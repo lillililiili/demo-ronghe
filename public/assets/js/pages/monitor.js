@@ -29,11 +29,12 @@ let chartPaused = false, logPaused = false;   // 图表刷新与日志滚动是�
   }).sort((a, b) => b.ts - a.ts);
 
   function render() {
-    /* 用户裁定（2026-08-28）：进页面就该有一台设备被选中，不是停在全站聚合表上。
-       放在 render() 里而不是声明处：本页不调 g.APP.rerender，render() 只在进入
-       页面时跑一次，所以这等于「每次进来都回到第一台」，而页面内的「返回全部 ›」
-       与树上的其它选择在本次停留期间照常生效、不会被重置。 */
-    selDev = firstDevInTree;
+    /* 默认进入时选中设备树第一台；从数据大屏等入口携带 {device:id} 时，
+       优先承接该设备并清掉旧筛选，确保树、曲线、告警与日志定位到同一对象。 */
+    const ctx = U.consume('monitor');
+    const deep = ctx && ctx.device ? M.devices.find(d => d.id === ctx.device) : null;
+    selDev = deep || firstDevInTree;
+    if (deep) { scopeCh = null; flt = { channel: null, type: null, status: null, kw: '' }; }
     const faults = devAlarms.filter(a => a.lv === '高').length;
     return `${U.kpis([
       { label: '在线设备', value: U.num(D.online), color: 'cyan', icon: 'device', desc: `在线率 ${D.onlineRate}%` },

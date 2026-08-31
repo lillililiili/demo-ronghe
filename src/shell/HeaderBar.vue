@@ -19,13 +19,11 @@ const clkHtml = computed(() => `${U.icon('clock')} ${store.timeStr}`);
 const weaHtml = `${M.CONF.city} ${U.icon('cloud')} ${M.CONF.weather.tempLo}℃ ~ ${M.CONF.weather.tempHi}℃ ${M.CONF.weather.text}`;
 const bellN = M.todayStats.pendingAlarm + M.todayStats.disposing;
 
-/* ---------- 大屏展示（监控预览专版，bigscreen.html 单独窗口）----------
-   入口是 <a target="dy-bigscreen"> 而非 window.open：用户手点的链接不吃弹窗拦截，
-   命名 target 让反复点击复用同一个窗口。 */
-const screenLabel = `${U.icon('mon')} 大屏展示`;
+/* ---------- 大屏展示：进入 Vue Router 管理的监控大屏页面 ---------- */
+const screenLabel = `${U.icon('mon')} 数据大屏`;
 
-/* ---------- 大屏模式 ---------- */
-const bigLabel = computed(() => `${U.icon('fullscreen')} ${store.bigscreen ? '退出大屏' : '大屏'}`);
+/* ---------- 全屏模式 ---------- */
+const bigLabel = computed(() => `${U.icon('fullscreen')} ${store.bigscreen ? '退出全屏' : '全屏'}`);
 function toggleBig() {
   const on = document.body.classList.toggle('bigscreen');
   store.bigscreen = on;
@@ -35,7 +33,7 @@ function toggleBig() {
     document.exitFullscreen().catch(() => { });
   }
   window.dispatchEvent(new Event('resize'));
-  toast(on ? '已进入大屏模式（字号放大，适配指挥大厅）' : '已退出大屏模式', 'ok');
+  toast(on ? '已进入全屏模式（字号放大，适配指挥大厅）' : '已退出全屏模式', 'ok');
 }
 function onFsChange() {
   if (!document.fullscreenElement && document.body.classList.contains('bigscreen')) {
@@ -88,8 +86,8 @@ onBeforeUnmount(() => {
     <div class="meta">
       <span class="it" id="clk" v-html="clkHtml"></span>
       <span class="it" id="wea" v-html="weaHtml"></span>
-      <span class="it"><a class="btn ghost" id="btnScreen" href="bigscreen.html" target="dy-bigscreen" title="监控预览专版大屏：单独窗口打开，可拖至大屏独立部署显示" v-html="screenLabel"></a></span>
-      <span class="it"><button class="btn ghost" id="btnBig" title="大屏模式：放大字号与行距，适配指挥大厅显示" v-html="bigLabel" @click="toggleBig"></button></span>
+      <span class="it"><router-link class="btn ghost" id="btnScreen" to="/bigscreen" title="进入低空安全数据大屏" v-html="screenLabel"></router-link></span>
+      <span class="it"><button class="btn ghost" id="btnBig" title="全屏模式：放大字号与行距，适配指挥大厅显示" v-html="bigLabel" @click="toggleBig"></button></span>
       <button class="it bell icon-btn" id="bell" type="button" aria-label="查看告警" @click="goAlarms">
         <svg class="hdr-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>
         <span class="dot" id="bellN">{{ bellN }}</span>

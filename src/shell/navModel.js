@@ -63,10 +63,12 @@ export const ROUTES = (function () {
   r.risk = { t: '飞行计划 · 全部风险事件', p: '飞行监管', ph: 'flights' };
   r.airspace = { t: '飞行计划', p: '飞行监管', ph: 'flights' };
   r.overview = { t: '融合感知', p: '感知监测', ph: 'situation' };
+  r.bigscreen = { t: '低空安全监控大屏', p: null, ph: null };
   return r;
 })();
 
 export const PAGE_THEME = {
+  bigscreen: 'overview',
   situation: 'sensing', monitor: 'sensing',
   flights: 'flight', legality: 'flight', risk: 'flight', airspace: 'flight',
   alarms: 'incident', punish: 'incident',

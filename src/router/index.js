@@ -22,6 +22,7 @@ export { routeKey };
 /* body[data-page]/[data-theme] 与标题统一在 afterEach 写（首个路由也会触发）。 */
 router.afterEach(to => {
   const k = routeKey(to);
+  document.body.classList.toggle('bs-body', k === 'bigscreen');
   document.body.dataset.page = k;
   document.body.dataset.theme = PAGE_THEME[k] || 'sensing';
   document.title = pageTitle(k) + ' · 无人机融合感知平台';

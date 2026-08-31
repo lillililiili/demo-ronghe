@@ -22,11 +22,12 @@ npm run preview    # 生产产物预览（瓦片中间件同样生效）
 public/assets/js/          ← legacy 层：与 dongying-demo/assets/js 逐字节一致的副本，
 │                             以经典 <script> 按原顺序加载（保持经典脚本语义，非 ESM）
 ├── mock.js                ← 唯一数据源（确定性 LCG，两版所有数字必然逐位相等）
-├── ui.js/charts.js/map.js/geo.js/video.js/case.js/search.js/bigscreen.js
+├── ui.js/charts.js/map.js/geo.js/video.js/case.js/search.js
 └── pages/*.js             ← 13 个 legacy 页面（未转换的仍由它渲染）
-public/bigscreen.html      ← 独立大屏页（原样搬运，单独窗口打开）
 src/
 ├── main.js                ← APP/ROUTES 全局 shim + createApp
+├── bigscreen/             ← #/bigscreen 路由：Naive UI 表格/按钮/弹窗 + 地图/图表/视频适配
+│   └── BigScreenApp.vue   ← 大屏页面、响应式数据与资源生命周期
 ├── shell/                 ← Vue 外壳：App/HeaderBar/NavSidebar/Breadcrumb
 │   ├── PageHost.vue       ← 切换器：VUE_PAGES 注册表 → Vue 页；否则 LegacyHost
 │   ├── LegacyHost.vue     ← 命令式宿主，逐字移植旧 route() 挂载/清理次序
@@ -52,7 +53,7 @@ demo 侧随时有并行会话在改。**同步流程**：
 bash tools/parity-diff.sh            # 任何 DIFF 都表示 legacy 副本落后
 ```
 
-1. **未转换页面 + 共享层 + css/img/bigscreen**：直接重拷（`cp`），零风险。
+1. **未转换页面 + 共享层 + css/img**：直接重拷（`cp`），零风险；大屏已 Vue 化，需按差异迁移。
 2. **已转换页面**：`git diff -- dongying-demo/assets/js/pages/<页>.js` 看上游改了什么，
    把 diff 重放进对应 `src/pages/*Page.vue`，然后与新版 legacy 并排指纹比对。
 3. **app.js**：属外壳，diff 重放进 shell 组件（HeaderBar/Breadcrumb/navModel/PageHost）。

@@ -1,50 +1,54 @@
-# Design QA — 监控大屏重点目标模块与地图视频弹窗
+# Design QA — 数据大屏“强指挥舱态势”视觉优化
 
-- Source visual truth: `C:\Users\黄建凯\AppData\Local\Temp\codex-clipboard-33091226-24f7-42c8-8719-7b1ded8daf80.png`
-- Implementation screenshot: `E:\沉积岩\demo-ronghe\design-qa-assets\implementation-bigscreen-target-dynamics.png`
-- Interaction screenshot: `E:\沉积岩\demo-ronghe\design-qa-assets\implementation-bigscreen-video-modal.png`
-- Viewport: 1920 × 900 CSS px, device scale factor 1
-- Source pixels: 1920 × 900; implementation pixels: 1920 × 900
-- Density normalization: both artifacts were inspected at native 1× density with matching viewport and crop.
-- State: `bigscreen.html`, online AMap loaded; default dashboard and clicked-unmanned-aircraft video modal states.
+- Source visual truth: `C:\Users\黄建凯\.codex\generated_images\01a05653-cc16-7201-a113-7b9f1fd710bc\exec-3c28ec57-cad4-41d7-aaee-81a2548df15c.png`
+- Implementation screenshot (compact): `C:\Users\黄建凯\AppData\Local\Temp\demo-ronghe-cockpit-qa\implementation-1366x768.png`
+- Implementation screenshot (large): `C:\Users\黄建凯\AppData\Local\Temp\demo-ronghe-cockpit-qa\implementation-1920x900.png`
+- Comparison image: `C:\Users\黄建凯\AppData\Local\Temp\demo-ronghe-cockpit-qa\comparison-source-vs-implementation.png`
+- Source pixels: 1672 × 941; implementation pixels: 1366 × 768 and 1920 × 900
+- CSS viewports: 1366 × 768 and 1920 × 900; device scale factor 1
+- Density normalization: the source was resampled to 1366 × 768 for the side-by-side comparison; the implementation remained at native 1× density.
+- State: `#/bigscreen`, default dashboard with online AMap; map-video modal and navigation states were tested separately.
 
 ## Full-view comparison evidence
 
-- The three-column dashboard, header, KPI row, map extent, panel geometry, borders, corner decoration, typography, and semantic color system remain aligned with the source.
-- The source's blank realtime-video slot is intentionally replaced with a populated “重点目标动态” table in the same panel footprint, so no surrounding region shifts or resizes.
-- The replacement module uses existing table density and tokens, displays four visible rows without clipping, and reports the live/actively tracked totals in the panel header.
-- The map hint is compact and non-interactive; it does not obscure persistent controls or important map content.
+- The implementation preserves the source's three-column cockpit composition, centered title, four-KPI band, equal-height side panels, semantic colors, angular technical framing, and map-first hierarchy.
+- The title, KPI values, radar-ring assets, panel corners, cyan edge treatment, action icons, chart colors, and alarm table now follow the selected strong cockpit direction.
+- At both required viewports the page exactly matches viewport width and height with no horizontal or vertical document overflow.
+- Intentional exception: the source concept uses a dark map treatment, while the implementation retains the existing light AMap, markers, center, zoom, controls, data, and video interaction per the user's explicit constraint.
 
 ## Focused comparison evidence
 
-- The replacement panel was inspected at full 1920 × 900 resolution. Target IDs, districts, risk levels, and states remain readable; long values truncate within fixed table columns instead of overflowing.
-- The modal interaction screenshot confirms that clicking a map unmanned-aircraft target opens a centered realtime-video view with the selected target ID, optical device, preview state, legal status, and risk level.
-- Focused evidence was required because the new table and modal text are too small to validate reliably from layout geometry alone.
+- Header/KPI region: inspected at native resolution for title weight, wing width, KPI number scale, semantic color, ring brightness, and equal card sizing.
+- Side panels: inspected for header truncation, chart legend placement, four action icons, panel corner assets, table row density, and visible module links.
+- Map/video state: a visible UAV marker (`UAV20260826033`) was hovered and clicked; the realtime-video dialog rendered its canvas and target metadata, then closed without leaving `#/bigscreen`.
 
 ## Required fidelity surfaces
 
-- Fonts and typography: the existing PingFang SC/system and Menlo/Consolas stacks, header hierarchy, table sizes, line heights, and numeric treatment are preserved.
-- Spacing and layout rhythm: the replacement occupies the original middle-left panel, keeps existing padding and row rhythm, and introduces no viewport overflow.
-- Colors and visual tokens: risk and state colors reuse the dashboard's red, amber, cyan, and green semantic tokens; panel surfaces and modal elevation match the existing theme.
-- Image quality and asset fidelity: the existing logo, map rendering, chart canvases, KPI ring, and EO video renderer remain unchanged and sharp at the tested density.
-- Copy and content: the module title, live/track totals, target metadata, map instruction, and video-modal labels are concise and consistent with the low-altitude safety domain.
+- Fonts and typography: system Chinese UI font and DIN/Bahnschrift numeric stack remain sharp; title, panel headers, KPI values, labels, legends, and table rows form a readable hierarchy at both sizes.
+- Spacing and layout rhythm: 23% / flexible center / 23% tracks, 10–12px gaps, equal side-panel heights, compact 1366 rules, and large-screen breathing room match the selected composition without clipping.
+- Colors and visual tokens: cyan/blue communicate normal operation, amber communicates pending work, red is reserved for danger, and green indicates normal/low-risk status.
+- Image quality and asset fidelity: the existing brand logo, title wing, panel corner, KPI ring, map, and video renderer remain source assets; Ionicons provide the four business icons without custom placeholder drawings.
+- Copy and content: all module titles, KPI labels, summaries, alarm columns, and business-entry labels remain unchanged and readable. The risk donut includes `未定级` so its segments equal the center total.
 
 ## Interaction and console checks
 
-- Verified map unmanned-aircraft hover, click, selected-target video modal opening, animated video canvas creation, and close-button dismissal.
-- Verified the original realtime-video panel is absent from the DOM and the replacement displays four height-fitted target rows.
-- Verified no horizontal or vertical viewport overflow at 1920 × 900.
+- Passed: four KPI routes, six module routes, four closure-task routes, and selected alarm deep link.
+- Passed: Enter/Space operation on chart/module entry points and visible focus treatment.
+- Passed: map zoom in, zoom out, reset, legend expand/collapse, UAV hover, realtime-video modal open, canvas render, and close.
+- Passed: route return and repeated dashboard initialization; chart canvases render without duplicate-instance errors.
 - Browser console errors/warnings: none.
 
-## Findings
+## Findings and comparison history
 
-- No actionable P0/P1/P2 visual or interaction issues remain.
-- Accepted intentional difference: the highlighted blank “实时视频” source region now contains “重点目标动态,” as requested.
+1. Earlier P2: the compact title was weaker than the selected concept and the target-risk legend moved below the ring.
+   Fix: enlarged the compact title and wings, strengthened panel/KPI edges, and fixed the risk legend to a right-side vertical layout.
+   Post-fix evidence: final 1366 × 768 screenshot shows a readable centered title and four-item right-side risk legend with no collision.
+2. Earlier P2: the target-risk slices totaled 9 while the center total displayed 10.
+   Fix: added the missing `未定级` category using the shared chart gray token.
+   Post-fix evidence: the rendered donut data now accounts for every realtime UAV target.
 
-## Comparison history
+## Follow-up polish
 
-1. Earlier P1: the realtime-video panel was hidden only with the HTML `hidden` attribute, but the product's panel display rule overrode it and left a visible blank realtime-video shell.
-2. Fix: replaced the shell with the data-backed “重点目标动态” table and preserved realtime video exclusively as a map-target modal.
-3. Post-fix evidence: the final dashboard screenshot shows the replacement panel without layout drift, and the interaction screenshot shows the selected-target realtime-video modal.
+- P3: the light production map naturally creates less cockpit contrast than the concept's dark map; this is accepted because keeping the map unchanged is a hard product constraint.
 
 final result: passed

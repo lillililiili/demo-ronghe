@@ -1,97 +1,200 @@
 /* ============================================================
-   监控大屏专版（bigscreen.html 专用，独立部署显示）
-   与业务系统同一套视觉词汇：app.css 的 .panel/.kpi/.tb + 主题层
-   （body[data-theme="overview"] 的 page-art 贴图与强调色）全部继承，
-   本文件只做大屏骨架、KPI 放大形态与装饰素材（assets/img/bigscreen/*.svg）。
+   数据大屏 · 强指挥舱态势
+   路由：#/bigscreen
+   地图内容由 MapView 独立管理，本文件只处理外层页面与容器视觉。
    ============================================================ */
-.bs-body{overflow:hidden}
-.bs-root{position:relative;z-index:1;display:flex;flex-direction:column;height:100vh;min-width:1280px;padding:0 14px 14px}
+.bs-body{overflow:hidden;background:#030b17}
+.bs-root{
+  position:relative;z-index:1;display:flex;flex-direction:column;height:100vh;min-width:1280px;
+  padding:0 14px 14px;background:rgba(2,10,22,.42)
+}
 
-/* ---------- 顶部标题带（沿用 .hdr 的表面与描边语言，标题居中加两翼装饰） ---------- */
+/* ---------- 顶部指挥标题带 ---------- */
 .bs-hdr{
-  flex:none;height:64px;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;
-  margin:0 -14px 12px;padding:0 22px;
-  background:rgba(5,14,26,.94);border-bottom:1px solid var(--line-2);
-  box-shadow:0 8px 24px rgba(0,0,0,.14);backdrop-filter:blur(14px);
+  flex:none;height:64px;display:grid;grid-template-columns:minmax(320px,1fr) auto minmax(320px,1fr);
+  align-items:center;margin:0 -14px 12px;padding:0 22px;
+  background:rgba(3,12,25,.96);border-bottom:1px solid rgba(43,180,255,.32);
+  box-shadow:0 8px 28px rgba(0,0,0,.26),inset 0 -1px 0 rgba(45,207,208,.08)
 }
-.bs-hdr-l{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--txt-2);white-space:nowrap}
-.bs-hdr-l img{flex:none;object-fit:contain}
-.bs-hdr-t{display:flex;align-items:center;gap:16px;white-space:nowrap}
+.bs-hdr-l{display:flex;align-items:center;gap:10px;color:#b9cbe0;font-size:13px;letter-spacing:.2px;white-space:nowrap}
+.bs-hdr-l img{width:30px;height:30px;flex:none;object-fit:contain;filter:drop-shadow(0 0 8px rgba(45,207,208,.24))}
+.bs-hdr-t{display:flex;align-items:center;gap:14px;white-space:nowrap}
 .bs-hdr-t span{
-  font-size:25px;font-weight:650;letter-spacing:7px;text-indent:7px;
-  background:linear-gradient(180deg,#f4f9ff 30%,#8fbcff);-webkit-background-clip:text;background-clip:text;color:transparent;
-  text-shadow:0 0 30px rgba(var(--page-accent-rgb,75,156,255),.35);
+  color:#edf6ff;font-size:27px;font-weight:700;letter-spacing:7px;text-indent:7px;
+  text-shadow:0 0 22px rgba(75,156,255,.48),0 2px 0 rgba(255,255,255,.08)
 }
-/* 两翼装饰：codex 生成的单色 SVG 走 mask，用主题强调色上色；右翼镜像左翼 */
 .bs-wing{
-  width:180px;height:24px;flex:none;
-  background:linear-gradient(90deg,var(--cyan),var(--page-accent,var(--blue)));
+  width:180px;height:24px;flex:none;background:linear-gradient(90deg,var(--cyan),var(--blue));
   -webkit-mask:url('../img/bigscreen/title-wing.svg') no-repeat center/contain;
           mask:url('../img/bigscreen/title-wing.svg') no-repeat center/contain;
+  filter:drop-shadow(0 0 6px rgba(45,207,208,.42))
 }
 .bs-wing.r{transform:scaleX(-1)}
-.bs-hdr-r{display:flex;align-items:center;justify-content:flex-end;gap:14px;font-size:13px;color:var(--txt-2)}
-#bsClk{font-family:Menlo,Consolas,monospace;font-variant-numeric:tabular-nums}
-.bs-exit{height:28px;padding:0 12px;font-size:12.5px;text-decoration:none}
+.bs-hdr-r{display:flex;align-items:center;justify-content:flex-end;gap:15px;color:#b3c5da;font-size:13px}
+.bs-clock{font-family:Menlo,Consolas,monospace;font-variant-numeric:tabular-nums;letter-spacing:.25px}
+.bs-exit.n-button{
+  height:30px;padding:0 12px;border-color:rgba(75,156,255,.38);border-radius:4px;
+  background:rgba(7,24,46,.7);color:#c9ddf5
+}
+.bs-exit.n-button:hover{border-color:var(--cyan);background:rgba(16,53,88,.78);color:#fff}
 
 /* ---------- 三栏骨架 ---------- */
-.bs-grid{flex:1;min-height:0;display:grid;grid-template-columns:23% 1fr 23%;gap:12px}
-.bs-col{display:flex;flex-direction:column;gap:12px;min-width:0;min-height:0}
-.bs-mid{display:flex;flex-direction:column;gap:12px;min-width:0;min-height:0}
+.bs-grid{flex:1;min-height:0;display:grid;grid-template-columns:23% minmax(0,1fr) 23%;gap:12px}
+.bs-col,.bs-mid{display:flex;min-width:0;min-height:0;flex-direction:column;gap:12px}
 
-/* 面板：完全复用 .panel/.ph 的表面工艺，这里只接管尺寸分配与角标装饰 */
-.bs-col .panel{flex:1;min-height:0}
+/* ---------- 指挥舱面板 ---------- */
+.bs-col .panel{
+  flex:1;min-height:0;overflow:hidden;border-color:rgba(35,176,255,.58);border-radius:3px;
+  background:rgba(5,20,39,.94);box-shadow:0 10px 26px rgba(0,0,0,.22),inset 0 0 22px rgba(22,109,186,.07),inset 0 0 0 1px rgba(45,207,208,.025)
+}
+.bs-col .panel:hover{border-color:rgba(45,207,208,.54)}
+.bs-col .panel>.ph{
+  min-height:44px;padding:8px 12px;border-bottom-color:rgba(44,153,226,.19);
+  background:rgba(12,42,72,.3)
+}
+.bs-col .panel>.ph h3{color:#edf6ff;font-size:14.5px;font-weight:650;letter-spacing:.25px}
+.bs-col .panel>.ph h3::before{
+  display:block;width:3px;height:15px;border-radius:1px;background:var(--cyan);
+  box-shadow:0 0 10px rgba(45,207,208,.7)
+}
+.bs-col .panel>.ph .sub{color:#8299b5;font-size:11.5px}
 .bs-grid .panel>.pb{display:flex;flex-direction:column;overflow:hidden;padding:8px 10px}
-.bs-grid .panel>.pb.bs-tbwrap{padding:0 0 4px}
-.bs-chart{flex:1;min-height:120px}   /* 下限兜底：矮窗口下图表画布不塌扁（评审会话 1280×720 实测判据） */
-#bsVideo{flex:1;min-height:0}
-/* 四角角标：左上/右下两枚（mask 上色 + 旋转），呼应指挥大屏的仪器感 */
+.bs-chart{flex:1;min-height:118px}
 .bs-grid .panel::before,.bs-grid .panel::after{
-  content:"";position:absolute;width:16px;height:16px;pointer-events:none;z-index:2;
-  background:rgba(var(--page-accent-rgb,75,156,255),.75);
-  -webkit-mask:url('../img/bigscreen/panel-corner.svg') no-repeat center/contain;
-          mask:url('../img/bigscreen/panel-corner.svg') no-repeat center/contain;
+  content:"";position:absolute;z-index:3;width:21px;height:21px;pointer-events:none;
+  background:#25bcff;-webkit-mask:url('../img/bigscreen/panel-corner.svg') no-repeat center/contain;
+  mask:url('../img/bigscreen/panel-corner.svg') no-repeat center/contain;
+  filter:drop-shadow(0 0 4px rgba(45,207,208,.38))
 }
 .bs-grid .panel::before{top:-1px;left:-1px}
-.bs-grid .panel::after{bottom:-1px;right:-1px;transform:rotate(180deg)}
+.bs-grid .panel::after{right:-1px;bottom:-1px;transform:rotate(180deg)}
 
-/* ---------- 中列：KPI 卡（继承主题层 .kpi 的 page-art 贴图工艺，改为大屏居中大数形态） ---------- */
-.bs-kpis{flex:none;display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
-.bs-kpis .kpi{flex-direction:column;justify-content:center;gap:2px;padding:12px 10px 10px;text-align:center}
-.bs-kpis .kpi .v{
-  font-family:"DIN Alternate","Bahnschrift",Menlo,sans-serif;font-variant-numeric:tabular-nums;
-  font-size:42px;font-weight:700;line-height:1.1;letter-spacing:1px;
-  text-shadow:0 0 22px currentColor;
+/* ---------- 模块入口 ---------- */
+.bs-panel-meta{display:flex;min-width:0;align-items:center;justify-content:flex-end;gap:8px}
+.bs-panel-meta .sub{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bs-module-link{
+  flex:none;padding:3px 0;border:0;background:none;color:#5fb9ff;font:11.5px/1.3 inherit;cursor:pointer
 }
-/* 雷达发光环底座：codex 素材 mask 上色，跟随各卡的 KPI 色 */
+.bs-module-link:hover{color:#8fe8ff;text-shadow:0 0 9px rgba(45,207,208,.5)}
+
+/* ---------- 中列 KPI ---------- */
+.bs-kpis{flex:none;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.bs-kpis .kpi{
+  --tone:var(--kpi-tone,var(--blue));appearance:none;isolation:isolate;position:relative;display:flex;
+  min-height:136px;flex-direction:column;justify-content:center;gap:1px;padding:10px 8px 9px;
+  border:1px solid color-mix(in srgb,var(--tone) 44%,#173c62);border-radius:3px;
+  background:#071a31;color:var(--tone);text-align:center;font:inherit;cursor:pointer;
+  box-shadow:0 9px 22px rgba(0,0,0,.2),inset 0 0 24px color-mix(in srgb,var(--tone) 7%,transparent);
+  transition:transform .16s ease,border-color .16s ease,box-shadow .16s ease
+}
+body[data-theme] .bs-kpis .kpi::before{
+  opacity:.48;filter:saturate(1.05) contrast(1.05);background-position:center!important
+}
+body[data-theme] .bs-kpis .kpi::after{
+  background:none;box-shadow:inset 0 0 0 1px rgba(255,255,255,.018)
+}
+.bs-kpis .kpi:hover{
+  z-index:2;transform:translateY(-2px);border-color:var(--tone);
+  box-shadow:0 12px 28px rgba(0,0,0,.27),0 0 16px color-mix(in srgb,var(--tone) 18%,transparent)
+}
+.bs-kpis .kpi .v{
+  position:relative;z-index:1;font-family:"DIN Alternate","Bahnschrift",Menlo,sans-serif;
+  font-size:45px;font-weight:750;line-height:1;font-variant-numeric:tabular-nums;letter-spacing:.5px;
+  text-shadow:0 0 18px currentColor
+}
 .bs-kpis .kpi .ring{
-  width:150px;height:40px;margin:-2px auto 2px;background:currentColor;
+  position:relative;z-index:1;width:150px;height:43px;margin:0 auto;background:currentColor;
   -webkit-mask:url('../img/bigscreen/kpi-ring.svg') no-repeat center/contain;
           mask:url('../img/bigscreen/kpi-ring.svg') no-repeat center/contain;
+  filter:drop-shadow(0 0 8px currentColor);opacity:.94
 }
-.bs-kpis .kpi .lb{font-size:13.5px;color:var(--txt-2);letter-spacing:3px;text-indent:3px}
+.bs-kpis .kpi .lb{position:relative;z-index:1;color:#dceaff;font-size:14px;font-weight:550;letter-spacing:1.5px}
+.bs-kpis .kpi>small{
+  position:absolute;right:8px;bottom:5px;z-index:2;color:#7290ae;font-size:9.5px;font-weight:400;
+  letter-spacing:0;opacity:0;transition:opacity .16s ease
+}
+.bs-kpis .kpi:hover>small,.bs-kpis .kpi:focus-visible>small{opacity:1}
 
+/* ---------- 地图：内部视觉和行为保持原实现 ---------- */
+.bs-map-shell{position:relative;flex:1;min-height:0}
 .bs-map{
-  flex:1;min-height:0;position:relative;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;
-  box-shadow:var(--shadow-soft),inset 0 0 60px rgba(10,40,110,.22);
+  width:100%;height:100%;position:relative;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;
+  box-shadow:var(--shadow-soft),inset 0 0 60px rgba(10,40,110,.22)
 }
 .bs-map-hint{
-  position:absolute;z-index:7;left:50%;top:10px;transform:translateX(-50%);pointer-events:none;
+  position:absolute;z-index:7;left:50%;top:46px;transform:translateX(-50%);pointer-events:none;
   padding:6px 12px;border:1px solid rgba(75,156,255,.28);border-radius:5px;
   background:rgba(5,14,26,.82);box-shadow:0 4px 16px rgba(0,0,0,.18);
-  color:var(--txt-2);font-size:12px;letter-spacing:.5px;white-space:nowrap;
+  color:var(--txt-2);font-size:12px;letter-spacing:.5px;white-space:nowrap
+}
+.bs-map-link{
+  position:absolute;z-index:8;right:10px;top:10px;height:30px;padding:0 12px;border:1px solid rgba(75,156,255,.38);
+  border-radius:5px;background:rgba(5,14,26,.86);color:#bcd8ff;font:12px/1.2 inherit;cursor:pointer;
+  box-shadow:0 4px 16px rgba(0,0,0,.22)
+}
+.bs-map-link:hover{color:#fff;border-color:rgba(75,156,255,.75);background:rgba(12,34,66,.94)}
+
+/* ---------- 处置闭环 ---------- */
+.bs-grid .panel>.pb.bs-action-grid{
+  display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:8px;padding:10px
+}
+.bs-action-card{
+  position:relative;display:grid;grid-template-columns:30px auto minmax(0,1fr);grid-template-rows:auto auto;
+  align-items:center;column-gap:7px;min-width:0;padding:8px 9px;border:1px solid rgba(50,137,211,.24);
+  border-radius:3px;background:rgba(6,25,47,.76);color:#bdcde0;font:inherit;text-align:left;cursor:pointer;
+  transition:border-color .16s ease,background .16s ease,transform .16s ease
+}
+.bs-action-card:hover{transform:translateY(-1px);border-color:rgba(45,207,208,.52);background:rgba(12,43,73,.76)}
+.bs-action-icon{grid-row:1/3;color:#53afff;font-size:25px;filter:drop-shadow(0 0 6px rgba(75,156,255,.36))}
+.bs-action-card b{color:#ffd068;font:750 25px/1 "DIN Alternate","Bahnschrift",sans-serif}
+.bs-action-card span{overflow:hidden;color:#dbe8f7;font-size:12px;text-overflow:ellipsis;white-space:nowrap}
+.bs-action-card small{grid-column:2/4;color:#6faef0;font-size:10px;white-space:nowrap}
+.bs-action-card.is-bad .bs-action-icon,.bs-action-card.is-bad b{color:#ff6875}
+.bs-action-card.is-good .bs-action-icon,.bs-action-card.is-good b{color:#62daa4}
+
+/* ---------- 图表容器 ---------- */
+.bs-grid .panel>.pb.bs-visual-body{gap:6px;padding:7px 9px 9px}
+.bs-panel-chart{flex:1;min-height:96px;border-radius:2px}
+.bs-panel-chart.is-clickable{cursor:pointer;transition:background .16s ease,box-shadow .16s ease}
+.bs-panel-chart.is-clickable:hover{background:rgba(26,111,183,.045);box-shadow:inset 0 0 0 1px rgba(45,207,208,.12)}
+.bs-device-chart-wrap{display:grid;grid-template-columns:47% minmax(0,1fr);align-items:center;flex:1;min-height:0}
+.bs-panel-chart.is-ring{width:100%;height:100%;min-height:100px}
+.bs-device-legend{display:flex;min-width:0;flex-direction:column;gap:7px;padding-right:4px}
+.bs-device-legend button{
+  display:grid;grid-template-columns:7px minmax(0,1fr) auto;align-items:center;gap:7px;padding:6px 8px;
+  border:1px solid rgba(48,135,207,.24);border-radius:3px;background:rgba(5,24,46,.68);
+  color:#c4d4e7;font:inherit;text-align:left;cursor:pointer
+}
+.bs-device-legend button:hover{border-color:rgba(45,207,208,.48);background:rgba(12,43,73,.7)}
+.bs-device-legend i{width:7px;height:7px;border-radius:50%;background:#71859e}
+.bs-device-legend i.is-abnormal,.bs-device-legend i.is-alarm{background:var(--red);box-shadow:0 0 7px rgba(255,91,97,.58)}
+.bs-device-legend span{overflow:hidden;color:#8299b5;font-size:10.5px;text-overflow:ellipsis;white-space:nowrap}
+.bs-device-legend b{color:#edf5ff;font:750 14px/1 "DIN Alternate","Bahnschrift",sans-serif}
+.bs-grid .panel>.pb.bs-flight-body{padding-top:5px}
+
+/* ---------- 实时告警 ---------- */
+.bs-grid .panel>.pb.bs-table-body{padding:0 0 3px}
+.bs-naive-table.n-data-table{
+  flex:1;min-height:0;--n-font-size:12px!important;--n-th-color:#143357!important;
+  --n-th-color-hover:#143357!important;--n-td-color:transparent!important;
+  --n-td-color-hover:rgba(29,119,194,.12)!important;--n-border-color:rgba(50,137,211,.18)!important;
+  --n-th-text-color:#d5e7fb!important;--n-td-text-color:#afc1d6!important
+}
+.bs-naive-table .n-data-table-th,.bs-naive-table .n-data-table-td{height:40px;padding:7px 10px!important}
+.bs-naive-table .n-data-table-th{font-weight:650}
+.bs-naive-table .n-data-table-td{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bs-naive-table .n-data-table-td .mono{font-family:Menlo,Consolas,monospace;font-size:12px}
+.bs-clickable-row{cursor:pointer}
+.bs-clickable-row:hover .n-data-table-td{background:rgba(29,119,194,.14)!important}
+
+/* ---------- 焦点与键盘 ---------- */
+.bs-kpis .kpi:focus-visible,.bs-module-link:focus-visible,.bs-map-link:focus-visible,
+.bs-action-card:focus-visible,.bs-clickable-row:focus-visible,.bs-panel-chart:focus-visible,
+.bs-device-legend button:focus-visible{
+  outline:2px solid var(--cyan);outline-offset:-2px
 }
 
-/* ---------- 左列：重点目标动态 ---------- */
-.bs-target-tb tr.is-tracked{background:rgba(34,211,238,.07)}
-.bs-target-tb tr.is-tracked td:first-child{color:#a9f3ff}
-.bs-target-tb td{white-space:nowrap}
-.bs-track-dot{
-  display:inline-block;width:6px;height:6px;margin-right:6px;border-radius:50%;vertical-align:1px;
-  background:var(--cyan);box-shadow:0 0 8px var(--cyan);
-}
-
-/* ---------- 地图无人机实时视频弹窗 ---------- */
+/* ---------- 地图无人机视频弹窗 ---------- */
 .bs-video-modal{display:flex;flex-direction:column;gap:10px}
 .bs-video-meta,.bs-video-info{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .bs-video-meta{color:var(--txt-2);font-size:12.5px}
@@ -99,16 +202,44 @@
 .bs-video-state i{width:7px;height:7px;border-radius:50%;background:currentColor;box-shadow:0 0 8px currentColor}
 .bs-video-state.is-tracked{color:var(--green)}
 #bsVideoModal{width:100%;min-height:300px}
+.bs-video-card.n-card{width:min(780px,92vw);background:#07192d;border-color:rgba(45,207,208,.28);box-shadow:0 28px 80px rgba(0,0,0,.5)}
+.bs-video-card .n-card-header{border-bottom:1px solid rgba(50,137,211,.2)}
+.bs-video-card .n-card__content{padding-top:14px}
 .bs-video-info{
-  flex-wrap:wrap;justify-content:flex-start;padding:10px 12px;border:1px solid var(--line-2);border-radius:6px;
-  background:rgba(6,18,35,.55);color:var(--txt-3);font-size:12px;
+  flex-wrap:wrap;justify-content:flex-start;padding:10px 12px;border:1px solid rgba(50,137,211,.2);
+  border-radius:3px;background:rgba(4,18,35,.72);color:var(--txt-3);font-size:12px
 }
 .bs-video-info span{min-width:calc(25% - 12px)}
 .bs-video-info b{margin-left:5px;color:var(--txt-2);font-weight:500}
 
-/* ---------- 表格：复用 table.tb，大屏关掉行指针（不可点） ---------- */
-.bs-tbwrap .tb{table-layout:fixed}
-.bs-tbwrap .tb tbody tr{cursor:default}
-.bs-tbwrap .tb tbody tr:hover{background:rgba(75,156,255,.06)}
-.bs-tbwrap .tb td{overflow:hidden;text-overflow:ellipsis}
-.bs-tbwrap .tb td.mono{font-family:Menlo,Consolas,monospace;font-size:12px}
+/* ---------- 1366×768 紧凑档 ---------- */
+@media (max-width:1500px),(max-height:820px){
+  .bs-root{padding:0 14px 12px}
+  .bs-hdr{height:64px;margin-bottom:12px;padding:0 18px;grid-template-columns:minmax(295px,1fr) auto minmax(295px,1fr)}
+  .bs-hdr-t{gap:10px}
+  .bs-hdr-t span{font-size:27px;letter-spacing:5px;text-indent:5px}
+  .bs-wing{width:140px;height:22px}
+  .bs-grid,.bs-col,.bs-mid{gap:10px}
+  .bs-col .panel>.ph{min-height:41px;padding:7px 11px}
+  .bs-col .panel>.ph h3{font-size:13.5px}
+  .bs-panel-meta{gap:6px}
+  .bs-panel-meta .sub{max-width:92px}
+  .bs-kpis{gap:10px}
+  .bs-kpis .kpi{min-height:136px;padding:8px 5px 7px}
+  .bs-kpis .kpi .v{font-size:41px}
+  .bs-kpis .kpi .ring{width:126px;height:38px}
+  .bs-kpis .kpi .lb{font-size:12.5px;letter-spacing:.8px}
+  .bs-grid .panel>.pb.bs-action-grid{gap:7px;padding:9px}
+  .bs-action-card{grid-template-columns:26px auto minmax(0,1fr);padding:7px 8px;column-gap:6px}
+  .bs-action-icon{font-size:22px}
+  .bs-action-card b{font-size:22px}
+  .bs-action-card span{font-size:11px}
+  .bs-device-chart-wrap{grid-template-columns:46% minmax(0,1fr)}
+  .bs-device-legend{gap:5px}
+  .bs-device-legend button{padding:5px 7px}
+  .bs-naive-table .n-data-table-th,.bs-naive-table .n-data-table-td{height:38px;padding:6px 8px!important}
+}
+
+@media (prefers-reduced-motion:reduce){
+  .bs-root *,.bs-root *::before,.bs-root *::after{animation:none!important;transition-duration:.01ms!important}
+}

@@ -9,6 +9,7 @@ export const useAppStore = defineStore('app', {
     navMini: false,       // 侧栏折叠
     bigscreen: false,     // 大屏模式
     remountKey: 0,        // APP.rerender() 自增，PageHost 监听后整页重挂
-    timeStr: ''           // M.nowStr()，HeaderBar 的 1s 定时器维护，Breadcrumb 消费
+    timeStr: '',          // M.systemNowStr()，顶栏系统当前时间
+    dataTimeStr: ''       // M.nowStr()，Mock 数据统计基准时间
   })
 });

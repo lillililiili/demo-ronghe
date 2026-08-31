@@ -32,7 +32,7 @@ const verShown = ver.replace(/\s*\(D\d+\)/, '');
   <div class="crumb" id="crumb">
     <div class="cbs" v-html="cbsHtml"></div>
     <span class="spacer"></span>
-    <span class="cinfo">数据统计时间 <b id="ftm">{{ store.timeStr }}</b></span>
+    <span class="cinfo">数据统计时间 <b id="ftm">{{ store.dataTimeStr }}</b></span>
     <span class="cinfo" title="平台坐标与高度基准（技术口径）：WGS-84 坐标系 · 椭球高">WGS-84 · 椭球高</span>
     <span class="cinfo" id="fver" :title="`${ver}（D 编号为内部评审轮次标记）`">{{ verShown }}</span>
   </div>

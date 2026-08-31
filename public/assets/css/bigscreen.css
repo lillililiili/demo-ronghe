@@ -3,38 +3,50 @@
    路由：#/bigscreen
    地图内容由 MapView 独立管理，本文件只处理外层页面与容器视觉。
    ============================================================ */
-.bs-body{overflow:hidden;background:#030b17}
+.bs-body{
+  overflow:hidden;background:#030b17 url('../img/bigscreen/cockpit-glow-bg.png') no-repeat center/cover;
+  background-attachment:fixed
+}
 .bs-root{
   position:relative;z-index:1;display:flex;flex-direction:column;height:100vh;min-width:1280px;
-  padding:0 14px 14px;background:rgba(2,10,22,.42)
+  padding:0 14px 14px;background:rgba(1,8,19,.28);isolation:isolate
+}
+.bs-root::before{
+  content:"";position:absolute;z-index:-1;inset:0;pointer-events:none;
+  background:url('../img/bigscreen/cockpit-glow-bg.png') no-repeat center/cover;opacity:.58;
+  filter:saturate(1.34) contrast(1.12)
 }
 
 /* ---------- 顶部指挥标题带 ---------- */
 .bs-hdr{
   flex:none;height:64px;display:grid;grid-template-columns:minmax(320px,1fr) auto minmax(320px,1fr);
   align-items:center;margin:0 -14px 12px;padding:0 22px;
-  background:rgba(3,12,25,.96);border-bottom:1px solid rgba(43,180,255,.32);
-  box-shadow:0 8px 28px rgba(0,0,0,.26),inset 0 -1px 0 rgba(45,207,208,.08)
+  background-color:rgba(2,11,25,.78);background-image:url('../img/bigscreen/cockpit-glow-bg.png');
+  background-repeat:no-repeat;background-position:center 3%;background-size:cover;background-blend-mode:screen;
+  border-bottom:1px solid rgba(61,207,255,.55);
+  box-shadow:0 10px 34px rgba(0,0,0,.32),0 2px 20px rgba(19,151,255,.13),inset 0 -1px 0 rgba(97,231,255,.16);
+  backdrop-filter:blur(9px)
 }
 .bs-hdr-l{display:flex;align-items:center;gap:10px;color:#b9cbe0;font-size:13px;letter-spacing:.2px;white-space:nowrap}
-.bs-hdr-l img{width:30px;height:30px;flex:none;object-fit:contain;filter:drop-shadow(0 0 8px rgba(45,207,208,.24))}
+.bs-hdr-l img{width:30px;height:30px;flex:none;object-fit:contain;filter:drop-shadow(0 0 10px rgba(60,190,255,.75))}
 .bs-hdr-t{display:flex;align-items:center;gap:14px;white-space:nowrap}
 .bs-hdr-t span{
   color:#edf6ff;font-size:27px;font-weight:700;letter-spacing:7px;text-indent:7px;
-  text-shadow:0 0 22px rgba(75,156,255,.48),0 2px 0 rgba(255,255,255,.08)
+  text-shadow:0 0 7px rgba(255,255,255,.42),0 0 20px rgba(72,167,255,.8),0 0 46px rgba(39,126,255,.34),0 2px 0 rgba(255,255,255,.08)
 }
 .bs-wing{
   width:180px;height:24px;flex:none;background:linear-gradient(90deg,var(--cyan),var(--blue));
   -webkit-mask:url('../img/bigscreen/title-wing.svg') no-repeat center/contain;
           mask:url('../img/bigscreen/title-wing.svg') no-repeat center/contain;
-  filter:drop-shadow(0 0 6px rgba(45,207,208,.42))
+  filter:drop-shadow(0 0 5px rgba(45,207,208,.72)) drop-shadow(0 0 16px rgba(43,143,255,.35))
 }
 .bs-wing.r{transform:scaleX(-1)}
 .bs-hdr-r{display:flex;align-items:center;justify-content:flex-end;gap:15px;color:#b3c5da;font-size:13px}
+.bs-weather{display:inline-flex;max-width:230px;overflow:hidden;color:#8ed9ff;text-overflow:ellipsis;white-space:nowrap;text-shadow:0 0 10px rgba(45,180,255,.24)}
 .bs-clock{font-family:Menlo,Consolas,monospace;font-variant-numeric:tabular-nums;letter-spacing:.25px}
 .bs-exit.n-button{
   height:30px;padding:0 12px;border-color:rgba(75,156,255,.38);border-radius:4px;
-  background:rgba(7,24,46,.7);color:#c9ddf5
+  background:rgba(7,24,46,.72);color:#c9ddf5;box-shadow:inset 0 0 10px rgba(58,173,255,.08),0 0 12px rgba(43,143,255,.06)
 }
 .bs-exit.n-button:hover{border-color:var(--cyan);background:rgba(16,53,88,.78);color:#fff}
 
@@ -45,17 +57,24 @@
 /* ---------- 指挥舱面板 ---------- */
 .bs-col .panel{
   flex:1;min-height:0;overflow:hidden;border-color:rgba(35,176,255,.58);border-radius:3px;
-  background:rgba(5,20,39,.94);box-shadow:0 10px 26px rgba(0,0,0,.22),inset 0 0 22px rgba(22,109,186,.07),inset 0 0 0 1px rgba(45,207,208,.025)
+  background-color:rgba(3,17,35,.76);background-image:url('../img/bigscreen/cockpit-glow-bg.png');
+  background-repeat:no-repeat;background-position:center;background-size:220% auto;background-blend-mode:screen;
+  backdrop-filter:blur(4px) saturate(1.2);
+  outline:1px solid rgba(93,209,255,.11);outline-offset:-4px;
+  box-shadow:0 0 0 1px rgba(1,8,18,.9),0 12px 32px rgba(0,0,0,.28),0 0 10px rgba(29,160,255,.16),0 0 28px rgba(25,139,255,.08),inset 0 0 0 1px rgba(95,218,255,.1),inset 0 0 18px rgba(45,207,208,.055),inset 0 0 38px rgba(25,132,220,.1)
 }
-.bs-col .panel:hover{border-color:rgba(45,207,208,.54)}
+.bs-col .panel:hover{
+  border-color:rgba(90,226,255,.94);outline-color:rgba(118,230,255,.25);
+  box-shadow:0 0 0 1px rgba(1,8,18,.9),0 12px 34px rgba(0,0,0,.3),0 0 11px rgba(66,207,255,.35),0 0 30px rgba(29,171,255,.18),inset 0 0 0 1px rgba(133,235,255,.18),inset 0 0 42px rgba(22,126,220,.14)
+}
 .bs-col .panel>.ph{
   min-height:44px;padding:8px 12px;border-bottom-color:rgba(44,153,226,.19);
-  background:rgba(12,42,72,.3)
+  background:rgba(10,42,77,.48);box-shadow:inset 0 -1px 12px rgba(45,173,255,.045)
 }
 .bs-col .panel>.ph h3{color:#edf6ff;font-size:14.5px;font-weight:650;letter-spacing:.25px}
 .bs-col .panel>.ph h3::before{
   display:block;width:3px;height:15px;border-radius:1px;background:var(--cyan);
-  box-shadow:0 0 10px rgba(45,207,208,.7)
+  box-shadow:0 0 5px currentColor,0 0 14px rgba(45,207,208,.85)
 }
 .bs-col .panel>.ph .sub{color:#8299b5;font-size:11.5px}
 .bs-grid .panel>.pb{display:flex;flex-direction:column;overflow:hidden;padding:8px 10px}
@@ -64,10 +83,20 @@
   content:"";position:absolute;z-index:3;width:21px;height:21px;pointer-events:none;
   background:#25bcff;-webkit-mask:url('../img/bigscreen/panel-corner.svg') no-repeat center/contain;
   mask:url('../img/bigscreen/panel-corner.svg') no-repeat center/contain;
-  filter:drop-shadow(0 0 4px rgba(45,207,208,.38))
+  filter:drop-shadow(0 0 5px rgba(45,207,208,.9)) drop-shadow(0 0 13px rgba(43,143,255,.52));
+  animation:bs-corner-breathe 3.8s ease-in-out infinite alternate
 }
 .bs-grid .panel::before{top:-1px;left:-1px}
 .bs-grid .panel::after{right:-1px;bottom:-1px;transform:rotate(180deg)}
+.bs-grid .panel>.ph::after,.bs-grid .panel>.pb::after{
+  content:"";position:absolute;z-index:3;width:18px;height:18px;pointer-events:none;background:#45d7ff;
+  -webkit-mask:url('../img/bigscreen/panel-corner.svg') no-repeat center/contain;
+  mask:url('../img/bigscreen/panel-corner.svg') no-repeat center/contain;
+  filter:drop-shadow(0 0 5px rgba(74,221,255,.85)) drop-shadow(0 0 12px rgba(43,143,255,.42));
+  animation:bs-corner-breathe 3.8s ease-in-out infinite alternate-reverse
+}
+.bs-grid .panel>.ph::after{top:-1px;right:-1px;transform:rotate(90deg)}
+.bs-grid .panel>.pb::after{left:-1px;bottom:-1px;transform:rotate(-90deg)}
 
 /* ---------- 模块入口 ---------- */
 .bs-panel-meta{display:flex;min-width:0;align-items:center;justify-content:flex-end;gap:8px}
@@ -83,30 +112,36 @@
   --tone:var(--kpi-tone,var(--blue));appearance:none;isolation:isolate;position:relative;display:flex;
   min-height:136px;flex-direction:column;justify-content:center;gap:1px;padding:10px 8px 9px;
   border:1px solid color-mix(in srgb,var(--tone) 44%,#173c62);border-radius:3px;
-  background:#071a31;color:var(--tone);text-align:center;font:inherit;cursor:pointer;
-  box-shadow:0 9px 22px rgba(0,0,0,.2),inset 0 0 24px color-mix(in srgb,var(--tone) 7%,transparent);
-  transition:transform .16s ease,border-color .16s ease,box-shadow .16s ease
+  background-color:rgba(5,23,46,.76);background-image:url('../img/bigscreen/cockpit-glow-bg.png');
+  background-repeat:no-repeat;background-position:center 6%;background-size:190% auto;background-blend-mode:screen;
+  color:var(--tone);text-align:center;font:inherit;cursor:pointer;
+  outline:1px solid color-mix(in srgb,var(--tone) 16%,transparent);outline-offset:-4px;
+  box-shadow:0 0 0 1px rgba(1,8,18,.9),0 10px 26px rgba(0,0,0,.28),0 0 9px color-mix(in srgb,var(--tone) 19%,transparent),0 0 24px color-mix(in srgb,var(--tone) 10%,transparent),inset 0 0 0 1px color-mix(in srgb,var(--tone) 13%,transparent),inset 0 0 32px color-mix(in srgb,var(--tone) 12%,transparent);
+  backdrop-filter:blur(6px) saturate(1.16);
+  transition:transform .16s ease,border-color .16s ease,box-shadow .16s ease;
+  animation:bs-kpi-border-breathe 4.6s ease-in-out infinite alternate
 }
 body[data-theme] .bs-kpis .kpi::before{
-  opacity:.48;filter:saturate(1.05) contrast(1.05);background-position:center!important
+  opacity:.58;filter:saturate(1.2) contrast(1.08);background-position:center!important
 }
 body[data-theme] .bs-kpis .kpi::after{
   background:none;box-shadow:inset 0 0 0 1px rgba(255,255,255,.018)
 }
 .bs-kpis .kpi:hover{
   z-index:2;transform:translateY(-2px);border-color:var(--tone);
-  box-shadow:0 12px 28px rgba(0,0,0,.27),0 0 16px color-mix(in srgb,var(--tone) 18%,transparent)
+  outline-color:color-mix(in srgb,var(--tone) 32%,transparent);
+  box-shadow:0 0 0 1px rgba(1,8,18,.9),0 12px 28px rgba(0,0,0,.27),0 0 12px color-mix(in srgb,var(--tone) 36%,transparent),0 0 30px color-mix(in srgb,var(--tone) 22%,transparent),inset 0 0 0 1px color-mix(in srgb,var(--tone) 24%,transparent),inset 0 0 38px color-mix(in srgb,var(--tone) 15%,transparent)
 }
 .bs-kpis .kpi .v{
   position:relative;z-index:1;font-family:"DIN Alternate","Bahnschrift",Menlo,sans-serif;
   font-size:45px;font-weight:750;line-height:1;font-variant-numeric:tabular-nums;letter-spacing:.5px;
-  text-shadow:0 0 18px currentColor
+  text-shadow:0 0 5px rgba(255,255,255,.5),0 0 18px currentColor,0 0 34px color-mix(in srgb,currentColor 42%,transparent)
 }
 .bs-kpis .kpi .ring{
   position:relative;z-index:1;width:150px;height:43px;margin:0 auto;background:currentColor;
   -webkit-mask:url('../img/bigscreen/kpi-ring.svg') no-repeat center/contain;
           mask:url('../img/bigscreen/kpi-ring.svg') no-repeat center/contain;
-  filter:drop-shadow(0 0 8px currentColor);opacity:.94
+  filter:drop-shadow(0 0 5px currentColor) drop-shadow(0 0 14px currentColor);opacity:.98
 }
 .bs-kpis .kpi .lb{position:relative;z-index:1;color:#dceaff;font-size:14px;font-weight:550;letter-spacing:1.5px}
 .bs-kpis .kpi>small{
@@ -116,10 +151,18 @@ body[data-theme] .bs-kpis .kpi::after{
 .bs-kpis .kpi:hover>small,.bs-kpis .kpi:focus-visible>small{opacity:1}
 
 /* ---------- 地图：内部视觉和行为保持原实现 ---------- */
-.bs-map-shell{position:relative;flex:1;min-height:0}
+.bs-map-shell{position:relative;flex:1;min-height:0;filter:drop-shadow(0 0 9px rgba(54,184,255,.18))}
+.bs-map-shell::before,.bs-map-shell::after{
+  content:"";position:absolute;z-index:9;width:30px;height:30px;pointer-events:none;background:#45d7ff;
+  -webkit-mask:url('../img/bigscreen/panel-corner.svg') no-repeat center/contain;
+  mask:url('../img/bigscreen/panel-corner.svg') no-repeat center/contain;
+  filter:drop-shadow(0 0 6px #25a9ff) drop-shadow(0 0 14px rgba(37,169,255,.6))
+}
+.bs-map-shell::before{left:-2px;top:-2px}.bs-map-shell::after{right:-2px;bottom:-2px;transform:rotate(180deg)}
 .bs-map{
   width:100%;height:100%;position:relative;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;
-  box-shadow:var(--shadow-soft),inset 0 0 60px rgba(10,40,110,.22)
+  outline:1px solid rgba(81,207,255,.17);outline-offset:-4px;
+  box-shadow:var(--shadow-soft),0 0 0 1px rgba(63,196,255,.24),0 0 12px rgba(55,190,255,.24),0 0 28px rgba(36,150,255,.13),inset 0 0 0 1px rgba(118,229,255,.08),inset 0 0 60px rgba(10,40,110,.22)
 }
 .bs-map-hint{
   position:absolute;z-index:7;left:50%;top:46px;transform:translateX(-50%);pointer-events:none;
@@ -130,7 +173,7 @@ body[data-theme] .bs-kpis .kpi::after{
 .bs-map-link{
   position:absolute;z-index:8;right:10px;top:10px;height:30px;padding:0 12px;border:1px solid rgba(75,156,255,.38);
   border-radius:5px;background:rgba(5,14,26,.86);color:#bcd8ff;font:12px/1.2 inherit;cursor:pointer;
-  box-shadow:0 4px 16px rgba(0,0,0,.22)
+  box-shadow:0 4px 16px rgba(0,0,0,.22),0 0 15px rgba(38,160,255,.18),inset 0 0 12px rgba(45,207,208,.07)
 }
 .bs-map-link:hover{color:#fff;border-color:rgba(75,156,255,.75);background:rgba(12,34,66,.94)}
 
@@ -141,16 +184,19 @@ body[data-theme] .bs-kpis .kpi::after{
 .bs-action-card{
   position:relative;display:grid;grid-template-columns:30px auto minmax(0,1fr);grid-template-rows:auto auto;
   align-items:center;column-gap:7px;min-width:0;padding:8px 9px;border:1px solid rgba(50,137,211,.24);
-  border-radius:3px;background:rgba(6,25,47,.76);color:#bdcde0;font:inherit;text-align:left;cursor:pointer;
+  border-radius:3px;background:rgba(5,25,50,.84);color:#bdcde0;font:inherit;text-align:left;cursor:pointer;
+  outline:1px solid rgba(93,209,255,.07);outline-offset:-3px;
+  box-shadow:0 0 0 1px rgba(1,8,18,.72),inset 0 0 0 1px rgba(100,216,255,.045),inset 0 0 20px rgba(31,136,230,.07),0 0 13px rgba(25,135,230,.07);
   transition:border-color .16s ease,background .16s ease,transform .16s ease
 }
-.bs-action-card:hover{transform:translateY(-1px);border-color:rgba(45,207,208,.52);background:rgba(12,43,73,.76)}
-.bs-action-icon{grid-row:1/3;color:#53afff;font-size:25px;filter:drop-shadow(0 0 6px rgba(75,156,255,.36))}
+.bs-action-card:hover{transform:translateY(-1px);border-color:rgba(79,220,255,.86);outline-color:rgba(110,229,255,.2);background:rgba(11,46,82,.84);box-shadow:0 0 0 1px rgba(1,8,18,.72),inset 0 0 0 1px rgba(126,230,255,.1),inset 0 0 24px rgba(41,162,255,.1),0 0 9px rgba(71,213,255,.26),0 0 20px rgba(37,165,255,.15)}
+.bs-action-icon{grid-row:1/3;color:#53afff;font-size:25px;filter:drop-shadow(0 0 5px currentColor) drop-shadow(0 0 11px rgba(75,156,255,.45))}
 .bs-action-card b{color:#ffd068;font:750 25px/1 "DIN Alternate","Bahnschrift",sans-serif}
 .bs-action-card span{overflow:hidden;color:#dbe8f7;font-size:12px;text-overflow:ellipsis;white-space:nowrap}
 .bs-action-card small{grid-column:2/4;color:#6faef0;font-size:10px;white-space:nowrap}
 .bs-action-card.is-bad .bs-action-icon,.bs-action-card.is-bad b{color:#ff6875}
 .bs-action-card.is-good .bs-action-icon,.bs-action-card.is-good b{color:#62daa4}
+.bs-action-card.is-bad{box-shadow:inset 0 0 18px rgba(255,82,105,.055),0 0 12px rgba(255,82,105,.035)}
 
 /* ---------- 图表容器 ---------- */
 .bs-grid .panel>.pb.bs-visual-body{gap:6px;padding:7px 9px 9px}
@@ -163,7 +209,8 @@ body[data-theme] .bs-kpis .kpi::after{
 .bs-device-legend button{
   display:grid;grid-template-columns:7px minmax(0,1fr) auto;align-items:center;gap:7px;padding:6px 8px;
   border:1px solid rgba(48,135,207,.24);border-radius:3px;background:rgba(5,24,46,.68);
-  color:#c4d4e7;font:inherit;text-align:left;cursor:pointer
+  color:#c4d4e7;font:inherit;text-align:left;cursor:pointer;
+  box-shadow:inset 0 0 0 1px rgba(94,205,255,.035),0 0 9px rgba(34,146,236,.04)
 }
 .bs-device-legend button:hover{border-color:rgba(45,207,208,.48);background:rgba(12,43,73,.7)}
 .bs-device-legend i{width:7px;height:7px;border-radius:50%;background:#71859e}
@@ -186,6 +233,77 @@ body[data-theme] .bs-kpis .kpi::after{
 .bs-naive-table .n-data-table-td .mono{font-family:Menlo,Consolas,monospace;font-size:12px}
 .bs-clickable-row{cursor:pointer}
 .bs-clickable-row:hover .n-data-table-td{background:rgba(29,119,194,.14)!important}
+.bs-clickable-row.is-高 .n-data-table-td{background:rgba(255,62,86,.035)!important}
+.bs-clickable-row.is-高 .n-data-table-td:first-child{box-shadow:inset 3px 0 0 rgba(255,82,105,.82)}
+.bs-clickable-row.is-高:hover .n-data-table-td{background:rgba(255,62,86,.075)!important}
+
+@keyframes bs-corner-breathe{
+  from{opacity:.68}
+  to{opacity:1}
+}
+@keyframes bs-kpi-border-breathe{
+  from{filter:brightness(.96)}
+  to{filter:brightness(1.08)}
+}
+
+/* ---------- 参考效果图：双层切角装甲框 ---------- */
+.bs-col .panel{
+  --frame-cut:9px;padding:1px;border:0;outline:0;
+  clip-path:polygon(0 var(--frame-cut),var(--frame-cut) 0,calc(100% - var(--frame-cut)) 0,100% var(--frame-cut),100% calc(100% - var(--frame-cut)),calc(100% - var(--frame-cut)) 100%,var(--frame-cut) 100%,0 calc(100% - var(--frame-cut)));
+  background:#25cfff;filter:drop-shadow(0 0 4px rgba(37,207,255,.54)) drop-shadow(0 0 13px rgba(32,143,255,.18));
+  box-shadow:none
+}
+.bs-col .panel::before{
+  content:"";position:absolute;z-index:0;inset:1px;width:auto;height:auto;pointer-events:none;
+  clip-path:polygon(0 8px,8px 0,calc(100% - 8px) 0,100% 8px,100% calc(100% - 8px),calc(100% - 8px) 100%,8px 100%,0 calc(100% - 8px));
+  background-color:rgba(3,17,35,.94);background-image:url('../img/bigscreen/cockpit-glow-bg.png');
+  background-repeat:no-repeat;background-position:center;background-size:220% auto;background-blend-mode:screen;
+  -webkit-mask:none;mask:none;filter:none;animation:none;opacity:1
+}
+.bs-col .panel::after{
+  content:"";position:absolute;z-index:0;inset:4px;width:auto;height:auto;pointer-events:none;
+  clip-path:polygon(0 6px,6px 0,calc(100% - 6px) 0,100% 6px,100% calc(100% - 6px),calc(100% - 6px) 100%,6px 100%,0 calc(100% - 6px));
+  background:transparent;-webkit-mask:none;mask:none;transform:none;filter:none;animation:none;
+  box-shadow:inset 0 0 0 1px rgba(79,211,255,.25),inset 0 0 18px rgba(29,160,255,.08)
+}
+.bs-col .panel:hover{
+  background:#68e5ff;filter:drop-shadow(0 0 6px rgba(70,223,255,.72)) drop-shadow(0 0 18px rgba(32,143,255,.28));
+  box-shadow:none
+}
+.bs-grid .panel>.ph,.bs-grid .panel>.pb{position:relative;z-index:1}
+.bs-grid .panel>.ph::after,.bs-grid .panel>.pb::after{display:none}
+
+.bs-kpis .kpi{
+  --frame-cut:10px;border:0;outline:0;overflow:hidden;
+  clip-path:polygon(0 var(--frame-cut),var(--frame-cut) 0,calc(100% - var(--frame-cut)) 0,100% var(--frame-cut),100% calc(100% - var(--frame-cut)),calc(100% - var(--frame-cut)) 100%,var(--frame-cut) 100%,0 calc(100% - var(--frame-cut)));
+  background:color-mix(in srgb,var(--tone) 70%,#0876a8);box-shadow:none;
+  animation:bs-kpi-frame-breathe 4.6s ease-in-out infinite alternate
+}
+body[data-theme] .bs-kpis .kpi::before{
+  content:"";position:absolute;z-index:0;inset:1px;pointer-events:none;opacity:1;
+  clip-path:polygon(0 9px,9px 0,calc(100% - 9px) 0,100% 9px,100% calc(100% - 9px),calc(100% - 9px) 100%,9px 100%,0 calc(100% - 9px));
+  background-color:rgba(4,19,39,.93);background-image:url('../img/bigscreen/cockpit-glow-bg.png');
+  background-repeat:no-repeat;background-position:center 6%!important;background-size:190% auto;background-blend-mode:screen;
+  filter:none
+}
+body[data-theme] .bs-kpis .kpi::after{
+  content:"";position:absolute;z-index:0;inset:5px;pointer-events:none;
+  clip-path:polygon(0 6px,6px 0,calc(100% - 6px) 0,100% 6px,100% calc(100% - 6px),calc(100% - 6px) 100%,6px 100%,0 calc(100% - 6px));
+  background:none;box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--tone) 26%,transparent),inset 0 0 20px color-mix(in srgb,var(--tone) 8%,transparent)
+}
+.bs-kpis .kpi:hover{
+  background:var(--tone);box-shadow:none;filter:brightness(1.12) drop-shadow(0 0 7px color-mix(in srgb,var(--tone) 74%,transparent)) drop-shadow(0 0 18px color-mix(in srgb,var(--tone) 30%,transparent))
+}
+.bs-kpis .kpi>*{position:relative;z-index:1}
+@keyframes bs-kpi-frame-breathe{
+  from{filter:brightness(.96) drop-shadow(0 0 3px color-mix(in srgb,var(--tone) 30%,transparent))}
+  to{filter:brightness(1.06) drop-shadow(0 0 6px color-mix(in srgb,var(--tone) 52%,transparent))}
+}
+
+.bs-action-card,.bs-device-legend button{
+  clip-path:polygon(0 5px,5px 0,calc(100% - 5px) 0,100% 5px,100% calc(100% - 5px),calc(100% - 5px) 100%,5px 100%,0 calc(100% - 5px));
+  border-color:rgba(49,194,255,.34);border-radius:0
+}
 
 /* ---------- 焦点与键盘 ---------- */
 .bs-kpis .kpi:focus-visible,.bs-module-link:focus-visible,.bs-map-link:focus-visible,
@@ -217,6 +335,9 @@ body[data-theme] .bs-kpis .kpi::after{
   .bs-root{padding:0 14px 12px}
   .bs-hdr{height:64px;margin-bottom:12px;padding:0 18px;grid-template-columns:minmax(295px,1fr) auto minmax(295px,1fr)}
   .bs-hdr-t{gap:10px}
+  .bs-hdr-r{gap:10px}
+  .bs-weather{max-width:78px}
+  .bs-weather-detail{display:none}
   .bs-hdr-t span{font-size:27px;letter-spacing:5px;text-indent:5px}
   .bs-wing{width:140px;height:22px}
   .bs-grid,.bs-col,.bs-mid{gap:10px}

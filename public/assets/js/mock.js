@@ -4827,11 +4827,16 @@
   function now() { return new Date(CONF.demoTime.getTime() + (Date.now() - _t0)); }
   const nowStr = () => fmtDT(now());
   const nowTime = () => fmtT(now());
+  /* 系统时钟只用于顶栏与大屏展示；业务数据与运行期留痕继续使用 now()，
+     避免固定 Mock 数据被误标成机器当前日期。 */
+  function systemNow() { return new Date(); }
+  const systemNowStr = () => fmtDT(systemNow());
+  const systemNowTime = () => fmtT(systemNow());
 
   /* ---------------- 导出 ---------------- */
   global.MOCK = {
     CONF, DISTRICTS, AIRPORTS, PARTNERS, PILOTS, MODELS, VIOLATIONS, T_TYPES,
-    now, nowStr, nowTime,
+    now, nowStr, nowTime, systemNow, systemNowStr, systemNowTime,
     devices, deviceStats, airspaces, flightPlans,
     allTargets, todayTargets, liveTargets,
     alarms, todayAlarms, cases, casesToday, authLogs,

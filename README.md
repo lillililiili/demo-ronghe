@@ -90,6 +90,8 @@ node tools/tilecheck.cjs      # 仅审计保留的历史瓦片包（线上地图
 `MapView` 的 Canvas 叠加层绘制。复制 `.env.example` 为 `.env.local` 后配置 Web 端 Key；
 本地开发可配置 `VITE_AMAP_SECURITY_CODE`，生产环境必须配置
 `VITE_AMAP_SERVICE_HOST=/_AMapService` 并按 `deploy/nginx-amap.conf.example` 代理安全密钥。
+顶栏天气复用同一 JS API 配置，通过 `AMap.Weather` 获取东营实时天气和当天预报；
+请求失败时自动回退到 `MOCK.CONF.weather`，不会阻塞页面加载。
 
 原 1.5GB / 32 万张离线瓦片仅保留作历史回滚数据，Vite 不再转发、构建不再复制，
 运行时不会产生 `/assets/tiles/**` 请求。`tools/tilecheck.cjs` 仅用于人工审计旧瓦片包。

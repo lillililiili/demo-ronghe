@@ -8,12 +8,13 @@ import {
   RadioOutline
 } from '@vicons/ionicons5';
 import { theme, themeOverrides } from '../ui/theme.js';
+import { refreshWeather, weatherState } from '../services/weather.js';
 
 const M = window.MOCK;
 const U = window.UI;
 const E = window.EVT;
 
-const clock = ref(M.nowStr());
+const clock = ref(M.systemNowStr());
 const viewportHeight = ref(window.innerHeight);
 const showVideo = ref(false);
 const selectedTarget = ref(null);
@@ -25,6 +26,7 @@ const mapEl = ref(null);
 const videoEl = ref(null);
 
 let clockTimer = null;
+let weatherTimer = null;
 let resizeTimer = null;
 let map = null;
 let video = null;
@@ -102,6 +104,19 @@ const targetSummary = computed(() => `实时 ${targetAll.value.length} 架 · �
 const deviceSummary = computed(() => `在线率 ${M.deviceStats.onlineRate}% · 关注 ${deviceExceptions.value.length}`);
 const alarmSummary = computed(() => `今日 ${alarmAll.value.length} 条 · 待核实 ${alarmAll.value.filter(a => a._flowStatus === '待核实').length}`);
 const opticalDevice = computed(() => M.devices.find(d => d.type === '光电' && d.status === '在线'));
+const weatherTemp = computed(() => {
+  const w = weatherState;
+  return w.temperature == null ? `${w.tempLo}℃~${w.tempHi}℃` : `${w.temperature}℃`;
+});
+const weatherDetail = computed(() => {
+  const w = weatherState;
+  const wind = w.windDirection ? ` · ${w.windDirection}风${w.windPower ? `${w.windPower}级` : ''}` : '';
+  return ` · ${w.text}${wind}`;
+});
+const weatherTitle = computed(() => {
+  const w = weatherState;
+  return [w.source, w.reportTime && `发布 ${w.reportTime}`, w.humidity && `湿度 ${w.humidity}%`, w.error].filter(Boolean).join(' · ');
+});
 
 const mono = text => h('span', { class: 'mono' }, text);
 const colored = (text, color) => h('span', { style: { color } }, text);
@@ -118,7 +133,7 @@ function goAlarm(row) {
 
 function rowProps(action, label) {
   return row => ({
-    class: 'bs-clickable-row',
+    class: ['bs-clickable-row', row.level ? `is-${row.level}` : ''],
     role: 'link',
     tabindex: 0,
     'aria-label': label(row),
@@ -234,7 +249,9 @@ function handleResize() {
 }
 
 onMounted(() => {
-  clockTimer = window.setInterval(() => { clock.value = M.nowStr(); }, 1000);
+  clockTimer = window.setInterval(() => { clock.value = M.systemNowStr(); }, 1000);
+  refreshWeather();
+  weatherTimer = window.setInterval(refreshWeather, 30 * 60 * 1000);
   window.addEventListener('resize', handleResize);
   requestAnimationFrame(() => {
     renderCharts();
@@ -244,6 +261,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   clearInterval(clockTimer);
+  clearInterval(weatherTimer);
   clearTimeout(resizeTimer);
   window.removeEventListener('resize', handleResize);
   destroyVideo();
@@ -259,7 +277,7 @@ onBeforeUnmount(() => {
       <header class="bs-hdr">
         <div class="bs-hdr-l"><img src="/assets/img/brand/logo-mark.png" alt="" width="30" height="30">无人机融合感知与低空安全管理平台</div>
         <div class="bs-hdr-t"><i class="bs-wing" aria-hidden="true"></i><span>低空安全数据大屏</span><i class="bs-wing r" aria-hidden="true"></i></div>
-        <div class="bs-hdr-r"><span class="bs-clock">{{ clock }}</span><n-button class="bs-exit" tag="a" href="#/situation" size="small" ghost title="返回业务系统">退出大屏</n-button></div>
+        <div class="bs-hdr-r"><span class="bs-weather" :title="weatherTitle"><span>{{ weatherState.city }} · {{ weatherTemp }}</span><span class="bs-weather-detail">{{ weatherDetail }}</span></span><span class="bs-clock">{{ clock }}</span><n-button class="bs-exit" tag="a" href="#/situation" size="small" ghost title="返回业务系统">退出大屏</n-button></div>
       </header>
 
       <div class="bs-grid">

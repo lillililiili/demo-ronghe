@@ -7,16 +7,30 @@ import { useAppStore } from '../stores/app.js';
 import { carouselDlg } from './useCarousel.js';
 import { toast } from '../ui/nv.js';
 import { openModal, closeModal } from '../ui/modal.js';
+import { refreshWeather, weatherState } from '../services/weather.js';
 
 const store = useAppStore();
 const M = window.MOCK, U = window.UI;
 
-/* ---------- 时钟（平台当前时刻只有一个来源：M.now()） ---------- */
-let clkTimer = null;
-const tick = () => { store.timeStr = M.nowStr(); };
+/* ---------- 时钟：系统当前时间与 Mock 数据统计时间分离 ---------- */
+let clkTimer = null, weatherTimer = null;
+const tick = () => {
+  store.timeStr = M.systemNowStr();
+  store.dataTimeStr = M.nowStr();
+};
 tick();
 const clkHtml = computed(() => `${U.icon('clock')} ${store.timeStr}`);
-const weaHtml = `${M.CONF.city} ${U.icon('cloud')} ${M.CONF.weather.tempLo}℃ ~ ${M.CONF.weather.tempHi}℃ ${M.CONF.weather.text}`;
+const weaHtml = computed(() => {
+  const w = weatherState;
+  const temp = w.temperature == null ? `${w.tempLo}℃ ~ ${w.tempHi}℃` : `${w.temperature}℃`;
+  const wind = w.windDirection ? ` ${w.windDirection}风${w.windPower ? `${w.windPower}级` : ''}` : '';
+  return `${w.city} ${U.icon('cloud')} ${temp} ${w.text}${wind}`;
+});
+const weatherTitle = computed(() => {
+  const w = weatherState;
+  const detail = [w.source, w.reportTime && `发布 ${w.reportTime}`, w.humidity && `湿度 ${w.humidity}%`].filter(Boolean).join(' · ');
+  return w.error ? `${detail || '本地天气'} · ${w.error}` : detail;
+});
 const bellN = M.todayStats.pendingAlarm + M.todayStats.disposing;
 
 /* ---------- 大屏展示：进入 Vue Router 管理的监控大屏页面 ---------- */
@@ -66,11 +80,14 @@ function onMenu(k) {
 
 onMounted(() => {
   clkTimer = setInterval(tick, 1000);
+  refreshWeather();
+  weatherTimer = setInterval(refreshWeather, 30 * 60 * 1000);
   document.addEventListener('fullscreenchange', onFsChange);
   document.addEventListener('click', closeMenu);
 });
 onBeforeUnmount(() => {
   clearInterval(clkTimer);
+  clearInterval(weatherTimer);
   document.removeEventListener('fullscreenchange', onFsChange);
   document.removeEventListener('click', closeMenu);
 });
@@ -85,7 +102,7 @@ onBeforeUnmount(() => {
     <div class="spacer"></div>
     <div class="meta">
       <span class="it" id="clk" v-html="clkHtml"></span>
-      <span class="it" id="wea" v-html="weaHtml"></span>
+      <span class="it" id="wea" :title="weatherTitle" v-html="weaHtml"></span>
       <span class="it"><router-link class="btn ghost" id="btnScreen" to="/bigscreen" title="进入低空安全数据大屏" v-html="screenLabel"></router-link></span>
       <span class="it"><button class="btn ghost" id="btnBig" title="全屏模式：放大字号与行距，适配指挥大厅显示" v-html="bigLabel" @click="toggleBig"></button></span>
       <button class="it bell icon-btn" id="bell" type="button" aria-label="查看告警" @click="goAlarms">

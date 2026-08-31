@@ -1,54 +1,62 @@
-# Design QA — 数据大屏“强指挥舱态势”视觉优化
+# Design QA — 数据大屏光感与切角装甲框
 
-- Source visual truth: `C:\Users\黄建凯\.codex\generated_images\01a05653-cc16-7201-a113-7b9f1fd710bc\exec-3c28ec57-cad4-41d7-aaee-81a2548df15c.png`
-- Implementation screenshot (compact): `C:\Users\黄建凯\AppData\Local\Temp\demo-ronghe-cockpit-qa\implementation-1366x768.png`
-- Implementation screenshot (large): `C:\Users\黄建凯\AppData\Local\Temp\demo-ronghe-cockpit-qa\implementation-1920x900.png`
-- Comparison image: `C:\Users\黄建凯\AppData\Local\Temp\demo-ronghe-cockpit-qa\comparison-source-vs-implementation.png`
-- Source pixels: 1672 × 941; implementation pixels: 1366 × 768 and 1920 × 900
-- CSS viewports: 1366 × 768 and 1920 × 900; device scale factor 1
-- Density normalization: the source was resampled to 1366 × 768 for the side-by-side comparison; the implementation remained at native 1× density.
-- State: `#/bigscreen`, default dashboard with online AMap; map-video modal and navigation states were tested separately.
+- Source visual truth: `C:\Users\黄建凯\AppData\Local\Temp\codex-clipboard-fc444005-39c4-4e48-bc1d-7ec21f811c8e.png`
+- Supporting generated background: `C:\Users\黄建凯\.codex\generated_images\01a05653-cc16-7201-a113-7b9f1fd710bc\exec-de905992-22c2-4836-be23-893c8cc3435b.png`
+- Project background asset: `E:\沉积岩\demo-ronghe\public\assets\img\bigscreen\cockpit-glow-bg.png`
+- Implementation screenshot (compact): `C:\Users\黄建凯\AppData\Local\Temp\demo-ronghe-glow-qa\implementation-chamfer-1366x768.png`
+- Implementation screenshot (large): `C:\Users\黄建凯\AppData\Local\Temp\demo-ronghe-glow-qa\implementation-chamfer-1920x900.png`
+- Comparison image: `C:\Users\黄建凯\AppData\Local\Temp\demo-ronghe-glow-qa\comparison-frame-reference-vs-implementation.png`
+- Source pixels: 821 × 528; dashboard crop: 810 × 456. Implementation pixels: 1366 × 768 and 1920 × 900.
+- CSS viewports: 1366 × 768 and 1920 × 900; device scale factor 1.
+- Density normalization: the 810 × 456 dashboard region was cropped from the reference and resampled to 1366 × 768; the implementation remained at native 1× density.
+- State: `#/bigscreen`, default dashboard after map and charts settled.
 
 ## Full-view comparison evidence
 
-- The implementation preserves the source's three-column cockpit composition, centered title, four-KPI band, equal-height side panels, semantic colors, angular technical framing, and map-first hierarchy.
-- The title, KPI values, radar-ring assets, panel corners, cyan edge treatment, action icons, chart colors, and alarm table now follow the selected strong cockpit direction.
-- At both required viewports the page exactly matches viewport width and height with no horizontal or vertical document overflow.
-- Intentional exception: the source concept uses a dark map treatment, while the implementation retains the existing light AMap, markers, center, zoom, controls, data, and video interaction per the user's explicit constraint.
+- The implementation now matches the reference's key border language: clipped corners, bright cyan outer frame, restrained inner frame, deep-blue translucent surface, and semantic KPI glow.
+- The generated cockpit image is clearly visible in the title canopy, page gaps, KPI cards, and side panels without overlaying the map.
+- The existing three-column hierarchy, map area, chart placement, panel count, labels, and actions remain unchanged.
+- Both required viewports exactly match document width and height with no horizontal or vertical overflow.
+- Intentional exception: the source concept uses a dark map; the production implementation keeps the existing light AMap, markers, center, zoom, controls, data, and UAV video interaction as explicitly required.
 
 ## Focused comparison evidence
 
-- Header/KPI region: inspected at native resolution for title weight, wing width, KPI number scale, semantic color, ring brightness, and equal card sizing.
-- Side panels: inspected for header truncation, chart legend placement, four action icons, panel corner assets, table row density, and visible module links.
-- Map/video state: a visible UAV marker (`UAV20260826033`) was hovered and clicked; the realtime-video dialog rendered its canvas and target metadata, then closed without leaving `#/bigscreen`.
+- Header/KPI region: checked at native resolution for title halo, frame cuts, two-layer borders, semantic colors, ring sharpness, and equal card sizing.
+- Side panels: checked for all four clipped corners, inner border continuity, title/summary readability, chart contrast, and table alignment.
+- Action cards: checked for smaller matching cut corners, real Ionicons, risk colors, hover/focus affordance, and text truncation.
+- Focused extra crops were unnecessary because the 1366 × 768 native screenshot keeps headers, icons, table copy, and border geometry readable.
 
 ## Required fidelity surfaces
 
-- Fonts and typography: system Chinese UI font and DIN/Bahnschrift numeric stack remain sharp; title, panel headers, KPI values, labels, legends, and table rows form a readable hierarchy at both sizes.
-- Spacing and layout rhythm: 23% / flexible center / 23% tracks, 10–12px gaps, equal side-panel heights, compact 1366 rules, and large-screen breathing room match the selected composition without clipping.
-- Colors and visual tokens: cyan/blue communicate normal operation, amber communicates pending work, red is reserved for danger, and green indicates normal/low-risk status.
-- Image quality and asset fidelity: the existing brand logo, title wing, panel corner, KPI ring, map, and video renderer remain source assets; Ionicons provide the four business icons without custom placeholder drawings.
-- Copy and content: all module titles, KPI labels, summaries, alarm columns, and business-entry labels remain unchanged and readable. The risk donut includes `未定级` so its segments equal the center total.
+- Fonts and typography: title, headers, KPI numerals, chart labels, legends, and table rows retain clear optical hierarchy with no overlap or broken wrapping.
+- Spacing and layout rhythm: three columns, KPI band, 10–12px gaps, and equal panel heights remain stable at 1366 × 768 and 1920 × 900.
+- Colors and tokens: cyan/blue remain normal-operation colors; amber means pending; red is reserved for danger; green means normal or low risk.
+- Image quality and asset fidelity: the generated 16:9 background is used at cover size without stretching; the existing brand logo, title wing, KPI ring, panel assets, map, and video renderer remain real assets; business icons come from Ionicons.
+- Copy and content: module titles, KPI labels, summaries, chart legends, table columns, and entry labels remain coherent and readable.
+- Accessibility and motion: buttons remain semantic, Enter-based chart navigation works, focus outlines remain visible, and all new frame animations stop under `prefers-reduced-motion`.
 
-## Interaction and console checks
+## Interaction and technical checks
 
-- Passed: four KPI routes, six module routes, four closure-task routes, and selected alarm deep link.
-- Passed: Enter/Space operation on chart/module entry points and visible focus treatment.
-- Passed: map zoom in, zoom out, reset, legend expand/collapse, UAV hover, realtime-video modal open, canvas render, and close.
-- Passed: route return and repeated dashboard initialization; chart canvases render without duplicate-instance errors.
+- Passed: KPI click route to `#/situation`.
+- Passed: action-card click route to `#/alarms`.
+- Passed: chart Enter key route to `#/legality`.
+- Passed: six panels and four KPI cards render after route return.
 - Browser console errors/warnings: none.
+- Production build: passed (`4044 modules transformed`).
+- Source compliance scan: all 9 checks passed.
+- `git diff --check`: passed; only repository line-ending notices remain.
 
 ## Findings and comparison history
 
-1. Earlier P2: the compact title was weaker than the selected concept and the target-risk legend moved below the ring.
-   Fix: enlarged the compact title and wings, strengthened panel/KPI edges, and fixed the risk legend to a right-side vertical layout.
-   Post-fix evidence: final 1366 × 768 screenshot shows a readable centered title and four-item right-side risk legend with no collision.
-2. Earlier P2: the target-risk slices totaled 9 while the center total displayed 10.
-   Fix: added the missing `未定级` category using the shared chart gray token.
-   Post-fix evidence: the rendered donut data now accounts for every realtime UAV target.
+1. Earlier P2: the generated background was technically loaded but nearly hidden by a 60% page veil and 88% opaque panels.
+   Fix: increased the asset layer visibility and allowed the light texture to pass through the header, side panels, and KPI surfaces while leaving the map opaque.
+   Post-fix evidence: both final screenshots clearly show the canopy circuitry and blue energy illumination.
+2. Earlier P2: ordinary rectangular borders did not match the selected effect image's technical frame language.
+   Fix: replaced side-panel and KPI borders with two-layer clipped-corner frames, semantic KPI edge colors, and smaller matching action-card cuts.
+   Post-fix evidence: the final side-by-side comparison shows matching chamfer geometry and cyan edge hierarchy.
 
 ## Follow-up polish
 
-- P3: the light production map naturally creates less cockpit contrast than the concept's dark map; this is accepted because keeping the map unchanged is a hard product constraint.
+- P3: the reference's dark map increases overall contrast, while the production light map remains intentionally unchanged by product constraint.
 
 final result: passed

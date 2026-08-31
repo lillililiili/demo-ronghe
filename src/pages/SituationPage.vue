@@ -13,8 +13,10 @@ export default {};
    模块加载期导出/登记，这里不重复；本页的「实时视频 / 轨迹回放」直接复用
    window.TARGET_MEDIA（同一套弹窗实现，跨页与本页共用一份）。 */
 import { ref, onMounted, onUnmounted } from 'vue';
+import { NDrawer, NDrawerContent } from 'naive-ui';
 import { usePageChrome } from '../shell/usePageChrome.js';
 import UPanel from '../ui/UPanel.vue';
+import { toast } from '../ui/nv.js';
 
 const M = window.MOCK, U = window.UI, CH = window.CH;
 usePageChrome('situation');
@@ -23,7 +25,10 @@ const root = ref(null);
 let map = null, sel = null;
 let almFocus = null;
 let selAlarmId = null;
-let drawerEl = null;
+/* P3：技术详情抽屉换 n-drawer（受控）；内容仍是既有卡片字符串（B 类展示串保留） */
+const showDrawer = ref(false);
+const drawerTitle = ref('');
+const drawerHtml = ref('');
 const flt = S.flt;
 
 function matchFilter(t) {
@@ -142,12 +147,8 @@ function paintFuse() {
 }
 
 /* ---- 技术详情抽屉 ---- */
-function closeDrawer() {
-  if (drawerEl) { drawerEl.remove(); drawerEl = null; }
-  document.querySelectorAll('.drawer-mask').forEach(x => x.remove());
-}
+function closeDrawer() { showDrawer.value = false; }
 function techDrawer() {
-  closeDrawer();
   const f = sel.fused;
   const cards = Object.keys(f).map(k => {
     const s2 = f[k];
@@ -162,17 +163,9 @@ function techDrawer() {
       ${U.kv(Object.keys(s2).filter(x => x !== 'on').map(x => [x, x === '置信度' ? (s2[x] ? `<b style="color:${col}">${s2[x]}%</b>` : '—') : s2[x]]))}
     </div>`;
   }).join('');
-  const mask = document.createElement('div'); mask.className = 'drawer-mask';
-  mask.onclick = closeDrawer;
-  drawerEl = document.createElement('div');
-  drawerEl.className = 'drawer';
-  drawerEl.innerHTML = `<div class="dh">技术详情 · <span class="mono" style="font-size:14px">${sel.id}</span>
-      <span class="x" data-x>${U.icon('close')}</span></div>
-    <div class="db">
-      <div style="font-size:13px;color:var(--txt-3);margin-bottom:8px">各来源上报字段</div>
-      ${cards}</div>`;
-  document.body.appendChild(mask); document.body.appendChild(drawerEl);
-  drawerEl.querySelector('[data-x]').onclick = closeDrawer;
+  drawerTitle.value = sel.id;
+  drawerHtml.value = `<div style="font-size:13px;color:var(--txt-3);margin-bottom:8px">各来源上报字段</div>${cards}`;
+  showDrawer.value = true;
 }
 
 /* ---- 告警列表 ---- */
@@ -236,16 +229,16 @@ function bindActions(isUav) {
   const almEl = g2('btnAlm');
   if (almEl) almEl.onclick = () => {
     const a = alarmsOf(sel.id).slice().sort((x, y) => (x.ts < y.ts ? 1 : x.ts > y.ts ? -1 : 0))[0];
-    if (!a) return U.toast('该目标暂无关联告警记录', 'err');
+    if (!a) return toast('该目标暂无关联告警记录', 'err');
     sessionStorage.setItem('alarm.sel', a.id);
     location.hash = '#/alarms';
   };
   if (isUav) {
     g2('btnReplay').onclick = () => window.TARGET_MEDIA.openReplay(sel);
   } else {
-    g2('btnNotify').onclick = () => U.toast('已通知东营胜利机场塔台与属地派出所（回执 2/2）', 'ok');
-    g2('btnDrive').onclick = () => U.toast('已派发驱离作业任务至属地保障单位', 'ok');
-    g2('btnRisk').onclick = () => { U.toast('正在跳转空间安全风险监测…'); setTimeout(() => location.hash = '#/risk', 600); };
+    g2('btnNotify').onclick = () => toast('已通知东营胜利机场塔台与属地派出所（回执 2/2）', 'ok');
+    g2('btnDrive').onclick = () => toast('已派发驱离作业任务至属地保障单位', 'ok');
+    g2('btnRisk').onclick = () => { toast('正在跳转空间安全风险监测…'); setTimeout(() => location.hash = '#/risk', 600); };
   }
 }
 
@@ -311,7 +304,7 @@ onMounted(() => {
   if (ctx && ctx.target) {
     const t = M.liveTargets.find(x => x.id === ctx.target);
     if (t) sel = t;
-    else U.toast('该目标已脱离实时跟踪窗口，已显示当前追踪目标');
+    else toast('该目标已脱离实时跟踪窗口，已显示当前追踪目标');
   }
   applyFilter();
   map.sel = sel.id;
@@ -358,7 +351,7 @@ onMounted(() => {
     else {
       const ht = (M.todayTargets || []).find(x => x.id === el.dataset.alm)
         || (M.allTargets || []).find(x => x.id === el.dataset.alm);
-      if (!ht) return U.toast('该告警未关联到可定位的目标记录', 'err');
+      if (!ht) return toast('该告警未关联到可定位的目标记录', 'err');
       almFocus = ht.id;
       applyFilter();
       map.sel = ht.id;
@@ -367,7 +360,7 @@ onMounted(() => {
         map.ox += map.w / 2 - q[0]; map.oy += map.h / 2 - q[1];
       }
       refresh();
-      U.toast('已在地图定位 ' + ht.id + '（该目标已离开实时跟踪窗口，显示为告警发生时位置）');
+      toast('已在地图定位 ' + ht.id + '（该目标已离开实时跟踪窗口，显示为告警发生时位置）');
     }
   });
   U.on(view, '[data-f]', 'change', (e, el) => {
@@ -412,5 +405,11 @@ onMounted(() => {
           body-html='<div class="alarm" id="stAlarms"></div>' />
       </div>
     </div>
+    <n-drawer v-model:show="showDrawer" :width="600" :z-index="150" to="body">
+      <n-drawer-content closable body-content-style="padding:14px 16px">
+        <template #header>技术详情 · <span class="mono" style="font-size:14px;margin-left:6px">{{ drawerTitle }}</span></template>
+        <div v-html="drawerHtml"></div>
+      </n-drawer-content>
+    </n-drawer>
   </div>
 </template>

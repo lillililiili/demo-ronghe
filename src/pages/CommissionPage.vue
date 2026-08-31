@@ -2,10 +2,14 @@
 /* 设备接入与调测 —— 转换页（源：legacy pages/commission.js）。
    legacy mount 本就「进入页面即重置为未开始」，故全部状态放组件内，
    不需要跨导航模块级状态。COM-03 参数登记（COMM_TEST）仍由 legacy script
-   在模块加载期执行，这里不重复。定时器在 onUnmounted 清理。 */
+   在模块加载期执行，这里不重复。定时器在 onUnmounted 清理。    分页器（U.pager）本页暂保留：列表区在命令式 innerHTML 重刷区内（页签/整页字符串渲染），
+   模板层 n-pagination 放不进去；待该区块结构化后随 P5 迁移。
+*/
 import { ref, onMounted, onUnmounted } from 'vue';
 import { usePageChrome } from '../shell/usePageChrome.js';
 import UPanel from '../ui/UPanel.vue';
+import { toast } from '../ui/nv.js';
+import { openModal, closeModal } from '../ui/modal.js';
 
 const M = window.MOCK, U = window.UI, CH = window.CH;
 usePageChrome('commission');
@@ -306,11 +310,11 @@ function paint() {
     el.querySelector('.c').innerHTML = i < step ? U.icon('check') : i + 1;
   });
   const cal = document.getElementById('cmCal');
-  if (cal) cal.onclick = () => U.toast('坐标校准工具：请在地图上选取 3 个已知控制点（Demo）');
+  if (cal) cal.onclick = () => toast('坐标校准工具：请在地图上选取 3 个已知控制点（Demo）');
   const clr = document.getElementById('cmClr');
   if (clr) clr.onclick = () => document.getElementById('cmLog').innerHTML = '';
   const raw = document.getElementById('cmRaw');
-  if (raw) raw.onclick = () => U.modal({
+  if (raw) raw.onclick = () => openModal({
     title: '接口原始报文', width: '680px',
     body: `<pre class="code" style="max-height:420px">${JSON.stringify({
       header: { device: dev.id, proto: dev.proto, ts: '2026-08-26T10:24:36.128+08:00', seq: 10245 },
@@ -334,7 +338,7 @@ const SCRIPT = [
 
 function start() {
   if (running) return;
-  if (phase !== 'ready' || !paramsSaved) return U.toast('请按流程操作：建立连接 → 保存参数 → 开始测试', 'err');
+  if (phase !== 'ready' || !paramsSaved) return toast('请按流程操作：建立连接 → 保存参数 → 开始测试', 'err');
   running = true; phase = 'testing'; sec = 0; step = 2;
   document.getElementById('cmStop').disabled = false;
   paint();
@@ -371,7 +375,7 @@ function start() {
           cost: '00:' + M.util.p2(Math.floor(elapsed() / 60)) + ':' + M.util.p2(elapsed() % 60),
           operator: ((M.users && M.users[0]) || { name: '管理员' }).name
         };
-        U.toast(`${U.icon('check')} 设备调测完成，可生成调测报告`, 'ok');
+        toast(`${U.icon('check')} 设备调测完成，可生成调测报告`, 'ok');
         running = false; phase = 'done'; step = 6;
         clearInterval(timer);
         const logHtml2 = log.innerHTML;
@@ -399,7 +403,7 @@ function stop() {
   running = false; clearInterval(timer);
   if (phase === 'testing') { phase = paramsSaved ? 'ready' : 'config'; step = PHASE_STEP[phase]; }
   const b = document.getElementById('cmStop'); if (b) b.disabled = true;
-  if (was) { U.toast('已停止调测，链路保持连接；可「开始测试」重新跑', 'err'); paint(); }
+  if (was) { toast('已停止调测，链路保持连接；可「开始测试」重新跑', 'err'); paint(); }
 }
 
 function reportOf(t) {
@@ -437,7 +441,7 @@ function reportModal(t) {
   const R = reportOf(t);
   const okTag = '<span style="color:#79e5a5">通过</span>';
   const noTag = '<span style="color:#ff8b95">不通过</span>';
-  U.modal({
+  openModal({
     title: '调测报告 · ' + R.d.name + '（' + (t.live ? '本次调测' : '第 ' + t.no + ' 条记录') + '）', width: '680px',
     body: `<div class="warnbox">本报告的单项结论<b>由该次调测自己记录的实测值与通过阈值推导</b>，
         不是固定文案，也不是从记录的「成功/失败」反推。
@@ -481,7 +485,7 @@ function reportModal(t) {
       ${U.kv([['签署', '平台团队：' + t.operator + ' ／ 设备方：待签署']])}`,
     footer: `<button class="btn" data-close>关闭</button>
       <button class="btn" data-act="dl">${U.icon('download')} 下载 PDF</button>`,
-    on: { dl: () => U.toast('正式环境将导出《设备调测报告》PDF 并归档进证据台账；Demo 不生成文件', 'err') }
+    on: { dl: () => toast('正式环境将导出《设备调测报告》PDF 并归档进证据台账；Demo 不生成文件', 'err') }
   });
 }
 
@@ -501,7 +505,7 @@ onMounted(() => {
     const tr2 = document.getElementById('cmTree');
     if (tr2) tr2.scrollTop = keep;
   });
-  U.on(view, '[data-step]', 'click', () => U.toast(
+  U.on(view, '[data-step]', 'click', () => toast(
     running ? '调测进行中，进度由测试自动推进' : '进度由「开始测试」推进，不能手动跳步', 'err'));
   U.on(view, '[data-ct]', 'click', (e, el) => {
     tab = el.dataset.ct; page = 1;
@@ -515,7 +519,7 @@ onMounted(() => {
     if (el.value === 'TCP') { a.value = 'tcp://' + dev.ip + ':9001'; p.value = 9001; }
     else if (el.value === 'WS') { a.value = 'ws://' + dev.ip + ':8080/push'; p.value = 8080; }
     else { a.value = 'http://' + dev.ip + ':8080/api/v1/data'; p.value = 8080; }
-    U.toast('协议已切换为 ' + el.value + '，接入地址与端口已联动更新');
+    toast('协议已切换为 ' + el.value + '，接入地址与端口已联动更新');
   });
   U.on(view, '[data-rep]', 'click', (e, el) => {
     const t = M.commTasks.find(x => x.no === +el.dataset.rep);
@@ -523,7 +527,7 @@ onMounted(() => {
   });
   U.on(view, '[data-rdl]', 'click', (e, el) => {
     const t = M.commTasks.find(x => x.no === +el.dataset.rdl);
-    U.toast(`正式环境将导出第 ${el.dataset.rdl} 条《设备调测报告》PDF${t ? `（${t.dev.name} · ${t.result}）` : ''}；Demo 不生成文件`, 'err');
+    toast(`正式环境将导出第 ${el.dataset.rdl} 条《设备调测报告》PDF${t ? `（${t.dev.name} · ${t.result}）` : ''}；Demo 不生成文件`, 'err');
   });
   document.getElementById('cmStart').onclick = start;
   document.getElementById('cmStop').onclick = stop;
@@ -534,14 +538,14 @@ onMounted(() => {
     const lg = document.getElementById('cmLog');
     if (lg) lg.innerHTML += `<div class="l"><span class="tm">${M.util.fmtDT(M.CONF.demoTime)}</span><span>开始连接设备 ${dev.ip}:${dev.port} …</span></div>
       <div class="l"><span class="tm">${M.util.fmtDT(M.CONF.demoTime)}</span><span>连接成功，${dev.proto === 'TCP' ? 'TCP 三次握手完成' : 'HTTP 通道就绪'}</span></div>`;
-    U.toast('连接已建立，请配置并「保存参数」', 'ok');
+    toast('连接已建立，请配置并「保存参数」', 'ok');
   };
   document.getElementById('cmSave').onclick = () => {
     if (phase === 'access' || phase === 'done' || running) return;
     paramsSaved = true;
     if (phase === 'config') { phase = 'ready'; step = 2; }
     paint();
-    U.toast('参数已保存至设备档案，可「开始测试」', 'ok');
+    toast('参数已保存至设备档案，可「开始测试」', 'ok');
   };
   document.getElementById('cmReconn').onclick = () => {
     if (running || !paramsSaved || phase === 'access') return;
@@ -549,11 +553,11 @@ onMounted(() => {
     paint();
     const lg = document.getElementById('cmLog');
     if (lg) lg.innerHTML += `<div class="l"><span class="tm">${M.util.fmtDT(M.CONF.demoTime)}</span><span>重新建立连接成功（${dev.ip}:${dev.port}），请重新确认并保存参数</span></div>`;
-    U.toast('已重新连接，请重新「保存参数」后再开始测试', 'ok');
+    toast('已重新连接，请重新「保存参数」后再开始测试', 'ok');
   };
   syncReportBtn();
   document.getElementById('cmReport').onclick = () => {
-    if (step < 5 || !lastRun) return U.toast('请先完成调测流程再生成报告', 'err');
+    if (step < 5 || !lastRun) return toast('请先完成调测流程再生成报告', 'err');
     return reportModal(lastRun);
   };
 });

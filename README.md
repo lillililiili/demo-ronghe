@@ -88,3 +88,20 @@ node tools/tilecheck.cjs      # 瓦片完整性（瓦片仍读 dongying-demo 原
 1.5GB / 32 万张离线瓦片**不复制**：dev 与 preview 由 `vite.config.js` 的中间件把
 `/assets/tiles/**` 转发到 `../dongying-demo/assets/tiles`。生产部署时用反向代理
 或把瓦片目录挂载/复制到站点根的 `assets/tiles/`（勿放进 `public/`，build 会全量复制）。
+
+## 组件库（Naive UI，2026-08-31 引入）
+
+交互件全套替换（P0–P4a 完成 + P4b 样板），展示串（tag/kv/sect 等 ~280 处大屏视觉签名）不替换：
+
+- **P0 主题**：`src/ui/theme.js` 运行时 getComputedStyle 读 app.css token 生成
+  themeOverrides（app.css 保持唯一真源，勿手抄色值）；App.vue 包 n-config-provider。
+- **P1 toast 96 处**：`src/ui/nv.js` 的 `toast()` → message.success/error/info。
+- **P2 分页 4 页**（Alarms/Evidence/Devices/Legality）→ n-pagination 受控；
+  其余 4 页列表区命令式 innerHTML，pager 保留（P5 项）。
+- **P3**：situation techDrawer → n-drawer；Users/Archive 模板层 tabs → n-tabs。
+- **P4a 弹窗桥接**：`src/ui/modal.js` 的 `openModal/closeModal` 与 U.modal 同签名同契约，
+  全部 U.modal 调用点换壳 Naive；同一事件连开两次走微任务合并（防孤儿容器）。
+- **P4b 受控表单**：`openModal({render, footer:false})` 扩展口；
+  样板 `src/ui/modals/CarouselModal.vue`（大屏轮播设置）。
+- z-index 对齐旧层级：mask 100 / drawer 150 / toast 200 / carousel 300。
+- 上游 diff 重放映射表：`tools/NAIVE-MAP.md`。dev-only 对照页 `#/__ui-lab`。

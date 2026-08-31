@@ -15,14 +15,20 @@ export default {};
    数据层的归并/门禁），转换后移到本组件 setup —— 时机等价（进入页面时）。
    legacy 中已无到达路径的 evidModal / reviewModal / confirmModal / legacyDetail /
    evidSect / factorSect 不带入（同 evidence 页先例）。 */
-import { ref, onMounted, onUnmounted } from 'vue';
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue';
+import { NPagination } from 'naive-ui';
 import { usePageChrome } from '../shell/usePageChrome.js';
 import UPanel from '../ui/UPanel.vue';
+import { toast } from '../ui/nv.js';
+import { openModal, closeModal } from '../ui/modal.js';
 
 const M = window.MOCK, U = window.UI, CH = window.CH, EVT = window.EVT;
 usePageChrome('legality');
 const root = ref(null);
-const st = S.st;
+/* reactive 代理同一份模块级状态：n-pagination 需要响应式，底层仍是 S.st */
+const st = reactive(S.st);
+const totalCount = ref(0);
+const pageCount = computed(() => Math.max(1, Math.ceil(totalCount.value / st.size)));
 
 const OPER = { name: '系统管理员', account: 'admin', role: '超级管理员' };
 const nowStr = () => M.nowStr();
@@ -467,7 +473,7 @@ const autoDegraded = () => M.allTargets.filter(t => t.type === '无人机' && ga
 function decisionConfirmModal() {
   const t = st.sel;
   if (!t || t.legal !== '待确认') return;
-  U.modal({
+  openModal({
     title: '人工确认 · ' + t.id, width: '560px',
     body: `${U.kv([
       ['目标编号', '<span class="mono">' + t.id + '</span>'],
@@ -490,8 +496,8 @@ function decisionConfirmModal() {
         const reason = (el.querySelector('[data-cfre]').value || '').trim();
         applyReview(t, result, reason || '人工研判确认结果为' + result, '人工确认');
         syncLinked(t, result, OPER, true, true);
-        U.closeModal(); refresh();
-        U.toast('人工确认完成，判定状态已更新为「' + result + '」', 'ok');
+        closeModal(); refresh();
+        toast('人工确认完成，判定状态已更新为「' + result + '」', 'ok');
       }
     }
   });
@@ -502,7 +508,7 @@ function manualReviseModal() {
   if (!t || !['合法', '非法'].includes(t.legal)) return;
   const cur = t.legal;
   const target = cur === '合法' ? '非法' : '合法';
-  U.modal({
+  openModal({
     title: '人工改判 · ' + t.id, width: '600px',
     body: `<div class="warnbox">人工改判会保留原判定，并记录操作者、时间、新判定和改判理由。</div>
       ${U.kv([
@@ -524,8 +530,8 @@ function manualReviseModal() {
         if (reason.length < 5) { err.textContent = '改判理由不少于5个字'; return; }
         applyReview(t, target, reason, '人工改判');
         syncLinked(t, target, OPER, true, true);
-        U.closeModal(); refresh();
-        U.toast('已人工改判：' + cur + ' → ' + target, 'ok');
+        closeModal(); refresh();
+        toast('已人工改判：' + cur + ' → ' + target, 'ok');
       }
     }
   });
@@ -551,7 +557,7 @@ function buildAlarmFrom(t) {
 function toAlarmFlow() {
   const t = st.sel; if (!t) return;
   const exist = linkedAlarm(t);
-  U.modal({
+  openModal({
     title: '转告警工单 · ' + t.id, width: '560px',
     body: exist
       ? `<div class="warnbox">该目标已有关联告警 <b class="mono">${exist.id}</b>（${exist.status}）。
@@ -575,7 +581,7 @@ function toAlarmFlow() {
           M.todayAlarms.unshift(a);
           audit(OPER, '转告警工单（生成 ' + a.id + '）', t.id);
         }
-        U.closeModal();
+        closeModal();
         sessionStorage.setItem('alarm.sel', a.id);
         location.hash = '#/alarms';
       }
@@ -592,8 +598,8 @@ function toCaseFlow() {
     U.goto('punish', { caseId: c0.id });
     return;
   }
-  if (!EVT) { U.toast('事件层未加载，无法立案', 'err'); return; }
-  U.modal({
+  if (!EVT) { toast('事件层未加载，无法立案', 'err'); return; }
+  openModal({
     title: '转处置立案 · ' + t.id, width: '600px',
     body: `<div class="warnbox">立案将固化<b>当前判定快照</b>（判定结果 / 违规事由 / 风险等级 / 来源与置信度），
         后续复核推翻判定时可查「当初凭什么立案」。<br>
@@ -610,11 +616,11 @@ function toCaseFlow() {
     on: {
       ok: () => {
         const r = EVT.fileCase(EVT.of(t.id));
-        if (!r.ok) { U.toast(r.msg, 'err'); return; }
+        if (!r.ok) { toast(r.msg, 'err'); return; }
         audit(OPER, '转处置立案：' + r.case.id, t.id);
         const bp = ((M.stats || {}).byPenalty || []).find(x => x.name === r.case.penalty);
         if (bp) bp.value++;
-        U.closeModal();
+        closeModal();
         U.goto('punish', { caseId: r.case.id });
       }
     }
@@ -681,6 +687,7 @@ const listPanelBody = `<div class="toolbar">
 
 function list() {
   const rows = targets(), page = rows.slice((st.page - 1) * st.size, st.page * st.size);
+  totalCount.value = rows.length;
   return U.table([
     {
       t: '目标 / 时间', w: '118px', render: t => U.cell(t.id, t.time.slice(11), { mono: true })
@@ -705,7 +712,7 @@ function list() {
           ? `<div style="font-size:10.5px;color:var(--txt-3)" title="${vs.join('、')}">+${vs.length - 2} 项</div>` : '') + overH;
       }
     }
-  ], page, { rowId: t => t.id, activeId: st.sel && st.sel.id }) + U.pager({ total: rows.length, page: st.page, size: st.size });
+  ], page, { rowId: t => t.id, activeId: st.sel && st.sel.id });
 }
 
 function spaceHits(t) {
@@ -956,6 +963,9 @@ function refresh() { paint(); }
 
 onUnmounted(() => { if (detMap) { try { detMap.destroy(); } catch (e) { } detMap = null; } });
 
+function onPage(p2) { st.page = p2; paint(); }
+function onPageSize(s2) { st.size = s2; st.page = 1; paint(); }
+
 onMounted(() => {
   const view = root.value;
   const drift = enumDrift();
@@ -1001,8 +1011,7 @@ onMounted(() => {
     }
     st.page = 1; paint();
   });
-  U.on(view, '[data-pg]', 'click', (e, el) => { if (el.dataset.pg) { st.page = +el.dataset.pg; paint(); } });
-  U.on(view, '[data-size]', 'change', (e, el) => { st.size = parseInt(el.value); st.page = 1; paint(); });
+  /* 分页交互已由模板层 <n-pagination> 受控接管（P2），[data-pg]/[data-size] 委托删除 */
   U.on(view, '[data-f]', 'change', (e, el) => { st[el.dataset.f] = el.value; st.page = 1; paint(); });
   U.on(view, '[data-lg]', 'click', (e, el) => {
     const k = el.dataset.lg;
@@ -1013,14 +1022,14 @@ onMounted(() => {
     else if (k === 'tocase') toCaseFlow();
     else if (k === 'degrade') {
       const t = st.sel;
-      if (t.legal !== '非法') { U.toast('该目标当前判定已非「非法」，无需重复降级', 'ok'); return; }
+      if (t.legal !== '非法') { toast('该目标当前判定已非「非法」，无需重复降级', 'ok'); return; }
       const c = M.cases.find(x => x.targetId === t.id);
       const rsn = '证据不足降级：判定时刻无 uavSN 数据源（需协议破解 dcd / RemoteID rid 设备），身份匹配仅能依据时间窗 + 空间范围，不足以定性为非法'
         + (c ? '。该目标已立案 ' + c.id + '，须在处置处罚管理同步复核案件' : '');
       const from = applyReview(t, '待确认', rsn, '证据不足降级');
       const req = c ? raiseReviewRequest(t, c, from, '待确认', rsn, OPER) : null;
       refresh();
-      U.toast('已按证据不足降级为「待确认」，原判定「非法」保留可查'
+      toast('已按证据不足降级为「待确认」，原判定「非法」保留可查'
         + (req ? `；已对案件 ${c.id} 发起复核请求 <b>${req.id}</b>` : ''), 'ok');
     }
   });
@@ -1028,10 +1037,10 @@ onMounted(() => {
     const all = targets();
     const kept = all.filter(revised).length;
     refresh();
-    U.toast(`已按当前规则重新判定今日 ${all.length} 个目标`
+    toast(`已按当前规则重新判定今日 ${all.length} 个目标`
       + (kept ? `；其中 ${kept} 个已人工改判的结果<b>不被引擎覆盖</b>（设计 8.6）` : ''), 'ok');
   };
-  document.getElementById('lgRule').onclick = () => U.modal({
+  document.getElementById('lgRule').onclick = () => openModal({
     title: '判定规则说明', width: '760px',
     body: `${(function () {
       const d = enumDrift();
@@ -1088,7 +1097,19 @@ onMounted(() => {
         点列表任一行，右侧显示判定详情 → 底部点「<b>人工复核</b>」演示；非法目标另有「<b>转处置立案</b>」。</div>
 
       <div class="row" style="margin-top:12px;flex:1;min-height:0;padding-bottom:6px">
-        <UPanel title="判定结果列表" panel-style="flex:1.4" nopad :body-html="listPanelBody" />
+        <UPanel title="判定结果列表" panel-style="flex:1.4" nopad>
+          <div style="display:contents" v-html="listPanelBody"></div>
+          <!-- P2：分页器换 n-pagination（受控），容器样式内联复刻旧 .pager 观感 -->
+          <div style="display:flex;align-items:center;justify-content:center;gap:8px;padding:10px;min-height:42px;
+            background:rgba(8,19,32,.54);border-top:1px solid rgba(130,174,218,.10);flex:none">
+            <n-pagination :page="st.page" :page-size="st.size" :item-count="totalCount"
+              show-size-picker :page-sizes="[10, 20, 50]"
+              @update:page="onPage" @update:page-size="onPageSize">
+              <template #prefix>共 {{ totalCount.toLocaleString() }} 条</template>
+              <template #suffix>共 {{ pageCount }} 页</template>
+            </n-pagination>
+          </div>
+        </UPanel>
         <UPanel title="判定详情" panel-style="width:40%;min-width:380px;flex:none" nopad
           extra='<span id="lgSt"></span>' body-html='<div id="lgDetail" style="flex:1;overflow:auto;padding:12px"></div>' />
       </div>

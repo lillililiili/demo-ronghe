@@ -12,10 +12,15 @@ export default {};
 <script setup>
 /* 日志归档 —— 第三个转换页（源：legacy pages/archive.js）。
    外骨架（KPI/页签）进 template；页签体、列表、图表沿用 legacy 的命令式
-   渲染与 U.on 委托（绑在组件根上，组件按 :key 重挂时随节点销毁，无重复绑定）。 */
+   渲染与 U.on 委托（绑在组件根上，组件按 :key 重挂时随节点销毁，无重复绑定）。    分页器（U.pager）本页暂保留：列表区在命令式 innerHTML 重刷区内（页签/整页字符串渲染），
+   模板层 n-pagination 放不进去；待该区块结构化后随 P5 迁移。
+*/
 import { ref, computed, onMounted } from 'vue';
+import { NTabs, NTab } from 'naive-ui';
 import { usePageChrome } from '../shell/usePageChrome.js';
 import UKpis from '../ui/UKpis.vue';
+import { toast } from '../ui/nv.js';
+import { openModal, closeModal } from '../ui/modal.js';
 
 const M = window.MOCK, U = window.UI, CH = window.CH, L = M.logStats;
 usePageChrome('archive');
@@ -171,7 +176,7 @@ function detailModal(l) {
       ['轨迹长度', t.trackKm + ' km'], ['高度 / 速度', t.alt + ' m / ' + t.speed + ' m/s'],
       ['数据来源', t.source + '（置信度 ' + U.confPct(t.source_confidence) + '）']]));
   }
-  U.modal({
+  openModal({
     title: `日志详情 · ${l.id}`, width: '720px',
     body: `${U.detailHero({
       icon: 'archive', title: l.summary, subtitle: '审计与日志归档', id: l.id,
@@ -200,8 +205,8 @@ function detailModal(l) {
       ${l.status === '待归档' ? `<button class="btn warn" data-act="arch">归档本条</button>` : ''}
       <button class="btn pri" data-act="down">${U.icon('download')} 下载完整日志包</button>`,
     on: {
-      down: () => U.toast('已生成日志包（JSON + 轨迹 + 截图 + 审计），共 5.4 MB', 'ok'),
-      arch: () => { l.status = '已归档'; U.closeModal(); paint(); U.toast(`「${l.id}」已归档`, 'ok'); }
+      down: () => toast('已生成日志包（JSON + 轨迹 + 截图 + 审计），共 5.4 MB', 'ok'),
+      arch: () => { l.status = '已归档'; closeModal(); paint(); toast(`「${l.id}」已归档`, 'ok'); }
     }
   });
 }
@@ -282,10 +287,10 @@ function bindListTools() {
     b.title = d ? '点击应用输入框中的检索条件' : '输入框条件已全部应用；下拉筛选即时生效，无需点查询';
   }
   const doQuery = () => {
-    if (!dirty()) return U.toast('检索条件未变化（下拉筛选已即时生效，输入框条件也已应用）');
+    if (!dirty()) return toast('检索条件未变化（下拉筛选已即时生效，输入框条件也已应用）');
     Object.assign(S.st, cur());
     S.st.page = 1; paint(); syncQ();
-    U.toast('查询完成，命中 ' + filtered().length + ' 条', 'ok');
+    toast('查询完成，命中 ' + filtered().length + ' 条', 'ok');
   };
   inputs.forEach(i => {
     const el = g2(i); if (!el) return;
@@ -300,21 +305,21 @@ function bindListTools() {
     document.querySelectorAll('#arBody select[data-f]').forEach(s2 => s2.selectedIndex = 0);
     paint(); syncQ();
   };
-  g2('arExp').onclick = () => U.toast('已导出「日志归档.csv」共 ' + filtered().length + ' 条', 'ok');
+  g2('arExp').onclick = () => toast('已导出「日志归档.csv」共 ' + filtered().length + ' 条', 'ok');
   g2('arCfg').onclick = cfgModal;
   g2('arBatch').onclick = () => {
     const ids = U.checked(document.getElementById('arBody'));
-    if (!ids.length) return U.toast('请先勾选左侧待归档记录（仅待归档记录可勾选）', 'err');
+    if (!ids.length) return toast('请先勾选左侧待归档记录（仅待归档记录可勾选）', 'err');
     ids.forEach(id => { const l = M.logs.find(x => x.id === id); if (l) l.status = '已归档'; });
     paint();
     const pe = document.getElementById('arPend');
     if (pe) pe.textContent = pendingN();
-    U.toast(`已归档 ${ids.length} 条记录，待归档剩余 ${pendingN()} 条`, 'ok');
+    toast(`已归档 ${ids.length} 条记录，待归档剩余 ${pendingN()} 条`, 'ok');
   };
 }
 
 function cfgModal() {
-  U.modal({
+  openModal({
     title: '归档策略配置', width: '520px',
     body: U.kv([['自动归档', '事件闭环后 T+0 自动归档'], ['待归档兜底', '超 24h 未闭环记录转人工批量归档'],
     ['在线保留', '90 天（热数据）'], ['冷备周期', '90 天后转冷存储，保留 3 年'],
@@ -333,7 +338,7 @@ onMounted(() => {
   paintTab(view);
   U.on(view, '[data-row]', 'click', (e, el) => { const l = M.logs.find(x => x.id === el.dataset.row); if (l) detailModal(l); });
   U.on(view, '[data-lop]', 'click', (e, el) => { e.stopPropagation(); const l = M.logs.find(x => x.id === el.dataset.lop); if (l) detailModal(l); });
-  U.on(view, '[data-ldl]', 'click', (e, el) => { e.stopPropagation(); U.toast('已下载日志 ' + el.dataset.ldl + '（Demo）', 'ok'); });
+  U.on(view, '[data-ldl]', 'click', (e, el) => { e.stopPropagation(); toast('已下载日志 ' + el.dataset.ldl + '（Demo）', 'ok'); });
   U.on(view, '[data-pg]', 'click', (e, el) => { if (el.dataset.pg) { S.st.page = +el.dataset.pg; paint(); } });
   U.on(view, '[data-size]', 'change', (e, el) => { S.st.size = parseInt(el.value); S.st.page = 1; paint(); });
   U.on(view, '[data-f]', 'change', (e, el) => { S.st[el.dataset.f] = el.value; S.st.page = 1; paint(); });
@@ -356,10 +361,11 @@ onMounted(() => {
 <template>
   <div class="view" id="view" ref="root">
     <UKpis :list="kpiList" />
-    <div class="tabs" style="margin:12px 0 0">
-      <span class="tab" :class="{ on: tab === 'list' }" data-at2="list" @click="setTab('list')">日志检索</span>
-      <span class="tab" :class="{ on: tab === 'stat' }" data-at2="stat" @click="setTab('stat')">归档统计与策略</span>
-    </div>
+    <!-- P3：页签换 n-tabs（模板层受控；行为同 setTab） -->
+    <n-tabs type="line" size="small" :value="tab" @update:value="setTab" style="margin:12px 0 0">
+      <n-tab name="list">日志检索</n-tab>
+      <n-tab name="stat">归档统计与策略</n-tab>
+    </n-tabs>
     <div id="arBody" style="margin-top:12px"></div>
   </div>
 </template>

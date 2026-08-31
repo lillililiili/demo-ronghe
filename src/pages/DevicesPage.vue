@@ -14,15 +14,21 @@ export default {};
    switchModal）已按用户裁定删除、运行时不可达，页面在此复刻一份同构 DS 自用
    （含 sessionStorage 恢复，语义与 legacy 完全一致；两份 DS 均恒为所存模式，
    无运行时分叉路径）。 */
-import { ref, onMounted, onUnmounted } from 'vue';
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue';
+import { NPagination } from 'naive-ui';
 import { usePageChrome } from '../shell/usePageChrome.js';
 import UPanel from '../ui/UPanel.vue';
 import UKpis from '../ui/UKpis.vue';
+import { toast } from '../ui/nv.js';
+import { openModal, closeModal } from '../ui/modal.js';
 
 const M = window.MOCK, U = window.UI, CH = window.CH;
 usePageChrome('devices');
 const root = ref(null);
-const st = S.st, SORT = S.SORT;
+/* reactive 代理同一份模块级状态：n-pagination 需要响应式，底层仍是 S.st */
+const st = reactive(S.st), SORT = S.SORT;
+const totalCount = ref(0);
+const pageCount = computed(() => Math.max(1, Math.ceil(totalCount.value / st.size)));
 let map = null;
 onUnmounted(() => { if (map) map.destroy(); map = null; });
 
@@ -95,7 +101,7 @@ function stats(list) {
 const writable = () => MODES[DS.mode].writable;
 function guardWrite(action) {
   if (writable()) return true;
-  U.toast(`当前数据源为「${MODES[DS.mode].name}」，${DS.mode === 'replay'
+  toast(`当前数据源为「${MODES[DS.mode].name}」，${DS.mode === 'replay'
     ? '历史回放是只读视图，不允许写台账' : '正式接口未连通，禁止下发配置'}，无法执行「${action}」。请先切回 Mock 数据源。`, 'err');
   return false;
 }
@@ -175,6 +181,7 @@ const mgrBody = `<div class="toolbar">
 function list() {
   const rows = sorted(filtered());
   const page = rows.slice((st.page - 1) * st.size, st.page * st.size);
+  totalCount.value = rows.length;
   const ro = !writable();
   return U.table([
     { t: sortTh('设备编号', 'id'), w: '112px', cls: 'num', render: d => d.id.slice(-9) },
@@ -208,8 +215,7 @@ function list() {
            <span class="lnk" style="color:var(--txt-3);cursor:not-allowed" title="非 Mock 数据源不可写">停用</span>`
           : `<span class="lnk" data-op="edit|${d.id}">编辑</span><span class="lnk" data-op="stop|${d.id}">${d.disabled ? '启用' : '停用'}</span>`)
     }
-  ], page, { rowId: d => d.id, activeId: st.sel && st.sel.id })
-    + U.pager({ total: rows.length, page: st.page, size: st.size });
+  ], page, { rowId: d => d.id, activeId: st.sel && st.sel.id });
 }
 
 function detail() {
@@ -274,7 +280,7 @@ function paintDetail() {
 function paint() { document.getElementById('dvList').innerHTML = list(); paintDetail(); }
 
 function addModal() {
-  U.modal({
+  openModal({
     title: '新增设备', width: '640px',
     body: `<div class="warnbox">设备接入需同时登记 <b>协议、鉴权、上报频率、错误码、坐标基准</b>（会议纪要 §8.1），否则无法进入调测流程。</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
@@ -290,11 +296,14 @@ function addModal() {
       ${U.field('纬度', `<input class="ip" style="flex:1" placeholder="37.449000">`)}
     </div>`,
     footer: `<button class="btn" data-close>取消</button><button class="btn pri" data-act="ok">保存并进入调测</button>`,
-    on: { ok: () => { U.closeModal(); U.toast('已保存，正在跳转设备调测…', 'ok'); setTimeout(() => location.hash = '#/commission', 600); } }
+    on: { ok: () => { closeModal(); toast('已保存，正在跳转设备调测…', 'ok'); setTimeout(() => location.hash = '#/commission', 600); } }
   });
 }
 
 const MODES_NAME = () => MODES[DS.mode].name;
+
+function onPage(p2) { st.page = p2; paint(); }
+function onPageSize(s2) { st.size = s2; st.page = 1; paint(); }
 
 onMounted(() => {
   const view = root.value;
@@ -316,8 +325,7 @@ onMounted(() => {
     st.page = 1;
     document.getElementById('dvList').innerHTML = list();
   });
-  U.on(view, '[data-pg]', 'click', (e, el) => { if (el.dataset.pg) { st.page = +el.dataset.pg; paint(); } });
-  U.on(view, '[data-size]', 'change', (e, el) => { st.size = parseInt(el.value); st.page = 1; paint(); });
+  /* 分页交互已由模板层 <n-pagination> 受控接管（P2），[data-pg]/[data-size] 委托删除 */
   U.on(view, '[data-f]', 'change', (e, el) => { st[el.dataset.f] = el.value; st.page = 1; paint(); });
   U.on(view, '[data-op]', 'click', (e, el) => {
     e.stopPropagation();
@@ -325,25 +333,25 @@ onMounted(() => {
     st.sel = dsList().find(d => d.id === id);
     if (op === 'view') { paint(); return; }
     if (!guardWrite(op === 'edit' ? '编辑设备' : '停用/启用设备')) return;
-    if (op === 'edit') U.toast('编辑设备 ' + id + '（Demo）；正式环境 PUT /api/v1/device/' + id);
+    if (op === 'edit') toast('编辑设备 ' + id + '（Demo）；正式环境 PUT /api/v1/device/' + id);
     else {
       st.sel.disabled = !st.sel.disabled;
       replayCache = {};        // 台账变了,历史快照需按新台账重算
       paint();
-      U.toast(st.sel.disabled
+      toast(st.sel.disabled
         ? `已停用「${st.sel.name}」，该设备数据不再参与融合计算（台账保留）`
         : `已重新启用「${st.sel.name}」`, st.sel.disabled ? 'err' : 'ok');
     }
   });
-  U.on(view, '[data-dv]', 'click', () => U.toast(
+  U.on(view, '[data-dv]', 'click', () => toast(
     DS.mode === 'live' ? '正式接口未连通，无法发起连通性测试'
       : DS.mode === 'replay' ? '历史回放为只读视图，连通性测试针对当前时刻，请先切回 Mock 数据源'
         : '连通性测试：TCP 握手成功，心跳正常，往返时延 ' + (st.sel.latency || 0) + ' ms',
     DS.mode === 'mock' ? 'ok' : 'err'));
   document.getElementById('dvKw').oninput = e => { st.kw = e.target.value.trim(); st.page = 1; document.getElementById('dvList').innerHTML = list(); };
   document.getElementById('dvAdd').onclick = () => { if (guardWrite('新增设备')) addModal(); };
-  document.getElementById('dvImp').onclick = () => { if (guardWrite('批量导入')) U.toast('支持 Excel 批量导入设备台账（模板含编号/型号/坐标/协议字段）'); };
-  document.getElementById('dvExp').onclick = () => U.toast(`已导出「设备台账.xlsx」共 ${filtered().length} 条（数据源：${MODES_NAME()}${DS.mode === 'replay' ? ' @ ' + snapKey() : ''}）`, 'ok');
+  document.getElementById('dvImp').onclick = () => { if (guardWrite('批量导入')) toast('支持 Excel 批量导入设备台账（模板含编号/型号/坐标/协议字段）'); };
+  document.getElementById('dvExp').onclick = () => toast(`已导出「设备台账.xlsx」共 ${filtered().length} 条（数据源：${MODES_NAME()}${DS.mode === 'replay' ? ' @ ' + snapKey() : ''}）`, 'ok');
   document.getElementById('dvGoMon').onclick = () => location.hash = '#/monitor';
 });
 </script>
@@ -357,7 +365,19 @@ onMounted(() => {
       右上「<b>实时监测 ›</b>」跳到该设备的实时监测页。</div>
     <!-- 284 → 330：引导条实占约 46px，不补偿会底部溢出；min-height 同步 608 → 562 -->
     <div class="row" style="margin-top:12px;height:calc(100vh - 330px);min-height:562px;padding-bottom:12px">
-      <UPanel title="设备管理" panel-style="flex:6;min-width:0" nopad :sub="mgrSub" :body-html="mgrBody" />
+      <UPanel title="设备管理" panel-style="flex:6;min-width:0" nopad :sub="mgrSub">
+        <div style="display:contents" v-html="mgrBody"></div>
+          <!-- P2：分页器换 n-pagination（受控），容器样式内联复刻旧 .pager 观感 -->
+          <div style="display:flex;align-items:center;justify-content:center;gap:8px;padding:10px;min-height:42px;
+            background:rgba(8,19,32,.54);border-top:1px solid rgba(130,174,218,.10);flex:none">
+            <n-pagination :page="st.page" :page-size="st.size" :item-count="totalCount"
+              show-size-picker :page-sizes="[10, 20, 50]"
+              @update:page="onPage" @update:page-size="onPageSize">
+              <template #prefix>共 {{ totalCount.toLocaleString() }} 条</template>
+              <template #suffix>共 {{ pageCount }} 页</template>
+            </n-pagination>
+          </div>
+      </UPanel>
       <UPanel title="设备详情预览" panel-style="flex:4;min-width:0" nopad
         extra='<span class="lnk" id="dvGoMon">实时监测 ›</span>'
         body-style="padding:0;display:flex;flex-direction:column"

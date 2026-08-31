@@ -17,9 +17,12 @@ export default {};
    同一组件承接 flights / risk / airspace 三个路由 key：syncTabByRoute 按当前
    路由预置页签（#/risk → events），复刻 legacy 别名代理语义。
    「全部风险事件」页签整体委托 legacy g.RISK_IMPL（risk.js，字节保留）——
-   状态机与写入口只有一份。四组 U.regParams 仍由 legacy script 模块加载期执行。 */
+   状态机与写入口只有一份。四组 U.regParams 仍由 legacy script 模块加载期执行。    分页器（U.pager）本页暂保留：列表区在命令式 innerHTML 重刷区内（页签/整页字符串渲染），
+   模板层 n-pagination 放不进去；待该区块结构化后随 P5 迁移。
+*/
 import { ref, onMounted, onUnmounted } from 'vue';
 import { usePageChrome } from '../shell/usePageChrome.js';
+import { toast } from '../ui/nv.js';
 
 const M = window.MOCK, U = window.UI;
 const root = ref(null);
@@ -473,11 +476,11 @@ function mountRoute(view) {
     const t = p && ((M.todayTargets || []).find(x => x.alignedPlanId === p.id)
       || (M.allTargets || []).find(x => x.alignedPlanId === p.id));
     if (t) return U.goto('legality', { target: t.id });
-    U.toast('该计划未匹配到感知目标，已跳转合法性判定，但无法自动选中对应目标');
+    toast('该计划未匹配到感知目标，已跳转合法性判定，但无法自动选中对应目标');
     location.hash = '#/legality';
   });
   document.getElementById('flKw').oninput = e => { st.kw = e.target.value.trim(); st.page = 1; paint(); };
-  document.getElementById('flExp').onclick = () => U.toast('已导出「飞行计划.xlsx」共 ' + filtered().length + ' 条', 'ok');
+  document.getElementById('flExp').onclick = () => toast('已导出「飞行计划.xlsx」共 ' + filtered().length + ' 条', 'ok');
 }
 
 onMounted(() => {

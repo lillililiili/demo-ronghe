@@ -3528,6 +3528,11 @@
     /* ---- 三个并行会话建议收的断言 ---- */
     (function () {
       const bad = allTargets.filter(t => t.type === '无人机').filter(t => {
+        /* 人工改判是设计 8.6 的合法路径：结论以复核记录为准，不再要求由客观事实推导；
+           原判定保留在 legalOriginal、理由在 reviewLog，可全程追溯 —— 不豁免的话，
+           值班员每做一次人工确认本断言就红一条，等于把合规操作当成数据缺陷。
+           只豁免人工（legalSource='人工改判'）；引擎降级/状态归并仍受约束。 */
+        if (t.legalSource === '人工改判') return false;
         if (!t.facts) return true;
         const notCovered = t.facts.inNoFlyZone || t.facts.planMatch === '未命中' || t.facts.overZoneHeight || t.facts.overZoneTime;
         const strong = t.source_confidence >= 0.80, stable = t.facts.trackStatus === '稳定';

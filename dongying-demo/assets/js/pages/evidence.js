@@ -7,7 +7,7 @@
   const M = MOCK, U = UI;
   let st = {
     page: 1, size: 10, kind: '全部', verify: '全部', status: '全部', refKind: '全部',
-    kw: '', onlyBad: false, sel: null, sort: 'captured', dir: -1, mod: '全部'
+    kw: '', sel: null, sort: 'captured', dir: -1, mod: '全部'
   };
 
   const ALL = '全部';
@@ -63,7 +63,6 @@
       (st.status === ALL || x.status === st.status) &&
       (st.refKind === ALL || x.refs.some(r => r.kind === st.refKind)) &&
       (st.mod === ALL || moduleOf(x) === st.mod) &&
-      (!st.onlyBad || isBad(x) || x.status === '已到期待清理' || !retainSane(x)) &&
       /* originAction 一并进检索域：它里面带着案件号、调测任务号、授权号、风险事件号，
          而这些编号在别的字段里未必出现（如"授权 AUTH202608001"只存在于这句话里）。
          不收进来的话，按授权号根本搜不到对应的指令报文。 */
@@ -79,7 +78,7 @@
     const ctx = U.consume('evidence');
     if (ctx && ctx.id) {
       const hit = M.evidenceFiles.find(f => f.id === ctx.id);
-      if (hit) { st.sel = hit; st.kind = st.verify = st.status = st.refKind = ALL; st.kw = ''; st.onlyBad = false; }
+      if (hit) { st.sel = hit; st.kind = st.verify = st.status = st.refKind = ALL; st.kw = ''; }
     }
     st.sel = st.sel || M.evidenceFiles[0];
     const F = M.evidenceFiles;
@@ -134,7 +133,6 @@
           ${U.field('关联对象', U.select('refKind', [ALL, ...Object.keys(REF_LABEL).map(k => ({ v: k, t: REF_LABEL[k] }))], st.refKind))}
           <input class="ip" id="evKw" style="width:180px" placeholder="编号 / 名称 / 关联对象编号" value="${st.kw}">
           <span style="flex:1"></span>
-          <label class="chk" style="margin:0"><input type="checkbox" id="evBad" ${st.onlyBad ? 'checked' : ''}>只看需处理</label>
         </div>
         <div id="evList" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>`
     })}
@@ -155,11 +153,14 @@
         st.sel = hit;
         st.kind = st.verify = st.status = st.refKind = st.mod = ALL;
         st.kw = '';
-        st.onlyBad = false;
       }
     }
     st.sel = st.sel || M.evidenceFiles[0];
     return `<div style="height:100%;display:flex;flex-direction:column;min-height:0">
+      ${/* 操作引导（用户裁定 2026-08-30：多处补黄字引导）。主行 flex:1，自适应不需高度补偿 */''}
+      <div class="warnbox" style="margin:0 0 12px;padding:8px 11px;font-size:12px;flex:none">
+        演示动线：用顶部筛选（<b>类型 / 完整性 / 保管状态 / 来源模块</b>）收敛台账 →
+        点任一行，右侧查看证据详情、完整性校验与关联对象。</div>
       <div class="row" style="flex:1;min-height:0;padding-bottom:6px">
         ${U.panel({
           title: '证据文件台账', style: 'flex:1;min-width:0', nopad: true,
@@ -171,7 +172,6 @@
             ${U.field('关联对象', U.select('refKind', [ALL, ...Object.keys(REF_LABEL).map(k => ({ v: k, t: REF_LABEL[k] }))], st.refKind))}
             <input class="ip" id="evKw" style="width:180px" placeholder="编号 / 名称 / 关联对象编号" value="${st.kw}">
             <span style="flex:1"></span>
-            <label class="chk" style="margin:0"><input type="checkbox" id="evBad" ${st.onlyBad ? 'checked' : ''}>只看需处理</label>
           </div>
           <div id="evList" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>`
         })}
@@ -359,7 +359,6 @@
     });
 
     document.getElementById('evKw').oninput = e => { st.kw = e.target.value.trim(); st.page = 1; paint(); };
-    document.getElementById('evBad').onchange = e => { st.onlyBad = e.target.checked; st.page = 1; paint(); };
   }
 
   const OPER = () => (M.users && M.users[0]) || { name: '值班员', roleName: '值班员' };

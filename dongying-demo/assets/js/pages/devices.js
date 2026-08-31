@@ -165,7 +165,8 @@
   /* 数据源标识同步到全站页脚（app.js 仅在启动时写过一次，这里按当前模式覆盖） */
   function paintFooter() {
     const f = document.getElementById('fver');
-    if (f) f.textContent = M.CONF.version + ' · ' + MODES[DS.mode].foot +
+    // 版本号里的 (D3) 是内部评审轮次标记，主界面不露技术编号 —— 与 app.js 面包屑同口径，全文放 title
+    if (f) f.textContent = M.CONF.version.replace(/\s*\(D\d+\)/, '') + ' · ' + MODES[DS.mode].foot +
       (DS.mode === 'replay' ? ' @ ' + snapKey() : DS.mode === 'live' ? '（' + (probeOk() ? '已连通' : '未连通') + '）' : '');
   }
 
@@ -249,12 +250,17 @@
   }
 
   function filtered() {
+    /* 默认异常 → 离线 → 在线（用户裁定 2026-08-30：把要处理的先选出来）。
+       只是未点表头时的缺省序：sorted() 一旦有 SORT.key 会整体重排，互不干扰；
+       sort 稳定，同状态内保持数据层原序。 */
+    const rank = d => d.status === '异常' ? 0 : d.status === '离线' ? 1 : 2;
     return dsList().filter(d =>
       (st.type === '全部' || d.type === st.type) &&
       (st.region === '全部' || d.region === st.region) &&
       (st.vendor === '全部' || d.vendor === st.vendor) &&
       (st.status === '全部' || d.status === st.status) &&
-      (!st.kw || d.id.includes(st.kw) || d.name.includes(st.kw)));
+      (!st.kw || d.id.includes(st.kw) || d.name.includes(st.kw)))
+      .sort((a, b) => rank(a) - rank(b));
   }
 
   function render() {
@@ -274,7 +280,13 @@
       { label: '接入厂家数', value: dash(U.num(D.vendors)), color: 'purple', icon: 'api', desc: noData ? '—' : `设备型号 ${D.models} 种` }
     ])}
 
-    <div class="row" style="margin-top:12px;height:calc(100vh - 284px);min-height:608px;padding-bottom:12px">
+    ${/* 操作引导（用户裁定 2026-08-30：设备管理/设备监测/证据管理补黄字引导） */''}
+    <div class="warnbox" style="margin:12px 0 0;padding:8px 11px;font-size:12px">
+      演示动线：列表默认<b>异常 / 离线设备排前面</b> → 点任一行，右侧看设备详情与运行指标 →
+      右上「<b>实时监测 ›</b>」跳到该设备的实时监测页。</div>
+    ${/* 284 → 330：上面新增的引导条实占约 46px（34 内容 + 12 间距），不补偿会底部溢出；
+         min-height 同步 608 → 562，保持"矮视口才接管"的原语义。 */''}
+    <div class="row" style="margin-top:12px;height:calc(100vh - 330px);min-height:562px;padding-bottom:12px">
       ${U.panel({
       /* 用户裁定（2026-08-27）：左右按 6:4 分宽（与告警、处置处罚同口径） */
       title: '设备管理', style: 'flex:6;min-width:0', nopad: true,

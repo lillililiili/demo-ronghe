@@ -4,8 +4,9 @@
   let map = null, sel = null, timer = null;
 
   const FLOW = M.DISPOSAL_FLOW;   // B1:六环节唯一常量，三页共用
-  /* 顶部筛选条状态。此前这四个下拉没有任何事件绑定 —— 用户以为筛过了、看到的却是全量数据，
-     在核心态势页会直接导致误判，故补齐并让地图/告警/目标三处同步收敛。 */
+  /* 顶部筛选条状态。此前这些下拉没有任何事件绑定 —— 用户以为筛过了、看到的却是全量数据，
+     在核心态势页会直接导致误判，故补齐并让地图/告警/目标三处同步收敛。
+     （「数据来源」下拉已删，src 恒为「全部」，见 render 内注释。） */
   let flt = { region: '东营市全域', ttype: '全部', risk: '全部', src: '全部' };
   function matchFilter(t) {
     if (flt.region !== '东营市全域' && t.district !== flt.region) return false;
@@ -52,7 +53,9 @@
           <span style="color:var(--txt-3)">（近 1 小时）</span></span>`)}
         ${U.field('目标类型', U.select('ttype', ['全部', ...M.T_TYPES.map(x => x[0])], flt.ttype))}
         ${U.field('风险等级', U.select('risk', ['全部', '超高风险', '高风险', '中风险', '低风险'], flt.risk))}
-        ${U.field('数据来源', U.select('src', ['全部', '融合感知箱', 'TDOA', '5G-A'], flt.src))}
+        ${/* 「数据来源」下拉已按用户裁定删除（2026-08-30）：它筛完只收敛了告警列表，
+             地图与当前目标却仍是全量视角 —— 放在全局筛选条上会让人以为整页都按来源收敛了。
+             flt.src 状态保留且恒为「全部」，matchFilter 的来源分支自然短路，不另删逻辑。 */''}
         <span style="flex:1"></span>
         <span id="stFltInfo" style="font-size:11.5px"></span>
         <span style="font-size:11.5px;color:var(--txt-3);margin-left:10px">图层控制见地图右上角</span>
@@ -72,14 +75,22 @@
          「每一路各自上报了哪些字段」—— 那是设备联调要看的东西。
          现在压成一条贡献条（谁接入了、置信度多少、权重多少），
          逐路字段、关联关系、点迹诊断、融合参数全部收进「技术详情」抽屉，一个都没删。 */
-      title: '多源融合结果', sub: `融合置信度阈值 80%`, style: 'flex:none;height:228px',
+      /* 228 → 264：雷达/光电并入同一张「融合感知箱」卡后组卡变高（两行传感器），
+         228 下箱卡底部被裁。差值取自地图（flex:1 自适应）。 */
+      title: '多源融合结果', sub: `融合置信度阈值 80%`, style: 'flex:none;height:264px',
       extra: `<button class="btn ghost" id="btnTech">${U.icon('settings')} 技术详情</button>`,
       body: `<div id="stFuse"></div>`
     })}
       </div>
 
-      <!-- 右栏：当前目标与处置 → 处置流程 → 实时告警 -->
-      <div class="col" style="width:420px;flex:none">
+      <!-- 右栏：当前目标与处置 → 处置流程 → 实时告警。
+           420px 固定宽 → 占 40%（用户 2026-08-30）；420px 下限保窄屏排版不塌 -->
+      <div class="col" style="width:40%;min-width:420px;flex:none">
+        ${/* 操作引导（用户裁定 2026-08-30：仿设备接入调测页的阶段黄字，多处补引导，
+             让看 Demo 的人知道该点哪里）。演示动线在此页最长，值得占一条。 */''}
+        <div class="warnbox" style="margin:0;padding:8px 11px;font-size:12px;flex:none">
+          演示动线：在<b>地图</b>或下方<b>「实时告警列表」</b>点选目标 → 本卡查看研判结论 →
+          底部按「<b>实时视频 / 轨迹回放 / 查看告警</b>」演示；反制在告警详情内发起。</div>
         ${U.panel({
       title: '当前追踪目标 · 处置', style: 'flex:none', nopad: true,
       extra: `<span id="stTag"></span>`,
@@ -168,15 +179,31 @@
 
   function paintFuse() {
     const t = sel, f = t.fused;
-    const bars = Object.keys(f).map(k => {
+    /* 贡献条按「接入路」分组（用户裁定 2026-08-30）：雷达与光电同属融合感知箱，
+       不该并排成两张独立来源卡 —— 那读起来像四路设备，而实际是三路接入。
+       组内每个传感器仍保留各自的识别结果/置信度/权重，不合并数值：
+       融合权重真值在 mock.js 按传感器给出，这里只改展示分组，不发明「箱级置信度」。 */
+    const sensorRow = k => {
       const s2 = f[k], c = (CH_OF[k] || [null, '#8ca0be'])[1];
       const w = M.fusionWeights[k];
-      return `<div class="s ${s2.on ? '' : 'off'}">
-        <div class="sh"><span class="dot-s" style="background:${s2.on ? c : '#5a6c88'}"></span>
+      return `<div style="display:flex;flex-direction:column;gap:4px;${s2.on ? '' : 'opacity:.42'}">
+        <div class="sh" style="font-size:12.5px"><span class="dot-s" style="background:${s2.on ? c : '#5a6c88'}"></span>
           <b>${SHORT[k] || k}</b><span class="st">${s2.on ? s2.识别结果 : '未接入'}</span></div>
         <div class="bar"><i style="width:${s2.on ? s2.置信度 : 0}%;background:${c}"></i></div>
         <div class="sv"><span>置信度${w != null ? ' · 权重 ' + w + '%' : ''}</span>
           <b class="mono" style="color:${s2.on ? c : 'var(--txt-3)'}">${s2.on ? s2.置信度 + '%' : '—'}</b></div>
+      </div>`;
+    };
+    const GROUPS = [
+      { name: '融合感知箱', sub: '第1路 · 雷达 + 光电', ks: ['雷达', '光电'] },
+      { name: '5G-A', sub: '第2路', ks: ['5G-A基站'] },
+      { name: 'TDOA', sub: '第3路', ks: ['TDOA/AOA'] }
+    ];
+    const bars = GROUPS.filter(gp => gp.ks.some(k => f[k])).map(gp => {
+      const anyOn = gp.ks.some(k => f[k] && f[k].on);
+      return `<div class="s ${anyOn ? '' : 'off'}">
+        <div class="sh"><b>${gp.name}</b><span class="st">${gp.sub}</span></div>
+        ${gp.ks.filter(k => f[k]).map(sensorRow).join('')}
       </div>`;
     }).join('');
     document.getElementById('stFuse').innerHTML = `
@@ -267,6 +294,13 @@
     }
     const dev = M.devices.filter(d => d.type === '反制' && d.status === '在线').slice(0, 4);
     const zoneOk = !!t.zone;
+    /* fusedConf/srcCount 只有 liveTargets 才有；告警页会传 allTargets 里的目标进来。
+       兜底顺序：自带 → 同 id 的实时目标 → source_confidence(0~1,Schema 字段；不回退 conf,C09-21 待删) → 明示缺失。 */
+    const lv = (t.fusedConf == null || t.srcCount == null) ? (M.liveTargets || []).find(x => x.id === t.id) : null;
+    const fc = t.fusedConf != null ? t.fusedConf
+      : (lv && lv.fusedConf != null) ? lv.fusedConf
+        : (t.source_confidence != null ? Math.round(t.source_confidence * 100) : null);
+    const srcN = t.srcCount != null ? t.srcCount : (lv && lv.srcCount != null) ? lv.srcCount : null;
     const legalRisk = M.liveTargets.filter(x => x.id !== t.id && Math.abs(x.lon - t.lon) < .08 && Math.abs(x.lat - t.lat) < .08 && x.legal === '合法');
     U.modal({
       title: '反制处置授权确认',
@@ -276,7 +310,9 @@
         执行过程全程留痕，支持随时停止与急停。</div>
         ${U.sect('① 目标确认', U.kv([
         ['目标编号', `<b class="mono">${t.id}</b>`], ['轨迹编号', t.trackId || '归档轨迹'],
-        ['融合置信度', `${t.fusedConf}%（${t.srcCount} 路来源）`],
+        ['融合置信度', fc != null
+        ? `${fc}%（${srcN != null ? srcN + ' 路来源' : '来源路数未知'}）`
+        : '<span class="tag t-amber">无实时融合数据 · 以轨迹与告警证据为准</span>'],
         ['违规判定', `${t.legal} / ${t.violation || '—'}`],
         ['当前位置', `${t.lon.toFixed(4)}°E, ${t.lat.toFixed(4)}°N, 高度 ${t.alt} m`]
       ]))}
@@ -298,14 +334,35 @@
         ${U.sect('④ 人工双确认', `
           <label class="chk"><input type="checkbox" data-c="1">我已核对目标身份与违规事实，确认对该目标实施反制处置</label>
           <label class="chk"><input type="checkbox" data-c="2">我已确认作用范围内无合法飞行目标与地面安全风险，并知悉本次操作将全程审计</label>`)}`,
-      footer: `<button class="btn" data-close>取消</button>
-        <button class="btn danger" data-act="go" disabled id="btnGo">确认授权并下发指令</button>`,
+      footer: `<span id="ctHint" style="margin-right:auto;align-self:center;font-size:12px;color:var(--txt-3)">
+          须先勾选下方「④ 人工双确认」两项，方可下发指令</span>
+        <button class="btn" data-close>取消</button>
+        <button class="btn danger" data-act="go" disabled id="btnGo"
+          title="须先勾选「④ 人工双确认」两项">确认授权并下发指令</button>`,
       mounted: el => {
         const upd = () => {
           const n = [...el.querySelectorAll('[data-c]')].filter(x => x.checked).length;
-          el.querySelector('#btnGo').disabled = n < 2;
+          const go = el.querySelector('#btnGo');
+          go.disabled = n < 2;
+          // disabled 按钮不派发 click，穿透给父容器做反馈（见下方 footer 监听）
+          go.style.pointerEvents = go.disabled ? 'none' : '';
+          const hint = el.querySelector('#ctHint');
+          if (hint) hint.style.visibility = n < 2 ? 'visible' : 'hidden';
         };
         el.querySelectorAll('[data-c]').forEach(c => c.onchange = upd);
+        upd();
+        /* 双确认区可能折叠在弹窗滚动区外：禁用态下点提交按钮位置时，
+           说明原因并把 ④ 滚进视野 —— 否则用户面对一个"点不动"的红按钮没有任何线索 */
+        const go0 = el.querySelector('#btnGo');
+        const mf = go0 && go0.parentElement;
+        if (mf) mf.addEventListener('click', e => {
+          if (e.target.closest && e.target.closest('[data-close]')) return;
+          const go = el.querySelector('#btnGo');
+          if (!go || !go.disabled) return;
+          U.toast('请先完成「④ 人工双确认」：两项均需勾选后方可下发指令', 'err');
+          const c = el.querySelector('[data-c]');
+          if (c && c.scrollIntoView) c.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        });
       },
       on: {
         go: () => {
@@ -453,7 +510,7 @@
       durationS: rr(40, 120), evaluatedAt: M.util.fmtDT(M.CONF.demoTime)
     };
     U.modal({
-      title: '反制效果评估（F0811 · A11）', width: '560px',
+      title: '<span title="F0811 · A11">反制效果评估</span>', width: '560px',
       body: `<div class="warnbox">功能性实现（B档）：由处置前后轨迹变化形成结论并写入案件；
           <b>量化判据阈值待算法方标定</b>。结论已回写目标 ${t.id} 的处置记录。</div>
         <div style="display:flex;align-items:center;gap:14px;padding:12px;border:1px solid var(--line);border-radius:8px;margin-bottom:12px">
@@ -518,12 +575,19 @@
       ['track', '无人机轨迹', '<span class="sw ln" style="border-color:#2fd06e"></span>']
     ].concat([...new Set(AT.map(a => a.layer))].map(k =>
       [k, layerLabel(k), `<span class="sw ln" style="border-color:${layerColor(k)}"></span>`]));
-    lyBox.innerHTML = `<div class="lyt">图层与图例</div>` +
+    /* 默认折叠成「图层」小条（评审：图例遮挡地图面积大，尤其 1280 宽），点标题展开。
+       技术编号（A03/A04）移入 title，面板文案用业务语言。 */
+    lyBox.classList.add('collapsed');
+    lyBox.innerHTML = `<div class="lyt" role="button" tabindex="0" aria-label="展开或收起图层与图例">图层与图例 <span class="lg-arrow">▸</span></div>` +
       LY.map(([k, n, sw]) => `<label><input type="checkbox" data-layer="${k}" checked>${sw}${n}</label>` +
         (k === 'track' ? `<div class="sub"><i style="border-color:#ff4d5e"></i>非法/告警</div>
-          <div class="sub"><i style="border-color:#ff8b3d"></i>弥合段 A03</div>
-          <div class="sub"><i style="border-color:#22d3ee"></i>预测段 A04</div>` : '')).join('');
+          <div class="sub" title="弥合段（A03）"><i style="border-color:#ff8b3d"></i>推算补全段</div>
+          <div class="sub" title="预测段（A04）"><i style="border-color:#22d3ee"></i>预测延伸段</div>` : '')).join('');
     document.getElementById('stMap').appendChild(lyBox);
+    lyBox.querySelector('.lyt').addEventListener('click', () => {
+      const c = lyBox.classList.toggle('collapsed');
+      lyBox.querySelector('.lg-arrow').textContent = c ? '▸' : '▾';
+    });
     U.on(view, '[data-layer]', 'change', (e, el) => map.setLayer(el.dataset.layer, el.checked));
     U.on(view, '[data-alm]', 'click', (e, el) => {
       selAlarmId = el.dataset.almId;      // 点哪条亮哪条，与目标有几条告警无关
@@ -561,7 +625,7 @@
     });
     // 筛选：改下拉即时生效（地图、告警列表、当前目标三处同步）
     U.on(view, '[data-f]', 'change', (e, el) => {
-      if (flt[el.dataset.f] === undefined) return;      // 只处理顶部筛选条的四个下拉
+      if (flt[el.dataset.f] === undefined) return;      // 只处理顶部筛选条的下拉
       flt[el.dataset.f] = el.value;
       almFocus = null;                    // 换了筛选条件，上一个历史聚焦点不再有上下文
       selAlarmId = null;                  // 高亮的那条可能已被筛掉，别留一个指不到行的 id
@@ -635,7 +699,7 @@
         body: `<div style="display:flex;gap:12px">
           <div style="flex:1;min-width:0">
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-              <span style="font-size:12px;color:var(--txt-3)">光电吊舱-02 · 联动跟踪中（A07/A08）</span>
+              <span style="font-size:12px;color:var(--txt-3)" title="A07/A08 联动跟踪">光电吊舱-02 · 联动跟踪中</span>
               <span><button class="btn ghost" data-act="vis" style="height:24px;font-size:11.5px">可见光</button>
               <button class="btn ghost" data-act="ir" style="height:24px;font-size:11.5px">热成像</button>
               <button class="btn ghost" data-act="snap" style="height:24px;font-size:11.5px">${U.icon('camera')} 截图取证</button></span></div>
@@ -643,13 +707,11 @@
             <div style="margin-top:8px;font-size:11px;color:var(--txt-3)">正式版 /api/v1/eo/stream 拉流；本画面为 Demo 模拟渲染，接口 Schema 一致。</div>
           </div>
           <div style="width:252px;flex:none">
-            <div style="font-size:12.5px;color:#9ec6ff;margin-bottom:4px">光电跟踪（F0207）</div>
-            <div class="warnbox" style="margin:0 0 8px;padding:6px 8px;font-size:10.5px;line-height:1.55">
-              依《光电设备边端协同接口》，云台<b>由平台下发跟踪任务后自行指向目标</b>，
-              协议未提供手动瞄准动作（<span class="mono">AbsMoveByAngle / SetHome / MoveHome /
-              DetectToggle / TrackToggle</span> 均标注「暂不支持」）。<br>
-              可用事件仅 <b>BeginTracking / EndTracking / HeartBeat</b>。
-            </div>
+            <div style="font-size:12.5px;color:#9ec6ff;margin-bottom:4px" title="F0207">光电跟踪</div>
+            ${/* 协议能力说明黄字块已按用户裁定删除（2026-08-30）：演示时那段
+                 「AbsMoveByAngle…均暂不支持」是给联调方看的，不是给领导看的。
+                 协议事实本身仍在：手动瞄准无入口、可用事件仅 Begin/End/HeartBeat，
+                 界面行为未变，只去掉了说明文字。 */''}
             ${(function () {
         /* 下发跟踪是处置动作不是查看动作 —— 按 §11.9 权限模型判定，不在页面里另解 PERM 矩阵。
            解矩阵的逻辑一旦有第二份，改权限模型时必然漏改一处。 */
@@ -671,8 +733,8 @@
             <div style="font-size:11px;color:#9ec6ff;margin-bottom:3px">指令回执</div>
             <div id="ptzLog" style="font:10px/1.7 Menlo,monospace;color:var(--txt-3);height:96px;overflow:auto;
               background:rgba(3,9,26,.7);border:1px solid var(--line-2);border-radius:5px;padding:5px 7px"></div>
-            <div style="font-size:10.5px;color:var(--txt-3);margin-top:5px">
-              A09 云台控制由设备方交付（C档验收）；引导源见下方跟踪任务</div>
+            <div style="font-size:10.5px;color:var(--txt-3);margin-top:5px" title="A09 · C档验收">
+              云台点动控制由设备方交付；引导源见下方跟踪任务</div>
           </div></div>`,
         on: {
           vis: () => { if (v) v.mode = 'visible'; },
@@ -723,7 +785,7 @@
                     ['④ 跟丢处理', '目标丢失超时后自动结束跟踪并回报，云台停留在最后方位，需人工确认']
                   ])}
                     <div style="margin-top:8px;font-size:11.5px;color:var(--txt-3)">
-                      引导源：${bs.typeName} <span class="mono">${bs.id}</span>（A08 雷达引导光电）</div>
+                      引导源：${bs.typeName} <span class="mono">${bs.id}</span><span title="A08">（雷达引导光电）</span></div>
                     <div style="margin-top:9px;padding-top:9px;border-top:1px solid var(--line)">
                       <label class="chk"><input type="checkbox" data-pc>
                         我知悉上述四项后果，确认下发本次光电跟踪任务</label>
@@ -816,7 +878,7 @@
           el.querySelector('#rpInfo').innerHTML =
             `<span>进度 <b class="mono">${idx + 1}/${tr.length}</b></span>
              <span>高度 <b class="mono">${cur.alt} m</b></span>
-             <span>点型 ${cur.kind === 'meas' ? '<span class="tag t-green">实测</span>' : cur.kind === 'bridge' ? '<span class="tag t-orange">弥合(A03)</span>' : '<span class="tag t-cyan">预测(A04)</span>'}</span>
+             <span>点型 ${cur.kind === 'meas' ? '<span class="tag t-green">实测</span>' : cur.kind === 'bridge' ? '<span class="tag t-orange" title="弥合段（A03）">推算补全</span>' : '<span class="tag t-cyan" title="预测段（A04）">预测延伸</span>'}</span>
              <span style="color:var(--txt-3)">时段 ${M.util.fmtT(new Date(t0))} ~ ${M.util.fmtT(new Date(t1))}</span>`;
         }
         paintFrame();

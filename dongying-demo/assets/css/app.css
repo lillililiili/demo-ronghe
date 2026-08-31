@@ -230,6 +230,7 @@ select.sel option{background:#0a1a3f}
   background:rgba(61,139,255,.12);border:1px solid rgba(61,139,255,.36);color:#bcd6ff;font-size:13.5px;
   font-family:inherit;transition:.15s;white-space:nowrap;
 }
+a.btn{text-decoration:none}   /* 顶栏「大屏展示」等以 <a> 承载的按钮 */
 .svg-icon{width:1em;height:1em;display:inline-block;fill:none;stroke:currentColor;stroke-width:1.8;vertical-align:-.12em;flex:none}
 .btn>.svg-icon,.field-icon>.svg-icon{width:16px;height:16px}
 .icon-btn{display:inline-flex;align-items:center;justify-content:center;padding:0;border:0;background:transparent;color:inherit;cursor:pointer}
@@ -1109,3 +1110,37 @@ body[data-page="stats"] .panel{box-shadow:0 7px 20px rgba(0,0,0,.12);border-colo
 .hist-tag{display:inline-block;margin-right:6px;padding:0 6px;border-radius:4px;
   font-size:11px;line-height:18px;color:var(--txt-3);
   border:1px dashed rgba(140,160,190,.45);background:rgba(140,160,190,.08)}
+
+/* ---------- 合法性判定中心 UX 改版（评审落地）新增选择器，未改动既有规则 ---------- */
+/* 检查语义图标：绿=通过 红=命中违规 橙=偏差 灰=不可判定（颜色由 ui.js stateIcon 内联给出） */
+.state-ic{display:inline-flex;align-items:center;gap:4px;vertical-align:middle}
+.state-ic .si-t{font-size:12px}
+/* KPI 卡 opt-in 可点击态（仅带 data-kpi 的卡生效） */
+.kpi.is-clickable{cursor:pointer;transition:border-color .15s ease,transform .15s ease}
+.kpi.is-clickable:hover{border-color:rgba(120,170,255,.55);transform:translateY(-1px)}
+.kpi.is-clickable:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+.kpi.is-active{border-color:var(--kpi-c,#4b9cff);box-shadow:inset 0 0 0 1px var(--kpi-c,#4b9cff)}
+/* 当前筛选条件 chip（替代与统计卡重复的下拉入口） */
+.filter-chip{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;
+  border:1px solid rgba(120,170,255,.35);background:rgba(61,139,255,.12);font-size:12px;color:var(--txt-2);white-space:nowrap}
+.filter-chip .fx{cursor:pointer;color:var(--txt-3);font-size:14px;line-height:1;padding:0 1px}
+.filter-chip .fx:hover{color:#ff8b95}
+/* 状态标签组：chip 从"当前条件展示"升级为可点切换的视图入口（2026-08-30） */
+.filter-chip[data-chip-set]{cursor:pointer;user-select:none}
+.filter-chip[data-chip-set]:hover{border-color:rgba(120,170,255,.6);color:var(--txt)}
+.filter-chip.on{background:rgba(61,139,255,.3);border-color:#4b9cff;color:#e8f2ff;font-weight:600}
+/* 选中行左缘加色条：仅底色变化在长列表里不够醒目 */
+table.tb tbody tr.on{box-shadow:inset 3px 0 0 var(--blue)}
+/* 地图图例/图层浮层默认折叠为小条，点标题展开 */
+.maplegend .lg-hd{cursor:pointer;user-select:none;color:var(--txt-2);font-weight:600}
+.maplegend .lg-hd:hover{color:var(--cyan)}
+.maplegend.collapsed .li{display:none}
+.maplayers .lyt{cursor:pointer;user-select:none}
+.maplayers .lyt:hover{color:var(--cyan)}
+.maplayers.collapsed label,.maplayers.collapsed .sub{display:none}
+.maplayers.collapsed .lyt{margin-bottom:0}
+/* 详情顶部：数据完整性状态条（四档色由内联变量 --integ-c 给出） */
+.integrity-strip{margin:0 0 10px;border:1px solid;border-radius:8px;font-size:12.5px}
+.integrity-strip>summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px;padding:8px 11px}
+.integrity-strip>summary::-webkit-details-marker{display:none}
+.integrity-strip .ig-body{padding:2px 11px 9px;color:var(--txt-3);line-height:1.7}

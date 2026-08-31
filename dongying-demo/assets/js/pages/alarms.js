@@ -1,7 +1,9 @@
 /* ===== 13. 异常飞行与告警中心 ===== */
 (function (g) {
   const M = MOCK, U = UI;
-  let st = { page: 1, size: 10, level: '全部', status: '全部', kind: '全部', region: '全部', sel: null,
+  /* 状态默认「待核实」（用户裁定 2026-08-30：和合法性页一样，把要处理的先选出来）；
+     深链跳入的既有逻辑会重置为「全部」，不受影响。 */
+  let st = { page: 1, size: 10, level: '全部', status: '待核实', kind: '全部', region: '全部', sel: null,
     sort: 'ts', dir: -1 };     // 默认按时间倒序，与数据层 alarms.sort(b.ts-a.ts) 一致，首屏顺序不变
 
   /* 告警页按本轮确认后的最短闭环展示，不复用案件的六环节状态：
@@ -77,7 +79,8 @@
   function render() {
     const sid = sessionStorage.getItem('alarm.sel');
     const deep = sid && M.alarms.find(a => a.id === sid);
-    st.sel = deep || st.sel || M.todayAlarms[0] || M.alarms[0];
+    // safe-default: 默认选中项跟随当前筛选（待核实视图选首条待核实告警），用户可见可改
+    st.sel = deep || st.sel || rows()[0] || M.todayAlarms[0] || M.alarms[0];
     sessionStorage.removeItem('alarm.sel');
     /* 深链跳来（COM-05 统一检索 / 总览点告警）：清掉筛选并翻到该条所在页，
        否则右侧详情停在它上面、左侧列表里却找不到这一行 */
@@ -109,11 +112,14 @@
           ${U.field('状态', U.select('status', ['全部', ...FLOW_STATUS], st.status))}
           ${U.field('区域', U.select('region', ['全部', ...M.DISTRICTS.map(d => d.name)], st.region))}
           <span style="flex:1"></span>
-          <button class="btn" id="alChan">${U.icon('bell')} 通知渠道</button>
         </div>
         <div id="alList" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>`
     })}
       <div class="col" style="flex:4;min-width:0">
+        ${/* 操作引导（用户裁定 2026-08-30：多处补黄字引导） */''}
+        <div class="warnbox" style="margin:0;padding:8px 11px;font-size:12px;flex:none">
+          演示动线：点左侧<b>告警列表</b>任一行 → 地图定位关联目标 → 下方详情底部点
+          「<b>人工核实 / 发起联动反制</b>」推进处置，「实时视频 / 轨迹回放」查看证据。</div>
         ${U.panel({
       /* 地图高度取 244px 与行高 46% 的较小值：视口偏矮时（1280×800）不至于把下面的详情面板压成一条缝 */
       title: '关联目标定位与轨迹', style: 'height:244px;max-height:50%;flex:none', nopad: true,
@@ -212,64 +218,9 @@
       ['数据来源', a.source + `（置信度 ${U.confPct(a.source_confidence)}）`],
       ['告警内容', a.detail]
     ], { surface: true, density: 'compact' }), { icon: 'alert' })}
-      ${(function () {
-        /* C06 去重与升级：先按「同目标 + 同类型 + 5 分钟窗口」在数据集中找真实同族告警；
-           当前 Demo 数据集每个目标只生成一条告警，找不到同族时退回 CH.seeded 派生的合并明细，
-           并明确标注「Demo 派生」——不要让一个凭空数字冒充引擎输出。
-           正式版由 C06 引擎写入 mergedAlarmIds，此处直接列真实被合并的告警编号。 */
-        const peers = M.alarms.filter(x => x.id !== a.id && x.targetId === a.targetId
-          && x.type === a.type && Math.abs(x.ts - a.ts) <= AP.dedupWindowMin * 60000).sort((p, q) => p.ts - q.ts);
-        const rs = CH.seeded('dedup' + a.id);
-        const derived = !peers.length;
-        const cnt = derived ? rs(1, 4) : peers.length + 1;
-        const items = derived
-          ? Array.from({ length: cnt }, (_, i) => ({
-            id: a.id + '-M' + M.util.p2(i + 1),
-            time: M.util.fmtT(new Date(a.ts - (cnt - 1 - i) * rs(40, 170) * 1000)),
-            src: i === cnt - 1 ? a.source : ['融合感知箱', 'TDOA', '5G-A'][rs(0, 2)]
-          }))
-          : peers.concat([a]).map(x => ({ id: x.id, time: x.time.slice(11), src: x.source }));
-        const up = cnt >= AP.upgradeCount;
-        const lower = { '高': '中', '中': '低', '低': '低' };
-        return U.sect(`去重与升级（C06）${derived ? '<span class="tag t-amber" style="margin-left:4px" title="当前 Demo 数据集每个目标仅生成一条告警，合并明细按告警编号确定性派生；正式版取 C06 引擎的 mergedAlarmIds">Demo 派生</span>' : ''}`,
-          U.kv([
-            ['合并策略', `同目标 + 同类型 + ${AP.dedupWindowMin} 分钟窗口内合并`],
-            ['合并条数', `<b>${cnt}</b> 条（含本条，保留为 <span class="mono">${a.id}</span>）`],
-            ['被合并明细', `<div style="line-height:1.75">${items.map(x =>
-              `<div><span class="mono" style="color:var(--txt-3)">${x.time}</span>
-                 <span class="mono">${x.id}</span>
-                 <span style="color:var(--txt-3)">· ${x.src}</span>
-                 ${x.id === a.id ? '<span class="tag t-cyan">保留</span>' : '<span class="tag t-gray">已合并</span>'}</div>`).join('')}</div>`],
-            ['升级规则', `同目标 ${AP.upgradeWindowMin} 分钟内重复 ≥${AP.upgradeCount} 次 → 等级上调一级`],
-            ['是否升级', up
-              ? `${U.tag('已升级', 't-red')} <span style="color:var(--txt-3)">${lower[a.level]} → ${a.level}</span>`
-              : `${U.tag('未升级', 't-gray')} <span style="color:var(--txt-3)">重复 ${cnt} 次 &lt; ${AP.upgradeCount} 次阈值</span>`]
-          ]));
-      })()}
-      ${(function () {
-        /* B02 统一目标 ID 合并/分裂：告警一旦引用某 target_id，即使目标后续被合并也要能回溯 */
-        const lng = (M.idLineage || []).filter(l =>
-          (l.memberIds || []).includes(a.targetId) || l.originId === a.targetId || l.survivorId === a.targetId);
-        if (!lng.length) return '';
-        return U.sect('关联目标 ID 变更历史（B02）', lng.map(l => U.kv([
-          ['变更类型', l.op === 'merge' ? U.tag('合并', 't-cyan') : U.tag('分裂', 't-purple')],
-          ['发生时间', l.at],
-          [l.op === 'merge' ? '合并后保留' : '拆分自', l.op === 'merge'
-            ? `<span class="mono">${l.survivorId}</span>` : `<span class="mono">${l.originId}</span>`],
-          ['涉及目标', `<span class="mono">${(l.memberIds || []).join(' , ')}</span>`],
-          ['判据', l.basis], ['执行者', l.operator]
-        ])).join('') + `<div style="font-size:11px;color:var(--txt-3);line-height:1.7">
-          本条告警引用的 target_id 参与过上述变更；合并前的判定快照已随变更记录留存，证据链可回溯。</div>`,
-          { collapsible: true, open: false, icon: 'trend' });
-      })()}
-      ${U.sect('通知记录（F0605）', (a.notifyLog && a.notifyLog.length)
-        ? a.notifyLog.map(n => `<div style="display:flex;justify-content:space-between;gap:8px;font-size:11.5px;
-            padding:4px 0;border-bottom:1px solid rgba(64,158,255,.08)">
-            <span class="mono" style="color:var(--txt-3)">${n.time}</span>
-            <span style="flex:1">${n.channel} → ${n.target}</span>
-            <span style="color:${n.ok ? '#79e5a5' : '#ffd07a'}">${n.result}</span></div>`).join('')
-        : '<div style="color:var(--txt-3);font-size:12px">暂无通知记录</div>',
-        { collapsible: true, open: false, icon: 'bell' })}
+      ${/* 「关联目标 ID 变更历史（B02）」区块已按用户裁定删除（2026-08-30）：
+           合并/分裂谱系是证据链回溯用的技术事实，演示告警详情不需要它。
+           M.idLineage 数据与合并快照仍在数据层（日志归档可查），删的只是本页展示。 */''}
       ${U.detailActions(`
         <button class="btn" data-al="video">${U.icon('video')} 实时视频</button>
         <button class="btn" data-al="replay">${U.icon('trend')} 轨迹回放</button>
@@ -372,6 +323,10 @@
   function mount(view) {
     view.style.overflow = 'hidden';
     paint();
+    // 深链/默认选中的行可能落在列表滚动区外（尤其统一检索/态势页跳来时）：
+    // 挂载后把选中行滚到列表可视区中部。行点击走 selectRow 不重建列表，不受此影响。
+    const selTr = document.querySelector('#alList tr.on');
+    if (selTr && selTr.scrollIntoView) selTr.scrollIntoView({ block: 'center' });
     // B5:地图。maxDev:0 + device:false —— 本页只关心目标与告警点位，不铺设备
     map = new MapView(document.getElementById('alMap'), {
       zoom: 2.2, maxDev: 0, maxAlarm: 1, legend: false, layers: { device: false }
@@ -428,7 +383,6 @@
       else if (k === 'notify') sendModal();
       else if (k === 'verify') verifyModal();
     });
-    document.getElementById('alChan').onclick = chanModal;
     document.getElementById('alLoc').onclick = () => { if (map) { map.zoom = 2.2; map.ox = map.oy = 0; } focusMap(); };
   }
   function startInterference(a) {
@@ -474,8 +428,15 @@
       footer: `<button class="btn" data-close>取消</button><button class="btn pri" data-act="ok">提交核实结论</button>`,
       on: {
         ok: el => {
-          const note = (el.querySelector('[data-vfnote]').value || '').trim();
-          if (!note) { U.toast('核实说明为必填 —— 状态变更必须能回答"依据是什么"', 'err'); return; }
+          const ipt = el.querySelector('[data-vfnote]');
+          const note = (ipt.value || '').trim();
+          if (!note) {
+            // toast 会自动消失，输入框上留一个持续的未通过标记，直到用户开始输入
+            ipt.style.borderColor = 'var(--red, #ff4d5e)';
+            ipt.focus();
+            ipt.oninput = () => { ipt.style.borderColor = ''; ipt.oninput = null; };
+            U.toast('核实说明为必填 —— 状态变更必须能回答"依据是什么"', 'err'); return;
+          }
           const real = el.querySelector('[data-vf="true"]').checked;
           const u = M.currentUser || { name: '值班员', roleName: '值班员' };
           const from = statusOf(a);
@@ -498,48 +459,6 @@
     });
   }
 
-  /* ---- F0605:通知渠道配置(外发通道为预留接口,Demo 不真实外发) ---- */
-  function chanModal() {
-    U.modal({
-      title: '告警通知渠道配置（F0605）', width: '820px',
-      body: `<div class="warnbox">外发通道为<b>预留接口</b>，Demo 环境不真实外发。正式环境需配置各渠道凭据
-          （钉钉 webhook 与加签密钥、企业微信应用凭据、短信网关账号等），由接口负责人确认后联调。</div>
-        <table class="tb"><thead><tr>
-          <th style="width:44px;text-align:center">启用</th><th style="width:132px">渠道</th>
-          <th style="width:60px">类型</th><th style="width:130px">通知对象</th>
-          <th style="width:200px">接口</th><th style="width:118px;text-align:center">就绪状态</th>
-          <th>触发说明</th></tr></thead><tbody>
-          ${M.notifyChannels.map(c => `<tr>
-            <td style="text-align:center"><label class="chk" style="margin:0;justify-content:center">
-              <input type="checkbox" data-ncon="${c.id}" ${c.on ? 'checked' : ''}></label></td>
-            <td>${c.name}</td>
-            <td>${U.tag(c.type, c.type === '内部' ? 't-blue' : 't-purple')}</td>
-            <td style="color:var(--txt-2)">${c.target}</td>
-            <td><span class="mono" style="font-size:11px">${c.api}</span></td>
-            <td style="text-align:center">${c.ready ? U.tag('已联调', 't-green') : U.tag('预留接口', 't-amber')}</td>
-            <td style="color:var(--txt-3);font-size:11.5px">${c.desc}</td></tr>`).join('')}
-        </tbody></table>
-        ${U.sect('触发规则（Demo 缺省值，待业务方确认 · 见「用户与权限 › 参数总览」）', U.kv([
-        ['高风险告警', '立即通知（不受夜间限制）'],
-        ['中风险告警', `${AP.midEscalateMin} 分钟未处置自动升级通知`],
-        ['重复告警合并', `同目标 ${AP.upgradeWindowMin} 分钟内重复告警合并为一条通知（与 C06 去重升级一致）`],
-        ['夜间策略', `${AP.nightFrom}–${AP.nightTo} 仅高风险外发，其余次日汇总`],
-        ['失败重试', `外发失败按 ${AP.retryBackoffS.map(x => x + 's').join('/')} 退避重试 ${AP.retryTimes} 次，仍失败转站内告警并记录`]
-      ]))}`,
-      footer: `<button class="btn" data-close>取消</button><button class="btn pri" data-act="save">保存配置</button>`,
-      on: {
-        save: el => {
-          M.notifyChannels.forEach(c => {
-            const box = el.querySelector(`[data-ncon="${c.id}"]`);
-            if (box) c.on = box.checked;
-          });
-          U.closeModal();
-          U.toast(`通知渠道已保存：启用 ${M.notifyChannels.filter(c => c.on).length} / ${M.notifyChannels.length} 个`, 'ok');
-        }
-      }
-    });
-  }
-
   /* ---- F0605:按渠道发送通知(ready:false 明确标注未真实外发) ---- */
   function sendModal() {
     const a = st.sel;
@@ -552,7 +471,7 @@
         ${on.length ? on.map(c => `<label class="chk"><input type="checkbox" data-nc="${c.id}" checked>
             ${c.name} <span style="color:var(--txt-3)">→ ${c.target}</span>
             ${c.ready ? U.tag('已联调', 't-green') : U.tag('预留接口', 't-amber')}</label>`).join('')
-          : '<div class="empty">无已启用渠道，请先在「通知渠道」中启用</div>'}
+          : '<div class="empty">当前无已启用的通知渠道</div>'}
         <div id="ncResult" style="margin-top:10px"></div>`,
       footer: `<button class="btn" data-close>关闭</button>
         <button class="btn pri" data-act="send" ${on.length ? '' : 'disabled'}>发送通知</button>`,
@@ -574,7 +493,7 @@
           }).join('');
           el.querySelector('#ncResult').innerHTML =
             `<div style="font-size:12.5px;color:#9ec6ff;margin-bottom:4px">发送结果</div>${lines}`;
-          document.getElementById('alDetail').innerHTML = detail();     // 通知记录即时可见
+          document.getElementById('alDetail').innerHTML = detail();     // 重绘详情：处置动作按新状态刷新
           const okN = picked.filter(c => c.ready).length;
           U.toast(`通知已发送：${okN} 个渠道送达，${picked.length - okN} 个为预留接口未外发`, okN ? 'ok' : 'err');
         }
@@ -597,7 +516,7 @@
   U.regParams({
     key: 'F0605', name: '告警通知渠道与触发规则', page: '异常告警中心', hash: '#/alarms',
     ver: 'demo-v1', confirmed: false, owner: '业务方',
-    basis: '需求文档 F0605 告警通知；渠道就绪状态见本页「通知渠道」',
+    basis: '需求文档 F0605 告警通知；渠道就绪状态见下方 items（配置界面本期不提供）',
     affects: ['告警外发', '通知升级', '夜间静默'],
     items: () => [
       { n: '已启用渠道 / 总数', v: `${M.notifyChannels.filter(c => c.on).length} / ${M.notifyChannels.length}` },
@@ -611,7 +530,7 @@
   U.regParams({
     key: 'C06', name: '告警去重与升级阈值', page: '异常告警中心', hash: '#/alarms',
     ver: 'C06-demo-v1', confirmed: false, owner: '业务方',
-    basis: '业务规则 C06 重复告警合并与等级升级；判定过程见告警详情「去重与升级」',
+    basis: '业务规则 C06 重复告警合并与等级升级。阈值在此登记待业务方确认；Demo 界面不再展示合并判定过程（区块已按用户裁定删除），正式版由 C06 引擎按这三个值执行。',
     affects: ['告警条数', '告警等级', '通知次数'],
     items: () => [
       { n: '合并窗口（同目标+同类型）', v: AP.dedupWindowMin + ' 分钟' },

@@ -107,6 +107,22 @@
   const legal = l => `<span class="tag ${LEGAL_C[l] || 't-gray'}">${l}</span>`;
   const dotState = s => `<span class="dot-s" style="background:${s === '在线' || s === '正常' ? '#2fd06e' : s === '离线' ? '#8ca0be' : '#ff4d5e'}"></span>${s}`;
 
+  /* ---- 检查语义图标 ----
+     「检查完成」与「检查通过」必须分开：绿勾只许表示合规通过，
+     命中违规=红叉、存在偏差=橙三角、无判据=灰"不可判定"。
+     label===false 只出图标（窄列场景），传字符串可覆盖默认文字。 */
+  const STATE_IC = {
+    pass: { i: 'check', c: '#2fd06e', t: '通过' },
+    warn: { i: 'warning', c: '#ffb020', t: '存在偏差' },
+    fail: { i: 'cross', c: '#ff4d5e', t: '命中违规' },
+    na: { i: null, c: 'var(--txt-3)', t: '不可判定' }
+  };
+  function stateIcon(s, label) {
+    const d = STATE_IC[s] || STATE_IC.na;
+    const tx = label === false ? '' : `<span class="si-t">${label || d.t}</span>`;
+    return `<span class="state-ic" style="color:${d.c}">${d.i ? icon(d.i) : '—'}${tx}</span>`;
+  }
+
   /* ---- 面板 ---- */
   function panel(o) {
     const extra = o.extra || '';
@@ -158,7 +174,10 @@
     const wrapCls = ['kpis', opts.variant ? 'kpis-' + opts.variant : '', opts.density ? 'density-' + opts.density : '', opts.className || ''].filter(Boolean).join(' ');
     return `<div class="${wrapCls}">` + list.map(k => {
       const c = KC[k.color] || KC.blue;
-      return `<div class="kpi kpi-${k.color || 'blue'} ${k.className || ''}">
+      // k.attr（如 data-kpi="非法"）为 opt-in 可点击卡：加手型/焦点态；k.active 标当前激活。
+      // 不传时输出与既有调用方完全一致，其余页面零影响。
+      const click = k.attr ? ` ${k.attr} tabindex="0" role="button"` : '';
+      return `<div class="kpi kpi-${k.color || 'blue'} ${k.className || ''}${k.attr ? ' is-clickable' : ''}${k.active ? ' is-active' : ''}"${click}${k.active ? ` style="--kpi-c:${c}"` : ''}>
         <div class="ic" style="background:${c}22;border:1px solid ${c}55;color:${c}">${icon(k.icon || 'chart')}</div>
         <div class="tx"><div class="lb" title="${String(k.label).replace(/"/g, '&quot;')}">${k.label}</div>
           <div class="vl" style="color:${c}">${k.value}${k.unit ? `<span style="font-size:13px;color:var(--txt-2);margin-left:3px">${k.unit}</span>` : ''}</div>
@@ -435,7 +454,7 @@
   function basisHtml(t) {
     return `<div class="basis">` + legalBasis(t).map(x => `
       <div class="b ${x.na ? 'na' : x.bad ? 'bad' : ''}">
-        <div class="bi">${x.na ? '—' : x.bad ? icon('cross') : icon('check')}</div>
+        <div class="bi">${stateIcon(x.na ? 'na' : x.bad ? 'fail' : 'pass', false)}</div>
         <div class="bt"><b>${x.k}</b><span>${x.na ? (x.un || '本项无判据') : x.bad ? x.no : x.ok}</span></div>
       </div>`).join('') + `</div>`;
   }
@@ -469,7 +488,7 @@
   });
 
   g.UI = {
-    icon, num, pct, money, delta, tag, risk, legal, dotState, panel, detailHero, kpis, table, cell, pager,
+    icon, num, pct, money, delta, tag, risk, legal, dotState, stateIcon, panel, detailHero, kpis, table, cell, pager,
     checked, bindCheckAll, goto, consume, selectRow, srcTag, confPct, modelTag, regParams, paramGroups,
     kv, sect, metricStrip, detailActions, codeBlock, steps, timeline, modal, closeModal, toast, field, select, input, bars, on, KC,
     legalBasis, basisHtml, verdictHtml

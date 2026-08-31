@@ -7,8 +7,26 @@
   ];
   let step = 0, dev = M.devices[0], running = false, timer = null, sec = 0, page = 1, size = 10, tab = 'lian';
   let lastRun = null;              // 本次实际跑完的调测结果（报告取它，不取写死的字符串）
+  /* 阶段状态机（用户裁定 2026-08-28）：中栏与按钮随阶段变。
+     access 设备接入 → config 参数配置（建立连接后）→ ready 待测试（保存参数后）
+     → testing 测试中 → done 结果确认。
+     闸门：建立连接 → 才能保存参数；保存参数 → 才能 开始测试/重新连接；
+     完成后 开始测试 置灰（换设备或重新连接后可再测）；报告只在完成后可点。 */
+  let phase = 'access';
+  let paramsSaved = false;
+  const PHASE_STEP = { access: 0, config: 1, ready: 2, testing: 2, done: 6 };
+  const STAGE_TITLE = { access: '设备接入', config: '参数配置', ready: '参数配置', testing: '调测执行', done: '结果确认' };
+  function syncState() {
+    const el = document.getElementById('cmState');
+    if (!el) return;
+    const m = running ? ['t-cyan', '测试中']
+      : phase === 'done' ? ['t-green', '已完成']
+        : phase === 'ready' ? ['t-amber', '待测试']
+          : phase === 'config' ? ['t-blue', '已连接'] : ['t-gray', '未连接'];
+    el.className = 'tag ' + m[0]; el.textContent = m[1];
+  }
   /* 原 500ms × 每 2 tick 一行 ≈ 每步 20s、跑完 2 分钟；260ms 仍需约 62s，演示时依然没人等得完。
-     降到 80ms ≈ 每步 3s、全程约 19s。另给「跳过动画」直接出结果。
+     降到 80ms ≈ 每步 3s、全程约 19s。（「跳过动画」入口已按用户裁定删除）
      （节流环境下测不准，这个数是按常量算的：SCRIPT 11 行 × 2 tick × 80ms ≈ 1.8s + 面板刷新开销） */
   const TICK_MS = 80;
   const elapsed = () => Math.floor(sec * TICK_MS / 1000);
@@ -56,30 +74,36 @@
     })}
 
     <div class="row mb12" style="height:560px;flex:none">
-      <div class="col" style="width:268px">
+      ${/* 左栏 268 → 300px、区域/类型并排（用户 2026-08-30：「设备选择和设备信息太挤」）：
+           两个下拉竖排吃掉一行高度，树只剩 3 行可见；并排后树多出约 30px，
+           且 300px 下设备名不再被省略号截断。差值取自中栏（flex:1.5 自适应）。 */''}
+      <div class="col" style="width:300px">
         ${U.panel({
       title: '设备选择', style: 'flex:none;height:260px', nopad: true,
       body: `<div style="padding:8px;display:flex;flex-direction:column;gap:6px">
-            ${U.field('区域', U.select('r', ['全部区域', ...M.DISTRICTS.map(d => d.name)]))}
-            ${U.field('类型', U.select('t', ['全部类型', ...new Set(M.devices.map(d => d.type))]))}
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+              ${U.field('区域', U.select('r', ['全部区域', ...M.DISTRICTS.map(d => d.name)]))}
+              ${U.field('类型', U.select('t', ['全部类型', ...new Set(M.devices.map(d => d.type))]))}
+            </div>
             <input class="ip" placeholder="请输入设备名称/ID/IP" id="cmKw">
           </div>
           <div class="tree" id="cmTree" style="padding:0 8px 8px;overflow:auto;flex:1;min-height:0"></div>`
     })}
-        ${U.panel({ title: '设备信息', style: 'flex:1;min-height:0', body: `<div id="cmInfo"></div>` })}
+        ${U.panel({
+      title: '设备信息', style: 'flex:1;min-height:0', nopad: true,
+      body: `<div id="cmInfo" style="flex:1;overflow:auto;padding:12px"></div>`
+    })}
       </div>
 
       ${U.panel({
-      title: '参数配置', style: 'flex:1.5', nopad: true,
+      title: `<span id="cmStageTitle">设备接入</span>`, style: 'flex:1.5', nopad: true,
       body: `<div id="cmCfg" style="padding:12px;overflow:auto;flex:1"></div>
-          <!-- 5 个按钮在 517px 的面板里放不下（我加「跳过动画」后 545px），
-               .panel>.pb 本身是 overflow:auto，于是这一行把整个面板体撑出 28px。
-               允许换行即可 —— 按钮换行比横滚可用。 -->
+          <!-- 「跳过动画」已按用户裁定删除；四个按钮的可用性由状态机统一管（syncActionBtns/syncReportBtn） -->
           <div class="detail-actions" style="margin:0;border-width:1px 0 0;border-radius:0;flex-wrap:wrap;justify-content:flex-start">
-            <button class="btn pri" id="cmStart">${U.icon('play')} 开始测试</button>
-            <button class="btn" id="cmSkip" title="跳过逐步动画，直接跑完全部 6 步并出结果">${U.icon('skip')} 跳过动画</button>
-            <button class="btn" id="cmSave">${U.icon('save')} 保存参数</button>
-            <button class="btn" id="cmReconn">${U.icon('refresh')} 重新连接</button>
+            <button class="btn pri" id="cmConnect">${U.icon('link')} 建立连接</button>
+            <button class="btn" id="cmSave" disabled title="请先「建立连接」">${U.icon('save')} 保存参数</button>
+            <button class="btn pri" id="cmStart" disabled title="请先「保存参数」再开始测试">${U.icon('play')} 开始测试</button>
+            <button class="btn" id="cmReconn" disabled title="请先「保存参数」再重新连接">${U.icon('refresh')} 重新连接</button>
             <button class="btn" id="cmReport" disabled title="需先完成 6 步调测流程（当前未开始）">${U.icon('file')} 生成调测报告</button>
           </div>`
     })}
@@ -126,11 +150,15 @@
       { label: '连接状态', value: running ? '测试中' : dev.status, tone: dev.status === '在线' ? 'good' : 'warn', icon: 'link' },
       { label: '设备类型', value: dev.type, icon: 'device' },
       { label: '固件版本', value: dev.fw, icon: 'file' }
-    ], { compact: true }) + U.kv([['设备名称', dev.name], ['设备类型', dev.type], ['设备型号', dev.model],
-    ['IP 地址', `<span class="mono">${dev.ip}</span>`], ['所属区域', dev.region],
-    ['供应商', dev.vendor], ['设备编号', `<span class="mono">${dev.id}</span>`],
-    ['固件版本', dev.fw], ['接入时间', dev.installed + ' 14:32:18'],
-    ['设备状态', U.dotState(dev.status)]], { surface: true, density: 'compact' });
+    ], { compact: true }) + U.kv([
+      /* kv 只留 hero/指标条没有的字段（用户 2026-08-30：「设备信息太挤」）——
+         设备名称/类型/状态/固件四项在上方已各出现一次，同一面板里第二遍是纯占位。
+         所属区域保留：hero micro 变体不渲染 meta，删掉它就真没了。 */
+      ['设备型号', dev.model],
+      ['IP 地址', `<span class="mono">${dev.ip}</span>`],
+      ['所属区域', dev.region],
+      ['供应商', dev.vendor], ['设备编号', `<span class="mono">${dev.id}</span>`],
+      ['接入时间', dev.installed + ' 14:32:18']], { surface: true, density: 'compact' });
   }
 
   function cfg() {
@@ -181,9 +209,8 @@
   }
 
   function live() {
-    const st = running ? '测试中' : (step >= 5 ? '已完成' : '未开始');
     return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
-        ${U.kv([['连接状态', running ? '<span style="color:#79e5a5">● 已连接</span>' : '<span style="color:var(--txt-3)">○ 未连接</span>'],
+        ${U.kv([['连接状态', phase !== 'access' ? '<span style="color:#79e5a5">● 已连接</span>' : '<span style="color:var(--txt-3)">○ 未连接</span>'],
       ['连接时长', running ? '00:' + M.util.p2(Math.floor(elapsed() / 60)) + ':' + M.util.p2(elapsed() % 60) : '—'],
       ['最后心跳', running ? M.util.fmtDT(new Date(M.CONF.demoTime.getTime() + elapsed() * 1000)) : '—']])}
       </div>
@@ -278,17 +305,82 @@
   function syncReportBtn() {
     const b = document.getElementById('cmReport');
     if (!b) return;
-    const ok = step >= 5;
+    const ok = phase === 'done' && !!lastRun;
     b.disabled = !ok;
     b.title = ok ? '调测流程已完成，可生成报告'
-      : `需先完成 6 步调测流程（当前进度 ${step}/6${running ? ' · 测试进行中' : ''}）`;
+      : `需先完成 6 步调测流程（当前进度 ${Math.min(step, 5)}/6${running ? ' · 测试进行中' : ''}）`;
+  }
+
+  /* 按钮可用性全部由阶段推导，任何地方不再手工 set disabled */
+  function syncActionBtns() {
+    const set = (id, dis, title) => { const b = document.getElementById(id); if (b) { b.disabled = dis; b.title = title; } };
+    set('cmConnect', phase !== 'access' || running,
+      phase === 'access' ? '与该设备建立连接，进入参数配置' : '连接已建立');
+    set('cmSave', phase === 'access' || phase === 'done' || running,
+      phase === 'access' ? '请先「建立连接」'
+        : phase === 'done' ? '调测已完成；「重新连接」回到参数配置后方可修改参数'
+          : running ? '测试进行中' : '保存参数后解锁开始测试/重新连接');
+    set('cmStart', running || !paramsSaved || phase !== 'ready',
+      running ? '测试进行中'
+        : phase === 'done' ? '本次调测已完成；「重新连接」回到参数配置后可再测'
+          : !paramsSaved || phase === 'config' ? '请先「保存参数」再开始测试'
+            : phase === 'access' ? '请先「建立连接」并保存参数' : '按已保存参数开始调测');
+    set('cmReconn', running || !paramsSaved || phase === 'access',
+      running ? '测试进行中' : phase === 'access' ? '请先「建立连接」'
+        : !paramsSaved ? '请先「保存参数」再重新连接' : '重新建立连接（完成态重连后可再次测试）');
+  }
+
+  /* 中栏随阶段切换 */
+  function accessView() {
+    const addr = dev.proto === 'TCP' ? 'tcp://' + dev.ip + ':' + dev.port : 'http://' + dev.ip + ':' + dev.port + '/api/v1/data';
+    return `<div class="warnbox" style="margin-bottom:12px">当前处于<b>设备接入</b>阶段：确认左侧选中的设备与下方通信信息无误后，
+        点击「建立连接」进入参数配置。</div>
+      ${U.kv([['目标设备', dev.name + '（' + dev.id + '）'], ['通信方式', dev.proto],
+      ['IP / 端口', `<span class="mono">${dev.ip}:${dev.port}</span>`],
+      ['接入地址', `<span class="mono">${addr}</span>`],
+      ['接入通道', dev.channel], ['设备状态', U.dotState(dev.status)]], { surface: true })}
+      <div style="margin-top:10px;font-size:11.5px;color:var(--txt-3)">连接建立后才能配置与保存参数；参数保存后才能开始测试。</div>`;
+  }
+  function resultView() {
+    if (!lastRun) return '<div class="empty">尚无本次调测结果</div>';
+    const r = lastRun;
+    return `<div class="warnbox" style="margin-bottom:12px">调测已完成：${r.result === '成功'
+        ? '<b style="color:#79e5a5">全部指标达标</b>' : '<b style="color:#ff8b95">存在未达标项</b>'}
+        · 可点击下方「生成调测报告」导出本次结果。</div>
+      ${U.kv([['调测对象', r.dev.name + '（' + r.dev.id + '）'], ['调测内容', r.content],
+      ['结论', r.result === '成功' ? '<span class="tag t-green">成功</span>' : '<span class="tag t-red">失败</span>'],
+      ['起止时间', r.start + ' ~ ' + r.end], ['耗时', r.cost], ['操作人', r.operator]], { surface: true })}
+      ${U.sect('指标明细', U.table([
+      { t: '指标', k: 'k', w: '120px' },
+      { t: '实测值', render: x => `<span class="mono">${x.v} ${x.unit}</span>` },
+      { t: '阈值', render: x => `<span class="mono">≤ ${x.th} ${x.unit}</span>` },
+      { t: '判定', w: '80px', render: x => x.ok ? '<span class="tag t-green">达标</span>' : '<span class="tag t-red">超标</span>' }
+    ], r.items))}
+      <div style="margin-top:8px;font-size:11.5px;color:var(--txt-3)">需重新调测：点「重新连接」后再「开始测试」，或在左侧换选设备。</div>`;
+  }
+  function stageBody() {
+    if (phase === 'access') return accessView();
+    if (phase === 'done') return resultView();
+    /* config / ready / testing 显示参数表单；测试中整体锁定防误改。
+       三个阶段各配一条黄字引导（用户 2026-08-30：仿设备接入阶段的提示多加几处，
+       让看 Demo 的人知道下一步点哪里）。 */
+    const stageHint = running
+      ? `测试进行中：右侧「实时调测结果」滚动显示各步日志与链路指标，跑完后点<b>「生成调测报告」</b>。`
+      : phase === 'ready'
+        ? `参数已保存：点下方<b>「开始测试」</b>，自动依次执行通信测试 → 接口测试 → 校准联调（约 20 秒）。`
+        : `连接已建立：核对或调整下方参数后，点下方<b>「保存参数」</b>进入待测试状态。`;
+    return `<div class="warnbox" style="margin-bottom:12px">${stageHint}</div>
+      <fieldset ${running ? 'disabled' : ''} style="border:0;padding:0;margin:0;min-width:0">${cfg()}</fieldset>`;
   }
 
   function paint() {
     syncReportBtn();
+    syncActionBtns();
     document.getElementById('cmTree').innerHTML = tree();
     document.getElementById('cmInfo').innerHTML = info();
-    document.getElementById('cmCfg').innerHTML = cfg();
+    document.getElementById('cmCfg').innerHTML = stageBody();
+    const tt = document.getElementById('cmStageTitle'); if (tt) tt.textContent = STAGE_TITLE[phase];
+    syncState();
     document.getElementById('cmLive').innerHTML = live();
     document.getElementById('cmList').innerHTML = listBody();
     document.querySelectorAll('#cmSteps .st').forEach((el, i) => {
@@ -310,13 +402,12 @@
     });
   }
 
+  /* 连接两条日志已移交「建立连接」动作（阶段①手动完成）；测试从第③步通信测试起跑 */
   const SCRIPT = [
-    ['开始连接设备 {ip}:{port} …', 0],
-    ['连接成功，TCP 三次握手完成', 1],
-    ['开始通信测试…', 1],
-    ['通信测试通过，延迟 {lat}ms，丢包率 {loss}%', 2],
-    ['开始接口测试 {addr} …', 2],
-    ['接口测试通过，状态码 200，字段校验 32/32 通过', 3],
+    ['开始通信测试…', 2],
+    ['通信测试通过，延迟 {lat}ms，丢包率 {loss}%', 3],
+    ['开始接口测试 {addr} …', 3],
+    ['接口测试通过，状态码 200，字段校验 32/32 通过', 4],
     ['开始坐标校准（WGS-84）…', 4],
     ['坐标校准完成，经纬度偏移已更新（Δlon 0.000012°, Δlat 0.000008°）', 4],
     ['开始时钟同步（NTP ntp.dongying.gov.cn）…', 4],
@@ -326,10 +417,9 @@
 
   function start() {
     if (running) return;
-    running = true; sec = 0; step = 0;
+    if (phase !== 'ready' || !paramsSaved) return U.toast('请按流程操作：建立连接 → 保存参数 → 开始测试', 'err');
+    running = true; phase = 'testing'; sec = 0; step = 2;
     document.getElementById('cmStop').disabled = false;
-    document.getElementById('cmState').className = 'tag t-cyan';
-    document.getElementById('cmState').textContent = '测试中';
     paint();
     let i = 0;
     timer = setInterval(() => {
@@ -366,10 +456,11 @@
             operator: ((M.users && M.users[0]) || { name: '管理员' }).name
           };
           U.toast(`${U.icon('check')} 设备调测完成，可生成调测报告`, 'ok');
-          running = false;
-          document.getElementById('cmState').className = 'tag t-green';
-          document.getElementById('cmState').textContent = '已完成';
+          running = false; phase = 'done'; step = 6;
           clearInterval(timer);
+          const logHtml2 = log.innerHTML;
+          paint();
+          const lg2 = document.getElementById('cmLog'); if (lg2) lg2.innerHTML = logHtml2;
         }
       }
       const l = document.getElementById('cmLive');
@@ -383,44 +474,7 @@
       }
     }, TICK_MS);
   }
-  /* 把剩余脚本一次性打完并置为完成态 —— 不是跳过判定，只是跳过等待 */
-  function fastForward() {
-    clearInterval(timer);
-    step = 5; running = false; sec = 26;
-    paint();                       // #cmLog 在 #cmLive 里，paint 会重建它 —— 必须先 paint 再写日志
-    const log = document.getElementById('cmLog');
-    SCRIPT.forEach(([txt, st2], idx) => {
-      if (!log) return;
-      const lm = linkMetrics(st2);
-      const line = txt.replace('{ip}', dev.ip).replace('{port}', dev.port)
-        .replace('{addr}', dev.proto === 'TCP' ? 'tcp://' + dev.ip + ':' + dev.port : '/api/v1/data')
-        .replace('{id}', dev.id)
-        .replace('{lat}', lm.latency).replace('{loss}', lm.loss.toFixed(2))
-        .replace('{ntp}', CH.seeded('ntp:' + dev.id)(1, 9));
-      if (log.textContent.indexOf(line) < 0)
-        log.insertAdjacentHTML('beforeend',
-          `<div class="l"><span class="tm">${M.util.fmtDT(new Date(M.CONF.demoTime.getTime() + (idx + 1) * 2))}</span><span>${line}</span></div>`);
-    });
-    if (log) log.scrollTop = log.scrollHeight;
-    const m5 = linkMetrics(5), t0 = M.CONF.demoTime;
-    const itemsFF = [
-      { k: '时延', v: m5.latency, unit: 'ms', th: COMM_TH.latencyMs, ok: m5.latency <= COMM_TH.latencyMs },
-      { k: '丢包率', v: m5.loss, unit: '%', th: COMM_TH.lossPct, ok: m5.loss <= COMM_TH.lossPct },
-      { k: '抖动', v: m5.jitter, unit: 'ms', th: COMM_TH.jitterMs, ok: m5.jitter <= COMM_TH.jitterMs }
-    ];
-    lastRun = {
-      live: true, no: 'LIVE', dev,
-      content: '通信测试 + 接口测试 + 校准联调 + 时钟同步',
-      items: itemsFF, result: itemsFF.every(x => x.ok) ? '成功' : '失败',
-      start: M.util.fmtDT(t0), end: M.util.fmtDT(new Date(t0.getTime() + 26000)),
-      cost: '00:00:26', operator: ((M.users && M.users[0]) || { name: '管理员' }).name
-    };
-    syncReportBtn();
-    const stEl = document.getElementById('cmState');
-    if (stEl) { stEl.className = 'tag t-green'; stEl.textContent = '已完成'; }
-    const sp = document.getElementById('cmStop'); if (sp) sp.disabled = true;
-    U.toast('已跳过动画，6 步调测按同一套逻辑跑完，可生成报告', 'ok');
-  }
+  /* fastForward（跳过动画）已随按钮一并按用户裁定删除 */
 
   function bindLive() {
     const clr = document.getElementById('cmClr');
@@ -429,10 +483,9 @@
   function stop() {
     const was = running;
     running = false; clearInterval(timer);
-    const s = document.getElementById('cmState');
-    if (s) { s.className = 'tag t-gray'; s.textContent = '已停止'; }
+    if (phase === 'testing') { phase = paramsSaved ? 'ready' : 'config'; step = PHASE_STEP[phase]; }
     const b = document.getElementById('cmStop'); if (b) b.disabled = true;
-    if (was) U.toast('已停止调测，链路已断开；当前进度停留在第 ' + (step + 1) + ' 步', 'err');
+    if (was) { U.toast('已停止调测，链路保持连接；可「开始测试」重新跑', 'err'); paint(); }
   }
 
   function mount(view) {
@@ -441,10 +494,12 @@
        进入页面即重置为未开始。 */
     clearInterval(timer);
     step = 0; running = false; sec = 0; lastRun = null;
+    phase = 'access'; paramsSaved = false;
     paint();
     U.on(view, '[data-dev]', 'click', (e, el) => {
       dev = M.devices.find(d => d.id === el.dataset.dev);
       step = 0; running = false; clearInterval(timer);
+      phase = 'access'; paramsSaved = false; lastRun = null;
       const tr = document.getElementById('cmTree');
       const keep = tr ? tr.scrollTop : 0;      // 保持树滚动位置
       paint();
@@ -480,11 +535,34 @@
       U.toast(`正式环境将导出第 ${el.dataset.rdl} 条《设备调测报告》PDF${t ? `（${t.dev.name} · ${t.result}）` : ''}；Demo 不生成文件`, 'err');
     });
     document.getElementById('cmStart').onclick = start;
-    /* 演示动线不该被动画绑住：跳过动画直接推到终态，走的仍是 start 的同一套落库逻辑 */
-    document.getElementById('cmSkip').onclick = () => { start(); fastForward(); };
     document.getElementById('cmStop').onclick = stop;
-    document.getElementById('cmSave').onclick = () => U.toast('参数已保存至设备档案（Demo）', 'ok');
-    document.getElementById('cmReconn').onclick = () => { U.toast('正在重新建立连接…'); setTimeout(start, 500); };
+    /* 建立连接：阶段① → ②，连接日志在此写入（原 SCRIPT 前两条移到这里） */
+    document.getElementById('cmConnect').onclick = () => {
+      if (phase !== 'access') return;
+      phase = 'config'; step = 1;
+      paint();
+      const lg = document.getElementById('cmLog');
+      if (lg) lg.innerHTML += `<div class="l"><span class="tm">${M.util.fmtDT(M.CONF.demoTime)}</span><span>开始连接设备 ${dev.ip}:${dev.port} …</span></div>
+        <div class="l"><span class="tm">${M.util.fmtDT(M.CONF.demoTime)}</span><span>连接成功，${dev.proto === 'TCP' ? 'TCP 三次握手完成' : 'HTTP 通道就绪'}</span></div>`;
+      U.toast('连接已建立，请配置并「保存参数」', 'ok');
+    };
+    document.getElementById('cmSave').onclick = () => {
+      if (phase === 'access' || phase === 'done' || running) return;
+      paramsSaved = true;
+      if (phase === 'config') { phase = 'ready'; step = 2; }
+      paint();
+      U.toast('参数已保存至设备档案，可「开始测试」', 'ok');
+    };
+    /* 重新连接（用户裁定 2026-08-28）：回到参数配置阶段，参数需重新保存 ——
+       此时「重新连接」自身随 paramsSaved=false 置灰，直到再次保存参数 */
+    document.getElementById('cmReconn').onclick = () => {
+      if (running || !paramsSaved || phase === 'access') return;
+      lastRun = null; phase = 'config'; paramsSaved = false; step = 1;
+      paint();
+      const lg = document.getElementById('cmLog');
+      if (lg) lg.innerHTML += `<div class="l"><span class="tm">${M.util.fmtDT(M.CONF.demoTime)}</span><span>重新建立连接成功（${dev.ip}:${dev.port}），请重新确认并保存参数</span></div>`;
+      U.toast('已重新连接，请重新「保存参数」后再开始测试', 'ok');
+    };
     syncReportBtn();
     document.getElementById('cmReport').onclick = () => {
       if (step < 5 || !lastRun) return U.toast('请先完成调测流程再生成报告', 'err');   // 兜底:置灰后正常点不到

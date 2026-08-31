@@ -1,7 +1,9 @@
 /* ===== 12. 飞行合法性判定中心 ===== */
 (function (g) {
   const M = MOCK, U = UI;
-  let st = { page: 1, size: 10, legal: '全部', region: '全部', sel: null };
+  /* legal 默认「待处理」（非法+待确认）：值班视角先看要处理的，合法目标不占首屏（评审落地）。
+     '待处理' 是页面筛选视图，不是判定结果取值 —— 不进 DISPLAY_STATUSES、不进任何数据字段。 */
+  let st = { page: 1, size: 10, legal: '待处理', region: '全部', sel: null };
 
   /* 当前操作者 —— 与 app.js 个人信息、users.js 审计口径一致 */
   const OPER = { name: '系统管理员', account: 'admin', role: '超级管理员' };
@@ -266,9 +268,9 @@
     const dims = (t.facts && t.facts.planMatchDims) || t.plan_match_dims || null;
     const dimLine = () => {
       if (!dims) return '';
-      const mark = v => v === true ? '<span style="color:#2fd06e">' + U.icon('check') + '</span>'
-        : v === false ? '<span style="color:#ff8b95">' + U.icon('cross') + '</span>'
-          : '<span style="color:#ffd07a" title="无判据可依">?</span>';
+      const mark = v => v === true ? U.stateIcon('pass', false)
+        : v === false ? U.stateIcon('fail', false)
+          : `<span title="无判据可依">${U.stateIcon('na', false)}</span>`;
       return '<div style="margin-top:3px;font-size:11.5px">'
         + (M.C01_DIMS || Object.keys(dims)).map(d => `${mark(dims[d])} ${d}`).join('　') + '</div>';
     };
@@ -561,10 +563,13 @@
       }
     }
     const c = linkedCase(t);
-    if (c && doCase && to === '合法' && c.status !== '已结案' && c.status !== '待核实') {
-      out.push(`案件 ${c.id} ${c.status} → 待核实`);
-      audit(actor, `联动更新案件状态：${c.status} → 待核实`, c.id);
-      c.status = '待核实';
+    if (c && doCase && to === '合法') {
+      /* 原来这里直接写 c.status='待核实' —— 违反「案件状态取自唯一推导来源 caseStatusOf」
+         （status 与 stage 分叉，自检必红），而且判定页本就不该越权改案件状态。
+         按本页 raiseReviewRequest 既有原则改为发起定性复核请求，由处置处罚管理按 §11 处理。 */
+      const req = raiseReviewRequest(t, c, t.legalOriginal || t.legal, to,
+        '人工复核改判为合法，案件定性依据需按 §11 流程复核', actor);
+      if (req) out.push(`案件 ${c.id} 已发起定性复核请求 ${req.id}`);
     }
     return out;
   }
@@ -912,25 +917,148 @@
     });
   }
 
+  /* =========================================================================
+   * 转办联动（评审：判定后的下一步动作要清楚）——
+   * 转告警：无关联告警则页面层生成一条「待核实」工单（先例 alarms.js addPendingVerificationAlarm，
+   *   字段模板与 mock.js buildAlarms 一致），经 alarm.sel 深链跳告警中心；
+   * 转处置：复用 EVT.fileCase 立案（固化判定快照），经 goto('punish',{caseId}) 跳处置处罚。
+   * 两者都先弹确认框再执行，并记入操作审计。
+   * ====================================================================== */
+  function buildAlarmFrom(t) {
+    const lv = t.risk === '超高风险' || t.risk === '高风险' ? '高' : t.risk === '中风险' ? '中' : '低';
+    let n = 1, id;
+    do { id = 'ALM' + t.date.replace(/-/g, '') + 'M' + String(n).padStart(2, '0'); n++; }
+    while (M.alarms.some(a => a.id === id));
+    return {
+      id, targetId: t.id, ymd: t.ymd, date: t.date,
+      time: M.util.fmtDT(M.CONF.demoTime), ts: M.CONF.demoTime.getTime(),
+      type: t.legal === '待确认' ? '待确认目标核实' : ((M.ALARM_TYPE || {})[t.violation] || '飞行违规告警'),
+      kind: '飞行违规', level: lv, risk: t.risk, district: t.district,
+      status: '新建', flowStatus: '待核实', verified: false, notifyLog: [], verifyLog: [],
+      detail: `合法性研判转办：目标 ${t.id} 当前判定「${t.legal}」`
+        + (vlist(t).length ? `，违规事由 ${vlist(t).join('、')}` : '，待人工核实定性'),
+      source: t.source, source_confidence: t.facts && t.facts.sourceConfidence
+    };
+  }
+
+  function toAlarmFlow() {
+    const t = st.sel; if (!t) return;
+    const exist = linkedAlarm(t);
+    U.modal({
+      title: '转告警工单 · ' + t.id, width: '560px',
+      body: exist
+        ? `<div class="warnbox">该目标已有关联告警 <b class="mono">${exist.id}</b>（${exist.status}）。
+            确认后跳转告警中心并选中该工单，<b>不重复生成</b>。转办动作记入操作审计。</div>`
+        : `<div class="warnbox">将为该目标生成一条<b>待核实</b>告警工单并转告警中心处理；生成与转办动作记入操作审计。</div>
+          ${U.kv([
+          ['目标编号', '<span class="mono">' + t.id + '</span>'],
+          ['当前判定', U.legal(t.legal)],
+          ['事由', vlist(t).length ? vlist(t).join('、') : '待人工核实定性'],
+          ['风险等级', U.risk(t.risk)],
+          ['经办人', OPER.name + '（' + OPER.role + '）']
+        ])}`,
+      footer: `<button class="btn" data-close>取消</button><button class="btn pri" data-act="ok">确认转办</button>`,
+      on: {
+        ok: () => {
+          let a = linkedAlarm(t);
+          if (a) audit(OPER, '转告警工单（关联既有告警 ' + a.id + '）', t.id);
+          else {
+            a = buildAlarmFrom(t);
+            M.alarms.unshift(a);
+            M.todayAlarms.unshift(a);
+            audit(OPER, '转告警工单（生成 ' + a.id + '）', t.id);
+          }
+          U.closeModal();
+          // 告警页的深链约定是 sessionStorage 'alarm.sel'（alarms.js render 消费），不走 U.consume
+          sessionStorage.setItem('alarm.sel', a.id);
+          location.hash = '#/alarms';
+        }
+      }
+    });
+  }
+
+  function toCaseFlow() {
+    const t = st.sel;
+    if (!t || t.legal !== '非法') return;   // 闸门兜底：按钮已按状态置灰，此处防直调
+    const c0 = linkedCase(t);
+    if (c0) {
+      audit(OPER, '转处置处罚（既有案件 ' + c0.id + '）', t.id);
+      U.goto('punish', { caseId: c0.id });
+      return;
+    }
+    if (!g.EVT) { U.toast('事件层未加载，无法立案', 'err'); return; }
+    U.modal({
+      title: '转处置立案 · ' + t.id, width: '600px',
+      body: `<div class="warnbox">立案将固化<b>当前判定快照</b>（判定结果 / 违规事由 / 风险等级 / 来源与置信度），
+          后续复核推翻判定时可查「当初凭什么立案」。<br>
+          立案后转<b>处置处罚模块</b>；反制等处置手段在该模块内经授权流程执行，本页不提供反制入口。</div>
+        ${U.kv([
+        ['目标编号', '<span class="mono">' + t.id + '</span>'],
+        ['判定结果', U.legal(t.legal)],
+        ['违规事由', vlist(t).join('、') || '—'],
+        ['风险等级', U.risk(t.risk)],
+        ['数据来源', t.source + '（置信度 ' + U.confPct(t.source_confidence) + '）'],
+        ['经办人', OPER.name + '（' + OPER.role + '）']
+      ])}`,
+      footer: '<button class="btn" data-close>取消</button><button class="btn warn" data-act="ok">确认立案并转处置</button>',
+      on: {
+        ok: () => {
+          const r = g.EVT.fileCase(g.EVT.of(t.id));
+          if (!r.ok) { U.toast(r.msg, 'err'); return; }
+          // fileCase 自身不写审计（审计在事件流 advance 的立案环节），转办入口自己留痕
+          audit(OPER, '转处置立案：' + r.case.id, t.id);
+          /* 运行期新增案件后同步处罚方式分布快照 ——
+             selfCheck 断言「处罚方式分布合计 = 案件总数」的左端是加载时算好的静态聚合，
+             不同步它，演示中做一次立案自检就红一条。 */
+          const bp = ((M.stats || {}).byPenalty || []).find(x => x.name === r.case.penalty);
+          if (bp) bp.value++;
+          U.closeModal();
+          U.goto('punish', { caseId: r.case.id });
+        }
+      }
+    });
+  }
+
   /* ---------------- 渲染 ---------------- */
   function targets() {
+    /* 重力排序：非法高风险 → 非法一般 → 待确认 → 合法；同档内按时间倒序。
+       值班员最先要看到的是最需要处理的，不是最新出现的。 */
+    const rank = t => t.legal === '非法' ? (/高/.test(t.risk) ? 0 : 1) : t.legal === '待确认' ? 2 : 3;
     return M.todayTargets.filter(t => t.type === '无人机')
-      .filter(t => (st.legal === '全部' || t.legal === st.legal) && (st.region === '全部' || t.district === st.region))
-      .sort((a, b) => b.ts - a.ts);
+      .filter(t => (st.legal === '全部' ? true
+        : st.legal === '待处理' ? (t.legal === '非法' || t.legal === '待确认')
+          : t.legal === st.legal)
+        && (st.region === '全部' || t.district === st.region))
+      .sort((a, b) => rank(a) - rank(b) || b.ts - a.ts);
   }
 
   function kpiHtml() {
     const T = M.todayTargets.filter(t => t.type === '无人机');
     const c = s => T.filter(t => t.legal === s).length;
+    /* 统计卡即筛选入口（评审：卡片与下拉两套入口会让人疑惑是否同步）——
+       点卡切换列表筛选，再点当前激活卡回到默认「待处理」视图。
+       desc 兼作三态定义说明，悬停出全文（kpis 自动生成 title）。 */
+    const card = (o, key) => Object.assign(o, { attr: `data-kpi="${key}"`, active: st.legal === key });
     return U.kpis([
-      { label: '今日判定目标', value: U.num(T.length), color: 'blue', icon: 'check', desc: '仅无人机参与合法性判定' },
-      { label: '合法', value: U.num(c('合法')), color: 'green', icon: 'check', desc: `占比 ${U.pct(c('合法'), T.length)}` },
-      { label: '非法', value: U.num(c('非法')), color: 'red', icon: 'alert', desc: '黑飞/禁飞区/身份不符' },
-      {
-        label: '待确认', value: U.num(c('待确认')), color: 'amber', icon: 'alert',
-        desc: `需人工确认 · 占比 ${U.pct(c('待确认'), T.length)}`
-      }
+      card({ label: '今日判定目标', value: U.num(T.length), color: 'blue', icon: 'check', desc: '仅无人机参与合法性判定 · 点击查看全部' }, '全部'),
+      card({ label: '合法', value: U.num(c('合法')), color: 'green', icon: 'check', desc: '计划·时间·空域·航线均符合' }, '合法'),
+      card({ label: '非法', value: U.num(c('非法')), color: 'red', icon: 'alert', desc: '无有效计划，或进入任何计划都无权批准的空域/时段' }, '非法'),
+      card({ label: '待确认', value: U.num(c('待确认')), color: 'amber', icon: 'alert', desc: '关键数据缺失或存在偏差，需人工核实后定性' }, '待确认')
     ]);
+  }
+
+  /* 当前筛选条件 chips：替代与统计卡重复的「判定结果」下拉（评审：两套入口统一为一套） */
+  function chipsHtml() {
+    /* 状态标签组（用户裁定 2026-08-30）：原来只有一枚静态「待处理」chip，
+       换状态得靠点上方统计卡 —— 那个入口没人发现。现在五种视图全部摆出来、
+       点谁看谁，默认仍是「待处理」；统计卡点击入口保留，两套入口写同一个 st.legal。 */
+    const opts = [['待处理', '待处理（非法 + 待确认）', '默认视图：非法与待确认目标，按处理优先级排序'],
+      ['全部', '全部', '查看今日全部判定目标'], ['合法', '合法', '仅看判定为合法的目标'],
+      ['非法', '非法', '仅看判定为非法的目标'], ['待确认', '待确认', '仅看需人工核实的目标']];
+    const out = opts.map(([k, label, tip]) =>
+      `<span class="filter-chip ${st.legal === k ? 'on' : ''}" data-chip-set="${k}" role="button" tabindex="0" title="${tip}">${label}</span>`);
+    if (st.region !== '全部') out.push(`<span class="filter-chip">区域：${st.region}<span class="fx" data-chip-clear="region" title="清除区域筛选" role="button">×</span></span>`);
+    return out.join('');
   }
 
   function render() {
@@ -950,27 +1078,36 @@
       }
     }
     // safe-default: 列表默认选中项，用户可见可改；选不中时退到首条只是初始焦点，不构成任何事实断言
-    st.sel = st.sel || T.find(t => t.legal === '非法') || T[0];
+    // 默认视图已按重力排序（非法高风险在前），直接取当前筛选结果首条
+    st.sel = st.sel || targets()[0] || T[0];
     /* 本页的判定结论由参数算出，而那些参数一组都没被业务方签过字。
        评审时对方不问，界面上任何地方都不会主动说 —— 所以在产出结论的这一页明写。
        这不是警告横幅，是出处标注：读的人有权知道这个「非法」是按谁定的阈值算出来的。 */
     return `<div style="height:100%;display:flex;flex-direction:column;min-height:0">
     <div id="lgKpi">${kpiHtml()}</div>
 
+    ${/* 操作引导（用户裁定 2026-08-30：多处补黄字引导）。主行是 flex:1，多这一条不破高度。 */''}
+    <div class="warnbox" style="margin:12px 0 0;padding:8px 11px;font-size:12px;flex:none">
+      演示动线：点上方<b>统计卡</b>或列表左上<b>状态标签</b>切换「待处理 / 合法 / 非法 / 待确认」视图 →
+      点列表任一行，右侧显示判定详情 → 底部点「<b>人工复核</b>」演示；非法目标另有「<b>转处置立案</b>」。</div>
+
     <div class="row" style="margin-top:12px;flex:1;min-height:0;padding-bottom:6px">
       ${U.panel({
       title: '判定结果列表', style: 'flex:1.4', nopad: true,
       body: `<div class="toolbar">
-          ${U.field('判定结果', U.select('legal', ['全部', ...DISPLAY_STATUSES], st.legal))}
+          <span id="lgChips" style="display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap"></span>
           ${U.field('区域', U.select('region', ['全部', ...M.DISTRICTS.map(d => d.name)], st.region))}
           <span style="flex:1"></span>
-          <button class="btn" id="lgRule">${U.icon('settings')} 规则显示</button>
+          <button class="btn" id="lgRule">${U.icon('settings')} 判定规则说明</button>
           <button class="btn" id="lgRecalc">${U.icon('refresh')} 重新判定</button>
         </div>
         <div id="lgList" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>`
     })}
       ${U.panel({
-      title: '判定详情', style: 'width:480px', nopad: true, extra: `<span id="lgSt"></span>`,
+      /* 右栏占比 36%→40%（用户 2026-08-30：「左右太窄，要占 40%」）。
+         取消 480px 封顶：封顶会让宽屏上实际占比跌回 33%，与「占 40%」相悖；
+         下限 380px 保 1280 窄档内容不折行。 */
+      title: '判定详情', style: 'width:40%;min-width:380px;flex:none', nopad: true, extra: `<span id="lgSt"></span>`,
       body: `<div id="lgDetail" style="flex:1;overflow:auto;padding:12px"></div>`
     })}
     </div>
@@ -983,43 +1120,35 @@
 
   function list() {
     const rows = targets(), page = rows.slice((st.page - 1) * st.size, st.page * st.size);
+    /* 列表只留决策所需 4 列（评审：信息完整但阅读路径碎）——
+       机型/归属、高度速度、经纬度、来源置信全部已在右侧详情「目标信息」里，
+       高度只在超高违规时作为红色辅助信息随违规原因出现。 */
     return U.table([
-      { t: '目标编号', k: 'id', w: '112px', cls: 'num' },
-      { t: '发现时间', w: '64px', cls: 'num', render: t => t.time.slice(11) },
-      /* 这一格最容易变宽：机型名 + 来源标记 + 归属单位，三样都来自数据层，
-         而 td 是 white-space:nowrap —— 声明 w 压不住内容，内容多长这一列就多宽。
-         所以宽度由**内层固定宽容器**兜住，两行各自 ellipsis，完整值走 title 与右侧详情。
-         只给 td 写 w 是压不住的：那次 8px 横向滚动条就是这么来的。 */
       {
-        t: '机型 / 归属', w: '110px', render: t => `<div style="width:104px">
-          <div style="overflow:hidden;text-overflow:ellipsis" title="${String(t.model || '').replace(/"/g, '&quot;')}">${U.modelTag(t.model, t.modelSource, true)}</div>
-          <div style="font-size:11px;color:var(--txt-3);overflow:hidden;text-overflow:ellipsis" title="${t.partner}">${t.partner}</div></div>`
+        t: '目标 / 时间', w: '118px', render: t => U.cell(t.id, t.time.slice(11), { mono: true })
       },
-      { t: '区域 / 高度', w: '92px', render: t => `${t.district}<div class="mono" style="font-size:11px;color:var(--txt-3)">${t.alt}m</div>` },
       {
         /* 两个标签纵向堆叠：并排会把这一格撑到 125px（td 是 nowrap，声明宽度压不住内容） */
-        t: '判定 / 风险', w: '84px', render: t => U.legal(t.legal)
+        t: '判定 / 风险', w: '96px', render: t => U.legal(t.legal)
           + `<div style="margin-top:2px">${U.risk(t.risk)}</div>`
           + (needGate(t) ? ` <span title="身份依据缺失，证据不足" style="color:#ff8b95">${U.icon('warning')}</span>` : '')
           + (manualRevised(t) ? `<div style="font-size:10.5px;color:#c8adff;margin-top:2px" title="原判定 ${engOf(t)}，已人工改判">人工改判</div>`
             : engineDegraded(t) ? `<div style="font-size:10.5px;color:#ffd07a;margin-top:2px" title="原判定 ${engOf(t)}，因身份依据缺失由引擎证据门禁降级">证据降级</div>` : '')
       },
+      { t: '区域', w: '72px', render: t => t.district },
       {
-        t: '违规原因', w: '96px', render: t => {
+        t: '违规原因', render: t => {
           const vs = vlist(t);
           if (!vs.length) return '—';
           // 纵向堆叠并折叠第 3 条起：多违规目标横排会把列撑宽，导致列表横向溢出
           const show = vs.slice(0, 2).map(v =>
             `<div style="margin:1px 0">${U.tag(v, FORBIDDEN_VIOLATIONS.indexOf(v) >= 0 ? 't-red' : 't-orange')}</div>`).join('');
+          /* 高度只在超高违规时出现，且明示基准（距地/海拔）—— 不给合规目标平白展示技术数值 */
+          const overH = anyV(t, ['超出空域限高', '超出计划批准高度'])
+            ? `<div class="mono" style="font-size:10.5px;color:#ff8b95">实测 ${t.heightAgl != null ? t.heightAgl + ' m（距地）' : t.alt + ' m（海拔）'}</div>` : '';
           return show + (vs.length > 2
-            ? `<div style="font-size:10.5px;color:var(--txt-3)" title="${vs.join('、')}">+${vs.length - 2} 项</div>` : '');
+            ? `<div style="font-size:10.5px;color:var(--txt-3)" title="${vs.join('、')}">+${vs.length - 2} 项</div>` : '') + overH;
         }
-      },
-      /* 来源与置信度合并成一列：二者本就是同一件事的两面（谁测的 / 测得多准）。
-         1440 宽下列宽合计 870 > 容器 726，按既有做法合并相关列，而不是让列表横滚。 */
-      {
-        t: '数据来源', w: '90px', render: t => `<div>${t.source}</div>`
-          + `<div class="mono" style="font-size:11px;color:var(--txt-3)">置信度 ${U.confPct(t.source_confidence)}</div>`
       }
     ], page, { rowId: t => t.id, activeId: st.sel && st.sel.id }) + U.pager({ total: rows.length, page: st.page, size: st.size });
   }
@@ -1059,7 +1188,7 @@
         <span title="协议明确光电与 AOA 的位置无效">${t.position_accuracy == null ? '（光电 / AOA 位置无效）' : ''}</span>
         ${t.matched_plan_id ? ` · 命中计划 <b class="mono" style="color:var(--txt-2)">${t.matched_plan_id}</b>` : ' · 未命中报备计划'}
       </div>
-      `);
+      `, { collapsible: true, open: false, icon: 'shield' });
   }
 
   /* ---- 空间证据：C02 是空间判断，最终依据是几何关系，只能用图表达 ----
@@ -1081,12 +1210,12 @@
     const hits = spaceHits(t);
     const pts = t.track_points || [];
     const bridged = pts.filter(p => p.kind === 'bridge').length;
-    return U.sect('空间证据（C02 命中在图上的位置）'
+    return U.sect('空间证据（违规位置示意）'
       + (hits.length ? ` <span class="tag t-red">${hits.length} 项命中</span>` : ' <span class="tag t-green">无空间类命中</span>'),
       `<div id="lgMap" style="height:210px;border:1px solid var(--line);border-radius:6px;overflow:hidden"></div>
       <div style="font-size:11.5px;color:var(--txt-3);margin-top:6px;line-height:1.7">
         ${pts.length ? `轨迹 ${pts.length} 点`
-        + (bridged ? `，其中 <b style="color:#ff8b3d">${bridged} 点为弥合段(A03)</b> —— 该段无实测值，位置由算法推算，<b>不得等同实测参与判定</b>（§6.8）`
+        + (bridged ? `，其中 <b style="color:#ff8b3d" title="弥合段（A03）">${bridged} 点为推算补全段</b> —— 该段无实测值，位置由算法推算，<b>不得等同实测参与判定</b>（§6.8）`
           : '，全部为实测点') : '<span style="color:#ffd07a">该目标无轨迹数据，图上只能显示空域范围</span>'}
       </div>
       ${hits.length ? `<div style="margin-top:8px;display:flex;flex-direction:column;gap:6px">
@@ -1094,10 +1223,22 @@
           <div><b>${h.v}</b>${h.zone ? ` · ${h.zone.type}「${h.zone.name}」` : h.route ? ` · 航线「${h.route.name}」` : ''}</div>
           <div style="color:var(--txt-3)">${h.how}</div></div>`).join('')}
       </div>` : `<div style="font-size:12px;color:var(--txt-3);margin-top:7px">
-        本次判定无空间类命中；图上仅供核对轨迹与所在空域的位置关系。</div>`}`);
+        本次判定无空间类命中；图上仅供核对轨迹与所在空域的位置关系。</div>`}`,
+      /* 折叠区内建图有坑：<details> 收起时容器 display:none、map.w=0，初始对齐失效。
+         故这里只出 DOM，建图延迟到首次展开（bindSpaceMap 监听 toggle）。 */
+      { collapsible: true, open: false, icon: 'zone', className: 'lg-space' });
   }
   /* 地图实例随详情面板重绘而重建：详情是 innerHTML 整体替换，旧 canvas 已脱离文档 */
   let detMap = null;
+  function resetDetMap() { if (detMap) { try { detMap.destroy(); } catch (e) { } detMap = null; } }
+  /* 空间证据区默认收起：展开那一刻才建图（此时容器有尺寸）；重复展开时重建，无叠加偏移 */
+  function bindSpaceMap() {
+    resetDetMap();
+    const d = document.querySelector('#lgDetail details.lg-space');
+    if (!d) return;
+    d.addEventListener('toggle', () => { if (d.open) drawDetailMap(); });
+    if (d.open) drawDetailMap();
+  }
   function drawDetailMap() {
     const box = document.getElementById('lgMap');
     if (!box) return;
@@ -1124,9 +1265,11 @@
   /* 表10-4「非法」结论依据校验 —— 只对引擎原始结论为「非法」的目标展示 */
   function reqSect(t, j) {
     if (j.eng !== '非法') return '';
+    /* 「要件成立」是支撑非法结论的事实，不是「检查通过」—— 绿勾在这里会被读反
+       （评审：系统只完成了计算但结果违规，不得用绿色对勾）。改用中性标签。 */
     const row = r => `<div style="display:flex;gap:8px;align-items:flex-start;font-size:12.5px;
-        border-left:2px solid ${r.ok ? '#2fd06e' : '#ffb020'};padding-left:8px">
-      <span style="width:14px">${r.ok ? '<span style="color:#2fd06e">' + U.icon('check') + '</span>' : '<span style="color:#ffb020">' + U.icon('cross') + '</span>'}</span>
+        border-left:2px solid ${r.ok ? '#2dcfd0' : 'var(--line)'};padding-left:8px">
+      <span style="flex:none">${r.ok ? U.tag('成立', 't-cyan') : U.tag('不成立', 't-gray')}</span>
       <div style="flex:1"><div>${r.n}</div><div style="color:var(--txt-3)">${r.why}</div></div></div>`;
     const basis = j.reqs.filter(r => r.g === '定性依据'), qual = j.reqs.filter(r => r.g === '质量门槛');
     return U.sect(`「非法」结论依据校验 <span class="tag ${j.reqMiss.length ? 't-amber' : 't-green'}">${j.reqMiss.length ? '缺 ' + j.reqMiss.length + ' 项' : '成立'}</span>`,
@@ -1151,7 +1294,7 @@
     const rows = Object.keys(C03.w).map(k => ({
       k, n: C03.wName[k], w: C03.w[k], v: j.F[k], add: C03.w[k] * j.F[k] * 100
     })).sort((a, b) => b.add - a.add);
-    return U.sect(`C03 风险评分明细 <span class="tag t-blue">${j.score} / 100 · ${j.grade}</span>`,
+    return U.sect(`<span title="C03 五因子加权模型">风险评分明细</span> <span class="tag t-blue">${j.score} / 100 · ${j.grade}</span>`,
       `<div style="font-size:11.5px;color:var(--txt-3);margin-bottom:7px">
         设计 §10.4 多因子加权：违规项严重度 / 目标类别 / 区域敏感度 / 轨迹稳定性 / 来源可信度。
         权重与阈值为 <span class="mono">${C03.ver}</span>　<b>【待确认：由业务方调参，纪要 §10】</b></div>
@@ -1203,8 +1346,7 @@
     return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
         <b class="mono" style="font-size:14px">${t.id}</b></div>
       ${U.verdictHtml(t)}
-      <div style="font-size:13.5px;color:var(--txt-2);margin:14px 0 9px">判定依据</div>
-      ${U.basisHtml(t)}
+      ${/* 「判定依据」块已按用户裁定删除（2026-08-30），与 detail() 同口径 */''}
       ${ctxE && ctxE.alarm ? `<div style="margin:12px 0;font-size:13px;color:var(--txt-2)">
         已触发告警 <span class="mono">${ctxE.alarm.id}</span> ${U.tag(ctxE.alarm.status)}
         ${ctxE.kase ? `· 案件 <span class="mono">${ctxE.kase.id}</span> ${U.tag(ctxE.kase.status)}` : '· 尚未立案'}</div>` : ''}
@@ -1221,7 +1363,7 @@
         : '<span style="color:#ffd07a">设备未上报（协议选填）</span>'],
       ['速度', `${t.speed} m/s`], ['数据来源', t.source + `（置信度 ${U.confPct(t.source_confidence)}）`]
     ]))}
-      ${evidSect(t, j)}
+      ${/* evidSect（身份数据源可用性）已按用户裁定删除（2026-08-30），与 detail() 同口径 */''}
       ${U.sect('规则判定过程' + (manual ? ' <span class="tag t-purple">当前判定已由人工改判</span>'
       : autoDeg ? ' <span class="tag t-amber">当前判定为证据门禁降级结果</span>' : ''), `
         ${manual ? `<div class="warnbox" style="margin-bottom:9px">以下为<b>规则引擎原始输出</b>（判定为「${engOf(t)}」）。
@@ -1237,7 +1379,7 @@
       </div>`)}
       ${spaceSect(t, j)}
       ${reqSect(t, j)}
-      ${factorSect(t, j)}
+      ${/* factorSect（风险评分明细）已按用户裁定删除（2026-08-30），与 detail() 同口径 */''}
       ${U.sect('判定结论', `<div style="display:flex;align-items:center;gap:14px;padding:10px;border:1px solid var(--line);border-radius:6px">
         <div id="lgScore" style="width:76px;height:76px"></div>
         <div style="flex:1;font-size:12.5px;line-height:1.9">
@@ -1274,6 +1416,93 @@
       </div>`;
   }
 
+  /* ---- 数据完整性状态条（评审：详情顶部一眼看清数据是否齐、缺什么、为什么缺）----
+     只归纳既有状态位（gated / needGate / engineDegraded / ev.full / undeterminable），
+     不新增任何判定；缺失维度按协议要求显示「不可判定」，绝不折算成合规。 */
+  function integrityStrip(t, j) {
+    const miss = [];
+    if (!j.ev.full) miss.push('无人机实名编号（uav_sn）未取得 —— 仅协议破解 / RemoteID 设备可提供，身份维度降级为「时间窗 + 空间范围」，不足以支撑身份定性');
+    if (t.heightAgl == null) miss.push('距地高度未上报（协议 height 为选填）—— 限高判定不以海拔高替代');
+    if (!j.ev.hasPilot) miss.push('遥控器定位缺失（需 TDOA / AOA / 协议破解提供 pilot_position）—— 超视距维度不可判定');
+    undet(t).forEach(u => miss.push(`「${u}」无判据可依 —— 未计入违规，也不作合规`));
+    let grade, color, desc;
+    if (j.gated || needGate(t)) { grade = '判定依据不足'; color = '#ff4d5e'; desc = '结论已按规则向「待确认」收敛，不得定性为非法'; }
+    else if (engineDegraded(t) || !j.ev.full) { grade = '降级判定'; color = '#ff8b3d'; desc = '部分维度缺数据源，按降级口径判定'; }
+    else if (miss.length) { grade = '部分数据缺失'; color = '#ffb020'; desc = '缺失维度按「不可判定」处理，未参与结论'; }
+    else { grade = '数据完整'; color = '#2fd06e'; desc = '各判定维度均有数据支撑'; }
+    return `<details class="integrity-strip" style="border-color:${color}66;background:${color}0f">
+      <summary>${U.icon('shield')}<b style="color:${color};flex:none">${grade}</b>
+        <span style="color:var(--txt-3);font-size:11.5px;flex:1">${desc}${miss.length ? ` · ${miss.length} 项缺失，点击展开` : ''}</span></summary>
+      <div class="ig-body">${miss.length ? miss.map(m => `<div>· ${m}</div>`).join('') : '本次判定各维度均有数据支撑，无缺失项。'}</div>
+    </details>`;
+  }
+
+  /* ---- 与批准计划对比（评审：固定概念卡改为选中目标的实际对比）----
+     技术协议要求计划航线与实际轨迹对比并输出横向偏航 / 时间偏差 / 高度偏差。
+     数值只是证据展示，超限结论的唯一真值 = violation_reasons，本卡不设第二份阈值表。
+     横向偏航取目标侧实算值 facts.routeMaxDevM —— flights 页的 plan.deviation.lateral
+     在无走廊几何时恒为 null（数据层声明不可判定），不可复用。 */
+  function planCompareSect(t) {
+    const f = t.facts || {};
+    const p = t.matched_plan_id ? M.flightPlans.find(x => x.id === t.matched_plan_id) : null;
+    if (!p) return `<div class="warnbox" style="margin-top:8px">
+      <b style="color:#ff8b95">无有效飞行计划</b> —— 该时空范围内不存在任何可关联的报备计划，无从对比航线与批准参数。</div>`;
+    const row = (name, state, txt) => `<div style="display:flex;gap:8px;align-items:flex-start;font-size:12.5px;padding:5px 0;border-bottom:1px dashed rgba(130,174,218,.12)">
+      <span style="width:64px;flex:none;color:var(--txt-2)">${name}</span>
+      <span style="flex:none">${U.stateIcon(state, false)}</span>
+      <span style="flex:1;${state === 'na' ? 'color:var(--txt-3)' : state === 'fail' ? 'color:#ff8b95' : ''}">${txt}</span>
+    </div>`;
+    // 横向偏航：无走廊几何 → 不可判定（与 C02-3 口径一致）
+    const latNa = f.routeMaxDevM == null;
+    const lat = latNa
+      ? row('航线偏航', 'na', '无报备航线几何数据（管服平台 routes 未接入）—— 不可判定，不以「未测到」当作合规')
+      : row('航线偏航', hasV(t, '偏离报备航线') ? 'fail' : 'pass',
+        `最大横向偏差 <b class="mono">${f.routeMaxDevM} m</b>（走廊半宽阈值 ${f.routeHalfWidthM} m）`);
+    // 时间偏差：批准时段与实际发现时刻并列
+    const timeBad = anyV(t, ['超出计划批准时段', '超出空域管制时段']);
+    const time = row('时间', timeBad ? 'fail' : 'pass',
+      `批准时段 <span class="mono">${String(p.start || '—').slice(11, 16)} ~ ${String(p.end || '—').slice(11, 16)}</span>，实际发现 <span class="mono">${t.time.slice(11, 16)}</span>`);
+    // 高度偏差：缺距地高时不可判定（不以海拔高冒充），有违规标注时按事实展示
+    const hBad = anyV(t, ['超出计划批准高度', '超出空域限高']);
+    const hgt = hBad
+      ? row('高度', 'fail', `实测 <b class="mono">${t.heightAgl != null ? t.heightAgl + ' m（距地）' : t.alt + ' m（海拔）'}</b>，计划批准 ≤ <span class="mono">${p.maxAlt} m</span>`
+        + (t.heightAgl != null && t.heightAgl > p.maxAlt ? `，偏差 <b class="mono">+${t.heightAgl - p.maxAlt} m</b>` : ''))
+      : t.heightAgl == null
+        ? row('高度', 'na', '距地高未上报（协议 height 选填）—— 高度对比不可判定，不以海拔高替代')
+        : row('高度', 'pass', `实测 <b class="mono">${t.heightAgl} m（距地）</b>，计划批准 ≤ <span class="mono">${p.maxAlt} m</span>`);
+    return `<div class="detail-sect" style="margin-top:8px">
+      <span class="sect-head"><span class="sect-icon">${U.icon('plan')}</span><span class="sect-title">与批准计划对比
+        <span class="mono" style="color:var(--txt-3);font-size:11px">${p.id}</span></span></span>
+      <div class="sect-body">${lat}${time}${hgt}</div></div>`;
+  }
+
+  /* ---- 固定业务操作区（评审：按钮闸门化）——
+     合法：仅复核，无转办；待确认：复核 + 转告警，不得直接立案；非法：复核 + 转处置。
+     不满足条件的按钮置灰并用 title 说明原因（与调测页既有「置灰而非隐藏」做法一致）。
+     反制不在本页：合法性页面负责判断，正式反制在处置处罚模块经授权流程执行。 */
+  function actionBar(t) {
+    if (t.type !== '无人机') return '';
+    const a = linkedAlarm(t), c = linkedCase(t);
+    const btn = (k, label, cls, dis, tip) =>
+      `<button class="btn ${cls || ''}" data-lg="${k}" ${dis ? 'disabled' : ''} title="${tip || ''}"
+        style="flex:1;height:36px;justify-content:center">${label}</button>`;
+    if (t.legal === '合法') return U.detailActions(
+      btn('revise', '人工复核（改判）', 'warn', false, '合法目标可查看可复核，不提供转办入口'));
+    /* 待确认只留「人工复核」（用户裁定 2026-08-30）：转告警/立案都以定性为前提，
+       定性之前唯一正当动作就是复核 —— 复核定为非法后，按钮组自然长出转办入口。 */
+    if (t.legal === '待确认') return U.detailActions(
+      btn('confirm', '人工复核', 'pri', false, '补充核验并定性（合法 / 非法）'));
+    /* 「转告警工单」已按用户裁定整体删除（2026-08-30）：非法目标绝大多数本就带关联告警
+       （按钮常年置灰），演示上有意义的流转只有复核与立案。toAlarmFlow 逻辑保留不再有入口。 */
+    if (t.legal === '非法') return U.detailActions(
+      btn('revise', '人工复核', 'pri', false, '复核判定依据，可改判')
+      + btn('tocase', '转处置立案', 'warn', false, c ? `已立案 ${c.id}，点击转到处置处罚` : '立案并转处置处罚模块'));
+    return '';
+  }
+
+  /* 详情阅读顺序（评审统一为：结论/当前状态 → 关键依据 → 下一步操作 → 技术详情）：
+     hero+完整性条+指标+结论 → 判定依据+计划对比 → 技术区全部默认折叠 → 底部固定操作条。
+     技术编号（C01/C02/C03）只在折叠的技术区出现，主表面用业务语言。 */
   function detail() {
     const t = st.sel;
     if (!t) return '<div class="empty">请选择目标</div>';
@@ -1283,14 +1512,20 @@
     const j = judge(t);
     const manual = manualRevised(t);
     const autoDeg = !manual && engineDegraded(t);
-    const ic = s => s === 'pass'
-      ? '<span style="color:#2fd06e">' + U.icon('check') + '</span>'
-      : s === 'warn' ? '<span style="color:#ffb020">!</span>' : '<span style="color:#ff4d5e">' + U.icon('cross') + '</span>';
+    const ic = s => U.stateIcon(s, false);
+    const pts = t.track_points || [];
+    const lastUpd = pts.length && pts[pts.length - 1].t
+      ? new Date(pts[pts.length - 1].t).toTimeString().slice(0, 8)
+      : t.time.slice(11);
+    /* 翻页/换筛选后原选中目标可能已不在当前结果里 —— 明确提示而不是悄悄留着旧详情（评审第 7 条） */
+    const inList = targets().some(x => x.id === t.id);
     return `${U.detailHero({
       icon: 'scale', subtitle: '合法性研判目标', title: t.subtype || t.type, id: t.id,
       tags: [U.legal(t.legal), U.risk(t.risk), manual ? U.tag('人工改判', 't-purple') : ''],
-      meta: [['区域', t.district], ['发现', t.time.slice(11)]]
+      meta: [['区域', t.district], ['发现', t.time.slice(11)], ['最后更新', lastUpd]]
     })}
+      ${inList ? '' : `<div class="warnbox" style="margin-bottom:10px">原选中目标已不在当前筛选结果中，右侧仍显示其详情；点击列表任一行可切换。</div>`}
+      ${integrityStrip(t, j)}
       ${U.metricStrip([
         { label: '合法性结论', value: t.legal, tone: t.legal === '合法' ? 'good' : t.legal === '非法' ? 'bad' : 'warn', icon: 'scale' },
         { label: '风险等级', value: t.risk, tone: /高/.test(t.risk) ? 'bad' : /中/.test(t.risk) ? 'warn' : 'info', icon: 'alert' },
@@ -1298,8 +1533,22 @@
         { label: '判定方式', value: manual ? '人工改判' : autoDeg ? '自动收敛' : '规则引擎', icon: 'settings' }
       ], { compact: true })}
       ${U.verdictHtml(t)}
-      <div style="font-size:13.5px;color:var(--txt-2);margin:14px 0 9px">判定依据</div>
-      ${U.basisHtml(t)}
+      ${/* 「关键依据」四项（身份/计划/空域/时间，U.basisHtml）已按用户裁定删除（2026-08-30）：
+           结论横幅已带违规原因，四项展开与下方折叠的「判定明细（技术）」重复。
+           判据本身仍在技术区可查，删的是重复展示层。 */''}
+      ${planCompareSect(t)}
+      <div style="font-size:13.5px;color:var(--txt-2);margin:14px 0 2px">技术详情
+        <span style="font-size:11.5px;color:var(--txt-3)">（判定明细与原始数据，默认收起）</span></div>
+      ${U.sect('判定明细（技术）' + (manual ? ' <span class="tag t-purple">当前结果已人工改判</span>'
+        : autoDeg ? ' <span class="tag t-amber">当前结果已自动收敛</span>' : ''), `
+        <div style="display:flex;flex-direction:column;gap:7px">
+          ${j.items.map(i => `<div style="display:flex;gap:8px;align-items:flex-start;font-size:12.5px;
+            border-left:2px solid ${i.s === 'pass' ? '#2fd06e' : i.s === 'warn' ? '#ffb020' : '#ff4d5e'};padding-left:8px">
+            <span style="flex:none;width:16px">${ic(i.s)}</span>
+            <div style="flex:1"><div><b>${i.r.n}</b> <span class="mono" style="color:var(--txt-3);font-size:11px">(${i.r.id})</span> ${i.badge || ''}</div>
+              <div style="color:var(--txt-3)">${i.msg}</div></div>
+          </div>`).join('')}
+        </div>`, { icon: 'settings', collapsible: true, open: false })}
       ${U.sect('目标信息', U.kv([
         ['发现时间', t.time],
         ['机型', U.modelTag(t.uav_model, t.modelSource)],
@@ -1307,28 +1556,19 @@
         ['飞手', t.pilot],
         ['位置', `<span class="mono">${t.lon.toFixed(4)}°E, ${t.lat.toFixed(4)}°N</span>`],
         ['海拔高度', t.alt + ' m'],
+        ['距地高度', t.heightAgl != null ? t.heightAgl + ' m'
+          : '<span style="color:var(--txt-3)" title="协议 height 为选填，设备未上报">未上报（不以海拔替代）</span>'],
         ['速度', t.speed + ' m/s'],
         ['数据来源', t.source + '（置信度 ' + U.confPct(t.source_confidence) + '）']
-      ], { surface: true, density: 'compact' }), { icon: 'plane' })}
-      ${U.sect('规则判定过程' + (manual ? ' <span class="tag t-purple">当前结果已人工改判</span>'
-        : autoDeg ? ' <span class="tag t-amber">当前结果已自动收敛</span>' : ''), `
-        <div style="display:flex;flex-direction:column;gap:7px">
-          ${j.items.map(i => `<div style="display:flex;gap:8px;align-items:flex-start;font-size:12.5px;
-            border-left:2px solid ${i.s === 'pass' ? '#2fd06e' : i.s === 'warn' ? '#ffb020' : '#ff4d5e'};padding-left:8px">
-            <span style="width:14px">${ic(i.s)}</span>
-            <div style="flex:1"><div><b>${i.r.id}</b> ${i.r.n} ${i.badge || ''}</div>
-              <div style="color:var(--txt-3)">${i.msg}</div></div>
-          </div>`).join('')}
-        </div>`, { icon: 'settings' })}
+      ], { surface: true, density: 'compact' }), { icon: 'plane', collapsible: true, open: false })}
+      ${/* 「身份数据源可用性」（evidSect）已按用户裁定删除（2026-08-30）：
+           uav_sn 取得与否的事实仍进判定（j.ev / 完整性条 / 降级口径都还在），删的只是展示区块。 */''}
       ${spaceSect(t, j)}
       ${reqSect(t, j)}
-      ${factorSect(t, j)}
+      ${/* 「风险评分明细」（C03 五因子表，factorSect）已按用户裁定删除（2026-08-30）。
+           C03 评分与权重的真值仍在数据层与参数总览登记，删的只是本页展示。 */''}
       ${reviewSect(t)}
-      ${t.legal === '待确认'
-        ? U.detailActions('<button class="btn pri" style="width:100%;height:38px;justify-content:center" data-lg="confirm">人工确认</button>')
-        : ['合法', '非法'].includes(t.legal)
-          ? U.detailActions('<button class="btn warn" style="width:100%;height:38px;justify-content:center" data-lg="revise">人工改判</button>')
-          : ''}`;
+      ${actionBar(t)}`;
   }
 
   function drawRing() {
@@ -1341,11 +1581,12 @@
 
   function paint() {
     const k = document.getElementById('lgKpi'); if (k) k.innerHTML = kpiHtml();
+    const ch = document.getElementById('lgChips'); if (ch) ch.innerHTML = chipsHtml();
     const n = document.getElementById('lgEvidN'); if (n) n.textContent = autoDegraded().length + gatedList().length;
     document.getElementById('lgList').innerHTML = list();
     document.getElementById('lgDetail').innerHTML = detail();
     drawRing();
-    drawDetailMap();
+    bindSpaceMap();
   }
   /* 判定被真实改变后的全量刷新：KPI / 列表 / 详情 / 评分环 */
   function refresh() { paint(); }
@@ -1368,7 +1609,34 @@
       U.selectRow(document.getElementById('lgList'), el.dataset.row);
       document.getElementById('lgDetail').innerHTML = detail();
       drawRing();
-      drawDetailMap();
+      bindSpaceMap();
+    });
+    /* 统计卡即筛选：点卡切换，再点当前激活卡回默认「待处理」视图 */
+    U.on(view, '[data-kpi]', 'click', (e, el) => {
+      const v = el.dataset.kpi;
+      st.legal = st.legal === v ? '待处理' : v;
+      st.page = 1; paint();
+    });
+    U.on(view, '[data-kpi]', 'keydown', (e, el) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); el.click(); }
+    });
+    /* 状态标签组：与统计卡写同一个 st.legal，两套入口不会各筛各的 */
+    U.on(view, '[data-chip-set]', 'click', (e, el) => {
+      st.legal = el.dataset.chipSet; st.page = 1; paint();
+    });
+    U.on(view, '[data-chip-set]', 'keydown', (e, el) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); el.click(); }
+    });
+    U.on(view, '[data-chip-clear]', 'click', (e, el) => {
+      e.stopPropagation();
+      if (el.dataset.chipClear === 'legal') st.legal = '待处理';
+      else {
+        st.region = '全部';
+        // 区域下拉是 render() 一次性输出、paint() 不重建 —— 复位状态时必须同步它的显示值
+        const s = view.querySelector('select[data-f="region"]');
+        if (s) s.value = '全部';
+      }
+      st.page = 1; paint();
     });
     U.on(view, '[data-pg]', 'click', (e, el) => { if (el.dataset.pg) { st.page = +el.dataset.pg; paint(); } });
     U.on(view, '[data-size]', 'change', (e, el) => { st.size = parseInt(el.value); st.page = 1; paint(); });
@@ -1378,6 +1646,8 @@
       if (!st.sel) return;
       if (k === 'confirm') decisionConfirmModal();
       else if (k === 'revise') manualReviseModal();
+      else if (k === 'toalarm') toAlarmFlow();
+      else if (k === 'tocase') toCaseFlow();
       else if (k === 'degrade') {
         const t = st.sel;
         if (t.legal !== '非法') { U.toast('该目标当前判定已非「非法」，无需重复降级', 'ok'); return; }
@@ -1399,7 +1669,7 @@
         + (kept ? `；其中 ${kept} 个已人工改判的结果<b>不被引擎覆盖</b>（设计 8.6）` : ''), 'ok');
     };
     document.getElementById('lgRule').onclick = () => U.modal({
-      title: '规则显示', width: '760px',
+      title: '判定规则说明', width: '760px',
       body: `${(function () {
         const d = enumDrift();
         return (d.stale.length || d.missing.length)

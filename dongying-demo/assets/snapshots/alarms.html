@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><base href="/"><!-- 静态快照（无 JS 交互），生成于 2026-08-31 00:53:43 UTC；交互版： http://localhost:8899/#/alarms -->
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>告警事件 · 无人机融合感知平台</title>
+<link rel="icon" type="image/png" href="assets/img/brand/logo-mark.png">
+<link rel="stylesheet" href="assets/css/app.css">
+</head>
+<body data-page="alarms" data-theme="incident">
+<div id="app">
+  <header class="hdr">
+    <div class="logo">
+      <img src="assets/img/brand/logo-mark.png" alt="平台 Logo" width="36" height="36">
+      <b>无人机融合感知与低空安全管理平台</b>
+    </div>
+    <div class="spacer"></div>
+    <div class="meta">
+      <span class="it" id="clk"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 7v5l3 2"></path></svg> 2026-08-26 10:24:46</span>
+      <span class="it" id="wea">东营 <svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M6 18h12a4 4 0 0 0 .4-8 6.5 6.5 0 0 0-12.3 1.7A3.2 3.2 0 0 0 6 18z"></path></svg> 22℃ ~ 30℃ 多云</span>
+      <span class="it"><a class="btn ghost" id="btnScreen" href="bigscreen.html" target="dy-bigscreen" title="监控预览专版大屏：单独窗口打开，可拖至大屏独立部署显示"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18v11H3zM8 20h8M12 16v4M6.5 12l2.5-3 2.5 2.5L15 7l2.5 5"></path></svg> 大屏展示</a></span>
+      <span class="it"><button class="btn ghost" id="btnBig" title="大屏模式：放大字号与行距，适配指挥大厅显示"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"></path></svg> 大屏</button></span>
+      <span class="it"><button class="btn ghost" id="btnSearch" title="统一检索：目标 / 设备 / 计划 / 告警 / 案件（Command+K）" style="gap:6px"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM16 16l5 5"></path></svg> 检索<span style="font-size:10.5px;opacity:.65;border:1px solid var(--line);
+      border-radius:3px;padding:0 4px;line-height:15px">Command+K</span></button></span><button class="it bell icon-btn" id="bell" type="button" aria-label="查看告警">
+        <svg class="hdr-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"></path></svg>
+        <span class="dot" id="bellN">12</span>
+      </button>
+      <button class="user icon-btn" type="button" aria-haspopup="menu" aria-expanded="false"><span class="av">管</span><span>管理员</span><svg class="chev-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 9 5 5 5-5"></path></svg></button>
+    </div>
+  </header>
+  <div class="body">
+    <nav class="nav" id="nav"><div class="g1  ">
+        <div class="l1 gh" data-grp="感知监测"><i><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M12 12 19 7M12 21a9 9 0 1 0-9-9M12 12a4.5 4.5 0 1 0 4.5 4.5M21 12h-2M12 3v2"></path></svg></i><span>感知监测</span><b class="ca">›</b></div>
+        <div class="l2"><a class="" href="#/situation" data-k="situation"><em></em><span>融合感知</span></a></div>
+      </div><div class="g1  ">
+        <div class="l1 gh" data-grp="飞行监管"><i><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v16H4zM4 9h16M9 3v4M15 3v4M8 14h3M8 17h6"></path></svg></i><span>飞行监管</span><b class="ca">›</b></div>
+        <div class="l2"><a class="" href="#/flights" data-k="flights"><em></em><span>飞行计划</span></a><a class="" href="#/legality" data-k="legality"><em></em><span>合法性研判</span></a></div>
+      </div><div class="g1 open has">
+        <div class="l1 gh" data-grp="事件处置"><i><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4 2.5 20h19zM12 10v4M12 17.5v.5"></path></svg></i><span>事件处置</span><b class="ca">›</b></div>
+        <div class="l2"><a class="on" href="#/alarms" data-k="alarms"><em></em><span>告警事件</span></a><a class="" href="#/punish" data-k="punish"><em></em><span>处置与处罚</span></a></div>
+      </div><div class="g1  ">
+        <div class="l1 gh" data-grp="分析报告"><i><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V9M10 20V4M16 20v-7M22 20H2"></path></svg></i><span>分析报告</span><b class="ca">›</b></div>
+        <div class="l2"><a class="" href="#/stats" data-k="stats"><em></em><span>运行统计</span></a><a class="" href="#/evidence" data-k="evidence"><em></em><span>证据管理</span></a></div>
+      </div><div class="g1  ">
+        <div class="l1 gh" data-grp="运维管理"><i><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 3.5a4 4 0 0 0 5 5L21 7l-4-4zM3 21l9.5-9.5M9 15l-3.5 3.5"></path></svg></i><span>运维管理</span><b class="ca">›</b></div>
+        <div class="l2"><a class="" href="#/devices" data-k="devices"><em></em><span>设备管理</span></a><a class="" href="#/monitor" data-k="monitor"><em></em><span>设备实时监测</span></a><a class="" href="#/commission" data-k="commission"><em></em><span>设备接入调测</span></a></div>
+      </div><div class="g1  ">
+        <div class="l1 gh" data-grp="系统管理"><i><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 20 6v6c0 5-3.4 8-8 9-4.6-1-8-4-8-9V6zM9 12l2 2 4-5"></path></svg></i><span>系统管理</span><b class="ca">›</b></div>
+        <div class="l2"><a class="" href="#/users" data-k="users"><em></em><span>用户与权限</span></a><a class="" href="#/archive" data-k="archive"><em></em><span>日志归档</span></a></div>
+      </div><div class="navfoot">
+           <div class="fold" id="fold">« 收起菜单</div>
+         </div></nav>
+    <main class="main">
+      <div class="crumb" id="crumb"><div class="cbs"><a href="#/situation">首页</a><b>›</b><a href="#/alarms">事件处置</a><b>›</b><span class="c on">告警事件</span></div>
+      <span class="spacer"></span>
+      <span class="cinfo">数据统计时间 <b id="ftm">2026-08-26 10:24:46</b></span>
+      <span class="cinfo" title="平台坐标与高度基准（技术口径）：WGS-84 坐标系 · 椭球高">WGS-84 · 椭球高</span>
+      <span class="cinfo" id="fver" title="Demo V0.3 (D3)（D 编号为内部评审轮次标记）">Demo V0.3</span></div>
+      <div class="view" id="view" style="overflow: hidden;"><div class="alarms-page" style="height:100%;min-height:0;display:flex;flex-direction:column">
+    <div class="kpis"><div class="kpi kpi-blue ">
+        <div class="ic" style="background:#4b9cff22;border:1px solid #4b9cff55;color:#4b9cff"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4 2.5 20h19zM12 10v4M12 17.5v.5"></path></svg></div>
+        <div class="tx"><div class="lb" title="今日告警总数">今日告警总数</div>
+          <div class="vl" style="color:#4b9cff">24</div>
+          <div class="dt" title="近30天 635 起">近30天 635 起</div></div></div><div class="kpi kpi-amber ">
+        <div class="ic" style="background:#f1a43a22;border:1px solid #f1a43a55;color:#f1a43a"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4 2.5 20h19zM12 10v4M12 17.5v.5"></path></svg></div>
+        <div class="tx"><div class="lb" title="待核实">待核实</div>
+          <div class="vl" style="color:#f1a43a">5</div>
+          <div class="dt" title="待人工确认属实或误报">待人工确认属实或误报</div></div></div><div class="kpi kpi-orange ">
+        <div class="ic" style="background:#f5824522;border:1px solid #f5824555;color:#f58245"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M12 12 19 7M12 21a9 9 0 1 0-9-9M12 12a4.5 4.5 0 1 0 4.5 4.5M21 12h-2M12 3v2"></path></svg></div>
+        <div class="tx"><div class="lb" title="反制中">反制中</div>
+          <div class="vl" style="color:#f58245">9</div>
+          <div class="dt" title="待发起联动反制">待发起联动反制</div></div></div><div class="kpi kpi-red ">
+        <div class="ic" style="background:#ff5b6122;border:1px solid #ff5b6155;color:#ff5b61"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M12 12 19 7M12 21a9 9 0 1 0-9-9M12 12a4.5 4.5 0 1 0 4.5 4.5M21 12h-2M12 3v2"></path></svg></div>
+        <div class="tx"><div class="lb" title="干扰中">干扰中</div>
+          <div class="vl" style="color:#ff5b61">0</div>
+          <div class="dt" title="反制信号干扰执行中">反制信号干扰执行中</div></div></div><div class="kpi kpi-green ">
+        <div class="ic" style="background:#41d49a22;border:1px solid #41d49a55;color:#41d49a"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l4 4L19 6"></path></svg></div>
+        <div class="tx"><div class="lb" title="待处置">待处置</div>
+          <div class="vl" style="color:#41d49a">10</div>
+          <div class="dt" title="请进入处置与处罚页面">请进入处置与处罚页面</div></div></div><div class="kpi kpi-purple ">
+        <div class="ic" style="background:#8e7dff22;border:1px solid #8e7dff55;color:#8e7dff"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l4 4L19 6"></path></svg></div>
+        <div class="tx"><div class="lb" title="误报">误报</div>
+          <div class="vl" style="color:#8e7dff">0</div>
+          <div class="dt" title="人工核实后已排除">人工核实后已排除</div></div></div></div>
+
+    <!-- 指标卡占实际高度，主工作区用 flex 接收全部剩余空间，不再依赖视口像素常量。 -->
+    <div class="row" style="margin-top:12px;flex:1;min-height:0">
+      <section class="panel" style="flex:6;min-width:0"><div class="ph"><h3>告警列表</h3><span class="spacer"></span></div>
+      <div class="pb nopad"><div class="toolbar">
+          <div class="field"><label>等级</label><select class="sel" data-f="level"><option value="全部" selected="">全部</option><option value="高">高</option><option value="中">中</option><option value="低">低</option></select></div>
+          <div class="field"><label>类别</label><select class="sel" data-f="kind"><option value="全部" selected="">全部</option><option value="飞行违规">飞行违规</option><option value="空间安全">空间安全</option></select></div>
+          <div class="field"><label>状态</label><select class="sel" data-f="status"><option value="全部">全部</option><option value="待核实" selected="">待核实</option><option value="反制中">反制中</option><option value="干扰中">干扰中</option><option value="待处置">待处置</option><option value="误报">误报</option></select></div>
+          <div class="field"><label>区域</label><select class="sel" data-f="region"><option value="全部" selected="">全部</option><option value="东营区">东营区</option><option value="广饶县">广饶县</option><option value="河口区">河口区</option><option value="垦利区">垦利区</option><option value="利津县">利津县</option><option value="东营港经济区">东营港经济区</option></select></div>
+          <span style="flex:1"></span>
+        </div>
+        <div id="alList" style="flex:1;display:flex;flex-direction:column;min-height:0"><div class="scroll table-scroll table-shell" style="flex:1">
+      <table class="tb"><thead><tr><th class="" style="width:108px;"><span class="lnk" data-sort="ts" role="button" tabindex="0" title="点击按「告警编号 / 时间」排序" style="color:inherit;cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px;text-decoration-color:rgba(156,198,255,.5)">告警编号 / 时间<span style="font-size:10px;margin-left:2px">▼</span></span></th><th class="" style="width:52px;text-align:center"><span class="lnk" data-sort="level" role="button" tabindex="0" title="点击按「等级」排序（高→低）" style="color:inherit;cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px;text-decoration-color:rgba(156,198,255,.5)">等级</span></th><th class="" style="width:128px;"><span class="lnk" data-sort="kind" role="button" tabindex="0" title="点击按「类别 / 类型」排序" style="color:inherit;cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px;text-decoration-color:rgba(156,198,255,.5)">类别 / 类型</span></th><th class="" style="width:146px;"><span class="lnk" data-sort="district" role="button" tabindex="0" title="点击按「关联目标 / 区域」排序（按行政区既定顺序）" style="color:inherit;cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px;text-decoration-color:rgba(156,198,255,.5)">关联目标 / 区域</span></th><th class="" style="">告警内容</th><th class="" style="width:86px;"><span class="lnk" data-sort="status" role="button" tabindex="0" title="点击按「状态」排序（按处置流程顺序）" style="color:inherit;cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px;text-decoration-color:rgba(156,198,255,.5)">状态</span></th></tr></thead><tbody><tr data-row="ALM20260826622" tabindex="0" class="on"><td class="num" style=""><div class="cell-stack cell-mono"><span class="cell-copy"><span class="cell-main">260826622</span><span class="cell-sub">17:51:00</span></span></div></td><td class="" style="text-align:center"><span class="tag t-blue">低</span></td><td class="" style=""><div class="cell-stack"><span class="cell-copy"><span class="cell-main"><span class="tag t-orange">飞行违规</span></span><span class="cell-sub">超出空域限高</span></span></div></td><td class="" style=""><div class="cell-stack cell-mono"><span class="cell-copy"><span class="cell-main">UAV20260826026</span><span class="cell-sub">广饶县</span></span></div></td><td class="" style=""><div title="目标 UAV20260826026 超出空域限高，实测高度 73m，速度 10.2m/s" style="white-space:normal;line-height:1.5;
+          max-height:34px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">目标 UAV20260826026 超出空域限高，实测高度 73m，速度 10.2m/s</div></td><td class="" style=""><span class="tag t-amber">待核实</span></td></tr><tr data-row="ALM20260826615" tabindex="0" class=""><td class="num" style=""><div class="cell-stack cell-mono"><span class="cell-copy"><span class="cell-main">260826615</span><span class="cell-sub">13:03:22</span></span></div></td><td class="" style="text-align:center"><span class="tag t-amber">中</span></td><td class="" style=""><div class="cell-stack"><span class="cell-copy"><span class="cell-main"><span class="tag t-orange">飞行违规</span></span><span class="cell-sub">夜间飞行</span></span></div></td><td class="" style=""><div class="cell-stack cell-mono"><span class="cell-copy"><span class="cell-main">UAV20260826009</span><span class="cell-sub">广饶县</span></span></div></td><td class="" style=""><div title="目标 UAV20260826009 夜间飞行，实测高度 122m，速度 6m/s" style="white-space:normal;line-height:1.5;
+          max-height:34px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">目标 UAV20260826009 夜间飞行，实测高度 122m，速度 6m/s</div></td><td class="" style=""><span class="tag t-amber">待核实</span></td></tr><tr data-row="ALM20260826999" tabindex="0" class=""><td class="num" style=""><div class="cell-stack cell-mono"><span class="cell-copy"><span class="cell-main">260826999</span><span class="cell-sub">10:24:36</span></span></div></td><td class="" style="text-align:center"><span class="tag t-blue">低</span></td><td class="" style=""><div class="cell-stack"><span class="cell-copy"><span class="cell-main"><span class="tag t-orange">飞行违规</span></span><span class="cell-sub">超出空域限高</span></span></div></td><td class="" style=""><div class="cell-stack cell-mono"><span class="cell-copy"><span class="cell-main">UAV20260826035</span><span class="cell-sub">广饶县</span></span></div></td><td class="" style=""><div title="目标 UAV20260826035 触发新增告警，等待值班员人工核实" style="white-space:normal;line-height:1.5;
+          max-height:34px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">目标 UAV20260826035 触发新增告警，等待值班员人工核实</div></td><td class="" style=""><span class="tag t-amber">待核实</span></td></tr><tr data-row="ALM20260826632" tabindex="0" class=""><td class="num" style=""><div class="cell-stack cell-mono"><span class="cell-copy"><span class="cell-main">260826632</span><span class="cell-sub">07:48:22</span></span></div></td><td class="" style="text-align:center"><span class="tag t-blue">低</span></td><td class="" style=""><div class="cell-stack"><span class="cell-copy"><span class="cell-main"><span class="tag t-orange">飞行违规</span></span><span class="cell-sub">超出空域限高</span></span></div></td><td class="" style=""><div class="cell-stack cell-mono"><span class="cell-copy"><span class="cell-main">UAV20260826045</span><span class="cell-sub">东营区</span></span></div></td><td class="" style=""><div title="目标 UAV20260826045 超出空域限高，实测高度 189m，速度 10.3m/s" style="white-space:normal;line-height:1.5;
+          max-height:34px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">目标 UAV20260826045 超出空域限高，实测高度 189m，速度 10.3m/s</div></td><td class="" style=""><span class="tag t-amber">待核实</span></td></tr><tr data-row="ALM20260826618" tabindex="0" class=""><td class="num" style=""><div class="cell-stack cell-mono"><span class="cell-copy"><span class="cell-main">260826618</span><span class="cell-sub">05:43:11</span></span></div></td><td class="" style="text-align:center"><span class="tag t-red">高</span></td><td class="" style=""><div class="cell-stack"><span class="cell-copy"><span class="cell-main"><span class="tag t-orange">飞行违规</span></span><span class="cell-sub">非法闯入</span></span></div></td><td class="" style=""><div class="cell-stack cell-mono"><span class="cell-copy"><span class="cell-main">UAV20260826013</span><span class="cell-sub">东营港经济区</span></span></div></td><td class="" style=""><div title="目标 UAV20260826013 未经批准飞行，实测高度 284m，速度 4.2m/s" style="white-space:normal;line-height:1.5;
+          max-height:34px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">目标 UAV20260826013 未经批准飞行，实测高度 284m，速度 4.2m/s</div></td><td class="" style=""><span class="tag t-amber">待核实</span></td></tr></tbody></table></div><div class="pager" data-pager="">
+      <span>共 5 条</span>
+      <select class="sel" data-size="" style="height:26px"><option selected="">10条/页</option><option>20条/页</option><option>50条/页</option></select>
+      <span class="pg  dis" data-pg="">‹</span><span class="pg on" data-pg="1">1</span><span class="pg  dis" data-pg="">›</span>
+      <span>共 1 页</span></div></div></div></section>
+      <div class="col" style="flex:4;min-width:0">
+        
+        <div class="warnbox" style="margin:0;padding:8px 11px;font-size:12px;flex:none">
+          演示动线：点左侧<b>告警列表</b>任一行 → 地图定位关联目标 → 下方详情底部点
+          「<b>人工核实 / 发起联动反制</b>」推进处置，「实时视频 / 轨迹回放」查看证据。</div>
+        <section class="panel" style="height:244px;max-height:50%;flex:none"><div class="ph"><h3>关联目标定位与轨迹</h3><span class="spacer"></span><span id="alMapSrc" style="font-size:11px;color:var(--txt-3);white-space:nowrap"><span class="tag t-amber" title="历史归档轨迹（Demo 按归档点位还原，正式版取 /api/v1/target/track）">归档轨迹</span>
+       <span title="实测 / 弥合(A03) / 预测(A04) 三种点型按 §6.8 分线型绘制：实测=动画虚线，弥合=橙色宽隙虚线，预测=青色点线">
+         <span style="color:#8fbaff">实16</span><span style="color:#ff8b3d">/弥3</span><span style="color:#22d3ee">/预3</span></span></span>
+        <button class="btn" id="alLoc" style="height:24px;font-size:11.5px;flex:none" title="重新定位到当前告警的关联目标"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s7-6.1 7-12a7 7 0 1 0-14 0c0 5.9 7 12 7 12zM12 6a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"></path></svg> 定位</button></div>
+      <div class="pb nopad" style="padding:6px"><div id="alMap" style="flex:1;min-height:0" class="mapwrap"><canvas width="540" height="161"></canvas>
+      <div class="mapctl">
+        <div class="mb" data-z="in" role="button" aria-label="放大"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM8 11h6M11 8v6M16 16l5 5"></path></svg></div><div class="mb" data-z="out" role="button" aria-label="缩小"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM8 11h6M16 16l5 5"></path></svg></div><div class="mb" data-z="fit" role="button" aria-label="复位"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"></path></svg></div>
+      </div>
+      
+      <div class="maptip"></div>
+      <div class="mapscale"><span>≈ 8.9 km</span><div class="bar" style="width: 73px;"></div></div></div>
+          <div id="alMapInfo" style="flex:none;height:19px;line-height:19px;padding:2px 2px 0;font-size:10.5px;
+            color:var(--txt-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="UAV20260826026｜旋翼飞行器｜合法性 非法｜高度 73 m
+轨迹来源：历史归档轨迹（Demo 按归档点位还原，正式版取 /api/v1/target/track）
+点型：实测 16（动画虚线）/ 弥合 A03 3（橙色宽隙虚线）/ 预测 A04 3（青色点线）"><span class="mono" style="color:var(--txt-2)">UAV20260826026</span> · 旋翼飞行器 ·
+         合法性 <span style="color:#ff8b95">非法</span> · 高度 73 m ·
+         历史归档轨迹</div></div></section>
+        <section class="panel" style="flex:1;min-height:0"><div class="ph"><h3>告警详情与处置</h3><span class="spacer"></span><span id="alSt"><span class="tag t-amber">待核实</span></span></div>
+      <div class="pb nopad"><div id="alDetail" style="flex:1;overflow:auto;padding:12px"><div class="detail-hero detail-hero-auto">
+      <div class="detail-hero-inner">
+        <div class="detail-hero-icon"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4 2.5 20h19zM12 10v4M12 17.5v.5"></path></svg></div>
+        <div class="detail-hero-copy">
+          <div class="detail-hero-eyebrow">告警事件</div>
+          <div class="detail-hero-title" title="超出空域限高">超出空域限高</div>
+          <div class="detail-hero-id mono" title="ALM20260826622">ALM20260826622</div>
+        </div>
+        <div class="detail-hero-side">
+          
+          <div class="detail-hero-tags"><span class="tag t-blue">低</span><span class="tag t-amber">待核实</span></div>
+          
+          <div class="detail-hero-meta"><span><b>区域</b>广饶县</span><span><b>时间</b>17:51:00</span></div>
+        </div>
+      </div>
+    </div>
+      <div class="metric-strip is-compact"><div class="metric-item is-info"><span class="metric-icon"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4 2.5 20h19zM12 10v4M12 17.5v.5"></path></svg></span><span class="metric-copy"><small>告警等级</small><b>低</b></span></div><div class="metric-item is-warn"><span class="metric-icon"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M8 5v14l11-7z"></path></svg></span><span class="metric-copy"><small>处置状态</small><b>待核实</b></span></div><div class="metric-item "><span class="metric-icon"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M3 13l18-9-6 16-3-6-5-1zM12 14l3-3"></path></svg></span><span class="metric-copy"><small>目标类型</small><b>旋翼飞行器</b></span></div><div class="metric-item is-good"><span class="metric-icon"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M12 12 19 7M12 21a9 9 0 1 0-9-9M12 12a4.5 4.5 0 1 0 4.5 4.5M21 12h-2M12 3v2"></path></svg></span><span class="metric-copy"><small>来源置信</small><b>94%</b></span></div></div>
+      <div class="sect detail-sect"><span class="sect-head"><span class="sect-icon"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M4 18l5-6 4 3 7-9M15 6h5v5"></path></svg></span><span class="sect-title">处置流程</span></span><div class="sect-body"><div class="steps"><div class="st done  ">
+        <div class="c"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l4 4L19 6"></path></svg></div>
+        <div class="n">告警触发</div><div class="t">17:51:00</div></div><div class="st  act ">
+        <div class="c">02</div>
+        <div class="n">人工核实</div><div class="t"></div></div><div class="st   ">
+        <div class="c">03</div>
+        <div class="n">反制</div><div class="t"></div></div><div class="st   ">
+        <div class="c">04</div>
+        <div class="n">信号干扰</div><div class="t"></div></div></div></div></div>
+      <div class="sect detail-sect"><span class="sect-head"><span class="sect-icon"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4 2.5 20h19zM12 10v4M12 17.5v.5"></path></svg></span><span class="sect-title">告警信息</span></span><div class="sect-body"><dl class="kv density-compact kv-surface"><dt class="">告警类型</dt><dd class=" ">超出空域限高</dd><dt class="">告警等级</dt><dd class=" "><span class="tag t-amber">低</span></dd><dt class="">触发时间</dt><dd class=" ">2026-08-26 17:51:00</dd><dt class="">所在区域</dt><dd class=" ">广饶县</dd><dt class="">关联目标</dt><dd class=" "><span class="mono">UAV20260826026</span></dd><dt class="">目标类型</dt><dd class=" ">旋翼飞行器</dd><dt class="">高度/速度</dt><dd class=" ">73 m / 10.2 m/s</dd><dt class="">数据来源</dt><dd class=" ">5G-A（置信度 94%）</dd><dt class="">告警内容</dt><dd class=" ">目标 UAV20260826026 超出空域限高，实测高度 73m，速度 10.2m/s</dd></dl></div></div>
+      
+      <div class="detail-actions is-sticky ">
+        <button class="btn" data-al="video"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h13v12H3zM16 10l5-3v10l-5-3z"></path></svg> 实时视频</button>
+        <button class="btn" data-al="replay"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M4 18l5-6 4 3 7-9M15 6h5v5"></path></svg> 轨迹回放</button>
+        <button class="btn pri" data-al="verify">人工核实</button></div></div></div></section>
+      </div>
+    </div></div></div>
+    </main>
+  </div>
+</div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<div class="usermenu">
+      <div class="mi" data-um="me"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21a8 8 0 0 1 16 0"></path></svg> 个人信息</div>
+      <div class="mi" data-um="ops"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM4.9 4.9l2.2 2.2M16.9 16.9l2.2 2.2M3 12h3M18 12h3M4.9 19.1l2.2-2.2M16.9 7.1l2.2-2.2M12 3v3M12 18v3"></path></svg> 运维管理</div>
+      <div class="mi" data-um="users"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 20 6v6c0 5-3.4 8-8 9-4.6-1-8-4-8-9V6zM9 12l2 2 4-5"></path></svg> 用户与权限</div>
+      <div class="mi" data-um="carousel"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M8 5v14l11-7z"></path></svg> 大屏轮播</div>
+      <div class="sep"></div>
+      <div class="mi" data-um="logout"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M10 5H4v14h6M14 8l4 4-4 4M8 12h10"></path></svg> 退出登录</div></div></body></html>

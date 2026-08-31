@@ -1,0 +1,142 @@
+/* =============================================================================
+ * bigscreen.js —— 监控大屏专版（bigscreen.html 专用）
+ * 运行形态：大屏单独部署显示，业务系统在电脑上运行（客户明确要求的专版）。
+ * 数据口径：与业务系统同一份 MOCK 数据集派生（闭环数字走 EVT.counts()），
+ *           本文件不得出现任何硬编码统计数字。
+ * ========================================================================== */
+(function (g) {
+  'use strict';
+  const M = g.MOCK, E = g.EVT;
+  const $ = id => document.getElementById(id);
+
+  /* ---------- 时钟（与业务系统同源：演示时间基准推进） ---------- */
+  function tickClock() { $('bsClk').textContent = M.nowStr(); }
+
+  /* ---------- 顶部 KPI：今日业务闭环，实时从 EVT.counts() 派生 ----------
+     卡片继承主题层 .kpi 的 page-art 贴图工艺，数字/环/标签为大屏放大形态 */
+  function paintKpis() {
+    const c = E.counts();
+    const items = [
+      { lb: '今日发现目标', v: c.found, color: '#ffd53d' },
+      { lb: '今日告警', v: c.alarmed, color: 'var(--cyan)' },
+      { lb: '已结案', v: c.closed, color: '#dfe9ff' },
+      { lb: '待处置', v: c.pending + c.disposing, color: 'var(--red)' }
+    ];
+    $('bsKpis').innerHTML = items.map(k => `
+      <div class="kpi" style="color:${k.color}">
+        <div class="v">${k.v}</div>
+        <div class="ring"></div>
+        <div class="lb">${k.lb}</div>
+      </div>`).join('');
+  }
+
+  /* ---------- 左列图表 ---------- */
+  function paintCharts() {
+    const d = M.stats.days.slice(-7);   // 大屏小面板只放近 7 日，30 天全量在业务系统统计分析页
+    CH.line($('bsTrend'), {
+      x: d.map(x => x.md),
+      series: [
+        { name: '发现目标', data: d.map(x => x.total), color: CH.C.blue, area: true },
+        { name: '非法目标', data: d.map(x => x.illegal), color: CH.C.red }
+      ]
+    });
+    CH.line($('bsAlmTrend'), {
+      x: d.map(x => x.md), legend: false,
+      series: [{ name: '告警次数', data: d.map(x => x.alarm), color: CH.C.amber, area: true, label: true }]
+    });
+    CH.bar($('bsType'), {
+      x: M.stats.byType.map(x => x.name), legend: false,
+      series: [{ name: '目标数', data: M.stats.byType.map(x => x.value), color: CH.C.cyan }]
+    });
+  }
+
+  /* ---------- 实时视频：优先取当前正被跟踪的目标 ---------- */
+  let video = null;
+  function paintVideo() {
+    const box = $('bsVideo');
+    if (video) { video.destroy(); box.innerHTML = ''; }
+    const tracked = M.liveTargets.find(x => x.tracked);
+    // safe-default: 无跟踪任务时预览首个实时目标，但标签如实写"预览"、画面不出 LOCK 框，不冒充跟踪
+    const t = tracked || M.liveTargets[0];
+    const eo = M.devices.find(dv => dv.type === '光电' && dv.status === '在线');
+    $('bsVidSub').textContent = t ? (tracked ? `跟踪目标 ${t.id}` : `预览目标 ${t.id} · 当前无跟踪任务`) : '';
+    video = new EOVideo(box, {
+      height: Math.max(150, box.clientHeight || 200),
+      targetId: t ? t.id : '', device: eo ? eo.name : undefined,
+      locked: !!tracked
+    });
+  }
+
+  /* ---------- 右列表格：先满额渲染，再按面板实际高度裁掉溢出行 ----------
+     不做行高常量假设（.tb 与主题层都会动它），量出来多少裁多少，天然零裁切。 */
+  function fitRows(tb) {
+    const box = tb.closest('.pb');
+    let guard = 40;
+    while (guard-- && tb.rows.length > 3 && tb.offsetHeight > box.clientHeight - 4) {
+      tb.deleteRow(tb.rows.length - 1);
+    }
+  }
+
+  function paintDevices() {
+    const tb = $('bsDevTb');
+    const s = M.deviceStats;
+    $('bsDevSub').textContent = `在线 ${s.online}/${s.total} · 在线率 ${s.onlineRate}%`;
+    const cl = { '在线': 'var(--green)', '离线': 'var(--txt-3)', '异常': 'var(--red)' };
+    /* 心跳最新的排前面：大屏关注"此刻在报数的设备" */
+    const list = M.devices.slice().sort((a, b) => (a.hbMin || 99) - (b.hbMin || 99)).slice(0, 20);
+    tb.innerHTML = `<tr><th style="width:34%">设备编号</th><th>设备名称</th><th style="width:20%">状态</th></tr>` +
+      list.map(d => `<tr>
+        <td class="mono">${d.id}</td>
+        <td title="${d.name}">${d.name}</td>
+        <td style="color:${cl[d.status] || 'var(--txt-2)'}">● ${d.status}</td>
+      </tr>`).join('');
+    fitRows(tb);
+  }
+
+  function paintAlarms() {
+    const tb = $('bsAlmTb');
+    const as = M.todayAlarms.slice().sort((a, b) => b.ts - a.ts);
+    $('bsAlmSub').textContent = `今日 ${as.length} 条`;
+    const cl = { '高': 'var(--red)', '中': 'var(--amber)', '低': 'var(--cyan)' };
+    tb.innerHTML = `<tr><th style="width:24%">时间</th><th>告警类型</th><th style="width:15%">等级</th><th style="width:21%">状态</th></tr>` +
+      as.slice(0, 20).map(a => `<tr>
+        <td class="mono">${a.time.slice(11, 19)}</td>
+        <td title="${a.detail}">${a.type}</td>
+        <td style="color:${cl[a.level] || 'var(--txt-2)'}">● ${a.level}</td>
+        <td>${a.status}</td>
+      </tr>`).join('');
+    fitRows(tb);
+  }
+
+  /* ---------- 中央地图：与综合态势同一取数口径 ---------- */
+  function mountMap() {
+    const map = new MapView($('bsMap'), { zoom: 1.06, maxDev: 46, maxAlarm: 8 });
+    map.setData({
+      airspaces: M.airspaces,
+      devices: M.devices.filter((d, i) => i % 4 === 0),
+      targets: M.liveTargets,
+      alarms: M.todayAlarms.slice(0, 8)
+    });
+  }
+
+  /* ---------- 启动 ----------
+     依尺寸的渲染（图表容器/视频高度/表格裁行）放 requestAnimationFrame（约定⑯），
+     并在 load 后再校一次表格——首帧布局未稳时量高裁行会把行数裁少。 */
+  tickClock(); setInterval(tickClock, 1000);
+  paintKpis();
+  requestAnimationFrame(() => {
+    paintCharts();
+    paintVideo();
+    paintDevices();
+    paintAlarms();
+    mountMap();
+  });
+  window.addEventListener('load', () => { paintDevices(); paintAlarms(); });
+
+  /* 窗口尺寸变化（拖到大屏、全屏切换）：表格行数与视频高度需重装 */
+  let rt = null;
+  window.addEventListener('resize', () => {
+    clearTimeout(rt);
+    rt = setTimeout(() => { paintVideo(); paintDevices(); paintAlarms(); }, 250);
+  });
+})(window);

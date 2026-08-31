@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 28">
+  <defs>
+    <linearGradient id="wing" x1="0" y1="0" x2="220" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fff" stop-opacity="0.05"/>
+      <stop offset="0.42" stop-color="#fff" stop-opacity="0.18"/>
+      <stop offset="0.78" stop-color="#fff" stop-opacity="0.48"/>
+      <stop offset="0.91" stop-color="#fff" stop-opacity="0.76"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0.94"/>
+    </linearGradient>
+    <linearGradient id="wing-soft" x1="54" y1="0" x2="220" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fff" stop-opacity="0.04"/>
+      <stop offset="0.68" stop-color="#fff" stop-opacity="0.32"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0.82"/>
+    </linearGradient>
+  </defs>
+
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M2 14H218.5" stroke="url(#wing)" stroke-width="0.7"/>
+    <path d="M54 10H148L155 7H218.5" stroke="url(#wing-soft)" stroke-width="0.75"/>
+    <path d="M82 18H158L165 21H218.5" stroke="url(#wing-soft)" stroke-width="0.75"/>
+    <path d="M126 12H218.5" stroke="url(#wing-soft)" stroke-width="0.55" stroke-opacity="0.62"/>
+    <path d="M142 16H218.5" stroke="url(#wing-soft)" stroke-width="0.55" stroke-opacity="0.48"/>
+  </g>
+
+  <path d="M91 11.5L93.5 14L91 16.5L88.5 14Z" fill="#fff" fill-opacity="0.42"/>
+  <circle cx="99" cy="14" r="0.85" fill="#fff" fill-opacity="0.56"/>
+  <path d="M202 5.5L210.5 14L202 22.5" fill="none" stroke="#fff" stroke-width="0.85" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.72"/>
+  <path d="M210 7L217 14L210 21" fill="none" stroke="#fff" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.92"/>
+  <circle cx="218.5" cy="14" r="1.25" fill="#fff" fill-opacity="0.96"/>
+</svg>

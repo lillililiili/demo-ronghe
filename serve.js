@@ -8,7 +8,7 @@ const http = require('http'), fs = require('fs'), path = require('path'), os = r
    公网隧道一开，这些全在外面。现在 serve.js 与 tools/ 都在服务根之外，
    服务根只剩 index.html 与 assets/。
    纪律：**往 dongying-demo/ 放任何文件之前，先问"这个能不能被公网下载"。** */
-const ROOT = path.join(__dirname, 'dongying-demo'), PORT = 8899, HOST = '0.0.0.0';   // 显式监听全部网卡，否则局域网访问不到
+const ROOT = path.join(__dirname, 'dongying-demo'), PORT = +process.argv[2] || 8899, HOST = '0.0.0.0';   // 显式监听全部网卡，否则局域网访问不到；端口可 node serve.js 8901 指定（大屏单独部署时起第二实例）
 const T = {
   '.html': 'text/html; charset=utf-8', '.js': 'application/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8',
@@ -20,7 +20,7 @@ http.createServer((q, s) => {
   let p = decodeURIComponent(q.url.split('?')[0]); if (p === '/') p = '/index.html';
   /* 白名单放行（B 的加固，随样式合并移植）：服务根内也只允许 index.html 与 assets/，
      将来误放进根目录的文件默认不可下载；path.resolve 防 ../ 穿越。 */
-  if (p !== '/index.html' && !p.startsWith('/assets/')) { s.writeHead(404); return s.end('404 ' + p); }
+  if (p !== '/index.html' && p !== '/bigscreen.html' && !p.startsWith('/assets/')) { s.writeHead(404); return s.end('404 ' + p); }
   const f = path.resolve(ROOT, '.' + p);
   if (!f.startsWith(ROOT + path.sep)) { s.writeHead(403); return s.end('forbidden'); }
   fs.readFile(f, (e, d) => {

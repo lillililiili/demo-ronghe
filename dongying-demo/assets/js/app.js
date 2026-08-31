@@ -144,15 +144,20 @@
     box.innerHTML = `<div class="cbs">${parts.join('<b>›</b>')}</div>
       <span class="spacer"></span>
       <span class="cinfo">数据统计时间 <b id="ftm">${M.nowStr()}</b></span>
-      <span class="cinfo">WGS-84 · 椭球高</span>
-      <span class="cinfo" id="fver">${M.CONF.version}</span>`;
+      <span class="cinfo" title="平台坐标与高度基准（技术口径）：WGS-84 坐标系 · 椭球高">WGS-84 · 椭球高</span>
+      <span class="cinfo" id="fver" title="${M.CONF.version}（D 编号为内部评审轮次标记）">${M.CONF.version.replace(/\s*\(D\d+\)/, '')}</span>`;
   }
 
   /* ---------- 路由 ---------- */
   const curKey = () => (location.hash.replace('#/', '') || 'situation').split('?')[0];
   let current = null;
+  /* 旧地址重定向：目标页已删、语义由别的页承接时，把 hash 直接改写到承接页 ——
+     渲染、标题、面包屑、页内状态全部走承接页自己的路径，不留第二份渲染入口。
+     上一版只补了 ROUTES 的标题映射，渲染仍按原 key 找 PAGES.overview，落到错误提示页。 */
+  const REDIRECT = { overview: 'situation' };
   function route() {
-    const k = curKey();
+    let k = curKey();
+    if (REDIRECT[k]) { location.replace(location.pathname + location.search + '#/' + REDIRECT[k]); return; }
     document.body.dataset.page = k;
     document.body.dataset.theme = PAGE_THEME[k] || 'sensing';
     const known = !!ROUTES[k];
@@ -244,6 +249,14 @@
     });
   }
 
+  /* ---------- 大屏展示（监控预览专版，bigscreen.html 单独窗口/单独部署）
+     入口是 <a target="dy-bigscreen"> 而非 window.open：用户手点的链接不吃弹窗拦截，
+     命名 target 让反复点击复用同一个窗口；运行时把该窗口拖到大屏即为独立部署形态。 ---------- */
+  function bindScreenPage() {
+    const btn = document.getElementById('btnScreen');
+    if (btn) btn.innerHTML = `${U.icon('mon')} 大屏展示`;
+  }
+
   /* ---------- 大屏模式 ---------- */
   function bindBigScreen() {
     const btn = document.getElementById('btnBig');
@@ -325,6 +338,7 @@
   /* ---------- 启动 ---------- */
   function boot() {
     clock();
+    bindScreenPage();
     bindBigScreen();
     window.addEventListener('hashchange', route);
     if (!location.hash) location.hash = '#/situation';

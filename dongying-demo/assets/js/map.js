@@ -58,12 +58,15 @@
     this.tileCache = {}; this.tileZ = 12;
     this.zoom = opt.zoom || 1; this.ox = 0; this.oy = 0; this.t = 0; this.hover = null; this.sel = null;
     box.classList.add('mapwrap');
-    const legendHtml = opt.legend === false ? '' : `<div class="maplegend">
+    /* 图例默认折叠成「图例」小条（评审：1280 宽下图例遮挡地图过多），点标题展开。
+       opt.legendOpen:true 可保持展开。文案用业务语言，技术编号（A03/A04）移入 title。 */
+    const legendHtml = opt.legend === false ? '' : `<div class="maplegend${opt.legendOpen ? '' : ' collapsed'}">
+        <div class="lg-hd" role="button" tabindex="0" aria-label="展开或收起图例">图例 <span class="lg-arrow">${opt.legendOpen ? '▾' : '▸'}</span></div>
         <div class="li"><span class="sw" style="border-color:#2fd06e"></span>合法目标轨迹</div>
         <div class="li"><span class="sw" style="border-color:#8ca0be"></span>不适用（异物 §4.2）</div>
         <div class="li"><span class="sw" style="border-color:#ff4d5e"></span>非法/告警目标</div>
-        <div class="li"><span class="sw" style="border-color:#ff8b3d;border-top-style:dotted"></span>弥合段 (A03)</div>
-        <div class="li"><span class="sw" style="border-color:#22d3ee;border-top-style:dotted"></span>预测段 (A04)</div>
+        <div class="li" title="弥合段（A03）"><span class="sw" style="border-color:#ff8b3d;border-top-style:dotted"></span>推算补全段</div>
+        <div class="li" title="预测段（A04）"><span class="sw" style="border-color:#22d3ee;border-top-style:dotted"></span>预测延伸段</div>
         <div class="li"><span style="width:14px;text-align:center;color:#22d3ee">●</span>设备点位</div>
         ${(window.MOCK && window.MOCK.AIRSPACE_TYPES ? window.MOCK.AIRSPACE_TYPES : [])
           .filter((a, i, arr) => arr.findIndex(x => x.legend === a.legend) === i)
@@ -90,6 +93,13 @@
     this._ro = new ResizeObserver(() => self._resize());
     this._ro.observe(this.box);
     this.box.addEventListener('click', e => {
+      const lg = e.target.closest('.lg-hd');
+      if (lg) {
+        const box = lg.closest('.maplegend'), open = box.classList.toggle('collapsed');
+        const ar = lg.querySelector('.lg-arrow');
+        if (ar) ar.textContent = open ? '▸' : '▾';
+        return;
+      }
       const z = e.target.closest('[data-z]');
       if (z) {
         if (z.dataset.z === 'in') self.setZoom(self.zoom * 1.5);

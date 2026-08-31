@@ -1,7 +1,8 @@
 /* ===== 9. 处置处罚管理（含反制与公安授权信号干扰） ===== */
 (function (g) {
   const M = MOCK, U = UI;
-  let st = { page: 1, size: 10, status: '全部状态', region: '全部区域', vio: '全部类型', partner: '全部合作方', days: 30, sel: null, tab: 'case', rvFilter: '全部案件' };
+  /* 通知状态默认「待通知」（用户裁定 2026-08-30：把要处理的先选出来）；深链跳入的既有逻辑重置为全部 */
+  let st = { page: 1, size: 10, status: '待通知', region: '全部区域', vio: '全部类型', partner: '全部合作方', days: 30, sel: null, tab: 'case', rvFilter: '全部案件' };
   let map = null;
   let pageView = null, previousViewOverflow = '';
 
@@ -203,7 +204,10 @@
       (st.status === '全部状态' || noticeStatus(c) === st.status) &&
       (st.region === '全部区域' || c.district === st.region) &&
       (st.vio === '全部类型' || c.violation === st.vio) &&
-      (st.partner === '全部合作方' || c.partner === st.partner));
+      (st.partner === '全部合作方' || c.partner === st.partner))
+      /* 未结案排前面（用户裁定 2026-08-30：把要处理的先选出来）；filter 已给新数组，
+         sort 不动 M.cases。同档内保持时间倒序。 */
+      .sort((a, b) => ((a.status === '已结案') - (b.status === '已结案')) || b.ts - a.ts);
   }
 
   function render() {
@@ -220,7 +224,8 @@
         if (idx >= 0) st.page = Math.max(1, Math.ceil((idx + 1) / st.size));
       }
     }
-    st.sel = st.sel || M.cases[0];
+    // safe-default: 默认选中项跟随当前筛选（待通知视图选首条待通知案件），用户可见可改
+    st.sel = st.sel || filtered()[0] || M.cases[0];
     const all = M.cases;
     const pendingNotice = all.filter(c => noticeStatus(c) === '待通知').length;
     const notified = all.filter(c => noticeStatus(c) === '已通知').length;
@@ -634,7 +639,7 @@
           在此仅作既有事实展示，<b>不由本页产生</b>。跨模块推进会被数据层
           <span class="mono">advanceCase</span> 直接拒绝。</div>`;
     })())}
-      ${c.idLineage ? U.sect('目标 ID 变更回溯（B02 · 设计 6.5）', `
+      ${c.idLineage ? U.sect('<span title="B02 · 设计 §6.5">目标 ID 变更回溯</span>', `
         <div class="warnbox" style="margin-bottom:8px;padding:7px 9px;font-size:11.5px;line-height:1.6">
           本案引用的目标 <span class="mono">${c.targetId}</span> 在立案后发生过
           <b>${c.idLineage.op === 'merge' ? '目标合并' : '目标分裂'}</b>（${c.idLineage.at}）。

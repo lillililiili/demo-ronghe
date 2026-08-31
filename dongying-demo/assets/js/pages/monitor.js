@@ -29,6 +29,11 @@ let chartPaused = false, logPaused = false;   // 图表刷新与日志滚动是�
   }).sort((a, b) => b.ts - a.ts);
 
   function render() {
+    /* 用户裁定（2026-08-28）：进页面就该有一台设备被选中，不是停在全站聚合表上。
+       放在 render() 里而不是声明处：本页不调 g.APP.rerender，render() 只在进入
+       页面时跑一次，所以这等于「每次进来都回到第一台」，而页面内的「返回全部 ›」
+       与树上的其它选择在本次停留期间照常生效、不会被重置。 */
+    selDev = firstDevInTree;
     const faults = devAlarms.filter(a => a.lv === '高').length;
     return `${U.kpis([
       { label: '在线设备', value: U.num(D.online), color: 'cyan', icon: 'device', desc: `在线率 ${D.onlineRate}%` },
@@ -39,7 +44,12 @@ let chartPaused = false, logPaused = false;   // 图表刷新与日志滚动是�
       { label: '今日故障数', value: faults, color: 'purple', icon: 'tool', desc: '高等级告警计数' }
     ])}
 
-    <div class="row" style="margin-top:12px;height:calc(100vh - 442px);min-height:300px">
+    ${/* 操作引导（用户裁定 2026-08-30：设备管理/设备监测/证据管理补黄字引导）。
+         主行定高随之 442 → 488：引导条实占约 46px，不补偿会底部溢出。 */''}
+    <div class="warnbox" style="margin:12px 0 0;padding:8px 11px;font-size:12px">
+      演示动线：三栏联动 —— 点左侧<b>设备树</b>或<b>右侧告警行</b>都会选中对应设备，
+      中栏随之显示该设备的「<b>运行状态 / 信号与链路</b>」实时曲线；点中栏「返回全部 ›」回到全站聚合视图。</div>
+    <div class="row" style="margin-top:12px;height:calc(100vh - 488px);min-height:300px">
       ${U.panel({
       title: '设备分类与状态', style: 'width:262px', nopad: true,
       body: `<div style="padding:8px"><div class="search-input">${U.icon('search')}<input class="ip" style="width:100%" placeholder="搜索设备名称或编号" id="mnKw"></div></div>
@@ -82,6 +92,16 @@ let chartPaused = false, logPaused = false;   // 图表刷新与日志滚动是�
      scopeCh：顶部下拉的通道范围。
      此前这两个都不存在 —— 页面叫「设备实时监测」，却只能看全站聚合：
      搜索能搜到「广饶县雷达01号 · 命中 1 台」，右侧 CPU/信号/链路 却纹丝不动。 */
+  /* 设备树里的第一台设备。取数顺序与 tree() 完全一致
+     （byChannel[0] → 该通道下第一个类型 → 该类型第一台），
+     否则「默认选中的那台」和「树上第一行」不是同一台，看着像随机挑了一台。 */
+  const firstDevInTree = (() => {
+    const ch = (M.deviceStats.byChannel || [])[0];
+    if (!ch) return null;
+    const ty = (M.deviceStats.byType || []).find(t => t.channel === ch.channel);
+    if (!ty) return null;
+    return M.devices.find(d => d.type === ty.type && d.channel === ch.channel) || null;
+  })();
   let selDev = null, scopeCh = null;
   let flt = { channel: null, type: null, status: null, kw: '' };
   /* 当前监控范围内的设备集合 —— 环形图、迷你曲线、信号/链路曲线全部据此取数 */

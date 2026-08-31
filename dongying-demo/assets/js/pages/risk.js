@@ -1,8 +1,11 @@
 /* ===== 14. 空间安全风险监测（鸟群/气球/风筝/孔明灯） ===== */
 (function (g) {
   const M = MOCK, U = UI;
-  let st = { page: 1, size: 10, level: '全部', type: '全部', sel: null, tab: 'event',
-    sort: 'ts', dir: -1 };     // 默认时间倒序，与数据层 riskEvents.sort(b.ts-a.ts) 一致
+  /* status 筛选默认「待核验」（用户裁定 2026-08-30：补状态筛选，且把要处理的先选出来）；
+     深链跳入时与 level/type 一起重置为「全部」。排序保持状态正序，切到「全部」时
+     待核验仍排前面。 */
+  let st = { page: 1, size: 10, level: '全部', type: '全部', status: '待核验', sel: null, tab: 'event',
+    sort: 'status', dir: 1 };
 
   /* 表头排序（154 条事件，光靠等级筛选不够用：值守真正要问的是
      "离保护对象最近的是哪几起"和"哪几起还没核验"）。
@@ -147,7 +150,8 @@
 
   function rows() {
     const f = M.riskEvents.filter(r =>
-      (st.level === '全部' || r.level === st.level) && (st.type === '全部' || r.type === st.type));
+      (st.level === '全部' || r.level === st.level) && (st.type === '全部' || r.type === st.type)
+      && (st.status === '全部' || r.status === st.status));
     const g = SORTERS[st.sort];
     if (!g) return f;
     return f.sort((x, y) => { const a = g(x), b = g(y); return (a < b ? -1 : a > b ? 1 : 0) * st.dir; });
@@ -164,12 +168,13 @@
       const hit = (ctx.eventId && M.riskEvents.find(r => r.id === ctx.eventId))
         || (ctx.targetId && M.riskEvents.find(r => r.targetId === ctx.targetId));
       if (hit) {
-        st.sel = hit; st.tab = 'event'; st.level = '全部'; st.type = '全部';
+        st.sel = hit; st.tab = 'event'; st.level = '全部'; st.type = '全部'; st.status = '全部';
         const all = rows();
         st.page = Math.max(1, Math.ceil((all.findIndex(r => r.id === hit.id) + 1) / st.size));
       }
     }
-    st.sel = st.sel || M.riskEvents[0];
+    // safe-default: 默认选中项跟随当前筛选（待核验视图选首条待核验事件），用户可见可改
+    st.sel = st.sel || rows()[0] || M.riskEvents[0];
     const R = M.riskEvents;
     const c = l => R.filter(r => r.level === l).length;
     const RR = M.RISK_RULE || {};
@@ -206,7 +211,8 @@
       body: `<div id="rkList" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>`
     })}
       ${U.panel({
-      title: '风险详情', style: 'width:340px', nopad: true, extra: `<span id="rkSt"></span>`,
+      /* 340px 固定宽 → 占 30%（用户 2026-08-30：「风险详情要占30%」）；340px 下限保窄屏不折行 */
+      title: '风险详情', style: 'width:30%;min-width:340px;flex:none', nopad: true, extra: `<span id="rkSt"></span>`,
       body: `<div id="rkDetail" style="flex:1;overflow:auto;padding:12px"></div>`
     })}
     </div>
@@ -226,6 +232,7 @@
       ${st.tab === 'event' ? `
         ${U.field('风险等级', U.select('level', ['全部', '高', '中', '低'], st.level))}
         ${U.field('目标类型', U.select('type', ['全部', '鸟', '未知', '识别中', '船', '车'], st.type))}
+        ${U.field('状态', U.select('status', ['全部', '待核验', '待通知', '已通知', '处置中', '已处置', '已排除', '已归档'], st.status))}
         <span style="flex:1"></span>
         ${/* 「通报保护对象」按钮已按用户要求删除 —— 连同"保护对象"这一层概念一起去掉。
              通报记录本身保留（由「通知上级」写入的那套），只是不再有"向保护对象群发日报"这个动作。 */''}`

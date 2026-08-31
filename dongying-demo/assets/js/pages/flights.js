@@ -1,7 +1,10 @@
 /* ===== 11. 飞行活动管理（飞行计划 / 身份 / 合作方） ===== */
 (function (g) {
   const M = MOCK, U = UI;
-  let st = { page: 1, size: 10, status: '全部', partner: '全部', region: '全部', kw: '', sel: null,
+  /* 状态默认「待执行」（用户裁定 2026-08-30：和合法性页一样，把要处理的先选出来）——
+     待执行是唯一还有动作可做的档（合法性判定在起飞前）；看全量切回「全部」即可，
+     深链跳入时既有逻辑已重置为「全部」，不受影响。 */
+  let st = { page: 1, size: 10, status: '待执行', partner: '全部', region: '全部', kw: '', sel: null,
     hlRisk: null };   // 「本航线风险」列表里当前高亮的那起事件 id —— 与地图上的高亮是同一个来源
 
   /* ---- F0305:计划与实际飞行对照 —— 判定阈值(Demo 缺省值,待业务方确认 C01/C02) ---- */
@@ -81,7 +84,8 @@
         if (idx >= 0) st.page = Math.max(1, Math.ceil((idx + 1) / st.size));
       }
     }
-    st.sel = st.sel || M.flightPlans[0];
+    // safe-default: 默认选中项跟随当前筛选（待执行视图选首条待执行计划），用户可见可改
+    st.sel = st.sel || filtered()[0] || M.flightPlans[0];
     const F = M.flightPlans;
     const cnt = s => F.filter(p => p.status === s).length;
     const unmatched = F.filter(p => p.matched === '未匹配感知目标').length;
@@ -106,7 +110,14 @@
          560 = 本页在 900 高视口下的自然高度 568 − 8：标准档逐像素不变，
          只有视口低于约 892px 时才接管，让页面真正出现竖向滚动。
          全站同病，各页按同一算法各自取值（自然高 − 8）。 */''}
-    <div class="row" style="margin-top:12px;height:calc(100vh - 332px);min-height:560px">
+    ${/* 高度策略（用户 2026-08-30 两轮裁定：「计划详情拉长，一屏放不下页面右侧出滚动条」
+         + 「地图不改，按原来的样子」）：
+         行高必须是**定高**（max(812, 视口余量)）——第一版只给 min-height，网格容器不定高时
+         fr 行按内容贡献取尺寸，地图画布与容器互相喂大，实测地图被撑到两千多像素。
+         812 = 地图 320 + gap 12 + 详情 480；视口余量更大时增量全给详情行（1fr），
+         地图行固定 320px（≈改版前标准档实测画布高），不随详情加高而变。
+         视口低于约 1144px 时整页出竖向滚动条，一屏约束已按用户指令放弃。 */''}
+    <div class="row" style="margin-top:12px;height:max(812px, calc(100vh - 332px))">
       ${U.panel({
       title: '飞行计划与活动', style: 'flex:1.1', nopad: true,
       body: `<div class="toolbar">
@@ -131,7 +142,7 @@
            右列用 flex 而不是固定 620px：固定宽度下**视口越宽表格越占便宜** ——
            实测 1440 时地图/表格 = 51%，到 1600 反而掉到 41%，因为表格跟着视口长、地图不长。
            主次比例必须在各档宽度下都成立，否则它只是在某一个分辨率上碰巧对。 */''}
-      <div class="col" style="flex:1;min-width:560px;display:grid;grid-template-rows:minmax(290px,1.35fr) minmax(240px,1fr);gap:var(--gap)">
+      <div class="col" style="flex:1;min-width:560px;display:grid;grid-template-rows:320px minmax(460px,1fr);gap:var(--gap)">
         ${U.panel({
       /* 用户要的是"看这个计划的航线里有没有鸟群啊什么的" —— 不是把空间安全模块搬过来，
          而是在本页用地图回答"这条航线周边安不安全"。 */
@@ -214,10 +225,15 @@
     if (!p) return '<div class="empty">请选择计划</div>';
     document.getElementById('flSt').innerHTML = U.tag(p.status);
     const linked = M.todayTargets.filter(t => t.district === p.region && t.legal === '合法').slice(0, 2);
-    return `${U.detailHero({
-      icon: 'plan', subtitle: '飞行计划', title: p.purpose || p.route, id: p.id,
-      tags: [U.tag(p.status), U.tag(p.matched, p.matched === '已匹配' ? 't-green' : 't-amber')],
-      meta: [['区域', p.region], ['时段', p.start.slice(11) + '–' + p.end.slice(11)]]
+    return `<div class="warnbox" style="margin:0 0 10px;padding:6px 10px;font-size:11.5px;line-height:1.6">
+      在左侧列表点选计划：本卡与上方「航线周边态势」地图联动更新，
+      卡内下方「<b>本航线风险</b>」同步列出沿线风险事件，可逐条「通知上级」。</div>
+    ${/* hero 改 compact（用户 2026-08-30：「计划详情太挤」）：auto 档把右侧 48% 留给
+         标签+区域+时段，在本栏宽度下三者挤成一行、标题被压缩。compact 让标题独占整行、
+         标签下移一行；区域/时段不随 hero 展示 —— 「计划信息」里已有同两项，删的是重复。 */''}
+    ${U.detailHero({
+      icon: 'plan', variant: 'compact', subtitle: '飞行计划', title: p.purpose || p.route, id: p.id,
+      tags: [U.tag(p.status), U.tag(p.matched, p.matched === '已匹配' ? 't-green' : 't-amber')]
     })}
       ${U.metricStrip([
         { label: '执行状态', value: p.status, tone: p.status === '已完成' ? 'good' : 'info', icon: 'play' },
@@ -235,8 +251,8 @@
     ], { surface: true, density: 'compact' }), { icon: 'plan' })}
       ${U.sect('审批信息', U.kv([['审批单位', p.approver], ['审批时间', p.approvedAt], ['审批结论', U.tag('已批准', 't-green')]], { surface: true, density: 'compact' }), { icon: 'check' })}
       ${(function () {
-        if (p.matched === '—') return U.sect('计划与实际对照（F0305 · C01）', '<div class="empty" style="padding:10px">计划尚未开始执行</div>');
-        if (p.matched !== '已匹配') return U.sect('计划与实际对照（F0305 · C01）',
+        if (p.matched === '—') return U.sect('<span title="F0305 · C01">计划与实际对照</span>', '<div class="empty" style="padding:10px">计划尚未开始执行</div>');
+        if (p.matched !== '已匹配') return U.sect('<span title="F0305 · C01">计划与实际对照</span>',
           `<div class="warnbox">该计划时段内<b>未匹配到感知目标</b>，可能为：未按计划起飞、目标在探测盲区、或设备异常。建议人工核实。</div>
            ${U.kv([['匹配依据', '时间窗 ±10min + 空间 500m + 身份一致'], ['处理建议', '联系飞手核实 / 检查区域设备状态']])}`);
         const v = devVerdict(p), d = p.deviation;
@@ -244,7 +260,7 @@
            （数据层那条 `status==='待执行' ? null : {...}` 解释不了）。
            这里**不兜底成 0 或"一致"** —— 那会把"没有对照数据"说成"对照通过"，
            而这一格正是给监管看"有没有偏离报备"的。如实说没有，并指出矛盾在哪。 */
-        if (!d) return U.sect('计划与实际对照（F0305 · C01）',
+        if (!d) return U.sect('<span title="F0305 · C01">计划与实际对照</span>',
           `<div class="warnbox" style="border-color:rgba(255,176,32,.45);background:rgba(255,176,32,.08);line-height:1.85">
             注意：该计划标记为<b>已匹配</b>，但<b>没有对照数据</b>（<span class="mono">deviation</span> 为空）。<br>
             <span style="color:var(--txt-3)">"已匹配"意味着找到了对应的感知目标，那就应当能算出偏航/时差/超高三项。
@@ -256,7 +272,7 @@
              <div style="font-size:11px;color:var(--txt-3);line-height:1.7;margin-top:2px">${UNDET_WHY[k] || '无判据可依'}</div>`];
           return [DEV_TH[k].name, `<b class="mono" style="color:${devColor(it.lv)}">${txt}</b>　${U.tag(it.lv, DEV_C[it.lv])}`];
         };
-        return U.sect('计划与实际对照（F0305 · C01）',
+        return U.sect('<span title="F0305 · C01">计划与实际对照</span>',
           U.kv([
             ['匹配目标', linked.length ? linked.map(t => `<span class="mono">${t.id}</span>`).join('<br>') : '—'],
             ['匹配依据', '时间窗 ±10min + 空间 500m + 身份一致'],
@@ -650,6 +666,53 @@
         { n: '判据接入状态', v: '实际航迹未全量接入，「偏离报备航线」当前为不可判定' }
       ];
     }
+  });
+
+  /* ===== 从已删页面接收的参数登记 =====
+     「空域与航线」删除时 F0407 迁到了接口管理；接口管理随后也被删除（ff6eb82），
+     于是它第二次失去归属。**判据没跟着消失**：detectConflicts 仍在跑、
+     CONFLICT_MIN_OVERLAP 仍在用、数据层三条冲突断言仍在守且全绿。
+     参数的去留看的是判据还在不在，不是那个页面还在不在 —— 所以再迁一次，
+     落到本页（航线周边态势要显示走廊与空域的冲突）。
+     两次搬家都记在这里，是为了让下一个接手的人知道它从哪来、为什么还在。 */
+  U.regParams({
+    key: 'F0407', name: '空域规则冲突检测阈值', page: '飞行活动管理 · 航线周边态势', hash: '#/flights',
+    ver: 'demo-v1', confirmed: false, owner: '业务方',
+    basis: '需求文档 F0407 规则冲突检测；判定实现在 mock.js detectConflicts()',
+    affects: ['航线与空域冲突检测（本页航线周边态势）', '数据层 selfCheck 冲突断言'],
+    note: '原「新增/编辑空域时的冲突提示」入口随空域管理页删除，后接口管理页亦删除；判定实现与断言仍在数据层，故参数保留',
+    items: () => [
+      { n: '最小重叠率（低于此值不报冲突）', v: M.CONFLICT_MIN_OVERLAP + '%' },
+      { n: '时间重叠判据', v: '生效期存在交集' },
+      // 「哪些类型算绝对禁止」由 AIRSPACE_TYPES.forbidsAllPlans 声明，这里读它而不是再抄一遍类型名
+      {
+        n: '严重级判据一：与绝对禁止空间重叠',
+        v: M.AIRSPACE_TYPES.filter(t => t.forbidsAllPlans).map(t => t.type).join(' / ')
+      },
+      { n: '严重级判据二', v: '双方均有限高且取值不同 → 重叠区取更严值' },
+      { n: '严重冲突处理', v: '首次保存拦截，二次确认才放行' }
+    ]
+  });
+
+  /* API_LIMIT（接口限流与重试策略）同样随接口管理页删除。
+     它没有页面消费方了，但**约束本身仍然成立**：纪要 §8.1「控制类接口必须具备
+     幂等、回执与急停」仍是验收条款，monitor.js 的降级说明也还引着这一条。
+     数值全部是 Demo 缺省值、需双方接口负责人确认，所以必须留在客户确认表上 ——
+     **一条没有页面展示它的约束，不等于一条不存在的约束。**
+     暂挂本页：本页是控制类下发（反制授权、通知上级）的实际发起处之一。 */
+  U.regParams({
+    key: 'API_LIMIT', name: '接口限流与重试策略', page: '飞行活动管理', hash: '#/flights',
+    ver: 'demo-v1', confirmed: false, owner: '平台运维 / 双方接口负责人',
+    basis: '纪要 §8.1「控制类接口必须具备幂等、回执与急停」；具体数值为 Demo 缺省值',
+    affects: ['控制类接口下发行为（反制授权 / 通知上级 / 设备指令）'],
+    note: '原「接口管理」页已删除，限流/重试页签随之消失；约束与待确认状态不变，故继续登记',
+    items: () => [
+      { n: 'QPS 上限', v: '控制接口 5 / 其它 200' },
+      { n: '并发上限', v: '控制接口 1 / 其它 64' },
+      { n: '熔断阈值', v: '连续失败 5 次 / 10s，半开探测 30s' },
+      { n: '重试策略', v: '控制类禁止自动重试；其它 3 次，1s / 2s / 4s 指数退避' },
+      { n: '超时时间', v: '3000 ms' }
+    ]
   });
 
   g.PAGES = g.PAGES || {};

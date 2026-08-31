@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><base href="/"><!-- 静态快照（无 JS 交互），生成于 2026-08-31 00:53:43 UTC；交互版： http://localhost:8899/#/punish -->
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>处置与处罚 · 无人机融合感知平台</title>
+<link rel="icon" type="image/png" href="assets/img/brand/logo-mark.png">
+<link rel="stylesheet" href="assets/css/app.css">
+</head>
+<body data-page="punish" data-theme="incident">
+<div id="app">
+  <header class="hdr">
+    <div class="logo">
+      <img src="assets/img/brand/logo-mark.png" alt="平台 Logo" width="36" height="36">
+      <b>无人机融合感知与低空安全管理平台</b>
+    </div>
+    <div class="spacer"></div>
+    <div class="meta">
+      <span class="it" id="clk"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 7v5l3 2"></path></svg> 2026-08-26 10:24:49</span>
+      <span class="it" id="wea">东营 <svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M6 18h12a4 4 0 0 0 .4-8 6.5 6.5 0 0 0-12.3 1.7A3.2 3.2 0 0 0 6 18z"></path></svg> 22℃ ~ 30℃ 多云</span>
+      <span class="it"><a class="btn ghost" id="btnScreen" href="bigscreen.html" target="dy-bigscreen" title="监控预览专版大屏：单独窗口打开，可拖至大屏独立部署显示"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18v11H3zM8 20h8M12 16v4M6.5 12l2.5-3 2.5 2.5L15 7l2.5 5"></path></svg> 大屏展示</a></span>
+      <span class="it"><button class="btn ghost" id="btnBig" title="大屏模式：放大字号与行距，适配指挥大厅显示"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"></path></svg> 大屏</button></span>
+      <span class="it"><button class="btn ghost" id="btnSearch" title="统一检索：目标 / 设备 / 计划 / 告警 / 案件（Command+K）" style="gap:6px"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM16 16l5 5"></path></svg> 检索<span style="font-size:10.5px;opacity:.65;border:1px solid var(--line);
+      border-radius:3px;padding:0 4px;line-height:15px">Command+K</span></button></span><button class="it bell icon-btn" id="bell" type="button" aria-label="查看告警">
+        <svg class="hdr-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"></path></svg>
+        <span class="dot" id="bellN">12</span>
+      </button>
+      <button class="user icon-btn" type="button" aria-haspopup="menu" aria-expanded="false"><span class="av">管</span><span>管理员</span><svg class="chev-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 9 5 5 5-5"></path></svg></button>
+    </div>
+  </header>
+  <div class="body">
+    <nav class="nav" id="nav"><div class="g1  ">
+        <div class="l1 gh" data-grp="感知监测"><i><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M12 12 19 7M12 21a9 9 0 1 0-9-9M12 12a4.5 4.5 0 1 0 4.5 4.5M21 12h-2M12 3v2"></path></svg></i><span>感知监测</span><b class="ca">›</b></div>
+        <div class="l2"><a class="" href="#/situation" data-k="situation"><em></em><span>融合感知</span></a></div>
+      </div><div class="g1  ">
+        <div class="l1 gh" data-grp="飞行监管"><i><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v16H4zM4 9h16M9 3v4M15 3v4M8 14h3M8 17h6"></path></svg></i><span>飞行监管</span><b class="ca">›</b></div>
+        <div class="l2"><a class="" href="#/flights" data-k="flights"><em></em><span>飞行计划</span></a><a class="" href="#/legality" data-k="legality"><em></em><span>合法性研判</span></a></div>
+      </div><div class="g1 open has">
+        <div class="l1 gh" data-grp="事件处置"><i><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4 2.5 20h19zM12 10v4M12 17.5v.5"></path></svg></i><span>事件处置</span><b class="ca">›</b></div>
+        <div class="l2"><a class="" href="#/alarms" data-k="alarms"><em></em><span>告警事件</span></a><a class="on" href="#/punish" data-k="punish"><em></em><span>处置与处罚</span></a></div>
+      </div><div class="g1  ">
+        <div class="l1 gh" data-grp="分析报告"><i><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V9M10 20V4M16 20v-7M22 20H2"></path></svg></i><span>分析报告</span><b class="ca">›</b></div>
+        <div class="l2"><a class="" href="#/stats" data-k="stats"><em></em><span>运行统计</span></a><a class="" href="#/evidence" data-k="evidence"><em></em><span>证据管理</span></a></div>
+      </div><div class="g1  ">
+        <div class="l1 gh" data-grp="运维管理"><i><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 3.5a4 4 0 0 0 5 5L21 7l-4-4zM3 21l9.5-9.5M9 15l-3.5 3.5"></path></svg></i><span>运维管理</span><b class="ca">›</b></div>
+        <div class="l2"><a class="" href="#/devices" data-k="devices"><em></em><span>设备管理</span></a><a class="" href="#/monitor" data-k="monitor"><em></em><span>设备实时监测</span></a><a class="" href="#/commission" data-k="commission"><em></em><span>设备接入调测</span></a></div>
+      </div><div class="g1  ">
+        <div class="l1 gh" data-grp="系统管理"><i><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 20 6v6c0 5-3.4 8-8 9-4.6-1-8-4-8-9V6zM9 12l2 2 4-5"></path></svg></i><span>系统管理</span><b class="ca">›</b></div>
+        <div class="l2"><a class="" href="#/users" data-k="users"><em></em><span>用户与权限</span></a><a class="" href="#/archive" data-k="archive"><em></em><span>日志归档</span></a></div>
+      </div><div class="navfoot">
+           <div class="fold" id="fold">« 收起菜单</div>
+         </div></nav>
+    <main class="main">
+      <div class="crumb" id="crumb"><div class="cbs"><a href="#/situation">首页</a><b>›</b><a href="#/alarms">事件处置</a><b>›</b><span class="c on">处置与处罚</span></div>
+      <span class="spacer"></span>
+      <span class="cinfo">数据统计时间 <b id="ftm">2026-08-26 10:24:49</b></span>
+      <span class="cinfo" title="平台坐标与高度基准（技术口径）：WGS-84 坐标系 · 椭球高">WGS-84 · 椭球高</span>
+      <span class="cinfo" id="fver" title="Demo V0.3 (D3)（D 编号为内部评审轮次标记）">Demo V0.3</span></div>
+      <div class="view" id="view" style="overflow: hidden;"><div style="height:100%;display:flex;flex-direction:column;min-height:0">
+    <div class="kpis"><div class="kpi kpi-blue ">
+        <div class="ic" style="background:#4b9cff22;border:1px solid #4b9cff55;color:#4b9cff"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3 21 10l-3 3-7-7zM11 6 5 12l4 4 6-6M3 21h10"></path></svg></div>
+        <div class="tx"><div class="lb" title="处罚案件总数">处罚案件总数</div>
+          <div class="vl" style="color:#4b9cff">132</div>
+          <div class="dt" title="待通知 26 件 · 已通知 106 件">待通知 26 件 · 已通知 106 件</div></div></div><div class="kpi kpi-amber ">
+        <div class="ic" style="background:#f1a43a22;border:1px solid #f1a43a55;color:#f1a43a"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4 2.5 20h19zM12 10v4M12 17.5v.5"></path></svg></div>
+        <div class="tx"><div class="lb" title="待通知案件">待通知案件</div>
+          <div class="vl" style="color:#f1a43a">26</div>
+          <div class="dt" title="等待通知处罚部门 · 占比 19.7%">等待通知处罚部门 · 占比 19.7%</div></div></div><div class="kpi kpi-green ">
+        <div class="ic" style="background:#41d49a22;border:1px solid #41d49a55;color:#41d49a"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l4 4L19 6"></path></svg></div>
+        <div class="tx"><div class="lb" title="已通知案件">已通知案件</div>
+          <div class="vl" style="color:#41d49a">106</div>
+          <div class="dt" title="通知完成率 80.3%">通知完成率 80.3%</div></div></div></div>
+
+    <div id="pnBody" style="margin-top:12px;flex:1;min-height:0"><div class="row" style="height:100%;min-height:0;padding-bottom:6px">
+      <section class="panel" style="flex:6;min-width:0"><div class="ph"><h3>处罚案件管理</h3><span class="spacer"></span></div>
+      <div class="pb nopad"><div class="toolbar">
+          <div class="field"><label>时间</label><select class="sel" data-f="days"><option value="7">近7天</option><option value="30" selected="">近30天</option></select></div>
+          <div class="field"><label>区域</label><select class="sel" data-f="region"><option value="全部区域" selected="">全部区域</option><option value="东营区">东营区</option><option value="广饶县">广饶县</option><option value="河口区">河口区</option><option value="垦利区">垦利区</option><option value="利津县">利津县</option><option value="东营港经济区">东营港经济区</option></select></div>
+          <div class="field"><label>违法类型</label><select class="sel" data-f="vio"><option value="全部类型" selected="">全部类型</option><option value="未经批准飞行">未经批准飞行</option><option value="侵入禁飞区">侵入禁飞区</option><option value="超出空域限高">超出空域限高</option><option value="超出计划批准高度">超出计划批准高度</option><option value="超出空域管制时段">超出空域管制时段</option><option value="超出计划批准时段">超出计划批准时段</option><option value="超视距飞行">超视距飞行</option><option value="夜间飞行">夜间飞行</option><option value="偏离报备航线">偏离报备航线</option><option value="身份不匹配">身份不匹配</option></select></div>
+          <div class="field"><label>合作方</label><select class="sel" data-f="partner"><option value="全部合作方" selected="">全部合作方</option><option value="东营通航服务有限公司">东营通航服务有限公司</option><option value="黄河口无人机应用公司">黄河口无人机应用公司</option><option value="东营启航科技">东营启航科技</option><option value="山东云翼智能">山东云翼智能</option><option value="东营智航科技">东营智航科技</option><option value="胜利油田巡检队">胜利油田巡检队</option><option value="黄河口测绘队">黄河口测绘队</option><option value="利津应急救援队">利津应急救援队</option></select></div>
+          <div class="field"><label>通知状态</label><select class="sel" data-f="status"><option value="全部状态">全部状态</option><option value="待通知" selected="">待通知</option><option value="已通知">已通知</option></select></div>
+          <button class="btn" id="pnR">重置筛选</button>
+          <span style="flex:1"></span><button class="btn" id="pnExp"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5M4 20h16"></path></svg> 导出</button>
+        </div>
+        <div id="pnList" style="flex:1;display:flex;flex-direction:column;min-height:0"><div class="scroll table-scroll table-shell" style="flex:1">
+      <table class="tb"><thead><tr><th class="" style="width:134px;"><span data-sort="id" title="点击排序" style="cursor:pointer;user-select:none;white-space:nowrap;
+      border-bottom:1px dotted rgba(159,182,217,.45);">案件编号</span></th><th class="" style="width:106px;"><span data-sort="targetId" title="点击排序" style="cursor:pointer;user-select:none;white-space:nowrap;
+      border-bottom:1px dotted rgba(159,182,217,.45);">目标编号</span></th><th class="" style="width:128px;"><span data-sort="model" title="点击排序" style="cursor:pointer;user-select:none;white-space:nowrap;
+      border-bottom:1px dotted rgba(159,182,217,.45);">机型 / 主体</span></th><th class="" style="width:84px;"><span data-sort="violation" title="点击排序" style="cursor:pointer;user-select:none;white-space:nowrap;
+      border-bottom:1px dotted rgba(159,182,217,.45);">违法类型</span></th><th class="" style="width:128px;"><span data-sort="ts" title="点击排序" style="cursor:pointer;user-select:none;white-space:nowrap;
+      border-bottom:1px dotted rgba(159,182,217,.45);">发生时间 / 区域</span></th><th class="" style="width:86px;"><span data-sort="status" title="点击排序" style="cursor:pointer;user-select:none;white-space:nowrap;
+      border-bottom:1px dotted rgba(159,182,217,.45);">通知状态</span></th></tr></thead><tbody><tr data-row="CF20260826001" tabindex="0" class="on"><td class="num" style="">CF20260826001</td><td class="num" style=""><span title="UAV20260826030" style="font-size:11.5px">UAV20260826030</span></td><td class="" style=""><div style="white-space:normal;line-height:1.4"><span>DJI Mavic 3</span> <span class="tag" style="color:#8fbaff;border-color:#8fbaff55;background:#8fbaff18" title="型号取自报备信息，非探测识别所得">报备</span></div>
+          <div title="东营启航科技 · 王磊" style="font-size:11px;color:var(--txt-3);
+            white-space:normal;line-height:1.4;max-height:31px;overflow:hidden;display:-webkit-box;
+            -webkit-line-clamp:2;-webkit-box-orient:vertical">东营启航科技 · 王磊</div></td><td class="" style=""><div style="white-space:normal;line-height:1.5"><span class="tag t-orange" style="white-space:normal;display:inline">超出空域限高</span></div></td><td class="" style=""><div class="mono" style="font-size:11.5px">08-26 18:15</div><div style="font-size:11px;color:var(--txt-3)">广饶县</div></td><td class="" style=""><span class="tag t-amber">待通知</span></td></tr><tr data-row="CF20260826002" tabindex="0" class=""><td class="num" style="">CF20260826002</td><td class="num" style=""><span title="UAV20260826026" style="font-size:11.5px">UAV20260826026</span></td><td class="" style=""><div style="white-space:normal;line-height:1.4"><span>Autel EVO II</span> <span class="tag" style="color:#8fbaff;border-color:#8fbaff55;background:#8fbaff18" title="型号取自报备信息，非探测识别所得">报备</span></div>
+          <div title="利津应急救援队 · 张伟" style="font-size:11px;color:var(--txt-3);
+            white-space:normal;line-height:1.4;max-height:31px;overflow:hidden;display:-webkit-box;
+            -webkit-line-clamp:2;-webkit-box-orient:vertical">利津应急救援队 · 张伟</div></td><td class="" style=""><div style="white-space:normal;line-height:1.5"><span class="tag t-orange" style="white-space:normal;display:inline">超出空域限高</span></div></td><td class="" style=""><div class="mono" style="font-size:11.5px">08-26 17:51</div><div style="font-size:11px;color:var(--txt-3)">广饶县</div></td><td class="" style=""><span class="tag t-amber">待通知</span></td></tr><tr data-row="CF20260826003" tabindex="0" class=""><td class="num" style="">CF20260826003</td><td class="num" style=""><span title="UAV20260826047" style="font-size:11.5px">UAV20260826047</span></td><td class="" style=""><div style="white-space:normal;line-height:1.4"><span>大疆机场2</span> <span class="tag" style="color:#8fbaff;border-color:#8fbaff55;background:#8fbaff18" title="型号取自报备信息，非探测识别所得">报备</span></div>
+          <div title="山东云翼智能 · 黄勇" style="font-size:11px;color:var(--txt-3);
+            white-space:normal;line-height:1.4;max-height:31px;overflow:hidden;display:-webkit-box;
+            -webkit-line-clamp:2;-webkit-box-orient:vertical">山东云翼智能 · 黄勇</div></td><td class="" style=""><div style="white-space:normal;line-height:1.5"><span class="tag t-orange" style="white-space:normal;display:inline">侵入禁飞区</span></div></td><td class="" style=""><div class="mono" style="font-size:11.5px">08-26 16:19</div><div style="font-size:11px;color:var(--txt-3)">利津县</div></td><td class="" style=""><span class="tag t-amber">待通知</span></td></tr><tr data-row="CF20260826004" tabindex="0" class=""><td class="num" style="">CF20260826004</td><td class="num" style=""><span title="UAV20260826005" style="font-size:11.5px">UAV20260826005</span></td><td class="" style=""><div style="white-space:normal;line-height:1.4"><span>DJI Mini 3</span> <span class="tag" style="color:#8fbaff;border-color:#8fbaff55;background:#8fbaff18" title="型号取自报备信息，非探测识别所得">报备</span></div>
+          <div title="东营启航科技 · 吴刚" style="font-size:11px;color:var(--txt-3);
+            white-space:normal;line-height:1.4;max-height:31px;overflow:hidden;display:-webkit-box;
+            -webkit-line-clamp:2;-webkit-box-orient:vertical">东营启航科技 · 吴刚</div></td><td class="" style=""><div style="white-space:normal;line-height:1.5"><span class="tag t-orange" style="white-space:normal;display:inline">侵入禁飞区</span></div></td><td class="" style=""><div class="mono" style="font-size:11.5px">08-26 16:01</div><div style="font-size:11px;color:var(--txt-3)">利津县</div></td><td class="" style=""><span class="tag t-amber">待通知</span></td></tr><tr data-row="CF20260826005" tabindex="0" class=""><td class="num" style="">CF20260826005</td><td class="num" style=""><span title="UAV20260826021" style="font-size:11.5px">UAV20260826021</span></td><td class="" style=""><div style="white-space:normal;line-height:1.4"><span>大疆机场2</span> <span class="tag" style="color:#8fbaff;border-color:#8fbaff55;background:#8fbaff18" title="型号取自报备信息，非探测识别所得">报备</span></div>
+          <div title="东营启航科技 · 张伟" style="font-size:11px;color:var(--txt-3);
+            white-space:normal;line-height:1.4;max-height:31px;overflow:hidden;display:-webkit-box;
+            -webkit-line-clamp:2;-webkit-box-orient:vertical">东营启航科技 · 张伟</div></td><td class="" style=""><div style="white-space:normal;line-height:1.5"><span class="tag t-orange" style="white-space:normal;display:inline">超出空域限高</span></div></td><td class="" style=""><div class="mono" style="font-size:11.5px">08-26 15:18</div><div style="font-size:11px;color:var(--txt-3)">广饶县</div></td><td class="" style=""><span class="tag t-amber">待通知</span></td></tr><tr data-row="CF20260826006" tabindex="0" class=""><td class="num" style="">CF20260826006</td><td class="num" style=""><span title="UAV20260826004" style="font-size:11.5px">UAV20260826004</span></td><td class="" style=""><div style="white-space:normal;line-height:1.4"><span>DJI Mini 3</span> <span class="tag" style="color:#8fbaff;border-color:#8fbaff55;background:#8fbaff18" title="型号取自报备信息，非探测识别所得">报备</span></div>
+          <div title="黄河口无人机应用公司 · 陈晨" style="font-size:11px;color:var(--txt-3);
+            white-space:normal;line-height:1.4;max-height:31px;overflow:hidden;display:-webkit-box;
+            -webkit-line-clamp:2;-webkit-box-orient:vertical">黄河口无人机应用公司 · 陈晨</div></td><td class="" style=""><div style="white-space:normal;line-height:1.5"><span class="tag t-orange" style="white-space:normal;display:inline">超出空域限高</span></div></td><td class="" style=""><div class="mono" style="font-size:11.5px">08-26 14:08</div><div style="font-size:11px;color:var(--txt-3)">东营港经济区</div></td><td class="" style=""><span class="tag t-amber">待通知</span></td></tr><tr data-row="CF20260826007" tabindex="0" class=""><td class="num" style="">CF20260826007</td><td class="num" style=""><span title="UAV20260826043" style="font-size:11.5px">UAV20260826043</span></td><td class="" style=""><div style="white-space:normal;line-height:1.4"><span>DJI Mavic 3</span> <span class="tag" style="color:#79e5a5;border-color:#79e5a555;background:#79e5a518" title="协议破解设备解出的具体型号">解析</span></div>
+          <div title="东营启航科技 · 黄勇" style="font-size:11px;color:var(--txt-3);
+            white-space:normal;line-height:1.4;max-height:31px;overflow:hidden;display:-webkit-box;
+            -webkit-line-clamp:2;-webkit-box-orient:vertical">东营启航科技 · 黄勇</div></td><td class="" style=""><div style="white-space:normal;line-height:1.5"><span class="tag t-orange" style="white-space:normal;display:inline">侵入禁飞区</span></div></td><td class="" style=""><div class="mono" style="font-size:11.5px">08-26 08:19</div><div style="font-size:11px;color:var(--txt-3)">东营区</div></td><td class="" style=""><span class="tag t-amber">待通知</span></td></tr><tr data-row="CF20260825009" tabindex="0" class=""><td class="num" style="">CF20260825009</td><td class="num" style=""><span title="UAV20260825023" style="font-size:11.5px">UAV20260825023</span></td><td class="" style=""><div style="white-space:normal;line-height:1.4"><span>大疆机场2</span> <span class="tag" style="color:#79e5a5;border-color:#79e5a555;background:#79e5a518" title="协议破解设备解出的具体型号">解析</span></div>
+          <div title="胜利油田巡检队 · 周敏" style="font-size:11px;color:var(--txt-3);
+            white-space:normal;line-height:1.4;max-height:31px;overflow:hidden;display:-webkit-box;
+            -webkit-line-clamp:2;-webkit-box-orient:vertical">胜利油田巡检队 · 周敏</div></td><td class="" style=""><div style="white-space:normal;line-height:1.5"><span class="tag t-orange" style="white-space:normal;display:inline">未经批准飞行</span></div></td><td class="" style=""><div class="mono" style="font-size:11.5px">08-25 18:43</div><div style="font-size:11px;color:var(--txt-3)">东营区</div></td><td class="" style=""><span class="tag t-amber">待通知</span></td></tr><tr data-row="CF20260820038" tabindex="0" class=""><td class="num" style="">CF20260820038</td><td class="num" style=""><span title="UAV20260820010" style="font-size:11.5px">UAV20260820010</span></td><td class="" style=""><div style="white-space:normal;line-height:1.4"><span>DJI Mavic 3</span> <span class="tag" style="color:#79e5a5;border-color:#79e5a555;background:#79e5a518" title="协议破解设备解出的具体型号">解析</span></div>
+          <div title="胜利油田巡检队 · 徐亮" style="font-size:11px;color:var(--txt-3);
+            white-space:normal;line-height:1.4;max-height:31px;overflow:hidden;display:-webkit-box;
+            -webkit-line-clamp:2;-webkit-box-orient:vertical">胜利油田巡检队 · 徐亮</div></td><td class="" style=""><div style="white-space:normal;line-height:1.5"><span class="tag t-orange" style="white-space:normal;display:inline">未经批准飞行</span></div></td><td class="" style=""><div class="mono" style="font-size:11.5px">08-20 09:44</div><div style="font-size:11px;color:var(--txt-3)">河口区</div></td><td class="" style=""><span class="tag t-amber">待通知</span></td></tr><tr data-row="CF20260819041" tabindex="0" class=""><td class="num" style="">CF20260819041</td><td class="num" style=""><span title="UAV20260819023" style="font-size:11.5px">UAV20260819023</span></td><td class="" style=""><div style="white-space:normal;line-height:1.4"><span>DJI M 行业系列</span> <span class="tag" style="color:#c9a2ff;border-color:#c9a2ff55;background:#c9a2ff18" title="射频特征只能匹配到系列级，是线索不是识别结果">射频</span></div>
+          <div title="东营启航科技 · 王磊" style="font-size:11px;color:var(--txt-3);
+            white-space:normal;line-height:1.4;max-height:31px;overflow:hidden;display:-webkit-box;
+            -webkit-line-clamp:2;-webkit-box-orient:vertical">东营启航科技 · 王磊</div></td><td class="" style=""><div style="white-space:normal;line-height:1.5"><span class="tag t-orange" style="white-space:normal;display:inline">未经批准飞行</span></div></td><td class="" style=""><div class="mono" style="font-size:11.5px">08-19 18:37</div><div style="font-size:11px;color:var(--txt-3)">东营区</div></td><td class="" style=""><span class="tag t-amber">待通知</span></td></tr></tbody></table></div><div class="pager" data-pager="">
+      <span>共 26 条</span>
+      <select class="sel" data-size="" style="height:26px"><option selected="">10条/页</option><option>20条/页</option><option>50条/页</option></select>
+      <span class="pg  dis" data-pg="">‹</span><span class="pg on" data-pg="1">1</span><span class="pg " data-pg="2">2</span><span class="pg " data-pg="3">3</span><span class="pg " data-pg="2">›</span>
+      <span>共 3 页</span></div></div></div></section>
+      <section class="panel" style="flex:4;min-width:0"><div class="ph"><h3>案件详情</h3><span class="spacer"></span><span id="pnSt"><span class="tag t-amber">待通知</span></span></div>
+      <div class="pb nopad"><div id="pnDetail" style="flex:1;overflow:auto;padding:12px"><div class="detail-hero detail-hero-auto">
+      <div class="detail-hero-inner">
+        <div class="detail-hero-icon"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3 21 10l-3 3-7-7zM11 6 5 12l4 4 6-6M3 21h10"></path></svg></div>
+        <div class="detail-hero-copy">
+          <div class="detail-hero-eyebrow">处置处罚案件</div>
+          <div class="detail-hero-title" title="DJI Mavic 3">DJI Mavic 3</div>
+          <div class="detail-hero-id mono" title="CF20260826001">CF20260826001</div>
+        </div>
+        <div class="detail-hero-side">
+          
+          <div class="detail-hero-tags"><span class="tag t-amber">待通知</span><span class="tag t-red">非法</span></div>
+          
+          <div class="detail-hero-meta"><span><b>目标</b>UAV20260826030</span><span><b>区域</b>广饶县</span></div>
+        </div>
+      </div>
+    </div>
+      <div class="metric-strip is-compact"><div class="metric-item is-warn"><span class="metric-icon"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"></path></svg></span><span class="metric-copy"><small>通知状态</small><b>待通知</b></span></div><div class="metric-item is-bad"><span class="metric-icon"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4 2.5 20h19zM12 10v4M12 17.5v.5"></path></svg></span><span class="metric-copy"><small>违法类型</small><b>超出空域限高</b></span></div><div class="metric-item is-good"><span class="metric-icon"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h7l2 2h9v11H3z"></path></svg></span><span class="metric-copy"><small>证据数量</small><b>4<em>项</em></b></span></div><div class="metric-item is-warn"><span class="metric-icon"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 20 6v6c0 5-3.4 8-8 9-4.6-1-8-4-8-9V6zM9 12l2 2 4-5"></path></svg></span><span class="metric-copy"><small>处置结果</small><b>待执行</b></span></div></div>
+      <div class="sect detail-sect"><span class="sect-head"><span class="sect-icon"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4 2.5 20h19zM12 10v4M12 17.5v.5"></path></svg></span><span class="sect-title">违法事实</span></span><div class="sect-body"><dl class="kv density-compact kv-surface"><dt class="">目标编号</dt><dd class=" "><span class="mono lnk" data-goto="target">UAV20260826030</span></dd><dt class="">违法类型</dt><dd class=" "><span class="tag t-orange">超出空域限高</span></dd><dt class="">发生时间</dt><dd class=" ">2026-08-26 18:15:00</dd><dt class="">发生区域</dt><dd class=" ">广饶县</dd><dt class="">飞行高度</dt><dd class=" ">287 m</dd><dt class="">飞行速度</dt><dd class=" ">18 m/s</dd><dt class="">机型</dt><dd class=" "><span>DJI Mavic 3</span> <span class="tag" style="color:#8fbaff;border-color:#8fbaff55;background:#8fbaff18" title="型号取自报备信息，非探测识别所得">飞行计划报备</span></dd><dt class="">责任主体</dt><dd class=" ">东营启航科技</dd><dt class="">认定依据</dt><dd class=" ">C01 部分命中飞行计划，C02 认定 超出空域限高；C03 证据充分（来源置信度 0.89，轨迹稳定）</dd></dl></div></div>
+      <div class="sect detail-sect"><span class="sect-head"><span class="sect-icon"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h7l2 2h9v11H3z"></path></svg></span><span class="sect-title">证据链（4 项）</span></span><div class="sect-body"><div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:8px">
+          <div style="height:54px;border:1px solid var(--line);
+            border-radius:4px;background:linear-gradient(135deg,rgba(61,139,255,.22),rgba(4,12,32,.9));
+            display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;cursor:pointer" data-ev="EV20260826001" title="光电录像_CF20260826001_20260826-0944.mp4　51.6MB">
+            <span style="font-size:14px"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h13v12H3zM16 10l5-3v10l-5-3z"></path></svg></span>
+            <span style="font-size:10px;color:var(--txt-2)">光电录像</span>
+          </div><div style="height:54px;border:1px solid var(--line);
+            border-radius:4px;background:linear-gradient(135deg,rgba(61,139,255,.22),rgba(4,12,32,.9));
+            display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;cursor:pointer" data-ev="EV20260826002" title="光电抓拍图_CF20260826001_20260826-0938.jpg　2.4MB">
+            <span style="font-size:14px"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h4l2-3h4l2 3h4v12H4zM12 10a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7z"></path></svg></span>
+            <span style="font-size:10px;color:var(--txt-2)">光电抓拍图</span>
+          </div><div style="height:54px;border:1px solid var(--line);
+            border-radius:4px;background:linear-gradient(135deg,rgba(61,139,255,.22),rgba(4,12,32,.9));
+            display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;cursor:pointer" data-ev="EV20260826003" title="光电录像_CF20260826001_20260826-0932.mp4　77.5MB">
+            <span style="font-size:14px"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h13v12H3zM16 10l5-3v10l-5-3z"></path></svg></span>
+            <span style="font-size:10px;color:var(--txt-2)">光电录像</span>
+          </div><div style="height:54px;border:1px solid var(--line);
+            border-radius:4px;background:linear-gradient(135deg,rgba(61,139,255,.22),rgba(4,12,32,.9));
+            display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;cursor:pointer" data-ev="EV20260826004" title="光电抓拍图_CF20260826001_20260826-1018.jpg　1.6MB">
+            <span style="font-size:14px"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h4l2-3h4l2 3h4v12H4zM12 10a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7z"></path></svg></span>
+            <span style="font-size:10px;color:var(--txt-2)">光电抓拍图</span>
+          </div>
+        </div>
+        
+        <div id="pnTrack" style="height:130px;border:1px solid var(--line-2);border-radius:6px" class="mapwrap"><canvas width="503" height="130"></canvas>
+      <div class="mapctl">
+        <div class="mb" data-z="in" role="button" aria-label="放大"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM8 11h6M11 8v6M16 16l5 5"></path></svg></div><div class="mb" data-z="out" role="button" aria-label="缩小"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM8 11h6M16 16l5 5"></path></svg></div><div class="mb" data-z="fit" role="button" aria-label="复位"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"></path></svg></div>
+      </div>
+      
+      <div class="maptip"></div>
+      <div class="mapscale"><span>≈ 8.9 km</span><div class="bar" style="width: 145px;"></div></div></div></div></div>
+      <div class="sect detail-sect"><span class="sect-head"><span class="sect-icon"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v6H4zM4 13h16v6H4zM7 8h.01M7 16h.01"></path></svg></span><span class="sect-title">关联设备与处置</span></span><div class="sect-body"><dl class="kv density-compact kv-surface"><dt class="">遥控器 SN</dt><dd class=" "><span class="mono">RC2026163110</span></dd><dt class="">发现设备</dt><dd class=" ">广饶县雷达01号</dd><dt class="">处置方式</dt><dd class=" ">已发起反制</dd><dt class="">授权编号</dt><dd class=" "><span class="mono">AUTH202608001</span></dd><dt class="">执行结果</dt><dd class=" ">返航</dd></dl></div></div>
+      <div class="detail-actions is-sticky "><button class="btn pri" data-notify="CF20260826001">通知处罚部门</button></div></div></div></section>
+    </div></div>
+    </div></div>
+    </main>
+  </div>
+</div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<div class="usermenu">
+      <div class="mi" data-um="me"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21a8 8 0 0 1 16 0"></path></svg> 个人信息</div>
+      <div class="mi" data-um="ops"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM4.9 4.9l2.2 2.2M16.9 16.9l2.2 2.2M3 12h3M18 12h3M4.9 19.1l2.2-2.2M16.9 7.1l2.2-2.2M12 3v3M12 18v3"></path></svg> 运维管理</div>
+      <div class="mi" data-um="users"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 20 6v6c0 5-3.4 8-8 9-4.6-1-8-4-8-9V6zM9 12l2 2 4-5"></path></svg> 用户与权限</div>
+      <div class="mi" data-um="carousel"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M8 5v14l11-7z"></path></svg> 大屏轮播</div>
+      <div class="sep"></div>
+      <div class="mi" data-um="logout"><svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="M10 5H4v14h6M14 8l4 4-4 4M8 12h10"></path></svg> 退出登录</div></div></body></html>

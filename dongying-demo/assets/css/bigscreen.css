@@ -1,0 +1,84 @@
+/* ============================================================
+   监控大屏专版（bigscreen.html 专用，独立部署显示）
+   与业务系统同一套视觉词汇：app.css 的 .panel/.kpi/.tb + 主题层
+   （body[data-theme="overview"] 的 page-art 贴图与强调色）全部继承，
+   本文件只做大屏骨架、KPI 放大形态与装饰素材（assets/img/bigscreen/*.svg）。
+   ============================================================ */
+.bs-body{overflow:hidden}
+.bs-root{position:relative;z-index:1;display:flex;flex-direction:column;height:100vh;min-width:1280px;padding:0 14px 14px}
+
+/* ---------- 顶部标题带（沿用 .hdr 的表面与描边语言，标题居中加两翼装饰） ---------- */
+.bs-hdr{
+  flex:none;height:64px;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;
+  margin:0 -14px 12px;padding:0 22px;
+  background:rgba(5,14,26,.94);border-bottom:1px solid var(--line-2);
+  box-shadow:0 8px 24px rgba(0,0,0,.14);backdrop-filter:blur(14px);
+}
+.bs-hdr-l{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--txt-2);white-space:nowrap}
+.bs-hdr-l img{flex:none;object-fit:contain}
+.bs-hdr-t{display:flex;align-items:center;gap:16px;white-space:nowrap}
+.bs-hdr-t span{
+  font-size:25px;font-weight:650;letter-spacing:7px;text-indent:7px;
+  background:linear-gradient(180deg,#f4f9ff 30%,#8fbcff);-webkit-background-clip:text;background-clip:text;color:transparent;
+  text-shadow:0 0 30px rgba(var(--page-accent-rgb,75,156,255),.35);
+}
+/* 两翼装饰：codex 生成的单色 SVG 走 mask，用主题强调色上色；右翼镜像左翼 */
+.bs-wing{
+  width:180px;height:24px;flex:none;
+  background:linear-gradient(90deg,var(--cyan),var(--page-accent,var(--blue)));
+  -webkit-mask:url('../img/bigscreen/title-wing.svg') no-repeat center/contain;
+          mask:url('../img/bigscreen/title-wing.svg') no-repeat center/contain;
+}
+.bs-wing.r{transform:scaleX(-1)}
+.bs-hdr-r{display:flex;align-items:center;justify-content:flex-end;gap:14px;font-size:13px;color:var(--txt-2)}
+#bsClk{font-family:Menlo,Consolas,monospace;font-variant-numeric:tabular-nums}
+.bs-exit{height:28px;padding:0 12px;font-size:12.5px;text-decoration:none}
+
+/* ---------- 三栏骨架 ---------- */
+.bs-grid{flex:1;min-height:0;display:grid;grid-template-columns:23% 1fr 23%;gap:12px}
+.bs-col{display:flex;flex-direction:column;gap:12px;min-width:0;min-height:0}
+.bs-mid{display:flex;flex-direction:column;gap:12px;min-width:0;min-height:0}
+
+/* 面板：完全复用 .panel/.ph 的表面工艺，这里只接管尺寸分配与角标装饰 */
+.bs-col .panel{flex:1;min-height:0}
+.bs-grid .panel>.pb{display:flex;flex-direction:column;overflow:hidden;padding:8px 10px}
+.bs-grid .panel>.pb.bs-tbwrap{padding:0 0 4px}
+.bs-chart{flex:1;min-height:120px}   /* 下限兜底：矮窗口下图表画布不塌扁（评审会话 1280×720 实测判据） */
+#bsVideo{flex:1;min-height:0}
+/* 四角角标：左上/右下两枚（mask 上色 + 旋转），呼应指挥大屏的仪器感 */
+.bs-grid .panel::before,.bs-grid .panel::after{
+  content:"";position:absolute;width:16px;height:16px;pointer-events:none;z-index:2;
+  background:rgba(var(--page-accent-rgb,75,156,255),.75);
+  -webkit-mask:url('../img/bigscreen/panel-corner.svg') no-repeat center/contain;
+          mask:url('../img/bigscreen/panel-corner.svg') no-repeat center/contain;
+}
+.bs-grid .panel::before{top:-1px;left:-1px}
+.bs-grid .panel::after{bottom:-1px;right:-1px;transform:rotate(180deg)}
+
+/* ---------- 中列：KPI 卡（继承主题层 .kpi 的 page-art 贴图工艺，改为大屏居中大数形态） ---------- */
+.bs-kpis{flex:none;display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.bs-kpis .kpi{flex-direction:column;justify-content:center;gap:2px;padding:12px 10px 10px;text-align:center}
+.bs-kpis .kpi .v{
+  font-family:"DIN Alternate","Bahnschrift",Menlo,sans-serif;font-variant-numeric:tabular-nums;
+  font-size:42px;font-weight:700;line-height:1.1;letter-spacing:1px;
+  text-shadow:0 0 22px currentColor;
+}
+/* 雷达发光环底座：codex 素材 mask 上色，跟随各卡的 KPI 色 */
+.bs-kpis .kpi .ring{
+  width:150px;height:40px;margin:-2px auto 2px;background:currentColor;
+  -webkit-mask:url('../img/bigscreen/kpi-ring.svg') no-repeat center/contain;
+          mask:url('../img/bigscreen/kpi-ring.svg') no-repeat center/contain;
+}
+.bs-kpis .kpi .lb{font-size:13.5px;color:var(--txt-2);letter-spacing:3px;text-indent:3px}
+
+.bs-map{
+  flex:1;min-height:0;position:relative;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;
+  box-shadow:var(--shadow-soft),inset 0 0 60px rgba(10,40,110,.22);
+}
+
+/* ---------- 表格：复用 table.tb，大屏关掉行指针（不可点） ---------- */
+.bs-tbwrap .tb{table-layout:fixed}
+.bs-tbwrap .tb tbody tr{cursor:default}
+.bs-tbwrap .tb tbody tr:hover{background:rgba(75,156,255,.06)}
+.bs-tbwrap .tb td{overflow:hidden;text-overflow:ellipsis}
+.bs-tbwrap .tb td.mono{font-family:Menlo,Consolas,monospace;font-size:12px}

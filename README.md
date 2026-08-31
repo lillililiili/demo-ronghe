@@ -79,12 +79,16 @@ bash tools/parity-diff.sh            # 任何 DIFF 都表示 legacy 副本落后
 bash tools/parity-diff.sh     # legacy 副本字节级等价
 node tools/scan.cjs           # 源码合规扫描（含 src/**/*.vue）
 node tools/falsify.cjs        # mock.js 断言证伪（183 条 + 注入捕获）
-node tools/tilecheck.cjs      # 瓦片完整性（瓦片仍读 dongying-demo 原目录）
+node tools/tilecheck.cjs      # 仅审计保留的历史瓦片包（线上地图不调用）
 # tools/overflow.cjs          # 浏览器探针生成器，用法见文件头
 ```
 
-## 瓦片与部署
+## 地图与部署
 
-1.5GB / 32 万张离线瓦片**不复制**：dev 与 preview 由 `vite.config.js` 的中间件把
-`/assets/tiles/**` 转发到 `../dongying-demo/assets/tiles`。生产部署时用反向代理
-或把瓦片目录挂载/复制到站点根的 `assets/tiles/`（勿放进 `public/`，build 会全量复制）。
+地图使用高德 JS API 2.0 在线矢量底图，业务空域、设备、航迹、告警等仍由
+`MapView` 的 Canvas 叠加层绘制。复制 `.env.example` 为 `.env.local` 后配置 Web 端 Key；
+本地开发可配置 `VITE_AMAP_SECURITY_CODE`，生产环境必须配置
+`VITE_AMAP_SERVICE_HOST=/_AMapService` 并按 `deploy/nginx-amap.conf.example` 代理安全密钥。
+
+原 1.5GB / 32 万张离线瓦片仅保留作历史回滚数据，Vite 不再转发、构建不再复制，
+运行时不会产生 `/assets/tiles/**` 请求。`tools/tilecheck.cjs` 仅用于人工审计旧瓦片包。

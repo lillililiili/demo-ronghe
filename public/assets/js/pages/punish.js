@@ -857,8 +857,7 @@
         })] : []
       });
       const t2 = t || { lon: 118.6, lat: 37.45 };
-      setTimeout(() => { if (!map) return;   // 页面已切走时 destroy() 会把 map 置空，延时回调必须自查
-        const q = map.px(t2.lon, t2.lat); map.ox += map.w / 2 - q[0]; map.oy += map.h / 2 - q[1]; }, 30);
+      setTimeout(() => { if (map) map.centerAt(t2.lon, t2.lat); }, 30);
     }
   }
   function paint() {

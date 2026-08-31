@@ -323,22 +323,31 @@ a.btn{text-decoration:none}   /* 顶栏「大屏展示」等以 <a> 承载的按
 .fuse .fc.off{opacity:.5}
 
 /* 地图 */
-.mapwrap{position:relative;width:100%;height:100%;overflow:hidden;border-radius:6px;background:#04122b}
-.mapwrap canvas{position:absolute;inset:0;width:100%;height:100%}
+.mapwrap{position:relative;width:100%;height:100%;overflow:hidden;border-radius:6px;background:#edf2e9}
+.mapwrap>.mapbase{position:absolute;inset:0;z-index:0;background:#edf2e9}
+.mapwrap>canvas.mapoverlay{position:absolute;inset:0;z-index:2;width:100%;height:100%;pointer-events:none}
+.mapstatus{position:absolute;left:50%;top:10px;z-index:4;transform:translateX(-50%);pointer-events:none;
+  padding:5px 10px;border:1px solid rgba(71,91,106,.18);border-radius:5px;background:rgba(255,255,255,.94);
+  color:#415568;font-size:11px;line-height:1.2;white-space:nowrap;box-shadow:0 4px 14px rgba(43,64,78,.14)}
+.mapstatus.is-loading:before{content:'';display:inline-block;width:7px;height:7px;margin-right:6px;border-radius:50%;
+  background:#22d3ee;box-shadow:0 0 8px rgba(34,211,238,.8);animation:map-status-pulse 1.2s ease-in-out infinite}
+.mapstatus.is-fallback{color:#ffd07a;border-color:rgba(255,176,32,.35);background:rgba(38,27,8,.88)}
+@keyframes map-status-pulse{50%{opacity:.35;transform:scale(.75)}}
 .mapctl{position:absolute;left:10px;top:10px;display:flex;flex-direction:column;gap:5px;z-index:5}
-.mapctl .mb{width:28px;height:28px;border-radius:5px;background:rgba(7,18,45,.85);border:1px solid var(--line);
-  color:var(--txt-2);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:14px}
-.mapctl .mb:hover{border-color:var(--blue);color:#fff}
+.mapctl .mb{width:30px;height:30px;border-radius:5px;background:rgba(255,255,255,.96);border:1px solid rgba(61,80,94,.2);
+  color:#334a5d;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:14px;box-shadow:0 2px 8px rgba(39,59,72,.15)}
+.mapctl .mb:hover{border-color:#3484c5;color:#1769a6;background:#fff}
 .mapctl .mb.on{background:var(--blue);color:#fff;border-color:var(--blue)}
-.maplegend{position:absolute;right:10px;bottom:10px;background:rgba(7,18,45,.85);border:1px solid var(--line);
-  border-radius:6px;padding:8px 10px;font-size:11.5px;color:var(--txt-2);z-index:5;line-height:1.9}
+.maplegend{position:absolute;right:10px;bottom:10px;background:rgba(255,255,255,.94);border:1px solid rgba(61,80,94,.2);
+  border-radius:6px;padding:8px 10px;font-size:11.5px;color:#405568;z-index:5;line-height:1.9;box-shadow:0 3px 12px rgba(39,59,72,.14)}
 .maplegend .li{display:flex;align-items:center;gap:6px}
 .maplegend .sw{width:14px;height:0;border-top:2px dashed}
-.maptip{position:absolute;z-index:8;background:rgba(6,16,42,.95);border:1px solid var(--line);border-radius:6px;
-  padding:9px 11px;font-size:12px;pointer-events:none;box-shadow:var(--shadow);display:none;min-width:190px}
+.maptip{position:absolute;z-index:8;background:rgba(255,255,255,.97);border:1px solid rgba(61,80,94,.2);border-radius:6px;
+  padding:9px 11px;font-size:12px;color:#293f51;pointer-events:none;box-shadow:0 8px 24px rgba(39,59,72,.18);display:none;min-width:190px}
+.maptip .kv dt{color:#718394}.maptip .kv dd{color:#293f51}
 .maptip .kv{gap:3px 10px;font-size:12px}
-.mapscale{position:absolute;left:12px;bottom:12px;font-size:11px;color:var(--txt-2);z-index:5}
-.mapscale .bar{height:4px;border:1px solid var(--txt-2);border-top:0;width:70px}
+.mapscale{position:absolute;left:12px;bottom:27px;font-size:11px;color:#405568;text-shadow:0 1px 2px #fff;z-index:5}
+.mapscale .bar{height:4px;border:1px solid #405568;border-top:0;width:70px}
 
 /* 弹窗 */
 .mask{position:fixed;inset:0;background:rgba(2,6,18,.72);z-index:100;display:flex;align-items:center;
@@ -872,9 +881,9 @@ input.ip:focus,select.sel:focus,.search-input:focus-within{border-color:var(--bl
 .steps .st.act .c{background:rgba(75,156,255,.18);border-color:var(--blue);box-shadow:0 0 0 4px rgba(75,156,255,.08)}
 .alarm .a{background:rgba(255,91,97,.055);border-left-color:var(--red);border-radius:6px}
 .alarm .a:hover{background:rgba(255,91,97,.1)}
-.mapwrap{border-radius:6px;background:#071523;box-shadow:inset 0 0 0 1px rgba(125,165,210,.1)}
-.mapctl .mb,.maplegend,.maplayers{background:rgba(7,18,31,.9);border-color:rgba(125,165,210,.18);box-shadow:0 6px 16px rgba(0,0,0,.18)}
-.maptip{background:rgba(8,18,31,.97);border-color:rgba(125,165,210,.22);box-shadow:var(--shadow)}
+.mapwrap{border-radius:6px;background:#edf2e9;box-shadow:inset 0 0 0 1px rgba(65,87,102,.14)}
+.mapctl .mb,.maplegend,.maplayers{background:rgba(255,255,255,.94);border-color:rgba(61,80,94,.2);box-shadow:0 4px 14px rgba(39,59,72,.16)}
+.maptip{background:rgba(255,255,255,.97);border-color:rgba(61,80,94,.2);box-shadow:0 8px 24px rgba(39,59,72,.18)}
 .verdict{border-radius:8px;padding:14px 17px;background:linear-gradient(90deg,rgba(255,91,97,.1),rgba(255,91,97,.015));border-color:rgba(255,91,97,.25)}
 .verdict.ok{background:linear-gradient(90deg,rgba(65,212,154,.1),rgba(65,212,154,.015));border-color:rgba(65,212,154,.24)}
 .verdict.warn{background:linear-gradient(90deg,rgba(241,164,58,.1),rgba(241,164,58,.015));border-color:rgba(241,164,58,.24)}
@@ -1132,11 +1141,12 @@ body[data-page="stats"] .panel{box-shadow:0 7px 20px rgba(0,0,0,.12);border-colo
 /* 选中行左缘加色条：仅底色变化在长列表里不够醒目 */
 table.tb tbody tr.on{box-shadow:inset 3px 0 0 var(--blue)}
 /* 地图图例/图层浮层默认折叠为小条，点标题展开 */
-.maplegend .lg-hd{cursor:pointer;user-select:none;color:var(--txt-2);font-weight:600}
-.maplegend .lg-hd:hover{color:var(--cyan)}
+.maplegend .lg-hd{cursor:pointer;user-select:none;color:#405568;font-weight:600}
+.maplegend .lg-hd:hover{color:#1769a6}
 .maplegend.collapsed .li{display:none}
-.maplayers .lyt{cursor:pointer;user-select:none}
-.maplayers .lyt:hover{color:var(--cyan)}
+.maplayers .lyt{cursor:pointer;user-select:none;color:#607486}
+.maplayers .lyt:hover{color:#1769a6}
+.maplayers label{color:#405568}.maplayers label:hover{color:#1769a6}.maplayers .sub{color:#718394}
 .maplayers.collapsed label,.maplayers.collapsed .sub{display:none}
 .maplayers.collapsed .lyt{margin-bottom:0}
 /* 详情顶部：数据完整性状态条（四档色由内联变量 --integ-c 给出） */

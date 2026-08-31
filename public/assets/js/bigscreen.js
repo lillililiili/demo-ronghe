@@ -50,20 +50,42 @@
     });
   }
 
-  /* ---------- 实时视频：优先取当前正被跟踪的目标 ---------- */
-  let video = null;
-  function paintVideo() {
-    const box = $('bsVideo');
-    if (video) { video.destroy(); box.innerHTML = ''; }
-    const tracked = M.liveTargets.find(x => x.tracked);
-    // safe-default: 无跟踪任务时预览首个实时目标，但标签如实写"预览"、画面不出 LOCK 框，不冒充跟踪
-    const t = tracked || M.liveTargets[0];
+  /* ---------- 实时视频：由地图上的无人机目标按需打开 ---------- */
+  let modalVideo = null;
+  function openVideo(t) {
+    if (!t || t.type !== '无人机') return;
+    if (modalVideo) { modalVideo.destroy(); modalVideo = null; }
+
     const eo = M.devices.find(dv => dv.type === '光电' && dv.status === '在线');
-    $('bsVidSub').textContent = t ? (tracked ? `跟踪目标 ${t.id}` : `预览目标 ${t.id} · 当前无跟踪任务`) : '';
-    video = new EOVideo(box, {
-      height: Math.max(150, box.clientHeight || 200),
-      targetId: t ? t.id : '', device: eo ? eo.name : undefined,
-      locked: !!tracked
+    const tracked = !!t.tracked;
+    const statusText = tracked ? '锁定跟踪中' : '实时预览';
+    const statusClass = tracked ? 'is-tracked' : '';
+    UI.modal({
+      title: `实时视频 · ${t.id}`,
+      width: '780px',
+      footer: false,
+      body: `<div class="bs-video-modal">
+        <div class="bs-video-meta">
+          <span>${eo ? eo.name : '光电设备'} · EO 可见光 · 4K</span>
+          <span class="bs-video-state ${statusClass}"><i></i>${statusText}</span>
+        </div>
+        <div id="bsVideoModal"></div>
+        <div class="bs-video-info">
+          <span>目标编号 <b class="mono">${t.id}</b></span>
+          <span>目标类型 <b>${t.type}</b></span>
+          <span>合法性 <b>${t.legal || '待确认'}</b></span>
+          <span>风险等级 <b>${t.risk || '—'}</b></span>
+        </div>
+      </div>`,
+      mounted: el => {
+        const box = el.querySelector('#bsVideoModal');
+        modalVideo = new EOVideo(box, {
+          height: Math.max(300, Math.min(430, window.innerHeight * .46)),
+          targetId: t.id,
+          device: eo ? eo.name : undefined,
+          locked: tracked
+        });
+      }
     });
   }
 
@@ -93,6 +115,25 @@
     fitRows(tb);
   }
 
+  function paintTargets() {
+    const tb = $('bsTgtTb');
+    const score = { '高风险': 3, '中风险': 2, '低风险': 1 };
+    const list = M.liveTargets.filter(t => t.type === '无人机').slice().sort((a, b) =>
+      Number(!!b.tracked) - Number(!!a.tracked) || (score[b.risk] || 0) - (score[a.risk] || 0) || b.ts - a.ts
+    );
+    $('bsTgtSub').textContent = `实时 ${list.length} 架 · 跟踪 ${list.filter(t => t.tracked).length}`;
+    const riskColor = { '高风险': 'var(--red)', '中风险': 'var(--amber)', '低风险': 'var(--green)' };
+    const stateColor = { '跟踪中': 'var(--cyan)', '处置中': 'var(--amber)', '已处置': 'var(--green)' };
+    tb.innerHTML = `<tr><th style="width:37%">目标编号</th><th style="width:23%">区域</th><th style="width:19%">风险</th><th>状态</th></tr>` +
+      list.map(t => `<tr class="${t.tracked ? 'is-tracked' : ''}">
+        <td class="mono" title="${t.id}">${t.tracked ? '<i class="bs-track-dot"></i>' : ''}${t.id}</td>
+        <td title="${t.district}">${t.district}</td>
+        <td style="color:${riskColor[t.risk] || 'var(--txt-2)'}">${t.risk || '—'}</td>
+        <td style="color:${stateColor[t.status] || 'var(--txt-2)'}">${t.status || '实时'}</td>
+      </tr>`).join('');
+    fitRows(tb);
+  }
+
   function paintAlarms() {
     const tb = $('bsAlmTb');
     const as = M.todayAlarms.slice().sort((a, b) => b.ts - a.ts);
@@ -110,7 +151,22 @@
 
   /* ---------- 中央地图：与综合态势同一取数口径 ---------- */
   function mountMap() {
-    const map = new MapView($('bsMap'), { zoom: 1.06, maxDev: 46, maxAlarm: 8 });
+    const box = $('bsMap');
+    const map = new MapView(box, {
+      zoom: 1.06,
+      maxDev: 46,
+      maxAlarm: 8,
+      onPick: pick => {
+        if (!pick || pick.kind !== 'target' || !pick.data || pick.data.type !== '无人机') return;
+        map.sel = pick.data.id;
+        map.draw();
+        openVideo(pick.data);
+      }
+    });
+    const hint = document.createElement('div');
+    hint.className = 'bs-map-hint';
+    hint.textContent = '点击地图上的无人机查看实时视频';
+    box.appendChild(hint);
     map.setData({
       airspaces: M.airspaces,
       devices: M.devices.filter((d, i) => i % 4 === 0),
@@ -126,17 +182,17 @@
   paintKpis();
   requestAnimationFrame(() => {
     paintCharts();
-    paintVideo();
+    paintTargets();
     paintDevices();
     paintAlarms();
     mountMap();
   });
-  window.addEventListener('load', () => { paintDevices(); paintAlarms(); });
+  window.addEventListener('load', () => { paintTargets(); paintDevices(); paintAlarms(); });
 
-  /* 窗口尺寸变化（拖到大屏、全屏切换）：表格行数与视频高度需重装 */
+  /* 窗口尺寸变化（拖到大屏、全屏切换）：表格行数需重装 */
   let rt = null;
   window.addEventListener('resize', () => {
     clearTimeout(rt);
-    rt = setTimeout(() => { paintVideo(); paintDevices(); paintAlarms(); }, 250);
+    rt = setTimeout(() => { paintTargets(); paintDevices(); paintAlarms(); }, 250);
   });
 })(window);

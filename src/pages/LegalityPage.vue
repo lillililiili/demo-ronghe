@@ -761,9 +761,7 @@ function drawDetailMap() {
   const c = pts.length ? pts[Math.floor(pts.length / 2)] : t;
   const center = () => {
     if (!detMap || !detMap.w) return;
-    const q = detMap.px(c.lon, c.lat);
-    detMap.ox += detMap.w / 2 - q[0];
-    detMap.oy += detMap.h / 2 - q[1];
+    detMap.centerAt(c.lon, c.lat);
   };
   center();
   requestAnimationFrame(center);

@@ -411,8 +411,7 @@
       map.setData({ airspaces: M.airspaces, devices: [st.sel], targets: [], alarms: [] });
       const p = [st.sel.lon, st.sel.lat];
       // 将所选设备居中
-      setTimeout(() => { if (!map) return;   // 页面已切走时 destroy() 会把 map 置空，延时回调必须自查
-        const q = map.px(p[0], p[1]); map.ox += map.w / 2 - q[0]; map.oy += map.h / 2 - q[1]; }, 30);
+      setTimeout(() => { if (map) map.centerAt(p[0], p[1]); }, 30);
     }
   }
   function paint() { document.getElementById('dvList').innerHTML = list(); paintDetail(); }

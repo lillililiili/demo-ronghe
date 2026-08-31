@@ -317,8 +317,7 @@ onMounted(() => {
   map.sel = sel.id;
   selAlarmId = latestAlarmIdOf(sel.id);
   if (ctx && ctx.target && map.w) {
-    const q = map.px(sel.lon, sel.lat);
-    map.ox += map.w / 2 - q[0]; map.oy += map.h / 2 - q[1];
+    map.centerAt(sel.lon, sel.lat);
   }
   refresh();
 
@@ -352,7 +351,7 @@ onMounted(() => {
       almFocus = null;
       applyFilter();
       sel = t; map.sel = t.id;
-      if (map.w) { const q = map.px(t.lon, t.lat); map.ox += map.w / 2 - q[0]; map.oy += map.h / 2 - q[1]; }
+      if (map.w) map.centerAt(t.lon, t.lat);
       refresh();
     }
     else {
@@ -363,8 +362,7 @@ onMounted(() => {
       applyFilter();
       map.sel = ht.id;
       if (map.w && ht.lon != null) {
-        const q = map.px(ht.lon, ht.lat);
-        map.ox += map.w / 2 - q[0]; map.oy += map.h / 2 - q[1];
+        map.centerAt(ht.lon, ht.lat);
       }
       refresh();
       U.toast('已在地图定位 ' + ht.id + '（该目标已离开实时跟踪窗口，显示为告警发生时位置）');

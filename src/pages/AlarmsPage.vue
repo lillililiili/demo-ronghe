@@ -213,9 +213,7 @@ const kindStat = pts => pts.reduce((m, p) => { const k = p.kind || 'meas'; m[k] 
 
 function centerOn(lon, lat) {
   if (!map || !map.w) return;
-  const q = map.px(lon, lat);
-  map.ox += map.w / 2 - q[0];
-  map.oy += map.h / 2 - q[1];
+  map.centerAt(lon, lat);
 }
 
 function focusMap() {
@@ -431,7 +429,7 @@ onMounted(() => {
     else if (k === 'notify') sendModal();
     else if (k === 'verify') verifyModal();
   });
-  document.getElementById('alLoc').onclick = () => { if (map) { map.zoom = 2.2; map.ox = map.oy = 0; } focusMap(); };
+  document.getElementById('alLoc').onclick = () => { if (map) map.resetView(2.2); focusMap(); };
 });
 </script>
 

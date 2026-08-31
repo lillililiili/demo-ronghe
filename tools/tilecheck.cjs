@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /* =============================================================================
- * tools/tilecheck.js —— 本地瓦片完整性校验
+ * tools/tilecheck.js —— 历史离线瓦片包完整性校验（仅供回滚审计）
  *
  * 关键：地图范围 B 从 map.js 实际读取，而不是在本文件里抄一份。
  * 抄一份的话，map.js 改了边界这里不会跟随，校验结果会与实际渲染脱节
@@ -8,7 +8,7 @@
  * ========================================================================== */
 const fs = require('fs'), path = require('path');
 const ROOT = path.join(__dirname, '..', 'public');          // 适配副本：map.js 在 public/ 下
-const TILES = path.join(__dirname, '..', '..', 'dongying-demo', 'assets', 'tiles', 'DongyingTiles', 'AMap', 'roadmap');   // 瓦片仍在旧目录，dev 由 vite 中间件转发
+const TILES = path.join(__dirname, '..', '..', 'dongying-demo', 'assets', 'tiles', 'DongyingTiles', 'AMap', 'roadmap');   // 仅保留在旧目录；当前运行时不读取
 
 /* 从 map.js 解析 B —— 单一事实来源 */
 const src = fs.readFileSync(path.join(ROOT, 'assets', 'js', 'map.js'), 'utf8');
@@ -50,7 +50,8 @@ for (const z of [9, 10, 11, 12, 13, 14, 15, 16, 17]) {
 console.log('─'.repeat(56));
 const miss = totalExp - totalHave;
 console.log(`  合计  ${String(totalExp).padStart(9)} ${String(totalHave).padStart(9)} ${String(miss).padStart(8)}   ${(miss / totalExp * 100).toFixed(2)}%\n`);
-/* map.js 的 TILE_EXTENT 是**实测常量** —— 渲染层靠它夹住瓦片请求范围。
+/* 兼容旧版 map.js 的 TILE_EXTENT 审计。当前在线地图已移除此常量，届时自动跳过。
+   旧版渲染层靠它夹住瓦片请求范围。
    不能从某一级按 2 的幂推算：这个金字塔并非严格嵌套（低层级覆盖略宽），
    推算会在 z14/z17 越界一列，去请求不存在的瓦片，控制台报 404。
    换瓦片包后若忘了重测，渲染层就会按旧范围画 —— 要么少画一块，要么 404。

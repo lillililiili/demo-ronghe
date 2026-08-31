@@ -1254,9 +1254,7 @@
        此时对齐会失效。centerOn 是增量的，重复调用不会叠加偏移。 */
     const center = () => {
       if (!detMap || !detMap.w) return;
-      const q = detMap.px(c.lon, c.lat);
-      detMap.ox += detMap.w / 2 - q[0];
-      detMap.oy += detMap.h / 2 - q[1];
+      detMap.centerAt(c.lon, c.lat);
     };
     center();
     requestAnimationFrame(center);

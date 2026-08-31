@@ -555,8 +555,7 @@
     map.sel = sel.id;
     selAlarmId = latestAlarmIdOf(sel.id);   // 初始高亮与地图默认选中的目标对齐
     if (ctx && ctx.target && map.w) {
-      const q = map.px(sel.lon, sel.lat);
-      map.ox += map.w / 2 - q[0]; map.oy += map.h / 2 - q[1];
+      map.centerAt(sel.lon, sel.lat);
     }
     refresh();
 
@@ -597,7 +596,7 @@
         applyFilter();
         sel = t; map.sel = t.id;
         /* 高亮（脉冲圈+轨迹）只在画布内才看得见：选中即把目标移到地图中心 */
-        if (map.w) { const q = map.px(t.lon, t.lat); map.ox += map.w / 2 - q[0]; map.oy += map.h / 2 - q[1]; }
+        if (map.w) map.centerAt(t.lon, t.lat);
         refresh();
       }
       else {
@@ -616,8 +615,7 @@
         applyFilter();                    // 把它并进地图目标集
         map.sel = ht.id;
         if (map.w && ht.lon != null) {
-          const q = map.px(ht.lon, ht.lat);
-          map.ox += map.w / 2 - q[0]; map.oy += map.h / 2 - q[1];
+          map.centerAt(ht.lon, ht.lat);
         }
         refresh();
         U.toast('已在地图定位 ' + ht.id + '（该目标已离开实时跟踪窗口，显示为告警发生时位置）');
@@ -872,7 +870,7 @@
             targets: [Object.assign({}, t, { tracked: true, track: tr.slice(0, idx + 1), lon: cur.lon, lat: cur.lat, alt: cur.alt })],
             devices: [], alarms: []
           });
-          if (focus) { const q = rmap.px(cur.lon, cur.lat); rmap.ox += rmap.w / 2 - q[0]; rmap.oy += rmap.h / 2 - q[1]; }
+          if (focus) rmap.centerAt(cur.lon, cur.lat);
           slider.value = idx;
           el.querySelector('#rpTime').textContent = M.util.fmtT(new Date(cur.t));
           el.querySelector('#rpInfo').innerHTML =

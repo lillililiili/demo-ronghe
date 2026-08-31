@@ -341,8 +341,7 @@ function paintMap() {
   map._fl = { route: r, hz };
   map.setData({ airspaces: zs.length ? zs : M.airspaces.filter(a => a.status === '生效中'), devices: [], targets: [], alarms: [] });
   const w = r.waypoints[Math.floor(r.waypoints.length / 2)];
-  const q = map.px(w.lon, w.lat);
-  map.ox += map.w / 2 - q[0]; map.oy += map.h / 2 - q[1];
+  map.centerAt(w.lon, w.lat);
   if (rn) rn.textContent = `${r.id} ${r.name}`;
   if (sum) sum.innerHTML = `穿越空域 <b style="color:${forbid.length ? '#ff8b95' : '#cfe0f8'}">${zs.length}</b>`
     + (forbid.length ? `<span style="color:#ff8b95">（含禁止类 ${forbid.length}）</span>` : '')
@@ -358,8 +357,7 @@ function revealHazard(id) {
   if (!e) return;
   const q = map.px(e.lon, e.lat), pad = 60;
   if (q[0] >= pad && q[0] <= map.w - pad && q[1] >= pad && q[1] <= map.h - pad) return;
-  map.ox += map.w / 2 - q[0];
-  map.oy += map.h / 2 - q[1];
+  map.centerAt(e.lon, e.lat);
 }
 
 function paint() {

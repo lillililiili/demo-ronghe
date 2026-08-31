@@ -1,30 +1,63 @@
 /* =============================================================================
- * map.js —— 轻量 Canvas 态势地图（东营）
- * 无外部瓦片依赖，可离线运行；正式版替换为地图瓦片服务接口 /api/v1/map/tile
+ * map.js —— 高德在线矢量底图 + Canvas 业务态势叠加层（东营）
+ * 业务坐标统一保持 WGS-84，仅在高德 API 边界转换为 GCJ-02。
+ * 在线底图不可用时自动降级为内置简化矢量底图，不再读取离线瓦片。
  * ========================================================================== */
 (function (g) {
   'use strict';
-  /* 地图范围对齐本地瓦片的实际覆盖矩形（z12–z17 每列张数一致，矩形完整）。
-     原范围 118.00–119.30 / 36.95–38.20 比瓦片略大，会在西侧与上下边缘露出无图区域
-     （按原范围核算缺 42,738 张，实为边界超出而非瓦片不全）。
-     现取瓦片的严格内接矩形：z12–z17 全级别 0 缺失，且完整覆盖 6 个区县与
-     胜利机场、通航机场、胜利油田中心油库、东营港等全部关键设施。 */
+  /* 东营全域视图范围；业务叠加层与无网降级底图共用。 */
   const B = { lon0: 118.114, lon1: 119.308, lat0: 36.937, lat1: 38.156 };
-  /* 本地高德瓦片根路径（GCJ-02 切片，z2–z17）。离线可用，无外网依赖。 */
-  const TILE_BASE = 'assets/tiles/DongyingTiles/AMap/roadmap/';
-  /* 离线瓦片包每一级的实际覆盖范围 [xMin, xMax, yMin, yMax] —— **实测自瓦片目录**，不是推算。
-     不能从某一级按 2 的幂推导：这个金字塔并非严格嵌套（低层级覆盖略宽于高层级），
-     推出来会在 z14/z17 越界一列，于是去请求不存在的瓦片，控制台报 404 ——
-     演示时对方打开开发者工具就能看见。
-     换瓦片包后此表须重新实测；tools/tilecheck.js 会比对它与磁盘是否一致，漂移即报错。 */
-  const TILE_EXTENT = {
-    2: [3, 3, 1, 1], 3: [6, 6, 3, 3], 4: [13, 13, 6, 6], 5: [26, 26, 12, 12],
-    6: [52, 53, 24, 24], 7: [105, 106, 49, 49], 8: [211, 212, 98, 99],
-    9: [423, 425, 197, 199], 10: [847, 851, 394, 398], 11: [1695, 1702, 788, 797],
-    12: [3391, 3405, 1577, 1595], 13: [6783, 6810, 3155, 3190],
-    14: [13567, 13621, 6310, 6380], 15: [27134, 27243, 12621, 12761],
-    16: [54269, 54487, 25242, 25523], 17: [108539, 108975, 50485, 51046]
-  };
+  const CENTER = [(B.lon0 + B.lon1) / 2, (B.lat0 + B.lat1) / 2];
+  let amapPromise = null;
+
+  function configValue(v) {
+    if (!v || /^%VITE_[A-Z0-9_]+%$/.test(v)) return '';
+    return String(v).trim();
+  }
+
+  function loadScript(src) {
+    return new Promise((resolve, reject) => {
+      const old = document.querySelector(`script[data-amap-loader="${src}"]`);
+      if (old) {
+        old.addEventListener('load', resolve, { once: true });
+        old.addEventListener('error', () => reject(new Error('高德 Loader 加载失败')), { once: true });
+        return;
+      }
+      const s = document.createElement('script');
+      s.src = src; s.async = true; s.dataset.amapLoader = src;
+      s.onload = resolve;
+      s.onerror = () => reject(new Error('高德 Loader 加载失败'));
+      document.head.appendChild(s);
+    });
+  }
+
+  function loadAMap() {
+    if (amapPromise) return amapPromise;
+    const raw = g.__AMAP_CONFIG__ || {};
+    const cfg = {
+      key: configValue(raw.key),
+      securityJsCode: configValue(raw.securityJsCode),
+      serviceHost: configValue(raw.serviceHost)
+    };
+    amapPromise = Promise.resolve().then(() => {
+      if (!cfg.key) throw new Error('未配置高德 Web 端 Key');
+      if (cfg.serviceHost) {
+        g._AMapSecurityConfig = { serviceHost: cfg.serviceHost.replace(/\/$/, '') };
+      } else if (cfg.securityJsCode) {
+        g._AMapSecurityConfig = { securityJsCode: cfg.securityJsCode };
+      } else {
+        throw new Error('未配置高德安全密钥或安全代理');
+      }
+      if (g.AMap) return g.AMap;
+      if (g.AMapLoader) return g.AMapLoader;
+      return loadScript('https://webapi.amap.com/loader.js').then(() => g.AMapLoader);
+    }).then(loaderOrMap => {
+      if (g.AMap) return g.AMap;
+      if (!loaderOrMap || !loaderOrMap.load) throw new Error('高德 Loader 不可用');
+      return loaderOrMap.load({ key: cfg.key, version: '2.0', plugins: [] });
+    });
+    return amapPromise;
+  }
 
   /* 东营地理骨架（简化矢量，仅用于 Demo 视觉参考） */
   const COAST = [[118.02, 38.13], [118.30, 38.17], [118.62, 38.10], [118.90, 38.01], [119.10, 37.87],
@@ -38,14 +71,14 @@
     [[118.52, 36.98], [118.58, 37.30], [118.70, 37.60], [118.86, 37.86]]
   ];
   const LABELS = [
-    { n: '东营市', lon: 118.582, lat: 37.449, s: 15, c: '#dbe9ff' },
-    { n: '河口区', lon: 118.525, lat: 37.886, s: 12, c: '#9fb6d9' },
-    { n: '利津县', lon: 118.256, lat: 37.490, s: 12, c: '#9fb6d9' },
-    { n: '垦利区', lon: 118.548, lat: 37.588, s: 12, c: '#9fb6d9' },
-    { n: '广饶县', lon: 118.407, lat: 37.053, s: 12, c: '#9fb6d9' },
-    { n: '东营港', lon: 118.960, lat: 38.085, s: 11, c: '#9fb6d9' },
-    { n: '渤海', lon: 119.12, lat: 38.05, s: 13, c: '#4c7fbf' },
-    { n: '莱州湾', lon: 119.14, lat: 37.30, s: 12, c: '#4c7fbf' }
+    { n: '东营市', lon: 118.582, lat: 37.449, s: 15, c: '#2f485f' },
+    { n: '河口区', lon: 118.525, lat: 37.886, s: 12, c: '#526b80' },
+    { n: '利津县', lon: 118.256, lat: 37.490, s: 12, c: '#526b80' },
+    { n: '垦利区', lon: 118.548, lat: 37.588, s: 12, c: '#526b80' },
+    { n: '广饶县', lon: 118.407, lat: 37.053, s: 12, c: '#526b80' },
+    { n: '东营港', lon: 118.960, lat: 38.085, s: 11, c: '#526b80' },
+    { n: '渤海', lon: 119.12, lat: 38.05, s: 13, c: '#3e7fa6' },
+    { n: '莱州湾', lon: 119.14, lat: 37.30, s: 12, c: '#3e7fa6' }
   ];
 
   function MapView(box, opt) {
@@ -53,10 +86,9 @@
     this.box = box; this.opt = opt;
     this.data = { airspaces: [], devices: [], targets: [], alarms: [] };
     this.layers = Object.assign({ device: true, track: true, nofly: true, suit: true, limit: true, alarm: true }, opt.layers);
-    /* 瓦片底图（本地高德切片，GCJ-02）。数据仍为 WGS-84，绘制时按 GEO.wgsToPixel 纠偏 */
-    this.tiles = opt.tiles !== false && !!g.GEO;
-    this.tileCache = {}; this.tileZ = 12;
+    this.online = false; this.amap = null; this.AMap = null;
     this.zoom = opt.zoom || 1; this.ox = 0; this.oy = 0; this.t = 0; this.hover = null; this.sel = null;
+    this._pendingCenter = CENTER.slice();
     box.classList.add('mapwrap');
     /* 图例默认折叠成「图例」小条（评审：1280 宽下图例遮挡地图过多），点标题展开。
        opt.legendOpen:true 可保持展开。文案用业务语言，技术编号（A03/A04）移入 title。 */
@@ -72,152 +104,236 @@
           .filter((a, i, arr) => arr.findIndex(x => x.legend === a.legend) === i)
           .map(a => `<div class="li"><span class="sw" style="border-color:${a.color}"></span>${a.legend}</div>`).join('')}
       </div>`;
-    box.innerHTML = `<canvas></canvas>
+    box.innerHTML = `<div class="mapbase"></div><canvas class="mapoverlay"></canvas>
       <div class="mapctl">
         <div class="mb" data-z="in" role="button" aria-label="放大">${g.UI.icon('zoomIn')}</div><div class="mb" data-z="out" role="button" aria-label="缩小">${g.UI.icon('zoomOut')}</div><div class="mb" data-z="fit" role="button" aria-label="复位">${g.UI.icon('expand')}</div>
       </div>
       ${legendHtml}
       <div class="maptip"></div>
-      <div class="mapscale"><span></span><div class="bar"></div></div>`;
+      <div class="mapscale"><span></span><div class="bar"></div></div>
+      <div class="mapstatus is-loading">在线底图加载中…</div>`;
     box.__map = this;          // 便于调试与外部程序化控制
-    this.cv = box.querySelector('canvas');
+    this.baseEl = box.querySelector('.mapbase');
+    this.cv = box.querySelector('.mapoverlay');
     this.ctx = this.cv.getContext('2d');
     this.tip = box.querySelector('.maptip');
+    this.statusEl = box.querySelector('.mapstatus');
     this._bind();
     this._resize();
+    this._initAMap();
     this._loop();
   }
+
+  MapView.prototype._initAMap = function () {
+    loadAMap().then(AMap => {
+      if (this._dead || !this.box.isConnected) return;
+      this.AMap = AMap;
+      const center = g.GEO.wgs84ToGcj02(this._pendingCenter[0], this._pendingCenter[1]);
+      this.amap = new AMap.Map(this.baseEl, {
+        viewMode: '2D',
+        zoom: this._levelForScale(this.zoom),
+        center,
+        // 标准浅色地图保留道路、建筑、水系和 POI 的完整层级。
+        mapStyle: 'amap://styles/normal',
+        features: ['bg', 'road', 'building', 'point'],
+        resizeEnable: true,
+        rotateEnable: false,
+        pitchEnable: false,
+        jogEnable: false,
+        showLabel: true
+      });
+      this.online = true;
+      const redraw = () => this.draw();
+      const syncZoom = () => {
+        const level = this.amap && this.amap.getZoom ? this.amap.getZoom() : this._levelForScale(this.zoom);
+        this.zoom = Math.max(1, Math.min(12, Math.pow(2, level - this._fitLevelForWidth())));
+        this.draw();
+      };
+      this.amap.on('mapmove', redraw);
+      this.amap.on('zoomchange', syncZoom);
+      this.amap.on('resize', redraw);
+      this.amap.on('complete', () => {
+        if (this.statusEl) { this.statusEl.className = 'mapstatus'; this.statusEl.style.display = 'none'; }
+        this.draw();
+      });
+      this.draw();
+    }).catch(err => {
+      if (this._dead) return;
+      this.online = false;
+      if (this.statusEl) {
+        this.statusEl.className = 'mapstatus is-fallback';
+        this.statusEl.textContent = '在线底图不可用，已切换简化地图';
+        this.statusEl.title = err && err.message ? err.message : String(err);
+      }
+      this.draw();
+      if (g.console && console.warn) console.warn('[MapView] 高德在线底图加载失败，使用简化地图：', err);
+    });
+  };
 
   MapView.prototype._bind = function () {
     const self = this;
     this._ro = new ResizeObserver(() => self._resize());
     this._ro.observe(this.box);
-    this.box.addEventListener('click', e => {
-      const lg = e.target.closest('.lg-hd');
+    this._boxClick = e => {
+      const lg = e.target.closest && e.target.closest('.lg-hd');
       if (lg) {
-        const box = lg.closest('.maplegend'), open = box.classList.toggle('collapsed');
+        e.preventDefault(); e.stopPropagation();
+        const box = lg.closest('.maplegend'), closed = box.classList.toggle('collapsed');
         const ar = lg.querySelector('.lg-arrow');
-        if (ar) ar.textContent = open ? '▸' : '▾';
+        if (ar) ar.textContent = closed ? '▸' : '▾';
         return;
       }
-      const z = e.target.closest('[data-z]');
+      const z = e.target.closest && e.target.closest('[data-z]');
       if (z) {
+        e.preventDefault(); e.stopPropagation();
         if (z.dataset.z === 'in') self.setZoom(self.zoom * 1.5);
         else if (z.dataset.z === 'out') self.setZoom(self.zoom / 1.5);
-        else { self.zoom = 1; self.ox = self.oy = 0; self._fitTiles(); self.draw(); }
+        else self.resetView();
         return;
       }
+      if (e.target.closest && e.target.closest('.maplayers,.mapstatus')) return;
       if (self.hover && self.opt.onPick) self.opt.onPick(self.hover);
-    });
-    this.cv.addEventListener('mousemove', e => {
+    };
+    this._boxMove = e => {
       const r = self.cv.getBoundingClientRect();
       self.mx = e.clientX - r.left; self.my = e.clientY - r.top;
       self._hit();
-    });
-    this.cv.addEventListener('mouseleave', () => { self.hover = null; self.tip.style.display = 'none'; });
+    };
+    this._boxLeave = () => {
+      self.hover = null; self.tip.style.display = 'none';
+      if (self.baseEl) self.baseEl.style.cursor = '';
+    };
+    this.box.addEventListener('click', this._boxClick, true);
+    this.box.addEventListener('mousemove', this._boxMove, true);
+    this.box.addEventListener('mouseleave', this._boxLeave);
+
     let drag = null;
-    this.cv.addEventListener('mousedown', e => { drag = { x: e.clientX, y: e.clientY, ox: self.ox, oy: self.oy }; });
-    /* 挂在 window 上的监听器必须留引用，destroy() 时移除。
-       原来只 disconnect 了 ResizeObserver，这两条永远留着 ——
-       设备页每开一次详情就新建一个 MapView，每次漏两个，切多少次漏多少次。 */
+    this._boxDown = e => {
+      if (self.online || e.button !== 0 || (e.target.closest && e.target.closest('.mapctl,.maplegend,.maplayers'))) return;
+      drag = { x: e.clientX, y: e.clientY, ox: self.ox, oy: self.oy };
+    };
+    this._boxWheel = e => {
+      if (self.online) return;
+      e.preventDefault();
+      self.setZoom(self.zoom * (e.deltaY < 0 ? 1.18 : 0.85));
+    };
+    this.box.addEventListener('mousedown', this._boxDown, true);
+    this.box.addEventListener('wheel', this._boxWheel, { passive: false, capture: true });
     this._winUp = () => drag = null;
     window.addEventListener('mouseup', this._winUp);
     this._winMove = e => {
-      if (!drag) return;
+      if (!drag || self.online) return;
       self.ox = drag.ox + (e.clientX - drag.x); self.oy = drag.oy + (e.clientY - drag.y);
       self.draw();
     };
     window.addEventListener('mousemove', this._winMove);
-    this.cv.addEventListener('wheel', e => {
-      e.preventDefault();
-      self.setZoom(self.zoom * (e.deltaY < 0 ? 1.18 : 0.85));
-    }, { passive: false });
   };
 
   MapView.prototype._resize = function () {
     const r = this.box.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
     this.w = r.width; this.h = r.height;
-    this.cv.width = r.width * dpr; this.cv.height = r.height * dpr;
+    this.cv.width = Math.max(1, Math.round(r.width * dpr));
+    this.cv.height = Math.max(1, Math.round(r.height * dpr));
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    this._fitTiles();
+    if (this.amap && this.amap.resize) this.amap.resize();
+    this.draw();
   };
 
-  /* 瓦片模式：Web Mercator 投影 + WGS-84→GCJ-02 纠偏，保证矢量要素与底图严丝合缝。
-     无瓦片模式：沿用原线性投影（矢量示意底图）。 */
-  MapView.prototype.px = function (lon, lat) {
-    if (this.tiles) {
-      const z = this.tileZ;
-      const [pxX, pxY] = g.GEO.wgsToPixel(lon, lat, z);
-      return [pxX - this.originX + this.ox, pxY - this.originY + this.oy];
-    }
-    const sx = this.w / (B.lon1 - B.lon0), sy = this.h / (B.lat1 - B.lat0);
-    const base = Math.min(sx, sy) * this.zoom;
-    const kx = Math.min(sx * this.zoom / base, 1.7);
-    const cx = this.w / 2 + this.ox, cy = this.h / 2 + this.oy;
-    return [cx + (lon - (B.lon0 + B.lon1) / 2) * base * kx, cy - (lat - (B.lat0 + B.lat1) / 2) * base];
-  };
-
-  /* 依据面板尺寸选择瓦片层级，并把东营中心对准画布中心 */
-  MapView.prototype._fitTiles = function () {
-    if (!this.tiles || !this.w) return;
-    // 选择「一屏刚好铺满期望经度跨度」的层级；zoom 越大跨度越小 → 自动选到更高层级
-    const span = (B.lon1 - B.lon0) / this.zoom;
-    let z = 11, best = 1e9;
-    // 下限取 8：窄面板（如 324px 宽的风险页地图）在 z9 一屏覆盖不足东营全域跨度
+  MapView.prototype._fitLevelForWidth = function () {
+    if (!this.w || !g.GEO) return 10;
+    let z = 10, best = Infinity;
     for (let t = 8; t <= 17; t++) {
-      const spanPx = g.GEO.TILE * Math.pow(2, t) * (span / 360);
+      const spanPx = g.GEO.TILE * Math.pow(2, t) * ((B.lon1 - B.lon0) / 360);
       const diff = Math.abs(spanPx - this.w);
       if (diff < best) { best = diff; z = t; }
     }
-    this.tileZ = z;
-    const c = g.GEO.wgsToPixel((B.lon0 + B.lon1) / 2, (B.lat0 + B.lat1) / 2, z);
-    this.originX = c[0] - this.w / 2;
-    this.originY = c[1] - this.h / 2;
-    this.tileCache = this.tileCache || {};
+    return z;
   };
 
-  /* 缩放：以视口中心为锚点，缩放前后中心点对应的地理位置保持不变。
-     瓦片模式下还需重算层级与原点，否则改了 zoom 底图不会跟着变。 */
-  MapView.prototype.setZoom = function (z) {
-    const nz = Math.max(1, Math.min(12, z));
-    if (Math.abs(nz - this.zoom) < 1e-6) return;
-    if (!this.tiles) { this.zoom = nz; return; }
-    // 记录缩放前视口中心的地理坐标
-    const cx = this.w / 2, cy = this.h / 2;
-    const before = this.unpx(cx, cy);
-    this.zoom = nz;
-    this._fitTiles();
-    // 缩放后把该地理坐标重新对准视口中心
-    this.ox = 0; this.oy = 0;
-    const after = this.px(before[0], before[1]);
-    this.ox = cx - after[0]; this.oy = cy - after[1];
-    this.draw();          // 立即重绘：rAF 在标签页不可见时会被暂停
+  MapView.prototype._levelForScale = function (scale) {
+    return Math.max(8, Math.min(18, this._fitLevelForWidth() + Math.log2(Math.max(1, scale))));
   };
 
-  /* 屏幕像素 → WGS-84（px 的逆运算，用于缩放锚点与点击取坐标） */
-  MapView.prototype.unpx = function (sx, sy) {
-    if (!this.tiles) {
-      const kx0 = this.w / (B.lon1 - B.lon0), ky0 = this.h / (B.lat1 - B.lat0);
-      const base = Math.min(kx0, ky0) * this.zoom;
-      const kx = Math.min(kx0 * this.zoom / base, 1.7);
-      const cx = this.w / 2 + this.ox, cy = this.h / 2 + this.oy;
-      return [(sx - cx) / (base * kx) + (B.lon0 + B.lon1) / 2,
-      (B.lat0 + B.lat1) / 2 - (sy - cy) / base];
+  MapView.prototype._fallbackPx = function (lon, lat) {
+    const sx = this.w / (B.lon1 - B.lon0), sy = this.h / (B.lat1 - B.lat0);
+    const base = Math.min(sx, sy) * this.zoom;
+    const kx = Math.min(sx * this.zoom / (base || 1), 1.7);
+    const cx = this.w / 2 + this.ox, cy = this.h / 2 + this.oy;
+    return [cx + (lon - CENTER[0]) * base * kx, cy - (lat - CENTER[1]) * base];
+  };
+
+  /* 业务层始终传 WGS-84；仅调用高德 API 时转换为 GCJ-02。 */
+  MapView.prototype.px = function (lon, lat) {
+    if (this.online && this.amap && this.AMap) {
+      const gcj = g.GEO.wgs84ToGcj02(lon, lat);
+      const p = this.amap.lngLatToContainer(new this.AMap.LngLat(gcj[0], gcj[1]));
+      if (p) return [typeof p.getX === 'function' ? p.getX() : p.x, typeof p.getY === 'function' ? p.getY() : p.y];
     }
-    const z = this.tileZ;
-    const wx = sx - this.ox + this.originX, wy = sy - this.oy + this.originY;
-    const gLon = g.GEO.pixelXToLon(wx, z), gLat = g.GEO.pixelYToLat(wy, z);
-    return g.GEO.gcj02ToWgs84(gLon, gLat);      // 底图是 GCJ-02，换回平台的 WGS-84
+    return this._fallbackPx(lon, lat);
   };
 
-  MapView.prototype.setData = function (d) { Object.assign(this.data, d); return this; };
-  MapView.prototype.setLayer = function (k, v) { this.layers[k] = v; return this; };
+  MapView.prototype.unpx = function (sx, sy) {
+    if (this.online && this.amap && this.AMap) {
+      const p = this.amap.containerToLngLat(new this.AMap.Pixel(sx, sy));
+      if (p) return g.GEO.gcj02ToWgs84(p.getLng(), p.getLat());
+    }
+    const kx0 = this.w / (B.lon1 - B.lon0), ky0 = this.h / (B.lat1 - B.lat0);
+    const base = Math.min(kx0, ky0) * this.zoom;
+    const kx = Math.min(kx0 * this.zoom / (base || 1), 1.7);
+    const cx = this.w / 2 + this.ox, cy = this.h / 2 + this.oy;
+    return [(sx - cx) / (base * kx || 1) + CENTER[0], CENTER[1] - (sy - cy) / (base || 1)];
+  };
+
+  MapView.prototype.setZoom = function (z) {
+    this.zoom = Math.max(1, Math.min(12, z));
+    if (this.online && this.amap) this.amap.setZoom(this._levelForScale(this.zoom));
+    this.draw();
+    return this;
+  };
+
+  MapView.prototype.centerAt = function (lon, lat, options) {
+    if (!Number.isFinite(lon) || !Number.isFinite(lat)) return this;
+    options = options || {};
+    if (Number.isFinite(options.scale)) this.setZoom(options.scale);
+    this._pendingCenter = [lon, lat];
+    if (this.online && this.amap) {
+      this.amap.setCenter(g.GEO.wgs84ToGcj02(lon, lat));
+    } else {
+      const q = this._fallbackPx(lon, lat);
+      this.ox += this.w / 2 - q[0]; this.oy += this.h / 2 - q[1];
+    }
+    this.draw();
+    return this;
+  };
+
+  MapView.prototype.resetView = function (scale) {
+    this.zoom = Math.max(1, Math.min(12, scale == null ? 1 : scale));
+    this.ox = this.oy = 0;
+    this._pendingCenter = CENTER.slice();
+    if (this.online && this.amap) {
+      this.amap.setZoom(this._levelForScale(this.zoom));
+      this.amap.setCenter(g.GEO.wgs84ToGcj02(CENTER[0], CENTER[1]));
+    }
+    this.draw();
+    return this;
+  };
+
+  MapView.prototype.setData = function (d) { Object.assign(this.data, d); this.draw(); return this; };
+  MapView.prototype.setLayer = function (k, v) { this.layers[k] = v; this.draw(); return this; };
   MapView.prototype.destroy = function () {
     this._dead = true;
+    if (this._raf) cancelAnimationFrame(this._raf);
     if (this._ro) this._ro.disconnect();
-    if (this._winUp) { window.removeEventListener('mouseup', this._winUp); this._winUp = null; }
-    if (this._winMove) { window.removeEventListener('mousemove', this._winMove); this._winMove = null; }
+    if (this._boxClick) this.box.removeEventListener('click', this._boxClick, true);
+    if (this._boxMove) this.box.removeEventListener('mousemove', this._boxMove, true);
+    if (this._boxLeave) this.box.removeEventListener('mouseleave', this._boxLeave);
+    if (this._boxDown) this.box.removeEventListener('mousedown', this._boxDown, true);
+    if (this._boxWheel) this.box.removeEventListener('wheel', this._boxWheel, true);
+    if (this._winUp) window.removeEventListener('mouseup', this._winUp);
+    if (this._winMove) window.removeEventListener('mousemove', this._winMove);
+    if (this.amap) { try { this.amap.destroy(); } catch (e) { } this.amap = null; }
+    if (this.box && this.box.__map === this) delete this.box.__map;
   };
 
   MapView.prototype._hit = function () {
@@ -234,16 +350,21 @@
       const tw = this.tip.offsetWidth, th = this.tip.offsetHeight;
       this.tip.style.left = Math.min(this.w - tw - 8, Math.max(8, best.x + 14)) + 'px';
       this.tip.style.top = Math.min(this.h - th - 8, Math.max(8, best.y - th - 10)) + 'px';
-      this.cv.style.cursor = 'pointer';
-    } else { this.tip.style.display = 'none'; this.cv.style.cursor = 'grab'; }
+      if (this.baseEl) this.baseEl.style.cursor = 'pointer';
+    } else {
+      this.tip.style.display = 'none';
+      if (this.baseEl) this.baseEl.style.cursor = '';
+    }
   };
 
   MapView.prototype._loop = function () {
     const self = this;
-    (function f() { if (self._dead || !self.box.isConnected) return; self.t += 1; self.draw(); requestAnimationFrame(f); })();
+    (function f() {
+      if (self._dead || !self.box.isConnected) return;
+      self.t += 1; self.draw(); self._raf = requestAnimationFrame(f);
+    })();
   };
 
-  /* 绘制本地瓦片（{z}/{x}/{y}.png，高德 GCJ-02 切片） */
   /* AOA 方位线：从上报设备射出一条带不确定扇区的射线，末端标「仅方位」。
      长度用固定像素而非真实距离 —— AOA 给不出距离，画一条有确定长度的线同样是编。 */
   MapView.prototype._drawBearing = function (c, t, P, col) {
@@ -268,51 +389,7 @@
     c.restore();
   };
 
-  MapView.prototype._drawTiles = function (c, W, H) {
-    const z = this.tileZ, T = g.GEO.TILE;
-    c.fillStyle = '#0d1a2e'; c.fillRect(0, 0, W, H);
-    /* 取瓦片范围必须与绘制位置用同一套偏移：绘制时 dx = x*T - originX + ox，
-       所以可视区对应的世界像素范围是 [originX-ox, originX-ox+W]。
-       若此处漏掉 ox/oy，取来的瓦片会被画到视口外——请求全部 200 OK 却什么都看不到。 */
-    let x0 = Math.floor((this.originX - this.ox) / T), x1 = Math.floor((this.originX - this.ox + W) / T);
-    let y0 = Math.floor((this.originY - this.oy) / T), y1 = Math.floor((this.originY - this.oy + H) / T);
-    // 夹到离线包实际覆盖范围内：越界的瓦片不存在，发出去只会拿回 404
-    const cov = TILE_EXTENT[z];
-    if (cov) { x0 = Math.max(x0, cov[0]); x1 = Math.min(x1, cov[1]);
-      y0 = Math.max(y0, cov[2]); y1 = Math.min(y1, cov[3]); }
-    const self = this;
-    let pending = 0;
-    for (let x = x0; x <= x1; x++) {
-      for (let y = y0; y <= y1; y++) {
-        const key = z + '/' + x + '/' + y;
-        let img = this.tileCache[key];
-        if (img === undefined) {
-          img = new Image();
-          img.onload = () => { self.tileCache[key] = img; };
-          img.onerror = () => { self.tileCache[key] = null; };   // 越界瓦片：记 null 不重复请求
-          img.src = TILE_BASE + key + '.png';
-          this.tileCache[key] = img;
-          pending++;
-          continue;
-        }
-        if (!img || !img.complete || !img.naturalWidth) { pending++; continue; }
-        const dx = x * T - this.originX + this.ox, dy = y * T - this.originY + this.oy;
-        c.drawImage(img, dx, dy, T, T);
-      }
-    }
-    /* 深色主题适配：保留蓝色基调，但适当减轻压暗，让路网与地名更清楚。 */
-    c.globalCompositeOperation = 'multiply';
-    c.fillStyle = 'rgba(5,20,39,.40)'; c.fillRect(0, 0, W, H);
-    c.globalCompositeOperation = 'color';
-    c.fillStyle = 'hsl(211,52%,29%)'; c.fillRect(0, 0, W, H);
-    c.globalCompositeOperation = 'source-over';
-    if (pending) {
-      c.font = '11px "PingFang SC"'; c.fillStyle = 'rgba(159,182,217,.7)'; c.textAlign = 'left';
-      c.fillText('瓦片加载中…', 12, H - 12);
-    }
-  };
-
-  /* 瓦片模式下的叠加层（空域/设备/轨迹/告警），与矢量模式共用同一套绘制逻辑 */
+  /* 空域/设备/轨迹/告警始终由业务 Canvas 绘制。 */
   MapView.prototype._drawOverlays = function (c, W, H) {
     this._paintLayers(c, W, H);
   };
@@ -323,43 +400,42 @@
     const P = (a, b) => this.px(a, b);
     c.clearRect(0, 0, W, H);
 
-    /* ---- 底图 ---- */
-    if (this.tiles) { this._drawTiles(c, W, H); }
-    else {
-      const gr = c.createLinearGradient(0, 0, 0, H);
-      gr.addColorStop(0, '#0a1d3b'); gr.addColorStop(1, '#06162a');
-      c.fillStyle = gr; c.fillRect(0, 0, W, H);
-    }
-    if (this.tiles) { this._drawOverlays(c, W, H); return; }
+    /* 在线时底图由下层高德容器渲染；Canvas 只画业务叠加层。 */
+    if (this.online && this.amap) { this._drawOverlays(c, W, H); return; }
+
+    /* 无网/无 Key 降级底图：保持业务可操作，但不读取任何离线瓦片。 */
+    const gr = c.createLinearGradient(0, 0, 0, H);
+    gr.addColorStop(0, '#f5f1e8'); gr.addColorStop(1, '#edf2e6');
+    c.fillStyle = gr; c.fillRect(0, 0, W, H);
 
     /* 海域 */
     c.beginPath();
     COAST.forEach((p, i) => { const q = P(p[0], p[1]); i ? c.lineTo(q[0], q[1]) : c.moveTo(q[0], q[1]); });
     const e1 = P(B.lon1 + 1, B.lat0 - 1), e2 = P(B.lon1 + 1, B.lat1 + 1);
     c.lineTo(e1[0], e1[1]); c.lineTo(e2[0], e2[1]); c.closePath();
-    c.fillStyle = 'rgba(12,54,101,.75)'; c.fill();
-    c.strokeStyle = 'rgba(90,170,230,.5)'; c.lineWidth = 1.2; c.stroke();
+    c.fillStyle = '#b9dce8'; c.fill();
+    c.strokeStyle = 'rgba(88,151,178,.62)'; c.lineWidth = 1.2; c.stroke();
 
     /* 经纬网 */
-    c.strokeStyle = 'rgba(64,158,255,.07)'; c.lineWidth = 1;
+    c.strokeStyle = 'rgba(91,116,126,.10)'; c.lineWidth = 1;
     for (let lo = 118.0; lo <= 119.3; lo += 0.1) { const a = P(lo, B.lat0), b = P(lo, B.lat1); c.beginPath(); c.moveTo(a[0], a[1]); c.lineTo(b[0], b[1]); c.stroke(); }
     for (let la = 37.0; la <= 38.2; la += 0.1) { const a = P(B.lon0, la), b = P(B.lon1, la); c.beginPath(); c.moveTo(a[0], a[1]); c.lineTo(b[0], b[1]); c.stroke(); }
 
     /* 道路 */
-    c.strokeStyle = 'rgba(120,160,210,.22)'; c.lineWidth = 1.4;
+    c.strokeStyle = 'rgba(196,155,105,.62)'; c.lineWidth = 2.2;
     ROADS.forEach(r => { c.beginPath(); r.forEach((p, i) => { const q = P(p[0], p[1]); i ? c.lineTo(q[0], q[1]) : c.moveTo(q[0], q[1]); }); c.stroke(); });
 
     /* 黄河 */
-    c.strokeStyle = 'rgba(94,168,235,.55)'; c.lineWidth = 2.6; c.lineCap = 'round';
+    c.strokeStyle = 'rgba(84,157,187,.72)'; c.lineWidth = 2.6; c.lineCap = 'round';
     c.beginPath(); RIVER.forEach((p, i) => { const q = P(p[0], p[1]); i ? c.lineTo(q[0], q[1]) : c.moveTo(q[0], q[1]); }); c.stroke();
-    c.strokeStyle = 'rgba(140,210,255,.25)'; c.lineWidth = 6; c.stroke();
+    c.strokeStyle = 'rgba(168,218,232,.65)'; c.lineWidth = 6; c.stroke();
 
     /* 地名 */
     c.textAlign = 'center'; c.textBaseline = 'middle';
     LABELS.forEach(l => {
       const q = P(l.lon, l.lat);
       c.font = `${l.s}px "PingFang SC",sans-serif`;
-      c.fillStyle = 'rgba(0,0,0,.55)'; c.fillText(l.n, q[0] + 1, q[1] + 1);
+      c.strokeStyle = 'rgba(255,255,255,.94)'; c.lineWidth = 4; c.strokeText(l.n, q[0], q[1]);
       c.fillStyle = l.c; c.fillText(l.n, q[0], q[1]);
     });
 
@@ -377,27 +453,39 @@
       const key = (window.MOCK && window.MOCK.airspaceType) ? window.MOCK.airspaceType(a.type).layer
         : (a.type === '禁飞空域' ? 'nofly' : a.type === '适飞空域' ? 'suit' : 'limit');
       if (!this.layers[key]) return;
+      // 高亮色适合暗色底图，在浅色底图上用同色相深色保持可读性。
+      const ink = ({
+        '#ff4d5e': '#d52d42', '#2fd06e': '#16864f', '#ffb020': '#b97600',
+        '#3d8bff': '#2c66bb', '#a97bff': '#7545c7', '#8ca0be': '#5f7189'
+      })[String(a.color).toLowerCase()] || a.color;
       c.beginPath();
       a.poly.forEach((p, i) => { const q = P(p[0], p[1]); i ? c.lineTo(q[0], q[1]) : c.moveTo(q[0], q[1]); });
       c.closePath();
-      c.fillStyle = a.color + '22'; c.fill();
-      c.setLineDash([7, 5]); c.lineWidth = 1.6; c.strokeStyle = a.color; c.stroke(); c.setLineDash([]);
-      // 斜线填充
-      c.save(); c.clip();
-      c.strokeStyle = a.color + '33'; c.lineWidth = 1;
-      const bb = a.poly.reduce((m, p) => { const q = P(p[0], p[1]); return [Math.min(m[0], q[0]), Math.min(m[1], q[1]), Math.max(m[2], q[0]), Math.max(m[3], q[1])]; }, [1e9, 1e9, -1e9, -1e9]);
-      for (let x = bb[0] - (bb[3] - bb[1]); x < bb[2]; x += 8) { c.beginPath(); c.moveTo(x, bb[1]); c.lineTo(x + (bb[3] - bb[1]), bb[3]); c.stroke(); }
-      c.restore();
+      c.fillStyle = a.color + '14'; c.fill();
+      c.setLineDash([6, 4]); c.lineWidth = 1.35; c.strokeStyle = ink + 'd9'; c.stroke(); c.setLineDash([]);
+      // 仅禁飞区保留稀疏纹理作为强语义，其他类型让出底图细节。
+      if (key === 'nofly') {
+        c.save(); c.clip();
+        c.strokeStyle = ink + '1f'; c.lineWidth = .8;
+        const bb = a.poly.reduce((m, p) => { const q = P(p[0], p[1]); return [Math.min(m[0], q[0]), Math.min(m[1], q[1]), Math.max(m[2], q[0]), Math.max(m[3], q[1])]; }, [1e9, 1e9, -1e9, -1e9]);
+        for (let x = bb[0] - (bb[3] - bb[1]); x < bb[2]; x += 15) { c.beginPath(); c.moveTo(x, bb[1]); c.lineTo(x + (bb[3] - bb[1]), bb[3]); c.stroke(); }
+        c.restore();
+      }
       const ctr = P(a.center.lon, a.center.lat);
       if (this.opt.showAirspaceLabels !== false) {
-        c.font = '12px "PingFang SC"'; c.fillStyle = a.color; c.textAlign = 'center';
-        c.fillText(a.type, ctr[0], ctr[1] - 7);
-        c.font = '10.5px Menlo'; c.fillStyle = a.color + 'cc';
-        c.fillText(a.id + (a.limit ? ' · ' + a.limitTx : ''), ctr[0], ctr[1] + 8);
+        c.textAlign = 'center';
+        c.font = '600 12px "PingFang SC"';
+        c.strokeStyle = 'rgba(255,255,255,.94)'; c.lineWidth = 4;
+        c.strokeText(a.type, ctr[0], ctr[1] - 7);
+        c.fillStyle = ink; c.fillText(a.type, ctr[0], ctr[1] - 7);
+        c.font = '10.5px Menlo';
+        const airTx = a.id + (a.limit ? ' · ' + a.limitTx : '');
+        c.strokeText(airTx, ctr[0], ctr[1] + 8);
+        c.fillStyle = ink; c.fillText(airTx, ctr[0], ctr[1] + 8);
       }
       picks.push({
         x: ctr[0], y: ctr[1], kind: 'airspace', data: a,
-        tip: `<b style="color:${a.color}">${a.name}</b><dl class="kv" style="margin-top:6px">
+        tip: `<b style="color:${ink}">${a.name}</b><dl class="kv" style="margin-top:6px">
           <dt>编号</dt><dd>${a.id}</dd><dt>类型</dt><dd>${a.type}</dd>
           <dt>限高</dt><dd>${a.limitTx}</dd><dt>管理单位</dt><dd>${a.unit}</dd></dl>`
       });
@@ -408,9 +496,10 @@
       (this.data.devices || []).slice(0, this.opt.maxDev || 90).forEach(d => {
         const q = P(d.lon, d.lat);
         if (q[0] < -20 || q[0] > W + 20 || q[1] < -20 || q[1] > H + 20) return;
-        const col = d.status === '在线' ? (d.alarm ? '#ffb020' : '#22d3ee') : d.status === '离线' ? '#8ca0be' : '#ff4d5e';
-        c.beginPath(); c.arc(q[0], q[1], 2.8, 0, 7); c.fillStyle = col; c.fill();
-        c.beginPath(); c.arc(q[0], q[1], 5.4, 0, 7); c.strokeStyle = col + '55'; c.lineWidth = 1; c.stroke();
+        const col = d.status === '在线' ? (d.alarm ? '#d97706' : '#008fb3') : d.status === '离线' ? '#64748b' : '#dc2638';
+        c.beginPath(); c.arc(q[0], q[1], 4.4, 0, 7); c.fillStyle = 'rgba(255,255,255,.9)'; c.fill();
+        c.beginPath(); c.arc(q[0], q[1], 2.35, 0, 7); c.fillStyle = col; c.fill();
+        c.beginPath(); c.arc(q[0], q[1], 5.2, 0, 7); c.strokeStyle = col + '70'; c.lineWidth = .9; c.stroke();
         if (d.alarm) {
           const r = 7 + (this.t % 60) / 60 * 9;
           c.beginPath(); c.arc(q[0], q[1], r, 0, 7);

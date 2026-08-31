@@ -412,9 +412,7 @@
      东西两头的事件会落在画布外。所以选中事件时把地图移过去，保证"选中即看得见"。 */
   function centerOn(r) {
     if (!map || !map.w || !r) return;
-    const q = map.px(r.lon, r.lat);
-    map.ox += map.w / 2 - q[0];
-    map.oy += map.h / 2 - q[1];
+    map.centerAt(r.lon, r.lat);
   }
 
   function paint() {

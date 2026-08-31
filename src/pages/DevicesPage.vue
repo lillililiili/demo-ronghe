@@ -267,8 +267,7 @@ function paintDetail() {
     map = new window.MapView(el, { zoom: 2.4, maxDev: 30, layers: { track: false, alarm: false }, legend: false });
     map.setData({ airspaces: M.airspaces, devices: [st.sel], targets: [], alarms: [] });
     const p = [st.sel.lon, st.sel.lat];
-    setTimeout(() => { if (!map) return;
-      const q = map.px(p[0], p[1]); map.ox += map.w / 2 - q[0]; map.oy += map.h / 2 - q[1]; }, 30);
+    setTimeout(() => { if (map) map.centerAt(p[0], p[1]); }, 30);
   }
 }
 function paint() { document.getElementById('dvList').innerHTML = list(); paintDetail(); }

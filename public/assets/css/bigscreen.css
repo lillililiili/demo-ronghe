@@ -75,6 +75,36 @@
   flex:1;min-height:0;position:relative;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;
   box-shadow:var(--shadow-soft),inset 0 0 60px rgba(10,40,110,.22);
 }
+.bs-map-hint{
+  position:absolute;z-index:7;left:50%;top:10px;transform:translateX(-50%);pointer-events:none;
+  padding:6px 12px;border:1px solid rgba(75,156,255,.28);border-radius:5px;
+  background:rgba(5,14,26,.82);box-shadow:0 4px 16px rgba(0,0,0,.18);
+  color:var(--txt-2);font-size:12px;letter-spacing:.5px;white-space:nowrap;
+}
+
+/* ---------- 左列：重点目标动态 ---------- */
+.bs-target-tb tr.is-tracked{background:rgba(34,211,238,.07)}
+.bs-target-tb tr.is-tracked td:first-child{color:#a9f3ff}
+.bs-target-tb td{white-space:nowrap}
+.bs-track-dot{
+  display:inline-block;width:6px;height:6px;margin-right:6px;border-radius:50%;vertical-align:1px;
+  background:var(--cyan);box-shadow:0 0 8px var(--cyan);
+}
+
+/* ---------- 地图无人机实时视频弹窗 ---------- */
+.bs-video-modal{display:flex;flex-direction:column;gap:10px}
+.bs-video-meta,.bs-video-info{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.bs-video-meta{color:var(--txt-2);font-size:12.5px}
+.bs-video-state{display:inline-flex;align-items:center;gap:6px;color:var(--cyan)}
+.bs-video-state i{width:7px;height:7px;border-radius:50%;background:currentColor;box-shadow:0 0 8px currentColor}
+.bs-video-state.is-tracked{color:var(--green)}
+#bsVideoModal{width:100%;min-height:300px}
+.bs-video-info{
+  flex-wrap:wrap;justify-content:flex-start;padding:10px 12px;border:1px solid var(--line-2);border-radius:6px;
+  background:rgba(6,18,35,.55);color:var(--txt-3);font-size:12px;
+}
+.bs-video-info span{min-width:calc(25% - 12px)}
+.bs-video-info b{margin-left:5px;color:var(--txt-2);font-weight:500}
 
 /* ---------- 表格：复用 table.tb，大屏关掉行指针（不可点） ---------- */
 .bs-tbwrap .tb{table-layout:fixed}

@@ -10,8 +10,9 @@
  * ========================================================================== */
 const fs = require('fs'), path = require('path');
 
-const ROOT = path.join(__dirname, '..', 'dongying-demo');   // tools 已移出服务根，故多一层
-const SRC = path.join(ROOT, 'assets', 'js');
+const ROOT = path.join(__dirname, '..');                    // dongying-vue 根（适配副本：legacy 在 public/ 下）
+const SRC = path.join(ROOT, 'public', 'assets', 'js');
+const VUESRC = path.join(ROOT, 'src');
 
 /* 收集待扫描文件：assets/js/**\/*.js，排除 vendor 与本脚本 */
 function collect(dir, out = []) {
@@ -19,11 +20,11 @@ function collect(dir, out = []) {
     const f = path.join(dir, name);
     const st = fs.statSync(f);
     if (st.isDirectory()) { if (name !== 'vendor') collect(f, out); }
-    else if (name.endsWith('.js')) out.push(f);
+    else if (name.endsWith('.js') || name.endsWith('.vue')) out.push(f);
   }
   return out;
 }
-const FILES = collect(SRC).concat([path.join(ROOT, 'index.html')]);
+const FILES = collect(SRC).concat(collect(VUESRC)).concat([path.join(ROOT, 'index.html')]);
 
 /* ---- 规则：每条含 名称 / 正则 / 说明 / 白名单(允许出现的上下文) ---- */
 const RULES = [

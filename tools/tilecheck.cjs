@@ -7,8 +7,8 @@
  * （本轮就发生过：边界对齐后按旧值仍报 35,570 张缺失）。
  * ========================================================================== */
 const fs = require('fs'), path = require('path');
-const ROOT = path.join(__dirname, '..', 'dongying-demo');   // tools 已移出服务根，故多一层
-const TILES = path.join(ROOT, 'assets', 'tiles', 'DongyingTiles', 'AMap', 'roadmap');
+const ROOT = path.join(__dirname, '..', 'public');          // 适配副本：map.js 在 public/ 下
+const TILES = path.join(__dirname, '..', '..', 'dongying-demo', 'assets', 'tiles', 'DongyingTiles', 'AMap', 'roadmap');   // 瓦片仍在旧目录，dev 由 vite 中间件转发
 
 /* 从 map.js 解析 B —— 单一事实来源 */
 const src = fs.readFileSync(path.join(ROOT, 'assets', 'js', 'map.js'), 'utf8');

@@ -33,9 +33,9 @@ const VERBOSE = process.argv.includes('--verbose');
 const C = { r: '\x1b[31m', g: '\x1b[32m', y: '\x1b[33m', d: '\x1b[90m', b: '\x1b[1m', x: '\x1b[0m' };
 
 function load() {
-  delete require.cache[require.resolve('../dongying-demo/assets/js/mock.js')];
+  delete require.cache[require.resolve('../public/assets/js/mock.js')];
   global.window = {};
-  require('../dongying-demo/assets/js/mock.js');
+  require('../public/assets/js/mock.js');
   return global.window.MOCK;
 }
 
@@ -302,7 +302,7 @@ const INJECTIONS = [
    一个把好断言也标红的筛子，最后的结果是没人看它 —— 这正是我们在治的病。 */
 function staticScreen() {
   const fs = require('fs');
-  const src = fs.readFileSync(path.join(__dirname, '../dongying-demo/assets/js/mock.js'), 'utf8');
+  const src = fs.readFileSync(path.join(__dirname, '../public/assets/js/mock.js'), 'utf8');
   const sc = src.indexOf('function selfCheck');
   const body = src.slice(sc);
   const build = src.slice(0, sc);                       // 数据构造区（selfCheck 之前）

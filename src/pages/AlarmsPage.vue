@@ -15,15 +15,22 @@ export default {};
    U.regParams F0605 参数登记）仍由 legacy script 执行，这里不重复。
    地图（MapView）在 onUnmounted 销毁；usePageChrome 先注册，故卸载顺序
    与旧版 route() 一致：CH.disposeAll → map.destroy → closeModal。 */
-import { ref, onMounted, onUnmounted } from 'vue';
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue';
+import { NPagination } from 'naive-ui';
 import { usePageChrome } from '../shell/usePageChrome.js';
 import UPanel from '../ui/UPanel.vue';
 import UKpis from '../ui/UKpis.vue';
+import { toast } from '../ui/nv.js';
+import { openModal, closeModal } from '../ui/modal.js';
 
 const M = window.MOCK, U = window.UI, CH = window.CH;
 usePageChrome('alarms');
 const root = ref(null);
-const st = S.st;
+/* reactive 代理同一份模块级状态：n-pagination 的 :page/:page-size 需要响应式，
+   底层对象仍是 S.st，跨导航记忆不变 */
+const st = reactive(S.st);
+const totalCount = ref(0);
+const pageCount = computed(() => Math.max(1, Math.ceil(totalCount.value / st.size)));
 let map = null;
 onUnmounted(() => { if (map) map.destroy(); map = null; });
 
@@ -97,6 +104,7 @@ const mapBody = `<div id="alMap" style="flex:1;min-height:0"></div>
 
 function list() {
   const all = rows(), page = all.slice((st.page - 1) * st.size, st.page * st.size);
+  totalCount.value = all.length;
   return U.table([
     {
       t: sortTh('ts', '告警编号 / 时间'), w: '108px', cls: 'num',
@@ -112,8 +120,7 @@ function list() {
         max-height:34px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">${a.detail}</div>`
     },
     { t: sortTh('status', '状态'), w: '86px', render: a => U.tag(statusOf(a)) }
-  ], page, { rowId: a => a.id, activeId: st.sel && st.sel.id })
-    + U.pager({ total: all.length, page: st.page, size: st.size });
+  ], page, { rowId: a => a.id, activeId: st.sel && st.sel.id });
 }
 
 function disposalSteps(a) {
@@ -265,7 +272,7 @@ function startInterference(a) {
   a.interferenceStartedAt = M.util.fmtDT(M.CONF.demoTime);
   M.pushAudit('异常告警中心', `联动反制授权通过（${from} → 干扰中）`, a.targetId);
   remount();
-  U.toast('已发起反制信号干扰，请进入处置与处罚页面来处置。', 'ok');
+  toast('已发起反制信号干扰，请进入处置与处罚页面来处置。', 'ok');
   setTimeout(() => {
     a.flowStatus = '待处置';
     a.interferenceFinishedAt = M.util.fmtDT(new Date(M.CONF.demoTime.getTime() + 3000));
@@ -277,9 +284,9 @@ function startInterference(a) {
 function verifyModal() {
   const a = st.sel;
   if (!a) return;
-  if (statusOf(a) !== '待核实') return U.toast('当前告警无需重复核实', 'err');
+  if (statusOf(a) !== '待核实') return toast('当前告警无需重复核实', 'err');
   const t = M.allTargets.find(x => x.id === a.targetId) || {};
-  U.modal({
+  openModal({
     title: '人工核实 · ' + a.id, width: '600px',
     body: `<div class="warnbox">核实是状态机的必经环节（待核实 → 反制中 / 误报）。
         结论为「误报」时告警进入终态，样本计入误报率统计与 C06 规则优化；
@@ -307,7 +314,7 @@ function verifyModal() {
           ipt.style.borderColor = 'var(--red, #ff4d5e)';
           ipt.focus();
           ipt.oninput = () => { ipt.style.borderColor = ''; ipt.oninput = null; };
-          U.toast('核实说明为必填 —— 状态变更必须能回答"依据是什么"', 'err'); return;
+          toast('核实说明为必填 —— 状态变更必须能回答"依据是什么"', 'err'); return;
         }
         const real = el.querySelector('[data-vf="true"]').checked;
         const u = M.currentUser || { name: '值班员', roleName: '值班员' };
@@ -323,9 +330,9 @@ function verifyModal() {
           module: '异常告警中心', action: `人工核实：${real ? '属实' : '误报'}（${from} → ${a.flowStatus}）：${note}`,
           target: a.targetId, result: '成功', ip: '10.20.6.31', term: '终端-01'
         });
-        U.closeModal();
+        closeModal();
         remount();
-        U.toast(`核实完成：${from} → ${a.flowStatus}${real ? '' : '（流程在人工核实节点终止）'}`, real ? 'ok' : '');
+        toast(`核实完成：${from} → ${a.flowStatus}${real ? '' : '（流程在人工核实节点终止）'}`, real ? 'ok' : '');
       }
     }
   });
@@ -334,7 +341,7 @@ function verifyModal() {
 function sendModal() {
   const a = st.sel;
   const on = M.notifyChannels.filter(c2 => c2.on);
-  U.modal({
+  openModal({
     title: '发送告警通知 · ' + a.id, width: '620px',
     body: `${U.kv([['告警', `${a.type}（${U.tag(a.level, a.level === '高' ? 't-red' : 't-amber')}）`],
     ['关联目标', `<span class="mono">${a.targetId}</span>`], ['区域', a.district], ['时间', a.time]])}
@@ -350,7 +357,7 @@ function sendModal() {
       send: el => {
         const picked = [...el.querySelectorAll('[data-nc]')].filter(x => x.checked)
           .map(x => M.notifyChannels.find(c2 => c2.id === x.dataset.nc));
-        if (!picked.length) return U.toast('请至少选择一个渠道', 'err');
+        if (!picked.length) return toast('请至少选择一个渠道', 'err');
         a.notifyLog = a.notifyLog || [];
         const now = M.util.fmtDT(M.CONF.demoTime);
         const lines = picked.map(c2 => {
@@ -366,11 +373,14 @@ function sendModal() {
           `<div style="font-size:12.5px;color:#9ec6ff;margin-bottom:4px">发送结果</div>${lines}`;
         document.getElementById('alDetail').innerHTML = detail();
         const okN = picked.filter(c2 => c2.ready).length;
-        U.toast(`通知已发送：${okN} 个渠道送达，${picked.length - okN} 个为预留接口未外发`, okN ? 'ok' : 'err');
+        toast(`通知已发送：${okN} 个渠道送达，${picked.length - okN} 个为预留接口未外发`, okN ? 'ok' : 'err');
       }
     }
   });
 }
+
+function onPage(p2) { st.page = p2; paint(); }
+function onPageSize(s2) { st.size = s2; st.page = 1; paint(); }
 
 onMounted(() => {
   const view = root.value;
@@ -391,8 +401,7 @@ onMounted(() => {
     document.getElementById('alDetail').innerHTML = detail();
     focusMap();
   });
-  U.on(view, '[data-pg]', 'click', (e, el) => { if (el.dataset.pg) { st.page = +el.dataset.pg; paint(); } });
-  U.on(view, '[data-size]', 'change', (e, el) => { st.size = parseInt(el.value); st.page = 1; paint(); });
+  /* 分页交互已由模板层 <n-pagination> 受控接管（P2），[data-pg]/[data-size] 委托删除 */
   U.on(view, '[data-f]', 'change', (e, el) => { st[el.dataset.f] = el.value; st.page = 1; paint(); });
   const doSort = key => {
     if (st.sort === key) st.dir = -st.dir;
@@ -411,16 +420,16 @@ onMounted(() => {
     if (k === 'counter') {
       const a = st.sel;
       const t = a && M.allTargets.find(x => x.id === a.targetId);
-      if (!a || statusOf(a) !== '反制中') return U.toast('当前告警不在反制节点', 'err');
-      if (!t) return U.toast('未找到该告警的关联目标', 'err');
-      if (!window.TARGET_ACTIONS) return U.toast('反制授权组件尚未加载', 'err');
+      if (!a || statusOf(a) !== '反制中') return toast('当前告警不在反制节点', 'err');
+      if (!t) return toast('未找到该告警的关联目标', 'err');
+      if (!window.TARGET_ACTIONS) return toast('反制授权组件尚未加载', 'err');
       window.TARGET_ACTIONS.openCounterAuth(t, () => startInterference(a));
     }
     else if (k === 'video' || k === 'replay') {
       const a = st.sel;
       const t = a && M.allTargets.find(x => x.id === a.targetId);
-      if (!t) return U.toast('未找到该告警的关联目标', 'err');
-      if (!window.TARGET_MEDIA) return U.toast('媒体查看组件尚未加载', 'err');
+      if (!t) return toast('未找到该告警的关联目标', 'err');
+      if (!window.TARGET_MEDIA) return toast('媒体查看组件尚未加载', 'err');
       const tk = trackFor(t, a);
       const target = Object.assign({}, t, { track: tk.pts });
       if (k === 'video') window.TARGET_MEDIA.openVideo(target);
@@ -438,7 +447,19 @@ onMounted(() => {
     <div class="alarms-page" style="height:100%;min-height:0;display:flex;flex-direction:column">
       <UKpis :list="kpiList" />
       <div class="row" style="margin-top:12px;flex:1;min-height:0">
-        <UPanel title="告警列表" panel-style="flex:6;min-width:0" nopad :body-html="listPanelBody" />
+        <UPanel title="告警列表" panel-style="flex:6;min-width:0" nopad>
+          <div style="display:contents" v-html="listPanelBody"></div>
+          <!-- P2：分页器换 n-pagination（受控），容器样式内联复刻旧 .pager 观感 -->
+          <div style="display:flex;align-items:center;justify-content:center;gap:8px;padding:10px;min-height:42px;
+            background:rgba(8,19,32,.54);border-top:1px solid rgba(130,174,218,.10);flex:none">
+            <n-pagination :page="st.page" :page-size="st.size" :item-count="totalCount"
+              show-size-picker :page-sizes="[10, 20, 50]"
+              @update:page="onPage" @update:page-size="onPageSize">
+              <template #prefix>共 {{ totalCount.toLocaleString() }} 条</template>
+              <template #suffix>共 {{ pageCount }} 页</template>
+            </n-pagination>
+          </div>
+        </UPanel>
         <div class="col" style="flex:4;min-width:0">
           <!-- 操作引导（用户裁定 2026-08-30：多处补黄字引导） -->
           <div class="warnbox" style="margin:0;padding:8px 11px;font-size:12px;flex:none">

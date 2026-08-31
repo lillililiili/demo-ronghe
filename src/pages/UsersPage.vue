@@ -10,7 +10,10 @@ export default {};
    页签与工具条走响应式；行选中与详情面板保持命令式（legacy 约定⑥：
    列表行点击只 selectRow + 刷详情，不重建列表 DOM，防滚动回顶）。 */
 import { ref, computed, nextTick } from 'vue';
+import { NTabs, NTab } from 'naive-ui';
 import { usePageChrome } from '../shell/usePageChrome.js';
+import { toast } from '../ui/nv.js';
+import { openModal, closeModal } from '../ui/modal.js';
 
 const M = window.MOCK, U = window.UI;
 usePageChrome('users');
@@ -112,7 +115,7 @@ function permReviewModal() {
   const me = M.currentUser || {};
   const reviewers = M.users.filter(u => ['R1', 'R2'].includes(u.role) && u.status === '正常' && u.id !== me.id);
   const TX = { 'AUTH': '授权', 'OP': '操作', 'READ': '查看', '—': '—' };
-  U.modal({
+  openModal({
     title: '权限变更双人复核（' + chg.length + ' 项）', width: '640px',
     body: `<div class="warnbox">变更经复核人确认后立即生效并记入操作审计；审计日志不可修改、不可删除。</div>
       ${U.table([
@@ -132,13 +135,13 @@ function permReviewModal() {
       ok: () => {
         const rid = document.getElementById('pmReviewer').value;
         const rv = M.users.find(u => u.id === rid);
-        if (!rv) return U.toast('请先选择复核人（§6.3 双人复核）', 'err');
+        if (!rv) return toast('请先选择复核人（§6.3 双人复核）', 'err');
         chg.forEach(c => { M.PERM[c.rid][c.i] = c.to; });
         M.pushAudit('用户与权限', `权限变更 ${chg.length} 项生效（复核人 ${rv.name}）：`
           + chg.map(c => `${c.m}/${c.role} ${TX[c.from]}→${TX[c.to]}`).join('；'), 'PERM');
         state.permDraft = null;
-        U.closeModal();
-        U.toast(`权限变更 ${chg.length} 项已生效，已记入操作审计`, 'ok');
+        closeModal();
+        toast(`权限变更 ${chg.length} 项已生效，已记入操作审计`, 'ok');
         bump.value++;
       }
     }
@@ -207,11 +210,11 @@ function onClick(e) {
       u.status = u.status === '正常' ? '已停用' : '正常';
       if (u.status === '已停用') u.online = false;
       bump.value++;
-      U.toast(`账号「${u.account}」已${u.status === '正常' ? '启用' : '停用'},操作已记入审计`, u.status === '正常' ? 'ok' : 'err');
+      toast(`账号「${u.account}」已${u.status === '正常' ? '启用' : '停用'},操作已记入审计`, u.status === '正常' ? 'ok' : 'err');
     } else if (op === 'reset') {
-      U.toast(`已向 ${u.phone} 下发临时密码,首次登录强制修改(Demo)`, 'ok');
+      toast(`已向 ${u.phone} 下发临时密码,首次登录强制修改(Demo)`, 'ok');
     } else {
-      U.toast('编辑用户信息(Demo);变更角色须双人复核', 'ok');
+      toast('编辑用户信息(Demo);变更角色须双人复核', 'ok');
     }
     return;
   }
@@ -230,15 +233,15 @@ function onClick(e) {
     return;
   }
   if (pl) {
-    U.toast(pl.dataset.pl === 'row'
+    toast(pl.dataset.pl === 'row'
       ? '「反制/干扰授权」行锁定：仅超级管理员与处置授权人可授权（纪要 §6.3 人在回路）'
       : '超级管理员列锁定：该角色定义即全部功能授权，不可降级', 'err');
     return;
   }
   if (t.closest('#usAdd')) return addUserModal();
-  if (t.closest('#usSave')) return permChanges().length ? permReviewModal() : U.toast('暂无改动 —— 点击矩阵单元格切换权限后再保存', 'err');
-  if (t.closest('#usDrop')) { state.permDraft = null; bump.value++; U.toast('未保存的权限改动已放弃', 'ok'); return; }
-  if (t.closest('#usExp')) return U.toast('已导出「操作审计日志.csv」共 ' + M.auditLogs.length + ' 条,导出行为本身已记入审计', 'ok');
+  if (t.closest('#usSave')) return permChanges().length ? permReviewModal() : toast('暂无改动 —— 点击矩阵单元格切换权限后再保存', 'err');
+  if (t.closest('#usDrop')) { state.permDraft = null; bump.value++; toast('未保存的权限改动已放弃', 'ok'); return; }
+  if (t.closest('#usExp')) return toast('已导出「操作审计日志.csv」共 ' + M.auditLogs.length + ' 条,导出行为本身已记入审计', 'ok');
 }
 
 function onInput(e) {
@@ -258,7 +261,7 @@ function onInput(e) {
 }
 
 function addUserModal() {
-  U.modal({
+  openModal({
     title: '新增用户', width: '540px',
     body: `<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
       ${U.field('账号', `<input class="ip" style="flex:1" placeholder="登录账号">`)}
@@ -270,7 +273,7 @@ function addUserModal() {
     </div>
     <label class="chk" style="margin-top:10px"><input type="checkbox">授予「处置授权人」及以上角色须经单位负责人书面批准(§6.3)</label>`,
     footer: `<button class="btn" data-close>取消</button><button class="btn pri" data-act="ok">创建</button>`,
-    on: { ok: () => { U.closeModal(); U.toast('用户已创建,初始密码已通过短信下发(Demo)', 'ok'); } }
+    on: { ok: () => { closeModal(); toast('用户已创建,初始密码已通过短信下发(Demo)', 'ok'); } }
   });
 }
 </script>
@@ -279,7 +282,11 @@ function addUserModal() {
   <div class="view" id="view" @click="onClick" @input="onInput">
     <div class="panel" style="flex:1;min-height:0;margin-top:12px;margin-bottom:12px;height:calc(100vh - 138px)">
       <div class="ph">
-        <div class="tabs" style="border:0"><span v-for="[k, t] in TABS" :key="k" class="tab" :class="{ on: tab === k }" :data-ut="k" @click="setTab(k)">{{ t }}</span></div>
+        <!-- P3：页签换 n-tabs（模板层受控；行为同 setTab） -->
+        <n-tabs type="line" size="small" :value="tab" @update:value="setTab" style="width:auto"
+          pane-style="display:none" tab-style="padding:6px 2px">
+          <n-tab v-for="[k, t] in TABS" :key="k" :name="k">{{ t }}</n-tab>
+        </n-tabs>
         <span class="spacer"></span>
         <span id="usTools" v-html="toolsHtml"></span>
       </div>

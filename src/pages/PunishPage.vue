@@ -14,10 +14,14 @@ export default {};
 /* 处置处罚管理 —— 转换页（源：legacy pages/punish.js）。
    三条 U.regParams 仍由 legacy script 模块加载期登记，这里不重复。
    auth/review/pend 三个页签在上游已删除页签条、当前不可达，代码按 legacy
-   原样保留（deep-state 途径仍可进入，行为一致）。 */
+   原样保留（deep-state 途径仍可进入，行为一致）。    分页器（U.pager）本页暂保留：列表区在命令式 innerHTML 重刷区内（页签/整页字符串渲染），
+   模板层 n-pagination 放不进去；待该区块结构化后随 P5 迁移。
+*/
 import { ref, onMounted, onUnmounted } from 'vue';
 import { usePageChrome } from '../shell/usePageChrome.js';
 import UKpis from '../ui/UKpis.vue';
+import { toast } from '../ui/nv.js';
+import { openModal, closeModal } from '../ui/modal.js';
 
 const M = window.MOCK, U = window.UI, CH = window.CH, EVT = window.EVT;
 usePageChrome('punish');
@@ -428,7 +432,7 @@ function pendList() {
 function pendModal(p) {
   if (!p) return;
   const t = tgtOf(p.targetId);
-  U.modal({
+  openModal({
     title: '待办案源 · ' + p.id, width: '720px',
     body: `<div class="warnbox">本条<b>不是案件</b>：违法事实成立，但${p.blockedBy === '责任主体待认定'
       ? '责任主体没有任何认定路径，依法不得具名当事人' : '证据要件不足以支撑定性'}，
@@ -592,7 +596,7 @@ function paintTab() {
     body.innerHTML = tabPend();
     document.getElementById('pnPendList').innerHTML = pendList();
     const ex = document.getElementById('pnPendExp');
-    if (ex) ex.onclick = () => U.toast('已导出「待办案源清单.xlsx」共 ' + (M.pendingSubjects || []).length + ' 条（含认定缺口与下一步）', 'ok');
+    if (ex) ex.onclick = () => toast('已导出「待办案源清单.xlsx」共 ' + (M.pendingSubjects || []).length + ' 条（含认定缺口与下一步）', 'ok');
   } else {
     body.innerHTML = tabAuth();
     document.getElementById('pnAuth').innerHTML = authTable();
@@ -631,7 +635,7 @@ function paintAuthCharts() {
       colors: top.map(t => t[0].includes('公安') ? '#ff4d5e' : '#a97bff')
     });
     const exp = document.getElementById('pnAuthExp');
-    if (exp) exp.onclick = () => U.toast('已导出「反制与干扰授权审计.csv」共 ' + A.length + ' 条；导出行为本身已记入审计', 'ok');
+    if (exp) exp.onclick = () => toast('已导出「反制与干扰授权审计.csv」共 ' + A.length + ' 条；导出行为本身已记入审计', 'ok');
   }
 }
 
@@ -691,7 +695,7 @@ function cmpBlock(c) {
 function snapModal(c) {
   if (!c) return;
   const rr = M.reviewRequests.find(r => r.caseId === c.id);
-  U.modal({
+  openModal({
     title: '立案判定核查 · ' + c.id, width: '680px',
     body: `${U.kv([['案件状态', U.tag(c.status)], ['目标编号', `<span class="mono">${c.targetId}</span>`],
     ['违法类型', U.tag(c.violation, 't-orange')], ['发生时间', c.time]])}
@@ -720,7 +724,7 @@ function reviewModal(r) {
   const done = rvOutcome[r.id];
   const closed = c && c.status === '已结案';
   if (done) {
-    return U.modal({
+    return openModal({
       title: '复核记录 · ' + r.id, width: '680px',
       body: `${U.kv([['关联案件', `<span class="mono">${r.caseId}</span> ${U.tag(c ? c.status : r.caseStatus)}`],
       ['目标编号', `<span class="mono">${r.targetId}</span>`],
@@ -732,7 +736,7 @@ function reviewModal(r) {
     });
   }
   const reviewers = M.users.filter(u => u.roleName === '处置授权人' || u.roleName === '超级管理员');
-  U.modal({
+  openModal({
     title: '定性依据复核 · ' + r.id, width: '720px',
     body: `${closed ? `<div class="warnbox" style="border-color:rgba(255,77,94,.45);background:rgba(255,77,94,.10)">
         <b>本案已结案。</b>已结案案件不允许直接改动状态 —— 依设计 §11，须先取得<b>复核审批文号</b>方可作出
@@ -765,17 +769,17 @@ function reviewModal(r) {
         const opinion = el.querySelector('[data-f="rvop"]').value.trim();
         const by = el.querySelector('[data-f="rvby"]').value;
         const apn = el.querySelector('[data-f="apn"]').value.trim();
-        if (!opinion) return U.toast('请填写复核意见', 'err');
+        if (!opinion) return toast('请填写复核意见', 'err');
         const changesCase = result !== '维持原定性';
         if (closed && changesCase) {
-          if (!apn) return U.toast('本案已结案，作出改变案件状态的结论必须填写 §11 复核审批文号', 'err');
+          if (!apn) return toast('本案已结案，作出改变案件状态的结论必须填写 §11 复核审批文号', 'err');
           const ack = el.querySelector('[data-f="rvack"]');
-          if (!ack || !ack.checked) return U.toast('请确认已按 §11 案件复核流程报批', 'err');
+          if (!ack || !ack.checked) return toast('请确认已按 §11 案件复核流程报批', 'err');
         }
         applyReview(r, { result, by, opinion, approvalNo: apn, at: M.util.fmtDT(M.CONF.demoTime) });
-        U.closeModal();
+        closeModal();
         paintTab();
-        U.toast(`复核已办结：${r.caseId} · ${result}` + (changesCase && c ? `，案件状态已变更为「${c.status}」` : '，案件状态不变')
+        toast(`复核已办结：${r.caseId} · ${result}` + (changesCase && c ? `，案件状态已变更为「${c.status}」` : '，案件状态不变')
           + '，已记入平台操作审计', changesCase ? 'err' : 'ok');
       }
     }
@@ -801,7 +805,7 @@ function applyReview(r, o) {
 
 function docModal() {
   const c = st.sel;
-  U.modal({
+  openModal({
     title: '《行政处罚决定书》预览', width: '680px',
     body: `<div class="warnbox" style="border-color:rgba(255,77,94,.45);background:rgba(255,77,94,.10);margin-bottom:12px">
       <b>本文书为 Demo 生成样例，不具法律效力。</b>三处出处需在正式实施前落实：
@@ -841,12 +845,14 @@ function docModal() {
       <p>依据相关法规，决定给予：<b>${c.penalty}${c.penalty === '罚款' ? '人民币 ' + U.num(c.fine) + ' 元' : ''}</b>。</p>
       <div style="text-align:right;margin-top:24px">东营市公安局<br>${c.date}</div>
     </div>`,
-    footer: `<button class="btn" data-close>关闭</button><button class="btn pri" data-close onclick="UI.toast('文书已下载（Demo 样例，不具法律效力；金额档位表未经业务方确认）','err')">${U.icon('download')} 下载 PDF</button>`
+    /* P4b：原为内联 onclick="UI.toast(...)"（走 legacy toast），改 data-act 走桥接层统一出口 */
+    footer: `<button class="btn" data-close>关闭</button><button class="btn pri" data-close data-act="dl">${U.icon('download')} 下载 PDF</button>`,
+    on: { dl: () => toast('文书已下载（Demo 样例，不具法律效力；金额档位表未经业务方确认）', 'err') }
   });
 }
 
 function authModal(a) {
-  U.modal({
+  openModal({
     title: '授权与执行审计 · ' + a.id, width: '640px',
     body: U.kv([['授权类型', a.type], ['关联案件', a.caseId], ['目标编号', a.targetId],
     ['联动单位', a.unit], ['审批人', a.approver], ['操作人', a.operator],
@@ -872,7 +878,7 @@ function processModal() {
   const probe = M.canAdvanceCase(c, MY_MODULE);
   const blocked = probe.ok === false;
 
-  U.modal({
+  openModal({
     title: '推进案件流程 · ' + c.id, width: '580px',
     body: `${U.kv([
       ['当前环节', cur ? `${cur.n}　<span style="color:var(--txt-3);font-size:11.5px">（${cur.owner}）</span>` : '已完成'],
@@ -894,15 +900,15 @@ function processModal() {
       : `<button class="btn" data-close>取消</button><button class="btn pri" data-act="ok">确认推进</button>`,
     on: {
       ok: () => {
-        U.closeModal();
+        closeModal();
         const r = M.advanceCase(c, MY_MODULE);
         if (!r || r.ok === false) {
           paint();
-          return U.toast(r && r.reason ? r.reason : '本页无法推进该环节', 'err');
+          return toast(r && r.reason ? r.reason : '本页无法推进该环节', 'err');
         }
         if (r.status === '已结案' || c.stage >= 3) c.docReady = true;
         paint();
-        U.toast(`案件已推进至「${r.step}」，状态 ${r.status}，操作记入审计日志`, 'ok');
+        toast(`案件已推进至「${r.step}」，状态 ${r.status}，操作记入审计日志`, 'ok');
       }
     }
   });
@@ -911,7 +917,7 @@ function processModal() {
 function jamModal() {
   const u = (M.users && M.users[0]) || { name: '值班员', roleName: '值班员' };
   const cases = M.cases.filter(c => c.status !== '已结案');
-  U.modal({
+  openModal({
     title: '发起公安授权信号干扰', width: '680px',
     body: `<div class="warnbox">注意：信号干扰为公安受控手段。必须填写<b>审批/授权编号、联动单位、作用范围、执行时长</b>，
       执行期间支持启停与急停，全过程审计（纪要 §6.3 / §11.1）。平台不代替公安做审批。</div>
@@ -957,15 +963,15 @@ function jamModal() {
       go: el => {
         const app = (el.querySelector('[data-japp]').value || '').trim();
         if (!app) {
-          U.toast('公安审批文号为必填 —— 没有文号，这条授权记录无法回答"谁批准的"', 'err');
+          toast('公安审批文号为必填 —— 没有文号，这条授权记录无法回答"谁批准的"', 'err');
           el.querySelector('[data-japp]').focus();
           return;
         }
         const sec = parseInt(el.querySelector('[data-jsec]').value, 10);
-        if (!sec || sec <= 0) { U.toast('执行时长须为正整数（秒）', 'err'); return; }
+        if (!sec || sec <= 0) { toast('执行时长须为正整数（秒）', 'err'); return; }
         const chs = [...el.querySelectorAll('[data-jch]')].filter(x => x.checked)
           .map(x => +x.dataset.jch).sort();
-        if (!chs.length) { U.toast('至少选择一路干扰通道 —— 一路不开等于没有实施干扰', 'err'); return; }
+        if (!chs.length) { toast('至少选择一路干扰通道 —— 一路不开等于没有实施干扰', 'err'); return; }
         const caseId = el.querySelector('[data-jcase]').value;
         const c = M.cases.find(x => x.id === caseId);
         const t0 = M.CONF.demoTime;
@@ -991,10 +997,10 @@ function jamModal() {
         };
         M.authLogs.unshift(rec);
         rvAudit(`公安授权信号干扰下发（审批文号 ${app}）`, rec.targetId, u.name);
-        U.closeModal();
+        closeModal();
         st.tab = 'auth';
         window.APP.rerender();
-        U.toast(`干扰任务已下发并留痕：授权编号 ${rec.id}，可在本页「反制与干扰授权审计」中查看`, 'ok');
+        toast(`干扰任务已下发并留痕：授权编号 ${rec.id}，可在本页「反制与干扰授权审计」中查看`, 'ok');
       }
     }
   });
@@ -1026,7 +1032,7 @@ onMounted(() => {
     noticed[c.id] = '已通知';
     saveNotice();
     window.APP.rerender();
-    U.toast('通知成功', 'ok');
+    toast('通知成功', 'ok');
   });
   U.on(view, '[data-cop]', 'click', (e, el) => {
     e.stopPropagation();
@@ -1052,24 +1058,24 @@ onMounted(() => {
     if (op === 'estop') rec.estop = '触发过急停';
     rvAudit(`公安授权信号干扰${op === 'estop' ? '急停' : '停止'}（${rec.id}）`, rec.targetId, u.name);
     window.APP.rerender();
-    U.toast(op === 'estop' ? `已触发急停：${rec.id}，设备立即停止发射，已记入审计`
+    toast(op === 'estop' ? `已触发急停：${rec.id}，设备立即停止发射，已记入审计`
       : `已停止干扰：${rec.id}，回执已接收，已记入审计`, op === 'estop' ? 'err' : 'ok');
   });
   U.on(view, '[data-doc]', 'click', (e, el) => {
     if (el.dataset.doc === 'prev') docModal();
-    else if (el.dataset.doc === 'down') U.toast('已下载《行政处罚决定书》' + st.sel.docNo
+    else if (el.dataset.doc === 'down') toast('已下载《行政处罚决定书》' + st.sel.docNo
       + '（Demo 样例，不具法律效力；金额依据的档位表未经业务方确认）', 'err');
     else processModal();
   });
   U.on(view, '[data-ev]', 'click', () => {
     if (!st.sel) return;
     const fs2 = M.evidenceOf ? M.evidenceOf('case', st.sel.id) : [];
-    if (!fs2.length) return U.toast(`案件 ${st.sel.id} 在证据台账中暂无关联材料`, 'err');
+    if (!fs2.length) return toast(`案件 ${st.sel.id} 在证据台账中暂无关联材料`, 'err');
     if (window.SEARCH && window.SEARCH.goEntity) { U.goto('evidence', { id: fs2[0].id }); }
-    else U.toast(`本案关联证据 ${fs2.length} 份，可在「证据存储管理」中查看`, 'ok');
+    else toast(`本案关联证据 ${fs2.length} 份，可在「证据存储管理」中查看`, 'ok');
   });
   U.on(view, '[data-goto]', 'click', () => U.goto('legality', { target: st.sel.targetId }));
-  U.on(view, '[data-goparam]', 'click', () => { location.hash = '#/users'; U.toast('参数总览 → 罚则金额档位（待业务方确认）'); });
+  U.on(view, '[data-goparam]', 'click', () => { location.hash = '#/users'; toast('参数总览 → 罚则金额档位（待业务方确认）'); });
   U.on(view, '[data-sort]', 'click', (e, el) => {
     const k = el.dataset.sort;
     if (SORT.key === k) SORT.dir = SORT.dir === 'asc' ? 'desc' : 'asc';
@@ -1079,9 +1085,9 @@ onMounted(() => {
   });
   U.on(view, '#pnR', 'click', () => {
     Object.assign(st, { status: '全部状态', region: '全部区域', vio: '全部类型', partner: '全部合作方', days: 30, page: 1 });
-    paintTab(); U.toast('筛选条件已重置');
+    paintTab(); toast('筛选条件已重置');
   });
-  U.on(view, '#pnExp', 'click', () => U.toast('已导出「处罚案件明细.xlsx」共 ' + filtered().length + ' 条', 'ok'));
+  U.on(view, '#pnExp', 'click', () => toast('已导出「处罚案件明细.xlsx」共 ' + filtered().length + ' 条', 'ok'));
   U.on(view, '[data-ps]', 'click', (e, el) => {
     e.stopPropagation();
     pendModal((M.pendingSubjects || []).find(p => p.id === el.dataset.ps));

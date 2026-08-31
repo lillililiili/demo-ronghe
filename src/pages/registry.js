@@ -4,6 +4,7 @@
    ⚠ monitor 不转：其 devAlarms 在模块加载期消耗共享 LCG（M.util.ri），时间戳
    与排序由加载位置决定，SFC 重算必然数值漂移 —— 转换收益抵不过 1:1 破坏，
    长期方案是数据层把 devAlarms 挪进 mock.js 后再转。 */
+import { defineAsyncComponent } from 'vue';
 import StatsPage from './StatsPage.vue';
 import UsersPage from './UsersPage.vue';
 import ArchivePage from './ArchivePage.vue';
@@ -34,3 +35,8 @@ export const VUE_PAGES = {
   punish: PunishPage,
   legality: LegalityPage
 };
+
+/* dev-only：Naive UI 主题校准对照台（P0 验收用）。异步组件，不进生产构建。 */
+if (import.meta.env.DEV) {
+  VUE_PAGES['__ui-lab'] = defineAsyncComponent(() => import('../ui/UiLab.vue'));
+}

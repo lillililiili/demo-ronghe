@@ -9,6 +9,8 @@ const routes = Object.keys(REDIRECT).map(k => ({
   path: '/' + k, redirect: '/' + REDIRECT[k]
 }));
 routes.push({ path: '/:page*', component: PageHost });
+/* dev-only 的 #/__ui-lab 对照台不在这里挂路由 —— 本应用没有 <router-view>
+   出口（PageHost 由 App.vue 直接渲染），页面注册一律走 pages/registry.js。 */
 
 export const router = createRouter({
   history: createWebHashHistory(),

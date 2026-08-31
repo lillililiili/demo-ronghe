@@ -9,6 +9,7 @@ import { usePageChrome } from '../shell/usePageChrome.js';
 import { useCharts } from '../ui/useChart.js';
 import UPanel from '../ui/UPanel.vue';
 import UKpis from '../ui/UKpis.vue';
+import { toast } from '../ui/nv.js';
 
 const M = window.MOCK, U = window.UI, S = M.stats;
 usePageChrome('stats');
@@ -106,8 +107,8 @@ useCharts(CH => {
 
 /* ---- 交互（legacy mount 同构：事件委托改为 Vue 侧委托处理器） ---- */
 function onToolbarClick(e) {
-  if (e.target.closest('#stExp')) U.toast('已导出「近30天统计明细.xlsx」（Demo：接口 /api/v1/stats/export）', 'ok');
-  else if (e.target.closest('#stRep')) U.toast('已生成「东营市低空运行月报」PDF（Demo）', 'ok');
+  if (e.target.closest('#stExp')) toast('已导出「近30天统计明细.xlsx」（Demo：接口 /api/v1/stats/export）', 'ok');
+  else if (e.target.closest('#stRep')) toast('已生成「东营市低空运行月报」PDF（Demo）', 'ok');
 }
 function onRegionTab(e) {
   const el = e.target.closest('[data-rt]');

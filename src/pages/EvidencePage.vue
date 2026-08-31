@@ -16,14 +16,19 @@ export default {};
    否则参数总览会出现两份同 key 条目。
    doRead/destroyModal 在 legacy 里已无到达路径（调阅/销毁入口按 2026-08-28
    裁定删除），转换时不带入。 */
-import { ref, onMounted } from 'vue';
+import { ref, reactive, computed, onMounted } from 'vue';
+import { NPagination } from 'naive-ui';
 import { usePageChrome } from '../shell/usePageChrome.js';
 import UPanel from '../ui/UPanel.vue';
+import { toast } from '../ui/nv.js';
 
 const M = window.MOCK, U = window.UI;
 usePageChrome('evidence');
 const root = ref(null);
-const st = S.st;
+/* reactive 代理同一份模块级状态：n-pagination 需要响应式，底层仍是 S.st */
+const st = reactive(S.st);
+const totalCount = ref(0);
+const pageCount = computed(() => Math.max(1, Math.ceil(totalCount.value / st.size)));
 
 const ALL = '全部';
 const REF_LABEL = { case: '处罚案件', target: '感知目标', alarm: '告警', riskEvent: '空间安全风险事件', authLog: '反制/干扰授权', commTask: '调测任务', device: '设备', airspace: '空域' };
@@ -97,6 +102,7 @@ const ledgerBody = `<div class="toolbar">
 
 function list() {
   const all = rows(), page = all.slice((st.page - 1) * st.size, st.page * st.size);
+  totalCount.value = all.length;
   return U.table([
     {
       t: sortTh('kind', '证据编号 / 类型'), w: '132px', cls: 'num',
@@ -122,8 +128,7 @@ function list() {
       t: sortTh('refs', '引用'), w: '58px', align: 'right', cls: 'num',
       render: f => f.refs.length
     }
-  ], page, { rowId: f => f.id, activeId: st.sel && st.sel.id })
-    + U.pager({ total: all.length, page: st.page, size: st.size });
+  ], page, { rowId: f => f.id, activeId: st.sel && st.sel.id });
 }
 
 function detail() {
@@ -215,17 +220,20 @@ function paint() {
 
 function doDownload() {
   if (!st.sel) return;
-  U.toast('已下载 ' + st.sel.name, 'ok');
+  toast('已下载 ' + st.sel.name, 'ok');
 }
 function doVerify() {
   const f = st.sel;
   f.verifyAt = M.util.fmtDT(M.CONF.demoTime);
   document.getElementById('evDetail').innerHTML = detail();
   paint();
-  U.toast(isBad(f)
+  toast(isBad(f)
     ? `已重新比对 ${f.id}：仍为「${f.verifyState}」。校验只比对不修复，须按处置流程人工闭环`
     : `已重新比对 ${f.id}：哈希与入库值一致，结果「完好」`, isBad(f) ? 'err' : 'ok');
 }
+
+function onPage(p2) { st.page = p2; paint(); }
+function onPageSize(s2) { st.size = s2; st.page = 1; paint(); }
 
 onMounted(() => {
   const view = root.value;
@@ -235,8 +243,7 @@ onMounted(() => {
     U.selectRow(document.getElementById('evList'), el.dataset.row);
     document.getElementById('evDetail').innerHTML = detail();      // 只刷详情，不重建列表
   });
-  U.on(view, '[data-pg]', 'click', (e, el) => { if (el.dataset.pg) { st.page = +el.dataset.pg; paint(); } });
-  U.on(view, '[data-size]', 'change', (e, el) => { st.size = parseInt(el.value); st.page = 1; paint(); });
+  /* 分页交互已由模板层 <n-pagination> 受控接管（P2），[data-pg]/[data-size] 委托删除 */
   U.on(view, '[data-f]', 'change', (e, el) => { st[el.dataset.f] = el.value; st.page = 1; paint(); });
 
   const doSort = key => {
@@ -254,7 +261,7 @@ onMounted(() => {
   U.on(view, '[data-ev-go]', 'click', (e, el) => {
     const [kind, id] = el.dataset.evGo.split('|');
     if (window.SEARCH && window.SEARCH.goEntity) window.SEARCH.goEntity(kind, id);
-    else U.toast('检索模块未加载，无法直达', 'err');
+    else toast('检索模块未加载，无法直达', 'err');
   });
 
   U.on(view, '[data-evact]', 'click', (e, el) => {
@@ -276,7 +283,19 @@ onMounted(() => {
         演示动线：用顶部筛选（<b>类型 / 完整性 / 保管状态 / 来源模块</b>）收敛台账 →
         点任一行，右侧查看证据详情、完整性校验与关联对象。</div>
       <div class="row" style="flex:1;min-height:0;padding-bottom:6px">
-        <UPanel title="证据文件台账" panel-style="flex:1;min-width:0" nopad :body-html="ledgerBody" />
+        <UPanel title="证据文件台账" panel-style="flex:1;min-width:0" nopad>
+          <div style="display:contents" v-html="ledgerBody"></div>
+          <!-- P2：分页器换 n-pagination（受控），容器样式内联复刻旧 .pager 观感 -->
+          <div style="display:flex;align-items:center;justify-content:center;gap:8px;padding:10px;min-height:42px;
+            background:rgba(8,19,32,.54);border-top:1px solid rgba(130,174,218,.10);flex:none">
+            <n-pagination :page="st.page" :page-size="st.size" :item-count="totalCount"
+              show-size-picker :page-sizes="[10, 20, 50]"
+              @update:page="onPage" @update:page-size="onPageSize">
+              <template #prefix>共 {{ totalCount.toLocaleString() }} 条</template>
+              <template #suffix>共 {{ pageCount }} 页</template>
+            </n-pagination>
+          </div>
+        </UPanel>
         <UPanel title="证据详情" panel-style="width:452px;flex:none" nopad
           body-html='<div id="evDetail" style="flex:1;overflow:auto;padding:12px"></div>' />
       </div>

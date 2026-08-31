@@ -5,6 +5,8 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { useAppStore } from '../stores/app.js';
 import { carouselDlg } from './useCarousel.js';
+import { toast } from '../ui/nv.js';
+import { openModal, closeModal } from '../ui/modal.js';
 
 const store = useAppStore();
 const M = window.MOCK, U = window.UI;
@@ -33,7 +35,7 @@ function toggleBig() {
     document.exitFullscreen().catch(() => { });
   }
   window.dispatchEvent(new Event('resize'));
-  U.toast(on ? '已进入大屏模式（字号放大，适配指挥大厅）' : '已退出大屏模式', 'ok');
+  toast(on ? '已进入大屏模式（字号放大，适配指挥大厅）' : '已退出大屏模式', 'ok');
 }
 function onFsChange() {
   if (!document.fullscreenElement && document.body.classList.contains('bigscreen')) {
@@ -55,13 +57,13 @@ function onMenu(k) {
   closeMenu();
   if (k === 'users') location.hash = '#/users';
   else if (k === 'carousel') carouselDlg();
-  else if (k === 'me') U.modal({
+  else if (k === 'me') openModal({
     title: '个人信息', width: '440px',
     body: U.kv([['账号', 'admin'], ['姓名', '系统管理员'], ['角色', '超级管理员'],
     ['所属单位', '东营市低空安全管理中心'], ['双因子认证', '已开启'],
     ['最后登录', M.util.fmtDT(M.CONF.demoTime)], ['登录 IP', '10.20.1.15']])
   });
-  else U.toast('已退出登录(Demo 环境不跳转登录页)', 'ok');
+  else toast('已退出登录(Demo 环境不跳转登录页)', 'ok');
 }
 
 onMounted(() => {

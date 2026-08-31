@@ -6,6 +6,7 @@
 import { onMounted, onUnmounted } from 'vue';
 import { groupOf } from './navModel.js';
 import { useAppStore } from '../stores/app.js';
+import { closeModal } from '../ui/modal.js';
 
 export function usePageChrome(k) {
   const store = useAppStore();
@@ -18,6 +19,6 @@ export function usePageChrome(k) {
   });
   onUnmounted(() => {
     window.CH.disposeAll();
-    window.UI.closeModal();
+    closeModal();          // 桥接层 closeModal 内部也会收掉 legacy 的 U.modal
   });
 }

@@ -1,9 +1,10 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
-import { NSelect } from 'naive-ui';
+import { UField } from '@/components/form/index.js';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import { toast } from '@/ui/nv.js';
 import { openModal, closeModal } from '@/ui/modal.js';
+import { openFormModal } from '@/ui/formModal.js';
 import { openRiskVerification } from '@/ui/riskVerificationModal.js';
 import {
   listWorkbenchEvents, getWorkbenchDetail,
@@ -158,26 +159,29 @@ watch([selectedKey, revision], mountMap, { flush: 'post' });
 function verifyModal() {
   const d = selected.value;
   if (!d || d.kind !== 'uav') return;
-  openModal({
+  openFormModal({
     title: `人工核实 · ${d.ctx.alarm.id}`, width: '620px',
-    body: `<div class="warnbox">核实结论会直接进入现有告警状态机：属实后进入「反制中」，误报则在本环节终止。</div>
-      ${U.kv([
-        ['关联目标', `<span class="mono">${d.ctx.id}</span>`],
-        ['告警类型', d.ctx.alarm.type], ['风险等级', U.tag(d.ctx.alarm.level, tagClass(d.ctx.alarm.level))],
-        ['区域 / 时间', `${d.ctx.alarm.district} · ${d.ctx.alarm.time}`], ['告警内容', d.ctx.alarm.detail]
-      ])}
-      ${U.sect('核实结论', `<label class="chk"><input type="radio" name="wbvf" data-v="1" checked>属实，进入反制</label>
-        <label class="chk"><input type="radio" name="wbvf" data-v="0">误报，终止事件</label>
-        ${U.field('核实说明', '<input class="ip" data-note style="flex:1" placeholder="必填：现场确认、轨迹复核或联系结果">')}`)}`,
-    footer: '<button class="btn" data-close>取消</button><button class="btn pri" data-act="submit">提交核实结论</button>',
-    on: { submit: el => {
-      const note = (el.querySelector('[data-note]').value || '').trim();
-      if (!note) return toast('核实说明为必填', 'err');
-      const real = el.querySelector('[data-v="1"]').checked;
-      const r = verifyUav(selectedKey.value, real, note);
+    warning: '核实结论会直接进入现有告警状态机：属实后进入「反制中」，误报则在本环节终止。',
+    introHtml: U.kv([
+      ['关联目标', `<span class="mono">${d.ctx.id}</span>`],
+      ['告警类型', d.ctx.alarm.type], ['风险等级', U.tag(d.ctx.alarm.level, tagClass(d.ctx.alarm.level))],
+      ['区域 / 时间', `${d.ctx.alarm.district} · ${d.ctx.alarm.time}`], ['告警内容', d.ctx.alarm.detail]
+    ]),
+    fields: [
+      { key: 'real', label: '核实结论', type: 'radio', required: true, options: [
+        { value: '1', label: '属实，进入反制' },
+        { value: '0', label: '误报，终止事件' }
+      ] },
+      { key: 'note', label: '核实说明', required: true, placeholder: '必填：现场确认、轨迹复核或联系结果' }
+    ],
+    initial: { real: '1', note: '' },
+    confirmText: '提交核实结论',
+    validate: m => !(m.note || '').trim() ? '核实说明为必填' : '',
+    onSubmit: ({ real, note }) => {
+      const r = verifyUav(selectedKey.value, real === '1', (note || '').trim());
       if (!r.ok) return toast(r.msg, 'err');
       closeModal(); refresh(); toast(r.msg, 'ok');
-    } }
+    }
   });
 }
 
@@ -305,7 +309,7 @@ onUnmounted(() => {
             </button>
           </div>
           <div class="wb-filters">
-            <n-select v-model:value="level" :options="levelOptions" :clearable="false" aria-label="风险等级" />
+            <UField variant="toolbar" label="风险等级" sr-only v-model="level" type="select" :options="levelOptions" />
             <span class="wb-sort-note"><span v-html="icon('trend')"></span> 优先级排序</span>
           </div>
           <div class="wb-event-list">

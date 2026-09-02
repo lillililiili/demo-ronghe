@@ -20,7 +20,8 @@ import { usePageChrome } from '@/hooks/usePageChrome.js';
 import UPanel from '@/components/UPanel.vue';
 import UKpis from '@/components/UKpis.vue';
 import { toast } from '@/ui/nv.js';
-import { openModal, closeModal } from '@/ui/modal.js';
+import { closeModal } from '@/ui/modal.js';
+import { openFormModal, optionsOf } from '@/ui/formModal.js';
 
 const M = window.MOCK, U = window.UI, CH = window.CH;
 usePageChrome('devices');
@@ -284,23 +285,28 @@ function paintDetail() {
 function paint() { document.getElementById('dvList').innerHTML = list(); paintDetail(); }
 
 function addModal() {
-  openModal({
-    title: '新增设备', width: '640px',
-    body: `<div class="warnbox">设备接入需同时登记 <b>协议、鉴权、上报频率、错误码、坐标基准</b>（会议纪要 §8.1），否则无法进入调测流程。</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-      ${U.field('设备名称', `<input class="ip" style="flex:1" placeholder="如：东营区雷达09号">`)}
-      ${U.field('设备类型', U.select('t', TYPES))}
-      ${U.field('接入通道', U.select('c', ['融合感知箱', 'TDOA', '5G-A']))}
-      ${U.field('供应商', U.select('v', VENDORS))}
-      ${U.field('IP 地址', `<input class="ip" style="flex:1" placeholder="192.168.10.45">`)}
-      ${U.field('端口', `<input class="ip" style="width:90px" placeholder="8080">`)}
-      ${U.field('通信协议', U.select('p', ['HTTP', 'TCP', 'WS']))}
-      ${U.field('鉴权方式', U.select('a', ['Token', 'AK/SK', '无']))}
-      ${U.field('经度', `<input class="ip" style="flex:1" placeholder="118.582000">`)}
-      ${U.field('纬度', `<input class="ip" style="flex:1" placeholder="37.449000">`)}
-    </div>`,
-    footer: `<button class="btn" data-close>取消</button><button class="btn pri" data-act="ok">保存并进入调测</button>`,
-    on: { ok: () => { closeModal(); toast('已保存，正在跳转设备调测…', 'ok'); setTimeout(() => location.hash = '#/commission', 600); } }
+  openFormModal({
+    title: '新增设备', width: '640px', columns: 2,
+    warning: '设备接入需同时登记 <b>协议、鉴权、上报频率、错误码、坐标基准</b>（会议纪要 §8.1），否则无法进入调测流程。',
+    fields: [
+      { key: 'name', label: '设备名称', placeholder: '如：东营区雷达09号' },
+      { key: 'type', label: '设备类型', type: 'select', options: optionsOf(TYPES), clearable: false },
+      { key: 'channel', label: '接入通道', type: 'select', options: optionsOf(['融合感知箱', 'TDOA', '5G-A']), clearable: false },
+      { key: 'vendor', label: '供应商', type: 'select', options: optionsOf(VENDORS), clearable: false },
+      { key: 'ip', label: 'IP 地址', placeholder: '192.168.10.45' },
+      { key: 'port', label: '端口', placeholder: '8080' },
+      { key: 'proto', label: '通信协议', type: 'select', options: optionsOf(['HTTP', 'TCP', 'WS']), clearable: false },
+      { key: 'auth', label: '鉴权方式', type: 'select', options: optionsOf(['Token', 'AK/SK', '无']), clearable: false },
+      { key: 'lon', label: '经度', placeholder: '118.582000' },
+      { key: 'lat', label: '纬度', placeholder: '37.449000' }
+    ],
+    initial: { name: '', type: TYPES[0] || null, channel: '融合感知箱', vendor: VENDORS[0] || null, ip: '', port: '', proto: 'HTTP', auth: 'Token', lon: '', lat: '' },
+    confirmText: '保存并进入调测',
+    onSubmit: () => {
+      closeModal();
+      toast('已保存，正在跳转设备调测…', 'ok');
+      setTimeout(() => location.hash = '#/commission', 600);
+    }
   });
 }
 

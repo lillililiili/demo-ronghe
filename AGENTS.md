@@ -101,10 +101,17 @@
 - `v-html` 只用于仓库内受信任的 legacy 渲染串和图标输出。禁止把外部输入、用户输入或未清洗数据直接传入 `v-html`；还要避免为了包裹 HTML 额外增加会破坏 DOM 指纹的节点。
 - 保持 hash 地址与旧书签兼容，例如 `#/situation`、`#/alarms`、`#/risk`、`#/monitor` 和 `#/bigscreen`。
 
+## 表单控件（Naive UI 强制）
+
+- **产品表单只使用公共表单件**（内部才是 Naive UI）：`src/components/form/` 的 `UField`、`UFieldGrid`、`UFormFooter`、`UControl`。Vue 模板禁止出现原生 `<input>`、`<select>`、`<textarea>`，也不要在页面里直接铺 `NInput`/`NSelect`（权限矩阵等无对应公共件的除外）。
+- **新弹窗表单**走 `openFormModal()`（`src/ui/formModal.js`）或 `openModal({ render: () => h(Comp), footer: false })` 后在 Comp 里用 `UField`。样板：`ControlledFormModal.vue`、`CarouselModal.vue`。
+- **禁止**为了“看起来像组件”而用 CSS 给原生控件描边；也禁止在 Vue 页面继续拼 `U.field` + `` `<input class="ip">` `` / `U.select` 作为新表单。
+- 仍由 `innerHTML` 绘制的旧工具条 / 调测参数 / monitor 字符串，必须带 `.ip` / `.sel` / `type="checkbox|radio"`，由 `src/ui/legacyControls.js` 升级为真 Naive 组件。新代码不要再扩大这条兼容路径。
+- `tools/scan.cjs` 对 Vue 模板中的原生表单控件判红。扫描、修复和生成新代码均遵守本条。
+
 ## UI 与交互规则
 
 - 交互控件优先使用现有 Naive UI 适配：toast 走 `src/ui/nv.js`，弹窗走 `src/ui/modal.js`，确认框走 `src/ui/confirm.js`。具体 legacy → Naive 映射见 `tools/NAIVE-MAP.md`。
-- 所有页面和弹窗的表单控件必须使用 Naive UI 组件（如 `NInput`、`NSelect`、`NInputNumber`、`NDatePicker`、`NCheckbox`、`NRadio`）；禁止新增或继续渲染原生 `<input>`、`<select>`、`<textarea>` 表单控件。legacy 字符串表单必须先迁入 `openModal({ render })` 受控 Vue 组件，不得仅靠 CSS 仿写组件库外观。扫描、修复和生成新代码均遵守此规则。
 - 弹窗保持单例、遮罩关闭、`data-close`/`data-act` 委托和既有 z-index 契约；Vue 页面不要绕回 legacy toast 或另造第二套弹窗系统。
 - 展示型 legacy helpers（如 tag、kv、sect、metricStrip）可以继续复用。不要仅为“组件化”改变已有 DOM 数量、文案、数据口径或视觉签名。
 - 优先复用现有图标、品牌资源、`MapView`、图表和组件；不要用 emoji、占位图、临时手绘 SVG 或虚构数据代替真实界面资产。
@@ -161,4 +168,5 @@
 - 阻止页面私自复制状态机、跳过权限/审计/证据/回执，或让不同入口对同一事件显示不同阶段的改动。
 - 阻止把密钥写入源码、生产包或日志，以及把开发安全码带入生产配置的改动。
 - 阻止只靠 toast 模拟成功、虚构业务记录或把路线图能力伪装成已落地能力的改动。
+- 阻止在 Vue 模板或新弹窗里新增原生 `<input>` / `<select>` / `<textarea>` 表单控件，或仅靠 CSS 仿写组件库外观；新表单必须使用 Naive UI。
 - 阻止无验证证据却声称构建、流程、视觉或兼容性已通过的改动。

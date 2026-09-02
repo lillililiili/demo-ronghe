@@ -31,14 +31,14 @@ const RULES = [
   {
     name: 'Vue template 不得直接渲染原生表单控件',
     re: /<(?:input|select|textarea)\b/gi,
-    why: '页面和弹窗的表单控件统一使用 Naive UI；legacy 字符串由受控桥接层承接',
+    why: '页面和弹窗的表单控件必须使用 Naive UI（NInput/NSelect/NCheckbox/NRadio 等）；新表单走 openFormModal 或 openModal({ render })',
     onlyFiles: /[\\/]src[\\/].*\.vue$/,
     templateOnly: true
   },
   {
     name: 'legacy 字符串文本框与下拉必须进入 Naive UI 桥接层',
     re: /<(?:select|textarea)\b(?![^>]*\bclass\s*=\s*["'][^"']*\b(?:ip|sel)\b)|<input\b(?![^>]*\btype\s*=\s*["'](?:checkbox|radio|range|hidden|file|button|submit)["'])(?![^>]*\bclass\s*=\s*["'][^"']*\b(?:ip|sel)\b)/gi,
-    why: '兼容字符串中仅 .ip/.sel 文本、文本域和下拉会被 legacyControls.js 替换为真 Naive UI 组件',
+    why: '存量 innerHTML 中仅 .ip/.sel 文本框/下拉以及 checkbox/radio 会被 legacyControls.js 替换为真 Naive UI 组件；新表单不要再走这条路径',
     onlyFiles: /[\\/]src[\\/].*\.(?:vue|js)$|[\\/]public[\\/]assets[\\/]js[\\/]pages[\\/]monitor\.js$/
   },
   {

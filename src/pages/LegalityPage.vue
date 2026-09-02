@@ -16,10 +16,12 @@ export default {};
    legacy 中已无到达路径的 evidModal / reviewModal / confirmModal / legacyDetail /
    evidSect / factorSect 不带入（同 evidence 页先例）。 */
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue';
-import { NPagination, NSelect } from 'naive-ui';
+import { NPagination } from 'naive-ui';
+import { UField } from '@/components/form/index.js';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import { toast } from '@/ui/nv.js';
 import { openModal, closeModal } from '@/ui/modal.js';
+import { openFormModal, optionsOf } from '@/ui/formModal.js';
 
 const M = window.MOCK, U = window.UI, CH = window.CH, EVT = window.EVT;
 usePageChrome('legality');
@@ -475,32 +477,25 @@ const autoDegraded = () => M.allTargets.filter(t => t.type === '无人机' && ga
 function decisionConfirmModal() {
   const t = st.sel;
   if (!t || t.legal !== '待确认') return;
-  openModal({
+  openFormModal({
     title: '人工确认 · ' + t.id, width: '560px',
-    body: `${U.kv([
+    introHtml: U.kv([
       ['目标编号', '<span class="mono">' + t.id + '</span>'],
       ['当前状态', U.legal(t.legal)],
       ['确认人', OPER.name + '（' + OPER.role + '）']
-    ])}
-    ${U.field('确认结果', `<select class="sel" data-cfresult style="flex:1">
-      <option value="合法">合法</option>
-      <option value="非法">非法</option>
-    </select>`)}
-    <div style="margin-top:12px">
-      <div style="font-size:12.5px;color:var(--txt-2);margin-bottom:6px">确认说明（选填）</div>
-      <textarea class="ip" data-cfre style="width:100%;height:64px;padding:8px"
-        placeholder="填写核实依据或误报原因"></textarea>
-    </div>`,
-    footer: '<button class="btn" data-close>取消</button><button class="btn pri" data-act="ok">提交</button>',
-    on: {
-      ok: el => {
-        const result = el.querySelector('[data-cfresult]').value;
-        const reason = (el.querySelector('[data-cfre]').value || '').trim();
-        applyReview(t, result, reason || '人工研判确认结果为' + result, '人工确认');
-        syncLinked(t, result, OPER, true, true);
-        closeModal(); refresh();
-        toast('人工确认完成，判定状态已更新为「' + result + '」', 'ok');
-      }
+    ]),
+    fields: [
+      { key: 'result', label: '确认结果', type: 'select', options: optionsOf(['合法', '非法']), clearable: false },
+      { key: 'reason', label: '确认说明（选填）', type: 'textarea', placeholder: '填写核实依据或误报原因', minRows: 3 }
+    ],
+    initial: { result: '合法', reason: '' },
+    confirmText: '提交',
+    onSubmit: ({ result, reason }) => {
+      const note = (reason || '').trim() || ('人工研判确认结果为' + result);
+      applyReview(t, result, note, '人工确认');
+      syncLinked(t, result, OPER, true, true);
+      closeModal(); refresh();
+      toast('人工确认完成，判定状态已更新为「' + result + '」', 'ok');
     }
   });
 }
@@ -510,31 +505,25 @@ function manualReviseModal() {
   if (!t || !['合法', '非法'].includes(t.legal)) return;
   const cur = t.legal;
   const target = cur === '合法' ? '非法' : '合法';
-  openModal({
+  openFormModal({
     title: '人工改判 · ' + t.id, width: '600px',
-    body: `<div class="warnbox">人工改判会保留原判定，并记录操作者、时间、新判定和改判理由。</div>
-      ${U.kv([
-        ['目标编号', '<span class="mono">' + t.id + '</span>'],
-        ['当前判定', U.legal(cur)]
-      ])}
-      ${U.field('改判为', '<input class="ip" style="flex:1" value="' + target + '" readonly>')}
-      <div style="margin-top:12px">
-        <div style="font-size:12.5px;color:var(--txt-2);margin-bottom:6px">改判理由 <span style="color:#ff8b95">*</span></div>
-        <textarea class="ip" data-rvre style="width:100%;height:76px;padding:8px"
-          placeholder="请填写人工核实依据，不少于5个字"></textarea>
-      </div>
-      <div id="rvSimpleErr" style="color:#ff8b95;font-size:12px;margin-top:8px"></div>`,
-    footer: '<button class="btn" data-close>取消</button><button class="btn pri" data-act="ok">提交改判</button>',
-    on: {
-      ok: el => {
-        const reason = (el.querySelector('[data-rvre]').value || '').trim();
-        const err = el.querySelector('#rvSimpleErr');
-        if (reason.length < 5) { err.textContent = '改判理由不少于5个字'; return; }
-        applyReview(t, target, reason, '人工改判');
-        syncLinked(t, target, OPER, true, true);
-        closeModal(); refresh();
-        toast('已人工改判：' + cur + ' → ' + target, 'ok');
-      }
+    warning: '人工改判会保留原判定，并记录操作者、时间、新判定和改判理由。',
+    introHtml: U.kv([
+      ['目标编号', '<span class="mono">' + t.id + '</span>'],
+      ['当前判定', U.legal(cur)]
+    ]),
+    fields: [
+      { key: 'to', label: '改判为', readonly: true },
+      { key: 'reason', label: '改判理由', type: 'textarea', required: true, placeholder: '请填写人工核实依据，不少于5个字', minRows: 3 }
+    ],
+    initial: { to: target, reason: '' },
+    confirmText: '提交改判',
+    validate: m => (m.reason || '').trim().length < 5 ? '改判理由不少于5个字' : '',
+    onSubmit: ({ reason }) => {
+      applyReview(t, target, (reason || '').trim(), '人工改判');
+      syncLinked(t, target, OPER, true, true);
+      closeModal(); refresh();
+      toast('已人工改判：' + cur + ' → ' + target, 'ok');
     }
   });
 }
@@ -1197,9 +1186,7 @@ onMounted(() => {
           <header class="lg-panel-head">
             <h2>待人工复核 <span id="lgQueueN"></span></h2>
             <span class="lg-head-spacer"></span>
-            <label class="lg-region-filter"><span>区域</span>
-              <n-select v-model:value="st.region" :options="regionOptions" :clearable="false" aria-label="区域" />
-            </label>
+            <UField class="lg-region-filter" variant="toolbar" label="区域" v-model="st.region" type="select" :options="regionOptions" />
             <button class="lg-icon-btn" id="lgRule" type="button" aria-label="查看判定规则" title="判定规则说明" v-html="U.icon('settings')"></button>
             <button class="lg-icon-btn" id="lgRecalc" type="button" aria-label="重新判定" title="重新判定" v-html="U.icon('refresh')"></button>
           </header>

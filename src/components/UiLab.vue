@@ -3,7 +3,8 @@
    用途：P0 主题校准的验收台 —— 同一段中文文案、同一语义色，
    左列旧控件（全局样式类）右列 Naive UI，目测色板/圆角/字号/行高是否违和。 */
 import { ref } from 'vue';
-import { NButton, NTag, NPagination, NModal, NInput, NSelect, NCard, NDrawer, NDrawerContent } from 'naive-ui';
+import { NButton, NTag, NPagination, NModal, NDrawer, NDrawerContent } from 'naive-ui';
+import { UField } from '@/components/form/index.js';
 import { message } from '@/ui/nv.js';
 
 const U = window.UI;
@@ -20,7 +21,7 @@ const oldToast = t => U.toast(sample, t);
 const oldModal = () => U.modal({
   title: '旧版弹窗对照', width: '520px',
   body: `${U.kv([['目标编号', '<span class="mono">UAV20260826047</span>'], ['判定', U.legal('非法')]])}
-    ${U.field('说明', '<input class="ip" style="flex:1" placeholder="旧版输入框">')}`,
+    <div class="info-line" style="margin-top:10px">对照台不再渲染原生表单；产品表单一律走 Naive UI。</div>`,
   footer: '<button class="btn" data-close>取消</button><button class="btn pri" data-act="ok">确定</button>',
   on: { ok: () => { U.closeModal(); U.toast('旧版确定', 'ok'); } }
 });
@@ -81,13 +82,12 @@ const oldPagerHtml = U.pager({ total: 137, page: 3, size: 10 });
       </div></section>
 
       <!-- 表单件 -->
-      <section class="panel"><div class="ph"><h3>旧 · 表单件</h3></div><div class="pb" style="display:flex;gap:10px;align-items:center">
-        <div class="field"><label>区域</label><select class="sel"><option>全部</option><option>东营区</option></select></div>
-        <input class="ip" style="width:200px" placeholder="请输入设备编号/名称">
+      <section class="panel"><div class="ph"><h3>已停用 · 原生表单</h3></div><div class="pb" style="color:var(--txt-3);font-size:12.5px;line-height:1.7">
+        产品表单禁止再渲染原生 input / select / textarea。请使用右侧 Naive UI 控件。
       </div></section>
-      <section class="panel"><div class="ph"><h3>新 · n-select / n-input</h3></div><div class="pb" style="display:flex;gap:10px;align-items:center">
-        <div class="field"><label>区域</label><n-select v-model:value="selVal" :options="selOpts" size="small" style="width:120px" /></div>
-        <n-input v-model:value="iptVal" size="small" style="width:200px" placeholder="请输入设备编号/名称" />
+      <section class="panel"><div class="ph"><h3>新 · UField</h3></div><div class="pb" style="display:flex;gap:10px;align-items:center">
+        <UField variant="toolbar" label="区域" v-model="selVal" type="select" :options="selOpts" style="width:180px" />
+        <UField variant="toolbar" v-model="iptVal" placeholder="请输入设备编号/名称" style="width:200px" />
       </div></section>
 
       <!-- 弹窗 / 抽屉 -->
@@ -102,7 +102,7 @@ const oldPagerHtml = U.pager({ total: 137, page: 3, size: 10 });
 
     <n-modal v-model:show="showModal" preset="card" title="新版弹窗对照" style="width:520px" :z-index="100">
       <div v-html="U.kv([['目标编号', '<span class=&quot;mono&quot;>UAV20260826047</span>'], ['判定', U.legal('非法')]])"></div>
-      <n-input v-model:value="iptVal" placeholder="新版输入框" style="margin-top:10px" />
+      <UField v-model="iptVal" placeholder="新版输入框" style="margin-top:10px" />
       <template #footer>
         <div style="display:flex;justify-content:flex-end;gap:8px">
           <n-button @click="showModal = false">取消</n-button>

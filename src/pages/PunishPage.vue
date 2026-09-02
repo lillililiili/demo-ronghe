@@ -4,8 +4,8 @@
    还原逻辑在 setup 模块作用域执行（legacy script 加载期已对共享 M.cases
    应用过一次，这里按同一份存储重放，结果幂等）。 */
 const S = {
-  /* 通知状态默认「待通知」（用户裁定 2026-08-30：把要处理的先选出来）；深链跳入的既有逻辑重置为全部 */
-  st: { page: 1, size: 10, status: '待通知', region: '全部区域', vio: '全部类型', partner: '全部合作方', days: 30, sel: null, tab: 'case', rvFilter: '全部案件' }
+  /* 表格顶栏下拉默认「全部*」，由用户再收窄。 */
+  st: { page: 1, size: 10, status: '全部状态', region: '全部区域', vio: '全部类型', partner: '全部合作方', days: 30, sel: null, tab: 'case', rvFilter: '全部案件' }
 };
 export default {};
 </script>
@@ -17,11 +17,13 @@ export default {};
    原样保留（deep-state 途径仍可进入，行为一致）。    分页器（U.pager）本页暂保留：列表区在命令式 innerHTML 重刷区内（页签/整页字符串渲染），
    模板层 n-pagination 放不进去；待该区块结构化后随 P5 迁移。
 */
-import { ref, onMounted, onUnmounted } from 'vue';
+import { h, ref, onMounted, onUnmounted } from 'vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import UKpis from '@/components/UKpis.vue';
 import { toast } from '@/ui/nv.js';
 import { openModal, closeModal } from '@/ui/modal.js';
+import { openFormModal, optionsOf } from '@/ui/formModal.js';
+import JamAuthModal from '@/components/modals/JamAuthModal.vue';
 
 const M = window.MOCK, U = window.UI, CH = window.CH, EVT = window.EVT;
 usePageChrome('punish');
@@ -139,7 +141,7 @@ if (ctx && ctx.caseId) {
     if (idx >= 0) st.page = Math.max(1, Math.ceil((idx + 1) / st.size));
   }
 }
-// safe-default: 默认选中项跟随当前筛选（待通知视图选首条待通知案件），用户可见可改
+// safe-default: 默认选中当前筛选下的首条案件，用户可见可改
 st.sel = noticeCases().includes(st.sel) ? st.sel : (filtered()[0] || noticeCases()[0] || null);
 const all0 = noticeCases();
 const pendingNotice0 = all0.filter(c => noticeStatus(c) === '待通知').length;
@@ -738,52 +740,46 @@ function reviewModal(r) {
     });
   }
   const reviewers = M.users.filter(u => u.roleName === '处置授权人' || u.roleName === '超级管理员');
-  openModal({
-    title: '定性依据复核 · ' + r.id, width: '720px',
-    body: `${closed ? `<div class="warnbox" style="border-color:rgba(255,77,94,.45);background:rgba(255,77,94,.10)">
-        <b>本案已结案。</b>已结案案件不允许直接改动状态 —— 依设计 §11，须先取得<b>复核审批文号</b>方可作出
-        「撤销案件」或「补充证据后重判」的结论；仅出具「维持原定性」意见时不改动案件状态，可直接提交。</div>`
-      : `<div class="warnbox">本案在办（${c ? c.status : r.caseStatus}），复核结论将<b>真实改动案件状态与流程环节</b>，并记入平台操作审计。</div>`}
-      ${U.kv([['关联案件', `<span class="mono">${r.caseId}</span> ${U.tag(c ? c.status : r.caseStatus)}`],
+  openFormModal({
+    title: '定性依据复核 · ' + r.id, width: '720px', columns: 2,
+    warning: closed
+      ? `<b>本案已结案。</b>已结案案件不允许直接改动状态 —— 依设计 §11，须先取得<b>复核审批文号</b>方可作出
+        「撤销案件」或「补充证据后重判」的结论；仅出具「维持原定性」意见时不改动案件状态，可直接提交。`
+      : `本案在办（${c ? c.status : r.caseStatus}），复核结论将<b>真实改动案件状态与流程环节</b>，并记入平台操作审计。`,
+    introHtml: U.kv([['关联案件', `<span class="mono">${r.caseId}</span> ${U.tag(c ? c.status : r.caseStatus)}`],
       ['目标编号', `<span class="mono">${r.targetId}</span>`],
       ['拟改判', `${U.legal(r.from)} <span style="color:var(--txt-3)">→</span> ${U.legal(r.to)}`],
       ['提出方', r.raisedBy], ['提出时间', r.at],
       ['降级理由', `<div style="white-space:normal">${r.reason}</div>`],
-      ['数据层备注', `<div style="white-space:normal;color:var(--txt-3)">${r.note}</div>`]])}
-      ${U.sect('事件确认时判定 vs 当前判定', c ? cmpBlock(c) : '<span style="color:var(--txt-3)">未找到关联案件</span>')}
-      ${U.sect('复核结论', `<div style="display:flex;flex-direction:column;gap:6px">
-        ${RV_RESULTS.map((x, i) => `<label class="chk" style="margin:0"><input type="radio" name="rvr" value="${x.k}" ${i === 0 ? 'checked' : ''}>
-          <span>${U.tag(x.k, x.c)} <span style="color:var(--txt-3)">${x.desc}</span></span></label>`).join('')}
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
-        ${U.field('复核人', `<select class="sel" data-f="rvby" style="flex:1">
-          ${reviewers.map(u => `<option>${u.name}</option>`).join('')}</select>`)}
-        ${U.field('§11 复核审批文号', `<input class="ip" data-f="apn" style="flex:1"
-          placeholder="${closed ? '已结案改状态必填，如 FH-2026-0826-01' : '选填'}">`)}
-      </div>
-      ${U.field('复核意见', `<input class="ip" data-f="rvop" style="flex:1;margin-top:10px" placeholder="必填，写明依据与结论理由">`)}
-      ${closed ? `<label class="chk" style="margin-top:10px"><input type="checkbox" data-f="rvack">
-        我确认本次复核已按设计 §11 案件复核流程报批，审批文号如上，操作将记入平台操作审计。</label>` : ''}`)}`,
-    footer: `<button class="btn" data-close>取消</button><button class="btn pri" data-act="ok">提交复核结论</button>`,
-    on: {
-      ok: el => {
-        const result = (el.querySelector('input[name="rvr"]:checked') || {}).value;
-        const opinion = el.querySelector('[data-f="rvop"]').value.trim();
-        const by = el.querySelector('[data-f="rvby"]').value;
-        const apn = el.querySelector('[data-f="apn"]').value.trim();
-        if (!opinion) return toast('请填写复核意见', 'err');
-        const changesCase = result !== '维持原定性';
-        if (closed && changesCase) {
-          if (!apn) return toast('本案已结案，作出改变案件状态的结论必须填写 §11 复核审批文号', 'err');
-          const ack = el.querySelector('[data-f="rvack"]');
-          if (!ack || !ack.checked) return toast('请确认已按 §11 案件复核流程报批', 'err');
-        }
-        applyReview(r, { result, by, opinion, approvalNo: apn, at: M.util.fmtDT(M.CONF.demoTime) });
-        closeModal();
-        paintTab();
-        toast(`复核已办结：${r.caseId} · ${result}` + (changesCase && c ? `，案件状态已变更为「${c.status}」` : '，案件状态不变')
-          + '，已记入平台操作审计', changesCase ? 'err' : 'ok');
+      ['数据层备注', `<div style="white-space:normal;color:var(--txt-3)">${r.note}</div>`]])
+      + U.sect('事件确认时判定 vs 当前判定', c ? cmpBlock(c) : '<span style="color:var(--txt-3)">未找到关联案件</span>'),
+    fields: [
+      { key: 'result', label: '复核结论', type: 'radio', required: true, wide: true, options: RV_RESULTS.map(x => ({
+        value: x.k, html: `${U.tag(x.k, x.c)} <span style="color:var(--txt-3)">${x.desc}</span>`
+      })) },
+      { key: 'by', label: '复核人', type: 'select', options: optionsOf(reviewers.map(u => u.name)), clearable: false },
+      { key: 'apn', label: '§11 复核审批文号', placeholder: closed ? '已结案改状态必填，如 FH-2026-0826-01' : '选填' },
+      { key: 'opinion', label: '复核意见', required: true, wide: true, placeholder: '必填，写明依据与结论理由' },
+      ...(closed ? [{ key: 'ack', type: 'checkbox', wide: true, label: '我确认本次复核已按设计 §11 案件复核流程报批，审批文号如上，操作将记入平台操作审计。' }] : [])
+    ],
+    initial: { result: RV_RESULTS[0].k, by: reviewers[0]?.name || null, apn: '', opinion: '', ack: false },
+    confirmText: '提交复核结论',
+    validate: m => {
+      if (!(m.opinion || '').trim()) return '请填写复核意见';
+      if (closed && m.result !== '维持原定性') {
+        if (!(m.apn || '').trim()) return '本案已结案，作出改变案件状态的结论必须填写 §11 复核审批文号';
+        if (!m.ack) return '请确认已按 §11 案件复核流程报批';
       }
+      return '';
+    },
+    onSubmit: m => {
+      const result = m.result;
+      const changesCase = result !== '维持原定性';
+      applyReview(r, { result, by: m.by, opinion: (m.opinion || '').trim(), approvalNo: (m.apn || '').trim(), at: M.util.fmtDT(M.CONF.demoTime) });
+      closeModal();
+      paintTab();
+      toast(`复核已办结：${r.caseId} · ${result}` + (changesCase && c ? `，案件状态已变更为「${c.status}」` : '，案件状态不变')
+        + '，已记入平台操作审计', changesCase ? 'err' : 'ok');
     }
   });
 }
@@ -883,93 +879,42 @@ function jamModal() {
     return toast('需要「反制/干扰授权」授权权限', 'err');
   }
   const u = (M.users && M.users[0]) || { name: '值班员', roleName: '值班员' };
-  const cases = M.cases.filter(c => c.status !== '已结案');
   openModal({
-    title: '发起公安授权信号干扰', width: '680px',
-    body: `<div class="warnbox">注意：信号干扰为公安受控手段。必须填写<b>审批/授权编号、联动单位、作用范围、执行时长</b>，
-      执行期间支持启停与急停，全过程审计（纪要 §6.3 / §11.1）。平台不代替公安做审批。</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        ${U.field('关联案件', `<select class="sel" data-jcase style="flex:1">
-          ${cases.map(c => `<option value="${c.id}" ${st.sel && st.sel.id === c.id ? 'selected' : ''}>${c.id} · ${c.violation}</option>`).join('')}
-        </select>`)}
-        ${U.field('目标编号', `<input class="ip" data-jtarget style="flex:1" value="${st.sel ? st.sel.targetId : ''}" readonly>`)}
-        ${U.field('审批编号 <span style="color:#ff8b95">*</span>', `<input class="ip" data-japp style="flex:1" placeholder="公安审批文号（必填）">`)}
-        ${U.field('联动单位', `<select class="sel" data-junit style="flex:1">
-          ${['东营市公安局特警支队', '东营市公安局东营分局', '东营市公安局广饶分局'].map(x => `<option>${x}</option>`).join('')}</select>`)}
-        ${U.field('干扰设备', `<select class="sel" data-jdev style="flex:1">
-          ${['公安干扰车-01', '公安干扰车-02', '便携干扰终端-03'].map(x => `<option>${x}</option>`).join('')}</select>`)}
-        ${U.field('干扰通道', `<div style="flex:1">
-          ${Object.values(M.JAM_CH).map(c => `<label class="chk" style="margin:0 0 4px">
-            <input type="checkbox" data-jch="${c.ch}"${c.gnss ? '' : ' checked'}>
-            <span class="mono">ch${c.ch}</span> ${c.key}
-            <span style="color:var(--txt-3);font-size:11px">${c.range} · ${c.powerW}W</span>
-            ${c.gnss ? `<b style="color:var(--red);font-size:11px">卫星导航链路</b>` : ''}
-          </label>`).join('')}
-          <div id="jamGnssWarn" class="warnbox" style="display:none;margin-top:6px;font-size:11.5px">
-            <b>ch2 将干扰 GPS / GLONASS / 北斗卫星导航链路。</b>
-            其法律后果与干扰遥控、图传链路不同，且影响范围不限于目标无人机。
-            开启前须确认公安授权文书已明确载明卫星导航链路干扰。</div>
-        </div>`)}
-        ${U.field('作用范围', `<input class="ip" data-jrange style="flex:1" value="1500 m 扇区 60°">`)}
-        ${U.field('执行时长(秒)', `<input class="ip" data-jsec style="flex:1" value="120">`)}
-      </div>
-      <label class="chk" style="margin-top:10px"><input type="checkbox" data-j="1">已取得公安机关书面/系统授权，授权编号真实有效</label>
-      <label class="chk"><input type="checkbox" data-j="2">已评估作用范围内通信、导航与其他合法飞行影响</label>
-      <label class="chk"><input type="checkbox" data-j="3">知悉本次操作全程录音录像并纳入审计，可随时急停</label>
-      <div style="margin-top:8px;font-size:11.5px;color:var(--txt-3);line-height:1.8">
-        提交后立即在<b>「反制与干扰授权审计」</b>生成一条授权记录（本页签），并写入平台操作审计。
-        通道与频段/功率取自设备一手资料（${M.JAM_SOURCE}）。</div>`,
-    footer: `<button class="btn" data-close>取消</button><button class="btn danger" data-act="go" disabled id="jamGo">提交并执行</button>`,
-    mounted: el => {
-      const upd = () => el.querySelector('#jamGo').disabled = [...el.querySelectorAll('[data-j]')].filter(x => x.checked).length < 3;
-      el.querySelectorAll('[data-j]').forEach(c => c.onchange = upd);
-      const gn = el.querySelector('[data-jch="2"]'), warn = el.querySelector('#jamGnssWarn');
-      if (gn && warn) gn.onchange = () => warn.style.display = gn.checked ? '' : 'none';
-    },
-    on: {
-      go: el => {
-        const app = (el.querySelector('[data-japp]').value || '').trim();
-        if (!app) {
-          toast('公安审批文号为必填 —— 没有文号，这条授权记录无法回答"谁批准的"', 'err');
-          el.querySelector('[data-japp]').focus();
-          return;
-        }
-        const sec = parseInt(el.querySelector('[data-jsec]').value, 10);
-        if (!sec || sec <= 0) { toast('执行时长须为正整数（秒）', 'err'); return; }
-        const chs = [...el.querySelectorAll('[data-jch]')].filter(x => x.checked)
-          .map(x => +x.dataset.jch).sort();
-        if (!chs.length) { toast('至少选择一路干扰通道 —— 一路不开等于没有实施干扰', 'err'); return; }
-        const caseId = el.querySelector('[data-jcase]').value;
-        const c = M.cases.find(x => x.id === caseId);
+    title: '发起公安授权信号干扰', width: '680px', footer: false,
+    render: () => h(JamAuthModal, {
+      caseId: st.sel ? st.sel.id : '',
+      targetId: st.sel ? st.sel.targetId : '',
+      operator: u.name,
+      onDone: input => {
         const t0 = M.CONF.demoTime;
         const rec = {
           id: 'AUTH' + M.util.ymd(t0) + M.util.p3(M.authLogs.length + 1),
-          caseId, targetId: (c && c.targetId) || (st.sel ? st.sel.targetId : '—'),
+          caseId: input.caseId, targetId: input.targetId || '—',
           type: '公安授权信号干扰',
-          unit: el.querySelector('[data-junit]').value,
-          approver: app,
+          unit: input.unit,
+          approver: input.approvalNo,
           operator: u.name,
-          device: el.querySelector('[data-jdev]').value,
-          channels: chs,
-          band: chs.map(n => M.JAM_CH[n].key).join(' / '),
+          device: input.device,
+          channels: input.channels,
+          band: input.channels.map(n => M.JAM_CH[n].key).join(' / '),
           bandSource: M.JAM_SOURCE,
-          gnssJam: chs.includes(2),
-          range: el.querySelector('[data-jrange]').value.trim(),
-          durationS: sec,
+          gnssJam: input.channels.includes(2),
+          range: input.range,
+          durationS: input.durationS,
           start: M.util.fmtDT(t0),
-          end: M.util.fmtDT(new Date(t0.getTime() + sec * 1000)),
+          end: M.util.fmtDT(new Date(t0.getTime() + input.durationS * 1000)),
           result: '执行中',
           ack: '待回执', audit: '完整', estop: '未触发',
-          approvalNo: app
+          approvalNo: input.approvalNo
         };
         M.authLogs.unshift(rec);
-        rvAudit(`公安授权信号干扰下发（审批文号 ${app}）`, rec.targetId, u.name);
+        rvAudit(`公安授权信号干扰下发（审批文号 ${input.approvalNo}）`, rec.targetId, u.name);
         closeModal();
         st.tab = 'auth';
         window.APP.rerender();
         toast(`干扰任务已下发并留痕：授权编号 ${rec.id}，可在本页「反制与干扰授权审计」中查看`, 'ok');
       }
-    }
+    })
   });
 }
 

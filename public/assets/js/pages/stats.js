@@ -132,10 +132,10 @@
     U.on(view, '[data-rt]', 'click', (e, el) => {
       view.querySelectorAll('[data-rt]').forEach(x => x.classList.toggle('on', x === el));
       const box = document.getElementById('sRegion');
+      if (CH.disposeEl) CH.disposeEl(box);
       if (el.dataset.rt === 'list') { box.innerHTML = regionTable(); }
       else {
         box.innerHTML = '';
-        const max = Math.max(...S.regions.map(r => r.total));
         CH.hbar(box, {
           y: S.regions.map(r => r.name), data: S.regions.map(r => r.total),
           colors: S.regions.map(r => r.illegal / r.total > .05 ? '#ff4d5e' : '#3d8bff')

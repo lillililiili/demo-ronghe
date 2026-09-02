@@ -12,6 +12,8 @@ import { ROUTES, pageTitle } from '@/config/navModel.js';
 import { useAppStore } from '@/stores/app.js';
 import { openConfirm } from '@/ui/confirm.js';
 import { openRiskVerification } from '@/ui/riskVerificationModal.js';
+import { openCounterAuth } from '@/ui/counterAuthModal.js';
+import { openDeviceRebootForm } from '@/ui/deviceRebootModal.js';
 
 const pinia = createPinia();
 const store = useAppStore(pinia);
@@ -24,6 +26,8 @@ window.ROUTES = ROUTES;
    挂载之后，因此在此收口即可避免两套弹窗实现。 */
 window.UI.confirmAction = openConfirm;
 window.UI.openRiskVerification = openRiskVerification;
+window.UI.openCounterAuth = openCounterAuth;
+window.UI.openDeviceRebootForm = openDeviceRebootForm;
 window.APP = {
   rerender() { store.remountKey++; },
   setCrumb(txt) { store.crumbCtx = txt; },

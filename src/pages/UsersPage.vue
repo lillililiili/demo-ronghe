@@ -5,7 +5,8 @@ export default {};
 
 <script setup>
 import { computed, h, ref } from 'vue';
-import { NInput, NSelect, NTabs, NTab } from 'naive-ui';
+import { NTabs, NTab } from 'naive-ui';
+import { UField } from '@/components/form/index.js';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import { toast } from '@/ui/nv.js';
 import { openModal, closeModal } from '@/ui/modal.js';
@@ -126,13 +127,11 @@ function exportAudit() {
         </n-tabs>
         <span class="spacer"></span>
         <template v-if="tab === 'users'">
-          <label class="sr-only" for="userKeyword">搜索用户</label>
-          <n-input id="userKeyword" v-model:value="keyword" clearable placeholder="搜索姓名、账号、单位或角色" />
+          <UField id="userKeyword" variant="toolbar" label="搜索用户" sr-only v-model="keyword" clearable placeholder="搜索姓名、账号、单位或角色" />
           <button class="btn pri" type="button" :disabled="!canAdmin" @click="userForm(null)" v-html="icon('plus') + ' 新增用户'"></button>
         </template>
         <template v-else>
-          <label class="sr-only" for="auditModule">审计模块</label>
-          <n-select id="auditModule" v-model:value="auditModule" :options="auditOptions" :clearable="false" />
+          <UField id="auditModule" variant="toolbar" label="审计模块" sr-only v-model="auditModule" type="select" :options="auditOptions" />
           <button class="btn" type="button" @click="exportAudit" v-html="icon('download') + ' 导出审计日志'"></button>
         </template>
       </header>

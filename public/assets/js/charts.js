@@ -21,8 +21,23 @@
   const LEG = { textStyle: { color: '#9aacbf', fontSize: 11 }, itemWidth: 10, itemHeight: 8, icon: 'roundRect' };
 
   const insts = [];
+  /* 同一容器再次 init 前必须卸掉旧实例。切页签用 innerHTML 清画布不会清
+     echarts 挂在节点上的实例，第二次 init 会拿到已空的死图，表现为空白。 */
+  function disposeEl(el) {
+    if (!el) return;
+    for (let i = insts.length - 1; i >= 0; i--) {
+      if (insts[i].el !== el) continue;
+      const x = insts.splice(i, 1)[0];
+      try { x.ro.disconnect(); x.ch.dispose(); } catch (e) { }
+    }
+    try {
+      const leftover = echarts.getInstanceByDom(el);
+      if (leftover) leftover.dispose();
+    } catch (e) { }
+  }
   function make(el, opt) {
     if (!el) return null;
+    disposeEl(el);
     const ch = echarts.init(el, null, { renderer: 'canvas' });
     ch.setOption(opt);
     const ro = new ResizeObserver(() => ch.resize());
@@ -184,5 +199,5 @@
   }
 
   g.CH = {
-    seeded, make, line, bar, hbar, donut, ring, realtime, disposeAll, C, PALETTE };
+    seeded, make, line, bar, hbar, donut, ring, realtime, disposeEl, disposeAll, C, PALETTE };
 })(window);

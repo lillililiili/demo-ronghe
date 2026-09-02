@@ -1,8 +1,8 @@
 /* ===== 9. 处置处罚管理（含反制与公安授权信号干扰） ===== */
 (function (g) {
   const M = MOCK, U = UI;
-  /* 通知状态默认「待通知」（用户裁定 2026-08-30：把要处理的先选出来）；深链跳入的既有逻辑重置为全部 */
-  let st = { page: 1, size: 10, status: '待通知', region: '全部区域', vio: '全部类型', partner: '全部合作方', days: 30, sel: null, tab: 'case', rvFilter: '全部案件' };
+  /* 表格顶栏下拉默认「全部*」，由用户再收窄。 */
+  let st = { page: 1, size: 10, status: '全部状态', region: '全部区域', vio: '全部类型', partner: '全部合作方', days: 30, sel: null, tab: 'case', rvFilter: '全部案件' };
   let map = null;
   let pageView = null, previousViewOverflow = '';
 
@@ -221,7 +221,7 @@
         if (idx >= 0) st.page = Math.max(1, Math.ceil((idx + 1) / st.size));
       }
     }
-    // safe-default: 默认选中项跟随当前筛选（待通知视图选首条待通知案件），用户可见可改
+    // safe-default: 默认选中当前筛选下的首条案件，用户可见可改
     st.sel = noticeCases().includes(st.sel) ? st.sel : (filtered()[0] || noticeCases()[0] || null);
     const all = noticeCases();
     const pendingNotice = all.filter(c => noticeStatus(c) === '待通知').length;

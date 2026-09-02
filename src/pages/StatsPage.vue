@@ -112,6 +112,9 @@ function onRegionTab(e) {
   const view = document.getElementById('view');
   view.querySelectorAll('[data-rt]').forEach(x => x.classList.toggle('on', x === el));
   const box = document.getElementById('sRegion');
+  if (!box) return;
+  /* 切回排行表会 innerHTML 清掉 canvas，必须先卸实例，否则第二次热力图 init 复用死图。 */
+  if (window.CH.disposeEl) window.CH.disposeEl(box);
   if (el.dataset.rt === 'list') { box.innerHTML = regionTable(); }
   else {
     box.innerHTML = '';

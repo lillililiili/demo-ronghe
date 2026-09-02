@@ -1,9 +1,8 @@
 /* ===== 13. 异常飞行与告警中心 ===== */
 (function (g) {
   const M = MOCK, U = UI;
-  /* 状态默认「待核实」（用户裁定 2026-08-30：和合法性页一样，把要处理的先选出来）；
-     深链跳入的既有逻辑会重置为「全部」，不受影响。 */
-  let st = { page: 1, size: 10, level: '全部', status: '待核实', kind: '全部', region: '全部', sel: null,
+  /* 表格顶栏下拉默认「全部」，由用户再收窄。 */
+  let st = { page: 1, size: 10, level: '全部', status: '全部', kind: '全部', region: '全部', sel: null,
     sort: 'ts', dir: -1 };     // 默认按时间倒序，与数据层 alarms.sort(b.ts-a.ts) 一致，首屏顺序不变
 
   /* 告警页按原有最短闭环在当前页直接操作：
@@ -86,7 +85,7 @@
   function render() {
     const sid = sessionStorage.getItem('alarm.sel');
     const deep = sid && M.alarms.find(a => a.id === sid);
-    // safe-default: 默认选中项跟随当前筛选（待核实视图选首条待核实告警），用户可见可改
+    // safe-default: 默认选中当前筛选下的首条告警，用户可见可改
     st.sel = deep || st.sel || rows()[0] || M.todayAlarms[0] || M.alarms[0];
     sessionStorage.removeItem('alarm.sel');
     /* 深链跳来（COM-05 统一检索 / 总览点告警）：清掉筛选并翻到该条所在页，

@@ -1,0 +1,37 @@
+/* 公共表单件：UField / UFieldGrid / UFormFooter。尺寸对齐 tokens，不要在页面里再抄一份。 */
+.u-field{display:flex;min-width:0}
+.u-field.is-form{flex-direction:column;align-items:stretch;gap:6px}
+.u-field.is-toolbar{flex-direction:row;align-items:center;gap:6px}
+.u-field>label{color:var(--txt-2);font-size:13.5px;white-space:nowrap}
+.u-field.is-form>label{font-size:12.5px}
+.u-field.is-required>label::after{content:' *';color:#ff8b95}
+.u-field__control{display:flex;flex:1;min-width:0;flex-direction:column;gap:5px}
+.u-field.is-form .u-field__control .n-input,
+.u-field.is-form .u-field__control .n-select,
+.u-field.is-form .u-field__control .n-input-number{width:100%}
+.u-field.is-toolbar .u-field__control{flex:1;min-width:8.5em}
+.u-field.is-toolbar .n-select{min-width:8.5em}
+.u-select-menu,.n-base-select-menu{min-width:9em}
+.u-select-menu .n-base-select-option,
+.n-base-select-menu .n-base-select-option{white-space:nowrap}
+.u-select-menu .n-base-select-option__content,
+.n-base-select-menu .n-base-select-option__content{overflow:visible;text-overflow:unset}
+.u-field__help{color:var(--txt-3);font-size:11px;line-height:1.5}
+.u-field-grid{display:grid;gap:12px 14px}
+.u-field-grid.is-two{grid-template-columns:repeat(2,minmax(0,1fr))}
+.u-field-grid .is-wide,.u-field-grid .u-field.is-wide{grid-column:1/-1}
+.u-control-stack{display:flex;flex-direction:column;align-items:flex-start;gap:8px}
+.u-control-grid{display:grid;grid-template-columns:1fr 1fr;gap:2px 8px;max-height:230px;overflow:auto}
+.u-form-footer{display:flex;justify-content:flex-end;gap:8px;margin-top:16px;padding-top:14px;border-top:1px solid var(--line-2)}
+.controlled-form__grid{display:grid;gap:12px 14px}
+.controlled-form__grid.is-two{grid-template-columns:repeat(2,minmax(0,1fr))}
+.controlled-form__grid .is-wide{grid-column:1/-1}
+.controlled-form__stack{display:flex;flex-direction:column;align-items:flex-start;gap:8px}
+.controlled-form__message{margin-bottom:14px}
+.controlled-form__intro{margin-bottom:12px}
+.controlled-form__html{width:100%}
+.controlled-form__help{display:block;margin-top:5px;color:var(--txt-3);font-size:11px;line-height:1.5}
+.controlled-form__footer{display:flex;justify-content:flex-end;gap:8px;margin-top:16px;padding-top:14px;border-top:1px solid var(--line-2)}
+@media(max-width:680px){
+  .u-field-grid.is-two,.controlled-form__grid.is-two{grid-template-columns:1fr}
+}

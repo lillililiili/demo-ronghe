@@ -5,7 +5,8 @@ export default {};
 
 <script setup>
 import { computed, h, ref } from 'vue';
-import { NCheckbox, NInput, NTabs, NTab } from 'naive-ui';
+import { NCheckbox, NTabs, NTab } from 'naive-ui';
+import { UField } from '@/components/form/index.js';
 import { NAV } from '@/config/navModel.js';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import { toast } from '@/ui/nv.js';
@@ -205,8 +206,8 @@ ensureDraft(selectedId.value);
           <button class="btn pri" type="button" @click="roleForm(null)" v-html="icon('plus') + ' 新增角色'"></button>
         </header>
         <div class="role-search">
-          <label class="sr-only" for="roleSearch">搜索角色</label>
-          <n-input id="roleSearch" :value="query" clearable placeholder="搜索角色名称、说明或编号" @update:value="setQuery" />
+          <UField id="roleSearch" variant="toolbar" label="搜索角色" sr-only :model-value="query" clearable
+            placeholder="搜索角色名称、说明或编号" @update:model-value="setQuery" />
         </div>
         <div class="role-list" role="list" aria-label="角色列表">
           <div v-if="!roleList.length" class="empty">没有匹配的角色</div>

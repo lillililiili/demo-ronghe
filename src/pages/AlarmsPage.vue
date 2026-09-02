@@ -1,9 +1,8 @@
 <script>
 /* 模块级状态：跨导航保持（legacy 约定）。 */
 const S = {
-  /* 状态默认「待核实」（用户裁定 2026-08-30：和合法性页一样，把要处理的先选出来）；
-     深链跳入的既有逻辑会重置为「全部」，不受影响。 */
-  st: { page: 1, size: 10, level: '全部', status: '待核实', kind: '全部', region: '全部', sel: null,
+  /* 表格顶栏下拉默认「全部」，由用户再收窄。 */
+  st: { page: 1, size: 10, level: '全部', status: '全部', kind: '全部', region: '全部', sel: null,
     sort: 'ts', dir: -1 }
 };
 export default {};
@@ -15,13 +14,15 @@ export default {};
    U.regParams F0605 参数登记）仍由 legacy script 执行，这里不重复。
    地图（MapView）在 onUnmounted 销毁；usePageChrome 先注册，故卸载顺序
    与旧版 route() 一致：CH.disposeAll → map.destroy → closeModal。 */
-import { ref, reactive, computed, onMounted, onUnmounted } from 'vue';
+import { ref, reactive, computed, h, onMounted, onUnmounted } from 'vue';
 import { NPagination } from 'naive-ui';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import UPanel from '@/components/UPanel.vue';
 import UKpis from '@/components/UKpis.vue';
 import { toast } from '@/ui/nv.js';
 import { openModal, closeModal } from '@/ui/modal.js';
+import { openFormModal } from '@/ui/formModal.js';
+import AlarmNotifyModal from '@/components/modals/AlarmNotifyModal.vue';
 
 const M = window.MOCK, U = window.UI, CH = window.CH;
 usePageChrome('alarms');
@@ -75,7 +76,7 @@ function rows() {
 /* 深链（sessionStorage alarm.sel）与默认选中 —— 与 legacy render() 同构 */
 const sid = sessionStorage.getItem('alarm.sel');
 const deep = sid && M.alarms.find(a => a.id === sid);
-// safe-default: 默认选中项跟随当前筛选（待核实视图选首条待核实告警），用户可见可改
+// safe-default: 默认选中当前筛选下的首条告警，用户可见可改
 st.sel = deep || st.sel || rows()[0] || M.todayAlarms[0] || M.alarms[0];
 sessionStorage.removeItem('alarm.sel');
 if (deep) {
@@ -315,45 +316,36 @@ function verifyModal() {
   if (!a) return;
   if (statusOf(a) !== '待核实') return toast('当前告警无需重复核实', 'err');
   const t = M.allTargets.find(x => x.id === a.targetId) || {};
-  openModal({
+  openFormModal({
     title: '人工核实 · ' + a.id, width: '600px',
-    body: `<div class="warnbox">核实是状态机的必经环节（待核实 → 反制中 / 误报）。
+    warning: `核实是状态机的必经环节（待核实 → 反制中 / 误报）。
         结论为「误报」时告警进入终态，样本计入误报率统计与 C06 规则优化；
-        结论为「属实」时直接进入反制节点，可在本页发起联动处置。</div>
-      ${U.kv([
+        结论为「属实」时直接进入反制节点，可在本页发起联动处置。`,
+    introHtml: U.kv([
       ['告警类型', a.type], ['告警等级', U.tag(a.level, a.level === '高' ? 't-red' : a.level === '中' ? 't-amber' : 't-blue')],
       ['关联目标', `<span class="mono">${a.targetId}</span>　${t.subtype || t.type || '—'}`],
       ['合法性判定', t.legal_status || t.legal || '—'],
       ['触发时间 / 区域', a.time + '　' + a.district],
       ['告警内容', a.detail]
-    ])}
-      ${U.sect('核实结论', `
-        <label class="chk"><input type="radio" name="vfr" data-vf="true" checked>
-          <span><b>属实</b> —— 告警成立，状态推进至「反制中」</span></label>
-        <label class="chk"><input type="radio" name="vfr" data-vf="false">
-          <span><b>误报</b> —— 告警不成立，状态置为「误报」（终态），并计入误报率统计</span></label>
-        ${U.field('核实说明', `<input class="ip" data-vfnote style="flex:1" placeholder="必填：核实依据（如现场确认、轨迹复核、飞手联系结果）">`)}`)}`,
-    footer: `<button class="btn" data-close>取消</button><button class="btn pri" data-act="ok">提交核实结论</button>`,
-    on: {
-      ok: el => {
-        const ipt = el.querySelector('[data-vfnote]');
-        const note = (ipt.value || '').trim();
-        if (!note) {
-          // toast 会自动消失，输入框上留一个持续的未通过标记，直到用户开始输入
-          ipt.style.borderColor = 'var(--red, #ff4d5e)';
-          ipt.focus();
-          ipt.oninput = () => { ipt.style.borderColor = ''; ipt.oninput = null; };
-          toast('核实说明为必填 —— 状态变更必须能回答"依据是什么"', 'err'); return;
-        }
-        const real = el.querySelector('[data-vf="true"]').checked;
-        const from = statusOf(a);
-        const ctx = window.EVT && window.EVT.of(a.targetId);
-        const result = ctx ? window.EVT.verify(ctx, { real, note }) : { ok: false, msg: '事件聚合服务不可用' };
-        if (!result.ok) return toast(result.msg, 'err');
-        closeModal();
-        remount();
-        toast(`核实完成：${from} → ${a.flowStatus}${real ? '' : '（流程在人工核实节点终止）'}`, 'ok');
-      }
+    ]),
+    fields: [
+      { key: 'real', label: '核实结论', type: 'radio', required: true, options: [
+        { value: '1', html: '<b>属实</b> —— 告警成立，状态推进至「反制中」' },
+        { value: '0', html: '<b>误报</b> —— 告警不成立，状态置为「误报」（终态），并计入误报率统计' }
+      ] },
+      { key: 'note', label: '核实说明', required: true, placeholder: '必填：核实依据（如现场确认、轨迹复核、飞手联系结果）' }
+    ],
+    initial: { real: '1', note: '' },
+    confirmText: '提交核实结论',
+    validate: m => !(m.note || '').trim() ? '核实说明为必填 —— 状态变更必须能回答"依据是什么"' : '',
+    onSubmit: ({ real, note }) => {
+      const from = statusOf(a);
+      const ctx = window.EVT && window.EVT.of(a.targetId);
+      const result = ctx ? window.EVT.verify(ctx, { real: real === '1', note: (note || '').trim() }) : { ok: false, msg: '事件聚合服务不可用' };
+      if (!result.ok) return toast(result.msg, 'err');
+      closeModal();
+      remount();
+      toast(`核实完成：${from} → ${a.flowStatus}${real === '1' ? '' : '（流程在人工核实节点终止）'}`, 'ok');
     }
   });
 }
@@ -362,40 +354,12 @@ function sendModal() {
   const a = st.sel;
   const on = M.notifyChannels.filter(c2 => c2.on);
   openModal({
-    title: '发送告警通知 · ' + a.id, width: '620px',
-    body: `${U.kv([['告警', `${a.type}（${U.tag(a.level, a.level === '高' ? 't-red' : 't-amber')}）`],
-    ['关联目标', `<span class="mono">${a.targetId}</span>`], ['区域', a.district], ['时间', a.time]])}
-      <div style="margin:12px 0 6px;font-size:12.5px;color:var(--txt-2)">选择通知渠道（仅列出已启用）</div>
-      ${on.length ? on.map(c2 => `<label class="chk"><input type="checkbox" data-nc="${c2.id}" checked>
-          ${c2.name} <span style="color:var(--txt-3)">→ ${c2.target}</span>
-          ${c2.ready ? U.tag('已联调', 't-green') : U.tag('预留接口', 't-amber')}</label>`).join('')
-        : '<div class="empty">当前无已启用的通知渠道</div>'}
-      <div id="ncResult" style="margin-top:10px"></div>`,
-    footer: `<button class="btn" data-close>关闭</button>
-      <button class="btn pri" data-act="send" ${on.length ? '' : 'disabled'}>发送通知</button>`,
-    on: {
-      send: el => {
-        const picked = [...el.querySelectorAll('[data-nc]')].filter(x => x.checked)
-          .map(x => M.notifyChannels.find(c2 => c2.id === x.dataset.nc));
-        if (!picked.length) return toast('请至少选择一个渠道', 'err');
-        a.notifyLog = a.notifyLog || [];
-        const now = M.util.fmtDT(M.CONF.demoTime);
-        const lines = picked.map(c2 => {
-          const ok = c2.ready;
-          const result = ok ? `已送达（回执 ${'RC' + CH.seeded(c2.id + a.id)(100000, 999999)}）` : '接口预留，Demo 未真实外发';
-          a.notifyLog.push({ time: now, channel: c2.name, target: c2.target, ok, result });
-          return `<div style="display:flex;justify-content:space-between;gap:8px;font-size:12px;padding:4px 0;
-            border-bottom:1px solid rgba(64,158,255,.08)">
-            <span>${c2.name} → ${c2.target}</span>
-            <span style="color:${ok ? '#79e5a5' : '#ffd07a'}">${result}</span></div>`;
-        }).join('');
-        el.querySelector('#ncResult').innerHTML =
-          `<div style="font-size:12.5px;color:#9ec6ff;margin-bottom:4px">发送结果</div>${lines}`;
-        document.getElementById('alDetail').innerHTML = detail();
-        const okN = picked.filter(c2 => c2.ready).length;
-        toast(`通知已发送：${okN} 个渠道送达，${picked.length - okN} 个为预留接口未外发`, okN ? 'ok' : 'err');
-      }
-    }
+    title: '发送告警通知 · ' + a.id, width: '620px', footer: false,
+    render: () => h(AlarmNotifyModal, {
+      alarm: a,
+      channels: on,
+      onSent: () => { const el = document.getElementById('alDetail'); if (el) el.innerHTML = detail(); }
+    })
   });
 }
 

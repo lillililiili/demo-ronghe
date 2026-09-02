@@ -8,10 +8,10 @@
 ============================================================================= -->
 <script setup>
 import { ref } from 'vue';
-import { NSelect, NCheckboxGroup, NCheckbox, NButton } from 'naive-ui';
 import { ROUTES, pageTitle } from '@/config/navModel.js';
 import { toast } from '@/ui/nv.js';
 import { closeModal } from '@/ui/modal.js';
+import { UField, UFormFooter } from '@/components/form/index.js';
 
 const props = defineProps({
   defaults: { type: Array, default: () => [] },
@@ -20,11 +20,11 @@ const props = defineProps({
 
 const sec = ref(15);
 const pages = ref([...props.defaults]);
-const all = Object.keys(ROUTES);
 const secOpts = [
   { value: 10, label: '10 秒' }, { value: 15, label: '15 秒' },
   { value: 30, label: '30 秒' }, { value: 60, label: '60 秒' }
 ];
+const pageOpts = Object.keys(ROUTES).map(k => ({ value: k, label: pageTitle(k) }));
 
 function go() {
   if (!pages.value.length) return toast('请至少选择一个页面', 'err');
@@ -36,18 +36,7 @@ function go() {
 
 <template>
   <div class="warnbox">用于指挥大厅无人值守展示：按设定间隔自动切换页面，随时可停止。</div>
-  <div style="display:flex;align-items:center;gap:10px;margin:12px 0 6px">
-    <span style="font-size:13px;color:var(--txt-2);flex:0 0 auto">切换间隔</span>
-    <n-select v-model:value="sec" :options="secOpts" size="small" style="width:140px" />
-  </div>
-  <div style="margin:12px 0 6px;font-size:13px;color:var(--txt-2)">参与轮播的页面</div>
-  <n-checkbox-group v-model:value="pages">
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:2px;max-height:230px;overflow:auto">
-      <n-checkbox v-for="k in all" :key="k" :value="k" :label="pageTitle(k)" style="margin:2px 0" />
-    </div>
-  </n-checkbox-group>
-  <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px">
-    <n-button size="small" @click="closeModal()">取消</n-button>
-    <n-button size="small" type="primary" @click="go">开始轮播</n-button>
-  </div>
+  <UField v-model="sec" variant="toolbar" type="select" label="切换间隔" :options="secOpts" size="small" style="margin:12px 0 6px;max-width:240px" />
+  <UField v-model="pages" type="checkboxGroup" label="参与轮播的页面" layout="grid" :options="pageOpts" style="margin:12px 0 6px" />
+  <UFormFooter size="small" confirm-text="开始轮播" @cancel="closeModal()" @confirm="go" />
 </template>

@@ -292,6 +292,9 @@
     if (t.type !== '无人机') {
       return U.toast('该目标为' + (t.subtype || t.type) + '，按 §4.2 不进入反制流程，请使用空间安全风险处置', 'err');
     }
+    if (g.UI && typeof g.UI.openCounterAuth === 'function') {
+      return g.UI.openCounterAuth(t, onAuthorized);
+    }
     const dev = M.devices.filter(d => d.type === '反制' && d.status === '在线').slice(0, 4);
     const zoneOk = !!t.zone;
     /* fusedConf/srcCount 只有 liveTargets 才有；告警页会传 allTargets 里的目标进来。

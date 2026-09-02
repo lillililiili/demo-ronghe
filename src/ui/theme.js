@@ -87,6 +87,14 @@ export const themeOverrides = {
     /* 旧 .toast：实色深底 + 语义色描边，最大宽度防长文案撑爆 */
     maxWidth: '520px'
   },
+  Select: {
+    peers: {
+      InternalSelectMenu: {
+        optionHeightMedium: '34px',
+        optionHeightSmall: '32px'
+      }
+    }
+  },
   Pagination: {
     /* 对齐旧 .pg / .pg.on 的观感（方块页码、主色高亮） */
     itemBorderRadius: '5px'

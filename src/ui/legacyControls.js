@@ -1,9 +1,13 @@
 import { createApp, h, reactive, ref } from 'vue';
-import { NConfigProvider, NInput, NSelect } from 'naive-ui';
+import { NCheckbox, NConfigProvider, NInput, NRadio, NSelect } from 'naive-ui';
+import { SELECT_DROPDOWN, selectMenuMinWidth, selectMenuProps } from '@/components/form/selectProps.js';
 import { theme, themeOverrides } from './theme.js';
 
 const instances = new Map();
-const selector = 'input.ip, textarea.ip, select.ip, select.sel';
+const selector = 'input.ip, textarea.ip, select.ip, select.sel, input[type="checkbox"], input[type="radio"]';
+const skipInside = '.naive-control-bridge, .n-checkbox, .n-radio, .n-input, .n-select, .n-input-number, .n-checkbox-group, .n-radio-group';
+const nativeChecked = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked');
+let paused = 0;
 
 function dispatch(nativeEl, type) {
   nativeEl.dispatchEvent(new Event(type, { bubbles: true }));
@@ -23,10 +27,10 @@ function proxyField(nativeEl, state, componentRef) {
   nativeEl.focus = () => componentRef.value?.focus?.();
 }
 
-function createHost(nativeEl) {
+function createHost(nativeEl, kind) {
   const host = document.createElement('div');
-  host.className = 'naive-control-bridge';
-  host.style.cssText = nativeEl.getAttribute('style') || '';
+  host.className = 'naive-control-bridge' + (kind ? ' is-' + kind : '');
+  if (kind !== 'check') host.style.cssText = nativeEl.getAttribute('style') || '';
   nativeEl.before(host);
   nativeEl.classList.add('native-control-proxy');
   nativeEl.dataset.naiveUpgraded = '1';
@@ -66,6 +70,7 @@ function mountSelect(nativeEl) {
     value: option.value,
     disabled: option.disabled
   }));
+  host.style.minWidth = selectMenuMinWidth(options) + 'px';
   const state = reactive({ value: nativeEl.value || options[0]?.value || null, disabled: nativeEl.disabled });
   const componentRef = ref(null);
   proxyField(nativeEl, state, componentRef);
@@ -77,6 +82,8 @@ function mountSelect(nativeEl) {
         options,
         disabled: state.disabled,
         clearable: false,
+        consistentMenuWidth: SELECT_DROPDOWN.consistentMenuWidth,
+        menuProps: selectMenuProps(options),
         placeholder: nativeEl.getAttribute('data-placeholder') || '请选择',
         'onUpdate:value': value => {
           state.value = value;
@@ -90,17 +97,89 @@ function mountSelect(nativeEl) {
   instances.set(nativeEl, { app, host });
 }
 
+function syncRadioGroup(name) {
+  if (!name) return;
+  document.querySelectorAll('input[type="radio"][name="' + name.replace(/"/g, '\\"') + '"]').forEach(el => {
+    const inst = instances.get(el);
+    if (inst && inst.syncFromNative) inst.syncFromNative();
+  });
+}
+
+function mountCheckable(nativeEl) {
+  const isRadio = nativeEl.type === 'radio';
+  const host = createHost(nativeEl, 'check');
+  const state = reactive({ checked: !!nativeEl.checked, disabled: nativeEl.disabled });
+  const syncFromNative = () => { state.checked = !!nativeChecked.get.call(nativeEl); };
+  Object.defineProperty(nativeEl, 'checked', {
+    configurable: true,
+    get: () => nativeChecked.get.call(nativeEl),
+    set: value => {
+      nativeChecked.set.call(nativeEl, value);
+      state.checked = !!value;
+      if (isRadio && value) syncRadioGroup(nativeEl.name);
+    }
+  });
+  nativeEl.addEventListener('change', () => {
+    state.checked = !!nativeChecked.get.call(nativeEl);
+    if (isRadio) syncRadioGroup(nativeEl.name);
+  });
+  host.addEventListener('click', e => e.stopPropagation());
+  const label = nativeEl.closest('label');
+  if (label && !label.dataset.naiveLabelBound) {
+    label.dataset.naiveLabelBound = '1';
+    label.addEventListener('click', e => {
+      if (e.target.closest('.naive-control-bridge')) return;
+      const control = label.querySelector('input[type="checkbox"],input[type="radio"]');
+      if (!control || control.disabled) return;
+      e.preventDefault();
+      if (control.type === 'radio') control.checked = true;
+      else control.checked = !control.checked;
+      dispatch(control, 'input');
+      dispatch(control, 'change');
+    });
+  }
+  const Comp = isRadio ? NRadio : NCheckbox;
+  const app = createApp({
+    render: () => h(NConfigProvider, { theme, themeOverrides }, {
+      default: () => h(Comp, {
+        checked: state.checked,
+        disabled: state.disabled,
+        size: nativeEl.closest('td.ck, th.ck') ? 'small' : 'medium',
+        'onUpdate:checked': value => {
+          if (isRadio && !value) return;
+          nativeEl.checked = value;
+          dispatch(nativeEl, 'input');
+          dispatch(nativeEl, 'change');
+        }
+      })
+    })
+  });
+  app.mount(host);
+  instances.set(nativeEl, { app, host, syncFromNative });
+}
+
+function shouldSkip(nativeEl) {
+  if (!nativeEl || nativeEl.dataset.naiveUpgraded || instances.has(nativeEl)) return true;
+  if (nativeEl.closest(skipInside)) return true;
+  const type = nativeEl.type || '';
+  return nativeEl.tagName === 'INPUT' && ['range', 'hidden', 'file', 'button', 'submit'].includes(type);
+}
+
 export function upgradeLegacyControls(root) {
-  if (!root?.querySelectorAll) return;
+  if (paused || !root?.querySelectorAll) return;
   const candidates = [];
   if (root.matches?.(selector)) candidates.push(root);
   candidates.push(...root.querySelectorAll(selector));
-  candidates.forEach(nativeEl => {
-    if (nativeEl.dataset.naiveUpgraded || instances.has(nativeEl)) return;
-    const type = nativeEl.type || '';
-    if (nativeEl.tagName === 'INPUT' && ['checkbox', 'radio', 'range', 'hidden', 'file', 'button', 'submit'].includes(type)) return;
-    nativeEl.tagName === 'SELECT' ? mountSelect(nativeEl) : mountInput(nativeEl);
-  });
+  paused++;
+  try {
+    candidates.forEach(nativeEl => {
+      if (shouldSkip(nativeEl)) return;
+      const type = nativeEl.type || '';
+      if (type === 'checkbox' || type === 'radio') mountCheckable(nativeEl);
+      else if (nativeEl.tagName === 'SELECT') mountSelect(nativeEl);
+      else mountInput(nativeEl);
+    });
+  } finally { paused--; }
 }
 
 export function teardownLegacyControls(root) {

@@ -1,10 +1,8 @@
 /* ===== 11. 飞行活动管理（飞行计划 / 身份 / 合作方） ===== */
 (function (g) {
   const M = MOCK, U = UI;
-  /* 状态默认「待执行」（用户裁定 2026-08-30：和合法性页一样，把要处理的先选出来）——
-     待执行是唯一还有动作可做的档（合法性判定在起飞前）；看全量切回「全部」即可，
-     深链跳入时既有逻辑已重置为「全部」，不受影响。 */
-  let st = { page: 1, size: 10, status: '待执行', partner: '全部', region: '全部', kw: '', sel: null,
+  /* 表格顶栏下拉默认「全部」，由用户再收窄。 */
+  let st = { page: 1, size: 10, status: '全部', partner: '全部', region: '全部', kw: '', sel: null,
     hlRisk: null };   // 「本航线风险」列表里当前高亮的那起事件 id —— 与地图上的高亮是同一个来源
 
   /* ---- F0305:计划与实际飞行对照 —— 判定阈值(Demo 缺省值,待业务方确认 C01/C02) ---- */
@@ -84,7 +82,7 @@
         if (idx >= 0) st.page = Math.max(1, Math.ceil((idx + 1) / st.size));
       }
     }
-    // safe-default: 默认选中项跟随当前筛选（待执行视图选首条待执行计划），用户可见可改
+    // safe-default: 默认选中当前筛选下的首条计划，用户可见可改
     st.sel = st.sel || filtered()[0] || M.flightPlans[0];
     const F = M.flightPlans;
     const cnt = s => F.filter(p => p.status === s).length;

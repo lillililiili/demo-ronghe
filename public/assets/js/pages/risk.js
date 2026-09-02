@@ -1,10 +1,8 @@
 /* ===== 14. 空间安全风险监测（鸟群/气球/风筝/孔明灯） ===== */
 (function (g) {
   const M = MOCK, U = UI;
-  /* status 筛选默认「待核验」（用户裁定 2026-08-30：补状态筛选，且把要处理的先选出来）；
-     深链跳入时与 level/type 一起重置为「全部」。排序保持状态正序，切到「全部」时
-     待核验仍排前面。 */
-  let st = { page: 1, size: 10, level: '全部', type: '全部', status: '待核验', sel: null, tab: 'event',
+  /* 表格顶栏下拉默认「全部」，由用户再收窄。排序仍按状态正序，待核验排前面。 */
+  let st = { page: 1, size: 10, level: '全部', type: '全部', status: '全部', sel: null, tab: 'event',
     sort: 'status', dir: 1 };
 
   /* 表头排序（154 条事件，光靠等级筛选不够用：值守真正要问的是

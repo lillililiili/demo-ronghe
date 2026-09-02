@@ -442,6 +442,42 @@ let chartPaused = false, logPaused = false;   // 图表刷新与日志滚动是�
       return false;
     }
     const u = M.currentUser || { name: '值班员', roleName: '值班员' };
+    const commit = why => {
+      const rs = CH.seeded('rb' + d.id + M.util.ymd(M.CONF.demoTime));
+      const taskId = 'RB' + M.util.ymd(M.CONF.demoTime) + M.util.p3(rs(1, 999));
+      const at = M.util.fmtDT(M.CONF.demoTime);
+      d.lastReboot = { at, by: u.name, why, taskId, ack: '待回执' };
+      d.controlLogs = d.controlLogs || [];
+      d.controlLogs.unshift({ at, by: u.name, action: '远程重启', reason: why, taskId, ack: '待回执' });
+      audit(`远程重启下发（${taskId}）：${why}`, d.id, u.name);
+      if (opts.onStart) opts.onStart(d, d.lastReboot);
+      window.dispatchEvent(new CustomEvent('device:changed', { detail: { id: d.id, phase: 'processing' } }));
+      U.toast(`重启指令已下发：${taskId}，等待设备回执`, 'ok');
+      pushLog(`[CTRL] POST /api/v1/device/control  {"deviceId":"${d.id}","cmd":"reboot","taskId":"${taskId}"}`);
+      setTimeout(() => {
+        const cost = rs(8, 26);
+        d.lastReboot.ack = `已回执（重启完成，耗时 ${cost}s）`;
+        if (d.controlLogs && d.controlLogs[0] && d.controlLogs[0].taskId === taskId) d.controlLogs[0].ack = d.lastReboot.ack;
+        d.hb = M.nowStr();
+        d.hbMin = 0;
+        d.status = '在线';
+        d.alarm = false;
+        d.health = '良好';
+        d.workState = 1;
+        d.latency = d.latency == null ? 32 : Math.min(d.latency, 60);
+        d.loss = d.loss == null ? 0.2 : Math.min(d.loss, 0.8);
+        if (M.recalcDeviceStats) M.recalcDeviceStats();
+        audit(`远程重启回执（${taskId}）：重启完成，耗时 ${cost}s`, d.id, u.name);
+        if (opts.onAck) opts.onAck(d, d.lastReboot);
+        window.dispatchEvent(new CustomEvent('device:changed', { detail: { id: d.id, phase: 'verify' } }));
+        pushLog(`[CTRL] ← 200 {"taskId":"${taskId}","status":"rebooted","costS":${cost}}  设备已恢复上报`);
+        if (document.getElementById('mnBody')) U.toast(`${d.name} 重启回执已接收（耗时 ${cost}s）`, 'ok');
+      }, 2600);
+    };
+    if (g.UI && typeof g.UI.openDeviceRebootForm === 'function') {
+      g.UI.openDeviceRebootForm(d, { onConfirm: commit });
+      return true;
+    }
     U.modal({
       title: '远程重启设备 · ' + d.name, width: '600px',
       body: `<div class="warnbox" style="border-color:rgba(255,77,94,.45)">
@@ -468,39 +504,8 @@ let chartPaused = false, logPaused = false;   // 图表刷新与日志滚动是�
         go: el => {
           const why = (el.querySelector('[data-rbwhy]').value || '').trim();
           if (!why) { U.toast('重启原因为必填 —— 设备控制操作必须能回答"为什么重启"', 'err'); return; }
-          const rs = CH.seeded('rb' + d.id + M.util.ymd(M.CONF.demoTime));
-          const taskId = 'RB' + M.util.ymd(M.CONF.demoTime) + M.util.p3(rs(1, 999));
-          const at = M.util.fmtDT(M.CONF.demoTime);
-          d.lastReboot = { at, by: u.name, why, taskId, ack: '待回执' };
-          d.controlLogs = d.controlLogs || [];
-          d.controlLogs.unshift({ at, by: u.name, action: '远程重启', reason: why, taskId, ack: '待回执' });
-          audit(`远程重启下发（${taskId}）：${why}`, d.id, u.name);
-          if (opts.onStart) opts.onStart(d, d.lastReboot);
-          window.dispatchEvent(new CustomEvent('device:changed', { detail: { id: d.id, phase: 'processing' } }));
           U.closeModal();
-          U.toast(`重启指令已下发：${taskId}，等待设备回执`, 'ok');
-          pushLog(`[CTRL] POST /api/v1/device/control  {"deviceId":"${d.id}","cmd":"reboot","taskId":"${taskId}"}`);
-          /* 回执真的会到 —— 到达后回写状态并再记一条审计。
-             页面可能已经切走，所以只动数据 + 尽力刷新 UI，不假设 DOM 还在。 */
-          setTimeout(() => {
-            const cost = rs(8, 26);
-            d.lastReboot.ack = `已回执（重启完成，耗时 ${cost}s）`;
-            if (d.controlLogs && d.controlLogs[0] && d.controlLogs[0].taskId === taskId) d.controlLogs[0].ack = d.lastReboot.ack;
-            d.hb = M.nowStr();
-            d.hbMin = 0;
-            d.status = '在线';
-            d.alarm = false;
-            d.health = '良好';
-            d.workState = 1;
-            d.latency = d.latency == null ? 32 : Math.min(d.latency, 60);
-            d.loss = d.loss == null ? 0.2 : Math.min(d.loss, 0.8);
-            if (M.recalcDeviceStats) M.recalcDeviceStats();
-            audit(`远程重启回执（${taskId}）：重启完成，耗时 ${cost}s`, d.id, u.name);
-            if (opts.onAck) opts.onAck(d, d.lastReboot);
-            window.dispatchEvent(new CustomEvent('device:changed', { detail: { id: d.id, phase: 'verify' } }));
-            pushLog(`[CTRL] ← 200 {"taskId":"${taskId}","status":"rebooted","costS":${cost}}  设备已恢复上报`);
-            if (document.getElementById('mnBody')) U.toast(`${d.name} 重启回执已接收（耗时 ${cost}s）`, 'ok');
-          }, 2600);
+          commit(why);
         }
       }
     });

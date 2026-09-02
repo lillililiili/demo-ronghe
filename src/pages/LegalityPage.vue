@@ -16,9 +16,8 @@ export default {};
    legacy 中已无到达路径的 evidModal / reviewModal / confirmModal / legacyDetail /
    evidSect / factorSect 不带入（同 evidence 页先例）。 */
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue';
-import { NPagination } from 'naive-ui';
+import { NPagination, NSelect } from 'naive-ui';
 import { usePageChrome } from '../shell/usePageChrome.js';
-import UPanel from '../ui/UPanel.vue';
 import { toast } from '../ui/nv.js';
 import { openModal, closeModal } from '../ui/modal.js';
 
@@ -29,6 +28,9 @@ const root = ref(null);
 const st = reactive(S.st);
 const totalCount = ref(0);
 const pageCount = computed(() => Math.max(1, Math.ceil(totalCount.value / st.size)));
+const regionOptions = computed(() => [{ label: '全部', value: '全部' }, ...M.DISTRICTS.map(d => ({ label: d.name, value: d.name }))]);
+const evidenceTab = ref('space');
+const basisSel = ref(0);
 
 const OPER = { name: '系统管理员', account: 'admin', role: '超级管理员' };
 const nowStr = () => M.nowStr();
@@ -598,12 +600,12 @@ function toCaseFlow() {
     U.goto('punish', { caseId: c0.id });
     return;
   }
-  if (!EVT) { toast('事件层未加载，无法立案', 'err'); return; }
+  if (!EVT) { toast('事件层未加载，无法转入处置', 'err'); return; }
   openModal({
-    title: '转处置立案 · ' + t.id, width: '600px',
-    body: `<div class="warnbox">立案将固化<b>当前判定快照</b>（判定结果 / 违规事由 / 风险等级 / 来源与置信度），
-        后续复核推翻判定时可查「当初凭什么立案」。<br>
-        立案后转<b>处置处罚模块</b>；反制等处置手段在该模块内经授权流程执行，本页不提供反制入口。</div>
+    title: '转入处置 · ' + t.id, width: '600px',
+    body: `<div class="warnbox">转入处置会自动保存<b>当前判定快照</b>（判定结果 / 违规事由 / 风险等级 / 来源与置信度），
+        供后续复核追溯当时依据。<br>
+        确认后进入<b>处置处罚模块</b>；反制等处置手段在相应模块内经授权执行，本页不提供反制入口。</div>
       ${U.kv([
       ['目标编号', '<span class="mono">' + t.id + '</span>'],
       ['判定结果', U.legal(t.legal)],
@@ -612,12 +614,12 @@ function toCaseFlow() {
       ['数据来源', t.source + '（置信度 ' + U.confPct(t.source_confidence) + '）'],
       ['经办人', OPER.name + '（' + OPER.role + '）']
     ])}`,
-    footer: '<button class="btn" data-close>取消</button><button class="btn warn" data-act="ok">确认立案并转处置</button>',
+    footer: '<button class="btn" data-close>取消</button><button class="btn warn" data-act="ok">确认转入处置</button>',
     on: {
       ok: () => {
-        const r = EVT.fileCase(EVT.of(t.id));
+        const r = EVT.ensureCaseRecord(EVT.of(t.id));
         if (!r.ok) { toast(r.msg, 'err'); return; }
-        audit(OPER, '转处置立案：' + r.case.id, t.id);
+        audit(OPER, '转入处置：' + r.case.id, t.id);
         const bp = ((M.stats || {}).byPenalty || []).find(x => x.name === r.case.penalty);
         if (bp) bp.value++;
         closeModal();
@@ -641,12 +643,19 @@ function targets() {
 function kpiHtml() {
   const T = M.todayTargets.filter(t => t.type === '无人机');
   const c = s => T.filter(t => t.legal === s).length;
-  const card = (o, key) => Object.assign(o, { attr: `data-kpi="${key}"`, active: st.legal === key });
+  const card = (o, key) => Object.assign(o, {
+    attr: `data-kpi="${key}"`,
+    active: st.legal === key || (key === '全部' && st.legal === '待处理')
+  });
   return U.kpis([
-    card({ label: '今日判定目标', value: U.num(T.length), color: 'blue', icon: 'check', desc: '仅无人机参与合法性判定 · 点击查看全部' }, '全部'),
-    card({ label: '合法', value: U.num(c('合法')), color: 'green', icon: 'check', desc: '计划·时间·空域·航线均符合' }, '合法'),
-    card({ label: '非法', value: U.num(c('非法')), color: 'red', icon: 'alert', desc: '无有效计划，或进入任何计划都无权批准的空域/时段' }, '非法'),
-    card({ label: '待确认', value: U.num(c('待确认')), color: 'amber', icon: 'alert', desc: '关键数据缺失或存在偏差，需人工核实后定性' }, '待确认')
+    card({ label: '今日判定目标', value: U.num(T.length), color: 'blue', icon: 'check',
+      desc: '仅无人机参与合法性判定 · 点击查看全部' }, '全部'),
+    card({ label: '合法', value: U.num(c('合法')), color: 'green', icon: 'check',
+      desc: '计划·时间·空域·航线均符合' }, '合法'),
+    card({ label: '非法', value: U.num(c('非法')), color: 'red', icon: 'alert',
+      desc: '无有效计划，或进入任何计划都无权批准的空域/时段' }, '非法'),
+    card({ label: '待确认', value: U.num(c('待确认')), color: 'amber', icon: 'alert',
+      desc: '关键数据缺失或存在偏差，需人工核实后定性' }, '待确认')
   ]);
 }
 
@@ -676,43 +685,54 @@ applyEvidenceGate();
   }
   st.sel = st.sel || targets()[0] || T[0];
 }
-const listPanelBody = `<div class="toolbar">
-    <span id="lgChips" style="display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap"></span>
-    ${U.field('区域', U.select('region', ['全部', ...M.DISTRICTS.map(d => d.name)], st.region))}
-    <span style="flex:1"></span>
-    <button class="btn" id="lgRule">${U.icon('settings')} 判定规则说明</button>
-    <button class="btn" id="lgRecalc">${U.icon('refresh')} 重新判定</button>
-  </div>
-  <div id="lgList" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>`;
+function orderedTargets() {
+  const rows = targets();
+  if (st.legal !== '待处理') return rows;
+  const illegal = rows.filter(t => t.legal === '非法');
+  const pending = rows.filter(t => t.legal === '待确认');
+  const chunk = Math.max(1, Math.ceil(st.size / 2));
+  return illegal.slice(0, chunk).concat(pending.slice(0, chunk), illegal.slice(chunk), pending.slice(chunk));
+}
+
+function queueRow(t) {
+  const reasons = vlist(t);
+  const revisedTx = manualRevised(t) ? '<span class="lg-row-note is-purple">人工改判</span>'
+    : engineDegraded(t) ? '<span class="lg-row-note is-amber">证据降级</span>' : '';
+  return `<button class="lg-queue-row${st.sel && st.sel.id === t.id ? ' is-selected' : ''}" data-row="${t.id}"
+    aria-current="${st.sel && st.sel.id === t.id ? 'true' : 'false'}">
+    <span class="lg-row-target"><b class="mono">${t.id}</b><small>${t.time.slice(11)}</small></span>
+    <span class="lg-row-verdict">${U.legal(t.legal)}${revisedTx}</span>
+    <span class="lg-row-risk">${U.risk(t.risk)}</span>
+    <span class="lg-row-region">${t.district}</span>
+    <span class="lg-row-reason" title="${esc(reasons.join('、') || '无违规原因')}">${esc(reasons[0] || '系统自动通过')}</span>
+  </button>`;
+}
+
+function queueGroup(status, pageRows, forceSummary) {
+  const all = M.todayTargets.filter(t => t.type === '无人机' && t.legal === status
+    && (st.region === '全部' || t.district === st.region));
+  const rows = pageRows.filter(t => t.legal === status);
+  if (!rows.length && !forceSummary) return '';
+  const tone = status === '非法' ? 'red' : status === '待确认' ? 'amber' : 'green';
+  const label = status === '非法' ? '系统判定非法' : status === '待确认' ? '系统待确认' : '系统自动通过';
+  return `<section class="lg-queue-group is-${tone}">
+    <button class="lg-group-head" data-chip-set="${status}" aria-label="筛选${label}">
+      <span class="lg-group-caret">${U.icon('play')}</span><b>${label}（${all.length}）</b>
+      <span>查看${label}目标</span></button>
+    ${rows.length ? `<div class="lg-group-rows">${rows.map(queueRow).join('')}</div>` : ''}
+  </section>`;
+}
 
 function list() {
-  const rows = targets(), page = rows.slice((st.page - 1) * st.size, st.page * st.size);
+  const rows = orderedTargets();
+  const page = rows.slice((st.page - 1) * st.size, st.page * st.size);
   totalCount.value = rows.length;
-  return U.table([
-    {
-      t: '目标 / 时间', w: '118px', render: t => U.cell(t.id, t.time.slice(11), { mono: true })
-    },
-    {
-      t: '判定 / 风险', w: '96px', render: t => U.legal(t.legal)
-        + `<div style="margin-top:2px">${U.risk(t.risk)}</div>`
-        + (needGate(t) ? ` <span title="身份依据缺失，证据不足" style="color:#ff8b95">${U.icon('warning')}</span>` : '')
-        + (manualRevised(t) ? `<div style="font-size:10.5px;color:#c8adff;margin-top:2px" title="原判定 ${engOf(t)}，已人工改判">人工改判</div>`
-          : engineDegraded(t) ? `<div style="font-size:10.5px;color:#ffd07a;margin-top:2px" title="原判定 ${engOf(t)}，因身份依据缺失由引擎证据门禁降级">证据降级</div>` : '')
-    },
-    { t: '区域', w: '72px', render: t => t.district },
-    {
-      t: '违规原因', render: t => {
-        const vs = vlist(t);
-        if (!vs.length) return '—';
-        const show = vs.slice(0, 2).map(v =>
-          `<div style="margin:1px 0">${U.tag(v, FORBIDDEN_VIOLATIONS.indexOf(v) >= 0 ? 't-red' : 't-orange')}</div>`).join('');
-        const overH = anyV(t, ['超出空域限高', '超出计划批准高度'])
-          ? `<div class="mono" style="font-size:10.5px;color:#ff8b95">实测 ${t.heightAgl != null ? t.heightAgl + ' m（距地）' : t.alt + ' m（海拔）'}</div>` : '';
-        return show + (vs.length > 2
-          ? `<div style="font-size:10.5px;color:var(--txt-3)" title="${vs.join('、')}">+${vs.length - 2} 项</div>` : '') + overH;
-      }
-    }
-  ], page, { rowId: t => t.id, activeId: st.sel && st.sel.id });
+  const order = ['非法', '待确认', '合法'];
+  const groups = order.map(s => queueGroup(s, page, st.legal === '待处理' && s === '合法')).join('');
+  return `<div class="lg-queue-columns" aria-hidden="true">
+      <span>目标 / 时间</span><span>系统判定</span><span>风险等级</span><span>区域</span><span>主要原因</span>
+    </div>
+    <div class="lg-queue-scroll">${groups || '<div class="empty">当前筛选条件下没有研判目标</div>'}</div>`;
 }
 
 function spaceHits(t) {
@@ -751,19 +771,39 @@ let detMap = null;
 function resetDetMap() { if (detMap) { try { detMap.destroy(); } catch (e) { } detMap = null; } }
 function bindSpaceMap() {
   resetDetMap();
-  const d = document.querySelector('#lgDetail details.lg-space');
-  if (!d) return;
-  d.addEventListener('toggle', () => { if (d.open) drawDetailMap(); });
-  if (d.open) drawDetailMap();
+  if (evidenceTab.value !== 'space' || !document.getElementById('lgMap')) return;
+  drawDetailMap();
 }
 function drawDetailMap() {
   const box = document.getElementById('lgMap');
   if (!box) return;
   if (detMap) { try { detMap.destroy(); } catch (e) { } detMap = null; }
   const t = st.sel; if (!t) return;
-  detMap = new window.MapView(box, { zoom: 3.2, maxDev: 0, maxAlarm: 0, legend: false, layers: { device: false, alarm: false } });
-  detMap.setData({ airspaces: M.airspaces, devices: [], alarms: [], targets: [t] });
-  detMap.sel = t;
+  detMap = new window.MapView(box, { zoom: 3.2, maxDev: 0, maxAlarm: 0, legend: false,
+    showAirspaceLabels: true, showTargetLabels: false, layers: { device: false, alarm: false } });
+  const plan = t.matched_plan_id ? M.flightPlans.find(p => p.id === t.matched_plan_id) : null;
+  const route = M.routeById && M.routeById(t.routeId || (plan && plan.routeId));
+  const draw0 = detMap.draw.bind(detMap);
+  detMap.draw = function () {
+    draw0();
+    if (!route || !route.waypoints || route.waypoints.length < 2) return;
+    const c2 = this.ctx;
+    c2.save();
+    c2.beginPath();
+    route.waypoints.forEach((w, i) => {
+      const q = this.px(w.lon, w.lat);
+      i ? c2.lineTo(q[0], q[1]) : c2.moveTo(q[0], q[1]);
+    });
+    c2.setLineDash([7, 4]); c2.strokeStyle = '#256dff'; c2.lineWidth = 1.8; c2.stroke(); c2.setLineDash([]);
+    route.waypoints.forEach(w => {
+      const q = this.px(w.lon, w.lat);
+      c2.beginPath(); c2.arc(q[0], q[1], 2.3, 0, Math.PI * 2); c2.fillStyle = '#4b9cff'; c2.fill();
+    });
+    c2.restore();
+  };
+  const mapTarget = Object.assign({}, t, { track: t.track_points || t.track || [] });
+  detMap.setData({ airspaces: M.airspaces, devices: [], alarms: [], targets: [mapTarget] });
+  detMap.sel = mapTarget.id;
   const pts = t.track_points || [];
   const c = pts.length ? pts[Math.floor(pts.length / 2)] : t;
   const center = () => {
@@ -866,18 +906,19 @@ function planCompareSect(t) {
 function actionBar(t) {
   if (t.type !== '无人机') return '';
   const a = linkedAlarm(t), c = linkedCase(t);
+  const noOp = !M.can('合法性判定', 'op');
   const btn = (k, label, cls, dis, tip) =>
-    `<button class="btn ${cls || ''}" data-lg="${k}" ${dis ? 'disabled' : ''} title="${tip || ''}"
+    `<button class="btn ${cls || ''}" data-lg="${k}" ${dis || noOp ? 'disabled' : ''} title="${noOp ? '当前角色仅可查看，不能修改判定' : (tip || '')}"
       style="flex:1;height:36px;justify-content:center">${label}</button>`;
   if (t.legal === '合法') return U.detailActions(
     btn('revise', '人工复核（改判）', 'warn', false, '合法目标可查看可复核，不提供转办入口'));
   if (t.legal === '待确认') return U.detailActions(
     btn('confirm', '人工复核', 'pri', false, '补充核验并定性（合法 / 非法）'));
   /* 「转告警工单」已按用户裁定整体删除（2026-08-30）：非法目标绝大多数本就带关联告警
-     （按钮常年置灰），演示上有意义的流转只有复核与立案。toAlarmFlow 逻辑保留不再有入口。 */
+     （按钮常年置灰），演示上有意义的流转只有复核与转入处置。toAlarmFlow 逻辑保留不再有入口。 */
   if (t.legal === '非法') return U.detailActions(
     btn('revise', '人工复核', 'pri', false, '复核判定依据，可改判')
-    + btn('tocase', '转处置立案', 'warn', false, c ? `已立案 ${c.id}，点击转到处置处罚` : '立案并转处置处罚模块'));
+    + btn('tocase', '转入处置', 'warn', false, c ? `已有处置记录 ${c.id}，点击转到处置处罚` : '生成处置记录并进入处置处罚模块'));
   return '';
 }
 
@@ -889,56 +930,89 @@ function detail() {
     + (manualRevised(t) ? ' <span class="tag t-purple">人工改判</span>' : '');
   const j = judge(t);
   const manual = manualRevised(t);
-  const autoDeg = !manual && engineDegraded(t);
-  const ic = s => U.stateIcon(s, false);
-  const pts = t.track_points || [];
-  const lastUpd = pts.length && pts[pts.length - 1].t
-    ? new Date(pts[pts.length - 1].t).toTimeString().slice(0, 8)
-    : t.time.slice(11);
-  const inList = targets().some(x => x.id === t.id);
-  return `${U.detailHero({
-    icon: 'scale', subtitle: '合法性研判目标', title: t.subtype || t.type, id: t.id,
-    tags: [U.legal(t.legal), U.risk(t.risk), manual ? U.tag('人工改判', 't-purple') : ''],
-    meta: [['区域', t.district], ['发现', t.time.slice(11)], ['最后更新', lastUpd]]
-  })}
-    ${inList ? '' : `<div class="warnbox" style="margin-bottom:10px">原选中目标已不在当前筛选结果中，右侧仍显示其详情；点击列表任一行可切换。</div>`}
-    ${integrityStrip(t, j)}
-    ${U.metricStrip([
-      { label: '合法性结论', value: t.legal, tone: t.legal === '合法' ? 'good' : t.legal === '非法' ? 'bad' : 'warn', icon: 'scale' },
-      { label: '风险等级', value: t.risk, tone: /高/.test(t.risk) ? 'bad' : /中/.test(t.risk) ? 'warn' : 'info', icon: 'alert' },
-      { label: '来源置信', value: U.confPct(t.source_confidence), tone: 'good', icon: 'radar' },
-      { label: '判定方式', value: manual ? '人工改判' : autoDeg ? '自动收敛' : '规则引擎', icon: 'settings' }
-    ], { compact: true })}
-    ${U.verdictHtml(t)}
-    ${planCompareSect(t)}
-    <div style="font-size:13.5px;color:var(--txt-2);margin:14px 0 2px">技术详情
-      <span style="font-size:11.5px;color:var(--txt-3)">（判定明细与原始数据，默认收起）</span></div>
-    ${U.sect('判定明细（技术）' + (manual ? ' <span class="tag t-purple">当前结果已人工改判</span>'
-      : autoDeg ? ' <span class="tag t-amber">当前结果已自动收敛</span>' : ''), `
-      <div style="display:flex;flex-direction:column;gap:7px">
-        ${j.items.map(i => `<div style="display:flex;gap:8px;align-items:flex-start;font-size:12.5px;
-          border-left:2px solid ${i.s === 'pass' ? '#2fd06e' : i.s === 'warn' ? '#ffb020' : '#ff4d5e'};padding-left:8px">
-          <span style="flex:none;width:16px">${ic(i.s)}</span>
-          <div style="flex:1"><div><b>${i.r.n}</b> <span class="mono" style="color:var(--txt-3);font-size:11px">(${i.r.id})</span> ${i.badge || ''}</div>
-            <div style="color:var(--txt-3)">${i.msg}</div></div>
-        </div>`).join('')}
-      </div>`, { icon: 'settings', collapsible: true, open: false })}
-    ${U.sect('目标信息', U.kv([
-      ['发现时间', t.time],
-      ['机型', U.modelTag(t.uav_model, t.modelSource)],
-      ['归属单位', t.partner],
-      ['飞手', t.pilot],
-      ['位置', `<span class="mono">${t.lon.toFixed(4)}°E, ${t.lat.toFixed(4)}°N</span>`],
-      ['海拔高度', t.alt + ' m'],
-      ['距地高度', t.heightAgl != null ? t.heightAgl + ' m'
-        : '<span style="color:var(--txt-3)" title="协议 height 为选填，设备未上报">未上报（不以海拔替代）</span>'],
-      ['速度', t.speed + ' m/s'],
-      ['数据来源', t.source + '（置信度 ' + U.confPct(t.source_confidence) + '）']
-    ], { surface: true, density: 'compact' }), { icon: 'plane', collapsible: true, open: false })}
-    ${spaceSect(t, j)}
-    ${reqSect(t, j)}
-    ${reviewSect(t)}
-    ${actionBar(t)}`;
+  const log = t.reviewLog || [];
+  const lastReview = log.length ? log[log.length - 1] : null;
+  const primary = vlist(t)[0] || (t.legal === '合法' ? '各项规则校验通过' : '关键判据需要补充核验');
+  const plan = t.matched_plan_id ? M.flightPlans.find(p => p.id === t.matched_plan_id) : null;
+  const alarm = linkedAlarm(t), kase = linkedCase(t);
+  const tone = t.legal === '合法' ? 'green' : t.legal === '非法' ? 'red' : 'amber';
+  const resultTx = i => i.s === 'pass' ? '通过' : i.s === 'fail' ? '不通过'
+    : i.r.id === 'C01' ? '部分匹配' : '无法判定';
+  const influenceTx = i => {
+    if (i.s === 'fail' && ['C02-1', 'C02-2', 'C02-4'].includes(i.r.id)) return '一票否决';
+    if (i.s === 'warn' && i.r.id === 'C01') return '降低置信度';
+    if (i.s === 'warn') return '不可视为通过';
+    return '—';
+  };
+  const basisItems = j.items.filter(i => i.r.id !== 'C03');
+  const compactMsg = s => esc(String(s).replace(/<br\s*\/?>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim());
+  const basisRows = basisItems.map((i, idx) => `<button class="lg-basis-row${basisSel.value === idx ? ' is-selected' : ''}"
+      data-basis="${idx}" aria-pressed="${basisSel.value === idx}">
+      <span>${idx + 1}</span><span><b>${i.r.n}</b><small>${i.r.id}</small></span>
+      <span class="is-${i.s}">${U.stateIcon(i.s, false)} ${resultTx(i)}</span>
+      <span class="lg-impact is-${i.s}">${influenceTx(i)}</span><span title="${compactMsg(i.msg)}">${compactMsg(i.msg)}</span>
+    </button>`).join('');
+  const selectedBasis = basisItems[Math.min(basisSel.value, basisItems.length - 1)] || basisItems[0];
+  const hits = spaceHits(t);
+  const pts = t.track_points || t.track || [];
+  const firstHit = hits[0];
+  const evidenceTabs = [
+    ['space', 'zone', '空间位置证据'], ['rules', 'settings', '规则依据'],
+    ['raw', 'database', '原始数据'], ['related', 'link', '相关资源']
+  ].map(([k, icon, label]) => `<button class="lg-evidence-tab${evidenceTab.value === k ? ' is-active' : ''}"
+      data-evidence-tab="${k}" aria-selected="${evidenceTab.value === k}">${U.icon(icon)} ${label}</button>`).join('');
+  let evidenceBody = '';
+  if (evidenceTab.value === 'space') {
+    evidenceBody = `<div class="lg-evidence-copy"><h4>证据说明</h4>
+      <p>目标轨迹${firstHit ? `命中“${esc(firstHit.v)}”` : '未发现空间类违规'}，轨迹共持续 ${Math.max(1, Math.round(t.durMin || 1))} 分钟。</p>
+      <dl><dt>进入时间</dt><dd>${t.time}</dd><dt>轨迹时长</dt><dd>${Math.max(1, Math.round(t.durMin || 1))} 分钟</dd>
+        <dt>轨迹位置</dt><dd class="mono">${t.lat.toFixed(4)}°N, ${t.lon.toFixed(4)}°E</dd>
+        <dt>轨迹点数</dt><dd>${pts.length || '—'}</dd></dl>
+      ${firstHit ? `<p class="lg-evidence-alert">${esc(firstHit.how)}</p>` : ''}
+      <button class="lg-link-btn" data-lg-nav="center">重新定位地图</button></div>
+      <div class="lg-map-wrap"><div id="lgMap" aria-label="目标轨迹与空域关系地图"></div>
+        <div class="lg-map-legend"><span class="is-zone">禁飞区</span><span class="is-plan">批准航线</span><span class="is-track">实际轨迹</span></div></div>`;
+  } else if (evidenceTab.value === 'rules') {
+    evidenceBody = `<div class="lg-evidence-wide"><h4>${selectedBasis.r.n} <span>${selectedBasis.r.id}</span></h4>
+      <div class="lg-rule-focus is-${selectedBasis.s}">${U.stateIcon(selectedBasis.s, false)} ${resultTx(selectedBasis)}</div>
+      <p>${selectedBasis.msg}</p><p class="lg-muted">规则说明：${selectedBasis.r.d}</p></div>`;
+  } else if (evidenceTab.value === 'raw') {
+    evidenceBody = `<div class="lg-evidence-wide">${U.kv([
+      ['目标编号', `<span class="mono">${t.id}</span>`], ['发现时间', t.time], ['目标类型', t.subtype || t.type],
+      ['归属单位', t.partner || '—'], ['飞手', t.pilot || '—'], ['距地高度', t.heightAgl != null ? t.heightAgl + ' m' : '未上报'],
+      ['海拔高度', t.alt + ' m'], ['速度', t.speed + ' m/s'], ['数据来源', `${t.source}（${U.confPct(t.source_confidence)}）`]
+    ], { surface: true, density: 'compact' })}</div>`;
+  } else {
+    evidenceBody = `<div class="lg-evidence-wide">${U.kv([
+      ['批准计划', plan ? `<span class="mono">${plan.id}</span>` : '无有效计划'],
+      ['关联告警', alarm ? `<span class="mono">${alarm.id}</span> · ${alarm.status}` : '无关联告警'],
+      ['处置记录', kase ? `<span class="mono">${kase.id}</span> · ${kase.status}` : '尚未生成'],
+      ['空域规则', firstHit && firstHit.zone ? `${firstHit.zone.name} · ${firstHit.zone.id}` : '未命中空间类规则'],
+      ['复核记录', log.length ? `${log.length} 条，最近由 ${esc(lastReview.operator)}` : '暂无人工复核记录']
+    ], { surface: true, density: 'compact' })}</div>`;
+  }
+  return `<div class="lg-review-head"><span>当前目标：<b class="mono">${t.id}</b></span>${U.risk(t.risk)}
+      <span class="lg-head-spacer"></span><button class="btn" data-lg-nav="next">切换目标</button>
+      <button class="lg-icon-btn" data-lg-nav="prev" aria-label="上一个目标">${U.icon('play')}</button>
+      <button class="lg-icon-btn is-next" data-lg-nav="next" aria-label="下一个目标">${U.icon('play')}</button></div>
+    <div class="lg-detail-scroll">
+      <section class="lg-verdict-card is-${tone}">
+        <div class="lg-verdict-block"><span class="lg-verdict-icon">${U.icon(t.legal === '合法' ? 'shield' : 'alert')}</span>
+          <div><small>系统判定</small><strong>${t.legal}</strong><span>${j.gated ? '证据不足，结论已自动收敛' : '依据规则引擎判定'}</span></div></div>
+        <div class="lg-core-reason"><small>核心原因</small><b>${esc(primary)}</b><span>依据规则：${basisItems.filter(i => i.s === 'fail').map(i => i.r.id).join('、') || 'C01–C02 综合判定'}</span></div>
+        <div class="lg-target-facts"><dl><dt>发现时间</dt><dd>${t.time}</dd><dt>实测高度</dt><dd>${t.heightAgl != null ? t.heightAgl + ' m（距地）' : t.alt + ' m（海拔）'}</dd>
+          <dt>归属单位</dt><dd>${t.partner || '—'}</dd><dt>飞手</dt><dd>${t.pilot || '—'}</dd></dl></div>
+        <div class="lg-review-state"><small>人工复核状态</small>${manual ? U.tag('已复核', 't-green') : U.tag(t.legal === '合法' ? '无需复核' : '待复核', t.legal === '合法' ? 't-green' : 't-blue')}
+          <dl><dt>人工结论</dt><dd>${manual ? t.legal : '未出'}</dd><dt>复核人</dt><dd>${lastReview ? esc(lastReview.operator) : '—'}</dd><dt>复核时间</dt><dd>${lastReview ? lastReview.at : '—'}</dd></dl></div>
+      </section>
+      <section class="lg-basis-card"><header><b>判定依据总表</b><span>（点击行查看证据详情）</span></header>
+        <div class="lg-basis-columns" aria-hidden="true"><span>序号</span><span>判定项</span><span>结果</span><span>影响</span><span>说明</span></div>
+        <div class="lg-basis-table">${basisRows}</div></section>
+      <section class="lg-evidence-card"><header><b>证据详情</b><span>${evidenceTab.value === 'space' ? '（空间位置校验）' : ''}</span></header>
+        <div class="lg-evidence-tabs" role="tablist">${evidenceTabs}</div><div class="lg-evidence-body">${evidenceBody}</div></section>
+      ${reviewSect(t)}
+    </div>
+    <div class="lg-action-dock">${actionBar(t)}</div>`;
 }
 
 function drawRing() {
@@ -949,9 +1023,12 @@ function drawRing() {
 }
 
 function paint() {
+  CH.disposeAll();
   const k = document.getElementById('lgKpi'); if (k) k.innerHTML = kpiHtml();
-  const ch = document.getElementById('lgChips'); if (ch) ch.innerHTML = chipsHtml();
-  const n = document.getElementById('lgEvidN'); if (n) n.textContent = autoDegraded().length + gatedList().length;
+  const qn = document.getElementById('lgQueueN');
+  if (qn) qn.textContent = `（${M.todayTargets.filter(t => t.type === '无人机'
+    && (t.legal === '非法' || t.legal === '待确认')
+    && (st.region === '全部' || t.district === st.region)).length}）`;
   document.getElementById('lgList').innerHTML = list();
   document.getElementById('lgDetail').innerHTML = detail();
   drawRing();
@@ -980,10 +1057,7 @@ onMounted(() => {
 
   U.on(view, '[data-row]', 'click', (e, el) => {
     st.sel = M.todayTargets.find(t => t.id === el.dataset.row) || st.sel;
-    U.selectRow(document.getElementById('lgList'), el.dataset.row);
-    document.getElementById('lgDetail').innerHTML = detail();
-    drawRing();
-    bindSpaceMap();
+    basisSel.value = 0; evidenceTab.value = 'space'; paint();
   });
   U.on(view, '[data-kpi]', 'click', (e, el) => {
     const v = el.dataset.kpi;
@@ -1011,9 +1085,38 @@ onMounted(() => {
   });
   /* 分页交互已由模板层 <n-pagination> 受控接管（P2），[data-pg]/[data-size] 委托删除 */
   U.on(view, '[data-f]', 'change', (e, el) => { st[el.dataset.f] = el.value; st.page = 1; paint(); });
+  U.on(view, '[data-basis]', 'click', (e, el) => {
+    basisSel.value = Number(el.dataset.basis) || 0;
+    evidenceTab.value = 'rules';
+    document.getElementById('lgDetail').innerHTML = detail();
+    bindSpaceMap();
+  });
+  U.on(view, '[data-evidence-tab]', 'click', (e, el) => {
+    evidenceTab.value = el.dataset.evidenceTab;
+    document.getElementById('lgDetail').innerHTML = detail();
+    bindSpaceMap();
+  });
+  U.on(view, '[data-lg-nav]', 'click', (e, el) => {
+    const k = el.dataset.lgNav;
+    if (k === 'center') {
+      if (detMap && st.sel) detMap.centerAt(st.sel.lon, st.sel.lat);
+      return;
+    }
+    const rows = orderedTargets();
+    if (!rows.length) return;
+    const at = Math.max(0, rows.findIndex(t => st.sel && t.id === st.sel.id));
+    const next = k === 'prev' ? (at - 1 + rows.length) % rows.length : (at + 1) % rows.length;
+    st.sel = rows[next];
+    st.page = Math.floor(next / st.size) + 1;
+    basisSel.value = 0; evidenceTab.value = 'space'; paint();
+  });
   U.on(view, '[data-lg]', 'click', (e, el) => {
     const k = el.dataset.lg;
     if (!st.sel) return;
+    if (!M.can('合法性判定', 'op')) {
+      M.pushAudit('合法性判定', '判定操作被拒绝：无操作权限', st.sel.id, '失败');
+      return toast('需要「合法性判定」操作权限', 'err');
+    }
     if (k === 'confirm') decisionConfirmModal();
     else if (k === 'revise') manualReviseModal();
     else if (k === 'toalarm') toAlarmFlow();
@@ -1023,7 +1126,7 @@ onMounted(() => {
       if (t.legal !== '非法') { toast('该目标当前判定已非「非法」，无需重复降级', 'ok'); return; }
       const c = M.cases.find(x => x.targetId === t.id);
       const rsn = '证据不足降级：判定时刻无 uavSN 数据源（需协议破解 dcd / RemoteID rid 设备），身份匹配仅能依据时间窗 + 空间范围，不足以定性为非法'
-        + (c ? '。该目标已立案 ' + c.id + '，须在处置处罚管理同步复核案件' : '');
+        + (c ? '。该目标已有处置记录 ' + c.id + '，须在处置处罚管理同步复核案件' : '');
       const from = applyReview(t, '待确认', rsn, '证据不足降级');
       const req = c ? raiseReviewRequest(t, c, from, '待确认', rsn, OPER) : null;
       refresh();
@@ -1032,6 +1135,7 @@ onMounted(() => {
     }
   });
   document.getElementById('lgRecalc').onclick = () => {
+    if (!M.can('合法性判定', 'op')) return toast('需要「合法性判定」操作权限', 'err');
     const all = targets();
     const kept = all.filter(revised).length;
     refresh();
@@ -1085,32 +1189,84 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="view" id="view" ref="root">
-    <div style="height:100%;display:flex;flex-direction:column;min-height:0">
-      <div id="lgKpi"></div>
-
-      <!-- 操作引导（用户裁定 2026-08-30：多处补黄字引导） -->
-      <div class="warnbox" style="margin:12px 0 0;padding:8px 11px;font-size:12px;flex:none">
-        演示动线：点上方<b>统计卡</b>或列表左上<b>状态标签</b>切换「待处理 / 合法 / 非法 / 待确认」视图 →
-        点列表任一行，右侧显示判定详情 → 底部点「<b>人工复核</b>」演示；非法目标另有「<b>转处置立案</b>」。</div>
-
-      <div class="row" style="margin-top:12px;flex:1;min-height:0;padding-bottom:6px">
-        <UPanel title="判定结果列表" panel-style="flex:1.4" nopad>
-          <div style="display:contents" v-html="listPanelBody"></div>
-          <!-- P2：分页器换 n-pagination（受控），容器样式内联复刻旧 .pager 观感 -->
-          <div style="display:flex;align-items:center;justify-content:center;gap:8px;padding:10px;min-height:42px;
-            background:rgba(8,19,32,.54);border-top:1px solid rgba(130,174,218,.10);flex:none">
+  <div class="view legality-workbench" id="view" ref="root">
+    <div class="lg-shell">
+      <div id="lgKpi" class="lg-kpi-host" aria-label="今日合法性判定统计"></div>
+      <div class="lg-workspace">
+        <section class="lg-queue-panel" aria-label="待人工复核目标队列">
+          <header class="lg-panel-head">
+            <h2>待人工复核 <span id="lgQueueN"></span></h2>
+            <span class="lg-head-spacer"></span>
+            <label class="lg-region-filter"><span>区域</span>
+              <n-select v-model:value="st.region" :options="regionOptions" :clearable="false" aria-label="区域" />
+            </label>
+            <button class="lg-icon-btn" id="lgRule" type="button" aria-label="查看判定规则" title="判定规则说明" v-html="U.icon('settings')"></button>
+            <button class="lg-icon-btn" id="lgRecalc" type="button" aria-label="重新判定" title="重新判定" v-html="U.icon('refresh')"></button>
+          </header>
+          <div class="lg-queue-tabs" role="tablist" aria-label="判定状态筛选">
+            <button :class="{ 'is-active': st.legal === '待处理' || st.legal === '非法' }" data-chip-set="待处理">系统判定非法</button>
+            <button :class="{ 'is-active': st.legal === '待确认' }" data-chip-set="待确认">系统待确认</button>
+            <button :class="{ 'is-active': st.legal === '合法' }" data-chip-set="合法">系统自动通过</button>
+          </div>
+          <div id="lgList" class="lg-list-host"></div>
+          <footer class="lg-pager">
             <n-pagination :page="st.page" :page-size="st.size" :item-count="totalCount"
               show-size-picker :page-sizes="[10, 20, 50]"
               @update:page="onPage" @update:page-size="onPageSize">
               <template #prefix>共 {{ totalCount.toLocaleString() }} 条</template>
               <template #suffix>共 {{ pageCount }} 页</template>
             </n-pagination>
-          </div>
-        </UPanel>
-        <UPanel title="判定详情" panel-style="width:40%;min-width:380px;flex:none" nopad
-          extra='<span id="lgSt"></span>' body-html='<div id="lgDetail" style="flex:1;overflow:auto;padding:12px"></div>' />
+          </footer>
+        </section>
+        <section class="lg-review-panel" aria-label="合法性研判详情">
+          <span id="lgSt" class="lg-hidden-status"></span>
+          <div id="lgDetail" class="lg-detail-host"></div>
+        </section>
       </div>
     </div>
   </div>
 </template>
+
+<style>
+.legality-workbench{--lg-blue:#4b9cff;--lg-red:#ff5b61;--lg-green:#41d49a;--lg-amber:#f1a43a;overflow:hidden!important;padding:10px 12px 12px!important}
+.legality-workbench *{box-sizing:border-box}
+.legality-workbench button{font:inherit}
+.legality-workbench button:focus-visible,.legality-workbench select:focus-visible{outline:2px solid var(--lg-blue);outline-offset:2px}
+.legality-workbench .lg-shell{height:100%;min-height:0;display:flex;flex-direction:column;gap:10px}
+.legality-workbench .lg-kpi-host{flex:none}.legality-workbench .lg-kpi-host>.kpis{grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.legality-workbench .lg-kpi-host .kpi{min-width:0}
+.legality-workbench .lg-workspace{min-height:0;flex:1;display:grid;grid-template-columns:minmax(430px,32%) minmax(0,1fr);gap:10px}
+.legality-workbench .lg-queue-panel,.legality-workbench .lg-review-panel{min-width:0;min-height:0;display:flex;flex-direction:column;border:1px solid rgba(130,174,218,.17);border-radius:8px;background:#091827;overflow:hidden;box-shadow:0 10px 24px rgba(0,0,0,.14)}
+.legality-workbench .lg-panel-head,.legality-workbench .lg-review-head{height:46px;min-height:46px;display:flex;align-items:center;gap:8px;padding:0 10px;border-bottom:1px solid rgba(130,174,218,.12);background:#0b1b2d}
+.legality-workbench .lg-panel-head h2{margin:0;color:#dfe9f5;font-size:14px;font-weight:650}.legality-workbench .lg-panel-head h2 span{color:var(--lg-amber)}
+.legality-workbench .lg-head-spacer{flex:1}
+.legality-workbench .lg-region-filter{display:flex;align-items:center;gap:6px;color:#7f93aa;font-size:11px}.legality-workbench .lg-region-filter .n-select{width:112px}
+.legality-workbench .lg-icon-btn{width:32px;height:30px;display:flex;align-items:center;justify-content:center;border:1px solid rgba(130,174,218,.16);border-radius:5px;background:#0b1b2d;color:#91a6bd;cursor:pointer}.legality-workbench .lg-icon-btn:hover{color:#dce9f8;border-color:rgba(75,156,255,.5)}
+.legality-workbench .lg-icon-btn .svg-icon{width:15px;height:15px;fill:none;stroke:currentColor}.legality-workbench .lg-review-head .lg-icon-btn .svg-icon{transform:rotate(180deg)}.legality-workbench .lg-review-head .lg-icon-btn.is-next .svg-icon{transform:none}
+.legality-workbench .lg-queue-tabs{height:42px;min-height:42px;display:flex;align-items:center;gap:7px;padding:6px 10px;border-bottom:1px solid rgba(130,174,218,.09)}
+.legality-workbench .lg-queue-tabs button{height:28px;padding:0 12px;border:1px solid transparent;border-radius:5px;background:transparent;color:#8498af;font-size:11.5px;cursor:pointer}.legality-workbench .lg-queue-tabs button:hover{color:#dfeaf7}.legality-workbench .lg-queue-tabs button.is-active{border-color:rgba(255,91,97,.25);background:rgba(255,91,97,.1);color:#ff7a80}
+.legality-workbench .lg-list-host{min-height:0;flex:1;display:flex;flex-direction:column}
+.legality-workbench .lg-queue-columns,.legality-workbench .lg-queue-row{display:grid;grid-template-columns:minmax(112px,1.3fr) minmax(72px,.75fr) minmax(70px,.72fr) minmax(58px,.62fr) minmax(100px,1.1fr);align-items:center;column-gap:7px}
+.legality-workbench .lg-queue-columns{height:34px;min-height:34px;padding:0 12px;color:#8195ad;font-size:11px;border-bottom:1px solid rgba(130,174,218,.1);background:#0a1a2c}
+.legality-workbench .lg-queue-scroll{min-height:0;flex:1;overflow:auto;scrollbar-width:thin}
+.legality-workbench .lg-queue-group{border-bottom:1px solid rgba(130,174,218,.09)}
+.legality-workbench .lg-group-head{width:100%;height:32px;padding:0 11px;display:flex;align-items:center;gap:7px;border:0;border-bottom:1px solid rgba(130,174,218,.07);background:#0b1d30;color:#93a7bd;text-align:left;cursor:pointer}.legality-workbench .lg-group-head b{font-size:11.5px}.legality-workbench .lg-group-head>span:last-child{margin-left:auto;color:#61758d;font-size:10px}
+.legality-workbench .lg-group-caret{width:13px;height:13px;display:flex;align-items:center;justify-content:center}.legality-workbench .lg-group-caret .svg-icon{width:10px;height:10px;fill:none;stroke:currentColor;transform:rotate(90deg)}
+.legality-workbench .lg-queue-group.is-red .lg-group-head b{color:#ff686f}.legality-workbench .lg-queue-group.is-amber .lg-group-head b{color:#e6a130}.legality-workbench .lg-queue-group.is-green .lg-group-head b{color:#37c488}
+.legality-workbench .lg-queue-row{width:100%;min-height:49px;padding:5px 12px;border:0;border-bottom:1px solid rgba(130,174,218,.065);background:#091827;color:#b7c5d5;text-align:left;cursor:pointer}.legality-workbench .lg-queue-row:hover{background:#0d2238}.legality-workbench .lg-queue-row.is-selected{background:#0f2b4c;box-shadow:inset 2px 0 var(--lg-blue),inset 0 0 0 1px rgba(75,156,255,.5)}
+.legality-workbench .lg-queue-row>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.legality-workbench .lg-row-target{display:flex;flex-direction:column}.legality-workbench .lg-row-target b{color:#d8e5f3;font-size:11px}.legality-workbench .lg-row-target small{color:#70859d;font-size:10px}.legality-workbench .lg-row-note{display:block;margin-top:2px;color:#c5a7ff;font-size:9px}.legality-workbench .lg-row-note.is-amber{color:#e7ad55}.legality-workbench .lg-row-region,.legality-workbench .lg-row-reason{font-size:10.5px}
+.legality-workbench .lg-pager{height:50px;min-height:50px;display:flex;align-items:center;justify-content:center;padding:5px 8px;border-top:1px solid rgba(130,174,218,.1);background:#091725;overflow:hidden;white-space:nowrap}.legality-workbench .lg-pager .n-pagination{flex-wrap:nowrap!important;column-gap:3px!important}.legality-workbench .lg-pager .n-pagination-prefix,.legality-workbench .lg-pager .n-pagination-suffix{white-space:nowrap;font-size:11px}
+.legality-workbench .lg-hidden-status{display:none}.legality-workbench .lg-detail-host{height:100%;min-height:0;display:flex;flex-direction:column}.legality-workbench .lg-review-head{color:#879bb2;font-size:12px}.legality-workbench .lg-review-head b{color:#c8d7e8}.legality-workbench .lg-review-head>.tag{margin-left:4px}
+.legality-workbench .lg-detail-scroll{min-height:0;flex:1;overflow:auto;padding:9px;scrollbar-width:thin}
+.legality-workbench .lg-verdict-card{min-height:116px;display:grid;grid-template-columns:1.05fr 1.55fr 1.05fr .92fr;border:1px solid rgba(130,174,218,.13);border-radius:7px;background:#0b1b2d;overflow:hidden}.legality-workbench .lg-verdict-card>div{min-width:0;padding:12px;border-right:1px solid rgba(130,174,218,.1)}.legality-workbench .lg-verdict-card>div:last-child{border-right:0}
+.legality-workbench .lg-verdict-block{display:flex;align-items:center;gap:10px}.legality-workbench .lg-verdict-icon{width:38px;height:38px;flex:none;display:flex;align-items:center;justify-content:center;border-radius:50%;background:rgba(255,91,97,.11);color:var(--lg-red)}.legality-workbench .lg-verdict-icon .svg-icon{width:20px;height:20px;fill:none;stroke:currentColor}.legality-workbench .lg-verdict-block>div{min-width:0;display:flex;flex-direction:column}.legality-workbench .lg-verdict-card small{color:#7f92a8;font-size:10px}.legality-workbench .lg-verdict-block strong{margin:2px 0;color:var(--lg-red);font-size:24px;font-weight:600}.legality-workbench .lg-verdict-card.is-green .lg-verdict-block strong,.legality-workbench .lg-verdict-card.is-green .lg-verdict-icon{color:var(--lg-green)}.legality-workbench .lg-verdict-card.is-amber .lg-verdict-block strong,.legality-workbench .lg-verdict-card.is-amber .lg-verdict-icon{color:var(--lg-amber)}.legality-workbench .lg-verdict-block span,.legality-workbench .lg-core-reason span{color:#788ca3;font-size:10px}
+.legality-workbench .lg-core-reason{display:flex;flex-direction:column;justify-content:center}.legality-workbench .lg-core-reason b{margin:7px 0;color:#e3edf8;font-size:14px;white-space:normal}.legality-workbench .lg-target-facts dl,.legality-workbench .lg-review-state dl{margin:0;display:grid;grid-template-columns:64px minmax(0,1fr);gap:5px 7px;font-size:10px}.legality-workbench .lg-target-facts dt,.legality-workbench .lg-review-state dt{color:#6f839b}.legality-workbench .lg-target-facts dd,.legality-workbench .lg-review-state dd{margin:0;color:#b9c7d6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.legality-workbench .lg-review-state{display:flex;flex-direction:column;gap:7px}.legality-workbench .lg-review-state>.tag{align-self:flex-start}
+.legality-workbench .lg-basis-card,.legality-workbench .lg-evidence-card{margin-top:9px;border:1px solid rgba(130,174,218,.12);border-radius:7px;background:#091827;overflow:hidden}.legality-workbench .lg-basis-card>header,.legality-workbench .lg-evidence-card>header{height:34px;display:flex;align-items:center;gap:5px;padding:0 11px;color:#d5e1ee;font-size:12px;border-bottom:1px solid rgba(130,174,218,.09)}.legality-workbench .lg-basis-card>header span,.legality-workbench .lg-evidence-card>header span{color:#667b93;font-size:10px}
+.legality-workbench .lg-basis-columns,.legality-workbench .lg-basis-row{display:grid;grid-template-columns:45px minmax(140px,1fr) minmax(102px,.72fr) minmax(92px,.66fr) minmax(220px,2.35fr);align-items:center;column-gap:8px}.legality-workbench .lg-basis-columns{height:28px;padding:0 10px;background:#0b1c2f;color:#6f849b;font-size:10px}.legality-workbench .lg-basis-row{width:100%;height:26px;min-height:26px;padding:2px 10px;border:0;border-top:1px solid rgba(130,174,218,.055);background:transparent;color:#aebdcd;text-align:left;font-size:10.5px;cursor:pointer}.legality-workbench .lg-basis-row:hover{background:#0d2238}.legality-workbench .lg-basis-row.is-selected{background:#10305a;box-shadow:inset 0 0 0 1px #2f82ef}.legality-workbench .lg-basis-row>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.legality-workbench .lg-basis-row>span:nth-child(2){display:flex;align-items:baseline;gap:6px}.legality-workbench .lg-basis-row small{color:#61768e}.legality-workbench .lg-basis-row .is-pass{color:#38c98a}.legality-workbench .lg-basis-row .is-warn{color:#e4a22e}.legality-workbench .lg-basis-row .is-fail{color:#ff656c}.legality-workbench .lg-basis-row .svg-icon{width:12px;height:12px;vertical-align:-2px}
+.legality-workbench .lg-evidence-tabs{height:36px;display:flex;align-items:end;gap:3px;padding:4px 8px 0;border-bottom:1px solid rgba(130,174,218,.09);background:#0a1a2c}.legality-workbench .lg-evidence-tab{height:31px;padding:0 12px;display:flex;align-items:center;gap:5px;border:1px solid rgba(130,174,218,.08);border-bottom:0;border-radius:5px 5px 0 0;background:#0b1b2d;color:#7c91a9;font-size:10.5px;cursor:pointer}.legality-workbench .lg-evidence-tab.is-active{background:#103666;color:#dbeaff;border-color:rgba(75,156,255,.35)}.legality-workbench .lg-evidence-tab .svg-icon{width:12px;height:12px;fill:none;stroke:currentColor}
+.legality-workbench .lg-evidence-body{height:175px;min-height:175px;display:grid;grid-template-columns:minmax(260px,35%) minmax(0,1fr);gap:9px;padding:8px}.legality-workbench .lg-evidence-copy,.legality-workbench .lg-evidence-wide{min-width:0;overflow:auto;padding:7px 10px;border:1px solid rgba(130,174,218,.08);border-radius:6px;background:#0a1a2b}.legality-workbench .lg-evidence-wide{grid-column:1/-1}.legality-workbench .lg-evidence-copy h4,.legality-workbench .lg-evidence-wide h4{margin:0 0 5px;color:#cbd9e7;font-size:11.5px}.legality-workbench .lg-evidence-copy h4 span,.legality-workbench .lg-evidence-wide h4 span{color:#657a92;font-size:10px}.legality-workbench .lg-evidence-copy p,.legality-workbench .lg-evidence-wide p{margin:4px 0;color:#8fa1b5;font-size:10px;line-height:1.45}.legality-workbench .lg-evidence-copy dl{margin:5px 0;display:grid;grid-template-columns:67px 1fr;gap:3px;font-size:9.5px}.legality-workbench .lg-evidence-copy dt{color:#657b93}.legality-workbench .lg-evidence-copy dd{margin:0;color:#b5c4d4}.legality-workbench .lg-evidence-alert{padding-left:7px;border-left:2px solid var(--lg-red);color:#d59b9f!important}.legality-workbench .lg-link-btn{padding:0;border:0;background:transparent;color:var(--lg-blue);font-size:10px;cursor:pointer}.legality-workbench .lg-rule-focus{display:inline-flex;align-items:center;gap:5px;padding:4px 8px;border-radius:4px;background:#0d2238}.legality-workbench .lg-rule-focus.is-pass{color:var(--lg-green)}.legality-workbench .lg-rule-focus.is-warn{color:var(--lg-amber)}.legality-workbench .lg-rule-focus.is-fail{color:var(--lg-red)}.legality-workbench .lg-muted{color:#6e839a!important}
+.legality-workbench .lg-map-wrap{position:relative;min-width:0;min-height:159px;border:1px solid rgba(130,174,218,.12);border-radius:6px;overflow:hidden;background:#dbe7ef}.legality-workbench #lgMap{position:absolute;inset:0}.legality-workbench .lg-map-legend{position:absolute;left:50%;bottom:5px;transform:translateX(-50%);display:flex;gap:13px;padding:3px 9px;border-radius:4px;background:rgba(5,15,27,.88);color:#c4d2e0;font-size:9px;white-space:nowrap}.legality-workbench .lg-map-legend span:before{content:"";display:inline-block;width:14px;height:3px;margin-right:4px;vertical-align:2px;background:currentColor}.legality-workbench .lg-map-legend .is-zone{color:#d84d52}.legality-workbench .lg-map-legend .is-plan{color:#4b9cff}.legality-workbench .lg-map-legend .is-track{color:#ff5b61}
+.legality-workbench .lg-action-dock{min-height:52px;padding:6px 9px;border-top:1px solid rgba(130,174,218,.12);background:#081522}.legality-workbench .lg-action-dock .detail-actions{margin:0;padding:0;background:transparent;border:0}.legality-workbench .lg-action-dock .btn{height:38px!important;font-size:14px}.legality-workbench .detail-sect{margin-inline:0}
+@media (max-width:1320px){.legality-workbench .lg-workspace{grid-template-columns:minmax(410px,38%) minmax(0,1fr)}.legality-workbench .lg-verdict-card{grid-template-columns:1fr 1.4fr 1fr}.legality-workbench .lg-review-state{grid-column:1/-1;border-top:1px solid rgba(130,174,218,.1)!important}.legality-workbench .lg-verdict-card{min-height:154px}.legality-workbench .lg-review-state{flex-direction:row;align-items:center}.legality-workbench .lg-review-state dl{flex:1;grid-template-columns:60px 1fr 60px 1fr}}
+@media (max-width:1040px){.legality-workbench{overflow:auto!important}.legality-workbench .lg-shell{height:auto;min-height:100%}.legality-workbench .lg-kpi-host>.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.legality-workbench .lg-workspace{grid-template-columns:1fr}.legality-workbench .lg-queue-panel{min-height:620px}.legality-workbench .lg-review-panel{min-height:720px}.legality-workbench .lg-evidence-body{grid-template-columns:1fr}.legality-workbench .lg-map-wrap{min-height:260px}}
+@media (prefers-reduced-motion:reduce){.legality-workbench *{scroll-behavior:auto!important;transition:none!important}}
+</style>

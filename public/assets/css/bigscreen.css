@@ -222,7 +222,7 @@ body[data-theme] .bs-kpis .kpi::after{
 /* ---------- 实时告警 ---------- */
 .bs-grid .panel>.pb.bs-table-body{padding:0 0 3px}
 .bs-naive-table.n-data-table{
-  flex:1;min-height:0;--n-font-size:12px!important;--n-th-color:#143357!important;
+  flex:1;min-height:0;--n-font-size:14px!important;--n-th-color:#143357!important;
   --n-th-color-hover:#143357!important;--n-td-color:transparent!important;
   --n-td-color-hover:rgba(29,119,194,.12)!important;--n-border-color:rgba(50,137,211,.18)!important;
   --n-th-text-color:#d5e7fb!important;--n-td-text-color:#afc1d6!important
@@ -230,7 +230,7 @@ body[data-theme] .bs-kpis .kpi::after{
 .bs-naive-table .n-data-table-th,.bs-naive-table .n-data-table-td{height:40px;padding:7px 10px!important}
 .bs-naive-table .n-data-table-th{font-weight:650}
 .bs-naive-table .n-data-table-td{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.bs-naive-table .n-data-table-td .mono{font-family:Menlo,Consolas,monospace;font-size:12px}
+.bs-naive-table .n-data-table-td .mono{font-family:Menlo,Consolas,monospace;font-size:14px}
 .bs-clickable-row{cursor:pointer}
 .bs-clickable-row:hover .n-data-table-td{background:rgba(29,119,194,.14)!important}
 .bs-clickable-row.is-高 .n-data-table-td{background:rgba(255,62,86,.035)!important}

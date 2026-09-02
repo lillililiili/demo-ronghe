@@ -7,6 +7,7 @@
 import { defineAsyncComponent } from 'vue';
 import StatsPage from './StatsPage.vue';
 import UsersPage from './UsersPage.vue';
+import RolesPage from './RolesPage.vue';
 import ArchivePage from './ArchivePage.vue';
 import EvidencePage from './EvidencePage.vue';
 import AlarmsPage from './AlarmsPage.vue';
@@ -16,10 +17,13 @@ import FlightsPage from './FlightsPage.vue';
 import SituationPage from './SituationPage.vue';
 import PunishPage from './PunishPage.vue';
 import LegalityPage from './LegalityPage.vue';
+import WorkbenchPage from './WorkbenchPage.vue';
 
 export const VUE_PAGES = {
+  workbench: WorkbenchPage,
   stats: StatsPage,
   users: UsersPage,
+  roles: RolesPage,
   archive: ArchivePage,
   evidence: EvidencePage,
   alarms: AlarmsPage,

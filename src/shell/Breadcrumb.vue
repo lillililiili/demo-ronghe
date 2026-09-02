@@ -16,10 +16,10 @@ const cur = computed(() => routeKey(route));
 
 const cbsHtml = computed(() => {
   const k = cur.value, r = ROUTES[k] || { t: k };
-  const parts = [`<a href="#/situation">首页</a>`];
+  const parts = [`<a href="#/workbench">首页</a>`];
   if (r.p) parts.push(`<a href="#/${r.ph}">${r.p}</a>`);
-  if (!(k === 'situation')) parts.push(`<span class="c on">${r.t}</span>`);
-  else parts[0] = `<span class="c on">融合感知</span>`;
+  if (!(k === 'workbench')) parts.push(`<span class="c on">${r.t}</span>`);
+  else parts[0] = `<span class="c on">我的工作台</span>`;
   if (store.crumbCtx) parts.push(`<span class="c ctx">${store.crumbCtx}</span>`);
   return parts.join('<b>›</b>');
 });

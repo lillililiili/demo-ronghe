@@ -51,7 +51,7 @@
   /* ===== 两个页签（用户拍板：空间安全风险并入本页）=====
      「按航线看」= 原飞行活动内容 + 本航线风险区块
      「全部风险事件」= 原空间安全风险整页，由 g.RISK_IMPL 委托渲染，
-       工作流（待核验→待通知→已通知/已排除→归档）与写入口原样复用，不复制第二份。 */
+       工作流（待核验→待通知→已通知→处置，或核验后排除）与写入口原样复用，不复制第二份。 */
   let tab = 'route';                      // route | events
   const setTabRoute = t => { tab = t; tabHash = (location.hash || '').split('?')[0]; };
   let tabHash = '';                       // 上次决定 tab 时所处的路由
@@ -195,10 +195,11 @@
       { t: '计划编号', w: '116px', cls: 'num', render: p => p.id.slice(-10) },
       { t: '计划时段', w: '146px', render: p => `<div class="mono" style="font-size:11.5px">${p.start.slice(11, 16)} ~ ${p.end.slice(11, 16)}</div><div style="font-size:11px;color:var(--txt-3)">${p.durMin} 分钟</div>` },
       { t: '最大高度', w: '82px', cls: 'num', render: p => p.maxAlt + ' m' },
+      { t: '状态', w: '74px', render: p => U.tag(p.status) },
       {
-        t: '状态 / 匹配', w: '86px',
-        render: p => `<div>${U.tag(p.status)}</div><div style="margin-top:2px">${p.matched === '已匹配'
-          ? U.tag('已匹配', 't-green') : (p.matched === '—' ? '<span style="color:var(--txt-3)">—</span>' : U.tag('未匹配', 't-amber'))}</div>`
+        t: '匹配', w: '76px',
+        render: p => p.matched === '已匹配'
+          ? U.tag('已匹配', 't-green') : (p.matched === '—' ? '<span style="color:var(--txt-3)">—</span>' : U.tag('未匹配', 't-amber'))
       },
       {
         t: '偏航/时差', w: '116px', align: 'right', cls: 'num', render: p => {
@@ -328,11 +329,11 @@
       `<div class="inline-icon" style="color:#79e5a5;font-size:12.5px">${U.icon('check')} 走廊内与 ${RISK_NEAR_KM} km 邻近范围内无风险事件</div>`);
     const row = (e, lv) => {
       /* 本页只暴露「通知上级」一个动作（用户裁定）。
-         核验、排除、归档属于风险处置模块 —— 在一条飞行计划的上下文里，
+         核验、排除、处置属于风险处置模块 —— 在一条飞行计划的上下文里，
          看到航线附近有鸟群，唯一合适的动作是把它捅上去，不是在这儿结案。
          **这是"少暴露"，不是"另做一套"**：状态机仍是数据层的 RISK_FLOW，
          写入口仍是 g.RISK_IMPL.advance，这里只过滤显示哪些后继动作。
-         若当前状态根本走不到「已通知」（如已归档），**不显示点不动的按钮**，
+         若当前状态根本走不到「已通知」（如已处置或已排除），**不显示点不动的按钮**，
          状态标签本身已经说明处于哪一步。 */
       const nx = ((M.riskNext ? M.riskNext(e.status) : []) || []).filter(t => t.to === '已通知');
       /* 整行可点 = 在上方地图上高亮这一起。选中态读 st.hlRisk 而不是靠 DOM 记，
@@ -484,10 +485,8 @@
       const [id, to] = el.dataset.flriskTo.split('|');
       const ev = (M.riskEvents || []).find(x => x.id === id);
       if (!ev) return;
-      /* 直接调 riskEvents 导出的那个写入口，**不在这里另写一份**。
-         合法性校验、处置记录、审计都在它里面，此处只负责传入重绘方式。 */
-      const rec = { act: '（航线视角）' + to, result: '经飞行活动管理·本航线风险发起', evidence: '事件全量记录' };
-      g.RISK_IMPL.advance(ev, to, rec, () => g.APP.rerender());
+      /* 与工作台、全部风险事件共用 act：通知上级必须先弹确认，再生成通报记录后推进状态。 */
+      g.RISK_IMPL.act(ev, to, () => g.APP.rerender());
     });
     U.on(view, '[data-flrisk-go]', 'click', (e, el) => {
       // 跳到「全部风险事件」页签并选中该事件，复用既有的 goto/consume 通路

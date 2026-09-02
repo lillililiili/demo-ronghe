@@ -30,18 +30,13 @@ const st = S.st;
 let map = null;
 onUnmounted(() => { if (map) map.destroy(); map = null; });
 
-const NOTICE_KEY = 'punish.notice.v1';
-let noticed = {};
-try { noticed = JSON.parse(sessionStorage.getItem(NOTICE_KEY) || '{}') || {}; } catch (e) { noticed = {}; }
-const noticeStatus = c => noticed[c.id] || (c.status === '已结案' ? '已通知' : '待通知');
-function saveNotice() {
-  try { sessionStorage.setItem(NOTICE_KEY, JSON.stringify(noticed)); } catch (e) { }
-}
+const noticeStatus = c => M.caseNoticeStatus(c);
+const noticeCases = () => M.cases.filter(c => c.stage >= M.DISPOSAL_FLOW.length - 1);
 
 const RV_RESULTS = [
-  { k: '维持原定性', desc: '复核后认为立案定性成立，案件按原流程继续', c: 't-green' },
+  { k: '维持原定性', desc: '复核后认为事件确认定性成立，案件按原流程继续', c: 't-green' },
   { k: '撤销案件', desc: '定性依据不成立，案件退回待核实重新走流程', c: 't-red' },
-  { k: '补充证据后重判', desc: '证据要件不齐，退回已立案环节补证后重新判定', c: 't-amber' }
+  { k: '补充证据后重判', desc: '证据要件不齐，退回人工核实环节补证后重新判定', c: 't-amber' }
 ];
 const RV_KEY = 'punish.review.v1';
 let rvOutcome = {};
@@ -121,7 +116,7 @@ function sorted(rows) {
 }
 function filtered() {
   const from = M.CONF.demoTime.getTime() - st.days * 864e5;
-  return M.cases.filter(c =>
+  return noticeCases().filter(c =>
     c.ts >= from &&
     (st.status === '全部状态' || noticeStatus(c) === st.status) &&
     (st.region === '全部区域' || c.district === st.region) &&
@@ -145,8 +140,8 @@ if (ctx && ctx.caseId) {
   }
 }
 // safe-default: 默认选中项跟随当前筛选（待通知视图选首条待通知案件），用户可见可改
-st.sel = st.sel || filtered()[0] || M.cases[0];
-const all0 = M.cases;
+st.sel = noticeCases().includes(st.sel) ? st.sel : (filtered()[0] || noticeCases()[0] || null);
+const all0 = noticeCases();
 const pendingNotice0 = all0.filter(c => noticeStatus(c) === '待通知').length;
 const notified0 = all0.filter(c => noticeStatus(c) === '已通知').length;
 const kpiList = [
@@ -231,21 +226,21 @@ function tabReview() {
       ['其中已结案案件', `<b class="mono" style="color:${closedCase ? '#ff8b95' : 'var(--txt-2)'}">${closedCase}</b> 件`
         + (closedCase ? '　<span class="tag t-red">须走 §11 复核流程</span>' : '')],
       ['已办结复核', `<b class="mono">${Object.keys(rvOutcome).length}</b> 条`],
-      ['立案判定一致性', mm.length
+      ['事件确认判定一致性', mm.length
         ? `<span class="tag t-red">${mm.length} / ${M.cases.length} 件不一致</span>`
         : `<span class="tag t-green">${M.cases.length} 件全部一致</span>`],
-      ['证据门禁降级', `<b class="mono">${gate.length}</b> 个目标（其中已立案 <b class="mono">${gateFiled}</b> 个）`]
+      ['证据门禁降级', `<b class="mono">${gate.length}</b> 个目标（其中已有处置记录 <b class="mono">${gateFiled}</b> 个）`]
     ])
   })}
     ${U.panel({
     title: '定性依据复核队列',
-    sub: `设计 §11 · 受理 → 比对立案与当前判定 → 出具结论 → 真实改案件状态并写审计`,
+    sub: `设计 §11 · 受理 → 比对事件确认与当前判定 → 出具结论 → 真实改案件状态并写审计`,
     style: 'flex:1', nopad: true,
     body: `<div id="pnRvList" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>`
   })}
   </div>
   ${U.panel({
-    title: '立案判定一致性核查', sub: `覆盖全部 ${M.cases.length} 件案件 · 已立案案件是历史事实，快照不因后续重新判定而消失`,
+    title: '事件确认判定一致性核查', sub: `覆盖全部 ${M.cases.length} 件案件 · 处置记录是历史事实，快照不因后续重新判定而消失`,
     style: 'height:calc(100vh - 482px);min-height:410px;margin-bottom:12px', nopad: true,
     extra: U.select('rvf', ['全部案件', '仅看不一致', '仅已结案'], st.rvFilter),
     body: `<div id="pnRvChk" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>`
@@ -259,15 +254,15 @@ function rvList() {
     const noCase = gate.filter(x => !M.cases.some(c => c.targetId === x.targetId));
     return `<div style="padding:22px 20px;color:var(--txt-2);font-size:12.5px;line-height:1.95">
       <div style="font-size:14px;color:var(--txt);margin-bottom:8px">当前无待复核请求</div>
-      复核请求由证据充分性门禁产生，且<b>仅当被降级的目标已立案</b>时才需要复核 ——
-      未立案的目标由判定页直接改判即可，不涉及案件状态，也就不需要走 §11。<br>
+      复核请求由证据充分性门禁产生，且<b>仅当被降级的目标已有处置记录</b>时才需要复核 ——
+      尚无处置记录的目标由判定页直接改判即可，不涉及案件状态，也就不需要走 §11。<br>
       当前证据门禁共降级 <b class="mono">${gate.length}</b> 个目标，其中 <b class="mono">${noCase.length}</b> 个未关联案件：
       <div style="margin-top:8px">${gate.length ? gate.map(x => `<div style="padding:6px 9px;border:1px solid var(--line-2);border-radius:5px;margin-bottom:6px">
           <span class="mono">${x.targetId}</span>　${U.legal(x.from)} <span style="color:var(--txt-3)">→</span> ${U.legal('待确认')}
-          ${M.cases.some(c => c.targetId === x.targetId) ? U.tag('已立案', 't-red') : U.tag('未立案 · 无需复核', 't-gray')}
+          ${M.cases.some(c => c.targetId === x.targetId) ? U.tag('已有处置记录', 't-red') : U.tag('尚无处置记录 · 无需复核', 't-gray')}
           <div style="color:var(--txt-3);font-size:11.5px;margin-top:3px;white-space:normal">${x.reasons.join('；')}</div>
         </div>`).join('') : '<span style="color:var(--txt-3)">门禁未降级任何目标</span>'}</div>
-      <div style="color:var(--txt-3);margin-top:6px">一旦出现「已立案后被降级」的目标，请求会自动进入本队列，本页无需改动。</div>
+      <div style="color:var(--txt-3);margin-top:6px">一旦出现「进入处置后被降级」的目标，请求会自动进入本队列，本页无需改动。</div>
     </div>`;
   }
   return U.table([
@@ -277,7 +272,8 @@ function rvList() {
       t: '目标 / 案件', w: '140px', render: r => `<div class="mono" style="font-size:11.5px">${r.targetId}</div>
         <div class="mono" style="font-size:11.5px;color:var(--txt-3)">${r.caseId}</div>${U.tag(r.caseStatus)}`
     },
-    { t: '拟改判', w: '128px', render: r => `${U.legal(r.from)} <span style="color:var(--txt-3)">→</span> ${U.legal(r.to)}` },
+    { t: '原判定', w: '72px', render: r => U.legal(r.from) },
+    { t: '拟改判', w: '72px', render: r => U.legal(r.to) },
     { t: '降级理由', render: r => `<div style="white-space:normal;font-size:11.5px">${r.reason}</div>
         <div style="white-space:normal;font-size:11px;color:var(--txt-3);margin-top:2px">${r.raisedBy}</div>` },
     {
@@ -300,15 +296,15 @@ function rvCheck() {
   const head = `<div style="padding:7px 12px;font-size:12px;border-bottom:1px solid var(--line-2);
       background:${mm.length ? 'rgba(255,77,94,.08)' : 'rgba(47,208,110,.07)'};white-space:normal">
     ${mm.length
-      ? `<b style="color:#ff96a0">${mm.length} 件</b>案件的立案快照与当前判定不一致，需按 §11 复核`
-      : `<b style="color:#79e5a5">全部 ${M.cases.length} 件</b>案件的立案快照与当前判定一致，暂无需复核`}
+      ? `<b style="color:#ff96a0">${mm.length} 件</b>案件的事件确认快照与当前判定不一致，需按 §11 复核`
+      : `<b style="color:#79e5a5">全部 ${M.cases.length} 件</b>案件的事件确认快照与当前判定一致，暂无需复核`}
     <span style="color:var(--txt-3)">　· 差异只认「定性 / 违规事由 / 风险等级」三项；置信度随融合权重调整而变（F0210），不计为定性差异</span>
   </div>`;
   return head + U.table([
     { t: '案件编号', w: '118px', cls: 'num', render: c => c.id },
     { t: '状态', w: '74px', render: c => U.tag(c.status) },
     {
-      t: '立案时判定', w: '150px', render: c => {
+      t: '事件确认时判定', w: '150px', render: c => {
         const d = judgeDiff(c), s2 = d.snap;
         return `<div>${U.legal(s2.legal_status)} ${(s2.violation_reasons || []).join('、')}</div>
           <div style="font-size:11px;color:var(--txt-3);white-space:normal">${s2.risk_level} · 置信 ${U.confPct(s2.confidence)} · ${(s2.at || '').slice(5, 16)}</div>`;
@@ -322,16 +318,21 @@ function rvCheck() {
           <div style="font-size:11px;color:var(--txt-3);white-space:normal">${d.cur.risk} · 置信 ${U.confPct(d.cur.conf)}</div>`;
       }
     },
-    {
-      t: '差异', render: c => {
-        const d = judgeDiff(c);
-        if (d.lost) return `<span style="font-size:11.5px;color:var(--txt-3);white-space:normal">目标 ID 发生过变更，见案件详情的 ID 变更回溯</span>`;
-        return d.items.length
-          ? `<div style="white-space:normal">${d.items.map(x => `${U.tag(x[0], 't-red')} <span style="font-size:11.5px">${x[1]} → <b>${x[2]}</b></span>`).join('<br>')}</div>`
-          : '<span class="tag t-green">一致</span>';
-      }
-    }
+    { t: '定性差异', w: '150px', render: c => rvDiffCell(c, '定性') },
+    { t: '违规事由差异', w: '190px', render: c => rvDiffCell(c, '违规事由') },
+    { t: '风险差异', w: '150px', render: c => rvDiffCell(c, '风险等级') }
   ], rows, { rowId: c => c.id, activeId: st.sel && st.sel.id });
+}
+
+function rvDiffCell(c, key) {
+  const d = judgeDiff(c);
+  if (d.lost) return key === '定性'
+    ? '<span style="font-size:11.5px;color:var(--txt-3);white-space:normal">目标 ID 已变更，见案件详情回溯</span>'
+    : '<span style="color:var(--txt-3)">—</span>';
+  const item = d.items.find(x => x[0] === key);
+  return item
+    ? `${U.tag('有差异', 't-red')}<div style="font-size:11.5px;white-space:normal;margin-top:3px">${item[1]} → <b>${item[2]}</b></div>`
+    : '<span style="color:var(--txt-3)">—</span>';
 }
 
 let _tgt = null;
@@ -355,9 +356,9 @@ function tabPend() {
   const S2 = pendStat();
   return `<div class="warnbox" style="margin-bottom:12px;border-color:rgba(255,176,32,.5);line-height:1.85">
       <b>本页签的 ${(M.pendingSubjects || []).length} 条不是案件，也没有发起任何处罚处置。</b>
-      它们是<b>案源</b> —— 违法事实成立、但尚不具备立案条件的目标（编号 <span class="mono">PS…</span>，
+      它们是<b>待补充线索</b> —— 违法事实成立、但责任主体或证据要件尚不完整的目标（编号 <span class="mono">PS…</span>，
       与案件编号 <span class="mono">CF…</span> 不同一序列）。<br>
-      本屏<b>不提供立案入口</b>，也不产生文书、罚款与处置流程；这些只存在于「处罚案件管理」页签的
+      本屏<b>不提供转入处罚入口</b>，也不产生文书、罚款与处置流程；这些只存在于「处罚案件管理」页签的
       <b>${M.cases.length}</b> 件案件里。补齐认定路径后，由数据层重新派生为案件，届时才会出现在那一侧。
     </div>
     <div class="row" style="height:200px;margin-bottom:12px">
@@ -366,34 +367,34 @@ function tabPend() {
     style: 'width:430px',
     body: U.kv([
       ['当前判定非法', `<b class="mono" style="font-size:15px">${S2.illegal}</b> 个目标`],
-      ['├ 已立案', `<b class="mono" style="color:#79e5a5">${S2.filedIllegal}</b> 件`],
+      ['├ 已有处罚记录', `<b class="mono" style="color:#79e5a5">${S2.filedIllegal}</b> 件`],
       ['├ 待办案源', `<b class="mono" style="color:#ffd07a">${S2.pend}</b> 条（${Object.entries(S2.by).map(x => x[0] + ' ' + x[1]).join(' · ')}）`],
       ['└ 合计核对', S2.filedIllegal + S2.pend === S2.illegal
         ? `<span class="tag t-green inline-icon">${S2.filedIllegal} + ${S2.pend} = ${S2.illegal} ${U.icon('check')}</span>`
         : `<span class="tag t-red">${S2.filedIllegal} + ${S2.pend} ≠ ${S2.illegal}</span>`],
       ['另计', S2.revised
-        ? `<b class="mono">${S2.revised}</b> 件已立案案件的目标经事实修订降级为「待确认」，已进入 §11 复核
+        ? `<b class="mono">${S2.revised}</b> 件已有处置记录的目标经事实修订降级为「待确认」，已进入 §11 复核
            <div style="font-size:11px;color:var(--txt-3);white-space:normal">
-             ${(S2.revisedCases || []).map(x => `${x.id}（${x.status}）立案为 ${x.filedAs} → 现 ${x.nowIs}`).join('；')}
-             <br>立案是历史事实，不因今天重新判定而消失，故不计入当前非法目标</div>`
+             ${(S2.revisedCases || []).map(x => `${x.id}（${x.status}）确认时为 ${x.filedAs} → 现 ${x.nowIs}`).join('；')}
+             <br>处置记录是历史事实，不因今天重新判定而消失，故不计入当前非法目标</div>`
         : '—']
     ])
   })}
     ${U.panel({
-    title: '为什么这些目标不立案', sub: '闸门在责任主体，不在机型', style: 'flex:1',
+    title: '为什么这些目标暂不进入处罚', sub: '闸门在责任主体和证据要件，不在机型', style: 'flex:1',
     body: `<div class="warnbox" style="margin-bottom:8px;line-height:1.75">
         能把一个目标绑定到具体人或单位的只有四条路：<b>计划报备匹配 / 实名 SN / 遥控源定位 / 协议破解·RemoteID</b>。
         一条都没有时<b>不得具名</b> —— 处罚决定书是对着当事人开的，主体认错了，整份文书就是错的。
         机型未识别不作为闸门：它只影响文书里的描述项与罚则分级，不影响违法事实成立。</div>
       <div style="font-size:12.5px;color:var(--txt-2);line-height:1.95">
-        本屏<b>不提供立案入口</b> —— 条件不满足时没有入口，这本身就是闸门。
+        本屏<b>不提供转入处罚入口</b> —— 条件不满足时没有入口，这本身就是闸门。
         补齐任一条认定路径（调证 / 现场查获 / 布控）后，由数据层重新派生为案件。<br>
         <span style="color:var(--txt-3)">「证据待补强」是另一类：主体可认定，但证据要件不足以支撑定性，需补证后再判。</span>
       </div>`
   })}
   </div>
   ${U.panel({
-    title: '待办案源（未立案，非案件）', sub: `${(M.pendingSubjects || []).length} 条 · 违法事实成立但尚不具备立案条件`,
+    title: '待补充线索（非案件）', sub: `${(M.pendingSubjects || []).length} 条 · 违法事实成立但责任主体或证据要件不完整`,
     style: 'height:calc(100vh - 482px);min-height:410px;margin-bottom:12px', nopad: true,
     extra: `<button class="btn" id="pnPendExp">${U.icon('download')} 导出待办清单</button>`,
     body: `<div id="pnPendList" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>`
@@ -402,7 +403,7 @@ function tabPend() {
 
 function pendList() {
   const PS = M.pendingSubjects || [];
-  if (!PS.length) return `<div class="empty">当前没有待办案源：全部违法目标均已具备立案条件</div>`;
+  if (!PS.length) return `<div class="empty">当前没有待补充线索：全部违法目标均已具备进入处罚流程的条件</div>`;
   return U.table([
     {
       t: '案源编号', w: '96px', cls: 'num',
@@ -452,7 +453,7 @@ function pendModal(p) {
         ${(p.missing || []).map(x => `<div class="inline-icon">${U.icon('cross')} ${x}</div>`).join('')}</div>`)}
       ${U.sect('下一步', `<div style="font-size:12.5px;color:#ffd07a">${p.nextStep}</div>
         <div style="font-size:11.5px;color:var(--txt-3);margin-top:6px;white-space:normal">
-          补齐任一条认定路径后由数据层重新派生为案件；本页不提供直接立案入口 —— 条件不满足时没有入口，这本身就是闸门。</div>`)}
+          补齐任一条认定路径后由数据层重新派生为案件；本页不提供直接转入处罚入口 —— 条件不满足时没有入口，这本身就是闸门。</div>`)}
       ${t ? U.sect('目标当前判定', U.kv([['定性', U.legal(t.legal_status || t.legal)],
       ['风险等级', U.tag(t.risk_level || t.risk)],
       ['来源可信度', U.confPct(t.source_confidence)]])) : ''}`,
@@ -504,15 +505,15 @@ function noticeDetail() {
   const evidence = !fs2.length
     ? '<div class="warnbox" style="border-color:rgba(255,77,94,.45)">本案在证据台账中无关联材料，事实认定缺少可溯源证据。</div>'
     : `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:8px">
-        ${fs2.slice(0, 8).map(f => `<div style="height:54px;border:1px solid var(--line);
+        ${fs2.slice(0, 8).map(f => `<button type="button" class="punish-evidence-card" style="height:54px;border:1px solid var(--line);
           border-radius:4px;background:linear-gradient(135deg,rgba(61,139,255,.22),rgba(4,12,32,.9));
-          display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;cursor:pointer"
-          data-ev="${f.id}" title="${f.name}　${f.sizeMB.toFixed(1)}MB">
+          display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;cursor:pointer;color:inherit;font:inherit"
+          data-ev="${f.id}" title="${f.name}　${f.sizeMB.toFixed(1)}MB" aria-label="查看证据详情：${f.kind}，${f.name}">
           <span style="font-size:14px">${U.icon(ICON[f.kind] || 'folder')}</span>
           <span style="font-size:10px;color:var(--txt-2)">${f.kind}</span>
-        </div>`).join('')}
+        </button>`).join('')}
       </div>
-      ${fs2.length > 8 ? `<div style="font-size:11px;color:var(--txt-3);margin-bottom:6px">另有 ${fs2.length - 8} 份，点任一份可进证据台账查看全部</div>` : ''}
+      ${fs2.length > 8 ? `<div style="font-size:11px;color:var(--txt-3);margin-bottom:6px">另有 ${fs2.length - 8} 份，可在「证据管理」中查看全部台账</div>` : ''}
       <div id="pnTrack" style="height:130px;border:1px solid var(--line-2);border-radius:6px"></div>`;
 
   document.getElementById('pnSt').innerHTML =
@@ -654,11 +655,9 @@ function authTable() {
     { t: '时长', w: '58px', align: 'right', cls: 'num', render: a => a.durationS + 's' },
     { t: '开始时间', k: 'start', w: '142px', cls: 'num' },
     { t: '执行结果', w: '88px', render: a => U.tag(a.result, a.result === '无效' ? 't-red' : 't-green') },
-    {
-      t: '回执 / 急停 / 审计', w: '168px', render: a => `${U.tag(a.ack, 't-green')}
-        ${U.tag(a.estop === '未触发' ? '无急停' : '急停', a.estop === '未触发' ? 't-gray' : 't-red')}
-        ${U.tag(a.audit, 't-green')}`
-    }
+    { t: '回执', w: '76px', render: a => U.tag(a.ack, 't-green') },
+    { t: '急停', w: '76px', render: a => U.tag(a.estop === '未触发' ? '无急停' : '急停', a.estop === '未触发' ? 't-gray' : 't-red') },
+    { t: '审计', w: '76px', render: a => U.tag(a.audit, 't-green') }
   ], M.authLogs, { rowId: a => a.id });
 }
 
@@ -666,17 +665,16 @@ function authTable() {
 function cmpBlock(c) {
   const d = judgeDiff(c), s2 = d.snap;
   if (d.lost) return `<div class="warnbox">本案引用的目标 <span class="mono">${c.targetId}</span> 已发生合并/分裂，
-    当前判定需按 ID 变更回溯还原（见案件详情「目标 ID 变更回溯」）。立案快照仍完整保留：
+    当前判定需按 ID 变更回溯还原（见案件详情「目标 ID 变更回溯」）。事件确认快照仍完整保留：
     ${U.legal(s2.legal_status)} ${(s2.violation_reasons || []).join('、')} · ${s2.risk_level} · ${s2.at}</div>`;
   const row = (lb, a, b, diff) => `<tr>
-    <td style="width:88px;color:var(--txt-3)">${lb}</td>
-    <td style="width:44%">${a}</td>
-    <td style="width:44%">${diff ? `<b style="color:#ffd07a">${b}</b>` : b}</td></tr>`;
+    <td style="color:var(--txt-3)">${lb}</td>
+    <td>${a}</td>
+    <td>${diff ? `<b style="color:#ffd07a">${b}</b>` : b}</td></tr>`;
   const isDiff = k => d.items.some(x => x[0] === k);
-  return `<div style="display:flex;gap:8px;margin-bottom:6px;font-size:12px;color:var(--txt-3)">
-      <span style="width:88px"></span><span style="width:44%">立案时判定（${(s2.at || '').slice(5, 16)}）</span>
-      <span style="width:44%">当前判定</span></div>
-    <table class="tb" style="font-size:12.5px"><tbody>
+  return `<table class="tb"><thead><tr>
+      <th></th><th>事件确认时判定（${(s2.at || '').slice(5, 16)}）</th><th>当前判定</th>
+    </tr></thead><tbody>
       ${row('定性', U.legal(s2.legal_status), U.legal(d.cur.legal), isDiff('定性'))}
       ${row('违规事由', (s2.violation_reasons || []).join('、') || '—', d.cur.vio || '—', isDiff('违规事由'))}
       ${row('风险等级', U.tag(s2.risk_level), U.tag(d.cur.risk), isDiff('风险等级'))}
@@ -684,19 +682,19 @@ function cmpBlock(c) {
       ${row('来源', s2.source_type || '—', '—', false)}
     </tbody></table>
     <div style="margin-top:8px;font-size:12px;color:var(--txt-2);white-space:normal">
-      <b>立案依据：</b>${s2.basis || '—'}</div>
+      <b>确认依据：</b>${s2.basis || '—'}</div>
     <div style="margin-top:6px">${d.items.length
       ? `<span class="tag t-red">${d.items.length} 项差异</span>
          <span style="font-size:11.5px;color:var(--txt-3)">${d.items.map(x => x[0]).join('、')}发生变化，须按 §11 复核后才能改动案件状态</span>`
-      : `<span class="tag t-green">立案快照与当前判定一致</span>
-         <span style="font-size:11.5px;color:var(--txt-3)">已立案案件是历史事实，即使后续重新判定，快照也不会被覆盖</span>`}</div>`;
+      : `<span class="tag t-green">事件确认快照与当前判定一致</span>
+         <span style="font-size:11.5px;color:var(--txt-3)">处置记录是历史事实，即使后续重新判定，快照也不会被覆盖</span>`}</div>`;
 }
 
 function snapModal(c) {
   if (!c) return;
   const rr = M.reviewRequests.find(r => r.caseId === c.id);
   openModal({
-    title: '立案判定核查 · ' + c.id, width: '680px',
+    title: '事件确认判定核查 · ' + c.id, width: '680px',
     body: `${U.kv([['案件状态', U.tag(c.status)], ['目标编号', `<span class="mono">${c.targetId}</span>`],
     ['违法类型', U.tag(c.violation, 't-orange')], ['发生时间', c.time]])}
       <div style="margin-top:12px">${cmpBlock(c)}</div>
@@ -719,6 +717,10 @@ function outcomeBox(o) {
 }
 
 function reviewModal(r) {
+  if (!M.can('处置处罚管理', 'op')) {
+    M.pushAudit('处置处罚管理', '受理复核被拒绝：无操作权限', r ? r.id : 'REVIEW', '失败');
+    return toast('需要「处置处罚管理」操作权限', 'err');
+  }
   if (!r) return;
   const c = M.cases.find(x => x.id === r.caseId);
   const done = rvOutcome[r.id];
@@ -748,7 +750,7 @@ function reviewModal(r) {
       ['提出方', r.raisedBy], ['提出时间', r.at],
       ['降级理由', `<div style="white-space:normal">${r.reason}</div>`],
       ['数据层备注', `<div style="white-space:normal;color:var(--txt-3)">${r.note}</div>`]])}
-      ${U.sect('立案时判定 vs 当前判定', c ? cmpBlock(c) : '<span style="color:var(--txt-3)">未找到关联案件</span>')}
+      ${U.sect('事件确认时判定 vs 当前判定', c ? cmpBlock(c) : '<span style="color:var(--txt-3)">未找到关联案件</span>')}
       ${U.sect('复核结论', `<div style="display:flex;flex-direction:column;gap:6px">
         ${RV_RESULTS.map((x, i) => `<label class="chk" style="margin:0"><input type="radio" name="rvr" value="${x.k}" ${i === 0 ? 'checked' : ''}>
           <span>${U.tag(x.k, x.c)} <span style="color:var(--txt-3)">${x.desc}</span></span></label>`).join('')}
@@ -787,6 +789,10 @@ function reviewModal(r) {
 }
 
 function applyReview(r, o) {
+  if (!M.can('处置处罚管理', 'op')) {
+    M.pushAudit('处置处罚管理', '提交复核被拒绝：无操作权限', r ? r.id : 'REVIEW', '失败');
+    return { ok: false, msg: '需要「处置处罚管理」操作权限' };
+  }
   const c = M.cases.find(x => x.id === r.caseId);
   if (c) {
     const why = `定性依据复核：${o.result}` + (o.approvalNo ? `（文号 ${o.approvalNo}）` : '');
@@ -871,50 +877,11 @@ function authModal(a) {
   });
 }
 
-function processModal() {
-  const c = st.sel;
-  const nextStep = M.DISPOSAL_FLOW[c.stage];
-  const cur = c.steps[c.stage - 1];
-  const probe = M.canAdvanceCase(c, MY_MODULE);
-  const blocked = probe.ok === false;
-
-  openModal({
-    title: '推进案件流程 · ' + c.id, width: '580px',
-    body: `${U.kv([
-      ['当前环节', cur ? `${cur.n}　<span style="color:var(--txt-3);font-size:11.5px">（${cur.owner}）</span>` : '已完成'],
-      ['下一环节', nextStep ? `${nextStep.n}　<span style="color:var(--txt-3);font-size:11.5px">（${nextStep.owner}）</span>` : '已到末环'],
-      ['违法类型', c.violation],
-      ['拟处罚', c.penalty + (c.penalty === '罚款' ? '（' + U.money(c.fine) + '）' : '')]
-    ])}
-      ${blocked ? `<div class="warnbox" style="margin-top:12px;border-color:rgba(255,176,32,.45);
-          background:rgba(255,176,32,.08);line-height:1.85">
-          注意：<b>本环节不由处置处罚管理执行，无法在本页推进。</b><br>
-          ${probe.reason}<br>
-          <span style="color:var(--txt-3)">六环节横跨三个模块，本页只负责<b>立案</b>与<b>结案归档</b>；
-          其余环节在此处只作为既有事实展示，不由本页产生。</span></div>`
-      : `<div style="margin-top:12px">${U.field('办理意见', `<input class="ip" style="flex:1;min-width:0" placeholder="请输入办理意见">`)}</div>
-         <label class="chk"><input type="checkbox" checked>同步至上级管控平台（/api/v1/dispatch/sync）</label>
-         <label class="chk"><input type="checkbox" checked>生成/更新处罚文书</label>`}`,
-    footer: blocked
-      ? `<button class="btn" data-close>知道了</button>`
-      : `<button class="btn" data-close>取消</button><button class="btn pri" data-act="ok">确认推进</button>`,
-    on: {
-      ok: () => {
-        closeModal();
-        const r = M.advanceCase(c, MY_MODULE);
-        if (!r || r.ok === false) {
-          paint();
-          return toast(r && r.reason ? r.reason : '本页无法推进该环节', 'err');
-        }
-        if (r.status === '已结案' || c.stage >= 3) c.docReady = true;
-        paint();
-        toast(`案件已推进至「${r.step}」，状态 ${r.status}，操作记入审计日志`, 'ok');
-      }
-    }
-  });
-}
-
 function jamModal() {
+  if (!M.can('反制/干扰授权', 'auth')) {
+    M.pushAudit('反制/干扰授权', '新建信号干扰授权被拒绝：无授权权限', st.sel ? st.sel.id : 'AUTH', '失败');
+    return toast('需要「反制/干扰授权」授权权限', 'err');
+  }
   const u = (M.users && M.users[0]) || { name: '值班员', roleName: '值班员' };
   const cases = M.cases.filter(c => c.status !== '已结案');
   openModal({
@@ -1029,16 +996,16 @@ onMounted(() => {
   U.on(view, '[data-notify]', 'click', (e, el) => {
     const c = M.cases.find(x => x.id === el.dataset.notify);
     if (!c || noticeStatus(c) === '已通知') return;
-    noticed[c.id] = '已通知';
-    saveNotice();
-    window.APP.rerender();
-    toast('通知成功', 'ok');
-  });
-  U.on(view, '[data-cop]', 'click', (e, el) => {
-    e.stopPropagation();
-    const [op, id] = el.dataset.cop.split('|');
-    st.sel = M.cases.find(c => c.id === id); paint();
-    if (op === 'do') processModal();
+    const ctx = EVT && EVT.of(c.targetId);
+    if (!ctx) return toast('未找到该处置记录的共享事件', 'err');
+    EVT.confirmPunish(ctx, {
+      note: '处置处罚管理页面确认通知处罚部门',
+      onResult: result => {
+        if (!result.ok) return toast(result.msg, 'err');
+        window.APP.rerender();
+        toast(result.msg, 'ok');
+      }
+    });
   });
   U.on(view, '[data-pg]', 'click', (e, el) => { if (el.dataset.pg) { st.page = +el.dataset.pg; paint(); } });
   U.on(view, '[data-size]', 'change', (e, el) => { st.size = parseInt(el.value); st.page = 1; paint(); });
@@ -1047,6 +1014,10 @@ onMounted(() => {
     st[k] = k === 'days' ? +el.value : el.value; st.page = 1; paint();
   });
   U.on(view, '[data-jam]', 'click', (e, el) => {
+    if (!M.can('反制/干扰授权', 'auth')) {
+      M.pushAudit('反制/干扰授权', '停止信号干扰被拒绝：无授权权限', el.dataset.jam, '失败');
+      return toast('需要「反制/干扰授权」授权权限', 'err');
+    }
     const [op, id] = el.dataset.jam.split('|');
     const rec = M.authLogs.find(x => x.id === id);
     if (!rec || rec.result !== '执行中') return;
@@ -1065,14 +1036,12 @@ onMounted(() => {
     if (el.dataset.doc === 'prev') docModal();
     else if (el.dataset.doc === 'down') toast('已下载《行政处罚决定书》' + st.sel.docNo
       + '（Demo 样例，不具法律效力；金额依据的档位表未经业务方确认）', 'err');
-    else processModal();
   });
-  U.on(view, '[data-ev]', 'click', () => {
-    if (!st.sel) return;
-    const fs2 = M.evidenceOf ? M.evidenceOf('case', st.sel.id) : [];
-    if (!fs2.length) return toast(`案件 ${st.sel.id} 在证据台账中暂无关联材料`, 'err');
-    if (window.SEARCH && window.SEARCH.goEntity) { U.goto('evidence', { id: fs2[0].id }); }
-    else toast(`本案关联证据 ${fs2.length} 份，可在「证据存储管理」中查看`, 'ok');
+  U.on(view, '[data-ev]', 'click', (e, el) => {
+    const f = M.evidenceFiles.find(x => x.id === el.dataset.ev);
+    if (!f) return toast('未找到对应证据数据', 'err');
+    if (!window.EVIDENCE_VIEW) return toast('证据详情模块未加载', 'err');
+    openModal(window.EVIDENCE_VIEW.modalOptions(f));
   });
   U.on(view, '[data-goto]', 'click', () => U.goto('legality', { target: st.sel.targetId }));
   U.on(view, '[data-goparam]', 'click', () => { location.hash = '#/users'; toast('参数总览 → 罚则金额档位（待业务方确认）'); });

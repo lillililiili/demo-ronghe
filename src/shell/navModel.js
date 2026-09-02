@@ -6,6 +6,7 @@
 
 /* kids 存在即为可展开的一级模块；没有 kids 的一级模块直接就是页面。 */
 export const NAV = [
+  { k: 'workbench', t: '我的工作台', icon: 'home' },
   /* 「综合态势」页已按用户裁定整页删除（2026-08-28），融合感知即首页 */
   {
     t: '感知监测', icon: 'radar', kids: [
@@ -30,8 +31,8 @@ export const NAV = [
       { k: 'evidence', t: '证据管理' }
     ]
   },
-  /* 用户指令（2026-08-27）：运维管理从右上角弹窗移入侧栏成组；
-     用户与权限、日志归档单独拆成「系统管理」组。 */
+  /* 用户指令（2026-09-02）：用户管理与角色管理拆分为独立菜单，
+     与日志归档共同归入「系统管理」组。 */
   {
     t: '运维管理', icon: 'tool', kids: [
       { k: 'devices', t: '设备管理' },
@@ -41,7 +42,8 @@ export const NAV = [
   },
   {
     t: '系统管理', icon: 'shield', kids: [
-      { k: 'users', t: '用户与权限' },
+      { k: 'users', t: '用户管理' },
+      { k: 'roles', t: '角色管理' },
       { k: 'archive', t: '日志归档' }
     ]
   }
@@ -68,13 +70,14 @@ export const ROUTES = (function () {
 })();
 
 export const PAGE_THEME = {
+  workbench: 'overview',
   bigscreen: 'overview',
   situation: 'sensing', monitor: 'sensing',
   flights: 'flight', legality: 'flight', risk: 'flight', airspace: 'flight',
   alarms: 'incident', punish: 'incident',
   stats: 'analytics', evidence: 'analytics',
   devices: 'operations', commission: 'operations', apis: 'operations',
-  users: 'system', archive: 'system'
+  users: 'system', roles: 'system', archive: 'system'
 };
 
 /* 旧地址重定向：目标页已删、语义由别的页承接时，hash 直接改写到承接页。 */
@@ -87,10 +90,10 @@ export function groupOf(k) {
   return r && r.p ? r.p : null;
 }
 
-/* 与旧版 curKey() 同语义：空路径 → situation；截掉 ?query。
+/* 空路径默认进入“我的工作台”；截掉 ?query。
    放这里（而不是 router/index.js）是为了避免 PageHost ↔ router 循环依赖。 */
 export function routeKey(route) {
   let p = route.params.page;
   if (Array.isArray(p)) p = p[0];
-  return ((p || 'situation') + '').split('?')[0];
+  return ((p || 'workbench') + '').split('?')[0];
 }

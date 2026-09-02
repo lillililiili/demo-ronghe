@@ -340,10 +340,10 @@
           <div style="font-size:11px;color:var(--txt-3)">${d.vendor}</div>`
       },
       {
-        t: sortTh('状态 / 健康', 'status'), w: '92px',
-        render: d => `<div style="color:${d.status === '在线' ? '#79e5a5' : d.status === '离线' ? '#a8bcd8' : '#ff8b95'}">${U.dotState(d.status)}</div>
-          <div style="margin-top:2px">${U.tag(d.health)}</div>`
+        t: sortTh('状态', 'status'), w: '76px',
+        render: d => `<span style="color:${d.status === '在线' ? '#79e5a5' : d.status === '离线' ? '#a8bcd8' : '#ff8b95'}">${U.dotState(d.status)}</span>`
       },
+      { t: '健康', w: '72px', render: d => U.tag(d.health) },
       { t: sortTh('最后心跳', 'hb'), w: '78px', cls: 'num', priority: 'optional', render: d => d.hb.slice(11) },
       {
         t: '操作', w: '132px', render: d => `<span class="lnk" data-op="view|${d.id}">查看</span>` +

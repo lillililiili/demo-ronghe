@@ -433,10 +433,15 @@ let chartPaused = false, logPaused = false;   // 图表刷新与日志滚动是�
      而本页自己所在的平台把「控制无回执」列为 C09 阻断性问题（apis.js），
      对在网感知设备下发重启却连二次确认都没有 —— 平台没遵守自己定的规矩。
      这里补齐：二次确认 + 原因必填 + 写操作审计 + 真实回执（回执到达后再写一条审计）。
-     注意不改 d.status —— deviceStats 是加载时算好的常量，改了 status 会让
-     台账与 KPI 当场对不上，那是我们一路在治的另一种病。重启事实记在 d.lastReboot 上。 */
-  function rebootModal(d) {
-    const u = (M.users && M.users[0]) || { name: '值班员', roleName: '值班员' };
+     回执到达后通过 M.recalcDeviceStats 原位重算 KPI，设备台账、工作台与监测页保持同源。 */
+  function rebootModal(d, opts) {
+    opts = opts || {};
+    if (!M.can('设备实时监测', 'op')) {
+      M.pushAudit('设备实时监测', '远程重启被拒绝：无操作权限', d.id, '失败');
+      U.toast('需要「设备实时监测」操作权限', 'err');
+      return false;
+    }
+    const u = M.currentUser || { name: '值班员', roleName: '值班员' };
     U.modal({
       title: '远程重启设备 · ' + d.name, width: '600px',
       body: `<div class="warnbox" style="border-color:rgba(255,77,94,.45)">
@@ -467,7 +472,11 @@ let chartPaused = false, logPaused = false;   // 图表刷新与日志滚动是�
           const taskId = 'RB' + M.util.ymd(M.CONF.demoTime) + M.util.p3(rs(1, 999));
           const at = M.util.fmtDT(M.CONF.demoTime);
           d.lastReboot = { at, by: u.name, why, taskId, ack: '待回执' };
+          d.controlLogs = d.controlLogs || [];
+          d.controlLogs.unshift({ at, by: u.name, action: '远程重启', reason: why, taskId, ack: '待回执' });
           audit(`远程重启下发（${taskId}）：${why}`, d.id, u.name);
+          if (opts.onStart) opts.onStart(d, d.lastReboot);
+          window.dispatchEvent(new CustomEvent('device:changed', { detail: { id: d.id, phase: 'processing' } }));
           U.closeModal();
           U.toast(`重启指令已下发：${taskId}，等待设备回执`, 'ok');
           pushLog(`[CTRL] POST /api/v1/device/control  {"deviceId":"${d.id}","cmd":"reboot","taskId":"${taskId}"}`);
@@ -476,8 +485,19 @@ let chartPaused = false, logPaused = false;   // 图表刷新与日志滚动是�
           setTimeout(() => {
             const cost = rs(8, 26);
             d.lastReboot.ack = `已回执（重启完成，耗时 ${cost}s）`;
-            d.hb = M.util.fmtDT(M.CONF.demoTime);
+            if (d.controlLogs && d.controlLogs[0] && d.controlLogs[0].taskId === taskId) d.controlLogs[0].ack = d.lastReboot.ack;
+            d.hb = M.nowStr();
+            d.hbMin = 0;
+            d.status = '在线';
+            d.alarm = false;
+            d.health = '良好';
+            d.workState = 1;
+            d.latency = d.latency == null ? 32 : Math.min(d.latency, 60);
+            d.loss = d.loss == null ? 0.2 : Math.min(d.loss, 0.8);
+            if (M.recalcDeviceStats) M.recalcDeviceStats();
             audit(`远程重启回执（${taskId}）：重启完成，耗时 ${cost}s`, d.id, u.name);
+            if (opts.onAck) opts.onAck(d, d.lastReboot);
+            window.dispatchEvent(new CustomEvent('device:changed', { detail: { id: d.id, phase: 'verify' } }));
             pushLog(`[CTRL] ← 200 {"taskId":"${taskId}","status":"rebooted","costS":${cost}}  设备已恢复上报`);
             if (document.getElementById('mnBody')) U.toast(`${d.name} 重启回执已接收（耗时 ${cost}s）`, 'ok');
           }, 2600);
@@ -504,5 +524,9 @@ let chartPaused = false, logPaused = false;   // 图表刷新与日志滚动是�
 
   function destroy() { clearInterval(timer); clearInterval(logTimer); charts = {}; chartPaused = logPaused = false; }
   g.PAGES = g.PAGES || {};
+  g.DEVICE_ACTIONS = {
+    openReboot: rebootModal,
+    canVerify(d) { return !!d && d.status === '在线' && !d.alarm && d.health === '良好' && d.hbMin <= 2; }
+  };
   g.PAGES.monitor = { render, mount, destroy };
 })(window);

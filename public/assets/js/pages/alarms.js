@@ -6,11 +6,18 @@
   let st = { page: 1, size: 10, level: '全部', status: '待核实', kind: '全部', region: '全部', sel: null,
     sort: 'ts', dir: -1 };     // 默认按时间倒序，与数据层 alarms.sort(b.ts-a.ts) 一致，首屏顺序不变
 
-  /* 告警页按本轮确认后的最短闭环展示，不复用案件的六环节状态：
+  /* 告警页按原有最短闭环在当前页直接操作：
      待核实 → 反制中 → 干扰中 → 待处置；核实不通过则进入误报终态。 */
-  const FLOW_STATUS = ['待核实', '反制中', '干扰中', '待处置', '误报'];
+  const FLOW_STATUS = ['待核实', '反制中', '干扰中', '待处置', '已处置', '误报'];
   const LEGACY_FLOW_STATUS = { '新建': '待核实', '已确认': '待核实', '处置中': '反制中', '已关闭': '待处置', '误报': '误报' };
-  const statusOf = a => a.flowStatus || LEGACY_FLOW_STATUS[a.status] || '待核实';
+  const statusOf = a => {
+    if (a.flowStatus) return a.flowStatus;
+    if (a.status === '已关闭' && g.EVT) {
+      const ctx = g.EVT.of(a.targetId);
+      if (ctx && ctx.stage >= g.EVT.FLOW.length) return '已处置';
+    }
+    return LEGACY_FLOW_STATUS[a.status] || '待核实';
+  };
 
   /* 增加一条可直接演示“待核实 → 属实/误报”的数据；底层 status 仍保留平台枚举，
      告警页的新状态放在 flowStatus，避免改坏统计、案件等共享模块。 */
@@ -97,7 +104,7 @@
       { label: '待核实', value: U.num(c('待核实')), color: 'amber', icon: 'alert', desc: '待人工确认属实或误报' },
       { label: '反制中', value: U.num(c('反制中')), color: 'orange', icon: 'radar', desc: '待发起联动反制' },
       { label: '干扰中', value: U.num(c('干扰中')), color: 'red', icon: 'radar', desc: '反制信号干扰执行中' },
-      { label: '待处置', value: U.num(c('待处置')), color: 'green', icon: 'check', desc: '请进入处置与处罚页面' },
+      { label: '待处置', value: U.num(c('待处置')), color: 'green', icon: 'check', desc: '待通知处罚部门' },
       { label: '误报', value: U.num(c('误报')), color: 'purple', icon: 'check', desc: '人工核实后已排除' }
     ])}
 
@@ -165,30 +172,43 @@
   function disposalSteps(a) {
     const s = statusOf(a);
     const trigger = { n: '告警触发', t: a.time.slice(11), done: true, act: false };
+    const ctx = g.EVT && g.EVT.of(a.targetId);
+    if (s !== '误报' && ctx) return g.EVT.steps(ctx).map((step, i) => ({
+      n: step.n, t: i === 0 ? a.time.slice(11) : step.t, done: step.done, act: step.act
+    }));
     if (s === '待核实') return [trigger,
       { n: '人工核实', t: '', done: false, act: true },
       { n: '反制', t: '', done: false, act: false },
-      { n: '信号干扰', t: '', done: false, act: false }];
+      { n: '信号干扰', t: '', done: false, act: false },
+      { n: '处置', t: '', done: false, act: false }];
     if (s === '误报') return [trigger,
       { n: '人工核实', t: '误报', done: true, act: false }];
     if (s === '反制中') return [trigger,
       { n: '人工核实', t: '属实', done: true, act: false },
       { n: '反制', t: '待授权', done: false, act: true },
-      { n: '信号干扰', t: '', done: false, act: false }];
+      { n: '信号干扰', t: '', done: false, act: false },
+      { n: '处置', t: '', done: false, act: false }];
     if (s === '干扰中') return [trigger,
       { n: '人工核实', t: '属实', done: true, act: false },
       { n: '反制', t: '已授权', done: true, act: false },
-      { n: '信号干扰', t: '干扰中', done: false, act: true }];
+      { n: '信号干扰', t: '干扰中', done: false, act: true },
+      { n: '处置', t: '', done: false, act: false }];
     return [trigger,
       { n: '人工核实', t: '属实', done: true, act: false },
       { n: '反制', t: '已授权', done: true, act: false },
-      { n: '信号干扰', t: '干扰完成', done: true, act: false }];
+      { n: '信号干扰', t: '干扰完成', done: true, act: false },
+      { n: '处置', t: s === '已处置' ? '已通知' : '待通知', done: s === '已处置', act: s === '待处置' }];
   }
 
   function disposalActions(a) {
     const s = statusOf(a);
     if (s === '待核实') return `<button class="btn pri" data-al="verify">人工核实</button>`;
     if (s === '反制中') return `<button class="btn danger" data-al="counter">${U.icon('bolt')} 发起联动反制</button>`;
+    if (s === '待处置') {
+      const ctx = g.EVT && g.EVT.of(a.targetId);
+      if (ctx && ctx.kase && ctx.stage === g.EVT.FLOW.length - 1)
+        return `<button class="btn pri" data-al="punish">通知处罚部门</button>`;
+    }
     return '';
   }
 
@@ -368,6 +388,11 @@
         if (!g.TARGET_ACTIONS) return U.toast('反制授权组件尚未加载', 'err');
         g.TARGET_ACTIONS.openCounterAuth(t, () => startInterference(a));
       }
+      else if (k === 'punish') {
+        const a = st.sel;
+        if (!a || statusOf(a) !== '待处置') return U.toast('当前告警无需通知处罚部门', 'err');
+        notifyPunishment(a);
+      }
       else if (k === 'video' || k === 'replay') {
         const a = st.sel;
         const t = a && M.allTargets.find(x => x.id === a.targetId);
@@ -384,22 +409,30 @@
     document.getElementById('alLoc').onclick = () => { if (map) map.resetView(2.2); focusMap(); };
   }
   function startInterference(a) {
-    const from = statusOf(a);
-    a.flowStatus = '干扰中';
-    a.status = '处置中';                  // 兼容共享数据层的旧枚举
-    a.interferenceStartedAt = M.util.fmtDT(M.CONF.demoTime);
-    M.pushAudit('异常告警中心', `联动反制授权通过（${from} → 干扰中）`, a.targetId);
-    remount();
-    U.toast('已发起反制信号干扰，请进入处置与处罚页面来处置。', 'ok');
-    setTimeout(() => {
-      a.flowStatus = '待处置';
-      a.interferenceFinishedAt = M.util.fmtDT(new Date(M.CONF.demoTime.getTime() + 3000));
-      M.pushAudit('异常告警中心', '信号干扰完成（干扰中 → 待处置）', a.targetId);
-      if (location.hash === '#/alarms') remount();
-    }, 3000);
+    const ctx = g.EVT && g.EVT.of(a.targetId);
+    if (!ctx) return U.toast('未找到该告警的共享事件记录', 'err');
+    const result = g.EVT.startLinkedCounter(ctx, {
+      note: '告警页完成反制授权并发起联动处置',
+      onStart: remount,
+      onComplete: () => { if (location.hash === '#/alarms') remount(); }
+    });
+    if (!result.ok) return U.toast(result.msg, 'err');
+    U.toast(result.msg, 'ok');
+  }
+  function notifyPunishment(a) {
+    const ctx = g.EVT && g.EVT.of(a.targetId);
+    if (!ctx) return U.toast('未找到该告警的共享事件记录', 'err');
+    return g.EVT.confirmPunish(ctx, {
+      note: '告警事件页确认通知处罚部门',
+      onResult: result => {
+        if (!result.ok) return U.toast(result.msg, 'err');
+        remount();
+        U.toast(result.msg, 'ok');
+      }
+    });
   }
 
-  /* 人工核实：属实进入反制节点，误报则在人工核实节点终止流程。 */
+  /* 人工核实：属实直接进入反制节点，误报则在人工核实节点终止流程。 */
   function verifyModal() {
     const a = st.sel;
     if (!a) return;
@@ -409,7 +442,7 @@
       title: '人工核实 · ' + a.id, width: '600px',
       body: `<div class="warnbox">核实是状态机的必经环节（待核实 → 反制中 / 误报）。
           结论为「误报」时告警进入终态，样本计入误报率统计与 C06 规则优化；
-          结论为「属实」时进入反制节点，可发起联动反制。</div>
+          结论为「属实」时直接进入反制节点，可在本页发起联动处置。</div>
         ${U.kv([
         ['告警类型', a.type], ['告警等级', U.tag(a.level, a.level === '高' ? 't-red' : a.level === '中' ? 't-amber' : 't-blue')],
         ['关联目标', `<span class="mono">${a.targetId}</span>　${t.subtype || t.type || '—'}`],
@@ -436,22 +469,13 @@
             U.toast('核实说明为必填 —— 状态变更必须能回答"依据是什么"', 'err'); return;
           }
           const real = el.querySelector('[data-vf="true"]').checked;
-          const u = M.currentUser || { name: '值班员', roleName: '值班员' };
           const from = statusOf(a);
-          a.flowStatus = real ? '反制中' : '误报';
-          a.status = real ? '处置中' : '误报';       // 兼容共享数据层的旧枚举
-          a.verified = true;
-          a.verifyLog = a.verifyLog || [];
-          a.verifyLog.push({ at: M.util.fmtDT(M.CONF.demoTime), by: u.name, result: real ? '属实' : '误报', note, from, to: a.flowStatus });
-          M.auditLogs.unshift({
-            id: 'AUAL' + a.id.slice(-6) + M.util.p2(a.verifyLog.length),
-            time: M.util.fmtDT(M.CONF.demoTime), user: u.name, role: u.roleName,
-            module: '异常告警中心', action: `人工核实：${real ? '属实' : '误报'}（${from} → ${a.flowStatus}）：${note}`,
-            target: a.targetId, result: '成功', ip: '10.20.6.31', term: '终端-01'
-          });
+          const ctx = g.EVT && g.EVT.of(a.targetId);
+          const result = ctx ? g.EVT.verify(ctx, { real, note }) : { ok: false, msg: '事件聚合服务不可用' };
+          if (!result.ok) return U.toast(result.msg, 'err');
           U.closeModal();
           remount();     // 状态变了，KPI 与列表都要联动
-          U.toast(`核实完成：${from} → ${a.flowStatus}${real ? '' : '（流程在人工核实节点终止）'}`, real ? 'ok' : '');
+          U.toast(`核实完成：${from} → ${a.flowStatus}${real ? '' : '（流程在人工核实节点终止）'}`, 'ok');
         }
       }
     });

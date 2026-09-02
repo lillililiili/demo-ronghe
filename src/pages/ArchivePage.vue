@@ -202,11 +202,17 @@ function detailModal(l) {
       ['所属单位', '东营市低空安全管理中心'], ['操作终端', '终端-' + M.util.p2(rr(1, 12))],
       ['日志大小', l.size], ['存证哈希', `<span class="mono" style="font-size:11px">sha256:${l.id.replace(/[^0-9a-z]/gi, '').toLowerCase()}8f2a…</span>`]]))}`,
     footer: `<button class="btn" data-close>关闭</button>
-      ${l.status === '待归档' ? `<button class="btn warn" data-act="arch">归档本条</button>` : ''}
+      ${l.status === '待归档' ? `<button class="btn warn" data-act="arch" ${M.can('日志归档', 'op') ? '' : 'disabled title="当前角色无归档操作权限"'}>归档本条</button>` : ''}
       <button class="btn pri" data-act="down">${U.icon('download')} 下载完整日志包</button>`,
     on: {
-      down: () => toast('已生成日志包（JSON + 轨迹 + 截图 + 审计），共 5.4 MB', 'ok'),
-      arch: () => { l.status = '已归档'; closeModal(); paint(); toast(`「${l.id}」已归档`, 'ok'); }
+      down: () => {
+        if (!M.can('日志归档', 'op')) return toast('需要「日志归档」操作权限', 'err');
+        M.pushAudit('日志归档', '下载完整日志包', l.id); toast('已生成日志包（JSON + 轨迹 + 截图 + 审计），共 5.4 MB', 'ok');
+      },
+      arch: () => {
+        if (!M.can('日志归档', 'op')) return toast('需要「日志归档」操作权限', 'err');
+        l.status = '已归档'; M.pushAudit('日志归档', '归档日志', l.id); closeModal(); paint(); toast(`「${l.id}」已归档`, 'ok');
+      }
     }
   });
 }
@@ -305,12 +311,17 @@ function bindListTools() {
     document.querySelectorAll('#arBody select[data-f]').forEach(s2 => s2.selectedIndex = 0);
     paint(); syncQ();
   };
-  g2('arExp').onclick = () => toast('已导出「日志归档.csv」共 ' + filtered().length + ' 条', 'ok');
-  g2('arCfg').onclick = cfgModal;
+  g2('arExp').onclick = () => {
+    if (!M.can('日志归档', 'op')) return toast('需要「日志归档」操作权限', 'err');
+    M.pushAudit('日志归档', `导出日志归档 ${filtered().length} 条`, 'ARCHIVE'); toast('已导出「日志归档.csv」共 ' + filtered().length + ' 条', 'ok');
+  };
+  g2('arCfg').onclick = () => M.can('日志归档', 'op') ? cfgModal() : toast('需要「日志归档」操作权限', 'err');
   g2('arBatch').onclick = () => {
+    if (!M.can('日志归档', 'op')) return toast('需要「日志归档」操作权限', 'err');
     const ids = U.checked(document.getElementById('arBody'));
     if (!ids.length) return toast('请先勾选左侧待归档记录（仅待归档记录可勾选）', 'err');
     ids.forEach(id => { const l = M.logs.find(x => x.id === id); if (l) l.status = '已归档'; });
+    M.pushAudit('日志归档', `批量归档 ${ids.length} 条记录`, 'ARCHIVE');
     paint();
     const pe = document.getElementById('arPend');
     if (pe) pe.textContent = pendingN();

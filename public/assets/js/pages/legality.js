@@ -837,7 +837,7 @@
             const c = M.cases.find(x => x.targetId === r.id);
             return c ? `<span class="mono" style="font-size:11.5px">${c.id}</span>
               <span class="tag t-amber" title="判定已降级，案件定性依据需在处置处罚管理同步复核">需复核</span>`
-              : '<span style="color:var(--txt-3)">未立案</span>';
+              : '<span style="color:var(--txt-3)">尚无处置记录</span>';
           }
         },
         { t: '', w: '96px', render: r => `<button class="btn" data-act="pick" data-id="${r.id}" style="height:24px;font-size:11.5px;padding:0 8px">查看依据</button>` }
@@ -852,7 +852,7 @@
         {
           t: '案件', w: '110px', render: r => {
             const c = M.cases.find(x => x.targetId === r.id);
-            return c ? `<span class="mono" style="font-size:11.5px">${c.id}</span>` : '<span style="color:var(--txt-3)">未立案</span>';
+            return c ? `<span class="mono" style="font-size:11.5px">${c.id}</span>` : '<span style="color:var(--txt-3)">尚无处置记录</span>';
           }
         },
         {
@@ -868,7 +868,7 @@
         </div>`)}
         <div style="font-size:11.5px;color:var(--txt-3);margin-top:10px">
           说明：降级动作统一在右侧「判定详情」中执行 —— 那里给出完整判定过程、数据源可用性与案件影响提示；
-          已立案目标降级后不直接改案件状态，改为发起<b>案件定性依据复核请求</b>，由处置处罚管理按 §11 流程处理。</div>
+          已有处置记录的目标降级后不直接改案件状态，改为发起<b>案件定性依据复核请求</b>，由处置处罚管理按 §11 流程处理。</div>
 
         <div style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px">
           <div class="warnbox" style="margin-bottom:9px">
@@ -897,7 +897,8 @@
         { t: '发起时间', k: 'at', w: '138px', cls: 'num' },
         { t: '目标编号', k: 'targetId', w: '134px', cls: 'num' },
         { t: '关联案件', w: '150px', render: r => `<span class="mono" style="font-size:11.5px">${r.caseId}</span>（${r.caseStatus}）` },
-        { t: '判定变更', w: '110px', render: r => `${U.legal(r.from)} → ${U.legal(r.to)}` },
+        { t: '原判定', w: '72px', render: r => U.legal(r.from) },
+        { t: '现判定', w: '72px', render: r => U.legal(r.to) },
         { t: '发起方', k: 'raisedBy', w: '190px' },
         { t: '状态', w: '80px', render: r => U.tag(r.status, 't-amber') }
       ], reqs, { rowId: r => r.id }) : '<div class="empty">暂无复核请求</div>'}
@@ -921,7 +922,7 @@
    * 转办联动（评审：判定后的下一步动作要清楚）——
    * 转告警：无关联告警则页面层生成一条「待核实」工单（先例 alarms.js addPendingVerificationAlarm，
    *   字段模板与 mock.js buildAlarms 一致），经 alarm.sel 深链跳告警中心；
-   * 转处置：复用 EVT.fileCase 立案（固化判定快照），经 goto('punish',{caseId}) 跳处置处罚。
+   * 转处置：复用 EVT.ensureCaseRecord 自动保存判定快照，经 goto('punish',{caseId}) 跳处置处罚。
    * 两者都先弹确认框再执行，并记入操作审计。
    * ====================================================================== */
   function buildAlarmFrom(t) {
@@ -986,12 +987,12 @@
       U.goto('punish', { caseId: c0.id });
       return;
     }
-    if (!g.EVT) { U.toast('事件层未加载，无法立案', 'err'); return; }
+    if (!g.EVT) { U.toast('事件层未加载，无法转入处置', 'err'); return; }
     U.modal({
-      title: '转处置立案 · ' + t.id, width: '600px',
-      body: `<div class="warnbox">立案将固化<b>当前判定快照</b>（判定结果 / 违规事由 / 风险等级 / 来源与置信度），
-          后续复核推翻判定时可查「当初凭什么立案」。<br>
-          立案后转<b>处置处罚模块</b>；反制等处置手段在该模块内经授权流程执行，本页不提供反制入口。</div>
+      title: '转入处置 · ' + t.id, width: '600px',
+      body: `<div class="warnbox">转入处置会自动保存<b>当前判定快照</b>（判定结果 / 违规事由 / 风险等级 / 来源与置信度），
+          供后续复核追溯当时依据。<br>
+          确认后进入<b>处置处罚模块</b>；反制等处置手段在相应模块内经授权执行，本页不提供反制入口。</div>
         ${U.kv([
         ['目标编号', '<span class="mono">' + t.id + '</span>'],
         ['判定结果', U.legal(t.legal)],
@@ -1000,16 +1001,15 @@
         ['数据来源', t.source + '（置信度 ' + U.confPct(t.source_confidence) + '）'],
         ['经办人', OPER.name + '（' + OPER.role + '）']
       ])}`,
-      footer: '<button class="btn" data-close>取消</button><button class="btn warn" data-act="ok">确认立案并转处置</button>',
+      footer: '<button class="btn" data-close>取消</button><button class="btn warn" data-act="ok">确认转入处置</button>',
       on: {
         ok: () => {
-          const r = g.EVT.fileCase(g.EVT.of(t.id));
+          const r = g.EVT.ensureCaseRecord(g.EVT.of(t.id));
           if (!r.ok) { U.toast(r.msg, 'err'); return; }
-          // fileCase 自身不写审计（审计在事件流 advance 的立案环节），转办入口自己留痕
-          audit(OPER, '转处置立案：' + r.case.id, t.id);
+          audit(OPER, '转入处置：' + r.case.id, t.id);
           /* 运行期新增案件后同步处罚方式分布快照 ——
              selfCheck 断言「处罚方式分布合计 = 案件总数」的左端是加载时算好的静态聚合，
-             不同步它，演示中做一次立案自检就红一条。 */
+             不同步它，演示中新增处置记录后自检会红一条。 */
           const bp = ((M.stats || {}).byPenalty || []).find(x => x.name === r.case.penalty);
           if (bp) bp.value++;
           U.closeModal();
@@ -1089,7 +1089,7 @@
     ${/* 操作引导（用户裁定 2026-08-30：多处补黄字引导）。主行是 flex:1，多这一条不破高度。 */''}
     <div class="warnbox" style="margin:12px 0 0;padding:8px 11px;font-size:12px;flex:none">
       演示动线：点上方<b>统计卡</b>或列表左上<b>状态标签</b>切换「待处理 / 合法 / 非法 / 待确认」视图 →
-      点列表任一行，右侧显示判定详情 → 底部点「<b>人工复核</b>」演示；非法目标另有「<b>转处置立案</b>」。</div>
+      点列表任一行，右侧显示判定详情 → 底部点「<b>人工复核</b>」演示；非法目标另有「<b>转入处置</b>」。</div>
 
     <div class="row" style="margin-top:12px;flex:1;min-height:0;padding-bottom:6px">
       ${U.panel({
@@ -1123,33 +1123,30 @@
     /* 列表只留决策所需 4 列（评审：信息完整但阅读路径碎）——
        机型/归属、高度速度、经纬度、来源置信全部已在右侧详情「目标信息」里，
        高度只在超高违规时作为红色辅助信息随违规原因出现。 */
+    const violationCell = (t, index) => {
+      const vs = vlist(t);
+      const v = vs[index];
+      if (!v) return '<span style="color:var(--txt-3)">—</span>';
+      const extra = index === 0 && anyV(t, ['超出空域限高', '超出计划批准高度'])
+        ? `<div class="mono" style="font-size:10.5px;color:#ff8b95">实测 ${t.heightAgl != null ? t.heightAgl + ' m（距地）' : t.alt + ' m（海拔）'}</div>`
+        : index === 1 && vs.length > 2
+          ? `<div style="font-size:10.5px;color:var(--txt-3)" title="${vs.join('、')}">另有 ${vs.length - 2} 项</div>` : '';
+      return U.tag(v, FORBIDDEN_VIOLATIONS.indexOf(v) >= 0 ? 't-red' : 't-orange') + extra;
+    };
     return U.table([
       {
         t: '目标 / 时间', w: '118px', render: t => U.cell(t.id, t.time.slice(11), { mono: true })
       },
       {
-        /* 两个标签纵向堆叠：并排会把这一格撑到 125px（td 是 nowrap，声明宽度压不住内容） */
-        t: '判定 / 风险', w: '96px', render: t => U.legal(t.legal)
-          + `<div style="margin-top:2px">${U.risk(t.risk)}</div>`
+        t: '判定', w: '78px', render: t => U.legal(t.legal)
           + (needGate(t) ? ` <span title="身份依据缺失，证据不足" style="color:#ff8b95">${U.icon('warning')}</span>` : '')
           + (manualRevised(t) ? `<div style="font-size:10.5px;color:#c8adff;margin-top:2px" title="原判定 ${engOf(t)}，已人工改判">人工改判</div>`
             : engineDegraded(t) ? `<div style="font-size:10.5px;color:#ffd07a;margin-top:2px" title="原判定 ${engOf(t)}，因身份依据缺失由引擎证据门禁降级">证据降级</div>` : '')
       },
+      { t: '风险', w: '62px', render: t => U.risk(t.risk) },
       { t: '区域', w: '72px', render: t => t.district },
-      {
-        t: '违规原因', render: t => {
-          const vs = vlist(t);
-          if (!vs.length) return '—';
-          // 纵向堆叠并折叠第 3 条起：多违规目标横排会把列撑宽，导致列表横向溢出
-          const show = vs.slice(0, 2).map(v =>
-            `<div style="margin:1px 0">${U.tag(v, FORBIDDEN_VIOLATIONS.indexOf(v) >= 0 ? 't-red' : 't-orange')}</div>`).join('');
-          /* 高度只在超高违规时出现，且明示基准（距地/海拔）—— 不给合规目标平白展示技术数值 */
-          const overH = anyV(t, ['超出空域限高', '超出计划批准高度'])
-            ? `<div class="mono" style="font-size:10.5px;color:#ff8b95">实测 ${t.heightAgl != null ? t.heightAgl + ' m（距地）' : t.alt + ' m（海拔）'}</div>` : '';
-          return show + (vs.length > 2
-            ? `<div style="font-size:10.5px;color:var(--txt-3)" title="${vs.join('、')}">+${vs.length - 2} 项</div>` : '') + overH;
-        }
-      }
+      { t: '主要违规', render: t => violationCell(t, 0) },
+      { t: '其他违规', render: t => violationCell(t, 1) }
     ], page, { rowId: t => t.id, activeId: st.sel && st.sel.id }) + U.pager({ total: rows.length, page: st.page, size: st.size });
   }
 
@@ -1168,8 +1165,8 @@
           <span style="color:var(--txt-3)">（V1.1 §5.4 note / 附录B Q13，待设备方确认现场部署与上报）</span></div>`}
       <div style="font-size:11.5px;color:var(--txt-3);margin-bottom:7px">
         判定时刻各数据源可用情况（区域：${t.district}，括号内为本区在线/总数）—— 身份依据：<b style="color:${ev.full ? '#7fe6a6' : '#ffd07a'}">${ev.basis}</b></div>
-      <table class="tb" style="table-layout:fixed"><thead><tr>
-        <th style="width:104px">数据源</th><th style="width:150px">能提供的身份信息</th><th>本次判定</th></tr></thead><tbody>
+      <table class="tb"><thead><tr>
+        <th>数据源</th><th>能提供的身份信息</th><th>本次判定</th></tr></thead><tbody>
         ${ev.rows.map(r => `<tr>
           <td style="white-space:normal">${r.s.type}
             <div class="mono" style="color:var(--txt-3);font-size:10.5px">${r.s.abbr}(${r.s.dt}) · ${r.d.online}/${r.d.total}</div></td>
@@ -1296,9 +1293,9 @@
       `<div style="font-size:11.5px;color:var(--txt-3);margin-bottom:7px">
         设计 §10.4 多因子加权：违规项严重度 / 目标类别 / 区域敏感度 / 轨迹稳定性 / 来源可信度。
         权重与阈值为 <span class="mono">${C03.ver}</span>　<b>【待确认：由业务方调参，纪要 §10】</b></div>
-      <table class="tb" style="table-layout:fixed"><thead><tr>
-        <th>因子</th><th style="width:62px;text-align:right">权重</th>
-        <th style="width:62px;text-align:right">取值</th><th style="width:70px;text-align:right">计入风险</th></tr></thead><tbody>
+      <table class="tb"><thead><tr>
+        <th>因子</th><th style="text-align:right">权重</th>
+        <th style="text-align:right">取值</th><th style="text-align:right">计入风险</th></tr></thead><tbody>
         ${rows.map(r => `<tr>
           <td style="white-space:normal">${r.n}${r.k === 'source' && !j.ev.full
         ? '<div style="font-size:10.5px;color:#ffd07a">含身份线索缺失加罚 +' + C03.idMissing + '</div>' : ''}</td>
@@ -1347,7 +1344,7 @@
       ${/* 「判定依据」块已按用户裁定删除（2026-08-30），与 detail() 同口径 */''}
       ${ctxE && ctxE.alarm ? `<div style="margin:12px 0;font-size:13px;color:var(--txt-2)">
         已触发告警 <span class="mono">${ctxE.alarm.id}</span> ${U.tag(ctxE.alarm.status)}
-        ${ctxE.kase ? `· 案件 <span class="mono">${ctxE.kase.id}</span> ${U.tag(ctxE.kase.status)}` : '· 尚未立案'}</div>` : ''}
+        ${ctxE.kase ? `· 处置记录 <span class="mono">${ctxE.kase.id}</span> ${U.tag(ctxE.kase.status)}` : '· 尚未生成处置记录'}</div>` : ''}
       <div style="margin:16px 0 4px;font-size:12.5px;color:var(--txt-3)">以下为完整判定过程与原始字段，供复核使用</div>
       ${U.sect('目标信息', U.kv([
       ['发现时间', t.time],
@@ -1400,7 +1397,7 @@
           （需协议破解 dcd / RemoteID rid 设备上报）。身份匹配只能依据时间窗 + 空间范围，
           <b>不足以定性为非法</b>；按 §10.4「结论一律向待确认收敛」应判「待确认」。
           ${j.reqMiss.length ? `<div style="margin-top:6px">表10-4 结论依据缺 ${j.reqMiss.length} 项：${j.reqMiss.map(r => r.n).join('、')}</div>` : ''}
-          ${c ? `<div style="margin-top:6px;color:#ff9aa4">该目标已立案 <span class="mono">${c.id}</span>（${c.status}）——
+          ${c ? `<div style="margin-top:6px;color:#ff9aa4">该目标已有处置记录 <span class="mono">${c.id}</span>（${c.status}）——
             降级后须在<b>处置处罚管理</b>同步复核该案件，否则会出现「案件在办、判定已降级」的矛盾。</div>` : ''}
           <div style="margin-top:8px"><button class="btn danger" data-lg="degrade">按证据不足降级为「待确认」</button></div>
         </div>`;
@@ -1410,7 +1407,7 @@
         <button class="btn" style="justify-content:center" data-lg="confirm">人工确认</button>
         <button class="btn warn" style="justify-content:center" data-lg="revise">人工改判</button>
         <button class="btn warn" style="justify-content:center" data-lg="reject">判定误报</button>
-        <button class="btn danger" style="justify-content:center" data-lg="case">转处置立案</button>
+        <button class="btn danger" style="justify-content:center" data-lg="case">转入处置</button>
       </div>`;
   }
 
@@ -1475,7 +1472,7 @@
   }
 
   /* ---- 固定业务操作区（评审：按钮闸门化）——
-     合法：仅复核，无转办；待确认：复核 + 转告警，不得直接立案；非法：复核 + 转处置。
+     合法：仅复核，无转办；待确认：复核 + 转告警，不得直接转入处置；非法：复核 + 转处置。
      不满足条件的按钮置灰并用 title 说明原因（与调测页既有「置灰而非隐藏」做法一致）。
      反制不在本页：合法性页面负责判断，正式反制在处置处罚模块经授权流程执行。 */
   function actionBar(t) {
@@ -1486,15 +1483,15 @@
         style="flex:1;height:36px;justify-content:center">${label}</button>`;
     if (t.legal === '合法') return U.detailActions(
       btn('revise', '人工复核（改判）', 'warn', false, '合法目标可查看可复核，不提供转办入口'));
-    /* 待确认只留「人工复核」（用户裁定 2026-08-30）：转告警/立案都以定性为前提，
+    /* 待确认只留「人工复核」（用户裁定 2026-08-30）：转告警/转处置都以定性为前提，
        定性之前唯一正当动作就是复核 —— 复核定为非法后，按钮组自然长出转办入口。 */
     if (t.legal === '待确认') return U.detailActions(
       btn('confirm', '人工复核', 'pri', false, '补充核验并定性（合法 / 非法）'));
     /* 「转告警工单」已按用户裁定整体删除（2026-08-30）：非法目标绝大多数本就带关联告警
-       （按钮常年置灰），演示上有意义的流转只有复核与立案。toAlarmFlow 逻辑保留不再有入口。 */
+       （按钮常年置灰），演示上有意义的流转只有复核与转入处置。toAlarmFlow 逻辑保留不再有入口。 */
     if (t.legal === '非法') return U.detailActions(
       btn('revise', '人工复核', 'pri', false, '复核判定依据，可改判')
-      + btn('tocase', '转处置立案', 'warn', false, c ? `已立案 ${c.id}，点击转到处置处罚` : '立案并转处置处罚模块'));
+      + btn('tocase', '转入处置', 'warn', false, c ? `已有处置记录 ${c.id}，点击转到处置处罚` : '生成处置记录并进入处置处罚模块'));
     return '';
   }
 
@@ -1651,7 +1648,7 @@
         if (t.legal !== '非法') { U.toast('该目标当前判定已非「非法」，无需重复降级', 'ok'); return; }
         const c = M.cases.find(x => x.targetId === t.id);
         const rsn = '证据不足降级：判定时刻无 uavSN 数据源（需协议破解 dcd / RemoteID rid 设备），身份匹配仅能依据时间窗 + 空间范围，不足以定性为非法'
-          + (c ? '。该目标已立案 ' + c.id + '，须在处置处罚管理同步复核案件' : '');
+          + (c ? '。该目标已有处置记录 ' + c.id + '，须在处置处罚管理同步复核案件' : '');
         const from = applyReview(t, '待确认', rsn, '证据不足降级');
         const req = c ? raiseReviewRequest(t, c, from, '待确认', rsn, OPER) : null;
         refresh();

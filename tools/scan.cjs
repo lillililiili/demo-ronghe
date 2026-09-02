@@ -29,6 +29,19 @@ const FILES = collect(SRC).concat(collect(VUESRC)).concat([path.join(ROOT, 'inde
 /* ---- 规则：每条含 名称 / 正则 / 说明 / 白名单(允许出现的上下文) ---- */
 const RULES = [
   {
+    name: 'Vue template 不得直接渲染原生表单控件',
+    re: /<(?:input|select|textarea)\b/gi,
+    why: '页面和弹窗的表单控件统一使用 Naive UI；legacy 字符串由受控桥接层承接',
+    onlyFiles: /[\\/]src[\\/].*\.vue$/,
+    templateOnly: true
+  },
+  {
+    name: 'legacy 字符串文本框与下拉必须进入 Naive UI 桥接层',
+    re: /<(?:select|textarea)\b(?![^>]*\bclass\s*=\s*["'][^"']*\b(?:ip|sel)\b)|<input\b(?![^>]*\btype\s*=\s*["'](?:checkbox|radio|range|hidden|file|button|submit)["'])(?![^>]*\bclass\s*=\s*["'][^"']*\b(?:ip|sel)\b)/gi,
+    why: '兼容字符串中仅 .ip/.sel 文本、文本域和下拉会被 legacyControls.js 替换为真 Naive UI 组件',
+    onlyFiles: /[\\/]src[\\/].*\.(?:vue|js)$|[\\/]public[\\/]assets[\\/]js[\\/]pages[\\/]monitor\.js$/
+  },
+  {
     name: '不得出现 ADS-B（协议设备类型枚举中不存在）',
     /* 只抓「当成真实数据源用」的写法。说明文案里指名它是编造的，是在执行这条规则而不是违反它 ——
        规则若不认语境，就会逼着人把教训从文案里删掉，那正好把知识删没了。 */
@@ -143,8 +156,12 @@ for (const rule of RULES) {
     /* 块注释的**续行**也是注释：`/* ... ` 之后、`*​/` 之前的每一行都不是代码。
        只判断行首 // 或 * 会漏掉不以 * 开头的续行 —— 我写的那段说明里提到
        `Date.now()` 就被自己的规则判成了违规。 */
-    let inBlock = false;
+    let inBlock = false, inTemplate = false;
     text.split('\n').forEach((line, i) => {
+      const templateLine = inTemplate || /<template\b/.test(line);
+      if (/<template\b/.test(line)) inTemplate = true;
+      if (/<\/template>/.test(line)) inTemplate = false;
+      if (rule.templateOnly && !templateLine) return;
       const wasInBlock = inBlock;
       const opens = (line.match(/\/\*/g) || []).length, closes = (line.match(/\*\//g) || []).length;
       if (opens > closes) inBlock = true; else if (closes > 0 && closes >= opens) inBlock = false;

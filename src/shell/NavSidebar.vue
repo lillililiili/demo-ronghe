@@ -10,6 +10,13 @@ const route = useRoute();
 const store = useAppStore();
 const cur = computed(() => routeKey(route));
 const icon = name => window.UI.icon(name);
+const visibleNav = computed(() => {
+  store.accessRevision;
+  return NAV.map(n => n.k
+    ? (window.MOCK.canMenu(n.k) ? n : null)
+    : Object.assign({}, n, { kids: n.kids.filter(c => window.MOCK.canMenu(c.k)) }))
+    .filter(n => n && (n.k || n.kids.length));
+});
 
 function toggleGrp(t) {
   store.openGrp = (store.openGrp === t) ? '' : t;
@@ -22,7 +29,7 @@ function fold() {
 
 <template>
   <nav class="nav" id="nav" :class="{ mini: store.navMini }">
-    <template v-for="n in NAV" :key="n.t">
+    <template v-for="n in visibleNav" :key="n.t">
       <a v-if="n.k" class="l1" :class="{ on: cur === n.k }" :href="'#/' + n.k" :data-k="n.k">
         <i v-html="icon(n.icon)"></i><span>{{ n.t }}</span></a>
       <div v-else class="g1" :class="{ open: store.openGrp === n.t, has: n.kids.some(c => c.k === cur) }">

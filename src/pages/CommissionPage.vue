@@ -336,7 +336,15 @@ const SCRIPT = [
   ['调测完成，已生成报告 RPT-{id}', 5]
 ];
 
+function guardCommission(action) {
+  if (M.can('设备接入调测', 'op')) return true;
+  M.pushAudit('设备接入调测', `${action}被拒绝：无操作权限`, dev ? dev.id : 'DEVICE', '失败');
+  toast('需要「设备接入调测」操作权限', 'err');
+  return false;
+}
+
 function start() {
+  if (!guardCommission('开始调测')) return;
   if (running) return;
   if (phase !== 'ready' || !paramsSaved) return toast('请按流程操作：建立连接 → 保存参数 → 开始测试', 'err');
   running = true; phase = 'testing'; sec = 0; step = 2;
@@ -399,6 +407,7 @@ function bindLive() {
   if (clr) clr.onclick = () => document.getElementById('cmLog').innerHTML = '';
 }
 function stop() {
+  if (running && !guardCommission('停止调测')) return;
   const was = running;
   running = false; clearInterval(timer);
   if (phase === 'testing') { phase = paramsSaved ? 'ready' : 'config'; step = PHASE_STEP[phase]; }
@@ -532,6 +541,7 @@ onMounted(() => {
   document.getElementById('cmStart').onclick = start;
   document.getElementById('cmStop').onclick = stop;
   document.getElementById('cmConnect').onclick = () => {
+    if (!guardCommission('建立连接')) return;
     if (phase !== 'access') return;
     phase = 'config'; step = 1;
     paint();
@@ -541,6 +551,7 @@ onMounted(() => {
     toast('连接已建立，请配置并「保存参数」', 'ok');
   };
   document.getElementById('cmSave').onclick = () => {
+    if (!guardCommission('保存设备参数')) return;
     if (phase === 'access' || phase === 'done' || running) return;
     paramsSaved = true;
     if (phase === 'config') { phase = 'ready'; step = 2; }
@@ -548,6 +559,7 @@ onMounted(() => {
     toast('参数已保存至设备档案，可「开始测试」', 'ok');
   };
   document.getElementById('cmReconn').onclick = () => {
+    if (!guardCommission('重新连接')) return;
     if (running || !paramsSaved || phase === 'access') return;
     lastRun = null; phase = 'config'; paramsSaved = false; step = 1;
     paint();

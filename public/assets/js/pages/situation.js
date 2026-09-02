@@ -3,7 +3,7 @@
   const M = MOCK, U = UI;
   let map = null, sel = null, timer = null;
 
-  const FLOW = M.DISPOSAL_FLOW;   // B1:六环节唯一常量，三页共用
+  const FLOW = M.DISPOSAL_FLOW;   // B1:五环节唯一常量，三页共用
   /* 顶部筛选条状态。此前这些下拉没有任何事件绑定 —— 用户以为筛过了、看到的却是全量数据，
      在核心态势页会直接导致误判，故补齐并让地图/告警/目标三处同步收敛。
      （「数据来源」下拉已删，src 恒为「全部」，见 render 内注释。） */
@@ -303,7 +303,7 @@
     const srcN = t.srcCount != null ? t.srcCount : (lv && lv.srcCount != null) ? lv.srcCount : null;
     const legalRisk = M.liveTargets.filter(x => x.id !== t.id && Math.abs(x.lon - t.lon) < .08 && Math.abs(x.lat - t.lat) < .08 && x.legal === '合法');
     U.modal({
-      title: '反制处置授权确认',
+      title: '联动反制授权确认',
       width: '720px',
       body: `<div class="warnbox">注意：反制/干扰属受控操作。依据会议纪要 §6.3 与 §11.1，必须完成
         <b>目标确认 → 空域与范围校验 → 合法目标影响评估 → 设备状态校验 → 人工双确认</b>，
@@ -330,7 +330,7 @@
           </div>
           ${U.kv([['授权编号', `<span class="mono">AUTH2026${M.util.p2(8)}${M.util.p3(27)}</span>`],
         ['授权单位', '东营市低空安全管理中心'], ['操作人', '管理员（当前登录）'],
-        ['公安信号干扰', '本次不涉及（如需请在处置处罚管理中发起授权流程）']])}`)}
+        ['信号干扰联动', '反制指令下发后自动启动，收到设备回执后进入“处置”环节']])}`)}
         ${U.sect('④ 人工双确认', `
           <label class="chk"><input type="checkbox" data-c="1">我已核对目标身份与违规事实，确认对该目标实施反制处置</label>
           <label class="chk"><input type="checkbox" data-c="2">我已确认作用范围内无合法飞行目标与地面安全风险，并知悉本次操作将全程审计</label>`)}`,
@@ -338,7 +338,7 @@
           须先勾选下方「④ 人工双确认」两项，方可下发指令</span>
         <button class="btn" data-close>取消</button>
         <button class="btn danger" data-act="go" disabled id="btnGo"
-          title="须先勾选「④ 人工双确认」两项">确认授权并下发指令</button>`,
+          title="须先勾选「④ 人工双确认」两项">确认授权并发起联动反制</button>`,
       mounted: el => {
         const upd = () => {
           const n = [...el.querySelectorAll('[data-c]')].filter(x => x.checked).length;
@@ -471,7 +471,7 @@
           ? `[SYNC] ← 回执已接收（上级平台 200 · 记录已入通报台账，待归入证据）`
           : `[SYNC] ← 回执超时未响应，已置「待重试」（重试 1/3，不影响本次处置结果）`;
       })(),
-      `[ARCH] 处置结果与证据链已归档（轨迹 + 视频 + 告警 + 授权记录 + 上级同步回执）`
+      `[DONE] 处置结果与证据链已自动留存（轨迹 + 视频 + 告警 + 授权记录 + 上级同步回执）`
     ];
     let i = 0;
     timer = setInterval(() => {
@@ -483,7 +483,7 @@
       if (i === script.length) {
         clearInterval(timer);
         finish('已完成');
-        U.toast(`${U.icon('check')} 反制处置完成，回执已接收，结果已归档`, 'ok');
+        U.toast(`${U.icon('check')} 反制处置完成，回执已接收，结果已自动留存`, 'ok');
         setTimeout(() => effectModal(t), 500);       // F0811:效果评估
       }
     }, 700);

@@ -150,10 +150,11 @@ function list() {
     { t: '计划编号', w: '116px', cls: 'num', render: p => p.id.slice(-10) },
     { t: '计划时段', w: '146px', render: p => `<div class="mono" style="font-size:11.5px">${p.start.slice(11, 16)} ~ ${p.end.slice(11, 16)}</div><div style="font-size:11px;color:var(--txt-3)">${p.durMin} 分钟</div>` },
     { t: '最大高度', w: '82px', cls: 'num', render: p => p.maxAlt + ' m' },
+    { t: '状态', w: '74px', render: p => U.tag(p.status) },
     {
-      t: '状态 / 匹配', w: '86px',
-      render: p => `<div>${U.tag(p.status)}</div><div style="margin-top:2px">${p.matched === '已匹配'
-        ? U.tag('已匹配', 't-green') : (p.matched === '—' ? '<span style="color:var(--txt-3)">—</span>' : U.tag('未匹配', 't-amber'))}</div>`
+      t: '匹配', w: '76px',
+      render: p => p.matched === '已匹配'
+        ? U.tag('已匹配', 't-green') : (p.matched === '—' ? '<span style="color:var(--txt-3)">—</span>' : U.tag('未匹配', 't-amber'))
     },
     {
       t: '偏航/时差', w: '116px', align: 'right', cls: 'num', render: p => {
@@ -374,8 +375,8 @@ function mountRoute(view) {
     const [id, to] = el.dataset.flriskTo.split('|');
     const ev = (M.riskEvents || []).find(x => x.id === id);
     if (!ev) return;
-    const rec = { act: '（航线视角）' + to, result: '经飞行活动管理·本航线风险发起', evidence: '事件全量记录' };
-    window.RISK_IMPL.advance(ev, to, rec, () => window.APP.rerender());
+    /* 与工作台、全部风险事件共用 act：通知上级必须先弹确认，再生成通报记录后推进状态。 */
+    window.RISK_IMPL.act(ev, to, () => window.APP.rerender());
   });
   U.on(view, '[data-flrisk-go]', 'click', (e, el) => {
     U.goto('risk', { eventId: el.dataset.flriskGo });

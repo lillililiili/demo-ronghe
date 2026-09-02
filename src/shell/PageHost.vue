@@ -10,14 +10,18 @@ import { routeKey } from './navModel.js';
 import { useAppStore } from '../stores/app.js';
 import { VUE_PAGES } from '../pages/registry.js';
 import LegacyHost from './LegacyHost.vue';
+import AccessDeniedPage from '../pages/AccessDeniedPage.vue';
+import { canAccessRoute } from '../services/accessControl.js';
 
 const route = useRoute();
 const store = useAppStore();
 const k = computed(() => routeKey(route));
+const allowed = computed(() => { store.accessRevision; return canAccessRoute(k.value); });
 const vueComp = computed(() => VUE_PAGES[k.value] || null);
 </script>
 
 <template>
-  <component v-if="vueComp" :is="vueComp" :key="k + ':' + store.remountKey" />
+  <AccessDeniedPage v-if="!allowed" />
+  <component v-else-if="vueComp" :is="vueComp" :key="k + ':' + store.remountKey" />
   <LegacyHost v-else />
 </template>

@@ -197,13 +197,16 @@
     });
   })();
 
-  const deviceStats = (function () {
+  /* 设备统计保持对象引用稳定：页面模块会在加载期缓存 M.deviceStats，
+     因此运行期设备恢复时只能原位重算，不能用新对象替换。 */
+  const deviceStats = {};
+  function recalcDeviceStats() {
     const total = devices.length;
     const online = devices.filter(d => d.status === '在线').length;
     const offline = devices.filter(d => d.status === '离线').length;
     const abn = devices.filter(d => d.status === '异常').length;
     const alarm = devices.filter(d => d.alarm).length;
-    return {
+    const next = {
       total, online, offline, abnormal: abn, alarm,
       onlineRate: +(online / total * 100).toFixed(1),
       offlineRate: +(offline / total * 100).toFixed(1),
@@ -231,7 +234,11 @@
         };
       })
     };
-  })();
+    Object.keys(deviceStats).forEach(k => { if (!(k in next)) delete deviceStats[k]; });
+    Object.assign(deviceStats, next);
+    return deviceStats;
+  }
+  recalcDeviceStats();
 
   /* ---------------- 2. 空域规则（东营，修正原图东莞坐标） ---------------- */
   const airspaces = [
@@ -795,14 +802,14 @@
       D('ALARM_STATUS', '告警状态', '平台定义（流程枚举）', true,
         ALARM_STATUS, ['异常告警中心', '综合态势总览'], '顺序即流转顺序，排序与流程校验都依赖它'),
       D('CASE_STATUS', '案件状态', '平台定义（流程枚举）', true,
-        CASE_STATUS, ['处置处罚管理', '日志归档'], '与 DISPOSAL_FLOW 的 6 个环节按 stage 对应'),
+        CASE_STATUS, ['处置处罚管理', '日志归档'], '与 DISPOSAL_FLOW 的 5 个环节按 stage 对应'),
       D('DISPOSAL_FLOW', '处置环节', '平台定义（设计 §11）', true,
         DISPOSAL_FLOW.map(f => f.n), ['处置处罚管理', '融合感知中心', '异常告警中心', '综合态势总览'],
         '四个页面共用同一份，页面不得自建环节数组'),
       D('DISTRICTS', '行政区划', '东营市行政区划', false,
         DISTRICTS.map(d => d.name), ['全部含区域筛选的页面'], '含坐标与权重，区域筛选与热力图均依赖'),
       D('ROLES', '角色', '平台定义（§11.9 权限模型）', true,
-        ROLES.map(r => r.id + ' ' + r.name), ['用户与权限', '反制/干扰授权'],
+        ROLES.map(r => r.id + ' ' + r.name), ['用户管理', '角色管理', '反制/干扰授权'],
         'R2 及以上才可执行反制与公安信号干扰授权（§6.3），改动即改安全边界')
     ];
   }
@@ -1497,7 +1504,7 @@
     const a = todays[1], b = todays[2];
     if (a && b) {
       const survivor = a, absorbed = b;
-      /* 验收用例：被合并方在合并前已被判非法并立案 —— 用于验证合并后案件仍可回溯。
+      /* 验收用例：被合并方在合并前已被判非法并形成处置记录 —— 用于验证合并后案件仍可回溯。
          强制设定结论时必须同步改写客观事实，否则后面的证据门禁会因「要件①不成立」
          把它降回待确认，判定过程与结论对不上（本轮实测踩过这个坑）。 */
       if (absorbed.facts) {
@@ -1906,32 +1913,25 @@
     return t.fusedConf;
   }
 
-  /* ---- B1:处置流程六环节（设计表 9-3）——态势/告警/处罚三页共用此唯一常量 ---- */
-  /* 六环节**横跨三个模块**，每个环节标明归属：
-     处罚页能展示全部六环节（那是案件的完整历史），但**只能推进属于自己的那两环**。
+  /* ---- B1:事件处置五环节——态势/工作台/处罚三页共用此唯一常量 ---- */
+  /* 五环节横跨三个处置模块，每个环节标明归属：
+     人工核实属实后自动生成处置记录，不设置额外的人工登记节点。
+     信号干扰完成后由值班席通知处罚部门并移交处置材料；处罚页继续办理处罚事项。
+     处罚页只展示处置结果、通知、文书与复核，不再承担末尾归档推进。
      此前没有归属信息，于是处罚页可以把案件推过「反制处置」「信号干扰」——
      那是融合感知中心做的事，处罚页把它没做过的事记成了已完成。 */
   const DISPOSAL_FLOW = [
     { n: '告警触发', d: '系统自动发现并触发告警', owner: '异常告警中心' },
     { n: '人工核实', d: '值班员核实目标与违规事实', owner: '异常告警中心' },
-    { n: '立案', d: '登记案件并确定责任主体', owner: '处置处罚管理' },
-    { n: '反制处置', d: '授权后实施反制（§6.3 人在回路）', owner: '融合感知中心' },
+    { n: '反制', d: '授权后实施反制（§6.3 人在回路）', owner: '融合感知中心' },
     { n: '信号干扰', d: '公安授权后实施信号干扰（如需）', owner: '融合感知中心' },
-    { n: '结案归档', d: '结果与证据链归档存证', owner: '处置处罚管理' }
+    { n: '处置', d: '通知处罚部门并同步处置记录、授权与证据', owner: '处置处罚管理' }
   ];
   /* ---- A7:状态枚举（设计 9.1 / 9.3）---- */
   const ALARM_STATUS = ['新建', '已确认', '处置中', '已关闭', '误报'];
-  const CASE_STATUS = ['待核实', '已立案', '处置中', '待归档', '已结案'];
-  /* ---- 案件状态的唯一推导来源 ----
-     此前 mock.js 与 punish.js **各写了一份 stage→status 的换算**，且两份都错位一格：
-       stage=2 表示「告警触发 + 人工核实」两环已完成、**立案尚未发生**，
-       而换算给出「已立案」—— 把一件还没立案的案子标成已立案。
-       实测 stage=2 的案件有 1 件，stage=3 的有 0 件，所以这个错位一直没人看见。
-     现在收成一个函数，页面不要再算第二遍。
-
-     【待确认：业务方】枚举与流程不对齐：六环节 vs 五状态，
-     缺少「人工核实已完成、尚未立案」对应的状态。此处保守取「待核实」——
-     它低估了进度，而「已立案」高估了：**在法律记录上，声称已立案而实际未立案，比反过来严重**。 */
+  const CASE_STATUS = ['待核实', '处置中', '已结案'];
+  /* ---- 处置记录状态的唯一推导来源 ----
+     stage 表示已完成环节数；页面不得再维护第二份换算。 */
   /* 数据层的审计写入口。此前只有 legality.js 里有一份页面级的，
      数据层动作（回退、同步下发）写不进审计 —— 而"能改数据却不留痕"正是审计要防的。 */
   function pushAudit(module, action, target, result) {
@@ -1948,11 +1948,11 @@
 
   function caseStatusOf(c) {
     const done = c.stage || 0;                     // 已完成环节数
-    if (done >= 6) return '已结案';
-    if (done >= 5) return '待归档';
-    if (done >= 4) return '处置中';                 // 反制处置已完成
-    if (done >= 3) return '已立案';                 // 立案已完成
-    return '待核实';                                // 含 done=2（核实完成、待立案）
+    /* 工作台完成“通知处罚部门”只代表无人机事件完成跨模块交接，
+       不等于处罚部门已经办结案件。动态交接记录继续保留为处置中。 */
+    if (done >= DISPOSAL_FLOW.length) return c.awaitingPunishment ? '处置中' : '已结案';
+    if (done >= 2) return '处置中';
+    return '待核实';
   }
   /* ---- 能否推进：**纯查询，绝不写任何数据** ----
      页面在弹窗打开前需要先问"这一步我能不能做"，好把理由提前说清楚。
@@ -1989,7 +1989,7 @@
   function rebuildCaseSteps(c, baseTs) {
     /* 三态：不适用 / 已完成 / 待处理。
        条件环节（反制处置、信号干扰）未实施时是**不适用**，不是"待处理"也不是"已完成"。 */
-    const applicableOf = k => k === 3 ? !!c.counterApplicable : k === 4 ? !!c.jamApplicable : true;
+    const applicableOf = k => k === 2 ? !!c.counterApplicable : k === 3 ? !!c.jamApplicable : true;
     c.steps = DISPOSAL_FLOW.map((f, k) => {
       const prev = (c.steps || [])[k] || {};
       const ok = applicableOf(k);
@@ -2000,7 +2000,7 @@
         t: !ok ? '不适用'
           : done ? (prev.t && prev.t !== '待处理' && prev.t !== '不适用' ? prev.t : nowStr())
             : '待处理',
-        done, act: k === c.stage
+        done, act: ok && k === c.stage
       };
     });
     c.status = caseStatusOf(c);
@@ -2057,9 +2057,9 @@
   /* ---------------- 6. 处置 / 处罚案件（由违规目标派生） ---------------- */
   const cases = [];
   (function buildCases() {
-    // 并非每起非法飞行都能立案：证据不足/责任主体无法认定的不进入处罚流程
+    // 证据不足或责任主体无法认定的非法飞行暂不生成处罚记录
     const src = allTargets.filter(t => t.legal === '非法').sort((a, b) => b.ts - a.ts)
-      // 立不了案的必须记下「卡在哪一步」，不能静默丢弃：
+      // 暂不能进入处罚的必须记下卡点，不能静默丢弃：
       // 静默丢弃会让查处率虚高 —— 分母悄悄变小了，而实际是案子没办成。
       .filter(t => {
         if (t.lineageDemo) return true;
@@ -2071,47 +2071,55 @@
       const isToday = t.ymd === ymd(CONF.demoTime);
       /* ---- 本案是否实际实施了反制 / 信号干扰 ----
          这是一个**独立的案情事实**，不是从 stage 推出来的：
-         并非每起案件都动用反制手段（多数是立案处罚了事）。
-         此前六环节被无差别套在每起案件上，于是 62 起案件的「反制处置」都标成已完成，
+         并非每起案件都动用反制手段（多数只进行后续处罚）。
+         此前流程被无差别套在每起案件上，于是 62 起案件的「反制处置」都标成已完成，
          而其中 38 起**没有任何授权凭据** —— 案卷显示反制已执行、却拿不出谁批的。
          纪要 §6.3 要求反制必须人工授权、双确认、急停、全程审计，
          「已实施反制但无授权记录」正是该条最不能出现的形态。
          授权记录由这个事实生成（授权是原因），不是反过来按 stage 补齐（那样两端同源、
          永远对得上也永远证明不了任何事）。 */
       /* 命名注意：这两个字段表达的是「**本案流程包含该环节**」，
-         **不是**「该环节已执行」。是否已执行看 `steps[3].done` / `steps[4].done`。
+         **不是**「该环节已执行」。是否已执行看 `steps[2].done` / `steps[3].done`。
          原名 `usedCounter` 是过去式，读起来像"已经用过了"，自带一个它并不保证的断言 ——
          复核者据此直接当成"已执行"的证据，报出过一个并不存在的缺陷
          （两件 stage=1/2 的案件被算成"已反制却缺授权"，实际它们还没走到该环节）。
-         正确用法始终是 `counterApplicable && stage > 3`，而旧名字不提示这一点。 */
-      const counterApplicable = rnd() < 0.42;                          // 本案流程是否包含反制处置环节
-      const jamApplicable = counterApplicable && rnd() < 0.28;         // 是否进一步包含公安信号干扰环节
-      // stage = 进行到第几环节（0..6）；不适用的环节直接跨过
-      const stage = isToday ? ri(1, 3) : pickW([[6, 82], [5, 10], [4, 8]]);
+         正确用法始终是 `counterApplicable && stage > 2`，而旧名字不提示这一点。 */
+      /* 禁飞区闯入属于必须制止的持续性高危事件：人工核实属实后必须进入反制，
+         不能再由随机样本把反制标成“不适用”。否则流程条会停在反制，工作台却显示“无需处理”。 */
+      const counterRequired = t.violation === '侵入禁飞区';
+      let counterApplicable = counterRequired || rnd() < 0.42;         // 本案流程是否包含反制环节
+      let jamApplicable = counterApplicable && rnd() < 0.28;           // 是否进一步包含公安信号干扰环节
+      // stage = 已完成环节数（0..5）；不适用的环节直接跨过
+      let stage = isToday ? ri(1, 2) : pickW([[5, 92], [4, 8]]);
+      /* 当天停在反制环节的演示样本必须有明确主动作，不能显示“处理中”却无按钮；
+         历史样本则按真实适用性自动跨过条件环节并闭环。 */
+      if (stage === 2 && !counterApplicable) counterApplicable = true;
+      if (!isToday && stage === 2 && !counterApplicable) stage = 3;
+      if (!isToday && stage === 3 && !jamApplicable) stage = 4;
       const status = caseStatusOf({ stage });   // 唯一来源，此处不再写第三份换算
       const base = new Date(t.ts);
       /* `t` 与 `done` 此前用了不同的偏移（`k < stage` 与 `k < stage - 1`）：
          第 stage-1 环节会**既有完成时间、又标着未完成**，同一格里两个字段互相打架。
          stage = 已完成环节数 ⇒ 0..stage-1 均已完成，当前进行中的是第 stage 环。 */
-      /* 反制处置(k=3) 与 信号干扰(k=4) 是**条件环节**（DISPOSAL_FLOW 里信号干扰本就写着「如需」）。
+      /* 反制处置(k=2) 与 信号干扰(k=3) 是条件环节（DISPOSAL_FLOW 里信号干扰本就写着「如需」）。
          未实施的标「不适用」，而不是标「已完成」—— 后者是在断言一件没发生的事。 */
-      const applicableOf = k => k === 3 ? counterApplicable : k === 4 ? jamApplicable : true;
+      const applicableOf = k => k === 2 ? counterApplicable : k === 3 ? jamApplicable : true;
       const steps = DISPOSAL_FLOW.map((f, k) => {
         const ok = applicableOf(k);
         return {
           n: f.n, d: f.d, owner: f.owner, applicable: ok,
           t: !ok ? '不适用' : (k < stage ? fmtDT(new Date(base.getTime() + k * ri(6, 90) * 60000)) : '待处理'),
-          done: ok && k < stage, act: k === stage
+          done: ok && k < stage, act: ok && k === stage
         };
       });
       const lineage = resolveTargetId(t.id);      // 案件引用的 target_id 是否发生过合并/分裂
-      // 立案时的判定快照 —— 已立案案件是历史事实，不因后续重新判定或证据门禁而消失
+      // 事件确认时的判定快照 —— 处置记录是历史事实，不因后续重新判定或证据门禁而消失
       const filingSnapshot = {
         at: fmtDT(new Date(t.ts + ri(30, 600) * 1000)),
         // 记录建案当时的真实判定。此前写死 '非法'，而校验它的断言比的也是同一个常量 ——
         // 两端同源的断言恒真，等于没有断言；判定一旦在后续被修订也看不出来。
         legal_status: t.legal,
-        // 立案快照须完整记录当时认定的全部违规事由，否则复核时看不出「当时认定了几条」
+        // 确认快照须完整记录当时认定的全部违规事由，否则复核时看不出当时认定了几条
         violation_reasons: t.violation_reasons.slice(),
         track_status: t.facts.trackStatus,
         risk_level: t.risk, source_type: t.source, confidence: t.facts.sourceConfidence,
@@ -2135,7 +2143,7 @@
         penalty: pickW([['警告', 55], ['罚款', 30], ['驱离', 15]]),
         rcSn: 'RC' + ri(2026000000, 2026999999),
         docNo: 'CF2026' + t.date.slice(5).replace('-', '') + p3(i % 999 + 1) + '-01',
-        docReady: stage >= 3,
+        docReady: stage >= 2,
         evidence: ri(2, 6), officer: pick(PILOTS)
       });
     });
@@ -2189,7 +2197,7 @@
        不是按 `cases.slice(0, 26)` 取前 26 件 —— 那与案件是否走过该环节毫无关系，
        实测造成 38 件"已反制却无授权"、2 件"有授权却还没走到该环节"，双向都错。
        只有真正走到该环节的案件才会有授权记录：授权是原因，环节完成是结果。 */
-    const src = cases.filter(c => c.counterApplicable && c.stage > 3);
+    const src = cases.filter(c => c.counterApplicable && c.stage > 2);
     src.forEach((c, i) => {
       const t = new Date(c.ts + ri(3, 20) * 60000);
       const res = pickW([['迫降', 34], ['返航', 46], ['退出管制区', 16], ['无效', 4]]);
@@ -2246,25 +2254,25 @@
       missing: t.caseBlockedBy === '责任主体待认定'
         ? ['无匹配飞行计划', '无实名 SN', '无协议破解/RemoteID 解析',
           t.pilotPosition ? '遥控源仅方位、无落点' : '未定位到遥控源']
-        : ['轨迹或影像证据链不完整，不足以支撑立案'],
+        : ['轨迹或影像证据链不完整，不足以进入处罚流程'],
       nextStep: t.caseBlockedBy === '责任主体待认定'
         ? (t.pilotPosition ? '据遥控源方位现场查找操作员' : '向频谱管理部门调证 / 现场布控')
         : '调取该时段光电录像与雷达原始点迹补强证据链',
       status: '待' + (t.caseBlockedBy === '责任主体待认定' ? '认定' : '补证')
     }));
 
-  /* ---- 立案后的事实修订（设计 §11 复核触发）----
+  /* ---- 进入处置后的事实修订（设计 §11 复核触发）----
      现实里判定被推翻，几乎都不是「规则变了」而是「事实变了」：设备二次标定后来源置信度下修、
      轨迹经离线复算判为短时丢失。修订后必须走 deriveLegality 重算 —— 结论不得手工改写，
      否则界面上的「判定过程」又会和结论对不上。
-     快照不跟随修订：已立案是历史事实。 */
+     快照不跟随修订：处置记录是历史事实。 */
   const factRevisions = [];
   (function reviseAfterFiling() {
     const REV = [
       { pick: c => c.status === '已结案',
         why: '光电设备年度标定复测，该时段来源置信度整体下修 0.14',
         apply: f => { f.sourceConfidence = +(f.sourceConfidence - 0.14).toFixed(2); f.confidence = Math.round(f.sourceConfidence * 100); } },
-      { pick: c => c.status === '处置中' || c.status === '已立案',
+      { pick: c => c.status === '处置中',
         why: '轨迹离线复算：中段缺 9 个点，重判为短时丢失',
         apply: f => { f.trackStatus = '短时丢失'; } }
     ];
@@ -2295,8 +2303,8 @@
   })();
 
   /* ---- 违法目标去向口径 ----
-     「当前判定非法」与「已立案」是两个时点的集合，不能直接相加：
-     被事实修订降级的案件仍然是案件（立案是历史事实），但已不在「当前非法」之内。
+     「当前判定非法」与「已有处置记录」是两个时点的集合，不能直接相加：
+     被事实修订降级的案件仍然是案件（处置记录是历史事实），但已不在「当前非法」之内。
      照 86 = 46 + 42 写会摆出一个算不平的等式，而它算不平的原因恰恰是复核机制在起作用。
      故在数据层就把三项分开，页面不必各自推导。 */
   const illegalDisposition = (function () {
@@ -2316,19 +2324,19 @@
         filedAs: c.filingSnapshot.legal_status,
         nowIs: (allTargets.find(x => x.id === c.targetId) || {}).legal })),
       caseTotal: cases.length,
-      // 结案率的分母写明白：只算已立案，不含待办案源
+      // 结案率的分母写明白：只算已有处罚记录，不含待办案源
       closedRate: cases.length ? +(cases.filter(c => c.status === '已结案').length / cases.length * 100).toFixed(1) : 0
     };
   })();
 
   /* ---- 定性依据复核请求队列（设计 §11 案件复核流程）----
-     证据门禁降级了某目标的判定，但若该目标已立案，判定页不得单方面改案件状态（尤其已结案）。
+     证据门禁降级了某目标的判定，但若该目标已有处置记录，判定页不得单方面改案件状态（尤其已结案）。
      改为产出复核请求，由处置处罚管理按案件复核流程处理。 */
   const reviewRequests = [];
   (function buildReviewRequests() {
     evidenceGateLog.forEach((g, i) => {
       const c = cases.find(x => x.targetId === g.targetId);
-      if (!c) return;                       // 未立案的目标不需要复核
+      if (!c) return;                       // 尚无处置记录的目标不需要案件复核
       reviewRequests.push({
         id: 'RR' + p3(reviewRequests.length + 1),
         at: g.at, targetId: g.targetId, caseId: c.id, caseStatus: c.status,
@@ -2709,22 +2717,15 @@
     const dx = (a.lon - b.lon) * 88.5, dy = (a.lat - b.lat) * 111;
     return Math.sqrt(dx * dx + dy * dy);
   }
-  /* ---- 风险事件状态机（用户新工作流）----
-     旧状态只有 待核验 / 处置中 / 已处置，表达不了"核验之后要不要通报上级"这条主线。
-     新流转两条路径：
-       待核验 --核验通过--> 待通知 --通知上级--> 已通知 --归档--> 已归档
-       待核验 --排除------> 已排除 --归档--> 已归档
-     「已排除」是核验后判定不构成风险（如误检、非管控目标），它同样要能归档，
-     否则误检事件会永远挂在待核验里，看起来像积压。 */
-  const RISK_STATUS = ['待核验', '待通知', '已通知', '已排除', '处置中', '已处置', '已归档'];
+  /* ---- 飞行计划风险状态机 ----
+     该事件用于飞行计划的航线风险预检：核验后通知上级即完成平台内闭环，
+     不在本系统继续设置「转处置 / 处置完成」环节；核验排除同样是终态。 */
+  const RISK_STATUS = ['待核验', '待通知', '已通知', '已排除'];
   const RISK_FLOW = {
     '待核验': [{ to: '待通知', act: '核验通过' }, { to: '已排除', act: '排除（误检/非管控目标）' }],
     '待通知': [{ to: '已通知', act: '通知上级' }],
-    '已通知': [{ to: '处置中', act: '转处置' }, { to: '已归档', act: '归档' }],
-    '处置中': [{ to: '已处置', act: '处置完成' }],
-    '已处置': [{ to: '已归档', act: '归档' }],
-    '已排除': [{ to: '已归档', act: '归档' }],
-    '已归档': []
+    '已通知': [],
+    '已排除': []
   };
   const riskNext = st => (RISK_FLOW[st] || []).slice();
 
@@ -2814,7 +2815,7 @@
     if (r.level === '中') return r.km != null && r.km <= RISK_RULE.nearKm
       ? '贴近航线，通报航线运营单位并持续观察'
       : '邻近航线，提示并持续观察';
-    return '记录归档，人工核验';
+    return '留存记录，人工核验';
   }
   /* 供页面保存配置后调用：重算全部事件。页面不要自己再实现一遍。 */
   function recalcRiskLevels() {
@@ -2856,10 +2857,10 @@
          不在这里各写一份 —— 那正是 level 曾经出现两个定义的来源。 */
       /* 状态按新流转分布；高等级事件更可能已推进到通报/处置，低等级更可能被排除或仍待核验 */
       status: lvl0 === '高'
-        ? pickW([['已处置', 34], ['处置中', 18], ['已通知', 20], ['待通知', 10], ['已归档', 12], ['待核验', 6]])
+        ? pickW([['已通知', 84], ['待通知', 10], ['待核验', 6]])
         : lvl0 === '中'
-          ? pickW([['已处置', 22], ['已通知', 22], ['待通知', 14], ['已归档', 18], ['待核验', 14], ['已排除', 10]])
-          : pickW([['已归档', 26], ['已排除', 24], ['待核验', 22], ['已通知', 14], ['已处置', 14]])
+          ? pickW([['已通知', 62], ['待通知', 14], ['待核验', 14], ['已排除', 10]])
+          : pickW([['已排除', 50], ['待核验', 22], ['已通知', 28]])
     }, riskLevelOf(t));
   }).sort((a, b) => b.ts - a.ts);
 
@@ -2914,7 +2915,7 @@
   const riskNotices = [];
   (function buildNotices() {
     let n = 0;
-    riskEvents.filter(e => ['已通知', '处置中', '已处置', '已归档'].indexOf(e.status) >= 0).forEach(e => {
+    riskEvents.filter(e => e.status === '已通知').forEach(e => {
       n++;
       // 高等级必须直通塔台；其余按渠道可用性挑。通报对象由**渠道**决定，
       // 原写法按等级另算一次 to，会出现"走塔台专线、却发给管理中心"这种自相矛盾的记录。
@@ -2944,7 +2945,7 @@
         ackNote: ack === '回执超时' ? '超出约定回执时限，已转电话催办'
           : ack === '发送失败' ? '接口返回错误，已改用电话通报' : '',
         api: 'POST /api/v1/dispatch/sync',
-        evidenceId: null            // 归档后回填对应证据文件
+        evidenceId: null            // 自动存证后回填对应证据文件
       });
     });
   })();
@@ -2981,7 +2982,7 @@
       ackStatus: '待回执', ackAt: null, ackBy: null, ackNote: '',
       retry: 0,
       api: 'POST /api/v1/dispatch/sync',
-      evidenceId: null                       // 归档后回填
+      evidenceId: null                       // 自动存证后回填
     };
     riskNotices.push(rec);
     pushAudit(rec.srcModule, `${rec.action}（${ch.name} → ${rec.to}）`, rec.id);
@@ -3004,12 +3005,13 @@
   /* ---------------- 11.5 用户 / 角色 / 操作审计 ----------------
      纪要 D2「权限审计」与 §6.3「授权人员/全过程审计」的支撑数据。
      反制与信号干扰授权仅「处置授权人」及以上角色可执行。 */
+  const SYSTEM_ROLE_IDS = ['R1', 'R2', 'R3', 'R4', 'R5'];
   const ROLES = [
-    { id: 'R1', name: '超级管理员', desc: '全部功能与系统配置', users: 0, level: 5 },
-    { id: 'R2', name: '处置授权人', desc: '反制/干扰授权、案件审批', users: 0, level: 4 },
-    { id: 'R3', name: '值班员', desc: '态势监视、告警核实与派发', users: 0, level: 3 },
-    { id: 'R4', name: '设备运维', desc: '设备接入、调测与监测', users: 0, level: 2 },
-    { id: 'R5', name: '审计员', desc: '只读 + 审计日志导出', users: 0, level: 1 }
+    { id: 'R1', name: '超级管理员', desc: '全部功能与系统配置', users: 0, level: 5, builtin: true },
+    { id: 'R2', name: '处置授权人', desc: '反制/干扰授权、案件审批', users: 0, level: 4, builtin: true },
+    { id: 'R3', name: '值班员', desc: '态势监视、告警核实与派发', users: 0, level: 3, builtin: true },
+    { id: 'R4', name: '设备运维', desc: '设备接入、调测与监测', users: 0, level: 2, builtin: true },
+    { id: 'R5', name: '审计员', desc: '只读 + 审计日志导出', users: 0, level: 1, builtin: true }
   ];
   const users = [];
   (function buildUsers() {
@@ -3053,15 +3055,30 @@
   const PERM_MODULES = [
     '综合态势总览', '融合感知中心', '统计分析', '飞行活动管理', '合法性判定',
     '空域与航线', '异常告警中心', '空间安全风险', '处置处罚管理', '反制/干扰授权',
-    '设备管理', '设备接入调测', '设备实时监测', '接口管理', '日志归档', '用户与权限'
+    '设备管理', '设备接入调测', '设备实时监测', '接口管理', '日志归档',
+    '证据管理', '用户管理', '角色管理'
   ];
   const PERM = {
     R1: PERM_MODULES.map(() => 'AUTH'),
-    R2: PERM_MODULES.map(m => ['反制/干扰授权', '处置处罚管理'].includes(m) ? 'AUTH' : (m === '用户与权限' ? '—' : 'OP')),
-    R3: PERM_MODULES.map(m => ['反制/干扰授权', '用户与权限', '接口管理'].includes(m) ? '—' : (['异常告警中心', '融合感知中心', '空间安全风险'].includes(m) ? 'OP' : 'READ')),
-    R4: PERM_MODULES.map(m => ['设备管理', '设备接入调测', '设备实时监测', '接口管理'].includes(m) ? 'OP' : (['反制/干扰授权', '用户与权限', '处置处罚管理'].includes(m) ? '—' : 'READ')),
-    R5: PERM_MODULES.map(m => ['反制/干扰授权', '用户与权限'].includes(m) ? '—' : 'READ')
+    R2: PERM_MODULES.map(m => ['反制/干扰授权', '处置处罚管理'].includes(m) ? 'AUTH' : (['用户管理', '角色管理'].includes(m) ? '—' : 'OP')),
+    R3: PERM_MODULES.map(m => ['反制/干扰授权', '用户管理', '角色管理', '接口管理'].includes(m) ? '—' : (['异常告警中心', '融合感知中心', '空间安全风险'].includes(m) ? 'OP' : 'READ')),
+    R4: PERM_MODULES.map(m => ['设备管理', '设备接入调测', '设备实时监测', '接口管理'].includes(m) ? 'OP' : (['反制/干扰授权', '用户管理', '角色管理', '处置处罚管理'].includes(m) ? '—' : 'READ')),
+    R5: PERM_MODULES.map(m => ['反制/干扰授权', '用户管理', '角色管理'].includes(m) ? '—' : 'READ')
   };
+
+  /* 菜单权限与操作权限分开保存：route key 决定入口是否可见，PERM 决定进入后
+     能查看/操作/授权到什么程度。旧别名 risk/airspace 复用 flights 菜单入口，
+     但仍分别校验自己的业务模块，避免“菜单可见”等于“所有页签都有权”。 */
+  const ROUTE_MODULES = {
+    bigscreen: '综合态势总览', situation: '融合感知中心', flights: '飞行活动管理',
+    risk: '空间安全风险', airspace: '空域与航线', legality: '合法性判定',
+    alarms: '异常告警中心', punish: '处置处罚管理', stats: '统计分析',
+    evidence: '证据管理', devices: '设备管理', commission: '设备接入调测',
+    monitor: '设备实时监测', archive: '日志归档', users: '用户管理', roles: '角色管理'
+  };
+  const MENU_KEYS = ['workbench', 'bigscreen', 'situation', 'flights', 'legality', 'alarms',
+    'punish', 'stats', 'evidence', 'devices', 'monitor', 'commission', 'users', 'roles', 'archive'];
+  const MENU_PERM = {};
 
   /* 操作审计:从授权/案件/调测记录确定性派生 + 登录事件 */
   /* ================= 当前登录用户与权限判定 =================
@@ -3081,12 +3098,191 @@
     return row ? (row[mi] || '—') : '—';
   }
   /* 当前用户能否对某模块执行某动作。action: 'read' | 'op' | 'auth' */
+  function canForRole(roleId, moduleName, action) {
+    const need = PERM_ACTIONS[action || 'read'] || 1;
+    return PERM_LEVELS[permLevel(roleId, moduleName)] >= need;
+  }
   function can(moduleName, action) {
     const u = users.find(x => x.id === _currentUserId);
-    if (!u) return false;
-    if (u.status !== '正常') return false;            // 停用账号不具备任何操作权限
-    const need = PERM_ACTIONS[action || 'read'] || 1;
-    return PERM_LEVELS[permLevel(u.role, moduleName)] >= need;
+    if (!u || u.status !== '正常') return false;       // 停用账号不具备任何操作权限
+    return canForRole(u.role, moduleName, action);
+  }
+  function menuKeyOf(routeKey) {
+    return routeKey === 'risk' || routeKey === 'airspace' ? 'flights' : routeKey;
+  }
+  function canMenu(routeKey, roleId) {
+    const u = roleId ? users.find(x => x.role === roleId && x.status === '正常') : users.find(x => x.id === _currentUserId);
+    const rid = roleId || (u && u.role);
+    if (!rid || (!roleId && (!u || u.status !== '正常'))) return false;
+    if (routeKey === 'workbench') return true;
+    const mk = menuKeyOf(routeKey), mod = ROUTE_MODULES[routeKey];
+    return !!(MENU_PERM[rid] && MENU_PERM[rid][mk] && mod && canForRole(rid, mod, 'read'));
+  }
+  function initMenuPerm(roleId) {
+    const row = {};
+    MENU_KEYS.forEach(k => { row[k] = k === 'workbench' || (!!ROUTE_MODULES[k] && canForRole(roleId, ROUTE_MODULES[k], 'read')); });
+    MENU_PERM[roleId] = row;
+    return row;
+  }
+  ROLES.forEach(r => initMenuPerm(r.id));
+
+  function notifyAccessChange() {
+    if (typeof CustomEvent === 'function') window.dispatchEvent(new CustomEvent('mock-access-change'));
+  }
+  function recalcRoleUsers() {
+    ROLES.forEach(r => { r.users = users.filter(u => u.role === r.id).length; });
+    return ROLES;
+  }
+  function activeReviewer(id) {
+    const me = users.find(x => x.id === _currentUserId) || {};
+    return users.find(u => u.id === id && u.id !== me.id && u.status === '正常' && ['R1', 'R2'].includes(u.role)) || null;
+  }
+  function requireAdmin(moduleName) {
+    return can(moduleName, 'auth') ? null : `需要「${moduleName}」授权权限`;
+  }
+  function validateRoleName(name, exceptId) {
+    const text = String(name || '').trim();
+    if (!text) return { ok: false, msg: '请输入角色名称' };
+    if (ROLES.some(r => r.id !== exceptId && r.name === text)) return { ok: false, msg: '角色名称已存在' };
+    return { ok: true, name: text };
+  }
+  function createRole(input) {
+    const denied = requireAdmin('角色管理');
+    if (denied) { pushAudit('角色管理', '新增角色被拒绝：无授权权限', 'ROLE', '失败'); return { ok: false, msg: denied }; }
+    const valid = validateRoleName(input && input.name);
+    if (!valid.ok) return valid;
+    const id = 'R' + (ROLES.reduce((n, r) => Math.max(n, parseInt(String(r.id).replace(/\D/g, '')) || 0), 0) + 1);
+    const role = { id, name: valid.name, desc: String((input && input.desc) || '').trim(), users: 0, level: 1, builtin: false };
+    ROLES.push(role);
+    PERM[id] = PERM_MODULES.map(() => '—');
+    initMenuPerm(id);
+    pushAudit('角色管理', `新增自定义角色「${role.name}」`, role.id);
+    notifyAccessChange();
+    return { ok: true, role };
+  }
+  function updateRole(id, input) {
+    const denied = requireAdmin('角色管理'), role = ROLES.find(r => r.id === id);
+    if (denied) { pushAudit('角色管理', '编辑角色被拒绝：无授权权限', id, '失败'); return { ok: false, msg: denied }; }
+    if (!role) return { ok: false, msg: '角色不存在' };
+    const valid = validateRoleName(role.builtin ? role.name : input && input.name, id);
+    if (!valid.ok) return valid;
+    const before = role.name;
+    if (!role.builtin) role.name = valid.name;
+    role.desc = String((input && input.desc) || '').trim();
+    users.filter(u => u.role === id).forEach(u => { u.roleName = role.name; });
+    pushAudit('角色管理', `编辑角色「${before}」${before !== role.name ? ` → 「${role.name}」` : ''}`, id);
+    notifyAccessChange();
+    return { ok: true, role };
+  }
+  function deleteRole(id, reviewerId) {
+    const denied = requireAdmin('角色管理'), role = ROLES.find(r => r.id === id);
+    if (denied) { pushAudit('角色管理', '删除角色被拒绝：无授权权限', id, '失败'); return { ok: false, msg: denied }; }
+    if (!role) return { ok: false, msg: '角色不存在' };
+    if (role.builtin || SYSTEM_ROLE_IDS.includes(id)) return { ok: false, msg: '系统内置角色不可删除' };
+    recalcRoleUsers();
+    if (role.users) return { ok: false, msg: `该角色仍有 ${role.users} 名用户，不能删除` };
+    const reviewer = activeReviewer(reviewerId);
+    if (!reviewer) return { ok: false, msg: '请选择非本人的有效复核人' };
+    ROLES.splice(ROLES.indexOf(role), 1);
+    delete PERM[id]; delete MENU_PERM[id];
+    pushAudit('角色管理', `删除自定义角色「${role.name}」（复核人 ${reviewer.name}）`, id);
+    notifyAccessChange();
+    return { ok: true };
+  }
+  function applyRoleAccess(id, menuInput, permInput, reviewerId) {
+    const denied = requireAdmin('角色管理'), role = ROLES.find(r => r.id === id);
+    if (denied) { pushAudit('角色管理', '权限变更被拒绝：无授权权限', id, '失败'); return { ok: false, msg: denied }; }
+    if (!role) return { ok: false, msg: '角色不存在' };
+    if (id === 'R1') return { ok: false, msg: '超级管理员权限固定为全部授权' };
+    const reviewer = activeReviewer(reviewerId);
+    if (!reviewer) return { ok: false, msg: '请选择非本人的有效复核人' };
+    const nextPerm = PERM[id].slice();
+    PERM_MODULES.forEach((m, i) => {
+      const v = permInput && permInput[i];
+      if (PERM_LEVELS[v] !== undefined) nextPerm[i] = v;
+    });
+    const counterI = PERM_MODULES.indexOf('反制/干扰授权');
+    nextPerm[counterI] = id === 'R2' ? 'AUTH' : '—';
+    const nextMenu = Object.assign({}, MENU_PERM[id] || initMenuPerm(id), menuInput || {}, { workbench: true });
+    MENU_KEYS.forEach(k => {
+      const mod = ROUTE_MODULES[k];
+      if (!mod) return;
+      const mi = PERM_MODULES.indexOf(mod);
+      if (mi < 0) return;
+      if (nextMenu[k] && nextPerm[mi] === '—') nextPerm[mi] = 'READ';
+      if (nextPerm[mi] === '—') nextMenu[k] = false;
+    });
+    const changes = [];
+    PERM_MODULES.forEach((m, i) => { if (PERM[id][i] !== nextPerm[i]) changes.push(`${m} ${PERM[id][i]}→${nextPerm[i]}`); });
+    MENU_KEYS.forEach(k => { if (!!MENU_PERM[id][k] !== !!nextMenu[k]) changes.push(`菜单 ${k} ${MENU_PERM[id][k] ? '开' : '关'}→${nextMenu[k] ? '开' : '关'}`); });
+    if (!changes.length) return { ok: false, msg: '暂无权限改动' };
+    PERM[id] = nextPerm;
+    MENU_PERM[id] = nextMenu;
+    pushAudit('角色管理', `角色「${role.name}」权限变更 ${changes.length} 项生效（复核人 ${reviewer.name}）：${changes.join('；')}`, id);
+    notifyAccessChange();
+    return { ok: true, changes };
+  }
+  function validateUserInput(input, exceptId) {
+    const account = String((input && input.account) || '').trim();
+    const name = String((input && input.name) || '').trim();
+    const role = ROLES.find(r => r.id === (input && input.role));
+    if (!account || !name) return { ok: false, msg: '账号和姓名为必填项' };
+    if (users.some(u => u.id !== exceptId && u.account === account)) return { ok: false, msg: '登录账号已存在' };
+    if (!role) return { ok: false, msg: '请选择有效角色' };
+    return { ok: true, account, name, role };
+  }
+  function createUser(input, reviewerId) {
+    const denied = requireAdmin('用户管理'), valid = validateUserInput(input);
+    if (denied) { pushAudit('用户管理', '新增用户被拒绝：无授权权限', 'USER', '失败'); return { ok: false, msg: denied }; }
+    if (!valid.ok) return valid;
+    const reviewer = activeReviewer(reviewerId);
+    if (!reviewer) return { ok: false, msg: '请选择非本人的有效复核人' };
+    const id = 'U' + p3(users.reduce((n, u) => Math.max(n, parseInt(String(u.id).replace(/\D/g, '')) || 0), 0) + 1);
+    const user = { id, account: valid.account, name: valid.name, role: valid.role.id, roleName: valid.role.name,
+      org: String((input && input.org) || '').trim() || '未填写', phone: String((input && input.phone) || '').trim() || '未填写',
+      status: '正常', online: false, lastLogin: '尚未登录', lastIp: '—', createdAt: fmtD(now()), mfa: '未开启' };
+    users.push(user); recalcRoleUsers();
+    pushAudit('用户管理', `新增用户「${user.account}」，分配角色「${user.roleName}」（复核人 ${reviewer.name}）`, user.id);
+    notifyAccessChange();
+    return { ok: true, user };
+  }
+  function updateUser(id, input, reviewerId) {
+    const denied = requireAdmin('用户管理'), user = users.find(u => u.id === id);
+    if (denied) { pushAudit('用户管理', '编辑用户被拒绝：无授权权限', id, '失败'); return { ok: false, msg: denied }; }
+    if (!user) return { ok: false, msg: '用户不存在' };
+    const valid = validateUserInput(input, id);
+    if (!valid.ok) return valid;
+    const roleChanged = user.role !== valid.role.id;
+    let reviewer = null;
+    if (roleChanged) {
+      reviewer = activeReviewer(reviewerId);
+      if (!reviewer) return { ok: false, msg: '变更角色须选择非本人的有效复核人' };
+    }
+    const beforeRole = user.roleName;
+    Object.assign(user, { account: valid.account, name: valid.name, role: valid.role.id, roleName: valid.role.name,
+      org: String((input && input.org) || '').trim() || '未填写', phone: String((input && input.phone) || '').trim() || '未填写' });
+    recalcRoleUsers();
+    pushAudit('用户管理', roleChanged ? `编辑用户并变更角色 ${beforeRole}→${user.roleName}（复核人 ${reviewer.name}）` : '编辑用户资料', user.id);
+    notifyAccessChange();
+    return { ok: true, user };
+  }
+  function setUserStatus(id) {
+    const denied = requireAdmin('用户管理'), user = users.find(u => u.id === id);
+    if (denied) { pushAudit('用户管理', '账号状态变更被拒绝：无授权权限', id, '失败'); return { ok: false, msg: denied }; }
+    if (!user) return { ok: false, msg: '用户不存在' };
+    if (user.id === _currentUserId) return { ok: false, msg: '不能停用当前登录账号' };
+    user.status = user.status === '正常' ? '已停用' : '正常';
+    if (user.status === '已停用') user.online = false;
+    pushAudit('用户管理', `${user.status === '正常' ? '启用' : '停用'}账号「${user.account}」`, user.id);
+    notifyAccessChange();
+    return { ok: true, user };
+  }
+  function resetUserPassword(id) {
+    const denied = requireAdmin('用户管理'), user = users.find(u => u.id === id);
+    if (denied) { pushAudit('用户管理', '重置密码被拒绝：无授权权限', id, '失败'); return { ok: false, msg: denied }; }
+    if (!user) return { ok: false, msg: '用户不存在' };
+    pushAudit('用户管理', `下发账号「${user.account}」临时密码`, user.id);
+    return { ok: true, user };
   }
   /* 切换当前用户（演示不同角色看到的差异）。传角色 ID 则取该角色下第一个正常账号。 */
   function switchUser(idOrRole) {
@@ -3094,6 +3290,7 @@
       || users.find(x => x.role === idOrRole && x.status === '正常');
     if (!u) return null;
     _currentUserId = u.id;
+    notifyAccessChange();
     return u;
   }
 
@@ -3112,6 +3309,78 @@
     });
     auditLogs.sort((a, b) => (a.time < b.time ? 1 : -1));
   })();
+
+  /* 无人机事件与处罚页共用同一份“通知处罚部门”状态。
+     旧实现由处罚页自己在 sessionStorage 里维护，工作台完成通知后处罚页仍显示待通知；
+     现在统一由数据层读写，两个入口执行同一个权限、状态与审计闸门。 */
+  const CASE_NOTICE_KEY = 'punish.notice.v1';
+  let caseNotices = {};
+  try { caseNotices = JSON.parse(sessionStorage.getItem(CASE_NOTICE_KEY) || '{}') || {}; }
+  catch (e) { caseNotices = {}; }
+  function noticeRecordOf(c) {
+    const v = c && caseNotices[c.id];
+    return typeof v === 'string' ? { status: v } : (v || null);
+  }
+  function caseNoticeStatus(c) {
+    const rec = noticeRecordOf(c);
+    if (rec && rec.status) return rec.status;
+    return c && c.stage >= DISPOSAL_FLOW.length ? '已通知' : '待通知';
+  }
+  function saveCaseNotices() {
+    try { sessionStorage.setItem(CASE_NOTICE_KEY, JSON.stringify(caseNotices)); }
+    catch (e) { /* 无存储权限时仍保留本次运行态 */ }
+  }
+  function notifyPunish(c, sourceModule) {
+    if (!c) return { ok: false, msg: '未找到处置记录' };
+    if (caseNoticeStatus(c) === '已通知') return { ok: false, msg: '处罚部门已通知，无需重复操作' };
+    if (!can('处置处罚管理', 'op')) {
+      pushAudit('处置处罚管理', '通知处罚部门被拒绝：无操作权限', c.id, '失败');
+      return { ok: false, msg: '需要「处置处罚管理」操作权限' };
+    }
+    if (c.stage !== DISPOSAL_FLOW.length - 1) {
+      const next = DISPOSAL_FLOW[c.stage];
+      const reason = next ? `请先完成「${next.n}」环节` : '当前记录不能重复通知';
+      pushAudit('处置处罚管理', '通知处罚部门被拒绝：' + reason, c.id, '失败');
+      return { ok: false, msg: reason };
+    }
+
+    /* 先标记为待处罚部门继续办理，再推进事件交接环节；这样工作台事件闭环，
+       处罚记录却不会被误标成“处罚已办结”。 */
+    c.awaitingPunishment = true;
+    const advanced = advanceCase(c, '处置处罚管理');
+    if (!advanced.ok) {
+      delete c.awaitingPunishment;
+      return { ok: false, msg: advanced.reason };
+    }
+    const user = users.find(x => x.id === _currentUserId) || {};
+    const rec = {
+      status: '已通知', at: nowStr(), by: user.name || '系统',
+      source: sourceModule || '处置处罚管理', to: '处置处罚管理'
+    };
+    caseNotices[c.id] = rec;
+    c.noticeRecord = rec;
+    saveCaseNotices();
+
+    const alarm = alarms.filter(a => a.targetId === c.targetId).sort((a, b) => b.ts - a.ts)[0];
+    if (alarm) {
+      alarm.status = '已关闭';
+      alarm.flowStatus = '已处置';
+      alarm.handledAt = rec.at;
+    }
+    pushAudit('处置处罚管理', `通知处罚部门：已同步处置记录、授权与证据（来源：${rec.source}）`, c.id);
+    return { ok: true, msg: '已通知处罚部门，处置材料已同步', record: rec };
+  }
+  /* 兼容旧版处罚页只保存“已通知”字符串、但没有推进共享 stage 的会话数据。 */
+  cases.forEach(c => {
+    const rec = noticeRecordOf(c);
+    if (!rec || rec.status !== '已通知' || c.stage !== DISPOSAL_FLOW.length - 1) return;
+    c.awaitingPunishment = true;
+    c.stage = DISPOSAL_FLOW.length;
+    c.noticeRecord = rec;
+    rebuildCaseSteps(c);
+    const alarm = alarms.filter(a => a.targetId === c.targetId).sort((a, b) => b.ts - a.ts)[0];
+    if (alarm) { alarm.status = '已关闭'; alarm.flowStatus = '已处置'; }
+  });
 
   /* ---------------- 12. 一致性自检（回应"页面数字互相矛盾"问题） ---------------- */
   /* ================= COM-04 证据文件台账 =================
@@ -3230,8 +3499,8 @@
         const kind = i === 0 ? '光电录像' : pick(pool);
         const dev = devices.filter(d => d.deviceTypeAbbr === (kind.indexOf('光电') === 0 ? 'oe' : 'radar'))[seq % 40] || null;
         /* 措辞必须与时间事实一致：这些材料在**告警触发后 1~15 分钟**由设备现场取证，
-           而 cases[].time 是**告警触发时刻**、不是立案时刻（立案是 steps[2]，多数还在后面）。
-           原措辞「立案时自动归集」字面意思是"证据此前已存在、立案那一刻收拢进来"，
+           而 cases[].time 是告警触发时刻、不是事件确认时刻。
+           原措辞「确认时自动归集」字面意思是证据此前已存在、确认时收拢进来，
            与取证时刻晚于该时刻这一事实直接冲突，而这句话就显示在取证时刻旁边。 */
         add(kind, c.ts + ri(60, 900) * 1000, '处置处罚管理',
           [{ kind: 'case', id: c.id }, { kind: 'target', id: c.targetId }], dev,
@@ -3246,7 +3515,7 @@
       if (c.status === '已结案') add('处罚文书',
         Math.max(c.ts + 60000, Math.min(c.ts + ri(2, 9) * 86400000, CONF.demoTime.getTime() - 60000)),
         '处置处罚管理', [{ kind: 'case', id: c.id }], null,
-        `案件 ${c.id} 结案时制作处罚文书并归档（案发后 ${Math.round((c.ts + 0) ? 0 : 0)}）`.replace('（案发后 0）', ''));
+        `案件 ${c.id} 结案时制作处罚文书并自动留存（案发后 ${Math.round((c.ts + 0) ? 0 : 0)}）`.replace('（案发后 0）', ''));
     });
     /* 反制/干扰授权：指令报文与回执 */
     /* 取证时刻取授权指令的下发时刻 `a.start`。
@@ -3272,12 +3541,12 @@
     /* 通报单回执：机场塔台人工闭环（NC3 渠道） */
     riskEvents.slice(0, 12).forEach(e => add('通报单回执', e.ts + ri(10, 40) * 60000, '空间安全风险',
       [{ kind: 'riskEvent', id: e.id }, { kind: 'target', id: e.targetId }], null,
-      `风险事件 ${e.id} 通报上级后回执归档（NC3 渠道人工闭环）`));
+      `风险事件 ${e.id} 通报上级后收到回执（NC3 渠道人工闭环）`));
 
-    /* ---- 补两类此前完全不进台账的归档记录 ----
+    /* ---- 补两类此前完全不进证据台账的自动留存记录 ----
        (1) 融合感知中心截图取证：最常产生证据的地方，此前只 push 一行处置日志 + toast
            「截图已加入证据链」，实际不写 evidenceFiles —— 又一次"声称记录了但没记"。
-       (2) 空间安全风险事件归档：新工作流要求归档进证据存储，此前不产生任何证据文件。
+       (2) 飞行计划风险事件轨迹留存：跟踪过程中自动存证，不设置人工归档动作。
        两类都必须在数据层产生，页面动作再接上去；反过来做会得到"看得见、刷新就没"的证据。 */
     authLogs.slice(0, 18).forEach((a, i) => {
       const dev = devices.filter(d => d.deviceTypeAbbr === 'oe')[(seq + i) % 50] || null;
@@ -3289,7 +3558,7 @@
     riskEvents.slice(0, 16).forEach((e, i) => {
       add('雷达轨迹快照', e.ts + ri(30, 120) * 60000, '空间安全风险',
         [{ kind: 'riskEvent', id: e.id }, { kind: 'target', id: e.targetId }], null,
-        `风险事件 ${e.id}（${e.type || '异物'}）处置完成后归档，随事件留存轨迹快照`);
+        `风险事件 ${e.id}（${e.type || '异物'}）跟踪过程中自动留存轨迹快照`);
     });
 
     /* ---- 故意不全绿的样本，且必须挂在真案件上 ---- */
@@ -3409,8 +3678,8 @@
       sum(stats.byType, t => t.value) === stats.total, stats.total, sum(stats.byType, t => t.value));
     add('统计分析：区域处罚合计 = 处罚案件总数',
       sum(stats.regions, r => r.punish) === stats.punish, stats.punish, sum(stats.regions, r => r.punish));
-    // 注：已立案案件是历史事实，不因后续重新判定或证据门禁而消失，故不与「当前非法目标数」比较，
-    //     改为校验每个案件都能追溯到立案时的非法判定快照（见下方断言）。
+    // 注：处置记录是历史事实，不因后续重新判定或证据门禁而消失，故不与「当前非法目标数」比较，
+    //     改为校验每个案件都能追溯到事件确认时的非法判定快照（见下方断言）。
     add('处罚：处罚方式分布合计 = 案件总数',
       sum(stats.byPenalty, p => p.value) === cases.length, cases.length, sum(stats.byPenalty, p => p.value));
     add('处罚：案件全部可追溯到非法目标',
@@ -3702,11 +3971,11 @@
     add('风险事件状态均在枚举内',
       riskEvents.every(e => RISK_STATUS.indexOf(e.status) >= 0),
       RISK_STATUS.join('/'), [...new Set(riskEvents.map(e => e.status))].join('/'));
-    add('已通知/处置中/已处置/已归档的事件必须有通报记录（通知上级是这些状态的前置动作）',
-      riskEvents.filter(e => ['已通知', '处置中', '已处置', '已归档'].indexOf(e.status) >= 0)
+    add('已通知的飞行计划风险事件必须有通报记录（通知上级即平台内闭环）',
+      riskEvents.filter(e => e.status === '已通知')
         .every(e => noticesOf(e.id).length > 0),
       '100% 有通报记录',
-      riskEvents.filter(e => ['已通知', '处置中', '已处置', '已归档'].indexOf(e.status) >= 0
+      riskEvents.filter(e => e.status === '已通知'
         && noticesOf(e.id).length === 0).length + ' 个缺通报记录');
     add('待核验/待通知/已排除的事件不应有通报记录（尚未通知或已排除）',
       riskEvents.filter(e => ['待核验', '待通知', '已排除'].indexOf(e.status) >= 0)
@@ -3740,24 +4009,24 @@
         .every(d => d.status !== '异常'), '0 台误判', '0 台误判');
     (function () {
       // 断言的意义在于「快照与当前判定可以不同」：有目标被事实修订降级后，
-      // 快照仍应停在立案时的结论。两端若同源，这条断言恒真、等于没写。
+      // 快照仍应停在事件确认时的结论。两端若同源，这条断言恒真、等于没写。
       const drifted = cases.filter(c => {
         const t = allTargets.find(x => x.id === c.targetId);
         return t && t.legal !== c.filingSnapshot.legal_status;
       });
       /* 判据换成「快照 === 该案件被修订前的判定」——
-         原来写的是「快照 === '非法'」，而快照存的就是立案时的判定、立案又只从非法目标派生，
+         原来写的是「快照 === '非法'」，而快照存的就是事件确认时的判定、记录又只从非法目标派生，
          两端同源、恒真。现在拿的是 factRevisions 独立记录的 from 值，两端不同源。 */
       const snapDrift = factRevisions.filter(r => {
         const c = cases.find(x => x.id === r.caseId);
         return c && c.filingSnapshot.legal_status !== r.from;
       });
-      add('立案快照不随后续判定修订而改变（快照 = 修订记录中的原判定）',
+      add('事件确认快照不随后续判定修订而改变（快照 = 修订记录中的原判定）',
         snapDrift.length === 0 && drifted.length === factRevisions.length,
         `${factRevisions.length} 件被修订，快照均停留在原判定`,
         snapDrift.length ? `${snapDrift.length} 件快照已被改写：${snapDrift[0].caseId}`
           : `${factRevisions.length} 件被修订、快照 0 件改写；当前判定与快照不一致的共 ${drifted.length} 件`);
-      add('判定被修订的已立案目标均产生复核请求（不得单方面改案件状态）',
+      add('判定被修订且已有处置记录的目标均产生复核请求（不得单方面改案件状态）',
         factRevisions.every(r => reviewRequests.some(q => q.targetId === r.targetId)),
         factRevisions.length + ' 件',
         reviewRequests.filter(q => factRevisions.some(r => r.targetId === q.targetId)).length + '/' + factRevisions.length + ' 件');
@@ -3773,7 +4042,7 @@
         const t = allTargets.find(x => x.id === c.targetId);
         return t && t.violation_reasons.length !== (c.filingSnapshot.violation_reasons || []).length;
       });
-      add('立案快照完整记录当时认定的全部违规事由（法律凭据完整性）',
+      add('事件确认快照完整记录当时认定的全部违规事由（法律凭据完整性）',
         bad.length === 0, '完全一致',
         bad.length ? `${bad.length} 件漏记：${bad.slice(0, 2).map(c => c.id).join('、')}` : '完全一致');
     })();
@@ -3781,11 +4050,11 @@
       const ill = allTargets.filter(t => t.legal === '非法');
       const covered = ill.filter(t => cases.some(c => c.targetId === t.id) || pendingSubjects.some(q => q.targetId === t.id));
       const D = illegalDisposition;
-      add('违法目标去向完整：要么立案、要么进待办案源并记明卡在哪一步',
+      add('违法目标去向完整：要么形成处罚记录、要么进待办案源并记明卡在哪一步',
         covered.length === ill.length, ill.length + ' 个全部有去向',
-        covered.length + '/' + ill.length + '（立案 ' + D.filed + ' · 待办 ' + D.pending + '）');
-      // 反向：每个案件也必须能说清它的目标现在是什么判定 —— 降级的要单列，不能混进"已立案且仍非法"
-      add('违法目标去向等式闭合：当前非法 = 已立案且仍非法 + 待办，降级案件另计',
+        covered.length + '/' + ill.length + '（处罚记录 ' + D.filed + ' · 待办 ' + D.pending + '）');
+      // 反向：每个案件也必须能说清它的目标现在是什么判定 —— 降级的要单列
+      add('违法目标去向等式闭合：当前非法 = 已有处罚记录且仍非法 + 待办，降级案件另计',
         D.filed + D.pending === D.illegalNow && D.filed + D.downgraded === D.caseTotal,
         `${D.illegalNow} = ${D.filed} + ${D.pending}，另计降级 ${D.downgraded} 件`,
         `${D.illegalNow} = ${D.filed} + ${D.pending}（${D.filed + D.pending === D.illegalNow ? '闭合' : '不闭合'}）· ` +
@@ -4067,7 +4336,7 @@
 
       /* 这条原来把 ['光电录像','光电抓拍图','雷达轨迹快照','现场照片'] 一律要求
          「取证时刻不得早于案件时刻」—— 但前三类在 EVID_TIME_REL 里明写是 `during`：
-         录像和轨迹快照产生于**事件进行中**，本来就早于立案。
+         录像和轨迹快照产生于事件进行中，本来就早于处置记录生成。
          也就是说同一个方向约束在本文件里有两份模型，而这一条用的是错的那份，
          只不过此前的随机样本恰好没走到冲突区，它就一直绿着。
          （这次删 cpu/mem/disk 让随机流整体挪位，样本一变它立刻现形。）
@@ -4097,10 +4366,10 @@
         '均为业务模块名',
         [...new Set(E.filter(f => PERM_MODULES.indexOf(f.srcModule) < 0 && f.srcModule !== '系统·反制授权引擎')
           .map(f => f.srcModule))].join('/') || '均为业务模块名');
-      add('融合感知中心截图取证与风险事件归档均已进入台账',
+      add('融合感知中心截图取证与风险事件轨迹均已进入证据台账',
         E.some(f => f.srcModule === '融合感知中心') && E.some(f => f.srcModule === '空间安全风险' && f.kind === '雷达轨迹快照'),
         '两类均在台账',
-        `融合感知中心 ${E.filter(f => f.srcModule === '融合感知中心').length} 份 / 风险归档 ${E.filter(f => f.srcModule === '空间安全风险' && f.kind === '雷达轨迹快照').length} 份`);
+        `融合感知中心 ${E.filter(f => f.srcModule === '融合感知中心').length} 份 / 风险轨迹 ${E.filter(f => f.srcModule === '空间安全风险' && f.kind === '雷达轨迹快照').length} 份`);
 
       const future = E.filter(f => f.capturedAt > fmtDT(CONF.demoTime));
       add('证据取证时刻不得晚于当前时刻（不存在"下周才取的证"）',
@@ -4169,7 +4438,13 @@
     /* ---- 反制授权凭据：双向对账 ----
        这次的缺陷正好是**双向**的（38 件缺授权 + 2 条孤儿授权），
        单向断言各自都抓不住：只写①孤儿照样通过，只写②缺失照样通过。 */
-    const needAuth = cases.filter(c => c.counterApplicable && c.stage > 3);
+    const needAuth = cases.filter(c => c.counterApplicable && c.stage > 2);
+    add('禁飞区闯入核实属实后必须进入反制（不得显示“无需处理”）',
+      cases.filter(c => c.filingSnapshot.violation_reasons.includes('侵入禁飞区'))
+        .every(c => c.counterApplicable === true),
+      '100% 进入反制',
+      cases.filter(c => c.filingSnapshot.violation_reasons.includes('侵入禁飞区') && !c.counterApplicable)
+        .map(c => c.id).slice(0, 3).join(' ') || '100% 进入反制');
     add('① 已实施反制且走过该环节的案件必须有授权凭据（§6.3 人在回路）',
       needAuth.every(c => authLogs.some(a => a.caseId === c.id)),
       needAuth.length + ' 件全部有凭据',
@@ -4178,16 +4453,16 @@
     add('② 每条授权记录都对应一个确实实施了反制且走到该环节的案件（无孤儿授权）',
       authLogs.every(a => {
         const c = cases.find(x => x.id === a.caseId);
-        return c && c.counterApplicable && c.stage > 3;
+        return c && c.counterApplicable && c.stage > 2;
       }), '0 条孤儿',
       authLogs.filter(a => {
         const c = cases.find(x => x.id === a.caseId);
-        return !c || !c.counterApplicable || c.stage <= 3;
+        return !c || !c.counterApplicable || c.stage <= 2;
       }).map(a => a.id).join(' ') || '0 条孤儿');
-    add('未实施反制的案件不得把「反制处置」标为已完成（不得断言未发生的事）',
-      cases.filter(c => !c.counterApplicable).every(c => c.steps[3].done === false && c.steps[3].t === '不适用'),
+    add('未实施反制的案件不得把「反制」标为已完成（不得断言未发生的事）',
+      cases.filter(c => !c.counterApplicable).every(c => c.steps[2].done === false && c.steps[2].t === '不适用'),
       '0 件',
-      cases.filter(c => !c.counterApplicable && (c.steps[3].done || c.steps[3].t !== '不适用')).length + ' 件');
+      cases.filter(c => !c.counterApplicable && (c.steps[2].done || c.steps[2].t !== '不适用')).length + ' 件');
     add('信号干扰授权仅出现在实施了干扰的案件上',
       authLogs.filter(a => a.type === '公安授权信号干扰')
         .every(a => (cases.find(x => x.id === a.caseId) || {}).jamApplicable === true),
@@ -4263,9 +4538,9 @@
       evidenceFiles.filter(f => f.kind === '处罚文书').length === cases.filter(c => c.status === '已结案').length,
       cases.filter(c => c.status === '已结案').length + ' 件',
       evidenceFiles.filter(f => f.kind === '处罚文书').length + ' ↔ ' + cases.filter(c => c.status === '已结案').length);
-    add('通报记录覆盖所有已通知及之后的风险事件（双向）',
+    add('通报记录覆盖所有已通知的飞行计划风险事件（双向）',
       (function () {
-        const need = riskEvents.filter(e => ['已通知', '处置中', '已处置', '已归档'].indexOf(e.status) >= 0);
+        const need = riskEvents.filter(e => e.status === '已通知');
         return need.every(e => noticesOf(e.id).length > 0)
           && riskNotices.every(x => !x.eventId || riskEvents.some(e => e.id === x.eventId));
       })(), '双向 0 差异', '双向 0 差异');
@@ -4291,10 +4566,10 @@
       cases.every(c => c.status === caseStatusOf(c)),
       '100% 同源',
       cases.filter(c => c.status !== caseStatusOf(c)).length + ' 件不一致');
-    add('未立案的案件不得标为「已立案」及其之后的状态（法律记录不得高估进度）',
-      cases.filter(c => c.stage < 3).every(c => c.status === '待核实'),
+    add('人工核实未完成的记录不得标为处置中（状态不得高估进度）',
+      cases.filter(c => c.stage < 2).every(c => c.status === '待核实'),
       '0 件高估',
-      cases.filter(c => c.stage < 3 && c.status !== '待核实')
+      cases.filter(c => c.stage < 2 && c.status !== '待核实')
         .map(c => c.id + '(stage=' + c.stage + '→' + c.status + ')').join(' ') || '0 件高估');
     /* 三态一致性：不适用 ⇒ 未完成且时间为"不适用"；已完成 ⇔ 时间是时间戳 */
     const stepBad = c => c.steps.some(st =>
@@ -4308,11 +4583,11 @@
       && cases.every(c => c.steps.every(st => !!st.owner)),
       '100% 有归属',
       DISPOSAL_FLOW.filter(f => !f.owner).map(f => f.n).join('/') || '100% 有归属');
-    add('跨模块推进被拒绝（处罚页不能代为完成反制处置）',
+    add('跨模块推进被拒绝（处罚页不能代为完成反制）',
       (function () {
-        const c = cases.find(x => x.stage === 3);
-        if (!c) {   // 没有恰好停在「立案已完成」的案件，用一个临时对象验规则本身
-          const probe = { stage: 3, steps: DISPOSAL_FLOW.map(f => ({ n: f.n, owner: f.owner, done: false, act: false, t: '待处理' })) };
+        const c = cases.find(x => x.stage === 2);
+        if (!c) {   // 没有恰好停在反制环节的记录，用一个临时对象验规则本身
+          const probe = { stage: 2, steps: DISPOSAL_FLOW.map(f => ({ n: f.n, owner: f.owner, done: false, act: false, t: '待处理' })) };
           return advanceCase(probe, '处置处罚管理').ok === false;
         }
         return advanceCase(Object.assign({}, c, { steps: c.steps.map(x => Object.assign({}, x)) }), '处置处罚管理').ok === false;
@@ -4363,10 +4638,10 @@
       '100% 只读',
       airspaces.filter(a => a.source === '上级管控平台' && a.editable !== false).length + ' 条可改');
 
-    add('每个角色至少有一个可用账号（否则该角色的权限行永远演示不到）',
-      ROLES.every(r => users.some(u => u.role === r.id && u.status === '正常')),
-      '5 个角色均有可用账号',
-      ROLES.filter(r => !users.some(u => u.role === r.id && u.status === '正常')).map(r => r.name).join('/') || '5 个角色均有可用账号');
+    add('每个系统内置角色至少有一个可用账号（否则其权限无法演示）',
+      ROLES.filter(r => r.builtin).every(r => users.some(u => u.role === r.id && u.status === '正常')),
+      SYSTEM_ROLE_IDS.length + ' 个系统角色均有可用账号',
+      ROLES.filter(r => r.builtin && !users.some(u => u.role === r.id && u.status === '正常')).map(r => r.name).join('/') || SYSTEM_ROLE_IDS.length + ' 个系统角色均有可用账号');
     add('权限判定取自 PERM 矩阵（不得另存一份权限副本）',
       ROLES.every(r => PERM_MODULES.every(m => {
         const lv = permLevel(r.id, m);
@@ -4376,6 +4651,15 @@
       ROLES.every(r => (permLevel(r.id, '反制/干扰授权') === 'AUTH') === (r.id === 'R1' || r.id === 'R2')),
       '仅 R1/R2',
       ROLES.filter(r => (permLevel(r.id, '反制/干扰授权') === 'AUTH') !== (r.id === 'R1' || r.id === 'R2')).map(r => r.id).join('/') || '仅 R1/R2');
+    add('菜单可见时必须具备对应模块查看权限（菜单与操作矩阵不得矛盾）',
+      ROLES.every(r => MENU_KEYS.every(k => k === 'workbench' || !MENU_PERM[r.id][k]
+        || canForRole(r.id, ROUTE_MODULES[k], 'read'))),
+      '100% 一致',
+      ROLES.flatMap(r => MENU_KEYS.filter(k => k !== 'workbench' && MENU_PERM[r.id][k]
+        && !canForRole(r.id, ROUTE_MODULES[k], 'read')).map(k => r.id + '/' + k)).join(' ') || '100% 一致');
+    add('超级管理员菜单与操作权限全部锁定为最高级',
+      MENU_KEYS.every(k => MENU_PERM.R1[k] === true) && PERM.R1.every(v => v === 'AUTH'),
+      '菜单全开 / 操作全授权', '超级管理员权限被降级');
     add('停用账号不具备任何操作权限',
       (function () {
         const dis = users.find(u => u.status !== '正常');
@@ -4401,8 +4685,10 @@
       '一一对应',
       commTasks.filter(t => (t.result === '失败') !== (t.failedItems.length > 0)).length + ' 条不一致');
 
-    add('用户与权限：角色用户数合计 = 用户总数',
-      ROLES.reduce((t, r) => t + r.users, 0) === users.length, users.length, ROLES.reduce((t, r) => t + r.users, 0));
+    add('用户与角色：角色人数由用户归属精确推导',
+      ROLES.every(r => r.users === users.filter(u => u.role === r.id).length)
+        && ROLES.reduce((t, r) => t + r.users, 0) === users.length,
+      users.length, ROLES.reduce((t, r) => t + r.users, 0));
     /* ---- C2:协议对齐断言（V1.1 任务书 C 节）---- */
     add('设备台账：每台设备均带协议 deviceType / deviceTypeAbbr',
       devices.every(d => typeof d.deviceType === 'number' && d.deviceTypeAbbr),
@@ -4614,9 +4900,9 @@
     add('案件状态取值均在 case_status 枚举内',
       cases.every(c => CASE_STATUS.includes(c.status)), CASE_STATUS.join('/'),
       [...new Set(cases.map(c => c.status))].join('/'));
-    add('处置流程为设计表 9-3 的六环节（三页共用同一常量）',
-      DISPOSAL_FLOW.length === 6 && cases.every(c => c.steps.length === 6),
-      '6 环节', DISPOSAL_FLOW.length + ' 环节');
+    add('处置流程为五环节（三页共用同一常量）',
+      DISPOSAL_FLOW.length === 5 && cases.every(c => c.steps.length === 5),
+      '5 环节', DISPOSAL_FLOW.length + ' 环节');
     add('目标编号格式统一（类型前缀 + YYYYMMDD + NNN）',
       allTargets.every(t => new RegExp('^(' + OBJECT_TYPES.map(o => o.abbr).join('|') + ')\\d{8}\\d{3}$').test(t.id)), '100%', '100%');
     add('目标编号前缀与目标类型一致',
@@ -4837,12 +5123,14 @@
   global.MOCK = {
     CONF, DISTRICTS, AIRPORTS, PARTNERS, PILOTS, MODELS, VIOLATIONS, T_TYPES,
     now, nowStr, nowTime, systemNow, systemNowStr, systemNowTime,
-    devices, deviceStats, airspaces, flightPlans,
+    devices, deviceStats, recalcDeviceStats, airspaces, flightPlans,
     allTargets, todayTargets, liveTargets,
     alarms, todayAlarms, cases, casesToday, authLogs,
     interfaces, ifStats, commTasks, COMM_TH, logs, logStats,
-    users, ROLES, PERM, PERM_MODULES, auditLogs,
-    switchUser, can, permLevel, PERM_LEVELS, PERM_ACTIONS,
+    users, ROLES, SYSTEM_ROLE_IDS, PERM, PERM_MODULES, MENU_PERM, MENU_KEYS, ROUTE_MODULES, auditLogs,
+    switchUser, can, canForRole, canMenu, permLevel, PERM_LEVELS, PERM_ACTIONS,
+    recalcRoleUsers, createRole, updateRole, deleteRole, applyRoleAccess,
+    createUser, updateUser, setUserStatus, resetUserPassword,
     DISPOSAL_FLOW, ALARM_STATUS, CASE_STATUS, DEV_TYPES_RESERVED,
     JAM_CH, JAM_SOURCE, channelsFor, bandNote,
     OBJECT_TYPES, airborneTargets, idLineage, resolveTargetId,
@@ -4850,6 +5138,7 @@
     C02_SEVERE, FINE, EVIDENCE_KINDS, EVIDENCE_VERIFY, EVIDENCE_STATUS, EVID_PARAMS, evidenceFiles, evidenceOf, evidenceRefs, ALT_BANDS, AGL_BANDS, TRACK_STATUS, AIRSPACE_TYPES, dictRegistry, airspaceType, LEGAL_STATUS, senseQuality, illegalDisposition, primaryViolation, deriveLegality, evidenceGateLog, reviewRequests, factRevisions, pendingSubjects,
     ruleVersions, RULE_KINDS, versionsOf, currentVersion,
     caseStatusOf, canAdvanceCase, advanceCase, setCaseStage, rebuildCaseSteps,
+    caseNoticeStatus, notifyPunish,
     pushDispatchSync, ackDispatchSync, syncOf, pushAudit,
     /* airspaceVersions 兼容视图已删除：页面层 0 引用（Session 1 确认），全部改读 versionsOf('airspace')。 */
     detectConflicts, CONFLICT_MIN_OVERLAP, notifyChannels,

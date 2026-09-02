@@ -89,6 +89,14 @@ export const themeOverrides = {
   Pagination: {
     /* 对齐旧 .pg / .pg.on 的观感（方块页码、主色高亮） */
     itemBorderRadius: '5px'
+  },
+  Dialog: {
+    titleFontSize: '16px',
+    padding: '20px 24px 22px',
+    contentMargin: '14px 0 22px',
+    actionSpace: '10px',
+    borderRadius: '10px',
+    closeMargin: '20px 22px 0 0'
   }
 };
 

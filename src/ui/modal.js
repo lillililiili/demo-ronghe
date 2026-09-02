@@ -16,6 +16,7 @@
 import { h, nextTick } from 'vue';
 import { createDiscreteApi } from 'naive-ui';
 import { theme, themeOverrides } from './theme.js';
+import LegacyFormContent from './modals/LegacyFormContent.vue';
 
 const { modal } = createDiscreteApi(['modal'], {
   configProviderProps: { theme, themeOverrides }
@@ -72,7 +73,7 @@ function reallyOpen(o) {
     title: () => h('span', { innerHTML: String(o.title == null ? '' : o.title) }),
     /* P4b：o.render 提供 vnode 工厂时走受控组件（真 Naive 表单），否则沿用 HTML 串桥接 */
     content: o.render ? o.render
-      : () => h('div', { innerHTML: o.body || '', onClick: handle, ref: bodyRef }),
+      : () => h(LegacyFormContent, { html: o.body || '', onClick: handle, onReady: bodyRef }),
     footer: o.footer === false ? undefined
       : () => h('div', {
         style: 'display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;align-items:center',
@@ -82,3 +83,6 @@ function reallyOpen(o) {
   });
   return cur;
 }
+
+/* 未迁移页面继续调用 window.UI.modal；统一接入同一 Naive UI 壳层与表单桥接。 */
+if (window.UI) window.UI.modal = openModal;

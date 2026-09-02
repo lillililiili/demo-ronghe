@@ -6,16 +6,14 @@
 (function (g) {
   const M = MOCK, U = UI;
   let st = {
-    page: 1, size: 10, kind: '全部', verify: '全部', status: '全部', refKind: '全部',
+    page: 1, size: 10, kind: '全部', status: '全部', refKind: '全部',
     kw: '', sel: null, sort: 'captured', dir: -1, mod: '全部'
   };
 
   const ALL = '全部';
   const REF_LABEL = { case: '处罚案件', target: '感知目标', alarm: '告警', riskEvent: '空间安全风险事件', authLog: '反制/干扰授权', commTask: '调测任务', device: '设备', airspace: '空域' };
 
-  const VC = { '完好': 't-green', '哈希不一致': 't-red', '文件缺失': 't-red', '待校验': 't-amber' };
   const SC = { '在库': 't-green', '临近到期': 't-amber', '已到期待清理': 't-orange', '已销毁': 't-gray' };
-  const isBad = f => f.verifyState !== '完好';
 
   /* ===== 归档来源模块 =====
      用户的心智是"按模块看"（哪个模块归档了什么），不是"按文件类型看"。
@@ -23,8 +21,8 @@
      旧规则是「页面产出归该页面；调测报告归设备接入调测；指令报文与回执归反制与干扰授权；
      其余设备直采归融合感知」，据此算出"融合感知 279 份"。数据层给的是"处置处罚 300 / 融合感知 18"。
      同一批文件两个结论，两边各自自洽 —— 差异全在那 249 份"设备拍的、挂在案件上"的文件上。
-     用数据判了：这 249 份的 capturedAt 全部**晚于**所引案件的立案时刻（1.2~15.0 分钟，
-     249/249 无一例外，两边时间基准同格式可比）。即证据是立案之后、在案件驱动下才产生的，
+     用数据判了：这 249 份的 capturedAt 全部晚于所引事件的确认时刻（1.2~15.0 分钟，
+     249/249 无一例外，两边时间基准同格式可比）。即证据是在事件确认后、由处置过程产生的，
      不是先有证据再归集。所以产生动作发生在处置处罚管理，旧规则把它们算给融合感知是错的。
      结论：模块归属只认数据层的 srcModule，本页不再推断 —— 页面重算一遍就等于多一个会分叉的口径。 */
   const moduleOf = f => f.srcModule;
@@ -42,12 +40,11 @@
     captured: f => f.capturedAt,
     kind: f => M.EVIDENCE_KINDS.indexOf(f.kind),
     size: f => f.sizeMB,
-    verify: f => M.EVIDENCE_VERIFY.indexOf(f.verifyState),
     status: f => M.EVIDENCE_STATUS.indexOf(f.status),
     refs: f => f.refs.length,
     access: f => f.accessCount
   };
-  const SORT_NOTE = { verify: '（完好→异常）', status: '（在库→已销毁）', kind: '（按类型枚举顺序）' };
+  const SORT_NOTE = { status: '（在库→已销毁）', kind: '（按类型枚举顺序）' };
   function sortTh(key, label) {
     const on = st.sort === key;
     return `<span class="lnk" data-sort="${key}" role="button" tabindex="0" title="点击按「${label}」排序${SORT_NOTE[key] || ''}"
@@ -59,7 +56,6 @@
     const kw = st.kw.toLowerCase();
     const f = M.evidenceFiles.filter(x =>
       (st.kind === ALL || x.kind === st.kind) &&
-      (st.verify === ALL || x.verifyState === st.verify) &&
       (st.status === ALL || x.status === st.status) &&
       (st.refKind === ALL || x.refs.some(r => r.kind === st.refKind)) &&
       (st.mod === ALL || moduleOf(x) === st.mod) &&
@@ -78,11 +74,10 @@
     const ctx = U.consume('evidence');
     if (ctx && ctx.id) {
       const hit = M.evidenceFiles.find(f => f.id === ctx.id);
-      if (hit) { st.sel = hit; st.kind = st.verify = st.status = st.refKind = ALL; st.kw = ''; }
+      if (hit) { st.sel = hit; st.kind = st.status = st.refKind = ALL; st.kw = ''; }
     }
     st.sel = st.sel || M.evidenceFiles[0];
     const F = M.evidenceFiles;
-    const bad = F.filter(isBad).length;
     const held = F.filter(f => f.legalHold).length;
     const due = F.filter(f => f.status === '已到期待清理').length;
     const caseIds = new Set();
@@ -94,9 +89,8 @@
     const noCase = F.filter(f => !f.refs.some(r => r.kind === 'case')).length;
     /* KPI 以**文件生命周期**领衔而不是以"关联案件"领衔：
        关联案件放第一屏会把这个页面框成处罚的附属，而它管的是文件本身
-       —— 完整性、留存到期、法定冻结、销毁留痕、跨实体反查。 */
+       —— 留存到期、法定冻结、销毁留痕、跨实体反查。 */
     return `${U.kpis([
-      { label: '完整性异常', value: U.num(bad), color: bad ? 'red' : 'green', icon: 'alert', desc: bad ? '哈希不一致 / 文件缺失 / 待校验' : '全部校验完好' },
       { label: '冻结中（未结案）', value: U.num(held), color: 'purple', icon: 'check', desc: '到期不清理，销毁被拦截' },
       { label: '已到期待清理', value: U.num(due), color: due ? 'orange' : 'green', icon: 'alert', desc: '需法制审批后销毁' },
       {
@@ -104,10 +98,10 @@
         desc: `占 ${U.pct(noCase, F.length, 0)} —— 调测报告 / 通报回执 / 指令回执等`
       },
       { label: '证据文件总数', value: U.num(F.length), color: 'blue', icon: 'archive', desc: `占用 ${gb} GB · 近30天入库 ${in30} · 关联案件 ${caseIds.size} 件` },
-      { label: '留存 / 校验', value: M.EVID_PARAMS.retainYears, unit: '年', color: 'amber', icon: 'zone', desc: `每 ${M.EVID_PARAMS.verifyCycleDays} 天全量校验 · 待业务方确认` }
+      { label: '留存策略', value: M.EVID_PARAMS.retainYears, unit: '年', color: 'amber', icon: 'zone', desc: '留存年限待业务方确认' }
     ])}
     <div class="warnbox" style="margin-top:12px;line-height:1.85;border-color:rgba(61,139,255,.45);background:rgba(61,139,255,.08)">
-      本页管的是<b>文件本身的生命周期</b>（完整性 / 留存到期 / 法定冻结 / 销毁留痕 / 跨实体反查），
+      本页管的是<b>文件本身的生命周期</b>（留存到期 / 法定冻结 / 销毁留痕 / 跨实体反查），
       不是案件办到哪一步 —— 后者在「处置处罚管理」。两者不重复：
       <b>${U.num(noCase)} 份（${U.pct(noCase, F.length, 0)}）证据不属于任何案件</b>，
       它们只存在于这里。
@@ -117,7 +111,7 @@
            问题没了还留着条目，和有问题却没条目一样坏。 */''}
     </div>
 
-    ${/* 底部那一行统计图（归档来源模块 / 完整性校验结果 / 入库趋势 / 存储占用）已按用户要求删除。
+    ${/* 底部那一行统计图已按用户要求删除。
          主行高度改为 100vh-277px —— 与 flights / risk 用同一个实测标定值：
          view 内除主行外的固定开销 183px、可视高 = 100vh-94。
          先按 100vh-236 试过，1440×900 下内容反而比可视高 41px（是撑出去不是留空白），
@@ -127,7 +121,6 @@
       title: '证据文件台账', style: 'flex:1;min-width:0', nopad: true,
       body: `<div class="toolbar">
           ${U.field('类型', U.select('kind', [ALL, ...M.EVIDENCE_KINDS], st.kind))}
-          ${U.field('完整性', U.select('verify', [ALL, ...M.EVIDENCE_VERIFY], st.verify))}
           ${U.field('保管状态', U.select('status', [ALL, ...M.EVIDENCE_STATUS], st.status))}
           ${U.field('来源模块', U.select('mod', [ALL, ...MODULES()], st.mod))}
           ${U.field('关联对象', U.select('refKind', [ALL, ...Object.keys(REF_LABEL).map(k => ({ v: k, t: REF_LABEL[k] }))], st.refKind))}
@@ -151,7 +144,7 @@
       const hit = M.evidenceFiles.find(f => f.id === ctx.id);
       if (hit) {
         st.sel = hit;
-        st.kind = st.verify = st.status = st.refKind = st.mod = ALL;
+        st.kind = st.status = st.refKind = st.mod = ALL;
         st.kw = '';
       }
     }
@@ -159,14 +152,13 @@
     return `<div style="height:100%;display:flex;flex-direction:column;min-height:0">
       ${/* 操作引导（用户裁定 2026-08-30：多处补黄字引导）。主行 flex:1，自适应不需高度补偿 */''}
       <div class="warnbox" style="margin:0 0 12px;padding:8px 11px;font-size:12px;flex:none">
-        演示动线：用顶部筛选（<b>类型 / 完整性 / 保管状态 / 来源模块</b>）收敛台账 →
-        点任一行，右侧查看证据详情、完整性校验与关联对象。</div>
+        演示动线：用顶部筛选（<b>类型 / 保管状态 / 来源模块 / 关联对象</b>）收敛台账 →
+        点任一行，右侧查看证据详情、保管信息与关联对象。</div>
       <div class="row" style="flex:1;min-height:0;padding-bottom:6px">
         ${U.panel({
           title: '证据文件台账', style: 'flex:1;min-width:0', nopad: true,
           body: `<div class="toolbar">
             ${U.field('类型', U.select('kind', [ALL, ...M.EVIDENCE_KINDS], st.kind))}
-            ${U.field('完整性', U.select('verify', [ALL, ...M.EVIDENCE_VERIFY], st.verify))}
             ${U.field('保管状态', U.select('status', [ALL, ...M.EVIDENCE_STATUS], st.status))}
             ${U.field('来源模块', U.select('mod', [ALL, ...MODULES()], st.mod))}
             ${U.field('关联对象', U.select('refKind', [ALL, ...Object.keys(REF_LABEL).map(k => ({ v: k, t: REF_LABEL[k] }))], st.refKind))}
@@ -202,10 +194,12 @@
           <div style="font-size:11px;color:var(--txt-3)">入库 +${Math.max(0, Math.round((new Date(f.ingestAt) - new Date(f.capturedAt)) / 1000))}s</div>`
       },
       { t: sortTh('size', '大小'), w: '72px', align: 'right', cls: 'num', render: f => f.sizeMB.toFixed(1) + ' MB' },
-      { t: sortTh('verify', '完整性'), w: '92px', render: f => U.tag(f.verifyState, VC[f.verifyState]) },
+      { t: sortTh('status', '保管'), w: '86px', render: f => U.tag(f.status, SC[f.status]) },
       {
-        t: sortTh('status', '保管'), w: '108px',
-        render: f => `${U.tag(f.status, SC[f.status])}${f.legalHold ? ' <span class="tag t-purple" title="关联案件未结案，冻结中">冻</span>' : ''}`
+        t: '冻结', w: '62px',
+        render: f => f.legalHold
+          ? '<span class="tag t-purple" title="关联案件未结案，冻结中">冻结中</span>'
+          : '<span style="color:var(--txt-3)">—</span>'
       },
       {
         t: sortTh('refs', '引用'), w: '58px', align: 'right', cls: 'num',
@@ -217,22 +211,23 @@
 
   /* 调阅记录区块已删（2026-08-28 裁定）；调阅数据仍在全站操作审计，未删数据层 */
 
-  function legacyDetail() {
-    const f = st.sel;
-    const stEl = document.getElementById('evSt');
-    if (!f) { if (stEl) stEl.innerHTML = ''; return '<div class="empty">请选择证据文件</div>'; }
-    if (stEl) stEl.innerHTML = U.tag(f.verifyState, VC[f.verifyState]) + ' ' + U.tag(f.status, SC[f.status]);
+  /* 证据详情唯一渲染入口：证据台账右栏与其他业务页的证据弹窗共用同一份字段、
+     保管口径和引用关系，避免各页各画一套后逐渐分叉。 */
+  function renderEvidenceDetail(f, options) {
+    options = options || {};
+    const interactiveRefs = options.interactiveRefs !== false;
+    const includeActions = options.includeActions !== false;
+    if (!f) return '<div class="empty">请选择证据文件</div>';
     const refs = M.evidenceRefs(f.id);
     const left = daysLeft(f), sane = retainSane(f);
 
     const ingestSec = Math.max(0, Math.round((new Date(f.ingestAt) - new Date(f.capturedAt)) / 1000));
     return `${U.detailHero({
       icon: 'file', subtitle: '证据文件', title: f.name, id: f.id,
-      tags: [U.tag(f.verifyState, VC[f.verifyState]), U.tag(f.status, SC[f.status])],
+      tags: [U.tag(f.status, SC[f.status])],
       meta: [['格式', f.ext.toUpperCase()], ['大小', f.sizeMB.toFixed(2) + ' MB']]
     })}
       ${U.metricStrip([
-        { label: '完整性', value: f.verifyState, tone: isBad(f) ? 'bad' : 'good', icon: 'shield' },
         { label: '保管状态', value: f.status, tone: f.status === '在库' ? 'good' : 'warn', icon: 'archive' },
         { label: '引用次数', value: refs.length, unit: '处', tone: refs.length ? 'info' : 'warn', icon: 'link' },
         { label: '入库时差', value: ingestSec, unit: 's', tone: ingestSec <= 60 ? 'good' : 'warn', icon: 'clock' }
@@ -243,9 +238,10 @@
       ['格式 / 大小', `${f.ext.toUpperCase()} · ${f.sizeMB.toFixed(2)} MB`],
       ['存储方式', f.storage],
       ['产生者', `${f.srcKind === 'device' ? '设备' : f.srcKind === 'page' ? '页面' : '系统'} · ${f.srcName}
-        ${f.srcKind === 'device' ? `<span class="mono lnk" data-ev-go="device|${f.srcId}">${f.srcId}</span>` : ''}`],
+        ${f.srcKind === 'device' ? `<span class="mono ${interactiveRefs ? 'lnk' : ''}"
+          ${interactiveRefs ? `data-ev-go="device|${f.srcId}"` : ''}>${f.srcId}</span>` : ''}`],
       /* 产生者与归属模块是两件事，必须分两行：357 份是设备拍的，但其中 249 份的归属模块是
-         处置处罚管理（立案后按案件调取取证）。合成一行会让人以为"设备拍的就归融合感知"。 */
+         处置处罚管理（事件确认后按处置记录调取取证）。合成一行会让人以为"设备拍的就归融合感知"。 */
       ['归属模块', U.tag(f.srcModule, 't-blue')],
       /* originAction 是一句自然语言，说明"这份东西怎么来的"。台账的价值在于每份都说得清来源，
          没有这一行，一份证据就只是一个文件名 —— 无法判断它该不该在这里、是谁的责任。 */
@@ -253,18 +249,6 @@
       ['取证时刻', f.capturedAt],
       ['入库时刻', `${f.ingestAt}　<span style="color:var(--txt-3);font-size:11px">链路时延 ${Math.max(0, Math.round((new Date(f.ingestAt) - new Date(f.capturedAt)) / 1000))}s</span>`]
     ]))}
-
-      ${U.sect('完整性校验', U.kv([
-      ['算法', f.hashAlgo],
-      ['哈希', `<span class="mono" style="font-size:11px;word-break:break-all">${f.hash}</span>`],
-      ['上次校验', f.verifyAt],
-      ['校验结果', U.tag(f.verifyState, VC[f.verifyState])]
-    ]) + (isBad(f)
-      ? `<div class="warnbox" style="border-color:rgba(255,77,94,.45);margin-top:8px;line-height:1.85">
-           <b>处置流程</b><br>${f.verifyNote || U.icon('warning') + ' 未记录处置说明 —— 校验异常必须写明发现时间、处置流程与责任人'}</div>`
-      : `<div style="font-size:11px;color:var(--txt-3);margin-top:6px;line-height:1.7">
-           每 ${M.EVID_PARAMS.verifyCycleDays} 天全量比对一次入库哈希。校验只做比对与记录，
-           <b>不会自动"修复"</b> —— 异常必须人工判定来源并留痕。</div>`))}
 
       ${U.sect('保管与留存', U.kv([
       ['留存期', f.retainYears + ' 年　<span class="tag t-amber">待业务方确认</span>'],
@@ -289,23 +273,52 @@
       ? refs.map(r => `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;
             border-bottom:1px solid rgba(64,158,255,.08);font-size:12px">
             <span class="tag t-gray" style="flex:none">${r.label}</span>
-            <span class="mono ${r.exists ? 'lnk' : ''}" ${r.exists ? `data-ev-go="${r.kind}|${r.id}"` : ''}
+            <span class="mono ${r.exists && interactiveRefs ? 'lnk' : ''}"
+              ${r.exists && interactiveRefs ? `data-ev-go="${r.kind}|${r.id}"` : ''}
               style="flex:none">${r.id}</span>
             <span style="flex:1;min-width:0;color:var(--txt-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.name || ''}</span>
             ${r.exists ? '' : '<span class="tag t-red" title="引用指向的对象已不存在">悬空</span>'}
           </div>`).join('')
       : '<div style="color:var(--txt-3);font-size:12px">无引用 —— 孤儿证据，应核实来源后归档或清理</div>')
       + `<div style="font-size:11px;color:var(--txt-3);margin-top:6px;line-height:1.7">
-          一份证据可同时被案件、告警、授权记录引用。点编号可直达对应页面并选中该条。</div>`}
+          一份证据可同时被案件、告警、授权记录引用。${interactiveRefs ? '点编号可直达对应页面并选中该条。' : ''}</div>`}
 
       ${/* 「调阅记录」区块与「调阅（记入审计）」「申请销毁」按钮均已按用户裁定删除（2026-08-28），
-           操作区只留校验与下载；调阅数据仍在操作审计里，未删数据层 */''}
-      ${U.sect('操作', `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-        <button class="btn pri" data-evact="download">${U.icon('download')} 下载</button>
-        <button class="btn" data-evact="verify">${U.icon('check')} 立即校验</button>
-      </div>
+           操作区只保留下载；调阅数据仍在操作审计里，未删数据层 */''}
+      ${includeActions ? U.sect('操作', `<button class="btn pri" style="width:100%;justify-content:center" data-evact="download">${U.icon('download')} 下载</button>
       <div style="margin-top:8px;font-size:11px;color:var(--txt-3);line-height:1.8">
-        Demo 下载仅演示操作入口，不包含真实文件；正式环境须经审批并逐次记入调阅审计。</div>`)}`;
+        Demo 下载仅演示操作入口，不包含真实文件；正式环境须经审批并逐次记入调阅审计。</div>`) : ''}`;
+  }
+
+  function downloadEvidence(f) {
+    if (!f) return false;
+    if (M.can && !M.can('证据管理', 'op')) {
+      if (M.pushAudit) M.pushAudit('证据管理', '下载证据被拒绝：无操作权限', f.id, '失败');
+      U.toast('需要「证据管理」操作权限', 'err');
+      return false;
+    }
+    if (M.pushAudit) M.pushAudit('证据管理', `下载证据「${f.name}」`, f.id);
+    U.toast('已下载 ' + f.name, 'ok');
+    return true;
+  }
+
+  function evidenceModalOptions(f) {
+    return {
+      title: `证据详情 · ${f.id}`,
+      width: '760px',
+      body: renderEvidenceDetail(f, { interactiveRefs: false, includeActions: false }),
+      footer: `<button class="btn" data-close>关闭</button>
+        <button class="btn pri" data-act="download">${U.icon('download')} 下载</button>`,
+      on: { download: () => downloadEvidence(f) }
+    };
+  }
+
+  function legacyDetail() {
+    const f = st.sel;
+    const stEl = document.getElementById('evSt');
+    if (!f) { if (stEl) stEl.innerHTML = ''; return renderEvidenceDetail(f); }
+    if (stEl) stEl.innerHTML = U.tag(f.status, SC[f.status]);
+    return renderEvidenceDetail(f);
   }
 
   function detail() {
@@ -319,8 +332,7 @@
 
   function mount(view) {
     paint();
-    /* 这里原本初始化底部四块（evMod 归档来源模块条形图 / evVerify 完整性校验环图 /
-       evTrend 入库趋势 / evSize 存储占用），已随面板一并删除。
+    /* 这里原本初始化底部统计图，已随面板一并删除。
        moduleOf 与 MODULES() 保留 —— 台账的「来源模块」筛选器仍在用它们。
        台账列表与详情（含每行的来源说明）按要求原样保留。 */
     U.on(view, '[data-row]', 'click', (e, el) => {
@@ -355,7 +367,6 @@
       if (el.disabled) return;
       const k = el.dataset.evact;
       if (k === 'download') return doDownload();
-      if (k === 'verify') return doVerify();
     });
 
     document.getElementById('evKw').oninput = e => { st.kw = e.target.value.trim(); st.page = 1; paint(); };
@@ -364,8 +375,7 @@
   const OPER = () => (M.users && M.users[0]) || { name: '值班员', roleName: '值班员' };
 
   function doDownload() {
-    if (!st.sel) return;
-    U.toast('已下载 ' + st.sel.name, 'ok');
+    downloadEvidence(st.sel);
   }
 
   /* 调阅：真实写全站操作审计并累加次数 —— 访问审计不是另一份数据 */
@@ -380,17 +390,6 @@
     });
     document.getElementById('evDetail').innerHTML = detail();
     U.toast(`已调阅 ${f.id}，本次调阅已记入操作审计`, 'ok');
-  }
-
-  /* 立即校验：只做比对与记录，异常不会自己变好 —— 一个点一下就转绿的校验按钮是假的 */
-  function doVerify() {
-    const f = st.sel;
-    f.verifyAt = M.util.fmtDT(M.CONF.demoTime);
-    document.getElementById('evDetail').innerHTML = detail();
-    paint();
-    U.toast(isBad(f)
-      ? `已重新比对 ${f.id}：仍为「${f.verifyState}」。校验只比对不修复，须按处置流程人工闭环`
-      : `已重新比对 ${f.id}：哈希与入库值一致，结果「完好」`, isBad(f) ? 'err' : 'ok');
   }
 
   /* 申请销毁：冻结与未到期两道闸门都要真拦，且拦截理由写清楚 */
@@ -451,10 +450,9 @@
     key: 'EVID', name: '证据留存与保管策略', page: '证据存储管理', hash: '#/evidence',
     ver: 'demo-v1', confirmed: false, owner: '法制 / 业务方',
     basis: '需求文档 COM-04 文件与证据存储；留存年限与冻结规则均为 Demo 缺省值',
-    affects: ['证据到期判定', '销毁闸门', '完整性校验周期', '存储容量规划'],
+    affects: ['证据到期判定', '销毁闸门', '存储容量规划'],
     items: () => [
       { n: '默认留存期', v: M.EVID_PARAMS.retainYears + ' 年' },
-      { n: '完整性校验周期', v: '每 ' + M.EVID_PARAMS.verifyCycleDays + ' 天全量比对' },
       { n: '未结案冻结', v: M.EVID_PARAMS.holdWhileOpen ? '开启（到期不清理）' : '关闭' },
       { n: '存储策略', v: M.EVID_PARAMS.storageDual ? '主存储 + 异地备份' : '仅主存储' },
       { n: '当前冻结份数', v: M.evidenceFiles.filter(f => f.legalHold).length + ' 份' },
@@ -462,6 +460,7 @@
     ]
   });
 
+  g.EVIDENCE_VIEW = { renderDetail: renderEvidenceDetail, modalOptions: evidenceModalOptions, download: downloadEvidence };
   g.PAGES = g.PAGES || {};
   g.PAGES.evidence = { render, mount };
 })(window);

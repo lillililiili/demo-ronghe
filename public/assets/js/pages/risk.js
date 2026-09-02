@@ -11,14 +11,12 @@
      "离保护对象最近的是哪几起"和"哪几起还没核验"）。
      排序键是页面状态，绝不 sort MOCK.riskEvents —— 那是全站共享数组。 */
   const LV_RANK = { '高': 3, '中': 2, '低': 1 };
-  /* 按待办优先级排，不是按字面。取自数据层的 RISK_STATUS —— 旧版是写死的三个状态，
-     状态机扩到七个之后，其余四个会全部并列在末位（indexOf 返回 -1 → 99），
-     排序看起来正常，实际是"四个状态不分先后"。硬编码的枚举副本不会报错，只会悄悄失准。 */
+  /* 按待办优先级排，不是按字面。取自数据层的 RISK_STATUS，避免页面复制状态枚举后失准。 */
   const ST_RANK = (typeof MOCK !== 'undefined' && MOCK.RISK_STATUS)
-    ? ['待核验', '待通知', '已通知', '处置中', '已处置', '已排除', '已归档']
+    ? ['待核验', '待通知', '已通知', '已排除']
       .filter(x => MOCK.RISK_STATUS.indexOf(x) >= 0)
-      .concat(MOCK.RISK_STATUS.filter(x => ['待核验', '待通知', '已通知', '处置中', '已处置', '已排除', '已归档'].indexOf(x) < 0))
-    : ['待核验', '处置中', '已处置'];
+      .concat(MOCK.RISK_STATUS.filter(x => ['待核验', '待通知', '已通知', '已排除'].indexOf(x) < 0))
+    : ['待核验', '待通知', '已通知', '已排除'];
   const SORTERS = {
     ts: r => r.ts,
     // 中文串比较是 UTF-16 码位序，没有含义；类型与行政区都改用数据层的既定顺序
@@ -28,7 +26,7 @@
     level: r => LV_RANK[r.level] || 0,
     status: r => { const i = ST_RANK.indexOf(r.status); return i < 0 ? 99 : i; }
   };
-  const SORT_NOTE = { district: '（按行政区既定顺序）', status: '（待核验→处置中→已处置）', level: '（高→低）', dist: '（距最近航线）' };
+  const SORT_NOTE = { district: '（按行政区既定顺序）', status: '（待核验→待通知→已通知/已排除）', level: '（高→低）', dist: '（距最近航线）' };
   function sortTh(key, label) {
     const on = st.sort === key;
     /* 排序箭头只画在当前排序列上：每个表头都挂一个 ⇅ 会把表格最小宽度顶宽（实测 +17px），
@@ -69,7 +67,7 @@
      通报记录与处置记录都挂在 MOCK 上（与 M.counterEffects 同一做法），仍由 riskEvents 派生，
      不引入第二份统计口径；派生值一律走 CH.seeded(事件编号)，同一事件任意次查看完全一致。
      —— 这两个数组是本页运行时创建的，若要固化进数据集需在 mock.js 增字段（已向主控会话登记）。 */
-  const OPER = () => (M.users && M.users[0]) || { name: '值班员', roleName: '值班员' };
+  const OPER = () => M.currentUser || { name: '值班员', roleName: '值班员' };
 
   /* ===== 通报记录：本页不再自己造 =====
      这里原本有一整套页面侧生成（initNotices / noticeTargets / noticeText / FEEDBACK /
@@ -139,6 +137,11 @@
      两个页签共用一个写入口，不存在两条推进路径。
      repaint 由调用方决定：本页用 repaintAll()，航线页签用 g.APP.rerender()。 */
   function advanceRisk(r, to, rec, repaint) {
+    if (!M.can('空间安全风险', 'op')) {
+      M.pushAudit('空间安全风险', `风险流转被拒绝：${r.status} → ${to}（无操作权限）`, r.id, '失败');
+      U.toast('需要「空间安全风险」操作权限', 'err');
+      return false;
+    }
     const legal = (M.riskNext ? M.riskNext(r.status) : []).some(t => t.to === to);
     if (!legal) { U.toast(`「${r.status}」不能直接转「${to}」`, 'err'); return false; }
     pushDisposal(r, rec);
@@ -146,6 +149,29 @@
     if (repaint) repaint();
     U.toast(`${rec.act} —— 事件状态 → ${to}`, 'ok');
     return true;
+  }
+
+  /* 工作台与风险页共用的动作入口。按钮只携带目标状态，具体通报、派工和
+     处置记录均在这里生成，避免工作台再实现一套风险流转副本。 */
+  function actRisk(r, to, repaint) {
+    if (!r) return false;
+    if (!M.can('空间安全风险', 'op')) {
+      M.pushAudit('空间安全风险', `风险动作被拒绝：${r.id}（无操作权限）`, r.id, '失败');
+      U.toast('需要「空间安全风险」操作权限', 'err');
+      return false;
+    }
+    if (!(M.riskNext(r.status) || []).some(x => x.to === to)) {
+      U.toast(`「${r.status}」不能直接转「${to}」`, 'err');
+      return false;
+    }
+    if (to === '已通知') return noticeModal(r, () => advanceRisk(r, to, {
+      act: '通知上级', result: '通报已发出，等待回执', evidence: '通报单 + 回执记录'
+    }, repaint));
+    const rec = {
+      '待通知': { act: '人工核验通过', result: '确认为真实风险，转通报上级', evidence: '核验单 + 现场影像' },
+      '已排除': { act: '排除（误检/非管控目标）', result: '核验后判定无需通报', evidence: '核验单' }
+    }[to] || { act: '状态流转至' + to, result: '—', evidence: '—' };
+    return advanceRisk(r, to, rec, repaint);
   }
 
   function rows() {
@@ -232,7 +258,7 @@
       ${st.tab === 'event' ? `
         ${U.field('风险等级', U.select('level', ['全部', '高', '中', '低'], st.level))}
         ${U.field('目标类型', U.select('type', ['全部', '鸟', '未知', '识别中', '船', '车'], st.type))}
-        ${U.field('状态', U.select('status', ['全部', '待核验', '待通知', '已通知', '处置中', '已处置', '已排除', '已归档'], st.status))}
+        ${U.field('状态', U.select('status', ['全部', '待核验', '待通知', '已通知', '已排除'], st.status))}
         <span style="flex:1"></span>
         ${/* 「通报保护对象」按钮已按用户要求删除 —— 连同"保护对象"这一层概念一起去掉。
              通报记录本身保留（由「通知上级」写入的那套），只是不再有"向保护对象群发日报"这个动作。 */''}`
@@ -286,13 +312,15 @@
     return bar() + U.table([
       { t: '编号', w: '68px', cls: 'num', render: r => `<span title="${r.id}">${r.id.slice(-6)}</span>` },
       {
-        t: sortTh('type', '目标 / 细类'), w: '116px',
-        render: r => `<div>${U.tag(r.type, r.type === '鸟' ? 't-green' : 't-cyan')}
-          <span class="mono" style="color:var(--txt-3)">×${r.count}</span></div>
-          <div style="font-size:10.5px;color:var(--txt-3);margin-top:2px;white-space:normal;line-height:1.4">${r.subtype
-          ? r.subtype + ' ' + U.srcTag(r.subtypeSource)
-          : '细类未识别'}</div>`
+        t: sortTh('type', '目标'), w: '74px',
+        render: r => `${U.tag(r.type, r.type === '鸟' ? 't-green' : 't-cyan')}
+          <span class="mono" style="color:var(--txt-3)">×${r.count}</span>`
       },
+      {
+        t: '细类', w: '88px',
+        render: r => `<span style="font-size:10.5px;color:var(--txt-3);white-space:normal;line-height:1.4">${r.subtype || '未识别'}</span>`
+      },
+      { t: '来源', w: '72px', render: r => r.subtype ? U.srcTag(r.subtypeSource) : '<span style="color:var(--txt-3)">—</span>' },
       {
         t: sortTh('district', '区域 / 高度'), w: '84px',
         render: r => `<div style="white-space:normal;line-height:1.4">${r.district}</div>
@@ -390,13 +418,12 @@
            **面板标题也从「风险详情与建议」改成「风险详情」—— 建议没了，名字不该再承诺它。**
            按钮仍按状态门控：只有「待通知」才给入口，其余状态不显示按钮也不留空位 ——
            状态标签本身已经说明处于哪一步，再摆一个灰按钮是重复且更容易点错。
-           注意：**列表行内的核验/转处置/归档按钮不在本次范围**，那是用户此前明确要的工作流。 */
+           注意：列表行内只保留当前可执行的核验、通知与处置动作。 */
         const can = (M.riskNext ? M.riskNext(r.status) : []).some(t => t.to === '已通知');
         if (can) return U.detailActions(`<button class="btn pri" style="width:100%;justify-content:center" data-rkto="已通知">通知上级</button>`);
-        /* 用户增补（2026-08-27）：「待核验」也要在详情里给通报入口。
-           一键走两步**合法**流转：核验通过（→待通知）后弹通报窗（→已通知），
-           每步各留一条处置记录；通报窗被取消则停在「待通知」，核验不回退。 */
-        if (r.status === '待核验') return U.detailActions(`<button class="btn pri" style="width:100%;justify-content:center" data-rkvn="1">核验通过并通报上级</button>`);
+        /* 待核验先进入人工核验弹窗；核验通过后只推进到“待通知”，
+           详情按钮随共享状态机自然切换为“通知上级”。 */
+        if (r.status === '待核验') return U.detailActions(`<button class="btn pri" style="width:100%;justify-content:center" data-rkverify="1">人工核验</button>`);
         return '';
       })()}`;
   }
@@ -528,34 +555,22 @@
       if (to === '已通知') return noticeModal(r, () => advanceRisk(r, to, {
         act: '通知上级', result: '通报已发出，等待回执', evidence: '通报单 + 回执记录'
       }, repaintAll));
-      if (to === '处置中') {
-        const rs = CH.seeded('drv' + r.id), unit = r.district + '属地保障单位';
-        return advanceRisk(r, to, {
-          act: '派发人工驱离作业', device: '—', unit,
-          result: `已受理，作业队 ${rs(2, 5)} 人预计 ${rs(15, 40)} 分钟内到位`,
-          evidence: '派工单 + 作业前后现场照片（回传后入链）'
-        }, repaintAll);
-      }
       const REC = {
         '待通知': { act: '人工核验通过', result: '确认为真实风险，转通报上级', evidence: '核验单 + 现场影像' },
-        '已排除': { act: '排除（误检/非管控目标）', result: '核验后判定无需处置', evidence: '核验单' },
-        '已处置': { act: '处置完成', result: '风险解除', evidence: '处置过程记录 + 现场影像' },
-        '已归档': { act: '归档', result: '事件闭环归档', evidence: '事件全量记录 + 通报与处置记录' }
+        '已排除': { act: '排除（误检/非管控目标）', result: '核验后判定无需通报', evidence: '核验单' }
       }[to];
       advanceRisk(r, to, REC || { act: '状态流转至' + to, result: '—', evidence: '—' }, repaintAll);
     });
 
-
-    /* 待核验详情的「核验通过并通报上级」：两次 advanceRisk 都走同一写入口，各自校验合法性 */
-    U.on(view, '[data-rkvn]', 'click', () => {
+    /* 与“我的工作台”共用同一个人工核验弹窗和同一个风险写入口。 */
+    U.on(view, '[data-rkverify]', 'click', () => {
       const r = st.sel;
       if (!r || r.status !== '待核验') return;
-      if (!advanceRisk(r, '待通知', {
-        act: '人工核验通过', result: '确认为真实风险，转通报上级', evidence: '核验单 + 现场影像'
-      }, repaintAll)) return;
-      noticeModal(r, () => advanceRisk(r, '已通知', {
-        act: '通知上级', result: '通报已发出，等待回执', evidence: '通报单 + 回执记录'
-      }, repaintAll));
+      U.openRiskVerification({
+        risk: r,
+        onExclude: () => actRisk(r, '已排除', repaintAll),
+        onConfirm: () => actRisk(r, '待通知', repaintAll)
+      });
     });
 
     U.on(view, '[data-rk]', 'click', (e, el) => {
@@ -575,44 +590,22 @@
       + `距${r.nearestRouteName || '最近航线'} ${r.nearestRouteKm} km，风险等级${r.level}；建议：${r.advice}`;
   }
 
-  /* 通报弹窗：选**渠道**，对象由渠道决定，不再让用户勾选对象。
-     旧版让用户任意多选对象、另选"通报方式"，这正是数据层修掉的那类矛盾的来源 ——
-     用户可以选出「机场塔台专线 + 东营市低空安全管理中心」这种组合。
-     onSent 回调用于把状态推进到「已通知」：状态改了却没有通报记录会被数据层断言抓住，
-     所以推进必须发生在通报真的写进去之后。 */
+  /* 通知上级只做一次简洁确认。渠道沿用数据层配置的默认首选项，通报内容由事件
+     实时生成；确认后仍先写通报记录，再推进状态，保证“已通知”必有通报记录。 */
   function noticeModal(r, onSent) {
-    const CH_LIST = M.NOTICE_CHANNELS || [];
-    const preview = k => noticeTo(k, r);
-    U.modal({
-      title: '通报上级 / 保护对象管理单位 · ' + r.id, width: '620px',
-      body: `<div class="warnbox">通报为对外协同动作，Demo 环境<b>不真实外发</b>；正式环境由
-          <span class="mono">/api/v1/dispatch/sync</span> 推送并回收回执。通报内容与回执全量留痕。</div>
-        ${U.kv([
-        ['风险事件', `<span class="mono">${r.id}</span>`],
-        ['关联目标', `<span class="mono">${r.targetId}</span>`],
-        ['目标 / 细类', `${r.type} ${U.srcTag('device')} ${r.subtype ? '· ' + r.subtype + ' ' + U.srcTag(r.subtypeSource, r.subtypeConf) : ''}`],
-        ['最近航线', `${r.nearestRouteName || '—'} · ${r.nearestRouteKm} km`],
-        ['风险等级', U.tag(r.level, r.level === '高' ? 't-red' : r.level === '中' ? 't-amber' : 't-blue')]
-      ])}
-        <div style="margin:12px 0 6px;font-size:12.5px;color:var(--txt-2)">通报渠道（对象由渠道决定）</div>
-        ${CH_LIST.map((c, i) => `<label class="chk"><input type="radio" name="ntch" data-nc="${c.key}" ${i === 0 ? 'checked' : ''}>
-          <b>${c.key}</b> ${c.name}
-          <span style="color:var(--txt-3)">→ ${preview(c.key)} · ${c.ackType}</span></label>`).join('')}
-        <div style="margin:12px 0 6px;font-size:12.5px;color:var(--txt-2)">通报内容</div>
-        <textarea class="ip" id="ntTxt" style="width:100%;height:74px;padding:8px;line-height:1.7;resize:vertical">${noticeText(r)}</textarea>`,
-      footer: `<button class="btn" data-close>取消</button><button class="btn pri" data-act="send">发送通报并记录</button>`,
-      on: {
-        send: el => {
-          const pick = [...el.querySelectorAll('[data-nc]')].find(x => x.checked);
-          if (!pick) return U.toast('请选择通报渠道', 'err');
-          const txt = el.querySelector('#ntTxt').value.trim();
-          if (!txt) return U.toast('通报内容不能为空', 'err');
-          const n = pushNotice(r, { channel: pick.dataset.nc, content: txt });
-          U.closeModal();
-          if (onSent) onSent();               // 由调用方决定要不要推进状态
-          else { repaintAll(); }
-          U.toast(`已通过 ${n.channel} ${n.channelName} 通报 ${n.to}，等待回执`, 'ok');
-        }
+    if (!M.can('空间安全风险', 'op')) return U.toast('需要「空间安全风险」操作权限', 'err');
+    U.confirmAction({
+      title: '确认',
+      message: '确认通知上级吗',
+      confirmText: '确认',
+      onConfirm: () => {
+        const channel = (M.NOTICE_CHANNELS || [])[0];
+        if (!channel) { U.toast('暂无可用通报渠道', 'err'); return false; }
+        const n = pushNotice(r, { channel: channel.key || channel, content: noticeText(r) });
+        if (onSent) onSent();               // 由调用方决定要不要推进状态
+        else { repaintAll(); }
+        U.toast(`已通过 ${n.channel} ${n.channelName} 通报 ${n.to}，等待回执`, 'ok');
+        return true;
       }
     });
   }
@@ -626,6 +619,7 @@
      但同属反制类设备：二次确认 → 执行监视 → 全程审计 → 处置记录进证据链，一步不能少。
      声压级/发射间隔/弹药量等硬件参数一律占位，不猜（纪要 §7）。 */
   function scareModal(r) {
+    if (!M.can('空间安全风险', 'op')) return U.toast('需要「空间安全风险」操作权限', 'err');
     const TBC = '【待确认：设备方提供】';
     const devs = M.devices.filter(d => d.type === '驱鸟炮')
       .map(d => ({ d, km: +M.util.distKm(d, r).toFixed(1) })).sort((a, b) => a.km - b.km);
@@ -743,8 +737,8 @@
         b.children[1].lastElementChild.textContent = execTx;
         b.children[2].lastElementChild.innerHTML = `<span style="color:#79e5a5">${ack}</span>`;
       }
-      push(`[ARCH] 处置结果「${result}」与证据链已归档，事件状态更新`);
-      // ——— 真实落库：改事件状态 + 写证据链 + 写全站操作审计 ———
+      push(`[DONE] 驱鸟指令结果「${result}」与证据链已自动留存`);
+      // ——— 真实落库：写设备执行记录、证据链与全站操作审计 ———
       pushDisposal(r, {
         act: '驱鸟炮处置下发', device: `${dev.name}（${dev.id}）`, cmd: 70001, ack,
         result: `${result} · 高度 ${r.alt}→${altAfter} m，距${r.nearestRouteName || '最近航线'} ${r.nearestRouteKm}→${kmAfter} km`,
@@ -752,20 +746,12 @@
         evidence: `指令报文 + 设备回执 ${ack} + 处置前后航迹快照（${orderNo}-EVID）`,
         orderNo, durationS: sec
       });
-      /* 不直接写状态：驱鸟是"处置手段"，状态该往哪走由 RISK_FLOW 说了算。
-         旧版从任意状态一步写成 已处置/处置中 —— 从「待核验」直接跳「已处置」是越界，
-         而越界状态一旦落库，数据层那条"状态越界"断言抓的是存量，抓不到页面新写进去的。 */
-      (function () {
-        const want = result === '驱离成功' ? '已处置' : '处置中';
-        const nx = (M.riskNext ? M.riskNext(r.status) : []).map(t => t.to);
-        if (nx.indexOf(want) >= 0) r.status = want;
-        else if (nx.indexOf('处置中') >= 0) r.status = '处置中';
-        // 两者都不合法就保持原状态：处置记录已经写进去了，状态由后续人工流转推进
-      })();
+      /* 驱鸟设备执行属于独立设备动作，不再推进飞行计划风险状态；
+         该事件在「通知上级」后已经完成平台内闭环。 */
       // 不改 r.alt / r.nearestRouteKm：这两个值由 lon/lat 与航线几何派生（数据层重算），
       // 就地改会和坐标对不上；处置前后的变化写在处置记录的 result 里。
       committed = true;
-      U.toast(`驱鸟处置完成：${result}，记录已入事件证据链与操作审计（关闭窗口后列表与 KPI 同步）`,
+      U.toast(`驱鸟指令执行结束：${result}，记录已入事件证据链与操作审计`,
         result === '驱离成功' ? 'ok' : '');
     }
   }
@@ -831,7 +817,7 @@
   /* 放在 g.RISK_IMPL 而不是 g.PAGES.riskEvents —— 它是实现对象，不是一个页面。
      挂进 PAGES 会凭空多出一条 #/riskEvents 路由：能渲染、但没有页签条，
      等于一个只有知道它存在的人才进得去的半成品页面。**命名空间即契约**。 */
-  g.RISK_IMPL = { render, mount, destroy, advance: advanceRisk };
+  g.RISK_IMPL = { render, mount, destroy, advance: advanceRisk, act: actRisk, notify: noticeModal, scare: scareModal };
   g.PAGES.risk = {
     render() { g.PAGES.flights.setTab('events'); return g.PAGES.flights.render(); },
     mount(v) { return g.PAGES.flights.mount(v); },

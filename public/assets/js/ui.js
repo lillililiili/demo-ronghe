@@ -94,7 +94,7 @@
   const STAT_C = {
     '在线': 't-green', '离线': 't-gray', '异常': 't-red', '告警': 't-orange',
     /* A7 告警状态枚举 */ '新建': 't-amber', '已确认': 't-cyan', '已关闭': 't-green', '误报': 't-blue',
-    /* A7 案件状态枚举 */ '待核实': 't-amber', '已立案': 't-cyan', '待归档': 't-blue',
+    /* 业务与日志状态标签 */ '待核实': 't-amber', '待归档': 't-blue',
     '正常': 't-green', '已处置': 't-green', '处置中': 't-orange',   /* 已处置/处置中 属目标跟踪与风险事件枚举，非 alarm_status */
     '已结案': 't-green', '处理中': 't-orange', '待处理': 't-amber', '跟踪中': 't-cyan',
     '成功': 't-green', '失败': 't-red', '已归档': 't-green', '生效中': 't-green',
@@ -186,12 +186,13 @@
   }
 
   /* ---- 表格 ---- */
-  /* cols: [{k,t,w,align,render(row,i)}]  opts:{page,size,total,rowId,onRow,activeId,maxH} */
+  /* cols: [{k,t,align,render(row,i)}]  opts:{page,size,total,rowId,onRow,activeId,maxH}
+     列宽统一交给浏览器按单元格内容计算，调用方遗留的 w 仅作兼容输入、不再输出。 */
   function table(cols, rows, opts) {
     opts = opts || {};
     // opts.checkbox: (row)=>id|null —— 返回 id 则该行可勾选(用于批量处置/批量归档)
     const ckHead = opts.checkbox ? `<th class="ck"><input type="checkbox" data-ckall aria-label="全选"></th>` : '';
-    const head = ckHead + cols.map(c => `<th class="${c.priority ? 'col-' + c.priority : ''}" style="${c.w ? 'width:' + c.w + ';' : ''}${c.align ? 'text-align:' + c.align : ''}">${c.t}</th>`).join('');
+    const head = ckHead + cols.map(c => `<th class="${c.priority ? 'col-' + c.priority : ''}" style="${c.align ? 'text-align:' + c.align : ''}">${c.t}</th>`).join('');
     const body = rows.length ? rows.map((r, i) => {
       const id = opts.rowId ? opts.rowId(r) : '';
       const ckId = opts.checkbox ? opts.checkbox(r) : null;

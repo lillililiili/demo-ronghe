@@ -64,7 +64,7 @@ const INJECTIONS = [
   ['重新引入 conf 字段（非首条）', () => { const t = M.allTargets[400]; t.conf = 88; return () => { delete t.conf; }; }],
   ['重新引入 violations 副本', () => { const t = M.allTargets[500]; t.violations = ['夜间飞行']; return () => { delete t.violations; }; }],
   ['violation_reasons 被截断', () => { const t = uav().find(x => x.violation_reasons.length > 1); const o = t.violation_reasons.slice(); t.violation_reasons = [o[0]]; return () => { t.violation_reasons = o; }; }],
-  ['立案快照被截断', () => { const c = M.cases.find(x => x.filingSnapshot.violation_reasons.length > 1); const o = c.filingSnapshot.violation_reasons.slice(); c.filingSnapshot.violation_reasons = [o[0]]; return () => { c.filingSnapshot.violation_reasons = o; }; }],
+  ['事件确认快照被截断', () => { const c = M.cases.find(x => x.filingSnapshot.violation_reasons.length > 1); const o = c.filingSnapshot.violation_reasons.slice(); c.filingSnapshot.violation_reasons = [o[0]]; return () => { c.filingSnapshot.violation_reasons = o; }; }],
   /* 必须挑一个「末项 ≠ 当前主违规」的样本：若随手取第一个多违规目标，
      它的末项可能**恰好就是**最严的那条，注入就成了空操作，于是"无人捕获"——
      而这既不是断言坏了，也不是数据坏了，是注入本身没有区分力。
@@ -77,13 +77,13 @@ const INJECTIONS = [
   ['融合感知箱目标给 5G-A 任务号', () => { const t = M.allTargets.find(x => x.source === '融合感知箱'); return set(t, 'source_task_id', 'TASK12345'); }],
   ['source_confidence 与 facts 脱钩', () => { const t = M.allTargets[7]; return set(t, 'source_confidence', 0.11); }],
   ['无认定路径却给具名主体', () => { const c = M.cases[0]; const o = c.filingSnapshot.subject_source; c.filingSnapshot.subject_source = null; return () => { c.filingSnapshot.subject_source = o; }; }],
-  ['违法目标既未立案也不在待办', () => { const q = M.pendingSubjects[0]; const o = q.targetId; q.targetId = 'NOPE'; return () => { q.targetId = o; }; }],
+  ['违法目标既无处罚记录也不在待办', () => { const q = M.pendingSubjects[0]; const o = q.targetId; q.targetId = 'NOPE'; return () => { q.targetId = o; }; }],
   ['轨迹点坐标越界', () => { const t = M.liveTargets[0]; const o = t.track[2].lon; t.track[2].lon = -0.05; return () => { t.track[2].lon = o; }; }],
   ['轨迹点分型统计与实际不符', () => { const t = M.liveTargets[0]; return set(t.track[1], 'kind', 'bridge'); }],
   ['弥合率退回常数', () => { const os = M.liveTargets.map(t => t.track.map(p => p.kind)); M.liveTargets.forEach(t => t.track.forEach((p, i) => { p.kind = (i >= 10 && i <= 13) ? 'bridge' : (i >= t.track.length - 2 ? 'pred' : 'meas'); })); return () => M.liveTargets.forEach((t, j) => t.track.forEach((p, i) => { p.kind = os[j][i]; })); }],
   ['高度缺失档被抹掉', () => { const b = M.stats.aglBands.find(x => x.absent); return set(b, 'value', 0); }],
   ['AOA 目标补上经纬度', () => { const t = M.allTargets.find(x => x.posValid === false); return set(t, 'lon', 118.5); }],
-  ['立案快照跟随后续修订改变', () => { const c = M.cases[0]; return set(c.filingSnapshot, 'legal_status', '待确认'); }],
+  ['事件确认快照跟随后续修订改变', () => { const c = M.cases[0]; return set(c.filingSnapshot, 'legal_status', '待确认'); }],
   ['风筝被当成目标类型', () => set(M.allTargets[9], 'type', '风筝')],
   ['设备停用但仍报在线', () => { const d = M.devices.find(x => x.disabled); return d ? set(d, 'status', '在线') : null; }],
   ['角色用户数与实际不符', () => set(M.ROLES[0], 'users', 99)],
@@ -96,6 +96,7 @@ const INJECTIONS = [
   /* fail-closed 兜底：这两条注入模拟"新增枚举值忘了登记" */
   /* 反制授权凭据：这次缺陷是双向的，两个方向各注一次 */
   ['已实施反制的案件缺授权凭据', () => { const a = M.authLogs[0]; const i = M.authLogs.indexOf(a); M.authLogs.splice(i, 1); return () => M.authLogs.splice(i, 0, a); }],
+  ['禁飞区闯入核实后跳过反制', () => { const c = M.cases.find(x => (x.filingSnapshot.violation_reasons || []).includes('侵入禁飞区')); return c ? set(c, 'counterApplicable', false) : null; }],
   ['孤儿授权（案件未走到该环节）', () => { const c = M.cases.find(x => !x.counterApplicable || x.stage <= 3); return set(M.authLogs[1], 'caseId', c.id); }],
   ['未实施反制却标该环节已完成', () => { const c = M.cases.find(x => !x.counterApplicable); const st = c.steps[3]; const o = { d: st.done, t: st.t }; st.done = true; st.t = '2026-08-20 10:00:00'; return () => { st.done = o.d; st.t = o.t; }; }],
   ['干扰频段裸填具体值（无 bandSource）', () => set(M.authLogs[0], 'band', '2.4GHz / 5.8GHz / GNSS')],
@@ -164,15 +165,16 @@ const INJECTIONS = [
      —— 而"影响不到"正是这条不变式本身。
      已用**实现替换**验证过：在副本上给 advanceCase 写一份自己的判据（只查是否走完、不查归属），
      该断言立刻报红并列出 26 处不一致。副本已删。 */
-  ['回退后残留完成时间', () => { const c = M.cases.find(x => x.stage < 6); const st = c.steps[c.stage]; const o = st.t; st.t = '2026-08-20 10:00:00'; return () => { st.t = o; }; }],
+  ['回退后残留完成时间', () => { const c = M.cases.find(x => x.stage < 4); const st = c.steps[c.stage]; const o = st.t; st.t = '2026-08-20 10:00:00'; return () => { st.t = o; }; }],
   ['回退未留理由', () => { const c = M.cases[0]; c.restageLog = [{ at: '2026-08-26 10:00:00', from: 3, to: 1, operator: '张三' }]; return () => { delete c.restageLog; }; }],
   ['同步记录说不出来源模块', () => { const r = M.riskNotices[0]; const o = r.srcModule; delete r.srcModule; return () => { r.srcModule = o; }; }],
   ['同步记录用单值字段承载关联（refs 被清空）', () => { const r = M.riskNotices[1]; const o = r.refs; r.refs = []; return () => { r.refs = o; }; }],
   ['同步回执退回成写死的词（无重试计数）', () => { const r = M.riskNotices[2]; const o = r.retry; delete r.retry; return () => { r.retry = o; }; }],
-  ['案件状态与推导来源脱钩', () => { const c = M.cases.find(x => x.status === '已结案'); return set(c, 'status', '待归档'); }],
-  ['未立案的案件被标为已立案', () => { const c = M.cases.find(x => x.stage < 3); return c ? set(c, 'status', '已立案') : null; }],
+  ['案件状态与推导来源脱钩', () => { const c = M.cases.find(x => x.status === '已结案'); return set(c, 'status', '处置中'); }],
+  ['未完成核实的记录被标为处置中', () => { const c = M.cases.find(x => x.stage < 2); return c ? set(c, 'status', '处置中') : null; }],
   ['环节有完成时间却标未完成', () => { const c = M.cases.find(x => x.steps.some(st => st.done)); const st = c.steps.find(x => x.done); return set(st, 'done', false); }],
-  ['处置环节丢失归属模块', () => { const f = M.DISPOSAL_FLOW[3]; const o = f.owner; delete f.owner; return () => { f.owner = o; }; }],
+  ['处置环节丢失归属模块', () => { const f = M.DISPOSAL_FLOW[2]; const o = f.owner; delete f.owner; return () => { f.owner = o; }; }],
+  ['处置流程缺少“通知处罚部门”环节', () => { const f = M.DISPOSAL_FLOW.pop(); return () => { M.DISPOSAL_FLOW.push(f); }; }],
   ['规则版本类型越界', () => set(M.ruleVersions[0], 'ruleKind', 'device')],
   ['同类规则出现两个当前生效版本', () => { const v = M.ruleVersions.find(x => x.ruleKind === 'airspace' && x.status === '历史'); return set(v, 'status', '当前生效'); }],
   ['某类规则没有当前生效版本', () => { const v = M.ruleVersions.find(x => x.ruleKind === 'route' && x.status === '当前生效'); return set(v, 'status', '历史'); }],
@@ -191,7 +193,7 @@ const INJECTIONS = [
      本地 UTC-4 时，`e.ts-10min` 经 toISOString 反而比 e.ts 晚 3 小时，注入就成了"更晚"，
      断言当然抓不到。时区在这个项目里已经咬过一次（顶栏/基准/机器时间三套），这里同理。 */
   ['通报时刻早于事件发生', () => { const n = M.riskNotices[0]; const e = M.riskEvents.find(y => y.id === n.eventId); const o = n.at; n.at = M.util.fmtDT(new Date(e.ts - 600000)); return () => { n.at = o; }; }],
-  ['案件取证材料早于告警触发', () => { const f = M.evidenceFiles.find(x => ['光电录像','光电抓拍图','雷达轨迹快照','现场照片'].includes(x.kind) && x.refs.some(r => r.kind === 'case')); const c = M.cases.find(y => y.id === f.refs.find(r => r.kind === 'case').id); const d = new Date(c.ts - 600000); const o = f.capturedAt; f.capturedAt = d.toISOString().slice(0,19).replace('T',' '); return () => { f.capturedAt = o; }; }],
+  ['案件取证材料早于告警触发', () => { const f = M.evidenceFiles.find(x => ['光电录像','光电抓拍图','雷达轨迹快照','现场照片'].includes(x.kind) && x.refs.some(r => r.kind === 'case')); const c = M.cases.find(y => y.id === f.refs.find(r => r.kind === 'case').id); const o = f.capturedAt; f.capturedAt = M.util.fmtDT(new Date(c.ts - 600000)); return () => { f.capturedAt = o; }; }],
   ['归档记录说不出产生动作', () => { const f = M.evidenceFiles[5]; const o = f.originAction; f.originAction = ''; return () => { f.originAction = o; }; }],
   ['来源模块暴露内部标识', () => { const f = M.evidenceFiles[6]; return set(f, 'srcModule', 'rule-engine'); }],
   ['上级下发的空域被置为可编辑', () => { const a = M.airspaces.find(x => x.source === '上级管控平台'); return set(a, 'editable', true); }],
@@ -205,6 +207,8 @@ const INJECTIONS = [
   ['某角色没有可用账号', () => { const us = M.users.filter(u => u.role === 'R5'); const o = us.map(u => u.status); us.forEach(u => u.status = '已停用'); return () => us.forEach((u, i) => u.status = o[i]); }],
   ['审计员被赋予反制授权', () => { const i = M.PERM_MODULES.indexOf('反制/干扰授权'); const o = M.PERM.R5[i]; M.PERM.R5[i] = 'AUTH'; return () => { M.PERM.R5[i] = o; }; }],
   ['处置授权人被收回反制授权', () => { const i = M.PERM_MODULES.indexOf('反制/干扰授权'); const o = M.PERM.R2[i]; M.PERM.R2[i] = 'OP'; return () => { M.PERM.R2[i] = o; }; }],
+  ['菜单开放但无对应查看权限', () => { const i = M.PERM_MODULES.indexOf('融合感知中心'); const op = M.PERM.R3[i], om = M.MENU_PERM.R3.situation; M.PERM.R3[i] = '—'; M.MENU_PERM.R3.situation = true; return () => { M.PERM.R3[i] = op; M.MENU_PERM.R3.situation = om; }; }],
+  ['超级管理员菜单被关闭', () => { const o = M.MENU_PERM.R1.roles; M.MENU_PERM.R1.roles = false; return () => { M.MENU_PERM.R1.roles = o; }; }],
   ['停用账号仍被放行', () => { const u = M.users.find(x => x.status !== '正常'); return set(u, 'status', '正常'); }],
   /* 下面这组针对"构造按规则 R、断言查规则 R"的一类断言 —— 静态筛把它们标为候选同源，
      但它们守的是**别处的代码违反 R**（场景改写、后续赋值），而不是构造自身。

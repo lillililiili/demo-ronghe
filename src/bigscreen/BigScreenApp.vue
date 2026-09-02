@@ -150,10 +150,10 @@ function rowProps(action, label) {
 const alarmRowProps = rowProps(goAlarm, row => `查看告警 ${row.id} 详情`);
 
 const alarmColumns = [
-  { title: '时间', key: 'time', width: 82, render: row => mono((row.time || '').slice(11, 19)) },
-  { title: '告警类型', key: 'type', ellipsis: { tooltip: true } },
-  { title: '等级', key: 'level', width: 54, render: row => colored(`● ${row.level}`, alarmColor[row.level] || 'var(--txt-2)') },
-  { title: '状态', key: '_flowStatus', width: 72 }
+  { title: '时间', key: 'time', render: row => mono((row.time || '').slice(11, 19)) },
+  { title: '告警类型', key: 'type' },
+  { title: '等级', key: 'level', render: row => colored(`● ${row.level}`, alarmColor[row.level] || 'var(--txt-2)') },
+  { title: '状态', key: '_flowStatus' }
 ];
 
 function renderCharts() {
@@ -342,7 +342,7 @@ onBeforeUnmount(() => {
           <section class="panel">
             <div class="ph"><h3>实时告警</h3><div class="bs-panel-meta"><span class="sub">{{ alarmSummary }}</span><button class="bs-module-link" @click="go('alarms')">进入告警 →</button></div></div>
             <div class="pb bs-table-body">
-              <n-data-table class="bs-naive-table" :columns="alarmColumns" :data="alarms" :pagination="false" :bordered="false" :single-line="true" size="small" :row-props="alarmRowProps" />
+              <n-data-table class="bs-naive-table" :columns="alarmColumns" :data="alarms" :pagination="false" :bordered="false" :single-line="true" table-layout="auto" size="small" :row-props="alarmRowProps" />
             </div>
           </section>
         </aside>

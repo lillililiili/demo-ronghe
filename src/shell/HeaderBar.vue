@@ -11,6 +11,12 @@ import { refreshWeather, weatherState } from '../services/weather.js';
 
 const store = useAppStore();
 const M = window.MOCK, U = window.UI;
+const currentUser = computed(() => { store.accessRevision; return M.currentUser || { name: '用户', account: '—', roleName: '—', org: '—' }; });
+const avatarText = computed(() => currentUser.value.name.slice(-1));
+const canBigscreen = computed(() => { store.accessRevision; return M.canMenu('bigscreen'); });
+const canAlarms = computed(() => { store.accessRevision; return M.canMenu('alarms'); });
+const canUsers = computed(() => { store.accessRevision; return M.canMenu('users'); });
+const canRoles = computed(() => { store.accessRevision; return M.canMenu('roles'); });
 
 /* ---------- 时钟：系统当前时间与 Mock 数据统计时间分离 ---------- */
 let clkTimer = null, weatherTimer = null;
@@ -47,7 +53,6 @@ function toggleBig() {
     document.exitFullscreen().catch(() => { });
   }
   window.dispatchEvent(new Event('resize'));
-  toast(on ? '已进入全屏模式（字号放大，适配指挥大厅）' : '已退出全屏模式', 'ok');
 }
 function onFsChange() {
   if (!document.fullscreenElement && document.body.classList.contains('bigscreen')) {
@@ -68,12 +73,13 @@ function goAlarms() { location.hash = '#/alarms'; }
 function onMenu(k) {
   closeMenu();
   if (k === 'users') location.hash = '#/users';
+  else if (k === 'roles') location.hash = '#/roles';
   else if (k === 'carousel') carouselDlg();
   else if (k === 'me') openModal({
     title: '个人信息', width: '440px',
-    body: U.kv([['账号', 'admin'], ['姓名', '系统管理员'], ['角色', '超级管理员'],
-    ['所属单位', '东营市低空安全管理中心'], ['双因子认证', '已开启'],
-    ['最后登录', M.util.fmtDT(M.CONF.demoTime)], ['登录 IP', '10.20.1.15']])
+    body: U.kv([['账号', currentUser.value.account], ['姓名', currentUser.value.name], ['角色', currentUser.value.roleName],
+    ['所属单位', currentUser.value.org], ['双因子认证', currentUser.value.mfa],
+    ['最后登录', currentUser.value.lastLogin], ['登录 IP', currentUser.value.lastIp]])
   });
   else toast('已退出登录(Demo 环境不跳转登录页)', 'ok');
 }
@@ -103,20 +109,21 @@ onBeforeUnmount(() => {
     <div class="meta">
       <span class="it" id="clk" v-html="clkHtml"></span>
       <span class="it" id="wea" :title="weatherTitle" v-html="weaHtml"></span>
-      <span class="it"><router-link class="btn ghost" id="btnScreen" to="/bigscreen" title="进入低空安全数据大屏" v-html="screenLabel"></router-link></span>
+      <span v-if="canBigscreen" class="it"><router-link class="btn ghost" id="btnScreen" to="/bigscreen" title="进入低空安全数据大屏" v-html="screenLabel"></router-link></span>
       <span class="it"><button class="btn ghost" id="btnBig" title="全屏模式：放大字号与行距，适配指挥大厅显示" v-html="bigLabel" @click="toggleBig"></button></span>
-      <button class="it bell icon-btn" id="bell" type="button" aria-label="查看告警" @click="goAlarms">
+      <button v-if="canAlarms" class="it bell icon-btn" id="bell" type="button" aria-label="查看告警" @click="goAlarms">
         <svg class="hdr-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>
         <span class="dot" id="bellN">{{ bellN }}</span>
       </button>
-      <button class="user icon-btn" type="button" aria-haspopup="menu" :aria-expanded="String(menuOpen)" @click="toggleMenu"><span class="av">管</span><span>管理员</span><svg class="chev-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 9 5 5 5-5"/></svg></button>
+      <button class="user icon-btn" type="button" aria-haspopup="menu" :aria-expanded="String(menuOpen)" @click="toggleMenu"><span class="av">{{ avatarText }}</span><span>{{ currentUser.name }}</span><svg class="chev-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 9 5 5 5-5"/></svg></button>
     </div>
   </header>
   <Teleport to="body">
     <div class="usermenu" :class="{ open: menuOpen }" @click.stop>
       <div class="mi" data-um="me" @click="onMenu('me')" v-html="U.icon('user') + ' 个人信息'"></div>
       <div class="mi" data-um="ops" @click="onMenu('ops')" v-html="U.icon('settings') + ' 运维管理'"></div>
-      <div class="mi" data-um="users" @click="onMenu('users')" v-html="U.icon('shield') + ' 用户与权限'"></div>
+      <div v-if="canUsers" class="mi" data-um="users" @click="onMenu('users')" v-html="U.icon('user') + ' 用户管理'"></div>
+      <div v-if="canRoles" class="mi" data-um="roles" @click="onMenu('roles')" v-html="U.icon('shield') + ' 角色管理'"></div>
       <div class="mi" data-um="carousel" @click="onMenu('carousel')" v-html="U.icon('play') + ' 大屏轮播'"></div>
       <div class="sep"></div>
       <div class="mi" data-um="logout" @click="onMenu('logout')" v-html="U.icon('logout') + ' 退出登录'"></div>

@@ -2,10 +2,10 @@
    bar/chip 仍 append 到 document.body（Vue 树之外），页面切换走 location.hash，
    vue-router hash 模式原生监听 hashchange。 */
 import { h } from 'vue';
-import { pageTitle } from './navModel.js';
-import { toast } from '../ui/nv.js';
-import { openModal } from '../ui/modal.js';
-import CarouselModal from '../ui/modals/CarouselModal.vue';
+import { pageTitle } from '@/config/navModel.js';
+import { toast } from '@/ui/nv.js';
+import { openModal } from '@/ui/modal.js';
+import CarouselModal from '@/components/modals/CarouselModal.vue';
 
 const curKey = () => (location.hash.replace('#/', '') || 'situation').split('?')[0];
 
@@ -39,7 +39,7 @@ function startCarousel(pages, sec) {
   }, sec * 1000);
 }
 
-/* P4b：受控表单版（样板），字段与校验见 src/ui/modals/CarouselModal.vue 头注释 */
+/* P4b：受控表单版（样板），字段与校验见 src/components/modals/CarouselModal.vue 头注释 */
 export function carouselDlg() {
   if (carTimer) { stopCarousel(); toast('已停止轮播'); return; }
   openModal({

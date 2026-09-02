@@ -1,0 +1,9 @@
+
+/* 处置与处罚 · 证据链卡片：原地查看详情，保留明确的悬停与键盘焦点。 */
+.punish-evidence-card{transition:border-color .15s ease,background-color .15s ease,box-shadow .15s ease}
+@media(hover:hover){
+  .punish-evidence-card:hover{border-color:rgba(92,180,255,.76)!important;box-shadow:0 0 0 1px rgba(92,180,255,.18),0 4px 12px rgba(0,0,0,.2)}
+}
+.punish-evidence-card:focus-visible{outline:2px solid #8fe3e9;outline-offset:2px;position:relative;z-index:1}
+.punish-evidence-card:active{background:linear-gradient(135deg,rgba(61,139,255,.32),rgba(4,12,32,.95))!important}
+@media(prefers-reduced-motion:reduce){.punish-evidence-card{transition:none}}

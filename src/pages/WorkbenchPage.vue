@@ -1,14 +1,14 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { NSelect } from 'naive-ui';
-import { usePageChrome } from '../shell/usePageChrome.js';
-import { toast } from '../ui/nv.js';
-import { openModal, closeModal } from '../ui/modal.js';
-import { openRiskVerification } from '../ui/riskVerificationModal.js';
+import { usePageChrome } from '@/hooks/usePageChrome.js';
+import { toast } from '@/ui/nv.js';
+import { openModal, closeModal } from '@/ui/modal.js';
+import { openRiskVerification } from '@/ui/riskVerificationModal.js';
 import {
   listWorkbenchEvents, getWorkbenchDetail,
   advanceUav, verifyUav, actRisk, openDeviceReboot, verifyDeviceRecovery
-} from '../services/workbenchEvents.js';
+} from '@/services/workbenchEvents.js';
 
 const M = window.MOCK, U = window.UI;
 usePageChrome('workbench');

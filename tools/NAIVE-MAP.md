@@ -7,7 +7,7 @@
 
 | 上游写法 | 本仓写法 | 备注 |
 | --- | --- | --- |
-| `U.toast(m, 'ok')` | `toast(m, 'ok')` | `import { toast } from '../ui/nv.js'` |
+| `U.toast(m, 'ok')` | `toast(m, 'ok')` | `import { toast } from '@/ui/nv.js'` |
 | `U.toast(m, 'err')` | `toast(m, 'err')` | 内部映射 message.success/error/info |
 | `U.toast(m)` | `toast(m)` | msg 含 HTML 时 toast() 自动走渲染函数 |
 
@@ -15,10 +15,10 @@
 
 | 上游写法 | 本仓写法 | 备注 |
 | --- | --- | --- |
-| `U.modal({...})` | `openModal({...})` | 同签名：title/width/body/footer/on/mounted；`import { openModal, closeModal } from '../ui/modal.js'` |
+| `U.modal({...})` | `openModal({...})` | 同签名：title/width/body/footer/on/mounted；`import { openModal, closeModal } from '@/ui/modal.js'` |
 | `U.closeModal()` | `closeModal()` | 会连带收掉 legacy U.modal |
 | footer 内联 `onclick="UI.toast(...)"` | `data-act="xx"` + `on:{xx}` | 内联 onclick 会走 legacy toast，须改造（样例：PunishPage docModal） |
-| —— | `openModal({ render: () => h(Comp), footer: false })` | P4b 受控表单扩展口（样板：ui/modals/CarouselModal.vue） |
+| —— | `openModal({ render: () => h(Comp), footer: false })` | P4b 受控表单扩展口（样板：src/components/modals/CarouselModal.vue） |
 
 桥接层行为契约（modal.js 头注释为准）：单例、掩层关、data-close/data-act 委托、
 mounted(卡片根) nextTick 触发、同一事件内连开两次只落最后一个（微任务合并，防孤儿容器）。
@@ -46,6 +46,6 @@ mask/modal 100 · drawer 150 · toast/message 200 · carousel 300
 
 ## 主题
 
-token 单一真源 = public/assets/css/app.css 第二套 `:root`（~601 行起）。
+token 单一真源 = `src/assets/css/tokens.css`。
 src/ui/theme.js 运行时 getComputedStyle 读取生成 themeOverrides，**不要手抄色值**；
-上游改 token 时 Vue 侧自动跟随，无需重放。
+上游改 token 时把 diff 重放到 `tokens.css`，Vue 侧自动跟随。

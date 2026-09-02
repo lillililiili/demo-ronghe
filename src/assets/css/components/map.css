@@ -1,0 +1,27 @@
+
+/* 地图 */
+.mapwrap{position:relative;width:100%;height:100%;overflow:hidden;border-radius:6px;background:#edf2e9}
+.mapwrap>.mapbase{position:absolute;inset:0;z-index:0;background:#edf2e9}
+.mapwrap>canvas.mapoverlay{position:absolute;inset:0;z-index:2;width:100%;height:100%;pointer-events:none}
+.mapstatus{position:absolute;left:50%;top:10px;z-index:4;transform:translateX(-50%);pointer-events:none;
+  padding:5px 10px;border:1px solid rgba(71,91,106,.18);border-radius:5px;background:rgba(255,255,255,.94);
+  color:#415568;font-size:11px;line-height:1.2;white-space:nowrap;box-shadow:0 4px 14px rgba(43,64,78,.14)}
+.mapstatus.is-loading:before{content:'';display:inline-block;width:7px;height:7px;margin-right:6px;border-radius:50%;
+  background:#22d3ee;box-shadow:0 0 8px rgba(34,211,238,.8);animation:map-status-pulse 1.2s ease-in-out infinite}
+.mapstatus.is-fallback{color:#ffd07a;border-color:rgba(255,176,32,.35);background:rgba(38,27,8,.88)}
+@keyframes map-status-pulse{50%{opacity:.35;transform:scale(.75)}}
+.mapctl{position:absolute;left:10px;top:10px;display:flex;flex-direction:column;gap:5px;z-index:5}
+.mapctl .mb{width:30px;height:30px;border-radius:5px;background:rgba(255,255,255,.96);border:1px solid rgba(61,80,94,.2);
+  color:#334a5d;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:14px;box-shadow:0 2px 8px rgba(39,59,72,.15)}
+.mapctl .mb:hover{border-color:#3484c5;color:#1769a6;background:#fff}
+.mapctl .mb.on{background:var(--blue);color:#fff;border-color:var(--blue)}
+.maplegend{position:absolute;right:10px;bottom:10px;background:rgba(255,255,255,.94);border:1px solid rgba(61,80,94,.2);
+  border-radius:6px;padding:8px 10px;font-size:11.5px;color:#405568;z-index:5;line-height:1.9;box-shadow:0 3px 12px rgba(39,59,72,.14)}
+.maplegend .li{display:flex;align-items:center;gap:6px}
+.maplegend .sw{width:14px;height:0;border-top:2px dashed}
+.maptip{position:absolute;z-index:8;background:rgba(255,255,255,.97);border:1px solid rgba(61,80,94,.2);border-radius:6px;
+  padding:9px 11px;font-size:12px;color:#293f51;pointer-events:none;box-shadow:0 8px 24px rgba(39,59,72,.18);display:none;min-width:190px}
+.maptip .kv dt{color:#718394}.maptip .kv dd{color:#293f51}
+.maptip .kv{gap:3px 10px;font-size:12px}
+.mapscale{position:absolute;left:12px;bottom:27px;font-size:11px;color:#405568;text-shadow:0 1px 2px #fff;z-index:5}
+.mapscale .bar{height:4px;border:1px solid #405568;border-top:0;width:70px}

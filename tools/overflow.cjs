@@ -27,7 +27,7 @@
 
    ── 判据为什么长这样：四版都错过 ──────────────────────────────
    v1  查 `.scroll` 类名
-       → 类名≠滚动容器。app.css 里 `.pb` 有 overflow:auto 却没有这个类，
+       → 类名≠滚动容器。全局样式里 `.pb` 有 overflow:auto 却没有这个类，
          于是九次复现全部落空，真正溢出的元素一次都没进过查询结果。
    v2  查元素自身 computed overflow-x
        → 仍然错：在 **overflow:visible 的元素**上量 scrollWidth 毫无意义。

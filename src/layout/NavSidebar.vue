@@ -3,8 +3,8 @@
    .on/.has/.open/.mini/.navfoot/.fold），CSS 原样命中。 */
 import { computed } from 'vue';
 import { useRoute } from 'vue-router';
-import { NAV, routeKey } from './navModel.js';
-import { useAppStore } from '../stores/app.js';
+import { NAV, routeKey } from '@/config/navModel.js';
+import { useAppStore } from '@/stores/app.js';
 
 const route = useRoute();
 const store = useAppStore();

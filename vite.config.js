@@ -1,8 +1,12 @@
 import { defineConfig, loadEnv } from 'vite';
 import vue from '@vitejs/plugin-vue';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const rootDir = fileURLToPath(new URL('.', import.meta.url));
 
 export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, __dirname, '');
+  const env = loadEnv(mode, rootDir, '');
   const amapRuntimeConfig = {
     key: env.VITE_AMAP_KEY || '',
     // 安全密钥仅允许进入开发服务器响应，生产构建强制剔除。
@@ -10,6 +14,11 @@ export default defineConfig(({ mode }) => {
     serviceHost: env.VITE_AMAP_SERVICE_HOST || ''
   };
   return {
+    resolve: {
+      alias: {
+        '@': path.join(rootDir, 'src')
+      }
+    },
     plugins: [
       vue(),
       {

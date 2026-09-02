@@ -2,7 +2,7 @@
  * nv.js —— Naive UI 命令式 API 单一出口（createDiscreteApi）。
  *
  * message 对应旧 U.toast、dialog 备用（P4 个别确认框可用）。
- * z-index 显式对齐旧层级（ui.js/app.css：mask 100 / drawer 150 / toast 200 /
+ * z-index 显式对齐旧层级（ui.js/全局样式：mask 100 / drawer 150 / toast 200 /
  * carousel 300）—— 并存期内新旧同类控件层序完全一致，P4 结束后再评估恢复默认。
  * message 容器位置对齐旧 .toast（top:70px 居中）。
  * 主题与 App.vue 的 n-config-provider 共用 theme.js 这一份配置。

@@ -1,0 +1,12 @@
+
+/* 徽标 */
+.tag{display:inline-block;padding:1px 7px;border-radius:4px;font-size:12px;line-height:1.7;white-space:nowrap;border:1px solid transparent}
+.t-red{background:rgba(255,77,94,.16);color:#ff8b95;border-color:rgba(255,77,94,.4)}
+.t-orange{background:rgba(255,139,61,.16);color:#ffb083;border-color:rgba(255,139,61,.4)}
+.t-amber{background:rgba(255,176,32,.16);color:#ffd07a;border-color:rgba(255,176,32,.4)}
+.t-green{background:rgba(47,208,110,.16);color:#79e5a5;border-color:rgba(47,208,110,.4)}
+.t-blue{background:rgba(61,139,255,.16);color:#8fbaff;border-color:rgba(61,139,255,.4)}
+.t-cyan{background:rgba(34,211,238,.16);color:#79e6f6;border-color:rgba(34,211,238,.4)}
+.t-purple{background:rgba(169,123,255,.16);color:#c8adff;border-color:rgba(169,123,255,.4)}
+.t-gray{background:rgba(140,160,190,.14);color:#a8bcd8;border-color:rgba(140,160,190,.3)}
+.dot-s{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:5px;vertical-align:1px}

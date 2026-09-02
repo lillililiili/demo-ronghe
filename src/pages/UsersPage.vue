@@ -6,10 +6,10 @@ export default {};
 <script setup>
 import { computed, h, ref } from 'vue';
 import { NInput, NSelect, NTabs, NTab } from 'naive-ui';
-import { usePageChrome } from '../shell/usePageChrome.js';
-import { toast } from '../ui/nv.js';
-import { openModal, closeModal } from '../ui/modal.js';
-import ControlledFormModal from '../ui/modals/ControlledFormModal.vue';
+import { usePageChrome } from '@/hooks/usePageChrome.js';
+import { toast } from '@/ui/nv.js';
+import { openModal, closeModal } from '@/ui/modal.js';
+import ControlledFormModal from '@/components/modals/ControlledFormModal.vue';
 
 const M = window.MOCK, U = window.UI;
 usePageChrome('users');

@@ -1,0 +1,23 @@
+/* ---------- F0106:大屏模式与轮播 ---------- */
+/* 大屏模式（F0106）：以下每一条都必须**严格大于**普通视图对应值。
+   相等 = 该项无效，更小 = 反向。上一轮 12 项里 6 项相等、3 项更小，
+   于是点「大屏」画面整体反而变紧 —— 一个叫大屏的按钮做的是反的。
+   改这里或改普通视图基准值时，两侧要一起看，不要只改一侧。 */
+body.bigscreen{font-size:14px}
+body.bigscreen .kpi .vl{font-size:41px}
+body.bigscreen .kpi .lb{font-size:15px}
+body.bigscreen table.tb{font-size:13.5px}
+body.bigscreen table.tb th,body.bigscreen table.tb td{padding:10px 12px}
+body.bigscreen .panel>.ph h3{font-size:17.5px}
+body.bigscreen .nav{width:190px}
+body.bigscreen .kv{font-size:15px}
+body.bigscreen .tag{font-size:12.5px}
+/* 轮播进度条 */
+.carousel-bar{position:fixed;left:0;top:0;height:2px;background:linear-gradient(90deg,var(--cyan),var(--blue));
+  z-index:300;width:0;transition:width .25s linear;box-shadow:0 0 8px rgba(34,211,238,.7)}
+.carousel-chip{position:fixed;right:16px;bottom:42px;z-index:300;display:flex;align-items:center;gap:9px;
+  background:rgba(11,30,74,.95);border:1px solid rgba(64,158,255,.5);border-radius:20px;padding:6px 14px;
+  font-size:12.5px;box-shadow:var(--shadow)}
+.carousel-chip b{color:var(--cyan)}
+.carousel-chip .x{cursor:pointer;color:var(--txt-3);font-size:15px;line-height:1}
+.carousel-chip .x:hover{color:#fff}

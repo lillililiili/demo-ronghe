@@ -16,11 +16,11 @@ export default {};
    无运行时分叉路径）。 */
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue';
 import { NPagination } from 'naive-ui';
-import { usePageChrome } from '../shell/usePageChrome.js';
-import UPanel from '../ui/UPanel.vue';
-import UKpis from '../ui/UKpis.vue';
-import { toast } from '../ui/nv.js';
-import { openModal, closeModal } from '../ui/modal.js';
+import { usePageChrome } from '@/hooks/usePageChrome.js';
+import UPanel from '@/components/UPanel.vue';
+import UKpis from '@/components/UKpis.vue';
+import { toast } from '@/ui/nv.js';
+import { openModal, closeModal } from '@/ui/modal.js';
 
 const M = window.MOCK, U = window.UI, CH = window.CH;
 usePageChrome('devices');

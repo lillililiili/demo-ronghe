@@ -1,10 +1,10 @@
 <script setup>
 /* __ui-lab —— 新旧控件同屏对照页（仅 dev 路由注册，见 router/index.js）。
    用途：P0 主题校准的验收台 —— 同一段中文文案、同一语义色，
-   左列旧控件（app.css 类）右列 Naive UI，目测色板/圆角/字号/行高是否违和。 */
+   左列旧控件（全局样式类）右列 Naive UI，目测色板/圆角/字号/行高是否违和。 */
 import { ref } from 'vue';
 import { NButton, NTag, NPagination, NModal, NInput, NSelect, NCard, NDrawer, NDrawerContent } from 'naive-ui';
-import { message } from './nv.js';
+import { message } from '@/ui/nv.js';
 
 const U = window.UI;
 const showModal = ref(false);
@@ -30,7 +30,7 @@ const oldPagerHtml = U.pager({ total: 137, page: 3, size: 10 });
 <template>
   <div class="view" id="view" style="padding:20px">
     <div class="warnbox" style="margin-bottom:14px">
-      __ui-lab 主题校准对照台（仅 dev）：左＝旧控件（app.css），右＝Naive UI（theme.js 映射）。
+      __ui-lab 主题校准对照台（仅 dev）：左＝旧控件（全局样式类），右＝Naive UI（theme.js 映射）。
       验收标准：色板 / 圆角 / 字号 / 行高目测无违和。</div>
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">

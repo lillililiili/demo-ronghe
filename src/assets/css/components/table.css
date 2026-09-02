@@ -1,0 +1,15 @@
+
+/* 表格 */
+table.tb{width:100%;border-collapse:collapse;font-size:12.5px}
+table.tb th{
+  background:#13294e;color:#bcd6ff;font-weight:600;text-align:left;
+  padding:8px 10px;white-space:nowrap;position:sticky;top:0;z-index:2;border-bottom:1px solid var(--line);
+}
+table.tb td{padding:7px 10px;border-bottom:1px solid rgba(64,158,255,.08);color:var(--txt-2);white-space:nowrap}
+table.tb tbody tr:hover{background:rgba(61,139,255,.10)}
+table.tb tbody tr.on{background:rgba(61,139,255,.18)}
+table.tb tbody tr{cursor:pointer}
+table.tb td.num{font-family:Menlo,monospace;color:var(--txt);font-variant-numeric:tabular-nums}
+.lnk{color:var(--blue);cursor:pointer}
+.lnk:hover{text-decoration:underline;color:#7fb4ff}
+.lnk+.lnk{margin-left:8px}

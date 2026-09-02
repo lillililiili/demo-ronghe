@@ -1,0 +1,35 @@
+
+/* KPI */
+/* 列数不写死：此前 repeat(6,1fr) 让 KPI 不足 6 个的页面留出空轨道，
+   卡片又被挤到放不下 12.5px 的中文标签而静默裁切（overflow:hidden 且无省略号）。
+   ── auto-fit 别改回 repeat(6,1fr) ──
+   实测 16 页里 13 页有 .kpis，且**每一页都正好 6 张**，所以 auto-fit 的
+   "不足 6 个也不留空轨道"这份灵活性目前一个使用者都没有。但它是为上面那个
+   静默裁切引入的：一旦改回定死列数，那个坑就原样回来了。看到"反正都是 6 张"
+   而顺手简化，正是它会被重新挖开的方式。
+   ── minmax 为什么是 190 而不是 198 ──
+   6 张排一行需要容器 6×190+5×12 = 1200px；1440 视口下 .kpis 容器实测只有
+   1231px，而按原来的 198 需要 6×198+5×12 = 1248px —— **差 17px**，于是
+   5 列 + 末行一张孤卡。临界视口约 1457px，所以 1600 正常、1440 掉两行。
+   上限须 ≤ (1231-5×12)/6 = 195.17px，取 190 留余量。
+   卡片实宽不受这个数影响（1fr 均分剩余空间，三档 190/176/168 实测都是 195px），
+   它只决定"能不能排下"。这不是随手调的整数，改之前先重算这两行算式。 */
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;align-items:stretch}
+.kpi{
+  display:flex;align-items:center;gap:12px;padding:14px 15px;border-radius:var(--r);
+  background:linear-gradient(135deg,rgba(13,35,80,.9),rgba(8,20,50,.75));
+  border:1px solid var(--line);position:relative;overflow:hidden;
+}
+.kpi:after{content:"";position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(120px 60px at 100% 0%,rgba(61,139,255,.16),transparent 70%)}
+.kpi .ic{width:48px;height:48px;flex:none;border-radius:10px;display:flex;align-items:center;justify-content:center}
+.kpi .ic svg{width:24px;height:24px;stroke-width:1.6;fill:none;stroke:currentColor}
+.kpi .tx{min-width:0}
+.kpi .lb{font-size:13.5px;color:var(--txt-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fc h5{min-width:0}
+.fc{min-width:0}
+.kpi .vl{font-size:34px;font-weight:700;line-height:1.25;font-family:"DIN Alternate","Bahnschrift",Menlo,sans-serif;letter-spacing:.5px;font-variant-numeric:tabular-nums}
+/* 描述行允许折行：它是 KPI 里最长的一段，强行 nowrap 会把整张卡撑出容器并被静默裁掉。
+   同排卡片由 grid 拉齐高度，折行不会造成参差。 */
+.kpi .dt{font-size:12px;color:var(--txt-3);line-height:1.5;margin-top:2px}
+.up{color:var(--red)} .dn{color:var(--green)} .flat{color:var(--txt-3)}

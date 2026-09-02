@@ -42,5 +42,5 @@ export const VUE_PAGES = {
 
 /* dev-only：Naive UI 主题校准对照台（P0 验收用）。异步组件，不进生产构建。 */
 if (import.meta.env.DEV) {
-  VUE_PAGES['__ui-lab'] = defineAsyncComponent(() => import('../ui/UiLab.vue'));
+  VUE_PAGES['__ui-lab'] = defineAsyncComponent(() => import('@/components/UiLab.vue'));
 }

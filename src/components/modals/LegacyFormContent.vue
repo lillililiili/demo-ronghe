@@ -1,6 +1,6 @@
 <script setup>
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
-import { teardownLegacyControls, upgradeLegacyControls } from '../legacyControls.js';
+import { teardownLegacyControls, upgradeLegacyControls } from '@/ui/legacyControls.js';
 
 const props = defineProps({
   html: { type: String, default: '' },

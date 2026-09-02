@@ -1,6 +1,6 @@
 <!-- =============================================================================
   CarouselModal —— P4b 受控表单样板（首个真 Naive 表单弹窗）。
-  legacy 锚点：app.js carouselDlg()（本项目由 shell/useCarousel.js 移植调用）。
+  legacy 锚点：app.js carouselDlg()（本项目由 src/hooks/useCarousel.js 移植调用）。
   字段清单：sec（切换间隔 10/15/30/60 秒，默认 15）
            pages（参与轮播页面多选，默认 CAROUSEL_DEFAULT 四页）
   校验：pages 至少一项，否则 toast err（与 legacy 同文案）。
@@ -9,9 +9,9 @@
 <script setup>
 import { ref } from 'vue';
 import { NSelect, NCheckboxGroup, NCheckbox, NButton } from 'naive-ui';
-import { ROUTES, pageTitle } from '../../shell/navModel.js';
-import { toast } from '../nv.js';
-import { closeModal } from '../modal.js';
+import { ROUTES, pageTitle } from '@/config/navModel.js';
+import { toast } from '@/ui/nv.js';
+import { closeModal } from '@/ui/modal.js';
 
 const props = defineProps({
   defaults: { type: Array, default: () => [] },

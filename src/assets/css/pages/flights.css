@@ -1,0 +1,7 @@
+
+/* ---------- 「本航线风险」行：点行在地图上高亮 ----------
+   新增选择器，未改动任何既有规则。 */
+.flrisk-row{padding:6px 4px;border-bottom:1px solid rgba(64,158,255,.08);
+  border-radius:6px;cursor:pointer;transition:background .15s,box-shadow .15s}
+.flrisk-row:hover{background:rgba(64,158,255,.07)}
+.flrisk-row.on{background:rgba(34,211,238,.13);box-shadow:inset 3px 0 0 var(--cyan)}

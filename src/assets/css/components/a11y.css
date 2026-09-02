@@ -1,0 +1,16 @@
+
+/* ---------- 焦点与可达性 ---------- */
+.btn:focus-visible,input.ip:focus-visible,select.sel:focus-visible,
+table.tb tbody tr:focus-visible,.tree .tn:focus-visible,.tabs .tab:focus-visible,
+.pager .pg:focus-visible,.lnk:focus-visible{
+  outline:2px solid var(--cyan);outline-offset:1px;border-radius:4px;
+}
+button{touch-action:manipulation}
+@media (prefers-reduced-motion: reduce){
+  *,*:before,*:after{animation-duration:.01ms !important;transition-duration:.01ms !important}
+}
+/* 表格复选框列 */
+table.tb td.ck,table.tb th.ck{width:34px;text-align:center;padding:6px 4px}
+table.tb input[type=checkbox]{accent-color:var(--blue);cursor:pointer;width:14px;height:14px;vertical-align:middle}
+/* 树节点选中态 */
+.tree .tn.filter-on{background:rgba(34,211,238,.16);color:#79e6f6;border:1px solid rgba(34,211,238,.35)}

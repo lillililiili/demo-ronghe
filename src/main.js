@@ -1,15 +1,17 @@
 /* main.js —— Vue 外壳入口。legacy 层（mock/ui/charts/…/pages/search）已由
    index.html 的经典 script 标签按原顺序加载完毕（经典脚本先于 module 执行），
    这里只负责：① 建 APP/ROUTES 全局 shim（legacy 页面与 search.js 消费）
-   ② 挂 Vue 应用。 */
+   ② 挂 Vue 应用。
+   CSS 必须先于 theme.js 求值，保证 getComputedStyle 能读到 token。 */
+import '@/assets/css/index.css';
 import { createApp } from 'vue';
 import { createPinia } from 'pinia';
-import App from './shell/App.vue';
-import { router } from './router/index.js';
-import { ROUTES, pageTitle } from './shell/navModel.js';
-import { useAppStore } from './stores/app.js';
-import { openConfirm } from './ui/confirm.js';
-import { openRiskVerification } from './ui/riskVerificationModal.js';
+import App from '@/layout/App.vue';
+import { router } from '@/router/index.js';
+import { ROUTES, pageTitle } from '@/config/navModel.js';
+import { useAppStore } from '@/stores/app.js';
+import { openConfirm } from '@/ui/confirm.js';
+import { openRiskVerification } from '@/ui/riskVerificationModal.js';
 
 const pinia = createPinia();
 const store = useAppStore(pinia);

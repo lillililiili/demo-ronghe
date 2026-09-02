@@ -1,0 +1,7 @@
+
+/* ---------- 通用 ---------- */
+.row{display:flex;gap:14px;min-height:0}
+.col{display:flex;flex-direction:column;gap:14px;min-width:0;min-height:0}
+.grid{display:grid;gap:14px}
+.mb12{margin-bottom:14px}
+.f1{flex:1;min-width:0}

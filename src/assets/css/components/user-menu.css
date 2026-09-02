@@ -1,0 +1,20 @@
+
+/* ---------- 用户下拉菜单 ---------- */
+.usermenu{position:absolute;right:14px;top:52px;z-index:120;width:170px;
+  background:linear-gradient(180deg,#0b1e4a,#081538);border:1px solid rgba(64,158,255,.45);
+  border-radius:8px;box-shadow:var(--shadow);padding:6px;display:none}
+.usermenu.open{display:block}
+.usermenu .mi{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:5px;
+  font-size:12.5px;color:var(--txt-2);cursor:pointer}
+.usermenu .mi:hover{background:rgba(61,139,255,.16);color:#fff}
+.usermenu .sep{height:1px;background:var(--line-2);margin:4px 6px}
+/* 权限矩阵 */
+.pmx{width:100%;border-collapse:collapse;font-size:12px}
+.pmx th,.pmx td{border:1px solid rgba(64,158,255,.14);padding:6px 8px;text-align:center;white-space:nowrap}
+.pmx th{background:#13294e;color:#bcd6ff;position:sticky;top:0;z-index:2}
+.pmx td:first-child,.pmx th:first-child{text-align:left;position:sticky;left:0;background:#0d2148;z-index:1}
+.pmx td .na{color:var(--txt-3)}
+/* 模拟视频 */
+.eovideo{position:relative;width:100%;background:#000;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.eovideo canvas{display:block;width:100%}
+

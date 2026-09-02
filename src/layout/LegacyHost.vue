@@ -7,8 +7,8 @@
    仍是 .main 的 flex 子项（.view{flex:1} 依赖）。 */
 import { ref, watch, onMounted, onBeforeUnmount } from 'vue';
 import { useRoute } from 'vue-router';
-import { ROUTES, groupOf, routeKey } from './navModel.js';
-import { useAppStore } from '../stores/app.js';
+import { ROUTES, groupOf, routeKey } from '@/config/navModel.js';
+import { useAppStore } from '@/stores/app.js';
 
 const route = useRoute();
 const store = useAppStore();

@@ -6,12 +6,12 @@
    CH.disposeAll() 不会误杀下一页的图表。 */
 import { computed } from 'vue';
 import { useRoute } from 'vue-router';
-import { routeKey } from './navModel.js';
-import { useAppStore } from '../stores/app.js';
-import { VUE_PAGES } from '../pages/registry.js';
+import { routeKey } from '@/config/navModel.js';
+import { useAppStore } from '@/stores/app.js';
+import { VUE_PAGES } from '@/pages/registry.js';
 import LegacyHost from './LegacyHost.vue';
-import AccessDeniedPage from '../pages/AccessDeniedPage.vue';
-import { canAccessRoute } from '../services/accessControl.js';
+import AccessDeniedPage from '@/pages/AccessDeniedPage.vue';
+import { canAccessRoute } from '@/services/accessControl.js';
 
 const route = useRoute();
 const store = useAppStore();

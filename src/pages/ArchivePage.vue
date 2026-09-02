@@ -17,10 +17,10 @@ export default {};
 */
 import { ref, computed, onMounted } from 'vue';
 import { NTabs, NTab } from 'naive-ui';
-import { usePageChrome } from '../shell/usePageChrome.js';
-import UKpis from '../ui/UKpis.vue';
-import { toast } from '../ui/nv.js';
-import { openModal, closeModal } from '../ui/modal.js';
+import { usePageChrome } from '@/hooks/usePageChrome.js';
+import UKpis from '@/components/UKpis.vue';
+import { toast } from '@/ui/nv.js';
+import { openModal, closeModal } from '@/ui/modal.js';
 
 const M = window.MOCK, U = window.UI, CH = window.CH, L = M.logStats;
 usePageChrome('archive');

@@ -1,0 +1,11 @@
+
+/* ---------- 表格自适应列宽与可读性 ----------
+   表格至少铺满容器；内容更长时按内容自然拓宽，由外层 .scroll 提供横向滚动。 */
+table.tb,table.pmx{
+  width:max-content;
+  min-width:100%;
+  table-layout:auto!important;
+  font-size:14.5px;
+}
+table.tb th,table.tb td,table.pmx th,table.pmx td{width:auto!important;max-width:none}
+table.tb.density-compact th,table.tb.density-compact td{font-size:14px}

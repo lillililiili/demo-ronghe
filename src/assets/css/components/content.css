@@ -1,0 +1,121 @@
+
+/* ============================================================
+   业务化改造新增组件
+   ============================================================ */
+
+/* 运维管理入口卡片 */
+.opsgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.opscard{border:1px solid var(--line);border-radius:8px;padding:14px 16px;cursor:pointer;
+  background:var(--panel-2);display:flex;flex-direction:column;gap:5px;transition:.15s}
+.opscard:hover{border-color:var(--blue);background:rgba(61,139,255,.12)}
+.opscard b{font-size:14.5px;color:var(--txt)}
+.opscard span{font-size:12.5px;color:var(--txt-3)}
+
+/* ---------- 结论横幅：先给结论，再给依据 ---------- */
+.verdict{border-radius:10px;padding:16px 20px;display:flex;align-items:center;gap:18px;
+  border:1px solid rgba(255,77,94,.42);background:linear-gradient(90deg,rgba(255,77,94,.16),rgba(255,77,94,.03))}
+.verdict.ok{border-color:rgba(47,208,110,.42);background:linear-gradient(90deg,rgba(47,208,110,.14),rgba(47,208,110,.02))}
+.verdict.warn{border-color:rgba(255,176,32,.42);background:linear-gradient(90deg,rgba(255,176,32,.14),rgba(255,176,32,.02))}
+.verdict .vi{width:46px;height:46px;flex:none;border-radius:12px;display:flex;align-items:center;
+  justify-content:center;font-size:24px;background:rgba(255,77,94,.18)}
+.verdict.ok .vi{background:rgba(47,208,110,.16)} .verdict.warn .vi{background:rgba(255,176,32,.16)}
+.verdict .vt{min-width:0;flex:1}
+.verdict .vt h2{font-size:22px;font-weight:700;line-height:1.35;letter-spacing:.5px;color:#ff96a0}
+.verdict.ok .vt h2{color:#79e5a5} .verdict.warn .vt h2{color:#ffd07a}
+.verdict .vt p{font-size:14px;color:var(--txt-2);margin-top:5px;line-height:1.7}
+.verdict .va{flex:none;display:flex;align-items:center;gap:10px}
+
+/* 判定依据条目 */
+.basis{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px}
+.basis .b{display:flex;gap:10px;align-items:flex-start;padding:11px 13px;border-radius:8px;
+  background:var(--panel-2);border:1px solid var(--line-2)}
+.basis .b .bi{width:20px;flex:none;text-align:center;font-size:14px}
+.basis .b .bt{min-width:0}
+.basis .b .bt b{display:block;font-size:13.5px;color:var(--txt);font-weight:600}
+.basis .b .bt span{font-size:12.5px;color:var(--txt-3);line-height:1.6}
+.basis .b.bad{border-color:rgba(255,77,94,.32);background:rgba(255,77,94,.07)}
+.basis .b.bad .bt b{color:#ff96a0}
+.basis .b.na{opacity:.72}
+
+/* ---------- 来源贡献条（替代四张来源卡） ---------- */
+.srcbar{display:flex;gap:10px;flex-wrap:wrap}
+.srcbar .s{flex:1;min-width:158px;border:1px solid var(--line-2);border-radius:8px;
+  padding:10px 12px;background:var(--panel-2);display:flex;flex-direction:column;gap:7px}
+.srcbar .s .sh{display:flex;align-items:center;gap:7px;font-size:13.5px}
+.srcbar .s .sh b{color:var(--txt)}
+.srcbar .s .sh .st{margin-left:auto;font-size:12px;color:var(--txt-3)}
+.srcbar .s .bar{height:6px}
+.srcbar .s .sv{font-size:12.5px;color:var(--txt-2);display:flex;justify-content:space-between}
+.srcbar .s.off{opacity:.42}
+
+/* ---------- 首页：重点事件卡片 ---------- */
+.focus{display:flex;flex-direction:column;gap:10px}
+.focus .f{border:1px solid var(--line-2);border-left:3px solid var(--red);border-radius:8px;
+  padding:12px 14px;cursor:pointer;background:rgba(255,77,94,.06);transition:.15s}
+.focus .f:hover{background:rgba(255,77,94,.13);border-color:rgba(255,77,94,.5)}
+.focus .f.lv2{border-left-color:var(--amber);background:rgba(255,176,32,.06)}
+.focus .f.lv2:hover{background:rgba(255,176,32,.13)}
+.focus .f.lv3{border-left-color:var(--blue);background:rgba(61,139,255,.06)}
+.focus .f.lv3:hover{background:rgba(61,139,255,.13)}
+.focus .f .r1{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px}
+.focus .f .r1 .id{font-family:Menlo,monospace;font-size:14px;color:#fff;font-weight:600}
+.focus .f .r2{font-size:13px;color:var(--txt-2);line-height:1.6}
+.focus .f .r3{display:flex;align-items:center;gap:10px;margin-top:8px;font-size:12.5px;color:var(--txt-3)}
+.focus .f .r3 .go{margin-left:auto;color:var(--cyan)}
+
+/* ---------- 今日业务闭环条 ---------- */
+.loop{display:flex;align-items:stretch;gap:0;border:1px solid var(--line-2);border-radius:10px;overflow:hidden}
+.loop .lp{flex:1;padding:13px 16px;display:flex;flex-direction:column;gap:3px;position:relative;
+  background:linear-gradient(180deg,rgba(13,35,80,.5),rgba(8,20,50,.35))}
+.loop .lp+.lp{border-left:1px solid var(--line-2)}
+.loop .lp .n{font-size:13px;color:var(--txt-2)}
+.loop .lp .v{font-size:26px;font-weight:700;font-family:"DIN Alternate","Bahnschrift",Menlo,sans-serif;
+  line-height:1.2;font-variant-numeric:tabular-nums}
+.loop .lp .s{font-size:12px;color:var(--txt-3)}
+.loop .lp:after{content:"›";position:absolute;right:-8px;top:50%;transform:translateY(-50%);
+  font-size:17px;color:var(--txt-3);z-index:2;background:var(--bg-1);padding:0 1px;line-height:1}
+.loop .lp:last-child:after{display:none}
+
+/* ---------- 目标事件工作台 ---------- */
+.wbtabs{display:flex;gap:0;border-bottom:1px solid var(--line-2);background:rgba(6,15,38,.4);border-radius:8px 8px 0 0}
+.wbtabs .t{padding:12px 20px;cursor:pointer;color:var(--txt-2);font-size:14.5px;
+  border-bottom:2px solid transparent;display:flex;align-items:center;gap:8px;white-space:nowrap}
+.wbtabs .t .no{width:20px;height:20px;border-radius:50%;background:rgba(255,255,255,.08);
+  font-size:11.5px;display:flex;align-items:center;justify-content:center;color:var(--txt-3)}
+.wbtabs .t:hover{color:var(--txt)}
+.wbtabs .t.on{color:#fff;border-bottom-color:var(--cyan);background:rgba(34,211,238,.06)}
+.wbtabs .t.on .no{background:var(--cyan);color:#04121c}
+.wbtabs .t.done .no{background:rgba(47,208,110,.28);color:#79e5a5}
+
+/* 待办动作卡：每个阶段只有一个主操作 */
+.todo{border:1px solid rgba(34,211,238,.35);background:linear-gradient(90deg,rgba(34,211,238,.12),rgba(34,211,238,.02));
+  border-radius:10px;padding:14px 18px;display:flex;align-items:center;gap:16px}
+.todo .tl2{flex:1;min-width:0}
+.todo .tl2 b{font-size:15px;color:#79e6f6;display:block;margin-bottom:3px}
+.todo .tl2 span{font-size:13px;color:var(--txt-2);line-height:1.6}
+
+/* ---------- 技术详情抽屉 ---------- */
+.drawer{position:fixed;right:0;top:0;bottom:0;width:600px;max-width:94vw;z-index:150;
+  background:linear-gradient(180deg,#081a3f,#050e26);border-left:1px solid rgba(64,158,255,.4);
+  box-shadow:-12px 0 40px rgba(0,0,0,.55);display:flex;flex-direction:column;animation:dwin .22s ease}
+@keyframes dwin{from{transform:translateX(24px);opacity:.4}}
+.drawer .dh{display:flex;align-items:center;padding:14px 18px;border-bottom:1px solid var(--line);font-size:15.5px;font-weight:600}
+.drawer .dh .x{margin-left:auto;cursor:pointer;color:var(--txt-3);font-size:19px;line-height:1}
+.drawer .dh .x:hover{color:#fff}
+.drawer .db{padding:16px 18px;overflow:auto;flex:1}
+.drawer-mask{position:fixed;inset:0;background:rgba(2,6,18,.5);z-index:149}
+
+/* 次要技术信息：默认收起 */
+.tech{margin-top:10px}
+.tech>summary{cursor:pointer;font-size:12.5px;color:var(--txt-3);list-style:none;
+  padding:6px 0;user-select:none}
+.tech>summary::-webkit-details-marker{display:none}
+.tech>summary:before{content:"▸ ";color:var(--txt-3)}
+.tech[open]>summary:before{content:"▾ "}
+.tech>summary:hover{color:var(--cyan)}
+.tech .tb{padding:8px 0 2px}
+
+/* 大屏模式追加 */
+body.bigscreen .verdict .vt h2{font-size:25px}
+body.bigscreen .loop .lp .v{font-size:30px}
+body.bigscreen .crumb{height:42px}

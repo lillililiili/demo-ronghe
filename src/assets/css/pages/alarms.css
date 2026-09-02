@@ -1,0 +1,8 @@
+
+/* ---------- 实时告警列表：目标已离开实时跟踪窗口的行 ----------
+   新增选择器，未改动任何既有规则。 */
+.stalm .a.hist,.a.hist{opacity:.72}
+.a.hist:hover{opacity:1}
+.hist-tag{display:inline-block;margin-right:6px;padding:0 6px;border-radius:4px;
+  font-size:11px;line-height:18px;color:var(--txt-3);
+  border:1px dashed rgba(140,160,190,.45);background:rgba(140,160,190,.08)}

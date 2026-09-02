@@ -1,6 +1,6 @@
 import { createRouter, createWebHashHistory } from 'vue-router';
-import { REDIRECT, PAGE_THEME, pageTitle, routeKey } from '../shell/navModel.js';
-import PageHost from '../shell/PageHost.vue';
+import { REDIRECT, PAGE_THEME, pageTitle, routeKey } from '@/config/navModel.js';
+import PageHost from '@/layout/PageHost.vue';
 
 /* hash 模式与旧版地址完全兼容：#/situation、#/legality、旧书签、UI.goto 写
    location.hash 都直接命中。REDIRECT 表用 router redirect 实现（等价旧版

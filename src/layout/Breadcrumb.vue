@@ -7,8 +7,8 @@
    命令式复刻，Vue 端对 fver 的文本绑定是常量、不会再 patch。 */
 import { computed } from 'vue';
 import { useRoute } from 'vue-router';
-import { ROUTES, routeKey } from './navModel.js';
-import { useAppStore } from '../stores/app.js';
+import { ROUTES, routeKey } from '@/config/navModel.js';
+import { useAppStore } from '@/stores/app.js';
 
 const route = useRoute();
 const store = useAppStore();

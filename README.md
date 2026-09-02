@@ -25,19 +25,21 @@ public/assets/js/          ← legacy 层：与 dongying-demo/assets/js 逐字�
 ├── ui.js/charts.js/map.js/geo.js/video.js/case.js/search.js
 └── pages/*.js             ← 13 个 legacy 页面（未转换的仍由它渲染）
 src/
-├── main.js                ← APP/ROUTES 全局 shim + createApp
-├── bigscreen/             ← #/bigscreen 路由：Naive UI 表格/按钮/弹窗 + 地图/图表/视频适配
-│   └── BigScreenApp.vue   ← 大屏页面、响应式数据与资源生命周期
-├── shell/                 ← Vue 外壳：App/HeaderBar/NavSidebar/Breadcrumb
-│   ├── PageHost.vue       ← 切换器：VUE_PAGES 注册表 → Vue 页；否则 LegacyHost
-│   ├── LegacyHost.vue     ← 命令式宿主，逐字移植旧 route() 挂载/清理次序
-│   ├── navModel.js        ← NAV/ROUTES/PAGE_THEME/REDIRECT 四表（逐字对应旧 app.js）
-│   └── usePageChrome.js   ← 转换页共用外壳职责（面包屑/导航组/页脚/卸载清理）
-├── ui/                    ← UPanel/UKpis（标记逐字复刻 ui.js 输出）+ useChart
-└── pages/
-    ├── registry.js        ← 已转换页面注册表（唯一开关）
-    └── *Page.vue          ← 转换页
+├── main.js                ← 先加载 CSS，再 APP/ROUTES shim + createApp
+├── assets/css/            ← 全局样式切片；tokens.css 是主题色唯一真源
+├── layout/                ← 外壳：App/HeaderBar/NavSidebar/Breadcrumb/PageHost/LegacyHost
+├── config/navModel.js     ← NAV/ROUTES/PAGE_THEME/REDIRECT 四表
+├── hooks/                 ← usePageChrome / useCarousel / useChart
+├── components/            ← UPanel/UKpis 与受控弹窗
+├── ui/                    ← Naive 适配：theme/toast/modal/confirm
+├── pages/
+│   ├── registry.js        ← 已转换页面注册表（唯一开关）
+│   ├── bigscreen/         ← #/bigscreen
+│   └── *Page.vue          ← 转换页
+└── services/ stores/ router/
 ```
+
+更细的目录约定见 `docs/目录结构.md` 与 `AGENTS.md`。
 
 **转换进度（12 转换 / 1 排除）**：
 ✅ stats · users · archive · evidence · alarms · commission · devices ·
@@ -53,10 +55,12 @@ demo 侧随时有并行会话在改。**同步流程**：
 bash tools/parity-diff.sh            # 任何 DIFF 都表示 legacy 副本落后
 ```
 
-1. **未转换页面 + 共享层 + css/img**：直接重拷（`cp`），零风险；大屏已 Vue 化，需按差异迁移。
+1. **未转换页面 + 共享 JS + img**：直接重拷（`cp`），零风险。
+   **CSS** 在 `src/assets/css/`，不与母本逐字节同步；上游样式 diff 重放到对应切片。
+   大屏已 Vue 化，需按差异迁移。
 2. **已转换页面**：`git diff -- dongying-demo/assets/js/pages/<页>.js` 看上游改了什么，
    把 diff 重放进对应 `src/pages/*Page.vue`，然后与新版 legacy 并排指纹比对。
-3. **app.js**：属外壳，diff 重放进 shell 组件（HeaderBar/Breadcrumb/navModel/PageHost）。
+3. **app.js**：属外壳，diff 重放进 layout 组件（HeaderBar/Breadcrumb/navModel/PageHost）。
 4. **index.html**（demo 侧）：新增 script 标签 → 本工程 index.html 同步加；
    新增顶栏控件 → HeaderBar.vue。
 
@@ -100,8 +104,8 @@ node tools/tilecheck.cjs      # 仅审计保留的历史瓦片包（线上地图
 
 交互件全套替换（P0–P4a 完成 + P4b 样板），展示串（tag/kv/sect 等 ~280 处大屏视觉签名）不替换：
 
-- **P0 主题**：`src/ui/theme.js` 运行时 getComputedStyle 读 app.css token 生成
-  themeOverrides（app.css 保持唯一真源，勿手抄色值）；App.vue 包 n-config-provider。
+- **P0 主题**：`src/ui/theme.js` 运行时 getComputedStyle 读 `src/assets/css/tokens.css`
+  生成 themeOverrides（token 文件保持唯一真源，勿手抄色值）；App.vue 包 n-config-provider。
 - **P1 toast 96 处**：`src/ui/nv.js` 的 `toast()` → message.success/error/info。
 - **P2 分页 4 页**（Alarms/Evidence/Devices/Legality）→ n-pagination 受控；
   其余 4 页列表区命令式 innerHTML，pager 保留（P5 项）。
@@ -109,6 +113,6 @@ node tools/tilecheck.cjs      # 仅审计保留的历史瓦片包（线上地图
 - **P4a 弹窗桥接**：`src/ui/modal.js` 的 `openModal/closeModal` 与 U.modal 同签名同契约，
   全部 U.modal 调用点换壳 Naive；同一事件连开两次走微任务合并（防孤儿容器）。
 - **P4b 受控表单**：`openModal({render, footer:false})` 扩展口；
-  样板 `src/ui/modals/CarouselModal.vue`（大屏轮播设置）。
+  样板 `src/components/modals/CarouselModal.vue`（大屏轮播设置）。
 - z-index 对齐旧层级：mask 100 / drawer 150 / toast 200 / carousel 300。
 - 上游 diff 重放映射表：`tools/NAIVE-MAP.md`。dev-only 对照页 `#/__ui-lab`。

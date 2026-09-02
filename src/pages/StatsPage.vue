@@ -2,14 +2,14 @@
 /* 运行统计 —— 第一个转换为真 Vue 组件的页面（源：legacy pages/stats.js）。
    转换约定：
    · 结构进 template，图表初始化进 useCharts（等价 legacy mount 时机）
-   · 数值/标签等叶子仍用 window.UI 的字符串生成器（U.num/U.delta/U.table），
-     与 legacy 逐字同源 —— 验收标准是与 legacy 页并排 DOM 指纹一致
+   · 数值/标签等叶子仍用 window.UI 的字符串生成器（U.num/U.table）
+   · 工具条不再放没有切片数据的时间/类型/区域下拉，避免点了数字不变
    · 外壳职责（面包屑/导航组/页脚/卸载清理）统一走 usePageChrome */
-import { usePageChrome } from '../shell/usePageChrome.js';
-import { useCharts } from '../ui/useChart.js';
-import UPanel from '../ui/UPanel.vue';
-import UKpis from '../ui/UKpis.vue';
-import { toast } from '../ui/nv.js';
+import { usePageChrome } from '@/hooks/usePageChrome.js';
+import { useCharts } from '@/hooks/useChart.js';
+import UPanel from '@/components/UPanel.vue';
+import UKpis from '@/components/UKpis.vue';
+import { toast } from '@/ui/nv.js';
 
 const M = window.MOCK, U = window.UI, S = M.stats;
 usePageChrome('stats');
@@ -17,21 +17,17 @@ usePageChrome('stats');
 /* ---- 工具条（legacy render 顶部的裸 toolbar 面板，整段同构） ---- */
 const d0 = M.util.fmtD(M.util.dayAdd(M.CONF.demoTime, -29)), d1 = M.util.fmtD(M.CONF.demoTime);
 const toolbarHtml =
-  `${U.field('时间维度', U.select('dim', ['近30天', '近7天', '本月', '本年'], '近30天'))}
-      ${U.field('', `<input class="ip" style="width:210px" value="${d0} 至 ${d1}" readonly>`)}
-      ${U.field('目标类型', U.select('tt', ['全部类型', ...M.T_TYPES.map(x => x[0])]))}
-      ${U.field('区域', U.select('rg', ['全部区域', ...M.DISTRICTS.map(d => d.name)]))}
+  `${U.field('统计区间', `<span class="mono" style="font-size:12px;color:var(--txt-2);padding:0 4px">${d0} 至 ${d1}（近30天全量）</span>`)}
+      <span style="font-size:11.5px;color:var(--txt-3)">当前页按近30天全量统计，没有按日/类型/区域切片的数据源</span>
       <span style="flex:1"></span>
       <button class="btn" id="stExp">${U.icon('download')} 导出数据</button>
       <button class="btn pri" id="stRep">${U.icon('download')} 报表下载</button>`;
 
 /* ---- KPI ---- */
-const prev = { total: Math.round(S.total / 1.11), illegal: Math.round(S.illegal / 1.17), punish: Math.round(S.punish / 1.18) };
-const dd = (a, b) => +((a - b) / b * 100).toFixed(1);
 const kpiList = [
-  { label: '飞行/目标总次数', value: U.num(S.total), color: 'blue', icon: 'radar', desc: `较前30天 ${U.delta(dd(S.total, prev.total), { goodIsRed: true })}` },
-  { label: '非法飞行次数', value: U.num(S.illegal), color: 'red', icon: 'alert', desc: `较前30天 ${U.delta(dd(S.illegal, prev.illegal), { goodIsRed: true })}` },
-  { label: '处罚案件数', value: U.num(S.punish), color: 'orange', icon: 'gavel', desc: `较前30天 ${U.delta(dd(S.punish, prev.punish), { goodIsRed: true })}` },
+  { label: '飞行/目标总次数', value: U.num(S.total), color: 'blue', icon: 'radar', desc: `${d0} 至 ${d1}` },
+  { label: '非法飞行次数', value: U.num(S.illegal), color: 'red', icon: 'alert', desc: `占比 ${U.pct(S.illegal, S.total)}` },
+  { label: '处罚案件数', value: U.num(S.punish), color: 'orange', icon: 'gavel', desc: `近30天立案` },
   /* 「平均处置时长」卡已按用户裁定删除（2026-08-30）；S.avgDisposeSec 仍在数据层 */
   { label: '接入设备总数', value: U.num(M.deviceStats.total), color: 'cyan', icon: 'device', desc: `在线 ${M.deviceStats.online} · ${M.deviceStats.onlineRate}%` },
   { label: '高风险目标数', value: U.num(S.highRisk), color: 'purple', icon: 'zone', desc: `占比 ${U.pct(S.highRisk, S.total)}` }
@@ -134,8 +130,7 @@ function onRegionTab(e) {
     <UKpis :list="kpiList" />
 
     <div class="row" style="height:270px;margin-top:12px">
-      <UPanel title="近30天目标趋势" panel-style="flex:1.5"
-        :extra="U.select('tt2', ['全部类型', '无人机', '非无人机'])">
+      <UPanel title="近30天目标趋势" panel-style="flex:1.5">
         <div id="sTrend" style="height:100%"></div>
       </UPanel>
       <UPanel title="各风险等级分布" sub="数量 | 占比" panel-style="flex:.75"><div id="sRisk" style="height:100%"></div></UPanel>

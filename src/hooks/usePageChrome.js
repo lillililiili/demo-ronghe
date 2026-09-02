@@ -4,9 +4,9 @@
    Vue patch 先卸旧再挂新（不同 key/类型），故 onUnmounted 里 disposeAll
    不会碰到下一页刚建的图表。 */
 import { onMounted, onUnmounted } from 'vue';
-import { groupOf } from './navModel.js';
-import { useAppStore } from '../stores/app.js';
-import { closeModal } from '../ui/modal.js';
+import { groupOf } from '@/config/navModel.js';
+import { useAppStore } from '@/stores/app.js';
+import { closeModal } from '@/ui/modal.js';
 
 export function usePageChrome(k) {
   const store = useAppStore();

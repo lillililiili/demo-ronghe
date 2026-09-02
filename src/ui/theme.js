@@ -1,11 +1,12 @@
 /* =============================================================================
- * theme.js —— Naive UI 主题：运行时从 app.css 的 :root token 生成 themeOverrides。
+ * theme.js —— Naive UI 主题：运行时从 tokens.css 的 :root 生成 themeOverrides。
  *
- * 原则：app.css 是颜色唯一真源（第二套 :root，约 601-632 行），这里不手抄色值 ——
+ * 原则：src/assets/css/tokens.css 是颜色唯一真源，这里不手抄色值 ——
  * getComputedStyle 读取，token 改了主题自动跟随，不存在双源漂移。
- * main.js 执行时 app.css 已经由 index.html 的 <link> 同步加载完毕，可安全读取。
+ * main.js 必须先 import '@/assets/css/index.css'，再求值本模块。
  * darkTheme 打底（Naive 完整设计过的暗色，非亮色翻转），overrides 只做「对齐本站」。
  * ========================================================================== */
+import '@/assets/css/index.css';
 import { darkTheme } from 'naive-ui';
 
 const css = getComputedStyle(document.documentElement);
@@ -30,7 +31,7 @@ const green = v('--green') || '#41d49a';
 const amber = v('--amber') || '#f1a43a';
 const cyan = v('--cyan') || '#2dcfd0';
 
-/* 字体栈照抄 app.css body 基线；行高 1.65（Naive 默认 1.6，必须显式覆盖） */
+/* 字体栈照抄 reset.css body 基线；行高 1.65（Naive 默认 1.6，必须显式覆盖） */
 const fontFamily = getComputedStyle(document.body).fontFamily
   || `-apple-system,"PingFang SC","Microsoft YaHei",sans-serif`;
 
@@ -101,6 +102,6 @@ export const themeOverrides = {
 };
 
 /* --page-accent 页面级强调色刻意不接入组件库：其消费者全在 B 类展示串与
-   app.css 类里（detail-hero/sect/tabs），组件库 primaryColor 全局固定为 --blue。
+   全局样式类里（detail-hero/sect/tabs），组件库 primaryColor 全局固定为 --blue。
    若未来某页需要组件级强调色，在 PageHost 嵌套第二层 n-config-provider 按路由
    覆盖 primaryColor —— 扩展点留此说明，本期不实现。 */

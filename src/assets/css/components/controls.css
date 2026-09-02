@@ -1,0 +1,50 @@
+
+/* 表单控件 */
+.field{display:flex;align-items:center;gap:6px}
+.field>label{color:var(--txt-2);font-size:13.5px;white-space:nowrap}
+input.ip,select.sel{
+  background:rgba(4,12,32,.8);border:1px solid var(--line);color:var(--txt);
+  border-radius:6px;padding:6px 10px;font-size:13.5px;outline:none;font-family:inherit;height:32px;
+}
+input.ip::placeholder{color:var(--txt-3)}
+input.ip:focus,select.sel:focus{border-color:var(--blue);box-shadow:0 0 0 2px rgba(61,139,255,.18)}
+.search-input{display:flex;align-items:center;gap:7px;padding-left:10px;border:1px solid var(--line);border-radius:6px;background:rgba(4,12,32,.8);color:var(--txt-3)}
+.search-input:focus-within{border-color:var(--blue);box-shadow:0 0 0 2px rgba(61,139,255,.18)}
+.search-input>.svg-icon{width:16px;height:16px}
+.search-input>input.ip{border:0;background:transparent;padding-left:0;box-shadow:none}
+select.sel{cursor:pointer}
+select.sel option{background:#0a1a3f}
+.btn{
+  display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 15px;border-radius:6px;cursor:pointer;
+  background:linear-gradient(135deg,#123864,#174675);border:1px solid #2f78ba;color:#d9ecff;font-size:13.5px;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 3px 10px rgba(15,62,108,.2);
+  font-family:inherit;transition:.15s;white-space:nowrap;
+}
+a.btn{text-decoration:none}   /* 顶栏「大屏展示」等以 <a> 承载的按钮 */
+.svg-icon{width:1em;height:1em;display:inline-block;fill:none;stroke:currentColor;stroke-width:1.8;vertical-align:-.12em;flex:none}
+.btn>.svg-icon,.field-icon>.svg-icon{width:16px;height:16px}
+.icon-btn{display:inline-flex;align-items:center;justify-content:center;padding:0;border:0;background:transparent;color:inherit;cursor:pointer}
+.icon-btn>.svg-icon{width:16px;height:16px}
+.inline-icon{display:inline-flex;align-items:center;gap:5px}
+.inline-icon>.svg-icon{width:15px;height:15px}
+.status-icon>.svg-icon{width:1em;height:1em}
+.btn:hover{background:linear-gradient(135deg,#18508a,#2165a5);border-color:#55a6ef;color:#fff;box-shadow:0 5px 14px rgba(29,98,164,.28)}
+.btn.pri{background:linear-gradient(135deg,#2f6fe0,#3d8bff);border-color:#4d97ff;color:#fff}
+.btn.pri:hover{filter:brightness(1.15)}
+.btn.danger{background:linear-gradient(135deg,#9f303a,#c5424c);border-color:#e15a63;color:#fff;box-shadow:0 5px 14px rgba(159,48,58,.24)}
+.btn.danger:hover{background:linear-gradient(135deg,#b93944,#db5059);border-color:#ff747c;color:#fff;box-shadow:0 7px 18px rgba(159,48,58,.32)}
+.btn.warn{background:linear-gradient(135deg,#c97912,#e69a24);border-color:#f2ad3f;color:#07111f;box-shadow:0 5px 14px rgba(201,121,18,.24)}
+.btn.warn:hover{background:linear-gradient(135deg,#dc8b1d,#f0aa32);border-color:#ffc45f;color:#07111f;box-shadow:0 7px 18px rgba(201,121,18,.32)}
+.btn.ghost{background:#102f50;border-color:#2c6b9f;color:#bfe0ff;box-shadow:none}
+.btn[disabled]{opacity:.4;cursor:not-allowed}
+.btn.big{height:38px;font-size:14px;padding:0 18px}
+.toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;border-bottom:1px solid var(--line-2)}
+
+/* 分页 */
+.pager{display:flex;align-items:center;gap:8px;justify-content:center;padding:10px;color:var(--txt-2);font-size:13px;flex-wrap:wrap}
+.pager .pg{min-width:26px;height:26px;padding:0 6px;display:flex;align-items:center;justify-content:center;
+  border:1px solid var(--line);border-radius:4px;cursor:pointer}
+.pager .pg:hover{border-color:var(--blue);color:#fff}
+.pager .pg.on{background:var(--blue);border-color:var(--blue);color:#fff}
+.pager .pg.dis{opacity:.35;cursor:not-allowed}
+.pager .pg.dis:hover{border-color:var(--line);color:var(--txt-2)}

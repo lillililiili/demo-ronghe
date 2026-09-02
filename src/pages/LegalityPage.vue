@@ -17,9 +17,9 @@ export default {};
    evidSect / factorSect 不带入（同 evidence 页先例）。 */
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue';
 import { NPagination, NSelect } from 'naive-ui';
-import { usePageChrome } from '../shell/usePageChrome.js';
-import { toast } from '../ui/nv.js';
-import { openModal, closeModal } from '../ui/modal.js';
+import { usePageChrome } from '@/hooks/usePageChrome.js';
+import { toast } from '@/ui/nv.js';
+import { openModal, closeModal } from '@/ui/modal.js';
 
 const M = window.MOCK, U = window.UI, CH = window.CH, EVT = window.EVT;
 usePageChrome('legality');

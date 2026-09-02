@@ -1,0 +1,14 @@
+
+.panel{
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--r);
+  backdrop-filter:blur(4px);display:flex;flex-direction:column;min-width:0;min-height:0;position:relative;
+}
+.panel>.ph{
+  display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:1px solid var(--line-2);flex:none;
+}
+.panel>.ph h3{font-size:15.5px;font-weight:600;display:flex;align-items:center;gap:8px;white-space:nowrap}
+.panel>.ph h3:before{content:"";width:3px;height:13px;border-radius:2px;background:linear-gradient(180deg,var(--cyan),var(--blue))}
+.panel>.ph .sub{font-size:12.5px;color:var(--txt-3)}
+.panel>.ph .spacer{flex:1}
+.panel>.pb{padding:14px;flex:1;min-height:0;overflow:auto}
+.panel>.pb.nopad{padding:0;display:flex;flex-direction:column}

@@ -1,0 +1,97 @@
+
+/* ---------- 布局 ---------- */
+#app{display:flex;flex-direction:column;height:100vh}
+/* 头部与页脚同样保持最小宽度，随内容横向滚动 */
+.hdr{
+  height:56px;min-width:1280px;flex:none;display:flex;align-items:center;gap:16px;padding:0 20px;
+  background:linear-gradient(90deg,rgba(9,24,60,.95),rgba(7,18,45,.85));
+  border-bottom:1px solid var(--line);position:relative;z-index:30;
+}
+.hdr .logo{display:flex;align-items:center;gap:10px;font-size:19px;font-weight:700;letter-spacing:1px}
+.hdr .logo svg{width:26px;height:26px;fill:var(--cyan)}
+.hdr .logo b{background:linear-gradient(90deg,#8fd0ff,#e6f0ff);-webkit-background-clip:text;background-clip:text;color:transparent}
+.hdr .spacer{flex:1}
+.hdr .meta{display:flex;align-items:center;gap:18px;color:var(--txt-2);font-size:12.5px}
+.hdr .meta .it{display:flex;align-items:center;gap:6px;white-space:nowrap}
+.hdr .bell{position:relative;cursor:pointer;width:24px;height:32px;display:inline-flex;align-items:center;justify-content:center;color:#bcd6ff;overflow:visible}
+.hdr .bell .hdr-icon{width:20px;height:20px;display:block;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.hdr .bell:hover{color:#fff}
+.hdr .bell .dot{position:absolute;top:-6px;right:-8px;background:var(--red);color:#fff;border-radius:9px;
+  font-size:10px;padding:1px 5px;line-height:1.4}
+.hdr .user{display:flex;align-items:center;gap:8px;cursor:pointer}
+.hdr .user .chev-icon{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.hdr .user .av{width:26px;height:26px;border-radius:50%;background:linear-gradient(135deg,#3d8bff,#22d3ee);
+  display:flex;align-items:center;justify-content:center;font-size:12px;color:#04091c;font-weight:700}
+.body{display:flex;flex:1;min-height:0;overflow-x:auto}
+/* 大屏业务系统：低于设计宽度时横向滚动，避免面板被挤压变形。
+   ── 这里原本写着 `.main{min-width:1180px}`，它从未生效 ──
+   下面第 78 行还有一条 `.main{flex:1;min-width:0;…}`，同特异性、后者胜，computed 实测就是 0px。
+   **声明值是"作者以为的约束"，computed 才是实际生效的约束**；这类覆盖不报错、不警告、
+   看源码完全合理，只有量 computed 才发现得了。（全文件扫过：同选择器覆盖只此一处，非系统性。）
+
+   不把它改成生效，是因为 1180 这个数本身也是错的。实测各页 min-content 宽度：
+     stats/monitor 1441 · apis/flights/legality/risk 1440 · alarms 1439 · users 1429
+     punish 1401 · devices 1390 · evidence 1345 · commission 1296 · airspace 1289
+     archive/overview/situation 1280
+   **全站地板 1441px**，让 1180 生效只会给出一个假地板。
+   低于地板时页面不会"看起来坏掉"，而是整页出横向滚动条 —— 那正是本项目判定为缺陷、
+   用户也说过难用的退化方式，比排不下更麻烦，因为它看起来像还能用。
+   最小支持宽度尚未定义（1366 下 10 个页面超标），定了再决定是加断点还是收内容。 */
+
+.nav{
+  width:168px;flex:none;padding:12px 8px;overflow-y:auto;
+  background:linear-gradient(180deg,rgba(8,20,50,.85),rgba(5,12,32,.85));
+  border-right:1px solid var(--line-2);display:flex;flex-direction:column;gap:2px;
+}
+.nav.mini{width:56px}
+/* 一级模块 */
+.nav .l1{
+  display:flex;align-items:center;gap:9px;padding:10px 10px;border-radius:var(--r);
+  color:var(--txt-2);text-decoration:none;font-size:14px;cursor:pointer;
+  border:1px solid transparent;transition:.15s;white-space:nowrap;overflow:hidden;
+}
+.nav .l1 i{width:18px;height:18px;flex:none;display:block}
+.nav .l1 i svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.6}
+.nav .l1 .ca{margin-left:auto;font-size:15px;color:var(--txt-3);transition:.18s;transform:rotate(0)}
+.nav .l1:hover{background:rgba(61,139,255,.10);color:var(--txt)}
+.nav a.l1.on{background:linear-gradient(90deg,rgba(61,139,255,.28),rgba(61,139,255,.04));
+  color:#fff;border-color:rgba(61,139,255,.4)}
+.nav .g1.has>.l1{color:#dceaff}
+.nav .g1.open>.l1 .ca{transform:rotate(90deg);color:var(--cyan)}
+/* 二级页面 */
+.nav .l2{display:none;padding:2px 0 6px 5px;margin-left:13px;border-left:1px solid rgba(64,158,255,.18)}
+.nav .g1.open .l2{display:block}
+.nav .l2 a{
+  display:flex;align-items:center;gap:7px;padding:7px 8px;border-radius:6px;margin:1px 0;
+  color:var(--txt-2);text-decoration:none;font-size:13px;white-space:nowrap;overflow:hidden;transition:.15s;
+}
+.nav .l2 a em{width:5px;height:5px;border-radius:50%;background:var(--txt-3);flex:none}
+.nav .l2 a:hover{background:rgba(61,139,255,.10);color:var(--txt)}
+.nav .l2 a.on{background:rgba(61,139,255,.20);color:#fff}
+.nav .l2 a.on em{background:var(--cyan);box-shadow:0 0 0 3px rgba(34,211,238,.2)}
+.nav.mini .l1 span,.nav.mini .l1 .ca,.nav.mini .l2,.nav.mini .opslink{display:none}
+.nav .navfoot{margin-top:auto;padding-top:10px;border-top:1px solid var(--line-2)}
+.nav .opslink{color:var(--txt-2);cursor:pointer;font-size:13px;padding:8px 12px;border-radius:6px}
+.nav .opslink:hover{background:rgba(61,139,255,.10);color:#fff}
+.nav .fold{color:var(--txt-3);cursor:pointer;font-size:12.5px;padding:8px 12px}
+.nav .fold:hover{color:var(--txt-2)}
+
+/* ---------- 面包屑 ---------- */
+.crumb{
+  height:38px;flex:none;display:flex;align-items:center;gap:14px;padding:0 18px;
+  border-bottom:1px solid var(--line-2);background:rgba(6,15,38,.45);
+}
+.crumb .cbs{display:flex;align-items:center;gap:8px;font-size:13.5px;min-width:0}
+.crumb .cbs a{color:var(--txt-2);text-decoration:none}
+.crumb .cbs a:hover{color:var(--cyan)}
+.crumb .cbs b{color:var(--txt-3);font-weight:400}
+.crumb .cbs .c{color:var(--txt-2)}
+.crumb .cbs .c.on{color:#fff;font-weight:600}
+.crumb .cbs .c.ctx{font-family:Menlo,monospace;color:var(--cyan)}
+.crumb [data-ops]{cursor:pointer}
+.crumb .spacer{flex:1}
+.crumb .cinfo{font-size:12px;color:var(--txt-3);white-space:nowrap}
+.crumb .cinfo b{color:var(--txt-2);font-weight:400;font-family:Menlo,monospace}
+
+.main{flex:1;min-width:0;display:flex;flex-direction:column}
+.view{flex:1;overflow:auto;padding:14px 12px 6px}

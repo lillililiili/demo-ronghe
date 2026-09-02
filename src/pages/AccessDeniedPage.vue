@@ -1,8 +1,8 @@
 <script setup>
 import { computed } from 'vue';
 import { useRoute } from 'vue-router';
-import { routeKey, pageTitle } from '../shell/navModel.js';
-import { accessBlocker } from '../services/accessControl.js';
+import { routeKey, pageTitle } from '@/config/navModel.js';
+import { accessBlocker } from '@/services/accessControl.js';
 
 const route = useRoute();
 const key = computed(() => routeKey(route));

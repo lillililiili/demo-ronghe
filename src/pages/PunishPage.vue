@@ -18,10 +18,10 @@ export default {};
    模板层 n-pagination 放不进去；待该区块结构化后随 P5 迁移。
 */
 import { ref, onMounted, onUnmounted } from 'vue';
-import { usePageChrome } from '../shell/usePageChrome.js';
-import UKpis from '../ui/UKpis.vue';
-import { toast } from '../ui/nv.js';
-import { openModal, closeModal } from '../ui/modal.js';
+import { usePageChrome } from '@/hooks/usePageChrome.js';
+import UKpis from '@/components/UKpis.vue';
+import { toast } from '@/ui/nv.js';
+import { openModal, closeModal } from '@/ui/modal.js';
 
 const M = window.MOCK, U = window.UI, CH = window.CH, EVT = window.EVT;
 usePageChrome('punish');

@@ -1,0 +1,30 @@
+/* 样式入口。顺序即层叠顺序，后写覆盖先写；不要调整 import 顺序。
+   token 真源：tokens.css。
+   改顶栏/导航/面板时同时看 layout/ 与 visual-2026.css。 */
+@import './tokens.css';
+@import './reset.css';
+@import './layout/shell.css';
+@import './mixins/utilities.css';
+@import './components/panel.css';
+@import './components/kpi.css';
+@import './components/table.css';
+@import './components/tag.css';
+@import './components/controls.css';
+@import './components/data-display.css';
+@import './components/map.css';
+@import './components/overlay.css';
+@import './components/a11y.css';
+@import './components/user-menu.css';
+@import './layout/bigscreen-mode.css';
+@import './components/map-layers.css';
+@import './components/content.css';
+@import './visual-2026.css';
+@import './themes.css';
+@import './pages/flights.css';
+@import './pages/alarms.css';
+@import './pages/legality.css';
+@import './pages/users.css';
+@import './components/table-fluid.css';
+@import './pages/workbench.css';
+@import './pages/punish.css';
+@import './pages/bigscreen.css';

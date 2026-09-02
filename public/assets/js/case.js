@@ -146,7 +146,9 @@
     a.verifiedAt = M.nowStr();
     a.verifyLog = a.verifyLog || [];
     a.flowStatus = real ? (isUav ? '反制中' : '待处置') : '误报';
-    a.status = real ? (isUav ? '处置中' : '待处置') : '误报';
+    /* status 只允许 ALARM_STATUS：新建/已确认/处置中/已关闭/误报。
+       「待处置」是流程词，只能写在 flowStatus，否则会撑破字典断言。 */
+    a.status = real ? (isUav ? '处置中' : '已确认') : '误报';
     a.verifyLog.push({
       at: a.verifiedAt, by: (M.currentUser || {}).name || '值班员',
       result: real ? '属实' : '误报', note, from, to: a.flowStatus

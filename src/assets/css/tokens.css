@@ -1,0 +1,34 @@
+/* 主题 token 唯一真源。Naive UI 通过 src/ui/theme.js 运行时读取这些变量。
+   不要在 Vue 主题配置或组件里手抄色值；新全局变量加在这里。 */
+:root{
+  --canvas:#07111f;
+  --surface-1:#0b1727;
+  --surface-2:#0e1d30;
+  --surface-3:#12243a;
+  --surface-hover:#142a44;
+  --bg-0:var(--canvas);
+  --bg-1:var(--surface-1);
+  --bg-2:var(--surface-2);
+  --bg-3:var(--surface-3);
+  --panel:rgba(13,28,47,.92);
+  --panel-2:rgba(10,23,39,.82);
+  --line:rgba(125,165,210,.16);
+  --line-2:rgba(125,165,210,.09);
+  --txt:#edf5ff;
+  --txt-2:#a7b7cb;
+  --txt-3:#71859e;
+  --blue:#4b9cff;
+  --cyan:#2dcfd0;
+  --green:#41d49a;
+  --amber:#f1a43a;
+  --orange:#f58245;
+  --red:#ff5b61;
+  --purple:#8e7dff;
+  --pink:#e96fab;
+  --shadow:0 12px 32px rgba(0,0,0,.22);
+  --shadow-soft:0 6px 18px rgba(0,0,0,.16);
+  --r:8px;
+  --header-h:64px;
+  --nav-w:176px;
+  --gap:12px;
+}

@@ -2,6 +2,8 @@
 
 本文件适用于整个仓库。除非子目录存在更具体的 `AGENTS.md` 或 `AGENTS.override.md`，否则所有改动都遵守以下规则。
 
+目录组织与编码约定参考了同类 Vue 工程的分层方式，但**不要**把那套技术栈原样搬进来：本仓库保持 JavaScript、原生 CSS、Naive UI 与渐进式 legacy 迁移。禁止借「对标」引入 TypeScript、Less、Ant Design、pnpm/yarn 或新的生产依赖。
+
 ## 项目定位
 
 - 这是“东营无人机融合感知与低空安全管理平台”演示工程的 Vue 3 迁移版。
@@ -12,6 +14,7 @@
 
 - 技术栈：Vue 3、Vite 6、Vue Router 4（hash 路由）、Pinia 3、Naive UI、ECharts。
 - 使用 npm；`package-lock.json` 是依赖锁文件。不要改用 pnpm 或 yarn。
+- 路径别名：`@/` → `src/`。跨目录引用一律用 `@/`，同目录组件可用相对路径。
 - 常用命令：
   - `npm install`
   - `npm run dev`
@@ -20,11 +23,67 @@
 - 项目当前没有 `test` 或 `lint` npm script。不要声称运行过不存在的命令。
 - 未经用户明确同意，不新增生产依赖，不更换构建工具，不做与当前任务无关的依赖升级。
 
+## 目录结构
+
+当前真源见 `docs/目录结构.md`。分层约定：
+
+| 目录 | 放什么 | 不放什么 |
+| --- | --- | --- |
+| `src/assets/css/` | 全局样式切片与入口 `index.css` | 页面私有、只服务单个 SFC 的样式 |
+| `src/components/` | 跨页面复用的 Vue 组件 | 某一页专用的业务块 |
+| `src/config/` | 导航、路由、页面主题等静态配置 | 运行时状态 |
+| `src/hooks/` | 跨模块 composable（`use` 前缀） | 某一页专用的逻辑 |
+| `src/layout/` | 壳层：顶栏、侧栏、面包屑、页面宿主 | 业务页 |
+| `src/pages/` | 路由页面 | 通用组件 |
+| `src/ui/` | Naive 适配层（toast/modal/theme/表单桥） | 展示型 Vue 组件 |
+| `src/services/` | 工作台入口、权限、天气等共享服务 | 页面私有渲染 |
+| `src/stores/` | Pinia 全局状态 | 页面局部 ref |
+| `public/assets/js/` | legacy IIFE 与演示数据 | 新的 Vue 代码 |
+| `public/assets/img/` | 运行时静态图 | 样式文件 |
+
+新增文件先判断该不该公共复用：只有跨页面使用的才进 `src/components/`、`src/hooks/`、`src/services/`。
+
+## 样式规范
+
+- 全局样式在 `src/assets/css/`，由 `src/main.js` 首先 `import '@/assets/css/index.css'`。不要再往 `public/assets/css/` 加样式，也不要在 `index.html` 用 `<link>` 加载业务 CSS。
+- `src/assets/css/index.css` 的 `@import` **顺序即层叠顺序**，后写覆盖先写。不要为了「好看」重排 import。
+- `src/assets/css/tokens.css` 是主题颜色与间距 token 的唯一真源。`src/ui/theme.js` 必须运行时 `getComputedStyle` 映射 Naive UI，禁止在主题配置里手抄色值。
+- 分层：
+  - `tokens.css` / `reset.css`：变量与基线
+  - `layout/`：壳层（顶栏、导航、面包屑、大屏模式）
+  - `mixins/`：通用布局工具类（`.row` `.col` `.grid` 等）
+  - `components/`：跨页组件类（面板、KPI、表格、按钮、地图、弹窗等）
+  - `visual-2026.css`：覆盖层，改顶栏/导航/面板时必须同时看这里和 `layout/`、`components/`
+  - `themes.css`：`body[data-theme]` 模块插画
+  - `pages/`：只作用于某页的选择器
+- 改样式先找已有全局类组合；不够再补对应切片。新增选择器尽量限定在页面根类下（如 `.workbench-page`），避免污染其他页。
+- 已有 class 名（`.hdr` `.nav` `.tb` `.kpi` 等）是视觉与 DOM 指纹的一部分，禁止为了 BEM 或「规范化」重命名。
+- 图片走 `public/assets/img/`，CSS 里用根路径 `url('/assets/img/...')`，不要用相对 `../img/`。
+- Vue 单文件若需要局部样式，写在该组件的 `<style scoped>`。不允许为了把 SFC 行数做小，把组件局部样式抽成单独 CSS 文件；行数超标时按业务块拆子组件。
+- 不引入 Less/Sass，除非用户明确要求并接受新增依赖。
+
+## 功能页面模块组织
+
+1. 新增功能页使用独立文件夹，相关代码收敛在该文件夹内：
+
+   ```
+   src/pages/<feature>/
+     XxxPage.vue
+     components/     # 仅本页使用
+     hooks/          # 仅本页使用
+   ```
+
+2. 只有跨页面复用的组件、hooks 才分别放入 `src/components/`、`src/hooks/`。
+3. 已迁移的扁平页面（`src/pages/*Page.vue`）不要为了目录整齐再搬一次；后续若拆子组件，再就地改成功能文件夹。
+4. 开发前先搜索并复用 `src/components/`、`src/hooks/`、`src/ui/`、`src/services/`、`src/assets/css/` 中的已有能力。
+5. 弹窗组件命名 `xxxModal`，抽屉 `xxxDrawer`，页面 `xxxPage`，hooks 以 `use` 开头。
+6. 新组件目标不超过约 500 行、函数不超过约 100 行。已迁移页受 DOM 指纹约束，禁止只为行数拆分而改 DOM 结构。
+
 ## 当前架构契约
 
 - `index.html` 中 `public/assets/js/**` 以经典 `<script>` 按固定顺序加载，随后才加载 `src/main.js`。这些 IIFE 依赖经典脚本语义和 `window.*` 全局对象；不要随意改成 ESM、调整加载顺序或异步加载。
 - 关键全局契约包括 `MOCK`、`UI`、`CH`、`MapView`、`EVT`、`PAGES`、`ROUTES` 和 `APP`。修改共享层前先搜索全部消费者。
-- `src/shell/navModel.js` 是导航、路由、页面主题和重定向表的当前真源；新增或改名页面时同步检查侧栏、标题、面包屑、重定向和别名。
+- `src/config/navModel.js` 是导航、路由、页面主题和重定向表的当前真源；新增或改名页面时同步检查侧栏、标题、面包屑、重定向和别名。
 - `src/pages/registry.js` 是 Vue 页面迁移开关。只有页面行为和 DOM 验收通过后才能登记；未登记页面继续由 `LegacyHost` 承载。
 - `monitor` 暂不迁移：它在模块加载期消耗共享确定性随机序列。只有先把对应数据副作用移入统一数据层并证明口径不漂移，才可改为 SFC。
 - `public/assets/js/mock.js` 是当前演示数据、领域关系和大量推导规则的主要真源。不要在 Vue 页面再造一份同类数据或状态机。
@@ -34,7 +93,8 @@
 
 - 开始迁移页面前重新读取对应 `public/assets/js/pages/<page>.js`；不要依赖旧会话或旧截图中的代码记忆。
 - 需要与同级 `dongying-demo` 母本同步时，先运行 `bash tools/parity-diff.sh`。若母本目录不存在，明确说明无法做字节级对照，不要猜测差异。
-- 未迁移页面、共享 legacy 层和静态资源可按母本同步；已迁移页面必须把上游差异人工重放到对应 Vue 页面，不能用旧脚本直接覆盖 SFC。
+- 未迁移页面、共享 legacy JS 和 `public/assets/img` 可按母本同步。**CSS 已由本仓 `src/assets/css/` 维护，不再与母本逐字节同步**；上游样式 diff 必须人工重放到对应切片。
+- 已迁移页面必须把上游 JS 差异人工重放到对应 Vue 页面，不能用旧脚本直接覆盖 SFC。
 - 保留 legacy 的状态生命周期：需要跨导航保留的模块级状态放在 SFC 普通 `<script>` 模块作用域；仅当旧 `mount()` 本就完全重置时，才放在 `setup` 生命周期中。
 - 模块加载期的数据注入、注册或随机数消耗只保留一处。不要在 SFC 中重复 `U.regParams`、Mock 注入或其他副作用。
 - 页面卸载必须清理图表、地图、动画帧、计时器、事件监听和弹窗。Vue 页面优先调用 `usePageChrome()`，并保持与 legacy 兼容的清理顺序。
@@ -43,7 +103,6 @@
 
 ## UI 与交互规则
 
-- `public/assets/css/app.css` 中的 CSS token 是应用主题颜色的唯一真源。`src/ui/theme.js` 应通过运行时 token 映射 Naive UI；不要在 Vue 主题配置中手抄一套色值。
 - 交互控件优先使用现有 Naive UI 适配：toast 走 `src/ui/nv.js`，弹窗走 `src/ui/modal.js`，确认框走 `src/ui/confirm.js`。具体 legacy → Naive 映射见 `tools/NAIVE-MAP.md`。
 - 所有页面和弹窗的表单控件必须使用 Naive UI 组件（如 `NInput`、`NSelect`、`NInputNumber`、`NDatePicker`、`NCheckbox`、`NRadio`）；禁止新增或继续渲染原生 `<input>`、`<select>`、`<textarea>` 表单控件。legacy 字符串表单必须先迁入 `openModal({ render })` 受控 Vue 组件，不得仅靠 CSS 仿写组件库外观。扫描、修复和生成新代码均遵守此规则。
 - 弹窗保持单例、遮罩关闭、`data-close`/`data-act` 委托和既有 z-index 契约；Vue 页面不要绕回 legacy toast 或另造第二套弹窗系统。
@@ -80,6 +139,7 @@
   - `node tools/falsify.cjs`
 - 改到历史瓦片审计逻辑时运行 `node tools/tilecheck.cjs`；它不是普通 UI 改动的必跑项。
 - 改到经典 JS/CJS 时对相关文件运行 `node --check <file>`。
+- 改到全局 CSS 时，至少抽查壳层、一张业务页、工作台和大屏，确认层叠未被打乱、图片能加载。
 - UI 改动需在真实浏览器验证受影响路由、关键交互链、控制台错误、目标视口和卸载清理；涉及地图时确认只剩一个活动地图宿主和 overlay canvas。
 - 页面迁移的验收门槛是与当前 legacy 页面并排比较：DOM 元素数和规范化 `textContent` 指纹一致。含 `requestAnimationFrame` 内容时先中和环境相关片段，并保证页面可见后再测量。
 - 视觉改造只有在确实捕获了对应截图、视口、状态和测试证据后才能更新 `design-qa.md`；不要引用缺失或过期图片作为通过依据。
@@ -97,6 +157,7 @@
 ## Code Review Rules
 
 - 阻止会破坏经典脚本加载顺序、全局 shim、hash 路由兼容、页面清理顺序或确定性 Mock 数据的改动。
+- 阻止把 CSS 重新堆回单文件、打乱 `index.css` 的 import 顺序，或在 Vue 主题里手抄 token 的改动。
 - 阻止页面私自复制状态机、跳过权限/审计/证据/回执，或让不同入口对同一事件显示不同阶段的改动。
 - 阻止把密钥写入源码、生产包或日志，以及把开发安全码带入生产配置的改动。
 - 阻止只靠 toast 模拟成功、虚构业务记录或把路线图能力伪装成已落地能力的改动。

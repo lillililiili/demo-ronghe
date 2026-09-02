@@ -18,9 +18,9 @@ export default {};
    裁定删除），转换时不带入。 */
 import { ref, reactive, computed, onMounted } from 'vue';
 import { NPagination } from 'naive-ui';
-import { usePageChrome } from '../shell/usePageChrome.js';
-import UPanel from '../ui/UPanel.vue';
-import { toast } from '../ui/nv.js';
+import { usePageChrome } from '@/hooks/usePageChrome.js';
+import UPanel from '@/components/UPanel.vue';
+import { toast } from '@/ui/nv.js';
 
 const M = window.MOCK, U = window.UI;
 usePageChrome('evidence');

@@ -16,7 +16,7 @@
 import { h, nextTick } from 'vue';
 import { createDiscreteApi } from 'naive-ui';
 import { theme, themeOverrides } from './theme.js';
-import LegacyFormContent from './modals/LegacyFormContent.vue';
+import LegacyFormContent from '@/components/modals/LegacyFormContent.vue';
 
 const { modal } = createDiscreteApi(['modal'], {
   configProviderProps: { theme, themeOverrides }

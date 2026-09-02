@@ -7,8 +7,8 @@ import {
   NotificationsOutline,
   RadioOutline
 } from '@vicons/ionicons5';
-import { theme, themeOverrides } from '../ui/theme.js';
-import { refreshWeather, weatherState } from '../services/weather.js';
+import { theme, themeOverrides } from '@/ui/theme.js';
+import { refreshWeather, weatherState } from '@/services/weather.js';
 
 const M = window.MOCK;
 const U = window.UI;
@@ -37,12 +37,10 @@ const alarmLevelScore = { 高: 3, 中: 2, 低: 1 };
 const alarmFlowScore = { 待核实: 0, 反制中: 1, 干扰中: 2, 待处置: 3, 新建: 4, 处置中: 5, 已关闭: 6, 误报: 7 };
 const legacyFlowStatus = { 新建: '待核实', 已确认: '待核实', 处置中: '反制中', 已关闭: '待处置', 误报: '误报' };
 
-let noticedCases = {};
-try { noticedCases = JSON.parse(sessionStorage.getItem('punish.notice.v1') || '{}') || {}; } catch (e) { noticedCases = {}; }
-
+const noticeTick = ref(0);
 const rowLimit = computed(() => viewportHeight.value < 760 ? 2 : viewportHeight.value < 850 ? 3 : 4);
 const alarmFlowStatus = alarm => alarm.flowStatus || legacyFlowStatus[alarm.status] || alarm.status || '待核实';
-const noticeStatus = item => noticedCases[item.id] || (item.status === '已结案' ? '已通知' : '待通知');
+const noticeStatus = item => { noticeTick.value; return M.caseNoticeStatus(item); };
 const isEvidenceException = item => item.verifyState !== '完好';
 const isPlanDeviated = plan => {
   const d = plan.deviation;
@@ -248,11 +246,14 @@ function handleResize() {
   resizeTimer = window.setTimeout(() => { viewportHeight.value = window.innerHeight; }, 120);
 }
 
+function bumpNotice() { noticeTick.value++; }
+
 onMounted(() => {
   clockTimer = window.setInterval(() => { clock.value = M.systemNowStr(); }, 1000);
   refreshWeather();
   weatherTimer = window.setInterval(refreshWeather, 30 * 60 * 1000);
   window.addEventListener('resize', handleResize);
+  window.addEventListener('evt:advance', bumpNotice);
   requestAnimationFrame(() => {
     renderCharts();
     renderMap();
@@ -264,6 +265,7 @@ onBeforeUnmount(() => {
   clearInterval(weatherTimer);
   clearTimeout(resizeTimer);
   window.removeEventListener('resize', handleResize);
+  window.removeEventListener('evt:advance', bumpNotice);
   destroyVideo();
   if (map) map.destroy();
   map = null;

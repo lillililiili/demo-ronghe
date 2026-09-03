@@ -21,11 +21,11 @@
 cd dongying-vue && npm install && npm run dev
 cd dongying-vue && npm run build
 cd server && ./mvnw test
-cd server && ./mvnw -Dtest=AuthApiIT test
+cd server && ./mvnw package
 cd server && ./mvnw spring-boot:run -Dspring-boot.run.profiles=local
 ```
 
-Windows PowerShell 进入对应目录后使用 `.\mvnw.cmd`，`-D` 参数建议整体加引号。当前认证类需显式指定并核对实际测试报告；普通 `test` 退出成功不代表执行了该类。
+Windows PowerShell 进入对应目录后使用 `.\mvnw.cmd`，`-D` 参数建议整体加引号。认证测试类为 `AuthApiTest`，普通 `test` 会执行；交付时核对 `target/surefire-reports` 的实际用例数。
 
 前端技术栈与编码约定以 `dongying-vue/AGENTS.md` 为准：保持 JavaScript、原生 CSS、Naive UI 与渐进式 legacy 迁移。
 

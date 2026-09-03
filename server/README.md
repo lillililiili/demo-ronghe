@@ -43,12 +43,11 @@ Linux/macOS 在 `server/` 执行：
 
 ## 测试
 
-以下命令都在 `server/` 执行。`AuthApiIT` 显式启用 `test` profile，使用 H2 PostgreSQL 兼容模式；不会依据 Docker 是否启动自动切换数据库。
+以下命令都在 `server/` 执行。`AuthApiTest` 启用 `test` profile，使用 H2 PostgreSQL 兼容模式；不会依据 Docker 是否启动自动切换数据库。普通 `./mvnw test` 会发现该类。
 
 Windows PowerShell：
 
 ```powershell
-.\mvnw.cmd "-Dtest=AuthApiIT" test
 .\mvnw.cmd test
 .\mvnw.cmd package
 ```
@@ -56,14 +55,11 @@ Windows PowerShell：
 Linux/macOS：
 
 ```bash
-./mvnw -Dtest=AuthApiIT test
 ./mvnw test
 ./mvnw package
 ```
 
-当前 POM 没有显式绑定 IT 生命周期，普通 `test/package` 不能被当作已执行 `AuthApiIT` 的证据。显式运行后核对 `target/surefire-reports` 中的实际用例数、失败及跳过；当前该类有 8 个测试方法。本次文档更新没有执行这些命令。
-
-H2 测试不替代 PostgreSQL/PostGIS 的 SQL、空间查询、锁、约束和迁移验证；新增相关功能时，在隔离真实数据库中补充验证，不连接生产库。
+核对 `target/surefire-reports` 中的实际用例数、失败及跳过。H2 测试不替代 PostgreSQL/PostGIS 的 SQL、空间查询、锁、约束和迁移验证；新增相关功能时，在隔离真实数据库中补充验证，不连接生产库。
 
 ## 约定
 
@@ -71,4 +67,4 @@ H2 测试不替代 PostgreSQL/PostGIS 的 SQL、空间查询、锁、约束和�
 - 成功状态及审计保持一致，失败尝试也须可靠留痕。当前审计 Mapper 只有 INSERT，不代表完整防篡改方案已完成。
 - 生产禁止公网依赖；真实部署网络按确认资料配置。`APP_SOURCE_MODE=live` 不得自动降级为 mock；当前尚无 live/replay 适配器，不应将模式名当作已接入能力。
 - 当前本地证据目录适配只用于开发测试；真实文件、元数据、哈希、下载授权和保管策略随业务切片建设。
-- 启动配置、默认账号、消息投递与测试发现等差距见[开发基线](../docs/后端开发基线.md)，本轮不修复业务或安全代码。
+- 启动配置、默认账号、消息投递与测试发现等差距见[开发基线](../docs/后端开发基线.md)。

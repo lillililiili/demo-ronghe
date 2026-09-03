@@ -81,9 +81,7 @@ Java 根包保持 `com.uav.lowaltitude`。保留现有 `modules/identity`、`mod
 以下命令均在 `server/` 内执行；启动前按 README 准备隔离开发数据库，测试不连接生产库。
 
 ```powershell
-# Windows PowerShell：显式执行当前认证集成测试
-.\mvnw.cmd "-Dtest=AuthApiIT" test
-# 默认测试和打包；检查实际执行的测试报告
+# Windows PowerShell
 .\mvnw.cmd test
 .\mvnw.cmd package
 # 本地启动
@@ -92,13 +90,12 @@ Java 根包保持 `com.uav.lowaltitude`。保留现有 `modules/identity`、`mod
 
 ```bash
 # Linux/macOS：同样在 server/ 执行
-./mvnw -Dtest=AuthApiIT test
 ./mvnw test
 ./mvnw package
 ./mvnw spring-boot:run -Dspring-boot.run.profiles=local
 ```
 
-- 当前 `AuthApiIT` 使用 `@ActiveProfiles("test")` 和 H2；这不是自动检测 Docker 后切换数据库。POM 未显式配置 IT 生命周期，不能假定普通 `test/package` 会执行该类，当前须显式指定并核对 `target/surefire-reports`。本规则不代表已修改测试配置。
+- 当前 `AuthApiTest` 使用 `@ActiveProfiles("test")` 和 H2；这不是自动检测 Docker 后切换数据库。普通 `test` 会发现该类。交付时核对 `target/surefire-reports`。
 - 新增普通测试使用默认可发现的 `*Test` 命名；若引入 `*IT` 生命周期，必须在获准的测试配置变更中明确绑定和验收命令。报告列出命令、实际用例数量、失败/跳过及环境，不能只报进程退出码。
 - 后端 Java/资源/配置/依赖改动至少运行受影响测试和 `package`；身份、权限或共享安全改动显式跑当前认证测试。无法执行时报告具体缺失条件，不声称通过。
 - SQL、空间查询、约束、锁和迁移变更必须在隔离 PostgreSQL/PostGIS 环境验证相关行为及迁移路径；H2 测试不能替代。没有环境时如实标记该项未验收，不偷偷使用现有业务数据库。

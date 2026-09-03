@@ -26,6 +26,7 @@ public class AuthService {
     private final SessionMapper sessionMapper;
     private final PasswordEncoder passwordEncoder;
     private final AuditService auditService;
+    private final LoginFailureRecorder loginFailureRecorder;
     private final AppProperties appProperties;
     private final AppClock appClock;
 
@@ -34,12 +35,14 @@ public class AuthService {
             SessionMapper sessionMapper,
             PasswordEncoder passwordEncoder,
             AuditService auditService,
+            LoginFailureRecorder loginFailureRecorder,
             AppProperties appProperties,
             AppClock appClock) {
         this.userMapper = userMapper;
         this.sessionMapper = sessionMapper;
         this.passwordEncoder = passwordEncoder;
         this.auditService = auditService;
+        this.loginFailureRecorder = loginFailureRecorder;
         this.appProperties = appProperties;
         this.appClock = appClock;
     }
@@ -48,26 +51,26 @@ public class AuthService {
     public Map<String, Object> login(String account, String password, String ip) {
         AppUser user = userMapper.findByAccount(account);
         if (user == null) {
-            auditService.record(null, account, "login_fail", "user", account, "unknown_account", ip);
+            loginFailureRecorder.unknownAccount(account, ip);
             throw new ApiException(HttpStatus.UNAUTHORIZED, "INVALID_CREDENTIALS", "账号或密码错误");
         }
         long now = appClock.nowMillis();
         if (user.getLockedUntil() != null && user.getLockedUntil() > now) {
-            auditService.record(user.getUserId(), account, "login_fail", "user", user.getUserId(), "locked", ip);
+            loginFailureRecorder.locked(user, account, ip);
             throw new ApiException(HttpStatus.UNAUTHORIZED, "ACCOUNT_LOCKED", "账号已锁定");
         }
         if (!"正常".equals(user.getStatus())) {
-            auditService.record(user.getUserId(), account, "login_fail", "user", user.getUserId(), "disabled", ip);
+            loginFailureRecorder.disabled(user, account, ip);
             throw new ApiException(HttpStatus.UNAUTHORIZED, "ACCOUNT_DISABLED", "账号已停用");
         }
         if (!passwordEncoder.matches(password, user.getPasswordHash())) {
-            int fails = user.getFailCount() + 1;
-            Long lockedUntil = null;
-            if (fails >= appProperties.getLogin().getFailLimit()) {
-                lockedUntil = now + appProperties.getLogin().getLockMinutes() * 60_000L;
-            }
-            userMapper.updateLock(user.getUserId(), fails, lockedUntil);
-            auditService.record(user.getUserId(), account, "login_fail", "user", user.getUserId(), "bad_password", ip);
+            loginFailureRecorder.badPassword(
+                    user,
+                    account,
+                    ip,
+                    now,
+                    appProperties.getLogin().getFailLimit(),
+                    appProperties.getLogin().getLockMinutes());
             throw new ApiException(HttpStatus.UNAUTHORIZED, "INVALID_CREDENTIALS", "账号或密码错误");
         }
         userMapper.updateLock(user.getUserId(), 0, null);

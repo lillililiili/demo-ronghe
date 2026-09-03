@@ -10,7 +10,7 @@ spring:
     clean-disabled: true
 
 app:
-  source-mode: ${APP_SOURCE_MODE:mock}
+  source-mode: ${APP_SOURCE_MODE}
   evidence-dir: ${EVIDENCE_DIR:./data/evidence}
   dev-seed:
     enabled: ${APP_DEV_SEED_ENABLED:false}

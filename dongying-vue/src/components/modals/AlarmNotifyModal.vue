@@ -19,6 +19,7 @@ const introHtml = U.kv([
 ]);
 const channelOpts = computed(() => props.channels.map(c2 => ({
   value: c2.id,
+  disabled: true,
   html: `${c2.name} <span style="color:var(--txt-3)"> → ${c2.target}</span> ${U.tag('接口未接入', 't-amber')}`
 })));
 </script>

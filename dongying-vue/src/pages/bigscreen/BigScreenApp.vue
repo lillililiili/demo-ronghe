@@ -30,6 +30,7 @@ let map = null;
 let video = null;
 let mapHint = null;
 let runtimeChart = null;
+let lifecycleGeneration = 0;
 let mounted = false;
 let runtimeStarted = false;
 
@@ -122,16 +123,16 @@ const isPlanDeviated = plan => {
     || (d.altDelta != null && Math.abs(d.altDelta) > 20);
 };
 
-const targetAll = computed(() => {
-  const data = screenData.value;
-  if (!data) return [];
-  return data.liveTargets.filter(t => t.type === '无人机').slice().sort((a, b) =>
+function rankTargets(items) {
+  return items.filter(t => t.type === '无人机').slice().sort((a, b) =>
     (riskScore[b.risk] || 0) - (riskScore[a.risk] || 0)
     || Number(b.legal === '待确认') - Number(a.legal === '待确认')
     || Number(!!b.tracked) - Number(!!a.tracked)
     || b.ts - a.ts
   );
-});
+}
+
+const targetAll = computed(() => rankTargets(screenData.value ? screenData.value.liveTargets : []));
 const judgementPending = computed(() => screenData.value ? screenData.value.todayTargets.filter(t =>
   t.type === '无人机' && (t.legal === '非法' || t.legal === '待确认')).length : 0);
 const pendingCases = computed(() => screenData.value
@@ -153,13 +154,14 @@ const deviceExceptions = computed(() => screenData.value ? screenData.value.devi
     || ({ 异常: 3, 离线: 2, 在线: 1 }[b.status] || 0) - ({ 异常: 3, 离线: 2, 在线: 1 }[a.status] || 0)
     || (b.hbMin || 0) - (a.hbMin || 0)
   ) : []);
-const flightPlans = computed(() => screenData.value ? screenData.value.flightPlans : []);
-const flightMetrics = computed(() => [
-  { label: '今日计划', value: flightPlans.value.length, page: 'flights' },
-  { label: '执行中', value: flightPlans.value.filter(p => p.status === '执行中').length, page: 'flights' },
-  { label: '未匹配', value: flightPlans.value.filter(p => p.matched === '未匹配感知目标').length, page: 'flights' },
-  { label: '偏离计划', value: flightPlans.value.filter(isPlanDeviated).length, page: 'flights', tone: 'bad' }
-]);
+function buildFlightMetrics(plans) {
+  return [
+    { label: '今日计划', value: plans.length, page: 'flights' },
+    { label: '执行中', value: plans.filter(p => p.status === '执行中').length, page: 'flights' },
+    { label: '未匹配', value: plans.filter(p => p.matched === '未匹配感知目标').length, page: 'flights' },
+    { label: '偏离计划', value: plans.filter(isPlanDeviated).length, page: 'flights', tone: 'bad' }
+  ];
+}
 
 const closureItems = computed(() => [
   { label: '待核实告警', value: alarmAll.value.filter(a => a._flowStatus === '待核实').length, page: 'alarms', tone: 'warn', icon: NotificationsOutline },
@@ -226,12 +228,13 @@ const alarmColumns = [
   { title: '状态', key: '_flowStatus' }
 ];
 
-function renderCharts() {
-  const data = screenData.value;
+function renderCharts(data) {
   if (!data) return;
   const days = data.statsDays.slice(-7);
+  const targets = rankTargets(data.liveTargets);
+  const flightMetrics = buildFlightMetrics(data.flightPlans);
   const gradedTargets = ['高风险', '中风险', '低风险'].reduce((sum, level) =>
-    sum + targetAll.value.filter(t => t.risk === level).length, 0);
+    sum + targets.filter(t => t.risk === level).length, 0);
   data.chart.line(trendEl.value, {
     x: days.map(x => x.md),
     series: [
@@ -241,22 +244,22 @@ function renderCharts() {
   });
   data.chart.donut(targetChartEl.value, {
     data: [
-      { name: '高风险', value: targetAll.value.filter(t => t.risk === '高风险').length, c: data.chart.C.red },
-      { name: '中风险', value: targetAll.value.filter(t => t.risk === '中风险').length, c: data.chart.C.amber },
-      { name: '低风险', value: targetAll.value.filter(t => t.risk === '低风险').length, c: data.chart.C.green },
-      { name: '未定级', value: Math.max(0, targetAll.value.length - gradedTargets), c: data.chart.C.gray }
+      { name: '高风险', value: targets.filter(t => t.risk === '高风险').length, c: data.chart.C.red },
+      { name: '中风险', value: targets.filter(t => t.risk === '中风险').length, c: data.chart.C.amber },
+      { name: '低风险', value: targets.filter(t => t.risk === '低风险').length, c: data.chart.C.green },
+      { name: '未定级', value: Math.max(0, targets.length - gradedTargets), c: data.chart.C.gray }
     ],
-    centerLabel: '重点目标', centerValue: targetAll.value.length, showPct: false,
+    centerLabel: '重点目标', centerValue: targets.length, showPct: false,
     narrow: false, center: ['31%', '50%'], radius: ['45%', '66%']
   });
   data.chart.ring(deviceChartEl.value, {
     value: data.deviceStats.onlineRate, label: '设备在线率', color: data.chart.C.cyan, fs: 24
   });
   data.chart.bar(flightChartEl.value, {
-    x: flightMetrics.value.map(item => item.label), legend: false,
+    x: flightMetrics.map(item => item.label), legend: false,
     grid: { left: 30, right: 8, top: 20, bottom: 24 },
     series: [{
-      name: '数量', data: flightMetrics.value.map(item => item.value), width: 24,
+      name: '数量', data: flightMetrics.map(item => item.value), width: 24,
       colorBy: p => p.dataIndex === 3 ? data.chart.C.red : [data.chart.C.blue, data.chart.C.green, data.chart.C.amber][p.dataIndex]
     }]
   });
@@ -268,8 +271,7 @@ function openVideo(target) {
   showVideo.value = true;
 }
 
-function renderMap() {
-  const data = screenData.value;
+function renderMap(data) {
   if (!data || !mapEl.value) return;
   map = new data.MapView(mapEl.value, {
     zoom: 1.06,
@@ -286,11 +288,10 @@ function renderMap() {
   mapHint.className = 'bs-map-hint';
   mapHint.textContent = '点击地图上的无人机查看实时视频';
   mapEl.value.appendChild(mapHint);
-  refreshMapData();
+  refreshMapData(data);
 }
 
-function refreshMapData() {
-  const data = screenData.value;
+function refreshMapData(data) {
   if (!data || !map) return;
   map.setData({
     airspaces: data.airspaces,
@@ -355,7 +356,13 @@ function adoptChartRuntime(nextChart) {
   runtimeChart = nextChart;
 }
 
+function invalidateLifecycle() {
+  lifecycleGeneration += 1;
+  return lifecycleGeneration;
+}
+
 function stopReadyRuntime() {
+  invalidateLifecycle();
   const currentClockTimer = clockTimer;
   clockTimer = null;
   if (currentClockTimer != null) runCleanup(() => clearInterval(currentClockTimer));
@@ -399,8 +406,8 @@ function startReadyRuntime() {
     }, 1000);
     window.addEventListener('resize', handleResize);
     window.addEventListener('evt:advance', bumpNotice);
-    renderCharts();
-    renderMap();
+    renderCharts(data);
+    renderMap(data);
   } catch (err) {
     failReadyRuntime(err);
   }
@@ -418,10 +425,13 @@ function failReadyRuntime(err) {
 }
 
 async function reloadBigScreen() {
+  if (runtimeStarted) stopReadyRuntime();
+  const generation = invalidateLifecycle();
   queryStatus.value = 'loading';
   queryError.value = '';
   screenData.value = null;
   await nextTick();
+  if (!mounted || generation !== lifecycleGeneration || queryStatus.value !== 'loading') return;
   try {
     const data = validateBigScreenData();
     screenData.value = data;
@@ -433,8 +443,10 @@ async function reloadBigScreen() {
 
 async function refreshBigScreenData() {
   if (queryStatus.value !== 'ready') return;
+  const generation = invalidateLifecycle();
   try {
     const data = validateBigScreenData();
+    if (!mounted || generation !== lifecycleGeneration || queryStatus.value !== 'ready') return;
     if (!hasVisibleBusinessData(data)) {
       screenData.value = null;
       queryStatus.value = 'empty';
@@ -443,11 +455,10 @@ async function refreshBigScreenData() {
     screenData.value = data;
     clock.value = data.initialClock;
     await nextTick();
-    if (mounted && queryStatus.value === 'ready') {
-      adoptChartRuntime(data.chart);
-      renderCharts();
-      refreshMapData();
-    }
+    if (!mounted || generation !== lifecycleGeneration || queryStatus.value !== 'ready') return;
+    adoptChartRuntime(data.chart);
+    renderCharts(data);
+    refreshMapData(data);
   } catch (err) {
     failReadyRuntime(err);
   }
@@ -455,15 +466,16 @@ async function refreshBigScreenData() {
 
 function bumpNotice() {
   noticeTick.value++;
-  refreshBigScreenData();
+  void refreshBigScreenData();
 }
 
 watch(queryStatus, async (status, previous) => {
+  const generation = lifecycleGeneration;
   if (!mounted) return;
-  if (previous === 'ready' && status !== 'ready') stopReadyRuntime();
+  if (previous === 'ready' && status !== 'ready' && runtimeStarted) stopReadyRuntime();
   if (status !== 'ready' || previous === 'ready') return;
   await nextTick();
-  if (mounted && queryStatus.value === 'ready') startReadyRuntime();
+  if (mounted && generation === lifecycleGeneration && queryStatus.value === 'ready') startReadyRuntime();
 }, { flush: 'pre' });
 
 onMounted(() => {

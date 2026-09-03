@@ -1,0 +1,39 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: low-altitude-server
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://127.0.0.1:5432/uav}
+    username: ${DB_USER:uav}
+    password: ${DB_PASSWORD:uav}
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  jackson:
+    property-naming-strategy: SNAKE_CASE
+    default-property-inclusion: non_null
+
+mybatis:
+  configuration:
+    map-underscore-to-camel-case: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+app:
+  source-mode: ${APP_SOURCE_MODE:mock}
+  evidence-dir: ${EVIDENCE_DIR:./data/evidence}
+  login:
+    fail-limit: ${LOGIN_FAIL_LIMIT:5}
+    lock-minutes: ${LOGIN_LOCK_MINUTES:30}
+  session:
+    ttl-hours: ${SESSION_TTL_HOURS:8}

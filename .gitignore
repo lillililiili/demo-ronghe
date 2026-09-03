@@ -6,3 +6,9 @@ dist/
 .env.local
 .env.*.local
 dongying-demo
+
+# backend
+server/target/
+server/.mvn/wrapper/maven-wrapper.jar
+data/evidence/
+.env

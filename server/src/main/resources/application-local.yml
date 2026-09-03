@@ -1,0 +1,9 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://127.0.0.1:5432/uav
+    username: uav
+    password: uav
+
+app:
+  source-mode: mock
+  evidence-dir: ./data/evidence

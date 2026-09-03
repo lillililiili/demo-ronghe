@@ -1,0 +1,46 @@
+services:
+  db:
+    image: postgis/postgis:16-3.5
+    environment:
+      POSTGRES_DB: uav
+      POSTGRES_USER: uav
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-uav}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U uav -d uav"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: ../server
+    environment:
+      DB_URL: jdbc:postgresql://db:5432/uav
+      DB_USER: uav
+      DB_PASSWORD: ${DB_PASSWORD:-uav}
+      APP_SOURCE_MODE: mock
+      EVIDENCE_DIR: /data/evidence
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    volumes:
+      - ../data/evidence:/data/evidence
+
+  web:
+    image: nginx:1.27
+    volumes:
+      - ../dongying-vue/dist:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ../data/tiles:/tiles:ro
+    ports:
+      - "80:80"
+    depends_on:
+      - api
+
+volumes:
+  pgdata: {}

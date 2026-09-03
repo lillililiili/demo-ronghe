@@ -38,6 +38,6 @@ cd ../server
 
 ## 其他
 
-- 文档：[目录结构](docs/目录结构.md)、[后端开发基线](docs/后端开发基线.md)
+- 文档：[目录结构](docs/目录结构.md)、[后端开发基线](docs/后端开发基线.md)、[数据库设计文档](docs/数据库设计文档.md)
 - 部署示例：`deploy/`（`compose.yml` 假定前端产物在 `dongying-vue/dist`，API 在 `server/`）
 - 开发规则：[仓库级](AGENTS.md)、[前端](dongying-vue/AGENTS.md)、[后端](server/AGENTS.md)

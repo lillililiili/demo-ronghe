@@ -2,14 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { UField } from '@/components/form/index.js';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
-import { toast } from '@/ui/nv.js';
-import { openModal, closeModal } from '@/ui/modal.js';
-import { openFormModal } from '@/ui/formModal.js';
-import { openRiskVerification } from '@/ui/riskVerificationModal.js';
-import {
-  listWorkbenchEvents, getWorkbenchDetail,
-  advanceUav, verifyUav, actRisk, openDeviceReboot, verifyDeviceRecovery
-} from '@/services/workbenchEvents.js';
+import { listWorkbenchEvents, getWorkbenchDetail } from '@/services/workbenchEvents.js';
 
 const M = window.MOCK, U = window.UI;
 usePageChrome('workbench');
@@ -41,13 +34,18 @@ const selected = computed(() => {
   return getWorkbenchDetail(selectedKey.value);
 });
 const currentUser = computed(() => M.currentUser || { name: '用户', roleName: '—' });
-const riskActions = computed(() => selected.value?.kind === 'risk' ? M.riskNext(selected.value.risk.status) : []);
 const canReadCase = computed(() => M.can('处置处罚管理', 'read'));
 const canReadAuth = computed(() => M.can('反制/干扰授权', 'read'));
 const levels = ['高', '中', '低'];
 const levelOptions = [{ label: '全部等级', value: 'all' }, ...levels.map(value => ({ label: `${value}风险`, value }))];
 const kindLabel = { uav: '无人机告警', risk: '飞行计划风险', device: '设备告警' };
 const kindIcon = { uav: 'plane', risk: 'plan', device: 'device' };
+const unavailableReasonByKind = {
+  uav: '真实处置接口未接入，当前仅展示 Mock 演示数据。',
+  risk: '真实通报接口未接入，当前仅展示 Mock 演示数据。',
+  device: '真实设备控制与恢复验证接口未接入，当前仅展示 Mock 演示数据。'
+};
+const actionUnavailableReason = computed(() => unavailableReasonByKind[selected.value?.kind] || '真实业务接口未接入，当前仅展示 Mock 演示数据。');
 const kindOptions = [
   { value: 'all', label: '全部事件' },
   { value: 'uav', label: '无人机告警' },
@@ -156,100 +154,6 @@ async function mountMap() {
 }
 watch([selectedKey, revision], mountMap, { flush: 'post' });
 
-function verifyModal() {
-  const d = selected.value;
-  if (!d || d.kind !== 'uav') return;
-  openFormModal({
-    title: `人工核实 · ${d.ctx.alarm.id}`, width: '620px',
-    warning: '核实结论会直接进入现有告警状态机：属实后进入「反制中」，误报则在本环节终止。',
-    introHtml: U.kv([
-      ['关联目标', `<span class="mono">${d.ctx.id}</span>`],
-      ['告警类型', d.ctx.alarm.type], ['风险等级', U.tag(d.ctx.alarm.level, tagClass(d.ctx.alarm.level))],
-      ['区域 / 时间', `${d.ctx.alarm.district} · ${d.ctx.alarm.time}`], ['告警内容', d.ctx.alarm.detail]
-    ]),
-    fields: [
-      { key: 'real', label: '核实结论', type: 'radio', required: true, options: [
-        { value: '1', label: '属实，进入反制' },
-        { value: '0', label: '误报，终止事件' }
-      ] },
-      { key: 'note', label: '核实说明', required: true, placeholder: '必填：现场确认、轨迹复核或联系结果' }
-    ],
-    initial: { real: '1', note: '' },
-    confirmText: '提交核实结论',
-    validate: m => !(m.note || '').trim() ? '核实说明为必填' : '',
-    onSubmit: ({ real, note }) => {
-      const r = verifyUav(selectedKey.value, real === '1', (note || '').trim());
-      if (!r.ok) return toast(r.msg, 'err');
-      closeModal(); refresh(); toast(r.msg, 'ok');
-    }
-  });
-}
-
-function runUavAction() {
-  const d = selected.value, td = d?.summary.todo;
-  if (!d || !td) return;
-  if (!td.allowed) return toast(td.blocker, 'err');
-  if (d.ctx.stage === 1) return verifyModal();
-  const execute = () => {
-    const r = advanceUav(selectedKey.value, td.hint);
-    if (!r.ok) { toast(r.msg, 'err'); return false; }
-    refresh(); toast(r.msg, 'ok'); return true;
-  };
-  if (d.ctx.stage === 2 && window.TARGET_ACTIONS) {
-    return window.TARGET_ACTIONS.openCounterAuth(d.ctx.target, execute);
-  }
-  if (d.ctx.stage === window.EVT.FLOW.length - 1) {
-    return window.EVT.confirmPunish(d.ctx, {
-      note: '工作台确认通知处罚部门',
-      onResult: r => {
-        if (!r.ok) return toast(r.msg, 'err');
-        refresh(); toast(r.msg, 'ok');
-      }
-    });
-  }
-  openModal({
-    title: `${td.action} · ${d.ctx.id}`, width: '540px',
-    body: `<div class="warnbox">本操作将推进业务状态并写入现有操作审计。</div>${U.kv([
-      ['当前环节', td.label], ['责任模块', td.module], ['目标编号', `<span class="mono">${d.ctx.id}</span>`]
-    ])}`,
-    footer: '<button class="btn" data-close>取消</button><button class="btn pri" data-act="ok">确认执行</button>',
-    on: { ok: () => { closeModal(); execute(); } }
-  });
-}
-
-function runRiskAction(to) {
-  if (!selected.value || selected.value.kind !== 'risk') return;
-  actRisk(selectedKey.value, to, refresh);
-}
-function runRiskPrimary() {
-  const d = selected.value;
-  if (!d || d.kind !== 'risk') return;
-  if (d.risk.status === '待核验') return riskVerifyModal();
-  runRiskAction(riskActions.value[0]?.to);
-}
-function riskVerifyModal() {
-  const d = selected.value;
-  if (!d || d.kind !== 'risk') return;
-  openRiskVerification({
-    risk: d.risk,
-    route: d.route,
-    plan: d.plan,
-    onExclude: () => runRiskAction('已排除'),
-    onConfirm: () => runRiskAction('待通知')
-  });
-}
-function runDeviceAction() {
-  const d = selected.value;
-  if (!d || d.kind !== 'device') return;
-  if (d.incident.stage === '待验证') {
-    const r = verifyDeviceRecovery(selectedKey.value);
-    toast(r.msg, r.ok ? 'ok' : 'err');
-    if (r.ok) refresh();
-    return;
-  }
-  openDeviceReboot(selectedKey.value, { onChange: refresh });
-}
-
 function fmt(v) { return v == null || v === '' ? '—' : v; }
 function dateShort(v) { return String(v || '—').replace(/^\d{4}-/, ''); }
 
@@ -319,7 +223,8 @@ onUnmounted(() => {
                 <span class="wb-event-top"><em>{{ e.kindLabel }}</em><span><i class="wb-source-state">{{ e.sourceStatus }}</i><i class="tag" :class="tagClass(e.level)">{{ e.level }}</i></span></span>
                 <b>{{ e.title }}</b><small class="mono">{{ e.sourceId }}</small>
                 <span class="wb-event-meta"><i>{{ e.district }}</i><i>{{ dateShort(e.occurredAt) }}</i></span>
-                <span class="wb-event-next">下一步：{{ e.todo?.action || '无需处理' }}</span>
+                <span v-if="e.todo" class="wb-event-next">下一步：{{ e.todo.action }}</span>
+                <span v-else class="wb-event-next">当前无待办动作</span>
               </span>
             </button>
             <button v-if="visibleEvents.length < filtered.length" class="wb-load-more" @click="loadMore">继续加载 {{ Math.min(30, filtered.length - visibleEvents.length) }} 件</button>
@@ -337,9 +242,8 @@ onUnmounted(() => {
             <div class="wb-title-tags"><span class="tag" :class="tagClass(selected.summary.level)">{{ selected.summary.level }}</span><span class="tag t-cyan">{{ selected.summary.sourceStatus }}</span></div>
             <div v-if="selected.summary.todo" class="wb-title-next">
               <span><small>下一步</small><b>{{ selected.summary.todo.action }}</b></span>
-              <button v-if="selected.kind === 'uav'" class="btn pri" :disabled="!selected.summary.todo.allowed" @click="runUavAction">{{ selected.summary.todo.action }}</button>
-              <button v-else-if="selected.kind === 'risk'" class="btn pri" :disabled="!selected.summary.todo.allowed" @click="runRiskPrimary">{{ selected.summary.todo.action }}</button>
-              <button v-else class="btn pri" :disabled="!selected.summary.todo.allowed" @click="runDeviceAction">{{ selected.summary.todo.action }}</button>
+              <button class="btn pri" disabled aria-describedby="wb-action-unavailable">{{ selected.summary.todo.action }}</button>
+              <span id="wb-action-unavailable" class="wb-blocker" role="note">{{ actionUnavailableReason }}</span>
             </div>
             <div class="wb-title-facts"><span><small>发生区域</small><b>{{ selected.summary.district }}</b></span><span><small>发生时间</small><b>{{ selected.summary.occurredAt }}</b></span></div>
           </section>
@@ -351,7 +255,7 @@ onUnmounted(() => {
               <div><small>下一步</small><h3>{{ selected.summary.todo.action }}</h3><p>{{ selected.summary.todo.hint }}</p>
                 <span>责任模块：<b>{{ selected.summary.todo.module }}</b></span><span v-if="selected.summary.todo.blocker" class="wb-blocker">{{ selected.summary.todo.blocker }}</span></div>
             </div>
-            <div v-else class="wb-complete"><span v-html="icon('check')"></span><div><b>当前事件已完成</b><small>{{ selected.kind === 'risk' ? '通知上级后已闭环，可在下方查看通报与核验记录。' : '无待办动作，可在下方查看完整处置记录。' }}</small></div></div>
+            <div v-else class="wb-complete"><span v-html="icon('check')"></span><div><b>当前无待办动作</b><small>事件源未提供下一步待办，工作台仅展示现有只读详情。</small></div></div>
           </section>
 
           <section v-if="selected.kind === 'uav' || selected.kind === 'risk'" class="wb-flow-card panel">

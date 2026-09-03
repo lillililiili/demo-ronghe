@@ -187,7 +187,13 @@ const colored = (text, color) => h('span', { style: { color } }, text);
 
 function go(page, context) {
   showVideo.value = false;
-  if (screenData.value) screenData.value.goto(page, context);
+  const data = screenData.value;
+  if (!data) return;
+  try {
+    data.goto(page, context);
+  } catch (err) {
+    failReadyRuntime(err);
+  }
 }
 
 function goAlarm(row) {
@@ -343,6 +349,12 @@ function disposeBigScreenCharts() {
     .forEach(host => runCleanup(() => chart.disposeEl(host.value)));
 }
 
+function adoptChartRuntime(nextChart) {
+  if (runtimeChart === nextChart) return;
+  disposeBigScreenCharts();
+  runtimeChart = nextChart;
+}
+
 function stopReadyRuntime() {
   const currentClockTimer = clockTimer;
   clockTimer = null;
@@ -432,6 +444,7 @@ async function refreshBigScreenData() {
     clock.value = data.initialClock;
     await nextTick();
     if (mounted && queryStatus.value === 'ready') {
+      adoptChartRuntime(data.chart);
       renderCharts();
       refreshMapData();
     }

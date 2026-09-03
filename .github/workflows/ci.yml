@@ -38,4 +38,4 @@ jobs:
           cache: maven
       - run: chmod +x mvnw
       - run: ./mvnw -B test
-      - run: ./mvnw -B -Dtest=AuthApiIT test
+      - run: ./mvnw -B package

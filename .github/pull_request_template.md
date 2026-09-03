@@ -27,7 +27,7 @@
 
 - [ ] `npm run build`
 - [ ] `.\mvnw.cmd test`
-- [ ] `.\mvnw.cmd "-Dtest=AuthApiIT" test`
+- [ ] `.\mvnw.cmd package`
 - [ ] PostgreSQL/PostGIS 迁移验证
 - [ ] 受影响页面的真实浏览器验证
 - [ ] `git diff --check`

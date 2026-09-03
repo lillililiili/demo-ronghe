@@ -2,7 +2,7 @@
 /* 模块级状态：跨导航保持（legacy 约定）。 */
 const S = {
   /* 表格顶栏下拉默认「全部」，由用户再收窄。 */
-  st: { page: 1, size: 10, level: '全部', status: '全部', kind: '全部', region: '全部', sel: null,
+  st: { page: 1, size: 20, level: '全部', status: '全部', kind: '全部', region: '全部', sel: null,
     sort: 'ts', dir: -1 }
 };
 export default {};
@@ -14,11 +14,14 @@ export default {};
    U.regParams F0605 参数登记）仍由 legacy script 执行，这里不重复。
    地图（MapView）在 onUnmounted 销毁；usePageChrome 先注册，故卸载顺序
    与旧版 route() 一致：CH.disposeAll → map.destroy → closeModal。 */
-import { ref, reactive, computed, h, onMounted, onUnmounted } from 'vue';
-import { NPagination } from 'naive-ui';
+import { ref, reactive, computed, h, nextTick, onMounted, onUnmounted, watch } from 'vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
+import { sliceLocal } from '@/hooks/pagedList.js';
+import { usePagedList } from '@/hooks/usePagedList.js';
 import UPanel from '@/components/UPanel.vue';
 import UKpis from '@/components/UKpis.vue';
+import PagePager from '@/components/PagePager.vue';
+import PageQueryShell from '@/components/PageQueryShell.vue';
 import { toast } from '@/ui/nv.js';
 import { openModal, closeModal } from '@/ui/modal.js';
 import { openFormModal } from '@/ui/formModal.js';
@@ -27,13 +30,13 @@ import AlarmNotifyModal from '@/components/modals/AlarmNotifyModal.vue';
 const M = window.MOCK, U = window.UI, CH = window.CH;
 usePageChrome('alarms');
 const root = ref(null);
-/* reactive 代理同一份模块级状态：n-pagination 的 :page/:page-size 需要响应式，
-   底层对象仍是 S.st，跨导航记忆不变 */
+/* reactive 代理同一份模块级状态，筛选与分页口径跨导航记忆不变。 */
 const st = reactive(S.st);
-const totalCount = ref(0);
-const pageCount = computed(() => Math.max(1, Math.ceil(totalCount.value / st.size)));
+const query = usePagedList({ page: st.page, size: st.size });
+const queryStatus = computed(() => query.status.value);
+const queryError = computed(() => query.errorMessage.value);
+let mounted = false;
 let map = null;
-onUnmounted(() => { if (map) map.destroy(); map = null; });
 
 const FLOW_STATUS = ['待核实', '反制中', '干扰中', '待处置', '已处置', '误报'];
 const LEGACY_FLOW_STATUS = { '新建': '待核实', '已确认': '待核实', '处置中': '反制中', '已关闭': '待处置', '误报': '误报' };
@@ -63,6 +66,7 @@ function sortTh(key, label) {
 }
 
 function rows() {
+  if (!Array.isArray(M.alarms)) throw new TypeError('Mock 告警数据源无效：alarms 必须是数组');
   const f = M.alarms.filter(a =>
     (st.level === '全部' || a.level === st.level) &&
     (st.status === '全部' || statusOf(a) === st.status) &&
@@ -73,17 +77,13 @@ function rows() {
   return f.sort((x, y) => { const a = g(x), b = g(y); return (a < b ? -1 : a > b ? 1 : 0) * st.dir; });
 }
 
-/* 深链（sessionStorage alarm.sel）与默认选中 —— 与 legacy render() 同构 */
-const sid = sessionStorage.getItem('alarm.sel');
-const deep = sid && M.alarms.find(a => a.id === sid);
-// safe-default: 默认选中当前筛选下的首条告警，用户可见可改
-st.sel = deep || st.sel || rows()[0] || M.todayAlarms[0] || M.alarms[0];
+/* 深链在首次成功载入时定位；无效数据源不得在 setup 阶段伪装为成功。 */
+let pendingDeepId = sessionStorage.getItem('alarm.sel');
 sessionStorage.removeItem('alarm.sel');
-if (deep) {
+if (pendingDeepId) {
   st.level = st.status = st.kind = st.region = '全部';
-  const all = rows();
-  st.page = Math.max(1, Math.ceil((all.findIndex(a => a.id === deep.id) + 1) / st.size));
 }
+st.sel = null;
 
 const T = M.todayAlarms;
 const c = s => T.filter(a => statusOf(a) === s).length;
@@ -96,14 +96,14 @@ const kpiList = [
   { label: '误报', value: U.num(c('误报')), color: 'purple', icon: 'check', desc: '人工核实后已排除' }
 ];
 
-const listPanelBody = `<div class="toolbar">
+const listToolbarHtml = `<div class="toolbar">
     ${U.field('等级', U.select('level', ['全部', '高', '中', '低'], st.level))}
     ${U.field('类别', U.select('kind', ['全部', '飞行违规', '空间安全'], st.kind))}
     ${U.field('状态', U.select('status', ['全部', ...FLOW_STATUS], st.status))}
     ${U.field('区域', U.select('region', ['全部', ...M.DISTRICTS.map(d => d.name)], st.region))}
     <span style="flex:1"></span>
-  </div>
-  <div id="alList" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>`;
+    <span style="font-size:11px;color:var(--txt-3);white-space:nowrap">Mock 演示数据 · 未接入后端告警查询接口</span>
+  </div>`;
 const mapExtra = `<span id="alMapSrc" style="font-size:11px;color:var(--txt-3);white-space:nowrap"></span>
   <button class="btn" id="alLoc" style="height:24px;font-size:11.5px;flex:none" title="重新定位到当前告警的关联目标">${U.icon('location')} 定位</button>`;
 const mapBody = `<div id="alMap" style="flex:1;min-height:0"></div>
@@ -111,8 +111,7 @@ const mapBody = `<div id="alMap" style="flex:1;min-height:0"></div>
       color:var(--txt-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>`;
 
 function list() {
-  const all = rows(), page = all.slice((st.page - 1) * st.size, st.page * st.size);
-  totalCount.value = all.length;
+  const page = query.items.value;
   return U.table([
     {
       t: sortTh('ts', '告警编号 / 时间'), w: '108px', cls: 'num',
@@ -177,7 +176,8 @@ function disposalActions(a) {
 function detail() {
   const a = st.sel;
   if (!a) return '<div class="empty">请选择告警</div>';
-  document.getElementById('alSt').innerHTML = U.tag(statusOf(a));
+  const statusEl = document.getElementById('alSt');
+  if (statusEl) statusEl.innerHTML = U.tag(statusOf(a));
   const t = M.allTargets.find(x => x.id === a.targetId) || {};
   return `${U.detailHero({
     icon: 'alert', subtitle: '告警事件', title: a.type, id: a.id,
@@ -210,8 +210,72 @@ function detail() {
 }
 
 function paint() {
-  document.getElementById('alList').innerHTML = list();
-  document.getElementById('alDetail').innerHTML = detail();
+  if (query.status.value !== 'ready') return;
+  const listEl = document.getElementById('alList');
+  const detailEl = document.getElementById('alDetail');
+  if (!listEl || !detailEl) return;
+  listEl.innerHTML = list();
+  detailEl.innerHTML = detail();
+}
+
+function failQuery(err) {
+  query.items.value = [];
+  query.total.value = 0;
+  st.sel = null;
+  query.setError(err);
+  disposeMap();
+}
+
+function applyAlarmPage(preferredId = null) {
+  try {
+    const all = rows();
+    let selectedId = preferredId;
+    if (pendingDeepId) {
+      const index = all.findIndex(item => item.id === pendingDeepId);
+      if (index >= 0) {
+        query.setPage(Math.ceil((index + 1) / query.size.value));
+        selectedId = pendingDeepId;
+      } else {
+        query.setPage(1);
+      }
+      pendingDeepId = null;
+    }
+    const previousStatus = query.status.value;
+    const parsed = query.applyPayload(sliceLocal(all, query.page.value, query.size.value));
+    if (!parsed) {
+      st.sel = null;
+      disposeMap();
+      return null;
+    }
+    st.page = parsed.page;
+    st.size = parsed.size;
+    if (query.status.value === 'empty') {
+      st.sel = null;
+      return parsed;
+    }
+    selectedId = selectedId || (st.sel && st.sel.id);
+    // safe-default: 只在当前可见页内选首条，用户可见且可点击任一行改选。
+    st.sel = parsed.items.find(item => item.id === selectedId) || parsed.items[0] || null;
+    if (previousStatus === 'ready') {
+      paint();
+      focusMap();
+      scrollSelectedRow();
+    }
+    return parsed;
+  } catch (err) {
+    failQuery(err);
+    return null;
+  }
+}
+
+async function reloadAlarms() {
+  query.setLoading();
+  query.items.value = [];
+  query.total.value = 0;
+  st.sel = null;
+  disposeMap();
+  await nextTick();
+  return applyAlarmPage();
 }
 
 function trackFor(t, a) {
@@ -282,6 +346,35 @@ function focusMap() {
     info.title = `${t.id}｜${t.subtype || t.type}｜合法性 ${t.legal}｜高度 ${t.alt} m\n轨迹来源：${tk.src}\n`
       + `点型：实测 ${ks.meas || 0}（动画虚线）/ 弥合 A03 ${ks.bridge || 0}（橙色宽隙虚线）/ 预测 A04 ${ks.pred || 0}（青色点线）`;
   }
+}
+
+function disposeMap() {
+  if (map) map.destroy();
+  map = null;
+}
+
+function scrollSelectedRow() {
+  const selectedRow = document.querySelector('#alList tr.on');
+  if (selectedRow && selectedRow.scrollIntoView) selectedRow.scrollIntoView({ block: 'center' });
+}
+
+function initReadyView() {
+  if (!mounted || query.status.value !== 'ready') return;
+  paint();
+  scrollSelectedRow();
+  const mapEl = document.getElementById('alMap');
+  if (!mapEl) return;
+  disposeMap();
+  map = new window.MapView(mapEl, {
+    zoom: 2.2, maxDev: 0, maxAlarm: 1, legend: false, layers: { device: false }
+  });
+  const activeMap = map;
+  const locate = document.getElementById('alLoc');
+  if (locate) locate.onclick = () => { if (map) map.resetView(2.2); focusMap(); };
+  focusMap();
+  requestAnimationFrame(() => {
+    if (mounted && query.status.value === 'ready' && map === activeMap) focusMap();
+  });
 }
 
 function remount() { window.APP.rerender(); }
@@ -363,35 +456,57 @@ function sendModal() {
   });
 }
 
-function onPage(p2) { st.page = p2; paint(); }
-function onPageSize(s2) { st.size = s2; st.page = 1; paint(); }
+function onPage(p2) {
+  query.setPage(p2);
+  applyAlarmPage();
+}
+
+function onPageSize(s2) {
+  query.setSize(s2);
+  st.page = query.page.value;
+  st.size = query.size.value;
+  applyAlarmPage();
+}
+
+watch(queryStatus, async (status, previous) => {
+  if (!mounted) return;
+  if (previous === 'ready' && status !== 'ready') {
+    st.sel = null;
+    disposeMap();
+  }
+  if (status !== 'ready' || previous === 'ready') return;
+  await nextTick();
+  if (mounted && query.status.value === 'ready') initReadyView();
+}, { flush: 'pre' });
+
+onUnmounted(() => {
+  mounted = false;
+  disposeMap();
+});
 
 onMounted(() => {
+  mounted = true;
   const view = root.value;
-  paint();
-  // 深链/默认选中的行可能落在列表滚动区外（尤其统一检索/态势页跳来时）：
-  // 挂载后把选中行滚到列表可视区中部。行点击走 selectRow 不重建列表，不受此影响。
-  const selTr = document.querySelector('#alList tr.on');
-  if (selTr && selTr.scrollIntoView) selTr.scrollIntoView({ block: 'center' });
-  map = new window.MapView(document.getElementById('alMap'), {
-    zoom: 2.2, maxDev: 0, maxAlarm: 1, legend: false, layers: { device: false }
-  });
-  focusMap();
-  requestAnimationFrame(focusMap);
 
   U.on(view, '[data-row]', 'click', (e, el) => {
-    st.sel = M.alarms.find(a => a.id === el.dataset.row);
+    st.sel = query.items.value.find(a => a.id === el.dataset.row) || null;
     U.selectRow(document.getElementById('alList'), el.dataset.row);
-    document.getElementById('alDetail').innerHTML = detail();
+    const detailEl = document.getElementById('alDetail');
+    if (detailEl) detailEl.innerHTML = detail();
     focusMap();
   });
-  /* 分页交互已由模板层 <n-pagination> 受控接管（P2），[data-pg]/[data-size] 委托删除 */
-  U.on(view, '[data-f]', 'change', (e, el) => { st[el.dataset.f] = el.value; st.page = 1; paint(); });
+  U.on(view, '[data-f]', 'change', (e, el) => {
+    st[el.dataset.f] = el.value;
+    query.setPage(1);
+    st.page = 1;
+    applyAlarmPage();
+  });
   const doSort = key => {
     if (st.sort === key) st.dir = -st.dir;
     else { st.sort = key; st.dir = key === 'ts' ? -1 : 1; }
+    query.setPage(1);
     st.page = 1;
-    paint();
+    applyAlarmPage();
     const sc = document.querySelector('#alList .scroll');
     if (sc) sc.scrollTop = 0;
   };
@@ -427,7 +542,7 @@ onMounted(() => {
     else if (k === 'notify') sendModal();
     else if (k === 'verify') verifyModal();
   });
-  document.getElementById('alLoc').onclick = () => { if (map) map.resetView(2.2); focusMap(); };
+  reloadAlarms();
 });
 </script>
 
@@ -437,17 +552,27 @@ onMounted(() => {
       <UKpis :list="kpiList" />
       <div class="row" style="margin-top:12px;flex:1;min-height:0">
         <UPanel title="告警列表" panel-style="flex:6;min-width:0" nopad>
-          <div style="display:contents" v-html="listPanelBody"></div>
-          <div class="pager">
-            <n-pagination :page="st.page" :page-size="st.size" :item-count="totalCount"
-              size="small" :page-slot="5" show-size-picker :page-sizes="[10, 20, 50].map(value => ({ value, label: `${value}条/页` }))"
-              @update:page="onPage" @update:page-size="onPageSize">
-              <template #prefix>共 {{ totalCount.toLocaleString() }} 条</template>
-              <template #suffix>共 {{ pageCount }} 页</template>
-            </n-pagination>
-          </div>
+          <div style="display:contents" v-html="listToolbarHtml"></div>
+          <PageQueryShell
+            :status="queryStatus"
+            loading-text="正在加载 Mock 告警演示数据…"
+            empty-title="暂无符合条件的告警"
+            empty-description="请调整上方筛选条件。当前列表仍为 Mock 演示数据。"
+            error-title="告警列表加载失败"
+            :error-message="queryError || '加载失败，且不会回退显示旧数据。'"
+            @retry="reloadAlarms">
+            <div id="alList" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>
+            <PagePager
+              :page="query.page.value"
+              :size="query.size.value"
+              :total="query.total.value"
+              :page-sizes="[20, 50, 100]"
+              @update:page="onPage"
+              @update:size="onPageSize"
+            />
+          </PageQueryShell>
         </UPanel>
-        <div class="col" style="flex:4;min-width:0">
+        <div v-if="queryStatus === 'ready'" class="col" style="flex:4;min-width:0">
           <!-- 操作引导（用户裁定 2026-08-30：多处补黄字引导） -->
           <div class="warnbox" style="margin:0;padding:8px 11px;font-size:12px;flex:none">
             演示动线：点左侧<b>告警列表</b>任一行 → 地图定位关联目标 → 下方详情底部点

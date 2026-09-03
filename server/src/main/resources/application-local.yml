@@ -7,3 +7,6 @@ spring:
 app:
   source-mode: mock
   evidence-dir: ./data/evidence
+  dev-seed:
+    enabled: ${APP_DEV_SEED_ENABLED:true}
+    password: ${APP_DEV_SEED_PASSWORD:changeme}

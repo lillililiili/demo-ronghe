@@ -1,0 +1,17 @@
+server:
+  port: ${API_PORT:8080}
+
+spring:
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
+  flyway:
+    clean-disabled: true
+
+app:
+  source-mode: ${APP_SOURCE_MODE:mock}
+  evidence-dir: ${EVIDENCE_DIR:./data/evidence}
+  dev-seed:
+    enabled: ${APP_DEV_SEED_ENABLED:false}
+    password: ${APP_DEV_SEED_PASSWORD:}

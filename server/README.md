@@ -35,7 +35,9 @@ Linux/macOS 在 `server/` 执行：
 
 数据库连接按 [application-local.yml](src/main/resources/application-local.yml)与 [Compose](../deploy/compose.yml)保持一致；修改了数据库凭据后须同步本地连接配置，不要提交或输出真实凭据。Flyway 会对所配置的数据库执行迁移。
 
-当前空用户表会初始化开发账号 `duty1` / `changeme`（另有 admin1、judge1、auth1、auth2、ops1、audit1）。**Seeder 尚未限制运行环境**，不能因名字含 Local 就认为生产安全；默认账号门禁和失败登录留痕仍待加固，见开发基线 G1/G2。本骨架不是可直接上线的生产配置。
+`local` profile 在空用户表中初始化合成开发账号 `duty1` / `changeme`（另有 admin1、judge1、auth1、auth2、ops1、audit1）；可通过 `APP_DEV_SEED_PASSWORD` 覆盖密码。Seeder 受 `app.dev-seed.enabled` 显式控制，默认环境和 `integration` profile 默认关闭，`test` profile 显式启用。默认账号门禁和失败登录留痕仍待继续加固，见开发基线 G2。本骨架不是可直接上线的生产配置。
+
+两位开发者的个人数据库、共享联调库与迁移协作流程见[协作开发环境](../docs/协作开发环境.md)。
 
 启动后可检查 `GET /actuator/health`；无 Bearer 请求 `GET /api/v1/alarms`、`GET /api/v1/devices` 应为 401。登录返回 `session_id` 后，以 `Authorization: Bearer <session_id>` 请求 `/api/v1/auth/me`；两个业务列表当前返回空分页。这些是验证步骤与预期，不是本轮实测结果。
 

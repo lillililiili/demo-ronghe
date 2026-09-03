@@ -5,6 +5,8 @@ dist/
 .DS_Store
 .env.local
 .env.*.local
+.env.integration
+.dev/
 dongying-demo
 map-data/
 

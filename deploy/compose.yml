@@ -2,15 +2,15 @@ services:
   db:
     image: postgis/postgis:16-3.5
     environment:
-      POSTGRES_DB: uav
-      POSTGRES_USER: uav
+      POSTGRES_DB: ${DB_NAME:-uav}
+      POSTGRES_USER: ${DB_USER:-uav}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-uav}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U uav -d uav"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-uav} -d ${DB_NAME:-uav}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -18,10 +18,12 @@ services:
   api:
     build: ../server
     environment:
-      DB_URL: jdbc:postgresql://db:5432/uav
-      DB_USER: uav
+      DB_URL: jdbc:postgresql://db:5432/${DB_NAME:-uav}
+      DB_USER: ${DB_USER:-uav}
       DB_PASSWORD: ${DB_PASSWORD:-uav}
       APP_SOURCE_MODE: mock
+      APP_DEV_SEED_ENABLED: "true"
+      APP_DEV_SEED_PASSWORD: ${APP_DEV_SEED_PASSWORD:-changeme}
       EVIDENCE_DIR: /data/evidence
     depends_on:
       db:

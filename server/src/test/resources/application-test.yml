@@ -15,3 +15,6 @@ app:
     lock-minutes: 30
   session:
     ttl-hours: 8
+  dev-seed:
+    enabled: true
+    password: changeme

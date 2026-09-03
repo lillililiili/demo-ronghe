@@ -9,6 +9,7 @@ public class AppProperties {
     private String evidenceDir = "./data/evidence";
     private final Login login = new Login();
     private final Session session = new Session();
+    private final DevSeed devSeed = new DevSeed();
 
     public String getSourceMode() {
         return sourceMode;
@@ -32,6 +33,10 @@ public class AppProperties {
 
     public Session getSession() {
         return session;
+    }
+
+    public DevSeed getDevSeed() {
+        return devSeed;
     }
 
     public static class Login {
@@ -64,6 +69,27 @@ public class AppProperties {
 
         public void setTtlHours(int ttlHours) {
             this.ttlHours = ttlHours;
+        }
+    }
+
+    public static class DevSeed {
+        private boolean enabled;
+        private String password = "";
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public String getPassword() {
+            return password;
+        }
+
+        public void setPassword(String password) {
+            this.password = password;
         }
     }
 }

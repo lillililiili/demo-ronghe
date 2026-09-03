@@ -87,14 +87,20 @@ st.sel = null;
 
 const T = M.todayAlarms;
 const c = s => T.filter(a => statusOf(a) === s).length;
-const kpiList = [
-  { label: '今日告警总数', value: U.num(T.length), color: 'blue', icon: 'alert', desc: `近30天 ${U.num(M.alarms.length)} 起` },
-  { label: '待核实', value: U.num(c('待核实')), color: 'amber', icon: 'alert', desc: '待人工确认属实或误报' },
-  { label: '反制中', value: U.num(c('反制中')), color: 'orange', icon: 'radar', desc: '待发起联动反制' },
-  { label: '干扰中', value: U.num(c('干扰中')), color: 'red', icon: 'radar', desc: '反制信号干扰执行中' },
-  { label: '待处置', value: U.num(c('待处置')), color: 'green', icon: 'check', desc: '待通知处罚部门' },
-  { label: '误报', value: U.num(c('误报')), color: 'purple', icon: 'check', desc: '人工核实后已排除' }
-];
+const kpiList = computed(() => {
+  const sourceReady = (queryStatus.value === 'ready' || queryStatus.value === 'empty') && Array.isArray(M.alarms);
+  const alarmTotal = sourceReady ? M.alarms.length : 0;
+  const todayTotal = sourceReady && Array.isArray(T) ? T.length : 0;
+  const statusCount = status => sourceReady && Array.isArray(T) ? c(status) : 0;
+  return [
+    { label: '今日告警总数', value: U.num(todayTotal), color: 'blue', icon: 'alert', desc: `近30天 ${U.num(alarmTotal)} 起` },
+    { label: '待核实', value: U.num(statusCount('待核实')), color: 'amber', icon: 'alert', desc: '待人工确认属实或误报' },
+    { label: '反制中', value: U.num(statusCount('反制中')), color: 'orange', icon: 'radar', desc: '待发起联动反制' },
+    { label: '干扰中', value: U.num(statusCount('干扰中')), color: 'red', icon: 'radar', desc: '反制信号干扰执行中' },
+    { label: '待处置', value: U.num(statusCount('待处置')), color: 'green', icon: 'check', desc: '待通知处罚部门' },
+    { label: '误报', value: U.num(statusCount('误报')), color: 'purple', icon: 'check', desc: '人工核实后已排除' }
+  ];
+});
 
 const listToolbarHtml = `<div class="toolbar">
     ${U.field('等级', U.select('level', ['全部', '高', '中', '低'], st.level))}

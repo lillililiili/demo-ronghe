@@ -171,8 +171,10 @@ function tabCase() {
         ${U.field('违法类型', U.select('vio', ['全部类型', ...M.VIOLATIONS], st.vio))}
         ${U.field('合作方', U.select('partner', ['全部合作方', ...M.PARTNERS.map(p => p.name)], st.partner))}
         ${U.field('通知状态', U.select('status', ['全部状态', '待通知', '已通知'], st.status))}
-        <button class="btn" id="pnR">重置筛选</button>
-        <span style="flex:1"></span><button class="btn" id="pnExp">${U.icon('download')} 导出</button>
+        <div class="toolbar-actions">
+          <button class="btn" id="pnR">重置筛选</button>
+          <button class="btn" id="pnExp">${U.icon('download')} 导出</button>
+        </div>
       </div>
       <div id="pnList" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>`
   })}
@@ -476,7 +478,7 @@ function list() {
       t: sortTh('机型 / 主体', 'model'), w: '128px',
       render: c => `<div style="white-space:normal;line-height:1.4">${U.modelTag(snapOf(c).model || c.model, snapOf(c).model_source, true)}</div>
         <div title="${(snapOf(c).subject || c.partner) + ' · ' + c.pilot}" style="font-size:11px;color:var(--txt-3);
-          white-space:normal;line-height:1.4;max-height:31px;overflow:hidden;display:-webkit-box;
+          white-space:normal;line-height:1.4;max-height:2.8em;overflow:hidden;display:-webkit-box;
           -webkit-line-clamp:2;-webkit-box-orient:vertical">${snapOf(c).subject || c.partner} · ${c.pilot}</div>`
     },
     {

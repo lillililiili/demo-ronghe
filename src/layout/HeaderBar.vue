@@ -1,5 +1,5 @@
 <script setup>
-/* 顶栏：logo / 时钟 / 天气 / 大屏按钮 / 告警铃铛 / 用户菜单。
+/* 顶栏：logo / 时钟 / 大屏按钮 / 告警铃铛 / 用户菜单。
    逻辑逐字移植旧 app.js 的 clock() 与 bindBigScreen()；用户菜单 Teleport 到 body
    （旧版就是 append 到 body 的 .usermenu，CSS 上下文保持一致）。 */
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
@@ -9,7 +9,6 @@ import { useRouter } from 'vue-router';
 import { logout } from '@/services/auth.js';
 import { toast } from '@/ui/nv.js';
 import { openModal, closeModal } from '@/ui/modal.js';
-import { refreshWeather, weatherState } from '@/services/weather.js';
 
 const store = useAppStore();
 const router = useRouter();
@@ -20,24 +19,13 @@ const canBigscreen = computed(() => { store.accessRevision; return M.canMenu('bi
 const canAlarms = computed(() => { store.accessRevision; return M.canMenu('alarms'); });
 
 /* ---------- 时钟：系统当前时间与 Mock 数据统计时间分离 ---------- */
-let clkTimer = null, weatherTimer = null;
+let clkTimer = null;
 const tick = () => {
   store.timeStr = M.systemNowStr();
   store.dataTimeStr = M.nowStr();
 };
 tick();
 const clkHtml = computed(() => `${U.icon('clock')} ${store.timeStr}`);
-const weaHtml = computed(() => {
-  const w = weatherState;
-  const temp = w.temperature == null ? `${w.tempLo}℃ ~ ${w.tempHi}℃` : `${w.temperature}℃`;
-  const wind = w.windDirection ? ` ${w.windDirection}风${w.windPower ? `${w.windPower}级` : ''}` : '';
-  return `${w.city} ${U.icon('cloud')} ${temp} ${w.text}${wind}（演示）`;
-});
-const weatherTitle = computed(() => {
-  const w = weatherState;
-  const detail = [w.source, w.reportTime && `发布 ${w.reportTime}`, w.humidity && `湿度 ${w.humidity}%`].filter(Boolean).join(' · ');
-  return w.error ? `${detail || '本地天气'} · ${w.error}` : detail;
-});
 /* todayStats 是 mock 加载期快照，核实/处置后不会变。铃铛按当前告警流程计数。 */
 const bellRev = ref(0);
 function alarmFlowOf(a) {
@@ -106,8 +94,6 @@ function onMenu(k) {
 onMounted(() => {
   window.SEARCH?.mount();
   clkTimer = setInterval(tick, 1000);
-  refreshWeather();
-  weatherTimer = setInterval(refreshWeather, 30 * 60 * 1000);
   document.addEventListener('fullscreenchange', onFsChange);
   document.addEventListener('click', closeMenu);
   window.addEventListener('evt:advance', bumpBell);
@@ -116,7 +102,6 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.SEARCH?.destroy();
   clearInterval(clkTimer);
-  clearInterval(weatherTimer);
   document.removeEventListener('fullscreenchange', onFsChange);
   document.removeEventListener('click', closeMenu);
   window.removeEventListener('evt:advance', bumpBell);
@@ -133,7 +118,6 @@ onBeforeUnmount(() => {
     <div class="spacer"></div>
     <div class="meta">
       <span class="it" id="clk" v-html="clkHtml"></span>
-      <span class="it" id="wea" :title="weatherTitle" v-html="weaHtml"></span>
       <span v-if="canBigscreen" class="it"><router-link class="btn ghost" id="btnScreen" to="/bigscreen" title="进入低空安全数据大屏" v-html="screenLabel"></router-link></span>
       <span class="it"><button class="btn ghost" id="btnBig" title="全屏模式：放大字号与行距，适配指挥大厅显示" v-html="bigLabel" @click="toggleBig"></button></span>
       <button v-if="canAlarms" class="it bell icon-btn" id="bell" type="button" aria-label="查看告警" @click="goAlarms">

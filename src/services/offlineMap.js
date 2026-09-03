@@ -122,7 +122,9 @@ export async function prepareOfflineMap(signal) {
     const header = await lease.archive.getHeader();
     signal.throwIfAborted();
     if (header.tileType !== 1 || header.maxZoom < 15) throw new Error('地图包不是预期的 Z0–Z15 矢量数据');
-    return { maplibre: engine.maplibre, style, manifest, release, transformRequest: url => ({ url: url.startsWith('pmtiles://') ? url : localUrl(url) }) };
+    const bounds = [header.minLon, header.minLat, header.maxLon, header.maxLat];
+    if (!bounds.every(Number.isFinite) || bounds[0] >= bounds[2] || bounds[1] >= bounds[3]) throw new Error('地图包覆盖范围无效');
+    return { maplibre: engine.maplibre, style, manifest, bounds, release, transformRequest: url => ({ url: url.startsWith('pmtiles://') ? url : localUrl(url) }) };
   } catch (error) { release(); throw error; }
 }
 

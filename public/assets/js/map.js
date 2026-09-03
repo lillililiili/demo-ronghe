@@ -44,6 +44,8 @@
     this.online = false; this.map = null;
     this.zoom = opt.zoom || 1; this.ox = 0; this.oy = 0; this.t = 0; this.hover = null; this.sel = null;
     this._pendingCenter = CENTER.slice();
+    this._isDefaultView = true;
+    this._defaultScale = this.zoom;
     box.classList.add('mapwrap');
     /* 图例默认折叠成「图例」小条（评审：1280 宽下图例遮挡地图过多），点标题展开。
        opt.legendOpen:true 可保持展开。文案用业务语言，技术编号（A03/A04）移入 title。 */
@@ -103,8 +105,6 @@
     this._mapEvents = [];
     // 构造阶段 WebGL 失败也可能已经插入 Canvas，必须一并清理。
     if (this.baseEl) { this.baseEl.replaceChildren(); this.baseEl.classList.remove('maplibregl-map'); }
-    // 构造阶段 WebGL 失败也可能已经插入 Canvas，必须一并清理。
-    if (this.baseEl) { this.baseEl.replaceChildren(); this.baseEl.classList.remove('maplibregl-map'); }
     if (this._release) { this._release(); this._release = null; }
     this.online = false;
   };
@@ -136,6 +136,8 @@
     }).then(runtime => {
       if (this._dead || controller.signal.aborted) { runtime.release(); return; }
       this._release = runtime.release;
+      this._coverageBounds = runtime.bounds;
+      this._applyDefaultView();
       const map = new runtime.maplibre.Map({
         container: this.baseEl, style: runtime.style, center: this._pendingCenter,
         zoom: this._levelForScale(this.zoom), minZoom: Math.min(7, this._fitLevelForWidth()), maxZoom: 18,
@@ -148,6 +150,7 @@
       map.touchZoomRotate.disableRotation();
       map.addControl(new runtime.maplibre.AttributionControl({ compact: false }), 'bottom-left');
       const on = (name, fn) => { map.on(name, fn); this._mapEvents.push([name, fn]); };
+      on('movestart', event => { if (event.originalEvent) this._isDefaultView = false; });
       on('move', () => { this._syncView(); this.draw(); this._hit(); });
       on('render', () => { this.draw(); });
       on('dragstart', () => { this._dragged = true; this._boxLeave(); });
@@ -240,7 +243,7 @@
     this._winMove = e => {
       if (!drag) return;
       const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
-      if (Math.hypot(dx, dy) > 4) self._dragged = true;
+      if (Math.hypot(dx, dy) > 4) { self._dragged = true; self._isDefaultView = false; }
       if (self.map) return;
       const size = 512 * Math.pow(2, self._levelForScale(self.zoom));
       self._pendingCenter = geographic(drag.center[0] - dx / size, drag.center[1] - dy / size);
@@ -258,10 +261,12 @@
     this.cv.width = Math.max(1, Math.round(r.width * dpr));
     this.cv.height = Math.max(1, Math.round(r.height * dpr));
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this._applyDefaultView();
     if (this.map) {
       const zoom = this._levelForScale(this.zoom);
+      const center = this._pendingCenter.slice();
       this.map.resize();
-      this.map.jumpTo({ zoom, center: this._pendingCenter });
+      this.map.jumpTo({ zoom, center });
     }
     this.draw();
   };
@@ -269,6 +274,29 @@
   MapView.prototype._fitLevelForWidth = function () {
     const a = merc(B.lon0, B.lat1), b = merc(B.lon1, B.lat0);
     return Math.log2(Math.min(Math.max(1, this.w - 40) / (b[0] - a[0]), Math.max(1, this.h - 40) / (b[1] - a[1])) / 512);
+  };
+
+  // 首屏与复位时让整个视口落在真实数据范围内；保留用户主动平移/缩放。
+  MapView.prototype._applyDefaultView = function () {
+    if (!this._isDefaultView) return;
+    let level = this._levelForScale(this._defaultScale);
+    if (this._coverageBounds && this.w > 0 && this.h > 0) {
+      const [west, south, east, north] = this._coverageBounds;
+      const a = merc(west, north), b = merc(east, south);
+      const center = merc(...CENTER);
+      // 留 4px 内边距，避免边缘抗锯齿或像素取整露出无数据背景。
+      center[0] = Math.max(a[0], Math.min(b[0], center[0]));
+      center[1] = Math.max(a[1], Math.min(b[1], center[1]));
+      let dx = Math.min(center[0] - a[0], b[0] - center[0]);
+      let dy = Math.min(center[1] - a[1], b[1] - center[1]);
+      if (dx <= 0 || dy <= 0) {
+        center[0] = (a[0] + b[0]) / 2; center[1] = (a[1] + b[1]) / 2;
+        dx = (b[0] - a[0]) / 2; dy = (b[1] - a[1]) / 2;
+      }
+      level = Math.min(18, Math.max(level, Math.log2(Math.max((this.w + 8) / (2 * dx), (this.h + 8) / (2 * dy)) / 512)));
+      this._pendingCenter = geographic(...center);
+    }
+    this.zoom = Math.pow(2, level - this._fitLevelForWidth());
   };
 
   MapView.prototype._levelForScale = function (scale) {
@@ -298,6 +326,7 @@
   };
 
   MapView.prototype.setZoom = function (z) {
+    this._isDefaultView = false;
     this.zoom = Math.pow(2, this._levelForScale(z) - this._fitLevelForWidth());
     if (this.map) this.map.setZoom(this._levelForScale(this.zoom));
     this.draw();
@@ -307,6 +336,7 @@
   MapView.prototype.centerAt = function (lon, lat, options) {
     if (!Number.isFinite(lon) || !Number.isFinite(lat)) return this;
     options = options || {};
+    this._isDefaultView = false;
     if (Number.isFinite(options.scale)) this.setZoom(options.scale);
     this._pendingCenter = [lon, lat];
     if (this.map) this.map.setCenter(this._pendingCenter);
@@ -316,7 +346,13 @@
 
   MapView.prototype.resetView = function (scale) {
     this.ox = this.oy = 0;
-    return this.centerAt(CENTER[0], CENTER[1], { scale: scale == null ? 1 : scale });
+    this._isDefaultView = true;
+    this._defaultScale = scale == null ? 1 : scale;
+    this._pendingCenter = CENTER.slice();
+    this._applyDefaultView();
+    if (this.map) this.map.jumpTo({ center: this._pendingCenter, zoom: this._levelForScale(this.zoom) });
+    this.draw();
+    return this;
   };
 
   MapView.prototype.setData = function (d) { Object.assign(this.data, d); this.draw(); return this; };
@@ -326,7 +362,6 @@
     this._dead = true;
     this._disposeBase();
     if (this._raf) cancelAnimationFrame(this._raf);
-    this._raf = null;
     this._raf = null;
     if (this._ro) this._ro.disconnect();
     if (this._boxClick) this.box.removeEventListener('click', this._boxClick, true);

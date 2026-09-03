@@ -14,14 +14,14 @@ import { toast } from '@/ui/nv.js';
 const M = window.MOCK, U = window.UI, S = M.stats;
 usePageChrome('stats');
 
-/* ---- 工具条（legacy render 顶部的裸 toolbar 面板，整段同构） ---- */
+/* ---- 工具条：统计说明与右侧操作按钮 ---- */
 const d0 = M.util.fmtD(M.util.dayAdd(M.CONF.demoTime, -29)), d1 = M.util.fmtD(M.CONF.demoTime);
 const toolbarHtml =
   `${U.field('统计区间', `<span class="mono" style="font-size:12px;color:var(--txt-2);padding:0 4px">${d0} 至 ${d1}（近30天全量）</span>`)}
       <span style="font-size:11.5px;color:var(--txt-3)">当前页按近30天全量统计，没有按日/类型/区域切片的数据源</span>
-      <span style="flex:1"></span>
+      <div class="toolbar-actions">
       <button class="btn" id="stExp">${U.icon('download')} 导出数据</button>
-      <button class="btn pri" id="stRep">${U.icon('download')} 报表下载</button>`;
+      <button class="btn pri" id="stRep">${U.icon('download')} 报表下载</button></div>`;
 
 /* ---- KPI ---- */
 const kpiList = [

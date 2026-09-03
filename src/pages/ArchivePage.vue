@@ -72,12 +72,13 @@ function tabList() {
     ${U.field('目标编号', `<input class="ip" id="arTgt" style="width:150px" placeholder="如 UAV20260826001">`)}
     ${U.field('设备编号', `<input class="ip" id="arDev" style="width:150px" placeholder="如 DEV260826001">`)}
     ${U.field('归档状态', U.select('astatus', ['全部', '待归档', '已归档'], S.st.astatus))}
+    <div class="toolbar-actions">
     <button class="btn" id="arQ" title="下拉筛选即时生效；三个输入框需点查询或回车才应用">${U.icon('search')} 查询</button>
     <button class="btn" id="arR">重置筛选</button>
-    <span style="flex:1"></span>
     <button class="btn warn" id="arBatch" disabled title="请先在列表中勾选待归档记录（仅「待归档」状态可勾选）">▤ 批量归档（<b id="arSelN">0</b>）</button>
     <button class="btn" id="arExp">${U.icon('download')} 导出日志</button>
     <button class="btn ghost" id="arCfg" aria-label="归档策略配置">${U.icon('settings')}</button>
+    </div>
   </div></div>
 
   ${U.panel({

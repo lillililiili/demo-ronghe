@@ -438,11 +438,9 @@ onMounted(() => {
       <div class="row" style="margin-top:12px;flex:1;min-height:0">
         <UPanel title="告警列表" panel-style="flex:6;min-width:0" nopad>
           <div style="display:contents" v-html="listPanelBody"></div>
-          <!-- P2：分页器换 n-pagination（受控），容器样式内联复刻旧 .pager 观感 -->
-          <div style="display:flex;align-items:center;justify-content:center;gap:8px;padding:10px;min-height:42px;
-            background:rgba(8,19,32,.54);border-top:1px solid rgba(130,174,218,.10);flex:none">
+          <div class="pager">
             <n-pagination :page="st.page" :page-size="st.size" :item-count="totalCount"
-              show-size-picker :page-sizes="[10, 20, 50]"
+              size="small" :page-slot="5" show-size-picker :page-sizes="[10, 20, 50].map(value => ({ value, label: `${value}条/页` }))"
               @update:page="onPage" @update:page-size="onPageSize">
               <template #prefix>共 {{ totalCount.toLocaleString() }} 条</template>
               <template #suffix>共 {{ pageCount }} 页</template>

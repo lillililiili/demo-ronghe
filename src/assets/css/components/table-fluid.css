@@ -5,7 +5,12 @@ table.tb,table.pmx{
   width:max-content;
   min-width:100%;
   table-layout:auto!important;
-  font-size:14.5px;
+  font-size:var(--table-font-size);
 }
 table.tb th,table.tb td,table.pmx th,table.pmx td{width:auto!important;max-width:none}
-table.tb.density-compact th,table.tb.density-compact td{font-size:14px}
+table.tb.density-compact th,table.tb.density-compact td{font-size:var(--table-compact-font-size)}
+table.tb :is(.cell-sub,small,.tag,.user-actions button){font-size:var(--table-detail-font-size)}
+/* 兼容受信任 legacy 表格串中的小字号；仅覆盖单元格，避免放大详情面板。 */
+table.tb td :is([style*="font-size:10"],[style*="font-size:11"],[style*="font-size:12"]){font-size:var(--table-detail-font-size)!important}
+body.bigscreen table.tb{--table-detail-font-size:14px}
+body.bigscreen table.tb.density-compact th,body.bigscreen table.tb.density-compact td{font-size:17px}

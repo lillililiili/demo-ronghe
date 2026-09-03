@@ -39,6 +39,8 @@ a.btn{text-decoration:none}   /* 顶栏「大屏展示」等以 <a> 承载的按
 .btn[disabled]{opacity:.4;cursor:not-allowed}
 .btn.big{height:38px;font-size:14px;padding:0 18px}
 .toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;border-bottom:1px solid var(--line-2)}
+/* 筛选项自然换行；操作按钮成组靠右，换行后仍保持右对齐。 */
+.toolbar-actions{display:flex;align-items:center;justify-content:flex-end;gap:inherit;flex-wrap:wrap;flex:0 0 auto;max-width:100%;margin-left:auto}
 
 /* 字符串表单桥接到 Naive 组件后，原节点仅作取值代理 */
 .naive-control-bridge{display:inline-flex;min-width:0;vertical-align:middle}
@@ -52,7 +54,13 @@ td.ck .naive-control-bridge,th.ck .naive-control-bridge{display:flex;justify-con
 
 
 /* 分页 */
-.pager{display:flex;align-items:center;gap:8px;justify-content:center;padding:10px;color:var(--txt-2);font-size:13px;flex-wrap:wrap}
+.pager{display:flex;align-items:center;gap:8px;justify-content:flex-end;width:max-content;max-width:100%;margin-left:auto;padding:10px;color:var(--txt-2);font-size:13px;flex:none;flex-wrap:wrap}
+.pager>span{white-space:nowrap;flex:none}
+/* 每页条数控件固定宽度，覆盖 legacy 桥接层用于普通筛选项的拉伸与最小宽度。 */
+.pager>.naive-control-bridge:not(.is-check){flex:0 0 104px;width:104px;min-width:104px!important;height:auto!important}
+.pager .n-pagination{max-width:100%;justify-content:flex-end;flex-wrap:wrap;row-gap:8px}
+.pager .n-pagination>.n-select{flex:0 0 104px;width:104px;min-width:104px}
+.pager .n-pagination-prefix,.pager .n-pagination-suffix{white-space:nowrap}
 .pager .pg{min-width:26px;height:26px;padding:0 6px;display:flex;align-items:center;justify-content:center;
   border:1px solid var(--line);border-radius:4px;cursor:pointer}
 .pager .pg:hover{border-color:var(--blue);color:#fff}

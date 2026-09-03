@@ -94,13 +94,17 @@ node tools/tilecheck.cjs      # 仅审计保留的历史瓦片包（线上地图
 `MapView` 的 Canvas 叠加层绘制。复制 `.env.example` 为 `.env.local` 后配置 Web 端 Key；
 本地开发可配置 `VITE_AMAP_SECURITY_CODE`，生产环境必须配置
 `VITE_AMAP_SERVICE_HOST=/_AMapService` 并按 `deploy/nginx-amap.conf.example` 代理安全密钥。
-顶栏天气复用同一 JS API 配置，通过 `AMap.Weather` 获取东营实时天气和当天预报；
-请求失败时自动回退到 `MOCK.CONF.weather`，不会阻塞页面加载。
+普通页面与数据大屏的顶栏不再展示天气，也不再启动天气刷新定时器。
 
 原 1.5GB / 32 万张离线瓦片仅保留作历史回滚数据，Vite 不再转发、构建不再复制，
 运行时不会产生 `/assets/tiles/**` 请求。`tools/tilecheck.cjs` 仅用于人工审计旧瓦片包。
 
 ## 组件库（Naive UI，2026-08-31 引入）
+
+列表筛选栏的操作按钮使用 `.toolbar-actions` 成组靠右，换行后保持右对齐。
+设备调测页的设备树支持点击区域标题或使用 Enter / 空格键展开、折叠；各区域独立保留本次页面内的折叠状态，重新进入页面时恢复展开。
+表格正文默认 16px、紧凑表格 15px、辅助文字 13px，由 `tokens.css` 的表格字号变量统一维护；长表格在局部容器内滚动。
+分页器统一使用 `.pager` 收在表格右下方，每页条数下拉框宽 104px；窄容器内可换行，禁止拉伸占满整行。
 
 交互件全套替换（P0–P4a 完成 + P4b 样板），展示串（tag/kv/sect 等 ~280 处大屏视觉签名）不替换：
 

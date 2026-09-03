@@ -35,6 +35,8 @@ let dev = M.devices.find(d => d.type === '雷达' && d.status === '在线')
   || M.devices.find(d => d.type === '雷达')
   || null;
 const hasDev = !!dev;
+// 仅保留本次页面内的折叠状态，切换设备或重绘调测面板时不重置。
+const collapsedRegions = new Set();
 
 function linkMetrics(atStep) {
   const r = CH.seeded('link:' + dev.id + '@' + atStep);
@@ -61,15 +63,15 @@ const noDevHtml = `<div class="warnbox" style="line-height:1.9">
   全部挂在一台并非被调测对象的设备上，而界面上看不出换了对象。<br>
   <span style="color:var(--txt-3)">请先在「设备管理」中登记雷达设备。</span></div>`;
 
-/* 左栏 268 → 300px、区域/类型并排（用户 2026-08-30：「设备选择和设备信息太挤」） */
-const devPickBody = hasDev ? `<div style="padding:8px;display:flex;flex-direction:column;gap:6px">
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+/* 设备筛选固定内容高度；下方设备树独立滚动。 */
+const devPickBody = hasDev ? `<div class="cm-device-filters">
+    <div class="cm-device-filter-row">
       ${U.field('区域', U.select('r', ['全部区域', ...M.DISTRICTS.map(d => d.name)]))}
       ${U.field('类型', U.select('t', ['全部类型', ...new Set(M.devices.map(d => d.type))]))}
     </div>
     <input class="ip" placeholder="请输入设备名称/ID/IP" id="cmKw">
   </div>
-  <div class="tree" id="cmTree" style="padding:0 8px 8px;overflow:auto;flex:1;min-height:0"></div>` : '';
+  <div class="tree" id="cmTree"></div>` : '';
 
 const midBody = `<div id="cmCfg" style="padding:12px;overflow:auto;flex:1"></div>
   <div class="detail-actions" style="margin:0;border-width:1px 0 0;border-radius:0;flex-wrap:wrap;justify-content:flex-start">
@@ -91,9 +93,11 @@ const listTabsBody = `<div class="tabs" style="padding:8px 12px 0">
 function tree() {
   const byRegion = {};
   M.devices.forEach(d => { (byRegion[d.region] = byRegion[d.region] || []).push(d); });
-  return Object.keys(byRegion).map(r => `
-    <div class="tn"><span>▾</span>${r}<span class="cnt">${byRegion[r].length}</span></div>
-    <div class="ch">${byRegion[r].slice(0, 6).map(d =>
+  return Object.keys(byRegion).map((r, i) => `
+    <button type="button" class="tn cm-region-toggle" data-cm-region="${r}"
+      aria-expanded="${!collapsedRegions.has(r)}" aria-controls="cmRegion${i}">
+      <span class="cm-region-caret" aria-hidden="true">${collapsedRegions.has(r) ? '▸' : '▾'}</span>${r}<span class="cnt">${byRegion[r].length}</span></button>
+    <div class="ch" id="cmRegion${i}" ${collapsedRegions.has(r) ? 'hidden' : ''}>${byRegion[r].slice(0, 6).map(d =>
     `<div class="tn ${dev && d.id === dev.id ? 'on' : ''}" data-dev="${d.id}">
         <span class="dot-s" style="background:${d.status === '在线' ? '#2fd06e' : d.status === '离线' ? '#8ca0be' : '#ff4d5e'}"></span>${d.name}</div>`).join('')}
       ${byRegion[r].length > 6 ? `<div class="tn" style="color:var(--txt-3)">… 其余 ${byRegion[r].length - 6} 台</div>` : ''}</div>`).join('');
@@ -504,6 +508,15 @@ onMounted(() => {
   if (!hasDev) return;
   const view = root.value;
   paint();
+  U.on(view, '[data-cm-region]', 'click', (e, el) => {
+    const region = el.dataset.cmRegion;
+    const collapsed = !collapsedRegions.has(region);
+    if (collapsed) collapsedRegions.add(region);
+    else collapsedRegions.delete(region);
+    el.setAttribute('aria-expanded', String(!collapsed));
+    el.querySelector('.cm-region-caret').textContent = collapsed ? '▸' : '▾';
+    document.getElementById(el.getAttribute('aria-controls')).hidden = collapsed;
+  });
   U.on(view, '[data-dev]', 'click', (e, el) => {
     dev = M.devices.find(d => d.id === el.dataset.dev);
     step = 0; running = false; clearInterval(timer);
@@ -576,13 +589,13 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="view" id="view" ref="root">
+  <div class="view commission-page" id="view" ref="root">
     <template v-if="hasDev">
       <UPanel :title="false" panel-style="flex:none;margin-bottom:12px" :body-html="stepsHtml" />
 
       <div class="row mb12" style="height:560px;flex:none">
         <div class="col" style="width:300px">
-          <UPanel title="设备选择" panel-style="flex:none;height:260px" nopad :body-html="devPickBody" />
+          <UPanel title="设备选择" class-name="cm-device-picker" panel-style="flex:none;height:260px" nopad :body-html="devPickBody" />
           <UPanel title="设备信息" panel-style="flex:1;min-height:0" nopad
             body-html='<div id="cmInfo" style="flex:1;overflow:auto;padding:12px"></div>' />
         </div>
@@ -600,3 +613,45 @@ onMounted(() => {
     <UPanel v-else title="设备接入调测" panel-style="flex:none" :body-html="noDevHtml" />
   </div>
 </template>
+
+<style scoped>
+.commission-page :deep(.cm-device-picker > .pb) { overflow: hidden; }
+.commission-page :deep(.cm-device-filters) {
+  display: grid;
+  flex: none;
+  min-width: 0;
+  gap: 8px;
+  padding: 10px;
+}
+.commission-page :deep(.cm-device-filter-row) {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.commission-page :deep(.cm-device-filter-row .field) {
+  flex-direction: column;
+  align-items: stretch;
+  min-width: 0;
+  gap: 4px;
+}
+/* 桥接层的通用 flex-basis 会把搜索框纵向撑高；下拉最小宽度也须受本栏约束。 */
+.commission-page :deep(.cm-device-filters .naive-control-bridge:not(.is-check)) {
+  flex: none;
+  width: 100%;
+  min-width: 0 !important;
+}
+.commission-page :deep(#cmTree) {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 8px 8px;
+}
+.commission-page :deep(.cm-region-toggle) {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+}
+</style>

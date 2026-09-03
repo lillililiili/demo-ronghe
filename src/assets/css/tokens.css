@@ -31,6 +31,9 @@
   --header-h:64px;
   --nav-w:176px;
   --gap:12px;
+  --table-font-size:16px;
+  --table-compact-font-size:15px;
+  --table-detail-font-size:13px;
   /* 晨雾登录页专用：不改变已登录业务页面的主题。 */
   --login-card:rgba(18,30,48,.74);
   --login-input:rgba(24,39,61,.24);

@@ -1196,9 +1196,9 @@ onMounted(() => {
             <button :class="{ 'is-active': st.legal === '合法' }" data-chip-set="合法">系统自动通过</button>
           </div>
           <div id="lgList" class="lg-list-host"></div>
-          <footer class="lg-pager">
+          <footer class="lg-pager pager">
             <n-pagination :page="st.page" :page-size="st.size" :item-count="totalCount"
-              show-size-picker :page-sizes="[10, 20, 50]"
+              size="small" :page-slot="5" show-size-picker :page-sizes="[10, 20, 50].map(value => ({ value, label: `${value}条/页` }))"
               @update:page="onPage" @update:page-size="onPageSize">
               <template #prefix>共 {{ totalCount.toLocaleString() }} 条</template>
               <template #suffix>共 {{ pageCount }} 页</template>
@@ -1241,7 +1241,7 @@ onMounted(() => {
 .legality-workbench .lg-queue-group.is-red .lg-group-head b{color:#ff686f}.legality-workbench .lg-queue-group.is-amber .lg-group-head b{color:#e6a130}.legality-workbench .lg-queue-group.is-green .lg-group-head b{color:#37c488}
 .legality-workbench .lg-queue-row{width:100%;min-height:49px;padding:5px 12px;border:0;border-bottom:1px solid rgba(130,174,218,.065);background:#091827;color:#b7c5d5;text-align:left;cursor:pointer}.legality-workbench .lg-queue-row:hover{background:#0d2238}.legality-workbench .lg-queue-row.is-selected{background:#0f2b4c;box-shadow:inset 2px 0 var(--lg-blue),inset 0 0 0 1px rgba(75,156,255,.5)}
 .legality-workbench .lg-queue-row>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.legality-workbench .lg-row-target{display:flex;flex-direction:column}.legality-workbench .lg-row-target b{color:#d8e5f3;font-size:11px}.legality-workbench .lg-row-target small{color:#70859d;font-size:10px}.legality-workbench .lg-row-note{display:block;margin-top:2px;color:#c5a7ff;font-size:9px}.legality-workbench .lg-row-note.is-amber{color:#e7ad55}.legality-workbench .lg-row-region,.legality-workbench .lg-row-reason{font-size:10.5px}
-.legality-workbench .lg-pager{height:50px;min-height:50px;display:flex;align-items:center;justify-content:center;padding:5px 8px;border-top:1px solid rgba(130,174,218,.1);background:#091725;overflow:hidden;white-space:nowrap}.legality-workbench .lg-pager .n-pagination{flex-wrap:nowrap!important;column-gap:3px!important}.legality-workbench .lg-pager .n-pagination-prefix,.legality-workbench .lg-pager .n-pagination-suffix{white-space:nowrap;font-size:11px}
+.legality-workbench .lg-pager{min-height:50px;padding:5px 8px;border-top:1px solid rgba(130,174,218,.1);background:#091725}
 .legality-workbench .lg-hidden-status{display:none}.legality-workbench .lg-detail-host{height:100%;min-height:0;display:flex;flex-direction:column}.legality-workbench .lg-review-head{color:#879bb2;font-size:12px}.legality-workbench .lg-review-head b{color:#c8d7e8}.legality-workbench .lg-review-head>.tag{margin-left:4px}
 .legality-workbench .lg-detail-scroll{min-height:0;flex:1;overflow:auto;padding:9px;scrollbar-width:thin}
 .legality-workbench .lg-verdict-card{min-height:116px;display:grid;grid-template-columns:1.05fr 1.55fr 1.05fr .92fr;border:1px solid rgba(130,174,218,.13);border-radius:7px;background:#0b1b2d;overflow:hidden}.legality-workbench .lg-verdict-card>div{min-width:0;padding:12px;border-right:1px solid rgba(130,174,218,.1)}.legality-workbench .lg-verdict-card>div:last-child{border-right:0}

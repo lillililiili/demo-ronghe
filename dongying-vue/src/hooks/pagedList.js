@@ -17,20 +17,49 @@ export function normalizeSize(size) {
 }
 
 export function parsePagedPayload(data) {
-  const src = data && typeof data === 'object' ? data : {};
-  const items = Array.isArray(src.items) ? src.items : [];
-  const page = normalizePage(src.page);
-  const size = normalizeSize(src.size);
-  const total = Number.isFinite(Number(src.total))
-    ? Math.max(0, Math.floor(Number(src.total)))
-    : items.length;
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw new TypeError('分页载荷无效：必须是对象');
+  }
+  for (const field of ['page', 'size', 'items', 'total']) {
+    if (!Object.prototype.hasOwnProperty.call(data, field)) {
+      throw new TypeError(`分页载荷无效：缺少 ${field}`);
+    }
+  }
+  const { page, size, items, total } = data;
+  if (!Number.isSafeInteger(page) || page < 1) {
+    throw new TypeError('分页载荷无效：page 必须是正整数');
+  }
+  if (!Number.isSafeInteger(size) || size < 1 || size > PAGE_MAX) {
+    throw new TypeError(`分页载荷无效：size 必须是 1-${PAGE_MAX} 的整数`);
+  }
+  if (!Array.isArray(items)) {
+    throw new TypeError('分页载荷无效：items 必须是数组');
+  }
+  if (!Number.isSafeInteger(total) || total < 0) {
+    throw new TypeError('分页载荷无效：total 必须是非负整数');
+  }
+  if (items.length > size) {
+    throw new TypeError('分页载荷无效：items 数量超过 size');
+  }
+  if (total === 0 && items.length > 0) {
+    throw new TypeError('分页载荷无效：total 为 0 时 items 必须为空');
+  }
+  const pageCount = Math.max(1, Math.ceil(total / size));
+  if (page > pageCount) {
+    throw new TypeError('分页载荷无效：page 超过有效页数');
+  }
+  const remaining = Math.max(0, total - (page - 1) * size);
+  if (items.length > remaining) {
+    throw new TypeError('分页载荷无效：items 数量超过当前页剩余总数');
+  }
   return { page, size, items, total };
 }
 
 export function sliceLocal(all, page, size) {
   const list = Array.isArray(all) ? all : [];
-  const p = normalizePage(page);
   const s = normalizeSize(size);
+  const pageCount = Math.max(1, Math.ceil(list.length / s));
+  const p = Math.min(normalizePage(page), pageCount);
   const start = (p - 1) * s;
   return { page: p, size: s, items: list.slice(start, start + s), total: list.length };
 }

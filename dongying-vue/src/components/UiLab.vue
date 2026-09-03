@@ -26,7 +26,7 @@ const oldModal = () => U.modal({
   footer: '<button class="btn" data-close>取消</button><button class="btn pri" data-act="ok">确定</button>',
   on: { ok: () => { U.closeModal(); U.toast('旧版确定', 'ok'); } }
 });
-const oldPagerHtml = U.pager({ total: 137, page: 3, size: 10 });
+const oldPagerHtml = U.pager({ total: 137, page: 3, size: 20 });
 </script>
 
 <template>

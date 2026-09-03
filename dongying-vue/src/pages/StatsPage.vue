@@ -1,14 +1,13 @@
 <script setup>
 /* 运行统计 —— 第一个转换为真 Vue 组件的页面（源：legacy pages/stats.js）。
    转换约定：
-   · 结构进 template，图表初始化进 useCharts（等价 legacy mount 时机）
+   · 结构进 template，图表随查询 ready 状态初始化和释放
    · 数值/标签等叶子仍用 window.UI 的字符串生成器（U.num/U.table）
    · 工具条不再放没有切片数据的时间/类型/区域下拉，避免点了数字不变
    · 外壳职责（面包屑/导航组/页脚/卸载清理）统一走 usePageChrome
    · 查询壳走 PageQueryShell：加载/空/错/就绪；本页数据仍来自 Mock，失败不得改写成成功 */
-import { computed } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, watch } from 'vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
-import { useCharts } from '@/hooks/useChart.js';
 import { sliceLocal } from '@/hooks/pagedList.js';
 import { usePagedList } from '@/hooks/usePagedList.js';
 import PagePager from '@/components/PagePager.vue';
@@ -19,13 +18,17 @@ import UKpis from '@/components/UKpis.vue';
 const M = window.MOCK, U = window.UI, S = M.stats;
 usePageChrome('stats');
 const query = usePagedList({ page: 1, size: 20 });
-function reloadStats() {
-  query.applyPayload(sliceLocal(S.regions || [], query.page.value, query.size.value));
-  renderRegionView();
-}
-reloadStats();
 const queryStatus = computed(() => query.status.value);
 const queryError = computed(() => query.errorMessage.value);
+
+function applyRegionPage() {
+  return query.applyPayload(sliceLocal(S.regions || [], query.page.value, query.size.value));
+}
+async function reloadStats() {
+  query.setLoading();
+  await nextTick();
+  return applyRegionPage();
+}
 
 /* ---- 工具条：统计说明与右侧操作按钮 ---- */
 const d0 = M.util.fmtD(M.util.dayAdd(M.CONF.demoTime, -29)), d1 = M.util.fmtD(M.CONF.demoTime);
@@ -83,8 +86,8 @@ function regionTable() {
         <span style="color:var(--txt-3)">/</span> ${U.num(M.util.sum(regions, r => r.highRisk))}</b></div>`;
 }
 
-/* ---- 图表（legacy mount 同构） ---- */
-useCharts(CH => {
+/* ---- 图表（legacy mount 同构；查询壳重建后可再次初始化） ---- */
+function initStatsCharts(CH) {
   CH.line(document.getElementById('sTrend'), {
     x: S.days.map(d => d.md), yName: '次数',
     series: [
@@ -117,6 +120,29 @@ useCharts(CH => {
     data: S.byPenalty.map((p, i) => ({ name: p.name, value: p.value, c: ['#2fd06e', '#ff4d5e', '#ffb020'][i] })),
     center: ['32%', '50%']
   });
+}
+
+const STATS_CHART_IDS = ['sTrend', 'sRisk', 'sType', 'sRegion', 'sDur', 'sTrack', 'sAlt', 'sPen'];
+function disposeStatsCharts() {
+  if (!window.CH.disposeEl) return;
+  STATS_CHART_IDS.forEach(id => window.CH.disposeEl(document.getElementById(id)));
+}
+
+let statsMounted = false;
+watch(queryStatus, async (status, previous) => {
+  if (!statsMounted) return;
+  if (previous === 'ready' && status !== 'ready') disposeStatsCharts();
+  if (status !== 'ready') return;
+  await nextTick();
+  if (statsMounted && query.status.value === 'ready') initStatsCharts(window.CH);
+}, { flush: 'pre' });
+onMounted(() => {
+  statsMounted = true;
+  reloadStats();
+});
+onBeforeUnmount(() => {
+  statsMounted = false;
+  disposeStatsCharts();
 });
 
 /* ---- 区域视图与本地演示分页 ---- */
@@ -146,11 +172,11 @@ function onRegionTab(e) {
 }
 function onPageChange(next) {
   query.setPage(next);
-  reloadStats();
+  if (applyRegionPage()) renderRegionView();
 }
 function onSizeChange(next) {
   query.setSize(next);
-  reloadStats();
+  if (applyRegionPage()) renderRegionView();
 }
 </script>
 

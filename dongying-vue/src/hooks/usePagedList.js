@@ -19,14 +19,22 @@ export function usePagedList(initial = {}) {
   const pageCount = computed(() => Math.max(1, Math.ceil(total.value / size.value) || 1));
 
   function applyPayload(data) {
-    const parsed = parsePagedPayload(data);
-    page.value = parsed.page;
-    size.value = parsed.size;
-    items.value = parsed.items;
-    total.value = parsed.total;
-    errorMessage.value = '';
-    status.value = parsed.total === 0 ? 'empty' : 'ready';
-    return parsed;
+    try {
+      const parsed = parsePagedPayload(data);
+      page.value = parsed.page;
+      size.value = parsed.size;
+      items.value = parsed.items;
+      total.value = parsed.total;
+      errorMessage.value = '';
+      status.value = parsed.total === 0 ? 'empty' : 'ready';
+      return parsed;
+    } catch (err) {
+      items.value = [];
+      total.value = 0;
+      status.value = 'error';
+      errorMessage.value = err instanceof Error ? err.message : '分页载荷无效';
+      return null;
+    }
   }
 
   function setLoading() {

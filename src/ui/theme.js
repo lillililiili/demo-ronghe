@@ -37,6 +37,27 @@ const fontFamily = getComputedStyle(document.body).fontFamily
 
 export const theme = darkTheme;
 
+/* 登录页局部组件主题，依然只从 tokens.css 读取，不影响业务表单。 */
+export const loginThemeOverrides = {
+  Input: {
+    heightLarge: '60px', fontSizeLarge: '18px', paddingLarge: '0 18px',
+    color: v('--login-input'), colorFocus: v('--login-input'),
+    textColor: v('--login-text'), placeholderColor: v('--login-muted'),
+    caretColor: v('--login-text'), border: `1px solid ${v('--login-line')}`,
+    borderHover: `1px solid ${v('--login-link')}`, borderFocus: `1px solid ${v('--login-link')}`,
+    boxShadowFocus: `0 0 0 3px ${v('--line')}`
+  },
+  Checkbox: { textColor: v('--login-muted'), border: `1px solid ${v('--login-line')}`, color: v('--login-input') },
+  Button: {
+    heightLarge: '60px', fontSizeLarge: '20px', textColorPrimary: v('--login-text'),
+    colorPrimary: v('--login-action'), colorHoverPrimary: v('--login-action-hover'),
+    colorPressedPrimary: v('--login-action-pressed'),
+    borderPrimary: `1px solid ${v('--login-action')}`,
+    borderHoverPrimary: `1px solid ${v('--login-action-hover')}`,
+    borderPressedPrimary: `1px solid ${v('--login-action-pressed')}`
+  }
+};
+
 export const themeOverrides = {
   common: {
     primaryColor: blue,

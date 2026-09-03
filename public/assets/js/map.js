@@ -1,66 +1,17 @@
 /* =============================================================================
- * map.js —— 高德在线矢量底图 + Canvas 业务态势叠加层（东营）
- * 业务坐标统一保持 WGS-84，仅在高德 API 边界转换为 GCJ-02。
- * 在线底图不可用时自动降级为内置简化矢量底图，不再读取离线瓦片。
+ * map.js —— 本地 PMTiles 矢量底图 + Canvas 业务态势叠加层（东营）
+ * 两种模式统一 WGS-84 / Web Mercator；失败仅降级内置示意图。
  * ========================================================================== */
 (function (g) {
   'use strict';
   /* 东营全域视图范围；业务叠加层与无网降级底图共用。 */
   const B = { lon0: 118.114, lon1: 119.308, lat0: 36.937, lat1: 38.156 };
   const CENTER = [(B.lon0 + B.lon1) / 2, (B.lat0 + B.lat1) / 2];
-  let amapPromise = null;
-
-  function configValue(v) {
-    if (!v || /^%VITE_[A-Z0-9_]+%$/.test(v)) return '';
-    return String(v).trim();
-  }
-
-  function loadScript(src) {
-    return new Promise((resolve, reject) => {
-      const old = document.querySelector(`script[data-amap-loader="${src}"]`);
-      if (old) {
-        old.addEventListener('load', resolve, { once: true });
-        old.addEventListener('error', () => reject(new Error('高德 Loader 加载失败')), { once: true });
-        return;
-      }
-      const s = document.createElement('script');
-      s.src = src; s.async = true; s.dataset.amapLoader = src;
-      s.onload = resolve;
-      s.onerror = () => reject(new Error('高德 Loader 加载失败'));
-      document.head.appendChild(s);
-    });
-  }
-
-  function loadAMap() {
-    if (amapPromise) return amapPromise;
-    const raw = g.__AMAP_CONFIG__ || {};
-    const cfg = {
-      key: configValue(raw.key),
-      securityJsCode: configValue(raw.securityJsCode),
-      serviceHost: configValue(raw.serviceHost)
-    };
-    amapPromise = Promise.resolve().then(() => {
-      if (!cfg.key) throw new Error('未配置高德 Web 端 Key');
-      if (cfg.serviceHost) {
-        g._AMapSecurityConfig = { serviceHost: cfg.serviceHost.replace(/\/$/, '') };
-      } else if (cfg.securityJsCode) {
-        g._AMapSecurityConfig = { securityJsCode: cfg.securityJsCode };
-      } else {
-        throw new Error('未配置高德安全密钥或安全代理');
-      }
-      if (g.AMap) return g.AMap;
-      if (g.AMapLoader) return g.AMapLoader;
-      return loadScript('https://webapi.amap.com/loader.js').then(() => g.AMapLoader);
-    }).then(loaderOrMap => {
-      if (g.AMap) return g.AMap;
-      if (!loaderOrMap || !loaderOrMap.load) throw new Error('高德 Loader 不可用');
-      return loaderOrMap.load({ key: cfg.key, version: '2.0', plugins: [] });
-    });
-    return amapPromise;
-  }
-
-  /* 复用同一份 Web 端 Key、安全密钥和 Loader，供顶栏天气等高德服务插件使用。 */
-  g.AMapReady = loadAMap;
+  const merc = (lon, lat) => {
+    const s = Math.sin(Math.max(-85.051129, Math.min(85.051129, lat)) * Math.PI / 180);
+    return [(lon + 180) / 360, .5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)];
+  };
+  const geographic = (x, y) => [x * 360 - 180, Math.atan(Math.sinh(Math.PI * (1 - 2 * y))) * 180 / Math.PI];
 
   /* 东营地理骨架（简化矢量，仅用于 Demo 视觉参考） */
   const COAST = [[118.02, 38.13], [118.30, 38.17], [118.62, 38.10], [118.90, 38.01], [119.10, 37.87],
@@ -86,10 +37,11 @@
 
   function MapView(box, opt) {
     opt = opt || {};
+    if (box.__map) box.__map.destroy();
     this.box = box; this.opt = opt;
     this.data = { airspaces: [], devices: [], targets: [], alarms: [] };
     this.layers = Object.assign({ device: true, track: true, nofly: true, suit: true, limit: true, alarm: true }, opt.layers);
-    this.online = false; this.amap = null; this.AMap = null;
+    this.online = false; this.map = null;
     this.zoom = opt.zoom || 1; this.ox = 0; this.oy = 0; this.t = 0; this.hover = null; this.sel = null;
     this._pendingCenter = CENTER.slice();
     box.classList.add('mapwrap');
@@ -109,12 +61,13 @@
       </div>`;
     box.innerHTML = `<div class="mapbase"></div><canvas class="mapoverlay"></canvas>
       <div class="mapctl">
-        <div class="mb" data-z="in" role="button" aria-label="放大">${g.UI.icon('zoomIn')}</div><div class="mb" data-z="out" role="button" aria-label="缩小">${g.UI.icon('zoomOut')}</div><div class="mb" data-z="fit" role="button" aria-label="复位">${g.UI.icon('expand')}</div>
+        <button type="button" class="mb" data-z="in" aria-label="放大">${g.UI.icon('zoomIn')}</button><button type="button" class="mb" data-z="out" aria-label="缩小">${g.UI.icon('zoomOut')}</button><button type="button" class="mb" data-z="fit" aria-label="复位">${g.UI.icon('expand')}</button>
       </div>
       ${legendHtml}
       <div class="maptip"></div>
       <div class="mapscale"><span></span><div class="bar"></div></div>
-      <div class="mapstatus is-loading">在线底图加载中…</div>`;
+      <div class="mapstatus is-loading" role="status" aria-live="polite"><span>底图加载中…</span><button type="button" data-map-retry hidden>重试</button></div>
+      <div class="mapcredit">简化示意图 · 非精确行政边界</div>`;
     box.__map = this;          // 便于调试与外部程序化控制
     this.baseEl = box.querySelector('.mapbase');
     this.cv = box.querySelector('.mapoverlay');
@@ -123,53 +76,96 @@
     this.statusEl = box.querySelector('.mapstatus');
     this._bind();
     this._resize();
-    this._initAMap();
+    this._initOffline();
     this._loop();
   }
 
-  MapView.prototype._initAMap = function () {
-    loadAMap().then(AMap => {
-      if (this._dead || !this.box.isConnected) return;
-      this.AMap = AMap;
-      const center = g.GEO.wgs84ToGcj02(this._pendingCenter[0], this._pendingCenter[1]);
-      this.amap = new AMap.Map(this.baseEl, {
-        viewMode: '2D',
-        zoom: this._levelForScale(this.zoom),
-        center,
-        // 标准浅色地图保留道路、建筑、水系和 POI 的完整层级。
-        mapStyle: 'amap://styles/normal',
-        features: ['bg', 'road', 'building', 'point'],
-        resizeEnable: true,
-        rotateEnable: false,
-        pitchEnable: false,
-        jogEnable: false,
-        showLabel: true
+  MapView.prototype._status = function (state, error) {
+    this.box.dataset.mapState = state;
+    this.baseEl.setAttribute('aria-busy', String(state === 'loading'));
+    this.statusEl.hidden = state === 'ready';
+    this.statusEl.className = 'mapstatus is-' + state;
+    this.statusEl.querySelector('span').textContent = state === 'loading' ? '底图加载中…' : '离线地图不可用，已切换简化示意图';
+    this.statusEl.querySelector('button').hidden = state !== 'fallback';
+    this.statusEl.title = error ? error.message || String(error) : '';
+    this.box.querySelector('.mapcredit').hidden = state === 'ready';
+  };
+
+  MapView.prototype._disposeBase = function () {
+    clearTimeout(this._loadTimer);
+    clearTimeout(this._failureTimer);
+    if (this._loadController) this._loadController.abort();
+    if (this.map) {
+      const map = this.map; this.map = null;
+      (this._mapEvents || []).forEach(([name, fn]) => map.off(name, fn));
+      map.remove();
+    }
+    this._mapEvents = [];
+    // 构造阶段 WebGL 失败也可能已经插入 Canvas，必须一并清理。
+    if (this.baseEl) { this.baseEl.replaceChildren(); this.baseEl.classList.remove('maplibregl-map'); }
+    // 构造阶段 WebGL 失败也可能已经插入 Canvas，必须一并清理。
+    if (this.baseEl) { this.baseEl.replaceChildren(); this.baseEl.classList.remove('maplibregl-map'); }
+    if (this._release) { this._release(); this._release = null; }
+    this.online = false;
+  };
+
+  MapView.prototype._fallback = function (error) {
+    if (this._dead) return;
+    if (this.map) this._syncView();
+    this._disposeBase();
+    this._status('fallback', error);
+    this.draw();
+  };
+
+  MapView.prototype._syncView = function () {
+    if (!this.map) return;
+    this._pendingCenter = this.map.getCenter().toArray();
+    this.zoom = Math.pow(2, this.map.getZoom() - this._fitLevelForWidth());
+  };
+
+  MapView.prototype._initOffline = function () {
+    if (this._dead) return;
+    this._disposeBase();
+    this._status('loading');
+    const controller = new AbortController();
+    this._loadController = controller;
+    this._loadTimer = setTimeout(() => this._fallback(new Error('地图加载超时，请检查地图包与静态服务器')), 25000);
+    Promise.resolve().then(() => {
+      if (!g.OfflineMap) throw new Error('本地地图加载桥接尚未就绪');
+      return g.OfflineMap.prepare(controller.signal);
+    }).then(runtime => {
+      if (this._dead || controller.signal.aborted) { runtime.release(); return; }
+      this._release = runtime.release;
+      const map = new runtime.maplibre.Map({
+        container: this.baseEl, style: runtime.style, center: this._pendingCenter,
+        zoom: this._levelForScale(this.zoom), minZoom: Math.min(7, this._fitLevelForWidth()), maxZoom: 18,
+        bearing: 0, pitch: 0, dragRotate: false, pitchWithRotate: false,
+        touchPitch: false, renderWorldCopies: false, attributionControl: false,
+        localIdeographFontFamily: false, fadeDuration: 0,
+        transformRequest: runtime.transformRequest
       });
-      this.online = true;
-      const redraw = () => this.draw();
-      const syncZoom = () => {
-        const level = this.amap && this.amap.getZoom ? this.amap.getZoom() : this._levelForScale(this.zoom);
-        this.zoom = Math.max(1, Math.min(12, Math.pow(2, level - this._fitLevelForWidth())));
-        this.draw();
-      };
-      this.amap.on('mapmove', redraw);
-      this.amap.on('zoomchange', syncZoom);
-      this.amap.on('resize', redraw);
-      this.amap.on('complete', () => {
-        if (this.statusEl) { this.statusEl.className = 'mapstatus'; this.statusEl.style.display = 'none'; }
-        this.draw();
+      this.map = map;
+      map.touchZoomRotate.disableRotation();
+      map.addControl(new runtime.maplibre.AttributionControl({ compact: false }), 'bottom-left');
+      const on = (name, fn) => { map.on(name, fn); this._mapEvents.push([name, fn]); };
+      on('move', () => { this._syncView(); this.draw(); this._hit(); });
+      on('render', () => { this.draw(); });
+      on('dragstart', () => { this._dragged = true; this._boxLeave(); });
+      on('dragend', () => { this._suppressClickUntil = Date.now() + 250; this._dragged = false; });
+      on('webglcontextlost', () => this._fallback(new Error('WebGL 上下文丢失，可尝试重试')));
+      on('error', event => {
+        // 在事件派发完成后清理引擎，避免 remove 造成重入。
+        clearTimeout(this._failureTimer);
+        this._failureTimer = setTimeout(() => this._fallback(event.error || new Error('离线资源读取失败')), 0);
+      });
+      on('load', () => {
+        clearTimeout(this._loadTimer);
+        this.online = true;
+        this._syncView(); this._status('ready'); this.draw();
       });
       this.draw();
-    }).catch(err => {
-      if (this._dead) return;
-      this.online = false;
-      if (this.statusEl) {
-        this.statusEl.className = 'mapstatus is-fallback';
-        this.statusEl.textContent = '在线底图不可用，已切换简化地图';
-        this.statusEl.title = err && err.message ? err.message : String(err);
-      }
-      this.draw();
-      if (g.console && console.warn) console.warn('[MapView] 高德在线底图加载失败，使用简化地图：', err);
+    }).catch(error => {
+      if (!this._dead && !controller.signal.aborted) this._fallback(error);
     });
   };
 
@@ -178,6 +174,7 @@
     this._ro = new ResizeObserver(() => self._resize());
     this._ro.observe(this.box);
     this._boxClick = e => {
+      if (e.target.closest && e.target.closest('[data-map-retry]')) { e.preventDefault(); e.stopPropagation(); self._initOffline(); return; }
       const lg = e.target.closest && e.target.closest('.lg-hd');
       if (lg) {
         e.preventDefault(); e.stopPropagation();
@@ -194,103 +191,115 @@
         else self.resetView();
         return;
       }
-      if (e.target.closest && e.target.closest('.maplayers,.mapstatus')) return;
+      if (e.target.closest && e.target.closest('.maplayers,.mapstatus,.maplibregl-control-container')) return;
+      if (self._dragged || Date.now() < (self._suppressClickUntil || 0)) return;
+      self._boxMove(e);
       if (self.hover && self.opt.onPick) self.opt.onPick(self.hover);
     };
     this._boxMove = e => {
       const r = self.cv.getBoundingClientRect();
       self.mx = e.clientX - r.left; self.my = e.clientY - r.top;
-      self._hit();
+      if (!self._dragged) self._hit();
     };
     this._boxLeave = () => {
+      self.mx = self.my = NaN;
       self.hover = null; self.tip.style.display = 'none';
       if (self.baseEl) self.baseEl.style.cursor = '';
     };
     this.box.addEventListener('click', this._boxClick, true);
     this.box.addEventListener('mousemove', this._boxMove, true);
     this.box.addEventListener('mouseleave', this._boxLeave);
+    this._boxKey = e => {
+      if (e.target.matches('.lg-hd') && ['Enter', ' '].includes(e.key)) { e.preventDefault(); e.target.click(); }
+    };
+    this.box.addEventListener('keydown', this._boxKey);
 
     let drag = null;
     this._boxDown = e => {
-      if (self.online || e.button !== 0 || (e.target.closest && e.target.closest('.mapctl,.maplegend,.maplayers'))) return;
-      drag = { x: e.clientX, y: e.clientY, ox: self.ox, oy: self.oy };
+      self._dragged = false;
+      if (e.button !== 0 || (e.target.closest && e.target.closest('.mapctl,.maplegend,.maplayers,.mapstatus,.maplibregl-control-container'))) return;
+      drag = { x: e.clientX, y: e.clientY, center: merc(...self._pendingCenter) };
     };
     this._boxWheel = e => {
-      if (self.online) return;
+      if (self.map || e.target.closest('.mapctl,.maplegend,.maplayers,.mapstatus')) return;
       e.preventDefault();
+      const r = self.cv.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+      const before = merc(...self.unpx(x, y));
       self.setZoom(self.zoom * (e.deltaY < 0 ? 1.18 : 0.85));
+      const after = merc(...self.unpx(x, y)), center = merc(...self._pendingCenter);
+      self._pendingCenter = geographic(center[0] + before[0] - after[0], center[1] + before[1] - after[1]);
+      self.draw(); self._boxMove(e);
     };
     this.box.addEventListener('mousedown', this._boxDown, true);
     this.box.addEventListener('wheel', this._boxWheel, { passive: false, capture: true });
-    this._winUp = () => drag = null;
+    this._winUp = () => {
+      if (self._dragged) self._suppressClickUntil = Date.now() + 250;
+      self._dragged = false; drag = null;
+    };
     window.addEventListener('mouseup', this._winUp);
     this._winMove = e => {
-      if (!drag || self.online) return;
-      self.ox = drag.ox + (e.clientX - drag.x); self.oy = drag.oy + (e.clientY - drag.y);
+      if (!drag) return;
+      const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+      if (Math.hypot(dx, dy) > 4) self._dragged = true;
+      if (self.map) return;
+      const size = 512 * Math.pow(2, self._levelForScale(self.zoom));
+      self._pendingCenter = geographic(drag.center[0] - dx / size, drag.center[1] - dy / size);
+      self._boxLeave();
       self.draw();
     };
     window.addEventListener('mousemove', this._winMove);
   };
 
   MapView.prototype._resize = function () {
+    if (this._dead) return;
     const r = this.box.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
     this.w = r.width; this.h = r.height;
     this.cv.width = Math.max(1, Math.round(r.width * dpr));
     this.cv.height = Math.max(1, Math.round(r.height * dpr));
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    if (this.amap && this.amap.resize) this.amap.resize();
+    if (this.map) {
+      const zoom = this._levelForScale(this.zoom);
+      this.map.resize();
+      this.map.jumpTo({ zoom, center: this._pendingCenter });
+    }
     this.draw();
   };
 
   MapView.prototype._fitLevelForWidth = function () {
-    if (!this.w || !g.GEO) return 10;
-    let z = 10, best = Infinity;
-    for (let t = 8; t <= 17; t++) {
-      const spanPx = g.GEO.TILE * Math.pow(2, t) * ((B.lon1 - B.lon0) / 360);
-      const diff = Math.abs(spanPx - this.w);
-      if (diff < best) { best = diff; z = t; }
-    }
-    return z;
+    const a = merc(B.lon0, B.lat1), b = merc(B.lon1, B.lat0);
+    return Math.log2(Math.min(Math.max(1, this.w - 40) / (b[0] - a[0]), Math.max(1, this.h - 40) / (b[1] - a[1])) / 512);
   };
 
   MapView.prototype._levelForScale = function (scale) {
-    return Math.max(8, Math.min(18, this._fitLevelForWidth() + Math.log2(Math.max(1, scale))));
+    const fit = this._fitLevelForWidth();
+    return Math.max(Math.min(7, fit), Math.min(18, fit + Math.log2(Math.max(.01, Number(scale) || 1))));
   };
 
   MapView.prototype._fallbackPx = function (lon, lat) {
-    const sx = this.w / (B.lon1 - B.lon0), sy = this.h / (B.lat1 - B.lat0);
-    const base = Math.min(sx, sy) * this.zoom;
-    const kx = Math.min(sx * this.zoom / (base || 1), 1.7);
-    const cx = this.w / 2 + this.ox, cy = this.h / 2 + this.oy;
-    return [cx + (lon - CENTER[0]) * base * kx, cy - (lat - CENTER[1]) * base];
+    const p = merc(lon, lat), center = merc(...this._pendingCenter);
+    const size = 512 * Math.pow(2, this._levelForScale(this.zoom));
+    return [this.w / 2 + (p[0] - center[0]) * size, this.h / 2 + (p[1] - center[1]) * size];
   };
 
-  /* 业务层始终传 WGS-84；仅调用高德 API 时转换为 GCJ-02。 */
+  /* 对外及引擎边界均为 WGS-84，不叠加 GCJ 偏移。 */
   MapView.prototype.px = function (lon, lat) {
-    if (this.online && this.amap && this.AMap) {
-      const gcj = g.GEO.wgs84ToGcj02(lon, lat);
-      const p = this.amap.lngLatToContainer(new this.AMap.LngLat(gcj[0], gcj[1]));
-      if (p) return [typeof p.getX === 'function' ? p.getX() : p.x, typeof p.getY === 'function' ? p.getY() : p.y];
+    if (this.map) {
+      const p = this.map.project([lon, lat]);
+      return [p.x, p.y];
     }
     return this._fallbackPx(lon, lat);
   };
 
   MapView.prototype.unpx = function (sx, sy) {
-    if (this.online && this.amap && this.AMap) {
-      const p = this.amap.containerToLngLat(new this.AMap.Pixel(sx, sy));
-      if (p) return g.GEO.gcj02ToWgs84(p.getLng(), p.getLat());
-    }
-    const kx0 = this.w / (B.lon1 - B.lon0), ky0 = this.h / (B.lat1 - B.lat0);
-    const base = Math.min(kx0, ky0) * this.zoom;
-    const kx = Math.min(kx0 * this.zoom / (base || 1), 1.7);
-    const cx = this.w / 2 + this.ox, cy = this.h / 2 + this.oy;
-    return [(sx - cx) / (base * kx || 1) + CENTER[0], CENTER[1] - (sy - cy) / (base || 1)];
+    if (this.map) return this.map.unproject([sx, sy]).toArray();
+    const center = merc(...this._pendingCenter), size = 512 * Math.pow(2, this._levelForScale(this.zoom));
+    return geographic(center[0] + (sx - this.w / 2) / size, center[1] + (sy - this.h / 2) / size);
   };
 
   MapView.prototype.setZoom = function (z) {
-    this.zoom = Math.max(1, Math.min(12, z));
-    if (this.online && this.amap) this.amap.setZoom(this._levelForScale(this.zoom));
+    this.zoom = Math.pow(2, this._levelForScale(z) - this._fitLevelForWidth());
+    if (this.map) this.map.setZoom(this._levelForScale(this.zoom));
     this.draw();
     return this;
   };
@@ -300,33 +309,25 @@
     options = options || {};
     if (Number.isFinite(options.scale)) this.setZoom(options.scale);
     this._pendingCenter = [lon, lat];
-    if (this.online && this.amap) {
-      this.amap.setCenter(g.GEO.wgs84ToGcj02(lon, lat));
-    } else {
-      const q = this._fallbackPx(lon, lat);
-      this.ox += this.w / 2 - q[0]; this.oy += this.h / 2 - q[1];
-    }
+    if (this.map) this.map.setCenter(this._pendingCenter);
     this.draw();
     return this;
   };
 
   MapView.prototype.resetView = function (scale) {
-    this.zoom = Math.max(1, Math.min(12, scale == null ? 1 : scale));
     this.ox = this.oy = 0;
-    this._pendingCenter = CENTER.slice();
-    if (this.online && this.amap) {
-      this.amap.setZoom(this._levelForScale(this.zoom));
-      this.amap.setCenter(g.GEO.wgs84ToGcj02(CENTER[0], CENTER[1]));
-    }
-    this.draw();
-    return this;
+    return this.centerAt(CENTER[0], CENTER[1], { scale: scale == null ? 1 : scale });
   };
 
   MapView.prototype.setData = function (d) { Object.assign(this.data, d); this.draw(); return this; };
   MapView.prototype.setLayer = function (k, v) { this.layers[k] = v; this.draw(); return this; };
   MapView.prototype.destroy = function () {
+    if (this._dead) return;
     this._dead = true;
+    this._disposeBase();
     if (this._raf) cancelAnimationFrame(this._raf);
+    this._raf = null;
+    this._raf = null;
     if (this._ro) this._ro.disconnect();
     if (this._boxClick) this.box.removeEventListener('click', this._boxClick, true);
     if (this._boxMove) this.box.removeEventListener('mousemove', this._boxMove, true);
@@ -335,8 +336,8 @@
     if (this._boxWheel) this.box.removeEventListener('wheel', this._boxWheel, true);
     if (this._winUp) window.removeEventListener('mouseup', this._winUp);
     if (this._winMove) window.removeEventListener('mousemove', this._winMove);
-    if (this.amap) { try { this.amap.destroy(); } catch (e) { } this.amap = null; }
-    if (this.box && this.box.__map === this) delete this.box.__map;
+    if (this._boxKey) this.box.removeEventListener('keydown', this._boxKey);
+    if (this.box && this.box.__map === this) { delete this.box.__map; this.box.replaceChildren(); delete this.box.dataset.mapState; }
   };
 
   MapView.prototype._hit = function () {
@@ -363,7 +364,8 @@
   MapView.prototype._loop = function () {
     const self = this;
     (function f() {
-      if (self._dead || !self.box.isConnected) return;
+      if (self._dead) return;
+      if (!self.box.isConnected) { self.destroy(); return; }
       self.t += 1; self.draw(); self._raf = requestAnimationFrame(f);
     })();
   };
@@ -403,10 +405,10 @@
     const P = (a, b) => this.px(a, b);
     c.clearRect(0, 0, W, H);
 
-    /* 在线时底图由下层高德容器渲染；Canvas 只画业务叠加层。 */
-    if (this.online && this.amap) { this._drawOverlays(c, W, H); return; }
+    /* 离线详细底图由 MapLibre 渲染；Canvas 只画业务叠加层。 */
+    if (this.online && this.map) { this._drawOverlays(c, W, H); return; }
 
-    /* 无网/无 Key 降级底图：保持业务可操作，但不读取任何离线瓦片。 */
+    /* 简化示意图：保持业务可操作，不读取任何历史图片瓦片。 */
     const gr = c.createLinearGradient(0, 0, 0, H);
     gr.addColorStop(0, '#f5f1e8'); gr.addColorStop(1, '#edf2e6');
     c.fillStyle = gr; c.fillRect(0, 0, W, H);
@@ -471,7 +473,10 @@
         c.save(); c.clip();
         c.strokeStyle = ink + '1f'; c.lineWidth = .8;
         const bb = a.poly.reduce((m, p) => { const q = P(p[0], p[1]); return [Math.min(m[0], q[0]), Math.min(m[1], q[1]), Math.max(m[2], q[0]), Math.max(m[3], q[1])]; }, [1e9, 1e9, -1e9, -1e9]);
-        for (let x = bb[0] - (bb[3] - bb[1]); x < bb[2]; x += 15) { c.beginPath(); c.moveTo(x, bb[1]); c.lineTo(x + (bb[3] - bb[1]), bb[3]); c.stroke(); }
+        // 街道级放大时多边形可能远大于屏幕，只绘制可见范围的纹理。
+        const top = Math.max(0, bb[1]), bottom = Math.min(H, bb[3]);
+        const left = Math.max(0, bb[0]), right = Math.min(W, bb[2]);
+        for (let x = left - (bottom - top); x < right && bottom > top; x += 15) { c.beginPath(); c.moveTo(x, top); c.lineTo(x + (bottom - top), bottom); c.stroke(); }
         c.restore();
       }
       const ctr = P(a.center.lon, a.center.lat);
@@ -650,10 +655,13 @@
     this._pickPts = picks;
 
     /* 比例尺 */
-    const s0 = this.px(118.5, 37.5), s1 = this.px(118.5 + 0.1, 37.5);
-    const pxPer10km = Math.abs(s1[0] - s0[0]);
+    const lat = this.unpx(W / 2, H / 2)[1];
+    const metersPerPixel = 40075016.686 * Math.cos(lat * Math.PI / 180) / (512 * Math.pow(2, this._levelForScale(this.zoom)));
+    const maxMeters = metersPerPixel * Math.min(100, W / 4);
+    const unit = Math.pow(10, Math.floor(Math.log10(maxMeters)));
+    const meters = [5, 2, 1].map(n => n * unit).find(n => n <= maxMeters) || unit;
     const el = this.box.querySelector('.mapscale');
-    if (el) { el.querySelector('span').textContent = '≈ 8.9 km'; el.querySelector('.bar').style.width = pxPer10km.toFixed(0) + 'px'; }
+    if (el) { el.querySelector('span').textContent = meters >= 1000 ? `${meters / 1000} km` : `${meters} m`; el.querySelector('.bar').style.width = (meters / metersPerPixel).toFixed(0) + 'px'; }
   };
 
   g.MapView = MapView;

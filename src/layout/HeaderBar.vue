@@ -4,20 +4,20 @@
    （旧版就是 append 到 body 的 .usermenu，CSS 上下文保持一致）。 */
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { useAppStore } from '@/stores/app.js';
-import { carouselDlg } from '@/hooks/useCarousel.js';
+import { stopCarousel } from '@/hooks/useCarousel.js';
+import { useRouter } from 'vue-router';
+import { logout } from '@/services/auth.js';
 import { toast } from '@/ui/nv.js';
 import { openModal, closeModal } from '@/ui/modal.js';
 import { refreshWeather, weatherState } from '@/services/weather.js';
 
 const store = useAppStore();
+const router = useRouter();
 const M = window.MOCK, U = window.UI;
 const currentUser = computed(() => { store.accessRevision; return M.currentUser || { name: '用户', account: '—', roleName: '—', org: '—' }; });
 const avatarText = computed(() => currentUser.value.name.slice(-1));
 const canBigscreen = computed(() => { store.accessRevision; return M.canMenu('bigscreen'); });
 const canAlarms = computed(() => { store.accessRevision; return M.canMenu('alarms'); });
-const canUsers = computed(() => { store.accessRevision; return M.canMenu('users'); });
-const canRoles = computed(() => { store.accessRevision; return M.canMenu('roles'); });
-const canDevices = computed(() => { store.accessRevision; return M.canMenu('devices'); });
 
 /* ---------- 时钟：系统当前时间与 Mock 数据统计时间分离 ---------- */
 let clkTimer = null, weatherTimer = null;
@@ -31,7 +31,7 @@ const weaHtml = computed(() => {
   const w = weatherState;
   const temp = w.temperature == null ? `${w.tempLo}℃ ~ ${w.tempHi}℃` : `${w.temperature}℃`;
   const wind = w.windDirection ? ` ${w.windDirection}风${w.windPower ? `${w.windPower}级` : ''}` : '';
-  return `${w.city} ${U.icon('cloud')} ${temp} ${w.text}${wind}`;
+  return `${w.city} ${U.icon('cloud')} ${temp} ${w.text}${wind}（演示）`;
 });
 const weatherTitle = computed(() => {
   const w = weatherState;
@@ -75,7 +75,7 @@ function onFsChange() {
   }
 }
 
-/* ---------- 用户菜单 ---------- */
+/* ---------- 用户菜单：仅保留个人信息与退出登录 ---------- */
 const menuOpen = ref(false);
 function toggleMenu(e) {
   e.stopPropagation();
@@ -85,20 +85,26 @@ function closeMenu() { menuOpen.value = false; }
 function goAlarms() { location.hash = '#/alarms'; }
 function onMenu(k) {
   closeMenu();
-  if (k === 'users') location.hash = '#/users';
-  else if (k === 'roles') location.hash = '#/roles';
-  else if (k === 'ops') location.hash = '#/devices';
-  else if (k === 'carousel') carouselDlg();
-  else if (k === 'me') openModal({
+  if (k === 'me') openModal({
     title: '个人信息', width: '440px',
     body: U.kv([['账号', currentUser.value.account], ['姓名', currentUser.value.name], ['角色', currentUser.value.roleName],
     ['所属单位', currentUser.value.org], ['双因子认证', currentUser.value.mfa],
     ['最后登录', currentUser.value.lastLogin], ['登录 IP', currentUser.value.lastIp]])
   });
-  else if (k === 'logout') toast('已退出登录(Demo 环境不跳转登录页)', 'ok');
+  else if (k === 'logout') {
+    stopCarousel();
+    closeModal();
+    document.body.classList.remove('bigscreen');
+    store.bigscreen = false;
+    if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+    logout();
+    router.replace('/login');
+    toast('已退出登录', 'ok');
+  }
 }
 
 onMounted(() => {
+  window.SEARCH?.mount();
   clkTimer = setInterval(tick, 1000);
   refreshWeather();
   weatherTimer = setInterval(refreshWeather, 30 * 60 * 1000);
@@ -108,6 +114,7 @@ onMounted(() => {
   window.addEventListener('mock-access-change', bumpBell);
 });
 onBeforeUnmount(() => {
+  window.SEARCH?.destroy();
   clearInterval(clkTimer);
   clearInterval(weatherTimer);
   document.removeEventListener('fullscreenchange', onFsChange);
@@ -139,10 +146,6 @@ onBeforeUnmount(() => {
   <Teleport to="body">
     <div class="usermenu" :class="{ open: menuOpen }" @click.stop>
       <div class="mi" data-um="me" @click="onMenu('me')" v-html="U.icon('user') + ' 个人信息'"></div>
-      <div v-if="canDevices" class="mi" data-um="ops" @click="onMenu('ops')" v-html="U.icon('settings') + ' 运维管理'"></div>
-      <div v-if="canUsers" class="mi" data-um="users" @click="onMenu('users')" v-html="U.icon('user') + ' 用户管理'"></div>
-      <div v-if="canRoles" class="mi" data-um="roles" @click="onMenu('roles')" v-html="U.icon('shield') + ' 角色管理'"></div>
-      <div class="mi" data-um="carousel" @click="onMenu('carousel')" v-html="U.icon('play') + ' 大屏轮播'"></div>
       <div class="sep"></div>
       <div class="mi" data-um="logout" @click="onMenu('logout')" v-html="U.icon('logout') + ' 退出登录'"></div>
     </div>

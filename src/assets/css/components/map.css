@@ -1,4 +1,5 @@
 
+@import 'maplibre-gl/dist/maplibre-gl.css';
 /* 地图 */
 .mapwrap{position:relative;width:100%;height:100%;overflow:hidden;border-radius:6px;background:#edf2e9}
 .mapwrap>.mapbase{position:absolute;inset:0;z-index:0;background:#edf2e9}
@@ -25,3 +26,12 @@
 .maptip .kv{gap:3px 10px;font-size:12px}
 .mapscale{position:absolute;left:12px;bottom:27px;font-size:11px;color:#405568;text-shadow:0 1px 2px #fff;z-index:5}
 .mapscale .bar{height:4px;border:1px solid #405568;border-top:0;width:70px}
+.mapwrap .mapstatus{max-width:calc(100% - 104px);white-space:normal;pointer-events:auto;line-height:1.5;text-align:center}
+.mapwrap .mapstatus[hidden],.mapwrap .mapcredit[hidden],.mapwrap .mapstatus button[hidden]{display:none}
+.mapwrap .mapstatus button{margin-left:8px;padding:2px 7px;border:1px solid currentColor;border-radius:4px;background:transparent;color:inherit;cursor:pointer;font:inherit}
+.mapwrap .mapctl button:focus-visible,.mapwrap .mapstatus button:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+.mapwrap .mapcredit{position:absolute;left:6px;bottom:2px;z-index:3;font-size:10px;line-height:18px;color:#405568;background:rgba(255,255,255,.9);padding:0 4px;pointer-events:none}
+.mapwrap .maplibregl-ctrl-attrib{font-size:10px;line-height:18px;max-width:calc(100% - 4px);color:#405568;background:rgba(255,255,255,.92)}
+.mapwrap .maplibregl-ctrl-attrib a{color:inherit}
+.mapwrap .maplibregl-ctrl-bottom-left{z-index:3;max-width:calc(100% - 80px)}
+@media(prefers-reduced-motion:reduce){.mapstatus.is-loading:before{animation:none}}

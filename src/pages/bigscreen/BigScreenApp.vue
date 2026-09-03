@@ -109,7 +109,7 @@ const weatherTemp = computed(() => {
 const weatherDetail = computed(() => {
   const w = weatherState;
   const wind = w.windDirection ? ` · ${w.windDirection}风${w.windPower ? `${w.windPower}级` : ''}` : '';
-  return ` · ${w.text}${wind}`;
+  return ` · ${w.text}${wind}（演示）`;
 });
 const weatherTitle = computed(() => {
   const w = weatherState;

@@ -7,6 +7,8 @@ defineProps({
   danger: Boolean,
   disabled: Boolean,
   hideCancel: Boolean,
+  loading: Boolean,
+  submit: Boolean,
   size: { type: String, default: 'medium' }
 });
 defineEmits(['cancel', 'confirm']);
@@ -16,6 +18,7 @@ defineEmits(['cancel', 'confirm']);
   <footer class="u-form-footer">
     <slot name="before" />
     <n-button v-if="!hideCancel" :size="size" @click="$emit('cancel')">{{ cancelText }}</n-button>
-    <n-button :size="size" :type="danger ? 'error' : 'primary'" :disabled="disabled" @click="$emit('confirm')">{{ confirmText }}</n-button>
+    <n-button :size="size" :type="danger ? 'error' : 'primary'" :disabled="disabled || loading" :loading="loading"
+      :attr-type="submit ? 'submit' : 'button'" @click="!submit && $emit('confirm')">{{ confirmText }}</n-button>
   </footer>
 </template>

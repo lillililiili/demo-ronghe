@@ -3294,6 +3294,12 @@
     return u;
   }
 
+  /* Vue 演示会话退出/失效时清空唯一身份，不重建数据、不消耗随机序列。 */
+  function clearCurrentUser() {
+    _currentUserId = null;
+    notifyAccessChange();
+  }
+
   const auditLogs = [];
   (function buildAudit() {
     let n = 0;
@@ -5128,7 +5134,7 @@
     alarms, todayAlarms, cases, casesToday, authLogs,
     interfaces, ifStats, commTasks, COMM_TH, logs, logStats,
     users, ROLES, SYSTEM_ROLE_IDS, PERM, PERM_MODULES, MENU_PERM, MENU_KEYS, ROUTE_MODULES, auditLogs,
-    switchUser, can, canForRole, canMenu, permLevel, PERM_LEVELS, PERM_ACTIONS,
+    switchUser, clearCurrentUser, can, canForRole, canMenu, permLevel, PERM_LEVELS, PERM_ACTIONS,
     recalcRoleUsers, createRole, updateRole, deleteRole, applyRoleAccess,
     createUser, updateUser, setUserStatus, resetUserPassword,
     DISPOSAL_FLOW, ALARM_STATUS, CASE_STATUS, DEV_TYPES_RESERVED,

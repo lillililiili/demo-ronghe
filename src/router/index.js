@@ -1,6 +1,7 @@
 import { createRouter, createWebHashHistory } from 'vue-router';
-import { REDIRECT, PAGE_THEME, pageTitle, routeKey } from '@/config/navModel.js';
+import { REDIRECT, ROUTES, PAGE_THEME, pageTitle, routeKey } from '@/config/navModel.js';
 import PageHost from '@/layout/PageHost.vue';
+import { isAuthenticated, restoreSession } from '@/services/auth.js';
 
 /* hash 模式与旧版地址完全兼容：#/situation、#/legality、旧书签、UI.goto 写
    location.hash 都直接命中。REDIRECT 表用 router redirect 实现（等价旧版
@@ -18,6 +19,20 @@ export const router = createRouter({
 });
 
 export { routeKey };
+
+/* 只接受系统内已知单段页面，不接受外站、嵌套路径和登录自循环。 */
+export function loginDestination(value) {
+  if (typeof value !== 'string' || !/^\/[a-z][a-z0-9-]*(?:\?[^#]*)?$/.test(value)) return '/workbench';
+  const key = value.slice(1).split('?')[0];
+  return key !== 'login' && ROUTES[key] ? value : '/workbench';
+}
+restoreSession();
+router.beforeEach(to => {
+  const key = routeKey(to);
+  if (key === 'login') return isAuthenticated() ? loginDestination(to.query.redirect) : true;
+  if (!isAuthenticated()) return { path: '/login', query: { redirect: loginDestination(to.fullPath) }, replace: true };
+  return true;
+});
 
 /* body[data-page]/[data-theme] 与标题统一在 afterEach 写（首个路由也会触发）。 */
 router.afterEach(to => {

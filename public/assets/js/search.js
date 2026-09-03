@@ -196,6 +196,7 @@
   };
 
   function open(preset) {
+    if (!M.currentUser || !document.querySelector('.hdr')) return;
     if (box) return focusInput();
     box = document.createElement('div');
     box.setAttribute('style', S.mask);
@@ -227,7 +228,7 @@
     run();
   }
   function focusInput() { const i = box && box.querySelector('#gsInput'); if (i) { i.focus(); i.select(); } }
-  function close() { if (box) { box.remove(); box = null; flat = []; cur = -1; } }
+  function close() { clearTimeout(timer); if (box) { box.remove(); box = null; flat = []; cur = -1; } }
 
   function onKey(e) {
     if (e.key === 'Escape') { e.preventDefault(); return close(); }
@@ -409,6 +410,19 @@
   const cssEsc = s => String(s).replace(/["\\]/g, '\\$&');
 
   /* ---------------- 挂载 ---------------- */
+  function onHotkey(e) {
+    if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); open(''); }
+  }
+  function onExample(e) {
+    const t = e.target.closest('[data-gs-eg]');
+    if (t && box) { const i = box.querySelector('#gsInput'); i.value = t.dataset.gsEg; i.focus(); run(); }
+  }
+  function destroy() {
+    close();
+    document.removeEventListener('keydown', onHotkey);
+    document.removeEventListener('click', onExample);
+    document.getElementById('btnSearch')?.parentElement.remove();
+  }
   function mount() {
     const meta = document.querySelector('.hdr .meta');
     if (!meta || document.getElementById('btnSearch')) return;
@@ -420,14 +434,8 @@
     meta.insertBefore(wrap, meta.querySelector('.bell') || meta.lastChild);
     document.getElementById('btnSearch').onclick = () => open('');
 
-    document.addEventListener('keydown', e => {
-      if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); open(''); }
-    });
-    // 示例 chip 点一下就填进去
-    document.addEventListener('click', e => {
-      const t = e.target.closest('[data-gs-eg]');
-      if (t && box) { const i = box.querySelector('#gsInput'); i.value = t.dataset.gsEg; i.focus(); run(); }
-    });
+    document.addEventListener('keydown', onHotkey);
+    document.addEventListener('click', onExample);
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount);
@@ -465,5 +473,5 @@
     U.toast(`暂不支持直达「${kind}」类型的 ${id}`, 'err');
   }
 
-  g.SEARCH = { open, close, search, parseQuery, goEntity };
+  g.SEARCH = { open, close, search, parseQuery, goEntity, mount, destroy };
 })(window);

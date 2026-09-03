@@ -66,10 +66,12 @@ export const ROUTES = (function () {
   r.airspace = { t: '飞行计划', p: '飞行监管', ph: 'flights' };
   r.overview = { t: '融合感知', p: '感知监测', ph: 'situation' };
   r.bigscreen = { t: '低空安全监控大屏', p: null, ph: null };
+  r.login = { t: '登录', p: null, ph: null }; // 独立入口，不加入业务导航/权限矩阵
   return r;
 })();
 
 export const PAGE_THEME = {
+  login: 'login',
   workbench: 'overview',
   bigscreen: 'overview',
   situation: 'sensing', monitor: 'sensing',

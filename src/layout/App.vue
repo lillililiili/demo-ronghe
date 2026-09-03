@@ -15,9 +15,16 @@ import PageHost from './PageHost.vue';
 import { useAppStore } from '@/stores/app.js';
 import { canAccessRoute } from '@/services/accessControl.js';
 import { installLegacyControlObserver } from '@/ui/legacyControls.js';
+import { authSession, isAuthenticated } from '@/services/auth.js';
+import LoginPage from '@/pages/login/LoginPage.vue';
 
 const route = useRoute();
 const store = useAppStore();
+const showLogin = computed(() => {
+  authSession.value;
+  store.accessRevision;
+  return routeKey(route) === 'login' || !isAuthenticated();
+});
 const isBigScreen = computed(() => routeKey(route) === 'bigscreen');
 const bigScreenAllowed = computed(() => {
   store.accessRevision;
@@ -37,7 +44,10 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <BigScreenApp v-if="bigScreenAllowed" />
+  <n-config-provider v-if="showLogin" :theme="theme" :theme-overrides="themeOverrides" style="display:contents">
+    <LoginPage />
+  </n-config-provider>
+  <BigScreenApp v-else-if="bigScreenAllowed" />
   <n-config-provider v-else :theme="theme" :theme-overrides="themeOverrides" style="display:contents">
     <HeaderBar />
     <div class="body">

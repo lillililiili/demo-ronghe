@@ -1,18 +1,12 @@
-import { defineConfig, loadEnv } from 'vite';
+import { defineConfig } from 'vite';
 import vue from '@vitejs/plugin-vue';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { externalMapData } from './tools/map-data-server.mjs';
 
 const rootDir = fileURLToPath(new URL('.', import.meta.url));
 
-export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, rootDir, '');
-  const amapRuntimeConfig = {
-    key: env.VITE_AMAP_KEY || '',
-    // 安全密钥仅允许进入开发服务器响应，生产构建强制剔除。
-    securityJsCode: mode === 'development' ? (env.VITE_AMAP_SECURITY_CODE || '') : '',
-    serviceHost: env.VITE_AMAP_SERVICE_HOST || ''
-  };
+export default defineConfig(() => {
   return {
     resolve: {
       alias: {
@@ -21,13 +15,10 @@ export default defineConfig(({ mode }) => {
     },
     plugins: [
       vue(),
-      {
-        name: 'amap-runtime-config',
-        transformIndexHtml(html) {
-          return html.replace('__AMAP_RUNTIME_CONFIG__', JSON.stringify(amapRuntimeConfig));
-        }
-      }
+      externalMapData(process.env.MAP_DATA_DIR || path.resolve(rootDir, '../map-data'))
     ],
+    // 旧高德 VITE_* 值不再暴露给浏览器；地图地址走独立静态配置。
+    envPrefix: 'APP_PUBLIC_',
     server: {
       port: 5173,
       // 历史瓦片仍留在仓库旁用于人工回滚，但不再参与运行时加载或文件监听。

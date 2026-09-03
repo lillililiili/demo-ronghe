@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import { NCheckbox, NCheckboxGroup, NInput, NInputNumber, NRadio, NRadioGroup, NSelect } from 'naive-ui';
 import { SELECT_DROPDOWN, selectMenuProps } from './selectProps.js';
 
@@ -19,10 +19,14 @@ const props = defineProps({
   layout: { type: String, default: 'stack' },
   id: { type: String, default: '' },
   boxLabel: { type: String, default: '' },
-  html: { type: String, default: '' }
+  html: { type: String, default: '' },
+  inputProps: { type: Object, default: () => ({}) },
+  status: { type: String, default: undefined }
 });
 const model = defineModel({ default: null });
 const menuProps = computed(() => selectMenuProps(props.options));
+const input = ref(null);
+defineExpose({ focus: () => input.value?.focus() });
 </script>
 
 <template>
@@ -49,7 +53,11 @@ const menuProps = computed(() => selectMenuProps(props.options));
   <n-checkbox v-else-if="type === 'checkbox'" :id="id || undefined" v-model:checked="model" :disabled="disabled" :size="size">
     {{ boxLabel }}
   </n-checkbox>
-  <n-input v-else :id="id || undefined" v-model:value="model" :type="type === 'textarea' ? 'textarea' : 'text'"
+  <n-input v-else ref="input" v-model:value="model" :type="['textarea', 'password'].includes(type) ? type : 'text'"
+    :input-props="{ ...inputProps, id: id || inputProps.id }" :status="status"
     :placeholder="placeholder" :disabled="disabled" :readonly="readonly" :clearable="clearable" :size="size"
-    :autosize="type === 'textarea' ? { minRows, maxRows } : false" />
+    :autosize="type === 'textarea' ? { minRows, maxRows } : false">
+    <template v-if="$slots.prefix" #prefix><slot name="prefix" /></template>
+    <template v-if="$slots.suffix" #suffix><slot name="suffix" /></template>
+  </n-input>
 </template>

@@ -4,6 +4,7 @@
    ② 挂 Vue 应用。
    CSS 必须先于 theme.js 求值，保证 getComputedStyle 能读到 token。 */
 import '@/assets/css/index.css';
+import '@/services/offlineMap.js';
 import { createApp } from 'vue';
 import { createPinia } from 'pinia';
 import App from '@/layout/App.vue';

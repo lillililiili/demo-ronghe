@@ -9,6 +9,10 @@ Set-StrictMode -Version Latest
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $frontendDir = Join-Path $repoRoot 'dongying-vue'
 $composeFile = Join-Path $repoRoot 'deploy\compose.yml'
+$mapDataCandidates = @(
+    (Join-Path $repoRoot 'map-data\dongying-dev\manifest.json'),
+    (Join-Path (Split-Path -Parent $repoRoot) 'map-data\dongying-dev\manifest.json')
+)
 
 function Assert-Command {
     param([Parameter(Mandatory)][string]$Name)
@@ -46,6 +50,14 @@ if (-not $SkipFrontendInstall -and -not (Test-Path (Join-Path $frontendDir 'node
     finally {
         Pop-Location
     }
+}
+
+$mapManifest = $mapDataCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+if ($mapManifest) {
+    Write-Host "Offline map package detected: $(Split-Path -Parent (Split-Path -Parent $mapManifest))"
+}
+else {
+    Write-Warning 'Offline map package was not found. Set MAP_DATA_DIR before starting Vite; see docs/offline-map-deployment.'
 }
 
 Write-Host ''

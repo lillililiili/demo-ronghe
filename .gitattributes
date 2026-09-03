@@ -1,0 +1,5 @@
+map-data/** -text -whitespace
+map-data/**/*.pmtiles binary
+map-data/**/*.pbf binary
+map-data/**/*.png binary
+map-data/**/*.otf binary

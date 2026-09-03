@@ -8,7 +8,6 @@ dist/
 .env.integration
 .dev/
 dongying-demo
-map-data/
 
 # backend
 server/target/

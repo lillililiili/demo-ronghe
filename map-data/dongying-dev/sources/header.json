@@ -1,0 +1,17 @@
+{
+  "tile_compression": "gzip",
+  "tile_type": "mvt",
+  "minzoom": 0,
+  "maxzoom": 15,
+  "bounds": [
+    117.914,
+    36.737,
+    119.508,
+    38.356
+  ],
+  "center": [
+    118.711,
+    37.5465,
+    0
+  ]
+}

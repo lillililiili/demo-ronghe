@@ -1,0 +1,11 @@
+东营开发用离线地图；非生产测绘成果。坐标：WGS-84。
+数据：Protomaps 20260902.pmtiles / tileset 4.15.2；样式：@protomaps/basemaps 5.7.2 light，zh-Hans；图标 v4。
+提取范围：117.914,36.737,119.508,38.356；Z0–Z15。Z16–Z18 为已有数据放大，不增加细节。
+来源：https://build.protomaps.com/20260902.pmtiles
+官方原包 BLAKE3：0f7860f75647583b49cd22fc344298023b501892d8d8f2c8466337072d0c1062（发布清单值；未下载全球包复算）
+样式：https://npm-style.protomaps.dev/style.json?version=5.7.2&theme=light&tiles=https://build.protomaps.com/20260902.pmtiles&lang=zh-Hans
+字体/图标：https://github.com/protomaps/basemaps-assets；字体许可见 fonts/OFL.txt，图标许可见 sources。
+中文字体：Noto Sans SC Regular 2.004，https://github.com/notofonts/noto-cjk/tree/Sans2.004，SIL OFL；本地 OTF 字体，不依赖操作系统字体。
+© OpenStreetMap contributors；OSM 数据采用 ODbL：https://www.openstreetmap.org/copyright
+Protomaps 底图及样式：https://github.com/protomaps/basemaps（BSD-3-Clause）；数据来源还包括 Natural Earth 等，见 sources/metadata.json。
+全量哈希见 checksums.json；变更地图、样式或字体后必须重新生成并检查。

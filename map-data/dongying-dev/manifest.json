@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "coordinateSystem": "WGS84",
+  "name": "东营开发底图",
+  "dataVersion": "20260902",
+  "tilesetVersion": "4.15.2",
+  "styleVersion": "5.7.2",
+  "archive": "./dongying-20260902.pmtiles",
+  "style": "./style.json",
+  "bounds": [
+    117.914,
+    36.737,
+    119.508,
+    38.356
+  ],
+  "minZoom": 0,
+  "maxZoom": 15,
+  "displayMaxZoom": 18
+}

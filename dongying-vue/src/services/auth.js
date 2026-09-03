@@ -4,6 +4,7 @@ import {
   apiRequest,
   clearSessionToken,
   getSessionToken,
+  setUnauthorizedHandler,
   setSessionToken
 } from './apiClient.js';
 
@@ -52,6 +53,27 @@ export function isAuthenticated() {
   return !!(sessionId.value && sessionId.value === getSessionToken() && currentUser.value);
 }
 
+function invalidAuthResponse() {
+  return new ApiError(502, 'INVALID_RESPONSE', '认证服务返回的会话信息不完整。');
+}
+
+function isNonEmptyString(value) {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function validateUserData(data) {
+  if (!data || !['user_id', 'account', 'name', 'role_code'].every(key => isNonEmptyString(data[key]))) {
+    throw invalidAuthResponse();
+  }
+}
+
+function validateLoginData(data) {
+  validateUserData(data);
+  if (!isNonEmptyString(data.session_id) || !Number.isFinite(data.expire_at) || data.expire_at <= 0) {
+    throw invalidAuthResponse();
+  }
+}
+
 function userSummary(data, previous = {}) {
   return {
     id: data.user_id,
@@ -75,7 +97,8 @@ function syncMockPermissions(roleCode) {
 }
 
 function acceptSession(data, token) {
-  if (!data || !token) throw new ApiError(502, 'INVALID_RESPONSE', '认证服务返回的会话信息不完整。');
+  validateUserData(data);
+  if (!isNonEmptyString(token)) throw invalidAuthResponse();
   sessionId.value = token;
   currentUser.value = userSummary(data, currentUser.value || {});
   syncMockPermissions(data.role_code);
@@ -88,6 +111,8 @@ function clearLocalSession() {
   M.clearCurrentUser();
 }
 
+setUnauthorizedHandler(clearLocalSession);
+
 export async function restoreSession() {
   const token = getSessionToken();
   if (!token) {
@@ -98,9 +123,9 @@ export async function restoreSession() {
     const data = await apiRequest('GET', '/api/v1/auth/me');
     acceptSession(data, token);
     return true;
-  } catch {
+  } catch (error) {
     clearLocalSession();
-    return false;
+    throw error;
   }
 }
 
@@ -108,15 +133,13 @@ export async function login({ account, password, remember }) {
   try {
     const cleanAccount = account.trim();
     const data = await apiRequest('POST', '/api/v1/auth/login', { account: cleanAccount, password });
-    if (typeof data?.session_id !== 'string' || !data.session_id) {
-      throw new ApiError(502, 'INVALID_RESPONSE', '认证服务返回的会话信息不完整。');
-    }
+    validateLoginData(data);
     const persisted = setSessionToken(data.session_id);
     acceptSession(data, data.session_id);
     writeStorage('localStorage', ACCOUNT_KEY, remember ? data.account : null);
     return { ok: true, persisted, user: currentUser.value };
   } catch (error) {
-    if (error instanceof ApiError && error.status === 401) clearLocalSession();
+    clearLocalSession();
     throw error;
   }
 }

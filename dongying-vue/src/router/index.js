@@ -29,7 +29,11 @@ export function loginDestination(value) {
 let sessionRestored = false;
 router.beforeEach(async to => {
   if (!sessionRestored) {
-    await restoreSession();
+    try {
+      await restoreSession();
+    } catch {
+      /* 会话已清理，继续按未登录路由处理 */
+    }
     sessionRestored = true;
   }
   const key = routeKey(to);

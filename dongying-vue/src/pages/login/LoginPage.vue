@@ -39,6 +39,11 @@ function showHelp() {
   });
 }
 
+function isCredentialError(reason) {
+  return reason?.status === 401
+    && (reason.code === 'INVALID_CREDENTIALS' || String(reason.code || '').startsWith('ACCOUNT_'));
+}
+
 async function submit() {
   if (busy.value) return;
   error.value = '';
@@ -57,10 +62,10 @@ async function submit() {
     await router.replace(loginDestination(route.query.redirect));
   } catch (reason) {
     error.value = reason?.message || '登录未完成，请重试。';
-    invalidField.value = 'password';
+    invalidField.value = isCredentialError(reason) ? 'password' : '';
   } finally {
     busy.value = false;
-    if (error.value) { await nextTick(); passwordField.value?.focus(); }
+    if (invalidField.value === 'password') { await nextTick(); passwordField.value?.focus(); }
   }
 }
 

@@ -16,6 +16,11 @@ function sessionStorageRef() {
 let sessionToken = (() => {
   try { return sessionStorageRef()?.getItem(SESSION_TOKEN_KEY) || null; } catch { return null; }
 })();
+let unauthorizedHandler = null;
+
+export function setUnauthorizedHandler(handler) {
+  unauthorizedHandler = typeof handler === 'function' ? handler : null;
+}
 
 export function setSessionToken(token) {
   sessionToken = typeof token === 'string' && token ? token : null;
@@ -36,6 +41,11 @@ export function getSessionToken() {
 export function clearSessionToken() {
   sessionToken = null;
   try { sessionStorageRef()?.removeItem(SESSION_TOKEN_KEY); } catch { /* 内存态仍已清除 */ }
+}
+
+function clearUnauthorizedSession() {
+  clearSessionToken();
+  unauthorizedHandler?.();
 }
 
 function errorFrom(status, payload) {
@@ -67,7 +77,7 @@ export async function apiRequest(method, path, body) {
     throw new ApiError(0, 'NETWORK_ERROR', '无法连接服务，请确认后端服务可用。');
   }
 
-  if (response.status === 401) clearSessionToken();
+  if (response.status === 401) clearUnauthorizedSession();
 
   let payload;
   try {

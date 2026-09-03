@@ -118,7 +118,10 @@ function render() {
         ${U.field('合作方', U.select('partner', ['全部', ...M.PARTNERS.map(p => p.name)], st.partner))}
         ${U.field('区域', U.select('region', ['全部', ...M.DISTRICTS.map(d => d.name)], st.region))}
         <input class="ip" id="flKw" style="width:190px" placeholder="计划编号 / 飞手 / 无人机ID">
-        <div class="toolbar-actions"><button class="btn" id="flExp">${U.icon('download')} 导出</button></div>
+        <div class="toolbar-actions">
+          <span style="font-size:11.5px;color:var(--txt-3)">真实导出接口未接入</span>
+          <button class="btn" id="flExp" disabled title="真实导出接口未接入，暂不能生成或下载文件">${U.icon('download')} 导出（未接入）</button>
+        </div>
       </div>
       <div id="flList" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>`
   })}
@@ -478,7 +481,6 @@ function mountRoute(view) {
     location.hash = '#/legality';
   });
   document.getElementById('flKw').oninput = e => { st.kw = e.target.value.trim(); st.page = 1; paint(); };
-  document.getElementById('flExp').onclick = () => toast('已导出「飞行计划.xlsx」共 ' + filtered().length + ' 条', 'ok');
 }
 
 onMounted(() => {

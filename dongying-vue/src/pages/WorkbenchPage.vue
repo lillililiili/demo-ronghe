@@ -255,7 +255,7 @@ onUnmounted(() => {
               <div><small>下一步</small><h3>{{ selected.summary.todo.action }}</h3><p>{{ selected.summary.todo.hint }}</p>
                 <span>责任模块：<b>{{ selected.summary.todo.module }}</b></span><span v-if="selected.summary.todo.blocker" class="wb-blocker">{{ selected.summary.todo.blocker }}</span></div>
             </div>
-            <div v-else class="wb-complete"><span v-html="icon('check')"></span><div><b>当前无待办动作</b><small>事件源未提供下一步待办，工作台仅展示现有只读详情。</small></div></div>
+            <div v-else class="wb-task"><span class="wb-task-state" v-html="icon('clipboard')"></span><div><small>只读状态</small><h3>当前无待办动作</h3><p>事件源未提供下一步待办，工作台仅展示现有只读详情。</p></div></div>
           </section>
 
           <section v-if="selected.kind === 'uav' || selected.kind === 'risk'" class="wb-flow-card panel">
@@ -314,7 +314,7 @@ onUnmounted(() => {
             <div class="wb-relation-line">
               <span><small>目标</small><b class="mono">{{ selected.ctx.id }}</b></span><i>→</i>
               <span><small>告警</small><b class="mono">{{ selected.ctx.alarm?.id || '—' }}</b></span><i>→</i>
-              <span v-if="canReadCase"><small>处置记录</small><b class="mono">{{ selected.ctx.kase?.id || '核实后自动生成' }}</b></span><span v-else class="is-hidden">处置记录无读取权限</span><i>→</i>
+              <span v-if="canReadCase"><small>处置记录</small><b class="mono">{{ selected.ctx.kase?.id || '尚未生成处置记录' }}</b></span><span v-else class="is-hidden">处置记录无读取权限</span><i>→</i>
               <span v-if="canReadAuth"><small>授权记录</small><b>{{ selected.ctx.auth.length }} 条</b></span><span v-else class="is-hidden">授权信息无读取权限</span><i>→</i>
               <span><small>证据</small><b>{{ selected.ctx.evidence.length }} 份</b></span>
             </div>
@@ -347,7 +347,7 @@ onUnmounted(() => {
                 <div v-if="!(selected.device.controlLogs || []).length" class="empty wb-record-empty">
                   <span class="wb-record-empty-icon" v-html="icon('tool')"></span>
                   <b>暂无控制记录</b>
-                  <small>下发设备控制指令后，执行结果将在这里留痕</small>
+                  <small>真实设备控制接口未接入，暂无控制记录</small>
                 </div>
               </div>
             </section>

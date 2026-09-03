@@ -10,9 +10,6 @@ import {
 import PageQueryShell from '@/components/PageQueryShell.vue';
 import { theme, themeOverrides } from '@/ui/theme.js';
 
-const M = window.MOCK;
-const U = window.UI;
-
 const clock = ref('—');
 const viewportHeight = ref(window.innerHeight);
 const queryStatus = ref('idle');
@@ -64,9 +61,10 @@ function requireFunction(name, value) {
 }
 
 function validateBigScreenData() {
-  requireRecord('MOCK', M);
-  const stats = requireRecord('MOCK.stats', M.stats);
-  const deviceStats = requireRecord('MOCK.deviceStats', M.deviceStats);
+  const mock = requireRecord('MOCK', window.MOCK);
+  const ui = requireRecord('UI', window.UI);
+  const stats = requireRecord('MOCK.stats', mock.stats);
+  const deviceStats = requireRecord('MOCK.deviceStats', mock.deviceStats);
   for (const key of ['onlineRate', 'offline', 'abnormal', 'alarm']) {
     if (!Number.isFinite(deviceStats[key])) {
       throw new TypeError(`大屏本地数据无效：MOCK.deviceStats.${key} 必须是有限数值`);
@@ -77,23 +75,23 @@ function validateBigScreenData() {
   for (const key of ['line', 'donut', 'ring', 'bar', 'disposeEl']) requireFunction(`CH.${key}`, chart[key]);
   requireFunction('MapView', window.MapView);
   requireFunction('EOVideo', window.EOVideo);
-  requireFunction('UI.goto', U && U.goto);
-  const systemNowStr = requireFunction('MOCK.systemNowStr', M.systemNowStr).bind(M);
+  requireFunction('UI.goto', ui.goto);
+  const systemNowStr = requireFunction('MOCK.systemNowStr', mock.systemNowStr).bind(mock);
   const initialClock = systemNowStr();
   if (typeof initialClock !== 'string') throw new TypeError('大屏本地数据无效：MOCK.systemNowStr 必须返回字符串');
   return {
-    liveTargets: requireObjectArray('MOCK.liveTargets', M.liveTargets),
-    todayTargets: requireObjectArray('MOCK.todayTargets', M.todayTargets),
-    cases: requireObjectArray('MOCK.cases', M.cases),
-    evidenceFiles: requireObjectArray('MOCK.evidenceFiles', M.evidenceFiles),
-    todayAlarms: requireObjectArray('MOCK.todayAlarms', M.todayAlarms),
-    devices: requireObjectArray('MOCK.devices', M.devices),
-    flightPlans: requireObjectArray('MOCK.flightPlans', M.flightPlans),
+    liveTargets: requireObjectArray('MOCK.liveTargets', mock.liveTargets),
+    todayTargets: requireObjectArray('MOCK.todayTargets', mock.todayTargets),
+    cases: requireObjectArray('MOCK.cases', mock.cases),
+    evidenceFiles: requireObjectArray('MOCK.evidenceFiles', mock.evidenceFiles),
+    todayAlarms: requireObjectArray('MOCK.todayAlarms', mock.todayAlarms),
+    devices: requireObjectArray('MOCK.devices', mock.devices),
+    flightPlans: requireObjectArray('MOCK.flightPlans', mock.flightPlans),
     statsDays: requireObjectArray('MOCK.stats.days', stats.days),
-    airspaces: requireObjectArray('MOCK.airspaces', M.airspaces),
+    airspaces: requireObjectArray('MOCK.airspaces', mock.airspaces),
     deviceStats,
-    caseNoticeStatus: requireFunction('MOCK.caseNoticeStatus', M.caseNoticeStatus).bind(M),
-    goto: U.goto.bind(U), chart, MapView: window.MapView, EOVideo: window.EOVideo,
+    caseNoticeStatus: requireFunction('MOCK.caseNoticeStatus', mock.caseNoticeStatus).bind(mock),
+    goto: ui.goto.bind(ui), chart, MapView: window.MapView, EOVideo: window.EOVideo,
     systemNowStr, initialClock
   };
 }
@@ -272,7 +270,7 @@ function renderMap() {
     maxDev: 46,
     maxAlarm: 8,
     onPick: pick => {
-      if (!pick || pick.kind !== 'target' || !pick.data || pick.data.type !== '无人机') return;
+      if (!map || !pick || pick.kind !== 'target' || !pick.data || pick.data.type !== '无人机') return;
       map.sel = pick.data.id;
       map.draw();
       openVideo(pick.data);
@@ -296,27 +294,36 @@ function refreshMapData() {
   });
 }
 
+function runCleanup(cleanup) {
+  try { cleanup(); } catch (err) { /* 单个资源失败不得阻断其余回滚。 */ }
+}
+
 function destroyVideo() {
-  if (video) video.destroy();
+  const currentVideo = video;
   video = null;
+  if (currentVideo) runCleanup(() => currentVideo.destroy());
 }
 
 async function mountVideo() {
-  destroyVideo();
-  const data = screenData.value;
-  if (queryStatus.value !== 'ready' || !data || !showVideo.value || !selectedTarget.value) return;
-  await nextTick();
-  if (queryStatus.value !== 'ready' || !videoEl.value) return;
-  video = new data.EOVideo(videoEl.value, {
-    height: Math.max(300, Math.min(430, window.innerHeight * .46)),
-    targetId: selectedTarget.value.id,
-    device: opticalDevice.value ? opticalDevice.value.name : undefined,
-    locked: !!selectedTarget.value.tracked
-  });
+  try {
+    destroyVideo();
+    const data = screenData.value;
+    if (queryStatus.value !== 'ready' || !data || !showVideo.value || !selectedTarget.value) return;
+    await nextTick();
+    if (queryStatus.value !== 'ready' || !videoEl.value || !selectedTarget.value) return;
+    video = new data.EOVideo(videoEl.value, {
+      height: Math.max(300, Math.min(430, window.innerHeight * .46)),
+      targetId: selectedTarget.value.id,
+      device: opticalDevice.value ? opticalDevice.value.name : undefined,
+      locked: !!selectedTarget.value.tracked
+    });
+  } catch (err) {
+    failReadyRuntime(err);
+  }
 }
 
 watch([showVideo, selectedTarget], ([visible]) => {
-  if (queryStatus.value === 'ready' && visible) mountVideo();
+  if (queryStatus.value === 'ready' && visible) void mountVideo();
   else destroyVideo();
 }, { flush: 'post' });
 
@@ -330,25 +337,30 @@ function handleResize() {
 
 function disposeBigScreenCharts() {
   const chart = runtimeChart;
-  if (!chart || typeof chart.disposeEl !== 'function') return;
-  [trendEl, targetChartEl, deviceChartEl, flightChartEl].forEach(host => chart.disposeEl(host.value));
   runtimeChart = null;
+  if (!chart || typeof chart.disposeEl !== 'function') return;
+  [trendEl, targetChartEl, deviceChartEl, flightChartEl]
+    .forEach(host => runCleanup(() => chart.disposeEl(host.value)));
 }
 
 function stopReadyRuntime() {
-  clearInterval(clockTimer);
+  const currentClockTimer = clockTimer;
   clockTimer = null;
-  clearTimeout(resizeTimer);
+  if (currentClockTimer != null) runCleanup(() => clearInterval(currentClockTimer));
+  const currentResizeTimer = resizeTimer;
   resizeTimer = null;
-  window.removeEventListener('resize', handleResize);
-  window.removeEventListener('evt:advance', bumpNotice);
+  if (currentResizeTimer != null) runCleanup(() => clearTimeout(currentResizeTimer));
+  runCleanup(() => window.removeEventListener('resize', handleResize));
+  runCleanup(() => window.removeEventListener('evt:advance', bumpNotice));
   showVideo.value = false;
   selectedTarget.value = null;
   destroyVideo();
-  if (map) map.destroy();
+  const currentMap = map;
   map = null;
-  if (mapHint) mapHint.remove();
+  if (currentMap) runCleanup(() => currentMap.destroy());
+  const currentMapHint = mapHint;
   mapHint = null;
+  if (currentMapHint) runCleanup(() => currentMapHint.remove());
   disposeBigScreenCharts();
   clock.value = '—';
   runtimeStarted = false;
@@ -358,22 +370,39 @@ function startReadyRuntime() {
   const data = screenData.value;
   if (!mounted || queryStatus.value !== 'ready' || !data) return;
   if (runtimeStarted) stopReadyRuntime();
-  runtimeChart = data.chart;
-  clock.value = data.initialClock;
-  clockTimer = window.setInterval(() => {
-    if (screenData.value) clock.value = screenData.value.systemNowStr();
-  }, 1000);
-  window.addEventListener('resize', handleResize);
-  window.addEventListener('evt:advance', bumpNotice);
   runtimeStarted = true;
-  renderCharts();
-  renderMap();
+  runtimeChart = data.chart;
+  try {
+    clock.value = data.initialClock;
+    clockTimer = window.setInterval(() => {
+      try {
+        const currentData = screenData.value;
+        if (!currentData) throw new Error('大屏运行数据已失效');
+        const nextClock = currentData.systemNowStr();
+        if (typeof nextClock !== 'string') throw new TypeError('MOCK.systemNowStr 必须返回字符串');
+        clock.value = nextClock;
+      } catch (err) {
+        failReadyRuntime(err);
+      }
+    }, 1000);
+    window.addEventListener('resize', handleResize);
+    window.addEventListener('evt:advance', bumpNotice);
+    renderCharts();
+    renderMap();
+  } catch (err) {
+    failReadyRuntime(err);
+  }
 }
 
 function failBigScreen(err) {
   screenData.value = null;
   queryError.value = err instanceof Error ? err.message : String(err || '大屏本地数据无效');
   queryStatus.value = 'error';
+}
+
+function failReadyRuntime(err) {
+  stopReadyRuntime();
+  failBigScreen(err);
 }
 
 async function reloadBigScreen() {
@@ -407,7 +436,7 @@ async function refreshBigScreenData() {
       refreshMapData();
     }
   } catch (err) {
-    failBigScreen(err);
+    failReadyRuntime(err);
   }
 }
 

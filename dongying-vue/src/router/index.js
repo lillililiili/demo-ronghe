@@ -26,8 +26,12 @@ export function loginDestination(value) {
   const key = value.slice(1).split('?')[0];
   return key !== 'login' && ROUTES[key] ? value : '/workbench';
 }
-restoreSession();
-router.beforeEach(to => {
+let sessionRestored = false;
+router.beforeEach(async to => {
+  if (!sessionRestored) {
+    await restoreSession();
+    sessionRestored = true;
+  }
   const key = routeKey(to);
   if (key === 'login') return isAuthenticated() ? loginDestination(to.query.redirect) : true;
   if (!isAuthenticated()) return { path: '/login', query: { redirect: loginDestination(to.fullPath) }, replace: true };

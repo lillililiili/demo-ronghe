@@ -42,7 +42,7 @@ if (-not $SkipFrontendInstall -and -not (Test-Path (Join-Path $frontendDir 'node
     Write-Host 'Installing frontend dependencies...'
     Push-Location $frontendDir
     try {
-        npm install
+        npm ci
         if ($LASTEXITCODE -ne 0) {
             throw 'Frontend dependency installation failed.'
         }

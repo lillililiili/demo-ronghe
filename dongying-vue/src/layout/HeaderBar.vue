@@ -6,14 +6,14 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { useAppStore } from '@/stores/app.js';
 import { stopCarousel } from '@/hooks/useCarousel.js';
 import { useRouter } from 'vue-router';
-import { logout } from '@/services/auth.js';
+import { authUser, logout } from '@/services/auth.js';
 import { toast } from '@/ui/nv.js';
 import { openModal, closeModal } from '@/ui/modal.js';
 
 const store = useAppStore();
 const router = useRouter();
 const M = window.MOCK, U = window.UI;
-const currentUser = computed(() => { store.accessRevision; return M.currentUser || { name: '用户', account: '—', roleName: '—', org: '—' }; });
+const currentUser = computed(() => authUser.value || { name: '用户', account: '—', roleName: '—', org: '—' });
 const avatarText = computed(() => currentUser.value.name.slice(-1));
 const canBigscreen = computed(() => { store.accessRevision; return M.canMenu('bigscreen'); });
 const canAlarms = computed(() => { store.accessRevision; return M.canMenu('alarms'); });
@@ -71,7 +71,7 @@ function toggleMenu(e) {
 }
 function closeMenu() { menuOpen.value = false; }
 function goAlarms() { location.hash = '#/alarms'; }
-function onMenu(k) {
+async function onMenu(k) {
   closeMenu();
   if (k === 'me') openModal({
     title: '个人信息', width: '440px',
@@ -85,9 +85,13 @@ function onMenu(k) {
     document.body.classList.remove('bigscreen');
     store.bigscreen = false;
     if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
-    logout();
-    router.replace('/login');
-    toast('已退出登录', 'ok');
+    try {
+      await logout();
+      toast('已退出登录', 'ok');
+    } catch (error) {
+      toast(`${error?.message || '退出请求未完成'}，本地登录状态已清除。`, 'err');
+    }
+    await router.replace('/login');
   }
 }
 

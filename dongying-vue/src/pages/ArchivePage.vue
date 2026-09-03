@@ -18,6 +18,7 @@ export default {};
 import { ref, computed, onMounted } from 'vue';
 import { NTabs, NTab } from 'naive-ui';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
+import { sliceLocal } from '@/hooks/pagedList.js';
 import UKpis from '@/components/UKpis.vue';
 import { toast } from '@/ui/nv.js';
 import { openModal, closeModal } from '@/ui/modal.js';
@@ -110,7 +111,8 @@ const TC = { '告警事件': 't-red', '轨迹日志': 't-blue', '处置记录': 
 
 function list() {
   const rows = sorted(filtered());
-  const page = rows.slice((S.st.page - 1) * S.st.size, S.st.page * S.st.size);
+  const paged = sliceLocal(rows, S.st.page, S.st.size);
+  const page = paged.items;
   return U.table([
     { t: sortTh('记录编号', 'id'), k: 'id', w: '160px', cls: 'num' },
     { t: sortTh('日志类型', 'type'), w: '96px', render: l => U.tag(l.type, TC[l.type]) },
@@ -124,7 +126,7 @@ function list() {
     rowId: l => l.id,
     checkbox: l => l.status === '待归档' ? l.id : null
   })
-    + U.pager({ total: rows.length, page: S.st.page, size: S.st.size });
+    + U.pager({ total: paged.total, page: paged.page, size: paged.size });
 }
 
 function payload(l) {

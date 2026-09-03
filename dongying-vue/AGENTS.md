@@ -43,6 +43,8 @@
 
 新增文件先判断该不该公共复用：只有跨页面使用的才进 `src/components/`、`src/hooks/`、`src/services/`。
 
+列表查询统一使用 `page/size/items/total`（页码从 1，默认每页 20，最大 100）。跨页加载中、空数据、接口错误、分页分别用 `PageLoading`、`PageEmpty`、`PageError`、`PagePager`，由 `PageQueryShell` 切换。解析切片用 `src/hooks/pagedList.js` / `usePagedList`。接口失败必须停在错误态，不得回退成 Mock 成功。`usePageChrome` 仍只负责面包屑/导航组/卸载清理，不要和查询壳混用。
+
 ## 样式规范
 
 - 全局样式在 `src/assets/css/`，由 `src/main.js` 首先 `import '@/assets/css/index.css'`。不要再往 `public/assets/css/` 加样式，也不要在 `index.html` 用 `<link>` 加载业务 CSS。

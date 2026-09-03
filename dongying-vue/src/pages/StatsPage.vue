@@ -4,15 +4,27 @@
    · 结构进 template，图表初始化进 useCharts（等价 legacy mount 时机）
    · 数值/标签等叶子仍用 window.UI 的字符串生成器（U.num/U.table）
    · 工具条不再放没有切片数据的时间/类型/区域下拉，避免点了数字不变
-   · 外壳职责（面包屑/导航组/页脚/卸载清理）统一走 usePageChrome */
+   · 外壳职责（面包屑/导航组/页脚/卸载清理）统一走 usePageChrome
+   · 查询壳走 PageQueryShell：加载/空/错/就绪；本页数据仍来自 Mock，失败不得改写成成功 */
+import { computed } from 'vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import { useCharts } from '@/hooks/useChart.js';
+import { sliceLocal } from '@/hooks/pagedList.js';
+import { usePagedList } from '@/hooks/usePagedList.js';
+import PageQueryShell from '@/components/PageQueryShell.vue';
 import UPanel from '@/components/UPanel.vue';
 import UKpis from '@/components/UKpis.vue';
 import { toast } from '@/ui/nv.js';
 
 const M = window.MOCK, U = window.UI, S = M.stats;
 usePageChrome('stats');
+const query = usePagedList({ page: 1, size: 20 });
+function reloadStats() {
+  query.applyPayload(sliceLocal(S.regions || [], query.page.value, query.size.value));
+}
+reloadStats();
+const queryStatus = computed(() => query.status.value);
+const queryError = computed(() => query.errorMessage.value);
 
 /* ---- 工具条：统计说明与右侧操作按钮 ---- */
 const d0 = M.util.fmtD(M.util.dayAdd(M.CONF.demoTime, -29)), d1 = M.util.fmtD(M.CONF.demoTime);
@@ -127,6 +139,14 @@ function onRegionTab(e) {
 </script>
 
 <template>
+  <PageQueryShell
+    :status="queryStatus"
+    :error-message="queryError"
+    loading-text="正在加载运行统计…"
+    empty-title="暂无运行统计"
+    empty-description="当前没有可汇总的飞行与处罚记录"
+    @retry="reloadStats"
+  >
   <div class="view" id="view">
     <div class="panel mb12" style="flex:none" @click="onToolbarClick"><div class="toolbar" style="border:0" v-html="toolbarHtml"></div></div>
 
@@ -157,4 +177,5 @@ function onRegionTab(e) {
       <UPanel title="违规主体排行" sub="近30天" panel-style="width:288px" nopad :body-html="rankHtml" />
     </div>
   </div>
+  </PageQueryShell>
 </template>

@@ -84,7 +84,7 @@ record InboundFrame(
 - `sourceNamespace` 按 5.2 节生成。
 - `sourceMessageId` 是 `record_no` 的规范十进制字符串，不补零、不使用科学计数法。
 - `receivedAt` 直接取 NDJSON 的 `received_at`，单位为 epoch 毫秒。
-- `payload` 是 `frame_hex` 解码得到的完整原始协议帧字节，包含帧头、帧长度和 CRC。调用方如需长期保留，必须复制数组；适配器不得在 `accept` 返回后修改该数组。
+- `payload` 是 `frame_hex` 解码得到的原始协议帧候选字节。校验成功时它必须是包含帧头、帧长度和 CRC 的一个完整帧；校验失败时仍以原字节进入 Inbox 并记录失败。调用方如需长期保留，必须复制数组；适配器不得在 `accept` 返回后修改该数组。
 
 回放适配器使用单工作线程，按文件物理行顺序调用 `accept`，同一适配器实例不并发调用 sink。`start` 原子地从停止态进入运行态并启动一次回放；运行中或停止中的第二次 `start` 必须以 `ADAPTER_ALREADY_RUNNING` 失败，不得创建第二个读取器或重绕文件。正常 EOF 后回到停止态；此后再次 `start` 从首行重放，并依赖来源幂等键消除重复影响。`stop` 是幂等操作，并且返回后不得再发生新的 `accept` 调用。
 
@@ -180,10 +180,12 @@ record InboundFrame(
 | --- | --- |
 | `dataset_id` | 必填字符串，匹配 `[a-z0-9][a-z0-9._-]{0,127}`；同一文件只能出现一个值 |
 | `record_no` | 必填 JSON 整数，范围为 1 到 `Long.MAX_VALUE`；生产夹具中同一数据集内唯一 |
-| `received_at` | 必填 JSON 整数，正数 epoch 毫秒；0 不表示未知 |
-| `frame_hex` | 必填非空字符串，只含偶数个十六进制字符，不带 `0x`、空格或分隔符；生成器统一输出小写，读取器可接受大小写 |
+| `received_at` | 必填 JSON 整数，范围为 1 到 `Long.MAX_VALUE` 的 epoch 毫秒；0 不表示未知，也不得超出 Java `long` 正整数范围 |
+| `frame_hex` | 必填非空字符串，只含偶数个十六进制字符，不带 `0x`、空格或分隔符；字符数不得超过 `2 * (8 + MAX_FRAME_LENGTH) = 33_554_448`；生成器统一输出小写，读取器可接受大小写 |
 
-每行的 `frame_hex` 必须恰好解码为一个完整协议帧。零帧、多个粘连帧、前导或尾随字节都以 `REPLAY_RECORD_FRAME_COUNT_INVALID` 失败，避免一个 `sourceMessageId` 对应多个设备消息。拆包和粘包能力在流式帧解析器单元测试中验证，不通过改变 NDJSON 的一行一帧约束来验证。
+每行的 `frame_hex` 必须恰好解码为一个完整协议帧。十六进制可解码但得到零帧、多个粘连帧、前导或尾随字节时，先按 5.2 节保存该行的原始消息封装，再以 `REPLAY_RECORD_FRAME_COUNT_INVALID` 把该 Inbox 置为 `FAILED`，避免一个 `sourceMessageId` 对应多个设备消息。拆包和粘包能力在流式帧解析器单元测试中验证，不通过改变 NDJSON 的一行一帧约束来验证。
+
+读取器必须使用有界读取，在扫描 `frame_hex` 字符串时累计字符数，一旦超限立即失败，不能先物化超限字符串再检查；十六进制解码和原始字节数组分配只能发生在长度检查通过后。超限直接按 `FRAME_HEX_INVALID` 隔离该行。该上限来自完整帧最大字节数 `8 + MAX_FRAME_LENGTH = 16_777_224`，不能另设更大的回放旁路。
 
 回放按物理行顺序处理，不按 `record_no` 排序。文件打开失败、非法 UTF-8 或无法确定行边界属于文件级损坏并终止本次运行；单行 JSON、字段或十六进制错误记录行号后隔离该行，继续下一行，最终运行结果为失败。错误报告不得输出完整载荷。
 
@@ -200,12 +202,52 @@ source_unique_key = (source_namespace, source_message_id)
 
 `sourceCode` 保存配置值，`sourceNamespace` 和 `sourceMessageId` 分别保存上式结果。`protocol_frame_id`、`radar_frame_no`、目标 ID 和载荷哈希都不得替代来源唯一键。
 
+生成 `source_namespace` 后必须在创建 `InboundFrame` 和查询 Inbox 前执行硬校验：字符串只能由上述 ASCII 片段和分隔冒号组成，字符数与 UTF-8 字节数都不得超过 128。即使 `source_code` 和 `dataset_id` 分别满足各自格式，组合值超限仍按 `REPLAY_LINE_INVALID` 处理；此时尚未形成合法来源键，不插入 Inbox。不得截断任一片段来适配 `inbox_message.source varchar(128)`。
+
+`sourceCode` 必须通过大小写敏感的精确等值匹配解析到唯一的 `integration_source.source_code`，不得去除字符、折叠大小写、模糊匹配或自动创建来源。新 T02 消息必须把匹配行的 `integration_source.source_id` 写入 `inbox_message.source_id`；没有精确匹配时拒绝摄取，不插入 Inbox。
+
+Inbox 列映射固定如下：
+
+| Inbox 列 | 唯一来源和写入规则 |
+| --- | --- |
+| `source` | `InboundFrame.sourceNamespace` 原值 |
+| `source_msg_id` | `InboundFrame.sourceMessageId` 原值 |
+| `source_id` | `InboundFrame.sourceCode` 精确匹配到的 `integration_source.source_id` |
+| `received_at` | `InboundFrame.receivedAt` 原值，epoch 毫秒 |
+| `payload_hash` | `SHA-256(InboundFrame.payload)`，64 位小写十六进制 |
+| `payload` | 下述四字段规范 JSON 对象 |
+
+`inbox_message.payload` 固定保存由原 NDJSON 行规范化得到的 JSONB 对象：
+
+```json
+{"dataset_id":"t02-v3-synthetic-001","record_no":1,"received_at":1731464128000,"frame_hex":"55aa55aa..."}
+```
+
+该对象必须且只能包含 `dataset_id` 字符串、`record_no` JSON 整数、`received_at` JSON 整数和 `frame_hex` 字符串。`frame_hex` 通过把 `InboundFrame.payload` 重新编码为无分隔符的小写十六进制生成，因此能够无损还原完整原始帧候选字节；其他三个值与已校验的 NDJSON 字段完全一致。JSONB 不承诺键的物理排列顺序，但键集合、类型和值固定。该对象是内部原始消息封装，不是 REST DTO，也不得由阶段 1 的业务查询接口返回。
+
 ### 5.3 幂等和冲突
 
 - 首次出现唯一键时，先持久化不可变原始消息和 `payload_hash`，再解析业务内容。
 - 相同唯一键且哈希相同是幂等重放。后续记录不更新首次保存的 `receivedAt`、载荷或解析结果，不重复产生历史点、最新状态或其他业务影响。
-- 相同唯一键但哈希不同必须返回 `SOURCE_MESSAGE_CONFLICT`。冲突记录与正常处理隔离，不调用正常业务写入；首次消息保持不变，不被标记成新载荷的失败，也不被覆盖。运行可以继续处理后续唯一键，但整体结果为失败。
+- 相同唯一键但哈希不同必须返回 `SOURCE_MESSAGE_CONFLICT`。由于 `UNIQUE(source, source_msg_id)`，不得插入第二条正常 Inbox，也不得通过改写来源命名空间、消息 ID 或其他字段绕开唯一键。“隔离”只表示拒绝该冲突输入的正常业务写入，并为本次回放形成脱敏诊断；已存在 Inbox 行的 `source/source_msg_id/source_id/received_at/payload_hash/payload/status/processed_at/last_error` 全部保持不变。运行可以继续处理后续唯一键，但整体结果为失败。
 - 载荷相同但唯一键不同不是重复消息；它们分别保留来源记录，后续业务去重不得偷偷改用载荷哈希。
+
+### 5.4 T02 业务标识映射
+
+回放模式下的来源会话和 T02 航迹标识固定映射如下：
+
+```text
+source_session_key = dataset_id
+external_target_id = TrackUploadV3.targetId 的无符号十进制字符串
+external_track_id = TrackUploadV3.targetId 的同一无符号十进制字符串
+point_seq = 当前 NDJSON 的 record_no
+```
+
+`source_session_key` 原样使用已校验的 `dataset_id`，不拼接来源代码或帧 ID。`targetId` 按 `UINT32` 解释并输出 0 到 4294967295 的规范十进制形式，不补零；同一来源会话内，它同时作为 `target_source_link.external_target_id`，并在该 link 内作为 `track.external_track_id`。`point_seq` 使用产生该航迹点的 `record_no`，重放时不得重新编号。
+
+同一 `TrackUploadV3` 消息内每个 `targetId` 最多出现一次。解析完整消息后必须先检查重复 ID，再执行任何 target、link、track 或 point 写入；出现重复时整个 Inbox 以 `MESSAGE_FIELD_INVALID` 置为 `FAILED`，不得部分写入。
+
+`UPLOAD_TARGET_V3` 不提供稳定目标 ID，禁止使用数组下标、帧内顺序、坐标或哈希猜造 target、`target_source_link` 或 track。该消息只保留 Inbox 和解析事实。`LoginReply`、`Heartbeat`、`RtkUpload` 在缺少已确认的 source 到 device 唯一映射时同样只保留 Inbox 和解析事实，不得写设备成功状态；不得把来源已启用或消息解析成功等同于设备映射已确认。T02 的任何消息都不创建 `alarm`。
 
 ## 6 流式帧解析
 
@@ -223,26 +265,28 @@ source_unique_key = (source_namespace, source_message_id)
 
 ## 7 错误分类和写入边界
 
+`inbox_message.status` 只允许 `RECEIVED`、`PROCESSING`、`DONE`、`FAILED`。新消息插入为 `RECEIVED`，取得处理租约后变为 `PROCESSING`，完整解析和允许的业务写入成功后才变为 `DONE`。`UnsupportedMessage` 和所有帧、CRC、负载或字段解析失败都必须变为 `FAILED`，并把下表对应的稳定错误码原样写入 `last_error`；不存在 `UNSUPPORTED` 或其他第五种状态。成功完成时 `last_error` 必须为空。
+
 | 错误码 | 分类 | 触发条件 | 处理 |
 | --- | --- | --- | --- |
 | `REPLAY_FILE_UNREADABLE` | 文件 | 文件不存在、无权限或读取失败 | 终止运行，不调用 sink |
 | `REPLAY_ENCODING_INVALID` | 文件 | 非 UTF-8、BOM 或无法可靠划分行 | 终止运行，不调用 sink |
-| `REPLAY_LINE_INVALID` | 记录 | JSON 非对象、字段缺失、多余、类型或范围错误 | 隔离该行，继续处理后续行 |
+| `REPLAY_LINE_INVALID` | 记录 | JSON 非对象、字段缺失、多余、类型或范围错误，或组合来源命名空间超过 128 | 隔离该行，继续处理后续行；未形成合法来源键时不建 Inbox |
 | `REPLAY_DATASET_MISMATCH` | 记录 | 同一文件出现不同 `dataset_id` | 隔离该行，整体运行失败 |
-| `FRAME_HEX_INVALID` | 记录 | `frame_hex` 为空、字符非法或长度为奇数 | 隔离该行，不创建伪造载荷 |
-| `REPLAY_RECORD_FRAME_COUNT_INVALID` | 记录 | 一行不是恰好一个完整帧 | 隔离该行，不进入业务写入 |
-| `SOURCE_MESSAGE_CONFLICT` | 来源 | 同一来源唯一键对应不同哈希 | 保留首条，隔离冲突，不覆盖 |
+| `FRAME_HEX_INVALID` | 记录 | `frame_hex` 为空、字符非法、长度为奇数或超过 33_554_448 个字符 | 在解码前隔离该行，不创建伪造载荷 |
+| `REPLAY_RECORD_FRAME_COUNT_INVALID` | 记录 | 一行不是恰好一个完整帧 | 当前 Inbox 置为 `FAILED`，`last_error` 写本错误码 |
+| `SOURCE_MESSAGE_CONFLICT` | 来源 | 同一来源唯一键对应不同哈希 | 不插入或更新 Inbox，只形成本次回放诊断 |
 | `ADAPTER_ALREADY_RUNNING` | 生命周期 | 运行中或停止中重复启动 | 拒绝第二次启动 |
-| `FRAME_LEADING_NOISE` | 帧边界 | 帧头前或 EOF 后只有无关字节 | 通用解析器可重同步；严格回放记录失败 |
-| `FRAME_LENGTH_INVALID` | 帧边界 | 长度小于 10、超过上限、溢出或与记录字节数不符 | 当前消息失败，不分配大缓冲区 |
-| `FRAME_TRUNCATED_AT_EOF` | 帧边界 | EOF 时已有帧头但候选帧不完整 | 当前消息失败 |
-| `FRAME_CRC_MISMATCH` | 完整性 | 线上 CRC 与计算结果不同 | 当前 Inbox 标记失败 |
-| `MESSAGE_PAYLOAD_LENGTH_INVALID` | 协议 | 固定负载长度错误或动态负载有剩余字节 | 当前 Inbox 标记失败 |
-| `MESSAGE_COUNT_INVALID` | 协议 | 数量为负、溢出或与负载长度不一致 | 当前 Inbox 标记失败 |
-| `MESSAGE_FIELD_INVALID` | 协议 | 固定值或受限枚举不合法 | 当前 Inbox 标记失败 |
-| `UNSUPPORTED_MESSAGE` | 协议 | 指令不在五类解析消息中 | 返回 `UnsupportedMessage`，当前 Inbox 标记不支持 |
+| `FRAME_LEADING_NOISE` | 帧边界 | 帧头前或 EOF 后只有无关字节 | 通用解析器可重同步；严格回放的当前 Inbox 置为 `FAILED` |
+| `FRAME_LENGTH_INVALID` | 帧边界 | 长度小于 10、超过上限、溢出或与记录字节数不符 | 当前 Inbox 置为 `FAILED`，不分配大缓冲区 |
+| `FRAME_TRUNCATED_AT_EOF` | 帧边界 | EOF 时已有帧头但候选帧不完整 | 当前 Inbox 置为 `FAILED` |
+| `FRAME_CRC_MISMATCH` | 完整性 | 线上 CRC 与计算结果不同 | 当前 Inbox 置为 `FAILED` |
+| `MESSAGE_PAYLOAD_LENGTH_INVALID` | 协议 | 固定负载长度错误或动态负载有剩余字节 | 当前 Inbox 置为 `FAILED` |
+| `MESSAGE_COUNT_INVALID` | 协议 | 数量为负、溢出或与负载长度不一致 | 当前 Inbox 置为 `FAILED` |
+| `MESSAGE_FIELD_INVALID` | 协议 | 固定值或受限枚举不合法 | 当前 Inbox 置为 `FAILED` |
+| `UNSUPPORTED_MESSAGE` | 协议 | 指令不在五类解析消息中 | 返回 `UnsupportedMessage`，当前 Inbox 置为 `FAILED` |
 
-NDJSON 信封尚未形成合法来源键或原始字节时，只能产生回放运行诊断，不能伪造 Inbox。形成合法 `InboundFrame` 后必须先创建或命中幂等 Inbox，再执行帧和消息解析；CRC、长度、计数、字段或不支持错误只更新该 Inbox 的失败或不支持状态，禁止写目标、轨迹、设备成功状态。sink 抛出异常时停止本次运行并传播失败，不得跳过该记录后继续宣称回放成功。
+NDJSON 信封尚未形成合法来源键或原始字节时，只能产生回放运行诊断，不能伪造 Inbox。形成合法 `InboundFrame` 后必须先创建或命中幂等 Inbox，再执行帧和消息解析；CRC、长度、计数、字段或不支持错误只把该 Inbox 更新为 `FAILED` 并把精确稳定错误码写入 `last_error`，禁止写目标、轨迹、设备成功状态。sink 抛出异常时停止本次运行并传播失败，不得跳过该记录后继续宣称回放成功。
 
 ## 8 RTK 坐标 高度和时间边界
 
@@ -304,6 +348,12 @@ frame = 55aa55aa || be32(frameLength) || body || crcWire
 | V12 CRC 旁路禁用 | 把 V01 的 CRC 两字节替换为 `cc cc` | 完整帧 | 计算值不匹配，因此为 `FRAME_CRC_MISMATCH` |
 | V13 有效 RTK 上报 | `frame(UPLOAD_RTK, 13, be64(latRaw) + be64(lonRaw) + be64(headingRaw) + be32(satellites) + be32(0))`，使用纯合成合法范围值 | 完整帧 | 产生 `RtkUpload`，保留无效的 `altitudeRaw`，单帧不自动批准原点 |
 | V14 已知范围外请求回复 | `frame(REQUEST_RTK, 14, be16(0))` | 完整帧 | 返回 `UnsupportedMessage`，不推进设备状态 |
+| V15 Inbox 状态收口 | 复用 V06 | 经过完整 Inbox 处理 | 状态依次为 `RECEIVED`、`PROCESSING`、`FAILED`，`last_error` 精确为 `UNSUPPORTED_MESSAGE`，不出现第五种状态 |
+| V16 来源命名空间超限 | 分别构造合法格式的 `source_code` 和 `dataset_id`，使组合命名空间达到 129 个 ASCII 字符 | 读取 NDJSON | `REPLAY_LINE_INVALID`，不创建 Inbox；128 个字符的边界值可继续处理 |
+| V17 回放字段上限 | 分别令 `received_at` 超过 `Long.MAX_VALUE`、令 `frame_hex` 达到 33_554_450 个字符 | 读取 NDJSON | 前者为 `REPLAY_LINE_INVALID`，后者在解码前为 `FRAME_HEX_INVALID`，两者均不创建 Inbox |
+| V18 规范原始消息封装 | 使用大小写混合但 CRC 正确的 V01 十六进制和合法来源配置 | 完整回放 | Inbox 六列按 5.2 节映射；JSONB 只有四个键，`frame_hex` 为 V01 的小写规范值，并可还原相同原始字节 |
+| V19 航迹标识和重复 ID | 构造含两个相同 `targetId` 的 `UPLOAD_TRACK_V3` | 完整帧 | Inbox 置为 `FAILED`，`last_error` 为 `MESSAGE_FIELD_INVALID`，不写 target、link、track 或 point；两个不同 ID 时各自使用 `dataset_id`、无符号 ID 字符串和 `record_no` 映射 |
+| V20 无稳定映射 | 分别构造有效 `UPLOAD_TARGET_V3`，以及没有 source 到 device 映射的有效 `HEARTBEAT` | 完整回放 | 两者 Inbox 可完成解析；前者不写 target/link/track，后者不写设备成功状态，均不写 `alarm` |
 
 每个成功向量还必须断言 `frame_length`、线上 CRC 顺序、外层 `protocol_frame_id` 和完整字节消费；每个失败向量必须断言 Inbox 或运行诊断的精确错误码，并断言目标、轨迹、设备成功状态和告警写入次数均为 0。
 

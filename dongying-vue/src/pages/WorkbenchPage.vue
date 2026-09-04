@@ -40,6 +40,7 @@ const levels = ['高', '中', '低'];
 const levelOptions = [{ label: '全部等级', value: 'all' }, ...levels.map(value => ({ label: `${value}风险`, value }))];
 const kindLabel = { uav: '无人机告警', risk: '飞行计划风险', device: '设备告警' };
 const kindIcon = { uav: 'plane', risk: 'plan', device: 'device' };
+// 各事件类型分别说明缺少的真实能力，避免笼统“不可用”掩盖具体接入边界。
 const unavailableReasonByKind = {
   uav: '真实处置接口未接入，当前仅展示 Mock 演示数据。',
   risk: '真实通报接口未接入，当前仅展示 Mock 演示数据。',
@@ -242,6 +243,7 @@ onUnmounted(() => {
             <div class="wb-title-tags"><span class="tag" :class="tagClass(selected.summary.level)">{{ selected.summary.level }}</span><span class="tag t-cyan">{{ selected.summary.sourceStatus }}</span></div>
             <div v-if="selected.summary.todo" class="wb-title-next">
               <span><small>下一步</small><b>{{ selected.summary.todo.action }}</b></span>
+              <!-- 工作台当前只读：按钮原生禁用且不绑定处理函数，键盘和鼠标都不能触发 Mock 写入。 -->
               <button class="btn pri" disabled aria-describedby="wb-action-unavailable">{{ selected.summary.todo.action }}</button>
               <span id="wb-action-unavailable" class="wb-blocker" role="note">{{ actionUnavailableReason }}</span>
             </div>
@@ -255,6 +257,7 @@ onUnmounted(() => {
               <div><small>下一步</small><h3>{{ selected.summary.todo.action }}</h3><p>{{ selected.summary.todo.hint }}</p>
                 <span>责任模块：<b>{{ selected.summary.todo.module }}</b></span><span v-if="selected.summary.todo.blocker" class="wb-blocker">{{ selected.summary.todo.blocker }}</span></div>
             </div>
+            <!-- “没有待办”只表示当前事件源未给出动作，不等同于业务已经办结。 -->
             <div v-else class="wb-task"><span class="wb-task-state" v-html="icon('clipboard')"></span><div><small>只读状态</small><h3>当前无待办动作</h3><p>事件源未提供下一步待办，工作台仅展示现有只读详情。</p></div></div>
           </section>
 

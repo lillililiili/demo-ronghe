@@ -19,11 +19,10 @@ const avatarText = computed(() => currentUser.value.name.slice(-1));
 const canBigscreen = computed(() => canAccessRoute('bigscreen'));
 const canAlarms = computed(() => canAccessRoute('alarms'));
 
-/* ---------- 时钟：系统当前时间与 Mock 数据统计时间分离 ---------- */
+/* ---------- 时钟：系统当前时间 ---------- */
 let clkTimer = null;
 const tick = () => {
   store.timeStr = M.systemNowStr();
-  store.dataTimeStr = M.nowStr();
 };
 tick();
 const clkHtml = computed(() => `${U.icon('clock')} ${store.timeStr}`);
@@ -94,7 +93,6 @@ async function onMenu(k) {
 }
 
 onMounted(() => {
-  window.SEARCH?.mount();
   clkTimer = setInterval(tick, 1000);
   document.addEventListener('fullscreenchange', onFsChange);
   document.addEventListener('click', closeMenu);

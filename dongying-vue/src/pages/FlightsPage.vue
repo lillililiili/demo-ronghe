@@ -104,7 +104,7 @@ function render() {
   return `${tabBar()}${U.kpis([
     { label: '今日报备计划', value: U.num(F.length), color: 'blue', icon: 'plan', desc: `来自上级管控平台 ${F.filter(p => p.source === '上级管控平台').length} 条` },
     { label: '执行中', value: U.num(cnt('执行中')), color: 'cyan', icon: 'radar', desc: '正在空中作业' },
-    { label: '待执行', value: U.num(cnt('待执行')), color: 'purple', icon: 'check', desc: '未到窗口期' },
+    { label: '待执行', value: U.num(cnt('待执行')), color: 'purple', icon: 'clock', desc: '未到窗口期' },
     { label: '已完成', value: U.num(cnt('已完成')), color: 'green', icon: 'check', desc: `完成率 ${U.pct(cnt('已完成'), F.length)}` },
     { label: '计划未匹配到目标', value: U.num(unmatched), color: 'amber', icon: 'alert', desc: '有计划无感知，需核查' },
     { label: '偏离报备计划', value: U.num(F.filter(p => { const v = devVerdict(p); return v && v.worst === '超限'; }).length), color: 'red', icon: 'alert', desc: `偏航>${DEV_TH.lateral.warn}m / 时差>${DEV_TH.timeMin.warn}min / 超高>${DEV_TH.altDelta.warn}m` }

@@ -15,7 +15,7 @@ npm run build      # dist/ 约 5MB，瓦片不进产物
 npm run preview    # 生产产物预览（瓦片中间件同样生效）
 ```
 
-运维管理三页和登录会话调用 Spring Boot `/api/v1`。本地开发先在 `server/` 以 `local` profile 启动后端；Vite 将 `/api` 代理到 `127.0.0.1:8080`。部署到不同 API 根地址时设置 `APP_PUBLIC_API_BASE_URL`，值可为 `/api` 或已包含 `/v1` 的完整地址。
+运维管理三页和登录会话调用 Spring Boot `/api/v1`，不再读取 `mock.js` 设备台账，也不展示开发种子设备。本地开发先在 `server/` 以 `local` profile 启动后端；Vite 将 `/api` 代理到 `127.0.0.1:8080`。部署到不同 API 根地址时设置 `APP_PUBLIC_API_BASE_URL`，值可为 `/api` 或已包含 `/v1` 的完整地址。
 
 旧版对照：项目根 `node serve.js` → http://localhost:8899。两个同时开、同 hash 并排比对，
 是所有验收的基本姿势。

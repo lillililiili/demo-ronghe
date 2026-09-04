@@ -152,7 +152,7 @@ public final class SystemDtos {
     public record RoleAccessRequest(
             @NotEmpty @Valid List<PermissionAssignment> permissions,
             @Min(0) int expectedVersion,
-            @NotBlank @Size(max = 1000) String reason) {
+            @Size(max = 1000) String reason) {
     }
 
     public record RoleDeletionDirectRequest(@NotBlank @Size(max = 1000) String reason) {

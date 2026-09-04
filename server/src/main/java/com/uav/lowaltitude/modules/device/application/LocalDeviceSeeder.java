@@ -7,6 +7,7 @@ import java.util.UUID;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.context.annotation.Profile;
 import org.springframework.core.annotation.Order;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
@@ -14,7 +15,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.uav.lowaltitude.platform.time.AppClock;
 
+/** 仅测试夹具。local/integration 运行库不再预置运维模拟设备。 */
 @Component
+@Profile("test")
 @ConditionalOnProperty(prefix = "app.dev-seed", name = "enabled", havingValue = "true")
 @Order(20)
 public class LocalDeviceSeeder implements ApplicationRunner {

@@ -14,6 +14,7 @@ export const deviceApi = {
   options: () => apiRequest('/devices/options'),
   detail: id => apiRequest(`/devices/${id}`),
   create: body => apiRequest('/devices', { method: 'POST', body }),
+  onboard: body => apiRequest('/devices/onboard', { method: 'POST', body }),
   update: (id, body) => apiRequest(`/devices/${id}`, { method: 'PUT', body }),
   setEnabled: (id, body) => apiRequest(`/devices/${id}/enabled`, { method: 'PATCH', body }),
   overview: () => apiRequest('/device-monitor/overview'),

@@ -43,9 +43,13 @@ public class CountermeasureTcp4ChV20Adapter implements DeviceAdapterPort {
     @Override
     public AdapterResult connect(CommissionWork work) {
         try {
-            ProbeResult result = query(work.configurationJson());
-            return new AdapterResult(true, "COUNTERMEASURE_QUERY_OK",
-                    "TCP 连接、" + result.encoding() + " 编码探测和只读状态查询通过");
+            AdapterConfiguration config = AdapterConfiguration.parse(mapper, work.configurationJson());
+            config.validateEndpoint();
+            List<InetAddress> addresses = networkPolicy.resolveAllowed(config.host(), config.allowedCidrs());
+            try (Socket socket = new Socket()) {
+                socket.connect(new InetSocketAddress(addresses.get(0), config.port()), config.timeoutMillis());
+            }
+            return new AdapterResult(true, "COUNTERMEASURE_TCP_OK", "TCP 端口可达，编码探测和状态查询在开始协议调测时执行");
         } catch (ProtocolException ex) {
             return new AdapterResult(false, ex.code(), ex.getMessage());
         } catch (IOException ex) {

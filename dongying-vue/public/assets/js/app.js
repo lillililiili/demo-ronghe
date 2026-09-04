@@ -141,11 +141,7 @@
     else parts[0] = `<span class="c on">融合感知</span>`;
     if (crumbCtx) parts.push(`<span class="c ctx">${crumbCtx}</span>`);
 
-    box.innerHTML = `<div class="cbs">${parts.join('<b>›</b>')}</div>
-      <span class="spacer"></span>
-      <span class="cinfo">数据统计时间 <b id="ftm">${M.nowStr()}</b></span>
-      <span class="cinfo" title="平台坐标与高度基准（技术口径）：WGS-84 坐标系 · 椭球高">WGS-84 · 椭球高</span>
-      <span class="cinfo" id="fver" title="${M.CONF.version}（D 编号为内部评审轮次标记）">${M.CONF.version.replace(/\s*\(D\d+\)/, '')}</span>`;
+    box.innerHTML = `<div class="cbs">${parts.join('<b>›</b>')}</div>`;
   }
 
   /* ---------- 路由 ---------- */
@@ -203,7 +199,6 @@
     const tick = () => {
       const s = M.nowStr();
       document.getElementById('clk').innerHTML = `${U.icon('clock')} ${s}`;
-      const f = document.getElementById('ftm'); if (f) f.textContent = s;
     };
     tick();
     setInterval(tick, 1000);

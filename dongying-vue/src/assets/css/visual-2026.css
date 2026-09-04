@@ -92,7 +92,6 @@ body::before{
 }
 .crumb .cbs{font-size:12.5px}
 .crumb .cbs .c.on{font-weight:500;color:#dfe9f6}
-.crumb .cinfo{font-size:11.5px}
 body[data-page="overview"] .crumb{display:none}
 .view{padding:12px;overflow:auto;overscroll-behavior:contain}
 .row,.col,.grid{gap:var(--gap)}
@@ -284,7 +283,6 @@ body[data-page="overview"] .focus .f .r3{margin-top:5px;font-size:11.5px}
   body[data-page="overview"] .kpi .vl{font-size:29px}
   body[data-page="overview"] .kpi .ic{width:44px;height:44px}
   table.tb th,table.tb td{padding:7px 8px}
-  .crumb .cinfo:nth-last-child(2){display:none}
   .row>.col[style*="width:420px"]{width:380px!important}
   .row>.col[style*="width:440px"]{width:390px!important}
 }
@@ -296,7 +294,6 @@ body[data-page="overview"] .focus .f .r3{margin-top:5px;font-size:11.5px}
   #btnBig{padding-inline:8px}
   .nav .l1{padding-inline:8px;font-size:13px}
   .nav .l2 a{font-size:12px}
-  .crumb .cinfo:not(:first-of-type){display:none}
   body[data-page="overview"] .kpis{padding:6px 8px}
   body[data-page="overview"] .kpi{padding:10px 11px;min-height:98px}
   body[data-page="overview"] .kpi .dt{max-width:175px}

@@ -36,6 +36,11 @@ public class DeviceRepository {
         return count == null ? 0 : count;
     }
 
+    public long countEnabledOnSource(String sourceId) {
+        Long count = jdbc.queryForObject("SELECT COUNT(*) FROM device WHERE source_id=? AND enabled=TRUE", Long.class, sourceId);
+        return count == null ? 0 : count;
+    }
+
     public List<Map<String, Object>> list(DeviceQuery query, int offset, int size, String orderBy) {
         SqlWhere where = where(query);
         where.params.put("offset", offset);

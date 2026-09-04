@@ -141,7 +141,7 @@ class SystemManagementApiTest {
                         .header("Authorization", bearer(admin))).andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString());
         ObjectNode update = permissionPayload(role.path("permissions"), "OP");
-        update.put("expected_version", role.path("version").asInt()).put("reason", "验证权限即时升级");
+        update.put("expected_version", role.path("version").asInt());
         mvc.perform(put("/api/v1/roles/{code}/permissions", roleCode)
                         .header("Authorization", bearer(admin)).header("Idempotency-Key", "role-update-" + roleCode)
                         .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(update)))
@@ -149,6 +149,9 @@ class SystemManagementApiTest {
                 .andExpect(jsonPath("$.data.permissions[?(@.permission_code == 'devices')].level").value("OP"));
         mvc.perform(get("/api/v1/auth/me").header("Authorization", bearer(userSession)))
                 .andExpect(status().isUnauthorized());
+        assertThat(jdbc.queryForObject(
+                "select count(*) from audit_log where action='role_permissions_updated' and object_id=? and detail like ?",
+                Integer.class, roleCode, "%超级管理员直接调整角色权限%")).isEqualTo(1);
 
         assertThat(jdbc.queryForObject("select count(*) from audit_log where detail like ?", Integer.class,
                 "%" + TEMP_PASSWORD + "%")).isZero();

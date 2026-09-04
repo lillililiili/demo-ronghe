@@ -146,8 +146,13 @@ public class DeviceOperationsProcessor {
         boolean simulated = bool(row, "simulated");
         criteria.put("source", simulated ? "DEVELOPMENT_SIMULATION" : text(row, "resolved_protocol_code"));
         criteria.put("confirmed", false);
+        String protocol = text(row, "resolved_protocol_code");
         criteria.put("warning", simulated ? "甲方设备协议与正式调测判据尚未确认"
-                : "协议链路调测结果；反制报告不包含射频发射验证");
+                : "COUNTERMEASURE_TCP_4CH_V2_0".equals(protocol)
+                    ? "协议链路调测结果；不包含射频发射验证"
+                    : "RADAR_TCP_V3_0_0".equals(protocol)
+                        ? "协议链路调测结果；雷达待机无航迹时结论可为不可判定"
+                        : "协议链路调测结果");
         Map<String, Object> results = new LinkedHashMap<>();
         results.put("result_code", result.resultCode());
         results.put("detail", result.detail());

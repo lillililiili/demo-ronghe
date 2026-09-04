@@ -10,7 +10,7 @@ spring:
       enabled: false
 
 app:
-  source-mode: mock
+  source-mode: live
   evidence-dir: ./data/evidence
   dev-seed:
     enabled: ${APP_DEV_SEED_ENABLED:true}

@@ -4,7 +4,7 @@
    · 结构进 template，图表初始化进 useCharts（等价 legacy mount 时机）
    · 数值/标签等叶子仍用 window.UI 的字符串生成器（U.num/U.table）
    · 工具条不再放没有切片数据的时间/类型/区域下拉，避免点了数字不变
-   · 外壳职责（面包屑/导航组/页脚/卸载清理）统一走 usePageChrome */
+   · 外壳职责（面包屑/导航组/卸载清理）统一走 usePageChrome */
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import { useCharts } from '@/hooks/useChart.js';
 import UPanel from '@/components/UPanel.vue';

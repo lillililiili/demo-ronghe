@@ -51,11 +51,14 @@ public class RadarTcpV300Adapter implements DeviceAdapterPort {
 
     @Override
     public AdapterResult connect(CommissionWork work) {
-        try (Session session = open(work.configurationJson())) {
-            LoginResult login = login(session);
-            return login.success()
-                    ? new AdapterResult(true, "RADAR_LOGIN_OK", "TCP 连接和数据权限登录通过")
-                    : new AdapterResult(false, "ADAPTER_UNAVAILABLE", login.detail());
+        try {
+            AdapterConfiguration configuration = AdapterConfiguration.parse(mapper, work.configurationJson());
+            configuration.validateEndpoint();
+            InetAddress address = networkPolicy.resolveAllowed(configuration.host(), configuration.allowedCidrs()).get(0);
+            try (Socket socket = new Socket()) {
+                socket.connect(new InetSocketAddress(address, configuration.port()), configuration.timeoutMillis());
+            }
+            return new AdapterResult(true, "RADAR_TCP_OK", "TCP 端口可达，数据权限登录在开始协议调测时执行");
         } catch (ProtocolException ex) {
             return new AdapterResult(false, ex.code(), ex.getMessage());
         } catch (IOException ex) {

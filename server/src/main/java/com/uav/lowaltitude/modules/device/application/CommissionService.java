@@ -180,9 +180,16 @@ public class CommissionService {
             throw illegal("任务尚未形成报告");
         return new Report(task.commissionId(), task.commissionNo(), task.deviceId(), task.deviceNo(), task.deviceName(),
                 task.status(), task.protocolCode(), task.sourceMode(), task.simulated(), task.startedAt(), task.finishedAt(),
-                parse(task.criteriaSnapshot()), parse(task.resultsJson()),
-                task.simulated() ? "开发模拟结果，不代表真实设备验收或投运依据"
-                        : "协议链路调测结果；四通道反制调测不包含射频发射验证");
+                parse(task.criteriaSnapshot()), parse(task.resultsJson()), reportWarning(task));
+    }
+
+    private static String reportWarning(Task task) {
+        if (task.simulated()) return "开发模拟结果，不代表真实设备验收或投运依据";
+        if ("COUNTERMEASURE_TCP_4CH_V2_0".equals(task.protocolCode()))
+            return "协议链路调测结果；不包含射频发射验证";
+        if ("RADAR_TCP_V3_0_0".equals(task.protocolCode()))
+            return "协议链路调测结果；雷达待机无航迹时结论可为不可判定";
+        return "协议链路调测结果";
     }
 
     private Task required(String id) {

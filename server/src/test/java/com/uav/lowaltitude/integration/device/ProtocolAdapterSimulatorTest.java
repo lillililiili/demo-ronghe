@@ -64,6 +64,25 @@ class ProtocolAdapterSimulatorTest {
     }
 
     @Test
+    void countermeasureConnectOnlyOpensTcpWithoutSendingQuery() throws Exception {
+        try (ServerSocket server = new ServerSocket(0)) {
+            CompletableFuture<Integer> firstByte = CompletableFuture.supplyAsync(() -> {
+                try (Socket socket = server.accept()) {
+                    return socket.getInputStream().read();
+                } catch (Exception ex) { throw new RuntimeException(ex); }
+            });
+            CountermeasureTcp4ChV20Adapter adapter = new CountermeasureTcp4ChV20Adapter(new ObjectMapper(),
+                    allowedLoopbackPolicy());
+            DeviceAdapterPort.AdapterResult result = adapter.connect(new DeviceAdapterPort.CommissionWork(
+                    "task", "T-1", "device", "D-1", DeviceProtocolCodes.COUNTERMEASURE_TCP_4CH_V2_0,
+                    config(server.getLocalPort(), "{\"device_address\":1,\"wire_encoding\":\"AUTO\"}")));
+            assertThat(result.success()).isTrue();
+            assertThat(result.resultCode()).isEqualTo("COUNTERMEASURE_TCP_OK");
+            assertThat(firstByte.get(5, TimeUnit.SECONDS)).isEqualTo(-1);
+        }
+    }
+
+    @Test
     void radarLoginHandlesSplitResponseAndNeverUsesDebugCrc() throws Exception {
         try (ServerSocket server = new ServerSocket(0)) {
             CompletableFuture<RadarV300Codec.RadarFrame> received = CompletableFuture.supplyAsync(() -> {
@@ -84,14 +103,32 @@ class ProtocolAdapterSimulatorTest {
             });
             RadarTcpV300Adapter adapter = new RadarTcpV300Adapter(new ObjectMapper(), allowedLoopbackPolicy(),
                     new EnvironmentCredentialResolver());
-            DeviceAdapterPort.AdapterResult result = adapter.connect(new DeviceAdapterPort.CommissionWork(
+            adapter.commission(new DeviceAdapterPort.CommissionWork(
                     "task", "T-1", "device", "D-1", DeviceProtocolCodes.RADAR_TCP_V3_0_0,
                     config(server.getLocalPort(), "{\"login_role\":\"DATA\"}")));
-            assertThat(result.success()).isTrue();
             RadarV300Codec.RadarFrame login = received.get(5, TimeUnit.SECONDS);
             assertThat(login.command()).isEqualTo(RadarV300Codec.COMMAND_LOGIN);
             assertThat(ByteBuffer.wrap(login.payload()).order(ByteOrder.BIG_ENDIAN).getInt()).isEqualTo(5);
             assertThat(login.debugCrc()).isFalse();
+        }
+    }
+
+    @Test
+    void radarConnectOnlyOpensTcpWithoutLogin() throws Exception {
+        try (ServerSocket server = new ServerSocket(0)) {
+            CompletableFuture<Integer> firstByte = CompletableFuture.supplyAsync(() -> {
+                try (Socket socket = server.accept()) {
+                    return socket.getInputStream().read();
+                } catch (Exception ex) { throw new RuntimeException(ex); }
+            });
+            RadarTcpV300Adapter adapter = new RadarTcpV300Adapter(new ObjectMapper(), allowedLoopbackPolicy(),
+                    new EnvironmentCredentialResolver());
+            DeviceAdapterPort.AdapterResult result = adapter.connect(new DeviceAdapterPort.CommissionWork(
+                    "task", "T-1", "device", "D-1", DeviceProtocolCodes.RADAR_TCP_V3_0_0,
+                    config(server.getLocalPort(), "{\"login_role\":\"DATA\"}")));
+            assertThat(result.success()).isTrue();
+            assertThat(result.resultCode()).isEqualTo("RADAR_TCP_OK");
+            assertThat(firstByte.get(5, TimeUnit.SECONDS)).isEqualTo(-1);
         }
     }
 

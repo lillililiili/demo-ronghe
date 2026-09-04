@@ -423,23 +423,8 @@
     document.removeEventListener('click', onExample);
     document.getElementById('btnSearch')?.parentElement.remove();
   }
-  function mount() {
-    const meta = document.querySelector('.hdr .meta');
-    if (!meta || document.getElementById('btnSearch')) return;
-    const wrap = document.createElement('span');
-    wrap.className = 'it';
-    wrap.innerHTML = `<button class="btn ghost" id="btnSearch" title="统一检索：目标 / 设备 / 计划 / 告警 / 案件（${HOTKEY}）"
-      style="gap:6px">${U.icon('search')} 检索<span style="font-size:10.5px;opacity:.65;border:1px solid var(--line);
-      border-radius:3px;padding:0 4px;line-height:15px">${HOTKEY}</span></button>`;
-    meta.insertBefore(wrap, meta.querySelector('.bell') || meta.lastChild);
-    document.getElementById('btnSearch').onclick = () => open('');
-
-    document.addEventListener('keydown', onHotkey);
-    document.addEventListener('click', onExample);
-  }
-
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount);
-  else mount();
+  /* 顶栏检索入口与 Ctrl/Command+K 已关闭；goEntity 仍供证据台账、飞行计划深链复用。 */
+  function mount() { return; }
 
   /* 按「实体类型 + 编号」跳转并选中 —— 证据台账的反向引用直接复用这里，
      不在别的文件里再抄一份「哪个页面用哪种深链」的对照表。
@@ -474,4 +459,5 @@
   }
 
   g.SEARCH = { open, close, search, parseQuery, goEntity, mount, destroy };
+  destroy();
 })(window);

@@ -62,6 +62,7 @@ function requireFunction(name, value) {
 }
 
 function validateBigScreenData() {
+  // 每轮都从 window 重新取并校验依赖，重试后不会继续使用首次加载时缓存的旧全局对象。
   const mock = requireRecord('MOCK', window.MOCK);
   const ui = requireRecord('UI', window.UI);
   const stats = requireRecord('MOCK.stats', mock.stats);
@@ -80,6 +81,7 @@ function validateBigScreenData() {
   const systemNowStr = requireFunction('MOCK.systemNowStr', mock.systemNowStr).bind(mock);
   const initialClock = systemNowStr();
   if (typeof initialClock !== 'string') throw new TypeError('大屏本地数据无效：MOCK.systemNowStr 必须返回字符串');
+  // 返回本轮一致性快照，后续渲染只能消费这组已通过校验的数据和运行时依赖。
   return {
     liveTargets: requireObjectArray('MOCK.liveTargets', mock.liveTargets),
     todayTargets: requireObjectArray('MOCK.todayTargets', mock.todayTargets),
@@ -108,6 +110,7 @@ const alarmFlowScore = { 待核实: 0, 反制中: 1, 干扰中: 2, 待处置: 3,
 const legacyFlowStatus = { 新建: '待核实', 已确认: '待核实', 处置中: '反制中', 已关闭: '待处置', 误报: '误报' };
 
 const noticeTick = ref(0);
+// 小高度窗口减少告警行数，确保大屏纵向内容不挤压到视口之外。
 const rowLimit = computed(() => viewportHeight.value < 760 ? 2 : viewportHeight.value < 850 ? 3 : 4);
 const alarmFlowStatus = alarm => alarm.flowStatus || legacyFlowStatus[alarm.status] || alarm.status || '待核实';
 const noticeStatus = item => {
@@ -191,6 +194,7 @@ function go(page, context) {
   showVideo.value = false;
   const data = screenData.value;
   if (!data) return;
+  // 旧 UI 跳转也纳入 ready 运行时异常边界，失败时整屏退出就绪态。
   try {
     data.goto(page, context);
   } catch (err) {
@@ -204,6 +208,7 @@ function goAlarm(row) {
 }
 
 function rowProps(action, label) {
+  // 表格行同时支持鼠标、Enter 和 Space，保持与真正链接一致的可访问操作。
   return row => ({
     class: ['bs-clickable-row', row.level ? `is-${row.level}` : ''],
     role: 'link',
@@ -302,6 +307,7 @@ function refreshMapData(data) {
 }
 
 function runCleanup(cleanup) {
+  // 清理采用逐项容错：某个第三方实例销毁失败，不能阻断计时器、地图等其余资源释放。
   try { cleanup(); } catch (err) { /* 单个资源失败不得阻断其余回滚。 */ }
 }
 
@@ -357,11 +363,13 @@ function adoptChartRuntime(nextChart) {
 }
 
 function invalidateLifecycle() {
+  // 代际号使旧的异步 continuation 自动失效，避免连续刷新后旧任务重新挂载资源。
   lifecycleGeneration += 1;
   return lifecycleGeneration;
 }
 
 function stopReadyRuntime() {
+  // ready 的所有副作用集中在一个出口清理，错误、空态、重试和卸载共享同一规则。
   invalidateLifecycle();
   const currentClockTimer = clockTimer;
   clockTimer = null;
@@ -431,6 +439,7 @@ async function reloadBigScreen() {
   queryError.value = '';
   screenData.value = null;
   await nextTick();
+  // 等待 DOM 切到 loading 后再校验；若期间又触发刷新，本轮结果直接作废。
   if (!mounted || generation !== lifecycleGeneration || queryStatus.value !== 'loading') return;
   try {
     const data = validateBigScreenData();
@@ -445,6 +454,7 @@ async function refreshBigScreenData() {
   if (queryStatus.value !== 'ready') return;
   const generation = invalidateLifecycle();
   try {
+    // 事件刷新重新校验当前全局对象，不能沿用上一次 ready 时的 MOCK/UI/CH。
     const data = validateBigScreenData();
     if (!mounted || generation !== lifecycleGeneration || queryStatus.value !== 'ready') return;
     if (!hasVisibleBusinessData(data)) {

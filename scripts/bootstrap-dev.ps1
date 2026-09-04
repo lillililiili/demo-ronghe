@@ -42,7 +42,8 @@ if (-not $SkipFrontendInstall -and -not (Test-Path (Join-Path $frontendDir 'node
     Write-Host 'Installing frontend dependencies...'
     Push-Location $frontendDir
     try {
-        npm install
+        # 使用锁文件确定性安装，确保本地依赖版本与 CI 一致。
+        npm ci
         if ($LASTEXITCODE -ne 0) {
             throw 'Frontend dependency installation failed.'
         }

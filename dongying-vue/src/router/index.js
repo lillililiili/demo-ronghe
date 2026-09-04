@@ -26,10 +26,20 @@ export function loginDestination(value) {
   const key = value.slice(1).split('?')[0];
   return key !== 'login' && ROUTES[key] ? value : '/workbench';
 }
-restoreSession();
-router.beforeEach(to => {
+let sessionRestored = false;
+router.beforeEach(async to => {
+  // 首次导航只恢复一次后端会话，后续跳转直接使用已同步的响应式认证状态。
+  if (!sessionRestored) {
+    try {
+      await restoreSession();
+    } catch {
+      /* 会话已清理，继续按未登录路由处理 */
+    }
+    sessionRestored = true;
+  }
   const key = routeKey(to);
   if (key === 'login') return isAuthenticated() ? loginDestination(to.query.redirect) : true;
+  // redirect 先经 loginDestination 收敛，避免登录后跳往外站或未知路由。
   if (!isAuthenticated()) return { path: '/login', query: { redirect: loginDestination(to.fullPath) }, replace: true };
   return true;
 });

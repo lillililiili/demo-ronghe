@@ -9,7 +9,7 @@ import UFormFooter from '@/components/form/UFormFooter.vue';
 import { loginThemeOverrides } from '@/ui/theme.js';
 import { openModal, closeModal } from '@/ui/modal.js';
 import { toast } from '@/ui/nv.js';
-import { DEMO_PASSWORD, forgetAccount, login, rememberedAccount } from '@/services/auth.js';
+import { forgetAccount, login, rememberedAccount } from '@/services/auth.js';
 import { loginDestination } from '@/router/index.js';
 
 const route = useRoute();
@@ -23,7 +23,6 @@ const error = ref('');
 const invalidField = ref('');
 const accountField = ref(null);
 const passwordField = ref(null);
-let submitTimer = null;
 
 watch(remember, value => { if (!value) forgetAccount(); });
 watch([account, password], () => { error.value = ''; invalidField.value = ''; });
@@ -33,15 +32,20 @@ function showHelp() {
     title: '忘记密码',
     width: '480px',
     render: () => h('div', { style: 'display:grid;gap:14px;line-height:1.8' }, [
-      h('p', '正式账号的密码请联系系统管理员重置。当前为本地演示，尚未接入真实认证服务，不提供邮件或短信找回，也不会发送重置请求。'),
-      h('p', ['演示账号：', h('strong', 'admin'), '　演示密码：', h('strong', DEMO_PASSWORD)]),
-      h('p', '也可使用现有账号体验不同岗位：zhangwei（值班员）、zhaopeng（设备运维）、wugang（审计员），演示密码相同。'),
-      h('p', { style: 'font-size:13px;color:var(--txt-2)' }, '只记住账号，不保存密码。账号中的 MFA 字段仅为演示资料，本次不会执行双因子认证；请勿输入真实工作密码。')
+      h('p', '本地开发账号：duty1。密码读取 APP_DEV_SEED_PASSWORD，未配置时默认为 changeme。'),
+      h('p', '正式环境请联系系统管理员获取账号或重置密码。'),
+      h('p', { style: 'font-size:13px;color:var(--txt-2)' }, '只记住账号，不保存密码；登录结果以认证服务返回为准。')
     ])
   });
 }
 
-function submit() {
+function isCredentialError(reason) {
+  return reason?.status === 401
+    && (reason.code === 'INVALID_CREDENTIALS' || String(reason.code || '').startsWith('ACCOUNT_'));
+}
+
+async function submit() {
+  // 登录期间锁定重复提交；校验错误聚焦到对应字段，服务错误则保留通用提示。
   if (busy.value) return;
   error.value = '';
   invalidField.value = !account.value.trim() ? 'account' : !password.value ? 'password' : '';
@@ -51,31 +55,23 @@ function submit() {
     return;
   }
   busy.value = true;
-  // 仅让演示处理中态可感知；计时器随页面卸载清理，绝不跨导航提交。
-  submitTimer = setTimeout(async () => {
-    try {
-      const result = login({ account: account.value, password: password.value, remember: remember.value });
-      if (!result.ok) {
-        error.value = result.message;
-        invalidField.value = 'password';
-        return;
-      }
-      password.value = '';
-      passwordVisible.value = false;
-      if (!result.persisted) toast('浏览器不允许保存会话，刷新后需重新登录。');
-      await router.replace(loginDestination(route.query.redirect));
-    } catch {
-      error.value = '登录未完成，请重试。';
-    } finally {
-      busy.value = false;
-      submitTimer = null;
-      if (error.value) { await nextTick(); passwordField.value?.focus(); }
-    }
-  }, 450);
+  try {
+    const result = await login({ account: account.value, password: password.value, remember: remember.value });
+    password.value = '';
+    passwordVisible.value = false;
+    // 存储受限不等于登录失败，但必须明确提示刷新后无法恢复会话。
+    if (!result.persisted) toast('浏览器不允许保存会话，刷新后需重新登录。');
+    await router.replace(loginDestination(route.query.redirect));
+  } catch (reason) {
+    error.value = reason?.message || '登录未完成，请重试。';
+    invalidField.value = isCredentialError(reason) ? 'password' : '';
+  } finally {
+    busy.value = false;
+    if (invalidField.value === 'password') { await nextTick(); passwordField.value?.focus(); }
+  }
 }
 
 onBeforeUnmount(() => {
-  clearTimeout(submitTimer);
   password.value = '';
   closeModal();
 });

@@ -1,6 +1,7 @@
 <script setup>
 import { NButton } from 'naive-ui';
 
+// 错误态明确承诺“不降级为演示数据”，重试动作只交回页面重新发起查询。
 defineProps({
   title: { type: String, default: '接口请求失败' },
   message: { type: String, default: '请稍后重试。失败时不会改用演示数据。' }

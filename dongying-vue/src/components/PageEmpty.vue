@@ -1,4 +1,5 @@
 <script setup>
+// 统一无数据表达，并预留可选操作插槽，避免各页面自行拼装不一致的空态。
 defineProps({
   title: { type: String, default: '暂无数据' },
   description: { type: String, default: '当前没有可显示的记录' }

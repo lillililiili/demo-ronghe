@@ -17,6 +17,7 @@ export function normalizeSize(size) {
 }
 
 export function parsePagedPayload(data) {
+  // 采用严格白名单契约：任何缺字段、越界或总数矛盾都应让页面进入错误态。
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
     throw new TypeError('分页载荷无效：必须是对象');
   }
@@ -56,6 +57,7 @@ export function parsePagedPayload(data) {
 }
 
 export function sliceLocal(all, page, size) {
+  // 本地 Mock 也产出与真实接口相同的分页结构，便于页面以后无损切换数据源。
   const list = Array.isArray(all) ? all : [];
   const s = normalizeSize(size);
   const pageCount = Math.max(1, Math.ceil(list.length / s));

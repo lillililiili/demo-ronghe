@@ -3,6 +3,7 @@ import PageLoading from '@/components/PageLoading.vue';
 import PageEmpty from '@/components/PageEmpty.vue';
 import PageError from '@/components/PageError.vue';
 
+// 查询壳保证同一时刻只渲染一种状态；未知状态按错误处理而不是误进就绪页。
 defineProps({
   status: {
     type: String,

@@ -25,6 +25,7 @@ function applyRegionPage() {
   return query.applyPayload(sliceLocal(S.regions || [], query.page.value, query.size.value));
 }
 async function reloadStats() {
+  // 先让加载态真正渲染一帧，再应用本地分页结果，保持与异步 API 相同的生命周期。
   query.setLoading();
   await nextTick();
   return applyRegionPage();
@@ -65,6 +66,7 @@ const rankHtml = (function () {
 })();
 
 function regionTable() {
+  // 排名按全量偏移计算，但行和“本页合计”只消费当前页数据。
   const regions = query.items.value;
   const offset = (query.page.value - 1) * query.size.value;
   return U.table([
@@ -124,6 +126,7 @@ function initStatsCharts(CH) {
 
 const STATS_CHART_IDS = ['sTrend', 'sRisk', 'sType', 'sRegion', 'sDur', 'sTrack', 'sAlt', 'sPen'];
 function disposeStatsCharts() {
+  // 查询离开 ready 或页面卸载时释放实例，防止重试后叠加图表和监听器。
   if (!window.CH.disposeEl) return;
   STATS_CHART_IDS.forEach(id => window.CH.disposeEl(document.getElementById(id)));
 }
@@ -155,6 +158,7 @@ function renderRegionView(view) {
     box.innerHTML = regionTable();
     return;
   }
+  // 热力图与排行表读取同一页，避免切换视图后出现数据口径不一致。
   const regions = query.items.value;
   box.innerHTML = '';
   window.CH.hbar(box, {

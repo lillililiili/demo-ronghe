@@ -19,6 +19,7 @@ export function usePagedList(initial = {}) {
   const pageCount = computed(() => Math.max(1, Math.ceil(total.value / size.value) || 1));
 
   function applyPayload(data) {
+    // 校验失败时清空旧列表并 fail closed，避免错误响应继续展示上一次成功数据。
     try {
       const parsed = parsePagedPayload(data);
       page.value = parsed.page;
@@ -52,6 +53,7 @@ export function usePagedList(initial = {}) {
   }
 
   function setSize(next) {
+    // 改变每页条数会改变页边界，因此统一回到第一页。
     size.value = normalizeSize(next);
     page.value = 1;
   }

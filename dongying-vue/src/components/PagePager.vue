@@ -11,6 +11,7 @@ const props = defineProps({
 });
 const emit = defineEmits(['update:page', 'update:size']);
 
+// 所有外部页码、条数和总数先归一化，禁止非法值直接传入分页组件。
 const safePage = computed(() => normalizePage(props.page));
 const safeSize = computed(() => normalizeSize(props.size));
 const itemCount = computed(() => {
@@ -19,6 +20,7 @@ const itemCount = computed(() => {
 });
 const pageCount = computed(() => Math.max(1, Math.ceil(itemCount.value / safeSize.value) || 1));
 const sizes = computed(() => {
+  // 去重并限制在后端契约允许的 1-100 范围内。
   const raw = Array.isArray(props.pageSizes) ? props.pageSizes : [20, 50, 100];
   const uniq = [];
   raw.forEach(value => {

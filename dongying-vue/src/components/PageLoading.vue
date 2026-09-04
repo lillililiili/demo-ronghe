@@ -1,6 +1,7 @@
 <script setup>
 import { NSpin } from 'naive-ui';
 
+// 公共加载态使用 status/live 语义，让视觉和辅助技术获得同一状态反馈。
 defineProps({
   description: { type: String, default: '正在加载…' }
 });

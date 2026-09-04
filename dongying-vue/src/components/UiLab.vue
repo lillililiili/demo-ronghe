@@ -11,6 +11,7 @@ import { message } from '@/ui/nv.js';
 const U = window.UI;
 const showModal = ref(false);
 const showDrawer = ref(false);
+// 固定样例让旧/新分页控件可以在开发对照台逐项比较。
 const page = ref(3);
 const pageSize = ref(20);
 const selVal = ref('全部');

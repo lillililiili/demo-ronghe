@@ -15,8 +15,13 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
 import com.uav.lowaltitude.Application;
+import com.uav.lowaltitude.modules.identity.infrastructure.UserMapper;
+import com.uav.lowaltitude.platform.config.AppProperties;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 @SpringBootTest(properties = {
         "spring.datasource.url=jdbc:h2:mem:local_access_enabled;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;"
@@ -137,6 +142,24 @@ class LocalAccessSeederTest {
             assertThat(disabledJdbc.queryForObject(
                     "select count(*) from app_user where scope_mode = 'ALL'", Integer.class)).isZero();
         }
+    }
+
+    @Test
+    void enabledSeedRequiresPasswordEvenWhenUsersAlreadyExist() {
+        UserMapper userMapper = mock(UserMapper.class);
+        when(userMapper.count()).thenReturn(1);
+        AppProperties properties = new AppProperties();
+        properties.getDevSeed().setEnabled(true);
+        properties.getDevSeed().setPassword(" ");
+        LocalUserSeeder localUserSeeder = new LocalUserSeeder(
+                userMapper,
+                mock(JdbcTemplate.class),
+                mock(org.springframework.security.crypto.password.PasswordEncoder.class),
+                properties);
+
+        assertThatThrownBy(() -> localUserSeeder.run(new DefaultApplicationArguments(new String[0])))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("app.dev-seed.password must be set when development seed is enabled");
     }
 
     private Map<String, Integer> accessCounts() {

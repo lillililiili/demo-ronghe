@@ -42,12 +42,12 @@ public class LocalUserSeeder implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
-        if (userMapper.count() > 0) {
-            return;
-        }
         String password = appProperties.getDevSeed().getPassword();
         if (password == null || password.isBlank()) {
             throw new IllegalStateException("app.dev-seed.password must be set when development seed is enabled");
+        }
+        if (userMapper.count() > 0) {
+            return;
         }
         ensureSyntheticRoles();
         String hash = passwordEncoder.encode(password);

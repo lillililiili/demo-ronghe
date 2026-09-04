@@ -9,6 +9,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.core.annotation.Order;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
@@ -18,6 +19,7 @@ import com.uav.lowaltitude.platform.config.AppProperties;
 
 @Component
 @ConditionalOnProperty(prefix = "app.dev-seed", name = "enabled", havingValue = "true")
+@Order(100)
 public class LocalUserSeeder implements ApplicationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(LocalUserSeeder.class);
@@ -47,6 +49,7 @@ public class LocalUserSeeder implements ApplicationRunner {
         if (password == null || password.isBlank()) {
             throw new IllegalStateException("app.dev-seed.password must be set when development seed is enabled");
         }
+        ensureSyntheticRoles();
         String hash = passwordEncoder.encode(password);
         List<Object[]> rows = List.of(
                 row("admin1", "系统管理员", "ROLE-ADMIN", hash),
@@ -64,6 +67,28 @@ public class LocalUserSeeder implements ApplicationRunner {
                 """,
                 rows);
         log.info("seeded synthetic regulator accounts for an isolated development environment");
+    }
+
+    private void ensureSyntheticRoles() {
+        for (String roleCode : List.of(
+                "ROLE-ADMIN",
+                "ROLE-DUTY",
+                "ROLE-JUDGE",
+                "ROLE-AUTH",
+                "ROLE-OPS",
+                "ROLE-AUDIT")) {
+            jdbcTemplate.update(
+                    """
+                    INSERT INTO app_role (
+                        role_code, name, enabled, system_role, created_at, updated_at, version
+                    )
+                    SELECT ?, ?, FALSE, FALSE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0
+                    WHERE NOT EXISTS (SELECT 1 FROM app_role WHERE role_code = ?)
+                    """,
+                    roleCode,
+                    "Synthetic " + roleCode,
+                    roleCode);
+        }
     }
 
     private static Object[] row(String account, String name, String role, String hash) {

@@ -3,10 +3,18 @@ package com.uav.lowaltitude.migration;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import javax.sql.DataSource;
 
@@ -90,6 +98,25 @@ class PostgresStage2SchemaTest {
                 assertThat(indexDefinitions(jdbc, schema))
                         .containsKeys("idx_device_location_gist", "idx_device_source_external_unique");
             });
+        });
+    }
+
+    @Test
+    void rejectsEmptyPointsInsteadOfEncodingUnknownLocations() throws Exception {
+        withRandomSchema(schema -> {
+            assertThat(stage2Flyway(schema).migrate().migrationsExecuted).isEqualTo(5);
+            withSchemaJdbc(schema, this::assertEmptyPointsAreRejected);
+        });
+    }
+
+    @Test
+    void rejectsConcurrentHierarchyCycles() throws Exception {
+        withRandomSchema(schema -> {
+            assertThat(stage2Flyway(schema).migrate().migrationsExecuted).isEqualTo(5);
+            assertConcurrentHierarchyCycleIsRejected(
+                    schema, "app_org", "org_id", "org_code", "org-concurrent");
+            assertConcurrentHierarchyCycleIsRejected(
+                    schema, "app_district", "district_id", "district_code", "district-concurrent");
         });
     }
 
@@ -260,6 +287,166 @@ class PostgresStage2SchemaTest {
         assertThatThrownBy(() -> jdbc.update(
                 "update app_district set parent_id = 'district-child' where district_id = 'district-parent'"))
                 .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    private void assertEmptyPointsAreRejected(JdbcTemplate jdbc) {
+        assertThatThrownBy(() -> jdbc.update("""
+                insert into device (
+                    device_id, device_no, name, location, source_mode,
+                    created_at, updated_at, version
+                ) values (
+                    'device-empty-point', 'EMPTY-POINT', 'Empty point',
+                    ST_GeomFromText('POINT EMPTY', 4326), 'replay',
+                    current_timestamp, current_timestamp, 0
+                )
+                """))
+                .isInstanceOf(DataIntegrityViolationException.class);
+
+        jdbc.update("""
+                insert into integration_source (
+                    source_id, source_code, name, enabled, source_mode,
+                    created_at, updated_at, version
+                ) values (
+                    'source-empty-point', 'source-empty-point', 'Empty point source', false, 'replay',
+                    current_timestamp, current_timestamp, 0
+                )
+                """);
+        jdbc.update("""
+                insert into target (
+                    target_id, target_no, source_mode, created_at, updated_at, version
+                ) values (
+                    'target-empty-point', 'TARGET-EMPTY-POINT', 'replay',
+                    current_timestamp, current_timestamp, 0
+                )
+                """);
+
+        assertThatThrownBy(() -> jdbc.update("""
+                insert into target_latest_state (
+                    target_id, location, observed_at, received_at,
+                    created_at, updated_at, version
+                ) values (
+                    'target-empty-point', ST_GeomFromText('POINT EMPTY', 4326),
+                    current_timestamp, current_timestamp,
+                    current_timestamp, current_timestamp, 0
+                )
+                """))
+                .isInstanceOf(DataIntegrityViolationException.class);
+
+        jdbc.update("""
+                insert into target_source_link (
+                    link_id, target_id, source_id, source_session_key, external_target_id, created_at
+                ) values (
+                    'link-empty-point', 'target-empty-point', 'source-empty-point',
+                    'session-empty-point', 'external-empty-point', current_timestamp
+                )
+                """);
+        jdbc.update("""
+                insert into track (
+                    track_id, target_id, link_id, external_track_id, created_at
+                ) values (
+                    'track-empty-point', 'target-empty-point', 'link-empty-point',
+                    'external-track-empty-point', current_timestamp
+                )
+                """);
+
+        assertThatThrownBy(() -> jdbc.update("""
+                insert into track_point (
+                    point_id, track_id, point_seq, received_at, location, created_at
+                ) values (
+                    'track-point-empty', 'track-empty-point', 1, current_timestamp,
+                    ST_GeomFromText('POINT EMPTY', 4326), current_timestamp
+                )
+                """))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    private void assertConcurrentHierarchyCycleIsRejected(
+            String schema,
+            String table,
+            String idColumn,
+            String codeColumn,
+            String valuePrefix) throws Exception {
+        String firstId = valuePrefix + "-a";
+        String secondId = valuePrefix + "-b";
+        withSchemaJdbc(schema, jdbc -> jdbc.batchUpdate(
+                "insert into " + table + " (" + idColumn + ", " + codeColumn + ", name) values (?, ?, ?)",
+                List.of(
+                        new Object[] {firstId, valuePrefix + "-code-a", valuePrefix + " A"},
+                        new Object[] {secondId, valuePrefix + "-code-b", valuePrefix + " B"})));
+
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try (Connection first = dataSource.getConnection();
+                Connection second = dataSource.getConnection()) {
+            first.setAutoCommit(false);
+            second.setAutoCommit(false);
+            setSearchPath(first, schema);
+            setSearchPath(second, schema);
+
+            updateParent(first, table, idColumn, firstId, secondId);
+
+            CountDownLatch secondStarted = new CountDownLatch(1);
+            Future<SQLException> secondResult = executor.submit(() -> {
+                secondStarted.countDown();
+                try {
+                    updateParent(second, table, idColumn, secondId, firstId);
+                    second.commit();
+                    return null;
+                } catch (SQLException exception) {
+                    second.rollback();
+                    return exception;
+                }
+            });
+            assertThat(secondStarted.await(5, TimeUnit.SECONDS)).isTrue();
+
+            SQLException completedBeforeFirstCommit = null;
+            boolean secondCompleted;
+            try {
+                completedBeforeFirstCommit = secondResult.get(500, TimeUnit.MILLISECONDS);
+                secondCompleted = true;
+            } catch (TimeoutException expectedLockWait) {
+                secondCompleted = false;
+            }
+
+            first.commit();
+            SQLException secondFailure = secondCompleted
+                    ? completedBeforeFirstCommit
+                    : secondResult.get(5, TimeUnit.SECONDS);
+            assertThat(secondFailure == null)
+                    .as("the second concurrent hierarchy update must be rejected")
+                    .isFalse();
+            assertThat(secondFailure.getSQLState()).isEqualTo("23514");
+        } finally {
+            executor.shutdownNow();
+        }
+
+        withSchemaJdbc(schema, jdbc -> assertThat(jdbc.queryForObject(
+                "select count(*) from " + table + " first_node join " + table
+                        + " second_node on first_node.parent_id = second_node." + idColumn
+                        + " where second_node.parent_id = first_node." + idColumn
+                        + " and first_node." + idColumn + " = ?",
+                Integer.class,
+                firstId)).isZero());
+    }
+
+    private void setSearchPath(Connection connection, String schema) throws SQLException {
+        assertSafeSchema(schema);
+        try (Statement statement = connection.createStatement()) {
+            statement.execute("set search_path to " + schema + ", public");
+        }
+    }
+
+    private void updateParent(
+            Connection connection,
+            String table,
+            String idColumn,
+            String childId,
+            String parentId) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(
+                "update " + table + " set parent_id = ? where " + idColumn + " = ?")) {
+            statement.setString(1, parentId);
+            statement.setString(2, childId);
+            assertThat(statement.executeUpdate()).isEqualTo(1);
+        }
     }
 
     private void executePostgresRepeatableAgain(JdbcTemplate jdbc) throws IOException {

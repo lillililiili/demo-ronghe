@@ -31,58 +31,43 @@ CREATE INDEX IF NOT EXISTS idx_track_point_display_time
 
 DO $$
 BEGIN
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conname = 'ck_device_location_wgs84'
-          AND conrelid = 'device'::regclass
-    ) THEN
-        ALTER TABLE device ADD CONSTRAINT ck_device_location_wgs84 CHECK (
-            location IS NULL
-            OR (
-                ST_SRID(location) = 4326
-                AND ST_X(location) BETWEEN -180 AND 180
-                AND ST_Y(location) BETWEEN -90 AND 90
-            )
-        );
-    END IF;
-END
-$$;
-
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conname = 'ck_target_latest_state_location_wgs84'
-          AND conrelid = 'target_latest_state'::regclass
-    ) THEN
-        ALTER TABLE target_latest_state ADD CONSTRAINT ck_target_latest_state_location_wgs84 CHECK (
-            location IS NULL
-            OR (
-                ST_SRID(location) = 4326
-                AND ST_X(location) BETWEEN -180 AND 180
-                AND ST_Y(location) BETWEEN -90 AND 90
-            )
-        );
-    END IF;
-END
-$$;
-
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conname = 'ck_track_point_location_wgs84'
-          AND conrelid = 'track_point'::regclass
-    ) THEN
-        ALTER TABLE track_point ADD CONSTRAINT ck_track_point_location_wgs84 CHECK (
-            ST_SRID(location) = 4326
+    ALTER TABLE device DROP CONSTRAINT IF EXISTS ck_device_location_wgs84;
+    ALTER TABLE device ADD CONSTRAINT ck_device_location_wgs84 CHECK (
+        location IS NULL
+        OR (
+            NOT ST_IsEmpty(location)
+            AND ST_SRID(location) = 4326
             AND ST_X(location) BETWEEN -180 AND 180
             AND ST_Y(location) BETWEEN -90 AND 90
-        );
-    END IF;
+        )
+    );
+END
+$$;
+
+DO $$
+BEGIN
+    ALTER TABLE target_latest_state DROP CONSTRAINT IF EXISTS ck_target_latest_state_location_wgs84;
+    ALTER TABLE target_latest_state ADD CONSTRAINT ck_target_latest_state_location_wgs84 CHECK (
+        location IS NULL
+        OR (
+            NOT ST_IsEmpty(location)
+            AND ST_SRID(location) = 4326
+            AND ST_X(location) BETWEEN -180 AND 180
+            AND ST_Y(location) BETWEEN -90 AND 90
+        )
+    );
+END
+$$;
+
+DO $$
+BEGIN
+    ALTER TABLE track_point DROP CONSTRAINT IF EXISTS ck_track_point_location_wgs84;
+    ALTER TABLE track_point ADD CONSTRAINT ck_track_point_location_wgs84 CHECK (
+        NOT ST_IsEmpty(location)
+        AND ST_SRID(location) = 4326
+        AND ST_X(location) BETWEEN -180 AND 180
+        AND ST_Y(location) BETWEEN -90 AND 90
+    );
 END
 $$;
 
@@ -96,6 +81,10 @@ BEGIN
     IF NEW.parent_id IS NULL THEN
         RETURN NEW;
     END IF;
+
+    PERFORM pg_advisory_xact_lock(
+        hashtextextended(current_database() || ':' || TG_TABLE_SCHEMA || ':' || TG_TABLE_NAME, 0)
+    );
 
     WITH RECURSIVE ancestors(org_id, parent_id) AS (
         SELECT org_id, parent_id
@@ -133,6 +122,10 @@ BEGIN
     IF NEW.parent_id IS NULL THEN
         RETURN NEW;
     END IF;
+
+    PERFORM pg_advisory_xact_lock(
+        hashtextextended(current_database() || ':' || TG_TABLE_SCHEMA || ':' || TG_TABLE_NAME, 0)
+    );
 
     WITH RECURSIVE ancestors(district_id, parent_id) AS (
         SELECT district_id, parent_id

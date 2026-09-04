@@ -74,6 +74,7 @@ function validateLoginData(data) {
   }
 }
 
+// 将后端字段归一为现有界面模型；缺失的展示字段只能沿用当前会话，不能伪造。
 function userSummary(data, previous = {}) {
   return {
     id: data.user_id,
@@ -90,6 +91,7 @@ function userSummary(data, previous = {}) {
   };
 }
 
+// 这里只桥接旧页面的菜单权限；登录真伪始终以后端会话为准。
 function syncMockPermissions(roleCode) {
   const role = MOCK_ROLES[roleCode];
   if (role && M.switchUser(role)) return;
@@ -104,6 +106,7 @@ function acceptSession(data, token) {
   syncMockPermissions(data.role_code);
 }
 
+// 所有失败路径共用同一清理动作，避免 token、Vue 状态和旧 Mock 用户相互矛盾。
 function clearLocalSession() {
   clearSessionToken();
   sessionId.value = null;
@@ -134,6 +137,7 @@ export async function login({ account, password, remember }) {
     const cleanAccount = account.trim();
     const data = await apiRequest('POST', '/api/v1/auth/login', { account: cleanAccount, password });
     validateLoginData(data);
+    // 先验证完整响应再持久化，防止残缺 session_id 被当成有效登录。
     const persisted = setSessionToken(data.session_id);
     acceptSession(data, data.session_id);
     writeStorage('localStorage', ACCOUNT_KEY, remember ? data.account : null);
@@ -149,6 +153,7 @@ export async function logout() {
   try {
     if (hadSession) await apiRequest('POST', '/api/v1/auth/logout');
   } finally {
+    // 服务端退出失败也必须清本地状态，避免浏览器继续以旧会话显示已登录。
     clearLocalSession();
   }
 }

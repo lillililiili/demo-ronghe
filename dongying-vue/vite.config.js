@@ -35,6 +35,7 @@ export default defineConfig(() => {
     server: {
       port: 5173,
       proxy: {
+        // 本地开发保持前端同源请求，由 Vite 转发到 Spring Boot，避免浏览器跨域差异。
         '/api': 'http://127.0.0.1:8080'
       },
       // 历史瓦片仍留在仓库旁用于人工回滚，但不再参与运行时加载或文件监听。

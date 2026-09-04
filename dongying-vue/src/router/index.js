@@ -28,6 +28,7 @@ export function loginDestination(value) {
 }
 let sessionRestored = false;
 router.beforeEach(async to => {
+  // 首次导航只恢复一次后端会话，后续跳转直接使用已同步的响应式认证状态。
   if (!sessionRestored) {
     try {
       await restoreSession();
@@ -38,6 +39,7 @@ router.beforeEach(async to => {
   }
   const key = routeKey(to);
   if (key === 'login') return isAuthenticated() ? loginDestination(to.query.redirect) : true;
+  // redirect 先经 loginDestination 收敛，避免登录后跳往外站或未知路由。
   if (!isAuthenticated()) return { path: '/login', query: { redirect: loginDestination(to.fullPath) }, replace: true };
   return true;
 });

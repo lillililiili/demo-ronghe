@@ -45,6 +45,7 @@ function isCredentialError(reason) {
 }
 
 async function submit() {
+  // 登录期间锁定重复提交；校验错误聚焦到对应字段，服务错误则保留通用提示。
   if (busy.value) return;
   error.value = '';
   invalidField.value = !account.value.trim() ? 'account' : !password.value ? 'password' : '';
@@ -58,6 +59,7 @@ async function submit() {
     const result = await login({ account: account.value, password: password.value, remember: remember.value });
     password.value = '';
     passwordVisible.value = false;
+    // 存储受限不等于登录失败，但必须明确提示刷新后无法恢复会话。
     if (!result.persisted) toast('浏览器不允许保存会话，刷新后需重新登录。');
     await router.replace(loginDestination(route.query.redirect));
   } catch (reason) {

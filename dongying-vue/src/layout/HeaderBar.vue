@@ -80,6 +80,7 @@ async function onMenu(k) {
     ['最后登录', currentUser.value.lastLogin], ['登录 IP', currentUser.value.lastIp]])
   });
   else if (k === 'logout') {
+    // 退出前先关闭跨页面 UI；即使服务端请求失败，logout() 也会清除本地会话。
     stopCarousel();
     closeModal();
     document.body.classList.remove('bigscreen');

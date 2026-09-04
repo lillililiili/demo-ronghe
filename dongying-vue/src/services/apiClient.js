@@ -18,6 +18,7 @@ let sessionToken = (() => {
 })();
 let unauthorizedHandler = null;
 
+// 401 的业务清理由认证模块注入，避免底层请求客户端反向依赖 Vue 状态。
 export function setUnauthorizedHandler(handler) {
   unauthorizedHandler = typeof handler === 'function' ? handler : null;
 }
@@ -77,6 +78,7 @@ export async function apiRequest(method, path, body) {
     throw new ApiError(0, 'NETWORK_ERROR', '无法连接服务，请确认后端服务可用。');
   }
 
+  // 无论错误体能否解析，401 都立即作废本地会话，防止页面继续显示过期身份。
   if (response.status === 401) clearUnauthorizedSession();
 
   let payload;
@@ -87,6 +89,7 @@ export async function apiRequest(method, path, body) {
   }
 
   if (!response.ok || payload?.ok === false) throw errorFrom(response.status, payload);
+  // HTTP 2xx 仍必须满足统一 ApiResponse 契约；畸形“成功”响应不能进入业务页面。
   if (payload?.ok !== true || !Object.hasOwn(payload, 'data')) {
     throw new ApiError(response.status, 'INVALID_RESPONSE', '服务返回格式异常。');
   }

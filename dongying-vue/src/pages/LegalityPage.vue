@@ -1123,14 +1123,6 @@ onMounted(() => {
         + (req ? `；已对案件 ${c.id} 发起复核请求 <b>${req.id}</b>` : ''), 'ok');
     }
   });
-  document.getElementById('lgRecalc').onclick = () => {
-    if (!M.can('合法性判定', 'op')) return toast('需要「合法性判定」操作权限', 'err');
-    const all = targets();
-    const kept = all.filter(revised).length;
-    refresh();
-    toast(`已按当前规则重新判定今日 ${all.length} 个目标`
-      + (kept ? `；其中 ${kept} 个已人工改判的结果<b>不被引擎覆盖</b>（设计 8.6）` : ''), 'ok');
-  };
   document.getElementById('lgRule').onclick = () => openModal({
     title: '判定规则说明', width: '760px',
     body: `${(function () {
@@ -1188,7 +1180,10 @@ onMounted(() => {
             <span class="lg-head-spacer"></span>
             <UField class="lg-region-filter" variant="toolbar" label="区域" v-model="st.region" type="select" :options="regionOptions" />
             <button class="lg-icon-btn" id="lgRule" type="button" aria-label="查看判定规则" title="判定规则说明" v-html="U.icon('settings')"></button>
-            <button class="lg-icon-btn" id="lgRecalc" type="button" aria-label="重新判定" title="重新判定" v-html="U.icon('refresh')"></button>
+            <!-- 重判需要服务端规则执行与审计，未接入前不绑定任何本地模拟动作。 -->
+            <span id="lgRecalcReason" style="font-size:11.5px;color:var(--txt-3)">重判服务未接入</span>
+            <button class="lg-icon-btn" id="lgRecalc" type="button" disabled aria-label="重新判定（重判服务未接入）"
+              aria-describedby="lgRecalcReason" title="重判服务未接入，暂不能重新判定" v-html="U.icon('refresh')"></button>
           </header>
           <div class="lg-queue-tabs" role="tablist" aria-label="判定状态筛选">
             <button :class="{ 'is-active': st.legal === '待处理' || st.legal === '非法' }" data-chip-set="待处理">系统判定非法</button>

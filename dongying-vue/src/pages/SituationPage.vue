@@ -203,6 +203,7 @@ function paintActions() {
     ? `<button class="btn warn" id="btnAlm" style="flex:1;justify-content:center"
          title="转到「告警事件」并定位到 ${latest.id}">⚠ 查看告警${alms.length > 1 ? '（' + alms.length + ' 条）' : ''} →</button>`
     : '';
+  // 非无人机目标只允许进入风险监测；通知和驱离缺少真实接口，因此不绑定模拟成功动作。
   document.getElementById('stAct').innerHTML = isUav
     ? `
        <div style="display:flex;gap:8px;margin-top:8px">
@@ -214,12 +215,15 @@ function paintActions() {
          ${U.icon('bolt')} 发起联动反制（不适用）</button>
        <div style="display:flex;gap:8px;margin-top:8px">
          <button class="btn" id="btnVideo" style="flex:1;justify-content:center">${U.icon('video')} 实时视频</button>
-         <button class="btn" id="btnNotify" style="flex:1;justify-content:center">通知机场/周边</button>
-         <button class="btn" id="btnDrive" style="flex:1;justify-content:center">派发驱离</button>
+         <button class="btn" id="btnNotify" style="flex:1;justify-content:center" disabled
+           title="真实接口未接入，暂不能通知机场或周边单位">通知机场/周边（未接入）</button>
+         <button class="btn" id="btnDrive" style="flex:1;justify-content:center" disabled
+           title="真实接口未接入，暂不能派发驱离任务">派发驱离（未接入）</button>
          <button class="btn" id="btnRisk" style="flex:1;justify-content:center">转风险监测 →</button>
        </div>
        <div class="warnbox" style="margin:6px 0 0;padding:6px 9px;font-size:11px;line-height:1.5">
-         §4.2：<b>${t.subtype || t.type}</b>不做合法性判定、不进入反制与处罚流程，仅风险评估与通知/驱离。</div>`;
+         §4.2：<b>${t.subtype || t.type}</b>不做合法性判定、不进入反制与处罚流程；
+         通知/驱离真实接口未接入，当前仅可转风险监测。</div>`;
   bindActions(isUav);
 }
 function bindActions(isUav) {
@@ -236,8 +240,6 @@ function bindActions(isUav) {
   if (isUav) {
     g2('btnReplay').onclick = () => window.TARGET_MEDIA.openReplay(sel);
   } else {
-    g2('btnNotify').onclick = () => toast('已通知东营胜利机场塔台与属地派出所（回执 2/2）', 'ok');
-    g2('btnDrive').onclick = () => toast('已派发驱离作业任务至属地保障单位', 'ok');
     g2('btnRisk').onclick = () => { toast('正在跳转空间安全风险监测…'); setTimeout(() => location.hash = '#/risk', 600); };
   }
 }

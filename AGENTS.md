@@ -2,6 +2,13 @@
 
 本文件适用于整个仓库。前端遵守 [dongying-vue/AGENTS.md](dongying-vue/AGENTS.md)，后端遵守 [server/AGENTS.md](server/AGENTS.md)；各子目录规则不自动套用于另一端。
 
+## Git 分支与提交
+
+- 所有对话只允许在 `main` 分支修改和提交代码。
+- 不得新建或使用其他分支，也不得新建 Git worktree；包括但不限于 `codex/*`、`feature/*` 分支。
+- 开始修改前必须确认当前分支为 `main`。如果当前不在 `main`，或 `main` 被其他 worktree 占用、无法安全切换，停止修改和提交并告知用户，不得自行创建替代分支。
+- 不得把其他分支上的提交合并、变基或拣选到 `main`，除非用户针对该操作另行明确授权。
+
 ## 目录
 
 | 路径 | 内容 |

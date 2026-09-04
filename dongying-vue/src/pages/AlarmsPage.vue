@@ -88,6 +88,7 @@ st.sel = null;
 const T = M.todayAlarms;
 const c = s => T.filter(a => statusOf(a) === s).length;
 const kpiList = computed(() => {
+  // 数据源未通过查询校验时 KPI 必须归零，不能继续展示旧 Mock 快照造成“页面已就绪”错觉。
   const sourceReady = (queryStatus.value === 'ready' || queryStatus.value === 'empty') && Array.isArray(M.alarms);
   const alarmTotal = sourceReady ? M.alarms.length : 0;
   const todayTotal = sourceReady && Array.isArray(T) ? T.length : 0;
@@ -225,6 +226,7 @@ function paint() {
 }
 
 function failQuery(err) {
+  // 错误态同时清列表、选择和地图，避免右侧详情残留上一次成功结果。
   query.items.value = [];
   query.total.value = 0;
   st.sel = null;
@@ -236,6 +238,7 @@ function applyAlarmPage(preferredId = null) {
   try {
     const all = rows();
     let selectedId = preferredId;
+    // 深链只消费一次：定位成功时跳到目标所在页，目标不存在则安全回到第一页。
     if (pendingDeepId) {
       const index = all.findIndex(item => item.id === pendingDeepId);
       if (index >= 0) {
@@ -275,6 +278,7 @@ function applyAlarmPage(preferredId = null) {
 }
 
 async function reloadAlarms() {
+  // 重试先撤销所有旧可视状态，再在下一渲染周期重新校验数据源。
   query.setLoading();
   query.items.value = [];
   query.total.value = 0;
@@ -355,6 +359,7 @@ function focusMap() {
 }
 
 function disposeMap() {
+  // 地图对象持有 DOM 与监听器；错误、重试和卸载都必须走同一释放入口。
   if (map) map.destroy();
   map = null;
 }
@@ -365,6 +370,7 @@ function scrollSelectedRow() {
 }
 
 function initReadyView() {
+  // 只有查询真正进入 ready 后才创建地图，防止空态/错误态背后残留实例。
   if (!mounted || query.status.value !== 'ready') return;
   paint();
   scrollSelectedRow();
@@ -476,6 +482,7 @@ function onPageSize(s2) {
 
 watch(queryStatus, async (status, previous) => {
   if (!mounted) return;
+  // 离开 ready 立即销毁；首次进入 ready 等 DOM 落地后再初始化详情和地图。
   if (previous === 'ready' && status !== 'ready') {
     st.sel = null;
     disposeMap();

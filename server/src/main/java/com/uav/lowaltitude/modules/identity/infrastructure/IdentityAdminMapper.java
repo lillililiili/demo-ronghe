@@ -48,6 +48,7 @@ public interface IdentityAdminMapper {
             FROM app_permission p
             LEFT JOIN app_role_permission rp
               ON rp.permission_code = p.permission_code AND rp.role_code = #{roleCode}
+            WHERE p.permission_kind = 'MODULE'
             ORDER BY p.sort_order
             """)
     List<PermissionRow> listPermissionsForRole(@Param("roleCode") String roleCode);
@@ -56,7 +57,9 @@ public interface IdentityAdminMapper {
             SELECT permission_code AS permissionCode, module_name AS moduleName,
                    route_key AS routeKey, sort_order AS sortOrder,
                    'NONE' AS permissionLevel, FALSE AS menuEnabled
-            FROM app_permission ORDER BY sort_order
+            FROM app_permission
+            WHERE permission_kind = 'MODULE'
+            ORDER BY sort_order
             """)
     List<PermissionRow> listPermissionCatalog();
 

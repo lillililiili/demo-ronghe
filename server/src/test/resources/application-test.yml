@@ -6,6 +6,8 @@ spring:
     password:
   flyway:
     enabled: true
+    locations:
+      - classpath:db/migration
 
 app:
   source-mode: mock

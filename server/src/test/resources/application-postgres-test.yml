@@ -1,0 +1,13 @@
+spring:
+  datasource:
+    url: ${POSTGRES_TEST_URL}
+    username: ${POSTGRES_TEST_USER}
+    password: ${POSTGRES_TEST_PASSWORD}
+  flyway:
+    enabled: false
+
+app:
+  dev-seed:
+    enabled: false
+  live-device:
+    enabled: false

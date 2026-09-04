@@ -34,7 +34,7 @@ public class ProtocolDataRepository {
     public boolean insertInbox(String sourceId, String deviceId, String messageKey, byte[] raw, long now) {
         try {
             jdbc.update("""
-                    INSERT INTO inbox_message (inbox_id,source,source_msg_id,received_at,source_id,
+                    INSERT INTO inbox_message (inbox_id,source,source_msg_id,received_at,ops_source_id,
                         protocol_message_key,payload_sha256,payload_bytes,processing_status)
                     VALUES (?,?,?,?,?,?,?,?, 'RECEIVED')
                     """, UUID.randomUUID().toString(), "live-device:" + deviceId, messageKey, now, sourceId,
@@ -47,14 +47,14 @@ public class ProtocolDataRepository {
 
     public void inboxProcessed(String deviceId, String messageKey, long now) {
         jdbc.update("""
-                UPDATE inbox_message SET processing_status='PROCESSED',processed_at=?,failure_reason=NULL
+                UPDATE inbox_message SET processing_status='PROCESSED',ops_processed_at=?,failure_reason=NULL
                 WHERE source=? AND source_msg_id=?
                 """, now, "live-device:" + deviceId, messageKey);
     }
 
     public void inboxFailed(String deviceId, String messageKey, String reason, long now) {
         jdbc.update("""
-                UPDATE inbox_message SET processing_status='FAILED',processed_at=?,failure_reason=?
+                UPDATE inbox_message SET processing_status='FAILED',ops_processed_at=?,failure_reason=?
                 WHERE source=? AND source_msg_id=?
                 """, now, truncate(reason), "live-device:" + deviceId, messageKey);
     }
@@ -74,7 +74,7 @@ public class ProtocolDataRepository {
                     """, item.classification(), item.categoryCode(), now, now, targetId);
             upsertLatest(targetId, batch.payloadFrameId(), item, observed, now);
             insertTrackPoint(trackId, batch.payloadFrameId(), item, observed, now);
-            jdbc.update("UPDATE track SET last_point_at=?,active=TRUE WHERE track_id=?", now, trackId);
+            jdbc.update("UPDATE ops_track SET last_point_at=?,active=TRUE WHERE track_id=?", now, trackId);
         }
         upsertRuntime(deviceId, "RADAR_TCP_V3_0_0", "ONLINE", "LOGGED_IN", null, now,
                 batch.payloadFrameId(), null, null, batch.items().size(), null, null, null);
@@ -156,7 +156,7 @@ public class ProtocolDataRepository {
     }
 
     public void expireTracks(long before, long now) {
-        jdbc.update("UPDATE track SET active=FALSE WHERE active=TRUE AND last_point_at<?", before);
+        jdbc.update("UPDATE ops_track SET active=FALSE WHERE active=TRUE AND last_point_at<?", before);
         jdbc.update("""
                 UPDATE sensing_target SET active=FALSE,updated_at=? WHERE active=TRUE AND last_seen_at<?
                 """, now, before);
@@ -187,9 +187,9 @@ public class ProtocolDataRepository {
                        s.raw_x_m,s.raw_y_m,s.raw_z_m,s.velocity_x_mps,s.velocity_y_mps,s.velocity_z_mps,
                        s.snr_db,s.rcs_legacy_m2,s.rcs_high_resolution_m2,s.selected,s.longitude_deg,
                        s.latitude_deg,s.derived,s.observed_at,s.received_at,s.frame_id
-                FROM sensing_target t JOIN device d ON d.device_id=t.primary_device_id
-                JOIN target_source_link l ON l.target_id=t.target_id
-                LEFT JOIN target_latest_state s ON s.target_id=t.target_id
+                FROM sensing_target t JOIN ops_device d ON d.device_id=t.primary_device_id
+                JOIN ops_target_source_link l ON l.target_id=t.target_id
+                LEFT JOIN ops_target_latest_state s ON s.target_id=t.target_id
                 WHERE 1=1
                 """ + filters + """
                 ORDER BY t.last_seen_at DESC,t.target_id OFFSET :offset ROWS FETCH NEXT :size ROWS ONLY
@@ -213,7 +213,7 @@ public class ProtocolDataRepository {
 
     public List<Map<String, Object>> trackPoints(String targetId, long from, long to, int limit) {
         return jdbc.queryForList("""
-                SELECT p.* FROM track_point p JOIN track t ON t.track_id=p.track_id
+                SELECT p.* FROM ops_track_point p JOIN ops_track t ON t.track_id=p.track_id
                 WHERE t.target_id=? AND p.received_at>=? AND p.received_at<=?
                 ORDER BY p.received_at DESC,p.track_point_id DESC OFFSET 0 ROWS FETCH NEXT ? ROWS ONLY
                 """, targetId, from, to, limit);
@@ -253,13 +253,13 @@ public class ProtocolDataRepository {
     }
 
     private void insertLinkIfMissing(String id, String targetId, String deviceId, long boot, String externalId, long now) {
-        try { jdbc.update("INSERT INTO target_source_link (link_id,target_id,device_id,radar_boot_micros,external_track_id,created_at) VALUES (?,?,?,?,?,?)",
+        try { jdbc.update("INSERT INTO ops_target_source_link (link_id,target_id,device_id,radar_boot_micros,external_track_id,created_at) VALUES (?,?,?,?,?,?)",
                 id, targetId, deviceId, boot, externalId, now); }
         catch (DataIntegrityViolationException ignored) { }
     }
 
     private void insertTrackIfMissing(String id, String targetId, String deviceId, long boot, String externalId, long observed) {
-        try { jdbc.update("INSERT INTO track (track_id,target_id,device_id,radar_boot_micros,external_track_id,started_at,last_point_at,active) VALUES (?,?,?,?,?,?,?,TRUE)",
+        try { jdbc.update("INSERT INTO ops_track (track_id,target_id,device_id,radar_boot_micros,external_track_id,started_at,last_point_at,active) VALUES (?,?,?,?,?,?,?,TRUE)",
                 id, targetId, deviceId, boot, externalId, observed, observed); }
         catch (DataIntegrityViolationException ignored) { }
     }
@@ -268,12 +268,12 @@ public class ProtocolDataRepository {
         Object[] values = { item.xM(), item.yM(), item.zM(), item.velocityXMps(), item.velocityYMps(), item.velocityZMps(),
                 item.snrDb(), item.legacyRcsM2(), item.highResolutionRcsM2(), item.selected(), observed, now, frameId, targetId };
         int updated = jdbc.update("""
-                UPDATE target_latest_state SET raw_x_m=?,raw_y_m=?,raw_z_m=?,velocity_x_mps=?,velocity_y_mps=?,
+                UPDATE ops_target_latest_state SET raw_x_m=?,raw_y_m=?,raw_z_m=?,velocity_x_mps=?,velocity_y_mps=?,
                     velocity_z_mps=?,snr_db=?,rcs_legacy_m2=?,rcs_high_resolution_m2=?,selected=?,
                     observed_at=?,received_at=?,frame_id=? WHERE target_id=?
                 """, values);
         if (updated == 0) jdbc.update("""
-                INSERT INTO target_latest_state (target_id,raw_x_m,raw_y_m,raw_z_m,velocity_x_mps,velocity_y_mps,
+                INSERT INTO ops_target_latest_state (target_id,raw_x_m,raw_y_m,raw_z_m,velocity_x_mps,velocity_y_mps,
                     velocity_z_mps,snr_db,rcs_legacy_m2,rcs_high_resolution_m2,selected,derived,
                     observed_at,received_at,frame_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,FALSE,?,?,?)
                 """, targetId, item.xM(), item.yM(), item.zM(), item.velocityXMps(), item.velocityYMps(),
@@ -283,7 +283,7 @@ public class ProtocolDataRepository {
 
     private void insertTrackPoint(String trackId, String frameId, TrackItem item, long observed, long now) {
         try { jdbc.update("""
-                INSERT INTO track_point (track_point_id,track_id,frame_id,observed_at,received_at,raw_x_m,raw_y_m,
+                INSERT INTO ops_track_point (track_point_id,track_id,frame_id,observed_at,received_at,raw_x_m,raw_y_m,
                     raw_z_m,velocity_x_mps,velocity_y_mps,velocity_z_mps,snr_db,rcs_legacy_m2,
                     rcs_high_resolution_m2,derived) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,FALSE)
                 """, UUID.randomUUID().toString(), trackId, frameId, observed, now, item.xM(), item.yM(), item.zM(),
@@ -332,7 +332,7 @@ public class ProtocolDataRepository {
         try { json = metrics.isEmpty() ? null : mapper.writeValueAsString(metrics); }
         catch (Exception ex) { throw new IllegalStateException(ex); }
         int updated = jdbc.update("""
-                UPDATE device_state SET connectivity=?,work_state_code=?,health_code=?,observed_at=?,received_at=?,
+                UPDATE ops_device_state SET connectivity=?,work_state_code=?,health_code=?,observed_at=?,received_at=?,
                     last_heartbeat_at=?,metrics_json=COALESCE(?,metrics_json),unknown_reason=?,simulated=FALSE,
                     version=version+1 WHERE device_id=?
                 """, connectivity, "ONLINE".equals(connectivity) ? "REPORTING" : "NO_RESPONSE",
@@ -340,7 +340,7 @@ public class ProtocolDataRepository {
                 "ONLINE".equals(connectivity) ? now : null, json,
                 "ONLINE".equals(connectivity) ? null : "协议会话未收到有效响应", deviceId);
         if (updated == 0) jdbc.update("""
-                INSERT INTO device_state (device_id,connectivity,work_state_code,has_alarm,health_code,
+                INSERT INTO ops_device_state (device_id,connectivity,work_state_code,has_alarm,health_code,
                     observed_at,received_at,last_heartbeat_at,metrics_json,unknown_reason,simulated,version)
                 VALUES (?,?,?,FALSE,?,?,?,?,?,?,FALSE,0)
                 """, deviceId, connectivity, "ONLINE".equals(connectivity) ? "REPORTING" : "NO_RESPONSE",
@@ -350,7 +350,7 @@ public class ProtocolDataRepository {
         if ("ONLINE".equals(connectivity)) metrics.forEach((code, raw) -> {
             if (!(raw instanceof Map<?, ?> metric) || !(metric.get("value") instanceof Number number)) return;
             jdbc.update("""
-                    INSERT INTO device_state_history (state_id,device_id,connectivity,observed_at,received_at,
+                    INSERT INTO ops_device_state_history (state_id,device_id,connectivity,observed_at,received_at,
                         metric_code,metric_value,metric_unit,simulated) VALUES (?,?,?,?,?,?,?,?,FALSE)
                     """, UUID.randomUUID().toString(), deviceId, connectivity, now, now, code,
                     number, metric.get("unit"));

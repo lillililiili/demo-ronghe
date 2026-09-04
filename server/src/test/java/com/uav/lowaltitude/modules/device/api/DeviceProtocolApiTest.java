@@ -88,7 +88,7 @@ class DeviceProtocolApiTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.protocol_code").value("RADAR_TCP_V3_0_0"))
                 .andReturn().getResponse().getContentAsString()).path("data");
-        jdbc.update("UPDATE integration_source SET protocol_code='COUNTERMEASURE_TCP_4CH_V2_0',protocol_version='2.0',allowed_cidrs='198.51.100.0/24' WHERE source_id=?",
+        jdbc.update("UPDATE ops_integration_source SET protocol_code='COUNTERMEASURE_TCP_4CH_V2_0',protocol_version='2.0',allowed_cidrs='198.51.100.0/24' WHERE source_id=?",
                 source.path("source_id").asText());
         mvc.perform(get("/api/v1/commission-tasks/{id}", task.path("commission_id").asText())
                         .header("Authorization", bearer(token)))
@@ -101,7 +101,7 @@ class DeviceProtocolApiTest {
                 String.class, task.path("commission_id").asText())).contains("\"rtk_enabled\":true");
 
         jdbc.update("""
-                INSERT INTO device_state (device_id,connectivity,health_code,received_at,last_heartbeat_at,simulated,version)
+                INSERT INTO ops_device_state (device_id,connectivity,health_code,received_at,last_heartbeat_at,simulated,version)
                 VALUES (?,'ONLINE','GOOD',1,1,FALSE,0)
                 """, deviceId);
         mvc.perform(post("/api/v1/devices/{id}/commands/reboot", deviceId)
@@ -152,8 +152,8 @@ class DeviceProtocolApiTest {
 
     @Test
     void radarPersistenceDeduplicatesTrackExpiresAfterThreeSecondsAndAveragesTwentyRtkFrames() {
-        String deviceId = jdbc.queryForObject("SELECT device_id FROM device WHERE device_no='DEV-MOCK-001'", String.class);
-        String sourceId = jdbc.queryForObject("SELECT source_id FROM device WHERE device_id=?", String.class, deviceId);
+        String deviceId = jdbc.queryForObject("SELECT device_id FROM ops_device WHERE device_no='DEV-MOCK-001'", String.class);
+        String sourceId = jdbc.queryForObject("SELECT source_id FROM ops_device WHERE device_id=?", String.class, deviceId);
         assertThat(protocolData.insertInbox(sourceId, deviceId, "golden:duplicate", new byte[] { 1, 2, 3 }, 1)).isTrue();
         assertThat(protocolData.insertInbox(sourceId, deviceId, "golden:duplicate", new byte[] { 1, 2, 3 }, 2)).isFalse();
         assertThat(jdbc.queryForObject("SELECT payload_sha256 FROM inbox_message WHERE source_msg_id='golden:duplicate'", String.class))
@@ -165,10 +165,10 @@ class DeviceProtocolApiTest {
         TrackBatch batch = new TrackBatch(123L, "998", received, BigDecimal.ZERO, BigDecimal.ONE, 0, 0, List.of(item));
         protocolData.saveTrackBatch(deviceId, "DEV-MOCK-001", batch, received);
         protocolData.saveTrackBatch(deviceId, "DEV-MOCK-001", batch, received);
-        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM track_point p JOIN track t ON t.track_id=p.track_id WHERE t.device_id=? AND t.external_track_id='88'",
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ops_track_point p JOIN ops_track t ON t.track_id=p.track_id WHERE t.device_id=? AND t.external_track_id='88'",
                 Long.class, deviceId)).isEqualTo(1L);
         protocolData.expireTracks(System.currentTimeMillis() - 3000, System.currentTimeMillis());
-        assertThat(jdbc.queryForObject("SELECT active FROM track WHERE device_id=? AND external_track_id='88'", Boolean.class, deviceId)).isFalse();
+        assertThat(jdbc.queryForObject("SELECT active FROM ops_track WHERE device_id=? AND external_track_id='88'", Boolean.class, deviceId)).isFalse();
 
         for (int i = 0; i < 20; i++) protocolData.saveRtk(deviceId, "rtk-" + i,
                 new Rtk(new BigDecimal("37.123456789"), new BigDecimal("118.987654321"),

@@ -11,6 +11,8 @@
 
 已有登录/退出/当前用户、数据库 Bearer 会话、角色权限、审计写入，以及设备台账、状态历史、事件、告警、重启命令与调测任务接口。设备动作由持久化 Outbox Worker 推进；开发模拟结果均显式标记。设备适配层已按 `source_mode + protocol_code` 路由，并实现 T02/兼容机扫雷达 TCP v3.0.0 与固定式四通道网络控制器 v2.0 的只读 live 接入。真实射频发射、雷达启停和正式验收阈值仍关闭。
 
+T02 只读契约与设备运维模型使用独立表：契约表保留 `device/target/track/alarm` 等稳定名称，既有设备运维与 live 感知表使用 `ops_*` 前缀。`device:read/target:read/alarm:read` 是独立动作权限，不能由运维菜单权限或 `ROLE-ADMIN` 名称隐式推导；生产迁移只建目录，不自动授权。合成动作授权同时要求 `local`/`test` profile 与 `app.dev-seed.enabled=true`，生产 profile 即使误开该属性也不会加载授权 Seeder。
+
 ## 本地启动
 
 准备 JDK 17 和 Docker；用 Wrapper 固定 Maven 版本。开发端口为 API 8080、前端 5173。以下数据库必须是隔离开发实例，不使用生产库或已有业务库作试验。
@@ -64,6 +66,14 @@ Linux/macOS：
 ```
 
 核对 `target/surefire-reports` 中的实际用例数、失败及跳过。H2 测试不替代 PostgreSQL/PostGIS 的 SQL、空间查询、锁、约束和迁移验证；新增相关功能时，在隔离真实数据库中补充验证，不连接生产库。
+
+阶段 2 的 PostgreSQL/PostGIS 回归只在显式提供隔离数据库时运行，并且只创建和删除随机的 `stage2_compat_*` schema：
+
+```bash
+POSTGRES_TEST_URL='jdbc:postgresql://127.0.0.1:5432/<isolated-db>' \
+POSTGRES_TEST_USER='<isolated-user>' POSTGRES_TEST_PASSWORD='<isolated-password>' \
+./mvnw -Dtest=PostgresStage2CompatibilityTest test
+```
 
 ## 约定
 

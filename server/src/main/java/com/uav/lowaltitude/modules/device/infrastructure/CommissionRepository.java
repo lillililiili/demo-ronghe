@@ -38,8 +38,8 @@ public class CommissionRepository {
                        COALESCE(t.protocol_version,s.protocol_version) AS resolved_protocol_version,
                        COALESCE(t.allowed_cidrs_snapshot,s.allowed_cidrs) AS resolved_allowed_cidrs,
                        COALESCE(t.source_credential_ref_snapshot,s.credential_ref) AS resolved_source_credential_ref
-                FROM commission_task t JOIN device d ON d.device_id=t.device_id
-                LEFT JOIN integration_source s ON s.source_id=d.source_id
+                FROM commission_task t JOIN ops_device d ON d.device_id=t.device_id
+                LEFT JOIN ops_integration_source s ON s.source_id=d.source_id
                 WHERE t.commission_id=?
                 """, id);
         return rows.isEmpty() ? null : rows.get(0);
@@ -52,8 +52,8 @@ public class CommissionRepository {
                        d.source_mode AS device_source_mode,
                        COALESCE(t.protocol_code,s.protocol_code) AS resolved_protocol_code,
                        COALESCE(t.protocol_version,s.protocol_version) AS resolved_protocol_version
-                FROM commission_task t JOIN device d ON d.device_id=t.device_id
-                LEFT JOIN integration_source s ON s.source_id=d.source_id WHERE 1=1
+                FROM commission_task t JOIN ops_device d ON d.device_id=t.device_id
+                LEFT JOIN ops_integration_source s ON s.source_id=d.source_id WHERE 1=1
                 """);
         add(sql, p, "t.device_id", "device_id", deviceId);
         add(sql, p, "t.status", "status", status);

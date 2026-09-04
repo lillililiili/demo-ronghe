@@ -1,58 +1,66 @@
 # T02 雷达只读后端阶段 2 退出报告
 
 - 日期：2026-09-04
-- 统一基线：`991518b935fda236600ace03e77ece8072b43635`
+- 恢复基线：`9a645b301265eafd5978c71bfd07ccd42c7f2769`
+- 实施分支：`main`
 - 结论：**READY**
-- 未关闭问题：P0 = 0，P1 = 0，P2 = 0
+- 未关闭问题：Critical = 0，Important = 0，Minor = 0
 
-## 交付范围
+## 背景与交付范围
 
-本阶段在只读边界内完成了访问控制结构、授权服务、本地隔离种子和雷达读模型数据库结构。没有新增雷达 HTTP API、replay/live 摄取、设备控制、前端改动或阶段 3 实现。
+阶段 2 的首轮实现曾在设备管理整合前完成；随后整合提交以同名、不同语义的设备与感知表替换了阶段 2 读模型。本次在保留整合后设备管理能力的前提下恢复阶段 2 契约，没有回退或覆盖后续业务代码：
 
-实现提交按整合顺序如下：
+- 新增 `V202609040006__restore_stage2_read_foundation.sql`。既有设备运维与 live 感知表及 Inbox 旧协议列重命名为 `ops_*`，数据、外键和依赖表继续保留；阶段 2 的 `integration_source/device/target/track/alarm` 等稳定表名重新用于 T02 只读模型。
+- 补齐 `device:read`、`target:read`、`alarm:read` 动作权限目录、数据库实时授权服务和 `NONE/ASSIGNED/ALL` 范围决策。动作授权不从会话角色、菜单权限或角色名称推导，也不缓存授权结果。
+- 生产迁移不写入三项动作权限的角色映射。合成授权同时受 `local`/`test` profile 和 `app.dev-seed.enabled=true` 约束；production profile 即使误开属性也不会加载阶段 2 授权 Seeder。
+- PostgreSQL 专属 repeatable migration 提供 GiST、部分唯一索引、表达式索引、WGS-84/空几何约束和组织/区域循环阻断；H2 test profile 只加载可移植迁移。
+- 整合后的身份表已对齐 `permission_code varchar(96)`、`permission_version bigint`、父区域和授权查询索引；Inbox 的 `payload_hash` 只接受 64 位小写十六进制 SHA-256。
+- 既有设备管理仓储和相关回归测试已切换到 `ops_*` 表。原菜单权限查询显式排除 ACTION 权限，避免生成 `device:read.read` 一类错误权限码。
 
-1. `ae854d747cceacfd9eaed9631fdf31fc3d326eef` `feat(server): add read access schema`
-2. `19dbbccb0fe9d7570c322ec7bc2078e025ba370c` `feat(server): enforce read permissions and scopes`
-3. `0b52d41d9b8e7c49b463671ebab521158e45ab20` `feat(server): seed isolated read access`
-4. `f53201eabe850be71306d1b2da5df7b9ed81319e` `feat(server): add radar read model schema`
-5. `8cbf421a3e3d13de5a43fa06d307b2609fab0c39` `test(server): verify stage 2 postgres schema`
-6. `ae7e601e779ba2ed619bd14a3b14a443e64cd460` `fix(server): enforce radar spatial and hierarchy constraints`
-7. `8f1c35bd4420a767e5862322ec1ce71f11f27f77` `fix(server): enforce development seed password gate`
-8. `634c68a1a4bc8e46a8c576128319427638a2a198` `fix(server): harden hierarchy validation`
+本阶段没有新增 T02 雷达 HTTP 查询、replay 摄取、目标/轨迹/告警应用查询、设备控制或前端改动；这些仍属于阶段 3 及后续范围。
 
-## 验收结果
+## 迁移验收
+
+PostgreSQL 验收使用本地隔离测试数据库中的随机 `stage2_compat_<uuid>` schema，测试结束仅清理自己创建且通过固定前缀校验的 schema。实际环境为 PostgreSQL 16.9、PostGIS 3.5.2。
+
+| 路径 | 实际结果 | 覆盖重点 |
+| --- | --- | --- |
+| 空 schema → 最新 | 13 migrations；第二次 migrate 为 0 | 表、类型、索引、空间约束、非法状态、非法哈希、部分唯一键、组织/区域循环 |
+| V1/V2 → 最新 | 后续 11 migrations；第二次 migrate 为 0 | 旧 Inbox 基线和完整升级顺序 |
+| 已有数据的 V5 → V6 | 后续 2 migrations；第二次 migrate 为 0 | 来源、设备、状态历史、Inbox、目标、轨迹及依赖外键在 `ops_*` 重命名后逐值保留 |
+
+测试覆盖设备越界坐标，设备、目标 latest 和轨迹点的 `POINT EMPTY`，重复非空 `(source_id, external_device_id)`，`ABNORMAL`，无来源告警，以及组织/区域循环。测试完成后确认没有残留 `stage2_compat_*` schema。
+
+## 测试与构建证据
 
 | 验收项 | 实际结果 | 结论 |
 | --- | --- | --- |
-| 受影响测试 | 38 tests，0 failures，0 errors，0 skipped | 通过 |
-| PostgreSQL/PostGIS 测试 | 6 tests，0 failures，0 errors，0 skipped | 通过 |
-| 全量 `test` | 47 tests，0 failures，0 errors，0 skipped | 通过 |
-| 全量 `package` | 47 tests，0 failures，0 errors，0 skipped；JAR 已生成 | 通过 |
+| H2 阶段 2 迁移测试 | 6 tests，0 failures，0 errors，0 skipped | 通过 |
+| PostgreSQL/PostGIS 专属测试 | 3 tests，0 failures，0 errors，0 skipped | 通过 |
+| 授权服务测试 | 4 tests，0 failures，0 errors，0 skipped | 通过 |
+| Seeder 环境门禁测试 | 3 tests，0 failures，0 errors，0 skipped | 通过 |
+| 全量 `package` | 59 tests，0 failures，0 errors，0 skipped；JAR 已生成 | 通过 |
 | `git diff --check` | 无输出 | 通过 |
 
-全量测试实际分布：`SourceModeGuardTest` 3、`AccessSchemaMigrationTest` 5、`PostgresStage2SchemaTest` 6、`RadarSchemaMigrationTest` 7、`AuthApiTest` 8、`LoginFailurePersistenceTest` 2、`AccessControlServiceTest` 11、`LocalAccessSeederTest` 5，共 47 项。
+完整测试共 59 项，覆盖原认证、系统管理、审计、设备管理、协议模拟与阶段 2 新增回归。最终 JAR SHA-256 为 `8127050453316e2794c217422f9398b5a5c77bf52df082ded06840c730216184`。
 
-PostgreSQL 验收使用隔离容器 `codex-stage2-pg-01a06afe`，镜像 `postgis/postgis:16-3.5`，仅绑定 `127.0.0.1:61063`。实际版本为 PostgreSQL 16.9、PostGIS 3.5.2。测试覆盖：空库从 V1 迁移、V2 后迁移、重复迁移、geometry/GiST、JSONB、`timestamptz`、部分唯一索引、表达式索引、外键和 CHECK 约束、越界坐标与 `POINT EMPTY`、顺序及并发层级环、非 READ COMMITTED 隔离拒绝、临时表遮蔽防护。测试结束后未残留 `stage2_%` schema。
+构建运行时为 OpenJDK 21.0.12，Maven 编译沿用项目 `<release>17</release>`；本机没有单独的 Java 17 运行时证据。全局 Tencent Maven 镜像发生 TLS 失败后，验收命令使用仅对本次进程生效的 Maven Central settings；仓库和用户 Maven 配置均未修改。
 
-构建运行时为 Temurin OpenJDK 21.0.12；本机未安装可用的 Java 17 运行时，因此未单独执行 Java 17 JVM 验收。Maven 编译使用项目既有 `<release>17</release>`。首次 `package` 受全局 Tencent Maven 镜像 TLS 失败影响，随后使用仅作用于该命令的 Maven Central 临时 settings 成功完成；未修改仓库或用户 Maven 配置。最终 JAR SHA-256 为 `5c6299214b0603c2a61c1a7e5660a7b058b44cf1fba3333d37c674b6b127c289`。
+## 独立审查
 
-## 审查与修正
+第一轮只读审查结论为 `With fixes`，指出生产 Seeder profile 门禁、已有数据的 V5→V6 升级证明及非法样本矩阵不足，并建议补齐哈希格式和身份物理字段。上述项目均已实现并以定向测试通过。
 
-独立只读审查最终确认 P0/P1/P2 均为 0，并建议 READY。审查期间发现的问题均已以回归测试固化：
+第二轮独立只读复核未发现未关闭的 Critical、Important 或 Minor，建议 **READY**。审查任务没有修改文件、分支或验收结果。
 
-- 空几何绕过空间约束与并发层级环问题由 `ae7e601` 修正。
-- 开发种子在已有用户时绕过密码门禁的问题由 `8f1c35b` 修正。
-- 可重复读快照和临时表遮蔽导致层级校验不可靠的问题由 `634c68a` 修正；层级写入明确要求 READ COMMITTED。
+## 基线与上线边界
 
-## 基线完整性
+V1/V2 未修改，当前 SHA-256 为：
 
-阶段 1 文档、阶段 2 计划以及 V1/V2 迁移均未被阶段 2 实现修改。V1/V2 与 `origin/main` 的对应文件逐字节一致：
+- `V1__init.sql`：`a2889567e5c925814b7b18c0301ef42d0b3022286dcd0d8e64b23f09cd6d632c`
+- `V2__outbox_inbox.sql`：`4f3ca4794a7a9c7a34cd2fae1396b00b377fcf3e39a334826bff2cfe8e5af87c`
 
-- `V1__init.sql` SHA-256：`a2889567e5c925814b7b18c0301ef42d0b3022286dcd0d8e64b23f09cd6d632c`
-- `V2__outbox_inbox.sql` SHA-256：`4f3ca4794a7a9c7a34cd2fae1396b00b377fcf3e39a334826bff2cfe8e5af87c`
-
-阶段 1 文档与阶段 2 计划的内容哈希复核通过。用户未跟踪资料保持原状，未纳入任何阶段 2 提交。
+用户未跟踪资料、计划文件和设备资料保持原状，未纳入阶段 2 交付。由于 V6 会重命名设备运维表和 Inbox 旧协议列，上线必须在维护窗口内将迁移与对应 `ops_*` 应用代码作为同一版本部署，不适合让 V5 与 V6 应用节点滚动并存。
 
 ## 退出判定
 
-阶段 2 的授权结构、雷达结构、隔离种子、数据库实测及独立审查均达到计划退出条件，判定 **READY**。阶段 3 未启动；如需进入阶段 3，应另行授权。
+阶段 2 的兼容迁移、动作权限、范围决策、环境隔离、真实 PostgreSQL/PostGIS 升级验证及独立审查均达到退出条件，判定 **READY**。阶段 3 尚未启动。

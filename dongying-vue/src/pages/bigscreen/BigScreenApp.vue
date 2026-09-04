@@ -7,14 +7,14 @@ import {
   NotificationsOutline,
   RadioOutline
 } from '@vicons/ionicons5';
+import PageQueryShell from '@/components/PageQueryShell.vue';
 import { theme, themeOverrides } from '@/ui/theme.js';
 
-const M = window.MOCK;
-const U = window.UI;
-const E = window.EVT;
-
-const clock = ref(M.systemNowStr());
+const clock = ref('—');
 const viewportHeight = ref(window.innerHeight);
+const queryStatus = ref('idle');
+const queryError = ref('');
+const screenData = ref(null);
 const showVideo = ref(false);
 const selectedTarget = ref(null);
 const trendEl = ref(null);
@@ -28,6 +28,80 @@ let clockTimer = null;
 let resizeTimer = null;
 let map = null;
 let video = null;
+let mapHint = null;
+let runtimeChart = null;
+let lifecycleGeneration = 0;
+let mounted = false;
+let runtimeStarted = false;
+
+/* 整屏空态只在所有可见业务集合均为空时成立；任一集合有数据仍展示 ready。 */
+const VISIBLE_COLLECTION_KEYS = [
+  'liveTargets', 'todayTargets', 'cases', 'evidenceFiles', 'todayAlarms',
+  'devices', 'flightPlans', 'statsDays', 'airspaces'
+];
+
+function isRecord(value) {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function requireRecord(name, value) {
+  if (!isRecord(value)) throw new TypeError(`大屏本地数据无效：${name} 必须是对象`);
+  return value;
+}
+
+function requireObjectArray(name, value) {
+  if (!Array.isArray(value) || !value.every(isRecord)) {
+    throw new TypeError(`大屏本地数据无效：${name} 必须是对象数组`);
+  }
+  return value;
+}
+
+function requireFunction(name, value) {
+  if (typeof value !== 'function') throw new TypeError(`大屏本地数据无效：${name} 必须是函数`);
+  return value;
+}
+
+function validateBigScreenData() {
+  // 每轮都从 window 重新取并校验依赖，重试后不会继续使用首次加载时缓存的旧全局对象。
+  const mock = requireRecord('MOCK', window.MOCK);
+  const ui = requireRecord('UI', window.UI);
+  const stats = requireRecord('MOCK.stats', mock.stats);
+  const deviceStats = requireRecord('MOCK.deviceStats', mock.deviceStats);
+  for (const key of ['onlineRate', 'offline', 'abnormal', 'alarm']) {
+    if (!Number.isFinite(deviceStats[key])) {
+      throw new TypeError(`大屏本地数据无效：MOCK.deviceStats.${key} 必须是有限数值`);
+    }
+  }
+  const chart = requireRecord('CH', window.CH);
+  requireRecord('CH.C', chart.C);
+  for (const key of ['line', 'donut', 'ring', 'bar', 'disposeEl']) requireFunction(`CH.${key}`, chart[key]);
+  requireFunction('MapView', window.MapView);
+  requireFunction('EOVideo', window.EOVideo);
+  requireFunction('UI.goto', ui.goto);
+  const systemNowStr = requireFunction('MOCK.systemNowStr', mock.systemNowStr).bind(mock);
+  const initialClock = systemNowStr();
+  if (typeof initialClock !== 'string') throw new TypeError('大屏本地数据无效：MOCK.systemNowStr 必须返回字符串');
+  // 返回本轮一致性快照，后续渲染只能消费这组已通过校验的数据和运行时依赖。
+  return {
+    liveTargets: requireObjectArray('MOCK.liveTargets', mock.liveTargets),
+    todayTargets: requireObjectArray('MOCK.todayTargets', mock.todayTargets),
+    cases: requireObjectArray('MOCK.cases', mock.cases),
+    evidenceFiles: requireObjectArray('MOCK.evidenceFiles', mock.evidenceFiles),
+    todayAlarms: requireObjectArray('MOCK.todayAlarms', mock.todayAlarms),
+    devices: requireObjectArray('MOCK.devices', mock.devices),
+    flightPlans: requireObjectArray('MOCK.flightPlans', mock.flightPlans),
+    statsDays: requireObjectArray('MOCK.stats.days', stats.days),
+    airspaces: requireObjectArray('MOCK.airspaces', mock.airspaces),
+    deviceStats,
+    caseNoticeStatus: requireFunction('MOCK.caseNoticeStatus', mock.caseNoticeStatus).bind(mock),
+    goto: ui.goto.bind(ui), chart, MapView: window.MapView, EOVideo: window.EOVideo,
+    systemNowStr, initialClock
+  };
+}
+
+function hasVisibleBusinessData(data) {
+  return VISIBLE_COLLECTION_KEYS.some(key => data[key].length > 0);
+}
 
 const riskScore = { 高风险: 3, 中风险: 2, 低风险: 1 };
 const alarmColor = { 高: 'var(--red)', 中: 'var(--amber)', 低: 'var(--cyan)' };
@@ -36,9 +110,13 @@ const alarmFlowScore = { 待核实: 0, 反制中: 1, 干扰中: 2, 待处置: 3,
 const legacyFlowStatus = { 新建: '待核实', 已确认: '待核实', 处置中: '反制中', 已关闭: '待处置', 误报: '误报' };
 
 const noticeTick = ref(0);
+// 小高度窗口减少告警行数，确保大屏纵向内容不挤压到视口之外。
 const rowLimit = computed(() => viewportHeight.value < 760 ? 2 : viewportHeight.value < 850 ? 3 : 4);
 const alarmFlowStatus = alarm => alarm.flowStatus || legacyFlowStatus[alarm.status] || alarm.status || '待核实';
-const noticeStatus = item => { noticeTick.value; return M.caseNoticeStatus(item); };
+const noticeStatus = item => {
+  noticeTick.value;
+  return screenData.value ? screenData.value.caseNoticeStatus(item) : '待通知';
+};
 const isEvidenceException = item => item.verifyState !== '完好';
 const isPlanDeviated = plan => {
   const d = plan.deviation;
@@ -48,65 +126,80 @@ const isPlanDeviated = plan => {
     || (d.altDelta != null && Math.abs(d.altDelta) > 20);
 };
 
-const targetAll = computed(() => M.liveTargets.filter(t => t.type === '无人机').slice().sort((a, b) =>
-  (riskScore[b.risk] || 0) - (riskScore[a.risk] || 0)
-  || Number(b.legal === '待确认') - Number(a.legal === '待确认')
-  || Number(!!b.tracked) - Number(!!a.tracked)
-  || b.ts - a.ts
-));
-const judgementPending = computed(() => M.todayTargets.filter(t =>
-  t.type === '无人机' && (t.legal === '非法' || t.legal === '待确认')).length);
-const pendingCases = computed(() => M.cases.filter(c => c.status !== '已结案' || noticeStatus(c) === '待通知'));
-const evidenceExceptions = computed(() => M.evidenceFiles.filter(isEvidenceException));
+function rankTargets(items) {
+  return items.filter(t => t.type === '无人机').slice().sort((a, b) =>
+    (riskScore[b.risk] || 0) - (riskScore[a.risk] || 0)
+    || Number(b.legal === '待确认') - Number(a.legal === '待确认')
+    || Number(!!b.tracked) - Number(!!a.tracked)
+    || b.ts - a.ts
+  );
+}
 
-const alarmAll = computed(() => M.todayAlarms.slice().map(a => ({ ...a, _flowStatus: alarmFlowStatus(a) })).sort((a, b) =>
-  (alarmFlowScore[a._flowStatus] ?? 99) - (alarmFlowScore[b._flowStatus] ?? 99)
-  || (alarmLevelScore[b.level] || 0) - (alarmLevelScore[a.level] || 0)
-  || b.ts - a.ts
-));
+const targetAll = computed(() => rankTargets(screenData.value ? screenData.value.liveTargets : []));
+const judgementPending = computed(() => screenData.value ? screenData.value.todayTargets.filter(t =>
+  t.type === '无人机' && (t.legal === '非法' || t.legal === '待确认')).length : 0);
+const pendingCases = computed(() => screenData.value
+  ? screenData.value.cases.filter(c => c.status !== '已结案' || noticeStatus(c) === '待通知') : []);
+const evidenceExceptions = computed(() => screenData.value
+  ? screenData.value.evidenceFiles.filter(isEvidenceException) : []);
+
+const alarmAll = computed(() => screenData.value ? screenData.value.todayAlarms.slice()
+  .map(a => ({ ...a, _flowStatus: alarmFlowStatus(a) })).sort((a, b) =>
+    (alarmFlowScore[a._flowStatus] ?? 99) - (alarmFlowScore[b._flowStatus] ?? 99)
+    || (alarmLevelScore[b.level] || 0) - (alarmLevelScore[a.level] || 0)
+    || b.ts - a.ts
+  ) : []);
 const alarms = computed(() => alarmAll.value.slice(0, rowLimit.value));
 
-const deviceExceptions = computed(() => M.devices.filter(d => d.status !== '在线' || d.alarm).slice().sort((a, b) =>
-  Number(!!b.alarm) - Number(!!a.alarm)
-  || ({ 异常: 3, 离线: 2, 在线: 1 }[b.status] || 0) - ({ 异常: 3, 离线: 2, 在线: 1 }[a.status] || 0)
-  || (b.hbMin || 0) - (a.hbMin || 0)
-));
-const flightPlans = computed(() => M.flightPlans || []);
-const flightMetrics = computed(() => [
-  { label: '今日计划', value: flightPlans.value.length, page: 'flights' },
-  { label: '执行中', value: flightPlans.value.filter(p => p.status === '执行中').length, page: 'flights' },
-  { label: '未匹配', value: flightPlans.value.filter(p => p.matched === '未匹配感知目标').length, page: 'flights' },
-  { label: '偏离计划', value: flightPlans.value.filter(isPlanDeviated).length, page: 'flights', tone: 'bad' }
-]);
+const deviceExceptions = computed(() => screenData.value ? screenData.value.devices
+  .filter(d => d.status !== '在线' || d.alarm).slice().sort((a, b) =>
+    Number(!!b.alarm) - Number(!!a.alarm)
+    || ({ 异常: 3, 离线: 2, 在线: 1 }[b.status] || 0) - ({ 异常: 3, 离线: 2, 在线: 1 }[a.status] || 0)
+    || (b.hbMin || 0) - (a.hbMin || 0)
+  ) : []);
+function buildFlightMetrics(plans) {
+  return [
+    { label: '今日计划', value: plans.length, page: 'flights' },
+    { label: '执行中', value: plans.filter(p => p.status === '执行中').length, page: 'flights' },
+    { label: '未匹配', value: plans.filter(p => p.matched === '未匹配感知目标').length, page: 'flights' },
+    { label: '偏离计划', value: plans.filter(isPlanDeviated).length, page: 'flights', tone: 'bad' }
+  ];
+}
 
 const closureItems = computed(() => [
   { label: '待核实告警', value: alarmAll.value.filter(a => a._flowStatus === '待核实').length, page: 'alarms', tone: 'warn', icon: NotificationsOutline },
   { label: '反制 / 干扰中', value: alarmAll.value.filter(a => ['反制中', '干扰中'].includes(a._flowStatus)).length, page: 'alarms', tone: 'bad', icon: RadioOutline },
-  { label: '待通知案件', value: M.cases.filter(c => noticeStatus(c) === '待通知').length, page: 'punish', tone: 'warn', icon: BriefcaseOutline },
+  { label: '待通知案件', value: screenData.value ? screenData.value.cases.filter(c => noticeStatus(c) === '待通知').length : 0, page: 'punish', tone: 'warn', icon: BriefcaseOutline },
   { label: '证据异常', value: evidenceExceptions.value.length, page: 'evidence', tone: evidenceExceptions.value.length ? 'bad' : 'good', icon: DocumentAttachOutline }
 ]);
 
-const kpis = computed(() => {
-  const counts = E.counts();
-  return [
-    { label: '今日感知目标', value: counts.found, color: '#ffd53d', page: 'situation' },
-    { label: '今日告警', value: alarmAll.value.length, color: 'var(--cyan)', page: 'alarms' },
-    { label: '待研判目标', value: judgementPending.value, color: 'var(--amber)', page: 'legality' },
-    { label: '待处置案件', value: pendingCases.value.length, color: 'var(--red)', page: 'punish' }
-  ];
-});
+/* EVT.counts().found 的原有口径：今日目标中排除遥控器。 */
+const kpis = computed(() => [
+  { label: '今日感知目标', value: screenData.value ? screenData.value.todayTargets.filter(t => t.type !== '遥控器').length : 0, color: '#ffd53d', page: 'situation' },
+  { label: '今日告警', value: alarmAll.value.length, color: 'var(--cyan)', page: 'alarms' },
+  { label: '待研判目标', value: judgementPending.value, color: 'var(--amber)', page: 'legality' },
+  { label: '待处置案件', value: pendingCases.value.length, color: 'var(--red)', page: 'punish' }
+]);
 
 const targetSummary = computed(() => `实时 ${targetAll.value.length} 架 · 高风险 ${targetAll.value.filter(t => t.risk === '高风险').length}`);
-const deviceSummary = computed(() => `在线率 ${M.deviceStats.onlineRate}% · 关注 ${deviceExceptions.value.length}`);
+const deviceSummary = computed(() => `在线率 ${screenData.value ? screenData.value.deviceStats.onlineRate : 0}% · 关注 ${deviceExceptions.value.length}`);
 const alarmSummary = computed(() => `今日 ${alarmAll.value.length} 条 · 待核实 ${alarmAll.value.filter(a => a._flowStatus === '待核实').length}`);
-const opticalDevice = computed(() => M.devices.find(d => d.type === '光电' && d.status === '在线'));
+const opticalDevice = computed(() => screenData.value
+  ? screenData.value.devices.find(d => d.type === '光电' && d.status === '在线') : null);
 
 const mono = text => h('span', { class: 'mono' }, text);
 const colored = (text, color) => h('span', { style: { color } }, text);
 
 function go(page, context) {
   showVideo.value = false;
-  U.goto(page, context);
+  const data = screenData.value;
+  if (!data) return;
+  // 旧 UI 跳转也纳入 ready 运行时异常边界，失败时整屏退出就绪态。
+  try {
+    data.goto(page, context);
+  } catch (err) {
+    failReadyRuntime(err);
+  }
 }
 
 function goAlarm(row) {
@@ -115,6 +208,7 @@ function goAlarm(row) {
 }
 
 function rowProps(action, label) {
+  // 表格行同时支持鼠标、Enter 和 Space，保持与真正链接一致的可访问操作。
   return row => ({
     class: ['bs-clickable-row', row.level ? `is-${row.level}` : ''],
     role: 'link',
@@ -139,36 +233,39 @@ const alarmColumns = [
   { title: '状态', key: '_flowStatus' }
 ];
 
-function renderCharts() {
-  const days = M.stats.days.slice(-7);
+function renderCharts(data) {
+  if (!data) return;
+  const days = data.statsDays.slice(-7);
+  const targets = rankTargets(data.liveTargets);
+  const flightMetrics = buildFlightMetrics(data.flightPlans);
   const gradedTargets = ['高风险', '中风险', '低风险'].reduce((sum, level) =>
-    sum + targetAll.value.filter(t => t.risk === level).length, 0);
-  window.CH.line(trendEl.value, {
+    sum + targets.filter(t => t.risk === level).length, 0);
+  data.chart.line(trendEl.value, {
     x: days.map(x => x.md),
     series: [
-      { name: '发现目标', data: days.map(x => x.total), color: window.CH.C.blue, area: true },
-      { name: '非法目标', data: days.map(x => x.illegal), color: window.CH.C.red }
+      { name: '发现目标', data: days.map(x => x.total), color: data.chart.C.blue, area: true },
+      { name: '非法目标', data: days.map(x => x.illegal), color: data.chart.C.red }
     ]
   });
-  window.CH.donut(targetChartEl.value, {
+  data.chart.donut(targetChartEl.value, {
     data: [
-      { name: '高风险', value: targetAll.value.filter(t => t.risk === '高风险').length, c: window.CH.C.red },
-      { name: '中风险', value: targetAll.value.filter(t => t.risk === '中风险').length, c: window.CH.C.amber },
-      { name: '低风险', value: targetAll.value.filter(t => t.risk === '低风险').length, c: window.CH.C.green },
-      { name: '未定级', value: Math.max(0, targetAll.value.length - gradedTargets), c: window.CH.C.gray }
+      { name: '高风险', value: targets.filter(t => t.risk === '高风险').length, c: data.chart.C.red },
+      { name: '中风险', value: targets.filter(t => t.risk === '中风险').length, c: data.chart.C.amber },
+      { name: '低风险', value: targets.filter(t => t.risk === '低风险').length, c: data.chart.C.green },
+      { name: '未定级', value: Math.max(0, targets.length - gradedTargets), c: data.chart.C.gray }
     ],
-    centerLabel: '重点目标', centerValue: targetAll.value.length, showPct: false,
+    centerLabel: '重点目标', centerValue: targets.length, showPct: false,
     narrow: false, center: ['31%', '50%'], radius: ['45%', '66%']
   });
-  window.CH.ring(deviceChartEl.value, {
-    value: M.deviceStats.onlineRate, label: '设备在线率', color: window.CH.C.cyan, fs: 24
+  data.chart.ring(deviceChartEl.value, {
+    value: data.deviceStats.onlineRate, label: '设备在线率', color: data.chart.C.cyan, fs: 24
   });
-  window.CH.bar(flightChartEl.value, {
-    x: flightMetrics.value.map(item => item.label), legend: false,
+  data.chart.bar(flightChartEl.value, {
+    x: flightMetrics.map(item => item.label), legend: false,
     grid: { left: 30, right: 8, top: 20, bottom: 24 },
     series: [{
-      name: '数量', data: flightMetrics.value.map(item => item.value), width: 24,
-      colorBy: p => p.dataIndex === 3 ? window.CH.C.red : [window.CH.C.blue, window.CH.C.green, window.CH.C.amber][p.dataIndex]
+      name: '数量', data: flightMetrics.map(item => item.value), width: 24,
+      colorBy: p => p.dataIndex === 3 ? data.chart.C.red : [data.chart.C.blue, data.chart.C.green, data.chart.C.amber][p.dataIndex]
     }]
   });
 }
@@ -179,79 +276,226 @@ function openVideo(target) {
   showVideo.value = true;
 }
 
-function renderMap() {
-  map = new window.MapView(mapEl.value, {
+function renderMap(data) {
+  if (!data || !mapEl.value) return;
+  map = new data.MapView(mapEl.value, {
     zoom: 1.06,
     maxDev: 46,
     maxAlarm: 8,
     onPick: pick => {
-      if (!pick || pick.kind !== 'target' || !pick.data || pick.data.type !== '无人机') return;
+      if (!map || !pick || pick.kind !== 'target' || !pick.data || pick.data.type !== '无人机') return;
       map.sel = pick.data.id;
       map.draw();
       openVideo(pick.data);
     }
   });
-  const hint = document.createElement('div');
-  hint.className = 'bs-map-hint';
-  hint.textContent = '点击地图上的无人机查看实时视频';
-  mapEl.value.appendChild(hint);
+  mapHint = document.createElement('div');
+  mapHint.className = 'bs-map-hint';
+  mapHint.textContent = '点击地图上的无人机查看实时视频';
+  mapEl.value.appendChild(mapHint);
+  refreshMapData(data);
+}
+
+function refreshMapData(data) {
+  if (!data || !map) return;
   map.setData({
-    airspaces: M.airspaces,
-    devices: M.devices.filter((d, i) => i % 4 === 0),
-    targets: M.liveTargets,
-    alarms: M.todayAlarms.slice(0, 8)
+    airspaces: data.airspaces,
+    devices: data.devices.filter((d, i) => i % 4 === 0),
+    targets: data.liveTargets,
+    alarms: data.todayAlarms.slice(0, 8)
   });
+}
+
+function runCleanup(cleanup) {
+  // 清理采用逐项容错：某个第三方实例销毁失败，不能阻断计时器、地图等其余资源释放。
+  try { cleanup(); } catch (err) { /* 单个资源失败不得阻断其余回滚。 */ }
 }
 
 function destroyVideo() {
-  if (video) video.destroy();
+  const currentVideo = video;
   video = null;
+  if (currentVideo) runCleanup(() => currentVideo.destroy());
 }
 
 async function mountVideo() {
-  destroyVideo();
-  if (!showVideo.value || !selectedTarget.value) return;
-  await nextTick();
-  if (!videoEl.value) return;
-  video = new window.EOVideo(videoEl.value, {
-    height: Math.max(300, Math.min(430, window.innerHeight * .46)),
-    targetId: selectedTarget.value.id,
-    device: opticalDevice.value ? opticalDevice.value.name : undefined,
-    locked: !!selectedTarget.value.tracked
-  });
+  try {
+    destroyVideo();
+    const data = screenData.value;
+    if (queryStatus.value !== 'ready' || !data || !showVideo.value || !selectedTarget.value) return;
+    await nextTick();
+    if (queryStatus.value !== 'ready' || !videoEl.value || !selectedTarget.value) return;
+    video = new data.EOVideo(videoEl.value, {
+      height: Math.max(300, Math.min(430, window.innerHeight * .46)),
+      targetId: selectedTarget.value.id,
+      device: opticalDevice.value ? opticalDevice.value.name : undefined,
+      locked: !!selectedTarget.value.tracked
+    });
+  } catch (err) {
+    failReadyRuntime(err);
+  }
 }
 
 watch([showVideo, selectedTarget], ([visible]) => {
-  if (visible) mountVideo();
+  if (queryStatus.value === 'ready' && visible) void mountVideo();
   else destroyVideo();
 }, { flush: 'post' });
 
 function handleResize() {
   clearTimeout(resizeTimer);
-  resizeTimer = window.setTimeout(() => { viewportHeight.value = window.innerHeight; }, 120);
+  resizeTimer = window.setTimeout(() => {
+    resizeTimer = null;
+    viewportHeight.value = window.innerHeight;
+  }, 120);
 }
 
-function bumpNotice() { noticeTick.value++; }
+function disposeBigScreenCharts() {
+  const chart = runtimeChart;
+  runtimeChart = null;
+  if (!chart || typeof chart.disposeEl !== 'function') return;
+  [trendEl, targetChartEl, deviceChartEl, flightChartEl]
+    .forEach(host => runCleanup(() => chart.disposeEl(host.value)));
+}
+
+function adoptChartRuntime(nextChart) {
+  if (runtimeChart === nextChart) return;
+  disposeBigScreenCharts();
+  runtimeChart = nextChart;
+}
+
+function invalidateLifecycle() {
+  // 代际号使旧的异步 continuation 自动失效，避免连续刷新后旧任务重新挂载资源。
+  lifecycleGeneration += 1;
+  return lifecycleGeneration;
+}
+
+function stopReadyRuntime() {
+  // ready 的所有副作用集中在一个出口清理，错误、空态、重试和卸载共享同一规则。
+  invalidateLifecycle();
+  const currentClockTimer = clockTimer;
+  clockTimer = null;
+  if (currentClockTimer != null) runCleanup(() => clearInterval(currentClockTimer));
+  const currentResizeTimer = resizeTimer;
+  resizeTimer = null;
+  if (currentResizeTimer != null) runCleanup(() => clearTimeout(currentResizeTimer));
+  runCleanup(() => window.removeEventListener('resize', handleResize));
+  runCleanup(() => window.removeEventListener('evt:advance', bumpNotice));
+  showVideo.value = false;
+  selectedTarget.value = null;
+  destroyVideo();
+  const currentMap = map;
+  map = null;
+  if (currentMap) runCleanup(() => currentMap.destroy());
+  const currentMapHint = mapHint;
+  mapHint = null;
+  if (currentMapHint) runCleanup(() => currentMapHint.remove());
+  disposeBigScreenCharts();
+  clock.value = '—';
+  runtimeStarted = false;
+}
+
+function startReadyRuntime() {
+  const data = screenData.value;
+  if (!mounted || queryStatus.value !== 'ready' || !data) return;
+  if (runtimeStarted) stopReadyRuntime();
+  runtimeStarted = true;
+  runtimeChart = data.chart;
+  try {
+    clock.value = data.initialClock;
+    clockTimer = window.setInterval(() => {
+      try {
+        const currentData = screenData.value;
+        if (!currentData) throw new Error('大屏运行数据已失效');
+        const nextClock = currentData.systemNowStr();
+        if (typeof nextClock !== 'string') throw new TypeError('MOCK.systemNowStr 必须返回字符串');
+        clock.value = nextClock;
+      } catch (err) {
+        failReadyRuntime(err);
+      }
+    }, 1000);
+    window.addEventListener('resize', handleResize);
+    window.addEventListener('evt:advance', bumpNotice);
+    renderCharts(data);
+    renderMap(data);
+  } catch (err) {
+    failReadyRuntime(err);
+  }
+}
+
+function failBigScreen(err) {
+  screenData.value = null;
+  queryError.value = err instanceof Error ? err.message : String(err || '大屏本地数据无效');
+  queryStatus.value = 'error';
+}
+
+function failReadyRuntime(err) {
+  stopReadyRuntime();
+  failBigScreen(err);
+}
+
+async function reloadBigScreen() {
+  if (runtimeStarted) stopReadyRuntime();
+  const generation = invalidateLifecycle();
+  queryStatus.value = 'loading';
+  queryError.value = '';
+  screenData.value = null;
+  await nextTick();
+  // 等待 DOM 切到 loading 后再校验；若期间又触发刷新，本轮结果直接作废。
+  if (!mounted || generation !== lifecycleGeneration || queryStatus.value !== 'loading') return;
+  try {
+    const data = validateBigScreenData();
+    screenData.value = data;
+    queryStatus.value = hasVisibleBusinessData(data) ? 'ready' : 'empty';
+  } catch (err) {
+    failBigScreen(err);
+  }
+}
+
+async function refreshBigScreenData() {
+  if (queryStatus.value !== 'ready') return;
+  const generation = invalidateLifecycle();
+  try {
+    // 事件刷新重新校验当前全局对象，不能沿用上一次 ready 时的 MOCK/UI/CH。
+    const data = validateBigScreenData();
+    if (!mounted || generation !== lifecycleGeneration || queryStatus.value !== 'ready') return;
+    if (!hasVisibleBusinessData(data)) {
+      screenData.value = null;
+      queryStatus.value = 'empty';
+      return;
+    }
+    screenData.value = data;
+    clock.value = data.initialClock;
+    await nextTick();
+    if (!mounted || generation !== lifecycleGeneration || queryStatus.value !== 'ready') return;
+    adoptChartRuntime(data.chart);
+    renderCharts(data);
+    refreshMapData(data);
+  } catch (err) {
+    failReadyRuntime(err);
+  }
+}
+
+function bumpNotice() {
+  noticeTick.value++;
+  void refreshBigScreenData();
+}
+
+watch(queryStatus, async (status, previous) => {
+  const generation = lifecycleGeneration;
+  if (!mounted) return;
+  if (previous === 'ready' && status !== 'ready' && runtimeStarted) stopReadyRuntime();
+  if (status !== 'ready' || previous === 'ready') return;
+  await nextTick();
+  if (mounted && generation === lifecycleGeneration && queryStatus.value === 'ready') startReadyRuntime();
+}, { flush: 'pre' });
 
 onMounted(() => {
-  clockTimer = window.setInterval(() => { clock.value = M.systemNowStr(); }, 1000);
-  window.addEventListener('resize', handleResize);
-  window.addEventListener('evt:advance', bumpNotice);
-  requestAnimationFrame(() => {
-    renderCharts();
-    renderMap();
-  });
+  mounted = true;
+  reloadBigScreen();
 });
 
 onBeforeUnmount(() => {
-  clearInterval(clockTimer);
-  clearTimeout(resizeTimer);
-  window.removeEventListener('resize', handleResize);
-  window.removeEventListener('evt:advance', bumpNotice);
-  destroyVideo();
-  if (map) map.destroy();
-  map = null;
-  window.CH.disposeAll();
+  mounted = false;
+  stopReadyRuntime();
 });
 </script>
 
@@ -261,10 +505,22 @@ onBeforeUnmount(() => {
       <header class="bs-hdr">
         <div class="bs-hdr-l"><img src="/assets/img/brand/logo-mark.png" alt="" width="30" height="30">无人机融合感知与低空安全管理平台</div>
         <div class="bs-hdr-t"><i class="bs-wing" aria-hidden="true"></i><span>低空安全数据大屏</span><i class="bs-wing r" aria-hidden="true"></i></div>
-        <div class="bs-hdr-r"><span class="bs-clock">{{ clock }}</span><n-button class="bs-exit" tag="a" href="#/situation" size="small" ghost title="返回业务系统">退出大屏</n-button></div>
+        <div class="bs-hdr-r">
+          <span v-if="queryStatus === 'ready'" style="color:#8ed9ff;font-size:11px">Mock 演示数据 · 未接入大屏业务数据接口</span>
+          <span class="bs-clock">{{ clock }}</span>
+          <n-button class="bs-exit" tag="a" href="#/situation" size="small" ghost title="返回业务系统">退出大屏</n-button>
+        </div>
       </header>
 
-      <div class="bs-grid">
+      <PageQueryShell
+        :status="queryStatus"
+        loading-text="正在校验大屏 Mock 演示数据…"
+        empty-title="暂无大屏业务数据"
+        empty-description="当前大屏可见业务集合均为空。数据源仍为 Mock 演示数据。"
+        error-title="大屏数据加载失败"
+        :error-message="queryError || '本地演示数据无效，且不会显示部分或旧数据。'"
+        @retry="reloadBigScreen">
+        <div class="bs-grid">
         <aside class="bs-col">
           <section class="panel">
             <div class="ph"><h3>感知与违法趋势</h3><div class="bs-panel-meta"><span class="sub">近 7 日</span><button class="bs-module-link" @click="go('stats')">进入统计 →</button></div></div>
@@ -308,9 +564,9 @@ onBeforeUnmount(() => {
               <div class="bs-device-chart-wrap">
                 <div ref="deviceChartEl" class="bs-panel-chart is-ring is-clickable" role="link" tabindex="0" aria-label="进入设备监测" @click="go('monitor')" @keydown.enter="go('monitor')" @keydown.space.prevent="go('monitor')"></div>
                 <div class="bs-device-legend">
-                  <button @click="go('monitor')"><i class="is-offline"></i><span>离线</span><b>{{ M.deviceStats.offline }}</b></button>
-                  <button @click="go('monitor')"><i class="is-abnormal"></i><span>异常</span><b>{{ M.deviceStats.abnormal }}</b></button>
-                  <button @click="go('monitor')"><i class="is-alarm"></i><span>告警设备</span><b>{{ M.deviceStats.alarm }}</b></button>
+                  <button @click="go('monitor')"><i class="is-offline"></i><span>离线</span><b>{{ screenData?.deviceStats.offline }}</b></button>
+                  <button @click="go('monitor')"><i class="is-abnormal"></i><span>异常</span><b>{{ screenData?.deviceStats.abnormal }}</b></button>
+                  <button @click="go('monitor')"><i class="is-alarm"></i><span>告警设备</span><b>{{ screenData?.deviceStats.alarm }}</b></button>
                 </div>
               </div>
             </div>
@@ -330,17 +586,21 @@ onBeforeUnmount(() => {
             </div>
           </section>
         </aside>
-      </div>
-    </div>
-
-    <n-modal v-model:show="showVideo" :auto-focus="false" @after-leave="destroyVideo">
-      <n-card class="bs-video-card" :title="`实时视频 · ${selectedTarget?.id || ''}`" closable :bordered="true" role="dialog" aria-modal="true" @close="showVideo = false">
-        <div v-if="selectedTarget" class="bs-video-modal">
-          <div class="bs-video-meta"><span>{{ opticalDevice?.name || '光电设备' }} · EO 可见光 · 4K</span><span class="bs-video-state" :class="{ 'is-tracked': selectedTarget.tracked }"><i></i>{{ selectedTarget.tracked ? '锁定跟踪中' : '实时预览' }}</span></div>
-          <div ref="videoEl" id="bsVideoModal"></div>
-          <div class="bs-video-info"><span>目标编号 <b class="mono">{{ selectedTarget.id }}</b></span><span>目标类型 <b>{{ selectedTarget.type }}</b></span><span>合法性 <b>{{ selectedTarget.legal || '待确认' }}</b></span><span>风险等级 <b>{{ selectedTarget.risk || '—' }}</b></span></div>
         </div>
-      </n-card>
-    </n-modal>
+
+        <n-modal v-model:show="showVideo" :auto-focus="false" @after-leave="destroyVideo">
+          <n-card class="bs-video-card" :title="`实时视频 · ${selectedTarget?.id || ''}`" closable :bordered="true" role="dialog" aria-modal="true" @close="showVideo = false">
+            <div v-if="selectedTarget" class="bs-video-modal">
+              <div class="bs-video-meta"><span>{{ opticalDevice?.name || '光电设备' }} · EO 可见光 · 4K</span><span class="bs-video-state" :class="{ 'is-tracked': selectedTarget.tracked }"><i></i>{{ selectedTarget.tracked ? '锁定跟踪中' : '实时预览' }}</span></div>
+              <div ref="videoEl" id="bsVideoModal"></div>
+              <div class="bs-video-info"><span>目标编号 <b class="mono">{{ selectedTarget.id }}</b></span><span>目标类型 <b>{{ selectedTarget.type }}</b></span><span>合法性 <b>{{ selectedTarget.legal || '待确认' }}</b></span><span>风险等级 <b>{{ selectedTarget.risk || '—' }}</b></span></div>
+            </div>
+          </n-card>
+        </n-modal>
+        <template #emptyAction>
+          <n-button type="primary" size="small" @click="reloadBigScreen">重新加载</n-button>
+        </template>
+      </PageQueryShell>
+    </div>
   </n-config-provider>
 </template>

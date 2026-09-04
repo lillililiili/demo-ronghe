@@ -8,9 +8,12 @@
 .u-field__control{display:flex;flex:1;min-width:0;flex-direction:column;gap:5px}
 .u-field.is-form .u-field__control .n-input,
 .u-field.is-form .u-field__control .n-select,
-.u-field.is-form .u-field__control .n-input-number{width:100%}
+.u-field.is-form .u-field__control .n-input-number,
+.u-field.is-form .u-field__control .n-date-picker{width:100%}
 .u-field.is-toolbar .u-field__control{flex:1;min-width:8.5em}
 .u-field.is-toolbar .n-select{min-width:8.5em}
+.u-field .n-date-picker{width:100%}
+.u-field.is-toolbar .n-date-picker{min-width:0}
 .u-select-menu,.n-base-select-menu{min-width:9em}
 .u-select-menu .n-base-select-option,
 .n-base-select-menu .n-base-select-option{white-space:nowrap}

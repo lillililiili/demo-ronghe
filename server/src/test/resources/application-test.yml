@@ -18,3 +18,5 @@ app:
   dev-seed:
     enabled: true
     password: changeme
+  live-device:
+    enabled: false

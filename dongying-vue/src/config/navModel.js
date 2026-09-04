@@ -44,7 +44,7 @@ export const NAV = [
     t: '系统管理', icon: 'shield', kids: [
       { k: 'users', t: '用户管理' },
       { k: 'roles', t: '角色管理' },
-      { k: 'archive', t: '日志归档' }
+      { k: 'archive', t: '审计日志' }
     ]
   }
 ];
@@ -67,11 +67,12 @@ export const ROUTES = (function () {
   r.overview = { t: '融合感知', p: '感知监测', ph: 'situation' };
   r.bigscreen = { t: '低空安全监控大屏', p: null, ph: null };
   r.login = { t: '登录', p: null, ph: null }; // 独立入口，不加入业务导航/权限矩阵
+  r['change-password'] = { t: '修改密码', p: null, ph: null };
   return r;
 })();
 
 export const PAGE_THEME = {
-  login: 'login',
+  login: 'login', 'change-password': 'login',
   workbench: 'overview',
   bigscreen: 'overview',
   situation: 'sensing', monitor: 'sensing',

@@ -2,21 +2,22 @@
 /* 顶栏：logo / 时钟 / 大屏按钮 / 告警铃铛 / 用户菜单。
    逻辑逐字移植旧 app.js 的 clock() 与 bindBigScreen()；用户菜单 Teleport 到 body
    （旧版就是 append 到 body 的 .usermenu，CSS 上下文保持一致）。 */
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
+import { h, ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { useAppStore } from '@/stores/app.js';
 import { stopCarousel } from '@/hooks/useCarousel.js';
 import { useRouter } from 'vue-router';
-import { logout } from '@/services/auth.js';
+import { authUser, logout } from '@/services/auth.js';
+import { canAccessRoute } from '@/services/accessControl.js';
 import { toast } from '@/ui/nv.js';
 import { openModal, closeModal } from '@/ui/modal.js';
 
 const store = useAppStore();
 const router = useRouter();
 const M = window.MOCK, U = window.UI;
-const currentUser = computed(() => { store.accessRevision; return M.currentUser || { name: '用户', account: '—', roleName: '—', org: '—' }; });
+const currentUser = computed(() => authUser.value || { name: '用户', account: '—', role_name: '—', org_name: '—' });
 const avatarText = computed(() => currentUser.value.name.slice(-1));
-const canBigscreen = computed(() => { store.accessRevision; return M.canMenu('bigscreen'); });
-const canAlarms = computed(() => { store.accessRevision; return M.canMenu('alarms'); });
+const canBigscreen = computed(() => canAccessRoute('bigscreen'));
+const canAlarms = computed(() => canAccessRoute('alarms'));
 
 /* ---------- 时钟：系统当前时间与 Mock 数据统计时间分离 ---------- */
 let clkTimer = null;
@@ -71,13 +72,14 @@ function toggleMenu(e) {
 }
 function closeMenu() { menuOpen.value = false; }
 function goAlarms() { location.hash = '#/alarms'; }
-function onMenu(k) {
+async function onMenu(k) {
   closeMenu();
   if (k === 'me') openModal({
     title: '个人信息', width: '440px',
-    body: U.kv([['账号', currentUser.value.account], ['姓名', currentUser.value.name], ['角色', currentUser.value.roleName],
-    ['所属单位', currentUser.value.org], ['双因子认证', currentUser.value.mfa],
-    ['最后登录', currentUser.value.lastLogin], ['登录 IP', currentUser.value.lastIp]])
+    render: () => h('dl', { class: 'kv' }, [
+      ['账号', currentUser.value.account], ['姓名', currentUser.value.name], ['角色', currentUser.value.role_name],
+      ['所属单位', currentUser.value.org_name || '未设置']
+    ].flatMap(([label, value]) => [h('dt', label), h('dd', String(value || '—'))]))
   });
   else if (k === 'logout') {
     stopCarousel();
@@ -85,7 +87,7 @@ function onMenu(k) {
     document.body.classList.remove('bigscreen');
     store.bigscreen = false;
     if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
-    logout();
+    await logout();
     router.replace('/login');
     toast('已退出登录', 'ok');
   }

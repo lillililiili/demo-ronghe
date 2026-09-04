@@ -1,7 +1,6 @@
 <script setup>
-import { computed, reactive } from 'vue';
+import { computed, nextTick, reactive, ref } from 'vue';
 import { NForm } from 'naive-ui';
-import { toast } from '@/ui/nv.js';
 import { UFieldGrid, UFormFooter } from '@/components/form/index.js';
 
 const props = defineProps({
@@ -21,7 +20,10 @@ const props = defineProps({
 });
 
 const model = reactive({ ...props.initial });
-const canSubmit = computed(() => !props.submitEnabled || !!props.submitEnabled(model));
+const busy = ref(false);
+const error = ref('');
+const errorBox = ref(null);
+const canSubmit = computed(() => !busy.value && (!props.submitEnabled || !!props.submitEnabled(model)));
 
 function isEmpty(value) {
   if (value == null) return true;
@@ -30,26 +32,38 @@ function isEmpty(value) {
   return false;
 }
 
-function submit() {
+async function fail(message) {
+  error.value = message;
+  await nextTick();
+  errorBox.value?.focus();
+}
+
+async function submit() {
+  if (busy.value) return;
+  error.value = '';
   for (const field of props.fields) {
-    if (!field.required) continue;
-    if (isEmpty(model[field.key])) return toast((field.label || '该项') + '为必填', 'err');
+    if (!field.required || (typeof field.visibleWhen === 'function' && !field.visibleWhen(model))) continue;
+    if (isEmpty(model[field.key])) return fail((field.label || '该项') + '为必填');
   }
   if (props.validate) {
     const msg = props.validate(model);
-    if (msg) return toast(msg, 'err');
+    if (msg) return fail(msg);
   }
-  props.onSubmit({ ...model });
+  busy.value = true;
+  try { await props.onSubmit({ ...model }); }
+  catch (e) { await fail(e.message || '操作失败，请重试。'); }
+  finally { busy.value = false; }
 }
 </script>
 
 <template>
   <n-form class="controlled-form" :show-feedback="false" @submit.prevent="submit">
+    <div v-if="error" ref="errorBox" class="warnbox controlled-form__message" tabindex="-1" role="alert">{{ error }}</div>
     <div v-if="warning" class="warnbox controlled-form__message" v-html="warning"></div>
     <div v-if="introHtml" class="controlled-form__intro" v-html="introHtml"></div>
     <UFieldGrid :fields="fields" :model="model" :columns="columns" />
     <div v-if="notice" class="info-line controlled-form__message">{{ notice }}</div>
-    <UFormFooter v-if="!hideFooter" :confirm-text="confirmText" :danger="danger" :disabled="!canSubmit"
+    <UFormFooter v-if="!hideFooter" :confirm-text="busy ? '正在处理…' : confirmText" :danger="danger" :disabled="!canSubmit" :loading="busy"
       @cancel="onCancel" @confirm="submit" />
   </n-form>
 </template>

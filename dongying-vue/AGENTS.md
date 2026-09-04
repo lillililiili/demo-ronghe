@@ -103,7 +103,7 @@
 
 ## 表单控件（Naive UI 强制）
 
-- **产品表单只使用公共表单件**（内部才是 Naive UI）：`src/components/form/` 的 `UField`、`UFieldGrid`、`UFormFooter`、`UControl`。Vue 模板禁止出现原生 `<input>`、`<select>`、`<textarea>`，也不要在页面里直接铺 `NInput`/`NSelect`（权限矩阵等无对应公共件的除外）。
+- **产品表单只使用公共表单件**（内部才是 Naive UI）：`src/components/form/` 的 `UField`、`UFieldGrid`、`UFormFooter`、`UControl`。Vue 模板禁止出现原生 `<input>`、`<select>`、`<textarea>`，也不要在页面里直接铺 `NInput`/`NSelect`/`NDatePicker`（权限矩阵等无对应公共件的除外）。日期时间范围走 `type="datetimerange"`。
 - **新弹窗表单**走 `openFormModal()`（`src/ui/formModal.js`）或 `openModal({ render: () => h(Comp), footer: false })` 后在 Comp 里用 `UField`。样板：`ControlledFormModal.vue`、`CarouselModal.vue`。
 - **禁止**为了“看起来像组件”而用 CSS 给原生控件描边；也禁止在 Vue 页面继续拼 `U.field` + `` `<input class="ip">` `` / `U.select` 作为新表单。
 - 仍由 `innerHTML` 绘制的旧工具条 / 调测参数 / monitor 字符串，必须带 `.ip` / `.sel` / `type="checkbox|radio"`，由 `src/ui/legacyControls.js` 升级为真 Naive 组件。新代码不要再扩大这条兼容路径。

@@ -10,6 +10,10 @@ public class AppProperties {
     private final Login login = new Login();
     private final Session session = new Session();
     private final DevSeed devSeed = new DevSeed();
+    private final BootstrapAdmin bootstrapAdmin = new BootstrapAdmin();
+    private final SuperAdmin superAdmin = new SuperAdmin();
+    private final SuperAdminRecovery superAdminRecovery = new SuperAdminRecovery();
+    private final LiveDevice liveDevice = new LiveDevice();
 
     public String getSourceMode() {
         return sourceMode;
@@ -38,6 +42,20 @@ public class AppProperties {
     public DevSeed getDevSeed() {
         return devSeed;
     }
+
+    public BootstrapAdmin getBootstrapAdmin() {
+        return bootstrapAdmin;
+    }
+
+    public SuperAdmin getSuperAdmin() {
+        return superAdmin;
+    }
+
+    public SuperAdminRecovery getSuperAdminRecovery() {
+        return superAdminRecovery;
+    }
+
+    public LiveDevice getLiveDevice() { return liveDevice; }
 
     public static class Login {
         private int failLimit = 5;
@@ -91,5 +109,51 @@ public class AppProperties {
         public void setPassword(String password) {
             this.password = password;
         }
+    }
+
+    public static class BootstrapAdmin {
+        private boolean enabled;
+        private String account = "";
+        private String name = "超级管理员";
+        private String password = "";
+
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
+        public String getAccount() { return account; }
+        public void setAccount(String value) { account = value; }
+        public String getName() { return name; }
+        public void setName(String value) { name = value; }
+        public String getPassword() { return password; }
+        public void setPassword(String value) { password = value; }
+    }
+
+    public static class SuperAdmin {
+        private String account = "admin1";
+
+        public String getAccount() { return account; }
+        public void setAccount(String value) { account = value; }
+    }
+
+    public static class SuperAdminRecovery {
+        private boolean enabled;
+        private String password = "";
+
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
+        public String getPassword() { return password; }
+        public void setPassword(String value) { password = value; }
+    }
+
+    public static class LiveDevice {
+        private boolean enabled;
+        private String instanceId = "";
+        private int leaseSeconds = 30;
+
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean value) { enabled = value; }
+        public String getInstanceId() { return instanceId; }
+        public void setInstanceId(String value) { instanceId = value; }
+        public int getLeaseSeconds() { return leaseSeconds; }
+        public void setLeaseSeconds(int value) { leaseSeconds = value; }
     }
 }

@@ -10,17 +10,23 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.uav.lowaltitude.platform.api.ApiResponse;
-import com.uav.lowaltitude.platform.security.AuthContext;
+import com.uav.lowaltitude.modules.identity.application.AccessService;
 
 @RestController
 @RequestMapping("/api/v1/alarms")
 public class AlarmController {
 
+    private final AccessService accessService;
+
+    public AlarmController(AccessService accessService) {
+        this.accessService = accessService;
+    }
+
     @GetMapping
     public ApiResponse<Map<String, Object>> list(
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int size) {
-        AuthContext.require();
+        accessService.requireBusinessData("alarms.read");
         int safeSize = Math.min(Math.max(size, 1), 100);
         int safePage = Math.max(page, 1);
         Map<String, Object> data = new LinkedHashMap<>();

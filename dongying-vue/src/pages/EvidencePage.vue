@@ -17,8 +17,8 @@ export default {};
    doRead/destroyModal 在 legacy 里已无到达路径（调阅/销毁入口按 2026-08-28
    裁定删除），转换时不带入。 */
 import { ref, reactive, computed, onMounted } from 'vue';
-import { NPagination } from 'naive-ui';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
+import UPagination from '@/components/UPagination.vue';
 import UPanel from '@/components/UPanel.vue';
 import { toast } from '@/ui/nv.js';
 
@@ -28,7 +28,6 @@ const root = ref(null);
 /* reactive 代理同一份模块级状态：n-pagination 需要响应式，底层仍是 S.st */
 const st = reactive(S.st);
 const totalCount = ref(0);
-const pageCount = computed(() => Math.max(1, Math.ceil(totalCount.value / st.size)));
 
 const ALL = '全部';
 const REF_LABEL = { case: '处罚案件', target: '感知目标', alarm: '告警', riskEvent: '空间安全风险事件', authLog: '反制/干扰授权', commTask: '调测任务', device: '设备', airspace: '空域' };
@@ -196,12 +195,8 @@ onMounted(() => {
         <UPanel title="证据文件台账" panel-style="flex:1;min-width:0" nopad>
           <div style="display:contents" v-html="ledgerBody"></div>
           <div class="pager">
-            <n-pagination :page="st.page" :page-size="st.size" :item-count="totalCount"
-              size="small" :page-slot="5" show-size-picker :page-sizes="[10, 20, 50].map(value => ({ value, label: `${value}条/页` }))"
-              @update:page="onPage" @update:page-size="onPageSize">
-              <template #prefix>共 {{ totalCount.toLocaleString() }} 条</template>
-              <template #suffix>共 {{ pageCount }} 页</template>
-            </n-pagination>
+            <UPagination v-model:page="st.page" v-model:page-size="st.size" :item-count="totalCount"
+              :prefix="`共 ${totalCount.toLocaleString()} 条`" @update:page="onPage" @update:page-size="onPageSize" />
           </div>
         </UPanel>
         <UPanel title="证据详情" panel-style="width:452px;flex:none" nopad

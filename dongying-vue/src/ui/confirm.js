@@ -1,7 +1,7 @@
 /* 通用操作确认弹窗：纯 Naive UI Dialog，供 legacy 与 Vue 业务页共同调用。 */
 import { h } from 'vue';
 import { createDiscreteApi } from 'naive-ui';
-import { closeModal } from './modal.js';
+import { closeModal, lockPageScroll, unlockPageScroll } from './modal.js';
 import { theme, themeOverrides } from './theme.js';
 
 const { dialog } = createDiscreteApi(['dialog'], {
@@ -64,10 +64,14 @@ export function openConfirm(options = {}) {
       }
     },
     onAfterLeave: () => {
-      if (current === handle) current = null;
+      if (current === handle) {
+        current = null;
+        unlockPageScroll();
+      }
     }
   });
 
   current = handle;
+  lockPageScroll();
   return handle;
 }

@@ -3,6 +3,11 @@ spring:
     url: jdbc:postgresql://127.0.0.1:5432/uav
     username: uav
     password: uav
+  devtools:
+    restart:
+      enabled: true
+    livereload:
+      enabled: false
 
 app:
   source-mode: mock

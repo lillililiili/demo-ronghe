@@ -52,6 +52,15 @@ public class BearerAuthFilter extends OncePerRequestFilter {
             writeUnauthorized(response);
             return;
         }
+        String path = request.getRequestURI();
+        if (user.mustChangePassword()
+                && !"/api/v1/auth/me".equals(path)
+                && !"/api/v1/auth/logout".equals(path)
+                && !"/api/v1/auth/change-password".equals(path)) {
+            writeError(response, HttpServletResponse.SC_FORBIDDEN,
+                    "PASSWORD_CHANGE_REQUIRED", "请先修改临时密码");
+            return;
+        }
         request.setAttribute(SESSION_ATTR, sessionId);
         AuthContext.set(user);
         try {
@@ -62,9 +71,13 @@ public class BearerAuthFilter extends OncePerRequestFilter {
     }
 
     private void writeUnauthorized(HttpServletResponse response) throws IOException {
-        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+        writeError(response, HttpServletResponse.SC_UNAUTHORIZED, "UNAUTHENTICATED", "未登录或会话已失效");
+    }
+
+    private void writeError(HttpServletResponse response, int status, String code, String message) throws IOException {
+        response.setStatus(status);
         response.setCharacterEncoding(StandardCharsets.UTF_8.name());
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
-        objectMapper.writeValue(response.getWriter(), ApiResponse.fail("UNAUTHENTICATED", "未登录"));
+        objectMapper.writeValue(response.getWriter(), ApiResponse.fail(code, message));
     }
 }

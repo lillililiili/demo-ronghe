@@ -7,7 +7,9 @@
  * darkTheme 打底（Naive 完整设计过的暗色，非亮色翻转），overrides 只做「对齐本站」。
  * ========================================================================== */
 import '@/assets/css/index.css';
-import { darkTheme } from 'naive-ui';
+import { darkTheme, dateZhCN, zhCN } from 'naive-ui';
+
+export { dateZhCN, zhCN };
 
 const css = getComputedStyle(document.documentElement);
 const v = name => css.getPropertyValue(name).trim();
@@ -119,6 +121,17 @@ export const themeOverrides = {
   Pagination: {
     /* 对齐旧 .pg / .pg.on 的观感（方块页码、主色高亮） */
     itemBorderRadius: '5px'
+  },
+  DataTable: {
+    thColor: v('--surface-2') || '#0e1d30',
+    thColorHover: v('--surface-hover') || '#142a44',
+    tdColor: v('--surface-1') || '#0b1727',
+    tdColorHover: v('--surface-hover') || '#142a44',
+    tdColorStriped: v('--surface-2') || '#0e1d30',
+    thTextColor: v('--txt-2') || '#a7b7cb',
+    tdTextColor: v('--txt-2') || '#a7b7cb',
+    borderColor: v('--line') || 'rgba(125,165,210,.16)',
+    thFontWeight: '600'
   },
   Dialog: {
     titleFontSize: '16px',

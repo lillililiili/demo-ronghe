@@ -7,9 +7,9 @@
 
 | 场景 | 写法 | 备注 |
 | --- | --- | --- |
-| 新弹窗表单 | `openFormModal({ fields, initial, onSubmit })` | `src/ui/formModal.js`；字段类型：text / textarea / select / number / radio / checkbox / checkboxGroup / html |
+| 新弹窗表单 | `openFormModal({ fields, initial, onSubmit })` | `src/ui/formModal.js`；字段类型：text / textarea / select / number / radio / checkbox / checkboxGroup / html / date / datetime / daterange / datetimerange |
 | 复杂受控弹窗 | `openModal({ render: () => h(Comp), footer: false })` + Comp 内 `UField`/`UFormFooter` | 样板：`CarouselModal.vue`、`JamAuthModal.vue`、`AlarmNotifyModal.vue` |
-| 页面模板筛选/搜索 | `<UField variant="toolbar" v-model type="select|text" />` | 公共件在 `src/components/form/`；不要在页面直接铺 NInput/NSelect |
+| 页面模板筛选/搜索 | `<UField variant="toolbar" v-model type="select\|text\|datetimerange" />` | 公共件在 `src/components/form/`；不要在页面直接铺 NInput/NSelect/NDatePicker |
 | 旧 innerHTML 字符串 | `<input class="ip">` / `<select class="sel">` / checkbox\|radio | 仅兼容存量；`legacyControls.js` 会替换成真 Naive 组件 |
 | 反制授权 / 设备重启 | `window.UI.openCounterAuth` / `window.UI.openDeviceRebootForm` | 由 `src/main.js` 注入，legacy 点击时走 Vue 表单 |
 

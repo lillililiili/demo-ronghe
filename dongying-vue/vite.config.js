@@ -34,6 +34,9 @@ export default defineConfig(() => {
     envPrefix: 'APP_PUBLIC_',
     server: {
       port: 5173,
+      proxy: {
+        '/api': { target: process.env.APP_API_PROXY_TARGET || 'http://127.0.0.1:8080', changeOrigin: true }
+      },
       // 历史瓦片仍留在仓库旁用于人工回滚，但不再参与运行时加载或文件监听。
       watch: { ignored: ['**/dongying-demo/assets/tiles/**'] }
     }

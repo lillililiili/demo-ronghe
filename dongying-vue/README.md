@@ -15,6 +15,8 @@ npm run build      # dist/ 约 5MB，瓦片不进产物
 npm run preview    # 生产产物预览（瓦片中间件同样生效）
 ```
 
+运维管理三页和登录会话调用 Spring Boot `/api/v1`。本地开发先在 `server/` 以 `local` profile 启动后端；Vite 将 `/api` 代理到 `127.0.0.1:8080`。部署到不同 API 根地址时设置 `APP_PUBLIC_API_BASE_URL`，值可为 `/api` 或已包含 `/v1` 的完整地址。
+
 旧版对照：项目根 `node serve.js` → http://localhost:8899。两个同时开、同 hash 并排比对，
 是所有验收的基本姿势。
 
@@ -43,11 +45,11 @@ src/
 
 更细的目录约定见仓库根 `docs/目录结构.md` 与本目录 `AGENTS.md`。
 
-**转换进度（12 转换 / 1 排除）**：
+**转换进度（13 个页面已转换）**：
 ✅ stats · users · archive · evidence · alarms · commission · devices ·
-   flights（含 risk / airspace 别名）· situation · punish · legality
-⛔ monitor —— 其 devAlarms 在模块加载期消耗共享 LCG，SFC 重算必然数值漂移；
-   待数据层把 devAlarms 挪进 mock.js 后再转（由 LegacyHost 承载，1:1 无损）
+   monitor · flights（含 risk / airspace 别名）· situation · punish · legality
+
+其中 devices、monitor、commission 已从浏览器 Mock 状态机切换为后端设备域接口；其余页面仍按各自迁移状态使用既有数据层。当前设备结果均明确标记为开发模拟，后端不可用时不会回退到 `window.MOCK`。
 
 ## 与 dongying-demo 的同步纪律（多会话并行是常态）
 

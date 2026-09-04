@@ -23,7 +23,6 @@ const error = ref('');
 const invalidField = ref('');
 const accountField = ref(null);
 const passwordField = ref(null);
-let submitTimer = null;
 
 watch(remember, value => { if (!value) forgetAccount(); });
 watch([account, password], () => { error.value = ''; invalidField.value = ''; });
@@ -33,15 +32,15 @@ function showHelp() {
     title: '忘记密码',
     width: '480px',
     render: () => h('div', { style: 'display:grid;gap:14px;line-height:1.8' }, [
-      h('p', '正式账号的密码请联系系统管理员重置。当前为本地演示，尚未接入真实认证服务，不提供邮件或短信找回，也不会发送重置请求。'),
-      h('p', ['演示账号：', h('strong', 'admin'), '　演示密码：', h('strong', DEMO_PASSWORD)]),
-      h('p', '也可使用现有账号体验不同岗位：zhangwei（值班员）、zhaopeng（设备运维）、wugang（审计员），演示密码相同。'),
-      h('p', { style: 'font-size:13px;color:var(--txt-2)' }, '只记住账号，不保存密码。账号中的 MFA 字段仅为演示资料，本次不会执行双因子认证；请勿输入真实工作密码。')
+      h('p', '密码请联系系统管理员重置。平台不会通过页面显示、邮件或短信返回原密码。'),
+      h('p', ['本地超级管理员：', h('strong', 'admin1'), '　开发密码：', h('strong', DEMO_PASSWORD)]),
+      h('p', '该账号和密码仅用于本地合成数据，禁止用于共享或生产环境。'),
+      h('p', { style: 'font-size:13px;color:var(--txt-2)' }, '“记住账号”只在本机保存账号，不保存密码或登录令牌。')
     ])
   });
 }
 
-function submit() {
+async function submit() {
   if (busy.value) return;
   error.value = '';
   invalidField.value = !account.value.trim() ? 'account' : !password.value ? 'password' : '';
@@ -51,31 +50,22 @@ function submit() {
     return;
   }
   busy.value = true;
-  // 仅让演示处理中态可感知；计时器随页面卸载清理，绝不跨导航提交。
-  submitTimer = setTimeout(async () => {
-    try {
-      const result = login({ account: account.value, password: password.value, remember: remember.value });
-      if (!result.ok) {
-        error.value = result.message;
-        invalidField.value = 'password';
-        return;
-      }
-      password.value = '';
-      passwordVisible.value = false;
-      if (!result.persisted) toast('浏览器不允许保存会话，刷新后需重新登录。');
-      await router.replace(loginDestination(route.query.redirect));
-    } catch {
-      error.value = '登录未完成，请重试。';
-    } finally {
-      busy.value = false;
-      submitTimer = null;
-      if (error.value) { await nextTick(); passwordField.value?.focus(); }
-    }
-  }, 450);
+  try {
+    const result = await login({ account: account.value, password: password.value, remember: remember.value });
+    password.value = '';
+    passwordVisible.value = false;
+    if (!result.persisted) toast('浏览器不允许保存会话，刷新后需重新登录。');
+    await router.replace(loginDestination(route.query.redirect));
+  } catch (e) {
+    error.value = e.message || '登录未完成，请重试。';
+    invalidField.value = 'password';
+  } finally {
+    busy.value = false;
+    if (error.value) { await nextTick(); passwordField.value?.focus(); }
+  }
 }
 
 onBeforeUnmount(() => {
-  clearTimeout(submitTimer);
   password.value = '';
   closeModal();
 });

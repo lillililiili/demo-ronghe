@@ -10,6 +10,7 @@
  *   · data-close 与 data-act 同存时两者都执行（先关后调，legacy 同序）
  *   · mounted(卡片根元素) 在 DOM 就绪后调用（nextTick，footer 已渲染）
  *   · 不响应 ESC（legacy 无此行为）；z-index 100 对齐旧 .mask
+ *   · 打开期间锁住壳层 .view 滚动；滚轮只留给弹窗内部可滚动区域
  * 换壳收益：Naive 卡片外观/动画/主题一致性；body 字符串与全部业务逻辑零改动。
  * P4b 逐个重写为受控表单时，从这里迁出即可（openModal 调用点即清单）。
  * ========================================================================== */
@@ -24,10 +25,66 @@ const { modal } = createDiscreteApi(['modal'], {
 
 let cur = null;
 let pendingOpen = null;
+let pageScrollLocked = false;
+let lockedView = null;
+let lockedViewScrollTop = 0;
+const LOCK_SCROLL_EVENTS = { capture: true, passive: false };
+
+function isPageScroller(el) {
+  if (!el || el === document.body || el === document.documentElement) return true;
+  if (el.classList?.contains('view') || el.classList?.contains('nav') || el.classList?.contains('n-modal-body-wrapper')) return true;
+  return el.classList?.contains('n-scrollbar-container') && el.closest('.n-modal-body-wrapper') && !el.closest('.n-modal');
+}
+
+function canScroll(el, dy) {
+  const style = getComputedStyle(el);
+  const overflowY = style.overflowY;
+  if (overflowY !== 'auto' && overflowY !== 'scroll') return false;
+  if (el.scrollHeight <= el.clientHeight + 1) return false;
+  if (dy < 0 && el.scrollTop <= 0) return false;
+  if (dy > 0 && el.scrollTop + el.clientHeight >= el.scrollHeight - 1) return false;
+  return true;
+}
+
+function onLockedScroll(e) {
+  const dy = e.deltaY || 0;
+  let node = e.target instanceof Element ? e.target : e.target?.parentElement;
+  while (node && node !== document.documentElement) {
+    if (isPageScroller(node)) break;
+    if (canScroll(node, dy)) return;
+    node = node.parentElement;
+  }
+  e.preventDefault();
+}
+
+export function lockPageScroll() {
+  if (pageScrollLocked) return;
+  pageScrollLocked = true;
+  lockedView = document.querySelector('.view');
+  lockedViewScrollTop = lockedView ? lockedView.scrollTop : 0;
+  document.documentElement.classList.add('is-modal-open');
+  if (lockedView) {
+    lockedView.scrollTop = lockedViewScrollTop;
+    requestAnimationFrame(() => { if (pageScrollLocked && lockedView) lockedView.scrollTop = lockedViewScrollTop; });
+  }
+  document.addEventListener('wheel', onLockedScroll, LOCK_SCROLL_EVENTS);
+  document.addEventListener('touchmove', onLockedScroll, LOCK_SCROLL_EVENTS);
+}
+
+export function unlockPageScroll() {
+  if (!pageScrollLocked) return;
+  pageScrollLocked = false;
+  document.documentElement.classList.remove('is-modal-open');
+  if (lockedView) lockedView.scrollTop = lockedViewScrollTop;
+  lockedView = null;
+  document.removeEventListener('wheel', onLockedScroll, LOCK_SCROLL_EVENTS);
+  document.removeEventListener('touchmove', onLockedScroll, LOCK_SCROLL_EVENTS);
+}
 
 export function closeModal() {
   pendingOpen = null;                       // 同一 tick 里还没真正打开的请求一并取消
   if (cur) { const c = cur; cur = null; try { c.destroy(); } catch (e) { } }
+  unlockPageScroll();
   /* 同时收掉可能开着的 legacy 弹窗（跨模块调用链里两套并存期共用一个「关闭」语义） */
   if (window.UI && window.UI.closeModal) window.UI.closeModal();
 }
@@ -66,9 +123,10 @@ function reallyOpen(o) {
     autoFocus: false,
     closeOnEsc: false,
     maskClosable: true,
+    blockScroll: true,
     zIndex: 100,
-    style: { width: o.width || '520px', maxWidth: '94vw' },
-    contentStyle: { maxHeight: '72vh', overflow: 'auto' },
+    style: { width: o.width || '520px', maxWidth: '94vw', maxHeight: 'calc(100vh - 32px)' },
+    contentStyle: { maxHeight: 'calc(100vh - 120px)', overflow: 'auto' },
     onClose: () => { closeModal(); return false; },
     title: () => h('span', { innerHTML: String(o.title == null ? '' : o.title) }),
     /* P4b：o.render 提供 vnode 工厂时走受控组件（真 Naive 表单），否则沿用 HTML 串桥接 */
@@ -81,6 +139,7 @@ function reallyOpen(o) {
         onClick: handle
       })
   });
+  lockPageScroll();
   return cur;
 }
 

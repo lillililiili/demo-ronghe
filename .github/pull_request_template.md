@@ -26,7 +26,9 @@
 <!-- 仅勾选实际运行且通过的检查，并补充失败或未运行原因。 -->
 
 - [ ] `npm run build`
+- [ ] `node tools/scan.cjs` 与 `node tools/falsify.cjs`
 - [ ] `.\mvnw.cmd test`
+- [ ] `.\mvnw.cmd "-Dtest=AuthApiTest,SystemManagementApiTest" test`
 - [ ] `.\mvnw.cmd package`
 - [ ] PostgreSQL/PostGIS 迁移验证
 - [ ] 受影响页面的真实浏览器验证

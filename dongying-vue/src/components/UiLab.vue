@@ -3,8 +3,9 @@
    用途：P0 主题校准的验收台 —— 同一段中文文案、同一语义色，
    左列旧控件（全局样式类）右列 Naive UI，目测色板/圆角/字号/行高是否违和。 */
 import { ref } from 'vue';
-import { NButton, NTag, NPagination, NModal, NDrawer, NDrawerContent } from 'naive-ui';
+import { NButton, NTag, NModal, NDrawer, NDrawerContent } from 'naive-ui';
 import { UField } from '@/components/form/index.js';
+import UPagination from '@/components/UPagination.vue';
 import { message } from '@/ui/nv.js';
 
 const U = window.UI;
@@ -74,11 +75,7 @@ const oldPagerHtml = U.pager({ total: 137, page: 3, size: 10 });
       <!-- 分页 -->
       <section class="panel"><div class="ph"><h3>旧 · U.pager</h3></div><div class="pb" v-html="oldPagerHtml"></div></section>
       <section class="panel"><div class="ph"><h3>新 · n-pagination</h3></div><div class="pb">
-        <n-pagination v-model:page="page" v-model:page-size="pageSize" :item-count="137"
-          show-size-picker :page-sizes="[10, 20, 50]">
-          <template #prefix>共 137 条</template>
-          <template #suffix>共 {{ Math.ceil(137 / pageSize) }} 页</template>
-        </n-pagination>
+        <UPagination v-model:page="page" v-model:page-size="pageSize" :item-count="137" prefix="共 137 条" />
       </div></section>
 
       <!-- 表单件 -->

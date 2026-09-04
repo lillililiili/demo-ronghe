@@ -7,7 +7,7 @@ import {
   NotificationsOutline,
   RadioOutline
 } from '@vicons/ionicons5';
-import { theme, themeOverrides } from '@/ui/theme.js';
+import { dateZhCN, theme, themeOverrides, zhCN } from '@/ui/theme.js';
 
 const M = window.MOCK;
 const U = window.UI;
@@ -256,7 +256,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <n-config-provider :theme="theme" :theme-overrides="themeOverrides" style="display: contents">
+  <n-config-provider :theme="theme" :theme-overrides="themeOverrides" :locale="zhCN" :date-locale="dateZhCN" style="display: contents">
     <div class="bs-root">
       <header class="bs-hdr">
         <div class="bs-hdr-l"><img src="/assets/img/brand/logo-mark.png" alt="" width="30" height="30">无人机融合感知与低空安全管理平台</div>

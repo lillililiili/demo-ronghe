@@ -3088,6 +3088,14 @@
      页面**不要自己解 PERM 矩阵** —— 解矩阵的逻辑一旦有第二份，改权限模型时必然漏改一处。 */
   const PERM_LEVELS = { '—': 0, 'READ': 1, 'OP': 2, 'AUTH': 3 };
   const PERM_ACTIONS = { read: 1, op: 2, auth: 3 };   // 查看 / 操作 / 授权
+  const LEGACY_PERMISSION_CODES = {
+    '综合态势总览': 'dashboard', '融合感知中心': 'sensing', '统计分析': 'statistics',
+    '飞行活动管理': 'flights', '合法性判定': 'legality', '空域与航线': 'airspace',
+    '异常告警中心': 'alarms', '空间安全风险': 'risk', '处置处罚管理': 'punishment',
+    '反制/干扰授权': 'countermeasure', '设备管理': 'devices', '设备接入调测': 'commissioning',
+    '设备实时监测': 'monitoring', '接口管理': 'interfaces', '日志归档': 'audit',
+    '证据管理': 'evidence', '用户管理': 'users', '角色管理': 'roles'
+  };
   let _currentUserId = 'U001';                        // 默认超级管理员，便于演示全量功能
 
   /* 某角色对某模块的权限档位 */
@@ -3103,6 +3111,11 @@
     return PERM_LEVELS[permLevel(roleId, moduleName)] >= need;
   }
   function can(moduleName, action) {
+    const apiAccess = global.__API_ACCESS;
+    if (apiAccess) {
+      const code = LEGACY_PERMISSION_CODES[moduleName];
+      return !!(code && apiAccess.permissionCodes.has(code + '.' + (action || 'read')));
+    }
     const u = users.find(x => x.id === _currentUserId);
     if (!u || u.status !== '正常') return false;       // 停用账号不具备任何操作权限
     return canForRole(u.role, moduleName, action);
@@ -3111,6 +3124,10 @@
     return routeKey === 'risk' || routeKey === 'airspace' ? 'flights' : routeKey;
   }
   function canMenu(routeKey, roleId) {
+    if (!roleId && global.__API_ACCESS) {
+      if (routeKey === 'workbench') return true;
+      return global.__API_ACCESS.menuKeys.has(menuKeyOf(routeKey));
+    }
     const u = roleId ? users.find(x => x.role === roleId && x.status === '正常') : users.find(x => x.id === _currentUserId);
     const rid = roleId || (u && u.role);
     if (!rid || (!roleId && (!u || u.status !== '正常'))) return false;

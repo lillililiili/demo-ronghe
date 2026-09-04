@@ -9,6 +9,10 @@ table.tb td{padding:7px 10px;border-bottom:1px solid rgba(64,158,255,.08);color:
 table.tb tbody tr:hover{background:rgba(61,139,255,.10)}
 table.tb tbody tr.on{background:rgba(61,139,255,.18)}
 table.tb tbody tr{cursor:pointer}
+.naive-table-fill{display:flex;flex:1 1 0;min-height:0;flex-direction:column}
+.naive-table-fill .n-data-table{flex:1;min-height:0;height:100%}
+.table-actions{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+.pager-row{display:flex;flex:none;align-items:center;justify-content:space-between;gap:12px;padding:10px 16px;color:var(--txt-3);border-top:1px solid var(--line)}
 table.tb td.num{font-family:Menlo,monospace;color:var(--txt);font-variant-numeric:tabular-nums}
 .lnk{color:var(--blue);cursor:pointer}
 .lnk:hover{text-decoration:underline;color:#7fb4ff}

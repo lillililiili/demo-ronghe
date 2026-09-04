@@ -1180,6 +1180,7 @@ onMounted(() => {
             <span class="lg-head-spacer"></span>
             <UField class="lg-region-filter" variant="toolbar" label="区域" v-model="st.region" type="select" :options="regionOptions" />
             <button class="lg-icon-btn" id="lgRule" type="button" aria-label="查看判定规则" title="判定规则说明" v-html="U.icon('settings')"></button>
+            <!-- 重判需要服务端规则执行与审计，未接入前不绑定任何本地模拟动作。 -->
             <span id="lgRecalcReason" style="font-size:11.5px;color:var(--txt-3)">重判服务未接入</span>
             <button class="lg-icon-btn" id="lgRecalc" type="button" disabled aria-label="重新判定（重判服务未接入）"
               aria-describedby="lgRecalcReason" title="重判服务未接入，暂不能重新判定" v-html="U.icon('refresh')"></button>

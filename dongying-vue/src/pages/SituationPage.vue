@@ -203,6 +203,7 @@ function paintActions() {
     ? `<button class="btn warn" id="btnAlm" style="flex:1;justify-content:center"
          title="转到「告警事件」并定位到 ${latest.id}">⚠ 查看告警${alms.length > 1 ? '（' + alms.length + ' 条）' : ''} →</button>`
     : '';
+  // 非无人机目标只允许进入风险监测；通知和驱离缺少真实接口，因此不绑定模拟成功动作。
   document.getElementById('stAct').innerHTML = isUav
     ? `
        <div style="display:flex;gap:8px;margin-top:8px">

@@ -101,6 +101,7 @@ function render() {
   const F = M.flightPlans;
   const cnt = s => F.filter(p => p.status === s).length;
   const unmatched = F.filter(p => p.matched === '未匹配感知目标').length;
+  // 当前只提供计划查询；导出按钮保持原位置但禁用，避免把前端计数伪装成文件交付。
   return `${tabBar()}${U.kpis([
     { label: '今日报备计划', value: U.num(F.length), color: 'blue', icon: 'plan', desc: `来自上级管控平台 ${F.filter(p => p.source === '上级管控平台').length} 条` },
     { label: '执行中', value: U.num(cnt('执行中')), color: 'cyan', icon: 'radar', desc: '正在空中作业' },

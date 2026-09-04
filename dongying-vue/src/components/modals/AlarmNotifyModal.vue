@@ -10,6 +10,7 @@ const props = defineProps({
 });
 
 const U = window.UI;
+// 保留原渠道勾选结果只用于只读展示；全部选项和提交入口都不可交互。
 const picked = ref(props.channels.map(c => c.id));
 const introHtml = U.kv([
   ['告警', `${props.alarm.type}（${U.tag(props.alarm.level, props.alarm.level === '高' ? 't-red' : 't-amber')}）`],
@@ -17,6 +18,7 @@ const introHtml = U.kv([
   ['区域', props.alarm.district],
   ['时间', props.alarm.time]
 ]);
+// 后端通知契约未接入前统一标记禁用，绝不生成本地回执或修改 notifyLog。
 const channelOpts = computed(() => props.channels.map(c2 => ({
   value: c2.id,
   disabled: true,

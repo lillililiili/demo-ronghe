@@ -1,119 +1,138 @@
 package com.uav.lowaltitude.modules.identity.api;
 
-import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.ActiveProfiles;
-import org.springframework.http.MediaType;
-import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.MvcResult;
-
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.web.servlet.MockMvc;
+
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
 class AuthApiTest {
 
-    @Autowired
-    MockMvc mvc;
-
-    @Autowired
-    ObjectMapper objectMapper;
+    @Autowired MockMvc mvc;
+    @Autowired ObjectMapper objectMapper;
+    @Autowired JdbcTemplate jdbc;
 
     @Test
-    void loginWithDuty1ReturnsSessionAndRoleDuty() throws Exception {
-        mvc.perform(post("/api/v1/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"account\":\"duty1\",\"password\":\"changeme\"}"))
+    void loginAndMeReturnTheOnlySuperAdminWithServerGeneratedFullAccess() throws Exception {
+        String token = loginToken();
+        mvc.perform(get("/api/v1/auth/me").header("Authorization", bearer(token)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.ok").value(true))
-                .andExpect(jsonPath("$.data.account").value("duty1"))
-                .andExpect(jsonPath("$.data.role_code").value("ROLE-DUTY"))
-                .andExpect(jsonPath("$.data.session_id").isNotEmpty());
+                .andExpect(jsonPath("$.data.account").value("admin1"))
+                .andExpect(jsonPath("$.data.role_code").value("ROLE-ADMIN"))
+                .andExpect(jsonPath("$.data.scope_mode").value("ALL"))
+                .andExpect(jsonPath("$.data.menu_keys[?(@ == 'users')]").exists())
+                .andExpect(jsonPath("$.data.menu_keys[?(@ == 'roles')]").exists())
+                .andExpect(jsonPath("$.data.menu_keys[?(@ == 'archive')]").exists())
+                .andExpect(jsonPath("$.data.permission_codes[?(@ == 'users.auth')]").exists())
+                .andExpect(jsonPath("$.data.permission_codes[?(@ == 'countermeasure.auth')]").exists());
     }
 
     @Test
-    void alarmsWithoutTokenReturns401() throws Exception {
-        mvc.perform(get("/api/v1/alarms"))
-                .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.ok").value(false))
-                .andExpect(jsonPath("$.error.code").value("UNAUTHENTICATED"));
-    }
-
-    @Test
-    void meWithBearerReturnsCurrentUser() throws Exception {
-        String token = loginToken("duty1");
-        mvc.perform(get("/api/v1/auth/me").header("Authorization", "Bearer " + token))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.ok").value(true))
-                .andExpect(jsonPath("$.data.account").value("duty1"))
-                .andExpect(jsonPath("$.data.role_code").value("ROLE-DUTY"))
-                .andExpect(jsonPath("$.data.source_mode").value("mock"));
-    }
-
-    @Test
-    void wrongPasswordReturnsInvalidCredentials() throws Exception {
-        mvc.perform(post("/api/v1/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"account\":\"duty1\",\"password\":\"wrong\"}"))
-                .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.ok").value(false))
-                .andExpect(jsonPath("$.error.code").value("INVALID_CREDENTIALS"));
-    }
-
-    @Test
-    void logoutThenMeReturns401() throws Exception {
-        String token = loginToken("duty1");
-        mvc.perform(post("/api/v1/auth/logout").header("Authorization", "Bearer " + token))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.ok").value(true));
-        mvc.perform(get("/api/v1/auth/me").header("Authorization", "Bearer " + token))
-                .andExpect(status().isUnauthorized());
-    }
-
-    @Test
-    void alarmsWithTokenReturnsEmptyPage() throws Exception {
-        String token = loginToken("duty1");
-        mvc.perform(get("/api/v1/alarms").header("Authorization", "Bearer " + token))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.ok").value(true))
-                .andExpect(jsonPath("$.data.items").isArray());
-    }
-
-    @Test
-    void devicesWithoutTokenReturns401() throws Exception {
+    void unauthenticatedRequestsReturn401() throws Exception {
         mvc.perform(get("/api/v1/devices"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.error.code").value("UNAUTHENTICATED"));
     }
 
     @Test
-    void devicesWithTokenReturnsEmptyPage() throws Exception {
-        String token = loginToken("duty1");
-        mvc.perform(get("/api/v1/devices").header("Authorization", "Bearer " + token))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.ok").value(true))
-                .andExpect(jsonPath("$.data.total").value(0));
+    void wrongPasswordIsRejectedAndFailureIsPersisted() throws Exception {
+        resetLoginState();
+        mvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"account\":\"admin1\",\"password\":\"wrong\"}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code").value("INVALID_CREDENTIALS"));
+        assertThat(jdbc.queryForObject("select fail_count from app_user where account='admin1'", Integer.class))
+                .isEqualTo(1);
+        resetLoginState();
     }
 
-    private String loginToken(String account) throws Exception {
-        MvcResult result = mvc.perform(post("/api/v1/auth/login")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"account\":\"" + account + "\",\"password\":\"changeme\"}"))
-                .andExpect(status().isOk())
-                .andReturn();
-        JsonNode root = objectMapper.readTree(result.getResponse().getContentAsString());
-        String sessionId = root.path("data").path("session_id").asText();
-        assertThat(sessionId).isNotBlank();
-        return sessionId;
+    @Test
+    void fifthFailureLocksAccount() throws Exception {
+        resetLoginState();
+        try {
+            for (int attempt = 0; attempt < 5; attempt++) {
+                mvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"account\":\"admin1\",\"password\":\"wrong\"}"))
+                        .andExpect(status().isUnauthorized());
+            }
+            mvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"account\":\"admin1\",\"password\":\"changeme\"}"))
+                    .andExpect(status().isUnauthorized())
+                    .andExpect(jsonPath("$.error.code").value("ACCOUNT_LOCKED"));
+        } finally {
+            resetLoginState();
+        }
     }
+
+    @Test
+    void disabledAccountCannotLogin() throws Exception {
+        jdbc.update("update app_user set status='DISABLED' where account='admin1'");
+        try {
+            mvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"account\":\"admin1\",\"password\":\"changeme\"}"))
+                    .andExpect(status().isUnauthorized())
+                    .andExpect(jsonPath("$.error.code").value("ACCOUNT_DISABLED"));
+        } finally {
+            jdbc.update("update app_user set status='ACTIVE' where account='admin1'");
+        }
+    }
+
+    @Test
+    void logoutAndExpiredSessionsCannotBeRestored() throws Exception {
+        String token = loginToken();
+        mvc.perform(post("/api/v1/auth/logout").header("Authorization", bearer(token))).andExpect(status().isOk());
+        mvc.perform(get("/api/v1/auth/me").header("Authorization", bearer(token))).andExpect(status().isUnauthorized());
+
+        token = loginToken();
+        jdbc.update("update app_session set expire_at=0 where session_id=?", token);
+        mvc.perform(get("/api/v1/auth/me").header("Authorization", bearer(token))).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void authenticationAuditNeverStoresBearerSessionId() throws Exception {
+        String token = loginToken();
+        mvc.perform(post("/api/v1/auth/logout").header("Authorization", bearer(token))).andExpect(status().isOk());
+        assertThat(jdbc.queryForObject(
+                "select count(*) from audit_log where object_id=? or detail=? or detail like ?",
+                Integer.class, token, token, "%" + token + "%")).isZero();
+    }
+
+    @Test
+    void authenticatedSuperAdminCanReadBusinessData() throws Exception {
+        String token = loginToken();
+        mvc.perform(get("/api/v1/devices").header("Authorization", bearer(token)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.items").isArray());
+        mvc.perform(get("/api/v1/alarms").header("Authorization", bearer(token)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.items").isArray());
+    }
+
+    private String loginToken() throws Exception {
+        String body = mvc.perform(post("/api/v1/auth/login").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"account\":\"admin1\",\"password\":\"changeme\"}"))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        JsonNode root = objectMapper.readTree(body);
+        String token = root.path("data").path("session_id").asText();
+        assertThat(token).isNotBlank();
+        return token;
+    }
+
+    private void resetLoginState() {
+        jdbc.update("update app_user set fail_count=0, locked_until=null, status='ACTIVE' where account='admin1'");
+    }
+
+    private static String bearer(String token) { return "Bearer " + token; }
 }

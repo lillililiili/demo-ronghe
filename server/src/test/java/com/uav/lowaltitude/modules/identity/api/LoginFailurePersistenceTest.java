@@ -29,24 +29,24 @@ class LoginFailurePersistenceTest {
 
     @BeforeEach
     @AfterEach
-    void resetDuty1() {
-        jdbc.update("update app_user set fail_count = 0, locked_until = null where account = ?", "duty1");
-        jdbc.update("delete from audit_log where account = ? and action = ?", "duty1", "login_fail");
+    void resetAdmin1() {
+        jdbc.update("update app_user set fail_count = 0, locked_until = null, status = 'ACTIVE' where account = ?", "admin1");
+        jdbc.update("delete from audit_log where account = ? and action = ?", "admin1", "login_fail");
     }
 
     @Test
     void wrongPasswordPersistsFailCountAndAudit() throws Exception {
         mvc.perform(post("/api/v1/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"account\":\"duty1\",\"password\":\"wrong\"}"))
+                        .content("{\"account\":\"admin1\",\"password\":\"wrong\"}"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.error.code").value("INVALID_CREDENTIALS"));
 
         Integer fails = jdbc.queryForObject(
-                "select fail_count from app_user where account = ?", Integer.class, "duty1");
+                "select fail_count from app_user where account = ?", Integer.class, "admin1");
         Integer audits = jdbc.queryForObject(
                 "select count(*) from audit_log where account = ? and action = ?",
-                Integer.class, "duty1", "login_fail");
+                Integer.class, "admin1", "login_fail");
         assertThat(fails).isEqualTo(1);
         assertThat(audits).isEqualTo(1);
     }
@@ -56,12 +56,12 @@ class LoginFailurePersistenceTest {
         for (int i = 0; i < 5; i++) {
             mvc.perform(post("/api/v1/auth/login")
                             .contentType(MediaType.APPLICATION_JSON)
-                            .content("{\"account\":\"duty1\",\"password\":\"wrong\"}"))
+                            .content("{\"account\":\"admin1\",\"password\":\"wrong\"}"))
                     .andExpect(status().isUnauthorized());
         }
         mvc.perform(post("/api/v1/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"account\":\"duty1\",\"password\":\"changeme\"}"))
+                        .content("{\"account\":\"admin1\",\"password\":\"changeme\"}"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.error.code").value("ACCOUNT_LOCKED"));
     }

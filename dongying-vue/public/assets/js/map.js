@@ -154,6 +154,7 @@
       on('move', () => { this._syncView(); this.draw(); this._hit(); });
       on('render', () => { this.draw(); });
       on('dragstart', () => { this._dragged = true; this._boxLeave(); });
+      // 非展示用：拖拽结束后 250ms 内抑制误点击，必须用墙钟而非 M.now()
       on('dragend', () => { this._suppressClickUntil = Date.now() + 250; this._dragged = false; });
       on('webglcontextlost', () => this._fallback(new Error('WebGL 上下文丢失，可尝试重试')));
       on('error', event => {
@@ -195,6 +196,7 @@
         return;
       }
       if (e.target.closest && e.target.closest('.maplayers,.mapstatus,.maplibregl-control-container')) return;
+      // 非展示用：对照墙钟判断拖拽后的误点击抑制窗口
       if (self._dragged || Date.now() < (self._suppressClickUntil || 0)) return;
       self._boxMove(e);
       if (self.hover && self.opt.onPick) self.opt.onPick(self.hover);
@@ -236,6 +238,7 @@
     this.box.addEventListener('mousedown', this._boxDown, true);
     this.box.addEventListener('wheel', this._boxWheel, { passive: false, capture: true });
     this._winUp = () => {
+      // 非展示用：拖拽结束后 250ms 内抑制误点击，必须用墙钟而非 M.now()
       if (self._dragged) self._suppressClickUntil = Date.now() + 250;
       self._dragged = false; drag = null;
     };

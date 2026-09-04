@@ -16,8 +16,8 @@ export default {};
    legacy 中已无到达路径的 evidModal / reviewModal / confirmModal / legacyDetail /
    evidSect / factorSect 不带入（同 evidence 页先例）。 */
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue';
-import { NPagination } from 'naive-ui';
 import { UField } from '@/components/form/index.js';
+import UPagination from '@/components/UPagination.vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import { toast } from '@/ui/nv.js';
 import { openModal, closeModal } from '@/ui/modal.js';
@@ -29,7 +29,6 @@ const root = ref(null);
 /* reactive 代理同一份模块级状态：n-pagination 需要响应式，底层仍是 S.st */
 const st = reactive(S.st);
 const totalCount = ref(0);
-const pageCount = computed(() => Math.max(1, Math.ceil(totalCount.value / st.size)));
 const regionOptions = computed(() => [{ label: '全部', value: '全部' }, ...M.DISTRICTS.map(d => ({ label: d.name, value: d.name }))]);
 const evidenceTab = ref('space');
 const basisSel = ref(0);
@@ -1197,12 +1196,8 @@ onMounted(() => {
           </div>
           <div id="lgList" class="lg-list-host"></div>
           <footer class="lg-pager pager">
-            <n-pagination :page="st.page" :page-size="st.size" :item-count="totalCount"
-              size="small" :page-slot="5" show-size-picker :page-sizes="[10, 20, 50].map(value => ({ value, label: `${value}条/页` }))"
-              @update:page="onPage" @update:page-size="onPageSize">
-              <template #prefix>共 {{ totalCount.toLocaleString() }} 条</template>
-              <template #suffix>共 {{ pageCount }} 页</template>
-            </n-pagination>
+            <UPagination v-model:page="st.page" v-model:page-size="st.size" :item-count="totalCount"
+              :prefix="`共 ${totalCount.toLocaleString()} 条`" @update:page="onPage" @update:page-size="onPageSize" />
           </footer>
         </section>
         <section class="lg-review-panel" aria-label="合法性研判详情">

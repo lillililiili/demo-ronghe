@@ -1,383 +1,147 @@
-<script>
-/* 模块级状态：跨导航保持（legacy 约定）。SORT 排序是页面状态，只排副本。 */
-const S = {
-  tab: 'list',
-  st: { page: 1, size: 20, type: '全部', astatus: '全部', kw: '', target: '', device: '' },
-  gran: '日',
-  SORT: { key: null, dir: 'asc' }
-};
-export default {};
-</script>
-
 <script setup>
-/* 日志归档 —— 第三个转换页（源：legacy pages/archive.js）。
-   外骨架（KPI/页签）进 template；页签体、列表、图表沿用 legacy 的命令式
-   渲染与 U.on 委托（绑在组件根上，组件按 :key 重挂时随节点销毁，无重复绑定）。    分页器（U.pager）本页暂保留：列表区在命令式 innerHTML 重刷区内（页签/整页字符串渲染），
-   模板层 n-pagination 放不进去；待该区块结构化后随 P5 迁移。
-*/
-import { ref, computed, onMounted } from 'vue';
-import { NTabs, NTab } from 'naive-ui';
+import { computed, h, onMounted, reactive, ref } from 'vue';
+import { NButton, NDataTable, NSpin, NTag } from 'naive-ui';
+import { UField } from '@/components/form/index.js';
+import UPagination from '@/components/UPagination.vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
-import UKpis from '@/components/UKpis.vue';
+import { hasPermission } from '@/services/accessControl.js';
+import { systemApi } from '@/services/systemAdmin.js';
+import { actionOptions, actionText, moduleOptions, moduleText, roleText } from './system/auditLabels.js';
+import { openModal } from '@/ui/modal.js';
 import { toast } from '@/ui/nv.js';
-import { openModal, closeModal } from '@/ui/modal.js';
 
-const M = window.MOCK, U = window.UI, CH = window.CH, L = M.logStats;
 usePageChrome('archive');
+const loading = ref(false);
+const exporting = ref(false);
+const error = ref('');
+const rows = ref([]);
+const roles = ref([]);
+const page = ref(1);
+const size = ref(20);
+const total = ref(0);
+const RANGE_DEFAULT_TIME = ['00:00:00', '23:59:59'];
+const filters = reactive({ range: null, account: '', module: null, action: null, result: null });
+const resultOptions = [{ value: 'SUCCESS', label: '成功' }, { value: 'FAILURE', label: '失败' }];
+const roleNames = computed(() => {
+  const names = { 'ROLE-ADMIN': '超级管理员' };
+  for (const item of roles.value) names[item.role_code] = item.name;
+  return names;
+});
 
-const root = ref(null);
-const tab = ref(S.tab);
+function params(includePage = true) {
+  const from = Array.isArray(filters.range) ? filters.range[0] : null;
+  const to = Array.isArray(filters.range) ? filters.range[1] : null;
+  return {
+    from: Number.isFinite(from) ? from : null, to: Number.isFinite(to) ? to : null,
+    account: filters.account.trim(), module: filters.module || '', action: filters.action || '',
+    result: filters.result,
+    ...(includePage ? { page: page.value, size: size.value } : {})
+  };
+}
+function dt(value) { return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '—'; }
+function resultText(value) { return value === 'SUCCESS' ? '成功' : value === 'FAILURE' ? '失败' : value || '—'; }
+function roleLabel(code) { return roleText(code, roleNames.value); }
 
-const AR_ST = ['待归档', '已归档'];
-const SORT_KEYS = {
-  id: l => l.id, type: l => l.type, target: l => l.target || '',
-  deviceName: l => l.deviceName || '', summary: l => l.summary || '',
-  time: l => l.time, status: l => AR_ST.indexOf(l.status)
-};
-function sortTh(label, key) {
-  const on = S.SORT.key === key;
-  return `<span data-sort="${key}" title="点击排序" style="cursor:pointer;user-select:none;white-space:nowrap;
-    border-bottom:1px dotted ${on ? '#8fbaff' : 'rgba(159,182,217,.45)'};${on ? 'color:#8fbaff' : ''}">${label}${on ? (S.SORT.dir === 'asc' ? ' ▲' : ' ▼') : ''}</span>`;
+async function load() {
+  loading.value = true; error.value = '';
+  try {
+    const [data, roleList] = await Promise.all([
+      systemApi.audits(params()),
+      roles.value.length ? Promise.resolve(roles.value) : systemApi.roles().catch(() => [])
+    ]);
+    rows.value = data.items; total.value = data.total;
+    if (!roles.value.length) roles.value = roleList;
+  } catch (e) { error.value = e.message || '审计日志加载失败。'; }
+  finally { loading.value = false; }
 }
-function sorted(rows) {
-  const f = S.SORT.key && SORT_KEYS[S.SORT.key];
-  if (!f) return rows;
-  const d = S.SORT.dir === 'asc' ? 1 : -1;
-  return rows.slice().sort((a, b) => { const x = f(a), y = f(b); return (x < y ? -1 : x > y ? 1 : 0) * d; });
+function search() { page.value = 1; load(); }
+function reset() {
+  Object.assign(filters, { range: null, account: '', module: null, action: null, result: null });
+  search();
 }
-function filtered() {
-  return M.logs.filter(l =>
-    (S.st.type === '全部' || l.type === S.st.type) &&
-    (S.st.astatus === '全部' || l.status === S.st.astatus) &&
-    (!S.st.target || l.target.includes(S.st.target)) &&
-    (!S.st.device || l.device.includes(S.st.device)) &&
-    (!S.st.kw || l.summary.includes(S.st.kw) || l.id.includes(S.st.kw)));
-}
-const pendingN = () => M.logs.filter(l => l.status === '待归档').length;
+function onPageSize(value) { size.value = value; page.value = 1; load(); }
 
-const kpiList = computed(() => [
-  { label: '归档总数', value: U.num(L.total), color: 'blue', icon: 'archive', desc: '历史累计 + 今日' },
-  { label: '今日新增', value: U.num(L.today), color: 'orange', icon: 'chart', desc: '与趋势图末点一致' },
-  { label: '目标类日志', value: U.num(L.target), color: 'cyan', icon: 'radar', desc: '轨迹 / 雷达 / 巡航' },
-  { label: '设备类日志', value: U.num(L.device), color: 'purple', icon: 'device', desc: '状态 / 心跳 / 故障' },
-  { label: '处置类日志', value: U.num(L.disposal), color: 'green', icon: 'check', desc: '告警 / 处置 / 授权' },
-  { label: '待归档', value: `<span id="arPend">${pendingN()}</span>`, color: 'red', icon: 'alert', desc: '勾选后可批量归档' }
+function detail(row) {
+  openModal({
+    title: `审计详情 · ${row.audit_id}`, width: '720px',
+    render: () => h('div', { class: 'audit-detail' }, [
+      h('dl', [
+        h('dt', '时间'), h('dd', dt(row.occurred_at)), h('dt', '用户'), h('dd', `${row.account || '—'}（${roleLabel(row.role_code)}）`),
+        h('dt', '模块'), h('dd', moduleText(row.module_code)), h('dt', '动作'), h('dd', actionText(row.action)),
+        h('dt', '结果'), h('dd', resultText(row.result)), h('dt', 'IP'), h('dd', row.ip || '—'),
+        h('dt', 'User-Agent'), h('dd', row.user_agent || '—'), h('dt', '详情'), h('dd', row.detail || '—')
+      ])
+    ])
+  });
+}
+
+async function exportCsv() {
+  if (exporting.value) return;
+  exporting.value = true;
+  try {
+    const blob = await systemApi.auditCsv(params(false));
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url; link.download = `audit-logs-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link); link.click(); link.remove(); URL.revokeObjectURL(url);
+    toast('审计日志已导出', 'ok');
+  } catch (e) { toast(e.message || '导出失败', 'err'); }
+  finally { exporting.value = false; }
+}
+
+const auditColumns = computed(() => [
+  { title: '时间', key: 'occurred_at', width: 180, render: row => h('span', { class: 'mono' }, dt(row.occurred_at)) },
+  { title: '账号', key: 'account', width: 120, ellipsis: { tooltip: true }, render: row => row.account || '—' },
+  { title: '角色', key: 'role_code', width: 130, ellipsis: { tooltip: true }, render: row => roleLabel(row.role_code) },
+  { title: '模块', key: 'module_code', width: 130, render: row => moduleText(row.module_code) },
+  { title: '动作', key: 'action', width: 150, ellipsis: { tooltip: true }, render: row => actionText(row.action) },
+  { title: '结果', key: 'result', width: 88, render: row => h(NTag, { size: 'small', type: row.result === 'SUCCESS' ? 'success' : 'error', bordered: false }, { default: () => resultText(row.result) }) },
+  { title: 'IP', key: 'ip', width: 130, render: row => h('span', { class: 'mono' }, row.ip || '—') },
+  { title: '操作', key: 'actions', width: 80, render: row => h(NButton, { text: true, type: 'primary', onClick: () => detail(row) }, { default: () => '详情' }) }
 ]);
 
-/* ---- 页签一/二（与 legacy 同构） ---- */
-function tabList() {
-  return `<div class="panel" style="flex:none;margin-bottom:12px"><div class="toolbar" style="border:0">
-    ${U.field('关键字', `<input class="ip" id="arKw" style="width:150px" placeholder="编号 / 摘要关键字（回车查询）">`)}
-    ${U.field('日志类型', U.select('type', ['全部', ...L.byType.map(t => t.name)], S.st.type))}
-    ${U.field('目标编号', `<input class="ip" id="arTgt" style="width:150px" placeholder="如 UAV20260826001">`)}
-    ${U.field('设备编号', `<input class="ip" id="arDev" style="width:150px" placeholder="如 DEV260826001">`)}
-    ${U.field('归档状态', U.select('astatus', ['全部', '待归档', '已归档'], S.st.astatus))}
-    <div class="toolbar-actions">
-    <button class="btn" id="arQ" title="下拉筛选即时生效；三个输入框需点查询或回车才应用">${U.icon('search')} 查询</button>
-    <button class="btn" id="arR">重置筛选</button>
-    <button class="btn warn" id="arBatch" disabled title="请先在列表中勾选待归档记录（仅「待归档」状态可勾选）">▤ 批量归档（<b id="arSelN">0</b>）</button>
-    <button class="btn" id="arExp">${U.icon('download')} 导出日志</button>
-    <button class="btn ghost" id="arCfg" aria-label="归档策略配置">${U.icon('settings')}</button>
-    </div>
-  </div></div>
-
-  ${U.panel({
-    title: '日志归档列表', sub: `<span id="arCnt"></span>`, style: 'height:calc(100vh - 362px);min-height:530px;margin-bottom:12px', nopad: true,
-    body: `<div id="arList" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>`
-  })}`;
-}
-function tabStat() {
-  return `<div class="row" style="height:calc(100vh - 342px);min-height:550px;padding-bottom:12px">
-    ${U.panel({
-    title: '归档趋势统计', style: 'flex:1.5',
-    extra: `<div class="tabs" style="border:0">${['日', '周', '月'].map(t => `<span class="tab ${t === S.gran ? 'on' : ''}" data-ag="${t}">${t}</span>`).join('')}</div>`,
-    body: `<div id="arTrend" style="height:100%"></div>`
-  })}
-    ${U.panel({
-    title: '归档类型分布', sub: '今日', style: 'flex:1',
-    body: `<div id="arType" style="height:100%"></div>`
-  })}
-    ${U.panel({
-    title: '归档存储与策略', style: 'width:300px',
-    body: U.kv([['在线保留', '90 天（热数据）'], ['归档存储', '对象存储 · 3 副本'],
-    ['冷备策略', '90 天后转冷，保留 3 年'], ['完整性', 'SHA-256 存证防篡改'],
-    ['访问审计', '查看/下载均记录操作人'], ['异常日志', '保留期与案件卷宗一致']])
-  })}
-  </div>`;
-}
-
-const TC = { '告警事件': 't-red', '轨迹日志': 't-blue', '处置记录': 't-amber', '设备状态': 't-cyan', '雷达检测': 't-purple', '巡航飞行': 't-green' };
-
-function list() {
-  const rows = sorted(filtered());
-  const page = rows.slice((S.st.page - 1) * S.st.size, S.st.page * S.st.size);
-  return U.table([
-    { t: sortTh('记录编号', 'id'), k: 'id', w: '160px', cls: 'num' },
-    { t: sortTh('日志类型', 'type'), w: '96px', render: l => U.tag(l.type, TC[l.type]) },
-    { t: sortTh('关联目标', 'target'), k: 'target', w: '132px', cls: 'num' },
-    { t: sortTh('关联设备', 'deviceName'), k: 'deviceName', w: '150px' },
-    { t: sortTh('事件摘要', 'summary'), k: 'summary' },
-    { t: sortTh('时间', 'time'), k: 'time', w: '150px', cls: 'num' },
-    { t: sortTh('归档状态', 'status'), w: '86px', render: l => U.tag(l.status, l.status === '待归档' ? 't-amber' : 't-green') },
-    { t: '操作', w: '96px', render: l => `<span class="lnk" data-lop="${l.id}">详情</span><span class="lnk" data-ldl="${l.id}">下载</span>` }
-  ], page, {
-    rowId: l => l.id,
-    checkbox: l => l.status === '待归档' ? l.id : null
-  })
-    + U.pager({ total: rows.length, page: S.st.page, size: S.st.size });
-}
-
-function payload(l) {
-  const t = M.allTargets.find(x => x.id === l.target);
-  const d = M.devices.find(x => x.id === l.device);
-  if (l.type === '设备状态') {
-    return {
-      eventType: 'DEVICE_STATUS', deviceId: l.device, deviceType: d ? d.type : '—',
-      status: d ? d.status : '—', health: d ? d.health : '—',
-      metrics: { temperature: d ? d.temp : 0, latencyMs: d ? d.latency : null, lossRate: d ? d.loss : null },
-      eventTime: l.time, receiveTime: l.time, source: '设备监控'
-    };
-  }
-  return {
-    eventType: l.type === '告警事件' ? 'ALERT_INTRUSION' : (l.type === '处置记录' ? 'DISPOSAL_RECORD' : 'TRACK_UPDATE'),
-    targetId: l.target, trackId: 'TRK' + (t ? t.seq : 0), deviceId: l.device,
-    location: { lat: t ? t.lat : 0, lng: t ? t.lon : 0, alt: t ? t.alt : 0, coordinateSystem: 'WGS-84' },
-    speed: t ? t.speed : 0, heading: t ? t.heading : 0,
-    zone: t ? t.district : '—', level: t && ['高风险', '超高风险'].includes(t.risk) ? 'HIGH' : 'MEDIUM',
-    description: l.summary, source: d ? d.type : '融合感知箱', confidence: t ? t.source_confidence : 0.9,
-    eventTime: l.time, receiveTime: l.time
-  };
-}
-
-function flowOf(l) {
-  const base = new Date(l.ts);
-  const off = [0, 14, 31, 99, 168, 207];
-  const color = ['#ff4d5e', '#ffb020', '#ffb020', '#3d8bff', '#a97bff', '#2fd06e'];
-  return M.DISPOSAL_FLOW.map((f, i) => ({
-    time: M.util.fmtT(new Date(base.getTime() + off[i] * 1000)),
-    label: f.n, desc: f.d, color: color[i]
-  }));
-}
-
-function detailModal(l) {
-  const rr = CH.seeded(l.id);
-  const d = M.devices.find(x => x.id === l.device);
-  const hasFlow = l.type === '告警事件' || l.type === '处置记录';
-  const t = M.allTargets.find(x => x.id === l.target);
-  let extra = '';
-  if (hasFlow) {
-    extra = U.sect('关联处置流程', U.timeline(flowOf(l)));
-  } else if (l.type === '设备状态') {
-    extra = U.sect('设备当时指标', U.kv([
-      ['温度', (d ? d.temp : '—') + ' ℃'], ['时延 / 丢包', (d && d.latency != null ? d.latency + ' ms' : '—') + ' / ' + (d && d.loss != null ? d.loss + ' %' : '—')],
-      ['信号强度', (d ? d.rssi : '—') + ' dBm'], ['最后心跳', d ? d.hb : '—']]));
-  } else if (t) {
-    extra = U.sect('目标轨迹概要', U.kv([
-      ['目标类型', t.subtype || t.type], ['跟踪时长', t.durMin + ' 分钟'],
-      ['轨迹长度', t.trackKm + ' km'], ['高度 / 速度', t.alt + ' m / ' + t.speed + ' m/s'],
-      ['数据来源', t.source + '（置信度 ' + U.confPct(t.source_confidence) + '）']]));
-  }
-  openModal({
-    title: `日志详情 · ${l.id}`, width: '720px',
-    body: `${U.detailHero({
-      icon: 'archive', title: l.summary, subtitle: '审计与日志归档', id: l.id,
-      tags: [U.tag(l.type, TC[l.type]), U.tag(l.status, l.status === '待归档' ? 't-amber' : 't-green')],
-      meta: [['事件时间', l.time], ['关联目标', l.target]]
-    })}
-      ${U.metricStrip([
-        { label: '日志类型', value: l.type, icon: 'archive' },
-        { label: '归档状态', value: l.status, tone: l.status === '已归档' ? 'good' : 'warn', icon: 'folder' },
-        { label: '关联对象', value: l.target || l.device || '—', icon: 'link' },
-        { label: '日志大小', value: l.size, icon: 'file' }
-      ], { compact: true })}
-      ${U.kv([['记录编号', `<span class="mono">${l.id}</span>`], ['事件时间', l.time],
-    ['归档状态', l.status], ['归档时间', l.status === '已归档' ? M.util.fmtDT(new Date(l.ts + 207000)) : '—'],
-    ['关联目标', l.target], ['关联设备', `${l.deviceName}（${l.device}）`]], { surface: true, density: 'compact' })}
-      <div style="margin-top:12px">${U.codeBlock('完整日志内容', JSON.stringify(payload(l), null, 2), { language: 'JSON', maxH: '230px' })}</div>
-      ${extra}
-      ${U.sect('附件 (3)', `<div class="attachment-list">
-        ${[['track_' + l.id.slice(-8) + '.json', '1.24 MB'], ['snapshot_' + l.id.slice(-8) + '.jpg', '512 KB'], ['radar_log_' + l.id.slice(-8) + '.zip', '3.68 MB']]
-      .map(([n, sz]) => `<div class="attachment-card">
-            <span aria-hidden="true">${U.icon('file')}</span><span class="lnk" style="flex:1">${n}</span><span style="color:var(--txt-3)">${sz}</span><span class="lnk" aria-label="下载附件">${U.icon('download')}</span></div>`).join('')}</div>`)}
-      ${U.sect('操作人信息', U.kv([['操作人', M.PILOTS[rr(0, M.PILOTS.length - 1)]], ['角色', '值班员'],
-      ['所属单位', '东营市低空安全管理中心'], ['操作终端', '终端-' + M.util.p2(rr(1, 12))],
-      ['日志大小', l.size], ['存证哈希', `<span class="mono" style="font-size:11px">sha256:${l.id.replace(/[^0-9a-z]/gi, '').toLowerCase()}8f2a…</span>`]]))}`,
-    footer: `<button class="btn" data-close>关闭</button>
-      ${l.status === '待归档' ? `<button class="btn warn" data-act="arch" ${M.can('日志归档', 'op') ? '' : 'disabled title="当前角色无归档操作权限"'}>归档本条</button>` : ''}
-      <button class="btn pri" data-act="down">${U.icon('download')} 下载完整日志包</button>`,
-    on: {
-      down: () => {
-        if (!M.can('日志归档', 'op')) return toast('需要「日志归档」操作权限', 'err');
-        M.pushAudit('日志归档', '下载完整日志包', l.id); toast('已生成日志包（JSON + 轨迹 + 截图 + 审计），共 5.4 MB', 'ok');
-      },
-      arch: () => {
-        if (!M.can('日志归档', 'op')) return toast('需要「日志归档」操作权限', 'err');
-        l.status = '已归档'; M.pushAudit('日志归档', '归档日志', l.id); closeModal(); paint(); toast(`「${l.id}」已归档`, 'ok');
-      }
-    }
-  });
-}
-
-function paint() {
-  const box = document.getElementById('arList');
-  box.innerHTML = list();
-  document.getElementById('arCnt').textContent = `共 ${U.num(filtered().length)} 条 · 本页可勾选待归档记录`;
-  document.getElementById('arPend').textContent = pendingN();
-  updateSelN();
-}
-function updateSelN() {
-  const n = U.checked(document.getElementById('arList') || document.body).length;
-  const el = document.getElementById('arSelN');
-  if (el) el.textContent = n;
-  const b = document.getElementById('arBatch');
-  if (b) {
-    b.disabled = !n;
-    b.title = n ? `将 ${n} 条待归档记录批量归档` : '请先在列表中勾选待归档记录（仅「待归档」状态可勾选）';
-  }
-}
-
-let trendChart = null;
-function paintTrend() {
-  const el = document.getElementById('arTrend');
-  el.innerHTML = '';
-  let x, total, abn;
-  if (S.gran === '日') {
-    x = L.trend.map(t => t.date); total = L.trend.map(t => t.total); abn = L.trend.map(t => t.abnormal);
-  } else if (S.gran === '周') {
-    const wk = L.trend.reduce((s, t) => s + t.total, 0);
-    const wa = L.trend.reduce((s, t) => s + t.abnormal, 0);
-    x = ['W31', 'W32', 'W33', 'W34(本周)'];
-    total = [Math.round(wk * .82), Math.round(wk * .88), Math.round(wk * .94), wk];
-    abn = [Math.round(wa * .82), Math.round(wa * .88), Math.round(wa * .94), wa];
-  } else {
-    const mo = L.total;
-    x = ['2026-06', '2026-07', '2026-08(至今)'];
-    total = [Math.round(mo * .29), Math.round(mo * .33), Math.round(mo * .38)];
-    abn = total.map(v => Math.round(v * .012));
-  }
-  trendChart = CH.line(el, {
-    x, yName: '归档总数', y2: '异常日志数', yScale: true,
-    series: [{ name: '归档总数', data: total, color: CH.C.blue, area: true, label: S.gran !== '日' },
-    { name: '异常日志数', data: abn, color: CH.C.red, yAxisIndex: 1, label: S.gran !== '日' }]
-  });
-}
-
-function paintTab(view) {
-  const body = document.getElementById('arBody');
-  CH.disposeAll();
-  if (S.tab === 'list') {
-    body.innerHTML = tabList();
-    paint();
-    U.bindCheckAll(view || document);
-    bindListTools();
-  } else {
-    body.innerHTML = tabStat();
-    requestAnimationFrame(() => {
-      if (S.tab !== 'stat' || !document.getElementById('arType')) return;
-      paintTrend();
-      CH.donut(document.getElementById('arType'), { data: L.byType, centerLabel: '今日合计', centerValue: L.today });
-    });
-  }
-}
-
-function bindListTools() {
-  const g2 = id => document.getElementById(id);
-  if (!g2('arQ')) return;
-  const inputs = ['arKw', 'arTgt', 'arDev'];
-  const cur = () => ({ kw: g2('arKw').value.trim(), target: g2('arTgt').value.trim(), device: g2('arDev').value.trim() });
-  const dirty = () => { const c = cur(); return c.kw !== S.st.kw || c.target !== S.st.target || c.device !== S.st.device; };
-  function syncQ() {
-    const b = g2('arQ'); if (!b) return;
-    const d = dirty();
-    b.className = 'btn' + (d ? ' pri' : '');
-    b.innerHTML = `${U.icon('search')} ${d ? '查询（有未应用条件）' : '查询'}`;
-    b.title = d ? '点击应用输入框中的检索条件' : '输入框条件已全部应用；下拉筛选即时生效，无需点查询';
-  }
-  const doQuery = () => {
-    if (!dirty()) return toast('检索条件未变化（下拉筛选已即时生效，输入框条件也已应用）');
-    Object.assign(S.st, cur());
-    S.st.page = 1; paint(); syncQ();
-    toast('查询完成，命中 ' + filtered().length + ' 条', 'ok');
-  };
-  inputs.forEach(i => {
-    const el = g2(i); if (!el) return;
-    el.oninput = syncQ;
-    el.onkeydown = e => { if (e.key === 'Enter') doQuery(); };
-  });
-  syncQ();
-  g2('arQ').onclick = doQuery;
-  g2('arR').onclick = () => {
-    S.st = { page: 1, size: S.st.size, type: '全部', astatus: '全部', kw: '', target: '', device: '' };
-    ['arKw', 'arTgt', 'arDev'].forEach(i => g2(i).value = '');
-    document.querySelectorAll('#arBody select[data-f]').forEach(s2 => s2.selectedIndex = 0);
-    paint(); syncQ();
-  };
-  g2('arExp').onclick = () => {
-    if (!M.can('日志归档', 'op')) return toast('需要「日志归档」操作权限', 'err');
-    M.pushAudit('日志归档', `导出日志归档 ${filtered().length} 条`, 'ARCHIVE'); toast('已导出「日志归档.csv」共 ' + filtered().length + ' 条', 'ok');
-  };
-  g2('arCfg').onclick = () => M.can('日志归档', 'op') ? cfgModal() : toast('需要「日志归档」操作权限', 'err');
-  g2('arBatch').onclick = () => {
-    if (!M.can('日志归档', 'op')) return toast('需要「日志归档」操作权限', 'err');
-    const ids = U.checked(document.getElementById('arBody'));
-    if (!ids.length) return toast('请先勾选左侧待归档记录（仅待归档记录可勾选）', 'err');
-    ids.forEach(id => { const l = M.logs.find(x => x.id === id); if (l) l.status = '已归档'; });
-    M.pushAudit('日志归档', `批量归档 ${ids.length} 条记录`, 'ARCHIVE');
-    paint();
-    const pe = document.getElementById('arPend');
-    if (pe) pe.textContent = pendingN();
-    toast(`已归档 ${ids.length} 条记录，待归档剩余 ${pendingN()} 条`, 'ok');
-  };
-}
-
-function cfgModal() {
-  openModal({
-    title: '归档策略配置', width: '520px',
-    body: U.kv([['自动归档', '事件闭环后 T+0 自动归档'], ['待归档兜底', '超 24h 未闭环记录转人工批量归档'],
-    ['在线保留', '90 天（热数据）'], ['冷备周期', '90 天后转冷存储，保留 3 年'],
-    ['完整性校验', 'SHA-256 存证，防篡改'], ['访问审计', '所有下载与查看均记录操作人与终端']])
-  });
-}
-
-function setTab(k) {
-  if (S.tab === k) return;
-  S.tab = k; tab.value = k;
-  paintTab(root.value);
-}
-
-onMounted(() => {
-  const view = root.value;
-  paintTab(view);
-  U.on(view, '[data-row]', 'click', (e, el) => { const l = M.logs.find(x => x.id === el.dataset.row); if (l) detailModal(l); });
-  U.on(view, '[data-lop]', 'click', (e, el) => { e.stopPropagation(); const l = M.logs.find(x => x.id === el.dataset.lop); if (l) detailModal(l); });
-  U.on(view, '[data-ldl]', 'click', (e, el) => { e.stopPropagation(); toast('已下载日志 ' + el.dataset.ldl + '（Demo）', 'ok'); });
-  U.on(view, '[data-pg]', 'click', (e, el) => { if (el.dataset.pg) { S.st.page = +el.dataset.pg; paint(); } });
-  U.on(view, '[data-size]', 'change', (e, el) => { S.st.size = parseInt(el.value); S.st.page = 1; paint(); });
-  U.on(view, '[data-f]', 'change', (e, el) => { S.st[el.dataset.f] = el.value; S.st.page = 1; paint(); });
-  U.on(view, '[data-ck],[data-ckall]', 'change', updateSelN);
-  U.on(view, '[data-sort]', 'click', (e, el) => {
-    const k = el.dataset.sort;
-    if (S.SORT.key === k) S.SORT.dir = S.SORT.dir === 'asc' ? 'desc' : 'asc';
-    else { S.SORT.key = k; S.SORT.dir = 'asc'; }
-    S.st.page = 1;
-    paint();
-  });
-  U.on(view, '[data-ag]', 'click', (e, el) => {
-    S.gran = el.dataset.ag;
-    view.querySelectorAll('[data-ag]').forEach(x => x.classList.toggle('on', x === el));
-    paintTrend();
-  });
-});
+onMounted(load);
 </script>
 
 <template>
-  <div class="view" id="view" ref="root">
-    <UKpis :list="kpiList" />
-    <!-- P3：页签换 n-tabs（模板层受控；行为同 setTab） -->
-    <n-tabs type="line" size="small" :value="tab" @update:value="setTab" style="margin:12px 0 0">
-      <n-tab name="list">日志检索</n-tab>
-      <n-tab name="stat">归档统计与策略</n-tab>
-    </n-tabs>
-    <div id="arBody" style="margin-top:12px"></div>
+  <div class="view audit-api-view">
+    <section class="panel audit-api-panel">
+      <header class="ph audit-heading"><div><h2>审计日志</h2><p>日志只读且不可删除；查询与 CSV 导出使用相同筛选条件。</p></div><n-button type="primary" :loading="exporting" :disabled="!hasPermission('audit.op')" @click="exportCsv">导出 CSV</n-button></header>
+      <form class="audit-filter" @submit.prevent="search">
+        <UField class="audit-time" v-model="filters.range" variant="toolbar" type="datetimerange" label="时间"
+          start-placeholder="开始时间" end-placeholder="结束时间" :default-time="RANGE_DEFAULT_TIME" clearable />
+        <UField v-model="filters.account" variant="toolbar" label="账号" placeholder="账号" clearable />
+        <UField v-model="filters.module" variant="toolbar" label="模块" type="select" :options="moduleOptions" clearable placeholder="全部模块" />
+        <UField v-model="filters.action" variant="toolbar" label="动作" type="select" :options="actionOptions" clearable placeholder="全部动作" />
+        <UField v-model="filters.result" variant="toolbar" label="结果" type="select" :options="resultOptions" clearable placeholder="全部结果" />
+        <div class="toolbar-actions"><n-button type="primary" attr-type="submit">查询</n-button><n-button @click="reset">重置</n-button></div>
+      </form>
+      <p v-if="error" class="audit-error" role="alert">{{ error }} <button type="button" @click="load">重试</button></p>
+      <n-spin :show="loading">
+        <div class="naive-table-fill">
+          <n-data-table :columns="auditColumns" :data="rows" :row-key="row => row.audit_id" :bordered="false" :single-line="true" size="small" flex-height :scroll-x="1100" />
+        </div>
+        <footer class="pager-row"><span>共 {{ total }} 条，默认按时间倒序。单次 CSV 导出上限 50,000 条。</span>
+          <UPagination v-model:page="page" v-model:page-size="size" :item-count="total" @update:page="load" @update:page-size="onPageSize" />
+        </footer>
+      </n-spin>
+    </section>
   </div>
 </template>
+
+<style scoped>
+.audit-api-view { display:flex; flex-direction:column; min-height:0; overflow:hidden; }
+.audit-api-panel { display:flex; flex:1; min-height:0; flex-direction:column; overflow:hidden; }
+.audit-heading { display:flex; flex:none; justify-content:space-between; align-items:center; gap:16px; }
+.audit-heading h2, .audit-heading p { margin:0; }.audit-heading p { margin-top:5px; color:var(--txt-3); }
+.audit-filter { display:flex; flex:none; flex-wrap:wrap; align-items:end; gap:10px; padding:14px 16px; border-bottom:1px solid var(--line); }
+.audit-filter .audit-time { flex:1 1 28em; min-width:min(28em, 100%); max-width:40em; }
+.audit-filter .audit-time :deep(.u-field__control) { min-width:22em; }
+.audit-filter .u-field:not(.audit-time) { flex:1 1 10em; min-width:9em; max-width:16em; }
+.audit-api-panel :deep(.n-spin-container), .audit-api-panel :deep(.n-spin-content) { display:flex; flex:1; min-height:0; flex-direction:column; overflow:hidden; }
+.audit-error { flex:none; margin:12px 16px; padding:11px 13px; border:1px solid var(--red); border-radius:6px; color:var(--red); background:color-mix(in srgb, var(--red) 10%, transparent); }
+:global(.audit-detail dl) { display:grid; grid-template-columns:110px 1fr; gap:12px; }
+:global(.audit-detail dt) { color:var(--txt-3); }
+:global(.audit-detail dd) { margin:0; word-break:break-word; }
+@media (max-width:760px) { .audit-filter .audit-time, .audit-filter .u-field:not(.audit-time) { flex:1 1 100%; min-width:0; max-width:none; }.audit-filter .audit-time :deep(.u-field__control) { min-width:0; }.pager-row { align-items:flex-start; flex-direction:column; } }
+</style>

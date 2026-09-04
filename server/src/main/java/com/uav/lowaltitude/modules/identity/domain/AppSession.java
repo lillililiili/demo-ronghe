@@ -6,6 +6,7 @@ public class AppSession {
     private long expireAt;
     private String ip;
     private String shiftNote;
+    private int permissionVersion;
 
     public String getSessionId() {
         return sessionId;
@@ -45,5 +46,13 @@ public class AppSession {
 
     public void setShiftNote(String shiftNote) {
         this.shiftNote = shiftNote;
+    }
+
+    public int getPermissionVersion() {
+        return permissionVersion;
+    }
+
+    public void setPermissionVersion(int permissionVersion) {
+        this.permissionVersion = permissionVersion;
     }
 }

@@ -1,68 +1,97 @@
-/* 本地 Mock 演示会话：公开演示密码，不代表生产认证，不发送网络请求。
-   用户/角色/权限仍取自 MOCK；接入真实后端时替换本服务。 */
-import { ref, readonly } from 'vue';
+import { readonly, ref } from 'vue';
+import { apiRequest, readSessionToken, writeSessionToken } from './apiClient.js';
 
-export const DEMO_PASSWORD = 'Demo@2026';
-const SESSION_KEY = 'dongying.demo.session.v1';
 const ACCOUNT_KEY = 'dongying.demo.account.v1';
-const sessionId = ref(null);
-export const authSession = readonly(sessionId);
-const M = window.MOCK;
+const sessionId = ref(readSessionToken());
+const user = ref(null);
+const restoring = ref(null);
+const restoreError = ref(null);
 
-function readStorage(kind, key) {
-  try { return window[kind].getItem(key); } catch { return null; }
-}
-function writeStorage(kind, key, value) {
+export const authSession = readonly(sessionId);
+export const authUser = readonly(user);
+export const authRestoreError = readonly(restoreError);
+export const DEMO_PASSWORD = 'changeme';
+
+function storage(kind, key, value) {
   try {
+    if (arguments.length === 2) return window[kind].getItem(key);
     if (value) window[kind].setItem(key, value);
     else window[kind].removeItem(key);
     return true;
   } catch { return false; }
 }
-export function rememberedAccount() {
-  return readStorage('localStorage', ACCOUNT_KEY) || '';
+
+function notifyAccessChanged() {
+  window.__API_ACCESS = user.value ? {
+    menuKeys: new Set(user.value.menu_keys || []),
+    permissionCodes: new Set(user.value.permission_codes || [])
+  } : null;
+  window.dispatchEvent(new Event('auth-access-change'));
+  window.dispatchEvent(new Event('mock-access-change'));
 }
-export function forgetAccount() {
-  writeStorage('localStorage', ACCOUNT_KEY, null);
+
+function clearSession() {
+  sessionId.value = '';
+  user.value = null;
+  restoreError.value = null;
+  writeSessionToken('');
+  notifyAccessChanged();
 }
-export function isAuthenticated() {
-  return !!(sessionId.value && M.currentUser?.id === sessionId.value && M.currentUser.status === '正常');
+
+export function rememberedAccount() { return storage('localStorage', ACCOUNT_KEY) || ''; }
+export function forgetAccount() { storage('localStorage', ACCOUNT_KEY, null); }
+export function isAuthenticated() { return !!(sessionId.value && user.value); }
+export function needsPasswordChange() { return !!user.value?.must_change_password; }
+
+export async function loadCurrentUser() {
+  const current = await apiRequest('/auth/me');
+  user.value = current;
+  restoreError.value = null;
+  notifyAccessChanged();
+  return current;
 }
-export function restoreSession() {
-  const id = readStorage('sessionStorage', SESSION_KEY);
-  const user = M.users.find(u => u.id === id && u.status === '正常');
-  sessionId.value = user?.id || null;
-  if (user) M.switchUser(user.id);
-  else {
-    writeStorage('sessionStorage', SESSION_KEY, null);
-    M.clearCurrentUser();
+
+export async function restoreSession() {
+  const token = readSessionToken();
+  sessionId.value = token;
+  if (!token) {
+    user.value = null;
+    restoreError.value = null;
+    return null;
   }
+  if (!restoring.value) {
+    restoring.value = loadCurrentUser().catch(error => {
+      if (error?.status === 401) clearSession();
+      else restoreError.value = error;
+      return null;
+    }).finally(() => { restoring.value = null; });
+  }
+  return restoring.value;
 }
-export function login({ account, password, remember }) {
-  const user = M.users.find(u => u.account === account.trim());
-  if (!user || password !== DEMO_PASSWORD) {
-    M.pushAudit('系统登录', '演示账号登录', user?.account || '未知账号', '失败（账号或密码错误）');
-    return { ok: false, message: '账号或密码不正确，请重试或查看“忘记密码”。' };
-  }
-  if (user.status !== '正常') {
-    M.pushAudit('系统登录', '演示账号登录', user.account, '失败（账号已停用）');
-    return { ok: false, message: '该账号已停用，请联系系统管理员。' };
-  }
-  M.switchUser(user.id);
-  user.online = true;
-  user.lastLogin = M.nowStr();
-  sessionId.value = user.id;
-  const persisted = writeStorage('sessionStorage', SESSION_KEY, user.id);
-  writeStorage('localStorage', ACCOUNT_KEY, remember ? user.account : null);
-  M.pushAudit('系统登录', '演示账号登录（未接入真实认证/MFA）', user.account);
+
+export async function login({ account, password, remember }) {
+  const data = await apiRequest('/auth/login', { method: 'POST', body: { account: account.trim(), password } });
+  const persisted = writeSessionToken(data.session_id);
+  sessionId.value = data.session_id;
+  storage('localStorage', ACCOUNT_KEY, remember ? data.account : null);
+  try { await loadCurrentUser(); }
+  catch (error) { clearSession(); throw error; }
   return { ok: true, persisted };
 }
-export function logout() {
-  if (M.currentUser && sessionId.value) {
-    M.pushAudit('系统登录', '退出演示登录', M.currentUser.account);
-    M.currentUser.online = false;
-  }
-  sessionId.value = null;
-  writeStorage('sessionStorage', SESSION_KEY, null);
-  M.clearCurrentUser();
+
+export async function logout() {
+  try { if (sessionId.value) await apiRequest('/auth/logout', { method: 'POST' }); }
+  catch { /* 本地会话仍须清除，避免后端不可用时把用户困在旧会话中。 */ }
+  finally { clearSession(); }
 }
+
+export async function changePassword(currentPassword, newPassword) {
+  await apiRequest('/auth/change-password', { method: 'POST', body: { current_password: currentPassword, new_password: newPassword } });
+  clearSession();
+}
+
+window.addEventListener('api:unauthorized', () => {
+  const current = location.hash.slice(1) || '/workbench';
+  clearSession();
+  if (!location.hash.startsWith('#/login')) location.hash = `#/login?redirect=${encodeURIComponent(current)}`;
+});

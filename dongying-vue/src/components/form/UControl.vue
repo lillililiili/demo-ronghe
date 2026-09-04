@@ -1,12 +1,24 @@
 <script setup>
 import { computed, ref } from 'vue';
-import { NCheckbox, NCheckboxGroup, NInput, NInputNumber, NRadio, NRadioGroup, NSelect } from 'naive-ui';
+import {
+  NCheckbox, NCheckboxGroup, NConfigProvider, NDatePicker, NInput, NInputNumber,
+  NRadio, NRadioGroup, NSelect, dateZhCN, zhCN
+} from 'naive-ui';
 import { SELECT_DROPDOWN, selectMenuProps } from './selectProps.js';
+
+const DATE_TYPES = new Set([
+  'date', 'datetime', 'daterange', 'datetimerange',
+  'month', 'year', 'quarter', 'week',
+  'monthrange', 'yearrange', 'quarterrange'
+]);
 
 const props = defineProps({
   type: { type: String, default: 'text' },
   options: { type: Array, default: () => [] },
   placeholder: { type: String, default: '' },
+  startPlaceholder: { type: String, default: '' },
+  endPlaceholder: { type: String, default: '' },
+  defaultTime: { type: [String, Array, Function], default: undefined },
   disabled: Boolean,
   readonly: Boolean,
   clearable: Boolean,
@@ -25,6 +37,7 @@ const props = defineProps({
 });
 const model = defineModel({ default: null });
 const menuProps = computed(() => selectMenuProps(props.options));
+const isDatePicker = computed(() => DATE_TYPES.has(props.type));
 const input = ref(null);
 defineExpose({ focus: () => input.value?.focus() });
 </script>
@@ -53,6 +66,12 @@ defineExpose({ focus: () => input.value?.focus() });
   <n-checkbox v-else-if="type === 'checkbox'" :id="id || undefined" v-model:checked="model" :disabled="disabled" :size="size">
     {{ boxLabel }}
   </n-checkbox>
+  <n-config-provider v-else-if="isDatePicker" :locale="zhCN" :date-locale="dateZhCN" style="display:contents">
+    <n-date-picker ref="input" :id="id || undefined" v-model:value="model" :type="type"
+      :placeholder="placeholder || undefined" :start-placeholder="startPlaceholder || undefined"
+      :end-placeholder="endPlaceholder || undefined" :default-time="defaultTime" :disabled="disabled"
+      :clearable="clearable" :size="size" :status="status" style="width:100%" />
+  </n-config-provider>
   <n-input v-else ref="input" v-model:value="model" :type="['textarea', 'password'].includes(type) ? type : 'text'"
     :input-props="{ ...inputProps, id: id || inputProps.id }" :status="status"
     :placeholder="placeholder" :disabled="disabled" :readonly="readonly" :clearable="clearable" :size="size"

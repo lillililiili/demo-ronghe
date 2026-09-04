@@ -1,0 +1,25 @@
+- main [ref=e5]:
+  - generic [ref=e6]:
+    - img "平台标志" [ref=e7]
+    - heading "东营无人机融合感知与 低空安全管理平台" [level=1] [ref=e8]:
+      - generic [ref=e9]: 东营无人机融合感知与
+      - generic [ref=e10]: 低空安全管理平台
+  - region "账号登录" [ref=e11]:
+    - generic [ref=e12]:
+      - generic [ref=e13]:
+        - generic [ref=e14]: 登录账号
+        - generic [ref=e23]:
+          - textbox "登录账号" [ref=e24]
+          - generic: 登录账号
+      - generic [ref=e25]:
+        - generic [ref=e26]: 密码
+        - generic [ref=e29]:
+          - generic [ref=e35]:
+            - textbox "密码" [ref=e36]
+            - generic: 密码
+          - button "显示密码" [ref=e38] [cursor=pointer]
+      - generic [ref=e46]:
+        - checkbox "记住账号" [ref=e47] [cursor=pointer]
+        - button "忘记密码" [ref=e55] [cursor=pointer]
+      - button "登录" [ref=e57] [cursor=pointer]
+  - generic [ref=e59]: 东营市低空安全管理中心

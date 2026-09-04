@@ -20,25 +20,30 @@ public class LoginFailureRecorder {
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void unknownAccount(String account, String ip) {
-        auditService.record(null, account, "login_fail", "user", account, "unknown_account", ip);
+    public void unknownAccount(String account, String ip, String userAgent) {
+        auditService.record(null, account, null, "authentication", "login_fail", "user", account,
+                "unknown_account", "FAILURE", ip, userAgent);
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void locked(AppUser user, String account, String ip) {
-        auditService.record(user.getUserId(), account, "login_fail", "user", user.getUserId(), "locked", ip);
+    public void locked(AppUser user, String account, String ip, String userAgent) {
+        auditService.record(user.getUserId(), account, user.getRoleCode(), "authentication", "login_fail",
+                "user", user.getUserId(), "locked", "FAILURE", ip, userAgent);
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void disabled(AppUser user, String account, String ip) {
-        auditService.record(user.getUserId(), account, "login_fail", "user", user.getUserId(), "disabled", ip);
+    public void disabled(AppUser user, String account, String ip, String userAgent) {
+        auditService.record(user.getUserId(), account, user.getRoleCode(), "authentication", "login_fail",
+                "user", user.getUserId(), "disabled", "FAILURE", ip, userAgent);
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void badPassword(AppUser user, String account, String ip, long now, int failLimit, int lockMinutes) {
+    public void badPassword(AppUser user, String account, String ip, String userAgent,
+            long now, int failLimit, int lockMinutes) {
         int fails = user.getFailCount() + 1;
         Long lockedUntil = fails >= failLimit ? now + lockMinutes * 60_000L : null;
         userMapper.updateLock(user.getUserId(), fails, lockedUntil);
-        auditService.record(user.getUserId(), account, "login_fail", "user", user.getUserId(), "bad_password", ip);
+        auditService.record(user.getUserId(), account, user.getRoleCode(), "authentication", "login_fail",
+                "user", user.getUserId(), "bad_password", "FAILURE", ip, userAgent);
     }
 }

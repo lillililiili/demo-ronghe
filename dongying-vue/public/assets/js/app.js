@@ -187,7 +187,7 @@
     current = page;
     if (page.mount) page.mount(view);
     renderNav(); renderCrumb();
-    document.title = pageTitle(k) + ' · 无人机融合感知平台';
+    document.title = '无人机融合感知平台';
   }
 
   g.APP = {

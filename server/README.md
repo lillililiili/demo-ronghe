@@ -1,13 +1,15 @@
 # low-altitude-server
 
-监管侧值班平台后端工程，当前处于骨架阶段。沿用 Java 17、Spring Boot 3.4.5、MyBatis Starter 3.0.4、Flyway、Maven Wrapper（Maven 3.9.9），开发数据库示例为 PostgreSQL 16/PostGIS 3.5。
+监管侧值班平台后端工程。沿用 Java 17、Spring Boot 3.4.5、MyBatis Starter 3.0.4、Flyway、Maven Wrapper（Maven 3.9.9），开发数据库示例为 PostgreSQL 16/PostGIS 3.5。身份权限和设备运维切片已形成可运行接口；其余业务域仍按开发基线渐进建设。
 
 - [后端开发基线](../docs/后端开发基线.md)：业务范围、能力状态、资料缺口与开发顺序。
 - [数据库设计文档](../docs/数据库设计文档.md)：现有表、拟建字段与关系、约束索引和分期迁移设计，尚未执行建表。
+- [设备运维接口契约](../docs/设备运维接口契约.md)：设备台账、实时监测、重启与接入调测的 REST 契约和联调边界。
+- [系统管理接口](../docs/系统管理接口.md)：登录、菜单、用户、组织区域、自定义角色和审计接口。
 - [后端项目规则](AGENTS.md)：分层、接口、安全、事务、测试及交付要求。
 - [仓库目录约定](../docs/目录结构.md)：前后端与部署位置。
 
-已有登录/退出/当前用户、数据库 Bearer 会话、审计写入、本地存储和迁移代码。阶段 2 增加了数据库实时读取权限/范围决策、隔离的 local/test 合成授权，以及雷达只读承载结构；现有告警与设备 Controller 仍固定返回空列表，尚未接入这些查询能力。Adapter、回放摄取和 Worker 也未形成真实接入闭环，不能把本阶段结构视为雷达已联调或设备控制已实现。
+已有登录/退出/当前用户、数据库 Bearer 会话、角色权限、审计写入，以及设备台账、状态历史、事件、告警、重启命令与调测任务接口。设备动作由持久化 Outbox Worker 推进；开发模拟结果均显式标记。设备适配层已按 `source_mode + protocol_code` 路由，并实现 T02/兼容机扫雷达 TCP v3.0.0 与固定式四通道网络控制器 v2.0 的只读 live 接入。真实射频发射、雷达启停和正式验收阈值仍关闭。
 
 ## 本地启动
 
@@ -33,17 +35,19 @@ Linux/macOS 在 `server/` 执行：
 ./mvnw spring-boot:run -Dspring-boot.run.profiles=local
 ```
 
-数据库连接按 [application-local.yml](src/main/resources/application-local.yml)与 [Compose](../deploy/compose.yml)保持一致；修改了数据库凭据后须同步本地连接配置，不要提交或输出真实凭据。数据库必须预装 PostGIS 扩展。生产 Flyway 依次执行 `V1__init.sql`、`V2__outbox_inbox.sql`、`V3__access_control.sql`、`V4__radar_read_model.sql`，再执行 `db/postgresql/R__stage2_postgres_constraints_and_indexes.sql` 中可重复的 PostgreSQL/PostGIS 约束、索引和层级防循环触发器。V1/V2 是已应用迁移，不得修改。
+`local` profile 启用 `spring-boot-devtools`：`target/classes` 变化后会快速重启应用，不必关掉 `spring-boot:run`。保存 Java 或 `src/main/resources` 后需要先编译（IDE 自动构建，或在 `server/` 执行 `.\mvnw.cmd compile -DskipTests` / `./mvnw compile -DskipTests`）。这不是前端那种方法体热替换；改方法签名、配置类或 Flyway 迁移仍可能需要重新执行 `spring-boot:run`。可执行包默认不包含 DevTools。前端静态页由 Vite 热更新，与此后端重启相互独立。
 
-`local` profile 在空用户表中初始化合成开发账号 `duty1` / `changeme`（另有 admin1、judge1、auth1、auth2、ops1、audit1）；可通过 `APP_DEV_SEED_PASSWORD` 覆盖密码。Seeder 受 `app.dev-seed.enabled` 显式控制，默认环境和 `integration` profile 默认关闭，`test` profile 显式启用。启用后只为 `duty1` 建立确定性的合成组织/区域精确元组，并显式授予三项读取权限；不会创建设备、目标、轨迹或告警数据，也不会授予 `ALL`。生产 V3 迁移只创建 `device:read`、`target:read`、`alarm:read` 权限目录，不启用兼容角色、不建立角色权限或用户范围。默认账号门禁和失败登录留痕仍待继续加固，见开发基线 G2。本骨架不是可直接上线的生产配置。
+数据库连接按 [application-local.yml](src/main/resources/application-local.yml)与 [Compose](../deploy/compose.yml)保持一致；修改了数据库凭据后须同步本地连接配置，不要提交或输出真实凭据。Flyway 会对所配置的数据库执行迁移。
+
+`local` profile 幂等补齐唯一合成超级管理员 `admin1` 以及确定性开发设备数据；默认密码为 `changeme`，可通过 `APP_DEV_SEED_PASSWORD` 覆盖。其他角色和账号由 `admin1` 在系统管理中按需创建。Seeder 受 `app.dev-seed.enabled` 显式控制，默认环境和 `integration` profile 默认关闭，`test` profile 显式启用。本工程不是可直接上线的生产配置。
 
 两位开发者的个人数据库、共享联调库与迁移协作流程见[协作开发环境](../docs/协作开发环境.md)。
 
-启动后可检查 `GET /actuator/health`；无 Bearer 请求 `GET /api/v1/alarms`、`GET /api/v1/devices` 应为 401。登录返回 `session_id` 后，以 `Authorization: Bearer <session_id>` 请求 `/api/v1/auth/me`；两个业务列表当前返回空分页。这些是验证步骤与预期，不是本轮实测结果。
+启动后可检查 `GET /actuator/health`；无 Bearer 请求 `GET /api/v1/devices` 应为 401。登录返回 `session_id` 后，以 `Authorization: Bearer <session_id>` 请求 `/api/v1/auth/me`。所有系统管理写接口还必须带 8–128 位 `Idempotency-Key`，更新已有资源须提交 `expected_version`。运行仓库根目录的 `.\scripts\verify-dev.ps1` 会检查健康状态、登录、`/auth/me` 和 Vite API 代理。
 
 ## 测试
 
-以下命令都在 `server/` 执行。`AuthApiTest` 启用 `test` profile，使用 H2 PostgreSQL 兼容模式；不会依据 Docker 是否启动自动切换数据库。普通 `./mvnw test` 会发现该类。
+以下命令都在 `server/` 执行。`AuthApiTest`、`SystemManagementApiTest` 和 `DeviceOperationsApiTest` 启用 `test` profile，使用 H2 PostgreSQL 兼容模式；不会依据 Docker 是否启动自动切换数据库。普通 `./mvnw test` 会发现这些测试。
 
 Windows PowerShell：
 
@@ -61,23 +65,10 @@ Linux/macOS：
 
 核对 `target/surefire-reports` 中的实际用例数、失败及跳过。H2 测试不替代 PostgreSQL/PostGIS 的 SQL、空间查询、锁、约束和迁移验证；新增相关功能时，在隔离真实数据库中补充验证，不连接生产库。
 
-阶段 2 的 H2 测试只加载 `classpath:db/migration`；PostgreSQL 专属 repeatable 不会在 H2 中执行。真实库验收必须指向可丢弃的 PostgreSQL 16/PostGIS 3.5 隔离数据库，并在当前进程中提供以下变量：
-
-```bash
-export POSTGRES_TEST_URL='jdbc:postgresql://127.0.0.1:PORT/disposable_database'
-export POSTGRES_TEST_USER='test_user'
-export POSTGRES_TEST_PASSWORD='set-locally-not-in-git'
-./mvnw -Dtest=PostgresStage2SchemaTest test
-```
-
-`PostgresStage2SchemaTest` 分别验证空 schema 从 V1 迁移到最新、以及先停在 V2 后升级到最新；测试只创建名称匹配 `stage2_[a-f0-9]{32}` 的随机 schema，并只清理自己创建的 schema。它会实际检查 geometry/GiST、JSONB、timestamptz、部分唯一索引、表达式索引、层级循环触发器、非法样本拒绝和 repeatable 幂等性。三项环境变量缺失时该测试会明确跳过，不能据此声明 PostgreSQL/PostGIS 已验收。
-
-组织和区域的非空 `parent_id` 写入必须使用 PostgreSQL 默认的 `READ COMMITTED` 隔离级别；层级触发器会拒绝其他隔离级别，以确保加锁后的循环检查读取到最新已提交关系。
-
 ## 约定
 
-- `AccessControlService` 从当前数据库校验用户、启用角色、显式权限、scope mode 和有效范围存在性；不信任会话中的角色码，也不缓存授权结果。现有业务 Controller 尚未接入该服务，读取接口落地留到后续阶段。
+- 服务端执行设备动作授权；业务数据访问仍按账号已有范围过滤。用户管理不再维护或展示数据范围，新建用户内部固定为 `ALL`，调整角色时不改写已有范围。
 - 成功状态及审计保持一致，失败尝试也须可靠留痕。当前审计 Mapper 只有 INSERT，不代表完整防篡改方案已完成。
-- 生产禁止公网依赖；真实部署网络按确认资料配置。`APP_SOURCE_MODE=live` 不得自动降级为 mock；当前尚无 live/replay 适配器，不应将模式名当作已接入能力。
+- 生产禁止公网依赖；真实部署网络按确认资料配置。live 来源默认停用，显式启用前逐台校验 TCP 配置、协议配置、凭据引用与 CIDR 白名单；任何连接失败都不得自动降级为 mock。`APP_LIVE_DEVICE_ENABLED=false` 可整体关闭 live 连接监督器，但不能把 live 数据改标为模拟成功。
 - 当前本地证据目录适配只用于开发测试；真实文件、元数据、哈希、下载授权和保管策略随业务切片建设。
 - 启动配置、默认账号、消息投递与测试发现等差距见[开发基线](../docs/后端开发基线.md)。

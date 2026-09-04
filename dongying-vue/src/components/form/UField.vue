@@ -12,6 +12,9 @@ const props = defineProps({
   srOnly: Boolean,
   options: { type: Array, default: () => [] },
   placeholder: { type: String, default: '' },
+  startPlaceholder: { type: String, default: '' },
+  endPlaceholder: { type: String, default: '' },
+  defaultTime: { type: [String, Array, Function], default: undefined },
   disabled: Boolean,
   readonly: Boolean,
   clearable: Boolean,
@@ -40,7 +43,9 @@ defineExpose({ focus: () => control.value?.focus() });
   <div class="u-field" :class="['is-' + variant, { 'is-wide': wide, 'is-required': required && !hideLabel }]">
     <label v-if="label && type !== 'checkbox' && type !== 'html'" :class="labelClass" :for="id || undefined">{{ label }}</label>
     <div class="u-field__control">
-      <UControl ref="control" v-model="model" :type="type" :options="options" :placeholder="placeholder" :disabled="disabled"
+      <UControl ref="control" v-model="model" :type="type" :options="options" :placeholder="placeholder"
+        :start-placeholder="startPlaceholder" :end-placeholder="endPlaceholder" :default-time="defaultTime"
+        :disabled="disabled"
         :readonly="readonly" :clearable="clearable" :min="min" :max="max" :min-rows="minRows" :max-rows="maxRows"
         :show-button="showButton" :size="controlSize" :layout="layout" :id="id" :box-label="boxLabel || (type === 'checkbox' ? label : '')"
         :html="html" :input-props="inputProps" :status="status">

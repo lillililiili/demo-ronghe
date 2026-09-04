@@ -22,6 +22,8 @@ jobs:
           cache: npm
           cache-dependency-path: dongying-vue/package-lock.json
       - run: npm ci
+      - run: node tools/scan.cjs
+      - run: node tools/falsify.cjs
       - run: npm run build
 
   backend:
@@ -38,4 +40,5 @@ jobs:
           cache: maven
       - run: chmod +x mvnw
       - run: ./mvnw -B test
+      - run: ./mvnw -B -Dtest=AuthApiTest,SystemManagementApiTest test
       - run: ./mvnw -B package

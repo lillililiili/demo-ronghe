@@ -15,8 +15,8 @@ export default {};
    地图（MapView）在 onUnmounted 销毁；usePageChrome 先注册，故卸载顺序
    与旧版 route() 一致：CH.disposeAll → map.destroy → closeModal。 */
 import { ref, reactive, computed, h, onMounted, onUnmounted } from 'vue';
-import { NPagination } from 'naive-ui';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
+import UPagination from '@/components/UPagination.vue';
 import UPanel from '@/components/UPanel.vue';
 import UKpis from '@/components/UKpis.vue';
 import { toast } from '@/ui/nv.js';
@@ -31,7 +31,6 @@ const root = ref(null);
    底层对象仍是 S.st，跨导航记忆不变 */
 const st = reactive(S.st);
 const totalCount = ref(0);
-const pageCount = computed(() => Math.max(1, Math.ceil(totalCount.value / st.size)));
 let map = null;
 onUnmounted(() => { if (map) map.destroy(); map = null; });
 
@@ -439,12 +438,8 @@ onMounted(() => {
         <UPanel title="告警列表" panel-style="flex:6;min-width:0" nopad>
           <div style="display:contents" v-html="listPanelBody"></div>
           <div class="pager">
-            <n-pagination :page="st.page" :page-size="st.size" :item-count="totalCount"
-              size="small" :page-slot="5" show-size-picker :page-sizes="[10, 20, 50].map(value => ({ value, label: `${value}条/页` }))"
-              @update:page="onPage" @update:page-size="onPageSize">
-              <template #prefix>共 {{ totalCount.toLocaleString() }} 条</template>
-              <template #suffix>共 {{ pageCount }} 页</template>
-            </n-pagination>
+            <UPagination v-model:page="st.page" v-model:page-size="st.size" :item-count="totalCount"
+              :prefix="`共 ${totalCount.toLocaleString()} 条`" @update:page="onPage" @update:page-size="onPageSize" />
           </div>
         </UPanel>
         <div class="col" style="flex:4;min-width:0">

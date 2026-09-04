@@ -5,6 +5,7 @@ import { computed } from 'vue';
 import { useRoute } from 'vue-router';
 import { NAV, routeKey } from '@/config/navModel.js';
 import { useAppStore } from '@/stores/app.js';
+import { canAccessRoute } from '@/services/accessControl.js';
 
 const route = useRoute();
 const store = useAppStore();
@@ -13,8 +14,8 @@ const icon = name => window.UI.icon(name);
 const visibleNav = computed(() => {
   store.accessRevision;
   return NAV.map(n => n.k
-    ? (window.MOCK.canMenu(n.k) ? n : null)
-    : Object.assign({}, n, { kids: n.kids.filter(c => window.MOCK.canMenu(c.k)) }))
+    ? (canAccessRoute(n.k) ? n : null)
+    : Object.assign({}, n, { kids: n.kids.filter(c => canAccessRoute(c.k)) }))
     .filter(n => n && (n.k || n.kids.length));
 });
 

@@ -6,8 +6,6 @@ spring:
     password:
   flyway:
     enabled: true
-    locations:
-      - classpath:db/migration
 
 app:
   source-mode: mock
@@ -20,3 +18,5 @@ app:
   dev-seed:
     enabled: true
     password: changeme
+  live-device:
+    enabled: false

@@ -1,293 +1,214 @@
-<script>
-const pageState = { selectedId: 'R1', query: '', tab: 'menu', drafts: {} };
-export default {};
-</script>
-
 <script setup>
-import { computed, h, ref } from 'vue';
-import { NCheckbox, NTabs, NTab } from 'naive-ui';
+import { computed, h, onMounted, ref, watch } from 'vue';
+import { NButton, NCheckbox, NDataTable, NSpin } from 'naive-ui';
 import { UField } from '@/components/form/index.js';
-import { NAV } from '@/config/navModel.js';
-import { usePageChrome } from '@/hooks/usePageChrome.js';
-import { toast } from '@/ui/nv.js';
-import { openModal, closeModal } from '@/ui/modal.js';
 import ControlledFormModal from '@/components/modals/ControlledFormModal.vue';
+import RoleCreateModal from './system/RoleCreateModal.vue';
+import { menuLabelOf, withSystemPermissionsLast } from './system/permissionOrder.js';
+import { usePageChrome } from '@/hooks/usePageChrome.js';
+import { hasPermission } from '@/services/accessControl.js';
+import { systemApi } from '@/services/systemAdmin.js';
+import { closeModal, openModal } from '@/ui/modal.js';
+import { toast } from '@/ui/nv.js';
 
-const M = window.MOCK, U = window.UI;
 usePageChrome('roles');
-
-const bump = ref(0);
-const query = ref(pageState.query);
-const tab = ref(pageState.tab);
-const selectedId = ref(pageState.selectedId);
-const levelLabels = { '—': '无权限', READ: '查看', OP: '操作', AUTH: '授权' };
-const levelOrder = ['—', 'READ', 'OP', 'AUTH'];
-const icon = name => U.icon(name);
-
+const loading = ref(false);
+const error = ref('');
+const query = ref('');
+const roles = ref([]);
+const catalog = ref([]);
+const selectedCode = ref(null);
+const roleDetail = ref(null);
+const draft = ref([]);
+const canOperate = computed(() => hasPermission('roles.auth'));
+const protectedCodes = new Set(['users', 'roles', 'audit', 'countermeasure']);
 const roleList = computed(() => {
-  bump.value;
-  const q = query.value.trim();
-  return M.ROLES.filter(r => !q || r.name.includes(q) || r.desc.includes(q) || r.id.toLowerCase().includes(q.toLowerCase()));
+  const q = query.value.trim().toLowerCase();
+  return roles.value.filter(item => !q || item.name.toLowerCase().includes(q)
+    || item.role_code.toLowerCase().includes(q) || (item.description || '').toLowerCase().includes(q));
 });
-const selectedRole = computed(() => {
-  bump.value;
-  return M.ROLES.find(r => r.id === selectedId.value) || null;
-});
-const isLocked = computed(() => selectedRole.value?.id === 'R1');
+const visibleDraft = computed(() => withSystemPermissionsLast(draft.value.filter(item => Boolean(item.route_key))));
+const isLocked = computed(() => roleDetail.value?.role_code === 'ROLE-ADMIN');
+const isDirty = computed(() => roleDetail.value && JSON.stringify(draft.value) !== JSON.stringify(roleDetail.value.permissions));
+const levelOptions = [
+  { value: 'NONE', label: '无权限' }, { value: 'READ', label: '查看' },
+  { value: 'OP', label: '操作' }, { value: 'AUTH', label: '授权' }
+];
 
-const menuGroups = computed(() => {
-  const groups = [];
-  NAV.forEach(n => {
-    if (n.k) groups.push({ title: '固定入口', items: [{ k: n.k, t: n.t, fixed: n.k === 'workbench' }] });
-    else groups.push({ title: n.t, items: n.kids.map(x => ({ k: x.k, t: x.t })) });
-  });
-  const sensing = groups.find(g => g.title === '感知监测');
-  if (sensing) sensing.items.push({ k: 'bigscreen', t: '数据大屏' });
-  return groups;
-});
+function esc(value) { return String(value ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]); }
+function permissionLocked(item) { return isLocked.value || protectedCodes.has(item.permission_code); }
+function setLevel(item, value) { item.level = value; if (value === 'NONE') item.menu_enabled = false; }
+function setMenu(item, value) { item.menu_enabled = value; if (value && item.level === 'NONE') item.level = 'READ'; }
+function discard() { draft.value = roleDetail.value.permissions.map(item => ({ ...item })); toast('已放弃未保存的权限改动', 'ok'); }
+function limitText(item) {
+  if (!isLocked.value && protectedCodes.has(item.permission_code)) return '仅超级管理员';
+  return isLocked.value ? '固定权限' : '可配置';
+}
+const permissionColumns = computed(() => [
+  { title: '权限编码', key: 'permission_code', width: 150, render: row => h('span', { class: 'mono' }, row.permission_code) },
+  { title: '菜单入口', key: 'route_key', width: 180, render: row => h(NCheckbox, {
+    checked: row.menu_enabled, disabled: permissionLocked(row), 'onUpdate:checked': value => setMenu(row, value)
+  }, { default: () => menuLabelOf(row.route_key) }) },
+  { title: '权限等级', key: 'level', width: 150, render: row => h(UField, {
+    modelValue: row.level, type: 'select', label: '权限等级', srOnly: true, options: levelOptions,
+    disabled: permissionLocked(row), 'onUpdate:modelValue': value => setLevel(row, value)
+  }) },
+  { title: '限制', key: 'limit', width: 130, render: row => (!isLocked.value && protectedCodes.has(row.permission_code)
+    ? h('span', { class: 'locked-note' }, '仅超级管理员') : limitText(row)) }
+]);
 
-function ensureDraft(id = selectedRole.value?.id) {
-  if (!id) return null;
-  if (!pageState.drafts[id]) {
-    pageState.drafts[id] = {
-      menu: Object.assign({}, M.MENU_PERM[id]),
-      perm: M.PERM[id].slice()
-    };
+async function loadRoles() {
+  roles.value = await systemApi.roles();
+  if (!roles.value.some(item => item.role_code === selectedCode.value)) {
+    selectedCode.value = roles.value.find(item => item.role_code === 'ROLE-ADMIN')?.role_code || roles.value[0]?.role_code || null;
   }
-  return pageState.drafts[id];
 }
-function draftOf() { return ensureDraft(selectedRole.value?.id); }
-function menuChecked(key) { bump.value; return !!draftOf()?.menu[key]; }
-function permValue(i) { bump.value; return draftOf()?.perm[i] || '—'; }
-function isDirty(id = selectedRole.value?.id) {
-  bump.value;
-  const d = pageState.drafts[id];
-  if (!d || !M.PERM[id] || !M.MENU_PERM[id]) return false;
-  return JSON.stringify(d.perm) !== JSON.stringify(M.PERM[id]) || JSON.stringify(d.menu) !== JSON.stringify(M.MENU_PERM[id]);
+async function loadRole(code = selectedCode.value) {
+  if (!code) { roleDetail.value = null; draft.value = []; return; }
+  loading.value = true;
+  error.value = '';
+  try {
+    roleDetail.value = await systemApi.role(code);
+    draft.value = roleDetail.value.permissions.map(item => ({ ...item }));
+  } catch (e) { error.value = e.message || '角色详情加载失败。'; }
+  finally { loading.value = false; }
 }
-function dirtyCount(id = selectedRole.value?.id) {
-  const d = pageState.drafts[id];
-  if (!d || !M.PERM[id] || !M.MENU_PERM[id]) return 0;
-  let n = d.perm.filter((v, i) => v !== M.PERM[id][i]).length;
-  M.MENU_KEYS.forEach(k => { if (!!d.menu[k] !== !!M.MENU_PERM[id][k]) n++; });
-  return n;
+async function loadAll() {
+  loading.value = true;
+  error.value = '';
+  try { [catalog.value] = await Promise.all([systemApi.permissions(), loadRoles()]); await loadRole(); }
+  catch (e) { error.value = e.message || '角色管理数据加载失败。'; }
+  finally { loading.value = false; }
 }
-function setSelected(id) {
-  pageState.selectedId = id;
-  selectedId.value = id;
-  ensureDraft(id);
-}
-function setTab(value) { pageState.tab = value; tab.value = value; }
-function setQuery(value) { pageState.query = value || ''; query.value = pageState.query; }
+watch(selectedCode, code => { if (code) loadRole(code); });
 
-function setMenu(key, checked) {
-  if (isLocked.value || key === 'workbench') return;
-  const d = draftOf();
-  d.menu[key] = checked;
-  const moduleName = M.ROUTE_MODULES[key];
-  const mi = M.PERM_MODULES.indexOf(moduleName);
-  if (mi >= 0) d.perm[mi] = checked && d.perm[mi] === '—' ? 'READ' : (!checked ? '—' : d.perm[mi]);
-  bump.value++;
-}
-function groupState(group) {
-  const editable = group.items.filter(x => !x.fixed);
-  const checked = editable.filter(x => menuChecked(x.k)).length;
-  return { checked: editable.length > 0 && checked === editable.length, indeterminate: checked > 0 && checked < editable.length };
-}
-function setGroup(group, checked) {
-  group.items.filter(x => !x.fixed).forEach(x => setMenu(x.k, checked));
-}
-function permissionLocked(moduleName) {
-  return isLocked.value || moduleName === '反制/干扰授权';
-}
-function setPermission(i, value) {
-  const role = selectedRole.value, moduleName = M.PERM_MODULES[i];
-  if (!role || permissionLocked(moduleName)) return;
-  const d = draftOf();
-  d.perm[i] = value;
-  if (value === '—') {
-    Object.entries(M.ROUTE_MODULES).forEach(([key, module]) => { if (module === moduleName && M.MENU_KEYS.includes(key)) d.menu[key] = false; });
-  }
-  bump.value++;
-}
-function discardDraft() {
-  const id = selectedRole.value?.id;
-  if (!id) return;
-  delete pageState.drafts[id];
-  ensureDraft(id);
-  bump.value++;
-  toast('已放弃当前角色的改动', 'ok');
-}
-function reviewers() {
-  const me = M.currentUser || {};
-  return M.users.filter(u => u.id !== me.id && u.status === '正常' && ['R1', 'R2'].includes(u.role));
-}
-function reviewerChoices() {
-  return reviewers().map(u => ({ value: u.id, label: `${u.name} · ${u.roleName} · ${u.org}` }));
-}
-function saveAccess() {
-  const role = selectedRole.value, count = dirtyCount();
-  if (!role || !count) return toast('暂无权限改动', 'err');
+function savePermissions() {
+  if (!isDirty.value) return toast('没有需要保存的权限改动', 'err');
   openModal({
-    title: `权限变更双人复核（${count} 项）`, width: '600px',
-    footer: false,
+    title: `保存权限 · ${esc(roleDetail.value.name)}`, width: '560px', footer: false,
     render: () => h(ControlledFormModal, {
-      fields: [{ key: 'reviewerId', label: '复核人', type: 'select', required: true, clearable: false, options: reviewerChoices(), placeholder: '请选择（处置授权人及以上，不可为本人）' }],
-      initial: { reviewerId: null },
-      warning: `角色「${role.name}」的菜单与操作权限将原子生效，并写入不可修改的操作审计。`,
-      confirmText: '复核通过并生效',
-      onCancel: closeModal,
-      onSubmit: ({ reviewerId }) => {
-      const d = draftOf();
-      const result = M.applyRoleAccess(role.id, d.menu, d.perm, reviewerId);
-      if (!result.ok) return toast(result.msg, 'err');
-      delete pageState.drafts[role.id]; ensureDraft(role.id); bump.value++;
-      closeModal(); toast(`角色「${role.name}」权限已生效，共 ${result.changes.length} 项`, 'ok');
+      fields: [{ key: 'reason', label: '操作原因', type: 'textarea', required: true, minRows: 4 }],
+      initial: { reason: '' },
+      warning: '权限保存后立即生效；该角色下所有用户的旧会话会被撤销，需要重新登录。',
+      confirmText: '保存并立即生效', onCancel: closeModal,
+      onSubmit: async ({ reason }) => {
+        const saved = await systemApi.updateRolePermissions(roleDetail.value.role_code, {
+          expected_version: roleDetail.value.version, reason,
+          permissions: draft.value.map(item => ({ permission_code: item.permission_code, level: item.level, menu_enabled: item.menu_enabled }))
+        });
+        closeModal(); roleDetail.value = saved; draft.value = saved.permissions.map(item => ({ ...item }));
+        await loadRoles(); toast('角色权限已立即生效，相关旧会话已撤销', 'ok');
       }
     })
   });
 }
-function roleForm(role) {
-  const editing = !!role;
+
+function createRole() {
   openModal({
-    title: editing ? '编辑角色' : '新增角色', width: '520px',
-    footer: false,
-    render: () => h(ControlledFormModal, {
-      fields: [
-        { key: 'name', label: '角色名称', required: true, disabled: !!role?.builtin, placeholder: '请输入角色名称' },
-        { key: 'desc', label: '角色说明', type: 'textarea', placeholder: '说明该角色的职责边界', minRows: 4 }
-      ],
-      initial: { name: role?.name || '', desc: role?.desc || '' },
-      notice: role?.builtin ? '系统内置角色的编号、名称和删除操作已锁定，仅允许维护说明。' : '',
-      onCancel: closeModal,
-      onSubmit: input => {
-      const result = editing ? M.updateRole(role.id, input) : M.createRole(input);
-      if (!result.ok) return toast(result.msg, 'err');
-      closeModal();
-      if (!editing) setSelected(result.role.id);
-      delete pageState.drafts[result.role.id]; ensureDraft(result.role.id); bump.value++;
-      toast(editing ? '角色信息已更新' : '自定义角色已创建', 'ok');
+    title: '新增自定义角色', width: '900px', footer: false,
+    render: () => h(RoleCreateModal, {
+      catalog: catalog.value, onCancel: closeModal,
+      onSubmit: async payload => {
+        const saved = await systemApi.createRole(payload);
+        closeModal(); await loadRoles(); selectedCode.value = saved.role_code; await loadRole(saved.role_code);
+        toast('角色及初始权限已创建并立即生效', 'ok');
       }
     })
   });
 }
-function deleteSelected() {
-  const role = selectedRole.value;
+
+function editDescription() {
+  const role = roleDetail.value;
   if (!role || role.builtin) return;
-  if (role.users) return toast(`该角色仍有 ${role.users} 名用户，不能删除`, 'err');
   openModal({
-    title: '删除角色双人复核', width: '560px',
-    footer: false,
+    title: `编辑角色说明 · ${esc(role.name)}`, width: '540px', footer: false,
     render: () => h(ControlledFormModal, {
-      fields: [{ key: 'reviewerId', label: '复核人', type: 'select', required: true, clearable: false, options: reviewerChoices(), placeholder: '请选择（处置授权人及以上，不可为本人）' }],
-      initial: { reviewerId: null },
-      warning: `删除角色「${role.name}」将同时移除其菜单与操作权限，此操作不可撤销并会写入审计。`,
-      confirmText: '确认删除', danger: true,
-      onCancel: closeModal,
-      onSubmit: ({ reviewerId }) => {
-      const result = M.deleteRole(role.id, reviewerId);
-      if (!result.ok) return toast(result.msg, 'err');
-      closeModal(); delete pageState.drafts[role.id]; setSelected(M.ROLES[0]?.id); bump.value++;
-      toast(`角色「${role.name}」已删除`, 'ok');
+      fields: [{ key: 'description', label: '角色说明', type: 'textarea', minRows: 4 }],
+      initial: { description: role.description || '' }, onCancel: closeModal,
+      onSubmit: async values => {
+        const saved = await systemApi.updateRole(role.role_code, { description: values.description, expected_version: role.version });
+        closeModal(); await loadRoles(); await loadRole(saved.role_code); toast('角色说明已保存', 'ok');
       }
     })
   });
 }
 
-ensureDraft(selectedId.value);
+function deleteRole() {
+  const role = roleDetail.value;
+  if (!role || role.builtin) return;
+  openModal({
+    title: `删除角色 · ${esc(role.name)}`, width: '540px', footer: false,
+    render: () => h(ControlledFormModal, {
+      fields: [{ key: 'reason', label: '删除原因', type: 'textarea', required: true, minRows: 4 }],
+      initial: { reason: '' },
+      warning: role.user_count ? `该角色仍有 ${role.user_count} 名用户，必须先调整用户角色。` : '删除会立即生效并记录审计日志，此操作不可撤销。',
+      danger: true, confirmText: '确认删除', submitEnabled: () => role.user_count === 0, onCancel: closeModal,
+      onSubmit: async ({ reason }) => {
+        await systemApi.deleteRole(role.role_code, role.version, reason);
+        closeModal(); selectedCode.value = 'ROLE-ADMIN'; await loadRoles(); await loadRole(); toast('角色已删除', 'ok');
+      }
+    })
+  });
+}
+
+onMounted(loadAll);
 </script>
 
 <template>
-  <div class="view roles-view">
-    <section class="role-manager" aria-label="角色管理">
-      <aside class="role-list-panel">
-        <header class="role-list-head">
-          <div><h2>角色列表</h2><span>共 {{ M.ROLES.length }} 个角色</span></div>
-          <button class="btn pri" type="button" @click="roleForm(null)" v-html="icon('plus') + ' 新增角色'"></button>
-        </header>
-        <div class="role-search">
-          <UField id="roleSearch" variant="toolbar" label="搜索角色" sr-only :model-value="query" clearable
-            placeholder="搜索角色名称、说明或编号" @update:model-value="setQuery" />
-        </div>
-        <div class="role-list" role="list" aria-label="角色列表">
-          <div v-if="!roleList.length" class="empty">没有匹配的角色</div>
-          <div v-for="role in roleList" :key="role.id" class="role-card" :class="{ on: selectedId === role.id }" role="listitem">
-            <button type="button" class="role-card-select" :aria-pressed="selectedId === role.id" @click="setSelected(role.id)">
-              <span class="role-card-main">
-              <span class="role-card-title"><b>{{ role.name }}</b><em>{{ role.id }}</em><i v-if="role.builtin">系统</i></span>
-              <small>{{ role.desc || '暂无角色说明' }}</small>
-              <span class="role-card-meta">成员 <b>{{ role.users }}</b> 人</span>
-              </span>
+  <div class="view roles-api-view">
+    <section class="panel roles-api-panel">
+      <header class="ph roles-api-header">
+        <div><h2>角色与权限</h2><p>超级管理员固定拥有全部权限；其他角色按业务需要即时配置。</p></div>
+        <span class="spacer"></span><n-button type="primary" :disabled="!canOperate" @click="createRole">新增角色</n-button>
+      </header>
+      <p v-if="error" class="system-error" role="alert">{{ error }} <button type="button" @click="loadAll">重试</button></p>
+      <n-spin :show="loading">
+        <div class="role-api-body">
+          <aside class="role-api-list">
+            <UField v-model="query" variant="toolbar" label="搜索角色" sr-only clearable placeholder="搜索名称、编码或说明" />
+            <button v-for="role in roleList" :key="role.role_code" type="button" :class="{ on: selectedCode === role.role_code }" @click="selectedCode = role.role_code">
+              <strong>{{ role.name }}</strong><span class="mono">{{ role.role_code }}</span><small>{{ role.user_count }} 名用户 · {{ role.builtin ? '内置' : '自定义' }}</small>
             </button>
-            <span class="role-card-actions">
-              <button type="button" class="role-icon-btn" :aria-label="`编辑角色 ${role.name}`" title="编辑角色" @click.stop="roleForm(role)" v-html="icon('pen')"></button>
-              <button type="button" class="role-icon-btn danger" :aria-label="`删除角色 ${role.name}`" :title="role.builtin ? '系统角色不可删除' : role.users ? '有成员的角色不可删除' : '删除角色'"
-                :disabled="role.builtin || role.users > 0" @click.stop="setSelected(role.id); deleteSelected()" v-html="icon('trash')"></button>
-            </span>
-          </div>
-        </div>
-      </aside>
-
-      <main v-if="selectedRole" class="role-permission-panel">
-        <header class="role-permission-head">
-          <div>
-            <span class="eyebrow">当前角色 · {{ selectedRole.id }}</span>
-            <h2>{{ selectedRole.name }}</h2>
-            <p>{{ selectedRole.desc || '暂无角色说明' }} · {{ selectedRole.users }} 名成员</p>
-          </div>
-          <span v-if="selectedRole.builtin" class="tag t-blue">系统内置</span>
-          <span v-else class="tag t-green">自定义角色</span>
-        </header>
-
-        <n-tabs type="line" size="small" :value="tab" @update:value="setTab" class="role-tabs" pane-style="display:none">
-          <n-tab name="menu">菜单权限</n-tab>
-          <n-tab name="operation">操作权限</n-tab>
-        </n-tabs>
-
-        <div v-if="tab === 'menu'" class="role-permission-scroll">
-          <div class="role-help">菜单权限决定侧栏和直达地址是否可访问；开启菜单会自动补足对应模块的查看权限。</div>
-          <section v-for="group in menuGroups" :key="group.title" class="permission-group">
-            <header>
-              <label class="permission-check group-check">
-                <n-checkbox :checked="groupState(group).checked" :indeterminate="groupState(group).indeterminate"
-                  :disabled="isLocked || group.items.every(x => x.fixed)" @update:checked="checked => setGroup(group, checked)" />
-                <b>{{ group.title }}</b>
-              </label>
-              <span>{{ group.items.filter(x => menuChecked(x.k)).length }}/{{ group.items.length }}</span>
-            </header>
-            <div class="permission-items">
-              <label v-for="item in group.items" :key="item.k" class="permission-check">
-                <n-checkbox :checked="menuChecked(item.k)" :disabled="isLocked || item.fixed" @update:checked="checked => setMenu(item.k, checked)" />
-                <span>{{ item.t }}</span><small v-if="item.fixed">固定入口</small>
-              </label>
-            </div>
-          </section>
-        </div>
-
-        <div v-else class="role-permission-scroll">
-          <div class="role-help">权限等级依次为查看、操作、授权；页面按钮和数据变更会再次校验，不能只靠界面隐藏。</div>
-          <div class="operation-grid">
-            <section v-for="(moduleName, i) in M.PERM_MODULES" :key="moduleName" class="operation-card" :class="{ critical: moduleName === '反制/干扰授权' }">
-              <header><b>{{ moduleName }}</b><span v-if="permissionLocked(moduleName)">已锁定</span></header>
-              <div class="permission-levels" role="group" :aria-label="`${moduleName}权限等级`">
-                <button v-for="level in levelOrder" :key="level" type="button" :aria-pressed="permValue(i) === level"
-                  :class="{ on: permValue(i) === level, auth: level === 'AUTH' }" :disabled="permissionLocked(moduleName)"
-                  @click="setPermission(i, level)">{{ levelLabels[level] }}</button>
+          </aside>
+          <main v-if="roleDetail" class="role-api-detail">
+            <header class="role-summary">
+              <div><h2>{{ roleDetail.name }} <span v-if="roleDetail.builtin" class="tag t-blue">唯一内置</span></h2><p>{{ roleDetail.description || '暂无角色说明' }}</p></div>
+              <div v-if="!roleDetail.builtin" class="role-summary-actions">
+                <div><n-button :disabled="!canOperate" @click="editDescription">编辑说明</n-button><n-button type="error" ghost :disabled="!canOperate || roleDetail.user_count > 0" :title="roleDetail.user_count > 0 ? `仍有 ${roleDetail.user_count} 名用户，需先调整其角色` : '删除该自定义角色'" @click="deleteRole">删除角色</n-button></div>
+                <small v-if="roleDetail.user_count > 0" class="delete-note">仍有 {{ roleDetail.user_count }} 名用户，需先调整其角色才能删除</small>
               </div>
-            </section>
-          </div>
+            </header>
+            <div class="naive-table-fill permission-table-wrap">
+              <n-data-table :columns="permissionColumns" :data="visibleDraft" :row-key="row => row.permission_code" :bordered="false" :single-line="true" size="small" flex-height :scroll-x="720" />
+            </div>
+            <footer class="permission-footer"><span>{{ isDirty ? '有尚未保存的权限改动' : '当前显示已生效权限' }}</span><n-button :disabled="!isDirty" @click="discard">放弃改动</n-button><n-button type="primary" :disabled="!canOperate || !isDirty || isLocked" @click="savePermissions">保存并立即生效</n-button></footer>
+          </main>
+          <div v-else class="empty">请选择角色</div>
         </div>
-
-        <footer class="role-savebar">
-          <span v-if="isLocked">超级管理员拥有全部权限，不能降级。</span>
-          <span v-else-if="isDirty()">当前角色有 <b>{{ dirtyCount() }}</b> 项待提交改动，保存后需双人复核。</span>
-          <span v-else>当前配置已保存。</span>
-          <div>
-            <button v-if="isDirty()" class="btn" type="button" @click="discardDraft">放弃更改</button>
-            <button class="btn pri" type="button" :disabled="isLocked || !isDirty()" @click="saveAccess" v-html="icon('save') + ' 保存权限'"></button>
-          </div>
-        </footer>
-      </main>
+      </n-spin>
     </section>
   </div>
 </template>
+
+<style scoped>
+.roles-api-view { display:flex; flex-direction:column; min-height:0; overflow:hidden; }
+.roles-api-panel { display:flex; flex:1; min-height:0; flex-direction:column; overflow:hidden; }
+.roles-api-header, .role-summary, .permission-footer { display:flex; flex:none; align-items:center; gap:12px; }
+.roles-api-header h1, .roles-api-header p { margin:0; }.roles-api-header p { margin-top:5px; color:var(--txt-3); }
+.roles-api-panel :deep(.n-spin-container), .roles-api-panel :deep(.n-spin-content) { display:flex; flex:1; min-height:0; flex-direction:column; overflow:hidden; }
+.role-api-body { display:grid; grid-template-columns:270px minmax(0, 1fr); flex:1; min-height:0; overflow:hidden; }
+.role-api-list { display:flex; flex-direction:column; gap:8px; min-height:0; overflow:auto; padding:14px; border-right:1px solid var(--line); }
+.role-api-list > button { display:grid; gap:5px; width:100%; padding:12px; border:1px solid transparent; border-radius:7px; text-align:left; color:var(--txt); background:transparent; cursor:pointer; }
+.role-api-list > button:hover, .role-api-list > button.on { border-color:var(--blue); background:color-mix(in srgb, var(--blue) 12%, transparent); }
+.role-api-list span, .role-api-list small, .locked-note { color:var(--txt-3); }
+.role-api-detail { display:flex; min-width:0; min-height:0; flex-direction:column; overflow:hidden; padding:18px; }
+.role-summary { justify-content:space-between; align-items:flex-start; }
+.role-summary h2, .role-summary p { margin:0; }.role-summary p { margin-top:7px; color:var(--txt-3); }
+.role-summary-actions { display:grid; justify-items:end; gap:6px; }.role-summary-actions > div { display:flex; gap:8px; }
+.delete-note { color:var(--orange, #f4a261); }
+.permission-table-wrap { margin-top:14px; border:1px solid var(--line); border-radius:7px; overflow:hidden; }
+.permission-table-wrap :deep(.u-field) { min-width:130px; }
+.permission-footer { justify-content:flex-end; margin-top:16px; }.permission-footer > span { margin-right:auto; color:var(--txt-3); }
+.system-error { flex:none; margin:12px 16px; padding:11px 13px; border:1px solid var(--red); border-radius:6px; color:var(--red); background:color-mix(in srgb, var(--red) 10%, transparent); }
+@media (max-width:900px) { .role-api-body { grid-template-columns:1fr; }.role-api-list { max-height:220px; border-right:0; border-bottom:1px solid var(--line); }.role-summary { flex-direction:column; } }
+</style>

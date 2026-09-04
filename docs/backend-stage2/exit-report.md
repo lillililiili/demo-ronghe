@@ -17,7 +17,27 @@
 - 整合后的身份表已对齐 `permission_code varchar(96)`、`permission_version bigint`、父区域和授权查询索引；Inbox 的 `payload_hash` 只接受 64 位小写十六进制 SHA-256。
 - 既有设备管理仓储和相关回归测试已切换到 `ops_*` 表。原菜单权限查询显式排除 ACTION 权限，避免生成 `device:read.read` 一类错误权限码。
 
-本阶段没有新增 T02 雷达 HTTP 查询、replay 摄取、目标/轨迹/告警应用查询、设备控制或前端改动；这些仍属于阶段 3 及后续范围。
+恢复基线验收当时没有新增 T02 雷达 HTTP 查询、replay 摄取、目标/轨迹/告警应用查询、设备控制或前端改动。其中目标/轨迹只读闭环已由下文“后续增量”补齐；其他能力仍属于后续范围。
+
+## 后续增量：协作者 B 目标/轨迹只读闭环
+
+- 新增目标列表、目标详情、目标轨迹和轨迹点四个标准查询接口，沿用 `target:read` 及组织/区域数据范围。
+- 列表的 `items`/`total`、详情、轨迹和轨迹点使用同一范围语义，越权对象按 404 处理；坐标仅输出可信 WGS-84，未知位置不生成 `(0,0)`。
+- `local`/`test` 环境提供确定性目标与轨迹数据；所有开发 Seeder 均在 `production`（包括 `production,local` 组合）下禁用。
+- 态势页仅将既有目标、详情和轨迹交互接到标准 API，不回退 `window.MOCK`。告警、合法性、风险、视频和处置继续显式标记为“尚未接入”。
+
+增量验收使用 H2 和 PostgreSQL 16.9/PostGIS 隔离库。`TargetReadPostgresApiTest` 只允许连接名称匹配 `stage2_target_verify_*` 的数据库，并在其中创建严格随机的 `stage2_target_api_*` schema，结束后级联清理。
+
+| 增量验收项 | 实际结果 | 结论 |
+| --- | --- | --- |
+| 目标 API H2 回归 | 12 tests，0 failures，0 errors，0 skipped | 通过 |
+| 目标 API PostgreSQL/PostGIS 回归 | 2 tests，0 failures，0 errors，0 skipped | 通过 |
+| 目标 Seeder 及幂等性 | 5 tests，0 failures，0 errors，0 skipped | 通过 |
+| 生产 Seeder 隔离 | 2 tests，0 failures，0 errors，0 skipped | 通过 |
+| 全量 `package`（显式启用隔离 PostgreSQL） | 80 tests，0 failures，0 errors，0 skipped | 通过 |
+| 前端生产构建、源码扫描和断言证伪 | 全部通过；仅保留既有大 chunk 提示 | 通过 |
+
+增量验收 JAR SHA-256 为 `78dfe3a7b2e96466aa67c2b08d5a412a38475ae650f6d8ee908e7a8fe1acf691`。
 
 ## 迁移验收
 
@@ -31,7 +51,7 @@ PostgreSQL 验收使用本地隔离测试数据库中的随机 `stage2_compat_<u
 
 测试覆盖设备越界坐标，设备、目标 latest 和轨迹点的 `POINT EMPTY`，重复非空 `(source_id, external_device_id)`，`ABNORMAL`，无来源告警，以及组织/区域循环。测试完成后确认没有残留 `stage2_compat_*` schema。
 
-## 测试与构建证据
+## 恢复基线当时的测试与构建证据
 
 | 验收项 | 实际结果 | 结论 |
 | --- | --- | --- |
@@ -42,7 +62,7 @@ PostgreSQL 验收使用本地隔离测试数据库中的随机 `stage2_compat_<u
 | 全量 `package` | 59 tests，0 failures，0 errors，0 skipped；JAR 已生成 | 通过 |
 | `git diff --check` | 无输出 | 通过 |
 
-完整测试共 59 项，覆盖原认证、系统管理、审计、设备管理、协议模拟与阶段 2 新增回归。最终 JAR SHA-256 为 `8127050453316e2794c217422f9398b5a5c77bf52df082ded06840c730216184`。
+恢复基线当时完整测试共 59 项，覆盖原认证、系统管理、审计、设备管理、协议模拟与阶段 2 新增回归。当时的 JAR SHA-256 为 `8127050453316e2794c217422f9398b5a5c77bf52df082ded06840c730216184`；当前增量证据以上文表格为准。
 
 构建运行时为 OpenJDK 21.0.12，Maven 编译沿用项目 `<release>17</release>`；本机没有单独的 Java 17 运行时证据。全局 Tencent Maven 镜像发生 TLS 失败后，验收命令使用仅对本次进程生效的 Maven Central settings；仓库和用户 Maven 配置均未修改。
 

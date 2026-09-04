@@ -12,7 +12,7 @@ import org.springframework.transaction.annotation.Transactional;
 import com.uav.lowaltitude.modules.identity.domain.PermissionCode;
 
 @Component
-@Profile({"local", "test"})
+@Profile("!production & (local | test)")
 @ConditionalOnProperty(prefix = "app.dev-seed", name = "enabled", havingValue = "true")
 @Order(40)
 public class LocalStage2AccessSeeder implements ApplicationRunner {

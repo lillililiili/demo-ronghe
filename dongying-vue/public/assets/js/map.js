@@ -4,6 +4,9 @@
  * ========================================================================== */
 (function (g) {
   'use strict';
+  const html = value => String(value == null ? '—' : value).replace(/[&<>"']/g, ch => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[ch]);
   /* 东营全域视图范围；业务叠加层与无网降级底图共用。 */
   const B = { lon0: 118.114, lon1: 119.308, lat0: 36.937, lat1: 38.156 };
   const CENTER = [(B.lon0 + B.lon1) / 2, (B.lat0 + B.lat1) / 2];
@@ -607,8 +610,10 @@
           const s = P(tr[0].lon, tr[0].lat);
           c.beginPath(); c.arc(s[0], s[1], 3, 0, 7); c.fillStyle = '#2fd06e'; c.fill();
         }
-        const last = tr.length ? tr[tr.length - 1] : { lon: t.lon, lat: t.lat };
-        const q = P(last.lon, last.lat);
+        const anchor = Number.isFinite(Number(t.lon)) && Number.isFinite(Number(t.lat))
+          ? { lon: Number(t.lon), lat: Number(t.lat) }
+          : tr.length ? tr[tr.length - 1] : { lon: t.lon, lat: t.lat };
+        const q = P(anchor.lon, anchor.lat);
         // 目标图标（旋翼）
         c.save(); c.translate(q[0], q[1]);
         if (isSel) {
@@ -654,12 +659,14 @@
           c.fillStyle = col; c.fillText(t.id.slice(-9), q[0] + 13, q[1] - 7);
         }
         if (dim) c.restore();
+        const altitudeTx = t.alt == null ? '—' : html(t.alt) + ' m AMSL';
+        const speedTx = t.speed == null ? '—' : html(t.speed) + ' m/s';
         picks.push({
           x: q[0], y: q[1], kind: 'target', data: t,
-          tip: `<b style="color:${col}">${t.id}</b><dl class="kv" style="margin-top:6px">
-            <dt>类型</dt><dd>${t.subtype || t.type}</dd><dt>高度</dt><dd>${t.alt} m</dd>
-            <dt>速度</dt><dd>${t.speed} m/s</dd><dt>合法性</dt><dd style="color:${col}">${t.legal}${t.violation ? '（' + t.violation + '）' : ''}</dd>
-            <dt>风险</dt><dd>${t.risk}</dd><dt>来源</dt><dd>${t.source}</dd></dl>`
+          tip: `<b style="color:${col}">${html(t.id)}</b><dl class="kv" style="margin-top:6px">
+            <dt>类型</dt><dd>${html(t.subtype || t.type)}</dd><dt>高度</dt><dd>${altitudeTx}</dd>
+            <dt>速度</dt><dd>${speedTx}</dd><dt>合法性</dt><dd style="color:${col}">${html(t.legal)}${t.violation ? '（' + html(t.violation) + '）' : ''}</dd>
+            <dt>风险</dt><dd>${html(t.risk)}</dd><dt>来源</dt><dd>${html(t.source)}</dd></dl>`
         });
       });
     }

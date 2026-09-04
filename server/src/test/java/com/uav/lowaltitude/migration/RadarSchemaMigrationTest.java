@@ -242,7 +242,7 @@ class RadarSchemaMigrationTest {
                     created_at, updated_at, version
                 ) values (?, ?, ?, ?, ?, ?, current_timestamp, current_timestamp, 0)
                 """, "device-duplicate", "device-unique", "Duplicate", "replay",
-                "org-radar", "district-radar"))
+                "org-unique", "district-unique"))
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 

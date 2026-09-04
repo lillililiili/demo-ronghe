@@ -52,7 +52,8 @@
 - 空字符串不是未知值；所有代码、名称、外部 ID 和原因码在写入前去除首尾空白，空结果按无效输入拒绝。
 - 没有设备状态事实时不创建虚假的 `device_state` 行；只有已记录状态行才能使用 `connectivity=UNKNOWN`，并应填写 `unknown_reason`。
 - `has_alarm=NULL` 表示来源没有提供可判定值；`false` 只表示来源明确报告“无设备告警”。它与业务 `alarm` 表是否存在记录没有推导关系。
-- `observed_at=NULL` 表示来源发生时间未知或不可信；`received_at` 始终保存平台实际接收时刻。迟到记录可以追加历史，但不能覆盖更新的最新状态。
+- `observed_at=NULL` 表示来源事件时间未知或不可信；`received_at` 始终保存平台实际接收时刻，但只能用于接收事实、历史查询筛选和稳定展示排序，绝不替代事件时间参与 latest 覆盖判断。
+- `device_state` 与 `target_latest_state` 只有在新事实具有可信、非空的事件时间，且该时间严格晚于现有 latest 的 `observed_at` 时才更新；latest 不存在时也只有可信事件时间才能创建。事件时间相等时保持首次接受的 latest，事件时间更早或未知时只追加历史/保留 Inbox（按对应对象是否有历史表决定），不得用后到的 `received_at` 打破并列。
 - 未知或非 WGS-84 坐标不写 `LOCATION`，也不写轨迹点；原始消息只保留在 Inbox。禁止生成 `POINT(0 0)`。
 - `altitude_amsl_m` 与 `height_agl_m` 是不同基准，缺少安装高度、地形或基准依据时分别保持 `NULL`，不得互相代填。设备的 `altitude_m` 必须与 `altitude_datum` 同时存在或同时为空。
 - 新表的外键删除行为默认采用 `RESTRICT`。除明确列出的唯一键外，不根据接近时间、接近位置、序列号或展示编号自动合并对象。
@@ -218,7 +219,7 @@
 | `work_state_code` | `varchar(32) NULL` | 保存已归一化或来源原码；未知为空 |
 | `has_alarm` | `boolean NULL` | 三值语义，不能用默认 false |
 | `health_code` | `varchar(32) NULL` | 未确认健康字典时保存可追溯代码，不推导 connectivity |
-| `observed_at` | `TIME NULL` | 来源时刻未知或不可信时为空 |
+| `observed_at` | `TIME NOT NULL` | latest 行必须具有可信来源事件时间；未知时间的事实不得创建或更新本表 |
 | `received_at` | `TIME NOT NULL` | 平台接收时刻 |
 | `last_heartbeat_at` | `TIME NULL` | 只有实际心跳事实才填写 |
 | `source_seq` | `bigint NULL` | 来源序号未知时为空，不自行生成协议序号 |
@@ -226,7 +227,7 @@
 | `unknown_reason` | `varchar(64) NULL` | connectivity 为 `UNKNOWN` 时必填；其他状态时必须为空 |
 | 公共列 | 可修改公共列 | 无独立来源/归属列，访问范围继承 `device` |
 
-索引：主键；筛选索引 `(connectivity, received_at DESC, device_id)`。最新状态只在新事实的有效排序时刻严格晚于现值，或排序时刻相同且接收时刻更晚时更新；迟到事实只进入历史。
+索引：主键；筛选索引 `(connectivity, received_at DESC, device_id)`。每个已归一化设备状态事实先按去重规则追加 `device_state_history`；随后仅当 incoming `observed_at` 非空，且 latest 不存在或 incoming `observed_at > device_state.observed_at` 时创建/条件更新 latest。相等、更早或未知事件时间均不覆盖；并发更新必须以该严格大于条件作为原子守卫，`received_at/source_seq` 不参与胜负判断。
 
 #### `device_state_history`
 
@@ -241,7 +242,7 @@
 | `snapshot` | `jsonb NOT NULL` | 归一化状态快照对象；可含 `work_state_code/has_alarm/health_code/last_heartbeat_at/source_seq/unknown_reason/metrics`，不得含凭据 |
 | 公共列 | 追加公共列 | 来源和范围均继承设备 |
 
-索引：`(device_id, (COALESCE(observed_at, received_at)) DESC, received_at DESC, state_id ASC)`；`(inbox_id)`。历史只追加，不因新状态删除或改写。
+索引：`(device_id, (COALESCE(observed_at, received_at)) DESC, received_at DESC, state_id ASC)`；`(inbox_id)`。历史只追加，不因新状态删除或改写。这里的 `COALESCE` 仅服务历史查询的筛选和稳定排序，不得复用于 `device_state` 的 latest 覆盖判断。
 
 #### `target`
 
@@ -252,13 +253,13 @@
 | `object_type_code` | `varchar(32) NULL` | 未确认目标类别为空，不默认为无人机 |
 | `subtype` | `varchar(64) NULL` | 未提供时为空 |
 | `uav_sn` | `varchar(128) NULL` | 不全局唯一，不作为主键或合法性结论 |
-| `first_seen_at` | `TIME NOT NULL` | 平台可确认的首次时间 |
-| `last_seen_at` | `TIME NOT NULL` | 必须不早于 `first_seen_at` |
+| `first_seen_at` | `TIME NULL` | 最早可信事件时间；尚无可信时间时为空，不用接收时间代填 |
+| `last_seen_at` | `TIME NULL` | 最新可信事件时间；与 `first_seen_at` 同为空或满足前者不晚于后者 |
 | `source_mode` | 来源公共列 | T02 首批固定 `replay` |
 | `owner_org_id/district_id` | 归属公共列 | 缺任一归属时不可见 |
 | 公共列 | 可修改公共列 | — |
 
-索引：`UNIQUE(target_no)`；范围及排序索引 `(owner_org_id, district_id, last_seen_at DESC, target_id ASC)`；筛选索引 `(object_type_code, last_seen_at DESC, target_id ASC)`。`uav_sn` 不建唯一约束。
+索引：`UNIQUE(target_no)`；范围及排序索引 `(owner_org_id, district_id, last_seen_at DESC NULLS LAST, target_id ASC)`；筛选索引 `(object_type_code, last_seen_at DESC NULLS LAST, target_id ASC)`。`uav_sn` 不建唯一约束。新目标可在事件时间未知时建立身份与来源 link，但 `first_seen_at/last_seen_at` 保持 NULL；后续只用可信事件时间更新最小/最大值，`received_at` 不参与。该摘要时间规则不改变下文 latest 必须严格晚于才覆盖的规则。
 
 #### `target_source_link`
 
@@ -287,12 +288,12 @@
 | `heading_deg` | `numeric(6,2) NULL` | 范围 `[0,360)` |
 | `classification_confidence` | `numeric(6,5) NULL` | 范围 `[0,1]`；不可由融合置信度代填 |
 | `fusion_confidence` | `numeric(6,5) NULL` | 范围 `[0,1]`；不表示算法已验收 |
-| `observed_at` | `TIME NULL` | 来源时刻 |
+| `observed_at` | `TIME NOT NULL` | latest 行必须具有可信来源事件时间；未知时间的事实不得创建或更新本表 |
 | `received_at` | `TIME NOT NULL` | 平台接收时刻 |
 | `unknown_fields` | `jsonb NOT NULL DEFAULT '[]'` | 下文 `FieldIssueDto` 的数组形状；仅记录不可用字段及原因，不放业务值 |
 | 公共列 | 可修改公共列 | 来源和范围继承 `target` |
 
-索引：主键和 `location` GiST 索引。最新状态更新规则与设备一致，以 `COALESCE(observed_at, received_at)`、`received_at` 比较；迟到点不得覆盖较新状态。
+索引：主键和 `location` GiST 索引。只有 incoming `observed_at` 非空，且 latest 不存在或 incoming `observed_at > target_latest_state.observed_at` 时，才创建或原子条件更新 latest。事件时间相等时保留首次接受的 latest；更早或未知时，有效位置可按去重规则追加 `track_point`，其余事实保留 Inbox，但都不得覆盖 latest。`received_at`、`point_seq` 和帧序号均不参与胜负判断。
 
 #### `track`
 
@@ -302,10 +303,10 @@
 | `target_id` | `ID NOT NULL` | 外键到 `target.target_id` |
 | `link_id` | `ID NOT NULL` | 外键到 `target_source_link.link_id` |
 | `external_track_id` | `CODE(128) NOT NULL` | 只在 link 内唯一 |
-| `started_at` | `TIME NOT NULL` | 轨迹开始时刻；来源不可信时使用已记录接收事实并由协议层保留原因 |
+| `started_at` | `TIME NULL` | 可信轨迹开始事件时间；来源时间未知时为空，禁止用接收时间代填 |
 | 公共列 | 追加公共列 | 来源和范围继承 `target` |
 
-键与索引：`UNIQUE(link_id, external_track_id)`；`(target_id, started_at DESC, track_id ASC)`。应用事务必须验证 `track.target_id` 等于 link 指向的目标。
+键与索引：`UNIQUE(link_id, external_track_id)`；`(target_id, started_at DESC NULLS LAST, track_id ASC)`。应用事务必须验证 `track.target_id` 等于 link 指向的目标。未知 `started_at` 不阻止保存可追溯的轨迹身份和历史点，但不产生 latest 更新资格。
 
 #### `track_point`
 
@@ -323,7 +324,7 @@
 | `raw_position` | `jsonb NULL` | 内部溯源值，不经本文 API 返回；不得包含凭据 |
 | 公共列 | 追加公共列 | 来源和范围继承 track → target |
 
-键与索引：`UNIQUE(track_id, point_seq)`；稳定查询索引 `(track_id, (COALESCE(observed_at, received_at)) ASC, point_seq ASC, point_id ASC)`；`(inbox_id)`；`location` GiST。无有效位置的报文只留 Inbox，不能插入空位置或零点。
+键与索引：`UNIQUE(track_id, point_seq)`；稳定查询索引 `(track_id, (COALESCE(observed_at, received_at)) ASC, point_seq ASC, point_id ASC)`；`(inbox_id)`；`location` GiST。无有效位置的报文只留 Inbox，不能插入空位置或零点。表达式中的 `COALESCE` 只定义历史点的查询次序，不赋予接收时间事件时间语义，也不参与 `target_latest_state` 覆盖判断。
 
 #### `alarm`
 
@@ -411,7 +412,7 @@
 | `field` | 是 | 当前 DTO 中未返回的字段名 |
 | `reason_code` | 是 | `NOT_REPORTED/INVALID_VALUE/REFERENCE_UNKNOWN/TIME_UNTRUSTED/NOT_APPLICABLE/UNSUPPORTED` 之一 |
 
-`field_issues` 始终按 `field ASC` 返回。它只描述当前状态的不可用字段，不能承载数据值或自由文本。
+`field_issues` 始终按 `field ASC` 返回。它只描述当前状态的不可用测量字段，不能承载数据值或自由文本；latest DTO 的 `observed_at` 必须可信且非空，因此不得用 field issue 掩盖缺失事件时间。
 
 ### 5.3 空值在线格式中的表现
 
@@ -420,8 +421,8 @@
 - 可选元数据省略表示未提供，不能推断类别、厂商、型号、序列号或协议版本。
 - `location` 省略表示没有可返回的可信 WGS-84 点；经纬度不能只返回一项。
 - 高度字段省略表示对应基准高度不可判定；不适用和基准未知由目标状态的 `field_issues` 细分。
-- `observed_at` 省略表示来源时刻不可用；`received_at` 仍必填。轨迹点同时返回 `event_time/time_basis`，告警排序始终使用必填的接收时间。
-- `latest_state` 省略表示尚无状态记录；不能合成一条 `UNKNOWN` 状态。状态记录中的 `connectivity=UNKNOWN` 则表示已记录但连接状态不可判定。
+- 历史 DTO 的 `observed_at` 省略表示来源事件时间不可用，`received_at` 仍必填；latest DTO 的 `observed_at` 必填，因为未知事件时间不能创建或覆盖 latest。轨迹点另返回只用于展示排序的 `sort_time/time_basis`，告警排序始终使用必填的接收时间。
+- `latest_state` 省略表示尚无具备可信事件时间的状态记录；不能根据 Inbox 或接收时间合成一条 latest，也不能合成一条 `UNKNOWN` 状态。已建立 latest 中的 `connectivity=UNKNOWN` 只表示连接状态不可判定，其 `observed_at` 仍是可信事件时间。
 - 可选布尔 `has_alarm` 省略表示未知，显式 false 才表示来源报告为否。
 
 ## 6. 9 个读取接口
@@ -457,10 +458,10 @@
 
 | 字段 | 必填 | 语义 |
 | --- | --- | --- |
-| `connectivity`、`received_at` | 是 | 连接状态和 epoch 毫秒接收时刻 |
+| `connectivity`、`observed_at`、`received_at` | 是 | 连接状态、可信事件时间和接收时刻；时间均为 epoch 毫秒 |
 | `work_state_code`、`health_code`、`unknown_reason` | 否 | 已记录代码或未知原因 |
 | `has_alarm` | 否 | 三值布尔语义 |
-| `observed_at`、`last_heartbeat_at` | 否 | epoch 毫秒 |
+| `last_heartbeat_at` | 否 | epoch 毫秒 |
 | `source_seq` | 否 | 来源序号 |
 
 ### 6.2 `GET /api/v1/devices/{device_id}`
@@ -488,10 +489,10 @@
 | 参数 | 必填/默认 | 语义 |
 | --- | --- | --- |
 | `page`、`size` | 否；1/20 | 通用分页 |
-| `time_from`、`time_to` | 否；成对 | 过滤 `COALESCE(observed_at, received_at)` 的 epoch 毫秒闭区间 |
+| `time_from`、`time_to` | 否；成对 | 过滤历史展示排序时间 `COALESCE(observed_at, received_at)` 的 epoch 毫秒闭区间 |
 | `connectivity` | 否 | 四个固定连接状态之一 |
 
-固定排序：`COALESCE(observed_at, received_at) DESC, received_at DESC, state_id ASC`。
+固定排序：`COALESCE(observed_at, received_at) DESC, received_at DESC, state_id ASC`。该表达式只用于历史查询，绝不复用于 latest 覆盖判断。
 
 `DeviceStateHistoryDto`：
 
@@ -515,16 +516,17 @@
 | `source_code` | 否 | 通过来源映射精确筛选；同一目标只返回一次 |
 | `device_id` | 否 | 通过来源映射精确筛选；仍执行目标范围过滤 |
 | `object_type_code` | 否 | 精确匹配；未知类别不匹配任意代码 |
-| `seen_from`、`seen_to` | 否；成对 | 过滤 `last_seen_at` 的 epoch 毫秒闭区间 |
+| `seen_from`、`seen_to` | 否；成对 | 过滤非空 `last_seen_at` 的 epoch 毫秒闭区间；未知时间目标不匹配该筛选 |
 | `owner_org_id`、`district_id` | 否 | 仅收窄有效范围 |
 
-固定排序：`target.last_seen_at DESC, target.target_id ASC`。涉及来源映射的筛选使用 `EXISTS`，不得因多条 link 重复目标或抬高 total。
+固定排序：`target.last_seen_at DESC NULLS LAST, target.target_id ASC`。涉及来源映射的筛选使用 `EXISTS`，不得因多条 link 重复目标或抬高 total。
 
 `TargetSummaryDto`：
 
 | 字段 | 必填 | 语义 |
 | --- | --- | --- |
-| `target_id`、`target_no`、`first_seen_at`、`last_seen_at` | 是 | ID 为字符串，时间为 epoch 毫秒 |
+| `target_id`、`target_no` | 是 | 平台目标身份，ID 为字符串 |
+| `first_seen_at`、`last_seen_at` | 否 | 可信事件时间，epoch 毫秒；尚无可信事件时间时同时省略 |
 | `object_type_code`、`subtype`、`uav_sn` | 否 | 未提供时省略，不形成无人机或合法性结论 |
 | `source_mode`、`owner_org_id`、`district_id` | 是 | 来源与完整归属 |
 | `latest_state` | 否 | `TargetStateDto`；没有状态行时省略 |
@@ -533,8 +535,7 @@
 
 | 字段 | 必填 | 语义 |
 | --- | --- | --- |
-| `received_at`、`field_issues` | 是 | 接收时刻为 epoch 毫秒；问题列表可为空数组 |
-| `observed_at` | 否 | 来源时刻 |
+| `observed_at`、`received_at`、`field_issues` | 是 | 可信事件时间、接收时刻均为 epoch 毫秒；问题列表可为空数组 |
 | `location` | 否 | `LocationDto` |
 | `altitude_amsl_m`、`height_agl_m` | 否 | 米；分别对应 AMSL/AGL |
 | `speed_mps`、`heading_deg` | 否 | m/s 与度 |
@@ -562,13 +563,13 @@
 | 参数 | 必填/默认 | 语义 |
 | --- | --- | --- |
 | `page`、`size` | 否；1/20 | 通用分页 |
-| `started_from`、`started_to` | 否；成对 | 过滤 `started_at` 的 epoch 毫秒闭区间 |
+| `started_from`、`started_to` | 否；成对 | 过滤非空 `started_at` 的 epoch 毫秒闭区间；未知开始时间轨迹不匹配该筛选 |
 | `source_code` | 否 | 通过 link/source 精确筛选 |
 | `device_id` | 否 | 通过 link 精确筛选 |
 
-固定排序：`track.started_at DESC, track.track_id ASC`。
+固定排序：`track.started_at DESC NULLS LAST, track.track_id ASC`。
 
-`TrackSummaryDto`：必填 `track_id/target_id/link_id/external_track_id/started_at/source_id/source_code/source_mode`；`device_id` 可选。`started_at` 为 epoch 毫秒。
+`TrackSummaryDto`：必填 `track_id/target_id/link_id/external_track_id/source_id/source_code/source_mode`；`device_id/started_at` 可选。`started_at` 为可信事件 epoch 毫秒，未知时省略。
 
 ### 6.7 `GET /api/v1/tracks/{track_id}/points`
 
@@ -579,16 +580,16 @@
 | 参数 | 必填/默认 | 语义 |
 | --- | --- | --- |
 | `page`、`size` | 否；1/20 | 通用分页 |
-| `time_from`、`time_to` | 否；成对 | 过滤 `COALESCE(observed_at, received_at)` 的 epoch 毫秒闭区间 |
+| `time_from`、`time_to` | 否；成对 | 过滤历史展示排序时间 `COALESCE(observed_at, received_at)` 的 epoch 毫秒闭区间 |
 
-固定排序：`COALESCE(observed_at, received_at) ASC, point_seq ASC, point_id ASC`。
+固定排序：`COALESCE(observed_at, received_at) ASC, point_seq ASC, point_id ASC`。该表达式只保证历史点展示和分页稳定，不参与 target latest 覆盖判断。
 
 `TrackPointDto`：
 
 | 字段 | 必填 | 语义 |
 | --- | --- | --- |
 | `point_id`、`track_id`、`point_seq` | 是 | 稳定身份与轨迹内次序 |
-| `event_time`、`time_basis`、`received_at` | 是 | `event_time=COALESCE(observed_at,received_at)`；`time_basis` 为 `OBSERVED/RECEIVED`；时间均为 epoch 毫秒 |
+| `sort_time`、`time_basis`、`received_at` | 是 | `sort_time=COALESCE(observed_at,received_at)`，只用于历史展示；`time_basis` 为 `OBSERVED/RECEIVED`；时间均为 epoch 毫秒 |
 | `observed_at` | 否 | 来源时刻未知时省略 |
 | `location` | 是 | `LocationDto`；轨迹点永远不返回伪坐标 |
 | `altitude_amsl_m`、`height_agl_m` | 否 | 米，基准不足时省略 |
@@ -653,6 +654,7 @@
 - `total` 与 `items` 必须共享完全相同的来源、筛选和范围条件；来源 link 查询使用 `EXISTS` 防止重复计数。
 - 新 DTO 使用明确类型，不直接序列化持久化对象，也不返回 `Map<String,Object>`、Inbox payload、原始位置、告警 detail、设备 metrics 或凭据引用。
 - `ONLINE/OFFLINE/DEGRADED/UNKNOWN` 是平台连接状态，不是厂商原码；映射缺少确认时使用有原因的 `UNKNOWN`，不能猜测。未知来源状态码保存在受控内部字段，不映射为在线。
+- latest 写入只比较可信事件时间并使用严格大于守卫：相等保持首次，更早或未知只进入历史/Inbox。查询中的 `COALESCE(observed_at, received_at)` 只为稳定展示与分页存在，严禁抽成可被 latest 更新复用的“统一时间”。
 - T02 回放只可创建 `replay` 数据。配置、适配器或数据不匹配时明确失败，不降级到 mock，不冒充 live。
 - 数据库 CHECK、FK、唯一键和应用事务共同保障完整性；涉及 PostgreSQL/PostGIS 的约束、表达式索引和迁移必须在阶段 2 的隔离数据库验证，H2 结果不能替代。
 
@@ -662,5 +664,6 @@
 - 覆盖无会话、无权限、角色停用、NONE、ASSIGNED 无元组、精确元组、显式 ALL、未知归属，以及详情越权统一 404。
 - 对每个分页接口验证默认值、边界、非法值、超末页、固定排序并列项和同范围 `total`。
 - 验证重复来源映射、重复轨迹点、重复告警被唯一约束阻止；相同 Inbox 键不同哈希不覆盖原事实。
-- 验证空状态与显式 UNKNOWN、null 与 0、false 与未知、observed/received 时间、AGL/AMSL 及无效坐标均按本文语义返回。
+- 分别验证 device/target latest：首个可信事件时间可创建、严格更新可覆盖、相等时间保持首次、较早时间只追加历史、未知事件时间只追加历史或保留 Inbox；即使后到记录的 `received_at` 更晚也不得覆盖。
+- 验证历史查询的 `COALESCE` 筛选与稳定排序不会改变 latest；验证空 latest 与显式 UNKNOWN、null 与 0、false 与未知、observed/received 时间、AGL/AMSL 及无效坐标均按本文语义返回。
 - 验证仅插入目标、轨迹或轨迹点不会产生 `alarm`；本阶段没有真实连接、控制、反制或业务写接口。

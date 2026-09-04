@@ -82,21 +82,33 @@ BEGIN
         RETURN NEW;
     END IF;
 
+    IF current_setting('transaction_isolation') <> 'read committed' THEN
+        RAISE EXCEPTION 'app_org parent changes require READ COMMITTED isolation'
+            USING ERRCODE = '25001';
+    END IF;
+
     PERFORM pg_advisory_xact_lock(
         hashtextextended(current_database() || ':' || TG_TABLE_SCHEMA || ':' || TG_TABLE_NAME, 0)
     );
 
-    WITH RECURSIVE ancestors(org_id, parent_id) AS (
-        SELECT org_id, parent_id
-        FROM app_org
-        WHERE org_id = NEW.parent_id
-        UNION
-        SELECT parent.org_id, parent.parent_id
-        FROM app_org parent
-        JOIN ancestors child ON parent.org_id = child.parent_id
+    EXECUTE format(
+        $query$
+        WITH RECURSIVE ancestors(org_id, parent_id) AS (
+            SELECT org_id, parent_id
+            FROM %1$I.%2$I
+            WHERE org_id = $1
+            UNION
+            SELECT parent.org_id, parent.parent_id
+            FROM %1$I.%2$I parent
+            JOIN ancestors child ON parent.org_id = child.parent_id
+        )
+        SELECT EXISTS (SELECT 1 FROM ancestors WHERE org_id = $2)
+        $query$,
+        TG_TABLE_SCHEMA,
+        TG_TABLE_NAME
     )
-    SELECT EXISTS (SELECT 1 FROM ancestors WHERE org_id = NEW.org_id)
-    INTO has_cycle;
+    INTO has_cycle
+    USING NEW.parent_id, NEW.org_id;
 
     IF has_cycle THEN
         RAISE EXCEPTION 'app_org hierarchy cycle is not allowed'
@@ -123,21 +135,33 @@ BEGIN
         RETURN NEW;
     END IF;
 
+    IF current_setting('transaction_isolation') <> 'read committed' THEN
+        RAISE EXCEPTION 'app_district parent changes require READ COMMITTED isolation'
+            USING ERRCODE = '25001';
+    END IF;
+
     PERFORM pg_advisory_xact_lock(
         hashtextextended(current_database() || ':' || TG_TABLE_SCHEMA || ':' || TG_TABLE_NAME, 0)
     );
 
-    WITH RECURSIVE ancestors(district_id, parent_id) AS (
-        SELECT district_id, parent_id
-        FROM app_district
-        WHERE district_id = NEW.parent_id
-        UNION
-        SELECT parent.district_id, parent.parent_id
-        FROM app_district parent
-        JOIN ancestors child ON parent.district_id = child.parent_id
+    EXECUTE format(
+        $query$
+        WITH RECURSIVE ancestors(district_id, parent_id) AS (
+            SELECT district_id, parent_id
+            FROM %1$I.%2$I
+            WHERE district_id = $1
+            UNION
+            SELECT parent.district_id, parent.parent_id
+            FROM %1$I.%2$I parent
+            JOIN ancestors child ON parent.district_id = child.parent_id
+        )
+        SELECT EXISTS (SELECT 1 FROM ancestors WHERE district_id = $2)
+        $query$,
+        TG_TABLE_SCHEMA,
+        TG_TABLE_NAME
     )
-    SELECT EXISTS (SELECT 1 FROM ancestors WHERE district_id = NEW.district_id)
-    INTO has_cycle;
+    INTO has_cycle
+    USING NEW.parent_id, NEW.district_id;
 
     IF has_cycle THEN
         RAISE EXCEPTION 'app_district hierarchy cycle is not allowed'

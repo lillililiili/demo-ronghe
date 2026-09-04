@@ -72,6 +72,8 @@ export POSTGRES_TEST_PASSWORD='set-locally-not-in-git'
 
 `PostgresStage2SchemaTest` 分别验证空 schema 从 V1 迁移到最新、以及先停在 V2 后升级到最新；测试只创建名称匹配 `stage2_[a-f0-9]{32}` 的随机 schema，并只清理自己创建的 schema。它会实际检查 geometry/GiST、JSONB、timestamptz、部分唯一索引、表达式索引、层级循环触发器、非法样本拒绝和 repeatable 幂等性。三项环境变量缺失时该测试会明确跳过，不能据此声明 PostgreSQL/PostGIS 已验收。
 
+组织和区域的非空 `parent_id` 写入必须使用 PostgreSQL 默认的 `READ COMMITTED` 隔离级别；层级触发器会拒绝其他隔离级别，以确保加锁后的循环检查读取到最新已提交关系。
+
 ## 约定
 
 - `AccessControlService` 从当前数据库校验用户、启用角色、显式权限、scope mode 和有效范围存在性；不信任会话中的角色码，也不缓存授权结果。现有业务 Controller 尚未接入该服务，读取接口落地留到后续阶段。

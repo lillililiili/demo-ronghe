@@ -120,6 +120,30 @@ class PostgresStage2SchemaTest {
         });
     }
 
+    @Test
+    void requiresReadCommittedIsolationForHierarchyChanges() throws Exception {
+        withRandomSchema(schema -> {
+            assertThat(stage2Flyway(schema).migrate().migrationsExecuted).isEqualTo(5);
+            assertHierarchyWriteIsRejectedAtRepeatableRead(
+                    schema, "app_org", "org_id", "org_code", "org-repeatable-read");
+            assertHierarchyWriteIsRejectedAtRepeatableRead(
+                    schema, "app_district", "district_id", "district_code", "district-repeatable-read");
+        });
+    }
+
+    @Test
+    void resolvesHierarchyQueriesAgainstTheTriggeredSchema() throws Exception {
+        withRandomSchema(schema -> {
+            assertThat(stage2Flyway(schema).migrate().migrationsExecuted).isEqualTo(5);
+            withSchemaJdbc(schema, jdbc -> {
+                assertTemporaryTableCannotShadowHierarchy(
+                        jdbc, schema, "app_org", "org_id", "org_code", "org-shadow");
+                assertTemporaryTableCannotShadowHierarchy(
+                        jdbc, schema, "app_district", "district_id", "district_code", "district-shadow");
+            });
+        });
+    }
+
     private Flyway stage2Flyway(String schema) {
         return Flyway.configure()
                 .dataSource(dataSource)
@@ -426,6 +450,71 @@ class PostgresStage2SchemaTest {
                         + " and first_node." + idColumn + " = ?",
                 Integer.class,
                 firstId)).isZero());
+    }
+
+    private void assertHierarchyWriteIsRejectedAtRepeatableRead(
+            String schema,
+            String table,
+            String idColumn,
+            String codeColumn,
+            String valuePrefix) throws Exception {
+        String firstId = valuePrefix + "-a";
+        String secondId = valuePrefix + "-b";
+        withSchemaJdbc(schema, jdbc -> jdbc.batchUpdate(
+                "insert into " + table + " (" + idColumn + ", " + codeColumn + ", name) values (?, ?, ?)",
+                List.of(
+                        new Object[] {firstId, valuePrefix + "-code-a", valuePrefix + " A"},
+                        new Object[] {secondId, valuePrefix + "-code-b", valuePrefix + " B"})));
+
+        SQLException failure = null;
+        try (Connection connection = dataSource.getConnection()) {
+            connection.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ);
+            connection.setAutoCommit(false);
+            setSearchPath(connection, schema);
+            try {
+                updateParent(connection, table, idColumn, firstId, secondId);
+            } catch (SQLException exception) {
+                failure = exception;
+            } finally {
+                connection.rollback();
+            }
+        }
+
+        assertThat(failure == null)
+                .as("hierarchy writes outside READ COMMITTED must be rejected")
+                .isFalse();
+        assertThat(failure.getSQLState()).isEqualTo("25001");
+    }
+
+    private void assertTemporaryTableCannotShadowHierarchy(
+            JdbcTemplate jdbc,
+            String schema,
+            String table,
+            String idColumn,
+            String codeColumn,
+            String valuePrefix) {
+        assertSafeSchema(schema);
+        String firstId = valuePrefix + "-a";
+        String secondId = valuePrefix + "-b";
+        jdbc.execute("create temporary table " + table
+                + " (" + idColumn + " varchar(36), parent_id varchar(36))");
+        jdbc.batchUpdate(
+                "insert into " + schema + "." + table
+                        + " (" + idColumn + ", " + codeColumn + ", name) values (?, ?, ?)",
+                List.of(
+                        new Object[] {firstId, valuePrefix + "-code-a", valuePrefix + " A"},
+                        new Object[] {secondId, valuePrefix + "-code-b", valuePrefix + " B"}));
+
+        jdbc.update(
+                "update " + schema + "." + table + " set parent_id = ? where " + idColumn + " = ?",
+                secondId,
+                firstId);
+        assertThatThrownBy(() -> jdbc.update(
+                "update " + schema + "." + table + " set parent_id = ? where " + idColumn + " = ?",
+                firstId,
+                secondId))
+                .isInstanceOf(DataIntegrityViolationException.class);
+        jdbc.execute("drop table " + table);
     }
 
     private void setSearchPath(Connection connection, String schema) throws SQLException {

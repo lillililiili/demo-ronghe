@@ -138,15 +138,18 @@
       this._release = runtime.release;
       this._coverageBounds = runtime.bounds;
       this._applyDefaultView();
+      const coverage = this._coverageBounds;
       const map = new runtime.maplibre.Map({
         container: this.baseEl, style: runtime.style, center: this._pendingCenter,
-        zoom: this._levelForScale(this.zoom), minZoom: Math.min(7, this._fitLevelForWidth()), maxZoom: 18,
+        zoom: this._levelForScale(this.zoom), minZoom: this._minLevel(), maxZoom: 18,
+        maxBounds: coverage ? [[coverage[0], coverage[1]], [coverage[2], coverage[3]]] : undefined,
         bearing: 0, pitch: 0, dragRotate: false, pitchWithRotate: false,
         touchPitch: false, renderWorldCopies: false, attributionControl: false,
         localIdeographFontFamily: false, fadeDuration: 0,
         transformRequest: runtime.transformRequest
       });
       this.map = map;
+      this._applyCameraLimits();
       map.touchZoomRotate.disableRotation();
       map.addControl(new runtime.maplibre.AttributionControl({ compact: false }), 'bottom-left');
       const on = (name, fn) => { map.on(name, fn); this._mapEvents.push([name, fn]); };
@@ -165,6 +168,7 @@
       on('load', () => {
         clearTimeout(this._loadTimer);
         this.online = true;
+        this._applyCameraLimits();
         this._syncView(); this._status('ready'); this.draw();
       });
       this.draw();
@@ -233,6 +237,7 @@
       self.setZoom(self.zoom * (e.deltaY < 0 ? 1.18 : 0.85));
       const after = merc(...self.unpx(x, y)), center = merc(...self._pendingCenter);
       self._pendingCenter = geographic(center[0] + before[0] - after[0], center[1] + before[1] - after[1]);
+      self._pendingCenter = self._clampCenter(self._pendingCenter[0], self._pendingCenter[1], self._levelForScale(self.zoom));
       self.draw(); self._boxMove(e);
     };
     this.box.addEventListener('mousedown', this._boxDown, true);
@@ -250,6 +255,7 @@
       if (self.map) return;
       const size = 512 * Math.pow(2, self._levelForScale(self.zoom));
       self._pendingCenter = geographic(drag.center[0] - dx / size, drag.center[1] - dy / size);
+      self._pendingCenter = self._clampCenter(self._pendingCenter[0], self._pendingCenter[1], self._levelForScale(self.zoom));
       self._boxLeave();
       self.draw();
     };
@@ -266,10 +272,12 @@
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this._applyDefaultView();
     if (this.map) {
-      const zoom = this._levelForScale(this.zoom);
-      const center = this._pendingCenter.slice();
       this.map.resize();
-      this.map.jumpTo({ zoom, center });
+      this._applyCameraLimits();
+      const zoom = this._levelForScale(this.zoom);
+      this._pendingCenter = this._clampCenter(this._pendingCenter[0], this._pendingCenter[1], zoom);
+      this.zoom = Math.pow(2, zoom - this._fitLevelForWidth());
+      this.map.jumpTo({ zoom, center: this._pendingCenter });
     }
     this.draw();
   };
@@ -279,32 +287,50 @@
     return Math.log2(Math.min(Math.max(1, this.w - 40) / (b[0] - a[0]), Math.max(1, this.h - 40) / (b[1] - a[1])) / 512);
   };
 
-  // 首屏与复位时让整个视口落在真实数据范围内；保留用户主动平移/缩放。
+  MapView.prototype._viewBounds = function () {
+    return this._coverageBounds || [B.lon0, B.lat0, B.lon1, B.lat1];
+  };
+
+  // 视口必须被数据覆盖：取较长边撑满，并多算 8px，避免边缘露底。
+  MapView.prototype._minLevel = function () {
+    if (this.w <= 0 || this.h <= 0) return Math.min(7, this._fitLevelForWidth());
+    const [west, south, east, north] = this._viewBounds();
+    const a = merc(west, north), b = merc(east, south);
+    const dx = b[0] - a[0], dy = b[1] - a[1];
+    if (dx <= 0 || dy <= 0) return Math.min(7, this._fitLevelForWidth());
+    return Math.min(18, Math.log2(Math.max((this.w + 8) / dx, (this.h + 8) / dy) / 512));
+  };
+
+  MapView.prototype._clampCenter = function (lon, lat, level) {
+    if (!Number.isFinite(lon) || !Number.isFinite(lat) || this.w <= 0 || this.h <= 0) return [lon, lat];
+    const [west, south, east, north] = this._viewBounds();
+    const a = merc(west, north), b = merc(east, south);
+    const size = 512 * Math.pow(2, level);
+    const hx = this.w / (2 * size), hy = this.h / (2 * size);
+    const c = merc(lon, lat);
+    const minX = a[0] + hx, maxX = b[0] - hx;
+    const minY = a[1] + hy, maxY = b[1] - hy;
+    c[0] = minX < maxX ? Math.max(minX, Math.min(maxX, c[0])) : (a[0] + b[0]) / 2;
+    c[1] = minY < maxY ? Math.max(minY, Math.min(maxY, c[1])) : (a[1] + b[1]) / 2;
+    return geographic(c[0], c[1]);
+  };
+
+  MapView.prototype._applyCameraLimits = function () {
+    if (!this.map) return;
+    this.map.setMinZoom(this._minLevel());
+  };
+
+  // 首屏与复位落到数据范围内；缩小/平移也不能超出覆盖范围。
   MapView.prototype._applyDefaultView = function () {
     if (!this._isDefaultView) return;
-    let level = this._levelForScale(this._defaultScale);
-    if (this._coverageBounds && this.w > 0 && this.h > 0) {
-      const [west, south, east, north] = this._coverageBounds;
-      const a = merc(west, north), b = merc(east, south);
-      const center = merc(...CENTER);
-      // 留 4px 内边距，避免边缘抗锯齿或像素取整露出无数据背景。
-      center[0] = Math.max(a[0], Math.min(b[0], center[0]));
-      center[1] = Math.max(a[1], Math.min(b[1], center[1]));
-      let dx = Math.min(center[0] - a[0], b[0] - center[0]);
-      let dy = Math.min(center[1] - a[1], b[1] - center[1]);
-      if (dx <= 0 || dy <= 0) {
-        center[0] = (a[0] + b[0]) / 2; center[1] = (a[1] + b[1]) / 2;
-        dx = (b[0] - a[0]) / 2; dy = (b[1] - a[1]) / 2;
-      }
-      level = Math.min(18, Math.max(level, Math.log2(Math.max((this.w + 8) / (2 * dx), (this.h + 8) / (2 * dy)) / 512)));
-      this._pendingCenter = geographic(...center);
-    }
+    const level = this._levelForScale(this._defaultScale);
+    this._pendingCenter = this._clampCenter(CENTER[0], CENTER[1], level);
     this.zoom = Math.pow(2, level - this._fitLevelForWidth());
   };
 
   MapView.prototype._levelForScale = function (scale) {
     const fit = this._fitLevelForWidth();
-    return Math.max(Math.min(7, fit), Math.min(18, fit + Math.log2(Math.max(.01, Number(scale) || 1))));
+    return Math.max(this._minLevel(), Math.min(18, fit + Math.log2(Math.max(.01, Number(scale) || 1))));
   };
 
   MapView.prototype._fallbackPx = function (lon, lat) {
@@ -330,8 +356,10 @@
 
   MapView.prototype.setZoom = function (z) {
     this._isDefaultView = false;
-    this.zoom = Math.pow(2, this._levelForScale(z) - this._fitLevelForWidth());
-    if (this.map) this.map.setZoom(this._levelForScale(this.zoom));
+    const level = this._levelForScale(z);
+    this.zoom = Math.pow(2, level - this._fitLevelForWidth());
+    this._pendingCenter = this._clampCenter(this._pendingCenter[0], this._pendingCenter[1], level);
+    if (this.map) this.map.setZoom(level);
     this.draw();
     return this;
   };
@@ -341,7 +369,7 @@
     options = options || {};
     this._isDefaultView = false;
     if (Number.isFinite(options.scale)) this.setZoom(options.scale);
-    this._pendingCenter = [lon, lat];
+    this._pendingCenter = this._clampCenter(lon, lat, this._levelForScale(this.zoom));
     if (this.map) this.map.setCenter(this._pendingCenter);
     this.draw();
     return this;
@@ -429,6 +457,66 @@
       c.fillText('仅方位 ' + t.azimuth.toFixed(0) + '°',
         o[0] + Math.cos(rad) * (L + 6), o[1] + Math.sin(rad) * (L + 6));
     }
+    c.restore();
+  };
+
+  MapView.prototype._still = function () {
+    return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  };
+
+  MapView.prototype._phase = function (period) {
+    return this._still() ? 0 : (this.t % period) / period;
+  };
+
+  MapView.prototype._drawTrackArrow = function (c, a, b, col) {
+    const dx = b[0] - a[0], dy = b[1] - a[1], len = Math.hypot(dx, dy);
+    if (len < 22) return;
+    const ux = dx / len, uy = dy / len;
+    const mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2, s = 5.5;
+    c.beginPath();
+    c.moveTo(mx - ux * 2 - uy * s * .55, my - uy * 2 + ux * s * .55);
+    c.lineTo(mx + ux * s, my + uy * s);
+    c.lineTo(mx - ux * 2 + uy * s * .55, my - uy * 2 - ux * s * .55);
+    c.strokeStyle = col; c.lineWidth = 1.35; c.lineJoin = 'round'; c.stroke();
+  };
+
+  MapView.prototype._drawUav = function (c, t, q, col, isSel) {
+    const heading = Number.isFinite(+t.heading) ? +t.heading : 0;
+    const mk = t.legal === '合法' ? '#22d3ee' : '#ff4d5e';
+    c.save();
+    c.translate(q[0], q[1]);
+    if (isSel) {
+      const ph = this._phase(50);
+      c.beginPath(); c.arc(0, 0, 12 + ph * 12, 0, 7);
+      c.strokeStyle = mk + Math.round(((1 - ph) * .8 + .2) * 255).toString(16).padStart(2, '0');
+      c.lineWidth = 2.6; c.stroke();
+      c.beginPath(); c.arc(0, 0, 9, 0, 7);
+      c.strokeStyle = mk; c.lineWidth = 1.8; c.stroke();
+      const B = 15, L = 6;
+      c.strokeStyle = mk; c.lineWidth = 2;
+      [[-1, -1], [1, -1], [1, 1], [-1, 1]].forEach(([sx, sy]) => {
+        c.beginPath();
+        c.moveTo(sx * B, sy * (B - L)); c.lineTo(sx * B, sy * B); c.lineTo(sx * (B - L), sy * B);
+        c.stroke();
+      });
+    } else if (t.tracked) {
+      const ph = this._phase(50);
+      c.beginPath(); c.arc(0, 0, 10 + ph * 10, 0, 7);
+      c.strokeStyle = `rgba(255,77,94,${(1 - ph) * .75 + .15})`; c.lineWidth = 1.5; c.stroke();
+    }
+    c.beginPath(); c.arc(0, 0, 8.2, 0, 7);
+    c.fillStyle = 'rgba(255,255,255,.72)'; c.fill();
+    c.rotate(heading * Math.PI / 180);
+    c.strokeStyle = col; c.lineWidth = 1.45; c.lineCap = 'round';
+    [[-5.2, -5.2], [5.2, -5.2], [5.2, 5.2], [-5.2, 5.2]].forEach(([x, y]) => {
+      c.beginPath(); c.moveTo(0, 0); c.lineTo(x, y); c.stroke();
+      c.beginPath(); c.arc(x, y, 2.15, 0, 7); c.fillStyle = 'rgba(255,255,255,.92)'; c.fill();
+      c.strokeStyle = col; c.stroke();
+    });
+    c.beginPath();
+    c.moveTo(0, -6.8); c.lineTo(2.6, 4.2); c.lineTo(0, 2.2); c.lineTo(-2.6, 4.2);
+    c.closePath(); c.fillStyle = col; c.fill();
+    c.strokeStyle = 'rgba(255,255,255,.55)'; c.lineWidth = .8; c.stroke();
     c.restore();
   };
 
@@ -578,9 +666,10 @@
         if (t.posValid === false) { this._drawBearing(c, t, P, col); if (dim) c.restore(); return; }
         const tr = t.track || [];
         if (tr.length > 1) {
-          /* F0202:按点型分段绘制 —— 实测=动画虚线 / 弥合=橙色宽隙虚线(A03) / 预测=青色点线(A04) */
+          /* F0202:按点型分段 —— 实测=实线+光晕 / 弥合=橙色虚线(A03) / 预测=青色点线(A04) */
+          const hot = t.tracked || isSel;
           const STYLE = {
-            meas: { dash: [6, 4], col: col + ((t.tracked || isSel) ? 'ee' : '99'), w: (t.tracked || isSel) ? 2 : 1.3, anim: true },
+            meas: { dash: isSel && !this._still() ? [8, 5] : [], col: col + (hot ? 'ee' : 'b0'), w: hot ? 2.4 : 1.6, glow: true, anim: isSel && !this._still() },
             bridge: { dash: [3, 6], col: '#ff8b3d', w: 2, anim: false },
             pred: { dash: [2, 5], col: '#22d3ee', w: 1.6, anim: false }
           };
@@ -589,18 +678,24 @@
             const kind = tr[i].kind || 'meas';
             const st = STYLE[kind] || STYLE.meas;
             const a = P(tr[i - 1].lon, tr[i - 1].lat), b = P(tr[i].lon, tr[i].lat);
+            if (st.glow) {
+              c.setLineDash([]); c.lineCap = 'round';
+              c.beginPath(); c.moveTo(a[0], a[1]); c.lineTo(b[0], b[1]);
+              c.strokeStyle = col + '2e'; c.lineWidth = st.w + 4; c.stroke();
+            }
             c.beginPath(); c.moveTo(a[0], a[1]); c.lineTo(b[0], b[1]);
-            c.setLineDash(st.dash); c.lineDashOffset = st.anim ? -(this.t * .6) % 10 : 0;
-            c.strokeStyle = st.col; c.lineWidth = st.w; c.stroke();
+            c.setLineDash(st.dash); c.lineDashOffset = st.anim ? -(this.t * .6) % 13 : 0;
+            c.strokeStyle = st.col; c.lineWidth = st.w; c.lineCap = 'round'; c.stroke();
+            if (isSel && kind === 'meas' && i % 3 === 0) this._drawTrackArrow(c, a, b, col);
             if (kind === 'bridge' && !bridgeLabelAt) bridgeLabelAt = a;
-            if (kind !== 'meas' && (t.tracked || this.sel === t.id)) {
+            if (kind !== 'meas' && hot) {
               c.setLineDash([]);
               c.beginPath(); c.arc(b[0], b[1], 2.2, 0, 7);
-              c.strokeStyle = st.col; c.lineWidth = 1.2; c.stroke();   // 空心点标记非实测点
+              c.strokeStyle = st.col; c.lineWidth = 1.2; c.stroke();
             }
           }
-          c.setLineDash([]);
-          if (bridgeLabelAt && (t.tracked || this.sel === t.id)) {
+          c.setLineDash([]); c.lineCap = 'butt';
+          if (bridgeLabelAt && hot) {
             c.font = '9.5px "PingFang SC"'; c.fillStyle = '#ffb083'; c.textAlign = 'left';
             c.fillText('注意：断裂-弥合', bridgeLabelAt[0] + 6, bridgeLabelAt[1] - 5);
           }
@@ -609,57 +704,13 @@
         }
         const last = tr.length ? tr[tr.length - 1] : { lon: t.lon, lat: t.lat };
         const q = P(last.lon, last.lat);
-        // 目标图标（旋翼）
-        c.save(); c.translate(q[0], q[1]);
-        if (isSel) {
-          /* 选中标记走交互色系（合法目标青色、其余红色），与合法性色 col 分层不混用 */
-          const mk = t.legal === '合法' ? '#22d3ee' : '#ff4d5e';
-          const ph = (this.t % 50) / 50;
-          c.beginPath(); c.arc(0, 0, 12 + ph * 14, 0, 7);   // 外圈强脉冲：粗线、透明度不落到 0
-          c.strokeStyle = mk + Math.round(((1 - ph) * .8 + .2) * 255).toString(16).padStart(2, '0');
-          c.lineWidth = 3; c.stroke();
-          c.beginPath(); c.arc(0, 0, 9, 0, 7);              // 内圈稳定锚：脉冲最淡时仍有落点
-          c.strokeStyle = mk; c.lineWidth = 2; c.stroke();
-          const B = 15, L = 6;                              // 四角定位括号（雷达风格）
-          c.strokeStyle = mk; c.lineWidth = 2;
-          [[-1, -1], [1, -1], [1, 1], [-1, 1]].forEach(([sx, sy]) => {
-            c.beginPath();
-            c.moveTo(sx * B, sy * (B - L)); c.lineTo(sx * B, sy * B); c.lineTo(sx * (B - L), sy * B);
-            c.stroke();
-          });
-        } else if (t.tracked) {
-          const r = 10 + (this.t % 50) / 50 * 12;
-          c.beginPath(); c.arc(0, 0, r, 0, 7);
-          c.strokeStyle = `rgba(255,77,94,${(1 - (this.t % 50) / 50) * .8})`; c.lineWidth = 1.5; c.stroke();
-        }
-        c.rotate((this.t * .04) % 6.283);
-        c.strokeStyle = col; c.lineWidth = 1.6;
-        for (let k = 0; k < 4; k++) {
-          const a = k * Math.PI / 2 + Math.PI / 4;
-          c.beginPath(); c.moveTo(0, 0); c.lineTo(Math.cos(a) * 6, Math.sin(a) * 6); c.stroke();
-          c.beginPath(); c.arc(Math.cos(a) * 6, Math.sin(a) * 6, 2.4, 0, 7); c.stroke();
-        }
-        c.restore();
-        c.beginPath(); c.arc(q[0], q[1], 2.4, 0, 7); c.fillStyle = col; c.fill();
-        if (isSel) {
-          const mk = t.legal === '合法' ? '#22d3ee' : '#ff4d5e';
-          c.font = '12px Menlo'; c.textAlign = 'left';
-          const tx = t.id.slice(-9), tw = c.measureText(tx).width + 10;
-          c.fillStyle = 'rgba(4,10,26,.92)'; c.fillRect(q[0] + 16, q[1] - 22, tw, 17);
-          c.strokeStyle = mk; c.lineWidth = 1; c.strokeRect(q[0] + 16, q[1] - 22, tw, 17);
-          c.fillStyle = '#fff'; c.fillText(tx, q[0] + 21, q[1] - 9);
-        } else if (this.opt.showTargetLabels !== false && (t.tracked || (this.data.targets || []).length <= 8)) {
-          c.font = '10.5px Menlo'; c.textAlign = 'left';
-          c.fillStyle = 'rgba(4,10,26,.8)'; c.fillRect(q[0] + 11, q[1] - 16, 62, 12);
-          c.fillStyle = col; c.fillText(t.id.slice(-9), q[0] + 13, q[1] - 7);
-        }
+        this._drawUav(c, t, q, col, isSel);
         if (dim) c.restore();
         picks.push({
           x: q[0], y: q[1], kind: 'target', data: t,
-          tip: `<b style="color:${col}">${t.id}</b><dl class="kv" style="margin-top:6px">
-            <dt>类型</dt><dd>${t.subtype || t.type}</dd><dt>高度</dt><dd>${t.alt} m</dd>
-            <dt>速度</dt><dd>${t.speed} m/s</dd><dt>合法性</dt><dd style="color:${col}">${t.legal}${t.violation ? '（' + t.violation + '）' : ''}</dd>
-            <dt>风险</dt><dd>${t.risk}</dd><dt>来源</dt><dd>${t.source}</dd></dl>`
+          tip: `<div class="maptip-uav"><b style="color:${col}">${t.id}</b>
+            <div class="maptip-uav-meta">${t.subtype || t.type}</div>
+            <div class="maptip-uav-tags">${t.legal}${t.violation ? ' · ' + t.violation : ''} · ${t.risk}</div></div>`
         });
       });
     }

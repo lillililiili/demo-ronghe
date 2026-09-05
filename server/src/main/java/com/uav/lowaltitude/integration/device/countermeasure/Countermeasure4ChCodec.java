@@ -20,7 +20,8 @@ public final class Countermeasure4ChCodec {
 
     public static byte[] query(int address) {
         validateAddress(address);
-        byte[] frame = new byte[] { (byte) REQUEST_HEADER, (byte) address, (byte) FUNCTION_QUERY, 0, 0, 0, 0, 0 };
+        // 资料查询例为 55 01 10 00 00 00 01 67；查哪一路都返回全板状态，数据末字节用 1。
+        byte[] frame = new byte[] { (byte) REQUEST_HEADER, (byte) address, (byte) FUNCTION_QUERY, 0, 0, 0, 1, 0 };
         frame[7] = checksum(frame, 0, 7);
         return frame;
     }

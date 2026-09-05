@@ -85,7 +85,7 @@ public class CountermeasureTcp4ChV20Adapter implements DeviceAdapterPort {
         try { configured = WireEncoding.valueOf(config.protocol().path("wire_encoding").asText("AUTO")); }
         catch (IllegalArgumentException ex) { throw new ProtocolException("PROTOCOL_NOT_CONFIGURED", "wire_encoding 无效"); }
         List<WireEncoding> candidates = configured == WireEncoding.AUTO
-                ? List.of(WireEncoding.RAW_BYTES, WireEncoding.ASCII_HEX_SPACED, WireEncoding.ASCII_HEX_COMPACT)
+                ? List.of(WireEncoding.ASCII_HEX_SPACED, WireEncoding.ASCII_HEX_COMPACT, WireEncoding.RAW_BYTES)
                 : List.of(configured);
         List<InetAddress> addresses = networkPolicy.resolveAllowed(config.host(), config.allowedCidrs());
         String lastError = null;

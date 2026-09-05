@@ -12,6 +12,10 @@ final class AuditLabels {
             "audit", "审计日志",
             "devices", "设备管理",
             "alarms", "告警事件",
+            // 阶段 4/5：风险、交接、工作台是独立模块，失败审计与列表展示都按各自模块归档。
+            "risk", "飞行风险",
+            "handoff", "业务交接",
+            "workbench", "工作台",
             "system", "系统");
 
     private static final Map<String, String> ACTIONS = Map.ofEntries(
@@ -43,22 +47,30 @@ final class AuditLabels {
             Map.entry("access_change_approved", "批准权限变更"),
             Map.entry("access_change_rejected", "驳回权限变更"),
             Map.entry("audit_export_requested", "导出审计日志"),
-            Map.entry("super_admin_recovered", "恢复超级管理员"));
+            Map.entry("super_admin_recovered", "恢复超级管理员"),
+            Map.entry("uav_event_verified", "核实无人机事件"),
+            Map.entry("risk_verified", "核验飞行风险"),
+            Map.entry("handoff_created", "提交业务交接"));
 
     private static final Map<String, String> METHODS = Map.of(
             "GET", "查询", "POST", "提交", "PUT", "更新", "PATCH", "更新", "DELETE", "删除");
 
-    private static final Map<String, String> PATHS = Map.of(
-            "/organizations", "组织",
-            "/districts", "区域",
-            "/users", "用户",
-            "/roles", "角色",
-            "/permissions", "权限",
-            "/audit-logs", "审计日志",
-            "/auth", "认证",
-            "/devices", "设备",
-            "/commission", "设备调测",
-            "/alarms", "告警");
+    private static final Map<String, String> PATHS = Map.ofEntries(
+            Map.entry("/organizations", "组织"),
+            Map.entry("/districts", "区域"),
+            Map.entry("/users", "用户"),
+            Map.entry("/roles", "角色"),
+            Map.entry("/permissions", "权限"),
+            Map.entry("/audit-logs", "审计日志"),
+            Map.entry("/auth", "认证"),
+            Map.entry("/devices", "设备"),
+            Map.entry("/commission", "设备调测"),
+            Map.entry("/alarms", "告警"),
+            Map.entry("/uav-events", "无人机事件"),
+            Map.entry("/risks", "飞行风险"),
+            Map.entry("/handoff-recipients", "交接接收方"),
+            Map.entry("/handoffs", "业务交接"),
+            Map.entry("/workbench", "工作台"));
 
     private AuditLabels() {
     }

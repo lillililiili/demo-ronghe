@@ -7,6 +7,7 @@ import org.apache.ibatis.annotations.Select;
 @Mapper
 public interface AccessControlMapper {
 
+    // MODULE/menu_enabled 只决定导航可见性；服务端业务动作必须命中 ACTION 目录，不能把“看得到菜单”当成写权限。
     @Select("""
             SELECT u.scope_mode
             FROM app_user u

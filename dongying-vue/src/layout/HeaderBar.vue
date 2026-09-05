@@ -10,6 +10,7 @@ import { authUser, logout } from '@/services/auth.js';
 import { canAccessRoute } from '@/services/accessControl.js';
 import { toast } from '@/ui/nv.js';
 import { openModal, closeModal } from '@/ui/modal.js';
+import { listAlarms } from '@/services/alarmApi.js';
 
 const store = useAppStore();
 const router = useRouter();
@@ -21,24 +22,36 @@ const canAlarms = computed(() => canAccessRoute('alarms'));
 
 /* ---------- 时钟：系统当前时间 ---------- */
 let clkTimer = null;
+let stopBellRoute = null;
 const tick = () => {
   store.timeStr = M.systemNowStr();
 };
 tick();
 const clkHtml = computed(() => `${U.icon('clock')} ${store.timeStr}`);
-/* todayStats 是 mock 加载期快照，核实/处置后不会变。铃铛按当前告警流程计数。 */
-const bellRev = ref(0);
-function alarmFlowOf(a) {
-  if (a.flowStatus) return a.flowStatus;
-  return ({ 新建: '待核实', 已确认: '待核实', 处置中: '反制中', 已关闭: '已处置', 误报: '误报' })[a.status] || '待核实';
+/* ---------- 告警铃铛：未处理数来自服务端告警列表 ----------
+   铃铛与告警页共用同一条件：同一个 alarm:read 权限、同一范围谓词、同一状态过滤。
+   原因：铃铛数字是“点进去能看到几条待办”的承诺。若这里另算一套（例如读 Mock 或
+   自己数状态），就会出现顶栏显示 3 条、告警页却是空列表或 403 的矛盾。
+   因此只向 listAlarms 各取 state=PENDING_VERIFICATION / EVIDENCE_REQUIRED 的 size=1 页，
+   用服务端 total 求和；无权限（403）或任何失败都清空数字，不回退旧 Mock 计数。 */
+const bellN = ref(null);
+let bellSeq = 0;
+async function refreshBell() {
+  const seq = ++bellSeq;
+  if (!canAlarms.value) { bellN.value = null; return; }
+  try {
+    const [pending, evidence] = await Promise.all([
+      listAlarms({ state: 'PENDING_VERIFICATION', page: 1, size: 1 }),
+      listAlarms({ state: 'EVIDENCE_REQUIRED', page: 1, size: 1 })
+    ]);
+    if (seq !== bellSeq) return;
+    bellN.value = (pending?.total || 0) + (evidence?.total || 0);
+  } catch {
+    // 403 表示无 alarm:read；其余失败同样是结果未知。两种情况都不显示数字，避免用旧值冒充事实。
+    if (seq === bellSeq) bellN.value = null;
+  }
 }
-const bellN = computed(() => {
-  bellRev.value;
-  store.accessRevision;
-  const open = new Set(['待核实', '反制中', '干扰中', '待处置']);
-  return (M.todayAlarms || []).filter(a => open.has(alarmFlowOf(a))).length;
-});
-function bumpBell() { bellRev.value++; }
+const bellText = computed(() => (bellN.value === null ? '' : String(bellN.value)));
 
 /* ---------- 大屏展示：进入 Vue Router 管理的监控大屏页面 ---------- */
 const screenLabel = `${U.icon('mon')} 数据大屏`;
@@ -96,16 +109,19 @@ onMounted(() => {
   clkTimer = setInterval(tick, 1000);
   document.addEventListener('fullscreenchange', onFsChange);
   document.addEventListener('click', closeMenu);
-  window.addEventListener('evt:advance', bumpBell);
-  window.addEventListener('mock-access-change', bumpBell);
+  // 登录/退出/权限刷新会触发 mock-access-change；路由切换后重取，核实完成回到其他页也能看到新数。
+  window.addEventListener('mock-access-change', refreshBell);
+  stopBellRoute = router.afterEach(() => { refreshBell(); });
+  refreshBell();
 });
 onBeforeUnmount(() => {
   window.SEARCH?.destroy();
   clearInterval(clkTimer);
   document.removeEventListener('fullscreenchange', onFsChange);
   document.removeEventListener('click', closeMenu);
-  window.removeEventListener('evt:advance', bumpBell);
-  window.removeEventListener('mock-access-change', bumpBell);
+  window.removeEventListener('mock-access-change', refreshBell);
+  stopBellRoute?.(); stopBellRoute = null;
+  bellSeq++;
 });
 </script>
 
@@ -122,7 +138,7 @@ onBeforeUnmount(() => {
       <span class="it"><button class="btn ghost" id="btnBig" title="全屏模式：放大字号与行距，适配指挥大厅显示" v-html="bigLabel" @click="toggleBig"></button></span>
       <button v-if="canAlarms" class="it bell icon-btn" id="bell" type="button" aria-label="查看告警" @click="goAlarms">
         <svg class="hdr-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>
-        <span class="dot" id="bellN">{{ bellN }}</span>
+        <span class="dot" id="bellN" v-show="bellN !== null">{{ bellText }}</span>
       </button>
       <button class="user icon-btn" type="button" aria-haspopup="menu" :aria-expanded="String(menuOpen)" @click="toggleMenu"><span class="av">{{ avatarText }}</span><span>{{ currentUser.name }}</span><svg class="chev-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 9 5 5 5-5"/></svg></button>
     </div>

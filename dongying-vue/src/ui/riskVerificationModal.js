@@ -1,47 +1,90 @@
-/* 飞行计划风险人工核验弹窗：工作台与“全部风险事件”共用同一实现。 */
-import { openModal, closeModal } from './modal.js';
+/* 飞行计划风险人工核验弹窗：飞行计划页“全部风险事件”与工作台共用同一实现。
+   只调用 riskApi.verifyRisk；不再读取 window.MOCK，也不产生第二套状态机。 */
+import { openFormModal } from './formModal.js';
+import { closeModal } from './modal.js';
+import { toast } from './nv.js';
+import { riskApi, newRiskIdempotencyKey } from '@/services/riskApi.js';
+import { isUncertainOutcome } from '@/services/apiClient.js';
 
-const PLAN_STATUS_RANK = { '执行中': 4, '待执行': 3, '已完成': 2, '已终止': 1, '已取消': 0 };
+export const RISK_STATE_TEXT = {
+  PENDING_VERIFICATION: '待核验',
+  PENDING_NOTIFICATION: '待通知',
+  NOTIFIED: '已通知',
+  EXCLUDED: '已排除'
+};
+export const riskStateText = code => RISK_STATE_TEXT[code] || (code ? String(code) : '—');
 
-function contextOf(risk, givenRoute, givenPlan) {
-  const M = window.MOCK;
-  const route = givenRoute !== undefined
-    ? givenRoute
-    : risk.nearestRouteId && M.routeById ? M.routeById(risk.nearestRouteId) : null;
-  if (givenPlan !== undefined) return { route, plan: givenPlan };
-  const plans = route && M.plansOf ? M.plansOf(route.id).slice() : [];
-  plans.sort((a, b) => (PLAN_STATUS_RANK[b.status] || 0) - (PLAN_STATUS_RANK[a.status] || 0)
-    || Math.abs(new Date(a.start).getTime() - risk.ts) - Math.abs(new Date(b.start).getTime() - risk.ts));
-  return { route, plan: plans[0] || null };
+/* 同一风险的幂等键在“结果未知”期间保留；只有服务端给出明确结果后才丢弃。 */
+const pendingKeys = new Map();
+
+function esc(value) {
+  return String(value ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+}
+function messageOf(error, fallback) {
+  if (!error) return fallback;
+  if (error.status === 401) return '登录已失效，请重新登录。';
+  if (error.status === 403) return '当前账号没有核验此风险的权限。';
+  return error.message || fallback;
 }
 
-export function openRiskVerification(options = {}) {
-  const risk = options.risk;
+/**
+ * @param {object} o
+ * @param {object} o.risk 服务端风险对象（含 risk_id/version/allowed_actions）
+ * @param {(result:object|null)=>Promise<object|null>} [o.refresh] 成功或结果未知时回读当前风险，返回最新对象
+ * @param {(result:object)=>void} [o.onDone] 明确成功后的回调
+ */
+export function openRiskVerification({ risk, refresh, onDone } = {}) {
   if (!risk) return false;
+  if (!(risk.allowed_actions || []).includes('VERIFY')) { toast('当前风险不可核验或缺少核验权限', 'err'); return false; }
+  const riskId = risk.risk_id;
+  const expectedVersion = Number(risk.version);
+  if (!pendingKeys.has(riskId)) pendingKeys.set(riskId, newRiskIdempotencyKey());
 
-  const U = window.UI;
-  const { route, plan } = contextOf(risk, options.route, options.plan);
-  const height = risk.altOverlap == null ? '高度不可判定' : risk.altOverlap ? '高度重叠' : '高度不重叠';
-
-  return openModal({
-    title: `人工核验 · ${risk.id}`,
-    width: '610px',
-    body: `<div class="warnbox">核验结论沿用飞行计划页“本航线风险”的共享状态机，不会产生第二套流程。</div>${U.kv([
-      ['飞行计划', plan ? `<span class="mono">${plan.id}</span> · ${plan.status}` : '该航线暂无关联计划'],
-      ['关联航线', route ? `<span class="mono">${route.id}</span> ${route.name}` : '未关联航线'],
-      ['风险事件', `<span class="mono">${risk.id}</span>`],
-      ['距离 / 高度', `${risk.nearestRouteKm} km · ${height}`]
-    ])}`,
-    footer: '<button class="btn" type="button" data-close>取消</button><button class="btn" type="button" data-act="exclude">排除风险</button><button class="btn pri" type="button" data-act="confirm">核验通过</button>',
-    on: {
-      exclude: () => {
+  openFormModal({
+    title: '人工核验',
+    width: '560px',
+    warning: '核验通过只进入“待通知”，不表示已通知上级；排除表示核验后判定无需通报。通知上级与交接在阶段 5 接入。',
+    notice: `风险 ${riskId} · ${risk.risk_type || ''} · 当前版本 v${expectedVersion} · 说明 1–1000 字必填`,
+    fields: [
+      { key: 'conclusion', label: '核验结论', type: 'radio', required: true, options: [
+        { value: 'CONFIRMED', label: '核验通过（转待通知）' },
+        { value: 'EXCLUDED', label: '排除（误检 / 非管控风险）' }
+      ] },
+      { key: 'note', label: '核验说明', type: 'textarea', required: true, minRows: 4, placeholder: '填写现场确认、航线与高度复核等依据（1–1000 字）' }
+    ],
+    initial: { conclusion: 'CONFIRMED', note: '' },
+    confirmText: '提交核验结论',
+    validate: m => { const n = String(m.note || '').trim(); return !n ? '核验说明为必填项' : n.length > 1000 ? `核验说明不能超过 1000 字（当前 ${n.length} 字）` : ''; },
+    onSubmit: async ({ conclusion, note }) => {
+      const key = pendingKeys.get(riskId);
+      try {
+        const result = await riskApi.verifyRisk(riskId, { conclusion, note: String(note || '').trim(), expected_version: expectedVersion }, key);
+        pendingKeys.delete(riskId);
         closeModal();
-        if (options.onExclude) options.onExclude(risk);
-      },
-      confirm: () => {
-        closeModal();
-        if (options.onConfirm) options.onConfirm(risk);
+        toast(`核验结论已提交：${riskStateText(result?.state)}（v${Number(result?.version)}）`, 'ok');
+        if (refresh) await refresh(result);
+        if (onDone) onDone(result);
+      } catch (error) {
+        if (isUncertainOutcome(error)) {
+          // 409 / 超时 / 断网：服务端可能已落库。保留原键，先回读详情核对，不自动换键重试、不提示成功。
+          const latest = refresh ? await refresh(null) : null;
+          if (latest && (Number(latest.version) !== expectedVersion || !(latest.allowed_actions || []).includes('VERIFY'))) {
+            pendingKeys.delete(riskId);
+            closeModal();
+            // 版本变化与终态要分开说明：前者仍可重新打开表单核验，后者不能再核验。
+            const stillVerifiable = (latest.allowed_actions || []).includes('VERIFY');
+            toast(stillVerifiable
+              ? `提交结果未确认，已刷新服务端状态：风险已更新为 v${Number(latest.version)}（${riskStateText(latest.state)}），请核对历史后重新打开核验表单。`
+              : `提交结果未确认，已刷新服务端状态：当前风险为「${riskStateText(latest.state)}」，不能再次核验。`, 'err');
+            return;
+          }
+          throw new Error(`提交结果未确认，请刷新核对：${messageOf(error, '服务端未返回明确结果')}`);
+        }
+        pendingKeys.delete(riskId);
+        pendingKeys.set(riskId, newRiskIdempotencyKey());
+        throw new Error(messageOf(error, '风险核验失败'));
       }
     }
   });
+  return true;
 }

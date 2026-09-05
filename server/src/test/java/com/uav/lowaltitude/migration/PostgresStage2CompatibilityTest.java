@@ -50,8 +50,11 @@ class PostgresStage2CompatibilityTest {
                     "select extversion from pg_extension where extname='postgis'", String.class))
                     .startsWith("3.5");
 
+            // 期望数取自当前类路径的待执行迁移，避免后续阶段每加一个迁移就让阶段 2 兼容测试过期。
+            int pending = stage2Flyway(schema).info().pending().length;
+            assertThat(pending).isGreaterThanOrEqualTo(13);
             MigrateResult first = stage2Flyway(schema).migrate();
-            assertThat(first.migrationsExecuted).isEqualTo(13);
+            assertThat(first.migrationsExecuted).isEqualTo(pending);
             assertThat(stage2Flyway(schema).migrate().migrationsExecuted).isZero();
 
             withSchema(schema, jdbc -> {
@@ -220,8 +223,11 @@ class PostgresStage2CompatibilityTest {
                     .load();
             assertThat(legacy.migrate().migrationsExecuted).isEqualTo(2);
 
+            // 期望数取自当前类路径的待执行迁移，而不是手抄常量：后续阶段每加一个迁移都不该让阶段 2 兼容测试过期。
+            int pending = stage2Flyway(schema).info().pending().length;
+            assertThat(pending).isGreaterThanOrEqualTo(11);
             MigrateResult upgrade = stage2Flyway(schema).migrate();
-            assertThat(upgrade.migrationsExecuted).isEqualTo(11);
+            assertThat(upgrade.migrationsExecuted).isEqualTo(pending);
             assertThat(stage2Flyway(schema).migrate().migrationsExecuted).isZero();
             withSchema(schema, jdbc -> assertThat(tableNames(jdbc, schema)).contains(
                     "ops_device", "device", "target", "alarm"));
@@ -244,8 +250,10 @@ class PostgresStage2CompatibilityTest {
 
             withSchema(schema, this::insertPopulatedV5OperationsGraph);
 
+            int pending = stage2Flyway(schema).info().pending().length;
+            assertThat(pending).isGreaterThanOrEqualTo(2);
             MigrateResult upgrade = stage2Flyway(schema).migrate();
-            assertThat(upgrade.migrationsExecuted).isEqualTo(2);
+            assertThat(upgrade.migrationsExecuted).isEqualTo(pending);
             assertThat(stage2Flyway(schema).migrate().migrationsExecuted).isZero();
 
             withSchema(schema, jdbc -> {

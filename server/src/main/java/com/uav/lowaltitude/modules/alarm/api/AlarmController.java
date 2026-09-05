@@ -1,39 +1,31 @@
 package com.uav.lowaltitude.modules.alarm.api;
 
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.util.MultiValueMap;
 
 import com.uav.lowaltitude.platform.api.ApiResponse;
-import com.uav.lowaltitude.modules.identity.application.AccessService;
+import com.uav.lowaltitude.modules.alarm.api.AlarmDtos.AlarmDto;
+import com.uav.lowaltitude.modules.alarm.api.AlarmDtos.PageDto;
+import com.uav.lowaltitude.modules.alarm.application.AlarmReadService;
 
+/** 来源告警只读；核实操作由独立 UAV event 资源承接，避免把设备事实误当作可编辑流程。 */
 @RestController
-@RequestMapping("/api/v1/alarms")
+@RequestMapping("/api/v1")
 public class AlarmController {
 
-    private final AccessService accessService;
+    private final AlarmReadService service;
 
-    public AlarmController(AccessService accessService) {
-        this.accessService = accessService;
+    public AlarmController(AlarmReadService service) { this.service = service; }
+
+    @GetMapping("/alarms")
+    public ApiResponse<PageDto<AlarmDto>> list(@RequestParam MultiValueMap<String, String> parameters) {
+        return ApiResponse.ok(service.list(parameters));
     }
 
-    @GetMapping
-    public ApiResponse<Map<String, Object>> list(
-            @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "20") int size) {
-        accessService.requireBusinessData("alarms.read");
-        int safeSize = Math.min(Math.max(size, 1), 100);
-        int safePage = Math.max(page, 1);
-        Map<String, Object> data = new LinkedHashMap<>();
-        data.put("items", List.of());
-        data.put("page", safePage);
-        data.put("size", safeSize);
-        data.put("total", 0);
-        return ApiResponse.ok(data);
-    }
+    @GetMapping("/alarms/{alarmId}")
+    public ApiResponse<AlarmDto> detail(@PathVariable String alarmId) { return ApiResponse.ok(service.detail(alarmId)); }
 }

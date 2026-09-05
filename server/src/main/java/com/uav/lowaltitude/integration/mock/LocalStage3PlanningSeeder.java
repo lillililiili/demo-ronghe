@@ -6,6 +6,7 @@ import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Profile;
+import org.springframework.core.annotation.Order;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -15,6 +16,8 @@ import com.uav.lowaltitude.platform.time.AppClock;
 @Component
 @Profile("!production & (local | test)")
 @ConditionalOnProperty(prefix = "app.dev-seed", name = "enabled", havingValue = "true")
+// 种子按阶段顺序执行：后阶段样例引用前阶段的计划/风险，靠明确 @Order 而不是 Bean 名称顺序。
+@Order(35)
 public class LocalStage3PlanningSeeder implements ApplicationRunner {
     private static final String SOURCE_ID = "seed-stage3-source";
     private final JdbcTemplate jdbc;

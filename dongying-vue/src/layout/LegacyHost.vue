@@ -53,11 +53,6 @@ function mountPage() {
   view.innerHTML = page.render();
   current = page;
   if (page.mount) page.mount(view);
-  /* 旧版 route() 在 mount 之后才 renderCrumb —— 页脚 #fver 因此在每次换页时
-     被重置为纯版本号（devices.mount 里 paintFooter 的写入被盖掉，只有页内
-     数据源动作后才显示模式后缀）。逐字复刻该时序。 */
-  const fver = document.getElementById('fver');
-  if (fver) fver.textContent = window.MOCK.CONF.version.replace(/\s*\(D\d+\)/, '');
 }
 
 onMounted(() => {

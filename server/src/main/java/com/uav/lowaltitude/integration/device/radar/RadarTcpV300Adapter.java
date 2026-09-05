@@ -5,8 +5,6 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.SocketTimeoutException;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
@@ -51,11 +49,14 @@ public class RadarTcpV300Adapter implements DeviceAdapterPort {
 
     @Override
     public AdapterResult connect(CommissionWork work) {
-        try (Session session = open(work.configurationJson())) {
-            LoginResult login = login(session);
-            return login.success()
-                    ? new AdapterResult(true, "RADAR_LOGIN_OK", "TCP 连接和数据权限登录通过")
-                    : new AdapterResult(false, "ADAPTER_UNAVAILABLE", login.detail());
+        try {
+            AdapterConfiguration configuration = AdapterConfiguration.parse(mapper, work.configurationJson());
+            configuration.validateEndpoint();
+            InetAddress address = networkPolicy.resolveAllowed(configuration.host(), configuration.allowedCidrs()).get(0);
+            try (Socket socket = new Socket()) {
+                socket.connect(new InetSocketAddress(address, configuration.port()), configuration.timeoutMillis());
+            }
+            return new AdapterResult(true, "RADAR_TCP_OK", "TCP 端口可达，数据权限登录在开始协议调测时执行");
         } catch (ProtocolException ex) {
             return new AdapterResult(false, ex.code(), ex.getMessage());
         } catch (IOException ex) {
@@ -166,12 +167,17 @@ public class RadarTcpV300Adapter implements DeviceAdapterPort {
             String raw = credentials.resolve(reference);
             try { recognitionCode = raw.startsWith("0x") ? Long.parseUnsignedLong(raw.substring(2), 16) : Long.parseUnsignedLong(raw); }
             catch (NumberFormatException ex) { throw new ProtocolException("CREDENTIAL_UNAVAILABLE", "雷达识别码不是无符号整数"); }
+            if ((recognitionCode >>> 32) != 0)
+                throw new ProtocolException("CREDENTIAL_UNAVAILABLE", "雷达识别码超出 UINT32");
         }
         write(session, RadarV300Codec.COMMAND_LOGIN, RadarV300Codec.loginDataPayload(recognitionCode));
         RadarFrame response = waitFor(session, RadarV300Codec.COMMAND_LOGIN, session.timeoutMillis());
-        if (response.payload().length < 2) return new LoginResult(false, "雷达登录响应长度不足");
-        int status = Short.toUnsignedInt(ByteBuffer.wrap(response.payload()).order(ByteOrder.BIG_ENDIAN).getShort());
-        return new LoginResult(status == 0, status == 0 ? "登录成功" : "雷达拒绝登录，状态码=" + status);
+        try {
+            int status = RadarV300Codec.loginStatus(response.payload());
+            return new LoginResult(status == 0, status == 0 ? "登录成功" : "雷达拒绝登录，状态码=" + status);
+        } catch (ProtocolException ex) {
+            return new LoginResult(false, ex.getMessage());
+        }
     }
 
     private void write(Session session, int command, byte[] payload) throws IOException {

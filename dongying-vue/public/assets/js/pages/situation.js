@@ -649,7 +649,7 @@
       ? alms.slice().sort((x, y) => (x.ts < y.ts ? 1 : x.ts > y.ts ? -1 : 0))[0] : null;
     const almBtn = latest
       ? `<button class="btn warn" id="btnAlm" style="flex:1;justify-content:center"
-           title="转到「告警事件」并定位到 ${latest.id}">⚠ 查看告警${alms.length > 1 ? '（' + alms.length + ' 条）' : ''} →</button>`
+           title="转到「告警事件」并定位到 ${latest.id}">⚠ 查看告警 →</button>`
       : '';
     document.getElementById('stAct').innerHTML = isUav
       ? `

@@ -19,6 +19,7 @@ import com.uav.lowaltitude.integration.device.EnvironmentCredentialResolver;
 import com.uav.lowaltitude.modules.device.infrastructure.IntegrationSourceRepository;
 import com.uav.lowaltitude.platform.api.ApiException;
 import com.uav.lowaltitude.platform.audit.AuditService;
+import com.uav.lowaltitude.platform.security.AuthContext;
 import com.uav.lowaltitude.platform.security.AuthUser;
 import com.uav.lowaltitude.platform.time.AppClock;
 
@@ -98,6 +99,59 @@ public class IntegrationSourceService {
         audit.record(user.userId(), user.account(), enabled ? "integration_source_enable" : "integration_source_disable",
                 "integration_source", id, reason.trim(), null);
         return required(id);
+    }
+
+    @Transactional
+    public Source insertLive(Mutation mutation) {
+        AuthContext.require();
+        validate(mutation);
+        long now = clock.nowMillis();
+        String id = UUID.randomUUID().toString();
+        Map<String, Object> values = values(mutation, now);
+        values.put("source_id", id);
+        try { repository.insert(values); }
+        catch (DataIntegrityViolationException ex) { throw conflict("来源编码已存在"); }
+        AuthUser user = AuthContext.require();
+        audit.record(user.userId(), user.account(), "integration_source_create", "integration_source", id,
+                mutation.sourceCode(), null);
+        return required(id);
+    }
+
+    @Transactional
+    public Source activate(String id, long version, String reason) {
+        AuthContext.require();
+        if (reason == null || reason.trim().length() < 2 || reason.trim().length() > 500)
+            throw bad("VALIDATION_ERROR", "reason 长度必须为 2–500 个字符");
+        Source source = required(id);
+        validateEnable(source);
+        if (repository.setEnabled(id, version, true, clock.nowMillis()) != 1) throw versionConflict();
+        AuthUser user = AuthContext.require();
+        audit.record(user.userId(), user.account(), "integration_source_enable", "integration_source", id, reason.trim(), null);
+        return required(id);
+    }
+
+    @Transactional
+    public void replaceNetwork(String sourceId, String allowedCidrs, String credentialRef) {
+        AuthContext.require();
+        Source before = required(sourceId);
+        Mutation mutation = new Mutation(before.sourceCode(), before.name(), before.protocolCode(),
+                before.protocolVersion(), credentialRef, allowedCidrs);
+        validate(mutation);
+        if (repository.update(sourceId, before.version(), values(mutation, clock.nowMillis())) != 1) throw versionConflict();
+        Source after = required(sourceId);
+        if (after.enabled()) validateEnable(after);
+    }
+
+    @Transactional
+    public void syncEnabled(String sourceId, boolean enabled, String reason) {
+        AuthContext.require();
+        Source source = required(sourceId);
+        if (source.enabled() == enabled) return;
+        if (enabled) validateEnable(source);
+        if (repository.setEnabled(sourceId, source.version(), enabled, clock.nowMillis()) != 1) throw versionConflict();
+        audit.record(AuthContext.require().userId(), AuthContext.require().account(),
+                enabled ? "integration_source_enable" : "integration_source_disable",
+                "integration_source", sourceId, reason == null ? "" : reason.trim(), null);
     }
 
     private void validateEnable(Source source) {

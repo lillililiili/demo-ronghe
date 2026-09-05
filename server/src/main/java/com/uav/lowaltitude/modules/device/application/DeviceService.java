@@ -51,10 +51,11 @@ public class DeviceService {
     private final AuditService audit;
     private final ObjectMapper objectMapper;
     private final DeviceAdapterRegistry adapterRegistry;
+    private final IntegrationSourceService sources;
 
     public DeviceService(DeviceRepository repository, DeviceAccessPolicy access, AppClock clock,
                          AppProperties properties, AuditService audit, ObjectMapper objectMapper,
-                         DeviceAdapterRegistry adapterRegistry) {
+                         DeviceAdapterRegistry adapterRegistry, IntegrationSourceService sources) {
         this.repository = repository;
         this.access = access;
         this.clock = clock;
@@ -62,6 +63,7 @@ public class DeviceService {
         this.audit = audit;
         this.objectMapper = objectMapper;
         this.adapterRegistry = adapterRegistry;
+        this.sources = sources;
     }
 
     public DevicePage list(DeviceFilter filter, int page, int size, String sort) {
@@ -114,7 +116,8 @@ public class DeviceService {
                 text(row, "firmware_version"), longValue(row, "installed_at"), connection,
                 connection != null, text(row, "source_code"), text(row, "source_name"),
                 text(row, "protocol_code"), text(row, "protocol_version"), protocol,
-                metrics(text(row, "metrics_json")));
+                metrics(text(row, "metrics_json")),
+                connection != null ? text(row, "allowed_cidrs") : null);
     }
 
     public DeviceState state(String id) {
@@ -210,6 +213,10 @@ public class DeviceService {
         }
         repository.addEvent(UUID.randomUUID().toString(), id, "CATALOG_UPDATED", "INFO",
                 "设备台账已更新", now, source.simulated());
+        if (blankToNull(mutation.allowedCidrs()) != null && blankToNull(mutation.sourceId()) != null) {
+            sources.replaceNetwork(mutation.sourceId(), mutation.allowedCidrs(),
+                    mutation.connection() == null ? null : mutation.connection().credentialRef());
+        }
         audit.record(user.userId(), user.account(), "device_update", "device", id, "version=" + version, null);
         return detail(id);
     }
@@ -219,11 +226,16 @@ public class DeviceService {
         AuthUser user = access.requireDevicesOperate();
         if (reason == null || reason.trim().length() < 2 || reason.trim().length() > 500)
             throw bad("VALIDATION_ERROR", "reason 长度必须为 2–500 个字符");
-        requiredDevice(id);
+        Map<String, Object> device = requiredDevice(id);
         long now = clock.nowMillis();
         if (repository.setEnabled(id, version, enabled, now) != 1) throw conflict();
         repository.addEvent(UUID.randomUUID().toString(), id, enabled ? "DEVICE_ENABLED" : "DEVICE_DISABLED", "WARN",
                 (enabled ? "设备已启用：" : "设备已停用：") + reason.trim(), now, "mock".equals(properties.getSourceMode()));
+        String sourceId = text(device, "source_id");
+        if (sourceId != null) {
+            boolean anyEnabled = repository.countEnabledOnSource(sourceId) > 0;
+            sources.syncEnabled(sourceId, anyEnabled, reason.trim());
+        }
         audit.record(user.userId(), user.account(), enabled ? "device_enable" : "device_disable",
                 "device", id, reason.trim(), null);
         return detail(id);
@@ -312,6 +324,9 @@ public class DeviceService {
             throw bad("VALIDATION_ERROR", "设备编号、名称、类型名称和接入通道必填");
         if (m.deviceNo().trim().length() > 64 || m.name().trim().length() > 128)
             throw bad("VALIDATION_ERROR", "设备编号或名称过长");
+        if (!"mock".equals(properties.getSourceMode())
+                && (blankToNull(m.sourceId()) == null || blankToNull(m.externalDeviceId()) == null))
+            throw bad("VALIDATION_ERROR", "必须绑定接入来源并填写来源设备 ID");
         if ((blankToNull(m.sourceId()) == null) != (blankToNull(m.externalDeviceId()) == null))
             throw bad("VALIDATION_ERROR", "source_id 与 external_device_id 必须同时填写或同时为空");
         if ((m.longitude() == null) != (m.latitude() == null))
@@ -540,7 +555,8 @@ public class DeviceService {
                                BigDecimal altitudeM, String altitudeDatum, String firmwareVersion, Long installedAt,
                                ConnectionProfile connection, boolean connectionVisible, String sourceCode,
                                String sourceName, String protocolCode, String protocolVersion,
-                               ProtocolConfiguration protocolConfiguration, List<MetricValue> metrics) { }
+                               ProtocolConfiguration protocolConfiguration, List<MetricValue> metrics,
+                               String allowedCidrs) { }
     public record DeviceState(String deviceId, String connectivity, String workStateCode, boolean hasAlarm,
                               String healthCode, Long observedAt, Long receivedAt, Long lastHeartbeatAt,
                               String unknownReason, List<MetricValue> metrics, boolean simulated) { }
@@ -567,7 +583,7 @@ public class DeviceService {
                                  BigDecimal longitude, BigDecimal latitude, String coordinateSystem,
                                  BigDecimal altitudeM, String altitudeDatum, String firmwareVersion,
                                  Long installedAt, ConnectionProfile connection,
-                                 ProtocolConfiguration protocolConfiguration) { }
+                                 ProtocolConfiguration protocolConfiguration, String allowedCidrs) { }
     public record ConnectionProfile(String transport, String host, Integer port, String path, String dataFormat,
                                     String charsetName, String authMode, String credentialRef, Integer heartbeatIntervalSeconds,
                                     Integer reportIntervalMillis, BigDecimal samplingRateHz,

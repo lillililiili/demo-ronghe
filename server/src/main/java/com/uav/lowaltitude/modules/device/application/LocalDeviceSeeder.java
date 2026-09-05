@@ -15,8 +15,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.uav.lowaltitude.platform.time.AppClock;
 
+/** 仅测试夹具。local/integration 运行库不再预置运维模拟设备。 */
 @Component
-@Profile("!production & (local | test)")
+@Profile("test")
 @ConditionalOnProperty(prefix = "app.dev-seed", name = "enabled", havingValue = "true")
 @Order(20)
 public class LocalDeviceSeeder implements ApplicationRunner {

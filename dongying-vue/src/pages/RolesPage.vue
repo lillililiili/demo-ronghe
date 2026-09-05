@@ -9,7 +9,7 @@ import { usePageChrome } from '@/hooks/usePageChrome.js';
 import { hasPermission } from '@/services/accessControl.js';
 import { systemApi } from '@/services/systemAdmin.js';
 import { closeModal, openModal } from '@/ui/modal.js';
-import { toast } from '@/ui/nv.js';
+import { dialog, toast } from '@/ui/nv.js';
 
 usePageChrome('roles');
 const loading = ref(false);
@@ -84,22 +84,26 @@ watch(selectedCode, code => { if (code) loadRole(code); });
 
 function savePermissions() {
   if (!isDirty.value) return toast('没有需要保存的权限改动', 'err');
-  openModal({
-    title: `保存权限 · ${esc(roleDetail.value.name)}`, width: '560px', footer: false,
-    render: () => h(ControlledFormModal, {
-      fields: [{ key: 'reason', label: '操作原因', type: 'textarea', required: true, minRows: 4 }],
-      initial: { reason: '' },
-      warning: '权限保存后立即生效；该角色下所有用户的旧会话会被撤销，需要重新登录。',
-      confirmText: '保存并立即生效', onCancel: closeModal,
-      onSubmit: async ({ reason }) => {
-        const saved = await systemApi.updateRolePermissions(roleDetail.value.role_code, {
-          expected_version: roleDetail.value.version, reason,
-          permissions: draft.value.map(item => ({ permission_code: item.permission_code, level: item.level, menu_enabled: item.menu_enabled }))
+  const role = roleDetail.value;
+  dialog.warning({
+    title: `保存权限 · ${role.name}`,
+    content: '权限保存后立即生效；该角色下所有用户的旧会话会被撤销，需要重新登录。',
+    positiveText: '保存并立即生效',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        const saved = await systemApi.updateRolePermissions(role.role_code, {
+          expected_version: role.version,
+          permissions: draft.value.map(item => ({
+            permission_code: item.permission_code, level: item.level, menu_enabled: item.menu_enabled
+          }))
         });
-        closeModal(); roleDetail.value = saved; draft.value = saved.permissions.map(item => ({ ...item }));
-        await loadRoles(); toast('角色权限已立即生效，相关旧会话已撤销', 'ok');
-      }
-    })
+        roleDetail.value = saved;
+        draft.value = saved.permissions.map(item => ({ ...item }));
+        await loadRoles();
+        toast('角色权限已立即生效，相关旧会话已撤销', 'ok');
+      } catch (e) { toast(e.message || '保存失败，请重试', 'err'); }
+    }
   });
 }
 

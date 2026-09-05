@@ -70,8 +70,21 @@ public final class RadarV300Codec {
         return ByteBuffer.allocate(8).order(ByteOrder.BIG_ENDIAN).putLong(0L).array();
     }
 
+    /** 资料：权限类型 UINT32（数据权限 0x5）+ 权限识别码 UINT32。 */
     public static byte[] loginDataPayload(long recognitionCode) {
-        return ByteBuffer.allocate(12).order(ByteOrder.BIG_ENDIAN).putInt(5).putLong(recognitionCode).array();
+        if ((recognitionCode >>> 32) != 0) throw invalid("雷达识别码必须为 32 位无符号整数");
+        return ByteBuffer.allocate(8).order(ByteOrder.BIG_ENDIAN)
+                .putInt(5)
+                .putInt((int) recognitionCode)
+                .array();
+    }
+
+    /** 登录回包附加数据：权限类型 4 字节 + 登录状态码 UINT16。返回状态码，0 为成功。 */
+    public static int loginStatus(byte[] payload) {
+        if (payload == null || payload.length < 6) throw invalid("雷达登录响应附加数据必须为权限类型 4 字节加状态码 2 字节");
+        ByteBuffer buffer = ByteBuffer.wrap(payload).order(ByteOrder.BIG_ENDIAN);
+        buffer.getInt();
+        return Short.toUnsignedInt(buffer.getShort());
     }
 
     public static byte[] getWorkModePayload() {

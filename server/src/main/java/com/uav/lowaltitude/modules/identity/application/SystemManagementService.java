@@ -521,8 +521,9 @@ public class SystemManagementService {
         }
         mapper.bumpPermissionVersionForRole(roleCode);
         sessionMapper.expireAllForRole(roleCode);
+        String reason = blank(request.reason()) ? "超级管理员直接调整角色权限" : request.reason().trim();
         audit("roles", "role_permissions_updated", "role", roleCode,
-                json(Map.of("before", before, "after", permissions, "reason", request.reason().trim())), meta);
+                json(Map.of("before", before, "after", permissions, "reason", reason)), meta);
         return toRole(requireRole(roleCode));
     }
 

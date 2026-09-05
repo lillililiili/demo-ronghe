@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.uav.lowaltitude.modules.device.application.DeviceOnboardService;
 import com.uav.lowaltitude.modules.device.application.DeviceService;
 import com.uav.lowaltitude.modules.device.application.DeviceService.ConnectionProfile;
 import com.uav.lowaltitude.modules.device.application.DeviceService.DeviceDetail;
@@ -33,9 +34,11 @@ import com.uav.lowaltitude.platform.api.ApiResponse;
 public class DeviceController {
 
     private final DeviceService service;
+    private final DeviceOnboardService onboardService;
 
-    public DeviceController(DeviceService service) {
+    public DeviceController(DeviceService service, DeviceOnboardService onboardService) {
         this.service = service;
+        this.onboardService = onboardService;
     }
 
     @GetMapping
@@ -58,6 +61,11 @@ public class DeviceController {
     @GetMapping("/options")
     public ApiResponse<DeviceOptions> options() {
         return ApiResponse.ok(service.options());
+    }
+
+    @PostMapping("/onboard")
+    public ApiResponse<DeviceDetail> onboard(@Valid @RequestBody DeviceOnboardService.OnboardRequest request) {
+        return ApiResponse.ok(onboardService.onboard(request));
     }
 
     @GetMapping("/{deviceId}")
@@ -107,12 +115,13 @@ public class DeviceController {
             String firmwareVersion,
             Long installedAt,
             ConnectionRequest connection,
-            ProtocolConfiguration protocolConfiguration) {
+            ProtocolConfiguration protocolConfiguration,
+            String allowedCidrs) {
         DeviceMutation toMutation() {
             return new DeviceMutation(sourceId, externalDeviceId, deviceNo, name, deviceTypeCode, deviceTypeName,
                     channel, model, vendor, ownerName, regionName, address, longitude, latitude,
                     coordinateSystem, altitudeM, altitudeDatum, firmwareVersion, installedAt,
-                    connection == null ? null : connection.toProfile(), protocolConfiguration);
+                    connection == null ? null : connection.toProfile(), protocolConfiguration, allowedCidrs);
         }
     }
 

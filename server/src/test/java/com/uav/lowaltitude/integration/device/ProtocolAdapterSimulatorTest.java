@@ -33,19 +33,13 @@ class ProtocolAdapterSimulatorTest {
         try (ServerSocket server = new ServerSocket(0)) {
             List<byte[]> requests = java.util.Collections.synchronizedList(new ArrayList<>());
             CompletableFuture<Void> simulator = CompletableFuture.runAsync(() -> {
-                try {
-                    try (Socket first = server.accept()) {
-                        requests.add(first.getInputStream().readNBytes(8));
-                        first.getOutputStream().write(new byte[] { 0 });
-                    }
-                    try (Socket second = server.accept()) {
-                        byte[] request = readUntilNewline(second);
-                        requests.add(request);
-                        byte[] response = "22 01 10 00 00 00 0D 40\r\n".getBytes(StandardCharsets.US_ASCII);
-                        second.getOutputStream().write(response, 0, 7);
-                        second.getOutputStream().flush();
-                        second.getOutputStream().write(response, 7, response.length - 7);
-                    }
+                try (Socket first = server.accept()) {
+                    byte[] request = readUntilNewline(first);
+                    requests.add(request);
+                    byte[] response = "22 01 10 00 00 00 0D 40\r\n".getBytes(StandardCharsets.US_ASCII);
+                    first.getOutputStream().write(response, 0, 7);
+                    first.getOutputStream().flush();
+                    first.getOutputStream().write(response, 7, response.length - 7);
                 } catch (Exception ex) { throw new RuntimeException(ex); }
             });
             NetworkTargetPolicy policy = allowedLoopbackPolicy();
@@ -56,10 +50,28 @@ class ProtocolAdapterSimulatorTest {
             assertThat(result.state().channels()).containsEntry("900M", true).containsEntry("1.5G", false)
                     .containsEntry("2.4G", true).containsEntry("5.8G", true);
             simulator.get(5, TimeUnit.SECONDS);
-            assertThat(requests.get(0)[2]).isEqualTo((byte) 0x10);
-            assertThat(new String(requests.get(1), StandardCharsets.US_ASCII)).contains(" 10 ");
+            assertThat(new String(requests.get(0), StandardCharsets.US_ASCII)).contains("55 01 10 00 00 00 01 67");
             assertThat(requests).allSatisfy(bytes -> assertThat(Arrays.toString(bytes))
                     .doesNotContain("17", "18", "19"));
+        }
+    }
+
+    @Test
+    void countermeasureConnectOnlyOpensTcpWithoutSendingQuery() throws Exception {
+        try (ServerSocket server = new ServerSocket(0)) {
+            CompletableFuture<Integer> firstByte = CompletableFuture.supplyAsync(() -> {
+                try (Socket socket = server.accept()) {
+                    return socket.getInputStream().read();
+                } catch (Exception ex) { throw new RuntimeException(ex); }
+            });
+            CountermeasureTcp4ChV20Adapter adapter = new CountermeasureTcp4ChV20Adapter(new ObjectMapper(),
+                    allowedLoopbackPolicy());
+            DeviceAdapterPort.AdapterResult result = adapter.connect(new DeviceAdapterPort.CommissionWork(
+                    "task", "T-1", "device", "D-1", DeviceProtocolCodes.COUNTERMEASURE_TCP_4CH_V2_0,
+                    config(server.getLocalPort(), "{\"device_address\":1,\"wire_encoding\":\"AUTO\"}")));
+            assertThat(result.success()).isTrue();
+            assertThat(result.resultCode()).isEqualTo("COUNTERMEASURE_TCP_OK");
+            assertThat(firstByte.get(5, TimeUnit.SECONDS)).isEqualTo(-1);
         }
     }
 
@@ -75,7 +87,9 @@ class ProtocolAdapterSimulatorTest {
                     System.arraycopy(header, 0, request, 0, 8);
                     System.arraycopy(remainder, 0, request, 8, body);
                     RadarV300Codec.RadarFrame login = RadarV300Codec.decode(request, false);
-                    byte[] reply = RadarV300Codec.encode(RadarV300Codec.COMMAND_LOGIN, login.frameId(), new byte[] { 0, 0 });
+                    byte[] replyPayload = ByteBuffer.allocate(6).order(ByteOrder.BIG_ENDIAN)
+                            .putInt(5).putShort((short) 0).array();
+                    byte[] reply = RadarV300Codec.encode(RadarV300Codec.COMMAND_LOGIN, login.frameId(), replyPayload);
                     socket.getOutputStream().write(reply, 0, 5);
                     socket.getOutputStream().flush();
                     socket.getOutputStream().write(reply, 5, reply.length - 5);
@@ -84,14 +98,35 @@ class ProtocolAdapterSimulatorTest {
             });
             RadarTcpV300Adapter adapter = new RadarTcpV300Adapter(new ObjectMapper(), allowedLoopbackPolicy(),
                     new EnvironmentCredentialResolver());
+            adapter.commission(new DeviceAdapterPort.CommissionWork(
+                    "task", "T-1", "device", "D-1", DeviceProtocolCodes.RADAR_TCP_V3_0_0,
+                    config(server.getLocalPort(), "{\"login_role\":\"DATA\"}")));
+            RadarV300Codec.RadarFrame login = received.get(5, TimeUnit.SECONDS);
+            assertThat(login.command()).isEqualTo(RadarV300Codec.COMMAND_LOGIN);
+            assertThat(login.payload()).hasSize(8);
+            ByteBuffer loginPayload = ByteBuffer.wrap(login.payload()).order(ByteOrder.BIG_ENDIAN);
+            assertThat(loginPayload.getInt()).isEqualTo(5);
+            assertThat(loginPayload.getInt()).isEqualTo(0);
+            assertThat(login.debugCrc()).isFalse();
+        }
+    }
+
+    @Test
+    void radarConnectOnlyOpensTcpWithoutLogin() throws Exception {
+        try (ServerSocket server = new ServerSocket(0)) {
+            CompletableFuture<Integer> firstByte = CompletableFuture.supplyAsync(() -> {
+                try (Socket socket = server.accept()) {
+                    return socket.getInputStream().read();
+                } catch (Exception ex) { throw new RuntimeException(ex); }
+            });
+            RadarTcpV300Adapter adapter = new RadarTcpV300Adapter(new ObjectMapper(), allowedLoopbackPolicy(),
+                    new EnvironmentCredentialResolver());
             DeviceAdapterPort.AdapterResult result = adapter.connect(new DeviceAdapterPort.CommissionWork(
                     "task", "T-1", "device", "D-1", DeviceProtocolCodes.RADAR_TCP_V3_0_0,
                     config(server.getLocalPort(), "{\"login_role\":\"DATA\"}")));
             assertThat(result.success()).isTrue();
-            RadarV300Codec.RadarFrame login = received.get(5, TimeUnit.SECONDS);
-            assertThat(login.command()).isEqualTo(RadarV300Codec.COMMAND_LOGIN);
-            assertThat(ByteBuffer.wrap(login.payload()).order(ByteOrder.BIG_ENDIAN).getInt()).isEqualTo(5);
-            assertThat(login.debugCrc()).isFalse();
+            assertThat(result.resultCode()).isEqualTo("RADAR_TCP_OK");
+            assertThat(firstByte.get(5, TimeUnit.SECONDS)).isEqualTo(-1);
         }
     }
 

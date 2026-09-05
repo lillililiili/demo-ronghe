@@ -10,7 +10,6 @@ export const useAppStore = defineStore('app', {
     bigscreen: false,     // 大屏模式
     remountKey: 0,        // APP.rerender() 自增，PageHost 监听后整页重挂
     accessRevision: 0,    // 当前用户、菜单或操作权限变化时自增，驱动外壳重新判权
-    timeStr: '',          // M.systemNowStr()，顶栏系统当前时间
-    dataTimeStr: ''       // M.nowStr()，Mock 数据统计基准时间
+    timeStr: ''           // M.systemNowStr()，顶栏系统当前时间
   })
 });

@@ -64,9 +64,23 @@ class ProtocolCodecTest {
     }
 
     @Test
+    void radarLoginPayloadIsEightBytesAndStatusSkipsPermissionType() {
+        byte[] payload = RadarV300Codec.loginDataPayload(0);
+        assertThat(HexFormat.of().withUpperCase().formatHex(payload)).isEqualTo("0000000500000000");
+        byte[] frame = RadarV300Codec.encode(RadarV300Codec.COMMAND_LOGIN, 1, payload);
+        assertThat(ByteBuffer.wrap(frame, 4, 4).order(ByteOrder.BIG_ENDIAN).getInt()).isEqualTo(0x12);
+        assertThat(RadarV300Codec.loginStatus(HexFormat.of().parseHex("000000030000"))).isEqualTo(0);
+        assertThat(RadarV300Codec.loginStatus(HexFormat.of().parseHex("000000050001"))).isEqualTo(1);
+        assertThatThrownBy(() -> RadarV300Codec.loginStatus(new byte[] { 0, 0 }))
+                .isInstanceOf(ProtocolException.class);
+        assertThatThrownBy(() -> RadarV300Codec.loginDataPayload(1L << 32))
+                .isInstanceOf(ProtocolException.class);
+    }
+
+    @Test
     void countermeasureGoldenQueryMapsOnlyLowFourChannelsAndForbidsBroadcast() {
         assertThat(HexFormat.of().withUpperCase().formatHex(Countermeasure4ChCodec.query(1)))
-                .isEqualTo("5501100000000066");
+                .isEqualTo("5501100000000167");
         byte[] response = HexFormat.of().parseHex("2201101234567F4E");
         Countermeasure4ChCodec.RelayState state = Countermeasure4ChCodec.parseResponse(response, 1);
         assertThat(state.rawStatusWord()).isEqualTo(0x1234567FL);

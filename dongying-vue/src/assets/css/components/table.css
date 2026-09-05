@@ -11,7 +11,19 @@ table.tb tbody tr.on{background:rgba(61,139,255,.18)}
 table.tb tbody tr{cursor:pointer}
 .naive-table-fill{display:flex;flex:1 1 0;min-height:0;flex-direction:column}
 .naive-table-fill .n-data-table{flex:1;min-height:0;height:100%}
-.table-actions{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+.table-actions{display:flex;flex-wrap:nowrap;align-items:center;gap:10px;white-space:nowrap}
+/* Naive 横向滚动条是 overlay：行数少或刚好撑满时会盖住最后一行，
+   右侧固定列也会和「状态」等末列叠字。给滚动内容留出轨道高度，并裁切单元格溢出。 */
+.n-data-table .n-data-table-base-table-body .n-scrollbar-content{padding-bottom:12px}
+.n-data-table .n-data-table-th,
+.n-data-table .n-data-table-td{overflow:hidden}
+.n-data-table .n-data-table-td .table-actions{min-width:0}
+.n-data-table .n-data-table-th--fixed-left,
+.n-data-table .n-data-table-th--fixed-right{background-color:var(--surface-2)}
+.n-data-table .n-data-table-td--fixed-left,
+.n-data-table .n-data-table-td--fixed-right{background-color:var(--surface-1)}
+.n-data-table .n-data-table-tr:hover .n-data-table-td--fixed-left,
+.n-data-table .n-data-table-tr:hover .n-data-table-td--fixed-right{background-color:var(--surface-hover)}
 .pager-row{display:flex;flex:none;align-items:center;justify-content:space-between;gap:12px;padding:10px 16px;color:var(--txt-3);border-top:1px solid var(--line)}
 table.tb td.num{font-family:Menlo,monospace;color:var(--txt);font-variant-numeric:tabular-nums}
 .lnk{color:var(--blue);cursor:pointer}

@@ -12,6 +12,7 @@ final class AuditLabels {
             "audit", "审计日志",
             "devices", "设备管理",
             "alarms", "告警事件",
+            "statistics", "运行统计",
             "system", "系统");
 
     private static final Map<String, String> ACTIONS = Map.ofEntries(
@@ -43,22 +44,24 @@ final class AuditLabels {
             Map.entry("access_change_approved", "批准权限变更"),
             Map.entry("access_change_rejected", "驳回权限变更"),
             Map.entry("audit_export_requested", "导出审计日志"),
+            Map.entry("stats_export_requested", "导出运行统计"),
             Map.entry("super_admin_recovered", "恢复超级管理员"));
 
     private static final Map<String, String> METHODS = Map.of(
             "GET", "查询", "POST", "提交", "PUT", "更新", "PATCH", "更新", "DELETE", "删除");
 
-    private static final Map<String, String> PATHS = Map.of(
-            "/organizations", "组织",
-            "/districts", "区域",
-            "/users", "用户",
-            "/roles", "角色",
-            "/permissions", "权限",
-            "/audit-logs", "审计日志",
-            "/auth", "认证",
-            "/devices", "设备",
-            "/commission", "设备调测",
-            "/alarms", "告警");
+    private static final Map<String, String> PATHS = Map.ofEntries(
+            Map.entry("/organizations", "组织"),
+            Map.entry("/districts", "区域"),
+            Map.entry("/users", "用户"),
+            Map.entry("/roles", "角色"),
+            Map.entry("/permissions", "权限"),
+            Map.entry("/audit-logs", "审计日志"),
+            Map.entry("/auth", "认证"),
+            Map.entry("/devices", "设备"),
+            Map.entry("/commission", "设备调测"),
+            Map.entry("/alarms", "告警"),
+            Map.entry("/stats", "运行统计"));
 
     private AuditLabels() {
     }

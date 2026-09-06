@@ -5,6 +5,7 @@ export const MODULE_LABELS = {
   audit: '审计日志',
   devices: '设备管理',
   alarms: '告警事件',
+  statistics: '运行统计',
   system: '系统'
 };
 
@@ -37,6 +38,7 @@ export const ACTION_LABELS = {
   access_change_approved: '批准权限变更',
   access_change_rejected: '驳回权限变更',
   audit_export_requested: '导出审计日志',
+  stats_export_requested: '导出运行统计',
   super_admin_recovered: '恢复超级管理员'
 };
 
@@ -51,7 +53,8 @@ const PATH_LABELS = [
   ['/auth', '认证'],
   ['/devices', '设备'],
   ['/commission', '设备调测'],
-  ['/alarms', '告警']
+  ['/alarms', '告警'],
+  ['/stats', '运行统计']
 ];
 
 export const moduleOptions = Object.entries(MODULE_LABELS).map(([value, label]) => ({ value, label }));

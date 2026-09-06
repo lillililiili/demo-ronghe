@@ -130,6 +130,7 @@ public class GlobalExceptionHandler {
         if (path.contains("/users") || path.contains("/organizations") || path.contains("/districts")) return "users";
         if (path.contains("/device") || path.contains("/commission")) return "devices";
         if (path.contains("/alarms")) return "alarms";
+        if (path.contains("/stats")) return "statistics";
         return "system";
     }
 }

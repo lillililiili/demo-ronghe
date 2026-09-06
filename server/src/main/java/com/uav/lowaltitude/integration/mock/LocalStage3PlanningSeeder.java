@@ -55,16 +55,16 @@ public class LocalStage3PlanningSeeder implements ApplicationRunner {
     }
 
     private void airspace(Instant at, Instant start, Instant end) {
-        jdbc.update("update airspace set airspace_no='KY-2026-001' where airspace_id='seed-stage3-airspace-prohibited' and airspace_no<>'KY-2026-001'");
-        jdbc.update("insert into airspace (airspace_id,airspace_no,name,source_id,source_mode,owner_org_id,district_id,created_at,updated_at,version) select 'seed-stage3-airspace-prohibited','KY-2026-001','禁止演示空域',?,'mock','seed-stage3-org','seed-stage3-district',?,?,0 where not exists(select 1 from airspace where airspace_id='seed-stage3-airspace-prohibited')", SOURCE_ID, ts(at), ts(at));
+        jdbc.update("update airspace set airspace_no='空域-001' where airspace_id='seed-stage3-airspace-prohibited' and airspace_no<>'空域-001'");
+        jdbc.update("insert into airspace (airspace_id,airspace_no,name,source_id,source_mode,owner_org_id,district_id,created_at,updated_at,version) select 'seed-stage3-airspace-prohibited','空域-001','禁止演示空域',?,'mock','seed-stage3-org','seed-stage3-district',?,?,0 where not exists(select 1 from airspace where airspace_id='seed-stage3-airspace-prohibited')", SOURCE_ID, ts(at), ts(at));
         // 禁止空域确实穿过 illegal 固定航线，前端仅读已保存研判与服务端冲突事实。
         jdbc.update("insert into airspace_version (airspace_version_id,airspace_id,version_no,kind_code,boundary,min_altitude_m,max_altitude_m,altitude_datum,valid_from,valid_to,created_at) select 'seed-stage3-av-prohibited','seed-stage3-airspace-prohibited',1,'PROHIBITED',CAST(? AS GEOMETRY),10,100,'AMSL',?,?,? where not exists(select 1 from airspace_version where airspace_version_id='seed-stage3-av-prohibited')", "SRID=4326;MULTIPOLYGON(((118.004 36.999,118.006 36.999,118.006 37.001,118.004 37.001,118.004 36.999)))", ts(start), ts(end), ts(at));
     }
 
     /* 演示业务编号：计划 JH、航线 HX；页面展示编号与名称，不再展示内部 ID。 */
     private static int seq(String suffix) { return switch (suffix) { case "legal" -> 1; case "illegal" -> 2; case "undetermined" -> 3; default -> 4; }; }
-    private static String planNo(String suffix) { return String.format("JH-20260905-%03d", seq(suffix)); }
-    private static String routeNo(String suffix) { return String.format("HX-2026-%03d", seq(suffix)); }
+    private static String planNo(String suffix) { return String.format("计划-0905-%03d", seq(suffix)); }
+    private static String routeNo(String suffix) { return String.format("航线-%03d", seq(suffix)); }
     private static String routeName(String suffix) { return switch (suffix) { case "legal" -> "演示航线（合法样例）"; case "illegal" -> "演示航线（穿越禁飞区）";
             case "undetermined" -> "演示航线（高度基准缺失）"; default -> "演示航线（跨范围样例）"; }; }
 

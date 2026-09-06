@@ -58,16 +58,16 @@ public class LocalStage5HandoffSeeder implements ApplicationRunner {
         recipient(RECIPIENT_POLICE, "公安机关（本地演示接收方）", base);
         recipient(RECIPIENT_AVIATION, "民航监管部门（本地演示接收方）", base);
         // 两条风险都停留在“待通知”：本期没有可信送达/回执事实，任何样例都不得把风险推进到 NOTIFIED。
-        risk(RISK_PENDING, "seed-stage5-verify-pending", "FX-20260905-101", "HIGH", "ROUTE_DEVIATION", "已核验，材料已提交、渠道未接通", base, submitter);
-        risk(RISK_HISTORY, "seed-stage5-verify-history", "FX-20260905-102", "MEDIUM", "AIRSPACE_CONFLICT", "已核验，历史送达样例（mock）", base.plusSeconds(1), submitter);
+        risk(RISK_PENDING, "seed-stage5-verify-pending", "风险-0905-101", "HIGH", "ROUTE_DEVIATION", "已核验，材料已提交、渠道未接通", base, submitter);
+        risk(RISK_HISTORY, "seed-stage5-verify-history", "风险-0905-102", "MEDIUM", "AIRSPACE_CONFLICT", "已核验，历史送达样例（mock）", base.plusSeconds(1), submitter);
         Instant submitted = base.plusSeconds(600);
-        handoff(HANDOFF_PENDING, RISK_PENDING, RECIPIENT_POLICE, submitter, submitted, riskMaterial(RISK_PENDING, "FX-20260905-101",
+        handoff(HANDOFF_PENDING, RISK_PENDING, RECIPIENT_POLICE, submitter, submitted, riskMaterial(RISK_PENDING, "风险-0905-101",
                 "HIGH", "ROUTE_DEVIATION", "已核验，材料已提交、渠道未接通", base, submitter));
         delivery(DELIVERY_PENDING, HANDOFF_PENDING, HandoffRules.PENDING_DELIVERY, HandoffRules.NOT_EXPECTED,
                 HandoffRules.CHANNEL_NOT_CONNECTED, submitted, null, null, null);
         Instant historySubmitted = base.plusSeconds(1200);
         handoff(HANDOFF_DELIVERED, RISK_HISTORY, RECIPIENT_AVIATION, submitter, historySubmitted, riskMaterial(RISK_HISTORY,
-                "FX-20260905-102", "MEDIUM", "AIRSPACE_CONFLICT", "已核验，历史送达样例（mock）", base.plusSeconds(1), submitter));
+                "风险-0905-102", "MEDIUM", "AIRSPACE_CONFLICT", "已核验，历史送达样例（mock）", base.plusSeconds(1), submitter));
         // 已送达历史只在 local/test 存在且 source_mode=mock；没有任何接口能把生产交接写成这个状态。
         delivery(DELIVERY_DELIVERED, HANDOFF_DELIVERED, "DELIVERED", "ACKNOWLEDGED", null, historySubmitted,
                 historySubmitted.plusSeconds(5), historySubmitted.plusSeconds(60), historySubmitted.plusSeconds(3600));

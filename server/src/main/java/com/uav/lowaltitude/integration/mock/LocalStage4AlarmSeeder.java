@@ -62,7 +62,7 @@ public class LocalStage4AlarmSeeder implements ApplicationRunner {
     /* 告警来源编号按固定顺序编为 GJ-日期-序号，旧库里的英文占位编号一并改写。 */
     private static String alarmNo(String suffix) {
         int seq = switch (suffix) { case "pending" -> 1; case "evidence" -> 2; case "same-target-a" -> 3; case "same-target-b" -> 4; case "no-target" -> 5; default -> 6; };
-        return String.format("GJ-20260905-%03d", seq);
+        return String.format("告警-0905-%03d", seq);
     }
     private void event(String suffix, String state, String org, String district, Instant at) {
         // PostgreSQL 下重复主键会让整个种子事务中止，不能依赖捕获 DuplicateKeyException 实现幂等：先查再插。
@@ -70,8 +70,8 @@ public class LocalStage4AlarmSeeder implements ApplicationRunner {
         if (existing != null && existing > 0) return;
         events.createForAlarm("seed-stage4-event-" + suffix, "seed-stage4-alarm-" + suffix, state, org, district, at.atOffset(java.time.ZoneOffset.UTC));
     }
-    private void target(String org, String district, Instant at) { jdbc.update("insert into target (target_id,target_no,source_mode,owner_org_id,district_id,created_at,updated_at,version) select 'seed-stage4-target-shared','MB-20260905-101','mock',?,?,?, ?,0 where not exists(select 1 from target where target_id='seed-stage4-target-shared')", org, district, ts(at), ts(at));
-        jdbc.update("update target set target_no='MB-20260905-101' where target_id='seed-stage4-target-shared' and target_no<>'MB-20260905-101'"); }
+    private void target(String org, String district, Instant at) { jdbc.update("insert into target (target_id,target_no,source_mode,owner_org_id,district_id,created_at,updated_at,version) select 'seed-stage4-target-shared','目标-0905-101','mock',?,?,?, ?,0 where not exists(select 1 from target where target_id='seed-stage4-target-shared')", org, district, ts(at), ts(at));
+        jdbc.update("update target set target_no='目标-0905-101' where target_id='seed-stage4-target-shared' and target_no<>'目标-0905-101'"); }
     private void org(String id, String code, String name, Instant at) { jdbc.update("insert into app_org (org_id,org_code,name,enabled,created_at,updated_at,version) select ?,?,?,true,?,?,0 where not exists(select 1 from app_org where org_id=?)", id, code, name, at.toEpochMilli(), at.toEpochMilli(), id); }
     private void district(String id, String code, String name, Instant at) { jdbc.update("insert into app_district (district_id,district_code,name,enabled,created_at,updated_at,version) select ?,?,?,true,?,?,0 where not exists(select 1 from app_district where district_id=?)", id, code, name, at.toEpochMilli(), at.toEpochMilli(), id); }
     private static Timestamp ts(Instant value) { return Timestamp.from(value); }

@@ -1119,7 +1119,7 @@ onUnmounted(() => {
 .rk-sort-note { font-size: 11px; color: var(--txt-3); white-space: nowrap; }
 .rk-sort { color: inherit; cursor: not-allowed; text-decoration: underline dotted; text-underline-offset: 3px; text-decoration-color: rgba(156, 198, 255, .3); opacity: .75; }
 .rk-error { margin: 8px 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.rk-id { display: inline-block; max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+.rk-id { display: inline-block; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
 .rk-sub { font-size: 11px; color: var(--txt-3); white-space: normal; line-height: 1.4; }
 .rk-wrap { white-space: normal; line-height: 1.4; overflow-wrap: anywhere; }
 .rk-ellipsis { max-width: 118px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.4; }

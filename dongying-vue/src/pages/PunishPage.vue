@@ -475,7 +475,7 @@ onMounted(() => {
 .pn-error { margin: 8px 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .tb tr { cursor: pointer; }
 .tb tr.on { background: rgba(34, 211, 238, .12); }
-.pn-id { display: inline-block; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+.pn-id { display: inline-block; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
 .pn-sub { font-size: 11px; color: var(--txt-3); white-space: normal; line-height: 1.4; overflow-wrap: anywhere; }
 .pn-sub-inline { font-size: 11px; color: var(--txt-3); margin-left: 4px; }
 .pn-wrap { white-space: normal; line-height: 1.4; overflow-wrap: anywhere; }

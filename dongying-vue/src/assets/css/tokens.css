@@ -31,9 +31,10 @@
   --header-h:64px;
   --nav-w:176px;
   --gap:12px;
-  --table-font-size:16px;
-  --table-compact-font-size:15px;
-  --table-detail-font-size:13px;
+  /* 用户裁定（2026-09-06）：表格正文 16px 过大，收紧到 13px；细节文字与紧凑密度同步下调。 */
+  --table-font-size:13px;
+  --table-compact-font-size:12.25px;
+  --table-detail-font-size:11.5px;
   /* 晨雾登录页专用：不改变已登录业务页面的主题。 */
   --login-card:rgba(18,30,48,.74);
   --login-input:rgba(24,39,61,.24);

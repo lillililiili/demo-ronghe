@@ -29,15 +29,15 @@ public class LocalStage2TargetSeeder implements ApplicationRunner {
 
     private static final List<TargetSeed> TARGETS = List.of(
             new TargetSeed(
-                    "seed-target-uav-wgs84", "MB-20260904-001", "UAV", "QUADCOPTER", "UAV-SEED-001",
+                    "seed-target-uav-wgs84", "目标-0904-001", "UAV", "QUADCOPTER", "SN-0001",
                     "2026-09-04T00:58:00Z", "2026-09-04T01:03:00Z",
                     "seed-link-uav-001", "seed-session-uav", "external-uav-001"),
             new TargetSeed(
-                    "seed-target-bird-wgs84", "MB-20260904-002", "BIRD", "MIGRATORY_BIRD", null,
+                    "seed-target-bird-wgs84", "目标-0904-002", "BIRD", "MIGRATORY_BIRD", null,
                     "2026-09-04T00:59:00Z", "2026-09-04T01:02:00Z",
                     "seed-link-bird-001", "seed-session-bird", "external-bird-001"),
             new TargetSeed(
-                    "seed-target-no-location", "MB-20260904-003", null, null, null,
+                    "seed-target-no-location", "目标-0904-003", null, null, null,
                     "2026-09-04T01:01:00Z", "2026-09-04T01:01:00Z",
                     "seed-link-unknown-001", "seed-session-unknown", "external-unknown-001"));
 
@@ -98,6 +98,7 @@ public class LocalStage2TargetSeeder implements ApplicationRunner {
                 CREATED_AT, CREATED_AT, seed.targetId());
         // 业务编号改为中文口径后，已有开发库里的旧编号一并补齐；只改展示编号，不动 ID 与事实字段。
         jdbc.update("update target set target_no = ? where target_id = ? and target_no <> ?", seed.targetNo(), seed.targetId(), seed.targetNo());
+        if (seed.uavSn() != null) jdbc.update("update target set uav_sn = ? where target_id = ? and uav_sn <> ?", seed.uavSn(), seed.targetId(), seed.uavSn());
         jdbc.update("""
                 insert into target_source_link (
                     link_id, target_id, source_id, device_id, source_session_key,

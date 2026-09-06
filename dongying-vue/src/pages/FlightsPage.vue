@@ -156,6 +156,8 @@ const riskDetailExtra = computed(() => {
   return `<span id="rkSt"><span class="tag ${RISK_SEVERITY_TAG[severity]}">${RISK_SEVERITY_LABEL[severity]}</span></span>`;
 });
 const riskHeroIcon = computed(() => (window.UI?.icon ? window.UI.icon('bird') : ''));
+/* 详情卡网格第一列固定留给图标；没有图标元素时文字会落进 40px 列，所以计划卡也必须输出图标。 */
+const planHeroIcon = computed(() => (window.UI?.icon ? window.UI.icon('plan') : ''));
 const canVerifyRisk = computed(() => Boolean(selectedRisk.value?.allowed_actions?.includes('VERIFY')));
 /* 通知按钮：服务端 allowed_actions 含 NOTIFY 为准；旧版详情不带 NOTIFY 时按“待通知”放开。
    /auth/me 的 permission_codes 不含 `handoff:create` 动作码，前端不预判权限，由服务端 403 裁决。 */
@@ -1023,11 +1025,11 @@ onUnmounted(() => {
       <div v-if="error" class="warnbox">{{ error }}</div>
       <div class="row flight-main">
         <UPanel title="飞行计划与活动" :panel-style="'flex:1.1;min-width:0'" nopad>
-          <div class="toolbar">
-            <UControl v-model="filters.status_code" type="select" :options="statusOptions" :disabled="loading" />
-            <UControl v-model="filters.keyword" placeholder="计划编号 / 无人机序列号" :disabled="loading" @keyup.enter="applyFilters" />
-            <UControl v-model="filters.owner_org_id" placeholder="所属组织 ID" :disabled="loading" @keyup.enter="applyFilters" />
-            <UControl v-model="filters.district_id" placeholder="区域 ID" :disabled="loading" @keyup.enter="applyFilters" />
+          <div class="toolbar plan-toolbar">
+            <div class="field"><label>状态</label><UControl v-model="filters.status_code" type="select" :options="statusOptions" :disabled="loading" /></div>
+            <div class="field plan-keyword"><label>关键字</label><UControl v-model="filters.keyword" placeholder="计划编号 / 无人机序列号" :disabled="loading" @keyup.enter="applyFilters" /></div>
+            <div class="field"><label>组织</label><UControl v-model="filters.owner_org_id" placeholder="机构标识" :disabled="loading" @keyup.enter="applyFilters" /></div>
+            <div class="field"><label>区域</label><UControl v-model="filters.district_id" placeholder="区域标识" :disabled="loading" @keyup.enter="applyFilters" /></div>
             <button class="btn" type="button" :disabled="loading" @click="applyFilters">查询</button>
             <span class="spacer"></span><button class="btn" type="button" disabled title="尚未接入">导出（尚未接入）</button>
           </div>
@@ -1066,7 +1068,7 @@ onUnmounted(() => {
           <div v-else-if="detailError" class="warnbox">{{ detailError }}</div>
           <div v-else-if="!selected" class="empty">请选择计划</div>
           <template v-else>
-            <div class="detail-hero detail-hero-compact"><div class="detail-hero-inner"><div class="detail-hero-copy"><div class="detail-hero-eyebrow">飞行计划</div><div class="detail-hero-title">{{ selected.plan_no }}</div><div class="detail-hero-id mono">{{ selected.route?.route_no || '未关联航线' }} / v{{ selected.route?.version_no ?? '—' }}</div></div></div></div>
+            <div class="detail-hero detail-hero-compact"><div class="detail-hero-inner"><div class="detail-hero-icon" v-html="planHeroIcon"></div><div class="detail-hero-copy"><div class="detail-hero-eyebrow">飞行计划</div><div class="detail-hero-title">{{ selected.plan_no }}</div><div class="detail-hero-id mono">{{ selected.route?.route_no || '未关联航线' }} / v{{ selected.route?.version_no ?? '—' }}</div></div></div></div>
             <div class="metric-strip is-compact"><div v-for="metric in [['执行状态', labelOf(PLAN_STATUS_LABEL, selected.status_code)], ['计划时长', formatDuration(selected)], ['航线版本', `v${selected.route?.version_no ?? '—'}`], ['目标匹配', '尚未接入']]" :key="metric[0]" class="metric-item"><div class="metric-copy"><small>{{ metric[0] }}</small><b>{{ metric[1] }}</b></div></div></div>
             <section class="sect"><h4>计划信息</h4><dl class="kv kv-surface"><dt>无人机序列号</dt><dd>{{ selected.uav_sn || '未提供' }}</dd><dt>所属范围</dt><dd>{{ selected.owner_org_name || selected.owner_org_id }} / {{ selected.district_name || selected.district_id }}</dd><dt>计划时段</dt><dd>{{ formatTime(selected.start_at) }} ～ {{ formatTime(selected.end_at) }}</dd><dt>计划来源</dt><dd>{{ selected.source?.source_name || selected.source?.source_code || labelOf(SOURCE_MODE_LABEL, selected.source_mode, '未提供') }}</dd></dl></section>
             <section class="sect"><h4>审批信息</h4><div class="empty">尚未接入审批事实读取。</div></section>
@@ -1092,7 +1094,10 @@ onUnmounted(() => {
 .flight-main { margin-top: 12px; align-items: stretch; gap: var(--gap); height: max(812px, calc(100vh - 332px)); }
 .flight-right { flex: 1; min-width: 560px; display: grid; grid-template-rows: 320px minmax(460px, 1fr); gap: var(--gap); }
 .toolbar { display: flex; gap: 8px; padding: 10px; flex-wrap: wrap; align-items: center; }
-.toolbar .u-control { width: 158px; }.toolbar .spacer { flex: 1; }
+/* UControl 根节点是 naive 的 .n-select/.n-input（默认 width:100%），必须用 :deep 定宽，否则每个控件独占一行。 */
+.plan-toolbar .field :deep(.n-select), .plan-toolbar .field :deep(.n-input) { width: 158px; }
+.plan-toolbar .plan-keyword :deep(.n-input) { width: 190px; }
+.toolbar .spacer { flex: 1; }
 .tb-wrap { overflow: auto; }
 .tb tr { cursor: pointer; }
 .tb tr.on { background: rgba(34, 211, 238, .12); }
@@ -1113,7 +1118,7 @@ onUnmounted(() => {
 .rk-legend { flex: none; height: 18px; line-height: 18px; font-size: 10.5px; color: var(--txt-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rk-list { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .risk-toolbar { gap: 6px 10px; }
-.risk-toolbar .tabs .tab { padding: 6px 10px; font-size: 13px; background: none; border-top: 0; border-left: 0; border-right: 0; font: inherit; }
+.risk-toolbar .tabs .tab { padding: 6px 10px; font-size: 13px; }
 .risk-toolbar .field :deep(.n-select), .risk-toolbar .field :deep(.n-input) { width: 108px; }
 .risk-toolbar .rk-range :deep(.n-date-picker) { width: 300px; }
 .rk-sort-note { font-size: 11px; color: var(--txt-3); white-space: nowrap; }

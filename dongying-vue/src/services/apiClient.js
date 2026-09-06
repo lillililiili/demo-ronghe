@@ -67,6 +67,33 @@ export async function apiRequest(path, options = {}) {
   }
 }
 
+/* 把非空查询参数序列化为 ?a=b；各业务 api 共用，避免每个文件各写一份。 */
+export function buildQuery(values = {}) {
+  const search = new URLSearchParams();
+  Object.entries(values).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') search.set(key, String(value));
+  });
+  const text = search.toString();
+  return text ? `?${text}` : '';
+}
+
+/* 带超时的请求：主动中止统一抛 TIMEOUT/408，与断网 NETWORK_ERROR 区分。
+   写请求超时属于“结果未知”，页面必须保留幂等键并回读服务端，不能当作失败换键重试。 */
+export async function apiRequestTimed(path, options = {}, timeoutMs = 15_000) {
+  const controller = new AbortController();
+  const timeout = globalThis.setTimeout(() => controller.abort(), timeoutMs);
+  try { return await apiRequest(path, { ...options, signal: controller.signal }); }
+  catch (error) {
+    if (controller.signal.aborted) throw new ApiError('请求超时，请核对服务端最新状态。', 'TIMEOUT', 408);
+    throw error;
+  } finally { globalThis.clearTimeout(timeout); }
+}
+
+/* 写请求的“结果未知”判定：409 冲突、超时、断网都可能已在服务端落库。 */
+export function isUncertainOutcome(error) {
+  return !!error && (error.status === 409 || error.code === 'TIMEOUT' || error.code === 'NETWORK_ERROR');
+}
+
 export async function apiDownload(path) {
   const headers = new Headers({ Accept: 'text/csv' });
   const token = readSessionToken();

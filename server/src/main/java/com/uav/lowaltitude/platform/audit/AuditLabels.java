@@ -5,15 +5,25 @@ import java.util.Map;
 
 final class AuditLabels {
 
-    private static final Map<String, String> MODULES = Map.of(
-            "authentication", "认证登录",
-            "users", "用户管理",
-            "roles", "角色管理",
-            "audit", "审计日志",
-            "devices", "设备管理",
-            "alarms", "告警事件",
-            "statistics", "运行统计",
-            "system", "系统");
+    // Map.of 最多 10 对；模块目录已超过上限，统一用 Map.ofEntries 承载。
+    private static final Map<String, String> MODULES = Map.ofEntries(
+            Map.entry("authentication", "认证登录"),
+            Map.entry("users", "用户管理"),
+            Map.entry("roles", "角色管理"),
+            Map.entry("audit", "审计日志"),
+            Map.entry("devices", "设备管理"),
+            Map.entry("alarms", "告警事件"),
+            // 阶段 4/5：风险、交接、工作台是独立模块，失败审计与列表展示都按各自模块归档。
+            Map.entry("risk", "飞行风险"),
+            Map.entry("handoff", "业务交接"),
+            Map.entry("workbench", "工作台"),
+            // 阶段 7：研判与规则引擎分开归档；飞行监管只读接口也有自己的模块名。
+            Map.entry("assessment", "合法性研判"),
+            Map.entry("rules", "规则引擎"),
+            Map.entry("flights", "飞行计划"),
+            Map.entry("airspace", "空域规则"),
+            Map.entry("statistics", "运行统计"),
+            Map.entry("system", "系统"));
 
     private static final Map<String, String> ACTIONS = Map.ofEntries(
             Map.entry("login_success", "登录成功"),
@@ -45,7 +55,17 @@ final class AuditLabels {
             Map.entry("access_change_rejected", "驳回权限变更"),
             Map.entry("audit_export_requested", "导出审计日志"),
             Map.entry("stats_export_requested", "导出运行统计"),
-            Map.entry("super_admin_recovered", "恢复超级管理员"));
+            Map.entry("super_admin_recovered", "恢复超级管理员"),
+            Map.entry("uav_event_verified", "核实无人机事件"),
+            Map.entry("risk_verified", "核验飞行风险"),
+            Map.entry("handoff_created", "提交业务交接"),
+            Map.entry("legality_evaluation_revised", "复核合法性研判"),
+            Map.entry("legality_evaluation_recomputed", "重新研判"),
+            Map.entry("legality_evaluation_escalated", "研判转告警"),
+            Map.entry("legality_evaluation_triggered", "手动触发研判"),
+            Map.entry("rule_set_activated", "激活规则集版本"),
+            Map.entry("rule_set_rolled_back", "回滚规则集版本"),
+            Map.entry("rule_set_shadow_changed", "调整规则集阴影版本"));
 
     private static final Map<String, String> METHODS = Map.of(
             "GET", "查询", "POST", "提交", "PUT", "更新", "PATCH", "更新", "DELETE", "删除");
@@ -61,6 +81,19 @@ final class AuditLabels {
             Map.entry("/devices", "设备"),
             Map.entry("/commission", "设备调测"),
             Map.entry("/alarms", "告警"),
+            Map.entry("/uav-events", "无人机事件"),
+            Map.entry("/risks", "飞行风险"),
+            Map.entry("/handoff-recipients", "交接接收方"),
+            Map.entry("/handoffs", "业务交接"),
+            Map.entry("/workbench", "工作台"),
+            Map.entry("/legality-evaluations", "合法性研判"),
+            Map.entry("/legality-assessments", "合法性研判"),
+            Map.entry("/rule-effects", "规则效果"),
+            Map.entry("/rule-set-versions", "规则集版本"),
+            Map.entry("/rule-sets", "规则集"),
+            Map.entry("/rule-runs", "规则运行"),
+            Map.entry("/flight-plans", "飞行计划"),
+            Map.entry("/airspace", "空域"),
             Map.entry("/stats", "运行统计"));
 
     private AuditLabels() {

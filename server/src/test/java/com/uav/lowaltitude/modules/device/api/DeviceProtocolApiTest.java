@@ -21,6 +21,8 @@ import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 import com.uav.lowaltitude.integration.device.radar.RadarV300PayloadDecoder.TrackBatch;
 import com.uav.lowaltitude.integration.device.radar.RadarV300PayloadDecoder.TrackItem;
@@ -30,6 +32,7 @@ import com.uav.lowaltitude.modules.device.infrastructure.ProtocolDataRepository;
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
+@Transactional
 class DeviceProtocolApiTest {
 
     @Autowired MockMvc mvc;
@@ -86,7 +89,7 @@ class DeviceProtocolApiTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.protocol_code").value("RADAR_TCP_V3_0_0"))
                 .andReturn().getResponse().getContentAsString()).path("data");
-        jdbc.update("UPDATE integration_source SET protocol_code='COUNTERMEASURE_TCP_4CH_V2_0',protocol_version='2.0',allowed_cidrs='198.51.100.0/24' WHERE source_id=?",
+        jdbc.update("UPDATE ops_integration_source SET protocol_code='COUNTERMEASURE_TCP_4CH_V2_0',protocol_version='2.0',allowed_cidrs='198.51.100.0/24' WHERE source_id=?",
                 source.path("source_id").asText());
         mvc.perform(get("/api/v1/commission-tasks/{id}", task.path("commission_id").asText())
                         .header("Authorization", bearer(token)))
@@ -99,7 +102,7 @@ class DeviceProtocolApiTest {
                 String.class, task.path("commission_id").asText())).contains("\"rtk_enabled\":true");
 
         jdbc.update("""
-                INSERT INTO device_state (device_id,connectivity,health_code,received_at,last_heartbeat_at,simulated,version)
+                INSERT INTO ops_device_state (device_id,connectivity,health_code,received_at,last_heartbeat_at,simulated,version)
                 VALUES (?,'ONLINE','GOOD',1,1,FALSE,0)
                 """, deviceId);
         mvc.perform(post("/api/v1/devices/{id}/commands/reboot", deviceId)
@@ -125,35 +128,51 @@ class DeviceProtocolApiTest {
                 .andExpect(jsonPath("$.data.points[0].derived").value(false));
     }
 
+    /* 本用例断言服务层事务在回环地址被拒后真实回滚；若沿用类级测试事务，未提交的设备行仍在同一事务内可见，
+       无法验证回滚，因此这里不参与测试事务（数据与上游用例一样留在共享 H2 中，编号带随机后缀）。 */
     @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     void onboardCreatesEnabledLiveDeviceAndRejectsLoopback() throws Exception {
-        String token = login();
         String suffix = UUID.randomUUID().toString().substring(0, 8);
         String deviceNo = "RAD-OB-" + suffix;
-        JsonNode created = mapper.readTree(mvc.perform(post("/api/v1/devices/onboard")
-                        .header("Authorization", bearer(token)).contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"protocol_code":"RADAR_TCP_V3_0_0","device_no":"%s","name":"接入雷达",
-                                 "host":"192.0.2.88","port":5001,"allowed_cidrs":"192.0.2.0/24"}
-                                """.formatted(deviceNo)))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.device.source_mode").value("live"))
-                .andExpect(jsonPath("$.data.device.device_type_name").value("雷达"))
-                .andExpect(jsonPath("$.data.protocol_code").value("RADAR_TCP_V3_0_0"))
-                .andExpect(jsonPath("$.data.allowed_cidrs").value("192.0.2.0/24"))
-                .andReturn().getResponse().getContentAsString()).path("data");
-        assertThat(jdbc.queryForObject("SELECT enabled FROM integration_source WHERE source_code=?", Boolean.class, deviceNo)).isTrue();
-        assertThat(created.path("device").path("channel").asText()).isEqualTo("雷达直连");
+        try {
+            String token = login();
+            JsonNode created = mapper.readTree(mvc.perform(post("/api/v1/devices/onboard")
+                            .header("Authorization", bearer(token)).contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {"protocol_code":"RADAR_TCP_V3_0_0","device_no":"%s","name":"接入雷达",
+                                     "host":"192.0.2.88","port":5001,"allowed_cidrs":"192.0.2.0/24"}
+                                    """.formatted(deviceNo)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.device.source_mode").value("live"))
+                    .andExpect(jsonPath("$.data.device.device_type_name").value("雷达"))
+                    .andExpect(jsonPath("$.data.protocol_code").value("RADAR_TCP_V3_0_0"))
+                    .andExpect(jsonPath("$.data.allowed_cidrs").value("192.0.2.0/24"))
+                    .andReturn().getResponse().getContentAsString()).path("data");
+            assertThat(jdbc.queryForObject("SELECT enabled FROM ops_integration_source WHERE source_code=?", Boolean.class, deviceNo)).isTrue();
+            assertThat(created.path("device").path("channel").asText()).isEqualTo("雷达直连");
 
-        mvc.perform(post("/api/v1/devices/onboard").header("Authorization", bearer(token))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"protocol_code":"COUNTERMEASURE_TCP_4CH_V2_0","device_no":"CM-OB-%s","name":"接入反制",
-                                 "host":"127.0.0.1","port":10006,"allowed_cidrs":"127.0.0.0/8"}
-                                """.formatted(suffix)))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.error.code").value("NETWORK_TARGET_FORBIDDEN"));
-        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM device WHERE device_no=?", Long.class, "CM-OB-" + suffix)).isZero();
+            mvc.perform(post("/api/v1/devices/onboard").header("Authorization", bearer(token))
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {"protocol_code":"COUNTERMEASURE_TCP_4CH_V2_0","device_no":"CM-OB-%s","name":"接入反制",
+                                     "host":"127.0.0.1","port":10006,"allowed_cidrs":"127.0.0.0/8"}
+                                    """.formatted(suffix)))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.error.code").value("NETWORK_TARGET_FORBIDDEN"));
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ops_device WHERE device_no=?", Long.class, "CM-OB-" + suffix)).isZero();
+        } finally {
+            // 不参与测试事务，必须自行清理，否则共享 H2 中的设备总数会影响 DeviceOperationsApiTest 等用例。
+            cleanupOnboarded(deviceNo);
+        }
+    }
+
+    private void cleanupOnboarded(String deviceNo) {
+        for (String table : List.of("device_event_log", "radar_v3_profile", "countermeasure_4ch_profile",
+                "device_connection_profile", "ops_device_state"))
+            jdbc.update("DELETE FROM " + table + " WHERE device_id IN (SELECT device_id FROM ops_device WHERE device_no=?)", deviceNo);
+        jdbc.update("DELETE FROM ops_device WHERE device_no=?", deviceNo);
+        jdbc.update("DELETE FROM ops_integration_source WHERE source_code=?", deviceNo);
     }
 
     @Test
@@ -181,8 +200,8 @@ class DeviceProtocolApiTest {
 
     @Test
     void radarPersistenceDeduplicatesTrackExpiresAfterThreeSecondsAndAveragesTwentyRtkFrames() {
-        String deviceId = jdbc.queryForObject("SELECT device_id FROM device WHERE device_no='DEV-MOCK-001'", String.class);
-        String sourceId = jdbc.queryForObject("SELECT source_id FROM device WHERE device_id=?", String.class, deviceId);
+        String deviceId = jdbc.queryForObject("SELECT device_id FROM ops_device WHERE device_no='DEV-MOCK-001'", String.class);
+        String sourceId = jdbc.queryForObject("SELECT source_id FROM ops_device WHERE device_id=?", String.class, deviceId);
         assertThat(protocolData.insertInbox(sourceId, deviceId, "golden:duplicate", new byte[] { 1, 2, 3 }, 1)).isTrue();
         assertThat(protocolData.insertInbox(sourceId, deviceId, "golden:duplicate", new byte[] { 1, 2, 3 }, 2)).isFalse();
         assertThat(jdbc.queryForObject("SELECT payload_sha256 FROM inbox_message WHERE source_msg_id='golden:duplicate'", String.class))
@@ -194,10 +213,10 @@ class DeviceProtocolApiTest {
         TrackBatch batch = new TrackBatch(123L, "998", received, BigDecimal.ZERO, BigDecimal.ONE, 0, 0, List.of(item));
         protocolData.saveTrackBatch(deviceId, "DEV-MOCK-001", batch, received);
         protocolData.saveTrackBatch(deviceId, "DEV-MOCK-001", batch, received);
-        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM track_point p JOIN track t ON t.track_id=p.track_id WHERE t.device_id=? AND t.external_track_id='88'",
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ops_track_point p JOIN ops_track t ON t.track_id=p.track_id WHERE t.device_id=? AND t.external_track_id='88'",
                 Long.class, deviceId)).isEqualTo(1L);
         protocolData.expireTracks(System.currentTimeMillis() - 3000, System.currentTimeMillis());
-        assertThat(jdbc.queryForObject("SELECT active FROM track WHERE device_id=? AND external_track_id='88'", Boolean.class, deviceId)).isFalse();
+        assertThat(jdbc.queryForObject("SELECT active FROM ops_track WHERE device_id=? AND external_track_id='88'", Boolean.class, deviceId)).isFalse();
 
         for (int i = 0; i < 20; i++) protocolData.saveRtk(deviceId, "rtk-" + i,
                 new Rtk(new BigDecimal("37.123456789"), new BigDecimal("118.987654321"),

@@ -4,6 +4,9 @@
  * ========================================================================== */
 (function (g) {
   'use strict';
+  const html = value => String(value == null ? '—' : value).replace(/[&<>"']/g, ch => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[ch]);
   /* 东营全域视图范围；业务叠加层与无网降级底图共用。 */
   const B = { lon0: 118.114, lon1: 119.308, lat0: 36.937, lat1: 38.156 };
   const CENTER = [(B.lon0 + B.lon1) / 2, (B.lat0 + B.lat1) / 2];
@@ -816,11 +819,13 @@
         const q = P(last.lon, last.lat);
         this._drawUav(c, t, q, col, isSel);
         if (dim) c.restore();
+        const altitudeTx = t.alt == null ? '—' : html(t.alt) + ' m AMSL';
+        const speedTx = t.speed == null ? '—' : html(t.speed) + ' m/s';
         picks.push({
           x: q[0], y: q[1], kind: 'target', data: t,
-          tip: `<div class="maptip-uav"><b style="color:${col}">${t.id}</b>
-            <div class="maptip-uav-meta">${t.subtype || t.type}</div>
-            <div class="maptip-uav-tags">${t.legal}${t.violation ? ' · ' + t.violation : ''} · ${t.risk}</div></div>`
+          tip: `<div class="maptip-uav"><b style="color:${col}">${html(t.id)}</b>
+            <div class="maptip-uav-meta">${html(t.subtype || t.type)}</div>
+            <div class="maptip-uav-tags">${html(t.legal)}${t.violation ? ' · ' + html(t.violation) : ''} · ${html(t.risk)}</div></div>`
         });
       });
     }

@@ -19,8 +19,8 @@ public class DeviceRepository {
                    src.source_code, src.name AS source_name, src.protocol_code, src.protocol_version,
                    src.allowed_cidrs, src.credential_ref AS source_credential_ref,
                    src.enabled AS source_enabled
-            FROM device d LEFT JOIN device_state s ON s.device_id = d.device_id
-            LEFT JOIN integration_source src ON src.source_id=d.source_id
+            FROM ops_device d LEFT JOIN ops_device_state s ON s.device_id = d.device_id
+            LEFT JOIN ops_integration_source src ON src.source_id=d.source_id
             """;
 
     private final JdbcTemplate jdbc;
@@ -32,12 +32,12 @@ public class DeviceRepository {
     }
 
     public long countAll() {
-        Long count = jdbc.queryForObject("SELECT COUNT(*) FROM device", Long.class);
+        Long count = jdbc.queryForObject("SELECT COUNT(*) FROM ops_device", Long.class);
         return count == null ? 0 : count;
     }
 
     public long countEnabledOnSource(String sourceId) {
-        Long count = jdbc.queryForObject("SELECT COUNT(*) FROM device WHERE source_id=? AND enabled=TRUE", Long.class, sourceId);
+        Long count = jdbc.queryForObject("SELECT COUNT(*) FROM ops_device WHERE source_id=? AND enabled=TRUE", Long.class, sourceId);
         return count == null ? 0 : count;
     }
 
@@ -51,7 +51,7 @@ public class DeviceRepository {
     public long count(DeviceQuery query) {
         SqlWhere where = where(query);
         Long count = named.queryForObject(
-                "SELECT COUNT(*) FROM device d LEFT JOIN device_state s ON s.device_id=d.device_id " + where.sql,
+                "SELECT COUNT(*) FROM ops_device d LEFT JOIN ops_device_state s ON s.device_id=d.device_id " + where.sql,
                 where.params,
                 Long.class);
         return count == null ? 0 : count;
@@ -80,7 +80,7 @@ public class DeviceRepository {
 
     public Map<String, Object> findIntegrationSource(String sourceId) {
         if (sourceId == null) return null;
-        List<Map<String, Object>> rows = jdbc.queryForList("SELECT * FROM integration_source WHERE source_id=?", sourceId);
+        List<Map<String, Object>> rows = jdbc.queryForList("SELECT * FROM ops_integration_source WHERE source_id=?", sourceId);
         return rows.isEmpty() ? null : rows.get(0);
     }
 
@@ -103,7 +103,7 @@ public class DeviceRepository {
             case "vendor" -> "vendor";
             default -> throw new IllegalArgumentException("unsupported option column");
         };
-        return jdbc.queryForList("SELECT DISTINCT " + safe + " FROM device WHERE " + safe
+        return jdbc.queryForList("SELECT DISTINCT " + safe + " FROM ops_device WHERE " + safe
                 + " IS NOT NULL AND " + safe + "<>'' ORDER BY " + safe, String.class);
     }
 
@@ -119,7 +119,7 @@ public class DeviceRepository {
                        COUNT(DISTINCT CASE WHEN d.model IS NOT NULL AND d.model<>'' THEN d.model END) AS model_count
                        ,SUM(CASE WHEN d.source_mode='live' THEN 1 ELSE 0 END) AS live_count
                        ,SUM(CASE WHEN d.simulated=TRUE THEN 1 ELSE 0 END) AS simulated_count
-                FROM device d LEFT JOIN device_state s ON s.device_id=d.device_id
+                FROM ops_device d LEFT JOIN ops_device_state s ON s.device_id=d.device_id
                 """);
     }
 
@@ -130,13 +130,13 @@ public class DeviceRepository {
                 + "SUM(CASE WHEN s.connectivity='OFFLINE' THEN 1 ELSE 0 END) AS offline, "
                 + "SUM(CASE WHEN s.connectivity='ABNORMAL' THEN 1 ELSE 0 END) AS abnormal, "
                 + "SUM(CASE WHEN s.connectivity IS NULL OR s.connectivity='UNKNOWN' THEN 1 ELSE 0 END) AS unknown_count "
-                + "FROM device d LEFT JOIN device_state s ON s.device_id=d.device_id "
+                + "FROM ops_device d LEFT JOIN ops_device_state s ON s.device_id=d.device_id "
                 + "GROUP BY " + safe + " ORDER BY " + safe);
     }
 
     public void insertDevice(Map<String, Object> values) {
         named.update("""
-                INSERT INTO device (
+                INSERT INTO ops_device (
                     device_id, source_id, external_device_id, device_no, name, device_type_code,
                     device_type_name, channel, model, vendor, owner_name, region_name, address,
                     longitude, latitude, coordinate_system, altitude_m, altitude_datum,
@@ -156,7 +156,7 @@ public class DeviceRepository {
         p.put("device_id", deviceId);
         p.put("expected_version", expectedVersion);
         return named.update("""
-                UPDATE device SET source_id=:source_id, external_device_id=:external_device_id,
+                UPDATE ops_device SET source_id=:source_id, external_device_id=:external_device_id,
                     device_no=:device_no, name=:name, device_type_code=:device_type_code,
                     device_type_name=:device_type_name, channel=:channel, model=:model, vendor=:vendor,
                     owner_name=:owner_name, region_name=:region_name, address=:address,
@@ -170,7 +170,7 @@ public class DeviceRepository {
     }
 
     public int setEnabled(String deviceId, long expectedVersion, boolean enabled, long now) {
-        return jdbc.update("UPDATE device SET enabled=?, version=version+1, updated_at=? WHERE device_id=? AND version=?",
+        return jdbc.update("UPDATE ops_device SET enabled=?, version=version+1, updated_at=? WHERE device_id=? AND version=?",
                 enabled, now, deviceId, expectedVersion);
     }
 
@@ -225,7 +225,7 @@ public class DeviceRepository {
         return named.queryForList("""
                 SELECT state_id, device_id, connectivity, observed_at, received_at,
                        metric_code, metric_value, metric_unit, simulated
-                FROM device_state_history
+                FROM ops_device_state_history
                 WHERE device_id=:device_id AND metric_code=:metric_code
                   AND received_at>=:from_time AND received_at<=:to_time
                 ORDER BY received_at DESC, state_id DESC OFFSET 0 ROWS FETCH NEXT :limit ROWS ONLY
@@ -234,7 +234,7 @@ public class DeviceRepository {
 
     public List<Map<String, Object>> incidents(String deviceId, String severity, String stage, int offset, int size) {
         Map<String, Object> p = new HashMap<>();
-        StringBuilder sql = new StringBuilder("SELECT i.*, d.device_no, d.name AS device_name FROM device_incident i JOIN device d ON d.device_id=i.device_id WHERE 1=1");
+        StringBuilder sql = new StringBuilder("SELECT i.*, d.device_no, d.name AS device_name FROM device_incident i JOIN ops_device d ON d.device_id=i.device_id WHERE 1=1");
         add(sql, p, "i.device_id", "device_id", deviceId);
         add(sql, p, "i.severity", "severity", severity);
         add(sql, p, "i.stage", "stage", stage);
@@ -255,7 +255,7 @@ public class DeviceRepository {
 
     public List<Map<String, Object>> events(String deviceId, long afterSeq, int limit) {
         Map<String, Object> p = new HashMap<>();
-        StringBuilder sql = new StringBuilder("SELECT e.*, d.device_no, d.name AS device_name FROM device_event_log e LEFT JOIN device d ON d.device_id=e.device_id WHERE e.event_seq>:after_seq");
+        StringBuilder sql = new StringBuilder("SELECT e.*, d.device_no, d.name AS device_name FROM device_event_log e LEFT JOIN ops_device d ON d.device_id=e.device_id WHERE e.event_seq>:after_seq");
         p.put("after_seq", afterSeq); p.put("limit", limit);
         add(sql, p, "e.device_id", "device_id", deviceId);
         sql.append(" ORDER BY e.event_seq OFFSET 0 ROWS FETCH NEXT :limit ROWS ONLY");
@@ -289,7 +289,7 @@ public class DeviceRepository {
     public Map<String, Object> findCommand(String commandId) {
         List<Map<String, Object>> rows = jdbc.queryForList("""
                 SELECT c.*, d.device_no, d.name AS device_name
-                FROM device_command c JOIN device d ON d.device_id=c.device_id WHERE c.command_id=?
+                FROM device_command c JOIN ops_device d ON d.device_id=c.device_id WHERE c.command_id=?
                 """, commandId);
         return rows.isEmpty() ? null : rows.get(0);
     }
@@ -351,7 +351,7 @@ public class DeviceRepository {
 
     public void markDeviceRecovered(String deviceId, long now) {
         jdbc.update("""
-                UPDATE device_state SET connectivity='ONLINE', has_alarm=FALSE, health_code='GOOD',
+                UPDATE ops_device_state SET connectivity='ONLINE', has_alarm=FALSE, health_code='GOOD',
                     observed_at=?, received_at=?, last_heartbeat_at=?, unknown_reason=NULL, version=version+1
                 WHERE device_id=?
                 """, now, now, now, deviceId);

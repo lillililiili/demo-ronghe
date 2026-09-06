@@ -21,28 +21,28 @@ public class IntegrationSourceRepository {
 
     public List<Map<String, Object>> list(int offset, int size) {
         return jdbc.queryForList("""
-                SELECT s.*, (SELECT COUNT(*) FROM device d WHERE d.source_id=s.source_id) AS device_count
-                FROM integration_source s ORDER BY s.created_at DESC,s.source_code
+                SELECT s.*, (SELECT COUNT(*) FROM ops_device d WHERE d.source_id=s.source_id) AS device_count
+                FROM ops_integration_source s ORDER BY s.created_at DESC,s.source_code
                 OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
                 """, offset, size);
     }
 
     public long count() {
-        Long value = jdbc.queryForObject("SELECT COUNT(*) FROM integration_source", Long.class);
+        Long value = jdbc.queryForObject("SELECT COUNT(*) FROM ops_integration_source", Long.class);
         return value == null ? 0 : value;
     }
 
     public Map<String, Object> find(String id) {
         List<Map<String, Object>> rows = jdbc.queryForList("""
-                SELECT s.*, (SELECT COUNT(*) FROM device d WHERE d.source_id=s.source_id) AS device_count
-                FROM integration_source s WHERE s.source_id=?
+                SELECT s.*, (SELECT COUNT(*) FROM ops_device d WHERE d.source_id=s.source_id) AS device_count
+                FROM ops_integration_source s WHERE s.source_id=?
                 """, id);
         return rows.isEmpty() ? null : rows.get(0);
     }
 
     public void insert(Map<String, Object> p) {
         named.update("""
-                INSERT INTO integration_source (source_id,source_code,name,protocol_code,protocol_version,
+                INSERT INTO ops_integration_source (source_id,source_code,name,protocol_code,protocol_version,
                     source_mode,enabled,credential_ref,allowed_cidrs,simulated,version,created_at,updated_at)
                 VALUES (:source_id,:source_code,:name,:protocol_code,:protocol_version,'live',FALSE,
                     :credential_ref,:allowed_cidrs,FALSE,0,:created_at,:updated_at)
@@ -54,7 +54,7 @@ public class IntegrationSourceRepository {
         values.put("source_id", id);
         values.put("version", version);
         return named.update("""
-                UPDATE integration_source SET source_code=:source_code,name=:name,protocol_code=:protocol_code,
+                UPDATE ops_integration_source SET source_code=:source_code,name=:name,protocol_code=:protocol_code,
                     protocol_version=:protocol_version,credential_ref=:credential_ref,allowed_cidrs=:allowed_cidrs,
                     version=version+1,updated_at=:updated_at
                 WHERE source_id=:source_id AND version=:version AND source_mode='live'
@@ -63,7 +63,7 @@ public class IntegrationSourceRepository {
 
     public int setEnabled(String id, long version, boolean enabled, long now) {
         return jdbc.update("""
-                UPDATE integration_source SET enabled=?,version=version+1,updated_at=?
+                UPDATE ops_integration_source SET enabled=?,version=version+1,updated_at=?
                 WHERE source_id=? AND version=? AND source_mode='live'
                 """, enabled, now, id, version);
     }
@@ -73,7 +73,7 @@ public class IntegrationSourceRepository {
                 SELECT d.device_id,d.device_no,d.enabled,p.host,p.port,p.transport,
                        r.device_id AS radar_profile_device_id,r.recognition_code_ref,
                        c.device_id AS counter_profile_device_id
-                FROM device d LEFT JOIN device_connection_profile p ON p.device_id=d.device_id
+                FROM ops_device d LEFT JOIN device_connection_profile p ON p.device_id=d.device_id
                 LEFT JOIN radar_v3_profile r ON r.device_id=d.device_id
                 LEFT JOIN countermeasure_4ch_profile c ON c.device_id=d.device_id
                 WHERE d.source_id=?

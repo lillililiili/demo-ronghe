@@ -10,7 +10,9 @@ spring:
     password: ${DB_PASSWORD:uav}
   flyway:
     enabled: true
-    locations: classpath:db/migration
+    locations:
+      - classpath:db/migration
+      - classpath:db/postgresql
     clean-disabled: true
   jackson:
     property-naming-strategy: SNAKE_CASE
@@ -55,3 +57,13 @@ app:
     enabled: ${APP_LIVE_DEVICE_ENABLED:true}
     instance-id: ${APP_INSTANCE_ID:}
     lease-seconds: ${APP_LIVE_DEVICE_LEASE_SECONDS:30}
+  # 阶段 7 规则引擎：默认关闭调度；DEMO 参数版本默认不允许激活（只能做影子验证）。
+  rule-engine:
+    enabled: ${APP_RULE_ENGINE_ENABLED:false}
+    poll-millis: ${APP_RULE_ENGINE_POLL_MILLIS:5000}
+    batch-size: ${APP_RULE_ENGINE_BATCH_SIZE:50}
+    lease-seconds: ${APP_RULE_ENGINE_LEASE_SECONDS:30}
+    instance-id: ${APP_INSTANCE_ID:}
+    allow-demo-active: ${APP_RULE_ENGINE_ALLOW_DEMO_ACTIVE:false}
+    replay:
+      run-on-start: ${APP_RULE_ENGINE_REPLAY_RUN_ON_START:false}

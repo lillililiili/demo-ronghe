@@ -20,7 +20,7 @@ public class LiveDeviceRepository {
                        s.credential_ref AS source_credential_ref,p.transport,p.host,p.port,p.timeout_millis,
                        p.credential_ref,r.login_role,r.recognition_code_ref,r.rtk_enabled,
                        r.coordinate_transform_enabled,c.device_address,c.wire_encoding,c.poll_interval_millis
-                FROM device d JOIN integration_source s ON s.source_id=d.source_id
+                FROM ops_device d JOIN ops_integration_source s ON s.source_id=d.source_id
                 JOIN device_connection_profile p ON p.device_id=d.device_id
                 LEFT JOIN radar_v3_profile r ON r.device_id=d.device_id
                 LEFT JOIN countermeasure_4ch_profile c ON c.device_id=d.device_id
@@ -30,7 +30,7 @@ public class LiveDeviceRepository {
 
     public boolean stillEnabled(String deviceId) {
         Integer count = jdbc.queryForObject("""
-                SELECT COUNT(*) FROM device d JOIN integration_source s ON s.source_id=d.source_id
+                SELECT COUNT(*) FROM ops_device d JOIN ops_integration_source s ON s.source_id=d.source_id
                 WHERE d.device_id=? AND d.enabled=TRUE AND s.enabled=TRUE AND d.source_mode='live'
                 """, Integer.class, deviceId);
         return count != null && count > 0;

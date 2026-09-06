@@ -1,254 +1,191 @@
-/* “我的工作台”统一事件适配层。
- * 这里只统一入口、分类和待办提示，不改写三类业务各自的状态机。 */
-const M = window.MOCK;
-const EVT = window.EVT;
+/* “我的工作台”统一事件适配层：把后端工作台摘要映射成页面视图模型，并提供导航与源对象读取。
+ * 这里只统一入口、分类和待办提示，不改写三类业务各自的状态机，也不再写任何内存状态：
+ * 队列、计数、详情全部来自 GET /workbench/items；核实委托 alarmApi/riskApi，通知委托 handoffApi（待领导接线）。 */
+import { SOURCE_MODE_LABEL, labelOf } from '@/ui/labels.js';
+import { getWorkbenchItem, listWorkbenchItems } from '@/services/workbenchApi.js';
+import { getAlarm, getUavEvent } from '@/services/alarmApi.js';
+import { riskApi } from '@/services/riskApi.js';
 
-const DEVICE_STAGES = ['待处理', '处理中', '待验证', '已恢复'];
-const deviceIncidents = new Map();
+export const KINDS = ['UAV_EVENT', 'RISK', 'DEVICE_INCIDENT'];
+export const kindLabel = { UAV_EVENT: '无人机告警', RISK: '飞行计划风险', DEVICE_INCIDENT: '设备告警' };
+export const kindIcon = { UAV_EVENT: 'plane', RISK: 'plan', DEVICE_INCIDENT: 'device' };
+export const kindModule = { UAV_EVENT: '异常告警中心', RISK: '飞行活动管理 · 全部风险事件', DEVICE_INCIDENT: '设备实时监测' };
 
-const LEVEL_RANK = { '超高风险': 5, '高风险': 4, '高': 4, '中风险': 3, '中': 3, '低风险': 2, '低': 2 };
-const KIND_RANK = { uav: 3, risk: 2, device: 1 };
-const BUCKET_RANK = { pending: 3, processing: 2, completed: 1 };
-const MODULE_OF = { uav: '异常告警中心', risk: '空间安全风险', device: '设备实时监测' };
-const kindLabel = { uav: '无人机告警', risk: '飞行计划风险', device: '设备告警' };
-const RISK_OWNER = '飞行活动管理 · 全部风险事件';
-const PLAN_STATUS_RANK = { '执行中': 4, '待执行': 3, '已完成': 2, '已终止': 1, '已取消': 0 };
+export const SEVERITY_LABEL = { CRITICAL: '紧急', HIGH: '高', MEDIUM: '中', LOW: '低' };
+export const SEVERITY_TAG = { CRITICAL: 't-red', HIGH: 't-red', MEDIUM: 't-amber', LOW: 't-blue' };
+export const STATE_LABEL = {
+  UAV_EVENT: { PENDING_VERIFICATION: '待核实', EVIDENCE_REQUIRED: '证据待补充', CONFIRMED: '已核实，待处置', FALSE_POSITIVE: '误报' },
+  RISK: { PENDING_VERIFICATION: '待核验', PENDING_NOTIFICATION: '待通知', NOTIFIED: '已通知', EXCLUDED: '已排除' },
+  DEVICE_INCIDENT: { PENDING: '待处理', PROCESSING: '处理中', PENDING_VERIFICATION: '待验证', RECOVERED: '已恢复' }
+};
+/* 旧设备阶段词表：保留导出名，供仍按中文阶段渲染的消费者使用。 */
+export const DEVICE_STAGES = ['待处理', '处理中', '待验证', '已恢复'];
+export const CLOSED_STATES = new Set(['FALSE_POSITIVE', 'NOTIFIED', 'EXCLUDED', 'RECOVERED']);
 
-function canRead(kind) { return M.can(MODULE_OF[kind], 'read'); }
-function occurredTs(v) {
-  if (Number.isFinite(v)) return v;
-  const n = new Date(v || 0).getTime();
-  return Number.isFinite(n) ? n : 0;
+export const BLOCKED_REASON_LABEL = {
+  COUNTERMEASURE_NOT_CONNECTED: '联动反制与信号干扰尚未接入：属实后停留在“已核实，待处置”，不表示反制或处罚交接已执行',
+  RECIPIENT_NOT_CONFIGURED: '交接接收方未配置，无法通知上级；不会以默认部门补值',
+  DEVICE_RECOVERY_NOT_CONNECTED: '设备重启、恢复校验与关闭命令尚未接入工作台；只读展示，处置请到设备实时监测页'
+};
+export const AVAILABILITY_LABEL = { AVAILABLE: '已接入', FORBIDDEN: '无读取权限', UNCONFIGURED: '设备归属映射未配置' };
+export const HANDOFF_NOT_WIRED = '通知上级待提交交接';
+
+export function severityLabel(code) { return SEVERITY_LABEL[code] || (code ? String(code) : '未知'); }
+export function severityTag(code) { return SEVERITY_TAG[code] || 't-gray'; }
+export function stateLabel(kind, code) { return (STATE_LABEL[kind] || {})[code] || (code ? String(code) : '未知'); }
+export function blockedLabel(code) { return code ? (BLOCKED_REASON_LABEL[code] || `阻断：${code}`) : ''; }
+export function keyOf(item) { return `${item.kind}:${item.source_id}`; }
+export function splitKey(key) {
+  const idx = String(key || '').indexOf(':');
+  return idx < 0 ? null : { kind: key.slice(0, idx), sourceId: key.slice(idx + 1) };
 }
-function deviceLevel(d) {
-  if (d.status === '离线' || d.status === '异常' || (d.loss != null && d.loss > 15)) return '高';
-  if (d.alarm || d.temp > 70 || d.latency > 100) return '中';
-  return '低';
-}
-function deviceKind(d) {
-  if (d.status === '离线') return '设备离线';
-  if (d.status === '异常') return '设备异常';
-  if (d.loss != null && d.loss > 15) return '接口异常';
-  if (d.temp > 70) return '温度过高';
-  if (d.latency > 100) return '网络抖动';
-  return '设备告警';
-}
-function ensureDeviceIncidents() {
-  M.devices.filter(d => d.status !== '在线' || d.alarm).forEach(d => {
-    if (!deviceIncidents.has(d.id)) {
-      deviceIncidents.set(d.id, {
-        id: d.id, stage: '待处理', createdAt: d.hb || M.nowStr(),
-        reason: deviceKind(d), updatedAt: d.hb || M.nowStr()
-      });
+
+/* 每个事项只给出一个明确的下一步；未接入或缺前置条件的动作显式禁用并说明原因，不伪装成可执行。 */
+function nextStep(item) {
+  const actions = item.allowed_actions || [];
+  const blocked = blockedLabel(item.blocked_reason);
+  if (item.kind === 'UAV_EVENT') {
+    if (actions.includes('VERIFY')) return { action: '人工核实', kind: 'verify', allowed: true, blocker: null, hint: '核实结论进入无人机事件核实历史；属实只表示已核实、待处置。' };
+    if (item.state === 'PENDING_VERIFICATION' || item.state === 'EVIDENCE_REQUIRED') return { action: '人工核实', kind: 'verify', allowed: false, blocker: '需要 alarm:verify 核实权限', hint: '当前账号只能查看，不能提交核实结论。' };
+    if (item.state === 'CONFIRMED') return { action: '联动反制', kind: 'countermeasure', allowed: false, blocker: blocked || BLOCKED_REASON_LABEL.COUNTERMEASURE_NOT_CONNECTED, hint: '已核实，待处置。' };
+    return null;
+  }
+  if (item.kind === 'RISK') {
+    if (actions.includes('VERIFY')) return { action: '人工核验', kind: 'verify', allowed: true, blocker: null, hint: '核验通过只进入“待通知”，不表示已通知上级。' };
+    if (item.state === 'PENDING_VERIFICATION') return { action: '人工核验', kind: 'verify', allowed: false, blocker: '需要 risk:verify 核验权限', hint: '当前账号只能查看，不能提交核验结论。' };
+    if (item.state === 'PENDING_NOTIFICATION') {
+      if (actions.includes('NOTIFY')) return { action: '通知上级', kind: 'notify', allowed: true, blocker: null, hint: '提交交接材料后风险仍保持“待通知”；提交成功只表示材料入库，不等于已发送或已送达。' };
+      return { action: '通知上级', kind: 'notify', allowed: false, blocker: blocked || '需要 handoff:create 交接权限', hint: '风险已核验通过，等待通知上级。' };
     }
-  });
-  return deviceIncidents;
+    return null;
+  }
+  if (item.state === 'RECOVERED') return null;
+  const label = item.state === 'PENDING_VERIFICATION' ? '恢复校验' : item.state === 'PROCESSING' ? '等待指令回执' : '远程重启';
+  return { action: label, kind: 'device', allowed: false, blocker: blocked || BLOCKED_REASON_LABEL.DEVICE_RECOVERY_NOT_CONNECTED, hint: '工作台只读展示设备异常事实。' };
 }
-function deviceBucket(stage) {
-  return stage === '已恢复' ? 'completed' : stage === '待处理' ? 'pending' : 'processing';
-}
-function uavSummary(id) {
-  const ctx = EVT.of(id);
-  if (!ctx || !ctx.alarm) return null;
-  const td = EVT.todo(ctx);
+
+/* 后端事项 → 页面摘要（只做字段映射与文案，不推导任何服务端未给出的事实）。 */
+export function summarize(item) {
   return {
-    key: `uav:${id}`, kind: 'uav', kindLabel: kindLabel.uav, sourceId: id,
-    title: ctx.alarm.type || ctx.target.violation || '无人机异常告警',
-    level: ctx.alarm.level || (ctx.target.risk || '').replace('风险', ''),
-    district: ctx.alarm.district || ctx.target.district,
-    occurredAt: ctx.alarm.time || ctx.target.time, occurredTs: ctx.alarm.ts || ctx.target.ts,
-    sourceStatus: EVT.phase(ctx),
-    statusBucket: ctx.stage >= EVT.FLOW.length ? 'completed' : ctx.stage <= 2 ? 'pending' : 'processing',
-    todo: td ? {
-      action: td.btn, label: td.label, module: td.module || td.owner,
-      permission: td.permission, allowed: td.allowed, blocker: td.blocker || ctx.blocked,
-      hint: td.hint
-    } : null
+    key: keyOf(item), kind: item.kind, kindLabel: kindLabel[item.kind] || item.kind, sourceId: item.source_id, sourceNo: item.source_no || '',
+    title: item.title || '', summary: item.summary || '',
+    severity: item.severity, level: severityLabel(item.severity), levelTag: severityTag(item.severity),
+    state: item.state, sourceStatus: stateLabel(item.kind, item.state),
+    statusBucket: CLOSED_STATES.has(item.state) ? 'completed' : 'pending',
+    receivedAt: item.received_at, occurredAt: item.occurred_at ?? null, updatedAt: item.updated_at ?? null,
+    version: item.version ?? null, allowedActions: item.allowed_actions || [], blockedReason: item.blocked_reason || null,
+    blockedLabel: blockedLabel(item.blocked_reason), sourceMode: item.source_mode, sourceModeLabel: labelOf(SOURCE_MODE_LABEL, item.source_mode, ''), links: item.links || {},
+    module: kindModule[item.kind], todo: nextStep(item)
   };
 }
-function riskContext(r) {
-  const route = r.nearestRouteId && M.routeById ? M.routeById(r.nearestRouteId) : null;
-  const plans = route && M.plansOf ? M.plansOf(route.id).slice() : [];
-  plans.sort((a, b) => (PLAN_STATUS_RANK[b.status] || 0) - (PLAN_STATUS_RANK[a.status] || 0)
-    || Math.abs(new Date(a.start).getTime() - r.ts) - Math.abs(new Date(b.start).getTime() - r.ts));
-  return { route, plans, plan: plans[0] || null };
-}
 
-function riskSteps(r) {
-  if (r.status === '已排除') return [
-    { n: '风险发现', done: true },
-    { n: '人工核验', done: true },
-    { n: '已排除', done: true, t: '误检或非管控目标' }
+/** 无人机事件流程条：反制与通知处罚部门本期未接入，只能显示为“未接入”，不能显示为已完成。 */
+export function uavSteps(state) {
+  const verified = ['CONFIRMED', 'FALSE_POSITIVE'].includes(state);
+  return [
+    { n: '告警接收', done: true },
+    { n: '人工核实', done: verified, act: !verified, t: state === 'EVIDENCE_REQUIRED' ? '证据待补充' : null },
+    { n: '联动反制', done: false, act: false, t: state === 'FALSE_POSITIVE' ? '误报终止' : '未接入' },
+    { n: '通知处罚部门', done: false, act: false, t: '未接入' }
   ];
-  const order = ['待核验', '待通知', '已通知'];
-  const idx = Math.max(0, order.indexOf(r.status));
-  const names = ['风险发现', '人工核验', '通知上级'];
-  return names.map((n, i) => ({
-    n,
-    done: i === 0 || i <= idx,
-    act: i === idx + 1 && r.status !== '已通知',
-    t: i === 0 ? (r.time || '系统自动识别') : null
-  }));
 }
 
-function riskTodoHint(r, action) {
-  if (r.status === '待核验') return '核对目标类型、航线距离、高度重叠和计划时段，选择“核验通过”或“排除”。';
-  if (r.status === '待通知') return '按飞行计划页“本航线风险”的同一入口生成通报与待回执记录。';
-  if (r.status === '已通知') return '通报已发出，飞行计划风险事件已完成平台内闭环。';
-  return action ? r.advice : '风险事件已闭环。';
+/** 飞行风险流程条：按后端状态推导，排除是核验后的终态分支。 */
+export function riskSteps(state) {
+  if (state === 'EXCLUDED') return [
+    { n: '风险发现', done: true }, { n: '人工核验', done: true }, { n: '已排除', done: true, t: '核验后判定无需通报' }
+  ];
+  const idx = state === 'NOTIFIED' ? 3 : state === 'PENDING_NOTIFICATION' ? 2 : 1;
+  return [
+    { n: '风险发现', done: true },
+    { n: '人工核验', done: idx >= 2, act: idx === 1 },
+    { n: '通知上级', done: idx >= 3, act: idx === 2, t: idx === 2 ? HANDOFF_NOT_WIRED : null }
+  ];
 }
 
-function riskSummary(r) {
-  const next = M.riskNext(r.status);
-  const action = next[0] || null;
-  const completed = ['已通知', '已排除'].includes(r.status);
-  const pending = r.status === '待核验';
-  const allowed = M.can('空间安全风险', 'op');
-  const { route } = riskContext(r);
-  const primaryAction = r.status === '待核验' ? '人工核验' : action && action.act;
-  return {
-    key: `risk:${r.id}`, kind: 'risk', kindLabel: kindLabel.risk, sourceId: r.id,
-    title: `${route ? route.name : '未关联航线'} · ${r.subtype || r.type}风险`, level: r.level,
-    district: r.district, occurredAt: r.time || r.date, occurredTs: r.ts,
-    sourceStatus: r.status, statusBucket: completed ? 'completed' : pending ? 'pending' : 'processing',
-    todo: action ? {
-      action: primaryAction, label: primaryAction, to: action.to, module: RISK_OWNER,
-      permission: 'op', allowed, blocker: allowed ? null : '需要「空间安全风险」操作权限',
-      hint: riskTodoHint(r, action)
-    } : null
-  };
+export function deviceSteps(state) {
+  const order = ['PENDING', 'PROCESSING', 'PENDING_VERIFICATION', 'RECOVERED'];
+  const idx = Math.max(0, order.indexOf(state));
+  return ['原因与确认', '下发重启', '等待回执', '恢复校验与关闭'].map((n, i) => ({ n, done: i < idx || state === 'RECOVERED', act: i === idx && state !== 'RECOVERED', t: i === idx && state !== 'RECOVERED' ? '未接入工作台' : null }));
 }
-function deviceSummary(d, incident) {
-  const allowed = M.can('设备实时监测', 'op');
-  const verify = incident.stage === '待验证';
+
+export function stepsOf(kind, state) {
+  return kind === 'UAV_EVENT' ? uavSteps(state) : kind === 'RISK' ? riskSteps(state) : deviceSteps(state);
+}
+
+/** 拉取一页工作台队列；返回摘要与同快照的计数/可用性。 */
+export async function listWorkbenchEvents(query = {}) {
+  const data = await listWorkbenchItems(query);
   return {
-    key: `device:${d.id}`, kind: 'device', kindLabel: kindLabel.device, sourceId: d.id,
-    title: incident.reason || deviceKind(d), level: deviceLevel(d), district: d.region,
-    occurredAt: incident.createdAt, occurredTs: occurredTs(incident.createdAt),
-    sourceStatus: incident.stage, statusBucket: deviceBucket(incident.stage),
-    todo: incident.stage === '已恢复' ? null : {
-      action: verify ? '恢复校验' : incident.stage === '处理中' ? '等待指令回执' : '远程重启',
-      label: verify ? '确认恢复并关闭' : incident.stage === '处理中' ? '等待指令回执' : '远程重启',
-      module: '设备实时监测', permission: 'op', allowed: allowed && incident.stage !== '处理中',
-      blocker: !allowed ? '需要「设备实时监测」操作权限' : incident.stage === '处理中' ? '重启指令执行中，等待设备回执' : null,
-      hint: verify ? '校验在线、心跳与健康状态后关闭事件' : '填写原因并二次确认后下发控制指令'
-    }
+    items: (data.items || []).map(summarize), total: Number(data.total || 0), page: Number(data.page || 1), size: Number(data.size || 0),
+    counts: data.counts_by_kind || {}, availability: data.source_availability || {}, asOf: data.as_of ?? null
   };
 }
 
-export function listWorkbenchEvents() {
-  const out = [];
-  if (canRead('uav')) {
-    const seen = new Set();
-    M.todayAlarms.slice().sort((a, b) => b.ts - a.ts).forEach(a => {
-      if (seen.has(a.targetId)) return;
-      seen.add(a.targetId);
-      const e = uavSummary(a.targetId);
-      if (e) out.push(e);
-    });
+/** 顶部计数：counts_by_kind 为 null 表示无权限/未配置，不能显示成 0。 */
+export function workbenchStats(data) {
+  const counts = (data && data.counts) || {};
+  const availability = (data && data.availability) || {};
+  const byKind = {};
+  KINDS.forEach(k => { byKind[k] = availability[k] === 'AVAILABLE' ? Number(counts[k] || 0) : null; });
+  return { total: data ? Number(data.total || 0) : 0, byKind, availability, asOf: data ? data.asOf : null };
+}
+
+export async function getWorkbenchDetail(kind, sourceId) {
+  const data = await getWorkbenchItem(kind, sourceId);
+  const summary = summarize(data.item);
+  return { kind, summary, item: data.item, timeline: data.timeline || [], availability: data.availability || {}, steps: stepsOf(kind, data.item.state) };
+}
+
+/** 核实弹窗需要源对象（含 version/allowed_actions）；告警读取失败不阻塞核实，只影响展示。 */
+export async function loadUavSource(eventId) {
+  const event = await getUavEvent(eventId);
+  let alarm = null;
+  if (event && event.alarm_id) { try { alarm = await getAlarm(event.alarm_id); } catch { alarm = null; } }
+  return { event, alarm };
+}
+export function loadRiskSource(riskId) { return riskApi.getRisk(riskId); }
+
+/** links 只接受服务端给出的站内 hash 路由；任何非 #/ 前缀的地址都不跳转。 */
+export function navigateTo(link) {
+  if (typeof link !== 'string' || !/^#\/[a-z][a-z0-9-]*(?:\?[^#]*)?$/.test(link)) return false;
+  window.location.hash = link;
+  return true;
+}
+
+function linkParam(link, name) {
+  const idx = String(link || '').indexOf('?');
+  if (idx < 0) return null;
+  const value = new URLSearchParams(link.slice(idx + 1)).get(name);
+  return value ? value : null;
+}
+function stash(page, ctx) {
+  if (window.UI?.goto) { window.UI.goto(page, ctx); return true; }
+  try { sessionStorage.setItem('goto.' + page, JSON.stringify(ctx)); } catch { /* 存储不可用时仍跳转，目标页按默认选中 */ }
+  return navigateTo('#/' + page);
+}
+
+/* 源页面不解析 hash query，跳转沿用各页现有深链约定：告警页读 sessionStorage 的 alarm.sel；
+   风险页 UI.consume('risk') 取 {risk}；监测页 UI.consume('monitor') 取 {device}。先写存储再改 hash。 */
+export function openSourcePage(summary) {
+  const link = summary?.links?.source;
+  if (!navigateTo.test(link)) return false;
+  if (summary.kind === 'UAV_EVENT') {
+    const alarmId = linkParam(link, 'alarm_id');
+    if (!alarmId) return false;
+    try { sessionStorage.setItem('alarm.sel', alarmId); } catch { /* 同上 */ }
+    return navigateTo('#/alarms');
   }
-  if (canRead('risk')) M.riskEvents.forEach(r => out.push(riskSummary(r)));
-  if (canRead('device')) {
-    ensureDeviceIncidents().forEach((incident, id) => {
-      const d = M.devices.find(x => x.id === id);
-      if (d) out.push(deviceSummary(d, incident));
-    });
-  }
-  return out.sort((a, b) => (LEVEL_RANK[b.level] || 0) - (LEVEL_RANK[a.level] || 0)
-    || (BUCKET_RANK[b.statusBucket] || 0) - (BUCKET_RANK[a.statusBucket] || 0)
-    || (KIND_RANK[b.kind] || 0) - (KIND_RANK[a.kind] || 0)
-    || b.occurredTs - a.occurredTs);
+  if (summary.kind === 'RISK') return stash('risk', { risk: summary.sourceId });
+  const deviceId = linkParam(link, 'device_id');
+  return deviceId ? stash('monitor', { device: deviceId }) : false;
 }
+navigateTo.test = link => typeof link === 'string' && /^#\/[a-z][a-z0-9-]*(?:\?[^#]*)?$/.test(link);
 
-export function workbenchStats(events = listWorkbenchEvents()) {
-  return {
-    pending: events.filter(e => e.statusBucket === 'pending').length,
-    processing: events.filter(e => e.statusBucket === 'processing').length,
-    completed: events.filter(e => e.statusBucket === 'completed').length,
-    high: events.filter(e => ['超高风险', '高风险', '高'].includes(e.level)).length
-  };
-}
-
-export function getWorkbenchDetail(key) {
-  if (!key) return null;
-  const [kind, id] = key.split(':');
-  if (kind === 'uav') {
-    const ctx = EVT.of(id);
-    return ctx ? { kind, ctx, summary: uavSummary(id), steps: EVT.steps(ctx), timeline: timelineFor([id, ctx.alarm && ctx.alarm.id, ctx.kase && ctx.kase.id]) } : null;
-  }
-  if (kind === 'risk') {
-    const risk = M.riskEvents.find(r => r.id === id);
-    if (!risk) return null;
-    const context = riskContext(risk);
-    return {
-      kind, risk, route: context.route, plans: context.plans, plan: context.plan,
-      steps: riskSteps(risk), summary: riskSummary(risk), notices: M.noticesOf(id),
-      disposals: risk.disposals || [], timeline: timelineFor([id, risk.targetId])
-    };
-  }
-  const device = M.devices.find(d => d.id === id);
-  const incident = ensureDeviceIncidents().get(id);
-  return device && incident ? { kind, device, incident, summary: deviceSummary(device, incident), timeline: timelineFor([id]) } : null;
-}
-
-function timelineFor(ids) {
-  const set = new Set(ids.filter(Boolean));
-  return M.auditLogs.filter(a => set.has(a.target)).slice().sort((a, b) => String(b.time).localeCompare(String(a.time))).slice(0, 8);
-}
-
-export function advanceUav(key, note) {
-  const id = key.replace(/^uav:/, '');
-  const ctx = EVT.of(id);
-  if (!ctx) return { ok: false, msg: '事件不存在' };
-  return ctx.stage === 2 ? EVT.startLinkedCounter(ctx, { note }) : EVT.advance(ctx, note);
-}
-
-export function verifyUav(key, real, note) {
-  const id = key.replace(/^uav:/, '');
-  const ctx = EVT.of(id);
-  return ctx ? EVT.verify(ctx, { real, note }) : { ok: false, msg: '事件不存在' };
-}
-
-export function actRisk(key, to, repaint) {
-  const id = key.replace(/^risk:/, '');
-  const risk = M.riskEvents.find(r => r.id === id);
-  return risk && window.RISK_IMPL ? window.RISK_IMPL.act(risk, to, repaint) : false;
-}
-
-export function openDeviceReboot(key, hooks) {
-  const id = key.replace(/^device:/, '');
-  const d = M.devices.find(x => x.id === id);
-  const incident = ensureDeviceIncidents().get(id);
-  if (!d || !incident || !window.DEVICE_ACTIONS) return false;
-  return window.DEVICE_ACTIONS.openReboot(d, {
-    onStart(dev, log) {
-      incident.stage = '处理中'; incident.updatedAt = log.at;
-      if (hooks && hooks.onChange) hooks.onChange();
-    },
-    onAck(dev) {
-      incident.stage = '待验证'; incident.updatedAt = M.nowStr();
-      if (hooks && hooks.onChange) hooks.onChange();
-    }
-  });
-}
-
-export function verifyDeviceRecovery(key) {
-  const id = key.replace(/^device:/, '');
-  const d = M.devices.find(x => x.id === id);
-  const incident = ensureDeviceIncidents().get(id);
-  if (!d || !incident) return { ok: false, msg: '设备事件不存在' };
-  if (!M.can('设备实时监测', 'op')) {
-    M.pushAudit('设备实时监测', '恢复校验被拒绝：无操作权限', id, '失败');
-    return { ok: false, msg: '需要「设备实时监测」操作权限' };
-  }
-  if (!window.DEVICE_ACTIONS.canVerify(d)) {
-    M.pushAudit('设备实时监测', '恢复校验失败：在线、心跳或健康条件不满足', id, '失败');
-    return { ok: false, msg: '恢复条件不满足：需设备在线、无告警、健康良好且心跳不超过 2 分钟' };
-  }
-  incident.stage = '已恢复'; incident.updatedAt = M.nowStr();
-  M.pushAudit('设备实时监测', '恢复校验通过，设备事件关闭', id);
-  window.dispatchEvent(new CustomEvent('device:changed', { detail: { id, phase: 'completed' } }));
-  return { ok: true, msg: '恢复校验通过，设备事件已关闭' };
-}
-
-export { DEVICE_STAGES, kindLabel, riskSteps };
+/* ---- 以下为兼容旧消费者保留的导出名：本流程不再写内存状态，全部返回“未接入/请走源模块”的阻断结果。 ---- */
+function notWired(msg) { return { ok: false, msg }; }
+export function advanceUav() { return notWired(BLOCKED_REASON_LABEL.COUNTERMEASURE_NOT_CONNECTED); }
+export function verifyUav() { return notWired('请使用共享核实弹窗（alarmApi.verifyUavEvent）提交核实结论'); }
+export function actRisk() { return notWired('请使用共享核验弹窗（riskApi.verifyRisk）或交接接口，不再本地改写风险状态'); }
+export function openDeviceReboot() { return false; }
+export function verifyDeviceRecovery() { return notWired(BLOCKED_REASON_LABEL.DEVICE_RECOVERY_NOT_CONNECTED); }

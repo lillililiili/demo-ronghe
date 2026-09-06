@@ -53,7 +53,7 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleMissingHeader(MissingRequestHeaderException ex,
             HttpServletRequest request) {
         String message = "Idempotency-Key".equalsIgnoreCase(ex.getHeaderName())
-                ? "系统管理写操作必须提供 Idempotency-Key"
+                ? "写操作必须提供 Idempotency-Key"
                 : "缺少请求头 " + ex.getHeaderName();
         auditFailure(request, "MISSING_REQUEST_HEADER", message);
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
@@ -129,7 +129,17 @@ public class GlobalExceptionHandler {
         if (path.contains("/roles") || path.contains("/permissions") || path.contains("/access-change")) return "roles";
         if (path.contains("/users") || path.contains("/organizations") || path.contains("/districts")) return "users";
         if (path.contains("/device") || path.contains("/commission")) return "devices";
-        if (path.contains("/alarms")) return "alarms";
+        // 无人机事件与来源告警属于同一核实域；风险保持独立，失败审计不能都落到笼统的 system。
+        if (path.contains("/alarms") || path.contains("/uav-events")) return "alarms";
+        if (path.contains("/risks")) return "risk";
+        // 交接与工作台各自是独立模块：失败审计按模块归档，不能都落到笼统的 system。
+        if (path.contains("/handoff")) return "handoff";
+        if (path.contains("/workbench")) return "workbench";
+        // 阶段 7：合法性研判与规则引擎各自归档；计划/航线/空域只读接口归飞行监管，不再落到 system。
+        if (path.contains("/legality-") || path.contains("/rule-effects")) return "assessment";
+        if (path.contains("/rule-sets") || path.contains("/rule-set-versions") || path.contains("/rule-runs")) return "rules";
+        if (path.contains("/flight-plans") || path.contains("/routes") || path.contains("/route-versions")) return "flights";
+        if (path.contains("/airspace")) return "airspace";
         if (path.contains("/stats")) return "statistics";
         return "system";
     }

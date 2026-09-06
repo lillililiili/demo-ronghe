@@ -1,1019 +1,297 @@
 <script>
-/* 模块级状态：跨导航保持（legacy 约定）。
-   noticed / rvOutcome / rvCaseOps 有 sessionStorage 持久化；
-   还原逻辑在 setup 模块作用域执行（legacy script 加载期已对共享 M.cases
-   应用过一次，这里按同一份存储重放，结果幂等）。 */
+/* 模块级状态：跨导航保持筛选、分页与选中项（legacy 约定）。 */
 const S = {
-  /* 表格顶栏下拉默认「全部*」，由用户再收窄。 */
-  st: { page: 1, size: 10, status: '全部状态', region: '全部区域', vio: '全部类型', partner: '全部合作方', days: 30, sel: null, tab: 'case', rvFilter: '全部案件' }
+  page: 1, size: 20, selectedHandoffId: null,
+  filters: { source_kind: '', delivery_status: '', source_mode: '', created: null }
 };
 export default {};
 </script>
 
 <script setup>
-/* 处置处罚管理 —— 转换页（源：legacy pages/punish.js）。
-   三条 U.regParams 仍由 legacy script 模块加载期登记，这里不重复。
-   auth/review/pend 三个页签在上游已删除页签条、当前不可达，代码按 legacy
-   原样保留（deep-state 途径仍可进入，行为一致）。    分页器（U.pager）本页暂保留：列表区在命令式 innerHTML 重刷区内（页签/整页字符串渲染），
-   模板层 n-pagination 放不进去；待该区块结构化后随 P5 迁移。
-*/
-import { h, ref, onMounted, onUnmounted } from 'vue';
+/* 处置处罚管理 —— 阶段 5 交接查询页。
+   页面只读取后端 /handoffs 与 /handoff-recipients 事实：交接清单、材料快照、提交时间、投递状态与阻断原因。
+   原 Mock 案件管理、罚款/裁量、处罚文书、证据下载、反制授权记录与定性复核已停止执行：本期没有真实案件源，
+   对应区域禁用并说明“本期未建设”，不用 handoff_id 伪装 case_id。API 失败只显示失败态，不回退 Mock。 */
+import { computed, onMounted, reactive, ref } from 'vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import UKpis from '@/components/UKpis.vue';
-import { toast } from '@/ui/nv.js';
-import { openModal, closeModal } from '@/ui/modal.js';
-import { openFormModal, optionsOf } from '@/ui/formModal.js';
-import JamAuthModal from '@/components/modals/JamAuthModal.vue';
+import UPanel from '@/components/UPanel.vue';
+import UPagination from '@/components/UPagination.vue';
+import UControl from '@/components/form/UControl.vue';
+import { handoffApi } from '@/services/handoffApi.js';
+import { REASON_CODE_LABEL, RISK_TYPE_LABEL, SOURCE_MODE_LABEL, labelOf } from '@/ui/labels.js';
 
-const M = window.MOCK, U = window.UI, CH = window.CH, EVT = window.EVT;
 usePageChrome('punish');
 const root = ref(null);
-const st = S.st;
-let map = null;
-onUnmounted(() => { if (map) map.destroy(); map = null; });
+const U = window.UI;
 
-const noticeStatus = c => M.caseNoticeStatus(c);
-const noticeCases = () => M.cases.filter(c => c.stage >= M.DISPOSAL_FLOW.length - 1);
-
-const RV_RESULTS = [
-  { k: '维持原定性', desc: '复核后认为事件确认定性成立，案件按原流程继续', c: 't-green' },
-  { k: '撤销案件', desc: '定性依据不成立，案件退回待核实重新走流程', c: 't-red' },
-  { k: '补充证据后重判', desc: '证据要件不齐，退回人工核实环节补证后重新判定', c: 't-amber' }
+/* 文案映射全部为本页常量；服务端字符串只经 Vue 文本插值输出，不进 v-html。 */
+const KIND_LABEL = { RISK: '飞行风险', UAV_EVENT: '无人机事件' };
+const TYPE_LABEL = { RISK_NOTICE: '风险通知', UAV_PUNISHMENT: '处罚交接' };
+const DELIVERY_LABEL = { PENDING_DELIVERY: '待投递', SUBMITTED: '已发送', DELIVERED: '已送达', FAILED: '发送失败' };
+const DELIVERY_TAG = { PENDING_DELIVERY: 't-amber', SUBMITTED: 't-blue', DELIVERED: 't-green', FAILED: 't-red' };
+const DELIVERY_TONE = { PENDING_DELIVERY: 'warn', SUBMITTED: 'info', DELIVERED: 'good', FAILED: 'bad' };
+const RECEIPT_LABEL = { NOT_EXPECTED: '不需回执', PENDING: '等待回执', ACKNOWLEDGED: '已回执', TIMEOUT: '回执超时' };
+const BLOCKED_LABEL = { CHANNEL_NOT_CONNECTED: '通知渠道未接通' };
+const RISK_STATE_LABEL = { PENDING_VERIFICATION: '待核验', PENDING_NOTIFICATION: '待通知', NOTIFIED: '已通知', EXCLUDED: '已排除' };
+const SEVERITY_LABEL = { CRITICAL: '紧急', HIGH: '高', MEDIUM: '中', LOW: '低' };
+const SEVERITY_TAG = { CRITICAL: 't-red', HIGH: 't-red', MEDIUM: 't-amber', LOW: 't-blue' };
+const CONCLUSION_LABEL = { CONFIRMED: '核验通过', EXCLUDED: '已排除' };
+const REFERENCE_LABEL = { plan_id: '关联计划', route_version_id: '航线版本', assessment_id: '关联研判', target_id: '关联目标', track_id: '关联轨迹' };
+const DELIVERY_PAGE_SIZE = 10;
+const FIXED_SORT_NOTE = '服务端固定排序：created_at DESC, handoff_id DESC';
+const NOT_BUILT = '本期未建设';
+/* 本期未建设的原 Mock 功能：只声明边界，不生成任何案件、罚款、文书或证据记录。 */
+const NOT_BUILT_ITEMS = [
+  { key: 'case', label: '处罚案件管理', reason: '尚无真实案件源，交接记录不是案件；不以交接编号伪装案件编号' },
+  { key: 'penalty', label: '罚款与裁量', reason: '罚则金额档位未经业务方确认，处罚主体未定' },
+  { key: 'doc', label: '《行政处罚决定书》生成与下载', reason: '平台未获授权出具处罚文书' },
+  { key: 'evidence', label: '证据链查看与下载', reason: '正式证据文件与保管未接入，交接材料不含文件' },
+  { key: 'jam', label: '反制与公安信号干扰授权记录', reason: '反制/干扰完成事实未接入，处罚交接一律阻断' },
+  { key: 'review', label: '定性依据复核与待补充线索', reason: '依赖案件对象，本期不存在' }
 ];
-const RV_KEY = 'punish.review.v1';
-let rvOutcome = {};
-let rvCaseOps = {};
-function rvSave() {
-  try { sessionStorage.setItem(RV_KEY, JSON.stringify({ rvOutcome, rvCaseOps })); } catch (e) { }
+
+const kindOptions = [{ label: '全部来源', value: '' }, ...Object.keys(KIND_LABEL).map(value => ({ label: KIND_LABEL[value], value }))];
+const deliveryOptions = [{ label: '全部投递状态', value: '' }, ...Object.keys(DELIVERY_LABEL).map(value => ({ label: DELIVERY_LABEL[value], value }))];
+const sourceModeOptions = [{ label: '全部来源模式', value: '' }, ...['mock', 'replay', 'live'].map(value => ({ label: value, value }))];
+
+/* /auth/me 的 permission_codes 只有 `<模块>.read/.op/.auth`，不含 `handoff:read` 动作码；
+   无权限态不在前端预判，直接请求并以服务端 403 为准。 */
+const forbidden = ref(false);
+const filters = reactive(S.filters);
+const listLoading = ref(false);
+const listError = ref('');
+const handoffs = ref([]);
+const total = ref(0);
+const page = ref(S.page);
+const size = ref(S.size);
+const kpiTotals = ref({ all: null, pending: null, delivered: null });
+const kpiFailed = ref({ all: false, pending: false, delivered: false });
+const detailLoading = ref(false);
+const detailError = ref('');
+const selected = ref(null);
+const deliveries = ref([]);
+const deliveriesTotal = ref(0);
+const deliveriesPage = ref(1);
+const deliveriesLoading = ref(false);
+const deliveriesError = ref('');
+const legacyLinkNote = ref('');
+let listToken = 0, kpiToken = 0, detailToken = 0, deliveriesToken = 0;
+
+/* 3 张 KPI 与原页面同位同色；数值只取服务端 size=1 的 total，不在前端自算。 */
+const kpiList = computed(() => {
+  const value = key => (kpiFailed.value[key] ? '—' : kpiTotals.value[key] == null ? '…' : Number(kpiTotals.value[key]).toLocaleString('en-US'));
+  const desc = (key, text) => (kpiFailed.value[key] ? '服务端总数读取失败' : text);
+  if (forbidden.value) return [
+    { label: '交接总数', value: '—', color: 'blue', icon: 'gavel', desc: '服务端拒绝：无 handoff:read 权限' },
+    { label: '待投递', value: '—', color: 'amber', icon: 'alert', desc: '服务端拒绝：无 handoff:read 权限' },
+    { label: '已送达', value: '—', color: 'green', icon: 'check', desc: '服务端拒绝：无 handoff:read 权限' }
+  ];
+  return [
+    { label: '交接总数', value: value('all'), color: 'blue', icon: 'gavel', desc: desc('all', '当前权限范围内服务端总数') },
+    { label: '待投递', value: value('pending'), color: 'amber', icon: 'alert', desc: desc('pending', '已提交、尚未发送（通知渠道未接通）') },
+    { label: '已送达', value: value('delivered'), color: 'green', icon: 'check', desc: desc('delivered', '仅 local/test 的 mock 历史样例可能出现') }
+  ];
+});
+
+/* UPanel 的 extra 走 v-html：只输出本页常量映射出的标签，服务端字符串一律不进 v-html。 */
+const detailExtra = computed(() => {
+  const status = selected.value?.delivery_status;
+  if (!status) return '';
+  return `<span class="tag ${DELIVERY_TAG[status] || 't-gray'}">${DELIVERY_LABEL[status] || '未知状态'}</span>`;
+});
+const visibleReferences = computed(() => {
+  const references = selected.value?.material?.references || {};
+  return Object.keys(REFERENCE_LABEL).filter(key => references[key]).map(key => ({ key, label: REFERENCE_LABEL[key], value: references[key] }));
+});
+/* 服务端 availability.material：FORBIDDEN（缺 risk:read）/ SOURCE_NOT_VISIBLE（源风险不在可见范围）时风险材料与核实历史被省略。 */
+const materialUnavailableText = computed(() => {
+  const availability = selected.value?.availability?.material;
+  if (availability === 'FORBIDDEN') return '当前账号没有查看源风险的权限（risk:read），服务端已省略风险材料与核实历史。';
+  if (availability === 'SOURCE_NOT_VISIBLE') return '源风险已不在当前可见范围，服务端已省略风险材料与核实历史。';
+  return '快照中没有风险材料。';
+});
+const deliveryNote = computed(() => {
+  const row = selected.value;
+  if (!row) return '';
+  if (row.delivery_status === 'PENDING_DELIVERY') return '已提交，尚未发送：材料已入库等待投递，通知渠道未接通。提交成功不等于已通知上级，也不等于处罚办结。';
+  if (row.delivery_status === 'DELIVERED') return row.source_mode === 'mock' ? '这是 local/test 的只读 mock 历史样例；本期生产写入只会产生“待投递”。' : '外部系统已送达；送达不等于处罚办结。';
+  if (row.delivery_status === 'FAILED') return '最近一次投递失败；本期未建设发送重试。';
+  return '';
+});
+
+function label(map, value, fallback = '未知') { return value == null || value === '' ? fallback : (map[value] || value); }
+function formatTime(value) {
+  if (value === null || value === undefined) return '—';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString('zh-CN', { hour12: false });
 }
-(function rvRestore() {
+function formatClock(value) {
+  if (value === null || value === undefined) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  return `${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+function messageOf(reason, fallback) {
+  if (!reason) return fallback;
+  if (reason.status === 401) return '登录已失效，请重新登录。';
+  if (reason.status === 403) return '当前账号没有查看业务交接的权限（handoff:read）。';
+  if (reason.status === 404) return '交接记录不存在或不在当前权限范围内。';
+  if (reason.code === 'NETWORK_ERROR' || reason.code === 'TIMEOUT') return '服务连接超时或不可用，请稍后重试。';
+  return reason.message || fallback;
+}
+
+function listQuery() {
+  const query = { source_kind: filters.source_kind, delivery_status: filters.delivery_status, source_mode: filters.source_mode };
+  const range = Array.isArray(filters.created) ? filters.created : null;
+  if (range && range[0] != null && range[1] != null) {
+    // 契约要求 [from,to) 且 from < to；不满足时直接报错，不偷偷丢弃筛选。
+    if (!(Number(range[0]) < Number(range[1]))) throw new Error('提交时间范围必须满足开始时间早于结束时间。');
+    query.created_from = Number(range[0]);
+    query.created_to = Number(range[1]);
+  }
+  return query;
+}
+
+async function loadKpis() {
+  const token = ++kpiToken;
+  const queries = { all: {}, pending: { delivery_status: 'PENDING_DELIVERY' }, delivered: { delivery_status: 'DELIVERED' } };
+  await Promise.all(Object.keys(queries).map(async key => {
+    try {
+      const data = await handoffApi.listHandoffs({ ...queries[key], page: 1, size: 1 });
+      if (token !== kpiToken) return;
+      kpiTotals.value = { ...kpiTotals.value, [key]: data.total };
+      kpiFailed.value = { ...kpiFailed.value, [key]: false };
+    } catch {
+      if (token !== kpiToken) return;
+      kpiFailed.value = { ...kpiFailed.value, [key]: true };
+    }
+  }));
+}
+
+async function loadList(nextPage = page.value, requestedId = null) {
+  const token = ++listToken;
+  listLoading.value = true;
+  listError.value = '';
   try {
-    const v = JSON.parse(sessionStorage.getItem(RV_KEY) || 'null');
-    if (!v) return;
-    rvOutcome = v.rvOutcome || {}; rvCaseOps = v.rvCaseOps || {};
-    Object.keys(rvCaseOps).forEach(id => {
-      const c = M.cases.find(x => x.id === id); if (!c) return;
-      const o = rvCaseOps[id];
-      if (o.targetId && o.targetId !== c.targetId) { delete rvCaseOps[id]; return; }
-      c.stage = o.stage; c.docReady = o.docReady;
-      M.rebuildCaseSteps(c);
-    });
-    M.reviewRequests.forEach(r => { if (rvOutcome[r.id]) r.status = '已办结'; });
-  } catch (e) { }
-})();
-
-const MY_MODULE = '处置处罚管理';
-const mine = stp => stp.owner === MY_MODULE;
-
-function judgeDiff(c) {
-  const t = M.allTargets.find(x => x.id === c.targetId || x.target_id === c.targetId);
-  const snap = c.filingSnapshot || {};
-  if (!t) return { lost: true, snap, items: [] };
-  const cur = {
-    legal: t.legal_status || t.legal,
-    vio: ((t.violation_reasons || []).join('、')) || t.violation || '',
-    risk: t.risk_level || t.risk,
-    conf: t.source_confidence
-  };
-  const sv = (snap.violation_reasons || []).join('、');
-  const items = [];
-  if (snap.legal_status !== cur.legal) items.push(['定性', snap.legal_status, cur.legal]);
-  if (sv !== cur.vio) items.push(['违规事由', sv || '—', cur.vio || '—']);
-  if (snap.risk_level !== cur.risk) items.push(['风险等级', snap.risk_level, cur.risk]);
-  return { lost: false, snap, cur, items, legalChanged: snap.legal_status !== cur.legal };
-}
-const rvPending = () => M.reviewRequests.filter(r => r.status !== '已办结');
-const rvMismatch = () => M.cases.filter(c => judgeDiff(c).items.length);
-
-function rvAudit(action, target, by, result) {
-  M.auditLogs.unshift({
-    id: 'AU' + M.util.p3(M.auditLogs.length + 1), time: M.util.fmtDT(M.CONF.demoTime),
-    user: by, role: '处置授权人', module: '处置处罚管理', action, target,
-    result: result || '成功', ip: '10.20.5.15', term: '终端-01'
-  });
-}
-const snapOf = c => c.filingSnapshot || {};
-
-const SORT = { key: null, dir: 'asc' };
-const SORT_KEYS = {
-  id: c => c.id,
-  targetId: c => c.targetId,
-  model: c => (c.model === '未识别' ? '\uFFFF' : c.model) + c.partner,
-  violation: c => c.violation || '',
-  ts: c => c.ts,
-  status: c => ['待通知', '已通知'].indexOf(noticeStatus(c)),
-  penalty: c => ['警告', '驱离', '罚款'].indexOf(c.penalty),
-  fine: c => c.penalty === '罚款' ? c.fine : -1
-};
-function sortTh(label, key) {
-  const on = SORT.key === key;
-  return `<span data-sort="${key}" title="点击排序" style="cursor:pointer;user-select:none;white-space:nowrap;
-    border-bottom:1px dotted ${on ? '#8fbaff' : 'rgba(159,182,217,.45)'};${on ? 'color:#8fbaff' : ''}">${label}${on ? (SORT.dir === 'asc' ? ' ▲' : ' ▼') : ''}</span>`;
-}
-function sorted(rows) {
-  const f = SORT.key && SORT_KEYS[SORT.key];
-  if (!f) return rows;
-  const d = SORT.dir === 'asc' ? 1 : -1;
-  return rows.slice().sort((a, b) => { const x = f(a), y = f(b); return (x < y ? -1 : x > y ? 1 : 0) * d; });
-}
-function filtered() {
-  const from = M.CONF.demoTime.getTime() - st.days * 864e5;
-  return noticeCases().filter(c =>
-    c.ts >= from &&
-    (st.status === '全部状态' || noticeStatus(c) === st.status) &&
-    (st.region === '全部区域' || c.district === st.region) &&
-    (st.vio === '全部类型' || c.violation === st.vio) &&
-    (st.partner === '全部合作方' || c.partner === st.partner))
-    /* 未结案排前面（用户裁定 2026-08-30：把要处理的先选出来）；filter 已给新数组，
-       sort 不动 M.cases。同档内保持时间倒序。 */
-    .sort((a, b) => ((a.status === '已结案') - (b.status === '已结案')) || b.ts - a.ts);
-}
-
-/* ---- 首屏（与 legacy render() 同构：深链消费 + KPI） ---- */
-const ctx = U.consume('punish');
-if (ctx && ctx.caseId) {
-  const hit = M.cases.find(c => c.id === ctx.caseId);
-  if (hit) {
-    st.sel = hit;
-    Object.assign(st, { status: '全部状态', region: '全部区域', vio: '全部类型', partner: '全部合作方', days: 30 });
-    st.tab = 'case';
-    const idx = sorted(filtered()).findIndex(c => c.id === hit.id);
-    if (idx >= 0) st.page = Math.max(1, Math.ceil((idx + 1) / st.size));
-  }
-}
-// safe-default: 默认选中当前筛选下的首条案件，用户可见可改
-st.sel = noticeCases().includes(st.sel) ? st.sel : (filtered()[0] || noticeCases()[0] || null);
-const all0 = noticeCases();
-const pendingNotice0 = all0.filter(c => noticeStatus(c) === '待通知').length;
-const notified0 = all0.filter(c => noticeStatus(c) === '已通知').length;
-const kpiList = [
-  {
-    label: '处罚案件总数', value: U.num(all0.length), color: 'blue', icon: 'gavel',
-    desc: `待通知 ${pendingNotice0} 件 · 已通知 ${notified0} 件`
-  },
-  {
-    label: '待通知案件', value: U.num(pendingNotice0), color: 'amber', icon: 'alert',
-    desc: `等待通知处罚部门 · 占比 ${U.pct(pendingNotice0, all0.length)}`
-  },
-  {
-    label: '已通知案件', value: U.num(notified0), color: 'green', icon: 'check',
-    desc: `通知完成率 ${U.pct(notified0, all0.length)}`
-  }
-];
-
-function tabCase() {
-  return `<div class="row" style="height:100%;min-height:0;padding-bottom:6px">
-    ${U.panel({
-    title: '处罚案件管理', style: 'flex:6;min-width:0', nopad: true,
-    body: `<div class="toolbar">
-        ${U.field('时间', U.select('days', [{ v: 7, t: '近7天' }, { v: 30, t: '近30天' }], st.days))}
-        ${U.field('区域', U.select('region', ['全部区域', ...M.DISTRICTS.map(d => d.name)], st.region))}
-        ${U.field('违法类型', U.select('vio', ['全部类型', ...M.VIOLATIONS], st.vio))}
-        ${U.field('合作方', U.select('partner', ['全部合作方', ...M.PARTNERS.map(p => p.name)], st.partner))}
-        ${U.field('通知状态', U.select('status', ['全部状态', '待通知', '已通知'], st.status))}
-        <div class="toolbar-actions">
-          <button class="btn" id="pnR">重置筛选</button>
-          <button class="btn" id="pnExp">${U.icon('download')} 导出</button>
-        </div>
-      </div>
-      <div id="pnList" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>`
-  })}
-    ${U.panel({
-    title: '案件详情', style: 'flex:4;min-width:0', nopad: true,
-    extra: `<span id="pnSt"></span>`,
-    body: `<div id="pnDetail" style="flex:1;overflow:auto;padding:12px"></div>`
-  })}
-  </div>`;
-}
-
-function tabAuth() {
-  const A = M.authLogs;
-  const jam = A.filter(a => a.type.includes('公安'));
-  const estop = A.filter(a => a.estop !== '未触发');
-  const eff = A.filter(a => a.result !== '无效');
-  return `<div class="row" style="height:200px;margin-bottom:12px">
-    ${U.panel({
-    title: '授权概览', style: 'width:430px',
-    body: U.kv([
-      ['授权总次数', `<b class="mono" style="font-size:15px">${A.length}</b> 次`],
-      ['公安信号干扰', `<b class="mono" style="color:#ff8b95">${jam.length}</b> 次（需公安审批文号）`],
-      ['反制处置', `<b class="mono" style="color:#ffb083">${A.length - jam.length}</b> 次`],
-      ['处置有效率', `<b class="mono" style="color:#79e5a5">${U.pct(eff.length, A.length)}</b>（迫降/返航/退出）`],
-      ['触发急停', `<b class="mono" style="color:#ffd07a">${estop.length}</b> 次`],
-      ['审计完整性', `<span class="tag t-green">100% 完整</span>`]
-    ])
-  })}
-    ${U.panel({ title: '处置结果分布', style: 'flex:1', body: `<div id="pnAuthRes" style="height:100%"></div>` })}
-    ${U.panel({ title: '授权类型与联动单位', style: 'flex:1.2', body: `<div id="pnAuthUnit" style="height:100%"></div>` })}
-  </div>
-  ${U.panel({
-    title: '反制与公安信号干扰授权记录', sub: '全过程审计（§11.1）· 不可修改、不可删除',
-    style: 'height:calc(100vh - 482px);min-height:410px;margin-bottom:12px', nopad: true,
-    extra: `<button class="btn" id="pnAuthExp">${U.icon('download')} 导出审计</button>
-      <button class="btn danger" id="pnJam">发起公安授权信号干扰</button>`,
-    body: `<div id="pnAuth" style="flex:1;min-height:0;display:flex;flex-direction:column"></div>`
-  })}`;
-}
-
-function tabReview() {
-  const pend = rvPending(), all = M.reviewRequests;
-  const closedCase = pend.filter(r => r.caseStatus === '已结案').length;
-  const mm = rvMismatch();
-  const gate = M.evidenceGateLog || [];
-  const gateFiled = gate.filter(x => M.cases.some(c => c.targetId === x.targetId)).length;
-  return `<div class="row" style="height:200px;margin-bottom:12px">
-    ${U.panel({
-    title: '复核概览', style: 'width:420px',
-    body: U.kv([
-      ['待复核请求', `<b class="mono" style="font-size:15px;color:${pend.length ? '#ff8b95' : '#79e5a5'}">${pend.length}</b> 条`
-        + (all.length ? `<span style="color:var(--txt-3)">（累计 ${all.length} 条）</span>` : '')],
-      ['其中已结案案件', `<b class="mono" style="color:${closedCase ? '#ff8b95' : 'var(--txt-2)'}">${closedCase}</b> 件`
-        + (closedCase ? '　<span class="tag t-red">须走 §11 复核流程</span>' : '')],
-      ['已办结复核', `<b class="mono">${Object.keys(rvOutcome).length}</b> 条`],
-      ['事件确认判定一致性', mm.length
-        ? `<span class="tag t-red">${mm.length} / ${M.cases.length} 件不一致</span>`
-        : `<span class="tag t-green">${M.cases.length} 件全部一致</span>`],
-      ['证据门禁降级', `<b class="mono">${gate.length}</b> 个目标（其中已有处置记录 <b class="mono">${gateFiled}</b> 个）`]
-    ])
-  })}
-    ${U.panel({
-    title: '定性依据复核队列',
-    sub: `设计 §11 · 受理 → 比对事件确认与当前判定 → 出具结论 → 真实改案件状态并写审计`,
-    style: 'flex:1', nopad: true,
-    body: `<div id="pnRvList" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>`
-  })}
-  </div>
-  ${U.panel({
-    title: '事件确认判定一致性核查', sub: `覆盖全部 ${M.cases.length} 件案件 · 处置记录是历史事实，快照不因后续重新判定而消失`,
-    style: 'height:calc(100vh - 482px);min-height:410px;margin-bottom:12px', nopad: true,
-    extra: U.select('rvf', ['全部案件', '仅看不一致', '仅已结案'], st.rvFilter),
-    body: `<div id="pnRvChk" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>`
-  })}`;
-}
-
-function rvList() {
-  const rows = M.reviewRequests;
-  if (!rows.length) {
-    const gate = M.evidenceGateLog || [];
-    const noCase = gate.filter(x => !M.cases.some(c => c.targetId === x.targetId));
-    return `<div style="padding:22px 20px;color:var(--txt-2);font-size:12.5px;line-height:1.95">
-      <div style="font-size:14px;color:var(--txt);margin-bottom:8px">当前无待复核请求</div>
-      复核请求由证据充分性门禁产生，且<b>仅当被降级的目标已有处置记录</b>时才需要复核 ——
-      尚无处置记录的目标由判定页直接改判即可，不涉及案件状态，也就不需要走 §11。<br>
-      当前证据门禁共降级 <b class="mono">${gate.length}</b> 个目标，其中 <b class="mono">${noCase.length}</b> 个未关联案件：
-      <div style="margin-top:8px">${gate.length ? gate.map(x => `<div style="padding:6px 9px;border:1px solid var(--line-2);border-radius:5px;margin-bottom:6px">
-          <span class="mono">${x.targetId}</span>　${U.legal(x.from)} <span style="color:var(--txt-3)">→</span> ${U.legal('待确认')}
-          ${M.cases.some(c => c.targetId === x.targetId) ? U.tag('已有处置记录', 't-red') : U.tag('尚无处置记录 · 无需复核', 't-gray')}
-          <div style="color:var(--txt-3);font-size:11.5px;margin-top:3px;white-space:normal">${x.reasons.join('；')}</div>
-        </div>`).join('') : '<span style="color:var(--txt-3)">门禁未降级任何目标</span>'}</div>
-      <div style="color:var(--txt-3);margin-top:6px">一旦出现「进入处置后被降级」的目标，请求会自动进入本队列，本页无需改动。</div>
-    </div>`;
-  }
-  return U.table([
-    { t: '请求编号', w: '76px', cls: 'num', render: r => r.id },
-    { t: '提出时间', w: '92px', cls: 'num', render: r => `<div>${r.at.slice(0, 10)}</div><div>${r.at.slice(11)}</div>` },
-    {
-      t: '目标 / 案件', w: '140px', render: r => `<div class="mono" style="font-size:11.5px">${r.targetId}</div>
-        <div class="mono" style="font-size:11.5px;color:var(--txt-3)">${r.caseId}</div>${U.tag(r.caseStatus)}`
-    },
-    { t: '原判定', w: '72px', render: r => U.legal(r.from) },
-    { t: '拟改判', w: '72px', render: r => U.legal(r.to) },
-    { t: '降级理由', render: r => `<div style="white-space:normal;font-size:11.5px">${r.reason}</div>
-        <div style="white-space:normal;font-size:11px;color:var(--txt-3);margin-top:2px">${r.raisedBy}</div>` },
-    {
-      t: '状态 / 结论', w: '132px', render: r => {
-        const o = rvOutcome[r.id];
-        return U.tag(r.status, r.status === '已办结' ? 't-green' : 't-amber') +
-          (o ? `<div style="white-space:normal;font-size:11px;color:var(--txt-3);margin-top:3px">
-            ${(RV_RESULTS.find(x => x.k === o.result) || {}).k || o.result}<br>${o.by} · ${o.at.slice(5, 16)}</div>` : '');
-      }
-    },
-    { t: '操作', w: '58px', align: 'center', render: r => `<span class="lnk" data-rv="${r.id}">${rvOutcome[r.id] ? '查看' : '受理'}</span>` }
-  ], rows, { rowId: r => r.id });
-}
-
-function rvCheck() {
-  let rows = M.cases;
-  if (st.rvFilter === '仅看不一致') rows = rvMismatch();
-  else if (st.rvFilter === '仅已结案') rows = rows.filter(c => c.status === '已结案');
-  const mm = rvMismatch();
-  const head = `<div style="padding:7px 12px;font-size:12px;border-bottom:1px solid var(--line-2);
-      background:${mm.length ? 'rgba(255,77,94,.08)' : 'rgba(47,208,110,.07)'};white-space:normal">
-    ${mm.length
-      ? `<b style="color:#ff96a0">${mm.length} 件</b>案件的事件确认快照与当前判定不一致，需按 §11 复核`
-      : `<b style="color:#79e5a5">全部 ${M.cases.length} 件</b>案件的事件确认快照与当前判定一致，暂无需复核`}
-    <span style="color:var(--txt-3)">　· 差异只认「定性 / 违规事由 / 风险等级」三项；置信度随融合权重调整而变（F0210），不计为定性差异</span>
-  </div>`;
-  return head + U.table([
-    { t: '案件编号', w: '118px', cls: 'num', render: c => c.id },
-    { t: '状态', w: '74px', render: c => U.tag(c.status) },
-    {
-      t: '事件确认时判定', w: '150px', render: c => {
-        const d = judgeDiff(c), s2 = d.snap;
-        return `<div>${U.legal(s2.legal_status)} ${(s2.violation_reasons || []).join('、')}</div>
-          <div style="font-size:11px;color:var(--txt-3);white-space:normal">${s2.risk_level} · 置信 ${U.confPct(s2.confidence)} · ${(s2.at || '').slice(5, 16)}</div>`;
-      }
-    },
-    {
-      t: '当前判定', w: '150px', render: c => {
-        const d = judgeDiff(c);
-        if (d.lost) return `<span class="tag t-purple">目标已合并/分裂</span>`;
-        return `<div>${U.legal(d.cur.legal)} ${d.cur.vio}</div>
-          <div style="font-size:11px;color:var(--txt-3);white-space:normal">${d.cur.risk} · 置信 ${U.confPct(d.cur.conf)}</div>`;
-      }
-    },
-    { t: '定性差异', w: '150px', render: c => rvDiffCell(c, '定性') },
-    { t: '违规事由差异', w: '190px', render: c => rvDiffCell(c, '违规事由') },
-    { t: '风险差异', w: '150px', render: c => rvDiffCell(c, '风险等级') }
-  ], rows, { rowId: c => c.id, activeId: st.sel && st.sel.id });
-}
-
-function rvDiffCell(c, key) {
-  const d = judgeDiff(c);
-  if (d.lost) return key === '定性'
-    ? '<span style="font-size:11.5px;color:var(--txt-3);white-space:normal">目标 ID 已变更，见案件详情回溯</span>'
-    : '<span style="color:var(--txt-3)">—</span>';
-  const item = d.items.find(x => x[0] === key);
-  return item
-    ? `${U.tag('有差异', 't-red')}<div style="font-size:11.5px;white-space:normal;margin-top:3px">${item[1]} → <b>${item[2]}</b></div>`
-    : '<span style="color:var(--txt-3)">—</span>';
-}
-
-let _tgt = null;
-function tgtOf(id) {
-  if (!_tgt) { _tgt = new Map(); M.allTargets.forEach(t => { _tgt.set(t.id, t); if (t.target_id) _tgt.set(t.target_id, t); }); }
-  return _tgt.get(id);
-}
-function pendStat() {
-  const D = M.illegalDisposition;
-  const PS = M.pendingSubjects || [];
-  const by = {};
-  PS.forEach(p => { by[p.blockedBy] = (by[p.blockedBy] || 0) + 1; });
-  if (D) return {
-    illegal: D.illegalNow, filed: D.caseTotal, filedIllegal: D.filed,
-    revised: D.downgraded, revisedCases: D.downgradedCases || [], pend: D.pending, by
-  };
-  return { illegal: NaN, filed: M.cases.length, filedIllegal: NaN, revised: NaN, revisedCases: [], pend: PS.length, by, fallback: true };
-}
-
-function tabPend() {
-  const S2 = pendStat();
-  return `<div class="warnbox" style="margin-bottom:12px;border-color:rgba(255,176,32,.5);line-height:1.85">
-      <b>本页签的 ${(M.pendingSubjects || []).length} 条不是案件，也没有发起任何处罚处置。</b>
-      它们是<b>待补充线索</b> —— 违法事实成立、但责任主体或证据要件尚不完整的目标（编号 <span class="mono">PS…</span>，
-      与案件编号 <span class="mono">CF…</span> 不同一序列）。<br>
-      本屏<b>不提供转入处罚入口</b>，也不产生文书、罚款与处置流程；这些只存在于「处罚案件管理」页签的
-      <b>${M.cases.length}</b> 件案件里。补齐认定路径后，由数据层重新派生为案件，届时才会出现在那一侧。
-    </div>
-    <div class="row" style="height:200px;margin-bottom:12px">
-    ${U.panel({
-    title: '违法目标去向', sub: '口径实时派生',
-    style: 'width:430px',
-    body: U.kv([
-      ['当前判定非法', `<b class="mono" style="font-size:15px">${S2.illegal}</b> 个目标`],
-      ['├ 已有处罚记录', `<b class="mono" style="color:#79e5a5">${S2.filedIllegal}</b> 件`],
-      ['├ 待办案源', `<b class="mono" style="color:#ffd07a">${S2.pend}</b> 条（${Object.entries(S2.by).map(x => x[0] + ' ' + x[1]).join(' · ')}）`],
-      ['└ 合计核对', S2.filedIllegal + S2.pend === S2.illegal
-        ? `<span class="tag t-green inline-icon">${S2.filedIllegal} + ${S2.pend} = ${S2.illegal} ${U.icon('check')}</span>`
-        : `<span class="tag t-red">${S2.filedIllegal} + ${S2.pend} ≠ ${S2.illegal}</span>`],
-      ['另计', S2.revised
-        ? `<b class="mono">${S2.revised}</b> 件已有处置记录的目标经事实修订降级为「待确认」，已进入 §11 复核
-           <div style="font-size:11px;color:var(--txt-3);white-space:normal">
-             ${(S2.revisedCases || []).map(x => `${x.id}（${x.status}）确认时为 ${x.filedAs} → 现 ${x.nowIs}`).join('；')}
-             <br>处置记录是历史事实，不因今天重新判定而消失，故不计入当前非法目标</div>`
-        : '—']
-    ])
-  })}
-    ${U.panel({
-    title: '为什么这些目标暂不进入处罚', sub: '闸门在责任主体和证据要件，不在机型', style: 'flex:1',
-    body: `<div class="warnbox" style="margin-bottom:8px;line-height:1.75">
-        能把一个目标绑定到具体人或单位的只有四条路：<b>计划报备匹配 / 实名 SN / 遥控源定位 / 协议破解·RemoteID</b>。
-        一条都没有时<b>不得具名</b> —— 处罚决定书是对着当事人开的，主体认错了，整份文书就是错的。
-        机型未识别不作为闸门：它只影响文书里的描述项与罚则分级，不影响违法事实成立。</div>
-      <div style="font-size:12.5px;color:var(--txt-2);line-height:1.95">
-        本屏<b>不提供转入处罚入口</b> —— 条件不满足时没有入口，这本身就是闸门。
-        补齐任一条认定路径（调证 / 现场查获 / 布控）后，由数据层重新派生为案件。<br>
-        <span style="color:var(--txt-3)">「证据待补强」是另一类：主体可认定，但证据要件不足以支撑定性，需补证后再判。</span>
-      </div>`
-  })}
-  </div>
-  ${U.panel({
-    title: '待补充线索（非案件）', sub: `${(M.pendingSubjects || []).length} 条 · 违法事实成立但责任主体或证据要件不完整`,
-    style: 'height:calc(100vh - 482px);min-height:410px;margin-bottom:12px', nopad: true,
-    extra: `<button class="btn" id="pnPendExp">${U.icon('download')} 导出待办清单</button>`,
-    body: `<div id="pnPendList" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>`
-  })}`;
-}
-
-function pendList() {
-  const PS = M.pendingSubjects || [];
-  if (!PS.length) return `<div class="empty">当前没有待补充线索：全部违法目标均已具备进入处罚流程的条件</div>`;
-  return U.table([
-    {
-      t: '案源编号', w: '96px', cls: 'num',
-      render: p => `<span title="案源编号（PS 序列），不是案件编号（CF 序列）">${p.id}</span>`
-    },
-    { t: '时间', w: '92px', cls: 'num', render: p => `<div>${p.date}</div><div>${(p.time || '').slice(11)}</div>` },
-    {
-      t: '目标 / 区域', w: '138px', render: p => `<div class="mono" style="font-size:11.5px">${p.targetId}</div>
-        <div style="font-size:11px;color:var(--txt-3)">${p.district}</div>`
-    },
-    { t: '违法类型', w: '100px', render: p => U.tag(p.violation, 't-orange') },
-    { t: '机型', w: '146px', render: p => U.modelTag(p.model, p.modelSource, true) },
-    {
-      t: '来源 / 置信', w: '100px', render: p => `<div>${p.source}</div>
-        <div style="font-size:11px;color:var(--txt-3)">${U.confPct(p.source_confidence)} · ${p.track_status}</div>`
-    },
-    { t: '阻断原因', w: '104px', render: p => U.tag(p.blockedBy, p.blockedBy === '责任主体待认定' ? 't-red' : 't-amber') },
-    {
-      t: '缺什么', w: '230px', render: p => `<div style="white-space:normal;font-size:11.5px">
-        ${(p.missing || []).map(x => '· ' + x).join('<br>')}</div>`
-    },
-    { t: '下一步', render: p => `<div style="white-space:normal;font-size:11.5px;color:#ffd07a">${p.nextStep}</div>` },
-    { t: '', w: '46px', align: 'center', render: p => `<span class="lnk" data-ps="${p.id}">详情</span>` }
-  ], PS, { rowId: p => p.id });
-}
-
-function pendModal(p) {
-  if (!p) return;
-  const t = tgtOf(p.targetId);
-  openModal({
-    title: '待办案源 · ' + p.id, width: '720px',
-    body: `<div class="warnbox">本条<b>不是案件</b>：违法事实成立，但${p.blockedBy === '责任主体待认定'
-      ? '责任主体没有任何认定路径，依法不得具名当事人' : '证据要件不足以支撑定性'}，
-      因此未进入处罚流程，也没有处罚文书与罚款。</div>
-      ${U.kv([
-      ['目标编号', `<span class="mono">${p.targetId}</span>`],
-      ['发生时间 / 区域', p.time + ' · ' + p.district],
-      ['违法事实', (p.violation_reasons || [p.violation]).map(x => U.tag(x, 't-orange')).join(' ')],
-      ['机型', U.modelTag(p.model, p.modelSource)],
-      ['感知来源', `${p.source} · 置信度 ${U.confPct(p.source_confidence)} · 轨迹${p.track_status}`],
-      ['主体认定路径', p.subjectSource
-        ? `<span class="tag t-cyan">${p.subjectSource}</span>`
-        : `<span class="tag t-red">无</span> <span style="color:var(--txt-3)">四条路径均未命中</span>`],
-      ['阻断原因', U.tag(p.blockedBy, p.blockedBy === '责任主体待认定' ? 't-red' : 't-amber')]
-    ])}
-      ${U.sect('认定缺口', `<div style="font-size:12.5px;line-height:2">
-        ${(p.missing || []).map(x => `<div class="inline-icon">${U.icon('cross')} ${x}</div>`).join('')}</div>`)}
-      ${U.sect('下一步', `<div style="font-size:12.5px;color:#ffd07a">${p.nextStep}</div>
-        <div style="font-size:11.5px;color:var(--txt-3);margin-top:6px;white-space:normal">
-          补齐任一条认定路径后由数据层重新派生为案件；本页不提供直接转入处罚入口 —— 条件不满足时没有入口，这本身就是闸门。</div>`)}
-      ${t ? U.sect('目标当前判定', U.kv([['定性', U.legal(t.legal_status || t.legal)],
-      ['风险等级', U.tag(t.risk_level || t.risk)],
-      ['来源可信度', U.confPct(t.source_confidence)]])) : ''}`,
-    footer: `<button class="btn" data-close>关闭</button>`
-  });
-}
-
-function list() {
-  const rows = sorted(filtered());
-  const page = rows.slice((st.page - 1) * st.size, st.page * st.size);
-  return U.table([
-    { t: sortTh('案件编号', 'id'), k: 'id', w: '134px', cls: 'num' },
-    {
-      t: sortTh('目标编号', 'targetId'), w: '106px', cls: 'num',
-      render: c => `<span title="${c.targetId}" style="font-size:11.5px">${c.targetId}</span>`
-    },
-    {
-      t: sortTh('机型 / 主体', 'model'), w: '128px',
-      render: c => `<div style="white-space:normal;line-height:1.4">${U.modelTag(snapOf(c).model || c.model, snapOf(c).model_source, true)}</div>
-        <div title="${(snapOf(c).subject || c.partner) + ' · ' + c.pilot}" style="font-size:11px;color:var(--txt-3);
-          white-space:normal;line-height:1.4;max-height:2.8em;overflow:hidden;display:-webkit-box;
-          -webkit-line-clamp:2;-webkit-box-orient:vertical">${snapOf(c).subject || c.partner} · ${c.pilot}</div>`
-    },
-    {
-      t: sortTh('违法类型', 'violation'), w: '84px',
-      render: c => `<div style="white-space:normal;line-height:1.5"><span class="tag t-orange"
-        style="white-space:normal;display:inline">${c.violation}</span></div>`
-    },
-    { t: sortTh('发生时间 / 区域', 'ts'), w: '128px', render: c => `<div class="mono" style="font-size:11.5px">${c.time.slice(5, 16)}</div><div style="font-size:11px;color:var(--txt-3)">${c.district}</div>` },
-    { t: sortTh('通知状态', 'status'), w: '86px', render: c =>
-      U.tag(noticeStatus(c), noticeStatus(c) === '待通知' ? 't-amber' : 't-green') },
-  ], page, { rowId: c => c.id, activeId: st.sel && st.sel.id })
-    + U.pager({ total: rows.length, page: st.page, size: st.size });
-}
-
-function noticeDetail() {
-  const c = st.sel;
-  if (!c) return '<div class="empty">请选择案件</div>';
-  const nStatus = noticeStatus(c);
-  const t = M.allTargets.find(x => x.id === c.targetId) || {};
-  const auth = M.authLogs.find(a => a.caseId === c.id);
-  const caseNo = M.cases.findIndex(x => x.id === c.id) + 1;
-  const authNo = auth ? auth.id
-    : `AUTH${String(c.date || '').slice(0, 7).replace(/-/g, '')}${M.util.p3(caseNo)}`;
-  const device = (M.devices.find(d => d.region === c.district) || {}).name || '东营区雷达03号';
-  const fs2 = M.evidenceOf ? M.evidenceOf('case', c.id) : [];
-  const ICON = { '光电录像': 'video', '光电抓拍图': 'camera', '雷达轨迹快照': 'trend', '现场照片': 'image',
-    '处罚文书': 'file', '指令报文与回执': 'receipt', '通报单回执': 'mail', '调测报告': 'tool' };
-  const evidence = !fs2.length
-    ? '<div class="warnbox" style="border-color:rgba(255,77,94,.45)">本案在证据台账中无关联材料，事实认定缺少可溯源证据。</div>'
-    : `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:8px">
-        ${fs2.slice(0, 8).map(f => `<button type="button" class="punish-evidence-card" style="height:54px;border:1px solid var(--line);
-          border-radius:4px;background:linear-gradient(135deg,rgba(61,139,255,.22),rgba(4,12,32,.9));
-          display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;cursor:pointer;color:inherit;font:inherit"
-          data-ev="${f.id}" title="${f.name}　${f.sizeMB.toFixed(1)}MB" aria-label="查看证据详情：${f.kind}，${f.name}">
-          <span style="font-size:14px">${U.icon(ICON[f.kind] || 'folder')}</span>
-          <span style="font-size:10px;color:var(--txt-2)">${f.kind}</span>
-        </button>`).join('')}
-      </div>
-      ${fs2.length > 8 ? `<div style="font-size:11px;color:var(--txt-3);margin-bottom:6px">另有 ${fs2.length - 8} 份，可在「证据管理」中查看全部台账</div>` : ''}
-      <div id="pnTrack" style="height:130px;border:1px solid var(--line-2);border-radius:6px"></div>`;
-
-  document.getElementById('pnSt').innerHTML =
-    U.tag(nStatus, nStatus === '待通知' ? 't-amber' : 't-green');
-  return `${U.detailHero({
-    icon: 'gavel', subtitle: '处置处罚案件', title: snapOf(c).model || c.model || t.subtype || '低空安全案件', id: c.id,
-    tags: [U.tag(nStatus, nStatus === '待通知' ? 't-amber' : 't-green'), t.legal ? U.legal(t.legal) : ''],
-    meta: [['目标', c.targetId], ['区域', c.district]]
-  })}
-    ${U.metricStrip([
-      { label: '通知状态', value: nStatus, tone: nStatus === '待通知' ? 'warn' : 'good', icon: 'bell' },
-      { label: '违法类型', value: c.violation, tone: 'bad', icon: 'alert' },
-      { label: '证据数量', value: fs2.length, unit: '项', tone: fs2.length ? 'good' : 'bad', icon: 'folder' },
-      { label: '处置结果', value: auth ? auth.result : '待执行', tone: auth && auth.result !== '无效' ? 'good' : 'warn', icon: 'shield' }
-    ], { compact: true })}
-    ${U.sect('违法事实', U.kv([
-      ['目标编号', `<span class="mono lnk" data-goto="target">${c.targetId}</span>`],
-      ['违法类型', U.tag(c.violation, 't-orange')],
-      ['发生时间', c.time], ['发生区域', c.district],
-      ['飞行高度', (t.alt || '—') + ' m'], ['飞行速度', (t.speed || '—') + ' m/s'],
-      ['机型', U.modelTag(snapOf(c).model || c.model, snapOf(c).model_source)],
-      ['责任主体', snapOf(c).subject || c.partner],
-      ['认定依据', snapOf(c).basis || '空域规则 C02 + 计划匹配 C01']
-    ], { surface: true, density: 'compact' }), { icon: 'alert' })}
-    ${U.sect(`证据链（${fs2.length} 项）`, evidence, { icon: 'folder' })}
-    ${U.sect('关联设备与处置', U.kv([
-      ['遥控器 SN', `<span class="mono">${c.rcSn}</span>`],
-      ['发现设备', device],
-      ['处置方式', '已发起反制'],
-      ['授权编号', `<span class="mono">${authNo}</span>`],
-      ['执行结果', '返航']
-    ], { surface: true, density: 'compact' }), { icon: 'device' })}
-    ${nStatus === '待通知' ? U.detailActions(`<button class="btn pri" data-notify="${c.id}">通知处罚部门</button>`) : ''}`;
-}
-
-function paintDetail() {
-  document.getElementById('pnDetail').innerHTML = noticeDetail();
-  drawTrack();
-}
-function drawTrack() {
-  const box = document.getElementById('pnTrack');
-  if (box) {
-    if (map) map.destroy();
-    const t = M.allTargets.find(x => x.id === st.sel.targetId);
-    map = new window.MapView(box, { zoom: 2.6, layers: { device: false, alarm: false }, legend: false });
-    map.setData({
-      airspaces: M.airspaces, devices: [], alarms: [],
-      targets: t ? [Object.assign({}, t, {
-        tracked: true,
-        track: Array.from({ length: 18 }, (_, i) => ({ lon: t.lon - .06 + i * .007, lat: t.lat - .05 + i * .006, alt: t.alt }))
-      })] : []
-    });
-    const t2 = t || { lon: 118.6, lat: 37.45 };
-    setTimeout(() => { if (map) map.centerAt(t2.lon, t2.lat); }, 30);
-  }
-}
-function paint() {
-  document.getElementById('pnList').innerHTML = list();
-  paintDetail();
-}
-function paintReview() {
-  const a = document.getElementById('pnRvList'), b = document.getElementById('pnRvChk');
-  if (a) a.innerHTML = rvList();
-  if (b) b.innerHTML = rvCheck();
-  const badge = document.querySelector('[data-pt="review"] .tag');
-  if (badge) { badge.textContent = rvPending().length; badge.className = 'tag ' + (rvPending().length ? 't-red' : 't-gray'); }
-}
-
-function paintTab() {
-  const body = document.getElementById('pnBody');
-  CH.disposeAll();
-  if (map) { map.destroy(); map = null; }
-  if (st.tab === 'case') {
-    body.innerHTML = tabCase();
-    paint();
-    requestAnimationFrame(() => { if (st.tab === 'case') paintCaseCharts(); });
-  } else if (st.tab === 'review') {
-    body.innerHTML = tabReview();
-    paintReview();
-  } else if (st.tab === 'pend') {
-    body.innerHTML = tabPend();
-    document.getElementById('pnPendList').innerHTML = pendList();
-    const ex = document.getElementById('pnPendExp');
-    if (ex) ex.onclick = () => toast('已导出「待办案源清单.xlsx」共 ' + (M.pendingSubjects || []).length + ' 条（含认定缺口与下一步）', 'ok');
-  } else {
-    body.innerHTML = tabAuth();
-    document.getElementById('pnAuth').innerHTML = authTable();
-    requestAnimationFrame(() => { if (st.tab === 'auth') paintAuthCharts(); });
-  }
-  const jam = document.getElementById('pnJam');
-  if (jam) jam.onclick = jamModal;
-}
-
-function paintCaseCharts() {
-  if (document.getElementById('pnType')) {
-    CH.hbar(document.getElementById('pnType'), {
-      y: M.stats.byViolation.map(v => v.name), data: M.stats.byViolation.map(v => v.value)
-    });
-    const d = M.stats.days;
-    CH.line(document.getElementById('pnTrend'), {
-      x: d.map(x => x.md), yName: '案件数', y2: '金额(元)',
-      series: [{ name: '案件数量', data: d.map(x => x.punish), color: CH.C.blue, area: true },
-      { name: '罚款金额', data: d.map(x => x.punish * 4200), color: CH.C.red, yAxisIndex: 1 }]
-    });
+    const data = await handoffApi.listHandoffs({ ...listQuery(), page: nextPage, size: size.value });
+    if (token !== listToken) return;
+    forbidden.value = false;
+    handoffs.value = data.items || [];
+    total.value = data.total;
+    page.value = data.page;
+    S.page = data.page;
+    const wanted = requestedId || S.selectedHandoffId;
+    const hit = handoffs.value.find(item => item.handoff_id === wanted);
+    if (requestedId) loadDetail(requestedId);
+    else if (hit) loadDetail(hit.handoff_id);
+    else if (handoffs.value.length) loadDetail(handoffs.value[0].handoff_id);
+    else { selected.value = null; S.selectedHandoffId = null; deliveries.value = []; deliveriesTotal.value = 0; }
+  } catch (requestError) {
+    if (token !== listToken) return;
+    // 403 以服务端为准进入无权限态；其他错误保留失败态与重试。
+    forbidden.value = requestError.status === 403;
+    listError.value = messageOf(requestError, '读取交接清单失败');
+    handoffs.value = [];
+    total.value = 0;
+  } finally {
+    if (token === listToken) listLoading.value = false;
   }
 }
 
-function paintAuthCharts() {
-  {
-    const A = M.authLogs;
-    const RC = { '迫降': '#2fd06e', '返航': '#3d8bff', '退出管制区': '#ffb020', '无效': '#ff4d5e' };
-    const rc = M.util.groupCount(A, a => a.result);
-    CH.donut(document.getElementById('pnAuthRes'), {
-      data: [...rc.entries()].map(([n, v]) => ({ name: n, value: v, c: RC[n] })), center: ['32%', '50%']
-    });
-    const uc = M.util.groupCount(A, a => a.unit);
-    const top = [...uc.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
-    CH.hbar(document.getElementById('pnAuthUnit'), {
-      y: top.map(t => t[0].replace('东营市', '')), data: top.map(t => t[1]),
-      colors: top.map(t => t[0].includes('公安') ? '#ff4d5e' : '#a97bff')
-    });
-    const exp = document.getElementById('pnAuthExp');
-    if (exp) exp.onclick = () => toast('已导出「反制与干扰授权审计.csv」共 ' + A.length + ' 条；导出行为本身已记入审计', 'ok');
+async function loadDetail(handoffId) {
+  const token = ++detailToken;
+  S.selectedHandoffId = handoffId;
+  detailLoading.value = true;
+  detailError.value = '';
+  deliveriesError.value = '';
+  try {
+    const [detail, history] = await Promise.all([
+      handoffApi.getHandoff(handoffId),
+      handoffApi.listHandoffDeliveries(handoffId, { page: 1, size: DELIVERY_PAGE_SIZE })
+    ]);
+    if (token !== detailToken) return;
+    selected.value = detail;
+    deliveries.value = history.items || [];
+    deliveriesTotal.value = history.total;
+    deliveriesPage.value = history.page;
+  } catch (requestError) {
+    if (token !== detailToken) return;
+    selected.value = null;
+    deliveries.value = [];
+    deliveriesTotal.value = 0;
+    detailError.value = messageOf(requestError, '读取交接详情或投递记录失败');
+  } finally {
+    if (token === detailToken) detailLoading.value = false;
   }
 }
 
-function authTable() {
-  return U.table([
-    { t: '授权编号', k: 'id', w: '140px', cls: 'num' },
-    { t: '类型', w: '132px', render: a => U.tag(a.type, a.type.includes('公安') ? 't-red' : 't-orange') },
-    { t: '目标', k: 'targetId', w: '128px', cls: 'num' },
-    { t: '联动单位', w: '150px', render: a => a.unit.replace('东营市', '') },
-    { t: '审批 / 操作人', w: '116px', render: a => `${a.approver} <span style="color:var(--txt-3)">/ ${a.operator}</span>` },
-    { t: '设备', k: 'device', w: '112px' },
-    { t: '频段 / 作用范围', w: '196px', render: a => { const nt = M.bandNote(a); return `<div style="font-size:11.5px">${
-      a.band ? a.band + (a.gnssJam ? ` <b style="color:var(--red)">含卫星导航</b>` : '')
-             : `<span style="color:${nt.pending ? 'var(--orange)' : 'var(--txt-3)'}">${nt.txt}</span>`
-    }</div><div style="font-size:11px;color:var(--txt-3)">${a.range}</div>`; } },
-    { t: '时长', w: '58px', align: 'right', cls: 'num', render: a => a.durationS + 's' },
-    { t: '开始时间', k: 'start', w: '142px', cls: 'num' },
-    { t: '执行结果', w: '88px', render: a => U.tag(a.result, a.result === '无效' ? 't-red' : 't-green') },
-    { t: '回执', w: '76px', render: a => U.tag(a.ack, 't-green') },
-    { t: '急停', w: '76px', render: a => U.tag(a.estop === '未触发' ? '无急停' : '急停', a.estop === '未触发' ? 't-gray' : 't-red') },
-    { t: '审计', w: '76px', render: a => U.tag(a.audit, 't-green') }
-  ], M.authLogs, { rowId: a => a.id });
-}
-
-/* ---- 弹窗族（与 legacy 同构） ---- */
-function cmpBlock(c) {
-  const d = judgeDiff(c), s2 = d.snap;
-  if (d.lost) return `<div class="warnbox">本案引用的目标 <span class="mono">${c.targetId}</span> 已发生合并/分裂，
-    当前判定需按 ID 变更回溯还原（见案件详情「目标 ID 变更回溯」）。事件确认快照仍完整保留：
-    ${U.legal(s2.legal_status)} ${(s2.violation_reasons || []).join('、')} · ${s2.risk_level} · ${s2.at}</div>`;
-  const row = (lb, a, b, diff) => `<tr>
-    <td style="color:var(--txt-3)">${lb}</td>
-    <td>${a}</td>
-    <td>${diff ? `<b style="color:#ffd07a">${b}</b>` : b}</td></tr>`;
-  const isDiff = k => d.items.some(x => x[0] === k);
-  return `<table class="tb"><thead><tr>
-      <th></th><th>事件确认时判定（${(s2.at || '').slice(5, 16)}）</th><th>当前判定</th>
-    </tr></thead><tbody>
-      ${row('定性', U.legal(s2.legal_status), U.legal(d.cur.legal), isDiff('定性'))}
-      ${row('违规事由', (s2.violation_reasons || []).join('、') || '—', d.cur.vio || '—', isDiff('违规事由'))}
-      ${row('风险等级', U.tag(s2.risk_level), U.tag(d.cur.risk), isDiff('风险等级'))}
-      ${row('置信度', U.confPct(s2.confidence), U.confPct(d.cur.conf), false)}
-      ${row('来源', s2.source_type || '—', '—', false)}
-    </tbody></table>
-    <div style="margin-top:8px;font-size:12px;color:var(--txt-2);white-space:normal">
-      <b>确认依据：</b>${s2.basis || '—'}</div>
-    <div style="margin-top:6px">${d.items.length
-      ? `<span class="tag t-red">${d.items.length} 项差异</span>
-         <span style="font-size:11.5px;color:var(--txt-3)">${d.items.map(x => x[0]).join('、')}发生变化，须按 §11 复核后才能改动案件状态</span>`
-      : `<span class="tag t-green">事件确认快照与当前判定一致</span>
-         <span style="font-size:11.5px;color:var(--txt-3)">处置记录是历史事实，即使后续重新判定，快照也不会被覆盖</span>`}</div>`;
-}
-
-function snapModal(c) {
-  if (!c) return;
-  const rr = M.reviewRequests.find(r => r.caseId === c.id);
-  openModal({
-    title: '事件确认判定核查 · ' + c.id, width: '680px',
-    body: `${U.kv([['案件状态', U.tag(c.status)], ['目标编号', `<span class="mono">${c.targetId}</span>`],
-    ['违法类型', U.tag(c.violation, 't-orange')], ['发生时间', c.time]])}
-      <div style="margin-top:12px">${cmpBlock(c)}</div>
-      ${rvOutcome[rr && rr.id] ? outcomeBox(rvOutcome[rr.id]) : ''}`,
-    footer: `<button class="btn" data-close>关闭</button>
-      ${rr && !rvOutcome[rr.id] ? `<button class="btn pri" data-act="rv">受理复核</button>` : ''}`,
-    on: { rv: () => reviewModal(rr) }
-  });
-}
-
-function outcomeBox(o) {
-  const meta = RV_RESULTS.find(x => x.k === o.result) || {};
-  return `<div style="margin-top:12px;padding:9px 11px;border:1px solid var(--line-2);border-radius:6px;
-      background:rgba(61,139,255,.06)">
-    <div style="margin-bottom:5px">复核结论：${U.tag(o.result, meta.c || 't-gray')}
-      <span style="color:var(--txt-3);font-size:11.5px">${o.by} · ${o.at}
-      ${o.approvalNo ? ' · §11 复核审批文号 ' + o.approvalNo : ''}</span></div>
-    <div style="font-size:12px;color:var(--txt-2);white-space:normal">${o.opinion}</div>
-  </div>`;
-}
-
-function reviewModal(r) {
-  if (!M.can('处置处罚管理', 'op')) {
-    M.pushAudit('处置处罚管理', '受理复核被拒绝：无操作权限', r ? r.id : 'REVIEW', '失败');
-    return toast('需要「处置处罚管理」操作权限', 'err');
+async function changeDeliveriesPage(nextPage) {
+  const row = selected.value;
+  if (!row || nextPage === deliveriesPage.value) return;
+  const token = ++deliveriesToken;
+  deliveriesLoading.value = true;
+  deliveriesError.value = '';
+  try {
+    const history = await handoffApi.listHandoffDeliveries(row.handoff_id, { page: nextPage, size: DELIVERY_PAGE_SIZE });
+    if (token !== deliveriesToken || selected.value?.handoff_id !== row.handoff_id) return;
+    deliveries.value = history.items || [];
+    deliveriesTotal.value = history.total;
+    deliveriesPage.value = history.page;
+  } catch (requestError) {
+    if (token !== deliveriesToken || selected.value?.handoff_id !== row.handoff_id) return;
+    deliveriesError.value = messageOf(requestError, '读取投递记录失败');
+  } finally {
+    if (token === deliveriesToken) deliveriesLoading.value = false;
   }
-  if (!r) return;
-  const c = M.cases.find(x => x.id === r.caseId);
-  const done = rvOutcome[r.id];
-  const closed = c && c.status === '已结案';
-  if (done) {
-    return openModal({
-      title: '复核记录 · ' + r.id, width: '680px',
-      body: `${U.kv([['关联案件', `<span class="mono">${r.caseId}</span> ${U.tag(c ? c.status : r.caseStatus)}`],
-      ['目标编号', `<span class="mono">${r.targetId}</span>`],
-      ['拟改判', `${U.legal(r.from)} → ${U.legal(r.to)}`],
-      ['降级理由', `<div style="white-space:normal">${r.reason}</div>`]])}
-        ${outcomeBox(done)}
-        <div style="margin-top:12px">${c ? cmpBlock(c) : ''}</div>`,
-      footer: `<button class="btn" data-close>关闭</button>`
-    });
-  }
-  const reviewers = M.users.filter(u => u.roleName === '处置授权人' || u.roleName === '超级管理员');
-  openFormModal({
-    title: '定性依据复核 · ' + r.id, width: '720px', columns: 2,
-    warning: closed
-      ? `<b>本案已结案。</b>已结案案件不允许直接改动状态 —— 依设计 §11，须先取得<b>复核审批文号</b>方可作出
-        「撤销案件」或「补充证据后重判」的结论；仅出具「维持原定性」意见时不改动案件状态，可直接提交。`
-      : `本案在办（${c ? c.status : r.caseStatus}），复核结论将<b>真实改动案件状态与流程环节</b>，并记入平台操作审计。`,
-    introHtml: U.kv([['关联案件', `<span class="mono">${r.caseId}</span> ${U.tag(c ? c.status : r.caseStatus)}`],
-      ['目标编号', `<span class="mono">${r.targetId}</span>`],
-      ['拟改判', `${U.legal(r.from)} <span style="color:var(--txt-3)">→</span> ${U.legal(r.to)}`],
-      ['提出方', r.raisedBy], ['提出时间', r.at],
-      ['降级理由', `<div style="white-space:normal">${r.reason}</div>`],
-      ['数据层备注', `<div style="white-space:normal;color:var(--txt-3)">${r.note}</div>`]])
-      + U.sect('事件确认时判定 vs 当前判定', c ? cmpBlock(c) : '<span style="color:var(--txt-3)">未找到关联案件</span>'),
-    fields: [
-      { key: 'result', label: '复核结论', type: 'radio', required: true, wide: true, options: RV_RESULTS.map(x => ({
-        value: x.k, html: `${U.tag(x.k, x.c)} <span style="color:var(--txt-3)">${x.desc}</span>`
-      })) },
-      { key: 'by', label: '复核人', type: 'select', options: optionsOf(reviewers.map(u => u.name)), clearable: false },
-      { key: 'apn', label: '§11 复核审批文号', placeholder: closed ? '已结案改状态必填，如 FH-2026-0826-01' : '选填' },
-      { key: 'opinion', label: '复核意见', required: true, wide: true, placeholder: '必填，写明依据与结论理由' },
-      ...(closed ? [{ key: 'ack', type: 'checkbox', wide: true, label: '我确认本次复核已按设计 §11 案件复核流程报批，审批文号如上，操作将记入平台操作审计。' }] : [])
-    ],
-    initial: { result: RV_RESULTS[0].k, by: reviewers[0]?.name || null, apn: '', opinion: '', ack: false },
-    confirmText: '提交复核结论',
-    validate: m => {
-      if (!(m.opinion || '').trim()) return '请填写复核意见';
-      if (closed && m.result !== '维持原定性') {
-        if (!(m.apn || '').trim()) return '本案已结案，作出改变案件状态的结论必须填写 §11 复核审批文号';
-        if (!m.ack) return '请确认已按 §11 案件复核流程报批';
-      }
-      return '';
-    },
-    onSubmit: m => {
-      const result = m.result;
-      const changesCase = result !== '维持原定性';
-      applyReview(r, { result, by: m.by, opinion: (m.opinion || '').trim(), approvalNo: (m.apn || '').trim(), at: M.util.fmtDT(M.CONF.demoTime) });
-      closeModal();
-      paintTab();
-      toast(`复核已办结：${r.caseId} · ${result}` + (changesCase && c ? `，案件状态已变更为「${c.status}」` : '，案件状态不变')
-        + '，已记入平台操作审计', changesCase ? 'err' : 'ok');
-    }
-  });
 }
 
-function applyReview(r, o) {
-  if (!M.can('处置处罚管理', 'op')) {
-    M.pushAudit('处置处罚管理', '提交复核被拒绝：无操作权限', r ? r.id : 'REVIEW', '失败');
-    return { ok: false, msg: '需要「处置处罚管理」操作权限' };
-  }
-  const c = M.cases.find(x => x.id === r.caseId);
-  if (c) {
-    const why = `定性依据复核：${o.result}` + (o.approvalNo ? `（文号 ${o.approvalNo}）` : '');
-    if (o.result === '撤销案件') M.setCaseStage(c, 1, why, MY_MODULE);
-    else if (o.result === '补充证据后重判' && c.stage > 2) M.setCaseStage(c, 2, why, MY_MODULE);
-    if (o.result !== '维持原定性') {
-      rvCaseOps[c.id] = { targetId: c.targetId, status: c.status, stage: c.stage, docReady: c.docReady, note: o.result + '（' + r.id + '）' };
-    }
-  }
-  r.status = '已办结';
-  rvOutcome[r.id] = o;
-  rvAudit('定性依据复核 · ' + o.result + (o.approvalNo ? '（文号 ' + o.approvalNo + '）' : ''),
-    r.caseId + ' / ' + r.targetId, o.by);
-  rvSave();
+function applyFilters() {
+  try { listQuery(); } catch (validation) { listError.value = validation.message; return; }
+  S.selectedHandoffId = null;
+  loadList(1);
+}
+function resetFilters() {
+  Object.assign(filters, { source_kind: '', delivery_status: '', source_mode: '', created: null });
+  applyFilters();
+}
+function changePage(nextPage) { if (nextPage !== page.value) loadList(nextPage); }
+function changePageSize(nextSize) { size.value = nextSize; S.size = nextSize; loadList(1); }
+function selectHandoff(handoffId) {
+  if (selected.value?.handoff_id === handoffId && !detailError.value) return;
+  loadDetail(handoffId);
+}
+function retryList() { loadKpis(); loadList(page.value); }
+function retryDetail() { if (S.selectedHandoffId) loadDetail(S.selectedHandoffId); }
+function gotoSource(row) {
+  if (!row || row.source_kind !== 'RISK') return;
+  U.goto('risk', { riskId: row.source_id });
 }
 
-function docModal() {
-  const c = st.sel;
-  openModal({
-    title: '《行政处罚决定书》预览', width: '680px',
-    body: `<div class="warnbox" style="border-color:rgba(255,77,94,.45);background:rgba(255,77,94,.10);margin-bottom:12px">
-      <b>本文书为 Demo 生成样例，不具法律效力。</b>三处出处需在正式实施前落实：
-      <div style="margin-top:5px;line-height:1.9;font-size:12px">
-        ① <b>金额档位</b>：法规给的是罚款区间而非逐项定额，本文书金额所依据的档位表<b>尚未经业务方确认</b>
-           （见「用户与权限 → 参数总览 → 罚则金额档位」）<br>
-        ② <b>处罚主体与出具授权</b>：会议纪要未授权平台直接出具处罚文书，主体亦未确定<br>
-        ③ <b>证据材料</b>：正文所列证据<b>逐份取自证据台账</b>（证据存储管理页可溯源），
-           不是固定文案；校验异常的材料会在正文中单独标出<br>
-        ④ <b>责任主体认定</b>：本案主体的认定路径为
-           ${snapOf(c).subject_source ? '<span class="mono">' + snapOf(c).subject_source + '</span>' : '<b style="color:#ff96a0">未记录</b>'}
-      </div></div>
-    <div style="position:relative;overflow:hidden;background:#f6f8fc;color:#1a2b45;padding:26px 30px;border-radius:6px;font-size:13px;line-height:2">
-      <div style="position:absolute;inset:0;pointer-events:none;display:flex;flex-direction:column;justify-content:space-around">
-        ${Array.from({ length: 5 }, () => `<div style="transform:rotate(-24deg);text-align:center;white-space:nowrap;
-          color:rgba(190,40,55,.12);font-size:21px;font-weight:700;letter-spacing:3px">Demo 样例 · 不具法律效力 · Demo 样例 · 不具法律效力</div>`).join('')}
-      </div>
-      <div style="text-align:center;font-size:19px;font-weight:700;margin-bottom:6px">行政处罚决定书</div>
-      <div style="text-align:center;color:#5b6b85;margin-bottom:18px">${c.docNo}</div>
-      <p>当事人：${c.pilot}（${c.partner}）</p>
-      <p>经查，当事人于 ${c.time} 在${c.district}使用 ${c.model === '未识别' ? '型号未识别的' : c.model} 无人驾驶航空器实施「${c.violation}」行为，
-      由无人机融合感知与低空安全管理平台通过多源融合感知发现并固定证据（目标编号 ${c.targetId}）。</p>
-      ${(function () {
-        const fs2 = M.evidenceOf ? M.evidenceOf('case', c.id) : [];
-        if (!fs2.length) return `<p>本案<b>在证据台账中未检索到关联证据材料</b>，
-          事实认定所依据的材料需在正式出具前补充固定。</p>`;
-        const byKind = {};
-        fs2.forEach(f => { (byKind[f.kind] = byKind[f.kind] || []).push(f); });
-        const parts = Object.keys(byKind).map(k => `${k} ${byKind[k].length} 份`);
-        const bad = fs2.filter(f => f.verifyState !== '完好');
-        return `<p>上述事实有下列证据证实：${parts.join('、')}，共 ${fs2.length} 份，
-          均存于证据台账并可溯源（编号 ${fs2.slice(0, 3).map(f => f.id).join('、')}${fs2.length > 3 ? ' 等' : ''}）。</p>`
-          + (bad.length ? `<p style="color:#b3402d"><b>其中 ${bad.length} 份完整性校验异常</b>
-            （${bad.map(f => f.id + ' ' + f.verifyState).join('；')}），
-            依《证据保管办法》，该部分在结论作出前不得作为定案依据。</p>` : '');
-      })()}
-      <p>依据相关法规，决定给予：<b>${c.penalty}${c.penalty === '罚款' ? '人民币 ' + U.num(c.fine) + ' 元' : ''}</b>。</p>
-      <div style="text-align:right;margin-top:24px">东营市公安局<br>${c.date}</div>
-    </div>`,
-    /* P4b：原为内联 onclick="UI.toast(...)"（走 legacy toast），改 data-act 走桥接层统一出口 */
-    footer: `<button class="btn" data-close>关闭</button><button class="btn pri" data-close data-act="dl">${U.icon('download')} 下载 PDF</button>`,
-    on: { dl: () => toast('文书已下载（Demo 样例，不具法律效力；金额档位表未经业务方确认）', 'err') }
-  });
+function hashHandoffId() {
+  // 飞行风险页提交成功后以 #/punish?handoff=<id> 深链进入；只取该参数，不解释其他 query。
+  const query = (location.hash || '').split('?')[1] || '';
+  const value = new URLSearchParams(query).get('handoff');
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
-function authModal(a) {
-  openModal({
-    title: '授权与执行审计 · ' + a.id, width: '640px',
-    body: U.kv([['授权类型', a.type], ['关联案件', a.caseId], ['目标编号', a.targetId],
-    ['联动单位', a.unit], ['审批人', a.approver], ['操作人', a.operator],
-    ['处置设备', a.device],
-    ['干扰通道', a.channels
-      ? a.channels.map(n => `<span class="mono">ch${n}</span> ${M.JAM_CH[n].key} <span style="color:var(--txt-3)">${M.JAM_CH[n].range} · ${M.JAM_CH[n].powerW}W</span>`).join('<br>')
-      : (() => { const nt = M.bandNote(a); return nt.pending ? `<span style="color:var(--orange)">${nt.txt}</span>` : nt.txt; })()],
-    ['卫星导航链路干扰', a.gnssJam == null ? (M.bandNote(a).pending ? '待确认（通道组合未定义）' : '不适用')
-      : a.gnssJam ? `<b style="color:var(--red)">是</b> —— 干扰 GPS / GLONASS / 北斗，法律后果区别于遥控图传干扰`
-      : '否'],
-    ['通道依据', a.bandSource || '—'],
-    ['作用范围', a.range],
-    ['开始时间', a.start], ['结束时间', a.end], ['持续时长', a.durationS + ' 秒'],
-    ['执行结果', a.result], ['回执状态', a.ack], ['急停记录', a.estop], ['审计完整性', a.audit]])
-      + `<div class="warnbox" style="margin-top:12px">审计记录不可修改、不可删除，保留期与案件卷宗一致。</div>`
-  });
-}
-
-function jamModal() {
-  if (!M.can('反制/干扰授权', 'auth')) {
-    M.pushAudit('反制/干扰授权', '新建信号干扰授权被拒绝：无授权权限', st.sel ? st.sel.id : 'AUTH', '失败');
-    return toast('需要「反制/干扰授权」授权权限', 'err');
+function consumeDeepLink() {
+  const fromHash = hashHandoffId();
+  const context = U?.consume?.('punish');
+  if (!context) return fromHash;
+  const handoffId = context.handoffId || context.handoff_id || fromHash || null;
+  if (!handoffId && context.caseId) {
+    // 旧页面仍可能以 caseId 深链进入；本期没有案件对象，也不能把案件编号映射成交接编号。
+    legacyLinkNote.value = `本期未建设处罚案件对象：旧案件深链 ${String(context.caseId)} 无对应记录，下方为真实交接清单。`;
   }
-  const u = (M.users && M.users[0]) || { name: '值班员', roleName: '值班员' };
-  openModal({
-    title: '发起公安授权信号干扰', width: '680px', footer: false,
-    render: () => h(JamAuthModal, {
-      caseId: st.sel ? st.sel.id : '',
-      targetId: st.sel ? st.sel.targetId : '',
-      operator: u.name,
-      onDone: input => {
-        const t0 = M.CONF.demoTime;
-        const rec = {
-          id: 'AUTH' + M.util.ymd(t0) + M.util.p3(M.authLogs.length + 1),
-          caseId: input.caseId, targetId: input.targetId || '—',
-          type: '公安授权信号干扰',
-          unit: input.unit,
-          approver: input.approvalNo,
-          operator: u.name,
-          device: input.device,
-          channels: input.channels,
-          band: input.channels.map(n => M.JAM_CH[n].key).join(' / '),
-          bandSource: M.JAM_SOURCE,
-          gnssJam: input.channels.includes(2),
-          range: input.range,
-          durationS: input.durationS,
-          start: M.util.fmtDT(t0),
-          end: M.util.fmtDT(new Date(t0.getTime() + input.durationS * 1000)),
-          result: '执行中',
-          ack: '待回执', audit: '完整', estop: '未触发',
-          approvalNo: input.approvalNo
-        };
-        M.authLogs.unshift(rec);
-        rvAudit(`公安授权信号干扰下发（审批文号 ${input.approvalNo}）`, rec.targetId, u.name);
-        closeModal();
-        st.tab = 'auth';
-        window.APP.rerender();
-        toast(`干扰任务已下发并留痕：授权编号 ${rec.id}，可在本页「反制与干扰授权审计」中查看`, 'ok');
-      }
-    })
-  });
+  return typeof handoffId === 'string' && handoffId ? handoffId : null;
 }
 
 onMounted(() => {
-  const view = root.value;
-  paintTab();
-
-  U.on(view, '[data-row]', 'click', (e, el) => {
-    const c = M.cases.find(x => x.id === el.dataset.row);
-    if (st.tab === 'pend') {
-      return pendModal((M.pendingSubjects || []).find(p => p.id === el.dataset.row));
-    }
-    if (st.tab === 'review') {
-      if (c) { st.sel = c; U.selectRow(document.getElementById('pnRvChk'), c.id); snapModal(c); }
-      return;
-    }
-    if (c) {
-      st.sel = c;
-      U.selectRow(document.getElementById('pnList'), c.id);
-      paintDetail();
-    }
-    else { const a = M.authLogs.find(x => x.id === el.dataset.row); if (a) authModal(a); }
-  });
-  U.on(view, '[data-notify]', 'click', (e, el) => {
-    const c = M.cases.find(x => x.id === el.dataset.notify);
-    if (!c || noticeStatus(c) === '已通知') return;
-    const ctx = EVT && EVT.of(c.targetId);
-    if (!ctx) return toast('未找到该处置记录的共享事件', 'err');
-    EVT.confirmPunish(ctx, {
-      note: '处置处罚管理页面确认通知处罚部门',
-      onResult: result => {
-        if (!result.ok) return toast(result.msg, 'err');
-        window.APP.rerender();
-        toast(result.msg, 'ok');
-      }
-    });
-  });
-  U.on(view, '[data-pg]', 'click', (e, el) => { if (el.dataset.pg) { st.page = +el.dataset.pg; paint(); } });
-  U.on(view, '[data-size]', 'change', (e, el) => { st.size = parseInt(el.value); st.page = 1; paint(); });
-  U.on(view, '[data-f]', 'change', (e, el) => {
-    const k = el.dataset.f; if (k === 'rvf') return;
-    st[k] = k === 'days' ? +el.value : el.value; st.page = 1; paint();
-  });
-  U.on(view, '[data-jam]', 'click', (e, el) => {
-    if (!M.can('反制/干扰授权', 'auth')) {
-      M.pushAudit('反制/干扰授权', '停止信号干扰被拒绝：无授权权限', el.dataset.jam, '失败');
-      return toast('需要「反制/干扰授权」授权权限', 'err');
-    }
-    const [op, id] = el.dataset.jam.split('|');
-    const rec = M.authLogs.find(x => x.id === id);
-    if (!rec || rec.result !== '执行中') return;
-    const u = (M.users && M.users[0]) || { name: '值班员' };
-    const t0 = M.CONF.demoTime;
-    rec.end = M.util.fmtDT(t0);
-    rec.result = op === 'estop' ? '急停终止' : '人工停止';
-    rec.ack = '已回执';
-    if (op === 'estop') rec.estop = '触发过急停';
-    rvAudit(`公安授权信号干扰${op === 'estop' ? '急停' : '停止'}（${rec.id}）`, rec.targetId, u.name);
-    window.APP.rerender();
-    toast(op === 'estop' ? `已触发急停：${rec.id}，设备立即停止发射，已记入审计`
-      : `已停止干扰：${rec.id}，回执已接收，已记入审计`, op === 'estop' ? 'err' : 'ok');
-  });
-  U.on(view, '[data-doc]', 'click', (e, el) => {
-    if (el.dataset.doc === 'prev') docModal();
-    else if (el.dataset.doc === 'down') toast('已下载《行政处罚决定书》' + st.sel.docNo
-      + '（Demo 样例，不具法律效力；金额依据的档位表未经业务方确认）', 'err');
-  });
-  U.on(view, '[data-ev]', 'click', (e, el) => {
-    const f = M.evidenceFiles.find(x => x.id === el.dataset.ev);
-    if (!f) return toast('未找到对应证据数据', 'err');
-    if (!window.EVIDENCE_VIEW) return toast('证据详情模块未加载', 'err');
-    openModal(window.EVIDENCE_VIEW.modalOptions(f));
-  });
-  U.on(view, '[data-goto]', 'click', () => U.goto('legality', { target: st.sel.targetId }));
-  U.on(view, '[data-goparam]', 'click', () => { location.hash = '#/users'; toast('参数总览 → 罚则金额档位（待业务方确认）'); });
-  U.on(view, '[data-sort]', 'click', (e, el) => {
-    const k = el.dataset.sort;
-    if (SORT.key === k) SORT.dir = SORT.dir === 'asc' ? 'desc' : 'asc';
-    else { SORT.key = k; SORT.dir = 'asc'; }
-    st.page = 1;
-    document.getElementById('pnList').innerHTML = list();
-  });
-  U.on(view, '#pnR', 'click', () => {
-    Object.assign(st, { status: '全部状态', region: '全部区域', vio: '全部类型', partner: '全部合作方', days: 30, page: 1 });
-    paintTab(); toast('筛选条件已重置');
-  });
-  U.on(view, '#pnExp', 'click', () => toast('已导出「处罚案件明细.xlsx」共 ' + filtered().length + ' 条', 'ok'));
-  U.on(view, '[data-ps]', 'click', (e, el) => {
-    e.stopPropagation();
-    pendModal((M.pendingSubjects || []).find(p => p.id === el.dataset.ps));
-  });
-  U.on(view, '[data-rv]', 'click', (e, el) => {
-    e.stopPropagation();
-    reviewModal(M.reviewRequests.find(r => r.id === el.dataset.rv));
-  });
-  U.on(view, '[data-f="rvf"]', 'change', (e, el) => { st.rvFilter = el.value; paintReview(); });
-  U.on(view, '[data-jd]', 'click', (e, el) => { snapModal(M.cases.find(c => c.id === el.dataset.jd)); });
+  const requested = consumeDeepLink();
+  if (requested) { Object.assign(filters, { source_kind: '', delivery_status: '', source_mode: '', created: null }); S.selectedHandoffId = requested; }
+  loadKpis();
+  loadList(requested ? 1 : page.value, requested);
 });
 </script>
 
@@ -1021,7 +299,198 @@ onMounted(() => {
   <div class="view" id="view" ref="root" style="overflow:hidden">
     <div style="height:100%;display:flex;flex-direction:column;min-height:0">
       <UKpis :list="kpiList" />
-      <div id="pnBody" style="margin-top:12px;flex:1;min-height:0"></div>
+      <div id="pnBody" class="pn-body" style="margin-top:12px;flex:1;min-height:0">
+        <div v-if="forbidden" class="warnbox pn-forbidden">
+          服务端拒绝读取：当前账号没有查看业务交接的权限（handoff:read）。交接清单、材料与投递状态不可读取；本页不展示任何演示数据。
+          <button class="btn" type="button" :disabled="listLoading" @click="retryList">重试</button>
+        </div>
+        <template v-else>
+          <div v-if="legacyLinkNote" class="warnbox pn-note">{{ legacyLinkNote }}</div>
+          <div class="row pn-main">
+            <UPanel title="业务交接清单" sub="提交成功只表示材料入库，不表示已发送、已送达或处罚办结" panel-style="flex:6;min-width:0" nopad>
+              <div id="pnList" class="pn-list">
+                <div class="toolbar pn-toolbar">
+                  <div class="field"><label>来源类型</label><UControl v-model="filters.source_kind" type="select" :options="kindOptions" :disabled="listLoading" size="small" @update:model-value="applyFilters" /></div>
+                  <div class="field"><label>投递状态</label><UControl v-model="filters.delivery_status" type="select" :options="deliveryOptions" :disabled="listLoading" size="small" @update:model-value="applyFilters" /></div>
+                  <div class="field"><label>来源模式</label><UControl v-model="filters.source_mode" type="select" :options="sourceModeOptions" :disabled="listLoading" size="small" @update:model-value="applyFilters" /></div>
+                  <div class="field pn-range"><label>提交时间</label><UControl v-model="filters.created" type="datetimerange" clearable :disabled="listLoading" size="small" start-placeholder="开始" end-placeholder="结束" /></div>
+                  <button class="btn" type="button" :disabled="listLoading" @click="applyFilters">查询</button>
+                  <button class="btn" type="button" id="pnR" :disabled="listLoading" @click="resetFilters">重置筛选</button>
+                  <span class="spacer"></span>
+                  <span class="pn-sort-note" :title="FIXED_SORT_NOTE">服务端固定按提交时间倒序</span>
+                </div>
+                <div v-if="listError" class="warnbox pn-error">{{ listError }} <button class="btn" type="button" :disabled="listLoading" @click="retryList">重试</button></div>
+                <div v-if="listLoading" class="empty">正在读取交接清单…</div>
+                <div v-else-if="!listError && !handoffs.length" class="empty">当前筛选与权限范围内暂无交接记录；风险核验通过后可在飞行风险页提交通知交接。</div>
+                <div v-else-if="handoffs.length" class="scroll table-scroll table-shell" style="flex:1">
+                  <table class="tb">
+                    <thead><tr>
+                      <th>来源编号</th>
+                      <th>来源事项</th>
+                      <th>交接类型</th>
+                      <th>接收方</th>
+                      <th>提交时间</th>
+                      <th>投递状态</th>
+                      <th>回执</th>
+                      <th>阻断原因</th>
+                    </tr></thead>
+                    <tbody>
+                      <tr v-for="row in handoffs" :key="row.handoff_id" :data-row="row.handoff_id" tabindex="0" :class="{ on: selected?.handoff_id === row.handoff_id || (!selected && S.selectedHandoffId === row.handoff_id) }"
+                        @click="selectHandoff(row.handoff_id)" @keydown.enter.prevent="selectHandoff(row.handoff_id)">
+                        <td class="num"><span class="mono pn-id" :title="row.handoff_id">{{ row.source_no || row.handoff_id }}</span></td>
+                        <td><span class="tag t-cyan" :title="row.source_id">{{ label(KIND_LABEL, row.source_kind) }}</span></td>
+                        <td>{{ label(TYPE_LABEL, row.handoff_type) }}</td>
+                        <td><div class="pn-wrap">{{ row.recipient_name || row.recipient_id }}</div><div class="pn-sub">{{ labelOf(SOURCE_MODE_LABEL, row.source_mode, '') }}</div></td>
+                        <td class="num" :title="formatTime(row.created_at)">{{ formatClock(row.created_at) }}</td>
+                        <td><span class="tag" :class="DELIVERY_TAG[row.delivery_status] || 't-gray'">{{ label(DELIVERY_LABEL, row.delivery_status) }}</span></td>
+                        <td>{{ label(RECEIPT_LABEL, row.receipt_status) }}</td>
+                        <td><div class="pn-wrap">{{ row.blocked_reason ? label(BLOCKED_LABEL, row.blocked_reason) : '—' }}</div></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <div class="pager"><UPagination :page="page" :page-size="size" :item-count="total" :prefix="`共 ${total.toLocaleString('en-US')} 条`" @update:page="changePage" @update:page-size="changePageSize" /></div>
+              </div>
+            </UPanel>
+
+            <UPanel title="交接详情" panel-style="flex:4;min-width:340px" nopad :extra="detailExtra">
+              <div id="pnDetail" class="pn-detail">
+                <div v-if="detailLoading" class="empty">正在读取交接详情与投递记录…</div>
+                <div v-else-if="detailError" class="warnbox pn-error">{{ detailError }} <button class="btn" type="button" @click="retryDetail">重试</button></div>
+                <div v-else-if="!selected" class="empty">{{ handoffs.length ? '请选择交接记录' : '暂无可显示的交接记录' }}</div>
+                <template v-else>
+                  <div class="detail-hero detail-hero-micro"><div class="detail-hero-inner">
+                    <div class="detail-hero-copy"><div class="detail-hero-eyebrow">业务交接</div><div class="detail-hero-title">{{ label(TYPE_LABEL, selected.handoff_type) }}</div><div class="detail-hero-id mono" :title="selected.handoff_id">{{ selected.source_no || selected.handoff_id }}</div></div>
+                    <div class="detail-hero-side"><div class="detail-hero-tags"><span class="tag" :class="DELIVERY_TAG[selected.delivery_status] || 't-gray'">{{ label(DELIVERY_LABEL, selected.delivery_status) }}</span><span class="tag t-gray">{{ label(RECEIPT_LABEL, selected.receipt_status) }}</span></div></div>
+                  </div></div>
+                  <div class="metric-strip is-compact">
+                    <div class="metric-item" :class="DELIVERY_TONE[selected.delivery_status] ? 'is-' + DELIVERY_TONE[selected.delivery_status] : ''"><span class="metric-copy"><small>投递状态</small><b>{{ label(DELIVERY_LABEL, selected.delivery_status) }}</b></span></div>
+                    <div class="metric-item"><span class="metric-copy"><small>回执状态</small><b>{{ label(RECEIPT_LABEL, selected.receipt_status) }}</b></span></div>
+                    <div class="metric-item" :class="selected.blocked_reason ? 'is-warn' : ''"><span class="metric-copy"><small>阻断原因</small><b>{{ selected.blocked_reason ? label(BLOCKED_LABEL, selected.blocked_reason) : '无' }}</b></span></div>
+                    <div class="metric-item"><span class="metric-copy"><small>提交时间</small><b>{{ formatClock(selected.created_at) }}</b></span></div>
+                  </div>
+                  <div v-if="deliveryNote" class="warnbox pn-delivery-note">{{ deliveryNote }}</div>
+                  <div class="sect"><h4>交接信息</h4><dl class="kv kv-surface">
+                    <dt>来源编号</dt><dd class="mono" :title="selected.handoff_id">{{ selected.source_no || '未提供' }}</dd>
+                    <dt>来源事项</dt><dd :title="selected.source_id">{{ label(KIND_LABEL, selected.source_kind) }}
+                      <button v-if="selected.source_kind === 'RISK'" class="lnk pn-lnk" type="button" @click="gotoSource(selected)">查看风险</button></dd>
+                    <dt>交接类型</dt><dd>{{ label(TYPE_LABEL, selected.handoff_type) }}</dd>
+                    <dt>接收方</dt><dd :title="selected.recipient_id">{{ selected.recipient_name || '未提供' }}</dd>
+                    <dt>源版本</dt><dd class="mono">v{{ selected.source_version }}</dd>
+                    <dt>提交时间</dt><dd>{{ formatTime(selected.created_at) }}</dd>
+                    <dt>提交人</dt><dd :title="selected.submitted_by">{{ selected.submitted_by_name || selected.submitted_by || '未提供' }}</dd>
+                    <dt>所属范围</dt><dd>{{ selected.owner_org_name || selected.owner_org_id }} / {{ selected.district_name || selected.district_id }}</dd>
+                    <dt>来源模式</dt><dd>{{ labelOf(SOURCE_MODE_LABEL, selected.source_mode, '未提供') }}</dd>
+                  </dl></div>
+                  <div class="sect"><h4>材料快照 <span class="tag t-gray">schema v{{ selected.material?.schema_version ?? '—' }}</span></h4>
+                    <div v-if="!selected.material" class="empty">服务端未返回材料快照。</div>
+                    <template v-else>
+                      <dl v-if="selected.material.risk" class="kv kv-surface">
+                        <dt>风险编号</dt><dd class="mono" :title="selected.material.risk.risk_id">{{ selected.material.risk.source_risk_id || '未提供' }}</dd>
+                        <dt>风险类型</dt><dd>{{ labelOf(RISK_TYPE_LABEL, selected.material.risk.risk_type, '未提供') }}</dd>
+                        <dt>风险等级</dt><dd><span class="tag" :class="SEVERITY_TAG[selected.material.risk.severity] || 't-gray'">{{ label(SEVERITY_LABEL, selected.material.risk.severity) }}</span></dd>
+                        <dt>提交时状态</dt><dd>{{ label(RISK_STATE_LABEL, selected.material.risk.state) }}</dd>
+                        <dt>风险依据</dt><dd>{{ labelOf(REASON_CODE_LABEL, selected.material.risk.reason_code, '未提供') }}</dd>
+                        <dt>依据说明</dt><dd class="pn-wrap">{{ selected.material.risk.reason_text || '未提供' }}</dd>
+                        <dt>发生时间</dt><dd>{{ formatTime(selected.material.risk.occurred_at) }}</dd>
+                        <dt>接收时间</dt><dd>{{ formatTime(selected.material.risk.received_at) }}</dd>
+                        <dt>快照版本</dt><dd class="mono">v{{ selected.material.risk.version }}</dd>
+                      </dl>
+                      <div v-else class="empty">{{ materialUnavailableText }}</div>
+                      <template v-if="selected.material.risk">
+                      <div class="pn-subhead">关联引用</div>
+                      <dl v-if="visibleReferences.length" class="kv kv-surface">
+                        <template v-for="reference in visibleReferences" :key="reference.key">
+                          <dt>{{ reference.label }}</dt><dd :title="reference.value">已记录关联</dd>
+                        </template>
+                      </dl>
+                      <div v-else class="pn-note-text">当前权限下没有可见的关联引用（不可见的引用已由服务端省略）。</div>
+                      <div class="pn-subhead">核实历史 <span class="tag t-gray">{{ selected.material.verifications?.length || 0 }}</span></div>
+                      <div v-if="!selected.material.verifications?.length" class="pn-note-text">快照中没有核实记录。</div>
+                      <div v-else class="pn-history">
+                        <div v-for="item in selected.material.verifications" :key="`${item.version}-${item.created_at}`" class="pn-history-item">
+                          <div><span class="tag" :class="item.conclusion === 'CONFIRMED' ? 't-green' : 't-gray'">{{ label(CONCLUSION_LABEL, item.conclusion) }}</span> <span class="mono">v{{ item.version }}</span> → {{ label(RISK_STATE_LABEL, item.resulting_state) }}</div>
+                          <div class="pn-wrap">{{ item.note || '无说明' }}</div>
+                          <div class="pn-sub">{{ formatTime(item.created_at) }} · 操作人 {{ item.actor_name || item.actor_id || '未提供' }}</div>
+                        </div>
+                      </div>
+                      </template>
+                      <div class="pn-note-text">交接材料只含结构化字段；没有文件、哈希或下载链接，也不生成证据台账。</div>
+                    </template>
+                  </div>
+                  <div class="sect"><h4>投递记录 <span class="tag t-gray">{{ deliveriesTotal }}</span></h4>
+                    <div v-if="deliveriesLoading" class="empty">正在读取投递记录…</div>
+                    <div v-else-if="deliveriesError" class="warnbox pn-error">{{ deliveriesError }}</div>
+                    <div v-else-if="!deliveries.length" class="empty">尚无投递记录</div>
+                    <div v-else class="scroll table-scroll table-shell pn-deliveries">
+                      <table class="tb">
+                        <thead><tr><th>次序</th><th>投递状态</th><th>回执</th><th>阻断原因</th><th>创建</th><th>发送</th><th>送达</th><th>回执时间</th></tr></thead>
+                        <tbody>
+                          <tr v-for="item in deliveries" :key="item.delivery_id">
+                            <td class="num">{{ item.attempt_no }}</td>
+                            <td><span class="tag" :class="DELIVERY_TAG[item.delivery_status] || 't-gray'">{{ label(DELIVERY_LABEL, item.delivery_status) }}</span></td>
+                            <td>{{ label(RECEIPT_LABEL, item.receipt_status) }}</td>
+                            <td>{{ item.blocked_reason ? label(BLOCKED_LABEL, item.blocked_reason) : '—' }}</td>
+                            <td class="num" :title="formatTime(item.created_at)">{{ formatClock(item.created_at) }}</td>
+                            <td class="num" :title="formatTime(item.submitted_at)">{{ formatClock(item.submitted_at) }}</td>
+                            <td class="num" :title="formatTime(item.delivered_at)">{{ formatClock(item.delivered_at) }}</td>
+                            <td class="num" :title="formatTime(item.acknowledged_at)">{{ formatClock(item.acknowledged_at) }}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                    <div v-if="deliveriesTotal > DELIVERY_PAGE_SIZE" class="pager"><UPagination :page="deliveriesPage" :page-size="DELIVERY_PAGE_SIZE" :item-count="deliveriesTotal" size="small" @update:page="changeDeliveriesPage" /></div>
+                    <div class="pn-note-text">送达与回执只能来自外部系统事实；本页没有发送、重试或回执写入口。</div>
+                  </div>
+                </template>
+              </div>
+            </UPanel>
+          </div>
+
+          <UPanel title="处罚案件、文书与证据" sub="本期未建设 · 以下功能停止执行，不生成任何案件、罚款、文书或证据记录" panel-style="margin-top:12px" nopad>
+            <div class="pn-not-built">
+              <div v-for="item in NOT_BUILT_ITEMS" :key="item.key" class="pn-not-built-item" :data-not-built="item.key">
+                <div class="pn-not-built-head"><b>{{ item.label }}</b><span class="tag t-gray">{{ NOT_BUILT }}</span></div>
+                <div class="pn-sub pn-wrap">{{ item.reason }}</div>
+                <button class="btn" type="button" disabled :title="`${item.label}：${NOT_BUILT}`">{{ NOT_BUILT }}</button>
+              </div>
+            </div>
+          </UPanel>
+        </template>
+      </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+.pn-body { display: flex; flex-direction: column; min-height: 0; overflow: auto; }
+.pn-forbidden, .pn-note { margin: 0 0 12px; }
+.pn-main { align-items: stretch; gap: var(--gap); height: calc(100vh - 314px); min-height: 560px; flex: none; }
+.pn-list { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.pn-toolbar { display: flex; gap: 6px 10px; padding: 10px; flex-wrap: wrap; align-items: center; }
+.pn-toolbar .spacer { flex: 1; }
+.pn-toolbar .field :deep(.n-select) { width: 128px; }
+.pn-toolbar .pn-range :deep(.n-date-picker) { width: 300px; }
+.pn-sort-note { font-size: 11px; color: var(--txt-3); white-space: nowrap; }
+.pn-error { margin: 8px 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tb tr { cursor: pointer; }
+.tb tr.on { background: rgba(34, 211, 238, .12); }
+.pn-id { display: inline-block; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+.pn-sub { font-size: 11px; color: var(--txt-3); white-space: normal; line-height: 1.4; overflow-wrap: anywhere; }
+.pn-sub-inline { font-size: 11px; color: var(--txt-3); margin-left: 4px; }
+.pn-wrap { white-space: normal; line-height: 1.4; overflow-wrap: anywhere; }
+.pager { display: flex; justify-content: flex-end; padding: 10px; }
+.pn-detail { flex: 1; overflow: auto; padding: 12px; }
+.pn-delivery-note { margin: 8px 0 12px; }
+.pn-lnk { background: none; border: 0; padding: 0 0 0 6px; font: inherit; cursor: pointer; }
+.pn-subhead { margin: 12px 0 6px; font-size: 12px; font-weight: 600; color: var(--txt-2); }
+.pn-note-text { margin: 6px 0 4px; font-size: 11px; color: var(--txt-3); line-height: 1.6; }
+.pn-history { display: grid; gap: 8px; }
+.pn-history-item { display: grid; gap: 4px; padding: 8px; border: 1px solid var(--line); border-radius: 6px; font-size: 12px; }
+.pn-deliveries { max-height: 240px; }
+.pn-deliveries .tb tr { cursor: default; }
+.pn-not-built { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; padding: 12px; }
+.pn-not-built-item { display: grid; gap: 6px; padding: 10px; border: 1px dashed var(--line); border-radius: 6px; opacity: .85; }
+.pn-not-built-head { display: flex; align-items: center; gap: 8px; }
+.pn-not-built-item .btn { justify-self: start; }
+</style>

@@ -49,11 +49,11 @@ public class LocalDeviceSeeder implements ApplicationRunner {
     @Override
     @Transactional
     public void run(ApplicationArguments args) {
-        Long count = jdbc.queryForObject("SELECT COUNT(*) FROM device", Long.class);
+        Long count = jdbc.queryForObject("SELECT COUNT(*) FROM ops_device", Long.class);
         if (count != null && count > 0) return;
         long now = clock.nowMillis();
         jdbc.update("""
-                INSERT INTO integration_source (source_id,source_code,name,source_mode,enabled,simulated,created_at,updated_at)
+                INSERT INTO ops_integration_source (source_id,source_code,name,source_mode,enabled,simulated,created_at,updated_at)
                 VALUES (?,?,?,'mock',TRUE,TRUE,?,?)
                 """, SOURCE_ID, "LOCAL-MOCK", "本地开发模拟适配器", now, now);
         for (int i = 0; i < SEEDS.size(); i++) seed(SEEDS.get(i), i, now);
@@ -67,7 +67,7 @@ public class LocalDeviceSeeder implements ApplicationRunner {
         long heartbeat = "OFFLINE".equals(seed.connectivity()) ? now - 35 * 60_000L
                 : "UNKNOWN".equals(seed.connectivity()) ? now - 2 * 3_600_000L : now - (index % 3) * 20_000L;
         jdbc.update("""
-                INSERT INTO device (device_id,source_id,external_device_id,device_no,name,device_type_code,
+                INSERT INTO ops_device (device_id,source_id,external_device_id,device_no,name,device_type_code,
                     device_type_name,channel,model,vendor,owner_name,region_name,address,longitude,latitude,
                     coordinate_system,altitude_m,altitude_datum,firmware_version,installed_at,enabled,
                     source_mode,simulated,version,created_at,updated_at)
@@ -93,7 +93,7 @@ public class LocalDeviceSeeder implements ApplicationRunner {
                  "rssi_dbm":{"label":"信号强度","value":%d,"unit":"dBm","source":"mock-adapter"}}
                 """.formatted(24 + index * 4, 0.15 + index * 0.12, -55 - index * 2).replace("\n", "");
         jdbc.update("""
-                INSERT INTO device_state (device_id,connectivity,work_state_code,has_alarm,health_code,
+                INSERT INTO ops_device_state (device_id,connectivity,work_state_code,has_alarm,health_code,
                     observed_at,received_at,last_heartbeat_at,metrics_json,unknown_reason,simulated,version)
                 VALUES (?,?,?,?,?,?,?,?,?,?,TRUE,0)
                 """, id, seed.connectivity(), "ABNORMAL".equals(seed.connectivity()) ? "2" : "ONLINE".equals(seed.connectivity()) ? "1" : "0",
@@ -122,7 +122,7 @@ public class LocalDeviceSeeder implements ApplicationRunner {
 
     private void history(String deviceId, String connectivity, long at, String code, double value, String unit) {
         jdbc.update("""
-                INSERT INTO device_state_history (state_id,device_id,connectivity,observed_at,received_at,
+                INSERT INTO ops_device_state_history (state_id,device_id,connectivity,observed_at,received_at,
                     metric_code,metric_value,metric_unit,simulated) VALUES (?,?,?,?,?,?,?,?,TRUE)
                 """, UUID.randomUUID().toString(), deviceId, connectivity, at, at, code, value, unit);
     }

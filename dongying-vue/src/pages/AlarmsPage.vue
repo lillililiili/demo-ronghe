@@ -1,8 +1,9 @@
 <script>
-/* 模块级状态：跨导航保持（legacy 约定）。 */
+/* 模块级状态：跨导航保持（legacy 约定）。
+   level/status 映射为服务端契约的 severity/state；kind/region 保留控件但阶段 4 无契约支持，
+   固定为「全部」且禁用；sort/dir 保留字段，服务端固定按接收时间倒序，页面不做假排序。 */
 const S = {
-  /* 表格顶栏下拉默认「全部」，由用户再收窄。 */
-  st: { page: 1, size: 10, level: '全部', status: '全部', kind: '全部', region: '全部', sel: null,
+  st: { page: 1, size: 10, level: '全部', status: '全部', kind: '全部', region: '全部', sel: null, selId: null,
     sort: 'ts', dir: -1 }
 };
 export default {};
@@ -10,21 +11,24 @@ export default {};
 
 <script setup>
 /* 异常飞行与告警中心 —— 转换页（源：legacy pages/alarms.js）。
-   ⚠ 模块加载期副作用（addPendingVerificationAlarm 注入待核实告警、
-   U.regParams F0605 参数登记）仍由 legacy script 执行，这里不重复。
+   阶段 4：数据真源全部改为 alarmApi.js（apiRequest 唯一入口）。本流程不再读写
+   window.MOCK / window.EVT；API 失败显示错误并允许重试，不回退 Mock。
+   页面骨架（KPI / 工具条 / 列头 / 列表 + 分页 / 地图 / 详情 / 处置步骤与动作区）
+   沿用 HEAD 版本的 DOM 结构与 class 名，只替换数据源与状态口径。
    地图（MapView）在 onUnmounted 销毁；usePageChrome 先注册，故卸载顺序
    与旧版 route() 一致：CH.disposeAll → map.destroy → closeModal。 */
-import { ref, reactive, computed, h, onMounted, onUnmounted } from 'vue';
+import { ref, reactive, onMounted, onUnmounted } from 'vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import UPagination from '@/components/UPagination.vue';
 import UPanel from '@/components/UPanel.vue';
 import UKpis from '@/components/UKpis.vue';
 import { toast } from '@/ui/nv.js';
-import { openModal, closeModal } from '@/ui/modal.js';
-import { openFormModal } from '@/ui/formModal.js';
-import AlarmNotifyModal from '@/components/modals/AlarmNotifyModal.vue';
+import { getAlarm, getUavEvent, listAlarms, listUavVerifications } from '@/services/alarmApi.js';
+import { openUavVerification } from '@/ui/uavVerificationModal.js';
+import { targetApi } from '@/services/targetApi.js';
+import { SOURCE_MODE_LABEL as MODE_TEXT, targetTypeLabel } from '@/ui/labels.js';
 
-const M = window.MOCK, U = window.UI, CH = window.CH;
+const U = window.UI;
 usePageChrome('alarms');
 const root = ref(null);
 /* reactive 代理同一份模块级状态：n-pagination 的 :page/:page-size 需要响应式，
@@ -34,72 +38,110 @@ const totalCount = ref(0);
 let map = null;
 onUnmounted(() => { if (map) map.destroy(); map = null; });
 
-const FLOW_STATUS = ['待核实', '反制中', '干扰中', '待处置', '已处置', '误报'];
-const LEGACY_FLOW_STATUS = { '新建': '待核实', '已确认': '待核实', '处置中': '反制中', '已关闭': '待处置', '误报': '误报' };
-const statusOf = a => {
-  if (a.flowStatus) return a.flowStatus;
-  if (a.status === '已关闭' && window.EVT) {
-    const ctx = window.EVT.of(a.targetId);
-    if (ctx && ctx.stage >= window.EVT.FLOW.length) return '已处置';
-  }
-  return LEGACY_FLOW_STATUS[a.status] || '待核实';
+/* ---------- 契约词典（阶段 4 固定） ---------- */
+const NOT_WIRED = '阶段 4 未接入';
+const SEVERITY = {
+  CRITICAL: { t: '紧急', c: 't-red', tone: 'bad' }, HIGH: { t: '高', c: 't-red', tone: 'bad' },
+  MEDIUM: { t: '中', c: 't-amber', tone: 'warn' }, LOW: { t: '低', c: 't-blue', tone: 'info' }
 };
+/* CONFIRMED 只表示「已核实，待处置」——反制、干扰、处罚交接都未接入，页面不得出现「反制中 / 已处置」。 */
+const STATE = {
+  PENDING_VERIFICATION: { t: '待核实', c: 't-amber', color: '#ffb020' },
+  EVIDENCE_REQUIRED: { t: '证据待补充', c: 't-orange', color: '#ff8b3d' },
+  CONFIRMED: { t: '已核实，待处置', c: 't-cyan', color: '#22d3ee' },
+  FALSE_POSITIVE: { t: '误报', c: 't-blue', color: '#8fbaff' }
+};
+const NO_EVENT = { t: '未建事件', c: 't-gray', color: '#8ca0be' };
+const ALARM_TYPE = { UAV_INTRUSION: '无人机入侵', UAV: '无人机告警' };
+const SOURCE_MODE = { mock: { t: MODE_TEXT.mock, c: 't-purple' }, replay: { t: MODE_TEXT.replay, c: 't-amber' }, live: { t: MODE_TEXT.live, c: 't-green' } };
+const LEVEL_OPTS = [{ v: '全部', t: '全部' }, { v: 'CRITICAL', t: '紧急' }, { v: 'HIGH', t: '高' }, { v: 'MEDIUM', t: '中' }, { v: 'LOW', t: '低' }];
+const STATUS_OPTS = [{ v: '全部', t: '全部' }, ...Object.entries(STATE).map(([v, s]) => ({ v, t: s.t }))];
 
-const LV_RANK = { '高': 3, '中': 2, '低': 1 };
-const SORTERS = {
-  ts: a => a.ts,
-  level: a => LV_RANK[a.level] || 0,
-  kind: a => a.kind + '\u0000' + a.type,
-  district: a => M.DISTRICTS.findIndex(d => d.name === a.district),
-  status: a => FLOW_STATUS.indexOf(statusOf(a))
-};
-const SORT_NOTE = { district: '（按行政区既定顺序）', status: '（按处置流程顺序）', level: '（高→低）' };
-function sortTh(key, label) {
-  const on = st.sort === key;
-  return `<span class="lnk" data-sort="${key}" role="button" tabindex="0" title="点击按「${label}」排序${SORT_NOTE[key] || ''}"
-    style="color:inherit;cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px;text-decoration-color:rgba(156,198,255,.5)"
-    >${label}${on ? `<span style="font-size:10px;margin-left:2px">${st.dir < 0 ? '▼' : '▲'}</span>` : ''}</span>`;
+/* ---------- 通用小工具：服务端字符串一律转义后才进 innerHTML ---------- */
+const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+const el = id => document.getElementById(id);
+function fmt(ms) {
+  if (ms == null) return '';
+  const d = new Date(ms);
+  if (Number.isNaN(d.getTime())) return '';
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+const clock = ms => fmt(ms).slice(11) || '—';
+const sevOf = a => SEVERITY[a.severity] || { t: esc(a.severity || '—'), c: 't-gray', tone: 'info' };
+const stateOf = a => a.event_id ? (STATE[a.state] || { t: esc(a.state || '状态未知'), c: 't-gray', color: '#8ca0be' }) : NO_EVENT;
+const stateText = code => (STATE[code] || { t: esc(code || '—') }).t;
+const typeOf = a => ALARM_TYPE[a.alarm_type] || esc(a.alarm_type || '—');
+const modeOf = a => SOURCE_MODE[a.source_mode] || { t: esc(a.source_mode || '—'), c: 't-gray' };
+const sevTag = a => U.tag(sevOf(a).t, sevOf(a).c);
+const stateTag = a => U.tag(stateOf(a).t, stateOf(a).c);
+function messageOf(e) {
+  if (!e) return '请求失败，请稍后重试';
+  if (e.status === 401) return '登录已失效，请重新登录';
+  if (e.status === 403) return '当前账号没有相应权限';
+  if (e.code === 'TIMEOUT' || e.code === 'NETWORK_ERROR') return e.message || '服务不可用，请稍后重试';
+  return e.message || '请求失败，请稍后重试';
+}
+/* 只信任 WGS84 且数值在合法区间的坐标；未知/不可信不画点，也不以 (0,0) 补位。 */
+function coord(loc, issues, field) {
+  if (!loc || loc.coordinate_system !== 'WGS84') return null;
+  if (field && Array.isArray(issues) && issues.some(i => i && i.field === field)) return null;
+  const lon = Number(loc.longitude), lat = Number(loc.latitude);
+  if (!Number.isFinite(lon) || !Number.isFinite(lat) || lon < -180 || lon > 180 || lat < -90 || lat > 90) return null;
+  return { lon, lat };
 }
 
-function rows() {
-  const f = M.alarms.filter(a =>
-    (st.level === '全部' || a.level === st.level) &&
-    (st.status === '全部' || statusOf(a) === st.status) &&
-    (st.kind === '全部' || a.kind === st.kind) &&
-    (st.region === '全部' || a.district === st.region));
-  const g = SORTERS[st.sort];
-  if (!g) return f;
-  return f.sort((x, y) => { const a = g(x), b = g(y); return (a < b ? -1 : a > b ? 1 : 0) * st.dir; });
-}
-
-/* 深链（sessionStorage alarm.sel）与默认选中 —— 与 legacy render() 同构 */
-const sid = sessionStorage.getItem('alarm.sel');
-const deep = sid && M.alarms.find(a => a.id === sid);
-// safe-default: 默认选中当前筛选下的首条告警，用户可见可改
-st.sel = deep || st.sel || rows()[0] || M.todayAlarms[0] || M.alarms[0];
+/* ---------- 页面数据（服务端事实的一次性快照，不作为状态机真源） ---------- */
+const list = { rows: [], loading: false, error: '' };
+let listSeq = 0, detailSeq = 0;
+const emptyDetail = () => ({ alarm: null, event: null, history: [], historyTotal: 0, loading: false, error: '', eventError: '',
+  target: null, targetLoading: false, targetError: '', track: null, trackError: '' });
+let cur = emptyDetail();
+/* 深链（sessionStorage alarm.sel）—— 与 legacy render() 同构：mount 后按 ID 直接向服务端取详情 */
+const deepId = sessionStorage.getItem('alarm.sel');
 sessionStorage.removeItem('alarm.sel');
-if (deep) {
-  st.level = st.status = st.kind = st.region = '全部';
-  const all = rows();
-  st.page = Math.max(1, Math.ceil((all.findIndex(a => a.id === deep.id) + 1) / st.size));
+
+/* ---------- KPI：全部由服务端 total 得出；无法由后端得出的指标显示「尚未接入」 ---------- */
+const KPI_DEFS = [
+  { label: '今日告警总数', color: 'blue', icon: 'alert' },
+  { label: '待核实', color: 'amber', icon: 'alert' },
+  { label: '反制中', color: 'orange', icon: 'radar' },
+  { label: '干扰中', color: 'red', icon: 'radar' },
+  { label: '待处置', color: 'green', icon: 'check' },
+  { label: '误报', color: 'purple', icon: 'check' }
+];
+const kpiList = ref(KPI_DEFS.map(k => ({ ...k, value: '…', desc: '正在读取服务端统计' })));
+async function loadKpis() {
+  const count = q => listAlarms({ ...q, page: 1, size: 1 }).then(p => Number(p && p.total) || 0);
+  const now = new Date();
+  const from = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const to = from + 86400000, d30 = from - 29 * 86400000;
+  const r = await Promise.allSettled([
+    count({ occurred_from: from, occurred_to: to }), count({ occurred_from: d30, occurred_to: to }),
+    count({ state: 'PENDING_VERIFICATION' }), count({ state: 'EVIDENCE_REQUIRED' }),
+    count({ state: 'CONFIRMED' }), count({ state: 'FALSE_POSITIVE' })
+  ]);
+  const v = r.map(x => x.status === 'fulfilled' ? x.value : null);
+  const num = x => x == null ? '—' : U.num(x);
+  const fail = i => v[i] == null ? '读取失败：' + esc(messageOf(r[i].reason)) : null;
+  kpiList.value = [
+    { ...KPI_DEFS[0], value: num(v[0]), desc: fail(0) || `近30天 ${num(v[1])} 起（按发生时间统计，发生时间未知者不计）` },
+    { ...KPI_DEFS[1], value: num(v[2]), desc: fail(2) || `另有证据待补充 ${num(v[3])} 起，可再次核实` },
+    { ...KPI_DEFS[2], value: '尚未接入', desc: `联动反制${NOT_WIRED}` },
+    { ...KPI_DEFS[3], value: '尚未接入', desc: `信号干扰${NOT_WIRED}` },
+    { ...KPI_DEFS[4], value: num(v[4]), desc: fail(4) || '已核实，待处置；反制与处罚交接未接入' },
+    { ...KPI_DEFS[5], value: num(v[5]), desc: fail(5) || '人工核实后已排除' }
+  ];
 }
 
-const T = M.todayAlarms;
-const c = s => T.filter(a => statusOf(a) === s).length;
-const kpiList = [
-  { label: '今日告警总数', value: U.num(T.length), color: 'blue', icon: 'alert', desc: `近30天 ${U.num(M.alarms.length)} 起` },
-  { label: '待核实', value: U.num(c('待核实')), color: 'amber', icon: 'alert', desc: '待人工确认属实或误报' },
-  { label: '反制中', value: U.num(c('反制中')), color: 'orange', icon: 'radar', desc: '待发起联动反制' },
-  { label: '干扰中', value: U.num(c('干扰中')), color: 'red', icon: 'radar', desc: '反制信号干扰执行中' },
-  { label: '待处置', value: U.num(c('待处置')), color: 'green', icon: 'check', desc: '待通知处罚部门' },
-  { label: '误报', value: U.num(c('误报')), color: 'purple', icon: 'check', desc: '人工核实后已排除' }
-];
-
+/* ---------- 工具条：只暴露契约支持的过滤；不支持的保留控件但禁用并说明 ---------- */
+const disabledSelect = (name, reason) =>
+  `<select class="sel" data-f="${name}" disabled aria-disabled="true" title="${reason}"><option value="全部" selected>全部</option></select>`;
 const listPanelBody = `<div class="toolbar">
-    ${U.field('等级', U.select('level', ['全部', '高', '中', '低'], st.level))}
-    ${U.field('类别', U.select('kind', ['全部', '飞行违规', '空间安全'], st.kind))}
-    ${U.field('状态', U.select('status', ['全部', ...FLOW_STATUS], st.status))}
-    ${U.field('区域', U.select('region', ['全部', ...M.DISTRICTS.map(d => d.name)], st.region))}
+    ${U.field('等级', U.select('level', LEVEL_OPTS, st.level))}
+    ${U.field('类别', disabledSelect('kind', `服务端契约未提供类别筛选，${NOT_WIRED}`))}
+    ${U.field('状态', U.select('status', STATUS_OPTS, st.status))}
+    ${U.field('区域', disabledSelect('region', `服务端支持 district_id 过滤，但本页尚无区域字典，${NOT_WIRED}`))}
     <span style="flex:1"></span>
   </div>
   <div id="alList" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>`;
@@ -109,324 +151,311 @@ const mapBody = `<div id="alMap" style="flex:1;min-height:0"></div>
     <div id="alMapInfo" style="flex:none;height:19px;line-height:19px;padding:2px 2px 0;font-size:10.5px;
       color:var(--txt-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>`;
 
-function list() {
-  const all = rows(), page = all.slice((st.page - 1) * st.size, st.page * st.size);
-  totalCount.value = all.length;
+/* 列头排序：服务端固定 received_at DESC, alarm_id DESC；控件保留但禁用，不对一页数据做假排序。 */
+const SORT_REASON = `服务端固定按接收时间倒序（received_at DESC, alarm_id DESC），列排序${NOT_WIRED}`;
+function sortTh(key, label) {
+  const on = key === 'ts';
+  return `<span class="lnk" data-sort="${key}" role="button" tabindex="0" aria-disabled="true" title="${SORT_REASON}"
+    style="color:inherit;cursor:not-allowed;text-decoration:underline dotted;text-underline-offset:3px;text-decoration-color:rgba(156,198,255,.3)"
+    >${label}${on ? '<span style="font-size:10px;margin-left:2px">▼</span>' : ''}</span>`;
+}
+
+function queryOf() {
+  const q = { page: st.page, size: st.size };
+  if (st.level !== '全部') q.severity = st.level;
+  if (st.status !== '全部') q.state = st.status;
+  return q;
+}
+
+function summaryOf(a) {
+  const text = `${typeOf(a)} · 来源 ${esc(a.source_name || a.source_code || '—')}（${modeOf(a).t}）· 发生 ${fmt(a.occurred_at) || '未知'}`;
+  return `<div title="${text}" style="white-space:normal;line-height:1.5;
+        max-height:34px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">${text}</div>`;
+}
+
+function listHtml() {
+  if (list.loading && !list.rows.length) return `<div class="empty">正在读取告警列表…</div>`;
+  if (list.error) return `<div class="empty">${esc(list.error)}<br><button class="btn" data-al="retry" style="margin-top:10px">重试</button></div>`;
   return U.table([
     {
       t: sortTh('ts', '告警编号 / 时间'), w: '108px', cls: 'num',
-      render: a => U.cell(a.id.slice(-9), a.time.slice(11), { mono: true })
+      render: a => U.cell(esc(a.alarm_no || String(a.alarm_id).slice(-9)), clock(a.received_at), { mono: true, title: esc(a.alarm_id) })
     },
-    { t: sortTh('level', '等级'), w: '52px', align: 'center', render: a => U.tag(a.level, a.level === '高' ? 't-red' : a.level === '中' ? 't-amber' : 't-blue') },
-    {
-      t: sortTh('kind', '类别 / 类型'), w: '128px', render: a => U.cell(U.tag(a.kind, a.kind === '空间安全' ? 't-purple' : 't-orange'), a.type)
-    },
-    { t: sortTh('district', '关联目标 / 区域'), w: '146px', render: a => U.cell(a.targetId, a.district, { mono: true }) },
-    {
-      t: '告警内容', render: a => `<div title="${a.detail}" style="white-space:normal;line-height:1.5;
-        max-height:34px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">${a.detail}</div>`
-    },
-    { t: sortTh('status', '状态'), w: '86px', render: a => U.tag(statusOf(a)) }
-  ], page, { rowId: a => a.id, activeId: st.sel && st.sel.id });
+    { t: sortTh('level', '等级'), w: '52px', align: 'center', render: sevTag },
+    { t: sortTh('kind', '类别 / 类型'), w: '128px', render: a => U.cell(U.tag(modeOf(a).t, modeOf(a).c), typeOf(a)) },
+    { t: sortTh('district', '关联目标 / 区域'), w: '146px', render: a => U.cell(a.target_id ? esc(a.target_no || a.target_id) : '—', esc(a.district_name || a.district_id || '—'), { mono: true, title: a.target_id ? esc(a.target_id) : '无关联目标或无目标读取权限' }) },
+    { t: '告警内容', render: summaryOf },
+    { t: sortTh('status', '状态'), w: '86px', render: stateTag }
+  ], list.rows, { rowId: a => a.alarm_id, activeId: cur.alarm && cur.alarm.alarm_id });
 }
 
-function disposalSteps(a) {
-  const s = statusOf(a);
-  const trigger = { n: '告警触发', t: a.time.slice(11), done: true, act: false };
-  const ctx = window.EVT && window.EVT.of(a.targetId);
-  if (s !== '误报' && ctx) return window.EVT.steps(ctx).map((step, i) => ({
-    n: step.n, t: i === 0 ? a.time.slice(11) : step.t, done: step.done, act: step.act
-  }));
-  if (s === '待核实') return [trigger,
-    { n: '人工核实', t: '', done: false, act: true },
-    { n: '反制', t: '', done: false, act: false },
-    { n: '信号干扰', t: '', done: false, act: false },
-    { n: '处置', t: '', done: false, act: false }];
-  if (s === '误报') return [trigger,
-    { n: '人工核实', t: '误报', done: true, act: false }];
-  if (s === '反制中') return [trigger,
-    { n: '人工核实', t: '属实', done: true, act: false },
-    { n: '反制', t: '待授权', done: false, act: true },
-    { n: '信号干扰', t: '', done: false, act: false },
-    { n: '处置', t: '', done: false, act: false }];
-  if (s === '干扰中') return [trigger,
-    { n: '人工核实', t: '属实', done: true, act: false },
-    { n: '反制', t: '已授权', done: true, act: false },
-    { n: '信号干扰', t: '干扰中', done: false, act: true },
-    { n: '处置', t: '', done: false, act: false }];
-  return [trigger,
-    { n: '人工核实', t: '属实', done: true, act: false },
-    { n: '反制', t: '已授权', done: true, act: false },
-    { n: '信号干扰', t: '干扰完成', done: true, act: false },
-    { n: '处置', t: s === '已处置' ? '已通知' : '待通知', done: s === '已处置', act: s === '待处置' }];
+/* ---------- 处置流程与动作：只有人工核实接入；其余节点/按钮保留位置但禁用并说明 ---------- */
+function disposalSteps(a, ev) {
+  const trigger = { n: '告警触发', t: clock(a.received_at), done: true, act: false };
+  const na = n => ({ n, t: NOT_WIRED, done: false, act: false, applicable: false });
+  const tail = [na('反制'), na('信号干扰'), na('处置')];
+  if (!ev) return [trigger, { n: '人工核实', t: '未建事件', done: false, act: false }, ...tail];
+  if (ev.state === 'FALSE_POSITIVE') return [trigger, { n: '人工核实', t: '误报', done: true, act: false }];
+  if (ev.state === 'CONFIRMED') return [trigger, { n: '人工核实', t: '属实', done: true, act: false }, ...tail];
+  if (ev.state === 'EVIDENCE_REQUIRED') return [trigger, { n: '人工核实', t: '证据待补充', done: false, act: true }, ...tail];
+  return [trigger, { n: '人工核实', t: '', done: false, act: true }, ...tail];
 }
 
-function disposalActions(a) {
-  const s = statusOf(a);
-  if (s === '待核实') return `<button class="btn pri" data-al="verify">人工核实</button>`;
-  if (s === '反制中') return `<button class="btn danger" data-al="counter">${U.icon('bolt')} 发起联动反制</button>`;
-  if (s === '待处置') {
-    const ctx = window.EVT && window.EVT.of(a.targetId);
-    if (ctx && ctx.kase && ctx.stage === window.EVT.FLOW.length - 1)
-      return `<button class="btn pri" data-al="punish">通知处罚部门</button>`;
+function disposalActions(a, ev) {
+  const dis = (key, label, reason, cls) => `<button class="btn ${cls || ''}" data-al="${key}" disabled title="${reason}">${label}</button>`;
+  if (!ev) return dis('verify', '人工核实', '尚未创建核实事件，无法核实');
+  if ((ev.allowed_actions || []).includes('VERIFY')) return `<button class="btn pri" data-al="verify">人工核实</button>`;
+  if (ev.state === 'CONFIRMED') {
+    return dis('counter', `${U.icon('bolt')} 发起联动反制`, `${NOT_WIRED}：当前为「已核实，待处置」，联动反制未接入`, 'danger')
+      + ` ${dis('punish', '通知处罚部门', `${NOT_WIRED}：通知处罚部门未接入`)}`;
   }
-  return '';
+  if (ev.state === 'FALSE_POSITIVE') return '';
+  return dis('verify', '人工核实', '当前账号缺少核实权限（alarm:verify），或事件不在可核实状态');
 }
 
-function detail() {
-  const a = st.sel;
-  if (!a) return '<div class="empty">请选择告警</div>';
-  document.getElementById('alSt').innerHTML = U.tag(statusOf(a));
-  const t = M.allTargets.find(x => x.id === a.targetId) || {};
+function historyHtml() {
+  if (!cur.event) return `<div class="empty">尚未创建核实事件</div>`;
+  if (cur.eventError) return `<div class="empty">${esc(cur.eventError)}</div>`;
+  if (!cur.history.length) return `<div class="empty">暂无核实历史</div>`;
+  const more = cur.historyTotal > cur.history.length ? `<div class="empty">仅显示前 ${cur.history.length} 条，共 ${U.num(cur.historyTotal)} 条</div>` : '';
+  /* 说明文本是用户输入：这里只留占位 span，innerHTML 写入后再以 textContent 填充，不进 v-html。 */
+  return U.timeline(cur.history.map((h, i) => ({
+    time: clock(h.created_at),
+    label: `${stateText(h.previous_state)} → ${stateText(h.resulting_state)}（v${Number(h.version)}）`,
+    desc: `操作人 ${esc(h.actor_name || h.actor_id || '—')} · <span data-note="${i}"></span>`,
+    color: (STATE[h.resulting_state] || NO_EVENT).color
+  }))) + more;
+}
+function fillNotes(host) {
+  host.querySelectorAll('[data-note]').forEach(n => { const h = cur.history[Number(n.dataset.note)]; n.textContent = h ? String(h.note == null ? '' : h.note) : ''; });
+}
+
+function detailHtml() {
+  const a = cur.alarm, stEl = el('alSt');
+  if (!a) {
+    if (stEl) stEl.innerHTML = '';
+    if (cur.loading) return '<div class="empty">正在读取告警详情…</div>';
+    if (cur.error) return `<div class="empty">${esc(cur.error)}<br><button class="btn" data-al="retry-detail" style="margin-top:10px">重试</button></div>`;
+    return '<div class="empty">请选择告警</div>';
+  }
+  if (stEl) stEl.innerHTML = stateTag(a);
+  const ev = cur.event, t = cur.target, ls = t && t.latest_state;
+  const targetType = !a.target_id ? '—' : cur.targetLoading ? '读取中…' : cur.targetError ? '读取失败' : esc(t ? targetTypeLabel(t.subtype, t.object_type_code) : '—');
+  const altSpeed = ls ? `${ls.altitude_amsl_m == null ? '—' : esc(ls.altitude_amsl_m)} m / ${ls.speed_mps == null ? '—' : esc(ls.speed_mps)} m/s` : '— m / — m/s';
   return `${U.detailHero({
-    icon: 'alert', subtitle: '告警事件', title: a.type, id: a.id,
-    tags: [U.tag(a.level, a.level === '高' ? 't-red' : a.level === '中' ? 't-amber' : 't-blue'), U.tag(statusOf(a))],
-    meta: [['区域', a.district], ['时间', a.time.slice(11)]]
+    icon: 'alert', subtitle: '告警事件', title: typeOf(a), id: esc(a.alarm_no || a.alarm_id),
+    tags: [sevTag(a), stateTag(a)],
+    meta: [['区域', esc(a.district_name || a.district_id || '—')], ['时间', clock(a.received_at)]]
   })}
     ${U.metricStrip([
-      { label: '告警等级', value: a.level, tone: a.level === '高' ? 'bad' : a.level === '中' ? 'warn' : 'info', icon: 'alert' },
-      { label: '处置状态', value: statusOf(a), tone: statusOf(a) === '待核实' ? 'warn' : 'info', icon: 'play' },
-      { label: '目标类型', value: t.subtype || t.type || '—', icon: 'plane' },
-      { label: '来源置信', value: U.confPct(a.source_confidence), tone: 'good', icon: 'radar' }
+      { label: '告警等级', value: sevOf(a).t, tone: sevOf(a).tone, icon: 'alert' },
+      { label: '处置状态', value: stateOf(a).t, tone: a.state === 'CONFIRMED' || a.state === 'FALSE_POSITIVE' ? 'info' : 'warn', icon: 'play' },
+      { label: '目标类型', value: targetType, icon: 'plane' },
+      { label: '来源置信', value: NOT_WIRED, icon: 'radar' }
     ], { compact: true })}
-    ${U.sect('处置流程', U.steps(disposalSteps(a)), { icon: 'trend' })}
+    ${U.sect('处置流程', U.steps(disposalSteps(a, ev)), { icon: 'trend' })}
     ${U.sect('告警信息', U.kv([
-    ['告警类型', a.type], ['告警等级', U.tag(a.level, a.level === '高' ? 't-red' : 't-amber')],
-    ['触发时间', a.time], ['所在区域', a.district],
-    ['关联目标', `<span class="mono">${a.targetId}</span>`],
-    ['目标类型', t.subtype || t.type || '—'],
-    ['高度/速度', (t.alt || '—') + ' m / ' + (t.speed || '—') + ' m/s'],
-    ['数据来源', a.source + `（置信度 ${U.confPct(a.source_confidence)}）`],
-    ['告警内容', a.detail]
+    ['告警类型', typeOf(a)], ['告警等级', sevTag(a)],
+    ['触发时间', fmt(a.occurred_at) || '未知'], ['接收时间', fmt(a.received_at) || '—'],
+    ['所在区域', esc(a.district_name || a.district_id || '—')], ['所属机构', esc(a.owner_org_name || a.owner_org_id || '—')],
+    ['关联目标', a.target_id ? `<span class="mono" title="${esc(a.target_id)}">${esc(a.target_no || a.target_id)}</span>` : '无关联目标或无目标读取权限'],
+    ['目标类型', targetType],
+    ['高度/速度', altSpeed],
+    ['数据来源', `${esc(a.source_name || a.source_code || '—')}（${modeOf(a).t}）`],
+    ['核实事件', ev ? `已建核实事件　v${Number(ev.version)}` : (a.event_id ? '已建核实事件（详情读取失败）' : '尚未创建核实事件')]
   ], { surface: true, density: 'compact' }), { icon: 'alert' })}
-    ${/* 「关联目标 ID 变更历史（B02）」区块已按用户裁定删除（2026-08-30）：
-         合并/分裂谱系是证据链回溯用的技术事实，演示告警详情不需要它。
-         M.idLineage 数据与合并快照仍在数据层（日志归档可查），删的只是本页展示。 */''}
+    ${U.sect('核实历史', historyHtml(), { icon: 'trend' })}
     ${U.detailActions(`
-      <button class="btn" data-al="video">${U.icon('video')} 实时视频</button>
-      <button class="btn" data-al="replay">${U.icon('trend')} 轨迹回放</button>
-      ${disposalActions(a)}`)}`;
+      <button class="btn" data-al="video" disabled title="${NOT_WIRED}：实时视频">${U.icon('video')} 实时视频</button>
+      <button class="btn" data-al="replay" disabled title="${NOT_WIRED}：轨迹回放">${U.icon('trend')} 轨迹回放</button>
+      ${disposalActions(a, ev)}`)}`;
 }
 
-function paint() {
-  document.getElementById('alList').innerHTML = list();
-  document.getElementById('alDetail').innerHTML = detail();
-}
+function paintList() { const host = el('alList'); if (host) host.innerHTML = listHtml(); }
+function paintDetail() { const host = el('alDetail'); if (!host) return; host.innerHTML = detailHtml(); fillNotes(host); }
 
-function trackFor(t, a) {
-  const lv = M.liveTargets.find(x => x.id === t.id);
-  if (lv && lv.track && lv.track.length > 1)
-    return { pts: lv.track, src: '实时跟踪轨迹（/api/v1/target/track 实时流）', live: true };
-  const rs = CH.seeded('altrk' + t.id);
-  const n = 22, hd = (t.heading || 0) * Math.PI / 180;
-  const lon0 = t.lon - Math.sin(hd) * 0.055, lat0 = t.lat - Math.cos(hd) * 0.046;
-  const dl = (t.lon - lon0) / (n - 1), da = (t.lat - lat0) / (n - 1);
-  const hasBridge = rs(0, 9) < 6;
-  const b0 = Math.floor(n * 0.4), b1 = b0 + 2;
-  const open = !a || ['待核实', '反制中', '干扰中'].includes(statusOf(a));
-  const p0 = open ? n - 3 : n;
-  const pts = [];
-  for (let i = 0; i < n; i++) {
-    const kind = i >= p0 ? 'pred' : (hasBridge && i >= b0 && i <= b1 ? 'bridge' : 'meas');
-    pts.push({
-      lon: +(lon0 + dl * i + rs(-55, 55) / 1e4).toFixed(6),
-      lat: +(lat0 + da * i + rs(-45, 45) / 1e4).toFixed(6),
-      alt: t.alt, t: t.ts - (n - 1 - i) * 12000, kind
-    });
-  }
-  return { pts, src: '历史归档轨迹（Demo 按归档点位还原，正式版取 /api/v1/target/track）', live: false };
-}
-const kindStat = pts => pts.reduce((m, p) => { const k = p.kind || 'meas'; m[k] = (m[k] || 0) + 1; return m; }, {});
-
-function centerOn(lon, lat) {
-  if (!map || !map.w) return;
-  map.centerAt(lon, lat);
-}
-
+/* ---------- 地图：只有响应含 target_id（服务端已按 target:read 与范围元组裁剪）才读目标/轨迹 ---------- */
 function focusMap() {
   if (!map) return;
-  const a = st.sel, info = document.getElementById('alMapInfo'), srcEl = document.getElementById('alMapSrc');
-  if (!a) return;
-  const t = M.allTargets.find(x => x.id === a.targetId);
-  if (!t) {
-    map.sel = null;
-    map.setData({ airspaces: M.airspaces, devices: [], targets: [], alarms: [] });
-    if (srcEl) srcEl.textContent = '';
-    if (info) info.innerHTML = `<span class="inline-icon" style="color:#ffd07a" title="历史告警的关联目标可能已被 B02 合并">${U.icon('warning')} 关联目标 ${a.targetId} 不在目标库中，无法定位</span>`;
-    return;
-  }
-  const tk = trackFor(t, a);
-  map.sel = t.id;
+  const info = el('alMapInfo'), srcEl = el('alMapSrc'), a = cur.alarm;
+  const setInfo = (html, title) => { if (info) { info.innerHTML = html; info.title = title || ''; } };
+  const warn = text => `<span class="inline-icon" style="color:#ffd07a">${U.icon('warning')} ${text}</span>`;
+  map.sel = null;
+  map.setData({ airspaces: [], devices: [], targets: [], alarms: [] });
+  if (srcEl) srcEl.textContent = '';
+  if (!a) return setInfo(cur.loading ? '正在读取告警…' : '请选择告警');
+  if (!a.target_id) return setInfo(warn('无关联目标或无目标读取权限，无法定位'));
+  if (cur.targetLoading) return setInfo('正在读取关联目标…');
+  if (cur.targetError) return setInfo(warn(`关联目标 ${esc(a.target_no || a.target_id)} 读取失败：${esc(cur.targetError)}`));
+  const t = cur.target, ls = t && t.latest_state;
+  const pos = ls ? coord(ls.location, ls.field_issues, 'location') : null;
+  const pts = ((cur.track && cur.track.points) || []).map(p => {
+    const c = coord(p.location);
+    return c ? { lon: c.lon, lat: c.lat, alt: p.altitude_amsl_m == null ? null : Number(p.altitude_amsl_m), t: p.sort_time, kind: 'meas' } : null;
+  }).filter(Boolean);
+  const last = pos || (pts.length ? pts[pts.length - 1] : null);
+  if (!t || !last) return setInfo(warn(`关联目标 ${esc(t?.target_no || a.target_no || a.target_id)} 坐标未知或不可信，不以 (0,0) 补位，无法定位`));
+  const subtype = targetTypeLabel(t.subtype, t.object_type_code, '目标');
+  const target = {
+    id: t.target_no || t.target_id, lon: last.lon, lat: last.lat,
+    alt: ls && ls.altitude_amsl_m != null ? Number(ls.altitude_amsl_m) : null,
+    speed: ls && ls.speed_mps != null ? Number(ls.speed_mps) : null,
+    heading: ls && ls.heading_deg != null ? Number(ls.heading_deg) : 0,
+    // 合法性判定阶段 4 未接入：不向 MapView 传任何结论词（'待确认' 等），maptip 与信息栏同文案。
+    type: targetTypeLabel(null, t.object_type_code, '目标'), subtype, legal: '尚未接入', risk: '—', tracked: true,
+    track: pts.length > 1 ? pts : []
+  };
+  map.sel = target.id;
   map.setData({
-    airspaces: M.airspaces, devices: [],
-    targets: [Object.assign({}, t, { track: tk.pts, tracked: true })],
-    alarms: [a]
+    airspaces: [], devices: [], targets: [target],
+    alarms: [{ id: a.alarm_id, targetId: target.id, type: typeOf(a), level: sevOf(a).t, time: fmt(a.received_at), status: stateOf(a).t }]
   });
-  const last = tk.pts[tk.pts.length - 1];
-  centerOn(last.lon, last.lat);
-  const ks = kindStat(tk.pts);
-  if (srcEl) srcEl.innerHTML =
-    `${tk.live ? `<span class="tag t-green" title="${tk.src}">实时轨迹</span>`
-      : `<span class="tag t-amber" title="${tk.src}">归档轨迹</span>`}
-     <span title="实测 / 弥合(A03) / 预测(A04) 三种点型按 §6.8 分线型绘制：实测=动画虚线，弥合=橙色宽隙虚线，预测=青色点线">
-       <span style="color:#8fbaff">实${ks.meas || 0}</span><span
-         style="color:#ff8b3d">/弥${ks.bridge || 0}</span><span
-         style="color:#22d3ee">/预${ks.pred || 0}</span></span>`;
-  if (info) {
-    const lc = t.legal === '非法' ? '#ff8b95' : t.legal === '异常' ? '#ffb083' : t.legal === '待确认' ? '#ffd07a' : t.legal === '不适用' ? '#8ca0be' : '#79e5a5';
-    info.innerHTML =
-      `<span class="mono" style="color:var(--txt-2)">${t.id}</span> · ${t.subtype || t.type} ·
-       合法性 <span style="color:${lc}">${t.legal}</span> · 高度 ${t.alt} m ·
-       ${tk.live ? '实时轨迹' : '历史归档轨迹'}`;
-    info.title = `${t.id}｜${t.subtype || t.type}｜合法性 ${t.legal}｜高度 ${t.alt} m\n轨迹来源：${tk.src}\n`
-      + `点型：实测 ${ks.meas || 0}（动画虚线）/ 弥合 A03 ${ks.bridge || 0}（橙色宽隙虚线）/ 预测 A04 ${ks.pred || 0}（青色点线）`;
+  if (map.w) map.centerAt(last.lon, last.lat);
+  const trackNote = pts.length > 1 ? `服务端轨迹 · 实测 ${pts.length} 点` : cur.trackError ? `轨迹读取失败：${esc(cur.trackError)}` : '仅最新位置，无可信轨迹点';
+  if (srcEl) srcEl.innerHTML = pts.length > 1
+    ? `<span class="tag t-amber" title="/api/v1/targets/{id}/tracks 最新一条轨迹的最近点位（WGS84）">服务端轨迹</span> <span style="color:#8fbaff">实${pts.length}</span>`
+    : `<span class="tag t-gray" title="${cur.trackError ? esc(cur.trackError) : '该目标暂无可信轨迹点'}">无轨迹</span>`;
+  setInfo(`<span class="mono" style="color:var(--txt-2)" title="${esc(t.target_id)}">${esc(t.target_no || t.target_id)}</span> · ${esc(subtype)} · 合法性 <span style="color:#8ca0be">尚未接入</span> · 高度 ${target.alt == null ? '—' : esc(target.alt) + ' m'} · ${trackNote}`,
+    `${t.target_no || t.target_id}｜${subtype}｜高度 ${target.alt == null ? '—' : target.alt + ' m'}\n${trackNote}`);
+}
+
+/* ---------- 数据加载 ---------- */
+async function loadList() {
+  const my = ++listSeq;
+  list.loading = true; list.error = '';
+  paintList();
+  try {
+    const page = await listAlarms(queryOf());
+    if (my !== listSeq) return;
+    list.rows = Array.isArray(page && page.items) ? page.items : [];
+    totalCount.value = Number(page && page.total) || 0;
+    list.loading = false;
+    if (!list.rows.length && st.page > 1 && totalCount.value) {
+      st.page = Math.max(1, Math.ceil(totalCount.value / st.size));
+      return loadList();
+    }
+  } catch (e) {
+    if (my !== listSeq) return;
+    // API 失败只显示错误并允许重试，绝不回退 Mock 列表。
+    list.rows = []; totalCount.value = 0; list.loading = false; list.error = messageOf(e);
   }
+  paintList();
 }
 
-function remount() { window.APP.rerender(); }
-
-function startInterference(a) {
-  const ctx = window.EVT && window.EVT.of(a.targetId);
-  if (!ctx) return toast('未找到该告警的共享事件记录', 'err');
-  const result = window.EVT.startLinkedCounter(ctx, {
-    note: '告警页完成反制授权并发起联动处置',
-    onStart: remount,
-    onComplete: () => { if (location.hash === '#/alarms') remount(); }
-  });
-  if (!result.ok) return toast(result.msg, 'err');
-  toast(result.msg, 'ok');
-}
-
-function notifyPunishment(a) {
-  const ctx = window.EVT && window.EVT.of(a.targetId);
-  if (!ctx) return toast('未找到该告警的共享事件记录', 'err');
-  return window.EVT.confirmPunish(ctx, {
-    note: '告警事件页确认通知处罚部门',
-    onResult: result => {
-      if (!result.ok) return toast(result.msg, 'err');
-      remount();
-      toast(result.msg, 'ok');
+async function selectAlarm(id) {
+  const my = ++detailSeq;
+  st.selId = id; st.sel = null;
+  cur = emptyDetail(); cur.loading = true;
+  const listEl = el('alList');
+  if (listEl) U.selectRow(listEl, id);
+  paintDetail(); focusMap();
+  try {
+    const alarm = await getAlarm(id);
+    if (my !== detailSeq) return;
+    cur.alarm = alarm;
+    if (alarm.event_id) {
+      try {
+        const [ev, hist] = await Promise.all([getUavEvent(alarm.event_id), listUavVerifications(alarm.event_id, { page: 1, size: 100 })]);
+        if (my !== detailSeq) return;
+        cur.event = ev; cur.history = Array.isArray(hist && hist.items) ? hist.items : []; cur.historyTotal = Number(hist && hist.total) || 0;
+      } catch (e) { if (my !== detailSeq) return; cur.eventError = messageOf(e); }
     }
-  });
+  } catch (e) {
+    if (my !== detailSeq) return;
+    cur.error = messageOf(e);
+  }
+  cur.loading = false;
+  paintDetail(); focusMap();
+  await loadTarget(my);
 }
 
+async function loadTarget(my) {
+  const a = cur.alarm;
+  if (!a || !a.target_id) return;
+  cur.targetLoading = true;
+  focusMap();
+  try {
+    const t = await targetApi.detail(a.target_id);
+    if (my !== detailSeq) return;
+    cur.target = t;
+    try {
+      const tracks = await targetApi.tracks(a.target_id, { page: 1, size: 1 });
+      const track = tracks && Array.isArray(tracks.items) ? tracks.items[0] : null;
+      if (track) {
+        // 点位按时间升序分页：先取第一页得到 total，再取最后一页即最近 ≤100 个点位。
+        let points = await targetApi.points(track.track_id, { page: 1, size: 100 });
+        const total = Number(points && points.total) || 0;
+        if (total > 100) points = await targetApi.points(track.track_id, { page: Math.ceil(total / 100), size: 100 });
+        if (my !== detailSeq) return;
+        cur.track = { id: track.track_id, points: Array.isArray(points && points.items) ? points.items : [] };
+      }
+    } catch (e) { if (my !== detailSeq) return; cur.trackError = messageOf(e); }
+  } catch (e) {
+    if (my !== detailSeq) return;
+    cur.targetError = messageOf(e);
+  }
+  if (my !== detailSeq) return;
+  cur.targetLoading = false;
+  paintDetail(); focusMap();
+}
+
+async function refreshAfterWrite() {
+  const id = cur.alarm && cur.alarm.alarm_id;
+  await Promise.all([loadList(), id ? selectAlarm(id) : Promise.resolve(), loadKpis()]);
+}
+
+/* ---------- 人工核实：共享弹窗（与工作台同一实现，幂等键保留与 409/超时回读在弹窗内处理） ---------- */
 function verifyModal() {
-  const a = st.sel;
-  if (!a) return;
-  if (statusOf(a) !== '待核实') return toast('当前告警无需重复核实', 'err');
-  const t = M.allTargets.find(x => x.id === a.targetId) || {};
-  openFormModal({
-    title: '人工核实 · ' + a.id, width: '600px',
-    warning: `核实是状态机的必经环节（待核实 → 反制中 / 误报）。
-        结论为「误报」时告警进入终态，样本计入误报率统计与 C06 规则优化；
-        结论为「属实」时直接进入反制节点，可在本页发起联动处置。`,
-    introHtml: U.kv([
-      ['告警类型', a.type], ['告警等级', U.tag(a.level, a.level === '高' ? 't-red' : a.level === '中' ? 't-amber' : 't-blue')],
-      ['关联目标', `<span class="mono">${a.targetId}</span>　${t.subtype || t.type || '—'}`],
-      ['合法性判定', t.legal_status || t.legal || '—'],
-      ['触发时间 / 区域', a.time + '　' + a.district],
-      ['告警内容', a.detail]
-    ]),
-    fields: [
-      { key: 'real', label: '核实结论', type: 'radio', required: true, options: [
-        { value: '1', html: '<b>属实</b> —— 告警成立，状态推进至「反制中」' },
-        { value: '0', html: '<b>误报</b> —— 告警不成立，状态置为「误报」（终态），并计入误报率统计' }
-      ] },
-      { key: 'note', label: '核实说明', required: true, placeholder: '必填：核实依据（如现场确认、轨迹复核、飞手联系结果）' }
-    ],
-    initial: { real: '1', note: '' },
-    confirmText: '提交核实结论',
-    validate: m => !(m.note || '').trim() ? '核实说明为必填 —— 状态变更必须能回答"依据是什么"' : '',
-    onSubmit: ({ real, note }) => {
-      const from = statusOf(a);
-      const ctx = window.EVT && window.EVT.of(a.targetId);
-      const result = ctx ? window.EVT.verify(ctx, { real: real === '1', note: (note || '').trim() }) : { ok: false, msg: '事件聚合服务不可用' };
-      if (!result.ok) return toast(result.msg, 'err');
-      closeModal();
-      remount();
-      toast(`核实完成：${from} → ${a.flowStatus}${real === '1' ? '' : '（流程在人工核实节点终止）'}`, 'ok');
-    }
+  const a = cur.alarm, ev = cur.event;
+  if (!a || !ev) return toast('尚未创建核实事件，无法核实', 'err');
+  openUavVerification({
+    alarm: a,
+    event: ev,
+    refresh: async () => { await refreshAfterWrite(); return cur.event; }
   });
 }
 
-function sendModal() {
-  const a = st.sel;
-  const on = M.notifyChannels.filter(c2 => c2.on);
-  openModal({
-    title: '发送告警通知 · ' + a.id, width: '620px', footer: false,
-    render: () => h(AlarmNotifyModal, {
-      alarm: a,
-      channels: on,
-      onSent: () => { const el = document.getElementById('alDetail'); if (el) el.innerHTML = detail(); }
-    })
-  });
-}
+function onPage(p2) { st.page = p2; loadList(); }
+function onPageSize(s2) { st.size = s2; st.page = 1; loadList(); }
 
-function onPage(p2) { st.page = p2; paint(); }
-function onPageSize(s2) { st.size = s2; st.page = 1; paint(); }
-
-onMounted(() => {
+onMounted(async () => {
   const view = root.value;
-  paint();
-  // 深链/默认选中的行可能落在列表滚动区外（尤其统一检索/态势页跳来时）：
-  // 挂载后把选中行滚到列表可视区中部。行点击走 selectRow 不重建列表，不受此影响。
-  const selTr = document.querySelector('#alList tr.on');
-  if (selTr && selTr.scrollIntoView) selTr.scrollIntoView({ block: 'center' });
-  map = new window.MapView(document.getElementById('alMap'), {
+  paintList(); paintDetail();
+  map = new window.MapView(el('alMap'), {
     zoom: 2.2, maxDev: 0, maxAlarm: 1, legend: false, layers: { device: false }
   });
   focusMap();
   requestAnimationFrame(focusMap);
 
-  U.on(view, '[data-row]', 'click', (e, el) => {
-    st.sel = M.alarms.find(a => a.id === el.dataset.row);
-    U.selectRow(document.getElementById('alList'), el.dataset.row);
-    document.getElementById('alDetail').innerHTML = detail();
-    focusMap();
-  });
+  U.on(view, '[data-row]', 'click', (e, row) => { if (row.dataset.row) selectAlarm(row.dataset.row); });
   /* 分页交互已由模板层 <n-pagination> 受控接管（P2），[data-pg]/[data-size] 委托删除 */
-  U.on(view, '[data-f]', 'change', (e, el) => { st[el.dataset.f] = el.value; st.page = 1; paint(); });
-  const doSort = key => {
-    if (st.sort === key) st.dir = -st.dir;
-    else { st.sort = key; st.dir = key === 'ts' ? -1 : 1; }
-    st.page = 1;
-    paint();
-    const sc = document.querySelector('#alList .scroll');
-    if (sc) sc.scrollTop = 0;
-  };
-  U.on(view, '[data-sort]', 'click', (e, el) => doSort(el.dataset.sort));
-  U.on(view, '[data-sort]', 'keydown', (e, el) => {
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); doSort(el.dataset.sort); }
+  U.on(view, '[data-f]', 'change', (e, ctl) => {
+    if (ctl.disabled) return;
+    st[ctl.dataset.f] = ctl.value; st.page = 1; loadList();
   });
-  U.on(view, '[data-al]', 'click', (e, el) => {
-    const k = el.dataset.al;
-    if (k === 'counter') {
-      const a = st.sel;
-      const t = a && M.allTargets.find(x => x.id === a.targetId);
-      if (!a || statusOf(a) !== '反制中') return toast('当前告警不在反制节点', 'err');
-      if (!t) return toast('未找到该告警的关联目标', 'err');
-      if (!window.TARGET_ACTIONS) return toast('反制授权组件尚未加载', 'err');
-      window.TARGET_ACTIONS.openCounterAuth(t, () => startInterference(a));
-    }
-    else if (k === 'punish') {
-      const a = st.sel;
-      if (!a || statusOf(a) !== '待处置') return toast('当前告警无需通知处罚部门', 'err');
-      notifyPunishment(a);
-    }
-    else if (k === 'video' || k === 'replay') {
-      const a = st.sel;
-      const t = a && M.allTargets.find(x => x.id === a.targetId);
-      if (!t) return toast('未找到该告警的关联目标', 'err');
-      if (!window.TARGET_MEDIA) return toast('媒体查看组件尚未加载', 'err');
-      const tk = trackFor(t, a);
-      const target = Object.assign({}, t, { track: tk.pts });
-      if (k === 'video') window.TARGET_MEDIA.openVideo(target);
-      else window.TARGET_MEDIA.openReplay(target, a);
-    }
-    else if (k === 'notify') sendModal();
-    else if (k === 'verify') verifyModal();
+  const sortNote = () => toast(SORT_REASON);
+  U.on(view, '[data-sort]', 'click', sortNote);
+  U.on(view, '[data-sort]', 'keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); sortNote(); } });
+  U.on(view, '[data-al]', 'click', (e, btn) => {
+    if (btn.disabled) return;
+    const k = btn.dataset.al;
+    if (k === 'verify') verifyModal();
+    else if (k === 'retry') loadList();
+    else if (k === 'retry-detail' && st.selId) selectAlarm(st.selId);
   });
-  document.getElementById('alLoc').onclick = () => { if (map) map.resetView(2.2); focusMap(); };
+  el('alLoc').onclick = () => { if (map) map.resetView(2.2); focusMap(); };
+
+  loadKpis();
+  await loadList();
+  // safe-default：深链 > 上次选中 > 当前页首条；用户可见可改
+  const id = deepId || st.selId || (list.rows[0] && list.rows[0].alarm_id) || null;
+  if (id) {
+    const pending = selectAlarm(id);
+    // 深链/默认选中的行可能落在列表滚动区外：把选中行滚到列表可视区中部。
+    const selTr = document.querySelector('#alList tr.on');
+    if (selTr && selTr.scrollIntoView) selTr.scrollIntoView({ block: 'center' });
+    await pending;
+  }
 });
 </script>
 
@@ -446,7 +475,7 @@ onMounted(() => {
           <!-- 操作引导（用户裁定 2026-08-30：多处补黄字引导） -->
           <div class="warnbox" style="margin:0;padding:8px 11px;font-size:12px;flex:none">
             演示动线：点左侧<b>告警列表</b>任一行 → 地图定位关联目标 → 下方详情底部点
-            「<b>人工核实 / 发起联动反制</b>」推进处置，「实时视频 / 轨迹回放」查看证据。</div>
+            「<b>人工核实</b>」推进处置；「实时视频 / 轨迹回放 / 联动反制 / 通知处罚」阶段 4 未接入，按钮保留但禁用。</div>
           <UPanel title="关联目标定位与轨迹" panel-style="height:244px;max-height:50%;flex:none" nopad
             body-style="padding:6px" :extra="mapExtra" :body-html="mapBody" />
           <UPanel title="告警详情与处置" panel-style="flex:1;min-height:0" nopad

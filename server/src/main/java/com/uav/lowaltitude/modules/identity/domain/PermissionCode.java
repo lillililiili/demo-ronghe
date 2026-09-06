@@ -18,7 +18,13 @@ public enum PermissionCode {
     WORKBENCH_READ("workbench:read"),
     // 交接是独立于源状态的记录：读交接、发起交接分权，发起还必须同时具备源对象读权限。
     HANDOFF_READ("handoff:read"),
-    HANDOFF_CREATE("handoff:create");
+    HANDOFF_CREATE("handoff:create"),
+    // 阶段 7：规则集读取/激活分权；引擎评估、人工复核、转告警是三种不同动作，缺任一不能借研判读权限替代。
+    RULE_READ("rule:read"),
+    RULE_MANAGE("rule:manage"),
+    ASSESSMENT_EVALUATE("assessment:evaluate"),
+    ASSESSMENT_REVISE("assessment:revise"),
+    ASSESSMENT_ESCALATE("assessment:escalate");
 
     private final String value;
 

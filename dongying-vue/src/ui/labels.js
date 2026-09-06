@@ -11,8 +11,11 @@ export const REASON_CODE_LABEL = {
 export const PLAN_STATUS_LABEL = { PENDING: '待执行', APPROVED: '已批准', EXECUTING: '执行中', COMPLETED: '已完成', CANCELLED: '已取消' };
 export const HANDOFF_TYPE_LABEL = { RISK_NOTICE: '风险通报', UAV_PUNISHMENT: '处罚交接' };
 export const HANDOFF_KIND_LABEL = { RISK: '飞行风险', UAV_EVENT: '无人机事件', DEVICE_INCIDENT: '设备异常' };
-export const OBJECT_TYPE_LABEL = { UAV: '无人机', BIRD: '鸟类', BALLOON: '气球', KITE: '风筝', LANTERN: '孔明灯', UNKNOWN: '未分类' };
+export const OBJECT_TYPE_LABEL = { UAV: '无人机', BIRD: '鸟类', UNKNOWN: '未分类' };
+/* 气球、风筝、孔明灯只能是算法推断的 subtype，不是设备可上报的目标类型（V1.1 任务书 A4）。 */
+export const INFERRED_SUBTYPE_LABEL = { BALLOON: '气球', KITE: '风筝', LANTERN: '孔明灯' }; // subtype 推断
 export const SUBTYPE_LABEL = {
+  ...INFERRED_SUBTYPE_LABEL,
   QUADCOPTER: '多旋翼无人机', FIXED_WING: '固定翼无人机', VTOL: '垂直起降固定翼', HELICOPTER: '直升机型无人机',
   MIGRATORY_BIRD: '候鸟', BIRD_FLOCK: '鸟群', RAPTOR: '猛禽'
 };

@@ -192,16 +192,19 @@ class AirspaceReadApiTest {
                 Instant.ofEpochMilli(validFrom), Instant.ofEpochMilli(validTo));
 
         mvc.perform(get("/api/v1/airspaces?valid_at=" + validFrom)
+                        .param("owner_org_id", organizationId).param("district_id", districtId)
                         .header("Authorization", "Bearer " + sessionId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.total").value(1))
                 .andExpect(jsonPath("$.data.items[0].airspace_id").value(airspaceId));
         // 有效期为左闭右开，终点不能再把失效版本当成可用事实。
         mvc.perform(get("/api/v1/airspaces?valid_at=" + validTo)
+                        .param("owner_org_id", organizationId).param("district_id", districtId)
                         .header("Authorization", "Bearer " + sessionId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.total").value(0));
         mvc.perform(get("/api/v1/airspaces").param("keyword", "Visible airspace")
+                        .param("owner_org_id", organizationId).param("district_id", districtId)
                         .header("Authorization", "Bearer " + sessionId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.total").value(1))
@@ -251,6 +254,7 @@ class AirspaceReadApiTest {
         // 类型与时点必须落在同一版本；旧禁飞版本不能和当前限飞版本拼出一个虚假的当前禁飞空域。
         mvc.perform(get("/api/v1/airspaces")
                         .param("kind_code", "PROHIBITED")
+                        .param("owner_org_id", org).param("district_id", district)
                         .param("valid_at", String.valueOf(switchAt.toEpochMilli()))
                         .header("Authorization", "Bearer " + sessionId))
                 .andExpect(status().isOk())

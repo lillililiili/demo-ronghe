@@ -135,6 +135,11 @@ public class GlobalExceptionHandler {
         // 交接与工作台各自是独立模块：失败审计按模块归档，不能都落到笼统的 system。
         if (path.contains("/handoff")) return "handoff";
         if (path.contains("/workbench")) return "workbench";
+        // 阶段 7：合法性研判与规则引擎各自归档；计划/航线/空域只读接口归飞行监管，不再落到 system。
+        if (path.contains("/legality-") || path.contains("/rule-effects")) return "assessment";
+        if (path.contains("/rule-sets") || path.contains("/rule-set-versions") || path.contains("/rule-runs")) return "rules";
+        if (path.contains("/flight-plans") || path.contains("/routes") || path.contains("/route-versions")) return "flights";
+        if (path.contains("/airspace")) return "airspace";
         return "system";
     }
 }

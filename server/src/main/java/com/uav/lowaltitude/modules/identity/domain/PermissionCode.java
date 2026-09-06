@@ -24,7 +24,11 @@ public enum PermissionCode {
     RULE_MANAGE("rule:manage"),
     ASSESSMENT_EVALUATE("assessment:evaluate"),
     ASSESSMENT_REVISE("assessment:revise"),
-    ASSESSMENT_ESCALATE("assessment:escalate");
+    ASSESSMENT_ESCALATE("assessment:escalate"),
+    // 阶段 8：融合配置/血缘读取、人工修订与合并分裂、配置激活分权；读目标仍用 target:read，融合动作不附带目标可见范围。
+    FUSION_READ("fusion:read"),
+    FUSION_REVISE("fusion:revise"),
+    FUSION_MANAGE("fusion:manage");
 
     private final String value;
 

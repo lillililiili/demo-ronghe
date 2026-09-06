@@ -13,6 +13,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.context.annotation.Profile;
 import org.springframework.core.annotation.Order;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
@@ -22,6 +23,8 @@ import com.uav.lowaltitude.platform.time.AppClock;
 
 /** 仅 local/test 在 app.dev-seed.enabled 时写入运行统计样本事实，生产环境不得启用。 */
 @Component
+// 开发种子必须双门禁：production 或 production,local 组合下都不得注册，否则生产环境会因查不到开发组织而启动失败或写入样本事实。
+@Profile("!production & (local | test)")
 @ConditionalOnProperty(prefix = "app.dev-seed", name = "enabled", havingValue = "true")
 @Order(30)
 public class LocalReportingSeeder implements ApplicationRunner {

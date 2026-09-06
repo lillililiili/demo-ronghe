@@ -34,6 +34,15 @@ public class TargetReadRepository {
             LEFT JOIN app_district dist_ref ON dist_ref.district_id=t.district_id
             """;
 
+    /**
+     * 阶段 8：融合层轨迹 link_id 为空（决策 8-12），link/来源/设备三张表因此改为 LEFT JOIN。
+     * 原始层必须保持阶段 2 的可见性语义——link 属于本目标、来源与目标同 source_mode、设备存在且同源同模式；
+     * 少判其中任何一条，跨模式或错连的轨迹都会因为 LEFT JOIN 变成 NULL 行而被放行。
+     */
+    private static final String RAW_LAYER_LINK_VALID =
+            " AND (tr.link_id IS NULL OR (l.link_id IS NOT NULL AND s.source_id IS NOT NULL"
+                    + " AND (l.device_id IS NULL OR linked_device.device_id IS NOT NULL)))";
+
     private final NamedParameterJdbcTemplate jdbc;
     private final boolean postgis;
     private final ObjectMapper objectMapper;
@@ -74,10 +83,11 @@ public class TargetReadRepository {
         parameters.put("target_id", targetId);
         StringBuilder sql = new StringBuilder("""
                 SELECT l.link_id,l.source_id,s.source_code,s.source_mode,s.name AS source_name,l.source_session_key,
-                       l.external_target_id,l.device_id,l.protocol_version
+                       l.external_target_id,l.device_id,l.protocol_version,s.source_type,type_ref.schema_status
                 FROM target_source_link l
                 JOIN target t ON t.target_id=l.target_id
                 JOIN integration_source s ON s.source_id=l.source_id AND s.source_mode=t.source_mode
+                LEFT JOIN source_type_catalog type_ref ON type_ref.source_type=s.source_type
                 LEFT JOIN device linked_device
                   ON linked_device.device_id=l.device_id
                  AND linked_device.source_id=l.source_id
@@ -91,7 +101,8 @@ public class TargetReadRepository {
                 rs.getString("link_id"), rs.getString("source_id"), rs.getString("source_code"),
                 rs.getString("source_mode"), rs.getString("source_session_key"),
                 rs.getString("external_target_id"), rs.getString("device_id"),
-                rs.getString("protocol_version"), rs.getString("source_name")));
+                rs.getString("protocol_version"), rs.getString("source_name"),
+                rs.getString("source_type"), rs.getString("schema_status")));
     }
 
     public long countTracks(String targetId, TrackQuery query, AccessDecision access) {
@@ -106,7 +117,7 @@ public class TargetReadRepository {
         where.parameters.put("size", size);
         return jdbc.query("""
                 SELECT tr.track_id,tr.target_id,tr.link_id,tr.external_track_id,tr.started_at,
-                       l.source_id,s.source_code,s.source_mode,l.device_id
+                       l.source_id,s.source_code,s.source_mode,l.device_id,tr.layer,tr.config_version,tr.ended_at
                 """ + trackFrom() + where.sql
                 + " ORDER BY tr.started_at DESC NULLS LAST,tr.track_id ASC"
                 + " OFFSET :offset ROWS FETCH NEXT :size ROWS ONLY",
@@ -114,7 +125,7 @@ public class TargetReadRepository {
                 rs.getString("track_id"), rs.getString("target_id"), rs.getString("link_id"),
                 rs.getString("external_track_id"), rs.getString("source_id"),
                 rs.getString("source_code"), rs.getString("source_mode"), rs.getString("device_id"),
-                time(rs, "started_at")));
+                time(rs, "started_at"), rs.getString("layer"), rs.getString("config_version"), time(rs, "ended_at")));
     }
 
     public boolean accessibleValidTrack(String trackId, AccessDecision access) {
@@ -124,8 +135,8 @@ public class TargetReadRepository {
                 SELECT COUNT(*)
                 FROM track tr
                 JOIN target t ON t.target_id=tr.target_id
-                JOIN target_source_link l ON l.link_id=tr.link_id AND l.target_id=tr.target_id
-                JOIN integration_source s ON s.source_id=l.source_id AND s.source_mode=t.source_mode
+                LEFT JOIN target_source_link l ON l.link_id=tr.link_id AND l.target_id=tr.target_id
+                LEFT JOIN integration_source s ON s.source_id=l.source_id AND s.source_mode=t.source_mode
                 LEFT JOIN device linked_device
                   ON linked_device.device_id=l.device_id
                  AND linked_device.source_id=l.source_id
@@ -133,7 +144,8 @@ public class TargetReadRepository {
                 """);
         appendScope(sql, parameters, access);
         sql.append(" AND tr.track_id=:track_id");
-        sql.append(" AND (l.device_id IS NULL OR linked_device.device_id IS NOT NULL)");
+        // 融合层轨迹没有 link（决策 8-12）：只有原始层需要校验 link、来源与设备的模式一致性。
+        sql.append(RAW_LAYER_LINK_VALID);
         return count(sql.toString(), parameters) == 1;
     }
 
@@ -195,8 +207,11 @@ public class TargetReadRepository {
         Where where = new Where();
         appendScope(where.sql, where.parameters, access);
         where.sql.append(" AND tr.target_id=:target_id")
-                .append(" AND (l.device_id IS NULL OR linked_device.device_id IS NOT NULL)");
+                // 融合层没有 link：只有原始层需要校验 link、来源与设备的模式一致性。
+                // s.source_id IS NOT NULL 不可省：LEFT JOIN 后跨 source_mode 的来源会变成 NULL 行，漏掉它等于让跨模式轨迹可见。
+                .append(RAW_LAYER_LINK_VALID);
         where.parameters.put("target_id", targetId);
+        if (query.layer != null) add(where, "tr.layer", "layer", query.layer);
         if (query.sourceCode != null) add(where, "s.source_code", "source_code", query.sourceCode);
         if (query.deviceId != null) add(where, "l.device_id", "device_id", query.deviceId);
         if (query.startedFrom != null) {
@@ -207,12 +222,16 @@ public class TargetReadRepository {
         return where;
     }
 
+    /**
+     * 阶段 8：融合层轨迹 link_id 为空（决策 8-12），因此 link/source 三张表改为 LEFT JOIN。
+     * 原始层的可见性条件（同 source_mode、设备存在）用 tr.link_id IS NULL 保护，语义与阶段 2 完全一致。
+     */
     private static String trackFrom() {
         return """
                  FROM track tr
                  JOIN target t ON t.target_id=tr.target_id
-                 JOIN target_source_link l ON l.link_id=tr.link_id AND l.target_id=tr.target_id
-                 JOIN integration_source s ON s.source_id=l.source_id AND s.source_mode=t.source_mode
+                 LEFT JOIN target_source_link l ON l.link_id=tr.link_id AND l.target_id=tr.target_id
+                 LEFT JOIN integration_source s ON s.source_id=l.source_id AND s.source_mode=t.source_mode
                  LEFT JOIN device linked_device
                    ON linked_device.device_id=l.device_id
                   AND linked_device.source_id=l.source_id
@@ -225,8 +244,8 @@ public class TargetReadRepository {
                  FROM track_point p
                  JOIN track tr ON tr.track_id=p.track_id
                  JOIN target t ON t.target_id=tr.target_id
-                 JOIN target_source_link l ON l.link_id=tr.link_id AND l.target_id=tr.target_id
-                 JOIN integration_source s ON s.source_id=l.source_id AND s.source_mode=t.source_mode
+                 LEFT JOIN target_source_link l ON l.link_id=tr.link_id AND l.target_id=tr.target_id
+                 LEFT JOIN integration_source s ON s.source_id=l.source_id AND s.source_mode=t.source_mode
                  LEFT JOIN device linked_device
                    ON linked_device.device_id=l.device_id
                   AND linked_device.source_id=l.source_id
@@ -237,9 +256,12 @@ public class TargetReadRepository {
     private static Where pointWhere(String trackId, TimeQuery query, AccessDecision access) {
         Where where = new Where();
         appendScope(where.sql, where.parameters, access);
-        where.sql.append(" AND p.track_id=:track_id")
-                .append(" AND (l.device_id IS NULL OR linked_device.device_id IS NOT NULL)");
+        where.sql.append(" AND p.track_id=:track_id").append(RAW_LAYER_LINK_VALID);
         where.parameters.put("track_id", trackId);
+        if (query.kinds != null && !query.kinds.isEmpty()) {
+            where.sql.append(" AND p.point_kind IN (:point_kinds)");
+            where.parameters.put("point_kinds", query.kinds);
+        }
         if (query.timeFrom != null) {
             where.sql.append(" AND COALESCE(p.observed_at,p.received_at)>=:time_from"
                     + " AND COALESCE(p.observed_at,p.received_at)<=:time_to");
@@ -272,7 +294,7 @@ public class TargetReadRepository {
         return """
                 SELECT t.target_id,t.target_no,t.object_type_code,t.subtype,t.uav_sn,
                        t.first_seen_at,t.last_seen_at,t.source_mode,t.owner_org_id,t.district_id,
-                       org_ref.name AS owner_org_name,dist_ref.name AS district_name,
+                       org_ref.name AS owner_org_name,dist_ref.name AS district_name,t.version AS target_version,
                        t.created_at,t.updated_at,ls.observed_at AS state_observed_at,
                        ls.received_at AS state_received_at,ls.altitude_amsl_m,ls.height_agl_m,
                        ls.speed_mps,ls.heading_deg,ls.classification_confidence,ls.fusion_confidence,
@@ -283,7 +305,8 @@ public class TargetReadRepository {
     private String pointSelect() {
         return """
                 SELECT p.point_id,p.track_id,p.point_seq,p.observed_at,p.received_at,
-                       p.altitude_amsl_m,p.height_agl_m,
+                       p.altitude_amsl_m,p.height_agl_m,p.point_kind,p.position_accuracy_m,p.contributing,
+                       p.source_switched,p.degradation_level,
                 """ + locationColumns("p.location");
     }
 
@@ -312,13 +335,15 @@ public class TargetReadRepository {
                 location(rs), rs.getBigDecimal("altitude_amsl_m"), rs.getBigDecimal("height_agl_m"),
                 rs.getBigDecimal("speed_mps"), rs.getBigDecimal("heading_deg"),
                 rs.getBigDecimal("classification_confidence"), rs.getBigDecimal("fusion_confidence"),
-                normalizedJson(rs.getString("unknown_fields")), rs.getString("owner_org_name"), rs.getString("district_name"));
+                normalizedJson(rs.getString("unknown_fields")), rs.getString("owner_org_name"), rs.getString("district_name"), rs.getObject("target_version") == null ? null : rs.getLong("target_version"));
     }
 
     private PointRow pointRow(ResultSet rs, int rowNum) throws SQLException {
         return new PointRow(rs.getString("point_id"), rs.getString("track_id"), rs.getLong("point_seq"),
                 time(rs, "observed_at"), time(rs, "received_at"), location(rs),
-                rs.getBigDecimal("altitude_amsl_m"), rs.getBigDecimal("height_agl_m"));
+                rs.getBigDecimal("altitude_amsl_m"), rs.getBigDecimal("height_agl_m"),
+                rs.getString("point_kind"), rs.getBigDecimal("position_accuracy_m"),
+                jsonTextOf(rs.getObject("contributing")), (Boolean) rs.getObject("source_switched"), rs.getString("degradation_level"));
     }
 
     private static Coordinate location(ResultSet rs) throws SQLException {
@@ -397,10 +422,10 @@ public class TargetReadRepository {
     }
 
     public record TrackQuery(OffsetDateTime startedFrom, OffsetDateTime startedTo,
-            String sourceCode, String deviceId) {
+            String sourceCode, String deviceId, String layer) {
     }
 
-    public record TimeQuery(OffsetDateTime timeFrom, OffsetDateTime timeTo) {
+    public record TimeQuery(OffsetDateTime timeFrom, OffsetDateTime timeTo, java.util.List<String> kinds) {
     }
 
     public record Coordinate(BigDecimal longitude, BigDecimal latitude) {
@@ -412,18 +437,28 @@ public class TargetReadRepository {
             OffsetDateTime stateObservedAt, OffsetDateTime stateReceivedAt, Coordinate location,
             BigDecimal altitudeAmslM, BigDecimal heightAglM, BigDecimal speedMps, BigDecimal headingDeg,
             BigDecimal classificationConfidence, BigDecimal fusionConfidence, String unknownFields,
-            String ownerOrgName, String districtName) {
+            String ownerOrgName, String districtName, Long version) {
     }
 
     public record SourceLinkRow(String linkId, String sourceId, String sourceCode, String sourceMode,
-            String sourceSessionKey, String externalTargetId, String deviceId, String protocolVersion, String sourceName) {
+            String sourceSessionKey, String externalTargetId, String deviceId, String protocolVersion, String sourceName,
+            String sourceType, String schemaStatus) {
     }
 
     public record TrackRow(String trackId, String targetId, String linkId, String externalTrackId,
-            String sourceId, String sourceCode, String sourceMode, String deviceId, OffsetDateTime startedAt) {
+            String sourceId, String sourceCode, String sourceMode, String deviceId, OffsetDateTime startedAt,
+            String layer, String configVersion, OffsetDateTime endedAt) {
     }
 
     public record PointRow(String pointId, String trackId, long pointSeq, OffsetDateTime observedAt,
-            OffsetDateTime receivedAt, Coordinate location, BigDecimal altitudeAmslM, BigDecimal heightAglM) {
+            OffsetDateTime receivedAt, Coordinate location, BigDecimal altitudeAmslM, BigDecimal heightAglM,
+            String pointKind, BigDecimal positionAccuracyM, String contributingJson, Boolean sourceSwitched, String degradationLevel) {
+    }
+
+    /** JSON 列在 H2 上回读为 byte[]，PostgreSQL 为文本；统一成文本交由应用层解析。 */
+    private static String jsonTextOf(Object stored) {
+        if (stored == null) return null;
+        if (stored instanceof byte[] bytes) return new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+        return String.valueOf(stored);
     }
 }

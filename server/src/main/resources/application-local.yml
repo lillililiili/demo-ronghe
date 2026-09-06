@@ -1,4 +1,7 @@
 spring:
+  flyway:
+    # 协作者 A 的 V202609050001 编号低于本地库已应用版本；仅本地开发库允许乱序应用，生产配置不放开。
+    out-of-order: true
   datasource:
     url: jdbc:postgresql://127.0.0.1:5432/uav
     username: uav

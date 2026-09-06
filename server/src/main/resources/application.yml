@@ -67,3 +67,14 @@ app:
     allow-demo-active: ${APP_RULE_ENGINE_ALLOW_DEMO_ACTIVE:false}
     replay:
       run-on-start: ${APP_RULE_ENGINE_REPLAY_RUN_ON_START:false}
+  # 阶段 8 融合引擎：默认关闭摄取调度；实测雷达提升与回放自启动默认关闭。
+  fusion:
+    enabled: ${APP_FUSION_ENABLED:false}
+    poll-millis: ${APP_FUSION_POLL_MILLIS:500}
+    batch-size: ${APP_FUSION_BATCH_SIZE:50}
+    lease-millis: ${APP_FUSION_LEASE_MILLIS:30000}
+    max-attempts: ${APP_FUSION_MAX_ATTEMPTS:5}
+    live-promotion:
+      enabled: ${APP_FUSION_LIVE_PROMOTION_ENABLED:false}
+    replay:
+      run-on-start: ${APP_FUSION_REPLAY_RUN_ON_START:false}

@@ -13,7 +13,7 @@ import { createHandoff, listHandoffRecipients, newHandoffIdempotencyKey } from '
 import { openUavVerification } from '@/ui/uavVerificationModal.js';
 import { openRiskVerification } from '@/ui/riskVerificationModal.js';
 import { authUser } from '@/services/auth.js';
-import { CONCLUSION_LABEL, HANDOFF_TYPE_LABEL, RISK_TYPE_LABEL, labelOf } from '@/ui/labels.js';
+import { CONCLUSION_LABEL, RISK_CONCLUSION_LABEL, DELIVERY_STATUS_LABEL, HANDOFF_BLOCKED_LABEL, HANDOFF_TYPE_LABEL, RISK_TYPE_LABEL, labelOf, verificationOrdinal } from '@/ui/labels.js';
 import {
   KINDS, kindLabel, kindIcon, AVAILABILITY_LABEL,
   listWorkbenchEvents, workbenchStats, getWorkbenchDetail, loadUavSource, loadRiskSource, openSourcePage, splitKey, stateLabel
@@ -222,7 +222,7 @@ async function openNotifyModal(risk, summary) {
     title: '通知上级 · 提交交接',
     width: '560px',
     warning: '提交成功只表示交接材料已入库（待投递），不表示已发送、已送达或处罚办结；风险状态保持“待通知”。真实通知渠道本期未接入。',
-    notice: `风险 ${risk.source_risk_id || riskId} · ${labelOf(RISK_TYPE_LABEL, risk.risk_type, '')} · 当前版本 v${Number(risk.version)}`,
+    notice: [`风险 ${risk.source_risk_id || riskId}`, labelOf(RISK_TYPE_LABEL, risk.risk_type, ''), verificationOrdinal(risk.version, '已')].filter(Boolean).join(' · '),
     fields: options.length
       ? [{ key: 'recipient_id', label: '接收方', type: 'select', required: true, options, placeholder: '选择逻辑接收部门' }]
       : [{ key: 'unconfigured', type: 'html', html: '<div class="warnbox">接收方未配置：交接接收方目录为空，无法提交；不会以默认部门补值。</div>' }],
@@ -272,18 +272,31 @@ function openSource() {
   if (!openSourcePage(selected.value?.summary)) toast('该事项没有可用的站内跳转链接', 'err');
 }
 
-/* 时间线条目文案：只用服务端字段。 */
-function timelineTitle(t) {
-  if (t.entry_type === 'VERIFICATION') return `${t.conclusion || '核实'} · v${t.version}`;
-  if (t.entry_type === 'HANDOFF') return `交接已提交 · ${t.delivery_status || '—'}`;
+/* 时间线只留一行摘要（标题 + 时间 + 状态变化）；完整字段在上方"记录"面板逐条展示，不重复。
+   枚举一律经共享字典翻译；版本号显示为"第 N 次核实"；可选字段无值时不拼接。 */
+function conclusionLabel(kindValue, code) {
+  return labelOf(kindValue === 'RISK' ? RISK_CONCLUSION_LABEL : CONCLUSION_LABEL, code, '核实');
+}
+function timelineTitle(t, kindValue) {
+  if (t.entry_type === 'VERIFICATION') return `${verificationOrdinal(t.version) || '核实'} · 结论：${conclusionLabel(kindValue, t.conclusion)}`;
+  if (t.entry_type === 'HANDOFF') return `交接已提交 · ${labelOf(DELIVERY_STATUS_LABEL, t.delivery_status)}`;
   if (t.entry_type === 'DEVICE_INCIDENT_DETECTED') return '设备异常检出';
   if (t.entry_type === 'DEVICE_INCIDENT_CLOSED') return '设备异常关闭';
   return t.entry_type;
 }
 function timelineMeta(t, kindValue) {
-  if (t.entry_type === 'VERIFICATION') return `${fmt(t.at)} · ${stateLabel(kindValue, t.previous_state)} → ${stateLabel(kindValue, t.resulting_state)} · 操作人 ${t.actor_name || t.actor_id || '—'}`;
-  if (t.entry_type === 'HANDOFF') return `${fmt(t.at)} · 接收方 ${t.recipient_name || t.recipient_id || '—'} · 源版本 v${t.source_version}${t.blocked_reason ? ` · ${t.blocked_reason}` : ''}`;
-  return `${fmt(t.at)}${t.stage ? ` · ${stateLabel('DEVICE_INCIDENT', t.stage)}` : ''}${t.reason ? ` · ${t.reason}` : ''}`;
+  if (t.entry_type === 'VERIFICATION') return `${fmt(t.at)} · 状态：${stateLabel(kindValue, t.previous_state)} → ${stateLabel(kindValue, t.resulting_state)}`;
+  if (t.entry_type === 'HANDOFF') {
+    const parts = [fmt(t.at), `接收方 ${t.recipient_name || '—'}`];
+    const basis = verificationOrdinal(t.source_version, '依据');
+    if (basis) parts.push(basis);
+    if (t.blocked_reason) parts.push(labelOf(HANDOFF_BLOCKED_LABEL, t.blocked_reason));
+    return parts.join(' · ');
+  }
+  const parts = [fmt(t.at)];
+  if (t.stage) parts.push(stateLabel('DEVICE_INCIDENT', t.stage));
+  if (t.reason) parts.push(t.reason);
+  return parts.join(' · ');
 }
 const verifications = computed(() => (selected.value?.timeline || []).filter(t => t.entry_type === 'VERIFICATION'));
 const handoffs = computed(() => (selected.value?.timeline || []).filter(t => t.entry_type === 'HANDOFF'));
@@ -395,7 +408,7 @@ onUnmounted(() => {
               <div><small>{{ kindLabel[selected.kind] }}</small><h2>{{ selected.summary.title }}</h2>
                 <p class="mono" :title="selected.summary.sourceId">{{ selected.summary.sourceNo }}</p></div>
             </div>
-            <div class="wb-title-tags"><span class="tag" :class="tagClass(selected.summary)">{{ selected.summary.level }}</span><span class="tag t-cyan">{{ selected.summary.sourceStatus }}</span><span v-if="selected.summary.version != null" class="tag t-gray mono">v{{ selected.summary.version }}</span></div>
+            <div class="wb-title-tags"><span class="tag" :class="tagClass(selected.summary)">{{ selected.summary.level }}</span><span class="tag t-cyan">{{ selected.summary.sourceStatus }}</span><span v-if="verificationOrdinal(selected.summary.version)" class="tag t-gray">已{{ verificationOrdinal(selected.summary.version) }}</span></div>
             <div v-if="selected.summary.todo" class="wb-title-next">
               <span><small>下一步</small><b>{{ selected.summary.todo.action }}</b></span>
               <button class="btn pri" type="button" :disabled="!selected.summary.todo.allowed || acting" :title="selected.summary.todo.blocker || ''" @click="primaryAction">{{ selected.summary.todo.action }}</button>
@@ -459,16 +472,16 @@ onUnmounted(() => {
               <div class="wb-record-list">
                 <template v-if="selected.kind === 'RISK'">
                   <div v-if="selected.availability.handoffs === 'FORBIDDEN'" class="empty">交接记录需要 handoff:read 权限</div>
-                  <div v-for="h in handoffs" :key="h.handoff_id" class="wb-record-row"><span v-html="icon('mail')"></span><b>{{ h.recipient_name || h.recipient_id }}</b><small>{{ fmt(h.at) }} · {{ labelOf(HANDOFF_TYPE_LABEL, h.handoff_type) }} · v{{ h.source_version }}</small><em>{{ h.delivery_status }}</em></div>
-                  <div v-for="v in verifications" :key="'v' + v.version" class="wb-record-row"><span v-html="icon('clipboard')"></span><b>{{ labelOf(CONCLUSION_LABEL, v.conclusion) }}</b><small>{{ fmt(v.at) }} · {{ v.actor_name || v.actor_id }}</small><em>v{{ v.version }}</em></div>
+                  <div v-for="h in handoffs" :key="h.handoff_id" class="wb-record-row"><span v-html="icon('mail')"></span><b :title="h.recipient_id">{{ h.recipient_name || '—' }}</b><small>{{ fmt(h.at) }} · {{ labelOf(HANDOFF_TYPE_LABEL, h.handoff_type) }}<template v-if="verificationOrdinal(h.source_version)"> · {{ verificationOrdinal(h.source_version, '依据') }}</template></small><em>{{ labelOf(DELIVERY_STATUS_LABEL, h.delivery_status) }}</em></div>
+                  <div v-for="v in verifications" :key="'v' + v.version" class="wb-record-row"><span v-html="icon('clipboard')"></span><b>结论：{{ labelOf(RISK_CONCLUSION_LABEL, v.conclusion) }}</b><small>{{ fmt(v.at) }} · 核验人 <span :title="v.actor_id">{{ v.actor_name || '—' }}</span><template v-if="v.note"> · 备注：{{ v.note }}</template></small><em>{{ verificationOrdinal(v.version) }}</em></div>
                   <div v-if="!handoffs.length && !verifications.length && selected.availability.handoffs !== 'FORBIDDEN'" class="empty">暂无交接或核验记录</div>
                 </template>
                 <template v-else-if="selected.kind === 'UAV_EVENT'">
-                  <div v-for="v in verifications" :key="'v' + v.version" class="wb-record-row"><span v-html="icon('clipboard')"></span><b>{{ labelOf(CONCLUSION_LABEL, v.conclusion) }}</b><small>{{ fmt(v.at) }} · {{ v.actor_name || v.actor_id }} · {{ v.note }}</small><em>v{{ v.version }}</em></div>
+                  <div v-for="v in verifications" :key="'v' + v.version" class="wb-record-row"><span v-html="icon('clipboard')"></span><b>结论：{{ labelOf(CONCLUSION_LABEL, v.conclusion) }}</b><small>{{ fmt(v.at) }} · 核实人 <span :title="v.actor_id">{{ v.actor_name || '—' }}</span><template v-if="v.note"> · 备注：{{ v.note }}</template></small><em>{{ verificationOrdinal(v.version) }}</em></div>
                   <div v-if="!verifications.length" class="empty">暂无核实记录</div>
                 </template>
                 <template v-else>
-                  <div v-for="t in selected.timeline" :key="t.entry_type + t.at" class="wb-record-row"><span v-html="icon('tool')"></span><b>{{ timelineTitle(t) }}</b><small>{{ t.device_no }} · {{ t.device_name }}{{ t.reason ? ` · ${t.reason}` : '' }}</small><em>{{ stateLabel('DEVICE_INCIDENT', t.stage) }}</em></div>
+                  <div v-for="t in selected.timeline" :key="t.entry_type + t.at" class="wb-record-row"><span v-html="icon('tool')"></span><b>{{ timelineTitle(t, selected.kind) }}</b><small>{{ t.device_no }} · {{ t.device_name }}<template v-if="t.reason"> · {{ t.reason }}</template></small><em>{{ stateLabel('DEVICE_INCIDENT', t.stage) }}</em></div>
                   <div v-if="!selected.timeline.length" class="empty wb-record-empty">
                     <span class="wb-record-empty-icon" v-html="icon('tool')"></span>
                     <b>暂无设备事实</b>
@@ -480,7 +493,7 @@ onUnmounted(() => {
             <section class="panel wb-timeline">
               <div class="ph"><h3>事项时间线</h3><span class="sub">有范围的核实历史、交接与设备事实</span></div>
               <div class="wb-timeline-list">
-                <div v-for="t in selected.timeline" :key="t.entry_type + t.at + (t.version || t.handoff_id || '')"><i></i><span><b>{{ timelineTitle(t) }}</b><small>{{ timelineMeta(t, selected.kind) }}</small></span></div>
+                <div v-for="t in selected.timeline" :key="t.entry_type + t.at + (t.version || t.handoff_id || '')"><i></i><span><b>{{ timelineTitle(t, selected.kind) }}</b><small>{{ timelineMeta(t, selected.kind) }}</small></span></div>
                 <div v-if="!selected.timeline.length" class="empty">暂无时间线记录</div>
               </div>
             </section>

@@ -20,6 +20,16 @@ export const SUBTYPE_LABEL = {
   MIGRATORY_BIRD: '候鸟', BIRD_FLOCK: '鸟群', RAPTOR: '猛禽'
 };
 export const CONCLUSION_LABEL = { CONFIRMED: '核实属实', EXCLUDED: '已排除', FALSE_POSITIVE: '误报', EVIDENCE_REQUIRED: '证据待补充' };
+/* 飞行风险核验的结论用词与无人机事件不同（核验通过 → 转待通知），与 FlightsPage、riskVerificationModal 保持一致。 */
+export const RISK_CONCLUSION_LABEL = { CONFIRMED: '核验通过', EXCLUDED: '已排除' };
+export const DELIVERY_STATUS_LABEL = { PENDING_DELIVERY: '待投递', SUBMITTED: '已发送', DELIVERED: '已送达', FAILED: '发送失败' };
+export const RECEIPT_STATUS_LABEL = { NOT_EXPECTED: '不需回执', PENDING: '等待回执', ACKNOWLEDGED: '已回执', TIMEOUT: '回执超时' };
+export const HANDOFF_BLOCKED_LABEL = { CHANNEL_NOT_CONNECTED: '通知渠道未接通' };
+export const SEVERITY_LABEL = { CRITICAL: '紧急', HIGH: '高', MEDIUM: '中', LOW: '低' };
+export const SEVERITY_TAG = { CRITICAL: 't-red', HIGH: 't-red', MEDIUM: 't-amber', LOW: 't-blue' };
+export const RISK_STATE_LABEL = { PENDING_VERIFICATION: '待核验', PENDING_NOTIFICATION: '待通知', NOTIFIED: '已通知', EXCLUDED: '已排除' };
+/** 版本号翻译成次数：version 0 表示尚未核实，返回空串由调用方整段不渲染。 */
+export const verificationOrdinal = (version, prefix = '') => (version == null || Number(version) <= 0 ? '' : `${prefix}第${Number(version)}次核实`);
 export const RULE_RESULT_LABEL = { PASS: '通过', FAIL: '不通过', UNDETERMINED: '不可判定' };
 export const LEGALITY_LABEL = { LEGAL: '合法', ILLEGAL: '非法', UNDETERMINED: '待确认' };
 

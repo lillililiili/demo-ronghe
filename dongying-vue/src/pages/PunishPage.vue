@@ -19,24 +19,21 @@ import UPanel from '@/components/UPanel.vue';
 import UPagination from '@/components/UPagination.vue';
 import UControl from '@/components/form/UControl.vue';
 import { handoffApi } from '@/services/handoffApi.js';
-import { REASON_CODE_LABEL, RISK_TYPE_LABEL, SOURCE_MODE_LABEL, labelOf } from '@/ui/labels.js';
+import { DELIVERY_STATUS_LABEL, HANDOFF_BLOCKED_LABEL, HANDOFF_KIND_LABEL, HANDOFF_TYPE_LABEL, REASON_CODE_LABEL, RECEIPT_STATUS_LABEL, RISK_CONCLUSION_LABEL, RISK_STATE_LABEL, RISK_TYPE_LABEL, SEVERITY_LABEL, SEVERITY_TAG, SOURCE_MODE_LABEL, labelOf, verificationOrdinal } from '@/ui/labels.js';
 
 usePageChrome('punish');
 const root = ref(null);
 const U = window.UI;
 
-/* 文案映射全部为本页常量；服务端字符串只经 Vue 文本插值输出，不进 v-html。 */
-const KIND_LABEL = { RISK: '飞行风险', UAV_EVENT: '无人机事件' };
-const TYPE_LABEL = { RISK_NOTICE: '风险通知', UAV_PUNISHMENT: '处罚交接' };
-const DELIVERY_LABEL = { PENDING_DELIVERY: '待投递', SUBMITTED: '已发送', DELIVERED: '已送达', FAILED: '发送失败' };
+/* 文案全部来自共享字典（src/ui/labels.js、services/workbenchEvents.js）；服务端字符串只经 Vue 文本插值输出，不进 v-html。 */
+const KIND_LABEL = { RISK: HANDOFF_KIND_LABEL.RISK, UAV_EVENT: HANDOFF_KIND_LABEL.UAV_EVENT };
+const TYPE_LABEL = HANDOFF_TYPE_LABEL;
+const DELIVERY_LABEL = DELIVERY_STATUS_LABEL;
 const DELIVERY_TAG = { PENDING_DELIVERY: 't-amber', SUBMITTED: 't-blue', DELIVERED: 't-green', FAILED: 't-red' };
 const DELIVERY_TONE = { PENDING_DELIVERY: 'warn', SUBMITTED: 'info', DELIVERED: 'good', FAILED: 'bad' };
-const RECEIPT_LABEL = { NOT_EXPECTED: '不需回执', PENDING: '等待回执', ACKNOWLEDGED: '已回执', TIMEOUT: '回执超时' };
-const BLOCKED_LABEL = { CHANNEL_NOT_CONNECTED: '通知渠道未接通' };
-const RISK_STATE_LABEL = { PENDING_VERIFICATION: '待核验', PENDING_NOTIFICATION: '待通知', NOTIFIED: '已通知', EXCLUDED: '已排除' };
-const SEVERITY_LABEL = { CRITICAL: '紧急', HIGH: '高', MEDIUM: '中', LOW: '低' };
-const SEVERITY_TAG = { CRITICAL: 't-red', HIGH: 't-red', MEDIUM: 't-amber', LOW: 't-blue' };
-const CONCLUSION_LABEL = { CONFIRMED: '核验通过', EXCLUDED: '已排除' };
+const RECEIPT_LABEL = RECEIPT_STATUS_LABEL;
+const BLOCKED_LABEL = HANDOFF_BLOCKED_LABEL;
+const CONCLUSION_LABEL = RISK_CONCLUSION_LABEL;
 const REFERENCE_LABEL = { plan_id: '关联计划', route_version_id: '航线版本', assessment_id: '关联研判', target_id: '关联目标', track_id: '关联轨迹' };
 const DELIVERY_PAGE_SIZE = 10;
 const FIXED_SORT_NOTE = '服务端固定排序：created_at DESC, handoff_id DESC';
@@ -53,7 +50,7 @@ const NOT_BUILT_ITEMS = [
 
 const kindOptions = [{ label: '全部来源', value: '' }, ...Object.keys(KIND_LABEL).map(value => ({ label: KIND_LABEL[value], value }))];
 const deliveryOptions = [{ label: '全部投递状态', value: '' }, ...Object.keys(DELIVERY_LABEL).map(value => ({ label: DELIVERY_LABEL[value], value }))];
-const sourceModeOptions = [{ label: '全部来源模式', value: '' }, ...['mock', 'replay', 'live'].map(value => ({ label: value, value }))];
+const sourceModeOptions = [{ label: '全部来源模式', value: '' }, ...['mock', 'replay', 'live'].map(value => ({ label: labelOf(SOURCE_MODE_LABEL, value), value }))];
 
 /* /auth/me 的 permission_codes 只有 `<模块>.read/.op/.auth`，不含 `handoff:read` 动作码；
    无权限态不在前端预判，直接请求并以服务端 403 为准。 */
@@ -340,7 +337,7 @@ onMounted(() => {
                         <td class="num"><span class="mono pn-id" :title="row.handoff_id">{{ row.source_no || row.handoff_id }}</span></td>
                         <td><span class="tag t-cyan" :title="row.source_id">{{ label(KIND_LABEL, row.source_kind) }}</span></td>
                         <td>{{ label(TYPE_LABEL, row.handoff_type) }}</td>
-                        <td><div class="pn-wrap">{{ row.recipient_name || row.recipient_id }}</div><div class="pn-sub">{{ labelOf(SOURCE_MODE_LABEL, row.source_mode, '') }}</div></td>
+                        <td><div class="pn-wrap" :title="row.recipient_id">{{ row.recipient_name || '—' }}</div><div class="pn-sub">{{ labelOf(SOURCE_MODE_LABEL, row.source_mode, '') }}</div></td>
                         <td class="num" :title="formatTime(row.created_at)">{{ formatClock(row.created_at) }}</td>
                         <td><span class="tag" :class="DELIVERY_TAG[row.delivery_status] || 't-gray'">{{ label(DELIVERY_LABEL, row.delivery_status) }}</span></td>
                         <td>{{ label(RECEIPT_LABEL, row.receipt_status) }}</td>
@@ -377,10 +374,10 @@ onMounted(() => {
                       <button v-if="selected.source_kind === 'RISK'" class="lnk pn-lnk" type="button" @click="gotoSource(selected)">查看风险</button></dd>
                     <dt>交接类型</dt><dd>{{ label(TYPE_LABEL, selected.handoff_type) }}</dd>
                     <dt>接收方</dt><dd :title="selected.recipient_id">{{ selected.recipient_name || '未提供' }}</dd>
-                    <dt>源版本</dt><dd class="mono">v{{ selected.source_version }}</dd>
+                    <dt>源版本</dt><dd>{{ verificationOrdinal(selected.source_version) || '尚未核验' }}</dd>
                     <dt>提交时间</dt><dd>{{ formatTime(selected.created_at) }}</dd>
                     <dt>提交人</dt><dd :title="selected.submitted_by">{{ selected.submitted_by_name || selected.submitted_by || '未提供' }}</dd>
-                    <dt>所属范围</dt><dd>{{ selected.owner_org_name || selected.owner_org_id }} / {{ selected.district_name || selected.district_id }}</dd>
+                    <dt>所属范围</dt><dd :title="`${selected.owner_org_id || ''} / ${selected.district_id || ''}`">{{ selected.owner_org_name || '—' }} / {{ selected.district_name || '—' }}</dd>
                     <dt>来源模式</dt><dd>{{ labelOf(SOURCE_MODE_LABEL, selected.source_mode, '未提供') }}</dd>
                   </dl></div>
                   <div class="sect"><h4>材料快照 <span class="tag t-gray">schema v{{ selected.material?.schema_version ?? '—' }}</span></h4>
@@ -395,7 +392,7 @@ onMounted(() => {
                         <dt>依据说明</dt><dd class="pn-wrap">{{ selected.material.risk.reason_text || '未提供' }}</dd>
                         <dt>发生时间</dt><dd>{{ formatTime(selected.material.risk.occurred_at) }}</dd>
                         <dt>接收时间</dt><dd>{{ formatTime(selected.material.risk.received_at) }}</dd>
-                        <dt>快照版本</dt><dd class="mono">v{{ selected.material.risk.version }}</dd>
+                        <dt>快照版本</dt><dd>{{ verificationOrdinal(selected.material.risk.version) || '尚未核验' }}</dd>
                       </dl>
                       <div v-else class="empty">{{ materialUnavailableText }}</div>
                       <template v-if="selected.material.risk">
@@ -410,7 +407,7 @@ onMounted(() => {
                       <div v-if="!selected.material.verifications?.length" class="pn-note-text">快照中没有核实记录。</div>
                       <div v-else class="pn-history">
                         <div v-for="item in selected.material.verifications" :key="`${item.version}-${item.created_at}`" class="pn-history-item">
-                          <div><span class="tag" :class="item.conclusion === 'CONFIRMED' ? 't-green' : 't-gray'">{{ label(CONCLUSION_LABEL, item.conclusion) }}</span> <span class="mono">v{{ item.version }}</span> → {{ label(RISK_STATE_LABEL, item.resulting_state) }}</div>
+                          <div><span class="tag" :class="item.conclusion === 'CONFIRMED' ? 't-green' : 't-gray'">{{ label(CONCLUSION_LABEL, item.conclusion) }}</span> <span class="mono">{{ verificationOrdinal(item.version) }}</span> → {{ label(RISK_STATE_LABEL, item.resulting_state) }}</div>
                           <div class="pn-wrap">{{ item.note || '无说明' }}</div>
                           <div class="pn-sub">{{ formatTime(item.created_at) }} · 操作人 {{ item.actor_name || item.actor_id || '未提供' }}</div>
                         </div>

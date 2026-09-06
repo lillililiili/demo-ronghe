@@ -23,6 +23,7 @@ final class AuditLabels {
             Map.entry("flights", "飞行计划"),
             Map.entry("airspace", "空域规则"),
             Map.entry("statistics", "运行统计"),
+            Map.entry("fusion", "融合感知"),
             Map.entry("system", "系统"));
 
     private static final Map<String, String> ACTIONS = Map.ofEntries(
@@ -65,7 +66,11 @@ final class AuditLabels {
             Map.entry("legality_evaluation_triggered", "手动触发研判"),
             Map.entry("rule_set_activated", "激活规则集版本"),
             Map.entry("rule_set_rolled_back", "回滚规则集版本"),
-            Map.entry("rule_set_shadow_changed", "调整规则集阴影版本"));
+            Map.entry("rule_set_shadow_changed", "调整规则集阴影版本"),
+            Map.entry("target_class_revised", "修订目标类别"),
+            Map.entry("targets_merged", "合并目标"),
+            Map.entry("target_split", "分裂目标"),
+            Map.entry("fusion_config_activated", "激活融合参数版本"));
 
     private static final Map<String, String> METHODS = Map.of(
             "GET", "查询", "POST", "提交", "PUT", "更新", "PATCH", "更新", "DELETE", "删除");
@@ -94,7 +99,10 @@ final class AuditLabels {
             Map.entry("/rule-runs", "规则运行"),
             Map.entry("/flight-plans", "飞行计划"),
             Map.entry("/airspace", "空域"),
-            Map.entry("/stats", "运行统计"));
+            Map.entry("/stats", "运行统计"),
+            Map.entry("/fusion", "融合引擎"),
+            Map.entry("/targets", "目标"),
+            Map.entry("/tracks", "轨迹"));
 
     private AuditLabels() {
     }

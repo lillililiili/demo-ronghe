@@ -15,10 +15,23 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.MultiValueMap;
 
+import com.uav.lowaltitude.modules.fusion.infrastructure.DegradationRepository;
+import com.uav.lowaltitude.modules.fusion.infrastructure.DegradationRepository.DegradationRow;
+import com.uav.lowaltitude.modules.fusion.infrastructure.DegradationRepository.SelectionRow;
+import com.uav.lowaltitude.modules.fusion.infrastructure.FusedTrackRepository;
+import com.uav.lowaltitude.modules.fusion.infrastructure.LineageRepository;
+import com.uav.lowaltitude.modules.fusion.infrastructure.LineageRepository.AliasRow;
+import com.uav.lowaltitude.modules.fusion.infrastructure.LineageRepository.LineageRow;
+import com.uav.lowaltitude.modules.fusion.infrastructure.LineageRepository.TrackStatusRow;
 import com.uav.lowaltitude.modules.identity.application.AccessControlService;
 import com.uav.lowaltitude.modules.identity.domain.AccessDecision;
 import com.uav.lowaltitude.modules.identity.domain.PermissionCode;
+import com.uav.lowaltitude.modules.target.api.TargetDtos.AttributeSelectionDto;
+import com.uav.lowaltitude.modules.target.api.TargetDtos.ContributionDto;
+import com.uav.lowaltitude.modules.target.api.TargetDtos.DegradationDto;
 import com.uav.lowaltitude.modules.target.api.TargetDtos.FieldIssueDto;
+import com.uav.lowaltitude.modules.target.api.TargetDtos.LineageSummaryDto;
+import com.uav.lowaltitude.modules.target.api.TargetDtos.TrackStatusDto;
 import com.uav.lowaltitude.modules.target.api.TargetDtos.LocationDto;
 import com.uav.lowaltitude.modules.target.api.TargetDtos.PageDto;
 import com.uav.lowaltitude.modules.target.api.TargetDtos.TargetDetailDto;
@@ -48,16 +61,30 @@ public class TargetReadService {
             "location", "altitude_amsl_m", "height_agl_m", "speed_mps", "heading_deg",
             "classification_confidence", "fusion_confidence");
 
+    /** 阶段 8：融合层轨迹默认与原始层一起返回；点默认只给实测与桥接，PRED 需显式请求。 */
+    private static final Set<String> LAYERS = Set.of("RAW", "FUSED");
+    private static final Set<String> POINT_KINDS = Set.of("MEAS", "BRIDGE", "PRED");
+    private static final List<String> DEFAULT_POINT_KINDS = List.of("MEAS", "BRIDGE");
+
     private final AccessControlService accessControl;
     private final TargetReadRepository repository;
+    private final LineageRepository lineages;
+    private final DegradationRepository degradations;
+    private final FusedTrackRepository fusedTracks;
     private final ObjectMapper objectMapper;
 
     public TargetReadService(
             AccessControlService accessControl,
             TargetReadRepository repository,
+            LineageRepository lineages,
+            DegradationRepository degradations,
+            FusedTrackRepository fusedTracks,
             ObjectMapper objectMapper) {
         this.accessControl = accessControl;
         this.repository = repository;
+        this.lineages = lineages;
+        this.degradations = degradations;
+        this.fusedTracks = fusedTracks;
         this.objectMapper = objectMapper;
     }
 
@@ -88,11 +115,17 @@ public class TargetReadService {
         TargetRow row = repository.findTarget(id, access);
         if (row == null) throw notFound("TARGET_NOT_FOUND", "目标不存在");
         List<TargetSourceLinkDto> links = repository.sourceLinks(id, access).stream().map(this::sourceLink).toList();
+        // 阶段 8 追加字段：引擎未接管的目标这些行不存在，全部返回 null 而不是零值。
+        TrackStatusRow status = lineages.findTrackStatus(id);
+        DegradationRow degradation = degradations.findDegradation(id);
+        SelectionRow selection = degradations.findSelection(id);
         return new TargetDetailDto(
                 row.targetId(), row.targetNo(), millis(row.firstSeenAt()), millis(row.lastSeenAt()),
                 row.objectTypeCode(), row.subtype(), row.uavSn(), row.sourceMode(), row.ownerOrgId(),
                 row.districtId(), state(row), links, requiredMillis(row.createdAt()), requiredMillis(row.updatedAt()),
-                row.ownerOrgName(), row.districtName());
+                row.ownerOrgName(), row.districtName(),
+                status == null ? null : new TrackStatusDto(status.status(), requiredMillis(status.since())),
+                degradationDto(degradation), selectionDto(selection), lineageSummary(id), allowedActions(id, status, links.size()), row.version());
     }
 
     @Transactional(readOnly = true)
@@ -103,7 +136,7 @@ public class TargetReadService {
         Pagination page = request.pagination();
         TimeRange started = request.timeRange("started_from", "started_to");
         TrackQuery query = new TrackQuery(started.from, started.to,
-                request.optional("source_code", 64), request.optional("device_id", 36));
+                request.optional("source_code", 64), request.optional("device_id", 36), request.enumerated("layer", LAYERS));
         if (repository.findTarget(id, access) == null) throw notFound("TARGET_NOT_FOUND", "目标不存在");
         long total = repository.countTracks(id, query, access);
         List<TrackSummaryDto> items = repository.listTracks(id, query, access, page.offset(), page.size).stream()
@@ -119,7 +152,7 @@ public class TargetReadService {
         RequestValues request = new RequestValues(parameters);
         Pagination page = request.pagination();
         TimeRange time = request.timeRange("time_from", "time_to");
-        TimeQuery query = new TimeQuery(time.from, time.to);
+        TimeQuery query = new TimeQuery(time.from, time.to, request.kinds());
         if (!repository.accessibleValidTrack(id, access)) throw notFound("TRACK_NOT_FOUND", "轨迹不存在");
         long total = repository.countPoints(id, query, access);
         List<TrackPointDto> items = repository.listPoints(id, query, access, page.offset(), page.size).stream()
@@ -180,13 +213,93 @@ public class TargetReadService {
     private TargetSourceLinkDto sourceLink(SourceLinkRow row) {
         return new TargetSourceLinkDto(
                 row.linkId(), row.sourceId(), row.sourceCode(), row.sourceMode(), row.sourceSessionKey(),
-                row.externalTargetId(), row.deviceId(), row.protocolVersion(), row.sourceName());
+                row.externalTargetId(), row.deviceId(), row.protocolVersion(), row.sourceName(),
+                row.sourceType(), row.schemaStatus());
     }
 
     private TrackSummaryDto track(TrackRow row) {
         return new TrackSummaryDto(
                 row.trackId(), row.targetId(), row.linkId(), row.externalTrackId(), row.sourceId(),
-                row.sourceCode(), row.sourceMode(), row.deviceId(), millis(row.startedAt()));
+                row.sourceCode(), row.sourceMode(), row.deviceId(), millis(row.startedAt()),
+                row.layer(), row.configVersion(), millis(row.endedAt()));
+    }
+
+    private DegradationDto degradationDto(DegradationRow row) {
+        if (row == null) return null;
+        return new DegradationDto(row.level(), strings(row.availableSourceIdsJson()).stream()
+                .map(id -> sourceCode(id)).filter(java.util.Objects::nonNull).toList(), row.deficit(), row.determined());
+    }
+
+    private AttributeSelectionDto selectionDto(SelectionRow row) {
+        if (row == null) return null;
+        return new AttributeSelectionDto(sourceCode(row.positionSourceId()), sourceCode(row.classSourceId()),
+                sourceCode(row.identitySourceId()), sourceCode(row.motionSourceId()), row.manualClassOverride());
+    }
+
+    /** 被并目标返回 200，但 current_target_id 指向幸存目标：历史外键仍可解析，页面据此提示“已合并”。 */
+    private LineageSummaryDto lineageSummary(String targetId) {
+        long count = lineages.countLineage(targetId);
+        AliasRow alias = lineages.findAlias(targetId);
+        LineageRow last = lineages.lastLineage(targetId);
+        if (count == 0 && alias == null) return null;
+        return new LineageSummaryDto(alias == null ? targetId : alias.currentTargetId(), count,
+                last == null ? null : last.op(), last == null ? null : requiredMillis(last.occurredAt()));
+    }
+
+    /** 动作可用性只反映状态与关联数；具体权限由写接口自己再校验一次（这里不提前泄露权限判断）。 */
+    private List<String> allowedActions(String targetId, TrackStatusRow status, int linkCount) {
+        if (!visible(PermissionCode.FUSION_REVISE)) return List.of();
+        if (lineages.findAlias(targetId) != null) return List.of();
+        String state = status == null ? null : status.status();
+        if ("TERMINATED".equals(state) || "MERGE".equals(state)) return List.of();
+        List<String> actions = new ArrayList<>(List.of("REVISE_CLASS", "MERGE"));
+        if (linkCount >= 2) actions.add("SPLIT");
+        return List.copyOf(actions);
+    }
+
+    private boolean visible(PermissionCode permission) {
+        try { accessControl.require(permission); return true; }
+        catch (ApiException ignored) { return false; }
+    }
+
+    private String sourceCode(String sourceId) {
+        if (sourceId == null) return null;
+        return fusedTracks.sourceCodes(List.of(sourceId)).get(sourceId);
+    }
+
+    private List<String> strings(String json) {
+        if (json == null) return List.of();
+        try {
+            JsonNode node = objectMapper.readTree(json);
+            if (node != null && node.isTextual()) node = objectMapper.readTree(node.textValue());
+            if (node == null || !node.isArray()) return List.of();
+            List<String> out = new ArrayList<>();
+            for (JsonNode item : node) if (item.isTextual()) out.add(item.textValue());
+            return List.copyOf(out);
+        } catch (Exception ignored) {
+            throw internalError();
+        }
+    }
+
+    private List<ContributionDto> contributions(String json) {
+        if (json == null) return null;
+        try {
+            JsonNode node = objectMapper.readTree(json);
+            if (node != null && node.isTextual()) node = objectMapper.readTree(node.textValue());
+            if (node == null || !node.isArray() || node.isEmpty()) return null;
+            List<String> ids = new ArrayList<>();
+            for (JsonNode item : node) if (item.path("source_id").isTextual()) ids.add(item.path("source_id").textValue());
+            var codes = fusedTracks.sourceCodes(ids);
+            List<ContributionDto> out = new ArrayList<>();
+            for (JsonNode item : node) {
+                String code = codes.get(item.path("source_id").asText());
+                if (code == null) continue;
+                out.add(new ContributionDto(code, item.path("weight").isNumber() ? item.path("weight").decimalValue() : null));
+            }
+            return out.isEmpty() ? null : List.copyOf(out);
+        } catch (Exception ignored) {
+            throw internalError();
+        }
     }
 
     private TrackPointDto point(PointRow row) {
@@ -197,7 +310,9 @@ public class TargetReadService {
         return new TrackPointDto(
                 row.pointId(), row.trackId(), row.pointSeq(), requiredMillis(sortTime),
                 row.observedAt() == null ? "RECEIVED" : "OBSERVED", requiredMillis(row.receivedAt()),
-                millis(row.observedAt()), location(row.location()), row.altitudeAmslM(), row.heightAglM());
+                millis(row.observedAt()), location(row.location()), row.altitudeAmslM(), row.heightAglM(),
+                row.pointKind(), row.positionAccuracyM(), contributions(row.contributingJson()),
+                row.sourceSwitched(), row.degradationLevel());
     }
 
     private static LocationDto location(Coordinate coordinate) {
@@ -257,6 +372,26 @@ public class TargetReadService {
             } catch (NumberFormatException ex) {
                 throw invalidPage();
             }
+        }
+
+        private String enumerated(String name, Set<String> allowed) {
+            String value = optional(name, 16);
+            if (value != null && !allowed.contains(value)) throw validation(name);
+            return value;
+        }
+
+        /** kind 是逗号分隔集合，默认 MEAS,BRIDGE：预测点是推断而非观测，必须显式索取。 */
+        private List<String> kinds() {
+            if (!values.containsKey("kind")) return DEFAULT_POINT_KINDS;
+            String raw = optional("kind", 32);
+            List<String> kinds = new ArrayList<>();
+            for (String part : raw.split(",")) {
+                String kind = part.trim();
+                if (!POINT_KINDS.contains(kind) || kinds.contains(kind)) throw validation("kind");
+                kinds.add(kind);
+            }
+            if (kinds.isEmpty()) throw validation("kind");
+            return List.copyOf(kinds);
         }
 
         private String optional(String name, int maxLength) {

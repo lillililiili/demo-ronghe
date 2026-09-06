@@ -393,6 +393,51 @@ class TargetReadApiTest {
         return objectMapper.readTree(body);
     }
 
+    /* ---------- 阶段 8 追加：既有字段与排序不变，新增字段一律可空 ---------- */
+
+    @Test
+    void stage8FieldsAreAbsentWhenFusionEngineNeverTouchedTheTarget() throws Exception {
+        JsonNode detail = getJson("/api/v1/targets/" + targetLatest).path("data");
+        // 阶段 2 的既有断言必须继续成立：新增字段不能改变已有字段的存在性与取值。
+        assertThat(detail.path("target_id").asText()).isEqualTo(targetLatest);
+        assertThat(detail.path("source_links")).hasSize(2);
+        assertThat(detail.path("source_links").get(0).path("source_session_key").asText()).isEqualTo("session-a");
+        assertThat(detail.has("track_status")).isFalse();
+        assertThat(detail.has("degradation")).isFalse();
+        assertThat(detail.has("attribute_selection")).isFalse();
+        assertThat(detail.has("lineage_summary")).isFalse();
+        // 该来源没有登记 source_type：字段缺省而不是猜一个类型。
+        assertThat(detail.path("source_links").get(0).has("source_type")).isFalse();
+        // 读者没有 fusion:revise：动作列表为空数组而不是给出不可执行的入口。
+        assertThat(detail.path("allowed_actions")).isEmpty();
+        assertNoSensitiveFields(detail);
+
+        JsonNode tracks = getJson("/api/v1/targets/" + targetLatest + "/tracks?size=100").path("data");
+        assertThat(tracks.path("total").asLong()).isEqualTo(2);
+        // 阶段 2 既有轨迹默认落在 RAW 层，link_id 仍必须存在。
+        assertThat(tracks.path("items").get(0).path("layer").asText()).isEqualTo("RAW");
+        assertThat(tracks.path("items").get(0).path("link_id").asText()).isNotEmpty();
+        assertThat(tracks.path("items").get(0).has("config_version")).isFalse();
+        assertThat(tracks.path("items").get(0).has("ended_at")).isFalse();
+    }
+
+    @Test
+    void stage8PointFieldsDefaultToMeasuredWithoutFusionMetadata() throws Exception {
+        JsonNode points = getJson("/api/v1/tracks/" + validTrack + "/points?size=100").path("data");
+        assertThat(points.path("total").asLong()).isEqualTo(2);
+        JsonNode first = points.path("items").get(0);
+        // 迁移默认值 MEAS 让阶段 2 的历史点继续出现在默认查询里（默认 kind=MEAS,BRIDGE）。
+        assertThat(first.path("point_kind").asText()).isEqualTo("MEAS");
+        assertThat(first.has("contributing")).isFalse();
+        assertThat(first.has("position_accuracy_m")).isFalse();
+        assertThat(first.has("degradation_level")).isFalse();
+        assertThat(first.path("source_switched").asBoolean()).isFalse();
+        assertNoSensitiveFields(points);
+        // 过滤参数只接受契约词典。
+        assertError("/api/v1/tracks/" + validTrack + "/points?kind=EVERYTHING", 400, "VALIDATION_ERROR");
+        assertError("/api/v1/targets/" + targetLatest + "/tracks?layer=OTHER", 400, "VALIDATION_ERROR");
+    }
+
     private void assertError(String path, int expectedStatus, String code) throws Exception {
         mvc.perform(get(path).header("Authorization", "Bearer " + sessionId))
                 .andExpect(status().is(expectedStatus))

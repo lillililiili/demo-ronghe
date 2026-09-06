@@ -391,6 +391,13 @@
 
   MapView.prototype.setData = function (d) { Object.assign(this.data, d); this.draw(); return this; };
   MapView.prototype.setLayer = function (k, v) { this.layers[k] = v; this.draw(); return this; };
+  /* 米→像素：用当前纬度上 1° 经度的像素长度换算，粗略但足够画精度圈；不用于任何判定。 */
+  MapView.prototype._metersToPx = function (meters, lat) {
+    const a = this.px(0, lat), b = this.px(1, lat);
+    const pxPerDegLon = Math.abs(b[0] - a[0]);
+    const metersPerDegLon = 111320 * Math.cos((Number(lat) || 0) * Math.PI / 180);
+    return metersPerDegLon > 0 ? meters / metersPerDegLon * pxPerDegLon : 0;
+  };
   MapView.prototype.destroy = function () {
     if (this._dead) return;
     this._dead = true;
@@ -658,6 +665,8 @@
          对比是最强的可见性手段；选中者叠加 强脉冲 + 稳定内圈 + 四角定位括号。 */
       const selOnMap = !!this.sel && (this.data.targets || []).some(x => x.id === this.sel);
       (this.data.targets || []).forEach((t, ti) => {
+        // 阶段 8：目标可声明所属图层（如 raw-track 原始轨迹层），未声明即 track；未知图层键默认可见。
+        if (t.layerKey && t.layerKey !== 'track' && this.layers[t.layerKey] === false) return;
         const isSel = this.sel === t.id;
         const dim = selOnMap && !isSel;
         if (dim) { c.save(); c.globalAlpha = .35; }
@@ -705,8 +714,22 @@
           const s = P(tr[0].lon, tr[0].lat);
           c.beginPath(); c.arc(s[0], s[1], 3, 0, 7); c.fillStyle = '#2fd06e'; c.fill();
         }
-        const last = tr.length ? tr[tr.length - 1] : { lon: t.lon, lat: t.lat };
-        const q = P(last.lon, last.lat);
+        /* 锚点：目标自身的最新可信坐标优先于轨迹末点——轨迹可能只到上一帧，而 latest_state 才是当前位置；
+           两者都没有时不画（不用 (0,0) 或旧点冒充）。 */
+        const anchor = Number.isFinite(Number(t.lon)) && Number.isFinite(Number(t.lat))
+          ? { lon: Number(t.lon), lat: Number(t.lat) }
+          : tr.length ? tr[tr.length - 1] : null;
+        if (!anchor) { if (dim) c.restore(); return; }
+        const q = P(anchor.lon, anchor.lat);
+        /* 阶段 8：融合精度圈（米→像素按当前比例尺），只在选中且 accuracyM 为有限正数时画，不臆造精度。 */
+        if (isSel && Number.isFinite(Number(t.accuracyM)) && Number(t.accuracyM) > 0) {
+          const r = this._metersToPx(Number(t.accuracyM), anchor.lat);
+          if (r > 2) {
+            c.save(); c.beginPath(); c.arc(q[0], q[1], r, 0, 7);
+            c.strokeStyle = col + '99'; c.setLineDash([4, 4]); c.lineWidth = 1.2; c.stroke();
+            c.fillStyle = col + '14'; c.fill(); c.setLineDash([]); c.restore();
+          }
+        }
         this._drawUav(c, t, q, col, isSel);
         if (dim) c.restore();
         const altitudeTx = t.alt == null ? '—' : html(t.alt) + ' m AMSL';

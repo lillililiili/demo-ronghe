@@ -1,7 +1,7 @@
 /* “我的工作台”统一事件适配层：把后端工作台摘要映射成页面视图模型，并提供导航与源对象读取。
  * 这里只统一入口、分类和待办提示，不改写三类业务各自的状态机，也不再写任何内存状态：
  * 队列、计数、详情全部来自 GET /workbench/items；核实委托 alarmApi/riskApi，通知委托 handoffApi（待领导接线）。 */
-import { SOURCE_MODE_LABEL, labelOf } from '@/ui/labels.js';
+import { RISK_STATE_LABEL, SEVERITY_LABEL, SEVERITY_TAG, SOURCE_MODE_LABEL, labelOf } from '@/ui/labels.js';
 import { getWorkbenchItem, listWorkbenchItems } from '@/services/workbenchApi.js';
 import { getAlarm, getUavEvent } from '@/services/alarmApi.js';
 import { riskApi } from '@/services/riskApi.js';
@@ -11,11 +11,11 @@ export const kindLabel = { UAV_EVENT: '无人机告警', RISK: '飞行计划风�
 export const kindIcon = { UAV_EVENT: 'plane', RISK: 'plan', DEVICE_INCIDENT: 'device' };
 export const kindModule = { UAV_EVENT: '异常告警中心', RISK: '飞行活动管理 · 全部风险事件', DEVICE_INCIDENT: '设备实时监测' };
 
-export const SEVERITY_LABEL = { CRITICAL: '紧急', HIGH: '高', MEDIUM: '中', LOW: '低' };
-export const SEVERITY_TAG = { CRITICAL: 't-red', HIGH: 't-red', MEDIUM: 't-amber', LOW: 't-blue' };
+/* 等级/风险状态字典已上提到 ui/labels.js 与处罚交接页共用；这里保留导出名。 */
+export { SEVERITY_LABEL, SEVERITY_TAG };
 export const STATE_LABEL = {
   UAV_EVENT: { PENDING_VERIFICATION: '待核实', EVIDENCE_REQUIRED: '证据待补充', CONFIRMED: '已核实，待处置', FALSE_POSITIVE: '误报' },
-  RISK: { PENDING_VERIFICATION: '待核验', PENDING_NOTIFICATION: '待通知', NOTIFIED: '已通知', EXCLUDED: '已排除' },
+  RISK: RISK_STATE_LABEL,
   DEVICE_INCIDENT: { PENDING: '待处理', PROCESSING: '处理中', PENDING_VERIFICATION: '待验证', RECOVERED: '已恢复' }
 };
 /* 旧设备阶段词表：保留导出名，供仍按中文阶段渲染的消费者使用。 */

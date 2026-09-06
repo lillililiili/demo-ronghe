@@ -29,6 +29,7 @@ class ProductionDevSeedIsolationTest {
         try (ConfigurableApplicationContext context = start(database, profiles)) {
             assertThat(context.containsBean("localUserSeeder")).isFalse();
             assertThat(context.containsBean("localDeviceSeeder")).isFalse();
+            assertThat(context.containsBean("localReportingSeeder")).isFalse();
             assertThat(context.containsBean("localStage2AccessSeeder")).isFalse();
             assertThat(context.containsBean("localStage2TargetSeeder")).isFalse();
 
@@ -39,6 +40,8 @@ class ProductionDevSeedIsolationTest {
             assertThat(count(jdbc, "select count(*) from ops_integration_source where source_code='LOCAL-MOCK'")).isZero();
             assertThat(count(jdbc, "select count(*) from ops_device where device_no like 'DEV-MOCK-%'")).isZero();
             assertThat(count(jdbc, "select count(*) from target where target_id like 'seed-target-%'")).isZero();
+            assertThat(count(jdbc, "select count(*) from report_airborne_target")).isZero();
+            assertThat(count(jdbc, "select count(*) from report_penalty_case")).isZero();
         }
     }
 

@@ -5,6 +5,7 @@ import { closeModal } from './modal.js';
 import { toast } from './nv.js';
 import { verifyUavEvent } from '@/services/alarmApi.js';
 import { isUncertainOutcome } from '@/services/apiClient.js';
+import { ALARM_TYPE_LABEL, labelOf } from '@/ui/labels.js';
 
 export const UAV_STATE_TEXT = {
   PENDING_VERIFICATION: '待人工核实',
@@ -45,14 +46,14 @@ export function openUavVerification({ event, alarm, refresh, onDone } = {}) {
   const expectedVersion = Number(event.version);
   if (!pendingKeys.has(eventId)) pendingKeys.set(eventId, newKey());
   const intro = [
-    ['事件编号', `<span class="mono">${esc(eventId)}</span>　v${expectedVersion}`],
+    ['核实事件', `当前版本 v${expectedVersion}`],
     ['当前状态', esc(uavStateText(event.state))],
-    alarm ? ['告警', `<span class="mono">${esc(alarm.alarm_id)}</span> ${esc(alarm.alarm_type || '')}`] : null,
-    alarm ? ['关联目标', alarm.target_id ? `<span class="mono">${esc(alarm.target_id)}</span>` : '无关联目标或无目标读取权限'] : null
+    alarm ? ['告警', `<span class="mono" title="${esc(alarm.alarm_id)}">${esc(alarm.alarm_no || alarm.alarm_id)}</span> ${esc(labelOf(ALARM_TYPE_LABEL, alarm.alarm_type, ''))}`] : null,
+    alarm ? ['关联目标', alarm.target_id ? `<span class="mono" title="${esc(alarm.target_id)}">${esc(alarm.target_no || alarm.target_id)}</span>` : '无关联目标或无目标读取权限'] : null
   ].filter(Boolean).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join('');
 
   openFormModal({
-    title: '人工核实 · ' + esc(alarm?.alarm_id || eventId),
+    title: '人工核实 · ' + esc(alarm?.alarm_no || alarm?.alarm_id || '核实事件'),
     width: '600px',
     warning: '「属实」表示已核实、待处置，不代表反制、干扰或处罚交接已执行（阶段 4 未接入）；「误报」为终态；「证据待补充」记录本次核实后可再次核实。',
     introHtml: `<dl class="kv">${intro}</dl>`,

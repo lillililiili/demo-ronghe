@@ -94,7 +94,7 @@ public class HandoffReadService {
         return new HandoffDetailDto(row.handoffId(), row.sourceKind(), row.sourceId(), row.handoffType(), row.recipientId(), row.recipientName(),
                 row.sourceVersion(), row.ownerOrgId(), row.districtId(), row.sourceMode(), row.submittedBy(), requiredMillis(row.createdAt()),
                 row.deliveryStatus(), row.receiptStatus(), row.blockedReason(), material(row, source), latest == null ? null : dto(latest),
-                new AvailabilityDto(source.availability));
+                new AvailabilityDto(source.availability), row.ownerOrgName(), row.districtName(), row.submittedByName(), row.sourceNo());
     }
 
     @Transactional(readOnly = true)
@@ -157,7 +157,8 @@ public class HandoffReadService {
     public static HandoffDto dto(HandoffRow row) {
         return new HandoffDto(row.handoffId(), row.sourceKind(), row.sourceId(), row.handoffType(), row.recipientId(), row.recipientName(),
                 row.sourceVersion(), row.ownerOrgId(), row.districtId(), row.sourceMode(), row.submittedBy(), requiredMillis(row.createdAt()),
-                row.deliveryStatus(), row.receiptStatus(), row.blockedReason());
+                row.deliveryStatus(), row.receiptStatus(), row.blockedReason(),
+                row.ownerOrgName(), row.districtName(), row.submittedByName(), row.sourceNo());
     }
 
     public static DeliveryDto dto(DeliveryRow row) {

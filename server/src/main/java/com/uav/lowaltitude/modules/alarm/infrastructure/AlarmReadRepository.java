@@ -72,11 +72,14 @@ public class AlarmReadRepository {
     public boolean targetReadable(String targetId, AccessDecision access) { return targetVisible(targetId, null, null, access); }
 
     private static String from() {
-        return " FROM alarm a JOIN integration_source s ON s.source_id=a.source_id LEFT JOIN uav_event e ON e.alarm_id=a.alarm_id";
+        return " FROM alarm a JOIN integration_source s ON s.source_id=a.source_id LEFT JOIN uav_event e ON e.alarm_id=a.alarm_id"
+                + " LEFT JOIN app_org org_ref ON org_ref.org_id=a.owner_org_id LEFT JOIN app_district dist_ref ON dist_ref.district_id=a.district_id"
+                + " LEFT JOIN target tg ON tg.target_id=a.target_id";
     }
 
     private static String select() {
-        return "SELECT a.alarm_id,a.target_id,a.alarm_type,a.severity,a.occurred_at,a.received_at,a.source_mode,a.owner_org_id,a.district_id,s.source_code,e.event_id,e.state_code";
+        return "SELECT a.alarm_id,a.target_id,a.alarm_type,a.severity,a.occurred_at,a.received_at,a.source_mode,a.owner_org_id,a.district_id,s.source_code,e.event_id,e.state_code,"
+                + "a.source_alarm_id,s.name AS source_name,org_ref.name AS owner_org_name,dist_ref.name AS district_name,tg.target_no";
     }
 
     private static Where where(AlarmQuery query, AccessDecision access) {
@@ -118,7 +121,9 @@ public class AlarmReadRepository {
         return new AlarmRow(rs.getString("alarm_id"), rs.getString("target_id"), rs.getString("event_id"),
                 rs.getString("state_code"), rs.getString("alarm_type"), rs.getString("severity"),
                 time(rs, "occurred_at"), time(rs, "received_at"), rs.getString("source_code"),
-                rs.getString("source_mode"), rs.getString("owner_org_id"), rs.getString("district_id"));
+                rs.getString("source_mode"), rs.getString("owner_org_id"), rs.getString("district_id"),
+                rs.getString("source_alarm_id"), rs.getString("source_name"), rs.getString("owner_org_name"), rs.getString("district_name"),
+                rs.getString("target_no"));
     }
 
     private static OffsetDateTime time(ResultSet rs, String column) throws SQLException {
@@ -138,5 +143,6 @@ public class AlarmReadRepository {
     }
     public record AlarmRow(String alarmId, String targetId, String eventId, String state, String alarmType,
             String severity, OffsetDateTime occurredAt, OffsetDateTime receivedAt, String sourceCode,
-            String sourceMode, String ownerOrgId, String districtId) { }
+            String sourceMode, String ownerOrgId, String districtId,
+            String sourceAlarmId, String sourceName, String ownerOrgName, String districtName, String targetNo) { }
 }

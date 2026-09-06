@@ -37,7 +37,7 @@ public class RiskRepository {
         Where where = where(query, access);
         where.params.put("offset", offset);
         where.params.put("size", size);
-        return jdbc.query(select() + from() + where.sql
+        return jdbc.query(select() + names() + from() + nameJoins() + where.sql
                 + " ORDER BY r.received_at DESC,r.risk_id DESC OFFSET :offset ROWS FETCH NEXT :size ROWS ONLY",
                 where.params, RiskRepository::risk);
     }
@@ -46,7 +46,7 @@ public class RiskRepository {
         Where where = where(RiskQuery.empty(), access);
         where.sql.append(" AND r.risk_id=:risk_id");
         where.params.put("risk_id", riskId);
-        List<RiskRow> rows = jdbc.query(select() + from() + where.sql, where.params, RiskRepository::risk);
+        List<RiskRow> rows = jdbc.query(select() + names() + from() + nameJoins() + where.sql, where.params, RiskRepository::risk);
         return rows.isEmpty() ? null : rows.get(0);
     }
 
@@ -54,7 +54,7 @@ public class RiskRepository {
         Where where = where(RiskQuery.empty(), access);
         where.sql.append(" AND r.risk_id=:risk_id");
         where.params.put("risk_id", riskId);
-        List<RiskRow> rows = jdbc.query(select() + from() + where.sql + " FOR UPDATE", where.params, RiskRepository::risk);
+        List<RiskRow> rows = jdbc.query(select() + nullNames() + from() + where.sql + " FOR UPDATE", where.params, RiskRepository::risk);
         return rows.isEmpty() ? null : rows.get(0);
     }
 
@@ -84,9 +84,9 @@ public class RiskRepository {
         Where where = verificationWhere(riskId, access);
         where.params.put("offset", offset);
         where.params.put("size", size);
-        return jdbc.query("SELECT v.history_id,v.version,v.previous_state,v.resulting_state,v.conclusion,v.note,v.actor_id,v.created_at"
+        return jdbc.query("SELECT v.history_id,v.version,v.previous_state,v.resulting_state,v.conclusion,v.note,v.actor_id,v.created_at,au.name AS actor_name"
                 + " FROM flight_risk_verification v JOIN flight_risk r ON r.risk_id=v.risk_id"
-                + planJoin() + where.sql + " ORDER BY v.version ASC,v.history_id ASC OFFSET :offset ROWS FETCH NEXT :size ROWS ONLY",
+                + planJoin() + " LEFT JOIN app_user au ON au.user_id=v.actor_id" + where.sql + " ORDER BY v.version ASC,v.history_id ASC OFFSET :offset ROWS FETCH NEXT :size ROWS ONLY",
                 where.params, RiskRepository::verification);
     }
 
@@ -161,7 +161,7 @@ public class RiskRepository {
         params.put("route",row.routeVersionId());params.put("org",row.ownerOrgId());params.put("district",row.districtId());return params;}
 
     public RiskRow findBySource(String sourceId, String sourceRiskId) {
-        List<RiskRow> rows = jdbc.query(select() + from() + " WHERE r.source_id=:source AND r.source_risk_id=:source_risk",
+        List<RiskRow> rows = jdbc.query(select() + names() + from() + nameJoins() + " WHERE r.source_id=:source AND r.source_risk_id=:source_risk",
                 Map.of("source", sourceId, "source_risk", sourceRiskId), RiskRepository::risk);
         return rows.isEmpty() ? null : rows.get(0);
     }
@@ -224,7 +224,11 @@ public class RiskRepository {
     }
     private static String select() { return "SELECT r.risk_id,r.source_risk_id,r.plan_id,r.route_version_id,r.assessment_id,r.target_id,r.track_id,"
             + "r.risk_type,r.severity,r.state_code,r.reason_code,r.reason_text,r.occurred_at,r.received_at,r.observed_altitude_m,"
-            + "r.observed_altitude_datum,r.height_relation,s.source_code,r.source_mode,r.owner_org_id,r.district_id,r.created_at,r.updated_at,r.version"; }
+            + "r.observed_altitude_datum,r.height_relation,s.source_code,r.source_mode,r.owner_org_id,r.district_id,r.created_at,r.updated_at,r.version,p.plan_no"; }
+    /** 名称列只用于展示；FOR UPDATE 不能落在外连接可空侧，锁定查询改为同名空列。 */
+    private static String names() { return ",s.name AS source_name,org_ref.name AS owner_org_name,dist_ref.name AS district_name,tg.target_no"; }
+    private static String nullNames() { return ",CAST(NULL AS VARCHAR(128)) AS source_name,CAST(NULL AS VARCHAR(128)) AS owner_org_name,CAST(NULL AS VARCHAR(128)) AS district_name,CAST(NULL AS VARCHAR(64)) AS target_no"; }
+    private static String nameJoins() { return " LEFT JOIN app_org org_ref ON org_ref.org_id=r.owner_org_id LEFT JOIN app_district dist_ref ON dist_ref.district_id=r.district_id LEFT JOIN target tg ON tg.target_id=r.target_id"; }
     private static String from() { return " FROM flight_risk r JOIN integration_source s ON s.source_id=r.source_id AND s.source_mode=r.source_mode" + planJoin(); }
     private static String planJoin() { return " JOIN flight_plan p ON p.plan_id=r.plan_id AND p.route_version_id=r.route_version_id"
             + " AND p.owner_org_id=r.owner_org_id AND p.district_id=r.district_id"; }
@@ -233,10 +237,11 @@ public class RiskRepository {
             rs.getString("risk_type"), rs.getString("severity"), rs.getString("state_code"), rs.getString("reason_code"), rs.getString("reason_text"),
             time(rs,"occurred_at"), time(rs,"received_at"), rs.getBigDecimal("observed_altitude_m"), rs.getString("observed_altitude_datum"),
             rs.getString("height_relation"), rs.getString("source_code"), rs.getString("source_mode"), rs.getString("owner_org_id"), rs.getString("district_id"),
-            time(rs,"created_at"), time(rs,"updated_at"), rs.getLong("version")); }
+            time(rs,"created_at"), time(rs,"updated_at"), rs.getLong("version"),
+            rs.getString("source_name"), rs.getString("owner_org_name"), rs.getString("district_name"), rs.getString("plan_no"), rs.getString("target_no")); }
     private static VerificationRow verification(ResultSet rs, int ignored) throws SQLException { return new VerificationRow(rs.getString("history_id"),
             rs.getLong("version"),rs.getString("previous_state"),rs.getString("resulting_state"),rs.getString("conclusion"),
-            rs.getString("note"),rs.getString("actor_id"),time(rs,"created_at")); }
+            rs.getString("note"),rs.getString("actor_id"),time(rs,"created_at"),rs.getString("actor_name")); }
     private static OffsetDateTime time(ResultSet rs, String column) throws SQLException { Object value=rs.getObject(column); if(value==null)return null;
         if(value instanceof OffsetDateTime t)return t; if(value instanceof ZonedDateTime t)return t.toOffsetDateTime(); if(value instanceof Timestamp t)return t.toInstant().atOffset(ZoneOffset.UTC);
         if(value instanceof LocalDateTime t)return t.atOffset(ZoneOffset.UTC); return OffsetDateTime.parse(value.toString()); }
@@ -247,9 +252,10 @@ public class RiskRepository {
     public record RiskRow(String riskId,String sourceRiskId,String planId,String routeVersionId,String assessmentId,String targetId,String trackId,
             String riskType,String severity,String state,String reasonCode,String reasonText,OffsetDateTime occurredAt,OffsetDateTime receivedAt,
             BigDecimal observedAltitudeM,String observedAltitudeDatum,String heightRelation,String sourceCode,String sourceMode,String ownerOrgId,
-            String districtId,OffsetDateTime createdAt,OffsetDateTime updatedAt,long version) { }
+            String districtId,OffsetDateTime createdAt,OffsetDateTime updatedAt,long version,
+            String sourceName,String ownerOrgName,String districtName,String planNo,String targetNo) { }
     public record VerificationRow(String historyId,long version,String previousState,String resultingState,String conclusion,String note,
-            String actorId,OffsetDateTime createdAt) { }
+            String actorId,OffsetDateTime createdAt,String actorName) { }
     public record IngestionPlanRow(String planId,String routeVersionId,String ownerOrgId,String districtId) { }
     public record IngestRow(String riskId,String sourceId,String sourceRiskId,String planId,String routeVersionId,String assessmentId,String targetId,
             String trackId,String riskType,String severity,String reasonCode,String reasonText,OffsetDateTime occurredAt,OffsetDateTime receivedAt,

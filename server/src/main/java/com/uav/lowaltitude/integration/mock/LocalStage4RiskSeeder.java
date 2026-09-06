@@ -30,14 +30,14 @@ public class LocalStage4RiskSeeder implements ApplicationRunner {
         // Runner 的注册顺序不是数据依赖；先幂等确保 Stage3 计划存在，不能靠偶然启动顺序制造悬空风险。
         planningSeeder.run(args);
         Instant base=Instant.parse("2026-09-05T00:00:00Z");
-        risk("seed-stage4-risk-pending","STAGE4-SEED-PENDING","seed-stage3-plan-legal","seed-stage3-rv-legal",
+        risk("seed-stage4-risk-pending","FX-20260905-001","seed-stage3-plan-legal","seed-stage3-rv-legal",
                 "seed-stage3-org","seed-stage3-district","HIGH","PENDING_VERIFICATION","ROUTE_DEVIATION","已保存的计划偏离事实",base,null,null);
-        risk("seed-stage4-risk-confirmed","STAGE4-SEED-CONFIRMED","seed-stage3-plan-illegal","seed-stage3-rv-illegal",
+        risk("seed-stage4-risk-confirmed","FX-20260905-002","seed-stage3-plan-illegal","seed-stage3-rv-illegal",
                 "seed-stage3-org","seed-stage3-district","CRITICAL","PENDING_NOTIFICATION","AIRSPACE_CONFLICT","已核验，等待后续通知切片处理",base.plusSeconds(1),90d,"AMSL");
         // 计划本身缺高度基准；这里必须保留 UNKNOWN，不能默认成 AGL 或伪判安全。
-        risk("seed-stage4-risk-unknown-height","STAGE4-SEED-UNKNOWN","seed-stage3-plan-undetermined","seed-stage3-rv-undetermined",
+        risk("seed-stage4-risk-unknown-height","FX-20260905-003","seed-stage3-plan-undetermined","seed-stage3-rv-undetermined",
                 "seed-stage3-org","seed-stage3-district","MEDIUM","PENDING_VERIFICATION","ALTITUDE_UNKNOWN","高度事实不可比",base.plusSeconds(2),null,null);
-        risk("seed-stage4-risk-cross-scope","STAGE4-SEED-CROSS","seed-stage3-plan-cross-scope","seed-stage3-rv-cross-scope",
+        risk("seed-stage4-risk-cross-scope","FX-20260905-004","seed-stage3-plan-cross-scope","seed-stage3-rv-cross-scope",
                 "seed-stage3-other-org","seed-stage3-other-district","LOW","EXCLUDED","SOURCE_MISMATCH","跨范围反例，仅供范围测试",base.plusSeconds(3),null,null);
     }
 
@@ -49,5 +49,6 @@ public class LocalStage4RiskSeeder implements ApplicationRunner {
                 +"'UNKNOWN','mock',?,?,?,?,0 WHERE NOT EXISTS (SELECT 1 FROM flight_risk WHERE risk_id=?)",
                 id,sourceRisk,plan,route,severity,state,reason,text,Timestamp.from(at),Timestamp.from(at.plusSeconds(5)),altitude,datum,
                 org,district,Timestamp.from(at),Timestamp.from(at),id);
+        jdbc.update("UPDATE flight_risk SET source_risk_id=? WHERE risk_id=? AND source_risk_id<>?",sourceRisk,id,sourceRisk);
     }
 }

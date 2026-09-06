@@ -71,7 +71,7 @@ public class WorkbenchReadRepository {
         Map<String, Object> params = new HashMap<>();
         params.put("source_id", eventId);
         return jdbc.query("SELECT h.history_id,h.version,h.previous_state,h.resulting_state,h.conclusion,h.note,h.actor_id,"
-                + ms("h.created_at") + " AS created_at FROM uav_event_verification h WHERE h.event_id=:source_id"
+                + ms("h.created_at") + " AS created_at,au.name AS actor_name FROM uav_event_verification h LEFT JOIN app_user au ON au.user_id=h.actor_id WHERE h.event_id=:source_id"
                 + " AND EXISTS (SELECT 1 FROM (" + uavBranch(access, params) + ") u WHERE u.source_id=h.event_id)"
                 + " ORDER BY h.version ASC, h.history_id ASC", params, WorkbenchReadRepository::verification);
     }
@@ -80,7 +80,7 @@ public class WorkbenchReadRepository {
         Map<String, Object> params = new HashMap<>();
         params.put("source_id", riskId);
         return jdbc.query("SELECT h.history_id,h.version,h.previous_state,h.resulting_state,h.conclusion,h.note,h.actor_id,"
-                + ms("h.created_at") + " AS created_at FROM flight_risk_verification h WHERE h.risk_id=:source_id"
+                + ms("h.created_at") + " AS created_at,au.name AS actor_name FROM flight_risk_verification h LEFT JOIN app_user au ON au.user_id=h.actor_id WHERE h.risk_id=:source_id"
                 + " AND EXISTS (SELECT 1 FROM (" + riskBranch(access, params) + ") u WHERE u.source_id=h.risk_id)"
                 + " ORDER BY h.version ASC, h.history_id ASC", params, WorkbenchReadRepository::verification);
     }
@@ -131,7 +131,7 @@ public class WorkbenchReadRepository {
                 + ms("a.occurred_at") + " AS occurred_at, " + ms("e.updated_at") + " AS updated_at, e.version AS version,"
                 + " a.source_mode AS source_mode, a.owner_org_id AS owner_org_id, a.district_id AS district_id, a.alarm_type AS type_code,"
                 + " CAST(NULL AS VARCHAR(2000)) AS reason_text, CAST(NULL AS VARCHAR(64)) AS device_no, CAST(NULL AS VARCHAR(128)) AS device_name,"
-                + " a.alarm_id AS related_id"
+                + " a.alarm_id AS related_id, CAST(a.source_alarm_id AS VARCHAR(64)) AS source_no"
                 + " FROM uav_event e JOIN alarm a ON a.alarm_id=e.alarm_id AND a.owner_org_id=e.owner_org_id AND a.district_id=e.district_id"
                 + " WHERE EXISTS (SELECT 1 FROM app_org o WHERE o.org_id=e.owner_org_id AND o.enabled=TRUE)"
                 + " AND EXISTS (SELECT 1 FROM app_district d WHERE d.district_id=e.district_id AND d.enabled=TRUE)");
@@ -146,7 +146,7 @@ public class WorkbenchReadRepository {
                 + ms("r.occurred_at") + " AS occurred_at, " + ms("r.updated_at") + " AS updated_at, r.version AS version,"
                 + " r.source_mode AS source_mode, r.owner_org_id AS owner_org_id, r.district_id AS district_id, r.risk_type AS type_code,"
                 + " CAST(r.reason_text AS VARCHAR(2000)) AS reason_text, CAST(NULL AS VARCHAR(64)) AS device_no, CAST(NULL AS VARCHAR(128)) AS device_name,"
-                + " CAST(NULL AS VARCHAR(36)) AS related_id"
+                + " CAST(NULL AS VARCHAR(36)) AS related_id, CAST(r.source_risk_id AS VARCHAR(64)) AS source_no"
                 + " FROM flight_risk r JOIN integration_source s ON s.source_id=r.source_id AND s.source_mode=r.source_mode"
                 + " JOIN flight_plan p ON p.plan_id=r.plan_id AND p.route_version_id=r.route_version_id"
                 + " AND p.owner_org_id=r.owner_org_id AND p.district_id=r.district_id"
@@ -162,7 +162,7 @@ public class WorkbenchReadRepository {
                 + " di.severity AS severity, " + rank("di.severity") + " AS severity_rank, di.detected_at AS received_at,"
                 + " CAST(NULL AS BIGINT) AS occurred_at, di.closed_at AS updated_at, CAST(NULL AS BIGINT) AS version,"
                 + " di.source_mode AS source_mode, di.owner_org_id AS owner_org_id, di.district_id AS district_id, di.incident_type AS type_code,"
-                + " CAST(di.reason AS VARCHAR(2000)) AS reason_text, di.device_no AS device_no, di.device_name AS device_name, di.device_id AS related_id"
+                + " CAST(di.reason AS VARCHAR(2000)) AS reason_text, di.device_no AS device_no, di.device_name AS device_name, di.device_id AS related_id, CAST(di.device_no AS VARCHAR(64)) AS source_no"
                 + " FROM (" + deviceScope.scopedIncidentSql(access, params) + ") di";
     }
 
@@ -209,11 +209,11 @@ public class WorkbenchReadRepository {
         return new ItemRow(rs.getString("kind"), rs.getString("source_id"), rs.getString("state"), rs.getString("severity"),
                 rs.getLong("received_at"), nullable(rs, "occurred_at"), nullable(rs, "updated_at"), nullable(rs, "version"),
                 rs.getString("source_mode"), rs.getString("owner_org_id"), rs.getString("district_id"), rs.getString("type_code"),
-                rs.getString("reason_text"), rs.getString("device_no"), rs.getString("device_name"), rs.getString("related_id"));
+                rs.getString("reason_text"), rs.getString("device_no"), rs.getString("device_name"), rs.getString("related_id"), rs.getString("source_no"));
     }
     private static VerificationRow verification(ResultSet rs, int ignored) throws SQLException {
         return new VerificationRow(rs.getString("history_id"), rs.getLong("version"), rs.getString("previous_state"),
-                rs.getString("resulting_state"), rs.getString("conclusion"), rs.getString("note"), rs.getString("actor_id"), rs.getLong("created_at"));
+                rs.getString("resulting_state"), rs.getString("conclusion"), rs.getString("note"), rs.getString("actor_id"), rs.getLong("created_at"), rs.getString("actor_name"));
     }
     private static HandoffRow handoff(ResultSet rs, int ignored) throws SQLException {
         return new HandoffRow(rs.getString("handoff_id"), rs.getString("handoff_type"), rs.getString("recipient_id"),
@@ -230,9 +230,9 @@ public class WorkbenchReadRepository {
     }
     public record ItemRow(String kind, String sourceId, String state, String severity, long receivedAt, Long occurredAt, Long updatedAt,
             Long version, String sourceMode, String ownerOrgId, String districtId, String typeCode, String reasonText,
-            String deviceNo, String deviceName, String relatedId) { }
+            String deviceNo, String deviceName, String relatedId, String sourceNo) { }
     public record VerificationRow(String historyId, long version, String previousState, String resultingState, String conclusion,
-            String note, String actorId, long createdAt) { }
+            String note, String actorId, long createdAt, String actorName) { }
     public record HandoffRow(String handoffId, String handoffType, String recipientId, String recipientName, long sourceVersion,
             long createdAt, String deliveryStatus, String blockedReason) { }
 }

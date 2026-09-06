@@ -14,7 +14,7 @@ public final class FlightDtos {
     public record FieldIssueDto(String field, String reasonCode) {
     }
 
-    public record SourceDto(String sourceId, String sourceCode, String sourceMode) {
+    public record SourceDto(String sourceId, String sourceCode, String sourceMode, String sourceName) {
     }
 
     public record RouteReferenceDto(
@@ -28,12 +28,14 @@ public final class FlightDtos {
     public record FlightPlanDto(
             String planId, String planNo, String statusCode, SourceDto source, String sourceMode, String uavSn,
             Long startAt, Long endAt, String ownerOrgId, String districtId, RouteReferenceDto route,
-            List<FieldIssueDto> fieldIssues, long createdAt, long updatedAt, long version) {
+            List<FieldIssueDto> fieldIssues, long createdAt, long updatedAt, long version,
+            String ownerOrgName, String districtName) {
     }
 
     public record RouteDto(
             String routeId, String routeNo, String name, boolean enabled, SourceDto source, String sourceMode,
-            String ownerOrgId, String districtId, long createdAt, long updatedAt, long version) {
+            String ownerOrgId, String districtId, long createdAt, long updatedAt, long version,
+            String ownerOrgName, String districtName) {
     }
 
     public record RouteVersionDto(

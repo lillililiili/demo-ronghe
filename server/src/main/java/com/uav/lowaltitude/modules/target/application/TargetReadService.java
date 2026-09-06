@@ -91,7 +91,8 @@ public class TargetReadService {
         return new TargetDetailDto(
                 row.targetId(), row.targetNo(), millis(row.firstSeenAt()), millis(row.lastSeenAt()),
                 row.objectTypeCode(), row.subtype(), row.uavSn(), row.sourceMode(), row.ownerOrgId(),
-                row.districtId(), state(row), links, requiredMillis(row.createdAt()), requiredMillis(row.updatedAt()));
+                row.districtId(), state(row), links, requiredMillis(row.createdAt()), requiredMillis(row.updatedAt()),
+                row.ownerOrgName(), row.districtName());
     }
 
     @Transactional(readOnly = true)
@@ -131,7 +132,7 @@ public class TargetReadService {
         return new TargetSummaryDto(
                 row.targetId(), row.targetNo(), millis(row.firstSeenAt()), millis(row.lastSeenAt()),
                 row.objectTypeCode(), row.subtype(), row.uavSn(), row.sourceMode(), row.ownerOrgId(),
-                row.districtId(), state(row));
+                row.districtId(), state(row), row.ownerOrgName(), row.districtName());
     }
 
     private TargetStateDto state(TargetRow row) {
@@ -179,7 +180,7 @@ public class TargetReadService {
     private TargetSourceLinkDto sourceLink(SourceLinkRow row) {
         return new TargetSourceLinkDto(
                 row.linkId(), row.sourceId(), row.sourceCode(), row.sourceMode(), row.sourceSessionKey(),
-                row.externalTargetId(), row.deviceId(), row.protocolVersion());
+                row.externalTargetId(), row.deviceId(), row.protocolVersion(), row.sourceName());
     }
 
     private TrackSummaryDto track(TrackRow row) {

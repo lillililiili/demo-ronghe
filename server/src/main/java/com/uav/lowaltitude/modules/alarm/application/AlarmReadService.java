@@ -61,7 +61,8 @@ public class AlarmReadService {
         // target_id 是独立敏感引用：没有 target:read 时宁可省略，也不能以 0 坐标或可猜 ID 替代。
         String targetId = targetReferenceVisible(row.targetId(), row.ownerOrgId(), row.districtId()) ? row.targetId() : null;
         return new AlarmDto(row.alarmId(), row.eventId(), row.state(), row.alarmType(), row.severity(), millis(row.occurredAt()),
-                requiredMillis(row.receivedAt()), row.sourceCode(), row.sourceMode(), row.ownerOrgId(), row.districtId(), targetId);
+                requiredMillis(row.receivedAt()), row.sourceCode(), row.sourceMode(), row.ownerOrgId(), row.districtId(), targetId,
+                row.sourceAlarmId(), row.sourceName(), row.ownerOrgName(), row.districtName(), targetId == null ? null : row.targetNo());
     }
 
     private boolean targetReferenceVisible(String targetId, String orgId, String districtId) {

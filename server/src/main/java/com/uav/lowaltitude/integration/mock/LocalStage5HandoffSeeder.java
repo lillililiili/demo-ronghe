@@ -58,16 +58,16 @@ public class LocalStage5HandoffSeeder implements ApplicationRunner {
         recipient(RECIPIENT_POLICE, "公安机关（本地演示接收方）", base);
         recipient(RECIPIENT_AVIATION, "民航监管部门（本地演示接收方）", base);
         // 两条风险都停留在“待通知”：本期没有可信送达/回执事实，任何样例都不得把风险推进到 NOTIFIED。
-        risk(RISK_PENDING, "seed-stage5-verify-pending", "STAGE5-SEED-PENDING-DELIVERY", "HIGH", "ROUTE_DEVIATION", "已核验，材料已提交、渠道未接通", base, submitter);
-        risk(RISK_HISTORY, "seed-stage5-verify-history", "STAGE5-SEED-DELIVERED-HISTORY", "MEDIUM", "AIRSPACE_CONFLICT", "已核验，历史送达样例（mock）", base.plusSeconds(1), submitter);
+        risk(RISK_PENDING, "seed-stage5-verify-pending", "FX-20260905-101", "HIGH", "ROUTE_DEVIATION", "已核验，材料已提交、渠道未接通", base, submitter);
+        risk(RISK_HISTORY, "seed-stage5-verify-history", "FX-20260905-102", "MEDIUM", "AIRSPACE_CONFLICT", "已核验，历史送达样例（mock）", base.plusSeconds(1), submitter);
         Instant submitted = base.plusSeconds(600);
-        handoff(HANDOFF_PENDING, RISK_PENDING, RECIPIENT_POLICE, submitter, submitted, riskMaterial(RISK_PENDING, "STAGE5-SEED-PENDING-DELIVERY",
+        handoff(HANDOFF_PENDING, RISK_PENDING, RECIPIENT_POLICE, submitter, submitted, riskMaterial(RISK_PENDING, "FX-20260905-101",
                 "HIGH", "ROUTE_DEVIATION", "已核验，材料已提交、渠道未接通", base, submitter));
         delivery(DELIVERY_PENDING, HANDOFF_PENDING, HandoffRules.PENDING_DELIVERY, HandoffRules.NOT_EXPECTED,
                 HandoffRules.CHANNEL_NOT_CONNECTED, submitted, null, null, null);
         Instant historySubmitted = base.plusSeconds(1200);
         handoff(HANDOFF_DELIVERED, RISK_HISTORY, RECIPIENT_AVIATION, submitter, historySubmitted, riskMaterial(RISK_HISTORY,
-                "STAGE5-SEED-DELIVERED-HISTORY", "MEDIUM", "AIRSPACE_CONFLICT", "已核验，历史送达样例（mock）", base.plusSeconds(1), submitter));
+                "FX-20260905-102", "MEDIUM", "AIRSPACE_CONFLICT", "已核验，历史送达样例（mock）", base.plusSeconds(1), submitter));
         // 已送达历史只在 local/test 存在且 source_mode=mock；没有任何接口能把生产交接写成这个状态。
         delivery(DELIVERY_DELIVERED, HANDOFF_DELIVERED, "DELIVERED", "ACKNOWLEDGED", null, historySubmitted,
                 historySubmitted.plusSeconds(5), historySubmitted.plusSeconds(60), historySubmitted.plusSeconds(3600));
@@ -86,6 +86,7 @@ public class LocalStage5HandoffSeeder implements ApplicationRunner {
                 + " SELECT ?,'seed-stage3-source',?,'seed-stage3-plan-legal','seed-stage3-rv-legal','FLIGHT_OPERATION',?,'PENDING_NOTIFICATION',?,?,?,?,"
                 + "'UNKNOWN','mock','seed-stage3-org','seed-stage3-district',?,?,1 WHERE NOT EXISTS (SELECT 1 FROM flight_risk WHERE risk_id=?)",
                 id, sourceRisk, severity, reason, text, ts(at), ts(received), ts(received), ts(verified), id);
+        jdbc.update("UPDATE flight_risk SET source_risk_id=? WHERE risk_id=? AND source_risk_id<>?", sourceRisk, id, sourceRisk);
         jdbc.update("INSERT INTO flight_risk_verification (history_id,risk_id,version,previous_state,resulting_state,conclusion,note,actor_id,created_at)"
                 + " SELECT ?,?,1,'PENDING_VERIFICATION','PENDING_NOTIFICATION','CONFIRMED','本地演示：人工核验通过',?,?"
                 + " WHERE NOT EXISTS (SELECT 1 FROM flight_risk_verification WHERE risk_id=? AND version=1)",

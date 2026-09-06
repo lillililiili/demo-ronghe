@@ -57,16 +57,14 @@ public class FlightReadRepository {
 
     public long countRoutes(RouteQuery query, AccessDecision access) {
         Where where = routeWhere(query, access, "r");
-        return count("SELECT COUNT(*) FROM route r LEFT JOIN integration_source s"
-                + " ON s.source_id=r.source_id AND s.source_mode=r.source_mode" + where.sql, where.parameters);
+        return count("SELECT COUNT(*)" + routeFrom() + where.sql, where.parameters);
     }
 
     public List<RouteRow> listRoutes(RouteQuery query, AccessDecision access, int offset, int size) {
         Where where = routeWhere(query, access, "r");
         where.parameters.put("offset", offset);
         where.parameters.put("size", size);
-        return jdbc.query(routeSelect() + " FROM route r LEFT JOIN integration_source s"
-                + " ON s.source_id=r.source_id AND s.source_mode=r.source_mode" + where.sql
+        return jdbc.query(routeSelect() + routeFrom() + where.sql
                 + " ORDER BY r.updated_at DESC,r.route_id ASC OFFSET :offset ROWS FETCH NEXT :size ROWS ONLY",
                 where.parameters, this::routeRow);
     }
@@ -75,8 +73,7 @@ public class FlightReadRepository {
         Where where = routeWhere(RouteQuery.empty(), access, "r");
         where.sql.append(" AND r.route_id=:route_id");
         where.parameters.put("route_id", routeId);
-        List<RouteRow> rows = jdbc.query(routeSelect() + " FROM route r LEFT JOIN integration_source s"
-                + " ON s.source_id=r.source_id AND s.source_mode=r.source_mode" + where.sql,
+        List<RouteRow> rows = jdbc.query(routeSelect() + routeFrom() + where.sql,
                 where.parameters, this::routeRow);
         return rows.isEmpty() ? null : rows.get(0);
     }
@@ -176,6 +173,8 @@ public class FlightReadRepository {
                  JOIN route_version rv ON rv.route_version_id=p.route_version_id
                  JOIN route r ON r.route_id=rv.route_id
                  LEFT JOIN integration_source s ON s.source_id=p.source_id AND s.source_mode=p.source_mode
+                 LEFT JOIN app_org org_ref ON org_ref.org_id=p.owner_org_id
+                 LEFT JOIN app_district dist_ref ON dist_ref.district_id=p.district_id
                 """;
     }
 
@@ -183,14 +182,21 @@ public class FlightReadRepository {
         return """
                 SELECT p.plan_id,p.plan_no,p.status_code,p.source_id,p.source_mode,p.uav_sn,p.start_at,p.end_at,
                        p.owner_org_id,p.district_id,p.created_at,p.updated_at,p.version,s.source_code,
-                       rv.route_version_id,rv.version_no,r.route_id,r.route_no,r.name
+                       rv.route_version_id,rv.version_no,r.route_id,r.route_no,r.name,
+                       s.name AS source_name,org_ref.name AS owner_org_name,dist_ref.name AS district_name
                 """;
+    }
+
+    private static String routeFrom() {
+        return " FROM route r LEFT JOIN integration_source s ON s.source_id=r.source_id AND s.source_mode=r.source_mode"
+                + " LEFT JOIN app_org org_ref ON org_ref.org_id=r.owner_org_id LEFT JOIN app_district dist_ref ON dist_ref.district_id=r.district_id";
     }
 
     private static String routeSelect() {
         return """
                 SELECT r.route_id,r.route_no,r.name,r.enabled,r.source_id,r.source_mode,r.owner_org_id,r.district_id,
-                       r.created_at,r.updated_at,r.version,s.source_code
+                       r.created_at,r.updated_at,r.version,s.source_code,
+                       s.name AS source_name,org_ref.name AS owner_org_name,dist_ref.name AS district_name
                 """;
     }
 
@@ -210,13 +216,15 @@ public class FlightReadRepository {
                 rs.getString("source_id"), rs.getString("source_code"), rs.getString("source_mode"), rs.getString("uav_sn"),
                 time(rs, "start_at"), time(rs, "end_at"), rs.getString("owner_org_id"), rs.getString("district_id"),
                 rs.getString("route_version_id"), rs.getString("route_id"), rs.getString("route_no"), rs.getString("name"),
-                rs.getInt("version_no"), time(rs, "created_at"), time(rs, "updated_at"), rs.getLong("version"));
+                rs.getInt("version_no"), time(rs, "created_at"), time(rs, "updated_at"), rs.getLong("version"),
+                rs.getString("source_name"), rs.getString("owner_org_name"), rs.getString("district_name"));
     }
 
     private RouteRow routeRow(ResultSet rs, int rowNum) throws SQLException {
         return new RouteRow(rs.getString("route_id"), rs.getString("route_no"), rs.getString("name"), rs.getBoolean("enabled"),
                 rs.getString("source_id"), rs.getString("source_code"), rs.getString("source_mode"), rs.getString("owner_org_id"),
-                rs.getString("district_id"), time(rs, "created_at"), time(rs, "updated_at"), rs.getLong("version"));
+                rs.getString("district_id"), time(rs, "created_at"), time(rs, "updated_at"), rs.getLong("version"),
+                rs.getString("source_name"), rs.getString("owner_org_name"), rs.getString("district_name"));
     }
 
     private RouteVersionRow routeVersionRow(ResultSet rs, int rowNum) throws SQLException {
@@ -276,12 +284,13 @@ public class FlightReadRepository {
     public record PlanRow(String planId, String planNo, String statusCode, String sourceId, String sourceCode,
             String sourceMode, String uavSn, OffsetDateTime startAt, OffsetDateTime endAt, String ownerOrgId,
             String districtId, String routeVersionId, String routeId, String routeNo, String routeName, int versionNo,
-            OffsetDateTime createdAt, OffsetDateTime updatedAt, long version) {
+            OffsetDateTime createdAt, OffsetDateTime updatedAt, long version,
+            String sourceName, String ownerOrgName, String districtName) {
     }
 
     public record RouteRow(String routeId, String routeNo, String name, boolean enabled, String sourceId,
             String sourceCode, String sourceMode, String ownerOrgId, String districtId, OffsetDateTime createdAt,
-            OffsetDateTime updatedAt, long version) {
+            OffsetDateTime updatedAt, long version, String sourceName, String ownerOrgName, String districtName) {
     }
 
     public record RouteVersionRow(String routeVersionId, String routeId, int versionNo, String centerlineText,

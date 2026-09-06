@@ -16,14 +16,18 @@ public final class AlarmDtos {
     public record PageDto<T>(List<T> items, int page, int size, long total) { }
     public static final class AlarmDto {
         private final String alarmId, state, alarmType, severity, sourceCode, sourceMode, ownerOrgId, districtId, targetId;
+        /** 显示字段：业务编号与名称来自同一行的目录/来源联接，页面不得再把内部 ID 当编号展示。 */
+        private final String alarmNo, sourceName, ownerOrgName, districtName, targetNo;
         private final EventId eventId;
         private final Long occurredAt;
         private final long receivedAt;
         public AlarmDto(String alarmId, String eventId, String state, String alarmType, String severity, Long occurredAt,
-                long receivedAt, String sourceCode, String sourceMode, String ownerOrgId, String districtId, String targetId) {
+                long receivedAt, String sourceCode, String sourceMode, String ownerOrgId, String districtId, String targetId,
+                String alarmNo, String sourceName, String ownerOrgName, String districtName, String targetNo) {
             this.alarmId = alarmId; this.eventId = new EventId(eventId); this.state = state; this.alarmType = alarmType; this.severity = severity;
             this.occurredAt = occurredAt; this.receivedAt = receivedAt; this.sourceCode = sourceCode; this.sourceMode = sourceMode;
             this.ownerOrgId = ownerOrgId; this.districtId = districtId; this.targetId = targetId;
+            this.alarmNo = alarmNo; this.sourceName = sourceName; this.ownerOrgName = ownerOrgName; this.districtName = districtName; this.targetNo = targetNo;
         }
         public String getAlarmId() { return alarmId; }
         /** 无事件是稳定业务事实；包装值非空而序列化结果为 null，避免改全局 NON_NULL。 */
@@ -38,6 +42,11 @@ public final class AlarmDtos {
         public String getOwnerOrgId() { return ownerOrgId; }
         public String getDistrictId() { return districtId; }
         public String getTargetId() { return targetId; }
+        public String getAlarmNo() { return alarmNo; }
+        public String getSourceName() { return sourceName; }
+        public String getOwnerOrgName() { return ownerOrgName; }
+        public String getDistrictName() { return districtName; }
+        public String getTargetNo() { return targetNo; }
     }
     public record EventId(String value) { }
     public static final class EventIdSerializer extends JsonSerializer<EventId> {
@@ -48,6 +57,6 @@ public final class AlarmDtos {
     public record UavEventDto(String eventId, String alarmId, String targetId, String state, long version,
             long createdAt, long updatedAt, List<String> allowedActions) { }
     public record VerificationDto(String historyId, String previousState, String resultingState, String conclusion,
-            String note, long version, String actorId, long createdAt) { }
+            String note, long version, String actorId, long createdAt, String actorName) { }
     public record VerifyRequest(String conclusion, String note, Long expectedVersion) { }
 }

@@ -74,7 +74,8 @@ public class RiskReadService {
                 targetId, trackId, row.riskType(), row.severity(), row.state(), row.reasonCode(), row.reasonText(),
                 millis(row.occurredAt()), requiredMillis(row.receivedAt()), row.observedAltitudeM(), row.observedAltitudeDatum(),
                 row.heightRelation(), row.sourceCode(), row.sourceMode(), row.ownerOrgId(), row.districtId(), row.version(),
-                RiskState.verifiable(row.state())&&visible(PermissionCode.RISK_VERIFY) ? List.of("VERIFY") : List.of());
+                RiskState.verifiable(row.state())&&visible(PermissionCode.RISK_VERIFY) ? List.of("VERIFY") : List.of(),
+                row.sourceName(), row.ownerOrgName(), row.districtName(), planId == null ? null : row.planNo(), targetId == null ? null : row.targetNo());
     }
 
     private boolean visible(PermissionCode permission){try{access.require(permission);return true;}catch(ApiException ignored){return false;}}

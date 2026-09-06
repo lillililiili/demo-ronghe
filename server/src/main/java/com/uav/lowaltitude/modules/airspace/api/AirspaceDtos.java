@@ -20,11 +20,12 @@ public final class AirspaceDtos {
 
     public record AirspaceSummaryDto(
             String airspaceId, String airspaceNo, String name, String sourceMode,
-            String ownerOrgId, String districtId, long createdAt, long updatedAt, long version) {
+            String ownerOrgId, String districtId, long createdAt, long updatedAt, long version,
+            String ownerOrgName, String districtName) {
     }
     public record AirspaceDetailDto(String airspaceId, String airspaceNo, String name, String sourceMode,
             String ownerOrgId, String districtId, long createdAt, long updatedAt, long version,
-            AirspaceVersionDto currentVersion) { }
+            AirspaceVersionDto currentVersion, String ownerOrgName, String districtName) { }
 
     public record AirspaceVersionDto(
             String airspaceVersionId, String airspaceId, int versionNo, String kindCode,

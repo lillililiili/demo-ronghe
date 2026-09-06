@@ -46,9 +46,9 @@ class LocalStage2TargetSeederTest {
                 where target_id like 'seed-target-%'
                 order by target_id
                 """, String.class)).containsExactly(
-                        "seed-target-bird-wgs84:TGT-SEED-BIRD-001:BIRD:mock",
-                        "seed-target-no-location:TGT-SEED-UNKNOWN-001::mock",
-                        "seed-target-uav-wgs84:TGT-SEED-UAV-001:UAV:mock");
+                        "seed-target-bird-wgs84:MB-20260904-002:BIRD:mock",
+                        "seed-target-no-location:MB-20260904-003::mock",
+                        "seed-target-uav-wgs84:MB-20260904-001:UAV:mock");
         assertThat(jdbc.queryForObject("""
                 select count(*) from target
                 where target_id like 'seed-target-%'

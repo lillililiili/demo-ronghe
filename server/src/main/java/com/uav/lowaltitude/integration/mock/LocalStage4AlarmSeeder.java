@@ -56,10 +56,22 @@ public class LocalStage4AlarmSeeder implements ApplicationRunner {
     private void alarm(String suffix, String org, String district, String severity, Instant at) {
         String target = suffix.startsWith("same-target") ? "seed-stage4-target-shared" : null;
         if (target != null) target(org, district, at);
-        jdbc.update("insert into alarm (alarm_id,target_id,source_id,source_alarm_id,alarm_type,severity,occurred_at,received_at,source_mode,owner_org_id,district_id,created_at) select ?,?,?,?,?,?,?,?,'mock',?,?,? where not exists(select 1 from alarm where alarm_id=?)", "seed-stage4-alarm-" + suffix, target, SOURCE, "SEED-ALARM-" + suffix, "UAV_INTRUSION", severity, ts(at), ts(at), org, district, ts(at), "seed-stage4-alarm-" + suffix);
+        jdbc.update("insert into alarm (alarm_id,target_id,source_id,source_alarm_id,alarm_type,severity,occurred_at,received_at,source_mode,owner_org_id,district_id,created_at) select ?,?,?,?,?,?,?,?,'mock',?,?,? where not exists(select 1 from alarm where alarm_id=?)", "seed-stage4-alarm-" + suffix, target, SOURCE, alarmNo(suffix), "UAV_INTRUSION", severity, ts(at), ts(at), org, district, ts(at), "seed-stage4-alarm-" + suffix);
+        jdbc.update("update alarm set source_alarm_id=? where alarm_id=? and source_alarm_id<>?", alarmNo(suffix), "seed-stage4-alarm-" + suffix, alarmNo(suffix));
     }
-    private void event(String suffix, String state, String org, String district, Instant at) { events.createForAlarm("seed-stage4-event-" + suffix, "seed-stage4-alarm-" + suffix, state, org, district, at.atOffset(java.time.ZoneOffset.UTC)); }
-    private void target(String org, String district, Instant at) { jdbc.update("insert into target (target_id,target_no,source_mode,owner_org_id,district_id,created_at,updated_at,version) select 'seed-stage4-target-shared','SEED-TARGET-SHARED','mock',?,?,?, ?,0 where not exists(select 1 from target where target_id='seed-stage4-target-shared')", org, district, ts(at), ts(at)); }
+    /* 告警来源编号按固定顺序编为 GJ-日期-序号，旧库里的英文占位编号一并改写。 */
+    private static String alarmNo(String suffix) {
+        int seq = switch (suffix) { case "pending" -> 1; case "evidence" -> 2; case "same-target-a" -> 3; case "same-target-b" -> 4; case "no-target" -> 5; default -> 6; };
+        return String.format("GJ-20260905-%03d", seq);
+    }
+    private void event(String suffix, String state, String org, String district, Instant at) {
+        // PostgreSQL 下重复主键会让整个种子事务中止，不能依赖捕获 DuplicateKeyException 实现幂等：先查再插。
+        Integer existing = jdbc.queryForObject("select count(*) from uav_event where event_id=?", Integer.class, "seed-stage4-event-" + suffix);
+        if (existing != null && existing > 0) return;
+        events.createForAlarm("seed-stage4-event-" + suffix, "seed-stage4-alarm-" + suffix, state, org, district, at.atOffset(java.time.ZoneOffset.UTC));
+    }
+    private void target(String org, String district, Instant at) { jdbc.update("insert into target (target_id,target_no,source_mode,owner_org_id,district_id,created_at,updated_at,version) select 'seed-stage4-target-shared','MB-20260905-101','mock',?,?,?, ?,0 where not exists(select 1 from target where target_id='seed-stage4-target-shared')", org, district, ts(at), ts(at));
+        jdbc.update("update target set target_no='MB-20260905-101' where target_id='seed-stage4-target-shared' and target_no<>'MB-20260905-101'"); }
     private void org(String id, String code, String name, Instant at) { jdbc.update("insert into app_org (org_id,org_code,name,enabled,created_at,updated_at,version) select ?,?,?,true,?,?,0 where not exists(select 1 from app_org where org_id=?)", id, code, name, at.toEpochMilli(), at.toEpochMilli(), id); }
     private void district(String id, String code, String name, Instant at) { jdbc.update("insert into app_district (district_id,district_code,name,enabled,created_at,updated_at,version) select ?,?,?,true,?,?,0 where not exists(select 1 from app_district where district_id=?)", id, code, name, at.toEpochMilli(), at.toEpochMilli(), id); }
     private static Timestamp ts(Instant value) { return Timestamp.from(value); }

@@ -167,13 +167,19 @@ public class HandoffRepository {
     }
     private static String select() {
         return "SELECT h.handoff_id,h.source_kind,h.source_id,h.handoff_type,h.recipient_id,rc.display_name,h.source_version,h.owner_org_id,"
-                + "h.district_id,h.source_mode,h.submitted_by,h.created_at,d.delivery_status,d.receipt_status,d.blocked_reason";
+                + "h.district_id,h.source_mode,h.submitted_by,h.created_at,d.delivery_status,d.receipt_status,d.blocked_reason,"
+                + "org_ref.name AS owner_org_name,dist_ref.name AS district_name,su.name AS submitted_by_name,"
+                // 来源业务编号：风险取来源风险编号，无人机事件取其告警的来源告警编号。
+                + "COALESCE(fr.source_risk_id,al.source_alarm_id) AS source_no";
     }
     private static String from() {
         // delivery_status 指最新一次尝试；列表、详情与 count 共用同一联接，避免口径漂移。
         return " FROM handoff h JOIN handoff_recipient rc ON rc.recipient_id=h.recipient_id"
                 + " JOIN handoff_delivery d ON d.handoff_id=h.handoff_id"
-                + " AND d.attempt_no=(SELECT MAX(x.attempt_no) FROM handoff_delivery x WHERE x.handoff_id=h.handoff_id)";
+                + " AND d.attempt_no=(SELECT MAX(x.attempt_no) FROM handoff_delivery x WHERE x.handoff_id=h.handoff_id)"
+                + " LEFT JOIN app_org org_ref ON org_ref.org_id=h.owner_org_id LEFT JOIN app_district dist_ref ON dist_ref.district_id=h.district_id"
+                + " LEFT JOIN app_user su ON su.user_id=h.submitted_by LEFT JOIN flight_risk fr ON fr.risk_id=h.risk_id"
+                + " LEFT JOIN uav_event ue ON ue.event_id=h.event_id LEFT JOIN alarm al ON al.alarm_id=ue.alarm_id";
     }
     private static String deliverySelect() {
         return "SELECT d.delivery_id,d.handoff_id,d.attempt_no,d.delivery_status,d.receipt_status,d.blocked_reason,d.created_at,"
@@ -186,7 +192,8 @@ public class HandoffRepository {
         return new HandoffRow(rs.getString("handoff_id"), rs.getString("source_kind"), rs.getString("source_id"), rs.getString("handoff_type"),
                 rs.getString("recipient_id"), rs.getString("display_name"), rs.getLong("source_version"), rs.getString("owner_org_id"),
                 rs.getString("district_id"), rs.getString("source_mode"), rs.getString("submitted_by"), time(rs, "created_at"),
-                rs.getString("delivery_status"), rs.getString("receipt_status"), rs.getString("blocked_reason"));
+                rs.getString("delivery_status"), rs.getString("receipt_status"), rs.getString("blocked_reason"),
+                rs.getString("owner_org_name"), rs.getString("district_name"), rs.getString("submitted_by_name"), rs.getString("source_no"));
     }
     private static DeliveryRow delivery(ResultSet rs, int ignored) throws SQLException {
         return new DeliveryRow(rs.getString("delivery_id"), rs.getString("handoff_id"), rs.getInt("attempt_no"), rs.getString("delivery_status"),
@@ -206,7 +213,8 @@ public class HandoffRepository {
     public record RecipientRow(String recipientId, String displayName, String handoffType) { }
     public record HandoffRow(String handoffId, String sourceKind, String sourceId, String handoffType, String recipientId, String recipientName,
             long sourceVersion, String ownerOrgId, String districtId, String sourceMode, String submittedBy, OffsetDateTime createdAt,
-            String deliveryStatus, String receiptStatus, String blockedReason) { }
+            String deliveryStatus, String receiptStatus, String blockedReason,
+            String ownerOrgName, String districtName, String submittedByName, String sourceNo) { }
     public record DeliveryRow(String deliveryId, String handoffId, int attemptNo, String deliveryStatus, String receiptStatus, String blockedReason,
             OffsetDateTime createdAt, OffsetDateTime submittedAt, OffsetDateTime deliveredAt, OffsetDateTime acknowledgedAt) { }
     public record SnapshotRow(int schemaVersion, String json) { }

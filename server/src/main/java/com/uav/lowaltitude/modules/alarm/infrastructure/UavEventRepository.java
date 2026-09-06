@@ -36,7 +36,7 @@ public class UavEventRepository {
 
     public List<VerificationRow> verifications(String eventId, AccessDecision access, int offset, int size) {
         Where where = where(access); where.parameters.put("event_id", eventId); where.parameters.put("offset", offset); where.parameters.put("size", size); where.sql.append(" AND e.event_id=:event_id");
-        return jdbc.query("SELECT h.history_id,h.previous_state,h.resulting_state,h.conclusion,h.note,h.version,h.actor_id,h.created_at FROM uav_event_verification h JOIN uav_event e ON e.event_id=h.event_id JOIN alarm a ON a.alarm_id=e.alarm_id" + where.sql + " ORDER BY h.version ASC,h.history_id ASC OFFSET :offset ROWS FETCH NEXT :size ROWS ONLY", where.parameters, UavEventRepository::verification);
+        return jdbc.query("SELECT h.history_id,h.previous_state,h.resulting_state,h.conclusion,h.note,h.version,h.actor_id,h.created_at,au.name AS actor_name FROM uav_event_verification h JOIN uav_event e ON e.event_id=h.event_id JOIN alarm a ON a.alarm_id=e.alarm_id LEFT JOIN app_user au ON au.user_id=h.actor_id" + where.sql + " ORDER BY h.version ASC,h.history_id ASC OFFSET :offset ROWS FETCH NEXT :size ROWS ONLY", where.parameters, UavEventRepository::verification);
     }
 
     public int update(String eventId, long expectedVersion, String nextState, OffsetDateTime at) {
@@ -81,7 +81,7 @@ public class UavEventRepository {
                 time(rs, "created_at"), time(rs, "updated_at"), rs.getLong("version"));
     }
     private static VerificationRow verification(ResultSet rs, int ignored) throws SQLException {
-        return new VerificationRow(rs.getString("history_id"), rs.getString("previous_state"), rs.getString("resulting_state"), rs.getString("conclusion"), rs.getString("note"), rs.getLong("version"), rs.getString("actor_id"), time(rs, "created_at"));
+        return new VerificationRow(rs.getString("history_id"), rs.getString("previous_state"), rs.getString("resulting_state"), rs.getString("conclusion"), rs.getString("note"), rs.getLong("version"), rs.getString("actor_id"), time(rs, "created_at"), rs.getString("actor_name"));
     }
     private static OffsetDateTime time(ResultSet rs, String column) throws SQLException {
         Object value = rs.getObject(column); if (value instanceof OffsetDateTime time) return time; if (value instanceof ZonedDateTime time) return time.toOffsetDateTime(); if (value instanceof Timestamp time) return time.toInstant().atOffset(ZoneOffset.UTC); if (value instanceof LocalDateTime time) return time.atOffset(ZoneOffset.UTC); return OffsetDateTime.parse(value.toString());
@@ -90,5 +90,5 @@ public class UavEventRepository {
     public record EventRow(String eventId, String alarmId, String targetId, String state, String ownerOrgId,
             String districtId, OffsetDateTime createdAt, OffsetDateTime updatedAt, long version) { }
     public record VerificationRow(String historyId, String previousState, String resultingState, String conclusion,
-            String note, long version, String actorId, OffsetDateTime createdAt) { }
+            String note, long version, String actorId, OffsetDateTime createdAt, String actorName) { }
 }

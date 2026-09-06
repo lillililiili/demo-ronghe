@@ -55,6 +55,12 @@ public class WorkbenchReadService {
     private static final Set<String> SEVERITIES = Set.of("LOW", "MEDIUM", "HIGH", "CRITICAL");
     private static final Set<String> SOURCE_MODES = Set.of("mock", "replay", "live");
     private static final Map<String, String> SEVERITY_LABEL = Map.of("CRITICAL", "紧急", "HIGH", "高", "MEDIUM", "中", "LOW", "低");
+    /* 标题里的类型代码统一译成业务用语；未收录的代码原样返回，不猜测含义。 */
+    private static final Map<String, String> ALARM_TYPE_LABEL = Map.of("UAV_INTRUSION", "无人机入侵", "UAV", "无人机告警");
+    private static final Map<String, String> RISK_TYPE_LABEL = Map.of("FLIGHT_OPERATION", "飞行作业风险", "AIRSPACE", "空域风险", "FOREIGN_OBJECT", "空中异物风险");
+    private static final Map<String, String> INCIDENT_TYPE_LABEL = Map.of("OFFLINE", "设备离线", "ABNORMAL", "设备异常", "DEGRADED", "性能降级",
+            "ADAPTER_TIMEOUT", "适配器超时", "REBOOT_FAILED", "重启失败");
+    private static final Map<String, String> SOURCE_MODE_LABEL = Map.of("mock", "模拟", "replay", "回放", "live", "实时");
     private static final Map<String, String> UAV_STATE_LABEL = Map.of("PENDING_VERIFICATION", "待核实", "EVIDENCE_REQUIRED", "证据待补充",
             "CONFIRMED", "已核实，待处置", "FALSE_POSITIVE", "误报");
     private static final Map<String, String> RISK_STATE_LABEL = Map.of("PENDING_VERIFICATION", "待核验", "PENDING_NOTIFICATION", "待通知",
@@ -178,10 +184,10 @@ public class WorkbenchReadService {
 
     private ItemDto item(ItemRow row, Capabilities capabilities) {
         return switch (row.kind()) {
-            case UAV_EVENT -> new ItemDto(UAV_EVENT, row.sourceId(), row.state(), row.severity(), row.receivedAt(), row.occurredAt(),
+            case UAV_EVENT -> new ItemDto(UAV_EVENT, row.sourceId(), row.sourceNo(), row.state(), row.severity(), row.receivedAt(), row.occurredAt(),
                     row.updatedAt(), row.version(),
-                    "无人机告警核实 · " + row.typeCode(),
-                    "告警等级" + label(SEVERITY_LABEL, row.severity()) + "，事件" + label(UAV_STATE_LABEL, row.state()) + "；来源模式 " + row.sourceMode(),
+                    "无人机告警核实 · " + label(ALARM_TYPE_LABEL, row.typeCode()),
+                    "告警等级" + label(SEVERITY_LABEL, row.severity()) + "，事件" + label(UAV_STATE_LABEL, row.state()) + "；来源模式 " + label(SOURCE_MODE_LABEL, row.sourceMode()),
                     UavEventState.verifiable(row.state()) && capabilities.alarmVerify() ? List.of("VERIFY") : List.of(),
                     // 属实只表示已核实待处置：反制/干扰尚未接入，工作台不能给出可点击的“反制”。
                     "CONFIRMED".equals(row.state()) ? "COUNTERMEASURE_NOT_CONNECTED" : null,
@@ -194,13 +200,13 @@ public class WorkbenchReadService {
                     if (!capabilities.recipientConfigured()) blocked = "RECIPIENT_NOT_CONFIGURED";
                     else if (capabilities.handoffCreate()) actions.add("NOTIFY");
                 }
-                yield new ItemDto(RISK, row.sourceId(), row.state(), row.severity(), row.receivedAt(), row.occurredAt(), row.updatedAt(),
-                        row.version(), "飞行风险 · " + row.typeCode(), row.reasonText(), List.copyOf(actions), blocked, row.sourceMode(),
+                yield new ItemDto(RISK, row.sourceId(), row.sourceNo(), row.state(), row.severity(), row.receivedAt(), row.occurredAt(), row.updatedAt(),
+                        row.version(), "飞行风险 · " + label(RISK_TYPE_LABEL, row.typeCode()), row.reasonText(), List.copyOf(actions), blocked, row.sourceMode(),
                         Map.of("source", "#/risk?risk_id=" + encode(row.sourceId())));
             }
             // 设备异常没有任何可委托动作：重启/恢复校验/关闭命令仍走运维受控接口，本期未接入工作台。
-            default -> new ItemDto(DEVICE_INCIDENT, row.sourceId(), row.state(), row.severity(), row.receivedAt(), null, row.updatedAt(), null,
-                    "设备异常 · " + row.typeCode() + " · " + row.deviceNo(),
+            default -> new ItemDto(DEVICE_INCIDENT, row.sourceId(), row.sourceNo(), row.state(), row.severity(), row.receivedAt(), null, row.updatedAt(), null,
+                    "设备异常 · " + label(INCIDENT_TYPE_LABEL, row.typeCode()) + " · " + row.deviceNo(),
                     row.deviceName() + "，当前阶段" + label(DEVICE_STAGE_LABEL, row.state()),
                     List.of(), "DEVICE_RECOVERY_NOT_CONNECTED", row.sourceMode(),
                     Map.of("source", "#/monitor?device_id=" + encode(row.relatedId())));
@@ -208,7 +214,7 @@ public class WorkbenchReadService {
     }
 
     private static TimelineEntryDto verification(VerificationRow v) {
-        return TimelineEntryDto.verification(v.createdAt(), v.version(), v.previousState(), v.resultingState(), v.conclusion(), v.note(), v.actorId());
+        return TimelineEntryDto.verification(v.createdAt(), v.version(), v.previousState(), v.resultingState(), v.conclusion(), v.note(), v.actorId(), v.actorName());
     }
     private static TimelineEntryDto handoff(HandoffRow h) {
         return TimelineEntryDto.handoff(h.createdAt(), h.handoffId(), h.handoffType(), h.recipientId(), h.recipientName(), h.sourceVersion(),

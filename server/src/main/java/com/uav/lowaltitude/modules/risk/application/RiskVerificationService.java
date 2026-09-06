@@ -71,7 +71,8 @@ public class RiskVerificationService {
                 "conclusion="+conclusion+"; version="+(expected+1),"SUCCESS","","");
         return read.dto(new RiskRow(row.riskId(),row.sourceRiskId(),row.planId(),row.routeVersionId(),row.assessmentId(),row.targetId(),row.trackId(),
                 row.riskType(),row.severity(),next,row.reasonCode(),row.reasonText(),row.occurredAt(),row.receivedAt(),row.observedAltitudeM(),
-                row.observedAltitudeDatum(),row.heightRelation(),row.sourceCode(),row.sourceMode(),row.ownerOrgId(),row.districtId(),row.createdAt(),at,expected+1));
+                row.observedAltitudeDatum(),row.heightRelation(),row.sourceCode(),row.sourceMode(),row.ownerOrgId(),row.districtId(),row.createdAt(),at,expected+1,
+                row.sourceName(),row.ownerOrgName(),row.districtName(),row.planNo(),row.targetNo()));
     }
 
     private VerifyRequest parse(String rawRequest){
@@ -99,7 +100,7 @@ public class RiskVerificationService {
     private static String note(VerifyRequest request){String value=request==null||request.note()==null?"":request.note().trim();if(value.isEmpty()||value.length()>1000)throw bad("核验说明长度必须为1至1000");return value;}
     private static long version(VerifyRequest request){if(request==null||request.expectedVersion()==null||request.expectedVersion()<0)throw bad("expected_version 无效");return request.expectedVersion();}
     private static VerificationDto dto(VerificationRow row){return new VerificationDto(row.historyId(),row.version(),row.previousState(),
-            row.resultingState(),row.conclusion(),row.note(),row.actorId(),row.createdAt().toInstant().toEpochMilli());}
+            row.resultingState(),row.conclusion(),row.note(),row.actorId(),row.createdAt().toInstant().toEpochMilli(),row.actorName());}
     private static ApiException bad(String message){return new ApiException(HttpStatus.BAD_REQUEST,"VALIDATION_ERROR",message);}
     private static ApiException invalidRequest(){return new ApiException(HttpStatus.BAD_REQUEST,"INVALID_REQUEST","请求体无效");}
     private static String operation(String id,String conclusion,String note,long expected){

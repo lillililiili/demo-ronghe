@@ -41,7 +41,9 @@ public final class TargetDtos {
             String sourceMode,
             String ownerOrgId,
             String districtId,
-            TargetStateDto latestState) {
+            TargetStateDto latestState,
+            String ownerOrgName,
+            String districtName) {
     }
 
     public record TargetDetailDto(
@@ -58,7 +60,9 @@ public final class TargetDtos {
             TargetStateDto latestState,
             List<TargetSourceLinkDto> sourceLinks,
             long createdAt,
-            long updatedAt) {
+            long updatedAt,
+            String ownerOrgName,
+            String districtName) {
     }
 
     public record TargetSourceLinkDto(
@@ -69,7 +73,8 @@ public final class TargetDtos {
             String sourceSessionKey,
             String externalTargetId,
             String deviceId,
-            String protocolVersion) {
+            String protocolVersion,
+            String sourceName) {
     }
 
     public record TrackSummaryDto(

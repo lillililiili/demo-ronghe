@@ -17,6 +17,7 @@ import { handoffApi, newHandoffIdempotencyKey } from '@/services/handoffApi.js';
 import { openFormModal } from '@/ui/formModal.js';
 import { openModal, closeModal } from '@/ui/modal.js';
 import { toast } from '@/ui/nv.js';
+import { HANDOFF_TYPE_LABEL, PLAN_STATUS_LABEL, REASON_CODE_LABEL, RISK_TYPE_LABEL, SOURCE_MODE_LABEL, labelOf } from '@/ui/labels.js';
 import { isUncertainOutcome } from '@/services/apiClient.js';
 import { hasPermission } from '@/services/accessControl.js';
 import { authUser } from '@/services/auth.js';
@@ -202,7 +203,8 @@ function altitudeText(risk) {
   return `${risk.observed_altitude_m} m${risk.observed_altitude_datum ? ` ${risk.observed_altitude_datum}` : ' 基准未知'}`;
 }
 function relatedIdText(id, permissionCode) {
-  if (id) return id;
+  // 内部 ID 不直接展示；存在即说明已关联，ID 只放在 title 提示里。
+  if (id) return '已关联';
   if (actionAllowed(permissionCode) === false) return `无 ${permissionCode} 权限，字段未返回`;
   return `服务端未返回（需 ${permissionCode} 且对象在可见范围）`;
 }
@@ -882,9 +884,9 @@ onUnmounted(() => {
                 <div class="field" :title="NO_TYPE_FILTER_NOTE"><label>目标类型</label><UControl v-model="riskTypeFilterDisabled" type="select" :options="riskTypeOptions" disabled size="small" /></div>
                 <div class="field"><label>状态</label><UControl v-model="riskFilters.state" type="select" :options="riskStateOptions" :disabled="riskLoading" size="small" @update:model-value="applyRiskFilters" /></div>
                 <div class="field rk-range"><label>发生时间</label><UControl v-model="riskFilters.occurred" type="datetimerange" clearable :disabled="riskLoading" size="small" start-placeholder="开始" end-placeholder="结束" /></div>
-                <div class="field" :title="canFilterByPlan ? '按已保存计划 ID 筛选（服务端要求 flight:read）' : '无 flight:read 权限，阶段 4 契约不允许以计划 ID 筛选'"><label>计划 ID</label><UControl v-model="riskFilters.plan_id" placeholder="plan_id" :disabled="riskLoading || !canFilterByPlan" size="small" @keyup.enter="applyRiskFilters" /></div>
-                <div class="field"><label>组织</label><UControl v-model="riskFilters.owner_org_id" placeholder="owner_org_id" :disabled="riskLoading" size="small" @keyup.enter="applyRiskFilters" /></div>
-                <div class="field"><label>区域</label><UControl v-model="riskFilters.district_id" placeholder="district_id" :disabled="riskLoading" size="small" @keyup.enter="applyRiskFilters" /></div>
+                <div class="field" :title="canFilterByPlan ? '按已保存计划 ID 筛选（服务端要求 flight:read）' : '无 flight:read 权限，阶段 4 契约不允许以计划 ID 筛选'"><label>计划标识</label><UControl v-model="riskFilters.plan_id" placeholder="内部计划标识" :disabled="riskLoading || !canFilterByPlan" size="small" @keyup.enter="applyRiskFilters" /></div>
+                <div class="field"><label>组织</label><UControl v-model="riskFilters.owner_org_id" placeholder="机构标识" :disabled="riskLoading" size="small" @keyup.enter="applyRiskFilters" /></div>
+                <div class="field"><label>区域</label><UControl v-model="riskFilters.district_id" placeholder="区域标识" :disabled="riskLoading" size="small" @keyup.enter="applyRiskFilters" /></div>
                 <div class="field"><label>来源模式</label><UControl v-model="riskFilters.source_mode" placeholder="source_mode" :disabled="riskLoading" size="small" @keyup.enter="applyRiskFilters" /></div>
                 <button class="btn" type="button" :disabled="riskLoading" @click="applyRiskFilters">查询</button>
                 <span style="flex:1"></span>
@@ -916,12 +918,12 @@ onUnmounted(() => {
                   <tbody>
                     <tr v-for="risk in risks" :key="risk.risk_id" :data-row="risk.risk_id" tabindex="0" :class="{ on: activeRiskId === risk.risk_id }"
                       @click="selectRisk(risk.risk_id)" @keydown.enter.prevent="selectRisk(risk.risk_id)">
-                      <td class="num"><span class="mono rk-id" :title="risk.risk_id">{{ risk.risk_id }}</span></td>
-                      <td><span class="tag t-cyan">{{ risk.risk_type || '未知' }}</span><div v-if="risk.target_id" class="mono rk-sub">{{ risk.target_id }}</div></td>
-                      <td><div class="rk-wrap">{{ risk.reason_code || '未提供' }}</div></td>
-                      <td><div class="rk-sub">{{ risk.source_code || '未提供' }}</div><div class="rk-sub">{{ risk.source_mode || '' }}</div></td>
-                      <td><div class="rk-wrap">{{ risk.district_id || '未知' }}</div><div class="mono rk-sub">{{ altitudeText(risk) }} · {{ heightRelationLabel(risk.height_relation) }}</div></td>
-                      <td><div class="rk-ellipsis mono" :title="risk.plan_id || '未返回计划 ID'">{{ risk.plan_id || '—' }}</div><div class="rk-ellipsis mono rk-sub" :title="risk.route_version_id || '未返回航线版本 ID'">{{ risk.route_version_id || '—' }}</div></td>
+                      <td class="num"><span class="mono rk-id" :title="risk.risk_id">{{ risk.source_risk_id || risk.risk_id }}</span></td>
+                      <td><span class="tag t-cyan">{{ labelOf(RISK_TYPE_LABEL, risk.risk_type, '未知') }}</span><div v-if="risk.target_id" class="mono rk-sub" :title="risk.target_id">{{ risk.target_no || risk.target_id }}</div></td>
+                      <td><div class="rk-wrap">{{ labelOf(REASON_CODE_LABEL, risk.reason_code, '未提供') }}</div></td>
+                      <td><div class="rk-sub">{{ risk.source_name || risk.source_code || '未提供' }}</div><div class="rk-sub">{{ labelOf(SOURCE_MODE_LABEL, risk.source_mode, '') }}</div></td>
+                      <td><div class="rk-wrap">{{ risk.district_name || risk.district_id || '未知' }}</div><div class="mono rk-sub">{{ altitudeText(risk) }} · {{ heightRelationLabel(risk.height_relation) }}</div></td>
+                      <td><div class="rk-ellipsis mono" :title="risk.plan_id || '未返回计划'">{{ risk.plan_no || (risk.plan_id ? '已关联计划' : '—') }}</div><div class="rk-ellipsis rk-sub" :title="risk.route_version_id || '未返回航线版本'">{{ risk.route_version_id ? '已关联航线版本' : '—' }}</div></td>
                       <td style="text-align:center"><span class="tag" :class="severityTag(risk.severity)">{{ severityLabel(risk.severity) }}</span></td>
                       <td class="num" :title="`接收 ${formatTime(risk.received_at)}；发生 ${formatTime(risk.occurred_at)}`">{{ formatClock(risk.received_at) }}</td>
                       <td><span class="tag" :class="stateTag(risk.state)">{{ stateLabel(risk.state) }}</span></td>
@@ -938,10 +940,10 @@ onUnmounted(() => {
               <div v-else-if="!notices.length" class="empty">该风险尚无交接记录；核验通过后可在详情栏点击“通知上级”提交。</div>
               <div v-else class="scroll table-scroll table-shell" style="flex:1">
                 <table class="tb">
-                  <thead><tr><th>交接编号</th><th>接收方</th><th>提交时间</th><th>投递状态</th><th>回执</th><th>阻断原因</th><th></th></tr></thead>
+                  <thead><tr><th>交接类型</th><th>接收方</th><th>提交时间</th><th>投递状态</th><th>回执</th><th>阻断原因</th><th></th></tr></thead>
                   <tbody>
                     <tr v-for="notice in notices" :key="notice.handoff_id" :data-row="notice.handoff_id">
-                      <td class="num"><span class="mono rk-id" :title="notice.handoff_id">{{ notice.handoff_id }}</span></td>
+                      <td><span :title="notice.handoff_id">{{ labelOf(HANDOFF_TYPE_LABEL, notice.handoff_type) }}</span></td>
                       <td><div class="rk-wrap">{{ notice.recipient_name || notice.recipient_id }}</div></td>
                       <td class="num" :title="formatTime(notice.created_at)">{{ formatClock(notice.created_at) }}</td>
                       <td><span class="tag" :class="NOTICE_DELIVERY_TAG[notice.delivery_status] || 't-gray'">{{ NOTICE_DELIVERY_LABEL[notice.delivery_status] || notice.delivery_status || '未知' }}</span></td>
@@ -964,7 +966,7 @@ onUnmounted(() => {
             <template v-else>
               <div class="detail-hero detail-hero-micro"><div class="detail-hero-inner">
                 <div class="detail-hero-icon" v-html="riskHeroIcon"></div>
-                <div class="detail-hero-copy"><div class="detail-hero-eyebrow">飞行风险</div><div class="detail-hero-title">{{ selectedRisk.risk_type || '风险事件' }}</div><div class="detail-hero-id mono" :title="selectedRisk.risk_id">{{ selectedRisk.risk_id }}</div></div>
+                <div class="detail-hero-copy"><div class="detail-hero-eyebrow">飞行风险</div><div class="detail-hero-title">{{ labelOf(RISK_TYPE_LABEL, selectedRisk.risk_type, '风险事件') }}</div><div class="detail-hero-id mono" :title="selectedRisk.risk_id">{{ selectedRisk.source_risk_id || selectedRisk.risk_id }}</div></div>
                 <div class="detail-hero-side"><div class="detail-hero-tags"><span class="tag" :class="severityTag(selectedRisk.severity)">{{ severityLabel(selectedRisk.severity) }}</span><span class="tag" :class="stateTag(selectedRisk.state)">{{ stateLabel(selectedRisk.state) }}</span></div></div>
               </div></div>
               <div class="metric-strip is-compact">
@@ -974,25 +976,24 @@ onUnmounted(() => {
                 <div class="metric-item"><span class="metric-copy"><small>高度关系</small><b>{{ heightRelationLabel(selectedRisk.height_relation) }}</b></span></div>
               </div>
               <div class="sect"><h4>事件信息</h4><dl class="kv kv-surface">
-                <dt>风险编号</dt><dd class="mono">{{ selectedRisk.risk_id }}</dd>
-                <dt>来源风险编号</dt><dd class="mono">{{ selectedRisk.source_risk_id || '未提供' }}</dd>
-                <dt>风险类型</dt><dd>{{ selectedRisk.risk_type || '未提供' }}</dd>
-                <dt>来源</dt><dd>{{ selectedRisk.source_code || '未提供' }} / {{ selectedRisk.source_mode || '未提供' }}</dd>
+                <dt>风险编号</dt><dd class="mono" :title="selectedRisk.risk_id">{{ selectedRisk.source_risk_id || '未提供' }}</dd>
+                <dt>风险类型</dt><dd>{{ labelOf(RISK_TYPE_LABEL, selectedRisk.risk_type, '未提供') }}</dd>
+                <dt>来源</dt><dd>{{ selectedRisk.source_name || selectedRisk.source_code || '未提供' }}（{{ labelOf(SOURCE_MODE_LABEL, selectedRisk.source_mode, '未提供') }}）</dd>
                 <dt>发生时间</dt><dd>{{ formatTime(selectedRisk.occurred_at) }}</dd>
                 <dt>接收时间</dt><dd>{{ formatTime(selectedRisk.received_at) }}</dd>
-                <dt>所属范围</dt><dd>{{ selectedRisk.owner_org_id }} / {{ selectedRisk.district_id }}</dd>
+                <dt>所属范围</dt><dd>{{ selectedRisk.owner_org_name || selectedRisk.owner_org_id }} / {{ selectedRisk.district_name || selectedRisk.district_id }}</dd>
                 <dt>版本</dt><dd class="mono">v{{ selectedRisk.version }}</dd>
               </dl></div>
               <div class="sect"><h4>风险依据</h4><dl class="kv kv-surface">
-                <dt>依据代码</dt><dd class="mono">{{ selectedRisk.reason_code || '未提供' }}</dd>
+                <dt>风险依据</dt><dd>{{ labelOf(REASON_CODE_LABEL, selectedRisk.reason_code, '未提供') }}</dd>
                 <dt>依据说明</dt><dd class="rk-wrap">{{ selectedRisk.reason_text || '未提供' }}</dd>
                 <dt>观测高度</dt><dd>{{ altitudeText(selectedRisk) }}<span v-if="selectedRisk.observed_altitude_m == null" class="rk-hint">未知高度不判断安全，不以 0 补值</span></dd>
                 <dt>高度关系</dt><dd>{{ heightRelationLabel(selectedRisk.height_relation) }}<span v-if="!selectedRisk.height_relation || selectedRisk.height_relation === 'UNKNOWN'" class="rk-hint">缺高度或 AGL/AMSL 换算依据</span></dd>
-                <dt>关联计划</dt><dd class="mono">{{ relatedIdText(selectedRisk.plan_id, 'flight:read') }}</dd>
-                <dt>航线版本</dt><dd class="mono">{{ relatedIdText(selectedRisk.route_version_id, 'route:read') }}</dd>
-                <dt v-if="selectedRisk.assessment_id">关联研判</dt><dd v-if="selectedRisk.assessment_id" class="mono">{{ selectedRisk.assessment_id }}</dd>
-                <dt v-if="selectedRisk.target_id">关联目标</dt><dd v-if="selectedRisk.target_id" class="mono">{{ selectedRisk.target_id }}</dd>
-                <dt v-if="selectedRisk.track_id">关联轨迹</dt><dd v-if="selectedRisk.track_id" class="mono">{{ selectedRisk.track_id }}</dd>
+                <dt>关联计划</dt><dd class="mono" :title="selectedRisk.plan_id">{{ selectedRisk.plan_no || relatedIdText(selectedRisk.plan_id, 'flight:read') }}</dd>
+                <dt>航线版本</dt><dd :title="selectedRisk.route_version_id">{{ relatedIdText(selectedRisk.route_version_id, 'route:read') }}</dd>
+                <dt v-if="selectedRisk.assessment_id">关联研判</dt><dd v-if="selectedRisk.assessment_id" :title="selectedRisk.assessment_id">已关联研判记录</dd>
+                <dt v-if="selectedRisk.target_id">关联目标</dt><dd v-if="selectedRisk.target_id" class="mono" :title="selectedRisk.target_id">{{ selectedRisk.target_no || selectedRisk.target_id }}</dd>
+                <dt v-if="selectedRisk.track_id">关联轨迹</dt><dd v-if="selectedRisk.track_id" :title="selectedRisk.track_id">已关联轨迹</dd>
               </dl><div class="rk-note">依据来自服务端已保存的风险事实与固定航线版本；前端不按最新规则重算，也不推断合法性。</div></div>
               <div class="sect"><h4>核验历史 <span class="tag t-gray">{{ riskHistoryTotal }}</span></h4>
                 <div v-if="riskHistoryLoading" class="empty">正在读取核验历史…</div>
@@ -1002,7 +1003,7 @@ onUnmounted(() => {
                   <div v-for="item in riskHistory" :key="item.history_id" class="rk-history-item">
                     <div class="rk-history-head"><span class="tag" :class="item.conclusion === 'EXCLUDED' ? 't-gray' : 't-green'">{{ item.conclusion === 'EXCLUDED' ? '排除' : item.conclusion === 'CONFIRMED' ? '核验通过' : item.conclusion }}</span><span class="mono rk-sub">{{ stateLabel(item.previous_state) }} → {{ stateLabel(item.resulting_state) }} · v{{ item.version }}</span></div>
                     <div class="rk-wrap">{{ item.note }}</div>
-                    <div class="rk-sub">{{ formatTime(item.created_at) }} · 操作人 {{ item.actor_id }}</div>
+                    <div class="rk-sub">{{ formatTime(item.created_at) }} · 操作人 {{ item.actor_name || item.actor_id }}</div>
                   </div>
                 </div>
                 <div v-if="riskHistoryTotal > HISTORY_PAGE_SIZE" class="pager"><UPagination :page="riskHistoryPage" :page-size="HISTORY_PAGE_SIZE" :item-count="riskHistoryTotal" size="small" @update:page="changeRiskHistoryPage" /></div>
@@ -1040,7 +1041,7 @@ onUnmounted(() => {
                   tabindex="0" @click="loadDetail(plan.plan_id)" @keydown.enter="loadDetail(plan.plan_id)">
                   <td class="mono">{{ plan.plan_no }}</td>
                   <td>{{ formatTime(plan.start_at) }}<br><small>{{ formatDuration(plan) }}</small></td>
-                  <td>{{ plan.status_code }}</td>
+                  <td>{{ labelOf(PLAN_STATUS_LABEL, plan.status_code) }}</td>
                   <td>{{ plan.route?.route_no || '未知航线' }} / v{{ plan.route?.version_no ?? '—' }}</td>
                 </tr>
               </tbody>
@@ -1066,8 +1067,8 @@ onUnmounted(() => {
           <div v-else-if="!selected" class="empty">请选择计划</div>
           <template v-else>
             <div class="detail-hero detail-hero-compact"><div class="detail-hero-inner"><div class="detail-hero-copy"><div class="detail-hero-eyebrow">飞行计划</div><div class="detail-hero-title">{{ selected.plan_no }}</div><div class="detail-hero-id mono">{{ selected.route?.route_no || '未关联航线' }} / v{{ selected.route?.version_no ?? '—' }}</div></div></div></div>
-            <div class="metric-strip is-compact"><div v-for="metric in [['执行状态', selected.status_code], ['计划时长', formatDuration(selected)], ['航线版本', `v${selected.route?.version_no ?? '—'}`], ['目标匹配', '尚未接入']]" :key="metric[0]" class="metric-item"><div class="metric-copy"><small>{{ metric[0] }}</small><b>{{ metric[1] }}</b></div></div></div>
-            <section class="sect"><h4>计划信息</h4><dl class="kv kv-surface"><dt>无人机 ID</dt><dd>{{ selected.uav_sn || '未提供' }}</dd><dt>所属范围</dt><dd>{{ selected.owner_org_id }} / {{ selected.district_id }}</dd><dt>计划时段</dt><dd>{{ formatTime(selected.start_at) }} ～ {{ formatTime(selected.end_at) }}</dd><dt>计划来源</dt><dd>{{ selected.source?.source_code || selected.source_mode || '未提供' }}</dd></dl></section>
+            <div class="metric-strip is-compact"><div v-for="metric in [['执行状态', labelOf(PLAN_STATUS_LABEL, selected.status_code)], ['计划时长', formatDuration(selected)], ['航线版本', `v${selected.route?.version_no ?? '—'}`], ['目标匹配', '尚未接入']]" :key="metric[0]" class="metric-item"><div class="metric-copy"><small>{{ metric[0] }}</small><b>{{ metric[1] }}</b></div></div></div>
+            <section class="sect"><h4>计划信息</h4><dl class="kv kv-surface"><dt>无人机序列号</dt><dd>{{ selected.uav_sn || '未提供' }}</dd><dt>所属范围</dt><dd>{{ selected.owner_org_name || selected.owner_org_id }} / {{ selected.district_name || selected.district_id }}</dd><dt>计划时段</dt><dd>{{ formatTime(selected.start_at) }} ～ {{ formatTime(selected.end_at) }}</dd><dt>计划来源</dt><dd>{{ selected.source?.source_name || selected.source?.source_code || labelOf(SOURCE_MODE_LABEL, selected.source_mode, '未提供') }}</dd></dl></section>
             <section class="sect"><h4>审批信息</h4><div class="empty">尚未接入审批事实读取。</div></section>
             <section class="sect"><h4>计划与实际对照</h4><div class="empty">尚未接入感知匹配、偏航与高度对照；AGL/AMSL 不作前端换算。</div></section>
             <section class="sect"><h4>本航线风险</h4><div class="empty">尚未接入沿线风险事件；不根据地图几何自行计算风险。</div></section>

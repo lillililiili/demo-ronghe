@@ -1,6 +1,7 @@
 /* “我的工作台”统一事件适配层：把后端工作台摘要映射成页面视图模型，并提供导航与源对象读取。
  * 这里只统一入口、分类和待办提示，不改写三类业务各自的状态机，也不再写任何内存状态：
  * 队列、计数、详情全部来自 GET /workbench/items；核实委托 alarmApi/riskApi，通知委托 handoffApi（待领导接线）。 */
+import { SOURCE_MODE_LABEL, labelOf } from '@/ui/labels.js';
 import { getWorkbenchItem, listWorkbenchItems } from '@/services/workbenchApi.js';
 import { getAlarm, getUavEvent } from '@/services/alarmApi.js';
 import { riskApi } from '@/services/riskApi.js';
@@ -66,14 +67,14 @@ function nextStep(item) {
 /* 后端事项 → 页面摘要（只做字段映射与文案，不推导任何服务端未给出的事实）。 */
 export function summarize(item) {
   return {
-    key: keyOf(item), kind: item.kind, kindLabel: kindLabel[item.kind] || item.kind, sourceId: item.source_id,
+    key: keyOf(item), kind: item.kind, kindLabel: kindLabel[item.kind] || item.kind, sourceId: item.source_id, sourceNo: item.source_no || '',
     title: item.title || '', summary: item.summary || '',
     severity: item.severity, level: severityLabel(item.severity), levelTag: severityTag(item.severity),
     state: item.state, sourceStatus: stateLabel(item.kind, item.state),
     statusBucket: CLOSED_STATES.has(item.state) ? 'completed' : 'pending',
     receivedAt: item.received_at, occurredAt: item.occurred_at ?? null, updatedAt: item.updated_at ?? null,
     version: item.version ?? null, allowedActions: item.allowed_actions || [], blockedReason: item.blocked_reason || null,
-    blockedLabel: blockedLabel(item.blocked_reason), sourceMode: item.source_mode, links: item.links || {},
+    blockedLabel: blockedLabel(item.blocked_reason), sourceMode: item.source_mode, sourceModeLabel: labelOf(SOURCE_MODE_LABEL, item.source_mode, ''), links: item.links || {},
     module: kindModule[item.kind], todo: nextStep(item)
   };
 }

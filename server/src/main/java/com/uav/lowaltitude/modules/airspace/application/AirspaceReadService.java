@@ -75,7 +75,7 @@ public class AirspaceReadService {
         // 以统一业务时钟读取左闭右开有效版本；0 个版本是事实，不用“最新版本”替代。
         List<AirspaceVersionRow> current = repository.effectiveVersions(row.airspaceId(), clock.now().atOffset(ZoneOffset.UTC), access);
         if (current.size() > 1) throw new ApiException(HttpStatus.CONFLICT, "VERSION_AMBIGUOUS", "空域有效版本重叠");
-        return new AirspaceDtos.AirspaceDetailDto(row.airspaceId(), row.airspaceNo(), row.name(), row.sourceMode(), row.ownerOrgId(), row.districtId(), millis(row.createdAt()), millis(row.updatedAt()), row.version(), current.isEmpty() ? null : version(current.get(0)));
+        return new AirspaceDtos.AirspaceDetailDto(row.airspaceId(), row.airspaceNo(), row.name(), row.sourceMode(), row.ownerOrgId(), row.districtId(), millis(row.createdAt()), millis(row.updatedAt()), row.version(), current.isEmpty() ? null : version(current.get(0)), row.ownerOrgName(), row.districtName());
     }
 
     @Transactional(readOnly = true)
@@ -107,7 +107,8 @@ public class AirspaceReadService {
 
     private AirspaceSummaryDto summary(AirspaceRow row) {
         return new AirspaceSummaryDto(row.airspaceId(), row.airspaceNo(), row.name(), row.sourceMode(),
-                row.ownerOrgId(), row.districtId(), millis(row.createdAt()), millis(row.updatedAt()), row.version());
+                row.ownerOrgId(), row.districtId(), millis(row.createdAt()), millis(row.updatedAt()), row.version(),
+                row.ownerOrgName(), row.districtName());
     }
 
     private AirspaceVersionDto version(AirspaceVersionRow row) {

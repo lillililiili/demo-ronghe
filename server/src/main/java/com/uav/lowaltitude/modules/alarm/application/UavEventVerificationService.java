@@ -104,7 +104,7 @@ public class UavEventVerificationService {
     private boolean targetReferenceVisible(String targetId, String orgId, String districtId) { try { return alarms.targetVisible(targetId, orgId, districtId, access.require(PermissionCode.TARGET_READ)); } catch (ApiException ignored) { return false; } }
     // allowed_actions 不能只反映状态：读者无核实动作权限时不应得到可提交的误导入口。
     private boolean verifyAllowed() { try { access.require(PermissionCode.ALARM_VERIFY); return true; } catch (ApiException ignored) { return false; } }
-    private VerificationDto history(VerificationRow row) { return new VerificationDto(row.historyId(), row.previousState(), row.resultingState(), row.conclusion(), row.note(), row.version(), row.actorId(), millis(row.createdAt())); }
+    private VerificationDto history(VerificationRow row) { return new VerificationDto(row.historyId(), row.previousState(), row.resultingState(), row.conclusion(), row.note(), row.version(), row.actorId(), millis(row.createdAt()), row.actorName()); }
     private static String id(String value) { String id = value == null ? "" : value.trim(); if (id.isEmpty() || id.length() > 36) throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "ID 格式无效"); return id; }
     /** 长度前缀保留字段边界，避免备注中的分隔符把不同请求错误哈希成同一幂等操作。 */
     private static String stableOperation(String eventId, String conclusion, String note, long expectedVersion) {

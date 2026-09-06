@@ -19,6 +19,7 @@ import UPanel from '@/components/UPanel.vue';
 import UPagination from '@/components/UPagination.vue';
 import UControl from '@/components/form/UControl.vue';
 import { handoffApi } from '@/services/handoffApi.js';
+import { REASON_CODE_LABEL, RISK_TYPE_LABEL, SOURCE_MODE_LABEL, labelOf } from '@/ui/labels.js';
 
 usePageChrome('punish');
 const root = ref(null);
@@ -324,7 +325,7 @@ onMounted(() => {
                 <div v-else-if="handoffs.length" class="scroll table-scroll table-shell" style="flex:1">
                   <table class="tb">
                     <thead><tr>
-                      <th>交接编号</th>
+                      <th>来源编号</th>
                       <th>来源事项</th>
                       <th>交接类型</th>
                       <th>接收方</th>
@@ -336,10 +337,10 @@ onMounted(() => {
                     <tbody>
                       <tr v-for="row in handoffs" :key="row.handoff_id" :data-row="row.handoff_id" tabindex="0" :class="{ on: selected?.handoff_id === row.handoff_id || (!selected && S.selectedHandoffId === row.handoff_id) }"
                         @click="selectHandoff(row.handoff_id)" @keydown.enter.prevent="selectHandoff(row.handoff_id)">
-                        <td class="num"><span class="mono pn-id" :title="row.handoff_id">{{ row.handoff_id }}</span></td>
-                        <td><span class="tag t-cyan">{{ label(KIND_LABEL, row.source_kind) }}</span><div class="mono pn-sub" :title="row.source_id">{{ row.source_id }}</div></td>
+                        <td class="num"><span class="mono pn-id" :title="row.handoff_id">{{ row.source_no || row.handoff_id }}</span></td>
+                        <td><span class="tag t-cyan" :title="row.source_id">{{ label(KIND_LABEL, row.source_kind) }}</span></td>
                         <td>{{ label(TYPE_LABEL, row.handoff_type) }}</td>
-                        <td><div class="pn-wrap">{{ row.recipient_name || row.recipient_id }}</div><div class="mono pn-sub">{{ row.source_mode || '' }}</div></td>
+                        <td><div class="pn-wrap">{{ row.recipient_name || row.recipient_id }}</div><div class="pn-sub">{{ labelOf(SOURCE_MODE_LABEL, row.source_mode, '') }}</div></td>
                         <td class="num" :title="formatTime(row.created_at)">{{ formatClock(row.created_at) }}</td>
                         <td><span class="tag" :class="DELIVERY_TAG[row.delivery_status] || 't-gray'">{{ label(DELIVERY_LABEL, row.delivery_status) }}</span></td>
                         <td>{{ label(RECEIPT_LABEL, row.receipt_status) }}</td>
@@ -359,7 +360,7 @@ onMounted(() => {
                 <div v-else-if="!selected" class="empty">{{ handoffs.length ? '请选择交接记录' : '暂无可显示的交接记录' }}</div>
                 <template v-else>
                   <div class="detail-hero detail-hero-micro"><div class="detail-hero-inner">
-                    <div class="detail-hero-copy"><div class="detail-hero-eyebrow">业务交接</div><div class="detail-hero-title">{{ label(TYPE_LABEL, selected.handoff_type) }}</div><div class="detail-hero-id mono" :title="selected.handoff_id">{{ selected.handoff_id }}</div></div>
+                    <div class="detail-hero-copy"><div class="detail-hero-eyebrow">业务交接</div><div class="detail-hero-title">{{ label(TYPE_LABEL, selected.handoff_type) }}</div><div class="detail-hero-id mono" :title="selected.handoff_id">{{ selected.source_no || selected.handoff_id }}</div></div>
                     <div class="detail-hero-side"><div class="detail-hero-tags"><span class="tag" :class="DELIVERY_TAG[selected.delivery_status] || 't-gray'">{{ label(DELIVERY_LABEL, selected.delivery_status) }}</span><span class="tag t-gray">{{ label(RECEIPT_LABEL, selected.receipt_status) }}</span></div></div>
                   </div></div>
                   <div class="metric-strip is-compact">
@@ -370,27 +371,26 @@ onMounted(() => {
                   </div>
                   <div v-if="deliveryNote" class="warnbox pn-delivery-note">{{ deliveryNote }}</div>
                   <div class="sect"><h4>交接信息</h4><dl class="kv kv-surface">
-                    <dt>交接编号</dt><dd class="mono">{{ selected.handoff_id }}</dd>
-                    <dt>来源事项</dt><dd>{{ label(KIND_LABEL, selected.source_kind) }} <span class="mono">{{ selected.source_id }}</span>
+                    <dt>来源编号</dt><dd class="mono" :title="selected.handoff_id">{{ selected.source_no || '未提供' }}</dd>
+                    <dt>来源事项</dt><dd :title="selected.source_id">{{ label(KIND_LABEL, selected.source_kind) }}
                       <button v-if="selected.source_kind === 'RISK'" class="lnk pn-lnk" type="button" @click="gotoSource(selected)">查看风险</button></dd>
                     <dt>交接类型</dt><dd>{{ label(TYPE_LABEL, selected.handoff_type) }}</dd>
-                    <dt>接收方</dt><dd>{{ selected.recipient_name || '未提供' }} <span class="mono pn-sub-inline">{{ selected.recipient_id }}</span></dd>
+                    <dt>接收方</dt><dd :title="selected.recipient_id">{{ selected.recipient_name || '未提供' }}</dd>
                     <dt>源版本</dt><dd class="mono">v{{ selected.source_version }}</dd>
                     <dt>提交时间</dt><dd>{{ formatTime(selected.created_at) }}</dd>
-                    <dt>提交人 ID</dt><dd class="mono">{{ selected.submitted_by || '未提供' }}</dd>
-                    <dt>所属范围</dt><dd>{{ selected.owner_org_id }} / {{ selected.district_id }}</dd>
-                    <dt>来源模式</dt><dd>{{ selected.source_mode || '未提供' }}</dd>
+                    <dt>提交人</dt><dd :title="selected.submitted_by">{{ selected.submitted_by_name || selected.submitted_by || '未提供' }}</dd>
+                    <dt>所属范围</dt><dd>{{ selected.owner_org_name || selected.owner_org_id }} / {{ selected.district_name || selected.district_id }}</dd>
+                    <dt>来源模式</dt><dd>{{ labelOf(SOURCE_MODE_LABEL, selected.source_mode, '未提供') }}</dd>
                   </dl></div>
                   <div class="sect"><h4>材料快照 <span class="tag t-gray">schema v{{ selected.material?.schema_version ?? '—' }}</span></h4>
                     <div v-if="!selected.material" class="empty">服务端未返回材料快照。</div>
                     <template v-else>
                       <dl v-if="selected.material.risk" class="kv kv-surface">
-                        <dt>风险编号</dt><dd class="mono">{{ selected.material.risk.risk_id }}</dd>
-                        <dt>来源风险编号</dt><dd class="mono">{{ selected.material.risk.source_risk_id || '未提供' }}</dd>
-                        <dt>风险类型</dt><dd>{{ selected.material.risk.risk_type || '未提供' }}</dd>
+                        <dt>风险编号</dt><dd class="mono" :title="selected.material.risk.risk_id">{{ selected.material.risk.source_risk_id || '未提供' }}</dd>
+                        <dt>风险类型</dt><dd>{{ labelOf(RISK_TYPE_LABEL, selected.material.risk.risk_type, '未提供') }}</dd>
                         <dt>风险等级</dt><dd><span class="tag" :class="SEVERITY_TAG[selected.material.risk.severity] || 't-gray'">{{ label(SEVERITY_LABEL, selected.material.risk.severity) }}</span></dd>
                         <dt>提交时状态</dt><dd>{{ label(RISK_STATE_LABEL, selected.material.risk.state) }}</dd>
-                        <dt>依据代码</dt><dd class="mono">{{ selected.material.risk.reason_code || '未提供' }}</dd>
+                        <dt>风险依据</dt><dd>{{ labelOf(REASON_CODE_LABEL, selected.material.risk.reason_code, '未提供') }}</dd>
                         <dt>依据说明</dt><dd class="pn-wrap">{{ selected.material.risk.reason_text || '未提供' }}</dd>
                         <dt>发生时间</dt><dd>{{ formatTime(selected.material.risk.occurred_at) }}</dd>
                         <dt>接收时间</dt><dd>{{ formatTime(selected.material.risk.received_at) }}</dd>
@@ -401,7 +401,7 @@ onMounted(() => {
                       <div class="pn-subhead">关联引用</div>
                       <dl v-if="visibleReferences.length" class="kv kv-surface">
                         <template v-for="reference in visibleReferences" :key="reference.key">
-                          <dt>{{ reference.label }}</dt><dd class="mono">{{ reference.value }}</dd>
+                          <dt>{{ reference.label }}</dt><dd :title="reference.value">已记录关联</dd>
                         </template>
                       </dl>
                       <div v-else class="pn-note-text">当前权限下没有可见的关联引用（不可见的引用已由服务端省略）。</div>
@@ -411,7 +411,7 @@ onMounted(() => {
                         <div v-for="item in selected.material.verifications" :key="`${item.version}-${item.created_at}`" class="pn-history-item">
                           <div><span class="tag" :class="item.conclusion === 'CONFIRMED' ? 't-green' : 't-gray'">{{ label(CONCLUSION_LABEL, item.conclusion) }}</span> <span class="mono">v{{ item.version }}</span> → {{ label(RISK_STATE_LABEL, item.resulting_state) }}</div>
                           <div class="pn-wrap">{{ item.note || '无说明' }}</div>
-                          <div class="pn-sub">{{ formatTime(item.created_at) }} · 操作人 ID {{ item.actor_id || '未提供' }}</div>
+                          <div class="pn-sub">{{ formatTime(item.created_at) }} · 操作人 {{ item.actor_name || item.actor_id || '未提供' }}</div>
                         </div>
                       </div>
                       </template>

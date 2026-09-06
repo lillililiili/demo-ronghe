@@ -5,6 +5,7 @@ import { closeModal } from './modal.js';
 import { toast } from './nv.js';
 import { riskApi, newRiskIdempotencyKey } from '@/services/riskApi.js';
 import { isUncertainOutcome } from '@/services/apiClient.js';
+import { RISK_TYPE_LABEL, labelOf } from '@/ui/labels.js';
 
 export const RISK_STATE_TEXT = {
   PENDING_VERIFICATION: '待核验',
@@ -44,7 +45,7 @@ export function openRiskVerification({ risk, refresh, onDone } = {}) {
     title: '人工核验',
     width: '560px',
     warning: '核验通过只进入“待通知”，不表示已通知上级；排除表示核验后判定无需通报。通知上级与交接在阶段 5 接入。',
-    notice: `风险 ${riskId} · ${risk.risk_type || ''} · 当前版本 v${expectedVersion} · 说明 1–1000 字必填`,
+    notice: `风险 ${risk.source_risk_id || riskId} · ${labelOf(RISK_TYPE_LABEL, risk.risk_type, '')} · 当前版本 v${expectedVersion} · 说明 1–1000 字必填`,
     fields: [
       { key: 'conclusion', label: '核验结论', type: 'radio', required: true, options: [
         { value: 'CONFIRMED', label: '核验通过（转待通知）' },

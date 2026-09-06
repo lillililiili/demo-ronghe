@@ -18,6 +18,7 @@ import UPagination from '@/components/UPagination.vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import { flightApi, listAllFlightPlans } from '@/services/flightApi.js';
 import { legalityApi } from '@/services/legalityApi.js';
+import { REASON_CODE_LABEL, labelOf } from '@/ui/labels.js';
 
 usePageChrome('legality');
 const UI = window.UI;
@@ -135,11 +136,11 @@ function shortTime(value) {
 
 function assessmentReason(assessment) {
   if (!assessment) return '尚未取得已保存研判详情';
-  if (assessment.unknown_reasons?.length) return assessment.unknown_reasons[0];
+  if (assessment.unknown_reasons?.length) return labelOf(REASON_CODE_LABEL, assessment.unknown_reasons[0]);
   const failed = assessment.checks?.find(check => check.result_code === 'FAIL' && check.reason_code);
-  if (failed) return failed.reason_code;
+  if (failed) return labelOf(REASON_CODE_LABEL, failed.reason_code);
   const explained = assessment.checks?.find(check => check.reason_code);
-  return explained?.reason_code || '服务端未提供结论摘要';
+  return explained?.reason_code ? labelOf(REASON_CODE_LABEL, explained.reason_code) : '服务端未提供结论摘要';
 }
 
 function queueConclusion(plan) {
@@ -501,7 +502,7 @@ onMounted(() => {
                         <span class="lg-row-target"><b class="mono">{{ plan.plan_no || plan.plan_id }}</b><small>{{ shortTime(plan.start_at) }}</small></span>
                         <span class="lg-row-verdict">{{ queueConclusion(plan) }}</span>
                         <span class="lg-row-risk">—</span>
-                        <span class="lg-row-region">{{ plan.district_id || '未知' }}</span>
+                        <span class="lg-row-region">{{ plan.district_name || plan.district_id || '未知' }}</span>
                         <span class="lg-row-reason" :title="queueReason(plan)">{{ queueReason(plan) }}</span>
                       </button>
                     </div>
@@ -524,7 +525,7 @@ onMounted(() => {
           <div id="lgDetail" class="lg-detail-host">
             <header class="lg-review-head">
               <b>{{ selectedPlan?.plan_no || selectedPlan?.plan_id || '未选择计划' }}</b>
-              <span>{{ selectedAssessment ? `研判 ${selectedAssessment.assessment_id}` : '已保存研判' }}</span>
+              <span :title="selectedAssessment?.assessment_id">{{ selectedAssessment ? `研判时间 ${formatTime(selectedAssessment.assessed_at)}` : '已保存研判' }}</span>
               <span class="lg-head-spacer"></span>
               <button class="lg-icon-btn" type="button" :disabled="selectedQueueIndex <= 0"
                 aria-label="上一条" @click="moveSelection(-1)">←</button>
@@ -562,10 +563,10 @@ onMounted(() => {
                       <span>仅展示服务端保存字段，不在前端生成结论</span></div>
                     <div class="lg-target-facts">
                       <dl>
-                        <dt>目标 ID</dt><dd>{{ selectedAssessment.target_id || '服务端未提供' }}</dd>
-                        <dt>轨迹 ID</dt><dd>{{ selectedAssessment.track_id || '服务端未提供' }}</dd>
-                        <dt>计划 ID</dt><dd>{{ selectedAssessment.plan_id }}</dd>
-                        <dt>航线版本</dt><dd>{{ selectedAssessment.route_version_id || '服务端未提供' }}</dd>
+                        <dt>关联目标</dt><dd :title="selectedAssessment.target_id">{{ selectedAssessment.target_id ? '已关联目标' : '服务端未提供' }}</dd>
+                        <dt>关联轨迹</dt><dd :title="selectedAssessment.track_id">{{ selectedAssessment.track_id ? '已关联轨迹' : '服务端未提供' }}</dd>
+                        <dt>计划编号</dt><dd class="mono" :title="selectedAssessment.plan_id">{{ selectedPlan?.plan_no || selectedAssessment.plan_id }}</dd>
+                        <dt>航线版本</dt><dd :title="selectedAssessment.route_version_id">{{ selectedAssessment.route_version_id ? '已关联航线版本' : '服务端未提供' }}</dd>
                       </dl>
                     </div>
                     <div class="lg-review-state">
@@ -587,7 +588,7 @@ onMounted(() => {
                       <span><b class="mono">{{ check.rule_code || '未知规则' }}</b><small>已保存检查</small></span>
                       <span :class="resultClass(check.result_code)">{{ resultText(check.result_code) }}</span>
                       <span>{{ selectedAssessment.rule_version_code || '—' }}</span>
-                      <span>{{ check.reason_code || '服务端未提供' }}</span>
+                      <span>{{ labelOf(REASON_CODE_LABEL, check.reason_code, '服务端未提供') }}</span>
                     </button>
                   </section>
 
@@ -614,11 +615,11 @@ onMounted(() => {
                       <div v-else-if="st.evidenceTab === 'plan'" class="lg-evidence-wide">
                         <h4>精确输入版本 <span>服务端事实</span></h4>
                         <dl class="lg-resource-grid">
-                          <dt>计划 ID</dt><dd>{{ selectedAssessment.plan_id }}</dd>
-                          <dt>研判 ID</dt><dd>{{ selectedAssessment.assessment_id }}</dd>
-                          <dt>航线版本 ID</dt><dd>{{ selectedAssessment.route_version_id || '服务端未提供' }}</dd>
-                          <dt>目标 ID</dt><dd>{{ selectedAssessment.target_id || '服务端未提供' }}</dd>
-                          <dt>轨迹 ID</dt><dd>{{ selectedAssessment.track_id || '服务端未提供' }}</dd>
+                          <dt>计划编号</dt><dd class="mono" :title="selectedAssessment.plan_id">{{ selectedPlan?.plan_no || selectedAssessment.plan_id }}</dd>
+                          <dt>研判记录</dt><dd :title="selectedAssessment.assessment_id">{{ formatTime(selectedAssessment.assessed_at) }}</dd>
+                          <dt>航线版本</dt><dd :title="selectedAssessment.route_version_id">{{ selectedAssessment.route_version_id ? '已关联' : '服务端未提供' }}</dd>
+                          <dt>关联目标</dt><dd :title="selectedAssessment.target_id">{{ selectedAssessment.target_id ? '已关联' : '服务端未提供' }}</dd>
+                          <dt>关联轨迹</dt><dd :title="selectedAssessment.track_id">{{ selectedAssessment.track_id ? '已关联' : '服务端未提供' }}</dd>
                         </dl>
                       </div>
                       <div v-else class="lg-evidence-wide">
@@ -626,8 +627,8 @@ onMounted(() => {
                         <dl class="lg-resource-grid">
                           <dt>来源模式</dt><dd>{{ sourceText(selectedAssessment.source_mode) }}</dd>
                           <dt>规则版本代码</dt><dd>{{ selectedAssessment.rule_version_code || '服务端未提供' }}</dd>
-                          <dt>规则版本 ID</dt><dd>{{ selectedAssessment.rule_version_id || '服务端未提供' }}</dd>
-                          <dt>未知原因</dt><dd>{{ selectedAssessment.unknown_reasons?.join('、') || '服务端未提供' }}</dd>
+                          <dt>规则版本记录</dt><dd :title="selectedAssessment.rule_version_id">{{ selectedAssessment.rule_version_id ? '已记录' : '服务端未提供' }}</dd>
+                          <dt>未知原因</dt><dd>{{ selectedAssessment.unknown_reasons?.map(code => labelOf(REASON_CODE_LABEL, code)).join('、') || '服务端未提供' }}</dd>
                         </dl>
                         <h4>证据引用</h4>
                         <ul v-if="selectedAssessment.evidence_references?.length" class="lg-reference-list">

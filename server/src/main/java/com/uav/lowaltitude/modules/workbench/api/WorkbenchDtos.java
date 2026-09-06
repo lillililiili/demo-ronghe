@@ -14,7 +14,7 @@ public final class WorkbenchDtos {
             @JsonInclude(value = JsonInclude.Include.ALWAYS, content = JsonInclude.Include.ALWAYS) Map<String, Long> countsByKind,
             Map<String, String> sourceAvailability, long asOf) { }
 
-    public record ItemDto(String kind, String sourceId, String state, String severity, long receivedAt,
+    public record ItemDto(String kind, String sourceId, String sourceNo, String state, String severity, long receivedAt,
             Long occurredAt, Long updatedAt, Long version, String title, String summary, List<String> allowedActions,
             /** 契约固定字段：没有阻断原因时显式 null，与“字段缺失”区分。 */
             @JsonInclude(JsonInclude.Include.ALWAYS) String blockedReason,
@@ -24,22 +24,22 @@ public final class WorkbenchDtos {
 
     /** 时间线条目按 entry_type 携带各自字段，其余字段省略；只有操作归属 ID，不扩展用户资料。 */
     public record TimelineEntryDto(String entryType, long at, Long version, String previousState, String resultingState,
-            String conclusion, String note, String actorId, String handoffId, String handoffType, String recipientId,
+            String conclusion, String note, String actorId, String actorName, String handoffId, String handoffType, String recipientId,
             String recipientName, Long sourceVersion, String deliveryStatus, String blockedReason, String stage,
             String incidentType, String deviceNo, String deviceName, String reason) {
         public static TimelineEntryDto verification(long at, long version, String previousState, String resultingState,
-                String conclusion, String note, String actorId) {
-            return new TimelineEntryDto("VERIFICATION", at, version, previousState, resultingState, conclusion, note, actorId,
+                String conclusion, String note, String actorId, String actorName) {
+            return new TimelineEntryDto("VERIFICATION", at, version, previousState, resultingState, conclusion, note, actorId, actorName,
                     null, null, null, null, null, null, null, null, null, null, null, null);
         }
         public static TimelineEntryDto handoff(long at, String handoffId, String handoffType, String recipientId,
                 String recipientName, long sourceVersion, String deliveryStatus, String blockedReason) {
-            return new TimelineEntryDto("HANDOFF", at, null, null, null, null, null, null, handoffId, handoffType,
+            return new TimelineEntryDto("HANDOFF", at, null, null, null, null, null, null, null, handoffId, handoffType,
                     recipientId, recipientName, sourceVersion, deliveryStatus, blockedReason, null, null, null, null, null);
         }
         public static TimelineEntryDto deviceFact(String entryType, long at, String stage, String incidentType,
                 String deviceNo, String deviceName, String reason) {
-            return new TimelineEntryDto(entryType, at, null, null, null, null, null, null, null, null, null, null, null,
+            return new TimelineEntryDto(entryType, at, null, null, null, null, null, null, null, null, null, null, null, null,
                     null, null, stage, incidentType, deviceNo, deviceName, reason);
         }
     }

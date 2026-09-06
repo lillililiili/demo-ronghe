@@ -30,6 +30,8 @@ public class TargetReadRepository {
     private static final String TARGET_FROM = """
             FROM target t
             LEFT JOIN target_latest_state ls ON ls.target_id=t.target_id
+            LEFT JOIN app_org org_ref ON org_ref.org_id=t.owner_org_id
+            LEFT JOIN app_district dist_ref ON dist_ref.district_id=t.district_id
             """;
 
     private final NamedParameterJdbcTemplate jdbc;
@@ -71,7 +73,7 @@ public class TargetReadRepository {
         Map<String, Object> parameters = new HashMap<>();
         parameters.put("target_id", targetId);
         StringBuilder sql = new StringBuilder("""
-                SELECT l.link_id,l.source_id,s.source_code,s.source_mode,l.source_session_key,
+                SELECT l.link_id,l.source_id,s.source_code,s.source_mode,s.name AS source_name,l.source_session_key,
                        l.external_target_id,l.device_id,l.protocol_version
                 FROM target_source_link l
                 JOIN target t ON t.target_id=l.target_id
@@ -89,7 +91,7 @@ public class TargetReadRepository {
                 rs.getString("link_id"), rs.getString("source_id"), rs.getString("source_code"),
                 rs.getString("source_mode"), rs.getString("source_session_key"),
                 rs.getString("external_target_id"), rs.getString("device_id"),
-                rs.getString("protocol_version")));
+                rs.getString("protocol_version"), rs.getString("source_name")));
     }
 
     public long countTracks(String targetId, TrackQuery query, AccessDecision access) {
@@ -270,6 +272,7 @@ public class TargetReadRepository {
         return """
                 SELECT t.target_id,t.target_no,t.object_type_code,t.subtype,t.uav_sn,
                        t.first_seen_at,t.last_seen_at,t.source_mode,t.owner_org_id,t.district_id,
+                       org_ref.name AS owner_org_name,dist_ref.name AS district_name,
                        t.created_at,t.updated_at,ls.observed_at AS state_observed_at,
                        ls.received_at AS state_received_at,ls.altitude_amsl_m,ls.height_agl_m,
                        ls.speed_mps,ls.heading_deg,ls.classification_confidence,ls.fusion_confidence,
@@ -309,7 +312,7 @@ public class TargetReadRepository {
                 location(rs), rs.getBigDecimal("altitude_amsl_m"), rs.getBigDecimal("height_agl_m"),
                 rs.getBigDecimal("speed_mps"), rs.getBigDecimal("heading_deg"),
                 rs.getBigDecimal("classification_confidence"), rs.getBigDecimal("fusion_confidence"),
-                normalizedJson(rs.getString("unknown_fields")));
+                normalizedJson(rs.getString("unknown_fields")), rs.getString("owner_org_name"), rs.getString("district_name"));
     }
 
     private PointRow pointRow(ResultSet rs, int rowNum) throws SQLException {
@@ -408,11 +411,12 @@ public class TargetReadRepository {
             String ownerOrgId, String districtId, OffsetDateTime createdAt, OffsetDateTime updatedAt,
             OffsetDateTime stateObservedAt, OffsetDateTime stateReceivedAt, Coordinate location,
             BigDecimal altitudeAmslM, BigDecimal heightAglM, BigDecimal speedMps, BigDecimal headingDeg,
-            BigDecimal classificationConfidence, BigDecimal fusionConfidence, String unknownFields) {
+            BigDecimal classificationConfidence, BigDecimal fusionConfidence, String unknownFields,
+            String ownerOrgName, String districtName) {
     }
 
     public record SourceLinkRow(String linkId, String sourceId, String sourceCode, String sourceMode,
-            String sourceSessionKey, String externalTargetId, String deviceId, String protocolVersion) {
+            String sourceSessionKey, String externalTargetId, String deviceId, String protocolVersion, String sourceName) {
     }
 
     public record TrackRow(String trackId, String targetId, String linkId, String externalTrackId,

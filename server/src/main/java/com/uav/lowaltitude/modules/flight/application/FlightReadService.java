@@ -115,16 +115,17 @@ public class FlightReadService {
         List<FieldIssueDto> issues = new ArrayList<>();
         if (row.startAt() == null) issues.add(new FieldIssueDto("start_at", "TIME_UNTRUSTED"));
         if (row.endAt() == null) issues.add(new FieldIssueDto("end_at", "TIME_UNTRUSTED"));
-        return new FlightPlanDto(row.planId(), row.planNo(), row.statusCode(), source(row.sourceId(), row.sourceCode(), row.sourceMode()),
+        return new FlightPlanDto(row.planId(), row.planNo(), row.statusCode(), source(row.sourceId(), row.sourceCode(), row.sourceMode(), row.sourceName()),
                 row.sourceMode(), row.uavSn(), millis(row.startAt()), millis(row.endAt()), row.ownerOrgId(), row.districtId(),
                 new RouteReferenceDto(row.routeVersionId(), row.routeId(), row.routeNo(), row.routeName(), row.versionNo()),
-                List.copyOf(issues), requiredMillis(row.createdAt()), requiredMillis(row.updatedAt()), row.version());
+                List.copyOf(issues), requiredMillis(row.createdAt()), requiredMillis(row.updatedAt()), row.version(),
+                row.ownerOrgName(), row.districtName());
     }
 
     private RouteDto route(RouteRow row) {
         return new RouteDto(row.routeId(), row.routeNo(), row.name(), row.enabled(),
-                source(row.sourceId(), row.sourceCode(), row.sourceMode()), row.sourceMode(), row.ownerOrgId(), row.districtId(),
-                requiredMillis(row.createdAt()), requiredMillis(row.updatedAt()), row.version());
+                source(row.sourceId(), row.sourceCode(), row.sourceMode(), row.sourceName()), row.sourceMode(), row.ownerOrgId(), row.districtId(),
+                requiredMillis(row.createdAt()), requiredMillis(row.updatedAt()), row.version(), row.ownerOrgName(), row.districtName());
     }
 
     private RouteVersionDto routeVersion(RouteVersionRow row) {
@@ -137,8 +138,8 @@ public class FlightReadService {
                 row.changeReason(), issues, requiredMillis(row.createdAt()));
     }
 
-    private static SourceDto source(String sourceId, String sourceCode, String sourceMode) {
-        return sourceId == null ? null : new SourceDto(sourceId, sourceCode, sourceMode);
+    private static SourceDto source(String sourceId, String sourceCode, String sourceMode, String sourceName) {
+        return sourceId == null ? null : new SourceDto(sourceId, sourceCode, sourceMode, sourceName);
     }
 
     private static GeoJsonLineStringDto lineString(String text) {

@@ -26,6 +26,7 @@ import { toast } from '@/ui/nv.js';
 import { getAlarm, getUavEvent, listAlarms, listUavVerifications } from '@/services/alarmApi.js';
 import { openUavVerification } from '@/ui/uavVerificationModal.js';
 import { targetApi } from '@/services/targetApi.js';
+import { SOURCE_MODE_LABEL as MODE_TEXT, targetTypeLabel } from '@/ui/labels.js';
 
 const U = window.UI;
 usePageChrome('alarms');
@@ -52,7 +53,7 @@ const STATE = {
 };
 const NO_EVENT = { t: '未建事件', c: 't-gray', color: '#8ca0be' };
 const ALARM_TYPE = { UAV_INTRUSION: '无人机入侵', UAV: '无人机告警' };
-const SOURCE_MODE = { mock: { t: '模拟', c: 't-purple' }, replay: { t: '回放', c: 't-amber' }, live: { t: '实时', c: 't-green' } };
+const SOURCE_MODE = { mock: { t: MODE_TEXT.mock, c: 't-purple' }, replay: { t: MODE_TEXT.replay, c: 't-amber' }, live: { t: MODE_TEXT.live, c: 't-green' } };
 const LEVEL_OPTS = [{ v: '全部', t: '全部' }, { v: 'CRITICAL', t: '紧急' }, { v: 'HIGH', t: '高' }, { v: 'MEDIUM', t: '中' }, { v: 'LOW', t: '低' }];
 const STATUS_OPTS = [{ v: '全部', t: '全部' }, ...Object.entries(STATE).map(([v, s]) => ({ v, t: s.t }))];
 
@@ -167,7 +168,7 @@ function queryOf() {
 }
 
 function summaryOf(a) {
-  const text = `${typeOf(a)} · 来源 ${esc(a.source_code || '—')}（${modeOf(a).t}）· 发生 ${fmt(a.occurred_at) || '未知'}`;
+  const text = `${typeOf(a)} · 来源 ${esc(a.source_name || a.source_code || '—')}（${modeOf(a).t}）· 发生 ${fmt(a.occurred_at) || '未知'}`;
   return `<div title="${text}" style="white-space:normal;line-height:1.5;
         max-height:34px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">${text}</div>`;
 }
@@ -178,11 +179,11 @@ function listHtml() {
   return U.table([
     {
       t: sortTh('ts', '告警编号 / 时间'), w: '108px', cls: 'num',
-      render: a => U.cell(esc(String(a.alarm_id).slice(-9)), clock(a.received_at), { mono: true, title: esc(a.alarm_id) })
+      render: a => U.cell(esc(a.alarm_no || String(a.alarm_id).slice(-9)), clock(a.received_at), { mono: true, title: esc(a.alarm_id) })
     },
     { t: sortTh('level', '等级'), w: '52px', align: 'center', render: sevTag },
     { t: sortTh('kind', '类别 / 类型'), w: '128px', render: a => U.cell(U.tag(modeOf(a).t, modeOf(a).c), typeOf(a)) },
-    { t: sortTh('district', '关联目标 / 区域'), w: '146px', render: a => U.cell(a.target_id ? esc(a.target_id) : '—', esc(a.district_id), { mono: true, title: a.target_id ? esc(a.target_id) : '无关联目标或无目标读取权限' }) },
+    { t: sortTh('district', '关联目标 / 区域'), w: '146px', render: a => U.cell(a.target_id ? esc(a.target_no || a.target_id) : '—', esc(a.district_name || a.district_id || '—'), { mono: true, title: a.target_id ? esc(a.target_id) : '无关联目标或无目标读取权限' }) },
     { t: '告警内容', render: summaryOf },
     { t: sortTh('status', '状态'), w: '86px', render: stateTag }
   ], list.rows, { rowId: a => a.alarm_id, activeId: cur.alarm && cur.alarm.alarm_id });
@@ -221,7 +222,7 @@ function historyHtml() {
   return U.timeline(cur.history.map((h, i) => ({
     time: clock(h.created_at),
     label: `${stateText(h.previous_state)} → ${stateText(h.resulting_state)}（v${Number(h.version)}）`,
-    desc: `<span class="mono">${esc(h.actor_id)}</span> · <span data-note="${i}"></span>`,
+    desc: `操作人 ${esc(h.actor_name || h.actor_id || '—')} · <span data-note="${i}"></span>`,
     color: (STATE[h.resulting_state] || NO_EVENT).color
   }))) + more;
 }
@@ -239,12 +240,12 @@ function detailHtml() {
   }
   if (stEl) stEl.innerHTML = stateTag(a);
   const ev = cur.event, t = cur.target, ls = t && t.latest_state;
-  const targetType = !a.target_id ? '—' : cur.targetLoading ? '读取中…' : cur.targetError ? '读取失败' : esc((t && (t.subtype || t.object_type_code)) || '—');
+  const targetType = !a.target_id ? '—' : cur.targetLoading ? '读取中…' : cur.targetError ? '读取失败' : esc(t ? targetTypeLabel(t.subtype, t.object_type_code) : '—');
   const altSpeed = ls ? `${ls.altitude_amsl_m == null ? '—' : esc(ls.altitude_amsl_m)} m / ${ls.speed_mps == null ? '—' : esc(ls.speed_mps)} m/s` : '— m / — m/s';
   return `${U.detailHero({
-    icon: 'alert', subtitle: '告警事件', title: typeOf(a), id: esc(a.alarm_id),
+    icon: 'alert', subtitle: '告警事件', title: typeOf(a), id: esc(a.alarm_no || a.alarm_id),
     tags: [sevTag(a), stateTag(a)],
-    meta: [['区域', esc(a.district_id)], ['时间', clock(a.received_at)]]
+    meta: [['区域', esc(a.district_name || a.district_id || '—')], ['时间', clock(a.received_at)]]
   })}
     ${U.metricStrip([
       { label: '告警等级', value: sevOf(a).t, tone: sevOf(a).tone, icon: 'alert' },
@@ -256,12 +257,12 @@ function detailHtml() {
     ${U.sect('告警信息', U.kv([
     ['告警类型', typeOf(a)], ['告警等级', sevTag(a)],
     ['触发时间', fmt(a.occurred_at) || '未知'], ['接收时间', fmt(a.received_at) || '—'],
-    ['所在区域', esc(a.district_id)], ['所属机构', esc(a.owner_org_id)],
-    ['关联目标', a.target_id ? `<span class="mono">${esc(a.target_id)}</span>` : '无关联目标或无目标读取权限'],
+    ['所在区域', esc(a.district_name || a.district_id || '—')], ['所属机构', esc(a.owner_org_name || a.owner_org_id || '—')],
+    ['关联目标', a.target_id ? `<span class="mono" title="${esc(a.target_id)}">${esc(a.target_no || a.target_id)}</span>` : '无关联目标或无目标读取权限'],
     ['目标类型', targetType],
     ['高度/速度', altSpeed],
-    ['数据来源', `${esc(a.source_code || '—')}（${modeOf(a).t}）`],
-    ['核实事件', ev ? `<span class="mono">${esc(ev.event_id)}</span>　v${Number(ev.version)}` : (a.event_id ? `<span class="mono">${esc(a.event_id)}</span>` : '尚未创建核实事件')]
+    ['数据来源', `${esc(a.source_name || a.source_code || '—')}（${modeOf(a).t}）`],
+    ['核实事件', ev ? `已建核实事件　v${Number(ev.version)}` : (a.event_id ? '已建核实事件（详情读取失败）' : '尚未创建核实事件')]
   ], { surface: true, density: 'compact' }), { icon: 'alert' })}
     ${U.sect('核实历史', historyHtml(), { icon: 'trend' })}
     ${U.detailActions(`
@@ -285,7 +286,7 @@ function focusMap() {
   if (!a) return setInfo(cur.loading ? '正在读取告警…' : '请选择告警');
   if (!a.target_id) return setInfo(warn('无关联目标或无目标读取权限，无法定位'));
   if (cur.targetLoading) return setInfo('正在读取关联目标…');
-  if (cur.targetError) return setInfo(warn(`关联目标 ${esc(a.target_id)} 读取失败：${esc(cur.targetError)}`));
+  if (cur.targetError) return setInfo(warn(`关联目标 ${esc(a.target_no || a.target_id)} 读取失败：${esc(cur.targetError)}`));
   const t = cur.target, ls = t && t.latest_state;
   const pos = ls ? coord(ls.location, ls.field_issues, 'location') : null;
   const pts = ((cur.track && cur.track.points) || []).map(p => {
@@ -293,15 +294,15 @@ function focusMap() {
     return c ? { lon: c.lon, lat: c.lat, alt: p.altitude_amsl_m == null ? null : Number(p.altitude_amsl_m), t: p.sort_time, kind: 'meas' } : null;
   }).filter(Boolean);
   const last = pos || (pts.length ? pts[pts.length - 1] : null);
-  if (!t || !last) return setInfo(warn(`关联目标 ${esc(a.target_id)} 坐标未知或不可信，不以 (0,0) 补位，无法定位`));
-  const subtype = (t.subtype || t.object_type_code || '目标');
+  if (!t || !last) return setInfo(warn(`关联目标 ${esc(t?.target_no || a.target_no || a.target_id)} 坐标未知或不可信，不以 (0,0) 补位，无法定位`));
+  const subtype = targetTypeLabel(t.subtype, t.object_type_code, '目标');
   const target = {
-    id: t.target_id, lon: last.lon, lat: last.lat,
+    id: t.target_no || t.target_id, lon: last.lon, lat: last.lat,
     alt: ls && ls.altitude_amsl_m != null ? Number(ls.altitude_amsl_m) : null,
     speed: ls && ls.speed_mps != null ? Number(ls.speed_mps) : null,
     heading: ls && ls.heading_deg != null ? Number(ls.heading_deg) : 0,
     // 合法性判定阶段 4 未接入：不向 MapView 传任何结论词（'待确认' 等），maptip 与信息栏同文案。
-    type: t.object_type_code || '目标', subtype, legal: '尚未接入', risk: '—', tracked: true,
+    type: targetTypeLabel(null, t.object_type_code, '目标'), subtype, legal: '尚未接入', risk: '—', tracked: true,
     track: pts.length > 1 ? pts : []
   };
   map.sel = target.id;
@@ -314,8 +315,8 @@ function focusMap() {
   if (srcEl) srcEl.innerHTML = pts.length > 1
     ? `<span class="tag t-amber" title="/api/v1/targets/{id}/tracks 最新一条轨迹的最近点位（WGS84）">服务端轨迹</span> <span style="color:#8fbaff">实${pts.length}</span>`
     : `<span class="tag t-gray" title="${cur.trackError ? esc(cur.trackError) : '该目标暂无可信轨迹点'}">无轨迹</span>`;
-  setInfo(`<span class="mono" style="color:var(--txt-2)">${esc(t.target_id)}</span> · ${esc(subtype)} · 合法性 <span style="color:#8ca0be">尚未接入</span> · 高度 ${target.alt == null ? '—' : esc(target.alt) + ' m'} · ${trackNote}`,
-    `${t.target_id}｜${subtype}｜高度 ${target.alt == null ? '—' : target.alt + ' m'}\n${trackNote}`);
+  setInfo(`<span class="mono" style="color:var(--txt-2)" title="${esc(t.target_id)}">${esc(t.target_no || t.target_id)}</span> · ${esc(subtype)} · 合法性 <span style="color:#8ca0be">尚未接入</span> · 高度 ${target.alt == null ? '—' : esc(target.alt) + ' m'} · ${trackNote}`,
+    `${t.target_no || t.target_id}｜${subtype}｜高度 ${target.alt == null ? '—' : target.alt + ' m'}\n${trackNote}`);
 }
 
 /* ---------- 数据加载 ---------- */

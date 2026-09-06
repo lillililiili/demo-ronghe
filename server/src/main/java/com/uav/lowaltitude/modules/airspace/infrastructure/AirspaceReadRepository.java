@@ -43,8 +43,10 @@ public class AirspaceReadRepository {
         where.parameters().put("size", size);
         return jdbc.query("""
                 SELECT a.airspace_id,a.airspace_no,a.name,a.source_mode,a.owner_org_id,a.district_id,
-                       a.created_at,a.updated_at,a.version
+                       a.created_at,a.updated_at,a.version,org_ref.name AS owner_org_name,dist_ref.name AS district_name
                 FROM airspace a
+                LEFT JOIN app_org org_ref ON org_ref.org_id=a.owner_org_id
+                LEFT JOIN app_district dist_ref ON dist_ref.district_id=a.district_id
                 """ + where.sql()
                 + " ORDER BY a.updated_at DESC,a.airspace_id ASC OFFSET :offset ROWS FETCH NEXT :size ROWS ONLY",
                 where.parameters(), (rs, rowNumber) -> row(rs, rowNumber));
@@ -56,8 +58,10 @@ public class AirspaceReadRepository {
         where.parameters().put("airspace_id", airspaceId);
         List<AirspaceRow> rows = jdbc.query("""
                 SELECT a.airspace_id,a.airspace_no,a.name,a.source_mode,a.owner_org_id,a.district_id,
-                       a.created_at,a.updated_at,a.version
+                       a.created_at,a.updated_at,a.version,org_ref.name AS owner_org_name,dist_ref.name AS district_name
                 FROM airspace a
+                LEFT JOIN app_org org_ref ON org_ref.org_id=a.owner_org_id
+                LEFT JOIN app_district dist_ref ON dist_ref.district_id=a.district_id
                 """ + where.sql(), where.parameters(), (rs, rowNumber) -> row(rs, rowNumber));
         return rows.isEmpty() ? null : rows.get(0);
     }
@@ -222,7 +226,8 @@ public class AirspaceReadRepository {
     private static AirspaceRow row(ResultSet rs, int rowNumber) throws SQLException {
         return new AirspaceRow(rs.getString("airspace_id"), rs.getString("airspace_no"), rs.getString("name"),
                 rs.getString("source_mode"), rs.getString("owner_org_id"), rs.getString("district_id"),
-                time(rs, "created_at"), time(rs, "updated_at"), rs.getLong("version"));
+                time(rs, "created_at"), time(rs, "updated_at"), rs.getLong("version"),
+                rs.getString("owner_org_name"), rs.getString("district_name"));
     }
 
     private static String aOrNull(ResultSet rs, String name) throws SQLException { return rs.getString(name); }
@@ -260,7 +265,8 @@ public class AirspaceReadRepository {
     }
 
     public record AirspaceRow(String airspaceId, String airspaceNo, String name, String sourceMode,
-            String ownerOrgId, String districtId, OffsetDateTime createdAt, OffsetDateTime updatedAt, long version) {
+            String ownerOrgId, String districtId, OffsetDateTime createdAt, OffsetDateTime updatedAt, long version,
+            String ownerOrgName, String districtName) {
     }
 
     public record AirspaceVersionRow(String airspaceVersionId, String airspaceId, int versionNo, String kindCode,

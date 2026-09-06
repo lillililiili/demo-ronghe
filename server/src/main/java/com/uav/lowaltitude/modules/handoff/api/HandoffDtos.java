@@ -14,13 +14,15 @@ public final class HandoffDtos {
             long sourceVersion, String deliveryStatus, String receiptStatus, String blockedReason, long createdAt) { }
     public record HandoffDto(String handoffId, String sourceKind, String sourceId, String handoffType, String recipientId,
             String recipientName, long sourceVersion, String ownerOrgId, String districtId, String sourceMode, String submittedBy,
-            long createdAt, String deliveryStatus, String receiptStatus, String blockedReason) { }
+            long createdAt, String deliveryStatus, String receiptStatus, String blockedReason,
+            String ownerOrgName, String districtName, String submittedByName, String sourceNo) { }
     public record DeliveryDto(String deliveryId, String handoffId, int attemptNo, String deliveryStatus, String receiptStatus,
             String blockedReason, long createdAt, Long submittedAt, Long deliveredAt, Long acknowledgedAt) { }
     public record HandoffDetailDto(String handoffId, String sourceKind, String sourceId, String handoffType, String recipientId,
             String recipientName, long sourceVersion, String ownerOrgId, String districtId, String sourceMode, String submittedBy,
             long createdAt, String deliveryStatus, String receiptStatus, String blockedReason, MaterialDto material,
-            DeliveryDto latestDelivery, AvailabilityDto availability) { }
+            DeliveryDto latestDelivery, AvailabilityDto availability,
+            String ownerOrgName, String districtName, String submittedByName, String sourceNo) { }
     /** material：AVAILABLE / FORBIDDEN（读者缺 risk:read）/ SOURCE_NOT_VISIBLE（源风险已不在读者可见范围）。 */
     public record AvailabilityDto(String material) { }
 

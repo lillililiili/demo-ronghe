@@ -140,6 +140,7 @@ public class GlobalExceptionHandler {
         if (path.contains("/rule-sets") || path.contains("/rule-set-versions") || path.contains("/rule-runs")) return "rules";
         if (path.contains("/flight-plans") || path.contains("/routes") || path.contains("/route-versions")) return "flights";
         if (path.contains("/airspace")) return "airspace";
+        if (path.contains("/stats")) return "statistics";
         return "system";
     }
 }

@@ -22,6 +22,7 @@ final class AuditLabels {
             Map.entry("rules", "规则引擎"),
             Map.entry("flights", "飞行计划"),
             Map.entry("airspace", "空域规则"),
+            Map.entry("statistics", "运行统计"),
             Map.entry("system", "系统"));
 
     private static final Map<String, String> ACTIONS = Map.ofEntries(
@@ -53,6 +54,7 @@ final class AuditLabels {
             Map.entry("access_change_approved", "批准权限变更"),
             Map.entry("access_change_rejected", "驳回权限变更"),
             Map.entry("audit_export_requested", "导出审计日志"),
+            Map.entry("stats_export_requested", "导出运行统计"),
             Map.entry("super_admin_recovered", "恢复超级管理员"),
             Map.entry("uav_event_verified", "核实无人机事件"),
             Map.entry("risk_verified", "核验飞行风险"),
@@ -91,7 +93,8 @@ final class AuditLabels {
             Map.entry("/rule-sets", "规则集"),
             Map.entry("/rule-runs", "规则运行"),
             Map.entry("/flight-plans", "飞行计划"),
-            Map.entry("/airspace", "空域"));
+            Map.entry("/airspace", "空域"),
+            Map.entry("/stats", "运行统计"));
 
     private AuditLabels() {
     }

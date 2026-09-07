@@ -22,6 +22,18 @@ export const SUBTYPE_LABEL = {
 export const CONCLUSION_LABEL = { CONFIRMED: '核实属实', EXCLUDED: '已排除', FALSE_POSITIVE: '误报', EVIDENCE_REQUIRED: '证据待补充' };
 export const RULE_RESULT_LABEL = { PASS: '通过', FAIL: '不通过', UNDETERMINED: '不可判定' };
 export const LEGALITY_LABEL = { LEGAL: '合法', ILLEGAL: '非法', UNDETERMINED: '待确认' };
+export const EVIDENCE_KIND_LABEL = {
+  EO_VIDEO: '光电录像', EO_STILL: '光电抓拍图', TRACK_SNAPSHOT: '雷达轨迹快照',
+  NOTICE_RECEIPT: '通报单回执', COMMISSION_REPORT: '调测报告', COMMAND_LOG: '指令报文与回执',
+  SCENE_PHOTO: '现场照片', PENALTY_DOCUMENT: '处罚文书'
+};
+export const EVIDENCE_STATUS_LABEL = {
+  PENDING: '入库中', AVAILABLE: '在库', MISSING: '文件缺失', CORRUPT: '哈希不符', DESTROYED: '已销毁'
+};
+export const EVIDENCE_SUBJECT_LABEL = {
+  EVENT: '无人机事件', DEVICE: '设备', TARGET: '感知目标', PLAN: '飞行计划',
+  COMMAND: '指令', COMMISSION: '调测任务'
+};
 
 /** 取中文文案；代码为空返回 fallback，未收录返回代码本身。 */
 export const labelOf = (map, code, fallback = '—') => (code == null || code === '' ? fallback : (map[code] || String(code)));

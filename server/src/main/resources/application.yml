@@ -17,6 +17,10 @@ spring:
   jackson:
     property-naming-strategy: SNAKE_CASE
     default-property-inclusion: non_null
+  servlet:
+    multipart:
+      max-file-size: 32MB
+      max-request-size: 33MB
 
 mybatis:
   configuration:

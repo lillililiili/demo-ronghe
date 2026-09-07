@@ -23,6 +23,7 @@ final class AuditLabels {
             Map.entry("flights", "飞行计划"),
             Map.entry("airspace", "空域规则"),
             Map.entry("statistics", "运行统计"),
+            Map.entry("evidence", "证据管理"),
             Map.entry("system", "系统"));
 
     private static final Map<String, String> ACTIONS = Map.ofEntries(
@@ -65,7 +66,14 @@ final class AuditLabels {
             Map.entry("legality_evaluation_triggered", "手动触发研判"),
             Map.entry("rule_set_activated", "激活规则集版本"),
             Map.entry("rule_set_rolled_back", "回滚规则集版本"),
-            Map.entry("rule_set_shadow_changed", "调整规则集阴影版本"));
+            Map.entry("rule_set_shadow_changed", "调整规则集阴影版本"),
+            Map.entry("evidence_ingested", "入库证据文件"),
+            Map.entry("evidence_linked", "关联证据对象"),
+            Map.entry("evidence_hold_placed", "冻结证据"),
+            Map.entry("evidence_hold_released", "解除证据冻结"),
+            Map.entry("evidence_verified", "校验证据文件"),
+            Map.entry("evidence_downloaded", "下载证据文件"),
+            Map.entry("evidence_exported", "导出证据台账"));
 
     private static final Map<String, String> METHODS = Map.of(
             "GET", "查询", "POST", "提交", "PUT", "更新", "PATCH", "更新", "DELETE", "删除");
@@ -94,7 +102,8 @@ final class AuditLabels {
             Map.entry("/rule-runs", "规则运行"),
             Map.entry("/flight-plans", "飞行计划"),
             Map.entry("/airspace", "空域"),
-            Map.entry("/stats", "运行统计"));
+            Map.entry("/stats", "运行统计"),
+            Map.entry("/evidence-files", "证据文件"));
 
     private AuditLabels() {
     }

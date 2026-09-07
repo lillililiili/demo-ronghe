@@ -14,6 +14,7 @@ import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 import com.uav.lowaltitude.platform.audit.AuditService;
 import com.uav.lowaltitude.platform.security.AuthContext;
@@ -65,6 +66,14 @@ public class GlobalExceptionHandler {
         auditFailure(request, "INVALID_REQUEST", "请求参数格式不正确");
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(ApiResponse.fail("INVALID_REQUEST", "请求参数格式不正确"));
+    }
+
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<ApiResponse<Void>> handleTooLarge(MaxUploadSizeExceededException ex,
+            HttpServletRequest request) {
+        auditFailure(request, "FILE_TOO_LARGE", "文件超过 32 MiB");
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.fail("FILE_TOO_LARGE", "文件超过 32 MiB"));
     }
 
     @ExceptionHandler(Exception.class)
@@ -141,6 +150,7 @@ public class GlobalExceptionHandler {
         if (path.contains("/flight-plans") || path.contains("/routes") || path.contains("/route-versions")) return "flights";
         if (path.contains("/airspace")) return "airspace";
         if (path.contains("/stats")) return "statistics";
+        if (path.contains("/evidence-files")) return "evidence";
         return "system";
     }
 }

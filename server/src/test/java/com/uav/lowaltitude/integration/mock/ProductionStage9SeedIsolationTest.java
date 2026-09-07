@@ -55,8 +55,9 @@ class ProductionStage9SeedIsolationTest {
             assertThat(actions).containsExactly("airport:manage", "airport:read", "airspace:manage", "flight:authorize", "risk:evaluate");
             assertThat(jdbc.queryForObject("select count(*) from app_permission where permission_code in ('airspace:manage','airport:read','airport:manage','risk:evaluate','flight:authorize') and route_key is not null", Integer.class))
                     .as("动作权限不带菜单键").isZero();
-            assertThat(jdbc.queryForObject("select route_key from app_permission where permission_code='airspace'", String.class)).isEqualTo("airspace");
-            assertThat(jdbc.queryForObject("select route_key from app_permission where permission_code='risk'", String.class)).isEqualTo("risk");
+            // V202609070010 撤回菜单提升：两行仍在但 route_key 为空（用户 2026-09-07 裁定）。
+            assertThat(jdbc.queryForObject("select count(*) from app_permission where permission_code in ('airspace','risk')", Integer.class)).isEqualTo(2);
+            assertThat(jdbc.queryForObject("select count(*) from app_permission where permission_code in ('airspace','risk') and route_key is not null", Integer.class)).isZero();
             // 只登记不授权：除内置超级管理员角色外，没有任何角色被默认授予阶段 9 动作。
             assertThat(jdbc.queryForObject(
                     "select count(*) from app_role_permission where permission_code in ('airspace:manage','airport:read','airport:manage','risk:evaluate','flight:authorize') and role_code <> 'ROLE-ADMIN'",

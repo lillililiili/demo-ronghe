@@ -72,14 +72,16 @@ class Stage9AccessControlServiceTest {
     }
 
     @Test
-    void airspaceAndRiskModulesBecomeRealMenusOnlyForSuperAdminByDefault() {
+    void airspaceAndRiskModulesStayAliasesWithoutMenuAfterRevert() {
+        // 迁移 060 曾把两行升级为真实菜单，V202609070010 撤回（用户 2026-09-07 裁定）：行仍在、route_key 为空，
+        // 因此不论超级管理员还是开启了 menu_enabled 的普通角色，菜单里都不会出现这两项；阶段 9 的动作权限不受影响。
         List<Map<String, Object>> modules = jdbc.queryForList("select permission_code, route_key from app_permission where permission_code in ('airspace','risk') order by permission_code");
-        assertThat(modules).extracting(row -> row.get("route_key")).containsExactly("airspace", "risk");
-        // 超级管理员自动看到所有带 route_key 的模块菜单；普通角色未开启 menu_enabled 时看不到。
-        assertThat(accessService.menuKeys("ROLE-ADMIN")).contains("airspace", "risk", "flights");
+        assertThat(modules).extracting(row -> row.get("permission_code")).containsExactly("airspace", "risk");
+        assertThat(modules).extracting(row -> row.get("route_key")).containsOnlyNulls();
+        assertThat(accessService.menuKeys("ROLE-ADMIN")).contains("flights").doesNotContain("airspace", "risk");
         assertThat(accessService.menuKeys(ROLE)).doesNotContain("airspace", "risk");
         jdbc.update("insert into app_role_permission (role_code,permission_code,permission_level,menu_enabled,created_at) values (?,?,'READ',true,current_timestamp)", ROLE, "risk");
-        assertThat(accessService.menuKeys(ROLE)).contains("risk").doesNotContain("airspace");
+        assertThat(accessService.menuKeys(ROLE)).doesNotContain("risk", "airspace");
     }
 
     @Test

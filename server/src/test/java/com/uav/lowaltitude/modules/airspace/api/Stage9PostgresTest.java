@@ -157,10 +157,11 @@ class Stage9PostgresTest {
                 "select permission_code from app_permission where permission_code in ('airspace:manage','airport:read','airport:manage','risk:evaluate','flight:authorize') order by permission_code",
                 String.class);
         assertThat(actions).containsExactly("airport:manage", "airport:read", "airspace:manage", "flight:authorize", "risk:evaluate");
-        // 动作码不带菜单键；两个既有 MODULE 行升级为真实菜单。
+        // 动作码不带菜单键；两个既有 MODULE 行在迁移 060 升级为真实菜单后，又被 V202609070010 撤回为别名
+        // （用户 2026-09-07 裁定，见 docs/backend-stage9/menu-scope-deviation.md）：route_key 为空、行仍在。
         assertThat(jdbc.queryForObject("select count(*) from app_permission where permission_code in ('airspace:manage','airport:read','airport:manage','risk:evaluate','flight:authorize') and route_key is not null", Long.class)).isZero();
-        assertThat(jdbc.queryForObject("select route_key from app_permission where permission_code='airspace'", String.class)).isEqualTo("airspace");
-        assertThat(jdbc.queryForObject("select route_key from app_permission where permission_code='risk'", String.class)).isEqualTo("risk");
+        assertThat(jdbc.queryForObject("select count(*) from app_permission where permission_code in ('airspace','risk')", Long.class)).isEqualTo(2L);
+        assertThat(jdbc.queryForObject("select count(*) from app_permission where permission_code in ('airspace','risk') and route_key is not null", Long.class)).isZero();
         assertThat(jdbc.queryForObject("select sort_order from app_permission where permission_code='airspace:manage'", Integer.class)).isEqualTo(960);
         assertThat(jdbc.queryForObject("select sort_order from app_permission where permission_code='flight:authorize'", Integer.class)).isEqualTo(964);
         // 迁移只登记目录，不给任何角色授权，也不插入任何业务数据。

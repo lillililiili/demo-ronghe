@@ -76,9 +76,8 @@ class SystemManagementApiTest {
                 "sensing:感知监测:situation",
                 "flights:飞行监管:flights",
                 "legality:飞行监管:legality",
-                // 阶段 9（迁移 060）给既有 MODULE 行 airspace / risk 补了 route_key，成为真实菜单。
-                "airspace:飞行监管:airspace",
-                "risk:飞行监管:risk",
+                // 阶段 9（迁移 060）曾给既有 MODULE 行 airspace / risk 补 route_key 成为真实菜单，
+                // 迁移 V202609070010 撤回为别名（route_key 为空，用户 2026-09-07 裁定），因此不再出现在可见菜单里。
                 "alarms:事件处置:alarms",
                 "punishment:事件处置:punish",
                 "statistics:分析报告:stats",

@@ -124,7 +124,9 @@ public class DefaultFusedLayerWriter implements FusedLayerWriter {
         Set<UnknownField> unknown = new LinkedHashSet<>();
         fused.unknownFields().stream().filter(u -> !(manualOverride && "classification_confidence".equals(u.field()))).forEach(unknown::add);
         unknown.addAll(degradation.unknownFields());
-        double[] pilot = pilotOfIdentitySource(frame, fused);
+        // 本帧有没有身份主源，决定它有没有资格改写飞手位置两列（决策 8.5-27）。
+        boolean pilotDecided = fused.selection() != null && fused.selection().identitySourceId() != null;
+        double[] pilot = pilotDecided ? pilotOfIdentitySource(frame, fused) : null;
         if (fused.longitude() == null) {
             // 无位置帧：位置保留本帧所在融合轨迹的最后可信点，只刷新其它字段；这里不写 (0,0)。
             // 必须用本帧的 track 而不是再查"开放轨迹"：TERMINATED 帧在此之前已把该轨迹 ended_at 关闭，
@@ -135,12 +137,13 @@ public class DefaultFusedLayerWriter implements FusedLayerWriter {
             tracks.upsertLatestState(new LatestState(frame.targetId(), lonLat == null ? null : lonLat[0], lonLat == null ? null : lonLat[1], decimal(fused.altitudeAmslM(), METRIC_SCALE),
                     decimal(fused.heightAglM(), METRIC_SCALE), decimal(fused.speedMps(), SPEED_SCALE), decimal(fused.headingDeg(), METRIC_SCALE), classConfidence,
                     decimal(degradation.fusionConfidence(), CONF_SCALE), observedAt, now, write(unknownList(unknown)), now,
-                    pilot == null ? null : pilot[0], pilot == null ? null : pilot[1]));
+                    pilot == null ? null : pilot[0], pilot == null ? null : pilot[1], pilot == null ? null : observedAt, pilotDecided));
             return;
         }
         tracks.upsertLatestState(new LatestState(frame.targetId(), fused.longitude(), fused.latitude(), decimal(fused.altitudeAmslM(), METRIC_SCALE), decimal(fused.heightAglM(), METRIC_SCALE),
                 decimal(fused.speedMps(), SPEED_SCALE), decimal(fused.headingDeg(), METRIC_SCALE), classConfidence, decimal(degradation.fusionConfidence(), CONF_SCALE),
-                observedAt, now, write(unknownList(unknown)), now, pilot == null ? null : pilot[0], pilot == null ? null : pilot[1]));
+                observedAt, now, write(unknownList(unknown)), now,
+                pilot == null ? null : pilot[0], pilot == null ? null : pilot[1], pilot == null ? null : observedAt, pilotDecided));
     }
 
     /**
@@ -149,8 +152,7 @@ public class DefaultFusedLayerWriter implements FusedLayerWriter {
      * 身份主源缺失或它没给飞手位置就返回空，不回退到其它来源，也不补 (0,0)。
      */
     private static double[] pilotOfIdentitySource(TargetFrameResult frame, FusedState fused) {
-        String identitySourceId = fused.selection() == null ? null : fused.selection().identitySourceId();
-        if (identitySourceId == null) return null;
+        String identitySourceId = fused.selection().identitySourceId();
         return frame.estimates().stream()
                 .filter(e -> identitySourceId.equals(e.sourceId()) && e.pilotLongitude() != null && e.pilotLatitude() != null)
                 .findFirst()
@@ -158,7 +160,12 @@ public class DefaultFusedLayerWriter implements FusedLayerWriter {
                 .orElse(null);
     }
 
+    /**
+     * 决策 8.5-27：整帧没有来源时不改写属性优选。"这一帧没有任何来源"不是"从来不知道这些属性来自哪一路"，
+     * 后者会把已有归属抹成 NULL，页面读起来像从未选过源。中断这件事由 target_degradation 那行如实记录。
+     */
     private void writeSelection(TargetFrameResult frame, FusedState fused, boolean manualOverride, SelectionRow previous, OffsetDateTime observedAt, OffsetDateTime now, FusionParams params) {
+        if (frame.estimates() == null || frame.estimates().isEmpty()) return;
         String classCode = manualOverride ? previous.classCode() : fused.classCode();
         BigDecimal classConfidence = manualOverride ? previous.classConfidence() : decimal(fused.classConfidence(), CONF_SCALE);
         String classSource = manualOverride ? null : fused.selection().classSourceId();

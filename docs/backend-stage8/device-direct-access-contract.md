@@ -60,3 +60,9 @@
 - C02-6：`TargetState.pilot*` 存在 → 目标与飞手位置大圆距离 > `C02-6.vlos_m` → FAIL `BVLOS_EXCEEDED`，≤ → PASS；不存在 → UNDETERMINED `PILOT_POSITION_UNAVAILABLE`（不变）。
 - 高度：凌云来源 `altitude` 只落 `quality.altitude_raw`，`quality.altitude_datum=REFERENCE_UNKNOWN`，`altitude_amsl_m` 留空（决策 8.5-24）；`height` → `height_agl_m` + `quality.height_datum=DEVICE_GROUND`。
 - 协议 C：`external_target_id` 与 `source_session_key` 同取 `taskId`（8.5-20）；未映射事件返回空帧、inbox DONE（8.5-22）。协议 A 帧级 `observed_at` 取首个对象 `time`（8.5-21）。
+
+## 7. 提交后跟进（决策 8.5-27 / 8.5-28）
+
+- `target_attribute_selection`：帧内无任何来源估计时不写选源行（保留上一帧归属），"当前无来源"由 `target_degradation` 记录。
+- `target_latest_state.pilot_location` 只由携带身份主源的帧改写：身份主源在但未报 pilot → 写 NULL；整帧无身份主源 → 不碰该列。迁移 072 增 `pilot_observed_at`（与 `pilot_location` 同写同留），`RuleContracts.TargetState` 增可空 `pilotObservedAt`（旧 12/14 参构造器保留），C02-6 facts 输出 `pilot_observed_at`。本期不设独立"飞手位置过期"阈值，过期性由目标整体新鲜度（C03 `fresh_seconds`）兜底。
+- `inbox_message` 增单调写入序列 `ingest_seq`（迁移 073），`claim`/`failExhausted` 按 `received_at, ingest_seq` 领取；跨来源同毫秒帧无事实先后，管线以"同一批帧任意顺序处理结果一致"为守护性质（8.5-29）。

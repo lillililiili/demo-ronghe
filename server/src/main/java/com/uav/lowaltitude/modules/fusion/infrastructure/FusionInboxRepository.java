@@ -73,6 +73,11 @@ public class FusionInboxRepository {
     }
 
     /**
+     * 排序键是 (received_at, ingest_seq) 而不是 (received_at, inbox_id)：inbox_id 是随机 UUID，
+     * 同一毫秒到达的多源帧会按随机顺序处理，同一份数据集重放得不到同一份结果（决策 8.5-29）。
+     * ingest_seq 只保证"写入先后"可复现，不代表设备的真实到达先后——同毫秒的两台设备没有事实上的先后，
+     * 因此管线的结论本就不应依赖同毫秒内的处理顺序，稳定排序是为了让回放可复现，不是为了给顺序赋予含义。
+     *
      * 领取时把 fusion_attempts 加一，且只领 fusion_attempts < maxAttempts 的行：
      * 租约过期的 PROCESSING 行可以被重领，但同一毒帧最多重领 maxAttempts 次，之后由 {@link #failExhausted} 置 FAILED。
      */
@@ -85,10 +90,10 @@ public class FusionInboxRepository {
         putPrefixes(p, prefixes);
         int claimed = jdbc.update("UPDATE inbox_message SET status='PROCESSING', lease_token=:token, lease_until=:until, fusion_attempts=fusion_attempts+1"
                 + " WHERE inbox_id IN (SELECT inbox_id FROM inbox_message WHERE (status='RECEIVED' OR (status='PROCESSING' AND lease_until<:now))"
-                + " AND fusion_attempts<:max AND " + prefixSql(prefixes) + " AND source_id IS NOT NULL AND payload IS NOT NULL ORDER BY received_at ASC, inbox_id ASC FETCH FIRST :batch ROWS ONLY)"
+                + " AND fusion_attempts<:max AND " + prefixSql(prefixes) + " AND source_id IS NOT NULL AND payload IS NOT NULL ORDER BY received_at ASC, ingest_seq ASC FETCH FIRST :batch ROWS ONLY)"
                 + " AND (status='RECEIVED' OR (status='PROCESSING' AND lease_until<:now)) AND fusion_attempts<:max", p);
         if (claimed == 0) return List.of();
-        return jdbc.query("SELECT inbox_id,source,source_msg_id,source_id,received_at,CAST(payload AS VARCHAR) AS payload_text FROM inbox_message WHERE lease_token=:token ORDER BY received_at ASC, inbox_id ASC",
+        return jdbc.query("SELECT inbox_id,source,source_msg_id,source_id,received_at,CAST(payload AS VARCHAR) AS payload_text FROM inbox_message WHERE lease_token=:token ORDER BY received_at ASC, ingest_seq ASC",
                 Map.of("token", token), (rs, i) -> new InboxRow(rs.getString("inbox_id"), rs.getString("source"), rs.getString("source_msg_id"), rs.getString("source_id"),
                         rs.getLong("received_at"), rs.getString("payload_text")));
     }

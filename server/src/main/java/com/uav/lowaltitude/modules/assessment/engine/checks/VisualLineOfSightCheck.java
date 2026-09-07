@@ -44,6 +44,9 @@ public class VisualLineOfSightCheck implements RuleCheck {
         Map<String, Object> facts = CheckSupport.facts();
         // 飞手位置作为一块坐标进 facts（与契约 §6 的 pilot_location 同名），而不是拆成两个平行字段。
         facts.put("pilot_location", Map.of("longitude", state.pilotLongitude(), "latitude", state.pilotLatitude()));
+        // 决策 8.5-27 之后飞手位置可以保留自若干帧之前，因此判定依据必须带上它的观测时刻；
+        // 本期不设独立过期阈值，由目标整体新鲜度兜底（8.5-28），但"有多旧"要让读的人看得见。
+        facts.put("pilot_observed_at", state.pilotObservedAt());
         var evidence = CheckSupport.evidence(CheckSupport.EVIDENCE_TARGET, state.targetId());
         if (!CheckSupport.positionKnown(state)) {
             return CheckSupport.undetermined(ruleCode(), RuleCodes.POSITION_UNKNOWN, facts, refs, evidence,

@@ -93,15 +93,19 @@ public class FusedTrackRepository {
         p.put("t", s.targetId()); p.put("geom", s.longitude() == null ? null : ewkt(s.longitude(), s.latitude())); p.put("amsl", s.altitudeAmslM()); p.put("agl", s.heightAglM());
         p.put("speed", s.speedMps()); p.put("heading", s.headingDeg()); p.put("cconf", s.classificationConfidence()); p.put("fconf", s.fusionConfidence());
         p.put("observed", s.observedAt()); p.put("received", s.receivedAt()); p.put("unknown", s.unknownFieldsJson()); p.put("updated", s.updatedAt());
-        // 飞手位置每帧重写（含写回 NULL）：它描述"这一刻飞手在哪"，留着上一帧的旧值会让 C02-6 拿过期位置判超视距。
+        // 飞手位置只由"携带身份主源的帧"改写（决策 8.5-27）：没有身份主源的帧对"飞手在哪"不表态，
+        // 连同它的观测时刻一起保持原值；SQL 里干脆不出现这两列，而不是写一个看起来像新值的旧值。
         p.put("pilot", s.pilotLongitude() == null || s.pilotLatitude() == null ? null : ewkt(s.pilotLongitude(), s.pilotLatitude()));
+        p.put("pilot_at", s.pilotObservedAt());
+        String pilotSet = s.pilotDecided() ? " pilot_location=CAST(:pilot AS GEOMETRY), pilot_observed_at=:pilot_at," : "";
         int updated = jdbc.update("UPDATE target_latest_state SET location=CAST(:geom AS GEOMETRY), altitude_amsl_m=:amsl, height_agl_m=:agl, speed_mps=:speed, heading_deg=:heading,"
                 + " classification_confidence=:cconf, fusion_confidence=:fconf, observed_at=:observed, received_at=:received, unknown_fields=CAST(:unknown AS JSON),"
-                + " pilot_location=CAST(:pilot AS GEOMETRY), updated_at=:updated"
+                + pilotSet + " updated_at=:updated"
                 + " WHERE target_id=:t", p);
         if (updated == 0) {
-            jdbc.update("INSERT INTO target_latest_state (target_id,location,altitude_amsl_m,height_agl_m,speed_mps,heading_deg,classification_confidence,fusion_confidence,observed_at,received_at,unknown_fields,pilot_location,created_at,updated_at,version)"
-                    + " VALUES (:t,CAST(:geom AS GEOMETRY),:amsl,:agl,:speed,:heading,:cconf,:fconf,:observed,:received,CAST(:unknown AS JSON),CAST(:pilot AS GEOMETRY),:updated,:updated,0)", p);
+            // 新行没有"原值"可留，两列照写（未表态时即为 NULL）。
+            jdbc.update("INSERT INTO target_latest_state (target_id,location,altitude_amsl_m,height_agl_m,speed_mps,heading_deg,classification_confidence,fusion_confidence,observed_at,received_at,unknown_fields,pilot_location,pilot_observed_at,created_at,updated_at,version)"
+                    + " VALUES (:t,CAST(:geom AS GEOMETRY),:amsl,:agl,:speed,:heading,:cconf,:fconf,:observed,:received,CAST(:unknown AS JSON),CAST(:pilot AS GEOMETRY),:pilot_at,:updated,:updated,0)", p);
         }
     }
 
@@ -136,6 +140,16 @@ public class FusedTrackRepository {
             String contributingJson, String positionSourceId, boolean sourceSwitched, String degradationLevel) { }
     public record LatestState(String targetId, Double longitude, Double latitude, BigDecimal altitudeAmslM, BigDecimal heightAglM, BigDecimal speedMps, BigDecimal headingDeg,
             BigDecimal classificationConfidence, BigDecimal fusionConfidence, OffsetDateTime observedAt, OffsetDateTime receivedAt, String unknownFieldsJson, OffsetDateTime updatedAt,
-            /* 阶段 8.5：身份主源给出的飞手位置，无则为空。 */
-            Double pilotLongitude, Double pilotLatitude) { }
+            /* 阶段 8.5：身份主源给出的飞手位置与它的观测时刻；pilotDecided 为 false 时本帧不表态，两列保持原值。 */
+            Double pilotLongitude, Double pilotLatitude, OffsetDateTime pilotObservedAt, boolean pilotDecided) {
+
+        /** 直接指定飞手位置的调用方（测试夹具）：明写就是表态，写入 NULL 即清空；观测时刻留空。 */
+        public LatestState(String targetId, Double longitude, Double latitude, BigDecimal altitudeAmslM, BigDecimal heightAglM,
+                BigDecimal speedMps, BigDecimal headingDeg, BigDecimal classificationConfidence, BigDecimal fusionConfidence,
+                OffsetDateTime observedAt, OffsetDateTime receivedAt, String unknownFieldsJson, OffsetDateTime updatedAt,
+                Double pilotLongitude, Double pilotLatitude) {
+            this(targetId, longitude, latitude, altitudeAmslM, heightAglM, speedMps, headingDeg, classificationConfidence,
+                    fusionConfidence, observedAt, receivedAt, unknownFieldsJson, updatedAt, pilotLongitude, pilotLatitude, null, true);
+        }
+    }
 }

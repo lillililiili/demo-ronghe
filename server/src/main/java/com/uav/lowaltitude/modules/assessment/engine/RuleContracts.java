@@ -42,12 +42,21 @@ public final class RuleContracts {
             BigDecimal altitudeAmslM, BigDecimal heightAglM, BigDecimal speedMps, BigDecimal headingDeg,
             BigDecimal confidence, OffsetDateTime observedAt, OffsetDateTime receivedAt,
             /* 阶段 8.5：融合后的飞手/遥控器位置（target_latest_state.pilot_location），C02-6 超视距的输入；无则 null。 */
-            BigDecimal pilotLongitude, BigDecimal pilotLatitude) {
+            BigDecimal pilotLongitude, BigDecimal pilotLatitude,
+            /* 决策 8.5-28：飞手位置对应的观测时刻（target_latest_state.pilot_observed_at），可保留的飞手位置必须可追溯；无则 null。 */
+            OffsetDateTime pilotObservedAt) {
         /** 阶段 7 的旧签名：无飞手位置。 */
         public TargetState(String targetId, String trackId, String uavSn, BigDecimal longitude, BigDecimal latitude,
                 BigDecimal altitudeAmslM, BigDecimal heightAglM, BigDecimal speedMps, BigDecimal headingDeg,
                 BigDecimal confidence, OffsetDateTime observedAt, OffsetDateTime receivedAt) {
-            this(targetId, trackId, uavSn, longitude, latitude, altitudeAmslM, heightAglM, speedMps, headingDeg, confidence, observedAt, receivedAt, null, null);
+            this(targetId, trackId, uavSn, longitude, latitude, altitudeAmslM, heightAglM, speedMps, headingDeg, confidence, observedAt, receivedAt, null, null, null);
+        }
+        /** 阶段 8.5 的 14 参签名：有飞手位置、无其观测时刻。 */
+        public TargetState(String targetId, String trackId, String uavSn, BigDecimal longitude, BigDecimal latitude,
+                BigDecimal altitudeAmslM, BigDecimal heightAglM, BigDecimal speedMps, BigDecimal headingDeg,
+                BigDecimal confidence, OffsetDateTime observedAt, OffsetDateTime receivedAt,
+                BigDecimal pilotLongitude, BigDecimal pilotLatitude) {
+            this(targetId, trackId, uavSn, longitude, latitude, altitudeAmslM, heightAglM, speedMps, headingDeg, confidence, observedAt, receivedAt, pilotLongitude, pilotLatitude, null);
         }
     }
 

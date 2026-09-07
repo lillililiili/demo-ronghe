@@ -642,11 +642,10 @@ class Stage85PostgresTest {
         assertThat(target).isNotNull();
         assertThat(target.location()).as("目标位置必须回出坐标").isNotNull();
         assertThat(target.location().longitude()).isNotNull();
-        // 最新状态里的飞手位置：这里**自己写入**再读，而不是依赖融合的选源结果。
-        // 原因见报告"给领导的观察"：数据集里 TDOA 与光电的观测会被关联成同一个统一目标，而该目标的
-        // `target_attribute_selection` 三个来源列都是 NULL；`DefaultFusedLayerWriter.pilotOfIdentitySource`
-        // 没有身份主源就返回空，于是飞手位置一次也写不进最新状态。那是选源侧的问题，不该由这条读路径用例来背——
-        // 这条要回答的是"读侧在 PG 上取不取得到坐标"，所以用 E2 自己的写入方法把状态摆好，再读。
+        // 最新状态里的飞手位置：这里**自己写入**再读，而不是依赖融合选源的结果。
+        // 这条用例要回答的是"读侧在 PG 上取不取得到坐标"，把它绑到选源的产出上会让两件事互相掩盖：
+        // 选源一变（决策 8.5-27 之后就变过一次），这条读路径用例就会跟着红，而问题根本不在读侧。
+        // 所以用 E2 自己的写入方法把状态摆好再读——写入路径另有用例 9 与 14 覆盖。
         BigDecimal observationPilotLon = jdbc.queryForObject("select ST_X(pilot_location) from source_observation"
                 + " where external_target_id='D-PILOT' and pilot_location is not null limit 1", BigDecimal.class);
         BigDecimal observationPilotLat = jdbc.queryForObject("select ST_Y(pilot_location) from source_observation"
@@ -791,6 +790,133 @@ class Stage85PostgresTest {
             if (cause instanceof java.sql.SQLException sql) return sql.getSQLState();
         }
         return failure == null ? null : "<no SQLException: " + failure + ">";
+    }
+
+    /**
+     * 提交后跟进的两支迁移（决策 8.5-28 / 8.5-29）在真实库上的形态。
+     * `ingest_seq` 是领取排序的稳定键，它自己必须先是单调且唯一的，否则"顺序可复现"无从谈起。
+     */
+    @Test
+    @Order(13)
+    void followUpMigrations072And073AreAppliedWithUsableColumnShapes() {
+        assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success=false", Long.class)).isZero();
+        for (String version : List.of("202609050072", "202609050073")) {
+            assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where version=?", Long.class, version))
+                    .as("迁移 " + version + " 必须已应用").isEqualTo(1L);
+        }
+        // 072：飞手位置的观测时刻，可空（多数来源根本不上报飞手，缺失是真实结论）。
+        Map<String, Object> pilotAt = jdbc.queryForMap("select data_type,is_nullable from information_schema.columns"
+                + " where table_schema=? and table_name='target_latest_state' and column_name='pilot_observed_at'", SCHEMA);
+        assertThat(pilotAt).containsEntry("data_type", "timestamp with time zone").containsEntry("is_nullable", "YES");
+        // 073：写入序列，非空且由数据库生成——由调用方填就失去"写入先后"的意义了。
+        Map<String, Object> ingestSeq = jdbc.queryForMap("select data_type,is_nullable,is_identity from information_schema.columns"
+                + " where table_schema=? and table_name='inbox_message' and column_name='ingest_seq'", SCHEMA);
+        assertThat(ingestSeq).containsEntry("data_type", "bigint").containsEntry("is_nullable", "NO").containsEntry("is_identity", "YES");
+        assertThat(jdbc.queryForList("select indexname from pg_indexes where schemaname=? and indexname='idx_stage85_inbox_claim_order'",
+                String.class, SCHEMA)).as("排序键要有索引跟着").hasSize(1);
+
+        // 单调且唯一：三条同一毫秒写入的信封，序号必须严格递增。
+        String source = "replay:seq-" + suffix;
+        for (int i = 1; i <= 3; i++) insertInbox(source, "seq-" + i, "{\"n\":" + i + "}");
+        List<Long> seqs = jdbc.queryForList("select ingest_seq from inbox_message where source=? order by ingest_seq", Long.class, source);
+        assertThat(seqs).hasSize(3).doesNotHaveDuplicates().isSorted();
+        assertThat(seqs.get(2)).isGreaterThan(seqs.get(0));
+        for (String inboxId : jdbc.queryForList("select inbox_id from inbox_message where source=?", String.class, source)) {
+            inbox.done(inboxId, T0.toInstant().toEpochMilli());
+        }
+    }
+
+    /**
+     * 决策 8.5-27/8.5-28：飞手位置只由**携带身份主源的帧**改写；不表态的帧连同观测时刻一起保持原值。
+     *
+     * <p>三条路径分开验，因为它们的失败后果完全不同：
+     * 表态且有位置 → 两列同写；不表态 → 两列同留（**这条最要紧**，原先每帧重写会让一条没有飞手的光电帧
+     * 把 TDOA 刚写进去的飞手位置抹掉）；表态且位置为空 → 两列同清（明写就是"我确认现在没有"，不能当成不表态）。
+     *
+     * <p>注意"同写同留"是**写入方的保证，不是数据库约束**：`LatestState` 的 15 参夹具构造器就允许写位置不写时刻。
+     * 所以这里断言的是 `upsertLatestState` 的行为，不是全库不变式——把它写成全库不变式会因为夹具而假红。
+     */
+    @Test
+    @Order(14)
+    void pilotLocationAndItsObservedAtAreWrittenKeptAndClearedTogether() {
+        String targetId = "s85-pilot-pair-" + suffix;
+        jdbc.update("insert into target (target_id,target_no,object_type_code,first_seen_at,last_seen_at,source_mode,created_at,updated_at,version)"
+                + " values (?,?,'UAV',?,?,'live',?,?,0)", targetId, "目标-S85P-" + suffix, T0, T0, T0, T0);
+
+        // ① 表态且有位置：两列同写。
+        OffsetDateTime pilotAt = T0.plusMinutes(1);
+        fusedTracks.upsertLatestState(pilotState(targetId, 100.61, 20.41, pilotAt, true));
+        Map<String, Object> written = jdbc.queryForMap("select ST_X(pilot_location) as lon, pilot_observed_at from target_latest_state where target_id=?", targetId);
+        assertThat((Double) written.get("lon")).isEqualTo(100.61);
+        assertThat(written.get("pilot_observed_at")).as("有飞手位置就必须有它的观测时刻，否则没法判断这个位置有多旧").isNotNull();
+
+        // ② 不表态：两列同留。这条是 8.5-27 的正题——原先每帧重写，一条没有飞手的帧就能把上一帧的飞手位置抹掉。
+        fusedTracks.upsertLatestState(pilotState(targetId, null, null, null, false));
+        Map<String, Object> kept = jdbc.queryForMap("select ST_X(pilot_location) as lon, pilot_observed_at from target_latest_state where target_id=?", targetId);
+        assertThat((Double) kept.get("lon")).as("不表态的帧不得抹掉已知的飞手位置").isEqualTo(100.61);
+        assertThat(kept.get("pilot_observed_at")).as("位置留下了，它的时刻也必须留下——否则会变成一个不知多旧的位置").isNotNull();
+        assertThat(kept.get("pilot_observed_at")).isEqualTo(written.get("pilot_observed_at"));
+
+        // ③ 表态且位置为空：两列同清。明写 NULL 是"我确认现在没有"，与"不表态"是两件事。
+        fusedTracks.upsertLatestState(pilotState(targetId, null, null, null, true));
+        assertThat(jdbc.queryForObject("select count(*) from target_latest_state where target_id=?"
+                + " and pilot_location is null and pilot_observed_at is null", Long.class, targetId))
+                .as("显式清空必须两列一起清，不能留一个孤儿时刻").isEqualTo(1L);
+
+        // ④ 再表态一次，时刻随之更新：位置变了而时刻不变，等于用新位置冒充旧观测。
+        fusedTracks.upsertLatestState(pilotState(targetId, 100.62, 20.42, pilotAt.plusMinutes(5), true));
+        assertThat(jdbc.queryForObject("select pilot_observed_at from target_latest_state where target_id=?", OffsetDateTime.class, targetId))
+                .isEqualTo(pilotAt.plusMinutes(5));
+    }
+
+    /**
+     * 决策 8.5-29：领取顺序按 `(received_at, ingest_seq)`，同一份数据灌两次得到同一个顺序。
+     *
+     * <p>断言的是"顺序等于按 `(received_at, ingest_seq)` 排出来的顺序"，而不只是"两次相同"——
+     * 两次都错成同一个顺序也满足"两次相同"，那样的用例挡不住任何东西。
+     * 用同一毫秒、交替前缀的行来构造：只有排序键真的生效，顺序才会等于写入顺序；
+     * 若还按随机 `inbox_id` 排，交替前缀会被打乱。
+     */
+    @Test
+    @Order(15)
+    void claimOrderFollowsIngestSequenceAndIsReproducible() {
+        String tag = "order-" + suffix;
+        List<String> prefixes = List.of("replay:", "lingyun:radar:", "eo-edge:");
+        List<String> insertionOrder = new java.util.ArrayList<>();
+        for (int i = 1; i <= 12; i++) {
+            String source = prefixes.get(i % prefixes.size()) + tag;
+            insertInbox(source, "ord-" + i, "{\"n\":" + i + "}");   // 同一 received_at（T0），只有 ingest_seq 不同
+            insertionOrder.add(source + "#ord-" + i);
+        }
+        List<String> byOrderingKey = jdbc.queryForList("select source||'#'||source_msg_id from inbox_message"
+                + " where source like ? order by received_at asc, ingest_seq asc", String.class, "%" + tag);
+        assertThat(byOrderingKey).as("同毫秒写入时，排序键顺序就是写入顺序").containsExactlyElementsOf(insertionOrder);
+
+        List<FusionInboxRepository.InboxRow> claimed = inbox.claim(System.currentTimeMillis(), 12, 60_000L);
+        List<String> claimedOrder = claimed.stream().filter(row -> row.source().endsWith(tag))
+                .map(row -> row.source() + "#" + row.sourceMsgId()).toList();
+        assertThat(claimedOrder).as("领取顺序必须与 (received_at, ingest_seq) 一致").containsExactlyElementsOf(insertionOrder);
+        for (FusionInboxRepository.InboxRow row : claimed) inbox.done(row.inboxId(), System.currentTimeMillis());
+
+        // 再灌一批同样的数据：相对顺序不变（序号继续单调，不会因为随机 id 而重排）。
+        String secondTag = "order2-" + suffix;
+        List<String> secondInsertion = new java.util.ArrayList<>();
+        for (int i = 1; i <= 12; i++) {
+            String source = prefixes.get(i % prefixes.size()) + secondTag;
+            insertInbox(source, "ord-" + i, "{\"n\":" + i + "}");
+            secondInsertion.add(source + "#ord-" + i);
+        }
+        List<FusionInboxRepository.InboxRow> second = inbox.claim(System.currentTimeMillis(), 12, 60_000L);
+        assertThat(second.stream().filter(row -> row.source().endsWith(secondTag))
+                .map(row -> row.source() + "#" + row.sourceMsgId()).toList())
+                .as("同一份数据第二次灌库仍得到同一个顺序").containsExactlyElementsOf(secondInsertion);
+        for (FusionInboxRepository.InboxRow row : second) inbox.done(row.inboxId(), System.currentTimeMillis());
+    }
+
+    private FusedTrackRepository.LatestState pilotState(String targetId, Double pilotLon, Double pilotLat,
+            OffsetDateTime pilotObservedAt, boolean decided) {
+        return new FusedTrackRepository.LatestState(targetId, 100.70, 20.50, null, null, null, null, null, null,
+                T0, T0, "[]", T0, pilotLon, pilotLat, pilotObservedAt, decided);
     }
 
     // ---------------------------------------------------------------------------------------------------------------

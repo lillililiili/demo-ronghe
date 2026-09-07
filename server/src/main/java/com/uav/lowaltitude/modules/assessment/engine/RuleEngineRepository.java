@@ -234,7 +234,7 @@ public class RuleEngineRepository {
     public StateRow latestState(String targetId) {
         List<StateRow> rows = jdbc.query("SELECT " + locationColumns("s.location", "") + "," + locationColumns("s.pilot_location", "pilot_")
                 + ",s.altitude_amsl_m,s.height_agl_m,s.speed_mps,s.heading_deg,"
-                + "s.classification_confidence,s.fusion_confidence,s.observed_at,s.received_at,s.updated_at FROM target_latest_state s WHERE s.target_id=:id",
+                + "s.classification_confidence,s.fusion_confidence,s.observed_at,s.received_at,s.updated_at,s.pilot_observed_at FROM target_latest_state s WHERE s.target_id=:id",
                 Map.of("id", targetId), (rs, i) -> {
                     BigDecimal[] point = location(rs, "");
                     BigDecimal[] pilot = location(rs, "pilot_");
@@ -242,7 +242,7 @@ public class RuleEngineRepository {
                             rs.getBigDecimal("height_agl_m"), rs.getBigDecimal("speed_mps"), rs.getBigDecimal("heading_deg"),
                             rs.getBigDecimal("classification_confidence"), rs.getBigDecimal("fusion_confidence"),
                             time(rs, "observed_at"), time(rs, "received_at"), time(rs, "updated_at"),
-                            pilot == null ? null : pilot[0], pilot == null ? null : pilot[1]);
+                            pilot == null ? null : pilot[0], pilot == null ? null : pilot[1], time(rs, "pilot_observed_at"));
                 });
         return rows.isEmpty() ? null : rows.get(0);
     }
@@ -475,8 +475,9 @@ public class RuleEngineRepository {
     public record StateRow(BigDecimal longitude, BigDecimal latitude, BigDecimal altitudeAmslM, BigDecimal heightAglM, BigDecimal speedMps,
             BigDecimal headingDeg, BigDecimal classificationConfidence, BigDecimal fusionConfidence, OffsetDateTime observedAt,
             OffsetDateTime receivedAt, OffsetDateTime updatedAt,
-            /* 阶段 8.5：融合层写入的飞手位置，C02-6 的输入；无则为空。 */
-            BigDecimal pilotLongitude, BigDecimal pilotLatitude) { }
+            /* 阶段 8.5：融合层写入的飞手位置与它的观测时刻，C02-6 的输入；无则为空。
+             * pilotObservedAt 暂时只到本行为止：冻结接口 TargetState 的第 15 个字段由领导添加，加完再接进 C02-6 的 facts（决策 8.5-28）。 */
+            BigDecimal pilotLongitude, BigDecimal pilotLatitude, OffsetDateTime pilotObservedAt) { }
     public record EvaluationLink(String evaluationId, String targetId, String planId, String assessmentId, String mode) { }
     public record EvaluationInsert(String evaluationId, String runId, String ruleSetVersionId, RunMode mode, SubjectKind subjectKind, String targetId,
             String trackId, String planId, String routeVersionId, OffsetDateTime observedAt, OffsetDateTime asOf, OffsetDateTime evaluatedAt,

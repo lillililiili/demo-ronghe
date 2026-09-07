@@ -167,6 +167,8 @@ class C02ChecksTest {
         assertThat(far.reasonCode()).isEqualTo("BVLOS_EXCEEDED");
         assertThat(((BigDecimal) far.facts().get("distance_m")).doubleValue()).isBetween(1000.0, 1200.0);
         assertThat(far.facts()).containsEntry("pilot_location", Map.of("longitude", new BigDecimal("118.02"), "latitude", new BigDecimal("37.03")));
+        // 决策 8.5-28：飞手位置可能保留自若干帧之前，判定依据里必须带上它的观测时刻，读的人才知道有多旧。
+        assertThat(far.facts()).containsEntry("pilot_observed_at", AS_OF.minusMinutes(3));
         assertThat(far.message()).contains("演示");
 
         HitDetail near = new VisualLineOfSightCheck().evaluate(context(withPilot("118.02", "37.021"), full(), List.of(), null), params);
@@ -243,7 +245,7 @@ class C02ChecksTest {
     /** 目标位置同 state()，另带飞手位置：C02-6 的唯一新增输入。 */
     private static TargetState withPilot(String pilotLon, String pilotLat) {
         return new TargetState("t-1", "tr-1", "SN-1", new BigDecimal("118.02"), new BigDecimal("37.02"), new BigDecimal("80.00"), new BigDecimal("60.00"),
-                null, null, new BigDecimal("0.9"), AS_OF, AS_OF, new BigDecimal(pilotLon), new BigDecimal(pilotLat));
+                null, null, new BigDecimal("0.9"), AS_OF, AS_OF, new BigDecimal(pilotLon), new BigDecimal(pilotLat), AS_OF.minusMinutes(3));
     }
     private static AirspaceHit hit(String kind, String relation, String min, String max, String datum, String unknown) {
         return new AirspaceHit("a-" + kind, "av-" + kind, kind, relation, min == null ? null : new BigDecimal(min), max == null ? null : new BigDecimal(max), datum,

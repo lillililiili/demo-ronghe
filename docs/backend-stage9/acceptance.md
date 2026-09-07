@@ -42,3 +42,7 @@
 - 阶段 8 遗留：引擎自动合并/分裂未在管线触发；凌云协议映射（阶段 8.5）未开始。
 - 未映射路径 500 而非 404（平台级）。
 - 执行会话未落盘截图（9-29）；浏览器路径由领导在本节记录。
+
+## 提交后补充（2026-09-07，阶段 9 收尾）
+- 助手补齐 `ProductionStage9SeedIsolationTest`：迁移 061/063/064 的九张业务数据表在 `production` / `production,local` 下逐表断言为空，并按 id 前缀点名核对阶段 9/阶段 3 种子行；目录表（`space_object_subtype`、`SPACE-RISK-DEMO` 结构与参数、`rule-engine-space-risk-*` 来源行）按决策 9-16 允许存在但不激活。2/2（隔离 H2）。`Stage9PostgresTest` 终态 20/20（并发登记同 `document_no` 一成一 409、决策 9-28 引擎只取含 C03 的规则集）已在 236af2c 内。
+- 知会协作者 A（审查 P2-1）：`dongying-vue/src/ui/labels.js` 的 `LEGALITY_LABEL.UNDETERMINED` 由"待确认"改为"不可判定"，大屏 `bigscreen/BigScreenApp.vue` 消费同一字典，文案随之变化；`RuleEngineRepository.ruleSetsWithVersions()` 只取成员含 C03 的规则集（9-28）。

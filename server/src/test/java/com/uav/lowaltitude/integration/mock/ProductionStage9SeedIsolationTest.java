@@ -96,9 +96,21 @@ class ProductionStage9SeedIsolationTest {
             assertThat(jdbc.queryForObject("select count(*) from space_risk_fact", Integer.class)).isZero();
             assertThat(jdbc.queryForObject("select count(*) from rule_evaluation_run", Integer.class))
                     .as("无 ACTIVE 版本时 Job 空转，连一条评估运行记录都不该有").isZero();
+
+            // 迁移 061/063/064 建的都是**业务数据表**，不是目录：生产里它们必须一行都没有。
+            // 逐表断言而不是抽查——漏掉哪张表，那张表就成了演示数据进生产的通道。
+            for (String table : List.of("airspace_version_origin", "airspace_import_batch", "airspace_import_item",
+                    "airport", "airport_runway", "airport_procedure_route", "airport_protected_target",
+                    "airport_notification_target", "flight_plan_authorization")) {
+                assertThat(jdbc.queryForObject("select count(*) from " + table, Integer.class))
+                        .as(table + " 是业务数据表，生产必须为空").isZero();
+            }
+            // 两个种子各自的行也点名核一次：即使将来有人换了 Bean 名绕过上面的 containsBean 断言，数据这一层仍然拦得住。
+            assertThat(jdbc.queryForObject("select count(*) from target where target_id like 'seed-stage9-%'", Integer.class))
+                    .as("阶段 9 空间风险种子的异物目标不得进生产").isZero();
+            assertThat(jdbc.queryForObject("select count(*) from route_version where route_version_id like 'seed-stage3-%'", Integer.class))
+                    .as("阶段 9 种子依赖的阶段 3 计划航线同样不得进生产").isZero();
+            assertThat(jdbc.queryForObject("select count(*) from flight_plan where plan_id like 'seed-stage3-%'", Integer.class)).isZero();
         }
     }
-
-    // TODO(9.4，待迁移 061/063/064 落地)：airspace_import_batch / airspace_import_item / airspace_version_origin、
-    //   airport 及其四张子表、flight_plan_authorization 在生产为空。
 }

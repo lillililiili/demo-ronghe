@@ -1,8 +1,8 @@
 import { authUser } from './auth.js';
 
-const ROUTE_ALIAS = { overview: 'situation', risk: 'flights', airspace: 'flights' };
+const ROUTE_ALIAS = { overview: 'situation' };
 const ROUTE_PERMISSION = {
-  situation: 'sensing', flights: 'flights', legality: 'legality', alarms: 'alarms', punish: 'punishment',
+  situation: 'sensing', flights: 'flights', airspace: 'airspace', risk: 'risk', legality: 'legality', alarms: 'alarms', punish: 'punishment',
   stats: 'statistics', evidence: 'evidence', devices: 'devices', monitor: 'monitoring', commission: 'commissioning',
   apis: 'interfaces', users: 'users', roles: 'roles', archive: 'audit'
 };

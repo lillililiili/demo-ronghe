@@ -15,3 +15,14 @@ body{
 ::-webkit-scrollbar-track{background:rgba(255,255,255,.04)}
 ::-webkit-scrollbar-corner{background:transparent}
 *{scrollbar-width:thin;scrollbar-color:rgba(90,150,220,.5) rgba(255,255,255,.05)}
+
+/* Chrome/Safari 自动填充会强制刷成浅蓝底黑字，在深色输入框上是一块白斑。
+   背景只绘制到文字范围 + 无限延迟背景过渡，保留控件自身的半透明底色。 */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active{
+  -webkit-background-clip:text;background-clip:text;
+  -webkit-text-fill-color:currentColor;caret-color:currentColor;
+  transition:background-color 600000s 0s
+}

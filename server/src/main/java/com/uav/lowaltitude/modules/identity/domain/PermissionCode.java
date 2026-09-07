@@ -34,7 +34,13 @@ public enum PermissionCode {
     EVIDENCE_INGEST("evidence:ingest"),
     EVIDENCE_DOWNLOAD("evidence:download"),
     EVIDENCE_LINK("evidence:link"),
-    EVIDENCE_HOLD("evidence:hold");
+    EVIDENCE_HOLD("evidence:hold"),
+    // 阶段 9：空域写/导入、机场基础数据、空间风险评估触发、飞行计划外部授权登记。
+    AIRSPACE_MANAGE("airspace:manage"),
+    AIRPORT_READ("airport:read"),
+    AIRPORT_MANAGE("airport:manage"),
+    RISK_EVALUATE("risk:evaluate"),
+    FLIGHT_AUTHORIZE("flight:authorize");
 
     private final String value;
 

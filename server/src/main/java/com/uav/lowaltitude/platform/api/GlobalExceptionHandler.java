@@ -148,6 +148,9 @@ public class GlobalExceptionHandler {
         if (path.contains("/legality-") || path.contains("/rule-effects")) return "assessment";
         if (path.contains("/rule-sets") || path.contains("/rule-set-versions") || path.contains("/rule-runs")) return "rules";
         if (path.contains("/flight-plans") || path.contains("/routes") || path.contains("/route-versions")) return "flights";
+        // 阶段 9：机场基础数据独立归档；空间风险汇总、异物细类字典与 C04/C05 评估触发归风险模块。
+        if (path.contains("/airports")) return "airport";
+        if (path.contains("/space-risks") || path.contains("/space-object-subtypes") || path.contains("/rule-evaluations")) return "risk";
         if (path.contains("/airspace")) return "airspace";
         if (path.contains("/stats")) return "statistics";
         // 阶段 8：融合引擎配置/状态/指标与目标修订、合并、分裂都归融合模块；阶段 2 的目标只读接口本身仍归 system（无写审计）。

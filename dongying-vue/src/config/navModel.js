@@ -16,6 +16,9 @@ export const NAV = [
   {
     t: '飞行监管', icon: 'plan', kids: [
       { k: 'flights', t: '飞行计划' },
+      /* 阶段 9：空域与航线规则、空间安全风险从"飞行计划的别名"变为独立页面；菜单可见性由服务端 menu_keys 决定。 */
+      { k: 'airspace', t: '空域与航线规则' },
+      { k: 'risk', t: '空间安全风险' },
       { k: 'legality', t: '合法性研判' }
     ]
   },
@@ -60,10 +63,6 @@ export const ROUTES = (function () {
     n.kids.forEach(c => { r[c.k] = { t: c.t, p: n.t, ph: n.kids[0].k }; });
   });
   EXTRA.forEach(e => { r[e.k] = { t: e.t, p: e.parent, ph: 'alarms' }; });
-  /* 别名路由（risk/airspace 并入飞行计划后保留的旧地址）：
-     不在 NAV 里，但标题/面包屑必须按落点显示。 */
-  r.risk = { t: '飞行计划 · 全部风险事件', p: '飞行监管', ph: 'flights' };
-  r.airspace = { t: '飞行计划', p: '飞行监管', ph: 'flights' };
   r.overview = { t: '融合感知', p: '感知监测', ph: 'situation' };
   r.bigscreen = { t: '低空安全监控大屏', p: null, ph: null };
   r.login = { t: '登录', p: null, ph: null }; // 独立入口，不加入业务导航/权限矩阵

@@ -25,6 +25,7 @@ final class AuditLabels {
             Map.entry("statistics", "运行统计"),
             Map.entry("fusion", "融合感知"),
             Map.entry("evidence", "证据管理"),
+            Map.entry("airport", "机场基础数据"),
             Map.entry("system", "系统"));
 
     private static final Map<String, String> ACTIONS = Map.ofEntries(
@@ -78,7 +79,19 @@ final class AuditLabels {
             Map.entry("evidence_hold_released", "解除证据冻结"),
             Map.entry("evidence_verified", "校验证据文件"),
             Map.entry("evidence_downloaded", "下载证据文件"),
-            Map.entry("evidence_exported", "导出证据台账"));
+            Map.entry("evidence_exported", "导出证据台账"),
+            Map.entry("airspace_created", "新建空域"),
+            Map.entry("airspace_version_created", "新增空域版本"),
+            Map.entry("airspace_import_staged", "暂存空域导入"),
+            Map.entry("airspace_import_confirmed", "确认空域导入"),
+            Map.entry("airspace_import_discarded", "放弃空域导入"),
+            Map.entry("airport_created", "新建机场"),
+            Map.entry("airport_runway_created", "新增跑道"),
+            Map.entry("airport_procedure_route_created", "新增进离场航线"),
+            Map.entry("airport_protected_target_created", "新增保护目标"),
+            Map.entry("airport_notification_target_created", "新增通报对象"),
+            Map.entry("rule_evaluation_triggered", "手动触发空间风险评估"),
+            Map.entry("plan_authorization_recorded", "登记飞行计划外部授权"));
 
     private static final Map<String, String> METHODS = Map.of(
             "GET", "查询", "POST", "提交", "PUT", "更新", "PATCH", "更新", "DELETE", "删除");
@@ -111,7 +124,11 @@ final class AuditLabels {
             Map.entry("/fusion", "融合引擎"),
             Map.entry("/targets", "目标"),
             Map.entry("/tracks", "轨迹"),
-            Map.entry("/evidence-files", "证据文件"));
+            Map.entry("/evidence-files", "证据文件"),
+            Map.entry("/airports", "机场"),
+            Map.entry("/space-risks", "空间安全风险"),
+            Map.entry("/space-object-subtypes", "异物细类"),
+            Map.entry("/rule-evaluations", "风险规则评估"));
 
     private AuditLabels() {
     }

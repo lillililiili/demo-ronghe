@@ -17,6 +17,8 @@ import SituationPage from './SituationPage.vue';
 import PunishPage from './PunishPage.vue';
 import LegalityPage from './LegalityPage.vue';
 import WorkbenchPage from './WorkbenchPage.vue';
+import AirspacePage from './airspace/AirspacePage.vue';
+import SpaceRiskPage from './spacerisk/SpaceRiskPage.vue';
 
 export const VUE_PAGES = {
   workbench: WorkbenchPage,
@@ -29,12 +31,10 @@ export const VUE_PAGES = {
   commission: CommissionPage,
   devices: DevicesPage,
   monitor: MonitorPage,
-  /* flights/risk/airspace 三个路由 key 共用一个组件：
-     组件内 syncTabByRoute 按当前 hash 预置页签（#/risk → 全部风险事件），
-     复刻 legacy 别名代理（PAGES.risk/airspace → flights）语义。 */
   flights: FlightsPage,
-  risk: FlightsPage,
-  airspace: FlightsPage,
+  /* 阶段 9：risk / airspace 不再是 flights 的别名，各自是独立页面。 */
+  airspace: AirspacePage,
+  risk: SpaceRiskPage,
   situation: SituationPage,
   punish: PunishPage,
   legality: LegalityPage

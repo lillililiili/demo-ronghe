@@ -43,10 +43,11 @@ class ProductionStage7SeedIsolationTest {
 
             JdbcTemplate jdbc = context.getBean(JdbcTemplate.class);
             // 生产没有 ACTIVE/SHADOW 规则集版本：引擎空转，不产生研判或告警。
-            assertThat(jdbc.queryForObject("select count(*) from rule_set", Integer.class)).isZero();
+            // 阶段 9 迁移 062 登记 SPACE-RISK-DEMO（PUBLISHED+DEMO，未激活）及其参数属结构性目录；生产不变量改为"无生效/影子版本、无阶段 7 种子规则集"。
+            assertThat(jdbc.queryForObject("select count(*) from rule_set where rule_set_code='LEGALITY-DEMO'", Integer.class)).isZero();
             assertThat(jdbc.queryForObject("select count(*) from rule_set where active_version_id is not null or shadow_version_id is not null", Integer.class)).isZero();
-            assertThat(jdbc.queryForObject("select count(*) from rule_set_version", Integer.class)).isZero();
-            assertThat(jdbc.queryForObject("select count(*) from rule_param", Integer.class)).isZero();
+            assertThat(jdbc.queryForObject("select count(*) from rule_set_version where rule_set_id not in (select rule_set_id from rule_set where rule_set_code='SPACE-RISK-DEMO')", Integer.class)).isZero();
+            assertThat(jdbc.queryForObject("select count(*) from rule_param where rule_set_version_id not in (select rule_set_version_id from rule_set_version v join rule_set s on s.rule_set_id=v.rule_set_id where s.rule_set_code='SPACE-RISK-DEMO')", Integer.class)).isZero();
             assertThat(jdbc.queryForObject("select count(*) from rule_run", Integer.class)).isZero();
             assertThat(jdbc.queryForObject("select count(*) from rule_evaluation", Integer.class)).isZero();
             assertThat(jdbc.queryForObject("select count(*) from legality_review", Integer.class)).isZero();

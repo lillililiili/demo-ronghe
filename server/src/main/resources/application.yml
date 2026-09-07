@@ -63,6 +63,12 @@ app:
     lease-seconds: ${APP_LIVE_DEVICE_LEASE_SECONDS:30}
   # 阶段 7 规则引擎：默认关闭调度；DEMO 参数版本默认不允许激活（只能做影子验证）。
   rule-engine:
+    # C04 空间安全风险定时评估：默认关闭，只在 PostGIS 部署上按需打开（H2 会记 UNAVAILABLE）。
+    c04:
+      enabled: false
+      poll-millis: 60000
+      # 调度回看窗口（分钟）；这是调度参数，不是规则阈值——规则阈值一律在 rule_param 里。
+      window-minutes: 30
     enabled: ${APP_RULE_ENGINE_ENABLED:false}
     poll-millis: ${APP_RULE_ENGINE_POLL_MILLIS:5000}
     batch-size: ${APP_RULE_ENGINE_BATCH_SIZE:50}

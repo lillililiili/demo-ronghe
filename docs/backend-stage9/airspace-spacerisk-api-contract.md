@@ -1,6 +1,6 @@
 # 阶段 9 飞行监管补齐与第二业务线接口契约
 
-> 状态：领导冻结稿 v1.0（2026-09-06）。配套：`docs/backend-stage9/decisions.md`、`docs/backend-stage3/flight-airspace-assessment-api-contract.md`（阶段 3 只读契约，本文只追加）、`docs/backend-stage4/alarm-risk-api-contract.md`（风险核验，本文只加过滤与可空字段）、`docs/backend-stage7/rule-engine-api-contract.md`（规则参数机制）。约定沿用：`{ok,data}` 包络、snake_case、字符串 ID、epoch 毫秒、`page/size → items/page/size/total`、先鉴权再解析、精确 `(owner_org_id,district_id)` 元组、越权 404、写接口 `Idempotency-Key` + `expected_version`、成功审计同事务、失败审计事务外、未知字段 `UNKNOWN_FIELD`。
+> 状态：领导冻结稿 v1.1（2026-09-07：space-fact 响应体、并发 confirm 的 409 码；v1.0 于 2026-09-06）。配套：`docs/backend-stage9/decisions.md`、`docs/backend-stage3/flight-airspace-assessment-api-contract.md`（阶段 3 只读契约，本文只追加）、`docs/backend-stage4/alarm-risk-api-contract.md`（风险核验，本文只加过滤与可空字段）、`docs/backend-stage7/rule-engine-api-contract.md`（规则参数机制）。约定沿用：`{ok,data}` 包络、snake_case、字符串 ID、epoch 毫秒、`page/size → items/page/size/total`、先鉴权再解析、精确 `(owner_org_id,district_id)` 元组、越权 404、写接口 `Idempotency-Key` + `expected_version`、成功审计同事务、失败审计事务外、未知字段 `UNKNOWN_FIELD`。
 
 ## 交付边界
 
@@ -31,12 +31,12 @@ POST /api/v1/airspaces/{id}/versions                    {kind_code, boundary, mi
 GET  /api/v1/airspaces/{id}/versions/{a}/diff/{b}       {fields:[{field, from, to}], geometry:{changed, area_delta_m2?, availability AVAILABLE|UNAVAILABLE}}（H2 下几何 UNAVAILABLE）
 POST /api/v1/airspaces/import-batches                   {geojson(FeatureCollection ≤2 MB, ≤200 features), defaults{kind_code?, altitude_datum?, valid_from?}, owner_org_id, district_id} → 201 {batch_id, status:STAGED, items[{seq, name, kind_code, issues[], accepted}]}
 GET  /api/v1/airspaces/import-batches/{id}
-POST /api/v1/airspaces/import-batches/{id}/confirm      {expected_version} → 200 {created_airspaces, created_versions}；只对 accepted 项建空域/版本；并发 confirm 一成一 409 VERSION_CONFLICT
+POST /api/v1/airspaces/import-batches/{id}/confirm      {expected_version} → 200 {created_airspaces, created_versions}；只对 accepted 项建空域/版本；并发 confirm 一成一 409：批次已被另一请求决定 → `IMPORT_ALREADY_DECIDED`；客户端携带的 `expected_version` 已过期 → `VERSION_CONFLICT`（决策 9-23）
 POST /api/v1/airspaces/import-batches/{id}/discard      {expected_version} → 200
 
 # 空间安全风险（读：risk:read；评估：risk:evaluate）
 GET  /api/v1/risks?risk_type=SPACE_OBJECT&object_subtype=&page&size    既有接口加过滤；RiskDto 追加可空 space_fact{subtype_code, subtype_name, rule_version_id, rule_set_version_no, corridor_relation, distance_to_route_m, altitude_band, object_count, trend}
-GET  /api/v1/risks/{id}/space-fact                       无则 404 SPACE_FACT_NOT_FOUND
+GET  /api/v1/risks/{id}/space-fact                       无则 404 SPACE_FACT_NOT_FOUND；响应体（v1.1，审查第 5 轮补）：{risk_id, subtype_code, subtype_name, rule_version_id, rule_set_version_id, rule_set_version_no, distance_to_route_m?, corridor_relation, altitude_band, altitude_datum, object_count?, trend?, unknown_reasons[], longitude?, latitude?, target_altitude_raw?, window_from, window_to}——坐标为顶层扁平字段（决策 9-18），没有可信坐标时省略，页面不画点
 GET  /api/v1/space-risks/summary?from&to&owner_org_id&district_id       {by_subtype[], by_severity[], by_state[], by_altitude_band[], trend_buckets[{from,to,count}], routes_involved, rule_version:{rule_set_code, version_no, param_status}}
 GET  /api/v1/space-object-subtypes                       [{subtype_code, display_name, aliases[], enabled}]
 POST /api/v1/rule-evaluations                            {rule_code C04|C05, window_from, window_to} → 202 {run_id, status}；H2/无 PostGIS → status UNAVAILABLE（不是 500）

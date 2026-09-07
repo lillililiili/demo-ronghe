@@ -12,7 +12,9 @@ public final class RiskDtos {
             String reasonCode, String reasonText, Long occurredAt, long receivedAt, BigDecimal observedAltitudeM,
             String observedAltitudeDatum, String heightRelation, String sourceCode, String sourceMode,
             String ownerOrgId, String districtId, long version, List<String> allowedActions,
-            String sourceName, String ownerOrgName, String districtName, String planNo, String targetNo) { }
+            String sourceName, String ownerOrgName, String districtName, String planNo, String targetNo,
+            /* 阶段 9 追加：空中异物风险的判定依据；其它风险类型没有这一段，字段整体缺省。 */
+            SpaceRiskDtos.SpaceFactDto spaceFact) { }
     public record VerificationDto(String historyId, long version, String previousState, String resultingState,
             String conclusion, String note, String actorId, long createdAt, String actorName) { }
     public record VerifyRequest(String conclusion, String note, Long expectedVersion) { }

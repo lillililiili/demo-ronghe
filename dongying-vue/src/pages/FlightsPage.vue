@@ -13,11 +13,16 @@ import { flightApi } from '@/services/flightApi.js';
 import { airspaceApi } from '@/services/airspaceApi.js';
 import { riskApi } from '@/services/riskApi.js';
 import { openRiskVerification } from '@/ui/riskVerificationModal.js';
+import { RULE_REASON_TEXT } from '@/ui/legalityReviewModal.js';
 import { handoffApi, newHandoffIdempotencyKey } from '@/services/handoffApi.js';
 import { openFormModal } from '@/ui/formModal.js';
 import { openModal, closeModal } from '@/ui/modal.js';
 import { toast } from '@/ui/nv.js';
-import { HANDOFF_TYPE_LABEL, PLAN_STATUS_LABEL, REASON_CODE_LABEL, RISK_TYPE_LABEL, SOURCE_MODE_LABEL, labelOf } from '@/ui/labels.js';
+import {
+  ALTITUDE_DATUM_LABEL, ALTITUDE_RELATION_LABEL, AUTHORIZATION_SOURCE_LABEL,
+  HANDOFF_TYPE_LABEL, LEGALITY_LABEL, PLAN_MATCH_LABEL, PLAN_STATUS_LABEL, REASON_CODE_LABEL, RISK_TYPE_LABEL,
+  SECTION_AVAILABILITY_LABEL, SOURCE_MODE_LABEL, labelOf
+} from '@/ui/labels.js';
 import { isUncertainOutcome } from '@/services/apiClient.js';
 import { hasPermission } from '@/services/accessControl.js';
 import { authUser } from '@/services/auth.js';
@@ -266,6 +271,8 @@ async function loadDetail(planId) {
   routeGeometryError.value = '';
   airspaceError.value = '';
   routeGeometryLoading.value = false;
+  actuals.value = null;
+  actualsError.value = '';
   destroyRouteMap();
   let plan = null;
   try {
@@ -279,8 +286,133 @@ async function loadDetail(planId) {
   }
   // 计划详情只要求 flight:read；航线几何另行读取，不能让 route:read 失败掩盖已取得的计划事实。
   if (plan && selected.value?.plan_id === plan.plan_id) {
-    await Promise.all([loadRouteGeometry(plan), loadAirspaceContext(plan)]);
+    await Promise.all([loadRouteGeometry(plan), loadAirspaceContext(plan), loadActuals(plan)]);
   }
+}
+
+/* ---------- 计划与实际对照（阶段 9）----------
+   五段各自带 availability：无权限的段只说"无权限查看"，不显示任何数量；
+   有权限但没有数据是空列表或"尚无引擎研判"，两者含义不同，页面不能混为一谈。
+   匹配、高度关系、合法性都来自同一次已保存的研判，页面不自行计算几何或换算高度基准。 */
+const actuals = ref(null);
+const actualsLoading = ref(false);
+const actualsError = ref('');
+const authorizationBusy = ref(false);
+/* 服务端要的是动作码 flight:authorize，不是菜单模块 flights 的级别码：
+   ROLE-JUDGE 有 flights OP 却没这个动作（按钮可点、提交 403），只授动作码的角色又会被误禁用。
+   沿用本页既有的三态写法：动作码清单未知时不预先禁用，交给服务端裁决。 */
+const canAuthorize = computed(() => actionAllowed('flight:authorize') !== false);
+const authorizeBlockedNote = '需要外部授权登记权限';
+
+async function loadActuals(plan) {
+  actualsLoading.value = true;
+  actualsError.value = '';
+  try {
+    const data = await flightApi.actuals(plan.plan_id);
+    if (selected.value?.plan_id !== plan.plan_id) return;
+    actuals.value = data;
+  } catch (requestError) {
+    if (selected.value?.plan_id !== plan.plan_id) return;
+    actualsError.value = requestError.message || '读取计划与实际对照失败';
+  } finally {
+    if (selected.value?.plan_id === plan.plan_id) actualsLoading.value = false;
+  }
+}
+
+function sectionReady(section) { return section?.availability === 'AVAILABLE'; }
+function sectionNote(section) { return labelOf(SECTION_AVAILABILITY_LABEL, section?.availability, '暂不可用'); }
+
+/* 高度关系只在目标高度与计划高度带同基准时才有方向；否则说明为什么判不了，绝不替引擎换算 AGL/AMSL。 */
+const planAltitudeText = computed(() => {
+  const section = actuals.value?.altitude_relation;
+  if (!sectionReady(section)) return sectionNote(section);
+  const relation = labelOf(ALTITUDE_RELATION_LABEL, section.relation);
+  if (section.relation !== 'UNDETERMINED' || !section.unknown_reason) return relation;
+  return `${relation}（${labelOf(RULE_REASON_TEXT, section.unknown_reason)}）`;
+});
+
+/* C01 的 message 里带着原始原因码（例如 CORRIDOR_MISMATCH），不能直接上屏；只取 facts 里的原因码翻译。 */
+/* 参数状态是规则集版本级的事实：DEMO 版本得出的结论不能被当成已确认口径使用，必须在结论旁边说明。 */
+const demoParams = computed(() => actuals.value?.match?.param_status === 'DEMO');
+const demoLegalityParams = computed(() => actuals.value?.legality?.param_status === 'DEMO');
+
+/* 指标条与下方"计划与实际对照"读同一条研判，避免同屏出现两个说法。 */
+const matchMetricText = computed(() => {
+  const section = actuals.value?.match;
+  if (!section) return actualsLoading.value ? '读取中' : '—';
+  return sectionReady(section) ? labelOf(PLAN_MATCH_LABEL, section.plan_match_code) : sectionNote(section);
+});
+
+const matchReasonText = computed(() => {
+  const reason = actuals.value?.match?.hit_details_c01?.[0]?.facts?.match_reason;
+  return reason ? labelOf(RULE_REASON_TEXT, reason) : '';
+});
+
+const altitudeBandText = computed(() => {
+  const section = actuals.value?.altitude_relation;
+  if (!sectionReady(section) || section.min_altitude_m == null || section.max_altitude_m == null) return '';
+  return `${section.min_altitude_m} ～ ${section.max_altitude_m} 米（${labelOf(ALTITUDE_DATUM_LABEL, section.datum, '基准未知')}）`;
+});
+
+const targetAltitudeText = computed(() => {
+  const section = actuals.value?.altitude_relation;
+  if (!sectionReady(section) || section.target_altitude_m == null) return '';
+  return `${section.target_altitude_m} 米（${labelOf(ALTITUDE_DATUM_LABEL, section.datum, '基准未知')}）`;
+});
+
+function newIdempotencyKey() {
+  return globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+/* 登记外部授权：记录别处已经批下来的文号，只增一条记录，不改变本平台的计划状态。 */
+function openAuthorization() {
+  if (!canAuthorize.value || !selected.value) return;
+  const plan = selected.value;
+  const key = newIdempotencyKey();
+  openFormModal({
+    title: `登记外部授权 · ${plan.plan_no}`,
+    notice: '登记的是别处已经批下来的授权文号，只作记录，不会改变这条计划的执行状态。同一计划的同一文号只能登记一次。',
+    fields: [
+      { key: 'document_no', label: '授权文号', required: true, placeholder: '例如 SW-2026-001' },
+      { key: 'issuer', label: '签发单位', required: true },
+      { key: 'granted_from', label: '授权开始时间', type: 'datetime', required: true },
+      { key: 'granted_to', label: '授权结束时间', type: 'datetime', required: true },
+      { key: 'scope_note', label: '授权说明', type: 'textarea', placeholder: '例如：限于报备航线走廊内' }
+    ],
+    confirmText: '登记',
+    validate: values => (new Date(values.granted_from).getTime() < new Date(values.granted_to).getTime()
+      ? '' : '结束时间必须晚于开始时间'),
+    onSubmit: async values => {
+      if (authorizationBusy.value) return;
+      authorizationBusy.value = true;
+      try {
+        const body = {
+          document_no: values.document_no.trim(),
+          issuer: values.issuer.trim(),
+          granted_from: new Date(values.granted_from).getTime(),
+          granted_to: new Date(values.granted_to).getTime()
+        };
+        if (values.scope_note) body.scope_note = values.scope_note.trim();
+        await flightApi.recordAuthorization(plan.plan_id, body, key);
+        closeModal();
+        toast('外部授权已登记。', 'ok');
+        if (selected.value?.plan_id === plan.plan_id) await loadActuals(plan);
+      } catch (reason) {
+        toast(authorizationMessage(reason), 'err');
+        // 结果未知时不重试同一个键，改为回读服务已经记下的内容。
+        if (isUncertainOutcome?.(reason) && selected.value?.plan_id === plan.plan_id) await loadActuals(plan);
+      } finally { authorizationBusy.value = false; }
+    }
+  });
+}
+
+function authorizationMessage(reason) {
+  const code = reason?.code;
+  if (code === 'AUTHORIZATION_EXISTS') return '这条计划已经登记过同一个文号了。';
+  if (code === 'INVALID_VALIDITY') return '结束时间必须晚于开始时间。';
+  if (code === 'IDEMPOTENCY_REPLAY') return '该登记已提交过，已为你刷新最新结果。';
+  if (reason?.status === 403) return authorizeBlockedNote;
+  return reason?.message || '登记失败，请稍后重试。';
 }
 
 async function loadRouteGeometry(plan) {
@@ -785,14 +917,9 @@ function enterRiskTab(requestedId = null) {
   loadRisks(requestedId ? 1 : riskPage.value, requestedId);
 }
 
-function consumeRiskDeepLink() {
-  const context = window.UI?.consume?.('risk');
-  const requested = context?.eventId || context?.riskId || context?.risk_id || context?.risk || null;
-  return typeof requested === 'string' && requested ? requested : null;
-}
-
 /* 阶段 9 起 #/risk 是独立的空间安全风险页，本页不再按 hash 预置页签、也不改写地址；
-   页签切换只在页内进行，深链上下文（风险 ID）仍可把"全部风险事件"页签打开。 */
+   页签切换只在页内进行。UI 上下文键 'risk'（工作台/处罚页的"转风险"）归空间安全风险页消费（决策 9-15），
+   本页"全部风险事件"页签只响应页内点击，不再抢这个一次性键。 */
 function syncTabByRoute() {
   const hash = (location.hash || '').split('?')[0];
   if (hash === S.tabHash) return;
@@ -807,7 +934,7 @@ function syncTabByRoute() {
 function activateTab(tab) {
   if (tab === 'events') {
     activeTab.value = 'events';
-    enterRiskTab(consumeRiskDeepLink());
+    enterRiskTab(null);
     return;
   }
   activeTab.value = 'route';
@@ -1062,12 +1189,71 @@ onUnmounted(() => {
           <div v-else-if="!selected" class="empty">请选择计划</div>
           <template v-else>
             <div class="detail-hero detail-hero-compact"><div class="detail-hero-inner"><div class="detail-hero-icon" v-html="planHeroIcon"></div><div class="detail-hero-copy"><div class="detail-hero-eyebrow">飞行计划</div><div class="detail-hero-title">{{ selected.plan_no }}</div><div class="detail-hero-id mono">{{ selected.route?.route_no || '未关联航线' }} / v{{ selected.route?.version_no ?? '—' }}</div></div></div></div>
-            <div class="metric-strip is-compact"><div v-for="metric in [['执行状态', labelOf(PLAN_STATUS_LABEL, selected.status_code)], ['计划时长', formatDuration(selected)], ['航线版本', `v${selected.route?.version_no ?? '—'}`], ['目标匹配', '尚未接入']]" :key="metric[0]" class="metric-item"><div class="metric-copy"><small>{{ metric[0] }}</small><b>{{ metric[1] }}</b></div></div></div>
+            <div class="metric-strip is-compact"><div v-for="metric in [['执行状态', labelOf(PLAN_STATUS_LABEL, selected.status_code)], ['计划时长', formatDuration(selected)], ['航线版本', `v${selected.route?.version_no ?? '—'}`], ['目标匹配', matchMetricText]]" :key="metric[0]" class="metric-item"><div class="metric-copy"><small>{{ metric[0] }}</small><b>{{ metric[1] }}</b></div></div></div>
             <section class="sect"><h4>计划信息</h4><dl class="kv kv-surface"><dt>无人机序列号</dt><dd>{{ selected.uav_sn || '未提供' }}</dd><dt>所属范围</dt><dd>{{ selected.owner_org_name || selected.owner_org_id }} / {{ selected.district_name || selected.district_id }}</dd><dt>计划时段</dt><dd>{{ formatTime(selected.start_at) }} ～ {{ formatTime(selected.end_at) }}</dd><dt>计划来源</dt><dd>{{ selected.source?.source_name || selected.source?.source_code || labelOf(SOURCE_MODE_LABEL, selected.source_mode, '未提供') }}</dd></dl></section>
             <section class="sect"><h4>审批信息</h4><div class="empty">尚未接入审批事实读取。</div></section>
-            <section class="sect"><h4>计划与实际对照</h4><div class="empty">尚未接入感知匹配、偏航与高度对照；AGL/AMSL 不作前端换算。</div></section>
-            <section class="sect"><h4>本航线风险</h4><div class="empty">尚未接入沿线风险事件；不根据地图几何自行计算风险。</div></section>
-            <section class="sect"><h4>合法性</h4><div class="empty">尚未接入已保存合法性研判；冲突事实不等于合法性结论。</div></section>
+            <section class="sect"><h4>外部授权登记</h4>
+              <div class="row" style="gap:8px;align-items:center;margin-bottom:8px">
+                <button class="btn" type="button" :disabled="!canAuthorize || authorizationBusy"
+                  :title="canAuthorize ? '' : authorizeBlockedNote" @click="openAuthorization">登记外部授权</button>
+                <span v-if="!canAuthorize" class="muted">{{ authorizeBlockedNote }}</span>
+              </div>
+              <div v-if="actualsLoading" class="empty">正在读取…</div>
+              <div v-else-if="actualsError" class="warnbox">{{ actualsError }}</div>
+              <div v-else-if="!sectionReady(actuals?.authorizations)" class="empty">{{ sectionNote(actuals?.authorizations) }}</div>
+              <div v-else-if="!actuals.authorizations.items.length" class="empty">还没有登记过外部授权。</div>
+              <div v-else class="conflict-list">
+                <div v-for="item in actuals.authorizations.items" :key="item.authorization_id" class="conflict-item" :title="item.authorization_id">
+                  <b>{{ item.document_no }}</b>
+                  <span>{{ item.issuer }}</span>
+                  <span>{{ formatTime(item.granted_from) }} ～ {{ formatTime(item.granted_to) }}</span>
+                  <span v-if="item.scope_note">说明：{{ item.scope_note }}</span>
+                  <span class="muted">{{ labelOf(AUTHORIZATION_SOURCE_LABEL, item.source_kind) }} · 登记人 {{ item.recorded_by_name || '未知' }} · {{ formatTime(item.recorded_at) }}</span>
+                </div>
+              </div>
+            </section>
+            <section class="sect"><h4>计划与实际对照</h4>
+              <div v-if="actualsLoading" class="empty">正在读取…</div>
+              <div v-else-if="actualsError" class="warnbox">{{ actualsError }}</div>
+              <div v-else-if="!sectionReady(actuals?.match)" class="empty">{{ sectionNote(actuals?.match) }}</div>
+              <template v-else>
+                <dl class="kv kv-surface" :title="actuals.match.evaluation_id">
+                  <dt>计划匹配</dt><dd>{{ labelOf(PLAN_MATCH_LABEL, actuals.match.plan_match_code) }}</dd>
+                  <dt>研判时间</dt><dd>{{ formatTime(actuals.match.evaluated_at) }}</dd>
+                  <dt>高度关系</dt><dd>{{ planAltitudeText }}</dd>
+                  <template v-if="altitudeBandText"><dt>计划高度带</dt><dd>{{ altitudeBandText }}</dd></template>
+                  <template v-if="targetAltitudeText"><dt>实际高度</dt><dd>{{ targetAltitudeText }}</dd></template>
+                  <template v-if="matchReasonText"><dt>匹配原因</dt><dd>{{ matchReasonText }}</dd></template>
+                </dl>
+                <div v-if="demoParams"><span class="tag t-amber">参数为演示值，尚未确认</span></div>
+              </template>
+            </section>
+            <section class="sect"><h4>本航线风险</h4>
+              <div v-if="actualsLoading" class="empty">正在读取…</div>
+              <div v-else-if="actualsError" class="warnbox">{{ actualsError }}</div>
+              <div v-else-if="!sectionReady(actuals?.latest_risks)" class="empty">{{ sectionNote(actuals?.latest_risks) }}</div>
+              <div v-else-if="!actuals.latest_risks.items.length" class="empty">最近没有与这条计划关联的风险。</div>
+              <div v-else class="conflict-list">
+                <div v-for="item in actuals.latest_risks.items" :key="item.risk_id" class="conflict-item" :title="item.risk_id">
+                  <b>{{ labelOf(RISK_TYPE_LABEL, item.risk_type) }} · {{ severityLabel(item.severity) }}</b>
+                  <span>{{ item.reason_text }}</span>
+                  <span class="muted">{{ stateLabel(item.state_code) }} · 接收 {{ formatTime(item.received_at) }}</span>
+                </div>
+              </div>
+            </section>
+            <section class="sect"><h4>合法性</h4>
+              <div v-if="actualsLoading" class="empty">正在读取…</div>
+              <div v-else-if="actualsError" class="warnbox">{{ actualsError }}</div>
+              <div v-else-if="!sectionReady(actuals?.legality)" class="empty">{{ sectionNote(actuals?.legality) }}</div>
+              <template v-else>
+                <dl class="kv kv-surface" :title="actuals.legality.evaluation_id">
+                  <dt>研判结论</dt><dd>{{ labelOf(LEGALITY_LABEL, actuals.legality.legal_status) }}</dd>
+                  <dt>研判时间</dt><dd>{{ formatTime(actuals.legality.evaluated_at) }}</dd>
+                </dl>
+                <div v-if="demoLegalityParams"><span class="tag t-amber">参数为演示值，尚未确认</span></div>
+                <div class="muted">这里显示的是引擎已保存的研判结论；下方的空域冲突事实只是它的输入之一。</div>
+              </template>
+            </section>
             <section class="sect"><h4>空域冲突事实</h4><div v-if="!conflicts.length" class="empty">服务端未返回空域冲突事实。</div><div v-else class="conflict-list"><div v-for="fact in conflicts" :key="`${fact.airspace_version_id}-${fact.conflict_code}`" class="conflict-item">{{ fact.airspace_id }} / {{ fact.airspace_version_id }}：水平 {{ fact.horizontal_relation }}；高度 {{ fact.height_relation }}；时间 {{ fact.time_relation }}；{{ fact.conflict_code || '未提供' }}</div></div></section>
             <div class="row" style="margin-top:12px;gap:8px;flex-wrap:wrap">
               <button class="btn" type="button" disabled title="尚未接入">导出（尚未接入）</button>

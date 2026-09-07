@@ -2,7 +2,8 @@
    规则：页面只展示名称与业务编号，内部 ID 只能进 title 提示；未收录的代码原样返回，不猜测含义。 */
 export const SOURCE_MODE_LABEL = { mock: '模拟', replay: '回放', live: '实时' };
 export const ALARM_TYPE_LABEL = { UAV_INTRUSION: '无人机入侵', UAV: '无人机告警' };
-export const RISK_TYPE_LABEL = { FLIGHT_OPERATION: '飞行作业风险', AIRSPACE: '空域风险', FOREIGN_OBJECT: '空中异物风险' };
+// SPACE_OBJECT 是阶段 9 C04 评估写入的风险类型；FOREIGN_OBJECT 是同一业务概念的早期写法，两者中文一致。
+export const RISK_TYPE_LABEL = { FLIGHT_OPERATION: '飞行作业风险', AIRSPACE: '空域风险', SPACE_OBJECT: '空中异物风险', FOREIGN_OBJECT: '空中异物风险' };
 export const REASON_CODE_LABEL = {
   ROUTE_DEVIATION: '偏离报备航线', AIRSPACE_CONFLICT: '空域冲突', ALTITUDE_UNKNOWN: '高度信息缺失', SOURCE_MISMATCH: '来源不一致',
   PROHIBITED_AIRSPACE_OVERLAP: '穿越禁飞空域', ALTITUDE_DATUM_OR_RANGE_UNKNOWN: '高度基准或范围未知', CORRIDOR_WIDTH_UNKNOWN: '航线走廊宽度未知',
@@ -29,9 +30,25 @@ export const SEVERITY_LABEL = { CRITICAL: '紧急', HIGH: '高', MEDIUM: '中', 
 export const SEVERITY_TAG = { CRITICAL: 't-red', HIGH: 't-red', MEDIUM: 't-amber', LOW: 't-blue' };
 export const RISK_STATE_LABEL = { PENDING_VERIFICATION: '待核验', PENDING_NOTIFICATION: '待通知', NOTIFIED: '已通知', EXCLUDED: '已排除' };
 /** 版本号翻译成次数：version 0 表示尚未核实，返回空串由调用方整段不渲染。 */
+/* 阶段 9 空间安全风险：异物细类、高度带与走廊关系。
+   气球/风筝/孔明灯只在细类语境出现，与 INFERRED_SUBTYPE_LABEL 同义但键不同（服务端字典码）。 */
+export const SPACE_OBJECT_SUBTYPE_LABEL = {
+  BIRD_FLOCK: '鸟群', BALLOON: '气球', KITE: '风筝', SKY_LANTERN: '孔明灯', OTHER_OBJECT: '其他异物' // subtype 字典
+};
+export const ALTITUDE_BAND_LABEL = { CLIMB: '起降爬升段', APPROACH: '进近段', CRUISE: '巡航段', UNKNOWN: '高度未知' };
+export const CORRIDOR_RELATION_LABEL = { INSIDE: '航线走廊内', NEAR: '邻近航线', OUTSIDE: '走廊外', UNKNOWN: '距离未知' };
+export const OBJECT_TREND_LABEL = { RISING: '数量上升', FLAT: '数量平稳', FALLING: '数量下降', UNKNOWN: '趋势未知' };
 export const verificationOrdinal = (version, prefix = '') => (version == null || Number(version) <= 0 ? '' : `${prefix}第${Number(version)}次核实`);
 export const RULE_RESULT_LABEL = { PASS: '通过', FAIL: '不通过', UNDETERMINED: '不可判定' };
-export const LEGALITY_LABEL = { LEGAL: '合法', ILLEGAL: '非法', UNDETERMINED: '待确认' };
+// UNDETERMINED 是引擎判不了，不是等人来确认：与 LegalityPage、复核弹窗保持同一个说法。
+export const LEGALITY_LABEL = { LEGAL: '合法', ABNORMAL: '异常', ILLEGAL: '非法', UNDETERMINED: '不可判定', NOT_APPLICABLE: '不适用' };
+// 阶段 9 计划与实际对照：段可用性、计划匹配、高度关系与外部授权登记。
+export const SECTION_AVAILABILITY_LABEL = { FORBIDDEN: '无权限查看', NO_EVALUATION: '尚无引擎研判', UNAVAILABLE: '暂不可用' };
+export const PLAN_MATCH_LABEL = { FULL: '完全匹配', PARTIAL: '部分匹配', NONE: '无匹配计划', UNDETERMINED: '不可判定', NOT_APPLICABLE: '不适用' };
+export const ALTITUDE_RELATION_LABEL = {
+  ABOVE: '高于计划高度带', WITHIN: '在计划高度带内', BELOW: '低于计划高度带', UNDETERMINED: '不可判定'
+};
+export const AUTHORIZATION_SOURCE_LABEL = { MANUAL: '人工登记', IMPORT: '批量导入' };
 export const EVIDENCE_KIND_LABEL = {
   EO_VIDEO: '光电录像', EO_STILL: '光电抓拍图', TRACK_SNAPSHOT: '雷达轨迹快照',
   NOTICE_RECEIPT: '通报单回执', COMMISSION_REPORT: '调测报告', COMMAND_LOG: '指令报文与回执',
@@ -44,6 +61,43 @@ export const EVIDENCE_SUBJECT_LABEL = {
   EVENT: '无人机事件', DEVICE: '设备', TARGET: '感知目标', PLAN: '飞行计划',
   COMMAND: '指令', COMMISSION: '调测任务'
 };
+
+/* 阶段 9 空域种类：页面的图层配色与筛选都以这个字典为准，历史写法（HEIGHT_LIMIT/TEMPORARY）一并收录，
+   便于旧数据在页面上仍有中文，不影响写接口只接受规范值。 */
+export const AIRSPACE_KIND_LABEL = {
+  PROHIBITED: '禁飞区', RESTRICTED: '限制区', ALTITUDE_LIMIT: '限高区', PERMITTED: '适飞区', TEMPORARY_CONTROL: '临时管制区',
+  HEIGHT_LIMIT: '限高区', TEMPORARY: '临时管制区'
+};
+/** 空域图层配色：禁飞与限制用红系，限高用橙系，适飞用蓝系，临时管制用紫系。 */
+export const AIRSPACE_KIND_TAG = {
+  PROHIBITED: 't-red', RESTRICTED: 't-red', ALTITUDE_LIMIT: 't-amber', PERMITTED: 't-blue', TEMPORARY_CONTROL: 't-gray',
+  HEIGHT_LIMIT: 't-amber', TEMPORARY: 't-gray'
+};
+export const AIRSPACE_KIND_COLOR = {
+  PROHIBITED: '#ff4d5e', RESTRICTED: '#ff7a45', ALTITUDE_LIMIT: '#ffb020', PERMITTED: '#3d8bff', TEMPORARY_CONTROL: '#a97bff',
+  HEIGHT_LIMIT: '#ffb020', TEMPORARY: '#a97bff'
+};
+export const ALTITUDE_DATUM_LABEL = { AGL: '离地高度', AMSL: '海拔高度' };
+export const AIRSPACE_VALIDITY_LABEL = { ACTIVE: '生效中', SUPERSEDED: '已被接替', SCHEDULED: '未生效', EXPIRED: '已失效' };
+/** 版本来源：谁把这一版放进来的。 */
+export const AIRSPACE_ORIGIN_LABEL = { MANUAL: '人工新建', GEOJSON_IMPORT: '文件导入', SEED: '演示数据' };
+export const IMPORT_STATUS_LABEL = { STAGED: '待确认', CONFIRMED: '已确认', DISCARDED: '已放弃' };
+/** 导入被拒绝的原因：每条都要能让操作者知道该改文件的哪一处。 */
+export const IMPORT_ISSUE_LABEL = {
+  GEOMETRY_MISSING: '缺少边界几何', GEOMETRY_INVALID: '边界几何无效', GEOMETRY_NOT_SUPPORTED: '边界只支持面或多面',
+  RING_NOT_CLOSED: '边界闭合环未闭合', RING_TOO_SHORT: '边界至少需要三个顶点', COORDINATE_INVALID: '坐标不是数字',
+  COORDINATE_OUT_OF_RANGE: '坐标超出经纬度范围', KIND_MISSING: '缺少空域种类', KIND_NOT_SUPPORTED: '空域种类不在字典内',
+  ALTITUDE_INCOMPLETE: '高度带缺少上下限或基准', ALTITUDE_DATUM_NOT_SUPPORTED: '高度基准只支持离地或海拔',
+  ALTITUDE_RANGE_INVERTED: '高度下限高于上限', VALID_FROM_MISSING: '缺少生效时间', TIME_INVALID: '时间格式无法识别',
+  INVALID_VALIDITY: '失效时间早于生效时间'
+};
+/** 差异面板的字段名；未收录的字段原样显示代码，不猜含义。 */
+export const AIRSPACE_DIFF_FIELD_LABEL = {
+  kind_code: '空域种类', min_altitude_m: '高度下限', max_altitude_m: '高度上限', altitude_datum: '高度基准',
+  valid_from: '生效时间', valid_to: '失效时间', change_reason: '变更原因'
+};
+/** 版本号翻译成次数：第 N 版，供空域版本时间线使用。 */
+export const airspaceVersionOrdinal = versionNo => (versionNo == null || Number(versionNo) <= 0 ? '' : `第${Number(versionNo)}版`);
 
 /** 取中文文案；代码为空返回 fallback，未收录返回代码本身。 */
 export const labelOf = (map, code, fallback = '—') => (code == null || code === '' ? fallback : (map[code] || String(code)));

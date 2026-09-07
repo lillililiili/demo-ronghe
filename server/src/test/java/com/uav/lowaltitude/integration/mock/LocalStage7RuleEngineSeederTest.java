@@ -148,7 +148,9 @@ class LocalStage7RuleEngineSeederTest {
             assertThat(context.getBeansOfType(RuleReplayRunner.class)).isEmpty();
             assertThat(context.getBeansOfType(ApplicationRunner.class).keySet()).noneMatch(name -> name.toLowerCase().contains("stage7"));
             JdbcTemplate isolated = context.getBean(JdbcTemplate.class);
-            assertThat(isolated.queryForObject("select count(*) from rule_set", Long.class)).isZero();
+            // 阶段 9 起迁移 062 会登记 SPACE-RISK-DEMO 规则集（结构性目录，未激活）；生产的不变量是"没有生效/影子版本、没有阶段 7 种子规则集"。
+            assertThat(isolated.queryForObject("select count(*) from rule_set where active_version_id is not null or shadow_version_id is not null", Long.class)).isZero();
+            assertThat(isolated.queryForObject("select count(*) from rule_set where rule_set_code='LEGALITY-DEMO'", Long.class)).isZero();
             assertThat(isolated.queryForObject("select count(*) from rule_run", Long.class)).isZero();
             assertThat(isolated.queryForObject("select count(*) from target where target_id like 'seed-stage7-%'", Long.class)).isZero();
         }

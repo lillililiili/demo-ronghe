@@ -233,7 +233,9 @@ class Stage7PostgresTest {
         assertThat(permissions).containsExactly("assessment:escalate", "assessment:evaluate", "assessment:revise", "rule:manage", "rule:read");
         // 迁移只登记引擎来源目录，不插入任何规则集或研判：本 schema 中的规则集只能来自各用例夹具。
         assertThat(jdbc.queryForObject("select count(*) from integration_source where source_id like 'rule-engine-legality-%' and enabled=true and credential_ref is null", Long.class)).isEqualTo(3L);
-        assertThat(jdbc.queryForObject("select count(*) from rule_set where rule_set_code not like 'LEGALITY-S7-%'", Long.class)).isZero();
+        // 阶段 9 迁移 062 登记的 SPACE-RISK-DEMO（PUBLISHED+DEMO，未激活）属结构性目录（决策 9-30），不算阶段 7 的意外数据。
+        assertThat(jdbc.queryForObject("select count(*) from rule_set where rule_set_code not like 'LEGALITY-S7-%' and rule_set_code<>'SPACE-RISK-DEMO'", Long.class)).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from rule_set where rule_set_code='SPACE-RISK-DEMO' and (active_version_id is not null or shadow_version_id is not null)", Long.class)).isZero();
         assertThat(jdbc.queryForObject("select count(*) from assessment_result", Long.class)).isZero();
     }
 

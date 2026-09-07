@@ -181,6 +181,32 @@ class RiskReadApiTest {
         assertThat(jdbc.queryForObject("select count(*) from flight_risk where source_id='seed-stage3-source' and source_risk_id='same-source-risk'", Long.class)).isEqualTo(1L);
     }
 
+    /* ---------- 阶段 9 追加：新增过滤不改变既有默认列表 ---------- */
+
+    @Test
+    void stage9FiltersDoNotChangeTheDefaultRiskList() throws Exception {
+        insertRisk("risk-stage9-a", "src-stage9-a", "HIGH", "PENDING_VERIFICATION", "seed-stage3-plan-legal",
+                "seed-stage3-rv-legal", "seed-stage3-org", "seed-stage3-district", 11_000, 11_100, null, null);
+        // 默认列表（不带阶段 9 过滤）与阶段 4 行为一致：作业风险照常可见，且没有空间事实字段。
+        mvc.perform(get("/api/v1/risks?occurred_from=11000&occurred_to=11001").header("Authorization", bearer(session)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(1))
+                .andExpect(jsonPath("$.data.items[0].risk_id").value("risk-stage9-a"))
+                .andExpect(jsonPath("$.data.items[0].risk_type").value("ROUTE_DEVIATION"))
+                .andExpect(jsonPath("$.data.items[0].space_fact").doesNotExist());
+        // 按类型过滤：既有类型仍在，异物类型为空（本夹具没有异物风险）。
+        mvc.perform(get("/api/v1/risks?risk_type=ROUTE_DEVIATION&occurred_from=11000&occurred_to=11001").header("Authorization", bearer(session)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.total").value(1));
+        mvc.perform(get("/api/v1/risks?risk_type=SPACE_OBJECT&occurred_from=11000&occurred_to=11001").header("Authorization", bearer(session)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.items").isEmpty());
+        // 细类过滤只作用于有空间事实的风险，不会把作业风险带出来。
+        mvc.perform(get("/api/v1/risks?object_subtype=BIRD_FLOCK&occurred_from=11000&occurred_to=11001").header("Authorization", bearer(session)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.items").isEmpty());
+        // risk_type 在库里是自由文本：未出现过的取值只是筛不到，不是参数错误。
+        mvc.perform(get("/api/v1/risks?risk_type=UNKNOWN_TYPE&occurred_from=11000&occurred_to=11001").header("Authorization", bearer(session)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.items").isEmpty());
+    }
+
     private void insertRisk(String id, String sourceRiskId, String severity, String state, String plan, String routeVersion,
             String org, String district, long occurred, long received, Double altitude, String datum) {
         jdbc.update("insert into flight_risk (risk_id,source_id,source_risk_id,plan_id,route_version_id,risk_type,severity,state_code,reason_code,reason_text,occurred_at,received_at,observed_altitude_m,observed_altitude_datum,height_relation,source_mode,owner_org_id,district_id,created_at,updated_at,version) values (?,'seed-stage3-source',?,?,?,?,?,?,'ROUTE_DEVIATION','服务端保存的风险依据',?,?,?,?,'UNKNOWN','mock',?,?,?, ?,0)",

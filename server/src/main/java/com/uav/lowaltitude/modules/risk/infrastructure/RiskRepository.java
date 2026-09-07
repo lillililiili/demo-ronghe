@@ -190,6 +190,12 @@ public class RiskRepository {
         add(where, "r.owner_org_id", "owner", query.ownerOrgId);
         add(where, "r.district_id", "district", query.districtId);
         add(where, "r.source_mode", "mode", query.sourceMode);
+        add(where, "r.risk_type", "risk_type", query.riskType);
+        if (query.objectSubtype != null) {
+            // 细类过滤走空间事实表：没有空间事实的风险本来就没有细类，不该因为过滤而"看起来存在"。
+            where.sql.append(" AND EXISTS (SELECT 1 FROM space_risk_fact sf WHERE sf.risk_id=r.risk_id AND sf.subtype_code=:object_subtype)");
+            where.params.put("object_subtype", query.objectSubtype);
+        }
         if (query.occurredFrom != null) {
             where.sql.append(" AND r.occurred_at IS NOT NULL AND r.occurred_at>=:occurred_from AND r.occurred_at<:occurred_to");
             where.params.put("occurred_from", query.occurredFrom); where.params.put("occurred_to", query.occurredTo);
@@ -248,7 +254,8 @@ public class RiskRepository {
 
     private static final class Where { final StringBuilder sql = new StringBuilder(); final Map<String,Object> params = new HashMap<>(); }
     public record RiskQuery(String state, String severity, String planId, OffsetDateTime occurredFrom, OffsetDateTime occurredTo,
-            String ownerOrgId, String districtId, String sourceMode) { public static RiskQuery empty(){return new RiskQuery(null,null,null,null,null,null,null,null);} }
+            String ownerOrgId, String districtId, String sourceMode, String riskType, String objectSubtype) {
+        public static RiskQuery empty(){return new RiskQuery(null,null,null,null,null,null,null,null,null,null);} }
     public record RiskRow(String riskId,String sourceRiskId,String planId,String routeVersionId,String assessmentId,String targetId,String trackId,
             String riskType,String severity,String state,String reasonCode,String reasonText,OffsetDateTime occurredAt,OffsetDateTime receivedAt,
             BigDecimal observedAltitudeM,String observedAltitudeDatum,String heightRelation,String sourceCode,String sourceMode,String ownerOrgId,

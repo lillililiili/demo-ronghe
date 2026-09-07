@@ -11,5 +11,13 @@ export const riskApi = {
   listRiskVerifications: (riskId, params) => apiRequestTimed(`/risks/${encodeURIComponent(riskId)}/verifications${buildQuery(params)}`),
   verifyRisk: (riskId, body, idempotencyKey) => apiRequestTimed(`/risks/${encodeURIComponent(riskId)}/verifications`, {
     method: 'POST', body, mutation: true, idempotencyKey
+  }),
+  /* 阶段 9 空间安全风险：细类字典、空间事实、汇总与评估运行记录。 */
+  listSpaceObjectSubtypes: () => apiRequestTimed('/space-object-subtypes'),
+  getSpaceFact: riskId => apiRequestTimed(`/risks/${encodeURIComponent(riskId)}/space-fact`),
+  spaceRiskSummary: params => apiRequestTimed(`/space-risks/summary${buildQuery(params)}`),
+  listRuleEvaluations: params => apiRequestTimed(`/rule-evaluations${buildQuery(params)}`),
+  triggerRuleEvaluation: (body, idempotencyKey) => apiRequestTimed('/rule-evaluations', {
+    method: 'POST', body, mutation: true, idempotencyKey
   })
 };

@@ -25,15 +25,20 @@ import com.uav.lowaltitude.platform.api.ApiException;
 @Service
 public class RiskReadService {
     private static final Set<String> ALLOWED = Set.of("state", "severity", "plan_id", "occurred_from", "occurred_to",
-            "owner_org_id", "district_id", "source_mode", "page", "size");
+            "owner_org_id", "district_id", "source_mode", "page", "size", "risk_type", "object_subtype");
+    /* risk_type 在库里是自由文本（阶段 4 的 CHECK 只要求非空），已有数据用 ROUTE_DEVIATION 等值；
+       这里不做白名单，否则会把合法的既有类型判成参数错误。SPACE_OBJECT 只是其中一个取值。 */
     private static final Set<String> STATES=Set.of("PENDING_VERIFICATION","PENDING_NOTIFICATION","NOTIFIED","EXCLUDED");
     private static final Set<String> SEVERITIES=Set.of("LOW","MEDIUM","HIGH","CRITICAL");
     private static final Set<String> SOURCE_MODES=Set.of("mock","replay","live");
     private final AccessControlService access;
     private final RiskRepository repository;
 
-    public RiskReadService(AccessControlService access, RiskRepository repository) {
-        this.access = access; this.repository = repository;
+    private final com.uav.lowaltitude.modules.risk.application.spacerisk.SpaceRiskReadService spaceRisk;
+
+    public RiskReadService(AccessControlService access, RiskRepository repository,
+            @org.springframework.context.annotation.Lazy com.uav.lowaltitude.modules.risk.application.spacerisk.SpaceRiskReadService spaceRisk) {
+        this.access = access; this.repository = repository; this.spaceRisk = spaceRisk;
     }
 
     @Transactional(readOnly = true)
@@ -48,7 +53,8 @@ public class RiskReadService {
         String planId=request.optional("plan_id",36);
         RiskQuery query = new RiskQuery(request.enumerated("state",STATES), request.enumerated("severity",SEVERITIES),
                 planId, occurred.from, occurred.to, request.optional("owner_org_id", 36),
-                request.optional("district_id", 36), request.enumerated("source_mode",SOURCE_MODES));
+                request.optional("district_id", 36), request.enumerated("source_mode",SOURCE_MODES),
+                request.optional("risk_type", 64), request.optional("object_subtype", 32));
         long total = repository.count(query, decision);
         return new PageDto<>(repository.list(query, decision, page.offset(), page.size).stream().map(this::dto).toList(),
                 page.page, page.size, total);
@@ -60,6 +66,11 @@ public class RiskReadService {
         RiskRow row = repository.find(id(riskId), decision);
         if (row == null) throw notFound();
         return dto(row);
+    }
+
+    /** 空间事实是可空追加字段：没有事实的风险（阶段 4 的作业风险）整段缺省，不返回空对象。 */
+    private com.uav.lowaltitude.modules.risk.api.SpaceRiskDtos.SpaceFactDto spaceFact(RiskRow row) {
+        return spaceRisk == null ? null : spaceRisk.factOrNull(row.riskId());
     }
 
     public RiskDto dto(RiskRow row) {
@@ -75,7 +86,8 @@ public class RiskReadService {
                 millis(row.occurredAt()), requiredMillis(row.receivedAt()), row.observedAltitudeM(), row.observedAltitudeDatum(),
                 row.heightRelation(), row.sourceCode(), row.sourceMode(), row.ownerOrgId(), row.districtId(), row.version(),
                 RiskState.verifiable(row.state())&&visible(PermissionCode.RISK_VERIFY) ? List.of("VERIFY") : List.of(),
-                row.sourceName(), row.ownerOrgName(), row.districtName(), planId == null ? null : row.planNo(), targetId == null ? null : row.targetNo());
+                row.sourceName(), row.ownerOrgName(), row.districtName(), planId == null ? null : row.planNo(), targetId == null ? null : row.targetNo(),
+                spaceFact(row));
     }
 
     private boolean visible(PermissionCode permission){try{access.require(permission);return true;}catch(ApiException ignored){return false;}}

@@ -48,9 +48,16 @@ public class RuleEngineRepository {
         return rows.isEmpty() ? null : rows.get(0);
     }
 
-    /** 有生效或影子版本的规则集：Worker 每个 tick 只对这些集合起运行。 */
+    /**
+     * 有生效或影子版本、且是"合法性规则集"（成员里含 C03 四态判定）的规则集：Worker 每个 tick 只对这些集合起运行。
+     * 阶段 9 起 rule_set 表里还有空间风险规则集（SPACE-RISK-DEMO，成员只有 C04/C05），它由 SpaceRiskEvaluationJob 自己消费；
+     * 合法性引擎若把它当作规则集运行，会因缺 C03.fresh_seconds 等参数而整轮失败（决策 9-28）。
+     */
     public List<RuleSetRow> ruleSetsWithVersions() {
-        return jdbc.query(ruleSetSelect() + " WHERE active_version_id IS NOT NULL OR shadow_version_id IS NOT NULL ORDER BY rule_set_code", Map.of(), RuleEngineRepository::ruleSet);
+        return jdbc.query(ruleSetSelect() + " s WHERE (s.active_version_id IS NOT NULL OR s.shadow_version_id IS NOT NULL)"
+                + " AND EXISTS (SELECT 1 FROM rule_set_member m JOIN rule_version rv ON rv.rule_version_id=m.rule_version_id"
+                + " WHERE m.rule_set_version_id IN (s.active_version_id, s.shadow_version_id) AND rv.rule_code='C03')"
+                + " ORDER BY s.rule_set_code", Map.of(), RuleEngineRepository::ruleSet);
     }
 
     public VersionRow findVersion(String versionId) {

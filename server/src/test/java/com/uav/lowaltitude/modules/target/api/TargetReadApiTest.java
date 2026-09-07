@@ -508,4 +508,12 @@ class TargetReadApiTest {
     private static String id() {
         return UUID.randomUUID().toString();
     }
+
+    /** 阶段 8 决策 8-26：目标详情暴露可空 version，是修订/合并/分裂 expected_version 的唯一来源。 */
+    @Test
+    void detailExposesTargetRowVersionForExpectedVersion() throws Exception {
+        jdbc.update("update target set version=3 where target_id=?", targetLatest);
+        JsonNode detail = getJson("/api/v1/targets/" + targetLatest).path("data");
+        assertThat(detail.path("version").asLong()).isEqualTo(3L);
+    }
 }

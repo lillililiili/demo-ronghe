@@ -30,3 +30,6 @@
 | 8-24 | 工作区里非阶段 8 的前端改动 | `dongying-vue/src/assets/css/reset.css`（webkit autofill 深色适配）来自其他会话、未认领，**不进阶段 8 提交**；`b2d1359`（另一会话已提交：overlay.css 的 `.tabs .tab` 全局重置、FlightsPage/PunishPage 布局修复）影响面含 A 的页面页签样式，在本阶段提交说明与验收文档知会 A | 一并提交 / 回退他人改动 | 不覆盖、不提交他人未认领的工作区改动 |
 | 8-25 | 无源 TERMINATED 帧写最新状态时丢位置 | 领导集成修复：`DefaultFusedLayerWriter.writeLatestState` 用本帧的融合轨迹取最后可信点（不再查"开放轨迹"，因为 TERMINATED 已先关闭轨迹）；保留位置时移除 `location` 未知标记；新增 `DefaultFusedLayerWriterTerminalFrameTest` | 交 E2 返工 | 真实 PostgreSQL 验收暴露：7 个回放目标 6 个最新状态无位置；H2 单测未覆盖终止帧 |
 | 8-26 | 目标详情缺 `version` | `GET /targets/{id}` 追加可空 `version`（`target.version`），供修订/合并/分裂的 `expected_version` | 客户端另查 | 验收时写接口无法拿到期望版本；阶段 2 读契约只加字段不改既有字段 |
+| 8-27 | A 的 `LocalReportingSeeder` 跨归属改动的登记 | 已在提交 `010c0b2` 说明中单列；补本条决策并新增 `ProductionReportingSeedIsolationTest`（production / production,local 下不注册、统计事实表为空），与仓库其他种子的隔离用例对齐；知会 A | 不补用例 | 审查 P2：每个种子都配隔离用例，唯独 reporting 缺 |
+| 8-28 | 融合轨迹关闭与迟到帧的顺序 | `DefaultFusedLayerWriter` 把 `endTrack` 移到迟到判定之后：迟到的 TERMINATED 帧只补历史点，不用更早的 `observed_at` 关掉当前轨迹 | 保持"正序入站"前提不改代码 | 审查建议；接实测源后乱序不可避免，否则融合层轨迹碎片化 |
+| 8-29 | `GET /targets/{id}.version` 的自动化锁定 | `TargetReadApiTest` 追加契约断言（14→15 例） | 仅靠 PG 验收肉眼确认 | 它是三个写接口 `expected_version` 的唯一来源 |

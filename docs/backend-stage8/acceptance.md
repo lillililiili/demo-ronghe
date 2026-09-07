@@ -48,3 +48,7 @@
 - 引擎自动合并/分裂未在管线内触发（8-16，人工接口可用）；`association_pending` 只写 GATE_AMBIGUOUS；`split` 只支持 `link_ids`（8-21）。
 - 回放数据集固定在 2025-09-05，`fusion/status` 只能演示"全部离线/中断"态，在线态未在浏览器验证。
 - FE-1（Session 5）前端可读性任务报告未收到，不在本次提交内。
+
+## 跟进（审查第 6–13 轮遗留 P2，2026-09-06）
+- 决策 8-27/8-28/8-29：`ProductionReportingSeedIsolationTest` 2/2；`DefaultFusedLayerWriter` 的 `endTrack` 移到迟到判定之后（`DefaultFusedLayerWriterTerminalFrameTest` 1/1、`FusionPipelineReplayTest` 7/7、`FusionReadApiTest` 7/7、`FusionCommandApiTest` 5/5）；`TargetReadApiTest` 14→15（`version` 契约断言）。
+- 带 PG 环境变量复跑：`Stage8PostgresTest` 7/7（`stage456_verify_s8`，PostgreSQL 16.9 + PostGIS 3.5.2，随机 `stage456_` schema 已清理）、`TargetReadPostgresApiTest` 2/2（`stage2_target_verify_s45`）。

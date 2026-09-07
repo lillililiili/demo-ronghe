@@ -77,8 +77,10 @@ public class DefaultFusedLayerWriter implements FusedLayerWriter {
 
         FusedTrackRow track = openTrack(frame, observedAt, now, params);
         writePoint(frame, track, fused, degradation, observedAt, now, params);
-        if (frame.status() == TrackStatus.TERMINATED) tracks.endTrack(track.trackId(), observedAt);
         if (late) return;
+        // 关闭融合轨迹放在迟到判定之后：迟到的 TERMINATED 帧若用更早的 observed_at 关掉当前轨迹，
+        // 下一帧就会另开一条 fused:<target>:<ms>，融合层被切成碎片（审查建议）。
+        if (frame.status() == TrackStatus.TERMINATED) tracks.endTrack(track.trackId(), observedAt);
 
         boolean manualOverride = previousSelection != null && previousSelection.manualClassOverride();
         writeLatestState(frame, track, fused, degradation, manualOverride, previousSelection, observedAt, now);

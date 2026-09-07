@@ -61,7 +61,9 @@ class FusionPipelineReplayTest {
         jdbc.update("delete from track_point"); jdbc.update("delete from track"); jdbc.update("delete from source_observation");
         jdbc.update("delete from target_current_alias"); jdbc.update("delete from target_lineage"); jdbc.update("delete from target_track_status");
         jdbc.update("delete from target_source_link"); jdbc.update("delete from target where unified=true");
-        jdbc.update("update inbox_message set status='RECEIVED', processed_at=null, last_error=null, lease_token=null, lease_until=null where source like 'replay:%'");
+        // 阶段 8.5：种子摄取的是直连报文（lingyun: / eo-edge:），复位条件跟着换，否则这里一帧都放不回去。
+        jdbc.update("update inbox_message set status='RECEIVED', processed_at=null, last_error=null, lease_token=null, lease_until=null"
+                + " where source like 'lingyun:%' or source like 'eo-edge:%' or source like 'live-radar:%'");
         drain();
     }
 
@@ -152,9 +154,59 @@ class FusionPipelineReplayTest {
         assertThat(accuracies).isNotEmpty();
         // 雷达 15 m 与 TDOA 60 m 的差异必须原样传给融合层，不能被抹平成同一个数。
         assertThat(accuracies.stream().anyMatch(a -> a != null && a <= 20)).isTrue();
-        Long tdoaObservations = jdbc.queryForObject("select count(*) from source_observation o join integration_source s on s.source_id=o.source_id"
-                + " where s.source_code=? and o.position_accuracy_m=60", Long.class, FusionReplayDatasetGenerator.TDOA);
-        assertThat(tdoaObservations).isPositive();
+        assertThat(accuracies.stream().anyMatch(a -> a != null && a >= 50)).isTrue();
+        // 阶段 8.5：凌云协议里没有精度字段，观测的 position_accuracy_m 为空，精度由 fusion_config 的缺省值补上并标记，
+        // 数值与阶段 8 显式给的一致（TDOA 60 m），所以上面的估计精度断言不变。
+        Long tdoaWithoutAccuracy = jdbc.queryForObject("select count(*) from source_observation o join integration_source s on s.source_id=o.source_id"
+                + " where s.source_code=? and o.position_accuracy_m is null", Long.class, FusionReplayDatasetGenerator.TDOA);
+        assertThat(tdoaWithoutAccuracy).isPositive();
+    }
+
+    @Test
+    void tdoaPilotPositionReachesTheObservationRow() {
+        String targetId = targetByExternal("D-PILOT");
+        assertThat(targetId).isNotNull();
+        // 飞手位置必须真的落进 pilot_location：C02-6 超视距要拿它和目标位置算距离，写不进去这条规则就永远不可判定。
+        Long withPilot = jdbc.queryForObject("select count(*) from source_observation where external_target_id='D-PILOT' and pilot_location is not null", Long.class);
+        assertThat(withPilot).isPositive();
+        assertThat(jdbc.queryForObject("select count(*) from source_observation where external_target_id='D-PILOT' and class_source='SENSE_DATA'", Long.class)).isPositive();
+        assertThat(jdbc.queryForObject("select identity_clue from source_observation where external_target_id='D-PILOT' fetch first 1 rows only", String.class))
+                .isEqualTo("SN-PILOT-01");
+    }
+
+    @Test
+    void aoaKeepsIdentityCluesWithoutContributingAPosition() {
+        Long withoutPosition = jdbc.queryForObject("select count(*) from source_observation where external_target_id='A-BEARING' and location is null", Long.class);
+        assertThat(withoutPosition).isPositive();
+        // 报文里带着经纬度，但协议说它无效：一条都不许落进 location，否则关联会拿假位置当证据。
+        assertThat(jdbc.queryForObject("select count(*) from source_observation where external_target_id='A-BEARING' and location is not null", Long.class)).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from source_observation where external_target_id='A-BEARING' and identity_clue='SN-PILOT-01'", Long.class)).isPositive();
+        // 没有位置的观测不写测量点，但方位要留在 quality 里。
+        assertThat(jdbc.queryForObject("select count(*) from track_point p join track t on t.track_id=p.track_id"
+                + " join target_source_link l on l.link_id=t.link_id where l.external_target_id='A-BEARING'", Long.class)).isZero();
+        assertThat(jdbc.queryForObject("select cast(quality as varchar) from source_observation where external_target_id='A-BEARING' fetch first 1 rows only", String.class))
+                .contains("bearing_deg");
+    }
+
+    @Test
+    void opticalOnlyHasObservationsWhileItIsTracking() {
+        Long observations = jdbc.queryForObject("select count(*) from source_observation where external_target_id='T-EO-TRACK'", Long.class);
+        // 第 4–8 帧在跟踪，其余是心跳：心跳不产生观测，否则会凭空造出"目标一直可见"。
+        assertThat(observations).isEqualTo(5L);
+        assertThat(jdbc.queryForObject("select count(*) from source_observation where external_target_id='T-EO-TRACK' and class_source='EO_TRACKING' and class_code='UAV'", Long.class))
+                .isEqualTo(5L);
+        // 心跳帧照样处理完（DONE），不是失败。
+        assertThat(jdbc.queryForObject("select count(*) from inbox_message where source like 'eo-edge:%' and status='FAILED'", Long.class)).isZero();
+    }
+
+    @Test
+    void identifyingTargetsHaveNoClassCode() {
+        Long identifying = jdbc.queryForObject("select count(*) from source_observation where external_target_id='R-IDENT'", Long.class);
+        assertThat(identifying).isPositive();
+        // 255 是"还没认出来"：给了 class_code，页面就会把它显示成一个确定的类型。
+        assertThat(jdbc.queryForObject("select count(*) from source_observation where external_target_id='R-IDENT' and class_code is not null", Long.class)).isZero();
+        assertThat(jdbc.queryForObject("select cast(quality as varchar) from source_observation where external_target_id='R-IDENT' fetch first 1 rows only", String.class))
+                .contains("identifying");
     }
 
     @Test

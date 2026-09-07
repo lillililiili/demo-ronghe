@@ -211,6 +211,22 @@ class TargetReadApiTest {
         assertNoSensitiveFields(response);
     }
 
+    /**
+     * 阶段 8.5：融合层写入的飞手位置要露给读侧（C02-6 的判定依据，页面也要能标出飞手在哪）。
+     * 可空列，没有就整个字段不下发——不出现 null 占位，也不拿目标位置顶替。
+     */
+    @Test
+    void latestStateExposesPilotLocationOnlyWhenItExists() throws Exception {
+        JsonNode before = getJson("/api/v1/targets/" + targetLatest).path("data").path("latest_state");
+        assertThat(before.has("pilot_location")).as("没有飞手位置就不下发该字段").isFalse();
+
+        jdbc.update("update target_latest_state set pilot_location=GEOMETRY 'SRID=4326;POINT (120.130 30.260)' where target_id=?", targetLatest);
+        JsonNode after = getJson("/api/v1/targets/" + targetLatest).path("data").path("latest_state");
+        assertThat(after.path("pilot_location").path("longitude").decimalValue()).isEqualByComparingTo("120.130");
+        assertThat(after.path("pilot_location").path("latitude").decimalValue()).isEqualByComparingTo("30.260");
+        assertThat(after.path("pilot_location").path("coordinate_system").asText()).isEqualTo("WGS84");
+    }
+
     @Test
     void paginatesAndFiltersTargetsWithoutSourceLinkDuplication() throws Exception {
         String sourceCode = "SRC-MOCK-" + suffix;

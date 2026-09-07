@@ -124,6 +124,7 @@ public class DefaultFusedLayerWriter implements FusedLayerWriter {
         Set<UnknownField> unknown = new LinkedHashSet<>();
         fused.unknownFields().stream().filter(u -> !(manualOverride && "classification_confidence".equals(u.field()))).forEach(unknown::add);
         unknown.addAll(degradation.unknownFields());
+        double[] pilot = pilotOfIdentitySource(frame, fused);
         if (fused.longitude() == null) {
             // 无位置帧：位置保留本帧所在融合轨迹的最后可信点，只刷新其它字段；这里不写 (0,0)。
             // 必须用本帧的 track 而不是再查"开放轨迹"：TERMINATED 帧在此之前已把该轨迹 ended_at 关闭，
@@ -133,12 +134,28 @@ public class DefaultFusedLayerWriter implements FusedLayerWriter {
             if (lonLat != null) unknown.removeIf(u -> "location".equals(u.field()));
             tracks.upsertLatestState(new LatestState(frame.targetId(), lonLat == null ? null : lonLat[0], lonLat == null ? null : lonLat[1], decimal(fused.altitudeAmslM(), METRIC_SCALE),
                     decimal(fused.heightAglM(), METRIC_SCALE), decimal(fused.speedMps(), SPEED_SCALE), decimal(fused.headingDeg(), METRIC_SCALE), classConfidence,
-                    decimal(degradation.fusionConfidence(), CONF_SCALE), observedAt, now, write(unknownList(unknown)), now));
+                    decimal(degradation.fusionConfidence(), CONF_SCALE), observedAt, now, write(unknownList(unknown)), now,
+                    pilot == null ? null : pilot[0], pilot == null ? null : pilot[1]));
             return;
         }
         tracks.upsertLatestState(new LatestState(frame.targetId(), fused.longitude(), fused.latitude(), decimal(fused.altitudeAmslM(), METRIC_SCALE), decimal(fused.heightAglM(), METRIC_SCALE),
                 decimal(fused.speedMps(), SPEED_SCALE), decimal(fused.headingDeg(), METRIC_SCALE), classConfidence, decimal(degradation.fusionConfidence(), CONF_SCALE),
-                observedAt, now, write(unknownList(unknown)), now));
+                observedAt, now, write(unknownList(unknown)), now, pilot == null ? null : pilot[0], pilot == null ? null : pilot[1]));
+    }
+
+    /**
+     * 飞手位置只取身份主源（决策 8.5-5）：C02-6 要的是"这个目标的飞手在哪"，
+     * 只有身份类来源（TDOA/DCD/RID）带这个字段。取任意来源会把别的传感器的站址当成飞手位置；
+     * 身份主源缺失或它没给飞手位置就返回空，不回退到其它来源，也不补 (0,0)。
+     */
+    private static double[] pilotOfIdentitySource(TargetFrameResult frame, FusedState fused) {
+        String identitySourceId = fused.selection() == null ? null : fused.selection().identitySourceId();
+        if (identitySourceId == null) return null;
+        return frame.estimates().stream()
+                .filter(e -> identitySourceId.equals(e.sourceId()) && e.pilotLongitude() != null && e.pilotLatitude() != null)
+                .findFirst()
+                .map(e -> new double[] { e.pilotLongitude(), e.pilotLatitude() })
+                .orElse(null);
     }
 
     private void writeSelection(TargetFrameResult frame, FusedState fused, boolean manualOverride, SelectionRow previous, OffsetDateTime observedAt, OffsetDateTime now, FusionParams params) {

@@ -26,7 +26,12 @@ public final class FusionDtos {
     public record ObservationDto(String observationId, String sourceCode, String sourceType, String externalTargetId,
             long observedAt, long receivedAt, BigDecimal longitude, BigDecimal latitude, BigDecimal positionAccuracyM,
             BigDecimal altitudeAmslM, BigDecimal heightAglM, BigDecimal speedMps, BigDecimal headingDeg,
-            String classCode, BigDecimal classConfidence, String identityClue, String sourceMode) { }
+            String classCode, BigDecimal classConfidence, String identityClue, String sourceMode,
+            /* 阶段 8.5：飞手（遥控器）位置与类别来源（光电跟踪 / 感知数据 / 雷达 / 人工），可空，缺失时不下发。 */
+            LocationDto pilotLocation, String classSource) { }
+
+    /** 与目标读侧同形的坐标块：经纬度加坐标系，便于页面直接落图。 */
+    public record LocationDto(BigDecimal longitude, BigDecimal latitude, String coordinateSystem) { }
 
     public record ClassificationRevisionDto(String revisionId, String targetId, String classCode, long version, long updatedAt) { }
 

@@ -2,6 +2,7 @@ package com.uav.lowaltitude.integration.mock;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -29,6 +30,9 @@ class LocalStage8FusionReplaySeederTest {
     @Autowired LocalStage8FusionReplaySeeder seeder;
     @Autowired ApplicationArguments arguments;
 
+    /** 直连数据集的四个 inbox 前缀（阶段 8.5 起种子摄取的是设备原始报文，不再是自建回放信封）。 */
+    private static final String DIRECT_SOURCES = "(source like 'lingyun:%' or source like 'eo-edge:%' or source like 'live-radar:%')";
+
     @Test
     void seedsReplaySourcesAndDatasetIdempotently() {
         Map<String, Long> before = counts();
@@ -37,13 +41,14 @@ class LocalStage8FusionReplaySeederTest {
         assertThat(counts()).isEqualTo(before);
 
         assertThat(jdbc.queryForList("select source_code from integration_source where source_mode='replay' order by source_code", String.class))
-                .contains(FusionReplayDatasetGenerator.EO, FusionReplayDatasetGenerator.RADAR, FusionReplayDatasetGenerator.TDOA);
+                .contains(FusionReplayDatasetGenerator.AOA, FusionReplayDatasetGenerator.EO, FusionReplayDatasetGenerator.RADAR, FusionReplayDatasetGenerator.TDOA);
         // 只断言本种子登记的来源：迁移 040 也有一条 source_mode='replay' 的规则引擎来源（source_type 为空是它的正常状态）。
         assertThat(jdbc.queryForObject("select count(*) from integration_source where source_id like 'seed-stage8-%' and source_type is null", Long.class)).isZero();
-        assertThat(jdbc.queryForObject("select count(*) from device where device_id like 'seed-stage8-%' and enabled=true", Long.class)).isEqualTo(3L);
-        assertThat(jdbc.queryForObject("select count(*) from inbox_message where source like 'replay:%'", Long.class)).isPositive();
+        // 阶段 8.5 起多一台 AOA：它只给方位不给位置，必须是独立来源才能演示"有身份线索但不参与位置关联"。
+        assertThat(jdbc.queryForObject("select count(*) from device where device_id like 'seed-stage8%' and enabled=true", Long.class)).isEqualTo(4L);
+        assertThat(jdbc.queryForObject("select count(*) from inbox_message where " + DIRECT_SOURCES, Long.class)).isPositive();
         // 摄取完成：没有留下未处理或失败的回放帧。
-        assertThat(jdbc.queryForObject("select count(*) from inbox_message where source like 'replay:%' and status<>'DONE'", Long.class)).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from inbox_message where " + DIRECT_SOURCES + " and status<>'DONE'", Long.class)).isZero();
         assertThat(jdbc.queryForObject("select count(*) from source_observation", Long.class)).isPositive();
         assertThat(jdbc.queryForObject("select count(*) from target where unified=true", Long.class)).isPositive();
         // 回放产物全部落在 replay 分区：不得混进 mock/live 的统一目标库。
@@ -75,10 +80,14 @@ class LocalStage8FusionReplaySeederTest {
 
     @Test
     void replayInboxRowsCarryContractEnvelopeIdentity() {
-        String source = jdbc.queryForObject("select source from inbox_message where source like 'replay:%' order by received_at, inbox_id fetch first 1 rows only", String.class);
-        assertThat(source).startsWith("replay:").endsWith(":" + FusionReplayDatasetGenerator.DATASET_ID);
-        assertThat(jdbc.queryForObject("select count(*) from inbox_message where source like 'replay:%' and (payload_hash is null or source_id is null or payload is null)", Long.class)).isZero();
-        assertThat(jdbc.queryForObject("select count(*) from inbox_message where source like 'replay:%' and payload_hash not like '________________________________________________________________'", Long.class)).isZero();
+        // 阶段 8.5：inbox 里存的就是设备原样发来的报文，source 用契约 §2 的前缀，不再夹一层自建回放信封。
+        List<String> sources = jdbc.queryForList("select distinct source from inbox_message where " + DIRECT_SOURCES + " order by source", String.class);
+        assertThat(sources).isNotEmpty();
+        assertThat(sources).allSatisfy(source -> assertThat(source).matches("^(lingyun:[a-z0-9]+:|eo-edge:|live-radar:).+"));
+        assertThat(sources).anySatisfy(source -> assertThat(source).startsWith("lingyun:aoa:"));
+        assertThat(sources).anySatisfy(source -> assertThat(source).startsWith("eo-edge:"));
+        assertThat(jdbc.queryForObject("select count(*) from inbox_message where " + DIRECT_SOURCES + " and (payload_hash is null or source_id is null or payload is null)", Long.class)).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from inbox_message where " + DIRECT_SOURCES + " and payload_hash not like '________________________________________________________________'", Long.class)).isZero();
         // ops 的 live-device 行不受影响（本测试库里没有，断言恒为 0 只是守住"融合不碰 ops inbox"这条边界）。
         assertThat(jdbc.queryForObject("select count(*) from inbox_message where source like 'live-device:%' and status='PROCESSING'", Long.class)).isZero();
     }
@@ -87,7 +96,7 @@ class LocalStage8FusionReplaySeederTest {
         return Map.of(
                 "integration_source", count("integration_source where source_id like 'seed-stage8-%'"),
                 "device", count("device where device_id like 'seed-stage8-%'"),
-                "inbox", count("inbox_message where source like 'replay:%'"),
+                "inbox", count("inbox_message where " + DIRECT_SOURCES),
                 "observation", count("source_observation"),
                 "target", count("target where unified=true"),
                 "link", count("target_source_link l join target t on t.target_id=l.target_id where t.unified=true"),

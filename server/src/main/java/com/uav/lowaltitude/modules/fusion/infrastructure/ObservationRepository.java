@@ -53,11 +53,14 @@ public class ObservationRepository {
         p.put("class_code", o.classCode()); p.put("class_conf", o.classConfidence()); p.put("identity", o.identityClue()); p.put("identity_conf", o.identityConfidence());
         p.put("latency", o.latencyMs()); p.put("quality", write(o.quality())); p.put("mode", o.sourceMode()); p.put("org", o.ownerOrgId()); p.put("district", o.districtId());
         p.put("created", Timestamp.from(Instant.now()));
+        // 飞手位置与目标位置分列存放：C02-6 要拿这两个点算大圆距离，合并进 location 就分不开了。
+        p.put("pilot", o.hasPilotPosition() ? ewkt(o.pilotLongitude(), o.pilotLatitude()) : null);
+        p.put("class_source", o.classSource());
         jdbc.update("INSERT INTO source_observation (observation_id,inbox_id,source_id,device_id,source_type,source_session_key,external_target_id,external_track_id,"
                 + "observed_at,received_at,location,position_accuracy_m,altitude_amsl_m,height_agl_m,speed_mps,heading_deg,class_code,class_confidence,identity_clue,"
-                + "identity_confidence,latency_ms,quality,source_mode,owner_org_id,district_id,created_at) VALUES (:id,:inbox,:source,:device,:type,:session,:external,"
-                + ":external_track,:observed,:received,CAST(:location AS GEOMETRY),:accuracy,:amsl,:agl,:speed,:heading,:class_code,:class_conf,:identity,:identity_conf,"
-                + ":latency,CAST(:quality AS JSON),:mode,:org,:district,:created)", p);
+                + "identity_confidence,latency_ms,quality,source_mode,owner_org_id,district_id,created_at,pilot_location,class_source) VALUES (:id,:inbox,:source,:device,"
+                + ":type,:session,:external,:external_track,:observed,:received,CAST(:location AS GEOMETRY),:accuracy,:amsl,:agl,:speed,:heading,:class_code,:class_conf,"
+                + ":identity,:identity_conf,:latency,CAST(:quality AS JSON),:mode,:org,:district,:created,CAST(:pilot AS GEOMETRY),:class_source)", p);
     }
 
     public long countByInbox(String inboxId) {

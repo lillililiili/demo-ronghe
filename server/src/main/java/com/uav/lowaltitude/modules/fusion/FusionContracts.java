@@ -58,7 +58,20 @@ public final class FusionContracts {
             String identityClue,
             Double identityConfidence,
             PointKind kind,
-            Map<String, Object> quality) {
+            Map<String, Object> quality,
+            /* 阶段 8.5：飞手/遥控器位置（凌云协议 A 的 pilotLon/pilotLat，TDOA/AOA/DCD/RID 才有）与类别来源（EO_TRACKING / SENSE_DATA / MANUAL）。 */
+            Double pilotLongitude,
+            Double pilotLatitude,
+            String classSource) {
+        /** 阶段 8 的旧签名：无飞手位置与类别来源。 */
+        public SourceEstimate(String sourceId, String sourceCode, String sourceType, String schemaStatus, String linkId, String rawTrackId,
+                String observationId, Instant observedAt, Double longitude, Double latitude, Double accuracyM, Double altitudeAmslM,
+                Double heightAglM, Double speedMps, Double headingDeg, String classCode, Double classConfidence, String identityClue,
+                Double identityConfidence, PointKind kind, Map<String, Object> quality) {
+            this(sourceId, sourceCode, sourceType, schemaStatus, linkId, rawTrackId, observationId, observedAt, longitude, latitude, accuracyM,
+                    altitudeAmslM, heightAglM, speedMps, headingDeg, classCode, classConfidence, identityClue, identityConfidence, kind, quality,
+                    null, null, null);
+        }
     }
 
     /**

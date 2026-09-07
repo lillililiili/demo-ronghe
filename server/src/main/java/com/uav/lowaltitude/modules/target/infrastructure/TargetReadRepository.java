@@ -299,7 +299,7 @@ public class TargetReadRepository {
                        ls.received_at AS state_received_at,ls.altitude_amsl_m,ls.height_agl_m,
                        ls.speed_mps,ls.heading_deg,ls.classification_confidence,ls.fusion_confidence,
                        ls.unknown_fields,
-                """ + locationColumns("ls.location");
+                """ + locationColumns("ls.location", "") + "," + locationColumns("ls.pilot_location", "pilot_");
     }
 
     private String pointSelect() {
@@ -307,22 +307,23 @@ public class TargetReadRepository {
                 SELECT p.point_id,p.track_id,p.point_seq,p.observed_at,p.received_at,
                        p.altitude_amsl_m,p.height_agl_m,p.point_kind,p.position_accuracy_m,p.contributing,
                        p.source_switched,p.degradation_level,
-                """ + locationColumns("p.location");
+                """ + locationColumns("p.location", "");
     }
 
-    private String locationColumns(String column) {
+    /** alias 前缀区分同一行里的多个几何列（目标位置与飞手位置）。 */
+    private String locationColumns(String column, String alias) {
         if (postgis) {
             return "CASE WHEN " + column + " IS NOT NULL AND ST_SRID(" + column + ")=4326"
                     + " AND ST_X(" + column + ") BETWEEN -180 AND 180"
-                    + " AND ST_Y(" + column + ") BETWEEN -90 AND 90 THEN ST_X(" + column + ") END AS longitude,"
+                    + " AND ST_Y(" + column + ") BETWEEN -90 AND 90 THEN ST_X(" + column + ") END AS " + alias + "longitude,"
                     + "CASE WHEN " + column + " IS NOT NULL AND ST_SRID(" + column + ")=4326"
                     + " AND ST_X(" + column + ") BETWEEN -180 AND 180"
-                    + " AND ST_Y(" + column + ") BETWEEN -90 AND 90 THEN ST_Y(" + column + ") END AS latitude,"
-                    + "CASE WHEN " + column + " IS NOT NULL THEN ST_SRID(" + column + ") END AS location_srid,"
-                    + "CAST(NULL AS VARCHAR) AS location_text ";
+                    + " AND ST_Y(" + column + ") BETWEEN -90 AND 90 THEN ST_Y(" + column + ") END AS " + alias + "latitude,"
+                    + "CASE WHEN " + column + " IS NOT NULL THEN ST_SRID(" + column + ") END AS " + alias + "location_srid,"
+                    + "CAST(NULL AS VARCHAR) AS " + alias + "location_text ";
         }
-        return "CAST(NULL AS NUMERIC) AS longitude,CAST(NULL AS NUMERIC) AS latitude,"
-                + "CAST(NULL AS INTEGER) AS location_srid,CAST(" + column + " AS VARCHAR) AS location_text ";
+        return "CAST(NULL AS NUMERIC) AS " + alias + "longitude,CAST(NULL AS NUMERIC) AS " + alias + "latitude,"
+                + "CAST(NULL AS INTEGER) AS " + alias + "location_srid,CAST(" + column + " AS VARCHAR) AS " + alias + "location_text ";
     }
 
     private TargetRow targetRow(ResultSet rs, int rowNum) throws SQLException {
@@ -332,25 +333,26 @@ public class TargetReadRepository {
                 time(rs, "last_seen_at"), rs.getString("source_mode"), rs.getString("owner_org_id"),
                 rs.getString("district_id"), time(rs, "created_at"), time(rs, "updated_at"),
                 time(rs, "state_observed_at"), time(rs, "state_received_at"),
-                location(rs), rs.getBigDecimal("altitude_amsl_m"), rs.getBigDecimal("height_agl_m"),
+                location(rs, ""), rs.getBigDecimal("altitude_amsl_m"), rs.getBigDecimal("height_agl_m"),
                 rs.getBigDecimal("speed_mps"), rs.getBigDecimal("heading_deg"),
                 rs.getBigDecimal("classification_confidence"), rs.getBigDecimal("fusion_confidence"),
-                normalizedJson(rs.getString("unknown_fields")), rs.getString("owner_org_name"), rs.getString("district_name"), rs.getObject("target_version") == null ? null : rs.getLong("target_version"));
+                normalizedJson(rs.getString("unknown_fields")), rs.getString("owner_org_name"), rs.getString("district_name"),
+                rs.getObject("target_version") == null ? null : rs.getLong("target_version"), location(rs, "pilot_"));
     }
 
     private PointRow pointRow(ResultSet rs, int rowNum) throws SQLException {
         return new PointRow(rs.getString("point_id"), rs.getString("track_id"), rs.getLong("point_seq"),
-                time(rs, "observed_at"), time(rs, "received_at"), location(rs),
+                time(rs, "observed_at"), time(rs, "received_at"), location(rs, ""),
                 rs.getBigDecimal("altitude_amsl_m"), rs.getBigDecimal("height_agl_m"),
                 rs.getString("point_kind"), rs.getBigDecimal("position_accuracy_m"),
                 jsonTextOf(rs.getObject("contributing")), (Boolean) rs.getObject("source_switched"), rs.getString("degradation_level"));
     }
 
-    private static Coordinate location(ResultSet rs) throws SQLException {
-        BigDecimal longitude = rs.getBigDecimal("longitude");
-        BigDecimal latitude = rs.getBigDecimal("latitude");
+    private static Coordinate location(ResultSet rs, String alias) throws SQLException {
+        BigDecimal longitude = rs.getBigDecimal(alias + "longitude");
+        BigDecimal latitude = rs.getBigDecimal(alias + "latitude");
         if (longitude != null && latitude != null) return trusted(longitude, latitude);
-        String value = rs.getString("location_text");
+        String value = rs.getString(alias + "location_text");
         if (value == null) return null;
         int point = value.toUpperCase().indexOf("POINT");
         int open = value.indexOf('(', point);
@@ -437,7 +439,9 @@ public class TargetReadRepository {
             OffsetDateTime stateObservedAt, OffsetDateTime stateReceivedAt, Coordinate location,
             BigDecimal altitudeAmslM, BigDecimal heightAglM, BigDecimal speedMps, BigDecimal headingDeg,
             BigDecimal classificationConfidence, BigDecimal fusionConfidence, String unknownFields,
-            String ownerOrgName, String districtName, Long version) {
+            String ownerOrgName, String districtName, Long version,
+            /* 阶段 8.5：融合层写入的飞手位置，可空。 */
+            Coordinate pilotLocation) {
     }
 
     public record SourceLinkRow(String linkId, String sourceId, String sourceCode, String sourceMode,

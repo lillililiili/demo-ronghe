@@ -18,12 +18,20 @@ import com.uav.lowaltitude.modules.fusion.domain.AlphaBetaFilter;
 @Component
 public class FusionReplayDatasetGenerator {
     public static final String DATASET_ID = "stage8-fusion-demo";
+    /** 阶段 8.5 数据集：同样的六个场景，但报文换成凌云协议 A/C 的真实形状，另加四个直连专有场景。 */
+    public static final String DATASET_ID_V2 = "stage85-lingyun-demo";
     public static final long T0_MILLIS = 1_757_073_600_000L; // 2026-09-05T12:00:00Z
     public static final long SEED = 20260905L;
     public static final long FRAME_INTERVAL_MS = 1000L;
     public static final String RADAR = "replay-radar-a", TDOA = "replay-tdoa-a", EO = "replay-eo-a";
     /** 六场景（契约 §回放数据集）。 */
     public static final List<String> SCENARIOS = List.of("three-source", "single-missing", "crossing", "split-merge", "late-out-of-order", "accuracy-gap");
+    /** 直连专有场景：飞手位置、只有方位的 AOA、只在跟踪期间可见的光电、识别中的目标。 */
+    public static final List<String> SCENARIOS_V2 = List.of("tdoa-pilot", "aoa-bearing", "eo-tracking", "identifying-255");
+    public static final String AOA = "replay-aoa-a";
+    /** 各回放来源在直连报文里的 inbox source（契约 v1.1 §2）。 */
+    public static final Map<String, String> INBOX_SOURCES = Map.of(
+            RADAR, "lingyun:radar:S85R1", TDOA, "lingyun:tdoa:S85T1", AOA, "lingyun:aoa:S85A1", EO, "eo-edge:S85E1");
 
     private static final double LON0 = 118.62, LAT0 = 37.42;
     private static final double RADAR_ACC = 15, TDOA_ACC = 60, EO_ACC = 25;
@@ -146,6 +154,178 @@ public class FusionReplayDatasetGenerator {
         if (classConfidence != null) item.put("class_confidence", classConfidence);
         if (identityClue != null) item.put("identity_clue", identityClue);
         return item;
+    }
+
+    // ---------- 阶段 8.5：数据集 v2（凌云协议 A / C 报文） ----------
+
+    /** 一条直连回放记录：payload 就是设备原样上报的报文，inbox 的 source 决定它交给哪个映射器。 */
+    public record ProtocolRecord(long recordNo, String sourceCode, String inboxSource, long observedAtMillis, long receivedAtMillis,
+            Map<String, Object> payload, String scenario) { }
+    public record ProtocolDataset(String datasetId, List<ProtocolRecord> records, List<GroundTruth> groundTruth) { }
+
+    /**
+     * v2 = 把 v1 的六个场景逐条翻译成协议报文 + 四个直连专有场景。
+     * 翻译而不是重新生成，是为了让原六场景的坐标与顺序逐字不变——只有这样，"换了报文格式但结论不变"才是可验证的。
+     * 协议里没有精度字段，去掉后由 fusion_config 的缺省精度补上（RADAR 15 / TDOA 60 / EO 25，与 v1 显式值一致）。
+     */
+    public ProtocolDataset generateV2() {
+        Dataset v1 = generate();
+        List<ProtocolRecord> records = new ArrayList<>();
+        for (Record record : v1.records()) records.add(translate(record));
+        List<GroundTruth> truth = new ArrayList<>(v1.groundTruth());
+        long recordNo = records.isEmpty() ? 0 : records.get(records.size() - 1).recordNo() + 1;
+        recordNo = directAccessScenarios(recordNo, records, truth);
+        return new ProtocolDataset(DATASET_ID_V2, List.copyOf(records), List.copyOf(truth));
+    }
+
+    private ProtocolRecord translate(Record record) {
+        if (EO.equals(record.sourceCode())) {
+            // 光电在协议 A 里既没有位置也没有类别：它的观测只能来自协议 C 的跟踪上报。
+            // 协议 C 一条上报只跟一个目标，因此光电记录在 v1 里本来就只有一个 item。
+            Map<String, Object> item = record.items().get(0);
+            Map<String, Object> aiStatus = aiStatus(className(item.get("class_code")), number(item.get("lon")), number(item.get("lat")),
+                    number(item.get("class_confidence")));
+            return new ProtocolRecord(record.recordNo(), record.sourceCode(), INBOX_SOURCES.get(EO), record.observedAtMillis(),
+                    record.receivedAtMillis(), beginTracking(String.valueOf(item.get("external_target_id")), record.observedAtMillis(), aiStatus),
+                    record.scenario());
+        }
+        // 一条 SenseData 可以带多个目标（交叉、分裂场景就是同一帧两个回波）：逐个翻译，一个都不能少。
+        List<Map<String, Object>> objects = new ArrayList<>();
+        for (Map<String, Object> item : record.items()) {
+            Map<String, Object> extension = new LinkedHashMap<>();
+            putObjectType(extension, item.get("class_code"));
+            putIfPresent(extension, "probability", item.get("class_confidence"));
+            putIfPresent(extension, "uavSN", item.get("identity_clue"));
+            objects.add(senseObject(String.valueOf(item.get("external_target_id")), record.observedAtMillis(),
+                    number(item.get("lon")), number(item.get("lat")), extension));
+        }
+        return new ProtocolRecord(record.recordNo(), record.sourceCode(), INBOX_SOURCES.get(record.sourceCode()), record.observedAtMillis(),
+                record.receivedAtMillis(), senseData(record.recordNo(), record.receivedAtMillis(), List.copyOf(objects)), record.scenario());
+    }
+
+    private long directAccessScenarios(long startRecordNo, List<ProtocolRecord> records, List<GroundTruth> truth) {
+        Random random = new Random(SEED + 1);
+        long recordNo = startRecordNo;
+        long base = T0_MILLIS + (SCENARIOS.size() + 1L) * 600_000L;
+        double lonBase = LON0 + SCENARIOS.size() * 0.05;
+
+        for (int frame = 0; frame < FRAMES; frame++) {
+            long observedAt = base + frame * FRAME_INTERVAL_MS;
+            double[] p = along(lonBase, LAT0, frame, 10, 0);
+            double[] noisy = noisy(p, TDOA_ACC, random);
+
+            // ① TDOA 带飞手位置：C02-6 超视距要拿目标与飞手两点算距离，飞手点必须真的落进 pilot_location。
+            Map<String, Object> pilotExtension = new LinkedHashMap<>();
+            pilotExtension.put("uavSN", "SN-PILOT-01");
+            pilotExtension.put("pilotLon", round(lonBase));
+            pilotExtension.put("pilotLat", round(LAT0));
+            putObjectType(pilotExtension, "UAV");
+            records.add(new ProtocolRecord(recordNo++, TDOA, INBOX_SOURCES.get(TDOA), observedAt, observedAt,
+                    senseData(recordNo, observedAt, List.of(senseObject("D-PILOT", observedAt, noisy[0], noisy[1], pilotExtension))), "tdoa-pilot"));
+            truth.add(new GroundTruth("tdoa-pilot", recordNo - 1, "tdoa-pilot:TA", TDOA, "D-PILOT", observedAt));
+
+            // ② AOA 只有方位：协议明说经纬度无效，报文里照样带着，映射时必须丢掉——留着就是假位置。
+            Map<String, Object> aoaExtension = new LinkedHashMap<>();
+            aoaExtension.put("direction", round((frame * 7.5) % 360));
+            aoaExtension.put("uavSN", "SN-PILOT-01");
+            records.add(new ProtocolRecord(recordNo++, AOA, INBOX_SOURCES.get(AOA), observedAt, observedAt,
+                    senseData(recordNo, observedAt, List.of(senseObject("A-BEARING", observedAt, round(noisy[0]), round(noisy[1]), aoaExtension))), "aoa-bearing"));
+            truth.add(new GroundTruth("aoa-bearing", recordNo - 1, "aoa-bearing:TA", AOA, "A-BEARING", observedAt));
+
+            // ③ 光电只在第 4–8 帧跟踪：前后是心跳，不产生任何观测。
+            boolean tracking = frame >= 4 && frame <= 8;
+            Map<String, Object> payload = tracking
+                    ? beginTracking("T-EO-TRACK", observedAt, aiStatus("drone", round(noisy[0]), round(noisy[1]), 0.9))
+                    : heartBeat(observedAt);
+            records.add(new ProtocolRecord(recordNo++, EO, INBOX_SOURCES.get(EO), observedAt, observedAt, payload, "eo-tracking"));
+            if (tracking) truth.add(new GroundTruth("eo-tracking", recordNo - 1, "eo-tracking:TA", EO, "T-EO-TRACK", observedAt));
+
+            // ④ 识别中（255）：类别必须为空，页面才不会把"还没认出来"显示成一个确定的类型。
+            Map<String, Object> identifyingExtension = new LinkedHashMap<>();
+            identifyingExtension.put("objectType", 255);
+            double[] other = noisy(along(lonBase + 0.02, LAT0, frame, 6, 0), RADAR_ACC, random);
+            records.add(new ProtocolRecord(recordNo++, RADAR, INBOX_SOURCES.get(RADAR), observedAt, observedAt,
+                    senseData(recordNo, observedAt, List.of(senseObject("R-IDENT", observedAt, other[0], other[1], identifyingExtension))), "identifying-255"));
+            truth.add(new GroundTruth("identifying-255", recordNo - 1, "identifying-255:TA", RADAR, "R-IDENT", observedAt));
+        }
+        return recordNo;
+    }
+
+    private static Map<String, Object> senseData(long msgCnt, long ptTime, List<Map<String, Object>> objects) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("deviceId", "S85");
+        payload.put("msgCnt", msgCnt);
+        payload.put("ptTime", ptTime);
+        payload.put("objects", objects);
+        return payload;
+    }
+
+    private static Map<String, Object> senseObject(String objectId, long time, Double longitude, Double latitude, Map<String, Object> extension) {
+        Map<String, Object> object = new LinkedHashMap<>();
+        object.put("objectId", objectId);
+        object.put("time", time);
+        putIfPresent(object, "longitude", longitude);
+        putIfPresent(object, "latitude", latitude);
+        object.put("extension", extension);
+        return object;
+    }
+
+    private static Map<String, Object> beginTracking(String taskId, long timestamp, Map<String, Object> aiStatus) {
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put("taskId", taskId);
+        metadata.put("deviceId", "S85E1D1");
+        metadata.put("workState", 1);
+        metadata.put("aiStatus", aiStatus);
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("event", "BeginTracking");
+        payload.put("edgeId", "S85E1");
+        payload.put("timestamp", timestamp);
+        payload.put("metadata", metadata);
+        return payload;
+    }
+
+    private static Map<String, Object> heartBeat(long timestamp) {
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put("workState", 1);
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("event", "HeartBeat");
+        payload.put("edgeId", "S85E1");
+        payload.put("timestamp", timestamp);
+        payload.put("metadata", metadata);
+        return payload;
+    }
+
+    private static Map<String, Object> aiStatus(String className, Double longitude, Double latitude, Double detectConfidence) {
+        Map<String, Object> aiStatus = new LinkedHashMap<>();
+        putIfPresent(aiStatus, "className", className);
+        putIfPresent(aiStatus, "longitude", longitude);
+        putIfPresent(aiStatus, "latitude", latitude);
+        putIfPresent(aiStatus, "detectConfidence", detectConfidence);
+        return aiStatus;
+    }
+
+    /** 我们的类别码 → 协议 A 的 objectType 数字；协议里没有的类别就不写这个字段。 */
+    private static void putObjectType(Map<String, Object> extension, Object classCode) {
+        if ("UAV".equals(classCode)) extension.put("objectType", 30);
+        else if ("BIRD".equals(classCode)) extension.put("objectType", 40);
+    }
+
+    /** 我们的类别码 → 协议 C 的 className；协议目前只承诺 drone / bird。 */
+    private static String className(Object classCode) {
+        if ("UAV".equals(classCode)) return "drone";
+        if ("BIRD".equals(classCode)) return "bird";
+        return null;
+    }
+
+    private static double[] noisy(double[] position, double accuracy, Random random) {
+        double[] point = AlphaBetaFilter.fromEnu(position[0], position[1], random.nextGaussian() * accuracy / 3, random.nextGaussian() * accuracy / 3);
+        return new double[]{round(point[0]), round(point[1])};
+    }
+
+    private static Double number(Object value) { return value == null ? null : ((Number) value).doubleValue(); }
+
+    private static void putIfPresent(Map<String, Object> target, String key, Object value) {
+        if (value != null) target.put(key, value);
     }
 
     private static double round(double value) { return Math.round(value * 1e7) / 1e7; }

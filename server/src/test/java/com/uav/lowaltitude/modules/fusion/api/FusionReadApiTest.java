@@ -184,6 +184,28 @@ class FusionReadApiTest {
         error("/api/v1/targets/" + crossTarget + "/lineage", readerWithFusion, 404, "TARGET_NOT_FOUND");
     }
 
+    /**
+     * 阶段 8.5：观测的飞手位置与类别来源要露给读侧——页面据此说明"这个类别是光电判的还是感知数据报的"。
+     * 两列可空，缺失时整个字段不下发（不出现 null 占位）。
+     */
+    @Test
+    void observationsExposePilotLocationAndClassSourceWhenPresent() throws Exception {
+        JsonNode before = data("/api/v1/targets/" + fusedTarget + "/observations", reader).path("items").get(0);
+        assertThat(before.has("pilot_location")).as("没有飞手位置就不下发该字段").isFalse();
+        assertThat(before.has("class_source")).isFalse();
+
+        // 观测经 target_source_link 挂到目标上，本身没有 target_id 列。
+        jdbc.update("update source_observation set pilot_location=CAST('SRID=4326;POINT (118.5 37.4)' AS GEOMETRY), class_source='SENSE_DATA'"
+                + " where observation_id in (select o.observation_id from source_observation o"
+                + " join target_source_link l on l.source_id=o.source_id and l.source_session_key=o.source_session_key"
+                + " and l.external_target_id=o.external_target_id where l.target_id=?)", fusedTarget);
+        JsonNode after = data("/api/v1/targets/" + fusedTarget + "/observations", reader).path("items").get(0);
+        assertThat(after.path("pilot_location").path("longitude").decimalValue()).isEqualByComparingTo("118.5");
+        assertThat(after.path("pilot_location").path("latitude").decimalValue()).isEqualByComparingTo("37.4");
+        assertThat(after.path("pilot_location").path("coordinate_system").asText()).isEqualTo("WGS84");
+        assertThat(after.path("class_source").asText()).isEqualTo("SENSE_DATA");
+    }
+
     @Test
     void fusionStatusReportsSourcesAndDataInterruption() throws Exception {
         JsonNode status = data("/api/v1/fusion/status", reader);

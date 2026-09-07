@@ -225,8 +225,9 @@ public class LegalityEvaluationService {
 
     private static TargetState state(Resolved resolved, String trackId, StateRow row) {
         BigDecimal confidence = row.fusionConfidence() != null ? row.fusionConfidence() : row.classificationConfidence();
+        // 阶段 8.5：飞手位置随最新状态一起进规则，C02-6 才判得出超视距（共享改动，见 task-8.5.2 报告）。
         return new TargetState(resolved.targetId(), trackId, resolved.uavSn(), row.longitude(), row.latitude(), row.altitudeAmslM(), row.heightAglM(),
-                row.speedMps(), row.headingDeg(), confidence, row.observedAt(), row.receivedAt());
+                row.speedMps(), row.headingDeg(), confidence, row.observedAt(), row.receivedAt(), row.pilotLongitude(), row.pilotLatitude());
     }
 
     private List<PlanFact> candidates(Resolved resolved, RuleParams ruleParams, OffsetDateTime asOf, Map<String, MemberRow> members) {

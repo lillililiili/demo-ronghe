@@ -1,5 +1,6 @@
 package com.uav.lowaltitude.modules.fusion.infrastructure;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -9,18 +10,60 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Repository;
 
+import com.uav.lowaltitude.modules.fusion.application.FusionProperties;
+import com.uav.lowaltitude.modules.fusion.ingest.InboxSourceRouter;
+
 /**
- * 融合摄取的 inbox 视图：只领取回放来源（source LIKE 'replay:%'）且带 source_id/payload 的行，
- * ops 的 live-device:* 行由设备模块自己的 processing_status/ops_lease_* 处理，这里一概不碰。
+ * 融合摄取的 inbox 视图：只领取我们真的能解释的来源前缀（阶段 8.5 起为 replay: / lingyun: / eo-edge: / live-radar:）
+ * 且带 source_id/payload 的行；ops 的 live-device:* 行由设备模块自己的 processing_status/ops_lease_* 处理，这里一概不碰。
+ * 白名单与 {@code InboxSourceRouter} 的映射器一一对应：领了却没有映射器的帧只会变成 FAILED，白占重试次数。
  * 领取是条件更新（RECEIVED → PROCESSING，租约到期的 PROCESSING 可被重新领取），外层 WHERE 再次校验状态，
  * PostgreSQL 会在行锁释放后按最新行版本重查，因此两个并发领取者不会拿到同一行。
  */
 @Repository
 public class FusionInboxRepository {
     public static final String REPLAY_SOURCE_PREFIX = "replay:";
-    private final NamedParameterJdbcTemplate jdbc;
+    public static final String LIVE_RADAR_SOURCE_PREFIX = "live-radar:";
 
-    public FusionInboxRepository(JdbcTemplate jdbcTemplate) { this.jdbc = new NamedParameterJdbcTemplate(jdbcTemplate); }
+    private final NamedParameterJdbcTemplate jdbc;
+    private final InboxSourceRouter router;
+    private final FusionProperties properties;
+
+    public FusionInboxRepository(JdbcTemplate jdbcTemplate, InboxSourceRouter router, FusionProperties properties) {
+        this.jdbc = new NamedParameterJdbcTemplate(jdbcTemplate);
+        this.router = router;
+        this.properties = properties;
+    }
+
+    /**
+     * 能领取的来源前缀 = 已注册映射器的前缀，减去关着开关的实测雷达。
+     * 清单取自 {@link InboxSourceRouter}，不再手工维护第二份：领了却没有映射器的帧只会白白耗掉重试次数。
+     * 实测雷达提升默认关闭，关闭时**连领都不领**——领了就会解析、丢弃并置为已处理，
+     * `fusion_attempts` 被推到上限后由 {@link #failExhausted} 永久判成毒帧；一个纯配置开关不该有不可逆的数据后果。
+     */
+    List<String> claimablePrefixes() {
+        List<String> prefixes = new ArrayList<>();
+        for (String prefix : router.prefixes()) {
+            if (LIVE_RADAR_SOURCE_PREFIX.equals(prefix) && !properties.getLivePromotion().isEnabled()) continue;
+            prefixes.add(prefix);
+        }
+        if (prefixes.isEmpty()) throw new IllegalStateException("没有可领取的来源前缀：至少要注册一个映射器");
+        return List.copyOf(prefixes);
+    }
+
+    /** 展开成 SQL 的 (source LIKE :p0 OR source LIKE :p1 ...)：IN 用不了前缀匹配。 */
+    private String prefixSql(List<String> prefixes) {
+        StringBuilder sql = new StringBuilder("(");
+        for (int i = 0; i < prefixes.size(); i++) {
+            if (i > 0) sql.append(" OR ");
+            sql.append("source LIKE :prefix").append(i);
+        }
+        return sql.append(")").toString();
+    }
+
+    private void putPrefixes(Map<String, Object> parameters, List<String> prefixes) {
+        for (int i = 0; i < prefixes.size(); i++) parameters.put("prefix" + i, prefixes.get(i) + "%");
+    }
 
     public record InboxRow(String inboxId, String source, String sourceMsgId, String sourceId, long receivedAtMillis, String payloadJson) { }
 
@@ -36,11 +79,13 @@ public class FusionInboxRepository {
     public List<InboxRow> claim(long nowMillis, int batch, long leaseMillis, int maxAttempts) {
         String token = UUID.randomUUID().toString();
         Map<String, Object> p = new HashMap<>();
-        p.put("token", token); p.put("until", nowMillis + leaseMillis); p.put("now", nowMillis); p.put("batch", batch); p.put("prefix", REPLAY_SOURCE_PREFIX + "%");
+        p.put("token", token); p.put("until", nowMillis + leaseMillis); p.put("now", nowMillis); p.put("batch", batch);
         p.put("max", maxAttempts);
+        List<String> prefixes = claimablePrefixes();
+        putPrefixes(p, prefixes);
         int claimed = jdbc.update("UPDATE inbox_message SET status='PROCESSING', lease_token=:token, lease_until=:until, fusion_attempts=fusion_attempts+1"
                 + " WHERE inbox_id IN (SELECT inbox_id FROM inbox_message WHERE (status='RECEIVED' OR (status='PROCESSING' AND lease_until<:now))"
-                + " AND fusion_attempts<:max AND source LIKE :prefix AND source_id IS NOT NULL AND payload IS NOT NULL ORDER BY received_at ASC, inbox_id ASC FETCH FIRST :batch ROWS ONLY)"
+                + " AND fusion_attempts<:max AND " + prefixSql(prefixes) + " AND source_id IS NOT NULL AND payload IS NOT NULL ORDER BY received_at ASC, inbox_id ASC FETCH FIRST :batch ROWS ONLY)"
                 + " AND (status='RECEIVED' OR (status='PROCESSING' AND lease_until<:now)) AND fusion_attempts<:max", p);
         if (claimed == 0) return List.of();
         return jdbc.query("SELECT inbox_id,source,source_msg_id,source_id,received_at,CAST(payload AS VARCHAR) AS payload_text FROM inbox_message WHERE lease_token=:token ORDER BY received_at ASC, inbox_id ASC",
@@ -51,10 +96,12 @@ public class FusionInboxRepository {
     /** 租约已过期且领取次数已耗尽的行统一置 FAILED（processed_at 必须同时写，见 ck_stage2_inbox_processed_at）。返回处理行数。 */
     public int failExhausted(long nowMillis, int maxAttempts) {
         Map<String, Object> p = new HashMap<>();
-        p.put("now", nowMillis); p.put("max", maxAttempts); p.put("prefix", REPLAY_SOURCE_PREFIX + "%");
+        p.put("now", nowMillis); p.put("max", maxAttempts);
+        List<String> prefixes = claimablePrefixes();
+        putPrefixes(p, prefixes);
         p.put("error", "超过最大领取次数 " + maxAttempts + "，帧已放弃");
         return jdbc.update("UPDATE inbox_message SET status='FAILED', processed_at=:now, last_error=:error, lease_token=NULL, lease_until=NULL"
-                + " WHERE status='PROCESSING' AND lease_until<:now AND fusion_attempts>=:max AND source LIKE :prefix", p);
+                + " WHERE status='PROCESSING' AND lease_until<:now AND fusion_attempts>=:max AND " + prefixSql(prefixes), p);
     }
 
     public void done(String inboxId, long nowMillis) {
@@ -69,7 +116,7 @@ public class FusionInboxRepository {
     }
 
     /** 回放信封入库：同键同哈希幂等（返回 false），同键不同哈希是来源冲突（SOURCE_MESSAGE_CONFLICT）。 */
-    public boolean insertReplay(String source, String sourceMsgId, long receivedAtMillis, String sourceId, String payloadHash, String payloadJson) {
+    public boolean insertEnvelope(String source, String sourceMsgId, long receivedAtMillis, String sourceId, String payloadHash, String payloadJson) {
         Map<String, Object> p = new HashMap<>();
         p.put("id", UUID.randomUUID().toString()); p.put("source", source); p.put("msg", sourceMsgId); p.put("received", receivedAtMillis);
         p.put("source_id", sourceId); p.put("hash", payloadHash); p.put("payload", payloadJson);

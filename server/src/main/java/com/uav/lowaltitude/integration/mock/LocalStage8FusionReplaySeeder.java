@@ -41,7 +41,9 @@ public class LocalStage8FusionReplaySeeder implements ApplicationRunner {
     public static final List<SourceSeed> SOURCES = List.of(
             new SourceSeed(FusionReplayDatasetGenerator.RADAR, "RADAR", "阶段八回放雷达", "seed-stage8-source-radar", "seed-stage8-device-radar", "DEV-STAGE8-RADAR-001"),
             new SourceSeed(FusionReplayDatasetGenerator.TDOA, "TDOA", "阶段八回放 TDOA", "seed-stage8-source-tdoa", "seed-stage8-device-tdoa", "DEV-STAGE8-TDOA-001"),
-            new SourceSeed(FusionReplayDatasetGenerator.EO, "EO", "阶段八回放光电", "seed-stage8-source-eo", "seed-stage8-device-eo", "DEV-STAGE8-EO-001"));
+            new SourceSeed(FusionReplayDatasetGenerator.EO, "EO", "阶段八回放光电", "seed-stage8-source-eo", "seed-stage8-device-eo", "DEV-STAGE8-EO-001"),
+            // 阶段 8.5 新增：AOA 只给方位不给位置，需要一个独立来源才能演示"有身份线索但不参与位置关联"。
+            new SourceSeed(FusionReplayDatasetGenerator.AOA, "AOA", "阶段八点五回放 AOA", "seed-stage85-source-aoa", "seed-stage85-device-aoa", "DEV-STAGE85-AOA-001"));
     private static final Timestamp CREATED_AT = Timestamp.from(Instant.parse("2026-09-05T00:00:00Z"));
 
     private final JdbcTemplate jdbc;
@@ -60,9 +62,11 @@ public class LocalStage8FusionReplaySeeder implements ApplicationRunner {
     public void run(ApplicationArguments args) {
         ensureScope();
         SOURCES.forEach(this::ensureSource);
-        LoadReport report = runner.load();
+        // 阶段 8.5 起默认摄取直连报文数据集（v2）；v1 的自建信封仍可读，留给需要复现阶段 8 结论的回归。
+        LoadReport report = runner.loadV2();
         int frames = drain();
-        log.info("stage 8 replay seed: records={}, inserted={}, skipped={}, frames processed={}", report.records(), report.inserted(), report.skipped(), frames);
+        log.info("stage 8.5 direct-access replay seed: dataset={}, records={}, inserted={}, skipped={}, frames processed={}",
+                report.datasetId(), report.records(), report.inserted(), report.skipped(), frames);
     }
 
     /** 同步跑完所有待处理回放帧；每帧一次调用，失败帧记 FAILED 后继续（与 Worker 行为一致）。 */

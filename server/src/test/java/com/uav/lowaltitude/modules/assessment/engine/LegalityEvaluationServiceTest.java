@@ -165,6 +165,45 @@ class LegalityEvaluationServiceTest {
         assertThat(result.alarmCreated()).isTrue();
     }
 
+    /**
+     * 阶段 8.5：飞手位置写进 target_latest_state 之后，C02-6 从"恒未知"变成可判定。
+     * 目标在 POINT(118.025 37.025)：飞手北移 0.01° 约 1111 m（超 500 m 阈值），北移 0.0005° 约 55 m（阈内）。
+     */
+    @Test
+    void visualLineOfSightBecomesDecidableOncePilotPositionIsStored() throws Exception {
+        assertThat(check(evaluateActive(), "C02-6").path("reason_code").asText(null))
+                .as("没有飞手位置时仍是未知").isEqualTo("PILOT_POSITION_UNAVAILABLE");
+
+        setPilot("118.025 37.035");
+        JsonNode far = check(evaluateActive(), "C02-6");
+        assertThat(far.get("result_code").asText()).isEqualTo("FAIL");
+        assertThat(far.get("reason_code").asText()).isEqualTo("BVLOS_EXCEEDED");
+        assertThat(far.path("facts").path("distance_m").asDouble()).isBetween(1000.0, 1200.0);
+
+        setPilot("118.025 37.0255");
+        JsonNode near = check(evaluateActive(), "C02-6");
+        assertThat(near.get("result_code").asText()).isEqualTo("PASS");
+        assertThat(near.path("facts").path("distance_m").asDouble()).isLessThan(500.0);
+    }
+
+    private void setPilot(String point) {
+        jdbc.update("update target_latest_state set pilot_location=CAST(? AS GEOMETRY) where target_id=?", "SRID=4326;POINT(" + point + ")", targetId);
+    }
+
+    private Object evaluateActive() {
+        RunHandle run = runs.start(code, RunMode.ACTIVE, "MANUAL", null, null, now());
+        EvaluationResult result = service.evaluate(subject(targetId), RunMode.ACTIVE, now(), run.runId());
+        return jdbc.queryForMap("select hit_details from rule_evaluation where evaluation_id=?", result.evaluationId()).get("hit_details");
+    }
+
+    private JsonNode check(Object hitDetails, String ruleCode) throws Exception {
+        JsonNode hits = array(hitDetails);
+        for (JsonNode hit : hits) {
+            if (ruleCode.equals(hit.path("rule_code").asText())) return hit;
+        }
+        throw new AssertionError("研判明细里没有 " + ruleCode + "：" + hits);
+    }
+
     @Test
     void staleStateIsNotApplicableAndNeverProjected() {
         jdbc.update("update target_latest_state set observed_at=?,updated_at=? where target_id=?", ts(now().minusHours(2)), ts(now().minusHours(2)), targetId);

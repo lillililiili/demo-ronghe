@@ -17,7 +17,7 @@ import com.uav.lowaltitude.Application;
 /**
  * production 必须压过 local：阶段 8 的回放种子、回放 Runner 与摄取 Worker 不允许因部署 profile 组合泄入生产。
  * 故意打开 app.dev-seed.enabled 与 app.fusion.replay.run-on-start，证明仅靠 profile/属性门禁就足以阻止它们注册和写表；
- * 生产没有任何来源观测、回放目标或融合事件，但迁移 050 登记的 fusion_config demo-v1 与五行来源类型目录必须存在——
+ * 生产没有任何来源观测、回放目标或融合事件，但迁移 050/070 登记的 fusion_config demo-v1 与八行来源类型目录必须存在——
  * 它们是引擎运行的结构性目录（参数外置、来源类型外键），不是演示数据。
  * 按 Bean 名断言，不引用 E1/E2 的类型：类被重命名时这里也不会因编译依赖而“默认通过”。
  */
@@ -56,7 +56,7 @@ class ProductionStage8SeedIsolationTest {
             assertThat(jdbc.queryForObject("select count(*) from fusion_config where config_version='demo-v1' and status='ACTIVE' and schema_status='DEMO'", Integer.class)).isEqualTo(1);
             assertThat(jdbc.queryForObject("select count(*) from fusion_config where status='ACTIVE'", Integer.class)).isEqualTo(1);
             List<String> types = jdbc.queryForList("select source_type from source_type_catalog order by source_type", String.class);
-            assertThat(types).containsExactly("EO", "FIVE_G_A", "FUSION_BOX", "RADAR", "TDOA");
+            assertThat(types).containsExactly("AOA", "DCD", "EO", "FIVE_G_A", "FUSION_BOX", "RADAR", "RID", "TDOA"); // 阶段 8.5 迁移 070 按凌云协议增 AOA/DCD/RID（仍 DEMO）
             assertThat(jdbc.queryForObject("select count(*) from source_type_catalog where schema_status='CONFIRMED'", Integer.class)).isEqualTo(1);
             assertThat(jdbc.queryForObject("select schema_status from source_type_catalog where source_type='RADAR'", String.class)).isEqualTo("CONFIRMED");
         }

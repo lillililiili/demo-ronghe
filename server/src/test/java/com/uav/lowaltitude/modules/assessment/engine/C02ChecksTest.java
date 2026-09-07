@@ -149,13 +149,37 @@ class C02ChecksTest {
         assertThat(check.evaluate(context(state(), noPlan(), List.of(), AS_OF.withHour(13)), params).resultCode()).isEqualTo(ResultCode.FAIL);
     }
 
+    /**
+     * C02-6 三态：飞手位置接入后按目标与飞手的大圆距离判定，缺飞手位置仍是未知。
+     * 阈值 500 m：飞手在 (118.02, 37.02)，目标北移 0.01° 约 1111 m（超），北移 0.001° 约 111 m（不超）。
+     */
     @Test
-    void visualLineOfSightIsAlwaysUnknownUntilPilotPositionIsConnected() {
-        HitDetail detail = new VisualLineOfSightCheck().evaluate(context(state(), full(), List.of(), null), params);
-        assertThat(detail.ruleCode()).isEqualTo("C02-6");
-        assertThat(detail.resultCode()).isEqualTo(ResultCode.UNDETERMINED);
-        assertThat(detail.reasonCode()).isEqualTo("PILOT_POSITION_UNAVAILABLE");
-        assertThat(detail.params()).anyMatch(ref -> "vlos_m".equals(ref.key()));
+    void visualLineOfSightJudgesDistanceOnceThePilotPositionIsKnown() {
+        HitDetail unknown = new VisualLineOfSightCheck().evaluate(context(state(), full(), List.of(), null), params);
+        assertThat(unknown.ruleCode()).isEqualTo("C02-6");
+        assertThat(unknown.resultCode()).isEqualTo(ResultCode.UNDETERMINED);
+        assertThat(unknown.reasonCode()).isEqualTo("PILOT_POSITION_UNAVAILABLE");
+        assertThat(unknown.params()).anyMatch(ref -> "vlos_m".equals(ref.key()));
+        assertThat(unknown.facts()).doesNotContainKey("distance_m");
+
+        HitDetail far = new VisualLineOfSightCheck().evaluate(context(withPilot("118.02", "37.03"), full(), List.of(), null), params);
+        assertThat(far.resultCode()).isEqualTo(ResultCode.FAIL);
+        assertThat(far.reasonCode()).isEqualTo("BVLOS_EXCEEDED");
+        assertThat(((BigDecimal) far.facts().get("distance_m")).doubleValue()).isBetween(1000.0, 1200.0);
+        assertThat(far.facts()).containsEntry("pilot_location", Map.of("longitude", new BigDecimal("118.02"), "latitude", new BigDecimal("37.03")));
+        assertThat(far.message()).contains("演示");
+
+        HitDetail near = new VisualLineOfSightCheck().evaluate(context(withPilot("118.02", "37.021"), full(), List.of(), null), params);
+        assertThat(near.resultCode()).isEqualTo(ResultCode.PASS);
+        assertThat(near.reasonCode()).isNull();
+        assertThat(((BigDecimal) near.facts().get("distance_m")).doubleValue()).isLessThan(500.0);
+
+        // 有飞手位置但目标位置缺失：不拿单边坐标硬算，也不当成"没接入"。
+        TargetState noTarget = new TargetState("t-1", "tr-1", "SN-1", null, null, null, null, null, null, new BigDecimal("0.9"), AS_OF, AS_OF,
+                new BigDecimal("118.02"), new BigDecimal("37.02"));
+        HitDetail missing = new VisualLineOfSightCheck().evaluate(context(noTarget, full(), List.of(), null), params);
+        assertThat(missing.resultCode()).isEqualTo(ResultCode.UNDETERMINED);
+        assertThat(missing.reasonCode()).isEqualTo("POSITION_UNKNOWN");
     }
 
     @Test
@@ -215,6 +239,11 @@ class C02ChecksTest {
     private static TargetState state() {
         return new TargetState("t-1", "tr-1", "SN-1", new BigDecimal("118.02"), new BigDecimal("37.02"), new BigDecimal("80.00"), new BigDecimal("60.00"),
                 null, null, new BigDecimal("0.9"), AS_OF, AS_OF);
+    }
+    /** 目标位置同 state()，另带飞手位置：C02-6 的唯一新增输入。 */
+    private static TargetState withPilot(String pilotLon, String pilotLat) {
+        return new TargetState("t-1", "tr-1", "SN-1", new BigDecimal("118.02"), new BigDecimal("37.02"), new BigDecimal("80.00"), new BigDecimal("60.00"),
+                null, null, new BigDecimal("0.9"), AS_OF, AS_OF, new BigDecimal(pilotLon), new BigDecimal(pilotLat));
     }
     private static AirspaceHit hit(String kind, String relation, String min, String max, String datum, String unknown) {
         return new AirspaceHit("a-" + kind, "av-" + kind, kind, relation, min == null ? null : new BigDecimal(min), max == null ? null : new BigDecimal(max), datum,

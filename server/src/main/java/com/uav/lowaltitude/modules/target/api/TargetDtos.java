@@ -27,7 +27,9 @@ public final class TargetDtos {
             BigDecimal speedMps,
             BigDecimal headingDeg,
             BigDecimal classificationConfidence,
-            BigDecimal fusionConfidence) {
+            BigDecimal fusionConfidence,
+            /* 阶段 8.5：飞手（遥控器）位置，只有身份类来源报得出；没有就整个字段不下发。 */
+            LocationDto pilotLocation) {
     }
 
     public record TargetSummaryDto(

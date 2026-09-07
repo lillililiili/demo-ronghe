@@ -93,12 +93,15 @@ public class FusedTrackRepository {
         p.put("t", s.targetId()); p.put("geom", s.longitude() == null ? null : ewkt(s.longitude(), s.latitude())); p.put("amsl", s.altitudeAmslM()); p.put("agl", s.heightAglM());
         p.put("speed", s.speedMps()); p.put("heading", s.headingDeg()); p.put("cconf", s.classificationConfidence()); p.put("fconf", s.fusionConfidence());
         p.put("observed", s.observedAt()); p.put("received", s.receivedAt()); p.put("unknown", s.unknownFieldsJson()); p.put("updated", s.updatedAt());
+        // 飞手位置每帧重写（含写回 NULL）：它描述"这一刻飞手在哪"，留着上一帧的旧值会让 C02-6 拿过期位置判超视距。
+        p.put("pilot", s.pilotLongitude() == null || s.pilotLatitude() == null ? null : ewkt(s.pilotLongitude(), s.pilotLatitude()));
         int updated = jdbc.update("UPDATE target_latest_state SET location=CAST(:geom AS GEOMETRY), altitude_amsl_m=:amsl, height_agl_m=:agl, speed_mps=:speed, heading_deg=:heading,"
-                + " classification_confidence=:cconf, fusion_confidence=:fconf, observed_at=:observed, received_at=:received, unknown_fields=CAST(:unknown AS JSON), updated_at=:updated"
+                + " classification_confidence=:cconf, fusion_confidence=:fconf, observed_at=:observed, received_at=:received, unknown_fields=CAST(:unknown AS JSON),"
+                + " pilot_location=CAST(:pilot AS GEOMETRY), updated_at=:updated"
                 + " WHERE target_id=:t", p);
         if (updated == 0) {
-            jdbc.update("INSERT INTO target_latest_state (target_id,location,altitude_amsl_m,height_agl_m,speed_mps,heading_deg,classification_confidence,fusion_confidence,observed_at,received_at,unknown_fields,created_at,updated_at,version)"
-                    + " VALUES (:t,CAST(:geom AS GEOMETRY),:amsl,:agl,:speed,:heading,:cconf,:fconf,:observed,:received,CAST(:unknown AS JSON),:updated,:updated,0)", p);
+            jdbc.update("INSERT INTO target_latest_state (target_id,location,altitude_amsl_m,height_agl_m,speed_mps,heading_deg,classification_confidence,fusion_confidence,observed_at,received_at,unknown_fields,pilot_location,created_at,updated_at,version)"
+                    + " VALUES (:t,CAST(:geom AS GEOMETRY),:amsl,:agl,:speed,:heading,:cconf,:fconf,:observed,:received,CAST(:unknown AS JSON),CAST(:pilot AS GEOMETRY),:updated,:updated,0)", p);
         }
     }
 
@@ -132,5 +135,7 @@ public class FusedTrackRepository {
             BigDecimal altitudeAmslM, BigDecimal heightAglM, OffsetDateTime createdAt, String pointKind, String observationId, BigDecimal positionAccuracyM,
             String contributingJson, String positionSourceId, boolean sourceSwitched, String degradationLevel) { }
     public record LatestState(String targetId, Double longitude, Double latitude, BigDecimal altitudeAmslM, BigDecimal heightAglM, BigDecimal speedMps, BigDecimal headingDeg,
-            BigDecimal classificationConfidence, BigDecimal fusionConfidence, OffsetDateTime observedAt, OffsetDateTime receivedAt, String unknownFieldsJson, OffsetDateTime updatedAt) { }
+            BigDecimal classificationConfidence, BigDecimal fusionConfidence, OffsetDateTime observedAt, OffsetDateTime receivedAt, String unknownFieldsJson, OffsetDateTime updatedAt,
+            /* 阶段 8.5：身份主源给出的飞手位置，无则为空。 */
+            Double pilotLongitude, Double pilotLatitude) { }
 }

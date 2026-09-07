@@ -17,6 +17,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.uav.lowaltitude.modules.fusion.api.FusionDtos.FusionStatusDto;
 import com.uav.lowaltitude.modules.fusion.api.FusionDtos.LineageDto;
+import com.uav.lowaltitude.modules.fusion.api.FusionDtos.LocationDto;
 import com.uav.lowaltitude.modules.fusion.api.FusionDtos.ObservationDto;
 import com.uav.lowaltitude.modules.fusion.api.FusionDtos.PageDto;
 import com.uav.lowaltitude.modules.fusion.api.FusionDtos.SourceStatusDto;
@@ -111,7 +112,10 @@ public class FusionReadService {
         return new ObservationDto(row.observationId(), row.sourceCode(), row.sourceType(), row.externalTargetId(),
                 row.observedAt().toInstant().toEpochMilli(), row.receivedAt().toInstant().toEpochMilli(), row.longitude(), row.latitude(),
                 row.positionAccuracyM(), row.altitudeAmslM(), row.heightAglM(), row.speedMps(), row.headingDeg(),
-                row.classCode(), row.classConfidence(), row.identityClue(), row.sourceMode());
+                row.classCode(), row.classConfidence(), row.identityClue(), row.sourceMode(),
+                row.pilotLongitude() == null || row.pilotLatitude() == null ? null
+                        : new LocationDto(row.pilotLongitude(), row.pilotLatitude(), "WGS84"),
+                row.classSource());
     }
 
     private List<String> strings(String value) {

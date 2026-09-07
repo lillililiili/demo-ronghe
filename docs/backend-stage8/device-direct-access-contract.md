@@ -1,6 +1,6 @@
 # 设备直连接入契约（阶段 8.5，A/B 边界）
 
-> 状态：领导冻结稿 v1.0（2026-09-07）。依据：会议纪要 V1.0 三路架构、凌云协议 A v8.6 / B V2.4 / C 20250826（`设备资料/凌云协议/`）、决策 8-30（云端只保留我们的平台）、对齐文档 `target-schema-v1-alignment.md` §5。配套计划：《协作者 A 直连接入计划》《协作者 B 直连切片计划》。
+> 状态：领导冻结稿 v1.1（2026-09-07：补冻结接口扩展、迁移编号、字段落点；v1.0 同日）。依据：会议纪要 V1.0 三路架构、凌云协议 A v8.6 / B V2.4 / C 20250826（`设备资料/凌云协议/`）、决策 8-30（云端只保留我们的平台）、对齐文档 `target-schema-v1-alignment.md` §5。配套计划：《协作者 A 直连接入计划》《协作者 B 直连切片计划》。
 
 ## 1. 边界
 
@@ -48,3 +48,15 @@
 ## 5. 待确认（客户/厂家）
 
 高度基准；各源标称精度；`objectId` 生命周期与上报频率；光电 `className` 取值表与门限；云台角度控制与"执行中/急停"回执。确认前一律原样透传并标注，不猜测。
+
+## 6. 冻结接口与落点（阶段 8.5，v1.1）
+
+- `FusionContracts.SourceEstimate` 追加可空 `pilotLongitude / pilotLatitude / classSource`（旧 21 参构造器保留，新字段为 null）；`RuleContracts.TargetState` 追加可空 `pilotLongitude / pilotLatitude`（旧 12 参构造器保留）。
+- 迁移 070（领导）：`source_type_catalog` 增 `AOA / DCD / RID`，EO/TDOA/5G-A/融合箱 `spec_ref` 指向凌云协议 A；`fusion_config demo-v1` 的 `accuracy_default_m` 与 `weights` 增三项（AOA 位置权重 0）。
+- 迁移 071（E1）：`source_observation ADD pilot_location GEOMETRY(POINT,4326), class_source VARCHAR(16)`；`target_latest_state ADD pilot_location GEOMETRY(POINT,4326)`；`R__stage85_direct_access.sql`：两列 SRID/范围 CHECK + GIST。
+- ~~迁移 072~~ 取消（决策 8.5-12）：C02-6 复用既有参数 `C02-6.vlos_m`（500 m，DEMO），不新增参数。
+- 映射入口：`modules/fusion/ingest/InboxSourceRouter` 按 `source` 前缀分派 `FrameMapper`：`replay:`（现有解析迁出为 `ReplayFrameMapper`）、`lingyun:`（`LingyunSenseDataMapper`）、`eo-edge:`（`EoTrackingReportMapper`）、`live-radar:`（`LiveRadarFrameMapper`）；`FusionInboxRepository.claim` 白名单同四个前缀。
+- `class_source` 取值：`SENSE_DATA`（协议 A objectType）、`EO_TRACKING`（协议 C aiStatus）、`RADAR`（雷达分类码）、`MANUAL`（人工修订）。
+- C02-6：`TargetState.pilot*` 存在 → 目标与飞手位置大圆距离 > `C02-6.vlos_m` → FAIL `BVLOS_EXCEEDED`，≤ → PASS；不存在 → UNDETERMINED `PILOT_POSITION_UNAVAILABLE`（不变）。
+- 高度：凌云来源 `altitude` 只落 `quality.altitude_raw`，`quality.altitude_datum=REFERENCE_UNKNOWN`，`altitude_amsl_m` 留空（决策 8.5-24）；`height` → `height_agl_m` + `quality.height_datum=DEVICE_GROUND`。
+- 协议 C：`external_target_id` 与 `source_session_key` 同取 `taskId`（8.5-20）；未映射事件返回空帧、inbox DONE（8.5-22）。协议 A 帧级 `observed_at` 取首个对象 `time`（8.5-21）。

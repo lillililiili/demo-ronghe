@@ -12,7 +12,20 @@ export const REASON_CODE_LABEL = {
 export const PLAN_STATUS_LABEL = { PENDING: '待执行', APPROVED: '已批准', EXECUTING: '执行中', COMPLETED: '已完成', CANCELLED: '已取消' };
 export const HANDOFF_TYPE_LABEL = { RISK_NOTICE: '风险通报', UAV_PUNISHMENT: '处罚交接' };
 export const HANDOFF_KIND_LABEL = { RISK: '飞行风险', UAV_EVENT: '无人机事件', DEVICE_INCIDENT: '设备异常' };
-export const OBJECT_TYPE_LABEL = { UAV: '无人机', BIRD: '鸟类', UNKNOWN: '未分类' };
+/* PERSON/VEHICLE/SHIP/REMOTE_CONTROLLER 来自凌云协议 A 的 objectType（阶段 8.5 直连切片）。 */
+export const OBJECT_TYPE_LABEL = {
+  UAV: '无人机', BIRD: '鸟类', UNKNOWN: '未分类',
+  PERSON: '人员', VEHICLE: '车辆', SHIP: '船只', REMOTE_CONTROLLER: '遥控器'
+};
+/* 来源类型中文取自 source_type_catalog.display_name（迁移 050 与 070），同一个码全站只有一个说法。 */
+export const SOURCE_TYPE_LABEL = {
+  RADAR: '雷达', EO: '光电', TDOA: 'TDOA', FIVE_G_A: '5G-A 基站', FUSION_BOX: '融合感知箱',
+  AOA: '无线电测向（AOA）', DCD: '协议破解', RID: 'RemoteID'
+};
+/* 来源接入状态：DEMO 表示字段有协议出处但尚未与真实设备联调，页面必须说清楚，不能让人当成已核实的能力。 */
+export const SCHEMA_STATUS_LABEL = { CONFIRMED: '已联调确认', DEMO: '按凌云协议 v8.6 建模，待联调' };
+/* 目标类别是哪一路给的：观测的 class_source（阶段 8.5）。 */
+export const CLASS_SOURCE_LABEL = { SENSE_DATA: '感知数据', EO_TRACKING: '光电跟踪', RADAR: '雷达分类', MANUAL: '人工修订' };
 /* 气球、风筝、孔明灯只能是算法推断的 subtype，不是设备可上报的目标类型（V1.1 任务书 A4）。 */
 export const INFERRED_SUBTYPE_LABEL = { BALLOON: '气球', KITE: '风筝', LANTERN: '孔明灯' }; // subtype 推断
 export const SUBTYPE_LABEL = {

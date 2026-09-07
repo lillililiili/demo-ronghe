@@ -80,26 +80,42 @@ public class ObservationReadRepository {
     }
 
     private String select() {
-        String location = postgis
-                ? "CASE WHEN o.location IS NOT NULL AND ST_SRID(o.location)=4326 THEN ST_X(o.location) END AS longitude,"
-                        + "CASE WHEN o.location IS NOT NULL AND ST_SRID(o.location)=4326 THEN ST_Y(o.location) END AS latitude,"
-                        + "CAST(NULL AS VARCHAR) AS location_text"
-                : "CAST(NULL AS NUMERIC) AS longitude,CAST(NULL AS NUMERIC) AS latitude,CAST(o.location AS VARCHAR) AS location_text";
         return "SELECT o.observation_id,s.source_code,o.source_type,o.external_target_id,o.observed_at,o.received_at,"
                 + "o.position_accuracy_m,o.altitude_amsl_m,o.height_agl_m,o.speed_mps,o.heading_deg,o.class_code,"
-                + "o.class_confidence,o.identity_clue,o.source_mode," + location + " ";
+                + "o.class_confidence,o.identity_clue,o.source_mode,o.class_source,"
+                + locationColumns("o.location", "") + "," + locationColumns("o.pilot_location", "pilot_") + " ";
+    }
+
+    /** alias 前缀区分同一行里的多个几何列（观测位置与飞手位置）。 */
+    private String locationColumns(String column, String alias) {
+        if (postgis) {
+            return "CASE WHEN " + column + " IS NOT NULL AND ST_SRID(" + column + ")=4326 THEN ST_X(" + column + ") END AS " + alias + "longitude,"
+                    + "CASE WHEN " + column + " IS NOT NULL AND ST_SRID(" + column + ")=4326 THEN ST_Y(" + column + ") END AS " + alias + "latitude,"
+                    + "CAST(NULL AS VARCHAR) AS " + alias + "location_text";
+        }
+        return "CAST(NULL AS NUMERIC) AS " + alias + "longitude,CAST(NULL AS NUMERIC) AS " + alias + "latitude,"
+                + "CAST(" + column + " AS VARCHAR) AS " + alias + "location_text";
     }
 
     private static ObservationRow row(ResultSet rs, int ignored) throws SQLException {
-        BigDecimal longitude = rs.getBigDecimal("longitude"), latitude = rs.getBigDecimal("latitude");
-        if (longitude == null || latitude == null) {
-            double[] parsed = parse(rs.getString("location_text"));
-            if (parsed != null) { longitude = BigDecimal.valueOf(parsed[0]); latitude = BigDecimal.valueOf(parsed[1]); }
-        }
+        BigDecimal[] location = coordinate(rs, ""), pilot = coordinate(rs, "pilot_");
         return new ObservationRow(rs.getString("observation_id"), rs.getString("source_code"), rs.getString("source_type"), rs.getString("external_target_id"),
-                FusionConfigRepository.time(rs, "observed_at"), FusionConfigRepository.time(rs, "received_at"), longitude, latitude, rs.getBigDecimal("position_accuracy_m"),
+                FusionConfigRepository.time(rs, "observed_at"), FusionConfigRepository.time(rs, "received_at"),
+                location == null ? null : location[0], location == null ? null : location[1], rs.getBigDecimal("position_accuracy_m"),
                 rs.getBigDecimal("altitude_amsl_m"), rs.getBigDecimal("height_agl_m"), rs.getBigDecimal("speed_mps"), rs.getBigDecimal("heading_deg"),
-                rs.getString("class_code"), rs.getBigDecimal("class_confidence"), rs.getString("identity_clue"), rs.getString("source_mode"));
+                rs.getString("class_code"), rs.getBigDecimal("class_confidence"), rs.getString("identity_clue"), rs.getString("source_mode"),
+                pilot == null ? null : pilot[0], pilot == null ? null : pilot[1], rs.getString("class_source"));
+    }
+
+    /** PG 分支直接给数值，H2 分支回读 EWKT 文本再解析；两端都不接受非 4326 的坐标。 */
+    private static BigDecimal[] coordinate(ResultSet rs, String alias) throws SQLException {
+        BigDecimal longitude = rs.getBigDecimal(alias + "longitude"), latitude = rs.getBigDecimal(alias + "latitude");
+        if (longitude == null || latitude == null) {
+            double[] parsed = parse(rs.getString(alias + "location_text"));
+            if (parsed == null) return null;
+            longitude = BigDecimal.valueOf(parsed[0]); latitude = BigDecimal.valueOf(parsed[1]);
+        }
+        return new BigDecimal[] { longitude, latitude };
     }
 
     /** H2 上几何列回读为 EWKT 文本；非 4326 一律当作不可信坐标丢弃，不猜测坐标系。 */
@@ -127,6 +143,8 @@ public class ObservationReadRepository {
     public record ObservationQuery(String sourceCode, OffsetDateTime timeFrom, OffsetDateTime timeTo) { }
     public record ObservationRow(String observationId, String sourceCode, String sourceType, String externalTargetId, OffsetDateTime observedAt, OffsetDateTime receivedAt,
             BigDecimal longitude, BigDecimal latitude, BigDecimal positionAccuracyM, BigDecimal altitudeAmslM, BigDecimal heightAglM, BigDecimal speedMps, BigDecimal headingDeg,
-            String classCode, BigDecimal classConfidence, String identityClue, String sourceMode) { }
+            String classCode, BigDecimal classConfidence, String identityClue, String sourceMode,
+            /* 阶段 8.5：飞手位置与类别来源，可空。 */
+            BigDecimal pilotLongitude, BigDecimal pilotLatitude, String classSource) { }
     public record SourceStatusRow(String sourceCode, String sourceType, String schemaStatus, OffsetDateTime lastObservedAt) { }
 }

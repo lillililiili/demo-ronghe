@@ -14,6 +14,8 @@ import org.springframework.stereotype.Component;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.uav.lowaltitude.integration.replay.FusionReplayDatasetGenerator.Dataset;
+import com.uav.lowaltitude.integration.replay.FusionReplayDatasetGenerator.ProtocolDataset;
+import com.uav.lowaltitude.integration.replay.FusionReplayDatasetGenerator.ProtocolRecord;
 import com.uav.lowaltitude.integration.replay.FusionReplayDatasetGenerator.Record;
 import com.uav.lowaltitude.modules.fusion.infrastructure.FusionInboxRepository;
 
@@ -37,6 +39,9 @@ public class FusionReplayRunner {
         this.generator = generator; this.reader = reader; this.inbox = inbox; this.jdbc = jdbc; this.json = json;
     }
 
+    /** v2 数据集实际用到的直连前缀（雷达帧由助手的实测端口写入，不由本生成器产出）。 */
+    private static final List<String> DIRECT_ACCESS_PREFIXES = List.of("lingyun:", "eo-edge:");
+
     public record LoadReport(String datasetId, int records, int inserted, int skipped) { }
 
     /** 生成数据集并写 inbox；返回写入与跳过的条数。 */
@@ -49,7 +54,7 @@ public class FusionReplayRunner {
             if (sourceId == null) throw new IllegalStateException("回放来源未登记: " + record.sourceCode());
             String line = envelope(dataset.datasetId(), record);
             FusionReplayReader.Envelope envelope = reader.read(line);
-            boolean added = inbox.insertReplay(envelope.source(), Long.toString(envelope.recordNo()), envelope.receivedAtMillis(), sourceId,
+            boolean added = inbox.insertEnvelope(envelope.source(), Long.toString(envelope.recordNo()), envelope.receivedAtMillis(), sourceId,
                     envelope.payloadHash(), envelope.payloadJson());
             if (added) inserted++; else skipped++;
         }
@@ -67,6 +72,46 @@ public class FusionReplayRunner {
     /** 数据集是否已经全部写入 inbox（用于种子跳过判断）。 */
     public boolean alreadyLoaded(String datasetId) {
         return inbox.countBySourcePrefix("replay:") >= generator.generate().records().size();
+    }
+
+    // ---------- 阶段 8.5：数据集 v2（直连报文） ----------
+
+    /**
+     * 写入直连回放数据集：inbox 的 payload 就是设备原样上报的凌云报文，source 用契约 §2 的前缀，
+     * 由 {@code InboxSourceRouter} 决定交给哪个映射器。信封（{@link FusionReplayReader}）仍是 v1 的形状，
+     * 只用于归档与哈希复算，不再夹在设备报文与 inbox 之间——夹一层会让"库里存的就是设备发来的原文"这句话不成立。
+     */
+    public LoadReport loadV2() {
+        ProtocolDataset dataset = generator.generateV2();
+        Map<String, String> sourceIds = sourceIdsByCode();
+        int inserted = 0, skipped = 0;
+        for (ProtocolRecord record : dataset.records()) {
+            String sourceId = sourceIds.get(record.sourceCode());
+            if (sourceId == null) throw new IllegalStateException("回放来源未登记: " + record.sourceCode());
+            String payload = payloadJson(record.payload());
+            boolean added = inbox.insertEnvelope(record.inboxSource(), Long.toString(record.recordNo()), record.receivedAtMillis(), sourceId,
+                    FusionReplayReader.sha256(payload), payload);
+            if (added) inserted++; else skipped++;
+        }
+        log.info("fusion direct-access dataset loaded: dataset={}, records={}, inserted={}, skipped={}",
+                dataset.datasetId(), dataset.records().size(), inserted, skipped);
+        return new LoadReport(dataset.datasetId(), dataset.records().size(), inserted, skipped);
+    }
+
+    /** v2 数据集是否已全部写入：按直连前缀合计计数（回放前缀属于 v1，不计）。 */
+    public boolean alreadyLoadedV2() {
+        long written = 0;
+        for (String prefix : DIRECT_ACCESS_PREFIXES) written += inbox.countBySourcePrefix(prefix);
+        return written >= generator.generateV2().records().size();
+    }
+
+    private String payloadJson(Map<String, Object> payload) {
+        try {
+            return json.writer().with(com.fasterxml.jackson.databind.SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS)
+                    .writeValueAsString(new java.util.TreeMap<>(payload));
+        } catch (JsonProcessingException ex) {
+            throw new IllegalStateException("直连报文无法序列化", ex);
+        }
     }
 
     private Map<String, String> sourceIdsByCode() {

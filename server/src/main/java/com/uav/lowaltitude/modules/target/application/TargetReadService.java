@@ -173,7 +173,7 @@ public class TargetReadService {
         return new TargetStateDto(
                 requiredMillis(row.stateObservedAt()), requiredMillis(row.stateReceivedAt()), issues(row),
                 location(row.location()), row.altitudeAmslM(), row.heightAglM(), row.speedMps(), row.headingDeg(),
-                row.classificationConfidence(), row.fusionConfidence());
+                row.classificationConfidence(), row.fusionConfidence(), location(row.pilotLocation()));
     }
 
     private List<FieldIssueDto> issues(TargetRow row) {

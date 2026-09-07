@@ -39,7 +39,24 @@ public record SourceObservation(
         String sourceMode,
         String ownerOrgId,
         String districtId,
-        long pointSeq) {
+        long pointSeq,
+        /* 阶段 8.5：飞手/遥控器位置（凌云协议 A 的 pilotLon/pilotLat）与类别来源。飞手位置是**另一个点**，
+           不是目标位置——C02-6 超视距要拿它和目标位置算距离，混进 location 就再也分不开了。 */
+        Double pilotLongitude,
+        Double pilotLatitude,
+        String classSource) {
+
+    /** 阶段 8 的旧签名：没有飞手位置与类别来源的来源保持原样构造。 */
+    public SourceObservation(String observationId, String inboxId, String sourceId, String sourceCode, String sourceType, String schemaStatus,
+            String deviceId, String sourceSessionKey, String externalTargetId, String externalTrackId, Instant observedAt, Instant receivedAt,
+            Double longitude, Double latitude, Double positionAccuracyM, Double altitudeAmslM, Double heightAglM, Double speedMps,
+            Double headingDeg, String classCode, Double classConfidence, String identityClue, Double identityConfidence, Long latencyMs,
+            Map<String, Object> quality, String sourceMode, String ownerOrgId, String districtId, long pointSeq) {
+        this(observationId, inboxId, sourceId, sourceCode, sourceType, schemaStatus, deviceId, sourceSessionKey, externalTargetId,
+                externalTrackId, observedAt, receivedAt, longitude, latitude, positionAccuracyM, altitudeAmslM, heightAglM, speedMps,
+                headingDeg, classCode, classConfidence, identityClue, identityConfidence, latencyMs, quality, sourceMode, ownerOrgId,
+                districtId, pointSeq, null, null, null);
+    }
 
     /** 融合分区：跨 source_mode 或跨归属元组的观测永不关联（回放与实测、不同单位辖区的目标不是同一个物理对象的证据）。 */
     public FusionDomainKey domain() {
@@ -48,6 +65,10 @@ public record SourceObservation(
 
     public boolean hasPosition() {
         return longitude != null && latitude != null;
+    }
+
+    public boolean hasPilotPosition() {
+        return pilotLongitude != null && pilotLatitude != null;
     }
 
     public long observedMillis() {

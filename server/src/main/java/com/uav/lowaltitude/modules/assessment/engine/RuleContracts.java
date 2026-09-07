@@ -40,7 +40,16 @@ public final class RuleContracts {
      */
     public record TargetState(String targetId, String trackId, String uavSn, BigDecimal longitude, BigDecimal latitude,
             BigDecimal altitudeAmslM, BigDecimal heightAglM, BigDecimal speedMps, BigDecimal headingDeg,
-            BigDecimal confidence, OffsetDateTime observedAt, OffsetDateTime receivedAt) { }
+            BigDecimal confidence, OffsetDateTime observedAt, OffsetDateTime receivedAt,
+            /* 阶段 8.5：融合后的飞手/遥控器位置（target_latest_state.pilot_location），C02-6 超视距的输入；无则 null。 */
+            BigDecimal pilotLongitude, BigDecimal pilotLatitude) {
+        /** 阶段 7 的旧签名：无飞手位置。 */
+        public TargetState(String targetId, String trackId, String uavSn, BigDecimal longitude, BigDecimal latitude,
+                BigDecimal altitudeAmslM, BigDecimal heightAglM, BigDecimal speedMps, BigDecimal headingDeg,
+                BigDecimal confidence, OffsetDateTime observedAt, OffsetDateTime receivedAt) {
+            this(targetId, trackId, uavSn, longitude, latitude, altitudeAmslM, heightAglM, speedMps, headingDeg, confidence, observedAt, receivedAt, null, null);
+        }
+    }
 
     /** 最近轨迹质量：点数与最大相邻间隔（秒）；用于 C03 质量门。 */
     public record TrackQuality(int pointCount, Long maxGapSeconds, boolean bridged) { }

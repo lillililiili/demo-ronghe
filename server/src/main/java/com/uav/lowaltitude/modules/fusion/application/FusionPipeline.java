@@ -36,6 +36,9 @@ import com.uav.lowaltitude.modules.fusion.domain.IdentityStateMachine;
 import com.uav.lowaltitude.modules.fusion.domain.IdentityStateMachine.TrackState;
 import com.uav.lowaltitude.modules.fusion.domain.IdentityStateMachine.Transition;
 import com.uav.lowaltitude.modules.fusion.domain.SourceObservation;
+import com.uav.lowaltitude.modules.fusion.ingest.FrameMapper.Frame;
+import com.uav.lowaltitude.modules.fusion.ingest.FrameMapper.Item;
+import com.uav.lowaltitude.modules.fusion.ingest.InboxSourceRouter;
 import com.uav.lowaltitude.modules.fusion.infrastructure.AssociationPendingRepository;
 import com.uav.lowaltitude.modules.fusion.infrastructure.FusionInboxRepository.InboxRow;
 import com.uav.lowaltitude.modules.fusion.infrastructure.IdentityRepository;
@@ -66,12 +69,14 @@ public class FusionPipeline {
     private final AssociationPendingRepository pendings;
     private final FusionConfigLoader configLoader;
     private final ObjectProvider<FusedLayerWriter> fusedLayerWriter;
+    private final InboxSourceRouter router;
     private final ObjectMapper json;
 
     public FusionPipeline(ObservationRepository observations, RawTrackRepository rawTracks, IdentityRepository identities,
-            AssociationPendingRepository pendings, FusionConfigLoader configLoader, ObjectProvider<FusedLayerWriter> fusedLayerWriter, ObjectMapper json) {
+            AssociationPendingRepository pendings, FusionConfigLoader configLoader, ObjectProvider<FusedLayerWriter> fusedLayerWriter,
+            InboxSourceRouter router, ObjectMapper json) {
         this.observations = observations; this.rawTracks = rawTracks; this.identities = identities; this.pendings = pendings;
-        this.configLoader = configLoader; this.fusedLayerWriter = fusedLayerWriter; this.json = json;
+        this.configLoader = configLoader; this.fusedLayerWriter = fusedLayerWriter; this.router = router; this.json = json;
     }
 
     public record FrameOutcome(int observationCount, int targetCount, List<String> targetIds) { }
@@ -85,17 +90,17 @@ public class FusionPipeline {
         SourceMeta source = observations.findSource(inbox.sourceId());
         if (source == null || !source.enabled()) throw new IllegalStateException("回放来源不存在或已停用: " + inbox.sourceId());
         DeviceMeta device = observations.findDeviceForSource(inbox.sourceId());
-        Frame frame = parse(inbox.payloadJson());
+        Frame frame = router.map(inbox);
         Instant receivedAt = Instant.ofEpochMilli(inbox.receivedAtMillis());
         FusionDomainKey domain = new FusionDomainKey(source.sourceMode(), device == null ? null : device.ownerOrgId(), device == null ? null : device.districtId());
 
         List<SourceObservation> parsed = new ArrayList<>();
         for (Item item : frame.items()) {
             parsed.add(new SourceObservation(UUID.randomUUID().toString(), inbox.inboxId(), source.sourceId(), source.sourceCode(), source.sourceType(), source.schemaStatus(),
-                    device == null ? null : device.deviceId(), frame.datasetId(), item.externalTargetId(), item.externalTrackId(), frame.observedAt(), receivedAt,
+                    device == null ? null : device.deviceId(), frame.sessionKey(), item.externalTargetId(), item.externalTrackId(), frame.observedAt(), receivedAt,
                     item.longitude(), item.latitude(), item.positionAccuracyM(), item.altitudeAmslM(), item.heightAglM(), item.speedMps(), item.headingDeg(),
-                    item.classCode(), item.classConfidence(), item.identityClue(), null, item.latencyMs(), new LinkedHashMap<>(), source.sourceMode(),
-                    domain.ownerOrgId(), domain.districtId(), frame.recordNo()));
+                    item.classCode(), item.classConfidence(), item.identityClue(), null, item.latencyMs(), new LinkedHashMap<>(item.quality()), source.sourceMode(),
+                    domain.ownerOrgId(), domain.districtId(), frame.recordNo(), item.pilotLongitude(), item.pilotLatitude(), item.classSource()));
         }
 
         // ① 滤波：每条观测按其 link 的现有状态更新；缺精度用目录缺省并在 quality 标记。
@@ -263,12 +268,17 @@ public class FusionPipeline {
                     observation.longitude(), observation.latitude(), observation.altitudeAmslM(), observation.heightAglM(), observation.observationId(), accuracyM, PointKind.MEAS.name());
         }
         State state = update == null ? null : update.state();
+        // 三元表达式两侧一个是 Double、一个是 double 会触发自动拆箱：没有位置的来源（AOA 只给方位）在这里会 NPE。
+        // 显式装箱保留"没有位置"这件事，让它一路带到融合层，而不是在管线里炸掉整帧。
+        Double estimateLongitude = state == null ? observation.longitude() : Double.valueOf(state.longitude());
+        Double estimateLatitude = state == null ? observation.latitude() : Double.valueOf(state.latitude());
         return new SourceEstimate(observation.sourceId(), observation.sourceCode(), observation.sourceType(), observation.schemaStatus(), linkId, trackId,
-                observation.observationId(), observation.observedAt(), state == null ? observation.longitude() : state.longitude(),
-                state == null ? observation.latitude() : state.latitude(), state == null ? null : state.accuracyM(), observation.altitudeAmslM(), observation.heightAglM(),
+                observation.observationId(), observation.observedAt(), estimateLongitude, estimateLatitude,
+                state == null ? null : state.accuracyM(), observation.altitudeAmslM(), observation.heightAglM(),
                 observation.speedMps() != null ? observation.speedMps() : (state == null ? null : state.speedMps()),
                 observation.headingDeg() != null ? observation.headingDeg() : (state == null ? null : state.headingDeg()),
-                observation.classCode(), observation.classConfidence(), observation.identityClue(), observation.identityConfidence(), PointKind.MEAS, Map.copyOf(observation.quality()));
+                observation.classCode(), observation.classConfidence(), observation.identityClue(), observation.identityConfidence(),
+                PointKind.MEAS, Map.copyOf(observation.quality()), observation.pilotLongitude(), observation.pilotLatitude(), observation.classSource());
     }
 
     private Map<String, State> predictStates(AlphaBetaFilter filter, List<ActiveTarget> active, Instant at) {
@@ -293,40 +303,6 @@ public class FusionPipeline {
     }
 
     /** 回放信封 frame 部分。 */
-    private record Frame(String datasetId, long recordNo, String sourceCode, Instant observedAt, List<Item> items) { }
-    private record Item(String externalTargetId, String externalTrackId, Double longitude, Double latitude, Double positionAccuracyM, Double altitudeAmslM,
-            Double heightAglM, Double speedMps, Double headingDeg, String classCode, Double classConfidence, String identityClue, Long latencyMs) { }
-
-    private Frame parse(String payloadJson) {
-        try {
-            JsonNode root = json.readTree(payloadJson);
-            if (root.isTextual()) root = json.readTree(root.textValue());
-            JsonNode frame = root.get("frame");
-            if (frame == null || !frame.isObject()) throw new IllegalStateException("回放信封缺少 frame");
-            List<Item> items = new ArrayList<>();
-            for (JsonNode item : frame.withArray("items")) {
-                items.add(new Item(text(item, "external_target_id"), text(item, "external_track_id"), number(item, "lon"), number(item, "lat"),
-                        number(item, "position_accuracy_m"), number(item, "alt_amsl_m"), number(item, "height_agl_m"), number(item, "speed_mps"),
-                        number(item, "heading_deg"), text(item, "class_code"), number(item, "class_confidence"), text(item, "identity_clue"),
-                        number(item, "latency_ms") == null ? null : number(item, "latency_ms").longValue()));
-            }
-            return new Frame(text(root, "dataset_id"), root.get("record_no").asLong(), text(frame, "source_code"),
-                    Instant.ofEpochMilli(frame.get("observed_at").asLong()), List.copyOf(items));
-        } catch (java.io.IOException ex) {
-            throw new IllegalStateException("回放信封无法解析", ex);
-        }
-    }
-
-    private static String text(JsonNode node, String field) {
-        JsonNode value = node.get(field);
-        return value == null || value.isNull() || !value.isTextual() ? null : value.textValue();
-    }
-
-    private static Double number(JsonNode node, String field) {
-        JsonNode value = node.get(field);
-        return value == null || value.isNull() || !value.isNumber() ? null : value.doubleValue();
-    }
-
     /**
      * 读 JSON 列：H2 把 CAST(? AS JSON) 的字符串存成 JSON 文本，读回是"带引号的字符串"，PostgreSQL 直接是对象；
      * 两种形态都要能解开，否则同一份代码在 H2 绿、在真实库红（阶段 7 的教训）。

@@ -917,15 +917,27 @@ function enterRiskTab(requestedId = null) {
   loadRisks(requestedId ? 1 : riskPage.value, requestedId);
 }
 
-/* 阶段 9 起 #/risk 是独立的空间安全风险页，本页不再按 hash 预置页签、也不改写地址；
-   页签切换只在页内进行。UI 上下文键 'risk'（工作台/处罚页的"转风险"）归空间安全风险页消费（决策 9-15），
-   本页"全部风险事件"页签只响应页内点击，不再抢这个一次性键。 */
+/* 阶段 9 曾把 #/risk 拆成独立页面，2026-09-07 按用户裁定撤回：这两个模块原型里没有，
+   risk / airspace 恢复为本页的别名。深链键 'risk'（工作台、处罚页、态势页的"转风险"）
+   重新由本页消费，否则那三个生产者写入的一次性键将无人接收。 */
+function consumeRiskDeepLink() {
+  const context = window.UI?.consume?.('risk');
+  const requested = context?.eventId || context?.riskId || context?.risk_id || context?.risk || null;
+  return typeof requested === 'string' && requested ? requested : null;
+}
+
 function syncTabByRoute() {
   const hash = (location.hash || '').split('?')[0];
   if (hash === S.tabHash) return;
   S.tabHash = hash;
-  if (activeTab.value === 'events') return;
-  activeTab.value = 'route';
+  // risk 是唯一能预置事件页签的别名；离开它再进入 flights 必须回到航线页，不能复用旧页签状态。
+  const nextTab = hash.startsWith('#/risk') ? 'events' : 'route';
+  if (nextTab === 'events') {
+    activeTab.value = nextTab;
+    enterRiskTab(consumeRiskDeepLink());
+    return;
+  }
+  activeTab.value = nextTab;
   destroyRouteMap();
   if (!routeLoaded.value && !loading.value) loadPlans();
   else nextTick(renderRouteMap);
@@ -934,11 +946,14 @@ function syncTabByRoute() {
 function activateTab(tab) {
   if (tab === 'events') {
     activeTab.value = 'events';
-    enterRiskTab(null);
+    // 先记下目标 hash，再改地址：随后的 hashchange 不会再触发一次重复加载。
+    if (!location.hash.startsWith('#/risk')) { S.tabHash = '#/risk'; location.hash = '#/risk'; }
+    enterRiskTab(consumeRiskDeepLink());
     return;
   }
   activeTab.value = 'route';
   destroyRouteMap();
+  if (location.hash.startsWith('#/risk')) { S.tabHash = '#/flights'; location.hash = '#/flights'; }
   if (!routeLoaded.value && !loading.value) loadPlans();
   else nextTick(renderRouteMap);
 }

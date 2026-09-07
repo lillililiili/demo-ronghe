@@ -16,9 +16,6 @@ export const NAV = [
   {
     t: '飞行监管', icon: 'plan', kids: [
       { k: 'flights', t: '飞行计划' },
-      /* 阶段 9：空域与航线规则、空间安全风险从"飞行计划的别名"变为独立页面；菜单可见性由服务端 menu_keys 决定。 */
-      { k: 'airspace', t: '空域与航线规则' },
-      { k: 'risk', t: '空间安全风险' },
       { k: 'legality', t: '合法性研判' }
     ]
   },

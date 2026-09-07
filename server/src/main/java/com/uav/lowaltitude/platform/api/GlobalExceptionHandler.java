@@ -15,6 +15,8 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.servlet.NoHandlerFoundException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import com.uav.lowaltitude.platform.audit.AuditService;
 import com.uav.lowaltitude.platform.security.AuthContext;
@@ -74,6 +76,21 @@ public class GlobalExceptionHandler {
         auditFailure(request, "FILE_TOO_LARGE", "文件超过 32 MiB");
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(ApiResponse.fail("FILE_TOO_LARGE", "文件超过 32 MiB"));
+    }
+
+    /**
+     * 决策 10-3：未映射路径是 404 `NOT_FOUND`，不是 500。
+     * 后端不托管前端静态资源（Vite 代理），所以任何没有 Controller 的路径最终都落在 Spring 6.1+ 的
+     * {@link NoResourceFoundException}（默认资源处理器）或开启 throw-exception-if-no-handler-found 后的
+     * {@link NoHandlerFoundException}；两者都不是服务故障，落进兜底分支只会把"打错地址"报成"服务坏了"，
+     * 既误导前端重试，也污染错误告警。响应不回显路径：探测者拿不到"哪段路径存在"的额外线索；
+     * 路径只进服务端审计（有登录者时），便于事后追查。鉴权仍在过滤器里先做，未登录到不了这里。
+     */
+    @ExceptionHandler({NoHandlerFoundException.class, NoResourceFoundException.class})
+    public ResponseEntity<ApiResponse<Void>> handleUnmapped(Exception ex, HttpServletRequest request) {
+        auditFailure(request, "NOT_FOUND", "资源不存在");
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ApiResponse.fail("NOT_FOUND", "资源不存在"));
     }
 
     @ExceptionHandler(Exception.class)

@@ -14,6 +14,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 import com.uav.lowaltitude.Application;
 import com.uav.lowaltitude.modules.fusion.FusionContracts.SourceObservationPort;
+import com.uav.lowaltitude.testsupport.SourceTypeCatalogFixture;
 
 /**
  * production 必须压过 local：阶段 8.5 的直连切片（凌云 v2 回放数据集、实测雷达提升端口）不允许因部署 profile 组合泄入生产。
@@ -101,12 +102,11 @@ class ProductionStage85SeedIsolationTest {
                     .as("规则引擎的回放来源行来自迁移 040，是结构性目录，不在清理范围内").isEqualTo(1);
 
             // 结构性目录：生产也必须有，且必须自述为 DEMO（未联调）。这一段与上面的"为空"断言方向相反，是有意的。
-            assertThat(jdbc.queryForList("select source_type from source_type_catalog order by source_type", String.class))
-                    .as("契约 §2 的八种来源类型是外键与融合参数的前提，生产也要有")
-                    .containsExactly("AOA", "DCD", "EO", "FIVE_G_A", "FUSION_BOX", "RADAR", "RID", "TDOA");
+            // 契约 §2 的八种来源类型是外键与融合参数的前提，生产也要有；口径统一在夹具里（阶段 10.3）。
+            SourceTypeCatalogFixture.assertCatalog(jdbc);
             assertThat(jdbc.queryForList(
                     "select source_type from source_type_catalog where schema_status='DEMO' and source_type in ('AOA','DCD','RID') order by source_type",
-                    String.class)).as("凌云三路未联调，生产也必须标 DEMO").containsExactly("AOA", "DCD", "RID");
+                    String.class)).as("凌云三路未联调，生产也必须标 DEMO").containsExactlyElementsOf(SourceTypeCatalogFixture.STAGE85_TYPES);
             assertThat(jdbc.queryForObject("select count(*) from source_type_catalog where spec_ref is null", Integer.class))
                     .as("每种来源都要能追到协议出处").isZero();
             assertThat(jdbc.queryForObject("select status from fusion_config where config_version='demo-v1'", String.class))

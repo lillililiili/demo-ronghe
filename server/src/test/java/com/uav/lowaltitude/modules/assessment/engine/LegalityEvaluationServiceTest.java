@@ -314,10 +314,10 @@ class LegalityEvaluationServiceTest {
         }
         String[][] params = {
                 {"C01", "time_window_min", "10", "INTEGER"}, {"C01", "corridor_tolerance_m", "20", "NUMBER"},
-                {"C02-1", "kinds", "PROHIBITED,RESTRICTED", "LIST"}, {"C02-2", "kinds", "HEIGHT_LIMIT,ALTITUDE_LIMIT", "LIST"},
+                {"C02-1", "kinds", "PROHIBITED,RESTRICTED", "LIST"}, {"C02-2", "kinds", "ALTITUDE_LIMIT", "LIST"},
                 {"C02-3", "tolerance_m", "20", "NUMBER"}, {"C02-4", "grace_min", "10", "INTEGER"},
                 {"C02-5", "timezone", "Asia/Shanghai", "STRING"}, {"C02-5", "night_from", "24", "INTEGER"}, {"C02-5", "night_to", "0", "INTEGER"},
-                {"C02-6", "vlos_m", "500", "NUMBER"}, {"C02-8", "kinds", "TEMPORARY,TEMPORARY_CONTROL", "LIST"},
+                {"C02-6", "vlos_m", "500", "NUMBER"}, {"C02-8", "kinds", "TEMPORARY_CONTROL", "LIST"},
                 {"C03", "fresh_seconds", "120", "INTEGER"}, {"C03", "track_points", "10", "INTEGER"}, {"C03", "conf_min", "0.75", "NUMBER"},
                 {"C03", "min_points", "3", "INTEGER"}, {"C03", "gap_seconds", "30", "INTEGER"}, {"C03", "no_plan_status", "ILLEGAL", "STRING"},
                 {"C03", "ignore_undetermined_rules", "C02-6", "LIST"},

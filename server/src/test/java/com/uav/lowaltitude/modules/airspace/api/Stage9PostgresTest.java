@@ -2,6 +2,7 @@ package com.uav.lowaltitude.modules.airspace.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -24,6 +25,8 @@ import java.util.concurrent.TimeUnit;
 import javax.sql.DataSource;
 
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.FlywayException;
+import org.flywaydb.core.api.MigrationVersion;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.MethodOrderer;
@@ -954,6 +957,123 @@ class Stage9PostgresTest {
                 .containsExactly("LEGALITY-DEMO");
     }
 
+    /**
+     * 阶段 10 迁移 074（决策 10-2 / 10-5）在真实 PG 上的形态：`ck_stage9_airspace_kind_code` 收紧为 AirspaceKind 五值，
+     * 061 保留的两个历史写法 HEIGHT_LIMIT / TEMPORARY 不再进得来。
+     * 断言 SQLSTATE 23514 并点名约束：只断言"抛了"，换成触发器或别的约束拒绝也照样绿。
+     */
+    @Test
+    @Order(21)
+    void migration074RejectsLegacyKindCodesAndAcceptsTheFiveValueDictionary() {
+        assertThat(jdbc.queryForList("select version from flyway_schema_history where success=true and version is not null", String.class))
+                .as("074 必须已在本 schema 应用").contains("202609050074");
+        String definition = jdbc.queryForObject(
+                "select pg_get_constraintdef(oid) from pg_constraint where conrelid='airspace_version'::regclass and conname='ck_stage9_airspace_kind_code'",
+                String.class);
+        assertThat(definition).as("074 重建的同名 CHECK 只含五值")
+                .contains("PROHIBITED", "RESTRICTED", "ALTITUDE_LIMIT", "PERMITTED", "TEMPORARY_CONTROL")
+                .doesNotContain("HEIGHT_LIMIT", "'TEMPORARY'");
+
+        insertAirspaceWithVersion();
+        for (String legacy : List.of("HEIGHT_LIMIT", "TEMPORARY")) {
+            Throwable failure = catchThrowable(() -> insertVersion(id(), 200, legacy, boundary(), T0.plusDays(3)));
+            assertThat(failure).as("历史写法 " + legacy).isInstanceOf(DataIntegrityViolationException.class);
+            assertThat(sqlState(failure)).as(legacy + " 必须以 23514（check_violation）被拒").isEqualTo("23514");
+            assertThat(failure).hasMessageContaining("ck_stage9_airspace_kind_code");
+        }
+        assertThat(jdbc.queryForObject("select count(*) from airspace_version where airspace_id=? and version_no=200", Long.class, airspaceId))
+                .as("被拒的插入不留行").isZero();
+
+        // 五值字典逐个可插：不是"约束存在"就够了，收紧过头（例如漏了 PERMITTED）同样是回归。
+        int versionNo = 210;
+        for (String kind : List.of("PROHIBITED", "RESTRICTED", "ALTITUDE_LIMIT", "PERMITTED", "TEMPORARY_CONTROL")) {
+            insertVersion(id(), versionNo++, kind, boundary(), T0.plusDays(3));
+        }
+        assertThat(jdbc.queryForList("select kind_code from airspace_version where airspace_id=? and version_no between 210 and 214 order by version_no", String.class, airspaceId))
+                .containsExactly("PROHIBITED", "RESTRICTED", "ALTITUDE_LIMIT", "PERMITTED", "TEMPORARY_CONTROL");
+    }
+
+    /**
+     * 决策 10-5 的另一半：074 不含 UPDATE，若某个库仍有旧值行，迁移必须以 PostgreSQL 自带的
+     * "check constraint ... is violated by some row" 明确失败，而不是被接替式触发器打回（那会误导运维去查触发器），
+     * 更不能静默放过。在一个独立的随机 schema 里手动模拟：先迁到 073 停下、插一行 HEIGHT_LIMIT、再迁到 074。
+     * 随后按 074 注释里给运维的处置（临时摘触发器归一→恢复→重跑）走一遍，证明这条处置路径确实能收尾。
+     */
+    @Test
+    @Order(22)
+    void migration074FailsLoudlyOnLegacyRowsWithCheckViolationNotTriggerError() throws Exception {
+        String schema = SCHEMA_PREFIX + UUID.randomUUID().toString().replace("-", "");
+        if (!schema.matches("^" + SCHEMA_PREFIX + "[a-f0-9]{32}$")) throw new IllegalStateException("Unsafe scratch schema");
+        JdbcTemplate root = new JdbcTemplate(rootDataSource());
+        root.execute("create schema " + schema);
+        try {
+            // 决策 10-13：db/postgresql 的 073.5 会在 074 之前把旧值归一，所以"存量旧值行"必须在 073.5 之后、074 之前造出来，
+            // 才能验证 074 本身遇到旧值时的失败方式（PG 的 CHECK 违反，不是触发器报错）。
+            Flyway before074 = flywayFor(schema, "202609050073.5");
+            before074.migrate();
+            JdbcTemplate scratch = new JdbcTemplate(new DriverManagerDataSource(
+                    requiredEnvironment("POSTGRES_TEST_URL") + (requiredEnvironment("POSTGRES_TEST_URL").contains("?") ? "&" : "?") + "currentSchema=" + schema + ",public",
+                    requiredEnvironment("POSTGRES_TEST_USER"), requiredEnvironment("POSTGRES_TEST_PASSWORD")));
+            assertThat(scratch.queryForObject("select current_schema()", String.class)).isEqualTo(schema);
+            List<String> applied = scratch.queryForList("select version from flyway_schema_history where success=true and version is not null", String.class);
+            assertThat(applied).as("target=073.5 时 073/073.5 已应用、074 未应用").contains("202609050073", "202609050073.5").doesNotContain("202609050074");
+
+            // 061 的 CHECK 仍容许历史写法：这就是"存量旧值行"的来源。
+            String orgId = id(), districtId = id(), legacyAirspace = id(), legacyVersion = id();
+            scratch.update("insert into app_org (org_id,org_code,name,enabled,created_at,updated_at,version) values (?,?,?,true,0,0,0)", orgId, "ORG-074-" + suffix, "074 存量验证机构");
+            scratch.update("insert into app_district (district_id,district_code,name,enabled,created_at,updated_at,version) values (?,?,?,true,0,0,0)", districtId, "DIST-074-" + suffix, "074 存量验证区域");
+            scratch.update("insert into airspace (airspace_id,airspace_no,name,source_mode,owner_org_id,district_id,created_at,updated_at,version) values (?,?,?,'live',?,?,?,?,0)",
+                    legacyAirspace, "AS-074-" + suffix, "074 存量验证空域", orgId, districtId, T0, T0);
+            scratch.update("insert into airspace_version (airspace_version_id,airspace_id,version_no,kind_code,boundary,valid_from,created_at) values (?,?,1,'HEIGHT_LIMIT',ST_GeomFromEWKT(?),?,?)",
+                    legacyVersion, legacyAirspace, boundary(), T0, T0);
+            boolean successionTriggerPresent = scratch.queryForObject("select count(*) from pg_trigger where tgrelid=(quote_ident(?)||'.airspace_version')::regclass and tgname='trg_stage9_airspace_version_succession'",
+                    Long.class, schema) == 1L;
+
+            Throwable failure = catchThrowable(() -> flywayFor(schema, "202609050074").migrate());
+            assertThat(failure).as("存量旧值行上 074 必须失败").isInstanceOf(FlywayException.class);
+            assertThat(sqlState(failure)).as("失败原因是 CHECK（23514），不是触发器或其他").isEqualTo("23514");
+            assertThat(failure).hasMessageContaining("violated by some row").hasMessageContaining("ck_stage9_airspace_kind_code");
+            assertThat(failure.getMessage()).as("不能是接替式触发器的报错").doesNotContain("immutable except closing valid_to");
+            // PostgreSQL 的 DDL 在事务里：整条迁移回滚，旧值行与 061 的七值 CHECK 原封不动；Flyway 的历史表里 074 没有成功记录。
+            assertThat(scratch.queryForObject("select kind_code from airspace_version where airspace_version_id=?", String.class, legacyVersion)).isEqualTo("HEIGHT_LIMIT");
+            assertThat(scratch.queryForObject("select pg_get_constraintdef(oid) from pg_constraint where conrelid=(quote_ident(?)||'.airspace_version')::regclass and conname='ck_stage9_airspace_kind_code'", String.class, schema))
+                    .contains("HEIGHT_LIMIT");
+            assertThat(scratch.queryForObject("select count(*) from flyway_schema_history where version='202609050074' and success=true", Long.class)).isZero();
+            assertThat(scratch.queryForObject("select count(*) from flyway_schema_history where version='202609050074'", Long.class))
+                    .as("PG 支持事务性 DDL：Flyway 回滚后不记失败行（记的话 repair 前无法重跑）").isZero();
+
+            // 074 注释给运维的处置路径：临时摘触发器 → 归一 → 恢复 → 重跑 074。摘触发器只在"确实有触发器"时有意义，两种情况都要能收尾。
+            scratch.execute("alter table airspace_version disable trigger user");
+            assertThat(scratch.update("update airspace_version set kind_code='ALTITUDE_LIMIT' where kind_code='HEIGHT_LIMIT'")).isEqualTo(1);
+            scratch.execute("alter table airspace_version enable trigger user");
+            flywayFor(schema, "202609050074").migrate();
+            assertThat(scratch.queryForObject("select count(*) from flyway_schema_history where version='202609050074' and success=true", Long.class)).isEqualTo(1L);
+            assertThat(scratch.queryForObject("select count(*) from flyway_schema_history where success=false", Long.class)).isZero();
+            assertThat(scratch.queryForObject("select kind_code from airspace_version where airspace_version_id=?", String.class, legacyVersion)).isEqualTo("ALTITUDE_LIMIT");
+            if (successionTriggerPresent) {
+                assertThat(scratch.queryForObject("select tgenabled from pg_trigger where tgrelid=(quote_ident(?)||'.airspace_version')::regclass and tgname='trg_stage9_airspace_version_succession'", String.class, schema))
+                        .as("处置完成后触发器必须恢复启用").isEqualTo("O");
+            }
+        } finally {
+            root.execute("drop schema " + schema + " cascade");
+        }
+    }
+
+    /** 只迁到指定版本的 Flyway：与 {@link #initializeSchema()} 同一套位置与开关，仅多一个 target。 */
+    private static Flyway flywayFor(String schema, String targetVersion) {
+        return Flyway.configure().dataSource(rootDataSource()).schemas(schema).defaultSchema(schema).createSchemas(false).cleanDisabled(true)
+                .locations("classpath:db/migration", "classpath:db/postgresql")
+                .target(MigrationVersion.fromVersion(targetVersion)).load();
+    }
+
+    /** 取最内层 PostgreSQL 异常的 SQLSTATE：只断言"抛了"会让约束换成别的机制时照样通过。 */
+    private static String sqlState(Throwable failure) {
+        for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+            if (cause instanceof java.sql.SQLException sql) return sql.getSQLState();
+        }
+        return failure == null ? null : "<no SQLException: " + failure + ">";
+    }
+
     private String authorizerRole() {
         String role = "ROLE-S9-AUTH-" + suffix;
         jdbc.update("insert into app_role (role_code,name,description,builtin,enabled,created_at,updated_at,version,system_role) values (?,?,'',false,true,0,0,0,false)", role, role);
@@ -1212,6 +1332,47 @@ class Stage9PostgresTest {
 
     private static void assertSafeSchema() {
         if (!SCHEMA.matches("^" + SCHEMA_PREFIX + "[a-f0-9]{32}$")) throw new IllegalStateException("Unsafe Stage 9 verification schema");
+    }
+
+    @Test
+    @Order(23)
+    void migration0735RenormalizesLegacyRowsSoThat074SucceedsOnUpgradedDatabases() throws Exception {
+        // 决策 10-13 的正题：已有库（065 之后旧版种子又写过 HEIGHT_LIMIT/TEMPORARY）升级到阶段 10 时，
+        // 073.5 先归一、074 再收紧，整条链必须一次跑通——领导用验收库启动新 jar 时正是这条路径先失败、加了 073.5 才通过。
+        String schema = SCHEMA_PREFIX + UUID.randomUUID().toString().replace("-", "");
+        if (!schema.matches("^" + SCHEMA_PREFIX + "[a-f0-9]{32}$")) throw new IllegalStateException("Unsafe scratch schema");
+        JdbcTemplate root = new JdbcTemplate(rootDataSource());
+        root.execute("create schema " + schema);
+        try {
+            flywayFor(schema, "202609050073").migrate();
+            JdbcTemplate scratch = new JdbcTemplate(new DriverManagerDataSource(
+                    requiredEnvironment("POSTGRES_TEST_URL") + (requiredEnvironment("POSTGRES_TEST_URL").contains("?") ? "&" : "?") + "currentSchema=" + schema + ",public",
+                    requiredEnvironment("POSTGRES_TEST_USER"), requiredEnvironment("POSTGRES_TEST_PASSWORD")));
+            String orgId = id(), districtId = id(), legacyAirspace = id(), legacyVersion = id(), legacyVersion2 = id(), legacyAirspace2 = id();
+            scratch.update("insert into app_org (org_id,org_code,name,enabled,created_at,updated_at,version) values (?,?,?,true,0,0,0)", orgId, "ORG-0735-" + suffix, "073.5 升级验证机构");
+            scratch.update("insert into app_district (district_id,district_code,name,enabled,created_at,updated_at,version) values (?,?,?,true,0,0,0)", districtId, "DIST-0735-" + suffix, "073.5 升级验证区域");
+            scratch.update("insert into airspace (airspace_id,airspace_no,name,source_mode,owner_org_id,district_id,created_at,updated_at,version) values (?,?,?,'live',?,?,?,?,0)",
+                    legacyAirspace, "AS-0735A-" + suffix, "073.5 升级验证空域 A", orgId, districtId, T0, T0);
+            scratch.update("insert into airspace (airspace_id,airspace_no,name,source_mode,owner_org_id,district_id,created_at,updated_at,version) values (?,?,?,'live',?,?,?,?,0)",
+                    legacyAirspace2, "AS-0735B-" + suffix, "073.5 升级验证空域 B", orgId, districtId, T0, T0);
+            scratch.update("insert into airspace_version (airspace_version_id,airspace_id,version_no,kind_code,boundary,valid_from,created_at) values (?,?,1,'HEIGHT_LIMIT',ST_GeomFromEWKT(?),?,?)",
+                    legacyVersion, legacyAirspace, boundary(), T0, T0);
+            scratch.update("insert into airspace_version (airspace_version_id,airspace_id,version_no,kind_code,boundary,valid_from,created_at) values (?,?,1,'TEMPORARY',ST_GeomFromEWKT(?),?,?)",
+                    legacyVersion2, legacyAirspace2, boundary(), T0, T0);
+
+            flywayFor(schema, "202609050074").migrate();
+
+            assertThat(scratch.queryForObject("select kind_code from airspace_version where airspace_version_id=?", String.class, legacyVersion)).isEqualTo("ALTITUDE_LIMIT");
+            assertThat(scratch.queryForObject("select kind_code from airspace_version where airspace_version_id=?", String.class, legacyVersion2)).isEqualTo("TEMPORARY_CONTROL");
+            assertThat(scratch.queryForList("select version from flyway_schema_history where success=true and version is not null", String.class))
+                    .contains("202609050073.5", "202609050074");
+            assertThat(scratch.queryForObject("select pg_get_constraintdef(oid) from pg_constraint where conrelid=(quote_ident(?)||'.airspace_version')::regclass and conname='ck_stage9_airspace_kind_code'", String.class, schema))
+                    .doesNotContain("HEIGHT_LIMIT").doesNotContain("'TEMPORARY'");
+            // 073.5 摘掉又恢复了触发器：升级后接替式保护仍在。
+            assertThat(scratch.queryForObject("select tgenabled from pg_trigger where tgrelid=(quote_ident(?)||'.airspace_version')::regclass and tgname='trg_stage9_airspace_version_succession'", String.class, schema)).isEqualTo("O");
+        } finally {
+            root.execute("drop schema " + schema + " cascade");
+        }
     }
 
     private static String id() { return UUID.randomUUID().toString(); }

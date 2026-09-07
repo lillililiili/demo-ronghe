@@ -105,7 +105,11 @@ public class FusionReplayRunner {
         return written >= generator.generateV2().records().size();
     }
 
-    private String payloadJson(Map<String, Object> payload) {
+    /**
+     * 规范化报文（字段按字母序）。包内可见供 {@link LingyunMqttReplayExporter} 复用：
+     * 导出物的 payload 必须与写进 inbox 的原文逐字一致，两处各写一遍序列化早晚会漂。
+     */
+    String payloadJson(Map<String, Object> payload) {
         try {
             return json.writer().with(com.fasterxml.jackson.databind.SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS)
                     .writeValueAsString(new java.util.TreeMap<>(payload));

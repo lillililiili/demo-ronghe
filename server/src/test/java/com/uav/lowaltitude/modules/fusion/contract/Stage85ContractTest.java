@@ -16,6 +16,7 @@ import com.uav.lowaltitude.modules.fusion.FusionContracts.FusionParams;
 import com.uav.lowaltitude.modules.fusion.application.FusionConfigService;
 import com.uav.lowaltitude.modules.fusion.FusionContracts.PointKind;
 import com.uav.lowaltitude.modules.fusion.FusionContracts.SourceEstimate;
+import com.uav.lowaltitude.testsupport.SourceTypeCatalogFixture;
 
 /**
  * 阶段 8.5 契约基线（迁移 070 + 冻结接口扩展）：来源目录八行且只有雷达 CONFIRMED、凌云协议引用已登记、
@@ -31,11 +32,10 @@ class Stage85ContractTest {
 
     @Test
     void catalogHasEightSourceTypesAndOnlyRadarIsConfirmed() {
+        // 八行目录、只有雷达 CONFIRMED、其余 DEMO：口径统一在夹具里（阶段 10.3）。
+        SourceTypeCatalogFixture.assertCatalog(jdbc);
         List<Map<String, Object>> rows = jdbc.queryForList("select source_type, schema_status, spec_ref from source_type_catalog order by source_type");
-        assertThat(rows).extracting(r -> r.get("source_type")).containsExactly("AOA", "DCD", "EO", "FIVE_G_A", "FUSION_BOX", "RADAR", "RID", "TDOA");
-        assertThat(rows).filteredOn(r -> "RADAR".equals(r.get("source_type"))).extracting(r -> r.get("schema_status")).containsExactly("CONFIRMED");
-        assertThat(rows).filteredOn(r -> !"RADAR".equals(r.get("source_type"))).allSatisfy(r -> {
-            assertThat(r.get("schema_status")).isEqualTo("DEMO");
+        assertThat(rows).filteredOn(r -> !SourceTypeCatalogFixture.CONFIRMED_TYPES.contains(r.get("source_type"))).allSatisfy(r -> {
             // 三路字段现在有出处（凌云协议 A），但联调前不得标 CONFIRMED。
             assertThat(String.valueOf(r.get("spec_ref"))).contains("凌云协议");
         });

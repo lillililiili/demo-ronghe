@@ -1,6 +1,6 @@
 # 设备直连接入契约（阶段 8.5，A/B 边界）
 
-> 状态：领导冻结稿 v1.1（2026-09-07：补冻结接口扩展、迁移编号、字段落点；v1.0 同日）。依据：会议纪要 V1.0 三路架构、凌云协议 A v8.6 / B V2.4 / C 20250826（`设备资料/凌云协议/`）、决策 8-30（云端只保留我们的平台）、对齐文档 `target-schema-v1-alignment.md` §5。配套计划：《协作者 A 直连接入计划》《协作者 B 直连切片计划》。
+> 状态：领导冻结稿 v1.2（2026-09-07：§8 联调输入物与 `fusion_event` 摘要实现口径；v1.1/v1.0 同日）。依据：会议纪要 V1.0 三路架构、凌云协议 A v8.6 / B V2.4 / C 20250826（`设备资料/凌云协议/`）、决策 8-30（云端只保留我们的平台）、对齐文档 `target-schema-v1-alignment.md` §5。配套计划：《协作者 A 直连接入计划》《协作者 B 直连切片计划》。
 
 ## 1. 边界
 
@@ -66,3 +66,8 @@
 - `target_attribute_selection`：帧内无任何来源估计时不写选源行（保留上一帧归属），"当前无来源"由 `target_degradation` 记录。
 - `target_latest_state.pilot_location` 只由携带身份主源的帧改写：身份主源在但未报 pilot → 写 NULL；整帧无身份主源 → 不碰该列。迁移 072 增 `pilot_observed_at`（与 `pilot_location` 同写同留），`RuleContracts.TargetState` 增可空 `pilotObservedAt`（旧 12/14 参构造器保留），C02-6 facts 输出 `pilot_observed_at`。本期不设独立"飞手位置过期"阈值，过期性由目标整体新鲜度（C03 `fresh_seconds`）兜底。
 - `inbox_message` 增单调写入序列 `ingest_seq`（迁移 073），`claim`/`failExhausted` 按 `received_at, ingest_seq` 领取；跨来源同毫秒帧无事实先后，管线以"同一批帧任意顺序处理结果一致"为守护性质（8.5-29）。
+
+## 8. 阶段 10 补充（v1.2）
+
+- `fusion_event` §4 的 `latest_state` 摘要由 `DefaultFusedLayerWriter.emitEvents` 实现；`pilot_location` 有则出键；`alarm_active`/`max_risk_severity` 从 `uav_event`/`flight_risk` 当前状态取，取不到不出键；`altitude_datum` 固定 `UNCONFIRMED`（10-1）。
+- 联调输入物：`docs/直连接入计划/stage85-lingyun-demo.mqtt.ndjson`，每行 `{topic, qos, payload, record_no, received_at, source}`（`source` 是该报文按 §2 应落成的 inbox `source` 值，供 A 核对适配器信封，不是设备报文的一部分、不发布）；协议 A 主题 `bridge/{providerCode}/device_data/{deviceTypeAbbr}/{deviceId}`（providerCode 用 `dongying`），协议 C 主题 `iot-reporting/cmlc/edge/{edgeId}`；payload 为设备原文，与回放种子写入 inbox 的 `payload` 逐字一致（10-4）。A 的 P1 用任意 MQTT 客户端按行发布即可复现 8.5 的 v2 场景。

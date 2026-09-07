@@ -57,7 +57,7 @@ class C02ChecksTest {
         AirspaceHit above = hit("PROHIBITED", "COVERS", "10", "60", "AMSL", null);
         assertThat(new RestrictedAirspaceCheck().evaluate(context(state(), full(), List.of(above), null), params).resultCode()).isEqualTo(ResultCode.PASS);
         // 类型不在参数列表内即与本规则无关。
-        AirspaceHit other = hit("HEIGHT_LIMIT", "COVERS", null, null, null, null);
+        AirspaceHit other = hit("ALTITUDE_LIMIT", "COVERS", null, null, null, null);
         assertThat(new RestrictedAirspaceCheck().evaluate(context(state(), full(), List.of(other), null), params).resultCode()).isEqualTo(ResultCode.PASS);
     }
 
@@ -83,19 +83,19 @@ class C02ChecksTest {
 
     @Test
     void airspaceAltitudeComparesOnlySameDatum() {
-        AirspaceHit limit = hit("HEIGHT_LIMIT", "COVERS", "0", "60", "AMSL", null);
+        AirspaceHit limit = hit("ALTITUDE_LIMIT", "COVERS", "0", "60", "AMSL", null);
         HitDetail fail = new AirspaceAltitudeCheck().evaluate(context(state(), full(), List.of(limit), null), params);
         assertThat(fail.resultCode()).isEqualTo(ResultCode.FAIL);
         assertThat(fail.reasonCode()).isEqualTo("AIRSPACE_ALTITUDE_EXCEEDED");
         assertThat(fail.ruleCode()).isEqualTo("C02-2");
-        AirspaceHit agl = hit("HEIGHT_LIMIT", "COVERS", "0", "30", "AGL", null);
+        AirspaceHit agl = hit("ALTITUDE_LIMIT", "COVERS", "0", "30", "AGL", null);
         TargetState amslOnly = new TargetState("t-1", "tr-1", "SN-1", new BigDecimal("118"), new BigDecimal("37"), new BigDecimal("80"), null, null, null, new BigDecimal("0.9"), AS_OF, AS_OF);
         HitDetail unknown = new AirspaceAltitudeCheck().evaluate(context(amslOnly, full(), List.of(agl), null), params);
         assertThat(unknown.resultCode()).isEqualTo(ResultCode.UNDETERMINED);
         assertThat(unknown.reasonCode()).isEqualTo("ALTITUDE_DATUM_OR_RANGE_UNKNOWN");
-        AirspaceHit noBand = hit("HEIGHT_LIMIT", "COVERS", null, null, null, null);
+        AirspaceHit noBand = hit("ALTITUDE_LIMIT", "COVERS", null, null, null, null);
         assertThat(new AirspaceAltitudeCheck().evaluate(context(state(), full(), List.of(noBand), null), params).reasonCode()).isEqualTo("ALTITUDE_DATUM_OR_RANGE_UNKNOWN");
-        AirspaceHit touches = hit("HEIGHT_LIMIT", "TOUCHES", "0", "60", "AMSL", null);
+        AirspaceHit touches = hit("ALTITUDE_LIMIT", "TOUCHES", "0", "60", "AMSL", null);
         assertThat(new AirspaceAltitudeCheck().evaluate(context(state(), full(), List.of(touches), null), params).reasonCode()).isEqualTo("BOUNDARY_POLICY_UNKNOWN");
     }
 
@@ -209,12 +209,12 @@ class C02ChecksTest {
 
     @Test
     void temporaryRestrictionRequiresEffectiveWindowAndCoverage() {
-        AirspaceHit active = new AirspaceHit("a-T", "av-T", "TEMPORARY", "COVERS", null, null, null, AS_OF.minusHours(1), AS_OF.plusHours(1), null);
+        AirspaceHit active = new AirspaceHit("a-T", "av-T", "TEMPORARY_CONTROL", "COVERS", null, null, null, AS_OF.minusHours(1), AS_OF.plusHours(1), null);
         HitDetail fail = new TemporaryRestrictionCheck().evaluate(context(state(), full(), List.of(active), null), params);
         assertThat(fail.resultCode()).isEqualTo(ResultCode.FAIL);
         assertThat(fail.reasonCode()).isEqualTo("TEMPORARY_RESTRICTION_ACTIVE");
         assertThat(fail.ruleCode()).isEqualTo("C02-8");
-        AirspaceHit expired = new AirspaceHit("a-T", "av-T", "TEMPORARY", "COVERS", null, null, null, AS_OF.minusHours(3), AS_OF.minusHours(1), null);
+        AirspaceHit expired = new AirspaceHit("a-T", "av-T", "TEMPORARY_CONTROL", "COVERS", null, null, null, AS_OF.minusHours(3), AS_OF.minusHours(1), null);
         assertThat(new TemporaryRestrictionCheck().evaluate(context(state(), full(), List.of(expired), null), params).resultCode()).isEqualTo(ResultCode.PASS);
         AirspaceHit touches = new AirspaceHit("a-T", "av-T", "TEMPORARY_CONTROL", "TOUCHES", null, null, null, AS_OF.minusHours(1), null, null);
         assertThat(new TemporaryRestrictionCheck().evaluate(context(state(), full(), List.of(touches), null), params).reasonCode()).isEqualTo("BOUNDARY_POLICY_UNKNOWN");

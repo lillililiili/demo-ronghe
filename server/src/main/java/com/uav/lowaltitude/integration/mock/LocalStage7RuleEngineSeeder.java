@@ -17,6 +17,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.uav.lowaltitude.modules.assessment.engine.RuleCodes;
+import com.uav.lowaltitude.modules.airspace.domain.AirspaceKind;
 
 /**
  * 阶段 7 规则引擎演示夹具（双门禁：!production 且 local/test，且 app.dev-seed.enabled=true）。
@@ -46,13 +47,18 @@ public class LocalStage7RuleEngineSeeder implements ApplicationRunner {
     private static final int[] PRIORITIES = {RuleCodes.PRIORITY_C01, RuleCodes.PRIORITY_C02_1, RuleCodes.PRIORITY_C02_2, RuleCodes.PRIORITY_C02_3,
             RuleCodes.PRIORITY_C02_4, RuleCodes.PRIORITY_C02_5, RuleCodes.PRIORITY_C02_6, RuleCodes.PRIORITY_C02_7, RuleCodes.PRIORITY_C02_8,
             RuleCodes.PRIORITY_C03, PRIORITY_C06};
-    /** 契约 DEMO 参数目录（LEGALITY-DEMO v1）；v2 只改 C02-3.tolerance_m。 */
+    /**
+     * 契约 DEMO 参数目录（LEGALITY-DEMO v1）；v2 只改 C02-3.tolerance_m。
+     * 阶段 10（决策 10-2）：C02-2.kinds 只写规范值 ALTITUDE_LIMIT、C02-8.kinds 只写 TEMPORARY_CONTROL——迁移 074 起 airspace_version.kind_code 的 CHECK 只留
+     * AirspaceKind 的五值，HEIGHT_LIMIT / TEMPORARY 已不可能出现在库里，参数里再列它们只是让读者以为它们仍是合法种类。
+     * 注意 param() 只补缺行：已发布版本的参数在 PostgreSQL 上不可改，已有库里的 C02-2.kinds / C02-8.kinds 仍是旧串（含规范值，判定不变）。
+     */
     private static final String[][] DEMO_PARAMS = {
             {"C01", "time_window_min", "10", "INTEGER", "min"}, {"C01", "corridor_tolerance_m", "100", "NUMBER", "m"},
-            {"C02-1", "kinds", "PROHIBITED,RESTRICTED", "LIST", null}, {"C02-2", "kinds", "HEIGHT_LIMIT,ALTITUDE_LIMIT", "LIST", null},
+            {"C02-1", "kinds", "PROHIBITED,RESTRICTED", "LIST", null}, {"C02-2", "kinds", "ALTITUDE_LIMIT", "LIST", null},
             {"C02-3", "tolerance_m", "20", "NUMBER", "m"}, {"C02-4", "grace_min", "10", "INTEGER", "min"},
             {"C02-5", "timezone", "Asia/Shanghai", "STRING", null}, {"C02-5", "night_from", "20", "INTEGER", "h"}, {"C02-5", "night_to", "6", "INTEGER", "h"},
-            {"C02-6", "vlos_m", "500", "NUMBER", "m"}, {"C02-8", "kinds", "TEMPORARY,TEMPORARY_CONTROL", "LIST", null},
+            {"C02-6", "vlos_m", "500", "NUMBER", "m"}, {"C02-8", "kinds", "TEMPORARY_CONTROL", "LIST", null},
             {"C03", "fresh_seconds", "120", "INTEGER", "s"}, {"C03", "track_points", "10", "INTEGER", null}, {"C03", "conf_min", "0.75", "NUMBER", null},
             {"C03", "min_points", "3", "INTEGER", null}, {"C03", "gap_seconds", "30", "INTEGER", "s"}, {"C03", "no_plan_status", "ILLEGAL", "STRING", null},
             {"C03", "ignore_undetermined_rules", "C02-6", "LIST", null},
@@ -138,11 +144,15 @@ public class LocalStage7RuleEngineSeeder implements ApplicationRunner {
                 stableId(versionId + ":" + ruleCode + ":" + key), versionId, ruleCode, key, value, type, unit, versionId, ruleCode, key);
     }
 
-    /** P1 禁止（无高度带）、H1 限高（AMSL 0–60）、T1 临时管制（T0±1h）；各自一个约 900 m 见方的边界。 */
+    /**
+     * P1 禁止（无高度带）、H1 限高（AMSL 0–60）、T1 临时管制（T0±1h）；各自一个约 900 m 见方的边界。
+     * kind_code 一律用 AirspaceKind 的规范值（决策 10-2）：种子是迁移 074 之后唯一还可能写出 HEIGHT_LIMIT/TEMPORARY 的地方，
+     * 继续写旧值会在全新库启动时直接撞上 ck_stage9_airspace_kind_code。
+     */
     private void airspaces(Instant at) {
-        airspace("p1", "KY-S7-P1", "阶段七禁止空域 P1", "PROHIBITED", square(118.300, 37.300), null, null, null, T0.minusSeconds(86_400), null, at);
-        airspace("h1", "KY-S7-H1", "阶段七限高空域 H1", "HEIGHT_LIMIT", square(118.400, 37.400), 0, 60, "AMSL", T0.minusSeconds(86_400), null, at);
-        airspace("t1", "KY-S7-T1", "阶段七临时管制 T1", "TEMPORARY", square(118.500, 37.500), null, null, null, T0.minusSeconds(3_600), T0.plusSeconds(3_600), at);
+        airspace("p1", "KY-S7-P1", "阶段七禁止空域 P1", AirspaceKind.PROHIBITED, square(118.300, 37.300), null, null, null, T0.minusSeconds(86_400), null, at);
+        airspace("h1", "KY-S7-H1", "阶段七限高空域 H1", AirspaceKind.ALTITUDE_LIMIT, square(118.400, 37.400), 0, 60, "AMSL", T0.minusSeconds(86_400), null, at);
+        airspace("t1", "KY-S7-T1", "阶段七临时管制 T1", AirspaceKind.TEMPORARY_CONTROL, square(118.500, 37.500), null, null, null, T0.minusSeconds(3_600), T0.plusSeconds(3_600), at);
     }
 
     private void airspace(String suffix, String no, String name, String kind, String boundary, Integer min, Integer max, String datum, Instant from, Instant to, Instant at) {

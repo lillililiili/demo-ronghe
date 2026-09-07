@@ -38,8 +38,16 @@ public class FusionEventEmitter {
 
     /** 只在本轨迹段内首次转 STABLE 时发一次；重复帧不重复发。 */
     public void stableOnce(String targetId, OffsetDateTime occurredAt, OffsetDateTime trackStartedAt, Map<String, Object> payload) {
-        if (repository.existsSince(targetId, STATUS_STABLE, trackStartedAt == null ? occurredAt : trackStartedAt)) return;
+        if (stableAlreadyEmitted(targetId, occurredAt, trackStartedAt)) return;
         emit(STATUS_STABLE, targetId, occurredAt, payload);
+    }
+
+    /**
+     * 本轨迹段内是否已经发过 STATUS_STABLE（阶段 10 只加）：摘要 payload 要查目标编号、告警与风险，
+     * 调用方先问这一句再组装，避免 STABLE 之后的每一帧都白查三张表再被 stableOnce 丢掉。
+     */
+    public boolean stableAlreadyEmitted(String targetId, OffsetDateTime occurredAt, OffsetDateTime trackStartedAt) {
+        return repository.existsSince(targetId, STATUS_STABLE, trackStartedAt == null ? occurredAt : trackStartedAt);
     }
 
     private String write(Map<String, Object> payload) {

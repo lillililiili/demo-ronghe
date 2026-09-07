@@ -92,10 +92,11 @@ class RuleReplayRegressionTest {
         }
         facts.route(LocalStage7RuleEngineSeeder.targetId("deviation"), DEVIATION_M, HALF_WIDTH);
         // 空域事实与种子几何等价：H1 限高 AMSL 0–60（airspace-limit、datum-mismatch 在其内）、P1 禁止（boundary 恰在顶点）、T1 临时管制 T0±1h（merge 在其内）。
-        facts.airspace(LocalStage7RuleEngineSeeder.targetId("airspace-limit"), covers(AIRSPACE_H1, "HEIGHT_LIMIT", BigDecimal.ZERO, new BigDecimal("60"), "AMSL", dayBefore, null));
-        facts.airspace(LocalStage7RuleEngineSeeder.targetId("datum-mismatch"), covers(AIRSPACE_H1, "HEIGHT_LIMIT", BigDecimal.ZERO, new BigDecimal("60"), "AMSL", dayBefore, null));
+        // kind 用种子自阶段 10 起写出的规范值（决策 10-2）；决策表的十个结论不变——桩事实只是换了同义写法，规则参数也只认规范值。
+        facts.airspace(LocalStage7RuleEngineSeeder.targetId("airspace-limit"), covers(AIRSPACE_H1, "ALTITUDE_LIMIT", BigDecimal.ZERO, new BigDecimal("60"), "AMSL", dayBefore, null));
+        facts.airspace(LocalStage7RuleEngineSeeder.targetId("datum-mismatch"), covers(AIRSPACE_H1, "ALTITUDE_LIMIT", BigDecimal.ZERO, new BigDecimal("60"), "AMSL", dayBefore, null));
         facts.airspace(LocalStage7RuleEngineSeeder.targetId("boundary"), touches(AIRSPACE_P1, "PROHIBITED", dayBefore));
-        facts.airspace(LocalStage7RuleEngineSeeder.targetId("merge"), covers(AIRSPACE_T1, "TEMPORARY", null, null, null, T0.minusHours(1), T0.plusHours(1)));
+        facts.airspace(LocalStage7RuleEngineSeeder.targetId("merge"), covers(AIRSPACE_T1, "TEMPORARY_CONTROL", null, null, null, T0.minusHours(1), T0.plusHours(1)));
     }
 
     @Test

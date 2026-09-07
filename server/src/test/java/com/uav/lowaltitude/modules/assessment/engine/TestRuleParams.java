@@ -18,10 +18,10 @@ final class TestRuleParams implements RuleParams {
     static TestRuleParams demoCatalog() {
         TestRuleParams params = new TestRuleParams("DEMO");
         params.put("C01", "time_window_min", "10").put("C01", "corridor_tolerance_m", "20")
-                .put("C02-1", "kinds", "PROHIBITED,RESTRICTED").put("C02-2", "kinds", "HEIGHT_LIMIT,ALTITUDE_LIMIT")
+                .put("C02-1", "kinds", "PROHIBITED,RESTRICTED").put("C02-2", "kinds", "ALTITUDE_LIMIT")
                 .put("C02-3", "tolerance_m", "20").put("C02-4", "grace_min", "10")
                 .put("C02-5", "timezone", "Asia/Shanghai").put("C02-5", "night_from", "20").put("C02-5", "night_to", "6")
-                .put("C02-6", "vlos_m", "500").put("C02-8", "kinds", "TEMPORARY,TEMPORARY_CONTROL")
+                .put("C02-6", "vlos_m", "500").put("C02-8", "kinds", "TEMPORARY_CONTROL")
                 .put("C03", "fresh_seconds", "120").put("C03", "track_points", "10").put("C03", "conf_min", "0.75")
                 .put("C03", "min_points", "3").put("C03", "gap_seconds", "30").put("C03", "no_plan_status", "ILLEGAL")
                 .put("C03", "ignore_undetermined_rules", "C02-6")

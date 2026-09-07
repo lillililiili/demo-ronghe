@@ -43,6 +43,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import com.uav.lowaltitude.modules.fusion.infrastructure.FusionInboxRepository;
 import com.uav.lowaltitude.modules.fusion.infrastructure.FusionInboxRepository.InboxRow;
+import com.uav.lowaltitude.testsupport.SourceTypeCatalogFixture;
 
 /**
  * 阶段 8 PostgreSQL/PostGIS 专项验证：迁移 050–054 与 R__stage8 在真实库升级；source_observation.location 的 WGS-84 检查；
@@ -147,7 +148,10 @@ class Stage8PostgresTest {
         assertThat(jdbc.queryForObject("select data_type from information_schema.columns where table_schema=? and table_name='track_point' and column_name='point_kind'", String.class, SCHEMA)).isEqualTo("character varying");
         List<String> permissions = jdbc.queryForList("select permission_code from app_permission where permission_code in ('fusion:read','fusion:revise','fusion:manage') order by permission_code", String.class);
         assertThat(permissions).containsExactly("fusion:manage", "fusion:read", "fusion:revise");
-        assertThat(jdbc.queryForObject("select count(*) from source_type_catalog", Long.class)).isEqualTo(8L); // 阶段 8.5 迁移 070 增 AOA/DCD/RID（决策 8.5-26）
+        // 阶段 8.5 迁移 070 增 AOA/DCD/RID（决策 8.5-26）；行数与状态口径统一在夹具里（阶段 10.3）。
+        assertThat(jdbc.queryForObject("select count(*) from source_type_catalog", Long.class))
+                .isEqualTo((long) SourceTypeCatalogFixture.EXPECTED_TYPES.size());
+        SourceTypeCatalogFixture.assertCatalog(jdbc);
         assertThat(jdbc.queryForObject("select count(*) from fusion_config where status='ACTIVE' and config_version='demo-v1'", Long.class)).isEqualTo(1L);
         // 迁移不写任何观测、目标或真值：本 schema 里的目标只能来自各用例夹具。
         assertThat(jdbc.queryForObject("select count(*) from source_observation", Long.class)).isZero();

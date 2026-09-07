@@ -19,6 +19,7 @@ import com.uav.lowaltitude.modules.identity.domain.ScopeMode;
 import com.uav.lowaltitude.platform.api.ApiException;
 import com.uav.lowaltitude.platform.security.AuthContext;
 import com.uav.lowaltitude.platform.security.AuthUser;
+import com.uav.lowaltitude.testsupport.SourceTypeCatalogFixture;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowableOfType;
@@ -72,11 +73,8 @@ class Stage8AccessControlServiceTest {
 
     @Test
     void sourceTypeCatalogMarksOnlyRadarAsConfirmed() {
-        List<Map<String, Object>> rows = jdbc.queryForList("select source_type, schema_status from source_type_catalog order by source_type");
-        assertThat(rows).extracting(row -> row.get("source_type")).containsExactly("AOA", "DCD", "EO", "FIVE_G_A", "FUSION_BOX", "RADAR", "RID", "TDOA"); // 阶段 8.5 迁移 070 按凌云协议增 AOA/DCD/RID
-        // 只有雷达有协议资料（T02 v3.0.0）；其余三路及融合箱字段为 Demo，页面与文档必须标注待确认。
-        assertThat(rows).filteredOn(row -> "RADAR".equals(row.get("source_type"))).extracting(row -> row.get("schema_status")).containsExactly("CONFIRMED");
-        assertThat(rows).filteredOn(row -> !"RADAR".equals(row.get("source_type"))).allSatisfy(row -> assertThat(row.get("schema_status")).isEqualTo("DEMO"));
+        // 八行目录、只有雷达 CONFIRMED、其余 DEMO：口径统一在夹具里（阶段 10.3），这里不再各自抄一份。
+        SourceTypeCatalogFixture.assertCatalog(jdbc);
         assertThat(jdbc.queryForObject("select count(*) from information_schema.columns where lower(table_name)='integration_source' and lower(column_name)='source_type'", Integer.class)).isEqualTo(1);
     }
 

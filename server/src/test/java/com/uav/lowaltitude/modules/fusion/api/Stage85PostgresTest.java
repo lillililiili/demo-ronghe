@@ -53,6 +53,7 @@ import com.uav.lowaltitude.modules.target.infrastructure.TargetReadRepository;
 import com.uav.lowaltitude.modules.fusion.infrastructure.FusedTrackRepository;
 import com.uav.lowaltitude.modules.fusion.infrastructure.FusionInboxRepository;
 import com.uav.lowaltitude.platform.time.AppClock;
+import com.uav.lowaltitude.testsupport.SourceTypeCatalogFixture;
 
 /**
  * 阶段 8.5（设备直连切片）PostgreSQL/PostGIS 专项验证。沿用 Stage8/Stage9PostgresTest 已跑通的做法：
@@ -82,11 +83,9 @@ class Stage85PostgresTest {
     private static final String DATABASE_PATTERN = "^stage456_verify_[a-z0-9_]+$";
     private static final OffsetDateTime T0 = OffsetDateTime.of(2026, 9, 7, 12, 0, 0, 0, ZoneOffset.UTC);
 
-    /** 契约 §2 的来源类型码表：迁移 050 的五个 + 迁移 070 按凌云协议 A v8.6 补的三个。 */
-    private static final List<String> SOURCE_TYPES = List.of(
-            "AOA", "DCD", "EO", "FIVE_G_A", "FUSION_BOX", "RADAR", "RID", "TDOA");
-    /** 迁移 070 新增的三行：凌云协议给了字段但未联调，必须仍标 DEMO。 */
-    private static final List<String> STAGE85_SOURCE_TYPES = List.of("AOA", "DCD", "RID");
+    /** 契约 §2 的来源类型码表与 070 新增三行：口径统一在 {@link SourceTypeCatalogFixture}（阶段 10.3）。 */
+    private static final List<String> SOURCE_TYPES = SourceTypeCatalogFixture.EXPECTED_TYPES;
+    private static final List<String> STAGE85_SOURCE_TYPES = SourceTypeCatalogFixture.STAGE85_TYPES;
     private static final String LINGYUN_SPEC = "设备资料/凌云协议/协议A-设备数据及感知数据接入协议v8.6.pdf";
 
     private static boolean schemaCreated;
@@ -171,8 +170,8 @@ class Stage85PostgresTest {
     @Test
     @Order(4)
     void sourceTypeCatalogCarriesTheThreeLingyunSourcesAsDemo() {
-        assertThat(jdbc.queryForList("select source_type from source_type_catalog order by source_type", String.class))
-                .as("契约 §2 的八种来源类型").containsExactlyElementsOf(SOURCE_TYPES);
+        // 八行目录、只有雷达 CONFIRMED、其余 DEMO：在真实 PG 上按同一夹具口径断言。
+        SourceTypeCatalogFixture.assertCatalog(jdbc);
         for (String type : STAGE85_SOURCE_TYPES) {
             Map<String, Object> row = jdbc.queryForMap("select schema_status,spec_ref,display_name from source_type_catalog where source_type=?", type);
             assertThat(row).as(type + " 未经联调，不得标 CONFIRMED").containsEntry("schema_status", "DEMO");

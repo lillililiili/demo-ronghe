@@ -25,6 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.uav.lowaltitude.Application;
 import com.uav.lowaltitude.integration.mock.RuleReplayRunner.ReplayReport;
+import com.uav.lowaltitude.modules.airspace.domain.AirspaceKind;
 
 /**
  * 阶段 7 种子：幂等、重启不重置人工复核与已激活版本、双门禁（production 与 production,local 都不注册）、
@@ -64,7 +65,13 @@ class LocalStage7RuleEngineSeederTest {
             assertThat(jdbc.queryForObject("select count(*) from track_point tp join track t on t.track_id=tp.track_id where t.target_id=?", Long.class, LocalStage7RuleEngineSeeder.targetId(scenario))).as(scenario).isGreaterThanOrEqualTo(3L);
         }
         assertThat(jdbc.queryForList("select kind_code from airspace_version where airspace_id like 'seed-stage7-airspace-%' order by kind_code", String.class))
-                .containsExactly("HEIGHT_LIMIT", "PROHIBITED", "TEMPORARY");
+                .as("阶段 10 起种子只写 AirspaceKind 五值字典，历史同义写法不再出现（决策 10-2）")
+                .containsExactly(AirspaceKind.ALTITUDE_LIMIT, AirspaceKind.PROHIBITED, AirspaceKind.TEMPORARY_CONTROL)
+                .allSatisfy(kind -> assertThat(AirspaceKind.supported(kind)).isTrue());
+        assertThat(jdbc.queryForObject("select value_text from rule_param where rule_set_version_id=? and rule_code='C02-2' and param_key='kinds'", String.class, LocalStage7RuleEngineSeeder.VERSION_1))
+                .isEqualTo(AirspaceKind.ALTITUDE_LIMIT);
+        assertThat(jdbc.queryForObject("select value_text from rule_param where rule_set_version_id=? and rule_code='C02-8' and param_key='kinds'", String.class, LocalStage7RuleEngineSeeder.VERSION_1))
+                .isEqualTo(AirspaceKind.TEMPORARY_CONTROL);
         assertThat(jdbc.queryForObject("select altitude_datum||'/'||min_altitude_m||'/'||max_altitude_m from airspace_version where airspace_version_id='seed-stage7-av-h1'", String.class)).startsWith("AMSL/0");
         // 无计划场景没有计划；跨范围场景落在另一元组；缺高度基准场景只有 AGL。
         assertThat(jdbc.queryForObject("select count(*) from flight_plan where plan_id in (?,?)", Long.class, LocalStage7RuleEngineSeeder.planId("no-plan"), LocalStage7RuleEngineSeeder.planId("cross-scope"))).isZero();
@@ -75,6 +82,35 @@ class LocalStage7RuleEngineSeederTest {
         // 种子只写事实：不产生研判、复核或告警。
         assertThat(jdbc.queryForObject("select count(*) from rule_evaluation e join rule_set_version v on v.rule_set_version_id=e.rule_set_version_id where v.rule_set_id=? and e.run_id like 'seed-%'", Long.class, LocalStage7RuleEngineSeeder.RULE_SET_ID)).isZero();
         assertThat(jdbc.queryForObject("select count(*) from alarm where target_id like 'seed-stage7-target-%' and source_id='seed-stage7-source'", Long.class)).isZero();
+    }
+
+    /**
+     * 迁移 074（决策 10-2/10-5）在 H2 上的证据：ck_stage9_airspace_kind_code 只留五值，历史写法 HEIGHT_LIMIT / TEMPORARY 被 CHECK 拒，
+     * 规范值照常写入。PostgreSQL 侧同一断言由助手的 Stage9PostgresTest 覆盖。按约束名断言，换成别的错误也算失败。
+     */
+    @Test
+    void migration074RejectsLegacyKindCodesOnH2() {
+        Timestamp at = Timestamp.from(LocalStage7RuleEngineSeeder.T0);
+        String boundary = jdbc.queryForObject("select cast(boundary as varchar) from airspace_version where airspace_version_id='seed-stage7-av-h1'", String.class);
+        final int legacyVersionNo = 100;
+        int versionNo = legacyVersionNo;
+        for (String legacy : List.of("HEIGHT_LIMIT", "TEMPORARY")) {
+            String id = "s10-legacy-" + UUID.randomUUID().toString().substring(0, 8);
+            Throwable failure = org.assertj.core.api.Assertions.catchThrowable(() -> insertVersion(id, legacyVersionNo, legacy, boundary, at));
+            assertThat(failure).as("历史写法 " + legacy + " 必须被 CHECK 拒").isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+            assertThat(failure.getMessage()).containsIgnoringCase("ck_stage9_airspace_kind_code");
+            assertThat(jdbc.queryForObject("select count(*) from airspace_version where airspace_version_id=?", Long.class, id)).isZero();
+        }
+        for (String kind : AirspaceKind.CODES) {
+            String id = "s10-canonical-" + UUID.randomUUID().toString().substring(0, 8);
+            insertVersion(id, ++versionNo, kind, boundary, at);
+            assertThat(jdbc.queryForObject("select kind_code from airspace_version where airspace_version_id=?", String.class, id)).isEqualTo(kind);
+        }
+    }
+
+    private void insertVersion(String id, int versionNo, String kind, String boundary, Timestamp at) {
+        jdbc.update("insert into airspace_version (airspace_version_id,airspace_id,version_no,kind_code,boundary,valid_from,created_at)"
+                + " values (?,'seed-stage7-airspace-h1',?,?,CAST(? AS GEOMETRY),?,?)", id, versionNo, kind, boundary, at, at);
     }
 
     @Test

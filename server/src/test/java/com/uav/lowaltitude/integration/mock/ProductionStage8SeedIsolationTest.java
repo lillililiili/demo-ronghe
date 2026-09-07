@@ -13,6 +13,7 @@ import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import com.uav.lowaltitude.Application;
+import com.uav.lowaltitude.testsupport.SourceTypeCatalogFixture;
 
 /**
  * production 必须压过 local：阶段 8 的回放种子、回放 Runner 与摄取 Worker 不允许因部署 profile 组合泄入生产。
@@ -55,10 +56,10 @@ class ProductionStage8SeedIsolationTest {
             // 迁移 050 的结构性目录：恰一个 ACTIVE 的 demo-v1（DEMO 状态），五种来源类型。
             assertThat(jdbc.queryForObject("select count(*) from fusion_config where config_version='demo-v1' and status='ACTIVE' and schema_status='DEMO'", Integer.class)).isEqualTo(1);
             assertThat(jdbc.queryForObject("select count(*) from fusion_config where status='ACTIVE'", Integer.class)).isEqualTo(1);
-            List<String> types = jdbc.queryForList("select source_type from source_type_catalog order by source_type", String.class);
-            assertThat(types).containsExactly("AOA", "DCD", "EO", "FIVE_G_A", "FUSION_BOX", "RADAR", "RID", "TDOA"); // 阶段 8.5 迁移 070 按凌云协议增 AOA/DCD/RID（仍 DEMO）
-            assertThat(jdbc.queryForObject("select count(*) from source_type_catalog where schema_status='CONFIRMED'", Integer.class)).isEqualTo(1);
-            assertThat(jdbc.queryForObject("select schema_status from source_type_catalog where source_type='RADAR'", String.class)).isEqualTo("CONFIRMED");
+            // 八行目录、只有雷达 CONFIRMED：口径统一在夹具里（阶段 10.3）。
+            SourceTypeCatalogFixture.assertCatalog(jdbc);
+            assertThat(jdbc.queryForObject("select count(*) from source_type_catalog where schema_status='CONFIRMED'", Integer.class))
+                    .isEqualTo(SourceTypeCatalogFixture.CONFIRMED_TYPES.size());
         }
     }
 }

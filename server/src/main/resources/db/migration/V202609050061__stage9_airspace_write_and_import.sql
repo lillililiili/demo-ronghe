@@ -6,8 +6,11 @@
 -- ---------- kind_code 字典 ----------
 -- 决策 9-3：种类必须来自固定字典，页面才能有稳定的图层映射（禁飞/限高/适飞）。
 -- 历史行先归一：阶段 3/7 种子写过 HEIGHT_LIMIT 与 TEMPORARY 两个同义写法。
-UPDATE airspace_version SET kind_code = 'ALTITUDE_LIMIT' WHERE kind_code = 'HEIGHT_LIMIT';
-UPDATE airspace_version SET kind_code = 'TEMPORARY_CONTROL' WHERE kind_code = 'TEMPORARY';
+-- 归一动作本身移到 db/postgresql/V202609050065__stage9_airspace_kind_code_normalization.sql：
+-- 阶段 3 的 trg_stage3_airspace_version_immutable 禁止一切 UPDATE，而它建在 R__ 里（Flyway 先跑完
+-- 全部 V 迁移才跑 R），所以在已经启动过一次的库上，这里的 UPDATE 必然被触发器拒绝；全新库上反而
+-- 因为触发器尚未创建而侥幸通过。归一需要临时摘掉触发器，那是 PostgreSQL 专属语法，不能放进本文件
+-- （本目录同时要在 H2 测试库执行）。
 
 -- CHECK 里额外保留 HEIGHT_LIMIT / TEMPORARY 两个历史写法：阶段 7 的种子与测试仍在插入它们，
 -- 而那些文件不属于本任务；去掉会让全新 H2 库一启动就违反约束。写接口（AirspaceKind）只接受规范的五个值，

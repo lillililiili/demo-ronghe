@@ -28,7 +28,13 @@ public enum PermissionCode {
     // 阶段 8：融合配置/血缘读取、人工修订与合并分裂、配置激活分权；读目标仍用 target:read，融合动作不附带目标可见范围。
     FUSION_READ("fusion:read"),
     FUSION_REVISE("fusion:revise"),
-    FUSION_MANAGE("fusion:manage");
+    FUSION_MANAGE("fusion:manage"),
+    // 证据文件底座：读、入库、下载、关联、冻结分权；菜单 evidence 不能替代其中任一动作。
+    EVIDENCE_READ("evidence:read"),
+    EVIDENCE_INGEST("evidence:ingest"),
+    EVIDENCE_DOWNLOAD("evidence:download"),
+    EVIDENCE_LINK("evidence:link"),
+    EVIDENCE_HOLD("evidence:hold");
 
     private final String value;
 

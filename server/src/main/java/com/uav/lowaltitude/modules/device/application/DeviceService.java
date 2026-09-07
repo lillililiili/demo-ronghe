@@ -96,6 +96,18 @@ public class DeviceService {
                 mode, simulated == total);
     }
 
+    /** 大屏地图点：只返回有经纬度的启用设备；非 WGS-84 仍带回坐标系，由调用方决定是否绘制。 */
+    public List<DeviceMapMarker> mapMarkers(int limit) {
+        access.requireMonitoringRead();
+        int safe = Math.min(Math.max(limit, 1), 100);
+        List<DeviceMapMarker> markers = new ArrayList<>();
+        for (Map<String, Object> row : repository.listForTree(query(new DeviceFilter(null, null, null, null, null, null, true)), safe)) {
+            DeviceMapMarker marker = marker(row);
+            if (marker != null) markers.add(marker);
+        }
+        return List.copyOf(markers);
+    }
+
     public DeviceTree tree(DeviceFilter filter) {
         access.requireMonitoringRead();
         DeviceQuery query = query(filter);
@@ -440,6 +452,15 @@ public class DeviceService {
         return new SourceSelection(mode, bool(row, "simulated"), protocol);
     }
 
+    private DeviceMapMarker marker(Map<String, Object> r) {
+        BigDecimal longitude = decimal(r, "longitude");
+        BigDecimal latitude = decimal(r, "latitude");
+        if (longitude == null || latitude == null) return null;
+        return new DeviceMapMarker(text(r, "device_id"), text(r, "device_no"), text(r, "name"),
+                text(r, "device_type_name"), text(r, "channel"), text(r, "connectivity", "UNKNOWN"),
+                bool(r, "has_alarm"), longitude, latitude, text(r, "coordinate_system"));
+    }
+
     private DeviceSummary summary(Map<String, Object> r) {
         return new DeviceSummary(text(r, "device_id"), text(r, "device_no"), text(r, "name"),
                 text(r, "device_type_code"), text(r, "device_type_name"), text(r, "channel"),
@@ -543,6 +564,9 @@ public class DeviceService {
                                  int vendorCount, int modelCount, List<OverviewGroup> byChannel,
                                  List<OverviewGroup> byType, String sourceMode, boolean simulated) { }
     public record OverviewGroup(String name, int total, int online, int offline, int abnormal, int unknown) { }
+    public record DeviceMapMarker(String deviceId, String deviceNo, String name, String deviceTypeName,
+                                 String channel, String connectivity, boolean hasAlarm,
+                                 BigDecimal longitude, BigDecimal latitude, String coordinateSystem) { }
     public record DeviceSummary(String deviceId, String deviceNo, String name, String deviceTypeCode,
                                 String deviceTypeName, String channel, String ownerName, String regionName,
                                 String address, String model, String vendor, boolean enabled, long version,

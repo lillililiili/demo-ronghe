@@ -24,6 +24,7 @@ final class AuditLabels {
             Map.entry("airspace", "空域规则"),
             Map.entry("statistics", "运行统计"),
             Map.entry("fusion", "融合感知"),
+            Map.entry("evidence", "证据管理"),
             Map.entry("system", "系统"));
 
     private static final Map<String, String> ACTIONS = Map.ofEntries(
@@ -70,7 +71,14 @@ final class AuditLabels {
             Map.entry("target_class_revised", "修订目标类别"),
             Map.entry("targets_merged", "合并目标"),
             Map.entry("target_split", "分裂目标"),
-            Map.entry("fusion_config_activated", "激活融合参数版本"));
+            Map.entry("fusion_config_activated", "激活融合参数版本"),
+            Map.entry("evidence_ingested", "入库证据文件"),
+            Map.entry("evidence_linked", "关联证据对象"),
+            Map.entry("evidence_hold_placed", "冻结证据"),
+            Map.entry("evidence_hold_released", "解除证据冻结"),
+            Map.entry("evidence_verified", "校验证据文件"),
+            Map.entry("evidence_downloaded", "下载证据文件"),
+            Map.entry("evidence_exported", "导出证据台账"));
 
     private static final Map<String, String> METHODS = Map.of(
             "GET", "查询", "POST", "提交", "PUT", "更新", "PATCH", "更新", "DELETE", "删除");
@@ -102,7 +110,8 @@ final class AuditLabels {
             Map.entry("/stats", "运行统计"),
             Map.entry("/fusion", "融合引擎"),
             Map.entry("/targets", "目标"),
-            Map.entry("/tracks", "轨迹"));
+            Map.entry("/tracks", "轨迹"),
+            Map.entry("/evidence-files", "证据文件"));
 
     private AuditLabels() {
     }

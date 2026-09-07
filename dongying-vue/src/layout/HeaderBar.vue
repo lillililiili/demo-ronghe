@@ -14,17 +14,21 @@ import { listAlarms } from '@/services/alarmApi.js';
 
 const store = useAppStore();
 const router = useRouter();
-const M = window.MOCK, U = window.UI;
+const U = window.UI;
 const currentUser = computed(() => authUser.value || { name: '用户', account: '—', role_name: '—', org_name: '—' });
 const avatarText = computed(() => currentUser.value.name.slice(-1));
 const canBigscreen = computed(() => canAccessRoute('bigscreen'));
 const canAlarms = computed(() => canAccessRoute('alarms'));
 
-/* ---------- 时钟：系统当前时间 ---------- */
+/* ---------- 时钟：本地墙钟，不再使用 Mock 演示基准时刻 ---------- */
+function formatClock(date) {
+  const p = n => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())} ${p(date.getHours())}:${p(date.getMinutes())}:${p(date.getSeconds())}`;
+}
 let clkTimer = null;
 let stopBellRoute = null;
 const tick = () => {
-  store.timeStr = M.systemNowStr();
+  store.timeStr = formatClock(new Date());
 };
 tick();
 const clkHtml = computed(() => `${U.icon('clock')} ${store.timeStr}`);

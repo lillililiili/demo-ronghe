@@ -107,3 +107,24 @@ export async function apiDownload(path) {
   }
   return response.blob();
 }
+
+export async function apiBinary(path) {
+  const headers = new Headers({ Accept: '*/*' });
+  const token = readSessionToken();
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  let response;
+  try { response = await fetch(`${API_BASE}${path}`, { headers }); }
+  catch { throw new ApiError('无法连接后端服务，请稍后重试。', 'NETWORK_ERROR', 0); }
+  const contentType = response.headers.get('content-type') || '';
+  if (contentType.includes('application/json')) {
+    await decode(response);
+    return null;
+  }
+  if (!response.ok) throw new ApiError(`服务返回异常（HTTP ${response.status}）`, 'HTTP_ERROR', response.status);
+  const blob = await response.blob();
+  const disposition = response.headers.get('content-disposition') || '';
+  const utf = /filename\*=UTF-8''([^;]+)/i.exec(disposition);
+  const plain = /filename="?([^"]+)"?/i.exec(disposition);
+  const filename = decodeURIComponent((utf && utf[1]) || (plain && plain[1]) || 'download');
+  return { blob, filename };
+}

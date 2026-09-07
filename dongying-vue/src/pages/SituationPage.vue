@@ -58,31 +58,100 @@ function shownAlarms() {
 /* ---- 首屏骨架 ---- */
 sel = M.liveTargets[0];
 
-/* ---- 当前追踪目标 ---- */
-function paintTarget() {
-  const t = sel;
-  const fuseOn = hasFuseData(t);
-  const metrics = [
-    !fuseOn && { label: '目标类型', value: t.subtype || t.type, icon: 'plane' },
-    { label: '飞行速度', value: t.speed, unit: 'm/s', icon: 'trend' },
-    { label: '当前高度', value: t.alt, unit: 'm', icon: 'chart' },
-    !fuseOn && { label: '融合来源', value: t.srcCount, unit: '路', tone: 'info', icon: 'radar' }
-  ].filter(Boolean);
-  const legalLine = fuseOn ? '' : (t.type === '无人机'
-    ? (t.violation ? `<span style="color:#ff8b95">${t.legal} · ${t.violation}</span>` : t.legal)
-    : `<span class="tag t-gray">不适用</span> <span style="color:var(--txt-3);font-size:11px">非无人机走空间安全风险线（§4.2）</span>`);
-  document.getElementById('stTarget').innerHTML = `
-    ${fuseOn ? '' : `<div class="target-summary-tags" style="margin-bottom:8px">${U.legal(t.legal)}${U.risk(t.risk)}</div>`}
-    ${U.metricStrip(metrics, { compact: true })}
-    <div style="margin-top:5px;font-size:12.5px;display:flex;flex-direction:column;gap:4px">
-      <div style="display:flex;gap:6px"><span style="color:var(--txt-3);flex:none">经纬度</span>
-        <span class="mono">${t.lon.toFixed(3)}°E, ${t.lat.toFixed(3)}°N</span></div>
-      ${fuseOn ? '' : `<div style="display:flex;gap:6px"><span style="color:var(--txt-3);flex:none">数据来源</span>
-        <span>${t.srcCount} 路（融合置信度 <b style="color:#8fbaff">${t.fusedConf}%</b>）</span></div>`}
-      ${legalLine ? `<div style="display:flex;gap:6px"><span style="color:var(--txt-3);flex:none">合法性</span>
-        <span style="min-width:0">${legalLine}</span></div>` : ''}
+/* ---- 地图悬浮卡：承接原「当前追踪目标」的研判信息与处置按钮 ---- */
+const STATUS_TAG = { '跟踪中': ['t-cyan', '#22d3ee'], '处置中': ['t-orange', '#ff8b3d'], '已处置': ['t-green', '#2fd06e'] };
+function legalColor(t) {
+  return t.legal === '非法' ? '#ff4d5e' : t.legal === '异常' ? '#ff8b3d'
+    : t.legal === '待确认' ? '#ffb020' : t.legal === '不适用' ? '#8ca0be' : '#2fd06e';
+}
+function statusTag(t) {
+  if (!t.status) return '';
+  const [cls, col] = STATUS_TAG[t.status] || ['t-gray', '#8ca0be'];
+  return `<span class="tag ${cls}"><span class="dot-s" style="background:${col}"></span>${t.status}</span>`;
+}
+function tipActions(t) {
+  const isUav = t.type === '无人机';
+  const alms = alarmsOf(t.id);
+  const latest = alms.length
+    ? alms.slice().sort((x, y) => (x.ts < y.ts ? 1 : x.ts > y.ts ? -1 : 0))[0] : null;
+  const id = t.id;
+  const almBtn = latest
+    ? `<button type="button" class="btn warn" data-tip-act="alarm" data-tip-id="${id}"
+         title="转到「告警事件」并定位到 ${latest.id}">⚠ 查看告警 →</button>`
+    : '';
+  if (isUav) {
+    return `<div class="maptip-track-acts">
+      <button type="button" class="btn" data-tip-act="video" data-tip-id="${id}">${U.icon('video')} 实时视频</button>
+      ${almBtn}
+    </div>`;
+  }
+  return `<div class="maptip-track-note">非无人机不进入反制流程，仅评估与通知/驱离</div>
+    <div class="maptip-track-acts is-grid">
+      <button type="button" class="btn" data-tip-act="video" data-tip-id="${id}">${U.icon('video')} 实时视频</button>
+      <button type="button" class="btn" data-tip-act="notify" data-tip-id="${id}">通知机场/周边</button>
+      <button type="button" class="btn" data-tip-act="drive" data-tip-id="${id}">派发驱离</button>
+      <button type="button" class="btn" data-tip-act="risk" data-tip-id="${id}">转风险监测 →</button>
+    </div>`;
+}
+function renderTargetTip(t) {
+  const lon = Number.isFinite(t.lon) ? t.lon.toFixed(3) : '—';
+  const lat = Number.isFinite(t.lat) ? t.lat.toFixed(3) : '—';
+  const tags = `${t.legal}${t.violation ? ' · ' + t.violation : ''} · ${t.risk}`;
+  return `<div class="maptip-track">
+    <header class="maptip-track-hd">
+      <div class="maptip-track-id">
+        <b style="color:${legalColor(t)}">${t.id}</b>
+        <span class="maptip-track-type">${t.subtype || t.type}</span>
+      </div>
+      ${statusTag(t)}
+    </header>
+    <div class="maptip-track-tags">${tags}</div>
+    <div class="maptip-track-metrics">
+      <div class="maptip-metric">
+        <span class="maptip-metric-ic">${U.icon('trend')}</span>
+        <span><small>飞行速度</small><b>${t.speed == null ? '—' : t.speed}<em>m/s</em></b></span>
+      </div>
+      <div class="maptip-metric">
+        <span class="maptip-metric-ic">${U.icon('chart')}</span>
+        <span><small>当前高度</small><b>${t.alt == null ? '—' : t.alt}<em>m</em></b></span>
+      </div>
     </div>
-    <div id="stAct" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line-2)"></div>`;
+    <div class="maptip-track-geo"><span>经纬度</span><span class="mono">${lon}°E, ${lat}°N</span></div>
+    ${tipActions(t)}
+  </div>`;
+}
+function renderMapTip(hit) {
+  if (hit.kind !== 'target' || !hit.data) return null;
+  return renderTargetTip(hit.data);
+}
+function selectTarget(t) {
+  if (!t) return;
+  sel = t;
+  almFocus = null;
+  selAlarmId = latestAlarmIdOf(sel.id);
+  if (map) map.sel = sel.id;
+  refresh();
+}
+function onTipAction(act, hit) {
+  const t = hit && hit.data;
+  if (!t) return;
+  const live = M.liveTargets.find(x => x.id === t.id);
+  if (live && live.id !== sel.id) selectTarget(live);
+  if (act === 'video') {
+    if (!window.TARGET_MEDIA) return toast('媒体查看组件尚未加载', 'err');
+    window.TARGET_MEDIA.openVideo(live || t);
+    return;
+  }
+  if (act === 'alarm') {
+    const a = alarmsOf(t.id).slice().sort((x, y) => (x.ts < y.ts ? 1 : x.ts > y.ts ? -1 : 0))[0];
+    if (!a) return toast('该目标暂无关联告警记录', 'err');
+    sessionStorage.setItem('alarm.sel', a.id);
+    location.hash = '#/alarms';
+    return;
+  }
+  if (act === 'notify') toast('已通知东营胜利机场塔台与属地派出所（回执 2/2）', 'ok');
+  else if (act === 'drive') toast('已派发驱离作业任务至属地保障单位', 'ok');
+  else if (act === 'risk') { toast('正在跳转空间安全风险监测…'); setTimeout(() => location.hash = '#/risk', 600); }
 }
 
 /* ---- 融合卡（按接入路分组，与 legacy 同构） ---- */
@@ -156,61 +225,7 @@ function paintAlarms() {
     </div>`; }).join('');
 }
 
-/* ---- 处置动作区 ---- */
-const alarmsOf = id => (M.alarms || []).filter(a => a.targetId === id);
-
-function paintActions() {
-  const t = sel, isUav = t.type === '无人机';
-  const alms = alarmsOf(t.id);
-  const latest = alms.length
-    ? alms.slice().sort((x, y) => (x.ts < y.ts ? 1 : x.ts > y.ts ? -1 : 0))[0] : null;
-  const almBtn = latest
-    ? `<button class="btn warn" id="btnAlm" style="flex:1;justify-content:center"
-         title="转到「告警事件」并定位到 ${latest.id}">⚠ 查看告警 →</button>`
-    : '';
-  document.getElementById('stAct').innerHTML = isUav
-    ? `
-       <div style="display:flex;gap:8px;margin-top:8px">
-         <button class="btn" id="btnVideo" style="flex:1;justify-content:center">${U.icon('video')} 实时视频</button>
-         ${almBtn}
-       </div>`
-    : `<button class="btn big" style="width:100%;justify-content:center" disabled title="非无人机目标不进入反制流程">
-         ${U.icon('bolt')} 发起联动反制（不适用）</button>
-       <div style="display:flex;gap:8px;margin-top:8px">
-         <button class="btn" id="btnVideo" style="flex:1;justify-content:center">${U.icon('video')} 实时视频</button>
-         <button class="btn" id="btnNotify" style="flex:1;justify-content:center">通知机场/周边</button>
-         <button class="btn" id="btnDrive" style="flex:1;justify-content:center">派发驱离</button>
-         <button class="btn" id="btnRisk" style="flex:1;justify-content:center">转风险监测 →</button>
-       </div>
-       <div class="warnbox" style="margin:6px 0 0;padding:6px 9px;font-size:11px;line-height:1.5">
-         §4.2：<b>${t.subtype || t.type}</b>不做合法性判定、不进入反制与处罚流程，仅风险评估与通知/驱离。</div>`;
-  bindActions(isUav);
-}
-function bindActions(isUav) {
-  const g2 = id => document.getElementById(id);
-  /* 视频/回放弹窗复用 legacy 的跨页导出（同一套实现，弹窗自管生命周期） */
-  g2('btnVideo').onclick = () => window.TARGET_MEDIA.openVideo(sel);
-  const almEl = g2('btnAlm');
-  if (almEl) almEl.onclick = () => {
-    const a = alarmsOf(sel.id).slice().sort((x, y) => (x.ts < y.ts ? 1 : x.ts > y.ts ? -1 : 0))[0];
-    if (!a) return toast('该目标暂无关联告警记录', 'err');
-    sessionStorage.setItem('alarm.sel', a.id);
-    location.hash = '#/alarms';
-  };
-  if (!isUav) {
-    g2('btnNotify').onclick = () => toast('已通知东营胜利机场塔台与属地派出所（回执 2/2）', 'ok');
-    g2('btnDrive').onclick = () => toast('已派发驱离作业任务至属地保障单位', 'ok');
-    g2('btnRisk').onclick = () => { toast('正在跳转空间安全风险监测…'); setTimeout(() => location.hash = '#/risk', 600); };
-  }
-}
-
-function paintTag() {
-  const el = document.getElementById('stTag');
-  if (!el) return;
-  const m2 = { '跟踪中': ['t-cyan', '#22d3ee'], '处置中': ['t-orange', '#ff8b3d'], '已处置': ['t-green', '#2fd06e'] };
-  const [cls, col] = m2[sel.status] || ['t-gray', '#8ca0be'];
-  el.innerHTML = `<span class="tag ${cls}"><span class="dot-s" style="background:${col}"></span>${sel.status}</span>`;
-}
+function alarmsOf(id) { return (M.alarms || []).filter(a => a.targetId === id); }
 
 function applyFilter() {
   const ts = shownTargets();
@@ -230,7 +245,7 @@ function applyFilter() {
 }
 
 function refresh() {
-  paintTarget(); paintFuse(); paintAlarms(); paintTag(); paintActions();
+  paintFuse(); paintAlarms();
 }
 
 onUnmounted(() => { if (map) map.destroy(); map = null; });
@@ -239,12 +254,17 @@ onMounted(() => {
   const view = root.value;
   map = new window.MapView(document.getElementById('stMap'), {
     maxDev: 46, maxAlarm: 0, zoom: 1.06, legend: false, layers: { alarm: false },
+    interactiveTip: true, renderTip: renderMapTip, onTipAction,
     onPick: p => {
       if (p.kind === 'target') {
-        sel = M.liveTargets.find(t => t.id === p.data.id) || sel;
-        almFocus = null;
-        selAlarmId = latestAlarmIdOf(sel.id);
-        refresh();
+        const t = M.liveTargets.find(x => x.id === p.data.id) || p.data;
+        if (t && t.id) {
+          sel = M.liveTargets.find(x => x.id === t.id) || sel;
+          map.sel = t.id;
+          almFocus = M.liveTargets.some(x => x.id === t.id) ? null : t.id;
+          selAlarmId = latestAlarmIdOf(t.id);
+          refresh();
+        }
       }
     }
   });
@@ -312,13 +332,6 @@ onMounted(() => {
   <div class="view situation-page" id="view" ref="root">
     <div class="sit-stage">
       <div id="stMap" class="sit-map"></div>
-      <aside class="sit-hud sit-hud-target" aria-label="当前追踪目标">
-        <header class="sit-hud-hd">
-          <h3>当前追踪目标</h3>
-          <span id="stTag"></span>
-        </header>
-        <div class="sit-hud-bd" id="stTarget"></div>
-      </aside>
       <aside class="sit-hud sit-hud-alarms" aria-label="实时告警列表">
         <header class="sit-hud-hd">
           <h3>实时告警</h3>

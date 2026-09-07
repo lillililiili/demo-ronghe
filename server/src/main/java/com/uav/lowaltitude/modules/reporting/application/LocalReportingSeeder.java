@@ -21,7 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.uav.lowaltitude.platform.time.AppClock;
 
-/** 仅 local/test 在 app.dev-seed.enabled 时写入运行统计样本事实，生产环境不得启用。 */
+/** 仅 local/test 在 app.dev-seed.enabled 时写入运行统计样本事实；production 与 production,local 都不得注册。 */
 @Component
 // 开发种子必须双门禁：production 或 production,local 组合下都不得注册，否则生产环境会因查不到开发组织而启动失败或写入样本事实。
 @Profile("!production & (local | test)")

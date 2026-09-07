@@ -33,3 +33,4 @@
 | 8-27 | A 的 `LocalReportingSeeder` 跨归属改动的登记 | 已在提交 `010c0b2` 说明中单列；补本条决策并新增 `ProductionReportingSeedIsolationTest`（production / production,local 下不注册、统计事实表为空），与仓库其他种子的隔离用例对齐；知会 A | 不补用例 | 审查 P2：每个种子都配隔离用例，唯独 reporting 缺 |
 | 8-28 | 融合轨迹关闭与迟到帧的顺序 | `DefaultFusedLayerWriter` 把 `endTrack` 移到迟到判定之后：迟到的 TERMINATED 帧只补历史点，不用更早的 `observed_at` 关掉当前轨迹 | 保持"正序入站"前提不改代码 | 审查建议；接实测源后乱序不可避免，否则融合层轨迹碎片化 |
 | 8-29 | `GET /targets/{id}.version` 的自动化锁定 | `TargetReadApiTest` 追加契约断言（14→15 例） | 仅靠 PG 验收肉眼确认 | 它是三个写接口 `expected_version` 的唯一来源 |
+| 8-30 | 凌云协议的定位 | 客户确认云端只保留我们的平台、不保留凌云或其他中转（用户 2026-09-06 转达）：三份凌云协议按“我们坐到凌云的位置”使用——收协议 A、发协议 B、当协议 C 的边缘中心；三路字段从 Demo 升级为“协议已提供、未联调”，库内 `schema_status` 联调通过前仍为 DEMO；映射见对齐文档 §5，落地作为阶段 8 补充切片排在阶段 9 提交之后；厂家原始协议（纪要 A2）继续索要 | 等厂家原始协议再动 / 直接标 CONFIRMED | 设备厂家系统现在只会按凌云格式上报；联调未做不能标 CONFIRMED |

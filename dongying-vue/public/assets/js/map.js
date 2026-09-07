@@ -78,6 +78,11 @@
     this.cv = box.querySelector('.mapoverlay');
     this.ctx = this.cv.getContext('2d');
     this.tip = box.querySelector('.maptip');
+    if (opt.interactiveTip) {
+      this.tip.classList.add('is-interactive');
+      this.tip.setAttribute('role', 'dialog');
+      this.tip.setAttribute('aria-label', '目标详情');
+    }
     this.statusEl = box.querySelector('.mapstatus');
     this._bind();
     this._resize();
@@ -202,21 +207,29 @@
         else self.resetView();
         return;
       }
-      if (e.target.closest && e.target.closest('.maplayers,.mapstatus,.maplibregl-control-container')) return;
+      if (e.target.closest && e.target.closest('.maplayers,.mapstatus,.maplibregl-control-container,.maptip')) return;
       // 非展示用：对照墙钟判断拖拽后的误点击抑制窗口
       if (self._dragged || Date.now() < (self._suppressClickUntil || 0)) return;
       self._boxMove(e);
       if (self.hover && self.opt.onPick) self.opt.onPick(self.hover);
     };
     this._boxMove = e => {
+      if (e.target.closest && e.target.closest('.maptip')) {
+        self._tipHovering = true;
+        return;
+      }
+      self._tipHovering = false;
       const r = self.cv.getBoundingClientRect();
       self.mx = e.clientX - r.left; self.my = e.clientY - r.top;
       if (!self._dragged) self._hit();
     };
     this._boxLeave = () => {
       self.mx = self.my = NaN;
-      self.hover = null; self.tip.style.display = 'none';
+      self.hover = null;
+      self._tipHovering = false;
       if (self.baseEl) self.baseEl.style.cursor = '';
+      if (self.opt.pinSelTip) self._hit();
+      else self._hideTip(true);
     };
     this.box.addEventListener('click', this._boxClick, true);
     this.box.addEventListener('mousemove', this._boxMove, true);
@@ -226,10 +239,30 @@
     };
     this.box.addEventListener('keydown', this._boxKey);
 
+    this._tipClick = e => {
+      e.stopPropagation();
+      const btn = e.target.closest('[data-tip-act]');
+      if (!btn || typeof self.opt.onTipAction !== 'function') return;
+      const hit = (self._pickPts || []).find(p => self._tipKey(p) === self._tipKeyShown) || self.hover;
+      self.opt.onTipAction(btn.dataset.tipAct, hit);
+    };
+    this._tipEnter = () => {
+      self._tipHovering = true;
+      clearTimeout(self._tipHideTimer);
+      self._tipHideTimer = null;
+    };
+    this._tipLeave = () => {
+      self._tipHovering = false;
+      self._hit();
+    };
+    this.tip.addEventListener('click', this._tipClick);
+    this.tip.addEventListener('mouseenter', this._tipEnter);
+    this.tip.addEventListener('mouseleave', this._tipLeave);
+
     let drag = null;
     this._boxDown = e => {
       self._dragged = false;
-      if (e.button !== 0 || (e.target.closest && e.target.closest('.mapctl,.maplegend,.maplayers,.mapstatus,.maplibregl-control-container'))) return;
+      if (e.button !== 0 || (e.target.closest && e.target.closest('.mapctl,.maplegend,.maplayers,.mapstatus,.maplibregl-control-container,.maptip'))) return;
       drag = { x: e.clientX, y: e.clientY, center: merc(...self._pendingCenter) };
     };
     this._boxWheel = e => {
@@ -413,26 +446,103 @@
     if (this._winUp) window.removeEventListener('mouseup', this._winUp);
     if (this._winMove) window.removeEventListener('mousemove', this._winMove);
     if (this._boxKey) this.box.removeEventListener('keydown', this._boxKey);
+    clearTimeout(this._tipHideTimer);
+    if (this.tip) {
+      if (this._tipClick) this.tip.removeEventListener('click', this._tipClick);
+      if (this._tipEnter) this.tip.removeEventListener('mouseenter', this._tipEnter);
+      if (this._tipLeave) this.tip.removeEventListener('mouseleave', this._tipLeave);
+    }
     if (this.box && this.box.__map === this) { delete this.box.__map; this.box.replaceChildren(); delete this.box.dataset.mapState; }
   };
 
-  MapView.prototype._hit = function () {
-    const pts = this._pickPts || [];
-    let best = null, bd = 14;
-    for (const p of pts) {
-      const d = Math.hypot(p.x - this.mx, p.y - this.my);
-      if (d < bd) { bd = d; best = p; }
-    }
-    this.hover = best;
-    if (best) {
-      this.tip.style.display = 'block';
-      this.tip.innerHTML = best.tip;
-      const tw = this.tip.offsetWidth, th = this.tip.offsetHeight;
-      this.tip.style.left = Math.min(this.w - tw - 8, Math.max(8, best.x + 14)) + 'px';
-      this.tip.style.top = Math.min(this.h - th - 8, Math.max(8, best.y - th - 10)) + 'px';
-      if (this.baseEl) this.baseEl.style.cursor = 'pointer';
-    } else {
+  MapView.prototype._tipKey = function (hit) {
+    if (!hit) return '';
+    const id = hit.data && (hit.data.id || hit.data.name);
+    return hit.kind + ':' + (id || '');
+  };
+
+  MapView.prototype._placeTip = function (x, y) {
+    const tw = this.tip.offsetWidth, th = this.tip.offsetHeight, gap = 14;
+    let left = x + gap, side = 'right';
+    let top = y - th / 2;
+    if (left + tw > this.w - 8) { left = x - tw - gap; side = 'left'; }
+    this.tip.style.left = Math.min(this.w - tw - 8, Math.max(8, left)) + 'px';
+    this.tip.style.top = Math.min(this.h - th - 8, Math.max(8, top)) + 'px';
+    this.tip.dataset.side = side;
+  };
+
+  MapView.prototype._hideTip = function (immediate) {
+    const hide = () => {
+      if (this._dead || this._tipHovering) return;
       this.tip.style.display = 'none';
+      this._tipKeyShown = '';
+      this._tipAt = null;
+    };
+    if (immediate) {
+      clearTimeout(this._tipHideTimer);
+      this._tipHideTimer = null;
+      hide();
+      return;
+    }
+    if (this.opt.interactiveTip) {
+      if (!this._tipHideTimer) {
+        this._tipHideTimer = setTimeout(() => {
+          this._tipHideTimer = null;
+          hide();
+        }, 180);
+      }
+      return;
+    }
+    hide();
+  };
+
+  MapView.prototype._showTip = function (hit) {
+    const key = this._tipKey(hit);
+    if (this._tipKeyShown !== key) {
+      this._tipKeyShown = key;
+      this._tipAt = null;
+      let html = hit.tip;
+      if (typeof this.opt.renderTip === 'function') {
+        const custom = this.opt.renderTip(hit);
+        if (custom != null) html = custom;
+      }
+      this.tip.innerHTML = html;
+      this.tip.classList.toggle('is-track', hit.kind === 'target' && typeof this.opt.renderTip === 'function');
+    }
+    this.tip.style.display = 'block';
+    if (this._tipAt && Math.abs(this._tipAt[0] - hit.x) < 0.5 && Math.abs(this._tipAt[1] - hit.y) < 0.5) return;
+    this._tipAt = [hit.x, hit.y];
+    this._placeTip(hit.x, hit.y);
+  };
+
+  MapView.prototype._hit = function () {
+    if (this._dead || !this.tip) return;
+    const pts = this._pickPts || [];
+    let best = null;
+    if (this._tipHovering && this._tipKeyShown) {
+      best = pts.find(p => this._tipKey(p) === this._tipKeyShown) || null;
+    } else if (Number.isFinite(this.mx) && Number.isFinite(this.my)) {
+      let bd = 14;
+      for (const p of pts) {
+        const d = Math.hypot(p.x - this.mx, p.y - this.my);
+        if (d < bd) { bd = d; best = p; }
+      }
+    }
+    this.hover = (this._tipHovering && best) ? best
+      : (Number.isFinite(this.mx) && Number.isFinite(this.my) ? best : null);
+
+    let shown = this.hover;
+    if (!shown && this.opt.pinSelTip && this.sel) {
+      shown = pts.find(p => p.kind === 'target' && p.data && p.data.id === this.sel) || null;
+    }
+
+    if (shown) {
+      clearTimeout(this._tipHideTimer);
+      this._tipHideTimer = null;
+      this._showTip(shown);
+      if (this.baseEl) this.baseEl.style.cursor = this.hover ? 'pointer' : '';
+    } else {
+      this._hideTip(!this.opt.interactiveTip);
       if (this.baseEl) this.baseEl.style.cursor = '';
     }
   };
@@ -770,6 +880,7 @@
       });
     }
     this._pickPts = picks;
+    if (this.opt.pinSelTip || (this.opt.interactiveTip && this.tip && this.tip.style.display !== 'none')) this._hit();
 
     /* 比例尺 */
     const lat = this.unpx(W / 2, H / 2)[1];

@@ -1,7 +1,6 @@
 import { defineStore } from 'pinia';
 
-/* 外壳级共享状态。注意：业务数据一律不进这里 —— window.MOCK 是唯一数据源，
-   reactive 代理会破坏 currentUser 的 getter 语义与全站共享引用语义。 */
+/* 外壳级共享状态。业务数据不进这里。 */
 export const useAppStore = defineStore('app', {
   state: () => ({
     crumbCtx: null,       // 面包屑尾部业务上下文，APP.setCrumb 写入，换页清空
@@ -10,6 +9,6 @@ export const useAppStore = defineStore('app', {
     bigscreen: false,     // 大屏模式
     remountKey: 0,        // APP.rerender() 自增，PageHost 监听后整页重挂
     accessRevision: 0,    // 当前用户、菜单或操作权限变化时自增，驱动外壳重新判权
-    timeStr: ''           // M.systemNowStr()，顶栏系统当前时间
+    timeStr: ''           // 顶栏本地墙钟
   })
 });

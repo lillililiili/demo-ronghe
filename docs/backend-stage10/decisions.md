@@ -16,3 +16,4 @@
 | 10-12 | PostgreSQL 上 074 遇旧值行失败时 Flyway 不留失败记录（事务 DDL 整体回滚），以 SQLSTATE 23514 + 约束名为准；用例按此断言 | 助手实测 Flyway 10.20 在 PG 上回滚不写历史行，"记录失败"的说法只对非事务 DDL 成立 |
 | 10-13 | 新增 PG 专属迁移 `db/postgresql/V202609050073_5__stage10_airspace_kind_code_renormalize.sql`（与 065 同法归一旧值），版本夹在 073 与 074 之间 | 领导用新 jar 启动验收库 `uav_stage85_verify` 时 074 以 "violated by some row" 失败：065 之后旧版种子又写入了旧值，所有已有库都会如此；一次性订正、注释禁止复制此写法。10-5 的"明确失败"行为与 10-10 的乱序迁移都在真实库上得到印证 |
 | 10-14 | 自阶段 10 起，B 线新迁移改按实际日期编号（`V2026MMDDnnnn`，与 A 一致），不再沿用 `20260905` 固定前缀 | 根因是 B 的固定前缀永远小于 A 的日期编号；改为真实日期后顺序单调，生产无需乱序 |
+| 10-15 | B 线每阶段的计划文档允许提交到 `docs/superpowers/plans/`（不再列入排除清单）；`.superpowers/`、`.planning/`、`.claude/`、`.worktrees/`、根目录 docx、`设备资料/` 仍排除 | 用户要求每阶段计划落盘可事后审阅（记忆 feedback-plan-mode-per-stage）；该目录已有 12 份计划随合并入库，口径统一为"计划入库、过程台账不入库" |

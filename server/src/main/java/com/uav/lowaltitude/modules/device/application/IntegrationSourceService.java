@@ -102,9 +102,11 @@ public class IntegrationSourceService {
             throw bad("MQTT_REGISTRATION_REQUIRED", "MQTT 接入请在设备登记和 MQTT 连接配置中维护");
         if (enabled) validateEnable(source);
         if (repository.setEnabled(id, version, enabled, clock.nowMillis()) != 1) throw versionConflict();
+        Source after = required(id);
+        syncStandardRadar(after, enabled, clock.nowMillis());
         audit.record(user.userId(), user.account(), enabled ? "integration_source_enable" : "integration_source_disable",
                 "integration_source", id, reason.trim(), null);
-        return required(id);
+        return after;
     }
 
     @Transactional
@@ -117,6 +119,8 @@ public class IntegrationSourceService {
         values.put("source_id", id);
         try { repository.insert(values); }
         catch (DataIntegrityViolationException ex) { throw conflict("来源编码已存在"); }
+        if (DeviceProtocolCodes.RADAR_TCP_V3_0_0.equals(mutation.protocolCode()))
+            repository.ensureStandardLiveRadar(mutation.sourceCode().trim(), mutation.name().trim(), "3.0.0", false, now);
         AuthUser user = AuthContext.require();
         audit.record(user.userId(), user.account(), "integration_source_create", "integration_source", id,
                 mutation.sourceCode(), null);
@@ -131,9 +135,11 @@ public class IntegrationSourceService {
         Source source = required(id);
         validateEnable(source);
         if (repository.setEnabled(id, version, true, clock.nowMillis()) != 1) throw versionConflict();
+        Source after = required(id);
+        syncStandardRadar(after, true, clock.nowMillis());
         AuthUser user = AuthContext.require();
         audit.record(user.userId(), user.account(), "integration_source_enable", "integration_source", id, reason.trim(), null);
-        return required(id);
+        return after;
     }
 
     @Transactional
@@ -155,9 +161,16 @@ public class IntegrationSourceService {
         if (source.enabled() == enabled) return;
         if (enabled) validateEnable(source);
         if (repository.setEnabled(sourceId, source.version(), enabled, clock.nowMillis()) != 1) throw versionConflict();
+        syncStandardRadar(source, enabled, clock.nowMillis());
         audit.record(AuthContext.require().userId(), AuthContext.require().account(),
                 enabled ? "integration_source_enable" : "integration_source_disable",
                 "integration_source", sourceId, reason == null ? "" : reason.trim(), null);
+    }
+
+    private void syncStandardRadar(Source source, boolean enabled, long now) {
+        if (source == null || !DeviceProtocolCodes.RADAR_TCP_V3_0_0.equals(source.protocolCode())) return;
+        if (source.sourceCode() == null || source.name() == null) return;
+        repository.ensureStandardLiveRadar(source.sourceCode(), source.name(), source.protocolVersion(), enabled, now);
     }
 
     private void validateEnable(Source source) {

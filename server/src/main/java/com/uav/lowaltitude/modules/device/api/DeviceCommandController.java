@@ -14,6 +14,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.uav.lowaltitude.modules.device.application.DeviceService;
+import com.uav.lowaltitude.modules.device.application.LingyunControlService;
+import com.uav.lowaltitude.platform.api.ApiException;
 import com.uav.lowaltitude.platform.api.ApiResponse;
 
 @RestController
@@ -21,9 +23,11 @@ import com.uav.lowaltitude.platform.api.ApiResponse;
 public class DeviceCommandController {
 
     private final DeviceService service;
+    private final LingyunControlService control;
 
-    public DeviceCommandController(DeviceService service) {
+    public DeviceCommandController(DeviceService service, LingyunControlService control) {
         this.service = service;
+        this.control = control;
     }
 
     @PostMapping("/devices/{deviceId}/commands/reboot")
@@ -35,10 +39,28 @@ public class DeviceCommandController {
                 .body(ApiResponse.ok(service.createReboot(deviceId, idempotencyKey, request.reason())));
     }
 
+    @PostMapping("/devices/{deviceId}/commands/lingyun-control")
+    public ResponseEntity<ApiResponse<DeviceService.Command>> lingyunControl(
+            @PathVariable String deviceId,
+            @RequestHeader("Idempotency-Key") String idempotencyKey,
+            @RequestBody ControlRequest request) {
+        if (request == null) request = new ControlRequest(null, null, null, null, null);
+        String id = control.enqueue(deviceId, idempotencyKey, request.authorizationId(), request.operationType(),
+                request.operationCmd(), request.operationParams(), request.reason());
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(ApiResponse.ok(service.command(id)));
+    }
+
+    @PostMapping("/devices/{deviceId}/commands/emergency-stop")
+    public ResponseEntity<ApiResponse<DeviceService.Command>> emergencyStop(@PathVariable String deviceId) {
+        throw new ApiException(HttpStatus.CONFLICT, "CONTROL_NOT_ENABLED", "急停：设备协议未提供");
+    }
+
     @GetMapping("/device-commands/{commandId}")
     public ApiResponse<DeviceService.Command> command(@PathVariable String commandId) {
         return ApiResponse.ok(service.command(commandId));
     }
 
     public record RebootRequest(@NotBlank String reason) { }
+    public record ControlRequest(String authorizationId, Integer operationType, Integer operationCmd,
+                                 java.util.Map<String, Object> operationParams, String reason) { }
 }

@@ -27,6 +27,12 @@ public final class MqttConfiguration {
         public String topic(boolean sensing) {
             return "bridge/" + providerCode + (sensing ? "/device_data/" : "/device/") + deviceTypeAbbr + "/" + externalDeviceId;
         }
+        public String controlTopic() {
+            return "bridge/" + providerCode + "/device_control/" + deviceTypeAbbr + "/" + externalDeviceId;
+        }
+        public String controlRespTopic() {
+            return "bridge/" + providerCode + "/device_control_resp/" + deviceTypeAbbr + "/" + externalDeviceId;
+        }
         public String source() { return "lingyun:" + deviceTypeAbbr + ":" + deviceId; }
     }
 }

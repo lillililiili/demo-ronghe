@@ -46,7 +46,7 @@ class DeviceProtocolApiTest {
         mvc.perform(get("/api/v1/device-protocols").header("Authorization", bearer(token)))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.length()").value(4))
                 .andExpect(jsonPath("$.data[0].protocol_code").value("LINGYUN_MQTT_V8_6"))
-                .andExpect(jsonPath("$.data[0].control_enabled").value(false))
+                .andExpect(jsonPath("$.data[0].control_enabled").value(true))
                 .andExpect(jsonPath("$.data[1].protocol_code").value("EO_EDGE_MQTT_20250826"))
                 .andExpect(jsonPath("$.data[3].capabilities[0]").value("SAFE_STATUS_QUERY"));
 
@@ -81,6 +81,10 @@ class DeviceProtocolApiTest {
                         .content("{\"enabled\":true,\"version\":" + source.path("version").asLong()
                                 + ",\"reason\":\"协议回归显式启用\"}"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.enabled").value(true));
+        assertThat(jdbc.queryForObject("SELECT source_type FROM integration_source WHERE source_code=?",
+                String.class, source.path("source_code").asText())).isEqualTo("RADAR");
+        assertThat(jdbc.queryForObject("SELECT enabled FROM integration_source WHERE source_code=?",
+                Boolean.class, source.path("source_code").asText())).isTrue();
 
         mvc.perform(get("/api/v1/devices/{id}/protocol-status", deviceId).header("Authorization", bearer(token)))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.connection_state").value("DISCONNECTED"));
@@ -118,6 +122,8 @@ class DeviceProtocolApiTest {
                 3, "UAV", false);
         protocolData.saveTrackBatch(deviceId, deviceNo, new TrackBatch(99L, "7", System.currentTimeMillis(),
                 BigDecimal.ZERO, BigDecimal.ONE, 1, 0, List.of(item)), System.currentTimeMillis());
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM inbox_message WHERE source=?", Long.class,
+                "live-radar:" + source.path("source_code").asText())).isZero();
         String targets = mvc.perform(get("/api/v1/sensing/targets?device_id=" + deviceId)
                         .header("Authorization", bearer(token)))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.total").value(1))
@@ -152,6 +158,8 @@ class DeviceProtocolApiTest {
                     .andExpect(jsonPath("$.data.allowed_cidrs").value("192.0.2.0/24"))
                     .andReturn().getResponse().getContentAsString()).path("data");
             assertThat(jdbc.queryForObject("SELECT enabled FROM ops_integration_source WHERE source_code=?", Boolean.class, deviceNo)).isTrue();
+            assertThat(jdbc.queryForObject("SELECT source_type FROM integration_source WHERE source_code=?", String.class, deviceNo)).isEqualTo("RADAR");
+            assertThat(jdbc.queryForObject("SELECT enabled FROM integration_source WHERE source_code=?", Boolean.class, deviceNo)).isTrue();
             assertThat(created.path("device").path("channel").asText()).isEqualTo("雷达直连");
 
             mvc.perform(post("/api/v1/devices/onboard").header("Authorization", bearer(token))
@@ -175,6 +183,7 @@ class DeviceProtocolApiTest {
             jdbc.update("DELETE FROM " + table + " WHERE device_id IN (SELECT device_id FROM ops_device WHERE device_no=?)", deviceNo);
         jdbc.update("DELETE FROM ops_device WHERE device_no=?", deviceNo);
         jdbc.update("DELETE FROM ops_integration_source WHERE source_code=?", deviceNo);
+        jdbc.update("DELETE FROM integration_source WHERE source_code=?", deviceNo);
     }
 
     @Test
@@ -198,6 +207,8 @@ class DeviceProtocolApiTest {
                         .header("Authorization", bearer(token)).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"enabled\":true,\"version\":0,\"reason\":\"验证网络边界\"}"))
                 .andExpect(status().isBadRequest()).andExpect(jsonPath("$.error.code").value("NETWORK_TARGET_FORBIDDEN"));
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM integration_source WHERE source_code=? AND source_type='RADAR'",
+                Long.class, "CM-" + suffix)).isZero();
     }
 
     @Test
@@ -217,6 +228,8 @@ class DeviceProtocolApiTest {
         protocolData.saveTrackBatch(deviceId, "DEV-MOCK-001", batch, received);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM ops_track_point p JOIN ops_track t ON t.track_id=p.track_id WHERE t.device_id=? AND t.external_track_id='88'",
                 Long.class, deviceId)).isEqualTo(1L);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM inbox_message WHERE source LIKE 'live-radar:%' AND source_msg_id LIKE '123:%'",
+                Long.class)).isZero();
         protocolData.expireTracks(System.currentTimeMillis() - 3000, System.currentTimeMillis());
         assertThat(jdbc.queryForObject("SELECT active FROM ops_track WHERE device_id=? AND external_track_id='88'", Boolean.class, deviceId)).isFalse();
 

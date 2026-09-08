@@ -1,6 +1,6 @@
 # 设备直连接入契约（阶段 8.5，A/B 边界）
 
-> 状态：v1.2（2026-09-07）。A 侧 P1 协议 A MQTT 信封与 P3 协议 C 光电边端信封已按实现冻结（§8）；B 侧阶段 8.5 领取前缀、映射入口与 `ingest_seq`（§6–§7）及阶段 10 的 `fusion_event` 摘要与联调输入物（§9）已落地。依据：会议纪要 V1.0 三路架构、凌云协议 A v8.6 / B V2.4 / C 20250826（`设备资料/凌云协议/`）、决策 8-30（云端只保留我们的平台）、对齐文档 `target-schema-v1-alignment.md` §5。配套计划：《协作者 A 直连接入计划》《协作者 B 直连切片计划》。
+> 状态：v1.4（2026-09-07）。A 侧 P1 / P3 / P4-A / P5 已按实现冻结（P4-A 默认关；P5 控制不写融合 inbox）。B 侧阶段 8.5 领取前缀、映射入口与 `ingest_seq`（§6–§7）及阶段 10 的 `fusion_event` 摘要与联调输入物（§9）已落地。依据：会议纪要 V1.0 三路架构、凌云协议 A v8.6 / B V2.4 / C 20250826（`设备资料/凌云协议/`）、决策 8-30（云端只保留我们的平台）、对齐文档 `target-schema-v1-alignment.md` §5、决策 8.5-12/20–29。配套计划：《协作者 A 直连接入计划》《协作者 B 直连切片计划》。
 
 ## 1. 边界
 
@@ -10,13 +10,13 @@
 
 ## 2. inbox 信封（A 写、B 读）
 
-P1（协议 A MQTT）与 P3（协议 C 光电边端）信封已冻结。P4-A/P5 仍分开。不得使用「任务 `msgId` 等于观测唯一编号」或「按随机 UUID 递增」。
+P1（协议 A MQTT）、P3（协议 C 光电边端）、P4-A（雷达 TCP 提升）信封与 P5（协议 B 控制）已冻结。P5 控制指令不写融合领取前缀的 inbox。不得使用「任务 `msgId` 等于观测唯一编号」或「按随机 UUID 递增」。
 
 ### 2.1 P1 已冻结（协议 A，雷达 / 5G-A / TDOA）
 
 | 列 | 值 | 说明 |
 | --- | --- | --- |
-| `source` | `lingyun:<deviceTypeAbbr>:<内部标准设备ID>` | 内部 ID 是 A 登记时写入 `device.device_id` 的稳定主键，不是 Topic/`SenseData` 里的外部 `deviceId`。外部编号、提供方编码保留在 `mqtt_device_binding`。模拟 `replay` 与真实 `live` 使用不同内部 ID，避免碰撞 |
+| `source` | `lingyun:<deviceTypeAbbr>:<内部标准设备ID>` | 内部 ID 是 A 登记时写入 `device.device_id` 的稳定主键，不是 Topic/`SenseData` 里的外部 `deviceId`。外部编号、提供方编码保留在 `mqtt_device_binding`。模拟 `replay` 与真实 `live` 使用不同内部 ID，避免碰撞。无 `taskId` 的来源（雷达 / TDOA / AOA）B 用**整条 `source` 串**作会话键参与 link 身份，因此该内部 ID 在同一 `source_mode` 下对同一台物理设备必须保持稳定；重新登记或迁库改号会使同一台设备的目标分叉成新的一批 |
 | `source_msg_id` | `<ptTime>:<msgCnt>` | 不再单独使用循环序号。同键同原始 UTF-8 SHA-256 为重复；同键不同哈希记冲突，不覆盖、不静默丢弃 |
 | `source_id` | 标准侧 `integration_source.source_id` | `source_type`：`radar→RADAR`，`5ga→FIVE_G_A`，`tdoa→TDOA` |
 | `payload` | 协议 A 整条原始 JSON（工参不进 inbox；仅 `device_data` 的 `SenseData`） | JSON；**不**向原文插入平台字段 |
@@ -41,17 +41,20 @@ Topic 与正文必须一致：`bridge/{providerCode}/device|device_data/{deviceT
 
 只把入站 `event=BeginTracking` 且带 `metadata.codeStatus` 的上报写入 inbox。HeartBeat / CameraStatus / EndTracking 只更新运维态或 `device_command`。A 的光电跟踪触发只读 `fusion_event`，游标为 `(created_at, event_id)` 序偶，**不是** UUID 递增。
 
-### 2.3 后续切片（P4-A / P5）
+### 2.3 P4-A 已冻结（雷达 TCP 轨迹提升，默认关）
 
-| 列 | P4-A 雷达 TCP 提升 |
+| 列 | 值 |
 | --- | --- |
-| `source` | `live-radar:<deviceId>` |
-| `source_msg_id` | `<bootMicros>:<frameId>` |
-| `payload` | `{device_id, boot_micros, frame_id, items:[…]}`，受 `app.fusion.live-promotion.enabled` 控制，默认关 |
+| `source` | `live-radar:<deviceId>`。`deviceId` 是标准 `integration_source.source_code`（雷达 TCP 接入时等于台账 `device_no`），**不是** ops UUID |
+| `source_msg_id` | `<boot_micros>:<frame_id>`，取自解码后的 `radarBootMicros` 与 `payloadFrameId` |
+| `source_id` | 标准 `integration_source.source_id`（B 的端口按 `source_code` 且 `enabled=true` 解析；未登记或停用拒收，不自动建来源） |
+| `payload` | `{device_id, boot_micros, frame_id, items:[{external_track_id, longitude, latitude, z_m, velocity_x_mps, velocity_y_mps, velocity_z_mps, snr_db, rcs_m2, classification}]}` |
+| `payload_hash` | 序列化后 UTF-8 SHA-256（端口计算） |
+| `status` | `RECEIVED` |
 
-B 的 `FusionInboxRepository.claim` 已按映射器前缀领取 `replay:` / `lingyun:` / `eo-edge:`；`live-radar:` 受 `app.fusion.live-promotion.enabled` 控制，默认不领。ops 的 `live-device:*` 继续由设备模块处理。P5 控制指令不写 inbox。
+受 `app.fusion.live-promotion.enabled`（`APP_FUSION_LIVE_PROMOTION_ENABLED`）控制，默认关：关则零行 `live-radar:`，ops 的 `live-device:*` 与航迹表与关闭前一致。只提升 `COMMAND_UPLOAD_TRACK_V3` 航迹批；点迹、RTK、反制不写该前缀。`items` 空数组合法。`rcs_m2` 取高分辨率 RCS，缺则用协议遗留 RCS。`classification` 为解码器已有 `categoryCode`（`PENDING_IDENTIFICATION` / `PERSON` / `VEHICLE` / `UAV` / `BIRD` / `UNIDENTIFIED`）。`longitude`/`latitude` 仅在 ops 已有非空派生经纬度时填入，否则 JSON `null` 或省略，**不写 0,0**。打开开关不等于客户现场雷达联调完成。
 
-雷达帧（P4-A）payload 结构：`{device_id, boot_micros, frame_id, items:[{external_track_id, longitude, latitude, z_m, velocity_x_mps, velocity_y_mps, velocity_z_mps, snr_db, rcs_m2, classification}]}`。
+B 的 `FusionInboxRepository.claim` 已按映射器前缀领取 `replay:` / `lingyun:` / `eo-edge:`；`live-radar:` 仅在开关打开时领取。P5 控制走 `device_command` + MQTT `device_control` / `device_control_resp`，回执 inbox 前缀为 `control-resp:`（不在领取白名单）。
 
 ## 3. 映射（B 实现，A 不做）
 
@@ -103,14 +106,17 @@ B 的 `FusionInboxRepository.claim` 已按映射器前缀领取 `replay:` / `lin
 
 A 不修改融合代码。B 已领取 `lingyun:` / `eo-edge:`。核对时注意：
 
-1. `source` 第三段是**内部设备 ID**，外部 `deviceId` 只在 payload / Topic 中。
+1. `source` 第三段是**内部设备 ID**（`device.device_id`），外部 `deviceId` 只在 payload / Topic 中。该主键在首次登记时分配，更新名称/厂家/型号不改号，接入身份字段不可改。无 `taskId` 的来源（雷达 / TDOA / AOA）B 用整条 `source` 作会话键：同一 `source_mode` 下同一台物理设备必须沿用该 ID；删除后重登或迁库改写 `device_id` 会使目标分叉。`replay` 与 `live` 故意使用不同内部 ID。
 2. `received_at` 是平台接收钟；观测时刻取 payload 的 `objects[].time`（协议 A）或事件 `timestamp`（协议 C）。
 3. 协议 A 工参主题 `bridge/.../device/...` **不会**出现在 inbox。设备在线态在运维 `ops_device_state`。
 4. 协议 A 可能写入 `objects: []` 的合法空列表，应视为无观测而不是错误帧。
 5. 协议 C 只把 `event=BeginTracking` 上报写入 inbox；`EndTracking` 之后不再有该任务的 `eo-edge:` 观测行。`objectData` 不当观测。
-6. 契约 §4 的 `STATUS_STABLE` payload（`latest_state`、`alarm_active`、`max_risk_severity`）仍须 B 的发射器写入，否则真实融合流水线上的自动跟踪不会触发；A 测试直接插入事件行。
+6. 契约 §4 的 `STATUS_STABLE` payload 见 §9：`latest_state` 已由 B 写入；`alarm_active`/`max_risk_severity` 有当前告警/风险才出键。A 的自动跟踪在缺键时跳过；测试可直接插入事件行。
+7. P4-A `source` 的 `deviceId` 是标准 `integration_source.source_code`，不是 ops `device_id`。雷达 TCP 登记/启用会幂等补标准 `integration_source`（`source_type=RADAR`），这是登记补全，不是从报文自动发现。ops `live-device:` 与 `live-radar:` 是两行；前者重复则整帧（含提升）跳过。该 `source_code` 对同一台物理雷达同样必须保持稳定（接入时等于台账 `device_no`）。
+8. P5 协议 B 控制不写 `lingyun:` inbox。下发 Topic `bridge/{providerCode}/device_control/{type}/{externalDeviceId}`，回执 `device_control_resp`；`msgNo` 等于 `command_no`。急停设备协议未提供。诱骗/干扰/驱鸟炮类型缩写未确认前不下发。
 
 ## 9. 阶段 10 补充（B 侧）
 
 - `fusion_event` §4 的 `latest_state` 摘要由 `DefaultFusedLayerWriter.emitEvents` 实现；`pilot_location` 有则出键；`alarm_active`/`max_risk_severity` 从 `uav_event`/`flight_risk` 当前状态取，取不到不出键；`altitude_datum` 固定 `UNCONFIRMED`（10-1）。
 - 联调输入物：`docs/直连接入计划/stage85-lingyun-demo.mqtt.ndjson`，每行 `{topic, qos, payload, record_no, received_at, source}`（`source` 是该报文按 §2 应落成的 inbox `source` 值，供 A 核对适配器信封，不是设备报文的一部分、不发布）；协议 A 主题 `bridge/{providerCode}/device_data/{deviceTypeAbbr}/{deviceId}`（providerCode 用 `dongying`），协议 C 主题 `iot-reporting/cmlc/edge/{edgeId}`；payload 为设备原文，与回放种子写入 inbox 的 `payload` 逐字一致（10-4）。A 的 P1 用任意 MQTT 客户端按行发布即可复现 8.5 的 v2 场景。
+- 协议 A `objects: []` 由 `LingyunSenseDataMapper` 视为空闲帧（决策 10-16），与 §8.4 一致。

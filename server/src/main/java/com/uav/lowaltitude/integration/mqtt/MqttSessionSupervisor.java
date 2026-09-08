@@ -16,6 +16,7 @@ import org.springframework.stereotype.Component;
 import com.uav.lowaltitude.integration.device.EnvironmentCredentialResolver;
 import org.springframework.beans.factory.annotation.Value;
 import com.uav.lowaltitude.modules.device.application.EoEdgeIngressService;
+import com.uav.lowaltitude.modules.device.application.LingyunControlService;
 import com.uav.lowaltitude.modules.device.application.MqttConfigurationService;
 import com.uav.lowaltitude.modules.device.application.MqttIngressService;
 import com.uav.lowaltitude.modules.device.domain.MqttConfiguration.Broker;
@@ -35,6 +36,7 @@ public class MqttSessionSupervisor {
     private final AppClock clock;
     private final EoEdgeIngressService eoIngress;
     private final EoEdgeRepository eoEdges;
+    private final LingyunControlService control;
     private final long heartbeatTimeout;
     private final String owner=UUID.randomUUID().toString();
     private final Map<String,Session> sessions=new HashMap<>();
@@ -42,16 +44,23 @@ public class MqttSessionSupervisor {
 
     public MqttSessionSupervisor(MqttRepository repository,MqttIngressService ingress,MqttConfigurationService configuration,
             MqttNetworkPolicy network,EnvironmentCredentialResolver credentials,AppClock clock) {
-        this(repository,ingress,configuration,network,credentials,clock,null,null,3000L);
+        this(repository,ingress,configuration,network,credentials,clock,null,null,3000L,null);
+    }
+    public MqttSessionSupervisor(MqttRepository repository,MqttIngressService ingress,MqttConfigurationService configuration,
+            MqttNetworkPolicy network,EnvironmentCredentialResolver credentials,AppClock clock,
+            EoEdgeIngressService eoIngress,EoEdgeRepository eoEdges, long heartbeatTimeout) {
+        this(repository,ingress,configuration,network,credentials,clock,eoIngress,eoEdges,heartbeatTimeout,null);
     }
     @org.springframework.beans.factory.annotation.Autowired
     public MqttSessionSupervisor(MqttRepository repository,MqttIngressService ingress,MqttConfigurationService configuration,
             MqttNetworkPolicy network,EnvironmentCredentialResolver credentials,AppClock clock,
             EoEdgeIngressService eoIngress,EoEdgeRepository eoEdges,
-            @Value("${app.eo-edge.heartbeat-timeout-millis:3000}") long heartbeatTimeout) {
+            @Value("${app.eo-edge.heartbeat-timeout-millis:3000}") long heartbeatTimeout,
+            LingyunControlService control) {
         this.repository=repository; this.ingress=ingress; this.configuration=configuration;
         this.network=network; this.credentials=credentials; this.clock=clock;
         this.eoIngress=eoIngress; this.eoEdges=eoEdges; this.heartbeatTimeout=heartbeatTimeout;
+        this.control=control;
     }
     @Scheduled(fixedDelayString="${app.mqtt.reconcile-millis:1000}")
     public synchronized void reconcile() {
@@ -113,6 +122,9 @@ public class MqttSessionSupervisor {
                 if (topic.startsWith("iot-reporting/cmlc/edge/") && eoIngress != null)
                     eoIngress.receive(broker.brokerId(),owner,topic,message.getPayload(),message.getId(),message.getQos(),
                             message.isRetained(),message.isDuplicate(),receivedAt);
+                else if (LingyunControlEnvelope.isControlRespTopic(topic) && control != null)
+                    control.receive(broker.brokerId(),owner,topic,message.getPayload(),message.getQos(),
+                            message.isRetained(),receivedAt);
                 else
                     ingress.receive(broker.brokerId(),owner,topic,message.getPayload(),message.getId(),message.getQos(),
                             message.isRetained(),message.isDuplicate(),receivedAt);
@@ -143,6 +155,7 @@ public class MqttSessionSupervisor {
         for(var b:bindings) {
             Set<String> target=b.enabled()?desired:disabled;
             target.add(b.topic(false)); target.add(b.topic(true));
+            target.add(b.controlRespTopic());
         }
         if (eoEdges != null) {
             for (String topic : eoEdges.reportingTopics(broker.brokerId())) desired.add(topic);

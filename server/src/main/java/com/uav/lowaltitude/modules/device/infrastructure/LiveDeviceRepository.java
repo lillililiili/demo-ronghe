@@ -16,7 +16,7 @@ public class LiveDeviceRepository {
 
     public List<Map<String, Object>> enabledDevices() {
         return jdbc.queryForList("""
-                SELECT d.device_id,d.device_no,d.source_id,s.protocol_code,s.allowed_cidrs,
+                SELECT d.device_id,d.device_no,d.source_id,s.source_code,s.protocol_code,s.allowed_cidrs,
                        s.credential_ref AS source_credential_ref,p.transport,p.host,p.port,p.timeout_millis,
                        p.credential_ref,r.login_role,r.recognition_code_ref,r.rtk_enabled,
                        r.coordinate_transform_enabled,c.device_address,c.wire_encoding,c.poll_interval_millis

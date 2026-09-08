@@ -41,6 +41,7 @@ public class LiveDeviceSupervisor {
 
     private final LiveDeviceRepository live;
     private final ProtocolDataRepository protocolData;
+    private final LiveRadarFrameIngestService radarIngest;
     private final RadarTcpV300Adapter radar;
     private final CountermeasureTcp4ChV20Adapter countermeasure;
     private final ObjectMapper mapper;
@@ -55,10 +56,12 @@ public class LiveDeviceSupervisor {
     private final Map<String, Running> running = new ConcurrentHashMap<>();
 
     public LiveDeviceSupervisor(LiveDeviceRepository live, ProtocolDataRepository protocolData,
-                                RadarTcpV300Adapter radar, CountermeasureTcp4ChV20Adapter countermeasure,
-                                ObjectMapper mapper, AppClock clock, AppProperties properties) {
+                                LiveRadarFrameIngestService radarIngest, RadarTcpV300Adapter radar,
+                                CountermeasureTcp4ChV20Adapter countermeasure, ObjectMapper mapper,
+                                AppClock clock, AppProperties properties) {
         this.live = live;
         this.protocolData = protocolData;
+        this.radarIngest = radarIngest;
         this.radar = radar;
         this.countermeasure = countermeasure;
         this.mapper = mapper;
@@ -112,6 +115,7 @@ public class LiveDeviceSupervisor {
 
     private void runRadar(Map<String, Object> row, String json, String token, AtomicBoolean keep) throws Exception {
         String deviceId = text(row, "device_id"), sourceId = text(row, "source_id"), deviceNo = text(row, "device_no");
+        String sourceCode = text(row, "source_code");
         long[] nextRenew = { 0L };
         radar.monitor(json, () -> keep.get() && live.stillEnabled(deviceId),
                 () -> renew(deviceId, token, nextRenew), new RadarTcpV300Adapter.LiveFrameListener() {
@@ -123,7 +127,7 @@ public class LiveDeviceSupervisor {
                     }
 
                     @Override public void frame(RadarV300Codec.RadarFrame frame, byte[] raw, long receivedAt) {
-                        handleRadarFrame(sourceId, deviceId, deviceNo, frame, raw, receivedAt);
+                        handleRadarFrame(sourceId, deviceId, deviceNo, sourceCode, frame, raw, receivedAt);
                     }
 
                     @Override public void invalidFrames(long count) {
@@ -132,15 +136,14 @@ public class LiveDeviceSupervisor {
                 });
     }
 
-    private void handleRadarFrame(String sourceId, String deviceId, String deviceNo,
+    private void handleRadarFrame(String sourceId, String deviceId, String deviceNo, String sourceCode,
                                   RadarV300Codec.RadarFrame frame, byte[] raw, long receivedAt) {
         String key = null;
         try {
             if (frame.command() == RadarV300Codec.COMMAND_UPLOAD_TRACK_V3) {
                 TrackBatch batch = RadarV300PayloadDecoder.track(frame.payload());
-                key = messageKey(deviceId, batch.radarBootMicros(), frame.command(), batch.payloadFrameId());
-                if (!protocolData.insertInbox(sourceId, deviceId, key, raw, receivedAt)) return;
-                protocolData.saveTrackBatch(deviceId, deviceNo, batch, receivedAt);
+                key = LiveRadarFrameIngestService.trackMessageKey(deviceId, batch);
+                if (!radarIngest.ingestTrack(sourceId, deviceId, deviceNo, sourceCode, batch, raw, receivedAt)) return;
             } else if (frame.command() == RadarV300Codec.COMMAND_UPLOAD_TARGET_V3) {
                 PointBatch batch = RadarV300PayloadDecoder.points(frame.payload());
                 key = messageKey(deviceId, batch.radarBootMicros(), frame.command(), batch.payloadFrameId());

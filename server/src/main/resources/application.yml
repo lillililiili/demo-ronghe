@@ -69,6 +69,8 @@ app:
     poll-millis: ${APP_EO_POLL_MILLIS:1000}
     command-timeout-millis: ${APP_EO_COMMAND_TIMEOUT_MILLIS:10000}
     auto-track-batch: ${APP_EO_AUTO_TRACK_BATCH:20}
+  lingyun-control:
+    command-timeout-millis: ${APP_LINGYUN_CONTROL_TIMEOUT_MILLIS:10000}
   # 阶段 7 规则引擎：默认关闭调度；DEMO 参数版本默认不允许激活（只能做影子验证）。
   rule-engine:
     # C04 空间安全风险定时评估：默认关闭，只在 PostGIS 部署上按需打开（H2 会记 UNAVAILABLE）。

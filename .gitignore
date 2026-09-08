@@ -17,3 +17,7 @@ data/evidence/
 
 # Word/WPS 临时锁文件
 **/.~*
+
+# Playwright 产物（阶段 15 E2E）
+dongying-vue/test-results/
+dongying-vue/playwright-report/

@@ -15,3 +15,7 @@
 | 15-11 | 证据主体扩到 CASE/AUTHORIZATION 不在本阶段：A 的表与三条 CHECK，契约 §6 提请 A | 范围控制 |
 | 15-12 | 本阶段无新表；如需迁移只用 `V202609080104+`；权限 sort 980+ | 约定 |
 | 15-13 | CI 修订：主跑排除 `TargetReadPostgresApiTest`（其守卫要求库名 `stage2_target_verify_*`，在 `ci_verify` 上会拒绝加载）并用专属库单独跑；`package` 加 `-DskipTests`；汇总放在所有测试步骤之后；去掉重复的 `AuthApiTest,SystemManagementApiTest` 单跑；e2e 作业改为 checkout 后按 `playwright.config.js` 存在与否逐步判断（作业级 `hashFiles` 在 checkout 前恒空） | 审查阶段 15 第 1 轮 P0-1/P1-1/建议 |
+| 15-14 | 动作权限接口三处口径：`ROLE_LOCKED`（本次提交带了 actions 且角色是 ROLE-ADMIN）与 `BUILTIN_ROLE_PROTECTED` 分开；`NO_CHANGES` 只在矩阵与动作都没变时才报；`users/roles/audit` 域动作守卫按 `module_code` 判并先于任何此类动作行存在 | E1：前端要分得清"内置角色整体不可改"与"多带了动作行"；只调动作也是有效变更；守卫先于对象存在，否则谁加谁顺手授出去 |
+| 15-15 | `latest_state.bearing_deg/bearing_device_id` 只在目标自身 `location` 为空时给（`location` 非空则省略键；与 `pilot_location` 无关——只测到飞手、目标未定位的场景正需要方位线），前端"有值就画"；`ROLE_LOCKED` 文案改为"内置角色的动作权限不可修改" | 审查第 3 轮 P2-1 与建议：一个目标不能同时有位置点和方位线两套线索；锁覆盖所有内置角色，话要说对 |
+| 15-16 | 三摘要与方位按整页批量取回（每页固定四条查询），不在主查询挂相关子查询；列表与详情共用同一套取数；JSON 列在 SQL 里只做可移植粗筛（`LIKE`），取值交给 Java——PG 专属 `->>` 一律不用（H2 直接语法错） | E1：`TargetRow` 已二十多字段；单测库与生产库要跑同一条 SQL |
+| 15-17 | `.gitignore` 加 `dongying-vue/test-results/`、`dongying-vue/playwright-report/`；`bearingOf`（从 quality JSON 取方位）抽到一处共用，目标读侧与观测读侧都用它 | 审查第 4 轮 P2-2 与建议：排除项写进 ignore 才自动生效；键名一变改一份漏一份且两边都不报错 |

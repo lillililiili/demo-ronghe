@@ -210,6 +210,33 @@ class FusionPipelineReplayTest {
     }
 
     @Test
+    void idleSenseDataFrameIsDoneWithoutAnyObservation() {
+        // 协议 A 的空 objects 是"本帧什么都没探到"，与协议 C 的心跳同一性质：
+        // 不产生观测，但 inbox 必须走到 DONE。判成 FAILED 会累计 fusion_attempts，
+        // 空闲周期一多就把一台正常设备的帧推到重试上限（决策 10-16）。
+        String sourceId = jdbc.queryForObject("select source_id from integration_source where source_code=?"
+                , String.class, FusionReplayDatasetGenerator.RADAR);
+        String inboxId = UUID.randomUUID().toString();
+        long observedAt = System.currentTimeMillis();
+        String payload = "{\"deviceId\":\"IDLE\",\"msgCnt\":7,\"ptTime\":" + observedAt + ",\"objects\":[]}";
+        jdbc.update("insert into inbox_message (inbox_id,source,source_msg_id,received_at,source_id,payload_hash,payload,status,fusion_attempts)"
+                + " values (?,?,?,?,?,?,cast(? as json),'RECEIVED',0)",
+                inboxId, "lingyun:radar:IDLE", "idle-" + inboxId, observedAt, sourceId, "0".repeat(64), payload);
+
+        long observationsBefore = count("source_observation");
+        pipeline.processFrame(new FusionInboxRepository.InboxRow(inboxId, "lingyun:radar:IDLE", "idle", sourceId, observedAt, payload));
+        inbox.done(inboxId, System.currentTimeMillis());
+
+        assertThat(jdbc.queryForObject("select status from inbox_message where inbox_id=?", String.class, inboxId)).isEqualTo("DONE");
+        assertThat(jdbc.queryForObject("select fusion_attempts from inbox_message where inbox_id=?", Integer.class, inboxId)).isZero();
+        assertThat(count("source_observation")).as("空帧不该产生任何观测").isEqualTo(observationsBefore);
+    }
+
+    private long count(String table) {
+        return jdbc.queryForObject("select count(*) from " + table, Long.class);
+    }
+
+    @Test
     void failedFrameRollsBackWholeFrameAndMarksInboxFailed() {
         // 构造一条坏帧：source_id 指向不存在的来源 → 整帧失败，不得留下任何观测。
         String inboxId = UUID.randomUUID().toString();

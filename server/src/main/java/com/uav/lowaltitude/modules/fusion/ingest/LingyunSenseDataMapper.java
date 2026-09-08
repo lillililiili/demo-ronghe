@@ -83,7 +83,16 @@ public class LingyunSenseDataMapper implements FrameMapper {
             }
             items.add(item(object, extension, externalTargetId, observedAt, frameObservedAt, positionInvalid, msgCnt, ptTime));
         }
-        if (frameObservedAt == null) throw new IllegalStateException("SenseData 的 objects 为空");
+        if (frameObservedAt == null) {
+            // 空 objects 是合法的"本帧什么都没探到"，不是坏报文（决策 10-16）：设备按固定周期上报，
+            // 视野里没有目标时照样发一条。当成错误会把 inbox 刷成 FAILED 并累计 fusion_attempts，
+            // 几个空闲周期就能把一台正常设备的帧推到重试上限，之后真有目标了也领不进来。
+            // 与协议 C 的心跳同样处理：返回空帧，inbox 照常 DONE。
+            // 此时帧内没有任何 time，观测时刻只能取报文级的 ptTime；连 ptTime 都没有才是真的说不清这帧是什么时候的。
+            if (ptTime == null) throw new IllegalStateException("SenseData 的 objects 为空且缺少 ptTime，无法确定该帧的时刻");
+            return Frame.empty(sessionKey == null ? inbox.source() : sessionKey, msgCnt == null ? 0L : msgCnt,
+                    inbox.source(), Instant.ofEpochMilli(ptTime));
+        }
         // 没有任务 id 的设备（雷达/TDOA 等）用 source 本身作会话键：它稳定、非空，且天然按设备分区。
         return new Frame(sessionKey == null ? inbox.source() : sessionKey, msgCnt == null ? 0L : msgCnt,
                 inbox.source(), Instant.ofEpochMilli(frameObservedAt), List.copyOf(items));

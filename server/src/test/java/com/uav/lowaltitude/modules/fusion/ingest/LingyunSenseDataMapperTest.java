@@ -121,6 +121,22 @@ class LingyunSenseDataMapperTest {
     }
 
     @Test
+    void emptyObjectListIsAnIdleFrameNotABadMessage() {
+        // 设备按周期上报，视野里没目标时照发一条空的。当成坏报文会让 inbox 变 FAILED 并累计重试次数，
+        // 几个空闲周期就能把一台正常设备推到上限——之后真有目标了反而领不进来（决策 10-16）。
+        String idle = "{\"deviceId\":\"227\",\"msgCnt\":42,\"ptTime\":" + TIME + ",\"objects\":[]}";
+        Frame frame = mapper.map(inbox("radar", idle));
+        assertThat(frame.items()).isEmpty();
+        // 帧内没有任何 time，观测时刻只能取报文级的 ptTime。
+        assertThat(frame.observedAt().toEpochMilli()).isEqualTo(TIME);
+        assertThat(frame.recordNo()).isEqualTo(42);
+
+        // 连 ptTime 都没有就真的说不清这帧是什么时候的，那才是坏报文。
+        assertThatThrownBy(() -> mapper.map(inbox("radar", "{\"deviceId\":\"227\",\"objects\":[]}")))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("ptTime");
+    }
+
+    @Test
     void malformedPayloadsAreRejectedSoTheWholeFrameFails() {
         assertThatThrownBy(() -> mapper.map(inbox("radar", "{\"deviceId\":\"227\"}")))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("objects");

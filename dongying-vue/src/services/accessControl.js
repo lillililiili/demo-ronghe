@@ -1,7 +1,7 @@
 import { authUser } from './auth.js';
 import { pageTitle } from '@/config/navModel.js';
 
-const ROUTE_ALIAS = { overview: 'situation' };
+const ROUTE_ALIAS = { overview: 'situation', risk: 'flights' };
 const ROUTE_PERMISSION = {
   situation: 'sensing', flights: 'flights', airspace: 'airspace', risk: 'risk', legality: 'legality', alarms: 'alarms', punish: 'punishment',
   stats: 'statistics', evidence: 'evidence', devices: 'devices', monitor: 'monitoring', commission: 'commissioning',

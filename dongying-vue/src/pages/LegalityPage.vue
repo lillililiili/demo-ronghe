@@ -109,7 +109,7 @@ function groupedItems(code) {
   return items.value.filter(item => (item.legal_status === code) || (code === 'UNDETERMINED' && item.legal_status === 'NOT_APPLICABLE'));
 }
 
-function resultText(code) { return RULE_RESULT_TEXT[code] || code || '服务端未提供'; }
+function resultText(code) { return RULE_RESULT_TEXT[code] || code || '未提供'; }
 function resultClass(code) { return resultMeta[code]?.className || 'is-warn'; }
 function ruleName(code) { return RULE_CODE_TEXT[code] || '规则'; }
 function gradeText(item) {
@@ -117,9 +117,9 @@ function gradeText(item) {
   const score = item.score != null ? `（${Number(item.score).toFixed(0)} 分）` : '';
   return `${GRADE_TEXT[item.grade] || item.grade}${score}`;
 }
-function sourceText(mode) { return labelOf(SOURCE_MODE_LABEL, mode, '服务端未提供'); }
+function sourceText(mode) { return labelOf(SOURCE_MODE_LABEL, mode, '未提供'); }
 function ruleVersionText(item) {
-  if (!item?.rule_set_code) return '服务端未提供';
+  if (!item?.rule_set_code) return '未提供';
   return `${item.rule_set_code} v${item.rule_set_version_no ?? '—'}`;
 }
 function formatTime(value) {
@@ -141,7 +141,7 @@ function evaluationReason(item) {
   if (item.violation_reasons?.length) return ruleReasonText(item.violation_reasons[0]);
   if (item.unknown_reasons?.length) return ruleReasonText(item.unknown_reasons[0]);
   if (item.legal_status === 'LEGAL') return '全部检查通过';
-  return '服务端未提供结论摘要';
+  return '未提供结论摘要';
 }
 function reasonList(codes) {
   return (codes || []).map(code => ruleReasonText(code)).join('、');
@@ -416,8 +416,8 @@ onMounted(() => {
               :options="districtOptions" :disabled="loading" @update:model-value="onRegionChange" />
             <button class="lg-icon-btn" id="lgRule" type="button" :disabled="!selectedEvaluation" aria-label="查看判定规则与参数（只读）"
               :title="selectedEvaluation ? `查看 ${ruleVersionText(selectedEvaluation)} 的规则与参数（需要规则读取权限）` : '请先选择研判'" @click="onRuleView">规则</button>
-            <button class="lg-icon-btn" type="button" :disabled="loading" aria-label="刷新服务端数据"
-              title="刷新服务端研判队列与统计" @click="loadQueue({ keepSelection: true }); loadKpi(); loadShadowHint()">刷新</button>
+            <button class="lg-icon-btn" type="button" :disabled="loading" aria-label="刷新数据"
+              title="刷新研判队列与统计" @click="loadQueue({ keepSelection: true }); loadKpi(); loadShadowHint()">刷新</button>
             <button class="lg-icon-btn" id="lgRecalc" type="button" :disabled="!selectedEvaluation?.target_id || !allowed.includes('RECOMPUTE')"
               aria-label="对当前目标手动评估" :title="selectedEvaluation?.target_id ? '按当前生效规则集对该目标立即评估一次（需要评估与目标读取权限）' : '当前研判没有可见目标，无法手动评估'"
               @click="onManualEvaluate">重算</button>
@@ -436,14 +436,14 @@ onMounted(() => {
             <div class="lg-queue-scroll">
               <div v-if="shadowHint" class="lg-inline-error lg-shadow-hint" role="status">{{ shadowHint }}</div>
               <div v-if="listError" class="empty lg-state-error" role="alert">{{ listError }}</div>
-              <div v-else-if="loading" class="empty">正在读取服务端引擎研判…</div>
+              <div v-else-if="loading" class="empty">正在读取引擎研判…</div>
               <div v-else-if="deepLinkNotice" class="empty lg-state-warn" role="status">{{ deepLinkNotice }}</div>
               <template v-else>
                 <section v-for="group in groups" v-show="st.legal === group.code"
                   :key="group.code" class="lg-queue-group" :class="`is-${group.tone}`">
                   <div class="lg-group-head">
                     <span class="lg-group-caret">›</span><b>{{ group.label }}（{{ groupedItems(group.code).length }}）</b>
-                    <span>当前服务端分页 · 每目标最新一条</span>
+                    <span>每目标最新一条</span>
                   </div>
                   <div class="lg-group-rows">
                     <button v-for="item in groupedItems(group.code)" :key="item.evaluation_id" type="button"
@@ -464,7 +464,7 @@ onMounted(() => {
 
           <footer class="lg-pager pager">
             <UPagination v-model:page="st.page" v-model:page-size="st.size" :item-count="totalCount"
-              :prefix="`服务端研判共 ${totalCount.toLocaleString()} 条`"
+              :prefix="`研判共 ${totalCount.toLocaleString()} 条`"
               @update:page="onPage" @update:page-size="onPageSize" />
           </footer>
         </section>
@@ -507,7 +507,7 @@ onMounted(() => {
                       <span>{{ sourceText(selectedEvaluation.source_mode) }} · 等级 {{ gradeText(selectedEvaluation) }}</span></div>
                   </div>
                   <div class="lg-core-reason"><small>核心依据 / 未知原因</small><b>{{ primaryReason }}</b>
-                    <span>{{ selectedEvaluation.violation_reasons?.length ? `违规：${reasonList(selectedEvaluation.violation_reasons)}` : '' }}{{ selectedEvaluation.unknown_reasons?.length ? `　未知：${reasonList(selectedEvaluation.unknown_reasons)}` : '' }}{{ !selectedEvaluation.violation_reasons?.length && !selectedEvaluation.unknown_reasons?.length ? '仅展示服务端保存字段，不在前端生成结论' : '' }}</span></div>
+                    <span>{{ selectedEvaluation.violation_reasons?.length ? `违规：${reasonList(selectedEvaluation.violation_reasons)}` : '' }}{{ selectedEvaluation.unknown_reasons?.length ? `　未知：${reasonList(selectedEvaluation.unknown_reasons)}` : '' }}{{ !selectedEvaluation.violation_reasons?.length && !selectedEvaluation.unknown_reasons?.length ? '仅展示已保存字段，不在前端生成结论' : '' }}</span></div>
                   <div class="lg-target-facts">
                     <dl>
                       <dt>关联目标</dt><dd :title="selectedEvaluation.target_id">{{ selectedEvaluation.target_no || (selectedEvaluation.target_id ? '已关联目标' : '不可见或无关联') }}</dd>
@@ -528,9 +528,9 @@ onMounted(() => {
                 </section>
 
                 <section class="lg-basis-card">
-                  <header>判定依据表 <span>服务端 hit_details · 点击行查看命中事实与参数</span></header>
-                  <div class="lg-basis-columns"><span>序号</span><span>规则 / 检查项</span><span>判定结果</span><span>参数状态</span><span>服务端原因码</span></div>
-                  <div v-if="!selectedEvaluation.hit_details?.length" class="empty">服务端未提供单项检查</div>
+                  <header>判定依据表 <span>点击行查看命中事实与参数</span></header>
+                  <div class="lg-basis-columns"><span>序号</span><span>规则 / 检查项</span><span>判定结果</span><span>参数状态</span><span>原因码</span></div>
+                  <div v-if="!selectedEvaluation.hit_details?.length" class="empty">未提供单项检查</div>
                   <button v-for="(hit, index) in selectedEvaluation.hit_details || []"
                     :key="`${hit.rule_code}-${index}`" type="button" class="lg-basis-row" :class="{ 'is-selected': selectedHitIndex === index }"
                     :title="hit.message || ''" @click="toggleHit(index)">
@@ -542,7 +542,7 @@ onMounted(() => {
                   </button>
                   <div v-if="selectedHit" class="lg-rule-focus" :class="resultClass(selectedHit.result_code)">
                     <b>{{ selectedHit.rule_code }} {{ ruleName(selectedHit.rule_code) }}</b>
-                    <span>{{ selectedHit.message || '服务端未提供解释' }}</span>
+                    <span>{{ selectedHit.message || '未提供解释' }}</span>
                     <span v-if="selectedHit.params?.length" class="lg-muted">参数：{{ selectedHit.params.map(p => `${p.key}=${p.value}${p.status === 'DEMO' ? '(DEMO)' : ''}`).join('，') }}</span>
                     <span v-if="selectedHit.facts && Object.keys(selectedHit.facts).length" class="lg-muted">事实：{{ factText(selectedHit.facts) }}</span>
                   </div>
@@ -564,7 +564,7 @@ onMounted(() => {
                             <dt>{{ reference.kind || '引用' }}</dt><dd class="mono">{{ reference.id }}</dd>
                           </template>
                         </dl>
-                        <p v-else>服务端未提供证据引用</p>
+                        <p v-else>未提供证据引用</p>
                         <p class="lg-evidence-alert">研判读取接口不提供空域边界、航线或轨迹几何，地图不可绘制；不会连接旧空域、旧轨迹或推测坐标。</p>
                       </div>
                       <div class="lg-map-wrap" aria-label="空间证据地图不可绘制">
@@ -574,7 +574,7 @@ onMounted(() => {
                       </div>
                     </template>
                     <div v-else-if="st.evidenceTab === 'plan'" class="lg-evidence-wide">
-                      <h4>计划匹配（C01）与身份 <span>服务端事实</span></h4>
+                      <h4>计划匹配（C01）与身份 <span>已保存事实</span></h4>
                       <dl class="lg-resource-grid">
                         <dt>匹配等级</dt><dd>{{ planMatchText(selectedEvaluation.plan_match_code) }}{{ c01Facts?.match_reason ? `（${ruleReasonText(c01Facts.match_reason)}）` : '' }}</dd>
                         <dt>计划编号</dt><dd class="mono" :title="selectedEvaluation.plan_id">{{ selectedEvaluation.plan_no || (selectedEvaluation.plan_id ? '已关联计划' : '无匹配计划或不可见') }}</dd>

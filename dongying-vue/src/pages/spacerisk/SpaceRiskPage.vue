@@ -354,12 +354,12 @@ onUnmounted(() => {
 <template>
   <div class="view spacerisk-page" id="view">
     <div class="kpis">
-      <div class="kpi is-blue"><span v-html="icon('bird')"></span><em>近 7 天异物事件</em><b>{{ kpi('total') }}</b><small>鸟群 / 气球 / 风筝 / 其他异物</small></div>
-      <div class="kpi is-red"><span v-html="icon('alert')"></span><em>高风险事件</em><b>{{ kpi('high_severity') }}</b><small>进入航线走廊且高度重叠</small></div>
-      <div class="kpi is-amber"><span v-html="icon('alert')"></span><em>中风险事件</em><b>{{ kpi('medium_severity') }}</b><small>邻近航线，或高度无法比较</small></div>
-      <div class="kpi is-green"><span v-html="icon('bird')"></span><em>鸟类事件</em><b>{{ kpi('bird_events') }}</b><small>细类为鸟群的事件</small></div>
-      <div class="kpi is-orange"><span v-html="icon('check')"></span><em>待核验</em><b>{{ kpi('pending_verification') }}</b><small>需人工确认</small></div>
-      <div class="kpi is-purple"><span v-html="icon('zone')"></span><em>涉及航线</em><b>{{ kpi('routes_involved') }}</b><small>有异物事件挂靠的航线</small></div>
+      <div class="kpi is-blue"><span v-html="icon('bird')"></span><em>近 7 天异物事件</em><b>{{ kpi('total') }}</b></div>
+      <div class="kpi is-red"><span v-html="icon('alert')"></span><em>高风险事件</em><b>{{ kpi('high_severity') }}</b></div>
+      <div class="kpi is-amber"><span v-html="icon('alert')"></span><em>中风险事件</em><b>{{ kpi('medium_severity') }}</b></div>
+      <div class="kpi is-green"><span v-html="icon('bird')"></span><em>鸟类事件</em><b>{{ kpi('bird_events') }}</b></div>
+      <div class="kpi is-orange"><span v-html="icon('check')"></span><em>待核验</em><b>{{ kpi('pending_verification') }}</b></div>
+      <div class="kpi is-purple"><span v-html="icon('zone')"></span><em>涉及航线</em><b>{{ kpi('routes_involved') }}</b></div>
     </div>
     <div v-if="summaryError" class="warnbox sr-inline-error">{{ summaryError }}</div>
 

@@ -30,9 +30,8 @@ export const VUE_PAGES = {
   devices: DevicesPage,
   monitor: MonitorPage,
   flights: FlightsPage,
-  /* flights/risk/airspace 三个路由 key 共用一个组件：
-     组件内 syncTabByRoute 按当前 hash 预置页签（#/risk → 全部风险事件），
-     复刻 legacy 别名代理（PAGES.risk/airspace → flights）语义。 */
+  /* airspace 仍与 flights 共用组件。#/risk 由 router 重定向到 #/flights?tab=events，
+     不再作为独立「空间安全风险」页渲染。 */
   risk: FlightsPage,
   airspace: FlightsPage,
   situation: SituationPage,

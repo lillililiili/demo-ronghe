@@ -84,7 +84,7 @@ export async function apiRequestTimed(path, options = {}, timeoutMs = 15_000) {
   const timeout = globalThis.setTimeout(() => controller.abort(), timeoutMs);
   try { return await apiRequest(path, { ...options, signal: controller.signal }); }
   catch (error) {
-    if (controller.signal.aborted) throw new ApiError('请求超时，请核对服务端最新状态。', 'TIMEOUT', 408);
+    if (controller.signal.aborted) throw new ApiError('请求超时，请核对最新状态。', 'TIMEOUT', 408);
     throw error;
   } finally { globalThis.clearTimeout(timeout); }
 }

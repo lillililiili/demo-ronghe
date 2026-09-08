@@ -18,7 +18,9 @@ const routes = [
   { path: '/', redirect: '/workbench' },
   ...Object.keys(REDIRECT).map(k => ({
     path: '/' + k, redirect: '/' + REDIRECT[k]
-  }))
+  })),
+  /* #/risk 已撤回独立页：落到飞行计划「全部风险事件」，避免无 risk 菜单权限时被拦成「无法访问空间安全风险」。 */
+  { path: '/risk', redirect: to => ({ path: '/flights', query: { ...to.query, tab: 'events' } }) }
 ];
 routes.push({ path: '/:page*', component: PageHost });
 /* dev-only 的 #/__ui-lab 对照台不在这里挂路由 —— 本应用没有 <router-view>

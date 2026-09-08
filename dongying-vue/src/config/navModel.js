@@ -64,6 +64,7 @@ export const ROUTES = (function () {
   /* 已实现但暂不挂菜单的页面（决策 12-8）：仍要有中文名，否则"无权访问"提示会把英文路由键摆给用户看。
      名称与迁移 060 的权限目录一致。 */
   r.airspace = { t: '空域与航线规则', p: '飞行监管', ph: 'flights' };
+  /* 旧书签 #/risk 会重定向到飞行计划「全部风险事件」；名称仅用于万一落到无权页时的提示。 */
   r.risk = { t: '空间安全风险', p: '飞行监管', ph: 'flights' };
   r.bigscreen = { t: '低空安全监控大屏', p: null, ph: null };
   r.login = { t: '登录', p: null, ph: null }; // 独立入口，不加入业务导航/权限矩阵
@@ -83,7 +84,8 @@ export const PAGE_THEME = {
   users: 'system', roles: 'system', archive: 'system'
 };
 
-/* 旧地址重定向：目标页已删、语义由别的页承接时，hash 直接改写到承接页。 */
+/* 旧地址重定向：目标页已删、语义由别的页承接时，hash 直接改写到承接页。
+   #/risk 要带 tab=events，在 router/index.js 单独处理，不放这张纯 path 表。 */
 export const REDIRECT = { overview: 'situation' };
 
 export const pageTitle = k => (ROUTES[k] || { t: k }).t;

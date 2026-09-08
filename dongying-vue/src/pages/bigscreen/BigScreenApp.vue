@@ -376,7 +376,7 @@ onBeforeUnmount(() => {
         <main class="bs-mid">
           <div class="bs-kpis">
             <button v-for="item in kpis" :key="item.label" class="kpi" :style="{ '--kpi-tone': item.color }" :aria-label="`${item.label} ${item.value}，进入对应业务页面`" @click="go(item.page)">
-              <div class="v">{{ item.value }}</div><div class="ring"></div><div class="lb">{{ item.label }}</div><small>点击查看</small>
+              <div class="v">{{ item.value }}</div><div class="ring"></div><div class="lb">{{ item.label }}</div>
             </button>
           </div>
           <div class="bs-map-shell">

@@ -86,11 +86,11 @@ async function settleUncertain({ error, evaluationId, action, expectedVersion, r
     releaseKey(evaluationId, action);
     closeModal();
     toast(stillAllowed
-      ? `提交结果未确认，已刷新服务端状态：复核版本已更新为 v${version}（${reviewStateText(latest.review?.state)}），请核对历史后重新操作。`
-      : `提交结果未确认，已刷新服务端状态：当前为「${reviewStateText(latest.review?.state)}」，该动作已不可执行。`, 'err');
+      ? `提交结果未确认，已刷新当前状态：复核版本已更新为 v${version}（${reviewStateText(latest.review?.state)}），请核对历史后重新操作。`
+      : `提交结果未确认，已刷新当前状态：当前为「${reviewStateText(latest.review?.state)}」，该动作已不可执行。`, 'err');
     return true;
   }
-  throw new Error(`提交结果未确认，请刷新核对：${messageOf(error, '服务端未返回明确结果')}`);
+  throw new Error(`提交结果未确认，请刷新核对：${messageOf(error, '未返回明确结果')}`);
 }
 
 function intro(evaluation) {
@@ -273,7 +273,7 @@ export function openLegalityManualEvaluate({ targetId, targetNo, refresh, onDone
         return true;
       } catch (error) {
         if (isUncertainOutcome(error)) {
-          toast(`评估结果未确认，请刷新队列核对：${messageOf(error, '服务端未返回明确结果')}`, 'err');
+          toast(`评估结果未确认，请刷新队列核对：${messageOf(error, '未返回明确结果')}`, 'err');
           if (refresh) await refresh(null);
           return true;
         }
@@ -304,9 +304,9 @@ export async function openRuleVersionView({ ruleSetVersionId, ruleSetCode, versi
   openModal({
     title: '判定规则与参数（只读）',
     width: '760px',
-    body: `${head}<p class="lg-muted">参数值来自服务端规则集版本；DEMO 表示演示参数尚未业务确认，激活/回滚/影子设置不在本页操作。</p>`
-      + `<h4>成员规则</h4><table class="tb"><thead><tr><th>规则</th><th>名称</th><th>优先级</th><th>状态</th></tr></thead><tbody>${members || '<tr><td colspan="4">服务端未提供成员规则</td></tr>'}</tbody></table>`
-      + `<h4>参数</h4><table class="tb"><thead><tr><th>规则</th><th>参数</th><th>值</th><th>状态</th><th>说明</th></tr></thead><tbody>${params || '<tr><td colspan="5">服务端未提供参数</td></tr>'}</tbody></table>`,
+    body: `${head}<p class="lg-muted">参数值来自规则集版本；DEMO 表示演示参数尚未业务确认，激活/回滚/影子设置不在本页操作。</p>`
+      + `<h4>成员规则</h4><table class="tb"><thead><tr><th>规则</th><th>名称</th><th>优先级</th><th>状态</th></tr></thead><tbody>${members || '<tr><td colspan="4">未提供成员规则</td></tr>'}</tbody></table>`
+      + `<h4>参数</h4><table class="tb"><thead><tr><th>规则</th><th>参数</th><th>值</th><th>状态</th><th>说明</th></tr></thead><tbody>${params || '<tr><td colspan="5">未提供参数</td></tr>'}</tbody></table>`,
     footer: '<button class="btn" data-close>关闭</button>'
   });
   return true;

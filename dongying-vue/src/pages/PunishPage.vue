@@ -49,7 +49,7 @@ const BLOCKED_LABEL = HANDOFF_BLOCKED_LABEL;
 const CONCLUSION_LABEL = RISK_CONCLUSION_LABEL;
 const REFERENCE_LABEL = { plan_id: '关联计划', route_version_id: '航线版本', assessment_id: '关联研判', target_id: '关联目标', track_id: '关联轨迹' };
 const DELIVERY_PAGE_SIZE = 10;
-const FIXED_SORT_NOTE = '服务端固定排序：created_at DESC, handoff_id DESC';
+const FIXED_SORT_NOTE = '当前按提交时间倒序：created_at DESC, handoff_id DESC';
 
 const kindOptions = [{ label: '全部来源', value: '' }, ...Object.keys(KIND_LABEL).map(value => ({ label: KIND_LABEL[value], value }))];
 const deliveryOptions = [{ label: '全部投递状态', value: '' }, ...Object.keys(DELIVERY_LABEL).map(value => ({ label: DELIVERY_LABEL[value], value }))];
@@ -108,14 +108,14 @@ let listToken = 0, kpiToken = 0, detailToken = 0, deliveriesToken = 0, chainToke
 /* 3 张 KPI 与原页面同位同色；数值只取服务端 size=1 的 total，不在前端自算。 */
 const kpiList = computed(() => {
   const value = key => (kpiFailed.value[key] ? '—' : kpiTotals.value[key] == null ? '…' : Number(kpiTotals.value[key]).toLocaleString('en-US'));
-  const desc = (key, text) => (kpiFailed.value[key] ? '服务端总数读取失败' : text);
+  const desc = (key, text) => (kpiFailed.value[key] ? '总数读取失败' : text);
   if (forbidden.value) return [
-    { label: '交接总数', value: '—', color: 'blue', icon: 'gavel', desc: '服务端拒绝：无 handoff:read 权限' },
-    { label: '待投递', value: '—', color: 'amber', icon: 'alert', desc: '服务端拒绝：无 handoff:read 权限' },
-    { label: '已送达', value: '—', color: 'green', icon: 'check', desc: '服务端拒绝：无 handoff:read 权限' }
+    { label: '交接总数', value: '—', color: 'blue', icon: 'gavel', desc: '无 handoff:read 权限' },
+    { label: '待投递', value: '—', color: 'amber', icon: 'alert', desc: '无 handoff:read 权限' },
+    { label: '已送达', value: '—', color: 'green', icon: 'check', desc: '无 handoff:read 权限' }
   ];
   return [
-    { label: '交接总数', value: value('all'), color: 'blue', icon: 'gavel', desc: desc('all', '当前权限范围内服务端总数') },
+    { label: '交接总数', value: value('all'), color: 'blue', icon: 'gavel', desc: desc('all', '当前权限范围内总数') },
     { label: '待投递', value: value('pending'), color: 'amber', icon: 'alert', desc: desc('pending', '已提交、尚未发送（通知渠道未接通）') },
     { label: '已送达', value: value('delivered'), color: 'green', icon: 'check', desc: desc('delivered', '仅 local/test 的 mock 历史样例可能出现') }
   ];
@@ -134,8 +134,8 @@ const visibleReferences = computed(() => {
 /* 服务端 availability.material：FORBIDDEN（缺 risk:read）/ SOURCE_NOT_VISIBLE（源风险不在可见范围）时风险材料与核实历史被省略。 */
 const materialUnavailableText = computed(() => {
   const availability = selected.value?.availability?.material;
-  if (availability === 'FORBIDDEN') return '当前账号没有查看源风险的权限（risk:read），服务端已省略风险材料与核实历史。';
-  if (availability === 'SOURCE_NOT_VISIBLE') return '源风险已不在当前可见范围，服务端已省略风险材料与核实历史。';
+  if (availability === 'FORBIDDEN') return '当前账号没有查看源风险的权限（risk:read），已省略风险材料与核实历史。';
+  if (availability === 'SOURCE_NOT_VISIBLE') return '源风险已不在当前可见范围，已省略风险材料与核实历史。';
   return '快照中没有风险材料。';
 });
 const deliveryNote = computed(() => {
@@ -363,7 +363,7 @@ onMounted(() => {
       <UKpis :list="kpiList" />
       <div id="pnBody" class="pn-body" style="margin-top:12px;flex:1;min-height:0">
         <div v-if="forbidden" class="warnbox pn-forbidden">
-          服务端拒绝读取：当前账号没有查看业务交接的权限（handoff:read）。交接清单、材料与投递状态不可读取；本页不展示任何演示数据。
+          当前账号没有查看业务交接的权限（handoff:read）。交接清单、材料与投递状态不可读取；本页不展示任何演示数据。
           <button class="btn" type="button" :disabled="listLoading" @click="retryList">重试</button>
         </div>
         <template v-else>
@@ -381,7 +381,7 @@ onMounted(() => {
                   <div class="toolbar-actions">
                     <button class="btn" type="button" :disabled="listLoading" @click="applyFilters">查询</button>
                     <button class="btn" type="button" id="pnR" :disabled="listLoading" @click="resetFilters">重置筛选</button>
-                    <span class="toolbar-note" :title="FIXED_SORT_NOTE">服务端固定按提交时间倒序</span>
+                    <span class="toolbar-note" :title="FIXED_SORT_NOTE">按提交时间倒序</span>
                   </div>
                 </div>
                 <div v-if="listError" class="warnbox pn-error">{{ listError }} <button class="btn" type="button" :disabled="listLoading" @click="retryList">重试</button></div>
@@ -478,7 +478,7 @@ onMounted(() => {
                     </template>
                   </div>
                   <div class="sect"><h4>材料快照 <span class="tag t-gray">schema v{{ selected.material?.schema_version ?? '—' }}</span></h4>
-                    <div v-if="!selected.material" class="empty">服务端未返回材料快照。</div>
+                    <div v-if="!selected.material" class="empty">未返回材料快照。</div>
                     <template v-else>
                       <dl v-if="selected.material.risk" class="kv kv-surface">
                         <dt>风险编号</dt><dd class="mono" :title="selected.material.risk.risk_id">{{ selected.material.risk.source_risk_id || '未提供' }}</dd>
@@ -499,7 +499,7 @@ onMounted(() => {
                           <dt>{{ reference.label }}</dt><dd :title="reference.value">已记录关联</dd>
                         </template>
                       </dl>
-                      <div v-else class="pn-note-text">当前权限下没有可见的关联引用（不可见的引用已由服务端省略）。</div>
+                      <div v-else class="pn-note-text">当前权限下没有可见的关联引用（不可见的引用已省略）。</div>
                       <div class="pn-subhead">核实历史 <span class="tag t-gray">{{ selected.material.verifications?.length || 0 }}</span></div>
                       <div v-if="!selected.material.verifications?.length" class="pn-note-text">快照中没有核实记录。</div>
                       <div v-else class="pn-history">

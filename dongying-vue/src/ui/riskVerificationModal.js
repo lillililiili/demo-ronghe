@@ -75,11 +75,11 @@ export function openRiskVerification({ risk, refresh, onDone } = {}) {
             // 版本变化与终态要分开说明：前者仍可重新打开表单核验，后者不能再核验。
             const stillVerifiable = (latest.allowed_actions || []).includes('VERIFY');
             toast(stillVerifiable
-              ? `提交结果未确认，已刷新服务端状态：风险已更新为 v${Number(latest.version)}（${riskStateText(latest.state)}），请核对历史后重新打开核验表单。`
-              : `提交结果未确认，已刷新服务端状态：当前风险为「${riskStateText(latest.state)}」，不能再次核验。`, 'err');
+              ? `提交结果未确认，已刷新当前状态：风险已更新为 v${Number(latest.version)}（${riskStateText(latest.state)}），请核对历史后重新打开核验表单。`
+              : `提交结果未确认，已刷新当前状态：当前风险为「${riskStateText(latest.state)}」，不能再次核验。`, 'err');
             return;
           }
-          throw new Error(`提交结果未确认，请刷新核对：${messageOf(error, '服务端未返回明确结果')}`);
+          throw new Error(`提交结果未确认，请刷新核对：${messageOf(error, '未返回明确结果')}`);
         }
         pendingKeys.delete(riskId);
         pendingKeys.set(riskId, newRiskIdempotencyKey());

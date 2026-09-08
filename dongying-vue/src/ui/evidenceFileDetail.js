@@ -75,7 +75,7 @@ export function renderEvidenceFileDetail(f, options = {}) {
     ? `<div style="font-size:12px;color:var(--txt-3);line-height:1.8">文件内容已销毁，台账编号、哈希和销毁记录保留，不能再下载。</div>`
     : mode === 'modal'
     ? `<button class="btn pri" style="width:100%;justify-content:center" data-act="download">${U.icon('download')} 下载</button>
-       <div style="margin-top:8px;font-size:11px;color:var(--txt-3);line-height:1.8">只读查看。下载须经服务端鉴权并记入访问记录。</div>`
+       <div style="margin-top:8px;font-size:11px;color:var(--txt-3);line-height:1.8">只读查看。下载须经鉴权并记入访问记录。</div>`
     : `<button class="btn pri" style="width:100%;justify-content:center" data-evact="download">${U.icon('download')} 下载</button>
     <div style="display:flex;gap:8px;margin-top:8px">
       <button class="btn" style="flex:1" data-evact="verify">校验哈希</button>
@@ -85,8 +85,8 @@ export function renderEvidenceFileDetail(f, options = {}) {
     </div>
     ${canDestroy
       ? `<button class="btn danger" style="width:100%;justify-content:center;margin-top:8px" data-evact="destroy">销毁文件</button>
-         <div style="margin-top:8px;font-size:11px;color:var(--txt-3);line-height:1.8">下载须经服务端鉴权并记入访问记录。销毁只删文件内容，台账仍可查。</div>`
-      : `<div style="margin-top:8px;font-size:11px;color:var(--txt-3);line-height:1.8">下载须经服务端鉴权并记入访问记录。已到期且未冻结时才能销毁。</div>`}`;
+         <div style="margin-top:8px;font-size:11px;color:var(--txt-3);line-height:1.8">下载须经鉴权并记入访问记录。销毁只删文件内容，台账仍可查。</div>`
+      : `<div style="margin-top:8px;font-size:11px;color:var(--txt-3);line-height:1.8">下载须经鉴权并记入访问记录。已到期且未冻结时才能销毁。</div>`}`;
   const tags = [U.tag(status, SC[f.status] || 't-gray')];
   if (f.custody || f.held) tags.push(custodyTag(f));
   return `${U.detailHero({

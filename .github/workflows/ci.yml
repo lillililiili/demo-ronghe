@@ -30,6 +30,26 @@ jobs:
     defaults:
       run:
         working-directory: server
+    # PostgreSQL/PostGIS 服务：让靠 POSTGRES_TEST_URL 门禁的专项用例（空间判定、只增触发器、并发、分两步升级）
+    # 在 CI 上真的跑起来，而不是静默跳过（决策 15-9）。
+    services:
+      postgres:
+        image: postgis/postgis:16-3.5
+        env:
+          POSTGRES_USER: uav
+          POSTGRES_PASSWORD: uav
+          POSTGRES_DB: ci_verify
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U uav -d ci_verify"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      POSTGRES_TEST_URL: jdbc:postgresql://127.0.0.1:5432/ci_verify
+      POSTGRES_TEST_USER: uav
+      POSTGRES_TEST_PASSWORD: uav
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -38,6 +58,48 @@ jobs:
           java-version: 17
           cache: maven
       - run: chmod +x mvnw
+      - name: Create isolation databases for the PostgreSQL suites
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client >/dev/null
+          PGPASSWORD=uav psql -h 127.0.0.1 -U uav -d ci_verify -c "CREATE EXTENSION IF NOT EXISTS postgis;"
+          PGPASSWORD=uav psql -h 127.0.0.1 -U uav -d ci_verify -c "CREATE DATABASE stage2_target_verify_ci;"
+          PGPASSWORD=uav psql -h 127.0.0.1 -U uav -d stage2_target_verify_ci -c "CREATE EXTENSION IF NOT EXISTS postgis;"
       - run: ./mvnw -B test
+      - name: TargetRead PostgreSQL suite (needs its own stage2_target_verify_* database)
+        run: ./mvnw -B -Dtest=TargetReadPostgresApiTest -Dsurefire.failIfNoSpecifiedTests=false test
+        env:
+          POSTGRES_TEST_URL: jdbc:postgresql://127.0.0.1:5432/stage2_target_verify_ci
+      - name: Test summary (run / failures / errors / skipped)
+        if: always()
+        run: |
+          python3 - <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          import glob, xml.etree.ElementTree as ET
+          t=f=e=s=0
+          for p in glob.glob('target/surefire-reports/TEST-*.xml'):
+              r=ET.parse(p).getroot()
+              t+=int(r.get('tests',0)); f+=int(r.get('failures',0)); e+=int(r.get('errors',0)); s+=int(r.get('skipped',0))
+          print(f"## Backend tests\n\n| run | failures | errors | skipped |\n| --- | --- | --- | --- |\n| {t} | {f} | {e} | {s} |\n")
+          print("跳过数应只剩非 PostgreSQL 门禁的用例；若接近 90+，说明 PostgreSQL 服务没接上。")
+          EOF
       - run: ./mvnw -B -Dtest=AuthApiTest,SystemManagementApiTest test
       - run: ./mvnw -B package
+
+  e2e:
+    # 阶段 15 起的 E2E 骨架（Playwright）：稳定前不阻断合并（决策 15-9）。助手落地 dongying-vue/e2e 后此作业才有用例。
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    needs: [frontend]
+    if: hashFiles('dongying-vue/playwright.config.js') != ''
+    defaults:
+      run:
+        working-directory: dongying-vue
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: dongying-vue/package-lock.json
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run e2e -- --reporter=list

@@ -33,3 +33,8 @@
 - 处罚交接材料包未定义（13-25），归下一阶段。
 - 策略 demo-v1 全部 DEMO（Q5）。
 - 后续：`services/workbenchEvents.js` 的兼容导出（`advanceUav/verifyUav/actRisk/openDeviceReboot/verifyDeviceRecovery`）全仓无调用点，下次清理一并删除（E2 报备，本阶段不动）。
+
+## 跟进（提交 `cbf2a3e` 之后）
+- 审查第 13 轮 P1-1 / E1：`R__stage13_disposal.sql` 的 `to_regclass` 守卫在"先停在中间版本再前进"的库上会静默不建触发器（R__ 被记为已应用后不再重跑）。修法：触发器与 CHECK 移入版本化 `db/postgresql/V202609070103__stage13_disposal_pg.sql`，R__ 只留函数（13-32 修订）。
+- 证据：PG `Stage13PostgresTest` 9/9、`Stage9PostgresTest` 24/24、`Stage5PostgresTest` 5/5（`stage456_verify_s13`）；升级路径：新 jar 再次起在 `uav_stage10_verify`，Flyway 应用 2 个迁移（R__ 校验和变化重跑 + 0103），`flyway_schema_history` 有 `202609070103 stage13 disposal pg` success，`pg_trigger` 存在 `trg_stage13_disposal_event_append_only`，`/actuator/health` 200。
+- 助手补"074 → 最新 → UPDATE/DELETE 报 23514"的分两步升级用例（见 13.3 报告第五轮）。

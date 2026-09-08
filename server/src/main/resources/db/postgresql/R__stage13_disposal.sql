@@ -12,25 +12,7 @@ BEGIN
 END;
 $$;
 
--- 守卫：升级回归会把库只迁到某个中间版本（如 Stage9PostgresTest 的 073.5/074 用例），
--- 此时 Flyway 仍会跑本 R__ 脚本，而 0102 的表尚不存在——表没到位就跳过，等下一次校验和变化或全量迁移再补。
-DO $$
-BEGIN
-    IF to_regclass('disposal_authorization_event') IS NOT NULL THEN
-        EXECUTE 'DROP TRIGGER IF EXISTS trg_stage13_disposal_event_append_only ON disposal_authorization_event';
-        EXECUTE 'CREATE TRIGGER trg_stage13_disposal_event_append_only
-            BEFORE UPDATE OR DELETE ON disposal_authorization_event
-            FOR EACH ROW EXECUTE FUNCTION prevent_stage13_disposal_event_mutation()';
-    END IF;
-END $$;
-
--- 零长度或倒挂的有效期说不清"哪段时间是被授权的"——对一个允许动手的授权来说，这是不能含糊的边界。
--- 迁移 0102 里两列可以同时为 NULL（尚未审批），因此这里只在两列都有值时校验。
-DO $$
-BEGIN
-    IF to_regclass('disposal_authorization') IS NOT NULL THEN
-        EXECUTE 'ALTER TABLE disposal_authorization DROP CONSTRAINT IF EXISTS ck_stage13_authorization_window';
-        EXECUTE 'ALTER TABLE disposal_authorization ADD CONSTRAINT ck_stage13_authorization_window
-            CHECK (valid_from IS NULL OR valid_until IS NULL OR valid_until > valid_from)';
-    END IF;
-END $$;
+-- 触发器与 CHECK 不在这里建：R__ 只在校验和变化时重跑，一个先停在中间版本（表未建）再前进到 0102 的库，
+-- 会把本脚本记为"已应用"而永远不再补触发器——只增保证就静默丢了（审查第 13 轮 P1-1）。
+-- 因此触发器与 CHECK 放在版本化的 PG 专属迁移 V202609070103__stage13_disposal_pg.sql（0102 之后只跑一次，不需守卫）；
+-- 本脚本只保留无表依赖的函数定义。

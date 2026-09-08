@@ -20,6 +20,7 @@ import java.util.concurrent.TimeUnit;
 import javax.sql.DataSource;
 
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.MigrationVersion;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.MethodOrderer;
@@ -397,6 +398,96 @@ class Stage13PostgresTest {
             assertThat(eventCount(authorizationId, "EXPIRE"))
                     .as("每条恰一条 EXPIRE 事件：这是条件更新与事件绑在一起的直接证据").isEqualTo(1L);
         }
+    }
+
+    /**
+     * 分两步升级（决策 13-32 修订，审查第 13 轮 P1-1）：先停在阶段 10 的 074，再前进到最新。
+     *
+     * <p><b>这条用例存在的理由</b>：只增触发器原先放在 `R__stage13_disposal.sql` 里。R__ 只在校验和变化时重跑——
+     * 一个先停在"`disposal_authorization_event` 还没建"的版本、随后再前进的库，会在第一次 migrate 时
+     * 把该 R__ 记为已应用（守卫让它什么都没做），之后**永远不再补触发器**。
+     * 结果是：库看起来迁移全绿、事件表却没有只增保护，而这件事在一次性建库的测试里怎么也测不出来。
+     * 现在触发器与 CHECK 移到版本化的 `V202609070103`，本用例就是钉住"分两步升级也真的装上了"。
+     *
+     * <p>断言落在**行为**上而不是"触发器存在"：查 `pg_trigger` 只能证明有个同名对象，
+     * 证明不了它真的拦得住写入。这里直接写一次、删一次，要求都以 23514 被拒。
+     */
+    @Test
+    @Order(10)
+    void stagedUpgradeStillInstallsAppendOnlyTriggerAndWindowCheck() {
+        String schema = SCHEMA_PREFIX + UUID.randomUUID().toString().replace("-", "");
+        if (!schema.matches("^" + SCHEMA_PREFIX + "[a-f0-9]{32}$")) throw new IllegalStateException("Unsafe scratch schema");
+        JdbcTemplate root = new JdbcTemplate(rootDataSource());
+        root.execute("create schema " + schema);
+        try {
+            // 第一步：停在阶段 10 的 074——此时阶段 13 的表都还没建。
+            flywayFor(schema, "202609050074").migrate();
+            JdbcTemplate scratch = scratchTemplate(schema);
+            assertThat(scratch.queryForObject("select to_regclass(?)::text", String.class, schema + ".disposal_authorization_event"))
+                    .as("停在 074 时阶段 13 的表还不该存在").isNull();
+
+            // 第二步：前进到最新。
+            flywayForAll(schema).migrate();
+            assertThat(scratch.queryForObject("select count(*) from flyway_schema_history where success=false", Long.class)).isZero();
+
+            // 行为断言：事件写得进，改不动、删不掉。
+            String eventId = seedAuthorizationEvent(scratch, schema);
+            assertThat(sqlState(catching(() -> scratch.update(
+                    "update disposal_authorization_event set note='x' where event_id=?", eventId))))
+                    .as("分两步升级的库上，事件 UPDATE 仍必须以 23514 被拒").isEqualTo("23514");
+            assertThat(sqlState(catching(() -> scratch.update(
+                    "delete from disposal_authorization_event where event_id=?", eventId))))
+                    .as("DELETE 同样").isEqualTo("23514");
+            assertThat(scratch.queryForObject("select note from disposal_authorization_event where event_id=?", String.class, eventId))
+                    .isEqualTo("分两步升级验证");
+
+            // 有效期 CHECK 也必须在（它和触发器一起从 R__ 搬到了 0103）。
+            assertThat(scratch.queryForObject("select count(*) from pg_constraint"
+                    + " where conrelid=(quote_ident(?)||'.disposal_authorization')::regclass"
+                    + " and conname='ck_stage13_authorization_window'", Long.class, schema)).isEqualTo(1L);
+        } finally {
+            root.execute("drop schema " + schema + " cascade");
+        }
+    }
+
+    /** 在指定 schema 上造出一条授权与一条事件，返回事件 id。夹具链：角色→用户→机构/区域→授权→事件。 */
+    private String seedAuthorizationEvent(JdbcTemplate scratch, String schema) {
+        String tag = schema.substring(SCHEMA_PREFIX.length(), SCHEMA_PREFIX.length() + 8);
+        String orgId = id(), districtId = id(), roleCode = "ROLE-UP-" + tag, userId = id(),
+                authorizationId = id(), eventId = id();
+        scratch.update("insert into app_org (org_id,org_code,name,enabled,created_at,updated_at,version) values (?,?,?,true,0,0,0)",
+                orgId, "ORG-UP-" + tag, "分步升级验证机构 " + tag);
+        scratch.update("insert into app_district (district_id,district_code,name,enabled,created_at,updated_at,version) values (?,?,?,true,0,0,0)",
+                districtId, "DIST-UP-" + tag, "分步升级验证区域 " + tag);
+        scratch.update("insert into app_role (role_code,name,description,builtin,enabled,created_at,updated_at,version,system_role)"
+                + " values (?,?,'',false,true,0,0,0,false)", roleCode, "分步升级验证角色 " + tag);
+        scratch.update("insert into app_user (user_id,account,name,role_code,status,password_hash,fail_count,scope_mode,permission_version,created_at,updated_at,version)"
+                + " values (?,?,?,?,'ACTIVE','unused',0,'ALL',0,0,0,0)", userId, "up-" + tag, "分步升级验证人", roleCode);
+        scratch.update("insert into disposal_authorization (authorization_id,authorization_no,action_type,subject_kind,subject_id,"
+                + "channel,reason,requested_by,requested_at,status,policy_version,owner_org_id,district_id,source_mode,version,created_at,updated_at)"
+                + " values (?,?,'COUNTERMEASURE','UAV_EVENT',?,'MANUAL','分两步升级验证',?,?,'REQUESTED','demo-v1',?,?,'live',0,?,?)",
+                authorizationId, "AUTH-20260908-" + tag.substring(0, 4), "subject-" + tag, userId, T0, orgId, districtId, T0, T0);
+        scratch.update("insert into disposal_authorization_event (event_id,authorization_id,event_kind,actor_id,note,snapshot,occurred_at)"
+                + " values (?,?,'REQUEST',?,?,cast('{}' as json),?)", eventId, authorizationId, userId, "分两步升级验证", T0);
+        return eventId;
+    }
+
+    private static Flyway flywayFor(String schema, String targetVersion) {
+        return Flyway.configure().dataSource(rootDataSource()).schemas(schema).defaultSchema(schema).createSchemas(false)
+                .cleanDisabled(true).locations("classpath:db/migration", "classpath:db/postgresql")
+                .target(MigrationVersion.fromVersion(targetVersion)).load();
+    }
+
+    private static Flyway flywayForAll(String schema) {
+        return Flyway.configure().dataSource(rootDataSource()).schemas(schema).defaultSchema(schema).createSchemas(false)
+                .cleanDisabled(true).locations("classpath:db/migration", "classpath:db/postgresql").load();
+    }
+
+    private static JdbcTemplate scratchTemplate(String schema) {
+        String base = requiredEnvironment("POSTGRES_TEST_URL");
+        return new JdbcTemplate(new DriverManagerDataSource(base + (base.contains("?") ? "&" : "?")
+                + "currentSchema=" + schema + ",public", requiredEnvironment("POSTGRES_TEST_USER"),
+                requiredEnvironment("POSTGRES_TEST_PASSWORD")));
     }
 
     /** 造一条已核实的无人机事件（申请路径只支持 UAV_EVENT，且策略要求 CONFIRMED）。 */

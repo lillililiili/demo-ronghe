@@ -43,5 +43,7 @@ export const targetApi = {
   },
   pointsAll(trackId, params) {
     return allPages(page => this.points(trackId, page), params);
-  }
+  },
+  /* 融合来源在线态：融合感知页用它把目标详情里的来源标成在线/离线。 */
+  fusionStatus: () => apiRequest('/fusion/status')
 };

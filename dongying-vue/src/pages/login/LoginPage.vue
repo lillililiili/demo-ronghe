@@ -9,7 +9,7 @@ import UFormFooter from '@/components/form/UFormFooter.vue';
 import { loginThemeOverrides } from '@/ui/theme.js';
 import { openModal, closeModal } from '@/ui/modal.js';
 import { toast } from '@/ui/nv.js';
-import { DEMO_PASSWORD, forgetAccount, login, rememberedAccount } from '@/services/auth.js';
+import { forgetAccount, login, rememberedAccount } from '@/services/auth.js';
 import { loginDestination } from '@/router/index.js';
 
 const route = useRoute();
@@ -32,9 +32,7 @@ function showHelp() {
     title: '忘记密码',
     width: '480px',
     render: () => h('div', { style: 'display:grid;gap:14px;line-height:1.8' }, [
-      h('p', '密码请联系系统管理员重置。平台不会通过页面显示、邮件或短信返回原密码。'),
-      h('p', ['本地超级管理员：', h('strong', 'admin1'), '　开发密码：', h('strong', DEMO_PASSWORD)]),
-      h('p', '该账号和密码仅用于本地合成数据，禁止用于共享或生产环境。'),
+      h('p', '请联系系统管理员重置密码。平台不会通过页面显示、邮件或短信返回原密码。'),
       h('p', { style: 'font-size:13px;color:var(--txt-2)' }, '“记住账号”只在本机保存账号，不保存密码或登录令牌。')
     ])
   });

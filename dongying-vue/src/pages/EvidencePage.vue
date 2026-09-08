@@ -59,12 +59,15 @@ function idem() {
 }
 
 const ledgerBody = `<div class="toolbar">
-  ${U.field('类型', U.select('kind', KIND_OPTS, st.kind))}
-  ${U.field('文件状态', U.select('status', STATUS_OPTS, st.status))}
-  ${U.field('关联对象', U.select('refKind', REF_OPTS, st.refKind))}
-  <input class="ip" id="evKw" style="width:180px" placeholder="编号 / 文件名" value="${esc(st.kw)}">
-  <span style="flex:1"></span>
-  <button class="btn" type="button" data-evact="export">导出 CSV</button>
+  <div class="toolbar-fields">
+    ${U.field('类型', U.select('kind', KIND_OPTS, st.kind))}
+    ${U.field('文件状态', U.select('status', STATUS_OPTS, st.status))}
+    ${U.field('关联对象', U.select('refKind', REF_OPTS, st.refKind))}
+    <input class="ip" id="evKw" placeholder="编号 / 文件名" value="${esc(st.kw)}">
+  </div>
+  <div class="toolbar-actions">
+    <button class="btn" type="button" data-evact="export">导出 CSV</button>
+  </div>
 </div>
 <div id="evList" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>`;
 

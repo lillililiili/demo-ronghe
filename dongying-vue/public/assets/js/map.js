@@ -60,9 +60,7 @@
         <div class="li" title="弥合段（A03）"><span class="sw" style="border-color:#ff8b3d;border-top-style:dotted"></span>推算补全段</div>
         <div class="li" title="预测段（A04）"><span class="sw" style="border-color:#22d3ee;border-top-style:dotted"></span>预测延伸段</div>
         <div class="li"><span style="width:14px;text-align:center;color:#22d3ee">●</span>设备点位</div>
-        ${(window.MOCK && window.MOCK.AIRSPACE_TYPES ? window.MOCK.AIRSPACE_TYPES : [])
-          .filter((a, i, arr) => arr.findIndex(x => x.legend === a.legend) === i)
-          .map(a => `<div class="li"><span class="sw" style="border-color:${a.color}"></span>${a.legend}</div>`).join('')}
+        <div data-legend-airspaces></div>
       </div>`;
     box.innerHTML = `<div class="mapbase"></div><canvas class="mapoverlay"></canvas>
       <div class="mapctl">
@@ -422,7 +420,21 @@
     return this;
   };
 
-  MapView.prototype.setData = function (d) { Object.assign(this.data, d); this.draw(); return this; };
+  /* 已经告警过的空域 id：draw() 逐帧执行，不去重会把控制台刷满。 */
+  const warnedMissingLayer = new Set();
+
+  MapView.prototype.setData = function (d) { Object.assign(this.data, d); this._paintAirspaceLegend(); this.draw(); return this; };
+  /* 图例里的空域行由**当前数据**推导（阶段 12 去 mock.js）：图上画了哪几类就列哪几类，
+     没有空域就整行不显示——留一个空条目比不显示更糟，那会让人以为图例坏了。 */
+  MapView.prototype._paintAirspaceLegend = function () {
+    const slot = this.box && this.box.querySelector('[data-legend-airspaces]');
+    if (!slot) return;
+    const seen = new Map();
+    (this.data.airspaces || []).forEach(a => { if (a && a.type && !seen.has(a.type)) seen.set(a.type, a.color); });
+    slot.innerHTML = [...seen].map(([type, color]) =>
+      `<div class="li"><span class="sw" style="border-color:${color}"></span>${type}</div>`).join('');
+    slot.style.display = seen.size ? '' : 'none';
+  };
   MapView.prototype.setLayer = function (k, v) { this.layers[k] = v; this.draw(); return this; };
   /* 米→像素：用当前纬度上 1° 经度的像素长度换算，粗略但足够画精度圈；不用于任何判定。 */
   MapView.prototype._metersToPx = function (meters, lat) {
@@ -700,9 +712,18 @@
 
     /* 空域 */
     (this.data.airspaces || []).forEach(a => {
-      // 图层归属读数据层声明，不在渲染层写第二份类型判断
-      const key = (window.MOCK && window.MOCK.airspaceType) ? window.MOCK.airspaceType(a.type).layer
-        : (a.type === '禁飞空域' ? 'nofly' : a.type === '适飞空域' ? 'suit' : 'limit');
+      /* 图层归属只认数据层声明的 layer，不再按 type 猜（审查第 3 轮 P2-1）。
+         原来的回落把「临时管制区」归进 limit，而数据层把它归在 nofly——同一片空域，
+         勾掉「禁飞」它不消失、勾掉「限制」它才消失，使用者无从理解。
+         漏传 layer 的空域一律不画并告警一次（按 id 去重：draw() 每帧都跑，不去重会刷屏）。 */
+      const key = a.layer;
+      if (!key) {
+        if (!warnedMissingLayer.has(a.id)) {
+          warnedMissingLayer.add(a.id);
+          console.warn('[MapView] 空域缺少 layer 字段，已跳过绘制：', a.id || a.name || a);
+        }
+        return;
+      }
       if (!this.layers[key]) return;
       // 高亮色适合暗色底图，在浅色底图上用同色相深色保持可读性。
       const ink = ({
@@ -860,9 +881,10 @@
         /* 查不到区名就不画，不能落到第一个行政区 —— 那会把一条告警画在东营区，
            而它其实在哪没人知道。兜底可以降级为"显示不了"，不可以替换成另一个实体：
            前者用户看得见，后者用户看不见。 */
-        const d = MOCK.DISTRICTS.find(x => x.name === a.district) || null;
-        if (!t && !d) return;
-        const lon = t ? t.lon : d.lon + 0.05, lat = t ? t.lat : d.lat + 0.03;
+        /* 阶段 12 去掉 mock.js 后前端不再有行政区坐标表，因此只画能定位到目标的告警。
+           这与上面那条原则一致：兜底可以降级为"显示不了"，不可以替换成另一个实体。 */
+        if (!t) return;
+        const lon = t.lon, lat = t.lat;
         const q = P(lon, lat);
         const col = a.level === '高' ? '#ff4d5e' : a.level === '中' ? '#ffb020' : '#3d8bff';
         const ph = (this.t % 70) / 70;

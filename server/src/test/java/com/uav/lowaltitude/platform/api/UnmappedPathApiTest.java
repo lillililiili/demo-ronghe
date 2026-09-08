@@ -5,6 +5,7 @@ import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -105,6 +106,32 @@ class UnmappedPathApiTest {
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.ok").value(false))
                 .andExpect(jsonPath("$.error.code").value("TARGET_NOT_FOUND"));
+    }
+
+    /**
+     * 决策 12-6：已映射路径用错 HTTP 方法是 405 `METHOD_NOT_ALLOWED`，不是兜底的 500。
+     * 与 404 同因：把"客户端打错了"报成"服务坏了"，前端会照 500 重试，错误告警也被污染。
+     * `Allow` 是 HTTP 规范要求的必要信息（告诉客户端该用哪个方法），但响应体仍不回显路径。
+     */
+    @Test
+    void wrongMethodOnMappedPathIs405WithAllowHeader() throws Exception {
+        mvc.perform(post("/api/v1/targets").header("Authorization", "Bearer " + sessionId))
+                .andExpect(status().isMethodNotAllowed())
+                .andExpect(header().string("Allow", containsString("GET")))
+                .andExpect(content().contentTypeCompatibleWith("application/json"))
+                .andExpect(jsonPath("$.ok").value(false))
+                .andExpect(jsonPath("$.error.code").value("METHOD_NOT_ALLOWED"))
+                .andExpect(jsonPath("$.error.message").value("请求方法不支持"))
+                .andExpect(jsonPath("$.data").doesNotExist())
+                .andExpect(content().string(not(containsString("/api/v1/targets"))));
+    }
+
+    /** 鉴权仍在路由之前：未登录时错方法也只能得到 401，405 不该泄露"这条路由存在"。 */
+    @Test
+    void wrongMethodWithoutSessionIsStill401() throws Exception {
+        mvc.perform(post("/api/v1/targets"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code").value("UNAUTHENTICATED"));
     }
 
     @Test

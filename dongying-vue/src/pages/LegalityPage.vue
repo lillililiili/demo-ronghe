@@ -317,6 +317,7 @@ function openAlarm() {
 async function loadKpi() {
   // 当日窗口按北京时间取 [今日 00:00, 明日 00:00)，不随浏览器所在时区漂移；北京无夏令时，固定 UTC+8。无权限显示“无权限”而不是 0。
   const timezone = 'Asia/Shanghai';
+  // 非展示用：把当下折算成北京时区的年月日，用来拼查询窗口，不上屏。
   const parts = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
   const pick = type => Number(parts.find(part => part.type === type)?.value);
   const from = new Date(Date.UTC(pick('year'), pick('month') - 1, pick('day')) - 8 * 60 * 60 * 1000);

@@ -116,10 +116,11 @@
     c.strokeRect(W / 2 - 3, H / 2 - 3, 6, 6);
 
     /* OSD 叠加信息 */
-    const dt = new Date(MOCK.CONF.demoTime.getTime() + t * 33);
+    /* 阶段 12：不再依赖 mock.js 的演示时钟，OSD 用真实时间。 */
+    const dt = new Date();
     c.font = '10.5px Menlo'; c.fillStyle = ir ? '#e8e8e8' : '#c9f5dc';
     c.fillText((this.opt.device || '光电吊舱-02') + ' · ' + (ir ? 'IR 热成像' : 'EO 可见光') + ' · 4K', 10, 16);
-    c.fillText(MOCK.util.fmtDT(dt), 10, H - 26);
+    c.fillText(dt.toLocaleString('zh-CN', { hour12: false }), 10, H - 26);
     c.fillText('AZ ' + (118 + Math.sin(t * .013) * 12).toFixed(1) + '°  EL ' + (12 + Math.cos(t * .019) * 4).toFixed(1) + '°  ZOOM ' + (8 + Math.sin(t * .008) * 2).toFixed(1) + 'x', 10, H - 12);
     const bit = Math.floor(t / 30) % 2 === 0;
     if (bit) { c.fillStyle = '#ff4d5e'; c.beginPath(); c.arc(W - 52, 12, 4, 0, 7); c.fill(); }

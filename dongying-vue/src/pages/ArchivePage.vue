@@ -82,6 +82,7 @@ async function exportCsv() {
     const blob = await systemApi.auditCsv(params(false));
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
+    // 非展示用：只做导出文件名的日期后缀，不上屏，不参与任何判定。
     link.href = url; link.download = `audit-logs-${new Date().toISOString().slice(0, 10)}.csv`;
     document.body.appendChild(link); link.click(); link.remove(); URL.revokeObjectURL(url);
     toast('审计日志已导出', 'ok');

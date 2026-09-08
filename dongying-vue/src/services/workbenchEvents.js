@@ -1,7 +1,8 @@
 /* “我的工作台”统一事件适配层：把后端工作台摘要映射成页面视图模型，并提供导航与源对象读取。
  * 这里只统一入口、分类和待办提示，不改写三类业务各自的状态机，也不再写任何内存状态：
  * 队列、计数、详情全部来自 GET /workbench/items；核实委托 alarmApi/riskApi，通知委托 handoffApi（待领导接线）。 */
-import { RISK_STATE_LABEL, SEVERITY_LABEL, SEVERITY_TAG, SOURCE_MODE_LABEL, labelOf } from '@/ui/labels.js';
+import { disposalStatusText, RISK_STATE_LABEL, SEVERITY_LABEL, SEVERITY_TAG, SOURCE_MODE_LABEL, labelOf } from '@/ui/labels.js';
+import { disposalApi } from '@/services/disposalApi.js';
 import { getWorkbenchItem, listWorkbenchItems } from '@/services/workbenchApi.js';
 import { getAlarm, getUavEvent } from '@/services/alarmApi.js';
 import { riskApi } from '@/services/riskApi.js';
@@ -47,7 +48,8 @@ function nextStep(item) {
   if (item.kind === 'UAV_EVENT') {
     if (actions.includes('VERIFY')) return { action: '人工核实', kind: 'verify', allowed: true, blocker: null, hint: '核实结论进入无人机事件核实历史；属实只表示已核实、待处置。' };
     if (item.state === 'PENDING_VERIFICATION' || item.state === 'EVIDENCE_REQUIRED') return { action: '人工核实', kind: 'verify', allowed: false, blocker: '需要 alarm:verify 核实权限', hint: '当前账号只能查看，不能提交核实结论。' };
-    if (item.state === 'CONFIRMED') return { action: '联动反制', kind: 'countermeasure', allowed: false, blocker: blocked || BLOCKED_REASON_LABEL.COUNTERMEASURE_NOT_CONNECTED, hint: '已核实，待处置。' };
+    // 阶段 13：已核实的事件可以发起联动反制申请。按钮只负责提申请，能否执行由审批与时限决定。
+    if (item.state === 'CONFIRMED') return { action: '联动反制', kind: 'countermeasure', allowed: true, blocker: null, hint: '发起联动反制申请：需另一位有审批权限的人批准后才能执行' };
     return null;
   }
   if (item.kind === 'RISK') {
@@ -79,13 +81,30 @@ export function summarize(item) {
   };
 }
 
-/** 无人机事件流程条：反制与通知处罚部门本期未接入，只能显示为“未接入”，不能显示为已完成。 */
-export function uavSteps(state) {
+/**
+ * 无人机事件流程条。
+ * 阶段 13：联动反制按该事件的最新授权显示真实状态——完成 = 存在 COMPLETED 授权，
+ * 进行中 = APPROVED/EXECUTING；没有授权说“尚无授权”，读不到说“尚未接入”，三者不能混为一谈。
+ * 通知处罚部门仍未接入。
+ * @param {object|null} [counter] 该事件最新的 COUNTERMEASURE 授权；`null` 表示没有；`undefined` 表示没读到
+ */
+export function uavSteps(state, counter) {
   const verified = ['CONFIRMED', 'FALSE_POSITIVE'].includes(state);
+  const counterStep = () => {
+    if (state === 'FALSE_POSITIVE') return { n: '联动反制', done: false, act: false, t: '误报终止' };
+    if (counter === undefined) return { n: '联动反制', done: false, act: false, t: '未接入' };
+    if (!counter) return { n: '联动反制', done: false, act: false, t: '尚无授权' };
+    return {
+      n: '联动反制',
+      done: counter.status === 'COMPLETED',
+      act: ['APPROVED', 'EXECUTING'].includes(counter.status),
+      t: disposalStatusText(counter)
+    };
+  };
   return [
     { n: '告警接收', done: true },
     { n: '人工核实', done: verified, act: !verified, t: state === 'EVIDENCE_REQUIRED' ? '证据待补充' : null },
-    { n: '联动反制', done: false, act: false, t: state === 'FALSE_POSITIVE' ? '误报终止' : '未接入' },
+    counterStep(),
     { n: '通知处罚部门', done: false, act: false, t: '未接入' }
   ];
 }
@@ -109,8 +128,8 @@ export function deviceSteps(state) {
   return ['原因与确认', '下发重启', '等待回执', '恢复校验与关闭'].map((n, i) => ({ n, done: i < idx || state === 'RECOVERED', act: i === idx && state !== 'RECOVERED', t: i === idx && state !== 'RECOVERED' ? '未接入工作台' : null }));
 }
 
-export function stepsOf(kind, state) {
-  return kind === 'UAV_EVENT' ? uavSteps(state) : kind === 'RISK' ? riskSteps(state) : deviceSteps(state);
+export function stepsOf(kind, state, counter) {
+  return kind === 'UAV_EVENT' ? uavSteps(state, counter) : kind === 'RISK' ? riskSteps(state) : deviceSteps(state);
 }
 
 /** 拉取一页工作台队列；返回摘要与同快照的计数/可用性。 */
@@ -134,7 +153,21 @@ export function workbenchStats(data) {
 export async function getWorkbenchDetail(kind, sourceId) {
   const data = await getWorkbenchItem(kind, sourceId);
   const summary = summarize(data.item);
-  return { kind, summary, item: data.item, timeline: data.timeline || [], availability: data.availability || {}, steps: stepsOf(kind, data.item.state) };
+  // 反制状态来自处置授权（阶段 13）：读不到时传 undefined，流程条显示“未接入”而不是“尚无授权”。
+  const counter = kind === 'UAV_EVENT' ? await latestCountermeasure(sourceId) : undefined;
+  return { kind, summary, item: data.item, timeline: data.timeline || [], availability: data.availability || {}, steps: stepsOf(kind, data.item.state, counter) };
+}
+
+/** 该事件最新的联动反制授权：没有返回 null，读不到返回 undefined（两者在流程条上说法不同）。 */
+async function latestCountermeasure(eventId) {
+  try {
+    const page = await disposalApi.list({ subject_kind: 'UAV_EVENT', subject_id: eventId, action_type: 'COUNTERMEASURE', page: 1, size: 20 });
+    const rows = page?.items || [];
+    if (!rows.length) return null;
+    return rows.reduce((latest, row) => (Number(row.requested_at || 0) >= Number(latest.requested_at || 0) ? row : latest), rows[0]);
+  } catch {
+    return undefined;
+  }
 }
 
 /** 核实弹窗需要源对象（含 version/allowed_actions）；告警读取失败不阻塞核实，只影响展示。 */

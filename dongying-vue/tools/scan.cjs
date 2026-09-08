@@ -80,16 +80,35 @@ const RULES = [
     skipWindow: /violation_reasons|legal_status|risk_level/
   },
   {
-    /* 平台当前时刻只有一个来源 M.now()。第二个时间源即使公式相同也会对不齐 ——
-       app.js 的顶栏时钟原来自己捕获起点，比 M.now() 慢 5 秒；situation.js 的处置日志
-       直接用机器时间，连时区都不同（平台显示 10:42，日志写 04:10）。
-       app.js 一并纳入、不留例外：留了例外，下一个人就会把新的时间源写进外壳层。 */
-    name: '页面与外壳层不得直接取系统时间（展示用时间戳须派生自 M.now()）',
-    re: /new Date\s*\(\s*\)|Date\.now\s*\(/g,
-    why: '第二个时间源与 M.now() 必然对不齐；界面上会同时出现两个"当前时刻"',
-    // 注意：onlyFiles 匹配的是**绝对路径**，不能用 ^ 锚定。写 ^assets/... 会永不匹配，
+    /* 界面上的"当前时刻"只能有一个来源。历史教训：app.js 的顶栏时钟自己捕获起点，比数据层的
+       M.now() 慢 5 秒；situation.js 的处置日志直接用机器时间，连时区都不同（平台显示 10:42，日志写 04:10）。
+
+       阶段 12（决策 12-12）更新：mock.js 连同 M.now() 已删除，规则原先要求的替代物不复存在。
+       - 移出 video.js：它的 new Date() 是假视频画布的 OSD 叠字，只显示、不参与任何判定，
+         且与顶栏同用系统时间、不会对不齐。用豁免注释绕过是不诚实的——豁免词是"非展示用"，而它确实是展示用。
+       - 移出 app.js / search.js / pages/：这三者已在阶段 12 删除，留着只会让人以为它们仍被覆盖；
+         按本文件自己的告诫，一条永不匹配的作用域和不存在没有区别。
+
+       阶段 12 评审第 5 轮更新：作用域扩到 src/ 的 .vue/.js。只守绘图外壳层挡不住真正会发生的那件事——
+       页面（SituationPage 之类）自己长出第二个时钟；而顶栏时钟本身就在 src/ 下，规则却够不着它所保护的东西。
+
+       同时把匹配收窄到 new Date()。Date.now() 在 src/ 下命中 12 个文件，几乎全是幂等键
+       （`crypto.randomUUID?.() || `${Date.now()}-…``）与查询参数，不是时钟；连它一起报会产生
+       约 18 条"这是幂等键"的豁免，把规则训练成随手放行的噪音——那才是第二个时钟真正溜进来的路。
+       展示用时钟的写法是 new Date()，收窄不放过它。
+
+       skipFiles 里的两个文件本身就是时钟，不能用豁免注释（豁免词是"非展示用"，而它们确实是展示用）：
+       - layout/HeaderBar.vue：全站唯一的顶栏时钟，本规则要保护的正是它的唯一性。
+       - pages/bigscreen/BigScreenApp.vue：独立全屏视图，不与顶栏同屏出现，且同用系统时间、不会对不齐。
+       其余正当用法（导出文件名、KPI 查询窗口、时区格式化）不是时钟，走相邻行"非展示用"按行豁免，
+       而不是整文件放行——那些页面日后真长出时钟，仍然会被拦下。 */
+    name: '界面上只能有一个时钟（展示用当前时刻只由顶栏时钟提供）',
+    re: /new Date\s*\(\s*\)/g,
+    why: '第二个时间源即使公式相同也会与顶栏时钟对不齐；界面上会同时出现两个"当前时刻"',
+    // 注意：onlyFiles/skipFiles 匹配的是**绝对路径**，不能用 ^ 锚定。写 ^assets/... 会永不匹配，
     // 而规则照样显示绿灯 —— 一条作用域为空的规则和不存在没有区别。
-    onlyFiles: /pages\/.*\.js$|assets\/js\/(app|ui|map|charts|video|search)\.js$/,
+    onlyFiles: /(assets\/js\/(ui|map|charts)\.js|src\/.*\.(vue|js))$/,
+    skipFiles: /src\/(layout\/HeaderBar\.vue|pages\/bigscreen\/BigScreenApp\.vue)$/,
     // 豁免必须在相邻行显式声明用途，不接受隐式匹配
     skipWindow: /性能计时|耗时测量|逐帧动画|requestAnimationFrame|非展示用/
   },
@@ -152,6 +171,9 @@ for (const rule of RULES) {
   const hits = [];
   for (const f of FILES) {
     if (rule.onlyFiles && !rule.onlyFiles.test(f)) continue;
+    // 整文件放行只用于"这个文件本身就是被保护的那个东西"的情形；
+    // 按行豁免（skipWindow）优先，它日后仍能拦住同一文件里新长出的违规。
+    if (rule.skipFiles && rule.skipFiles.test(f)) continue;
     const text = fs.readFileSync(f, 'utf8');
     /* 块注释的**续行**也是注释：`/* ... ` 之后、`*​/` 之前的每一行都不是代码。
        只判断行首 // 或 * 会漏掉不以 * 开头的续行 —— 我写的那段说明里提到

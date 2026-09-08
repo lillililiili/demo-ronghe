@@ -11,6 +11,8 @@ import { openFormModal } from '@/ui/formModal.js';
 import { isUncertainOutcome } from '@/services/apiClient.js';
 import { createHandoff, listHandoffRecipients, newHandoffIdempotencyKey } from '@/services/handoffApi.js';
 import { openUavVerification } from '@/ui/uavVerificationModal.js';
+import { disposalApi } from '@/services/disposalApi.js';
+import { openDisposalRequest } from '@/ui/disposalAuthModal.js';
 import { openRiskVerification } from '@/ui/riskVerificationModal.js';
 import { authUser } from '@/services/auth.js';
 import { CONCLUSION_LABEL, RISK_CONCLUSION_LABEL, DELIVERY_STATUS_LABEL, HANDOFF_BLOCKED_LABEL, HANDOFF_TYPE_LABEL, RISK_TYPE_LABEL, labelOf, verificationOrdinal } from '@/ui/labels.js';
@@ -170,6 +172,20 @@ async function runUavAction() {
   acting.value = true;
   try {
     const eventId = d.summary.sourceId;
+    // 阶段 13：已核实事件的下一步是发起联动反制申请，走与告警页同一个授权弹窗。
+    if (td.kind === 'countermeasure') {
+      let policy = null;
+      try { policy = await disposalApi.policies(); } catch { policy = null; }
+      openDisposalRequest({
+        actionType: 'COUNTERMEASURE',
+        subjectKind: 'UAV_EVENT',
+        subjectId: eventId,
+        subjectText: d.summary.title || eventId,
+        policy,
+        refresh: async () => { await refreshAll(); return null; }
+      });
+      return;
+    }
     const { event, alarm } = await loadUavSource(eventId);
     openUavVerification({
       event, alarm,

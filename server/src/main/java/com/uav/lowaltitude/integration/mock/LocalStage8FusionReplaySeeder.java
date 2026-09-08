@@ -63,6 +63,13 @@ public class LocalStage8FusionReplaySeeder implements ApplicationRunner {
         ensureScope();
         SOURCES.forEach(this::ensureSource);
         // 阶段 8.5 起默认摄取直连报文数据集（v2）；v1 的自建信封仍可读，留给需要复现阶段 8 结论的回归。
+        // 已灌过就不再灌：数据集内容会随版本漂移（如 1692e10 改了 SenseData 的 deviceId），
+        // 旧构建灌进去的同键报文哈希不同，重灌会以 SOURCE_MESSAGE_CONFLICT 把应用拦在启动阶段。
+        // 库里已有的观测与目标是那次灌入的产物，原样保留；要拿新数据集重来，换一个库。
+        if (runner.alreadyLoadedV2()) {
+            log.warn("stage 8.5 direct-access replay seed skipped: dataset already loaded (possibly by an older build); keeping existing rows");
+            return;
+        }
         LoadReport report = runner.loadV2();
         int frames = drain();
         log.info("stage 8.5 direct-access replay seed: dataset={}, records={}, inserted={}, skipped={}, frames processed={}",

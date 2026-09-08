@@ -60,6 +60,23 @@ class LocalStage8FusionReplaySeederTest {
         assertThat(jdbc.queryForObject("select count(*) from target_lineage where op='CREATE'", Long.class)).isPositive();
     }
 
+    /**
+     * 升级路径：旧构建已把数据集灌进库（例如 1692e10 之前生成的 SenseData 载荷），新构建生成的同键报文哈希不同。
+     * 种子不能因此让整个应用起不来——已灌过的数据集应原样保留、跳过重灌，而不是抛 SOURCE_MESSAGE_CONFLICT。
+     */
+    @Test
+    void skipsReloadWhenDatasetAlreadyLoadedByAnOlderBuild() {
+        seeder.run(arguments);
+        Map<String, Long> before = counts();
+        // 把库里已有的一条直连报文改成"旧构建的哈希"，模拟数据集内容随版本漂移。
+        int changed = jdbc.update("update inbox_message set payload_hash='0000000000000000000000000000000000000000000000000000000000000000' where inbox_id in "
+                + "(select inbox_id from inbox_message where " + DIRECT_SOURCES + " order by inbox_id limit 1)");
+        assertThat(changed).isEqualTo(1);
+        seeder.run(arguments);
+        assertThat(counts()).isEqualTo(before);
+        assertThat(jdbc.queryForObject("select count(*) from inbox_message where payload_hash='0000000000000000000000000000000000000000000000000000000000000000'", Long.class)).isEqualTo(1L);
+    }
+
     @Test
     void profileAndPropertyGatesExcludeProductionEvenWhenLocalIsAlsoActive() {
         Profile profile = LocalStage8FusionReplaySeeder.class.getAnnotation(Profile.class);

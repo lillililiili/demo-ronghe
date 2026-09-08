@@ -482,14 +482,17 @@ onUnmounted(() => { document.removeEventListener('click', onDocumentClick); dest
     <div class="row airspace-main">
       <UPanel title="空域列表" panel-style="flex:1.15" nopad>
         <div class="toolbar airspace-toolbar">
-          <div class="field"><label>种类</label><UControl v-model="filters.kind_code" type="select" :options="KIND_OPTIONS" :disabled="loading" size="small" @update:model-value="applyFilters" /></div>
-          <div class="field"><label>生效状态</label><UControl v-model="filters.validity" type="select" :options="VALIDITY_OPTIONS" :disabled="loading" size="small" /></div>
-          <div class="field"><label>机构</label><UControl v-model="filters.owner_org_id" placeholder="机构标识" :disabled="loading" size="small" @keyup.enter="applyFilters" /></div>
-          <div class="field"><label>区域</label><UControl v-model="filters.district_id" placeholder="区域标识" :disabled="loading" size="small" @keyup.enter="applyFilters" /></div>
-          <button class="btn" type="button" :disabled="loading" @click="applyFilters">查询</button>
-          <span style="flex:1"></span>
-          <button class="btn pri" type="button" :disabled="!canManage || busy" :title="canManage ? '' : manageBlockedNote" @click="openCreate">新建空域</button>
-          <button class="btn" type="button" :disabled="!canManage || busy" :title="canManage ? '' : manageBlockedNote" @click="openImport">导入文件</button>
+          <div class="toolbar-fields">
+            <div class="field"><label>种类</label><UControl v-model="filters.kind_code" type="select" :options="KIND_OPTIONS" :disabled="loading" size="small" @update:model-value="applyFilters" /></div>
+            <div class="field"><label>生效状态</label><UControl v-model="filters.validity" type="select" :options="VALIDITY_OPTIONS" :disabled="loading" size="small" /></div>
+            <div class="field"><label>机构</label><UControl v-model="filters.owner_org_id" placeholder="机构标识" :disabled="loading" size="small" @keyup.enter="applyFilters" /></div>
+            <div class="field"><label>区域</label><UControl v-model="filters.district_id" placeholder="区域标识" :disabled="loading" size="small" @keyup.enter="applyFilters" /></div>
+          </div>
+          <div class="toolbar-actions">
+            <button class="btn" type="button" :disabled="loading" @click="applyFilters">查询</button>
+            <button class="btn pri" type="button" :disabled="!canManage || busy" :title="canManage ? '' : manageBlockedNote" @click="openCreate">新建空域</button>
+            <button class="btn" type="button" :disabled="!canManage || busy" :title="canManage ? '' : manageBlockedNote" @click="openImport">导入文件</button>
+          </div>
         </div>
 
         <div v-if="error" class="empty">{{ error }}</div>
@@ -635,11 +638,9 @@ onUnmounted(() => { document.removeEventListener('click', onDocumentClick); dest
 
 <style scoped>
 /* 页面根是 .view（display:block），三栏要占满可视高度必须自己成为纵向 flex 容器，与告警/飞行计划页一致。 */
+/* 工具栏布局与控件定宽统一到 controls.css 的 .toolbar/.toolbar-fields（决策 12-15）。 */
 .airspace-page { display: flex; flex-direction: column; height: 100%; min-height: 0; overflow: hidden; }
 .airspace-main { flex: 1; min-height: 0; gap: 10px; }
-.airspace-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 10px; }
-.airspace-page :deep(.airspace-toolbar .n-select) { width: 132px; }
-.airspace-page :deep(.airspace-toolbar .n-input) { width: 148px; }
 .airspace-list { overflow: auto; flex: 1; }
 /* 四列必须在面板内排得下：名称列吸收剩余宽度并允许折行，避免整表横向溢出把归属列挤出视野。 */
 .airspace-list table { table-layout: fixed; width: 100%; }

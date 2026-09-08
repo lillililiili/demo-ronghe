@@ -1017,21 +1017,25 @@ onUnmounted(() => {
                   <span class="tag t-gray" style="margin-left:4px">{{ riskTab === 'notice' ? noticesTotal : '交接' }}</span></button>
               </div>
               <template v-if="riskTab === 'event'">
-                <div class="field"><label>风险等级</label><UControl v-model="riskFilters.severity" type="select" :options="riskSeverityOptions" :disabled="riskLoading" size="small" @update:model-value="applyRiskFilters" /></div>
-                <div class="field" :title="NO_TYPE_FILTER_NOTE"><label>目标类型</label><UControl v-model="riskTypeFilterDisabled" type="select" :options="riskTypeOptions" disabled size="small" /></div>
-                <div class="field"><label>状态</label><UControl v-model="riskFilters.state" type="select" :options="riskStateOptions" :disabled="riskLoading" size="small" @update:model-value="applyRiskFilters" /></div>
-                <div class="field rk-range"><label>发生时间</label><UControl v-model="riskFilters.occurred" type="datetimerange" clearable :disabled="riskLoading" size="small" start-placeholder="开始" end-placeholder="结束" /></div>
-                <div class="field" :title="canFilterByPlan ? '按已保存计划 ID 筛选（服务端要求 flight:read）' : '无 flight:read 权限，阶段 4 契约不允许以计划 ID 筛选'"><label>计划标识</label><UControl v-model="riskFilters.plan_id" placeholder="内部计划标识" :disabled="riskLoading || !canFilterByPlan" size="small" @keyup.enter="applyRiskFilters" /></div>
-                <div class="field"><label>组织</label><UControl v-model="riskFilters.owner_org_id" placeholder="机构标识" :disabled="riskLoading" size="small" @keyup.enter="applyRiskFilters" /></div>
-                <div class="field"><label>区域</label><UControl v-model="riskFilters.district_id" placeholder="区域标识" :disabled="riskLoading" size="small" @keyup.enter="applyRiskFilters" /></div>
-                <div class="field"><label>来源模式</label><UControl v-model="riskFilters.source_mode" placeholder="source_mode" :disabled="riskLoading" size="small" @keyup.enter="applyRiskFilters" /></div>
-                <button class="btn" type="button" :disabled="riskLoading" @click="applyRiskFilters">查询</button>
-                <span style="flex:1"></span>
-                <span class="rk-sort-note" :title="FIXED_SORT_NOTE">服务端固定按接收时间倒序</span>
+                <div class="toolbar-fields">
+                  <div class="field"><label>风险等级</label><UControl v-model="riskFilters.severity" type="select" :options="riskSeverityOptions" :disabled="riskLoading" size="small" @update:model-value="applyRiskFilters" /></div>
+                  <div class="field" :title="NO_TYPE_FILTER_NOTE"><label>目标类型</label><UControl v-model="riskTypeFilterDisabled" type="select" :options="riskTypeOptions" disabled size="small" /></div>
+                  <div class="field"><label>状态</label><UControl v-model="riskFilters.state" type="select" :options="riskStateOptions" :disabled="riskLoading" size="small" @update:model-value="applyRiskFilters" /></div>
+                  <div class="field rk-range"><label>发生时间</label><UControl v-model="riskFilters.occurred" type="datetimerange" clearable :disabled="riskLoading" size="small" start-placeholder="开始" end-placeholder="结束" /></div>
+                  <div class="field" :title="canFilterByPlan ? '按已保存计划 ID 筛选（服务端要求 flight:read）' : '无 flight:read 权限，阶段 4 契约不允许以计划 ID 筛选'"><label>计划标识</label><UControl v-model="riskFilters.plan_id" placeholder="内部计划标识" :disabled="riskLoading || !canFilterByPlan" size="small" @keyup.enter="applyRiskFilters" /></div>
+                  <div class="field"><label>组织</label><UControl v-model="riskFilters.owner_org_id" placeholder="机构标识" :disabled="riskLoading" size="small" @keyup.enter="applyRiskFilters" /></div>
+                  <div class="field"><label>区域</label><UControl v-model="riskFilters.district_id" placeholder="区域标识" :disabled="riskLoading" size="small" @keyup.enter="applyRiskFilters" /></div>
+                  <div class="field"><label>来源模式</label><UControl v-model="riskFilters.source_mode" placeholder="source_mode" :disabled="riskLoading" size="small" @keyup.enter="applyRiskFilters" /></div>
+                </div>
+                <div class="toolbar-actions">
+                  <button class="btn" type="button" :disabled="riskLoading" @click="applyRiskFilters">查询</button>
+                  <span class="toolbar-note" :title="FIXED_SORT_NOTE">服务端固定按接收时间倒序</span>
+                </div>
               </template>
               <template v-else>
-                <span style="flex:1"></span>
-                <span class="rk-sort-note">交接记录来自服务端；提交成功只表示材料入库，不表示已发送</span>
+                <div class="toolbar-actions">
+                  <span class="toolbar-note">交接记录来自服务端；提交成功只表示材料入库，不表示已发送</span>
+                </div>
               </template>
             </div>
 
@@ -1161,12 +1165,16 @@ onUnmounted(() => {
       <div class="row flight-main">
         <UPanel title="飞行计划与活动" :panel-style="'flex:1.1;min-width:0'" nopad>
           <div class="toolbar plan-toolbar">
-            <div class="field"><label>状态</label><UControl v-model="filters.status_code" type="select" :options="statusOptions" :disabled="loading" /></div>
-            <div class="field plan-keyword"><label>关键字</label><UControl v-model="filters.keyword" placeholder="计划编号 / 无人机序列号" :disabled="loading" @keyup.enter="applyFilters" /></div>
-            <div class="field"><label>组织</label><UControl v-model="filters.owner_org_id" placeholder="机构标识" :disabled="loading" @keyup.enter="applyFilters" /></div>
-            <div class="field"><label>区域</label><UControl v-model="filters.district_id" placeholder="区域标识" :disabled="loading" @keyup.enter="applyFilters" /></div>
-            <button class="btn" type="button" :disabled="loading" @click="applyFilters">查询</button>
-            <span class="spacer"></span><button class="btn" type="button" disabled title="尚未接入">导出（尚未接入）</button>
+            <div class="toolbar-fields">
+              <div class="field"><label>状态</label><UControl v-model="filters.status_code" type="select" :options="statusOptions" :disabled="loading" /></div>
+              <div class="field plan-keyword"><label>关键字</label><UControl v-model="filters.keyword" placeholder="计划编号 / 无人机序列号" :disabled="loading" @keyup.enter="applyFilters" /></div>
+              <div class="field"><label>组织</label><UControl v-model="filters.owner_org_id" placeholder="机构标识" :disabled="loading" @keyup.enter="applyFilters" /></div>
+              <div class="field"><label>区域</label><UControl v-model="filters.district_id" placeholder="区域标识" :disabled="loading" @keyup.enter="applyFilters" /></div>
+            </div>
+            <div class="toolbar-actions">
+              <button class="btn" type="button" :disabled="loading" @click="applyFilters">查询</button>
+              <button class="btn" type="button" disabled title="尚未接入">导出（尚未接入）</button>
+            </div>
           </div>
           <div v-if="loading" class="empty">正在读取飞行计划…</div>
           <div v-else-if="!plans.length" class="empty">暂无可访问的飞行计划</div>
@@ -1287,11 +1295,7 @@ onUnmounted(() => {
 .flights-page { min-width: 0; }
 .flight-main { margin-top: 12px; align-items: stretch; gap: var(--gap); height: max(812px, calc(100vh - 332px)); }
 .flight-right { flex: 1; min-width: 560px; display: grid; grid-template-rows: 320px minmax(460px, 1fr); gap: var(--gap); }
-.toolbar { display: flex; gap: 8px; padding: 10px; flex-wrap: wrap; align-items: center; }
-/* UControl 根节点是 naive 的 .n-select/.n-input（默认 width:100%），必须用 :deep 定宽，否则每个控件独占一行。 */
-.plan-toolbar .field :deep(.n-select), .plan-toolbar .field :deep(.n-input) { width: 158px; }
-.plan-toolbar .plan-keyword :deep(.n-input) { width: 190px; }
-.toolbar .spacer { flex: 1; }
+/* 控件定宽已统一到 controls.css 的 .toolbar .field（决策 12-15）：各页各定一个宽度正是换行位置对不齐的根因。 */
 .tb-wrap { overflow: auto; }
 .tb tr { cursor: pointer; }
 .tb tr.on { background: rgba(34, 211, 238, .12); }
@@ -1311,11 +1315,7 @@ onUnmounted(() => {
 .rk-map-empty { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 12px; font-size: 12px; }
 .rk-legend { flex: none; height: 18px; line-height: 18px; font-size: 10.5px; color: var(--txt-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rk-list { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-.risk-toolbar { gap: 6px 10px; }
 .risk-toolbar .tabs .tab { padding: 6px 10px; font-size: 13px; }
-.risk-toolbar .field :deep(.n-select), .risk-toolbar .field :deep(.n-input) { width: 108px; }
-.risk-toolbar .rk-range :deep(.n-date-picker) { width: 300px; }
-.rk-sort-note { font-size: 11px; color: var(--txt-3); white-space: nowrap; }
 .rk-sort { color: inherit; cursor: not-allowed; text-decoration: underline dotted; text-underline-offset: 3px; text-decoration-color: rgba(156, 198, 255, .3); opacity: .75; }
 .rk-error { margin: 8px 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .rk-id { display: inline-block; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }

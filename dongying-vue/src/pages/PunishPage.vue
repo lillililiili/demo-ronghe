@@ -20,10 +20,14 @@ import UPagination from '@/components/UPagination.vue';
 import UControl from '@/components/form/UControl.vue';
 import { handoffApi } from '@/services/handoffApi.js';
 import { getEvidenceChain } from '@/services/evidenceApi.js';
+import { disposalApi, isDisposalUnavailable } from '@/services/disposalApi.js';
+import { DISPOSAL_UNAVAILABLE_TEXT } from '@/ui/disposalAuthModal.js';
 import {
-  DELIVERY_STATUS_LABEL, EVIDENCE_COVERAGE_LABEL, EVIDENCE_RECORD_TYPE_LABEL, HANDOFF_BLOCKED_LABEL,
-  HANDOFF_KIND_LABEL, HANDOFF_TYPE_LABEL, REASON_CODE_LABEL, RECEIPT_STATUS_LABEL, RISK_CONCLUSION_LABEL,
-  RISK_STATE_LABEL, RISK_TYPE_LABEL, SEVERITY_LABEL, SEVERITY_TAG, SOURCE_MODE_LABEL, labelOf, verificationOrdinal
+  DELIVERY_STATUS_LABEL, DISPOSAL_ACTION_LABEL, DISPOSAL_BLOCK_REASON_LABEL, DISPOSAL_CHANNEL_LABEL,
+  DISPOSAL_EVENT_KIND_LABEL, DISPOSAL_RESULT_LABEL, disposalStatusText, EVIDENCE_COVERAGE_LABEL,
+  EVIDENCE_RECORD_TYPE_LABEL, HANDOFF_BLOCKED_LABEL, HANDOFF_KIND_LABEL, HANDOFF_TYPE_LABEL,
+  REASON_CODE_LABEL, RECEIPT_STATUS_LABEL, RISK_CONCLUSION_LABEL, RISK_STATE_LABEL, RISK_TYPE_LABEL,
+  SEVERITY_LABEL, SEVERITY_TAG, SOURCE_MODE_LABEL, labelOf, verificationOrdinal
 } from '@/ui/labels.js';
 import { openEvidenceFileModal } from '@/ui/evidenceFileDetail.js';
 import {
@@ -66,6 +70,30 @@ const kpiFailed = ref({ all: false, pending: false, delivered: false });
 const detailLoading = ref(false);
 const detailError = ref('');
 const selected = ref(null);
+/* 阶段 13：所选交接对应主体的处置授权记录。读不到（13.1 未落地时是 404）就显示原因，绝不显示空列表冒充“没有授权”。 */
+const disposals = ref([]);
+const disposalError = ref('');
+const disposalUnavailable = ref(false);
+const disposalEvents = ref([]);
+
+async function loadDisposals(row) {
+  disposals.value = []; disposalEvents.value = []; disposalError.value = ''; disposalUnavailable.value = false;
+  if (!row?.source_id || !row?.source_kind) return;
+  try {
+    const page = await disposalApi.list({ subject_kind: row.source_kind, subject_id: row.source_id, page: 1, size: 50 });
+    disposals.value = page?.items || [];
+    // 只取最新一条授权的事件流：处置经过要能追溯到人和时刻，多条时由授权详情页展开。
+    const latest = disposals.value[0];
+    if (latest?.authorization_id) {
+      const events = await disposalApi.events(latest.authorization_id, { page: 1, size: 50 });
+      // 事件流接口返回的是裸数组（不是分页对象）：两种形状都接住，免得接口小改动就把经过悄悄变空。
+      disposalEvents.value = Array.isArray(events) ? events : (events?.items || []);
+    }
+  } catch (error) {
+    disposalUnavailable.value = isDisposalUnavailable(error);
+    disposalError.value = disposalUnavailable.value ? DISPOSAL_UNAVAILABLE_TEXT : messageOf(error);
+  }
+}
 const deliveries = ref([]);
 const deliveriesTotal = ref(0);
 const deliveriesPage = ref(1);
@@ -211,6 +239,7 @@ async function loadDetail(handoffId) {
     ]);
     if (token !== detailToken) return;
     selected.value = detail;
+    loadDisposals(detail);              // 授权记录与交接详情并行呈现：读失败不影响交接本身
     deliveries.value = history.items || [];
     deliveriesTotal.value = history.total;
     deliveriesPage.value = history.page;
@@ -218,6 +247,7 @@ async function loadDetail(handoffId) {
   } catch (requestError) {
     if (token !== detailToken) return;
     selected.value = null;
+    disposals.value = []; disposalEvents.value = []; disposalError.value = ''; disposalUnavailable.value = false;
     deliveries.value = [];
     deliveriesTotal.value = 0;
     chain.value = null;
@@ -342,14 +372,17 @@ onMounted(() => {
             <UPanel title="业务交接清单" sub="提交成功只表示材料入库，不表示已发送、已送达或处罚办结" panel-style="flex:6;min-width:0" nopad>
               <div id="pnList" class="pn-list">
                 <div class="toolbar pn-toolbar">
-                  <div class="field"><label>来源类型</label><UControl v-model="filters.source_kind" type="select" :options="kindOptions" :disabled="listLoading" size="small" @update:model-value="applyFilters" /></div>
-                  <div class="field"><label>投递状态</label><UControl v-model="filters.delivery_status" type="select" :options="deliveryOptions" :disabled="listLoading" size="small" @update:model-value="applyFilters" /></div>
-                  <div class="field"><label>来源模式</label><UControl v-model="filters.source_mode" type="select" :options="sourceModeOptions" :disabled="listLoading" size="small" @update:model-value="applyFilters" /></div>
-                  <div class="field pn-range"><label>提交时间</label><UControl v-model="filters.created" type="datetimerange" clearable :disabled="listLoading" size="small" start-placeholder="开始" end-placeholder="结束" /></div>
-                  <button class="btn" type="button" :disabled="listLoading" @click="applyFilters">查询</button>
-                  <button class="btn" type="button" id="pnR" :disabled="listLoading" @click="resetFilters">重置筛选</button>
-                  <span class="spacer"></span>
-                  <span class="pn-sort-note" :title="FIXED_SORT_NOTE">服务端固定按提交时间倒序</span>
+                  <div class="toolbar-fields">
+                    <div class="field"><label>来源类型</label><UControl v-model="filters.source_kind" type="select" :options="kindOptions" :disabled="listLoading" size="small" @update:model-value="applyFilters" /></div>
+                    <div class="field"><label>投递状态</label><UControl v-model="filters.delivery_status" type="select" :options="deliveryOptions" :disabled="listLoading" size="small" @update:model-value="applyFilters" /></div>
+                    <div class="field"><label>来源模式</label><UControl v-model="filters.source_mode" type="select" :options="sourceModeOptions" :disabled="listLoading" size="small" @update:model-value="applyFilters" /></div>
+                    <div class="field pn-range"><label>提交时间</label><UControl v-model="filters.created" type="datetimerange" clearable :disabled="listLoading" size="small" start-placeholder="开始" end-placeholder="结束" /></div>
+                  </div>
+                  <div class="toolbar-actions">
+                    <button class="btn" type="button" :disabled="listLoading" @click="applyFilters">查询</button>
+                    <button class="btn" type="button" id="pnR" :disabled="listLoading" @click="resetFilters">重置筛选</button>
+                    <span class="toolbar-note" :title="FIXED_SORT_NOTE">服务端固定按提交时间倒序</span>
+                  </div>
                 </div>
                 <div v-if="listError" class="warnbox pn-error">{{ listError }} <button class="btn" type="button" :disabled="listLoading" @click="retryList">重试</button></div>
                 <div v-if="listLoading" class="empty">正在读取交接清单…</div>
@@ -508,6 +541,40 @@ onMounted(() => {
               </div>
             </UPanel>
           </div>
+
+          <UPanel title="反制与公安信号干扰授权记录" sub="按所选交接的处置对象列出授权与经过；执行结果以设备回执为准" panel-style="flex:none">
+            <div class="pn-disposal">
+              <div v-if="disposalError" class="pn-sub pn-wrap">{{ disposalError }}</div>
+              <div v-else-if="!disposals.length" class="pn-sub pn-wrap">该处置对象尚无授权记录。</div>
+              <template v-else>
+                <div v-for="row in disposals" :key="row.authorization_id" class="pn-disposal-row">
+                  <div class="pn-disposal-head">
+                    <b class="mono" :title="row.authorization_id">{{ row.authorization_no }}</b>
+                    <span class="tag t-gray">{{ labelOf(DISPOSAL_ACTION_LABEL, row.action_type) }}</span>
+                    <span class="tag">状态：{{ disposalStatusText(row) }}</span>
+                  </div>
+                  <div class="pn-sub pn-wrap">
+                    <span v-if="row.approved_by_name || row.approved_by" :title="row.approved_by || ''">审批人：{{ row.approved_by_name || '—' }}</span>
+                    <span v-if="row.requested_by_name || row.requested_by" :title="row.requested_by || ''"> · 申请人：{{ row.requested_by_name || '—' }}</span>
+                    <span v-if="row.valid_until"> · 有效至 {{ formatTime(row.valid_until) }}</span>
+                    <span v-if="row.channel"> · {{ labelOf(DISPOSAL_CHANNEL_LABEL, row.channel) }}</span>
+                  </div>
+                  <div v-if="row.execution_block_reason" class="pn-sub pn-wrap">
+                    执行受阻：{{ labelOf(DISPOSAL_BLOCK_REASON_LABEL, row.execution_block_reason) }}
+                  </div>
+                  <div v-if="row.result_code" class="pn-sub pn-wrap">
+                    结果：{{ labelOf(DISPOSAL_RESULT_LABEL, row.result_code) }}<span v-if="row.result_detail"> · {{ row.result_detail }}</span>
+                  </div>
+                </div>
+                <div v-if="disposalEvents.length" class="pn-disposal-events">
+                  <div class="pn-sub">最新一条授权的经过</div>
+                  <div v-for="ev in disposalEvents" :key="ev.event_id" class="pn-sub pn-wrap">
+                    {{ formatTime(ev.occurred_at) }} · {{ labelOf(DISPOSAL_EVENT_KIND_LABEL, ev.event_kind) }}<span v-if="ev.note"> · {{ ev.note }}</span>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </UPanel>
         </template>
       </div>
     </div>
@@ -519,11 +586,7 @@ onMounted(() => {
 .pn-forbidden, .pn-note { margin: 0 0 12px; }
 .pn-main { align-items: stretch; gap: var(--gap); height: calc(100vh - 314px); min-height: 560px; flex: none; }
 .pn-list { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-.pn-toolbar { display: flex; gap: 6px 10px; padding: 10px; flex-wrap: wrap; align-items: center; }
-.pn-toolbar .spacer { flex: 1; }
-.pn-toolbar .field :deep(.n-select) { width: 128px; }
-.pn-toolbar .pn-range :deep(.n-date-picker) { width: 300px; }
-.pn-sort-note { font-size: 11px; color: var(--txt-3); white-space: nowrap; }
+.pn-toolbar { padding: 10px; }
 .pn-error { margin: 8px 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .tb tr { cursor: pointer; }
 .tb tr.on { background: rgba(34, 211, 238, .12); }
@@ -541,6 +604,10 @@ onMounted(() => {
 .pn-history-item { display: grid; gap: 4px; padding: 8px; border: 1px solid var(--line); border-radius: 6px; font-size: 12px; }
 .pn-deliveries { max-height: 240px; }
 .pn-deliveries .tb tr { cursor: default; }
+.pn-disposal { display: grid; gap: 10px; }
+.pn-disposal-row { display: grid; gap: 4px; padding: 8px; border: 1px solid var(--line); border-radius: 6px; }
+.pn-disposal-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pn-disposal-events { display: grid; gap: 4px; margin-top: 4px; }
 .pn-chain-cov { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 8px; }
 .pn-chain-cov-item { display: grid; gap: 4px; padding: 6px; border: 1px solid var(--line); border-radius: 4px; font-size: 11px; }
 .pn-chain-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }

@@ -41,7 +41,13 @@ public enum PermissionCode {
     AIRPORT_READ("airport:read"),
     AIRPORT_MANAGE("airport:manage"),
     RISK_EVALUATE("risk:evaluate"),
-    FLIGHT_AUTHORIZE("flight:authorize");
+    FLIGHT_AUTHORIZE("flight:authorize"),
+    // 阶段 13：处置授权域（反制/干扰/驱离/诱骗的申请、审批、执行、停止）。执行还需协作者 A 的 devices.op（设备控制面）。
+    DISPOSAL_READ("disposal:read"),
+    DISPOSAL_REQUEST("disposal:request"),
+    DISPOSAL_APPROVE("disposal:approve"),
+    DISPOSAL_EXECUTE("disposal:execute"),
+    DISPOSAL_STOP("disposal:stop");
 
     private final String value;
 

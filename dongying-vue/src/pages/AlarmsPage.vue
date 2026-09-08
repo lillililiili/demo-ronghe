@@ -27,9 +27,11 @@ import { getAlarm, getUavEvent, listAlarms, listUavVerifications } from '@/servi
 import { getEvidenceChain } from '@/services/evidenceApi.js';
 import { openUavVerification } from '@/ui/uavVerificationModal.js';
 import { targetApi } from '@/services/targetApi.js';
-import { SOURCE_MODE_LABEL as MODE_TEXT, targetTypeLabel } from '@/ui/labels.js';
+import { DISPOSAL_ACTION_LABEL, disposalStatusText, labelOf, SOURCE_MODE_LABEL as MODE_TEXT, targetTypeLabel } from '@/ui/labels.js';
 import { openEvidenceFileModal } from '@/ui/evidenceFileDetail.js';
 import { renderEvidenceChainHtml } from '@/ui/evidenceChainView.js';
+import { disposalApi, isDisposalUnavailable } from '@/services/disposalApi.js';
+import { DISPOSAL_UNAVAILABLE_TEXT, openDisposalRequest } from '@/ui/disposalAuthModal.js';
 
 const U = window.UI;
 usePageChrome('alarms');
@@ -106,6 +108,27 @@ const deepId = sessionStorage.getItem('alarm.sel');
 sessionStorage.removeItem('alarm.sel');
 
 /* ---------- KPI：全部由服务端 total 得出；无法由后端得出的指标显示「尚未接入」 ---------- */
+/* 当前选中事件的处置授权：按动作类型取最新一条，供流程步骤与按钮显示真实状态。
+   读不到（13.1 未落地时是 404）就记下原因并显示“尚未接入”，绝不假装“无授权”。 */
+const disposal = reactive({ byAction: {}, unavailable: false, error: '' });
+const DISPOSAL_ACTIVE = ['APPROVED', 'EXECUTING'];
+
+async function loadEventDisposals(eventId) {
+  disposal.byAction = {}; disposal.unavailable = false; disposal.error = '';
+  if (!eventId) return;
+  try {
+    const page = await disposalApi.list({ subject_kind: 'UAV_EVENT', subject_id: eventId, page: 1, size: 50 });
+    // 同一动作可能申请过多次：按申请时间取最新一条代表当前状态。
+    for (const row of page?.items || []) {
+      const prev = disposal.byAction[row.action_type];
+      if (!prev || Number(row.requested_at || 0) >= Number(prev.requested_at || 0)) disposal.byAction[row.action_type] = row;
+    }
+  } catch (error) {
+    disposal.unavailable = isDisposalUnavailable(error);
+    disposal.error = disposal.unavailable ? DISPOSAL_UNAVAILABLE_TEXT : messageOf(error);
+  }
+}
+
 const KPI_DEFS = [
   { label: '今日告警总数', color: 'blue', icon: 'alert' },
   { label: '待核实', color: 'amber', icon: 'alert' },
@@ -117,22 +140,37 @@ const KPI_DEFS = [
 const kpiList = ref(KPI_DEFS.map(k => ({ ...k, value: '…', desc: '正在读取服务端统计' })));
 async function loadKpis() {
   const count = q => listAlarms({ ...q, page: 1, size: 1 }).then(p => Number(p && p.total) || 0);
+  /* “反制中 / 干扰中”问的是当前有多少处置在进行，因此按状态计数（契约的列表接口没有日期过滤，
+     跨页在前端数日期会数错）。EXECUTING 是正在执行，APPROVED 是已批准待执行，两者分开报。 */
+  const disposalCount = actionType => Promise.all(DISPOSAL_ACTIVE.map(status =>
+    disposalApi.list({ action_type: actionType, status, page: 1, size: 1 }).then(p => Number(p && p.total) || 0)
+  )).then(([approved, executing]) => ({ approved, executing }));
+  // 非展示用：算 KPI 查询窗口（今日 / 近 30 天）的时间戳边界，只当查询参数发给服务端。
   const now = new Date();
   const from = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const to = from + 86400000, d30 = from - 29 * 86400000;
   const r = await Promise.allSettled([
     count({ occurred_from: from, occurred_to: to }), count({ occurred_from: d30, occurred_to: to }),
     count({ state: 'PENDING_VERIFICATION' }), count({ state: 'EVIDENCE_REQUIRED' }),
-    count({ state: 'CONFIRMED' }), count({ state: 'FALSE_POSITIVE' })
+    count({ state: 'CONFIRMED' }), count({ state: 'FALSE_POSITIVE' }),
+    disposalCount('COUNTERMEASURE'), disposalCount('JAMMING')
   ]);
   const v = r.map(x => x.status === 'fulfilled' ? x.value : null);
   const num = x => x == null ? '—' : U.num(x);
+  /* 处置授权读不到时如实说明原因，不写 0——“没有在执行”与“读不到”是两件事。 */
+  const disposalKpi = (def, settled, value) => {
+    if (!value) {
+      const unavailable = settled?.reason && isDisposalUnavailable(settled.reason);
+      return { ...def, value: unavailable ? '尚未接入' : '—', desc: unavailable ? DISPOSAL_UNAVAILABLE_TEXT : '读取失败：' + esc(messageOf(settled?.reason)) };
+    }
+    return { ...def, value: U.num(value.executing), desc: `另有 ${U.num(value.approved)} 起已批准待执行` };
+  };
   const fail = i => v[i] == null ? '读取失败：' + esc(messageOf(r[i].reason)) : null;
   kpiList.value = [
     { ...KPI_DEFS[0], value: num(v[0]), desc: fail(0) || `近30天 ${num(v[1])} 起（按发生时间统计，发生时间未知者不计）` },
     { ...KPI_DEFS[1], value: num(v[2]), desc: fail(2) || `另有证据待补充 ${num(v[3])} 起，可再次核实` },
-    { ...KPI_DEFS[2], value: '尚未接入', desc: `联动反制${NOT_WIRED}` },
-    { ...KPI_DEFS[3], value: '尚未接入', desc: `信号干扰${NOT_WIRED}` },
+    disposalKpi(KPI_DEFS[2], r[6], v[6]),
+    disposalKpi(KPI_DEFS[3], r[7], v[7]),
     { ...KPI_DEFS[4], value: num(v[4]), desc: fail(4) || '已核实，待处置；反制与处罚交接未接入' },
     { ...KPI_DEFS[5], value: num(v[5]), desc: fail(5) || '人工核实后已排除' }
   ];
@@ -142,11 +180,12 @@ async function loadKpis() {
 const disabledSelect = (name, reason) =>
   `<select class="sel" data-f="${name}" disabled aria-disabled="true" title="${reason}"><option value="全部" selected>全部</option></select>`;
 const listPanelBody = `<div class="toolbar">
-    ${U.field('等级', U.select('level', LEVEL_OPTS, st.level))}
-    ${U.field('类别', disabledSelect('kind', `服务端契约未提供类别筛选，${NOT_WIRED}`))}
-    ${U.field('状态', U.select('status', STATUS_OPTS, st.status))}
-    ${U.field('区域', disabledSelect('region', `服务端支持 district_id 过滤，但本页尚无区域字典，${NOT_WIRED}`))}
-    <span style="flex:1"></span>
+    <div class="toolbar-fields">
+      ${U.field('等级', U.select('level', LEVEL_OPTS, st.level))}
+      ${U.field('类别', disabledSelect('kind', `服务端契约未提供类别筛选，${NOT_WIRED}`))}
+      ${U.field('状态', U.select('status', STATUS_OPTS, st.status))}
+      ${U.field('区域', disabledSelect('region', `服务端支持 district_id 过滤，但本页尚无区域字典，${NOT_WIRED}`))}
+    </div>
   </div>
   <div id="alList" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>`;
 const mapExtra = `<span id="alMapSrc" style="font-size:11px;color:var(--txt-3);white-space:nowrap"></span>
@@ -197,7 +236,22 @@ function listHtml() {
 function disposalSteps(a, ev) {
   const trigger = { n: '告警触发', t: clock(a.received_at), done: true, act: false };
   const na = n => ({ n, t: NOT_WIRED, done: false, act: false, applicable: false });
-  const tail = [na('反制'), na('信号干扰'), na('处置')];
+  /* 反制 / 信号干扰按该事件的最新授权显示状态；读不到时说“尚未接入”，没有授权时说“尚无授权”，
+     两者不能混为一谈。“处置”仍是处罚交接，阶段 4 起就未接入。 */
+  const step = actionType => {
+    const name = labelOf(DISPOSAL_ACTION_LABEL, actionType);
+    if (disposal.unavailable || disposal.error) return { n: name, t: disposal.error || DISPOSAL_UNAVAILABLE_TEXT, done: false, act: false, applicable: false };
+    const auth = disposal.byAction[actionType];
+    if (!auth) return { n: name, t: '尚无授权', done: false, act: false, applicable: true };
+    return {
+      n: name,
+      t: disposalStatusText(auth),
+      done: auth.status === 'COMPLETED',
+      act: DISPOSAL_ACTIVE.includes(auth.status),
+      applicable: true
+    };
+  };
+  const tail = [step('COUNTERMEASURE'), step('JAMMING'), na('处置')];
   if (!ev) return [trigger, { n: '人工核实', t: '未建事件', done: false, act: false }, ...tail];
   if (ev.state === 'FALSE_POSITIVE') return [trigger, { n: '人工核实', t: '误报', done: true, act: false }];
   if (ev.state === 'CONFIRMED') return [trigger, { n: '人工核实', t: '属实', done: true, act: false }, ...tail];
@@ -210,8 +264,11 @@ function disposalActions(a, ev) {
   if (!ev) return dis('verify', '人工核实', '尚未创建核实事件，无法核实');
   if ((ev.allowed_actions || []).includes('VERIFY')) return `<button class="btn pri" data-al="verify">人工核实</button>`;
   if (ev.state === 'CONFIRMED') {
-    return dis('counter', `${U.icon('bolt')} 发起联动反制`, `${NOT_WIRED}：当前为「已核实，待处置」，联动反制未接入`, 'danger')
-      + ` ${dis('punish', '通知处罚部门', `${NOT_WIRED}：通知处罚部门未接入`)}`;
+    /* 已核实的事件可以发起联动反制申请：按钮本身只负责“提申请”，能不能执行由审批与时限决定。 */
+    const counter = disposal.unavailable || disposal.error
+      ? dis('counter', `${U.icon('bolt')} 发起联动反制`, esc(disposal.error || DISPOSAL_UNAVAILABLE_TEXT), 'danger')
+      : `<button class="btn danger" data-al="counter">${U.icon('bolt')} 发起联动反制</button>`;
+    return counter + ` ${dis('punish', '通知处罚部门', `${NOT_WIRED}：通知处罚部门未接入`)}`;
   }
   if (ev.state === 'FALSE_POSITIVE') return '';
   return dis('verify', '人工核实', '当前账号缺少核实权限（alarm:verify），或事件不在可核实状态');
@@ -365,6 +422,8 @@ async function selectAlarm(id) {
         const [ev, hist] = await Promise.all([getUavEvent(alarm.event_id), listUavVerifications(alarm.event_id, { page: 1, size: 100 })]);
         if (my !== detailSeq) return;
         cur.event = ev; cur.history = Array.isArray(hist && hist.items) ? hist.items : []; cur.historyTotal = Number(hist && hist.total) || 0;
+        await loadEventDisposals(alarm.event_id);
+        if (my !== detailSeq) return;
       } catch (e) { if (my !== detailSeq) return; cur.eventError = messageOf(e); }
     }
   } catch (e) {
@@ -441,6 +500,28 @@ function verifyModal() {
   });
 }
 
+/* 发起联动反制申请：主体是这条已核实的无人机事件，策略与时限由服务端返回，前端不预设。 */
+async function counterModal() {
+  const a = cur.alarm, ev = cur.event;
+  if (!a || !ev) return toast('尚未创建核实事件，无法发起处置申请', 'err');
+  let policy = null;
+  try { policy = await disposalApi.policies(); } catch { policy = null; }   // 策略读不到只影响提示文字，不阻断申请
+  /* 决策 13-19：信号干扰与联动反制共用这一个入口，动作类型在弹窗里选，不给页面新增按钮。 */
+  openDisposalRequest({
+    actionType: 'COUNTERMEASURE',
+    actionOptions: ['COUNTERMEASURE', 'JAMMING'],
+    subjectKind: 'UAV_EVENT',
+    subjectId: ev.event_id,
+    subjectText: a.alarm_no || a.alarm_id,
+    policy,
+    // refreshAfterWrite 会重读列表、详情（内含授权）与 KPI，详情重读后步骤与按钮即反映新状态。
+    refresh: async () => {
+      await refreshAfterWrite();
+      return disposal.byAction.COUNTERMEASURE || disposal.byAction.JAMMING || null;
+    }
+  });
+}
+
 function onPage(p2) { st.page = p2; loadList(); }
 function onPageSize(s2) { st.size = s2; st.page = 1; loadList(); }
 
@@ -466,6 +547,7 @@ onMounted(async () => {
     if (btn.disabled) return;
     const k = btn.dataset.al;
     if (k === 'verify') verifyModal();
+    else if (k === 'counter') counterModal();
     else if (k === 'retry') loadList();
     else if (k === 'retry-detail' && st.selId) selectAlarm(st.selId);
     else if (k === 'chain-retry' && st.selId) loadChain(detailSeq);
@@ -505,7 +587,8 @@ onMounted(async () => {
           <!-- 操作引导（用户裁定 2026-08-30：多处补黄字引导） -->
           <div class="warnbox" style="margin:0;padding:8px 11px;font-size:12px;flex:none">
             演示动线：点左侧<b>告警列表</b>任一行 → 地图定位关联目标 → 下方详情底部点
-            「<b>人工核实</b>」推进处置；「实时视频 / 轨迹回放 / 联动反制 / 通知处罚」阶段 4 未接入，按钮保留但禁用。</div>
+            「<b>人工核实</b>」推进处置；已核实的事件可点「<b>发起联动反制</b>」提交处置申请（需另一人审批后才能执行）；
+            「实时视频 / 轨迹回放 / 通知处罚」尚未接入，按钮保留但禁用。</div>
           <UPanel title="关联目标定位与轨迹" panel-style="height:244px;max-height:50%;flex:none" nopad
             body-style="padding:6px" :extra="mapExtra" :body-html="mapBody" />
           <UPanel title="告警详情与处置" panel-style="flex:1;min-height:0" nopad

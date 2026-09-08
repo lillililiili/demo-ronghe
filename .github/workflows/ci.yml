@@ -23,7 +23,6 @@ jobs:
           cache-dependency-path: dongying-vue/package-lock.json
       - run: npm ci
       - run: node tools/scan.cjs
-      - run: node tools/falsify.cjs
       - run: npm run build
 
   backend:

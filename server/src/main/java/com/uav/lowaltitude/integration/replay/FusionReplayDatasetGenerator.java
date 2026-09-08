@@ -200,7 +200,7 @@ public class FusionReplayDatasetGenerator {
                     number(item.get("lon")), number(item.get("lat")), extension));
         }
         return new ProtocolRecord(record.recordNo(), record.sourceCode(), INBOX_SOURCES.get(record.sourceCode()), record.observedAtMillis(),
-                record.receivedAtMillis(), senseData(record.recordNo(), record.receivedAtMillis(), List.copyOf(objects)), record.scenario());
+                record.receivedAtMillis(), senseData(record.sourceCode(), record.recordNo(), record.receivedAtMillis(), List.copyOf(objects)), record.scenario());
     }
 
     private long directAccessScenarios(long startRecordNo, List<ProtocolRecord> records, List<GroundTruth> truth) {
@@ -221,7 +221,7 @@ public class FusionReplayDatasetGenerator {
             pilotExtension.put("pilotLat", round(LAT0));
             putObjectType(pilotExtension, "UAV");
             records.add(new ProtocolRecord(recordNo++, TDOA, INBOX_SOURCES.get(TDOA), observedAt, observedAt,
-                    senseData(recordNo, observedAt, List.of(senseObject("D-PILOT", observedAt, noisy[0], noisy[1], pilotExtension))), "tdoa-pilot"));
+                    senseData(TDOA, recordNo, observedAt, List.of(senseObject("D-PILOT", observedAt, noisy[0], noisy[1], pilotExtension))), "tdoa-pilot"));
             truth.add(new GroundTruth("tdoa-pilot", recordNo - 1, "tdoa-pilot:TA", TDOA, "D-PILOT", observedAt));
 
             // ② AOA 只有方位：协议明说经纬度无效，报文里照样带着，映射时必须丢掉——留着就是假位置。
@@ -229,7 +229,7 @@ public class FusionReplayDatasetGenerator {
             aoaExtension.put("direction", round((frame * 7.5) % 360));
             aoaExtension.put("uavSN", "SN-PILOT-01");
             records.add(new ProtocolRecord(recordNo++, AOA, INBOX_SOURCES.get(AOA), observedAt, observedAt,
-                    senseData(recordNo, observedAt, List.of(senseObject("A-BEARING", observedAt, round(noisy[0]), round(noisy[1]), aoaExtension))), "aoa-bearing"));
+                    senseData(AOA, recordNo, observedAt, List.of(senseObject("A-BEARING", observedAt, round(noisy[0]), round(noisy[1]), aoaExtension))), "aoa-bearing"));
             truth.add(new GroundTruth("aoa-bearing", recordNo - 1, "aoa-bearing:TA", AOA, "A-BEARING", observedAt));
 
             // ③ 光电只在第 4–8 帧跟踪：前后是心跳，不产生任何观测。
@@ -245,15 +245,26 @@ public class FusionReplayDatasetGenerator {
             identifyingExtension.put("objectType", 255);
             double[] other = noisy(along(lonBase + 0.02, LAT0, frame, 6, 0), RADAR_ACC, random);
             records.add(new ProtocolRecord(recordNo++, RADAR, INBOX_SOURCES.get(RADAR), observedAt, observedAt,
-                    senseData(recordNo, observedAt, List.of(senseObject("R-IDENT", observedAt, other[0], other[1], identifyingExtension))), "identifying-255"));
+                    senseData(RADAR, recordNo, observedAt, List.of(senseObject("R-IDENT", observedAt, other[0], other[1], identifyingExtension))), "identifying-255"));
             truth.add(new GroundTruth("identifying-255", recordNo - 1, "identifying-255:TA", RADAR, "R-IDENT", observedAt));
         }
         return recordNo;
     }
 
-    private static Map<String, Object> senseData(long msgCnt, long ptTime, List<Map<String, Object>> objects) {
+    /**
+     * 协议 A 报文里的 {@code deviceId} 必须与主题末段一致——{@code LingyunEnvelope} 的身份校验按这条拒收
+     * （payload.deviceId != 主题末段 → IDENTITY_MISMATCH）。主题末段由 {@code LingyunMqttReplayExporter}
+     * 从 {@link #INBOX_SOURCES} 的最后一段拼出，所以这里从同一处取值：两边各写一份迟早会漂。
+     */
+    static String deviceIdOf(String sourceCode) {
+        String source = INBOX_SOURCES.get(sourceCode);
+        if (source == null) throw new IllegalArgumentException("未登记的回放来源: " + sourceCode);
+        return source.substring(source.lastIndexOf(':') + 1);
+    }
+
+    private static Map<String, Object> senseData(String sourceCode, long msgCnt, long ptTime, List<Map<String, Object>> objects) {
         Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("deviceId", "S85");
+        payload.put("deviceId", deviceIdOf(sourceCode));
         payload.put("msgCnt", msgCnt);
         payload.put("ptTime", ptTime);
         payload.put("objects", objects);
@@ -274,6 +285,9 @@ public class FusionReplayDatasetGenerator {
         Map<String, Object> metadata = new LinkedHashMap<>();
         metadata.put("taskId", taskId);
         metadata.put("deviceId", "S85E1D1");
+        // 协议 C 的 BeginTracking/EndTracking 必带 codeStatus，缺了会被 EoEdgeEnvelope 判 INVALID_ENVELOPE；
+        // 200 表示成功（EoEdgeIngressService 按 !=200 记失败），其余取值待厂家给完整码表后再补。
+        metadata.put("codeStatus", 200);
         metadata.put("workState", 1);
         metadata.put("aiStatus", aiStatus);
         Map<String, Object> payload = new LinkedHashMap<>();
@@ -286,7 +300,13 @@ public class FusionReplayDatasetGenerator {
 
     private static Map<String, Object> heartBeat(long timestamp) {
         Map<String, Object> metadata = new LinkedHashMap<>();
+        // 心跳同样要过 EoEdgeEnvelope：deviceId 对所有事件必填，HeartBeat 另外要求 codeStatus、workState
+        // 和 cameraStatus 三者齐备（缺任一判 INVALID_ENVELOPE）。cameraStatus 平台侧只原样存档，
+        // 不解析字段，因此这里给一个最小对象；真实字段表待厂家提供。
+        metadata.put("deviceId", "S85E1D1");
+        metadata.put("codeStatus", 200);
         metadata.put("workState", 1);
+        metadata.put("cameraStatus", Map.of("zoom", 1, "focus", "AUTO"));
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("event", "HeartBeat");
         payload.put("edgeId", "S85E1");

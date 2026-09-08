@@ -3,6 +3,7 @@ import { h } from 'vue';
 import { openModal, closeModal } from './modal.js';
 import ControlledFormModal from '@/components/modals/ControlledFormModal.vue';
 
+export { closeModal };
 export { optionsOf } from '@/components/form/options.js';
 
 export function openFormModal(o) {

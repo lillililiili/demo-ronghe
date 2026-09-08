@@ -173,7 +173,7 @@ public class GlobalExceptionHandler {
         if (path.contains("/stats")) return "statistics";
         // 阶段 8：融合引擎配置/状态/指标与目标修订、合并、分裂都归融合模块；阶段 2 的目标只读接口本身仍归 system（无写审计）。
         if (path.contains("/fusion") || path.contains("/classification-revisions") || path.contains("/targets/merge") || path.matches(".*/targets/[^/]+/split$")) return "fusion";
-        if (path.contains("/evidence-files")) return "evidence";
+        if (path.contains("/evidence-files") || path.contains("/evidence-chains")) return "evidence";
         return "system";
     }
 }

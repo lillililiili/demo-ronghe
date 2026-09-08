@@ -24,9 +24,12 @@ import UPanel from '@/components/UPanel.vue';
 import UKpis from '@/components/UKpis.vue';
 import { toast } from '@/ui/nv.js';
 import { getAlarm, getUavEvent, listAlarms, listUavVerifications } from '@/services/alarmApi.js';
+import { getEvidenceChain } from '@/services/evidenceApi.js';
 import { openUavVerification } from '@/ui/uavVerificationModal.js';
 import { targetApi } from '@/services/targetApi.js';
 import { SOURCE_MODE_LABEL as MODE_TEXT, targetTypeLabel } from '@/ui/labels.js';
+import { openEvidenceFileModal } from '@/ui/evidenceFileDetail.js';
+import { renderEvidenceChainHtml } from '@/ui/evidenceChainView.js';
 
 const U = window.UI;
 usePageChrome('alarms');
@@ -95,7 +98,8 @@ function coord(loc, issues, field) {
 const list = { rows: [], loading: false, error: '' };
 let listSeq = 0, detailSeq = 0;
 const emptyDetail = () => ({ alarm: null, event: null, history: [], historyTotal: 0, loading: false, error: '', eventError: '',
-  target: null, targetLoading: false, targetError: '', track: null, trackError: '' });
+  target: null, targetLoading: false, targetError: '', track: null, trackError: '',
+  chain: null, chainLoading: false, chainError: '', chainUnavailable: '' });
 let cur = emptyDetail();
 /* 深链（sessionStorage alarm.sel）—— 与 legacy render() 同构：mount 后按 ID 直接向服务端取详情 */
 const deepId = sessionStorage.getItem('alarm.sel');
@@ -265,6 +269,9 @@ function detailHtml() {
     ['核实事件', ev ? `已建核实事件　v${Number(ev.version)}` : (a.event_id ? '已建核实事件（详情读取失败）' : '尚未创建核实事件')]
   ], { surface: true, density: 'compact' }), { icon: 'alert' })}
     ${U.sect('核实历史', historyHtml(), { icon: 'trend' })}
+    ${renderEvidenceChainHtml(cur.chain, {
+      loading: cur.chainLoading, error: cur.chainError, unavailable: cur.chainUnavailable
+    })}
     ${U.detailActions(`
       <button class="btn" data-al="video" disabled title="${NOT_WIRED}：实时视频">${U.icon('video')} 实时视频</button>
       <button class="btn" data-al="replay" disabled title="${NOT_WIRED}：轨迹回放">${U.icon('trend')} 轨迹回放</button>
@@ -364,9 +371,28 @@ async function selectAlarm(id) {
     if (my !== detailSeq) return;
     cur.error = messageOf(e);
   }
+  if (cur.alarm && (cur.alarm.event_id || cur.alarm.target_id)) cur.chainLoading = true;
   cur.loading = false;
   paintDetail(); focusMap();
-  await loadTarget(my);
+  await Promise.all([loadTarget(my), loadChain(my)]);
+}
+
+async function loadChain(my) {
+  const a = cur.alarm;
+  if (!a || my !== detailSeq) return;
+  cur.chainLoading = true; cur.chainError = ''; cur.chainUnavailable = ''; cur.chain = null;
+  paintDetail();
+  try {
+    if (a.event_id) cur.chain = await getEvidenceChain('EVENT', a.event_id);
+    else if (a.target_id) cur.chain = await getEvidenceChain('TARGET', a.target_id);
+    else cur.chainUnavailable = '无核实事件且无关联目标，无法汇总证据链。';
+  } catch (e) {
+    if (my !== detailSeq) return;
+    cur.chainError = e.status === 403 ? '当前账号没有 evidence:read，无法读取证据链' : messageOf(e);
+  }
+  if (my !== detailSeq) return;
+  cur.chainLoading = false;
+  paintDetail();
 }
 
 async function loadTarget(my) {
@@ -442,6 +468,10 @@ onMounted(async () => {
     if (k === 'verify') verifyModal();
     else if (k === 'retry') loadList();
     else if (k === 'retry-detail' && st.selId) selectAlarm(st.selId);
+    else if (k === 'chain-retry' && st.selId) loadChain(detailSeq);
+  });
+  U.on(view, '[data-ev-file]', 'click', (e, btn) => {
+    if (btn.dataset.evFile) openEvidenceFileModal(btn.dataset.evFile);
   });
   el('alLoc').onclick = () => { if (map) map.resetView(2.2); focusMap(); };
 

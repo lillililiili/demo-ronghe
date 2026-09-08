@@ -1,5 +1,5 @@
 import { readonly, ref } from 'vue';
-import { apiRequest, readSessionToken, writeSessionToken } from './apiClient.js';
+import { apiRequest, apiRequestTimed, readSessionToken, writeSessionToken } from './apiClient.js';
 
 const ACCOUNT_KEY = 'dongying.demo.account.v1';
 const sessionId = ref(readSessionToken());
@@ -44,7 +44,7 @@ export function isAuthenticated() { return !!(sessionId.value && user.value); }
 export function needsPasswordChange() { return !!user.value?.must_change_password; }
 
 export async function loadCurrentUser() {
-  const current = await apiRequest('/auth/me');
+  const current = await apiRequestTimed('/auth/me', {}, 8_000);
   user.value = current;
   restoreError.value = null;
   notifyAccessChanged();

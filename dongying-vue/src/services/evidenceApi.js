@@ -8,6 +8,10 @@ export function getEvidenceFile(id) {
   return apiRequestTimed(`/evidence-files/${encodeURIComponent(id)}`);
 }
 
+export function getEvidenceChain(subjectKind, subjectId) {
+  return apiRequestTimed(`/evidence-chains/${encodeURIComponent(subjectKind)}/${encodeURIComponent(subjectId)}`);
+}
+
 export function listEvidenceAccessLogs(id, values) {
   return apiRequestTimed(`/evidence-files/${encodeURIComponent(id)}/access-logs${buildQuery(values)}`);
 }
@@ -27,6 +31,14 @@ export function holdEvidenceFile(id, reason, idempotencyKey) {
 export function releaseEvidenceHold(id, holdId, idempotencyKey) {
   return apiRequestTimed(`/evidence-files/${encodeURIComponent(id)}/holds/${encodeURIComponent(holdId)}/release`, {
     method: 'POST', mutation: true, idempotencyKey
+  });
+}
+
+export function destroyEvidenceFile(id, reason, approvalNo, idempotencyKey) {
+  const body = { reason };
+  if (approvalNo) body.approval_no = approvalNo;
+  return apiRequestTimed(`/evidence-files/${encodeURIComponent(id)}/destroy`, {
+    method: 'POST', body, mutation: true, idempotencyKey
   });
 }
 

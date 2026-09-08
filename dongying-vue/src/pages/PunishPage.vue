@@ -19,7 +19,16 @@ import UPanel from '@/components/UPanel.vue';
 import UPagination from '@/components/UPagination.vue';
 import UControl from '@/components/form/UControl.vue';
 import { handoffApi } from '@/services/handoffApi.js';
-import { DELIVERY_STATUS_LABEL, HANDOFF_BLOCKED_LABEL, HANDOFF_KIND_LABEL, HANDOFF_TYPE_LABEL, REASON_CODE_LABEL, RECEIPT_STATUS_LABEL, RISK_CONCLUSION_LABEL, RISK_STATE_LABEL, RISK_TYPE_LABEL, SEVERITY_LABEL, SEVERITY_TAG, SOURCE_MODE_LABEL, labelOf, verificationOrdinal } from '@/ui/labels.js';
+import { getEvidenceChain } from '@/services/evidenceApi.js';
+import {
+  DELIVERY_STATUS_LABEL, EVIDENCE_COVERAGE_LABEL, EVIDENCE_RECORD_TYPE_LABEL, HANDOFF_BLOCKED_LABEL,
+  HANDOFF_KIND_LABEL, HANDOFF_TYPE_LABEL, REASON_CODE_LABEL, RECEIPT_STATUS_LABEL, RISK_CONCLUSION_LABEL,
+  RISK_STATE_LABEL, RISK_TYPE_LABEL, SEVERITY_LABEL, SEVERITY_TAG, SOURCE_MODE_LABEL, labelOf, verificationOrdinal
+} from '@/ui/labels.js';
+import { openEvidenceFileModal } from '@/ui/evidenceFileDetail.js';
+import {
+  EVIDENCE_CHAIN_TYPES, coverageTagClass, isFileRecord, recordCaption, recordHint
+} from '@/ui/evidenceChainView.js';
 
 usePageChrome('punish');
 const root = ref(null);
@@ -37,16 +46,6 @@ const CONCLUSION_LABEL = RISK_CONCLUSION_LABEL;
 const REFERENCE_LABEL = { plan_id: '关联计划', route_version_id: '航线版本', assessment_id: '关联研判', target_id: '关联目标', track_id: '关联轨迹' };
 const DELIVERY_PAGE_SIZE = 10;
 const FIXED_SORT_NOTE = '服务端固定排序：created_at DESC, handoff_id DESC';
-const NOT_BUILT = '本期未建设';
-/* 本期未建设的原 Mock 功能：只声明边界，不生成任何案件、罚款、文书或证据记录。 */
-const NOT_BUILT_ITEMS = [
-  { key: 'case', label: '处罚案件管理', reason: '尚无真实案件源，交接记录不是案件；不以交接编号伪装案件编号' },
-  { key: 'penalty', label: '罚款与裁量', reason: '罚则金额档位未经业务方确认，处罚主体未定' },
-  { key: 'doc', label: '《行政处罚决定书》生成与下载', reason: '平台未获授权出具处罚文书' },
-  { key: 'evidence', label: '证据链查看与下载', reason: '正式证据文件与保管未接入，交接材料不含文件' },
-  { key: 'jam', label: '反制与公安信号干扰授权记录', reason: '反制/干扰完成事实未接入，处罚交接一律阻断' },
-  { key: 'review', label: '定性依据复核与待补充线索', reason: '依赖案件对象，本期不存在' }
-];
 
 const kindOptions = [{ label: '全部来源', value: '' }, ...Object.keys(KIND_LABEL).map(value => ({ label: KIND_LABEL[value], value }))];
 const deliveryOptions = [{ label: '全部投递状态', value: '' }, ...Object.keys(DELIVERY_LABEL).map(value => ({ label: DELIVERY_LABEL[value], value }))];
@@ -72,8 +71,11 @@ const deliveriesTotal = ref(0);
 const deliveriesPage = ref(1);
 const deliveriesLoading = ref(false);
 const deliveriesError = ref('');
+const chain = ref(null);
+const chainLoading = ref(false);
+const chainError = ref('');
 const legacyLinkNote = ref('');
-let listToken = 0, kpiToken = 0, detailToken = 0, deliveriesToken = 0;
+let listToken = 0, kpiToken = 0, detailToken = 0, deliveriesToken = 0, chainToken = 0;
 
 /* 3 张 KPI 与原页面同位同色；数值只取服务端 size=1 的 total，不在前端自算。 */
 const kpiList = computed(() => {
@@ -212,11 +214,14 @@ async function loadDetail(handoffId) {
     deliveries.value = history.items || [];
     deliveriesTotal.value = history.total;
     deliveriesPage.value = history.page;
+    loadChain(detail);
   } catch (requestError) {
     if (token !== detailToken) return;
     selected.value = null;
     deliveries.value = [];
     deliveriesTotal.value = 0;
+    chain.value = null;
+    chainError.value = '';
     detailError.value = messageOf(requestError, '读取交接详情或投递记录失败');
   } finally {
     if (token === detailToken) detailLoading.value = false;
@@ -260,6 +265,36 @@ function selectHandoff(handoffId) {
 }
 function retryList() { loadKpis(); loadList(page.value); }
 function retryDetail() { if (S.selectedHandoffId) loadDetail(S.selectedHandoffId); }
+
+async function loadChain(detail) {
+  const token = ++chainToken;
+  chain.value = null;
+  chainError.value = '';
+  if (!detail || detail.source_kind !== 'UAV_EVENT' || !detail.source_id) {
+    chainLoading.value = false;
+    return;
+  }
+  chainLoading.value = true;
+  try {
+    const data = await getEvidenceChain('EVENT', detail.source_id);
+    if (token !== chainToken) return;
+    chain.value = data;
+  } catch (requestError) {
+    if (token !== chainToken) return;
+    chainError.value = requestError.status === 403
+      ? '当前账号没有 evidence:read，无法读取证据链。'
+      : (requestError.message || '证据链读取失败');
+  } finally {
+    if (token === chainToken) chainLoading.value = false;
+  }
+}
+
+const chainCoverage = computed(() => EVIDENCE_CHAIN_TYPES.map(type => {
+  const item = chain.value?.coverage?.[type] || {};
+  return { type, label: labelOf(EVIDENCE_RECORD_TYPE_LABEL, type, type), status: item.status || 'ABSENT', count: item.count || 0 };
+}));
+const chainRecords = computed(() => chain.value?.records || []);
+const chainBroken = computed(() => chainRecords.value.filter(row => row.availability === 'UNAVAILABLE').length);
 function gotoSource(row) {
   if (!row || row.source_kind !== 'RISK') return;
   U.goto('risk', { riskId: row.source_id });
@@ -380,6 +415,35 @@ onMounted(() => {
                     <dt>所属范围</dt><dd :title="`${selected.owner_org_id || ''} / ${selected.district_id || ''}`">{{ selected.owner_org_name || '—' }} / {{ selected.district_name || '—' }}</dd>
                     <dt>来源模式</dt><dd>{{ labelOf(SOURCE_MODE_LABEL, selected.source_mode, '未提供') }}</dd>
                   </dl></div>
+                  <div class="sect"><h4>证据链
+                    <span v-if="selected.source_kind === 'UAV_EVENT'" class="tag t-gray">{{ chainRecords.length }} 项</span>
+                    <span v-if="chainBroken" class="tag t-red">{{ chainBroken }} 份校验异常</span>
+                  </h4>
+                    <div v-if="selected.source_kind !== 'UAV_EVENT'" class="pn-note-text">风险交接不是无人机八类证据链的根对象；请在告警详情按事件或目标查看。</div>
+                    <div v-else-if="chainLoading" class="empty">正在读取证据链…</div>
+                    <div v-else-if="chainError" class="warnbox pn-error">{{ chainError }} <button class="btn" type="button" @click="loadChain(selected)">重试</button></div>
+                    <template v-else-if="chain">
+                      <div class="pn-chain-cov">
+                        <div v-for="item in chainCoverage" :key="item.type" class="pn-chain-cov-item">
+                          <span>{{ item.label }}</span>
+                          <span class="tag" :class="coverageTagClass(item.status)">{{ labelOf(EVIDENCE_COVERAGE_LABEL, item.status, item.status) }}<template v-if="item.count"> {{ item.count }}</template></span>
+                        </div>
+                      </div>
+                      <div v-if="!chainRecords.length" class="pn-note-text">当前事件没有已关联的八类记录。缺项已标为缺失，不编造材料。</div>
+                      <div v-else class="pn-chain-cards">
+                        <button v-for="row in chainRecords.slice(0, 8)" :key="row.record_id" type="button" class="punish-evidence-card"
+                          :disabled="!isFileRecord(row)"
+                          :title="recordHint(row)"
+                          :aria-label="'查看证据：' + recordCaption(row)"
+                          @click="isFileRecord(row) && openEvidenceFileModal(row.record_id)">
+                          <span>{{ recordCaption(row) }}</span>
+                          <small>{{ isFileRecord(row) ? '打开文件' : recordHint(row) }}</small>
+                        </button>
+                      </div>
+                      <div v-if="chainRecords.length > 8" class="pn-note-text">另有 {{ chainRecords.length - 8 }} 项，可在「证据管理」查看文件台账。</div>
+                      <div v-if="chain.integrity" class="pn-note-text">链校验 {{ chain.integrity.algorithm }} · {{ chain.integrity.member_count }} 项 · {{ chain.integrity.checksum }}</div>
+                    </template>
+                  </div>
                   <div class="sect"><h4>材料快照 <span class="tag t-gray">schema v{{ selected.material?.schema_version ?? '—' }}</span></h4>
                     <div v-if="!selected.material" class="empty">服务端未返回材料快照。</div>
                     <template v-else>
@@ -444,16 +508,6 @@ onMounted(() => {
               </div>
             </UPanel>
           </div>
-
-          <UPanel title="处罚案件、文书与证据" sub="本期未建设 · 以下功能停止执行，不生成任何案件、罚款、文书或证据记录" panel-style="margin-top:12px" nopad>
-            <div class="pn-not-built">
-              <div v-for="item in NOT_BUILT_ITEMS" :key="item.key" class="pn-not-built-item" :data-not-built="item.key">
-                <div class="pn-not-built-head"><b>{{ item.label }}</b><span class="tag t-gray">{{ NOT_BUILT }}</span></div>
-                <div class="pn-sub pn-wrap">{{ item.reason }}</div>
-                <button class="btn" type="button" disabled :title="`${item.label}：${NOT_BUILT}`">{{ NOT_BUILT }}</button>
-              </div>
-            </div>
-          </UPanel>
         </template>
       </div>
     </div>
@@ -487,8 +541,10 @@ onMounted(() => {
 .pn-history-item { display: grid; gap: 4px; padding: 8px; border: 1px solid var(--line); border-radius: 6px; font-size: 12px; }
 .pn-deliveries { max-height: 240px; }
 .pn-deliveries .tb tr { cursor: default; }
-.pn-not-built { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; padding: 12px; }
-.pn-not-built-item { display: grid; gap: 6px; padding: 10px; border: 1px dashed var(--line); border-radius: 6px; opacity: .85; }
-.pn-not-built-head { display: flex; align-items: center; gap: 8px; }
-.pn-not-built-item .btn { justify-self: start; }
+.pn-chain-cov { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 8px; }
+.pn-chain-cov-item { display: grid; gap: 4px; padding: 6px; border: 1px solid var(--line); border-radius: 4px; font-size: 11px; }
+.pn-chain-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.punish-evidence-card { height: 54px; border: 1px solid var(--line); border-radius: 4px; background: linear-gradient(135deg, rgba(61,139,255,.22), rgba(4,12,32,.9)); color: inherit; font: inherit; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; }
+.punish-evidence-card:disabled { cursor: default; opacity: .85; }
+.punish-evidence-card small { font-size: 10px; color: var(--txt-3); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>

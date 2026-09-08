@@ -24,6 +24,36 @@ export const SOURCE_TYPE_LABEL = {
 };
 /* 来源接入状态：DEMO 表示字段有协议出处但尚未与真实设备联调，页面必须说清楚，不能让人当成已核实的能力。 */
 export const SCHEMA_STATUS_LABEL = { CONFIRMED: '已联调确认', DEMO: '按凌云协议 v8.6 建模，待联调' };
+/* 处置授权（阶段 13）：动作、状态、执行通道。同一个码全站只有一个说法，页面一律经 labelOf 取词。 */
+export const DISPOSAL_ACTION_LABEL = { COUNTERMEASURE: '联动反制', JAMMING: '信号干扰', DISPERSAL: '驱离', DECOY: '诱骗' };
+/* 状态回答“现在在哪一步”，与执行结果（成功/失败）分开说，不要混成一句。 */
+export const DISPOSAL_STATUS_LABEL = {
+  REQUESTED: '待审批', APPROVED: '已批准', REJECTED: '已驳回', EXECUTING: '执行中',
+  COMPLETED: '已完成', FAILED: '执行失败', STOPPED: '已停止', EXPIRED: '已过期', CANCELLED: '已撤销'
+};
+export const DISPOSAL_CHANNEL_LABEL = { LINGYUN_B: '凌云协议 B 设备', COUNTERMEASURE_4CH: '四通道反制设备', MANUAL: '人工执行' };
+export const DISPOSAL_RESULT_LABEL = { SUCCEEDED: '执行成功', FAILED: '执行失败' };
+/* 决策 13-10/13-11：STOPPED 不能只说“已停止”——撤销授权与设备是否真的急停是两件事，必须带限定语。 */
+export const DISPOSAL_STOP_RESULT_LABEL = {
+  EXECUTED: '授权已撤销；设备急停已受理',
+  UNAVAILABLE: '授权已撤销；设备急停未执行（协议未提供）',
+  NOT_ATTEMPTED: '授权已撤销；未尝试设备急停',
+  NOT_BOUND: '授权已撤销；设备未登记凌云连接，请运维补配置后重试'
+};
+/* 授权事件流的动作名：事件流直接上屏，枚举必须翻成中文（技能 writing-user-readable-ui-text）。 */
+export const DISPOSAL_EVENT_KIND_LABEL = {
+  REQUEST: '发起申请', APPROVE: '批准', REJECT: '驳回', EXECUTE: '下发执行', RECEIPT: '设备回执',
+  STOP: '停止', COMPLETE: '完成', FAIL: '失败', EXPIRE: '超时失效', CANCEL: '撤销',
+  MANUAL_RESULT: '登记人工结果', DEVICE_STOP_UNAVAILABLE: '设备急停不可用', DEVICE_CONTROL_UNAVAILABLE: '设备控制不可用'
+};
+/* 决策 13-12/13-14：执行被阻的四种原因，三种可补救、一种要等厂家；页面不得把它显示成失败或成功。 */
+export const DISPOSAL_BLOCK_REASON_LABEL = {
+  DEVICE_CAPABILITY: '该设备不支持自动执行，可登记人工结果',
+  PROTOCOL_NOT_OPENED: '该类指令码尚未开放（等厂家确认设备类型），可登记人工结果',
+  NOT_BOUND: '设备未登记凌云连接，请运维补登记后重试',
+  DEVICE_OFFLINE: '设备当前离线或未启用，请恢复后重试'
+};
+
 /* 目标类别是哪一路给的：观测的 class_source（阶段 8.5）。 */
 export const CLASS_SOURCE_LABEL = { SENSE_DATA: '感知数据', EO_TRACKING: '光电跟踪', RADAR: '雷达分类', MANUAL: '人工修订' };
 /* 气球、风筝、孔明灯只能是算法推断的 subtype，不是设备可上报的目标类型（V1.1 任务书 A4）。 */
@@ -38,7 +68,12 @@ export const CONCLUSION_LABEL = { CONFIRMED: '核实属实', EXCLUDED: '已排�
 export const RISK_CONCLUSION_LABEL = { CONFIRMED: '核验通过', EXCLUDED: '已排除' };
 export const DELIVERY_STATUS_LABEL = { PENDING_DELIVERY: '待投递', SUBMITTED: '已发送', DELIVERED: '已送达', FAILED: '发送失败' };
 export const RECEIPT_STATUS_LABEL = { NOT_EXPECTED: '不需回执', PENDING: '等待回执', ACKNOWLEDGED: '已回执', TIMEOUT: '回执超时' };
-export const HANDOFF_BLOCKED_LABEL = { CHANNEL_NOT_CONNECTED: '通知渠道未接通' };
+/* HANDOFF_MATERIALS_NOT_DEFINED（决策 13-25）：反制/干扰完成事实已经有了，卡住的是处罚交接的材料包定义，
+   与“通知渠道未接通”不是一回事，两句必须分开说。 */
+export const HANDOFF_BLOCKED_LABEL = {
+  CHANNEL_NOT_CONNECTED: '通知渠道未接通',
+  HANDOFF_MATERIALS_NOT_DEFINED: '处罚交接的材料包尚未定义，暂不能提交'
+};
 export const SEVERITY_LABEL = { CRITICAL: '紧急', HIGH: '高', MEDIUM: '中', LOW: '低' };
 export const SEVERITY_TAG = { CRITICAL: 't-red', HIGH: 't-red', MEDIUM: 't-amber', LOW: 't-blue' };
 export const RISK_STATE_LABEL = { PENDING_VERIFICATION: '待核验', PENDING_NOTIFICATION: '待通知', NOTIFIED: '已通知', EXCLUDED: '已排除' };
@@ -115,5 +150,17 @@ export const airspaceVersionOrdinal = versionNo => (versionNo == null || Number(
 /** 取中文文案；代码为空返回 fallback，未收录返回代码本身。 */
 export const labelOf = (map, code, fallback = '—') => (code == null || code === '' ? fallback : (map[code] || String(code)));
 /** 目标类型文案：优先细分类型，其次大类。 */
+/**
+ * 授权状态的上屏文案。STOPPED 必须带“设备急停到底做没做”的限定语（决策 13-10/13-11）：
+ * 撤销授权是平台的事，设备急停是设备的事，混成一句“已停止”会让人以为设备真的停了。
+ * 结果字段缺失时明说“未知”，不挑一个好听的说法顶上。
+ */
+export const disposalStatusText = auth => {
+  const status = auth?.status;
+  if (status !== 'STOPPED') return labelOf(DISPOSAL_STATUS_LABEL, status);
+  const result = auth?.device_stop_result;
+  return DISPOSAL_STOP_RESULT_LABEL[result] || '授权已撤销；设备急停结果未知';
+};
+
 export const targetTypeLabel = (subtype, objectType, fallback = '—') =>
   subtype ? labelOf(SUBTYPE_LABEL, subtype) : labelOf(OBJECT_TYPE_LABEL, objectType, fallback);

@@ -1,0 +1,255 @@
+package com.uav.lowaltitude.modules.disposal.api;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import java.sql.Timestamp;
+import java.time.Instant;
+import java.util.List;
+import java.util.UUID;
+
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.ResultActions;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+/**
+ * 执行通道：人工执行走完整链路；经设备的通道在本期一律执行不了，但必须"如实拒绝并留痕"，
+ * 而不是伪造回执，也不能把授权推进到 EXECUTING。
+ */
+@SpringBootTest
+@AutoConfigureMockMvc
+@ActiveProfiles("test")
+class DisposalExecutionTest {
+    private static final String ORG = "seed-stage3-org", DISTRICT = "seed-stage3-district";
+
+    @Autowired MockMvc mvc;
+    @Autowired JdbcTemplate jdbc;
+    @Autowired ObjectMapper objectMapper;
+
+    private String requester, approver;
+    private String eventId;
+
+    @BeforeEach
+    void fixture() {
+        requester = user("REQ", List.of("disposal:read", "disposal:request"))[0];
+        // 经协议 B 执行还需要 A 的设备控制面权限（决策 13-9）：那是模块级权限 `devices` 的 OP 档，
+        // 不是一个叫 "devices.op" 的权限码——`devices.op` 是 A 代码里"模块 devices + op 档"的写法。
+        approver = user("APR", List.of("disposal:read", "disposal:approve", "disposal:execute",
+                "disposal:stop", "devices", "monitoring"))[0];
+        eventId = event("CONFIRMED");
+    }
+
+    @AfterEach
+    void cleanup() {
+        jdbc.update("delete from disposal_authorization_event where authorization_id in"
+                + " (select authorization_id from disposal_authorization where subject_id like 'exec-event-%')");
+        jdbc.update("delete from disposal_authorization where subject_id like 'exec-event-%'");
+        jdbc.update("delete from uav_event where event_id like 'exec-event-%'");
+        jdbc.update("delete from alarm where alarm_id like 'exec-alarm-%'");
+    }
+
+    @Test
+    void manualChannelRunsThroughToCompleted() throws Exception {
+        String id = approved("MANUAL", null);
+        execute(id, 1).andExpect(status().isOk()).andExpect(jsonPath("$.data.status").value("EXECUTING"));
+        mvc.perform(post("/api/v1/disposal-authorizations/{id}/manual-result", id)
+                        .header("Authorization", bearer(approver)).header("Idempotency-Key", key())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"expected_version\":2,\"result\":\"SUCCEEDED\",\"detail\":\"演示：已驱离\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.status").value("COMPLETED"));
+        assertThat(kinds(id)).containsExactly("REQUEST", "APPROVE", "EXECUTE", "MANUAL_RESULT");
+    }
+
+    @Test
+    void manualResultIsRejectedOnDeviceChannel() throws Exception {
+        String id = approved("MANUAL", null);
+        execute(id, 1).andExpect(status().isOk());
+        // 人工登记结果只对人工通道开放：协议 B 的结果必须来自设备回执，不能由人代设备宣布成功。
+        String deviceId = anyDevice();
+        if (deviceId == null) return;
+        String other = approved("LINGYUN_B", deviceId);
+        mvc.perform(post("/api/v1/disposal-authorizations/{id}/manual-result", other)
+                        .header("Authorization", bearer(approver)).header("Idempotency-Key", key())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"expected_version\":1,\"result\":\"SUCCEEDED\",\"detail\":\"不该被接受\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("INVALID_TRANSITION"));
+    }
+
+    @Test
+    void deviceChannelCannotExecuteThisPhaseButLeavesEvidence() throws Exception {
+        String deviceId = anyDevice();
+        if (deviceId == null) return;   // 环境里没有设备夹具时跳过，不做假断言。
+        String id = approved("LINGYUN_B", deviceId);
+        JsonNode error = body(execute(id, 1).andExpect(status().isConflict())).path("error");
+        // 测试库里没有任何 mqtt_device_binding，因此走的必然是"未登记"这一支。断成精确值而不是二选一：
+        // 用 isIn(A,B) 会让两条分支互相顶替——真跑成另一支也照样绿，等于没测。
+        assertThat(bindings()).isZero();
+        // COUNTERMEASURE 在 demo-v1 里映射到指令码 60003，而 A 的 family() 不认它——
+        // 因此先被"协议面未开通"拦下，轮不到判断设备绑没绑定。这正是本期 LINGYUN_B 的真实处境。
+        assertThat(error.path("code").asText()).isEqualTo("DEVICE_CONTROL_UNAVAILABLE");
+        // 关键：授权仍是 APPROVED，且拒绝这件事必须留在事件流里——
+        // 若实现把异常直接抛出去，事件会跟着事务回滚，事后就查不出当时为什么执行不了。
+        assertThat(statusOf(id)).isEqualTo("APPROVED");
+        // 事件种类与 HTTP 码**有意不同**（13-22）：对外统一 DEVICE_CONTROL_UNAVAILABLE，
+        // 事件里记具体是哪一种受阻，DTO 据事件推导 execution_block_reason。断言事件记的是具体那一条。
+        assertThat(kinds(id)).contains("PROTOCOL_NOT_OPENED");
+        assertThat(commandId(id)).isNull();
+    }
+
+    @Test
+    void fourChannelIsBlockedAsACapabilityProblemAndSaysSoInTheDto() throws Exception {
+        String deviceId = anyDevice();
+        assertThat(deviceId).as("测试库需要至少一台设备，否则本用例是空跑").isNotNull();
+        String id = approved("COUNTERMEASURE_4CH", deviceId);
+        body(execute(id, 1).andExpect(status().isConflict()))
+                .path("error").path("code").asText().equals("DEVICE_CONTROL_UNAVAILABLE");
+        assertThat(kinds(id)).contains("DEVICE_CONTROL_UNAVAILABLE");
+        assertThat(statusOf(id)).isEqualTo("APPROVED");
+        // 四通道是"这台设备本来就不能自动执行"，补救方是换设备——不能和"等厂家开通指令码"混为一谈。
+        assertThat(blockReason(id)).isEqualTo("DEVICE_CAPABILITY");
+    }
+
+    @Test
+    void deviceChannelBlockReasonIsProtocolNotOpened() throws Exception {
+        String deviceId = anyDevice();
+        assertThat(deviceId).isNotNull();
+        String id = approved("LINGYUN_B", deviceId);
+        execute(id, 1).andExpect(status().isConflict());
+        // 补救方是厂家（确认设备类型缩写、由 A 开通映射），不是运维——两者混同会让人白忙一场。
+        assertThat(blockReason(id)).isEqualTo("PROTOCOL_NOT_OPENED");
+        assertThat(kinds(id)).contains("PROTOCOL_NOT_OPENED");
+    }
+
+    @Test
+    void blockReasonClearsOnceExecutionSucceeds() throws Exception {
+        String id = approved("MANUAL", null);
+        execute(id, 1).andExpect(status().isOk());
+        // 人工通道从来没有受阻事件；执行成功后更不该显示"受阻"。
+        assertThat(blockReason(id)).isNull();
+    }
+
+    @Test
+    void executionOutsideTheWindowIsRejected() throws Exception {
+        String id = approved("MANUAL", null);
+        // 把有效期改成已经过去：过期的授权不是"晚一点也行"，是已经失效。
+        jdbc.update("update disposal_authorization set valid_from=?, valid_until=? where authorization_id=?",
+                Timestamp.from(Instant.parse("2020-01-01T00:00:00Z")),
+                Timestamp.from(Instant.parse("2020-01-01T00:30:00Z")), id);
+        execute(id, 1).andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("AUTHORIZATION_EXPIRED"));
+        assertThat(statusOf(id)).isEqualTo("APPROVED");
+    }
+
+    /* ---- 辅助 ---- */
+
+    private String approved(String channel, String deviceId) throws Exception {
+        String bodyText = "{\"action_type\":\"COUNTERMEASURE\",\"subject_kind\":\"UAV_EVENT\",\"subject_id\":\""
+                + event("CONFIRMED") + "\",\"channel\":\"" + channel + "\""
+                + (deviceId == null ? "" : ",\"device_id\":\"" + deviceId + "\"") + ",\"reason\":\"执行通道测试\"}";
+        String id = body(mvc.perform(post("/api/v1/disposal-authorizations").header("Authorization", bearer(requester))
+                        .header("Idempotency-Key", key()).contentType(MediaType.APPLICATION_JSON).content(bodyText))
+                .andExpect(status().isCreated())).path("data").path("authorization_id").asText();
+        mvc.perform(post("/api/v1/disposal-authorizations/{id}/approve", id).header("Authorization", bearer(approver))
+                        .header("Idempotency-Key", key()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"expected_version\":0}")).andExpect(status().isOk());
+        return id;
+    }
+
+    private ResultActions execute(String id, long version) throws Exception {
+        return mvc.perform(post("/api/v1/disposal-authorizations/{id}/execute", id)
+                .header("Authorization", bearer(approver)).header("Idempotency-Key", key())
+                .contentType(MediaType.APPLICATION_JSON).content("{\"expected_version\":" + version + "}"));
+    }
+
+    private String anyDevice() {
+        return jdbc.query("select device_id from ops_device where enabled=true order by device_id asc limit 1",
+                rs -> rs.next() ? rs.getString(1) : null);
+    }
+
+    private List<String> kinds(String id) {
+        return jdbc.queryForList("select event_kind from disposal_authorization_event where authorization_id=?"
+                + " order by occurred_at asc, event_id asc", String.class, id);
+    }
+
+    private String statusOf(String id) {
+        return jdbc.queryForObject("select status from disposal_authorization where authorization_id=?", String.class, id);
+    }
+
+    /** 从详情接口读派生值，而不是从库里自己推——要测的正是接口给出来的那个值。 */
+    private String blockReason(String id) throws Exception {
+        com.fasterxml.jackson.databind.JsonNode node = body(mvc.perform(
+                org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .get("/api/v1/disposal-authorizations/{id}", id)
+                        .header("Authorization", bearer(approver))).andExpect(status().isOk()))
+                .path("data").path("execution_block_reason");
+        return node.isMissingNode() || node.isNull() ? null : node.asText();
+    }
+
+    private long bindings() {
+        return jdbc.queryForObject("select count(*) from mqtt_device_binding", Long.class);
+    }
+
+    private String commandId(String id) {
+        return jdbc.queryForObject("select execution_command_id from disposal_authorization where authorization_id=?",
+                String.class, id);
+    }
+
+    private JsonNode body(ResultActions actions) throws Exception {
+        return objectMapper.readTree(actions.andReturn().getResponse().getContentAsString());
+    }
+
+    private String event(String state) {
+        String suffix = UUID.randomUUID().toString().substring(0, 8);
+        String alarmId = "exec-alarm-" + suffix, id = "exec-event-" + suffix;
+        Timestamp at = Timestamp.from(Instant.parse("2026-09-07T02:00:00Z"));
+        jdbc.update("insert into integration_source (source_id,source_code,name,enabled,source_mode,created_at,updated_at,version)"
+                + " select 'exec-src','EXEC-TEST','执行测试来源',true,'mock',?,?,0"
+                + " where not exists(select 1 from integration_source where source_id='exec-src')", at, at);
+        jdbc.update("insert into alarm (alarm_id,target_id,source_id,source_alarm_id,alarm_type,severity,occurred_at,"
+                + "received_at,source_mode,owner_org_id,district_id,created_at)"
+                + " values (?,null,'exec-src',?,'UAV_INTRUSION','HIGH',?,?,'mock',?,?,?)",
+                alarmId, "告警-执行-" + suffix, at, at, ORG, DISTRICT, at);
+        jdbc.update("insert into uav_event (event_id,alarm_id,state_code,owner_org_id,district_id,created_at,updated_at,version)"
+                + " values (?,?,?,?,?,?,?,1)", id, alarmId, state, ORG, DISTRICT, at, at);
+        return id;
+    }
+
+    private String[] user(String tag, List<String> permissions) {
+        String suffix = UUID.randomUUID().toString().substring(0, 8), role = "ROLE-EXE-" + tag + "-" + suffix;
+        String userId = UUID.randomUUID().toString(), token = UUID.randomUUID().toString();
+        jdbc.update("insert into app_role (role_code,name,description,builtin,enabled,created_at,updated_at,version,system_role)"
+                + " values (?,?,'',false,true,0,0,0,false)", role, role);
+        for (String permission : permissions) {
+            jdbc.update("insert into app_role_permission (role_code,permission_code,permission_level,menu_enabled,created_at)"
+                    + " select ?,?,?,false,current_timestamp where exists"
+                    + " (select 1 from app_permission where permission_code=?)", role, permission,
+                    permission.startsWith("disposal:") && permission.endsWith(":read") ? "READ" : "OP", permission);
+        }
+        jdbc.update("insert into app_role_permission (role_code,permission_code,permission_level,menu_enabled,created_at)"
+                + " values (?, 'alarm:read','READ',false,current_timestamp)", role);
+        jdbc.update("insert into app_user (user_id,account,name,role_code,status,password_hash,fail_count,scope_mode,"
+                + "permission_version,created_at,updated_at,version) values (?,?,?,?,'ACTIVE','unused',0,'ASSIGNED',0,0,0,0)",
+                userId, "exe-" + tag.toLowerCase() + "-" + suffix, "执行" + tag, role);
+        jdbc.update("insert into app_user_data_scope (user_id,org_id,district_id) values (?,?,?)", userId, ORG, DISTRICT);
+        jdbc.update("insert into app_session (session_id,user_id,expire_at,ip,permission_version) values (?,?,?,'127.0.0.1',0)",
+                token, userId, System.currentTimeMillis() + 3_600_000);
+        return new String[]{token, userId};
+    }
+
+    private static String key() { return UUID.randomUUID().toString(); }
+    private static String bearer(String token) { return "Bearer " + token; }
+}

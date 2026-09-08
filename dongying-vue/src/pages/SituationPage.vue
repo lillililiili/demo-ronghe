@@ -25,6 +25,8 @@ import { deviceApi } from '@/services/deviceApi.js';
 import { listAlarms } from '@/services/alarmApi.js';
 import { legalityApi } from '@/services/legalityApi.js';
 import { SOURCE_TYPE_LABEL, SCHEMA_STATUS_LABEL, labelOf } from '@/ui/labels.js';
+import { disposalApi } from '@/services/disposalApi.js';
+import { openDisposalRequest } from '@/ui/disposalAuthModal.js';
 import {
   AIRSPACE_LAYERS, legalByTarget, percent, toAirspaces, toAlarms, toDevices, toTargets, toTrack
 } from '@/services/situationData.js';
@@ -105,7 +107,9 @@ function tipActions(t) {
      而留着能点、点了弹一句假的成功提示，比禁用更糟——那会让人以为通知真的发出去了。 */
   const videoBtn = `<button type="button" class="btn" disabled title="尚未接入">${U.icon('video')} 实时视频（未接入）</button>`;
   const notifyBtn = `<button type="button" class="btn" disabled title="尚未接入">通知机场/周边（未接入）</button>`;
-  const driveBtn = `<button type="button" class="btn" disabled title="尚未接入">派发驱离（未接入）</button>`;
+  /* 阶段 13：驱离改为走处置授权——按钮只负责“提申请”，批准与执行由授权流程决定，
+     点了不会有任何设备动作，也不会弹假成功。 */
+  const driveBtn = `<button type="button" class="btn" data-tip-act="drive" data-tip-id="${id}">派发驱离</button>`;
   /* "转风险监测"保持可用：它是 #/risk 深链的三个生产者之一（阶段 9 决策 9-15 专门保住的），去掉会断掉这条跳转。 */
   const riskBtn = `<button type="button" class="btn" data-tip-act="risk" data-tip-id="${id}">转风险监测 →</button>`;
   if (isUav) {
@@ -165,9 +169,24 @@ function onTipAction(act, hit) {
     location.hash = '#/alarms';
     return;
   }
-  /* video / notify / drive 三个按钮是禁用态，点不到，因此这里不再有对应分支——
+  /* video / notify 两个按钮仍是禁用态，点不到，因此没有对应分支——
      没有能力就不要留一条会弹出假成功提示的处理路径。 */
+  if (act === 'drive') { requestDispersal(t); return; }
   if (act === 'risk') { toast('正在跳转空间安全风险监测…'); setTimeout(() => location.hash = '#/risk', 600); }
+}
+
+/* 对目标发起驱离申请：主体是目标本身（契约 subject_kind=TARGET）。
+   策略读不到只影响提示文字，不阻断申请；能不能真的执行由审批与设备通道决定。 */
+async function requestDispersal(t) {
+  let policy = null;
+  try { policy = await disposalApi.policies(); } catch { policy = null; }
+  openDisposalRequest({
+    actionType: 'DISPERSAL',
+    subjectKind: 'TARGET',
+    subjectId: t.id,
+    subjectText: t.no || t.id,
+    policy
+  });
 }
 
 /* ---- 融合卡：来源来自目标详情的 source_links，在线态来自 /fusion/status ---- */

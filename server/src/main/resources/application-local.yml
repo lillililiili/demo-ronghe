@@ -18,3 +18,7 @@ app:
   dev-seed:
     enabled: ${APP_DEV_SEED_ENABLED:true}
     password: ${APP_DEV_SEED_PASSWORD:changeme}
+  disposal:
+    expiry:
+      enabled: true
+      poll-millis: 60000

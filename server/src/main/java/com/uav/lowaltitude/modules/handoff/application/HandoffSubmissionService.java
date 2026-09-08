@@ -22,6 +22,7 @@ import com.uav.lowaltitude.modules.handoff.api.HandoffDtos.MaterialDto;
 import com.uav.lowaltitude.modules.handoff.api.HandoffDtos.ReferenceMaterialDto;
 import com.uav.lowaltitude.modules.handoff.api.HandoffDtos.RiskMaterialDto;
 import com.uav.lowaltitude.modules.handoff.api.HandoffDtos.VerificationMaterialDto;
+import com.uav.lowaltitude.modules.handoff.domain.DisposalCompletionPort;
 import com.uav.lowaltitude.modules.handoff.domain.HandoffRules;
 import com.uav.lowaltitude.modules.handoff.infrastructure.HandoffRepository;
 import com.uav.lowaltitude.modules.handoff.infrastructure.HandoffRepository.DeliveryInsert;
@@ -54,11 +55,14 @@ public class HandoffSubmissionService {
     private final AppClock clock;
     private final AuditService audit;
     private final ObjectMapper objectMapper;
+    private final DisposalCompletionPort disposals;
 
     public HandoffSubmissionService(AccessControlService access, HandoffRepository repository, RiskRepository risks, RiskReadService riskRead,
-            IdempotencyGuard idempotency, AppClock clock, AuditService audit, ObjectMapper objectMapper) {
+            IdempotencyGuard idempotency, AppClock clock, AuditService audit, ObjectMapper objectMapper,
+            DisposalCompletionPort disposals) {
         this.access = access; this.repository = repository; this.risks = risks; this.riskRead = riskRead;
         this.idempotency = idempotency; this.clock = clock; this.audit = audit; this.objectMapper = objectMapper;
+        this.disposals = disposals;
     }
 
     /**
@@ -71,10 +75,21 @@ public class HandoffSubmissionService {
         access.require(PermissionCode.HANDOFF_CREATE);
         AccessDecision riskDecision = access.require(PermissionCode.RISK_READ);
         CreateRequest request = parse(rawRequest);
-        HandoffRules.requirePrerequisite(request.handoffType());
-        HandoffRules.requireKindSupportsType(request.sourceKind(), request.handoffType());
         String sourceId = HandoffReadService.id(request.sourceId());
         String recipientId = HandoffReadService.id(request.recipientId());
+        // 前提要拿到 source_id 才能查"这一件事有没有完成的处置授权"，因此排在解析之后（决策 13-6）；
+        // 但仍排在 requireKindSupportsType 之前——否则 (RISK, UAV_PUNISHMENT) 会先被判成 400 INVALID_KIND，
+        // 而阶段 5 起对这一组合的回答一直是 409 HANDOFF_PREREQUISITE_UNAVAILABLE。改动机制不该改掉既有答复。
+        HandoffRules.requirePrerequisite(request.handoffType(), request.sourceKind(), sourceId, disposals);
+        HandoffRules.requireKindSupportsType(request.sourceKind(), request.handoffType());
+        if (HandoffRules.TYPE_UAV_PUNISHMENT.equals(request.handoffType())) {
+            // 前提已经成立（该事件确有完成的处置授权），但**处罚交接的材料包还没有定义**：
+            // 现有快照结构（MaterialDto）整套是风险形状——风险字段 + 风险核实历史，装不下无人机事件与授权证据。
+            // 与其把事件硬塞进风险字段、或者悄悄落一份空材料，不如在这里明说：
+            // 送交公安的材料包含哪些内容是业务决定，不该由实现顺手定下来。
+            throw new ApiException(HttpStatus.CONFLICT, "HANDOFF_MATERIALS_NOT_DEFINED",
+                    "处罚交接的材料包尚未定义，暂不能提交");
+        }
         // 先锁源风险却不改它的状态或版本：锁只用来串行化同一风险的并发提交并冻结版本核对；
         // “已通知”需要真实送达/回执事实，交接提交本身不是风险状态迁移。
         RiskRow risk = risks.lock(sourceId, riskDecision);

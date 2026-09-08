@@ -31,4 +31,20 @@
 
 ## 未接入 / 已知限制
 - 证据主体扩到 CASE/AUTHORIZATION 待 A（15-11）。
+- AOA 方位线只在设备台账（A 的 `/devices`）登记了该设备坐标时才画；验收库 `/devices` 为 0 条，故页面上看不到线（后端 `bearing_deg/bearing_device_id` 已返回，前端字段名已修正并有 8 条单测）。凭方位角随便找原点等于伪造位置，不做回退。
 - 融合自动合并/分裂、工作台设备动作、统计切片不在本阶段。
+
+## 跟进（提交 `79ac5e9` 之后）
+- E2 恢复后补报联调：其 15-19/15-22 改动已随 `79ac5e9` 入库；态势页两个字段名修正（`bearing_device_id`、违规事由用规则引擎原因码字典）与风险导出按钮位置也在提交内。
+- 新发现三件：①演示复核员种子的 MODULE 授权码写错（`risks/handoffs` 非模块码），reviewer1 无处罚页菜单，页面上仍走不到两人链路 → 15-31（E1，种子对已存在的 NONE 行做幂等 UPDATE）；②导出正文枚举列为英文码 → 15-32（服务端字典翻中文）；③`identity_confidence` 在 DTO 中，AOA 观测为 null 被省略，非缺陷。
+- round11 核对（2026-09-08 09:2x，`uav_stage10_verify`，jar 09:22 重打包）：定向 H2 8 类全绿（Seeder 8/8、Isolation 3/3、AlarmListSortExport 11/11、RiskListSortExport 11/11、LocalStage2AccessSeeder 5/5、DeviceBusinessScope 6/6、SystemManagementApi 9/9、RoleActionPermissionApi 12/12）。第一次用 09:15 旧包重启（E1 09:18 的升级库 UPDATE 未进包），reviewer1 `menu_keys` 仍为 alarms/monitor/workbench，DB 里 punishment/sensing/flights 行为 NONE——证实 15-31 修订的必要；换新包重启后 `menu_keys` = alarms/flights/monitor/punish/situation/workbench，DB 行 READ + 菜单开，`permission_version` 0→1。
+- 导出中文：`/alarms/export.csv`（reviewer1，200）等级"中"、状态"待核实"；`/risks/export.csv`（admin1，200；reviewer1 403 为预期，无 `risk:read`）风险类型"空中异物风险"、等级"中"、状态"待核验"。仍是原码的列：告警类别 `RULE_LEGALITY`、风险类型 `PLANNING` 等——前端字典本身没有这些码，记为前后端联合字典后续项。
+- 助手 round11 复跑（真 PG `stage456_verify_s15`）：Stage15PostgresTest 9/9、ProductionStage15SeedIsolationTest 3/3；E2E 34/39，5 条红全是 reviewer1 菜单有了但页面读接口 403 → 15-34（E1 round12，动作授权补七个 READ）。
+- E2 浏览器审批：前置全通过（菜单、`allowed_actions:[APPROVE,REJECT,CANCEL]`、行渲染"待审批"），但页面没有任何审批按钮，admin1 同样 → 15-35（E2，按 `allowed_actions` 渲染动作按钮）。`AUTH-20260908-0002` 仍 REQUESTED / version 0。
+- 第二次重启（同一 09:22 包，09:4x）：紧挨重启前后各读一次 reviewer1 的 `permission_version`，1 → 1，种子无改动不递增（E1 提醒的"日日踢下线"风险不存在）。
+- round12（15-34 修订）：H2 全量 157 类 894 跑 / 3 红 / 102 跳——3 红是 Stage3/4/8AccessControlServiceTest 的"非管理员角色不持有这些码"断言被演示复核员的新读权限触发，按 15-23 先例把 `ROLE-DEMO-REVIEWER` 按名排除后 9/9 绿；jar 09:38 重启 8081 后 reviewer1 访问 `/airspaces /devices /legality-evaluations /fusion/status /flight-plans /risks/districts /risks /targets` 全 200，`permission_version` 1→2（本轮确实加了行），`devices` 模块行 READ、菜单关。
+- 15-35（E2）：reviewer1 在 5174 处罚页对 `AUTH-20260908-0002` 真点一次审批：只有待审批行出按钮，提交后该行原地刷新为已批准、按钮变为执行/停止；服务端回读 APPROVED、version 0→1、`allowed_actions=[EXECUTE,STOP,CANCEL]` 与页面一致。执行一步仍卡环境（该授权指向 `no-such-device`）。告警页处置是流程条无行结构，报而不改。
+- 助手 round12 复跑（真 PG）：Stage15PostgresTest 9/9、ProductionStage15SeedIsolationTest 3/3，各两遍一致；E2E 40/40 两遍（新增 `e2e/disposal-actions.spec.js`：处罚页每条授权行渲染的按钮集合必须等于服务端 `allowed_actions` 经页面入口表映射后的集合，CANCEL 钉为"有意不画"，双向变异验证）。round11 的 5 条红全部消失，reviewer1 持 16 条动作行。
+- E2 15-35 追加：证据卡片副标题改走共享字典（`ui/evidenceChainView.js` 的 `recordHint()`，处罚页与告警页共用一处），结论码只在事件链上翻；scan/build/check-ui-text 零命中。
+- Stage3/4/8AccessControlServiceTest 追加钉死演示复核员在各组码里的持有内容（Stage3 四个 READ、Stage4 只 `risk:read`、Stage8 只 `fusion:read`），9/9 绿。
+- 跟进提交：见下方提交号。

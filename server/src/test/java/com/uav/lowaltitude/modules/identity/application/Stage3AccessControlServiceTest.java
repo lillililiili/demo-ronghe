@@ -103,8 +103,14 @@ class Stage3AccessControlServiceTest {
         assertThat(jdbc.queryForObject("""
                 select count(*) from app_role_permission
                 where permission_code in ('flight:read', 'route:read', 'airspace:read', 'assessment:read')
-                  and role_code <> 'ROLE-ADMIN'
-                """, Integer.class)).isZero();
+                  and role_code not in ('ROLE-ADMIN', 'ROLE-DEMO-REVIEWER')
+                """, Integer.class)).isZero();   // 演示复核员是 local/test 种子角色（15-34），不是生产角色
+        // 演示复核员在这组码里只许持四个 READ（15-34）：按名放行之外再钉死内容，种子将来多授一个也会红。
+        assertThat(jdbc.queryForList("""
+                select permission_code || '=' || permission_level from app_role_permission
+                where permission_code in ('flight:read', 'route:read', 'airspace:read', 'assessment:read')
+                  and role_code = 'ROLE-DEMO-REVIEWER' order by permission_code
+                """, String.class)).containsExactly("airspace:read=READ", "assessment:read=READ", "flight:read=READ", "route:read=READ");
     }
 
     @Test

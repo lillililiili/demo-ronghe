@@ -138,7 +138,11 @@ public class RiskReadService {
             "风险编号", "风险类型", "等级", "状态", "事由", "发生时间", "接收时间", "所属组织", "所属区域", "来源");
 
     private static List<String> exportRow(RiskRepository.RiskRow row) {
-        return java.util.Arrays.asList(row.sourceRiskId(), row.riskType(), row.severity(), row.state(),
+        // 枚举列翻中文（决策 15-32），与告警同一套字典，免得两张表对同一个码给出两个说法。
+        return java.util.Arrays.asList(row.sourceRiskId(),
+                com.uav.lowaltitude.platform.export.CsvLabels.riskType(row.riskType()),
+                com.uav.lowaltitude.platform.export.CsvLabels.severity(row.severity()),
+                com.uav.lowaltitude.platform.export.CsvLabels.riskState(row.state()),
                 row.reasonText(), exportTime(row.occurredAt()), exportTime(row.receivedAt()),
                 row.ownerOrgName(), row.districtName(), row.sourceCode());
     }

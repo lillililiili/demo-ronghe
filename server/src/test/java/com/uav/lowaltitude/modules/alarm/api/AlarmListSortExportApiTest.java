@@ -214,6 +214,35 @@ class AlarmListSortExportApiTest {
         assertThat(first).noneMatch(cell -> !cell.isEmpty() && "=+-@".indexOf(cell.charAt(0)) >= 0);
     }
 
+    /**
+     * 决策 15-32：列头早就是中文，正文却还是 HIGH / PENDING_VERIFICATION——一线人员拿到的是半中半英的表。
+     * 中文逐字取自前端，导出与页面必须同一套说法。
+     */
+    @Test
+    void exportTranslatesEnumColumnsToChinese() throws Exception {
+        attachEventsWithDistinctStates();
+        List<String[]> rows = exportRows();
+        assertThat(rows).as("本用例的导出行").hasSize(3);
+        // 等级：三条种子分别是 LOW/HIGH/MEDIUM。
+        assertThat(rows.stream().map(r -> r[2]).sorted().toList())
+                .containsExactlyInAnyOrder("低", "高", "中");
+        // 状态取自 uav_event，与风险的"待核验"不是同一套（告警核实、风险核验）。
+        assertThat(rows.stream().map(r -> r[3]).toList())
+                .containsExactlyInAnyOrder("待核实", "证据待补充", "已核实，待处置");
+        // 类别：字典里有的翻译，没有的原样给出（不写成"未知"，那会把信息抹掉）。
+        assertThat(rows.stream().map(r -> r[1]).toList()).contains("无人机入侵");
+    }
+
+    /** 导出正文里属于本用例的那几行，按列拆开。 */
+    private List<String[]> exportRows() throws Exception {
+        byte[] body = mvc.perform(get("/api/v1/alarms/export.csv").header("Authorization", bearer(reader)))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsByteArray();
+        List<String[]> rows = new ArrayList<>();
+        new String(body, 3, body.length - 3, StandardCharsets.UTF_8).lines().skip(1)
+                .filter(l -> l.startsWith("告警-排序-")).forEach(l -> rows.add(l.split(",")));
+        return rows;
+    }
+
     @Test
     void exportIsAudited() throws Exception {
         mvc.perform(get("/api/v1/alarms/export.csv?alarm_type=UAV_INTRUSION")

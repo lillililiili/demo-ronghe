@@ -198,6 +198,29 @@ class RiskListSortExportApiTest {
         assertThat(reasons).noneMatch(cell -> !cell.isEmpty() && "=+-@".indexOf(cell.charAt(0)) >= 0);
     }
 
+    /**
+     * 决策 15-32：列头是中文、正文是 HIGH / PENDING_VERIFICATION 的话，拿到的是半中半英的表。
+     * 注意风险状态说"待核验"而告警说"待核实"——同一个码、两套业务用语，页面上一直如此，不要去"统一"。
+     */
+    @Test
+    void exportTranslatesEnumColumnsToChinese() throws Exception {
+        List<String[]> rows = exportRows();
+        assertThat(rows).as("本用例的导出行").hasSize(3);
+        assertThat(rows.stream().map(r -> r[2]).toList()).containsExactlyInAnyOrder("低", "高", "中");
+        assertThat(rows.stream().map(r -> r[3]).toList()).containsOnly("待核验");
+        assertThat(rows.stream().map(r -> r[1]).toList()).contains("空域风险");
+    }
+
+    /** 导出正文里属于本用例的那几行，按列拆开。 */
+    private List<String[]> exportRows() throws Exception {
+        byte[] body = mvc.perform(get("/api/v1/risks/export.csv").header("Authorization", bearer(reader)))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsByteArray();
+        List<String[]> rows = new ArrayList<>();
+        new String(body, 3, body.length - 3, StandardCharsets.UTF_8).lines().skip(1)
+                .filter(l -> l.startsWith("风险-排序-")).forEach(l -> rows.add(l.split(",")));
+        return rows;
+    }
+
     @Test
     void exportIsAudited() throws Exception {
         mvc.perform(get("/api/v1/risks/export.csv?risk_type=AIRSPACE")

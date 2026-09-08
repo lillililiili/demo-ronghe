@@ -105,8 +105,14 @@ class Stage4AccessControlServiceTest {
         assertThat(jdbc.queryForObject("""
                 select count(*) from app_role_permission
                 where permission_code in ('alarm:verify', 'risk:read', 'risk:verify')
-                  and role_code <> 'ROLE-ADMIN'
-                """, Integer.class)).isZero();
+                  and role_code not in ('ROLE-ADMIN', 'ROLE-DEMO-REVIEWER')
+                """, Integer.class)).isZero();   // 演示复核员是 local/test 种子角色（15-34），不是生产角色
+        // 演示复核员在这组码里只许持 risk:read（15-34），不许 alarm:verify / risk:verify。
+        assertThat(jdbc.queryForList("""
+                select permission_code || '=' || permission_level from app_role_permission
+                where permission_code in ('alarm:verify', 'risk:read', 'risk:verify')
+                  and role_code = 'ROLE-DEMO-REVIEWER' order by permission_code
+                """, String.class)).containsExactly("risk:read=READ");
     }
 
     @Test

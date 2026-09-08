@@ -30,7 +30,9 @@ import {
   confirmDiscretion, openCaseAssign, openCaseClose, openCaseFile, openCaseReview, openCaseWithdraw,
   openDiscretionDraft, openDocumentRevoke, openLeadAdd, openLeadResolve, yuan
 } from '@/ui/punishmentModals.js';
-import { DISPOSAL_UNAVAILABLE_TEXT } from '@/ui/disposalAuthModal.js';
+import {
+  DISPOSAL_UNAVAILABLE_TEXT, openDisposalApproval, openDisposalExecution, openDisposalManualResult, openDisposalStop
+} from '@/ui/disposalAuthModal.js';
 import { ALARM_TYPE_LABEL, CONCLUSION_LABEL as EVENT_CONCLUSION_LABEL, CASE_EVENT_KIND_LABEL, CASE_STATUS_LABEL, DISCRETION_STATUS_LABEL, DOCUMENT_STATUS_LABEL,
   LEAD_KIND_LABEL, PENALTY_TYPE_LABEL, REVIEW_CONCLUSION_LABEL, VIOLATION_CODE_LABEL,
   DISPOSAL_ACTION_LABEL, DISPOSAL_BLOCK_REASON_LABEL, DISPOSAL_CHANNEL_LABEL, DISPOSAL_EVENT_KIND_LABEL, DISPOSAL_RESULT_LABEL, disposalStatusText, DELIVERY_STATUS_LABEL, HANDOFF_BLOCKED_LABEL, HANDOFF_KIND_LABEL, HANDOFF_TYPE_LABEL, REASON_CODE_LABEL, RECEIPT_STATUS_LABEL, RISK_CONCLUSION_LABEL, RISK_STATE_LABEL, RISK_TYPE_LABEL, SEVERITY_LABEL, SEVERITY_TAG, SOURCE_MODE_LABEL, EVIDENCE_COVERAGE_LABEL, EVIDENCE_RECORD_TYPE_LABEL, labelOf, verificationOrdinal } from '@/ui/labels.js';
@@ -201,6 +203,30 @@ async function issueDocument() {
   } catch (error) {
     toast(messageOf(error, '出具决定书失败'), 'err');
   }
+}
+
+/* 每行能点哪些动作由服务端逐条返回的 allowed_actions 决定（决策 15-35）：
+   它已经把"状态允不允许"和"这个人有没有这项权限"两件事都算进去了，前端再自己判一遍只会与它不一致。
+   没有这个字段、或者它是空的，就一个按钮都不画——不画"点了才吃 403"的按钮。
+   批准与驳回是同一个弹窗里的两个结论，所以只画一颗"审批"。
+   撤回（CANCEL）暂不画：还没有对应的弹窗，画一颗点不动的按钮不如不画。 */
+const DISPOSAL_ROW_ACTIONS = [
+  { key: 'approve', codes: ['APPROVE', 'REJECT'], label: '审批', open: openDisposalApproval, title: '批准或驳回这条申请；审批人不能是申请人' },
+  { key: 'execute', codes: ['EXECUTE'], label: '执行', open: openDisposalExecution, title: '按已批准的处置下发执行指令' },
+  { key: 'manual', codes: ['MANUAL_RESULT'], label: '登记执行结果', open: openDisposalManualResult, title: '人工执行的处置在现场完成后登记结果' },
+  { key: 'stop', codes: ['STOP'], label: '停止', open: openDisposalStop, title: '立即停止这条处置，并尝试让设备急停' }
+];
+function disposalRowActions(row) {
+  const allowed = Array.isArray(row?.allowed_actions) ? row.allowed_actions : [];
+  return DISPOSAL_ROW_ACTIONS.filter(action => action.codes.some(code => allowed.includes(code)));
+}
+/* 写完之后回读这一行并交回给弹窗：结果未确认时，弹窗要靠这条记录判断服务端到底落库了没有。 */
+async function refreshDisposalRow(authorizationId) {
+  await loadDisposals(selected.value);
+  return disposals.value.find(row => row.authorization_id === authorizationId) || null;
+}
+function runDisposalAction(action, row) {
+  action.open({ authorization: row, refresh: () => refreshDisposalRow(row.authorization_id) });
 }
 
 async function loadDisposals(row) {
@@ -600,11 +626,11 @@ onMounted(() => {
                       <div v-else class="pn-chain-cards">
                         <button v-for="row in chainRecords.slice(0, 8)" :key="row.record_id" type="button" class="punish-evidence-card"
                           :disabled="!isFileRecord(row)"
-                          :title="recordHint(row)"
+                          :title="recordHint(row, chain)"
                           :aria-label="'查看证据：' + recordCaption(row)"
                           @click="isFileRecord(row) && openEvidenceFileModal(row.record_id)">
                           <span>{{ recordCaption(row) }}</span>
-                          <small>{{ isFileRecord(row) ? '打开文件' : recordHint(row) }}</small>
+                          <small>{{ isFileRecord(row) ? '打开文件' : recordHint(row, chain) }}</small>
                         </button>
                       </div>
                       <div v-if="chainRecords.length > 8" class="pn-note-text">另有 {{ chainRecords.length - 8 }} 项，可在「证据管理」查看文件台账。</div>
@@ -718,6 +744,10 @@ onMounted(() => {
                   </div>
                   <div v-if="row.result_code" class="pn-sub pn-wrap">
                     结果：{{ labelOf(DISPOSAL_RESULT_LABEL, row.result_code) }}<span v-if="row.result_detail"> · {{ row.result_detail }}</span>
+                  </div>
+                  <div v-if="disposalRowActions(row).length" class="pn-disposal-acts">
+                    <button v-for="action in disposalRowActions(row)" :key="action.key" class="btn" type="button"
+                      :title="action.title" @click="runDisposalAction(action, row)">{{ action.label }}</button>
                   </div>
                 </div>
                 <div v-if="disposalEvents.length" class="pn-disposal-events">
@@ -886,6 +916,7 @@ onMounted(() => {
 .pn-disposal { display: grid; gap: 10px; }
 .pn-disposal-row { display: grid; gap: 4px; padding: 8px; border: 1px solid var(--line); border-radius: 6px; }
 .pn-disposal-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pn-disposal-acts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
 .pn-disposal-events { display: grid; gap: 4px; margin-top: 4px; }
 .pn-chain-cov { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 8px; }
 .pn-chain-cov-item { display: grid; gap: 4px; padding: 6px; border: 1px solid var(--line); border-radius: 4px; font-size: 11px; }

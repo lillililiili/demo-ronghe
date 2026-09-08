@@ -1,5 +1,6 @@
 import {
-  EVIDENCE_COVERAGE_LABEL, EVIDENCE_KIND_LABEL, EVIDENCE_RECORD_TYPE_LABEL, EVIDENCE_STATUS_LABEL, labelOf
+  ALARM_TYPE_LABEL, CONCLUSION_LABEL, DISPOSAL_ACTION_LABEL, EVIDENCE_COVERAGE_LABEL, EVIDENCE_KIND_LABEL,
+  EVIDENCE_RECORD_TYPE_LABEL, EVIDENCE_STATUS_LABEL, HANDOFF_TYPE_LABEL, labelOf
 } from '@/ui/labels.js';
 import { escEvidence, fmtEvidenceTime } from '@/ui/evidenceFileDetail.js';
 
@@ -26,17 +27,20 @@ export function recordCaption(record) {
   return labelOf(EVIDENCE_RECORD_TYPE_LABEL, record.record_type, record.record_type);
 }
 
-export function recordHint(record) {
+/* 卡片副标题：能翻的码一律走共享字典（labelOf 翻不出来时原样返回该码），这里不另造新词。
+   结论码只在事件链上翻：CONFIRMED 在无人机事件里是"核实属实"、在飞行风险里是"核验通过"，
+   记录本身不带这个区分，翻错比不翻更糟，所以拿不准来源时保持原码。 */
+export function recordHint(record, chain) {
   const summary = record.summary || {};
   if (summary.original_name) return summary.original_name;
   if (summary.evidence_no) return summary.evidence_no;
   if (summary.command_no) return summary.command_no;
-  if (summary.conclusion_code) return summary.conclusion_code;
-  if (summary.conclusion) return summary.conclusion;
-  if (summary.alarm_type) return summary.alarm_type;
-  if (summary.action) return summary.action;
-  if (summary.layer) return summary.layer;
-  if (summary.handoff_type) return summary.handoff_type;
+  const conclusion = summary.conclusion_code || summary.conclusion;
+  if (conclusion) return chain && chain.subject_kind === 'EVENT' ? labelOf(CONCLUSION_LABEL, conclusion) : conclusion;
+  if (summary.alarm_type) return labelOf(ALARM_TYPE_LABEL, summary.alarm_type);
+  if (summary.action) return labelOf(DISPOSAL_ACTION_LABEL, summary.action);
+  if (summary.layer) return summary.layer;   // 融合分层没有共享字典，原码照旧
+  if (summary.handoff_type) return labelOf(HANDOFF_TYPE_LABEL, summary.handoff_type);
   return record.record_id;
 }
 
@@ -72,7 +76,7 @@ export function renderEvidenceChainHtml(chain, state = {}) {
           const file = isFileRecord(record);
           const bad = record.availability === 'UNAVAILABLE';
           const cap = esc(recordCaption(record));
-          const hint = esc(recordHint(record));
+          const hint = esc(recordHint(record, chain));
           const tag = file && record.summary && record.summary.status
             ? esc(labelOf(EVIDENCE_STATUS_LABEL, record.summary.status, record.summary.status)) : '';
           const inner = `<span style="font-size:14px">${U.icon(TYPE_ICON[record.record_type] || 'folder')}</span>

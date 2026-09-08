@@ -85,7 +85,11 @@ public class AlarmReadService {
             "告警编号", "告警类别", "等级", "状态", "发生时间", "接收时间", "目标编号", "所属组织", "所属区域", "来源");
 
     private static List<String> exportRow(AlarmRow row) {
-        return java.util.Arrays.asList(row.sourceAlarmId(), row.alarmType(), row.severity(), row.state(),
+        // 枚举列翻中文（决策 15-32）：列头是中文、正文却是 HIGH/PENDING_VERIFICATION，拿到的是半中半英的表。
+        return java.util.Arrays.asList(row.sourceAlarmId(),
+                com.uav.lowaltitude.platform.export.CsvLabels.alarmType(row.alarmType()),
+                com.uav.lowaltitude.platform.export.CsvLabels.severity(row.severity()),
+                com.uav.lowaltitude.platform.export.CsvLabels.uavEventState(row.state()),
                 time(row.occurredAt()), time(row.receivedAt()), row.targetNo(), row.ownerOrgName(),
                 row.districtName(), row.sourceName());
     }

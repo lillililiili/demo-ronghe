@@ -14,9 +14,14 @@ import { authRestoreError, authSession, isAuthenticated, needsPasswordChange, re
 /* hash 模式与旧版地址完全兼容：#/situation、#/legality、旧书签、UI.goto 写
    location.hash 都直接命中。REDIRECT 表用 router redirect 实现（等价旧版
    location.replace，不污染历史）。 */
-const routes = Object.keys(REDIRECT).map(k => ({
-  path: '/' + k, redirect: '/' + REDIRECT[k]
-}));
+const routes = [
+  { path: '/', redirect: '/workbench' },
+  ...Object.keys(REDIRECT).map(k => ({
+    path: '/' + k, redirect: '/' + REDIRECT[k]
+  })),
+  /* #/risk 已撤回独立页：落到飞行计划「全部风险事件」，避免无 risk 菜单权限时被拦成「无法访问空间安全风险」。 */
+  { path: '/risk', redirect: to => ({ path: '/flights', query: { ...to.query, tab: 'events' } }) }
+];
 routes.push({ path: '/:page*', component: PageHost });
 /* dev-only 的 #/__ui-lab 对照台不在这里挂路由 —— 本应用没有 <router-view>
    出口（PageHost 由 App.vue 直接渲染），页面注册一律走 pages/registry.js。 */

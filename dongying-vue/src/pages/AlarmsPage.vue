@@ -27,11 +27,16 @@ import { openFormModal } from '@/ui/formModal.js';
 import { closeModal } from '@/ui/modal.js';
 import { toast } from '@/ui/nv.js';
 import { getAlarm, getUavEvent, listAlarms, listUavVerifications } from '@/services/alarmApi.js';
+import { getEvidenceChain } from '@/services/evidenceApi.js';
 import { openUavVerification } from '@/ui/uavVerificationModal.js';
 import { targetApi } from '@/services/targetApi.js';
 import { DISPOSAL_ACTION_LABEL, disposalStatusText, labelOf, SOURCE_MODE_LABEL as MODE_TEXT, targetTypeLabel } from '@/ui/labels.js';
+import { openEvidenceFileModal } from '@/ui/evidenceFileDetail.js';
+import { renderEvidenceChainHtml } from '@/ui/evidenceChainView.js';
 import { disposalApi, isDisposalUnavailable } from '@/services/disposalApi.js';
 import { DISPOSAL_UNAVAILABLE_TEXT, openDisposalRequest } from '@/ui/disposalAuthModal.js';
+import { canRouteAction } from '@/services/accessControl.js';
+import { deviceApi } from '@/services/deviceApi.js';
 
 const U = window.UI;
 usePageChrome('alarms');
@@ -100,7 +105,9 @@ function coord(loc, issues, field) {
 const list = { rows: [], loading: false, error: '' };
 let listSeq = 0, detailSeq = 0;
 const emptyDetail = () => ({ alarm: null, event: null, history: [], historyTotal: 0, loading: false, error: '', eventError: '',
-  target: null, targetLoading: false, targetError: '', track: null, trackError: '' });
+  target: null, targetLoading: false, targetError: '', track: null, trackError: '',
+  chain: null, chainLoading: false, chainError: '', chainUnavailable: '',
+  eoTask: null, eoTaskError: '' });
 let cur = emptyDetail();
 /* 深链（sessionStorage alarm.sel）—— 与 legacy render() 同构：mount 后按 ID 直接向服务端取详情 */
 const deepId = sessionStorage.getItem('alarm.sel');
@@ -136,7 +143,7 @@ const KPI_DEFS = [
   { label: '待处置', color: 'green', icon: 'check' },
   { label: '误报', color: 'purple', icon: 'check' }
 ];
-const kpiList = ref(KPI_DEFS.map(k => ({ ...k, value: '…', desc: '正在读取服务端统计' })));
+const kpiList = ref(KPI_DEFS.map(k => ({ ...k, value: '…', desc: '' })));
 async function loadKpis() {
   const count = q => listAlarms({ ...q, page: 1, size: 1 }).then(p => Number(p && p.total) || 0);
   /* “反制中 / 干扰中”问的是当前有多少处置在进行，因此按状态计数（契约的列表接口没有日期过滤，
@@ -181,9 +188,9 @@ const disabledSelect = (name, reason) =>
 const listPanelBody = `<div class="toolbar">
     <div class="toolbar-fields">
       ${U.field('等级', U.select('level', LEVEL_OPTS, st.level))}
-      ${U.field('类别', disabledSelect('kind', `服务端契约未提供类别筛选，${NOT_WIRED}`))}
+      ${U.field('类别', disabledSelect('kind', `当前未提供类别筛选，${NOT_WIRED}`))}
       ${U.field('状态', U.select('status', STATUS_OPTS, st.status))}
-      ${U.field('区域', disabledSelect('region', `服务端支持 district_id 过滤，但本页尚无区域字典，${NOT_WIRED}`))}
+      ${U.field('区域', disabledSelect('region', `支持按区域过滤，但本页尚无区域字典，${NOT_WIRED}`))}
     </div>
   </div>
   <div id="alList" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>`;
@@ -194,7 +201,7 @@ const mapBody = `<div id="alMap" style="flex:1;min-height:0"></div>
       color:var(--txt-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>`;
 
 /* 列头排序：服务端固定 received_at DESC, alarm_id DESC；控件保留但禁用，不对一页数据做假排序。 */
-const SORT_REASON = `服务端固定按接收时间倒序（received_at DESC, alarm_id DESC），列排序${NOT_WIRED}`;
+const SORT_REASON = `当前按接收时间倒序（received_at DESC, alarm_id DESC），列排序${NOT_WIRED}`;
 function sortTh(key, label) {
   const on = key === 'ts';
   return `<span class="lnk" data-sort="${key}" role="button" tabindex="0" aria-disabled="true" title="${SORT_REASON}"
@@ -327,10 +334,28 @@ function detailHtml() {
     ['核实事件', ev ? `已建核实事件　v${Number(ev.version)}` : (a.event_id ? '已建核实事件（详情读取失败）' : '尚未创建核实事件')]
   ], { surface: true, density: 'compact' }), { icon: 'alert' })}
     ${U.sect('核实历史', historyHtml(), { icon: 'trend' })}
+    ${renderEvidenceChainHtml(cur.chain, {
+      loading: cur.chainLoading, error: cur.chainError, unavailable: cur.chainUnavailable
+    })}
     ${U.detailActions(`
       <button class="btn" data-al="video" disabled title="${NOT_WIRED}：实时视频">${U.icon('video')} 实时视频</button>
       <button class="btn" data-al="replay" disabled title="${NOT_WIRED}：轨迹回放">${U.icon('trend')} 轨迹回放</button>
+      ${eoTrackActions(a)}
       ${disposalActions(a, ev)}`)}`;
+}
+
+function eoTrackActions(a) {
+  const canEo = canRouteAction('devices', 'op');
+  if (!canEo) {
+    return `<button class="btn" data-al="eo-track" disabled title="需要设备管理的操作权限">光电跟踪</button>`;
+  }
+  if (!a.target_id) {
+    return `<button class="btn" data-al="eo-track" disabled title="该告警没有关联目标">光电跟踪</button>`;
+  }
+  const open = cur.eoTask && (cur.eoTask.status === 'OPEN' || cur.eoTask.status === 'ENDING');
+  const begin = `<button class="btn" data-al="eo-track" title="向光电下发 BeginTracking，不是地图镜头跟随"${open ? ' disabled' : ''}>光电跟踪</button>`;
+  const stop = `<button class="btn" data-al="eo-stop" ${open ? '' : 'disabled '}title="${open ? '结束跟踪并释放光电' : '当前没有进行中的光电跟踪'}">停止跟踪</button>`;
+  return begin + stop;
 }
 
 function paintList() { const host = el('alList'); if (host) host.innerHTML = listHtml(); }
@@ -373,9 +398,9 @@ function focusMap() {
     alarms: [{ id: a.alarm_id, targetId: target.id, type: typeOf(a), level: sevOf(a).t, time: fmt(a.received_at), status: stateOf(a).t }]
   });
   if (map.w) map.centerAt(last.lon, last.lat);
-  const trackNote = pts.length > 1 ? `服务端轨迹 · 实测 ${pts.length} 点` : cur.trackError ? `轨迹读取失败：${esc(cur.trackError)}` : '仅最新位置，无可信轨迹点';
+  const trackNote = pts.length > 1 ? `实测轨迹 · ${pts.length} 点` : cur.trackError ? `轨迹读取失败：${esc(cur.trackError)}` : '仅最新位置，无可信轨迹点';
   if (srcEl) srcEl.innerHTML = pts.length > 1
-    ? `<span class="tag t-amber" title="/api/v1/targets/{id}/tracks 最新一条轨迹的最近点位（WGS84）">服务端轨迹</span> <span style="color:#8fbaff">实${pts.length}</span>`
+    ? `<span class="tag t-amber" title="/api/v1/targets/{id}/tracks 最新一条轨迹的最近点位（WGS84）">实测轨迹</span> <span style="color:#8fbaff">实${pts.length}</span>`
     : `<span class="tag t-gray" title="${cur.trackError ? esc(cur.trackError) : '该目标暂无可信轨迹点'}">无轨迹</span>`;
   setInfo(`<span class="mono" style="color:var(--txt-2)" title="${esc(t.target_id)}">${esc(t.target_no || t.target_id)}</span> · ${esc(subtype)} · 合法性 <span style="color:#8ca0be">尚未接入</span> · 高度 ${target.alt == null ? '—' : esc(target.alt) + ' m'} · ${trackNote}`,
     `${t.target_no || t.target_id}｜${subtype}｜高度 ${target.alt == null ? '—' : target.alt + ' m'}\n${trackNote}`);
@@ -428,9 +453,28 @@ async function selectAlarm(id) {
     if (my !== detailSeq) return;
     cur.error = messageOf(e);
   }
+  if (cur.alarm && (cur.alarm.event_id || cur.alarm.target_id)) cur.chainLoading = true;
   cur.loading = false;
   paintDetail(); focusMap();
-  await loadTarget(my);
+  await Promise.all([loadTarget(my), loadChain(my)]);
+}
+
+async function loadChain(my) {
+  const a = cur.alarm;
+  if (!a || my !== detailSeq) return;
+  cur.chainLoading = true; cur.chainError = ''; cur.chainUnavailable = ''; cur.chain = null;
+  paintDetail();
+  try {
+    if (a.event_id) cur.chain = await getEvidenceChain('EVENT', a.event_id);
+    else if (a.target_id) cur.chain = await getEvidenceChain('TARGET', a.target_id);
+    else cur.chainUnavailable = '无核实事件且无关联目标，无法汇总证据链。';
+  } catch (e) {
+    if (my !== detailSeq) return;
+    cur.chainError = e.status === 403 ? '当前账号没有 evidence:read，无法读取证据链' : messageOf(e);
+  }
+  if (my !== detailSeq) return;
+  cur.chainLoading = false;
+  paintDetail();
 }
 
 async function loadTarget(my) {
@@ -460,7 +504,40 @@ async function loadTarget(my) {
   }
   if (my !== detailSeq) return;
   cur.targetLoading = false;
+  await loadEoTask(my);
   paintDetail(); focusMap();
+}
+
+async function loadEoTask(my) {
+  const a = cur.alarm;
+  cur.eoTask = null; cur.eoTaskError = '';
+  if (!a || !a.target_id || !canRouteAction('devices', 'op')) return;
+  try {
+    cur.eoTask = await deviceApi.currentEoTrack(a.target_id);
+  } catch (e) {
+    if (my !== detailSeq) return;
+    if (e.status !== 404) cur.eoTaskError = messageOf(e);
+  }
+}
+
+async function beginEoTrack() {
+  const a = cur.alarm;
+  if (!a || !a.target_id) return toast('该告警没有关联目标', 'err');
+  try {
+    cur.eoTask = await deviceApi.beginEoTrack(a.target_id, { reason: '值班员点选' });
+    toast('已下发光电跟踪', 'ok');
+    paintDetail();
+  } catch (e) { toast(e.message || '光电跟踪失败', 'err'); }
+}
+
+async function endEoTrack() {
+  const taskId = cur.eoTask && cur.eoTask.task_id;
+  if (!taskId) return toast('当前没有进行中的光电跟踪', 'err');
+  try {
+    cur.eoTask = await deviceApi.endEoTrack(taskId);
+    toast('已请求停止光电跟踪', 'ok');
+    paintDetail();
+  } catch (e) { toast(e.message || '停止光电跟踪失败', 'err'); }
 }
 
 async function refreshAfterWrite() {
@@ -575,6 +652,12 @@ onMounted(async () => {
     else if (k === 'punish') punishModal();
     else if (k === 'retry') loadList();
     else if (k === 'retry-detail' && st.selId) selectAlarm(st.selId);
+    else if (k === 'chain-retry' && st.selId) loadChain(detailSeq);
+    else if (k === 'eo-track') beginEoTrack();
+    else if (k === 'eo-stop') endEoTrack();
+  });
+  U.on(view, '[data-ev-file]', 'click', (e, btn) => {
+    if (btn.dataset.evFile) openEvidenceFileModal(btn.dataset.evFile);
   });
   el('alLoc').onclick = () => { if (map) map.resetView(2.2); focusMap(); };
 

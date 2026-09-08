@@ -264,7 +264,7 @@ async function openNotifyModal(risk, summary) {
         if (isUncertainOutcome(e)) {
           // 409 重放/版本冲突、超时、断网：服务端可能已落库。保留原键，回读事项与计数，不换键重试、不提示成功。
           await refreshAll();
-          throw new Error(`提交结果未确认，请刷新核对：${messageOf(e, '服务端未返回明确结果')}`);
+          throw new Error(`提交结果未确认，请刷新核对：${messageOf(e, '未返回明确结果')}`);
         }
         pendingNotifyKeys.delete(riskId);
         pendingNotifyKeys.set(riskId, newHandoffIdempotencyKey());
@@ -357,7 +357,7 @@ onUnmounted(() => {
         <div>
           <div class="wb-eyebrow"><span v-html="icon('home')"></span> 我的工作台</div>
           <h1>{{ currentUser.name }}，这是您当前需要关注的事项</h1>
-          <p>服务端按等级、接收时间统一排序；每个事项只呈现一个明确的下一步。<span v-if="stats.asOf" class="wb-asof">数据时刻 {{ fmt(stats.asOf) }}</span></p>
+          <p>按等级、接收时间统一排序；每个事项只呈现一个明确的下一步。<span v-if="stats.asOf" class="wb-asof">数据时刻 {{ fmt(stats.asOf) }}</span></p>
         </div>
         <div class="wb-user-chip">
           <span class="wb-user-avatar" v-html="icon('user')"></span>
@@ -367,19 +367,19 @@ onUnmounted(() => {
 
       <div class="wb-kpis">
         <button class="wb-kpi is-cyan" :class="{ active: kind === 'all' && level === 'all' }" :aria-pressed="kind === 'all' && level === 'all'" @click="showKind('all')">
-          <span v-html="icon('clipboard')"></span><em>全部事项</em><b>{{ countText(stats.total) }}</b><small>后端聚合的三类源事项</small>
+          <span v-html="icon('clipboard')"></span><em>全部事项</em><b>{{ countText(stats.total) }}</b>
         </button>
         <button class="wb-kpi is-red" :class="{ active: kind === 'all' && level === 'HIGH' }" :aria-pressed="kind === 'all' && level === 'HIGH'" @click="showHighRisk">
-          <span v-html="icon('warning')"></span><em>高等级事项</em><b>{{ countText(highCount) }}</b><small>等级为高或紧急的事项</small>
+          <span v-html="icon('warning')"></span><em>高等级事项</em><b>{{ countText(highCount) }}</b>
         </button>
         <button class="wb-kpi is-blue" :class="{ active: kind === 'UAV_EVENT' && level === 'all' }" :aria-pressed="kind === 'UAV_EVENT' && level === 'all'" @click="showKind('UAV_EVENT')">
-          <span v-html="icon('plane')"></span><em>无人机告警</em><b>{{ kindCount('UAV_EVENT') }}</b><small>人工核实；反制与处罚交接未接入</small>
+          <span v-html="icon('plane')"></span><em>无人机告警</em><b>{{ kindCount('UAV_EVENT') }}</b>
         </button>
         <button class="wb-kpi is-purple" :class="{ active: kind === 'RISK' && level === 'all' }" :aria-pressed="kind === 'RISK' && level === 'all'" @click="showKind('RISK')">
-          <span v-html="icon('plan')"></span><em>飞行计划风险</em><b>{{ kindCount('RISK') }}</b><small>核验航线风险并通知上级</small>
+          <span v-html="icon('plan')"></span><em>飞行计划风险</em><b>{{ kindCount('RISK') }}</b>
         </button>
         <button class="wb-kpi is-amber" :class="{ active: kind === 'DEVICE_INCIDENT' && level === 'all' }" :aria-pressed="kind === 'DEVICE_INCIDENT' && level === 'all'" @click="showKind('DEVICE_INCIDENT')">
-          <span v-html="icon('device')"></span><em>设备告警</em><b>{{ kindCount('DEVICE_INCIDENT') }}</b><small>只读展示，恢复处置未接入</small>
+          <span v-html="icon('device')"></span><em>设备告警</em><b>{{ kindCount('DEVICE_INCIDENT') }}</b>
         </button>
       </div>
 
@@ -445,7 +445,7 @@ onUnmounted(() => {
           </section>
 
           <section class="wb-flow-card panel">
-            <div class="ph"><h3>{{ selected.kind === 'RISK' ? '飞行计划风险流程' : selected.kind === 'UAV_EVENT' ? '无人机事件处置流程' : '设备异常处置流程' }}</h3><span class="sub">按服务端状态推导；未接入环节明确标注</span></div>
+            <div class="ph"><h3>{{ selected.kind === 'RISK' ? '飞行计划风险流程' : selected.kind === 'UAV_EVENT' ? '无人机事件处置流程' : '设备异常处置流程' }}</h3><span class="sub">按当前状态推导；未接入环节明确标注</span></div>
             <div class="wb-flow" :style="{ '--wb-flow-count': selected.steps.length }">
               <div v-for="(s,i) in selected.steps" :key="s.n" :class="['wb-flow-step',{done:s.done,active:s.act}]">
                 <span>{{ s.done ? '✓' : i + 1 }}</span><b>{{ s.n }}</b><small>{{ s.done ? (s.t || '已完成') : s.t ? s.t : s.act ? '当前环节' : '待处理' }}</small>
@@ -471,7 +471,7 @@ onUnmounted(() => {
           </div>
 
           <section class="panel wb-relations">
-            <div class="ph"><h3>事项关系</h3><span class="sub">只展示服务端授权返回的引用与站内跳转</span></div>
+            <div class="ph"><h3>事项关系</h3><span class="sub">只展示已授权返回的引用与站内跳转</span></div>
             <div class="wb-relation-line">
               <span><small>事项类型</small><b>{{ kindLabel[selected.kind] }}</b></span><i>→</i>
               <span><small>源编号</small><b class="mono" :title="selected.summary.sourceId">{{ selected.summary.sourceNo || '—' }}</b></span><i>→</i>

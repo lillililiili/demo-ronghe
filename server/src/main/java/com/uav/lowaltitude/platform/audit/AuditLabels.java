@@ -82,6 +82,7 @@ final class AuditLabels {
             Map.entry("evidence_verified", "校验证据文件"),
             Map.entry("evidence_downloaded", "下载证据文件"),
             Map.entry("evidence_exported", "导出证据台账"),
+            Map.entry("evidence_destroyed", "销毁证据文件"),
             Map.entry("disposal_requested", "申请处置授权"),
             Map.entry("disposal_approved", "批准处置授权"),
             Map.entry("disposal_rejected", "驳回处置授权"),
@@ -111,7 +112,9 @@ final class AuditLabels {
             Map.entry("airport_protected_target_created", "新增保护目标"),
             Map.entry("airport_notification_target_created", "新增通报对象"),
             Map.entry("rule_evaluation_triggered", "手动触发空间风险评估"),
-            Map.entry("plan_authorization_recorded", "登记飞行计划外部授权"));
+            Map.entry("plan_authorization_recorded", "登记飞行计划外部授权"),
+            Map.entry("eo_track_requested", "下发光电跟踪"),
+            Map.entry("eo_track_ended", "停止光电跟踪"));
 
     private static final Map<String, String> METHODS = Map.of(
             "GET", "查询", "POST", "提交", "PUT", "更新", "PATCH", "更新", "DELETE", "删除");
@@ -146,8 +149,10 @@ final class AuditLabels {
             Map.entry("/stats", "运行统计"),
             Map.entry("/fusion", "融合引擎"),
             Map.entry("/targets", "目标"),
+            Map.entry("/eo-tracking-tasks", "光电跟踪"),
             Map.entry("/tracks", "轨迹"),
             Map.entry("/evidence-files", "证据文件"),
+            Map.entry("/evidence-chains", "证据链"),
             Map.entry("/airports", "机场"),
             Map.entry("/space-risks", "空间安全风险"),
             Map.entry("/space-object-subtypes", "异物细类"),

@@ -1,6 +1,6 @@
 # 设备直连接入契约（阶段 8.5，A/B 边界）
 
-> 状态：v1.4（2026-09-07）。A 侧 P1 / P3 / P4-A / P5 已按实现冻结（P4-A 默认关；P5 控制不写融合 inbox）。B 侧阶段 8.5 领取前缀、映射入口与 `ingest_seq`（§6–§7）及阶段 10 的 `fusion_event` 摘要与联调输入物（§9）已落地。依据：会议纪要 V1.0 三路架构、凌云协议 A v8.6 / B V2.4 / C 20250826（`设备资料/凌云协议/`）、决策 8-30（云端只保留我们的平台）、对齐文档 `target-schema-v1-alignment.md` §5、决策 8.5-12/20–29。配套计划：《协作者 A 直连接入计划》《协作者 B 直连切片计划》。
+> 状态：v1.5（2026-09-08）。A 侧 P1 探测类扩到 AOA / 协议破解 / RemoteID；P3 值班员手点跟踪已落地（自动跟踪默认关）。P4-A 默认关；P5 控制不写融合 inbox。雷达 TCP 与四通道反制维持厂家原生协议，不改。B 侧阶段 8.5 领取前缀、映射入口与 `ingest_seq`（§6–§7）及阶段 10 的 `fusion_event` 摘要与联调输入物（§9）已落地。依据：客户 2026-09-08 确认（凌云协议 A/B/C、MQTT 模拟可先用）、会议纪要 V1.0、凌云协议 A v8.6 / B V2.4 / C 20250826、对齐文档 `target-schema-v1-alignment.md` §5。配套计划：《协作者 A 直连接入计划》《协作者 A 任务单 20260908》。
 
 ## 1. 边界
 
@@ -12,19 +12,19 @@
 
 P1（协议 A MQTT）、P3（协议 C 光电边端）、P4-A（雷达 TCP 提升）信封与 P5（协议 B 控制）已冻结。P5 控制指令不写融合领取前缀的 inbox。不得使用「任务 `msgId` 等于观测唯一编号」或「按随机 UUID 递增」。
 
-### 2.1 P1 已冻结（协议 A，雷达 / 5G-A / TDOA）
+### 2.1 P1 已冻结（协议 A，雷达 / 5G-A / TDOA / AOA / 协议破解 / RemoteID）
 
 | 列 | 值 | 说明 |
 | --- | --- | --- |
 | `source` | `lingyun:<deviceTypeAbbr>:<内部标准设备ID>` | 内部 ID 是 A 登记时写入 `device.device_id` 的稳定主键，不是 Topic/`SenseData` 里的外部 `deviceId`。外部编号、提供方编码保留在 `mqtt_device_binding`。模拟 `replay` 与真实 `live` 使用不同内部 ID，避免碰撞。无 `taskId` 的来源（雷达 / TDOA / AOA）B 用**整条 `source` 串**作会话键参与 link 身份，因此该内部 ID 在同一 `source_mode` 下对同一台物理设备必须保持稳定；重新登记或迁库改号会使同一台设备的目标分叉成新的一批 |
 | `source_msg_id` | `<ptTime>:<msgCnt>` | 不再单独使用循环序号。同键同原始 UTF-8 SHA-256 为重复；同键不同哈希记冲突，不覆盖、不静默丢弃 |
-| `source_id` | 标准侧 `integration_source.source_id` | `source_type`：`radar→RADAR`，`5ga→FIVE_G_A`，`tdoa→TDOA` |
+| `source_id` | 标准侧 `integration_source.source_id` | `source_type`：`radar→RADAR`，`5ga→FIVE_G_A`，`tdoa→TDOA`，`aoa→AOA`，`dcd→DCD`，`rid→RID`。主题缩写对应协议 A 附录 `deviceType`：`5ga=0`、`radar=1`、`aoa=9`、`tdoa=10`、`dcd=11`、`rid=102`。附录其余类型（光电 oe、察打一体 isrs、反制/诱骗等）本切片不登记 |
 | `payload` | 协议 A 整条原始 JSON（工参不进 inbox；仅 `device_data` 的 `SenseData`） | JSON；**不**向原文插入平台字段 |
 | `payload_hash` | 收到的原始 UTF-8 字节 SHA-256 小写十六进制 | `ck_stage2_inbox_payload_hash` |
 | `status` | `RECEIVED` | B 领取后 `PROCESSING → DONE/FAILED`，`processed_at` 同时写。A 的独立验收不以融合目标出现为条件 |
 | `received_at` | 平台实际收到时刻（`AppClock` 毫秒） | `ptTime` 与 `objects[].time` 原样留在 payload，A 不解释坐标与高度 |
 
-Topic 与正文必须一致：`bridge/{providerCode}/device|device_data/{deviceTypeAbbr}/{externalDeviceId}`。未登记、类型不在雷达/5G-A/TDOA、retained、非 QoS1、身份不一致：记拒收诊断后确认，不自动创建设备。工参只更新已登记设备在线态与 `workState`；30 秒无有效工参离线；`workState=0` 不是离线。
+Topic 与正文必须一致：`bridge/{providerCode}/device|device_data/{deviceTypeAbbr}/{externalDeviceId}`。未登记、类型不在白名单、retained、非 QoS1、身份不一致：记拒收诊断后确认，不自动创建设备。工参只更新已登记设备在线态与 `workState`；30 秒无有效工参离线；`workState=0` 不是离线。A 不解释 `objects[]`（含 SN、飞手位置、方位）；映射仍由 B 的 `LingyunSenseDataMapper` 领取 `lingyun:` 前缀完成。高度原样留在 payload，不进合法性比较（基准待客户确认）。
 
 ### 2.2 P3 已冻结（协议 C 光电边端）
 
@@ -39,7 +39,7 @@ Topic 与正文必须一致：`bridge/{providerCode}/device|device_data/{deviceT
 | `status` | `RECEIVED` | |
 | `received_at` | 平台收到时刻 | `timestamp` 原样留在 payload |
 
-只把入站 `event=BeginTracking` 且带 `metadata.codeStatus` 的上报写入 inbox。HeartBeat / CameraStatus / EndTracking 只更新运维态或 `device_command`。A 的光电跟踪触发只读 `fusion_event`，游标为 `(created_at, event_id)` 序偶，**不是** UUID 递增。
+只把入站 `event=BeginTracking` 且带 `metadata.codeStatus` 的上报写入 inbox。HeartBeat / CameraStatus / EndTracking 只更新运维态或 `device_command`。确认表 D6 默认「点选之后再跟踪」：值班员手点入口为 `POST /api/v1/targets/{targetId}/eo-tracking-tasks`（`devices.op` + 目标 `target:read` 可见），停止为 `POST /api/v1/eo-tracking-tasks/{taskId}/end`；查询进行中任务 `GET /api/v1/targets/{targetId}/eo-tracking-tasks`。自动轮询 `fusion_event` 受 `app.eo-edge.auto-track.enabled` 控制，**默认关**。未开任务的跟踪上报仍拒收 `TRACK_NOT_OPEN`。协议 C 标「暂不支持」的事件不实现。
 
 ### 2.3 P4-A 已冻结（雷达 TCP 轨迹提升，默认关）
 

@@ -87,7 +87,6 @@ bash tools/parity-diff.sh            # 任何 DIFF 都表示 legacy 副本落后
 ```bash
 bash tools/parity-diff.sh     # legacy 副本字节级等价
 node tools/scan.cjs           # 源码合规扫描（含 src/**/*.vue）
-node tools/falsify.cjs        # mock.js 断言证伪（183 条 + 注入捕获）
 node tools/tilecheck.cjs      # 仅审计保留的历史瓦片包（线上地图不调用）
 # tools/overflow.cjs          # 浏览器探针生成器，用法见文件头
 ```

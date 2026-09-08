@@ -17,5 +17,8 @@ public interface ObjectStoragePort {
 
     boolean exists(String relativePath);
 
+    /** 删除对象。路径不存在视为成功，不抛错。 */
+    void deleteIfPresent(String relativePath);
+
     record StoredObject(String relativePath, long sizeBytes, String sha256) { }
 }

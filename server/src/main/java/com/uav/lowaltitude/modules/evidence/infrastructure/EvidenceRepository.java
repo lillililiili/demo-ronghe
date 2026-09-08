@@ -79,14 +79,15 @@ public class EvidenceRepository {
         p.put("id", row.evidenceId()); p.put("no", row.evidenceNo()); p.put("kind", row.kindCode());
         p.put("name", row.originalName()); p.put("type", row.contentType()); p.put("backend", row.storageBackend());
         p.put("key", row.objectKey()); p.put("size", row.sizeBytes()); p.put("sha", row.sha256());
-        p.put("captured", ts(row.capturedAt())); p.put("stored", ts(row.storedAt())); p.put("status", row.status());
+        p.put("captured", ts(row.capturedAt())); p.put("stored", ts(row.storedAt()));
+        p.put("retain", ts(row.retainUntil())); p.put("status", row.status());
         p.put("mode", row.sourceMode()); p.put("org", row.ownerOrgId()); p.put("district", row.districtId());
         p.put("created", ts(row.createdAt())); p.put("updated", ts(row.updatedAt())); p.put("version", row.version());
         jdbc.update("""
                 INSERT INTO evidence_file (evidence_id,evidence_no,kind_code,original_name,content_type,storage_backend,
-                    object_key,size_bytes,sha256,captured_at,stored_at,status,source_mode,owner_org_id,district_id,
+                    object_key,size_bytes,sha256,captured_at,stored_at,retain_until,status,source_mode,owner_org_id,district_id,
                     created_at,updated_at,version)
-                VALUES (:id,:no,:kind,:name,:type,:backend,:key,:size,:sha,:captured,:stored,:status,:mode,:org,:district,
+                VALUES (:id,:no,:kind,:name,:type,:backend,:key,:size,:sha,:captured,:stored,:retain,:status,:mode,:org,:district,
                     :created,:updated,:version)
                 """, p);
     }
@@ -104,6 +105,22 @@ public class EvidenceRepository {
                 UPDATE evidence_file SET status=:status, updated_at=:updated, version=version+1
                 WHERE evidence_id=:id AND version=:version
                 """, Map.of("id", evidenceId, "status", status, "updated", ts(updatedAt), "version", expectedVersion));
+    }
+
+    public int markDestroyed(String evidenceId, String destroyedBy, String reason, String approval,
+            Instant destroyedAt, long expectedVersion) {
+        Map<String, Object> p = new HashMap<>();
+        p.put("id", evidenceId);
+        p.put("by", destroyedBy);
+        p.put("reason", reason);
+        p.put("approval", approval);
+        p.put("at", ts(destroyedAt));
+        p.put("version", expectedVersion);
+        return jdbc.update("""
+                UPDATE evidence_file SET status='DESTROYED', destroyed_at=:at, destroyed_by=:by,
+                    destroy_reason=:reason, destroy_approval=:approval, updated_at=:at, version=version+1
+                WHERE evidence_id=:id AND version=:version AND status<>'DESTROYED'
+                """, p);
     }
 
     public long count(FileQuery query, AccessDecision access, boolean ingest) {
@@ -263,7 +280,8 @@ public class EvidenceRepository {
 
     private static final String FILE_COLUMNS = "f.evidence_id,f.evidence_no,f.kind_code,f.original_name,f.content_type,"
             + "f.storage_backend,f.object_key,f.size_bytes,f.sha256,f.captured_at,f.stored_at,f.status,f.retain_until,"
-            + "f.source_mode,f.owner_org_id,f.district_id,f.created_at,f.updated_at,f.version";
+            + "f.source_mode,f.owner_org_id,f.district_id,f.created_at,f.updated_at,f.version,"
+            + "f.destroyed_at,f.destroyed_by,f.destroy_reason,f.destroy_approval";
 
     private static FileRow file(ResultSet rs, int ignored) throws SQLException {
         return new FileRow(rs.getString("evidence_id"), rs.getString("evidence_no"), rs.getString("kind_code"),
@@ -271,7 +289,9 @@ public class EvidenceRepository {
                 rs.getString("object_key"), longOrNull(rs, "size_bytes"), rs.getString("sha256"),
                 time(rs, "captured_at"), time(rs, "stored_at"), rs.getString("status"), time(rs, "retain_until"),
                 rs.getString("source_mode"), rs.getString("owner_org_id"), rs.getString("district_id"),
-                time(rs, "created_at"), time(rs, "updated_at"), rs.getLong("version"));
+                time(rs, "created_at"), time(rs, "updated_at"), rs.getLong("version"),
+                time(rs, "destroyed_at"), rs.getString("destroyed_by"), rs.getString("destroy_reason"),
+                rs.getString("destroy_approval"));
     }
 
     private static LinkRow link(ResultSet rs, int ignored) throws SQLException {
@@ -311,13 +331,14 @@ public class EvidenceRepository {
 
     public record FileInsert(String evidenceId, String evidenceNo, String kindCode, String originalName,
             String contentType, String storageBackend, String objectKey, Long sizeBytes, String sha256,
-            Instant capturedAt, Instant storedAt, String status, String sourceMode, String ownerOrgId,
-            String districtId, Instant createdAt, Instant updatedAt, long version) { }
+            Instant capturedAt, Instant storedAt, Instant retainUntil, String status, String sourceMode,
+            String ownerOrgId, String districtId, Instant createdAt, Instant updatedAt, long version) { }
 
     public record FileRow(String evidenceId, String evidenceNo, String kindCode, String originalName,
             String contentType, String storageBackend, String objectKey, Long sizeBytes, String sha256,
             Instant capturedAt, Instant storedAt, String status, Instant retainUntil, String sourceMode,
-            String ownerOrgId, String districtId, Instant createdAt, Instant updatedAt, long version) { }
+            String ownerOrgId, String districtId, Instant createdAt, Instant updatedAt, long version,
+            Instant destroyedAt, String destroyedBy, String destroyReason, String destroyApproval) { }
 
     public record LinkRow(String linkId, String evidenceId, String subjectKind, String subjectId, String eventId,
             String deviceId, String targetId, String planId, String commandId, String commissionId, Instant createdAt) { }

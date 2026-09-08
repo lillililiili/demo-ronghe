@@ -78,4 +78,13 @@ public class LocalObjectStorage implements ObjectStoragePort {
     public boolean exists(String relativePath) {
         return Files.isRegularFile(resolve(relativePath));
     }
+
+    @Override
+    public void deleteIfPresent(String relativePath) {
+        try {
+            Files.deleteIfExists(resolve(relativePath));
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
 }

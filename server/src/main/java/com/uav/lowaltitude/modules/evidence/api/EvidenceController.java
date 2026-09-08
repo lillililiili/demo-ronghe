@@ -30,6 +30,7 @@ import com.uav.lowaltitude.modules.evidence.api.EvidenceDtos.CreatedLinkDto;
 import com.uav.lowaltitude.modules.evidence.api.EvidenceDtos.EvidenceDetailDto;
 import com.uav.lowaltitude.modules.evidence.api.EvidenceDtos.EvidenceSummaryDto;
 import com.uav.lowaltitude.modules.evidence.api.EvidenceDtos.HoldDto;
+import com.uav.lowaltitude.modules.evidence.api.EvidenceDtos.DestroyRequest;
 import com.uav.lowaltitude.modules.evidence.api.EvidenceDtos.HoldRequest;
 import com.uav.lowaltitude.modules.evidence.api.EvidenceDtos.LinkRequest;
 import com.uav.lowaltitude.modules.evidence.api.EvidenceDtos.PageDto;
@@ -120,5 +121,13 @@ public class EvidenceController {
     public ApiResponse<HoldDto> release(@PathVariable String evidenceId, @PathVariable String holdId,
             @RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey) {
         return ApiResponse.ok(evidence.release(evidenceId, holdId, idempotencyKey));
+    }
+
+    @PostMapping("/{evidenceId}/destroy")
+    public ApiResponse<EvidenceDetailDto> destroy(@PathVariable String evidenceId,
+            @RequestBody(required = false) DestroyRequest body,
+            @RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey) {
+        return ApiResponse.ok(evidence.destroy(evidenceId, body == null ? null : body.reason(),
+                body == null ? null : body.approvalNo(), idempotencyKey));
     }
 }

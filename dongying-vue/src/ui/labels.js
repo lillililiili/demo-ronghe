@@ -147,10 +147,21 @@ export const EVIDENCE_KIND_LABEL = {
 export const EVIDENCE_STATUS_LABEL = {
   PENDING: '入库中', AVAILABLE: '在库', MISSING: '文件缺失', CORRUPT: '哈希不符', DESTROYED: '已销毁'
 };
+export const EVIDENCE_CUSTODY_LABEL = {
+  KEPT: '保管中', NEARING: '临近到期', DUE: '已到期', HELD: '冻结保管'
+};
+export const EVIDENCE_CUSTODY_TAG = {
+  KEPT: 't-green', NEARING: 't-amber', DUE: 't-orange', HELD: 't-purple'
+};
 export const EVIDENCE_SUBJECT_LABEL = {
   EVENT: '无人机事件', DEVICE: '设备', TARGET: '感知目标', PLAN: '飞行计划',
   COMMAND: '指令', COMMISSION: '调测任务'
 };
+export const EVIDENCE_RECORD_TYPE_LABEL = {
+  TRACK: '轨迹', VIDEO: '视频', IMAGE: '图像', ALARM: '告警',
+  JUDGMENT: '判定', AUTHORIZATION: '授权', DISPOSAL: '处置', OPERATION: '操作'
+};
+export const EVIDENCE_COVERAGE_LABEL = { PRESENT: '已收录', ABSENT: '缺失', FORBIDDEN: '无权限' };
 
 /* 阶段 9 空域种类：页面的图层配色与筛选都以这个字典为准，历史写法（HEIGHT_LIMIT/TEMPORARY）一并收录，
    便于旧数据在页面上仍有中文，不影响写接口只接受规范值。 */

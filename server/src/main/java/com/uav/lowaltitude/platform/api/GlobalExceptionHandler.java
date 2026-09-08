@@ -177,7 +177,7 @@ public class GlobalExceptionHandler {
         if (path.contains("/audit-logs")) return "audit";
         if (path.contains("/roles") || path.contains("/permissions") || path.contains("/access-change")) return "roles";
         if (path.contains("/users") || path.contains("/organizations") || path.contains("/districts")) return "users";
-        if (path.contains("/device") || path.contains("/commission")) return "devices";
+        if (path.contains("/device") || path.contains("/commission") || path.contains("/eo-tracking-tasks")) return "devices";
         // 无人机事件与来源告警属于同一核实域；风险保持独立，失败审计不能都落到笼统的 system。
         if (path.contains("/alarms") || path.contains("/uav-events")) return "alarms";
         if (path.contains("/risks")) return "risk";
@@ -198,7 +198,7 @@ public class GlobalExceptionHandler {
         if (path.contains("/stats")) return "statistics";
         // 阶段 8：融合引擎配置/状态/指标与目标修订、合并、分裂都归融合模块；阶段 2 的目标只读接口本身仍归 system（无写审计）。
         if (path.contains("/fusion") || path.contains("/classification-revisions") || path.contains("/targets/merge") || path.matches(".*/targets/[^/]+/split$")) return "fusion";
-        if (path.contains("/evidence-files")) return "evidence";
+        if (path.contains("/evidence-files") || path.contains("/evidence-chains")) return "evidence";
         return "system";
     }
 }

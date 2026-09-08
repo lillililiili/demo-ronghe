@@ -29,7 +29,6 @@
 .fc h5{min-width:0}
 .fc{min-width:0}
 .kpi .vl{font-size:34px;font-weight:700;line-height:1.25;font-family:"DIN Alternate","Bahnschrift",Menlo,sans-serif;letter-spacing:.5px;font-variant-numeric:tabular-nums}
-/* 描述行允许折行：它是 KPI 里最长的一段，强行 nowrap 会把整张卡撑出容器并被静默裁掉。
-   同排卡片由 grid 拉齐高度，折行不会造成参差。 */
-.kpi .dt{font-size:12px;color:var(--txt-3);line-height:1.5;margin-top:2px}
+/* 统计卡片不再展示描述行，避免各页残留口径说明。 */
+.kpi .dt{display:none}
 .up{color:var(--red)} .dn{color:var(--green)} .flat{color:var(--txt-3)}

@@ -1,6 +1,6 @@
 <script>
 /* 跨导航只保留筛选、分页与选中 ID；业务事实仍每次从只读 API 重取，不能缓存成 Mock 副本。 */
-const S = { filters: { status_code: '', keyword: '', owner_org_id: '', district_id: '' }, page: 1, size: 20, selectedPlanId: null, tab: 'route', tabHash: '',
+const S = { filters: { status_code: '', keyword: '' }, page: 1, size: 20, selectedPlanId: null, tab: 'route', tabHash: '',
   /* 风险页签：筛选只收契约允许的字段；目标类型筛选与任意排序契约不支持，只保留禁用控件。 */
   riskFilters: { severity: '', state: '', plan_id: '', owner_org_id: '', district_id: '', source_mode: '', occurred: null },
   riskPage: 1, riskSize: 10, selectedRiskId: null, riskTab: 'event' };
@@ -51,7 +51,16 @@ const error = ref('');
 const detailError = ref('');
 const routeGeometryError = ref('');
 const airspaceError = ref('');
-const activeTab = ref('route');
+function hashPath(raw = location.hash || '') {
+  return raw.split('?')[0];
+}
+function hashWantsEventsTab(raw = location.hash || '') {
+  if (hashPath(raw).startsWith('#/risk')) return true;
+  const q = raw.indexOf('?');
+  if (q < 0) return false;
+  return new URLSearchParams(raw.slice(q + 1)).get('tab') === 'events';
+}
+const activeTab = ref(hashWantsEventsTab() ? 'events' : 'route');
 const mapHost = ref(null);
 const routeLoaded = ref(false);
 /* 全页只允许一个活动 MapView：航线页签与风险页签共用同一变量，切换前先 destroyRouteMap()。 */
@@ -107,7 +116,7 @@ const RISK_SEVERITY_TAG = { CRITICAL: 't-red', HIGH: 't-red', MEDIUM: 't-amber',
 const RISK_SEVERITY_TONE = { CRITICAL: 'bad', HIGH: 'bad', MEDIUM: 'warn', LOW: 'info' };
 /* 与迁移 022 的 CHECK 枚举一致：UNKNOWN / WITHIN / OUTSIDE；未知不判断安全。 */
 const HEIGHT_RELATION_LABEL = { UNKNOWN: '高度关系未知', WITHIN: '在航线高度范围内', OUTSIDE: '超出航线高度范围' };
-const FIXED_SORT_NOTE = '服务端固定排序：received_at DESC, risk_id DESC；阶段 4 未提供按该列排序';
+const FIXED_SORT_NOTE = '当前按接收时间倒序：received_at DESC, risk_id DESC；阶段 4 未提供按该列排序';
 const NO_TYPE_FILTER_NOTE = '阶段 4 未提供目标类型筛选（契约仅支持状态、等级、计划、发生时间、组织、区域、来源模式）';
 const HISTORY_PAGE_SIZE = 10;
 
@@ -124,8 +133,8 @@ const canFilterByPlan = computed(() => actionAllowed('flight:read') !== false);
 const canReadRoute = computed(() => actionAllowed('route:read') !== false);
 
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / size.value)));
-const statusOptions = [{ label: '全部状态', value: '' }, ...['PENDING', 'APPROVED', 'EXECUTING', 'COMPLETED', 'CANCELLED'].map(value => ({ label: value, value }))];
-const kpiList = ['今日报备计划', '执行中', '待执行', '已完成', '计划未匹配到目标', '偏离报备计划'].map((label, index) => ({ label, value: '—', color: ['blue', 'cyan', 'purple', 'green', 'amber', 'red'][index], icon: ['plan', 'radar', 'check', 'check', 'alert', 'alert'][index], desc: '尚未接入后端聚合口径' }));
+const statusOptions = [{ label: '全部状态', value: '' }, ...Object.keys(PLAN_STATUS_LABEL).map(value => ({ label: PLAN_STATUS_LABEL[value], value }))];
+const kpiList = ['今日报备计划', '执行中', '待执行', '已完成', '计划未匹配到目标', '偏离报备计划'].map((label, index) => ({ label, value: '—', color: ['blue', 'cyan', 'purple', 'green', 'amber', 'red'][index], icon: ['plan', 'radar', 'check', 'check', 'alert', 'alert'][index] }));
 const trustedCenterline = computed(() => trustedCoordinates(routeVersion.value));
 const trustedAirspaces = computed(() => trustedAirspaceOverlays());
 const hasMapContent = computed(() => Boolean(trustedCenterline.value?.length || trustedAirspaces.value.length));
@@ -134,13 +143,13 @@ const hasMapContent = computed(() => Boolean(trustedCenterline.value?.length || 
 const RISK_KPI_QUERIES = { all: {}, high: { severity: 'HIGH' }, medium: { severity: 'MEDIUM' }, pending: { state: 'PENDING_VERIFICATION' } };
 const riskKpis = computed(() => {
   const value = key => (riskKpiFailed.value[key] ? '—' : riskKpiTotals.value[key] == null ? '…' : Number(riskKpiTotals.value[key]).toLocaleString('en-US'));
-  const desc = (key, text) => (riskKpiFailed.value[key] ? '服务端总数读取失败' : text);
+  const desc = (key, text) => (riskKpiFailed.value[key] ? '总数读取失败' : text);
   return [
-    { label: '风险事件', value: value('all'), color: 'blue', icon: 'bird', desc: desc('all', '当前权限范围内服务端总数') },
-    { label: '高风险事件', value: value('high'), color: 'red', icon: 'alert', desc: desc('high', 'severity=HIGH 的服务端总数') },
-    { label: '中风险事件', value: value('medium'), color: 'amber', icon: 'alert', desc: desc('medium', 'severity=MEDIUM 的服务端总数') },
+    { label: '风险事件', value: value('all'), color: 'blue', icon: 'bird', desc: desc('all', '当前权限范围内总数') },
+    { label: '高风险事件', value: value('high'), color: 'red', icon: 'alert', desc: desc('high', 'severity=HIGH 的总数') },
+    { label: '中风险事件', value: value('medium'), color: 'amber', icon: 'alert', desc: desc('medium', 'severity=MEDIUM 的总数') },
     { label: '鸟类事件', value: '尚未接入', color: 'green', icon: 'bird', desc: '阶段 4 风险无目标类型口径' },
-    { label: '待核验', value: value('pending'), color: 'orange', icon: 'check', desc: desc('pending', 'state=PENDING_VERIFICATION 的服务端总数') },
+    { label: '待核验', value: value('pending'), color: 'orange', icon: 'check', desc: desc('pending', 'state=PENDING_VERIFICATION 的总数') },
     { label: '涉及航线', value: '尚未接入', color: 'purple', icon: 'zone', desc: '阶段 4 未提供航线维度聚合' }
   ];
 });
@@ -150,7 +159,7 @@ const riskMapNote = computed(() => {
   if (riskMapLoading.value) return '正在读取关联航线版本几何…';
   if (riskMapError.value) return riskMapError.value;
   if (!selectedRisk.value) return '未选择风险事件；风险本身无坐标字段，只按关联航线版本绘制依据。';
-  if (!selectedRisk.value.route_version_id) return canReadRoute.value ? '服务端未返回航线版本关联（需 route:read 且对象可见），无可信坐标，不绘制。' : '无 route:read 权限，服务端未返回航线版本，不绘制。';
+  if (!selectedRisk.value.route_version_id) return canReadRoute.value ? '未返回航线版本关联（需 route:read 且对象可见），无可信坐标，不绘制。' : '无 route:read 权限，未返回航线版本，不绘制。';
   if (!canReadRoute.value) return '无 route:read 权限，不读取航线几何。';
   return '不可绘制：航线版本未取得可信 WGS-84 中心线。';
 });
@@ -173,14 +182,14 @@ const canNotifyRisk = computed(() => {
 });
 const notifyBlockReason = computed(() => {
   if (!selectedRisk.value) return '';
-  if (canNotifyRisk.value) return '向接收方提交风险通知交接（材料入库，不等于已发送；权限由服务端裁决）';
+  if (canNotifyRisk.value) return '向接收方提交风险通知交接（材料入库，不等于已发送）';
   return `当前状态「${stateLabel(selectedRisk.value.state)}」不允许通知`;
 });
 const verifyBlockReason = computed(() => {
   if (!selectedRisk.value) return '';
   if (canVerifyRisk.value) return '提交核验通过或排除结论';
   if (selectedRisk.value.state !== 'PENDING_VERIFICATION') return `当前状态「${stateLabel(selectedRisk.value.state)}」不允许核验`;
-  return '服务端未授予 VERIFY：缺少 risk:verify 权限或对象不在当前范围';
+  return '未授予核验权限：缺少 risk:verify 权限或对象不在当前范围';
 });
 
 function formatTime(value) {
@@ -213,7 +222,7 @@ function relatedIdText(id, permissionCode) {
   // 内部 ID 不直接展示；存在即说明已关联，ID 只放在 title 提示里。
   if (id) return '已关联';
   if (actionAllowed(permissionCode) === false) return `无 ${permissionCode} 权限，字段未返回`;
-  return `服务端未返回（需 ${permissionCode} 且对象在可见范围）`;
+  return `未返回该关联（需 ${permissionCode} 且对象在可见范围）`;
 }
 
 function riskMessageOf(reason, fallback) {
@@ -228,7 +237,12 @@ async function loadPlans(nextPage = page.value) {
   loading.value = true;
   error.value = '';
   try {
-    const data = await flightApi.list({ page: nextPage, size: size.value, ...filters });
+    const data = await flightApi.list({
+      page: nextPage,
+      size: size.value,
+      status_code: filters.status_code,
+      keyword: filters.keyword
+    });
     page.value = data.page;
     total.value = data.total;
     plans.value = data.items;
@@ -775,7 +789,7 @@ function openRiskVerify() {
 function handoffMessageOf(error, fallback) {
   if (!error) return fallback;
   if (error.status === 401) return '登录已失效，请重新登录。';
-  if (error.status === 403) return '服务端拒绝：当前账号没有提交或查看交接的权限（handoff:create / handoff:read）。';
+  if (error.status === 403) return '当前账号没有提交或查看交接的权限（handoff:create / handoff:read）。';
   if (error.code === 'NETWORK_ERROR' || error.code === 'TIMEOUT') return '服务连接超时或不可用，请稍后重试。';
   return error.message || fallback;
 }
@@ -840,7 +854,7 @@ async function openRiskNotify() {
     title: '通知上级 · 风险通知交接',
     width: '560px',
     warning: empty
-      ? '接收方未配置：服务端交接接收方目录为空，不能提交；本页不以默认部门补值。'
+      ? '接收方未配置：交接接收方目录为空，不能提交；本页不以默认部门补值。'
       : '提交只表示材料入库（待投递），通知渠道未接通，不表示已发送、已送达或处罚办结；源风险保持“待通知”。',
     notice: `风险 ${riskId} · 当前版本 v${expectedVersion}`,
     fields: [{ key: 'recipient_id', label: '接收方', type: 'select', required: true,
@@ -872,12 +886,12 @@ async function openRiskNotify() {
           // 明确失败：服务端未落库，换新键并回读风险，避免旧版本再次提交。
           pendingHandoffKeys.set(riskId, newHandoffIdempotencyKey());
           await refreshAfterNotify(riskId);
-          throw new Error(`提交被拒绝，已刷新服务端状态：${handoffMessageOf(requestError, '请核对后重试')}`);
+          throw new Error(`提交被拒绝，已刷新当前状态：${handoffMessageOf(requestError, '请核对后重试')}`);
         }
         if (isUncertainOutcome(requestError)) {
           // 超时 / 断网 / 其他 409：服务端可能已落库。保留原键，先回读风险与交接记录，不自动换键重试、不提示成功。
           await refreshAfterNotify(riskId);
-          throw new Error(`提交结果未确认，请刷新核对：${handoffMessageOf(requestError, '服务端未返回明确结果')}`);
+          throw new Error(`提交结果未确认，请刷新核对：${handoffMessageOf(requestError, '未返回明确结果')}`);
         }
         pendingHandoffKeys.set(riskId, newHandoffIdempotencyKey());
         throw new Error(handoffMessageOf(requestError, '提交交接失败'));
@@ -917,45 +931,52 @@ function enterRiskTab(requestedId = null) {
   loadRisks(requestedId ? 1 : riskPage.value, requestedId);
 }
 
-/* 阶段 9 曾把 #/risk 拆成独立页面，2026-09-07 按用户裁定撤回：这两个模块原型里没有，
-   risk / airspace 恢复为本页的别名。深链键 'risk'（工作台、处罚页、态势页的"转风险"）
-   重新由本页消费，否则那三个生产者写入的一次性键将无人接收。 */
+/* 阶段 9 曾把 #/risk 拆成独立「空间安全风险」页，已撤回。工作台 / 处罚 / 态势仍可能
+   写入深链键 'risk' 或打开 #/risk；本页消费这些上下文，并只在飞行计划里切「全部风险事件」。 */
 function consumeRiskDeepLink() {
   const context = window.UI?.consume?.('risk');
   const requested = context?.eventId || context?.riskId || context?.risk_id || context?.risk || null;
   return typeof requested === 'string' && requested ? requested : null;
 }
 
-function syncTabByRoute() {
-  const hash = (location.hash || '').split('?')[0];
-  if (hash === S.tabHash) return;
-  S.tabHash = hash;
-  // risk 是唯一能预置事件页签的别名；离开它再进入 flights 必须回到航线页，不能复用旧页签状态。
-  const nextTab = hash.startsWith('#/risk') ? 'events' : 'route';
-  if (nextTab === 'events') {
-    activeTab.value = nextTab;
-    enterRiskTab(consumeRiskDeepLink());
-    return;
-  }
-  activeTab.value = nextTab;
+function flightsTabHash(tab) {
+  return tab === 'events' ? '#/flights?tab=events' : '#/flights';
+}
+
+function showEventsTab(requestedId = null) {
+  activeTab.value = 'events';
+  enterRiskTab(requestedId);
+}
+
+function showRouteTab() {
+  activeTab.value = 'route';
   destroyRouteMap();
   if (!routeLoaded.value && !loading.value) loadPlans();
   else nextTick(renderRouteMap);
 }
 
-function activateTab(tab) {
-  if (tab === 'events') {
-    activeTab.value = 'events';
-    // 先记下目标 hash，再改地址：随后的 hashchange 不会再触发一次重复加载。
-    if (!location.hash.startsWith('#/risk')) { S.tabHash = '#/risk'; location.hash = '#/risk'; }
-    enterRiskTab(consumeRiskDeepLink());
+function syncTabByRoute() {
+  const raw = location.hash || '';
+  if (raw === S.tabHash) return;
+  if (hashPath(raw).startsWith('#/risk')) {
+    S.tabHash = flightsTabHash('events');
+    if (raw !== S.tabHash) location.hash = S.tabHash;
+    showEventsTab(consumeRiskDeepLink());
     return;
   }
-  activeTab.value = 'route';
-  destroyRouteMap();
-  if (location.hash.startsWith('#/risk')) { S.tabHash = '#/flights'; location.hash = '#/flights'; }
-  if (!routeLoaded.value && !loading.value) loadPlans();
-  else nextTick(renderRouteMap);
+  S.tabHash = raw;
+  if (hashWantsEventsTab(raw)) showEventsTab(consumeRiskDeepLink());
+  else showRouteTab();
+}
+
+function activateTab(tab) {
+  const next = flightsTabHash(tab);
+  if (location.hash !== next) {
+    S.tabHash = next;
+    location.hash = next;
+  }
+  if (tab === 'events') showEventsTab(consumeRiskDeepLink());
+  else showRouteTab();
 }
 
 onMounted(() => {
@@ -1013,7 +1034,7 @@ onUnmounted(() => {
             <div class="toolbar risk-toolbar">
               <div class="tabs" style="border-bottom:none;gap:0">
                 <button class="tab" :class="{ on: riskTab === 'event' }" type="button" @click="switchRiskTab('event')">风险事件</button>
-                <button class="tab" :class="{ on: riskTab === 'notice' }" type="button" title="按选中风险读取服务端交接记录" @click="switchRiskTab('notice')">通报记录
+                <button class="tab" :class="{ on: riskTab === 'notice' }" type="button" title="按选中风险读取交接记录" @click="switchRiskTab('notice')">通报记录
                   <span class="tag t-gray" style="margin-left:4px">{{ riskTab === 'notice' ? noticesTotal : '交接' }}</span></button>
               </div>
               <template v-if="riskTab === 'event'">
@@ -1022,19 +1043,19 @@ onUnmounted(() => {
                   <div class="field" :title="NO_TYPE_FILTER_NOTE"><label>目标类型</label><UControl v-model="riskTypeFilterDisabled" type="select" :options="riskTypeOptions" disabled size="small" /></div>
                   <div class="field"><label>状态</label><UControl v-model="riskFilters.state" type="select" :options="riskStateOptions" :disabled="riskLoading" size="small" @update:model-value="applyRiskFilters" /></div>
                   <div class="field rk-range"><label>发生时间</label><UControl v-model="riskFilters.occurred" type="datetimerange" clearable :disabled="riskLoading" size="small" start-placeholder="开始" end-placeholder="结束" /></div>
-                  <div class="field" :title="canFilterByPlan ? '按已保存计划 ID 筛选（服务端要求 flight:read）' : '无 flight:read 权限，阶段 4 契约不允许以计划 ID 筛选'"><label>计划标识</label><UControl v-model="riskFilters.plan_id" placeholder="内部计划标识" :disabled="riskLoading || !canFilterByPlan" size="small" @keyup.enter="applyRiskFilters" /></div>
+                  <div class="field" :title="canFilterByPlan ? '按已保存计划 ID 筛选（需要 flight:read）' : '无 flight:read 权限，阶段 4 契约不允许以计划 ID 筛选'"><label>计划标识</label><UControl v-model="riskFilters.plan_id" placeholder="内部计划标识" :disabled="riskLoading || !canFilterByPlan" size="small" @keyup.enter="applyRiskFilters" /></div>
                   <div class="field"><label>组织</label><UControl v-model="riskFilters.owner_org_id" placeholder="机构标识" :disabled="riskLoading" size="small" @keyup.enter="applyRiskFilters" /></div>
                   <div class="field"><label>区域</label><UControl v-model="riskFilters.district_id" placeholder="区域标识" :disabled="riskLoading" size="small" @keyup.enter="applyRiskFilters" /></div>
                   <div class="field"><label>来源模式</label><UControl v-model="riskFilters.source_mode" placeholder="source_mode" :disabled="riskLoading" size="small" @keyup.enter="applyRiskFilters" /></div>
                 </div>
                 <div class="toolbar-actions">
                   <button class="btn" type="button" :disabled="riskLoading" @click="applyRiskFilters">查询</button>
-                  <span class="toolbar-note" :title="FIXED_SORT_NOTE">服务端固定按接收时间倒序</span>
+                  <span class="toolbar-note" :title="FIXED_SORT_NOTE">按接收时间倒序</span>
                 </div>
               </template>
               <template v-else>
                 <div class="toolbar-actions">
-                  <span class="toolbar-note">交接记录来自服务端；提交成功只表示材料入库，不表示已发送</span>
+                  <span class="toolbar-note">提交成功只表示材料入库，不表示已发送</span>
                 </div>
               </template>
             </div>
@@ -1135,7 +1156,7 @@ onUnmounted(() => {
                 <dt v-if="selectedRisk.assessment_id">关联研判</dt><dd v-if="selectedRisk.assessment_id" :title="selectedRisk.assessment_id">已关联研判记录</dd>
                 <dt v-if="selectedRisk.target_id">关联目标</dt><dd v-if="selectedRisk.target_id" class="mono" :title="selectedRisk.target_id">{{ selectedRisk.target_no || selectedRisk.target_id }}</dd>
                 <dt v-if="selectedRisk.track_id">关联轨迹</dt><dd v-if="selectedRisk.track_id" :title="selectedRisk.track_id">已关联轨迹</dd>
-              </dl><div class="rk-note">依据来自服务端已保存的风险事实与固定航线版本；前端不按最新规则重算，也不推断合法性。</div></div>
+              </dl><div class="rk-note">依据来自已保存的风险事实与固定航线版本；前端不按最新规则重算，也不推断合法性。</div></div>
               <div class="sect"><h4>核验历史 <span class="tag t-gray">{{ riskHistoryTotal }}</span></h4>
                 <div v-if="riskHistoryLoading" class="empty">正在读取核验历史…</div>
                 <div v-else-if="riskHistoryError" class="warnbox rk-error">{{ riskHistoryError }}</div>
@@ -1163,13 +1184,11 @@ onUnmounted(() => {
       <UKpis :list="kpiList" />
       <div v-if="error" class="warnbox">{{ error }}</div>
       <div class="row flight-main">
-        <UPanel title="飞行计划与活动" :panel-style="'flex:1.1;min-width:0'" nopad>
+        <UPanel title="飞行计划与活动" :panel-style="'flex:1.1;min-width:0;min-height:0'" nopad>
           <div class="toolbar plan-toolbar">
             <div class="toolbar-fields">
               <div class="field"><label>状态</label><UControl v-model="filters.status_code" type="select" :options="statusOptions" :disabled="loading" /></div>
-              <div class="field plan-keyword"><label>关键字</label><UControl v-model="filters.keyword" placeholder="计划编号 / 无人机序列号" :disabled="loading" @keyup.enter="applyFilters" /></div>
-              <div class="field"><label>组织</label><UControl v-model="filters.owner_org_id" placeholder="机构标识" :disabled="loading" @keyup.enter="applyFilters" /></div>
-              <div class="field"><label>区域</label><UControl v-model="filters.district_id" placeholder="区域标识" :disabled="loading" @keyup.enter="applyFilters" /></div>
+              <div class="field plan-keyword"><label>计划编号</label><UControl v-model="filters.keyword" placeholder="计划编号" :disabled="loading" @keyup.enter="applyFilters" /></div>
             </div>
             <div class="toolbar-actions">
               <button class="btn" type="button" :disabled="loading" @click="applyFilters">查询</button>
@@ -1198,7 +1217,7 @@ onUnmounted(() => {
         <div class="col flight-right">
           <UPanel title="航线周边态势" nopad body-style="padding:6px">
             <!-- UPanel 的 sub/extra 使用 v-html；API 航线编号只能经 Vue 文本插值输出。 -->
-            <div class="map-summary">{{ selected?.route ? `${selected.route.route_no} / v${selected.route.version_no} · ` : '' }}{{ conflicts.length ? `服务端返回 ${conflicts.length} 条空域时空关系事实` : '未接入风险/异物推导；仅展示已取得的航线与空域版本几何。' }}</div>
+            <div class="map-summary">{{ selected?.route ? `${selected.route.route_no} / v${selected.route.version_no} · ` : '' }}{{ conflicts.length ? `共 ${conflicts.length} 条空域时空关系事实` : '未接入风险/异物推导；仅展示已取得的航线与空域版本几何。' }}</div>
             <div ref="mapHost" class="route-map" :class="{ unavailable: !hasMapContent }"></div>
             <div v-if="routeGeometryLoading || airspaceLoading" class="empty">正在读取航线或空域事实…</div>
             <div v-else-if="routeGeometryError || airspaceError" class="warnbox">{{ routeGeometryError || airspaceError }}</div>
@@ -1277,7 +1296,7 @@ onUnmounted(() => {
                 <div class="muted">这里显示的是引擎已保存的研判结论；下方的空域冲突事实只是它的输入之一。</div>
               </template>
             </section>
-            <section class="sect"><h4>空域冲突事实</h4><div v-if="!conflicts.length" class="empty">服务端未返回空域冲突事实。</div><div v-else class="conflict-list"><div v-for="fact in conflicts" :key="`${fact.airspace_version_id}-${fact.conflict_code}`" class="conflict-item">{{ fact.airspace_id }} / {{ fact.airspace_version_id }}：水平 {{ fact.horizontal_relation }}；高度 {{ fact.height_relation }}；时间 {{ fact.time_relation }}；{{ fact.conflict_code || '未提供' }}</div></div></section>
+            <section class="sect"><h4>空域冲突事实</h4><div v-if="!conflicts.length" class="empty">未返回空域冲突事实。</div><div v-else class="conflict-list"><div v-for="fact in conflicts" :key="`${fact.airspace_version_id}-${fact.conflict_code}`" class="conflict-item">{{ fact.airspace_id }} / {{ fact.airspace_version_id }}：水平 {{ fact.horizontal_relation }}；高度 {{ fact.height_relation }}；时间 {{ fact.time_relation }}；{{ fact.conflict_code || '未提供' }}</div></div></section>
             <div class="row" style="margin-top:12px;gap:8px;flex-wrap:wrap">
               <button class="btn" type="button" disabled title="尚未接入">导出（尚未接入）</button>
               <button class="btn" type="button" disabled title="尚未接入">风险通知（尚未接入）</button>
@@ -1292,25 +1311,31 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.flights-page { min-width: 0; }
-.flight-main { margin-top: 12px; align-items: stretch; gap: var(--gap); height: max(812px, calc(100vh - 332px)); }
-.flight-right { flex: 1; min-width: 560px; display: grid; grid-template-rows: 320px minmax(460px, 1fr); gap: var(--gap); }
+.flights-page { min-width: 0; min-height: 0; height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+.flights-page > .tabs { flex: none; }
+.flights-page :deep(.kpis) { flex: none; }
+.flight-main { margin-top: 12px; flex: 1; min-height: 0; align-items: stretch; gap: var(--gap); }
+.flight-main > :deep(.panel) { min-height: 0; }
+.flight-right { flex: 1; min-width: 560px; min-height: 0; display: grid; grid-template-rows: minmax(180px, 28vh) minmax(0, 1fr); gap: var(--gap); }
 /* 控件定宽已统一到 controls.css 的 .toolbar .field（决策 12-15）：各页各定一个宽度正是换行位置对不齐的根因。 */
+.plan-toolbar { flex: none; padding-bottom: 16px; }
+.plan-toolbar + .empty,
+.plan-toolbar + .tb-wrap { flex: 1; min-height: 0; margin-top: 8px; }
 .tb-wrap { overflow: auto; }
 .tb tr { cursor: pointer; }
 .tb tr.on { background: rgba(34, 211, 238, .12); }
 .route-geometry { overflow-wrap: anywhere; line-height: 1.7; }
-.route-map { height: 245px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.route-map { flex: 1; min-height: 0; height: auto; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 .route-map.unavailable { display: none; }
-.map-summary,.map-note { padding: 3px 4px; font-size: 11px; color: var(--txt-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.detail-body { height: 100%; overflow: auto; padding: 12px; }
-.pager { display:flex; justify-content:flex-end; padding:10px; }
+.map-summary,.map-note { flex: none; padding: 3px 4px; font-size: 11px; color: var(--txt-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.detail-body { flex: 1; min-height: 0; overflow: auto; padding: 12px; }
+.pager { flex: none; display:flex; justify-content:flex-end; padding:10px; }
 .conflict-list { display: grid; gap: 8px; margin-top: 8px; }
 .conflict-item { display: grid; gap: 3px; padding: 8px; border: 1px solid var(--line); border-radius: 6px; font-size: 12px; }
 .muted { color: var(--txt-3); font-size: 12px; }
 .sect-title { margin-top: 14px; font-weight: 600; }
 /* 风险页签：沿用原 RISK_IMPL 的三栏高度与面板比例（地图 0.82 / 列表 1.7 / 详情 30%）。 */
-.risk-main { margin-top: 12px; height: calc(100vh - 314px); min-height: 578px; }
+.risk-main { margin-top: 12px; flex: 1; min-height: 0; }
 .rk-map { flex: 1; min-height: 0; }
 .rk-map-empty { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 12px; font-size: 12px; }
 .rk-legend { flex: none; height: 18px; line-height: 18px; font-size: 10.5px; color: var(--txt-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1330,6 +1355,6 @@ onUnmounted(() => {
 .rk-notify-done { display: grid; gap: 12px; }
 .rk-notify-done .detail-actions { display: flex; gap: 8px; justify-content: flex-end; }
 .rk-history-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-@media (max-width: 1100px) { .flight-main { height:auto; flex-direction:column; }.flight-right { min-width:0; grid-template-rows:320px minmax(460px,auto); } }
-@media (max-width: 1180px) { .risk-main { height: auto; flex-direction: column; }.risk-main :deep(.panel) { width: auto !important; min-height: 360px; } }
+@media (max-width: 1100px) { .flights-page { overflow: auto; }.flight-main { flex: none; height: auto; flex-direction: column; }.flight-right { min-width: 0; grid-template-rows: 320px minmax(460px, auto); } }
+@media (max-width: 1180px) { .flights-page { overflow: auto; }.risk-main { flex: none; height: auto; flex-direction: column; }.risk-main :deep(.panel) { width: auto !important; min-height: 360px; } }
 </style>

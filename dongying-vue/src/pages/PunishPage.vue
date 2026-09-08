@@ -23,6 +23,7 @@ import { toast } from '@/ui/nv.js';
 import { hasPermission } from '@/services/accessControl.js';
 import { UAV_STATE_TEXT as UAV_STATE_LABEL } from '@/ui/uavVerificationModal.js';
 import { handoffApi } from '@/services/handoffApi.js';
+import { getEvidenceChain } from '@/services/evidenceApi.js';
 import { disposalApi, isDisposalUnavailable } from '@/services/disposalApi.js';
 import { fetchDocumentContent, isPunishmentUnavailable, punishmentApi, PUNISHMENT_UNAVAILABLE_TEXT } from '@/services/punishmentApi.js';
 import {
@@ -32,7 +33,11 @@ import {
 import { DISPOSAL_UNAVAILABLE_TEXT } from '@/ui/disposalAuthModal.js';
 import { ALARM_TYPE_LABEL, CONCLUSION_LABEL as EVENT_CONCLUSION_LABEL, CASE_EVENT_KIND_LABEL, CASE_STATUS_LABEL, DISCRETION_STATUS_LABEL, DOCUMENT_STATUS_LABEL,
   LEAD_KIND_LABEL, PENALTY_TYPE_LABEL, REVIEW_CONCLUSION_LABEL, VIOLATION_CODE_LABEL,
-  DISPOSAL_ACTION_LABEL, DISPOSAL_BLOCK_REASON_LABEL, DISPOSAL_CHANNEL_LABEL, DISPOSAL_EVENT_KIND_LABEL, DISPOSAL_RESULT_LABEL, disposalStatusText, DELIVERY_STATUS_LABEL, HANDOFF_BLOCKED_LABEL, HANDOFF_KIND_LABEL, HANDOFF_TYPE_LABEL, REASON_CODE_LABEL, RECEIPT_STATUS_LABEL, RISK_CONCLUSION_LABEL, RISK_STATE_LABEL, RISK_TYPE_LABEL, SEVERITY_LABEL, SEVERITY_TAG, SOURCE_MODE_LABEL, labelOf, verificationOrdinal } from '@/ui/labels.js';
+  DISPOSAL_ACTION_LABEL, DISPOSAL_BLOCK_REASON_LABEL, DISPOSAL_CHANNEL_LABEL, DISPOSAL_EVENT_KIND_LABEL, DISPOSAL_RESULT_LABEL, disposalStatusText, DELIVERY_STATUS_LABEL, HANDOFF_BLOCKED_LABEL, HANDOFF_KIND_LABEL, HANDOFF_TYPE_LABEL, REASON_CODE_LABEL, RECEIPT_STATUS_LABEL, RISK_CONCLUSION_LABEL, RISK_STATE_LABEL, RISK_TYPE_LABEL, SEVERITY_LABEL, SEVERITY_TAG, SOURCE_MODE_LABEL, EVIDENCE_COVERAGE_LABEL, EVIDENCE_RECORD_TYPE_LABEL, labelOf, verificationOrdinal } from '@/ui/labels.js';
+import { openEvidenceFileModal } from '@/ui/evidenceFileDetail.js';
+import {
+  EVIDENCE_CHAIN_TYPES, coverageTagClass, isFileRecord, recordCaption, recordHint
+} from '@/ui/evidenceChainView.js';
 
 usePageChrome('punish');
 const root = ref(null);
@@ -49,8 +54,7 @@ const BLOCKED_LABEL = HANDOFF_BLOCKED_LABEL;
 const CONCLUSION_LABEL = RISK_CONCLUSION_LABEL;
 const REFERENCE_LABEL = { plan_id: '关联计划', route_version_id: '航线版本', assessment_id: '关联研判', target_id: '关联目标', track_id: '关联轨迹' };
 const DELIVERY_PAGE_SIZE = 10;
-const FIXED_SORT_NOTE = '服务端固定排序：created_at DESC, handoff_id DESC';
-const NOT_BUILT = '本期未建设';
+const FIXED_SORT_NOTE = '当前按提交时间倒序：created_at DESC, handoff_id DESC';
 /* 五块的边界说明：接上案件域之后不再是"整块未建设"，但每块仍有具体的、说得清的缺口，逐条写明白。 */
 const BLOCK_GAPS = {
   case: '案件只在本平台内流转：外部处罚系统与文书报送渠道尚未接入',
@@ -222,20 +226,23 @@ const deliveriesTotal = ref(0);
 const deliveriesPage = ref(1);
 const deliveriesLoading = ref(false);
 const deliveriesError = ref('');
+const chain = ref(null);
+const chainLoading = ref(false);
+const chainError = ref('');
 const legacyLinkNote = ref('');
-let listToken = 0, kpiToken = 0, detailToken = 0, deliveriesToken = 0;
+let listToken = 0, kpiToken = 0, detailToken = 0, deliveriesToken = 0, chainToken = 0;
 
 /* 3 张 KPI 与原页面同位同色；数值只取服务端 size=1 的 total，不在前端自算。 */
 const kpiList = computed(() => {
   const value = key => (kpiFailed.value[key] ? '—' : kpiTotals.value[key] == null ? '…' : Number(kpiTotals.value[key]).toLocaleString('en-US'));
-  const desc = (key, text) => (kpiFailed.value[key] ? '服务端总数读取失败' : text);
+  const desc = (key, text) => (kpiFailed.value[key] ? '总数读取失败' : text);
   if (forbidden.value) return [
-    { label: '交接总数', value: '—', color: 'blue', icon: 'gavel', desc: '服务端拒绝：无 handoff:read 权限' },
-    { label: '待投递', value: '—', color: 'amber', icon: 'alert', desc: '服务端拒绝：无 handoff:read 权限' },
-    { label: '已送达', value: '—', color: 'green', icon: 'check', desc: '服务端拒绝：无 handoff:read 权限' }
+    { label: '交接总数', value: '—', color: 'blue', icon: 'gavel', desc: '无 handoff:read 权限' },
+    { label: '待投递', value: '—', color: 'amber', icon: 'alert', desc: '无 handoff:read 权限' },
+    { label: '已送达', value: '—', color: 'green', icon: 'check', desc: '无 handoff:read 权限' }
   ];
   return [
-    { label: '交接总数', value: value('all'), color: 'blue', icon: 'gavel', desc: desc('all', '当前权限范围内服务端总数') },
+    { label: '交接总数', value: value('all'), color: 'blue', icon: 'gavel', desc: desc('all', '当前权限范围内总数') },
     { label: '待投递', value: value('pending'), color: 'amber', icon: 'alert', desc: desc('pending', '已提交、尚未发送（通知渠道未接通）') },
     { label: '已送达', value: value('delivered'), color: 'green', icon: 'check', desc: desc('delivered', '仅 local/test 的 mock 历史样例可能出现') }
   ];
@@ -257,8 +264,8 @@ const visibleReferences = computed(() => {
 const materialUnavailableText = computed(() => {
   const availability = selected.value?.availability?.material;
   const kind = selected.value?.source_kind === 'UAV_EVENT' ? '事件' : '风险';
-  if (availability === 'FORBIDDEN') return `当前账号没有查看源${kind}的权限，服务端已省略材料与核实历史。`;
-  if (availability === 'SOURCE_NOT_VISIBLE') return `源${kind}已不在当前可见范围，服务端已省略材料与核实历史。`;
+  if (availability === 'FORBIDDEN') return `当前账号没有查看源${kind}的权限，已省略材料与核实历史。`;
+  if (availability === 'SOURCE_NOT_VISIBLE') return `源${kind}已不在当前可见范围，已省略材料与核实历史。`;
   return Number(selected.value?.material?.schema_version || 0) >= 2
     ? '快照中没有事件材料。'
     : '快照中没有风险材料。';
@@ -369,6 +376,7 @@ async function loadDetail(handoffId) {
     deliveries.value = history.items || [];
     deliveriesTotal.value = history.total;
     deliveriesPage.value = history.page;
+    loadChain(detail);
   } catch (requestError) {
     if (token !== detailToken) return;
     selected.value = null;
@@ -376,6 +384,8 @@ async function loadDetail(handoffId) {
     resetPunishment();
     deliveries.value = [];
     deliveriesTotal.value = 0;
+    chain.value = null;
+    chainError.value = '';
     detailError.value = messageOf(requestError, '读取交接详情或投递记录失败');
   } finally {
     if (token === detailToken) detailLoading.value = false;
@@ -419,6 +429,36 @@ function selectHandoff(handoffId) {
 }
 function retryList() { loadKpis(); loadList(page.value); }
 function retryDetail() { if (S.selectedHandoffId) loadDetail(S.selectedHandoffId); }
+
+async function loadChain(detail) {
+  const token = ++chainToken;
+  chain.value = null;
+  chainError.value = '';
+  if (!detail || detail.source_kind !== 'UAV_EVENT' || !detail.source_id) {
+    chainLoading.value = false;
+    return;
+  }
+  chainLoading.value = true;
+  try {
+    const data = await getEvidenceChain('EVENT', detail.source_id);
+    if (token !== chainToken) return;
+    chain.value = data;
+  } catch (requestError) {
+    if (token !== chainToken) return;
+    chainError.value = requestError.status === 403
+      ? '当前账号没有 evidence:read，无法读取证据链。'
+      : (requestError.message || '证据链读取失败');
+  } finally {
+    if (token === chainToken) chainLoading.value = false;
+  }
+}
+
+const chainCoverage = computed(() => EVIDENCE_CHAIN_TYPES.map(type => {
+  const item = chain.value?.coverage?.[type] || {};
+  return { type, label: labelOf(EVIDENCE_RECORD_TYPE_LABEL, type, type), status: item.status || 'ABSENT', count: item.count || 0 };
+}));
+const chainRecords = computed(() => chain.value?.records || []);
+const chainBroken = computed(() => chainRecords.value.filter(row => row.availability === 'UNAVAILABLE').length);
 function gotoSource(row) {
   if (!row || row.source_kind !== 'RISK') return;
   U.goto('risk', { riskId: row.source_id });
@@ -457,7 +497,7 @@ onMounted(() => {
       <UKpis :list="kpiList" />
       <div id="pnBody" class="pn-body" style="margin-top:12px;flex:1;min-height:0">
         <div v-if="forbidden" class="warnbox pn-forbidden">
-          服务端拒绝读取：当前账号没有查看业务交接的权限（handoff:read）。交接清单、材料与投递状态不可读取；本页不展示任何演示数据。
+          当前账号没有查看业务交接的权限（handoff:read）。交接清单、材料与投递状态不可读取；本页不展示任何演示数据。
           <button class="btn" type="button" :disabled="listLoading" @click="retryList">重试</button>
         </div>
         <template v-else>
@@ -475,7 +515,7 @@ onMounted(() => {
                   <div class="toolbar-actions">
                     <button class="btn" type="button" :disabled="listLoading" @click="applyFilters">查询</button>
                     <button class="btn" type="button" id="pnR" :disabled="listLoading" @click="resetFilters">重置筛选</button>
-                    <span class="toolbar-note" :title="FIXED_SORT_NOTE">服务端固定按提交时间倒序</span>
+                    <span class="toolbar-note" :title="FIXED_SORT_NOTE">按提交时间倒序</span>
                   </div>
                 </div>
                 <div v-if="listError" class="warnbox pn-error">{{ listError }} <button class="btn" type="button" :disabled="listLoading" @click="retryList">重试</button></div>
@@ -542,6 +582,35 @@ onMounted(() => {
                     <dt>所属范围</dt><dd :title="`${selected.owner_org_id || ''} / ${selected.district_id || ''}`">{{ selected.owner_org_name || '—' }} / {{ selected.district_name || '—' }}</dd>
                     <dt>来源模式</dt><dd>{{ labelOf(SOURCE_MODE_LABEL, selected.source_mode, '未提供') }}</dd>
                   </dl></div>
+                  <div class="sect"><h4>证据链
+                    <span v-if="selected.source_kind === 'UAV_EVENT'" class="tag t-gray">{{ chainRecords.length }} 项</span>
+                    <span v-if="chainBroken" class="tag t-red">{{ chainBroken }} 份校验异常</span>
+                  </h4>
+                    <div v-if="selected.source_kind !== 'UAV_EVENT'" class="pn-note-text">风险交接不是无人机八类证据链的根对象；请在告警详情按事件或目标查看。</div>
+                    <div v-else-if="chainLoading" class="empty">正在读取证据链…</div>
+                    <div v-else-if="chainError" class="warnbox pn-error">{{ chainError }} <button class="btn" type="button" @click="loadChain(selected)">重试</button></div>
+                    <template v-else-if="chain">
+                      <div class="pn-chain-cov">
+                        <div v-for="item in chainCoverage" :key="item.type" class="pn-chain-cov-item">
+                          <span>{{ item.label }}</span>
+                          <span class="tag" :class="coverageTagClass(item.status)">{{ labelOf(EVIDENCE_COVERAGE_LABEL, item.status, item.status) }}<template v-if="item.count"> {{ item.count }}</template></span>
+                        </div>
+                      </div>
+                      <div v-if="!chainRecords.length" class="pn-note-text">当前事件没有已关联的八类记录。缺项已标为缺失，不编造材料。</div>
+                      <div v-else class="pn-chain-cards">
+                        <button v-for="row in chainRecords.slice(0, 8)" :key="row.record_id" type="button" class="punish-evidence-card"
+                          :disabled="!isFileRecord(row)"
+                          :title="recordHint(row)"
+                          :aria-label="'查看证据：' + recordCaption(row)"
+                          @click="isFileRecord(row) && openEvidenceFileModal(row.record_id)">
+                          <span>{{ recordCaption(row) }}</span>
+                          <small>{{ isFileRecord(row) ? '打开文件' : recordHint(row) }}</small>
+                        </button>
+                      </div>
+                      <div v-if="chainRecords.length > 8" class="pn-note-text">另有 {{ chainRecords.length - 8 }} 项，可在「证据管理」查看文件台账。</div>
+                      <div v-if="chain.integrity" class="pn-note-text">链校验 {{ chain.integrity.algorithm }} · {{ chain.integrity.member_count }} 项 · {{ chain.integrity.checksum }}</div>
+                    </template>
+                  </div>
                   <div class="sect"><h4>材料快照 <span v-if="selected.material?.schema_version" class="tag t-gray">第 {{ selected.material.schema_version }} 版</span></h4>
                     <div v-if="!selected.material" class="empty">这条交接没有材料快照。</div>
                     <template v-else>
@@ -584,7 +653,7 @@ onMounted(() => {
                           <dt>{{ reference.label }}</dt><dd :title="reference.value">已记录关联</dd>
                         </template>
                       </dl>
-                      <div v-else class="pn-note-text">当前权限下没有可见的关联引用（不可见的引用已由服务端省略）。</div>
+                      <div v-else class="pn-note-text">当前权限下没有可见的关联引用（不可见的引用已省略）。</div>
                       <div class="pn-subhead">核实历史 <span class="tag t-gray">{{ selected.material.verifications?.length || 0 }}</span></div>
                       <div v-if="!selected.material.verifications?.length" class="pn-note-text">快照中没有核实记录。</div>
                       <div v-else class="pn-history">
@@ -744,7 +813,7 @@ onMounted(() => {
               </div>
 
               <div class="pn-not-built-item" data-not-built="evidence">
-                <div class="pn-not-built-head"><b>证据链</b></div>
+                <div class="pn-not-built-head"><b>移送材料中的证据引用</b></div>
                 <div v-if="evidenceNote" class="pn-sub pn-wrap">{{ evidenceNote }}</div>
                 <div v-else class="pn-sub pn-wrap">
                   <div v-for="item in materialEvidence" :key="item.evidence_id">
@@ -814,8 +883,14 @@ onMounted(() => {
 .pn-history-item { display: grid; gap: 4px; padding: 8px; border: 1px solid var(--line); border-radius: 6px; font-size: 12px; }
 .pn-deliveries { max-height: 240px; }
 .pn-deliveries .tb tr { cursor: default; }
-.pn-not-built { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; padding: 12px; }
-.pn-not-built-item { display: grid; gap: 6px; padding: 10px; border: 1px dashed var(--line); border-radius: 6px; opacity: .85; }
-.pn-not-built-head { display: flex; align-items: center; gap: 8px; }
-.pn-not-built-item .btn { justify-self: start; }
+.pn-disposal { display: grid; gap: 10px; }
+.pn-disposal-row { display: grid; gap: 4px; padding: 8px; border: 1px solid var(--line); border-radius: 6px; }
+.pn-disposal-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pn-disposal-events { display: grid; gap: 4px; margin-top: 4px; }
+.pn-chain-cov { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 8px; }
+.pn-chain-cov-item { display: grid; gap: 4px; padding: 6px; border: 1px solid var(--line); border-radius: 4px; font-size: 11px; }
+.pn-chain-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.punish-evidence-card { height: 54px; border: 1px solid var(--line); border-radius: 4px; background: linear-gradient(135deg, rgba(61,139,255,.22), rgba(4,12,32,.9)); color: inherit; font: inherit; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; }
+.punish-evidence-card:disabled { cursor: default; opacity: .85; }
+.punish-evidence-card small { font-size: 10px; color: var(--txt-3); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>

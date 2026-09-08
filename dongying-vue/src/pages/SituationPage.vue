@@ -27,6 +27,7 @@ import { legalityApi } from '@/services/legalityApi.js';
 import { SOURCE_TYPE_LABEL, SCHEMA_STATUS_LABEL, labelOf } from '@/ui/labels.js';
 import { disposalApi } from '@/services/disposalApi.js';
 import { openDisposalRequest } from '@/ui/disposalAuthModal.js';
+import { canRouteAction } from '@/services/accessControl.js';
 import {
   AIRSPACE_LAYERS, legalByTarget, percent, toAirspaces, toAlarms, toDevices, toTargets, toTrack
 } from '@/services/situationData.js';
@@ -105,6 +106,11 @@ function tipActions(t) {
     : '';
   /* 没有后端能力的按钮一律"保留 + 禁用 + 标注"，不删（决策 11-4 / 11-7）：删按钮属于改布局，
      而留着能点、点了弹一句假的成功提示，比禁用更糟——那会让人以为通知真的发出去了。 */
+  const canEo = canRouteAction('devices', 'op');
+  const eoTitle = canEo
+    ? '向光电下发 BeginTracking，不是地图镜头跟随'
+    : '需要设备管理的操作权限';
+  const eoBtn = `<button type="button" class="btn" data-tip-act="eo-track" data-tip-id="${id}" ${canEo ? '' : 'disabled '}title="${eoTitle}">光电跟踪</button>`;
   const videoBtn = `<button type="button" class="btn" disabled title="尚未接入">${U.icon('video')} 实时视频（未接入）</button>`;
   const notifyBtn = `<button type="button" class="btn" disabled title="尚未接入">通知机场/周边（未接入）</button>`;
   /* 阶段 13：驱离改为走处置授权——按钮只负责“提申请”，批准与执行由授权流程决定，
@@ -113,7 +119,7 @@ function tipActions(t) {
   /* "转风险监测"保持可用：它是 #/risk 深链的三个生产者之一（阶段 9 决策 9-15 专门保住的），去掉会断掉这条跳转。 */
   const riskBtn = `<button type="button" class="btn" data-tip-act="risk" data-tip-id="${id}">转风险监测 →</button>`;
   if (isUav) {
-    return `<div class="maptip-track-acts">${videoBtn}${almBtn}</div>`;
+    return `<div class="maptip-track-acts">${videoBtn}${eoBtn}${almBtn}</div>`;
   }
   return `<div class="maptip-track-note">非无人机不进入反制流程，仅评估与通知/驱离</div>
     <div class="maptip-track-acts is-grid">${videoBtn}${notifyBtn}${driveBtn}${riskBtn}${almBtn}</div>`;
@@ -172,7 +178,18 @@ function onTipAction(act, hit) {
   /* video / notify 两个按钮仍是禁用态，点不到，因此没有对应分支——
      没有能力就不要留一条会弹出假成功提示的处理路径。 */
   if (act === 'drive') { requestDispersal(t); return; }
-  if (act === 'risk') { toast('正在跳转空间安全风险监测…'); setTimeout(() => location.hash = '#/risk', 600); }
+  if (act === 'risk') { toast('正在跳转飞行计划风险事件…'); setTimeout(() => location.hash = '#/risk', 600); }
+  if (act === 'eo-track') { requestEoTrack(t); }
+}
+
+async function requestEoTrack(t) {
+  if (!t?.id) return;
+  try {
+    await deviceApi.beginEoTrack(t.id, { reason: '值班员点选' });
+    toast('已下发光电跟踪', 'ok');
+  } catch (error) {
+    toast(error.message || '光电跟踪失败', 'err');
+  }
 }
 
 /* 对目标发起驱离申请：主体是目标本身（契约 subject_kind=TARGET）。

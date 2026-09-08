@@ -11,6 +11,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
+import java.sql.Timestamp;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.HexFormat;
 import java.util.UUID;
 
@@ -174,17 +177,146 @@ class EvidenceApiTest {
         assertThat(hold.get("hold_id").asText()).isNotBlank();
     }
 
+    @Test
+    void ingestPersistsRetainUntilByKindAndHoldWinsCustody() throws Exception {
+        String ingest = reader("ASSIGNED", org, district);
+        grantAction(ingest, "evidence:ingest", "evidence:read", "evidence:hold");
+        long captured = Instant.parse("2020-06-15T00:00:00Z").toEpochMilli();
+        JsonNode report = ingestFile(ingest, "report.pdf", org, district, null, null, "COMMISSION_REPORT", captured);
+        assertThat(report.get("retain_label").asText()).isEqualTo("90 天");
+        assertThat(report.get("retain_note").asText()).isEqualTo("设备建设期记录，非案件证据");
+        assertThat(report.get("custody").asText()).isEqualTo("DUE");
+        assertThat(report.get("retain_until").asLong()).isEqualTo(
+                Instant.parse("2020-06-15T00:00:00Z").atOffset(ZoneOffset.UTC).plusDays(90).toInstant().toEpochMilli());
+        Timestamp storedUntil = jdbc.queryForObject(
+                "select retain_until from evidence_file where evidence_id=?", Timestamp.class,
+                report.get("evidence_id").asText());
+        assertThat(storedUntil.toInstant()).isEqualTo(Instant.parse("2020-09-13T00:00:00Z"));
+
+        JsonNode still = ingestFile(ingest, "shot.jpg", org, district, null, null);
+        long stillCaptured = still.get("captured_at").asLong();
+        assertThat(still.get("retain_label").asText()).isEqualTo("3 年");
+        assertThat(still.get("custody").asText()).isEqualTo("KEPT");
+        assertThat(still.get("retain_until").asLong()).isEqualTo(
+                Instant.ofEpochMilli(stillCaptured).atOffset(ZoneOffset.UTC).plusYears(3).toInstant().toEpochMilli());
+
+        String dueId = report.get("evidence_id").asText();
+        mvc.perform(post("/api/v1/evidence-files/" + dueId + "/holds")
+                        .header("Authorization", bearer(ingest)).header("Idempotency-Key", "hold-due-" + suffix)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\"案件未结\"}"))
+                .andExpect(status().isCreated());
+        mvc.perform(get("/api/v1/evidence-files/" + dueId).header("Authorization", bearer(ingest)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.custody").value("HELD"))
+                .andExpect(jsonPath("$.data.held").value(true));
+    }
+
+    @Test
+    void nullRetainUntilIsDerivedOnReadWithoutWritingBack() throws Exception {
+        String ingest = reader("ASSIGNED", org, district);
+        grantAction(ingest, "evidence:ingest", "evidence:read");
+        String evidenceId = UUID.randomUUID().toString();
+        Instant captured = Instant.parse("2021-03-01T00:00:00Z");
+        Timestamp at = Timestamp.from(captured);
+        jdbc.update("""
+                insert into evidence_file (evidence_id,evidence_no,kind_code,original_name,content_type,storage_backend,
+                    object_key,size_bytes,sha256,captured_at,stored_at,retain_until,status,source_mode,owner_org_id,district_id,
+                    created_at,updated_at,version)
+                values (?,?,'EO_VIDEO','old.mp4','video/mp4','local',?,1,?,?,?,null,'AVAILABLE','mock',?,?,?,?,0)
+                """, evidenceId, "EV-OLD-" + suffix, "old/" + evidenceId + "/old.mp4", "a".repeat(64),
+                at, at, org, district, at, at);
+        JsonNode detail = json.readTree(mvc.perform(get("/api/v1/evidence-files/" + evidenceId)
+                        .header("Authorization", bearer(ingest)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.retain_label").value("3 年"))
+                .andExpect(jsonPath("$.data.custody").value("DUE"))
+                .andReturn().getResponse().getContentAsString()).get("data");
+        assertThat(detail.get("retain_until").asLong()).isEqualTo(Instant.parse("2024-03-01T00:00:00Z").toEpochMilli());
+        assertThat(jdbc.queryForObject("select retain_until from evidence_file where evidence_id=?", Timestamp.class, evidenceId))
+                .isNull();
+    }
+
+    @Test
+    void destroyRemovesBytesKeepsMetadataAndEnforcesGates() throws Exception {
+        String ingest = reader("ASSIGNED", org, district);
+        grantAction(ingest, "evidence:ingest", "evidence:read", "evidence:download", "evidence:hold");
+        long captured = Instant.parse("2020-06-15T00:00:00Z").toEpochMilli();
+        String dueId = ingestFile(ingest, "due.pdf", org, district, null, null, "COMMISSION_REPORT", captured)
+                .get("evidence_id").asText();
+        String keptId = ingestFile(ingest, "kept.jpg", org, district, null, null).get("evidence_id").asText();
+
+        mvc.perform(post("/api/v1/evidence-files/" + dueId + "/destroy")
+                        .header("Authorization", bearer(ingest)).header("Idempotency-Key", "del-no-" + suffix)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\"留存届满\"}"))
+                .andExpect(status().isForbidden());
+
+        grantAction(ingest, "evidence:destroy");
+        mvc.perform(post("/api/v1/evidence-files/" + keptId + "/destroy")
+                        .header("Authorization", bearer(ingest)).header("Idempotency-Key", "del-kept-" + suffix)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\"留存届满\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("DESTROY_NOT_DUE"));
+
+        mvc.perform(post("/api/v1/evidence-files/" + dueId + "/holds")
+                        .header("Authorization", bearer(ingest)).header("Idempotency-Key", "del-hold-" + suffix)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\"案件未结\"}"))
+                .andExpect(status().isCreated());
+        mvc.perform(post("/api/v1/evidence-files/" + dueId + "/destroy")
+                        .header("Authorization", bearer(ingest)).header("Idempotency-Key", "del-held-" + suffix)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\"留存届满\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("HOLD_ACTIVE"));
+        JsonNode hold = json.readTree(mvc.perform(get("/api/v1/evidence-files/" + dueId)
+                        .header("Authorization", bearer(ingest)))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString()).get("data");
+        String holdId = hold.get("holds").get(0).get("hold_id").asText();
+        mvc.perform(post("/api/v1/evidence-files/" + dueId + "/holds/" + holdId + "/release")
+                        .header("Authorization", bearer(ingest)).header("Idempotency-Key", "del-rel-" + suffix))
+                .andExpect(status().isOk());
+
+        Path stored = Path.of(properties.getEvidenceDir()).toAbsolutePath().normalize()
+                .resolve(jdbc.queryForObject("select object_key from evidence_file where evidence_id=?", String.class, dueId));
+        assertThat(stored).exists();
+        JsonNode destroyed = json.readTree(mvc.perform(post("/api/v1/evidence-files/" + dueId + "/destroy")
+                        .header("Authorization", bearer(ingest)).header("Idempotency-Key", "del-ok-" + suffix)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"reason\":\"留存届满清理\",\"approval_no\":\"DEL-2026-0118\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("DESTROYED"))
+                .andExpect(jsonPath("$.data.destroy_reason").value("留存届满清理"))
+                .andExpect(jsonPath("$.data.destroy_approval").value("DEL-2026-0118"))
+                .andReturn().getResponse().getContentAsString()).get("data");
+        assertThat(destroyed.get("sha256").asText()).isEqualTo(sha(PAYLOAD));
+        assertThat(stored).doesNotExist();
+        mvc.perform(get("/api/v1/evidence-files/" + dueId + "/content").header("Authorization", bearer(ingest)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("EVIDENCE_DESTROYED"));
+        mvc.perform(post("/api/v1/evidence-files/" + dueId + "/destroy")
+                        .header("Authorization", bearer(ingest)).header("Idempotency-Key", "del-again-" + suffix)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\"再次销毁\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("EVIDENCE_DESTROYED"));
+    }
+
     private JsonNode ingestFile(String token, String filename, String orgId, String districtId,
             String subjectKind, String subjectId) throws Exception {
+        return ingestFile(token, filename, orgId, districtId, subjectKind, subjectId, "EO_STILL", null);
+    }
+
+    private JsonNode ingestFile(String token, String filename, String orgId, String districtId,
+            String subjectKind, String subjectId, String kindCode, Long capturedAt) throws Exception {
         var request = multipart("/api/v1/evidence-files")
                 .file(new MockMultipartFile("file", filename, "application/octet-stream", PAYLOAD))
-                .param("kind_code", "EO_STILL")
+                .param("kind_code", kindCode)
                 .param("owner_org_id", orgId)
                 .param("district_id", districtId)
                 .header("Authorization", bearer(token))
                 .header("Idempotency-Key", "ing-" + filename + "-" + suffix);
         if (subjectKind != null) {
             request.param("subject_kind", subjectKind).param("subject_id", subjectId);
+        }
+        if (capturedAt != null) {
+            request.param("captured_at", String.valueOf(capturedAt));
         }
         String body = mvc.perform(request).andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
         return json.readTree(body).get("data");

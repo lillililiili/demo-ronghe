@@ -29,6 +29,7 @@ import com.uav.lowaltitude.modules.evidence.api.EvidenceDtos.HoldDto;
 import com.uav.lowaltitude.modules.evidence.api.EvidenceDtos.LinkDto;
 import com.uav.lowaltitude.modules.evidence.api.EvidenceDtos.PageDto;
 import com.uav.lowaltitude.modules.evidence.api.EvidenceDtos.VerifyDto;
+import com.uav.lowaltitude.modules.evidence.domain.EvidenceRetention;
 import com.uav.lowaltitude.modules.evidence.infrastructure.EvidenceRepository;
 import com.uav.lowaltitude.modules.evidence.infrastructure.EvidenceRepository.FileInsert;
 import com.uav.lowaltitude.modules.evidence.infrastructure.EvidenceRepository.FileQuery;
@@ -138,14 +139,21 @@ public class EvidenceAssociationService {
         Request request = Request.list(parameters);
         FileQuery query = request.query();
         List<FileRow> rows = repository.list(query, decision, ingest, 0, 100);
-        StringBuilder body = new StringBuilder("evidence_no,kind_code,original_name,status,size_bytes,sha256,captured_at,stored_at\n");
+        StringBuilder body = new StringBuilder(
+                "evidence_no,kind_code,original_name,status,size_bytes,sha256,captured_at,stored_at,retain_until,retain_label,custody\n");
+        Instant now = clock.now();
         for (FileRow row : rows) {
+            Instant until = retainUntilOf(row);
+            boolean held = repository.hasActiveHold(row.evidenceId());
             body.append(csv(row.evidenceNo())).append(',').append(csv(row.kindCode())).append(',')
                     .append(csv(row.originalName())).append(',').append(csv(row.status())).append(',')
                     .append(row.sizeBytes() == null ? "" : row.sizeBytes()).append(',')
                     .append(csv(row.sha256())).append(',')
                     .append(row.capturedAt() == null ? "" : row.capturedAt().toEpochMilli()).append(',')
-                    .append(row.storedAt() == null ? "" : row.storedAt().toEpochMilli()).append('\n');
+                    .append(row.storedAt() == null ? "" : row.storedAt().toEpochMilli()).append(',')
+                    .append(until == null ? "" : until.toEpochMilli()).append(',')
+                    .append(csv(EvidenceRetention.policy(row.kindCode()).label())).append(',')
+                    .append(csv(EvidenceRetention.custody(until, now, held))).append('\n');
         }
         AuthUser actor = AuthContext.require();
         audit.record(actor.userId(), actor.account(), actor.roleCode(), "evidence", "evidence_exported",
@@ -178,9 +186,10 @@ public class EvidenceAssociationService {
         Instant now = clock.now();
         String evidenceId = UUID.randomUUID().toString();
         String objectKey = now.toString().substring(0, 10) + "/" + evidenceId + "/" + request.storedName();
+        Instant retainUntil = EvidenceRetention.until(request.kindCode(), request.capturedAt(), now);
         repository.insertFile(new FileInsert(evidenceId, evidenceNo(now, evidenceId), request.kindCode(),
                 request.originalName(), request.contentType(), "local", objectKey, null, null,
-                request.capturedAt(), null, "PENDING", request.sourceMode(), org, district, now, now, 0));
+                request.capturedAt(), null, retainUntil, "PENDING", request.sourceMode(), org, district, now, now, 0));
         StoredObject stored;
         try (InputStream in = file.getInputStream()) {
             stored = storage.putNew(objectKey, in);
@@ -259,6 +268,9 @@ public class EvidenceAssociationService {
         String text = reason == null ? "" : reason.trim();
         if (text.length() < 1 || text.length() > 500) throw invalid("冻结原因长度须为 1 至 500 字");
         idempotency.claim(idempotencyKey, "hold|" + file.evidenceId() + "|" + text);
+        if ("DESTROYED".equals(file.status())) {
+            throw new ApiException(HttpStatus.CONFLICT, "EVIDENCE_DESTROYED", "文件已销毁，仅保留元数据");
+        }
         if (repository.hasActiveHold(file.evidenceId())) {
             throw new ApiException(HttpStatus.CONFLICT, "HOLD_ACTIVE", "该证据已处于冻结中");
         }
@@ -290,6 +302,37 @@ public class EvidenceAssociationService {
         audit.record(actor.userId(), actor.account(), actor.roleCode(), "evidence", "evidence_hold_released",
                 "evidence_file", file.evidenceId(), "hold_id=" + hid, "SUCCESS", "", "");
         return new HoldDto(hid, hold.reason(), hold.heldBy(), millis(hold.createdAt()), millis(now), decision.userId());
+    }
+
+    @Transactional
+    public EvidenceDetailDto destroy(String evidenceId, String reason, String approvalNo, String idempotencyKey) {
+        AccessDecision decision = access.require(PermissionCode.EVIDENCE_DESTROY);
+        FileRow file = visible(id(evidenceId), decision, probe(PermissionCode.EVIDENCE_INGEST));
+        String text = reason == null ? "" : reason.trim();
+        if (text.length() < 1 || text.length() > 500) throw invalid("销毁原因长度须为 1 至 500 字");
+        String approval = approvalNo == null || approvalNo.isBlank() ? null : approvalNo.trim();
+        if (approval != null && approval.length() > 64) throw invalid("审批号长度须为 1 至 64 字");
+        if ("DESTROYED".equals(file.status())) {
+            throw new ApiException(HttpStatus.CONFLICT, "EVIDENCE_DESTROYED", "文件已销毁，仅保留元数据");
+        }
+        if (repository.hasActiveHold(file.evidenceId())) {
+            throw new ApiException(HttpStatus.CONFLICT, "HOLD_ACTIVE", "冻结中的证据不能销毁");
+        }
+        Instant until = retainUntilOf(file);
+        Instant now = clock.now();
+        if (until == null || until.isAfter(now)) {
+            throw new ApiException(HttpStatus.CONFLICT, "DESTROY_NOT_DUE", "留存期未届满，不能销毁");
+        }
+        idempotency.claim(idempotencyKey, "destroy|" + file.evidenceId() + "|" + text + "|" + nullToEmpty(approval));
+        int updated = repository.markDestroyed(file.evidenceId(), decision.userId(), text, approval, now, file.version());
+        if (updated != 1) throw new ApiException(HttpStatus.CONFLICT, "VERSION_CONFLICT", "数据已被其他操作更新");
+        storage.deleteIfPresent(file.objectKey());
+        repository.insertAccess(UUID.randomUUID().toString(), file.evidenceId(), decision.userId(),
+                "DESTROY", "GRANTED", null, now);
+        AuthUser actor = AuthContext.require();
+        audit.record(actor.userId(), actor.account(), actor.roleCode(), "evidence", "evidence_destroyed",
+                "evidence_file", file.evidenceId(), "reason=" + text, "SUCCESS", "", "");
+        return detail(repository.find(file.evidenceId()), decision);
     }
 
     @Transactional
@@ -352,9 +395,13 @@ public class EvidenceAssociationService {
     }
 
     private EvidenceSummaryDto summary(FileRow row) {
+        Instant until = retainUntilOf(row);
+        boolean held = repository.hasActiveHold(row.evidenceId());
         return new EvidenceSummaryDto(row.evidenceId(), row.evidenceNo(), row.kindCode(), row.originalName(),
                 row.contentType(), row.sizeBytes(), row.status(), millis(row.capturedAt()), millis(row.storedAt()),
-                repository.hasActiveHold(row.evidenceId()), repository.linkCount(row.evidenceId()));
+                held, repository.linkCount(row.evidenceId()), millis(until),
+                EvidenceRetention.policy(row.kindCode()).label(),
+                EvidenceRetention.custody(until, clock.now(), held));
     }
 
     private EvidenceDetailDto detail(FileRow row, AccessDecision decision) {
@@ -369,11 +416,20 @@ public class EvidenceAssociationService {
                 .map(h -> new HoldDto(h.holdId(), h.reason(), h.heldBy(), millis(h.createdAt()),
                         millis(h.releasedAt()), h.releasedBy()))
                 .toList();
+        Instant until = retainUntilOf(row);
+        boolean held = repository.hasActiveHold(row.evidenceId());
+        EvidenceRetention.Policy policy = EvidenceRetention.policy(row.kindCode());
         return new EvidenceDetailDto(row.evidenceId(), row.evidenceNo(), row.kindCode(), row.originalName(),
                 row.contentType(), row.sizeBytes(), row.sha256(), row.status(), millis(row.capturedAt()),
-                millis(row.storedAt()), millis(row.retainUntil()), repository.hasActiveHold(row.evidenceId()),
+                millis(row.storedAt()), millis(until), policy.label(),
+                EvidenceRetention.custody(until, clock.now(), held), policy.note(), held,
                 row.sourceMode(), row.ownerOrgId(), row.districtId(), row.version(), millis(row.createdAt()),
-                millis(row.updatedAt()), List.copyOf(links), holds);
+                millis(row.updatedAt()), List.copyOf(links), holds, millis(row.destroyedAt()), row.destroyedBy(),
+                row.destroyReason(), row.destroyApproval());
+    }
+
+    private static Instant retainUntilOf(FileRow row) {
+        return EvidenceRetention.effectiveUntil(row.retainUntil(), row.kindCode(), row.capturedAt(), row.storedAt());
     }
 
     private String digest(String objectKey) {

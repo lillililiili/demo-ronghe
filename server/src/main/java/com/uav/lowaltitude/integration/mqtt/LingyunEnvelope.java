@@ -17,7 +17,9 @@ import com.uav.lowaltitude.integration.device.DeviceProtocolCodes;
 public record LingyunEnvelope(String provider, String type, String externalId, boolean sensing,
                               String json, String hash, Long ptTime, Integer msgCnt, Integer workState) {
     public static final String PROTOCOL = DeviceProtocolCodes.LINGYUN_MQTT_V8_6;
-    public static final Map<String, Integer> TYPES = Map.of("radar", 1, "5ga", 0, "tdoa", 10);
+    /** 协议 A 附录 deviceType ↔ 主题缩写。本切片只受理探测类：雷达/5G-A/TDOA/AOA/协议破解/RemoteID。 */
+    public static final Map<String, Integer> TYPES = Map.of(
+            "radar", 1, "5ga", 0, "tdoa", 10, "aoa", 9, "dcd", 11, "rid", 102);
     private static final ObjectMapper JSON = new ObjectMapper()
             .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
             .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);

@@ -180,8 +180,7 @@
       return `<div class="kpi kpi-${k.color || 'blue'} ${k.className || ''}${k.attr ? ' is-clickable' : ''}${k.active ? ' is-active' : ''}"${click}${k.active ? ` style="--kpi-c:${c}"` : ''}>
         <div class="ic" style="background:${c}22;border:1px solid ${c}55;color:${c}">${icon(k.icon || 'chart')}</div>
         <div class="tx"><div class="lb" title="${String(k.label).replace(/"/g, '&quot;')}">${k.label}</div>
-          <div class="vl" style="color:${c}">${k.value}${k.unit ? `<span style="font-size:13px;color:var(--txt-2);margin-left:3px">${k.unit}</span>` : ''}</div>
-          <div class="dt" title="${String(k.desc || '').replace(/<[^>]+>/g, '').replace(/"/g, '&quot;')}">${k.desc || ''}</div></div></div>`;
+          <div class="vl" style="color:${c}">${k.value}${k.unit ? `<span style="font-size:13px;color:var(--txt-2);margin-left:3px">${k.unit}</span>` : ''}</div></div></div>`;
     }).join('') + `</div>`;
   }
 

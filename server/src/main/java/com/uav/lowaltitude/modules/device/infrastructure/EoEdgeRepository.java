@@ -238,6 +238,19 @@ public class EoEdgeRepository {
                 Integer.class, targetId);
         return count != null && count > 0;
     }
+    public Map<String, Object> openTaskByTarget(String targetId) {
+        return jdbc.queryForList("""
+                SELECT * FROM eo_tracking_task WHERE target_id=? AND status IN ('OPEN','ENDING')
+                ORDER BY created_at DESC FETCH FIRST 1 ROWS ONLY
+                """, targetId).stream().findFirst().orElse(null);
+    }
+    public Binding idleDeviceById(String opsDeviceId, String org, String district) {
+        return jdbc.query(BINDING_SELECT + """
+                WHERE m.ops_device_id=? AND s.owner_org_id=? AND s.district_id=? AND d.enabled=TRUE
+                AND (m.work_state IS NULL OR m.work_state=0)
+                AND NOT EXISTS (SELECT 1 FROM eo_tracking_task t WHERE t.ops_device_id=m.ops_device_id AND t.status IN ('OPEN','ENDING'))
+                """, this::binding, opsDeviceId, org, district).stream().findFirst().orElse(null);
+    }
 
     public Map<String, Object> lockCursor() {
         List<Map<String, Object>> rows = jdbc.queryForList("SELECT * FROM eo_fusion_cursor WHERE cursor_name='default' FOR UPDATE");

@@ -29,12 +29,13 @@ public enum PermissionCode {
     FUSION_READ("fusion:read"),
     FUSION_REVISE("fusion:revise"),
     FUSION_MANAGE("fusion:manage"),
-    // 证据文件底座：读、入库、下载、关联、冻结分权；菜单 evidence 不能替代其中任一动作。
+    // 证据文件底座：读、入库、下载、关联、冻结、销毁分权；菜单 evidence 不能替代其中任一动作。
     EVIDENCE_READ("evidence:read"),
     EVIDENCE_INGEST("evidence:ingest"),
     EVIDENCE_DOWNLOAD("evidence:download"),
     EVIDENCE_LINK("evidence:link"),
     EVIDENCE_HOLD("evidence:hold"),
+    EVIDENCE_DESTROY("evidence:destroy"),
     // 阶段 9：空域写/导入、机场基础数据、空间风险评估触发、飞行计划外部授权登记。
     AIRSPACE_MANAGE("airspace:manage"),
     AIRPORT_READ("airport:read"),

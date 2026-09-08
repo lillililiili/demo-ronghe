@@ -177,7 +177,7 @@ public class GlobalExceptionHandler {
         if (path.contains("/audit-logs")) return "audit";
         if (path.contains("/roles") || path.contains("/permissions") || path.contains("/access-change")) return "roles";
         if (path.contains("/users") || path.contains("/organizations") || path.contains("/districts")) return "users";
-        if (path.contains("/device") || path.contains("/commission")) return "devices";
+        if (path.contains("/device") || path.contains("/commission") || path.contains("/eo-tracking-tasks")) return "devices";
         // 无人机事件与来源告警属于同一核实域；风险保持独立，失败审计不能都落到笼统的 system。
         if (path.contains("/alarms") || path.contains("/uav-events")) return "alarms";
         if (path.contains("/risks")) return "risk";

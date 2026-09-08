@@ -25,7 +25,7 @@ public final class LingyunControlEnvelope {
             "direction", "angle", "induceLongitude", "induceLatitude", "bands",
             "targetId", "targetLongitude", "targetLatitude", "targetAltitude",
             "duration", "defenseZoneId", "cameraId");
-    public static final Set<String> REGISTRABLE = Set.of("radar", "5ga", "tdoa", "aoa", "oe");
+    public static final Set<String> REGISTRABLE = Set.of("radar", "5ga", "tdoa", "aoa", "dcd", "rid", "oe");
     public static final Set<Integer> REQUIRES_TARGET_ID = Set.of(30002, 50005);
     private static final ObjectMapper JSON = new ObjectMapper()
             .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)

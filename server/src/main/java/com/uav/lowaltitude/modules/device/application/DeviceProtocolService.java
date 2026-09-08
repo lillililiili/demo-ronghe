@@ -17,7 +17,8 @@ public class DeviceProtocolService {
     public List<ProtocolDescriptor> catalog() {
         access.requireDevicesRead();
         return List.of(
-                new ProtocolDescriptor(DeviceProtocolCodes.LINGYUN_MQTT_V8_6, "凌云协议 A MQTT（雷达 / 5G-A / TDOA）", "8.6",
+                new ProtocolDescriptor(DeviceProtocolCodes.LINGYUN_MQTT_V8_6,
+                        "凌云协议 A MQTT（雷达 / 5G-A / TDOA / AOA / 协议破解 / RemoteID）", "8.6",
                         List.of("DEVICE_STATIC_RECEIVE", "SENSE_INBOX_RECEIVE", "LINGYUN_CONTROL"),
                         List.of(new Field("broker_id", "id", true, "选择已登记 MQTT 连接"),
                                 new Field("source_mode", "enum", true, "replay 模拟回放 / live 真实来源，待联调"),

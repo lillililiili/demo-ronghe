@@ -85,9 +85,16 @@ class MqttIngressTest {
     private static String key() { return UUID.randomUUID().toString(); }
 
     @Test void threeTypesCreateBothIdentitiesAndReceiveOnlyTargetsIntoInbox() {
-        for(String type:List.of("radar","5ga","tdoa")) {
+        for(String type:List.of("radar","5ga","tdoa","aoa","dcd","rid")) {
             Binding b=register(type);
             assertThat(b.deviceId()).isNotEqualTo(b.opsDeviceId());
+            String expectedType = switch (type) {
+                case "radar" -> "RADAR"; case "5ga" -> "FIVE_G_A"; case "tdoa" -> "TDOA";
+                case "aoa" -> "AOA"; case "dcd" -> "DCD"; case "rid" -> "RID";
+                default -> throw new IllegalStateException(type);
+            };
+            assertThat(jdbc.queryForObject("SELECT source_type FROM integration_source WHERE source_id=?",
+                    String.class, b.sourceId())).isEqualTo(expectedType);
             receive(b,heartbeat(type,0,null),false,1,false,false);
             assertThat(devices.state(b.opsDeviceId()).connectivity()).isEqualTo("ONLINE");
             assertThat(devices.state(b.opsDeviceId()).workStateCode()).isEqualTo("0");

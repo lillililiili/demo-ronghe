@@ -29,7 +29,16 @@ export const deviceApi = {
   command: id => apiRequest(`/device-commands/${id}`),
   protocolStatus: id => apiRequest(`/devices/${id}/protocol-status`),
   targets: params => apiRequest(`/sensing/targets${query(params)}`),
-  targetTrack: (id, params) => apiRequest(`/sensing/targets/${id}/track${query(params)}`)
+  targetTrack: (id, params) => apiRequest(`/sensing/targets/${id}/track${query(params)}`),
+  beginEoTrack: (targetId, body = {}, key = newIdempotencyKey('eo-track')) =>
+    apiRequest(`/targets/${targetId}/eo-tracking-tasks`, {
+      method: 'POST', body, headers: { 'Idempotency-Key': key }
+    }),
+  currentEoTrack: targetId => apiRequest(`/targets/${targetId}/eo-tracking-tasks`),
+  endEoTrack: (taskId, key = newIdempotencyKey('eo-track-end')) =>
+    apiRequest(`/eo-tracking-tasks/${taskId}/end`, {
+      method: 'POST', body: {}, headers: { 'Idempotency-Key': key }
+    })
 };
 
 export const mqttApi = {

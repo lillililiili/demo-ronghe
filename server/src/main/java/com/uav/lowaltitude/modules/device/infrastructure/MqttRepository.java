@@ -83,10 +83,24 @@ public class MqttRepository {
     public String register(Registration p, long now) {
         String opsId=uuid(), deviceId=uuid(), opsSource=uuid(), source=uuid();
         String type= switch(p.deviceTypeAbbr()) {
-            case "radar" -> "RADAR"; case "5ga" -> "FIVE_G_A"; case "oe" -> "EO"; case "aoa" -> "AOA"; default -> "TDOA";
+            case "radar" -> "RADAR";
+            case "5ga" -> "FIVE_G_A";
+            case "oe" -> "EO";
+            case "aoa" -> "AOA";
+            case "tdoa" -> "TDOA";
+            case "dcd" -> "DCD";
+            case "rid" -> "RID";
+            default -> throw new IllegalArgumentException("UNSUPPORTED_TYPE");
         };
         String typeName= switch(p.deviceTypeAbbr()) {
-            case "radar" -> "雷达"; case "5ga" -> "5G-A"; case "oe" -> "光电"; case "aoa" -> "AOA"; default -> "TDOA";
+            case "radar" -> "雷达";
+            case "5ga" -> "5G-A";
+            case "oe" -> "光电";
+            case "aoa" -> "AOA";
+            case "tdoa" -> "TDOA";
+            case "dcd" -> "协议破解";
+            case "rid" -> "RemoteID";
+            default -> throw new IllegalArgumentException("UNSUPPORTED_TYPE");
         };
         boolean simulated=p.sourceMode().equals("replay");
         Timestamp time=new Timestamp(now);

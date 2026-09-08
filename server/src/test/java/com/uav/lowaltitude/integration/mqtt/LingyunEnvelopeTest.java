@@ -8,7 +8,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 class LingyunEnvelopeTest {
     @ParameterizedTest
-    @ValueSource(strings={"radar","5ga","tdoa"})
+    @ValueSource(strings={"radar","5ga","tdoa","aoa","dcd","rid"})
     void parsesEnvelopeWithoutInventingOrValidatingObjectCoordinates(String type) {
         String raw="{\"deviceId\":\"external-1\",\"ptTime\":1000,\"msgCnt\":2147483647,\"objects\":[{\"longitude\":999}]}";
         var decoded=LingyunEnvelope.decode("bridge/provider/device_data/"+type+"/external-1",raw.getBytes(StandardCharsets.UTF_8));
@@ -31,5 +31,22 @@ class LingyunEnvelopeTest {
     @Test void rejectsInvalidUtf8AndUnsupportedTopic() {
         assertThatThrownBy(() -> LingyunEnvelope.decode("bridge/provider/device_data/radar/x",new byte[]{(byte)0xff})).hasMessage("INVALID_JSON_UTF8");
         assertThatThrownBy(() -> LingyunEnvelope.decode("bridge/provider/device_data/eo/x",new byte[0])).hasMessage("UNSUPPORTED_TYPE");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings={"aoa","dcd","rid"})
+    void workParamIdentityUsesAppendixDeviceType(String type) {
+        int code = LingyunEnvelope.TYPES.get(type);
+        String raw = "{\"providerCode\":\"provider\",\"deviceId\":\"external-1\",\"deviceName\":\"fixture\",\"deviceType\":"
+                + code + ",\"workState\":1}";
+        var decoded = LingyunEnvelope.decode("bridge/provider/device/" + type + "/external-1",
+                raw.getBytes(StandardCharsets.UTF_8));
+        assertThat(decoded.sensing()).isFalse();
+        assertThat(decoded.workState()).isEqualTo(1);
+        String wrong = raw.replace("\"deviceType\":" + code, "\"deviceType\":1");
+        if (code != 1) {
+            assertThatThrownBy(() -> LingyunEnvelope.decode("bridge/provider/device/" + type + "/external-1",
+                    wrong.getBytes(StandardCharsets.UTF_8))).hasMessage("IDENTITY_MISMATCH");
+        }
     }
 }

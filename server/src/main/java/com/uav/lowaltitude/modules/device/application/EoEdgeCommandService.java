@@ -34,10 +34,17 @@ public class EoEdgeCommandService {
     @Transactional
     public String enqueueBegin(Binding binding, String taskId, String targetId, String eventId, String notes,
                                Map<String, Object> bootstrap, String requestedBy) {
+        return enqueueBegin(binding, taskId, targetId, eventId, notes, bootstrap, requestedBy, "FUSION_EVENT_AUTO_TRACK");
+    }
+
+    @Transactional
+    public String enqueueBegin(Binding binding, String taskId, String targetId, String eventId, String notes,
+                               Map<String, Object> bootstrap, String requestedBy, String commandReason) {
         long now = clock.nowMillis();
         String commandId = UUID.randomUUID().toString();
+        String reason = commandReason == null || commandReason.isBlank() ? "FUSION_EVENT_AUTO_TRACK" : commandReason;
         edges.insertCommand(commandId, "EO-" + now + "-" + commandId.substring(0, 6).toUpperCase(), binding.opsDeviceId(),
-                requestedBy, BEGIN, "FUSION_EVENT_AUTO_TRACK", binding.sourceMode(), "replay".equals(binding.sourceMode()),
+                requestedBy, BEGIN, reason, binding.sourceMode(), "replay".equals(binding.sourceMode()),
                 now + commandTimeoutMillis, now);
         try {
             edges.insertTask(taskId, targetId, eventId, binding.opsDeviceId(), commandId, notes, json.writeValueAsString(bootstrap), now);
@@ -49,10 +56,15 @@ public class EoEdgeCommandService {
 
     @Transactional
     public String enqueue(Binding binding, String type, String topic, String reason) {
+        return enqueue(binding, type, topic, reason, null);
+    }
+
+    @Transactional
+    public String enqueue(Binding binding, String type, String topic, String reason, String requestedBy) {
         long now = clock.nowMillis();
         String commandId = UUID.randomUUID().toString();
         edges.insertCommand(commandId, "EO-" + now + "-" + commandId.substring(0, 6).toUpperCase(), binding.opsDeviceId(),
-                null, type, reason, binding.sourceMode(), "replay".equals(binding.sourceMode()),
+                requestedBy, type, reason, binding.sourceMode(), "replay".equals(binding.sourceMode()),
                 now + commandTimeoutMillis, now);
         if (END.equals(type)) {
             var task = edges.openTask(binding.opsDeviceId());

@@ -26,17 +26,20 @@ public class EoAutoTrackService {
     private final EoEdgeCommandService commands;
     private final ObjectMapper json;
     private final boolean mqttEnabled;
+    private final boolean autoTrackEnabled;
     private final int batch;
 
     public EoAutoTrackService(EoEdgeRepository edges, EoEdgeCommandService commands, ObjectMapper json,
                               @Value("${app.mqtt.enabled:true}") boolean mqttEnabled,
+                              @Value("${app.eo-edge.auto-track.enabled:false}") boolean autoTrackEnabled,
                               @Value("${app.eo-edge.auto-track-batch:20}") int batch) {
-        this.edges = edges; this.commands = commands; this.json = json; this.mqttEnabled = mqttEnabled; this.batch = batch;
+        this.edges = edges; this.commands = commands; this.json = json;
+        this.mqttEnabled = mqttEnabled; this.autoTrackEnabled = autoTrackEnabled; this.batch = batch;
     }
 
     @Scheduled(fixedDelayString = "${app.eo-edge.poll-millis:1000}")
     public void scheduled() {
-        if (mqttEnabled) poll();
+        if (mqttEnabled && autoTrackEnabled) poll();
     }
 
     @Transactional

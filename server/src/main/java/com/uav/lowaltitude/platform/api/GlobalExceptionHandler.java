@@ -1,14 +1,17 @@
 package com.uav.lowaltitude.platform.api;
 
 import java.util.Map;
+import java.util.Set;
 
 import jakarta.servlet.http.HttpServletRequest;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -91,6 +94,25 @@ public class GlobalExceptionHandler {
         auditFailure(request, "NOT_FOUND", "资源不存在");
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(ApiResponse.fail("NOT_FOUND", "资源不存在"));
+    }
+
+    /**
+     * 决策 12-6：已映射路径用错 HTTP 方法是 405 `METHOD_NOT_ALLOWED`，与未映射路径的 404 同因——
+     * 都是"客户端打错了"，落进兜底分支就变成 500，前端会照服务故障重试，错误告警也被污染。
+     *
+     * `Allow` 头是 HTTP 规范要求的：客户端得知道该用哪个方法。但响应体仍不回显路径与被拒的方法，
+     * 口径与 404 一致，不给探测者额外线索。Spring 允许 supportedMethods 为空，那就不发这个头，
+     * 不伪造一个空 Allow，也不猜一组方法。
+     */
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMethodNotSupported(HttpRequestMethodNotSupportedException ex, HttpServletRequest request) {
+        auditFailure(request, "METHOD_NOT_ALLOWED", "请求方法不支持");
+        ResponseEntity.BodyBuilder response = ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED);
+        Set<HttpMethod> supported = ex.getSupportedHttpMethods();
+        if (supported != null && !supported.isEmpty()) {
+            response.allow(supported.toArray(new HttpMethod[0]));
+        }
+        return response.body(ApiResponse.fail("METHOD_NOT_ALLOWED", "请求方法不支持"));
     }
 
     @ExceptionHandler(Exception.class)

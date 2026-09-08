@@ -9,9 +9,9 @@
    而别名只有 Vite 认得。文案一律走共享字典，本页不另建一套中文。 */
 import { OBJECT_TYPE_LABEL, labelOf, targetTypeLabel } from '../ui/labels.js';
 
-/* 图层字典：与 mock.js 的 AIRSPACE_TYPES 同名、同色、同图层键（决策 11-6）。
-   为什么连图层键也必须一致：map.js 画空域时用 window.MOCK.airspaceType(a.type).layer 决定归属，
-   而 mock.js 仍被其它 legacy 页面加载。这里若自定义图层键，图例上的勾选框与地图实际隐藏的图层就对不上。 */
+/* 空域图层字典（决策 11-6 定名与配色，12-3 定归属来源）。
+   阶段 12 起 mock.js 已删除，map.js 的图层归属直接读这里给出的 `layer` 字段——
+   所以本表是唯一事实来源：改这里就同时改了地图归属与图例，不会再出现"图例勾选框与地图隐藏的图层对不上"。 */
 export const AIRSPACE_LAYERS = [
   { kindCode: 'PROHIBITED', type: '禁飞空域', color: '#ff4d5e', layer: 'nofly', legend: '禁飞区' },
   { kindCode: 'TEMPORARY_CONTROL', type: '临时管制区', color: '#2fd06e', layer: 'nofly', legend: '禁飞区' },

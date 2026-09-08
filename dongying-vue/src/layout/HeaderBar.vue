@@ -4,7 +4,6 @@
    （旧版就是 append 到 body 的 .usermenu，CSS 上下文保持一致）。 */
 import { h, ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { useAppStore } from '@/stores/app.js';
-import { stopCarousel } from '@/hooks/useCarousel.js';
 import { useRouter } from 'vue-router';
 import { authUser, logout } from '@/services/auth.js';
 import { canAccessRoute } from '@/services/accessControl.js';
@@ -98,7 +97,7 @@ async function onMenu(k) {
     ].flatMap(([label, value]) => [h('dt', label), h('dd', String(value || '—'))]))
   });
   else if (k === 'logout') {
-    stopCarousel();
+    // 阶段 12：轮播组件已删除，登出时不再需要停它。
     closeModal();
     document.body.classList.remove('bigscreen');
     store.bigscreen = false;
@@ -119,7 +118,7 @@ onMounted(() => {
   refreshBell();
 });
 onBeforeUnmount(() => {
-  window.SEARCH?.destroy();
+  // 阶段 12：search.js 已删除，window.SEARCH 不再存在，这行随之移除。
   clearInterval(clkTimer);
   document.removeEventListener('fullscreenchange', onFsChange);
   document.removeEventListener('click', closeMenu);

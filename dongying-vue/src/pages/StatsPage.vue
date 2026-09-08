@@ -27,10 +27,10 @@ const toolbarHtml = computed(() => {
     ? `${S.value.from} 至 ${S.value.to}（近30天全量）`
     : (loading.value ? '加载中…' : '—');
   const disabled = !S.value || exporting.value ? ' disabled' : '';
-  return `${U.field('统计区间', `<span class="mono" style="font-size:12px;color:var(--txt-2);padding:0 4px">${range}</span>`)}
-      <span style="font-size:11.5px;color:var(--txt-3)">当前页按近30天全量统计，没有按日/类型/区域切片的数据源</span>
+  return `<div class="toolbar-fields">${U.field('统计区间', `<span class="mono" style="font-size:12px;color:var(--txt-2);padding:0 4px">${range}</span>`)}</div>
       <div class="toolbar-actions">
-      <button class="btn pri" id="stExp"${disabled}>${U.icon('download')} 导出数据</button></div>`;
+      <button class="btn pri" id="stExp"${disabled}>${U.icon('download')} 导出数据</button>
+      <span class="toolbar-note">当前页按近30天全量统计，没有按日/类型/区域切片的数据源</span></div>`;
 });
 
 const kpiList = computed(() => {

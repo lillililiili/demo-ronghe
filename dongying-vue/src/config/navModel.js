@@ -61,6 +61,10 @@ export const ROUTES = (function () {
   });
   EXTRA.forEach(e => { r[e.k] = { t: e.t, p: e.parent, ph: 'alarms' }; });
   r.overview = { t: '融合感知', p: '感知监测', ph: 'situation' };
+  /* 已实现但暂不挂菜单的页面（决策 12-8）：仍要有中文名，否则"无权访问"提示会把英文路由键摆给用户看。
+     名称与迁移 060 的权限目录一致。 */
+  r.airspace = { t: '空域与航线规则', p: '飞行监管', ph: 'flights' };
+  r.risk = { t: '空间安全风险', p: '飞行监管', ph: 'flights' };
   r.bigscreen = { t: '低空安全监控大屏', p: null, ph: null };
   r.login = { t: '登录', p: null, ph: null }; // 独立入口，不加入业务导航/权限矩阵
   r['change-password'] = { t: '修改密码', p: null, ph: null };
@@ -75,7 +79,7 @@ export const PAGE_THEME = {
   flights: 'flight', legality: 'flight', risk: 'flight', airspace: 'flight',
   alarms: 'incident', punish: 'incident',
   stats: 'analytics', evidence: 'analytics',
-  devices: 'operations', commission: 'operations', apis: 'operations',
+  devices: 'operations', commission: 'operations',
   users: 'system', roles: 'system', archive: 'system'
 };
 

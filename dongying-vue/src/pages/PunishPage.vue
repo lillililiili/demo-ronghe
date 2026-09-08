@@ -307,14 +307,17 @@ onMounted(() => {
             <UPanel title="业务交接清单" sub="提交成功只表示材料入库，不表示已发送、已送达或处罚办结" panel-style="flex:6;min-width:0" nopad>
               <div id="pnList" class="pn-list">
                 <div class="toolbar pn-toolbar">
-                  <div class="field"><label>来源类型</label><UControl v-model="filters.source_kind" type="select" :options="kindOptions" :disabled="listLoading" size="small" @update:model-value="applyFilters" /></div>
-                  <div class="field"><label>投递状态</label><UControl v-model="filters.delivery_status" type="select" :options="deliveryOptions" :disabled="listLoading" size="small" @update:model-value="applyFilters" /></div>
-                  <div class="field"><label>来源模式</label><UControl v-model="filters.source_mode" type="select" :options="sourceModeOptions" :disabled="listLoading" size="small" @update:model-value="applyFilters" /></div>
-                  <div class="field pn-range"><label>提交时间</label><UControl v-model="filters.created" type="datetimerange" clearable :disabled="listLoading" size="small" start-placeholder="开始" end-placeholder="结束" /></div>
-                  <button class="btn" type="button" :disabled="listLoading" @click="applyFilters">查询</button>
-                  <button class="btn" type="button" id="pnR" :disabled="listLoading" @click="resetFilters">重置筛选</button>
-                  <span class="spacer"></span>
-                  <span class="pn-sort-note" :title="FIXED_SORT_NOTE">服务端固定按提交时间倒序</span>
+                  <div class="toolbar-fields">
+                    <div class="field"><label>来源类型</label><UControl v-model="filters.source_kind" type="select" :options="kindOptions" :disabled="listLoading" size="small" @update:model-value="applyFilters" /></div>
+                    <div class="field"><label>投递状态</label><UControl v-model="filters.delivery_status" type="select" :options="deliveryOptions" :disabled="listLoading" size="small" @update:model-value="applyFilters" /></div>
+                    <div class="field"><label>来源模式</label><UControl v-model="filters.source_mode" type="select" :options="sourceModeOptions" :disabled="listLoading" size="small" @update:model-value="applyFilters" /></div>
+                    <div class="field pn-range"><label>提交时间</label><UControl v-model="filters.created" type="datetimerange" clearable :disabled="listLoading" size="small" start-placeholder="开始" end-placeholder="结束" /></div>
+                  </div>
+                  <div class="toolbar-actions">
+                    <button class="btn" type="button" :disabled="listLoading" @click="applyFilters">查询</button>
+                    <button class="btn" type="button" id="pnR" :disabled="listLoading" @click="resetFilters">重置筛选</button>
+                    <span class="toolbar-note" :title="FIXED_SORT_NOTE">服务端固定按提交时间倒序</span>
+                  </div>
                 </div>
                 <div v-if="listError" class="warnbox pn-error">{{ listError }} <button class="btn" type="button" :disabled="listLoading" @click="retryList">重试</button></div>
                 <div v-if="listLoading" class="empty">正在读取交接清单…</div>
@@ -465,11 +468,7 @@ onMounted(() => {
 .pn-forbidden, .pn-note { margin: 0 0 12px; }
 .pn-main { align-items: stretch; gap: var(--gap); height: calc(100vh - 314px); min-height: 560px; flex: none; }
 .pn-list { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-.pn-toolbar { display: flex; gap: 6px 10px; padding: 10px; flex-wrap: wrap; align-items: center; }
-.pn-toolbar .spacer { flex: 1; }
-.pn-toolbar .field :deep(.n-select) { width: 128px; }
-.pn-toolbar .pn-range :deep(.n-date-picker) { width: 300px; }
-.pn-sort-note { font-size: 11px; color: var(--txt-3); white-space: nowrap; }
+.pn-toolbar { padding: 10px; }
 .pn-error { margin: 8px 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .tb tr { cursor: pointer; }
 .tb tr.on { background: rgba(34, 211, 238, .12); }

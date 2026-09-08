@@ -113,6 +113,7 @@ const KPI_DEFS = [
 const kpiList = ref(KPI_DEFS.map(k => ({ ...k, value: '…', desc: '正在读取服务端统计' })));
 async function loadKpis() {
   const count = q => listAlarms({ ...q, page: 1, size: 1 }).then(p => Number(p && p.total) || 0);
+  // 非展示用：算 KPI 查询窗口（今日 / 近 30 天）的时间戳边界，只当查询参数发给服务端。
   const now = new Date();
   const from = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const to = from + 86400000, d30 = from - 29 * 86400000;
@@ -138,11 +139,12 @@ async function loadKpis() {
 const disabledSelect = (name, reason) =>
   `<select class="sel" data-f="${name}" disabled aria-disabled="true" title="${reason}"><option value="全部" selected>全部</option></select>`;
 const listPanelBody = `<div class="toolbar">
-    ${U.field('等级', U.select('level', LEVEL_OPTS, st.level))}
-    ${U.field('类别', disabledSelect('kind', `服务端契约未提供类别筛选，${NOT_WIRED}`))}
-    ${U.field('状态', U.select('status', STATUS_OPTS, st.status))}
-    ${U.field('区域', disabledSelect('region', `服务端支持 district_id 过滤，但本页尚无区域字典，${NOT_WIRED}`))}
-    <span style="flex:1"></span>
+    <div class="toolbar-fields">
+      ${U.field('等级', U.select('level', LEVEL_OPTS, st.level))}
+      ${U.field('类别', disabledSelect('kind', `服务端契约未提供类别筛选，${NOT_WIRED}`))}
+      ${U.field('状态', U.select('status', STATUS_OPTS, st.status))}
+      ${U.field('区域', disabledSelect('region', `服务端支持 district_id 过滤，但本页尚无区域字典，${NOT_WIRED}`))}
+    </div>
   </div>
   <div id="alList" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>`;
 const mapExtra = `<span id="alMapSrc" style="font-size:11px;color:var(--txt-3);white-space:nowrap"></span>

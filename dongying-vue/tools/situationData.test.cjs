@@ -63,6 +63,14 @@ async function main() {
   const drawn = S.toAirspaces([airspace('PROHIBITED', SQUARE_WITH_HOLE)]);
   check('可画空域产出一条', drawn.length, 1);
   check('空域带上颜色', drawn[0].color, '#ff4d5e');
+  // 阶段 12：map.js 的图层归属直接读这个字段（决策 12-3），缺了会掉进按类型名的回落分支。
+  check('空域带上 layer（map.js 据此决定图层归属）', drawn[0].layer, 'nofly');
+  // 阶段 12 起 map.js 删掉了按 type 猜图层的回落：漏传 layer 的空域不画、只告警。
+  // 所以装配层必须给**每一片**空域都带上 layer，缺一片就等于那片在地图上凭空消失。
+  for (const [code] of kinds) {
+    const one = S.toAirspaces([airspace(code, SQUARE_WITH_HOLE)]);
+    ok(`${code} 的空域必须带 layer（否则 map.js 不画）`, one.length === 1 && !!one[0].layer);
+  }
   check('空域带上 center（map.js 必需）', drawn[0].center, { lon: 118.1, lat: 37.1 });
   // map.js 把 id 直接画到图上，所以它必须是业务编号；内部 ID 只留在 airspaceId 里，不上屏。
   check('上屏的是业务编号而不是内部 ID', drawn[0].id, 'KY-1');

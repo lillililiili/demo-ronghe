@@ -377,10 +377,14 @@ onUnmounted(() => {
             <button type="button" class="tab" :class="{ on: activeTab === 'event' }" @click="activeTab = 'event'">风险事件</button>
             <button type="button" class="tab" :class="{ on: activeTab === 'notice' }" @click="activeTab = 'notice'">通报记录</button>
           </div>
-          <div class="field"><label>异物细类</label><UControl v-model="filters.subtype" type="select" :options="subtypeOptions" :disabled="listLoading" size="small" /></div>
-          <div class="field"><label>风险等级</label><UControl v-model="filters.severity" type="select" :options="severityOptions" :disabled="listLoading" size="small" /></div>
-          <div class="field"><label>处置状态</label><UControl v-model="filters.state" type="select" :options="stateOptions" :disabled="listLoading" size="small" /></div>
-          <button class="btn" type="button" @click="applyFilters">筛选</button>
+          <div class="toolbar-fields">
+            <div class="field"><label>异物细类</label><UControl v-model="filters.subtype" type="select" :options="subtypeOptions" :disabled="listLoading" size="small" /></div>
+            <div class="field"><label>风险等级</label><UControl v-model="filters.severity" type="select" :options="severityOptions" :disabled="listLoading" size="small" /></div>
+            <div class="field"><label>处置状态</label><UControl v-model="filters.state" type="select" :options="stateOptions" :disabled="listLoading" size="small" /></div>
+          </div>
+          <div class="toolbar-actions">
+            <button class="btn" type="button" @click="applyFilters">筛选</button>
+          </div>
         </div>
 
         <div v-if="activeTab === 'event'" class="sr-table-wrap">
@@ -490,7 +494,6 @@ onUnmounted(() => {
 .spacerisk-page .sr-list-panel { flex: 1.7; display: flex; flex-direction: column; min-width: 0; }
 .spacerisk-page .sr-detail-panel { width: 30%; min-width: 340px; flex: none; display: flex; flex-direction: column; }
 .spacerisk-page .sr-table-wrap { flex: 1; overflow: auto; min-height: 0; }
-.spacerisk-page .sr-toolbar { flex-wrap: wrap; gap: 8px; }
 .spacerisk-page .sr-detail { flex: 1; overflow: auto; padding: 12px; }
 .spacerisk-page .sr-sub { font-size: 11px; color: var(--txt-3); }
 .spacerisk-page .sr-reason { margin: 6px 0 0; font-size: 12px; line-height: 1.6; color: var(--txt-2); }

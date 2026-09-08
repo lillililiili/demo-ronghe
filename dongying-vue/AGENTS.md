@@ -143,7 +143,6 @@
 - 所有代码改动至少运行 `npm run build`。
 - 改到 legacy 共享层、Mock、业务状态或页面迁移时，运行：
   - `node tools/scan.cjs`
-  - `node tools/falsify.cjs`
 - 改到历史瓦片审计逻辑时运行 `node tools/tilecheck.cjs`；它不是普通 UI 改动的必跑项。
 - 改到经典 JS/CJS 时对相关文件运行 `node --check <file>`。
 - 改到全局 CSS 时，至少抽查壳层、一张业务页、工作台和大屏，确认层叠未被打乱、图片能加载。

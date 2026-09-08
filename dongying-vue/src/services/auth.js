@@ -10,7 +10,6 @@ const restoreError = ref(null);
 export const authSession = readonly(sessionId);
 export const authUser = readonly(user);
 export const authRestoreError = readonly(restoreError);
-export const DEMO_PASSWORD = 'changeme';
 
 function storage(kind, key, value) {
   try {

@@ -1,6 +1,14 @@
 package com.uav.lowaltitude.modules.device.api;
 
 import java.math.BigDecimal;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.validation.Validator;
+import org.springframework.web.bind.annotation.RequestHeader;
+import com.uav.lowaltitude.modules.device.application.MqttConfigurationService;
+import com.uav.lowaltitude.modules.device.domain.MqttConfiguration.Registration;
+import com.uav.lowaltitude.integration.device.DeviceProtocolCodes;
+import com.uav.lowaltitude.integration.mqtt.LingyunEnvelope;
 
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -35,10 +43,17 @@ public class DeviceController {
 
     private final DeviceService service;
     private final DeviceOnboardService onboardService;
+    private final MqttConfigurationService mqtt;
+    private final ObjectMapper mapper;
+    private final Validator validator;
 
-    public DeviceController(DeviceService service, DeviceOnboardService onboardService) {
+    public DeviceController(DeviceService service, DeviceOnboardService onboardService, MqttConfigurationService mqtt,
+                            ObjectMapper mapper, Validator validator) {
         this.service = service;
         this.onboardService = onboardService;
+        this.mqtt = mqtt;
+        this.mapper = mapper;
+        this.validator = validator;
     }
 
     @GetMapping
@@ -63,9 +78,17 @@ public class DeviceController {
         return ApiResponse.ok(service.options());
     }
 
+    @GetMapping("/mqtt-options")
+    public ApiResponse<java.util.List<MqttConfigurationService.BrokerOption>> mqttOptions() {
+        return ApiResponse.ok(mqtt.options());
+    }
+
     @PostMapping("/onboard")
-    public ApiResponse<DeviceDetail> onboard(@Valid @RequestBody DeviceOnboardService.OnboardRequest request) {
-        return ApiResponse.ok(onboardService.onboard(request));
+    public ApiResponse<DeviceDetail> onboard(@RequestBody JsonNode body, @RequestHeader(value="Idempotency-Key",required=false) String key) {
+        String protocol = body.path("protocol_code").asText();
+        if (LingyunEnvelope.PROTOCOL.equals(protocol) || DeviceProtocolCodes.EO_EDGE_MQTT_20250826.equals(protocol))
+            return ApiResponse.ok(service.detail(mqtt.register(convert(body,Registration.class),key)));
+        return ApiResponse.ok(onboardService.onboard(convert(body,DeviceOnboardService.OnboardRequest.class)));
     }
 
     @GetMapping("/{deviceId}")
@@ -79,7 +102,13 @@ public class DeviceController {
     }
 
     @PutMapping("/{deviceId}")
-    public ApiResponse<DeviceDetail> update(@PathVariable String deviceId, @Valid @RequestBody DeviceRequest request) {
+    public ApiResponse<DeviceDetail> update(@PathVariable String deviceId, @RequestBody JsonNode body,
+                                          @RequestHeader(value="Idempotency-Key",required=false) String key) {
+        if (mqtt.isMqtt(deviceId)) {
+            mqtt.updateDevice(deviceId,convert(body,Registration.class),key);
+            return ApiResponse.ok(service.detail(deviceId));
+        }
+        DeviceRequest request=convert(body,DeviceRequest.class);
         if (request.version() == null) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "version 必填");
         }
@@ -87,8 +116,22 @@ public class DeviceController {
     }
 
     @PatchMapping("/{deviceId}/enabled")
-    public ApiResponse<DeviceDetail> setEnabled(@PathVariable String deviceId, @Valid @RequestBody EnabledRequest request) {
+    public ApiResponse<DeviceDetail> setEnabled(@PathVariable String deviceId, @Valid @RequestBody EnabledRequest request,
+                                              @RequestHeader(value="Idempotency-Key",required=false) String key) {
+        if (mqtt.isMqtt(deviceId)) {
+            mqtt.enableDevice(deviceId,request.version(),request.enabled(),key);
+            return ApiResponse.ok(service.detail(deviceId));
+        }
         return ApiResponse.ok(service.setEnabled(deviceId, request.version(), request.enabled(), request.reason()));
+    }
+
+    private <T> T convert(JsonNode body,Class<T> type) {
+        final T value;
+        try { value=mapper.treeToValue(body,type); }
+        catch(Exception ex) { throw new ApiException(HttpStatus.BAD_REQUEST,"VALIDATION_ERROR","请求字段类型无效"); }
+        if(value==null || !validator.validate(value).isEmpty())
+            throw new ApiException(HttpStatus.BAD_REQUEST,"VALIDATION_ERROR","请填写有效的必填字段");
+        return value;
     }
 
     public record EnabledRequest(@NotNull Boolean enabled, @NotNull Long version, @NotBlank String reason) { }

@@ -14,9 +14,9 @@ export const deviceApi = {
   options: () => apiRequest('/devices/options'),
   detail: id => apiRequest(`/devices/${id}`),
   create: body => apiRequest('/devices', { method: 'POST', body }),
-  onboard: body => apiRequest('/devices/onboard', { method: 'POST', body }),
-  update: (id, body) => apiRequest(`/devices/${id}`, { method: 'PUT', body }),
-  setEnabled: (id, body) => apiRequest(`/devices/${id}/enabled`, { method: 'PATCH', body }),
+  onboard: (body, key = newIdempotencyKey('onboard')) => apiRequest('/devices/onboard', { method: 'POST', body, headers: { 'Idempotency-Key': key } }),
+  update: (id, body, key = newIdempotencyKey('device-update')) => apiRequest(`/devices/${id}`, { method: 'PUT', body, headers: { 'Idempotency-Key': key } }),
+  setEnabled: (id, body, key = newIdempotencyKey('device-enabled')) => apiRequest(`/devices/${id}/enabled`, { method: 'PATCH', body, headers: { 'Idempotency-Key': key } }),
   overview: () => apiRequest('/device-monitor/overview'),
   tree: params => apiRequest(`/device-monitor/tree${query(params)}`),
   state: id => apiRequest(`/devices/${id}/state`),
@@ -30,6 +30,15 @@ export const deviceApi = {
   protocolStatus: id => apiRequest(`/devices/${id}/protocol-status`),
   targets: params => apiRequest(`/sensing/targets${query(params)}`),
   targetTrack: (id, params) => apiRequest(`/sensing/targets/${id}/track${query(params)}`)
+};
+
+export const mqttApi = {
+  list: () => apiRequest('/mqtt-brokers'),
+  options: () => apiRequest('/devices/mqtt-options'),
+  scopes: () => apiRequest('/mqtt-brokers/scopes'),
+  create: (body, key) => apiRequest('/mqtt-brokers', { method: 'POST', body, headers: { 'Idempotency-Key': key } }),
+  update: (id, body, key) => apiRequest(`/mqtt-brokers/${id}`, { method: 'PUT', body, headers: { 'Idempotency-Key': key } }),
+  setEnabled: (id, body, key) => apiRequest(`/mqtt-brokers/${id}/enabled`, { method: 'PATCH', body, headers: { 'Idempotency-Key': key } })
 };
 
 export const integrationApi = {

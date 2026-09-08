@@ -447,6 +447,9 @@ public class DeviceService {
         if (row == null) throw bad("VALIDATION_ERROR", "source_id 对应的接入来源不存在");
         String mode = text(row, "source_mode");
         String protocol = text(row, "protocol_code");
+        if (DeviceProtocolCodes.LINGYUN_MQTT_V8_6.equals(protocol)
+                || DeviceProtocolCodes.EO_EDGE_MQTT_20250826.equals(protocol))
+            throw bad("MQTT_REGISTRATION_REQUIRED", "MQTT 设备必须通过接入设备接口登记和编辑");
         if ("live".equals(mode) && !adapterRegistry.supports(SourceMode.live, protocol))
             throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "PROTOCOL_UNSUPPORTED", "live 来源协议适配器不可用");
         return new SourceSelection(mode, bool(row, "simulated"), protocol);

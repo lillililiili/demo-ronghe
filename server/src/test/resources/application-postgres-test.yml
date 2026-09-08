@@ -11,3 +11,5 @@ app:
     enabled: false
   live-device:
     enabled: false
+  mqtt:
+    enabled: false

@@ -65,9 +65,10 @@ public class DeviceRepository {
     }
 
     public Map<String, Object> find(String deviceId) {
+        Map<String,Object> params=new HashMap<>();
+        params.put("device_id",deviceId);
         List<Map<String, Object>> rows = named.queryForList(
-                DEVICE_SELECT + " WHERE d.device_id=:device_id",
-                Map.of("device_id", deviceId));
+                DEVICE_SELECT + " WHERE d.device_id=:device_id" + mqttScope(params), params);
         return rows.isEmpty() ? null : rows.get(0);
     }
 
@@ -103,12 +104,14 @@ public class DeviceRepository {
             case "vendor" -> "vendor";
             default -> throw new IllegalArgumentException("unsupported option column");
         };
-        return jdbc.queryForList("SELECT DISTINCT " + safe + " FROM ops_device WHERE " + safe
-                + " IS NOT NULL AND " + safe + "<>'' ORDER BY " + safe, String.class);
+        Map<String,Object> params=new HashMap<>();
+        return named.queryForList("SELECT DISTINCT " + safe + " FROM ops_device d WHERE " + safe
+                + " IS NOT NULL AND " + safe + "<>''" + mqttScope(params) + " ORDER BY " + safe,params,String.class);
     }
 
     public Map<String, Object> overview() {
-        return jdbc.queryForMap("""
+        Map<String,Object> params=new HashMap<>();
+        return named.queryForMap("""
                 SELECT COUNT(*) AS total,
                        SUM(CASE WHEN s.connectivity='ONLINE' THEN 1 ELSE 0 END) AS online,
                        SUM(CASE WHEN s.connectivity='OFFLINE' THEN 1 ELSE 0 END) AS offline,
@@ -120,18 +123,19 @@ public class DeviceRepository {
                        ,SUM(CASE WHEN d.source_mode='live' THEN 1 ELSE 0 END) AS live_count
                        ,SUM(CASE WHEN d.simulated=TRUE THEN 1 ELSE 0 END) AS simulated_count
                 FROM ops_device d LEFT JOIN ops_device_state s ON s.device_id=d.device_id
-                """);
+                """ + " WHERE 1=1" + mqttScope(params),params);
     }
 
     public List<Map<String, Object>> overviewGroups(String groupColumn) {
+        Map<String,Object> params=new HashMap<>();
         String safe = "channel".equals(groupColumn) ? "d.channel" : "d.device_type_name";
-        return jdbc.queryForList("SELECT " + safe + " AS group_name, COUNT(*) AS total, "
+        return named.queryForList("SELECT " + safe + " AS group_name, COUNT(*) AS total, "
                 + "SUM(CASE WHEN s.connectivity='ONLINE' THEN 1 ELSE 0 END) AS online, "
                 + "SUM(CASE WHEN s.connectivity='OFFLINE' THEN 1 ELSE 0 END) AS offline, "
                 + "SUM(CASE WHEN s.connectivity='ABNORMAL' THEN 1 ELSE 0 END) AS abnormal, "
                 + "SUM(CASE WHEN s.connectivity IS NULL OR s.connectivity='UNKNOWN' THEN 1 ELSE 0 END) AS unknown_count "
                 + "FROM ops_device d LEFT JOIN ops_device_state s ON s.device_id=d.device_id "
-                + "GROUP BY " + safe + " ORDER BY " + safe);
+                + "WHERE 1=1" + mqttScope(params) + " GROUP BY " + safe + " ORDER BY " + safe,params);
     }
 
     public void insertDevice(Map<String, Object> values) {
@@ -303,7 +307,7 @@ public class DeviceRepository {
 
     public List<Map<String, Object>> expiredCommands(long now, int limit) {
         return jdbc.queryForList("""
-                SELECT c.command_id,c.device_id,c.status FROM device_command c
+                SELECT c.command_id,c.device_id,c.status,c.command_type FROM device_command c
                 WHERE c.status IN ('QUEUED','SENT','ACCEPTED') AND c.deadline_at IS NOT NULL AND c.deadline_at<?
                 ORDER BY c.deadline_at OFFSET 0 ROWS FETCH NEXT ? ROWS ONLY
                 """, now, limit);
@@ -324,7 +328,7 @@ public class DeviceRepository {
     }
 
     public List<Map<String, Object>> dueOutbox(long now, int limit) {
-        return jdbc.queryForList("SELECT * FROM outbox_event WHERE processed_at IS NULL AND available_at<=? AND topic IN ('device.reboot','commission.connect','commission.run') ORDER BY available_at,created_at OFFSET 0 ROWS FETCH NEXT ? ROWS ONLY",
+        return jdbc.queryForList("SELECT * FROM outbox_event WHERE processed_at IS NULL AND available_at<=? AND topic IN ('device.reboot','commission.connect','commission.run','eo.track.begin','eo.track.end','eo.camera.status') ORDER BY available_at,created_at OFFSET 0 ROWS FETCH NEXT ? ROWS ONLY",
                 now, limit);
     }
 
@@ -360,6 +364,7 @@ public class DeviceRepository {
     private SqlWhere where(DeviceQuery q) {
         Map<String, Object> p = new HashMap<>();
         StringBuilder sql = new StringBuilder(" WHERE 1=1");
+        sql.append(mqttScope(p));
         if (q.keyword != null && !q.keyword.isBlank()) {
             sql.append(" AND (LOWER(d.device_no) LIKE :keyword OR LOWER(d.name) LIKE :keyword)");
             p.put("keyword", "%" + q.keyword.toLowerCase() + "%");
@@ -380,6 +385,19 @@ public class DeviceRepository {
         if (value == null || value.isBlank()) return;
         sql.append(" AND ").append(column).append("=:").append(key);
         p.put(key, value);
+    }
+
+    // Preserve legacy device visibility while enforcing explicit tuple scope for the new MQTT registrations.
+    private String mqttScope(Map<String,Object> params) {
+        var actor=com.uav.lowaltitude.platform.security.AuthContext.get();
+        if(actor==null || "ALL".equals(actor.scopeMode())) return "";
+        params.put("mqtt_actor",actor.userId());
+        return """
+                 AND (NOT EXISTS(SELECT 1 FROM mqtt_device_binding mb WHERE mb.ops_device_id=d.device_id)
+                 OR EXISTS(SELECT 1 FROM device_business_scope bs JOIN app_user_data_scope us
+                     ON us.org_id=bs.owner_org_id AND us.district_id=bs.district_id
+                     WHERE bs.ops_device_id=d.device_id AND us.user_id=:mqtt_actor))
+                """;
     }
 
     public record DeviceQuery(String keyword, String typeCode, String channel, String region,

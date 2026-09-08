@@ -20,13 +20,15 @@ public class ProtocolStatusService {
     private final DeviceRepository devices;
     private final ProtocolDataRepository protocolData;
     private final ObjectMapper mapper;
+    private final MqttConfigurationService mqtt;
 
     public ProtocolStatusService(DeviceAccessPolicy access, DeviceRepository devices,
-                                 ProtocolDataRepository protocolData, ObjectMapper mapper) {
+                                 ProtocolDataRepository protocolData, ObjectMapper mapper, MqttConfigurationService mqtt) {
         this.access = access;
         this.devices = devices;
         this.protocolData = protocolData;
         this.mapper = mapper;
+        this.mqtt = mqtt;
     }
 
     public ProtocolStatus get(String deviceId) {
@@ -34,6 +36,13 @@ public class ProtocolStatusService {
         Map<String, Object> device = devices.find(deviceId);
         if (device == null) throw new ApiException(HttpStatus.NOT_FOUND, "DEVICE_NOT_FOUND", "设备不存在");
         String protocolCode = text(device, "protocol_code");
+        if (DeviceProtocolCodes.LINGYUN_MQTT_V8_6.equals(protocolCode)
+                || DeviceProtocolCodes.EO_EDGE_MQTT_20250826.equals(protocolCode)) {
+            Map<String,Object> details=mqtt.status(deviceId);
+            String version=DeviceProtocolCodes.EO_EDGE_MQTT_20250826.equals(protocolCode)?"20250826":"8.6";
+            return new ProtocolStatus(deviceId,protocolCode,version,text(device,"source_mode"),
+                    text(details,"connection_state"),text(details,"last_error"),details);
+        }
         if (protocolCode == null) return new ProtocolStatus(deviceId, null, null, text(device, "source_mode"),
                 "NOT_CONFIGURED", "设备未绑定协议来源", Map.of());
         Map<String, Object> runtime = protocolData.runtime(deviceId);

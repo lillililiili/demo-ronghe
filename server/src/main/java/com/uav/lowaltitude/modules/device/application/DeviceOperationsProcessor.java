@@ -27,15 +27,17 @@ public class DeviceOperationsProcessor {
     private final DeviceAdapterRegistry adapters;
     private final AppClock clock;
     private final ObjectMapper objectMapper;
+    private final EoEdgeCommandService eoCommands;
 
     public DeviceOperationsProcessor(DeviceRepository devices, CommissionRepository commissions,
                                      DeviceAdapterRegistry adapters, AppProperties properties,
-                                     AppClock clock, ObjectMapper objectMapper) {
+                                     AppClock clock, ObjectMapper objectMapper, EoEdgeCommandService eoCommands) {
         this.devices = devices;
         this.commissions = commissions;
         this.clock = clock;
         this.objectMapper = objectMapper;
         this.adapters = adapters;
+        this.eoCommands = eoCommands;
     }
 
     @Transactional
@@ -44,6 +46,7 @@ public class DeviceOperationsProcessor {
             case "device.reboot" -> reboot(payload);
             case "commission.connect" -> connect(payload);
             case "commission.run" -> commission(payload);
+            case "eo.track.begin", "eo.track.end", "eo.camera.status" -> eoCommands.dispatch(topic, payload);
             default -> throw new IllegalArgumentException("Unsupported outbox topic " + topic);
         }
     }
@@ -52,6 +55,8 @@ public class DeviceOperationsProcessor {
     public void expireCommands(long now) {
         for (Map<String, Object> row : devices.expiredCommands(now, 100)) {
             String commandId = text(row, "command_id");
+            String type = text(row, "command_type");
+            if (type != null && type.startsWith("EO_")) { eoCommands.timeout(commandId, "设备适配器未在截止时间前返回回执"); continue; }
             String status = text(row, "status");
             if (devices.updateCommand(commandId, status, "TIMED_OUT", now, "ADAPTER_TIMEOUT",
                     "设备适配器未在截止时间前返回回执") == 1) {
@@ -64,6 +69,7 @@ public class DeviceOperationsProcessor {
     @Transactional
     public void timeout(String topic, String payload, String detail) {
         long now = clock.nowMillis();
+        if (topic != null && topic.startsWith("eo.")) { eoCommands.timeout(payload, detail); return; }
         if ("device.reboot".equals(topic)) {
             Map<String, Object> command = devices.findCommand(payload);
             if (command != null && !terminal(text(command, "status"))) {

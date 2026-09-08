@@ -44,9 +44,11 @@ class DeviceProtocolApiTest {
     void protocolCatalogLiveSourceTypedDeviceStatusAndTargetsAreConnected() throws Exception {
         String token = login();
         mvc.perform(get("/api/v1/device-protocols").header("Authorization", bearer(token)))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.data.length()").value(2))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.length()").value(4))
+                .andExpect(jsonPath("$.data[0].protocol_code").value("LINGYUN_MQTT_V8_6"))
                 .andExpect(jsonPath("$.data[0].control_enabled").value(false))
-                .andExpect(jsonPath("$.data[1].capabilities[0]").value("SAFE_STATUS_QUERY"));
+                .andExpect(jsonPath("$.data[1].protocol_code").value("EO_EDGE_MQTT_20250826"))
+                .andExpect(jsonPath("$.data[3].capabilities[0]").value("SAFE_STATUS_QUERY"));
 
         String suffix = UUID.randomUUID().toString().substring(0, 8);
         String sourceBody = """

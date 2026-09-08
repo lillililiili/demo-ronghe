@@ -78,6 +78,9 @@ public class IntegrationSourceService {
         AuthUser user = access.requireInterfacesOperate();
         validate(mutation);
         Source before = required(id);
+        if (DeviceProtocolCodes.LINGYUN_MQTT_V8_6.equals(before.protocolCode())
+                || DeviceProtocolCodes.EO_EDGE_MQTT_20250826.equals(before.protocolCode()))
+            throw bad("MQTT_REGISTRATION_REQUIRED", "MQTT 接入请在设备登记和 MQTT 连接配置中维护");
         if (before.enabled() && !before.protocolCode().equals(mutation.protocolCode()))
             throw new ApiException(HttpStatus.CONFLICT, "ILLEGAL_STATE", "请先停用来源再修改协议");
         try {
@@ -94,6 +97,9 @@ public class IntegrationSourceService {
         if (reason == null || reason.trim().length() < 2 || reason.trim().length() > 500)
             throw bad("VALIDATION_ERROR", "reason 长度必须为 2–500 个字符");
         Source source = required(id);
+        if (DeviceProtocolCodes.LINGYUN_MQTT_V8_6.equals(source.protocolCode())
+                || DeviceProtocolCodes.EO_EDGE_MQTT_20250826.equals(source.protocolCode()))
+            throw bad("MQTT_REGISTRATION_REQUIRED", "MQTT 接入请在设备登记和 MQTT 连接配置中维护");
         if (enabled) validateEnable(source);
         if (repository.setEnabled(id, version, enabled, clock.nowMillis()) != 1) throw versionConflict();
         audit.record(user.userId(), user.account(), enabled ? "integration_source_enable" : "integration_source_disable",

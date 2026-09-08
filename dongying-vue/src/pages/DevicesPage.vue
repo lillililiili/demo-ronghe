@@ -1,13 +1,14 @@
 <script setup>
-import { computed, h, onMounted, reactive, ref } from 'vue';
+import { computed, h, onMounted, onUnmounted, reactive, ref } from 'vue';
 import { NButton, NDataTable, NEmpty, NSpin, NTag } from 'naive-ui';
 import UField from '@/components/form/UField.vue';
 import UPagination from '@/components/UPagination.vue';
 import UKpis from '@/components/UKpis.vue';
 import UPanel from '@/components/UPanel.vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
-import { canRouteAction } from '@/services/accessControl.js';
-import { deviceApi, integrationApi } from '@/services/deviceApi.js';
+import { canRouteAction, hasPermission } from '@/services/accessControl.js';
+import { deviceApi, integrationApi, mqttApi, newIdempotencyKey } from '@/services/deviceApi.js';
+import { isEo, isMqtt, isMqttTransport, mqttFields, mqttPayload, eoFields, eoPayload, openMqttBrokers, sourceLabel } from './devicesMqttForms.js';
 import { closeModal } from '@/ui/modal.js';
 import { openFormModal, optionsOf } from '@/ui/formModal.js';
 import { toast } from '@/ui/nv.js';
@@ -26,6 +27,12 @@ const loading = ref(false);
 const detailLoading = ref(false);
 const error = ref('');
 const canOperate = computed(() => canRouteAction('devices', 'op'));
+const canReadBrokers = computed(() => hasPermission('interfaces.read'));
+const canEditBrokers = computed(() => hasPermission('interfaces.op'));
+let active = true;
+const isActive = () => active;
+let refreshTimer;
+let detailSequence = 0;
 const selected = computed(() => detail.value?.device || null);
 const protocolOptions = computed(() => optionsOf((protocols.value || []).map(item => [item.protocol_code, `${item.name} · v${item.version}`])));
 const radarField = model => model.protocol_code === 'RADAR_TCP_V3_0_0';
@@ -75,6 +82,7 @@ async function loadList({ keepSelection = true } = {}) {
   error.value = '';
   try {
     const data = await deviceApi.list({ ...filters, page: page.page, size: page.size });
+    if (!active) return;
     Object.assign(page, data);
     if (!keepSelection || !page.items.some(item => item.device_id === selectedId.value)) selectedId.value = page.items[0]?.device_id || '';
     if (selectedId.value) await loadDetail(selectedId.value); else detail.value = null;
@@ -95,9 +103,11 @@ async function bootstrap() {
   } catch (e) { error.value = e.message || '设备管理数据加载失败'; loading.value = false; }
 }
 async function loadDetail(id) {
+  const sequence = ++detailSequence;
   detailLoading.value = true;
   try {
     const [deviceDetail, status] = await Promise.all([deviceApi.detail(id), deviceApi.protocolStatus(id)]);
+    if (!active || sequence !== detailSequence) return;
     detail.value = deviceDetail; protocolStatus.value = status;
   }
   catch (e) { toast(e.message || '设备详情加载失败', 'err'); detail.value = null; protocolStatus.value = null; }
@@ -114,16 +124,18 @@ function resetFilters() {
     connectivity: null, enabled: null, sort: 'priority' });
   page.page = 1; loadList({ keepSelection: false });
 }
-function formFields(editing = false) {
+function formFields(editing = false, brokers = [], scopes = []) {
   return [
     { key: 'protocol_code', label: '接入协议', type: 'select', required: true, options: protocolOptions.value,
-      disabled: editing, help: editing ? '更换协议需要停用后重新接入' : '选定协议后按该设备的实际 TCP 地址接入，类型和通道由协议决定' },
-    { key: 'device_no', label: '设备编号', required: true, placeholder: '现场设备编号' },
+      disabled: editing, help: editing ? '接入身份保持不变' : 'TCP 填写设备地址；MQTT 选择连接并填写协议中的设备身份' },
+    { key: 'device_no', label: '设备编号', required: true, disabled: editing, placeholder: '平台台账编号' },
     { key: 'name', label: '设备名称', required: true, placeholder: '现场设备名称' },
-    { key: 'host', label: '设备地址', required: true, placeholder: '现场 IP' },
-    { key: 'port', label: '端口', type: 'number', required: true, min: 1, max: 65535, placeholder: '现场端口' },
-    { key: 'allowed_cidrs', label: '设备网段 CIDR', required: true, placeholder: '现场设备网段 CIDR', },
-    { key: 'region_name', label: '所属区域', placeholder: '例如 东营区' },
+    ...mqttFields(brokers, scopes, editing),
+    ...eoFields(brokers, scopes, editing),
+    { key: 'host', label: '设备地址', required: true, visibleWhen: m => !isMqttTransport(m), placeholder: '现场 IP' },
+    { key: 'port', label: '端口', type: 'number', required: true, visibleWhen: m => !isMqttTransport(m), min: 1, max: 65535, placeholder: '现场端口' },
+    { key: 'allowed_cidrs', label: '设备网段 CIDR', required: true, visibleWhen: m => !isMqttTransport(m), placeholder: '现场设备网段 CIDR' },
+    { key: 'region_name', label: '所属区域', visibleWhen: m => !isMqttTransport(m), placeholder: '例如 东营区' },
     { key: 'vendor', label: '供应商', placeholder: '例如 设备厂商名称' },
     { key: 'radar_protocol_title', type: 'html', visibleWhen: radarField,
       html: '<b>雷达只读接入</b><small>不会开放雷达启停或寄存器写入。</small>' },
@@ -174,15 +186,28 @@ function protocolOf(values) {
 }
 async function openDeviceForm(row = null) {
   if (!canOperate.value) return;
+  let brokers, scopes;
+  try { [brokers, scopes] = await Promise.all([mqttApi.options(), mqttApi.scopes()]); }
+  catch (e) { if (active) toast(e.message || '接入配置加载失败', 'err'); return; }
   const current = row ? (row.device_id === detail.value?.device?.device_id ? detail.value : await deviceApi.detail(row.device_id)) : null;
+  const currentMqtt = current && isMqttTransport(current) ? (await deviceApi.protocolStatus(row.device_id)).details : null;
+  if (!active) return;
+  const initial = { ...initialFor(current), source_mode: 'replay', device_type_abbr: 'radar', edge_id: '', external_device_id: '' };
+  if (currentMqtt) Object.assign(initial, currentMqtt, { model: current.model || '',
+    scope_key: `${brokers.find(b => b.broker_id === currentMqtt.broker_id)?.owner_org_id}/${brokers.find(b => b.broker_id === currentMqtt.broker_id)?.district_id}` });
+  const key = newIdempotencyKey('device-form');
   openFormModal({ title: row ? `编辑设备 · ${row.device_no}` : '接入设备', width: '760px', columns: 2,
-    fields: formFields(!!row), initial: initialFor(current),
-    validate: m => (!m.host?.trim() || !m.port) ? '设备地址和端口为必填'
+    fields: formFields(!!row, brokers, scopes), initial,
+    validate: m => isMqttTransport(m) ? '' : (!m.host?.trim() || !m.port) ? '设备地址和端口为必填'
       : (!m.allowed_cidrs?.trim()) ? '设备网段 CIDR 为必填' : (!row && !m.protocol_code) ? '请选择接入协议' : '',
     confirmText: row ? '保存' : '接入',
     onSubmit: async values => {
       try {
-        const saved = row
+        const mqttBody = isEo(values) ? eoPayload(values, brokers, current?.device?.version)
+          : isMqtt(values) ? mqttPayload(values, brokers, current?.device?.version) : null;
+        const saved = mqttBody
+          ? (row ? await deviceApi.update(row.device_id, mqttBody, key) : await deviceApi.onboard(mqttBody, key))
+          : row
           ? await deviceApi.update(row.device_id, {
             version: current.device.version, source_id: current.source_id, external_device_id: current.external_device_id,
             device_no: values.device_no.trim(), name: values.name.trim(),
@@ -201,6 +226,7 @@ async function openDeviceForm(row = null) {
             device_address: values.device_address || 1, wire_encoding: values.wire_encoding || 'AUTO',
             poll_interval_millis: values.poll_interval_millis || 5000
           });
+        if (!active) return;
         closeModal(); selectedId.value = saved.device.device_id;
         toast(row ? '设备已更新' : '设备已接入', 'ok');
         await Promise.all([loadList(), refreshOverview()]);
@@ -208,19 +234,25 @@ async function openDeviceForm(row = null) {
     } });
 }
 function openEnabledForm(row) {
+  const key = newIdempotencyKey('device-enable');
   openFormModal({ title: `${row.enabled ? '停用' : '启用'}设备 · ${row.device_no}`, width: '520px', danger: row.enabled,
     warning: row.enabled ? '停用后会断开该设备的协议连接，并拒绝新建调测任务。' : '启用后会按网段白名单重新建立只读协议连接。',
     fields: [{ key: 'reason', label: `${row.enabled ? '停用' : '启用'}原因`, type: 'textarea', required: true, minRows: 3 }],
     initial: { reason: '' }, confirmText: `确认${row.enabled ? '停用' : '启用'}`,
     onSubmit: async values => {
       try {
-        await deviceApi.setEnabled(row.device_id, { enabled: !row.enabled, version: row.version, reason: values.reason.trim() });
+        await deviceApi.setEnabled(row.device_id, { enabled: !row.enabled, version: row.version, reason: values.reason.trim() }, key);
+        if (!active) return;
         closeModal(); toast(`设备已${row.enabled ? '停用' : '启用'}，审计记录已写入`, 'ok');
         await Promise.all([loadList(), refreshOverview()]);
       } catch (e) { if (e.code === 'VERSION_CONFLICT') await loadList(); throw e; }
     } });
 }
-onMounted(bootstrap);
+onMounted(() => {
+  bootstrap();
+  refreshTimer = setInterval(() => { if (!loading.value && !document.hidden) { loadList(); refreshOverview(); } }, 5000);
+});
+onUnmounted(() => { active = false; detailSequence++; clearInterval(refreshTimer); closeModal(); });
 </script>
 
 <template>
@@ -234,7 +266,7 @@ onMounted(bootstrap);
         <UField v-model="filters.channel" type="select" clearable label="接入通道" :options="selectOptions(options.channels)" />
         <UField v-model="filters.region" type="select" clearable label="区域" :options="selectOptions(options.regions)" />
         <UField v-model="filters.connectivity" type="select" clearable label="连接状态" :options="optionsOf([['ONLINE','在线'],['OFFLINE','离线'],['ABNORMAL','异常'],['UNKNOWN','未知']])" />
-        <div class="toolbar-actions"><NButton type="primary" @click="page.page=1;loadList({ keepSelection:false })">查询</NButton><NButton @click="resetFilters">重置</NButton><NButton type="primary" :disabled="!canOperate" @click="openDeviceForm()">接入设备</NButton></div>
+        <div class="toolbar-actions"><NButton type="primary" @click="page.page=1;loadList({ keepSelection:false })">查询</NButton><NButton @click="resetFilters">重置</NButton><NButton v-if="canReadBrokers" @click="openMqttBrokers(canEditBrokers, isActive)">MQTT 连接</NButton><NButton type="primary" :disabled="!canOperate" @click="openDeviceForm()">接入设备</NButton></div>
       </div>
       <div class="device-layout">
         <div class="table-pane">
@@ -260,11 +292,34 @@ onMounted(bootstrap);
                 <dt>供应商</dt><dd>{{ detail.vendor || '—' }}</dd>
                 <dt>最后心跳</dt><dd>{{ fmtTime(selected.last_heartbeat_at) }}</dd>
                 <dt>接入协议</dt><dd>{{ protocolLabel(detail.protocol_code, detail.protocol_version) }}</dd>
+                <template v-if="isMqtt(detail)">
+                  <dt>数据来源</dt><dd>{{ sourceLabel(selected.source_mode) }}</dd>
+                  <dt>MQTT 连接</dt><dd>{{ protocolStatus?.connection_state || 'DISCONNECTED' }}</dd>
+                  <dt>订阅状态</dt><dd>{{ protocolStatus?.details?.subscribed ? '已订阅' : '尚未订阅' }}</dd>
+                  <dt>工作状态</dt><dd>{{ ({ '0': '未工作', '1': '工作中', '2': '异常' })[selected.work_state_code] || '未知' }}</dd>
+                  <dt>最近工参</dt><dd>{{ fmtTime(protocolStatus?.details?.last_static_at) }}</dd>
+                  <dt>最近目标报文</dt><dd>{{ fmtTime(protocolStatus?.details?.last_sense_at) }}</dd>
+                  <dt>重复 / 冲突</dt><dd>{{ protocolStatus?.details?.duplicate_count ?? 0 }} / {{ protocolStatus?.details?.conflict_count ?? 0 }}</dd>
+                  <dt>疑似缺报</dt><dd>{{ protocolStatus?.details?.suspected_gap_count ?? 0 }} 次序号间隙</dd>
+                </template>
+                <template v-else-if="isEo(detail)">
+                  <dt>数据来源</dt><dd>{{ sourceLabel(selected.source_mode) }}</dd>
+                  <dt>MQTT 连接</dt><dd>{{ protocolStatus?.connection_state || 'DISCONNECTED' }}</dd>
+                  <dt>订阅状态</dt><dd>{{ protocolStatus?.details?.subscribed ? '已订阅' : '尚未订阅' }}</dd>
+                  <dt>边缘中心</dt><dd>{{ protocolStatus?.details?.edge_id || '—' }}</dd>
+                  <dt>光电设备编号</dt><dd>{{ protocolStatus?.details?.external_device_id || '—' }}</dd>
+                  <dt>工作状态</dt><dd>{{ ({ '0': '空闲', '1': '工作', '2': '自主探测' })[selected.work_state_code] || '未知' }}</dd>
+                  <dt>焦距 / 探测距离</dt><dd>{{ protocolStatus?.details?.camera_status_json ? '见相机状态' : '—' }}</dd>
+                  <dt>跟踪任务</dt><dd>{{ protocolStatus?.details?.open_task?.task_id || '无' }}</dd>
+                  <dt>重复 / 冲突</dt><dd>{{ protocolStatus?.details?.duplicate_count ?? 0 }} / {{ protocolStatus?.details?.conflict_count ?? 0 }}</dd>
+                </template>
                 <dt>设备网段</dt><dd>{{ detail.allowed_cidrs || '—' }}</dd>
               </dl>
               <div v-if="detail.connection_visible" class="connection-card"><b>连接配置</b><code>{{ detail.connection?.transport || '—' }}://{{ detail.connection?.host || '—' }}:{{ detail.connection?.port || '—' }}{{ detail.connection?.path || '' }}</code></div>
-              <div v-else class="info-line">当前角色无权查看连接主机、端口等敏感配置。</div>
-              <div v-if="selected.source_mode==='live'" class="connection-card protocol-card"><b>协议握手状态</b><NTag size="small" :type="protocolStatus?.connection_state==='ONLINE'?'success':protocolStatus?.connection_state==='ERROR'?'error':'warning'" :bordered="false">{{ protocolStatus?.connection_state || 'DISCONNECTED' }}</NTag><small>{{ protocolStatus?.blocking_reason || '等待后端 live 连接监督器建立会话' }}</small></div>
+              <div v-else-if="!isMqttTransport(detail)" class="info-line">当前角色无权查看连接主机、端口等敏感配置。</div>
+              <div v-if="isMqtt(detail)" class="connection-card"><b>接收诊断</b><small v-if="protocolStatus?.blocking_reason">{{ protocolStatus.blocking_reason }}</small><small v-for="(diagnostic, index) in (protocolStatus?.details?.recent_diagnostics || []).slice(0, 5)" :key="index">{{ fmtTime(diagnostic.received_at) }} · {{ diagnostic.outcome }} · {{ diagnostic.reason }}</small><small>工参维持在线状态，目标报文写入 inbox；本轮不提供控制或调测能力。</small></div>
+              <div v-if="isEo(detail)" class="connection-card"><b>光电边端</b><small v-if="protocolStatus?.details?.camera_status_json">相机状态 {{ protocolStatus.details.camera_status_json }}</small><small v-for="(diagnostic, index) in (protocolStatus?.details?.recent_diagnostics || []).slice(0, 5)" :key="index">{{ fmtTime(diagnostic.received_at) }} · {{ diagnostic.outcome }} · {{ diagnostic.reason }}</small><small>心跳维持在线；跟踪上报写入 inbox。角度移动 / home / 辅助识别：设备协议未提供。</small></div>
+              <div v-else-if="selected.source_mode==='live'" class="connection-card protocol-card"><b>协议握手状态</b><NTag size="small" :type="protocolStatus?.connection_state==='ONLINE'?'success':protocolStatus?.connection_state==='ERROR'?'error':'warning'" :bordered="false">{{ protocolStatus?.connection_state || 'DISCONNECTED' }}</NTag><small>{{ protocolStatus?.blocking_reason || '等待后端 live 连接监督器建立会话' }}</small></div>
             </template>
             <NEmpty v-else description="请选择设备" class="empty-block" />
           </NSpin>

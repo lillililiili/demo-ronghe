@@ -38,3 +38,4 @@
 - 审查第 13 轮 P1-1 / E1：`R__stage13_disposal.sql` 的 `to_regclass` 守卫在"先停在中间版本再前进"的库上会静默不建触发器（R__ 被记为已应用后不再重跑）。修法：触发器与 CHECK 移入版本化 `db/postgresql/V202609070103__stage13_disposal_pg.sql`，R__ 只留函数（13-32 修订）。
 - 证据：PG `Stage13PostgresTest` 9/9、`Stage9PostgresTest` 24/24、`Stage5PostgresTest` 5/5（`stage456_verify_s13`）；升级路径：新 jar 再次起在 `uav_stage10_verify`，Flyway 应用 2 个迁移（R__ 校验和变化重跑 + 0103），`flyway_schema_history` 有 `202609070103 stage13 disposal pg` success，`pg_trigger` 存在 `trg_stage13_disposal_event_append_only`，`/actuator/health` 200。
 - 助手补"074 → 最新 → UPDATE/DELETE 报 23514"的分两步升级用例（见 13.3 报告第五轮）。
+- 助手第五轮：`Stage13PostgresTest` 10/10（分两步升级用例断言落在行为上：UPDATE/DELETE 报 23514，不查 `pg_trigger` 同名对象）；R__ 依赖扫描：被引用最晚的表建于 064，加载 `db/postgresql` 的部分迁移停点最早为 073，当前无暴露面但属巧合——判据：R__ 只能引用不晚于最早停点所建的表；根治是 13-32 修订的规则（依赖具体表的 DDL 一律版本化）。

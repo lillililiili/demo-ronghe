@@ -10,18 +10,29 @@ export default {};
 <script setup>
 /* 处置处罚管理 —— 阶段 5 交接查询页。
    页面只读取后端 /handoffs 与 /handoff-recipients 事实：交接清单、材料快照、提交时间、投递状态与阻断原因。
-   原 Mock 案件管理、罚款/裁量、处罚文书、证据下载、反制授权记录与定性复核已停止执行：本期没有真实案件源，
-   对应区域禁用并说明“本期未建设”，不用 handoff_id 伪装 case_id。API 失败只显示失败态，不回退 Mock。 */
+   案件管理、罚款/裁量、处罚文书、证据链与定性复核自阶段 14 起接后端案件域（不用 handoff_id 伪装 case_id）；
+   反制与干扰授权记录自阶段 13 起接处置授权域。每块仍存在的缺口逐条写在 BLOCK_GAPS 里，不写笼统的“未建设”。
+   API 失败只显示失败态，不回退 Mock。 */
 import { computed, onMounted, reactive, ref } from 'vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import UKpis from '@/components/UKpis.vue';
 import UPanel from '@/components/UPanel.vue';
 import UPagination from '@/components/UPagination.vue';
 import UControl from '@/components/form/UControl.vue';
+import { toast } from '@/ui/nv.js';
+import { hasPermission } from '@/services/accessControl.js';
+import { UAV_STATE_TEXT as UAV_STATE_LABEL } from '@/ui/uavVerificationModal.js';
 import { handoffApi } from '@/services/handoffApi.js';
 import { disposalApi, isDisposalUnavailable } from '@/services/disposalApi.js';
+import { fetchDocumentContent, isPunishmentUnavailable, punishmentApi, PUNISHMENT_UNAVAILABLE_TEXT } from '@/services/punishmentApi.js';
+import {
+  confirmDiscretion, openCaseAssign, openCaseClose, openCaseFile, openCaseReview, openCaseWithdraw,
+  openDiscretionDraft, openDocumentRevoke, openLeadAdd, openLeadResolve, yuan
+} from '@/ui/punishmentModals.js';
 import { DISPOSAL_UNAVAILABLE_TEXT } from '@/ui/disposalAuthModal.js';
-import { DISPOSAL_ACTION_LABEL, DISPOSAL_BLOCK_REASON_LABEL, DISPOSAL_CHANNEL_LABEL, DISPOSAL_EVENT_KIND_LABEL, DISPOSAL_RESULT_LABEL, disposalStatusText, DELIVERY_STATUS_LABEL, HANDOFF_BLOCKED_LABEL, HANDOFF_KIND_LABEL, HANDOFF_TYPE_LABEL, REASON_CODE_LABEL, RECEIPT_STATUS_LABEL, RISK_CONCLUSION_LABEL, RISK_STATE_LABEL, RISK_TYPE_LABEL, SEVERITY_LABEL, SEVERITY_TAG, SOURCE_MODE_LABEL, labelOf, verificationOrdinal } from '@/ui/labels.js';
+import { ALARM_TYPE_LABEL, CONCLUSION_LABEL as EVENT_CONCLUSION_LABEL, CASE_EVENT_KIND_LABEL, CASE_STATUS_LABEL, DISCRETION_STATUS_LABEL, DOCUMENT_STATUS_LABEL,
+  LEAD_KIND_LABEL, PENALTY_TYPE_LABEL, REVIEW_CONCLUSION_LABEL, VIOLATION_CODE_LABEL,
+  DISPOSAL_ACTION_LABEL, DISPOSAL_BLOCK_REASON_LABEL, DISPOSAL_CHANNEL_LABEL, DISPOSAL_EVENT_KIND_LABEL, DISPOSAL_RESULT_LABEL, disposalStatusText, DELIVERY_STATUS_LABEL, HANDOFF_BLOCKED_LABEL, HANDOFF_KIND_LABEL, HANDOFF_TYPE_LABEL, REASON_CODE_LABEL, RECEIPT_STATUS_LABEL, RISK_CONCLUSION_LABEL, RISK_STATE_LABEL, RISK_TYPE_LABEL, SEVERITY_LABEL, SEVERITY_TAG, SOURCE_MODE_LABEL, labelOf, verificationOrdinal } from '@/ui/labels.js';
 
 usePageChrome('punish');
 const root = ref(null);
@@ -40,14 +51,14 @@ const REFERENCE_LABEL = { plan_id: '关联计划', route_version_id: '航线版�
 const DELIVERY_PAGE_SIZE = 10;
 const FIXED_SORT_NOTE = '服务端固定排序：created_at DESC, handoff_id DESC';
 const NOT_BUILT = '本期未建设';
-/* 本期未建设的原 Mock 功能：只声明边界，不生成任何案件、罚款、文书或证据记录。 */
-const NOT_BUILT_ITEMS = [
-  { key: 'case', label: '处罚案件管理', reason: '尚无真实案件源，交接记录不是案件；不以交接编号伪装案件编号' },
-  { key: 'penalty', label: '罚款与裁量', reason: '罚则金额档位未经业务方确认，处罚主体未定' },
-  { key: 'doc', label: '《行政处罚决定书》生成与下载', reason: '平台未获授权出具处罚文书' },
-  { key: 'evidence', label: '证据链查看与下载', reason: '正式证据文件与保管未接入，交接材料不含文件' },
-  { key: 'review', label: '定性依据复核与待补充线索', reason: '依赖案件对象，本期不存在' }
-];
+/* 五块的边界说明：接上案件域之后不再是"整块未建设"，但每块仍有具体的、说得清的缺口，逐条写明白。 */
+const BLOCK_GAPS = {
+  case: '案件只在本平台内流转：外部处罚系统与文书报送渠道尚未接入',
+  penalty: '罚则档位与金额区间是演示值（DEMO），未经业务方确认',
+  doc: '决定书为平台内生成的演示文本，无法律效力，也不提供下载（只能在平台内预览与复制）',
+  evidence: '证据只读事件主体的关联清单；证据主体尚未扩展到案件，文件本身仍由证据模块保管',
+  review: '复核只记录在本平台，未接入上级法制机构的复核流程'
+};
 
 const kindOptions = [{ label: '全部来源', value: '' }, ...Object.keys(KIND_LABEL).map(value => ({ label: KIND_LABEL[value], value }))];
 const deliveryOptions = [{ label: '全部投递状态', value: '' }, ...Object.keys(DELIVERY_LABEL).map(value => ({ label: DELIVERY_LABEL[value], value }))];
@@ -73,6 +84,120 @@ const disposals = ref([]);
 const disposalError = ref('');
 const disposalUnavailable = ref(false);
 const disposalEvents = ref([]);
+
+/* 处罚案件（阶段 14）：按所选交接读案件、事件流、裁量、文书与罚则档位。
+   读不到（14.1 未落地时是 404）显示原因；没有案件显示"尚未立案"——两者不互相冒充。 */
+const punishment = reactive({
+  loading: false, unavailable: false, error: '',
+  caseRow: null, events: [], documents: [], rules: [], officers: []
+});
+
+/* 只清与所选交接有关的部分：罚则档位是全局字典，重选交接不必重读。 */
+function resetPunishment() {
+  Object.assign(punishment, { loading: false, unavailable: false, error: '', caseRow: null, events: [], documents: [] });
+}
+
+async function loadPunishment(row) {
+  resetPunishment();
+  // 罚则档位与所选交接无关，先单独读一次：读不到要能说清是"服务没接入"还是"确实没有档位"，
+  // 不能因为所选交接不是处罚移送就显示成"暂无档位"。
+  if (!punishment.rules.length) {
+    try {
+      const rules = await punishmentApi.penaltyRules();
+      punishment.rules = Array.isArray(rules) ? rules : (rules?.items || []);
+    } catch (error) {
+      punishment.unavailable = isPunishmentUnavailable(error);
+      punishment.error = punishment.unavailable ? PUNISHMENT_UNAVAILABLE_TEXT : messageOf(error, '读取罚则档位失败');
+    }
+  }
+  if (!row?.handoff_id || row.handoff_type !== 'UAV_PUNISHMENT') return;
+  punishment.loading = true;
+  try {
+    const page = await punishmentApi.listCases({ handoff_id: row.handoff_id, page: 1, size: 1 });
+    const brief = (page?.items || [])[0] || null;
+    if (brief?.case_id) {
+      const [detail, events, documents] = await Promise.all([
+        punishmentApi.getCase(brief.case_id),
+        punishmentApi.caseEvents(brief.case_id).catch(() => []),
+        punishmentApi.listDocuments(brief.case_id).catch(() => [])
+      ]);
+      punishment.caseRow = detail || brief;
+      punishment.events = Array.isArray(events) ? events : (events?.items || []);
+      punishment.documents = Array.isArray(documents) ? documents : (documents?.items || []);
+    }
+  } catch (error) {
+    punishment.unavailable = isPunishmentUnavailable(error);
+    punishment.error = punishment.unavailable ? PUNISHMENT_UNAVAILABLE_TEXT : messageOf(error, '读取处罚案件失败');
+  } finally {
+    punishment.loading = false;
+  }
+}
+
+/* 案件详情给的是 current_discretion（单个对象）与 open_leads（只含未解决的），
+   没有 discretions[]/leads[]/reviews[] 这些数组；复核历史只能从事件流里取 REVIEWED 事件。 */
+const currentDiscretion = computed(() => punishment.caseRow?.current_discretion || null);
+const caseActions = computed(() => punishment.caseRow?.allowed_actions || []);
+const leads = computed(() => punishment.caseRow?.open_leads || []);
+const reviewEvents = computed(() => punishment.events.filter(ev => ev.event_kind === 'REVIEWED'));
+/* 材料快照 v2 的证据段；availability.evidence 决定"为什么看不到"，空数组不等于无权限。 */
+const materialEvidence = computed(() => selected.value?.material?.evidence || []);
+const evidenceAvailability = computed(() => selected.value?.availability?.evidence || null);
+const evidenceNote = computed(() => {
+  const state = evidenceAvailability.value;
+  if (state === 'FORBIDDEN') return '当前账号无证据查看权限';
+  if (state === 'OMITTED_AT_SUBMISSION') return '提交人当时无证据查看权限，材料未含证据清单';
+  // 与 material 的同名取值用同一句：同一个原因在同一页上不能有两种说法。
+  if (state === 'SOURCE_NOT_VISIBLE') return '源事件已不在当前可见范围，服务端已省略证据清单。';
+  // 材料包第 1 版（阶段 5 的风险移送）里没有证据这一段：说"没有关联证据"是替服务端下了它没下的结论。
+  const version = Number(selected.value?.material?.schema_version || 0);
+  if (version && version < 2) return '这条交接的材料包是第 1 版，当时的材料不含证据清单';
+  if (!selected.value?.material) return '这条交接没有材料快照';
+  if (!materialEvidence.value.length) return '移送时该事件没有关联证据';
+  return '';
+});
+
+/* 立案按钮：既要有处罚移送交接，也要有立案权限；两者缺一都禁用并在 title 说明是哪一样缺。 */
+/* 前端只看菜单级权限（permission_codes 是 punishment.read/op/auth 这种模块码，没有 punishment:file 这种动作码），
+   真正的动作权限由服务端判：够不到就让 403 说话，不在前端预判（14-18）。 */
+const canFileCase = computed(() => selected.value?.handoff_type === 'UAV_PUNISHMENT'
+  && !punishment.unavailable && hasPermission('punishment.op'));
+
+async function refreshPunishment() {
+  const row = selected.value;
+  if (row) await loadPunishment(row);
+  return punishment.caseRow;
+}
+
+/* 决定书正文：平台内预览与复制，不提供下载（浏览器沙箱里下载链接是死的）。 */
+const documentPreview = reactive({ open: false, title: '', text: '', error: '' });
+async function previewDocument(doc) {
+  documentPreview.open = true; documentPreview.title = doc.document_no || ''; documentPreview.text = ''; documentPreview.error = '';
+  try {
+    documentPreview.text = await fetchDocumentContent(doc.document_id);
+  } catch (error) {
+    documentPreview.error = messageOf(error, '文书正文读取失败');
+  }
+}
+async function copyDocument() {
+  try {
+    await navigator.clipboard.writeText(documentPreview.text || '');
+    toast('决定书全文已复制', 'ok');
+  } catch {
+    toast('复制失败，请手动选中全文复制', 'err');
+  }
+}
+
+async function issueDocument() {
+  const c = punishment.caseRow;
+  if (!c?.case_id) return;
+  try {
+    await punishmentApi.issueDocument(c.case_id, { expected_version: Number(c.version) });
+    toast('决定书已出具', 'ok');
+    await refreshPunishment();
+  } catch (error) {
+    toast(messageOf(error, '出具决定书失败'), 'err');
+  }
+}
 
 async function loadDisposals(row) {
   disposals.value = []; disposalEvents.value = []; disposalError.value = ''; disposalUnavailable.value = false;
@@ -126,12 +251,17 @@ const visibleReferences = computed(() => {
   const references = selected.value?.material?.references || {};
   return Object.keys(REFERENCE_LABEL).filter(key => references[key]).map(key => ({ key, label: REFERENCE_LABEL[key], value: references[key] }));
 });
-/* 服务端 availability.material：FORBIDDEN（缺 risk:read）/ SOURCE_NOT_VISIBLE（源风险不在可见范围）时风险材料与核实历史被省略。 */
+/* 服务端 availability.material：FORBIDDEN（缺 risk:read）/ SOURCE_NOT_VISIBLE（源风险不在可见范围）时材料被省略。
+   兜底那句要按材料包版本分开说：第 2 版是无人机事件移送，里面本来就没有"风险材料"这一段，
+   照搬第 1 版的说法会让人以为数据缺了。 */
 const materialUnavailableText = computed(() => {
   const availability = selected.value?.availability?.material;
-  if (availability === 'FORBIDDEN') return '当前账号没有查看源风险的权限（risk:read），服务端已省略风险材料与核实历史。';
-  if (availability === 'SOURCE_NOT_VISIBLE') return '源风险已不在当前可见范围，服务端已省略风险材料与核实历史。';
-  return '快照中没有风险材料。';
+  const kind = selected.value?.source_kind === 'UAV_EVENT' ? '事件' : '风险';
+  if (availability === 'FORBIDDEN') return `当前账号没有查看源${kind}的权限，服务端已省略材料与核实历史。`;
+  if (availability === 'SOURCE_NOT_VISIBLE') return `源${kind}已不在当前可见范围，服务端已省略材料与核实历史。`;
+  return Number(selected.value?.material?.schema_version || 0) >= 2
+    ? '快照中没有事件材料。'
+    : '快照中没有风险材料。';
 });
 const deliveryNote = computed(() => {
   const row = selected.value;
@@ -235,6 +365,7 @@ async function loadDetail(handoffId) {
     if (token !== detailToken) return;
     selected.value = detail;
     loadDisposals(detail);              // 授权记录与交接详情并行呈现：读失败不影响交接本身
+    loadPunishment(detail);             // 处罚案件同理：读失败只影响这五块，不影响交接清单
     deliveries.value = history.items || [];
     deliveriesTotal.value = history.total;
     deliveriesPage.value = history.page;
@@ -242,6 +373,7 @@ async function loadDetail(handoffId) {
     if (token !== detailToken) return;
     selected.value = null;
     disposals.value = []; disposalEvents.value = []; disposalError.value = ''; disposalUnavailable.value = false;
+    resetPunishment();
     deliveries.value = [];
     deliveriesTotal.value = 0;
     detailError.value = messageOf(requestError, '读取交接详情或投递记录失败');
@@ -410,9 +542,29 @@ onMounted(() => {
                     <dt>所属范围</dt><dd :title="`${selected.owner_org_id || ''} / ${selected.district_id || ''}`">{{ selected.owner_org_name || '—' }} / {{ selected.district_name || '—' }}</dd>
                     <dt>来源模式</dt><dd>{{ labelOf(SOURCE_MODE_LABEL, selected.source_mode, '未提供') }}</dd>
                   </dl></div>
-                  <div class="sect"><h4>材料快照 <span class="tag t-gray">schema v{{ selected.material?.schema_version ?? '—' }}</span></h4>
-                    <div v-if="!selected.material" class="empty">服务端未返回材料快照。</div>
+                  <div class="sect"><h4>材料快照 <span v-if="selected.material?.schema_version" class="tag t-gray">第 {{ selected.material.schema_version }} 版</span></h4>
+                    <div v-if="!selected.material" class="empty">这条交接没有材料快照。</div>
                     <template v-else>
+                      <!-- 材料包第 2 版（无人机事件移送）：事件 / 核实 / 处置授权 / 证据四段。 -->
+                      <dl v-if="selected.material.event" class="kv kv-surface">
+                        <dt>事件编号</dt><dd class="mono" :title="selected.material.event.event_id">{{ selected.material.event.source_alarm_id || selected.material.event.alarm_id || '未提供' }}</dd>
+                        <dt>告警类型</dt><dd>{{ labelOf(ALARM_TYPE_LABEL, selected.material.event.alarm_type, '未提供') }}</dd>
+                        <dt>提交时状态</dt><dd>{{ labelOf(UAV_STATE_LABEL, selected.material.event.state, '未提供') }}</dd>
+                        <dt>发生时间</dt><dd>{{ formatTime(selected.material.event.occurred_at) }}</dd>
+                      </dl>
+                      <div v-if="selected.material.verifications?.length" class="pn-sub pn-wrap">
+                        <div v-for="(vr, i) in selected.material.verifications" :key="i">
+                          第 {{ vr.version }} 次核实 · 结论：{{ labelOf(EVENT_CONCLUSION_LABEL, vr.conclusion, vr.conclusion) }}
+                          <span v-if="vr.actor_name"> · {{ vr.actor_name }}</span><span v-if="vr.note"> · {{ vr.note }}</span>
+                        </div>
+                      </div>
+                      <div v-if="selected.material.disposals?.length" class="pn-sub pn-wrap">
+                        <div v-for="d in selected.material.disposals" :key="d.authorization_id">
+                          <span class="mono" :title="d.authorization_id">{{ d.authorization_no }}</span>
+                          · {{ labelOf(DISPOSAL_ACTION_LABEL, d.action_type) }} · {{ disposalStatusText(d) }}
+                          <span v-if="d.approved_by_name"> · 审批人：{{ d.approved_by_name }}</span>
+                        </div>
+                      </div>
                       <dl v-if="selected.material.risk" class="kv kv-surface">
                         <dt>风险编号</dt><dd class="mono" :title="selected.material.risk.risk_id">{{ selected.material.risk.source_risk_id || '未提供' }}</dd>
                         <dt>风险类型</dt><dd>{{ labelOf(RISK_TYPE_LABEL, selected.material.risk.risk_type, '未提供') }}</dd>
@@ -424,7 +576,7 @@ onMounted(() => {
                         <dt>接收时间</dt><dd>{{ formatTime(selected.material.risk.received_at) }}</dd>
                         <dt>快照版本</dt><dd>{{ verificationOrdinal(selected.material.risk.version) || '尚未核验' }}</dd>
                       </dl>
-                      <div v-else class="empty">{{ materialUnavailableText }}</div>
+                      <div v-else-if="!selected.material.event" class="empty">{{ materialUnavailableText }}</div>
                       <template v-if="selected.material.risk">
                       <div class="pn-subhead">关联引用</div>
                       <dl v-if="visibleReferences.length" class="kv kv-surface">
@@ -509,12 +661,122 @@ onMounted(() => {
             </div>
           </UPanel>
 
-          <UPanel title="处罚案件、文书与证据" sub="本期未建设 · 以下功能停止执行，不生成任何案件、罚款、文书或证据记录" panel-style="margin-top:12px" nopad>
+          <UPanel title="处罚案件、文书与证据" sub="按所选处罚交接办理：立案 → 指派 → 裁量 → 复核 → 决定书 → 结案" panel-style="margin-top:12px" nopad>
             <div class="pn-not-built">
-              <div v-for="item in NOT_BUILT_ITEMS" :key="item.key" class="pn-not-built-item" :data-not-built="item.key">
-                <div class="pn-not-built-head"><b>{{ item.label }}</b><span class="tag t-gray">{{ NOT_BUILT }}</span></div>
-                <div class="pn-sub pn-wrap">{{ item.reason }}</div>
-                <button class="btn" type="button" disabled :title="`${item.label}：${NOT_BUILT}`">{{ NOT_BUILT }}</button>
+              <div class="pn-not-built-item" data-not-built="case">
+                <div class="pn-not-built-head"><b>处罚案件管理</b>
+                  <span v-if="punishment.caseRow" class="tag">{{ labelOf(CASE_STATUS_LABEL, punishment.caseRow.status) }}</span>
+                </div>
+                <div v-if="punishment.error" class="pn-sub pn-wrap">{{ punishment.error }}</div>
+                <template v-else-if="punishment.caseRow">
+                  <div class="pn-sub pn-wrap">
+                    <b class="mono" :title="punishment.caseRow.case_id">{{ punishment.caseRow.case_no }}</b>
+                    <span v-if="punishment.caseRow.officer_name"> · 承办人：{{ punishment.caseRow.officer_name }}</span>
+                    <span v-else> · 尚未指派承办人</span>
+                    <span v-if="punishment.caseRow.party_name"> · 当事人：{{ punishment.caseRow.party_name }}</span>
+                  </div>
+                  <div v-if="leads.length" class="pn-sub pn-wrap">
+                    <span v-for="lead in leads" :key="lead.lead_id">
+                      待补线索 {{ labelOf(LEAD_KIND_LABEL, lead.kind) }}：{{ lead.description }}
+                      <button v-if="!lead.resolved && caseActions.includes('RESOLVE_LEAD')" class="btn" type="button" @click="openLeadResolve({ punishmentCase: punishment.caseRow, lead, refresh: refreshPunishment })">标记已补齐</button>
+                    </span>
+                  </div>
+                  <div v-if="punishment.events.length" class="pn-sub pn-wrap">
+                    <div v-for="ev in punishment.events" :key="ev.event_id">
+                      {{ formatTime(ev.occurred_at) }} · {{ labelOf(CASE_EVENT_KIND_LABEL, ev.event_kind) }}<span v-if="ev.note"> · {{ ev.note }}</span>
+                    </div>
+                  </div>
+                  <div class="pn-actions">
+                    <button v-if="caseActions.includes('ASSIGN')" class="btn" type="button" @click="openCaseAssign({ punishmentCase: punishment.caseRow, officers: punishment.officers, refresh: refreshPunishment })">指派承办人</button>
+                    <button v-if="caseActions.includes('ADD_LEAD')" class="btn" type="button" @click="openLeadAdd({ punishmentCase: punishment.caseRow, refresh: refreshPunishment })">新增待补线索</button>
+                    <button v-if="caseActions.includes('CLOSE')" class="btn" type="button" @click="openCaseClose({ punishmentCase: punishment.caseRow, refresh: refreshPunishment })">结案</button>
+                    <button v-if="caseActions.includes('WITHDRAW')" class="btn" type="button" @click="openCaseWithdraw({ punishmentCase: punishment.caseRow, refresh: refreshPunishment })">撤案</button>
+                  </div>
+                </template>
+                <template v-else>
+                  <div class="pn-sub pn-wrap">{{ selected?.handoff_type === 'UAV_PUNISHMENT' ? '该处罚交接尚未立案。' : '所选交接不是处罚移送，无法立案。' }}</div>
+                  <button class="btn pri" type="button" :disabled="!canFileCase"
+                    :title="canFileCase ? '' : '需要立案权限与一条处罚移送交接'"
+                    @click="openCaseFile({ handoff: selected, refresh: refreshPunishment })">立案</button>
+                </template>
+                <div class="pn-sub pn-wrap">{{ BLOCK_GAPS.case }}</div>
+              </div>
+
+              <div class="pn-not-built-item" data-not-built="penalty">
+                <div class="pn-not-built-head"><b>罚款与裁量</b><span class="tag t-gray">演示档位</span></div>
+                <div v-if="!punishment.rules.length" class="pn-sub pn-wrap">{{ punishment.error || '服务端没有返回任何罚则档位。' }}</div>
+                <div v-else class="pn-sub pn-wrap">
+                  <div v-for="rule in punishment.rules" :key="rule.rule_code">
+                    {{ rule.title || labelOf(VIOLATION_CODE_LABEL, rule.violation_code) }}<!--
+                    -->{{ Number(rule.fine_max) > 0 ? `：${yuan(rule.fine_min)}–${yuan(rule.fine_max)} 元` : '：不涉及罚款' }}
+                    <span v-if="(rule.penalty_types || []).length"> · 可用处罚：{{ (rule.penalty_types || []).map(t => labelOf(PENALTY_TYPE_LABEL, t)).join(' / ') }}</span>
+                    <span v-if="rule.legal_basis"> · 依据：{{ rule.legal_basis }}</span>
+                  </div>
+                </div>
+                <div v-if="currentDiscretion" class="pn-sub pn-wrap">
+                  当前裁量（第 {{ currentDiscretion.version_no }} 版）：{{ labelOf(DISCRETION_STATUS_LABEL, currentDiscretion.status) }} ·
+                  {{ labelOf(PENALTY_TYPE_LABEL, currentDiscretion.penalty_type) }}
+                  <span v-if="currentDiscretion.fine_amount != null"> · {{ yuan(currentDiscretion.fine_amount) }} 元</span>
+                  <span v-if="currentDiscretion.basis_text"> · {{ currentDiscretion.basis_text }}</span>
+                </div>
+                <div class="pn-actions">
+                  <button v-if="caseActions.includes('DRAFT_DISCRETION')" class="btn" type="button" @click="openDiscretionDraft({ punishmentCase: punishment.caseRow, rules: punishment.rules, refresh: refreshPunishment })">拟定裁量</button>
+                  <button v-if="currentDiscretion?.status === 'DRAFT' && caseActions.includes('CONFIRM_DISCRETION')" class="btn pri" type="button" @click="confirmDiscretion({ punishmentCase: punishment.caseRow, discretion: currentDiscretion, refresh: refreshPunishment })">确认裁量</button>
+                </div>
+                <div class="pn-sub pn-wrap">{{ BLOCK_GAPS.penalty }}</div>
+              </div>
+
+              <div class="pn-not-built-item" data-not-built="doc">
+                <div class="pn-not-built-head"><b>《行政处罚决定书》</b><span class="tag t-gray">演示文本</span></div>
+                <div v-if="!punishment.documents.length" class="pn-sub pn-wrap">尚未出具决定书。</div>
+                <div v-else class="pn-sub pn-wrap">
+                  <div v-for="doc in punishment.documents" :key="doc.document_id">
+                    <b class="mono" :title="doc.rendered_sha256">{{ doc.document_no }}</b> · {{ labelOf(DOCUMENT_STATUS_LABEL, doc.status) }}
+                    <span v-if="doc.issued_by_name"> · 出具人：{{ doc.issued_by_name }}</span>
+                    <button class="btn" type="button" @click="previewDocument(doc)">预览全文</button>
+                    <button v-if="doc.status === 'ISSUED' && caseActions.includes('REVOKE_DOCUMENT')" class="btn" type="button" @click="openDocumentRevoke({ document: doc, refresh: refreshPunishment })">作废</button>
+                  </div>
+                </div>
+                <div class="pn-actions">
+                  <button v-if="caseActions.includes('ISSUE_DOCUMENT')" class="btn pri" type="button" @click="issueDocument">生成决定书</button>
+                </div>
+                <div class="pn-sub pn-wrap">{{ BLOCK_GAPS.doc }}</div>
+              </div>
+
+              <div class="pn-not-built-item" data-not-built="evidence">
+                <div class="pn-not-built-head"><b>证据链</b></div>
+                <div v-if="evidenceNote" class="pn-sub pn-wrap">{{ evidenceNote }}</div>
+                <div v-else class="pn-sub pn-wrap">
+                  <div v-for="item in materialEvidence" :key="item.evidence_id">
+                    <span class="mono" :title="item.sha256">{{ item.evidence_no }}</span> · {{ item.kind_code }}<span v-if="item.captured_at"> · {{ formatTime(item.captured_at) }}</span>
+                  </div>
+                </div>
+                <div class="pn-sub pn-wrap">{{ BLOCK_GAPS.evidence }}</div>
+              </div>
+
+              <div class="pn-not-built-item" data-not-built="review">
+                <div class="pn-not-built-head"><b>定性依据复核</b></div>
+                <div v-if="reviewEvents.length" class="pn-sub pn-wrap">
+                  <div v-for="rv in reviewEvents" :key="rv.event_id">
+                    {{ formatTime(rv.occurred_at) }} · {{ labelOf(CASE_EVENT_KIND_LABEL, rv.event_kind) }}<span v-if="rv.note"> · {{ rv.note }}</span>
+                  </div>
+                </div>
+                <div v-else class="pn-sub pn-wrap">尚无复核记录。</div>
+                <div class="pn-actions">
+                  <button v-if="caseActions.includes('REVIEW')" class="btn" type="button" @click="openCaseReview({ punishmentCase: punishment.caseRow, refresh: refreshPunishment })">提交复核结论</button>
+                </div>
+                <div class="pn-sub pn-wrap">{{ BLOCK_GAPS.review }}</div>
+              </div>
+            </div>
+          </UPanel>
+
+          <UPanel v-if="documentPreview.open" title="决定书全文" sub="平台内预览与复制，不提供下载" panel-style="margin-top:12px" nopad>
+            <div class="pn-doc-preview">
+              <div v-if="documentPreview.error" class="pn-sub pn-wrap">{{ documentPreview.error }}</div>
+              <pre v-else class="pn-doc-text">{{ documentPreview.text }}</pre>
+              <div class="pn-actions">
+                <button class="btn" type="button" @click="copyDocument">复制全文</button>
+                <button class="btn" type="button" @click="documentPreview.open = false">关闭</button>
               </div>
             </div>
           </UPanel>
@@ -534,6 +796,11 @@ onMounted(() => {
 .tb tr { cursor: pointer; }
 .tb tr.on { background: rgba(34, 211, 238, .12); }
 .pn-id { display: inline-block; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+.pn-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
+.pn-doc-preview { display: flex; flex-direction: column; gap: 8px; padding: 10px; }
+/* 决定书正文按同文件 .pn-wrap 的约定折行：pre 默认 white-space: pre，长行会把面板撑到横向溢出。 */
+.pn-doc-text { margin: 0; max-height: 320px; overflow: auto; font-size: 12px; line-height: 1.6;
+  white-space: pre-wrap; overflow-wrap: anywhere; }
 .pn-sub { font-size: 11px; color: var(--txt-3); white-space: normal; line-height: 1.4; overflow-wrap: anywhere; }
 .pn-sub-inline { font-size: 11px; color: var(--txt-3); margin-left: 4px; }
 .pn-wrap { white-space: normal; line-height: 1.4; overflow-wrap: anywhere; }

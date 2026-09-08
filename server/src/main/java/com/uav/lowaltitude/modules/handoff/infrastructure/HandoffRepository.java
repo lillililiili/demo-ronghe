@@ -218,6 +218,82 @@ public class HandoffRepository {
     public record DeliveryRow(String deliveryId, String handoffId, int attemptNo, String deliveryStatus, String receiptStatus, String blockedReason,
             OffsetDateTime createdAt, OffsetDateTime submittedAt, OffsetDateTime deliveredAt, OffsetDateTime acknowledgedAt) { }
     public record SnapshotRow(int schemaVersion, String json) { }
+    /* ---- 处罚交接材料包 v2 的取数（决策 14-2）。只读别人模块的表，不改它们。 ---- */
+
+    /** 事件 + 其告警的事实：处罚认定"何时发生了什么"的依据。 */
+    public EventMaterialRow eventMaterial(String eventId) {
+        List<EventMaterialRow> rows = jdbc.query("SELECT e.event_id,e.alarm_id,e.state_code,e.owner_org_id,e.district_id,"
+                + "e.version,a.source_alarm_id,a.alarm_type,a.severity,a.occurred_at,a.received_at,a.source_mode,a.target_id"
+                + " FROM uav_event e JOIN alarm a ON a.alarm_id=e.alarm_id WHERE e.event_id=:id",
+                Map.of("id", eventId), (rs, i) -> new EventMaterialRow(rs.getString("event_id"), rs.getString("alarm_id"),
+                        rs.getString("source_alarm_id"), rs.getString("alarm_type"), rs.getString("severity"),
+                        rs.getObject("occurred_at", OffsetDateTime.class), rs.getObject("received_at", OffsetDateTime.class),
+                        rs.getString("state_code"), rs.getString("target_id"), rs.getString("owner_org_id"),
+                        rs.getString("district_id"), rs.getString("source_mode"), rs.getLong("version")));
+        return rows.isEmpty() ? null : rows.get(0);
+    }
+
+    /** 核实历史全量：谁在什么时候认定它属实。 */
+    public List<EventVerificationRow> eventVerifications(String eventId) {
+        return jdbc.query("SELECT v.conclusion,v.note,v.resulting_state,v.version,v.created_at,v.actor_id,u.name AS actor_name"
+                + " FROM uav_event_verification v LEFT JOIN app_user u ON u.user_id=v.actor_id"
+                + " WHERE v.event_id=:id ORDER BY v.created_at ASC, v.history_id ASC",
+                Map.of("id", eventId), (rs, i) -> new EventVerificationRow(rs.getString("conclusion"), rs.getString("note"),
+                        rs.getString("resulting_state"), rs.getLong("version"),
+                        rs.getObject("created_at", OffsetDateTime.class), rs.getString("actor_id"),
+                        rs.getString("actor_name")));
+    }
+
+    /**
+     * 该事件的全部**终态**授权。只取终态：还在申请或执行中的授权说明不了"已经处置过"，
+     * 把它们冻进材料包会让读卷宗的人以为当时已经处置完成。
+     */
+    public List<DisposalMaterialRow> eventDisposals(String eventId) {
+        return jdbc.query("SELECT d.authorization_id,d.authorization_no,d.action_type,d.channel,d.device_id,d.status,"
+                + "ru.name AS requested_by_name,au.name AS approved_by_name,d.valid_from,d.valid_until,"
+                + "d.result_code,d.result_detail,"
+                // 完成时刻取事件流里 COMPLETE/MANUAL_RESULT 的发生时刻（决策 14-26）。
+                // 原先拿 updated_at 冒充：那是"这行最后被改动的时间"，作废、回执、任何一次更新都会推它，
+                // 落到卷宗上就成了一个说不出依据的"完成时间"。取不到就省略键，不猜。
+                + "(SELECT MIN(e.occurred_at) FROM disposal_authorization_event e"
+                + "   WHERE e.authorization_id=d.authorization_id"
+                + "   AND e.event_kind IN ('COMPLETE','MANUAL_RESULT')) AS completed_at"
+                + " FROM disposal_authorization d"
+                + " LEFT JOIN app_user ru ON ru.user_id=d.requested_by"
+                + " LEFT JOIN app_user au ON au.user_id=d.approved_by"
+                + " WHERE d.subject_kind='UAV_EVENT' AND d.subject_id=:id"
+                + " AND d.status IN ('COMPLETED','FAILED','STOPPED','EXPIRED','CANCELLED','REJECTED')"
+                + " ORDER BY d.requested_at ASC, d.authorization_id ASC",
+                Map.of("id", eventId), (rs, i) -> new DisposalMaterialRow(rs.getString("authorization_id"),
+                        rs.getString("authorization_no"), rs.getString("action_type"), rs.getString("channel"),
+                        rs.getString("device_id"), rs.getString("status"), rs.getString("requested_by_name"),
+                        rs.getString("approved_by_name"), rs.getObject("valid_from", OffsetDateTime.class),
+                        rs.getObject("valid_until", OffsetDateTime.class), rs.getString("result_code"),
+                        rs.getString("result_detail"), rs.getObject("completed_at", OffsetDateTime.class)));
+    }
+
+    /** 事件主体上关联的证据（只读协作者 A 的表，不写）。 */
+    public List<EvidenceMaterialRow> eventEvidence(String eventId) {
+        return jdbc.query("SELECT f.evidence_id,f.evidence_no,f.kind_code,f.sha256,f.captured_at,f.status"
+                + " FROM evidence_link l JOIN evidence_file f ON f.evidence_id=l.evidence_id"
+                + " WHERE l.subject_kind='EVENT' AND l.subject_id=:id"
+                + " ORDER BY f.captured_at ASC, f.evidence_id ASC",
+                Map.of("id", eventId), (rs, i) -> new EvidenceMaterialRow(rs.getString("evidence_id"),
+                        rs.getString("evidence_no"), rs.getString("kind_code"), rs.getString("sha256"),
+                        rs.getObject("captured_at", OffsetDateTime.class), rs.getString("status")));
+    }
+
+    public record EventMaterialRow(String eventId, String alarmId, String sourceAlarmId, String alarmType, String severity,
+            OffsetDateTime occurredAt, OffsetDateTime receivedAt, String state, String targetId, String ownerOrgId,
+            String districtId, String sourceMode, long version) { }
+    public record EventVerificationRow(String conclusion, String note, String resultingState, long version,
+            OffsetDateTime createdAt, String actorId, String actorName) { }
+    public record DisposalMaterialRow(String authorizationId, String authorizationNo, String actionType, String channel,
+            String deviceId, String status, String requestedByName, String approvedByName, OffsetDateTime validFrom,
+            OffsetDateTime validUntil, String resultCode, String resultDetail, OffsetDateTime completedAt) { }
+    public record EvidenceMaterialRow(String evidenceId, String evidenceNo, String kindCode, String sha256,
+            OffsetDateTime capturedAt, String status) { }
+
     public record HandoffInsert(String handoffId, String sourceKind, String sourceId, String riskId, String eventId, String handoffType,
             String recipientId, long sourceVersion, String ownerOrgId, String districtId, String sourceMode, String submittedBy,
             OffsetDateTime createdAt) { }

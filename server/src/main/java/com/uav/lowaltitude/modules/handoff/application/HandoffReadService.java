@@ -22,6 +22,9 @@ import com.uav.lowaltitude.modules.handoff.api.HandoffDtos.PageDto;
 import com.uav.lowaltitude.modules.handoff.api.HandoffDtos.RecipientDto;
 import com.uav.lowaltitude.modules.handoff.api.HandoffDtos.RecipientListDto;
 import com.uav.lowaltitude.modules.handoff.api.HandoffDtos.ReferenceMaterialDto;
+import com.uav.lowaltitude.modules.handoff.api.HandoffDtos.MaterialV2Dto;
+import com.uav.lowaltitude.modules.handoff.api.HandoffDtos.EvidenceMaterialDto;
+import com.uav.lowaltitude.modules.alarm.infrastructure.UavEventRepository;
 import com.uav.lowaltitude.modules.handoff.domain.HandoffRules;
 import com.uav.lowaltitude.modules.handoff.infrastructure.HandoffRepository;
 import com.uav.lowaltitude.modules.handoff.infrastructure.HandoffRepository.DeliveryRow;
@@ -47,11 +50,13 @@ public class HandoffReadService {
     private final HandoffRepository repository;
     private final RiskRepository risks;
     private final RiskReadService riskRead;
+    private final UavEventRepository events;
     private final ObjectMapper objectMapper;
 
     public HandoffReadService(AccessControlService access, HandoffRepository repository, RiskRepository risks,
-            RiskReadService riskRead, ObjectMapper objectMapper) {
-        this.access = access; this.repository = repository; this.risks = risks; this.riskRead = riskRead; this.objectMapper = objectMapper;
+            RiskReadService riskRead, UavEventRepository events, ObjectMapper objectMapper) {
+        this.access = access; this.repository = repository; this.risks = risks; this.riskRead = riskRead;
+        this.events = events; this.objectMapper = objectMapper;
     }
 
     @Transactional(readOnly = true)
@@ -94,7 +99,7 @@ public class HandoffReadService {
         return new HandoffDetailDto(row.handoffId(), row.sourceKind(), row.sourceId(), row.handoffType(), row.recipientId(), row.recipientName(),
                 row.sourceVersion(), row.ownerOrgId(), row.districtId(), row.sourceMode(), row.submittedBy(), requiredMillis(row.createdAt()),
                 row.deliveryStatus(), row.receiptStatus(), row.blockedReason(), material(row, source), latest == null ? null : dto(latest),
-                new AvailabilityDto(source.availability), row.ownerOrgName(), row.districtName(), row.submittedByName(), row.sourceNo());
+                new AvailabilityDto(source.availability, evidenceAvailability(row, repository.snapshot(row.handoffId()), source.availability)), row.ownerOrgName(), row.districtName(), row.submittedByName(), row.sourceNo());
     }
 
     @Transactional(readOnly = true)
@@ -113,9 +118,10 @@ public class HandoffReadService {
      * 读者缺 risk:read，或源风险已不在其可见范围（归属变化、目录停用）时，风险字段、核实历史与关联引用整体省略，
      * 只保留 schema_version 并以 availability 标记原因；可见时关联引用再逐项按当前关联权限裁剪，不提示被省略的数量。
      */
-    private MaterialDto material(HandoffRow row, SourceVisibility source) {
+    private Object material(HandoffRow row, SourceVisibility source) {
         SnapshotRow snapshot = repository.snapshot(row.handoffId());
         if (snapshot == null) return null;
+        if (snapshot.schemaVersion() >= HandoffSubmissionService.MATERIAL_SCHEMA_V2) return materialV2(snapshot, source);
         MaterialDto stored = parse(snapshot.json());
         int schemaVersion = stored.schemaVersion() == 0 ? snapshot.schemaVersion() : stored.schemaVersion();
         if (source.current == null) return new MaterialDto(schemaVersion, null, null, null);
@@ -123,7 +129,61 @@ public class HandoffReadService {
         return new MaterialDto(schemaVersion, stored.risk(), stored.verifications(), references);
     }
 
+    /**
+     * 处罚材料（v2）：来源不可见时整体省略，只留 schema_version；证据段另按**读者当前**的 evidence:read 裁剪。
+     * 提交时就没冻结证据的（evidence_omitted），补多少权限也变不出来——这两种情况在 availability.evidence 上分开表达。
+     */
+    private Object materialV2(SnapshotRow snapshot, SourceVisibility source) {
+        MaterialV2Dto stored = parseV2(snapshot.json());
+        int schemaVersion = stored.schemaVersion() == 0 ? snapshot.schemaVersion() : stored.schemaVersion();
+        if (!"AVAILABLE".equals(source.availability))
+            return new MaterialV2Dto(schemaVersion, null, null, null, null, null, null);
+        List<EvidenceMaterialDto> evidence = stored.evidence();
+        if (evidence != null && !mayReadEvidence()) evidence = null;
+        return new MaterialV2Dto(schemaVersion, stored.event(), stored.verifications(), stored.disposals(),
+                evidence, stored.evidenceOmitted(), stored.references());
+    }
+
+    /** 证据段的可用性：提交时就没冻结 > 读者没权限 > 可用。三者互斥，取最先成立的那个。 */
+    private String evidenceAvailability(HandoffRow row, SnapshotRow snapshot, String materialAvailability) {
+        if (snapshot == null || snapshot.schemaVersion() < HandoffSubmissionService.MATERIAL_SCHEMA_V2) return null;
+        // 材料整体不可用时，证据段跟着它（决策 14-25）：材料都看不到却说"证据可用"，
+        // 等于告诉对方"这份材料里是有证据的"——那本身就是不该漏出去的信息。
+        if (!"AVAILABLE".equals(materialAvailability)) return materialAvailability;
+        MaterialV2Dto stored = parseV2(snapshot.json());
+        if (Boolean.TRUE.equals(stored.evidenceOmitted())) return "OMITTED_AT_SUBMISSION";
+        return mayReadEvidence() ? "AVAILABLE" : "FORBIDDEN";
+    }
+
+    private boolean mayReadEvidence() {
+        try { access.require(PermissionCode.EVIDENCE_READ); return true; }
+        catch (ApiException denied) { return false; }
+    }
+
+    private MaterialV2Dto parseV2(String json) {
+        try {
+            JsonNode root = objectMapper.readTree(json);
+            // 与 v1 同一处理：H2 把 CAST(? AS JSON) 的字符串包成 JSON 文本，PostgreSQL 直接存对象，两种形态都要能读回。
+            if (root != null && root.isTextual()) root = objectMapper.readTree(root.textValue());
+            if (root == null || !root.isObject()) throw invalidSnapshot();
+            return objectMapper.treeToValue(root, MaterialV2Dto.class);
+        } catch (java.io.IOException ex) {
+            throw invalidSnapshot();
+        }
+    }
+
+    /**
+     * 来源可见性。处罚交接看的是事件（决策 14-4）：缺 alarm:read → FORBIDDEN；
+     * 事件已不在读者范围 → SOURCE_NOT_VISIBLE。两者不能混：前者补权限就能看，后者补权限也看不到。
+     */
     private SourceVisibility sourceVisibility(HandoffRow row) {
+        if (HandoffRules.KIND_UAV_EVENT.equals(row.sourceKind())) {
+            AccessDecision alarmDecision;
+            try { alarmDecision = access.require(PermissionCode.ALARM_READ); }
+            catch (ApiException denied) { return new SourceVisibility(null, "FORBIDDEN"); }
+            return events.find(row.sourceId(), alarmDecision) == null
+                    ? new SourceVisibility(null, "SOURCE_NOT_VISIBLE") : new SourceVisibility(null, "AVAILABLE");
+        }
         if (!HandoffRules.KIND_RISK.equals(row.sourceKind())) return new SourceVisibility(null, "SOURCE_NOT_VISIBLE");
         AccessDecision riskDecision;
         try { riskDecision = access.require(PermissionCode.RISK_READ); } catch (ApiException denied) { return new SourceVisibility(null, "FORBIDDEN"); }

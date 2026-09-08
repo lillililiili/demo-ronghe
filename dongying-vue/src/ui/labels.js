@@ -40,6 +40,48 @@ export const DISPOSAL_STOP_RESULT_LABEL = {
   NOT_ATTEMPTED: '授权已撤销；未尝试设备急停',
   NOT_BOUND: '授权已撤销；设备未登记凌云连接，请运维补配置后重试'
 };
+/* 处罚案件（阶段 14）。状态回答“案子办到哪一步”，与裁量、复核结论分开说。 */
+export const CASE_STATUS_LABEL = {
+  FILED: '已立案', INVESTIGATING: '调查中', UNDER_REVIEW: '复核中',
+  DECIDED: '已决定', CLOSED: '已结案', WITHDRAWN: '已撤案'
+};
+export const PENALTY_TYPE_LABEL = { WARNING: '警告', FINE: '罚款', WARNING_AND_FINE: '警告并处罚款' };
+/* 违法事由沿用阶段 7 规则引擎的原因码（服务端 penalty_rule.violation_code 就是这套）；
+   档位表自带 title，页面优先显示 title，这里是它缺失时的兜底。 */
+export const VIOLATION_CODE_LABEL = {
+  NO_AUTHORIZATION: '未经批准擅自飞行', PROHIBITED_AIRSPACE_OVERLAP: '进入禁飞空域飞行',
+  AIRSPACE_ALTITUDE_EXCEEDED: '超出空域限高飞行', PLAN_ALTITUDE_EXCEEDED: '超出计划高度飞行',
+  TIME_WINDOW_EXCEEDED: '超出批准时段飞行', ROUTE_DEVIATION: '偏离批准航线飞行',
+  BVLOS_EXCEEDED: '超视距飞行未符合要求', NIGHT_FLIGHT: '夜间飞行未符合要求',
+  IDENTITY_MISMATCH: '实名登记信息不符', OTHER: '其他违反飞行管理规定的行为'
+};
+export const DISCRETION_STATUS_LABEL = { DRAFT: '草稿', CONFIRMED: '已确认', SUPERSEDED: '已被新版本取代' };
+export const DOCUMENT_STATUS_LABEL = { ISSUED: '已出具', REVOKED: '已作废' };
+/* 复核结论回答“这次复核的结果”，不是案件状态。 */
+export const REVIEW_CONCLUSION_LABEL = { UPHELD: '维持', REVISED: '需修正', INSUFFICIENT: '证据不足' };
+export const LEAD_KIND_LABEL = {
+  PARTY_IDENTITY: '当事人身份', EVIDENCE: '证据', JURISDICTION: '管辖', FACT: '事实认定', OTHER: '其他'
+};
+export const CASE_EVENT_KIND_LABEL = {
+  FILE: '立案', ASSIGN: '指派承办人', LEAD_ADDED: '新增待补线索', LEAD_RESOLVED: '线索已补齐',
+  DISCRETION_DRAFTED: '拟定裁量', DISCRETION_CONFIRMED: '确认裁量', DOCUMENT_ISSUED: '出具决定书',
+  DOCUMENT_REVOKED: '作废决定书', REVIEW_REQUESTED: '提请复核', REVIEWED: '完成复核',
+  CLOSED: '结案', WITHDRAWN: '撤案'
+};
+/* 契约 §2.3 的错误码：每条都译成能据以行动的话，错误码本身不上屏。 */
+export const PUNISHMENT_BLOCKED_LABEL = {
+  CASE_ALREADY_EXISTS: '该事件已经立过案，一个事件只能有一个案件',
+  INVALID_TRANSITION: '案件当前状态不允许这一步操作，请刷新后按最新状态处理',
+  DISCRETION_NOT_CONFIRMED: '尚未确认裁量，先确认裁量才能出具决定书',
+  REVIEW_SELF_NOT_ALLOWED: '复核人不能是承办人，请由另一位有复核权限的人处理',
+  DECISION_DOCUMENT_REQUIRED: '结案前必须至少出具一份决定书',
+  FINE_OUT_OF_RANGE: '罚款金额超出该档位区间',
+  PENALTY_TYPE_NOT_ALLOWED: '该违法事由不允许这种处罚种类',
+  VALIDATION_ERROR: '填写内容不符合要求',
+  UNKNOWN_FIELD: '提交了未知字段',
+  NOT_FOUND: '记录不存在或不在当前权限范围内'
+};
+
 /* 授权事件流的动作名：事件流直接上屏，枚举必须翻成中文（技能 writing-user-readable-ui-text）。 */
 export const DISPOSAL_EVENT_KIND_LABEL = {
   REQUEST: '发起申请', APPROVE: '批准', REJECT: '驳回', EXECUTE: '下发执行', RECEIPT: '设备回执',

@@ -46,7 +46,13 @@ public enum PermissionCode {
     DISPOSAL_REQUEST("disposal:request"),
     DISPOSAL_APPROVE("disposal:approve"),
     DISPOSAL_EXECUTE("disposal:execute"),
-    DISPOSAL_STOP("disposal:stop");
+    DISPOSAL_STOP("disposal:stop"),
+    // 阶段 14：处罚案件域（立案/指派/线索、裁量与决定书、复核、结案）。目录行由迁移 V202609080101 先落。
+    PUNISHMENT_READ("punishment:read"),
+    PUNISHMENT_FILE("punishment:file"),
+    PUNISHMENT_DECIDE("punishment:decide"),
+    PUNISHMENT_REVIEW("punishment:review"),
+    PUNISHMENT_CLOSE("punishment:close");
 
     private final String value;
 

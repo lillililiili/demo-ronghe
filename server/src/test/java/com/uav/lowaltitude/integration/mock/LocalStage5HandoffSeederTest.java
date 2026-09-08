@@ -65,7 +65,10 @@ class LocalStage5HandoffSeederTest {
         assertThat(count("select count(*) from handoff h where h.handoff_id like 'seed-stage5-%' and not exists (select 1 from handoff_material_snapshot s where s.handoff_id=h.handoff_id)")).isZero();
         assertThat(count("select count(*) from handoff h join flight_risk r on r.risk_id=h.risk_id where h.handoff_id like 'seed-stage5-%' and r.state_code<>'PENDING_NOTIFICATION'")).isZero();
         assertThat(count("select count(*) from flight_risk where state_code='NOTIFIED'")).isZero();
-        assertThat(count("select count(*) from handoff where handoff_type='UAV_PUNISHMENT'")).isZero();
+        // 阶段 14（决策 14-16）起，处罚交接确实会有一条种子夹具，所以不能再断言"全库为零"。
+        // 这条断言真正要守的是"**阶段 5 的种子**不造处罚交接"——按前缀收窄，守住原意而不是删掉它。
+        assertThat(count("select count(*) from handoff where handoff_type='UAV_PUNISHMENT'"
+                + " and handoff_id like 'seed-stage5-%'")).isZero();
     }
 
     @Test

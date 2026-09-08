@@ -22,6 +22,9 @@ import { usePageChrome } from '@/hooks/usePageChrome.js';
 import UPagination from '@/components/UPagination.vue';
 import UPanel from '@/components/UPanel.vue';
 import UKpis from '@/components/UKpis.vue';
+import { handoffApi } from '@/services/handoffApi.js';
+import { openFormModal } from '@/ui/formModal.js';
+import { closeModal } from '@/ui/modal.js';
 import { toast } from '@/ui/nv.js';
 import { getAlarm, getUavEvent, listAlarms, listUavVerifications } from '@/services/alarmApi.js';
 import { openUavVerification } from '@/ui/uavVerificationModal.js';
@@ -264,7 +267,9 @@ function disposalActions(a, ev) {
     const counter = disposal.unavailable || disposal.error
       ? dis('counter', `${U.icon('bolt')} 发起联动反制`, esc(disposal.error || DISPOSAL_UNAVAILABLE_TEXT), 'danger')
       : `<button class="btn danger" data-al="counter">${U.icon('bolt')} 发起联动反制</button>`;
-    return counter + ` ${dis('punish', '通知处罚部门', `${NOT_WIRED}：通知处罚部门未接入`)}`;
+    /* 阶段 14：处罚移送已接入。按钮只负责提交交接，能不能提交（已核实、有已完成授权、未重复）由服务端判，
+       前端不预判（决策 14-18）。 */
+    return counter + ` <button class="btn" data-al="punish">提交处罚交接</button>`;
   }
   if (ev.state === 'FALSE_POSITIVE') return '';
   return dis('verify', '人工核实', '当前账号缺少核实权限（alarm:verify），或事件不在可核实状态');
@@ -496,6 +501,51 @@ async function counterModal() {
   });
 }
 
+let handoffKey = '';
+function newHandoffKey() {
+  if (!handoffKey) handoffKey = `handoff-${globalThis.crypto?.randomUUID?.() || Date.now()}`;
+  return handoffKey;
+}
+
+/* 提交处罚交接：选接收方后提交，expected_version 取当前事件版本（缺它服务端回 400，不是 409）。 */
+async function punishModal() {
+  const a = cur.alarm, ev = cur.event;
+  if (!a || !ev) return toast('尚未创建核实事件，无法移送处罚', 'err');
+  let recipients = [];
+  try {
+    const page = await handoffApi.listHandoffRecipients('UAV_PUNISHMENT');
+    recipients = page?.items || page || [];
+  } catch (error) {
+    return toast(messageOf(error) || '读取处罚接收方失败', 'err');
+  }
+  if (!recipients.length) return toast('没有可用的处罚接收方，请先在系统管理里配置', 'err');
+  openFormModal({
+    title: '提交处罚交接',
+    width: '560px',
+    warning: '移送后由处罚部门在处罚页立案；提交成功只表示材料入库，不表示已发送或已立案。',
+    fields: [{ key: 'recipient_id', label: '接收方', type: 'select', required: true,
+      options: recipients.map(r => ({ value: r.recipient_id, label: r.display_name || r.recipient_id })) }],
+    initial: { recipient_id: recipients[0].recipient_id },
+    confirmText: '提交移送',
+    validate: m => (m.recipient_id ? null : '请选择接收方'),
+    onSubmit: async ({ recipient_id: recipientId }) => {
+      try {
+        await handoffApi.createHandoff({
+          source_kind: 'UAV_EVENT', source_id: ev.event_id, handoff_type: 'UAV_PUNISHMENT',
+          recipient_id: recipientId, expected_version: Number(ev.version)
+        }, newHandoffKey());
+        closeModal();
+        handoffKey = '';                 // 明确成功后丢弃幂等键
+        toast('已移送，可到处罚页立案', 'ok');
+        await refreshAfterWrite();
+      } catch (error) {
+        // 服务端按码回：未核实 / 无已完成授权 / 已存在，都如实转述，不在前端预判。
+        throw new Error(messageOf(error) || '提交处罚交接失败');
+      }
+    }
+  });
+}
+
 function onPage(p2) { st.page = p2; loadList(); }
 function onPageSize(s2) { st.size = s2; st.page = 1; loadList(); }
 
@@ -522,6 +572,7 @@ onMounted(async () => {
     const k = btn.dataset.al;
     if (k === 'verify') verifyModal();
     else if (k === 'counter') counterModal();
+    else if (k === 'punish') punishModal();
     else if (k === 'retry') loadList();
     else if (k === 'retry-detail' && st.selId) selectAlarm(st.selId);
   });

@@ -55,7 +55,10 @@ class DeviceBusinessScopeTest {
         List<Map<String, Object>> rows = jdbc.queryForList("select permission_code, permission_kind, route_key from app_permission where permission_code in ('workbench:read','handoff:read','handoff:create') order by permission_code");
         assertThat(rows).extracting(row -> row.get("permission_code")).containsExactly("handoff:create", "handoff:read", "workbench:read");
         assertThat(rows).allSatisfy(row -> { assertThat(row.get("permission_kind")).isEqualTo("ACTION"); assertThat(row.get("route_key")).isNull(); });
-        assertThat(jdbc.queryForObject("select count(*) from app_role_permission where permission_code in ('workbench:read','handoff:read','handoff:create') and role_code<>'ROLE-ADMIN'", Integer.class)).isZero();
+        // 只看内置角色：同一缓存上下文里其它用例会给临时角色（如阶段 13/14 的 ROLE-S1xX-*）授这些码，
+        // 那是夹具不是产品授权；本断言守的是"迁移与种子没有给任何内置角色默认授权"。
+        assertThat(jdbc.queryForObject("select count(*) from app_role_permission rp join app_role r on r.role_code=rp.role_code"
+                + " where rp.permission_code in ('workbench:read','handoff:read','handoff:create') and rp.role_code<>'ROLE-ADMIN' and r.builtin=true", Integer.class)).isZero();
     }
 
     @Test

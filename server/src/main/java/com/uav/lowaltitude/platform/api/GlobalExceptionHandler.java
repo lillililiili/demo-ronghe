@@ -191,6 +191,7 @@ public class GlobalExceptionHandler {
         // 阶段 9：机场基础数据独立归档；空间风险汇总、异物细类字典与 C04/C05 评估触发归风险模块。
         // 阶段 13：处置授权（申请/审批/执行/停止）独立归档，不能落到 devices 或 system。
         if (path.contains("/disposal-")) return "disposal";
+        if (path.contains("/punishment-cases") || path.contains("/penalty-rules") || path.contains("/decision-documents")) return "punishment";
         if (path.contains("/airports")) return "airport";
         if (path.contains("/space-risks") || path.contains("/space-object-subtypes") || path.contains("/rule-evaluations")) return "risk";
         if (path.contains("/airspace")) return "airspace";

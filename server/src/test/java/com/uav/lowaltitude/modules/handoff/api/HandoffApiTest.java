@@ -123,8 +123,11 @@ class HandoffApiTest {
     void uavPunishmentIsBlockedForEverySourceKind() throws Exception {
         create(session, body("RISK", riskId, "UAV_PUNISHMENT", recipientId, 1), "up-risk-" + UUID.randomUUID())
                 .andExpect(status().isConflict()).andExpect(jsonPath("$.error.code").value("HANDOFF_PREREQUISITE_UNAVAILABLE"));
+        // 决策 14-21 修订：来源读权先于前提校验。session 没有 alarm:read，对**任意**事件 id 都只能拿到 403——
+        // 前提校验用的 completedExists 不带范围过滤，若排在读权之前，只有 handoff:create 的人
+        // 就能靠 409/403 的差异跨机构探测"那边有没有处置完成的事件"。
         create(session, body("UAV_EVENT", "event-any", "UAV_PUNISHMENT", recipientId, 0), "up-event-" + UUID.randomUUID())
-                .andExpect(status().isConflict()).andExpect(jsonPath("$.error.code").value("HANDOFF_PREREQUISITE_UNAVAILABLE"));
+                .andExpect(status().isForbidden());
         assertThat(handoffCount(riskId)).isZero();
     }
 
@@ -185,8 +188,9 @@ class HandoffApiTest {
         }
         create(session, body("DEVICE_INCIDENT", "incident-1", "RISK_NOTICE", recipientId, 1), "kind-" + UUID.randomUUID())
                 .andExpect(status().isBadRequest()).andExpect(jsonPath("$.error.code").value("INVALID_KIND"));
+        // 同上（14-21 修订）：声明 UAV_EVENT 来源就要先有 alarm:read，组合是否成立轮不到无权限者知道。
         create(session, body("UAV_EVENT", "event-1", "RISK_NOTICE", recipientId, 1), "kind-mismatch-" + UUID.randomUUID())
-                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.error.code").value("INVALID_KIND"));
+                .andExpect(status().isForbidden());
         create(session, body("RISK", riskId, "MAGIC", recipientId, 1), "type-" + UUID.randomUUID())
                 .andExpect(status().isBadRequest()).andExpect(jsonPath("$.error.code").value("INVALID_REQUEST"));
         mvc.perform(post("/api/v1/handoffs").header("Authorization", bearer(session))

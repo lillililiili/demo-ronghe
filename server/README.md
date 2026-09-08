@@ -50,6 +50,8 @@ Linux/macOS 在 `server/` 执行：
 
 协议 A MQTT（`LINGYUN_MQTT_V8_6`）与协议 C 光电边端（`EO_EDGE_MQTT_20250826`）由 `app.mqtt.enabled` 控制，默认开启；`test` profile 关闭以免占用嵌入式测试库。本地模拟：在设备页配置 `source_mode=replay` 的 MQTT 连接（回环仅允许 replay）。协议 A 登记雷达/5G-A/TDOA，向 `bridge/{providerCode}/device|device_data/{type}/{externalDeviceId}` 发布。光电登记 `edgeId` 与设备 `deviceId`，设备向 `iot-reporting/cmlc/edge/{edgeId}` 上报 HeartBeat / BeginTracking，平台向 `iot-dispatcher/cmlc/edge/{deviceId}` 下发。真实 broker 的密码只通过 `credential_ref=env:变量名` 注入，配置了 live 不等于现场已联调。目标/跟踪上报进入 `inbox_message` 后仍为 `RECEIVED`，融合消费由协作者 B 领取。
 
+雷达 TCP 航迹提升（P4-A）由 `app.fusion.live-promotion.enabled` / `APP_FUSION_LIVE_PROMOTION_ENABLED` 控制，默认关。打开后每条 `UPLOAD_TRACK_V3` 航迹批另写一行 `live-radar:<source_code>` 信封；不写融合业务表，打开开关也不等于客户现场雷达联调完成。
+
 目标/轨迹只读接口为 `GET /api/v1/targets`、`GET /api/v1/targets/{target_id}`、`GET /api/v1/targets/{target_id}/tracks` 和 `GET /api/v1/tracks/{track_id}/points`。这四个接口均要求 `target:read`，并使用账号的组织/区域数据范围；越权对象按不存在返回 404。响应 ID 为字符串，时间为 epoch 毫秒，坐标仅在存在可信 WGS-84 位置时输出。
 
 ## 测试

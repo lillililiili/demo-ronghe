@@ -8,6 +8,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Repository;
 
+import com.uav.lowaltitude.integration.device.DeviceProtocolCodes;
+
 @Repository
 public class IntegrationSourceRepository {
 
@@ -66,6 +68,22 @@ public class IntegrationSourceRepository {
                 UPDATE ops_integration_source SET enabled=?,version=version+1,updated_at=?
                 WHERE source_id=? AND version=? AND source_mode='live'
                 """, enabled, now, id, version);
+    }
+
+    public void ensureStandardLiveRadar(String sourceCode, String name, String protocolVersion, boolean enabled, long now) {
+        java.sql.Timestamp time = new java.sql.Timestamp(now);
+        String version = protocolVersion == null || protocolVersion.isBlank() ? "3.0.0" : protocolVersion.trim();
+        jdbc.update("""
+                INSERT INTO integration_source (source_id,source_code,name,protocol_code,protocol_version,source_mode,
+                    enabled,source_type,created_at,updated_at)
+                SELECT ?,?,?,?,?,'live',?,'RADAR',?,?
+                WHERE NOT EXISTS (SELECT 1 FROM integration_source WHERE source_code=?)
+                """, java.util.UUID.randomUUID().toString(), sourceCode, name, DeviceProtocolCodes.RADAR_TCP_V3_0_0,
+                version, enabled, time, time, sourceCode);
+        jdbc.update("""
+                UPDATE integration_source SET enabled=?,name=?,protocol_code=?,protocol_version=?,source_type='RADAR',updated_at=?
+                WHERE source_code=? AND source_mode='live'
+                """, enabled, name, DeviceProtocolCodes.RADAR_TCP_V3_0_0, version, time, sourceCode);
     }
 
     public List<Map<String, Object>> assignedDevices(String sourceId) {

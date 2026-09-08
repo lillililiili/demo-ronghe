@@ -32,17 +32,15 @@ public class ProtocolDataRepository {
     }
 
     public boolean insertInbox(String sourceId, String deviceId, String messageKey, byte[] raw, long now) {
-        try {
-            jdbc.update("""
-                    INSERT INTO inbox_message (inbox_id,source,source_msg_id,received_at,ops_source_id,
-                        protocol_message_key,payload_sha256,payload_bytes,processing_status)
-                    VALUES (?,?,?,?,?,?,?,?, 'RECEIVED')
-                    """, UUID.randomUUID().toString(), "live-device:" + deviceId, messageKey, now, sourceId,
-                    messageKey, sha256(raw), raw);
-            return true;
-        } catch (DataIntegrityViolationException duplicate) {
-            return false;
-        }
+        String source = "live-device:" + deviceId;
+        int inserted = jdbc.update("""
+                INSERT INTO inbox_message (inbox_id,source,source_msg_id,received_at,ops_source_id,
+                    protocol_message_key,payload_sha256,payload_bytes,processing_status)
+                SELECT ?,?,?,?,?,?,?,?, 'RECEIVED'
+                WHERE NOT EXISTS (SELECT 1 FROM inbox_message WHERE source=? AND source_msg_id=?)
+                """, UUID.randomUUID().toString(), source, messageKey, now, sourceId,
+                messageKey, sha256(raw), raw, source, messageKey);
+        return inserted == 1;
     }
 
     public void inboxProcessed(String deviceId, String messageKey, long now) {
@@ -175,6 +173,22 @@ public class ProtocolDataRepository {
     public Map<String, Object> siteReference(String deviceId) {
         List<Map<String, Object>> rows = jdbc.queryForList("SELECT * FROM radar_site_reference WHERE device_id=?", deviceId);
         return rows.isEmpty() ? null : rows.get(0);
+    }
+
+    public Map<String, java.math.BigDecimal[]> derivedLonLat(String deviceId, long radarBootMicros) {
+        List<Map<String, Object>> rows = jdbc.queryForList("""
+                SELECT l.external_track_id,s.longitude_deg,s.latitude_deg
+                FROM ops_target_source_link l JOIN ops_target_latest_state s ON s.target_id=l.target_id
+                WHERE l.device_id=? AND l.radar_boot_micros=? AND s.derived=TRUE
+                  AND s.longitude_deg IS NOT NULL AND s.latitude_deg IS NOT NULL
+                """, deviceId, radarBootMicros);
+        Map<String, java.math.BigDecimal[]> result = new HashMap<>();
+        for (Map<String, Object> row : rows) {
+            Object lon = row.get("longitude_deg"), lat = row.get("latitude_deg"), id = row.get("external_track_id");
+            if (id == null || lon == null || lat == null) continue;
+            result.put(String.valueOf(id), new java.math.BigDecimal[] { decimal(lon), decimal(lat) });
+        }
+        return result;
     }
 
     public List<Map<String, Object>> targets(String deviceId, Boolean active, Integer classification,
@@ -366,6 +380,9 @@ public class ProtocolDataRepository {
     }
 
     private static String stable(String value) { return UUID.nameUUIDFromBytes(value.getBytes(StandardCharsets.UTF_8)).toString(); }
+    private static java.math.BigDecimal decimal(Object value) {
+        return value instanceof java.math.BigDecimal d ? d : new java.math.BigDecimal(String.valueOf(value));
+    }
     private static String truncate(String value) { return value == null ? null : value.substring(0, Math.min(1000, value.length())); }
     private static String sha256(byte[] bytes) {
         try { return java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes)); }

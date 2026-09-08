@@ -38,3 +38,4 @@
 | 14-32 | `allowed_actions` 按调用者裁剪时把 `REVIEW` 对承办人本人排除（服务端已知承办人），前端不预判；`allowed_actions` 语义明确为『当前调用者现在能做的』 | E2 联调：UNDER_REVIEW 下承办人也拿到 REVIEW，按钮出现后才被 409 挡，与 14-18『前端不预判』相配的是服务端把表给准 |
 | 14-33 | 复核请求体：`missing_leads[]` 的结构校验（kind 词表、description 非空）提到锁定/版本/状态判定之前（400 先于 409）；`UPHELD` 时携带 `missing_leads` 直接 400 `VALIDATION_ERROR`（"维持不能同时列待补线索"），不允许一半留痕一半消失 | 审查第 7 轮 P2-10：答复码顺序是契约；同一输入不能两种命运 |
 | 14-32（补充） | `allowed_actions` 的 `REVIEW` 同时排除"无承办人"与"调用者即承办人"两种情况（`mayReview(callerId, officerId)` 与 `requireDifferentReviewer` 共用同一组入参，不预计算布尔，避免两处分叉） | 审查第 7 轮建议：只镜像一半，问题从一种挪到另一种 |
+| 14-34 | 阶段 14 的 H2 夹具 `PunishmentFixture.cleanup()` 清掉自己建的会话、数据范围与角色授权（`ROLE-PC-%`）；`DeviceBusinessScopeTest` 的断言恢复原状（除管理员外无人持有 `handoff:*`），不再收窄到内置角色 | 审查第 8 轮 P2-11：根因是夹具泄漏而不是断言过严；收窄会放开整个非内置角色面，且下一条同类断言还会再撞。用户/角色行不删（审计与案件事件以 FK 引用），空授权对断言惰性 |

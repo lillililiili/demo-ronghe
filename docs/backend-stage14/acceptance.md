@@ -30,3 +30,8 @@
 - 外部处罚系统与文书报送渠道、真实回执未接（Q4）；证据只读引用事件主体，CASE/HANDOFF 主体待 A 扩 `evidence_link`（14-15）。
 - 复核人 ≠ 承办人：单账号环境走不到复核之后；第二账号需用户建（13-33，夹具 `docs/backend-stage13/fixture-approver-role.sql` 已含 `punishment:review`）。
 - 案件不设时限、无催办；当事人只存名称与类型（14-12）；处罚动作权限无角色矩阵入口（13-33）。
+
+## 跟进（提交 `d3ef7a7` 之后）
+- 审查第 8 轮 P2-11：`DeviceBusinessScopeTest` 的收窄断言方向反了——根因是 `PunishmentFixture.cleanup()` 没清自己建的角色授权。改法（14-34）：夹具清 `app_session / app_user_data_scope / app_role_permission`（`ROLE-PC-%`），断言恢复原状；H2 全量复跑见下。
+- 审查第 9 轮建议（基线 `a372fce`，用户提交）：`accessBlocker` 对别名路由（`#/risk`、`#/airspace`）提示"需要'风险'的查看权限"，而实际要授的是"飞行计划"——归入小接线待办：有别名时提示写成两段（页面名 + 应授的模块）。
+- 跟进后 H2 全量：141 类 / 804 run / 0 fail / 0 err / 93 skip，`DeviceBusinessScopeTest` 用原断言（除管理员外无人持有 `handoff:*`/`workbench:read`）通过；第一次只清 `ROLE-PC-%` 仍红（35 条），补清 `HandoffPunishmentMaterialsApiTest` 的 `ROLE-PM-%` 后归零；断言失败时现在会列出持有者角色名。

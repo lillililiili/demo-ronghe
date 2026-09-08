@@ -57,6 +57,11 @@ class HandoffPunishmentMaterialsApiTest {
 
     @AfterEach
     void cleanup() {
+        // 自己造的会话/范围/授权也清掉：共享 H2 上下文里后跑的用例会把这些授权数成"产品授权"（14-34）。
+        // 用户与角色行不删：审计以 FK 引用用户；空授权对任何断言都是惰性的。
+        jdbc.update("delete from app_session where user_id in (select user_id from app_user where role_code like 'ROLE-PM-%')");
+        jdbc.update("delete from app_user_data_scope where user_id in (select user_id from app_user where role_code like 'ROLE-PM-%')");
+        jdbc.update("delete from app_role_permission where role_code like 'ROLE-PM-%'");
         jdbc.update("delete from handoff_delivery where handoff_id in (select handoff_id from handoff where source_id like 'pm-event-%')");
         jdbc.update("delete from handoff_material_snapshot where handoff_id in (select handoff_id from handoff where source_id like 'pm-event-%')");
         jdbc.update("delete from handoff where source_id like 'pm-event-%'");

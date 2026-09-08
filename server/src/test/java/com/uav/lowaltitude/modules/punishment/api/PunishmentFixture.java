@@ -73,5 +73,11 @@ final class PunishmentFixture {
         jdbc.update("delete from handoff_recipient where recipient_id like 'pc-recipient-%'");
         jdbc.update("delete from uav_event where event_id like 'pc-event-%'");
         jdbc.update("delete from alarm where alarm_id like 'pc-alarm-%'");
+        // 自己造的会话/范围/授权也要清：同一缓存上下文里后跑的用例会数 app_role_permission
+        // （如 DeviceBusinessScopeTest "除管理员外无人持有 handoff:*"），留着就是把夹具冒充成产品授权。
+        // app_user / app_role 行不删：审计与案件事件表以 FK 引用这些用户，删了会撞 FK；空角色与无会话的用户对任何断言都是惰性的。
+        jdbc.update("delete from app_session where user_id in (select user_id from app_user where role_code like 'ROLE-PC-%')");
+        jdbc.update("delete from app_user_data_scope where user_id in (select user_id from app_user where role_code like 'ROLE-PC-%')");
+        jdbc.update("delete from app_role_permission where role_code like 'ROLE-PC-%'");
     }
 }

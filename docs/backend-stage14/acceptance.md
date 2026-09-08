@@ -35,3 +35,4 @@
 - 审查第 8 轮 P2-11：`DeviceBusinessScopeTest` 的收窄断言方向反了——根因是 `PunishmentFixture.cleanup()` 没清自己建的角色授权。改法（14-34）：夹具清 `app_session / app_user_data_scope / app_role_permission`（`ROLE-PC-%`），断言恢复原状；H2 全量复跑见下。
 - 审查第 9 轮建议（基线 `a372fce`，用户提交）：`accessBlocker` 对别名路由（`#/risk`、`#/airspace`）提示"需要'风险'的查看权限"，而实际要授的是"飞行计划"——归入小接线待办：有别名时提示写成两段（页面名 + 应授的模块）。
 - 跟进后 H2 全量：141 类 / 804 run / 0 fail / 0 err / 93 skip，`DeviceBusinessScopeTest` 用原断言（除管理员外无人持有 `handoff:*`/`workbench:read`）通过；第一次只清 `ROLE-PC-%` 仍红（35 条），补清 `HandoffPunishmentMaterialsApiTest` 的 `ROLE-PM-%` 后归零；断言失败时现在会列出持有者角色名。
+- 合并 A（`00341d7`，origin/main 五条：C07 证据链与手工销毁、aoa/dcd/rid MQTT、光电人工跟踪、KPI 文案）：两处冲突手工合（`accessControl.js` 取 `a372fce` 的别名恢复版；`PunishPage.vue` 同时保留 A 的证据链区块与 B 的五块，B 的证据块改名"移送材料中的证据引用"）。合并树：H2 145 类 828/0/0/93；前端 build/scan 通过、文案 1 处既有；PG Stage13 10 / Stage14 9 / Stage5 5 / Stage9 24 / MqttP1 1 = 49/49；新 jar 起在 `uav_stage10_verify` 时 A 的 `202609070085/0104` 以乱序（local 允许）套用成功，健康 200。

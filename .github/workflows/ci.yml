@@ -64,11 +64,16 @@ jobs:
           PGPASSWORD=uav psql -h 127.0.0.1 -U uav -d ci_verify -c "CREATE EXTENSION IF NOT EXISTS postgis;"
           PGPASSWORD=uav psql -h 127.0.0.1 -U uav -d ci_verify -c "CREATE DATABASE stage2_target_verify_ci;"
           PGPASSWORD=uav psql -h 127.0.0.1 -U uav -d stage2_target_verify_ci -c "CREATE EXTENSION IF NOT EXISTS postgis;"
-      - run: ./mvnw -B test
+      # TargetReadPostgresApiTest 的守卫要求库名匹配 stage2_target_verify_*，在 ci_verify 上会拒绝加载上下文，
+      # 主跑必须排掉它，下一步用专属库单独跑（审查阶段 15 第 1 轮 P0-1）。
+      - name: Full test suite (H2 + PostgreSQL suites on ci_verify)
+        run: ./mvnw -B test -Dtest='!TargetReadPostgresApiTest' -Dsurefire.failIfNoSpecifiedTests=false
       - name: TargetRead PostgreSQL suite (needs its own stage2_target_verify_* database)
         run: ./mvnw -B -Dtest=TargetReadPostgresApiTest -Dsurefire.failIfNoSpecifiedTests=false test
         env:
           POSTGRES_TEST_URL: jdbc:postgresql://127.0.0.1:5432/stage2_target_verify_ci
+      - name: Package (tests already ran above)
+        run: ./mvnw -B -DskipTests package
       - name: Test summary (run / failures / errors / skipped)
         if: always()
         run: |
@@ -81,25 +86,31 @@ jobs:
           print(f"## Backend tests\n\n| run | failures | errors | skipped |\n| --- | --- | --- | --- |\n| {t} | {f} | {e} | {s} |\n")
           print("跳过数应只剩非 PostgreSQL 门禁的用例；若接近 90+，说明 PostgreSQL 服务没接上。")
           EOF
-      - run: ./mvnw -B -Dtest=AuthApiTest,SystemManagementApiTest test
-      - run: ./mvnw -B package
 
   e2e:
-    # 阶段 15 起的 E2E 骨架（Playwright）：稳定前不阻断合并（决策 15-9）。助手落地 dongying-vue/e2e 后此作业才有用例。
+    # 阶段 15 起的 E2E 骨架（Playwright）：稳定前不阻断合并（决策 15-9）。
+    # 作业级 if 在 checkout 前求值、hashFiles 恒空（审查第 1 轮 P1-1），因此改为 checkout 之后按文件存在与否逐步判断。
     runs-on: ubuntu-latest
     continue-on-error: true
     needs: [frontend]
-    if: hashFiles('dongying-vue/playwright.config.js') != ''
     defaults:
       run:
         working-directory: dongying-vue
     steps:
       - uses: actions/checkout@v4
+      - name: Detect Playwright config
+        id: pw
+        run: |
+          if [ -f playwright.config.js ]; then echo "present=true" >> "$GITHUB_OUTPUT"; else echo "present=false" >> "$GITHUB_OUTPUT"; echo "::notice::dongying-vue/playwright.config.js 不存在，E2E 作业无用例可跑"; fi
       - uses: actions/setup-node@v4
+        if: steps.pw.outputs.present == 'true'
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: dongying-vue/package-lock.json
       - run: npm ci
+        if: steps.pw.outputs.present == 'true'
       - run: npx playwright install --with-deps chromium
+        if: steps.pw.outputs.present == 'true'
       - run: npm run e2e -- --reporter=list
+        if: steps.pw.outputs.present == 'true'

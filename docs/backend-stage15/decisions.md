@@ -14,3 +14,4 @@
 | 15-10 | E2E 骨架：Playwright，登录经 API 注入 `sessionStorage`，用例矩阵 = 全部路由 × {admin1, reviewer1}，断言可达/拒绝、无控制台错误、三视口无横向溢出；不做业务流程 | 先把"页面进不进得去"钉住 |
 | 15-11 | 证据主体扩到 CASE/AUTHORIZATION 不在本阶段：A 的表与三条 CHECK，契约 §6 提请 A | 范围控制 |
 | 15-12 | 本阶段无新表；如需迁移只用 `V202609080104+`；权限 sort 980+ | 约定 |
+| 15-13 | CI 修订：主跑排除 `TargetReadPostgresApiTest`（其守卫要求库名 `stage2_target_verify_*`，在 `ci_verify` 上会拒绝加载）并用专属库单独跑；`package` 加 `-DskipTests`；汇总放在所有测试步骤之后；去掉重复的 `AuthApiTest,SystemManagementApiTest` 单跑；e2e 作业改为 checkout 后按 `playwright.config.js` 存在与否逐步判断（作业级 `hashFiles` 在 checkout 前恒空） | 审查阶段 15 第 1 轮 P0-1/P1-1/建议 |

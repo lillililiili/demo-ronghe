@@ -26,6 +26,19 @@ public class AlarmController {
         return ApiResponse.ok(service.list(parameters));
     }
 
+    /** 导出：路径独立于列表，便于 GlobalExceptionHandler 把它归到 alarms 模块并单独审计（决策 15-7）。 */
+    @GetMapping("/alarms/export.csv")
+    public org.springframework.http.ResponseEntity<byte[]> export(
+            @RequestParam org.springframework.util.MultiValueMap<String, String> parameters) {
+        return service.export(parameters);
+    }
+
+    /** 区域筛选项：必须排在 /alarms/{alarmId} 之前，否则 districts 会被当成一个告警 id。 */
+    @GetMapping("/alarms/districts")
+    public ApiResponse<java.util.List<com.uav.lowaltitude.modules.alarm.api.AlarmDtos.DistrictOptionDto>> districts() {
+        return ApiResponse.ok(service.districts());
+    }
+
     @GetMapping("/alarms/{alarmId}")
     public ApiResponse<AlarmDto> detail(@PathVariable String alarmId) { return ApiResponse.ok(service.detail(alarmId)); }
 }

@@ -6,6 +6,7 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -34,6 +35,9 @@ import com.uav.lowaltitude.modules.target.api.TargetDtos.LineageSummaryDto;
 import com.uav.lowaltitude.modules.target.api.TargetDtos.TrackStatusDto;
 import com.uav.lowaltitude.modules.target.api.TargetDtos.LocationDto;
 import com.uav.lowaltitude.modules.target.api.TargetDtos.PageDto;
+import com.uav.lowaltitude.modules.target.api.TargetDtos.RiskSummaryDto;
+import com.uav.lowaltitude.modules.target.api.TargetDtos.LegalitySummaryDto;
+import com.uav.lowaltitude.modules.target.api.TargetDtos.DisposalSummaryDto;
 import com.uav.lowaltitude.modules.target.api.TargetDtos.TargetDetailDto;
 import com.uav.lowaltitude.modules.target.api.TargetDtos.TargetSourceLinkDto;
 import com.uav.lowaltitude.modules.target.api.TargetDtos.TargetStateDto;
@@ -45,6 +49,11 @@ import com.uav.lowaltitude.modules.target.infrastructure.TargetReadRepository.Co
 import com.uav.lowaltitude.modules.target.infrastructure.TargetReadRepository.PointRow;
 import com.uav.lowaltitude.modules.target.infrastructure.TargetReadRepository.SourceLinkRow;
 import com.uav.lowaltitude.modules.target.infrastructure.TargetReadRepository.TargetQuery;
+import com.uav.lowaltitude.modules.target.infrastructure.TargetReadRepository.TargetSummariesRow;
+import com.uav.lowaltitude.modules.target.infrastructure.TargetReadRepository.RiskSummaryRow;
+import com.uav.lowaltitude.modules.target.infrastructure.TargetReadRepository.LegalitySummaryRow;
+import com.uav.lowaltitude.modules.target.infrastructure.TargetReadRepository.DisposalSummaryRow;
+import com.uav.lowaltitude.modules.target.infrastructure.TargetReadRepository.BearingRow;
 import com.uav.lowaltitude.modules.target.infrastructure.TargetReadRepository.TargetRow;
 import com.uav.lowaltitude.modules.target.infrastructure.TargetReadRepository.TimeQuery;
 import com.uav.lowaltitude.modules.target.infrastructure.TargetReadRepository.TrackQuery;
@@ -102,8 +111,11 @@ public class TargetReadService {
                 request.optional("owner_org_id", 36),
                 request.optional("district_id", 36));
         long total = repository.countTargets(query, access);
-        List<TargetSummaryDto> items = repository.listTargets(query, access, page.offset(), page.size).stream()
-                .map(this::summary)
+        List<TargetRow> rows = repository.listTargets(query, access, page.offset(), page.size);
+        // 三摘要与方位按**整页**一次取回（决策 15-4）：逐条查会变成 N+1，而列表最大 100 条。
+        Map<String, TargetSummariesRow> summaries = repository.summaries(rows.stream().map(TargetRow::targetId).toList());
+        List<TargetSummaryDto> items = rows.stream()
+                .map(row -> summary(row, summaries.get(row.targetId())))
                 .toList();
         return new PageDto<>(items, page.page, page.size, total);
     }
@@ -119,13 +131,18 @@ public class TargetReadService {
         TrackStatusRow status = lineages.findTrackStatus(id);
         DegradationRow degradation = degradations.findDegradation(id);
         SelectionRow selection = degradations.findSelection(id);
+        // 详情与列表走同一套取数（决策 15-4）：同一张悬浮卡在两处都要能画出来，
+        // 两条路各写一份就迟早会长出差异，而那种差异只有对着页面看才发现得了。
+        TargetSummariesRow summaries = repository.summaries(List.of(id)).get(id);
         return new TargetDetailDto(
                 row.targetId(), row.targetNo(), millis(row.firstSeenAt()), millis(row.lastSeenAt()),
                 row.objectTypeCode(), row.subtype(), row.uavSn(), row.sourceMode(), row.ownerOrgId(),
-                row.districtId(), state(row), links, requiredMillis(row.createdAt()), requiredMillis(row.updatedAt()),
-                row.ownerOrgName(), row.districtName(),
+                row.districtId(), state(row, summaries), links, requiredMillis(row.createdAt()),
+                requiredMillis(row.updatedAt()), row.ownerOrgName(), row.districtName(),
                 status == null ? null : new TrackStatusDto(status.status(), requiredMillis(status.since())),
-                degradationDto(degradation), selectionDto(selection), lineageSummary(id), allowedActions(id, status, links.size()), row.version());
+                degradationDto(degradation), selectionDto(selection), lineageSummary(id),
+                allowedActions(id, status, links.size()), row.version(),
+                riskSummary(summaries), legalitySummary(summaries), disposalSummary(summaries));
     }
 
     @Transactional(readOnly = true)
@@ -161,19 +178,62 @@ public class TargetReadService {
         return new PageDto<>(items, page.page, page.size, total);
     }
 
-    private TargetSummaryDto summary(TargetRow row) {
+    private TargetSummaryDto summary(TargetRow row, TargetSummariesRow summaries) {
         return new TargetSummaryDto(
                 row.targetId(), row.targetNo(), millis(row.firstSeenAt()), millis(row.lastSeenAt()),
                 row.objectTypeCode(), row.subtype(), row.uavSn(), row.sourceMode(), row.ownerOrgId(),
-                row.districtId(), state(row), row.ownerOrgName(), row.districtName());
+                row.districtId(), state(row, summaries), row.ownerOrgName(), row.districtName(),
+                riskSummary(summaries), legalitySummary(summaries), disposalSummary(summaries));
     }
 
-    private TargetStateDto state(TargetRow row) {
+    private TargetStateDto state(TargetRow row, TargetSummariesRow summaries) {
         if (row.stateObservedAt() == null) return null;
+        // 方位键只在目标**自身**当前没有位置时给（决策 15-15）：
+        // 有位置就画点，再给方位线会让同一个目标在图上同时出现一个点和一条方向线，读图的人不知道信哪个。
+        // 只看 location，**不看 pilot_location**：只测到飞手、目标本身未定位，正是需要方位线的场景。
+        BearingRow bearing = summaries == null || row.location() != null ? null : summaries.bearing();
         return new TargetStateDto(
                 requiredMillis(row.stateObservedAt()), requiredMillis(row.stateReceivedAt()), issues(row),
                 location(row.location()), row.altitudeAmslM(), row.heightAglM(), row.speedMps(), row.headingDeg(),
-                row.classificationConfidence(), row.fusionConfidence(), location(row.pilotLocation()));
+                row.classificationConfidence(), row.fusionConfidence(), location(row.pilotLocation()),
+                bearing == null ? null : bearing.bearingDeg(), bearing == null ? null : bearing.deviceId());
+    }
+
+    /* 三段各自没有就返回 null，键被 non_null 序列化省略——空对象在页面上会渲染成一行没有内容的标题。 */
+
+    private RiskSummaryDto riskSummary(TargetSummariesRow summaries) {
+        if (summaries == null || summaries.risk() == null) return null;
+        RiskSummaryRow risk = summaries.risk();
+        return new RiskSummaryDto(risk.riskId(), risk.severity(), risk.state(), millis(risk.occurredAt()));
+    }
+
+    private LegalitySummaryDto legalitySummary(TargetSummariesRow summaries) {
+        if (summaries == null || summaries.legality() == null) return null;
+        LegalitySummaryRow legality = summaries.legality();
+        return new LegalitySummaryDto(legality.evaluationId(), legality.legalStatus(), legality.grade(),
+                violationReasons(legality.violationReasonsJson()));
+    }
+
+    private DisposalSummaryDto disposalSummary(TargetSummariesRow summaries) {
+        if (summaries == null || summaries.disposal() == null) return null;
+        DisposalSummaryRow disposal = summaries.disposal();
+        return new DisposalSummaryDto(disposal.authorizationId(), disposal.authorizationNo(),
+                disposal.actionType(), disposal.status());
+    }
+
+    /** violation_reasons 是 JSON 数组；读不出来就不给这一项，而不是让整条目标打不开。 */
+    private List<String> violationReasons(String raw) {
+        if (raw == null || raw.isBlank()) return null;
+        try {
+            JsonNode node = objectMapper.readTree(raw);
+            if (node != null && node.isTextual()) node = objectMapper.readTree(node.textValue());
+            if (node == null || !node.isArray()) return null;
+            List<String> reasons = new ArrayList<>();
+            for (JsonNode item : node) reasons.add(item.isTextual() ? item.asText() : item.toString());
+            return reasons.isEmpty() ? null : reasons;
+        } catch (Exception ignored) {
+            return null;
+        }
     }
 
     private List<FieldIssueDto> issues(TargetRow row) {

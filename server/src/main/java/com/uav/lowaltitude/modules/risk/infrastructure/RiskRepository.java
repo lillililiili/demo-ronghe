@@ -33,14 +33,48 @@ public class RiskRepository {
         return total == null ? 0 : total;
     }
 
-    public List<RiskRow> list(RiskQuery query, AccessDecision access, int offset, int size) {
+    public List<RiskRow> list(RiskQuery query, AccessDecision access, int offset, int size, String sort, String order) {
         Where where = where(query, access);
         where.params.put("offset", offset);
         where.params.put("size", size);
-        return jdbc.query(select() + names() + from() + nameJoins() + where.sql
-                + " ORDER BY r.received_at DESC,r.risk_id DESC OFFSET :offset ROWS FETCH NEXT :size ROWS ONLY",
-                where.params, RiskRepository::risk);
+        return jdbc.query(select() + names() + from() + nameJoins() + where.sql + orderBy(sort, order)
+                + " OFFSET :offset ROWS FETCH NEXT :size ROWS ONLY", where.params, RiskRepository::risk);
     }
+
+    /** 导出：不分页，上限由调用方先用 count 卡；次序与列表完全一致。 */
+    public List<RiskRow> listForExport(RiskQuery query, AccessDecision access, int limit, String sort, String order) {
+        Where where = where(query, access);
+        where.params.put("size", limit);
+        return jdbc.query(select() + names() + from() + nameJoins() + where.sql + orderBy(sort, order)
+                + " FETCH NEXT :size ROWS ONLY", where.params, RiskRepository::risk);
+    }
+
+    /** 排序键白名单（决策 15-6）；列名只能是常量，次序键后恒附 risk_id 保证翻页稳定。 */
+    private static String orderBy(String sort, String order) {
+        String column = switch (sort == null ? "received_at" : sort) {
+            case "occurred_at" -> "r.occurred_at";
+            // 与告警同一口径的等级序号，别一张表按序号、另一张按字典序（决策 15-30）。
+            case "severity" -> com.uav.lowaltitude.platform.query.SeverityOrder.rank("r.severity");
+            case "state" -> "r.state_code";
+            default -> "r.received_at";
+        };
+        String direction = "asc".equalsIgnoreCase(order) ? "ASC" : "DESC";
+        return " ORDER BY " + column + " " + direction + ",r.risk_id " + direction;
+    }
+
+    /** 调用者范围内实际出现过的区域（决策 15-22）；与列表同一套 where，免得筛选框里出现选了就是空的区域。 */
+    public java.util.List<DistrictOptionRow> districts(AccessDecision access) {
+        Where where = where(RiskQuery.empty(), access);
+        return jdbc.query("SELECT DISTINCT r.district_id, d.name" + from()
+                + " JOIN app_district d ON d.district_id=r.district_id" + where.sql
+                + " ORDER BY d.name ASC, r.district_id ASC", where.params,
+                (rs, i) -> new DistrictOptionRow(rs.getString("district_id"), rs.getString("name")));
+    }
+
+    public record DistrictOptionRow(String districtId, String name) { }
+
+    public static final java.util.Set<String> SORT_KEYS =
+            java.util.Set.of("received_at", "occurred_at", "severity", "state");
 
     public RiskRow find(String riskId, AccessDecision access) {
         Where where = where(RiskQuery.empty(), access);
@@ -191,6 +225,13 @@ public class RiskRepository {
         add(where, "r.district_id", "district", query.districtId);
         add(where, "r.source_mode", "mode", query.sourceMode);
         add(where, "r.risk_type", "risk_type", query.riskType);
+        if (query.targetType != null) {
+            // 用 EXISTS 而不是引用 nameJoins 的 tg 别名：导出与列表都要能用，
+            // 而 EXISTS 不依赖任何联表，改联表结构时也不会跟着坏。
+            where.sql.append(" AND EXISTS (SELECT 1 FROM target ft WHERE ft.target_id=r.target_id"
+                    + " AND ft.object_type_code=:target_type)");
+            where.params.put("target_type", query.targetType);
+        }
         if (query.objectSubtype != null) {
             // 细类过滤走空间事实表：没有空间事实的风险本来就没有细类，不该因为过滤而"看起来存在"。
             where.sql.append(" AND EXISTS (SELECT 1 FROM space_risk_fact sf WHERE sf.risk_id=r.risk_id AND sf.subtype_code=:object_subtype)");
@@ -254,8 +295,10 @@ public class RiskRepository {
 
     private static final class Where { final StringBuilder sql = new StringBuilder(); final Map<String,Object> params = new HashMap<>(); }
     public record RiskQuery(String state, String severity, String planId, OffsetDateTime occurredFrom, OffsetDateTime occurredTo,
-            String ownerOrgId, String districtId, String sourceMode, String riskType, String objectSubtype) {
-        public static RiskQuery empty(){return new RiskQuery(null,null,null,null,null,null,null,null,null,null);} }
+            String ownerOrgId, String districtId, String sourceMode, String riskType, String objectSubtype,
+            /* 阶段 15（决策 15-7）：按关联目标的类别筛。 */
+            String targetType) {
+        public static RiskQuery empty(){return new RiskQuery(null,null,null,null,null,null,null,null,null,null,null);} }
     public record RiskRow(String riskId,String sourceRiskId,String planId,String routeVersionId,String assessmentId,String targetId,String trackId,
             String riskType,String severity,String state,String reasonCode,String reasonText,OffsetDateTime occurredAt,OffsetDateTime receivedAt,
             BigDecimal observedAltitudeM,String observedAltitudeDatum,String heightRelation,String sourceCode,String sourceMode,String ownerOrgId,

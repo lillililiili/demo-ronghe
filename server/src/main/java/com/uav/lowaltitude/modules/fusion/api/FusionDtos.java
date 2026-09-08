@@ -28,7 +28,11 @@ public final class FusionDtos {
             BigDecimal altitudeAmslM, BigDecimal heightAglM, BigDecimal speedMps, BigDecimal headingDeg,
             String classCode, BigDecimal classConfidence, String identityClue, String sourceMode,
             /* 阶段 8.5：飞手（遥控器）位置与类别来源（光电跟踪 / 感知数据 / 雷达 / 人工），可空，缺失时不下发。 */
-            LocationDto pilotLocation, String classSource) { }
+            LocationDto pilotLocation, String classSource,
+            /* 阶段 15（决策 15-5）：AOA 方位角、身份置信度、出这条观测的设备，可空。
+               class_confidence 与 identity_confidence 分开给：来源面板要能分别说清
+               "像不像这一类"和"是不是这一架"，混成一个数会让人以为身份也被确认过。 */
+            BigDecimal bearingDeg, BigDecimal identityConfidence, String deviceId) { }
 
     /** 与目标读侧同形的坐标块：经纬度加坐标系，便于页面直接落图。 */
     public record LocationDto(BigDecimal longitude, BigDecimal latitude, String coordinateSystem) { }

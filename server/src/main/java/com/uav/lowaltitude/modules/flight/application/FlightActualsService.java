@@ -123,8 +123,8 @@ public class FlightActualsService {
     private LatestRisksDto latestRisks(String planId) {
         AccessDecision risk = probe(PermissionCode.RISK_READ);
         if (risk == null) return LatestRisksDto.only(FORBIDDEN);
-        RiskQuery query = new RiskQuery(null, null, planId, null, null, null, null, null, null, null);
-        List<RiskItemDto> items = risks.list(query, risk, 0, LATEST_RISK_LIMIT).stream().map(FlightActualsService::risk).toList();
+        RiskQuery query = new RiskQuery(null, null, planId, null, null, null, null, null, null, null, null);
+        List<RiskItemDto> items = risks.list(query, risk, 0, LATEST_RISK_LIMIT, null, null).stream().map(FlightActualsService::risk).toList();
         return new LatestRisksDto(AVAILABLE, items);
     }
 

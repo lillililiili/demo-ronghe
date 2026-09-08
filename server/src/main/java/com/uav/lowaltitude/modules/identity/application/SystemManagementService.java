@@ -35,6 +35,10 @@ import com.uav.lowaltitude.modules.identity.api.SystemDtos.PermissionAssignment;
 import com.uav.lowaltitude.modules.identity.api.SystemDtos.PermissionResponse;
 import com.uav.lowaltitude.modules.identity.api.SystemDtos.RejectRequest;
 import com.uav.lowaltitude.modules.identity.api.SystemDtos.ReviewRequest;
+import com.uav.lowaltitude.modules.identity.api.SystemDtos.ActionAssignment;
+import com.uav.lowaltitude.modules.identity.api.SystemDtos.ActionModuleResponse;
+import com.uav.lowaltitude.modules.identity.api.SystemDtos.ActionResponse;
+import com.uav.lowaltitude.modules.identity.api.SystemDtos.RoleActionResponse;
 import com.uav.lowaltitude.modules.identity.api.SystemDtos.RoleAccessRequest;
 import com.uav.lowaltitude.modules.identity.api.SystemDtos.RoleCreateRequest;
 import com.uav.lowaltitude.modules.identity.api.SystemDtos.RoleDeletionRequest;
@@ -48,6 +52,7 @@ import com.uav.lowaltitude.modules.identity.api.SystemDtos.UserProfileRequest;
 import com.uav.lowaltitude.modules.identity.api.SystemDtos.UserResponse;
 import com.uav.lowaltitude.modules.identity.api.SystemDtos.UserStatusRequest;
 import com.uav.lowaltitude.modules.identity.domain.AppUser;
+import com.uav.lowaltitude.modules.identity.domain.IdentityRows.ActionRow;
 import com.uav.lowaltitude.modules.identity.domain.IdentityRows.AccessChangeRow;
 import com.uav.lowaltitude.modules.identity.domain.IdentityRows.DistrictRow;
 import com.uav.lowaltitude.modules.identity.domain.IdentityRows.OrgRow;
@@ -506,6 +511,12 @@ public class SystemManagementService {
         idempotencyGuard.claim(idempotencyKey, "role-permissions-direct:" + roleCode + ":" + request);
         accessService.require("roles.auth");
         RoleRow role = requireRole(roleCode);
+        // 超级管理员的动作权限同样固定：允许改它等于允许把自己锁在系统外（决策 15-2）。
+        // 单独用 ROLE_LOCKED 而不是复用 BUILTIN_ROLE_PROTECTED，是因为前端要能分辨"这是内置角色不给改"
+        // 与"这次提交里带了动作行"两种情况。
+        if (request.actions() != null && ("ROLE-ADMIN".equals(roleCode) || role.isBuiltin())) {
+            throw conflict("ROLE_LOCKED", "内置角色的动作权限不可修改");
+        }
         if (role.isBuiltin() || BUILTIN_ROLES.contains(roleCode)) {
             throw bad("BUILTIN_ROLE_PROTECTED", "超级管理员权限固定为全部授权");
         }
@@ -513,17 +524,28 @@ public class SystemManagementService {
         List<PermissionAssignment> before = mapper.listPermissionsForRole(roleCode).stream()
                 .map(p -> new PermissionAssignment(p.getPermissionCode(), p.getPermissionLevel(), p.isMenuEnabled()))
                 .toList();
-        if (json(before).equals(json(permissions))) throw bad("NO_CHANGES", "角色权限没有变化");
+        // 只改动作、矩阵原样提交也算一次有效变更，因此 NO_CHANGES 只在**两者都没变**时才成立。
+        if (request.actions() == null && json(before).equals(json(permissions))) {
+            throw bad("NO_CHANGES", "角色权限没有变化");
+        }
         if (mapper.bumpRoleVersion(roleCode, request.expectedVersion(), appClock.nowMillis()) != 1) conflict();
         for (PermissionAssignment permission : permissions) {
             mapper.updateRolePermission(roleCode, permission.permissionCode(), permission.level(),
                     permission.menuEnabled());
         }
+        // actions 缺省表示不动动作行；给了就整组替换（决策 15-2）。
+        List<ActionAssignment> actionsGranted = request.actions() == null ? null
+                : replaceRoleActions(roleCode, request.actions());
         mapper.bumpPermissionVersionForRole(roleCode);
         sessionMapper.expireAllForRole(roleCode);
         String reason = blank(request.reason()) ? "超级管理员直接调整角色权限" : request.reason().trim();
-        audit("roles", "role_permissions_updated", "role", roleCode,
-                json(Map.of("before", before, "after", permissions, "reason", reason)), meta);
+        Map<String, Object> detail = new LinkedHashMap<>();
+        detail.put("before", before);
+        detail.put("after", permissions);
+        detail.put("reason", reason);
+        // 记下实际授出去的动作：只记"改过"而不记改成了什么，事后回答不了"这个人当时凭什么能批"。
+        if (actionsGranted != null) detail.put("actions_granted", actionsGranted);
+        audit("roles", "role_permissions_updated", "role", roleCode, json(detail), meta);
         return toRole(requireRole(roleCode));
     }
 
@@ -801,7 +823,58 @@ public class SystemManagementService {
     private RoleResponse toRole(RoleRow row) {
         return new RoleResponse(row.getRoleCode(), row.getName(), row.getDescription(), row.isBuiltin(),
                 row.isEnabled(), row.getUserCount(), row.getVersion(),
-                mapper.listPermissionsForRole(row.getRoleCode()).stream().map(this::toPermission).toList());
+                mapper.listPermissionsForRole(row.getRoleCode()).stream().map(this::toPermission).toList(),
+                mapper.listActionsForRole(row.getRoleCode()).stream()
+                        .map(a -> new RoleActionResponse(a.getPermissionCode(), a.getLevel())).toList());
+    }
+
+    /* ---- 动作权限（决策 15-1 / 15-2）---- */
+
+    /** 动作目录，按模块分组。与 MODULE 矩阵分开：矩阵要求整组提交，动作是逐项授予的。 */
+    public List<ActionModuleResponse> listActionCatalog() {
+        accessService.require("roles.read");
+        Map<String, List<ActionRow>> byModule = new LinkedHashMap<>();
+        for (ActionRow row : mapper.listActionCatalog()) {
+            byModule.computeIfAbsent(row.getModuleCode(), code -> new ArrayList<>()).add(row);
+        }
+        List<ActionModuleResponse> modules = new ArrayList<>();
+        for (Map.Entry<String, List<ActionRow>> entry : byModule.entrySet()) {
+            List<ActionRow> rows = entry.getValue();
+            modules.add(new ActionModuleResponse(entry.getKey(), rows.get(0).getModuleName(),
+                    rows.stream().map(r -> new ActionResponse(r.getPermissionCode(), r.getActionCode(), r.getName()))
+                            .toList()));
+        }
+        return modules;
+    }
+
+    /**
+     * 把提交上来的动作行整组替换掉（决策 15-2）。
+     *
+     * 返回实际授出去的行，供审计记录——只记"改过动作"而不记改成了什么，事后没法回答"这个人当时凭什么能批"。
+     */
+    private List<ActionAssignment> replaceRoleActions(String roleCode, List<ActionAssignment> input) {
+        Map<String, ActionRow> catalog = new LinkedHashMap<>();
+        for (ActionRow row : mapper.listActionCatalog()) catalog.put(row.getPermissionCode(), row);
+        List<ActionAssignment> granted = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (ActionAssignment item : input) {
+            ActionRow action = catalog.get(item.permissionCode());
+            // 模块码不是动作码：拿它来授会绕过矩阵那套完整性校验。
+            if (action == null || !seen.add(item.permissionCode())) {
+                throw bad("INVALID_PERMISSION", "动作权限项不存在或重复");
+            }
+            // 用户、角色、审计这些域的动作不能授给自定义角色——与矩阵同一条红线（决策 15-2）。
+            // 目前目录里还没有这类动作行，这条守卫先于它们存在，否则谁加谁就顺手把它授出去了。
+            if (PROTECTED_CUSTOM_PERMISSIONS.contains(action.getModuleCode())) {
+                throw bad("SYSTEM_PERMISSION_PROTECTED", "自定义角色不能取得用户、角色或审计域的动作权限");
+            }
+            if (!"NONE".equals(item.level())) granted.add(item);
+        }
+        mapper.deleteRoleActions(roleCode);
+        for (ActionAssignment item : granted) {
+            mapper.insertRoleAction(roleCode, item.permissionCode(), item.level());
+        }
+        return granted;
     }
 
     private PermissionResponse toPermission(PermissionRow row) {

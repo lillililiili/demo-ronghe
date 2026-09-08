@@ -21,6 +21,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Repository;
 
+import com.uav.lowaltitude.modules.fusion.domain.QualityFacts;
 import com.uav.lowaltitude.modules.identity.domain.AccessDecision;
 import com.uav.lowaltitude.modules.identity.domain.ScopeMode;
 
@@ -432,6 +433,82 @@ public class TargetReadRepository {
 
     public record Coordinate(BigDecimal longitude, BigDecimal latitude) {
     }
+
+    /* ---- 阶段 15：悬浮卡三摘要与 AOA 方位（决策 15-4 / 15-5）---- */
+
+    /**
+     * 按**整页**一次取回，而不是在主查询里挂相关子查询。
+     *
+     * 两者都不是 N+1（每页固定四条查询），但批量版不会给 TargetRow 再塞十几个扁平列——
+     * 那个记录已经有二十多个字段，再加会让"这一行到底代表什么"彻底看不出来。
+     * 每段都只取**最新一条**：悬浮卡要回答的是"现在怎么样"，不是历史（决策 15-4）。
+     */
+    public Map<String, TargetSummariesRow> summaries(List<String> targetIds) {
+        Map<String, TargetSummariesRow> result = new HashMap<>();
+        if (targetIds == null || targetIds.isEmpty()) return result;
+        Map<String, Object> params = Map.of("ids", targetIds);
+        Map<String, RiskSummaryRow> risks = new HashMap<>();
+        // 排序键用 COALESCE(occurred_at, received_at)（决策 15-21）：`flight_risk.occurred_at` **可空**，
+        // 而元组比较里只要有一侧是 NULL，整个比较就返回 NULL 而不是真——于是两行都满足 NOT EXISTS，
+        // 两条风险都被写进 map，最终留下哪一条取决于结果集顺序，悬浮卡上的风险等级会在刷新之间跳变。
+        // 另外三段（研判 created_at、处置 requested_at、观测 observed_at）的排序列都是非空，不受这条影响。
+        jdbc.query("SELECT r.target_id,r.risk_id,r.severity,r.state_code,r.occurred_at FROM flight_risk r"
+                + " WHERE r.target_id IN (:ids) AND NOT EXISTS (SELECT 1 FROM flight_risk n WHERE n.target_id=r.target_id"
+                + "   AND (COALESCE(n.occurred_at, n.received_at), n.risk_id)"
+                + "     > (COALESCE(r.occurred_at, r.received_at), r.risk_id))", params,
+                rs -> { risks.put(rs.getString("target_id"), new RiskSummaryRow(rs.getString("risk_id"),
+                        rs.getString("severity"), rs.getString("state_code"),
+                        rs.getObject("occurred_at", OffsetDateTime.class))); });
+        Map<String, LegalitySummaryRow> legality = new HashMap<>();
+        jdbc.query("SELECT e.target_id,e.evaluation_id,e.legal_status,e.grade,e.violation_reasons FROM rule_evaluation e"
+                + " WHERE e.target_id IN (:ids) AND NOT EXISTS (SELECT 1 FROM rule_evaluation n"
+                + "   WHERE n.target_id=e.target_id AND (n.created_at, n.evaluation_id) > (e.created_at, e.evaluation_id))",
+                params, rs -> { legality.put(rs.getString("target_id"), new LegalitySummaryRow(
+                        rs.getString("evaluation_id"), rs.getString("legal_status"), rs.getString("grade"),
+                        jsonTextOf(rs.getObject("violation_reasons")))); });
+        Map<String, DisposalSummaryRow> disposals = new HashMap<>();
+        jdbc.query("SELECT d.target_id,d.authorization_id,d.authorization_no,d.action_type,d.status"
+                + " FROM disposal_authorization d WHERE d.target_id IN (:ids)"
+                + " AND NOT EXISTS (SELECT 1 FROM disposal_authorization n WHERE n.target_id=d.target_id"
+                + "   AND (n.requested_at, n.authorization_id) > (d.requested_at, d.authorization_id))", params,
+                rs -> { disposals.put(rs.getString("target_id"), new DisposalSummaryRow(
+                        rs.getString("authorization_id"), rs.getString("authorization_no"),
+                        rs.getString("action_type"), rs.getString("status"))); });
+        // 方位：只看**无位置但带方位**的观测（决策 15-5）。有位置的目标画点就够了，方位线是给"只知道方向"的那些准备的。
+        //
+        // 不用 `quality ->> 'bearing_deg'`：那是 PostgreSQL 独有的写法，H2 直接语法错误，
+        // 而这条查询在单测库与生产库上必须是同一条。改成 SQL 里做可移植的粗筛（LIKE 键名），
+        // 取值交给 Java 解析——与仓库里其它 JSON 列的读法一致。
+        Map<String, BearingRow> bearings = new HashMap<>();
+        jdbc.query("SELECT l.target_id, o.device_id, o.quality FROM source_observation o"
+                + " JOIN target_source_link l ON l.source_id=o.source_id"
+                + "   AND l.external_target_id=o.external_target_id"
+                + " WHERE l.target_id IN (:ids) AND o.location IS NULL AND " + QualityFacts.mentionsBearing("o.quality")
+                + " AND NOT EXISTS (SELECT 1 FROM source_observation n"
+                + "   JOIN target_source_link nl ON nl.source_id=n.source_id AND nl.external_target_id=n.external_target_id"
+                + "   WHERE nl.target_id=l.target_id AND n.location IS NULL AND " + QualityFacts.mentionsBearing("n.quality")
+                + "   AND (n.observed_at > o.observed_at"
+                + "        OR (n.observed_at = o.observed_at AND n.observation_id > o.observation_id)))", params,
+                rs -> {
+                    BigDecimal bearing = QualityFacts.bearingDeg(jsonTextOf(rs.getObject("quality")));
+                    // 粗筛只保证字符串里出现过这个键；真取不到值就不给方位，而不是画一条方向不明的线。
+                    if (bearing != null) {
+                        bearings.put(rs.getString("target_id"), new BearingRow(bearing, rs.getString("device_id")));
+                    }
+                });
+        for (String targetId : targetIds) {
+            result.put(targetId, new TargetSummariesRow(risks.get(targetId), legality.get(targetId),
+                    disposals.get(targetId), bearings.get(targetId)));
+        }
+        return result;
+    }
+
+    public record TargetSummariesRow(RiskSummaryRow risk, LegalitySummaryRow legality, DisposalSummaryRow disposal,
+            BearingRow bearing) { }
+    public record RiskSummaryRow(String riskId, String severity, String state, OffsetDateTime occurredAt) { }
+    public record LegalitySummaryRow(String evaluationId, String legalStatus, String grade, String violationReasonsJson) { }
+    public record DisposalSummaryRow(String authorizationId, String authorizationNo, String actionType, String status) { }
+    public record BearingRow(BigDecimal bearingDeg, String deviceId) { }
 
     public record TargetRow(String targetId, String targetNo, String objectTypeCode, String subtype,
             String uavSn, OffsetDateTime firstSeenAt, OffsetDateTime lastSeenAt, String sourceMode,

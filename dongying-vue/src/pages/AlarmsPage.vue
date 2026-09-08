@@ -1,10 +1,10 @@
 <script>
 /* 模块级状态：跨导航保持（legacy 约定）。
-   level/status 映射为服务端契约的 severity/state；kind/region 保留控件但阶段 4 无契约支持，
-   固定为「全部」且禁用；sort/dir 保留字段，服务端固定按接收时间倒序，页面不做假排序。 */
+   level/status 映射为服务端契约的 severity/state；kind/region 为类别、区域筛选（阶段 15 契约）；
+   sort/order 随列表与导出请求一起发给服务端（阶段 15 契约白名单四个键），页面不做假排序。 */
 const S = {
   st: { page: 1, size: 10, level: '全部', status: '全部', kind: '全部', region: '全部', sel: null, selId: null,
-    sort: 'ts', dir: -1 }
+    sort: 'received_at', order: 'desc' }
 };
 export default {};
 </script>
@@ -26,16 +26,16 @@ import { handoffApi } from '@/services/handoffApi.js';
 import { openFormModal } from '@/ui/formModal.js';
 import { closeModal } from '@/ui/modal.js';
 import { toast } from '@/ui/nv.js';
-import { getAlarm, getUavEvent, listAlarms, listUavVerifications } from '@/services/alarmApi.js';
+import { exportAlarmsCsv, getAlarm, getUavEvent, listAlarmDistricts, listAlarms, listUavVerifications } from '@/services/alarmApi.js';
 import { getEvidenceChain } from '@/services/evidenceApi.js';
 import { openUavVerification } from '@/ui/uavVerificationModal.js';
 import { targetApi } from '@/services/targetApi.js';
-import { DISPOSAL_ACTION_LABEL, disposalStatusText, labelOf, SOURCE_MODE_LABEL as MODE_TEXT, targetTypeLabel } from '@/ui/labels.js';
+import { ALARM_TYPE_LABEL, DISPOSAL_ACTION_LABEL, disposalStatusText, labelOf, SOURCE_MODE_LABEL as MODE_TEXT, targetTypeLabel } from '@/ui/labels.js';
 import { openEvidenceFileModal } from '@/ui/evidenceFileDetail.js';
 import { renderEvidenceChainHtml } from '@/ui/evidenceChainView.js';
 import { disposalApi, isDisposalUnavailable } from '@/services/disposalApi.js';
 import { DISPOSAL_UNAVAILABLE_TEXT, openDisposalRequest } from '@/ui/disposalAuthModal.js';
-import { canRouteAction } from '@/services/accessControl.js';
+import { canRouteAction, hasPermission } from '@/services/accessControl.js';
 import { deviceApi } from '@/services/deviceApi.js';
 
 const U = window.UI;
@@ -64,6 +64,14 @@ const STATE = {
 const NO_EVENT = { t: '未建事件', c: 't-gray', color: '#8ca0be' };
 const ALARM_TYPE = { UAV_INTRUSION: '无人机入侵', UAV: '无人机告警' };
 const SOURCE_MODE = { mock: { t: MODE_TEXT.mock, c: 't-purple' }, replay: { t: MODE_TEXT.replay, c: 't-amber' }, live: { t: MODE_TEXT.live, c: 't-green' } };
+/* 类别来自共享字典；区域来自本页的区域字典接口，读不到就把下拉标成"不可用"并在 title 说明原因。 */
+const KIND_OPTS = [{ v: '全部', t: '全部' }, ...Object.keys(ALARM_TYPE_LABEL).map(v => ({ v, t: ALARM_TYPE_LABEL[v] }))];
+const districts = ref([]);
+const districtError = ref('');
+const regionOpts = () => (districtError.value
+  ? [{ v: '全部', t: '全部' }, { v: '', t: '不可用', disabled: true }]
+  : [{ v: '全部', t: '全部' }, ...districts.value.map(d => ({ v: d.district_id, t: d.name }))]);
+
 const LEVEL_OPTS = [{ v: '全部', t: '全部' }, { v: 'CRITICAL', t: '紧急' }, { v: 'HIGH', t: '高' }, { v: 'MEDIUM', t: '中' }, { v: 'LOW', t: '低' }];
 const STATUS_OPTS = [{ v: '全部', t: '全部' }, ...Object.entries(STATE).map(([v, s]) => ({ v, t: s.t }))];
 
@@ -144,6 +152,53 @@ const KPI_DEFS = [
   { label: '误报', color: 'purple', icon: 'check' }
 ];
 const kpiList = ref(KPI_DEFS.map(k => ({ ...k, value: '…', desc: '' })));
+/* 区域字典：读不到就只留"全部"，并在筛选项 title 说明——不能凭当前页的数据拼一份看着像全量的区域列表。 */
+async function loadDistricts() {
+  try {
+    const rows = await listAlarmDistricts();
+    districts.value = (Array.isArray(rows) ? rows : rows?.items || []).filter(d => d.enabled !== false);
+    paintRegionOptions();
+  } catch (error) {
+    districtError.value = messageOf(error);
+    paintRegionOptions();
+  }
+}
+
+/* 工具条是一次性拼好的 HTML，区域选项在字典读回来之前就定型了；读回后补进去，
+   读失败就只留"全部"并在 title 说明，不留一个看着能用其实是空的下拉。 */
+function paintRegionOptions() {
+  const select = document.querySelector('select[data-f="region"]');
+  if (!select) return;
+  const current = st.region;
+  select.innerHTML = regionOpts()
+    .map(o => `<option value="${esc(o.v)}"${o.disabled ? ' disabled' : ''}${o.v === current ? ' selected' : ''}>${esc(o.t)}</option>`).join('');
+  select.title = districtError.value
+    ? `暂时读不到区域字典：${districtError.value}`
+    : (districts.value.length ? '' : '当前没有可选区域');
+}
+
+/* 导出：与列表同参（含排序与筛选），走 apiDownload 取 blob 后交浏览器保存，
+   与统计页、证据台账、审计日志三处既有导出同一写法。 */
+async function exportCsv() {
+  try {
+    const file = await exportAlarmsCsv(queryOf());
+    if (!file) return;
+    const url = URL.createObjectURL(file.blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = file.filename;      // 文件名由服务端的 Content-Disposition 决定
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    toast('已开始下载告警列表', 'ok');
+  } catch (error) {
+    toast(error?.code === 'EXPORT_TOO_LARGE'
+      ? '导出行数超过上限（5000 行），请缩小筛选范围后重试'
+      : messageOf(error) || '导出失败', 'err');
+  }
+}
+
 async function loadKpis() {
   const count = q => listAlarms({ ...q, page: 1, size: 1 }).then(p => Number(p && p.total) || 0);
   /* “反制中 / 干扰中”问的是当前有多少处置在进行，因此按状态计数（契约的列表接口没有日期过滤，
@@ -188,9 +243,12 @@ const disabledSelect = (name, reason) =>
 const listPanelBody = `<div class="toolbar">
     <div class="toolbar-fields">
       ${U.field('等级', U.select('level', LEVEL_OPTS, st.level))}
-      ${U.field('类别', disabledSelect('kind', `当前未提供类别筛选，${NOT_WIRED}`))}
+      ${U.field('类别', U.select('kind', KIND_OPTS, st.kind))}
       ${U.field('状态', U.select('status', STATUS_OPTS, st.status))}
-      ${U.field('区域', disabledSelect('region', `支持按区域过滤，但本页尚无区域字典，${NOT_WIRED}`))}
+      ${U.field('区域', U.select('region', regionOpts(), st.region))}
+    </div>
+    <div class="toolbar-actions">
+      <button class="btn" type="button" id="alExp" title="按当前筛选与排序导出 CSV（上限 5000 行）">导出 CSV</button>
     </div>
   </div>
   <div id="alList" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>`;
@@ -200,19 +258,29 @@ const mapBody = `<div id="alMap" style="flex:1;min-height:0"></div>
     <div id="alMapInfo" style="flex:none;height:19px;line-height:19px;padding:2px 2px 0;font-size:10.5px;
       color:var(--txt-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>`;
 
-/* 列头排序：服务端固定 received_at DESC, alarm_id DESC；控件保留但禁用，不对一页数据做假排序。 */
-const SORT_REASON = `当前按接收时间倒序（received_at DESC, alarm_id DESC），列排序${NOT_WIRED}`;
+/* 列头排序走服务端 sort/order（契约只支持这四个键）；不支持的列保持禁用并说明——
+   在前端对当前一页重排会得出一个与全局顺序不符的假名次。 */
+const SORT_KEYS = { ts: 'received_at', occurred: 'occurred_at', level: 'severity', status: 'state' };
+const SORT_NOT_SUPPORTED = '服务端不支持按该列排序；在前端对当前一页重排会给出与全局顺序不符的名次';
 function sortTh(key, label) {
-  const on = key === 'ts';
-  return `<span class="lnk" data-sort="${key}" role="button" tabindex="0" aria-disabled="true" title="${SORT_REASON}"
-    style="color:inherit;cursor:not-allowed;text-decoration:underline dotted;text-underline-offset:3px;text-decoration-color:rgba(156,198,255,.3)"
-    >${label}${on ? '<span style="font-size:10px;margin-left:2px">▼</span>' : ''}</span>`;
+  const field = SORT_KEYS[key];
+  if (!field) {
+    return `<span class="lnk" data-sort="${key}" role="button" tabindex="0" aria-disabled="true" title="${SORT_NOT_SUPPORTED}"
+      style="color:inherit;cursor:not-allowed;text-decoration:underline dotted;text-underline-offset:3px;text-decoration-color:rgba(156,198,255,.3)"
+      >${label}</span>`;
+  }
+  const on = st.sort === field;
+  const arrow = on ? `<span style="font-size:10px;margin-left:2px">${st.order === 'asc' ? '▲' : '▼'}</span>` : '';
+  return `<span class="lnk" data-sort="${key}" role="button" tabindex="0" title="按${label}排序"
+    style="cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px">${label}${arrow}</span>`;
 }
 
 function queryOf() {
-  const q = { page: st.page, size: st.size };
+  const q = { page: st.page, size: st.size, sort: st.sort, order: st.order };
   if (st.level !== '全部') q.severity = st.level;
   if (st.status !== '全部') q.state = st.status;
+  if (st.kind !== '全部') q.alarm_type = st.kind;
+  if (st.region !== '全部') q.district_id = st.region;
   return q;
 }
 
@@ -464,13 +532,21 @@ async function loadChain(my) {
   if (!a || my !== detailSeq) return;
   cur.chainLoading = true; cur.chainError = ''; cur.chainUnavailable = ''; cur.chain = null;
   paintDetail();
+  /* 没有证据查看权限就不发这个请求（15-19②）：每选中一条告警都发一次注定被拒的请求，
+     服务端留下一串无意义的拒绝记录，页面上还会显示成“读取失败”，而不是真正的原因。 */
+  if (!hasPermission('evidence.read')) {
+    cur.chainUnavailable = '当前账号没有证据查看权限，无法汇总证据链。';
+    cur.chainLoading = false;
+    paintDetail();
+    return;
+  }
   try {
     if (a.event_id) cur.chain = await getEvidenceChain('EVENT', a.event_id);
     else if (a.target_id) cur.chain = await getEvidenceChain('TARGET', a.target_id);
     else cur.chainUnavailable = '无核实事件且无关联目标，无法汇总证据链。';
   } catch (e) {
     if (my !== detailSeq) return;
-    cur.chainError = e.status === 403 ? '当前账号没有 evidence:read，无法读取证据链' : messageOf(e);
+    cur.chainError = e.status === 403 ? '当前账号没有证据查看权限，无法读取证据链' : messageOf(e);
   }
   if (my !== detailSeq) return;
   cur.chainLoading = false;
@@ -641,9 +717,17 @@ onMounted(async () => {
     if (ctl.disabled) return;
     st[ctl.dataset.f] = ctl.value; st.page = 1; loadList();
   });
-  const sortNote = () => toast(SORT_REASON);
-  U.on(view, '[data-sort]', 'click', sortNote);
-  U.on(view, '[data-sort]', 'keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); sortNote(); } });
+  /* 点列头切 asc/desc；不支持的列（aria-disabled）只说明为什么不能排。 */
+  const toggleSort = (btn) => {
+    const field = SORT_KEYS[btn.dataset.sort];
+    if (!field) return toast(SORT_NOT_SUPPORTED, 'err');
+    if (st.sort === field) st.order = st.order === 'asc' ? 'desc' : 'asc';
+    else { st.sort = field; st.order = 'desc'; }
+    st.page = 1;
+    loadList();
+  };
+  U.on(view, '[data-sort]', 'click', (e, btn) => toggleSort(btn));
+  U.on(view, '[data-sort]', 'keydown', (e, btn) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSort(btn); } });
   U.on(view, '[data-al]', 'click', (e, btn) => {
     if (btn.disabled) return;
     const k = btn.dataset.al;
@@ -660,6 +744,9 @@ onMounted(async () => {
     if (btn.dataset.evFile) openEvidenceFileModal(btn.dataset.evFile);
   });
   el('alLoc').onclick = () => { if (map) map.resetView(2.2); focusMap(); };
+  const expBtn = el('alExp');
+  if (expBtn) expBtn.onclick = () => exportCsv();
+  loadDistricts();
 
   loadKpis();
   await loadList();

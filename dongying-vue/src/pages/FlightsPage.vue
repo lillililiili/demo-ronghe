@@ -21,8 +21,7 @@ import { toast } from '@/ui/nv.js';
 import {
   ALTITUDE_DATUM_LABEL, ALTITUDE_RELATION_LABEL, AUTHORIZATION_SOURCE_LABEL,
   HANDOFF_TYPE_LABEL, LEGALITY_LABEL, PLAN_MATCH_LABEL, PLAN_STATUS_LABEL, REASON_CODE_LABEL, RISK_TYPE_LABEL,
-  SECTION_AVAILABILITY_LABEL, SOURCE_MODE_LABEL, labelOf
-} from '@/ui/labels.js';
+  SECTION_AVAILABILITY_LABEL, SOURCE_MODE_LABEL, labelOf, OBJECT_TYPE_LABEL } from '@/ui/labels.js';
 import { isUncertainOutcome } from '@/services/apiClient.js';
 import { hasPermission } from '@/services/accessControl.js';
 import { authUser } from '@/services/auth.js';
@@ -68,6 +67,23 @@ let routeMap = null;
 
 /* ---------- 风险页签状态（数据只来自 riskApi，不读 window.MOCK / RISK_IMPL） ---------- */
 const riskFilters = reactive(S.riskFilters);
+if (riskFilters.target_type === undefined) riskFilters.target_type = '';
+/* 列表排序走服务端（契约支持这四个键）；表格里其余列不可排，说明写在 title 上。 */
+const RISK_SORT_KEYS = { occurred: 'occurred_at', received: 'received_at', severity: 'severity', state: 'state' };
+const RISK_SORT_UNSUPPORTED = '服务端不支持按该列排序；在前端对当前一页重排会给出与全局顺序不符的名次';
+const riskSort = reactive({ field: 'received_at', order: 'desc' });
+function toggleRiskSort(key) {
+  const field = RISK_SORT_KEYS[key];
+  if (!field) return;
+  if (riskSort.field === field) riskSort.order = riskSort.order === 'asc' ? 'desc' : 'asc';
+  else { riskSort.field = field; riskSort.order = 'desc'; }
+  applyRiskFilters();
+}
+const riskSortMark = key => (riskSort.field === RISK_SORT_KEYS[key] ? (riskSort.order === 'asc' ? ' ▲' : ' ▼') : '');
+/* 工具栏说明随当前排序变化（排序由服务端执行，页面只转述）。 */
+const RISK_SORT_FIELD_LABEL = { received_at: '接收时间', occurred_at: '发生时间', severity: '风险等级', state: '状态' };
+const riskSortNote = computed(() => `按${RISK_SORT_FIELD_LABEL[riskSort.field] || riskSort.field}${riskSort.order === 'asc' ? '升序' : '倒序'}`);
+const riskSortNoteTitle = computed(() => `整份列表按${RISK_SORT_FIELD_LABEL[riskSort.field] || riskSort.field}${riskSort.order === 'asc' ? '升序' : '倒序'}排列（不只是当前这一页）；同一时间的记录按编号排出固定次序。点列头可切换升序 / 倒序`);
 const riskPage = ref(S.riskPage);
 const riskSize = ref(S.riskSize);
 const riskTotal = ref(0);
@@ -103,6 +119,9 @@ const riskMapError = ref('');
 const riskMapHost = ref(null);
 const riskKpiTotals = ref({});
 const riskKpiFailed = ref({});
+/* 涉及航线来自空间安全风险汇总（阶段 9 的 /space-risks/summary）：
+   分母为 0 时服务端给 {value:null, availability}，那是"没有可统计的数据"，不是 0。 */
+const routesSummary = ref({ state: 'loading', value: null, availability: '', error: '' });
 /* 同一风险第一次提交生成的幂等键，直到成功或切换风险前都不换；超时/409 后重试沿用同一键。 */
 let riskListToken = 0;
 let riskDetailToken = 0;
@@ -116,15 +135,35 @@ const RISK_SEVERITY_TAG = { CRITICAL: 't-red', HIGH: 't-red', MEDIUM: 't-amber',
 const RISK_SEVERITY_TONE = { CRITICAL: 'bad', HIGH: 'bad', MEDIUM: 'warn', LOW: 'info' };
 /* 与迁移 022 的 CHECK 枚举一致：UNKNOWN / WITHIN / OUTSIDE；未知不判断安全。 */
 const HEIGHT_RELATION_LABEL = { UNKNOWN: '高度关系未知', WITHIN: '在航线高度范围内', OUTSIDE: '超出航线高度范围' };
-const FIXED_SORT_NOTE = '当前按接收时间倒序：received_at DESC, risk_id DESC；阶段 4 未提供按该列排序';
-const NO_TYPE_FILTER_NOTE = '阶段 4 未提供目标类型筛选（契约仅支持状态、等级、计划、发生时间、组织、区域、来源模式）';
 const HISTORY_PAGE_SIZE = 10;
 
 const riskSeverityOptions = [{ label: '全部', value: '' }, ...Object.keys(RISK_SEVERITY_LABEL).map(value => ({ label: RISK_SEVERITY_LABEL[value], value }))];
 const riskStateOptions = [{ label: '全部', value: '' }, ...Object.keys(RISK_STATE_LABEL).map(value => ({ label: RISK_STATE_LABEL[value], value }))];
-/* 原页面的目标类型下拉保留原选项，但契约无此筛选，控件禁用且不参与请求。 */
-const riskTypeOptions = ['全部', '鸟', '未知', '识别中', '船', '车'].map(label => ({ label, value: label === '全部' ? '' : label }));
-const riskTypeFilterDisabled = ref('');
+/* 阶段 15：契约给了 target_type 筛选。选项值用共享字典的码（中文只做显示），
+   不再拿中文当查询值——那样服务端认不出。 */
+const riskTypeOptions = [{ label: '全部', value: '' },
+  ...Object.keys(OBJECT_TYPE_LABEL).map(code => ({ label: OBJECT_TYPE_LABEL[code], value: code }))];
+/* 区域字典按页取（15-22）：读不到时下拉只留"不可用"一项并在 title 说明，
+   不把当前页数据里出现过的区域拼成一份看着像全量的字典。 */
+const riskDistricts = ref([]);
+const riskDistrictError = ref('');
+const riskDistrictOptions = computed(() => (riskDistrictError.value
+  ? [{ label: '全部', value: '' }, { label: '不可用', value: '__unavailable', disabled: true }]
+  : [{ label: '全部', value: '' }, ...riskDistricts.value.map(d => ({ label: d.name || d.district_id, value: d.district_id }))]));
+const riskDistrictTitle = computed(() => (riskDistrictError.value
+  ? `暂时读不到区域字典：${riskDistrictError.value}`
+  : (riskDistricts.value.length ? '' : '当前没有可选区域')));
+async function loadRiskDistricts() {
+  try {
+    const rows = await riskApi.listDistricts();
+    riskDistricts.value = (Array.isArray(rows) ? rows : rows?.items || []).filter(d => d.enabled !== false);
+    riskDistrictError.value = '';
+  } catch (error) {
+    riskDistricts.value = [];
+    riskDistrictError.value = error?.message || '读取失败';
+  }
+}
+
 /* /auth/me 的 permission_codes 目前只含模块级 `<module>.read/op/auth`，不含阶段动作码（flight:read 等）。
    只有会话真的暴露了冒号动作码才在前端预判；否则返回 null，交给服务端裁决（关联 ID 是否返回即服务端的权限声明）。 */
 const knowsActionCodes = computed(() => (authUser.value?.permission_codes || []).some(code => /^[a-z_]+:[a-z_]+$/.test(code)));
@@ -140,7 +179,19 @@ const trustedAirspaces = computed(() => trustedAirspaceOverlays());
 const hasMapContent = computed(() => Boolean(trustedCenterline.value?.length || trustedAirspaces.value.length));
 
 /* 6 个 KPI 与原页面同位同色；数值只取服务端 size=1 的 total，后端无法得出的指标显示“尚未接入”。 */
-const RISK_KPI_QUERIES = { all: {}, high: { severity: 'HIGH' }, medium: { severity: 'MEDIUM' }, pending: { state: 'PENDING_VERIFICATION' } };
+const RISK_KPI_QUERIES = {
+  all: {}, high: { severity: 'HIGH' }, medium: { severity: 'MEDIUM' }, pending: { state: 'PENDING_VERIFICATION' },
+  /* 阶段 15：鸟类事件按空中异物风险的细类过滤取总数（阶段 9 起 risks 支持 risk_type/object_subtype）。 */
+  bird: { risk_type: 'SPACE_OBJECT', object_subtype: 'BIRD_FLOCK' }
+};
+const routesInvolved = computed(() => {
+  const r = routesSummary.value;
+  if (r.state === 'loading') return { text: '…', desc: '正在读取空间安全风险汇总' };
+  if (r.state === 'error') return { text: '—', desc: '读取失败：' + r.error };
+  if (r.value == null) return { text: '—', desc: r.availability === 'NO_DATA' ? '所选范围内还没有空间安全风险' : '服务端未提供该口径' };
+  return { text: Number(r.value).toLocaleString('en-US'), desc: '空间安全风险涉及的航线数' };
+});
+
 const riskKpis = computed(() => {
   const value = key => (riskKpiFailed.value[key] ? '—' : riskKpiTotals.value[key] == null ? '…' : Number(riskKpiTotals.value[key]).toLocaleString('en-US'));
   const desc = (key, text) => (riskKpiFailed.value[key] ? '总数读取失败' : text);
@@ -148,9 +199,9 @@ const riskKpis = computed(() => {
     { label: '风险事件', value: value('all'), color: 'blue', icon: 'bird', desc: desc('all', '当前权限范围内总数') },
     { label: '高风险事件', value: value('high'), color: 'red', icon: 'alert', desc: desc('high', 'severity=HIGH 的总数') },
     { label: '中风险事件', value: value('medium'), color: 'amber', icon: 'alert', desc: desc('medium', 'severity=MEDIUM 的总数') },
-    { label: '鸟类事件', value: '尚未接入', color: 'green', icon: 'bird', desc: '阶段 4 风险无目标类型口径' },
+    { label: '鸟类事件', value: value('bird'), color: 'green', icon: 'bird', desc: desc('bird', '空中异物风险中细类为鸟群的总数') },
     { label: '待核验', value: value('pending'), color: 'orange', icon: 'check', desc: desc('pending', 'state=PENDING_VERIFICATION 的总数') },
-    { label: '涉及航线', value: '尚未接入', color: 'purple', icon: 'zone', desc: '阶段 4 未提供航线维度聚合' }
+    { label: '涉及航线', value: routesInvolved.value.text, color: 'purple', icon: 'zone', desc: routesInvolved.value.desc }
   ];
 });
 
@@ -561,11 +612,34 @@ function chooseStatus(value) { filters.status_code = value; applyFilters(); }
 function changePage(nextPage) { if (nextPage !== page.value) loadPlans(nextPage); }
 function changePageSize(nextSize) { size.value = nextSize; routeLoaded.value = false; loadPlans(1); }
 
+/* 导出：与列表同参（含筛选与排序），文件名取服务端的 Content-Disposition。 */
+async function exportRiskCsv() {
+  try {
+    // 导出取全量（受服务端 5000 行上限约束），不受当前分页限制。
+    const file = await riskApi.exportRisksCsv(riskQuery());
+    if (!file) return;
+    const url = URL.createObjectURL(file.blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = file.filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    toast('已开始下载风险列表', 'ok');
+  } catch (error) {
+    toast(error?.code === 'EXPORT_TOO_LARGE'
+      ? '导出行数超过上限（5000 行），请缩小筛选范围后重试'
+      : error?.message || '导出失败', 'err');
+  }
+}
+
 /* ---------- 风险页签：列表 / KPI ---------- */
 function riskQuery() {
   const text = value => String(value ?? '').trim();
   const query = { severity: riskFilters.severity || '', state: riskFilters.state || '', owner_org_id: text(riskFilters.owner_org_id),
-    district_id: text(riskFilters.district_id), source_mode: text(riskFilters.source_mode) };
+    district_id: text(riskFilters.district_id), source_mode: text(riskFilters.source_mode),
+    target_type: riskFilters.target_type || '', sort: riskSort.field, order: riskSort.order };
   // plan_id 筛选另需 flight:read；已知无权限时控件禁用，也不把值带进请求以免换来 403。
   if (canFilterByPlan.value && text(riskFilters.plan_id)) query.plan_id = text(riskFilters.plan_id);
   const range = Array.isArray(riskFilters.occurred) ? riskFilters.occurred : null;
@@ -627,6 +701,21 @@ async function loadRiskKpis() {
   });
   riskKpiTotals.value = totals;
   riskKpiFailed.value = failed;
+  await loadRoutesInvolved(token);
+}
+
+async function loadRoutesInvolved(token) {
+  try {
+    const summary = await riskApi.spaceRiskSummary({});
+    if (token !== riskKpiToken) return;
+    const metric = summary?.routes_involved ?? summary?.metrics?.routes_involved ?? null;
+    routesSummary.value = metric && typeof metric === 'object'
+      ? { state: 'ok', value: metric.value ?? null, availability: metric.availability || '', error: '' }
+      : { state: 'ok', value: metric ?? null, availability: summary?.availability || '', error: '' };
+  } catch (error) {
+    if (token !== riskKpiToken) return;
+    routesSummary.value = { state: 'error', value: null, availability: '', error: error?.message || '读取失败' };
+  }
 }
 
 function clearRiskDetail() {
@@ -980,6 +1069,7 @@ function activateTab(tab) {
 }
 
 onMounted(() => {
+  loadRiskDistricts();
   window.addEventListener('hashchange', syncTabByRoute);
   S.tabHash = '';
   syncTabByRoute();
@@ -1040,17 +1130,19 @@ onUnmounted(() => {
               <template v-if="riskTab === 'event'">
                 <div class="toolbar-fields">
                   <div class="field"><label>风险等级</label><UControl v-model="riskFilters.severity" type="select" :options="riskSeverityOptions" :disabled="riskLoading" size="small" @update:model-value="applyRiskFilters" /></div>
-                  <div class="field" :title="NO_TYPE_FILTER_NOTE"><label>目标类型</label><UControl v-model="riskTypeFilterDisabled" type="select" :options="riskTypeOptions" disabled size="small" /></div>
+                  <div class="field"><label>目标类型</label><UControl v-model="riskFilters.target_type" type="select" :options="riskTypeOptions" :disabled="riskLoading" size="small" @update:model-value="applyRiskFilters" /></div>
                   <div class="field"><label>状态</label><UControl v-model="riskFilters.state" type="select" :options="riskStateOptions" :disabled="riskLoading" size="small" @update:model-value="applyRiskFilters" /></div>
                   <div class="field rk-range"><label>发生时间</label><UControl v-model="riskFilters.occurred" type="datetimerange" clearable :disabled="riskLoading" size="small" start-placeholder="开始" end-placeholder="结束" /></div>
                   <div class="field" :title="canFilterByPlan ? '按已保存计划 ID 筛选（需要 flight:read）' : '无 flight:read 权限，阶段 4 契约不允许以计划 ID 筛选'"><label>计划标识</label><UControl v-model="riskFilters.plan_id" placeholder="内部计划标识" :disabled="riskLoading || !canFilterByPlan" size="small" @keyup.enter="applyRiskFilters" /></div>
                   <div class="field"><label>组织</label><UControl v-model="riskFilters.owner_org_id" placeholder="机构标识" :disabled="riskLoading" size="small" @keyup.enter="applyRiskFilters" /></div>
-                  <div class="field"><label>区域</label><UControl v-model="riskFilters.district_id" placeholder="区域标识" :disabled="riskLoading" size="small" @keyup.enter="applyRiskFilters" /></div>
+                  <div class="field" :title="riskDistrictTitle"><label>区域</label><UControl v-model="riskFilters.district_id" type="select" :options="riskDistrictOptions" :disabled="riskLoading" size="small" @update:model-value="applyRiskFilters" /></div>
                   <div class="field"><label>来源模式</label><UControl v-model="riskFilters.source_mode" placeholder="source_mode" :disabled="riskLoading" size="small" @keyup.enter="applyRiskFilters" /></div>
                 </div>
                 <div class="toolbar-actions">
                   <button class="btn" type="button" :disabled="riskLoading" @click="applyRiskFilters">查询</button>
-                  <span class="toolbar-note" :title="FIXED_SORT_NOTE">按接收时间倒序</span>
+                  <button class="btn" type="button" :disabled="riskLoading" title="按当前筛选与排序导出风险列表 CSV（上限 5000 行）"
+                    @click="exportRiskCsv">导出 CSV</button>
+                  <span class="toolbar-note" :title="riskSortNoteTitle">{{ riskSortNote }}</span>
                 </div>
               </template>
               <template v-else>
@@ -1068,14 +1160,17 @@ onUnmounted(() => {
                 <table class="tb">
                   <thead><tr>
                     <th>编号</th>
-                    <th><span class="rk-sort" aria-disabled="true" :title="FIXED_SORT_NOTE">类型</span></th>
+                    <th><span class="rk-sort" aria-disabled="true" :title="RISK_SORT_UNSUPPORTED">类型</span></th>
                     <th>依据</th>
                     <th>来源</th>
-                    <th><span class="rk-sort" aria-disabled="true" :title="FIXED_SORT_NOTE">区域 / 高度</span></th>
-                    <th><span class="rk-sort" aria-disabled="true" :title="FIXED_SORT_NOTE">关联计划 / 航线</span></th>
-                    <th style="text-align:center"><span class="rk-sort" aria-disabled="true" :title="FIXED_SORT_NOTE">风险</span></th>
-                    <th><span class="rk-sort" aria-disabled="true" :title="FIXED_SORT_NOTE">时间</span></th>
-                    <th><span class="rk-sort" aria-disabled="true" :title="FIXED_SORT_NOTE">状态</span></th>
+                    <th><span class="rk-sort" aria-disabled="true" :title="RISK_SORT_UNSUPPORTED">区域 / 高度</span></th>
+                    <th><span class="rk-sort" aria-disabled="true" :title="RISK_SORT_UNSUPPORTED">关联计划 / 航线</span></th>
+                    <th style="text-align:center"><span class="rk-sort" role="button" tabindex="0" title="按风险等级排序"
+                      @click="toggleRiskSort('severity')" @keydown.enter="toggleRiskSort('severity')">风险{{ riskSortMark('severity') }}</span></th>
+                    <th><span class="rk-sort" role="button" tabindex="0" title="按接收时间排序（该列显示的是接收时间；发生时间见单元格提示）"
+                      @click="toggleRiskSort('received')" @keydown.enter="toggleRiskSort('received')">时间{{ riskSortMark('received') }}</span></th>
+                    <th><span class="rk-sort" role="button" tabindex="0" title="按状态排序"
+                      @click="toggleRiskSort('state')" @keydown.enter="toggleRiskSort('state')">状态{{ riskSortMark('state') }}</span></th>
                   </tr></thead>
                   <tbody>
                     <tr v-for="risk in risks" :key="risk.risk_id" :data-row="risk.risk_id" tabindex="0" :class="{ on: activeRiskId === risk.risk_id }"
@@ -1192,7 +1287,7 @@ onUnmounted(() => {
             </div>
             <div class="toolbar-actions">
               <button class="btn" type="button" :disabled="loading" @click="applyFilters">查询</button>
-              <button class="btn" type="button" disabled title="尚未接入">导出（尚未接入）</button>
+              <button class="btn" type="button" disabled title="飞行计划导出未接入：契约只提供告警与风险两个导出接口">导出（尚未接入）</button>
             </div>
           </div>
           <div v-if="loading" class="empty">正在读取飞行计划…</div>
@@ -1298,9 +1393,9 @@ onUnmounted(() => {
             </section>
             <section class="sect"><h4>空域冲突事实</h4><div v-if="!conflicts.length" class="empty">未返回空域冲突事实。</div><div v-else class="conflict-list"><div v-for="fact in conflicts" :key="`${fact.airspace_version_id}-${fact.conflict_code}`" class="conflict-item">{{ fact.airspace_id }} / {{ fact.airspace_version_id }}：水平 {{ fact.horizontal_relation }}；高度 {{ fact.height_relation }}；时间 {{ fact.time_relation }}；{{ fact.conflict_code || '未提供' }}</div></div></section>
             <div class="row" style="margin-top:12px;gap:8px;flex-wrap:wrap">
-              <button class="btn" type="button" disabled title="尚未接入">导出（尚未接入）</button>
-              <button class="btn" type="button" disabled title="尚未接入">风险通知（尚未接入）</button>
-              <button class="btn" type="button" disabled title="尚未接入">写入操作（尚未接入）</button>
+              <button class="btn" type="button" disabled title="飞行计划导出未接入：风险列表的导出在“全部风险事件”页签的筛选栏里">导出（尚未接入）</button>
+              <button class="btn" type="button" disabled title="风险通知未接入：本平台没有对外通知渠道，通报只能走处罚交接">风险通知（尚未接入）</button>
+              <button class="btn" type="button" disabled title="写入操作未接入：风险由规则引擎写入，页面不提供人工改写">写入操作（尚未接入）</button>
             </div>
           </template></div>
           </UPanel>
@@ -1342,6 +1437,7 @@ onUnmounted(() => {
 .rk-list { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .risk-toolbar .tabs .tab { padding: 6px 10px; font-size: 13px; }
 .rk-sort { color: inherit; cursor: not-allowed; text-decoration: underline dotted; text-underline-offset: 3px; text-decoration-color: rgba(156, 198, 255, .3); opacity: .75; }
+.rk-sort[role="button"] { cursor: pointer; opacity: 1; text-decoration-color: rgba(156, 198, 255, .6); }
 .rk-error { margin: 8px 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .rk-id { display: inline-block; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
 .rk-sub { font-size: 11px; color: var(--txt-3); white-space: normal; line-height: 1.4; }

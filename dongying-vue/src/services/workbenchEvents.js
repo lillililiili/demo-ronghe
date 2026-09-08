@@ -147,7 +147,8 @@ export function workbenchStats(data) {
   const availability = (data && data.availability) || {};
   const byKind = {};
   KINDS.forEach(k => { byKind[k] = availability[k] === 'AVAILABLE' ? Number(counts[k] || 0) : null; });
-  return { total: data ? Number(data.total || 0) : 0, byKind, availability, asOf: data ? data.asOf : null };
+  // 还没读到（未读、无权限、读失败）时 total 给 null，页面显示"—"；给 0 会把"没读到"说成"没有事项"。
+  return { total: data ? Number(data.total || 0) : null, byKind, availability, asOf: data ? data.asOf : null };
 }
 
 export async function getWorkbenchDetail(kind, sourceId) {

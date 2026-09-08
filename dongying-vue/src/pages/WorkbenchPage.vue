@@ -38,6 +38,11 @@ const error = ref('');
 const stats = ref(workbenchStats(null));
 const highCount = ref(null);
 const summaryError = ref('');
+/* 没有工作台查看权限时，队列、三个计数、15 秒轮询会一直发注定被拒的请求（15-19①）。
+   服务端只认动作权限 workbench:read，它不在 /auth/me 的 permission_codes 里，
+   菜单里又始终有"我的工作台"，前端事先无从判断——所以以队列这一次请求的结果为准：
+   一旦被拒，本页不再发第二个请求，也停掉轮询。 */
+const forbidden = ref(false);
 const selectedKey = ref('');
 const detail = ref(null);
 const detailLoading = ref(false);
@@ -86,6 +91,7 @@ function queueQuery(p, size) {
 
 /* ---------- 队列 ---------- */
 async function loadQueue({ append = false, silent = false } = {}) {
+  if (forbidden.value) return;
   const my = ++queueSeq;
   const nextPage = append ? page.value + 1 : 1;
   // 静默刷新时一次取回已展开的全部条数（上限 100），避免分页状态漂移。
@@ -101,7 +107,8 @@ async function loadQueue({ append = false, silent = false } = {}) {
     ensureSelection();
   } catch (e) {
     if (my !== queueSeq) return;
-    error.value = messageOf(e, '读取工作台队列失败');
+    if (e.status === 403) { forbidden.value = true; error.value = '当前账号没有工作台查看权限，无法查看事项队列。'; }
+    else error.value = messageOf(e, '读取工作台队列失败');
     if (!append && !silent) { items.value = []; total.value = 0; selectedKey.value = ''; }
   } finally {
     if (my === queueSeq) { loading.value = false; loadingMore.value = false; }
@@ -110,6 +117,7 @@ async function loadQueue({ append = false, silent = false } = {}) {
 
 /* 摘要：总计数/可用性 + 高等级事项数（HIGH 与 CRITICAL 两次 size=1 请求的 total）。 */
 async function loadSummary() {
+  if (forbidden.value) return;
   const my = ++summarySeq;
   try {
     const [all, high, critical] = await Promise.all([
@@ -322,14 +330,17 @@ function resetAll() {
   queueSeq++; detailSeq++; summarySeq++;
   items.value = []; total.value = 0; page.value = 1; selectedKey.value = ''; detail.value = null;
   error.value = ''; detailError.value = ''; summaryError.value = ''; stats.value = workbenchStats(null); highCount.value = null;
+  forbidden.value = false;
 }
 async function enter() {
   resetAll();
   if (!authUser.value) return;
-  await Promise.all([loadSummary(), loadQueue()]);
+  // 先拉队列，确认这个账号读得到工作台，再去拉三个计数；读不到就一个都不发。
+  await loadQueue();
+  await loadSummary();
 }
 function tick() {
-  if (!authUser.value) return;
+  if (!authUser.value || forbidden.value) return;
   loadSummary();
   loadQueue({ silent: true });
   if (selectedKey.value) loadDetail(selectedKey.value, { silent: true });
@@ -401,7 +412,8 @@ onUnmounted(() => {
             <span class="wb-sort-note"><span v-html="icon('trend')"></span> 等级 · 接收时间</span>
           </div>
           <div class="wb-event-list">
-            <div v-if="error" class="empty wb-empty wb-error">{{ error }}<br><button class="btn" type="button" @click="loadQueue()">重试</button></div>
+            <div v-if="forbidden" class="empty wb-empty">{{ error }}</div>
+            <div v-else-if="error" class="empty wb-empty wb-error">{{ error }}<br><button class="btn" type="button" @click="loadQueue()">重试</button></div>
             <div v-else-if="loading && !items.length" class="empty wb-empty">正在读取工作台队列…</div>
             <button v-for="e in items" :key="e.key" class="wb-event-card" :class="{ on: selectedKey === e.key }" @click="selectEvent(e)">
               <span class="wb-event-icon" v-html="icon(kindIcon[e.kind])"></span>

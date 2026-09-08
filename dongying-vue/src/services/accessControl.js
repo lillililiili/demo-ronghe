@@ -28,9 +28,15 @@ export function canRouteAction(routeKey, action = 'read') {
 
 /* 提示语给的是用户看得懂的页面名，不是权限模块编码（决策 12-14）：
    屏幕上出现 "需要"airspace"查看权限" 时，看到的人无从知道那指的是哪一页。 */
+/* 别名路由的两段提示（决策 15-8）：#/airspace 归在飞行计划下，只说“需要飞行计划的查看权限”
+   会让人不确定自己找的那一页算不算数。第二段用 navModel 的页面名说明它挂在谁下面，
+   两段都取自同一张导航表，菜单改名时不会与提示对不上。
+   只有 airspace 会走到这里：#/risk 与 #/overview 在 router 层已被重定向。 */
 export function accessBlocker(routeKey, action = 'read') {
   const module = routeModule(routeKey);
   if (!module) return '当前页面未配置访问权限';
   const label = action === 'auth' ? '授权' : action === 'op' ? '操作' : '查看';
-  return `需要“${pageTitle(routeKey)}”的${label}权限`;
+  const owner = ROUTE_ALIAS[routeKey];
+  const base = `需要“${pageTitle(owner || routeKey)}”的${label}权限`;
+  return owner ? `${base}（${pageTitle(routeKey)}由它承载）` : base;
 }

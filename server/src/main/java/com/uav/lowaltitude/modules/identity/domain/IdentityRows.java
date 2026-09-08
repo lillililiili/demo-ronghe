@@ -30,6 +30,32 @@ public final class IdentityRows {
         public void setVersion(int version) { this.version = version; }
     }
 
+    /** 动作权限目录行（决策 15-1）。与 MODULE 矩阵行分开：矩阵整组提交，动作逐项授予。 */
+    public static class ActionRow {
+        private String permissionCode;
+        private String moduleCode;
+        private String moduleName;
+        private String actionCode;
+        private String name;
+        private int sortOrder;
+        private String level;
+
+        public String getPermissionCode() { return permissionCode; }
+        public void setPermissionCode(String permissionCode) { this.permissionCode = permissionCode; }
+        public String getModuleCode() { return moduleCode; }
+        public void setModuleCode(String moduleCode) { this.moduleCode = moduleCode; }
+        public String getModuleName() { return moduleName; }
+        public void setModuleName(String moduleName) { this.moduleName = moduleName; }
+        public String getActionCode() { return actionCode; }
+        public void setActionCode(String actionCode) { this.actionCode = actionCode; }
+        public String getName() { return name; }
+        public void setName(String name) { this.name = name; }
+        public int getSortOrder() { return sortOrder; }
+        public void setSortOrder(int sortOrder) { this.sortOrder = sortOrder; }
+        public String getLevel() { return level; }
+        public void setLevel(String level) { this.level = level; }
+    }
+
     public static class PermissionRow {
         private String permissionCode;
         private String moduleName;

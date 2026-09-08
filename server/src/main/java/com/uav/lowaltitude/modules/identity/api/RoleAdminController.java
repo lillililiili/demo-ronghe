@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import com.uav.lowaltitude.modules.identity.api.SystemDtos.ActionModuleResponse;
 import com.uav.lowaltitude.modules.identity.api.SystemDtos.PermissionResponse;
 import com.uav.lowaltitude.modules.identity.api.SystemDtos.RoleAccessRequest;
 import com.uav.lowaltitude.modules.identity.api.SystemDtos.RoleCreateRequest;
@@ -49,6 +50,15 @@ public class RoleAdminController {
     @GetMapping("/permissions/catalog")
     public ApiResponse<List<PermissionResponse>> catalog() {
         return ApiResponse.ok(service.permissionCatalog());
+    }
+
+    /**
+     * 动作权限目录（决策 15-1）。与 `/permissions/catalog` 分开：矩阵要求整组提交，动作是逐项授予的，
+     * 混在一起会让"提交完整矩阵"这条校验把动作也算进去。
+     */
+    @GetMapping("/permissions/actions")
+    public ApiResponse<List<ActionModuleResponse>> actionCatalog() {
+        return ApiResponse.ok(service.listActionCatalog());
     }
 
     @PostMapping("/roles")

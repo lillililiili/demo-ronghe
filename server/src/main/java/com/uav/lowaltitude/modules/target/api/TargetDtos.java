@@ -29,8 +29,23 @@ public final class TargetDtos {
             BigDecimal classificationConfidence,
             BigDecimal fusionConfidence,
             /* 阶段 8.5：飞手（遥控器）位置，只有身份类来源报得出；没有就整个字段不下发。 */
-            LocationDto pilotLocation) {
+            LocationDto pilotLocation,
+            /* 阶段 15（决策 15-5）：最近一条**无位置但有方位**的观测给出的方位角与出方位的设备。
+               AOA 只报方位不报位置，页面据此画方位线；设备位置由页面从已加载的设备列表解析，
+               后端不在目标接口里再联一次设备表——那会让这个接口为了一条线去背设备域的可见性规则。 */
+            BigDecimal bearingDeg,
+            String bearingDeviceId) {
     }
+
+    /* 决策 15-4：悬浮卡要的是"现在怎么样"，所以三段各取**最新一条**；没有就整个键省略，
+       不给空对象——空对象在页面上会渲染成一行没有内容的标题。 */
+    public record RiskSummaryDto(String riskId, String severity, String state, Long occurredAt) { }
+
+    public record LegalitySummaryDto(String evaluationId, String legalStatus, String grade,
+            List<String> violationReasons) { }
+
+    public record DisposalSummaryDto(String authorizationId, String authorizationNo, String actionType,
+            String status) { }
 
     public record TargetSummaryDto(
             String targetId,
@@ -45,7 +60,11 @@ public final class TargetDtos {
             String districtId,
             TargetStateDto latestState,
             String ownerOrgName,
-            String districtName) {
+            String districtName,
+            /* 列表与详情同形（决策 15-4）：同一张悬浮卡在两处都要能画出来。 */
+            RiskSummaryDto riskSummary,
+            LegalitySummaryDto legalitySummary,
+            DisposalSummaryDto disposalSummary) {
     }
 
     public record TargetDetailDto(
@@ -72,7 +91,11 @@ public final class TargetDtos {
             LineageSummaryDto lineageSummary,
             List<String> allowedActions,
             /* 目标行版本：修订类别/合并/分裂的 expected_version 依据；阶段 8 验收发现客户端此前无处取得。 */
-            Long version) {
+            Long version,
+            /* 阶段 15（决策 15-4）：与列表同形的三段摘要。 */
+            RiskSummaryDto riskSummary,
+            LegalitySummaryDto legalitySummary,
+            DisposalSummaryDto disposalSummary) {
     }
 
     public record TargetSourceLinkDto(

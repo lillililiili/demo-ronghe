@@ -11,6 +11,7 @@ import org.apache.ibatis.annotations.Update;
 
 import com.uav.lowaltitude.modules.identity.domain.AppUser;
 import com.uav.lowaltitude.modules.identity.domain.IdentityRows.AccessChangeRow;
+import com.uav.lowaltitude.modules.identity.domain.IdentityRows.ActionRow;
 import com.uav.lowaltitude.modules.identity.domain.IdentityRows.DistrictRow;
 import com.uav.lowaltitude.modules.identity.domain.IdentityRows.OrgRow;
 import com.uav.lowaltitude.modules.identity.domain.IdentityRows.PendingUserRow;
@@ -386,4 +387,38 @@ public interface IdentityAdminMapper {
 
     @Update("UPDATE app_user SET permission_version = permission_version + 1 WHERE role_code = #{roleCode}")
     int bumpPermissionVersionForRole(@Param("roleCode") String roleCode);
+
+    /* ---- 动作权限（决策 15-1）。与 MODULE 矩阵分开：矩阵要求整组提交，动作是逐项授予的。 ---- */
+
+    @Select("""
+            SELECT permission_code AS permissionCode, module_code AS moduleCode, module_name AS moduleName,
+                   action_code AS actionCode, name, sort_order AS sortOrder
+            FROM app_permission
+            WHERE permission_kind = 'ACTION'
+            ORDER BY sort_order, permission_code
+            """)
+    List<ActionRow> listActionCatalog();
+
+    @Select("""
+            SELECT a.permission_code AS permissionCode, a.module_code AS moduleCode, a.module_name AS moduleName,
+                   a.action_code AS actionCode, a.name, a.sort_order AS sortOrder, p.permission_level AS level
+            FROM app_role_permission p JOIN app_permission a ON a.permission_code = p.permission_code
+            WHERE p.role_code = #{roleCode} AND a.permission_kind = 'ACTION'
+            ORDER BY a.sort_order, a.permission_code
+            """)
+    List<ActionRow> listActionsForRole(@Param("roleCode") String roleCode);
+
+    @Delete("""
+            DELETE FROM app_role_permission
+            WHERE role_code = #{roleCode}
+              AND permission_code IN (SELECT permission_code FROM app_permission WHERE permission_kind = 'ACTION')
+            """)
+    int deleteRoleActions(@Param("roleCode") String roleCode);
+
+    @Insert("""
+            INSERT INTO app_role_permission (role_code, permission_code, permission_level, menu_enabled, created_at)
+            VALUES (#{roleCode}, #{permissionCode}, #{level}, FALSE, CURRENT_TIMESTAMP)
+            """)
+    int insertRoleAction(@Param("roleCode") String roleCode, @Param("permissionCode") String permissionCode,
+            @Param("level") String level);
 }

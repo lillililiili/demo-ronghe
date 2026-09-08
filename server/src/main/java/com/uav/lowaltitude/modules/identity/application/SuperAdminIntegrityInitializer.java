@@ -79,6 +79,13 @@ public class SuperAdminIntegrityInitializer implements ApplicationRunner {
                 DELETE FROM app_user_data_scope
                 WHERE user_id = (SELECT user_id FROM app_user WHERE account = ?)
                 """, account);
+        // 只作用于**模块矩阵行**（决策 15-25 修订）。AUTH 是矩阵的第三级"可授权他人"，动作行只有 READ/OP，
+        // 没有 AUTH 这一级——把动作行也置成 AUTH 会造出一种矩阵那边校验不到的等级。
+        //
+        // 这条原先没有 kind 限定，配合 LocalStage2AccessSeeder(@Order 40) 会踩出一个只在**第二次启动**
+        // 才现形的缺陷：首次启动时本类(@Order 30)先跑，动作行还不存在；种子随后按 PermissionCode 插入
+        // 42 条 READ 动作行；下一次启动本类再跑，就把这 42 行一并抹成 AUTH。单个 Spring 测试上下文里
+        // 两个 runner 只跑一遍，所以 H2 永远看不到——真实库一重启就有（uav_stage10_verify 上实测 42 行）。
         jdbcTemplate.update("""
                 UPDATE app_role_permission
                 SET permission_level = 'AUTH',
@@ -86,6 +93,8 @@ public class SuperAdminIntegrityInitializer implements ApplicationRunner {
                         (SELECT permission_code FROM app_permission WHERE route_key IS NOT NULL)
                         THEN TRUE ELSE FALSE END
                 WHERE role_code = 'ROLE-ADMIN'
+                  AND permission_code IN
+                      (SELECT permission_code FROM app_permission WHERE permission_kind = 'MODULE')
                 """);
         jdbcTemplate.update("""
                 UPDATE app_role_permission SET permission_level = 'NONE', menu_enabled = FALSE

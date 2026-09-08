@@ -24,12 +24,15 @@ import { airspaceApi } from '@/services/airspaceApi.js';
 import { deviceApi } from '@/services/deviceApi.js';
 import { listAlarms } from '@/services/alarmApi.js';
 import { legalityApi } from '@/services/legalityApi.js';
-import { SOURCE_TYPE_LABEL, SCHEMA_STATUS_LABEL, labelOf } from '@/ui/labels.js';
+import { DISPOSAL_ACTION_LABEL, RISK_STATE_LABEL, SEVERITY_LABEL,
+  SOURCE_TYPE_LABEL, SCHEMA_STATUS_LABEL, disposalStatusText, labelOf } from '@/ui/labels.js';
+/* 合法性结论沿用核验弹窗里的同一份词表：同一个码全站只能有一个说法。 */
+import { legalStatusText, RULE_REASON_TEXT } from '@/ui/legalityReviewModal.js';
 import { disposalApi } from '@/services/disposalApi.js';
 import { openDisposalRequest } from '@/ui/disposalAuthModal.js';
 import { canRouteAction } from '@/services/accessControl.js';
 import {
-  AIRSPACE_LAYERS, legalByTarget, percent, toAirspaces, toAlarms, toDevices, toTargets, toTrack
+  AIRSPACE_LAYERS, attachBearing, bearingOrigins, legalByTarget, percent, toAirspaces, toAlarms, toDevices, toTargets, toTrack
 } from '@/services/situationData.js';
 
 const U = window.UI;
@@ -147,9 +150,30 @@ function renderTargetTip(t) {
       </div>
     </div>
     <div class="maptip-track-geo"><span>经纬度</span><span class="mono">${t.posValid ? `${lon}°E, ${lat}°N` : '未提供位置'}</span></div>
+    ${tipSummaryRows(t)}
     ${tipActions(t)}
   </div>`;
 }
+/* 风险 / 合法性 / 处置三行：服务端给了才渲染，缺哪行不渲染哪行（不写"—"占位，那会让人以为查过且为空）。 */
+function tipSummaryRows(t) {
+  const rows = [];
+  const risk = t.riskSummary;
+  if (risk?.severity) {
+    rows.push(['风险等级', `${esc(labelOf(SEVERITY_LABEL, risk.severity))}${risk.state ? ` · ${esc(labelOf(RISK_STATE_LABEL, risk.state))}` : ''}`]);
+  }
+  const legality = t.legalitySummary;
+  if (legality?.legal_status || legality?.violation_reasons?.length) {
+    // 违规事由用的是规则引擎的原因码（与合法性页、复核弹窗同一张表），不是风险的 reason_code。
+    const reasons = (legality.violation_reasons || []).map(code => esc(labelOf(RULE_REASON_TEXT, code))).join('、');
+    rows.push(['违规事由', reasons || esc(legalStatusText(legality.legal_status))]);
+  }
+  const disposal = t.disposalSummary;
+  if (disposal?.status) {
+    rows.push(['处置状态', `${esc(labelOf(DISPOSAL_ACTION_LABEL, disposal.action_type))} · ${esc(disposalStatusText(disposal))}`]);
+  }
+  return rows.map(([k, v]) => `<div class="maptip-track-geo"><span>${k}</span><span>${v}</span></div>`).join('');
+}
+
 function renderMapTip(hit) {
   if (hit.kind !== 'target' || !hit.data) return null;
   return renderTargetTip(hit.data);
@@ -211,6 +235,8 @@ function hasFuseData(t) {
   return !!(t && selDetail && Array.isArray(selDetail.source_links) && selDetail.source_links.length);
 }
 
+let sourceConfidence = {};
+
 function paintFuse() {
   const has = hasFuseData(sel);
   fuseVisible.value = has;
@@ -225,8 +251,12 @@ function paintFuse() {
     const col = online ? '#3d8bff' : '#5a6c88';
     /* 置信度条用的是**目标级** fusion_confidence——读接口没有按来源分路的置信度，
        所以 title 里说清它是整条融合链路的置信度，不让人误以为这是这一路自己的数。无值就整条不渲染。 */
-    const bar = conf == null ? ''
-      : `<span class="bar" title="目标融合置信度（非单一来源）"><i style="width:${conf}%;background:${col}"></i></span>`;
+    /* 有这一路自己的身份置信度就用它；没有才退回目标级融合置信度，两者的提示语不同，不混为一谈。 */
+    const own = sourceConfidence[link.source_code] ?? sourceConfidence[link.source_id];
+    const value = own?.confidence ?? conf;
+    const barTitle = own?.confidence != null ? '该来源的身份置信度' : '目标融合置信度（非单一来源）';
+    const bar = value == null ? ''
+      : `<span class="bar" title="${barTitle}"><i style="width:${value}%;background:${col}"></i></span>`;
     return `<div class="sit-fuse-ch${online ? '' : ' off'}">
       <span class="dot-s" style="background:${col}"></span>
       <b>${esc(name)}</b>${demo}${bar}
@@ -330,7 +360,7 @@ async function loadTargetsAndAlarms() {
       loadEvaluations().catch(() => ({ items: [] })),
       listAlarms({ size: 100 }).catch(() => ({ items: [] }))
     ]);
-    liveTargets = toTargets(targetPage.items || [], legalByTarget(evaluationPage.items || []));
+    liveTargets = attachBearing(toTargets(targetPage.items || [], legalByTarget(evaluationPage.items || [])), deviceOrigins);
     liveAlarms = toAlarms(alarmPage.items || []);
     loadError = '';
   } catch (reason) {
@@ -342,6 +372,8 @@ async function loadTargetsAndAlarms() {
   refresh();
 }
 
+let deviceOrigins = {};
+
 async function loadAirspacesAndDevices() {
   try {
     const page = await airspaceApi.list({ size: 100, valid_at: Date.now() });
@@ -352,6 +384,9 @@ async function loadAirspacesAndDevices() {
   try {
     const page = await deviceApi.list({ size: 200 });
     liveDevices = toDevices(page.items || []);
+    // 方位线的起点按 device_id 取原始坐标；设备列表刷新后给已加载的目标补上。
+    deviceOrigins = bearingOrigins(page.items || []);
+    attachBearing(liveTargets, deviceOrigins);
   } catch { liveDevices = []; }
   applyFilter();
 }
@@ -376,6 +411,21 @@ async function loadSelected() {
     selDetail = detail;
     sel.fusedConf = percent(detail.latest_state && detail.latest_state.fusion_confidence);
   } catch { selDetail = null; }
+  /* 分路置信度来自观测（阶段 15 的 identity_confidence）：按来源取最近一条。
+     读不到就退回目标级融合置信度，并在提示里说清那不是这一路自己的数。 */
+  try {
+    const page = await targetApi.observations(targetId, { size: 50 });
+    const bySource = {};
+    for (const row of page?.items || []) {
+      if (row.identity_confidence == null) continue;
+      const key = row.source_code || row.source_id;
+      const prev = bySource[key];
+      if (!prev || Number(row.observed_at || 0) >= Number(prev.observedAt || 0)) {
+        bySource[key] = { confidence: percent(row.identity_confidence), observedAt: Number(row.observed_at || 0) };
+      }
+    }
+    sourceConfidence = bySource;
+  } catch { sourceConfidence = {}; }
   try {
     const tracks = await targetApi.tracksAll(targetId, { size: 20 });
     const open = (tracks.items || [])[0];

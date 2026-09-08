@@ -11,6 +11,10 @@ import java.io.IOException;
 
 /** 阶段 4 只暴露告警安全摘要，不返回来源原始 JSON、凭据或设备内部字段。 */
 public final class AlarmDtos {
+
+    /** 区域筛选项（决策 15-22）：只含调用者范围内出现过的区域。 */
+    public record DistrictOptionDto(String districtId, String name) { }
+
     private AlarmDtos() { }
 
     public record PageDto<T>(List<T> items, int page, int size, long total) { }

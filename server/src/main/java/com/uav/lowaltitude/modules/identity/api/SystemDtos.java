@@ -136,7 +136,22 @@ public final class SystemDtos {
 
     public record RoleResponse(
             String roleCode, String name, String description, boolean builtin,
-            boolean enabled, int userCount, int version, List<PermissionResponse> permissions) {
+            boolean enabled, int userCount, int version, List<PermissionResponse> permissions,
+            /* 只列该角色**已授**的动作行（决策 15-1）：把全目录都列出来、未授的标 NONE，
+               会让页面分不清"没授给它"和"系统里没这一项"。 */
+            List<RoleActionResponse> actions) {
+    }
+
+    public record RoleActionResponse(String permissionCode, String level) { }
+
+    /** 动作权限目录，按模块分组；module_name 必须给，否则页面只能显示 disposal/punishment 这种码。 */
+    public record ActionModuleResponse(String moduleCode, String moduleName, List<ActionResponse> actions) { }
+
+    public record ActionResponse(String permissionCode, String actionCode, String name) { }
+
+    public record ActionAssignment(
+            @NotBlank String permissionCode,
+            @NotBlank @Pattern(regexp = "NONE|READ|OP") String level) {
     }
 
     public record RoleCreateRequest(
@@ -152,7 +167,10 @@ public final class SystemDtos {
     public record RoleAccessRequest(
             @NotEmpty @Valid List<PermissionAssignment> permissions,
             @Min(0) int expectedVersion,
-            @Size(max = 1000) String reason) {
+            @Size(max = 1000) String reason,
+            /* 缺省（null）表示**不动**该角色的动作行；给了就是整组替换，NONE 即删除（决策 15-2）。
+               把"没提交"当成"清空"会让一次无关的矩阵调整悄悄收走别人的动作权限。 */
+            @Valid List<ActionAssignment> actions) {
     }
 
     public record RoleDeletionDirectRequest(@NotBlank @Size(max = 1000) String reason) {

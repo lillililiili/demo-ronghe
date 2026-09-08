@@ -115,7 +115,7 @@ public class FusionReadService {
                 row.classCode(), row.classConfidence(), row.identityClue(), row.sourceMode(),
                 row.pilotLongitude() == null || row.pilotLatitude() == null ? null
                         : new LocationDto(row.pilotLongitude(), row.pilotLatitude(), "WGS84"),
-                row.classSource());
+                row.classSource(), row.bearingDeg(), row.identityConfidence(), row.deviceId());
     }
 
     private List<String> strings(String value) {

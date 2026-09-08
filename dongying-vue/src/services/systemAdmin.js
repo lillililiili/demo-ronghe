@@ -36,6 +36,8 @@ export const systemApi = {
   roles: () => apiRequest('/roles'),
   role: code => apiRequest(`/roles/${encodeURIComponent(code)}`),
   permissions: () => apiRequest('/permissions/catalog'),
+  /* 动作权限目录（阶段 15）：按模块分组，每个动作码带等级；与菜单级 permissions 是两张表。 */
+  permissionActions: () => apiRequest('/permissions/actions'),
   createRole: body => mutation('/roles', 'POST', body),
   updateRole: (code, body) => mutation(`/roles/${encodeURIComponent(code)}`, 'PATCH', body),
   updateRolePermissions: (code, body) => mutation(`/roles/${encodeURIComponent(code)}/permissions`, 'PUT', body),

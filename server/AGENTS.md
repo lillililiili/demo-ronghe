@@ -45,7 +45,7 @@ Java 根包保持 `com.uav.lowaltitude`。保留现有 `modules/identity`、`mod
 ## 4. 数据、事务与并发
 
 - 用实体关系、约束与查询需求设计持久化，不照搬 Mock 数组、视图 key、随机生成器或派生统计值。新业务表随切片建立，不为未确认路线图批量建空表。
-- 已应用 Flyway 迁移不可修改；结构变更新增下一版本迁移，先检查现有版本及并行工作避免撞号。禁止关闭迁移校验或手改历史来掩盖错误。
+- 已应用 Flyway 迁移不可修改；结构变更新增下一版本迁移，先检查现有版本及并行工作避免撞号。禁止关闭迁移校验或手改历史来掩盖错误。 尚未提交但已在某个验收库应用过的迁移也按此处理：改注释都会变校验和，让那个库起不来；只有确知仅一个库跑过且未推送时，才允许删该版本的历史行重跑（阶段 15 对 0104 的处理），否则加新迁移（0105 是正例）。
 - JSON/JSONB 列的读取：不用 PostgreSQL 专有的 `->>`/`@>`（H2 语法错），也不用裸 `LIKE`（PG 无 `jsonb ~~ text`，只在 H2 能跑）；要做字符串粗筛写 `CAST(col AS VARCHAR) LIKE …`，取值交给 Java 解析；插入表达式含拼接或函数时 `CAST(... AS JSON)`（决策 13-15、15-18）。任何 JSON 列的 SQL 改动都必须在真实 PostgreSQL 上跑一次。
 - 新写公共件先找同仓既有实现：CSV/文本导出一律走 `platform/export/CsvExport`（BOM、RFC 转义、公式前缀、行数上限），不另写转义；JSON 列粗筛用 `QualityFacts` 那类共用片段。阶段 15 两次撞上"仓库里早有正确写法、新代码另写一份错的"（`LineageRepository` 的 CAST LIKE、`AuditController` 的公式前缀）。
 - 事务边界：会写审计、幂等键或任何行的方法不得标 `@Transactional(readOnly = true)`（PG 只读事务禁 INSERT，SQLSTATE 25006；H2 不落实该语义）。改动事务注解或在只读方法里新增写操作，同样必须在真实 PostgreSQL 上跑一次（决策 15-20）。

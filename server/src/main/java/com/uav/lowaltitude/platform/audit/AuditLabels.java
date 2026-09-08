@@ -83,6 +83,8 @@ final class AuditLabels {
             Map.entry("evidence_downloaded", "下载证据文件"),
             Map.entry("evidence_exported", "导出证据台账"),
             Map.entry("evidence_destroyed", "销毁证据文件"),
+            Map.entry("alarms_exported", "导出告警列表"),
+            Map.entry("risks_exported", "导出风险列表"),
             Map.entry("disposal_requested", "申请处置授权"),
             Map.entry("disposal_approved", "批准处置授权"),
             Map.entry("disposal_rejected", "驳回处置授权"),

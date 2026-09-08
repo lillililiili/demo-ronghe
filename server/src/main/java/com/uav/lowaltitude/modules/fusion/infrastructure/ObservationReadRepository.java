@@ -14,6 +14,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Repository;
 
+import com.uav.lowaltitude.modules.fusion.domain.QualityFacts;
+
 /**
  * 原始观测层读取与融合来源状态。观测按目标的 link（source_id + external_target_id + session）归属，
  * 与阶段 2 一样只在同一 source_mode 内匹配：跨模式的同名外部 ID 不是同一个目标。
@@ -83,6 +85,9 @@ public class ObservationReadRepository {
         return "SELECT o.observation_id,s.source_code,o.source_type,o.external_target_id,o.observed_at,o.received_at,"
                 + "o.position_accuracy_m,o.altitude_amsl_m,o.height_agl_m,o.speed_mps,o.heading_deg,o.class_code,"
                 + "o.class_confidence,o.identity_clue,o.source_mode,o.class_source,"
+                // 阶段 15（决策 15-5）：AOA 只报方位不报位置，页面据此画方位线；identity_confidence 与
+                // class_confidence 分开给，来源面板要能分别说清"像不像这类"和"是不是这一架"。
+                + "o.identity_confidence,o.device_id,o.quality,"
                 + locationColumns("o.location", "") + "," + locationColumns("o.pilot_location", "pilot_") + " ";
     }
 
@@ -104,7 +109,9 @@ public class ObservationReadRepository {
                 location == null ? null : location[0], location == null ? null : location[1], rs.getBigDecimal("position_accuracy_m"),
                 rs.getBigDecimal("altitude_amsl_m"), rs.getBigDecimal("height_agl_m"), rs.getBigDecimal("speed_mps"), rs.getBigDecimal("heading_deg"),
                 rs.getString("class_code"), rs.getBigDecimal("class_confidence"), rs.getString("identity_clue"), rs.getString("source_mode"),
-                pilot == null ? null : pilot[0], pilot == null ? null : pilot[1], rs.getString("class_source"));
+                pilot == null ? null : pilot[0], pilot == null ? null : pilot[1], rs.getString("class_source"),
+                QualityFacts.bearingDeg(FusionConfigRepository.jsonText(rs.getObject("quality"))),
+                rs.getBigDecimal("identity_confidence"), rs.getString("device_id"));
     }
 
     /** PG 分支直接给数值，H2 分支回读 EWKT 文本再解析；两端都不接受非 4326 的坐标。 */
@@ -145,6 +152,8 @@ public class ObservationReadRepository {
             BigDecimal longitude, BigDecimal latitude, BigDecimal positionAccuracyM, BigDecimal altitudeAmslM, BigDecimal heightAglM, BigDecimal speedMps, BigDecimal headingDeg,
             String classCode, BigDecimal classConfidence, String identityClue, String sourceMode,
             /* 阶段 8.5：飞手位置与类别来源，可空。 */
-            BigDecimal pilotLongitude, BigDecimal pilotLatitude, String classSource) { }
+            BigDecimal pilotLongitude, BigDecimal pilotLatitude, String classSource,
+            /* 阶段 15：方位角（来自 quality.bearing_deg）、身份置信度、出这条观测的设备，均可空。 */
+            BigDecimal bearingDeg, BigDecimal identityConfidence, String deviceId) { }
     public record SourceStatusRow(String sourceCode, String sourceType, String schemaStatus, OffsetDateTime lastObservedAt) { }
 }

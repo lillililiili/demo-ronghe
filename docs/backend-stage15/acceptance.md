@@ -5,9 +5,9 @@
 ## 执行者报告
 | 任务 | 会话 | 结果 | 报告 |
 | --- | --- | --- | --- |
-| 15.1 后端 | Session 1 | actions landed 32 例（动作权限接口 + reviewer1 种子）；api landed 待填 | `task-15.1-report.md` |
-| 15.2 前端 | Session 2 | 待填 | `task-15.2-report.md` |
-| 15.3 PG + 隔离 + E2E 骨架 | Session 3 | `Stage15PostgresTest` 7/7（PG 16.9：动作目录⇔枚举逐一比对含总数、并发 PUT 动作行一成一 409、权限改动旧会话立刻失效、导出上限两侧、相同时刻分页稳定（故意打乱物理次序）、JSONB 方位读出且有位置不给、15-21 两半都钉且变异验证）+ `ProductionStage15SeedIsolationTest` 3/3（含 local 下必须注册的反面对照）+ E2E 39/39（17 路由 × 2 账号 + 大屏 × 2 + 3 条反空转自检，期望值取服务端 menu_keys，变异验证 14 红 5 绿）；发现两个 PG-only P0（15-18/15-20）与 occurred_at 可空（15-21）、区域筛选挂管理域权限（15-22） | `task-15.3-report.md` |
+| 15.1 后端 | Session 1 | actions 32 → seed fixed 61 → api 73 → round7 78 → round8 35（局部）→ round9 58 → round10 38（局部合跑）；动作权限接口（15-1/2/14）、reviewer1 种子（15-3）、三摘要与方位（15-4/5/15/16）、排序/筛选/导出（15-6/7/26/30）、两个 PG-only P0 修复（15-18/20）、区域接口（15-22）、目录中文化与 AUTH→OP（15-24/25/27，迁移 0104/0105 + 初始化器限 MODULE 行）；PG 全部由助手与领导补验 | `task-15.1-report.md` |
+| 15.2 前端 | Session 2 → 领导接管收尾 | 桩：7 改 + 4 service 只加方法，十个表单/九个字典；联调（真数据）：角色页动作矩阵接 `/permissions/actions`、两页排序下发 `sort/order` 并重置页码（不在客户端排序，理由写给用户）、区域筛选切 `/alarms|/risks/districts`、KPI 两卡接现有接口、态势页三摘要与方位线、别名两段提示、15-19 权限门禁；E2 07:30 后无回报，领导后台代理接管三件：核对排序已完整（只修风险表"时间"列绑定与工具栏说明）、15-29（AUTH 行过滤 + "保存后将被清除"）、联调记录；代理发现 `sort=state` 500（15-30，转 E1） | `task-15.2-report.md` |
+| 15.3 PG + 隔离 + E2E 骨架 | Session 3 | `Stage15PostgresTest` 最终 9/9（PG 16.9：动作目录⇔枚举逐一比对含总数、并发 PUT 动作行一成一 409、权限改动旧会话立刻失效、导出上限两侧、相同时刻分页稳定（故意打乱物理次序）、JSONB 方位读出且有位置不给、15-21 两半都钉且变异验证、初始化器再跑一次动作行仍 READ/OP 且模块行 AUTH、分两步升级（迁到 0104 → 写出脏行 → 迁到最新 → 零 AUTH））+ `ProductionStage15SeedIsolationTest` 3/3（含 local 下必须注册的反面对照）+ E2E 39/39（17 路由 × 2 账号 + 大屏 × 2 + 3 条反空转自检，期望值取服务端 menu_keys，变异验证 14 红 5 绿）；发现两个 PG-only P0（15-18/15-20）与 occurred_at 可空（15-21）、区域筛选挂管理域权限（15-22） | `task-15.3-report.md` |
 
 ## 领导验收
 - 15.0：CI 改动（PostGIS 服务、TargetRead 专属库、汇总、可选 e2e）经审查第 1 轮修订（15-13），YAML 校验通过；真实运行结果待推送后从 Actions 记录。
@@ -21,7 +21,13 @@
 - 15-23 收窄后复跑：`LocalStage2AccessSeederTest` 5/5、`DeviceBusinessScopeTest` 6/6、`LocalStage15DemoReviewerSeederTest` 6/6、`ProductionStage15SeedIsolationTest` 3/3。
 - round7 重启（07:3x）：`GET /alarms/districts` admin1 200（范围内出现过的区域列表）、reviewer1 200；`GET /risks/districts` admin1 200、reviewer1 403（无 `risk:read`，与列表权限一致）；旧 `GET /districts` 对 reviewer1 403（15-22 的动因）。`risk_summary` 按 15-21 取最新一条（两条目标分别 HIGH/MEDIUM）。
 - round8 重启（07:4x，jar 含 0104 与 CSV 公式前缀）：`V202609080104` 在升级库套用成功，42 个 ACTION 行 `name/module_name` 全中文（如 `disposal:approve` = 处置授权 / 审批处置），`/permissions/actions` 返回中文；AUTH 级动作行在本次启动后再次为 42 条（`SuperAdminIntegrityInitializer` 每次启动把超管既有行全置 AUTH，0104 的归一被重启抹回）——助手 `Stage15PostgresTest` 第 8 例在修复前红在正确位置，E1 round9 收（15-25 修订）。
-- 待填：round9（初始化器只碰 MODULE 行）重启核对 AUTH=0 / H2 全量终版 / 前端三项 / 浏览器 / E2E / CI 首跑。
+- round9 重启两次（07:5x，jar 含初始化器限 MODULE 行 + `V202609080105` 归一）：0104 因 E1 改注释后校验和变化，在验收库删其历史行重跑（只含幂等 UPDATE）；第一次启动后 0104/0105 均 success、AUTH 动作行 0、超管模块行 18 条仍 AUTH、42 个动作名全中文；第二次启动后 AUTH 动作行仍 0、超管 42 条动作行全为 OP、模块行 18 条 AUTH——初始化器不再回刷（15-25 修订）且存量已洗（15-27）。
+- H2 全量终版（round9 后，08:0x）：152 类 / 882 run / 0 fail / 0 err / 102 skip（skip 全为 env 门禁的 PG 类），BUILD SUCCESS。
+- 领导接管 15.2 尾项（08:38–08:5x）：代理核对 E2 已接的排序链路完整，补风险表"时间"列排序键与工具栏说明、15-29；8081 实测 `sort=severity/received_at/occurred_at` 两向 200、非法值 400、两条导出 200；发现 `sort=state` 500（`ORDER BY a.state` 列不存在，15-30 转 E1）。
+- 前端三项终版（08:5x，接管后）：`vite build` 通过（本机 `npm run build` 解析到别处 rollup，改直接调 `node ./node_modules/vite/bin/vite.js build`）；`scan.cjs` 11/11 通过；`check-ui-text` 8 文件 3 处命中——AlarmsPage:361 与 FlightsPage:921 为既有，RolesPage:267 是模板里的 `=== 'AUTH'` 比较而非上屏文案；`git diff --check` 通过。
+- E2E 领导跑（09:0x，Playwright/Chromium，`node node_modules/@playwright/test/cli.js test`，前端 5174 + 后端 8081 round9 jar）：39 passed（27.8 s）——17 路由 × {admin1, reviewer1} + 大屏 × 2 + 3 条反空转自检。
+- round10 后（09:1x）：H2 全量 152 类 / 884 run / 0 fail / 0 err / 102 skip；重启 8081，PG 实测告警与风险两张表 `received_at|occurred_at|severity|state` × `asc|desc` × 列表/导出共 32 组全部 200，`severity desc` 结果次序 HIGH… → MEDIUM… → LOW…（按严重程度而非字典序）。
+- CI 首跑：待推送后从 Actions 记录（backend 作业带 PostGIS 服务、可选 e2e 作业）。
 
 ## 未接入 / 已知限制
 - 证据主体扩到 CASE/AUTHORIZATION 待 A（15-11）。

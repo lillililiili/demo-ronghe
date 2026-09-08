@@ -143,7 +143,8 @@ export function legalByTarget(evaluations) {
 /**
  * 目标 → 地图/列表用的形状。
  * 没有位置的目标（AOA 只给方位）保留在列表里但 posValid=false，地图不画点；
- * TODO：map.js 支持按 quality.bearing_deg 画方位线，本期没有把方位带出来，先不画。
+ * 阶段 15 起把 bearing_deg 与来源设备带出来，由页面从设备位置画一条方位线——
+ * 设备没有坐标就不画：凭方位角在地图上随便找个原点画线等于伪造位置。
  */
 export function toTargets(targets, legalMap) {
   const legal = legalMap || {};
@@ -169,10 +170,46 @@ export function toTargets(targets, legalMap) {
       fusedConf: percent(state && state.fusion_confidence),
       uavSn: target.uav_sn || '',
       district: target.district_name || '',
+      /* 阶段 15 追加的三段摘要：缺哪段就是 null，页面缺哪行不渲染哪行，不写"—"占位。 */
+      riskSummary: target.risk_summary || null,
+      legalitySummary: target.legality_summary || null,
+      disposalSummary: target.disposal_summary || null,
+      /* 只报方位的目标：方位角与观测它的设备，供页面画方位线。 */
+      bearing: num(target.latest_state && target.latest_state.bearing_deg),
+      bearingDeviceId: (target.latest_state && target.latest_state.bearing_device_id) || null,
       track: [],
       layerKey: 'track'
     };
   });
+}
+
+/**
+ * 只报方位的目标 → 方位线的起点。按 device_id 建索引（toDevices 会丢掉无坐标设备并改用 device_no 作 id，
+ * 这里要的是原始 device_id 与真实坐标）。设备没坐标就不进这张表——没有起点就不画线，
+ * 凭方位角在地图上随便找个原点等于伪造位置。
+ */
+export function bearingOrigins(devices) {
+  const origins = {};
+  for (const device of devices || []) {
+    const lon = num(device.longitude), lat = num(device.latitude);
+    if (lon === null || lat === null || !device.device_id) continue;
+    origins[device.device_id] = { lon, lat };
+  }
+  return origins;
+}
+
+/** 给只报方位的目标补上方位线所需的三个字段；补不上的保持不可画。 */
+export function attachBearing(targets, origins) {
+  const map = origins || {};
+  for (const target of targets || []) {
+    if (target.posValid || target.bearing == null) continue;
+    const origin = map[target.bearingDeviceId];
+    if (!origin) continue;
+    target.azimuth = target.bearing;
+    target.fromDeviceLon = origin.lon;
+    target.fromDeviceLat = origin.lat;
+  }
+  return targets;
 }
 
 /** 置信度是 0–1 的小数，屏幕上按百分比显示；没有就是没有，不补 0。 */

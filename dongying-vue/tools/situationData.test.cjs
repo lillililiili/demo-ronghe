@@ -134,6 +134,27 @@ async function main() {
   check('没有坐标的轨迹点丢弃', track.length, 2);
   check('kind 小写透传', track.map(p => p.kind), ['meas', 'pred']);
 
+  /* ---- 只报方位的目标 ---- */
+  // 字段名按服务端实际返回：方位角与观测设备都在 latest_state 里（bearing_deg / bearing_device_id）。
+  const bearingTargets = S.toTargets([
+    { target_id: 'bt1', target_no: 'B-1', latest_state: { bearing_deg: 82.5, bearing_device_id: 'd1' } },
+    { target_id: 'bt2', target_no: 'B-2', latest_state: { bearing_deg: 10, bearing_device_id: 'd2' } },
+    { target_id: 'bt3', target_no: 'B-3', latest_state: { location: { longitude: 118.4, latitude: 37.3 }, bearing_deg: 30, bearing_device_id: 'd1' } }
+  ]);
+  check('只报方位的目标不算有位置', bearingTargets[0].posValid, false);
+  check('方位角读的是 bearing_deg', bearingTargets[0].bearing, 82.5);
+  check('观测设备读的是 bearing_device_id', bearingTargets[0].bearingDeviceId, 'd1');
+  const origins = S.bearingOrigins([
+    { device_id: 'd1', longitude: 118.5, latitude: 37.4 },
+    { device_id: 'd2', name: '无坐标设备' }
+  ]);
+  check('无坐标设备不能当方位线起点', origins.d2, undefined);
+  S.attachBearing(bearingTargets, origins);
+  check('有起点才画方位线', bearingTargets[0].azimuth, 82.5);
+  check('方位线起点取设备真实坐标', bearingTargets[0].fromDeviceLon, 118.5);
+  check('设备没坐标就不画方位线', bearingTargets[1].azimuth, undefined);
+  check('已有位置的目标不画方位线', bearingTargets[2].azimuth, undefined);
+
   /* ---- percent ---- */
   check('置信度四舍五入', S.percent(0.876), 88);
   check('没有置信度返回 null', S.percent(null), null);

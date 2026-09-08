@@ -40,6 +40,33 @@ export const DISPOSAL_STOP_RESULT_LABEL = {
   NOT_ATTEMPTED: '授权已撤销；未尝试设备急停',
   NOT_BOUND: '授权已撤销；设备未登记凌云连接，请运维补配置后重试'
 };
+/* 动作权限的中文名（阶段 15）。服务端目录里的 module_name/name 目前是英文开发描述
+   （如 "T02 device read" / "Read devices"），直接上屏就是给一线人员看英文；
+   这里按模块与动作码给出中文，服务端将来给了中文再优先用服务端的。 */
+export const ACTION_MODULE_LABEL = {
+  device: '设备', target: '目标', alarm: '告警', flight: '飞行计划', route: '航线', airspace: '空域',
+  assessment: '合法性研判', risk: '飞行风险', workbench: '工作台', handoff: '业务交接', rule: '规则引擎',
+  fusion: '融合感知', evidence: '证据', airport: '机场', disposal: '处置授权', punishment: '处罚案件'
+};
+export const ACTION_CODE_LABEL = {
+  'device:read': '查看设备', 'target:read': '查看目标',
+  'alarm:read': '查看告警', 'alarm:verify': '核实无人机事件',
+  'flight:read': '查看飞行计划', 'flight:authorize': '登记飞行授权',
+  'route:read': '查看航线', 'airspace:read': '查看空域', 'airspace:manage': '维护空域',
+  'assessment:read': '查看研判', 'assessment:evaluate': '发起研判', 'assessment:revise': '修订研判结论', 'assessment:escalate': '上报研判',
+  'risk:read': '查看风险', 'risk:verify': '核验风险', 'risk:evaluate': '触发风险评估',
+  'workbench:read': '查看工作台', 'handoff:read': '查看交接', 'handoff:create': '提交交接',
+  'rule:read': '查看规则集', 'rule:manage': '维护规则集',
+  'fusion:read': '查看融合结果', 'fusion:revise': '人工修订类别', 'fusion:manage': '维护融合配置',
+  'evidence:read': '查看证据', 'evidence:ingest': '证据入库', 'evidence:download': '下载证据',
+  'evidence:link': '关联证据', 'evidence:hold': '证据封存', 'evidence:destroy': '证据销毁',
+  'airport:read': '查看机场', 'airport:manage': '维护机场',
+  'disposal:read': '查看处置授权', 'disposal:request': '发起处置申请', 'disposal:approve': '审批处置',
+  'disposal:execute': '执行处置', 'disposal:stop': '停止处置',
+  'punishment:read': '查看处罚案件', 'punishment:file': '立案与调查', 'punishment:decide': '裁量与文书',
+  'punishment:review': '复核案件', 'punishment:close': '结案与撤案'
+};
+
 /* 处罚案件（阶段 14）。状态回答“案子办到哪一步”，与裁量、复核结论分开说。 */
 export const CASE_STATUS_LABEL = {
   FILED: '已立案', INVESTIGATING: '调查中', UNDER_REVIEW: '复核中',

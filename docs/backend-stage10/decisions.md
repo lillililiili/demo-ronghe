@@ -18,3 +18,4 @@
 | 10-14 | 自阶段 10 起，B 线新迁移改按实际日期编号（`V2026MMDDnnnn`，与 A 一致），不再沿用 `20260905` 固定前缀 | 根因是 B 的固定前缀永远小于 A 的日期编号；改为真实日期后顺序单调，生产无需乱序 |
 | 10-15 | B 线每阶段的计划文档允许提交到 `docs/superpowers/plans/`（不再列入排除清单）；`.superpowers/`、`.planning/`、`.claude/`、`.worktrees/`、根目录 docx、`设备资料/` 仍排除 | 用户要求每阶段计划落盘可事后审阅（记忆 feedback-plan-mode-per-stage）；该目录已有 12 份计划随合并入库，口径统一为"计划入库、过程台账不入库" |
 | 10-16 | 协议 A `objects: []` 视为合法"无观测帧"：映射返回空帧、inbox 记 DONE，不再当错误帧（与协议 C 心跳同一处理） | 协作者 A 确认 P1 会写入空列表；原实现在 `LingyunSenseDataMapper` 对空 objects 抛错会把 inbox 刷成 FAILED 并累计 `fusion_attempts` |
+| 10-17 | 073.5/074 不重新编号；生产首次部署必须从全新库开始（按版本序无乱序问题）；若确需在"已迁到 202609070001 之后"的非 local 库上升级，一次性使用 `spring.flyway.ignore-migration-patterns=*:ignored` 或临时 `out-of-order`，并记入部署文档 | 助手复现：非 local 库会在 Flyway 校验阶段直接失败（"resolved migration not applied"），不是静默跳过；重新编号会让已应用这两支的开发/验收库反向失败；当前没有生产库，10-14 已从根因消除后续风险；`Stage9PostgresTest` 用例 24 钉住"要么补上要么响亮失败，不得静默跳过" |

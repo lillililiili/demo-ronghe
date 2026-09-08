@@ -1375,5 +1375,102 @@ class Stage9PostgresTest {
         }
     }
 
+    /**
+     * 10.2 交办的先验：**074 的版本号比库里已应用的迁移小**（202609050074 < 202609070001/0010），
+     * 而 `application.yml` 没有开 `spring.flyway.out-of-order`（默认 false）。
+     * 于是在一个"已经升级过、当时还没有 074"的库上，074 有可能被 Flyway 判成 IGNORED 而**静默不执行**——
+     * 那样 CHECK 永远不会收紧，`HEIGHT_LIMIT` 还能写进去，而启动日志里看不出任何异常。
+     *
+     * <p>怎么造这个局面：全量迁移一遍拿到"已升级"的库，然后删掉 073.5/074 的历史行并把 CHECK 还原成七值——
+     * 这正是"那台库当年升级时这两支迁移还不存在"的样子（历史最大版本 202609070001，而 074 缺席）。
+     * 再跑一次 migrate，看它到底补不补。
+     *
+     * <p>用例接受两种结局，但**不接受第三种**：要么 074 被补上（CHECK 收紧、旧值写不进去），
+     * 要么 migrate 响亮地失败并点名缺的是哪支迁移；**不可以静默跳过**——那样应用照常启动，
+     * CHECK 一直停在七值，旧值继续写得进去，谁也不会发现。写成两分支是为了让它在领导选定修法之后仍然成立：
+     * 无论是开 out-of-order、给迁移重新编号，还是别的办法，"不静默"这条都不该变。
+     */
+    @Test
+    @Order(24)
+    void migration074IsStillAppliedOnDatabasesAlreadyUpgradedPastItsVersion() throws Exception {
+        String schema = SCHEMA_PREFIX + UUID.randomUUID().toString().replace("-", "");
+        if (!schema.matches("^" + SCHEMA_PREFIX + "[a-f0-9]{32}$")) throw new IllegalStateException("Unsafe scratch schema");
+        JdbcTemplate root = new JdbcTemplate(rootDataSource());
+        root.execute("create schema " + schema);
+        try {
+            flywayForAll(schema).migrate();
+            JdbcTemplate scratch = scratchTemplate(schema);
+            // 前提确认：库里确实存在版本号大于 074 的已应用迁移，否则这条用例根本没在测乱序。
+            assertThat(scratch.queryForList("select version from flyway_schema_history where success=true and version is not null", String.class))
+                    .as("必须有比 074 更新的迁移已应用，乱序场景才成立").anyMatch(v -> v.compareTo("202609050074") > 0);
+
+            // 回退成"当年升级时还没有 073.5/074"的样子：历史里抹掉这两行，CHECK 还原为迁移 061 的七值。
+            scratch.update("delete from flyway_schema_history where version in ('202609050073.5','202609050074')");
+            scratch.execute("alter table airspace_version drop constraint ck_stage9_airspace_kind_code");
+            scratch.execute("alter table airspace_version add constraint ck_stage9_airspace_kind_code check ("
+                    + "kind_code in ('PROHIBITED','RESTRICTED','ALTITUDE_LIMIT','PERMITTED','TEMPORARY_CONTROL','HEIGHT_LIMIT','TEMPORARY'))");
+
+            String failure = null;
+            try {
+                flywayForAll(schema).migrate();
+            } catch (FlywayException blocked) {
+                failure = blocked.getMessage();
+            }
+
+            boolean applied = scratch.queryForList("select version from flyway_schema_history where success=true and version is not null", String.class)
+                    .contains("202609050074");
+            if (applied) {
+                // 期望的结局：074 被补上，CHECK 收紧，旧值真的写不进去。
+                assertThat(scratch.queryForObject("select pg_get_constraintdef(oid) from pg_constraint"
+                        + " where conrelid=(quote_ident(?)||'.airspace_version')::regclass and conname='ck_stage9_airspace_kind_code'", String.class, schema))
+                        .as("补上 074 之后 CHECK 必须是五值").doesNotContain("HEIGHT_LIMIT").doesNotContain("'TEMPORARY'");
+                String orgId = id(), districtId = id(), airspaceId = id();
+                scratch.update("insert into app_org (org_id,org_code,name,enabled,created_at,updated_at,version) values (?,?,?,true,0,0,0)", orgId, "ORG-OOO-" + suffix, "乱序验证机构");
+                scratch.update("insert into app_district (district_id,district_code,name,enabled,created_at,updated_at,version) values (?,?,?,true,0,0,0)", districtId, "DIST-OOO-" + suffix, "乱序验证区域");
+                scratch.update("insert into airspace (airspace_id,airspace_no,name,source_mode,owner_org_id,district_id,created_at,updated_at,version) values (?,?,?,'live',?,?,?,?,0)",
+                        airspaceId, "AS-OOO-" + suffix, "乱序验证空域", orgId, districtId, T0, T0);
+                assertThat(sqlState(catching(() -> scratch.update(
+                        "insert into airspace_version (airspace_version_id,airspace_id,version_no,kind_code,boundary,valid_from,created_at) values (?,?,1,'HEIGHT_LIMIT',ST_GeomFromEWKT(?),?,?)",
+                        id(), airspaceId, boundary(), T0, T0))))
+                        .as("补上 074 之后旧值必须真的写不进去").isEqualTo("23514");
+                return;
+            }
+
+            // 没被补上——那就**必须是响亮地失败**，而且失败信息要点名缺的是哪两支迁移。
+            // 最坏的结局是"静默跳过"：迁移被判 IGNORED，应用照常启动，而 CHECK 一直是七值、旧值继续写得进去，
+            // 谁也不会发现。所以这一支断言的是"不是静默"，不是"迁移成功"。
+            assertThat(failure).as("074 既没被补上，migrate 也没报错——那就是静默跳过，最危险的一种").isNotNull();
+            assertThat(failure).contains("202609050074").contains("outOfOrder");
+            // 静默跳过的反证：库停在旧状态，没有被半途改成一个说不清的中间态。
+            assertThat(scratch.queryForObject("select pg_get_constraintdef(oid) from pg_constraint"
+                    + " where conrelid=(quote_ident(?)||'.airspace_version')::regclass and conname='ck_stage9_airspace_kind_code'", String.class, schema))
+                    .as("迁移被拦下时库应保持原状").contains("HEIGHT_LIMIT");
+        } finally {
+            root.execute("drop schema " + schema + " cascade");
+        }
+    }
+
+    /** 与 {@link #flywayFor} 相同，但不设 target：跑到最新版本。 */
+    private static Flyway flywayForAll(String schema) {
+        return Flyway.configure().dataSource(rootDataSource()).schemas(schema).defaultSchema(schema).createSchemas(false).cleanDisabled(true)
+                .locations("classpath:db/migration", "classpath:db/postgresql").load();
+    }
+
+    private static JdbcTemplate scratchTemplate(String schema) {
+        String base = requiredEnvironment("POSTGRES_TEST_URL");
+        return new JdbcTemplate(new DriverManagerDataSource(base + (base.contains("?") ? "&" : "?") + "currentSchema=" + schema + ",public",
+                requiredEnvironment("POSTGRES_TEST_USER"), requiredEnvironment("POSTGRES_TEST_PASSWORD")));
+    }
+
+    /** 捕获期望中的写入失败：返回异常本身（null 表示写入意外成功）。 */
+    private static Throwable catching(Runnable action) {
+        try {
+            action.run();
+            return null;
+        } catch (RuntimeException expected) {
+            return expected;
+        }
+    }
+
     private static String id() { return UUID.randomUUID().toString(); }
 }

@@ -1,6 +1,6 @@
 # 设备直连接入契约（阶段 8.5，A/B 边界）
 
-> 状态：v1.3（2026-09-07）。A 侧 P1 协议 A MQTT、P3 协议 C 光电边端、P4-A 雷达 TCP 提升信封已按实现冻结（P4-A 默认关，§2.3 / §8）。B 侧阶段 8.5 领取前缀、映射入口与 `ingest_seq`（§6–§7）及阶段 10 的 `fusion_event` 摘要与联调输入物（§9）已落地。P5 控制仍待冻结。依据：会议纪要 V1.0 三路架构、凌云协议 A v8.6 / B V2.4 / C 20250826（`设备资料/凌云协议/`）、决策 8-30（云端只保留我们的平台）、对齐文档 `target-schema-v1-alignment.md` §5、决策 8.5-12/20–29。配套计划：《协作者 A 直连接入计划》《协作者 B 直连切片计划》。
+> 状态：v1.4（2026-09-07）。A 侧 P1 / P3 / P4-A / P5 已按实现冻结（P4-A 默认关；P5 控制不写融合 inbox）。B 侧阶段 8.5 领取前缀、映射入口与 `ingest_seq`（§6–§7）及阶段 10 的 `fusion_event` 摘要与联调输入物（§9）已落地。依据：会议纪要 V1.0 三路架构、凌云协议 A v8.6 / B V2.4 / C 20250826（`设备资料/凌云协议/`）、决策 8-30（云端只保留我们的平台）、对齐文档 `target-schema-v1-alignment.md` §5、决策 8.5-12/20–29。配套计划：《协作者 A 直连接入计划》《协作者 B 直连切片计划》。
 
 ## 1. 边界
 
@@ -10,7 +10,7 @@
 
 ## 2. inbox 信封（A 写、B 读）
 
-P1（协议 A MQTT）、P3（协议 C 光电边端）与 P4-A（雷达 TCP 提升）信封已冻结。P5 控制仍分开。不得使用「任务 `msgId` 等于观测唯一编号」或「按随机 UUID 递增」。
+P1（协议 A MQTT）、P3（协议 C 光电边端）、P4-A（雷达 TCP 提升）信封与 P5（协议 B 控制）已冻结。P5 控制指令不写融合领取前缀的 inbox。不得使用「任务 `msgId` 等于观测唯一编号」或「按随机 UUID 递增」。
 
 ### 2.1 P1 已冻结（协议 A，雷达 / 5G-A / TDOA）
 
@@ -54,7 +54,7 @@ Topic 与正文必须一致：`bridge/{providerCode}/device|device_data/{deviceT
 
 受 `app.fusion.live-promotion.enabled`（`APP_FUSION_LIVE_PROMOTION_ENABLED`）控制，默认关：关则零行 `live-radar:`，ops 的 `live-device:*` 与航迹表与关闭前一致。只提升 `COMMAND_UPLOAD_TRACK_V3` 航迹批；点迹、RTK、反制不写该前缀。`items` 空数组合法。`rcs_m2` 取高分辨率 RCS，缺则用协议遗留 RCS。`classification` 为解码器已有 `categoryCode`（`PENDING_IDENTIFICATION` / `PERSON` / `VEHICLE` / `UAV` / `BIRD` / `UNIDENTIFIED`）。`longitude`/`latitude` 仅在 ops 已有非空派生经纬度时填入，否则 JSON `null` 或省略，**不写 0,0**。打开开关不等于客户现场雷达联调完成。
 
-B 的 `FusionInboxRepository.claim` 已按映射器前缀领取 `replay:` / `lingyun:` / `eo-edge:`；`live-radar:` 仅在开关打开时领取。P5 控制指令不写 inbox。
+B 的 `FusionInboxRepository.claim` 已按映射器前缀领取 `replay:` / `lingyun:` / `eo-edge:`；`live-radar:` 仅在开关打开时领取。P5 控制走 `device_command` + MQTT `device_control` / `device_control_resp`，回执 inbox 前缀为 `control-resp:`（不在领取白名单）。
 
 ## 3. 映射（B 实现，A 不做）
 
@@ -113,6 +113,7 @@ A 不修改融合代码。B 已领取 `lingyun:` / `eo-edge:`。核对时注意�
 5. 协议 C 只把 `event=BeginTracking` 上报写入 inbox；`EndTracking` 之后不再有该任务的 `eo-edge:` 观测行。`objectData` 不当观测。
 6. 契约 §4 的 `STATUS_STABLE` payload 见 §9：`latest_state` 已由 B 写入；`alarm_active`/`max_risk_severity` 有当前告警/风险才出键。A 的自动跟踪在缺键时跳过；测试可直接插入事件行。
 7. P4-A `source` 的 `deviceId` 是标准 `integration_source.source_code`，不是 ops `device_id`。雷达 TCP 登记/启用会幂等补标准 `integration_source`（`source_type=RADAR`），这是登记补全，不是从报文自动发现。ops `live-device:` 与 `live-radar:` 是两行；前者重复则整帧（含提升）跳过。该 `source_code` 对同一台物理雷达同样必须保持稳定（接入时等于台账 `device_no`）。
+8. P5 协议 B 控制不写 `lingyun:` inbox。下发 Topic `bridge/{providerCode}/device_control/{type}/{externalDeviceId}`，回执 `device_control_resp`；`msgNo` 等于 `command_no`。急停设备协议未提供。诱骗/干扰/驱鸟炮类型缩写未确认前不下发。
 
 ## 9. 阶段 10 补充（B 侧）
 

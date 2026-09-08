@@ -12,6 +12,7 @@ import com.uav.lowaltitude.modules.device.infrastructure.MqttRepository;
 import com.uav.lowaltitude.modules.identity.application.AccessService;
 import com.uav.lowaltitude.modules.identity.application.IdempotencyGuard;
 import com.uav.lowaltitude.integration.mqtt.EoEdgeEnvelope;
+import com.uav.lowaltitude.integration.mqtt.LingyunControlEnvelope;
 import com.uav.lowaltitude.integration.mqtt.LingyunEnvelope;
 import com.uav.lowaltitude.integration.mqtt.MqttNetworkPolicy;
 import com.uav.lowaltitude.integration.device.EnvironmentCredentialResolver;
@@ -186,6 +187,9 @@ public class MqttConfigurationService {
             status.put("connection_state","DISCONNECTED"); status.put("subscribed",false);
         }
         status.put("static_topic",b.topic(false)); status.put("sense_topic",b.topic(true));
+        status.put("control_topic",b.controlTopic()); status.put("control_resp_topic",b.controlRespTopic());
+        status.put("control_enabled", LingyunControlEnvelope.controllable(b.deviceTypeAbbr()));
+        status.put("emergency_stop","设备协议未提供");
         status.put("source_label",b.sourceMode().equals("replay")?"模拟回放":"真实来源，待联调");
         return status;
     }
@@ -211,8 +215,8 @@ public class MqttConfigurationService {
         required(p.ownerOrgId(),36); required(p.districtId(),36); mode(p.sourceMode());
         if((p.vendor()!=null && p.vendor().length()>128) || (p.model()!=null && p.model().length()>128)) throw bad("厂家或型号过长");
         if(eo(p)) { segment(p.edgeId(),64); segment(p.externalDeviceId(),32); return; }
-        if(!LingyunEnvelope.PROTOCOL.equals(p.protocolCode()) || !LingyunEnvelope.TYPES.containsKey(p.deviceTypeAbbr()))
-            throw bad("支持雷达、5G-A、TDOA 或光电边端");
+        if(!LingyunEnvelope.PROTOCOL.equals(p.protocolCode()) || !LingyunControlEnvelope.registrable(p.deviceTypeAbbr()))
+            throw bad("支持雷达、5G-A、TDOA、AOA、光电或光电边端");
         segment(p.providerCode(),64); segment(p.externalDeviceId(),128);
     }
     private static boolean eo(Registration p) { return EoEdgeEnvelope.PROTOCOL.equals(p.protocolCode()); }

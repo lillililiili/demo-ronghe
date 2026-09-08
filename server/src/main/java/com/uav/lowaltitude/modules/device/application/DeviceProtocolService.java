@@ -17,6 +17,18 @@ public class DeviceProtocolService {
     public List<ProtocolDescriptor> catalog() {
         access.requireDevicesRead();
         return List.of(
+                new ProtocolDescriptor(DeviceProtocolCodes.LINGYUN_MQTT_V8_6, "凌云协议 A MQTT（雷达 / 5G-A / TDOA）", "8.6",
+                        List.of("DEVICE_STATIC_RECEIVE", "SENSE_INBOX_RECEIVE"),
+                        List.of(new Field("broker_id", "id", true, "选择已登记 MQTT 连接"),
+                                new Field("source_mode", "enum", true, "replay 模拟回放 / live 真实来源，待联调")),
+                        Map.of("transport", "MQTT", "qos", 1), false),
+                new ProtocolDescriptor(DeviceProtocolCodes.EO_EDGE_MQTT_20250826, "凌云协议 C 光电边端协同", "20250826",
+                        List.of("HEARTBEAT_RECEIVE", "TRACK_BEGIN", "TRACK_END", "CAMERA_STATUS"),
+                        List.of(new Field("broker_id", "id", true, "选择已登记 MQTT 连接"),
+                                new Field("edge_id", "string", true, "平台作为边缘中心的 edgeId"),
+                                new Field("external_device_id", "string", true, "协议中的光电 deviceId"),
+                                new Field("unsupported", "note", false, "角度移动 / home 点 / 辅助识别开关：设备协议未提供")),
+                        Map.of("transport", "MQTT", "qos", 1, "unsupported", "设备协议未提供"), false),
                 new ProtocolDescriptor(DeviceProtocolCodes.RADAR_TCP_V3_0_0, "T02/兼容机扫雷达 TCP", "3.0.0",
                         List.of("LOGIN_DATA", "HEARTBEAT", "TARGET_RECEIVE", "TRACK_RECEIVE", "RTK", "STATUS_READ"),
                         List.of(new Field("login_role", "enum", true, "固定为 DATA"),

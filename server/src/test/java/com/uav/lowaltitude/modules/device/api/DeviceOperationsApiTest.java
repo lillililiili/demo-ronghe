@@ -220,7 +220,7 @@ class DeviceOperationsApiTest {
     }
 
     private void makeDeviceOutboxDue() {
-        jdbc.update("update outbox_event set available_at=0 where processed_at is null and topic in ('device.reboot','commission.connect','commission.run')");
+        jdbc.update("update outbox_event set available_at=0 where processed_at is null and topic in ('device.reboot','commission.connect','commission.run','eo.track.begin','eo.track.end','eo.camera.status')");
     }
 
     private String login(String account) throws Exception {

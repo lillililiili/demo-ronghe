@@ -25,6 +25,7 @@ public class LiveDeviceRepository {
                 LEFT JOIN radar_v3_profile r ON r.device_id=d.device_id
                 LEFT JOIN countermeasure_4ch_profile c ON c.device_id=d.device_id
                 WHERE d.enabled=TRUE AND d.source_mode='live' AND s.enabled=TRUE AND s.source_mode='live'
+                  AND s.protocol_code IN ('RADAR_TCP_V3_0_0','COUNTERMEASURE_TCP_4CH_V2_0')
                 """);
     }
 

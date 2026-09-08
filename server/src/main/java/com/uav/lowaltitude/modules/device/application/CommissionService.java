@@ -21,6 +21,7 @@ import com.uav.lowaltitude.platform.security.AuthUser;
 import com.uav.lowaltitude.platform.time.AppClock;
 import com.uav.lowaltitude.integration.DeviceAdapterRegistry;
 import com.uav.lowaltitude.integration.SourceMode;
+import com.uav.lowaltitude.integration.device.DeviceProtocolCodes;
 
 @Service
 public class CommissionService {
@@ -65,6 +66,9 @@ public class CommissionService {
         AuthUser user = access.requireCommissionOperate();
         Map<String, Object> device = devices.find(deviceId);
         if (device == null) throw notFound("DEVICE_NOT_FOUND", "设备不存在");
+        if (DeviceProtocolCodes.LINGYUN_MQTT_V8_6.equals(device.get("protocol_code"))
+                || DeviceProtocolCodes.EO_EDGE_MQTT_20250826.equals(device.get("protocol_code")))
+            throw new ApiException(HttpStatus.CONFLICT,"PROTOCOL_UNSUPPORTED","MQTT 协议本轮不提供调测能力");
         if (!asBoolean(device.get("enabled")))
             throw new ApiException(HttpStatus.CONFLICT, "DEVICE_NOT_OPERABLE", "停用设备不能发起调测");
         if (previousTaskId != null) {

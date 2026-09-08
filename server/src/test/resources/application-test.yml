@@ -22,3 +22,5 @@ app:
     password: changeme
   live-device:
     enabled: false
+  mqtt:
+    enabled: false

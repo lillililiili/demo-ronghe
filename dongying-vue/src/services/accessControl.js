@@ -1,9 +1,11 @@
 import { authUser } from './auth.js';
 import { pageTitle } from '@/config/navModel.js';
 
-const ROUTE_ALIAS = { overview: 'situation' };
+/* risk / airspace 是飞行计划页的别名（2026-09-07 撤回阶段 9 的独立菜单后恢复）：
+   它们不在 menu_keys 里，若不在此归并，#/risk 深链与「全部风险事件」页签都会被 PageHost 判成无权限。 */
+const ROUTE_ALIAS = { overview: 'situation', risk: 'flights', airspace: 'flights' };
 const ROUTE_PERMISSION = {
-  situation: 'sensing', flights: 'flights', airspace: 'airspace', risk: 'risk', legality: 'legality', alarms: 'alarms', punish: 'punishment',
+  situation: 'sensing', flights: 'flights', legality: 'legality', alarms: 'alarms', punish: 'punishment',
   stats: 'statistics', evidence: 'evidence', devices: 'devices', monitor: 'monitoring', commission: 'commissioning',
   users: 'users', roles: 'roles', archive: 'audit'
 };

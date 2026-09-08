@@ -15,8 +15,9 @@ export const DISPOSAL_UNAVAILABLE_TEXT = '处置授权服务尚未接入';
    把它们当"结果未知"会让人以为可能已经执行了，比报错更糟。 */
 const DEFINITE_CONFLICT_CODES = new Set([
   'TWO_PERSON_RULE', 'INVALID_TRANSITION', 'AUTHORIZATION_EXPIRED',
-  'DEVICE_CONTROL_UNAVAILABLE', 'DEVICE_NOT_BOUND',
-  'ACTIVE_AUTHORIZATION_EXISTS', 'SUBJECT_KIND_NOT_SUPPORTED'
+  'DEVICE_CONTROL_UNAVAILABLE', 'DEVICE_NOT_BOUND', 'DEVICE_OFFLINE',
+  'ACTIVE_AUTHORIZATION_EXISTS', 'SUBJECT_KIND_NOT_SUPPORTED',
+  'TARGET_NOT_ACTIVE', 'POLICY_REQUIRES_CONFIRMED_EVENT'
 ]);
 
 /* 同一授权的幂等键在“结果未知”期间保留；服务端给出明确结果后才丢弃，避免超时重试重复写授权。 */
@@ -50,6 +51,10 @@ function messageOf(error, fallback) {
   if (error.code === 'DEVICE_CONTROL_UNAVAILABLE') return '该设备不支持自动执行，未下发指令；可改为登记人工执行结果。';
   // 未登记连接是可补救的配置问题，与“设备根本不支持自动执行”不是一回事，两句必须分开说。
   if (error.code === 'DEVICE_NOT_BOUND') return '设备未登记凌云连接，未下发指令；请运维补登记后重试。';
+  // 离线是现场问题，与"未登记"（运维）和"不支持"（换通道）的补救方都不同（13-14）。
+  if (error.code === 'DEVICE_OFFLINE') return '设备未启用或不在线，未下发指令；请现场处理后重试。';
+  if (error.code === 'TARGET_NOT_ACTIVE') return '该目标最近没有观测记录，无法确认它仍在活动，不能对它派发处置。';
+  if (error.code === 'POLICY_REQUIRES_CONFIRMED_EVENT') return '该动作要求事件先经人工核实，请先完成核实再申请。';
   return error.message || fallback;
 }
 

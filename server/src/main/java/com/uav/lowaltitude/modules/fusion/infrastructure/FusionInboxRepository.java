@@ -9,6 +9,7 @@ import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 import com.uav.lowaltitude.modules.fusion.application.FusionProperties;
 import com.uav.lowaltitude.modules.fusion.ingest.InboxSourceRouter;
@@ -67,7 +68,15 @@ public class FusionInboxRepository {
 
     public record InboxRow(String inboxId, String source, String sourceMsgId, String sourceId, long receivedAtMillis, String payloadJson) { }
 
-    /** 兼容旧签名：不限次数（仅测试/种子直调使用）。 */
+    /**
+     * 兼容旧签名：不限次数（仅测试/种子直调使用）。
+     *
+     * <b>这里的 @Transactional 不能省（决策 15-40）</b>：本方法是 this 自调用四参版，
+     * Spring 的事务代理对自调用不生效——四参上的注解管不到这条路径。种子与并发用例走的都是三参，
+     * 少了它这两步就各自 autocommit、第一步的行锁立刻释放，并发领取者又会选到同一批。
+     * 实测过：只删掉这一个注解，`FusionPipelineReplayTest` 里 claim 就跑在事务外了。
+     */
+    @Transactional
     public List<InboxRow> claim(long nowMillis, int batch, long leaseMillis) {
         return claim(nowMillis, batch, leaseMillis, Integer.MAX_VALUE);
     }
@@ -80,7 +89,25 @@ public class FusionInboxRepository {
      *
      * 领取时把 fusion_attempts 加一，且只领 fusion_attempts < maxAttempts 的行：
      * 租约过期的 PROCESSING 行可以被重领，但同一毒帧最多重领 maxAttempts 次，之后由 {@link #failExhausted} 置 FAILED。
+     *
+     * **领取分两步，且必须在同一个事务里（决策 15-40）。**
+     *
+     * 第一步 `SELECT ... FOR UPDATE SKIP LOCKED` 把这一批 id 锁下来（决策 15-38：没有 SKIP LOCKED，
+     * 两个领取者会选中同一批，后到的在行锁上等、等到了重检已不成立，于是领到 **0 行**而不是"跳过去领下一批"；
+     * CI 慢机器上必现，本机单跑全看时序运气）。第二步只更新这批 id。
+     *
+     * **为什么不能把这个 SELECT 塞回 UPDATE 的子查询里**：PostgreSQL 会把它计划成 Nested Loop Semi Join，
+     * 子查询对每一行外层记录**重新执行**，而 LockRows 会把本语句刚改成 PROCESSING 的行剔掉、再取"下 20 行"——
+     * 循环下来 batch=20 一次领走 40 行（真 PG 上实测 UPDATE 40）。加 FOR UPDATE 之前子查询是一次性求值，
+     * 所以那时不会超领。也就是说"后到者领 0 行"与"超领一倍"是同一处 SQL 的两种病，不是修一个引出另一个。
+     * CTE 物化（`WITH picked AS MATERIALIZED ... UPDATE ... FROM picked`）在 PG 上验证可行，
+     * 但 H2 没有 `UPDATE ... FROM`，也未必认 `AS MATERIALIZED`——两步法两边都能跑，也更直白。
+     *
+     * 同一事务内锁一直持有到提交，所以第一步选中的行不会被别人抢走。
+     * 第二步的 status/attempts 重检**保留**：锁挡得住并发领取者，挡不住"选完到更新之间被 failExhausted
+     * 之类改掉"，两道防线管的不是同一件事。
      */
+    @Transactional
     public List<InboxRow> claim(long nowMillis, int batch, long leaseMillis, int maxAttempts) {
         String token = UUID.randomUUID().toString();
         Map<String, Object> p = new HashMap<>();
@@ -88,9 +115,14 @@ public class FusionInboxRepository {
         p.put("max", maxAttempts);
         List<String> prefixes = claimablePrefixes();
         putPrefixes(p, prefixes);
+        List<String> ids = jdbc.queryForList("SELECT inbox_id FROM inbox_message"
+                + " WHERE (status='RECEIVED' OR (status='PROCESSING' AND lease_until<:now))"
+                + " AND fusion_attempts<:max AND " + prefixSql(prefixes) + " AND source_id IS NOT NULL AND payload IS NOT NULL"
+                + " ORDER BY received_at ASC, ingest_seq ASC FETCH FIRST :batch ROWS ONLY FOR UPDATE SKIP LOCKED", p, String.class);
+        if (ids.isEmpty()) return List.of();
+        p.put("ids", ids);
         int claimed = jdbc.update("UPDATE inbox_message SET status='PROCESSING', lease_token=:token, lease_until=:until, fusion_attempts=fusion_attempts+1"
-                + " WHERE inbox_id IN (SELECT inbox_id FROM inbox_message WHERE (status='RECEIVED' OR (status='PROCESSING' AND lease_until<:now))"
-                + " AND fusion_attempts<:max AND " + prefixSql(prefixes) + " AND source_id IS NOT NULL AND payload IS NOT NULL ORDER BY received_at ASC, ingest_seq ASC FETCH FIRST :batch ROWS ONLY)"
+                + " WHERE inbox_id IN (:ids)"
                 + " AND (status='RECEIVED' OR (status='PROCESSING' AND lease_until<:now)) AND fusion_attempts<:max", p);
         if (claimed == 0) return List.of();
         return jdbc.query("SELECT inbox_id,source,source_msg_id,source_id,received_at,CAST(payload AS VARCHAR) AS payload_text FROM inbox_message WHERE lease_token=:token ORDER BY received_at ASC, ingest_seq ASC",

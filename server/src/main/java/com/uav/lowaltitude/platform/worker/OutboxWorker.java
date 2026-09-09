@@ -5,6 +5,7 @@ import java.util.Map;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -14,8 +15,16 @@ import com.uav.lowaltitude.platform.time.AppClock;
 
 /**
  * 同应用 Worker：通过条件更新领取到期 Outbox。处理器以业务 ID 幂等，服务重启后可继续扫描。
+ *
+ * 可以关（决策 15-39，与 {@code MqttSessionSupervisor} 同形）：默认开，`app.outbox.enabled=false` 时连 bean 都不注册。
+ * 起因是 PG 用例类 `@AfterAll` 拆 schema 到上下文关闭之间有一段窗口，这个 400ms 轮询还在跑 `expireCommands`，
+ * CI 日志里落下 6 条 `relation "device_command" does not exist`。真正的风险不在那几行噪音：
+ * 它**不是只读的**（会把超时指令置 TIMED_OUT 并写设备事件），哪天 PG 用例种了带 deadline 的 device_command，
+ * 就会有一个后台写手在断言中途改行——那种红查起来极贵，且看着像业务代码的错。
+ * 用产品开关而不是去改九个测试类：测试要关掉的是"后台线程在跑"，那本来就该是应用自己的开关。
  */
 @Component
+@ConditionalOnProperty(name = "app.outbox.enabled", havingValue = "true", matchIfMissing = true)
 public class OutboxWorker {
 
     private static final Logger log = LoggerFactory.getLogger(OutboxWorker.class);

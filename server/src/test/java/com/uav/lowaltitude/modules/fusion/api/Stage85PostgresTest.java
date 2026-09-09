@@ -719,9 +719,11 @@ class Stage85PostgresTest {
 
         // 四前缀全开，才谈得上"四前缀并发领取"。
         fusionProperties.getLivePromotion().setEnabled(true);
+        // 每人领一半：可领行数 >= 2*batch，所以两人各领满一批是**确定的**结果，不是碰巧。
+        int perClaim = Math.max(1, (int) claimable / 2);
         List<List<FusionInboxRepository.InboxRow>> results;
         try {
-            results = raceClaims(Math.max(1, (int) claimable / 2));
+            results = raceClaims(perClaim);
         } finally {
             fusionProperties.getLivePromotion().setEnabled(false);
         }
@@ -732,8 +734,14 @@ class Stage85PostgresTest {
         assertThat(first).as("同一行被两个领取者同时拿到，就会被处理两次").doesNotContainAnyElementsOf(second);
         assertThat(first).doesNotHaveDuplicates();
         assertThat(second).doesNotHaveDuplicates();
-        assertThat(first.size() + second.size()).as("两次领取合计不得超过可领行数（超了就说明有行被领了两次）")
-                .isLessThanOrEqualTo((int) claimable).isPositive();
+        // 合计**恰好**等于两批之和：只断言"不超过"的话，一个领取者少领、甚至领到 0 也照样通过——
+        // 而"后到的那个领到 0"正是 15-38/15-40 两轮要消除的症状本身。
+        assertThat(first.size() + second.size())
+                .as("两人各领满一批才算并发领取真的成立（claimable=" + claimable + " perClaim=" + perClaim
+                        + " first=" + first.size() + " second=" + second.size() + "）")
+                .isEqualTo(2 * perClaim);
+        assertThat(first.size() + second.size()).as("合计不得超过可领行数（超了就说明有行被领了两次）")
+                .isLessThanOrEqualTo((int) claimable);
         assertThat(jdbc.queryForObject("select coalesce(max(fusion_attempts),0) from inbox_message where source like ?", Integer.class, "%" + device))
                 .as("没有任何一行被领两次").isLessThanOrEqualTo(1);
         // 收尾，别把 PROCESSING 行留给后面的用例。

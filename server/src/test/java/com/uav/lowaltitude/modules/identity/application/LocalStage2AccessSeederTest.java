@@ -50,8 +50,16 @@ class LocalStage2AccessSeederTest {
         assertThat(jdbc.queryForObject(
                 "select scope_mode from app_user where account='admin1'", String.class))
                 .isEqualTo("ALL");
-        assertThat(legacyAccessService.permissionCodes("ROLE-ADMIN"))
-                .noneMatch(code -> code.contains(":"));
+        // 决策 16-4 起 permission_codes 里**有意**混着两种码：模块码带 .read|op|auth 后缀，动作码给原文。
+        // 原来这里断言"不含冒号"，那是 16-4 之前的口径。现在要守的是两者**不许串味**——
+        // 出现 disposal:approve.read 这种双重编码，前端两边都认不出来。
+        for (String code : legacyAccessService.permissionCodes("ROLE-ADMIN")) {
+            if (code.contains(":")) {
+                assertThat(code).as("动作码给原文").doesNotContain(".read", ".op", ".auth");
+            } else {
+                assertThat(code).as("模块码带等级后缀").matches(".+\\.(read|op|auth)$");
+            }
+        }
 
         seeder.run(new DefaultApplicationArguments(new String[0]));
         seeder.run(new DefaultApplicationArguments(new String[0]));

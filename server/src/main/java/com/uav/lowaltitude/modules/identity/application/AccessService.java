@@ -88,6 +88,10 @@ public class AccessService {
             if (value >= 2) codes.add(permission.getPermissionCode() + ".op");
             if (value >= 3) codes.add(permission.getPermissionCode() + ".auth");
         }
+        // 决策 16-4：模块码之后追加动作码**原文**（如 disposal:approve）。动作本身就是一个动作，
+        // 没有 read/op/auth 三级之分，套后缀反而要前端再拆一次。此前不下发，前端只能硬编码或等 403——
+        // 用户点下去才知道没权限。模块码与 menu_keys 一概不动。
+        codes.addAll(superAdmin ? mapper.listActionCodeCatalog() : mapper.listActionCodesForRole(roleCode));
         return List.copyOf(codes);
     }
 

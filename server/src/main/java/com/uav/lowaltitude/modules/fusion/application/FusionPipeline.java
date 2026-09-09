@@ -50,6 +50,11 @@ import com.uav.lowaltitude.modules.fusion.infrastructure.RawTrackRepository;
 import com.uav.lowaltitude.modules.fusion.infrastructure.RawTrackRepository.LinkRow;
 import com.uav.lowaltitude.modules.fusion.infrastructure.RawTrackRepository.LinkState;
 import com.uav.lowaltitude.modules.fusion.infrastructure.RawTrackRepository.TrackRow;
+import com.uav.lowaltitude.modules.fusion.infrastructure.LineageRepository;
+import com.uav.lowaltitude.modules.fusion.domain.MergeSplitEvaluator;
+import java.util.stream.Stream;
+import java.time.ZoneOffset;
+import java.time.OffsetDateTime;
 
 /**
  * 一帧（一个来源一个时刻的多目标观测）的处理：解析 → 按分区分组 → α-β 滤波 → 门限/匈牙利关联 → ID 状态机 → 写原始层 → 交融合层。
@@ -71,12 +76,15 @@ public class FusionPipeline {
     private final ObjectProvider<FusedLayerWriter> fusedLayerWriter;
     private final InboxSourceRouter router;
     private final ObjectMapper json;
+    private final LineageRepository lineages;
+    private final FusionEventEmitter events;
 
     public FusionPipeline(ObservationRepository observations, RawTrackRepository rawTracks, IdentityRepository identities,
             AssociationPendingRepository pendings, FusionConfigLoader configLoader, ObjectProvider<FusedLayerWriter> fusedLayerWriter,
-            InboxSourceRouter router, ObjectMapper json) {
+            InboxSourceRouter router, ObjectMapper json, LineageRepository lineages, FusionEventEmitter events) {
         this.observations = observations; this.rawTracks = rawTracks; this.identities = identities; this.pendings = pendings;
         this.configLoader = configLoader; this.fusedLayerWriter = fusedLayerWriter; this.router = router; this.json = json;
+        this.lineages = lineages; this.events = events;
     }
 
     public record FrameOutcome(int observationCount, int targetCount, List<String> targetIds) { }
@@ -169,11 +177,18 @@ public class FusionPipeline {
         // ③ 身份与原始层写入。
         Map<String, List<SourceEstimate>> estimatesByTarget = new LinkedHashMap<>();
         Map<String, Instant> observedByTarget = new LinkedHashMap<>();
+        Map<String, String> splitOrigins = new LinkedHashMap<>();
         for (int i = 0; i < parsed.size(); i++) {
             SourceObservation observation = parsed.get(i);
             observations.insert(observation);
             String targetId = assignedTarget[i];
-            if (targetId == null) targetId = createTarget(observation, machine, frame.observedAt());
+            if (targetId == null) {
+                // 决策 16-2：同一来源在同一帧里还有另一条回波、且那条落在一个**本帧之前就存在**的目标上，
+                // 那么这条新回波很可能是那个目标分裂出来的，而不是凭空冒出来的第三方。记下来交给 autoSplit 计帧。
+                String origin = sameSourceOrigin(parsed, assignedTarget, byTarget, i);
+                targetId = createTarget(observation, machine, frame.observedAt());
+                if (origin != null) splitOrigins.put(targetId, origin);
+            }
             else identities.touchTarget(targetId, observation.observedAt(), receivedAt);
             assignedTarget[i] = targetId;
             SourceEstimate estimate = writeRawLayer(observation, updates.get(i), accuracies.get(i), targetId, params, receivedAt);
@@ -218,6 +233,11 @@ public class FusionPipeline {
             estimatesByTarget.putIfAbsent(targetId, List.of());
             observedByTarget.putIfAbsent(targetId, frame.observedAt());
         }
+
+        // ④.5 自动合并（决策 16-1）：放在状态推进之后、交融合层之前——此时本帧的预测位置、状态、首见时刻都在手上，
+        // 被并目标要在进 ⑤ 之前从本帧结果里摘掉，否则融合层会为一个已经不存在的目标再写一帧。
+        autoMerge(domain, frame.observedAt(), params, machine, predicted, byTarget, statuses, estimatesByTarget, observedByTarget);
+        autoSplit(domain, frame.observedAt(), params, machine, splitOrigins, estimatesByTarget);
 
         // ⑤ 交给融合层（E2）。E2 未落地时 ObjectProvider 取不到 Bean，用无操作实现，原始层照常入库。
         FusedLayerWriter writer = fusedLayerWriter.getIfAvailable(() -> f -> { });
@@ -293,6 +313,167 @@ public class FusionPipeline {
             if (existing == null || state.accuracyM() < existing.accuracyM()) out.put(link.targetId(), state);
         }
         return out;
+    }
+
+    /**
+     * 自动合并（决策 16-1）：同域两个 STABLE 目标连续 `merge_min_frames` 帧落在 `merge_max_dist_sigma·σ` 内就并掉。
+     *
+     * 与人工合并（`FusionCommandService.merge`）写的是同一套东西，但有三处按 16-1 特意不同：
+     * `operator_kind=SYSTEM`（没有操作人）、**不递增 `target.version`**（沿用 8-6：系统写入不与人工写入争版本，
+     * 否则用户正在编辑的乐观锁会被后台随机打断）、**links 不迁移**（原始层的 link 记的是"哪条来源轨迹属于谁"，
+     * 迁移会让历史回放对不上；别名解析已经能把旧 id 指到 survivor）。
+     */
+    private void autoMerge(FusionDomainKey domain, Instant frameAt, FusionParams params, IdentityStateMachine machine,
+            Map<String, State> predicted, Map<String, ActiveTarget> byTarget, Map<String, TrackStatus> statuses,
+            Map<String, List<SourceEstimate>> estimatesByTarget, Map<String, Instant> observedByTarget) {
+        MergeSplitEvaluator evaluator = new MergeSplitEvaluator(machine);
+        List<MergeSplitEvaluator.TargetSnapshot> snapshots =
+                mergeSnapshots(estimatesByTarget, predicted, byTarget, statuses);
+        if (snapshots.size() < 2) return;
+
+        int expireFrames = params.integer("association", "pending_expire_frames");
+        OffsetDateTime at = frameAt.atOffset(ZoneOffset.UTC);
+        Set<String> merged = new LinkedHashSet<>();
+        for (MergeSplitEvaluator.Candidate candidate : evaluator.mergeCandidates(snapshots)) {
+            // 一帧里同一个目标只并一次：a+b 并完之后 b 已经不在了，b+c 这一对本帧不能再动。
+            if (merged.contains(candidate.aId()) || merged.contains(candidate.bId())) continue;
+            String pendingKey = "MANY_TO_ONE|" + String.join(",", Stream.of(candidate.aId(), candidate.bId()).sorted().toList());
+            AssociationPendingRepository.PendingRow open = pendings.findOpen(domain.asKey(), pendingKey);
+            int framesSeen = 1;
+            String pendingId;
+            if (open == null) {
+                pendingId = pendings.insert(domain.asKey(), null, write(List.of(candidate.aId(), candidate.bId())),
+                        "MANY_TO_ONE", pendingKey, frameAt);
+            } else {
+                pendingId = open.pendingId();
+                framesSeen = open.framesSeen() + 1;
+                pendings.touch(pendingId, frameAt, framesSeen);
+            }
+            if (framesSeen > expireFrames) {
+                // 计到过期帧数还没达阈说明判定被别的条件挡着，留着只会一直占位。
+                pendings.resolve(pendingId, "EXPIRED", frameAt);
+                continue;
+            }
+            if (!evaluator.mergeReady(framesSeen)) continue;
+
+            String survivor = candidate.survivorId(), loser = candidate.mergedId();
+            String lineageId = UUID.randomUUID().toString();
+            Map<String, Object> snapshotJson = new LinkedHashMap<>();
+            for (String id : List.of(survivor, loser)) {
+                ActiveTarget row = byTarget.get(id);
+                if (row != null) snapshotJson.put(id, Map.of("target_no", row.target().targetNo(),
+                        "object_type_code", row.target().objectTypeCode() == null ? "" : row.target().objectTypeCode(),
+                        "version", row.status().version()));
+            }
+            lineages.insertLineage(new LineageRepository.LineageInsert(lineageId, "MERGE", at, survivor, null,
+                    write(List.of(loser)), write(List.of(survivor)),
+                    write(Map.of("reason", "auto", "distance_m", candidate.distanceM(), "threshold_m", candidate.thresholdM(),
+                            "frames_seen", framesSeen)),
+                    ALGO_VERSION, params.configVersion(), "SYSTEM", null, null, write(snapshotJson), at));
+            // 被并目标行不删不改名：告警、事件、风险里的历史外键必须继续可解析，只加别名与状态。
+            lineages.upsertAlias(loser, survivor, lineageId, at);
+            lineages.redirectAliases(loser, survivor, lineageId, at);
+            lineages.upsertTrackStatus(loser, "MERGE", at);
+            events.emit(FusionEventEmitter.MERGED, survivor, at,
+                    Map.of("lineage_id", lineageId, "merged_target_ids", List.of(loser), "operator_kind", "SYSTEM"));
+            pendings.resolve(pendingId, "MERGED", frameAt);
+
+            estimatesByTarget.remove(loser);
+            observedByTarget.remove(loser);
+            statuses.remove(loser);
+            merged.add(loser);
+        }
+    }
+
+    /**
+     * 本帧有资格参与合并的目标（决策 16-8）。
+     *
+     * **必须本帧真的被观测命中**：④ 会把同分区**所有活目标**都放进 `estimatesByTarget`（空列表，供 ⑤ 照常写帧），
+     * 直接遍历那个 keySet 的话，库里任何一个陈旧 STABLE 目标——哪怕本轮一次都没被观测到——
+     * 只要预测位置落在 2σ 内就成了候选，而且"每帧都在"，必然凑够 `merge_min_frames`。
+     * 升级路径验收上就这么把活目标并进了阶段 2/8 的种子目标；全新库撞不到，因为那里没有陈旧目标同处一个分区。
+     */
+    static List<MergeSplitEvaluator.TargetSnapshot> mergeSnapshots(
+            Map<String, List<SourceEstimate>> estimatesByTarget, Map<String, State> predicted,
+            Map<String, ActiveTarget> byTarget, Map<String, TrackStatus> statuses) {
+        List<MergeSplitEvaluator.TargetSnapshot> snapshots = new ArrayList<>();
+        for (Map.Entry<String, List<SourceEstimate>> entry : estimatesByTarget.entrySet()) {
+            if (entry.getValue().isEmpty()) continue;
+            State state = predicted.get(entry.getKey());
+            ActiveTarget candidate = byTarget.get(entry.getKey());
+            // 本帧新建的目标没有预测态，也还是 TENTATIVE，不参与合并。
+            if (state == null || candidate == null) continue;
+            snapshots.add(new MergeSplitEvaluator.TargetSnapshot(entry.getKey(), statuses.get(entry.getKey()),
+                    state.longitude(), state.latitude(), state.accuracyM(), state.vx(), state.vy(),
+                    candidate.target().firstSeenAt()));
+        }
+        return snapshots;
+    }
+
+    /** 本帧同一来源的另一条回波落在了哪个既有目标上；没有就返回 null。 */
+    private String sameSourceOrigin(List<SourceObservation> parsed, String[] assignedTarget,
+            Map<String, ActiveTarget> byTarget, int index) {
+        String sourceId = parsed.get(index).sourceId();
+        for (int j = 0; j < parsed.size(); j++) {
+            if (j == index || !sourceId.equals(parsed.get(j).sourceId())) continue;
+            String other = assignedTarget[j];
+            // 必须是本帧之前就存在的目标：两条都是本帧新建时谁也不是谁分裂出来的。
+            if (other != null && byTarget.containsKey(other)) return other;
+        }
+        return null;
+    }
+
+    /**
+     * 自动分裂（决策 16-2）：同源同帧的第二回波先记 `association_pending(ONE_TO_MANY)` 计帧，
+     * 连续 `split_min_frames` 帧且间距 ≥ `split_min_separation_m` 才认。
+     *
+     * **原目标保留 ID 继续存活**，不按契约原文"终止原目标 + 两个新 ID"：态势页上一直在跟的目标突然换号，
+     * 比多一个目标更难解释。达阈后给新目标补一行 `op=SPLIT, origin_target_id=原目标` 的血缘。
+     *
+     * 注意是**补一行**而不是改写创建时那行 CREATE：`target_lineage` 在 PostgreSQL 上由
+     * `trg_stage8_lineage_append_only` 守着只增不改，UPDATE 会直接被拒——而 H2 没有这个触发器，
+     * 照"改写"写会是又一个"H2 绿、PG 红"。CREATE 那行记的是创建当时的事实，本就不该抹掉。
+     */
+    private void autoSplit(FusionDomainKey domain, Instant frameAt, FusionParams params, IdentityStateMachine machine,
+            Map<String, String> splitOrigins, Map<String, List<SourceEstimate>> estimatesByTarget) {
+        MergeSplitEvaluator evaluator = new MergeSplitEvaluator(machine);
+        for (Map.Entry<String, String> entry : splitOrigins.entrySet()) {
+            String pendingKey = "ONE_TO_MANY|" + entry.getValue() + "," + entry.getKey();
+            if (pendings.findOpen(domain.asKey(), pendingKey) == null) {
+                pendings.insert(domain.asKey(), null, write(List.of(entry.getValue(), entry.getKey())),
+                        "ONE_TO_MANY", pendingKey, frameAt);
+            }
+        }
+        int expireFrames = params.integer("association", "pending_expire_frames");
+        OffsetDateTime at = frameAt.atOffset(ZoneOffset.UTC);
+        for (AssociationPendingRepository.PendingRow pending : pendings.listOpen(domain.asKey(), "ONE_TO_MANY")) {
+            String[] pair = pending.pendingKey().substring("ONE_TO_MANY|".length()).split(",", 2);
+            if (pair.length != 2) continue;
+            String origin = pair[0], child = pair[1];
+            double separation = separationM(estimatesByTarget, origin, child);
+            if (Double.isNaN(separation)) continue;   // 本帧没同时看到这两个，不计也不重置
+            int framesSeen = splitOrigins.containsKey(child) ? pending.framesSeen() : pending.framesSeen() + 1;
+            if (framesSeen != pending.framesSeen()) pendings.touch(pending.pendingId(), frameAt, framesSeen);
+            if (framesSeen > expireFrames) { pendings.resolve(pending.pendingId(), "EXPIRED", frameAt); continue; }
+            if (!evaluator.splitReady(framesSeen, separation)) continue;
+
+            identities.insertLineage("SPLIT", frameAt, child, origin, write(List.of(child)), write(List.of(origin)),
+                    write(Map.of("reason", "auto", "separation_m", separation, "frames_seen", framesSeen)),
+                    ALGO_VERSION, params.configVersion(), write(Map.of()));
+            events.emit(FusionEventEmitter.SPLIT, child, at,
+                    Map.of("origin_target_id", origin, "separation_m", separation, "operator_kind", "SYSTEM"));
+            pendings.resolve(pending.pendingId(), "SPLIT", frameAt);
+        }
+    }
+
+    /** 本帧这两个目标之间的间距；有一个没被看到就返回 NaN。 */
+    private static double separationM(Map<String, List<SourceEstimate>> estimatesByTarget, String a, String b) {
+        List<SourceEstimate> ea = estimatesByTarget.get(a), eb = estimatesByTarget.get(b);
+        if (ea == null || eb == null || ea.isEmpty() || eb.isEmpty()) return Double.NaN;
+        SourceEstimate pa = ea.get(0), pb = eb.get(0);
+        if (pa.longitude() == null || pa.latitude() == null || pb.longitude() == null || pb.latitude() == null) return Double.NaN;
+        double[] offset = AlphaBetaFilter.toEnu(pa.longitude(), pa.latitude(), pb.longitude(), pb.latitude());
+        return Math.hypot(offset[0], offset[1]);
     }
 
     private void recordPending(FusionDomainKey domain, SourceObservation observation, List<String> candidateTargetIds, String reason, Instant at) {

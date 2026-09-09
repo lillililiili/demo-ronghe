@@ -41,6 +41,22 @@ class AuthApiTest {
                 .andExpect(jsonPath("$.data.permission_codes[?(@ == 'countermeasure.auth')]").exists());
     }
 
+    /**
+     * 决策 16-4：`/auth/me` 追加动作码原文。此前只下发模块码，前端没法照它决定动作按钮的显隐，
+     * 只能硬编码或等 403——用户点下去才知道自己没权限，这不是"提示"，是让人白点一次。
+     */
+    @Test
+    void meAlsoCarriesActionCodesSoTheFrontEndCanGateButtons() throws Exception {
+        String token = loginToken();
+        mvc.perform(get("/api/v1/auth/me").header("Authorization", bearer(token)))
+                .andExpect(status().isOk())
+                // 动作码给**原文**，不套 .read/.op/.auth：动作本身就是一个动作，没有三级之分。
+                .andExpect(jsonPath("$.data.permission_codes[?(@ == 'disposal:approve')]").exists())
+                .andExpect(jsonPath("$.data.permission_codes[?(@ == 'punishment:review')]").exists())
+                // 模块码原样保留，别为了加动作码把既有的挤掉。
+                .andExpect(jsonPath("$.data.permission_codes[?(@ == 'users.auth')]").exists());
+    }
+
     @Test
     void unauthenticatedRequestsReturn401() throws Exception {
         mvc.perform(get("/api/v1/devices"))

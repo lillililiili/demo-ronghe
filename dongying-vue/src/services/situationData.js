@@ -40,24 +40,32 @@ function num(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-/** MultiPolygon 只取每个多边形的外环（决策 11-2）；孔洞 map.js 画不了，本期忽略。TODO：孔洞需要 map.js 支持多环。 */
-export function outerRings(boundary) {
+/** MultiPolygon → 每个多边形的全部环（第 0 环是外环，其余是孔洞，决策 16-3）。
+    外环画不出来（点数不足）就整个多边形不画；坐标里有非数字则整条几何作废。 */
+export function polygonRings(boundary) {
   if (!boundary || boundary.type !== 'MultiPolygon' || !Array.isArray(boundary.coordinates)) return [];
-  const rings = [];
+  const polygons = [];
   for (const polygon of boundary.coordinates) {
     if (!Array.isArray(polygon) || !polygon.length) continue;
-    const ring = polygon[0];
-    if (!Array.isArray(ring) || ring.length < 3) continue;
-    const points = [];
-    for (const point of ring) {
-      const lon = num(Array.isArray(point) ? point[0] : null);
-      const lat = num(Array.isArray(point) ? point[1] : null);
-      if (lon === null || lat === null) return [];
-      points.push([lon, lat]);
+    const rings = [];
+    let voided = false;
+    for (const [index, ring] of polygon.entries()) {
+      if (!Array.isArray(ring) || ring.length < 3) {
+        if (index === 0) { voided = true; break; }
+        continue;
+      }
+      const points = [];
+      for (const point of ring) {
+        const lon = num(Array.isArray(point) ? point[0] : null);
+        const lat = num(Array.isArray(point) ? point[1] : null);
+        if (lon === null || lat === null) return [];
+        points.push([lon, lat]);
+      }
+      rings.push(points);
     }
-    rings.push(points);
+    if (!voided && rings.length) polygons.push(rings);
   }
-  return rings;
+  return polygons;
 }
 
 /** 外环的包围盒中心：map.js 画标注时必须有 center，缺了会直接抛错。 */
@@ -82,21 +90,22 @@ export function toAirspaces(details) {
     if (!version) continue;
     const meta = airspaceKindMeta(version.kind_code);
     if (!meta) continue;
-    const rings = outerRings(version.boundary);
-    rings.forEach((ring, index) => {
-      const center = ringCenter(ring);
+    const polygons = polygonRings(version.boundary);
+    polygons.forEach((rings, index) => {
+      const center = ringCenter(rings[0]);
       if (!center) return;
       // id 会被 map.js 直接画到图上（标注第二行），所以这里放**业务编号**而不是内部 ID。
       // 内部 ID 另存 airspaceId，只用于程序内引用，不上屏。
       const airspaceNo = detail.airspace_no || detail.airspace_id;
       out.push({
-        id: rings.length > 1 ? `${airspaceNo}#${index + 1}` : airspaceNo,
+        id: polygons.length > 1 ? `${airspaceNo}#${index + 1}` : airspaceNo,
         airspaceId: detail.airspace_id,
         name: detail.name || airspaceNo || '',
         type: meta.type,
         color: meta.color,
         layer: meta.layer,
-        poly: ring,
+        // rings 是全部环（第 0 环外环，其余是孔洞），map.js 按 even-odd 填充。
+        rings,
         center,
         alt: num(version.max_altitude_m)
       });

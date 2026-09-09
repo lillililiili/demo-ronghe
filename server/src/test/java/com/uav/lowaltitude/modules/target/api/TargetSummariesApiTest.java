@@ -6,6 +6,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 import org.junit.jupiter.api.AfterEach;
@@ -48,6 +50,7 @@ class TargetSummariesApiTest {
         jdbc.update("delete from rule_evaluation where evaluation_id like 'sum-eval-%'");
         jdbc.update("delete from rule_run where run_id like 'sum-run-%'");
         jdbc.update("delete from source_observation where source_id='sum-aoa-src'");
+        jdbc.update("delete from target_track_status where target_id like 'sum-target-%'");
         jdbc.update("delete from target_source_link where target_id like 'sum-target-%'");
         jdbc.update("delete from target_latest_state where target_id like 'sum-target-%'");
         jdbc.update("delete from target where target_id like 'sum-target-%'");
@@ -138,6 +141,47 @@ class TargetSummariesApiTest {
         assertThat(state.has("pilot_location")).isTrue();
         assertThat(state.path("bearing_deg").decimalValue()).isNotNull();
         assertThat(state.path("bearing_device_id").asText()).isNotBlank();
+    }
+
+    /**
+     * 决策 16-6：被合并的目标不该再出现在列表里。
+     *
+     * 合并本身早就落库了（血缘、别名、`track_status=MERGE` 都对），但 `GET /targets` 从不看
+     * `target_track_status`，于是用户在态势页上看到的还是"同一架出现两次"——功能在库里闭合了，
+     * 在屏幕上没有。被并者按定义就是某个存活目标的别名，列表里不该有它自己的一行。
+     */
+    @Test
+    void mergedTargetsAreHiddenFromTheDefaultListButCanBeAskedFor() throws Exception {
+        String survivor = target(), merged = target();
+        mergeInto(merged);
+
+        List<String> defaultIds = idsOf("/api/v1/targets?size=100");
+        assertThat(defaultIds).contains(survivor);
+        assertThat(defaultIds).as("被并者不该出现在默认列表").doesNotContain(merged);
+
+        // 详情不变：告警、事件、风险里存的是旧 id，历史数据必须还能打开。
+        mvc.perform(get("/api/v1/targets/{id}", merged).header("Authorization", bearer(reader)))
+                .andExpect(status().isOk());
+        // 要查也查得到，只是得明说。
+        assertThat(idsOf("/api/v1/targets?size=100&include_merged=true"))
+                .as("显式要求时应当带上").contains(merged, survivor);
+    }
+
+    private List<String> idsOf(String url) throws Exception {
+        List<String> ids = new ArrayList<>();
+        data(mvc.perform(get(url).header("Authorization", bearer(reader))).andExpect(status().isOk()))
+                .path("items").forEach(item -> ids.add(item.path("target_id").asText()));
+        return ids;
+    }
+
+    /**
+     * 把 merged 标成已被合并。规则只看 `target_track_status`，所以夹具也只写这一行——
+     * 别名与血缘是合并的其他产物，与"列表该不该显示"无关，写进来只会让这条用例依赖更多东西。
+     */
+    private void mergeInto(String merged) {
+        Timestamp at = Timestamp.from(Instant.parse("2026-09-08T06:00:00Z"));
+        jdbc.update("insert into target_track_status (target_id,status,since,updated_at,version)"
+                + " values (?,'MERGE',?,?,0)", merged, at, at);
     }
 
     private void assertSummaries(JsonNode node) {

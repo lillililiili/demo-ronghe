@@ -28,6 +28,7 @@ import com.uav.lowaltitude.integration.replay.FusionReplayDatasetGenerator;
 class LocalStage8FusionReplaySeederTest {
     @Autowired JdbcTemplate jdbc;
     @Autowired LocalStage8FusionReplaySeeder seeder;
+    @Autowired com.uav.lowaltitude.integration.replay.FusionReplayRunner runner;
     @Autowired ApplicationArguments arguments;
 
     /** 直连数据集的四个 inbox 前缀（阶段 8.5 起种子摄取的是设备原始报文，不再是自建回放信封）。 */
@@ -75,6 +76,39 @@ class LocalStage8FusionReplaySeederTest {
         seeder.run(arguments);
         assertThat(counts()).isEqualTo(before);
         assertThat(jdbc.queryForObject("select count(*) from inbox_message where payload_hash='0000000000000000000000000000000000000000000000000000000000000000'", Long.class)).isEqualTo(1L);
+    }
+
+    /**
+     * 决策 16-7：**两个数据集的"灌过没有"必须各判各的。**
+     *
+     * 这是 16.1 捅出娄子的那处机制：`alreadyLoadedV2()` 原本按 `lingyun:`/`eo-edge:` **前缀合计**判断，
+     * 而阶段 16 的数据集来源也叫 `lingyun:radar:S16R1`——它的行会把 stage85 的缺行掩盖掉，
+     * 守卫看着"灌满了"其实没有。（16.1 里是另一半：数据集变大让条数判断失效，旧库重灌撞哈希、应用起不来。）
+     *
+     * 把 24 条 stage85 的行移走：真实情况下就是这 24 条没灌进去，守卫必须说"没灌满"。
+     * 前缀合计的写法会因为 stage16 的 24 条而仍然算作 180，这条用例就是钉它。
+     */
+    @Test
+    void eachDatasetIsJudgedOnItsOwnRowsNotOnASharedPrefixCount() {
+        seeder.run(arguments);
+        assertThat(runner.alreadyLoadedV2()).isTrue();
+        assertThat(runner.alreadyLoadedStage16()).isTrue();
+
+        jdbc.update("update inbox_message set source='archived:s85' where inbox_id in ("
+                + "select inbox_id from inbox_message where source='lingyun:radar:S85R1' order by inbox_id limit 24)");
+        try {
+            assertThat(runner.alreadyLoadedV2()).as("stage85 缺行不该被 stage16 的行掩盖").isFalse();
+            assertThat(runner.alreadyLoadedStage16()).as("stage16 不受 stage85 影响").isTrue();
+        } finally {
+            jdbc.update("update inbox_message set source='lingyun:radar:S85R1' where source='archived:s85'");
+        }
+    }
+
+    /** 两个数据集不许写出同一个 (source, record_no)——撞了的话连全新库都装不上。 */
+    @Test
+    void theTwoDatasetsNeverShareAMessageKey() {
+        assertThat(jdbc.queryForObject("select count(*) from (select source, source_msg_id from inbox_message"
+                + " group by source, source_msg_id having count(*) > 1) dup", Long.class)).isZero();
     }
 
     @Test

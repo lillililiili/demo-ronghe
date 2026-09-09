@@ -70,7 +70,7 @@ public class TargetReadRepository {
     }
 
     public TargetRow findTarget(String targetId, AccessDecision access) {
-        TargetQuery query = new TargetQuery(null, null, null, null, null, null, null);
+        TargetQuery query = new TargetQuery(null, null, null, null, null, null, null, true);
         Where where = targetWhere(query, access);
         where.sql.append(" AND t.target_id=:target_id");
         where.parameters.put("target_id", targetId);
@@ -169,6 +169,13 @@ public class TargetReadRepository {
     private Where targetWhere(TargetQuery query, AccessDecision access) {
         Where where = new Where();
         appendScope(where.sql, where.parameters, access);
+        // 决策 16-6：被合并的目标按定义就是某个存活目标的别名，列表里不该有它自己的一行——
+        // 否则用户在态势页上看到的仍是"同一架出现两次"，合并在库里做完了、在屏幕上没有。
+        // 详情不过滤：告警、事件、风险里存的是旧 id，历史数据必须还能打开。
+        if (!query.includeMerged) {
+            where.sql.append(" AND NOT EXISTS (SELECT 1 FROM target_track_status merged_status"
+                    + " WHERE merged_status.target_id=t.target_id AND merged_status.status='MERGE')");
+        }
         if (query.ownerOrgId != null) add(where, "t.owner_org_id", "owner_org_id", query.ownerOrgId);
         if (query.districtId != null) add(where, "t.district_id", "district_id", query.districtId);
         if (query.objectTypeCode != null) add(where, "t.object_type_code", "object_type_code", query.objectTypeCode);
@@ -421,7 +428,8 @@ public class TargetReadRepository {
     }
 
     public record TargetQuery(String sourceCode, String deviceId, String objectTypeCode,
-            OffsetDateTime seenFrom, OffsetDateTime seenTo, String ownerOrgId, String districtId) {
+            OffsetDateTime seenFrom, OffsetDateTime seenTo, String ownerOrgId, String districtId,
+            boolean includeMerged) {
     }
 
     public record TrackQuery(OffsetDateTime startedFrom, OffsetDateTime startedTo,

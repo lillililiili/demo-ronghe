@@ -170,6 +170,13 @@ public class FusionInboxRepository {
         throw new IllegalStateException("SOURCE_MESSAGE_CONFLICT: " + source + "#" + sourceMsgId + " 已存在且哈希不同");
     }
 
+    /** 某个来源已写入的条数：按数据集判断"灌过没有"要用它，前缀合计会把别的数据集也算进来。 */
+    public long countBySource(String source) {
+        Long value = jdbc.queryForObject("SELECT COUNT(*) FROM inbox_message WHERE source=:source",
+                Map.of("source", source), Long.class);
+        return value == null ? 0 : value;
+    }
+
     public long countBySourcePrefix(String sourcePrefix) {
         Long count = jdbc.queryForObject("SELECT COUNT(*) FROM inbox_message WHERE source LIKE :prefix", Map.of("prefix", sourcePrefix + "%"), Long.class);
         return count == null ? 0 : count;

@@ -118,15 +118,93 @@ class FusionPipelineReplayTest {
         assertThat(jdbc.queryForObject("select count(*) from target_source_link where external_target_id='R-B'", Long.class)).isEqualTo(1L);
     }
 
+    /**
+     * 决策 16-1：两个已稳定的目标收敛到 2σ 内并保持 ≥ merge_min_frames 帧后，系统自动合并。
+     *
+     * 断言站在"外面能看到什么"这一侧：旧 id 还解析得到（历史外键不能断）、被并者状态是 MERGE、
+     * 血缘是 SYSTEM 的一行 MERGE、事件发了 MERGED。**目标版本号不许动**——系统写入不与人工写入争版本，
+     * 否则用户正在编辑时乐观锁会被后台随机打断。
+     */
     @Test
-    void splitScenarioProducesSecondTargetAndLineageRows() {
-        String first = targetByExternal("R-M1"), second = targetByExternal("R-M2");
-        assertThat(first).isNotNull();
-        assertThat(second).isNotNull();
-        assertThat(first).isNotEqualTo(second);
-        // 每个新目标都有 CREATE 血缘；血缘只增（PostgreSQL 触发器守住，H2 这里只断言行存在）。
-        assertThat(jdbc.queryForObject("select count(*) from target_lineage where op='CREATE' and survivor_target_id in (?,?)", Long.class, first, second)).isEqualTo(2L);
-        assertThat(jdbc.queryForObject("select count(*) from target_lineage where op='STATUS' and survivor_target_id=?", Long.class, first)).isPositive();
+    void convergeMergeScenarioLeavesOneTargetWithSystemMergeLineage() {
+        // 合并由系统发起、没有操作人，所以先从血缘认出幸存者与被并者，再看"外面能看到什么"。
+        Map<String, Object> lineage = jdbc.queryForMap(
+                "select survivor_target_id, CAST(member_target_ids AS VARCHAR) as members from target_lineage"
+                + " where op='MERGE' and operator_kind='SYSTEM'");
+        String survivor = (String) lineage.get("survivor_target_id");
+        String loser = String.valueOf(lineage.get("members")).replaceAll("[^0-9a-fA-F-]", "");
+        assertThat(loser).as("被并者").hasSize(36).isNotEqualTo(survivor);
+
+        // 两个回波最终都落到幸存者身上——"同一架出现两次"在页面上消失了，这正是本决策要的效果。
+        assertThat(targetByExternal("R-CV1")).isEqualTo(survivor);
+        assertThat(targetByExternal("R-CV2")).isEqualTo(survivor);
+
+        // 旧 id 必须还解析得到：告警、事件、风险、交接里存的都是旧 id，断了就是历史数据打不开。
+        assertThat(jdbc.queryForObject("select current_target_id from target_current_alias where historical_target_id=?",
+                String.class, loser)).isEqualTo(survivor);
+        assertThat(jdbc.queryForObject("select status from target_track_status where target_id=?", String.class, loser))
+                .isEqualTo("MERGE");
+        assertThat(jdbc.queryForObject("select count(*) from fusion_event where event_type='MERGED' and target_id=?",
+                Long.class, survivor)).isPositive();
+
+        Map<String, Object> pending = jdbc.queryForMap(
+                "select frames_seen, resolution from association_pending where reason='MANY_TO_ONE'");
+        assertThat(pending.get("resolution")).isEqualTo("MERGED");
+        // 恰好 merge_min_frames 帧才动手：早一帧就并说明门限没起作用，晚了说明计数被谁重置过。
+        assertThat(((Number) pending.get("frames_seen")).intValue()).isEqualTo(4);
+
+        // 系统合并不碰版本号（决策 16-1 / 8-6）：否则用户正在编辑时乐观锁会被后台随机打断。
+        assertThat(jdbc.queryForObject("select version from target where target_id=?", Long.class, survivor)).isZero();
+    }
+
+    @Test
+    void splitScenarioKeepsTheOriginIdAndRecordsSystemSplitLineage() {
+        String origin = targetByExternal("R-M1"), child = targetByExternal("R-M2");
+        assertThat(origin).isNotNull();
+        assertThat(child).isNotNull();
+        // 决策 16-2：原目标**保留 ID 继续存活**，不按契约原文"终止原目标 + 两个新 ID"——
+        // 态势页上一直在跟的目标突然换号，比多出一个目标更难解释。
+        assertThat(origin).isNotEqualTo(child);
+        assertThat(jdbc.queryForObject("select count(*) from target where target_id=?", Long.class, origin)).isEqualTo(1L);
+
+        // 创建当时那行 CREATE 留着不动（血缘只增），达阈后**另补**一行 SPLIT 指回原目标。
+        assertThat(jdbc.queryForObject("select count(*) from target_lineage where op='CREATE' and survivor_target_id in (?,?)",
+                Long.class, origin, child)).isEqualTo(2L);
+        Map<String, Object> split = jdbc.queryForMap("select origin_target_id, operator_kind"
+                + " from target_lineage where op='SPLIT' and survivor_target_id=?", child);
+        assertThat(split.get("origin_target_id")).as("分裂血缘要指回原目标").isEqualTo(origin);
+        assertThat(split.get("operator_kind")).isEqualTo("SYSTEM");
+        assertThat(jdbc.queryForObject("select count(*) from fusion_event where event_type='SPLIT' and target_id=?",
+                Long.class, child)).isPositive();
+
+        // 决策 16-2 修订（审查 P1-1）：原目标的 target_track_status **不许**被写成 SPLIT。
+        // SPLIT 对引擎是终态（IdentityStateMachine.TrackState.terminal()），而原目标自己的回波还在，
+        // 写了它就不再被跟踪——分裂出去一个新目标，不该让原来那个当场"死"掉。
+        assertThat(jdbc.queryForObject("select status from target_track_status where target_id=?", String.class, origin))
+                .as("原目标状态").isNotEqualTo("SPLIT");
+
+        Map<String, Object> pending = jdbc.queryForMap(
+                "select frames_seen, resolution from association_pending where pending_key=?",
+                "ONE_TO_MANY|" + origin + "," + child);
+        assertThat(pending.get("resolution")).isEqualTo("SPLIT");
+        // 帧数与间距要同时够：只够帧数就分，抖一下就多一个目标。
+        assertThat(((Number) pending.get("frames_seen")).intValue()).isGreaterThanOrEqualTo(4);
+    }
+
+    /**
+     * 决策 16-2 的反面：同源第二回波一直只隔 40 m，够不上 `split_min_separation_m`(100)。
+     * 这种"贴着飞"的回波不该被判成分裂——计到 `pending_expire_frames` 就该以 EXPIRED 收场，
+     * 而不是一直挂着占位、或者凑够帧数后偷偷分出一个目标。
+     */
+    @Test
+    void nearEchoThatNeverSeparatesEnoughExpiresInsteadOfSplitting() {
+        String origin = targetByExternal("R-NE1"), child = targetByExternal("R-NE2");
+        assertThat(origin).isNotNull();
+        assertThat(child).isNotNull();
+        assertThat(jdbc.queryForObject("select resolution from association_pending where reason='ONE_TO_MANY'"
+                + " and pending_key=?", String.class, "ONE_TO_MANY|" + origin + "," + child)).isEqualTo("EXPIRED");
+        assertThat(jdbc.queryForObject("select count(*) from target_lineage where op='SPLIT' and survivor_target_id=?",
+                Long.class, child)).as("间距不够就不许分裂").isZero();
     }
 
     @Test

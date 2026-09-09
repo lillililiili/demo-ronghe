@@ -43,7 +43,10 @@ public class LocalStage8FusionReplaySeeder implements ApplicationRunner {
             new SourceSeed(FusionReplayDatasetGenerator.TDOA, "TDOA", "阶段八回放 TDOA", "seed-stage8-source-tdoa", "seed-stage8-device-tdoa", "DEV-STAGE8-TDOA-001"),
             new SourceSeed(FusionReplayDatasetGenerator.EO, "EO", "阶段八回放光电", "seed-stage8-source-eo", "seed-stage8-device-eo", "DEV-STAGE8-EO-001"),
             // 阶段 8.5 新增：AOA 只给方位不给位置，需要一个独立来源才能演示"有身份线索但不参与位置关联"。
-            new SourceSeed(FusionReplayDatasetGenerator.AOA, "AOA", "阶段八点五回放 AOA", "seed-stage85-source-aoa", "seed-stage85-device-aoa", "DEV-STAGE85-AOA-001"));
+            new SourceSeed(FusionReplayDatasetGenerator.AOA, "AOA", "阶段八点五回放 AOA", "seed-stage85-source-aoa", "seed-stage85-device-aoa", "DEV-STAGE85-AOA-001"),
+            // 阶段 16（决策 16-7）：合并/分裂演示自成一个数据集，来源也要自己的——
+            // 沿用 S85R1 会让两个数据集写出同一个 (source, record_no)，全新库都装不上。
+            new SourceSeed(FusionReplayDatasetGenerator.RADAR_S16, "RADAR", "阶段十六合并分裂演示雷达", "seed-stage16-source-radar", "seed-stage16-device-radar", "DEV-STAGE16-RADAR-001"));
     private static final Timestamp CREATED_AT = Timestamp.from(Instant.parse("2026-09-05T00:00:00Z"));
 
     private final JdbcTemplate jdbc;
@@ -66,14 +69,26 @@ public class LocalStage8FusionReplaySeeder implements ApplicationRunner {
         // 已灌过就不再灌：数据集内容会随版本漂移（如 1692e10 改了 SenseData 的 deviceId），
         // 旧构建灌进去的同键报文哈希不同，重灌会以 SOURCE_MESSAGE_CONFLICT 把应用拦在启动阶段。
         // 库里已有的观测与目标是那次灌入的产物，原样保留；要拿新数据集重来，换一个库。
+        // 按数据集各自判断：一个灌过了不影响另一个。决策 16-7 之前只有一个数据集，
+        // 内容一变大 alreadyLoadedV2() 的条数判断就自己失效，旧库重灌撞哈希、应用起不来。
+        boolean loaded = false;
         if (runner.alreadyLoadedV2()) {
             log.warn("stage 8.5 direct-access replay seed skipped: dataset already loaded (possibly by an older build); keeping existing rows");
-            return;
+        } else {
+            LoadReport report = runner.loadV2();
+            log.info("stage 8.5 direct-access replay seed: dataset={}, records={}, inserted={}, skipped={}",
+                    report.datasetId(), report.records(), report.inserted(), report.skipped());
+            loaded = true;
         }
-        LoadReport report = runner.loadV2();
-        int frames = drain();
-        log.info("stage 8.5 direct-access replay seed: dataset={}, records={}, inserted={}, skipped={}, frames processed={}",
-                report.datasetId(), report.records(), report.inserted(), report.skipped(), frames);
+        if (runner.alreadyLoadedStage16()) {
+            log.warn("stage 16 merge/split replay seed skipped: dataset already loaded; keeping existing rows");
+        } else {
+            LoadReport report = runner.loadStage16();
+            log.info("stage 16 merge/split replay seed: dataset={}, records={}, inserted={}, skipped={}",
+                    report.datasetId(), report.records(), report.inserted(), report.skipped());
+            loaded = true;
+        }
+        if (loaded) log.info("fusion replay seed: frames processed={}", drain());
     }
 
     /** 同步跑完所有待处理回放帧；每帧一次调用，失败帧记 FAILED 后继续（与 Worker 行为一致）。 */

@@ -9,6 +9,7 @@ import {
 } from '@vicons/ionicons5';
 import { dateZhCN, theme, themeOverrides, zhCN } from '@/ui/theme.js';
 import { getDashboardSnapshot } from '@/services/dashboardApi.js';
+import { airspaceKindMeta } from '@/services/situationData.js';
 import { ALARM_TYPE_LABEL, LEGALITY_LABEL, OBJECT_TYPE_LABEL, labelOf, targetTypeLabel } from '@/ui/labels.js';
 
 const clock = ref('');
@@ -194,18 +195,32 @@ function ringCentroid(ring) {
   return { lon: x / ring.length, lat: y / ring.length };
 }
 
+/* 一片空域可能由多个多边形组成、每个多边形可能带孔洞（决策 16-3）：
+   逐个多边形出一条，rings 含全部环交给 map.js 按 even-odd 填充。
+   layer 取共享的种类映射：map.js 只认数据层给的 layer，缺了整片不画——
+   种类认不出时宁可不画，也不猜它属于禁飞还是限高。 */
 function mapAirspaces(items) {
-  return (items || []).map(a => {
-    const ring = a.boundary?.coordinates?.[0]?.[0];
-    if (!ring?.length) return null;
-    const poly = ring.map(p => [Number(p[0]), Number(p[1])]);
+  const out = [];
+  (items || []).forEach(a => {
+    const polygons = a.boundary?.coordinates;
+    if (!Array.isArray(polygons)) return;
     const kind = AIRSPACE_KIND[a.kind_code] || { type: a.kind_code || '空域', color: '#8ca0be' };
+    const layer = airspaceKindMeta(a.kind_code)?.layer || null;
     const limit = [a.min_altitude_m, a.max_altitude_m].filter(v => v != null).join('–');
-    return {
-      id: a.airspace_no || a.airspace_id, name: a.name, type: kind.type, color: kind.color, poly,
-      center: ringCentroid(poly), limitTx: limit ? `${limit} m AMSL` : '—', unit: '—'
-    };
-  }).filter(Boolean);
+    const no = a.airspace_no || a.airspace_id;
+    polygons.forEach((polygon, index) => {
+      if (!Array.isArray(polygon)) return;
+      const rings = polygon.filter(ring => Array.isArray(ring) && ring.length)
+        .map(ring => ring.map(p => [Number(p[0]), Number(p[1])]));
+      if (!rings.length) return;
+      out.push({
+        id: polygons.length > 1 ? `${no}#${index + 1}` : no, name: a.name, type: kind.type, color: kind.color, layer,
+        rings, center: ringCentroid(rings[0]),
+        limitTx: limit ? `${limit} m AMSL` : '—', unit: '—'
+      });
+    });
+  });
+  return out;
 }
 
 function mapDevices(items) {

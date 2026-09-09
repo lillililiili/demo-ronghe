@@ -423,6 +423,7 @@
   /* 已经告警过的空域 id：draw() 逐帧执行，不去重会把控制台刷满。 */
   const warnedMissingLayer = new Set();
 
+
   MapView.prototype.setData = function (d) { Object.assign(this.data, d); this._paintAirspaceLegend(); this.draw(); return this; };
   /* 图例里的空域行由**当前数据**推导（阶段 12 去 mock.js）：图上画了哪几类就列哪几类，
      没有空域就整行不显示——留一个空条目比不显示更糟，那会让人以为图例坏了。 */
@@ -730,16 +731,23 @@
         '#ff4d5e': '#d52d42', '#2fd06e': '#16864f', '#ffb020': '#b97600',
         '#3d8bff': '#2c66bb', '#a97bff': '#7545c7', '#8ca0be': '#5f7189'
       })[String(a.color).toLowerCase()] || a.color;
+      /* 一片空域的全部环（决策 16-3）：rings 的第 0 环是外环，其余是孔洞。
+         环都收在一条路径里，由 even-odd 规则挖出孔洞——孔洞不是"少画一块"，
+         它是禁飞区里合法可飞的那一块，画满了就是把能飞的地方说成不能飞。 */
+      const rings = (Array.isArray(a.rings) ? a.rings : []).filter(ring => Array.isArray(ring) && ring.length);
+      if (!rings.length) return;
       c.beginPath();
-      a.poly.forEach((p, i) => { const q = P(p[0], p[1]); i ? c.lineTo(q[0], q[1]) : c.moveTo(q[0], q[1]); });
-      c.closePath();
-      c.fillStyle = a.color + '14'; c.fill();
+      rings.forEach(ring => {
+        ring.forEach((p, i) => { const q = P(p[0], p[1]); i ? c.lineTo(q[0], q[1]) : c.moveTo(q[0], q[1]); });
+        c.closePath();
+      });
+      c.fillStyle = a.color + '14'; c.fill('evenodd');
       c.setLineDash([6, 4]); c.lineWidth = 1.35; c.strokeStyle = ink + 'd9'; c.stroke(); c.setLineDash([]);
       // 仅禁飞区保留稀疏纹理作为强语义，其他类型让出底图细节。
       if (key === 'nofly') {
-        c.save(); c.clip();
+        c.save(); c.clip('evenodd');
         c.strokeStyle = ink + '1f'; c.lineWidth = .8;
-        const bb = a.poly.reduce((m, p) => { const q = P(p[0], p[1]); return [Math.min(m[0], q[0]), Math.min(m[1], q[1]), Math.max(m[2], q[0]), Math.max(m[3], q[1])]; }, [1e9, 1e9, -1e9, -1e9]);
+        const bb = rings.reduce((m, ring) => ring.reduce((n, p) => { const q = P(p[0], p[1]); return [Math.min(n[0], q[0]), Math.min(n[1], q[1]), Math.max(n[2], q[0]), Math.max(n[3], q[1])]; }, m), [1e9, 1e9, -1e9, -1e9]);
         // 街道级放大时多边形可能远大于屏幕，只绘制可见范围的纹理。
         const top = Math.max(0, bb[1]), bottom = Math.min(H, bb[3]);
         const left = Math.max(0, bb[0]), right = Math.min(W, bb[2]);

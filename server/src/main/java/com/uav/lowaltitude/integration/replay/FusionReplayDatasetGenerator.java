@@ -29,9 +29,23 @@ public class FusionReplayDatasetGenerator {
     /** 直连专有场景：飞手位置、只有方位的 AOA、只在跟踪期间可见的光电、识别中的目标。 */
     public static final List<String> SCENARIOS_V2 = List.of("tdoa-pilot", "aoa-bearing", "eo-tracking", "identifying-255");
     public static final String AOA = "replay-aoa-a";
+    /**
+     * 阶段 16 的自动合并/分裂演示（决策 16-7）：**自己的 dataset_id、自己的来源标识**。
+     *
+     * 不能加进 `stage85-lingyun-demo`：那个 id 已经灌进所有开发库了，同一 id 下改内容会让
+     * `alreadyLoadedV2()`（按条数判断）失效——旧库 180 条 < 新的 204 条，守卫不触发、重灌撞哈希，
+     * 应用被拦在启动阶段。**dataset_id 是不可变内容，改内容必须换 id。**
+     *
+     * 来源标识也必须换：inbox 的键是 (source, record_no)。沿用 `lingyun:radar:S85R1` 而让 record_no
+     * 从 1 起，两个数据集会写出同一个 `lingyun:radar:S85R1#1` 而载荷不同——那连全新库都装不上。
+     */
+    public static final String DATASET_ID_S16 = "stage16-fusion-merge-demo";
+    public static final String RADAR_S16 = "replay-radar-s16";
+    public static final List<String> SCENARIOS_S16 = List.of("converge-merge", "near-echo");
     /** 各回放来源在直连报文里的 inbox source（契约 v1.1 §2）。 */
     public static final Map<String, String> INBOX_SOURCES = Map.of(
-            RADAR, "lingyun:radar:S85R1", TDOA, "lingyun:tdoa:S85T1", AOA, "lingyun:aoa:S85A1", EO, "eo-edge:S85E1");
+            RADAR, "lingyun:radar:S85R1", TDOA, "lingyun:tdoa:S85T1", AOA, "lingyun:aoa:S85A1", EO, "eo-edge:S85E1",
+            RADAR_S16, "lingyun:radar:S16R1");
 
     private static final double LON0 = 118.62, LAT0 = 37.42;
     private static final double RADAR_ACC = 15, TDOA_ACC = 60, EO_ACC = 25;
@@ -53,8 +67,11 @@ public class FusionReplayDatasetGenerator {
 
     private long scenario(String scenario, long startRecordNo, Random random, List<Record> records, List<GroundTruth> truth) {
         long recordNo = startRecordNo;
-        long base = T0_MILLIS + SCENARIOS.indexOf(scenario) * 600_000L;
-        double lonBase = LON0 + SCENARIOS.indexOf(scenario) * 0.05;
+        // 阶段 16 的场景排在 v1 之后，时间与经度都不与它们重叠。
+        int index = SCENARIOS.contains(scenario) ? SCENARIOS.indexOf(scenario)
+                : SCENARIOS.size() + SCENARIOS_S16.indexOf(scenario);
+        long base = T0_MILLIS + index * 600_000L;
+        double lonBase = LON0 + index * 0.05;
         for (int frame = 0; frame < FRAMES; frame++) {
             long observedAt = base + frame * FRAME_INTERVAL_MS;
             switch (scenario) {
@@ -90,6 +107,35 @@ public class FusionReplayDatasetGenerator {
                     }
                     truth.add(new GroundTruth(scenario, recordNo, scenario + ":TA", RADAR, "R-M1", observedAt));
                     records.add(new Record(recordNo++, RADAR, observedAt, observedAt, List.copyOf(items), scenario));
+                }
+                case "converge-merge" -> {
+                    // 决策 16-1：同一架被同一部雷达报成两个回波（外部目标号不同），于是落成两个目标——
+                    // 这正是"重复目标"现在的样子。两条各自稳定后一直落在 2σ 内，连续 ≥ merge_min_frames 帧，
+                    // 由管线自动合并。真值把两条标成同一实体。
+                    //
+                    // 两点取同一真值位置、各自带独立噪声：门限是 2σ 而 σ 会随滤波收敛到 ~10 m，
+                    // 一开始就隔开几百米再"跳"到近处是不行的——α-β 要好几帧才追得上，追上时门限已经收窄了。
+                    double[] a = along(lonBase, LAT0, frame, 10, 0);
+                    double[] b = a;
+                    records.add(new Record(recordNo++, RADAR_S16, observedAt, observedAt,
+                            List.of(item("R-CV1", a, RADAR_ACC, random, "UAV", null, null),
+                                    item("R-CV2", b, RADAR_ACC, random, "UAV", null, null)), scenario));
+                    truth.add(new GroundTruth(scenario, recordNo - 1, scenario + ":TA", RADAR_S16, "R-CV1", observedAt));
+                    truth.add(new GroundTruth(scenario, recordNo - 1, scenario + ":TA", RADAR_S16, "R-CV2", observedAt));
+                }
+                case "near-echo" -> {
+                    // 决策 16-2 的反面：同源第二回波从第 2 帧起出现，但一直只隔 40 m——够不上
+                    // split_min_separation_m(100)，所以**不该**被判成分裂。计到 pending_expire_frames 后
+                    // 这条 ONE_TO_MANY 应当以 EXPIRED 收场，而不是一直占着位置或悄悄分裂。
+                    double[] a = along(lonBase, LAT0, frame, 10, 0);
+                    List<Map<String, Object>> items = new ArrayList<>();
+                    items.add(item("R-NE1", a, RADAR_ACC, random, "UAV", null, null));
+                    if (frame >= 2) {
+                        items.add(item("R-NE2", AlphaBetaFilter.fromEnu(a[0], a[1], 0, 40.0), RADAR_ACC, random, "UAV", null, null));
+                        truth.add(new GroundTruth(scenario, recordNo, scenario + ":TB", RADAR_S16, "R-NE2", observedAt));
+                    }
+                    truth.add(new GroundTruth(scenario, recordNo, scenario + ":TA", RADAR_S16, "R-NE1", observedAt));
+                    records.add(new Record(recordNo++, RADAR_S16, observedAt, observedAt, List.copyOf(items), scenario));
                 }
                 case "late-out-of-order" -> {
                     // EO 晚 2.5 s 到达且 record_no 倒序：迟到帧只补原始层，不得回退融合结果。
@@ -176,6 +222,18 @@ public class FusionReplayDatasetGenerator {
         long recordNo = records.isEmpty() ? 0 : records.get(records.size() - 1).recordNo() + 1;
         recordNo = directAccessScenarios(recordNo, records, truth);
         return new ProtocolDataset(DATASET_ID_V2, List.copyOf(records), List.copyOf(truth));
+    }
+
+    /** 阶段 16 的合并/分裂演示数据集（决策 16-7）：与 stage85 完全分开，各灌各的。 */
+    public ProtocolDataset generateStage16() {
+        Random random = new Random(SEED + 16);
+        List<Record> records = new ArrayList<>();
+        List<GroundTruth> truth = new ArrayList<>();
+        long recordNo = 0;
+        for (String scenario : SCENARIOS_S16) recordNo = scenario(scenario, recordNo, random, records, truth);
+        List<ProtocolRecord> protocol = new ArrayList<>();
+        for (Record record : records) protocol.add(translate(record));
+        return new ProtocolDataset(DATASET_ID_S16, List.copyOf(protocol), List.copyOf(truth));
     }
 
     private ProtocolRecord translate(Record record) {

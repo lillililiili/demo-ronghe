@@ -40,7 +40,6 @@ public class FusionReplayRunner {
     }
 
     /** v2 数据集实际用到的直连前缀（雷达帧由助手的实测端口写入，不由本生成器产出）。 */
-    private static final List<String> DIRECT_ACCESS_PREFIXES = List.of("lingyun:", "eo-edge:");
 
     public record LoadReport(String datasetId, int records, int inserted, int skipped) { }
 
@@ -82,7 +81,40 @@ public class FusionReplayRunner {
      * 只用于归档与哈希复算，不再夹在设备报文与 inbox 之间——夹一层会让"库里存的就是设备发来的原文"这句话不成立。
      */
     public LoadReport loadV2() {
-        ProtocolDataset dataset = generator.generateV2();
+        return load(generator.generateV2());
+    }
+
+    /**
+     * v2 数据集是否已全部写入。
+     *
+     * 按**它自己的来源**精确计数，不按 `lingyun:`/`eo-edge:` 前缀合计（决策 16-7）：
+     * 阶段 16 的数据集来源也叫 `lingyun:radar:S16R1`，前缀合计会把它算进来，
+     * 于是 stage85 缺了多少行就会被 stage16 的行掩盖多少——守卫看着是"灌满了"，其实没有。
+     */
+    public boolean alreadyLoadedV2() {
+        return alreadyLoaded(generator.generateV2());
+    }
+
+    private boolean alreadyLoaded(ProtocolDataset dataset) {
+        long written = 0;
+        for (String source : dataset.records().stream().map(ProtocolRecord::inboxSource).distinct().toList()) {
+            written += inbox.countBySource(source);
+        }
+        return written >= dataset.records().size();
+    }
+
+    /** 灌入阶段 16 的合并/分裂演示数据集（决策 16-7）；与 v2 各灌各的。 */
+    public LoadReport loadStage16() {
+        return load(generator.generateStage16());
+    }
+
+    /** 阶段 16 数据集是否已灌过：与 v2 一样按自己的来源精确计数（见 {@link #alreadyLoaded}）。 */
+    public boolean alreadyLoadedStage16() {
+        return alreadyLoaded(generator.generateStage16());
+    }
+
+    /** loadV2/loadStage16 共用的写入：inbox 的键是 (source, record_no)，数据集之间必须来源不同。 */
+    private LoadReport load(ProtocolDataset dataset) {
         Map<String, String> sourceIds = sourceIdsByCode();
         int inserted = 0, skipped = 0;
         for (ProtocolRecord record : dataset.records()) {
@@ -96,13 +128,6 @@ public class FusionReplayRunner {
         log.info("fusion direct-access dataset loaded: dataset={}, records={}, inserted={}, skipped={}",
                 dataset.datasetId(), dataset.records().size(), inserted, skipped);
         return new LoadReport(dataset.datasetId(), dataset.records().size(), inserted, skipped);
-    }
-
-    /** v2 数据集是否已全部写入：按直连前缀合计计数（回放前缀属于 v1，不计）。 */
-    public boolean alreadyLoadedV2() {
-        long written = 0;
-        for (String prefix : DIRECT_ACCESS_PREFIXES) written += inbox.countBySourcePrefix(prefix);
-        return written >= generator.generateV2().records().size();
     }
 
     /**

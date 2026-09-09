@@ -51,7 +51,17 @@ test('处罚页的处置授权行：按钮集合与服务端 allowed_actions 一
     } catch { /* 非 JSON 或已被消费：这一条就不参与比对，下面的空集合断言会兜住 */ }
   });
 
+  // 不能依赖"默认选中的那条交接刚好有处置授权"：演示数据一加新交接，默认选中的就换人了
+  // （2026-09-09 实测：新增的 seed-vol-pcase-* 交接排到了前面，默认那条主体下没有授权，
+  //  用例于是等不到 .pn-disposal-row 而超时——那是夹具假设的问题，不是产品的问题）。
+  // 改为先问服务端哪条交接的主体下确实有授权，再按 data-row 点那一条。
+  const target = await findHandoffWithAuthorizations(request, session.sessionId);
+  test.skip(target === null, '演示数据里没有任何一条交接的主体下有处置授权，这条用例没有可验的对象——'
+      + '这不是通过，是没跑');
+
   await page.goto('/#/punish');
+  await page.waitForSelector(`tr[data-row="${target}"]`);
+  await page.click(`tr[data-row="${target}"]`);
   await page.waitForSelector('.pn-disposal-row');
 
   const rows = await page.locator('.pn-disposal-row').evaluateAll(nodes => nodes.map(node => ({
@@ -97,3 +107,24 @@ test('处罚页的处置授权行：按钮集合与服务端 allowed_actions 一
   const unexpected = unexpectedFailures(signals.failedResponses, 'reviewer1');
   expect(unexpected, `处罚页发出了 reviewer1 不该发出的请求：\n${unexpected.join('\n')}`).toEqual([]);
 });
+
+/**
+ * 找一条"主体下有处置授权"的交接。顺着交接列表问服务端，拿到第一条有授权的就停。
+ *
+ * 放在测试侧而不是写死某个种子 id：种子 id 会随演示数据调整而变，写死等于把用例挂在
+ * 别人的夹具编号上；而"哪条交接有授权"本来就是服务端能直接回答的问题。
+ */
+async function findHandoffWithAuthorizations(request, sessionId) {
+  const headers = { Authorization: `Bearer ${sessionId}` };
+  const listed = await request.get('/api/v1/handoffs?page=1&size=50', { headers });
+  const handoffs = (await listed.json())?.data?.items || [];
+  for (const handoff of handoffs) {
+    if (!handoff.source_kind || !handoff.source_id) continue;
+    const response = await request.get(
+      `/api/v1/disposal-authorizations?subject_kind=${handoff.source_kind}&subject_id=${handoff.source_id}&page=1&size=1`,
+      { headers });
+    if (!response.ok()) continue;
+    if (((await response.json())?.data?.items || []).length > 0) return handoff.handoff_id;
+  }
+  return null;
+}

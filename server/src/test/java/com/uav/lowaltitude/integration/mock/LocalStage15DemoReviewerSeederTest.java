@@ -126,9 +126,9 @@ class LocalStage15DemoReviewerSeederTest {
         MENU_NEEDS.forEach((menu, needed) -> {
             assertThat(menus).as("菜单 %s", menu).contains(menu);
             for (PermissionCode code : needed) {
-                // 动作权限要从授权行看：/auth/me 的 permission_codes 只列**模块**码
-                // （listPermissionsForRole 过滤 permission_kind='MODULE'），动作码根本不在里面。
-                assertThat(level(code.value())).as("%s 这一页要的 %s", menu, code.value()).isNotNull();
+                // 决策 16-4 起 /auth/me 也下发动作码原文，所以这里直接站在前端的位置断言：
+                // 前端就是拿这份 permission_codes 决定动作按钮显不显示的。
+                assertThat(codes).as("%s 这一页要的 %s", menu, code.value()).contains(code.value());
             }
         });
 
@@ -137,6 +137,8 @@ class LocalStage15DemoReviewerSeederTest {
         assertThat(codes).as("态势页要拉设备清单").contains("devices.read");
         // 但不给菜单：设备管理是运维的页面，复核员不该看到。读与菜单在这里是分开的。
         assertThat(menus).as("不该多出设备管理菜单").doesNotContain("devices");
+        // 没授的动作不能出现：下发的是"这个账号能做什么"，多给一个前端就会亮出一个点不动的按钮。
+        assertThat(codes).as("没授的动作").doesNotContain("fusion:manage", "punishment:close");
     }
 
     private JsonNode me() throws Exception {

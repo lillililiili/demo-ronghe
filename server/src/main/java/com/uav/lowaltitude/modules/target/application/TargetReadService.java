@@ -109,7 +109,8 @@ public class TargetReadService {
                 request.optional("object_type_code", 32),
                 seen.from, seen.to,
                 request.optional("owner_org_id", 36),
-                request.optional("district_id", 36));
+                request.optional("district_id", 36),
+                request.flag("include_merged"));
         long total = repository.countTargets(query, access);
         List<TargetRow> rows = repository.listTargets(query, access, page.offset(), page.size);
         // 三摘要与方位按**整页**一次取回（决策 15-4）：逐条查会变成 N+1，而列表最大 100 条。
@@ -432,6 +433,12 @@ public class TargetReadService {
             } catch (NumberFormatException ex) {
                 throw invalidPage();
             }
+        }
+
+        /** 只认 true；缺省、空、别的取值一律当假——默认隐藏被并目标（决策 16-6）。 */
+        private boolean flag(String name) {
+            List<String> found = values.get(name);
+            return found != null && found.size() == 1 && "true".equalsIgnoreCase(found.get(0));
         }
 
         private String enumerated(String name, Set<String> allowed) {

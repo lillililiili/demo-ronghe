@@ -20,7 +20,7 @@ function ok(name, condition) {
   console.error(`✗ ${name}`);
 }
 
-/** 带一个孔洞的正方形：外环四角 + 内环，内环必须被丢掉（决策 11-2）。 */
+/** 带一个孔洞的正方形：外环四角 + 内环，内环是禁飞区里合法可飞的那一块，必须保留（决策 16-3）。 */
 const SQUARE_WITH_HOLE = {
   type: 'MultiPolygon',
   coordinates: [[
@@ -40,13 +40,20 @@ async function main() {
   const S = await import('../src/services/situationData.js');
 
   /* ---- 空域几何 ---- */
-  const rings = S.outerRings(SQUARE_WITH_HOLE);
-  check('MultiPolygon 只取外环，孔洞丢弃', rings.length, 1);
-  check('外环点数保持不变', rings[0].length, 5);
-  check('外环包围盒中心', S.ringCenter(rings[0]), { lon: 118.1, lat: 37.1 });
-  check('非 MultiPolygon 不产出环', S.outerRings({ type: 'Polygon', coordinates: [] }), []);
-  check('坐标里有非数字则整条几何作废', S.outerRings({
+  const polygons = S.polygonRings(SQUARE_WITH_HOLE);
+  check('一个多边形产出一条', polygons.length, 1);
+  check('孔洞保留：外环 + 内环共两环', polygons[0].length, 2);
+  check('外环点数保持不变', polygons[0][0].length, 5);
+  check('内环点数保持不变', polygons[0][1].length, 5);
+  check('外环包围盒中心', S.ringCenter(polygons[0][0]), { lon: 118.1, lat: 37.1 });
+  check('非 MultiPolygon 不产出环', S.polygonRings({ type: 'Polygon', coordinates: [] }), []);
+  check('坐标里有非数字则整条几何作废', S.polygonRings({
     type: 'MultiPolygon', coordinates: [[[[118, 37], [118.1, 'x'], [118.1, 37.1], [118, 37]]]]
+  }), []);
+  // 外环点数不足时整个多边形不画：剩下的环是孔洞，把孔洞当外环画出来就是把可飞区标成禁飞区。
+  check('外环点数不足则整个多边形不画', S.polygonRings({
+    type: 'MultiPolygon',
+    coordinates: [[[[118, 37], [118.1, 37]], [[118.05, 37.05], [118.06, 37.05], [118.06, 37.06], [118.05, 37.05]]]]
   }), []);
 
   /* ---- 空域种类字典 ---- */
@@ -75,6 +82,21 @@ async function main() {
   // map.js 把 id 直接画到图上，所以它必须是业务编号；内部 ID 只留在 airspaceId 里，不上屏。
   check('上屏的是业务编号而不是内部 ID', drawn[0].id, 'KY-1');
   check('内部 ID 另存不上屏', drawn[0].airspaceId, 'a-1');
+  // 孔洞要一路带到地图数据里：map.js 按 even-odd 填充 rings，只给外环等于把可飞区涂成禁飞区。
+  check('装配后仍带着孔洞（外环 + 内环）', drawn[0].rings.length, 2);
+  check('第 0 环是外环，点数与原始几何一致', drawn[0].rings[0], SQUARE_WITH_HOLE.coordinates[0][0]);
+  // MultiPolygon 的每个多边形各成一条，各自带自己的环——两片分开的空域不能合成一条路径。
+  const twoParts = S.toAirspaces([airspace('PROHIBITED', {
+    type: 'MultiPolygon',
+    coordinates: [
+      SQUARE_WITH_HOLE.coordinates[0],
+      [[[119.0, 38.0], [119.2, 38.0], [119.2, 38.2], [119.0, 38.2], [119.0, 38.0]]]
+    ]
+  })]);
+  check('两个多边形各成一条', twoParts.length, 2);
+  check('第一条带孔洞', twoParts[0].rings.length, 2);
+  check('第二条只有外环', twoParts[1].rings.length, 1);
+  check('多条时编号带序号，便于在图上分辨', [twoParts[0].id, twoParts[1].id], ['KY-1#1', 'KY-1#2']);
   check('没有当前生效版本的空域不画', S.toAirspaces([airspace('PROHIBITED', null)]).length, 0);
   check('种类认不出的空域不画', S.toAirspaces([airspace('MYSTERY', SQUARE_WITH_HOLE)]).length, 0);
 

@@ -18,11 +18,13 @@ T02 只读契约与设备运维模型使用独立表：契约表保留 `device/t
 
 准备 JDK 17 和 Docker；用 Wrapper 固定 Maven 版本。开发端口为 API 8080、前端 5173。以下数据库必须是隔离开发实例，不使用生产库或已有业务库作试验。
 
-在仓库根目录启动开发数据库：
+在仓库根目录启动开发数据库（需要 MQTT 模拟时一并启动 Mosquitto）：
 
 ```bash
 cd deploy
 docker compose up -d db
+# 可选：本机凌云 MQTT 回放
+docker compose up -d db mosquitto
 ```
 
 从 `deploy/` 进入后端，Windows PowerShell：
@@ -42,13 +44,50 @@ Linux/macOS 在 `server/` 执行：
 
 数据库连接按 [application-local.yml](src/main/resources/application-local.yml)与 [Compose](../deploy/compose.yml)保持一致；修改了数据库凭据后须同步本地连接配置，不要提交或输出真实凭据。Flyway 会对所配置的数据库执行迁移。
 
-`local` profile 幂等补齐唯一合成超级管理员 `admin1` 以及三个目标/轨迹示例，不再预置运维模拟设备台账；默认密码为 `changeme`，可通过 `APP_DEV_SEED_PASSWORD` 覆盖。目标示例包含可信 WGS-84 目标以及无最新位置、仅有历史轨迹的目标。`app.dev-seed.enabled` 为真时还会写入运行统计样本事实（近 30 天空中目标与处罚案件），供统计页查询，不是生产指标。其他角色和账号由 `admin1` 在系统管理中按需创建。所有开发 Seeder 同时受 `!production & (local | test)` profile 和 `app.dev-seed.enabled=true` 约束，默认环境和 `integration` profile 默认关闭，`test` profile 显式启用；设备模拟夹具仅在 `test` profile 注入，不能当作现场设备。本工程不是可直接上线的生产配置。
+`local` profile 幂等补齐唯一合成超级管理员 `admin1` 以及三个目标/轨迹示例，不再预置运维模拟设备台账；默认密码为 `changeme`，可通过 `APP_DEV_SEED_PASSWORD` 覆盖。目标示例包含可信 WGS-84 目标以及无最新位置、仅有历史轨迹的目标。`app.dev-seed.enabled` 为真时还会写入运行统计样本事实（近 30 天空中目标与处罚案件），供统计页查询，不是生产指标。其他角色和账号由 `admin1` 在系统管理中按需创建。所有开发 Seeder 同时受 `!production & (local | test)` profile 和 `app.dev-seed.enabled=true` 约束，默认环境和 `integration` profile 默认关闭，`test` profile 显式启用；设备模拟夹具仅在 `test` profile 注入，不能当作现场设备。MQTT 回放种子 `LocalMqttSimSeeder` 只在 `local` 注册，避免把 `S85*` 设备写进 `test` 台账。本工程不是可直接上线的生产配置。
 
 两位开发者的个人数据库、共享联调库与迁移协作流程见[协作开发环境](../docs/协作开发环境.md)。
 
 启动后可检查 `GET /actuator/health`；无 Bearer 请求 `GET /api/v1/devices` 应为 401。登录返回 `session_id` 后，以 `Authorization: Bearer <session_id>` 请求 `/api/v1/auth/me`。所有系统管理写接口还必须带 8–128 位 `Idempotency-Key`，更新已有资源须提交 `expected_version`。运行仓库根目录的 `.\scripts\verify-dev.ps1` 会检查健康状态、登录、`/auth/me` 和 Vite API 代理。
 
-协议 A MQTT（`LINGYUN_MQTT_V8_6`）与协议 C 光电边端（`EO_EDGE_MQTT_20250826`）由 `app.mqtt.enabled` 控制，默认开启；`test` profile 关闭以免占用嵌入式测试库。本地模拟：在设备页配置 `source_mode=replay` 的 MQTT 连接（回环仅允许 replay）。协议 A 登记雷达/5G-A/TDOA/AOA/协议破解/RemoteID，向 `bridge/{providerCode}/device|device_data/{type}/{externalDeviceId}` 发布。光电登记 `edgeId` 与设备 `deviceId`，设备向 `iot-reporting/cmlc/edge/{edgeId}` 上报 HeartBeat / BeginTracking，平台向 `iot-dispatcher/cmlc/edge/{deviceId}` 下发。值班员手点跟踪：`POST /api/v1/targets/{id}/eo-tracking-tasks`；自动跟踪 `app.eo-edge.auto-track.enabled` 默认关。真实 broker 的密码只通过 `credential_ref=env:变量名` 注入，配置了 live 不等于现场已联调。目标/跟踪上报进入 `inbox_message` 后仍为 `RECEIVED`，融合消费由协作者 B 领取。雷达 TCP 与四通道反制维持厂家原生协议。
+协议 A MQTT（`LINGYUN_MQTT_V8_6`）与协议 C 光电边端（`EO_EDGE_MQTT_20250826`）由 `app.mqtt.enabled` 控制，默认开启；`test` profile 关闭以免占用嵌入式测试库。本地模拟：在设备页配置 `source_mode=replay` 的 MQTT 连接（回环仅允许 replay）。协议 A 登记雷达/5G-A/TDOA/AOA/协议破解/RemoteID，向 `bridge/{providerCode}/device|device_data/{type}/{externalDeviceId}` 发布。光电登记 `edgeId` 与设备 `deviceId`，设备向 `iot-reporting/cmlc/edge/{edgeId}` 上报 HeartBeat / BeginTracking，平台向 `iot-dispatcher/cmlc/edge/{deviceId}` 下发。值班员手点跟踪：`POST /api/v1/targets/{id}/eo-tracking-tasks`；自动跟踪 `app.eo-edge.auto-track.enabled` 默认关。真实 broker 的密码只通过 `credential_ref=env:变量名` 注入，配置了 live 不等于现场已联调。目标/跟踪上报进入 `inbox_message` 后仍为 `RECEIVED`，融合消费由协作者 B 领取。雷达 TCP 与四通道反制维持厂家原生协议。本机回放步骤见下方「本地 MQTT 模拟」；数据集说明见[凌云回放说明](../docs/直连接入计划/凌云回放说明.md)。
+
+## 本地 MQTT 模拟
+
+本机用 Compose 里的 Mosquitto（只绑 `127.0.0.1:1883`）发布仓库内冻结的 180 行 NDJSON，验证协议 A/C 适配器把报文写入 `inbox_message`。这不是现场联调，也不打开融合。
+
+`local` profile 且 `app.dev-seed.enabled=true` 时，启动会幂等登记：
+
+- MQTT 连接 `local-lingyun-replay`：`127.0.0.1:1883`，`tls=false`，`allowed_cidrs=127.0.0.1/32`，`source_mode=replay`，并启用
+- 设备：`S85R1` 雷达、`S85T1` TDOA、`S85A1` AOA（`LINGYUN_MQTT_V8_6`，`providerCode=dongying`）；光电边端 `edgeId=S85E1`、`externalDeviceId=S85E1D1`（`EO_EDGE_MQTT_20250826`）
+
+**`S85R1` 不是现场 T02 TCP 雷达。** `test` profile 不插入这些设备。已有同名连接或外部编号则跳过，不改人工登记。`api` Compose 服务不依赖 Mosquitto；本机 `spring-boot:run` 连宿主机 1883。
+
+```bash
+# 1. 启动库和本机 broker（在 deploy/）
+docker compose up -d db mosquitto
+
+# 2. local 启动后端（种子登记连接与四台设备）
+cd ../server
+# Windows PowerShell
+.\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=local"
+# Linux/macOS: ./mvnw spring-boot:run -Dspring-boot.run.profiles=local
+
+# 3. 登录 admin1 / changeme，设备页确认连接已启用、四台 replay 设备存在
+
+# 4. 仓库根目录发布 NDJSON（payload 原样 UTF-8 字节，禁止再 json.dumps）
+python server/scripts/publish_lingyun_ndjson.py
+# 缺少客户端时：pip install paho-mqtt
+
+# 5. 按 payload_hash 对账 inbox（RECEIVED 不等于融合已出目标）
+# SELECT source, source_msg_id, status FROM inbox_message
+#   WHERE source LIKE 'lingyun:%' OR source LIKE 'eo-edge:%';
+
+# 6. 光电 BeginTracking 须先手点跟踪（POST /api/v1/targets/{id}/eo-tracking-tasks），
+#    否则适配器记 TRACK_NOT_OPEN；看态势需 APP_FUSION_ENABLED=true（默认关）
+```
+
+发布脚本参数：`--host --port --file --limit --sleep-ms --dry-run`。默认文件为 `docs/直连接入计划/stage85-lingyun-demo.mqtt.ndjson`，不要改这个文件。
 
 雷达 TCP 航迹提升（P4-A）由 `app.fusion.live-promotion.enabled` / `APP_FUSION_LIVE_PROMOTION_ENABLED` 控制，默认关。打开后每条 `UPLOAD_TRACK_V3` 航迹批另写一行 `live-radar:<source_code>` 信封；不写融合业务表，打开开关也不等于客户现场雷达联调完成。
 

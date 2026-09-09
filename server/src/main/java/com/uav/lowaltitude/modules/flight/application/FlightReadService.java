@@ -117,7 +117,7 @@ public class FlightReadService {
         if (row.endAt() == null) issues.add(new FieldIssueDto("end_at", "TIME_UNTRUSTED"));
         return new FlightPlanDto(row.planId(), row.planNo(), row.statusCode(), source(row.sourceId(), row.sourceCode(), row.sourceMode(), row.sourceName()),
                 row.sourceMode(), row.uavSn(), millis(row.startAt()), millis(row.endAt()), row.ownerOrgId(), row.districtId(),
-                new RouteReferenceDto(row.routeVersionId(), row.routeId(), row.routeNo(), row.routeName(), row.versionNo()),
+                new RouteReferenceDto(row.routeVersionId(), row.routeId(), row.routeNo(), row.routeName(), row.versionNo(), row.maxAltitudeM()),
                 List.copyOf(issues), requiredMillis(row.createdAt()), requiredMillis(row.updatedAt()), row.version(),
                 row.ownerOrgName(), row.districtName());
     }

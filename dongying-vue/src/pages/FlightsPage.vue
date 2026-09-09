@@ -20,9 +20,10 @@ import { openModal, closeModal } from '@/ui/modal.js';
 import { toast } from '@/ui/nv.js';
 import {
   ALTITUDE_DATUM_LABEL, ALTITUDE_RELATION_LABEL, AUTHORIZATION_SOURCE_LABEL,
-  HANDOFF_TYPE_LABEL, LEGALITY_LABEL, PLAN_MATCH_LABEL, PLAN_STATUS_LABEL, REASON_CODE_LABEL, RISK_TYPE_LABEL,
-  SECTION_AVAILABILITY_LABEL, SOURCE_MODE_LABEL, labelOf, OBJECT_TYPE_LABEL } from '@/ui/labels.js';
+  HANDOFF_TYPE_LABEL, LEGALITY_LABEL, PLAN_MATCH_LABEL, PLAN_MATCH_TAG, PLAN_STATUS_LABEL, PLAN_STATUS_TAG, REASON_CODE_LABEL, RISK_TYPE_LABEL,
+  SECTION_AVAILABILITY_LABEL, SOURCE_MODE_LABEL, labelOf, OBJECT_TYPE_LABEL, readableNo } from '@/ui/labels.js';
 import { isUncertainOutcome } from '@/services/apiClient.js';
+import { loadTargetPosition } from '@/services/positionMap.js';
 import { hasPermission } from '@/services/accessControl.js';
 import { authUser } from '@/services/auth.js';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
@@ -173,7 +174,43 @@ const canReadRoute = computed(() => actionAllowed('route:read') !== false);
 
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / size.value)));
 const statusOptions = [{ label: '全部状态', value: '' }, ...Object.keys(PLAN_STATUS_LABEL).map(value => ({ label: PLAN_STATUS_LABEL[value], value }))];
-const kpiList = ['今日报备计划', '执行中', '待执行', '已完成', '计划未匹配到目标', '偏离报备计划'].map((label, index) => ({ label, value: '—', color: ['blue', 'cyan', 'purple', 'green', 'amber', 'red'][index], icon: ['plan', 'radar', 'check', 'check', 'alert', 'alert'][index] }));
+/* 6 个 KPI（决策 15-56）：前四个取服务端 size=1 的 total（今日=计划时段与今天相交；待执行=待执行+已批准），
+   后两个只能按本页已读到的对照结论统计（服务端没有跨计划的匹配汇总），desc 里写明"本页"。 */
+const planKpis = ref({ today: null, executing: null, pending: null, completed: null, failed: false });
+async function loadPlanKpis() {
+  // 非展示用：只作"今日"查询窗口的边界，不在界面上显示时刻
+  const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
+  const total = async params => Number((await flightApi.list({ ...params, page: 1, size: 1 })).total) || 0;
+  try {
+    const [today, executing, pending, approved, completed] = await Promise.all([
+      total({ window_from: dayStart.getTime(), window_to: dayStart.getTime() + 86_400_000 }),
+      total({ status_code: 'EXECUTING' }), total({ status_code: 'PENDING' }), total({ status_code: 'APPROVED' }), total({ status_code: 'COMPLETED' })
+    ]);
+    planKpis.value = { today, executing, pending: pending + approved, completed, failed: false };
+  } catch { planKpis.value = { today: null, executing: null, pending: null, completed: null, failed: true }; }
+}
+const pageMatchCounts = computed(() => {
+  let unmatched = 0, deviated = 0;
+  plans.value.forEach(plan => {
+    const section = rowActuals[plan.plan_id];
+    if (!section) return;
+    if (['EXECUTING', 'COMPLETED'].includes(plan.status_code) && section.availability === 'NO_EVALUATION') unmatched += 1;
+    if (section.availability === 'AVAILABLE' && section.plan_match_code === 'PARTIAL') deviated += 1;
+  });
+  return { unmatched, deviated };
+});
+const kpiList = computed(() => {
+  const n = value => (value == null ? (planKpis.value.failed ? '—' : '…') : Number(value).toLocaleString('en-US'));
+  const k = planKpis.value, m = pageMatchCounts.value;
+  return [
+    { label: '今日报备计划', value: n(k.today), color: 'blue', icon: 'plan', desc: '计划时段与今天相交的计划数' },
+    { label: '执行中', value: n(k.executing), color: 'cyan', icon: 'radar', desc: '状态为执行中' },
+    { label: '待执行', value: n(k.pending), color: 'purple', icon: 'check', desc: '待执行 + 已批准' },
+    { label: '已完成', value: n(k.completed), color: 'green', icon: 'check', desc: '状态为已完成' },
+    { label: '计划未匹配到目标', value: String(m.unmatched), color: 'amber', icon: 'alert', desc: '本页：执行中/已完成但尚无引擎研判' },
+    { label: '偏离报备计划', value: String(m.deviated), color: 'red', icon: 'alert', desc: '本页：计划匹配为部分匹配' }
+  ];
+});
 const trustedCenterline = computed(() => trustedCoordinates(routeVersion.value));
 const trustedAirspaces = computed(() => trustedAirspaceOverlays());
 const hasMapContent = computed(() => Boolean(trustedCenterline.value?.length || trustedAirspaces.value.length));
@@ -226,13 +263,17 @@ const planHeroIcon = computed(() => (window.UI?.icon ? window.UI.icon('plan') : 
 const canVerifyRisk = computed(() => Boolean(selectedRisk.value?.allowed_actions?.includes('VERIFY')));
 /* 通知按钮：服务端 allowed_actions 含 NOTIFY 为准；旧版详情不带 NOTIFY 时按“待通知”放开。
    /auth/me 的 permission_codes 不含 `handoff:create` 动作码，前端不预判权限，由服务端 403 裁决。 */
+/* 已提交过通知（未失败）就不能再点：服务端对同一接收方会 409，页面直接禁用并说明（决策 15-50）。 */
+const submittedNotice = computed(() => notices.value.find(n => n.delivery_status && n.delivery_status !== 'FAILED') || null);
 const canNotifyRisk = computed(() => {
   const risk = selectedRisk.value;
-  if (!risk) return false;
+  if (!risk || submittedNotice.value || noticesLoading.value) return false;
   return (risk.allowed_actions || []).includes('NOTIFY') || risk.state === 'PENDING_NOTIFICATION';
 });
 const notifyBlockReason = computed(() => {
   if (!selectedRisk.value) return '';
+  if (submittedNotice.value) return `已提交通知（${NOTICE_DELIVERY_LABEL[submittedNotice.value.delivery_status] || submittedNotice.value.delivery_status}），不能重复提交`;
+  if (noticesLoading.value) return '正在读取交接记录';
   if (canNotifyRisk.value) return '向接收方提交风险通知交接（材料入库，不等于已发送）';
   return `当前状态「${stateLabel(selectedRisk.value.state)}」不允许通知`;
 });
@@ -298,6 +339,8 @@ async function loadPlans(nextPage = page.value) {
     total.value = data.total;
     plans.value = data.items;
     routeLoaded.value = true;
+    loadRowActuals(plans.value);
+    loadPlanKpis();
     if (!selected.value || !plans.value.some(item => item.plan_id === selected.value.plan_id)) {
       selected.value = plans.value[0] || null;
       S.selectedPlanId = selected.value?.plan_id || null;
@@ -338,6 +381,7 @@ async function loadDetail(planId) {
   routeGeometryLoading.value = false;
   actuals.value = null;
   actualsError.value = '';
+  matchedTarget.value = null;
   destroyRouteMap();
   let plan = null;
   try {
@@ -369,6 +413,64 @@ const authorizationBusy = ref(false);
 const canAuthorize = computed(() => actionAllowed('flight:authorize') !== false);
 const authorizeBlockedNote = '需要外部授权登记权限';
 
+/* 列表"匹配"列：每行各读一次对照聚合（与详情栏同一接口、同一口径）。
+   读失败或无权限的行显示 —，不阻塞列表；翻页后旧结果作废。 */
+const rowActuals = reactive({});
+let rowActualsSeq = 0;
+async function loadRowActuals(rows) {
+  const seq = ++rowActualsSeq;
+  Object.keys(rowActuals).forEach(key => { delete rowActuals[key]; });
+  await Promise.all(rows.map(async plan => {
+    let section = null;
+    try { section = (await flightApi.actuals(plan.plan_id))?.match || null; } catch { section = null; }
+    if (seq === rowActualsSeq) rowActuals[plan.plan_id] = section;
+  }));
+}
+function rowMatch(plan) {
+  const section = rowActuals[plan.plan_id];
+  if (section === undefined) return { text: '…', tag: 't-gray', title: '正在读取对照结论' };
+  if (!section) return { text: '—', tag: '', title: '对照结论读取失败或无权限' };
+  if (!sectionReady(section)) return { text: '—', tag: '', title: sectionNote(section) };
+  return { text: labelOf(PLAN_MATCH_LABEL, section.plan_match_code), tag: PLAN_MATCH_TAG[section.plan_match_code] || 't-gray', title: '' };
+}
+const DEVIATION_NOTE = '引擎当前只给出计划匹配结论，不提供横向偏航与时差数值';
+
+/* 合法性判定：与 legacy 同一个跳转——有研判就带目标过去选中，没有就只跳页并说明。 */
+const legalityJumpNote = computed(() => (actuals.value?.match?.target_id ? '打开合法性研判页并选中本计划匹配到的目标' : '本计划尚无引擎研判，跳转后不会自动选中目标'));
+function goLegality() {
+  const targetId = actuals.value?.match?.target_id || null;
+  if (!targetId) toast('该计划尚无引擎研判或未匹配到感知目标，已跳转合法性研判，但无法自动选中对应目标');
+  if (window.UI?.goto) window.UI.goto('legality', targetId ? { target: targetId } : null);
+  else location.hash = '#/legality';
+}
+function rowSource(plan) {
+  return plan.source?.source_name || plan.source?.source_code || labelOf(SOURCE_MODE_LABEL, plan.source_mode, '—');
+}
+
+/* 轨迹来源（决策 15-55）：计划本身没有轨迹，画的是"对照聚合"里引擎匹配到的感知目标（match.target_id）的最新实测轨迹；
+   没有研判或未匹配到目标就不画，不拿别的目标凑。 */
+const matchedTarget = ref(null);
+const matchedTrackNote = ref('');
+async function loadMatchedTarget(plan, data) {
+  matchedTarget.value = null;
+  matchedTrackNote.value = '';
+  const targetId = data?.match?.target_id;
+  if (!targetId) { matchedTrackNote.value = data?.match?.availability === 'AVAILABLE' ? '研判未关联感知目标' : '尚无引擎研判，无轨迹可画'; return; }
+  try {
+    const legal = labelOf(LEGALITY_LABEL, data?.legality?.legal_status, '—');
+    const loaded = await loadTargetPosition(targetId, { legal });
+    if (selected.value?.plan_id !== plan.plan_id) return;
+    if (!loaded.mapTarget) { matchedTrackNote.value = `匹配目标 ${loaded.target?.target_no || targetId} 坐标未知或不可信`; return; }
+    matchedTarget.value = loaded.mapTarget;
+    matchedTrackNote.value = loaded.points.length > 1 ? `匹配目标 ${loaded.mapTarget.id} 实测轨迹 ${loaded.points.length} 点` : `匹配目标 ${loaded.mapTarget.id} 仅最新位置，无可信轨迹点`;
+    await nextTick();
+    renderRouteMap();
+  } catch (requestError) {
+    if (selected.value?.plan_id !== plan.plan_id) return;
+    matchedTrackNote.value = `匹配目标轨迹读取失败：${requestError?.message || '无目标读取权限'}`;
+  }
+}
+
 async function loadActuals(plan) {
   actualsLoading.value = true;
   actualsError.value = '';
@@ -376,6 +478,7 @@ async function loadActuals(plan) {
     const data = await flightApi.actuals(plan.plan_id);
     if (selected.value?.plan_id !== plan.plan_id) return;
     actuals.value = data;
+    loadMatchedTarget(plan, data);
   } catch (requestError) {
     if (selected.value?.plan_id !== plan.plan_id) return;
     actualsError.value = requestError.message || '读取计划与实际对照失败';
@@ -532,11 +635,13 @@ function renderRouteMap() {
   destroyRouteMap();
   const coordinates = trustedCenterline.value;
   const airspaces = trustedAirspaces.value;
-  if (activeTab.value !== 'route' || !mapHost.value || (!coordinates && !airspaces.length)) return;
+  const target = matchedTarget.value;
+  if (activeTab.value !== 'route' || !mapHost.value || (!coordinates && !airspaces.length && !target)) return;
   routeMap = new window.MapView(mapHost.value, {
-    zoom: 3.2, maxDev: 0, legend: false, layers: { device: false, track: false, alarm: false }
+    zoom: 3.2, maxDev: 0, legend: false, layers: { device: false, track: !!target, alarm: false }
   });
-  routeMap.setData({ airspaces: [], devices: [], targets: [], alarms: [] });
+  routeMap.setData({ airspaces: [], devices: [], targets: target ? [target] : [], alarms: [] });
+  if (target) routeMap.sel = target.id;
   const drawBase = routeMap.draw.bind(routeMap);
   routeMap.draw = function drawRouteCenterline() {
     drawBase();
@@ -574,7 +679,7 @@ function renderRouteMap() {
     }
     context.restore();
   };
-  const [longitude, latitude] = coordinates?.[Math.floor(coordinates.length / 2)] || airspaces[0].polygons[0][0][0];
+  const [longitude, latitude] = coordinates?.[Math.floor(coordinates.length / 2)] || (target ? [target.lon, target.lat] : airspaces[0].polygons[0][0][0]);
   routeMap.centerAt(longitude, latitude);
 }
 
@@ -609,6 +714,8 @@ function applyFilters() {
 }
 
 function chooseStatus(value) { filters.status_code = value; applyFilters(); }
+// 下拉一改就查（与 legacy 一致）；关键词仍走回车/查询。
+watch(() => filters.status_code, () => applyFilters());
 function changePage(nextPage) { if (nextPage !== page.value) loadPlans(nextPage); }
 function changePageSize(nextSize) { size.value = nextSize; routeLoaded.value = false; loadPlans(1); }
 
@@ -912,9 +1019,11 @@ async function refreshAfterNotify(riskId) {
 function showHandoffSubmitted(created) {
   const link = `#/punish?handoff=${encodeURIComponent(created.handoff_id)}`;
   openModal({
-    title: '已提交，尚未发送', width: '520px', footer: false,
+    title: created.delivery_status === 'DELIVERED' ? '已提交并送达' : '已提交，尚未发送', width: '520px', footer: false,
     render: () => h('div', { class: 'rk-notify-done' }, [
-      h('div', { class: 'warnbox' }, '材料已入库等待投递（PENDING_DELIVERY），通知渠道未接通：不表示已发送、已送达或处罚办结；源风险保持“待通知”。'),
+      h('div', { class: 'warnbox' }, created.delivery_status === 'DELIVERED'
+        ? `接收方已接收交接材料${created.receipt_status === 'ACKNOWLEDGED' ? '并回执' : ''}；送达不等于处罚办结，源风险保持“待通知”。`
+        : '材料已入库等待投递，通知渠道未接通：不表示已发送、已送达或处罚办结；源风险保持“待通知”。'),
       h('dl', { class: 'kv kv-surface' }, [
         h('dt', '交接编号'), h('dd', { class: 'mono' }, created.handoff_id),
         h('dt', '接收方'), h('dd', { class: 'mono' }, created.recipient_id),
@@ -944,8 +1053,8 @@ async function openRiskNotify() {
     width: '560px',
     warning: empty
       ? '接收方未配置：交接接收方目录为空，不能提交；本页不以默认部门补值。'
-      : '提交只表示材料入库（待投递），通知渠道未接通，不表示已发送、已送达或处罚办结；源风险保持“待通知”。',
-    notice: `风险 ${riskId} · 当前版本 v${expectedVersion}`,
+      : '提交后由通知渠道投递并回执，送达与回执以投递记录为准；不表示处罚办结，源风险保持“待通知”。',
+    notice: [readableNo(risk.source_risk_id) ? `风险 ${readableNo(risk.source_risk_id)}` : '风险事件', labelOf(RISK_TYPE_LABEL, risk.risk_type, ''), Number(expectedVersion) > 0 ? `已第${Number(expectedVersion)}次核验` : '尚未核验'].filter(Boolean).join(' · '),
     fields: [{ key: 'recipient_id', label: '接收方', type: 'select', required: true,
       options: recipients.map(item => ({ label: item.display_name, value: item.recipient_id })), placeholder: empty ? '接收方未配置' : '请选择接收方' }],
     initial: { recipient_id: recipients.length === 1 ? recipients[0].recipient_id : null },
@@ -1175,7 +1284,7 @@ onUnmounted(() => {
                   <tbody>
                     <tr v-for="risk in risks" :key="risk.risk_id" :data-row="risk.risk_id" tabindex="0" :class="{ on: activeRiskId === risk.risk_id }"
                       @click="selectRisk(risk.risk_id)" @keydown.enter.prevent="selectRisk(risk.risk_id)">
-                      <td class="num"><span class="mono rk-id" :title="risk.risk_id">{{ risk.source_risk_id || risk.risk_id }}</span></td>
+                      <td class="num"><span class="mono rk-id" :title="`${risk.source_risk_id || ''} / ${risk.risk_id}`">{{ readableNo(risk.source_risk_id) || '—' }}</span></td>
                       <td><span class="tag t-cyan">{{ labelOf(RISK_TYPE_LABEL, risk.risk_type, '未知') }}</span><div v-if="risk.target_id" class="mono rk-sub" :title="risk.target_id">{{ risk.target_no || risk.target_id }}</div></td>
                       <td><div class="rk-wrap">{{ labelOf(REASON_CODE_LABEL, risk.reason_code, '未提供') }}</div></td>
                       <td><div class="rk-sub">{{ risk.source_name || risk.source_code || '未提供' }}</div><div class="rk-sub">{{ labelOf(SOURCE_MODE_LABEL, risk.source_mode, '') }}</div></td>
@@ -1223,7 +1332,7 @@ onUnmounted(() => {
             <template v-else>
               <div class="detail-hero detail-hero-micro"><div class="detail-hero-inner">
                 <div class="detail-hero-icon" v-html="riskHeroIcon"></div>
-                <div class="detail-hero-copy"><div class="detail-hero-eyebrow">飞行风险</div><div class="detail-hero-title">{{ labelOf(RISK_TYPE_LABEL, selectedRisk.risk_type, '风险事件') }}</div><div class="detail-hero-id mono" :title="selectedRisk.risk_id">{{ selectedRisk.source_risk_id || selectedRisk.risk_id }}</div></div>
+                <div class="detail-hero-copy"><div class="detail-hero-eyebrow">飞行风险</div><div class="detail-hero-title">{{ labelOf(RISK_TYPE_LABEL, selectedRisk.risk_type, '风险事件') }}</div><div v-if="readableNo(selectedRisk.source_risk_id)" class="detail-hero-id mono" :title="selectedRisk.risk_id">{{ readableNo(selectedRisk.source_risk_id) }}</div></div>
                 <div class="detail-hero-side"><div class="detail-hero-tags"><span class="tag" :class="severityTag(selectedRisk.severity)">{{ severityLabel(selectedRisk.severity) }}</span><span class="tag" :class="stateTag(selectedRisk.state)">{{ stateLabel(selectedRisk.state) }}</span></div></div>
               </div></div>
               <div class="metric-strip is-compact">
@@ -1233,7 +1342,7 @@ onUnmounted(() => {
                 <div class="metric-item"><span class="metric-copy"><small>高度关系</small><b>{{ heightRelationLabel(selectedRisk.height_relation) }}</b></span></div>
               </div>
               <div class="sect"><h4>事件信息</h4><dl class="kv kv-surface">
-                <dt>风险编号</dt><dd class="mono" :title="selectedRisk.risk_id">{{ selectedRisk.source_risk_id || '未提供' }}</dd>
+                <dt>风险编号</dt><dd class="mono" :title="`${selectedRisk.source_risk_id || ''} / ${selectedRisk.risk_id}`">{{ readableNo(selectedRisk.source_risk_id) || '未提供' }}</dd>
                 <dt>风险类型</dt><dd>{{ labelOf(RISK_TYPE_LABEL, selectedRisk.risk_type, '未提供') }}</dd>
                 <dt>来源</dt><dd>{{ selectedRisk.source_name || selectedRisk.source_code || '未提供' }}（{{ labelOf(SOURCE_MODE_LABEL, selectedRisk.source_mode, '未提供') }}）</dd>
                 <dt>发生时间</dt><dd>{{ formatTime(selectedRisk.occurred_at) }}</dd>
@@ -1294,14 +1403,18 @@ onUnmounted(() => {
           <div v-else-if="!plans.length" class="empty">暂无可访问的飞行计划</div>
           <div v-else class="tb-wrap">
             <table class="tb">
-              <thead><tr><th>计划编号</th><th>计划时段</th><th>状态</th><th>航线版本</th></tr></thead>
+              <!-- 列集与 legacy flights.js 一致：编号 / 时段 / 最大高度 / 状态 / 匹配 / 偏航时差 / 来源；航线版本进编号行的小字。 -->
+              <thead><tr><th>计划编号</th><th>计划时段</th><th class="num">最大高度</th><th>状态</th><th>匹配</th><th class="num" style="text-align:right">偏航/时差</th><th>来源</th></tr></thead>
               <tbody>
                 <tr v-for="plan in plans" :key="plan.plan_id" :class="{ on: selected?.plan_id === plan.plan_id }"
                   tabindex="0" @click="loadDetail(plan.plan_id)" @keydown.enter="loadDetail(plan.plan_id)">
-                  <td class="mono">{{ plan.plan_no }}</td>
+                  <td class="mono">{{ plan.plan_no }}<br><small :title="plan.route?.route_version_id">{{ plan.route?.route_no || '未知航线' }} / v{{ plan.route?.version_no ?? '—' }}</small></td>
                   <td>{{ formatTime(plan.start_at) }}<br><small>{{ formatDuration(plan) }}</small></td>
-                  <td>{{ labelOf(PLAN_STATUS_LABEL, plan.status_code) }}</td>
-                  <td>{{ plan.route?.route_no || '未知航线' }} / v{{ plan.route?.version_no ?? '—' }}</td>
+                  <td class="num">{{ plan.route?.max_altitude_m == null ? '—' : `${plan.route.max_altitude_m} m` }}</td>
+                  <td><span class="tag" :class="PLAN_STATUS_TAG[plan.status_code] || 't-gray'">{{ labelOf(PLAN_STATUS_LABEL, plan.status_code) }}</span></td>
+                  <td><span v-if="rowMatch(plan).tag" class="tag" :class="rowMatch(plan).tag" :title="rowMatch(plan).title">{{ rowMatch(plan).text }}</span><span v-else style="color:var(--txt-3)" :title="rowMatch(plan).title">{{ rowMatch(plan).text }}</span></td>
+                  <td class="num" style="text-align:right;color:var(--txt-3)" :title="DEVIATION_NOTE">—</td>
+                  <td><div :title="rowSource(plan)" style="white-space:normal;line-height:1.4;font-size:11.5px">{{ rowSource(plan) }}</div></td>
                 </tr>
               </tbody>
             </table>
@@ -1312,7 +1425,7 @@ onUnmounted(() => {
         <div class="col flight-right">
           <UPanel title="航线周边态势" nopad body-style="padding:6px">
             <!-- UPanel 的 sub/extra 使用 v-html；API 航线编号只能经 Vue 文本插值输出。 -->
-            <div class="map-summary">{{ selected?.route ? `${selected.route.route_no} / v${selected.route.version_no} · ` : '' }}{{ conflicts.length ? `共 ${conflicts.length} 条空域时空关系事实` : '未接入风险/异物推导；仅展示已取得的航线与空域版本几何。' }}</div>
+            <div class="map-summary">{{ selected?.route ? `${selected.route.route_no} / v${selected.route.version_no} · ` : '' }}{{ conflicts.length ? `共 ${conflicts.length} 条空域时空关系事实` : '仅展示已取得的航线与空域版本几何' }}{{ matchedTrackNote ? ` · ${matchedTrackNote}` : '' }}</div>
             <div ref="mapHost" class="route-map" :class="{ unavailable: !hasMapContent }"></div>
             <div v-if="routeGeometryLoading || airspaceLoading" class="empty">正在读取航线或空域事实…</div>
             <div v-else-if="routeGeometryError || airspaceError" class="warnbox">{{ routeGeometryError || airspaceError }}</div>
@@ -1392,10 +1505,9 @@ onUnmounted(() => {
               </template>
             </section>
             <section class="sect"><h4>空域冲突事实</h4><div v-if="!conflicts.length" class="empty">未返回空域冲突事实。</div><div v-else class="conflict-list"><div v-for="fact in conflicts" :key="`${fact.airspace_version_id}-${fact.conflict_code}`" class="conflict-item">{{ fact.airspace_id }} / {{ fact.airspace_version_id }}：水平 {{ fact.horizontal_relation }}；高度 {{ fact.height_relation }}；时间 {{ fact.time_relation }}；{{ fact.conflict_code || '未提供' }}</div></div></section>
-            <div class="row" style="margin-top:12px;gap:8px;flex-wrap:wrap">
-              <button class="btn" type="button" disabled title="飞行计划导出未接入：风险列表的导出在“全部风险事件”页签的筛选栏里">导出（尚未接入）</button>
-              <button class="btn" type="button" disabled title="风险通知未接入：本平台没有对外通知渠道，通报只能走处罚交接">风险通知（尚未接入）</button>
-              <button class="btn" type="button" disabled title="写入操作未接入：风险由规则引擎写入，页面不提供人工改写">写入操作（尚未接入）</button>
+            <!-- 与 legacy 一致的唯一动作：跳到合法性研判页并选中本计划匹配到的目标（决策 15-48）。 -->
+            <div class="detail-actions" style="margin-top:12px">
+              <button class="btn pri" type="button" style="flex:1;justify-content:center" :title="legalityJumpNote" @click="goLegality">合法性判定 →</button>
             </div>
           </template></div>
           </UPanel>

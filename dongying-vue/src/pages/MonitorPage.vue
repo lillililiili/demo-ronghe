@@ -1,5 +1,6 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
+import { DEVICE_EVENT_TYPE_LABEL, SEVERITY_LABEL, labelOf } from '@/ui/labels.js';
 import { NButton, NDataTable, NEmpty, NSpin, NTag } from 'naive-ui';
 import UField from '@/components/form/UField.vue';
 import UKpis from '@/components/UKpis.vue';
@@ -178,8 +179,8 @@ onUnmounted(() => { clearInterval(aggregateTimer); clearInterval(selectedTimer);
         </UPanel>
       </div>
       <div class="right-column">
-        <UPanel title="活动告警" :sub="`${incidents.length} 条`" nopad><div v-if="incidents.length" class="feed"><button v-for="item in incidents" :key="item.incident_id" type="button" @click="selectedId=item.device_id"><span><NTag size="small" :type="item.severity==='HIGH'?'error':'warning'" :bordered="false">{{ item.severity }}</NTag><b>{{ item.device_name }}</b></span><p>{{ item.reason }}</p><time>{{ fmtTime(item.detected_at) }}</time></button></div><NEmpty v-else description="当前没有活动告警" class="empty-block" /></UPanel>
-        <UPanel title="设备事件流" sub="按序号增量拉取" panel-style="flex:1;min-height:0" nopad><div v-if="events.length" class="event-feed"><article v-for="item in [...events].reverse()" :key="item.event_seq"><i :class="item.level_code"></i><div><b>{{ item.event_type }}</b><p>{{ item.message }}</p><time>#{{ item.event_seq }} · {{ fmtTime(item.occurred_at) }}</time></div></article></div><NEmpty v-else description="暂无设备事件" class="empty-block" /></UPanel>
+        <UPanel title="活动告警" :sub="`${incidents.length} 条`" nopad><div v-if="incidents.length" class="feed"><button v-for="item in incidents" :key="item.incident_id" type="button" @click="selectedId=item.device_id"><span><NTag size="small" :type="item.severity==='HIGH'?'error':'warning'" :bordered="false">{{ labelOf(SEVERITY_LABEL, item.severity) }}</NTag><b>{{ item.device_name }}</b></span><p>{{ item.reason }}</p><time>{{ fmtTime(item.detected_at) }}</time></button></div><NEmpty v-else description="当前没有活动告警" class="empty-block" /></UPanel>
+        <UPanel title="设备事件流" sub="按序号增量拉取" panel-style="flex:1;min-height:0" nopad><div v-if="events.length" class="event-feed"><article v-for="item in [...events].reverse()" :key="item.event_seq"><i :class="item.level_code"></i><div><b :title="item.event_type">{{ labelOf(DEVICE_EVENT_TYPE_LABEL, item.event_type) }}</b><p>{{ item.message }}</p><time>#{{ item.event_seq }} · {{ fmtTime(item.occurred_at) }}</time></div></article></div><NEmpty v-else description="暂无设备事件" class="empty-block" /></UPanel>
       </div>
     </div>
   </div>

@@ -32,6 +32,9 @@ import com.uav.lowaltitude.modules.alarm.infrastructure.UavEventRepository;
 import com.uav.lowaltitude.modules.handoff.domain.HandoffRules;
 import com.uav.lowaltitude.modules.handoff.infrastructure.HandoffRepository;
 import com.uav.lowaltitude.modules.handoff.infrastructure.HandoffRepository.DeliveryInsert;
+import com.uav.lowaltitude.modules.handoff.domain.HandoffChannelPort;
+import com.uav.lowaltitude.modules.handoff.domain.HandoffChannelPort.DeliveryOutcome;
+import com.uav.lowaltitude.modules.handoff.domain.HandoffChannelPort.HandoffDispatch;
 import com.uav.lowaltitude.modules.handoff.infrastructure.HandoffRepository.HandoffInsert;
 import com.uav.lowaltitude.modules.handoff.infrastructure.HandoffRepository.RecipientRow;
 import com.uav.lowaltitude.modules.identity.application.AccessControlService;
@@ -69,7 +72,8 @@ public class HandoffSubmissionService {
 
     public HandoffSubmissionService(AccessControlService access, HandoffRepository repository, RiskRepository risks, RiskReadService riskRead,
             IdempotencyGuard idempotency, AppClock clock, AuditService audit, ObjectMapper objectMapper,
-            DisposalCompletionPort disposals, UavEventRepository events, HandoffMaterialAssembler materials) {
+            DisposalCompletionPort disposals, UavEventRepository events, HandoffMaterialAssembler materials, HandoffChannelPort channel) {
+        this.channel = channel;
         this.access = access; this.repository = repository; this.risks = risks; this.riskRead = riskRead;
         this.idempotency = idempotency; this.clock = clock; this.audit = audit; this.objectMapper = objectMapper;
         this.disposals = disposals;
@@ -123,15 +127,16 @@ public class HandoffSubmissionService {
         } catch (DuplicateKeyException ex) {
             throw alreadyExists();
         }
-        repository.insertSnapshot(handoffId, HandoffRules.SNAPSHOT_SCHEMA_VERSION, json(material), at);
-        // 提交不等于送达：本期没有接通任何通知渠道，首条投递记录只能是待投递并标明阻断原因，送达与回执必须来自后续外部事实。
-        repository.insertDelivery(new DeliveryInsert(UUID.randomUUID().toString(), handoffId, 1, HandoffRules.PENDING_DELIVERY,
-                HandoffRules.NOT_EXPECTED, HandoffRules.CHANNEL_NOT_CONNECTED, at, null, null, null));
+        String snapshot = json(material);
+        repository.insertSnapshot(handoffId, HandoffRules.SNAPSHOT_SCHEMA_VERSION, snapshot, at);
+        // 提交不等于送达：首条投递记录写渠道返回的事实（未接通=待投递+阻断原因；模拟/真实上级接口=送达与回执时刻）。
+        DeliveryOutcome outcome = dispatch(handoffId, request.sourceKind(), sourceId, request.handoffType(), recipient, snapshot, at);
+        repository.insertDelivery(delivery(handoffId, outcome, at));
         audit.record(actor.userId(), actor.account(), actor.roleCode(), "handoff", "handoff_created", "handoff", handoffId,
                 "source_kind=" + request.sourceKind() + "; source_id=" + sourceId + "; handoff_type=" + request.handoffType()
                         + "; recipient_id=" + recipientId + "; source_version=" + risk.version(), "SUCCESS", "", "");
         return new CreatedDto(handoffId, request.sourceKind(), sourceId, request.handoffType(), recipientId, risk.version(),
-                HandoffRules.PENDING_DELIVERY, HandoffRules.NOT_EXPECTED, HandoffRules.CHANNEL_NOT_CONNECTED, at.toInstant().toEpochMilli());
+                outcome.deliveryStatus(), outcome.receiptStatus(), outcome.blockedReason(), at.toInstant().toEpochMilli());
     }
 
     /**
@@ -170,14 +175,15 @@ public class HandoffSubmissionService {
         } catch (DuplicateKeyException ex) {
             throw alreadyExists();
         }
-        repository.insertSnapshot(handoffId, MATERIAL_SCHEMA_V2, json(material), at);
-        repository.insertDelivery(new DeliveryInsert(UUID.randomUUID().toString(), handoffId, 1, HandoffRules.PENDING_DELIVERY,
-                HandoffRules.NOT_EXPECTED, HandoffRules.CHANNEL_NOT_CONNECTED, at, null, null, null));
+        String snapshot = json(material);
+        repository.insertSnapshot(handoffId, MATERIAL_SCHEMA_V2, snapshot, at);
+        DeliveryOutcome outcome = dispatch(handoffId, request.sourceKind(), sourceId, request.handoffType(), recipient, snapshot, at);
+        repository.insertDelivery(delivery(handoffId, outcome, at));
         audit.record(actor.userId(), actor.account(), actor.roleCode(), "handoff", "handoff_created", "handoff", handoffId,
                 "source_kind=" + request.sourceKind() + "; source_id=" + sourceId + "; handoff_type=" + request.handoffType()
                         + "; recipient_id=" + recipientId + "; source_version=" + event.version(), "SUCCESS", "", "");
         return new CreatedDto(handoffId, request.sourceKind(), sourceId, request.handoffType(), recipientId, event.version(),
-                HandoffRules.PENDING_DELIVERY, HandoffRules.NOT_EXPECTED, HandoffRules.CHANNEL_NOT_CONNECTED,
+                outcome.deliveryStatus(), outcome.receiptStatus(), outcome.blockedReason(),
                 at.toInstant().toEpochMilli());
     }
 
@@ -269,4 +275,25 @@ public class HandoffSubmissionService {
     private static String framed(String value) { return value.getBytes(StandardCharsets.UTF_8).length + ":" + value; }
     private static ApiException invalidRequest() { return new ApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "请求体无效"); }
     private static ApiException alreadyExists() { return new ApiException(HttpStatus.CONFLICT, "HANDOFF_ALREADY_EXISTS", "该事项已向此接收方提交过交接"); }
+
+    private final HandoffChannelPort channel;
+
+    /** 渠道异常不吞：交接与快照已入库，投递记录如实写"待投递 · 未接通"，由后续人工或重试处理。 */
+    private DeliveryOutcome dispatch(String handoffId, String sourceKind, String sourceId, String handoffType, RecipientRow recipient,
+            String snapshot, OffsetDateTime at) {
+        try {
+            DeliveryOutcome outcome = channel.deliver(new HandoffDispatch(handoffId, sourceKind, sourceId, handoffType,
+                    recipient.recipientId(), recipient.displayName(), snapshot, at));
+            if (outcome == null || !HandoffRules.DELIVERY_STATUSES.contains(outcome.deliveryStatus())
+                    || !HandoffRules.RECEIPT_STATUSES.contains(outcome.receiptStatus())) return DeliveryOutcome.notConnected();
+            return outcome;
+        } catch (RuntimeException ex) {
+            return DeliveryOutcome.notConnected();
+        }
+    }
+
+    private static DeliveryInsert delivery(String handoffId, DeliveryOutcome outcome, OffsetDateTime at) {
+        return new DeliveryInsert(UUID.randomUUID().toString(), handoffId, 1, outcome.deliveryStatus(), outcome.receiptStatus(),
+                outcome.blockedReason(), at, outcome.submittedAt(), outcome.deliveredAt(), outcome.acknowledgedAt());
+    }
 }

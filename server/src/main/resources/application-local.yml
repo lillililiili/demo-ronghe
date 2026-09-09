@@ -15,6 +15,11 @@ spring:
 app:
   source-mode: live
   evidence-dir: ./data/evidence
+  handoff:
+    channel: ${APP_HANDOFF_CHANNEL:mock}
+  device:
+    mock-adapter:
+      enabled: ${APP_DEVICE_MOCK_ADAPTER_ENABLED:true}
   dev-seed:
     enabled: ${APP_DEV_SEED_ENABLED:true}
     password: ${APP_DEV_SEED_PASSWORD:changeme}

@@ -86,7 +86,7 @@ async function settleUncertain({ error, evaluationId, action, expectedVersion, r
     releaseKey(evaluationId, action);
     closeModal();
     toast(stillAllowed
-      ? `提交结果未确认，已刷新当前状态：复核版本已更新为 v${version}（${reviewStateText(latest.review?.state)}），请核对历史后重新操作。`
+      ? `提交结果未确认，已刷新当前状态：复核已更新为第${version}次（${reviewStateText(latest.review?.state)}），请核对历史后重新操作。`
       : `提交结果未确认，已刷新当前状态：当前为「${reviewStateText(latest.review?.state)}」，该动作已不可执行。`, 'err');
     return true;
   }
@@ -95,7 +95,7 @@ async function settleUncertain({ error, evaluationId, action, expectedVersion, r
 
 function intro(evaluation) {
   const rows = [
-    ['研判编号', `<span class="mono">${esc(evaluation.evaluation_id)}</span>　复核 v${Number(evaluation.review?.version ?? 0)}`],
+    ['复核次数', Number(evaluation.review?.version ?? 0) > 0 ? `已第${Number(evaluation.review.version)}次复核` : '尚未复核'],
     ['系统结论', esc(legalStatusText(evaluation.legal_status)) + (evaluation.grade ? `　等级 ${esc(evaluation.grade)}` : '')],
     ['复核状态', esc(reviewStateText(evaluation.review?.state))],
     ['计划匹配', esc(evaluation.plan_match_code || '—')],
@@ -152,7 +152,7 @@ export function openLegalityReview({ evaluation, refresh, onDone } = {}) {
         const result = await legalityApi.reviseEvaluation(evaluationId, body, key);
         releaseKey(evaluationId, action);
         closeModal();
-        toast(`复核完成：${reviewStateText(result?.review?.state)}（v${Number(result?.review?.version)}）`, 'ok');
+        toast(`复核完成：${reviewStateText(result?.review?.state)}（第${Number(result?.review?.version)}次复核）`, 'ok');
         if (refresh) await refresh(result);
         if (onDone) onDone(result);
       } catch (error) {

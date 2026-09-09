@@ -17,8 +17,9 @@ public final class FlightDtos {
     public record SourceDto(String sourceId, String sourceCode, String sourceMode, String sourceName) {
     }
 
+    /** maxAltitudeM 取自该计划引用的航线版本（列表页"最大高度"列）；航线版本未填时为 null。 */
     public record RouteReferenceDto(
-            String routeVersionId, String routeId, String routeNo, String name, int versionNo) {
+            String routeVersionId, String routeId, String routeNo, String name, int versionNo, BigDecimal maxAltitudeM) {
     }
 
     public record GeoJsonLineStringDto(

@@ -1,5 +1,5 @@
 <script setup>
-import { computed, h, onMounted, reactive, ref } from 'vue';
+import { computed, h, onMounted, reactive, ref, watch } from 'vue';
 import { NButton, NDataTable, NSpin, NTag } from 'naive-ui';
 import { UField } from '@/components/form/index.js';
 import UPagination from '@/components/UPagination.vue';
@@ -55,6 +55,7 @@ async function load() {
   finally { loading.value = false; }
 }
 function search() { page.value = 1; load(); }
+watch(() => [filters.module, filters.action, filters.result], () => search()); // 下拉一改就查（决策 15-56）
 function reset() {
   Object.assign(filters, { range: null, account: '', module: null, action: null, result: null });
   search();

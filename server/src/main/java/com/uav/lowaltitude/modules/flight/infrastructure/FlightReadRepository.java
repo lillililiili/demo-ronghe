@@ -182,7 +182,7 @@ public class FlightReadRepository {
         return """
                 SELECT p.plan_id,p.plan_no,p.status_code,p.source_id,p.source_mode,p.uav_sn,p.start_at,p.end_at,
                        p.owner_org_id,p.district_id,p.created_at,p.updated_at,p.version,s.source_code,
-                       rv.route_version_id,rv.version_no,r.route_id,r.route_no,r.name,
+                       rv.route_version_id,rv.version_no,rv.max_altitude_m,r.route_id,r.route_no,r.name,
                        s.name AS source_name,org_ref.name AS owner_org_name,dist_ref.name AS district_name
                 """;
     }
@@ -216,7 +216,7 @@ public class FlightReadRepository {
                 rs.getString("source_id"), rs.getString("source_code"), rs.getString("source_mode"), rs.getString("uav_sn"),
                 time(rs, "start_at"), time(rs, "end_at"), rs.getString("owner_org_id"), rs.getString("district_id"),
                 rs.getString("route_version_id"), rs.getString("route_id"), rs.getString("route_no"), rs.getString("name"),
-                rs.getInt("version_no"), time(rs, "created_at"), time(rs, "updated_at"), rs.getLong("version"),
+                rs.getInt("version_no"), rs.getBigDecimal("max_altitude_m"), time(rs, "created_at"), time(rs, "updated_at"), rs.getLong("version"),
                 rs.getString("source_name"), rs.getString("owner_org_name"), rs.getString("district_name"));
     }
 
@@ -284,7 +284,7 @@ public class FlightReadRepository {
     public record PlanRow(String planId, String planNo, String statusCode, String sourceId, String sourceCode,
             String sourceMode, String uavSn, OffsetDateTime startAt, OffsetDateTime endAt, String ownerOrgId,
             String districtId, String routeVersionId, String routeId, String routeNo, String routeName, int versionNo,
-            OffsetDateTime createdAt, OffsetDateTime updatedAt, long version,
+            BigDecimal maxAltitudeM, OffsetDateTime createdAt, OffsetDateTime updatedAt, long version,
             String sourceName, String ownerOrgName, String districtName) {
     }
 

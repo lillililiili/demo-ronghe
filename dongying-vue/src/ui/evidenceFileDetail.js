@@ -5,6 +5,8 @@ import {
   EVIDENCE_CUSTODY_LABEL, EVIDENCE_CUSTODY_TAG, EVIDENCE_KIND_LABEL, EVIDENCE_STATUS_LABEL,
   EVIDENCE_SUBJECT_LABEL, labelOf
 } from '@/ui/labels.js';
+/* 只有在库文件能下载：其余状态按钮禁用并说明（决策 15-58）。 */
+const DOWNLOAD_BLOCKED = { PENDING: '文件还在入库中，暂不能下载', MISSING: '文件缺失，不能下载', CORRUPT: '文件哈希不符，不能下载' };
 
 const SC = {
   PENDING: 't-gray', AVAILABLE: 't-green', MISSING: 't-orange', CORRUPT: 't-red', DESTROYED: 't-gray'
@@ -76,7 +78,9 @@ export function renderEvidenceFileDetail(f, options = {}) {
     : mode === 'modal'
     ? `<button class="btn pri" style="width:100%;justify-content:center" data-act="download">${U.icon('download')} 下载</button>
        <div style="margin-top:8px;font-size:11px;color:var(--txt-3);line-height:1.8">只读查看。下载须经鉴权并记入访问记录。</div>`
-    : `<button class="btn pri" style="width:100%;justify-content:center" data-evact="download">${U.icon('download')} 下载</button>
+    : `${f.status === 'AVAILABLE'
+        ? `<button class="btn pri" style="width:100%;justify-content:center" data-evact="download">${U.icon('download')} 下载</button>`
+        : `<button class="btn pri" style="width:100%;justify-content:center" disabled title="${esc(DOWNLOAD_BLOCKED[f.status] || '文件不可下载')}">${U.icon('download')} 下载</button>`}
     <div style="display:flex;gap:8px;margin-top:8px">
       <button class="btn" style="flex:1" data-evact="verify">校验哈希</button>
       ${f.held

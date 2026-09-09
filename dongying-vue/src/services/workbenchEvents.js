@@ -1,7 +1,7 @@
 /* “我的工作台”统一事件适配层：把后端工作台摘要映射成页面视图模型，并提供导航与源对象读取。
  * 这里只统一入口、分类和待办提示，不改写三类业务各自的状态机，也不再写任何内存状态：
  * 队列、计数、详情全部来自 GET /workbench/items；核实委托 alarmApi/riskApi，通知委托 handoffApi（待领导接线）。 */
-import { disposalStatusText, RISK_STATE_LABEL, SEVERITY_LABEL, SEVERITY_TAG, SOURCE_MODE_LABEL, labelOf } from '@/ui/labels.js';
+import { DELIVERY_STATUS_LABEL, DISPOSAL_ACTIVE_STATUSES, disposalStatusText, readableNo, RISK_STATE_LABEL, SEVERITY_LABEL, SEVERITY_TAG, SOURCE_MODE_LABEL, labelOf } from '@/ui/labels.js';
 import { disposalApi } from '@/services/disposalApi.js';
 import { getWorkbenchItem, listWorkbenchItems } from '@/services/workbenchApi.js';
 import { getAlarm, getUavEvent } from '@/services/alarmApi.js';
@@ -9,6 +9,8 @@ import { riskApi } from '@/services/riskApi.js';
 
 export const KINDS = ['UAV_EVENT', 'RISK', 'DEVICE_INCIDENT'];
 export const kindLabel = { UAV_EVENT: '无人机告警', RISK: '飞行计划风险', DEVICE_INCIDENT: '设备告警' };
+/* 事项的原始记录所在页（与侧栏菜单同名），供"打开 XX 页"按钮用；跳转目标见 openSourcePage。 */
+export const sourcePageLabel = { UAV_EVENT: '告警事件', RISK: '飞行计划', DEVICE_INCIDENT: '设备实时监测' };
 export const kindIcon = { UAV_EVENT: 'plane', RISK: 'plan', DEVICE_INCIDENT: 'device' };
 export const kindModule = { UAV_EVENT: '异常告警中心', RISK: '飞行活动管理 · 全部风险事件', DEVICE_INCIDENT: '设备实时监测' };
 
@@ -74,7 +76,7 @@ function nextStep(item) {
 /* 后端事项 → 页面摘要（只做字段映射与文案，不推导任何服务端未给出的事实）。 */
 export function summarize(item) {
   return {
-    key: keyOf(item), kind: item.kind, kindLabel: kindLabel[item.kind] || item.kind, sourceId: item.source_id, sourceNo: item.source_no || '',
+    key: keyOf(item), kind: item.kind, kindLabel: kindLabel[item.kind] || item.kind, sourceId: item.source_id, sourceNo: readableNo(item.source_no),
     title: item.title || '', summary: item.summary || '',
     severity: item.severity, level: severityLabel(item.severity), levelTag: severityTag(item.severity),
     state: item.state, sourceStatus: stateLabel(item.kind, item.state),
@@ -165,6 +167,15 @@ export async function getWorkbenchDetail(kind, sourceId) {
   const summary = summarize(data.item);
   // 反制状态来自处置授权（阶段 13）：读不到时传 undefined，流程条显示“未接入”而不是“尚无授权”。
   const counter = kind === 'UAV_EVENT' ? await latestCountermeasure(sourceId) : undefined;
+  // 已有未了结的联动反制申请时，服务端会以 ACTIVE_AUTHORIZATION_EXISTS 拒绝再次发起；按钮直接禁用并说明原因。
+  if (summary.todo?.kind === 'countermeasure' && counter && DISPOSAL_ACTIVE_STATUSES.includes(counter.status)) {
+    summary.todo = { ...summary.todo, allowed: false, blocker: `已有联动反制申请（${disposalStatusText(counter)}），了结前不能再次发起`, hint: '等该申请审批、执行或停止后，才能再次发起联动反制。' };
+  }
+  // 风险已提交过通知（交接记录存在且未失败）时，服务端对同一接收方会 409：按钮直接禁用并说明（决策 15-50）。
+  const submitted = (data.timeline || []).find(t => t.entry_type === 'HANDOFF' && t.delivery_status && t.delivery_status !== 'FAILED');
+  if (summary.todo?.kind === 'notify' && submitted) {
+    summary.todo = { ...summary.todo, allowed: false, blocker: `已提交通知（${labelOf(DELIVERY_STATUS_LABEL, submitted.delivery_status)}），不能重复提交`, hint: '交接材料已入库，等待投递或回执；风险状态保持「待通知」。' };
+  }
   return { kind, summary, item: data.item, timeline: data.timeline || [], availability: data.availability || {}, steps: stepsOf(kind, data.item.state, counter) };
 }
 

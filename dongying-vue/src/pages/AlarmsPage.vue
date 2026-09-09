@@ -30,7 +30,7 @@ import { exportAlarmsCsv, getAlarm, getUavEvent, listAlarmDistricts, listAlarms,
 import { getEvidenceChain } from '@/services/evidenceApi.js';
 import { openUavVerification } from '@/ui/uavVerificationModal.js';
 import { targetApi } from '@/services/targetApi.js';
-import { ALARM_TYPE_LABEL, DISPOSAL_ACTION_LABEL, disposalStatusText, labelOf, SOURCE_MODE_LABEL as MODE_TEXT, targetTypeLabel } from '@/ui/labels.js';
+import { ALARM_TYPE_LABEL, DISPOSAL_ACTIVE_STATUSES, DISPOSAL_ACTION_LABEL, disposalStatusText, labelOf, readableNo, SOURCE_MODE_LABEL as MODE_TEXT, targetTypeLabel, verificationOrdinal } from '@/ui/labels.js';
 import { openEvidenceFileModal } from '@/ui/evidenceFileDetail.js';
 import { renderEvidenceChainHtml } from '@/ui/evidenceChainView.js';
 import { disposalApi, isDisposalUnavailable } from '@/services/disposalApi.js';
@@ -62,7 +62,6 @@ const STATE = {
   FALSE_POSITIVE: { t: '误报', c: 't-blue', color: '#8fbaff' }
 };
 const NO_EVENT = { t: '未建事件', c: 't-gray', color: '#8ca0be' };
-const ALARM_TYPE = { UAV_INTRUSION: '无人机入侵', UAV: '无人机告警' };
 const SOURCE_MODE = { mock: { t: MODE_TEXT.mock, c: 't-purple' }, replay: { t: MODE_TEXT.replay, c: 't-amber' }, live: { t: MODE_TEXT.live, c: 't-green' } };
 /* 类别来自共享字典；区域来自本页的区域字典接口，读不到就把下拉标成"不可用"并在 title 说明原因。 */
 const KIND_OPTS = [{ v: '全部', t: '全部' }, ...Object.keys(ALARM_TYPE_LABEL).map(v => ({ v, t: ALARM_TYPE_LABEL[v] }))];
@@ -89,7 +88,9 @@ const clock = ms => fmt(ms).slice(11) || '—';
 const sevOf = a => SEVERITY[a.severity] || { t: esc(a.severity || '—'), c: 't-gray', tone: 'info' };
 const stateOf = a => a.event_id ? (STATE[a.state] || { t: esc(a.state || '状态未知'), c: 't-gray', color: '#8ca0be' }) : NO_EVENT;
 const stateText = code => (STATE[code] || { t: esc(code || '—') }).t;
-const typeOf = a => ALARM_TYPE[a.alarm_type] || esc(a.alarm_type || '—');
+const typeOf = a => ALARM_TYPE_LABEL[a.alarm_type] || esc(a.alarm_type || '—');
+/* 只上屏业务编号；引擎标识（eval:…）不是编号，列里显示 —，内部 ID 留在 title。 */
+const noOf = a => readableNo(a.alarm_no) || '—';
 const modeOf = a => SOURCE_MODE[a.source_mode] || { t: esc(a.source_mode || '—'), c: 't-gray' };
 const sevTag = a => U.tag(sevOf(a).t, sevOf(a).c);
 const stateTag = a => U.tag(stateOf(a).t, stateOf(a).c);
@@ -296,7 +297,7 @@ function listHtml() {
   return U.table([
     {
       t: sortTh('ts', '告警编号 / 时间'), w: '108px', cls: 'num',
-      render: a => U.cell(esc(a.alarm_no || String(a.alarm_id).slice(-9)), clock(a.received_at), { mono: true, title: esc(a.alarm_id) })
+      render: a => U.cell(esc(noOf(a)), clock(a.received_at), { mono: true, title: esc(a.alarm_id) })
     },
     { t: sortTh('level', '等级'), w: '52px', align: 'center', render: sevTag },
     { t: sortTh('kind', '类别 / 类型'), w: '128px', render: a => U.cell(U.tag(modeOf(a).t, modeOf(a).c), typeOf(a)) },
@@ -339,9 +340,14 @@ function disposalActions(a, ev) {
   if ((ev.allowed_actions || []).includes('VERIFY')) return `<button class="btn pri" data-al="verify">人工核实</button>`;
   if (ev.state === 'CONFIRMED') {
     /* 已核实的事件可以发起联动反制申请：按钮本身只负责“提申请”，能不能执行由审批与时限决定。 */
+    /* 已有未了结的联动反制申请（待审批/已批准/执行中）时服务端会拒绝再发起（ACTIVE_AUTHORIZATION_EXISTS），按钮直接禁用。 */
+    const active = disposal.byAction.COUNTERMEASURE;
+    const activeText = active && DISPOSAL_ACTIVE_STATUSES.includes(active.status) ? `已有联动反制申请（${disposalStatusText(active)}），了结前不能再次发起` : '';
     const counter = disposal.unavailable || disposal.error
       ? dis('counter', `${U.icon('bolt')} 发起联动反制`, esc(disposal.error || DISPOSAL_UNAVAILABLE_TEXT), 'danger')
-      : `<button class="btn danger" data-al="counter">${U.icon('bolt')} 发起联动反制</button>`;
+      : activeText
+        ? dis('counter', `${U.icon('bolt')} 发起联动反制`, esc(activeText), 'danger')
+        : `<button class="btn danger" data-al="counter">${U.icon('bolt')} 发起联动反制</button>`;
     /* 阶段 14：处罚移送已接入。按钮只负责提交交接，能不能提交（已核实、有已完成授权、未重复）由服务端判，
        前端不预判（决策 14-18）。 */
     return counter + ` <button class="btn" data-al="punish">提交处罚交接</button>`;
@@ -358,7 +364,7 @@ function historyHtml() {
   /* 说明文本是用户输入：这里只留占位 span，innerHTML 写入后再以 textContent 填充，不进 v-html。 */
   return U.timeline(cur.history.map((h, i) => ({
     time: clock(h.created_at),
-    label: `${stateText(h.previous_state)} → ${stateText(h.resulting_state)}（v${Number(h.version)}）`,
+    label: `${stateText(h.previous_state)} → ${stateText(h.resulting_state)}（第${Number(h.version)}次核实）`,
     desc: `操作人 ${esc(h.actor_name || h.actor_id || '—')} · <span data-note="${i}"></span>`,
     color: (STATE[h.resulting_state] || NO_EVENT).color
   }))) + more;
@@ -380,7 +386,7 @@ function detailHtml() {
   const targetType = !a.target_id ? '—' : cur.targetLoading ? '读取中…' : cur.targetError ? '读取失败' : esc(t ? targetTypeLabel(t.subtype, t.object_type_code) : '—');
   const altSpeed = ls ? `${ls.altitude_amsl_m == null ? '—' : esc(ls.altitude_amsl_m)} m / ${ls.speed_mps == null ? '—' : esc(ls.speed_mps)} m/s` : '— m / — m/s';
   return `${U.detailHero({
-    icon: 'alert', subtitle: '告警事件', title: typeOf(a), id: esc(a.alarm_no || a.alarm_id),
+    icon: 'alert', subtitle: '告警事件', title: typeOf(a), id: esc(noOf(a)),
     tags: [sevTag(a), stateTag(a)],
     meta: [['区域', esc(a.district_name || a.district_id || '—')], ['时间', clock(a.received_at)]]
   })}
@@ -399,7 +405,7 @@ function detailHtml() {
     ['目标类型', targetType],
     ['高度/速度', altSpeed],
     ['数据来源', `${esc(a.source_name || a.source_code || '—')}（${modeOf(a).t}）`],
-    ['核实事件', ev ? `已建核实事件　v${Number(ev.version)}` : (a.event_id ? '已建核实事件（详情读取失败）' : '尚未创建核实事件')]
+    ['核实事件', ev ? (verificationOrdinal(ev.version, '已') || '已建核实事件，尚未核实') : (a.event_id ? '已建核实事件（详情读取失败）' : '尚未创建核实事件')]
   ], { surface: true, density: 'compact' }), { icon: 'alert' })}
     ${U.sect('核实历史', historyHtml(), { icon: 'trend' })}
     ${renderEvidenceChainHtml(cur.chain, {
@@ -644,7 +650,7 @@ async function counterModal() {
     actionOptions: ['COUNTERMEASURE', 'JAMMING'],
     subjectKind: 'UAV_EVENT',
     subjectId: ev.event_id,
-    subjectText: a.alarm_no || a.alarm_id,
+    subjectText: readableNo(a.alarm_no) || typeOf(a),
     policy,
     // refreshAfterWrite 会重读列表、详情（内含授权）与 KPI，详情重读后步骤与按钮即反映新状态。
     refresh: async () => {

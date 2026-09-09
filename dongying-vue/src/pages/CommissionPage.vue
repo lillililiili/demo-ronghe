@@ -1,5 +1,6 @@
 <script setup>
 import { computed, h, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
+import { DEVICE_CONNECTIVITY_LABEL, labelOf } from '@/ui/labels.js';
 import { NButton, NEmpty, NSpin, NTag } from 'naive-ui';
 import UField from '@/components/form/UField.vue';
 import UFieldGrid from '@/components/form/UFieldGrid.vue';
@@ -137,6 +138,14 @@ async function createTask() {
     await applyDeviceConnection(selectedDeviceId.value);
   }, '调测任务已创建');
 }
+/* 禁用按钮要说明原因（决策 15-58）：调测按步推进，下一步只有在前一步完成的状态下才可点。 */
+const STEP_STATUS_LABEL = { CREATED: '已创建', CONNECTING: '连接中', CONNECTED: '已连接', READY: '配置就绪', RUNNING: '调测中', PASSED: '已通过', FAILED: '未通过', UNTESTABLE: '不可测', CANCELLED: '已取消' };
+function stepTitle(requiredStatus, label) {
+  if (!canOperate.value) return '缺少调测操作权限';
+  if (!active.value) return '还没有选中任务';
+  if (active.value.status === requiredStatus) return '';
+  return `当前任务处于「${STEP_STATUS_LABEL[active.value.status] || active.value.status}」，${label}只能在「${STEP_STATUS_LABEL[requiredStatus]}」阶段执行`;
+}
 function connectTask() { runAction(async () => { active.value = await commissionApi.connect(active.value.commission_id, active.value.version); }, isSimulation.value ? '正在通过模拟适配器建立连接' : '正在建立连接'); }
 function saveConfig() {
   if (!config.host?.trim() || !config.port) { error.value = '主机和端口为必填'; return; }
@@ -167,7 +176,7 @@ onUnmounted(() => { clearInterval(pollTimer); });
     <div v-if="error" class="warnbox error-row" role="alert"><span>{{ error }}</span><NButton size="small" @click="bootstrap">重试</NButton></div>
     <div class="commission-top">
       <UPanel title="调测对象" sub="启用设备" nopad>
-        <div class="device-picker"><UField v-model="selectedDeviceId" type="select" label="选择设备" :options="deviceOptions" :disabled="!!active && !terminal.has(active.status)" /><div v-if="currentDevice" class="device-card"><b>{{ currentDevice.name }}</b><code>{{ currentDevice.device_no }}</code><span>{{ currentDevice.device_type_name }} · {{ currentDevice.channel }}</span><NTag size="small" :type="currentDevice.connectivity==='ONLINE'?'success':'warning'" :bordered="false">{{ currentDevice.connectivity }}</NTag></div><NButton type="primary" block :disabled="!canOperate || !selectedDeviceId || (!!active && !terminal.has(active.status))" :loading="actionBusy" @click="createTask()">创建新任务</NButton></div>
+        <div class="device-picker"><UField v-model="selectedDeviceId" type="select" label="选择设备" :options="deviceOptions" :disabled="!!active && !terminal.has(active.status)" /><div v-if="currentDevice" class="device-card"><b>{{ currentDevice.name }}</b><code>{{ currentDevice.device_no }}</code><span>{{ currentDevice.device_type_name }} · {{ currentDevice.channel }}</span><NTag size="small" :type="currentDevice.connectivity==='ONLINE'?'success':'warning'" :bordered="false">{{ labelOf(DEVICE_CONNECTIVITY_LABEL, currentDevice.connectivity) }}</NTag></div><NButton type="primary" block :disabled="!canOperate || !selectedDeviceId || (!!active && !terminal.has(active.status))" :loading="actionBusy" @click="createTask()">创建新任务</NButton></div>
       </UPanel>
       <UPanel title="任务进度" :sub="active?.commission_no || '尚未创建任务'">
         <div class="progress-body">
@@ -182,17 +191,17 @@ onUnmounted(() => { clearInterval(pollTimer); });
           </div>
           <p v-else class="task-hint">请在左侧选择设备并创建任务</p>
           <div class="task-actions">
-            <NButton :type="active?.status==='CREATED'?'primary':'default'" :disabled="!canOperate || active?.status!=='CREATED'" :loading="actionBusy" @click="connectTask">建立连接</NButton>
-            <NButton :type="active?.status==='CONNECTED'?'primary':'default'" :disabled="!canOperate || active?.status!=='CONNECTED'" :loading="actionBusy" @click="saveConfig">保存配置</NButton>
-            <NButton :type="active?.status==='READY'?'primary':'default'" :disabled="!canOperate || active?.status!=='READY'" :loading="actionBusy" @click="startTask">开始协议调测</NButton>
-            <NButton :disabled="!canOperate || !active || terminal.has(active.status)" @click="cancelTask">取消任务</NButton>
+            <NButton :type="active?.status==='CREATED'?'primary':'default'" :disabled="!canOperate || active?.status!=='CREATED'" :title="stepTitle('CREATED', '建立连接')" :loading="actionBusy" @click="connectTask">建立连接</NButton>
+            <NButton :type="active?.status==='CONNECTED'?'primary':'default'" :disabled="!canOperate || active?.status!=='CONNECTED'" :title="stepTitle('CONNECTED', '保存配置')" :loading="actionBusy" @click="saveConfig">保存配置</NButton>
+            <NButton :type="active?.status==='READY'?'primary':'default'" :disabled="!canOperate || active?.status!=='READY'" :title="stepTitle('READY', '开始协议调测')" :loading="actionBusy" @click="startTask">开始协议调测</NButton>
+            <NButton :disabled="!canOperate || !active || terminal.has(active.status)" :title="!canOperate ? '缺少调测操作权限' : !active ? '还没有选中任务' : terminal.has(active.status) ? '任务已结束，不能取消' : ''" @click="cancelTask">取消任务</NButton>
           </div>
         </div>
       </UPanel>
     </div>
     <div class="commission-main">
       <UPanel title="连接配置" sub="随所选设备带出" nopad>
-        <NSpin :show="actionBusy"><div class="config-form"><UFieldGrid :fields="configFields" :model="config" :columns="2" /><NButton type="primary" :disabled="!canOperate || active?.status!=='CONNECTED'" :loading="actionBusy" @click="saveConfig">保存配置</NButton></div></NSpin>
+        <NSpin :show="actionBusy"><div class="config-form"><UFieldGrid :fields="configFields" :model="config" :columns="2" /><NButton type="primary" :disabled="!canOperate || active?.status!=='CONNECTED'" :title="stepTitle('CONNECTED', '保存配置')" :loading="actionBusy" @click="saveConfig">保存配置</NButton></div></NSpin>
       </UPanel>
       <UPanel title="调测事件" nopad>
         <div v-if="events.length" class="event-log"><article v-for="event in [...events].reverse()" :key="event.event_seq"><i :class="event.level_code"></i><div><header><b>{{ event.stage_code }}</b><time>{{ fmtTime(event.occurred_at) }}</time></header><p>{{ event.message }}</p><small v-if="event.simulated">模拟事件</small></div></article></div><NEmpty v-else description="暂无任务事件" class="empty-block" />

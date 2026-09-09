@@ -1,7 +1,18 @@
 /* 业务代码 → 中文文案字典（全站共用）。
    规则：页面只展示名称与业务编号，内部 ID 只能进 title 提示；未收录的代码原样返回，不猜测含义。 */
 export const SOURCE_MODE_LABEL = { mock: '模拟', replay: '回放', live: '实时' };
-export const ALARM_TYPE_LABEL = { UAV_INTRUSION: '无人机入侵', UAV: '无人机告警' };
+// RULE_LEGALITY 是阶段 7 规则引擎判定违规后自动生成的告警类型；叫「飞行违规」而不叫「合法性研判告警」，免得与飞行监管菜单下的「合法性研判」页混淆（决策 15-53）。
+export const ALARM_TYPE_LABEL = { UAV_INTRUSION: '无人机入侵', UAV: '无人机告警', RULE_LEGALITY: '飞行违规' };
+
+/* 业务编号才上屏。引擎写入的标识（eval:<uuid>、C04:<规则集>:<计划>:…）和裸 UUID 是内部 ID，
+   只能进 title 提示；这类值返回空串，调用方按"没有编号"处理（显示 — 或不渲染）。 */
+const ENGINE_ID = /^[A-Za-z][A-Za-z0-9_-]*:/;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export function readableNo(value) {
+  const text = value == null ? '' : String(value).trim();
+  if (!text || ENGINE_ID.test(text) || UUID.test(text)) return '';
+  return text;
+}
 // SPACE_OBJECT 是阶段 9 C04 评估写入的风险类型；FOREIGN_OBJECT 是同一业务概念的早期写法，两者中文一致。
 export const RISK_TYPE_LABEL = { FLIGHT_OPERATION: '飞行作业风险', AIRSPACE: '空域风险', SPACE_OBJECT: '空中异物风险', FOREIGN_OBJECT: '空中异物风险' };
 export const REASON_CODE_LABEL = {
@@ -10,6 +21,8 @@ export const REASON_CODE_LABEL = {
   TIME_UNTRUSTED: '时间不可信', LOCATION_UNTRUSTED: '位置不可信'
 };
 export const PLAN_STATUS_LABEL = { PENDING: '待执行', APPROVED: '已批准', EXECUTING: '执行中', COMPLETED: '已完成', CANCELLED: '已取消' };
+// 与 legacy ui.js STAT_C 同色：待执行蓝、执行中青、已完成绿、终态灰。
+export const PLAN_STATUS_TAG = { PENDING: 't-blue', APPROVED: 't-cyan', EXECUTING: 't-cyan', COMPLETED: 't-green', CANCELLED: 't-gray' };
 export const HANDOFF_TYPE_LABEL = { RISK_NOTICE: '风险通报', UAV_PUNISHMENT: '处罚交接' };
 export const HANDOFF_KIND_LABEL = { RISK: '飞行风险', UAV_EVENT: '无人机事件', DEVICE_INCIDENT: '设备异常' };
 /* PERSON/VEHICLE/SHIP/REMOTE_CONTROLLER 来自凌云协议 A 的 objectType（阶段 8.5 直连切片）。 */
@@ -27,6 +40,8 @@ export const SCHEMA_STATUS_LABEL = { CONFIRMED: '已联调确认', DEMO: '按凌
 /* 处置授权（阶段 13）：动作、状态、执行通道。同一个码全站只有一个说法，页面一律经 labelOf 取词。 */
 export const DISPOSAL_ACTION_LABEL = { COUNTERMEASURE: '联动反制', JAMMING: '信号干扰', DISPERSAL: '驱离', DECOY: '诱骗' };
 /* 状态回答“现在在哪一步”，与执行结果（成功/失败）分开说，不要混成一句。 */
+/* 未了结的授权：服务端对同一主体同类动作只允许一条（ACTIVE_AUTHORIZATION_EXISTS），页面据此禁用再次发起。 */
+export const DISPOSAL_ACTIVE_STATUSES = ['REQUESTED', 'APPROVED', 'EXECUTING'];
 export const DISPOSAL_STATUS_LABEL = {
   REQUESTED: '待审批', APPROVED: '已批准', REJECTED: '已驳回', EXECUTING: '执行中',
   COMPLETED: '已完成', FAILED: '执行失败', STOPPED: '已停止', EXPIRED: '已过期', CANCELLED: '已撤销'
@@ -144,6 +159,16 @@ export const HANDOFF_BLOCKED_LABEL = {
   HANDOFF_MATERIALS_NOT_DEFINED: '处罚交接的材料包尚未定义，暂不能提交'
 };
 export const SEVERITY_LABEL = { CRITICAL: '紧急', HIGH: '高', MEDIUM: '中', LOW: '低' };
+/* 设备域展示字典（决策 15-58 巡检补）：连接状态与设备事件流的类型码。未收录的码原样返回，便于对照排查。 */
+export const DEVICE_CONNECTIVITY_LABEL = { ONLINE: '在线', OFFLINE: '离线', ABNORMAL: '异常', DEGRADED: '降级', UNKNOWN: '未知' };
+export const DEVICE_EVENT_TYPE_LABEL = {
+  STATE_RECEIVED: '状态上报', INBOX_RECEIVED: '报文接收', HEARTBEAT: '心跳', HEARTBEAT_RECEIVE: '心跳接收', HEARTBEAT_UPDATED: '心跳更新',
+  STATE_UNKNOWN: '状态未知', COMMAND_FAILED: '指令失败', DEVICE_ENABLED: '设备启用', DEVICE_DISABLED: '设备停用',
+  CATALOG_CREATED: '台账登记', CATALOG_UPDATED: '台账修改',
+  REBOOT_QUEUED: '重启已排队', REBOOT_SUCCEEDED: '重启成功', REBOOT_FAILED: '重启失败', REBOOT_TIMED_OUT: '重启超时', REBOOT_CANCELLED: '重启已取消',
+  LINGYUN_CONTROL_QUEUED: '凌云控制已排队', LINGYUN_CONTROL_TIMED_OUT: '凌云控制超时', EO_TRACK_QUEUED: '光电跟踪已排队', EO_COMMAND_TIMED_OUT: '光电指令超时',
+  INCIDENT_OPENED: '异常产生', INCIDENT_RECOVERED: '异常恢复', DEVICE_OFFLINE: '设备离线', LINK_DEGRADED: '链路降级'
+};
 export const SEVERITY_TAG = { CRITICAL: 't-red', HIGH: 't-red', MEDIUM: 't-amber', LOW: 't-blue' };
 export const RISK_STATE_LABEL = { PENDING_VERIFICATION: '待核验', PENDING_NOTIFICATION: '待通知', NOTIFIED: '已通知', EXCLUDED: '已排除' };
 /** 版本号翻译成次数：version 0 表示尚未核实，返回空串由调用方整段不渲染。 */
@@ -156,12 +181,15 @@ export const ALTITUDE_BAND_LABEL = { CLIMB: '起降爬升段', APPROACH: '进近
 export const CORRIDOR_RELATION_LABEL = { INSIDE: '航线走廊内', NEAR: '邻近航线', OUTSIDE: '走廊外', UNKNOWN: '距离未知' };
 export const OBJECT_TREND_LABEL = { RISING: '数量上升', FLAT: '数量平稳', FALLING: '数量下降', UNKNOWN: '趋势未知' };
 export const verificationOrdinal = (version, prefix = '') => (version == null || Number(version) <= 0 ? '' : `${prefix}第${Number(version)}次核实`);
+// 规则集代码 → 名称（与种子/迁移里的 rule_set.name 一致）；页面只说名称与第几版，代码留在 title。
+export const RULE_SET_LABEL = { 'LEGALITY-DEMO': '合法性研判演示规则集', 'SPACE-RISK-DEMO': '空中异物风险演示规则集' };
 export const RULE_RESULT_LABEL = { PASS: '通过', FAIL: '不通过', UNDETERMINED: '不可判定' };
 // UNDETERMINED 是引擎判不了，不是等人来确认：与 LegalityPage、复核弹窗保持同一个说法。
 export const LEGALITY_LABEL = { LEGAL: '合法', ABNORMAL: '异常', ILLEGAL: '非法', UNDETERMINED: '不可判定', NOT_APPLICABLE: '不适用' };
 // 阶段 9 计划与实际对照：段可用性、计划匹配、高度关系与外部授权登记。
 export const SECTION_AVAILABILITY_LABEL = { FORBIDDEN: '无权限查看', NO_EVALUATION: '尚无引擎研判', UNAVAILABLE: '暂不可用' };
 export const PLAN_MATCH_LABEL = { FULL: '完全匹配', PARTIAL: '部分匹配', NONE: '无匹配计划', UNDETERMINED: '不可判定', NOT_APPLICABLE: '不适用' };
+export const PLAN_MATCH_TAG = { FULL: 't-green', PARTIAL: 't-amber', NONE: 't-amber', UNDETERMINED: 't-gray', NOT_APPLICABLE: 't-gray' };
 export const ALTITUDE_RELATION_LABEL = {
   ABOVE: '高于计划高度带', WITHIN: '在计划高度带内', BELOW: '低于计划高度带', UNDETERMINED: '不可判定'
 };

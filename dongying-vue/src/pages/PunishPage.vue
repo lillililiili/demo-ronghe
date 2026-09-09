@@ -13,7 +13,7 @@ export default {};
    案件管理、罚款/裁量、处罚文书、证据链与定性复核自阶段 14 起接后端案件域（不用 handoff_id 伪装 case_id）；
    反制与干扰授权记录自阶段 13 起接处置授权域。每块仍存在的缺口逐条写在 BLOCK_GAPS 里，不写笼统的“未建设”。
    API 失败只显示失败态，不回退 Mock。 */
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import UKpis from '@/components/UKpis.vue';
 import UPanel from '@/components/UPanel.vue';
@@ -35,7 +35,7 @@ import {
 } from '@/ui/disposalAuthModal.js';
 import { ALARM_TYPE_LABEL, CONCLUSION_LABEL as EVENT_CONCLUSION_LABEL, CASE_EVENT_KIND_LABEL, CASE_STATUS_LABEL, DISCRETION_STATUS_LABEL, DOCUMENT_STATUS_LABEL,
   LEAD_KIND_LABEL, PENALTY_TYPE_LABEL, REVIEW_CONCLUSION_LABEL, VIOLATION_CODE_LABEL,
-  DISPOSAL_ACTION_LABEL, DISPOSAL_BLOCK_REASON_LABEL, DISPOSAL_CHANNEL_LABEL, DISPOSAL_EVENT_KIND_LABEL, DISPOSAL_RESULT_LABEL, disposalStatusText, DELIVERY_STATUS_LABEL, HANDOFF_BLOCKED_LABEL, HANDOFF_KIND_LABEL, HANDOFF_TYPE_LABEL, REASON_CODE_LABEL, RECEIPT_STATUS_LABEL, RISK_CONCLUSION_LABEL, RISK_STATE_LABEL, RISK_TYPE_LABEL, SEVERITY_LABEL, SEVERITY_TAG, SOURCE_MODE_LABEL, EVIDENCE_COVERAGE_LABEL, EVIDENCE_RECORD_TYPE_LABEL, labelOf, verificationOrdinal } from '@/ui/labels.js';
+  DISPOSAL_ACTION_LABEL, DISPOSAL_BLOCK_REASON_LABEL, DISPOSAL_CHANNEL_LABEL, DISPOSAL_EVENT_KIND_LABEL, DISPOSAL_RESULT_LABEL, disposalStatusText, DELIVERY_STATUS_LABEL, HANDOFF_BLOCKED_LABEL, HANDOFF_KIND_LABEL, HANDOFF_TYPE_LABEL, REASON_CODE_LABEL, RECEIPT_STATUS_LABEL, RISK_CONCLUSION_LABEL, RISK_STATE_LABEL, RISK_TYPE_LABEL, SEVERITY_LABEL, SEVERITY_TAG, SOURCE_MODE_LABEL, EVIDENCE_COVERAGE_LABEL, EVIDENCE_RECORD_TYPE_LABEL, labelOf, readableNo, verificationOrdinal } from '@/ui/labels.js';
 import { openEvidenceFileModal } from '@/ui/evidenceFileDetail.js';
 import {
   EVIDENCE_CHAIN_TYPES, coverageTagClass, isFileRecord, recordCaption, recordHint
@@ -300,7 +300,7 @@ const deliveryNote = computed(() => {
   const row = selected.value;
   if (!row) return '';
   if (row.delivery_status === 'PENDING_DELIVERY') return '已提交，尚未发送：材料已入库等待投递，通知渠道未接通。提交成功不等于已通知上级，也不等于处罚办结。';
-  if (row.delivery_status === 'DELIVERED') return row.source_mode === 'mock' ? '这是 local/test 的只读 mock 历史样例；本期生产写入只会产生“待投递”。' : '外部系统已送达；送达不等于处罚办结。';
+  if (row.delivery_status === 'DELIVERED') return `接收方已接收交接材料${row.receipt_status === 'ACKNOWLEDGED' ? '并回执' : ''}；送达不等于处罚办结。`;
   if (row.delivery_status === 'FAILED') return '最近一次投递失败；本期未建设发送重试。';
   return '';
 });
@@ -438,6 +438,8 @@ async function changeDeliveriesPage(nextPage) {
   }
 }
 
+// 三个下拉一改就查（决策 15-56）；时间范围仍走查询按钮，避免选到一半就发请求。
+watch(() => [filters.source_kind, filters.delivery_status, filters.source_mode], () => applyFilters());
 function applyFilters() {
   try { listQuery(); } catch (validation) { listError.value = validation.message; return; }
   S.selectedHandoffId = null;
@@ -562,7 +564,7 @@ onMounted(() => {
                     <tbody>
                       <tr v-for="row in handoffs" :key="row.handoff_id" :data-row="row.handoff_id" tabindex="0" :class="{ on: selected?.handoff_id === row.handoff_id || (!selected && S.selectedHandoffId === row.handoff_id) }"
                         @click="selectHandoff(row.handoff_id)" @keydown.enter.prevent="selectHandoff(row.handoff_id)">
-                        <td class="num"><span class="mono pn-id" :title="row.handoff_id">{{ row.source_no || row.handoff_id }}</span></td>
+                        <td class="num"><span class="mono pn-id" :title="row.handoff_id">{{ readableNo(row.source_no) || '—' }}</span></td>
                         <td><span class="tag t-cyan" :title="row.source_id">{{ label(KIND_LABEL, row.source_kind) }}</span></td>
                         <td>{{ label(TYPE_LABEL, row.handoff_type) }}</td>
                         <td><div class="pn-wrap" :title="row.recipient_id">{{ row.recipient_name || '—' }}</div><div class="pn-sub">{{ labelOf(SOURCE_MODE_LABEL, row.source_mode, '') }}</div></td>
@@ -586,7 +588,7 @@ onMounted(() => {
                 <template v-else>
                   <div class="detail-hero detail-hero-micro"><div class="detail-hero-inner">
                     <div class="detail-hero-icon" v-html="U?.icon ? U.icon('clipboard') : ''"></div>
-                    <div class="detail-hero-copy"><div class="detail-hero-eyebrow">业务交接</div><div class="detail-hero-title">{{ label(TYPE_LABEL, selected.handoff_type) }}</div><div class="detail-hero-id mono" :title="selected.handoff_id">{{ selected.source_no || selected.handoff_id }}</div></div>
+                    <div class="detail-hero-copy"><div class="detail-hero-eyebrow">业务交接</div><div class="detail-hero-title">{{ label(TYPE_LABEL, selected.handoff_type) }}</div><div v-if="readableNo(selected.source_no)" class="detail-hero-id mono" :title="selected.handoff_id">{{ readableNo(selected.source_no) }}</div></div>
                     <div class="detail-hero-side"><div class="detail-hero-tags"><span class="tag" :class="DELIVERY_TAG[selected.delivery_status] || 't-gray'">{{ label(DELIVERY_LABEL, selected.delivery_status) }}</span><span class="tag t-gray">{{ label(RECEIPT_LABEL, selected.receipt_status) }}</span></div></div>
                   </div></div>
                   <div class="metric-strip is-compact">
@@ -597,7 +599,7 @@ onMounted(() => {
                   </div>
                   <div v-if="deliveryNote" class="warnbox pn-delivery-note">{{ deliveryNote }}</div>
                   <div class="sect"><h4>交接信息</h4><dl class="kv kv-surface">
-                    <dt>来源编号</dt><dd class="mono" :title="selected.handoff_id">{{ selected.source_no || '未提供' }}</dd>
+                    <dt>来源编号</dt><dd class="mono" :title="selected.handoff_id">{{ readableNo(selected.source_no) || '未提供' }}</dd>
                     <dt>来源事项</dt><dd :title="selected.source_id">{{ label(KIND_LABEL, selected.source_kind) }}
                       <button v-if="selected.source_kind === 'RISK'" class="lnk pn-lnk" type="button" @click="gotoSource(selected)">查看风险</button></dd>
                     <dt>交接类型</dt><dd>{{ label(TYPE_LABEL, selected.handoff_type) }}</dd>
@@ -715,7 +717,7 @@ onMounted(() => {
                       </table>
                     </div>
                     <div v-if="deliveriesTotal > DELIVERY_PAGE_SIZE" class="pager"><UPagination :page="deliveriesPage" :page-size="DELIVERY_PAGE_SIZE" :item-count="deliveriesTotal" size="small" @update:page="changeDeliveriesPage" /></div>
-                    <div class="pn-note-text">送达与回执只能来自外部系统事实；本页没有发送、重试或回执写入口。</div>
+                    <div class="pn-note-text">送达与回执来自通知渠道返回的事实；本页没有发送、重试或回执写入口。</div>
                   </div>
                 </template>
               </div>

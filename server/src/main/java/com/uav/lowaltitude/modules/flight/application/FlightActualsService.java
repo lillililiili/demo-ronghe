@@ -96,7 +96,7 @@ public class FlightActualsService {
         if (evaluation == null) return MatchDto.only(NO_EVALUATION);
         List<HitDetailDto> c01 = hits.stream().filter(hit -> C01.equals(hit.ruleCode())).toList();
         return new MatchDto(AVAILABLE, evaluation.planMatchCode(), evaluation.evaluationId(),
-                millis(evaluation.evaluatedAt()), evaluation.paramStatus(), c01);
+                millis(evaluation.evaluatedAt()), evaluation.paramStatus(), c01, evaluation.targetId());
     }
 
     /**

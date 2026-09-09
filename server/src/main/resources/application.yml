@@ -44,6 +44,9 @@ app:
     lock-minutes: ${LOGIN_LOCK_MINUTES:30}
   session:
     ttl-hours: ${SESSION_TTL_HOURS:8}
+  # 交接投递渠道：none=未接通（生产缺省，交接停在待投递）；mock=模拟上级接口（立即送达并回执）；接真实上级接口后新增实现并在此切换。
+  handoff:
+    channel: ${APP_HANDOFF_CHANNEL:none}
   dev-seed:
     enabled: ${APP_DEV_SEED_ENABLED:false}
     password: ${APP_DEV_SEED_PASSWORD:}

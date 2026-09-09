@@ -1,5 +1,5 @@
 <script setup>
-import { computed, h, onMounted, onUnmounted, reactive, ref } from 'vue';
+import { computed, h, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { NButton, NDataTable, NEmpty, NSpin, NTag } from 'naive-ui';
 import UField from '@/components/form/UField.vue';
 import UPagination from '@/components/UPagination.vue';
@@ -17,6 +17,8 @@ usePageChrome('devices');
 const filters = reactive({ keyword: '', type_code: null, channel: null, region: null, vendor: null,
   connectivity: null, enabled: null, sort: 'priority' });
 const options = ref({ types: [], channels: [], regions: [], vendors: [] });
+// 下拉一改就查（决策 15-56）；关键词仍走查询按钮。
+watch(() => [filters.type_code, filters.channel, filters.region, filters.vendor, filters.connectivity, filters.enabled, filters.sort], () => { page.page = 1; loadList({ keepSelection: false }); });
 const protocols = ref([]);
 const page = reactive({ items: [], page: 1, size: 10, total: 0 });
 const overview = ref({ total: 0, online: 0, offline: 0, abnormal: 0, unknown: 0, alarm: 0, vendor_count: 0, model_count: 0, simulated: false });

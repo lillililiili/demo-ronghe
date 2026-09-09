@@ -5,7 +5,8 @@ import { closeModal } from './modal.js';
 import { toast } from './nv.js';
 import { verifyUavEvent } from '@/services/alarmApi.js';
 import { isUncertainOutcome } from '@/services/apiClient.js';
-import { ALARM_TYPE_LABEL, labelOf } from '@/ui/labels.js';
+import { ALARM_TYPE_LABEL, labelOf, readableNo, verificationOrdinal } from '@/ui/labels.js';
+const ordinalText = version => verificationOrdinal(version, '已') || '尚未核实';
 
 export const UAV_STATE_TEXT = {
   PENDING_VERIFICATION: '待人工核实',
@@ -46,9 +47,9 @@ export function openUavVerification({ event, alarm, refresh, onDone } = {}) {
   const expectedVersion = Number(event.version);
   if (!pendingKeys.has(eventId)) pendingKeys.set(eventId, newKey());
   const intro = [
-    ['核实事件', `当前版本 v${expectedVersion}`],
+    ['核实次数', esc(ordinalText(expectedVersion))],
     ['当前状态', esc(uavStateText(event.state))],
-    alarm ? ['告警', `<span class="mono" title="${esc(alarm.alarm_id)}">${esc(alarm.alarm_no || alarm.alarm_id)}</span> ${esc(labelOf(ALARM_TYPE_LABEL, alarm.alarm_type, ''))}`] : null,
+    alarm ? ['告警', `${readableNo(alarm.alarm_no) ? `<span class="mono" title="${esc(alarm.alarm_id)}">${esc(readableNo(alarm.alarm_no))}</span> ` : ''}${esc(labelOf(ALARM_TYPE_LABEL, alarm.alarm_type, ''))}`] : null,
     alarm ? ['关联目标', alarm.target_id ? `<span class="mono" title="${esc(alarm.target_id)}">${esc(alarm.target_no || alarm.target_id)}</span>` : '无关联目标或无目标读取权限'] : null
   ].filter(Boolean).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join('');
 
@@ -74,7 +75,7 @@ export function openUavVerification({ event, alarm, refresh, onDone } = {}) {
         const result = await verifyUavEvent(eventId, { conclusion, note: String(note || '').trim(), expected_version: expectedVersion }, key);
         pendingKeys.delete(eventId);
         closeModal();
-        toast(`核实完成：${uavStateText(result?.state)}（v${Number(result?.version)}）`, 'ok');
+        toast(`核实完成：${uavStateText(result?.state)}（${ordinalText(result?.version)}）`, 'ok');
         if (refresh) await refresh(result);
         if (onDone) onDone(result);
       } catch (error) {
@@ -87,7 +88,7 @@ export function openUavVerification({ event, alarm, refresh, onDone } = {}) {
             // 版本变化与终态要分开说明：前者仍可重新打开表单核实，后者不能再核实。
             const stillVerifiable = (latest.allowed_actions || []).includes('VERIFY');
             toast(stillVerifiable
-              ? `提交结果未确认，已刷新当前状态：事件已更新为 v${Number(latest.version)}（${uavStateText(latest.state)}），请核对历史后重新打开核实表单。`
+              ? `提交结果未确认，已刷新当前状态：事件${ordinalText(latest.version)}（${uavStateText(latest.state)}），请核对历史后重新打开核实表单。`
               : `提交结果未确认，已刷新当前状态：当前事件为「${uavStateText(latest.state)}」，不能再次核实。`, 'err');
             return;
           }

@@ -79,6 +79,7 @@ async function refreshAll() {
 }
 
 function queryUsers() { page.value = 1; loadUsers(); }
+watch([statusFilter, roleFilter], () => queryUsers()); // 下拉一改就查（决策 15-56）
 function resetQuery() {
   keyword.value = '';
   statusFilter.value = null;

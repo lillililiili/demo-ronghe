@@ -35,7 +35,7 @@ public class FlightActualsRepository {
 
     /** 最近一条 ACTIVE 研判；同一时刻并列时按 evaluation_id 取大者，保证结果稳定。 */
     public EvaluationRow findLatestActiveEvaluation(String planId, AccessDecision access) {
-        StringBuilder sql = new StringBuilder("SELECT e.evaluation_id,e.plan_match_code,e.legal_status,e.evaluated_at,e.hit_details,"
+        StringBuilder sql = new StringBuilder("SELECT e.evaluation_id,e.target_id,e.plan_match_code,e.legal_status,e.evaluated_at,e.hit_details,"
                 + "v.param_status"
                 // 参数状态是规则集版本级的事实：DEMO 版本的结论不能被当成已确认口径使用，页面要能标出来。
                 + " FROM rule_evaluation e JOIN rule_set_version v ON v.rule_set_version_id=e.rule_set_version_id"
@@ -59,7 +59,7 @@ public class FlightActualsRepository {
 
     private static EvaluationRow evaluation(ResultSet rs, int rowNum) throws SQLException {
         return new EvaluationRow(rs.getString("evaluation_id"), rs.getString("plan_match_code"), rs.getString("legal_status"),
-                time(rs, "evaluated_at"), rs.getString("param_status"), rs.getString("hit_details"));
+                time(rs, "evaluated_at"), rs.getString("param_status"), rs.getString("hit_details"), rs.getString("target_id"));
     }
 
     private static OffsetDateTime time(ResultSet rs, String column) throws SQLException {
@@ -74,5 +74,5 @@ public class FlightActualsRepository {
     }
 
     public record EvaluationRow(String evaluationId, String planMatchCode, String legalStatus,
-            OffsetDateTime evaluatedAt, String paramStatus, String hitDetailsJson) { }
+            OffsetDateTime evaluatedAt, String paramStatus, String hitDetailsJson, String targetId) { }
 }

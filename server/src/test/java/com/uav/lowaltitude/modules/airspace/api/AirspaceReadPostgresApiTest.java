@@ -50,7 +50,7 @@ class AirspaceReadPostgresApiTest {
             // 必须走生产 Repository 的候选过滤与 geography 半宽判定，不能只用测试里的 ST 函数复述算法。
             AirspaceReadRepository repository = new AirspaceReadRepository(jdbc, new DriverManagerDataSource(schemaUrl(required("POSTGRES_TEST_URL")), required("POSTGRES_TEST_USER"), required("POSTGRES_TEST_PASSWORD")));
             OffsetDateTime now = jdbc.queryForObject("select current_timestamp", OffsetDateTime.class);
-            PlanRow plan = new PlanRow("plan-1", "P-1", "PENDING", null, null, "mock", null, now.minusMinutes(1), now.plusMinutes(1), "org-1", "district-1", "rv-1", "route-1", "R-1", "Route", 1, now, now, 0, null, null, null);
+            PlanRow plan = new PlanRow("plan-1", "P-1", "PENDING", null, null, "mock", null, now.minusMinutes(1), now.plusMinutes(1), "org-1", "district-1", "rv-1", "route-1", "R-1", "Route", 1, null, now, now, 0, null, null, null);
             var facts = repository.conflicts(plan, new AccessDecision("postgres-reader", ScopeMode.ALL));
             assertThat(facts).anySatisfy(row -> { assertThat(row.airspaceVersionId()).isEqualTo("av-hit"); assertThat(row.horizontalRelation()).isEqualTo("OVERLAPS"); });
             // 仅 bbox 候选过滤即可排除半宽外空域；结果不能把全宽 100m 错当 100m 半径。
@@ -77,7 +77,7 @@ class AirspaceReadPostgresApiTest {
 
             jdbc.update("insert into route (route_id,route_no,name,enabled,source_mode,owner_org_id,district_id,created_at,updated_at,version) values ('route-width','R-WIDTH','Route width unknown',true,'mock','org-1','district-1',current_timestamp,current_timestamp,0)");
             jdbc.update("insert into route_version (route_version_id,route_id,version_no,centerline,corridor_width_m,valid_from,created_at) values ('rv-width','route-width',1,ST_GeomFromText('LINESTRING(118 37,118.01 37)',4326),null,current_timestamp,current_timestamp)");
-            PlanRow widthUnknown = new PlanRow("plan-width", "P-WIDTH", "PENDING", null, null, "mock", null, now.minusMinutes(1), now.plusMinutes(1), "org-1", "district-1", "rv-width", "route-width", "R-WIDTH", "Route width unknown", 1, now, now, 0, null, null, null);
+            PlanRow widthUnknown = new PlanRow("plan-width", "P-WIDTH", "PENDING", null, null, "mock", null, now.minusMinutes(1), now.plusMinutes(1), "org-1", "district-1", "rv-width", "route-width", "R-WIDTH", "Route width unknown", 1, null, now, now, 0, null, null, null);
             assertFact(repository.conflicts(widthUnknown, new AccessDecision("postgres-reader", ScopeMode.ALL)), "av-hit", "UNDETERMINED", "CORRIDOR_WIDTH_UNKNOWN");
 
             // 被 assessment 引用的规则版本是历史输入，PG 触发器必须拒绝原位篡改其语义。

@@ -283,7 +283,7 @@ class AirspaceReadApiTest {
         OffsetDateTime at = OffsetDateTime.parse("2026-09-05T00:00:00Z");
         insertVersion(airspace, "v1-" + suffix, 1, at, at.plusHours(1));
         insertVersion(airspace, "v2-" + suffix, 2, at.plusHours(1), at.plusHours(2));
-        PlanRow plan = new PlanRow("plan", "P", "PENDING", null, null, "mock", null, at, at.plusHours(2), org, district, "route-version", "route", "R", "route", 1, at, at, 0, null, null, null);
+        PlanRow plan = new PlanRow("plan", "P", "PENDING", null, null, "mock", null, at, at.plusHours(2), org, district, "route-version", "route", "R", "route", 1, null, at, at, 0, null, null, null);
         assertThat(repository.hasAmbiguousEffectiveVersion(plan, new AccessDecision("reader", ScopeMode.ALL))).isFalse();
         insertVersion(airspace, "v3-" + suffix, 3, at.plusMinutes(30), at.plusHours(1).plusMinutes(30));
         assertThat(repository.hasAmbiguousEffectiveVersion(plan, new AccessDecision("reader", ScopeMode.ALL))).isTrue();

@@ -56,10 +56,14 @@ public class WorkbenchReadService {
     private static final Set<String> SOURCE_MODES = Set.of("mock", "replay", "live");
     private static final Map<String, String> SEVERITY_LABEL = Map.of("CRITICAL", "紧急", "HIGH", "高", "MEDIUM", "中", "LOW", "低");
     /* 标题里的类型代码统一译成业务用语；未收录的代码原样返回，不猜测含义。 */
-    private static final Map<String, String> ALARM_TYPE_LABEL = Map.of("UAV_INTRUSION", "无人机入侵", "UAV", "无人机告警");
-    private static final Map<String, String> RISK_TYPE_LABEL = Map.of("FLIGHT_OPERATION", "飞行作业风险", "AIRSPACE", "空域风险", "FOREIGN_OBJECT", "空中异物风险");
+    private static final Map<String, String> ALARM_TYPE_LABEL = Map.of("UAV_INTRUSION", "无人机入侵", "UAV", "无人机告警",
+            "RULE_LEGALITY", "飞行违规");
+    private static final Map<String, String> RISK_TYPE_LABEL = Map.of("FLIGHT_OPERATION", "飞行作业风险", "AIRSPACE", "空域风险",
+            "SPACE_OBJECT", "空中异物风险", "FOREIGN_OBJECT", "空中异物风险");
     private static final Map<String, String> INCIDENT_TYPE_LABEL = Map.of("OFFLINE", "设备离线", "ABNORMAL", "设备异常", "DEGRADED", "性能降级",
-            "ADAPTER_TIMEOUT", "适配器超时", "REBOOT_FAILED", "重启失败");
+            "ADAPTER_TIMEOUT", "适配器超时", "REBOOT_FAILED", "重启失败",
+            // 设备域实际写入的异常类型码（LocalDeviceSeeder / 演示种子）；没收录会把英文码摆到工作台标题上。
+            "DEVICE_OFFLINE", "设备离线", "LINK_DEGRADED", "链路降级", "STATE_UNKNOWN", "状态未知");
     private static final Map<String, String> SOURCE_MODE_LABEL = Map.of("mock", "模拟", "replay", "回放", "live", "实时");
     private static final Map<String, String> UAV_STATE_LABEL = Map.of("PENDING_VERIFICATION", "待核实", "EVIDENCE_REQUIRED", "证据待补充",
             "CONFIRMED", "已核实，待处置", "FALSE_POSITIVE", "误报");

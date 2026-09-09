@@ -17,7 +17,7 @@ import { UField } from '@/components/form/index.js';
 import UPagination from '@/components/UPagination.vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import { legalityApi } from '@/services/legalityApi.js';
-import { SOURCE_MODE_LABEL, labelOf } from '@/ui/labels.js';
+import { RULE_SET_LABEL, SOURCE_MODE_LABEL, labelOf } from '@/ui/labels.js';
 import {
   openLegalityReview, openLegalityRecompute, openLegalityEscalation, openLegalityManualEvaluate, openRuleVersionView,
   legalStatusText, reviewStateText, planMatchText, ruleReasonText,
@@ -120,7 +120,8 @@ function gradeText(item) {
 function sourceText(mode) { return labelOf(SOURCE_MODE_LABEL, mode, '未提供'); }
 function ruleVersionText(item) {
   if (!item?.rule_set_code) return '未提供';
-  return `${item.rule_set_code} v${item.rule_set_version_no ?? '—'}`;
+  const name = labelOf(RULE_SET_LABEL, item.rule_set_code);
+  return item.rule_set_version_no == null ? name : `${name} 第${item.rule_set_version_no}版`;
 }
 function formatTime(value) {
   if (value === null || value === undefined) return '未知';
@@ -517,10 +518,10 @@ onMounted(() => {
                     </dl>
                   </div>
                   <div class="lg-review-state">
-                    <span class="tag" :class="selectedEvaluation.review?.state === 'PENDING_REVIEW' ? 't-amber' : 't-gray'">{{ reviewStateText(selectedEvaluation.review?.state) }}{{ selectedEvaluation.review ? ` v${selectedEvaluation.review.version}` : '' }}</span>
+                    <span class="tag" :class="selectedEvaluation.review?.state === 'PENDING_REVIEW' ? 't-amber' : 't-gray'">{{ reviewStateText(selectedEvaluation.review?.state) }}{{ selectedEvaluation.review?.version > 0 ? ` · 第${selectedEvaluation.review.version}次复核` : '' }}</span>
                     <dl>
                       <dt>研判时间</dt><dd>{{ formatTime(selectedEvaluation.evaluated_at) }}</dd>
-                      <dt>规则版本</dt><dd>{{ ruleVersionText(selectedEvaluation) }}{{ demoParams ? '（DEMO）' : '' }}</dd>
+                      <dt>规则版本</dt><dd :title="selectedEvaluation.rule_set_code">{{ ruleVersionText(selectedEvaluation) }}{{ demoParams ? '（演示参数）' : '' }}</dd>
                       <dt>人工结论</dt><dd>{{ selectedEvaluation.review?.manual_status ? legalStatusText(selectedEvaluation.review.manual_status) : '—' }}</dd>
                       <dt>告警结果</dt><dd>{{ outcomeText(selectedEvaluation) }}</dd>
                     </dl>

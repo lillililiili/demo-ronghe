@@ -361,6 +361,53 @@ public class DeviceRepository {
                 """, now, now, now, deviceId);
     }
 
+    public Map<String, Object> findIncident(String incidentId) {
+        List<Map<String, Object>> rows = jdbc.queryForList("""
+                SELECT i.*, d.device_no, d.name AS device_name
+                FROM device_incident i JOIN ops_device d ON d.device_id=i.device_id
+                WHERE i.incident_id=?
+                """, incidentId);
+        return rows.isEmpty() ? null : rows.get(0);
+    }
+
+    public int startIncidentReboot(String incidentId, String commandId) {
+        return jdbc.update("""
+                UPDATE device_incident SET stage='PROCESSING', reboot_command_id=?, block_reason=NULL
+                WHERE incident_id=? AND stage='PENDING'
+                """, commandId, incidentId);
+    }
+
+    public int advanceIncidentByCommand(String commandId, String fromStage, String toStage) {
+        return jdbc.update("UPDATE device_incident SET stage=? WHERE reboot_command_id=? AND stage=?",
+                toStage, commandId, fromStage);
+    }
+
+    public int closeIncident(String incidentId, String expectedStage, long closedAt) {
+        return jdbc.update("UPDATE device_incident SET stage='RECOVERED', closed_at=? WHERE incident_id=? AND stage=?",
+                closedAt, incidentId, expectedStage);
+    }
+
+    public void insertRecoveryCheck(String checkId, String incidentId, String checkedBy, long checkedAt,
+                                    String result, String ruleVersion, String snapshot, String reason) {
+        jdbc.update("""
+                INSERT INTO device_recovery_check (check_id,incident_id,checked_by,checked_at,result,rule_version,state_snapshot,reason)
+                VALUES (?,?,?,?,?,?,?,?)
+                """, checkId, incidentId, checkedBy, checkedAt, result, ruleVersion, snapshot, reason);
+    }
+
+    public Map<String, Object> latestRecoveryCheck(String incidentId) {
+        List<Map<String, Object>> rows = jdbc.queryForList("""
+                SELECT * FROM device_recovery_check WHERE incident_id=?
+                ORDER BY checked_at DESC, check_id DESC OFFSET 0 ROWS FETCH FIRST 1 ROW ONLY
+                """, incidentId);
+        return rows.isEmpty() ? null : rows.get(0);
+    }
+
+    public Map<String, Object> findRecoveryCheck(String checkId) {
+        List<Map<String, Object>> rows = jdbc.queryForList("SELECT * FROM device_recovery_check WHERE check_id=?", checkId);
+        return rows.isEmpty() ? null : rows.get(0);
+    }
+
     private SqlWhere where(DeviceQuery q) {
         Map<String, Object> p = new HashMap<>();
         StringBuilder sql = new StringBuilder(" WHERE 1=1");

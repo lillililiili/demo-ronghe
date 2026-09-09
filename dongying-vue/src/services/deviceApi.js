@@ -22,6 +22,13 @@ export const deviceApi = {
   state: id => apiRequest(`/devices/${id}/state`),
   history: (id, params) => apiRequest(`/devices/${id}/state-history${query(params)}`),
   incidents: params => apiRequest(`/device-incidents${query(params)}`),
+  incident: id => apiRequest(`/device-incidents/${id}`),
+  rebootIncident: (id, reason, idempotencyKey) => apiRequest(`/device-incidents/${id}/reboot`, {
+    method: 'POST', body: { reason }, headers: { 'Idempotency-Key': idempotencyKey }
+  }),
+  checkIncidentRecovery: (id, idempotencyKey) => apiRequest(`/device-incidents/${id}/recovery-checks`, {
+    method: 'POST', body: {}, headers: { 'Idempotency-Key': idempotencyKey }
+  }),
   events: params => apiRequest(`/device-events${query(params)}`),
   reboot: (id, reason, idempotencyKey) => apiRequest(`/devices/${id}/commands/reboot`, {
     method: 'POST', body: { reason }, headers: { 'Idempotency-Key': idempotencyKey }

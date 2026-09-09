@@ -67,6 +67,7 @@ public class DeviceOperationsProcessor {
                     "设备适配器未在截止时间前返回回执") == 1) {
                 devices.addEvent(UUID.randomUUID().toString(), text(row, "device_id"), "REBOOT_TIMED_OUT", "ERROR",
                         "设备重启指令等待回执超时", now, true);
+                revertIncident(commandId);
             }
         }
     }
@@ -82,6 +83,7 @@ public class DeviceOperationsProcessor {
                 devices.updateCommand(payload, text(command, "status"), "TIMED_OUT", now,
                         "ADAPTER_RETRY_EXHAUSTED", detail);
                 devices.addEvent(UUID.randomUUID().toString(), text(command, "device_id"), "REBOOT_TIMED_OUT", "ERROR", detail, now, true);
+                revertIncident(payload);
             }
             return;
         }
@@ -123,12 +125,14 @@ public class DeviceOperationsProcessor {
                 devices.addEvent(UUID.randomUUID().toString(), text(command, "device_id"), "REBOOT_SUCCEEDED", "INFO",
                         bool(command, "simulated") ? "模拟重启回执已接收，设备状态恢复在线" : "设备重启回执已接收",
                         completed, bool(command, "simulated"));
+                devices.advanceIncidentByCommand(commandId, "PROCESSING", "PENDING_VERIFICATION");
             }
         } else {
             devices.updateCommand(commandId, status, "FAILED", completed, result.resultCode(), result.detail());
             devices.addEvent(UUID.randomUUID().toString(), text(command, "device_id"), "REBOOT_FAILED", "ERROR",
                     (bool(command, "simulated") ? "模拟重启失败：" : "设备重启失败：") + result.detail(),
                     completed, bool(command, "simulated"));
+            revertIncident(commandId);
         }
     }
 
@@ -180,6 +184,11 @@ public class DeviceOperationsProcessor {
                     result.success() ? "INFO" : "ERROR",
                     result.detail(), now, simulated);
         }
+    }
+
+    /** 异常单重启失败/超时回到待处理；成功只进入待验证，不把指令成功写成已恢复。 */
+    private void revertIncident(String commandId) {
+        devices.advanceIncidentByCommand(commandId, "PROCESSING", "PENDING");
     }
 
     private DeviceAdapterPort adapter(Map<String, Object> row) {

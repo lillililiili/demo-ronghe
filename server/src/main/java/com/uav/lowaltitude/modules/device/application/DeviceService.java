@@ -479,7 +479,7 @@ public class DeviceService {
         return new Incident(text(r, "incident_id"), text(r, "incident_no"), text(r, "device_id"),
                 text(r, "device_no"), text(r, "device_name"), text(r, "incident_type"), text(r, "severity"),
                 text(r, "stage"), longNumber(r, "detected_at"), text(r, "reason"), longValue(r, "closed_at"),
-                text(r, "block_reason"), bool(r, "simulated"));
+                text(r, "block_reason"), bool(r, "simulated"), text(r, "reboot_command_id"));
     }
 
     private ConnectionProfile connection(Map<String, Object> r) {
@@ -593,7 +593,8 @@ public class DeviceService {
     public record StateHistory(String deviceId, String metricCode, long from, long to, List<StatePoint> points) { }
     public record Incident(String incidentId, String incidentNo, String deviceId, String deviceNo,
                            String deviceName, String incidentType, String severity, String stage,
-                           long detectedAt, String reason, Long closedAt, String blockReason, boolean simulated) { }
+                           long detectedAt, String reason, Long closedAt, String blockReason, boolean simulated,
+                           String rebootCommandId) { }
     public record IncidentPage(List<Incident> items, int page, int size, long total) { }
     public record DeviceEvent(long eventSeq, String eventId, String deviceId, String deviceNo, String deviceName,
                               String eventType, String levelCode, String message, long occurredAt, boolean simulated) { }

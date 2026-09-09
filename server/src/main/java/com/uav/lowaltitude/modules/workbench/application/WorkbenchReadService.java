@@ -142,6 +142,7 @@ public class WorkbenchReadService {
                         row.deviceNo(), row.deviceName(), row.reasonText()));
                 if (row.updatedAt() != null) timeline.add(TimelineEntryDto.deviceFact("DEVICE_INCIDENT_CLOSED", row.updatedAt(),
                         row.state(), row.typeCode(), row.deviceNo(), row.deviceName(), null));
+                // 设备异常时间线仍只读本单事实；重启/校验过程走源模块接口，不查全局审计表。
                 availability.put("incident_facts", AVAILABLE);
             }
         }
@@ -176,11 +177,12 @@ public class WorkbenchReadService {
         boolean riskVisible = sources.decisions.containsKey(RISK);
         return new Capabilities(probe(PermissionCode.ALARM_VERIFY) != null, probe(PermissionCode.RISK_VERIFY) != null,
                 probe(PermissionCode.HANDOFF_CREATE) != null, probe(PermissionCode.HANDOFF_READ) != null,
-                riskVisible && repository.riskNoticeRecipientConfigured());
+                riskVisible && repository.riskNoticeRecipientConfigured(), monitoringOperate());
     }
 
     private AccessDecision probe(PermissionCode permission) { try { return access.require(permission); } catch (ApiException ignored) { return null; } }
     private boolean menuReadable(String code) { try { menuAccess.requireBusinessData(code); return true; } catch (ApiException ignored) { return false; } }
+    private boolean monitoringOperate() { try { menuAccess.requireBusinessData("monitoring.op"); return true; } catch (ApiException ignored) { return false; } }
 
     private ItemDto item(ItemRow row, Capabilities capabilities) {
         return switch (row.kind()) {
@@ -204,12 +206,19 @@ public class WorkbenchReadService {
                         row.version(), "飞行风险 · " + label(RISK_TYPE_LABEL, row.typeCode()), row.reasonText(), List.copyOf(actions), blocked, row.sourceMode(),
                         Map.of("source", "#/risk?risk_id=" + encode(row.sourceId())));
             }
-            // 设备异常没有任何可委托动作：重启/恢复校验/关闭命令仍走运维受控接口，本期未接入工作台。
-            default -> new ItemDto(DEVICE_INCIDENT, row.sourceId(), row.sourceNo(), row.state(), row.severity(), row.receivedAt(), null, row.updatedAt(), null,
-                    "设备异常 · " + label(INCIDENT_TYPE_LABEL, row.typeCode()) + " · " + row.deviceNo(),
-                    row.deviceName() + "，当前阶段" + label(DEVICE_STAGE_LABEL, row.state()),
-                    List.of(), "DEVICE_RECOVERY_NOT_CONNECTED", row.sourceMode(),
-                    Map.of("source", "#/monitor?device_id=" + encode(row.relatedId())));
+            // 设备异常写路径在源模块；工作台只按阶段委托 REBOOT / VERIFY_RECOVERY，PROCESSING 等待回执。
+            default -> {
+                List<String> actions = new ArrayList<>();
+                String blocked = null;
+                if ("PROCESSING".equals(row.state())) blocked = "WAITING_RECEIPT";
+                else if ("PENDING".equals(row.state()) && capabilities.monitoringOperate()) actions.add("REBOOT");
+                else if ("PENDING_VERIFICATION".equals(row.state()) && capabilities.monitoringOperate()) actions.add("VERIFY_RECOVERY");
+                yield new ItemDto(DEVICE_INCIDENT, row.sourceId(), row.sourceNo(), row.state(), row.severity(), row.receivedAt(), null, row.updatedAt(), null,
+                        "设备异常 · " + label(INCIDENT_TYPE_LABEL, row.typeCode()) + " · " + row.deviceNo(),
+                        row.deviceName() + "，当前阶段" + label(DEVICE_STAGE_LABEL, row.state()),
+                        List.copyOf(actions), blocked, row.sourceMode(),
+                        Map.of("source", "#/monitor?device_id=" + encode(row.relatedId())));
+            }
         };
     }
 
@@ -239,7 +248,8 @@ public class WorkbenchReadService {
         Branches branches() { return new Branches(available(UAV_EVENT), available(RISK), available(DEVICE_INCIDENT)); }
         private AccessDecision available(String kind) { return AVAILABLE.equals(availability.get(kind)) ? decisions.get(kind) : null; }
     }
-    private record Capabilities(boolean alarmVerify, boolean riskVerify, boolean handoffCreate, boolean handoffRead, boolean recipientConfigured) { }
+    private record Capabilities(boolean alarmVerify, boolean riskVerify, boolean handoffCreate, boolean handoffRead,
+            boolean recipientConfigured, boolean monitoringOperate) { }
 
     static final class Request {
         private final MultiValueMap<String, String> values;

@@ -26,6 +26,8 @@ export const CLOSED_STATES = new Set(['FALSE_POSITIVE', 'NOTIFIED', 'EXCLUDED', 
 export const BLOCKED_REASON_LABEL = {
   COUNTERMEASURE_NOT_CONNECTED: '联动反制与信号干扰尚未接入：属实后停留在“已核实，待处置”，不表示反制或处罚交接已执行',
   RECIPIENT_NOT_CONFIGURED: '交接接收方未配置，无法通知上级；不会以默认部门补值',
+  WAITING_RECEIPT: '重启指令已下发，等待设备回执；回执成功后才能做恢复校验',
+  DEVICE_NOT_OPERABLE: '该设备当前不可重启（离线、停用或协议未声明重启能力）',
   DEVICE_RECOVERY_NOT_CONNECTED: '设备重启、恢复校验与关闭命令尚未接入工作台；只读展示，处置请到设备实时监测页'
 };
 export const AVAILABILITY_LABEL = { AVAILABLE: '已接入', FORBIDDEN: '无读取权限', UNCONFIGURED: '设备归属映射未配置' };
@@ -62,8 +64,11 @@ function nextStep(item) {
     return null;
   }
   if (item.state === 'RECOVERED') return null;
-  const label = item.state === 'PENDING_VERIFICATION' ? '恢复校验' : item.state === 'PROCESSING' ? '等待指令回执' : '远程重启';
-  return { action: label, kind: 'device', allowed: false, blocker: blocked || BLOCKED_REASON_LABEL.DEVICE_RECOVERY_NOT_CONNECTED, hint: '工作台只读展示设备异常事实。' };
+  if (actions.includes('REBOOT')) return { action: '远程重启', kind: 'device-reboot', allowed: true, blocker: null, hint: '填写原因后下发重启；须等回执成功再做恢复校验。模拟回执不代表真实设备已重启。' };
+  if (actions.includes('VERIFY_RECOVERY')) return { action: '恢复校验', kind: 'device-verify', allowed: true, blocker: null, hint: '按当前设备状态快照校验；通过才关闭异常，失败保持待验证。' };
+  if (item.state === 'PROCESSING') return { action: '等待指令回执', kind: 'device-wait', allowed: false, blocker: blocked || BLOCKED_REASON_LABEL.WAITING_RECEIPT, hint: '指令已受理，页面会刷新回执结果。' };
+  if (item.state === 'PENDING_VERIFICATION') return { action: '恢复校验', kind: 'device-verify', allowed: false, blocker: blocked || '需要监测操作权限', hint: '当前账号只能查看，不能提交恢复校验。' };
+  return { action: '远程重启', kind: 'device-reboot', allowed: false, blocker: blocked || '需要监测操作权限', hint: '当前账号只能查看，不能下发重启。' };
 }
 
 /* 后端事项 → 页面摘要（只做字段映射与文案，不推导任何服务端未给出的事实）。 */
@@ -125,7 +130,11 @@ export function riskSteps(state) {
 export function deviceSteps(state) {
   const order = ['PENDING', 'PROCESSING', 'PENDING_VERIFICATION', 'RECOVERED'];
   const idx = Math.max(0, order.indexOf(state));
-  return ['原因与确认', '下发重启', '等待回执', '恢复校验与关闭'].map((n, i) => ({ n, done: i < idx || state === 'RECOVERED', act: i === idx && state !== 'RECOVERED', t: i === idx && state !== 'RECOVERED' ? '未接入工作台' : null }));
+  const current = { PENDING: '待下发重启', PROCESSING: '等待回执', PENDING_VERIFICATION: '待恢复校验' };
+  return ['原因与确认', '下发重启', '等待回执', '恢复校验与关闭'].map((n, i) => ({
+    n, done: i < idx || state === 'RECOVERED', act: i === idx && state !== 'RECOVERED',
+    t: i === idx && state !== 'RECOVERED' ? (current[state] || '当前环节') : null
+  }));
 }
 
 export function stepsOf(kind, state, counter) {

@@ -60,13 +60,13 @@ GET /api/v1/workbench/items/{kind}/{source_id}
 | --- | --- | --- | --- | --- | --- | --- |
 | UAV_EVENT | `uav_event.state_code` | `alarm.received_at` | `uav_event.updated_at` | `uav_event.version` | 源 `allowed_actions`（`VERIFY`） | `CONFIRMED` 时 `COUNTERMEASURE_NOT_CONNECTED`；否则 null |
 | RISK | `flight_risk.state` | `flight_risk.received_at` | `updated_at` | `version` | 源 `VERIFY`；`PENDING_NOTIFICATION` 且有 `handoff:create` 时 `NOTIFY` | 无接收方时 `RECIPIENT_NOT_CONFIGURED` |
-| DEVICE_INCIDENT | `device_incident.stage` | `detected_at` | `closed_at`（有则） | 省略 | 恒为 `[]` | `DEVICE_RECOVERY_NOT_CONNECTED` |
+| DEVICE_INCIDENT | `device_incident.stage` | `detected_at` | `closed_at`（有则） | 省略 | `PENDING`+`monitoring.op`→`REBOOT`；`PENDING_VERIFICATION`+`monitoring.op`→`VERIFY_RECOVERY`；其余 `[]` | `PROCESSING` 时 `WAITING_RECEIPT`；否则 null。原 `DEVICE_RECOVERY_NOT_CONNECTED` 已被设备异常写接口取代 |
 
 `title/summary` 只用安全字段（类型、等级、设备编号/名称、风险原因文案），不含原始 payload、凭据或无权关联 ID。`links` 只含经授权的现有 hash 路由（`#/alarms?...`、`#/risk?...`、`#/monitor?...`），不允许外部 URL。`source_mode` 取源表值；设备异常取 `ops_device.source_mode`。
 
 详情响应：`{item, timeline, availability}`。`timeline` 只读有范围的核实历史（UAV/RISK，`version ASC`）、交接记录（RISK，需 `handoff:read`；缺权限则 `availability.handoffs="FORBIDDEN"` 并省略）、设备异常事实；禁止查询全局审计表。
 
-工作台不提供任何写接口；核实走 `/uav-events/{id}/verifications`、`/risks/{id}/verifications`，通知走 `/handoffs`。
+工作台不提供任何写接口；核实走 `/uav-events/{id}/verifications`、`/risks/{id}/verifications`，通知走 `/handoffs`，设备异常重启/恢复校验走 `/device-incidents/{id}/reboot` 与 `/device-incidents/{id}/recovery-checks`。
 
 ## 交接
 
@@ -111,4 +111,4 @@ POST 成功 201：`{handoff_id,source_kind,source_id,handoff_type,recipient_id,s
 
 ## 尚未接入
 
-真实通知渠道与回执、无人机反制/干扰完成事实、处罚立案/罚款/结案、设备异常恢复/关闭命令、真实运维设备归属资料、正式证据文件与保管。以上在页面上必须显示为“未接入/禁用”并说明原因，不得显示为已完成。
+真实通知渠道与回执、无人机反制/干扰完成事实、处罚立案/罚款/结案、真实运维设备归属资料、正式证据文件与保管。设备异常重启/恢复校验已接到源模块（仅 mock 适配器能真正重启；live 协议未声明重启能力时 409）。以上未接入项必须显示为“未接入/禁用”并说明原因，不得显示为已完成。

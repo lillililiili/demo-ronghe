@@ -241,10 +241,19 @@ class WorkbenchReadApiTest {
                 .andExpect(jsonPath("$.data.item.blocked_reason").value("RECIPIENT_NOT_CONFIGURED"));
         mvc.perform(get("/api/v1/workbench/items/DEVICE_INCIDENT/wb-act-i-" + suffix).header("Authorization", bearer(full)))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.item.allowed_actions").isEmpty())
-                .andExpect(jsonPath("$.data.item.blocked_reason").value("DEVICE_RECOVERY_NOT_CONNECTED"))
+                .andExpect(jsonPath("$.data.item.blocked_reason").value(nullValue()))
                 .andExpect(jsonPath("$.data.item.version").doesNotExist())
                 .andExpect(jsonPath("$.data.item.links.source").value("#/monitor?device_id=" + device))
                 .andExpect(jsonPath("$.data.item.state").value("PENDING"));
+        incident("wb-wait-i-" + suffix, device, "MEDIUM", "PROCESSING", 1_500);
+        mvc.perform(get("/api/v1/workbench/items/DEVICE_INCIDENT/wb-wait-i-" + suffix).header("Authorization", bearer(full)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.item.allowed_actions").isEmpty())
+                .andExpect(jsonPath("$.data.item.blocked_reason").value("WAITING_RECEIPT"));
+        String operator = fullReader();
+        jdbc.update("update app_role_permission set permission_level='OP' where permission_code='monitoring' and role_code=(select u.role_code from app_session s join app_user u on u.user_id=s.user_id where s.session_id=?)", operator);
+        mvc.perform(get("/api/v1/workbench/items/DEVICE_INCIDENT/wb-act-i-" + suffix).header("Authorization", bearer(operator)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.item.allowed_actions[0]").value("REBOOT"))
+                .andExpect(jsonPath("$.data.item.blocked_reason").value(nullValue()));
 
         // 同一事务内 MyBatis 一级缓存会保留首次权限查询结果，因此追加权限后用新的会话验证。
         String actor = fullReader("alarm:verify", "risk:verify", "handoff:create");

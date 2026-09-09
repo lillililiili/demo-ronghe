@@ -1,6 +1,6 @@
 <script setup>
 /* 我的工作台：三类源事项的只读聚合视图。队列、计数、详情全部来自 GET /workbench/items；
-   核实/核验委托共享弹窗（alarmApi/riskApi），通知、反制、设备恢复按 allowed_actions/blocked_reason 禁用并说明原因。
+   核实/核验委托共享弹窗（alarmApi/riskApi），通知、反制委托既有接口，设备重启/恢复校验委托 deviceApi。
    API 失败直接显示错误，不回退 window.MOCK。 */
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { UField } from '@/components/form/index.js';
@@ -11,6 +11,7 @@ import { openFormModal } from '@/ui/formModal.js';
 import { isUncertainOutcome } from '@/services/apiClient.js';
 import { createHandoff, listHandoffRecipients, newHandoffIdempotencyKey } from '@/services/handoffApi.js';
 import { openUavVerification } from '@/ui/uavVerificationModal.js';
+import { deviceApi, newIdempotencyKey } from '@/services/deviceApi.js';
 import { disposalApi } from '@/services/disposalApi.js';
 import { openDisposalRequest } from '@/ui/disposalAuthModal.js';
 import { openRiskVerification } from '@/ui/riskVerificationModal.js';
@@ -53,6 +54,9 @@ let timer = null;
 let queueSeq = 0, detailSeq = 0, summarySeq = 0;
 /* 同一风险的交接幂等键在“结果未知”期间保留；明确成功或明确失败后才丢弃。 */
 const pendingNotifyKeys = new Map();
+const pendingRebootKeys = new Map();
+const pendingRecoveryKeys = new Map();
+const COMMAND_DONE = new Set(['SUCCEEDED', 'FAILED', 'TIMED_OUT', 'CANCELLED']);
 function esc(value) {
   return String(value ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 }
@@ -172,7 +176,7 @@ async function refreshAll() {
 }
 function refresh() { return refreshAll(); }
 
-/* ---------- 动作：核实/核验委托共享弹窗；通知/反制/设备恢复禁用 ---------- */
+/* ---------- 动作：核实/核验/通知/反制委托源模块；设备异常走 incident 重启与恢复校验 ---------- */
 async function runUavAction() {
   const d = selected.value, td = d?.summary.todo;
   if (!d || d.kind !== 'UAV_EVENT' || !td || acting.value) return;
@@ -281,9 +285,77 @@ async function openNotifyModal(risk, summary) {
     }
   });
 }
+async function waitCommand(commandId) {
+  let last = null;
+  for (let i = 0; i < 20; i++) {
+    last = await deviceApi.command(commandId);
+    if (last && COMMAND_DONE.has(last.status)) return last;
+    await new Promise(resolve => window.setTimeout(resolve, 400));
+  }
+  return last;
+}
 function runDeviceAction() {
-  const td = selected.value?.summary.todo;
-  toast(td?.blocker || '设备恢复尚未接入工作台', 'err');
+  const d = selected.value, td = d?.summary.todo;
+  if (!d || d.kind !== 'DEVICE_INCIDENT' || !td || acting.value) return;
+  if (!td.allowed) return toast(td.blocker || '当前动作不可执行', 'err');
+  if (td.kind === 'device-verify') return runDeviceRecovery(d);
+  return openDeviceReboot(d);
+}
+async function runDeviceRecovery(d) {
+  const incidentId = d.summary.sourceId;
+  if (!pendingRecoveryKeys.has(incidentId)) pendingRecoveryKeys.set(incidentId, newIdempotencyKey('incident-recovery'));
+  acting.value = true;
+  try {
+    const result = await deviceApi.checkIncidentRecovery(incidentId, pendingRecoveryKeys.get(incidentId));
+    pendingRecoveryKeys.delete(incidentId);
+    if (result.result === 'PASS') toast('恢复校验通过，异常已关闭', 'ok');
+    else if (result.result === 'UNKNOWN') toast(`设备状态未知，未关闭异常${result.reason ? '：' + result.reason : ''}`, 'err');
+    else toast(`恢复校验未通过，异常仍待验证${result.reason ? '：' + result.reason : ''}`, 'err');
+    await refreshAll();
+  } catch (e) {
+    if (isUncertainOutcome(e)) {
+      await refreshAll();
+      toast(`校验结果未确认，请刷新核对：${messageOf(e, '未返回明确结果')}`, 'err');
+    } else toast(messageOf(e, '恢复校验失败'), 'err');
+  } finally { acting.value = false; }
+}
+function openDeviceReboot(d) {
+  const incidentId = d.summary.sourceId;
+  if (!pendingRebootKeys.has(incidentId)) pendingRebootKeys.set(incidentId, newIdempotencyKey('incident-reboot'));
+  openFormModal({
+    title: '远程重启 · 设备异常',
+    width: '560px',
+    warning: '提交后等待适配器回执。模拟回执不代表真实设备已重启；协议未声明重启能力或设备离线时会失败，异常保持待处理。',
+    notice: [d.summary.title, d.summary.sourceNo].filter(Boolean).join(' · '),
+    fields: [{ key: 'reason', label: '重启原因', type: 'textarea', required: true, minRows: 3, maxlength: 500, placeholder: '说明为何对该异常下发重启' }],
+    confirmText: '下发重启',
+    submitEnabled: m => String(m.reason || '').trim().length >= 2,
+    onSubmit: async ({ reason }) => {
+      const key = pendingRebootKeys.get(incidentId);
+      try {
+        const command = await deviceApi.rebootIncident(incidentId, String(reason || '').trim(), key);
+        closeModal();
+        toast('重启指令已受理，等待回执', 'ok');
+        acting.value = true;
+        try {
+          const done = await waitCommand(command.command_id);
+          if (done?.status === 'SUCCEEDED') toast('重启回执已收到，请进行恢复校验', 'ok');
+          else if (done?.status) toast(`重启未成功（${done.status}），可重新下发`, 'err');
+          else toast('尚未收到回执，请稍后刷新核对', 'err');
+        } finally { acting.value = false; }
+        pendingRebootKeys.delete(incidentId);
+        await refreshAll();
+      } catch (e) {
+        if (isUncertainOutcome(e)) {
+          await refreshAll();
+          throw new Error(`提交结果未确认，请刷新核对：${messageOf(e, '未返回明确结果')}`);
+        }
+        pendingRebootKeys.delete(incidentId);
+        pendingRebootKeys.set(incidentId, newIdempotencyKey('incident-reboot'));
+        throw new Error(messageOf(e, '下发重启失败'));
+      }
+    }
+  });
 }
 function primaryAction() {
   const d = selected.value;
@@ -457,7 +529,7 @@ onUnmounted(() => {
           </section>
 
           <section class="wb-flow-card panel">
-            <div class="ph"><h3>{{ selected.kind === 'RISK' ? '飞行计划风险流程' : selected.kind === 'UAV_EVENT' ? '无人机事件处置流程' : '设备异常处置流程' }}</h3><span class="sub">按当前状态推导；未接入环节明确标注</span></div>
+            <div class="ph"><h3>{{ selected.kind === 'RISK' ? '飞行计划风险流程' : selected.kind === 'UAV_EVENT' ? '无人机事件处置流程' : '设备异常处置流程' }}</h3><span class="sub">按当前状态推导；设备重启须等回执后再做恢复校验</span></div>
             <div class="wb-flow" :style="{ '--wb-flow-count': selected.steps.length }">
               <div v-for="(s,i) in selected.steps" :key="s.n" :class="['wb-flow-step',{done:s.done,active:s.act}]">
                 <span>{{ s.done ? '✓' : i + 1 }}</span><b>{{ s.n }}</b><small>{{ s.done ? (s.t || '已完成') : s.t ? s.t : s.act ? '当前环节' : '待处理' }}</small>
@@ -489,7 +561,7 @@ onUnmounted(() => {
               <span><small>源编号</small><b class="mono" :title="selected.summary.sourceId">{{ selected.summary.sourceNo || '—' }}</b></span><i>→</i>
               <span v-if="selected.kind === 'RISK'"><small>交接记录</small><b>{{ selected.availability.handoffs === 'AVAILABLE' ? `${handoffs.length} 条` : selected.availability.handoffs === 'FORBIDDEN' ? '无读取权限' : '—' }}</b></span>
               <span v-else-if="selected.kind === 'UAV_EVENT'"><small>核实记录</small><b>{{ verifications.length }} 条</b></span>
-              <span v-else><small>动作</small><b>{{ selected.summary.blockedLabel ? '未接入' : '—' }}</b></span><i>→</i>
+              <span v-else><small>动作</small><b>{{ selected.summary.todo?.allowed ? selected.summary.todo.action : (selected.summary.blockedLabel || selected.summary.todo?.blocker || '—') }}</b></span><i>→</i>
               <span><small>源页面</small><button class="btn" type="button" :disabled="!selected.summary.links?.source" @click="openSource">打开源页面</button></span>
             </div>
           </section>
@@ -513,7 +585,7 @@ onUnmounted(() => {
                   <div v-if="!selected.timeline.length" class="empty wb-record-empty">
                     <span class="wb-record-empty-icon" v-html="icon('tool')"></span>
                     <b>暂无设备事实</b>
-                    <small>设备重启与恢复校验的控制记录尚未接入工作台</small>
+                    <small>检出与关闭事实会显示在这里；进行中的重启请看当前任务</small>
                   </div>
                 </template>
               </div>

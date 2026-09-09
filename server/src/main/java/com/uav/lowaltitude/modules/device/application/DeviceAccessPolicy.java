@@ -28,6 +28,10 @@ public class DeviceAccessPolicy {
         return user != null && accessService.permissionCodes(user.roleCode()).contains("devices.op");
     }
 
+    public boolean canOperateMonitoring(AuthUser user) {
+        return user != null && accessService.permissionCodes(user.roleCode()).contains("monitoring.op");
+    }
+
     private AuthUser require(String permissionCode) {
         accessService.requireBusinessData(permissionCode);
         return AuthContext.require();

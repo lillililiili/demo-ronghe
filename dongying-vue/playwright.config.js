@@ -32,7 +32,9 @@ export default defineConfig({
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'], viewport: { width: 1280, height: 800 } } }],
   webServer: {
-    command: `npx vite --port ${PORT}`,
+    // 用仓库内的 vite 入口而不是 `npx vite`：本机实测 npx 会解析到仓库外另一个
+    // vite 安装（/Users/frank/Desktop/untitled folder 2/...），起不来且报 rollup MODULE_NOT_FOUND。
+    command: `node node_modules/vite/bin/vite.js --port ${PORT}`,
     url: BASE_URL,
     env: { APP_API_PROXY_TARGET: API_TARGET },
     reuseExistingServer: !process.env.CI,

@@ -26,4 +26,8 @@
 
 ## 助手最终回归（16.7 之后，8081 于 06:50:18 UTC 重启）
 - 真 PG（各自 `stage456_verify_*` 隔离库，无残留 schema）：Stage16PostgresTest 6/6、Stage8PostgresTest 7/7、Stage85PostgresTest 15/15、Stage15PostgresTest 9/9；ProductionStage15SeedIsolationTest + FusionInboxRecoveryTest + OutboxWorkerRecoveryTest 10/10。E2E 40/40 两遍（`disposal-actions.spec.js` 改为向服务端询问哪条交接带处置授权再点该行：另一会话新灌的 `seed-vol-pcase-*` 交接排到了阶段 13 那条前面，原夹具"默认选中行就有授权"的假设失效，第一遍 39/40 被条数差抓住）。
-- 16-8 链检测：`uav_stage10_verify` 重启后无帧可处理（回放行全 DONE），该库上的 0 不构成证据；`uav_stage16_upgrade` 真跑了 24 帧，MERGE 恰 1、链 0，且触发条件在场（见上表 `目标-20250905-008`：陈旧 STABLE、同域、距 converge 目标 30 m、本轮不可观测）。助手按"两个陈旧目标互距"量得 1728 m 认为无触发条件，领导按"陈旧目标 ↔ 活目标"口径判定在场；正例（positive control）只有 stage10 上 16.7 之前的实跑记录（MERGE×2、链 1），没有用带缺陷的包在同一夹具上复跑（该包已被覆盖，round12 包没有自动合并不能作正例）。如实记录：负例带触发条件、正例为历史记录，非同一夹具上的成对实验。
+- 16-8 链检测：`uav_stage10_verify` 重启后无帧可处理（回放行全 DONE），该库上的 0 不构成证据；`uav_stage16_upgrade` 真跑了 24 帧，MERGE 恰 1、链 0，且触发条件在场（见上表 `目标-20250905-008`：陈旧 STABLE、同域、距 converge 目标 30 m、本轮不可观测）。助手按"两个陈旧目标互距"量得 1728 m 认为无触发条件，领导按"陈旧目标 ↔ 活目标"口径判定在场；正例（positive control）只有 stage10 上 16.7 之前的实跑记录（MERGE×2、链 1），没有用带缺陷的包在同一夹具上复跑（该包已被覆盖，round12 包没有自动合并不能作正例）。如实记录：库层负例带触发条件、正例为历史记录，非同一夹具上的成对实验；**成对实验在单元层是有的**——`FusionPipelineMergeCandidatesTest.aStableTargetWithNoObservationThisFrameIsNeverAMergeCandidate` 先红后绿，变量只有 `entry.getValue().isEmpty()` 那一处（审查第 8 轮指出）。门限按 `2.0 × max(σ)`、008 的 EO/TDOA 精度 25/60 m 算为 50–120 m，30 m 远在门内，不是边界情形。
+
+## CI
+- 34323041306（`802efd2`）：backend 918/0/0/0 跳 0，frontend 通过，e2e 39/40（`disposal-actions` 在干净库上无可动作行，16.8 处理）。
+- 16.8（助手）：夹具自给后，8083 全新库（与 CI 同态）40/40 两遍、8081 40/40 三遍；先在干净库复现了 CI 那句 `没有任何一行是可动作的`，再转绿。

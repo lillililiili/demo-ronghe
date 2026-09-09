@@ -6,6 +6,12 @@
  * 恰恰是访问矩阵天然看不见的一种漏洞——页面进得去、内容也渲染了，只是那颗按钮从来不存在。
  * 这类问题不放在这一层，就没有别的层会看它。
  *
+ * <p>**夹具自给**（2026-09-09）：干净库里阶段 13 的三条种子授权分别是 REJECTED/COMPLETED/EXPIRED
+ * （批准过的那条 30 分钟有效期早就过了），`allowed_actions` 全是空的——"该画的画了"这一半
+ * 在干净库上**结构性地跑不到**。CI 第三跑就红在这里，而本机之前是绿的，因为库里有别人手工造的行。
+ * 所以这条用例现在**自己发起一条处置申请**（REQUESTED，`allowed_actions=[APPROVE,REJECT,CANCEL]`），
+ * 比对完再 cancel 收回，不依赖库里恰好存在可动作的行。
+ *
  * 判据取**两个方向都要对**：
  *   · 画出来的每一颗按钮，服务端都得允许——否则就是"点了才吃 403"的越权入口；
  *   · 服务端允许、且本页有入口的动作，都得画出来——否则就是这次要修的那种漏做。
@@ -34,97 +40,121 @@ const BUTTON_FOR_ACTION = {
 const DELIBERATELY_NOT_RENDERED = ['CANCEL'];
 
 test('处罚页的处置授权行：按钮集合与服务端 allowed_actions 一致', async ({ context, page, request }) => {
-  const session = await apiLogin(request, 'reviewer1');
-  test.skip(session === null, 'reviewer1 尚不存在（决策 15-3）。这条不是通过，是没跑。');
-  await seedSession(context, session.sessionId);
+  const reviewer = await apiLogin(request, 'reviewer1');
+  test.skip(reviewer === null, 'reviewer1 尚不存在（决策 15-3）。这条不是通过，是没跑。');
+  const admin = await apiLogin(request, 'admin1');
+  test.skip(admin === null, 'admin1 不可登录，无法自给夹具。这条不是通过，是没跑。');
 
-  const signals = collectPageSignals(page);
-  /** 服务端逐行给的 allowed_actions，按授权号索引。 */
-  const allowedById = new Map();
-  page.on('response', async response => {
-    if (!new URL(response.url()).pathname.endsWith('/disposal-authorizations')) return;
-    try {
-      const body = await response.json();
-      for (const item of body?.data?.items || []) {
-        allowedById.set(item.authorization_id, item.allowed_actions || []);
+  const subject = await pickHandoffSubject(request, reviewer.sessionId);
+  test.skip(subject === null, '交接列表里没有任何带主体的交接，这条用例没有可验的对象——这不是通过，是没跑。');
+
+  // 自己造一条待审批的授权：干净库里没有任何可动作的行，"该画的画了"那一半否则永远跑不到。
+  const created = await requestAuthorization(request, admin.sessionId, subject);
+  test.skip(created === null, '无法发起处置申请（接口或权限不可用），没有可动作的行可比——这不是通过，是没跑。');
+
+  try {
+    await seedSession(context, reviewer.sessionId);
+    const signals = collectPageSignals(page);
+    /** 服务端逐行给的 allowed_actions，按授权号索引。 */
+    const allowedById = new Map();
+    page.on('response', async response => {
+      if (!new URL(response.url()).pathname.endsWith('/disposal-authorizations')) return;
+      try {
+        const body = await response.json();
+        for (const item of body?.data?.items || []) {
+          allowedById.set(item.authorization_id, item.allowed_actions || []);
+        }
+      } catch { /* 非 JSON 或已被消费：下面的空集合断言会兜住 */ }
+    });
+
+    await page.goto('/#/punish');
+    await page.waitForSelector(`tr[data-row="${subject.handoffId}"]`);
+    await page.click(`tr[data-row="${subject.handoffId}"]`);
+    await page.waitForSelector('.pn-disposal-row');
+
+    const rows = await page.locator('.pn-disposal-row').evaluateAll(nodes => nodes.map(node => ({
+      id: node.querySelector('b.mono')?.getAttribute('title') || '',
+      buttons: Array.from(node.querySelectorAll('.pn-disposal-acts button')).map(b => b.textContent.trim())
+    })));
+
+    expect(rows.length, '页面上一条处置授权都没有，这条用例什么也没验').toBeGreaterThan(0);
+    expect(allowedById.size, '没有抓到 /disposal-authorizations 的响应，无从比对').toBeGreaterThan(0);
+    expect(rows.map(row => row.id), '刚发起的那条授权必须出现在页面上，否则比对的不是它')
+        .toContain(created.authorizationId);
+
+    let rowsWithActions = 0;
+    let rowsWithoutActions = 0;
+    for (const row of rows) {
+      const allowed = allowedById.get(row.id);
+      expect(allowed, `页面上的授权 ${row.id} 在服务端响应里找不到`).toBeDefined();
+
+      const expectedButtons = [...new Set(allowed
+        .filter(action => !DELIBERATELY_NOT_RENDERED.includes(action))
+        .map(action => BUTTON_FOR_ACTION[action])
+        .filter(Boolean))];
+
+      expect([...new Set(row.buttons)].sort(),
+        `授权 ${row.id}：服务端允许 [${allowed.join(', ')}]，页面画了 [${row.buttons.join(', ')}]。`
+        + '多一颗是"点了才吃 403"的越权入口，少一颗是这条动作在全仓没有入口。')
+        .toEqual(expectedButtons.sort());
+
+      for (const action of allowed.filter(a => DELIBERATELY_NOT_RENDERED.includes(a))) {
+        expect(row.buttons, `授权 ${row.id}：${action} 目前没有对应的弹窗，不该画出按钮；`
+          + '若已经补上弹窗，请把它从 DELIBERATELY_NOT_RENDERED 里挪进 BUTTON_FOR_ACTION').not.toContain(action);
       }
-    } catch { /* 非 JSON 或已被消费：这一条就不参与比对，下面的空集合断言会兜住 */ }
-  });
 
-  // 不能依赖"默认选中的那条交接刚好有处置授权"：演示数据一加新交接，默认选中的就换人了
-  // （2026-09-09 实测：新增的 seed-vol-pcase-* 交接排到了前面，默认那条主体下没有授权，
-  //  用例于是等不到 .pn-disposal-row 而超时——那是夹具假设的问题，不是产品的问题）。
-  // 改为先问服务端哪条交接的主体下确实有授权，再按 data-row 点那一条。
-  const target = await findHandoffWithAuthorizations(request, session.sessionId);
-  test.skip(target === null, '演示数据里没有任何一条交接的主体下有处置授权，这条用例没有可验的对象——'
-      + '这不是通过，是没跑');
-
-  await page.goto('/#/punish');
-  await page.waitForSelector(`tr[data-row="${target}"]`);
-  await page.click(`tr[data-row="${target}"]`);
-  await page.waitForSelector('.pn-disposal-row');
-
-  const rows = await page.locator('.pn-disposal-row').evaluateAll(nodes => nodes.map(node => ({
-    id: node.querySelector('b.mono')?.getAttribute('title') || '',
-    buttons: Array.from(node.querySelectorAll('.pn-disposal-acts button')).map(b => b.textContent.trim())
-  })));
-
-  expect(rows.length, '页面上一条处置授权都没有，这条用例什么也没验').toBeGreaterThan(0);
-  expect(allowedById.size, '没有抓到 /disposal-authorizations 的响应，无从比对').toBeGreaterThan(0);
-
-  let rowsWithActions = 0;
-  let rowsWithoutActions = 0;
-  for (const row of rows) {
-    const allowed = allowedById.get(row.id);
-    expect(allowed, `页面上的授权 ${row.id} 在服务端响应里找不到`).toBeDefined();
-
-    const expectedButtons = [...new Set(allowed
-      .filter(action => !DELIBERATELY_NOT_RENDERED.includes(action))
-      .map(action => BUTTON_FOR_ACTION[action])
-      .filter(Boolean))];
-
-    expect([...new Set(row.buttons)].sort(),
-      `授权 ${row.id}：服务端允许 [${allowed.join(', ')}]，页面画了 [${row.buttons.join(', ')}]。`
-      + '多一颗是"点了才吃 403"的越权入口，少一颗是这条动作在全仓没有入口。')
-      .toEqual(expectedButtons.sort());
-
-    // 有意不画的那些，必须**真的**没画——否则"有意"会在某次改动里悄悄变成"顺手加上了"。
-    for (const action of allowed.filter(a => DELIBERATELY_NOT_RENDERED.includes(a))) {
-      expect(row.buttons, `授权 ${row.id}：${action} 目前没有对应的弹窗，不该画出按钮；`
-        + '若已经补上弹窗，请把它从 DELIBERATELY_NOT_RENDERED 里挪进 BUTTON_FOR_ACTION').not.toContain(action);
+      if (allowed.length) rowsWithActions++; else rowsWithoutActions++;
     }
 
-    if (allowed.length) rowsWithActions++; else rowsWithoutActions++;
+    // 两边都要有样本，否则这条用例是空转的。可动作的那一行现在由夹具保证，
+    // 终态那几行由阶段 13 的种子保证（REJECTED/COMPLETED/EXPIRED）。
+    expect(rowsWithActions, '没有任何一行是可动作的——"该画的画了"这一半没有被执行；'
+      + '夹具刚发起的那条授权应当就是它').toBeGreaterThan(0);
+    expect(rowsWithoutActions, '没有任何一行是终态的——"不该画的没画"这一半没有被执行；'
+      + '把按钮写死成永远渲染也会通过').toBeGreaterThan(0);
+
+    expect(signals.appErrors, `处罚页产生了应用级错误：\n${signals.appErrors.join('\n')}`).toEqual([]);
+    const unexpected = unexpectedFailures(signals.failedResponses, 'reviewer1');
+    expect(unexpected, `处罚页发出了 reviewer1 不该发出的请求：\n${unexpected.join('\n')}`).toEqual([]);
+  } finally {
+    // 收尾放 finally：用例红了也要把这条申请撤回，否则下一轮库里会攒出一堆待审批的演示申请。
+    await cancelAuthorization(request, admin.sessionId, created);
   }
-
-  // 两边都要有样本，否则这条用例是空转的：
-  // 只有可动作的行时，"不该画的没画"没跑；只有终态行时，"该画的画了"没跑。
-  expect(rowsWithActions, '没有任何一行是可动作的——"该画的画了"这一半没有被执行').toBeGreaterThan(0);
-  expect(rowsWithoutActions, '没有任何一行是终态的——"不该画的没画"这一半没有被执行；'
-    + '把按钮写死成永远渲染也会通过').toBeGreaterThan(0);
-
-  expect(signals.appErrors, `处罚页产生了应用级错误：\n${signals.appErrors.join('\n')}`).toEqual([]);
-  const unexpected = unexpectedFailures(signals.failedResponses, 'reviewer1');
-  expect(unexpected, `处罚页发出了 reviewer1 不该发出的请求：\n${unexpected.join('\n')}`).toEqual([]);
 });
 
-/**
- * 找一条"主体下有处置授权"的交接。顺着交接列表问服务端，拿到第一条有授权的就停。
- *
- * 放在测试侧而不是写死某个种子 id：种子 id 会随演示数据调整而变，写死等于把用例挂在
- * 别人的夹具编号上；而"哪条交接有授权"本来就是服务端能直接回答的问题。
- */
-async function findHandoffWithAuthorizations(request, sessionId) {
-  const headers = { Authorization: `Bearer ${sessionId}` };
-  const listed = await request.get('/api/v1/handoffs?page=1&size=50', { headers });
-  const handoffs = (await listed.json())?.data?.items || [];
-  for (const handoff of handoffs) {
-    if (!handoff.source_kind || !handoff.source_id) continue;
-    const response = await request.get(
-      `/api/v1/disposal-authorizations?subject_kind=${handoff.source_kind}&subject_id=${handoff.source_id}&page=1&size=1`,
-      { headers });
-    if (!response.ok()) continue;
-    if (((await response.json())?.data?.items || []).length > 0) return handoff.handoff_id;
+/** 取一条带主体的交接（处罚页的授权面板按交接的 source_kind/source_id 列授权）。 */
+async function pickHandoffSubject(request, sessionId) {
+  const listed = await request.get('/api/v1/handoffs?page=1&size=50',
+    { headers: { Authorization: `Bearer ${sessionId}` } });
+  for (const handoff of (await listed.json())?.data?.items || []) {
+    if (handoff.source_kind && handoff.source_id) {
+      return { handoffId: handoff.handoff_id, subjectKind: handoff.source_kind, subjectId: handoff.source_id };
+    }
   }
   return null;
+}
+
+/**
+ * 自己发起一条处置申请。`channel: MANUAL` 是有意的——经设备执行的处置必须指定设备，
+ * 而本用例不关心设备，挑人工渠道就不必在测试里硬编码某台种子设备。
+ */
+async function requestAuthorization(request, sessionId, subject) {
+  const response = await request.post('/api/v1/disposal-authorizations', {
+    headers: { Authorization: `Bearer ${sessionId}`, 'Idempotency-Key': `e2e-disposal-${Date.now()}-${Math.random()}` },
+    data: {
+      action_type: 'DISPERSAL', subject_kind: subject.subjectKind, subject_id: subject.subjectId,
+      channel: 'MANUAL', reason: 'E2E 夹具：自给一条待审批的处置申请，跑完撤回'
+    }
+  });
+  if (!response.ok()) return null;
+  const data = (await response.json())?.data;
+  return data?.authorization_id ? { authorizationId: data.authorization_id, version: data.version ?? 0 } : null;
+}
+
+async function cancelAuthorization(request, sessionId, created) {
+  if (!created) return;
+  await request.post(`/api/v1/disposal-authorizations/${created.authorizationId}/cancel`, {
+    headers: { Authorization: `Bearer ${sessionId}`, 'Idempotency-Key': `e2e-cancel-${Date.now()}-${Math.random()}` },
+    data: { expected_version: created.version }
+  });
 }

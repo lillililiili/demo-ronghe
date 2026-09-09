@@ -42,3 +42,4 @@
 | 15-35 | 处罚页处置授权行按服务端 `allowed_actions` 渲染动作按钮（审批/驳回/执行/人工结果/停止），复用 `ui/disposalAuthModal.js` 与 `disposalApi` 现有函数，不新写请求，不改页面结构 | E2 浏览器联调：reviewer1 与 admin1 在处罚页都看不到任何审批入口——`openDisposalApproval/Execution/ManualResult/Stop` 全仓无页面调用，授权行是纯只读渲染；13-33 拖两个阶段的真正原因是申请之后三步没有入口，而不是缺第二个账号 |
 | 15-34 修订 | `/devices` 由 A 的 `DeviceAccessPolicy` 按模块码 `devices.read` 把关，不是动作码 `device:read`；种子新增 `MODULE_DATA_ONLY=[devices]`，只把等级抬到 READ、不开菜单（设备管理是运维页面，不进复核员菜单）；用例把 situation→device/target/fusion/airspace/assessment、flights→flight/route/airspace/risk 的对应写死 | E1 实测：全仓模块级鉴权点 9 个，五条 403 里只有 `/devices` 是模块级；只加七个动作码态势页仍 403 |
 | 15-36（开放） | `/auth/me` 的 `permission_codes` 只有模块码，不下发动作码，前端无法据此决定动作按钮显隐（现靠服务端 `allowed_actions` 或等 403）；是否下发动作码留到下阶段与 E2 定口径，本轮不动 | E1 观察 |
+| 15-37 | CI：PG 专项主跑改用 `stage456_verify_ci` 库（与本机隔离库同一命名规则，不放宽用例的库名守卫）；E2E 作业下载 backend 作业的 jar，在作业自带的 PostGIS 服务上以 local 配置真跑后端再跑用例，仍不阻断合并 | 首跑 34295804430：PG 专项因库名被守卫拒绝、E2E 因无后端全红；放宽守卫会让本机误连生产库的防线失效，所以改 CI 不改用例 |

@@ -48,3 +48,9 @@
 - E2 15-35 追加：证据卡片副标题改走共享字典（`ui/evidenceChainView.js` 的 `recordHint()`，处罚页与告警页共用一处），结论码只在事件链上翻；scan/build/check-ui-text 零命中。
 - Stage3/4/8AccessControlServiceTest 追加钉死演示复核员在各组码里的持有内容（Stage3 四个 READ、Stage4 只 `risk:read`、Stage8 只 `fusion:read`），9/9 绿。
 - 跟进提交：见下方提交号。
+
+## CI 首跑（推送 `aa6b7eb` 之后）
+- 运行 34295804430（2026-09-09 00:37 UTC）：frontend 通过；backend 失败——10 个 PG 专项（Stage4/5/7/8/8.5/9/13/14/15、MqttP1）全部 ERROR，根因同一个：这些用例硬校验库名 `^stage456_verify_`，CI 主跑指向的是 `ci_verify`，上下文被守卫拒绝（H2 部分全绿，TargetRead 专项因已有专属库正常）；e2e 失败——作业里没有后端，Vite 代理到 8081 全部 ECONNREFUSED。
+- 修法（提交见下）：主跑改指向新建的 `stage456_verify_ci`（PostGIS）；backend 作业上传 jar 工件；e2e 作业改为 `needs: [frontend, backend]`，自带 PostGIS 服务，下载 jar 以 local 配置跑在全新库 `e2e_verify` 上（与本机 `backend-stage14` 同一套启动参数，开发种子开、口令 changeme），健康后再跑 Playwright；仍 `continue-on-error`（15-9）。失败时输出后端日志并上传 playwright-report。
+- 待填：第二次 CI 运行结果。
+

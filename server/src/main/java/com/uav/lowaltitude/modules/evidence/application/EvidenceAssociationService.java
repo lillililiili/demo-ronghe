@@ -56,7 +56,8 @@ public class EvidenceAssociationService {
     static final Set<String> KINDS = Set.of("EO_VIDEO", "EO_STILL", "TRACK_SNAPSHOT", "NOTICE_RECEIPT",
             "COMMISSION_REPORT", "COMMAND_LOG", "SCENE_PHOTO", "PENALTY_DOCUMENT");
     static final Set<String> STATUSES = Set.of("PENDING", "AVAILABLE", "MISSING", "CORRUPT", "DESTROYED");
-    static final Set<String> SUBJECTS = Set.of("EVENT", "DEVICE", "TARGET", "PLAN", "COMMAND", "COMMISSION");
+    static final Set<String> SUBJECTS = Set.of("EVENT", "DEVICE", "TARGET", "PLAN", "COMMAND", "COMMISSION",
+            "CASE", "AUTHORIZATION");
     static final Set<String> MODES = Set.of("mock", "replay", "live");
     private static final long MAX_BYTES = 32L * 1024 * 1024;
     private static final Set<String> LIST_PARAMS = Set.of("page", "size", "kind_code", "status",
@@ -89,7 +90,8 @@ public class EvidenceAssociationService {
         AccessDecision decision = access.require(PermissionCode.EVIDENCE_READ);
         boolean ingest = probe(PermissionCode.EVIDENCE_INGEST);
         Request request = Request.list(parameters);
-        if (request.subjectKind() != null && !repository.subjectVisible(request.subjectKind(), request.subjectId(), decision)) {
+        if (request.subjectKind() != null && (!canSeeKind(request.subjectKind())
+                || !repository.subjectVisible(request.subjectKind(), request.subjectId(), decision))) {
             return new PageDto<>(List.of(), request.page(), request.size(), 0);
         }
         FileQuery query = request.query();
@@ -113,7 +115,7 @@ public class EvidenceAssociationService {
         AccessDecision decision = access.require(PermissionCode.EVIDENCE_READ);
         String kind = subject(subjectKind);
         String id = id(subjectId);
-        if (!repository.subjectVisible(kind, id, decision)) return List.of();
+        if (!canSeeKind(kind) || !repository.subjectVisible(kind, id, decision)) return List.of();
         FileQuery query = new FileQuery(null, null, kind, id, null);
         boolean ingest = probe(PermissionCode.EVIDENCE_INGEST);
         return repository.list(query, decision, ingest, 0, 100).stream().map(this::summary).toList();
@@ -388,10 +390,17 @@ public class EvidenceAssociationService {
     }
 
     private SubjectRef requireVisibleSubject(String kind, String subjectId, AccessDecision decision) {
-        if (!repository.subjectVisible(kind, subjectId, decision)) {
+        if (!canSeeKind(kind) || !repository.subjectVisible(kind, subjectId, decision)) {
             throw new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "对象不存在或不可见");
         }
         return repository.findSubject(kind, subjectId);
+    }
+
+    /** 案件/授权除数据范围外还要有对应模块读权限，缺权按不存在处理，不泄露编号。 */
+    private boolean canSeeKind(String kind) {
+        if ("CASE".equals(kind)) return probe(PermissionCode.PUNISHMENT_READ);
+        if ("AUTHORIZATION".equals(kind)) return probe(PermissionCode.DISPOSAL_READ);
+        return true;
     }
 
     private EvidenceSummaryDto summary(FileRow row) {
@@ -407,7 +416,7 @@ public class EvidenceAssociationService {
     private EvidenceDetailDto detail(FileRow row, AccessDecision decision) {
         List<LinkDto> links = new ArrayList<>();
         for (LinkRow link : repository.links(row.evidenceId())) {
-            if (!repository.subjectVisible(link.subjectKind(), link.subjectId(), decision)) continue;
+            if (!canSeeKind(link.subjectKind()) || !repository.subjectVisible(link.subjectKind(), link.subjectId(), decision)) continue;
             SubjectRef subject = repository.findSubject(link.subjectKind(), link.subjectId());
             links.add(new LinkDto(link.linkId(), link.subjectKind(), link.subjectId(),
                     subject == null ? null : subject.no()));

@@ -7,7 +7,7 @@
 
 | 做 | 不做 |
 | --- | --- |
-| 按 `EVENT` / `TARGET` 聚合八类已有记录 | 处罚案件、空域、风险事件、反制授权表（均无 FK，不新建） |
+| 按 `EVENT` / `TARGET` / `CASE` 聚合八类已有记录 | 空域、风险事件表；`AUTHORIZATION` 不作链根 |
 | 读时计算 SHA-256 链校验值 | 链快照落库、ZIP 打包、按 Demo 年限销毁 |
 | 用 `target_current_alias` 展开家族，合并前判定取 `assessment_result` | 改写历史 FK、编辑 `modules/fusion/**`、虚构 `legal_status` |
 | 缺权桶标 `FORBIDDEN`，缺记录标 `ABSENT` | 把缺权当成缺失，或编造记录凑齐八类 |
@@ -48,7 +48,7 @@
 GET /api/v1/evidence-chains/{subject_kind}/{subject_id}
 ```
 
-`subject_kind` 仅 `EVENT` | `TARGET`。其它 400。无 query；出现任一 query 400。
+`subject_kind` 仅 `EVENT` | `TARGET` | `CASE`。`AUTHORIZATION` 只作文件关联主体，不是链根。其它 400。无 query；出现任一 query 400。CASE 链需要 `punishment:read` 且案件可见，否则 404。文件桶含挂到本案的证据；若案件有 `event_id` 且调用者可见，告警/处置桶按 EVENT 链同口径聚合。
 
 ### 成功 `data`
 

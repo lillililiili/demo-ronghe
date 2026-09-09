@@ -300,6 +300,7 @@ onUnmounted(() => { active = false; detailSequence++; clearInterval(refreshTimer
                   <dt>订阅状态</dt><dd>{{ protocolStatus?.details?.subscribed ? '已订阅' : '尚未订阅' }}</dd>
                   <dt>工作状态</dt><dd>{{ ({ '0': '未工作', '1': '工作中', '2': '异常' })[selected.work_state_code] || '未知' }}</dd>
                   <dt>最近工参</dt><dd>{{ fmtTime(protocolStatus?.details?.last_static_at) }}</dd>
+                  <dt>台账坐标</dt><dd>{{ detail.longitude == null || detail.latitude == null ? '—' : `${detail.longitude}, ${detail.latitude}` }}</dd>
                   <dt>最近目标报文</dt><dd>{{ fmtTime(protocolStatus?.details?.last_sense_at) }}</dd>
                   <dt>重复 / 冲突</dt><dd>{{ protocolStatus?.details?.duplicate_count ?? 0 }} / {{ protocolStatus?.details?.conflict_count ?? 0 }}</dd>
                   <dt>疑似缺报</dt><dd>{{ protocolStatus?.details?.suspected_gap_count ?? 0 }} 次序号间隙</dd>

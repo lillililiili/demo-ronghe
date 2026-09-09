@@ -50,6 +50,12 @@ public class EvidenceRepository {
                     FROM commission_task t JOIN ops_device d ON d.device_id=t.device_id
                     JOIN device_business_scope s ON s.ops_device_id=d.device_id
                     WHERE t.commission_id=:id""";
+            case "CASE" -> """
+                    SELECT case_id AS id, case_no AS no, owner_org_id, district_id
+                    FROM punishment_case WHERE case_id=:id""";
+            case "AUTHORIZATION" -> """
+                    SELECT authorization_id AS id, authorization_no AS no, owner_org_id, district_id
+                    FROM disposal_authorization WHERE authorization_id=:id""";
             default -> null;
         };
         if (sql == null) return null;
@@ -171,6 +177,7 @@ public class EvidenceRepository {
         p.put("created", ts(createdAt));
         p.put("event", null); p.put("device", null); p.put("target", null);
         p.put("plan", null); p.put("command", null); p.put("commission", null);
+        p.put("caseId", null); p.put("auth", null);
         switch (kind) {
             case "EVENT" -> p.put("event", subjectId);
             case "DEVICE" -> p.put("device", subjectId);
@@ -178,11 +185,13 @@ public class EvidenceRepository {
             case "PLAN" -> p.put("plan", subjectId);
             case "COMMAND" -> p.put("command", subjectId);
             case "COMMISSION" -> p.put("commission", subjectId);
+            case "CASE" -> p.put("caseId", subjectId);
+            case "AUTHORIZATION" -> p.put("auth", subjectId);
             default -> throw new IllegalArgumentException(kind);
         }
         jdbc.update("""
-                INSERT INTO evidence_link (link_id,evidence_id,subject_kind,subject_id,event_id,device_id,target_id,plan_id,command_id,commission_id,created_at)
-                VALUES (:id,:evidence,:kind,:subject,:event,:device,:target,:plan,:command,:commission,:created)
+                INSERT INTO evidence_link (link_id,evidence_id,subject_kind,subject_id,event_id,device_id,target_id,plan_id,command_id,commission_id,case_id,authorization_id,created_at)
+                VALUES (:id,:evidence,:kind,:subject,:event,:device,:target,:plan,:command,:commission,:caseId,:auth,:created)
                 """, p);
     }
 

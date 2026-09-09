@@ -92,10 +92,11 @@ export function summarize(item) {
  * 无人机事件流程条。
  * 阶段 13：联动反制按该事件的最新授权显示真实状态——完成 = 存在 COMPLETED 授权，
  * 进行中 = APPROVED/EXECUTING；没有授权说“尚无授权”，读不到说“尚未接入”，三者不能混为一谈。
- * 通知处罚部门仍未接入。
+ * 通知处罚部门按该事件 UAV_PUNISHMENT 交接推导：读不到交接说未接入，没有记录说尚未移送。
  * @param {object|null} [counter] 该事件最新的 COUNTERMEASURE 授权；`null` 表示没有；`undefined` 表示没读到
+ * @param {object|null} [punishHandoff] 处罚交接；`null` 表示没有；`undefined` 表示没读到
  */
-export function uavSteps(state, counter) {
+export function uavSteps(state, counter, punishHandoff) {
   const verified = ['CONFIRMED', 'FALSE_POSITIVE'].includes(state);
   const counterStep = () => {
     if (state === 'FALSE_POSITIVE') return { n: '联动反制', done: false, act: false, t: '误报终止' };
@@ -108,11 +109,22 @@ export function uavSteps(state, counter) {
       t: disposalStatusText(counter)
     };
   };
+  const punishStep = () => {
+    if (state === 'FALSE_POSITIVE') return { n: '通知处罚部门', done: false, act: false, t: '误报终止' };
+    if (punishHandoff === undefined) return { n: '通知处罚部门', done: false, act: false, t: '未接入' };
+    if (!punishHandoff) return { n: '通知处罚部门', done: false, act: false, t: '尚未移送' };
+    return {
+      n: '通知处罚部门',
+      done: punishHandoff.delivery_status !== 'FAILED',
+      act: false,
+      t: labelOf(DELIVERY_STATUS_LABEL, punishHandoff.delivery_status, punishHandoff.delivery_status)
+    };
+  };
   return [
     { n: '告警接收', done: true },
     { n: '人工核实', done: verified, act: !verified, t: state === 'EVIDENCE_REQUIRED' ? '证据待补充' : null },
     counterStep(),
-    { n: '通知处罚部门', done: false, act: false, t: '未接入' }
+    punishStep()
   ];
 }
 
@@ -139,8 +151,8 @@ export function deviceSteps(state) {
   }));
 }
 
-export function stepsOf(kind, state, counter) {
-  return kind === 'UAV_EVENT' ? uavSteps(state, counter) : kind === 'RISK' ? riskSteps(state) : deviceSteps(state);
+export function stepsOf(kind, state, counter, punishHandoff) {
+  return kind === 'UAV_EVENT' ? uavSteps(state, counter, punishHandoff) : kind === 'RISK' ? riskSteps(state) : deviceSteps(state);
 }
 
 /** 拉取一页工作台队列；返回摘要与同快照的计数/可用性。 */
@@ -176,7 +188,26 @@ export async function getWorkbenchDetail(kind, sourceId) {
   if (summary.todo?.kind === 'notify' && submitted) {
     summary.todo = { ...summary.todo, allowed: false, blocker: `已提交通知（${labelOf(DELIVERY_STATUS_LABEL, submitted.delivery_status)}），不能重复提交`, hint: '交接材料已入库，等待投递或回执；风险状态保持「待通知」。' };
   }
-  return { kind, summary, item: data.item, timeline: data.timeline || [], availability: data.availability || {}, steps: stepsOf(kind, data.item.state, counter) };
+  const punishHandoff = kind === 'UAV_EVENT'
+    ? (data.availability?.handoffs === 'FORBIDDEN'
+      ? undefined
+      : (data.timeline || []).find(t => t.entry_type === 'HANDOFF' && t.handoff_type === 'UAV_PUNISHMENT') || null)
+    : undefined;
+  if (summary.todo?.kind === 'countermeasure' && counter && counter.status === 'COMPLETED') {
+    if (punishHandoff && punishHandoff.delivery_status !== 'FAILED') {
+      summary.todo = {
+        action: '提交处罚交接', kind: 'punish', allowed: false,
+        blocker: `已提交处罚交接（${labelOf(DELIVERY_STATUS_LABEL, punishHandoff.delivery_status)}）`,
+        hint: '交接材料已入库，可到处罚页立案。'
+      };
+    } else {
+      summary.todo = {
+        action: '提交处罚交接', kind: 'punish', allowed: true, blocker: null,
+        hint: '移送后由处罚部门立案；提交成功只表示材料入库，不表示已发送或已立案。'
+      };
+    }
+  }
+  return { kind, summary, item: data.item, timeline: data.timeline || [], availability: data.availability || {}, steps: stepsOf(kind, data.item.state, counter, punishHandoff) };
 }
 
 /** 该事件最新的联动反制授权：没有返回 null，读不到返回 undefined（两者在流程条上说法不同）。 */

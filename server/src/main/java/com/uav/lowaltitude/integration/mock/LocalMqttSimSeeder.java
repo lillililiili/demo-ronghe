@@ -25,7 +25,7 @@ import com.uav.lowaltitude.platform.security.AuthContext;
 import com.uav.lowaltitude.platform.security.AuthUser;
 
 /**
- * 仅 local：登记本机 Mosquitto 回放连接与 NDJSON 四台设备。不挂 test（运维台账单测总数为 12）。
+ * 仅 local：登记本机 Mosquitto 回放连接与 NDJSON 设备。不挂 test（运维台账单测总数为 12）。
  * S85R1 是凌云 MQTT 雷达回放，不是现场 T02 TCP。生产 profile 不注册。
  */
 @Component
@@ -47,7 +47,10 @@ public class LocalMqttSimSeeder implements ApplicationRunner {
     public static final List<LingyunDevice> LINGYUN_DEVICES = List.of(
             new LingyunDevice("radar", "S85R1", "凌云 MQTT 回放雷达"),
             new LingyunDevice("tdoa", "S85T1", "凌云 MQTT 回放 TDOA"),
-            new LingyunDevice("aoa", "S85A1", "凌云 MQTT 回放 AOA"));
+            new LingyunDevice("aoa", "S85A1", "凌云 MQTT 回放 AOA"),
+            new LingyunDevice("5ga", "S85G1", "凌云 MQTT 回放 5G-A"),
+            new LingyunDevice("dcd", "S85D1", "凌云 MQTT 回放协议破解"),
+            new LingyunDevice("rid", "S85I1", "凌云 MQTT 回放 RemoteID"));
 
     private final JdbcTemplate jdbc;
     private final MqttConfigurationService configuration;

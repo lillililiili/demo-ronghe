@@ -298,6 +298,61 @@ class EvidenceApiTest {
                 .andExpect(jsonPath("$.error.code").value("EVIDENCE_DESTROYED"));
     }
 
+    @Test
+    void caseAndAuthorizationLinksRequireModuleReadAndStayInScope() throws Exception {
+        String ingest = reader("ASSIGNED", org, district);
+        grantAction(ingest, "evidence:ingest", "evidence:read", "evidence:link");
+        JsonNode created = ingestFile(ingest, "case.jpg", org, district, "TARGET", targetId);
+        String evidenceId = created.get("evidence_id").asText();
+        String caseId = insertCase(org, district);
+        String authId = insertAuthorization(org, district);
+
+        mvc.perform(post("/api/v1/evidence-files/" + evidenceId + "/links")
+                        .header("Authorization", bearer(ingest)).header("Idempotency-Key", "link-case-deny-" + suffix)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"subject_kind\":\"CASE\",\"subject_id\":\"" + caseId + "\"}"))
+                .andExpect(status().isNotFound());
+
+        grantAction(ingest, "punishment:read", "disposal:read");
+        mvc.perform(post("/api/v1/evidence-files/" + evidenceId + "/links")
+                        .header("Authorization", bearer(ingest)).header("Idempotency-Key", "link-case-ok-" + suffix)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"subject_kind\":\"CASE\",\"subject_id\":\"" + caseId + "\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.subject_kind").value("CASE"))
+                .andExpect(jsonPath("$.data.subject_id").value(caseId));
+        mvc.perform(post("/api/v1/evidence-files/" + evidenceId + "/links")
+                        .header("Authorization", bearer(ingest)).header("Idempotency-Key", "link-case-dup-" + suffix)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"subject_kind\":\"CASE\",\"subject_id\":\"" + caseId + "\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("LINK_EXISTS"));
+        mvc.perform(post("/api/v1/evidence-files/" + evidenceId + "/links")
+                        .header("Authorization", bearer(ingest)).header("Idempotency-Key", "link-auth-ok-" + suffix)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"subject_kind\":\"AUTHORIZATION\",\"subject_id\":\"" + authId + "\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.subject_kind").value("AUTHORIZATION"));
+        mvc.perform(post("/api/v1/evidence-files/" + evidenceId + "/links")
+                        .header("Authorization", bearer(ingest)).header("Idempotency-Key", "link-bad-kind-" + suffix)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"subject_kind\":\"HANDOFF\",\"subject_id\":\"" + caseId + "\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
+
+        mvc.perform(get("/api/v1/evidence-files").param("subject_kind", "CASE").param("subject_id", caseId)
+                        .header("Authorization", bearer(ingest)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(1));
+
+        String outsider = reader("ASSIGNED", otherOrg, otherDistrict);
+        grantAction(outsider, "evidence:read", "punishment:read");
+        mvc.perform(get("/api/v1/evidence-files").param("subject_kind", "CASE").param("subject_id", caseId)
+                        .header("Authorization", bearer(outsider)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.total").value(0));
+    }
+
     private JsonNode ingestFile(String token, String filename, String orgId, String districtId,
             String subjectKind, String subjectId) throws Exception {
         return ingestFile(token, filename, orgId, districtId, subjectKind, subjectId, "EO_STILL", null);
@@ -320,6 +375,49 @@ class EvidenceApiTest {
         }
         String body = mvc.perform(request).andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
         return json.readTree(body).get("data");
+    }
+
+    private String insertCase(String orgId, String districtId) {
+        Timestamp at = Timestamp.from(Instant.now());
+        String admin = jdbc.queryForObject("select user_id from app_user where account='admin1'", String.class);
+        String alarmId = "ev-al-" + suffix, eventId = "ev-evt-" + suffix, handoffId = "ev-ho-" + suffix;
+        String recipientId = "ev-rc-" + suffix, caseId = "ev-case-" + suffix;
+        jdbc.update("""
+                insert into integration_source (source_id,source_code,name,enabled,source_mode,created_at,updated_at,version)
+                values (?,?,?,true,'mock',?,?,0)
+                """, "ev-src-" + suffix, "EV-SRC-" + suffix, "证据案件来源", at, at);
+        jdbc.update("""
+                insert into alarm (alarm_id,target_id,source_id,source_alarm_id,alarm_type,severity,occurred_at,received_at,source_mode,owner_org_id,district_id,created_at)
+                values (?,?,?,?, 'UAV','HIGH',?,?,'mock',?,?,?)
+                """, alarmId, targetId, "ev-src-" + suffix, "AL-" + suffix, at, at, orgId, districtId, at);
+        jdbc.update("""
+                insert into uav_event (event_id,alarm_id,state_code,owner_org_id,district_id,created_at,updated_at,version)
+                values (?,?,'CONFIRMED',?,?,?,?,1)
+                """, eventId, alarmId, orgId, districtId, at, at);
+        jdbc.update("""
+                insert into handoff_recipient (recipient_id,display_name,handoff_type,enabled,created_at,updated_at)
+                values (?,?,'UAV_PUNISHMENT',true,?,?)
+                """, recipientId, "证据测试接收方", at, at);
+        jdbc.update("""
+                insert into handoff (handoff_id,source_kind,source_id,risk_id,event_id,handoff_type,recipient_id,source_version,owner_org_id,district_id,source_mode,submitted_by,created_at)
+                values (?,'UAV_EVENT',?,null,?,'UAV_PUNISHMENT',?,1,?,?,'mock',?,?)
+                """, handoffId, eventId, eventId, recipientId, orgId, districtId, admin, at);
+        jdbc.update("""
+                insert into punishment_case (case_id,case_no,event_id,handoff_id,status,party_type,filed_by,filed_by_name,filed_at,owner_org_id,district_id,source_mode,version,created_at,updated_at)
+                values (?,?,?,?,'FILED','UNKNOWN',?,?,?,?,?,'mock',0,?,?)
+                """, caseId, "CASE-20260909-" + suffix.toUpperCase(), eventId, handoffId, admin, "超级管理员", at, orgId, districtId, at, at);
+        return caseId;
+    }
+
+    private String insertAuthorization(String orgId, String districtId) {
+        Timestamp at = Timestamp.from(Instant.now());
+        String admin = jdbc.queryForObject("select user_id from app_user where account='admin1'", String.class);
+        String id = "ev-auth-" + suffix;
+        jdbc.update("""
+                insert into disposal_authorization (authorization_id,authorization_no,action_type,subject_kind,subject_id,target_id,channel,reason,requested_by,requested_at,status,policy_version,owner_org_id,district_id,source_mode,version,created_at,updated_at)
+                values (?,?,'DISPERSAL','TARGET',?,?,'MANUAL','证据关联用例',?,?,'REQUESTED','demo-v1',?,?,'mock',0,?,?)
+                """, id, "AUTH-20260909-" + suffix.toUpperCase(), targetId, targetId, admin, at, orgId, districtId, at, at);
+        return id;
     }
 
     private void catalog(String orgId, String districtId) {

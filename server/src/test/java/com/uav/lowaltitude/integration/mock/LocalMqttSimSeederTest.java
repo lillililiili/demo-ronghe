@@ -31,7 +31,7 @@ class LocalMqttSimSeederTest {
         assertThat(LocalMqttSimSeeder.class.getAnnotation(Profile.class).value())
                 .containsExactly("!production & local");
         assertThat(jdbc.queryForObject(
-                "SELECT COUNT(*) FROM ops_device WHERE device_no IN ('S85R1','S85T1','S85A1','S85E1D1')",
+                "SELECT COUNT(*) FROM ops_device WHERE device_no IN ('S85R1','S85T1','S85A1','S85G1','S85D1','S85I1','S85E1D1')",
                 Integer.class)).isZero();
     }
 
@@ -66,8 +66,8 @@ class LocalMqttSimSeederTest {
         assertThat(jdbc.queryForObject("SELECT enabled FROM mqtt_broker WHERE name=?", Boolean.class, LocalMqttSimSeeder.BROKER_NAME))
                 .isTrue();
         assertThat(jdbc.queryForObject(
-                "SELECT COUNT(*) FROM ops_device WHERE device_no IN ('S85R1','S85T1','S85A1','S85E1D1')",
-                Integer.class)).isEqualTo(4);
+                "SELECT COUNT(*) FROM ops_device WHERE device_no IN ('S85R1','S85T1','S85A1','S85G1','S85D1','S85I1','S85E1D1')",
+                Integer.class)).isEqualTo(7);
         assertThat(jdbc.queryForObject("""
                 SELECT s.protocol_code FROM ops_device d
                 JOIN ops_integration_source s ON s.source_id=d.source_id WHERE d.device_no='S85R1'
@@ -103,9 +103,21 @@ class LocalMqttSimSeederTest {
         assertThat(jdbc.queryForObject("""
                 SELECT COUNT(*) FROM device_business_scope s
                 JOIN ops_device d ON d.device_id=s.ops_device_id
-                WHERE d.device_no IN ('S85R1','S85T1','S85A1','S85E1D1')
+                WHERE d.device_no IN ('S85R1','S85T1','S85A1','S85G1','S85D1','S85I1','S85E1D1')
                   AND s.owner_org_id=? AND s.district_id=?
                 """, Integer.class, LocalStage5DeviceScopeSeeder.PLATFORM_ORG_ID,
-                LocalStage5DeviceScopeSeeder.DONGYING_DISTRICT_ID)).isEqualTo(4);
+                LocalStage5DeviceScopeSeeder.DONGYING_DISTRICT_ID)).isEqualTo(7);
+        assertThat(jdbc.queryForObject("""
+                SELECT b.device_type_abbr FROM mqtt_device_binding b
+                JOIN ops_device d ON d.device_id=b.ops_device_id WHERE d.device_no='S85G1'
+                """, String.class)).isEqualTo("5ga");
+        assertThat(jdbc.queryForObject("""
+                SELECT b.device_type_abbr FROM mqtt_device_binding b
+                JOIN ops_device d ON d.device_id=b.ops_device_id WHERE d.device_no='S85D1'
+                """, String.class)).isEqualTo("dcd");
+        assertThat(jdbc.queryForObject("""
+                SELECT b.device_type_abbr FROM mqtt_device_binding b
+                JOIN ops_device d ON d.device_id=b.ops_device_id WHERE d.device_no='S85I1'
+                """, String.class)).isEqualTo("rid");
     }
 }

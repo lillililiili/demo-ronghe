@@ -208,6 +208,13 @@ public class MqttRepository {
                 UPDATE ops_device_state SET connectivity='ONLINE',work_state_code=?,observed_at=?,received_at=?,
                     last_heartbeat_at=?,unknown_reason=NULL,metrics_json=?,version=version+1 WHERE device_id=?
                 """,String.valueOf(m.workState()),m.ptTime(),received,received,m.json(),b.opsDeviceId());
+        if (m.longitude() != null && m.latitude() != null) {
+            jdbc.update("""
+                    UPDATE ops_device SET longitude=?, latitude=?, coordinate_system='WGS-84',
+                        altitude_m=COALESCE(?, altitude_m), version=version+1, updated_at=?
+                    WHERE device_id=? AND longitude IS NULL AND latitude IS NULL
+                    """, m.longitude(), m.latitude(), m.altitude(), received, b.opsDeviceId());
+        }
     }
     public void diagnostic(String broker,String device,String topic,String hash,long received,String outcome,String reason) {
         jdbc.update("""

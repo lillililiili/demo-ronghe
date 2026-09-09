@@ -59,7 +59,7 @@ Linux/macOS 在 `server/` 执行：
 `local` profile 且 `app.dev-seed.enabled=true` 时，启动会幂等登记：
 
 - MQTT 连接 `local-lingyun-replay`：`127.0.0.1:1883`，`tls=false`，`allowed_cidrs=127.0.0.1/32`，`source_mode=replay`，并启用
-- 设备：`S85R1` 雷达、`S85T1` TDOA、`S85A1` AOA（`LINGYUN_MQTT_V8_6`，`providerCode=dongying`）；光电边端 `edgeId=S85E1`、`externalDeviceId=S85E1D1`（`EO_EDGE_MQTT_20250826`）
+- 设备：`S85R1` 雷达、`S85T1` TDOA、`S85A1` AOA、`S85G1` 5G-A、`S85D1` 协议破解、`S85I1` RemoteID（`LINGYUN_MQTT_V8_6`，`providerCode=dongying`）；光电边端 `edgeId=S85E1`、`externalDeviceId=S85E1D1`（`EO_EDGE_MQTT_20250826`）
 
 **`S85R1` 不是现场 T02 TCP 雷达。** `test` profile 不插入这些设备。已有同名连接或外部编号则跳过，不改人工登记。`api` Compose 服务不依赖 Mosquitto；本机 `spring-boot:run` 连宿主机 1883。
 
@@ -67,13 +67,13 @@ Linux/macOS 在 `server/` 执行：
 # 1. 启动库和本机 broker（在 deploy/）
 docker compose up -d db mosquitto
 
-# 2. local 启动后端（种子登记连接与四台设备）
+# 2. local 启动后端（种子登记连接与 replay 设备）
 cd ../server
 # Windows PowerShell
 .\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=local"
 # Linux/macOS: ./mvnw spring-boot:run -Dspring-boot.run.profiles=local
 
-# 3. 登录 admin1 / changeme，设备页确认连接已启用、四台 replay 设备存在
+# 3. 登录 admin1 / changeme，设备页确认连接已启用、七台 replay 设备存在
 
 # 4. 仓库根目录发布 NDJSON（payload 原样 UTF-8 字节，禁止再 json.dumps）
 python server/scripts/publish_lingyun_ndjson.py
@@ -87,7 +87,11 @@ python server/scripts/publish_lingyun_ndjson.py
 #    否则适配器记 TRACK_NOT_OPEN；看态势需 APP_FUSION_ENABLED=true（默认关）
 ```
 
-发布脚本参数：`--host --port --file --limit --sleep-ms --dry-run`。默认文件为 `docs/直连接入计划/stage85-lingyun-demo.mqtt.ndjson`，不要改这个文件。
+发布脚本参数：`--host --port --file --limit --sleep-ms --dry-run`。默认文件为 `docs/直连接入计划/stage85-lingyun-demo.mqtt.ndjson`，不要改这个文件。工参与 5G-A / 协议破解 / RemoteID 用阶段 2 文件：
+
+```bash
+python server/scripts/publish_lingyun_ndjson.py --file docs/直连接入计划/stage2-lingyun-static-dcd-rid.mqtt.ndjson
+```
 
 雷达 TCP 航迹提升（P4-A）由 `app.fusion.live-promotion.enabled` / `APP_FUSION_LIVE_PROMOTION_ENABLED` 控制，默认关。打开后每条 `UPLOAD_TRACK_V3` 航迹批另写一行 `live-radar:<source_code>` 信封；不写融合业务表，打开开关也不等于客户现场雷达联调完成。
 

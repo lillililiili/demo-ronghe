@@ -143,6 +143,25 @@ class EvidenceChainApiTest {
         mvc.perform(get("/api/v1/evidence-chains/PLAN/" + eventId).header("Authorization", bearer(token)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
+        mvc.perform(get("/api/v1/evidence-chains/AUTHORIZATION/" + eventId).header("Authorization", bearer(token)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
+    }
+
+    @Test
+    void caseChainIncludesCaseLinkedFileAndNeedsPunishmentRead() throws Exception {
+        String token = fullReader();
+        String caseId = insertCase();
+        ingest(token, "case-shot.jpg", "EO_STILL", "CASE", caseId);
+        String noPunish = reader("ASSIGNED", org, district);
+        grantAction(noPunish, "evidence:read");
+        mvc.perform(get("/api/v1/evidence-chains/CASE/" + caseId).header("Authorization", bearer(noPunish)))
+                .andExpect(status().isNotFound());
+        JsonNode data = chain(token, "CASE", caseId);
+        assertThat(data.get("subject_kind").asText()).isEqualTo("CASE");
+        assertThat(data.get("subject_id").asText()).isEqualTo(caseId);
+        assertThat(data.get("coverage").get("IMAGE").get("status").asText()).isEqualTo("PRESENT");
+        assertThat(data.get("coverage").get("ALARM").get("status").asText()).isEqualTo("PRESENT");
     }
 
     @Test
@@ -233,7 +252,7 @@ class EvidenceChainApiTest {
     private String fullReader() {
         String token = reader("ASSIGNED", org, district);
         grantAction(token, "evidence:read", "evidence:ingest", "evidence:link", "target:read", "alarm:read",
-                "assessment:read", "fusion:read", "handoff:read");
+                "assessment:read", "fusion:read", "handoff:read", "punishment:read");
         grantMenu(token, "audit");
         return token;
     }
@@ -269,6 +288,25 @@ class EvidenceChainApiTest {
                     record.get("fingerprint").asText()));
         }
         return EvidenceChainChecksum.digest(members);
+    }
+
+    private String insertCase() {
+        java.sql.Timestamp at = java.sql.Timestamp.from(T0);
+        String admin = jdbc.queryForObject("select user_id from app_user where account='admin1'", String.class);
+        String handoffId = "ch-ho-" + suffix, recipientId = "ch-rc-" + suffix, caseId = "ch-case-" + suffix;
+        jdbc.update("""
+                insert into handoff_recipient (recipient_id,display_name,handoff_type,enabled,created_at,updated_at)
+                values (?,?,'UAV_PUNISHMENT',true,?,?)
+                """, recipientId, "链测试接收方", at, at);
+        jdbc.update("""
+                insert into handoff (handoff_id,source_kind,source_id,risk_id,event_id,handoff_type,recipient_id,source_version,owner_org_id,district_id,source_mode,submitted_by,created_at)
+                values (?,'UAV_EVENT',?,null,?,'UAV_PUNISHMENT',?,1,?,?,'mock',?,?)
+                """, handoffId, eventId, eventId, recipientId, org, district, admin, at);
+        jdbc.update("""
+                insert into punishment_case (case_id,case_no,event_id,handoff_id,status,party_type,filed_by,filed_by_name,filed_at,owner_org_id,district_id,source_mode,version,created_at,updated_at)
+                values (?,?,?,?,'FILED','UNKNOWN',?,?,?,?,?,'mock',0,?,?)
+                """, caseId, "CASE-20260909-CH" + suffix.toUpperCase(), eventId, handoffId, admin, "超级管理员", at, org, district, at, at);
+        return caseId;
     }
 
     private void catalog(String orgId, String districtId) {

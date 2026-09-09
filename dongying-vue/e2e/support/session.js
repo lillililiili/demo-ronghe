@@ -61,14 +61,7 @@ export async function seedSession(context, sessionId) {
  * 逐条列出的代价是每加一个已知项要写一次理由，收益是**新冒出来的越权请求会立刻红**。
  * ========================================================================== */
 export const EXPECTED_FAILED_RESPONSES = {
-  admin1: [
-    {
-      status: 404,
-      match: /^\/api\/v1\/targets\/[^/]+\/eo-tracking-tasks$/,
-      why: '告警页对没有光电跟踪任务的目标取任务列表，服务端回 404 而不是 200 []。'
-         + '**已报领导的观察项，不是永久豁免**：空集合应当能自证为空。'
-    }
-  ],
+  admin1: [],
   reviewer1: [
     {
       status: 403,

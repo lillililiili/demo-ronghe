@@ -210,7 +210,7 @@ export const EVIDENCE_CUSTODY_TAG = {
 };
 export const EVIDENCE_SUBJECT_LABEL = {
   EVENT: '无人机事件', DEVICE: '设备', TARGET: '感知目标', PLAN: '飞行计划',
-  COMMAND: '指令', COMMISSION: '调测任务'
+  COMMAND: '指令', COMMISSION: '调测任务', CASE: '处罚案件', AUTHORIZATION: '处置授权'
 };
 export const EVIDENCE_RECORD_TYPE_LABEL = {
   TRACK: '轨迹', VIDEO: '视频', IMAGE: '图像', ALARM: '告警',

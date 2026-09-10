@@ -110,7 +110,7 @@ public class LocalStage7RuleEngineSeeder implements ApplicationRunner {
         jdbc.update("insert into rule_set (rule_set_id,rule_set_code,name,active_version_id,shadow_version_id,previous_active_version_id,version,created_at,updated_at)"
                 + " select ?,?,'合法性研判演示规则集',null,null,null,0,?,? where not exists (select 1 from rule_set where rule_set_id=?)",
                 RULE_SET_ID, RULE_SET_CODE, ts(at), ts(at), RULE_SET_ID);
-        version(VERSION_1, 1, "v1：契约 DEMO 参数目录", at);
+        version(VERSION_1, 1, "演示参数，尚未经业务方确认", at);
         version(VERSION_2, 2, "v2：C02-3 航线偏离容差放宽到 50 m（未激活，供影子/激活演示）", at);
         for (int i = 0; i < RULE_CODES.length; i++) {
             member(VERSION_1, "seed-stage7-rule-" + RULE_CODES[i], PRIORITIES[i]);
@@ -140,7 +140,7 @@ public class LocalStage7RuleEngineSeeder implements ApplicationRunner {
     private void param(String versionId, String ruleCode, String key, String value, String type, String unit) {
         // 已发布版本的参数在 PostgreSQL 上不可改：这里只补缺行，绝不 UPDATE 已存在的参数。
         jdbc.update("insert into rule_param (rule_param_id,rule_set_version_id,rule_code,param_key,value_text,value_type,unit,param_status,note)"
-                + " select ?,?,?,?,?,?,?,'DEMO','契约 DEMO 参数目录，尚未业务确认' where not exists (select 1 from rule_param where rule_set_version_id=? and rule_code=? and param_key=?)",
+                + " select ?,?,?,?,?,?,?,'DEMO','演示参数，尚未经业务方确认' where not exists (select 1 from rule_param where rule_set_version_id=? and rule_code=? and param_key=?)",
                 stableId(versionId + ":" + ruleCode + ":" + key), versionId, ruleCode, key, value, type, unit, versionId, ruleCode, key);
     }
 

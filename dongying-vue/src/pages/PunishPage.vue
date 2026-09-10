@@ -57,11 +57,11 @@ const DELIVERY_PAGE_SIZE = 10;
 const FIXED_SORT_NOTE = '当前按提交时间倒序：created_at DESC, handoff_id DESC';
 /* 五块的边界说明：接上案件域之后不再是"整块未建设"，但每块仍有具体的、说得清的缺口，逐条写明白。 */
 const BLOCK_GAPS = {
-  case: '案件只在本平台内流转：外部处罚系统与文书报送渠道尚未接入',
+  case: '案件只在本平台内办理，不会自动报送外部处罚系统',
   penalty: '罚则档位与金额区间是演示值，未经业务方确认',
   doc: '决定书为平台内生成的演示文本，无法律效力，也不提供下载（只能在平台内预览与复制）',
   evidence: '上方为移送时事件上的证据快照；下方为立案后挂到本案的证据文件',
-  review: '复核只记录在本平台，未接入上级法制机构的复核流程'
+  review: '复核结论只记录在本平台，不会自动提交上级法制机构'
 };
 
 const kindOptions = [{ label: '全部来源', value: '' }, ...Object.keys(KIND_LABEL).map(value => ({ label: KIND_LABEL[value], value }))];
@@ -279,14 +279,14 @@ const kpiList = computed(() => {
   const value = key => (kpiFailed.value[key] ? '—' : kpiTotals.value[key] == null ? '…' : Number(kpiTotals.value[key]).toLocaleString('en-US'));
   const desc = (key, text) => (kpiFailed.value[key] ? '总数读取失败' : text);
   if (forbidden.value) return [
-    { label: '交接总数', value: '—', color: 'blue', icon: 'gavel', desc: '无 handoff:read 权限' },
-    { label: '待投递', value: '—', color: 'amber', icon: 'alert', desc: '无 handoff:read 权限' },
-    { label: '已送达', value: '—', color: 'green', icon: 'check', desc: '无 handoff:read 权限' }
+    { label: '交接总数', value: '—', color: 'blue', icon: 'gavel', desc: '无交接读取权限' },
+    { label: '待投递', value: '—', color: 'amber', icon: 'alert', desc: '无交接读取权限' },
+    { label: '已送达', value: '—', color: 'green', icon: 'check', desc: '无交接读取权限' }
   ];
   return [
     { label: '交接总数', value: value('all'), color: 'blue', icon: 'gavel', desc: desc('all', '当前权限范围内总数') },
     { label: '待投递', value: value('pending'), color: 'amber', icon: 'alert', desc: desc('pending', '已提交、尚未发送（通知渠道未接通）') },
-    { label: '已送达', value: value('delivered'), color: 'green', icon: 'check', desc: desc('delivered', '仅 local/test 的 mock 历史样例可能出现') }
+    { label: '已送达', value: value('delivered'), color: 'green', icon: 'check', desc: desc('delivered', '接收方已收到交接材料') }
   ];
 });
 
@@ -522,7 +522,7 @@ function consumeDeepLink() {
   const handoffId = context.handoffId || context.handoff_id || fromHash || null;
   if (!handoffId && context.caseId) {
     // 旧页面仍可能以 caseId 深链进入；本期没有案件对象，也不能把案件编号映射成交接编号。
-    legacyLinkNote.value = `本期未建设处罚案件对象：旧案件深链 ${String(context.caseId)} 无对应记录，下方为真实交接清单。`;
+    legacyLinkNote.value = `链接指向的案件 ${String(context.caseId)} 没有对应记录，下方为交接清单。`;
   }
   return typeof handoffId === 'string' && handoffId ? handoffId : null;
 }

@@ -197,7 +197,7 @@ export const RULE_RESULT_LABEL = { PASS: '通过', FAIL: '不通过', UNDETERMIN
 // UNDETERMINED 是引擎判不了，不是等人来确认：与 LegalityPage、复核弹窗保持同一个说法。
 export const LEGALITY_LABEL = { LEGAL: '合法', ABNORMAL: '异常', ILLEGAL: '非法', UNDETERMINED: '不可判定', NOT_APPLICABLE: '不适用' };
 // 阶段 9 计划与实际对照：段可用性、计划匹配、高度关系与外部授权登记。
-export const SECTION_AVAILABILITY_LABEL = { FORBIDDEN: '无权限查看', NO_EVALUATION: '尚无引擎研判', UNAVAILABLE: '暂不可用' };
+export const SECTION_AVAILABILITY_LABEL = { FORBIDDEN: '无权限查看', NO_EVALUATION: '尚无研判', UNAVAILABLE: '暂不可用' };
 export const PLAN_MATCH_LABEL = { FULL: '完全匹配', PARTIAL: '部分匹配', NONE: '无匹配计划', UNDETERMINED: '不可判定', NOT_APPLICABLE: '不适用' };
 export const PLAN_MATCH_TAG = { FULL: 't-green', PARTIAL: 't-amber', NONE: 't-amber', UNDETERMINED: 't-gray', NOT_APPLICABLE: 't-gray' };
 export const ALTITUDE_RELATION_LABEL = {

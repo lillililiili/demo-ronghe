@@ -26,16 +26,49 @@ export const RULE_REASON_TEXT = {
   TIME_WINDOW_OVERRUN: '超出计划时间窗', NIGHT_FLIGHT: '夜间飞行', PLAN_ALTITUDE_EXCEEDED: '超出计划高度带', TEMPORARY_RESTRICTION_ACTIVE: '临时管制生效中',
   NO_AUTHORIZATION: '无飞行授权', BOUNDARY_POLICY_UNKNOWN: '边界接触政策未定', POSITION_UNKNOWN: '位置未知',
   ALTITUDE_DATUM_OR_RANGE_UNKNOWN: '高度基准或范围未知', VERSION_AMBIGUOUS: '空域版本歧义', CORRIDOR_WIDTH_UNKNOWN: '航线走廊宽度未知',
-  ROUTE_GEOMETRY_UNKNOWN: '航线几何未知', PLAN_TIME_UNKNOWN: '计划时间未知', PILOT_POSITION_UNAVAILABLE: '飞手位置尚未接入', NO_PLAN: '无计划',
+  ROUTE_GEOMETRY_UNKNOWN: '航线几何未知', PLAN_TIME_UNKNOWN: '计划时间未知', PILOT_POSITION_UNAVAILABLE: '飞手位置未知', NO_PLAN: '无计划',
   STATE_STALE: '状态已过期', NO_STATE: '无目标状态', LOW_CONFIDENCE: '置信度不足', CONFIDENCE_UNKNOWN: '置信度未知', TRACK_DEGRADED: '轨迹点不足',
   TRACK_BRIDGED: '轨迹存在断点', PLAN_MATCH_UNDETERMINED: '计划匹配不可判定', PLAN_MATCHER_UNAVAILABLE: '计划匹配不可用',
   NO_PLAN_CANDIDATE: '没有候选计划', PLAN_AMBIGUOUS: '多个计划同优', IDENTITY_CLUE_MISSING: '身份线索缺失', PLAN_IDENTITY_UNKNOWN: '计划未登记机身序列号',
   IDENTITY_MISMATCH: '身份不匹配', TIME_WINDOW_MISMATCH: '时间窗不匹配', CORRIDOR_MISMATCH: '不在航线走廊内',
-  TAKEOFF_POINT_UNAVAILABLE: '起降点尚未接入', PILOT_UNIT_UNAVAILABLE: '飞手/单位尚未接入'
+  TAKEOFF_POINT_UNAVAILABLE: '起降点未知', PILOT_UNIT_UNAVAILABLE: '飞手/单位未知'
 };
 export const MERGE_KIND_TEXT = { CREATED: '已生成告警', MERGED: '并入既有告警', UPGRADED: '升级生成告警', DOWNGRADED: '降级并入', MANUAL_ESCALATION: '人工转告警', BLOCKED: '告警被阻断', SUPPRESSED_SHADOW: '影子运行不告警' };
 export const CONCLUSION_TEXT = { CONFIRM: '确认', REJECT: '驳回', OVERRIDE: '改判', RECOMPUTE: '重新研判', ESCALATE: '转告警' };
 export const legalStatusText = code => LEGAL_STATUS_TEXT[code] || (code ? String(code) : '—');
+
+/* 规则参数的键与值都是引擎内部名；只读弹窗上用中文。 */
+const VERSION_STATUS_TEXT = { DRAFT: '草稿', PUBLISHED: '已发布', RETIRED: '已退役' };
+const RULE_SET_LABEL = { 'LEGALITY-DEMO': '合法性研判演示规则集', 'SPACE-RISK-DEMO': '空中异物风险演示规则集' };
+const PARAM_KEY_TEXT = {
+  time_window_min: '计划时间窗（分钟）', corridor_tolerance_m: '走廊容差（米）', tolerance_m: '偏离容差（米）', grace_min: '时间窗宽限（分钟）',
+  timezone: '时区', night_from: '夜航开始（时）', night_to: '夜航结束（时）', vlos_m: '目视视距（米）', kinds: '适用空域类型',
+  fresh_seconds: '轨迹新鲜度（秒）', track_points: '取用轨迹点数', conf_min: '置信度下限', min_points: '最少轨迹点数', gap_seconds: '允许断点（秒）',
+  no_plan_status: '无计划时的结论', ignore_undetermined_rules: '不可判定时不影响结论的规则', dedup_window_min: '告警合并窗口（分钟）',
+  upgrade_window_min: '告警升级窗口（分钟）', auto_close_min: '告警自动关闭（分钟）', severity_by_grade: '等级对应告警级别',
+  plan_window_pad_min: '计划前后延伸（分钟）', corridor_near_m: '邻近范围（米）'
+};
+const PARAM_VALUE_TEXT = {
+  PROHIBITED: '禁飞区', RESTRICTED: '限制区', ALTITUDE_LIMIT: '限高区', PERMITTED: '适飞区', TEMPORARY_CONTROL: '临时管制区',
+  ILLEGAL: '非法', ABNORMAL: '异常', LEGAL: '合法', UNDETERMINED: '不可判定', HIGH: '高', MEDIUM: '中', LOW: '低', 'Asia/Shanghai': '北京时间'
+};
+/* 种子写进库里的说明带着内部用语，上屏前换成人话。 */
+function demoNoteText(text) { return String(text || '').replace(/v\d+：?/g, '').replace(/契约 DEMO 参数目录/g, '演示参数').replace(/尚未业务确认/g, '尚未经业务方确认').trim(); }
+function paramKeyText(key) {
+  if (PARAM_KEY_TEXT[key]) return PARAM_KEY_TEXT[key];
+  if (key.startsWith('w.')) return `权重 · ${({ violation: '违规事实', plan_match: '计划匹配', airspace: '空域', track: '轨迹', confidence: '置信度' })[key.slice(2)] || key.slice(2)}`;
+  if (key.startsWith('severity.')) return `严重度 · ${RULE_REASON_TEXT[key.slice(9)] || key.slice(9)}`;
+  if (key.startsWith('grade.')) return `等级分界 · ${({ high: '高', medium: '中' })[key.slice(6)] || key.slice(6)}`;
+  return key;
+}
+function paramValueText(key, value) {
+  const text = value == null ? '—' : String(value);
+  return text.split(',').map(part => {
+    const [a, b] = part.split(':');
+    const left = PARAM_VALUE_TEXT[a] || RULE_CODE_TEXT[a] || a;
+    return b === undefined ? left : `${left}→${PARAM_VALUE_TEXT[b] || b}`;
+  }).join('、');
+}
 export const reviewStateText = code => REVIEW_STATE_TEXT[code] || (code ? String(code) : '—');
 export const planMatchText = code => PLAN_MATCH_TEXT[code] || (code ? String(code) : '—');
 export const ruleReasonText = code => RULE_REASON_TEXT[code] || (code ? String(code) : '');
@@ -278,7 +311,7 @@ export function openLegalityManualEvaluate({ targetId, targetNo, refresh, onDone
           return true;
         }
         rotateKey(targetId, action);
-        toast(error?.code === 'NO_ACTIVE_RULE_SET' ? '没有生效的规则集版本，引擎空转，无法评估。' : messageOf(error, '手动评估失败'), 'err');
+        toast(error?.code === 'NO_ACTIVE_RULE_SET' ? '没有生效的规则集版本，无法评估。' : messageOf(error, '手动评估失败'), 'err');
         return false;
       }
     }
@@ -292,19 +325,19 @@ export async function openRuleVersionView({ ruleSetVersionId, ruleSetCode, versi
   let detail;
   try { detail = await legalityApi.getRuleVersion(ruleSetVersionId); }
   catch (error) {
-    toast(error?.status === 403 ? '当前账号没有规则读取权限（rule:read），无法查看参数。' : messageOf(error, '读取规则版本失败'), 'err');
+    toast(error?.status === 403 ? '当前账号没有规则读取权限，无法查看参数。' : messageOf(error, '读取规则版本失败'), 'err');
     return false;
   }
   const members = (detail?.members || []).map(m => `<tr><td class="mono">${esc(m.rule_code)}</td><td>${esc(RULE_CODE_TEXT[m.rule_code] || '')}</td><td>${esc(m.priority)}</td><td>${m.enabled === false ? '停用' : '启用'}</td></tr>`).join('');
-  const params = (detail?.params || []).map(p => `<tr><td class="mono">${esc(p.rule_code)}</td><td class="mono">${esc(p.key)}</td><td>${esc(p.value)}${p.unit ? ` ${esc(p.unit)}` : ''}</td><td>${p.status === 'DEMO' ? '<span class="tag t-amber">DEMO 演示值</span>' : '<span class="tag t-green">已确认</span>'}</td><td>${esc(p.note || '')}</td></tr>`).join('');
-  const head = `<dl class="kv"><dt>规则集</dt><dd>${esc(detail?.rule_set_code || ruleSetCode || '—')} v${esc(detail?.version_no ?? versionNo ?? '—')}</dd>`
-    + `<dt>状态</dt><dd>${esc(detail?.status_code || '—')}　参数状态 ${detail?.param_status === 'DEMO' ? '<span class="tag t-amber">DEMO</span>' : esc(detail?.param_status || '—')}</dd>`
-    + `<dt>生效/影子</dt><dd>${detail?.is_active ? '生效中' : '未生效'}${detail?.is_shadow ? '，影子运行中' : ''}</dd>`
-    + (detail?.description ? `<dt>说明</dt><dd>${esc(detail.description)}</dd>` : '') + '</dl>';
+  const params = (detail?.params || []).map(p => `<tr><td class="mono">${esc(p.rule_code)}</td><td>${esc(paramKeyText(p.key))}</td><td>${esc(paramValueText(p.key, p.value))}${p.unit ? ` ${esc(p.unit)}` : ''}</td><td>${p.status === 'DEMO' ? '<span class="tag t-amber">演示值</span>' : '<span class="tag t-green">已确认</span>'}</td><td>${esc(demoNoteText(p.note))}</td></tr>`).join('');
+  const head = `<dl class="kv"><dt>规则集</dt><dd>${esc(RULE_SET_LABEL[detail?.rule_set_code || ruleSetCode] || detail?.rule_set_code || ruleSetCode || '—')} 第 ${esc(detail?.version_no ?? versionNo ?? '—')} 版</dd>`
+    + `<dt>状态</dt><dd>${esc(VERSION_STATUS_TEXT[detail?.status_code] || '—')}　参数 ${detail?.param_status === 'DEMO' ? '<span class="tag t-amber">演示值</span>' : (detail?.param_status ? '已确认' : '—')}</dd>`
+    + `<dt>生效状态</dt><dd>${detail?.is_active ? '生效中' : '未生效'}${detail?.is_shadow ? '，试运行中' : ''}</dd>`
+    + (detail?.description ? `<dt>说明</dt><dd>${esc(demoNoteText(detail.description))}</dd>` : '') + '</dl>';
   openModal({
     title: '判定规则与参数（只读）',
     width: '760px',
-    body: `${head}<p class="lg-muted">参数值来自规则集版本；DEMO 表示演示参数尚未业务确认，激活/回滚/影子设置不在本页操作。</p>`
+    body: `${head}<p class="lg-muted">参数值来自规则集版本；“演示值”表示尚未经业务方确认。激活、回滚、试运行设置不在本页操作。</p>`
       + `<h4>成员规则</h4><table class="tb"><thead><tr><th>规则</th><th>名称</th><th>优先级</th><th>状态</th></tr></thead><tbody>${members || '<tr><td colspan="4">未提供成员规则</td></tr>'}</tbody></table>`
       + `<h4>参数</h4><table class="tb"><thead><tr><th>规则</th><th>参数</th><th>值</th><th>状态</th><th>说明</th></tr></thead><tbody>${params || '<tr><td colspan="5">未提供参数</td></tr>'}</tbody></table>`,
     footer: '<button class="btn" data-close>关闭</button>'

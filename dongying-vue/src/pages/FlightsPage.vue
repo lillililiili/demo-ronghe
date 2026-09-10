@@ -207,7 +207,7 @@ const kpiList = computed(() => {
     { label: '执行中', value: n(k.executing), color: 'cyan', icon: 'radar', desc: '状态为执行中' },
     { label: '待执行', value: n(k.pending), color: 'purple', icon: 'check', desc: '未到计划时段' },
     { label: '已完成', value: n(k.completed), color: 'green', icon: 'check', desc: '状态为已完成' },
-    { label: '计划未匹配到目标', value: String(m.unmatched), color: 'amber', icon: 'alert', desc: '本页：执行中/已完成但尚无引擎研判' },
+    { label: '计划未匹配到目标', value: String(m.unmatched), color: 'amber', icon: 'alert', desc: '本页：执行中或已完成，但未匹配到感知目标' },
     { label: '偏离报备计划', value: String(m.deviated), color: 'red', icon: 'alert', desc: '本页：计划匹配为部分匹配' }
   ];
 });
@@ -225,7 +225,7 @@ const routesInvolved = computed(() => {
   const r = routesSummary.value;
   if (r.state === 'loading') return { text: '…', desc: '正在读取空间安全风险汇总' };
   if (r.state === 'error') return { text: '—', desc: '读取失败：' + r.error };
-  if (r.value == null) return { text: '—', desc: r.availability === 'NO_DATA' ? '所选范围内还没有空间安全风险' : '服务端未提供该口径' };
+  if (r.value == null) return { text: '—', desc: r.availability === 'NO_DATA' ? '所选范围内还没有空间安全风险' : '暂无此项统计' };
   return { text: Number(r.value).toLocaleString('en-US'), desc: '空间安全风险涉及的航线数' };
 });
 
@@ -247,7 +247,7 @@ const riskMapNote = computed(() => {
   if (riskMapLoading.value) return '正在读取关联航线版本几何…';
   if (riskMapError.value) return riskMapError.value;
   if (!selectedRisk.value) return '未选择风险事件；风险本身无坐标字段，只按关联航线版本绘制依据。';
-  if (!selectedRisk.value.route_version_id) return canReadRoute.value ? '未返回航线版本关联（需 route:read 且对象可见），无可信坐标，不绘制。' : '无 route:read 权限，未返回航线版本，不绘制。';
+  if (!selectedRisk.value.route_version_id) return canReadRoute.value ? '没有可读取的航线版本，无可信坐标，不绘制。' : '无 route:read 权限，未返回航线版本，不绘制。';
   if (!canReadRoute.value) return '无 route:read 权限，不读取航线几何。';
   return '不可绘制：航线版本未取得可信 WGS-84 中心线。';
 });
@@ -430,7 +430,7 @@ function rowMatch(plan) {
   if (!sectionReady(section)) return { text: section.availability === 'NO_EVALUATION' ? '未匹配' : '—', tag: section.availability === 'NO_EVALUATION' ? 't-amber' : '', title: matchMetricNote(section) };
   return { text: labelOf(PLAN_ROW_MATCH_LABEL, section.plan_match_code), tag: PLAN_MATCH_TAG[section.plan_match_code] || 't-gray', title: '' };
 }
-const DEVIATION_NOTE = '引擎当前只给出计划匹配结论，不提供横向偏航与时差数值';
+const DEVIATION_NOTE = '目前只有计划匹配结论，没有横向偏航与时差数值';
 
 /* 合法性判定：与 legacy 同一个跳转——有研判就带目标过去选中，没有就只跳页并说明。 */
 /* 与原版同一条规则：「合法性判定 →」只在待执行时出现——判定是起飞前的事，执行中、已完成、已取消都不显示。
@@ -455,7 +455,7 @@ async function loadMatchedTarget(plan, data) {
   const targetId = data?.match?.target_id;
   if (!targetId) {
     if (['PENDING', 'APPROVED', 'CANCELLED'].includes(plan?.status_code)) return;
-    matchedTrackNote.value = data?.match?.availability === 'AVAILABLE' ? '研判未关联感知目标' : '尚无引擎研判，无轨迹可画';
+    matchedTrackNote.value = data?.match?.availability === 'AVAILABLE' ? '研判未关联感知目标' : '尚无研判，无轨迹可画';
     return;
   }
   try {
@@ -1403,7 +1403,6 @@ onUnmounted(() => {
             </div>
             <div class="toolbar-actions">
               <button class="btn" type="button" :disabled="loading" @click="applyFilters">查询</button>
-              <button class="btn" type="button" disabled title="飞行计划导出未接入：契约只提供告警与风险两个导出接口">导出（尚未接入）</button>
             </div>
           </div>
           <div v-if="loading" class="empty">正在读取飞行计划…</div>

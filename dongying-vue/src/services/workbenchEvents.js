@@ -26,11 +26,11 @@ export const DEVICE_STAGES = ['待处理', '处理中', '待验证', '已恢复'
 export const CLOSED_STATES = new Set(['FALSE_POSITIVE', 'NOTIFIED', 'EXCLUDED', 'RECOVERED']);
 
 export const BLOCKED_REASON_LABEL = {
-  COUNTERMEASURE_NOT_CONNECTED: '联动反制与信号干扰尚未接入：属实后停留在“已核实，待处置”，不表示反制或处罚交接已执行',
+  COUNTERMEASURE_NOT_CONNECTED: '反制与信号干扰需在告警页申请处置授权；核实属实后停留在“已核实，待处置”，不表示已反制或已移送处罚',
   RECIPIENT_NOT_CONFIGURED: '交接接收方未配置，无法通知上级；不会以默认部门补值',
   WAITING_RECEIPT: '重启指令已下发，等待设备回执；回执成功后才能做恢复校验',
   DEVICE_NOT_OPERABLE: '该设备当前不可重启（离线、停用或协议未声明重启能力）',
-  DEVICE_RECOVERY_NOT_CONNECTED: '设备重启、恢复校验与关闭命令尚未接入工作台；只读展示，处置请到设备实时监测页'
+  DEVICE_RECOVERY_NOT_CONNECTED: '设备重启与恢复校验请到设备实时监测页操作，工作台只做查看'
 };
 export const AVAILABILITY_LABEL = { AVAILABLE: '已接入', FORBIDDEN: '无读取权限', UNCONFIGURED: '设备归属映射未配置' };
 export const HANDOFF_NOT_WIRED = '通知上级待提交交接';

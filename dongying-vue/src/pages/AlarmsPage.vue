@@ -222,7 +222,7 @@ async function loadKpis() {
   const disposalKpi = (def, settled, value) => {
     if (!value) {
       const unavailable = settled?.reason && isDisposalUnavailable(settled.reason);
-      return { ...def, value: unavailable ? '尚未接入' : '—', desc: unavailable ? DISPOSAL_UNAVAILABLE_TEXT : '读取失败：' + esc(messageOf(settled?.reason)) };
+      return { ...def, value: '—', desc: unavailable ? DISPOSAL_UNAVAILABLE_TEXT : '读取失败：' + esc(messageOf(settled?.reason)) };
     }
     return { ...def, value: U.num(value.executing), desc: `另有 ${U.num(value.approved)} 起已批准待执行` };
   };

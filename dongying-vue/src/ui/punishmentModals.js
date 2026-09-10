@@ -332,7 +332,7 @@ export function openDocumentRevoke({ document: doc, refresh, onDone } = {}) {
   openFormModal({
     title: `作废决定书 · ${doc.document_no || ''}`,
     width: '560px',
-    warning: '作废是只增记录：原文书仍可查阅，状态标为已作废。',
+    warning: '作废后原文书仍可查阅，状态标为已作废。',
     fields: [{ key: 'reason', label: '作废理由', type: 'textarea', required: true, minRows: 3, placeholder: '必填：为什么作废' }],
     initial: { reason: '' },
     confirmText: '作废',

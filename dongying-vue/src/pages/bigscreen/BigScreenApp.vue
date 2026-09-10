@@ -435,7 +435,7 @@ onBeforeUnmount(() => {
     <n-modal v-model:show="showVideo" :auto-focus="false" @after-leave="destroyVideo">
       <n-card class="bs-video-card" :title="`实时视频 · ${selectedTarget?.id || ''}`" closable :bordered="true" role="dialog" aria-modal="true" @close="showVideo = false">
         <div v-if="selectedTarget" class="bs-video-modal">
-          <div class="bs-video-meta"><span>{{ opticalDevice?.name || '光电设备' }} · EO 可见光 · Demo 模拟</span><span class="bs-video-state"><i></i>实时预览</span></div>
+          <div class="bs-video-meta"><span>{{ opticalDevice?.name || '光电设备' }} · 可见光 · 演示画面</span><span class="bs-video-state"><i></i>实时预览</span></div>
           <div ref="videoEl" id="bsVideoModal"></div>
           <div class="bs-video-info"><span>目标编号 <b class="mono">{{ selectedTarget.id }}</b></span><span>目标类型 <b>{{ selectedTarget.type }}</b></span><span>合法性 <b>{{ selectedTarget.legal || '待确认' }}</b></span><span>风险等级 <b>{{ selectedTarget.risk || '—' }}</b></span></div>
         </div>

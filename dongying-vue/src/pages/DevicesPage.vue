@@ -136,7 +136,7 @@ function formFields(editing = false, brokers = [], scopes = []) {
     ...eoFields(brokers, scopes, editing),
     { key: 'host', label: '设备地址', required: true, visibleWhen: m => !isMqttTransport(m), placeholder: '现场 IP' },
     { key: 'port', label: '端口', type: 'number', required: true, visibleWhen: m => !isMqttTransport(m), min: 1, max: 65535, placeholder: '现场端口' },
-    { key: 'allowed_cidrs', label: '设备网段 CIDR', required: true, visibleWhen: m => !isMqttTransport(m), placeholder: '现场设备网段 CIDR' },
+    { key: 'allowed_cidrs', label: '设备网段', required: true, visibleWhen: m => !isMqttTransport(m), placeholder: '现场设备网段' },
     { key: 'region_name', label: '所属区域', visibleWhen: m => !isMqttTransport(m), placeholder: '例如 东营区' },
     { key: 'vendor', label: '供应商', placeholder: '例如 设备厂商名称' },
     { key: 'radar_protocol_title', type: 'html', visibleWhen: radarField,
@@ -201,7 +201,7 @@ async function openDeviceForm(row = null) {
   openFormModal({ title: row ? `编辑设备 · ${row.device_no}` : '接入设备', width: '760px', columns: 2,
     fields: formFields(!!row, brokers, scopes), initial,
     validate: m => isMqttTransport(m) ? '' : (!m.host?.trim() || !m.port) ? '设备地址和端口为必填'
-      : (!m.allowed_cidrs?.trim()) ? '设备网段 CIDR 为必填' : (!row && !m.protocol_code) ? '请选择接入协议' : '',
+      : (!m.allowed_cidrs?.trim()) ? '设备网段 为必填' : (!row && !m.protocol_code) ? '请选择接入协议' : '',
     confirmText: row ? '保存' : '接入',
     onSubmit: async values => {
       try {
@@ -238,7 +238,7 @@ async function openDeviceForm(row = null) {
 function openEnabledForm(row) {
   const key = newIdempotencyKey('device-enable');
   openFormModal({ title: `${row.enabled ? '停用' : '启用'}设备 · ${row.device_no}`, width: '520px', danger: row.enabled,
-    warning: row.enabled ? '停用后会断开该设备的协议连接，并拒绝新建调测任务。' : '启用后会按网段白名单重新建立只读协议连接。',
+    warning: row.enabled ? '停用后会断开该设备的协议连接，并拒绝新建调测任务。' : '启用后会按允许的网段重新建立协议连接。',
     fields: [{ key: 'reason', label: `${row.enabled ? '停用' : '启用'}原因`, type: 'textarea', required: true, minRows: 3 }],
     initial: { reason: '' }, confirmText: `确认${row.enabled ? '停用' : '启用'}`,
     onSubmit: async values => {

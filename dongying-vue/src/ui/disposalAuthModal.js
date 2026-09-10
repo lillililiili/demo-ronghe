@@ -9,7 +9,7 @@ import { disposalApi, isDisposalUnavailable, newDisposalIdempotencyKey } from '@
 import { isUncertainOutcome } from '@/services/apiClient.js';
 import { DISPOSAL_ACTION_LABEL, DISPOSAL_BLOCK_REASON_LABEL, DISPOSAL_CHANNEL_LABEL, DISPOSAL_STATUS_LABEL, disposalStatusText, labelOf } from '@/ui/labels.js';
 
-export const DISPOSAL_UNAVAILABLE_TEXT = '处置授权服务尚未接入';
+export const DISPOSAL_UNAVAILABLE_TEXT = '处置授权功能暂不可用';
 
 /* 这些 409 是服务端给出的**确定**结论（不是"可能已落库"的乐观锁冲突）：请求一定没被受理。
    把它们当"结果未知"会让人以为可能已经执行了，比报错更糟。 */

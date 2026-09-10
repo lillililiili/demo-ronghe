@@ -6,6 +6,7 @@
 import { targetApi } from './targetApi.js';
 import { deviceApi } from './deviceApi.js';
 import { flightApi } from './flightApi.js';
+import { airspaceApi } from './airspaceApi.js';
 import { targetTypeLabel } from '@/ui/labels.js';
 
 /** GeoJSON 点 → {lon, lat}；坐标系不是 WGS84、被标为不可信或越界时返回 null。 */
@@ -106,4 +107,72 @@ export function installCenterline(map, coordinates) {
 
 export function centerOf(coordinates) {
   return coordinates?.[Math.floor(coordinates.length / 2)] || null;
+}
+
+/** 计划涉及的空域边界（MultiPolygon，WGS84）→ 可画的多边形组；读不到或几何不可信的空域直接跳过。 */
+export async function loadAirspaceOverlays(planId) {
+  if (!planId) return [];
+  const facts = await flightApi.conflicts(planId);
+  const versionIds = [...new Set((facts || []).map(fact => fact.airspace_version_id).filter(Boolean))];
+  const versions = await Promise.all(versionIds.map(id => airspaceApi.version(id).catch(() => null)));
+  const byVersion = new Map(versions.filter(Boolean).map(version => [version.airspace_version_id, version]));
+  return (facts || []).flatMap(conflict => {
+    const version = byVersion.get(conflict.airspace_version_id);
+    const boundary = version?.boundary;
+    if (boundary?.type !== 'MultiPolygon' || boundary.coordinate_system !== 'WGS84'
+      || version.field_issues?.some(issue => issue.field === 'boundary') || !Array.isArray(boundary.coordinates)) return [];
+    const polygons = boundary.coordinates.map(polygon => polygon.map(ring => ring.map(point => [Number(point?.[0]), Number(point?.[1])])))
+      .filter(polygon => polygon.length && polygon.every(ring => ring.length >= 4 && ring.every(([lon, lat]) => Number.isFinite(lon) && Number.isFinite(lat))));
+    return polygons.length ? [{ conflict, version, polygons }] : [];
+  });
+}
+
+/** 在 MapView 的 draw 之后补画空域边界（紫色虚线）与航线中心线（青色）。 */
+export function installOverlays(map, { centerline = null, airspaces = [] } = {}) {
+  if (!map || (!centerline && !airspaces.length)) return;
+  const drawBase = map.draw.bind(map);
+  map.draw = function drawWithOverlays() {
+    drawBase();
+    const context = this.ctx;
+    if (!context || !this.w) return;
+    context.save();
+    airspaces.forEach(({ polygons }) => {
+      context.beginPath();
+      polygons.forEach(polygon => polygon.forEach(ring => ring.forEach(([lon, lat], index) => {
+        const point = this.px(lon, lat);
+        if (index) context.lineTo(point[0], point[1]);
+        else context.moveTo(point[0], point[1]);
+      })));
+      context.fillStyle = '#a97bff18';
+      context.fill('evenodd');
+      context.setLineDash([6, 4]);
+      context.strokeStyle = '#7545c7';
+      context.lineWidth = 1.35;
+      context.stroke();
+      context.setLineDash([]);
+    });
+    if (centerline) {
+      context.beginPath();
+      centerline.forEach(([lon, lat], index) => {
+        const point = this.px(lon, lat);
+        if (index) context.lineTo(point[0], point[1]);
+        else context.moveTo(point[0], point[1]);
+      });
+      context.strokeStyle = '#22d3ee';
+      context.lineWidth = 2.4;
+      context.lineJoin = 'round';
+      context.stroke();
+    }
+    context.restore();
+  };
+}
+
+/** 把中心线、空域、轨迹点、目标锚点合成一组 [lon, lat]，供 MapView.fitTo 取包围盒。 */
+export function overlayPoints({ centerline = null, airspaces = [], points = [], anchor = null } = {}) {
+  const out = [];
+  if (centerline) out.push(...centerline);
+  airspaces.forEach(({ polygons }) => polygons.forEach(polygon => polygon.forEach(ring => out.push(...ring))));
+  points.forEach(point => out.push([point.lon, point.lat]));
+  if (anchor) out.push([anchor.lon, anchor.lat]);
+  return out;
 }

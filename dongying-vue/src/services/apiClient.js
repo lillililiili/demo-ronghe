@@ -31,7 +31,7 @@ function idempotencyKey() {
 async function decode(response) {
   const contentType = response.headers.get('content-type') || '';
   if (!contentType.includes('application/json')) {
-    if (!response.ok) throw new ApiError(`服务返回异常（HTTP ${response.status}）`, 'HTTP_ERROR', response.status);
+    if (!response.ok) throw new ApiError(`服务返回异常（状态码 ${response.status}）`, 'HTTP_ERROR', response.status);
     return response;
   }
   let envelope;
@@ -120,7 +120,7 @@ export async function apiBinary(path) {
     await decode(response);
     return null;
   }
-  if (!response.ok) throw new ApiError(`服务返回异常（HTTP ${response.status}）`, 'HTTP_ERROR', response.status);
+  if (!response.ok) throw new ApiError(`服务返回异常（状态码 ${response.status}）`, 'HTTP_ERROR', response.status);
   const blob = await response.blob();
   const disposition = response.headers.get('content-disposition') || '';
   const utf = /filename\*=UTF-8''([^;]+)/i.exec(disposition);

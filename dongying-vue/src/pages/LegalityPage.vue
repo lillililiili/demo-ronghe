@@ -11,12 +11,13 @@ export default {};
 </script>
 
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import UKpis from '@/components/UKpis.vue';
 import { UField } from '@/components/form/index.js';
 import UPagination from '@/components/UPagination.vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import { legalityApi } from '@/services/legalityApi.js';
+import { loadTargetPosition, loadRouteCenterline, loadAirspaceOverlays, installOverlays, overlayPoints } from '@/services/positionMap.js';
 import { RULE_SET_LABEL, SOURCE_MODE_LABEL, labelOf } from '@/ui/labels.js';
 import {
   openLegalityReview, openLegalityRecompute, openLegalityEscalation, openLegalityManualEvaluate, openRuleVersionView,
@@ -143,7 +144,7 @@ function shortTime(value) {
   return Number.isNaN(date.getTime()) ? '时间未知' : date.toLocaleTimeString('zh-CN', { hour12: false });
 }
 function percent(ratio) {
-  if (!ratio || ratio.value === null || ratio.value === undefined) return '无分母';
+  if (!ratio || ratio.value === null || ratio.value === undefined) return '—';
   return `${(Number(ratio.value) * 100).toFixed(1)}%`;
 }
 function evaluationReason(item) {
@@ -173,7 +174,7 @@ const FACT_KEY_TEXT = {
 };
 const DIM_TEXT = { MATCH: '匹配', MISMATCH: '不匹配', UNDETERMINED: '不可判定', PASS: '通过', FAIL: '不通过', UNKNOWN: '未知' };
 const TRIGGER_TEXT = { MANUAL: '手动触发', SCHEDULED: '自动调度', WORKER: '自动调度', REPLAY: '回放' };
-const MODE_TEXT = { ACTIVE: '正式', SHADOW: '影子' };
+const MODE_TEXT = { ACTIVE: '正式', SHADOW: '试运行' };
 function factKeyText(key) { return FACT_KEY_TEXT[key] || key.replace(/_/g, ' '); }
 function factValueText(key, value) {
   if (value === null || value === undefined) return '—';
@@ -248,7 +249,7 @@ async function loadQueue(options = {}) {
         const located = await legalityApi.listEvaluations({ mode: 'ACTIVE', latest_only: true, target_id: options.targetId, page: 1, size: 1 });
         if (token !== listToken) return;
         deepLink = located.items?.[0] || null;
-        if (!deepLink) deepLinkNotice.value = `目标 ${options.targetId} 没有可见的引擎研判；未自动选择无关研判。`;
+        if (!deepLink) deepLinkNotice.value = `目标 ${options.targetNo || options.targetId} 没有可见的研判记录。`;
         else st.legal = conclusionMeta[deepLink.legal_status] && deepLink.legal_status !== 'NOT_APPLICABLE' ? deepLink.legal_status : 'UNDETERMINED';
       } catch (error) {
         if (token !== listToken) return;
@@ -273,7 +274,7 @@ async function loadQueue(options = {}) {
     invalidateDetail();
     items.value = [];
     totalCount.value = 0;
-    listError.value = formatApiError(error, '读取引擎研判失败');
+    listError.value = formatApiError(error, '读取研判失败');
   } finally {
     if (token === listToken) loading.value = false;
   }
@@ -373,7 +374,7 @@ async function loadKpi() {
       { label: '今日研判', value: String(summary.evaluations ?? '—'), color: 'blue', icon: 'check', desc: '正式模式 · 北京时间当日（影子运行不计）' },
       { label: '可告警研判', value: String(summary.alarm_worthy ?? '—'), color: 'red', icon: 'alert', desc: `生成 ${summary.alarms_created ?? '—'} · 合并 ${summary.alarms_merged ?? '—'}` },
       { label: '已人工复核', value: String(summary.reviewed ?? '—'), color: 'green', icon: 'check', desc: `人工干预率 ${percent(summary.manual_override_rate)}` },
-      { label: '误报率', value: percent(summary.false_positive_rate), color: 'amber', icon: 'alert', desc: `漏判率 ${percent(summary.miss_rate)}` }
+      { label: '误报率', value: percent(summary.false_positive_rate), color: 'amber', icon: 'alert', desc: summary.false_positive_rate?.value == null ? '尚无人工复核，暂无法计算' : `漏判率 ${percent(summary.miss_rate)}` }
     ];
   } catch (error) {
     if (error?.status === 403) kpiList.value = kpiPlaceholder('无权限').map(card => ({ ...card, value: '无权限' }));
@@ -388,7 +389,7 @@ async function loadShadowHint() {
     const sets = Array.isArray(data) ? data : (data?.items || []);
     const shadow = sets.filter(set => set.shadow_version_id);
     shadowHint.value = shadow.length
-      ? `阴影运行中：${shadow.map(set => set.rule_set_code).join('、')} 正在用影子版本并行研判，影子结论不进入本队列、不投影、不告警。`
+      ? `试运行中：${shadow.map(set => labelOf(RULE_SET_LABEL, set.rule_set_code, set.rule_set_code)).join('、')} 正在用试运行版本并行研判，试运行结论不进入本队列、不产生告警。`
       : '';
   } catch {
     shadowHint.value = '';
@@ -430,7 +431,51 @@ function toggleHit(index) {
   selectedHitIndex.value = selectedHitIndex.value === index ? -1 : index;
 }
 
-watch(() => st.evidenceTab, value => { S.st.evidenceTab = value; });
+watch(() => st.evidenceTab, value => { S.st.evidenceTab = value; if (value === 'space') void renderEvidenceMap(selectedEvaluation.value); else destroyEvidenceMap(); });
+watch(selectedEvaluation, value => { if (st.evidenceTab === 'space') void renderEvidenceMap(value); });
+onBeforeUnmount(destroyEvidenceMap);
+
+/* ---------- 空间证据地图：画研判引用的目标轨迹、计划航线中心线与涉及的空域边界 ----------
+   只画可信 WGS-84 几何；读不到的项在说明里写明，不以 (0,0) 补位、不推断合法性。 */
+const evidenceMapHost = ref(null);
+const evidenceMapNote = ref('');
+let evidenceMap = null;
+let evidenceMapSeq = 0;
+function destroyEvidenceMap() {
+  if (evidenceMap) { try { evidenceMap.destroy(); } catch { /* 已卸载 */ } }
+  evidenceMap = null;
+}
+async function renderEvidenceMap(evaluation) {
+  const my = ++evidenceMapSeq;
+  destroyEvidenceMap();
+  if (!evaluation) { evidenceMapNote.value = ''; return; }
+  evidenceMapNote.value = '正在读取位置…';
+  let centerline = null, airspaces = [], loaded = null;
+  const missing = [];
+  if (evaluation.route_version_id) { try { centerline = await loadRouteCenterline(evaluation.route_version_id); } catch { centerline = null; } }
+  if (!centerline) missing.push(evaluation.plan_id ? '航线几何不可用' : '无匹配计划，无航线');
+  if (evaluation.plan_id) { try { airspaces = await loadAirspaceOverlays(evaluation.plan_id); } catch { airspaces = []; } }
+  if (evaluation.target_id) {
+    try { loaded = await loadTargetPosition(evaluation.target_id, { legal: legalStatusText(evaluation.legal_status) }); } catch { loaded = null; }
+    if (!loaded?.mapTarget) missing.push('目标坐标未知');
+  } else missing.push('目标不可见');
+  if (my !== evidenceMapSeq) return;
+  const targets = loaded?.mapTarget ? [loaded.mapTarget] : [];
+  const points = overlayPoints({ centerline, airspaces, points: loaded?.points || [], anchor: loaded?.anchor || null });
+  if (!points.length) { evidenceMapNote.value = `无可信几何，地图不绘制：${missing.join('；')}`; return; }
+  const drawn = [];
+  if (targets.length) drawn.push(loaded.points.length > 1 ? `目标轨迹 ${loaded.points.length} 点` : '目标最新位置');
+  if (centerline) drawn.push('计划航线');
+  if (airspaces.length) drawn.push(`空域 ${airspaces.length} 块`);
+  evidenceMapNote.value = `已绘制：${drawn.join('、')}${missing.length ? `；未绘制：${missing.join('、')}` : ''}`;
+  await nextTick();
+  if (my !== evidenceMapSeq || !evidenceMapHost.value) return;
+  evidenceMap = new window.MapView(evidenceMapHost.value, { zoom: 3, maxDev: 0, legend: false, layers: { device: false, track: targets.length > 0, alarm: false } });
+  installOverlays(evidenceMap, { centerline, airspaces });
+  evidenceMap.setData({ airspaces: [], devices: [], targets, alarms: [] });
+  if (targets.length) evidenceMap.sel = targets[0].id;
+  evidenceMap.fitTo(points);
+}
 
 onMounted(() => {
   const context = UI.consume('legality');
@@ -481,7 +526,7 @@ onMounted(() => {
             <div class="lg-queue-scroll">
               <div v-if="shadowHint" class="lg-inline-error lg-shadow-hint" role="status">{{ shadowHint }}</div>
               <div v-if="listError" class="empty lg-state-error" role="alert">{{ listError }}</div>
-              <div v-else-if="loading" class="empty">正在读取引擎研判…</div>
+              <div v-else-if="loading" class="empty">正在读取研判…</div>
               <div v-else-if="deepLinkNotice" class="empty lg-state-warn" role="status">{{ deepLinkNotice }}</div>
               <template v-else>
                 <section v-for="group in groups" v-show="st.legal === group.code"
@@ -502,7 +547,7 @@ onMounted(() => {
                     </button>
                   </div>
                 </section>
-                <div v-if="!items.length" class="empty">当前判定分组下没有引擎研判；空结果不代表合法，也可能是尚无生效规则集。</div>
+                <div v-if="!items.length" class="empty">当前分组下没有研判记录。没有记录不代表合法，也可能是还没有生效的规则集。</div>
               </template>
             </div>
           </div>
@@ -531,7 +576,7 @@ onMounted(() => {
 
             <div v-if="detailError" class="empty lg-state-error" role="alert">{{ detailError }}</div>
             <div v-else-if="detailLoading" class="empty">正在读取研判详情…</div>
-            <div v-else-if="!selectedEvaluation" class="empty">请选择研判；若从目标深链进入且无法映射，页面不会默认选择无关研判。</div>
+            <div v-else-if="!selectedEvaluation" class="empty">请选择一条研判</div>
             <template v-else>
               <div class="lg-history-strip" aria-label="研判链与复核历史">
                 <button v-if="selectedEvaluation.supersedes_evaluation_id" type="button"
@@ -608,26 +653,27 @@ onMounted(() => {
                           </template>
                         </dl>
                         <p v-else>未提供证据引用</p>
-                        <p class="lg-evidence-alert">研判读取接口不提供空域边界、航线或轨迹几何，地图不可绘制；不会连接旧空域、旧轨迹或推测坐标。</p>
+                        <p class="lg-muted">{{ evidenceMapNote }}</p>
                       </div>
-                      <div class="lg-map-wrap" aria-label="空间证据地图不可绘制">
-                        <div id="lgMap"><div class="lg-map-empty">可信输入几何尚未接入<br>地图不可绘制</div></div>
+                      <div class="lg-map-wrap" aria-label="空间证据地图">
+                        <div ref="evidenceMapHost" class="lg-map-host"></div>
+                        <div class="lg-map-legend"><span class="is-zone">空域边界</span><span class="is-plan">计划航线</span><span class="is-track">目标轨迹</span></div>
                       </div>
                     </template>
                     <div v-else-if="st.evidenceTab === 'plan'" class="lg-evidence-wide">
-                      <h4>计划匹配（C01）与身份 <span>已保存事实</span></h4>
+                      <h4>计划匹配与身份 <span>研判时保存的事实</span></h4>
                       <dl class="lg-resource-grid">
                         <dt>匹配等级</dt><dd>{{ planMatchText(selectedEvaluation.plan_match_code) }}{{ c01Facts?.match_reason ? `（${ruleReasonText(c01Facts.match_reason)}）` : '' }}</dd>
                         <dt>计划编号</dt><dd class="mono" :title="selectedEvaluation.plan_id">{{ selectedEvaluation.plan_no || (selectedEvaluation.plan_id ? '已关联计划' : '无匹配计划或不可见') }}</dd>
                         <dt>关联目标</dt><dd class="mono" :title="selectedEvaluation.target_id">{{ selectedEvaluation.target_no || (selectedEvaluation.target_id ? '已关联' : '不可见') }}</dd>
                         <dt>时间窗</dt><dd>{{ dimText(c01Facts?.dimensions?.time_window) }}</dd>
                         <dt>走廊</dt><dd>{{ dimText(c01Facts?.dimensions?.corridor) }}</dd>
-                        <dt>身份</dt><dd>{{ c01Facts?.dimensions?.identity === 'UNDETERMINED' ? '线索缺失（TDOA/5G-A 未接入）' : dimText(c01Facts?.dimensions?.identity) }}</dd>
+                        <dt>身份</dt><dd>{{ c01Facts?.dimensions?.identity === 'UNDETERMINED' ? '身份线索缺失（无测向或基站数据）' : dimText(c01Facts?.dimensions?.identity) }}</dd>
                         <dt>候选计划数</dt><dd>{{ c01Facts?.candidate_count ?? '未知' }}</dd>
                       </dl>
                     </div>
                     <div v-else class="lg-evidence-wide">
-                      <h4>复核历史 <span>只增记录</span></h4>
+                      <h4>复核历史 <span>按时间追加</span></h4>
                       <p v-if="revisionsError" class="lg-evidence-alert">{{ revisionsError }}</p>
                       <p v-else-if="revisionsLoading">正在读取复核历史…</p>
                       <ul v-else-if="revisions.length" class="lg-reference-list lg-revision-list">
@@ -649,7 +695,7 @@ onMounted(() => {
                         <dt>来源模式</dt><dd>{{ sourceText(selectedEvaluation.source_mode) }}</dd>
                         <dt>规则集版本</dt><dd>{{ ruleVersionText(selectedEvaluation) }} · 参数 {{ demoParams ? '演示值，尚未业务确认' : '已确认' }}</dd>
                         <dt>运行触发</dt><dd>{{ TRIGGER_TEXT[selectedEvaluation.trigger_kind] || '—' }} · {{ MODE_TEXT[selectedEvaluation.mode] || '—' }}</dd>
-                        <dt>计划投影</dt><dd :title="selectedEvaluation.assessment_id">{{ selectedEvaluation.assessment_id ? '已投影到计划研判' : '未投影（无匹配计划或影子运行）' }}</dd>
+                        <dt>计划研判</dt><dd :title="selectedEvaluation.assessment_id">{{ selectedEvaluation.assessment_id ? '已同步到计划研判' : '未同步（无匹配计划或试运行）' }}</dd>
                       </dl>
                     </div>
                   </div>
@@ -712,7 +758,7 @@ onMounted(() => {
 .legality-workbench .lg-basis-columns,.legality-workbench .lg-basis-row{display:grid;grid-template-columns:45px minmax(140px,1fr) minmax(102px,.72fr) minmax(92px,.66fr) minmax(220px,2.35fr);align-items:center;column-gap:8px}.legality-workbench .lg-basis-columns{height:28px;padding:0 10px;background:#0b1c2f;color:#6f849b;font-size:10px}.legality-workbench .lg-basis-row{width:100%;height:26px;min-height:26px;padding:2px 10px;border:0;border-top:1px solid rgba(130,174,218,.055);background:transparent;color:#aebdcd;text-align:left;font-size:10.5px;cursor:pointer}.legality-workbench .lg-basis-row:hover{background:#0d2238}.legality-workbench .lg-basis-row.is-selected{background:#10305a;box-shadow:inset 0 0 0 1px #2f82ef}.legality-workbench .lg-basis-row>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.legality-workbench .lg-basis-row>span:nth-child(2){display:flex;align-items:baseline;gap:6px}.legality-workbench .lg-basis-row small{color:#61768e}.legality-workbench .lg-basis-row .is-pass{color:#38c98a}.legality-workbench .lg-basis-row .is-warn{color:#e4a22e}.legality-workbench .lg-basis-row .is-fail{color:#ff656c}.legality-workbench .lg-basis-row .svg-icon{width:12px;height:12px;vertical-align:-2px}
 .legality-workbench .lg-evidence-tabs{height:36px;display:flex;align-items:end;gap:3px;padding:4px 8px 0;border-bottom:1px solid rgba(130,174,218,.09);background:#0a1a2c}.legality-workbench .lg-evidence-tab{height:31px;padding:0 12px;display:flex;align-items:center;gap:5px;border:1px solid rgba(130,174,218,.08);border-bottom:0;border-radius:5px 5px 0 0;background:#0b1b2d;color:#7c91a9;font-size:10.5px;cursor:pointer}.legality-workbench .lg-evidence-tab.is-active{background:#103666;color:#dbeaff;border-color:rgba(75,156,255,.35)}.legality-workbench .lg-evidence-tab .svg-icon{width:12px;height:12px;fill:none;stroke:currentColor}
 .legality-workbench .lg-evidence-body{height:175px;min-height:175px;display:grid;grid-template-columns:minmax(260px,35%) minmax(0,1fr);gap:9px;padding:8px}.legality-workbench .lg-evidence-copy,.legality-workbench .lg-evidence-wide{min-width:0;overflow:auto;padding:7px 10px;border:1px solid rgba(130,174,218,.08);border-radius:6px;background:#0a1a2b}.legality-workbench .lg-evidence-wide{grid-column:1/-1}.legality-workbench .lg-evidence-copy h4,.legality-workbench .lg-evidence-wide h4{margin:0 0 5px;color:#cbd9e7;font-size:11.5px}.legality-workbench .lg-evidence-copy h4 span,.legality-workbench .lg-evidence-wide h4 span{color:#657a92;font-size:10px}.legality-workbench .lg-evidence-copy p,.legality-workbench .lg-evidence-wide p{margin:4px 0;color:#8fa1b5;font-size:10px;line-height:1.45}.legality-workbench .lg-evidence-copy dl{margin:5px 0;display:grid;grid-template-columns:67px 1fr;gap:3px;font-size:9.5px}.legality-workbench .lg-evidence-copy dt{color:#657b93}.legality-workbench .lg-evidence-copy dd{margin:0;color:#b5c4d4}.legality-workbench .lg-evidence-alert{padding-left:7px;border-left:2px solid var(--lg-red);color:#d59b9f!important}.legality-workbench .lg-link-btn{padding:0;border:0;background:transparent;color:var(--lg-blue);font-size:10px;cursor:pointer}.legality-workbench .lg-rule-focus{display:inline-flex;align-items:center;gap:5px;padding:4px 8px;border-radius:4px;background:#0d2238}.legality-workbench .lg-rule-focus.is-pass{color:var(--lg-green)}.legality-workbench .lg-rule-focus.is-warn{color:var(--lg-amber)}.legality-workbench .lg-rule-focus.is-fail{color:var(--lg-red)}.legality-workbench .lg-muted{color:#6e839a!important}
-.legality-workbench .lg-map-wrap{position:relative;min-width:0;min-height:159px;border:1px solid rgba(130,174,218,.12);border-radius:6px;overflow:hidden;background:#dbe7ef}.legality-workbench #lgMap{position:absolute;inset:0}.legality-workbench .lg-map-legend{position:absolute;left:50%;bottom:5px;transform:translateX(-50%);display:flex;gap:13px;padding:3px 9px;border-radius:4px;background:rgba(5,15,27,.88);color:#c4d2e0;font-size:9px;white-space:nowrap}.legality-workbench .lg-map-legend span:before{content:"";display:inline-block;width:14px;height:3px;margin-right:4px;vertical-align:2px;background:currentColor}.legality-workbench .lg-map-legend .is-zone{color:#d84d52}.legality-workbench .lg-map-legend .is-plan{color:#4b9cff}.legality-workbench .lg-map-legend .is-track{color:#ff5b61}
+.legality-workbench .lg-map-wrap{position:relative;min-width:0;min-height:159px;border:1px solid rgba(130,174,218,.12);border-radius:6px;overflow:hidden;background:#dbe7ef}.legality-workbench .lg-map-host{position:absolute;inset:0}.legality-workbench .lg-map-legend{position:absolute;left:50%;bottom:5px;transform:translateX(-50%);display:flex;gap:13px;padding:3px 9px;border-radius:4px;background:rgba(5,15,27,.88);color:#c4d2e0;font-size:9px;white-space:nowrap}.legality-workbench .lg-map-legend span:before{content:"";display:inline-block;width:14px;height:3px;margin-right:4px;vertical-align:2px;background:currentColor}.legality-workbench .lg-map-legend .is-zone{color:#d84d52}.legality-workbench .lg-map-legend .is-plan{color:#4b9cff}.legality-workbench .lg-map-legend .is-track{color:#ff5b61}
 .legality-workbench .lg-action-dock{min-height:52px;padding:6px 9px;border-top:1px solid rgba(130,174,218,.12);background:#081522}.legality-workbench .lg-action-dock .detail-actions{margin:0;padding:0;background:transparent;border:0}.legality-workbench .lg-action-dock .btn{height:38px!important;font-size:14px}.legality-workbench .detail-sect{margin-inline:0}
 .legality-workbench .lg-icon-btn{width:auto;min-width:32px;padding:0 7px;font-size:10px}.legality-workbench .lg-icon-btn:disabled{cursor:not-allowed;opacity:.45}
 .legality-workbench .lg-group-head{cursor:default}.legality-workbench .lg-inline-error{padding:8px 11px;border-bottom:1px solid rgba(255,91,97,.2);background:rgba(255,91,97,.08);color:#ff9da2;font-size:10.5px;line-height:1.5}

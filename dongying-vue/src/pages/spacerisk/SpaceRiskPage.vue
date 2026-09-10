@@ -294,7 +294,7 @@ function openVerify() {
 }
 
 function scareNotAvailable() {
-  toast('驱鸟处置尚未接入：设备指令与作业参数待设备方确认。', 'err');
+  toast('驱鸟处置暂不可用：设备指令与作业参数待设备方确认。', 'err');
 }
 
 watch(selectedId, id => { loadDetail(id); });
@@ -479,7 +479,7 @@ onUnmounted(() => {
 
           <div class="sr-actions">
             <button class="btn pri" type="button" :disabled="!canVerify" @click="openVerify">人工核验</button>
-            <button class="btn" type="button" disabled title="设备指令与作业参数待设备方确认" @click="scareNotAvailable">驱鸟处置（尚未接入）</button>
+            <button class="btn" type="button" disabled title="设备指令与作业参数待设备方确认" @click="scareNotAvailable">驱鸟处置</button>
           </div>
         </div>
       </section>

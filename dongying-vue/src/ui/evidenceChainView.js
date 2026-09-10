@@ -127,7 +127,7 @@ function lineageHtml(lineage, currentId, historical) {
   }).join('');
   return U.sect('目标 ID 变更回溯', `
     <div class="warnbox" style="margin-bottom:8px;padding:7px 9px;font-size:11.5px;line-height:1.6">
-      当前归属目标 <span class="mono">${esc(currentId || '—')}</span>。ID 变更不得导致证据链断裂；下方为合并前判定（来自研判只增记录，不虚构合法性字段）。
+      当前归属目标 <span class="mono">${esc(currentId || '—')}</span>。ID 变更不得导致证据链断裂；下方为合并前判定（来自研判历史记录，不虚构合法性字段）。
     </div>
     ${U.kv([
       ['历史目标', hist],

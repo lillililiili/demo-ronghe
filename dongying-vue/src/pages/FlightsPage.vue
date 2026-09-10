@@ -19,8 +19,7 @@ import { openFormModal } from '@/ui/formModal.js';
 import { openModal, closeModal } from '@/ui/modal.js';
 import { toast } from '@/ui/nv.js';
 import {
-  ALTITUDE_DATUM_LABEL, ALTITUDE_RELATION_LABEL, AUTHORIZATION_SOURCE_LABEL,
-  HANDOFF_TYPE_LABEL, LEGALITY_LABEL, PLAN_MATCH_LABEL, PLAN_MATCH_TAG, PLAN_STATUS_LABEL, PLAN_STATUS_TAG, REASON_CODE_LABEL, RISK_TYPE_LABEL,
+  ALTITUDE_DATUM_LABEL, ALTITUDE_RELATION_LABEL, HANDOFF_TYPE_LABEL, LEGALITY_LABEL, PLAN_MATCH_LABEL, PLAN_MATCH_TAG, PLAN_STATUS_LABEL, PLAN_STATUS_TAG, REASON_CODE_LABEL, RISK_TYPE_LABEL,
   SECTION_AVAILABILITY_LABEL, SOURCE_MODE_LABEL, labelOf, OBJECT_TYPE_LABEL, readableNo } from '@/ui/labels.js';
 import { isUncertainOutcome } from '@/services/apiClient.js';
 import { loadTargetPosition } from '@/services/positionMap.js';
@@ -406,12 +405,6 @@ async function loadDetail(planId) {
 const actuals = ref(null);
 const actualsLoading = ref(false);
 const actualsError = ref('');
-const authorizationBusy = ref(false);
-/* 服务端要的是动作码 flight:authorize，不是菜单模块 flights 的级别码：
-   ROLE-JUDGE 有 flights OP 却没这个动作（按钮可点、提交 403），只授动作码的角色又会被误禁用。
-   沿用本页既有的三态写法：动作码清单未知时不预先禁用，交给服务端裁决。 */
-const canAuthorize = computed(() => actionAllowed('flight:authorize') !== false);
-const authorizeBlockedNote = '需要外部授权登记权限';
 
 /* 列表"匹配"列：每行各读一次对照聚合（与详情栏同一接口、同一口径）。
    读失败或无权限的行显示 —，不阻塞列表；翻页后旧结果作废。 */
@@ -528,60 +521,6 @@ const targetAltitudeText = computed(() => {
   return `${section.target_altitude_m} 米（${labelOf(ALTITUDE_DATUM_LABEL, section.datum, '基准未知')}）`;
 });
 
-function newIdempotencyKey() {
-  return globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
-/* 登记外部授权：记录别处已经批下来的文号，只增一条记录，不改变本平台的计划状态。 */
-function openAuthorization() {
-  if (!canAuthorize.value || !selected.value) return;
-  const plan = selected.value;
-  const key = newIdempotencyKey();
-  openFormModal({
-    title: `登记外部授权 · ${plan.plan_no}`,
-    notice: '登记的是别处已经批下来的授权文号，只作记录，不会改变这条计划的执行状态。同一计划的同一文号只能登记一次。',
-    fields: [
-      { key: 'document_no', label: '授权文号', required: true, placeholder: '例如 SW-2026-001' },
-      { key: 'issuer', label: '签发单位', required: true },
-      { key: 'granted_from', label: '授权开始时间', type: 'datetime', required: true },
-      { key: 'granted_to', label: '授权结束时间', type: 'datetime', required: true },
-      { key: 'scope_note', label: '授权说明', type: 'textarea', placeholder: '例如：限于报备航线走廊内' }
-    ],
-    confirmText: '登记',
-    validate: values => (new Date(values.granted_from).getTime() < new Date(values.granted_to).getTime()
-      ? '' : '结束时间必须晚于开始时间'),
-    onSubmit: async values => {
-      if (authorizationBusy.value) return;
-      authorizationBusy.value = true;
-      try {
-        const body = {
-          document_no: values.document_no.trim(),
-          issuer: values.issuer.trim(),
-          granted_from: new Date(values.granted_from).getTime(),
-          granted_to: new Date(values.granted_to).getTime()
-        };
-        if (values.scope_note) body.scope_note = values.scope_note.trim();
-        await flightApi.recordAuthorization(plan.plan_id, body, key);
-        closeModal();
-        toast('外部授权已登记。', 'ok');
-        if (selected.value?.plan_id === plan.plan_id) await loadActuals(plan);
-      } catch (reason) {
-        toast(authorizationMessage(reason), 'err');
-        // 结果未知时不重试同一个键，改为回读服务已经记下的内容。
-        if (isUncertainOutcome?.(reason) && selected.value?.plan_id === plan.plan_id) await loadActuals(plan);
-      } finally { authorizationBusy.value = false; }
-    }
-  });
-}
-
-function authorizationMessage(reason) {
-  const code = reason?.code;
-  if (code === 'AUTHORIZATION_EXISTS') return '这条计划已经登记过同一个文号了。';
-  if (code === 'INVALID_VALIDITY') return '结束时间必须晚于开始时间。';
-  if (code === 'IDEMPOTENCY_REPLAY') return '该登记已提交过，已为你刷新最新结果。';
-  if (reason?.status === 403) return authorizeBlockedNote;
-  return reason?.message || '登记失败，请稍后重试。';
-}
 
 async function loadRouteGeometry(plan) {
   if (!plan.route?.route_version_id) return;
@@ -1442,26 +1381,6 @@ onUnmounted(() => {
             <div class="metric-strip is-compact"><div v-for="metric in [['执行状态', labelOf(PLAN_STATUS_LABEL, selected.status_code)], ['计划时长', formatDuration(selected)], ['航线版本', `v${selected.route?.version_no ?? '—'}`], ['目标匹配', matchMetricText]]" :key="metric[0]" class="metric-item"><div class="metric-copy"><small>{{ metric[0] }}</small><b>{{ metric[1] }}</b></div></div></div>
             <section class="sect"><h4>计划信息</h4><dl class="kv kv-surface"><dt>无人机序列号</dt><dd>{{ selected.uav_sn || '未提供' }}</dd><dt>所属范围</dt><dd>{{ selected.owner_org_name || selected.owner_org_id }} / {{ selected.district_name || selected.district_id }}</dd><dt>计划时段</dt><dd>{{ formatTime(selected.start_at) }} ～ {{ formatTime(selected.end_at) }}</dd><dt>计划来源</dt><dd>{{ selected.source?.source_name || selected.source?.source_code || labelOf(SOURCE_MODE_LABEL, selected.source_mode, '未提供') }}</dd></dl></section>
             <section class="sect"><h4>审批信息</h4><div class="empty">尚未接入审批事实读取。</div></section>
-            <section class="sect"><h4>外部授权登记</h4>
-              <div class="row" style="gap:8px;align-items:center;margin-bottom:8px">
-                <button class="btn" type="button" :disabled="!canAuthorize || authorizationBusy"
-                  :title="canAuthorize ? '' : authorizeBlockedNote" @click="openAuthorization">登记外部授权</button>
-                <span v-if="!canAuthorize" class="muted">{{ authorizeBlockedNote }}</span>
-              </div>
-              <div v-if="actualsLoading" class="empty">正在读取…</div>
-              <div v-else-if="actualsError" class="warnbox">{{ actualsError }}</div>
-              <div v-else-if="!sectionReady(actuals?.authorizations)" class="empty">{{ sectionNote(actuals?.authorizations) }}</div>
-              <div v-else-if="!actuals.authorizations.items.length" class="empty">还没有登记过外部授权。</div>
-              <div v-else class="conflict-list">
-                <div v-for="item in actuals.authorizations.items" :key="item.authorization_id" class="conflict-item" :title="item.authorization_id">
-                  <b>{{ item.document_no }}</b>
-                  <span>{{ item.issuer }}</span>
-                  <span>{{ formatTime(item.granted_from) }} ～ {{ formatTime(item.granted_to) }}</span>
-                  <span v-if="item.scope_note">说明：{{ item.scope_note }}</span>
-                  <span class="muted">{{ labelOf(AUTHORIZATION_SOURCE_LABEL, item.source_kind) }} · 登记人 {{ item.recorded_by_name || '未知' }} · {{ formatTime(item.recorded_at) }}</span>
-                </div>
-              </div>
-            </section>
             <section class="sect"><h4>计划与实际对照</h4>
               <div v-if="actualsLoading" class="empty">正在读取…</div>
               <div v-else-if="actualsError" class="warnbox">{{ actualsError }}</div>

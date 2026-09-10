@@ -432,11 +432,11 @@ function rowMatch(plan) {
 const DEVIATION_NOTE = '引擎当前只给出计划匹配结论，不提供横向偏航与时差数值';
 
 /* 合法性判定：与 legacy 同一个跳转——有研判就带目标过去选中，没有就只跳页并说明。 */
-/* 按钮只在引擎已把本计划匹配到感知目标时出现：合法性研判是对目标做的，没有目标就没有那一步，也就不该有那个钮。 */
+/* 与原版同一条规则：「合法性判定 →」只在待执行时出现——判定是起飞前的事，执行中、已完成、已取消都不显示。
+   引擎若已把计划匹配到目标就带目标过去选中，否则只打开研判页。 */
 const matchedTargetId = computed(() => actuals.value?.match?.target_id || null);
 function goLegality() {
   const targetId = matchedTargetId.value;
-  if (!targetId) return;
   if (window.UI?.goto) window.UI.goto('legality', targetId ? { target: targetId } : null);
   else location.hash = '#/legality';
 }
@@ -1480,8 +1480,8 @@ onUnmounted(() => {
               </div>
             </section>
             <!-- 与 legacy 一致的唯一动作：跳到合法性研判页并选中本计划匹配到的目标（决策 15-48）。 -->
-            <div v-if="matchedTargetId" class="detail-actions" style="margin-top:12px">
-              <button class="btn pri" type="button" style="flex:1;justify-content:center" title="打开合法性研判页并选中本计划匹配到的目标" @click="goLegality">合法性判定 →</button>
+            <div v-if="planPending" class="detail-actions" style="margin-top:12px">
+              <button class="btn pri" type="button" style="flex:1;justify-content:center" :title="matchedTargetId ? '打开合法性研判页并选中本计划匹配到的目标' : '打开合法性研判页'" @click="goLegality">合法性判定 →</button>
             </div>
           </template></div>
           </UPanel>

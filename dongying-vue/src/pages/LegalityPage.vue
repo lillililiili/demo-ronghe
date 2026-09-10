@@ -588,8 +588,6 @@ onMounted(() => {
                   <div v-if="selectedHit" class="lg-rule-focus" :class="resultClass(selectedHit.result_code)">
                     <b>{{ selectedHit.rule_code }} {{ ruleName(selectedHit.rule_code) }}</b>
                     <span>{{ selectedHit.message || '未提供解释' }}</span>
-                    <span v-if="selectedHit.params?.length" class="lg-muted">参数：{{ selectedHit.params.map(p => `${factKeyText(p.key)} ${factValueText(p.key, p.value)}${p.status === 'DEMO' ? '（演示值）' : ''}`).join('，') }}</span>
-                    <span v-if="selectedHit.facts && Object.keys(selectedHit.facts).length" class="lg-muted">事实：{{ factText(selectedHit.facts) }}</span>
                   </div>
                 </section>
 

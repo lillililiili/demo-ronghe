@@ -19,7 +19,7 @@ import { openFormModal } from '@/ui/formModal.js';
 import { openModal, closeModal } from '@/ui/modal.js';
 import { toast } from '@/ui/nv.js';
 import {
-  ALTITUDE_DATUM_LABEL, ALTITUDE_RELATION_LABEL, HANDOFF_TYPE_LABEL, LEGALITY_LABEL, PLAN_MATCH_TAG, PLAN_ROW_MATCH_LABEL, PLAN_STATUS_LABEL, PLAN_STATUS_TAG, REASON_CODE_LABEL, RISK_TYPE_LABEL,
+  ALTITUDE_DATUM_LABEL, ALTITUDE_RELATION_LABEL, HANDOFF_TYPE_LABEL, LEGALITY_LABEL, PLAN_MATCH_TAG, PLAN_ROW_MATCH_LABEL, PLAN_STATUS_LABEL, PLAN_STATUS_TAG, REASON_CODE_LABEL, RECEIPT_RESULT_LABEL, RISK_TYPE_LABEL,
   SECTION_AVAILABILITY_LABEL, SOURCE_MODE_LABEL, labelOf, OBJECT_TYPE_LABEL, readableNo } from '@/ui/labels.js';
 import { isUncertainOutcome } from '@/services/apiClient.js';
 import { loadTargetPosition } from '@/services/positionMap.js';
@@ -100,6 +100,12 @@ const pendingHandoffKeys = new Map();
 const NOTICE_DELIVERY_LABEL = { PENDING_DELIVERY: '待投递', SUBMITTED: '已发送', DELIVERED: '已送达', FAILED: '发送失败' };
 const NOTICE_DELIVERY_TAG = { PENDING_DELIVERY: 't-amber', SUBMITTED: 't-blue', DELIVERED: 't-green', FAILED: 't-red' };
 const NOTICE_RECEIPT_LABEL = { NOT_EXPECTED: '不需回执', PENDING: '等待回执', ACKNOWLEDGED: '已回执', TIMEOUT: '回执超时' };
+/* 回执状态 + 回执结果连起来读："已回执 · 已驱离"。服务端没给结果就只显示状态，不补空位（决策 18-14）。 */
+function receiptText(notice) {
+  const status = NOTICE_RECEIPT_LABEL[notice.receipt_status] || notice.receipt_status || '未知';
+  const result = labelOf(RECEIPT_RESULT_LABEL, notice.receipt_result, '');
+  return result ? `${status} · ${result}` : status;
+}
 const NOTICE_BLOCKED_LABEL = { CHANNEL_NOT_CONNECTED: '通知渠道未接通' };
 const riskLoading = ref(false);
 const riskError = ref('');
@@ -114,6 +120,8 @@ const riskHistoryPage = ref(1);
 const riskHistoryLoading = ref(false);
 const riskHistoryError = ref('');
 const riskRouteVersion = ref(null);
+const riskTarget = ref(null);
+const riskTargetNote = ref('');
 const riskMapLoading = ref(false);
 const riskMapError = ref('');
 const riskMapHost = ref(null);
@@ -244,13 +252,35 @@ const riskKpis = computed(() => {
 });
 
 const riskMapCoords = computed(() => trustedCoordinates(riskRouteVersion.value));
+/* 风险点位：空中异物风险（C04）带位置快照，经纬度在 space_fact 里；标记颜色只表示等级，不表示合法性。
+   飞行作业风险与空域风险不产出位置快照，这两类返回 null，图上只有航线。 */
+const RISK_SEVERITY_COLOR = { CRITICAL: '#ff4d5e', HIGH: '#ff4d5e', MEDIUM: '#ffb020', LOW: '#3d8bff' };
+const riskPoint = computed(() => {
+  const fact = selectedRisk.value?.space_fact;
+  if (!fact || fact.longitude == null || fact.latitude == null) return null;
+  const longitude = Number(fact.longitude), latitude = Number(fact.latitude);
+  if (!Number.isFinite(longitude) || !Number.isFinite(latitude)) return null;
+  return { longitude, latitude, color: RISK_SEVERITY_COLOR[selectedRisk.value?.severity] || '#3d8bff' };
+});
+/* 三样几何有任意一样就该建图：只有航线、只有风险点、只有关联目标，都不该退化成一块空白。 */
+const riskMapDrawable = computed(() => Boolean(riskMapCoords.value || riskPoint.value || riskTarget.value));
 const riskMapNote = computed(() => {
   if (riskMapLoading.value) return '正在读取关联航线版本几何…';
   if (riskMapError.value) return riskMapError.value;
-  if (!selectedRisk.value) return '未选择风险事件；风险本身无坐标字段，只按关联航线版本绘制依据。';
-  if (!selectedRisk.value.route_version_id) return canReadRoute.value ? '没有可读取的航线版本，无可信坐标，不绘制。' : '无 route:read 权限，未返回航线版本，不绘制。';
-  if (!canReadRoute.value) return '无 route:read 权限，不读取航线几何。';
-  return '不可绘制：航线版本未取得可信 WGS-84 中心线。';
+  if (!selectedRisk.value) return '选择左侧风险事件后，按它的位置与关联航线绘制。';
+  const hasRoute = Boolean(selectedRisk.value.route_version_id);
+  if (hasRoute && !canReadRoute.value) return '本条风险没有位置坐标，关联航线又无读取权限，不绘制。';
+  if (hasRoute) return '本条风险没有位置坐标，关联航线版本也未取得可信 WGS-84 中心线，不绘制。';
+  return '本条风险没有位置坐标，也没有关联航线版本，不绘制。';
+});
+/* 图上少画了什么要说清楚，不能让人以为"图空=没事"。 */
+const riskMapMissingNote = computed(() => {
+  if (!selectedRisk.value || !riskMapDrawable.value) return '';
+  const missing = [];
+  if (!riskPoint.value) missing.push('本条风险未返回位置坐标');
+  if (selectedRisk.value.target_id && !riskTarget.value) missing.push(riskTargetNote.value || '关联目标位置未取得');
+  if (selectedRisk.value.route_version_id && !riskMapCoords.value) missing.push('关联航线中心线不可信');
+  return missing.join('；');
 });
 /* UPanel 的 extra 走 v-html：只输出本页常量映射出的标签，服务端字符串一律不进 v-html。 */
 const riskDetailExtra = computed(() => {
@@ -264,7 +294,7 @@ const planHeroIcon = computed(() => (window.UI?.icon ? window.UI.icon('plan') : 
 const canVerifyRisk = computed(() => Boolean(selectedRisk.value?.allowed_actions?.includes('VERIFY')));
 /* 通知按钮：服务端 allowed_actions 含 NOTIFY 为准；旧版详情不带 NOTIFY 时按“待通知”放开。
    /auth/me 的 permission_codes 不含 `handoff:create` 动作码，前端不预判权限，由服务端 403 裁决。 */
-/* 已提交过通知（未失败）就不能再点：服务端对同一接收方会 409，页面直接禁用并说明（决策 15-50）。 */
+/* 已提交过通知（未失败）就不能再点：服务端会 409，页面直接禁用并说明（决策 15-50）。 */
 const submittedNotice = computed(() => notices.value.find(n => n.delivery_status && n.delivery_status !== 'FAILED') || null);
 const canNotifyRisk = computed(() => {
   const risk = selectedRisk.value;
@@ -273,9 +303,14 @@ const canNotifyRisk = computed(() => {
 });
 const notifyBlockReason = computed(() => {
   if (!selectedRisk.value) return '';
-  if (submittedNotice.value) return `已提交通知（${NOTICE_DELIVERY_LABEL[submittedNotice.value.delivery_status] || submittedNotice.value.delivery_status}），不能重复提交`;
+  if (submittedNotice.value) {
+    // 回执带回了处理结果就一并说出来："已回执 · 已驱离"才是闭环，只有投递状态说明不了这件事办没办（决策 18-14）。
+    const result = labelOf(RECEIPT_RESULT_LABEL, submittedNotice.value.receipt_result, '');
+    const delivery = NOTICE_DELIVERY_LABEL[submittedNotice.value.delivery_status] || submittedNotice.value.delivery_status;
+    return `已提交通知（${delivery}${result ? ` · 回执${result}` : ''}），不能重复提交`;
+  }
   if (noticesLoading.value) return '正在读取交接记录';
-  if (canNotifyRisk.value) return '向接收方提交风险通知交接（材料入库，不等于已发送）';
+  if (canNotifyRisk.value) return '提交通知：由通知渠道投递并回执，回执“已驱离”即闭环';
   return `当前状态「${stateLabel(selectedRisk.value.state)}」不允许通知`;
 });
 const verifyBlockReason = computed(() => {
@@ -845,6 +880,8 @@ function clearRiskDetail() {
   riskHistoryPage.value = 1;
   riskHistoryError.value = '';
   riskRouteVersion.value = null;
+  riskTarget.value = null;
+  riskTargetNote.value = '';
   riskMapError.value = '';
   riskMapLoading.value = false;
   S.selectedRiskId = null;
@@ -861,6 +898,8 @@ async function loadRiskDetail(riskId) {
   riskDetailError.value = '';
   riskHistoryError.value = '';
   riskRouteVersion.value = null;
+  riskTarget.value = null;
+  riskTargetNote.value = '';
   riskMapError.value = '';
   riskMapLoading.value = false;
   destroyRouteMap();
@@ -888,7 +927,26 @@ async function loadRiskDetail(riskId) {
   } finally {
     if (token === riskDetailToken) riskDetailLoading.value = false;
   }
-  if (detail && token === riskDetailToken) await loadRiskRouteGeometry(detail, token);
+  if (!detail || token !== riskDetailToken) return;
+  // 三样几何各读各的，谁失败都不挡另外两样；全部到齐后只建一次图，避免先到的被后到的重建掉视野。
+  await Promise.all([loadRiskTargetPosition(detail, token), loadRiskRouteGeometry(detail, token)]);
+  if (token !== riskDetailToken) return;
+  await nextTick();
+  renderRiskMap();
+}
+
+/** 风险关联的感知目标：风险行里带 target_id，位置要再读一次目标详情才有。 */
+async function loadRiskTargetPosition(risk, token) {
+  if (!risk.target_id) return;
+  try {
+    const loaded = await loadTargetPosition(risk.target_id, { risk: severityLabel(risk.severity) });
+    if (token !== riskDetailToken) return;
+    if (!loaded.mapTarget) { riskTargetNote.value = `关联目标 ${loaded.target?.target_no || risk.target_id} 坐标未知或不可信`; return; }
+    riskTarget.value = loaded.mapTarget;
+  } catch (requestError) {
+    if (token !== riskDetailToken) return;
+    riskTargetNote.value = `关联目标位置读取失败：${requestError?.message || '无目标读取权限'}`;
+  }
 }
 
 async function loadRiskRouteGeometry(risk, token) {
@@ -900,8 +958,6 @@ async function loadRiskRouteGeometry(risk, token) {
     const version = await flightApi.routeVersion(risk.route_version_id);
     if (token !== riskDetailToken) return;
     riskRouteVersion.value = version;
-    await nextTick();
-    renderRiskMap();
   } catch (requestError) {
     if (token !== riskDetailToken) return;
     riskMapError.value = `航线版本几何读取失败：${riskMessageOf(requestError, '无 route:read 权限或航线版本不可见')}`;
@@ -913,45 +969,69 @@ async function loadRiskRouteGeometry(risk, token) {
 
 function renderRiskMap() {
   destroyRouteMap();
+  if (activeTab.value !== 'events' || !riskMapHost.value) return;
   const coordinates = riskMapCoords.value;
-  if (activeTab.value !== 'events' || !riskMapHost.value || !coordinates) return;
+  const point = riskPoint.value;
+  const target = riskTarget.value;
+  /* 视野按"这条风险相关的全部几何"收：风险点、关联目标、航线中心线三样有几样算几样。
+     只 centerAt 或只按中心线收，都会把另外两样推到视野外，看上去还是一张空图。 */
+  const focus = coordinates ? coordinates.slice() : [];
+  if (point) focus.push([point.longitude, point.latitude]);
+  if (target && Number.isFinite(target.lon) && Number.isFinite(target.lat)) focus.push([target.lon, target.lat]);
+  routeMap = new window.MapView(riskMapHost.value, {
+    zoom: focus.length ? 3.2 : 1, maxDev: 0, legend: false,
+    layers: { device: false, track: !!target, alarm: false }
+  });
+  routeMap.setData({ airspaces: [], devices: [], targets: target ? [target] : [], alarms: [] });
+  if (target) routeMap.sel = target.id;
+  if (!coordinates && !point) { if (focus.length) routeMap.fitTo(focus); return; }
   const version = riskRouteVersion.value;
   const label = `${version?.route_id || '航线'} v${version?.version_no ?? '—'}`;
-  routeMap = new window.MapView(riskMapHost.value, {
-    zoom: 3.2, maxDev: 0, legend: false, layers: { device: false, track: false, alarm: false }
-  });
-  routeMap.setData({ airspaces: [], devices: [], targets: [], alarms: [] });
   const drawBase = routeMap.draw.bind(routeMap);
   routeMap.draw = function drawRiskRouteCenterline() {
     drawBase();
     const context = this.ctx;
     if (!context || !this.w) return;
-    // 只画已保存航线版本的 WGS-84 中心线；风险无坐标时不画标记，也不以 (0,0) 补位。
+    // 只画已保存航线版本的 WGS-84 中心线与风险自身的位置快照；缺哪样就不画哪样，不以 (0,0) 补位。
     context.save();
-    context.beginPath();
-    coordinates.forEach(([longitude, latitude], index) => {
-      const point = this.px(longitude, latitude);
-      if (index) context.lineTo(point[0], point[1]);
-      else context.moveTo(point[0], point[1]);
-    });
-    context.setLineDash([6, 4]);
-    context.strokeStyle = 'rgba(61,139,255,.75)';
-    context.lineWidth = 1.6;
-    context.lineJoin = 'round';
-    context.stroke();
-    context.setLineDash([]);
-    const mid = this.px(...coordinates[coordinates.length >> 1]);
-    context.font = '10.5px "PingFang SC"';
-    context.textAlign = 'center';
-    context.textBaseline = 'middle';
-    const width = context.measureText(label).width + 8;
-    context.fillStyle = 'rgba(4,10,26,.75)';
-    context.fillRect(mid[0] - width / 2, mid[1] - 8, width, 15);
-    context.fillStyle = '#8fbaff';
-    context.fillText(label, mid[0], mid[1]);
+    if (coordinates) {
+      context.beginPath();
+      coordinates.forEach(([longitude, latitude], index) => {
+        const at = this.px(longitude, latitude);
+        if (index) context.lineTo(at[0], at[1]);
+        else context.moveTo(at[0], at[1]);
+      });
+      context.setLineDash([6, 4]);
+      context.strokeStyle = 'rgba(61,139,255,.75)';
+      context.lineWidth = 1.6;
+      context.lineJoin = 'round';
+      context.stroke();
+      context.setLineDash([]);
+      const mid = this.px(...coordinates[coordinates.length >> 1]);
+      context.font = '10.5px "PingFang SC"';
+      context.textAlign = 'center';
+      context.textBaseline = 'middle';
+      const width = context.measureText(label).width + 8;
+      context.fillStyle = 'rgba(4,10,26,.75)';
+      context.fillRect(mid[0] - width / 2, mid[1] - 8, width, 15);
+      context.fillStyle = '#8fbaff';
+      context.fillText(label, mid[0], mid[1]);
+    }
+    if (point) {
+      const at = this.px(point.longitude, point.latitude);
+      context.beginPath();
+      context.arc(at[0], at[1], 5, 0, Math.PI * 2);
+      context.fillStyle = point.color;
+      context.fill();
+      context.beginPath();
+      context.arc(at[0], at[1], 9, 0, Math.PI * 2);
+      context.strokeStyle = point.color;
+      context.lineWidth = 1.4;
+      context.stroke();
+    }
     context.restore();
   };
-  routeMap.fitTo(coordinates);
+  if (focus.length) routeMap.fitTo(focus);
 }
 
 async function changeRiskHistoryPage(nextPage) {
@@ -1026,23 +1106,28 @@ async function refreshAfterNotify(riskId) {
   if (selected.value) loadRouteRisks(selected.value);
 }
 
-/* 成功提示只用 Vue 节点渲染服务端 ID，不走 innerHTML；链接指向处罚页的交接详情。 */
+/* 成功提示只用 Vue 节点渲染服务端 ID，不走 innerHTML；链接指向通知记录详情。
+   风险到"通知上级"为止（决策 18-14），所以这里说的是投递与回执，不再提处罚办结。 */
 function showHandoffSubmitted(created) {
   const link = `#/punish?handoff=${encodeURIComponent(created.handoff_id)}`;
   openModal({
-    title: created.delivery_status === 'DELIVERED' ? '已提交并送达' : '已提交，尚未发送', width: '520px', footer: false,
+    title: created.delivery_status === 'DELIVERED' ? '通知已提交并送达' : '通知已提交，尚未发送', width: '520px', footer: false,
     render: () => h('div', { class: 'rk-notify-done' }, [
       h('div', { class: 'warnbox' }, created.delivery_status === 'DELIVERED'
-        ? `接收方已接收交接材料${created.receipt_status === 'ACKNOWLEDGED' ? '并回执' : ''}；送达不等于处罚办结，源风险保持“待通知”。`
-        : '材料已入库等待投递，通知渠道未接通：不表示已发送、已送达或处罚办结；源风险保持“待通知”。'),
+        ? `接收方已接收通知${created.receipt_status === 'ACKNOWLEDGED' ? '并回执' : ''}；回执“已驱离”才算闭环，在此之前源风险保持“待通知”。`
+        : '材料已入库等待投递，通知渠道未接通：不表示已发送、已送达；源风险保持“待通知”。'),
       h('dl', { class: 'kv kv-surface' }, [
-        h('dt', '交接编号'), h('dd', { class: 'mono' }, created.handoff_id),
-        h('dt', '接收方'), h('dd', { class: 'mono' }, created.recipient_id),
+        h('dt', '通知编号'), h('dd', { class: 'mono' }, created.handoff_id),
+        /* 只有拿到接收方名称才显示这一行：创建应答目前只回内部标识，把它摆上屏等于给人看一串没用的编码
+           （名称在通知记录里读得到）。 */
+        ...(created.recipient_name
+          ? [h('dt', '接收方'), h('dd', { title: created.recipient_id || '' }, created.recipient_name)]
+          : []),
         h('dt', '投递状态'), h('dd', `${NOTICE_DELIVERY_LABEL[created.delivery_status] || created.delivery_status || '未知'} · ${NOTICE_BLOCKED_LABEL[created.blocked_reason] || created.blocked_reason || '无阻断'}`)
       ]),
       h('div', { class: 'detail-actions' }, [
         h('button', { class: 'btn', type: 'button', onClick: () => closeModal() }, '关闭'),
-        h('a', { class: 'btn pri', href: link, onClick: () => closeModal() }, '查看交接')
+        h('a', { class: 'btn pri', href: link, onClick: () => closeModal() }, '查看通知记录')
       ])
     ])
   });
@@ -1053,27 +1138,19 @@ async function openRiskNotify(riskOverride = null) {
   if (!risk || (riskOverride ? !canNotifyItem(risk) : !canNotifyRisk.value)) return;
   const riskId = risk.risk_id;
   const expectedVersion = Number(risk.version);
-  let recipients = [];
-  try { recipients = (await handoffApi.listHandoffRecipients('RISK_NOTICE')).items || []; }
-  catch (requestError) { toast(handoffMessageOf(requestError, '读取交接接收方失败'), 'err'); return; }
-  if (!riskOverride && selectedRisk.value?.risk_id !== riskId) return;
-  const empty = !recipients.length;
   if (!pendingHandoffKeys.has(riskId)) pendingHandoffKeys.set(riskId, newHandoffIdempotencyKey());
+  /* 决策 18-14：风险到"通知上级"为止，回执"已驱离"即闭环，不进处置。
+     接收方不再让人选——服务端按默认接收方处理；页面少一个选择，就少一处能选错的地方。 */
   openFormModal({
-    title: '通知上级 · 风险通知交接',
+    title: '通知上级',
     width: '560px',
-    warning: empty
-      ? '接收方未配置：交接接收方目录为空，不能提交；本页不以默认部门补值。'
-      : '提交后由通知渠道投递并回执，送达与回执以投递记录为准；不表示处罚办结，源风险保持“待通知”。',
+    warning: '提交后由通知渠道投递并回执；回执“已驱离”即闭环，风险不进入处置。',
     notice: [risk.risk_no || readableNo(risk.source_risk_id) ? `风险 ${risk.risk_no || readableNo(risk.source_risk_id)}` : '风险事件', labelOf(RISK_TYPE_LABEL, risk.risk_type, ''), Number(expectedVersion) > 0 ? `已第${Number(expectedVersion)}次核验` : '尚未核验'].filter(Boolean).join(' · '),
-    fields: [{ key: 'recipient_id', label: '接收方', type: 'select', required: true,
-      options: recipients.map(item => ({ label: item.display_name, value: item.recipient_id })), placeholder: empty ? '接收方未配置' : '请选择接收方' }],
-    initial: { recipient_id: recipients.length === 1 ? recipients[0].recipient_id : null },
-    confirmText: empty ? '接收方未配置' : '提交交接',
-    submitEnabled: values => !empty && !!values.recipient_id,
-    onSubmit: async values => {
+    fields: [],
+    confirmText: '提交通知',
+    onSubmit: async () => {
       const key = pendingHandoffKeys.get(riskId);
-      const body = { source_kind: 'RISK', source_id: riskId, handoff_type: 'RISK_NOTICE', recipient_id: values.recipient_id, expected_version: expectedVersion };
+      const body = { source_kind: 'RISK', source_id: riskId, handoff_type: 'RISK_NOTICE', expected_version: expectedVersion };
       try {
         const created = await handoffApi.createHandoff(body, key);
         pendingHandoffKeys.delete(riskId);
@@ -1088,7 +1165,7 @@ async function openRiskNotify(riskOverride = null) {
           closeModal();
           riskTab.value = 'notice';
           await refreshAfterNotify(riskId);
-          toast(code === 'HANDOFF_ALREADY_EXISTS' ? '该风险已向此接收方提交过交接，已切换到通报记录。' : '该请求此前已提交，请在通报记录核对。', 'err');
+          toast(code === 'HANDOFF_ALREADY_EXISTS' ? '该风险已经提交过通知，已切换到通报记录。' : '该请求此前已提交，请在通报记录核对。', 'err');
           return;
         }
         if (code === 'VERSION_CONFLICT' || code === 'INVALID_TRANSITION' || code === 'RECIPIENT_NOT_CONFIGURED' || code === 'RECIPIENT_NOT_FOUND') {
@@ -1103,11 +1180,26 @@ async function openRiskNotify(riskOverride = null) {
           throw new Error(`提交结果未确认，请刷新核对：${handoffMessageOf(requestError, '未返回明确结果')}`);
         }
         pendingHandoffKeys.set(riskId, newHandoffIdempotencyKey());
-        throw new Error(handoffMessageOf(requestError, '提交交接失败'));
+        throw new Error(handoffMessageOf(requestError, '提交通知失败'));
       }
     }
   });
 }
+
+/* 筛选条一行放不下七个（阶段 18 对照原版：原版只有等级/目标类型/状态三个）：
+   常用的四个留在条上，其余三个收进"更多筛选"。收起来的筛选若正在生效，按钮上带数字标出来——
+   否则列表被筛过却看不出是被什么筛的。 */
+const riskMoreOpen = ref(false);
+/* 进页签时列表会自动选中第一条，那只是为了让右侧详情不空着，不代表用户在看这条风险的位置。
+   所以地图先停在全市视角，只有用户自己点了某条风险才放大过去（阶段 18 对照原版）。 */
+const riskUserPicked = ref(false);
+const riskMoreActiveCount = computed(() => {
+  const values = [riskFilters.risk_type, riskFilters.source_mode, riskFilters.occurred];
+  return values.filter(value => (Array.isArray(value) ? value.length > 0 : !!value)).length;
+});
+const riskMoreTitle = computed(() => (riskMoreActiveCount.value
+  ? `另有 ${riskMoreActiveCount.value} 个筛选正在生效：风险类型 / 发生时间 / 来源模式`
+  : '展开风险类型、发生时间、来源模式'));
 
 /* ---------- 风险页签：交互 ---------- */
 function applyRiskFilters() {
@@ -1122,6 +1214,7 @@ function switchRiskTab(tab) {
   riskTab.value = tab;
 }
 function selectRisk(riskId) {
+  riskUserPicked.value = true;
   if (selectedRisk.value?.risk_id === riskId && !riskDetailError.value) return;
   loadRiskDetail(riskId);
 }
@@ -1130,6 +1223,9 @@ function retryRiskList() { loadRiskKpis(); loadRisks(riskPage.value); }
 
 function enterRiskTab(requestedId = null) {
   destroyRouteMap();
+  riskUserPicked.value = !!requestedId;   // 深链带着风险编号进来，等同于用户点了这一条
+  // 进页签就先摆出全局底图，不等选中风险（选中后 loadRiskRouteGeometry 会再画一次）。
+  nextTick(() => renderRiskMap());
   if (requestedId) {
     // 深链只清筛选与页码，避免选中的那条被当前筛选挡在列表外；详情仍按精确 ID 读取。
     Object.assign(riskFilters, { severity: '', state: '', risk_type: '', plan_id: '', owner_org_id: '', district_id: '', source_mode: '', occurred: null });
@@ -1231,11 +1327,12 @@ onUnmounted(() => {
       <UKpis :list="riskKpis" />
       <div class="row risk-main">
         <UPanel title="风险事件与航线分布" panel-style="flex:0.82" nopad body-style="padding:6px">
-          <div v-if="riskMapCoords" id="rkMap" ref="riskMapHost" class="rk-map"></div>
+          <div v-if="riskMapDrawable" id="rkMap" ref="riskMapHost" class="rk-map"></div>
           <div v-else class="empty rk-map-empty">{{ riskMapNote }}</div>
-          <div class="rk-legend" title="蓝虚线为所选风险关联的已保存航线版本中心线；风险等级不表示合法性，风险本身未返回坐标时不绘制标记">
-            <span style="color:#8fbaff">蓝虚线</span>=所选风险关联的航线版本中心线 · 风险坐标未返回，不绘制
-            <span style="color:#ff4d5e">高</span>/<span style="color:#ffb020">中</span>/<span style="color:#3d8bff">低</span> 标记
+          <div class="rk-legend" title="圆点是这条风险的位置快照，颜色只表示等级，不表示合法性；蓝虚线是它关联的已保存航线版本中心线；哪一样没有就不画哪一样">
+            <span style="color:#8fbaff">蓝虚线</span>=关联航线中心线 · 圆点=风险位置
+            <span style="color:#ff4d5e">高</span>/<span style="color:#ffb020">中</span>/<span style="color:#3d8bff">低</span>
+            <span v-if="riskMapMissingNote" style="color:var(--txt-3)"> · {{ riskMapMissingNote }}</span>
           </div>
         </UPanel>
 
@@ -1251,17 +1348,21 @@ onUnmounted(() => {
                 <div class="toolbar-fields">
                   <div class="field"><label>风险等级</label><UControl v-model="riskFilters.severity" type="select" :options="riskSeverityOptions" :disabled="riskLoading" size="small" @update:model-value="applyRiskFilters" /></div>
                   <div class="field"><label>目标类型</label><UControl v-model="riskFilters.target_type" type="select" :options="riskTypeOptions" :disabled="riskLoading" size="small" @update:model-value="applyRiskFilters" /></div>
-                  <div class="field"><label>风险类型</label><UControl v-model="riskFilters.risk_type" type="select" :options="riskKindOptions" :disabled="riskLoading" size="small" @update:model-value="applyRiskFilters" /></div>
                   <div class="field"><label>状态</label><UControl v-model="riskFilters.state" type="select" :options="riskStateOptions" :disabled="riskLoading" size="small" @update:model-value="applyRiskFilters" /></div>
-                  <div class="field rk-range"><label>发生时间</label><UControl v-model="riskFilters.occurred" type="datetimerange" clearable :disabled="riskLoading" size="small" start-placeholder="开始" end-placeholder="结束" /></div>
                   <div class="field" :title="riskDistrictTitle"><label>区域</label><UControl v-model="riskFilters.district_id" type="select" :options="riskDistrictOptions" :disabled="riskLoading" size="small" @update:model-value="applyRiskFilters" /></div>
-                  <div class="field"><label>来源模式</label><UControl v-model="riskFilters.source_mode" type="select" :options="sourceModeOptions" :disabled="riskLoading" size="small" /></div>
                 </div>
                 <div class="toolbar-actions">
+                  <button class="btn" :class="{ on: riskMoreOpen }" type="button" :title="riskMoreTitle" @click="riskMoreOpen = !riskMoreOpen">更多筛选<span
+                    v-if="riskMoreActiveCount" class="tag t-blue" style="margin-left:4px">{{ riskMoreActiveCount }}</span></button>
                   <button class="btn" type="button" :disabled="riskLoading" @click="applyRiskFilters">查询</button>
                   <button class="btn" type="button" :disabled="riskLoading" title="按当前筛选与排序导出风险列表 CSV（上限 5000 行）"
                     @click="exportRiskCsv">导出 CSV</button>
                   <span class="toolbar-note" :title="riskSortNoteTitle">{{ riskSortNote }}</span>
+                </div>
+                <div v-if="riskMoreOpen" class="toolbar-fields rk-more">
+                  <div class="field"><label>风险类型</label><UControl v-model="riskFilters.risk_type" type="select" :options="riskKindOptions" :disabled="riskLoading" size="small" @update:model-value="applyRiskFilters" /></div>
+                  <div class="field rk-range"><label>发生时间</label><UControl v-model="riskFilters.occurred" type="datetimerange" clearable :disabled="riskLoading" size="small" start-placeholder="开始" end-placeholder="结束" /></div>
+                  <div class="field"><label>来源模式</label><UControl v-model="riskFilters.source_mode" type="select" :options="sourceModeOptions" :disabled="riskLoading" size="small" /></div>
                 </div>
               </template>
               <template v-else>
@@ -1313,7 +1414,7 @@ onUnmounted(() => {
               <div v-if="!activeRiskId" class="empty">请先在“风险事件”页签选择一条风险。</div>
               <div v-else-if="noticesError" class="warnbox rk-error">{{ noticesError }} <button class="btn" type="button" :disabled="noticesLoading" @click="loadRiskNotices(activeRiskId)">重试</button></div>
               <div v-else-if="noticesLoading" class="empty">正在读取交接记录…</div>
-              <div v-else-if="!notices.length" class="empty">该风险尚无交接记录；核验通过后可在详情栏点击“通知上级”提交。</div>
+              <div v-else-if="!notices.length" class="empty">该风险尚无通知记录；核验通过后可在详情栏点击“通知上级”提交。</div>
               <div v-else class="scroll table-scroll table-shell" style="flex:1">
                 <table class="tb">
                   <thead><tr><th>交接类型</th><th>接收方</th><th>提交时间</th><th>投递状态</th><th>回执</th><th>阻断原因</th><th></th></tr></thead>
@@ -1323,7 +1424,7 @@ onUnmounted(() => {
                       <td><div class="rk-wrap">{{ notice.recipient_name || notice.recipient_id }}</div></td>
                       <td class="num" :title="formatTime(notice.created_at)">{{ formatClock(notice.created_at) }}</td>
                       <td><span class="tag" :class="NOTICE_DELIVERY_TAG[notice.delivery_status] || 't-gray'">{{ NOTICE_DELIVERY_LABEL[notice.delivery_status] || notice.delivery_status || '未知' }}</span></td>
-                      <td>{{ NOTICE_RECEIPT_LABEL[notice.receipt_status] || notice.receipt_status || '未知' }}</td>
+                      <td>{{ receiptText(notice) }}</td>
                       <td><div class="rk-wrap">{{ notice.blocked_reason ? (NOTICE_BLOCKED_LABEL[notice.blocked_reason] || notice.blocked_reason) : '—' }}</div></td>
                       <td><a class="lnk" :href="`#/punish?handoff=${encodeURIComponent(notice.handoff_id)}`">查看交接</a></td>
                     </tr>
@@ -1477,7 +1578,7 @@ onUnmounted(() => {
                   </div>
                   <div class="route-risk-line">
                     <span class="tag t-gray">{{ stateLabel(item.state) }}</span>
-                    <button v-if="canNotifyItem(item)" class="btn" type="button" title="向接收方提交风险通知交接" @click="openRiskNotify(item)">通知上级</button>
+                    <button v-if="canNotifyItem(item)" class="btn" type="button" title="提交通知：由通知渠道投递并回执，回执“已驱离”即闭环" @click="openRiskNotify(item)">通知上级</button>
                   </div>
                 </div>
               </div>

@@ -11,16 +11,17 @@ public final class HandoffDtos {
     public record CreateRequest(String sourceKind, String sourceId, String handoffType, String recipientId, long expectedVersion) { }
     /** POST 成功体固定为契约列出的字段；提交成功只代表材料入库，delivery_status 只可能是 PENDING_DELIVERY。 */
     public record CreatedDto(String handoffId, String sourceKind, String sourceId, String handoffType, String recipientId,
-            long sourceVersion, String deliveryStatus, String receiptStatus, String blockedReason, long createdAt) { }
+            long sourceVersion, String deliveryStatus, String receiptStatus, String receiptResult, String blockedReason,
+            long createdAt) { }
     public record HandoffDto(String handoffId, String sourceKind, String sourceId, String handoffType, String recipientId,
             String recipientName, long sourceVersion, String ownerOrgId, String districtId, String sourceMode, String submittedBy,
-            long createdAt, String deliveryStatus, String receiptStatus, String blockedReason,
+            long createdAt, String deliveryStatus, String receiptStatus, String receiptResult, String blockedReason,
             String ownerOrgName, String districtName, String submittedByName, String sourceNo) { }
     public record DeliveryDto(String deliveryId, String handoffId, int attemptNo, String deliveryStatus, String receiptStatus,
             String blockedReason, long createdAt, Long submittedAt, Long deliveredAt, Long acknowledgedAt) { }
     public record HandoffDetailDto(String handoffId, String sourceKind, String sourceId, String handoffType, String recipientId,
             String recipientName, long sourceVersion, String ownerOrgId, String districtId, String sourceMode, String submittedBy,
-            long createdAt, String deliveryStatus, String receiptStatus, String blockedReason,
+            long createdAt, String deliveryStatus, String receiptStatus, String receiptResult, String blockedReason,
             // material 有两种形状：v1 是风险材料（MaterialDto），v2 是事件材料（MaterialV2Dto），按 schema_version 分派。
             // 用 Object 而不是共同父类型，是因为两者字段完全不同、也不该互相迁就；序列化按实际类型走。
             Object material,

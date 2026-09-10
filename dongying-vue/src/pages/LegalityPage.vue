@@ -20,7 +20,7 @@ import { legalityApi } from '@/services/legalityApi.js';
 import { loadTargetPosition, loadRouteCenterline, loadAirspaceOverlays, installOverlays, overlayPoints } from '@/services/positionMap.js';
 import { RULE_SET_LABEL, SOURCE_MODE_LABEL, labelOf } from '@/ui/labels.js';
 import {
-  openLegalityReview, openLegalityRecompute, openLegalityEscalation, openLegalityManualEvaluate, openRuleVersionView,
+  openLegalityReview, openLegalityRecompute,
   legalStatusText, reviewStateText, planMatchText, ruleReasonText,
   RULE_CODE_TEXT, RULE_RESULT_TEXT, MERGE_KIND_TEXT, CONCLUSION_TEXT, GRADE_TEXT
 } from '@/ui/legalityReviewModal.js';
@@ -66,13 +66,13 @@ const resultMeta = {
 const tabs = [
   { value: 'ILLEGAL', label: '系统判定非法' },
   { value: 'ABNORMAL', label: '系统判定异常' },
-  { value: 'UNDETERMINED', label: '系统待确认' },
+  { value: 'UNDETERMINED', label: '不可判定' },
   { value: 'LEGAL', label: '系统自动通过' }
 ];
 const groups = [
   { code: 'ILLEGAL', label: '系统判定非法', tone: 'red' },
   { code: 'ABNORMAL', label: '系统判定异常', tone: 'amber' },
-  { code: 'UNDETERMINED', label: '系统待确认', tone: 'amber' },
+  { code: 'UNDETERMINED', label: '不可判定', tone: 'amber' },
   { code: 'LEGAL', label: '系统自动通过', tone: 'green' }
 ];
 const evidenceTabs = [
@@ -96,7 +96,6 @@ const allowed = computed(() => selectedEvaluation.value?.allowed_actions || []);
 const selectedHit = computed(() => selectedEvaluation.value?.hit_details?.[selectedHitIndex.value] || null);
 const c01Facts = computed(() => selectedEvaluation.value?.hit_details?.find(hit => hit.rule_code === 'C01')?.facts || null);
 const demoParams = computed(() => selectedEvaluation.value?.param_status === 'DEMO');
-const alarmHref = computed(() => selectedEvaluation.value?.alarm_id ? '#/alarms' : '');
 
 function kpiPlaceholder(desc) {
   return [
@@ -174,8 +173,6 @@ const FACT_KEY_TEXT = {
   start_at: '开始', end_at: '结束', observed_at: '观测时刻', night_from: '夜航起', night_to: '夜航止', kinds: '空域类型'
 };
 const DIM_TEXT = { MATCH: '匹配', MISMATCH: '不匹配', UNDETERMINED: '不可判定', PASS: '通过', FAIL: '不通过', UNKNOWN: '未知' };
-const TRIGGER_TEXT = { MANUAL: '手动触发', SCHEDULED: '自动调度', WORKER: '自动调度', REPLAY: '回放' };
-const MODE_TEXT = { ACTIVE: '正式', SHADOW: '试运行' };
 function factKeyText(key) { return FACT_KEY_TEXT[key] || key.replace(/_/g, ' '); }
 function factValueText(key, value) {
   if (value === null || value === undefined) return '—';
@@ -344,22 +341,6 @@ function onReview() {
 function onRecompute() {
   openLegalityRecompute({ evaluation: selectedEvaluation.value, refresh: refreshAfterAction });
 }
-function onEscalate() {
-  openLegalityEscalation({ evaluation: selectedEvaluation.value, refresh: refreshAfterAction });
-}
-function onManualEvaluate() {
-  const current = selectedEvaluation.value;
-  openLegalityManualEvaluate({ targetId: current?.target_id, targetNo: current?.target_no, refresh: refreshAfterAction });
-}
-function onRuleView() {
-  const current = selectedEvaluation.value;
-  openRuleVersionView({ ruleSetVersionId: current?.rule_set_version_id, ruleSetCode: current?.rule_set_code, versionNo: current?.rule_set_version_no });
-}
-function openAlarm() {
-  const alarmId = selectedEvaluation.value?.alarm_id;
-  if (!alarmId) return;
-  UI.goto('alarms', { alarm: alarmId });
-}
 
 async function loadKpi() {
   // 当日窗口按北京时间取 [今日 00:00, 明日 00:00)，不随浏览器所在时区漂移；北京无夏令时，固定 UTC+8。无权限显示“无权限”而不是 0。
@@ -369,13 +350,29 @@ async function loadKpi() {
   const pick = type => Number(parts.find(part => part.type === type)?.value);
   const from = new Date(Date.UTC(pick('year'), pick('month') - 1, pick('day')) - 8 * 60 * 60 * 1000);
   const to = new Date(from.getTime() + 24 * 60 * 60 * 1000);
+  /* 四格按原版口径：今日研判 / 合法 / 非法 / 不可判定（阶段 18）。
+     服务端的规则效果汇总里没有按判定结论的计数，所以后三格各取一次研判列表的 total——
+     四次查询用同一个窗口与同一组条件（正式模式、每个目标只取最新一次），数字才对得上。
+     判为"异常"的既不算合法也不算非法，不进这三格，所以三格之和可能小于第一格。
+     原来的可告警 / 已复核 / 误报率并入第一格的说明行，不再各占一格。 */
+  const scope = { mode: 'ACTIVE', latest_only: true, from: from.getTime(), to: to.getTime(), page: 1, size: 1 };
+  let summary = null;
+  try { summary = await legalityApi.ruleEffectsSummary({ from: from.getTime(), to: to.getTime(), timezone }); } catch { summary = null; }
   try {
-    const summary = await legalityApi.ruleEffectsSummary({ from: from.getTime(), to: to.getTime(), timezone });
+    const [all, legal, illegal, undetermined] = await Promise.all([
+      legalityApi.listEvaluations(scope),
+      legalityApi.listEvaluations({ ...scope, legal_status: 'LEGAL' }),
+      legalityApi.listEvaluations({ ...scope, legal_status: 'ILLEGAL' }),
+      legalityApi.listEvaluations({ ...scope, legal_status: 'UNDETERMINED' })
+    ]);
+    const effect = summary
+      ? `；可告警 ${summary.alarm_worthy ?? '—'} · 已人工复核 ${summary.reviewed ?? '—'} · 误报率 ${percent(summary.false_positive_rate)}`
+      : '';
     kpiList.value = [
-      { label: '今日研判', value: String(summary.evaluations ?? '—'), color: 'blue', icon: 'check', desc: '正式模式 · 北京时间当日（影子运行不计）' },
-      { label: '可告警研判', value: String(summary.alarm_worthy ?? '—'), color: 'red', icon: 'alert', desc: `生成 ${summary.alarms_created ?? '—'} · 合并 ${summary.alarms_merged ?? '—'}` },
-      { label: '已人工复核', value: String(summary.reviewed ?? '—'), color: 'green', icon: 'check', desc: `人工干预率 ${percent(summary.manual_override_rate)}` },
-      { label: '误报率', value: percent(summary.false_positive_rate), color: 'amber', icon: 'alert', desc: summary.false_positive_rate?.value == null ? '尚无人工复核，暂无法计算' : `漏判率 ${percent(summary.miss_rate)}` }
+      { label: '今日研判', value: String(all.total ?? '—'), color: 'blue', icon: 'check', desc: `正式模式 · 北京时间当日（影子运行不计）${effect}` },
+      { label: '合法', value: String(legal.total ?? '—'), color: 'green', icon: 'check', desc: '计划、时间、空域、航线都对得上' },
+      { label: '非法', value: String(illegal.total ?? '—'), color: 'red', icon: 'alert', desc: '没有有效计划，或进入了任何计划都不能批准的空域、时段' },
+      { label: '不可判定', value: String(undetermined.total ?? '—'), color: 'amber', icon: 'alert', desc: '关键数据缺失或有偏差，要人工核实后才能定性；判为"异常"的不计入这三格' }
     ];
   } catch (error) {
     if (error?.status === 403) kpiList.value = kpiPlaceholder('无权限').map(card => ({ ...card, value: '无权限' }));
@@ -507,13 +504,6 @@ onMounted(() => {
               :options="districtOptions" :disabled="loading" @update:model-value="onRegionChange" />
             <UField class="lg-region-filter" variant="toolbar" label="复核" v-model="st.review" type="select"
               :options="reviewOptions" :disabled="loading" @update:model-value="onRegionChange" />
-            <button class="lg-icon-btn" id="lgRule" type="button" :disabled="!selectedEvaluation" aria-label="查看判定规则与参数（只读）"
-              :title="selectedEvaluation ? `查看 ${ruleVersionText(selectedEvaluation)} 的规则与参数（需要规则读取权限）` : '请先选择研判'" @click="onRuleView">规则</button>
-            <button class="lg-icon-btn" type="button" :disabled="loading" aria-label="刷新数据"
-              title="刷新研判队列与统计" @click="loadQueue({ keepSelection: true }); loadKpi(); loadShadowHint()">刷新</button>
-            <button class="lg-icon-btn" id="lgRecalc" type="button" :disabled="!selectedEvaluation?.target_id || !allowed.includes('RECOMPUTE')"
-              aria-label="对当前目标手动评估" :title="selectedEvaluation?.target_id ? '按当前生效规则集对该目标立即评估一次（需要评估与目标读取权限）' : '当前研判没有可见目标，无法手动评估'"
-              @click="onManualEvaluate">重算</button>
           </header>
 
           <div class="lg-queue-tabs" role="tablist" aria-label="判定状态筛选">
@@ -689,31 +679,18 @@ onMounted(() => {
                         </li>
                       </ul>
                       <p v-else>尚无复核历史</p>
-                      <h4>告警与规则版本</h4>
-                      <dl class="lg-resource-grid">
-                        <dt>告警结果</dt><dd>{{ outcomeText(selectedEvaluation) }}</dd>
-                        <dt>关联告警</dt><dd>
-                          <template v-if="selectedEvaluation.alarm_id"><a class="lg-link-btn" :href="alarmHref" :title="selectedEvaluation.alarm_id" @click.prevent="openAlarm">打开告警页核实</a>{{ selectedEvaluation.event_id ? '（已建待核实事件）' : '' }}</template>
-                        <template v-else>无告警关联或无告警读取权限</template></dd>
-                        <dt>来源模式</dt><dd>{{ sourceText(selectedEvaluation.source_mode) }}</dd>
-                        <dt>规则集版本</dt><dd>{{ ruleVersionText(selectedEvaluation) }} · 参数 {{ demoParams ? '演示值，尚未业务确认' : '已确认' }}</dd>
-                        <dt>运行触发</dt><dd>{{ TRIGGER_TEXT[selectedEvaluation.trigger_kind] || '—' }} · {{ MODE_TEXT[selectedEvaluation.mode] || '—' }}</dd>
-                        <dt>计划研判</dt><dd :title="selectedEvaluation.assessment_id">{{ selectedEvaluation.assessment_id ? '已同步到计划研判' : '未同步（无匹配计划或试运行）' }}</dd>
-                      </dl>
                     </div>
                   </div>
                 </section>
               </div>
 
               <footer class="lg-action-dock">
-                <!-- 动作以服务端 allowed_actions 为准：权限、状态、告警关联任一不满足即禁用；转入处置尚未接入。 -->
+<!-- 动作以服务端 allowed_actions 为准：权限或状态任一不满足即禁用。 -->
                 <div class="detail-actions">
                   <button class="btn pri" type="button" :disabled="!allowed.includes('REVIEW')"
                     :title="allowed.includes('REVIEW') ? '记录人工复核结论' : '当前不可复核：已复核、已被取代或缺少复核权限'" @click="onReview">人工复核</button>
                   <button class="btn" type="button" :disabled="!allowed.includes('RECOMPUTE')"
                     :title="allowed.includes('RECOMPUTE') ? '按当前生效规则集重新研判' : '当前不可重算：已被取代或缺少评估权限'" @click="onRecompute">重新研判</button>
-                  <button class="btn warn" type="button" :disabled="!allowed.includes('ESCALATE')"
-                    :title="allowed.includes('ESCALATE') ? '人工生成来源告警与待核实事件' : '当前不可转告警：结论为合法、已关联告警或缺少权限'" @click="onEscalate">转告警</button>
                 </div>
               </footer>
             </template>
@@ -734,7 +711,10 @@ onMounted(() => {
 .legality-workbench .lg-workspace{min-height:0;flex:1;display:grid;grid-template-columns:minmax(430px,32%) minmax(0,1fr);gap:10px}
 .legality-workbench .lg-queue-panel,.legality-workbench .lg-review-panel{min-width:0;min-height:0;display:flex;flex-direction:column;border:1px solid rgba(130,174,218,.17);border-radius:8px;background:#091827;overflow:hidden;box-shadow:0 10px 24px rgba(0,0,0,.14)}
 .legality-workbench .lg-panel-head,.legality-workbench .lg-review-head{height:46px;min-height:46px;display:flex;align-items:center;gap:8px;padding:0 10px;border-bottom:1px solid rgba(130,174,218,.12);background:#0b1b2d}
-.legality-workbench .lg-panel-head h2{margin:0;color:#dfe9f5;font-size:14px;font-weight:650}.legality-workbench .lg-panel-head h2 span{color:var(--lg-amber)}
+/* 标题不参与收缩：右边两个下拉与三个图标按钮一挤，"待人工复核 7" 就断成两行，
+   把 46px 高的头部撑破（阶段 18）。要让位的是下拉，不是标题。 */
+.legality-workbench .lg-panel-head h2{margin:0;color:#dfe9f5;font-size:14px;font-weight:650;flex:none;white-space:nowrap}.legality-workbench .lg-panel-head h2 span{color:var(--lg-amber)}
+.legality-workbench .lg-panel-head .lg-region-filter{min-width:0;flex:0 1 auto}
 .legality-workbench .lg-head-spacer{flex:1}
 .legality-workbench .lg-region-filter{display:flex;align-items:center;gap:6px;color:#7f93aa;font-size:11px}.legality-workbench .lg-region-filter .n-select{width:112px}
 .legality-workbench .lg-icon-btn{width:32px;height:30px;display:flex;align-items:center;justify-content:center;border:1px solid rgba(130,174,218,.16);border-radius:5px;background:#0b1b2d;color:#91a6bd;cursor:pointer}.legality-workbench .lg-icon-btn:hover{color:#dce9f8;border-color:rgba(75,156,255,.5)}

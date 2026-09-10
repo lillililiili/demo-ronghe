@@ -103,14 +103,25 @@ class Stage3AccessControlServiceTest {
         assertThat(jdbc.queryForObject("""
                 select count(*) from app_role_permission
                 where permission_code in ('flight:read', 'route:read', 'airspace:read', 'assessment:read')
-                  and role_code not in ('ROLE-ADMIN', 'ROLE-DEMO-REVIEWER')
+                  and role_code <> 'ROLE-ADMIN' and role_code not like 'ROLE-DEMO-%'
                 """, Integer.class)).isZero();   // 演示复核员是 local/test 种子角色（15-34），不是生产角色
-        // 演示复核员在这组码里只许持四个 READ（15-34）：按名放行之外再钉死内容，种子将来多授一个也会红。
+        // 按名放行之外再钉死内容：**每个演示角色各自持哪几个**都列出来。
+        // 只写"ROLE-DEMO- 开头的放行"等于把守卫拆了——种子多授一个、或多出第六个演示角色，都不会有人知道。
         assertThat(jdbc.queryForList("""
-                select permission_code || '=' || permission_level from app_role_permission
+                select role_code || ' ' || permission_code || '=' || permission_level from app_role_permission
                 where permission_code in ('flight:read', 'route:read', 'airspace:read', 'assessment:read')
-                  and role_code = 'ROLE-DEMO-REVIEWER' order by permission_code
-                """, String.class)).containsExactly("airspace:read=READ", "assessment:read=READ", "flight:read=READ", "route:read=READ");
+                  and role_code like 'ROLE-DEMO-%' order by role_code, permission_code
+                """, String.class)).containsExactly(
+                        // 决策 18-11 起读动作由"菜单 → 该页要读什么"推出：态势页带来空域与研判读，
+                        // 飞行监管页带来飞行与航线读。谁的菜单变了，这份清单就该跟着变——它变了才说明守卫在起作用。
+                        "ROLE-DEMO-AUDIT airspace:read=READ", "ROLE-DEMO-AUDIT assessment:read=READ",
+                        "ROLE-DEMO-AUDIT flight:read=READ", "ROLE-DEMO-AUDIT route:read=READ",
+                        "ROLE-DEMO-AUTH airspace:read=READ", "ROLE-DEMO-AUTH assessment:read=READ",
+                        "ROLE-DEMO-DUTY airspace:read=READ", "ROLE-DEMO-DUTY assessment:read=READ",
+                        "ROLE-DEMO-DUTY flight:read=READ", "ROLE-DEMO-DUTY route:read=READ",
+                        "ROLE-DEMO-REVIEWER airspace:read=READ", "ROLE-DEMO-REVIEWER assessment:read=READ",
+                        "ROLE-DEMO-REVIEWER flight:read=READ", "ROLE-DEMO-REVIEWER route:read=READ");
+
     }
 
     @Test

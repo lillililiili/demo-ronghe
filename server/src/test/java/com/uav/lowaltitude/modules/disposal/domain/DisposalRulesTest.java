@@ -232,6 +232,15 @@ class DisposalRulesTest {
         return DisposalRules.executionBlockReason(DisposalRules.APPROVED, kinds);
     }
 
+    /**
+     * 决策 18-14：风险的流程到"通知上级"为止，不进处置授权。
+     * 接口层那条反面用例只钉答复，名单里挂着 RISK 时它照样绿——名单本身要单独钉。
+     */
+    @Test
+    void riskIsNotADisposalSubject() {
+        assertThat(DisposalRules.SUBJECT_KINDS).containsExactlyInAnyOrder("UAV_EVENT", "TARGET");
+    }
+
     @Test
     void eventKindsMatchTheMigrationWhitelist() {
         assertThat(DisposalRules.EVENT_KINDS).containsExactlyInAnyOrder("REQUEST", "APPROVE", "REJECT", "EXECUTE",

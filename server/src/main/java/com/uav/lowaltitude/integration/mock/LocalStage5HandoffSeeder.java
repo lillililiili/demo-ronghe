@@ -55,8 +55,10 @@ public class LocalStage5HandoffSeeder implements ApplicationRunner {
         if (admins.isEmpty()) throw new IllegalStateException("stage 5 handoff seed requires the local admin1 user (LocalUserSeeder)");
         String submitter = admins.get(0);
         Instant base = Instant.parse("2026-09-05T01:00:00Z");
-        recipient(RECIPIENT_POLICE, "公安机关（本地演示接收方）", base);
-        recipient(RECIPIENT_AVIATION, "民航监管部门（本地演示接收方）", base);
+        recipient(RECIPIENT_POLICE, "公安机关（本地演示接收方）", base, false);
+        // 全新库上迁移先跑、接收方还不存在，所以"标默认"这件事迁移替不了种子做：
+        // 不在这里标，演示库起来后风险通知不传接收方就一律 400（决策 18-14 之后页面已经不传了）。
+        recipient(RECIPIENT_AVIATION, "民航监管部门（本地演示接收方）", base, true);
         // 两条风险都停留在“待通知”：本期没有可信送达/回执事实，任何样例都不得把风险推进到 NOTIFIED。
         risk(RISK_PENDING, "seed-stage5-verify-pending", "风险-0905-101", "HIGH", "ROUTE_DEVIATION", "已核验，材料已提交、渠道未接通", base, submitter);
         risk(RISK_HISTORY, "seed-stage5-verify-history", "风险-0905-102", "MEDIUM", "AIRSPACE_CONFLICT", "已核验，历史送达样例（mock）", base.plusSeconds(1), submitter);
@@ -73,10 +75,10 @@ public class LocalStage5HandoffSeeder implements ApplicationRunner {
                 historySubmitted.plusSeconds(5), historySubmitted.plusSeconds(60), historySubmitted.plusSeconds(3600));
     }
 
-    private void recipient(String id, String name, Instant at) {
-        jdbc.update("INSERT INTO handoff_recipient (recipient_id,display_name,handoff_type,enabled,created_at,updated_at)"
-                + " SELECT ?,?,'RISK_NOTICE',TRUE,?,? WHERE NOT EXISTS (SELECT 1 FROM handoff_recipient WHERE recipient_id=?)",
-                id, name, ts(at), ts(at), id);
+    private void recipient(String id, String name, Instant at, boolean isDefault) {
+        jdbc.update("INSERT INTO handoff_recipient (recipient_id,display_name,handoff_type,enabled,is_default,created_at,updated_at)"
+                + " SELECT ?,?,'RISK_NOTICE',TRUE,?,?,? WHERE NOT EXISTS (SELECT 1 FROM handoff_recipient WHERE recipient_id=?)",
+                id, name, isDefault, ts(at), ts(at), id);
     }
 
     private void risk(String id, String historyId, String sourceRisk, String severity, String reason, String text, Instant at, String actor) {

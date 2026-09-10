@@ -96,10 +96,18 @@ public class SuperAdminIntegrityInitializer implements ApplicationRunner {
                   AND permission_code IN
                       (SELECT permission_code FROM app_permission WHERE permission_kind = 'MODULE')
                 """);
+        // 用户、角色、反制这三个模块只归超级管理员——阶段 4 单一超管改造定的红线，每次启动重申一次。
+        //
+        // **审计不在其列（决策 18-13）**：审计员这个角色的本职就是看审计日志，把 audit 一并锁死是规则定得过严。
+        // 这里不按角色名开豁免——按名字豁免等于在产品代码里留一个只对某些名字生效的洞，
+        // 而问题出在清单本身，不在哪个角色特殊。
+        //
+        // 这条抹除只在**第二次启动**才现形（本类 @Order 30 跑在演示种子 @Order 130 之前），
+        // 第一次启动看着好好的——与 15-25 是同一个病，所以由用例手动再跑一次来盯。
         jdbcTemplate.update("""
                 UPDATE app_role_permission SET permission_level = 'NONE', menu_enabled = FALSE
                 WHERE role_code <> 'ROLE-ADMIN'
-                  AND permission_code IN ('users', 'roles', 'audit', 'countermeasure')
+                  AND permission_code IN ('users', 'roles', 'countermeasure')
                 """);
         int holders = count("SELECT COUNT(*) FROM app_user WHERE role_code = 'ROLE-ADMIN'");
         if (holders != 1) throw new IllegalStateException("the system must have exactly one ROLE-ADMIN account");

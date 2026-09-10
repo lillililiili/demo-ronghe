@@ -25,7 +25,7 @@
 | 13-21 | `allowed_actions` 按状态逐一断言且按权限裁剪（只有执行权只得 EXECUTE、只有停止权只得 STOP） | E1 注入证伪发现原用例只测 REQUESTED 状态，漏掉权限判断也能绿；否则只读用户会在 APPROVED 详情页看到可点的"执行" |
 | 13-22 | 事件词表加 `PROTOCOL_NOT_OPENED`（A 返回 `PROTOCOL_UNSUPPORTED`），`DEVICE_CONTROL_UNAVAILABLE` 只表示设备无自动执行能力（4CH，B 侧预检）；四种 `execution_block_reason` 与事件一一对应：DEVICE_CONTROL_UNAVAILABLE→DEVICE_CAPABILITY、PROTOCOL_NOT_OPENED→PROTOCOL_NOT_OPENED、DEVICE_NOT_BOUND→NOT_BOUND、DEVICE_OFFLINE→DEVICE_OFFLINE | 审查 13 第 7 轮补充：由 `event_kind` 推导时一种事件不能对两种原因；一一对应最不易被改回二分 |
 | 13-23 | `device_stop_result=EXECUTED` 本期不可达（设备协议无急停，平台拿不到"确已停止"的正面证据）；非设备通道恒 `NOT_ATTEMPTED`，设备通道无证据为 `UNAVAILABLE`；`EXECUTED` 保留给 A 日后实现急停时配套的正面事件 `DEVICE_STOP_EXECUTED` | E1 发现原推导会让人工执行的授权显示"设备已停"，正是 13-10 要防的误读 |
-| 13-24 | 主体支持：`UAV_EVENT` 全部动作；`TARGET` 只允许 `DISPERSAL`（策略 `requires_confirmed_event=false`，校验目标存在且在调用者范围元组内）；`RISK` 本期不支持（400 `SUBJECT_KIND_NOT_SUPPORTED`） | 态势页"派发驱离"以目标为主体；风险主体无可信状态来源 |
+| 13-24 | 主体支持：`UAV_EVENT` 全部动作；`TARGET` 只允许 `DISPERSAL`（策略 `requires_confirmed_event=false`，校验目标存在且在调用者范围元组内）；`RISK` 不支持（400 `SUBJECT_KIND_NOT_SUPPORTED`；决策 18-14 定死，见下） | 态势页"派发驱离"以目标为主体；风险主体无可信状态来源 |
 | 13-25 | 处罚交接：前提（存在 COMPLETED 授权）通过后，本期返回 409 `HANDOFF_MATERIALS_NOT_DEFINED`（"处罚交接的材料包尚未定义"），不硬塞风险形状的快照；材料包内容归下一阶段"处罚案件"与客户 Q4/Q7 | 送交公安的材料包是业务决定；诚实的 409 好过落到"源对象不存在"的 404 |
 | 13-26 | 授权 DTO 回填 `requested_by_name / approved_by_name`（联表 `app_user`） | 页面显示审批人姓名而非 ID |
 | 13-24（补充） | TARGET 主体的前置条件：目标存在、在调用者范围元组内、经 `target_current_alias` 解析到存活目标（被合并的历史 ID 解析到幸存者）、`target_latest_state` 在 C03 `fresh_seconds` 内（否则 409 `TARGET_NOT_ACTIVE`）；注释里"没有可信归属"的说法已过时（阶段 8/9 起 `target` 有 `owner_org_id/district_id`），改为只保留"状态来源"这一半的前置 | 审查 13 第 9 轮：元组校验只解决可见性，不覆盖目标是否仍活跃/已被合并 |

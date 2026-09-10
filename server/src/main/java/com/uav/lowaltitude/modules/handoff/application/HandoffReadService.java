@@ -98,7 +98,7 @@ public class HandoffReadService {
         SourceVisibility source = sourceVisibility(row);
         return new HandoffDetailDto(row.handoffId(), row.sourceKind(), row.sourceId(), row.handoffType(), row.recipientId(), row.recipientName(),
                 row.sourceVersion(), row.ownerOrgId(), row.districtId(), row.sourceMode(), row.submittedBy(), requiredMillis(row.createdAt()),
-                row.deliveryStatus(), row.receiptStatus(), row.blockedReason(), material(row, source), latest == null ? null : dto(latest),
+                row.deliveryStatus(), row.receiptStatus(), row.receiptResult(), row.blockedReason(), material(row, source), latest == null ? null : dto(latest),
                 new AvailabilityDto(source.availability, evidenceAvailability(row, repository.snapshot(row.handoffId()), source.availability)), row.ownerOrgName(), row.districtName(), row.submittedByName(), row.sourceNo());
     }
 
@@ -217,7 +217,7 @@ public class HandoffReadService {
     public static HandoffDto dto(HandoffRow row) {
         return new HandoffDto(row.handoffId(), row.sourceKind(), row.sourceId(), row.handoffType(), row.recipientId(), row.recipientName(),
                 row.sourceVersion(), row.ownerOrgId(), row.districtId(), row.sourceMode(), row.submittedBy(), requiredMillis(row.createdAt()),
-                row.deliveryStatus(), row.receiptStatus(), row.blockedReason(),
+                row.deliveryStatus(), row.receiptStatus(), row.receiptResult(), row.blockedReason(),
                 row.ownerOrgName(), row.districtName(), row.submittedByName(), row.sourceNo());
     }
 

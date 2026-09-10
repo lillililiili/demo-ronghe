@@ -5,3 +5,12 @@
   border-radius:6px;cursor:pointer;transition:background .15s,box-shadow .15s}
 .flrisk-row:hover{background:rgba(64,158,255,.07)}
 .flrisk-row.on{background:rgba(34,211,238,.13);box-shadow:inset 3px 0 0 var(--cyan)}
+
+/* ---------- 全部风险事件：筛选条一行（阶段 18 对照原版） ----------
+   四个常用筛选按可用宽度收窄、不换行；"更多筛选"展开的三个另起一行，与上面同宽同间距。 */
+.flights-page .toolbar-fields:not(.rk-more){flex-wrap:nowrap}
+.flights-page .toolbar .field{min-width:0}
+/* 收窄的是控件，不是标签：标签一起收缩就会被从左边裁掉（"类别"只剩"别"）。 */
+.flights-page .toolbar .field>label{flex:none}
+.flights-page .toolbar-fields:not(.rk-more) .field .n-select{width:auto;min-width:0;max-width:144px}
+.flights-page .toolbar-fields.rk-more{flex-basis:100%;margin-top:8px}

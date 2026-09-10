@@ -60,6 +60,10 @@ class LocalStage5HandoffSeederTest {
     @Test
     void seedsTwoRiskNoticeRecipientsOnePendingSampleAndOneMockDeliveredHistory() {
         assertThat(count("select count(*) from handoff_recipient where recipient_id like 'seed-stage5-%' and handoff_type='RISK_NOTICE' and enabled=true")).isEqualTo(2L);
+        // 决策 18-14 之后页面不再选接收方，全新库上必须**恰好一个**默认：
+        // 一个都没有，通知上级一律 400；多个默认等于没有默认，服务端还得再猜一次。
+        assertThat(count("select count(*) from handoff_recipient where recipient_id like 'seed-stage5-%'"
+                + " and handoff_type='RISK_NOTICE' and enabled=true and is_default=true")).isEqualTo(1L);
         assertThat(count("select count(*) from handoff h join handoff_delivery d on d.handoff_id=h.handoff_id where h.handoff_id='seed-stage5-handoff-pending' and d.attempt_no=1 and d.delivery_status='PENDING_DELIVERY' and d.receipt_status='NOT_EXPECTED' and d.blocked_reason='CHANNEL_NOT_CONNECTED' and h.source_mode='mock'")).isEqualTo(1L);
         assertThat(count("select count(*) from handoff h join handoff_delivery d on d.handoff_id=h.handoff_id where h.handoff_id='seed-stage5-handoff-delivered' and d.delivery_status='DELIVERED' and d.delivered_at is not null and h.source_mode='mock'")).isEqualTo(1L);
         assertThat(count("select count(*) from handoff h where h.handoff_id like 'seed-stage5-%' and not exists (select 1 from handoff_material_snapshot s where s.handoff_id=h.handoff_id)")).isZero();

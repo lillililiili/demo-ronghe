@@ -26,6 +26,9 @@ public final class HandoffRules {
     public static final String PENDING_DELIVERY = "PENDING_DELIVERY";
     public static final String NOT_EXPECTED = "NOT_EXPECTED";
     public static final String CHANNEL_NOT_CONNECTED = "CHANNEL_NOT_CONNECTED";
+    // 回执结果（决策 18-14）：风险的闭环判据是"已驱离"，不是"送到了"。未驱离说明事还没完，风险继续待通知。
+    public static final String RECEIPT_DISPERSED = "DISPERSED";
+    public static final String RECEIPT_NOT_DISPERSED = "NOT_DISPERSED";
     public static final int SNAPSHOT_SCHEMA_VERSION = 1;
 
     private HandoffRules() { }

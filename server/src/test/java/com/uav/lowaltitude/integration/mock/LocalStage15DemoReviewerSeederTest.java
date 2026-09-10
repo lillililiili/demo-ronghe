@@ -113,7 +113,9 @@ class LocalStage15DemoReviewerSeederTest {
             "situation", List.of(PermissionCode.DEVICE_READ, PermissionCode.TARGET_READ, PermissionCode.FUSION_READ,
                     PermissionCode.AIRSPACE_READ, PermissionCode.ASSESSMENT_READ),
             "flights", List.of(PermissionCode.FLIGHT_READ, PermissionCode.ROUTE_READ,
-                    PermissionCode.AIRSPACE_READ, PermissionCode.RISK_READ));
+                    PermissionCode.AIRSPACE_READ, PermissionCode.RISK_READ),
+            // 处罚页要看案件证据（18-12）：复核人判不了"证据够不够"就复核不了案子。
+            "punish", List.of(PermissionCode.PUNISHMENT_READ, PermissionCode.EVIDENCE_READ));
 
     @Test
     void everyMenuComesWithTheReadActionsThatPageNeeds() throws Exception {

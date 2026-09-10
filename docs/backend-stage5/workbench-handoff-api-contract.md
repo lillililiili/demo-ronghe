@@ -82,15 +82,18 @@ POST 头：`Idempotency-Key`（8–128）。body 只允许 `source_kind,source_i
 
 规则：
 
-- `source_kind=RISK` 且源风险当前状态 `PENDING_NOTIFICATION`，否则 409 `INVALID_TRANSITION`；`expected_version` 不等于当前版本 409 `VERSION_CONFLICT`。创建前锁定源风险，但**不修改**风险状态或版本。
+- `source_kind=RISK` 且源风险当前状态 `PENDING_NOTIFICATION`，否则 409 `INVALID_TRANSITION`；`expected_version` 不等于当前版本 409 `VERSION_CONFLICT`。创建前锁定源风险。**回执确认"已驱离"时把风险推进到"已通知"并把版本 +1**（决策 18-14：闭环判据是回执已驱离，不是送到了；停在"待通知"会让值班台一直把它当未办事项）——只对 `RISK_NOTICE` 且回执为 `DISPERSED` 生效，`NOT_DISPERSED` 与未接通渠道都保持"待通知"。推进与交接落库在同一事务、同一把源风险的锁下；这一步不新记审计动作，结果写在该笔交接的审计详情里（`risk_state=NOTIFIED`），否则查审计的人会看到风险状态变了却找不到任何一条记录说明为什么。
 - `handoff_type=UAV_PUNISHMENT`（任何 `source_kind`）本期一律 409 `HANDOFF_PREREQUISITE_UNAVAILABLE`。其余未知 `source_kind/handoff_type` 400。
 - 接收方从 `handoff_recipient` 中 `enabled=true` 且 `handoff_type` 匹配的行选择；目录为空 409 `RECIPIENT_NOT_CONFIGURED`；给定 `recipient_id` 不在可用目录 404 `RECIPIENT_NOT_FOUND`。生产不自动插入接收方。
+- `recipient_id` 可缺省（决策 18-14）：不传时依次找：该 `handoff_type` 下 `is_default=true` 且 `enabled=true` 的接收方 → 该类型**恰好只有一个**启用接收方时用它（决策 18-16：只有一个的时候没有可选的余地，再要求值班员显式指定就是让他把唯一的答案抄一遍）→ 零个或多个且都没标默认，才 400 `RECIPIENT_REQUIRED`。缺省只是"由服务端定收件人"，其余校验与显式传值完全一致，落库与响应里的 `recipient_id` 都是实际生效的那个。幂等键按"客户端这次发的请求"计算：不传接收方与显式传了默认接收方是两个不同的键。
 - 逻辑唯一 `(source_kind,source_id,handoff_type,recipient_id)` 由数据库唯一约束保证；命中 409 `HANDOFF_ALREADY_EXISTS`，错误体只有 code/message。
 - 事务：鉴权 → 锁源对象 → claim 幂等键 → 版本/状态/接收方检查 → 插入 `handoff` + `handoff_material_snapshot` + 首条 `handoff_delivery(attempt_no=1, delivery_status=PENDING_DELIVERY, receipt_status=NOT_EXPECTED, blocked_reason=CHANNEL_NOT_CONNECTED)` + 成功审计 → 提交。任何失败整体回滚，失败审计走事务外统一路径。
 - 快照白名单：风险 `risk_id,source_risk_id,risk_type,severity,state,reason_code,reason_text,occurred_at,received_at,version`、核实历史（`conclusion,note,resulting_state,version,created_at,actor_id`）、当时可见的关联引用及版本（`plan_id,route_version_id,assessment_id,target_id,track_id`）。没有文件就没有文件名/哈希/下载链接。`schema_version=1`。
 - 读取快照时重新检查交接归属与当前源对象/关联对象权限，不可见的关联引用从响应删除，不提示“有 N 个无权对象”。
 
 POST 成功 201：`{handoff_id,source_kind,source_id,handoff_type,recipient_id,source_version,delivery_status:"PENDING_DELIVERY",receipt_status:"NOT_EXPECTED",blocked_reason:"CHANNEL_NOT_CONNECTED",created_at}`。
+
+回执结果：`handoff.receipt_result` 记录上级回执带回的处置结果，创建响应、**列表**与详情都透出 `receipt_result`（通报记录是列表，详情有而列表没有，页面上那一列就永远空着）。取值 `DISPERSED/NOT_DISPERSED`；只有风险通知类的交接才有结果，处罚交接与尚未送达的交接为空，空值字段按本接口惯例整条不出现。该字段由渠道回执写入，不开放外部写接口。
 
 列表过滤：`source_kind,source_id,delivery_status,created_from,created_to,source_mode`；排序 `created_at DESC, handoff_id DESC`。`delivery_status` 指最新一次尝试。详情增加 `material`（白名单快照）与 `latest_delivery`；投递记录 `attempt_no ASC`。交接归属 `(owner_org_id,district_id)` 复制自源风险，列表/详情/count 用同一范围谓词。
 
@@ -107,7 +110,7 @@ POST 成功 201：`{handoff_id,source_kind,source_id,handoff_type,recipient_id,s
 
 ## 稳定错误码
 
-`FORBIDDEN(403)`、`NOT_FOUND(404)`、`STATE_REQUIRES_KIND(400)`、`INVALID_KIND(400)`、`UNKNOWN_FIELD(400)`、`INVALID_REQUEST(400)`、`RECIPIENT_NOT_FOUND(404)`、`RECIPIENT_NOT_CONFIGURED(409)`、`HANDOFF_PREREQUISITE_UNAVAILABLE(409)`、`HANDOFF_ALREADY_EXISTS(409)`、`INVALID_TRANSITION(409)`、`VERSION_CONFLICT(409)`、`IDEMPOTENCY_REPLAY(409)`、`IDEMPOTENCY_KEY_REUSED(409)`。阶段 4 已有错误码保持不变。
+`FORBIDDEN(403)`、`NOT_FOUND(404)`、`STATE_REQUIRES_KIND(400)`、`INVALID_KIND(400)`、`UNKNOWN_FIELD(400)`、`INVALID_REQUEST(400)`、`RECIPIENT_NOT_FOUND(404)`、`RECIPIENT_REQUIRED(400)`、`RECIPIENT_NOT_CONFIGURED(409)`、`HANDOFF_PREREQUISITE_UNAVAILABLE(409)`、`HANDOFF_ALREADY_EXISTS(409)`、`INVALID_TRANSITION(409)`、`VERSION_CONFLICT(409)`、`IDEMPOTENCY_REPLAY(409)`、`IDEMPOTENCY_KEY_REUSED(409)`。阶段 4 已有错误码保持不变。
 
 ## 尚未接入
 

@@ -75,11 +75,25 @@ const PATH_LABELS = [
   ['/stats', '运行统计']
 ];
 
+/* 服务端偶尔会写单复数不一致的模块码（实测审计里同时出现 risk 与 risks、alarms 与 alarm）。
+   归一只做显示，不进筛选项——否则下拉里会出现两个"飞行风险"。 */
+const MODULE_ALIASES = { risks: 'risk', alarm: 'alarms', rule: 'rules', device: 'devices', user: 'users', role: 'roles' };
+
 export const moduleOptions = Object.entries(MODULE_LABELS).map(([value, label]) => ({ value, label }));
 export const actionOptions = Object.entries(ACTION_LABELS).map(([value, label]) => ({ value, label }));
 
 export function moduleText(code) {
-  return MODULE_LABELS[code] || code || '—';
+  if (!code) return '—';
+  return MODULE_LABELS[code] || MODULE_LABELS[MODULE_ALIASES[code]] || code;
+}
+
+/* 本机回环地址在屏幕上没有意义：值班员看到 0:0:0:0:0:0:0:1 只会以为是坏数据。
+   原始值仍进 title，排查时拿得到。 */
+const LOOPBACK = new Set(['127.0.0.1', '::1', '0:0:0:0:0:0:0:1', '::ffff:127.0.0.1', 'localhost']);
+export function ipText(ip) {
+  const value = String(ip || '').trim();
+  if (!value) return '—';
+  return LOOPBACK.has(value) ? '本机' : value;
 }
 
 export function actionText(action) {

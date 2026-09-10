@@ -13,11 +13,28 @@ export const SESSION_KEY = 'dongying.api.session.v1';
 
 export const PASSWORD = process.env.E2E_PASSWORD || 'changeme';
 
-/** 演示账号。reviewer1 由 LocalStage15DemoReviewerSeeder 造（决策 15-3）。 */
+/**
+ * 演示账号：**一个角色取一个**。矩阵的规模由这张表决定，断言不用改——
+ * 每条用例的期望值是运行时从服务端 `/auth/me` 的 `menu_keys` 现取的，不是在用例里抄的第二份角色矩阵。
+ *
+ * 这张表是**明示的覆盖承诺**（改了要有人确认），不是自动发现的结果；
+ * 但"承诺覆盖的角色是不是真的都在"由 `access.spec.js` 里的角色覆盖自检去守——
+ * 只写一张静态表的话，种子没跑成功时矩阵会悄悄缩回只剩超管，而且全绿。
+ */
 export const ACCOUNTS = [
   { account: 'admin1', why: '内置超级管理员，全部菜单可达' },
-  { account: 'reviewer1', why: '第二人角色 ROLE-DEMO-REVIEWER（决策 15-3），用来验"被拒"的那一半' }
+  { account: 'reviewer1', why: '第二人复核角色，用来验"被拒"的那一半' },
+  { account: 'zhangjg', why: '处置授权人：反制/干扰授权与案件审批' },
+  { account: 'zhangwei', why: '值班员：态势监视、告警核实与派发' },
+  { account: 'zhaopeng', why: '设备运维：设备接入、调测与监测' },
+  { account: 'wugang', why: '审计员：只读加审计日志' }
 ];
+
+/**
+ * 已停用的演示账号：**必须登不上**。
+ * 单独列出来而不是混进上面那张表——它验的是认证，不是访问矩阵。
+ */
+export const DISABLED_ACCOUNT = { account: 'zhoumin', why: '设备运维（已停用）' };
 
 /**
  * 登录并读回 /auth/me。

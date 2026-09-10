@@ -176,6 +176,23 @@ class HandoffPunishmentMaterialsApiTest {
                 .andExpect(jsonPath("$.error.code").value("VERSION_CONFLICT"));
     }
 
+    /**
+     * 决策 18-14 只放开了风险通知的接收方缺省。移送给谁是案件的一部分，
+     * 处罚交接漏填接收方必须当场拒绝——不能顺手替值班员挑一个。
+     */
+    @Test
+    void punishmentHandoffStillRequiresAnExplicitRecipient() throws Exception {
+        // 把这个接收方标成默认：不这样，缺省逻辑即便对处罚也生效，也会因为"查不到默认"而恰好 400，测试就白钉了。
+        jdbc.update("update handoff_recipient set is_default=true where recipient_id=?", recipientId);
+        long version = jdbc.queryForObject("select version from uav_event where event_id=?", Long.class, eventId);
+        String withoutRecipient = "{\"source_kind\":\"UAV_EVENT\",\"source_id\":\"" + eventId
+                + "\",\"handoff_type\":\"UAV_PUNISHMENT\",\"expected_version\":" + version + "}";
+        mvc.perform(post("/api/v1/handoffs").header("Authorization", bearer(submitter))
+                        .header("Idempotency-Key", key()).contentType(MediaType.APPLICATION_JSON).content(withoutRecipient))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("RECIPIENT_REQUIRED"));
+    }
+
     @Test
     void secondHandoffForSameEventAndRecipientIsRejected() throws Exception {
         submit(submitter, eventId).andExpect(status().isCreated());

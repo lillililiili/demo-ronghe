@@ -284,10 +284,20 @@ function queryOf() {
   return q;
 }
 
+/* 告警内容写成一句话：谁、什么时候、在哪、发生了什么（阶段 18 对照原版）。
+   原来那句把类别、来源、来源模式、时间拼在一起，其中类别与"（模拟）"在左边一列已经各有一处，
+   同一件事在一屏里说两遍。来源改到第二行小字，不再带模式后缀。
+   服务端没有告警描述字段，所以这句只由已有事实拼成，缺哪段就少哪段，不补"未知"。 */
 function summaryOf(a) {
-  const text = `${typeOf(a)} · 来源 ${esc(a.source_name || a.source_code || '—')}（${modeOf(a).t}）· 发生 ${fmt(a.occurred_at) || '未知'}`;
-  return `<div title="${text}" style="white-space:normal;line-height:1.5;
-        max-height:34px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">${text}</div>`;
+  const parts = [];
+  if (a.target_no) parts.push(`目标 ${esc(a.target_no)}`);
+  const when = fmt(a.occurred_at);
+  if (when) parts.push(`于 ${when.slice(5, 16)}`);
+  if (a.district_name) parts.push(`在${esc(a.district_name)}`);
+  parts.push(`触发${typeOf(a)}`);
+  const text = parts.join(' ');
+  const source = esc(a.source_name || a.source_code || '');
+  return U.cell(text, source ? `来源 ${source}` : '', { title: source ? `${text} · 来源 ${source}` : text });
 }
 
 function listHtml() {
@@ -334,26 +344,42 @@ function disposalSteps(a, ev) {
 
 function disposalActions(a, ev) {
   const dis = (key, label, reason, cls) => `<button class="btn ${cls || ''}" data-al="${key}" disabled title="${reason}">${label}</button>`;
-  if (!ev) return dis('verify', '人工核实', '尚未创建核实事件，无法核实');
-  if ((ev.allowed_actions || []).includes('VERIFY')) return `<button class="btn pri" data-al="verify">人工核实</button>`;
-  if (ev.state === 'CONFIRMED') {
-    /* 已核实的事件可以发起联动反制申请：按钮本身只负责“提申请”，能不能执行由审批与时限决定。 */
-    /* 已有未了结的联动反制申请（待审批/已批准/执行中）时服务端会拒绝再发起（ACTIVE_AUTHORIZATION_EXISTS），按钮直接禁用。 */
-    const active = disposal.byAction.COUNTERMEASURE;
-    const activeText = active && DISPOSAL_ACTIVE_STATUSES.includes(active.status) ? `已有联动反制申请（${disposalStatusText(active)}），了结前不能再次发起` : '';
-    const counter = disposal.unavailable || disposal.error
-      ? dis('counter', `${U.icon('bolt')} 发起联动反制`, esc(disposal.error || DISPOSAL_UNAVAILABLE_TEXT), 'danger')
-      : !a.target_id
-        ? dis('counter', `${U.icon('bolt')} 发起联动反制`, '该告警没有关联感知目标，无法发起反制', 'danger')
-      : activeText
-        ? dis('counter', `${U.icon('bolt')} 发起联动反制`, esc(activeText), 'danger')
-        : `<button class="btn danger" data-al="counter">${U.icon('bolt')} 发起联动反制</button>`;
-    /* 阶段 14：处罚移送已接入。按钮只负责提交交接，能不能提交（已核实、有已完成授权、未重复）由服务端判，
-       前端不预判（决策 14-18）。 */
-    return counter + ` <button class="btn" data-al="punish">提交处罚交接</button>`;
+  const COUNTER = `${U.icon('bolt')} 发起联动反制`;
+  /* 三颗按钮在任何状态下都出现：能力是有的，只是这一档状态服务端不收。
+     该状态不允许就禁用并写明原因，不整段消失——按钮忽有忽无，值班员会以为这条事项没有这个动作。 */
+  const verifyButton = () => {
+    if (!ev) return dis('verify', '人工核实', '尚未创建核实事件，无法核实');
+    if ((ev.allowed_actions || []).includes('VERIFY')) return `<button class="btn pri" data-al="verify">人工核实</button>`;
+    if (ev.state === 'CONFIRMED') return dis('verify', '人工核实', '该事件已核实为属实，不再重复核实');
+    if (ev.state === 'FALSE_POSITIVE') return dis('verify', '人工核实', '该事件已判定为误报，不再核实');
+    return dis('verify', '人工核实', '当前账号缺少核实权限（alarm:verify），或事件不在可核实状态');
+  };
+  const blockedReason = () => {
+    if (!ev) return '该告警尚未创建核实事件';
+    if (ev.state === 'FALSE_POSITIVE') return '该事件已判定为误报';
+    if (ev.state !== 'CONFIRMED') return '该事件尚未核实为属实';
+    return '';
+  };
+  const blocked = blockedReason();
+  if (blocked) {
+    return verifyButton()
+      + ' ' + dis('counter', COUNTER, `${blocked}，不能发起反制`, 'danger')
+      + ' ' + dis('punish', '提交处罚交接', `${blocked}，不能移送处罚`);
   }
-  if (ev.state === 'FALSE_POSITIVE') return '';
-  return dis('verify', '人工核实', '当前账号缺少核实权限（alarm:verify），或事件不在可核实状态');
+  /* 已核实的事件可以发起联动反制申请：按钮本身只负责“提申请”，能不能执行由审批与时限决定。 */
+  /* 已有未了结的联动反制申请（待审批/已批准/执行中）时服务端会拒绝再发起（ACTIVE_AUTHORIZATION_EXISTS），按钮直接禁用。 */
+  const active = disposal.byAction.COUNTERMEASURE;
+  const activeText = active && DISPOSAL_ACTIVE_STATUSES.includes(active.status) ? `已有联动反制申请（${disposalStatusText(active)}），了结前不能再次发起` : '';
+  const counter = disposal.unavailable || disposal.error
+    ? dis('counter', COUNTER, esc(disposal.error || DISPOSAL_UNAVAILABLE_TEXT), 'danger')
+    : !a.target_id
+      ? dis('counter', COUNTER, '该告警没有关联感知目标，无法发起反制', 'danger')
+    : activeText
+      ? dis('counter', COUNTER, esc(activeText), 'danger')
+      : `<button class="btn danger" data-al="counter">${COUNTER}</button>`;
+  /* 阶段 14：处罚移送已接入。按钮只负责提交交接，能不能提交（已核实、有已完成授权、未重复）由服务端判，
+     前端不预判（决策 14-18）。 */
+  return verifyButton() + ' ' + counter + ` <button class="btn" data-al="punish">提交处罚交接</button>`;
 }
 
 function historyHtml() {
@@ -393,7 +419,12 @@ function detailHtml() {
     ${U.metricStrip([
       { label: '告警等级', value: sevOf(a).t, tone: sevOf(a).tone, icon: 'alert' },
       { label: '处置状态', value: stateOf(a).t, tone: a.state === 'CONFIRMED' || a.state === 'FALSE_POSITIVE' ? 'info' : 'warn', icon: 'play' },
-      { label: '目标类型', value: targetType, icon: 'plane' }
+      { label: '目标类型', value: targetType, icon: 'plane' },
+      /* 来源置信：目标最新状态里的融合置信度。读不到就整格不渲染——四个格子里摆一个"—"，
+         看的人分不清是"融合没给"还是"这条告警没有目标"。 */
+      ...(ls && ls.fusion_confidence != null
+        ? [{ label: '来源置信', value: U.confPct(ls.fusion_confidence), tone: 'good', icon: 'radar' }]
+        : [])
     ], { compact: true })}
     ${U.sect('处置流程', U.steps(disposalSteps(a, ev)), { icon: 'trend' })}
     ${U.sect('告警信息', U.kv([
@@ -426,7 +457,7 @@ function eoTrackActions(a) {
     return `<button class="btn" data-al="eo-track" disabled title="该告警没有关联目标">光电跟踪</button>`;
   }
   const open = cur.eoTask && (cur.eoTask.status === 'OPEN' || cur.eoTask.status === 'ENDING');
-  const begin = `<button class="btn" data-al="eo-track" title="向光电下发 BeginTracking，不是地图镜头跟随"${open ? ' disabled' : ''}>光电跟踪</button>`;
+  const begin = `<button class="btn" data-al="eo-track" title="向光电下发跟踪任务，由端侧自行指向，不是地图镜头跟随"${open ? ' disabled' : ''}>光电跟踪</button>`;
   const stop = `<button class="btn" data-al="eo-stop" ${open ? '' : 'disabled '}title="${open ? '结束跟踪并释放光电' : '当前没有进行中的光电跟踪'}">停止跟踪</button>`;
   return begin + stop;
 }

@@ -10,7 +10,7 @@
 | `authorization_id` | 字符串 ID |
 | `authorization_no` | `AUTH-YYYYMMDD-NNNN`，按日递增（13-5） |
 | `action_type` | `COUNTERMEASURE`（反制）/ `JAMMING`（信号干扰）/ `DISPERSAL`（驱离）/ `DECOY`（诱骗） |
-| `subject_kind` / `subject_id` | `UAV_EVENT` / `TARGET`（13-24：`TARGET` 只允许 `requires_confirmed_event=false` 的动作，即驱离；`subject_id` 落库为经 `target_current_alias` 解析后的存活目标；目标不在范围内 404、无观测/超过 C03 `fresh_seconds` 409 `TARGET_NOT_ACTIVE`，13-31）。`RISK` 本期不支持：400 `SUBJECT_KIND_NOT_SUPPORTED`（枚举保留在表 CHECK 里，待处罚案件阶段决定是否开放） |
+| `subject_kind` / `subject_id` | `UAV_EVENT` / `TARGET`（13-24：`TARGET` 只允许 `requires_confirmed_event=false` 的动作，即驱离；`subject_id` 落库为经 `target_current_alias` 解析后的存活目标；目标不在范围内 404、无观测/超过 C03 `fresh_seconds` 409 `TARGET_NOT_ACTIVE`，13-31）。`RISK` 不作处置主体：400 `SUBJECT_KIND_NOT_SUPPORTED`。决策 18-14 已定死——风险的流程到"通知上级"为止，回执"已驱离"即闭环，不再进处置授权，不是"待某阶段再议"。主体名单里已无 `RISK`；表 CHECK 的枚举保留不动，因为历史行还挂着它，改约束会让老数据违约 |
 | `target_id` | 可空；主体为事件时取事件关联目标 |
 | `device_id` / `channel` | 执行设备与通道：`LINGYUN_B`（协议 B 经 A）/ `COUNTERMEASURE_4CH`（四通道网络控制器，经 A 原生 TCP 下发；驱离/诱骗不能走该通道）/ `MANUAL`（人工执行） |
 | `status` | `REQUESTED / APPROVED / REJECTED / EXECUTING / COMPLETED / FAILED / STOPPED / EXPIRED / CANCELLED` |

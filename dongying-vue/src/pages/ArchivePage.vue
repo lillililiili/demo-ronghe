@@ -6,7 +6,7 @@ import UPagination from '@/components/UPagination.vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import { hasPermission } from '@/services/accessControl.js';
 import { systemApi } from '@/services/systemAdmin.js';
-import { actionOptions, actionText, moduleOptions, moduleText, roleText } from './system/auditLabels.js';
+import { actionOptions, actionText, ipText, moduleOptions, moduleText, roleText } from './system/auditLabels.js';
 import { openModal } from '@/ui/modal.js';
 import { toast } from '@/ui/nv.js';
 
@@ -22,6 +22,7 @@ const total = ref(0);
 const RANGE_DEFAULT_TIME = ['00:00:00', '23:59:59'];
 const filters = reactive({ range: null, account: '', module: null, action: null, result: null });
 const resultOptions = [{ value: 'SUCCESS', label: '成功' }, { value: 'FAILURE', label: '失败' }];
+const canReadRoles = computed(() => hasPermission('roles.read'));
 const roleNames = computed(() => {
   const names = { 'ROLE-ADMIN': '超级管理员' };
   for (const item of roles.value) names[item.role_code] = item.name;
@@ -41,13 +42,22 @@ function params(includePage = true) {
 function dt(value) { return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '—'; }
 function resultText(value) { return value === 'SUCCESS' ? '成功' : value === 'FAILURE' ? '失败' : value || '—'; }
 function roleLabel(code) { return roleText(code, roleNames.value); }
+/* 取不到角色名时把编码放进提示：屏幕上仍是中文，排查的人也拿得到那个编码。 */
+function roleTitle(code) {
+  if (!code) return '';
+  if (roleNames.value[code]) return code;
+  return canReadRoles.value ? code : `角色编码 ${code}；当前账号没有角色查看权限，取不到角色名`;
+}
 
 async function load() {
   loading.value = true; error.value = '';
   try {
+    /* 角色名只是把日志里的角色编码翻成中文，属于锦上添花：没有角色查看权限的账号（比如只配了
+       审计权限的审计员）去拉一次注定被拒的角色列表，只会在服务端留下一串拒绝记录（决策 18-12）。
+       没有权限就不发这个请求，角色列退回"超级管理员 / 自定义角色"，编码放进提示里，信息不丢。 */
     const [data, roleList] = await Promise.all([
       systemApi.audits(params()),
-      roles.value.length ? Promise.resolve(roles.value) : systemApi.roles().catch(() => [])
+      roles.value.length || !canReadRoles.value ? Promise.resolve(roles.value) : systemApi.roles().catch(() => [])
     ]);
     rows.value = data.items; total.value = data.total;
     if (!roles.value.length) roles.value = roleList;
@@ -67,9 +77,9 @@ function detail(row) {
     title: `审计详情 · ${dt(row.occurred_at)} · ${actionText(row.action)}`, width: '720px',
     render: () => h('div', { class: 'audit-detail' }, [
       h('dl', [
-        h('dt', '时间'), h('dd', dt(row.occurred_at)), h('dt', '用户'), h('dd', `${row.account || '—'}（${roleLabel(row.role_code)}）`),
+        h('dt', '时间'), h('dd', dt(row.occurred_at)), h('dt', '用户'), h('dd', { title: roleTitle(row.role_code) }, `${row.account || '—'}（${roleLabel(row.role_code)}）`),
         h('dt', '模块'), h('dd', moduleText(row.module_code)), h('dt', '动作'), h('dd', actionText(row.action)),
-        h('dt', '结果'), h('dd', resultText(row.result)), h('dt', 'IP'), h('dd', row.ip || '—'),
+        h('dt', '结果'), h('dd', resultText(row.result)), h('dt', 'IP'), h('dd', { title: row.ip || '' }, ipText(row.ip)),
         h('dt', '客户端'), h('dd', row.user_agent || '—'), h('dt', '详情'), h('dd', row.detail || '—')
       ])
     ])
@@ -94,11 +104,11 @@ async function exportCsv() {
 const auditColumns = computed(() => [
   { title: '时间', key: 'occurred_at', width: 180, render: row => h('span', { class: 'mono' }, dt(row.occurred_at)) },
   { title: '账号', key: 'account', width: 120, ellipsis: { tooltip: true }, render: row => row.account || '—' },
-  { title: '角色', key: 'role_code', width: 130, ellipsis: { tooltip: true }, render: row => roleLabel(row.role_code) },
+  { title: '角色', key: 'role_code', width: 130, ellipsis: { tooltip: true }, render: row => h('span', { title: roleTitle(row.role_code) }, roleLabel(row.role_code)) },
   { title: '模块', key: 'module_code', width: 130, render: row => moduleText(row.module_code) },
   { title: '动作', key: 'action', width: 150, ellipsis: { tooltip: true }, render: row => actionText(row.action) },
   { title: '结果', key: 'result', width: 88, render: row => h(NTag, { size: 'small', type: row.result === 'SUCCESS' ? 'success' : 'error', bordered: false }, { default: () => resultText(row.result) }) },
-  { title: 'IP', key: 'ip', width: 130, render: row => h('span', { class: 'mono' }, row.ip || '—') },
+  { title: 'IP', key: 'ip', width: 130, render: row => h('span', { class: 'mono', title: row.ip || '' }, ipText(row.ip)) },
   { title: '操作', key: 'actions', width: 80, render: row => h(NButton, { text: true, type: 'primary', onClick: () => detail(row) }, { default: () => '详情' }) }
 ]);
 

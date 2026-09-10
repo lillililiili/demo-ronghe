@@ -19,7 +19,9 @@ public final class DisposalRules {
     public static final String COUNTERMEASURE = "COUNTERMEASURE", JAMMING = "JAMMING",
             DISPERSAL = "DISPERSAL", DECOY = "DECOY";
     public static final Set<String> ACTION_TYPES = Set.of(COUNTERMEASURE, JAMMING, DISPERSAL, DECOY);
-    public static final Set<String> SUBJECT_KINDS = Set.of("UAV_EVENT", "RISK", "TARGET");
+    // 决策 18-14：飞行风险的流程到"通知上级"为止，回执"已驱离"即闭环，风险不进处置授权。
+    // 所以名单里没有 RISK——名单是这个接口对外的自我说明，挂着一个永远走不通的类型只会让人以为它能用。
+    public static final Set<String> SUBJECT_KINDS = Set.of("UAV_EVENT", "TARGET");
 
     public static final String LINGYUN_B = "LINGYUN_B", COUNTERMEASURE_4CH = "COUNTERMEASURE_4CH", MANUAL = "MANUAL";
     public static final Set<String> CHANNELS = Set.of(LINGYUN_B, COUNTERMEASURE_4CH, MANUAL);

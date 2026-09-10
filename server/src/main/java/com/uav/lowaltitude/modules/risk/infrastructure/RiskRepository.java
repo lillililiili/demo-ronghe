@@ -98,6 +98,18 @@ public class RiskRepository {
                 Map.of("state", nextState, "at", at, "id", riskId, "version", expectedVersion));
     }
 
+    /**
+     * 通知回执确认已驱离后把风险推进到"已通知"（决策 18-14）。返回受影响行数，0 表示没推进。
+     *
+     * WHERE 里钉死 `PENDING_NOTIFICATION`：这一步只从"待通知"走，重放同一笔回执只会影响 0 行，
+     * 也不会把已排除或已通知的风险重新拉回来。版本照既有写法 +1，否则两个并发操作分不出先后。
+     */
+    public int markNotified(String riskId, OffsetDateTime at) {
+        return jdbc.update("UPDATE flight_risk SET state_code='NOTIFIED',updated_at=:at,version=version+1"
+                + " WHERE risk_id=:id AND state_code='PENDING_NOTIFICATION'",
+                Map.of("at", at, "id", riskId));
+    }
+
     public void appendVerification(String historyId, String riskId, String conclusion, String note,
             String fromState, String toState, long expectedVersion, String verifiedBy, OffsetDateTime at) {
         jdbc.update("INSERT INTO flight_risk_verification (history_id,risk_id,version,previous_state,resulting_state,conclusion,note,actor_id,created_at)"

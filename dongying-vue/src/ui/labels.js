@@ -162,6 +162,9 @@ export const CONCLUSION_LABEL = { CONFIRMED: '核实属实', EXCLUDED: '已排�
 export const RISK_CONCLUSION_LABEL = { CONFIRMED: '核验通过', EXCLUDED: '已排除' };
 export const DELIVERY_STATUS_LABEL = { PENDING_DELIVERY: '待投递', SUBMITTED: '已发送', DELIVERED: '已送达', FAILED: '发送失败' };
 export const RECEIPT_STATUS_LABEL = { NOT_EXPECTED: '不需回执', PENDING: '等待回执', ACKNOWLEDGED: '已回执', TIMEOUT: '回执超时' };
+/* 回执带回来的处理结果（决策 18-14）：风险到"通知上级"为止，回执"已驱离"就算闭环，不再往处置走。
+   与回执状态是两件事——"已回执"说的是对方回了，"已驱离"说的是对方做了什么。 */
+export const RECEIPT_RESULT_LABEL = { DISPERSED: '已驱离', NOT_DISPERSED: '未驱离' };
 /* HANDOFF_MATERIALS_NOT_DEFINED（决策 13-25）：反制/干扰完成事实已经有了，卡住的是处罚交接的材料包定义，
    与“通知渠道未接通”不是一回事，两句必须分开说。 */
 export const HANDOFF_BLOCKED_LABEL = {

@@ -7,7 +7,6 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import { UControl } from '@/components/form/index.js';
 import UPagination from '@/components/UPagination.vue';
-import { toast } from '@/ui/nv.js';
 import { openRiskVerification } from '@/ui/riskVerificationModal.js';
 import { riskApi } from '@/services/riskApi.js';
 import { flightApi } from '@/services/flightApi.js';
@@ -59,6 +58,15 @@ let map = null;
 let listToken = 0, detailToken = 0, summaryToken = 0;
 
 const canVerify = computed(() => (detail.value?.allowed_actions || []).includes('VERIFY'));
+/* 按钮禁用必须说明为什么：只写一个灰按钮，值班员看不出是没权限还是这一档状态不给做。 */
+const verifyBlockReason = computed(() => {
+  if (canVerify.value) return '';
+  if (!detail.value) return '请先在左侧选中一条风险事件';
+  if (detail.value.state !== 'PENDING_VERIFICATION') {
+    return `当前状态「${labelOf(RISK_STATE_LABEL, detail.value.state)}」不允许核验，只有待核验的风险可以核验`;
+  }
+  return '当前账号缺少风险核验权限（risk:verify）';
+});
 /** 地图标记颜色只表示风险等级；没有位置快照坐标时返回 null，页面不画点。 */
 const SEVERITY_COLOR = { CRITICAL: '#ff4d5e', HIGH: '#ff4d5e', MEDIUM: '#ffb020', LOW: '#3d8bff' };
 const riskPoint = computed(() => {
@@ -293,10 +301,6 @@ function openVerify() {
   });
 }
 
-function scareNotAvailable() {
-  toast('驱鸟处置暂不可用：设备指令与作业参数待设备方确认。', 'err');
-}
-
 watch(selectedId, id => { loadDetail(id); });
 
 /* ---------- 深链（决策 9-15：'risk' 这个一次性键归本页消费） ----------
@@ -381,7 +385,7 @@ onUnmounted(() => {
           <div class="toolbar-fields">
             <div class="field"><label>异物细类</label><UControl v-model="filters.subtype" type="select" :options="subtypeOptions" :disabled="listLoading" size="small" /></div>
             <div class="field"><label>风险等级</label><UControl v-model="filters.severity" type="select" :options="severityOptions" :disabled="listLoading" size="small" /></div>
-            <div class="field"><label>处置状态</label><UControl v-model="filters.state" type="select" :options="stateOptions" :disabled="listLoading" size="small" /></div>
+            <div class="field"><label>风险状态</label><UControl v-model="filters.state" type="select" :options="stateOptions" :disabled="listLoading" size="small" /></div>
           </div>
           <div class="toolbar-actions">
             <button class="btn" type="button" @click="applyFilters">筛选</button>
@@ -478,8 +482,7 @@ onUnmounted(() => {
           </div>
 
           <div class="sr-actions">
-            <button class="btn pri" type="button" :disabled="!canVerify" @click="openVerify">人工核验</button>
-            <button class="btn" type="button" disabled title="设备指令与作业参数待设备方确认" @click="scareNotAvailable">驱鸟处置</button>
+            <button class="btn pri" type="button" :disabled="!canVerify" :title="verifyBlockReason" @click="openVerify">人工核验</button>
           </div>
         </div>
       </section>

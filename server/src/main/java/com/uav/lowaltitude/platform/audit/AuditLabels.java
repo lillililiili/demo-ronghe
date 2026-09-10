@@ -15,6 +15,10 @@ final class AuditLabels {
             Map.entry("alarms", "告警事件"),
             // 阶段 4/5：风险、交接、工作台是独立模块，失败审计与列表展示都按各自模块归档。
             Map.entry("risk", "飞行风险"),
+            // 导出走的是复数 risks、告警核实走的是单数 alarm——同一业务域在代码里有两个写法，
+            // 少一条字典就会有英文码直接出现在审计日志里。两个都收下，别让读日志的人去猜。
+            Map.entry("risks", "风险事件"),
+            Map.entry("alarm", "告警事件"),
             Map.entry("handoff", "业务交接"),
             Map.entry("workbench", "工作台"),
             // 阶段 7：研判与规则引擎分开归档；飞行监管只读接口也有自己的模块名。
@@ -31,6 +35,21 @@ final class AuditLabels {
             Map.entry("system", "系统"));
 
     private static final Map<String, String> ACTIONS = Map.ofEntries(
+            Map.entry("integration_source_create", "新增接入来源"),
+            Map.entry("integration_source_update", "修改接入来源"),
+            Map.entry("integration_source_enable", "启用或停用接入来源"),
+            Map.entry("device_create", "新增设备"),
+            Map.entry("device_update", "修改设备"),
+            Map.entry("device_reboot_requested", "远程重启设备"),
+            Map.entry("commission_create", "新建接入调测任务"),
+            Map.entry("commission_start", "开始调测"),
+            Map.entry("commission_connect", "调测建立连接"),
+            // 这一步做的是"保存连接参数快照"，不是核对参数——按服务里的原话来。
+            Map.entry("commission_configuration", "保存调测连接参数"),
+            Map.entry("commission_cancel", "取消调测任务"),
+            Map.entry("lingyun_control_requested", "下发设备控制指令"),
+            Map.entry("device_incident_reboot_requested", "请求设备重启"),
+            Map.entry("device_incident_recovery_checked", "恢复校验"),
             Map.entry("login_success", "登录成功"),
             Map.entry("login_fail", "登录失败"),
             Map.entry("logout", "退出登录"),

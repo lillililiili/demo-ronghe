@@ -47,8 +47,13 @@ function actionLevelOf(action) { return actionDraft.value[action.permission_code
 /* 授权级不在本分区的可选范围（契约只收 NONE/READ/OP）：升级前的库里可能还有 AUTH 的历史动作行，
    如实显示并锁住，不把它悄悄降成"操作"，也不显示成裸的 AUTH；提交时从 actions 里过滤掉，
    服务端整组替换会把它清除（15-29）。分支保留：0105 之后这类行本不该再出现。 */
+/* 超级管理员这一列固定显示"全部"：服务端对它一律按最高等级放行（AccessService 判到 ROLE-ADMIN
+   就直接取最高等级，并给它整份动作目录），而库里存的行可能只是"查看"。照库里显示会让人以为
+   超管只能看不能做——那是页面在说假话。 */
 function actionOptionsFor(action) {
-  return actionLevelOf(action) === 'AUTH'
+  const level = actionLevelOf(action);
+  if (isLocked.value) return [{ value: level, label: '全部' }];
+  return level === 'AUTH'
     ? [...actionLevelOptions, { value: 'AUTH', label: '授权' }]
     : actionLevelOptions;
 }

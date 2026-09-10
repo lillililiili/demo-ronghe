@@ -420,6 +420,8 @@ async function loadRowActuals(rows) {
   }));
 }
 function rowMatch(plan) {
+  if (['PENDING', 'APPROVED'].includes(plan.status_code)) return { text: '—', tag: '', title: '计划尚未开始执行' };
+  if (plan.status_code === 'CANCELLED') return { text: '—', tag: '', title: '计划已取消' };
   const section = rowActuals[plan.plan_id];
   if (section === undefined) return { text: '…', tag: 't-gray', title: '正在读取对照结论' };
   if (!section) return { text: '—', tag: '', title: '对照结论读取失败或无权限' };
@@ -429,10 +431,13 @@ function rowMatch(plan) {
 const DEVIATION_NOTE = '引擎当前只给出计划匹配结论，不提供横向偏航与时差数值';
 
 /* 合法性判定：与 legacy 同一个跳转——有研判就带目标过去选中，没有就只跳页并说明。 */
-const legalityJumpNote = computed(() => (actuals.value?.match?.target_id ? '打开合法性研判页并选中本计划匹配到的目标' : '本计划尚无引擎研判，跳转后不会自动选中目标'));
+const legalityJumpNote = computed(() => {
+  if (actuals.value?.match?.target_id) return '打开合法性研判页并选中本计划匹配到的目标';
+  return showComparison.value ? '本计划尚无引擎研判，跳转后不会自动选中目标' : '打开合法性研判页';
+});
 function goLegality() {
   const targetId = actuals.value?.match?.target_id || null;
-  if (!targetId) toast('该计划尚无引擎研判或未匹配到感知目标，已跳转合法性研判，但无法自动选中对应目标');
+  if (!targetId && showComparison.value) toast('该计划尚无引擎研判或未匹配到感知目标，已跳转合法性研判，但无法自动选中对应目标');
   if (window.UI?.goto) window.UI.goto('legality', targetId ? { target: targetId } : null);
   else location.hash = '#/legality';
 }

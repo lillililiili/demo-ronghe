@@ -105,7 +105,7 @@ public class AlarmReadRepository {
 
     private static String select() {
         return "SELECT a.alarm_id,a.target_id,a.alarm_type,a.severity,a.occurred_at,a.received_at,a.source_mode,a.owner_org_id,a.district_id,s.source_code,e.event_id,e.state_code,"
-                + "a.source_alarm_id,s.name AS source_name,org_ref.name AS owner_org_name,dist_ref.name AS district_name,tg.target_no";
+                + "a.source_alarm_id,s.name AS source_name,org_ref.name AS owner_org_name,dist_ref.name AS district_name,tg.target_no,a.alarm_no";
     }
 
     /** 排序白名单，供服务层在解析阶段拒绝非法值（400），而不是悄悄回落到默认次序。 */
@@ -170,7 +170,7 @@ public class AlarmReadRepository {
                 time(rs, "occurred_at"), time(rs, "received_at"), rs.getString("source_code"),
                 rs.getString("source_mode"), rs.getString("owner_org_id"), rs.getString("district_id"),
                 rs.getString("source_alarm_id"), rs.getString("source_name"), rs.getString("owner_org_name"), rs.getString("district_name"),
-                rs.getString("target_no"));
+                rs.getString("target_no"), rs.getString("alarm_no"));
     }
 
     private static OffsetDateTime time(ResultSet rs, String column) throws SQLException {
@@ -195,5 +195,8 @@ public class AlarmReadRepository {
     public record AlarmRow(String alarmId, String targetId, String eventId, String state, String alarmType,
             String severity, OffsetDateTime occurredAt, OffsetDateTime receivedAt, String sourceCode,
             String sourceMode, String ownerOrgId, String districtId,
-            String sourceAlarmId, String sourceName, String ownerOrgName, String districtName, String targetNo) { }
+            String sourceAlarmId, String sourceName, String ownerOrgName, String districtName, String targetNo, String alarmNo) {
+        /** 页面上的告警编号：平台编号优先，没有就用来源编号。 */
+        public String displayNo() { return alarmNo != null ? alarmNo : sourceAlarmId; }
+    }
 }

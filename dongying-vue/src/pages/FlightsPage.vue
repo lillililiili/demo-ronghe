@@ -1064,7 +1064,7 @@ async function openRiskNotify(riskOverride = null) {
     warning: empty
       ? '接收方未配置：交接接收方目录为空，不能提交；本页不以默认部门补值。'
       : '提交后由通知渠道投递并回执，送达与回执以投递记录为准；不表示处罚办结，源风险保持“待通知”。',
-    notice: [readableNo(risk.source_risk_id) ? `风险 ${readableNo(risk.source_risk_id)}` : '风险事件', labelOf(RISK_TYPE_LABEL, risk.risk_type, ''), Number(expectedVersion) > 0 ? `已第${Number(expectedVersion)}次核验` : '尚未核验'].filter(Boolean).join(' · '),
+    notice: [risk.risk_no || readableNo(risk.source_risk_id) ? `风险 ${risk.risk_no || readableNo(risk.source_risk_id)}` : '风险事件', labelOf(RISK_TYPE_LABEL, risk.risk_type, ''), Number(expectedVersion) > 0 ? `已第${Number(expectedVersion)}次核验` : '尚未核验'].filter(Boolean).join(' · '),
     fields: [{ key: 'recipient_id', label: '接收方', type: 'select', required: true,
       options: recipients.map(item => ({ label: item.display_name, value: item.recipient_id })), placeholder: empty ? '接收方未配置' : '请选择接收方' }],
     initial: { recipient_id: recipients.length === 1 ? recipients[0].recipient_id : null },
@@ -1292,7 +1292,7 @@ onUnmounted(() => {
                   <tbody>
                     <tr v-for="risk in risks" :key="risk.risk_id" :data-row="risk.risk_id" tabindex="0" :class="{ on: activeRiskId === risk.risk_id }"
                       @click="selectRisk(risk.risk_id)" @keydown.enter.prevent="selectRisk(risk.risk_id)">
-                      <td class="num"><span class="mono rk-id" :title="`${risk.source_risk_id || ''} / ${risk.risk_id}`">{{ readableNo(risk.source_risk_id) || '—' }}</span></td>
+                      <td class="num"><span class="mono rk-id" :title="`${risk.source_risk_id || ''} / ${risk.risk_id}`">{{ risk.risk_no || readableNo(risk.source_risk_id) || '—' }}</span></td>
                       <td><span class="tag t-cyan">{{ labelOf(RISK_TYPE_LABEL, risk.risk_type, '未知') }}</span><div v-if="risk.target_id" class="mono rk-sub" :title="risk.target_id">{{ risk.target_no || risk.target_id }}</div></td>
                       <td><div class="rk-wrap">{{ labelOf(REASON_CODE_LABEL, risk.reason_code, '未提供') }}</div></td>
                       <td><div class="rk-sub">{{ risk.source_name || risk.source_code || '未提供' }}</div><div class="rk-sub">{{ labelOf(SOURCE_MODE_LABEL, risk.source_mode, '') }}</div></td>
@@ -1350,7 +1350,7 @@ onUnmounted(() => {
                 <div class="metric-item"><span class="metric-copy"><small>高度关系</small><b>{{ heightRelationLabel(selectedRisk.height_relation) }}</b></span></div>
               </div>
               <div class="sect"><h4>事件信息</h4><dl class="kv kv-surface">
-                <dt>风险编号</dt><dd class="mono" :title="`${selectedRisk.source_risk_id || ''} / ${selectedRisk.risk_id}`">{{ readableNo(selectedRisk.source_risk_id) || '未提供' }}</dd>
+                <dt>风险编号</dt><dd class="mono" :title="`${selectedRisk.source_risk_id || ''} / ${selectedRisk.risk_id}`">{{ selectedRisk.risk_no || readableNo(selectedRisk.source_risk_id) || '未提供' }}</dd>
                 <dt>风险类型</dt><dd>{{ labelOf(RISK_TYPE_LABEL, selectedRisk.risk_type, '未提供') }}</dd>
                 <dt>来源</dt><dd>{{ selectedRisk.source_name || selectedRisk.source_code || '未提供' }}（{{ labelOf(SOURCE_MODE_LABEL, selectedRisk.source_mode, '未提供') }}）</dd>
                 <dt>发生时间</dt><dd>{{ formatTime(selectedRisk.occurred_at) }}</dd>
@@ -1471,7 +1471,7 @@ onUnmounted(() => {
               <div v-else class="conflict-list">
                 <div v-for="item in routeRisks.items" :key="item.risk_id" class="conflict-item" :title="item.risk_id">
                   <div class="route-risk-line">
-                    <span><span class="tag" :class="corridorTag(item)">{{ corridorText(item) }}</span> {{ riskTitle(item) }} <a class="lnk mono" href="#/flights?tab=events" @click.prevent="jumpToRisk(item.risk_id)">{{ readableNo(item.source_risk_id) || item.risk_id.slice(-6) }}</a></span>
+                    <span><span class="tag" :class="corridorTag(item)">{{ corridorText(item) }}</span> {{ riskTitle(item) }} <a class="lnk mono" href="#/flights?tab=events" @click.prevent="jumpToRisk(item.risk_id)">{{ item.risk_no || readableNo(item.source_risk_id) || '风险事件' }}</a></span>
                     <span v-if="item.space_fact?.distance_to_route_m != null" class="muted mono">距中心线 {{ (item.space_fact.distance_to_route_m / 1000).toFixed(2) }} km<template v-if="item.space_fact?.target_altitude_raw != null"> · {{ item.space_fact.target_altitude_raw }}m</template></span>
                   </div>
                   <div class="route-risk-line">

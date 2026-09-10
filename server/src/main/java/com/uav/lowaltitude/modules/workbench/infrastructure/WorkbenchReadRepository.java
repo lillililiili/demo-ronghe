@@ -131,7 +131,7 @@ public class WorkbenchReadRepository {
                 + ms("a.occurred_at") + " AS occurred_at, " + ms("e.updated_at") + " AS updated_at, e.version AS version,"
                 + " a.source_mode AS source_mode, a.owner_org_id AS owner_org_id, a.district_id AS district_id, a.alarm_type AS type_code,"
                 + " CAST(NULL AS VARCHAR(2000)) AS reason_text, CAST(NULL AS VARCHAR(64)) AS device_no, CAST(NULL AS VARCHAR(128)) AS device_name,"
-                + " a.alarm_id AS related_id, CAST(a.source_alarm_id AS VARCHAR(64)) AS source_no"
+                + " a.alarm_id AS related_id, CAST(COALESCE(a.alarm_no, a.source_alarm_id) AS VARCHAR(64)) AS source_no"
                 + " FROM uav_event e JOIN alarm a ON a.alarm_id=e.alarm_id AND a.owner_org_id=e.owner_org_id AND a.district_id=e.district_id"
                 + " WHERE EXISTS (SELECT 1 FROM app_org o WHERE o.org_id=e.owner_org_id AND o.enabled=TRUE)"
                 + " AND EXISTS (SELECT 1 FROM app_district d WHERE d.district_id=e.district_id AND d.enabled=TRUE)");
@@ -146,7 +146,7 @@ public class WorkbenchReadRepository {
                 + ms("r.occurred_at") + " AS occurred_at, " + ms("r.updated_at") + " AS updated_at, r.version AS version,"
                 + " r.source_mode AS source_mode, r.owner_org_id AS owner_org_id, r.district_id AS district_id, r.risk_type AS type_code,"
                 + " CAST(r.reason_text AS VARCHAR(2000)) AS reason_text, CAST(NULL AS VARCHAR(64)) AS device_no, CAST(NULL AS VARCHAR(128)) AS device_name,"
-                + " CAST(NULL AS VARCHAR(36)) AS related_id, CAST(r.source_risk_id AS VARCHAR(64)) AS source_no"
+                + " CAST(NULL AS VARCHAR(36)) AS related_id, CAST(COALESCE(r.risk_no, r.source_risk_id) AS VARCHAR(64)) AS source_no"
                 + " FROM flight_risk r JOIN integration_source s ON s.source_id=r.source_id AND s.source_mode=r.source_mode"
                 + " JOIN flight_plan p ON p.plan_id=r.plan_id AND p.route_version_id=r.route_version_id"
                 + " AND p.owner_org_id=r.owner_org_id AND p.district_id=r.district_id"

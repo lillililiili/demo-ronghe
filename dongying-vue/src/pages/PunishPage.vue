@@ -679,7 +679,7 @@ onMounted(() => {
                         </div>
                       </div>
                       <dl v-if="selected.material.risk" class="kv kv-surface">
-                        <dt>风险编号</dt><dd class="mono" :title="selected.material.risk.risk_id">{{ selected.material.risk.source_risk_id || '未提供' }}</dd>
+                        <dt>风险编号</dt><dd class="mono" :title="selected.material.risk.risk_id">{{ selected.material.risk.risk_no || readableNo(selected.material.risk.source_risk_id) || '未提供' }}</dd>
                         <dt>风险类型</dt><dd>{{ labelOf(RISK_TYPE_LABEL, selected.material.risk.risk_type, '未提供') }}</dd>
                         <dt>风险等级</dt><dd><span class="tag" :class="SEVERITY_TAG[selected.material.risk.severity] || 't-gray'">{{ label(SEVERITY_LABEL, selected.material.risk.severity) }}</span></dd>
                         <dt>提交时状态</dt><dd>{{ label(RISK_STATE_LABEL, selected.material.risk.state) }}</dd>

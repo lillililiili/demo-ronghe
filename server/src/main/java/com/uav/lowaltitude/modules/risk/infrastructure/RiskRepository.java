@@ -208,12 +208,12 @@ public class RiskRepository {
         params.put("severity", row.severity); params.put("reason", row.reasonCode); params.put("text", row.reasonText);
         params.put("occurred", row.occurredAt); params.put("received", row.receivedAt); params.put("altitude", row.altitude);
         params.put("datum", row.altitudeDatum); params.put("mode", row.sourceMode); params.put("org", row.ownerOrgId);
-        params.put("district", row.districtId);
+        params.put("district", row.districtId); params.put("risk_no", row.riskNo);
         jdbc.update("INSERT INTO flight_risk (risk_id,source_id,source_risk_id,plan_id,route_version_id,assessment_id,target_id,track_id,"
                 + "risk_type,severity,state_code,reason_code,reason_text,occurred_at,received_at,observed_altitude_m,"
-                + "observed_altitude_datum,height_relation,source_mode,owner_org_id,district_id,created_at,updated_at,version)"
+                + "observed_altitude_datum,height_relation,source_mode,owner_org_id,district_id,created_at,updated_at,version,risk_no)"
                 + " VALUES (:id,:source,:source_risk,:plan,:route,:assessment,:target,:track,:type,:severity,'PENDING_VERIFICATION',"
-                + ":reason,:text,:occurred,:received,:altitude,:datum,'UNKNOWN',:mode,:org,:district,:received,:received,0)", params);
+                + ":reason,:text,:occurred,:received,:altitude,:datum,'UNKNOWN',:mode,:org,:district,:received,:received,0,:risk_no)", params);
     }
 
     private Where where(RiskQuery query, AccessDecision access) {
@@ -269,7 +269,7 @@ public class RiskRepository {
     private static void add(Where where, String column, String name, String value) {
         if (value != null) { where.sql.append(" AND ").append(column).append("=:").append(name); where.params.put(name, value); }
     }
-    private static String select() { return "SELECT r.risk_id,r.source_risk_id,r.plan_id,r.route_version_id,r.assessment_id,r.target_id,r.track_id,"
+    private static String select() { return "SELECT r.risk_id,r.source_risk_id,r.risk_no,r.plan_id,r.route_version_id,r.assessment_id,r.target_id,r.track_id,"
             + "r.risk_type,r.severity,r.state_code,r.reason_code,r.reason_text,r.occurred_at,r.received_at,r.observed_altitude_m,"
             + "r.observed_altitude_datum,r.height_relation,s.source_code,r.source_mode,r.owner_org_id,r.district_id,r.created_at,r.updated_at,r.version,p.plan_no"; }
     /** 名称列只用于展示；FOR UPDATE 不能落在外连接可空侧，锁定查询改为同名空列。 */
@@ -285,7 +285,7 @@ public class RiskRepository {
             time(rs,"occurred_at"), time(rs,"received_at"), rs.getBigDecimal("observed_altitude_m"), rs.getString("observed_altitude_datum"),
             rs.getString("height_relation"), rs.getString("source_code"), rs.getString("source_mode"), rs.getString("owner_org_id"), rs.getString("district_id"),
             time(rs,"created_at"), time(rs,"updated_at"), rs.getLong("version"),
-            rs.getString("source_name"), rs.getString("owner_org_name"), rs.getString("district_name"), rs.getString("plan_no"), rs.getString("target_no")); }
+            rs.getString("source_name"), rs.getString("owner_org_name"), rs.getString("district_name"), rs.getString("plan_no"), rs.getString("target_no"), rs.getString("risk_no")); }
     private static VerificationRow verification(ResultSet rs, int ignored) throws SQLException { return new VerificationRow(rs.getString("history_id"),
             rs.getLong("version"),rs.getString("previous_state"),rs.getString("resulting_state"),rs.getString("conclusion"),
             rs.getString("note"),rs.getString("actor_id"),time(rs,"created_at"),rs.getString("actor_name")); }
@@ -303,11 +303,14 @@ public class RiskRepository {
             String riskType,String severity,String state,String reasonCode,String reasonText,OffsetDateTime occurredAt,OffsetDateTime receivedAt,
             BigDecimal observedAltitudeM,String observedAltitudeDatum,String heightRelation,String sourceCode,String sourceMode,String ownerOrgId,
             String districtId,OffsetDateTime createdAt,OffsetDateTime updatedAt,long version,
-            String sourceName,String ownerOrgName,String districtName,String planNo,String targetNo) { }
+            String sourceName,String ownerOrgName,String districtName,String planNo,String targetNo,String riskNo) {
+        /** 页面上的风险编号：平台编号优先，没有就用来源编号。 */
+        public String displayNo() { return riskNo != null ? riskNo : sourceRiskId; }
+    }
     public record VerificationRow(String historyId,long version,String previousState,String resultingState,String conclusion,String note,
             String actorId,OffsetDateTime createdAt,String actorName) { }
     public record IngestionPlanRow(String planId,String routeVersionId,String ownerOrgId,String districtId) { }
     public record IngestRow(String riskId,String sourceId,String sourceRiskId,String planId,String routeVersionId,String assessmentId,String targetId,
             String trackId,String riskType,String severity,String reasonCode,String reasonText,OffsetDateTime occurredAt,OffsetDateTime receivedAt,
-            BigDecimal altitude,String altitudeDatum,String sourceMode,String ownerOrgId,String districtId) { }
+            BigDecimal altitude,String altitudeDatum,String sourceMode,String ownerOrgId,String districtId,String riskNo) { }
 }

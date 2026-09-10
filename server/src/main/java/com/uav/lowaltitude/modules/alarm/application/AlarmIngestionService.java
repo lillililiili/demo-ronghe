@@ -36,9 +36,11 @@ public class AlarmIngestionService {
     private final AlarmMergeRepository repository;
     private final UavEventRepository events;
     private final ObjectMapper objectMapper;
+    private final com.uav.lowaltitude.platform.number.BusinessNumberService numbers;
 
-    public AlarmIngestionService(AlarmMergeRepository repository, UavEventRepository events, ObjectMapper objectMapper) {
-        this.repository = repository; this.events = events; this.objectMapper = objectMapper;
+    public AlarmIngestionService(AlarmMergeRepository repository, UavEventRepository events, ObjectMapper objectMapper,
+            com.uav.lowaltitude.platform.number.BusinessNumberService numbers) {
+        this.repository = repository; this.events = events; this.objectMapper = objectMapper; this.numbers = numbers;
     }
 
     /** 来源按目标 source_mode 取 rule-engine-legality-{mode}，避免回放/模拟研判产生的告警混入实测来源。 */
@@ -55,8 +57,11 @@ public class AlarmIngestionService {
         AlarmLink existing = repository.findAlarmBySource(sourceId, sourceAlarmId);
         if (existing != null) return new IngestResult(existing.alarmId(), existing.eventId(), false);
         String alarmId = UUID.randomUUID().toString();
+        // 来源编号能给人看就沿用，技术键（引擎 eval:…）才取平台编号。
+        String alarmNo = com.uav.lowaltitude.platform.number.BusinessNumberService.readable(sourceAlarmId) ? null
+                : numbers.next(com.uav.lowaltitude.platform.number.BusinessNumberService.ALARM, fact.receivedAt().toInstant());
         repository.insertAlarm(new AlarmInsert(alarmId, target.targetId(), sourceId, sourceAlarmId, fact.alarmType().trim(), fact.severity().trim(),
-                fact.occurredAt(), fact.receivedAt(), detailJson(fact.detail()), mode, target.ownerOrgId(), target.districtId()));
+                fact.occurredAt(), fact.receivedAt(), detailJson(fact.detail()), mode, target.ownerOrgId(), target.districtId(), alarmNo));
         String eventId = UUID.randomUUID().toString();
         // 同一告警只建一次事件：alarm_id 唯一约束兜底，重复时回读既有事件而不是报错。
         if (!events.createForAlarm(eventId, alarmId, PENDING_VERIFICATION, target.ownerOrgId(), target.districtId(), fact.receivedAt())) {

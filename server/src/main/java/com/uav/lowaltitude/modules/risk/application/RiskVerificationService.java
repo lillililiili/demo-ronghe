@@ -72,7 +72,7 @@ public class RiskVerificationService {
         return read.dto(new RiskRow(row.riskId(),row.sourceRiskId(),row.planId(),row.routeVersionId(),row.assessmentId(),row.targetId(),row.trackId(),
                 row.riskType(),row.severity(),next,row.reasonCode(),row.reasonText(),row.occurredAt(),row.receivedAt(),row.observedAltitudeM(),
                 row.observedAltitudeDatum(),row.heightRelation(),row.sourceCode(),row.sourceMode(),row.ownerOrgId(),row.districtId(),row.createdAt(),at,expected+1,
-                row.sourceName(),row.ownerOrgName(),row.districtName(),row.planNo(),row.targetNo()));
+                row.sourceName(),row.ownerOrgName(),row.districtName(),row.planNo(),row.targetNo(),row.riskNo()));
     }
 
     private VerifyRequest parse(String rawRequest){

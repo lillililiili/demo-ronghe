@@ -21,7 +21,8 @@ public class RiskIngestionService {
     private static final Set<String> SEVERITIES=Set.of("LOW","MEDIUM","HIGH","CRITICAL");
     private static final Set<String> MODES=Set.of("mock","replay","live");
     private final RiskRepository repository;
-    public RiskIngestionService(RiskRepository repository){this.repository=repository;}
+    private final com.uav.lowaltitude.platform.number.BusinessNumberService numbers;
+    public RiskIngestionService(RiskRepository repository, com.uav.lowaltitude.platform.number.BusinessNumberService numbers){this.repository=repository;this.numbers=numbers;}
 
     @Transactional
     public String ingest(TrustedRiskFact fact){
@@ -41,7 +42,10 @@ public class RiskIngestionService {
             repository.insert(new IngestRow(id,fact.sourceId().trim(),fact.sourceRiskId().trim(),fact.planId().trim(),fact.routeVersionId().trim(),
                     nullable(fact.assessmentId()),nullable(fact.targetId()),nullable(fact.trackId()),fact.riskType().trim(),fact.severity().trim(),
                     fact.reasonCode().trim(),fact.reasonText().trim(),fact.occurredAt(),fact.receivedAt(),fact.observedAltitudeM(),
-                    nullable(fact.observedAltitudeDatum()),fact.sourceMode().trim(),plan.ownerOrgId(),plan.districtId()));
+                    nullable(fact.observedAltitudeDatum()),fact.sourceMode().trim(),plan.ownerOrgId(),plan.districtId(),
+                    // 来源编号能给人看就沿用，技术键（C04:规则:计划:目标:窗口）才取平台编号。
+                    com.uav.lowaltitude.platform.number.BusinessNumberService.readable(fact.sourceRiskId())?null
+                        :numbers.next(com.uav.lowaltitude.platform.number.BusinessNumberService.RISK,fact.receivedAt().toInstant())));
         return id;
     }
 

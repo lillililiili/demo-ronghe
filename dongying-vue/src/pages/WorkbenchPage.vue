@@ -364,7 +364,7 @@ async function openNotifyModal(risk, summary) {
     title: '通知上级 · 提交交接',
     width: '560px',
     warning: '提交后由通知渠道投递并回执，送达与回执以投递记录为准；不表示处罚办结，风险状态保持“待通知”。',
-    notice: [readableNo(risk.source_risk_id) ? `风险 ${readableNo(risk.source_risk_id)}` : '风险事件', labelOf(RISK_TYPE_LABEL, risk.risk_type, ''), Number(risk.version) > 0 ? `已第${Number(risk.version)}次核验` : '尚未核验'].filter(Boolean).join(' · '),
+    notice: [risk.risk_no || readableNo(risk.source_risk_id) ? `风险 ${risk.risk_no || readableNo(risk.source_risk_id)}` : '风险事件', labelOf(RISK_TYPE_LABEL, risk.risk_type, ''), Number(risk.version) > 0 ? `已第${Number(risk.version)}次核验` : '尚未核验'].filter(Boolean).join(' · '),
     fields: options.length
       ? [{ key: 'recipient_id', label: '接收方', type: 'select', required: true, options, placeholder: '选择逻辑接收部门' }]
       : [{ key: 'unconfigured', type: 'html', html: '<div class="warnbox">接收方未配置：交接接收方目录为空，无法提交；不会以默认部门补值。</div>' }],

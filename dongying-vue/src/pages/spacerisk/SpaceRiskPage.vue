@@ -29,9 +29,10 @@ const subtypes = ref([]);
 const rows = ref([]);
 /* 决策 9-31：C04 生成的 source_risk_id 是技术键（规则版本:计划:目标:窗口），不能当业务编号上屏；键放进 title 供排查。 */
 function riskNoText(row) {
+  if (row?.risk_no) return row.risk_no;
   const no = row?.source_risk_id || '';
   if (!no) return '—';
-  return no.startsWith('C04:') ? 'C04 自动评估' : no;
+  return no.startsWith('C04:') ? '自动评估' : no;
 }
 const total = ref(0);
 const page = ref(1);

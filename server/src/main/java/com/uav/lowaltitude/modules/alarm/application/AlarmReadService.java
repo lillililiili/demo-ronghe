@@ -86,7 +86,7 @@ public class AlarmReadService {
 
     private static List<String> exportRow(AlarmRow row) {
         // 枚举列翻中文（决策 15-32）：列头是中文、正文却是 HIGH/PENDING_VERIFICATION，拿到的是半中半英的表。
-        return java.util.Arrays.asList(row.sourceAlarmId(),
+        return java.util.Arrays.asList(row.displayNo(),
                 com.uav.lowaltitude.platform.export.CsvLabels.alarmType(row.alarmType()),
                 com.uav.lowaltitude.platform.export.CsvLabels.severity(row.severity()),
                 com.uav.lowaltitude.platform.export.CsvLabels.uavEventState(row.state()),
@@ -176,7 +176,7 @@ public class AlarmReadService {
         String targetId = targetReferenceVisible(row.targetId(), row.ownerOrgId(), row.districtId()) ? row.targetId() : null;
         return new AlarmDto(row.alarmId(), row.eventId(), row.state(), row.alarmType(), row.severity(), millis(row.occurredAt()),
                 requiredMillis(row.receivedAt()), row.sourceCode(), row.sourceMode(), row.ownerOrgId(), row.districtId(), targetId,
-                row.sourceAlarmId(), row.sourceName(), row.ownerOrgName(), row.districtName(), targetId == null ? null : row.targetNo());
+                row.displayNo(), row.sourceName(), row.ownerOrgName(), row.districtName(), targetId == null ? null : row.targetNo());
     }
 
     private boolean targetReferenceVisible(String targetId, String orgId, String districtId) {

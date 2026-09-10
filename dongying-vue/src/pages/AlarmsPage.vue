@@ -49,7 +49,6 @@ let map = null;
 onUnmounted(() => { if (map) map.destroy(); map = null; });
 
 /* ---------- 契约词典（阶段 4 固定） ---------- */
-const NOT_WIRED = '阶段 4 未接入';
 const SEVERITY = {
   CRITICAL: { t: '紧急', c: 't-red', tone: 'bad' }, HIGH: { t: '高', c: 't-red', tone: 'bad' },
   MEDIUM: { t: '中', c: 't-amber', tone: 'warn' }, LOW: { t: '低', c: 't-blue', tone: 'info' }
@@ -310,7 +309,6 @@ function listHtml() {
 /* ---------- 处置流程与动作：只有人工核实接入；其余节点/按钮保留位置但禁用并说明 ---------- */
 function disposalSteps(a, ev) {
   const trigger = { n: '告警触发', t: clock(a.received_at), done: true, act: false };
-  const na = n => ({ n, t: NOT_WIRED, done: false, act: false, applicable: false });
   /* 反制 / 信号干扰按该事件的最新授权显示状态；读不到时说“尚未接入”，没有授权时说“尚无授权”，
      两者不能混为一谈。“处置”仍是处罚交接，阶段 4 起就未接入。 */
   const step = actionType => {
@@ -326,7 +324,7 @@ function disposalSteps(a, ev) {
       applicable: true
     };
   };
-  const tail = [step('COUNTERMEASURE'), step('JAMMING'), na('处置')];
+  const tail = [step('COUNTERMEASURE'), step('JAMMING'), { n: '处置', t: '', done: false, act: false, applicable: true }];
   if (!ev) return [trigger, { n: '人工核实', t: '未建事件', done: false, act: false }, ...tail];
   if (ev.state === 'FALSE_POSITIVE') return [trigger, { n: '人工核实', t: '误报', done: true, act: false }];
   if (ev.state === 'CONFIRMED') return [trigger, { n: '人工核实', t: '属实', done: true, act: false }, ...tail];
@@ -393,8 +391,7 @@ function detailHtml() {
     ${U.metricStrip([
       { label: '告警等级', value: sevOf(a).t, tone: sevOf(a).tone, icon: 'alert' },
       { label: '处置状态', value: stateOf(a).t, tone: a.state === 'CONFIRMED' || a.state === 'FALSE_POSITIVE' ? 'info' : 'warn', icon: 'play' },
-      { label: '目标类型', value: targetType, icon: 'plane' },
-      { label: '来源置信', value: NOT_WIRED, icon: 'radar' }
+      { label: '目标类型', value: targetType, icon: 'plane' }
     ], { compact: true })}
     ${U.sect('处置流程', U.steps(disposalSteps(a, ev)), { icon: 'trend' })}
     ${U.sect('告警信息', U.kv([

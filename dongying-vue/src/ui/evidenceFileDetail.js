@@ -1,10 +1,7 @@
 import { toast } from '@/ui/nv.js';
 import { openModal } from '@/ui/modal.js';
 import { downloadEvidenceContent, getEvidenceFile } from '@/services/evidenceApi.js';
-import {
-  EVIDENCE_CUSTODY_LABEL, EVIDENCE_CUSTODY_TAG, EVIDENCE_KIND_LABEL, EVIDENCE_STATUS_LABEL,
-  EVIDENCE_SUBJECT_LABEL, labelOf
-} from '@/ui/labels.js';
+import { EVIDENCE_CUSTODY_LABEL, EVIDENCE_CUSTODY_TAG, EVIDENCE_KIND_LABEL, EVIDENCE_STATUS_LABEL, EVIDENCE_SUBJECT_LABEL, SOURCE_MODE_LABEL, labelOf, readableNo } from '@/ui/labels.js';
 /* 只有在库文件能下载：其余状态按钮禁用并说明（决策 15-58）。 */
 const DOWNLOAD_BLOCKED = { PENDING: '文件还在入库中，暂不能下载', MISSING: '文件缺失，不能下载', CORRUPT: '文件哈希不符，不能下载' };
 
@@ -105,7 +102,7 @@ export function renderEvidenceFileDetail(f, options = {}) {
     ['SHA-256', `<span class="mono" style="word-break:break-all">${esc(f.sha256 || '—')}</span>`],
     ['取证时刻', fmtEvidenceTime(f.captured_at)],
     ['上传时间', fmtEvidenceTime(f.stored_at) + (ingestSec != null ? `　<span style="color:var(--txt-3);font-size:11px">相对取证 ${ingestSec}s</span>` : '')],
-    ['来源模式', esc(f.source_mode || '—')]
+    ['来源模式', esc(labelOf(SOURCE_MODE_LABEL, f.source_mode, '—'))]
   ]))}
   ${U.sect('保管', U.kv([
     ['文件状态', U.tag(status, SC[f.status] || 't-gray')],
@@ -123,7 +120,7 @@ export function renderEvidenceFileDetail(f, options = {}) {
   ${U.sect(`被引用（${links.length} 处）`, links.length
     ? links.map(r => `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid rgba(64,158,255,.08);font-size:12px">
         <span class="tag t-gray">${esc(labelOf(EVIDENCE_SUBJECT_LABEL, r.subject_kind, r.subject_kind))}</span>
-        <span class="mono ${mode === 'page' ? 'lnk' : ''}" ${mode === 'page' ? `data-ev-go="${esc(r.subject_kind)}|${esc(r.subject_id)}"` : ''}>${esc(r.subject_no || r.subject_id)}</span>
+        <span class="${mode === 'page' ? 'lnk' : ''}" title="${esc(r.subject_id)}" ${mode === 'page' ? `data-ev-go="${esc(r.subject_kind)}|${esc(r.subject_id)}"` : ''}>${esc((r.subject_no !== r.subject_id && readableNo(r.subject_no)) || `已关联${labelOf(EVIDENCE_SUBJECT_LABEL, r.subject_kind, '对象')}`)}</span>
       </div>`).join('')
     : emptyLinks)}
   ${U.sect('操作', actions)}`;

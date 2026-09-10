@@ -7,10 +7,12 @@ export const ALARM_TYPE_LABEL = { UAV_INTRUSION: '无人机入侵', UAV: '无人
 /* 业务编号才上屏。引擎写入的标识（eval:<uuid>、C04:<规则集>:<计划>:…）和裸 UUID 是内部 ID，
    只能进 title 提示；这类值返回空串，调用方按"没有编号"处理（显示 — 或不渲染）。 */
 const ENGINE_ID = /^[A-Za-z][A-Za-z0-9_-]*:/;
+/* 本地种子的主键（seed-…）也是内部 id，不是业务编号。 */
+const SEED_ID = /^seed-/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export function readableNo(value) {
   const text = value == null ? '' : String(value).trim();
-  if (!text || ENGINE_ID.test(text) || UUID.test(text)) return '';
+  if (!text || ENGINE_ID.test(text) || UUID.test(text) || SEED_ID.test(text)) return '';
   return text;
 }
 // SPACE_OBJECT 是阶段 9 C04 评估写入的风险类型；FOREIGN_OBJECT 是同一业务概念的早期写法，两者中文一致。
@@ -67,7 +69,7 @@ export const ACTION_MODULE_LABEL = {
 export const ACTION_CODE_LABEL = {
   'device:read': '查看设备', 'target:read': '查看目标',
   'alarm:read': '查看告警', 'alarm:verify': '核实无人机事件',
-  'flight:read': '查看飞行计划', 'flight:authorize': '登记飞行授权',
+  'flight:read': '查看飞行计划',
   'route:read': '查看航线', 'airspace:read': '查看空域', 'airspace:manage': '维护空域',
   'assessment:read': '查看研判', 'assessment:evaluate': '发起研判', 'assessment:revise': '修订研判结论', 'assessment:escalate': '上报研判',
   'risk:read': '查看风险', 'risk:verify': '核验风险', 'risk:evaluate': '触发风险评估',
@@ -109,7 +111,7 @@ export const CASE_EVENT_KIND_LABEL = {
   FILE: '立案', ASSIGN: '指派承办人', LEAD_ADDED: '新增待补线索', LEAD_RESOLVED: '线索已补齐',
   DISCRETION_DRAFTED: '拟定裁量', DISCRETION_CONFIRMED: '确认裁量', DOCUMENT_ISSUED: '出具决定书',
   DOCUMENT_REVOKED: '作废决定书', REVIEW_REQUESTED: '提请复核', REVIEWED: '完成复核',
-  CLOSED: '结案', WITHDRAWN: '撤案'
+  CLOSED: '结案', WITHDRAWN: '撤案', CLOSE: '结案', WITHDRAW: '撤案'
 };
 /* 契约 §2.3 的错误码：每条都译成能据以行动的话，错误码本身不上屏。 */
 export const PUNISHMENT_BLOCKED_LABEL = {
@@ -196,7 +198,6 @@ export const PLAN_MATCH_TAG = { FULL: 't-green', PARTIAL: 't-amber', NONE: 't-am
 export const ALTITUDE_RELATION_LABEL = {
   ABOVE: '高于计划高度带', WITHIN: '在计划高度带内', BELOW: '低于计划高度带', UNDETERMINED: '不可判定'
 };
-export const AUTHORIZATION_SOURCE_LABEL = { MANUAL: '人工登记', IMPORT: '批量导入' };
 export const EVIDENCE_KIND_LABEL = {
   EO_VIDEO: '光电录像', EO_STILL: '光电抓拍图', TRACK_SNAPSHOT: '雷达轨迹快照',
   NOTICE_RECEIPT: '通报单回执', COMMISSION_REPORT: '调测报告', COMMAND_LOG: '指令报文与回执',

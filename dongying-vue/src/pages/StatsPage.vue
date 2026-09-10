@@ -212,7 +212,7 @@ function onRegionTab(e) {
     </div>
 
     <div v-if="S" class="row" style="height:262px;margin-top:12px">
-      <UPanel title="飞行高度分布" :sub="`海拔高 altitude · 协议必填 · 参与统计 ${U.num(S.altTotal)} 个`" panel-style="flex:1">
+      <UPanel title="飞行高度分布" :sub="`海拔高度 · 协议必填 · 参与统计 ${U.num(S.altTotal)} 个`" panel-style="flex:1">
         <div id="sAlt" style="height:100%"></div>
       </UPanel>
       <UPanel title="飞行时长统计" sub="分钟" panel-style="flex:1"><div id="sDur" style="height:100%"></div></UPanel>

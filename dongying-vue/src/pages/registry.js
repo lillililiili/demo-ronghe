@@ -12,11 +12,14 @@ import AlarmsPage from './AlarmsPage.vue';
 import CommissionPage from './CommissionPage.vue';
 import DevicesPage from './DevicesPage.vue';
 import MonitorPage from './MonitorPage.vue';
-import FlightsPage from './FlightsPage.vue';
 import SituationPage from './SituationPage.vue';
 import PunishPage from './PunishPage.vue';
 import LegalityPage from './LegalityPage.vue';
 import WorkbenchPage from './WorkbenchPage.vue';
+
+/* FlightsPage 依赖尚未入库的 positionMap.js；同步 import 会让登录与其它页一起挂。
+   异步加载后，缺文件只影响飞行/空域/风险页。 */
+const FlightsPage = defineAsyncComponent(() => import('./FlightsPage.vue'));
 
 export const VUE_PAGES = {
   workbench: WorkbenchPage,

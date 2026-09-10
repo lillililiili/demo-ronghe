@@ -30,7 +30,7 @@ import { exportAlarmsCsv, getAlarm, getUavEvent, listAlarmDistricts, listAlarms,
 import { getEvidenceChain } from '@/services/evidenceApi.js';
 import { openUavVerification } from '@/ui/uavVerificationModal.js';
 import { targetApi } from '@/services/targetApi.js';
-import { ALARM_TYPE_LABEL, DISPOSAL_ACTIVE_STATUSES, DISPOSAL_ACTION_LABEL, disposalStatusText, labelOf, readableNo, SOURCE_MODE_LABEL as MODE_TEXT, targetTypeLabel, verificationOrdinal } from '@/ui/labels.js';
+import { ALARM_TYPE_LABEL, DISPOSAL_ACTIVE_STATUSES, DISPOSAL_ACTION_LABEL, disposalStatusText, labelOf, LEGALITY_LABEL, readableNo, SOURCE_MODE_LABEL as MODE_TEXT, targetTypeLabel, verificationOrdinal } from '@/ui/labels.js';
 import { openEvidenceFileModal } from '@/ui/evidenceFileDetail.js';
 import { renderEvidenceChainHtml } from '@/ui/evidenceChainView.js';
 import { disposalApi, isDisposalUnavailable } from '@/services/disposalApi.js';
@@ -233,7 +233,7 @@ async function loadKpis() {
     { ...KPI_DEFS[1], value: num(v[2]), desc: fail(2) || `另有证据待补充 ${num(v[3])} 起，可再次核实` },
     disposalKpi(KPI_DEFS[2], r[6], v[6]),
     disposalKpi(KPI_DEFS[3], r[7], v[7]),
-    { ...KPI_DEFS[4], value: num(v[4]), desc: fail(4) || '已核实，待处置；反制与处罚交接未接入' },
+    { ...KPI_DEFS[4], value: num(v[4]), desc: fail(4) || '已核实、待处置的事件数；反制与处罚交接见详情动作' },
     { ...KPI_DEFS[5], value: num(v[5]), desc: fail(5) || '人工核实后已排除' }
   ];
 }
@@ -412,8 +412,8 @@ function detailHtml() {
       loading: cur.chainLoading, error: cur.chainError, unavailable: cur.chainUnavailable
     })}
     ${U.detailActions(`
-      <button class="btn" data-al="video" disabled title="${NOT_WIRED}：实时视频">${U.icon('video')} 实时视频</button>
-      <button class="btn" data-al="replay" disabled title="${NOT_WIRED}：轨迹回放">${U.icon('trend')} 轨迹回放</button>
+      <button class="btn" data-al="video" disabled title="协议未提供实时视频流">${U.icon('video')} 实时视频</button>
+      <button class="btn" data-al="replay" ${((cur.track && cur.track.points) || []).length ? '' : 'disabled '}title="${((cur.track && cur.track.points) || []).length ? '定位到已加载的实测轨迹点，不是视频' : '没有已加载的轨迹点'}">${U.icon('trend')} 轨迹回放</button>
       ${eoTrackActions(a)}
       ${disposalActions(a, ev)}`)}`;
 }
@@ -463,7 +463,10 @@ function focusMap() {
     speed: ls && ls.speed_mps != null ? Number(ls.speed_mps) : null,
     heading: ls && ls.heading_deg != null ? Number(ls.heading_deg) : 0,
     // 合法性判定阶段 4 未接入：不向 MapView 传任何结论词（'待确认' 等），maptip 与信息栏同文案。
-    type: targetTypeLabel(null, t.object_type_code, '目标'), subtype, legal: '尚未接入', risk: '—', tracked: true,
+    type: targetTypeLabel(null, t.object_type_code, '目标'), subtype,
+    legal: t.legality_summary && t.legality_summary.legal_status
+      ? labelOf(LEGALITY_LABEL, t.legality_summary.legal_status, t.legality_summary.legal_status) : '—',
+    risk: t.risk_summary && t.risk_summary.severity ? esc(t.risk_summary.severity) : '—', tracked: true,
     track: pts.length > 1 ? pts : []
   };
   map.sel = target.id;
@@ -476,7 +479,7 @@ function focusMap() {
   if (srcEl) srcEl.innerHTML = pts.length > 1
     ? `<span class="tag t-amber" title="/api/v1/targets/{id}/tracks 最新一条轨迹的最近点位（WGS84）">实测轨迹</span> <span style="color:#8fbaff">实${pts.length}</span>`
     : `<span class="tag t-gray" title="${cur.trackError ? esc(cur.trackError) : '该目标暂无可信轨迹点'}">无轨迹</span>`;
-  setInfo(`<span class="mono" style="color:var(--txt-2)" title="${esc(t.target_id)}">${esc(t.target_no || t.target_id)}</span> · ${esc(subtype)} · 合法性 <span style="color:#8ca0be">尚未接入</span> · 高度 ${target.alt == null ? '—' : esc(target.alt) + ' m'} · ${trackNote}`,
+  setInfo(`<span class="mono" style="color:var(--txt-2)" title="${esc(t.target_id)}">${esc(t.target_no || t.target_id)}</span> · ${esc(subtype)} · 合法性 ${esc(target.legal)} · 高度 ${target.alt == null ? '—' : esc(target.alt) + ' m'} · ${trackNote}`,
     `${t.target_no || t.target_id}｜${subtype}｜高度 ${target.alt == null ? '—' : target.alt + ' m'}\n${trackNote}`);
 }
 
@@ -612,6 +615,14 @@ async function beginEoTrack() {
   } catch (e) { toast(e.message || '光电跟踪失败', 'err'); }
 }
 
+function replayLoadedTrack() {
+  const pts = ((cur.track && cur.track.points) || []).map(p => coord(p.location)).filter(Boolean);
+  if (!pts.length) return toast('没有已加载的轨迹点，无法回放', 'err');
+  const last = pts[pts.length - 1];
+  if (map && last) map.centerAt(last.lon, last.lat);
+  toast(`已定位到实测轨迹（${pts.length} 点），不是视频回放`, 'ok');
+}
+
 async function endEoTrack() {
   const taskId = cur.eoTask && cur.eoTask.task_id;
   if (!taskId) return toast('当前没有进行中的光电跟踪', 'err');
@@ -745,6 +756,7 @@ onMounted(async () => {
     else if (k === 'chain-retry' && st.selId) loadChain(detailSeq);
     else if (k === 'eo-track') beginEoTrack();
     else if (k === 'eo-stop') endEoTrack();
+    else if (k === 'replay') replayLoadedTrack();
   });
   U.on(view, '[data-ev-file]', 'click', (e, btn) => {
     if (btn.dataset.evFile) openEvidenceFileModal(btn.dataset.evFile);
@@ -784,8 +796,8 @@ onMounted(async () => {
           <!-- 操作引导（用户裁定 2026-08-30：多处补黄字引导） -->
           <div class="warnbox" style="margin:0;padding:8px 11px;font-size:12px;flex:none">
             演示动线：点左侧<b>告警列表</b>任一行 → 地图定位关联目标 → 下方详情底部点
-            「<b>人工核实</b>」推进处置；已核实的事件可点「<b>发起联动反制</b>」提交处置申请（需另一人审批后才能执行）；
-            「实时视频 / 轨迹回放 / 通知处罚」尚未接入，按钮保留但禁用。</div>
+            「<b>人工核实</b>」推进处置；已核实的事件可点「<b>发起联动反制</b>」提交处置申请（需另一人审批后才能执行），并可「<b>提交处罚交接</b>」。
+            实时视频协议未提供；轨迹回放仅定位已加载轨迹点，不是视频。</div>
           <UPanel title="关联目标定位与轨迹" panel-style="height:244px;max-height:50%;flex:none" nopad
             body-style="padding:6px" :extra="mapExtra" :body-html="mapBody" />
           <UPanel title="告警详情与处置" panel-style="flex:1;min-height:0" nopad

@@ -75,6 +75,11 @@ app:
     auto-track-batch: ${APP_EO_AUTO_TRACK_BATCH:20}
   lingyun-control:
     command-timeout-millis: ${APP_LINGYUN_CONTROL_TIMEOUT_MILLIS:10000}
+  countermeasure-4ch:
+    command-timeout-millis: ${APP_COUNTERMEASURE_4CH_TIMEOUT_MILLIS:10000}
+    sim-port: ${APP_COUNTERMEASURE_4CH_SIM_PORT:10006}
+  network:
+    allow-loopback-when-listed: ${APP_NETWORK_ALLOW_LOOPBACK_WHEN_LISTED:false}
   # 阶段 7 规则引擎：默认关闭调度；DEMO 参数版本默认不允许激活（只能做影子验证）。
   rule-engine:
     # C04 空间安全风险定时评估：默认关闭，只在 PostGIS 部署上按需打开（H2 会记 UNAVAILABLE）。

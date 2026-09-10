@@ -59,7 +59,7 @@ import com.uav.lowaltitude.platform.time.AppClock;
 public class EvidenceChainService {
     static final List<String> TYPES = List.of("TRACK", "VIDEO", "IMAGE", "ALARM", "JUDGMENT",
             "AUTHORIZATION", "DISPOSAL", "OPERATION");
-    static final Set<String> ROOTS = Set.of("EVENT", "TARGET");
+    static final Set<String> ROOTS = Set.of("EVENT", "TARGET", "CASE");
     static final Set<String> AUDIT_OBJECT_TYPES = Set.of("evidence_file", "uav_event", "alarm", "target",
             "device_command", "handoff", "assessment_result");
     private static final ObjectMapper DB_JSON = new ObjectMapper();
@@ -85,6 +85,9 @@ public class EvidenceChainService {
         if (parameters != null && !parameters.isEmpty()) throw invalid("参数无效");
         String kind = kind(subjectKind);
         String id = id(subjectId);
+        if ("CASE".equals(kind) && !probe(PermissionCode.PUNISHMENT_READ)) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "对象不存在或不可见");
+        }
         if (!subjects.subjectVisible(kind, id, decision)) {
             throw new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "对象不存在或不可见");
         }
@@ -97,6 +100,7 @@ public class EvidenceChainService {
 
         String eventId = null;
         String alarmId = null;
+        String caseId = null;
         String subjectNo;
         String seedTarget = null;
         if ("EVENT".equals(kind)) {
@@ -106,6 +110,19 @@ public class EvidenceChainService {
             alarmId = event.alarmId();
             subjectNo = event.eventId();
             if (targetRead) seedTarget = event.targetId();
+        } else if ("CASE".equals(kind)) {
+            EvidenceChainRepository.CaseRef crime = repository.findCase(id);
+            if (crime == null) throw new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "对象不存在或不可见");
+            caseId = crime.caseId();
+            subjectNo = crime.caseNo();
+            eventId = crime.eventId();
+            if (eventId != null) {
+                EventRef event = repository.findEvent(eventId);
+                if (event != null) {
+                    alarmId = event.alarmId();
+                    if (targetRead) seedTarget = event.targetId();
+                }
+            }
         } else {
             TargetRef target = repository.findTarget(id);
             if (target == null) throw new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "对象不存在或不可见");
@@ -132,7 +149,7 @@ public class EvidenceChainService {
         for (String type : TYPES) buckets.put(type, new ArrayList<>());
 
         if (targetRead) addTracks(buckets.get("TRACK"), repository.tracks(family));
-        addFiles(buckets, repository.files(eventId, family));
+        addFiles(buckets, repository.files(eventId, family, caseId));
         if (alarmRead) addAlarms(buckets.get("ALARM"), repository.alarms(alarmId, family));
         if (assessmentRead) addJudgments(buckets.get("JUDGMENT"), repository.judgments(family));
         addCommands(buckets.get("AUTHORIZATION"), repository.linkedCommands(eventId, family), decision);

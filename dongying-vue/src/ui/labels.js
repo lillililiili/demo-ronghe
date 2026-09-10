@@ -51,6 +51,7 @@ export const DISPOSAL_RESULT_LABEL = { SUCCEEDED: '执行成功', FAILED: '执�
 /* 决策 13-10/13-11：STOPPED 不能只说“已停止”——撤销授权与设备是否真的急停是两件事，必须带限定语。 */
 export const DISPOSAL_STOP_RESULT_LABEL = {
   EXECUTED: '授权已撤销；设备急停已受理',
+  ALL_OFF_ISSUED: '授权已撤销；已向四通道网络控制器下发全关，回执以设备为准',
   UNAVAILABLE: '授权已撤销；设备急停未执行（协议未提供）',
   NOT_ATTEMPTED: '授权已撤销；未尝试设备急停',
   NOT_BOUND: '授权已撤销；设备未登记凌云连接，请运维补配置后重试'
@@ -128,11 +129,13 @@ export const PUNISHMENT_BLOCKED_LABEL = {
 export const DISPOSAL_EVENT_KIND_LABEL = {
   REQUEST: '发起申请', APPROVE: '批准', REJECT: '驳回', EXECUTE: '下发执行', RECEIPT: '设备回执',
   STOP: '停止', COMPLETE: '完成', FAIL: '失败', EXPIRE: '超时失效', CANCEL: '撤销',
-  MANUAL_RESULT: '登记人工结果', DEVICE_STOP_UNAVAILABLE: '设备急停不可用', DEVICE_CONTROL_UNAVAILABLE: '设备控制不可用'
+  MANUAL_RESULT: '登记人工结果', DEVICE_STOP_UNAVAILABLE: '设备急停不可用', DEVICE_CONTROL_UNAVAILABLE: '设备控制不可用',
+  PROTOCOL_NOT_OPENED: '指令码未开放', DEVICE_NOT_BOUND: '设备未登记凌云连接', DEVICE_OFFLINE: '设备离线或未启用',
+  DEVICE_ALL_OFF_ISSUED: '已下发四通道全关'
 };
 /* 决策 13-12/13-14：执行被阻的四种原因，三种可补救、一种要等厂家；页面不得把它显示成失败或成功。 */
 export const DISPOSAL_BLOCK_REASON_LABEL = {
-  DEVICE_CAPABILITY: '该设备不支持自动执行，可登记人工结果',
+  DEVICE_CAPABILITY: '所选设备不能走该通道自动执行，请换设备或改通道',
   PROTOCOL_NOT_OPENED: '该类指令码尚未开放（等厂家确认设备类型），可登记人工结果',
   NOT_BOUND: '设备未登记凌云连接，请运维补登记后重试',
   DEVICE_OFFLINE: '设备当前离线或未启用，请恢复后重试'
@@ -210,7 +213,7 @@ export const EVIDENCE_CUSTODY_TAG = {
 };
 export const EVIDENCE_SUBJECT_LABEL = {
   EVENT: '无人机事件', DEVICE: '设备', TARGET: '感知目标', PLAN: '飞行计划',
-  COMMAND: '指令', COMMISSION: '调测任务'
+  COMMAND: '指令', COMMISSION: '调测任务', CASE: '处罚案件', AUTHORIZATION: '处置授权'
 };
 export const EVIDENCE_RECORD_TYPE_LABEL = {
   TRACK: '轨迹', VIDEO: '视频', IMAGE: '图像', ALARM: '告警',

@@ -198,6 +198,10 @@ async function runUavAction() {
       });
       return;
     }
+    if (td.kind === 'punish') {
+      acting.value = false;
+      return openUavPunishModal(d);
+    }
     const { event, alarm } = await loadUavSource(eventId);
     openUavVerification({
       event, alarm,
@@ -234,6 +238,46 @@ async function runRiskPrimary() {
     toast(messageOf(e, '读取飞行风险失败，无法打开核验'), 'err');
   } finally { acting.value = false; }
 }
+async function openUavPunishModal(d) {
+  const eventId = d.summary.sourceId;
+  let recipients = [];
+  try {
+    const page = await listHandoffRecipients('UAV_PUNISHMENT');
+    recipients = page?.items || [];
+  } catch (e) {
+    return toast(messageOf(e, '读取处罚接收方失败'), 'err');
+  }
+  const options = recipients.map(r => ({ label: r.display_name, value: r.recipient_id }));
+  if (!pendingNotifyKeys.has('punish:' + eventId)) pendingNotifyKeys.set('punish:' + eventId, newHandoffIdempotencyKey());
+  openFormModal({
+    title: '提交处罚交接',
+    width: '560px',
+    warning: '移送后由处罚部门在处罚页立案；提交成功只表示材料入库，不表示已发送或已立案。',
+    notice: d.summary.title || eventId,
+    fields: options.length
+      ? [{ key: 'recipient_id', label: '接收方', type: 'select', required: true, options, placeholder: '选择处罚接收方' }]
+      : [{ key: 'unconfigured', type: 'html', html: '<div class="warnbox">接收方未配置：处罚交接接收方目录为空，无法提交。</div>' }],
+    initial: { recipient_id: options.length === 1 ? options[0].value : '' },
+    confirmText: '提交移送',
+    submitEnabled: m => options.length > 0 && !!m.recipient_id,
+    onSubmit: async ({ recipient_id }) => {
+      const key = pendingNotifyKeys.get('punish:' + eventId);
+      try {
+        await createHandoff({
+          source_kind: 'UAV_EVENT', source_id: eventId, handoff_type: 'UAV_PUNISHMENT',
+          recipient_id, expected_version: Number(d.summary.version)
+        }, key);
+        pendingNotifyKeys.delete('punish:' + eventId);
+        closeModal();
+        toast('已移送，可到处罚页立案', 'ok');
+        await refreshAll();
+      } catch (e) {
+        throw new Error(messageOf(e, '提交处罚交接失败'));
+      }
+    }
+  });
+}
+
 /* 通知上级 = 提交 RISK_NOTICE 交接：接收方来自服务端目录；成功只表示材料入库（PENDING_DELIVERY），风险仍为“待通知”。 */
 async function openNotifyModal(risk, summary) {
   const riskId = risk.risk_id;

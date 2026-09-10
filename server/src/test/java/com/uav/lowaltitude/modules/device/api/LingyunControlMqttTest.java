@@ -113,8 +113,8 @@ class LingyunControlMqttTest {
         mvc.perform(post("/api/v1/devices/{id}/commands/lingyun-control", radar.opsDeviceId())
                         .header("Authorization", bearer()).header("Idempotency-Key", key())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"authorization_id\":\"AUTH-1\",\"operation_type\":1,\"operation_cmd\":50002,\"reason\":\"诱骗未开放\"}"))
-                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.error.code").value("PROTOCOL_UNSUPPORTED"));
+                        .content("{\"authorization_id\":\"AUTH-1\",\"operation_type\":1,\"operation_cmd\":50002,\"reason\":\"诱骗码打到雷达\"}"))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
         mvc.perform(post("/api/v1/devices/{id}/commands/emergency-stop", radar.opsDeviceId())
                         .header("Authorization", bearer()))
                 .andExpect(status().isConflict()).andExpect(jsonPath("$.error.code").value("CONTROL_NOT_ENABLED"));
@@ -123,6 +123,21 @@ class LingyunControlMqttTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"authorization_id\":\"AUTH-1\",\"operation_type\":1,\"operation_cmd\":30002,\"reason\":\"类型不符\"}"))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test void decoyCommandSucceedsOnMatchingDeviceAndDoesNotWriteFusionInbox() {
+        Binding decoy = register("dec");
+        online(decoy);
+        String ok = control.enqueue(decoy.opsDeviceId(), key(), "AUTH-DEC", 1, 50002, Map.of("direction", 0), "开启诱骗方向驱离");
+        swallowOutbox(ok);
+        control.receive(brokerId, owner, decoy.controlRespTopic(),
+                resp(jdbc.queryForObject("SELECT command_no FROM device_command WHERE command_id=?", String.class, ok),
+                        decoy.externalDeviceId(), 0, "ok").getBytes(StandardCharsets.UTF_8), 1, false, clock.nowMillis());
+        assertThat(jdbc.queryForObject("SELECT status FROM device_command WHERE command_id=?", String.class, ok)).isEqualTo("SUCCEEDED");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM inbox_message WHERE source LIKE 'lingyun:%' AND source_msg_id=?",
+                Long.class, jdbc.queryForObject("SELECT command_no FROM device_command WHERE command_id=?", String.class, ok))).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM inbox_message WHERE source LIKE 'control-resp:%' AND source_msg_id=(SELECT command_no FROM device_command WHERE command_id=?)",
+                Long.class, ok)).isEqualTo(1L);
     }
 
     @Test void successFailureTimeoutAndDoesNotWriteFusionInbox() {

@@ -27,3 +27,5 @@ app:
     expiry:
       enabled: true
       poll-millis: 60000
+  network:
+    allow-loopback-when-listed: true

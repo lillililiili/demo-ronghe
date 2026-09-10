@@ -142,7 +142,14 @@ public class LingyunControlService {
         if (!response.externalId().equals(text(command, "external_device_id"))) return;
         String next = response.code() == 0 ? "SUCCEEDED" : "FAILED";
         String code = response.code() == 0 ? "PROTOCOL_B_OK" : "PROTOCOL_B_FAILED";
-        if (controls.updateCommand(text(command, "command_id"), text(command, "status"), next, receivedAt, code, response.msg()) == 1) {
+        String current = text(command, "status");
+        int updated = controls.updateCommand(text(command, "command_id"), current, next, receivedAt, code, response.msg());
+        // dispatch() publishes inside the same transaction as QUEUED→SENT. A local echo can
+        // arrive while this row is still committed as QUEUED; retry from SENT after that commit.
+        if (updated == 0 && "QUEUED".equals(current)) {
+            updated = controls.updateCommand(text(command, "command_id"), "SENT", next, receivedAt, code, response.msg());
+        }
+        if (updated == 1) {
             controls.addReceipt(text(command, "command_id"), text(command, "command_no"), code, receivedAt, response.json());
             controls.addEvent(text(command, "device_id"),
                     next.equals("SUCCEEDED") ? "LINGYUN_CONTROL_SUCCEEDED" : "LINGYUN_CONTROL_FAILED",

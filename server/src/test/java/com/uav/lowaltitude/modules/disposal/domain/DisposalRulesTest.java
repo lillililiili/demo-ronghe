@@ -162,6 +162,9 @@ class DisposalRulesTest {
         // 未登记 MQTT 是本平台可补救的配置遗漏，与"厂家没做急停"不是一回事（13-11）。
         assertThat(DisposalRules.deviceStopResult(DisposalRules.LINGYUN_B, List.of("STOP", "DEVICE_NOT_BOUND")))
                 .isEqualTo(DisposalRules.STOP_NOT_BOUND);
+        assertThat(DisposalRules.deviceStopResult(DisposalRules.COUNTERMEASURE_4CH,
+                List.of("STOP", "DEVICE_ALL_OFF_ISSUED")))
+                .isEqualTo(DisposalRules.STOP_ALL_OFF_ISSUED);
     }
 
     // ---- 编号 ----
@@ -234,6 +237,6 @@ class DisposalRulesTest {
         assertThat(DisposalRules.EVENT_KINDS).containsExactlyInAnyOrder("REQUEST", "APPROVE", "REJECT", "EXECUTE",
                 "RECEIPT", "STOP", "COMPLETE", "FAIL", "EXPIRE", "CANCEL", "MANUAL_RESULT",
                 "DEVICE_STOP_UNAVAILABLE", "DEVICE_CONTROL_UNAVAILABLE", "DEVICE_NOT_BOUND",
-                "PROTOCOL_NOT_OPENED", "DEVICE_OFFLINE");
+                "PROTOCOL_NOT_OPENED", "DEVICE_OFFLINE", "DEVICE_ALL_OFF_ISSUED");
     }
 }

@@ -74,7 +74,7 @@ public class EoManualTrackService {
         String id = pathId(targetId);
         targets.target(id);
         Map<String, Object> task = edges.openTaskByTarget(id);
-        if (task == null) throw new ApiException(HttpStatus.NOT_FOUND, "EO_TRACK_NOT_OPEN", "该目标没有进行中的光电跟踪");
+        if (task == null) return null;
         return dto(task, text(task, "begin_command_id"));
     }
 

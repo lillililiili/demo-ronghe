@@ -174,10 +174,10 @@ public class DisposalAuthorizationService {
         }
 
         DisposalPolicy policy = policies.active();
-        // 四通道反制没有执行能力，B 侧直接判定，不去打扰 A（决策 13-3）；
-        // 经协议 B 下发时 A 的 enqueue 会自校验 devices.op，不绕开 A 的设备控制面权限（决策 13-9）。
+        // 四通道走 A 的原生 TCP 设置；凌云 B 仍经 enqueue，自校验 devices.op（决策 13-9）。
         DisposalExecutionGateway.Result dispatched = DisposalRules.COUNTERMEASURE_4CH.equals(row.channel())
-                ? DisposalExecutionGateway.noCapability(row.channel())
+                ? gateway.dispatch4ch(row.deviceId(), "disposal-" + id + "-" + row.version(),
+                        id, row.actionType(), row.reason())
                 : gateway.dispatch(row.deviceId(), "disposal-" + id + "-" + row.version(),
                         id, policy, row.actionType(), body.operationParams(), row.reason());
         if (dispatched instanceof DisposalExecutionGateway.Rejected rejected) {
@@ -243,10 +243,24 @@ public class DisposalAuthorizationService {
         // 撤销授权与停住设备是两件事。设备协议本期没有急停（A 的 emergency-stop 一律 CONTROL_NOT_ENABLED），
         // 所以这里如实记一条事件而不是假装停住了；撤销本身不因此受阻（决策 13-4）。
         String stopResult = DisposalRules.STOP_NOT_ATTEMPTED;
-        if (DisposalExecutionGateway.deviceChannel(row.channel())) {
+        if (DisposalRules.COUNTERMEASURE_4CH.equals(row.channel())) {
+            DisposalExecutionGateway.Result stopped = gateway.stop4ch(actor, row.deviceId(),
+                    "disposal-stop-" + id + "-" + row.version(), id, row.reason());
+            if (stopped instanceof DisposalExecutionGateway.Accepted) {
+                event(id, "DEVICE_ALL_OFF_ISSUED", actor.userId(), "已向四通道网络控制器下发全关，回执以设备为准",
+                        Map.of("device_id", nullSafe(row.deviceId()),
+                                "command_id", ((DisposalExecutionGateway.Accepted) stopped).commandId()), at);
+                stopResult = DisposalRules.STOP_ALL_OFF_ISSUED;
+            } else {
+                DisposalExecutionGateway.Rejected rejected = (DisposalExecutionGateway.Rejected) stopped;
+                event(id, rejected.eventKind(), actor.userId(), rejected.detail(),
+                        Map.of("device_id", nullSafe(row.deviceId())), at);
+                stopResult = DisposalRules.STOP_UNAVAILABLE;
+            }
+        } else if (DisposalRules.LINGYUN_B.equals(row.channel())) {
             if (!gateway.bound(row.deviceId())) {
                 event(id, DisposalExecutionGateway.EVENT_NOT_BOUND, actor.userId(),
-                        "该设备未登记凌云 MQTT，无法尝试急停", Map.of("device_id", nullSafe(row.deviceId())), at);
+                        "该设备未登记凌云 MQTT，无法尝试停止", Map.of("device_id", nullSafe(row.deviceId())), at);
                 stopResult = DisposalRules.STOP_NOT_BOUND;
             } else {
                 event(id, "DEVICE_STOP_UNAVAILABLE", actor.userId(), "设备协议未提供急停，授权已撤销但设备可能仍在动作",

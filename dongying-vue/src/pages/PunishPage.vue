@@ -23,7 +23,7 @@ import { toast } from '@/ui/nv.js';
 import { hasPermission } from '@/services/accessControl.js';
 import { UAV_STATE_TEXT as UAV_STATE_LABEL } from '@/ui/uavVerificationModal.js';
 import { handoffApi } from '@/services/handoffApi.js';
-import { getEvidenceChain } from '@/services/evidenceApi.js';
+import { getEvidenceChain, listEvidenceFiles } from '@/services/evidenceApi.js';
 import { disposalApi, isDisposalUnavailable } from '@/services/disposalApi.js';
 import { fetchDocumentContent, isPunishmentUnavailable, punishmentApi, PUNISHMENT_UNAVAILABLE_TEXT } from '@/services/punishmentApi.js';
 import {
@@ -62,7 +62,7 @@ const BLOCK_GAPS = {
   case: '案件只在本平台内流转：外部处罚系统与文书报送渠道尚未接入',
   penalty: '罚则档位与金额区间是演示值（DEMO），未经业务方确认',
   doc: '决定书为平台内生成的演示文本，无法律效力，也不提供下载（只能在平台内预览与复制）',
-  evidence: '证据只读事件主体的关联清单；证据主体尚未扩展到案件，文件本身仍由证据模块保管',
+  evidence: '上方为移送时事件上的证据快照；下方为立案后挂到本案的证据文件',
   review: '复核只记录在本平台，未接入上级法制机构的复核流程'
 };
 
@@ -95,12 +95,14 @@ const disposalEvents = ref([]);
    读不到（14.1 未落地时是 404）显示原因；没有案件显示"尚未立案"——两者不互相冒充。 */
 const punishment = reactive({
   loading: false, unavailable: false, error: '',
-  caseRow: null, events: [], documents: [], rules: [], officers: []
+  caseRow: null, events: [], documents: [], rules: [], officers: [],
+  caseEvidence: [], caseEvidenceOmitted: false, caseEvidenceError: ''
 });
 
 /* 只清与所选交接有关的部分：罚则档位是全局字典，重选交接不必重读。 */
 function resetPunishment() {
-  Object.assign(punishment, { loading: false, unavailable: false, error: '', caseRow: null, events: [], documents: [] });
+  Object.assign(punishment, { loading: false, unavailable: false, error: '', caseRow: null, events: [], documents: [],
+    caseEvidence: [], caseEvidenceOmitted: false, caseEvidenceError: '' });
 }
 
 async function loadPunishment(row) {
@@ -130,6 +132,22 @@ async function loadPunishment(row) {
       punishment.caseRow = detail || brief;
       punishment.events = Array.isArray(events) ? events : (events?.items || []);
       punishment.documents = Array.isArray(documents) ? documents : (documents?.items || []);
+      try {
+        const files = await listEvidenceFiles({ subject_kind: 'CASE', subject_id: punishment.caseRow.case_id, page: 1, size: 100 });
+        punishment.caseEvidence = files?.items || [];
+        punishment.caseEvidenceOmitted = false;
+        punishment.caseEvidenceError = '';
+      } catch (error) {
+        if (error.status === 403) {
+          punishment.caseEvidence = [];
+          punishment.caseEvidenceOmitted = true;
+          punishment.caseEvidenceError = '';
+        } else {
+          punishment.caseEvidence = [];
+          punishment.caseEvidenceOmitted = false;
+          punishment.caseEvidenceError = messageOf(error, '读取案件证据失败');
+        }
+      }
     }
   } catch (error) {
     punishment.unavailable = isPunishmentUnavailable(error);
@@ -853,6 +871,15 @@ onMounted(() => {
                   </div>
                 </div>
                 <div class="pn-sub pn-wrap">{{ BLOCK_GAPS.evidence }}</div>
+                <div class="pn-not-built-head" style="margin-top:8px"><b>本案关联证据</b></div>
+                <div v-if="punishment.caseEvidenceOmitted" class="pn-sub pn-wrap">当前账号没有 evidence:read，无法读取案件证据。</div>
+                <div v-else-if="punishment.caseEvidenceError" class="pn-sub pn-wrap">{{ punishment.caseEvidenceError }}</div>
+                <div v-else-if="!punishment.caseEvidence.length" class="pn-sub pn-wrap">本案尚未关联证据文件。</div>
+                <div v-else class="pn-sub pn-wrap">
+                  <div v-for="item in punishment.caseEvidence" :key="item.evidence_id">
+                    <span class="mono">{{ item.evidence_no }}</span> · {{ item.kind_code }}
+                  </div>
+                </div>
               </div>
 
               <div class="pn-not-built-item" data-not-built="review">

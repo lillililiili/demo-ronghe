@@ -8,7 +8,7 @@
 | 做 | 不做 |
 | --- | --- |
 | 真实字节入库，SHA-256 由服务端对内容计算 | 客户端提交的哈希、演示哈希、按哈希合并文件 |
-| `evidence_link` 关联已存在的业务对象（见下表） | 处罚案件、空域、风险事件、反制授权记录等尚未建 FK 的对象 |
+| `evidence_link` 关联已存在的业务对象（见下表，含案件与处置授权） | 空域、风险事件、交接头等未建 FK 的对象 |
 | 授权下载（无公开 URL）、访问成功/拒绝留痕 | 调阅按钮、页面手工「完整性筛选」 |
 | 冻结/解冻阻断后续清理；入库按平台缺省留存期写入 `retain_until`；人工销毁（已到期且未冻结） | 按年限自动销毁、ZIP 打包导出、异地备份 |
 | 文件级校验：缺失 → `MISSING`，哈希不符 → `CORRUPT` | 证据链完整性校验值、合并前判定依据（见 C07 契约，不在本文件切片） |
@@ -37,7 +37,7 @@
 
 ## 关联对象
 
-`subject_kind` 与 `evidence_link` 六列一一对应，恰有一个非空：
+`subject_kind` 与 `evidence_link` 八列一一对应，恰有一个非空：
 
 | kind | 列 | 表 |
 | --- | --- | --- |
@@ -47,8 +47,10 @@
 | `PLAN` | `plan_id` | `flight_plan` |
 | `COMMAND` | `command_id` | `device_command` |
 | `COMMISSION` | `commission_id` | `commission_task` |
+| `CASE` | `case_id` | `punishment_case`（另需 `punishment:read`） |
+| `AUTHORIZATION` | `authorization_id` | `disposal_authorization`（另需 `disposal:read`） |
 
-关联前对象必须存在且对操作者可见；设备/指令/调测在映射表为空时视为不可见。重复 `(evidence, kind, 对象)` 409 `LINK_EXISTS`。
+关联前对象必须存在且对操作者可见；设备/指令/调测在映射表为空时视为不可见。案件与授权缺对应模块读权限或越权范围按 404 / 空列表处理，不泄露编号。重复 `(evidence, kind, 对象)` 409 `LINK_EXISTS`。不提供 `HANDOFF` 主体。
 
 ## 种类与状态
 

@@ -56,7 +56,7 @@ export function openUavVerification({ event, alarm, refresh, onDone } = {}) {
   openFormModal({
     title: '人工核实 · ' + esc(alarm?.alarm_no || alarm?.alarm_id || '核实事件'),
     width: '600px',
-    warning: '「属实」表示已核实、待处置，不代表反制、干扰或处罚交接已执行（阶段 4 未接入）；「误报」为终态；「证据待补充」记录本次核实后可再次核实。',
+    warning: '「属实」表示已核实、待处置，不等于已反制或已提交处罚交接；「误报」为终态；「证据待补充」记录本次核实后可再次核实。',
     introHtml: `<dl class="kv">${intro}</dl>`,
     fields: [
       { key: 'conclusion', label: '核实结论', type: 'radio', required: true, options: [

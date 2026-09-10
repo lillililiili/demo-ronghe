@@ -87,6 +87,7 @@ export function renderEvidenceFileDetail(f, options = {}) {
         ? `<button class="btn" style="flex:1" data-evact="release" data-hold="${esc(activeHold?.hold_id || '')}">解除冻结</button>`
         : `<button class="btn" style="flex:1" data-evact="hold">冻结</button>`}
     </div>
+    <button class="btn" style="width:100%;justify-content:center;margin-top:8px" data-evact="link">关联业务对象</button>
     ${canDestroy
       ? `<button class="btn danger" style="width:100%;justify-content:center;margin-top:8px" data-evact="destroy">销毁文件</button>
          <div style="margin-top:8px;font-size:11px;color:var(--txt-3);line-height:1.8">下载须经鉴权并记入访问记录。销毁只删文件内容，台账仍可查。</div>`

@@ -29,11 +29,13 @@ public class DeviceOperationsProcessor {
     private final ObjectMapper objectMapper;
     private final EoEdgeCommandService eoCommands;
     private final LingyunControlService lingyunControl;
+    private final Countermeasure4ChControlService countermeasureControl;
 
     public DeviceOperationsProcessor(DeviceRepository devices, CommissionRepository commissions,
                                      DeviceAdapterRegistry adapters, AppProperties properties,
                                      AppClock clock, ObjectMapper objectMapper, EoEdgeCommandService eoCommands,
-                                     LingyunControlService lingyunControl) {
+                                     LingyunControlService lingyunControl,
+                                     Countermeasure4ChControlService countermeasureControl) {
         this.devices = devices;
         this.commissions = commissions;
         this.clock = clock;
@@ -41,6 +43,7 @@ public class DeviceOperationsProcessor {
         this.adapters = adapters;
         this.eoCommands = eoCommands;
         this.lingyunControl = lingyunControl;
+        this.countermeasureControl = countermeasureControl;
     }
 
     @Transactional
@@ -51,6 +54,7 @@ public class DeviceOperationsProcessor {
             case "commission.run" -> commission(payload);
             case "eo.track.begin", "eo.track.end", "eo.camera.status" -> eoCommands.dispatch(topic, payload);
             case "device.control.lingyun" -> lingyunControl.dispatch(payload);
+            case "device.control.countermeasure" -> countermeasureControl.dispatch(payload);
             default -> throw new IllegalArgumentException("Unsupported outbox topic " + topic);
         }
     }
@@ -62,6 +66,10 @@ public class DeviceOperationsProcessor {
             String type = text(row, "command_type");
             if (type != null && type.startsWith("EO_")) { eoCommands.timeout(commandId, "设备适配器未在截止时间前返回回执"); continue; }
             if (LingyunControlService.TYPE.equals(type)) { lingyunControl.timeout(commandId, "设备适配器未在截止时间前返回回执"); continue; }
+            if (Countermeasure4ChControlService.TYPE.equals(type)) {
+                countermeasureControl.timeout(commandId, "设备适配器未在截止时间前返回回执");
+                continue;
+            }
             String status = text(row, "status");
             if (devices.updateCommand(commandId, status, "TIMED_OUT", now, "ADAPTER_TIMEOUT",
                     "设备适配器未在截止时间前返回回执") == 1) {
@@ -77,6 +85,10 @@ public class DeviceOperationsProcessor {
         long now = clock.nowMillis();
         if (topic != null && topic.startsWith("eo.")) { eoCommands.timeout(payload, detail); return; }
         if (LingyunControlService.TOPIC.equals(topic)) { lingyunControl.timeout(payload, detail); return; }
+        if (Countermeasure4ChControlService.TOPIC.equals(topic)) {
+            countermeasureControl.timeout(payload, detail);
+            return;
+        }
         if ("device.reboot".equals(topic)) {
             Map<String, Object> command = devices.findCommand(payload);
             if (command != null && !terminal(text(command, "status"))) {

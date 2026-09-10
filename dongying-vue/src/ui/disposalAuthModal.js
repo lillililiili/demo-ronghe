@@ -149,7 +149,7 @@ export function openDisposalRequest({ actionType, actionOptions, subjectKind, su
         options: choices.map(a => ({ value: a, label: labelOf(DISPOSAL_ACTION_LABEL, a) })) }] : []),
       { key: 'channel', label: '执行通道', type: 'radio', required: true, options: [
         { value: 'LINGYUN_B', label: '凌云协议 B 设备（批准后可自动执行）' },
-        { value: 'COUNTERMEASURE_4CH', label: '四通道反制设备（本期不支持自动执行，只能登记人工结果）' },
+        { value: 'COUNTERMEASURE_4CH', label: '四通道反制设备（经网络控制器下发，回执以设备为准）' },
         { value: 'MANUAL', label: '人工执行（现场处置后登记结果）' }
       ] },
       { key: 'device_id', label: '执行设备', placeholder: '经设备执行时必填：设备编号；人工执行可留空' },
@@ -214,16 +214,18 @@ export function openDisposalApproval({ authorization, refresh, onDone } = {}) {
   return true;
 }
 
-/** 执行：凌云 B 下发指令；四通道设备本期没有执行能力，只能登记人工结果。 */
+/** 执行：凌云 B 或四通道网络控制器下发；人工通道登记现场结果。 */
 export function openDisposalExecution({ authorization, refresh, onDone } = {}) {
   const auth = authorization;
   if (!auth?.authorization_id) { toast('缺少授权记录', 'err'); return false; }
-  const manualOnly = auth.channel !== 'LINGYUN_B';
-  if (manualOnly) return openDisposalManualResult({ authorization: auth, refresh, onDone });
+  const autoDevice = auth.channel === 'LINGYUN_B' || auth.channel === 'COUNTERMEASURE_4CH';
+  if (!autoDevice) return openDisposalManualResult({ authorization: auth, refresh, onDone });
   openFormModal({
     title: `执行 · ${auth.authorization_no || '处置授权'}`,
     width: '560px',
-    warning: '下发后以设备回执为准：回执成功才算完成，超时或失败会如实标为执行失败。',
+    warning: auth.channel === 'COUNTERMEASURE_4CH'
+      ? '经四通道网络控制器下发，回执以设备为准。停止时下发全关，不是急停。'
+      : '下发后以设备回执为准：回执成功才算完成，超时或失败会如实标为执行失败。',
     introHtml: summaryHtml(auth),
     fields: [{ key: 'note', label: '执行备注', placeholder: '选填：下发参数说明' }],
     initial: { note: '' },
@@ -254,9 +256,7 @@ export function openDisposalManualResult({ authorization, refresh, onDone } = {}
   openFormModal({
     title: `登记执行结果 · ${auth.authorization_no || '处置授权'}`,
     width: '600px',
-    warning: auth.channel === 'COUNTERMEASURE_4CH'
-      ? '四通道反制设备本期不支持自动执行，请在现场处置后如实登记结果。'
-      : '人工执行：请在现场处置后如实登记结果。',
+    warning: '人工执行：请在现场处置后如实登记结果。',
     introHtml: summaryHtml(auth),
     fields: [
       { key: 'result', label: '执行结果', type: 'radio', required: true, options: [

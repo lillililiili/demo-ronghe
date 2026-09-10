@@ -39,11 +39,12 @@ public class DeviceProtocolService {
                                 new Field("coordinate_transform_enabled", "boolean", true, "具备验证参考值后才派生经纬度")),
                         Map.of("host", "192.168.8.168", "port", 5001), false),
                 new ProtocolDescriptor(DeviceProtocolCodes.COUNTERMEASURE_TCP_4CH_V2_0, "固定式四通道网络控制器", "2.0",
-                        List.of("SAFE_STATUS_QUERY", "WIRE_ENCODING_DETECTION", "FOUR_CHANNEL_NORMALIZATION"),
+                        List.of("SAFE_STATUS_QUERY", "WIRE_ENCODING_DETECTION", "FOUR_CHANNEL_NORMALIZATION", "RELAY_SET"),
                         List.of(new Field("device_address", "integer", true, "1–244，禁止广播地址 245"),
                                 new Field("wire_encoding", "enum", true, "AUTO/RAW_BYTES/ASCII_HEX_SPACED/ASCII_HEX_COMPACT"),
-                                new Field("poll_interval_millis", "integer", true, "1000–60000")),
-                        Map.of("host", "192.168.0.7", "port", 10006), false));
+                                new Field("poll_interval_millis", "integer", true, "1000–60000"),
+                                new Field("relay_set", "note", false, "0x11/0x12/0x13 经 REST 与处置通道下发；调测/轮询仍只发 0x10；停止=全关 0x00，不是急停")),
+                        Map.of("host", "192.168.0.7", "port", 10006), true));
     }
 
     public record ProtocolDescriptor(String protocolCode, String name, String version,

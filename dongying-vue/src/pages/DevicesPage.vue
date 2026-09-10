@@ -146,7 +146,7 @@ function formFields(editing = false, brokers = [], scopes = []) {
     { key: 'rtk_enabled', label: '采集雷达 RTK', type: 'checkbox', visibleWhen: radarField },
     { key: 'coordinate_transform_enabled', label: '验证参考值后派生经纬度', type: 'checkbox', visibleWhen: radarField },
     { key: 'countermeasure_protocol_title', type: 'html', visibleWhen: countermeasureField,
-      html: '<b>四通道只读查询</b><small>不发送射频或继电器动作。</small>' },
+      html: '<b>四通道状态查询</b><small>调测和轮询只发 0x10。继电器设置经处置授权或控制命令下发，回执以设备为准。</small>' },
     { key: 'device_address', label: '反制设备地址', type: 'number', min: 1, max: 244, visibleWhen: countermeasureField, placeholder: '1–244' },
     { key: 'wire_encoding', label: '反制线缆编码', type: 'select', visibleWhen: countermeasureField, options: optionsOf([
       ['AUTO', 'AUTO 安全探测'], ['RAW_BYTES', '原始 8 字节'], ['ASCII_HEX_SPACED', '空格 ASCII Hex'], ['ASCII_HEX_COMPACT', '紧凑 ASCII Hex']]) },
@@ -300,6 +300,7 @@ onUnmounted(() => { active = false; detailSequence++; clearInterval(refreshTimer
                   <dt>订阅状态</dt><dd>{{ protocolStatus?.details?.subscribed ? '已订阅' : '尚未订阅' }}</dd>
                   <dt>工作状态</dt><dd>{{ ({ '0': '未工作', '1': '工作中', '2': '异常' })[selected.work_state_code] || '未知' }}</dd>
                   <dt>最近工参</dt><dd>{{ fmtTime(protocolStatus?.details?.last_static_at) }}</dd>
+                  <dt>台账坐标</dt><dd>{{ detail.longitude == null || detail.latitude == null ? '—' : `${detail.longitude}, ${detail.latitude}` }}</dd>
                   <dt>最近目标报文</dt><dd>{{ fmtTime(protocolStatus?.details?.last_sense_at) }}</dd>
                   <dt>重复 / 冲突</dt><dd>{{ protocolStatus?.details?.duplicate_count ?? 0 }} / {{ protocolStatus?.details?.conflict_count ?? 0 }}</dd>
                   <dt>疑似缺报</dt><dd>{{ protocolStatus?.details?.suspected_gap_count ?? 0 }} 次序号间隙</dd>

@@ -26,8 +26,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
- * 执行通道：人工执行走完整链路；经设备的通道在本期一律执行不了，但必须"如实拒绝并留痕"，
- * 而不是伪造回执，也不能把授权推进到 EXECUTING。
+ * 执行通道：人工执行走完整链路；经设备的 LINGYUN_B 在未绑定/离线/码族未开通时必须如实拒绝并留痕，
+ * 不伪造回执，也不能把授权推进到 EXECUTING。
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -98,20 +98,17 @@ class DisposalExecutionTest {
         // 测试库里没有任何 mqtt_device_binding，因此走的必然是"未登记"这一支。断成精确值而不是二选一：
         // 用 isIn(A,B) 会让两条分支互相顶替——真跑成另一支也照样绿，等于没测。
         assertThat(bindings()).isZero();
-        // COUNTERMEASURE 在 demo-v1 里映射到指令码 60003，而 A 的 family() 不认它——
-        // 因此先被"协议面未开通"拦下，轮不到判断设备绑没绑定。这正是本期 LINGYUN_B 的真实处境。
-        assertThat(error.path("code").asText()).isEqualTo("DEVICE_CONTROL_UNAVAILABLE");
+        // 60003 已开通，测试库没有任何 mqtt_device_binding，因此下一刀是未登记。
+        assertThat(error.path("code").asText()).isEqualTo("DEVICE_NOT_BOUND");
         // 关键：授权仍是 APPROVED，且拒绝这件事必须留在事件流里——
         // 若实现把异常直接抛出去，事件会跟着事务回滚，事后就查不出当时为什么执行不了。
         assertThat(statusOf(id)).isEqualTo("APPROVED");
-        // 事件种类与 HTTP 码**有意不同**（13-22）：对外统一 DEVICE_CONTROL_UNAVAILABLE，
-        // 事件里记具体是哪一种受阻，DTO 据事件推导 execution_block_reason。断言事件记的是具体那一条。
-        assertThat(kinds(id)).contains("PROTOCOL_NOT_OPENED");
+        assertThat(kinds(id)).contains("DEVICE_NOT_BOUND");
         assertThat(commandId(id)).isNull();
     }
 
     @Test
-    void fourChannelIsBlockedAsACapabilityProblemAndSaysSoInTheDto() throws Exception {
+    void fourChannelOnNonFourChannelDeviceIsCapabilityAndSaysSoInTheDto() throws Exception {
         String deviceId = anyDevice();
         assertThat(deviceId).as("测试库需要至少一台设备，否则本用例是空跑").isNotNull();
         String id = approved("COUNTERMEASURE_4CH", deviceId);
@@ -119,19 +116,48 @@ class DisposalExecutionTest {
                 .path("error").path("code").asText().equals("DEVICE_CONTROL_UNAVAILABLE");
         assertThat(kinds(id)).contains("DEVICE_CONTROL_UNAVAILABLE");
         assertThat(statusOf(id)).isEqualTo("APPROVED");
-        // 四通道是"这台设备本来就不能自动执行"，补救方是换设备——不能和"等厂家开通指令码"混为一谈。
+        // 测试库设备不是四通道协议：补救方是换设备，不能和"等厂家开通指令码"混为一谈。
         assertThat(blockReason(id)).isEqualTo("DEVICE_CAPABILITY");
+    }
+
+    @Test
+    void fourChannelRejectsDecoyWithoutDispatching() throws Exception {
+        String deviceId = anyDevice();
+        assertThat(deviceId).isNotNull();
+        String bodyText = "{\"action_type\":\"DECOY\",\"subject_kind\":\"UAV_EVENT\",\"subject_id\":\""
+                + event("CONFIRMED") + "\",\"channel\":\"COUNTERMEASURE_4CH\",\"device_id\":\""
+                + deviceId + "\",\"reason\":\"诱骗不能走四通道\"}";
+        String id = body(mvc.perform(post("/api/v1/disposal-authorizations").header("Authorization", bearer(requester))
+                        .header("Idempotency-Key", key()).contentType(MediaType.APPLICATION_JSON).content(bodyText))
+                .andExpect(status().isCreated())).path("data").path("authorization_id").asText();
+        mvc.perform(post("/api/v1/disposal-authorizations/{id}/approve", id).header("Authorization", bearer(approver))
+                        .header("Idempotency-Key", key()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"expected_version\":0}")).andExpect(status().isOk());
+        execute(id, 1).andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
+        assertThat(statusOf(id)).isEqualTo("APPROVED");
+        assertThat(kinds(id)).doesNotContain("EXECUTE");
     }
 
     @Test
     void deviceChannelBlockReasonIsProtocolNotOpened() throws Exception {
         String deviceId = anyDevice();
         assertThat(deviceId).isNotNull();
-        String id = approved("LINGYUN_B", deviceId);
-        execute(id, 1).andExpect(status().isConflict());
-        // 补救方是厂家（确认设备类型缩写、由 A 开通映射），不是运维——两者混同会让人白忙一场。
-        assertThat(blockReason(id)).isEqualTo("PROTOCOL_NOT_OPENED");
-        assertThat(kinds(id)).contains("PROTOCOL_NOT_OPENED");
+        JsonNode original = policyParams();
+        try {
+            // 50000 是协议标明未有真实设备的诱骗码，family() 仍为 null，用来守住「未开通」这一支。
+            com.fasterxml.jackson.databind.node.ObjectNode root =
+                    (com.fasterxml.jackson.databind.node.ObjectNode) original.deepCopy();
+            ((com.fasterxml.jackson.databind.node.ObjectNode) root.path("command_map").path("COUNTERMEASURE"))
+                    .put("operation_cmd", 50000);
+            writePolicyParams(root);
+            String id = approved("LINGYUN_B", deviceId);
+            execute(id, 1).andExpect(status().isConflict());
+            assertThat(blockReason(id)).isEqualTo("PROTOCOL_NOT_OPENED");
+            assertThat(kinds(id)).contains("PROTOCOL_NOT_OPENED");
+        } finally {
+            writePolicyParams(original);
+        }
     }
 
     @Test
@@ -206,6 +232,20 @@ class DisposalExecutionTest {
     private String commandId(String id) {
         return jdbc.queryForObject("select execution_command_id from disposal_authorization where authorization_id=?",
                 String.class, id);
+    }
+
+    /** H2 把 JSON 列再包一层字符串；与 DisposalPolicyRepository.parse 同一解法。 */
+    private JsonNode policyParams() throws Exception {
+        String raw = jdbc.queryForObject(
+                "select cast(params as text) from disposal_policy where policy_code='demo-v1'", String.class);
+        JsonNode node = objectMapper.readTree(raw);
+        if (node != null && node.isTextual()) node = objectMapper.readTree(node.textValue());
+        return node;
+    }
+
+    private void writePolicyParams(JsonNode node) throws Exception {
+        jdbc.update("update disposal_policy set params=cast(? as json) where policy_code='demo-v1'",
+                objectMapper.writeValueAsString(node));
     }
 
     private JsonNode body(ResultActions actions) throws Exception {

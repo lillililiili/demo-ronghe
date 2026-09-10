@@ -95,6 +95,11 @@ class EoManualTrackApiTest {
                         .contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error.code").value("TARGET_NOT_FOUND"));
+        String idle = insertTarget(true);
+        mvc.perform(get("/api/v1/targets/{id}/eo-tracking-tasks", idle).header("Authorization", bearer()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ok").value(true))
+                .andExpect(jsonPath("$.data").doesNotExist());
     }
 
     @Test void operatorBeginThenGetThenSecondBeginConflictsThenEndReleases() throws Exception {

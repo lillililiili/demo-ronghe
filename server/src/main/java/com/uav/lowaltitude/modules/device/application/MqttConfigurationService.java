@@ -216,7 +216,7 @@ public class MqttConfigurationService {
         if((p.vendor()!=null && p.vendor().length()>128) || (p.model()!=null && p.model().length()>128)) throw bad("厂家或型号过长");
         if(eo(p)) { segment(p.edgeId(),64); segment(p.externalDeviceId(),32); return; }
         if(!LingyunEnvelope.PROTOCOL.equals(p.protocolCode()) || !LingyunControlEnvelope.registrable(p.deviceTypeAbbr()))
-            throw bad("支持雷达、5G-A、TDOA、AOA、协议破解、RemoteID、光电或光电边端");
+            throw bad("支持雷达、5G-A、TDOA、AOA、协议破解、RemoteID、诱骗、干扰、驱鸟炮、光电或光电边端");
         segment(p.providerCode(),64); segment(p.externalDeviceId(),128);
     }
     private static boolean eo(Registration p) { return EoEdgeEnvelope.PROTOCOL.equals(p.protocolCode()); }

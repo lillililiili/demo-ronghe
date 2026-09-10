@@ -78,8 +78,16 @@ class MqttIngressTest {
     }
     private String sense(long time,long count) { return "{\"deviceId\":\"external-1\",\"ptTime\":"+time+",\"msgCnt\":"+count+",\"objects\":[]}"; }
     private String heartbeat(String type,int workState,Long time) {
-        return "{\"providerCode\":\"fixture-provider\",\"deviceId\":\"external-1\",\"deviceName\":\"fixture\",\"deviceType\":"
-                +LingyunEnvelope.TYPES.get(type)+",\"workState\":"+workState+(time==null?"":",\"ptTime\":"+time)+"}";
+        return heartbeat(type, workState, time, null, null, null);
+    }
+    private String heartbeat(String type,int workState,Long time, Double longitude, Double latitude, Double altitude) {
+        StringBuilder body = new StringBuilder("{\"providerCode\":\"fixture-provider\",\"deviceId\":\"external-1\",\"deviceName\":\"fixture\",\"deviceType\":")
+                .append(LingyunEnvelope.TYPES.get(type)).append(",\"workState\":").append(workState);
+        if (time != null) body.append(",\"ptTime\":").append(time);
+        if (longitude != null) body.append(",\"deviceLongitude\":").append(longitude);
+        if (latitude != null) body.append(",\"deviceLatitude\":").append(latitude);
+        if (altitude != null) body.append(",\"deviceAltitude\":").append(altitude);
+        return body.append("}").toString();
     }
     private long inboxCount(Binding b) { return jdbc.queryForObject("SELECT COUNT(*) FROM inbox_message WHERE source=?",Long.class,b.source()); }
     private static String key() { return UUID.randomUUID().toString(); }
@@ -106,6 +114,23 @@ class MqttIngressTest {
         }
         assertThat(tcp.enabledDevices()).noneMatch(row -> LingyunEnvelope.PROTOCOL.equals(row.get("protocol_code")));
     }
+    @Test void controlStaticGoesOnlineWithoutInboxAndSenseDataIsRejected() {
+        for (String type : List.of("dec", "ifr", "bsc")) {
+            Binding b = register(type);
+            assertThat(jdbc.queryForObject("SELECT source_type FROM integration_source WHERE source_id=?",
+                    String.class, b.sourceId())).isNull();
+            receive(b, heartbeat(type, 0, null), false, 1, false, false);
+            assertThat(devices.state(b.opsDeviceId()).connectivity()).isEqualTo("ONLINE");
+            assertThat(devices.state(b.opsDeviceId()).workStateCode()).isEqualTo("0");
+            assertThat(inboxCount(b)).isZero();
+            ingress.receive(brokerId, owner, b.topic(true), sense(1000, 1).getBytes(StandardCharsets.UTF_8),
+                    2, 1, false, false, clock.nowMillis());
+            assertThat(inboxCount(b)).isZero();
+            assertThat(jdbc.queryForObject(
+                    "SELECT COUNT(*) FROM mqtt_receive_diagnostic WHERE broker_id=? AND reason='UNSUPPORTED_TYPE'",
+                    Long.class, brokerId)).isGreaterThanOrEqualTo(1L);
+        }
+    }
     @Test void duplicatesConflictsWrapAndOutOfOrderPreserveFirstPayloadAndLatestCounter() {
         Binding b=register("radar");
         receive(b,sense(1000,Integer.MAX_VALUE),true,1,false,false);
@@ -121,6 +146,31 @@ class MqttIngressTest {
         assertThat(((Number)status.get("suspected_gap_count")).longValue()).isOne();
         assertThat(repository.binding(b.opsDeviceId(),false).lastPtTime()).isEqualTo(3000);
     }
+    @Test void staticLocationFillsEmptyLedgerThenLeavesExistingCoordinates() {
+        Binding b = register("dcd");
+        receive(b, heartbeat("dcd", 1, 2000L), false, 1, false, false);
+        assertThat(jdbc.queryForObject("SELECT longitude FROM ops_device WHERE device_id=?", Double.class, b.opsDeviceId())).isNull();
+        receive(b, heartbeat("dcd", 1, 3000L, 118.62, 37.42, 12.5), false, 2, false, false);
+        assertThat(jdbc.queryForObject("SELECT longitude FROM ops_device WHERE device_id=?", java.math.BigDecimal.class, b.opsDeviceId()))
+                .isEqualByComparingTo("118.62");
+        assertThat(jdbc.queryForObject("SELECT latitude FROM ops_device WHERE device_id=?", java.math.BigDecimal.class, b.opsDeviceId()))
+                .isEqualByComparingTo("37.42");
+        assertThat(jdbc.queryForObject("SELECT altitude_m FROM ops_device WHERE device_id=?", java.math.BigDecimal.class, b.opsDeviceId()))
+                .isEqualByComparingTo("12.5");
+        assertThat(jdbc.queryForObject("SELECT coordinate_system FROM ops_device WHERE device_id=?", String.class, b.opsDeviceId()))
+                .isEqualTo("WGS-84");
+        receive(b, heartbeat("dcd", 1, 4000L, 119.0, 38.0, 99.0), false, 3, false, false);
+        assertThat(jdbc.queryForObject("SELECT longitude FROM ops_device WHERE device_id=?", java.math.BigDecimal.class, b.opsDeviceId()))
+                .isEqualByComparingTo("118.62");
+        receive(b, heartbeat("dcd", 1, 5000L, 118.1, null, null), false, 4, false, false);
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM mqtt_receive_diagnostic WHERE broker_id=? AND outcome='REJECTED' AND reason='INVALID_ENVELOPE'",
+                Long.class, brokerId)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT longitude FROM ops_device WHERE device_id=?", java.math.BigDecimal.class, b.opsDeviceId()))
+                .isEqualByComparingTo("118.62");
+        assertThat(inboxCount(b)).isZero();
+    }
+
     @Test void retainedRedeliveryAndOldStaticCannotRefreshOnlineOrRegressWorkState() {
         Binding b=register("tdoa");
         receive(b,heartbeat("tdoa",1,2000L),false,1,false,false);

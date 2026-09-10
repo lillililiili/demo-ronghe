@@ -90,7 +90,14 @@ public class MqttRepository {
             case "tdoa" -> "TDOA";
             case "dcd" -> "DCD";
             case "rid" -> "RID";
+            case "dec" -> "DEC";
+            case "ifr" -> "IFR";
+            case "bsc" -> "BSC";
             default -> throw new IllegalArgumentException("UNSUPPORTED_TYPE");
+        };
+        String catalogType= switch(p.deviceTypeAbbr()) {
+            case "dec", "ifr", "bsc" -> null;
+            default -> type;
         };
         String typeName= switch(p.deviceTypeAbbr()) {
             case "radar" -> "雷达";
@@ -100,6 +107,9 @@ public class MqttRepository {
             case "tdoa" -> "TDOA";
             case "dcd" -> "协议破解";
             case "rid" -> "RemoteID";
+            case "dec" -> "诱骗";
+            case "ifr" -> "干扰";
+            case "bsc" -> "驱鸟炮";
             default -> throw new IllegalArgumentException("UNSUPPORTED_TYPE");
         };
         boolean simulated=p.sourceMode().equals("replay");
@@ -111,7 +121,7 @@ public class MqttRepository {
         jdbc.update("""
                 INSERT INTO integration_source(source_id,source_code,name,protocol_code,protocol_version,source_mode,
                     enabled,source_type,created_at,updated_at) VALUES (?,?,?,?,'8.6',?,TRUE,?,?,?)
-                """,source,"mqtt-"+source,p.name(),LingyunEnvelope.PROTOCOL,p.sourceMode(),type,time,time);
+                """,source,"mqtt-"+source,p.name(),LingyunEnvelope.PROTOCOL,p.sourceMode(),catalogType,time,time);
         jdbc.update("""
                 INSERT INTO ops_device(device_id,source_id,external_device_id,device_no,name,device_type_code,device_type_name,
                     channel,model,vendor,source_mode,simulated,created_at,updated_at,owner_name,region_name)
@@ -208,6 +218,13 @@ public class MqttRepository {
                 UPDATE ops_device_state SET connectivity='ONLINE',work_state_code=?,observed_at=?,received_at=?,
                     last_heartbeat_at=?,unknown_reason=NULL,metrics_json=?,version=version+1 WHERE device_id=?
                 """,String.valueOf(m.workState()),m.ptTime(),received,received,m.json(),b.opsDeviceId());
+        if (m.longitude() != null && m.latitude() != null) {
+            jdbc.update("""
+                    UPDATE ops_device SET longitude=?, latitude=?, coordinate_system='WGS-84',
+                        altitude_m=COALESCE(?, altitude_m), version=version+1, updated_at=?
+                    WHERE device_id=? AND longitude IS NULL AND latitude IS NULL
+                    """, m.longitude(), m.latitude(), m.altitude(), received, b.opsDeviceId());
+        }
     }
     public void diagnostic(String broker,String device,String topic,String hash,long received,String outcome,String reason) {
         jdbc.update("""

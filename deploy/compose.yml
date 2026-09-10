@@ -15,6 +15,15 @@ services:
       timeout: 5s
       retries: 10
 
+  # Loopback MQTT broker for Lingyun protocol A/C replay. Not a live field broker.
+  # api does not depend on this service: local `spring-boot:run` connects to host 127.0.0.1:1883.
+  mosquitto:
+    image: eclipse-mosquitto:2
+    ports:
+      - "127.0.0.1:1883:1883"
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+
   api:
     build: ../server
     environment:

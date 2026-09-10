@@ -31,10 +31,11 @@ class LingyunEnvelopeTest {
     @Test void rejectsInvalidUtf8AndUnsupportedTopic() {
         assertThatThrownBy(() -> LingyunEnvelope.decode("bridge/provider/device_data/radar/x",new byte[]{(byte)0xff})).hasMessage("INVALID_JSON_UTF8");
         assertThatThrownBy(() -> LingyunEnvelope.decode("bridge/provider/device_data/eo/x",new byte[0])).hasMessage("UNSUPPORTED_TYPE");
+        assertThatThrownBy(() -> LingyunEnvelope.decode("bridge/provider/device_data/dec/x",new byte[0])).hasMessage("UNSUPPORTED_TYPE");
     }
 
     @ParameterizedTest
-    @ValueSource(strings={"aoa","dcd","rid"})
+    @ValueSource(strings={"aoa","dcd","rid","dec","ifr","bsc"})
     void workParamIdentityUsesAppendixDeviceType(String type) {
         int code = LingyunEnvelope.TYPES.get(type);
         String raw = "{\"providerCode\":\"provider\",\"deviceId\":\"external-1\",\"deviceName\":\"fixture\",\"deviceType\":"

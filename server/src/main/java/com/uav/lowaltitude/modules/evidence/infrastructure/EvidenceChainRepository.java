@@ -33,6 +33,14 @@ public class EvidenceChainRepository {
         return rows.isEmpty() ? null : rows.get(0);
     }
 
+    public CaseRef findCase(String caseId) {
+        List<CaseRef> rows = jdbc.query("""
+                SELECT case_id, case_no, event_id, owner_org_id, district_id FROM punishment_case WHERE case_id=:id
+                """, Map.of("id", caseId), (rs, i) -> new CaseRef(rs.getString("case_id"), rs.getString("case_no"),
+                rs.getString("event_id"), rs.getString("owner_org_id"), rs.getString("district_id")));
+        return rows.isEmpty() ? null : rows.get(0);
+    }
+
     public TargetRef findTarget(String targetId) {
         List<TargetRef> rows = jdbc.query("""
                 SELECT target_id, target_no, owner_org_id, district_id FROM target WHERE target_id=:id
@@ -63,7 +71,7 @@ public class EvidenceChainRepository {
                 rs.getInt("point_count")));
     }
 
-    public List<FileRow> files(String eventId, Collection<String> targetIds) {
+    public List<FileRow> files(String eventId, Collection<String> targetIds, String caseId) {
         StringBuilder sql = new StringBuilder("""
                 SELECT f.evidence_id, f.evidence_no, f.kind_code, f.original_name, f.status, f.sha256,
                     f.size_bytes, f.captured_at, f.stored_at
@@ -82,6 +90,12 @@ public class EvidenceChainRepository {
             if (any) sql.append(" OR");
             sql.append(" (l.subject_kind='TARGET' AND l.subject_id IN (:targetIds))");
             params.put("targetIds", targetIds);
+            any = true;
+        }
+        if (caseId != null) {
+            if (any) sql.append(" OR");
+            sql.append(" (l.subject_kind='CASE' AND l.subject_id=:caseId)");
+            params.put("caseId", caseId);
             any = true;
         }
         if (!any) return List.of();
@@ -269,6 +283,7 @@ public class EvidenceChainRepository {
 
     public record EventRef(String eventId, String alarmId, String ownerOrgId, String districtId, String targetId) { }
     public record TargetRef(String targetId, String targetNo, String ownerOrgId, String districtId) { }
+    public record CaseRef(String caseId, String caseNo, String eventId, String ownerOrgId, String districtId) { }
     public record AliasRow(String historicalTargetId, String currentTargetId) { }
     public record TrackRow(String trackId, String layer, Instant startedAt, Instant endedAt, int pointCount) { }
     public record FileRow(String evidenceId, String evidenceNo, String kindCode, String originalName, String status,

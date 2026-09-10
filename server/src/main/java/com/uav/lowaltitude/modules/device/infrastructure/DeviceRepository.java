@@ -328,7 +328,7 @@ public class DeviceRepository {
     }
 
     public List<Map<String, Object>> dueOutbox(long now, int limit) {
-        return jdbc.queryForList("SELECT * FROM outbox_event WHERE processed_at IS NULL AND available_at<=? AND topic IN ('device.reboot','commission.connect','commission.run','eo.track.begin','eo.track.end','eo.camera.status','device.control.lingyun') ORDER BY available_at,created_at OFFSET 0 ROWS FETCH NEXT ? ROWS ONLY",
+        return jdbc.queryForList("SELECT * FROM outbox_event WHERE processed_at IS NULL AND available_at<=? AND topic IN ('device.reboot','commission.connect','commission.run','eo.track.begin','eo.track.end','eo.camera.status','device.control.lingyun','device.control.countermeasure') ORDER BY available_at,created_at OFFSET 0 ROWS FETCH NEXT ? ROWS ONLY",
                 now, limit);
     }
 

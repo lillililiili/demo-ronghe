@@ -394,7 +394,7 @@ async function loadDetail(planId) {
   }
   // 计划详情只要求 flight:read；航线几何另行读取，不能让 route:read 失败掩盖已取得的计划事实。
   if (plan && selected.value?.plan_id === plan.plan_id) {
-    await Promise.all([loadRouteGeometry(plan), loadAirspaceContext(plan), loadActuals(plan)]);
+    await Promise.all([loadRouteGeometry(plan), loadAirspaceContext(plan), loadActuals(plan), loadRouteRisks(plan)]);
   }
 }
 
@@ -464,6 +464,54 @@ async function loadMatchedTarget(plan, data) {
   }
 }
 
+/* ---------- 本航线风险（按 legacy「按航线看」区块）：沿线风险直接给「通知上级」入口，状态机与写入口仍是风险页签那一套 ---------- */
+const ROUTE_RISK_DAYS = 7; // 与 legacy 一致的演示缺省值，业务方未确认
+const routeRisks = reactive({ loading: false, error: '', items: [], loaded: false });
+async function loadRouteRisks(plan) {
+  routeRisks.items = []; routeRisks.error = ''; routeRisks.loaded = false;
+  if (!plan?.route?.route_version_id || ['COMPLETED', 'CANCELLED'].includes(plan.status_code)) return;
+  routeRisks.loading = true;
+  try {
+    const now = Date.now();
+    const data = await riskApi.listRisks({ plan_id: plan.plan_id, occurred_from: now - ROUTE_RISK_DAYS * 86400000, occurred_to: now + 86400000, page: 1, size: 50 });
+    if (selected.value?.plan_id !== plan.plan_id) return;
+    routeRisks.items = data.items || [];
+    routeRisks.loaded = true;
+  } catch (requestError) {
+    if (selected.value?.plan_id !== plan.plan_id) return;
+    routeRisks.error = requestError.message || '读取本航线风险失败';
+  } finally {
+    if (selected.value?.plan_id === plan.plan_id) routeRisks.loading = false;
+  }
+}
+const routeRiskHeader = computed(() => {
+  if (planEnded.value || !selected.value?.route?.route_version_id || !routeRisks.loaded) return '';
+  const inside = routeRisks.items.filter(item => item.space_fact?.corridor_relation === 'INSIDE').length;
+  const near = routeRisks.items.filter(item => item.space_fact?.corridor_relation === 'NEAR').length;
+  return routeRisks.items.length ? `（近 ${ROUTE_RISK_DAYS} 天 · 走廊内 ${inside} / 邻近 ${near}）` : `（近 ${ROUTE_RISK_DAYS} 天）`;
+});
+function corridorText(item) {
+  const relation = item.space_fact?.corridor_relation;
+  if (relation === 'INSIDE') return '走廊内';
+  if (relation === 'NEAR') return '邻近';
+  if (relation === 'OUTSIDE') return '走廊外';
+  return severityLabel(item.severity);
+}
+function corridorTag(item) {
+  const relation = item.space_fact?.corridor_relation;
+  if (relation === 'INSIDE') return 't-red';
+  if (relation === 'NEAR') return 't-amber';
+  return 't-gray';
+}
+function riskTitle(item) {
+  const fact = item.space_fact;
+  if (fact?.subtype_name) return fact.object_count ? `${fact.subtype_name} ×${fact.object_count}` : fact.subtype_name;
+  return labelOf(RISK_TYPE_LABEL, item.risk_type);
+}
+/* 行内只放「通知上级」：以服务端 allowed_actions 为准，旧记录不带 NOTIFY 时按「待通知」放开；重复提交由服务端 409 裁决。 */
+function canNotifyItem(item) { return (item.allowed_actions || []).includes('NOTIFY') || item.state === 'PENDING_NOTIFICATION'; }
+function jumpToRisk(riskId) { activateTab('events'); enterRiskTab(riskId); }
+
 async function loadActuals(plan) {
   actualsLoading.value = true;
   actualsError.value = '';
@@ -480,6 +528,9 @@ async function loadActuals(plan) {
   }
 }
 
+/* 与 legacy 一致：待执行的计划没有"实际"可对照，已结束的计划不再做航线风险预检。 */
+const planPending = computed(() => ['PENDING', 'APPROVED'].includes(selected.value?.status_code));
+const planEnded = computed(() => ['COMPLETED', 'CANCELLED'].includes(selected.value?.status_code));
 function sectionReady(section) { return section?.availability === 'AVAILABLE'; }
 function sectionNote(section) { return labelOf(SECTION_AVAILABILITY_LABEL, section?.availability, '暂不可用'); }
 
@@ -495,7 +546,6 @@ const planAltitudeText = computed(() => {
 /* C01 的 message 里带着原始原因码（例如 CORRIDOR_MISMATCH），不能直接上屏；只取 facts 里的原因码翻译。 */
 /* 参数状态是规则集版本级的事实：DEMO 版本得出的结论不能被当成已确认口径使用，必须在结论旁边说明。 */
 const demoParams = computed(() => actuals.value?.match?.param_status === 'DEMO');
-const demoLegalityParams = computed(() => actuals.value?.legality?.param_status === 'DEMO');
 
 /* 指标条与下方"计划与实际对照"读同一条研判，避免同屏出现两个说法。 */
 const matchMetricText = computed(() => {
@@ -952,6 +1002,7 @@ async function loadRiskNotices(riskId) {
 async function refreshAfterNotify(riskId) {
   S.selectedRiskId = riskId;
   await Promise.all([loadRiskDetail(riskId), loadRiskNotices(riskId)]);
+  if (selected.value) loadRouteRisks(selected.value);
 }
 
 /* 成功提示只用 Vue 节点渲染服务端 ID，不走 innerHTML；链接指向处罚页的交接详情。 */
@@ -976,15 +1027,15 @@ function showHandoffSubmitted(created) {
   });
 }
 
-async function openRiskNotify() {
-  const risk = selectedRisk.value;
-  if (!risk || !canNotifyRisk.value) return;
+async function openRiskNotify(riskOverride = null) {
+  const risk = riskOverride || selectedRisk.value;
+  if (!risk || (riskOverride ? !canNotifyItem(risk) : !canNotifyRisk.value)) return;
   const riskId = risk.risk_id;
   const expectedVersion = Number(risk.version);
   let recipients = [];
   try { recipients = (await handoffApi.listHandoffRecipients('RISK_NOTICE')).items || []; }
   catch (requestError) { toast(handoffMessageOf(requestError, '读取交接接收方失败'), 'err'); return; }
-  if (selectedRisk.value?.risk_id !== riskId) return;
+  if (!riskOverride && selectedRisk.value?.risk_id !== riskId) return;
   const empty = !recipients.length;
   if (!pendingHandoffKeys.has(riskId)) pendingHandoffKeys.set(riskId, newHandoffIdempotencyKey());
   openFormModal({
@@ -1314,7 +1365,7 @@ onUnmounted(() => {
                 <div v-if="riskHistoryTotal > HISTORY_PAGE_SIZE" class="pager"><UPagination :page="riskHistoryPage" :page-size="HISTORY_PAGE_SIZE" :item-count="riskHistoryTotal" size="small" @update:page="changeRiskHistoryPage" /></div>
               </div>
               <div class="detail-actions is-sticky">
-                <button class="btn" type="button" :disabled="!canNotifyRisk" :title="notifyBlockReason" @click="openRiskNotify">通知上级</button>
+                <button class="btn" type="button" :disabled="!canNotifyRisk" :title="notifyBlockReason" @click="openRiskNotify()">通知上级</button>
                 <button class="btn pri" type="button" :disabled="!canVerifyRisk" :title="verifyBlockReason" @click="openRiskVerify">人工核验</button>
               </div>
             </template>
@@ -1382,7 +1433,9 @@ onUnmounted(() => {
             <section class="sect"><h4>计划信息</h4><dl class="kv kv-surface"><dt>无人机序列号</dt><dd>{{ selected.uav_sn || '未提供' }}</dd><dt>所属范围</dt><dd>{{ selected.owner_org_name || selected.owner_org_id }} / {{ selected.district_name || selected.district_id }}</dd><dt>计划时段</dt><dd>{{ formatTime(selected.start_at) }} ～ {{ formatTime(selected.end_at) }}</dd><dt>计划来源</dt><dd>{{ selected.source?.source_name || selected.source?.source_code || labelOf(SOURCE_MODE_LABEL, selected.source_mode, '未提供') }}</dd></dl></section>
             <section class="sect"><h4>审批信息</h4><div class="empty">尚未接入审批事实读取。</div></section>
             <section class="sect"><h4>计划与实际对照</h4>
-              <div v-if="actualsLoading" class="empty">正在读取…</div>
+              <div v-if="planPending" class="empty">计划尚未开始执行</div>
+              <div v-else-if="selected.status_code === 'CANCELLED'" class="empty">计划已取消，没有实际飞行可对照</div>
+              <div v-else-if="actualsLoading" class="empty">正在读取…</div>
               <div v-else-if="actualsError" class="warnbox">{{ actualsError }}</div>
               <div v-else-if="!sectionReady(actuals?.match)" class="empty">{{ sectionNote(actuals?.match) }}</div>
               <template v-else>
@@ -1397,33 +1450,25 @@ onUnmounted(() => {
                 <div v-if="demoParams"><span class="tag t-amber">参数为演示值，尚未确认</span></div>
               </template>
             </section>
-            <section class="sect"><h4>本航线风险</h4>
-              <div v-if="actualsLoading" class="empty">正在读取…</div>
-              <div v-else-if="actualsError" class="warnbox">{{ actualsError }}</div>
-              <div v-else-if="!sectionReady(actuals?.latest_risks)" class="empty">{{ sectionNote(actuals?.latest_risks) }}</div>
-              <div v-else-if="!actuals.latest_risks.items.length" class="empty">最近没有与这条计划关联的风险。</div>
+            <section class="sect"><h4>本航线风险<span v-if="routeRiskHeader" class="muted route-risk-head">{{ routeRiskHeader }}</span></h4>
+              <div v-if="planEnded" class="muted route-risk-note">计划{{ labelOf(PLAN_STATUS_LABEL, selected.status_code) }}，不再显示航线风险预检：该预检用于起飞前研判走廊沿线是否有异物，对已结束的计划没有意义。历史风险事件仍可在<a class="lnk" href="#/flights?tab=events" @click.prevent="activateTab('events')">全部风险事件</a>页签按时间查阅。</div>
+              <div v-else-if="!selected.route?.route_version_id" class="muted route-risk-note">该计划未关联航线走廊，无法计算沿线风险。</div>
+              <div v-else-if="routeRisks.loading" class="empty">正在读取…</div>
+              <div v-else-if="routeRisks.error" class="warnbox">{{ routeRisks.error }}</div>
+              <div v-else-if="!routeRisks.items.length" class="route-risk-ok">走廊内与邻近范围内无风险事件</div>
               <div v-else class="conflict-list">
-                <div v-for="item in actuals.latest_risks.items" :key="item.risk_id" class="conflict-item" :title="item.risk_id">
-                  <b>{{ labelOf(RISK_TYPE_LABEL, item.risk_type) }} · {{ severityLabel(item.severity) }}</b>
-                  <span>{{ item.reason_text }}</span>
-                  <span class="muted">{{ stateLabel(item.state_code) }} · 接收 {{ formatTime(item.received_at) }}</span>
+                <div v-for="item in routeRisks.items" :key="item.risk_id" class="conflict-item" :title="item.risk_id">
+                  <div class="route-risk-line">
+                    <span><span class="tag" :class="corridorTag(item)">{{ corridorText(item) }}</span> {{ riskTitle(item) }} <a class="lnk mono" href="#/flights?tab=events" @click.prevent="jumpToRisk(item.risk_id)">{{ readableNo(item.source_risk_id) || item.risk_id.slice(-6) }}</a></span>
+                    <span v-if="item.space_fact?.distance_to_route_m != null" class="muted mono">距中心线 {{ (item.space_fact.distance_to_route_m / 1000).toFixed(2) }} km<template v-if="item.space_fact?.target_altitude_raw != null"> · {{ item.space_fact.target_altitude_raw }}m</template></span>
+                  </div>
+                  <div class="route-risk-line">
+                    <span class="tag t-gray">{{ stateLabel(item.state) }}</span>
+                    <button v-if="canNotifyItem(item)" class="btn" type="button" title="向接收方提交风险通知交接" @click="openRiskNotify(item)">通知上级</button>
+                  </div>
                 </div>
               </div>
             </section>
-            <section class="sect"><h4>合法性</h4>
-              <div v-if="actualsLoading" class="empty">正在读取…</div>
-              <div v-else-if="actualsError" class="warnbox">{{ actualsError }}</div>
-              <div v-else-if="!sectionReady(actuals?.legality)" class="empty">{{ sectionNote(actuals?.legality) }}</div>
-              <template v-else>
-                <dl class="kv kv-surface" :title="actuals.legality.evaluation_id">
-                  <dt>研判结论</dt><dd>{{ labelOf(LEGALITY_LABEL, actuals.legality.legal_status) }}</dd>
-                  <dt>研判时间</dt><dd>{{ formatTime(actuals.legality.evaluated_at) }}</dd>
-                </dl>
-                <div v-if="demoLegalityParams"><span class="tag t-amber">参数为演示值，尚未确认</span></div>
-                <div class="muted">这里显示的是引擎已保存的研判结论；下方的空域冲突事实只是它的输入之一。</div>
-              </template>
-            </section>
-            <section class="sect"><h4>空域冲突事实</h4><div v-if="!conflicts.length" class="empty">未返回空域冲突事实。</div><div v-else class="conflict-list"><div v-for="fact in conflicts" :key="`${fact.airspace_version_id}-${fact.conflict_code}`" class="conflict-item">{{ fact.airspace_id }} / {{ fact.airspace_version_id }}：水平 {{ fact.horizontal_relation }}；高度 {{ fact.height_relation }}；时间 {{ fact.time_relation }}；{{ fact.conflict_code || '未提供' }}</div></div></section>
             <!-- 与 legacy 一致的唯一动作：跳到合法性研判页并选中本计划匹配到的目标（决策 15-48）。 -->
             <div class="detail-actions" style="margin-top:12px">
               <button class="btn pri" type="button" style="flex:1;justify-content:center" :title="legalityJumpNote" @click="goLegality">合法性判定 →</button>
@@ -1457,6 +1502,10 @@ onUnmounted(() => {
 .detail-body { flex: 1; min-height: 0; overflow: auto; padding: 12px; }
 .pager { flex: none; display:flex; justify-content:flex-end; padding:10px; }
 .conflict-list { display: grid; gap: 8px; margin-top: 8px; }
+.route-risk-head { font-weight: normal; font-size: 12px; margin-left: 4px; }
+.route-risk-note { font-size: 12px; line-height: 1.7; }
+.route-risk-ok { color: #79e5a5; font-size: 12.5px; padding: 6px 0; }
+.route-risk-line { display: flex; justify-content: space-between; gap: 8px; align-items: center; flex-wrap: wrap; }
 .conflict-item { display: grid; gap: 3px; padding: 8px; border: 1px solid var(--line); border-radius: 6px; font-size: 12px; }
 .muted { color: var(--txt-3); font-size: 12px; }
 .sect-title { margin-top: 14px; font-weight: 600; }

@@ -23,6 +23,12 @@ app:
   dev-seed:
     enabled: ${APP_DEV_SEED_ENABLED:true}
     password: ${APP_DEV_SEED_PASSWORD:changeme}
+  # 本地演示与验收同参：引擎开着、允许激活 DEMO 规则集、启动时回放阶段七与演示体量场景，合法性研判页才有记录可看。
+  rule-engine:
+    enabled: ${APP_RULE_ENGINE_ENABLED:true}
+    allow-demo-active: ${APP_RULE_ENGINE_ALLOW_DEMO_ACTIVE:true}
+    replay:
+      run-on-start: ${APP_RULE_ENGINE_REPLAY_RUN_ON_START:true}
   disposal:
     expiry:
       enabled: true

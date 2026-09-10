@@ -448,7 +448,11 @@ async function loadMatchedTarget(plan, data) {
   matchedTarget.value = null;
   matchedTrackNote.value = '';
   const targetId = data?.match?.target_id;
-  if (!targetId) { matchedTrackNote.value = data?.match?.availability === 'AVAILABLE' ? '研判未关联感知目标' : '尚无引擎研判，无轨迹可画'; return; }
+  if (!targetId) {
+    if (['PENDING', 'APPROVED', 'CANCELLED'].includes(plan?.status_code)) return;
+    matchedTrackNote.value = data?.match?.availability === 'AVAILABLE' ? '研判未关联感知目标' : '尚无引擎研判，无轨迹可画';
+    return;
+  }
   try {
     const legal = labelOf(LEGALITY_LABEL, data?.legality?.legal_status, '—');
     const loaded = await loadTargetPosition(targetId, { legal });
@@ -531,6 +535,9 @@ async function loadActuals(plan) {
 /* 与 legacy 一致：待执行的计划没有"实际"可对照，已结束的计划不再做航线风险预检。 */
 const planPending = computed(() => ['PENDING', 'APPROVED'].includes(selected.value?.status_code));
 const planEnded = computed(() => ['COMPLETED', 'CANCELLED'].includes(selected.value?.status_code));
+/* 没有事实就不摆空分区：待执行/已取消的计划没有实际飞行可对照；已结束或无走廊的计划没有起飞前航线预检。 */
+const showComparison = computed(() => !planPending.value && selected.value?.status_code !== 'CANCELLED');
+const showRouteRisks = computed(() => !planEnded.value && !!selected.value?.route?.route_version_id);
 function sectionReady(section) { return section?.availability === 'AVAILABLE'; }
 function sectionNote(section) { return labelOf(SECTION_AVAILABILITY_LABEL, section?.availability, '暂不可用'); }
 
@@ -549,6 +556,7 @@ const demoParams = computed(() => actuals.value?.match?.param_status === 'DEMO')
 
 /* 指标条与下方"计划与实际对照"读同一条研判，避免同屏出现两个说法。 */
 const matchMetricText = computed(() => {
+  if (!showComparison.value) return '—';
   const section = actuals.value?.match;
   if (!section) return actualsLoading.value ? '读取中' : '—';
   return sectionReady(section) ? labelOf(PLAN_MATCH_LABEL, section.plan_match_code) : sectionNote(section);
@@ -1431,11 +1439,8 @@ onUnmounted(() => {
             <div class="detail-hero detail-hero-compact"><div class="detail-hero-inner"><div class="detail-hero-icon" v-html="planHeroIcon"></div><div class="detail-hero-copy"><div class="detail-hero-eyebrow">飞行计划</div><div class="detail-hero-title">{{ selected.plan_no }}</div><div class="detail-hero-id mono">{{ selected.route?.route_no || '未关联航线' }} / v{{ selected.route?.version_no ?? '—' }}</div></div></div></div>
             <div class="metric-strip is-compact"><div v-for="metric in [['执行状态', labelOf(PLAN_STATUS_LABEL, selected.status_code)], ['计划时长', formatDuration(selected)], ['航线版本', `v${selected.route?.version_no ?? '—'}`], ['目标匹配', matchMetricText]]" :key="metric[0]" class="metric-item"><div class="metric-copy"><small>{{ metric[0] }}</small><b>{{ metric[1] }}</b></div></div></div>
             <section class="sect"><h4>计划信息</h4><dl class="kv kv-surface"><dt>无人机序列号</dt><dd>{{ selected.uav_sn || '未提供' }}</dd><dt>所属范围</dt><dd>{{ selected.owner_org_name || selected.owner_org_id }} / {{ selected.district_name || selected.district_id }}</dd><dt>计划时段</dt><dd>{{ formatTime(selected.start_at) }} ～ {{ formatTime(selected.end_at) }}</dd><dt>计划来源</dt><dd>{{ selected.source?.source_name || selected.source?.source_code || labelOf(SOURCE_MODE_LABEL, selected.source_mode, '未提供') }}</dd></dl></section>
-            <section class="sect"><h4>审批信息</h4><div class="empty">尚未接入审批事实读取。</div></section>
-            <section class="sect"><h4>计划与实际对照</h4>
-              <div v-if="planPending" class="empty">计划尚未开始执行</div>
-              <div v-else-if="selected.status_code === 'CANCELLED'" class="empty">计划已取消，没有实际飞行可对照</div>
-              <div v-else-if="actualsLoading" class="empty">正在读取…</div>
+            <section v-if="showComparison" class="sect"><h4>计划与实际对照</h4>
+              <div v-if="actualsLoading" class="empty">正在读取…</div>
               <div v-else-if="actualsError" class="warnbox">{{ actualsError }}</div>
               <div v-else-if="!sectionReady(actuals?.match)" class="empty">{{ sectionNote(actuals?.match) }}</div>
               <template v-else>
@@ -1450,10 +1455,8 @@ onUnmounted(() => {
                 <div v-if="demoParams"><span class="tag t-amber">参数为演示值，尚未确认</span></div>
               </template>
             </section>
-            <section class="sect"><h4>本航线风险<span v-if="routeRiskHeader" class="muted route-risk-head">{{ routeRiskHeader }}</span></h4>
-              <div v-if="planEnded" class="muted route-risk-note">计划{{ labelOf(PLAN_STATUS_LABEL, selected.status_code) }}，不再显示航线风险预检：该预检用于起飞前研判走廊沿线是否有异物，对已结束的计划没有意义。历史风险事件仍可在<a class="lnk" href="#/flights?tab=events" @click.prevent="activateTab('events')">全部风险事件</a>页签按时间查阅。</div>
-              <div v-else-if="!selected.route?.route_version_id" class="muted route-risk-note">该计划未关联航线走廊，无法计算沿线风险。</div>
-              <div v-else-if="routeRisks.loading" class="empty">正在读取…</div>
+            <section v-if="showRouteRisks" class="sect"><h4>本航线风险<span v-if="routeRiskHeader" class="muted route-risk-head">{{ routeRiskHeader }}</span></h4>
+              <div v-if="routeRisks.loading" class="empty">正在读取…</div>
               <div v-else-if="routeRisks.error" class="warnbox">{{ routeRisks.error }}</div>
               <div v-else-if="!routeRisks.items.length" class="route-risk-ok">走廊内与邻近范围内无风险事件</div>
               <div v-else class="conflict-list">
@@ -1503,7 +1506,6 @@ onUnmounted(() => {
 .pager { flex: none; display:flex; justify-content:flex-end; padding:10px; }
 .conflict-list { display: grid; gap: 8px; margin-top: 8px; }
 .route-risk-head { font-weight: normal; font-size: 12px; margin-left: 4px; }
-.route-risk-note { font-size: 12px; line-height: 1.7; }
 .route-risk-ok { color: #79e5a5; font-size: 12.5px; padding: 6px 0; }
 .route-risk-line { display: flex; justify-content: space-between; gap: 8px; align-items: center; flex-wrap: wrap; }
 .conflict-item { display: grid; gap: 3px; padding: 8px; border: 1px solid var(--line); border-radius: 6px; font-size: 12px; }

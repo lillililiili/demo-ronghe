@@ -2,7 +2,7 @@
 /* 跨导航只保留筛选、分页与选中 ID；业务事实仍每次从只读 API 重取，不能缓存成 Mock 副本。 */
 const S = { filters: { status_code: '', keyword: '' }, page: 1, size: 20, selectedPlanId: null, tab: 'route', tabHash: '',
   /* 风险页签：筛选只收契约允许的字段；目标类型筛选与任意排序契约不支持，只保留禁用控件。 */
-  riskFilters: { severity: '', state: '', plan_id: '', owner_org_id: '', district_id: '', source_mode: '', occurred: null },
+  riskFilters: { severity: '', state: '', risk_type: '', plan_id: '', owner_org_id: '', district_id: '', source_mode: '', occurred: null },
   riskPage: 1, riskSize: 10, selectedRiskId: null, riskTab: 'event' };
 export default {};
 </script>
@@ -139,6 +139,7 @@ const HISTORY_PAGE_SIZE = 10;
 
 const riskSeverityOptions = [{ label: '全部', value: '' }, ...Object.keys(RISK_SEVERITY_LABEL).map(value => ({ label: RISK_SEVERITY_LABEL[value], value }))];
 const riskStateOptions = [{ label: '全部', value: '' }, ...Object.keys(RISK_STATE_LABEL).map(value => ({ label: RISK_STATE_LABEL[value], value }))];
+const riskKindOptions = [{ label: '全部', value: '' }, ...['FLIGHT_OPERATION', 'AIRSPACE', 'SPACE_OBJECT'].map(value => ({ label: RISK_TYPE_LABEL[value], value }))];
 /* 阶段 15：契约给了 target_type 筛选。选项值用共享字典的码（中文只做显示），
    不再拿中文当查询值——那样服务端认不出。 */
 const riskTypeOptions = [{ label: '全部', value: '' },
@@ -756,7 +757,7 @@ function riskQuery() {
   const text = value => String(value ?? '').trim();
   const query = { severity: riskFilters.severity || '', state: riskFilters.state || '', owner_org_id: text(riskFilters.owner_org_id),
     district_id: text(riskFilters.district_id), source_mode: text(riskFilters.source_mode),
-    target_type: riskFilters.target_type || '', sort: riskSort.field, order: riskSort.order };
+    target_type: riskFilters.target_type || '', risk_type: riskFilters.risk_type || '', sort: riskSort.field, order: riskSort.order };
   // plan_id 筛选另需 flight:read；已知无权限时控件禁用，也不把值带进请求以免换来 403。
   if (canFilterByPlan.value && text(riskFilters.plan_id)) query.plan_id = text(riskFilters.plan_id);
   const range = Array.isArray(riskFilters.occurred) ? riskFilters.occurred : null;
@@ -1131,7 +1132,7 @@ function enterRiskTab(requestedId = null) {
   destroyRouteMap();
   if (requestedId) {
     // 深链只清筛选与页码，避免选中的那条被当前筛选挡在列表外；详情仍按精确 ID 读取。
-    Object.assign(riskFilters, { severity: '', state: '', plan_id: '', owner_org_id: '', district_id: '', source_mode: '', occurred: null });
+    Object.assign(riskFilters, { severity: '', state: '', risk_type: '', plan_id: '', owner_org_id: '', district_id: '', source_mode: '', occurred: null });
     riskTab.value = 'event';
     S.selectedRiskId = requestedId;
   }
@@ -1250,6 +1251,7 @@ onUnmounted(() => {
                 <div class="toolbar-fields">
                   <div class="field"><label>风险等级</label><UControl v-model="riskFilters.severity" type="select" :options="riskSeverityOptions" :disabled="riskLoading" size="small" @update:model-value="applyRiskFilters" /></div>
                   <div class="field"><label>目标类型</label><UControl v-model="riskFilters.target_type" type="select" :options="riskTypeOptions" :disabled="riskLoading" size="small" @update:model-value="applyRiskFilters" /></div>
+                  <div class="field"><label>风险类型</label><UControl v-model="riskFilters.risk_type" type="select" :options="riskKindOptions" :disabled="riskLoading" size="small" @update:model-value="applyRiskFilters" /></div>
                   <div class="field"><label>状态</label><UControl v-model="riskFilters.state" type="select" :options="riskStateOptions" :disabled="riskLoading" size="small" @update:model-value="applyRiskFilters" /></div>
                   <div class="field rk-range"><label>发生时间</label><UControl v-model="riskFilters.occurred" type="datetimerange" clearable :disabled="riskLoading" size="small" start-placeholder="开始" end-placeholder="结束" /></div>
                   <div class="field" :title="riskDistrictTitle"><label>区域</label><UControl v-model="riskFilters.district_id" type="select" :options="riskDistrictOptions" :disabled="riskLoading" size="small" @update:model-value="applyRiskFilters" /></div>

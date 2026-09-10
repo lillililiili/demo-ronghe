@@ -2,7 +2,7 @@
 /* 模块级页面状态：跨导航保留分页、筛选、选中项与证据页签；业务事实始终重新读取标准 API。 */
 const S = {
   st: {
-    page: 1, size: 10, legal: 'ILLEGAL', district: '',
+    page: 1, size: 10, legal: 'ILLEGAL', district: '', review: '',
     selectedEvaluationId: null, revisionPage: 1, revisionPageSize: 10,
     evidenceTab: 'space'
   }
@@ -81,6 +81,7 @@ const evidenceTabs = [
   { value: 'review', label: '复核历史与告警' }
 ];
 
+const reviewOptions = [{ label: '全部', value: '' }, { label: '待人工复核', value: 'PENDING_REVIEW' }, { label: '已确认', value: 'CONFIRMED' }, { label: '已驳回', value: 'REJECTED' }, { label: '已改判', value: 'OVERRIDDEN' }];
 const districtOptions = computed(() => {
   const values = new Map();
   items.value.forEach(item => { if (item.district_id) values.set(item.district_id, item.district_name || item.district_id); });
@@ -232,7 +233,7 @@ function invalidateDetail() {
 }
 
 function queryParams() {
-  return { mode: 'ACTIVE', latest_only: true, legal_status: st.legal, district_id: st.district, page: st.page, size: st.size };
+  return { mode: 'ACTIVE', latest_only: true, legal_status: st.legal, district_id: st.district, review_state: st.review || undefined, page: st.page, size: st.size };
 }
 
 async function loadQueue(options = {}) {
@@ -504,6 +505,8 @@ onMounted(() => {
             <span class="lg-head-spacer"></span>
             <UField class="lg-region-filter" variant="toolbar" label="区域" v-model="st.district" type="select"
               :options="districtOptions" :disabled="loading" @update:model-value="onRegionChange" />
+            <UField class="lg-region-filter" variant="toolbar" label="复核" v-model="st.review" type="select"
+              :options="reviewOptions" :disabled="loading" @update:model-value="onRegionChange" />
             <button class="lg-icon-btn" id="lgRule" type="button" :disabled="!selectedEvaluation" aria-label="查看判定规则与参数（只读）"
               :title="selectedEvaluation ? `查看 ${ruleVersionText(selectedEvaluation)} 的规则与参数（需要规则读取权限）` : '请先选择研判'" @click="onRuleView">规则</button>
             <button class="lg-icon-btn" type="button" :disabled="loading" aria-label="刷新数据"

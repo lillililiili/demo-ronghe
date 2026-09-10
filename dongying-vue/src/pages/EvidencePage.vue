@@ -1,6 +1,6 @@
 <script>
 const S = {
-  st: { page: 1, size: 10, kind: '', status: '', refKind: '', kw: '', selId: null }
+  st: { page: 1, size: 10, kind: '', status: '', custody: '', refKind: '', kw: '', selId: null }
 };
 export default {};
 </script>
@@ -21,9 +21,7 @@ import {
   destroyEvidenceFile, downloadEvidenceContent, exportEvidenceCsv, getEvidenceFile, holdEvidenceFile,
   linkEvidenceFile, listEvidenceFiles, releaseEvidenceHold, verifyEvidenceFile
 } from '@/services/evidenceApi.js';
-import {
-  EVIDENCE_KIND_LABEL, EVIDENCE_STATUS_LABEL, EVIDENCE_SUBJECT_LABEL, labelOf
-} from '@/ui/labels.js';
+import { EVIDENCE_CUSTODY_LABEL, EVIDENCE_KIND_LABEL, EVIDENCE_STATUS_LABEL, EVIDENCE_SUBJECT_LABEL, labelOf } from '@/ui/labels.js';
 import { custodyTag, renderEvidenceFileDetail, saveEvidenceBlob, sizeText } from '@/ui/evidenceFileDetail.js';
 
 const U = window.UI;
@@ -40,6 +38,7 @@ const kpis = ref({ total: 0, available: 0, held: 0, broken: 0 });
 const KIND_OPTS = [{ v: '', t: '全部' }, ...Object.entries(EVIDENCE_KIND_LABEL).map(([v, t]) => ({ v, t }))];
 const STATUS_OPTS = [{ v: '', t: '全部' }, ...Object.entries(EVIDENCE_STATUS_LABEL).map(([v, t]) => ({ v, t }))];
 const REF_OPTS = [{ v: '', t: '全部' }, ...Object.entries(EVIDENCE_SUBJECT_LABEL).map(([v, t]) => ({ v, t }))];
+const CUSTODY_OPTS = [{ v: '', t: '全部' }, ...Object.entries(EVIDENCE_CUSTODY_LABEL).map(([v, t]) => ({ v, t }))];
 const SC = {
   PENDING: 't-gray', AVAILABLE: 't-green', MISSING: 't-orange', CORRUPT: 't-red', DESTROYED: 't-gray'
 };
@@ -65,6 +64,7 @@ const ledgerBody = `<div class="toolbar">
   <div class="toolbar-fields">
     ${U.field('类型', U.select('kind', KIND_OPTS, st.kind))}
     ${U.field('文件状态', U.select('status', STATUS_OPTS, st.status))}
+    ${U.field('保管状态', U.select('custody', CUSTODY_OPTS, st.custody))}
     ${U.field('关联对象', U.select('refKind', REF_OPTS, st.refKind))}
     <input class="ip" id="evKw" placeholder="编号 / 文件名" value="${esc(st.kw)}">
   </div>
@@ -78,6 +78,7 @@ function query() {
   const values = { page: st.page, size: st.size };
   if (st.kind) values.kind_code = st.kind;
   if (st.status) values.status = st.status;
+  if (st.custody) values.custody = st.custody;
   if (st.kw) values.q = st.kw;
   return values;
 }

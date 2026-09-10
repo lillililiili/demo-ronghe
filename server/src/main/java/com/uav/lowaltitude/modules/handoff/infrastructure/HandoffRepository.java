@@ -140,6 +140,7 @@ public class HandoffRepository {
         add(where, "h.source_kind", "kind", query.sourceKind);
         add(where, "h.source_id", "source", query.sourceId);
         add(where, "d.delivery_status", "delivery", query.deliveryStatus);
+        add(where, "d.receipt_status", "receipt", query.receiptStatus);
         add(where, "h.source_mode", "mode", query.sourceMode);
         if (query.createdFrom != null) {
             where.sql.append(" AND h.created_at>=:created_from AND h.created_at<:created_to");
@@ -209,7 +210,12 @@ public class HandoffRepository {
 
     private static final class Where { final StringBuilder sql = new StringBuilder(); final Map<String, Object> params = new HashMap<>(); }
     public record HandoffQuery(String sourceKind, String sourceId, String deliveryStatus, OffsetDateTime createdFrom, OffsetDateTime createdTo,
-            String sourceMode) { public static HandoffQuery empty() { return new HandoffQuery(null, null, null, null, null, null); } }
+            String sourceMode, String receiptStatus) {
+        public HandoffQuery(String sourceKind, String sourceId, String deliveryStatus, OffsetDateTime createdFrom, OffsetDateTime createdTo, String sourceMode) {
+            this(sourceKind, sourceId, deliveryStatus, createdFrom, createdTo, sourceMode, null);
+        }
+        public static HandoffQuery empty() { return new HandoffQuery(null, null, null, null, null, null); }
+    }
     public record RecipientRow(String recipientId, String displayName, String handoffType) { }
     public record HandoffRow(String handoffId, String sourceKind, String sourceId, String handoffType, String recipientId, String recipientName,
             long sourceVersion, String ownerOrgId, String districtId, String sourceMode, String submittedBy, OffsetDateTime createdAt,

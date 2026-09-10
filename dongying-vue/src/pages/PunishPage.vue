@@ -2,7 +2,7 @@
 /* 模块级状态：跨导航保持筛选、分页与选中项（legacy 约定）。 */
 const S = {
   page: 1, size: 20, selectedHandoffId: null,
-  filters: { source_kind: '', delivery_status: '', source_mode: '', created: null }
+  filters: { source_kind: '', delivery_status: '', receipt_status: '', source_mode: '', created: null }
 };
 export default {};
 </script>
@@ -66,6 +66,7 @@ const BLOCK_GAPS = {
 
 const kindOptions = [{ label: '全部来源', value: '' }, ...Object.keys(KIND_LABEL).map(value => ({ label: KIND_LABEL[value], value }))];
 const deliveryOptions = [{ label: '全部投递状态', value: '' }, ...Object.keys(DELIVERY_LABEL).map(value => ({ label: DELIVERY_LABEL[value], value }))];
+const receiptOptions = [{ label: '全部回执状态', value: '' }, ...Object.keys(RECEIPT_LABEL).map(value => ({ label: RECEIPT_LABEL[value], value }))];
 const sourceModeOptions = [{ label: '全部来源模式', value: '' }, ...['mock', 'replay', 'live'].map(value => ({ label: labelOf(SOURCE_MODE_LABEL, value), value }))];
 
 /* /auth/me 的 permission_codes 只有 `<模块>.read/.op/.auth`，不含 `handoff:read` 动作码；
@@ -343,7 +344,7 @@ function messageOf(reason, fallback) {
 }
 
 function listQuery() {
-  const query = { source_kind: filters.source_kind, delivery_status: filters.delivery_status, source_mode: filters.source_mode };
+  const query = { source_kind: filters.source_kind, delivery_status: filters.delivery_status, receipt_status: filters.receipt_status, source_mode: filters.source_mode };
   const range = Array.isArray(filters.created) ? filters.created : null;
   if (range && range[0] != null && range[1] != null) {
     // 契约要求 [from,to) 且 from < to；不满足时直接报错，不偷偷丢弃筛选。
@@ -455,14 +456,14 @@ async function changeDeliveriesPage(nextPage) {
 }
 
 // 三个下拉一改就查（决策 15-56）；时间范围仍走查询按钮，避免选到一半就发请求。
-watch(() => [filters.source_kind, filters.delivery_status, filters.source_mode], () => applyFilters());
+watch(() => [filters.source_kind, filters.delivery_status, filters.receipt_status, filters.source_mode], () => applyFilters());
 function applyFilters() {
   try { listQuery(); } catch (validation) { listError.value = validation.message; return; }
   S.selectedHandoffId = null;
   loadList(1);
 }
 function resetFilters() {
-  Object.assign(filters, { source_kind: '', delivery_status: '', source_mode: '', created: null });
+  Object.assign(filters, { source_kind: '', delivery_status: '', receipt_status: '', source_mode: '', created: null });
   applyFilters();
 }
 function changePage(nextPage) { if (nextPage !== page.value) loadList(nextPage); }
@@ -529,7 +530,7 @@ function consumeDeepLink() {
 
 onMounted(() => {
   const requested = consumeDeepLink();
-  if (requested) { Object.assign(filters, { source_kind: '', delivery_status: '', source_mode: '', created: null }); S.selectedHandoffId = requested; }
+  if (requested) { Object.assign(filters, { source_kind: '', delivery_status: '', receipt_status: '', source_mode: '', created: null }); S.selectedHandoffId = requested; }
   loadKpis();
   loadList(requested ? 1 : page.value, requested);
 });
@@ -553,6 +554,7 @@ onMounted(() => {
                   <div class="toolbar-fields">
                     <div class="field"><label>来源类型</label><UControl v-model="filters.source_kind" type="select" :options="kindOptions" :disabled="listLoading" size="small" @update:model-value="applyFilters" /></div>
                     <div class="field"><label>投递状态</label><UControl v-model="filters.delivery_status" type="select" :options="deliveryOptions" :disabled="listLoading" size="small" @update:model-value="applyFilters" /></div>
+                    <div class="field"><label>回执状态</label><UControl v-model="filters.receipt_status" type="select" :options="receiptOptions" :disabled="listLoading" size="small" @update:model-value="applyFilters" /></div>
                     <div class="field"><label>来源模式</label><UControl v-model="filters.source_mode" type="select" :options="sourceModeOptions" :disabled="listLoading" size="small" @update:model-value="applyFilters" /></div>
                     <div class="field pn-range"><label>提交时间</label><UControl v-model="filters.created" type="datetimerange" clearable :disabled="listLoading" size="small" start-placeholder="开始" end-placeholder="结束" /></div>
                   </div>

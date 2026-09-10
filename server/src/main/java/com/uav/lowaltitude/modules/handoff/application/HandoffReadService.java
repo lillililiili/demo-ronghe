@@ -42,7 +42,7 @@ import com.uav.lowaltitude.platform.api.ApiException;
 
 @Service
 public class HandoffReadService {
-    private static final Set<String> LIST_PARAMETERS = Set.of("source_kind", "source_id", "delivery_status", "created_from", "created_to",
+    private static final Set<String> LIST_PARAMETERS = Set.of("source_kind", "source_id", "delivery_status", "receipt_status", "created_from", "created_to",
             "source_mode", "page", "size");
     private static final Set<String> PAGE_PARAMETERS = Set.of("page", "size");
     private static final Set<String> RECIPIENT_PARAMETERS = Set.of("handoff_type");
@@ -83,7 +83,7 @@ public class HandoffReadService {
         TimeRange created = request.timeRange("created_from", "created_to");
         HandoffQuery query = new HandoffQuery(request.enumerated("source_kind", HandoffRules.SOURCE_KINDS), request.optional("source_id", 36),
                 request.enumerated("delivery_status", HandoffRules.DELIVERY_STATUSES), created.from, created.to,
-                request.enumerated("source_mode", HandoffRules.SOURCE_MODES));
+                request.enumerated("source_mode", HandoffRules.SOURCE_MODES), request.enumerated("receipt_status", HandoffRules.RECEIPT_STATUSES));
         long total = repository.count(query, decision);
         return new PageDto<>(repository.list(query, decision, page.offset(), page.size).stream().map(HandoffReadService::dto).toList(),
                 page.page, page.size, total);

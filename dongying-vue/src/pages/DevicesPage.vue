@@ -268,6 +268,8 @@ onUnmounted(() => { active = false; detailSequence++; clearInterval(refreshTimer
         <UField v-model="filters.channel" type="select" clearable label="接入通道" :options="selectOptions(options.channels)" />
         <UField v-model="filters.region" type="select" clearable label="区域" :options="selectOptions(options.regions)" />
         <UField v-model="filters.connectivity" type="select" clearable label="连接状态" :options="optionsOf([['ONLINE','在线'],['OFFLINE','离线'],['ABNORMAL','异常'],['UNKNOWN','未知']])" />
+        <UField v-model="filters.vendor" type="select" clearable label="供应商" :options="selectOptions(options.vendors)" />
+        <UField v-model="filters.enabled" type="select" clearable label="启用状态" :options="optionsOf([[true,'启用'],[false,'停用']])" />
         <div class="toolbar-actions"><NButton type="primary" @click="page.page=1;loadList({ keepSelection:false })">查询</NButton><NButton @click="resetFilters">重置</NButton><NButton v-if="canReadBrokers" @click="openMqttBrokers(canEditBrokers, isActive)">MQTT 连接</NButton><NButton type="primary" :disabled="!canOperate" @click="openDeviceForm()">接入设备</NButton></div>
       </div>
       <div class="device-layout">

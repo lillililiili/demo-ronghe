@@ -582,7 +582,7 @@ onMounted(() => {
                     <span>{{ index + 1 }}</span>
                     <span><b class="mono">{{ hit.rule_code || '未知规则' }}</b><small>{{ ruleName(hit.rule_code) }}</small></span>
                     <span :class="resultClass(hit.result_code)">{{ resultText(hit.result_code) }}</span>
-                    <span>{{ hit.params?.some(p => p.status === 'DEMO') ? 'DEMO 演示值' : (hit.params?.length ? '已确认' : '—') }}</span>
+                    <span>{{ hit.params?.some(p => p.status === 'DEMO') ? '演示值' : (hit.params?.length ? '已确认' : '—') }}</span>
                     <span>{{ hit.reason_code ? ruleReasonText(hit.reason_code) : (hit.facts?.match_reason ? ruleReasonText(hit.facts.match_reason) : '—') }}</span>
                   </button>
                   <div v-if="selectedHit" class="lg-rule-focus" :class="resultClass(selectedHit.result_code)">

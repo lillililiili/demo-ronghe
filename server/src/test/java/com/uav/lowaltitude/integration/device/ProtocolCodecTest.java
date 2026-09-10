@@ -86,8 +86,36 @@ class ProtocolCodecTest {
         assertThat(state.rawStatusWord()).isEqualTo(0x1234567FL);
         assertThat(state.channels()).containsEntry("900M", true).containsEntry("1.5G", true)
                 .containsEntry("2.4G", true).containsEntry("5.8G", true);
-        assertThat(Countermeasure4ChCodec.documentedForceLandMaskForTestOnly()).isEqualTo(0x0F);
-        assertThat(Countermeasure4ChCodec.documentedDriveAwayMaskForTestOnly()).isEqualTo(0x0D);
+        assertThat(Countermeasure4ChCodec.MASK_FORCE_LAND).isEqualTo(0x0F);
+        assertThat(Countermeasure4ChCodec.MASK_DRIVE_AWAY).isEqualTo(0x0D);
         assertThatThrownBy(() -> Countermeasure4ChCodec.query(245)).isInstanceOf(ProtocolException.class);
+        assertThatThrownBy(() -> Countermeasure4ChCodec.channelOn(245, 1)).isInstanceOf(ProtocolException.class);
+    }
+
+    @Test
+    void countermeasureGoldenSetFramesAndParsesMatchingFunctionCodes() {
+        assertThat(HexFormat.of().withUpperCase().formatHex(Countermeasure4ChCodec.channelOn(1, 0x01)))
+                .isEqualTo("5501120000000169");
+        assertThat(HexFormat.of().withUpperCase().formatHex(Countermeasure4ChCodec.channelOff(1, 0x01)))
+                .isEqualTo("5501110000000168");
+        assertThat(HexFormat.of().withUpperCase().formatHex(Countermeasure4ChCodec.setMask(1, 0x0F)))
+                .isEqualTo("5501130000000F78");
+        assertThat(HexFormat.of().withUpperCase().formatHex(Countermeasure4ChCodec.setMask(1, 0x00)))
+                .isEqualTo("5501130000000069");
+        assertThat(HexFormat.of().withUpperCase().formatHex(Countermeasure4ChCodec.setMask(1, 0x0D)))
+                .isEqualTo("5501130000000D76");
+        Countermeasure4ChCodec.RelayState on = Countermeasure4ChCodec.parseResponse(
+                HexFormat.of().parseHex("2201120000000136"), 1, Countermeasure4ChCodec.FUNCTION_ON);
+        assertThat(on.channels()).containsEntry("900M", true).containsEntry("1.5G", false);
+        Countermeasure4ChCodec.RelayState off = Countermeasure4ChCodec.parseResponse(
+                HexFormat.of().parseHex("2201110000000034"), 1, Countermeasure4ChCodec.FUNCTION_OFF);
+        assertThat(off.channels()).containsEntry("900M", false);
+        assertThatThrownBy(() -> Countermeasure4ChCodec.parseResponse(
+                HexFormat.of().parseHex("2201120000000136"), 1))
+                .isInstanceOf(ProtocolException.class);
+        assertThatThrownBy(() -> Countermeasure4ChCodec.setMask(1, 0x03))
+                .isInstanceOf(ProtocolException.class);
+        assertThatThrownBy(() -> Countermeasure4ChCodec.channelOn(1, 0x03))
+                .isInstanceOf(ProtocolException.class);
     }
 }

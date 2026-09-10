@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.uav.lowaltitude.modules.device.application.Countermeasure4ChControlService;
 import com.uav.lowaltitude.modules.device.application.DeviceService;
 import com.uav.lowaltitude.modules.device.application.LingyunControlService;
 import com.uav.lowaltitude.platform.api.ApiException;
@@ -24,10 +25,13 @@ public class DeviceCommandController {
 
     private final DeviceService service;
     private final LingyunControlService control;
+    private final Countermeasure4ChControlService countermeasure;
 
-    public DeviceCommandController(DeviceService service, LingyunControlService control) {
+    public DeviceCommandController(DeviceService service, LingyunControlService control,
+                                   Countermeasure4ChControlService countermeasure) {
         this.service = service;
         this.control = control;
+        this.countermeasure = countermeasure;
     }
 
     @PostMapping("/devices/{deviceId}/commands/reboot")
@@ -50,6 +54,17 @@ public class DeviceCommandController {
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(ApiResponse.ok(service.command(id)));
     }
 
+    @PostMapping("/devices/{deviceId}/commands/countermeasure-4ch")
+    public ResponseEntity<ApiResponse<DeviceService.Command>> countermeasure4ch(
+            @PathVariable String deviceId,
+            @RequestHeader("Idempotency-Key") String idempotencyKey,
+            @RequestBody FourChRequest request) {
+        if (request == null) request = new FourChRequest(null, null, null, null, null);
+        String id = countermeasure.enqueue(deviceId, idempotencyKey, request.authorizationId(), request.action(),
+                request.channel(), request.mask(), request.reason());
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(ApiResponse.ok(service.command(id)));
+    }
+
     @PostMapping("/devices/{deviceId}/commands/emergency-stop")
     public ResponseEntity<ApiResponse<DeviceService.Command>> emergencyStop(@PathVariable String deviceId) {
         throw new ApiException(HttpStatus.CONFLICT, "CONTROL_NOT_ENABLED", "急停：设备协议未提供");
@@ -63,4 +78,5 @@ public class DeviceCommandController {
     public record RebootRequest(@NotBlank String reason) { }
     public record ControlRequest(String authorizationId, Integer operationType, Integer operationCmd,
                                  java.util.Map<String, Object> operationParams, String reason) { }
+    public record FourChRequest(String authorizationId, String action, String channel, Integer mask, String reason) { }
 }

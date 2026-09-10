@@ -40,7 +40,7 @@ public final class DisposalRules {
     public static final Set<String> EVENT_KINDS = Set.of("REQUEST", "APPROVE", "REJECT", "EXECUTE", "RECEIPT",
             "STOP", "COMPLETE", "FAIL", "EXPIRE", "CANCEL", "MANUAL_RESULT",
             "DEVICE_STOP_UNAVAILABLE", "DEVICE_CONTROL_UNAVAILABLE", "DEVICE_NOT_BOUND",
-            "PROTOCOL_NOT_OPENED", "DEVICE_OFFLINE");
+            "PROTOCOL_NOT_OPENED", "DEVICE_OFFLINE", "DEVICE_ALL_OFF_ISSUED");
 
     /** 执行受阻原因（决策 13-14 / 13-22）。四值各自对应一个不同的补救方，页面要分开说。 */
     public static final String BLOCK_DEVICE_CAPABILITY = "DEVICE_CAPABILITY",
@@ -56,7 +56,8 @@ public final class DisposalRules {
 
     /** 决策 13-10 / 13-11：停止时设备侧到底怎么了，由事件流推导，不加列。 */
     public static final String STOP_NOT_ATTEMPTED = "NOT_ATTEMPTED", STOP_EXECUTED = "EXECUTED",
-            STOP_UNAVAILABLE = "UNAVAILABLE", STOP_NOT_BOUND = "NOT_BOUND";
+            STOP_UNAVAILABLE = "UNAVAILABLE", STOP_NOT_BOUND = "NOT_BOUND",
+            STOP_ALL_OFF_ISSUED = "ALL_OFF_ISSUED";
 
     /** 动作 → 允许发起该动作的来源状态。没列出的组合就是不允许。 */
     private static final Map<String, Set<String>> TRANSITIONS = Map.of(
@@ -139,6 +140,7 @@ public final class DisposalRules {
     public static String deviceStopResult(String channel, List<String> eventKinds) {
         if (!eventKinds.contains("STOP")) return STOP_NOT_ATTEMPTED;
         if (!LINGYUN_B.equals(channel) && !COUNTERMEASURE_4CH.equals(channel)) return STOP_NOT_ATTEMPTED;
+        if (eventKinds.contains("DEVICE_ALL_OFF_ISSUED")) return STOP_ALL_OFF_ISSUED;
         if (eventKinds.contains("DEVICE_NOT_BOUND")) return STOP_NOT_BOUND;
         return STOP_UNAVAILABLE;
     }

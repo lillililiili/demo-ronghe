@@ -6,12 +6,26 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 @Component
 public class NetworkTargetPolicy {
 
     private static final byte[] CLOUD_METADATA = new byte[] { (byte) 169, (byte) 254, (byte) 169, (byte) 254 };
+
+    private final boolean allowLoopbackWhenListed;
+
+    public NetworkTargetPolicy() {
+        this(false);
+    }
+
+    @Autowired
+    public NetworkTargetPolicy(
+            @Value("${app.network.allow-loopback-when-listed:false}") boolean allowLoopbackWhenListed) {
+        this.allowLoopbackWhenListed = allowLoopbackWhenListed;
+    }
 
     public List<InetAddress> resolveAllowed(String host, String allowedCidrs) {
         if (host == null || host.isBlank()) throw forbidden("设备主机地址未配置");
@@ -32,8 +46,11 @@ public class NetworkTargetPolicy {
         return List.copyOf(accepted);
     }
 
-    private static boolean unsafe(InetAddress address) {
+    private boolean unsafe(InetAddress address) {
         byte[] raw = address.getAddress();
+        if (allowLoopbackWhenListed && address.isLoopbackAddress() && !address.isAnyLocalAddress()
+                && !address.isLinkLocalAddress() && !address.isMulticastAddress())
+            return false;
         return address.isAnyLocalAddress() || address.isLoopbackAddress() || address.isLinkLocalAddress()
                 || address.isMulticastAddress() || (raw.length == 4 && Arrays.equals(raw, CLOUD_METADATA));
     }

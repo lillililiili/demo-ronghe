@@ -146,7 +146,7 @@ function formFields(editing = false, brokers = [], scopes = []) {
     { key: 'rtk_enabled', label: '采集雷达 RTK', type: 'checkbox', visibleWhen: radarField },
     { key: 'coordinate_transform_enabled', label: '验证参考值后派生经纬度', type: 'checkbox', visibleWhen: radarField },
     { key: 'countermeasure_protocol_title', type: 'html', visibleWhen: countermeasureField,
-      html: '<b>四通道只读查询</b><small>不发送射频或继电器动作。</small>' },
+      html: '<b>四通道状态查询</b><small>调测和轮询只发 0x10。继电器设置经处置授权或控制命令下发，回执以设备为准。</small>' },
     { key: 'device_address', label: '反制设备地址', type: 'number', min: 1, max: 244, visibleWhen: countermeasureField, placeholder: '1–244' },
     { key: 'wire_encoding', label: '反制线缆编码', type: 'select', visibleWhen: countermeasureField, options: optionsOf([
       ['AUTO', 'AUTO 安全探测'], ['RAW_BYTES', '原始 8 字节'], ['ASCII_HEX_SPACED', '空格 ASCII Hex'], ['ASCII_HEX_COMPACT', '紧凑 ASCII Hex']]) },

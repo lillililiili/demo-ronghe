@@ -573,7 +573,7 @@ class Stage13PostgresTest {
         String executorSession = session("disposal:execute", "disposal:read", "alarm:read", "devices");
 
         String deviceId = boundOpsDevice("radar");
-        // ② 四通道反制（补救方＝换设备通道）：本期没有执行能力，事件 DEVICE_CONTROL_UNAVAILABLE。
+        // ② 四通道反制选了雷达设备（补救方＝换设备）：不是四通道协议，事件 DEVICE_CONTROL_UNAVAILABLE。
         String fourChannel = approvedAuthorization(requesterSession, approverSession, "JAMMING", "COUNTERMEASURE_4CH", deviceId);
         assertThat(executeExpectingConflict(executorSession, fourChannel)).isEqualTo("DEVICE_CONTROL_UNAVAILABLE");
         assertThat(eventCount(fourChannel, "DEVICE_CONTROL_UNAVAILABLE")).isEqualTo(1L);

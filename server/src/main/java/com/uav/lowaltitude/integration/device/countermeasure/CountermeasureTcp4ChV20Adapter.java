@@ -41,6 +41,34 @@ public class CountermeasureTcp4ChV20Adapter implements DeviceAdapterPort {
     }
 
     @Override
+    public AdapterResult setRelays(RelayWork work) {
+        try {
+            AdapterConfiguration config = AdapterConfiguration.parse(mapper, work.configurationJson());
+            config.validateEndpoint();
+            int address = config.protocol().path("device_address").asInt(1);
+            WireEncoding encoding = encodingOf(config);
+            if (encoding == WireEncoding.AUTO) {
+                ProbeResult probed = query(work.configurationJson());
+                encoding = probed.encoding();
+            }
+            byte[] logical = setFrame(address, work);
+            List<InetAddress> addresses = networkPolicy.resolveAllowed(config.host(), config.allowedCidrs());
+            byte[] response = exchange(addresses.get(0), config.port(), config.timeoutMillis(), logical, encoding);
+            RelayState state = Countermeasure4ChCodec.parseResponse(
+                    Countermeasure4ChCodec.decodeWire(response, encoding), address, functionOf(work.action()));
+            return new AdapterResult(true, "COUNTERMEASURE_SET_OK",
+                    "继电器设置回码已解析，低四位=" + Integer.toHexString(Byte.toUnsignedInt((byte) state.rawStatusWord()))
+                            + "；不代表射频已发射");
+        } catch (SocketTimeoutException ex) {
+            return new AdapterResult(false, "ADAPTER_TIMEOUT", safe(ex));
+        } catch (ProtocolException ex) {
+            return new AdapterResult(false, ex.code(), ex.getMessage());
+        } catch (IOException ex) {
+            return new AdapterResult(false, "ADAPTER_UNAVAILABLE", safe(ex));
+        }
+    }
+
+    @Override
     public AdapterResult connect(CommissionWork work) {
         try {
             AdapterConfiguration config = AdapterConfiguration.parse(mapper, work.configurationJson());
@@ -81,9 +109,7 @@ public class CountermeasureTcp4ChV20Adapter implements DeviceAdapterPort {
         AdapterConfiguration config = AdapterConfiguration.parse(mapper, json);
         config.validateEndpoint();
         int address = config.protocol().path("device_address").asInt(1);
-        WireEncoding configured;
-        try { configured = WireEncoding.valueOf(config.protocol().path("wire_encoding").asText("AUTO")); }
-        catch (IllegalArgumentException ex) { throw new ProtocolException("PROTOCOL_NOT_CONFIGURED", "wire_encoding 无效"); }
+        WireEncoding configured = encodingOf(config);
         List<WireEncoding> candidates = configured == WireEncoding.AUTO
                 ? List.of(WireEncoding.ASCII_HEX_SPACED, WireEncoding.ASCII_HEX_COMPACT, WireEncoding.RAW_BYTES)
                 : List.of(configured);
@@ -91,7 +117,8 @@ public class CountermeasureTcp4ChV20Adapter implements DeviceAdapterPort {
         String lastError = null;
         for (WireEncoding candidate : candidates) {
             try {
-                byte[] response = exchange(addresses.get(0), config.port(), config.timeoutMillis(), address, candidate);
+                byte[] response = exchange(addresses.get(0), config.port(), config.timeoutMillis(),
+                        Countermeasure4ChCodec.query(address), candidate);
                 RelayState state = Countermeasure4ChCodec.parseResponse(
                         Countermeasure4ChCodec.decodeWire(response, candidate), address);
                 return new ProbeResult(candidate, state);
@@ -102,16 +129,53 @@ public class CountermeasureTcp4ChV20Adapter implements DeviceAdapterPort {
         throw new ProtocolException("PROTOCOL_FRAME_INVALID", "三种只读查询编码均未收到有效响应：" + lastError);
     }
 
-    private byte[] exchange(InetAddress address, int port, int timeout, int deviceAddress,
+    private byte[] exchange(InetAddress address, int port, int timeout, byte[] logicalFrame,
                             WireEncoding encoding) throws IOException {
         try (Socket socket = new Socket()) {
             socket.connect(new InetSocketAddress(address, port), timeout);
             socket.setSoTimeout(timeout);
-            byte[] request = Countermeasure4ChCodec.encodeWire(Countermeasure4ChCodec.query(deviceAddress), encoding);
+            byte[] request = Countermeasure4ChCodec.encodeWire(logicalFrame, encoding);
             socket.getOutputStream().write(request);
             socket.getOutputStream().flush();
             return readResponse(socket, encoding);
         }
+    }
+
+    private static WireEncoding encodingOf(AdapterConfiguration config) {
+        try {
+            return WireEncoding.valueOf(config.protocol().path("wire_encoding").asText("AUTO"));
+        } catch (IllegalArgumentException ex) {
+            throw new ProtocolException("PROTOCOL_NOT_CONFIGURED", "wire_encoding 无效");
+        }
+    }
+
+    private static byte[] setFrame(int address, RelayWork work) {
+        String action = work.action() == null ? "" : work.action();
+        return switch (action) {
+            case "CHANNEL_ON" -> Countermeasure4ChCodec.channelOn(address, requiredBit(work.channelBit()));
+            case "CHANNEL_OFF" -> Countermeasure4ChCodec.channelOff(address, requiredBit(work.channelBit()));
+            case "SET_MASK" -> Countermeasure4ChCodec.setMask(address, requiredMask(work.mask()));
+            default -> throw new ProtocolException("PROTOCOL_UNSUPPORTED", "不支持的四通道动作：" + action);
+        };
+    }
+
+    private static int functionOf(String action) {
+        return switch (action == null ? "" : action) {
+            case "CHANNEL_ON" -> Countermeasure4ChCodec.FUNCTION_ON;
+            case "CHANNEL_OFF" -> Countermeasure4ChCodec.FUNCTION_OFF;
+            case "SET_MASK" -> Countermeasure4ChCodec.FUNCTION_SET;
+            default -> throw new ProtocolException("PROTOCOL_UNSUPPORTED", "不支持的四通道动作：" + action);
+        };
+    }
+
+    private static int requiredBit(Integer bit) {
+        if (bit == null) throw new ProtocolException("PROTOCOL_FRAME_INVALID", "单通道动作必须指定通道位");
+        return bit;
+    }
+
+    private static int requiredMask(Integer mask) {
+        if (mask == null) throw new ProtocolException("PROTOCOL_FRAME_INVALID", "组合动作必须指定掩码");
+        return mask;
     }
 
     private static byte[] readResponse(Socket socket, WireEncoding encoding) throws IOException {

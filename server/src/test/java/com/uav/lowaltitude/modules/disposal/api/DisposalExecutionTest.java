@@ -108,7 +108,7 @@ class DisposalExecutionTest {
     }
 
     @Test
-    void fourChannelIsBlockedAsACapabilityProblemAndSaysSoInTheDto() throws Exception {
+    void fourChannelOnNonFourChannelDeviceIsCapabilityAndSaysSoInTheDto() throws Exception {
         String deviceId = anyDevice();
         assertThat(deviceId).as("测试库需要至少一台设备，否则本用例是空跑").isNotNull();
         String id = approved("COUNTERMEASURE_4CH", deviceId);
@@ -116,8 +116,27 @@ class DisposalExecutionTest {
                 .path("error").path("code").asText().equals("DEVICE_CONTROL_UNAVAILABLE");
         assertThat(kinds(id)).contains("DEVICE_CONTROL_UNAVAILABLE");
         assertThat(statusOf(id)).isEqualTo("APPROVED");
-        // 四通道是"这台设备本来就不能自动执行"，补救方是换设备——不能和"等厂家开通指令码"混为一谈。
+        // 测试库设备不是四通道协议：补救方是换设备，不能和"等厂家开通指令码"混为一谈。
         assertThat(blockReason(id)).isEqualTo("DEVICE_CAPABILITY");
+    }
+
+    @Test
+    void fourChannelRejectsDecoyWithoutDispatching() throws Exception {
+        String deviceId = anyDevice();
+        assertThat(deviceId).isNotNull();
+        String bodyText = "{\"action_type\":\"DECOY\",\"subject_kind\":\"UAV_EVENT\",\"subject_id\":\""
+                + event("CONFIRMED") + "\",\"channel\":\"COUNTERMEASURE_4CH\",\"device_id\":\""
+                + deviceId + "\",\"reason\":\"诱骗不能走四通道\"}";
+        String id = body(mvc.perform(post("/api/v1/disposal-authorizations").header("Authorization", bearer(requester))
+                        .header("Idempotency-Key", key()).contentType(MediaType.APPLICATION_JSON).content(bodyText))
+                .andExpect(status().isCreated())).path("data").path("authorization_id").asText();
+        mvc.perform(post("/api/v1/disposal-authorizations/{id}/approve", id).header("Authorization", bearer(approver))
+                        .header("Idempotency-Key", key()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"expected_version\":0}")).andExpect(status().isOk());
+        execute(id, 1).andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
+        assertThat(statusOf(id)).isEqualTo("APPROVED");
+        assertThat(kinds(id)).doesNotContain("EXECUTE");
     }
 
     @Test

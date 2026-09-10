@@ -57,6 +57,59 @@ class ProtocolAdapterSimulatorTest {
     }
 
     @Test
+    void countermeasureSetMaskSendsDocumentedFrameAndParsesReply() throws Exception {
+        try (ServerSocket server = new ServerSocket(0)) {
+            List<byte[]> requests = java.util.Collections.synchronizedList(new ArrayList<>());
+            CompletableFuture<Void> simulator = CompletableFuture.runAsync(() -> {
+                try {
+                    for (int i = 0; i < 2; i++) {
+                        try (Socket socket = server.accept()) {
+                            byte[] request = readUntilNewline(socket);
+                            requests.add(request);
+                            boolean query = new String(request, StandardCharsets.US_ASCII).contains(" 10 ");
+                            String reply = query ? "22 01 10 00 00 00 00 33\r\n" : "22 01 13 00 00 00 0F 45\r\n";
+                            socket.getOutputStream().write(reply.getBytes(StandardCharsets.US_ASCII));
+                            socket.getOutputStream().flush();
+                        }
+                    }
+                } catch (Exception ex) { throw new RuntimeException(ex); }
+            });
+            CountermeasureTcp4ChV20Adapter adapter = new CountermeasureTcp4ChV20Adapter(new ObjectMapper(),
+                    allowedLoopbackPolicy());
+            DeviceAdapterPort.AdapterResult result = adapter.setRelays(new DeviceAdapterPort.RelayWork(
+                    "cmd", "device", config(server.getLocalPort(),
+                    "{\"device_address\":1,\"wire_encoding\":\"AUTO\"}"),
+                    "SET_MASK", null, 0x0F));
+            assertThat(result.success()).isTrue();
+            assertThat(result.resultCode()).isEqualTo("COUNTERMEASURE_SET_OK");
+            simulator.get(5, TimeUnit.SECONDS);
+            assertThat(new String(requests.get(0), StandardCharsets.US_ASCII)).contains("55 01 10 00 00 00 01 67");
+            assertThat(new String(requests.get(1), StandardCharsets.US_ASCII)).contains("55 01 13 00 00 00 0F 78");
+        }
+    }
+
+    @Test
+    void countermeasureSetTimesOutWhenDeviceDoesNotReply() throws Exception {
+        try (ServerSocket server = new ServerSocket(0)) {
+            CompletableFuture<Void> acceptor = CompletableFuture.runAsync(() -> {
+                try (Socket ignored = server.accept()) {
+                    Thread.sleep(1500);
+                } catch (Exception ex) { throw new RuntimeException(ex); }
+            });
+            CountermeasureTcp4ChV20Adapter adapter = new CountermeasureTcp4ChV20Adapter(new ObjectMapper(),
+                    allowedLoopbackPolicy());
+            DeviceAdapterPort.AdapterResult result = adapter.setRelays(new DeviceAdapterPort.RelayWork(
+                    "cmd", "device", "{\"allowed_cidrs\":\"127.0.0.1/32\",\"connection\":{\"host\":\"127.0.0.1\",\"port\":"
+                            + server.getLocalPort() + ",\"timeout_millis\":500},"
+                            + "\"protocol_configuration\":{\"device_address\":1,\"wire_encoding\":\"ASCII_HEX_SPACED\"}}",
+                    "SET_MASK", null, 0x00));
+            assertThat(result.success()).isFalse();
+            assertThat(result.resultCode()).isIn("ADAPTER_TIMEOUT", "ADAPTER_UNAVAILABLE", "PROTOCOL_FRAME_INVALID");
+            acceptor.get(5, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
     void countermeasureConnectOnlyOpensTcpWithoutSendingQuery() throws Exception {
         try (ServerSocket server = new ServerSocket(0)) {
             CompletableFuture<Integer> firstByte = CompletableFuture.supplyAsync(() -> {

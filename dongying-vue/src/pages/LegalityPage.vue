@@ -148,6 +148,7 @@ function percent(ratio) {
 }
 function evaluationReason(item) {
   if (!item) return '尚未取得研判详情';
+  if (item.legal_status === 'LEGAL') return item.unknown_reasons?.length ? `全部检查通过（${item.unknown_reasons.length} 项无法判定）` : '全部检查通过';
   if (item.violation_reasons?.length) return ruleReasonText(item.violation_reasons[0]);
   if (item.unknown_reasons?.length) return ruleReasonText(item.unknown_reasons[0]);
   if (item.legal_status === 'LEGAL') return '全部检查通过';
@@ -162,10 +163,44 @@ function subjectLabel(item) {
   if (item.plan_no || item.plan_id) return item.plan_no || '计划（编号不可见）';
   return '主体不可见';
 }
+/* 命中事实与参数的键都是引擎内部名；上屏用中文，数值取一位小数，内部 id 不上屏。 */
+const FACT_KEY_TEXT = {
+  plan_id: '计划', route_version_id: '航线版本', target_id: '目标', track_id: '轨迹', airspace_version_id: '空域版本',
+  distance_m: '距中心线（米）', deviation_m: '偏离量（米）', half_width_m: '走廊半宽（米）', tolerance_m: '容差（米）', corridor_tolerance_m: '走廊容差（米）',
+  altitude_m: '高度（米）', max_altitude_m: '最大高度（米）', min_altitude_m: '最小高度（米）', limit_m: '限高（米）', margin_m: '余量（米）',
+  time_window: '时间窗', corridor: '走廊', identity: '身份', confidence: '置信度', candidate_count: '候选计划数', match_reason: '匹配原因',
+  start_at: '开始', end_at: '结束', observed_at: '观测时刻', night_from: '夜航起', night_to: '夜航止', kinds: '空域类型'
+};
+const DIM_TEXT = { MATCH: '匹配', MISMATCH: '不匹配', UNDETERMINED: '不可判定', PASS: '通过', FAIL: '不通过', UNKNOWN: '未知' };
+const TRIGGER_TEXT = { MANUAL: '手动触发', SCHEDULED: '自动调度', WORKER: '自动调度', REPLAY: '回放' };
+const MODE_TEXT = { ACTIVE: '正式', SHADOW: '影子' };
+function factKeyText(key) { return FACT_KEY_TEXT[key] || key.replace(/_/g, ' '); }
+function factValueText(key, value) {
+  if (value === null || value === undefined) return '—';
+  if (typeof value === 'number') return Number.isInteger(value) ? String(value) : value.toFixed(1);
+  if (typeof value === 'string') {
+    if (/_id$/.test(key) || /^seed-/.test(value)) return '已关联';
+    if (DIM_TEXT[value]) return DIM_TEXT[value];
+    return ruleReasonText(value) === value ? value : ruleReasonText(value);
+  }
+  return factText(value);
+}
 function factText(value) {
   if (value === null || value === undefined) return '—';
-  if (typeof value === 'object') return Object.entries(value).map(([k, v]) => `${k}=${factText(v)}`).join('；');
+  if (typeof value === 'object') return Object.entries(value).map(([k, v]) => `${factKeyText(k)} ${factValueText(k, v)}`).join('；');
   return String(value);
+}
+function dimText(value) { return value ? (DIM_TEXT[value] || value) : '未评估'; }
+/* 合法结论且从未复核过，不是"待人工复核"，而是"无需复核"（原版口径）。 */
+function reviewText(item) {
+  if (item?.legal_status === 'LEGAL' && !(Number(item?.review?.version) > 0)) return '无需复核';
+  return reviewStateText(item?.review?.state);
+}
+function planMatchDetail(item) {
+  const base = planMatchText(item?.plan_match_code);
+  if (!item?.plan_no) return base;
+  if (item.plan_match_code === 'NONE') return `${base}（候选 ${item.plan_no} 不匹配）`;
+  return `${base} · ${item.plan_no}`;
 }
 function outcomeText(item) {
   const kind = item?.alarm_outcome_kind;
@@ -459,7 +494,7 @@ onMounted(() => {
                     <button v-for="item in groupedItems(group.code)" :key="item.evaluation_id" type="button"
                       class="lg-queue-row" :class="{ 'is-selected': selectedEvaluation?.evaluation_id === item.evaluation_id }"
                       :aria-current="selectedEvaluation?.evaluation_id === item.evaluation_id" @click="selectEvaluation(item)">
-                      <span class="lg-row-target"><b class="mono" :title="item.evaluation_id">{{ subjectLabel(item) }}</b><small>{{ shortTime(item.evaluated_at) }} · {{ reviewStateText(item.review?.state) }}</small></span>
+                      <span class="lg-row-target"><b class="mono" :title="item.evaluation_id">{{ subjectLabel(item) }}</b><small>{{ shortTime(item.evaluated_at) }} · {{ reviewText(item) }}</small></span>
                       <span class="lg-row-verdict">{{ legalStatusText(item.legal_status) }}</span>
                       <span class="lg-row-risk">{{ gradeText(item) }}</span>
                       <span class="lg-row-region">{{ item.district_name || item.district_id || '未知' }}</span>
@@ -504,7 +539,7 @@ onMounted(() => {
                 <button type="button" class="is-active" :title="selectedEvaluation.evaluation_id">{{ legalStatusText(selectedEvaluation.legal_status) }} · {{ formatTime(selectedEvaluation.evaluated_at) }}</button>
                 <button v-if="selectedEvaluation.superseded_by_evaluation_id" type="button"
                   :title="selectedEvaluation.superseded_by_evaluation_id" @click="selectEvaluationById(selectedEvaluation.superseded_by_evaluation_id)">重算后的新研判 →</button>
-                <UPagination v-model:page="st.revisionPage" v-model:page-size="st.revisionPageSize"
+                <UPagination v-if="revisionsTotal > 0" v-model:page="st.revisionPage" v-model:page-size="st.revisionPageSize"
                   :item-count="revisionsTotal" :prefix="`复核历史共 ${revisionsTotal.toLocaleString()} 条`"
                   @update:page="onRevisionPage" @update:page-size="onRevisionPageSize" />
               </div>
@@ -522,12 +557,12 @@ onMounted(() => {
                     <dl>
                       <dt>关联目标</dt><dd :title="selectedEvaluation.target_id">{{ selectedEvaluation.target_no || (selectedEvaluation.target_id ? '已关联目标' : '不可见或无关联') }}</dd>
                       <dt>关联轨迹</dt><dd :title="selectedEvaluation.track_id">{{ selectedEvaluation.track_id ? '已关联轨迹' : '不可见或无关联' }}</dd>
-                      <dt>计划匹配</dt><dd :title="selectedEvaluation.plan_id">{{ planMatchText(selectedEvaluation.plan_match_code) }}{{ selectedEvaluation.plan_no ? ` · ${selectedEvaluation.plan_no}` : '' }}</dd>
+                      <dt>计划匹配</dt><dd :title="selectedEvaluation.plan_id">{{ planMatchDetail(selectedEvaluation) }}</dd>
                       <dt>航线版本</dt><dd :title="selectedEvaluation.route_version_id">{{ selectedEvaluation.route_version_id ? '已关联航线版本' : '不可见或无关联' }}</dd>
                     </dl>
                   </div>
                   <div class="lg-review-state">
-                    <span class="tag" :class="selectedEvaluation.review?.state === 'PENDING_REVIEW' ? 't-amber' : 't-gray'">{{ reviewStateText(selectedEvaluation.review?.state) }}{{ selectedEvaluation.review?.version > 0 ? ` · 第${selectedEvaluation.review.version}次复核` : '' }}</span>
+                    <span class="tag" :class="selectedEvaluation.review?.state === 'PENDING_REVIEW' ? 't-amber' : 't-gray'">{{ reviewText(selectedEvaluation) }}{{ selectedEvaluation.review?.version > 0 ? ` · 第${selectedEvaluation.review.version}次复核` : '' }}</span>
                     <dl>
                       <dt>研判时间</dt><dd>{{ formatTime(selectedEvaluation.evaluated_at) }}</dd>
                       <dt>规则版本</dt><dd :title="selectedEvaluation.rule_set_code">{{ ruleVersionText(selectedEvaluation) }}{{ demoParams ? '（演示参数）' : '' }}</dd>
@@ -553,7 +588,7 @@ onMounted(() => {
                   <div v-if="selectedHit" class="lg-rule-focus" :class="resultClass(selectedHit.result_code)">
                     <b>{{ selectedHit.rule_code }} {{ ruleName(selectedHit.rule_code) }}</b>
                     <span>{{ selectedHit.message || '未提供解释' }}</span>
-                    <span v-if="selectedHit.params?.length" class="lg-muted">参数：{{ selectedHit.params.map(p => `${p.key}=${p.value}${p.status === 'DEMO' ? '(DEMO)' : ''}`).join('，') }}</span>
+                    <span v-if="selectedHit.params?.length" class="lg-muted">参数：{{ selectedHit.params.map(p => `${factKeyText(p.key)} ${factValueText(p.key, p.value)}${p.status === 'DEMO' ? '（演示值）' : ''}`).join('，') }}</span>
                     <span v-if="selectedHit.facts && Object.keys(selectedHit.facts).length" class="lg-muted">事实：{{ factText(selectedHit.facts) }}</span>
                   </div>
                 </section>
@@ -579,8 +614,6 @@ onMounted(() => {
                       </div>
                       <div class="lg-map-wrap" aria-label="空间证据地图不可绘制">
                         <div id="lgMap"><div class="lg-map-empty">可信输入几何尚未接入<br>地图不可绘制</div></div>
-                        <div class="lg-map-legend"><span class="is-zone">空域边界</span>
-                          <span class="is-plan">计划航线</span><span class="is-track">目标轨迹</span></div>
                       </div>
                     </template>
                     <div v-else-if="st.evidenceTab === 'plan'" class="lg-evidence-wide">
@@ -589,11 +622,9 @@ onMounted(() => {
                         <dt>匹配等级</dt><dd>{{ planMatchText(selectedEvaluation.plan_match_code) }}{{ c01Facts?.match_reason ? `（${ruleReasonText(c01Facts.match_reason)}）` : '' }}</dd>
                         <dt>计划编号</dt><dd class="mono" :title="selectedEvaluation.plan_id">{{ selectedEvaluation.plan_no || (selectedEvaluation.plan_id ? '已关联计划' : '无匹配计划或不可见') }}</dd>
                         <dt>关联目标</dt><dd class="mono" :title="selectedEvaluation.target_id">{{ selectedEvaluation.target_no || (selectedEvaluation.target_id ? '已关联' : '不可见') }}</dd>
-                        <dt>时间窗</dt><dd>{{ c01Facts?.dimensions?.time_window || '未评估' }}</dd>
-                        <dt>走廊</dt><dd>{{ c01Facts?.dimensions?.corridor || '未评估' }}</dd>
-                        <dt>身份</dt><dd>{{ c01Facts?.dimensions?.identity === 'UNDETERMINED' ? '线索缺失（TDOA/5G-A 未接入）' : (c01Facts?.dimensions?.identity || '未评估') }}</dd>
-                        <dt>起降点</dt><dd>尚未接入</dd>
-                        <dt>飞手 / 单位</dt><dd>尚未接入</dd>
+                        <dt>时间窗</dt><dd>{{ dimText(c01Facts?.dimensions?.time_window) }}</dd>
+                        <dt>走廊</dt><dd>{{ dimText(c01Facts?.dimensions?.corridor) }}</dd>
+                        <dt>身份</dt><dd>{{ c01Facts?.dimensions?.identity === 'UNDETERMINED' ? '线索缺失（TDOA/5G-A 未接入）' : dimText(c01Facts?.dimensions?.identity) }}</dd>
                         <dt>候选计划数</dt><dd>{{ c01Facts?.candidate_count ?? '未知' }}</dd>
                       </dl>
                     </div>
@@ -619,7 +650,7 @@ onMounted(() => {
                         <template v-else>无告警关联或无告警读取权限</template></dd>
                         <dt>来源模式</dt><dd>{{ sourceText(selectedEvaluation.source_mode) }}</dd>
                         <dt>规则集版本</dt><dd>{{ ruleVersionText(selectedEvaluation) }} · 参数 {{ demoParams ? 'DEMO 演示值，尚未业务确认' : '已确认' }}</dd>
-                        <dt>运行触发</dt><dd>{{ selectedEvaluation.trigger_kind || '—' }} · {{ selectedEvaluation.mode || '—' }}</dd>
+                        <dt>运行触发</dt><dd>{{ TRIGGER_TEXT[selectedEvaluation.trigger_kind] || '—' }} · {{ MODE_TEXT[selectedEvaluation.mode] || '—' }}</dd>
                         <dt>计划投影</dt><dd :title="selectedEvaluation.assessment_id">{{ selectedEvaluation.assessment_id ? '已投影到计划研判' : '未投影（无匹配计划或影子运行）' }}</dd>
                       </dl>
                     </div>
@@ -636,7 +667,6 @@ onMounted(() => {
                     :title="allowed.includes('RECOMPUTE') ? '按当前生效规则集重新研判' : '当前不可重算：已被取代或缺少评估权限'" @click="onRecompute">重新研判</button>
                   <button class="btn warn" type="button" :disabled="!allowed.includes('ESCALATE')"
                     :title="allowed.includes('ESCALATE') ? '人工生成来源告警与待核实事件' : '当前不可转告警：结论为合法、已关联告警或缺少权限'" @click="onEscalate">转告警</button>
-                  <button class="btn warn" type="button" disabled title="尚未接入">转入处置（尚未接入）</button>
                 </div>
               </footer>
             </template>

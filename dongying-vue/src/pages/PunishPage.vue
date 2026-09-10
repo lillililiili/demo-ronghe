@@ -33,9 +33,7 @@ import {
 import {
   DISPOSAL_UNAVAILABLE_TEXT, openDisposalApproval, openDisposalExecution, openDisposalManualResult, openDisposalStop
 } from '@/ui/disposalAuthModal.js';
-import { ALARM_TYPE_LABEL, CONCLUSION_LABEL as EVENT_CONCLUSION_LABEL, CASE_EVENT_KIND_LABEL, CASE_STATUS_LABEL, DISCRETION_STATUS_LABEL, DOCUMENT_STATUS_LABEL,
-  LEAD_KIND_LABEL, PENALTY_TYPE_LABEL, REVIEW_CONCLUSION_LABEL, VIOLATION_CODE_LABEL,
-  DISPOSAL_ACTION_LABEL, DISPOSAL_BLOCK_REASON_LABEL, DISPOSAL_CHANNEL_LABEL, DISPOSAL_EVENT_KIND_LABEL, DISPOSAL_RESULT_LABEL, disposalStatusText, DELIVERY_STATUS_LABEL, HANDOFF_BLOCKED_LABEL, HANDOFF_KIND_LABEL, HANDOFF_TYPE_LABEL, REASON_CODE_LABEL, RECEIPT_STATUS_LABEL, RISK_CONCLUSION_LABEL, RISK_STATE_LABEL, RISK_TYPE_LABEL, SEVERITY_LABEL, SEVERITY_TAG, SOURCE_MODE_LABEL, EVIDENCE_COVERAGE_LABEL, EVIDENCE_RECORD_TYPE_LABEL, labelOf, readableNo, verificationOrdinal } from '@/ui/labels.js';
+import { ALARM_TYPE_LABEL, CASE_EVENT_KIND_LABEL, CASE_STATUS_LABEL, CONCLUSION_LABEL as EVENT_CONCLUSION_LABEL, DELIVERY_STATUS_LABEL, DISCRETION_STATUS_LABEL, DISPOSAL_ACTION_LABEL, DISPOSAL_BLOCK_REASON_LABEL, DISPOSAL_CHANNEL_LABEL, DISPOSAL_EVENT_KIND_LABEL, DISPOSAL_RESULT_LABEL, DOCUMENT_STATUS_LABEL, EVIDENCE_COVERAGE_LABEL, EVIDENCE_KIND_LABEL, EVIDENCE_RECORD_TYPE_LABEL, HANDOFF_BLOCKED_LABEL, HANDOFF_KIND_LABEL, HANDOFF_TYPE_LABEL, LEAD_KIND_LABEL, PENALTY_TYPE_LABEL, REASON_CODE_LABEL, RECEIPT_STATUS_LABEL, REVIEW_CONCLUSION_LABEL, RISK_CONCLUSION_LABEL, RISK_STATE_LABEL, RISK_TYPE_LABEL, SEVERITY_LABEL, SEVERITY_TAG, SOURCE_MODE_LABEL, VIOLATION_CODE_LABEL, disposalStatusText, labelOf, readableNo, verificationOrdinal } from '@/ui/labels.js';
 import { openEvidenceFileModal } from '@/ui/evidenceFileDetail.js';
 import {
   EVIDENCE_CHAIN_TYPES, coverageTagClass, isFileRecord, recordCaption, recordHint
@@ -654,7 +652,7 @@ onMounted(() => {
                         </button>
                       </div>
                       <div v-if="chainRecords.length > 8" class="pn-note-text">另有 {{ chainRecords.length - 8 }} 项，可在「证据管理」查看文件台账。</div>
-                      <div v-if="chain.integrity" class="pn-note-text">链校验 {{ chain.integrity.algorithm }} · {{ chain.integrity.member_count }} 项 · {{ chain.integrity.checksum }}</div>
+                      <div v-if="chain.integrity" class="pn-note-text" :title="`${chain.integrity.algorithm} ${chain.integrity.checksum}`">链校验已生成 · {{ chain.integrity.member_count }} 项（悬停查看摘要）</div>
                     </template>
                   </div>
                   <div class="sect"><h4>材料快照 <span v-if="selected.material?.schema_version" class="tag t-gray">第 {{ selected.material.schema_version }} 版</span></h4>
@@ -706,7 +704,7 @@ onMounted(() => {
                         <div v-for="item in selected.material.verifications" :key="`${item.version}-${item.created_at}`" class="pn-history-item">
                           <div><span class="tag" :class="item.conclusion === 'CONFIRMED' ? 't-green' : 't-gray'">{{ label(CONCLUSION_LABEL, item.conclusion) }}</span> <span class="mono">{{ verificationOrdinal(item.version) }}</span> → {{ label(RISK_STATE_LABEL, item.resulting_state) }}</div>
                           <div class="pn-wrap">{{ item.note || '无说明' }}</div>
-                          <div class="pn-sub">{{ formatTime(item.created_at) }} · 操作人 {{ item.actor_name || item.actor_id || '未提供' }}</div>
+                          <div class="pn-sub">{{ formatTime(item.created_at) }} · 操作人 {{ item.actor_name || readableNo(item.actor_id) || '系统' }}</div>
                         </div>
                       </div>
                       </template>
@@ -780,7 +778,7 @@ onMounted(() => {
             </div>
           </UPanel>
 
-          <UPanel title="处罚案件、文书与证据" sub="按所选处罚交接办理：立案 → 指派 → 裁量 → 复核 → 决定书 → 结案" panel-style="margin-top:12px" nopad>
+          <UPanel v-if="selected?.handoff_type === 'UAV_PUNISHMENT'" title="处罚案件、文书与证据" sub="按所选处罚交接办理：立案 → 指派 → 裁量 → 复核 → 决定书 → 结案" panel-style="margin-top:12px" nopad>
             <div class="pn-not-built">
               <div class="pn-not-built-item" data-not-built="case">
                 <div class="pn-not-built-head"><b>处罚案件管理</b>
@@ -867,7 +865,7 @@ onMounted(() => {
                 <div v-if="evidenceNote" class="pn-sub pn-wrap">{{ evidenceNote }}</div>
                 <div v-else class="pn-sub pn-wrap">
                   <div v-for="item in materialEvidence" :key="item.evidence_id">
-                    <span class="mono" :title="item.sha256">{{ item.evidence_no }}</span> · {{ item.kind_code }}<span v-if="item.captured_at"> · {{ formatTime(item.captured_at) }}</span>
+                    <span class="mono" :title="item.sha256">{{ item.evidence_no }}</span> · {{ labelOf(EVIDENCE_KIND_LABEL, item.kind_code, item.kind_code) }}<span v-if="item.captured_at"> · {{ formatTime(item.captured_at) }}</span>
                   </div>
                 </div>
                 <div class="pn-sub pn-wrap">{{ BLOCK_GAPS.evidence }}</div>
@@ -877,7 +875,7 @@ onMounted(() => {
                 <div v-else-if="!punishment.caseEvidence.length" class="pn-sub pn-wrap">本案尚未关联证据文件。</div>
                 <div v-else class="pn-sub pn-wrap">
                   <div v-for="item in punishment.caseEvidence" :key="item.evidence_id">
-                    <span class="mono">{{ item.evidence_no }}</span> · {{ item.kind_code }}
+                    <span class="mono">{{ item.evidence_no }}</span> · {{ labelOf(EVIDENCE_KIND_LABEL, item.kind_code, item.kind_code) }}
                   </div>
                 </div>
               </div>

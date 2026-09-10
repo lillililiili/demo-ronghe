@@ -6,6 +6,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { UField } from '@/components/form/index.js';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import { toast } from '@/ui/nv.js';
+import { openConfirm } from '@/ui/confirm.js';
 import { closeModal } from '@/ui/modal.js';
 import { openFormModal } from '@/ui/formModal.js';
 import { isUncertainOutcome } from '@/services/apiClient.js';
@@ -91,7 +92,8 @@ function messageOf(e, fallback) {
   return e.message || fallback;
 }
 function queueQuery(p, size) {
-  return { kind: kind.value === 'all' ? undefined : kind.value, severity: level.value === 'all' ? undefined : level.value, page: p, size };
+  const high = level.value === 'HIGH_PLUS';
+  return { kind: kind.value === 'all' ? undefined : kind.value, severity: level.value === 'all' || high ? undefined : level.value, severity_min: high ? 'HIGH' : undefined, page: p, size };
 }
 
 /* ---------- 队列 ---------- */
@@ -169,7 +171,7 @@ watch([kind, level], () => { loadQueue(); });
 
 function selectEvent(e) { selectedKey.value = e.key; }
 function showKind(value) { kind.value = value; level.value = 'all'; }
-function showHighRisk() { kind.value = 'all'; level.value = 'HIGH'; }
+function showHighRisk() { kind.value = 'all'; level.value = 'HIGH_PLUS'; }
 function loadMore() { if (!loadingMore.value) loadQueue({ append: true }); }
 
 /* 源动作成功或结果未知后：刷新当前事项、队列与计数。 */
@@ -415,6 +417,8 @@ function runDeviceAction() {
 }
 async function runDeviceRecovery(d) {
   const incidentId = d.summary.sourceId;
+  const ok = await new Promise(resolve => openConfirm({ title: '恢复校验', message: `将读取 ${d.summary.title || '该设备'} 的最新状态快照并与异常发生前比对；通过则关闭异常，不通过则保持待验证。是否继续？`, confirmText: '开始校验', onConfirm: () => { resolve(true); return true; }, onCancel: () => resolve(false) }));
+  if (!ok) return;
   if (!pendingRecoveryKeys.has(incidentId)) pendingRecoveryKeys.set(incidentId, newIdempotencyKey('incident-recovery'));
   acting.value = true;
   try {
@@ -563,7 +567,7 @@ onUnmounted(() => {
         <button class="wb-kpi is-cyan" :class="{ active: kind === 'all' && level === 'all' }" :aria-pressed="kind === 'all' && level === 'all'" @click="showKind('all')">
           <span v-html="icon('clipboard')"></span><em>全部事项</em><b>{{ countText(stats.total) }}</b>
         </button>
-        <button class="wb-kpi is-red" :class="{ active: kind === 'all' && level === 'HIGH' }" :aria-pressed="kind === 'all' && level === 'HIGH'" @click="showHighRisk">
+        <button class="wb-kpi is-red" :class="{ active: kind === 'all' && level === 'HIGH_PLUS' }" :aria-pressed="kind === 'all' && level === 'HIGH_PLUS'" @click="showHighRisk">
           <span v-html="icon('warning')"></span><em>高等级事项</em><b>{{ countText(highCount) }}</b>
         </button>
         <button class="wb-kpi is-blue" :class="{ active: kind === 'UAV_EVENT' && level === 'all' }" :aria-pressed="kind === 'UAV_EVENT' && level === 'all'" @click="showKind('UAV_EVENT')">
@@ -634,13 +638,13 @@ onUnmounted(() => {
             <div v-if="selected.summary.todo" class="wb-task">
               <span class="wb-task-state" v-html="icon(selected.kind === 'DEVICE_INCIDENT' ? 'tool' : 'bolt')"></span>
               <div><small>下一步</small><h3>{{ selected.summary.todo.action }}</h3><p>{{ selected.summary.todo.hint }}</p>
-                <span>责任模块：<b>{{ selected.summary.module }}</b></span><span v-if="selected.summary.todo.blocker" class="wb-blocker">{{ selected.summary.todo.blocker }}</span></div>
+                <span>责任模块：<b>{{ selected.summary.module }}</b></span><span v-if="selected.summary.todo.blocker" class="wb-blocker"> · {{ selected.summary.todo.blocker }}</span></div>
             </div>
             <div v-else class="wb-complete"><span v-html="icon('check')"></span><div><b>当前事项无待办动作</b><small>{{ selected.summary.blockedLabel || '可在下方查看核实历史与时间线。' }}</small></div></div>
           </section>
 
           <section class="wb-flow-card panel">
-            <div class="ph"><h3>{{ selected.kind === 'RISK' ? '飞行计划风险流程' : selected.kind === 'UAV_EVENT' ? '无人机事件处置流程' : '设备异常处置流程' }}</h3><span class="sub">按当前状态推导；设备重启须等回执后再做恢复校验</span></div>
+            <div class="ph"><h3>{{ selected.kind === 'RISK' ? '飞行计划风险流程' : selected.kind === 'UAV_EVENT' ? '无人机事件处置流程' : '设备异常处置流程' }}</h3><span class="sub">{{ selected.kind === 'DEVICE_INCIDENT' ? '按当前状态推导；设备重启须等回执后再做恢复校验' : selected.kind === 'RISK' ? '按当前状态推导；核验通过后才能通知上级' : '按当前状态推导；核实属实后才能申请反制或移送处罚' }}</span></div>
             <div class="wb-flow" :style="{ '--wb-flow-count': selected.steps.length }">
               <div v-for="(s,i) in selected.steps" :key="s.n" :class="['wb-flow-step',{done:s.done,active:s.act}]">
                 <span>{{ s.done ? '✓' : i + 1 }}</span><b>{{ s.n }}</b><small>{{ s.done ? (s.t || '已完成') : s.t ? s.t : s.act ? '当前环节' : '待处理' }}</small>

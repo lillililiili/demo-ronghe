@@ -97,7 +97,7 @@ export function renderEvidenceChainHtml(chain, state = {}) {
       ${records.length > 8 ? `<div style="font-size:11px;color:var(--txt-3);margin-top:6px">另有 ${records.length - 8} 项，可在「证据管理」查看文件台账</div>` : ''}`;
   const integrity = chain.integrity
     ? `<div style="font-size:11px;color:var(--txt-3);line-height:1.7;margin-top:8px">
-        链校验 ${esc(chain.integrity.algorithm)}　<span class="mono" style="word-break:break-all">${esc(chain.integrity.checksum || '')}</span>
+        <span title="${esc(chain.integrity.algorithm)} ${esc(chain.integrity.checksum || '')}">链校验已生成（悬停查看摘要）</span>
         　${Number(chain.integrity.member_count) || 0} 项　${esc(fmtEvidenceTime(chain.integrity.computed_at))}
       </div>` : '';
   const lineage = lineageHtml(chain.lineage, chain.current_target_id, chain.historical_target_ids);

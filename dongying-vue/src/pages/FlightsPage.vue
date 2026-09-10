@@ -427,7 +427,7 @@ function rowMatch(plan) {
   if (plan.status_code === 'CANCELLED') return { text: '—', tag: '', title: '计划已取消' };
   if (section === undefined) return { text: '…', tag: 't-gray', title: '正在读取对照结论' };
   if (!section) return { text: '—', tag: '', title: '对照结论读取失败或无权限' };
-  if (!sectionReady(section)) return { text: '—', tag: '', title: sectionNote(section) };
+  if (!sectionReady(section)) return { text: section.availability === 'NO_EVALUATION' ? '未匹配' : '—', tag: section.availability === 'NO_EVALUATION' ? 't-amber' : '', title: matchMetricNote(section) };
   return { text: labelOf(PLAN_ROW_MATCH_LABEL, section.plan_match_code), tag: PLAN_MATCH_TAG[section.plan_match_code] || 't-gray', title: '' };
 }
 const DEVIATION_NOTE = '引擎当前只给出计划匹配结论，不提供横向偏航与时差数值';
@@ -546,6 +546,10 @@ const showComparison = computed(() => sectionReady(actuals.value?.match) || (!pl
 const showRouteRisks = computed(() => !planEnded.value && !!selected.value?.route?.route_version_id);
 function sectionReady(section) { return section?.availability === 'AVAILABLE'; }
 function sectionNote(section) { return labelOf(SECTION_AVAILABILITY_LABEL, section?.availability, '暂不可用'); }
+/* 计划时段内没有任何感知目标被引擎匹配到这条计划：对监管者来说是"没飞或没测到"，不是引擎的事，措辞与原版一致。 */
+const NO_MATCH_NOTE = '该计划时段内未匹配到感知目标，可能为：未按计划起飞、目标在探测盲区、或设备异常。建议人工核实。';
+function matchSectionNote(section) { return section?.availability === 'NO_EVALUATION' ? NO_MATCH_NOTE : sectionNote(section); }
+function matchMetricNote(section) { return section?.availability === 'NO_EVALUATION' ? '未匹配感知目标' : sectionNote(section); }
 
 /* 高度关系只在目标高度与计划高度带同基准时才有方向；否则说明为什么判不了，绝不替引擎换算 AGL/AMSL。 */
 const planAltitudeText = computed(() => {
@@ -565,7 +569,7 @@ const matchMetricText = computed(() => {
   const section = actuals.value?.match;
   if (!showComparison.value) return '—';
   if (!section) return actualsLoading.value ? '读取中' : '—';
-  return sectionReady(section) ? labelOf(PLAN_ROW_MATCH_LABEL, section.plan_match_code) : sectionNote(section);
+  return sectionReady(section) ? labelOf(PLAN_ROW_MATCH_LABEL, section.plan_match_code) : matchMetricNote(section);
 });
 
 const matchReasonText = computed(() => {
@@ -1447,7 +1451,7 @@ onUnmounted(() => {
             <section v-if="showComparison" class="sect"><h4>计划与实际对照</h4>
               <div v-if="actualsLoading" class="empty">正在读取…</div>
               <div v-else-if="actualsError" class="warnbox">{{ actualsError }}</div>
-              <div v-else-if="!sectionReady(actuals?.match)" class="empty">{{ sectionNote(actuals?.match) }}</div>
+              <div v-else-if="!sectionReady(actuals?.match)" class="warnbox">{{ matchSectionNote(actuals?.match) }}</div>
               <template v-else>
                 <dl class="kv kv-surface" :title="actuals.match.evaluation_id">
                   <dt>计划匹配</dt><dd>{{ labelOf(PLAN_ROW_MATCH_LABEL, actuals.match.plan_match_code) }}</dd>

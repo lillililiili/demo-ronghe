@@ -96,11 +96,11 @@ async function settleUncertain({ error, evaluationId, action, expectedVersion, r
 function intro(evaluation) {
   const rows = [
     ['复核次数', Number(evaluation.review?.version ?? 0) > 0 ? `已第${Number(evaluation.review.version)}次复核` : '尚未复核'],
-    ['系统结论', esc(legalStatusText(evaluation.legal_status)) + (evaluation.grade ? `　等级 ${esc(evaluation.grade)}` : '')],
+    ['系统结论', esc(legalStatusText(evaluation.legal_status)) + (evaluation.grade ? `　等级 ${esc(GRADE_TEXT[evaluation.grade] || evaluation.grade)}` : '')],
     ['复核状态', esc(reviewStateText(evaluation.review?.state))],
-    ['计划匹配', esc(evaluation.plan_match_code || '—')],
-    evaluation.violation_reasons?.length ? ['违规原因', esc(evaluation.violation_reasons.join('、'))] : null,
-    evaluation.unknown_reasons?.length ? ['未知原因', esc(evaluation.unknown_reasons.join('、'))] : null
+    ['计划匹配', esc(planMatchText(evaluation.plan_match_code)) + (evaluation.plan_no ? `　${esc(evaluation.plan_no)}` : '')],
+    evaluation.violation_reasons?.length ? ['违规原因', esc(evaluation.violation_reasons.map(ruleReasonText).join('、'))] : null,
+    evaluation.unknown_reasons?.length ? ['未知原因', esc(evaluation.unknown_reasons.map(ruleReasonText).join('、'))] : null
   ].filter(Boolean).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join('');
   return `<dl class="kv">${rows}</dl>`;
 }
@@ -124,7 +124,7 @@ export function openLegalityReview({ evaluation, refresh, onDone } = {}) {
     .map(code => ({ value: code, label: legalStatusText(code) }));
 
   openFormModal({
-    title: '人工复核 · ' + esc(evaluationId),
+    title: '人工复核 · ' + esc(evaluation.target_no || evaluation.plan_no || '研判'),
     width: '620px',
     warning: '复核只记录人工结论：「确认」采纳系统结论；「驳回」表示系统误判（告警与合并组不会删除，统计计误报）；「改判」需选择人工结论。复核不执行反制、不改告警核实状态。',
     introHtml: intro(evaluation),
@@ -179,7 +179,7 @@ export function openLegalityRecompute({ evaluation, refresh, onDone } = {}) {
   holdKey(evaluationId, action);
   // 重算说明由操作人填写并进复核历史（RECOMPUTE），不能用页面写死的文案冒充人工依据。
   openFormModal({
-    title: '重新研判 · ' + esc(evaluationId),
+    title: '重新研判 · ' + esc(evaluation.target_no || evaluation.plan_no || '研判'),
     width: '600px',
     warning: '将按当前激活规则集重新评估；旧研判保留并标记为"已被重算取代"，其复核记录不会被覆盖。',
     introHtml: intro(evaluation),
@@ -267,7 +267,7 @@ export function openLegalityManualEvaluate({ targetId, targetNo, refresh, onDone
         const result = await legalityApi.evaluate({ subject_kind: 'TARGET', subject_id: targetId, mode: 'ACTIVE' }, key);
         releaseKey(targetId, action);
         const evaluation = result?.evaluation || null;
-        toast(`评估完成：${legalStatusText(evaluation?.legal_status)}${evaluation?.grade ? `（等级 ${esc(evaluation.grade)}）` : ''}`, 'ok');
+        toast(`评估完成：${legalStatusText(evaluation?.legal_status)}${evaluation?.grade ? `（等级 ${GRADE_TEXT[evaluation.grade] || evaluation.grade}）` : ''}`, 'ok');
         if (refresh) await refresh(evaluation);
         if (onDone) onDone(evaluation);
         return true;

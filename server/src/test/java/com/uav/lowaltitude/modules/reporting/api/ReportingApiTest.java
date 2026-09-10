@@ -90,7 +90,7 @@ class ReportingApiTest {
         assertThat(data.path("regions").size()).isEqualTo(6);
         assertThat(data.path("partners").size()).isBetween(1, 5);
 
-        int dbDevices = jdbc.queryForObject("select count(*) from device", Integer.class);
+        int dbDevices = jdbc.queryForObject("select count(*) from ops_device", Integer.class);
         assertThat(data.path("devices").path("total").asInt()).isEqualTo(dbDevices);
         assertThat(data.path("devices").path("online").asInt()).isBetween(0, dbDevices);
     }

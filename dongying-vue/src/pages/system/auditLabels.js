@@ -8,7 +8,7 @@ export const MODULE_LABELS = {
   statistics: '运行统计',
   risk: '飞行风险', handoff: '业务交接', workbench: '工作台', assessment: '合法性研判', rules: '规则引擎', flights: '飞行计划',
   airspace: '空域规则', fusion: '融合感知', disposal: '处置授权', punishment: '处罚案件', evidence: '证据管理', airport: '机场基础数据',
-  alarm: '告警事件', device: '设备管理', mqtt: '设备接入',
+  mqtt: '设备接入',
   system: '系统'
 };
 
@@ -56,7 +56,8 @@ export const ACTION_LABELS = {
   rule_evaluation_triggered: '手动触发空间风险评估', eo_track_requested: '下发光电跟踪', eo_track_ended: '停止光电跟踪',
   mqtt_broker_create: '登记消息接入连接', mqtt_broker_enable: '启用消息接入连接', mqtt_broker_disable: '停用消息接入连接', mqtt_broker_update: '修改消息接入连接', mqtt_device_register: '登记接入设备', mqtt_device_bind: '绑定接入设备',
   device_created: '登记设备', device_updated: '修改设备', device_enabled: '启用设备', device_disabled: '停用设备', device_command_issued: '下发设备指令', device_incident_rebooted: '远程重启设备', device_incident_recovered: '确认设备恢复',
-  countermeasure_command_issued: '下发反制指令', commission_task_created: '创建调测任务', commission_task_cancelled: '取消调测任务'
+  countermeasure_command_issued: '下发反制指令', commission_task_created: '创建调测任务', commission_task_cancelled: '取消调测任务',
+  device_incident_recovery_checked: '检查设备恢复', device_incident_rebooted: '远程重启设备'
 };
 
 const METHOD_LABELS = { GET: '查询', POST: '提交', PUT: '更新', PATCH: '更新', DELETE: '删除' };

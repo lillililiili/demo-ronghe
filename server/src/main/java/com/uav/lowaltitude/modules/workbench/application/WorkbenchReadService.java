@@ -46,7 +46,7 @@ public class WorkbenchReadService {
     static final String DEVICE_INCIDENT = WorkbenchReadRepository.DEVICE_INCIDENT;
     static final List<String> KINDS = List.of(UAV_EVENT, RISK, DEVICE_INCIDENT);
     static final String AVAILABLE = "AVAILABLE", FORBIDDEN = "FORBIDDEN", UNCONFIGURED = "UNCONFIGURED";
-    private static final Set<String> ALLOWED = Set.of("kind", "state", "severity", "occurred_from", "occurred_to",
+    private static final Set<String> ALLOWED = Set.of("kind", "state", "severity", "severity_min", "occurred_from", "occurred_to",
             "owner_org_id", "district_id", "source_mode", "page", "size");
     private static final Map<String, Set<String>> STATES = Map.of(
             UAV_EVENT, Set.of("PENDING_VERIFICATION", "EVIDENCE_REQUIRED", "CONFIRMED", "FALSE_POSITIVE"),
@@ -269,7 +269,7 @@ public class WorkbenchReadService {
             if (values.containsKey("state") && kind == null) throw new ApiException(HttpStatus.BAD_REQUEST, "STATE_REQUIRES_KIND", "state 必须与 kind 成对出现");
             String state = kind == null ? null : enumerated("state", STATES.get(kind));
             TimeRange occurred = timeRange();
-            return new WorkbenchQuery(kind, state, enumerated("severity", SEVERITIES), occurred.from, occurred.to,
+            return new WorkbenchQuery(kind, state, enumerated("severity", SEVERITIES), enumerated("severity_min", SEVERITIES), occurred.from, occurred.to,
                     optional("owner_org_id", 36), optional("district_id", 36), enumerated("source_mode", SOURCE_MODES));
         }
         private String optional(String name, int max) { if (!values.containsKey(name)) return null; String value = single(name); if (value.length() > max) throw invalid(name + " 参数无效"); return value; }

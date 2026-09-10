@@ -91,6 +91,7 @@ async function loadDevices() {
   const data = await deviceApi.list({ page: 1, size: 100, enabled: true, sort: 'device_no_asc' });
   devices.value = data.items;
   if (!devices.value.some(d => d.device_id === selectedDeviceId.value)) selectedDeviceId.value = devices.value[0]?.device_id || null;
+  else void loadExistingTask(selectedDeviceId.value);
 }
 async function bootstrap() {
   loading.value = true; error.value = '';
@@ -163,9 +164,23 @@ function showReport() {
     ]) });
 }
 
+/* 选中设备时先找它已有的未结束任务：后端有任务却显示"尚未创建任务"，会让人再建一个重复任务。 */
+let existingRequest = 0;
+async function loadExistingTask(deviceId) {
+  const request = ++existingRequest;
+  if (!deviceId || (active.value && !terminal.has(active.value.status))) return;
+  try {
+    const page = await commissionApi.list({ device_id: deviceId, page: 1, size: 5 });
+    if (request !== existingRequest || selectedDeviceId.value !== deviceId) return;
+    const open = (page?.items || []).find(t => !terminal.has(t.status)) || null;
+    active.value = open;
+    if (open) await loadEvents();
+  } catch { /* 读不到就保持"尚未创建任务"，不阻塞新建 */ }
+}
 watch(selectedDeviceId, id => {
   if (active.value && !terminal.has(active.value.status)) return;
   void applyDeviceConnection(id);
+  void loadExistingTask(id);
 });
 onMounted(async () => { await bootstrap(); pollTimer = setInterval(pollActive, 2_000); });
 onUnmounted(() => { clearInterval(pollTimer); });

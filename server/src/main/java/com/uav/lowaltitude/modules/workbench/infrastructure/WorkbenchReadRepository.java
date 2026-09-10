@@ -182,6 +182,11 @@ public class WorkbenchReadRepository {
         StringBuilder sql = new StringBuilder(" WHERE 1=1");
         add(sql, params, "u.state", "state", query.state());
         add(sql, params, "u.severity", "severity", query.severity());
+        // severity_min：工作台"高等级事项"卡片要的是"高及以上"，等级序与排序用的 rank 同一口径。
+        if (query.severityMin() != null) {
+            sql.append(" AND u.severity_rank >= :severity_min_rank");
+            params.put("severity_min_rank", switch (query.severityMin()) { case "CRITICAL" -> 4; case "HIGH" -> 3; case "MEDIUM" -> 2; default -> 1; });
+        }
         add(sql, params, "u.owner_org_id", "owner_org_id", query.ownerOrgId());
         add(sql, params, "u.district_id", "district_id", query.districtId());
         add(sql, params, "u.source_mode", "source_mode", query.sourceMode());
@@ -224,7 +229,7 @@ public class WorkbenchReadRepository {
 
     /** 各支的范围决定；null 表示该支没有读权限（或未配置），不进入 UNION。 */
     public record Branches(AccessDecision uav, AccessDecision risk, AccessDecision device) { }
-    public record WorkbenchQuery(String kind, String state, String severity, Long occurredFrom, Long occurredTo,
+    public record WorkbenchQuery(String kind, String state, String severity, String severityMin, Long occurredFrom, Long occurredTo,
             String ownerOrgId, String districtId, String sourceMode) {
         boolean matchesKind(String candidate) { return kind == null || kind.equals(candidate); }
     }

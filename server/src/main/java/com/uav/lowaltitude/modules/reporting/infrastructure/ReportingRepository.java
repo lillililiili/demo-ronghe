@@ -127,11 +127,12 @@ public class ReportingRepository {
                 """, params(from, to, scope));
     }
 
+    /** 设备口径与设备管理页一致：运维台账 ops_device（含消息接入设备），不是阶段 2 的感知设备目录。 */
     public Map<String, Object> deviceCounts() {
         return named.queryForMap("""
                 SELECT COUNT(*) AS total,
                        SUM(CASE WHEN s.connectivity='ONLINE' THEN 1 ELSE 0 END) AS online
-                FROM device d LEFT JOIN device_state s ON s.device_id=d.device_id
+                FROM ops_device d LEFT JOIN ops_device_state s ON s.device_id=d.device_id
                 """, Map.of());
     }
 

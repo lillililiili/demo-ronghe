@@ -114,8 +114,7 @@ function tipActions(t) {
     ? '向光电下发 BeginTracking，不是地图镜头跟随'
     : '需要设备管理的操作权限';
   const eoBtn = `<button type="button" class="btn" data-tip-act="eo-track" data-tip-id="${id}" ${canEo ? '' : 'disabled '}title="${eoTitle}">光电跟踪</button>`;
-  const videoBtn = `<button type="button" class="btn" disabled title="尚未接入">${U.icon('video')} 实时视频（未接入）</button>`;
-  const notifyBtn = `<button type="button" class="btn" disabled title="尚未接入">通知机场/周边（未接入）</button>`;
+  const videoBtn = `<button type="button" class="btn" disabled title="协议未提供实时视频流">${U.icon('video')} 实时视频</button>`;
   /* 阶段 13：驱离改为走处置授权——按钮只负责“提申请”，批准与执行由授权流程决定，
      点了不会有任何设备动作，也不会弹假成功。 */
   const driveBtn = `<button type="button" class="btn" data-tip-act="drive" data-tip-id="${id}">派发驱离</button>`;
@@ -124,8 +123,14 @@ function tipActions(t) {
   if (isUav) {
     return `<div class="maptip-track-acts">${videoBtn}${eoBtn}${almBtn}</div>`;
   }
-  return `<div class="maptip-track-note">非无人机不进入反制流程，仅评估与通知/驱离</div>
-    <div class="maptip-track-acts is-grid">${videoBtn}${notifyBtn}${driveBtn}${riskBtn}${almBtn}</div>`;
+  /* 类型还没认出来的目标，说不上"非无人机"，也谈不上驱离：先核验、先转风险监测。 */
+  const unclassified = !t.type || /未分类|未识别|识别中|未知/.test(String(t.type));
+  if (unclassified) {
+    return `<div class="maptip-track-note">目标类型尚未认定，先核验；认定后再决定反制或驱离</div>
+    <div class="maptip-track-acts is-grid">${videoBtn}${riskBtn}${almBtn}</div>`;
+  }
+  return `<div class="maptip-track-note">非无人机不进入反制流程，仅评估与驱离</div>
+    <div class="maptip-track-acts is-grid">${videoBtn}${driveBtn}${riskBtn}${almBtn}</div>`;
 }
 function renderTargetTip(t) {
   const lon = Number.isFinite(t.lon) ? t.lon.toFixed(3) : '—';

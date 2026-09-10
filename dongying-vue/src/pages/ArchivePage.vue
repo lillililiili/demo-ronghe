@@ -64,13 +64,13 @@ function onPageSize(value) { size.value = value; page.value = 1; load(); }
 
 function detail(row) {
   openModal({
-    title: `审计详情 · ${row.audit_id}`, width: '720px',
+    title: `审计详情 · ${dt(row.occurred_at)} · ${actionText(row.action)}`, width: '720px',
     render: () => h('div', { class: 'audit-detail' }, [
       h('dl', [
         h('dt', '时间'), h('dd', dt(row.occurred_at)), h('dt', '用户'), h('dd', `${row.account || '—'}（${roleLabel(row.role_code)}）`),
         h('dt', '模块'), h('dd', moduleText(row.module_code)), h('dt', '动作'), h('dd', actionText(row.action)),
         h('dt', '结果'), h('dd', resultText(row.result)), h('dt', 'IP'), h('dd', row.ip || '—'),
-        h('dt', 'User-Agent'), h('dd', row.user_agent || '—'), h('dt', '详情'), h('dd', row.detail || '—')
+        h('dt', '客户端'), h('dd', row.user_agent || '—'), h('dt', '详情'), h('dd', row.detail || '—')
       ])
     ])
   });

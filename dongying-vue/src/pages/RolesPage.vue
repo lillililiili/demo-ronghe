@@ -95,14 +95,13 @@ function limitText(item) {
   return isLocked.value ? '固定权限' : '可配置';
 }
 const permissionColumns = computed(() => [
-  { title: '权限编码', key: 'permission_code', width: 150, render: row => h('span', { class: 'mono' }, row.permission_code) },
   { title: '菜单入口', key: 'route_key', width: 180, render: row => h(NCheckbox, {
     checked: row.menu_enabled, disabled: permissionLocked(row), 'onUpdate:checked': value => setMenu(row, value)
   }, { default: () => menuLabelOf(row.route_key) }) },
-  { title: '权限等级', key: 'level', width: 150, render: row => h(UField, {
+  { title: '权限等级', key: 'level', width: 150, render: row => (isLocked.value ? h('span', '全部') : h(UField, {
     modelValue: row.level, type: 'select', label: '权限等级', srOnly: true, options: levelOptions,
     disabled: permissionLocked(row), 'onUpdate:modelValue': value => setLevel(row, value)
-  }) },
+  })) },
   { title: '限制', key: 'limit', width: 130, render: row => (!isLocked.value && protectedCodes.has(row.permission_code)
     ? h('span', { class: 'locked-note' }, '仅超级管理员') : limitText(row)) }
 ]);

@@ -116,7 +116,7 @@ export const CASE_EVENT_KIND_LABEL = {
   FILE: '立案', ASSIGN: '指派承办人', LEAD_ADDED: '新增待补线索', LEAD_RESOLVED: '线索已补齐',
   DISCRETION_DRAFTED: '拟定裁量', DISCRETION_CONFIRMED: '确认裁量', DOCUMENT_ISSUED: '出具决定书',
   DOCUMENT_REVOKED: '作废决定书', REVIEW_REQUESTED: '提请复核', REVIEWED: '完成复核',
-  CLOSED: '结案', WITHDRAWN: '撤案', CLOSE: '结案', WITHDRAW: '撤案'
+  CLOSED: '结案', WITHDRAWN: '撤案', CLOSE: '结案', WITHDRAW: '撤案', REVIEW_CONCLUDED: '复核完成', REVIEW_REQUESTED: '提请复核'
 };
 /* 契约 §2.3 的错误码：每条都译成能据以行动的话，错误码本身不上屏。 */
 export const PUNISHMENT_BLOCKED_LABEL = {

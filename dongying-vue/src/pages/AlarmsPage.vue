@@ -229,7 +229,7 @@ async function loadKpis() {
   const fail = i => v[i] == null ? '读取失败：' + esc(messageOf(r[i].reason)) : null;
   kpiList.value = [
     { ...KPI_DEFS[0], value: num(v[0]), desc: fail(0) || `近30天 ${num(v[1])} 起（按发生时间统计，发生时间未知者不计）` },
-    { ...KPI_DEFS[1], value: num(v[2]), desc: fail(2) || `另有证据待补充 ${num(v[3])} 起，可再次核实` },
+    { ...KPI_DEFS[1], value: v[2] == null || v[3] == null ? num(v[2]) : num(v[2] + v[3]), desc: fail(2) || `含证据待补充 ${num(v[3])} 起，可再次核实` },
     disposalKpi(KPI_DEFS[2], r[6], v[6]),
     disposalKpi(KPI_DEFS[3], r[7], v[7]),
     { ...KPI_DEFS[4], value: num(v[4]), desc: fail(4) || '已核实、待处置的事件数；反制与处罚交接见详情动作' },
@@ -343,6 +343,8 @@ function disposalActions(a, ev) {
     const activeText = active && DISPOSAL_ACTIVE_STATUSES.includes(active.status) ? `已有联动反制申请（${disposalStatusText(active)}），了结前不能再次发起` : '';
     const counter = disposal.unavailable || disposal.error
       ? dis('counter', `${U.icon('bolt')} 发起联动反制`, esc(disposal.error || DISPOSAL_UNAVAILABLE_TEXT), 'danger')
+      : !a.target_id
+        ? dis('counter', `${U.icon('bolt')} 发起联动反制`, '该告警没有关联感知目标，无法发起反制', 'danger')
       : activeText
         ? dis('counter', `${U.icon('bolt')} 发起联动反制`, esc(activeText), 'danger')
         : `<button class="btn danger" data-al="counter">${U.icon('bolt')} 发起联动反制</button>`;

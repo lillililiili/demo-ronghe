@@ -107,7 +107,11 @@ export function toAirspaces(details) {
         // rings 是全部环（第 0 环外环，其余是孔洞），map.js 按 even-odd 填充。
         rings,
         center,
-        alt: num(version.max_altitude_m)
+        alt: num(version.max_altitude_m),
+        // map.js 的空域提示读 limit/limitTx/unit；没有的字段写"未提供"，不能让 undefined 上屏。
+        limit: num(version.max_altitude_m) != null,
+        limitTx: num(version.max_altitude_m) != null ? `${num(version.max_altitude_m)} m` : (meta.kindCode === 'PROHIBITED' ? '禁止飞行' : '未提供'),
+        unit: detail.managing_org_name || detail.owner_org_name || version.managing_org_name || '未提供'
       });
     });
   }

@@ -77,7 +77,7 @@ const closureItems = computed(() => {
     { label: '待核实告警', value: dash(c.pending_verification), page: 'alarms', tone: 'warn', icon: NotificationsOutline },
     { label: '已核实待处置', value: dash(c.confirmed_blocked), page: 'alarms', tone: 'bad', icon: RadioOutline },
     { label: '交接待办', value: dash(c.pending_handoffs), page: 'punish', tone: 'warn', icon: BriefcaseOutline },
-    { label: '证据管理', value: '未建设', page: 'evidence', tone: 'good', icon: DocumentAttachOutline }
+    { label: '证据台账', value: dash(c.evidence_files ?? c.evidence_total), page: 'evidence', tone: 'good', icon: DocumentAttachOutline }
   ];
 });
 
@@ -275,7 +275,7 @@ function renderMap() {
   });
   const hint = document.createElement('div');
   hint.className = 'bs-map-hint';
-  hint.textContent = '点击地图上的无人机查看实时视频（Demo 模拟画面）';
+  hint.textContent = '点击地图上的无人机查看实时视频（演示画面）';
   mapEl.value.appendChild(hint);
   const layer = snapshot.value?.map || {};
   map.setData({

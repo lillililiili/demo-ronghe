@@ -66,6 +66,7 @@
       <div class="mapctl">
         <button type="button" class="mb" data-z="in" aria-label="放大">${g.UI.icon('zoomIn')}</button><button type="button" class="mb" data-z="out" aria-label="缩小">${g.UI.icon('zoomOut')}</button><button type="button" class="mb" data-z="fit" aria-label="复位">${g.UI.icon('expand')}</button>
       </div>
+      <button type="button" class="mb map-refocus" data-z="refocus" title="回到本页数据所在的位置">⌖ 重新定位</button>
       ${legendHtml}
       <div class="maptip"></div>
       <div class="mapscale"><span></span><div class="bar"></div></div>
@@ -202,7 +203,7 @@
         e.preventDefault(); e.stopPropagation();
         if (z.dataset.z === 'in') self.setZoom(self.zoom * 1.5);
         else if (z.dataset.z === 'out') self.setZoom(self.zoom / 1.5);
-        else self.resetView();
+        else self.refocus();
         return;
       }
       if (e.target.closest && e.target.closest('.maplayers,.mapstatus,.maplibregl-control-container,.maptip')) return;
@@ -405,6 +406,7 @@
     const pts = (coordinates || []).filter(p => Number.isFinite(p?.[0]) && Number.isFinite(p?.[1]));
     if (!pts.length) return this;
     padding = Number.isFinite(padding) ? padding : 0.25;
+    this._focus = { kind: 'fit', coordinates: pts, padding };
     if (this.w <= 0 || this.h <= 0) { this._pendingFit = { coordinates: pts, padding }; return this; }
     const xs = pts.map(p => merc(p[0], p[1]));
     const minX = Math.min(...xs.map(p => p[0])), maxX = Math.max(...xs.map(p => p[0]));
@@ -427,12 +429,20 @@
     options = options || {};
     this._isDefaultView = false;
     if (Number.isFinite(options.scale)) this.setZoom(options.scale);
+    if (!options._replay) this._focus = { kind: 'center', lon, lat, scale: this.zoom };
     this._pendingCenter = this._clampCenter(lon, lat, this._levelForScale(this.zoom));
     if (this.map) this.map.setCenter(this._pendingCenter);
     this.draw();
     return this;
   };
 
+  /* 「重新定位」：回到本页数据所在的位置——上一次 fitTo 的包围盒或 centerAt 的中心；没有数据焦点时回默认视图。 */
+  MapView.prototype.refocus = function () {
+    const focus = this._focus;
+    if (!focus) return this.resetView();
+    if (focus.kind === 'fit') return this.fitTo(focus.coordinates, focus.padding);
+    return this.centerAt(focus.lon, focus.lat, { scale: focus.scale, _replay: true });
+  };
   MapView.prototype.resetView = function (scale) {
     this.ox = this.oy = 0;
     this._isDefaultView = true;

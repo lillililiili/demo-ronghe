@@ -36,3 +36,7 @@
 .mapwrap .maplibregl-ctrl-attrib a{color:inherit}
 .mapwrap .maplibregl-ctrl-bottom-left{z-index:3;max-width:calc(100% - 80px)}
 @media(prefers-reduced-motion:reduce){.mapstatus.is-loading:before{animation:none}}
+/* 右上角「重新定位」：回到本页数据所在位置（上一次 fitTo / centerAt 的焦点）。 */
+.mapwrap .map-refocus{position:absolute;right:10px;top:10px;z-index:5;width:auto;height:28px;padding:0 10px;border-radius:5px;background:rgba(255,255,255,.96);border:1px solid rgba(61,80,94,.2);color:#334a5d;font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer;box-shadow:0 2px 8px rgba(39,59,72,.15)}
+.mapwrap .map-refocus:hover{border-color:#3484c5;color:#1769a6;background:#fff}
+.mapwrap.is-fullscreen .map-refocus{top:14px;right:14px}

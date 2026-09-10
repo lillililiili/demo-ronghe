@@ -164,6 +164,34 @@ class SystemManagementApiTest {
                 .isEqualTo("ALL");
     }
 
+    /**
+     * 决策 18-13：审计日志的读与导出可以授给非超管角色——审计员按"只读 + 审计日志导出"定义，
+     * 看不到审计日志这个角色就不成立。18-10 之前只改了初始化器那一半，授权接口这一半还挡着，
+     * 于是管理员在角色矩阵里改不动，演示审计员角色整组提交还会被整次拒绝。
+     */
+    @Test
+    void customRoleCanBeGrantedAuditReadAndItsMenu() throws Exception {
+        String admin = login("admin1", "changeme");
+        JsonNode role = createRole(admin, "READ");
+        String roleCode = role.path("role_code").asText();
+
+        ObjectNode payload = permissionPayload(role.path("permissions"), "READ");
+        for (JsonNode item : payload.withArray("permissions")) {
+            if ("audit".equals(item.path("permission_code").asText())) {
+                ((ObjectNode) item).put("level", "OP").put("menu_enabled", true);
+            }
+        }
+        payload.put("expected_version", role.path("version").asInt()).put("reason", "审计员需要看审计日志");
+        mvc.perform(put("/api/v1/roles/{code}/permissions", roleCode)
+                        .header("Authorization", bearer(admin)).header("Idempotency-Key", "audit-" + roleCode)
+                        .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(payload)))
+                .andExpect(status().isOk());
+        assertThat(jdbc.queryForObject("select permission_level from app_role_permission"
+                + " where role_code=? and permission_code='audit'", String.class, roleCode)).isEqualTo("OP");
+        assertThat(jdbc.queryForObject("select menu_enabled from app_role_permission"
+                + " where role_code=? and permission_code='audit'", Boolean.class, roleCode)).isTrue();
+    }
+
     @Test
     void customRoleCannotReceiveProtectedPermissionsAndSuperAdminCannotBeChanged() throws Exception {
         String admin = login("admin1", "changeme");
@@ -172,7 +200,9 @@ class SystemManagementApiTest {
 
         ObjectNode forbidden = permissionPayload(role.path("permissions"), "READ");
         for (JsonNode item : forbidden.withArray("permissions")) {
-            if ("audit".equals(item.path("permission_code").asText())) {
+            // 原来这里试的是 audit——决策 18-13 之后审计已经可以授给自定义角色了，
+            // 继续拿它当反例就等于把放开的那条又钉死。改用仍然只归超管的反制/干扰。
+            if ("countermeasure".equals(item.path("permission_code").asText())) {
                 ((ObjectNode) item).put("level", "READ").put("menu_enabled", true);
             }
         }

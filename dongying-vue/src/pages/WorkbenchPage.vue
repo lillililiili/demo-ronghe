@@ -555,7 +555,7 @@ onUnmounted(() => {
         <div>
           <div class="wb-eyebrow"><span v-html="icon('home')"></span> 我的工作台</div>
           <h1>{{ currentUser.name }}，这是您当前需要关注的事项</h1>
-          <p>按等级、接收时间统一排序；每个事项只呈现一个明确的下一步。<span v-if="stats.asOf" class="wb-asof">数据时刻 {{ fmt(stats.asOf) }}</span></p>
+          <p>有下一步动作的排前面，等回执的居中，误报、已通知、已排除、已恢复的沉底；同档按等级、接收时间排序。每个事项只呈现一个明确的下一步。<span v-if="stats.asOf" class="wb-asof">数据时刻 {{ fmt(stats.asOf) }}</span></p>
         </div>
         <div class="wb-user-chip">
           <span class="wb-user-avatar" v-html="icon('user')"></span>

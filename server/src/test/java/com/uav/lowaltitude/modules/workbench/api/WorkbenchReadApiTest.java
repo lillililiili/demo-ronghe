@@ -163,17 +163,18 @@ class WorkbenchReadApiTest {
         assertThat(total).isEqualTo(9);
         assertThat(new LinkedHashSet<>(ordered)).hasSize(9);
         assertThat(ordered).hasSize(9);
-        // severity_rank DESC, received_at DESC, kind ASC, source_id DESC：CRITICAL 先于所有 HIGH，同等级按接收时间倒序，同时间按 kind 字母序。
+        // action_rank DESC, severity_rank DESC, received_at DESC, kind ASC, source_id DESC（决策 16-10）：
+        // 可操作的先按 CRITICAL > HIGH > … 与接收时间倒序、同时间按 kind 字母序；等回执的 PROCESSING 居中；已排除的沉底。
         assertThat(ordered).containsExactly(
                 "UAV_EVENT:wb-e-critical-" + suffix,
                 "RISK:wb-r-high-" + suffix,
                 "DEVICE_INCIDENT:wb-i-high-" + suffix,
                 "UAV_EVENT:wb-e-high-" + suffix,
-                "DEVICE_INCIDENT:wb-i-medium-" + suffix,
                 "RISK:wb-r-medium-" + suffix,
-                "RISK:wb-r-low-" + suffix,
                 "DEVICE_INCIDENT:wb-i-low-" + suffix,
-                "UAV_EVENT:wb-e-low-" + suffix);
+                "UAV_EVENT:wb-e-low-" + suffix,
+                "DEVICE_INCIDENT:wb-i-medium-" + suffix,
+                "RISK:wb-r-low-" + suffix);
         JsonNode first = data(mvc.perform(get("/api/v1/workbench/items?page=1&size=1").header("Authorization", bearer(full))).andReturn()).get("items").get(0);
         assertThat(first.get("received_at").asLong()).isEqualTo(1_000);
         assertThat(first.get("state").asText()).isEqualTo("PENDING_VERIFICATION");

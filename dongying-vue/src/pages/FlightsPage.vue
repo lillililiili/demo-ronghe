@@ -19,7 +19,7 @@ import { openFormModal } from '@/ui/formModal.js';
 import { openModal, closeModal } from '@/ui/modal.js';
 import { toast } from '@/ui/nv.js';
 import {
-  ALTITUDE_DATUM_LABEL, ALTITUDE_RELATION_LABEL, HANDOFF_TYPE_LABEL, LEGALITY_LABEL, PLAN_MATCH_LABEL, PLAN_MATCH_TAG, PLAN_STATUS_LABEL, PLAN_STATUS_TAG, REASON_CODE_LABEL, RISK_TYPE_LABEL,
+  ALTITUDE_DATUM_LABEL, ALTITUDE_RELATION_LABEL, HANDOFF_TYPE_LABEL, LEGALITY_LABEL, PLAN_MATCH_TAG, PLAN_ROW_MATCH_LABEL, PLAN_STATUS_LABEL, PLAN_STATUS_TAG, REASON_CODE_LABEL, RISK_TYPE_LABEL,
   SECTION_AVAILABILITY_LABEL, SOURCE_MODE_LABEL, labelOf, OBJECT_TYPE_LABEL, readableNo } from '@/ui/labels.js';
 import { isUncertainOutcome } from '@/services/apiClient.js';
 import { loadTargetPosition } from '@/services/positionMap.js';
@@ -172,7 +172,7 @@ const canFilterByPlan = computed(() => actionAllowed('flight:read') !== false);
 const canReadRoute = computed(() => actionAllowed('route:read') !== false);
 
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / size.value)));
-const statusOptions = [{ label: '全部状态', value: '' }, ...Object.keys(PLAN_STATUS_LABEL).map(value => ({ label: PLAN_STATUS_LABEL[value], value }))];
+const statusOptions = [{ label: '全部状态', value: '' }, ...['PENDING', 'EXECUTING', 'COMPLETED', 'CANCELLED'].map(value => ({ label: PLAN_STATUS_LABEL[value], value }))];
 /* 6 个 KPI（决策 15-56）：前四个取服务端 size=1 的 total（今日=计划时段与今天相交；待执行=待执行+已批准），
    后两个只能按本页已读到的对照结论统计（服务端没有跨计划的匹配汇总），desc 里写明"本页"。 */
 const planKpis = ref({ today: null, executing: null, pending: null, completed: null, failed: false });
@@ -204,7 +204,7 @@ const kpiList = computed(() => {
   return [
     { label: '今日报备计划', value: n(k.today), color: 'blue', icon: 'plan', desc: '计划时段与今天相交的计划数' },
     { label: '执行中', value: n(k.executing), color: 'cyan', icon: 'radar', desc: '状态为执行中' },
-    { label: '待执行', value: n(k.pending), color: 'purple', icon: 'check', desc: '待执行 + 已批准' },
+    { label: '待执行', value: n(k.pending), color: 'purple', icon: 'check', desc: '未到计划时段' },
     { label: '已完成', value: n(k.completed), color: 'green', icon: 'check', desc: '状态为已完成' },
     { label: '计划未匹配到目标', value: String(m.unmatched), color: 'amber', icon: 'alert', desc: '本页：执行中/已完成但尚无引擎研判' },
     { label: '偏离报备计划', value: String(m.deviated), color: 'red', icon: 'alert', desc: '本页：计划匹配为部分匹配' }
@@ -421,13 +421,13 @@ async function loadRowActuals(rows) {
 }
 function rowMatch(plan) {
   const section = rowActuals[plan.plan_id];
-  if (section && sectionReady(section)) return { text: labelOf(PLAN_MATCH_LABEL, section.plan_match_code), tag: PLAN_MATCH_TAG[section.plan_match_code] || 't-gray', title: '' };
+  if (section && sectionReady(section)) return { text: labelOf(PLAN_ROW_MATCH_LABEL, section.plan_match_code), tag: PLAN_MATCH_TAG[section.plan_match_code] || 't-gray', title: '' };
   if (['PENDING', 'APPROVED'].includes(plan.status_code)) return { text: '—', tag: '', title: '计划尚未开始执行' };
   if (plan.status_code === 'CANCELLED') return { text: '—', tag: '', title: '计划已取消' };
   if (section === undefined) return { text: '…', tag: 't-gray', title: '正在读取对照结论' };
   if (!section) return { text: '—', tag: '', title: '对照结论读取失败或无权限' };
   if (!sectionReady(section)) return { text: '—', tag: '', title: sectionNote(section) };
-  return { text: labelOf(PLAN_MATCH_LABEL, section.plan_match_code), tag: PLAN_MATCH_TAG[section.plan_match_code] || 't-gray', title: '' };
+  return { text: labelOf(PLAN_ROW_MATCH_LABEL, section.plan_match_code), tag: PLAN_MATCH_TAG[section.plan_match_code] || 't-gray', title: '' };
 }
 const DEVIATION_NOTE = '引擎当前只给出计划匹配结论，不提供横向偏航与时差数值';
 
@@ -564,7 +564,7 @@ const matchMetricText = computed(() => {
   const section = actuals.value?.match;
   if (!showComparison.value) return '—';
   if (!section) return actualsLoading.value ? '读取中' : '—';
-  return sectionReady(section) ? labelOf(PLAN_MATCH_LABEL, section.plan_match_code) : sectionNote(section);
+  return sectionReady(section) ? labelOf(PLAN_ROW_MATCH_LABEL, section.plan_match_code) : sectionNote(section);
 });
 
 const matchReasonText = computed(() => {
@@ -1452,7 +1452,7 @@ onUnmounted(() => {
               <div v-else-if="!sectionReady(actuals?.match)" class="empty">{{ sectionNote(actuals?.match) }}</div>
               <template v-else>
                 <dl class="kv kv-surface" :title="actuals.match.evaluation_id">
-                  <dt>计划匹配</dt><dd>{{ labelOf(PLAN_MATCH_LABEL, actuals.match.plan_match_code) }}</dd>
+                  <dt>计划匹配</dt><dd>{{ labelOf(PLAN_ROW_MATCH_LABEL, actuals.match.plan_match_code) }}</dd>
                   <dt>研判时间</dt><dd>{{ formatTime(actuals.match.evaluated_at) }}</dd>
                   <dt>高度关系</dt><dd>{{ planAltitudeText }}</dd>
                   <template v-if="altitudeBandText"><dt>计划高度带</dt><dd>{{ altitudeBandText }}</dd></template>

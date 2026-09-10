@@ -237,7 +237,7 @@ public class LocalStage7RuleEngineSeeder implements ApplicationRunner {
                 + " select ?,?,1,CAST(? AS GEOMETRY),100,?,?,?,?,? where not exists (select 1 from route_version where route_version_id=?)",
                 rv, route, line, min, max, datum, ts(start), ts(at), rv);
         jdbc.update("insert into flight_plan (plan_id,plan_no,status_code,source_id,source_mode,uav_sn,start_at,end_at,route_version_id,owner_org_id,district_id,created_at,updated_at,version)"
-                + " select ?,?,'APPROVED',?,'mock',?,?,?,?,?,?,?,?,0 where not exists (select 1 from flight_plan where plan_id=?)",
+                + " select ?,?,'PENDING',?,'mock',?,?,?,?,?,?,?,?,0 where not exists (select 1 from flight_plan where plan_id=?)",
                 plan, String.format("JH-S7-%03d", seq), SOURCE_ID, sn, ts(start), ts(end), rv, org, district, ts(at), ts(at), plan);
     }
 

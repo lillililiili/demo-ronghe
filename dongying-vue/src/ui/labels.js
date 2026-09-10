@@ -22,9 +22,13 @@ export const REASON_CODE_LABEL = {
   PROHIBITED_AIRSPACE_OVERLAP: '穿越禁飞空域', ALTITUDE_DATUM_OR_RANGE_UNKNOWN: '高度基准或范围未知', CORRIDOR_WIDTH_UNKNOWN: '航线走廊宽度未知',
   TIME_UNTRUSTED: '时间不可信', LOCATION_UNTRUSTED: '位置不可信'
 };
-export const PLAN_STATUS_LABEL = { PENDING: '待执行', APPROVED: '已批准', EXECUTING: '执行中', COMPLETED: '已完成', CANCELLED: '已取消' };
+/* 计划状态没有"已批准"这一档（平台不审批，来源送来的计划一律待执行；迁移 V202609100001 已把历史 APPROVED 并入 PENDING）。
+   保留 APPROVED 的映射只为旧数据不把代码漏到屏幕上；筛选项与统计口径都不再区分。 */
+export const PLAN_STATUS_LABEL = { PENDING: '待执行', APPROVED: '待执行', EXECUTING: '执行中', COMPLETED: '已完成', CANCELLED: '已取消' };
+/* 计划视角的匹配结论：引擎的 NONE 在目标视角叫"无匹配计划"，在计划这一行要说成"未匹配感知目标"。 */
+export const PLAN_ROW_MATCH_LABEL = { FULL: '完全匹配', PARTIAL: '部分匹配', NONE: '未匹配感知目标', UNDETERMINED: '不可判定', NOT_APPLICABLE: '不适用' };
 // 与 legacy ui.js STAT_C 同色：待执行蓝、执行中青、已完成绿、终态灰。
-export const PLAN_STATUS_TAG = { PENDING: 't-blue', APPROVED: 't-cyan', EXECUTING: 't-cyan', COMPLETED: 't-green', CANCELLED: 't-gray' };
+export const PLAN_STATUS_TAG = { PENDING: 't-blue', APPROVED: 't-blue', EXECUTING: 't-cyan', COMPLETED: 't-green', CANCELLED: 't-gray' };
 export const HANDOFF_TYPE_LABEL = { RISK_NOTICE: '风险通报', UAV_PUNISHMENT: '处罚交接' };
 export const HANDOFF_KIND_LABEL = { RISK: '飞行风险', UAV_EVENT: '无人机事件', DEVICE_INCIDENT: '设备异常' };
 /* PERSON/VEHICLE/SHIP/REMOTE_CONTROLLER 来自凌云协议 A 的 objectType（阶段 8.5 直连切片）。 */

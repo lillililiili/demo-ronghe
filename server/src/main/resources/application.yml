@@ -81,6 +81,11 @@ app:
   network:
     allow-loopback-when-listed: ${APP_NETWORK_ALLOW_LOOPBACK_WHEN_LISTED:false}
   # 阶段 7 规则引擎：默认关闭调度；DEMO 参数版本默认不允许激活（只能做影子验证）。
+  flight:
+    # 飞行计划执行状态按计划时段推进（待执行 → 执行中 → 已完成）；默认关闭，本地演示打开。见需求确认表增补四 F10。
+    status-advance:
+      enabled: ${APP_FLIGHT_STATUS_ADVANCE_ENABLED:false}
+      poll-millis: ${APP_FLIGHT_STATUS_ADVANCE_POLL_MILLIS:60000}
   rule-engine:
     # C04 空间安全风险定时评估：默认关闭，只在 PostGIS 部署上按需打开（H2 会记 UNAVAILABLE）。
     c04:

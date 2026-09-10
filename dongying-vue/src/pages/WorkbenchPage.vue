@@ -2,7 +2,7 @@
 /* 我的工作台：三类源事项的只读聚合视图。队列、计数、详情全部来自 GET /workbench/items；
    核实/核验委托共享弹窗（alarmApi/riskApi），通知、反制委托既有接口，设备重启/恢复校验委托 deviceApi。
    API 失败直接显示错误，不回退 window.MOCK。 */
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { UField } from '@/components/form/index.js';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import { toast } from '@/ui/nv.js';
@@ -16,10 +16,11 @@ import { disposalApi } from '@/services/disposalApi.js';
 import { openDisposalRequest } from '@/ui/disposalAuthModal.js';
 import { openRiskVerification } from '@/ui/riskVerificationModal.js';
 import { authUser } from '@/services/auth.js';
-import { CONCLUSION_LABEL, RISK_CONCLUSION_LABEL, DELIVERY_STATUS_LABEL, HANDOFF_BLOCKED_LABEL, HANDOFF_TYPE_LABEL, RISK_TYPE_LABEL, labelOf, verificationOrdinal } from '@/ui/labels.js';
+import { loadTargetPosition, loadDevicePosition, loadRouteCenterline, installCenterline, centerOf } from '@/services/positionMap.js';
+import { CONCLUSION_LABEL, RISK_CONCLUSION_LABEL, DELIVERY_STATUS_LABEL, HANDOFF_BLOCKED_LABEL, HANDOFF_TYPE_LABEL, RISK_TYPE_LABEL, labelOf, verificationOrdinal, readableNo } from '@/ui/labels.js';
 import {
   KINDS, kindLabel, kindIcon, AVAILABILITY_LABEL,
-  listWorkbenchEvents, workbenchStats, getWorkbenchDetail, loadUavSource, loadRiskSource, openSourcePage, splitKey, stateLabel
+  listWorkbenchEvents, workbenchStats, getWorkbenchDetail, loadUavSource, loadRiskSource, openSourcePage, sourcePageLabel, splitKey, stateLabel
 } from '@/services/workbenchEvents.js';
 
 const U = window.UI;
@@ -140,13 +141,14 @@ async function loadSummary() {
 async function loadDetail(key, { silent = false } = {}) {
   const my = ++detailSeq;
   const parts = splitKey(key);
-  if (!parts) { detail.value = null; detailError.value = ''; return null; }
+  if (!parts) { detail.value = null; detailError.value = ''; destroyPositionMap(); return null; }
   if (!silent) detailLoading.value = true;
   try {
     const data = await getWorkbenchDetail(parts.kind, parts.sourceId);
     if (my !== detailSeq) return null;
     detail.value = data;
     detailError.value = '';
+    if (!silent) renderPositionMap(data);
     return data;
   } catch (e) {
     if (my !== detailSeq) return null;
@@ -175,6 +177,72 @@ async function refreshAll() {
   await Promise.all([loadSummary(), loadQueue({ silent: true }), selectedKey.value ? loadDetail(selectedKey.value, { silent: true }) : Promise.resolve()]);
 }
 function refresh() { return refreshAll(); }
+
+/* ---------- 事项位置（决策 15-54）：坐标从源对象读，不从工作台接口猜 ----------
+   无人机告警 → 告警关联目标的最新位置与轨迹；飞行风险 → 风险关联的航线版本中心线 + 关联目标（若有）；
+   设备告警 → 设备台账坐标。取不到就把原因写在面板里，不画 (0,0)。 */
+let positionMap = null;
+let mapSeq = 0;
+const mapNote = ref('');
+function destroyPositionMap() {
+  if (positionMap) { try { positionMap.destroy(); } catch { /* 已卸载 */ } }
+  positionMap = null;
+}
+function linkParamOf(link, key) {
+  const q = typeof link === 'string' ? link.indexOf('?') : -1;
+  return q < 0 ? null : new URLSearchParams(link.slice(q + 1)).get(key);
+}
+async function renderPositionMap(data) {
+  const my = ++mapSeq;
+  destroyPositionMap();
+  mapNote.value = '正在读取位置…';
+  const summary = data?.summary;
+  if (!summary) { mapNote.value = ''; return; }
+  let targets = [], devices = [], alarms = [], centerline = null, center = null, note = '';
+  try {
+    if (data.kind === 'UAV_EVENT') {
+      const { alarm } = await loadUavSource(summary.sourceId);
+      if (!alarm?.target_id) note = '告警没有关联目标或无目标读取权限，无法定位';
+      else {
+        const loaded = await loadTargetPosition(alarm.target_id);
+        if (!loaded.mapTarget) note = `关联目标 ${loaded.target?.target_no || alarm.target_id} 坐标未知或不可信，不以 (0,0) 补位`;
+        else {
+          targets = [loaded.mapTarget];
+          alarms = [{ id: alarm.alarm_id, targetId: loaded.mapTarget.id, type: summary.title, level: summary.level, time: fmt(summary.receivedAt), status: summary.sourceStatus }];
+          center = [loaded.anchor.lon, loaded.anchor.lat];
+        }
+      }
+    } else if (data.kind === 'RISK') {
+      const risk = await loadRiskSource(summary.sourceId);
+      if (risk?.route_version_id) { try { centerline = await loadRouteCenterline(risk.route_version_id); } catch { centerline = null; } }
+      if (risk?.target_id) {
+        try {
+          const loaded = await loadTargetPosition(risk.target_id);
+          if (loaded.mapTarget) { targets = [loaded.mapTarget]; center = [loaded.anchor.lon, loaded.anchor.lat]; }
+        } catch { /* 目标读不到只影响标记，航线仍画 */ }
+      }
+      if (!center && centerline) center = centerOf(centerline);
+      if (!center) note = '风险未关联航线版本或目标，或无相应读取权限，无可信坐标';
+    } else {
+      const deviceId = linkParamOf(summary.links?.source, 'device_id') || summary.sourceId;
+      const loaded = await loadDevicePosition(deviceId);
+      if (!loaded.mapDevice) note = '设备台账没有坐标，无法定位';
+      else { devices = [loaded.mapDevice]; center = [loaded.mapDevice.lon, loaded.mapDevice.lat]; }
+    }
+  } catch (e) {
+    note = messageOf(e, '读取位置失败');
+  }
+  if (my !== mapSeq) return;
+  if (note) { mapNote.value = note; return; }
+  mapNote.value = '';
+  await nextTick();
+  if (my !== mapSeq || !mapHost.value) return;
+  positionMap = new window.MapView(mapHost.value, { zoom: 3, maxDev: 5, maxAlarm: 2, legend: false, layers: { device: devices.length > 0, track: targets.length > 0, alarm: alarms.length > 0 } });
+  installCenterline(positionMap, centerline);
+  positionMap.setData({ airspaces: [], devices, targets, alarms });
+  if (targets.length) positionMap.sel = targets[0].id;
+  if (center) positionMap.centerAt(center[0], center[1]);
+}
 
 /* ---------- 动作：核实/核验/通知/反制委托源模块；设备异常走 incident 重启与恢复校验 ---------- */
 async function runUavAction() {
@@ -293,8 +361,8 @@ async function openNotifyModal(risk, summary) {
   openFormModal({
     title: '通知上级 · 提交交接',
     width: '560px',
-    warning: '提交成功只表示交接材料已入库（待投递），不表示已发送、已送达或处罚办结；风险状态保持“待通知”。真实通知渠道本期未接入。',
-    notice: [`风险 ${risk.source_risk_id || riskId}`, labelOf(RISK_TYPE_LABEL, risk.risk_type, ''), verificationOrdinal(risk.version, '已')].filter(Boolean).join(' · '),
+    warning: '提交后由通知渠道投递并回执，送达与回执以投递记录为准；不表示处罚办结，风险状态保持“待通知”。',
+    notice: [readableNo(risk.source_risk_id) ? `风险 ${readableNo(risk.source_risk_id)}` : '风险事件', labelOf(RISK_TYPE_LABEL, risk.risk_type, ''), Number(risk.version) > 0 ? `已第${Number(risk.version)}次核验` : '尚未核验'].filter(Boolean).join(' · '),
     fields: options.length
       ? [{ key: 'recipient_id', label: '接收方', type: 'select', required: true, options, placeholder: '选择逻辑接收部门' }]
       : [{ key: 'unconfigured', type: 'html', html: '<div class="warnbox">接收方未配置：交接接收方目录为空，无法提交；不会以默认部门补值。</div>' }],
@@ -307,7 +375,7 @@ async function openNotifyModal(risk, summary) {
         const result = await createHandoff({ source_kind: 'RISK', source_id: riskId, handoff_type: 'RISK_NOTICE', recipient_id, expected_version: Number(risk.version) }, key);
         pendingNotifyKeys.delete(riskId);
         closeModal();
-        toast('已提交，尚未发送：交接材料已入库（待投递）。<a href="#/punish">前往处置与处罚页查看</a>', 'ok');
+        toast(`${result?.delivery_status === 'DELIVERED' ? '已提交并送达' + (result?.receipt_status === 'ACKNOWLEDGED' ? '，接收方已回执' : '') : '已提交，尚未发送：交接材料已入库（待投递）'}。<a href="#/punish">前往处置与处罚页查看</a>`, 'ok');
         await refreshAll();
       } catch (e) {
         if (e && e.code === 'HANDOFF_ALREADY_EXISTS') {
@@ -472,8 +540,7 @@ onUnmounted(() => {
   if (timer) window.clearInterval(timer);
   timer = null;
   resetAll();
-  // 本期接口不含坐标，页面不创建 MapView；宿主留空即可，无需销毁地图实例。
-  if (mapHost.value) mapHost.value.innerHTML = '';
+  destroyPositionMap();
 });
 </script>
 
@@ -535,7 +602,7 @@ onUnmounted(() => {
               <span class="wb-event-icon" v-html="icon(kindIcon[e.kind])"></span>
               <span class="wb-event-copy">
                 <span class="wb-event-top"><em>{{ e.kindLabel }}</em><span><i class="wb-source-state">{{ e.sourceStatus }}</i><i class="tag" :class="tagClass(e)">{{ e.level }}</i></span></span>
-                <b>{{ e.title }}</b><small class="mono" :title="e.sourceId">{{ e.sourceNo }}</small>
+                <b>{{ e.title }}</b><small v-if="e.sourceNo" class="mono" :title="e.sourceId">{{ e.sourceNo }}</small>
                 <span class="wb-event-meta"><i>{{ e.sourceModeLabel }}</i><i>{{ dateShort(e.receivedAt) }}</i></span>
                 <span class="wb-event-next">下一步：{{ e.todo?.action || '无需处理' }}</span>
               </span>
@@ -550,7 +617,7 @@ onUnmounted(() => {
             <div class="wb-title-main">
               <span class="wb-title-icon" v-html="icon(kindIcon[selected.kind])"></span>
               <div><small>{{ kindLabel[selected.kind] }}</small><h2>{{ selected.summary.title }}</h2>
-                <p class="mono" :title="selected.summary.sourceId">{{ selected.summary.sourceNo }}</p></div>
+                <p v-if="selected.summary.sourceNo" class="mono" :title="selected.summary.sourceId">{{ selected.summary.sourceNo }}</p></div>
             </div>
             <div class="wb-title-tags"><span class="tag" :class="tagClass(selected.summary)">{{ selected.summary.level }}</span><span class="tag t-cyan">{{ selected.summary.sourceStatus }}</span><span v-if="verificationOrdinal(selected.summary.version)" class="tag t-gray">已{{ verificationOrdinal(selected.summary.version) }}</span></div>
             <div v-if="selected.summary.todo" class="wb-title-next">
@@ -593,8 +660,11 @@ onUnmounted(() => {
               </div>
             </section>
 
-            <section class="panel wb-map-panel"><div class="ph"><h3>事项位置</h3><span class="sub">WGS-84</span></div>
-              <div ref="mapHost" class="wb-map wb-map-unavailable"><div class="empty">本期工作台接口不提供坐标字段，不绘制位置点<br><small>请在源页面查看目标、航线或设备位置</small></div></div>
+            <section class="panel wb-map-panel"><div class="ph"><h3>事项位置</h3><span class="sub">{{ selected.kind === 'UAV_EVENT' ? '关联目标最新位置与实测轨迹' : selected.kind === 'RISK' ? '关联航线中心线与目标位置' : '设备台账坐标' }}</span></div>
+              <div class="wb-map" :class="{ 'wb-map-unavailable': !!mapNote }">
+                <div v-if="mapNote" class="empty">{{ mapNote }}<br><small>可到{{ sourcePageLabel[selected.kind] }}页查看更多</small></div>
+                <div v-else ref="mapHost" class="wb-map-host"></div>
+              </div>
             </section>
           </div>
 
@@ -606,7 +676,7 @@ onUnmounted(() => {
               <span v-if="selected.kind === 'RISK'"><small>交接记录</small><b>{{ selected.availability.handoffs === 'AVAILABLE' ? `${handoffs.length} 条` : selected.availability.handoffs === 'FORBIDDEN' ? '无读取权限' : '—' }}</b></span>
               <span v-else-if="selected.kind === 'UAV_EVENT'"><small>核实记录</small><b>{{ verifications.length }} 条</b></span>
               <span v-else><small>动作</small><b>{{ selected.summary.todo?.allowed ? selected.summary.todo.action : (selected.summary.blockedLabel || selected.summary.todo?.blocker || '—') }}</b></span><i>→</i>
-              <span><small>源页面</small><button class="btn" type="button" :disabled="!selected.summary.links?.source" @click="openSource">打开源页面</button></span>
+              <span><small>原始记录所在页</small><button class="btn" type="button" :disabled="!selected.summary.links?.source" @click="openSource">打开{{ sourcePageLabel[selected.kind] }}页</button></span>
             </div>
           </section>
 

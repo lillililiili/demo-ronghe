@@ -1,6 +1,6 @@
 # 阶段 9 飞行监管补齐与第二业务线接口契约
 
-> 状态：领导冻结稿 v1.1（2026-09-07：space-fact 响应体、并发 confirm 的 409 码；v1.0 于 2026-09-06）。配套：`docs/backend-stage9/decisions.md`、`docs/backend-stage3/flight-airspace-assessment-api-contract.md`（阶段 3 只读契约，本文只追加）、`docs/backend-stage4/alarm-risk-api-contract.md`（风险核验，本文只加过滤与可空字段）、`docs/backend-stage7/rule-engine-api-contract.md`（规则参数机制）。约定沿用：`{ok,data}` 包络、snake_case、字符串 ID、epoch 毫秒、`page/size → items/page/size/total`、先鉴权再解析、精确 `(owner_org_id,district_id)` 元组、越权 404、写接口 `Idempotency-Key` + `expected_version`、成功审计同事务、失败审计事务外、未知字段 `UNKNOWN_FIELD`。
+> 状态：领导冻结稿 v1.1（2026-09-07：space-fact 响应体、并发 confirm 的 409 码；v1.0 于 2026-09-06）。**2026-09-09 变更**：外部授权登记按需求确认表增补四 F8 整体撤除——`GET/POST /flight-plans/{id}/authorizations`、`actuals` 响应的 `authorizations` 段、权限 `flight:authorize`、表 `flight_plan_authorization` 均已删除（`V202609090106`），下文相关条目仅作历史记录。配套：`docs/backend-stage9/decisions.md`、`docs/backend-stage3/flight-airspace-assessment-api-contract.md`（阶段 3 只读契约，本文只追加）、`docs/backend-stage4/alarm-risk-api-contract.md`（风险核验，本文只加过滤与可空字段）、`docs/backend-stage7/rule-engine-api-contract.md`（规则参数机制）。约定沿用：`{ok,data}` 包络、snake_case、字符串 ID、epoch 毫秒、`page/size → items/page/size/total`、先鉴权再解析、精确 `(owner_org_id,district_id)` 元组、越权 404、写接口 `Idempotency-Key` + `expected_version`、成功审计同事务、失败审计事务外、未知字段 `UNKNOWN_FIELD`。
 
 ## 交付边界
 

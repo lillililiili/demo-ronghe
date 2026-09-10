@@ -114,7 +114,6 @@ final class AuditLabels {
             Map.entry("airport_protected_target_created", "新增保护目标"),
             Map.entry("airport_notification_target_created", "新增通报对象"),
             Map.entry("rule_evaluation_triggered", "手动触发空间风险评估"),
-            Map.entry("plan_authorization_recorded", "登记飞行计划外部授权"),
             Map.entry("eo_track_requested", "下发光电跟踪"),
             Map.entry("eo_track_ended", "停止光电跟踪"));
 

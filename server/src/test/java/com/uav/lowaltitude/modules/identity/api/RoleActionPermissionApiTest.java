@@ -117,7 +117,8 @@ class RoleActionPermissionApiTest {
         // 只断言"含中文"会被一句半中半英的描述蒙混过去，所以再钉死一对具体措辞。
         assertThat(disposalModuleName).isEqualTo("处置授权");
         assertThat(approveName).isEqualTo("审批处置");
-        assertThat(actions).as("目录里的动作数").isGreaterThanOrEqualTo(42);
+        // 目录动作数与 PermissionCode 枚举一致：撤除动作（如 F8 的 flight:authorize）时两边一起减，不再钉死数字。
+        assertThat(actions).as("目录里的动作数").isEqualTo(com.uav.lowaltitude.modules.identity.domain.PermissionCode.values().length);
     }
 
     /**

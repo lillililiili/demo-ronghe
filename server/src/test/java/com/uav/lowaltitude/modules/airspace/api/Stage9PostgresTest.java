@@ -38,7 +38,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.test.annotation.DirtiesContext;
@@ -157,19 +156,23 @@ class Stage9PostgresTest {
         assertThat(versions).contains("202609050060");
         assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success=false", Long.class)).isZero();
         List<String> actions = jdbc.queryForList(
-                "select permission_code from app_permission where permission_code in ('airspace:manage','airport:read','airport:manage','risk:evaluate','flight:authorize') order by permission_code",
+                "select permission_code from app_permission where permission_code in ('airspace:manage','airport:read','airport:manage','risk:evaluate') order by permission_code",
                 String.class);
-        assertThat(actions).containsExactly("airport:manage", "airport:read", "airspace:manage", "flight:authorize", "risk:evaluate");
+        assertThat(actions).containsExactly("airport:manage", "airport:read", "airspace:manage", "risk:evaluate");
         // 动作码不带菜单键；两个既有 MODULE 行在迁移 060 升级为真实菜单后，又被 V202609070010 撤回为别名
         // （用户 2026-09-07 裁定，见 docs/backend-stage9/menu-scope-deviation.md）：route_key 为空、行仍在。
-        assertThat(jdbc.queryForObject("select count(*) from app_permission where permission_code in ('airspace:manage','airport:read','airport:manage','risk:evaluate','flight:authorize') and route_key is not null", Long.class)).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from app_permission where permission_code in ('airspace:manage','airport:read','airport:manage','risk:evaluate') and route_key is not null", Long.class)).isZero();
         assertThat(jdbc.queryForObject("select count(*) from app_permission where permission_code in ('airspace','risk')", Long.class)).isEqualTo(2L);
         assertThat(jdbc.queryForObject("select count(*) from app_permission where permission_code in ('airspace','risk') and route_key is not null", Long.class)).isZero();
         assertThat(jdbc.queryForObject("select sort_order from app_permission where permission_code='airspace:manage'", Integer.class)).isEqualTo(960);
-        assertThat(jdbc.queryForObject("select sort_order from app_permission where permission_code='flight:authorize'", Integer.class)).isEqualTo(964);
+        // flight:authorize 与 flight_plan_authorization 已按 F8 裁定由 V202609090106 撤除：目录与表都不该再存在。
+        assertThat(jdbc.queryForObject("select count(*) from app_permission where permission_code='flight:authorize'", Long.class)).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from app_role_permission where permission_code='flight:authorize'", Long.class)).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from information_schema.tables where table_name='flight_plan_authorization'", Long.class)).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from pg_proc where proname='prevent_stage9_plan_authorization_mutation'", Long.class)).isZero();
         // 迁移只登记目录，不给任何角色授权，也不插入任何业务数据。
         assertThat(jdbc.queryForObject(
-                "select count(*) from app_role_permission where permission_code in ('airspace:manage','airport:read','airport:manage','risk:evaluate','flight:authorize') and role_code <> 'ROLE-ADMIN'",
+                "select count(*) from app_role_permission where permission_code in ('airspace:manage','airport:read','airport:manage','risk:evaluate') and role_code <> 'ROLE-ADMIN'",
                 Long.class)).isZero();
         assertThat(jdbc.queryForObject("select count(*) from airspace", Long.class)).isZero();
         assertThat(jdbc.queryForObject("select count(*) from flight_risk where risk_type='SPACE_OBJECT'", Long.class)).isZero();
@@ -759,66 +762,6 @@ class Stage9PostgresTest {
                 + " and not exists (select 1 from space_risk_fact f where f.risk_id=r.risk_id)", Long.class)).isZero();
     }
 
-    /**
-     * E1 9.2 迁移 064：外部授权登记只增。平台不冒充审批机关（决策 9-10）——登记的是别处已经批下来的文号，
-     * 一旦落库就不能被改写或抹掉，否则"谁在什么时间被授权"这件事就没有可追溯的底账。
-     * UPDATE/DELETE 由只增触发器拦，触发器只在 db/postgresql 目录，H2 单测碰不到，只能在这里钉。
-     */
-    @Test
-    @Order(17)
-    void planAuthorizationIsAppendOnlyAndDocumentNumberIsUniquePerPlan() {
-        insertSpaceRisk();  // 复用夹具的计划：授权登记挂在 flight_plan 上（外键 ON DELETE RESTRICT）。
-        String recorder = id();
-        jdbc.update("insert into app_role (role_code,name,description,builtin,enabled,created_at,updated_at,version,system_role)"
-                + " select 'ROLE-ADMIN','超级管理员','',true,true,0,0,0,true where not exists (select 1 from app_role where role_code='ROLE-ADMIN')");
-        jdbc.update("insert into app_user (user_id,account,name,role_code,status,password_hash,fail_count,scope_mode,permission_version,created_at,updated_at,version)"
-                + " values (?,?,?,'ROLE-ADMIN','ACTIVE','unused',0,'ALL',0,0,0,0)", recorder, "s9-auth-" + suffix, "阶段九登记人");
-
-        String authId = id(), documentNo = "东空管授权字〔2026〕" + suffix.substring(0, 4) + "号";
-        jdbc.update("insert into flight_plan_authorization (authorization_id,plan_id,document_no,issuer,granted_from,granted_to,"
-                + "scope_note,recorded_by,recorded_at,source_kind) values (?,?,?,'东营空管站',?,?,'仅限该批次',?,?,'MANUAL')",
-                authId, planId, documentNo, T0, T0.plusHours(4), recorder, T0);
-
-        // 同一计划同一文号只能登记一次：重复提交不是新事实，来源方式不同也不例外。
-        assertThatThrownBy(() -> jdbc.update("insert into flight_plan_authorization (authorization_id,plan_id,document_no,issuer,"
-                + "granted_from,granted_to,recorded_by,recorded_at,source_kind) values (?,?,?,'东营空管站',?,?,?,?,'IMPORT')",
-                id(), planId, documentNo, T0, T0.plusHours(4), recorder, T0))
-                .as("UNIQUE(plan_id, document_no)").isInstanceOf(DuplicateKeyException.class);
-
-        // 只增：任何一列的 UPDATE 与任何 DELETE 都被触发器拒，且原行保持不变。
-        assertThatThrownBy(() -> jdbc.update("update flight_plan_authorization set scope_note='改口径' where authorization_id=?", authId))
-                .isInstanceOf(DataIntegrityViolationException.class);
-        assertThatThrownBy(() -> jdbc.update("update flight_plan_authorization set granted_to=? where authorization_id=?", T0.plusHours(8), authId))
-                .isInstanceOf(DataIntegrityViolationException.class);
-        assertThatThrownBy(() -> jdbc.update("delete from flight_plan_authorization where authorization_id=?", authId))
-                .isInstanceOf(DataIntegrityViolationException.class);
-        assertThat(jdbc.queryForList("select scope_note,cast(granted_to as varchar) from flight_plan_authorization where authorization_id=?", authId))
-                .singleElement().satisfies(row -> assertThat(row).containsEntry("scope_note", "仅限该批次"));
-
-        // 零长度与倒挂的授权区间说不清"哪段时间被授权"，一律拒。
-        assertThatThrownBy(() -> insertAuthorization(recorder, T0, T0)).as("granted_to = granted_from").isInstanceOf(DataIntegrityViolationException.class);
-        assertThatThrownBy(() -> insertAuthorization(recorder, T0, T0.minusHours(1))).as("granted_to < granted_from").isInstanceOf(DataIntegrityViolationException.class);
-        // 空白文号/签发单位不是"未知"，它会伪装成一条有效登记：CHECK 直接拒。
-        assertThatThrownBy(() -> jdbc.update("insert into flight_plan_authorization (authorization_id,plan_id,document_no,issuer,"
-                + "granted_from,granted_to,recorded_by,recorded_at,source_kind) values (?,?,'   ','东营空管站',?,?,?,?,'MANUAL')",
-                id(), planId, T0, T0.plusHours(1), recorder, T0)).isInstanceOf(DataIntegrityViolationException.class);
-        assertThatThrownBy(() -> jdbc.update("insert into flight_plan_authorization (authorization_id,plan_id,document_no,issuer,"
-                + "granted_from,granted_to,recorded_by,recorded_at,source_kind) values (?,?,?,'  ',?,?,?,?,'MANUAL')",
-                id(), planId, documentNo + "-B", T0, T0.plusHours(1), recorder, T0)).isInstanceOf(DataIntegrityViolationException.class);
-        // 来源方式只有 MANUAL/IMPORT 两种，字典外值被拒。
-        assertThatThrownBy(() -> jdbc.update("insert into flight_plan_authorization (authorization_id,plan_id,document_no,issuer,"
-                + "granted_from,granted_to,recorded_by,recorded_at,source_kind) values (?,?,?,'东营空管站',?,?,?,?,'AUTO')",
-                id(), planId, documentNo + "-C", T0, T0.plusHours(1), recorder, T0)).isInstanceOf(DataIntegrityViolationException.class);
-
-        assertThat(jdbc.queryForObject("select count(*) from flight_plan_authorization where plan_id=?", Long.class, planId))
-                .as("只有第一条合法登记留下来").isEqualTo(1L);
-    }
-
-    private void insertAuthorization(String recorder, OffsetDateTime from, OffsetDateTime to) {
-        jdbc.update("insert into flight_plan_authorization (authorization_id,plan_id,document_no,issuer,granted_from,granted_to,"
-                + "recorded_by,recorded_at,source_kind) values (?,?,?,'东营空管站',?,?,?,?,'MANUAL')",
-                id(), planId, "窗口用例-" + UUID.randomUUID(), from, to, recorder, T0);
-    }
 
     /**
      * E1 9.1 的 `R__stage9_airspace_succession` 接替式不变量的完整分支（此前只在 psql 里逐条验过，领导要求写成用例）。
@@ -900,36 +843,6 @@ class Stage9PostgresTest {
         return id;
     }
 
-    /**
-     * E1 9.2 授权登记接口的并发保证。用例 17 钉的是数据库的 `UNIQUE(plan_id, document_no)`，这里钉的是**接口层**：
-     * 服务里那句"存在性预检挡不住并发，唯一约束才是最终保障"必须真的把 `DataIntegrityViolationException` 翻成 409
-     * `AUTHORIZATION_EXISTS`，而不是漏成 500。两条真实连接、两个不同的幂等键，所以走的是唯一约束而不是幂等短路。
-     */
-    @Test
-    @Order(19)
-    void twoRealConnectionsRecordingSameDocumentNoCommitExactlyOne() throws Exception {
-        insertSpaceRisk();  // 夹具计划（归属 org/district），登记挂在它上面。
-        String authorizer = sessionWithScope(authorizerRole(), org, district);
-        String documentNo = "东空管授权字-并发-" + suffix.substring(0, 4);
-        List<MvcResult> results = race(
-                post("/api/v1/flight-plans/{id}/authorizations", planId).header("Authorization", "Bearer " + authorizer)
-                        .header("Idempotency-Key", "auth-a-" + UUID.randomUUID()).contentType(MediaType.APPLICATION_JSON)
-                        .content(authorizationBody(documentNo, "东营市空管办")),
-                post("/api/v1/flight-plans/{id}/authorizations", planId).header("Authorization", "Bearer " + authorizer)
-                        .header("Idempotency-Key", "auth-b-" + UUID.randomUUID()).contentType(MediaType.APPLICATION_JSON)
-                        .content(authorizationBody(documentNo, "东营市空管办")));
-        List<Integer> statuses = results.stream().map(r -> r.getResponse().getStatus()).sorted().toList();
-        assertThat(statuses).as("同一计划同一文号并发登记必须一成一败，且落败方是 409 不是 500").containsExactly(201, 409);
-        MvcResult loser = results.stream().filter(r -> r.getResponse().getStatus() == 409).findFirst().orElseThrow();
-        assertThat(json.readTree(loser.getResponse().getContentAsString()).path("error").path("code").asText())
-                .isEqualTo("AUTHORIZATION_EXISTS");
-        // 落败方整体回滚：库里恰一条登记，读接口也只看到一条。
-        assertThat(jdbc.queryForObject("select count(*) from flight_plan_authorization where plan_id=? and document_no=?",
-                Long.class, planId, documentNo)).isEqualTo(1L);
-        mvc.perform(get("/api/v1/flight-plans/{id}/authorizations", planId).header("Authorization", "Bearer " + authorizer))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.items.length()").value(1));
-    }
 
     /**
      * 决策 9-28 的引擎过滤，在真实库上核一次。阶段 9 起 `rule_set` 表里同时存在合法性规则集与空间风险规则集，
@@ -1074,29 +987,8 @@ class Stage9PostgresTest {
         return failure == null ? null : "<no SQLException: " + failure + ">";
     }
 
-    private String authorizerRole() {
-        String role = "ROLE-S9-AUTH-" + suffix;
-        jdbc.update("insert into app_role (role_code,name,description,builtin,enabled,created_at,updated_at,version,system_role) values (?,?,'',false,true,0,0,0,false)", role, role);
-        jdbc.update("insert into app_role_permission (role_code,permission_code,permission_level,menu_enabled,created_at) values"
-                + " (?,'flight:read','READ',false,current_timestamp),(?,'flight:authorize','OP',false,current_timestamp)", role, role);
-        return role;
-    }
 
-    /** 与 {@link #session} 同构，但把数据范围绑到指定的 (org, district)：授权登记走的是夹具计划的归属，不是种子的。 */
-    private String sessionWithScope(String roleCode, String orgId, String districtId) {
-        String user = id(), token = UUID.randomUUID().toString();
-        jdbc.update("insert into app_user (user_id,account,name,role_code,status,password_hash,fail_count,scope_mode,permission_version,created_at,updated_at,version)"
-                + " values (?,?,?,?,'ACTIVE','unused',0,'ASSIGNED',0,0,0,0)", user, "s9-auth-" + user.substring(0, 8), "阶段九登记员", roleCode);
-        jdbc.update("insert into app_user_data_scope (user_id,org_id,district_id) values (?,?,?)", user, orgId, districtId);
-        jdbc.update("insert into app_session (session_id,user_id,expire_at,ip,permission_version) values (?,?,?,'127.0.0.1',0)",
-                token, user, System.currentTimeMillis() + 3_600_000L);
-        return token;
-    }
 
-    private String authorizationBody(String documentNo, String issuer) {
-        return "{\"document_no\":\"" + documentNo + "\",\"issuer\":\"" + issuer + "\",\"granted_from\":" + T0.toInstant().toEpochMilli()
-                + ",\"granted_to\":" + T0.plusHours(4).toInstant().toEpochMilli() + ",\"scope_note\":\"仅限该批次\"}";
-    }
 
 
 

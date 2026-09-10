@@ -74,18 +74,5 @@ CREATE TRIGGER trg_stage9_airspace_version_origin_append_only
 BEFORE UPDATE OR DELETE ON airspace_version_origin
 FOR EACH ROW EXECUTE FUNCTION prevent_stage9_airspace_version_origin_mutation();
 
--- 飞行计划外部授权登记只增：它记录的是"某单位在某文号下批过这段飞行"这一既成事实，
--- 改写或删除等于替签发单位改口。登记错了应当由新的登记与说明覆盖，而不是把旧行抹掉。
-CREATE OR REPLACE FUNCTION prevent_stage9_plan_authorization_mutation()
-RETURNS TRIGGER
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    RAISE EXCEPTION 'flight plan authorizations are append-only' USING ERRCODE = '23514';
-END
-$$;
-
-DROP TRIGGER IF EXISTS trg_stage9_plan_authorization_append_only ON flight_plan_authorization;
-CREATE TRIGGER trg_stage9_plan_authorization_append_only
-BEFORE UPDATE OR DELETE ON flight_plan_authorization
-FOR EACH ROW EXECUTE FUNCTION prevent_stage9_plan_authorization_mutation();
+-- 飞行计划外部授权登记已按 F8 裁定撤除（V202609090106 删表）：触发器随表消失，这里只清掉遗留函数。
+DROP FUNCTION IF EXISTS prevent_stage9_plan_authorization_mutation();

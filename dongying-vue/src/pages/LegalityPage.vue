@@ -520,7 +520,7 @@ onMounted(() => {
             <header class="lg-review-head">
               <b>{{ subjectLabel(selectedEvaluation) }}</b>
               <span :title="selectedEvaluation?.evaluation_id">{{ selectedEvaluation ? `研判时间 ${formatTime(selectedEvaluation.evaluated_at)}` : '引擎研判' }}</span>
-              <span v-if="selectedEvaluation" class="tag" :class="demoParams ? 't-amber' : 't-green'">{{ demoParams ? 'DEMO 参数' : '已确认参数' }}</span>
+              <span v-if="selectedEvaluation" class="tag" :class="demoParams ? 't-amber' : 't-green'">{{ demoParams ? '演示参数' : '已确认参数' }}</span>
               <span class="lg-head-spacer"></span>
               <button class="lg-icon-btn" type="button" :disabled="selectedQueueIndex <= 0"
                 aria-label="上一条" @click="moveSelection(-1)">←</button>
@@ -647,7 +647,7 @@ onMounted(() => {
                           <template v-if="selectedEvaluation.alarm_id"><a class="lg-link-btn" :href="alarmHref" :title="selectedEvaluation.alarm_id" @click.prevent="openAlarm">打开告警页核实</a>{{ selectedEvaluation.event_id ? '（已建待核实事件）' : '' }}</template>
                         <template v-else>无告警关联或无告警读取权限</template></dd>
                         <dt>来源模式</dt><dd>{{ sourceText(selectedEvaluation.source_mode) }}</dd>
-                        <dt>规则集版本</dt><dd>{{ ruleVersionText(selectedEvaluation) }} · 参数 {{ demoParams ? 'DEMO 演示值，尚未业务确认' : '已确认' }}</dd>
+                        <dt>规则集版本</dt><dd>{{ ruleVersionText(selectedEvaluation) }} · 参数 {{ demoParams ? '演示值，尚未业务确认' : '已确认' }}</dd>
                         <dt>运行触发</dt><dd>{{ TRIGGER_TEXT[selectedEvaluation.trigger_kind] || '—' }} · {{ MODE_TEXT[selectedEvaluation.mode] || '—' }}</dd>
                         <dt>计划投影</dt><dd :title="selectedEvaluation.assessment_id">{{ selectedEvaluation.assessment_id ? '已投影到计划研判' : '未投影（无匹配计划或影子运行）' }}</dd>
                       </dl>

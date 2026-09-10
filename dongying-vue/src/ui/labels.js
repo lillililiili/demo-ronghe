@@ -20,7 +20,8 @@ export const RISK_TYPE_LABEL = { FLIGHT_OPERATION: '飞行作业风险', AIRSPAC
 export const REASON_CODE_LABEL = {
   ROUTE_DEVIATION: '偏离报备航线', AIRSPACE_CONFLICT: '空域冲突', ALTITUDE_UNKNOWN: '高度信息缺失', SOURCE_MISMATCH: '来源不一致',
   PROHIBITED_AIRSPACE_OVERLAP: '穿越禁飞空域', ALTITUDE_DATUM_OR_RANGE_UNKNOWN: '高度基准或范围未知', CORRIDOR_WIDTH_UNKNOWN: '航线走廊宽度未知',
-  TIME_UNTRUSTED: '时间不可信', LOCATION_UNTRUSTED: '位置不可信'
+  TIME_UNTRUSTED: '时间不可信', LOCATION_UNTRUSTED: '位置不可信',
+  SPACE_OBJECT_NEAR_ROUTE: '异物邻近航线', SPACE_OBJECT_IN_CORRIDOR: '异物进入航线走廊', SPACE_OBJECT_ALTITUDE_UNKNOWN: '异物高度未知', SPACE_OBJECT_IN_AIRPORT_ZONE: '异物进入机场保护区'
 };
 /* 计划状态没有"已批准"这一档（平台不审批，来源送来的计划一律待执行；迁移 V202609100001 已把历史 APPROVED 并入 PENDING）。
    保留 APPROVED 的映射只为旧数据不把代码漏到屏幕上；筛选项与统计口径都不再区分。 */

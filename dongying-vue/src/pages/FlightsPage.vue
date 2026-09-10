@@ -172,6 +172,7 @@ const canFilterByPlan = computed(() => actionAllowed('flight:read') !== false);
 const canReadRoute = computed(() => actionAllowed('route:read') !== false);
 
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / size.value)));
+const sourceModeOptions = [{ label: '全部', value: '' }, ...Object.keys(SOURCE_MODE_LABEL).map(value => ({ label: SOURCE_MODE_LABEL[value], value }))];
 const statusOptions = [{ label: '全部状态', value: '' }, ...['PENDING', 'EXECUTING', 'COMPLETED', 'CANCELLED'].map(value => ({ label: PLAN_STATUS_LABEL[value], value }))];
 /* 6 个 KPI（决策 15-56）：前四个取服务端 size=1 的 total（今日=计划时段与今天相交；待执行=待执行+已批准），
    后两个只能按本页已读到的对照结论统计（服务端没有跨计划的匹配汇总），desc 里写明"本页"。 */
@@ -1247,10 +1248,8 @@ onUnmounted(() => {
                   <div class="field"><label>目标类型</label><UControl v-model="riskFilters.target_type" type="select" :options="riskTypeOptions" :disabled="riskLoading" size="small" @update:model-value="applyRiskFilters" /></div>
                   <div class="field"><label>状态</label><UControl v-model="riskFilters.state" type="select" :options="riskStateOptions" :disabled="riskLoading" size="small" @update:model-value="applyRiskFilters" /></div>
                   <div class="field rk-range"><label>发生时间</label><UControl v-model="riskFilters.occurred" type="datetimerange" clearable :disabled="riskLoading" size="small" start-placeholder="开始" end-placeholder="结束" /></div>
-                  <div class="field" :title="canFilterByPlan ? '按已保存计划 ID 筛选（需要 flight:read）' : '无 flight:read 权限，阶段 4 契约不允许以计划 ID 筛选'"><label>计划标识</label><UControl v-model="riskFilters.plan_id" placeholder="内部计划标识" :disabled="riskLoading || !canFilterByPlan" size="small" @keyup.enter="applyRiskFilters" /></div>
-                  <div class="field"><label>组织</label><UControl v-model="riskFilters.owner_org_id" placeholder="机构标识" :disabled="riskLoading" size="small" @keyup.enter="applyRiskFilters" /></div>
                   <div class="field" :title="riskDistrictTitle"><label>区域</label><UControl v-model="riskFilters.district_id" type="select" :options="riskDistrictOptions" :disabled="riskLoading" size="small" @update:model-value="applyRiskFilters" /></div>
-                  <div class="field"><label>来源模式</label><UControl v-model="riskFilters.source_mode" placeholder="source_mode" :disabled="riskLoading" size="small" @keyup.enter="applyRiskFilters" /></div>
+                  <div class="field"><label>来源模式</label><UControl v-model="riskFilters.source_mode" type="select" :options="sourceModeOptions" :disabled="riskLoading" size="small" /></div>
                 </div>
                 <div class="toolbar-actions">
                   <button class="btn" type="button" :disabled="riskLoading" @click="applyRiskFilters">查询</button>
@@ -1353,7 +1352,6 @@ onUnmounted(() => {
                 <dt>发生时间</dt><dd>{{ formatTime(selectedRisk.occurred_at) }}</dd>
                 <dt>接收时间</dt><dd>{{ formatTime(selectedRisk.received_at) }}</dd>
                 <dt>所属范围</dt><dd>{{ selectedRisk.owner_org_name || selectedRisk.owner_org_id }} / {{ selectedRisk.district_name || selectedRisk.district_id }}</dd>
-                <dt>版本</dt><dd class="mono">v{{ selectedRisk.version }}</dd>
               </dl></div>
               <div class="sect"><h4>风险依据</h4><dl class="kv kv-surface">
                 <dt>风险依据</dt><dd>{{ labelOf(REASON_CODE_LABEL, selectedRisk.reason_code, '未提供') }}</dd>
@@ -1372,7 +1370,7 @@ onUnmounted(() => {
                 <div v-else-if="!riskHistory.length" class="empty">尚无已保存的核验记录</div>
                 <div v-else class="rk-history">
                   <div v-for="item in riskHistory" :key="item.history_id" class="rk-history-item">
-                    <div class="rk-history-head"><span class="tag" :class="item.conclusion === 'EXCLUDED' ? 't-gray' : 't-green'">{{ item.conclusion === 'EXCLUDED' ? '排除' : item.conclusion === 'CONFIRMED' ? '核验通过' : item.conclusion }}</span><span class="mono rk-sub">{{ stateLabel(item.previous_state) }} → {{ stateLabel(item.resulting_state) }} · v{{ item.version }}</span></div>
+                    <div class="rk-history-head"><span class="tag" :class="item.conclusion === 'EXCLUDED' ? 't-gray' : 't-green'">{{ item.conclusion === 'EXCLUDED' ? '排除' : item.conclusion === 'CONFIRMED' ? '核验通过' : item.conclusion }}</span><span class="mono rk-sub">{{ stateLabel(item.previous_state) }} → {{ stateLabel(item.resulting_state) }} · 第 {{ item.version }} 次核验</span></div>
                     <div class="rk-wrap">{{ item.note }}</div>
                     <div class="rk-sub">{{ formatTime(item.created_at) }} · 操作人 {{ item.actor_name || item.actor_id }}</div>
                   </div>

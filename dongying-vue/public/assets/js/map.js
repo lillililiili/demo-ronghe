@@ -305,6 +305,7 @@
     this.cv.height = Math.max(1, Math.round(r.height * dpr));
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this._applyDefaultView();
+    if (this._pendingFit && this.w > 0 && this.h > 0) { const f = this._pendingFit; this._pendingFit = null; this.fitTo(f.coordinates, f.padding); return; }
     if (this.map) {
       this.map.resize();
       this._applyCameraLimits();
@@ -394,6 +395,29 @@
     this.zoom = Math.pow(2, level - this._fitLevelForWidth());
     this._pendingCenter = this._clampCenter(this._pendingCenter[0], this._pendingCenter[1], level);
     if (this.map) this.map.setZoom(level);
+    this.draw();
+    return this;
+  };
+
+  /* 把视口对准一组 [lon, lat] 点：缩放到这些点占视口的 (1 - 2*padding)，中心取包围盒中心。
+     容器尚无尺寸时记下来，等首次 _resize 再套用；级别仍受覆盖范围的最小级别约束。 */
+  MapView.prototype.fitTo = function (coordinates, padding) {
+    const pts = (coordinates || []).filter(p => Number.isFinite(p?.[0]) && Number.isFinite(p?.[1]));
+    if (!pts.length) return this;
+    padding = Number.isFinite(padding) ? padding : 0.25;
+    if (this.w <= 0 || this.h <= 0) { this._pendingFit = { coordinates: pts, padding }; return this; }
+    const xs = pts.map(p => merc(p[0], p[1]));
+    const minX = Math.min(...xs.map(p => p[0])), maxX = Math.max(...xs.map(p => p[0]));
+    const minY = Math.min(...xs.map(p => p[1])), maxY = Math.max(...xs.map(p => p[1]));
+    const usableW = Math.max(1, this.w * (1 - 2 * padding)), usableH = Math.max(1, this.h * (1 - 2 * padding));
+    const dx = Math.max(maxX - minX, 1e-7), dy = Math.max(maxY - minY, 1e-7);
+    let level = Math.log2(Math.min(usableW / dx, usableH / dy) / 512);
+    level = Math.max(this._minLevel(), Math.min(17, level));
+    this._isDefaultView = false;
+    this.zoom = Math.pow(2, level - this._fitLevelForWidth());
+    const center = geographic((minX + maxX) / 2, (minY + maxY) / 2);
+    this._pendingCenter = this._clampCenter(center[0], center[1], level);
+    if (this.map) this.map.jumpTo({ center: this._pendingCenter, zoom: level });
     this.draw();
     return this;
   };

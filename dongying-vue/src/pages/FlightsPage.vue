@@ -399,7 +399,7 @@ async function loadDetail(planId) {
 }
 
 /* ---------- 计划与实际对照（阶段 9）----------
-   五段各自带 availability：无权限的段只说"无权限查看"，不显示任何数量；
+   各段自带 availability：无权限的段只说"无权限查看"，不显示任何数量；
    有权限但没有数据是空列表或"尚无引擎研判"，两者含义不同，页面不能混为一谈。
    匹配、高度关系、合法性都来自同一次已保存的研判，页面不自行计算几何或换算高度基准。 */
 const actuals = ref(null);
@@ -420,9 +420,10 @@ async function loadRowActuals(rows) {
   }));
 }
 function rowMatch(plan) {
+  const section = rowActuals[plan.plan_id];
+  if (section && sectionReady(section)) return { text: labelOf(PLAN_MATCH_LABEL, section.plan_match_code), tag: PLAN_MATCH_TAG[section.plan_match_code] || 't-gray', title: '' };
   if (['PENDING', 'APPROVED'].includes(plan.status_code)) return { text: '—', tag: '', title: '计划尚未开始执行' };
   if (plan.status_code === 'CANCELLED') return { text: '—', tag: '', title: '计划已取消' };
-  const section = rowActuals[plan.plan_id];
   if (section === undefined) return { text: '…', tag: 't-gray', title: '正在读取对照结论' };
   if (!section) return { text: '—', tag: '', title: '对照结论读取失败或无权限' };
   if (!sectionReady(section)) return { text: '—', tag: '', title: sectionNote(section) };
@@ -431,13 +432,11 @@ function rowMatch(plan) {
 const DEVIATION_NOTE = '引擎当前只给出计划匹配结论，不提供横向偏航与时差数值';
 
 /* 合法性判定：与 legacy 同一个跳转——有研判就带目标过去选中，没有就只跳页并说明。 */
-const legalityJumpNote = computed(() => {
-  if (actuals.value?.match?.target_id) return '打开合法性研判页并选中本计划匹配到的目标';
-  return showComparison.value ? '本计划尚无引擎研判，跳转后不会自动选中目标' : '打开合法性研判页';
-});
+/* 按钮只在引擎已把本计划匹配到感知目标时出现：合法性研判是对目标做的，没有目标就没有那一步，也就不该有那个钮。 */
+const matchedTargetId = computed(() => actuals.value?.match?.target_id || null);
 function goLegality() {
-  const targetId = actuals.value?.match?.target_id || null;
-  if (!targetId && showComparison.value) toast('该计划尚无引擎研判或未匹配到感知目标，已跳转合法性研判，但无法自动选中对应目标');
+  const targetId = matchedTargetId.value;
+  if (!targetId) return;
   if (window.UI?.goto) window.UI.goto('legality', targetId ? { target: targetId } : null);
   else location.hash = '#/legality';
 }
@@ -482,7 +481,7 @@ async function loadRouteRisks(plan) {
   routeRisks.loading = true;
   try {
     const now = Date.now();
-    const data = await riskApi.listRisks({ plan_id: plan.plan_id, occurred_from: now - ROUTE_RISK_DAYS * 86400000, occurred_to: now + 86400000, page: 1, size: 50 });
+    const data = await riskApi.listRisks({ plan_id: plan.plan_id, risk_type: 'SPACE_OBJECT', occurred_from: now - ROUTE_RISK_DAYS * 86400000, occurred_to: now + 86400000, page: 1, size: 50 });
     if (selected.value?.plan_id !== plan.plan_id) return;
     routeRisks.items = data.items || [];
     routeRisks.loaded = true;
@@ -541,7 +540,8 @@ async function loadActuals(plan) {
 const planPending = computed(() => ['PENDING', 'APPROVED'].includes(selected.value?.status_code));
 const planEnded = computed(() => ['COMPLETED', 'CANCELLED'].includes(selected.value?.status_code));
 /* 没有事实就不摆空分区：待执行/已取消的计划没有实际飞行可对照；已结束或无走廊的计划没有起飞前航线预检。 */
-const showComparison = computed(() => !planPending.value && selected.value?.status_code !== 'CANCELLED');
+/* 有引擎结论就照实显示（状态字段不随时间流转，已批准的计划也可能早已飞过）；没有结论且计划还没飞或已取消，才不摆空分区。 */
+const showComparison = computed(() => sectionReady(actuals.value?.match) || (!planPending.value && selected.value?.status_code !== 'CANCELLED'));
 const showRouteRisks = computed(() => !planEnded.value && !!selected.value?.route?.route_version_id);
 function sectionReady(section) { return section?.availability === 'AVAILABLE'; }
 function sectionNote(section) { return labelOf(SECTION_AVAILABILITY_LABEL, section?.availability, '暂不可用'); }
@@ -561,8 +561,8 @@ const demoParams = computed(() => actuals.value?.match?.param_status === 'DEMO')
 
 /* 指标条与下方"计划与实际对照"读同一条研判，避免同屏出现两个说法。 */
 const matchMetricText = computed(() => {
-  if (!showComparison.value) return '—';
   const section = actuals.value?.match;
+  if (!showComparison.value) return '—';
   if (!section) return actualsLoading.value ? '读取中' : '—';
   return sectionReady(section) ? labelOf(PLAN_MATCH_LABEL, section.plan_match_code) : sectionNote(section);
 });
@@ -681,8 +681,11 @@ function renderRouteMap() {
     }
     context.restore();
   };
-  const [longitude, latitude] = coordinates?.[Math.floor(coordinates.length / 2)] || (target ? [target.lon, target.lat] : airspaces[0].polygons[0][0][0]);
-  routeMap.centerAt(longitude, latitude);
+  if (coordinates) routeMap.fitTo(coordinates);
+  else {
+    const [longitude, latitude] = target ? [target.lon, target.lat] : airspaces[0].polygons[0][0][0];
+    routeMap.centerAt(longitude, latitude);
+  }
 }
 
 async function loadAirspaceContext(plan) {
@@ -942,8 +945,7 @@ function renderRiskMap() {
     context.fillText(label, mid[0], mid[1]);
     context.restore();
   };
-  const [longitude, latitude] = coordinates[Math.floor(coordinates.length / 2)];
-  routeMap.centerAt(longitude, latitude);
+  routeMap.fitTo(coordinates);
 }
 
 async function changeRiskHistoryPage(nextPage) {
@@ -1478,8 +1480,8 @@ onUnmounted(() => {
               </div>
             </section>
             <!-- 与 legacy 一致的唯一动作：跳到合法性研判页并选中本计划匹配到的目标（决策 15-48）。 -->
-            <div class="detail-actions" style="margin-top:12px">
-              <button class="btn pri" type="button" style="flex:1;justify-content:center" :title="legalityJumpNote" @click="goLegality">合法性判定 →</button>
+            <div v-if="matchedTargetId" class="detail-actions" style="margin-top:12px">
+              <button class="btn pri" type="button" style="flex:1;justify-content:center" title="打开合法性研判页并选中本计划匹配到的目标" @click="goLegality">合法性判定 →</button>
             </div>
           </template></div>
           </UPanel>

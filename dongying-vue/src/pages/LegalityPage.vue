@@ -114,10 +114,19 @@ function resultClass(code) { return resultMeta[code]?.className || 'is-warn'; }
 function ruleName(code) { return RULE_CODE_TEXT[code] || '规则'; }
 function gradeText(item) {
   if (!item?.grade) return '—';
-  const score = item.score != null ? `（${Number(item.score).toFixed(0)} 分）` : '';
+  const score = item.score != null ? ` ${Number(item.score).toFixed(0)}分` : '';
   return `${GRADE_TEXT[item.grade] || item.grade}${score}`;
 }
 function sourceText(mode) { return labelOf(SOURCE_MODE_LABEL, mode, '未提供'); }
+/* 证据引用只给种类与内部 id；屏幕上显示中文种类和可读编号，id 放 title。 */
+const REFERENCE_KIND_TEXT = { target: '感知目标', track: '目标轨迹', flight_plan: '飞行计划', route_version: '航线版本', airspace_version: '空域版本', rule_set_version: '规则集版本', rule_version: '规则版本', alarm: '告警', risk: '风险事件' };
+function referenceKindText(kind) { return REFERENCE_KIND_TEXT[kind] || '引用'; }
+function referenceText(reference) {
+  const current = selectedEvaluation.value || {};
+  if (reference.kind === 'target' && current.target_id === reference.id && current.target_no) return current.target_no;
+  if (reference.kind === 'flight_plan' && current.plan_id === reference.id && current.plan_no) return current.plan_no;
+  return `已引用${referenceKindText(reference.kind)}`;
+}
 function ruleVersionText(item) {
   if (!item?.rule_set_code) return '未提供';
   const name = labelOf(RULE_SET_LABEL, item.rule_set_code);
@@ -559,10 +568,10 @@ onMounted(() => {
                   <div class="lg-evidence-body">
                     <template v-if="st.evidenceTab === 'space'">
                       <div class="lg-evidence-copy">
-                        <h4>证据引用 <span>evidence_references</span></h4>
+                        <h4>证据引用 <span>研判时读取的精确输入</span></h4>
                         <dl v-if="selectedEvaluation.evidence_references?.length">
                           <template v-for="(reference, index) in selectedEvaluation.evidence_references" :key="`${reference.kind}-${reference.id}-${index}`">
-                            <dt>{{ reference.kind || '引用' }}</dt><dd class="mono">{{ reference.id }}</dd>
+                            <dt>{{ referenceKindText(reference.kind) }}</dt><dd :title="reference.id">{{ referenceText(reference) }}</dd>
                           </template>
                         </dl>
                         <p v-else>未提供证据引用</p>
@@ -589,12 +598,12 @@ onMounted(() => {
                       </dl>
                     </div>
                     <div v-else class="lg-evidence-wide">
-                      <h4>复核历史 <span>legality_review_history</span></h4>
+                      <h4>复核历史 <span>只增记录</span></h4>
                       <p v-if="revisionsError" class="lg-evidence-alert">{{ revisionsError }}</p>
                       <p v-else-if="revisionsLoading">正在读取复核历史…</p>
                       <ul v-else-if="revisions.length" class="lg-reference-list lg-revision-list">
                         <li v-for="item in revisions" :key="item.history_id">
-                          v{{ item.version }} · {{ CONCLUSION_TEXT[item.conclusion] || item.conclusion }} · {{ reviewStateText(item.previous_state) }} → {{ reviewStateText(item.resulting_state) }}
+                          第 {{ item.version }} 次 · {{ CONCLUSION_TEXT[item.conclusion] || item.conclusion }} · {{ reviewStateText(item.previous_state) }} → {{ reviewStateText(item.resulting_state) }}
                           {{ item.status_after && item.status_after !== item.status_before ? `（${legalStatusText(item.status_before)} → ${legalStatusText(item.status_after)}）` : '' }}
                           · {{ item.actor_name || item.actor_id }} · {{ formatTime(item.created_at) }}
                           <br><span class="lg-muted">{{ item.note }}</span>

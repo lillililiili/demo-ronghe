@@ -90,7 +90,14 @@ public class MqttRepository {
             case "tdoa" -> "TDOA";
             case "dcd" -> "DCD";
             case "rid" -> "RID";
+            case "dec" -> "DEC";
+            case "ifr" -> "IFR";
+            case "bsc" -> "BSC";
             default -> throw new IllegalArgumentException("UNSUPPORTED_TYPE");
+        };
+        String catalogType= switch(p.deviceTypeAbbr()) {
+            case "dec", "ifr", "bsc" -> null;
+            default -> type;
         };
         String typeName= switch(p.deviceTypeAbbr()) {
             case "radar" -> "雷达";
@@ -100,6 +107,9 @@ public class MqttRepository {
             case "tdoa" -> "TDOA";
             case "dcd" -> "协议破解";
             case "rid" -> "RemoteID";
+            case "dec" -> "诱骗";
+            case "ifr" -> "干扰";
+            case "bsc" -> "驱鸟炮";
             default -> throw new IllegalArgumentException("UNSUPPORTED_TYPE");
         };
         boolean simulated=p.sourceMode().equals("replay");
@@ -111,7 +121,7 @@ public class MqttRepository {
         jdbc.update("""
                 INSERT INTO integration_source(source_id,source_code,name,protocol_code,protocol_version,source_mode,
                     enabled,source_type,created_at,updated_at) VALUES (?,?,?,?,'8.6',?,TRUE,?,?,?)
-                """,source,"mqtt-"+source,p.name(),LingyunEnvelope.PROTOCOL,p.sourceMode(),type,time,time);
+                """,source,"mqtt-"+source,p.name(),LingyunEnvelope.PROTOCOL,p.sourceMode(),catalogType,time,time);
         jdbc.update("""
                 INSERT INTO ops_device(device_id,source_id,external_device_id,device_no,name,device_type_code,device_type_name,
                     channel,model,vendor,source_mode,simulated,created_at,updated_at,owner_name,region_name)

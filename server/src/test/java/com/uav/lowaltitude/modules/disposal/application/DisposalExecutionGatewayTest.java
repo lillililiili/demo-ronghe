@@ -57,8 +57,8 @@ class DisposalExecutionGatewayTest {
         return gateway.dispatch("dev-1", "key-1", "auth-1", policy(cmd), "COUNTERMEASURE", Map.of(), "理由");
     }
 
-    /** 10000 是雷达探测模式，A 的 family() 认得；60003 是干扰迫降，A 至今没给它设备类型缩写。 */
-    private static final int OPENED = 10000, NOT_OPENED = 60003;
+    /** 60003 干扰迫降已映射 ifr；50000 是协议标明未有真实设备的码，family() 仍为 null。 */
+    private static final int OPENED = 60003, NOT_OPENED = 50000;
 
     @Test
     void acceptedCarriesTheCommandId() {
@@ -73,8 +73,14 @@ class DisposalExecutionGatewayTest {
                 (DisposalExecutionGateway.Rejected) dispatch(gateway, NOT_OPENED);
         assertThat(rejected.eventKind()).isEqualTo("PROTOCOL_NOT_OPENED");
         assertThat(rejected.errorCode()).isEqualTo("DEVICE_CONTROL_UNAVAILABLE");
-        // 本期四种处置动作全卡在这一条：A 的 family() 不映射 60002/60003/70001/50002。
         verify(control, never()).enqueue(anyString(), anyString(), anyString(), anyInt(), anyInt(), any(), anyString());
+    }
+
+    @Test
+    void openedJammingCommandReachesAWhenBoundAndOnline() {
+        DisposalExecutionGateway gateway = gateway(true, true, true);
+        assertThat(dispatch(gateway, OPENED)).isEqualTo(new DisposalExecutionGateway.Accepted("cmd-1"));
+        verify(control).enqueue(anyString(), anyString(), anyString(), anyInt(), anyInt(), any(), anyString());
     }
 
     @Test

@@ -1,6 +1,6 @@
 # 设备直连接入契约（阶段 8.5，A/B 边界）
 
-> 状态：v1.5（2026-09-08）。A 侧 P1 探测类扩到 AOA / 协议破解 / RemoteID；P3 值班员手点跟踪已落地（自动跟踪默认关）。P4-A 默认关；P5 控制不写融合 inbox。雷达 TCP 与四通道反制维持厂家原生协议，不改。B 侧阶段 8.5 领取前缀、映射入口与 `ingest_seq`（§6–§7）及阶段 10 的 `fusion_event` 摘要与联调输入物（§9）已落地。依据：客户 2026-09-08 确认（凌云协议 A/B/C、MQTT 模拟可先用）、会议纪要 V1.0、凌云协议 A v8.6 / B V2.4 / C 20250826、对齐文档 `target-schema-v1-alignment.md` §5。配套计划：《协作者 A 直连接入计划》《协作者 A 任务单 20260908》。
+> 状态：v1.6（2026-09-09）。在 v1.5 上按协议 A v8.6 / B V2.4 附录开通诱骗 `dec=5`、干扰 `ifr=6`、驱鸟炮 `bsc=12` 的工参与控制下发。inbox 探测类仍是雷达 / 5G-A / TDOA / AOA / 协议破解 / RemoteID。`cm`/`oe`/`isrs` 仍不走本切片 MQTT 登记。P3 值班员手点跟踪已落地（自动跟踪默认关）。P4-A 默认关；P5 控制不写融合 inbox。雷达 TCP 与四通道反制维持厂家原生协议，不改。B 侧阶段 8.5 领取前缀、映射入口与 `ingest_seq`（§6–§7）及阶段 10 的 `fusion_event` 摘要与联调输入物（§9）已落地。依据：客户 2026-09-08 确认（凌云协议 A/B/C、MQTT 模拟可先用）、会议纪要 V1.0、凌云协议 A v8.6 / B V2.4 / C 20250826、对齐文档 `target-schema-v1-alignment.md` §5。配套计划：《协作者 A 直连接入计划》《协作者 A 任务单 20260908》。
 
 ## 1. 边界
 
@@ -18,7 +18,7 @@ P1（协议 A MQTT）、P3（协议 C 光电边端）、P4-A（雷达 TCP 提升
 | --- | --- | --- |
 | `source` | `lingyun:<deviceTypeAbbr>:<内部标准设备ID>` | 内部 ID 是 A 登记时写入 `device.device_id` 的稳定主键，不是 Topic/`SenseData` 里的外部 `deviceId`。外部编号、提供方编码保留在 `mqtt_device_binding`。模拟 `replay` 与真实 `live` 使用不同内部 ID，避免碰撞。无 `taskId` 的来源（雷达 / TDOA / AOA）B 用**整条 `source` 串**作会话键参与 link 身份，因此该内部 ID 在同一 `source_mode` 下对同一台物理设备必须保持稳定；重新登记或迁库改号会使同一台设备的目标分叉成新的一批 |
 | `source_msg_id` | `<ptTime>:<msgCnt>` | 不再单独使用循环序号。同键同原始 UTF-8 SHA-256 为重复；同键不同哈希记冲突，不覆盖、不静默丢弃 |
-| `source_id` | 标准侧 `integration_source.source_id` | `source_type`：`radar→RADAR`，`5ga→FIVE_G_A`，`tdoa→TDOA`，`aoa→AOA`，`dcd→DCD`，`rid→RID`。主题缩写对应协议 A 附录 `deviceType`：`5ga=0`、`radar=1`、`aoa=9`、`tdoa=10`、`dcd=11`、`rid=102`。附录其余类型（光电 oe、察打一体 isrs、反制/诱骗等）本切片不登记 |
+| `source_id` | 标准侧 `integration_source.source_id` | `source_type`：`radar→RADAR`，`5ga→FIVE_G_A`，`tdoa→TDOA`，`aoa→AOA`，`dcd→DCD`，`rid→RID`。主题缩写对应协议 A 附录 `deviceType`：`5ga=0`、`radar=1`、`aoa=9`、`tdoa=10`、`dcd=11`、`rid=102`。控制类 `dec=5`/`ifr=6`/`bsc=12` 可登记工参与协议 B 下发，**不写**本前缀 inbox，`integration_source.source_type` 为 NULL（融合目录仍恰好八种探测类）。光电 oe、察打一体 isrs、反制 cm 仍不走本切片 MQTT 登记 |
 | `payload` | 协议 A 整条原始 JSON（工参不进 inbox；仅 `device_data` 的 `SenseData`） | JSON；**不**向原文插入平台字段 |
 | `payload_hash` | 收到的原始 UTF-8 字节 SHA-256 小写十六进制 | `ck_stage2_inbox_payload_hash` |
 | `status` | `RECEIVED` | B 领取后 `PROCESSING → DONE/FAILED`，`processed_at` 同时写。A 的独立验收不以融合目标出现为条件 |
@@ -113,7 +113,7 @@ A 不修改融合代码。B 已领取 `lingyun:` / `eo-edge:`。核对时注意�
 5. 协议 C 只把 `event=BeginTracking` 上报写入 inbox；`EndTracking` 之后不再有该任务的 `eo-edge:` 观测行。`objectData` 不当观测。
 6. 契约 §4 的 `STATUS_STABLE` payload 见 §9：`latest_state` 已由 B 写入；`alarm_active`/`max_risk_severity` 有当前告警/风险才出键。A 的自动跟踪在缺键时跳过；测试可直接插入事件行。
 7. P4-A `source` 的 `deviceId` 是标准 `integration_source.source_code`，不是 ops `device_id`。雷达 TCP 登记/启用会幂等补标准 `integration_source`（`source_type=RADAR`），这是登记补全，不是从报文自动发现。ops `live-device:` 与 `live-radar:` 是两行；前者重复则整帧（含提升）跳过。该 `source_code` 对同一台物理雷达同样必须保持稳定（接入时等于台账 `device_no`）。
-8. P5 协议 B 控制不写 `lingyun:` inbox。下发 Topic `bridge/{providerCode}/device_control/{type}/{externalDeviceId}`，回执 `device_control_resp`；`msgNo` 等于 `command_no`。急停设备协议未提供。诱骗/干扰/驱鸟炮类型缩写未确认前不下发。
+8. P5 协议 B 控制不写 `lingyun:` inbox。下发 Topic `bridge/{providerCode}/device_control/{type}/{externalDeviceId}`，回执 `device_control_resp`；`msgNo` 等于 `command_no`。急停设备协议未提供（停止用同一指令的 `operationType=0`）。诱骗/干扰/驱鸟炮按附录缩写 `dec`/`ifr`/`bsc` 下发，须与绑定类型同族；协议标明「未有真实设备」的 50000/50001/50004/50006/50007 仍不进白名单。`cm` 不走本切片（四通道维持厂家原生协议）。
 
 ## 9. 阶段 10 补充（B 侧）
 

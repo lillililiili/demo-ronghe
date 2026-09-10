@@ -114,6 +114,23 @@ class MqttIngressTest {
         }
         assertThat(tcp.enabledDevices()).noneMatch(row -> LingyunEnvelope.PROTOCOL.equals(row.get("protocol_code")));
     }
+    @Test void controlStaticGoesOnlineWithoutInboxAndSenseDataIsRejected() {
+        for (String type : List.of("dec", "ifr", "bsc")) {
+            Binding b = register(type);
+            assertThat(jdbc.queryForObject("SELECT source_type FROM integration_source WHERE source_id=?",
+                    String.class, b.sourceId())).isNull();
+            receive(b, heartbeat(type, 0, null), false, 1, false, false);
+            assertThat(devices.state(b.opsDeviceId()).connectivity()).isEqualTo("ONLINE");
+            assertThat(devices.state(b.opsDeviceId()).workStateCode()).isEqualTo("0");
+            assertThat(inboxCount(b)).isZero();
+            ingress.receive(brokerId, owner, b.topic(true), sense(1000, 1).getBytes(StandardCharsets.UTF_8),
+                    2, 1, false, false, clock.nowMillis());
+            assertThat(inboxCount(b)).isZero();
+            assertThat(jdbc.queryForObject(
+                    "SELECT COUNT(*) FROM mqtt_receive_diagnostic WHERE broker_id=? AND reason='UNSUPPORTED_TYPE'",
+                    Long.class, brokerId)).isGreaterThanOrEqualTo(1L);
+        }
+    }
     @Test void duplicatesConflictsWrapAndOutOfOrderPreserveFirstPayloadAndLatestCounter() {
         Binding b=register("radar");
         receive(b,sense(1000,Integer.MAX_VALUE),true,1,false,false);

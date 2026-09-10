@@ -18,9 +18,16 @@ public record LingyunEnvelope(String provider, String type, String externalId, b
                               String json, String hash, Long ptTime, Integer msgCnt, Integer workState,
                               Double longitude, Double latitude, Double altitude) {
     public static final String PROTOCOL = DeviceProtocolCodes.LINGYUN_MQTT_V8_6;
-    /** 协议 A 附录 deviceType ↔ 主题缩写。本切片只受理探测类：雷达/5G-A/TDOA/AOA/协议破解/RemoteID。 */
-    public static final Map<String, Integer> TYPES = Map.of(
+    /** 协议 A 附录探测类：只这些类型的 SenseData 进 inbox。 */
+    public static final Map<String, Integer> SENSING_TYPES = Map.of(
             "radar", 1, "5ga", 0, "tdoa", 10, "aoa", 9, "dcd", 11, "rid", 102);
+    /**
+     * 工参可受理的附录缩写：探测六类 + 诱骗/干扰/驱鸟炮。
+     * 不登记 cm/oe/isrs；光电工参走协议 C 心跳。
+     */
+    public static final Map<String, Integer> TYPES = Map.of(
+            "radar", 1, "5ga", 0, "tdoa", 10, "aoa", 9, "dcd", 11, "rid", 102,
+            "dec", 5, "ifr", 6, "bsc", 12);
     private static final ObjectMapper JSON = new ObjectMapper()
             .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
             .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
@@ -31,7 +38,12 @@ public record LingyunEnvelope(String provider, String type, String externalId, b
         if (parts.length != 5 || !parts[0].equals("bridge")
                 || !(parts[2].equals("device") || parts[2].equals("device_data")))
             throw new Rejected("INVALID_TOPIC");
-        if (!TYPES.containsKey(parts[3])) throw new Rejected("UNSUPPORTED_TYPE");
+        boolean sense = parts[2].equals("device_data");
+        if (sense) {
+            if (!SENSING_TYPES.containsKey(parts[3])) throw new Rejected("UNSUPPORTED_TYPE");
+        } else if (!TYPES.containsKey(parts[3])) {
+            throw new Rejected("UNSUPPORTED_TYPE");
+        }
         final String raw;
         final JsonNode root;
         try {
@@ -42,7 +54,6 @@ public record LingyunEnvelope(String provider, String type, String externalId, b
         if (root == null || !root.isObject()) throw new Rejected("INVALID_ENVELOPE");
         if (!root.path("deviceId").isTextual() || !root.path("deviceId").asText().equals(parts[4]))
             throw new Rejected("IDENTITY_MISMATCH");
-        boolean sense = parts[2].equals("device_data");
         Long ptTime = root.has("ptTime") ? integer(root, "ptTime", Long.MAX_VALUE) : null;
         if (sense) {
             if (ptTime == null || !root.path("objects").isArray()) throw new Rejected("INVALID_ENVELOPE");

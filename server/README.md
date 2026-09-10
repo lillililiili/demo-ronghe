@@ -59,7 +59,7 @@ Linux/macOS 在 `server/` 执行：
 `local` profile 且 `app.dev-seed.enabled=true` 时，启动会幂等登记：
 
 - MQTT 连接 `local-lingyun-replay`：`127.0.0.1:1883`，`tls=false`，`allowed_cidrs=127.0.0.1/32`，`source_mode=replay`，并启用
-- 设备：`S85R1` 雷达、`S85T1` TDOA、`S85A1` AOA、`S85G1` 5G-A、`S85D1` 协议破解、`S85I1` RemoteID（`LINGYUN_MQTT_V8_6`，`providerCode=dongying`）；光电边端 `edgeId=S85E1`、`externalDeviceId=S85E1D1`（`EO_EDGE_MQTT_20250826`）
+- 设备：`S85R1` 雷达、`S85T1` TDOA、`S85A1` AOA、`S85G1` 5G-A、`S85D1` 协议破解、`S85I1` RemoteID、`S85Y1` 诱骗、`S85F1` 干扰、`S85B1` 驱鸟炮（`LINGYUN_MQTT_V8_6`，`providerCode=dongying`）；光电边端 `edgeId=S85E1`、`externalDeviceId=S85E1D1`（`EO_EDGE_MQTT_20250826`）
 
 **`S85R1` 不是现场 T02 TCP 雷达。** `test` profile 不插入这些设备。已有同名连接或外部编号则跳过，不改人工登记。`api` Compose 服务不依赖 Mosquitto；本机 `spring-boot:run` 连宿主机 1883。
 
@@ -93,9 +93,18 @@ python server/scripts/publish_lingyun_ndjson.py
 python server/scripts/publish_lingyun_ndjson.py --file docs/直连接入计划/stage2-lingyun-static-dcd-rid.mqtt.ndjson
 ```
 
+诱骗/干扰/驱鸟炮工参（阶段 3，不改冻结文件）：
+
+```bash
+python server/scripts/publish_lingyun_ndjson.py --file docs/直连接入计划/stage3-lingyun-control-static.mqtt.ndjson
+python server/scripts/reply_lingyun_control.py
+```
+
+处置执行须绑同族设备：COUNTERMEASURE/JAMMING→`S85F1`，DECOY→`S85Y1`，DISPERSAL→`S85B1`。回执脚本订阅控制主题并回 `code=0`；Java 不对 replay 伪造成功。
+
 雷达 TCP 航迹提升（P4-A）由 `app.fusion.live-promotion.enabled` / `APP_FUSION_LIVE_PROMOTION_ENABLED` 控制，默认关。打开后每条 `UPLOAD_TRACK_V3` 航迹批另写一行 `live-radar:<source_code>` 信封；不写融合业务表，打开开关也不等于客户现场雷达联调完成。
 
-协议 B 控制：`POST /api/v1/devices/{id}/commands/lingyun-control`，经已有 MQTT 会话发布 `bridge/{provider}/device_control/...`，回执主题 `device_control_resp`。急停接口固定返回「设备协议未提供」。不用协议 B 接管四通道反制。配置 live 不等于现场联调完成。
+协议 B 控制：`POST /api/v1/devices/{id}/commands/lingyun-control`，经已有 MQTT 会话发布 `bridge/{provider}/device_control/...`，回执主题 `device_control_resp`。诱骗 `dec`、干扰 `ifr`、驱鸟炮 `bsc` 已按附录开通，须与绑定类型同族。急停接口固定返回「设备协议未提供」。不用协议 B 接管四通道反制。配置 live 不等于现场联调完成。
 
 目标/轨迹只读接口为 `GET /api/v1/targets`、`GET /api/v1/targets/{target_id}`、`GET /api/v1/targets/{target_id}/tracks` 和 `GET /api/v1/tracks/{track_id}/points`。这四个接口均要求 `target:read`，并使用账号的组织/区域数据范围；越权对象按不存在返回 404。响应 ID 为字符串，时间为 epoch 毫秒，坐标仅在存在可信 WGS-84 位置时输出。
 

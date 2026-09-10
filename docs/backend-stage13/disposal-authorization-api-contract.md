@@ -1,6 +1,6 @@
 # 处置授权 API 契约（阶段 13，v1.1）
 
-> 状态：v1.1（2026-09-08，验收后修订：13-24/13-29/13-31 与错误码汇总）；v1.0 冻结稿 2026-09-07。依据：计划 `docs/superpowers/plans/2026-09-07-collaborator-b-stage-13-disposal-authorization.md`、决策 13-1…13-9、协作者 A 的 P5（`POST /devices/{id}/commands/lingyun-control` 需 `authorization_id`）。通用约定同前：`{ok,data}` 包络、snake_case、字符串 ID、epoch ms、`page,size→items/page/size/total`、先鉴权再解析、精确 `(owner_org_id,district_id)` 元组、越权 404、`Idempotency-Key` + `expected_version`。
+> 状态：v1.2（2026-09-09，A 按协议 A/B 附录开通 `dec`/`ifr`/`bsc` 后：LINGYUN_B 在绑定同族 MQTT 设备且在线时可 enqueue；未映射码族仍 `PROTOCOL_NOT_OPENED`。v1.1 为 2026-09-08 验收修订：13-24/13-29/13-31 与错误码汇总）；v1.0 冻结稿 2026-09-07。依据：计划 `docs/superpowers/plans/2026-09-07-collaborator-b-stage-13-disposal-authorization.md`、决策 13-1…13-9、协作者 A 的 P5（`POST /devices/{id}/commands/lingyun-control` 需 `authorization_id`）。通用约定同前：`{ok,data}` 包络、snake_case、字符串 ID、epoch ms、`page,size→items/page/size/total`、先鉴权再解析、精确 `(owner_org_id,district_id)` 元组、越权 404、`Idempotency-Key` + `expected_version`。
 
 ## 1. 资源
 
@@ -30,7 +30,7 @@
 | GET | `/disposal-authorizations/{id}/events` | `disposal:read` | 只增事件流 |
 | POST | `/{id}/approve` `{expected_version, note?}` | `disposal:approve` | 两人规则：审批人 ≠ 申请人 → 否则 409 `TWO_PERSON_RULE`；REQUESTED 以外 409 `INVALID_TRANSITION` |
 | POST | `/{id}/reject` `{expected_version, note}` | `disposal:approve` | — |
-| POST | `/{id}/execute` `{expected_version, operation_params?}` | `disposal:execute`（LINGYUN_B 还需 A 的 `devices.op`，13-9） | 必须 APPROVED 且在时限内（过期 409 `AUTHORIZATION_EXPIRED`）；LINGYUN_B → **调 A 之前**按 A 的公开判据自检四种受阻（13-29，顺序：指令码未开通 → 未绑定 → 未启用/不在线）：`PROTOCOL_NOT_OPENED` 事件 + 409 `DEVICE_CONTROL_UNAVAILABLE`；`DEVICE_NOT_BOUND` 事件 + 409 `DEVICE_NOT_BOUND`；`DEVICE_OFFLINE` 事件 + 409 `DEVICE_OFFLINE`；全部通过才从 `policy.command_map` 取码调 A 的 `enqueue`，受理则 EXECUTING。A 仍可能因请求本身拒绝（参数非法、设备不存在）：原样透出、不记事件、不改状态（13-14）。`COUNTERMEASURE_4CH` → `DEVICE_CONTROL_UNAVAILABLE` 事件 + 409 `DEVICE_CONTROL_UNAVAILABLE`。受阻时授权保持 APPROVED（本期四种处置码 A 均未开放，真实阻塞恒为 `PROTOCOL_NOT_OPENED`）；`MANUAL` → EXECUTING，等 `manual-result` |
+| POST | `/{id}/execute` `{expected_version, operation_params?}` | `disposal:execute`（LINGYUN_B 还需 A 的 `devices.op`，13-9） | 必须 APPROVED 且在时限内（过期 409 `AUTHORIZATION_EXPIRED`）；LINGYUN_B → **调 A 之前**按 A 的公开判据自检四种受阻（13-29，顺序：指令码未开通 → 未绑定 → 未启用/不在线）：`PROTOCOL_NOT_OPENED` 事件 + 409 `DEVICE_CONTROL_UNAVAILABLE`；`DEVICE_NOT_BOUND` 事件 + 409 `DEVICE_NOT_BOUND`；`DEVICE_OFFLINE` 事件 + 409 `DEVICE_OFFLINE`；全部通过才从 `policy.command_map` 取码调 A 的 `enqueue`，受理则 EXECUTING。A 仍可能因请求本身拒绝（参数非法、设备类型与指令码不同族、设备不存在）：原样透出、不记事件、不改状态（13-14）。`COUNTERMEASURE_4CH` → `DEVICE_CONTROL_UNAVAILABLE` 事件 + 409 `DEVICE_CONTROL_UNAVAILABLE`。受阻时授权保持 APPROVED。A 已开通 `ifr`（60002/60003）/`dec`（50002）/`bsc`（70001）：未绑定或离线时阻塞为 `NOT_BOUND`/`DEVICE_OFFLINE`，绑错类型为 400 `VALIDATION_ERROR`；尚未映射的码族仍 `PROTOCOL_NOT_OPENED`。`MANUAL` → EXECUTING，等 `manual-result` |
 | POST | `/{id}/manual-result` `{expected_version, result: SUCCEEDED|FAILED, detail}` | `disposal:execute` | 仅 MANUAL 通道 |
 | POST | `/{id}/stop` `{expected_version, note}` | `disposal:stop` | APPROVED/EXECUTING → STOPPED；同时尝试 A 的急停，不可用记事件 `DEVICE_STOP_UNAVAILABLE`（13-4） |
 | POST | `/{id}/cancel` `{expected_version}` | 申请人本人或 `disposal:approve` | REQUESTED/APPROVED → CANCELLED |

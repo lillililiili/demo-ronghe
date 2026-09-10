@@ -50,7 +50,10 @@ public class LocalMqttSimSeeder implements ApplicationRunner {
             new LingyunDevice("aoa", "S85A1", "凌云 MQTT 回放 AOA"),
             new LingyunDevice("5ga", "S85G1", "凌云 MQTT 回放 5G-A"),
             new LingyunDevice("dcd", "S85D1", "凌云 MQTT 回放协议破解"),
-            new LingyunDevice("rid", "S85I1", "凌云 MQTT 回放 RemoteID"));
+            new LingyunDevice("rid", "S85I1", "凌云 MQTT 回放 RemoteID"),
+            new LingyunDevice("dec", "S85Y1", "凌云 MQTT 回放诱骗"),
+            new LingyunDevice("ifr", "S85F1", "凌云 MQTT 回放干扰"),
+            new LingyunDevice("bsc", "S85B1", "凌云 MQTT 回放驱鸟炮"));
 
     private final JdbcTemplate jdbc;
     private final MqttConfigurationService configuration;

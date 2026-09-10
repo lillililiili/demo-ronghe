@@ -25,7 +25,8 @@ public final class LingyunControlEnvelope {
             "direction", "angle", "induceLongitude", "induceLatitude", "bands",
             "targetId", "targetLongitude", "targetLatitude", "targetAltitude",
             "duration", "defenseZoneId", "cameraId");
-    public static final Set<String> REGISTRABLE = Set.of("radar", "5ga", "tdoa", "aoa", "dcd", "rid", "oe");
+    public static final Set<String> REGISTRABLE = Set.of(
+            "radar", "5ga", "tdoa", "aoa", "dcd", "rid", "oe", "dec", "ifr", "bsc");
     public static final Set<Integer> REQUIRES_TARGET_ID = Set.of(30002, 50005);
     private static final ObjectMapper JSON = new ObjectMapper()
             .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
@@ -43,6 +44,9 @@ public final class LingyunControlEnvelope {
     public static String family(int cmd) {
         if (cmd == 10000) return "radar";
         if (cmd >= 30000 && cmd <= 30003) return "oe";
+        if (cmd == 50002 || cmd == 50003 || cmd == 50005 || cmd == 50100 || cmd == 50101) return "dec";
+        if (cmd == 60002 || cmd == 60003 || cmd == 60100 || cmd == 60101) return "ifr";
+        if (cmd == 70001) return "bsc";
         if (cmd == 90000) return "aoa";
         if (cmd == 100000) return "tdoa";
         return null;

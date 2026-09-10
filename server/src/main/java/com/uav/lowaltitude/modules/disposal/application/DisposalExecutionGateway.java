@@ -20,10 +20,9 @@ import com.uav.lowaltitude.platform.api.ApiException;
  * 指令码未开通要等厂家、没登记 MQTT 运维补一条就行、设备离线是现场的事。
  * 压成"不可用"一个码，运维会把自己五分钟能修的事当成厂家的事一直挂着。
  *
- * 本期的事实：A 的 LingyunControlEnvelope.family() 只映射 radar/oe/aoa/tdoa，
- * 处置要用的 60002/60003/70001/50002 一律没有设备类型缩写，enqueue 抛 PROTOCOL_UNSUPPORTED
- * （A 自己的 LingyunControlMqttTest 对 50002 就是这么断言的，用例名"诱骗未开放"）。
- * 也就是说 LINGYUN_B 通道现在发不出任何一条处置指令；等 A 开通映射后这条路不改代码就能活。
+ * A 已按协议 A/B 附录开通 dec/ifr/bsc（500xx/600xx/70001）。family() 仍返回 null 的码
+ * （例如协议标明「未有真实设备」的 50000）继续走 PROTOCOL_NOT_OPENED。
+ * 四种处置动作要真正 enqueue，还须绑定同族 MQTT 设备且在线；类型不符由 A 以 400 原样透出（13-14）。
  */
 @Component
 public class DisposalExecutionGateway {
@@ -70,7 +69,7 @@ public class DisposalExecutionGateway {
         DisposalPolicy.Command command = policy.command(actionType);
         // 顺序有意：先判"指令码开没开通"。它一旦没开通，补绑定、把设备弄上线都没用——
         // 先报 NOT_BOUND 会把运维支去做一件做完仍然执行不了的事。三条各自独立成立时，报最靠前那条。
-        // ① 指令码在 A 的协议面还没开通（本期四种处置动作都卡在这一条）——补救方是厂家。
+        // ① 指令码在 A 的协议面还没开通——补救方是厂家。已开通的 60002/60003/70001/50002 会落到后面两刀。
         if (LingyunControlEnvelope.family(command.operationCmd()) == null) {
             return new Rejected(EVENT_PROTOCOL_NOT_OPENED, "DEVICE_CONTROL_UNAVAILABLE",
                     "指令码 " + command.operationCmd() + " 对应的设备类型缩写尚未确认，协议面未开通，不能下发");

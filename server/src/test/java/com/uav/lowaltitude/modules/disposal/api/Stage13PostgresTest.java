@@ -560,12 +560,9 @@ class Stage13PostgresTest {
      * 等厂家开协议 / 运维补登记 / 现场处理设备 / 换设备通道。页面必须分开说，
      * 否则运维会把自己能修的事（补一条 MQTT 绑定）当成厂家的事一直挂着。
      *
-     * <p><b>为什么要临时改策略的指令码</b>：本期四种处置动作的指令码（60002/60003/70001/50002）
-     * 在 A 的 {@code LingyunControlEnvelope.family()} 里全都没有映射，所以网关第一道自检就拦下了——
-     * 「未绑定」「离线」这两支在真实策略下**根本走不到**。把 COUNTERMEASURE 的指令码临时改成 A 已映射的
-     * 10000（radar），走的仍是同一段代码，只是数据不同；这同时预验了一件事：**等厂家确认缩写、
-     * 指令码进了 family() 之后，这两条分支会真的生效**，而不是到那天才发现从来没被跑过。
-     * 用例结束时把策略改回去。
+     * <p><b>为什么 ① 要临时改策略</b>：60003 已映射 ifr，真实策略会越过「未开通」去看绑定/在线。
+     * 用协议标明未有真实设备的 50000 才能单独打到 PROTOCOL_NOT_OPENED。③④ 用真实 60003 即可，
+     * 不再把码换成 10000。用例结束时把策略改回去。
      */
     @Test
     @Order(9)
@@ -575,14 +572,7 @@ class Stage13PostgresTest {
         // 设备控制面的权限码 devices.op 是由目录行 devices 在 OP 级别派生出来的，不是独立的目录行（决策 13-9）。
         String executorSession = session("disposal:execute", "disposal:read", "alarm:read", "devices");
 
-        // ① 指令码未开通（真实策略，补救方＝厂家）：事件 PROTOCOL_NOT_OPENED，错误码 DEVICE_CONTROL_UNAVAILABLE。
         String deviceId = boundOpsDevice("radar");
-        String protocolBlocked = approvedAuthorization(requesterSession, approverSession, "COUNTERMEASURE", "LINGYUN_B", deviceId);
-        assertThat(executeExpectingConflict(executorSession, protocolBlocked)).isEqualTo("DEVICE_CONTROL_UNAVAILABLE");
-        assertThat(eventCount(protocolBlocked, "PROTOCOL_NOT_OPENED")).isEqualTo(1L);
-        assertThat(blockReason(approverSession, protocolBlocked)).isEqualTo("PROTOCOL_NOT_OPENED");
-        assertThat(status(protocolBlocked)).as("受阻不推进状态：授权仍是 APPROVED，等厂家开通后可再执行").isEqualTo("APPROVED");
-
         // ② 四通道反制（补救方＝换设备通道）：本期没有执行能力，事件 DEVICE_CONTROL_UNAVAILABLE。
         String fourChannel = approvedAuthorization(requesterSession, approverSession, "JAMMING", "COUNTERMEASURE_4CH", deviceId);
         assertThat(executeExpectingConflict(executorSession, fourChannel)).isEqualTo("DEVICE_CONTROL_UNAVAILABLE");
@@ -591,32 +581,38 @@ class Stage13PostgresTest {
 
         String originalParams = jdbc.queryForObject(
                 "select cast(params as text) from disposal_policy where policy_code='demo-v1'", String.class);
+        String protocolBlocked;
         try {
-            // 把 COUNTERMEASURE 的指令码换成 A 已映射的 10000（radar），越过第一道自检。
-            usePolicyCommand(10000);
-
-            // ③ 未登记 MQTT 绑定（补救方＝运维）。
-            String unboundDevice = opsDevice(true);   // 有设备行、没有绑定行
-            String notBound = approvedAuthorization(requesterSession, approverSession, "COUNTERMEASURE", "LINGYUN_B", unboundDevice);
-            assertThat(executeExpectingConflict(executorSession, notBound)).isEqualTo("DEVICE_NOT_BOUND");
-            assertThat(eventCount(notBound, "DEVICE_NOT_BOUND")).isEqualTo(1L);
-            assertThat(blockReason(approverSession, notBound)).isEqualTo("NOT_BOUND");
-
-            // ④ 已登记但设备未启用/不在线（补救方＝现场）。
-            // 有绑定、但没有 ops_device_state 行 → connectivity 不是 ONLINE → 走"不在线"那一支。
-            String offlineDevice = boundOpsDevice("radar");
-            String offline = approvedAuthorization(requesterSession, approverSession, "COUNTERMEASURE", "LINGYUN_B", offlineDevice);
-            assertThat(executeExpectingConflict(executorSession, offline)).isEqualTo("DEVICE_OFFLINE");
-            assertThat(eventCount(offline, "DEVICE_OFFLINE")).isEqualTo(1L);
-            assertThat(blockReason(approverSession, offline)).isEqualTo("DEVICE_OFFLINE");
-
-            // 四个取值互不相同——这正是"四个补救方"能被页面分开说的前提。
-            assertThat(List.of(blockReason(approverSession, protocolBlocked), blockReason(approverSession, fourChannel),
-                    blockReason(approverSession, notBound), blockReason(approverSession, offline)))
-                    .containsExactlyInAnyOrder("PROTOCOL_NOT_OPENED", "DEVICE_CAPABILITY", "NOT_BOUND", "DEVICE_OFFLINE");
+            // ① 指令码未开通（50000 未映射，补救方＝厂家）。
+            usePolicyCommand(50000);
+            protocolBlocked = approvedAuthorization(requesterSession, approverSession, "COUNTERMEASURE", "LINGYUN_B", deviceId);
+            assertThat(executeExpectingConflict(executorSession, protocolBlocked)).isEqualTo("DEVICE_CONTROL_UNAVAILABLE");
+            assertThat(eventCount(protocolBlocked, "PROTOCOL_NOT_OPENED")).isEqualTo(1L);
+            assertThat(blockReason(approverSession, protocolBlocked)).isEqualTo("PROTOCOL_NOT_OPENED");
+            assertThat(status(protocolBlocked)).as("受阻不推进状态：授权仍是 APPROVED，等厂家开通后可再执行").isEqualTo("APPROVED");
         } finally {
             jdbc.update("update disposal_policy set params=cast(? as json) where policy_code='demo-v1'", originalParams);
         }
+
+        // ③ 未登记 MQTT 绑定（补救方＝运维）。60003 已开通，不再需要把码换成 10000。
+        String unboundDevice = opsDevice(true);   // 有设备行、没有绑定行
+        String notBound = approvedAuthorization(requesterSession, approverSession, "COUNTERMEASURE", "LINGYUN_B", unboundDevice);
+        assertThat(executeExpectingConflict(executorSession, notBound)).isEqualTo("DEVICE_NOT_BOUND");
+        assertThat(eventCount(notBound, "DEVICE_NOT_BOUND")).isEqualTo(1L);
+        assertThat(blockReason(approverSession, notBound)).isEqualTo("NOT_BOUND");
+
+        // ④ 已登记但设备未启用/不在线（补救方＝现场）。
+        // 有绑定、但没有 ops_device_state 行 → connectivity 不是 ONLINE → 走"不在线"那一支。
+        String offlineDevice = boundOpsDevice("radar");
+        String offline = approvedAuthorization(requesterSession, approverSession, "COUNTERMEASURE", "LINGYUN_B", offlineDevice);
+        assertThat(executeExpectingConflict(executorSession, offline)).isEqualTo("DEVICE_OFFLINE");
+        assertThat(eventCount(offline, "DEVICE_OFFLINE")).isEqualTo(1L);
+        assertThat(blockReason(approverSession, offline)).isEqualTo("DEVICE_OFFLINE");
+
+        // 四个取值互不相同——这正是"四个补救方"能被页面分开说的前提。
+        assertThat(List.of(blockReason(approverSession, protocolBlocked), blockReason(approverSession, fourChannel),
+                blockReason(approverSession, notBound), blockReason(approverSession, offline)))
+                .containsExactlyInAnyOrder("PROTOCOL_NOT_OPENED", "DEVICE_CAPABILITY", "NOT_BOUND", "DEVICE_OFFLINE");
     }
 
     /** 把 demo-v1 里 COUNTERMEASURE 的 operation_cmd 换成指定值，其余参数原样保留。 */

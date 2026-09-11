@@ -48,19 +48,19 @@ class ProductionStage9SeedIsolationTest {
             assertThat(stage9Runners).isEmpty();
 
             JdbcTemplate jdbc = context.getBean(JdbcTemplate.class);
-            // 迁移 060 的结构性目录：五个动作权限码只登记不授权，两个既有 MODULE 行拿到 route_key 成为真实菜单。
+            // 迁移 060 的结构性目录：四个动作权限码只登记不授权（flight:authorize 已按 F8 裁定由 V202609090106 撤除），两个既有 MODULE 行拿到 route_key 成为真实菜单。
             List<String> actions = jdbc.queryForList(
-                    "select permission_code from app_permission where permission_code in ('airspace:manage','airport:read','airport:manage','risk:evaluate','flight:authorize') order by permission_code",
+                    "select permission_code from app_permission where permission_code in ('airspace:manage','airport:read','airport:manage','risk:evaluate') order by permission_code",
                     String.class);
-            assertThat(actions).containsExactly("airport:manage", "airport:read", "airspace:manage", "flight:authorize", "risk:evaluate");
-            assertThat(jdbc.queryForObject("select count(*) from app_permission where permission_code in ('airspace:manage','airport:read','airport:manage','risk:evaluate','flight:authorize') and route_key is not null", Integer.class))
+            assertThat(actions).containsExactly("airport:manage", "airport:read", "airspace:manage", "risk:evaluate");
+            assertThat(jdbc.queryForObject("select count(*) from app_permission where permission_code in ('airspace:manage','airport:read','airport:manage','risk:evaluate') and route_key is not null", Integer.class))
                     .as("动作权限不带菜单键").isZero();
             // V202609070010 撤回菜单提升：两行仍在但 route_key 为空（用户 2026-09-07 裁定）。
             assertThat(jdbc.queryForObject("select count(*) from app_permission where permission_code in ('airspace','risk')", Integer.class)).isEqualTo(2);
             assertThat(jdbc.queryForObject("select count(*) from app_permission where permission_code in ('airspace','risk') and route_key is not null", Integer.class)).isZero();
             // 只登记不授权：除内置超级管理员角色外，没有任何角色被默认授予阶段 9 动作。
             assertThat(jdbc.queryForObject(
-                    "select count(*) from app_role_permission where permission_code in ('airspace:manage','airport:read','airport:manage','risk:evaluate','flight:authorize') and role_code <> 'ROLE-ADMIN'",
+                    "select count(*) from app_role_permission where permission_code in ('airspace:manage','airport:read','airport:manage','risk:evaluate') and role_code <> 'ROLE-ADMIN'",
                     Integer.class)).isZero();
             // 生产没有空域演示数据：阶段 3 的种子空域与阶段 9 的演示空域都不存在。
             assertThat(jdbc.queryForObject("select count(*) from airspace where airspace_id like 'seed-stage9-%'", Integer.class)).isZero();
@@ -98,11 +98,11 @@ class ProductionStage9SeedIsolationTest {
             assertThat(jdbc.queryForObject("select count(*) from rule_evaluation_run", Integer.class))
                     .as("无 ACTIVE 版本时 Job 空转，连一条评估运行记录都不该有").isZero();
 
-            // 迁移 061/063/064 建的都是**业务数据表**，不是目录：生产里它们必须一行都没有。
+            // 迁移 061/063 建的都是**业务数据表**，不是目录：生产里它们必须一行都没有。
             // 逐表断言而不是抽查——漏掉哪张表，那张表就成了演示数据进生产的通道。
             for (String table : List.of("airspace_version_origin", "airspace_import_batch", "airspace_import_item",
                     "airport", "airport_runway", "airport_procedure_route", "airport_protected_target",
-                    "airport_notification_target", "flight_plan_authorization")) {
+                    "airport_notification_target")) {
                 assertThat(jdbc.queryForObject("select count(*) from " + table, Integer.class))
                         .as(table + " 是业务数据表，生产必须为空").isZero();
             }

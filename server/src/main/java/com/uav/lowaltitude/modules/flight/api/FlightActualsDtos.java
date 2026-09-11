@@ -16,7 +16,7 @@ public final class FlightActualsDtos {
     private FlightActualsDtos() { }
 
     public record ActualsDto(String planId, String planNo, MatchDto match, AltitudeRelationDto altitudeRelation,
-            LatestRisksDto latestRisks, LegalityDto legality, AuthorizationsDto authorizations) { }
+            LatestRisksDto latestRisks, LegalityDto legality) { }
 
     /** param_status 是产生这条结论的规则集版本的参数状态（DEMO|CONFIRMED）：DEMO 的结论不能当已确认口径用。 */
     /** target_id 是产生这条研判的感知目标：飞行计划页"合法性判定"按钮据此跳到研判页并选中该目标。 */
@@ -51,14 +51,4 @@ public final class FlightActualsDtos {
             String paramStatus) {
         public static LegalityDto only(String availability) { return new LegalityDto(availability, null, null, null, null); }
     }
-
-    public record AuthorizationsDto(String availability, List<AuthorizationDto> items) {
-        public static AuthorizationsDto only(String availability) { return new AuthorizationsDto(availability, null); }
-    }
-
-    public record AuthorizationDto(String authorizationId, String documentNo, String issuer, long grantedFrom,
-            long grantedTo, String scopeNote, String recordedBy, String recordedByName, long recordedAt,
-            String sourceKind) { }
-
-    public record RecordedAuthorizationDto(String planId, String authorizationId) { }
 }

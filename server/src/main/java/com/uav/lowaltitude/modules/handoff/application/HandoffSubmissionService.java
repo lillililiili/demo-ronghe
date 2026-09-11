@@ -99,7 +99,9 @@ public class HandoffSubmissionService {
         AccessDecision riskDecision = access.require(uavEvent ? PermissionCode.ALARM_READ : PermissionCode.RISK_READ);
         CreateRequest request = parse(rawRequest);
         String sourceId = HandoffReadService.id(request.sourceId());
-        String recipientId = HandoffReadService.id(request.recipientId());
+        // 接收方可缺省（18-14），所以只在有值时才校验格式；缺省的那条路由 resolveRecipient 决定。
+        String recipientId = request.recipientId() == null || request.recipientId().isBlank()
+                ? null : HandoffReadService.id(request.recipientId());
         // 前提与组合校验保住既有答复：(RISK, UAV_PUNISHMENT) 恒 409、(UAV_EVENT, RISK_NOTICE) 恒 400。
         HandoffRules.requirePrerequisite(request.handoffType(), request.sourceKind(), sourceId, disposals);
         HandoffRules.requireKindSupportsType(request.sourceKind(), request.handoffType());
@@ -113,8 +115,8 @@ public class HandoffSubmissionService {
         if (!repository.anyEnabledRecipient(request.handoffType())) {
             throw new ApiException(HttpStatus.CONFLICT, "RECIPIENT_NOT_CONFIGURED", "尚未配置可用的交接接收方");
         }
-        RecipientRow recipient = repository.findEnabledRecipient(recipientId, request.handoffType());
-        if (recipient == null) throw new ApiException(HttpStatus.NOT_FOUND, "RECIPIENT_NOT_FOUND", "接收方不存在或不可用");
+        RecipientRow recipient = resolveRecipient(recipientId, request.handoffType());
+        recipientId = recipient.recipientId();
         // 源风险已加锁，这里的预检对同一风险是可靠的；数据库唯一约束仍是最终保障。
         if (repository.logicalExists(request.sourceKind(), sourceId, request.handoffType(), recipientId)) throw alreadyExists();
         OffsetDateTime at = clock.now().atOffset(ZoneOffset.UTC);
@@ -132,11 +134,21 @@ public class HandoffSubmissionService {
         // 提交不等于送达：首条投递记录写渠道返回的事实（未接通=待投递+阻断原因；模拟/真实上级接口=送达与回执时刻）。
         DeliveryOutcome outcome = dispatch(handoffId, request.sourceKind(), sourceId, request.handoffType(), recipient, snapshot, at);
         repository.insertDelivery(delivery(handoffId, outcome, at));
+        if (outcome.receiptResult() != null) repository.updateReceiptResult(handoffId, outcome.receiptResult());
+        // 决策 18-14：风险的闭环判据是回执"已驱离"，不是"送到了"。确认驱离这条风险就走完了；
+        // 状态停在"待通知"会让值班台一直把它当未办事项。未驱离则保持待通知——事还没完，还得继续跟。
+        // 源风险已在本事务里加锁，这一步与交接落库同生共死；不另记审计动作，而是把结果写进这条交接的审计详情，
+        // 否则查审计的人会看到风险状态变了却找不到任何一条记录说明为什么。
+        boolean closed = HandoffRules.TYPE_RISK_NOTICE.equals(request.handoffType())
+                && HandoffRules.RECEIPT_DISPERSED.equals(outcome.receiptResult())
+                && risks.markNotified(sourceId, at) == 1;
         audit.record(actor.userId(), actor.account(), actor.roleCode(), "handoff", "handoff_created", "handoff", handoffId,
                 "source_kind=" + request.sourceKind() + "; source_id=" + sourceId + "; handoff_type=" + request.handoffType()
-                        + "; recipient_id=" + recipientId + "; source_version=" + risk.version(), "SUCCESS", "", "");
+                        + "; recipient_id=" + recipientId + "; source_version=" + risk.version()
+                        + (closed ? "; risk_state=NOTIFIED" : ""), "SUCCESS", "", "");
         return new CreatedDto(handoffId, request.sourceKind(), sourceId, request.handoffType(), recipientId, risk.version(),
-                outcome.deliveryStatus(), outcome.receiptStatus(), outcome.blockedReason(), at.toInstant().toEpochMilli());
+                outcome.deliveryStatus(), outcome.receiptStatus(), outcome.receiptResult(), outcome.blockedReason(),
+                at.toInstant().toEpochMilli());
     }
 
     /**
@@ -158,8 +170,8 @@ public class HandoffSubmissionService {
             throw new ApiException(HttpStatus.CONFLICT, "INVALID_TRANSITION", "只有已核实为属实的事件可以提交处罚交接");
         if (!repository.anyEnabledRecipient(request.handoffType()))
             throw new ApiException(HttpStatus.CONFLICT, "RECIPIENT_NOT_CONFIGURED", "尚未配置可用的交接接收方");
-        RecipientRow recipient = repository.findEnabledRecipient(recipientId, request.handoffType());
-        if (recipient == null) throw new ApiException(HttpStatus.NOT_FOUND, "RECIPIENT_NOT_FOUND", "接收方不存在或不可用");
+        RecipientRow recipient = resolveRecipient(recipientId, request.handoffType());
+        recipientId = recipient.recipientId();
         if (repository.logicalExists(request.sourceKind(), sourceId, request.handoffType(), recipientId)) throw alreadyExists();
 
         OffsetDateTime at = clock.now().atOffset(ZoneOffset.UTC);
@@ -182,8 +194,9 @@ public class HandoffSubmissionService {
         audit.record(actor.userId(), actor.account(), actor.roleCode(), "handoff", "handoff_created", "handoff", handoffId,
                 "source_kind=" + request.sourceKind() + "; source_id=" + sourceId + "; handoff_type=" + request.handoffType()
                         + "; recipient_id=" + recipientId + "; source_version=" + event.version(), "SUCCESS", "", "");
+        if (outcome.receiptResult() != null) repository.updateReceiptResult(handoffId, outcome.receiptResult());
         return new CreatedDto(handoffId, request.sourceKind(), sourceId, request.handoffType(), recipientId, event.version(),
-                outcome.deliveryStatus(), outcome.receiptStatus(), outcome.blockedReason(),
+                outcome.deliveryStatus(), outcome.receiptStatus(), outcome.receiptResult(), outcome.blockedReason(),
                 at.toInstant().toEpochMilli());
     }
 
@@ -253,16 +266,24 @@ public class HandoffSubmissionService {
             if (node == null || !node.isObject() || parser.nextToken() != null) throw invalidRequest();
             // 夹带 delivery_status/receipt_status/delivered_at 等任何非契约字段：客户端不能自行推进投递或回执。
             node.fieldNames().forEachRemaining(name -> { if (!BODY_FIELDS.contains(name)) throw new ApiException(HttpStatus.BAD_REQUEST, "UNKNOWN_FIELD", "请求体包含未知字段 " + name); });
-            if (node.size() != BODY_FIELDS.size()) throw invalidRequest();
-            for (String field : new String[]{"source_kind", "source_id", "handoff_type", "recipient_id"}) {
-                if (!node.get(field).isTextual()) throw invalidRequest();
+            // recipient_id 可缺省（决策 18-14：风险通知取默认接收方），其余四项仍必填。
+            // 白名单一步没放松：未知字段照样 UNKNOWN_FIELD，只是"字段齐不齐"改成逐个必填项检查，
+            // 而不是数个数——数个数的写法在"某一项可选"之后就表达不了"少了哪个"。
+            for (String field : new String[]{"source_kind", "source_id", "handoff_type"}) {
+                JsonNode value = node.get(field);
+                if (value == null || !value.isTextual()) throw invalidRequest();
             }
+            JsonNode recipientNode = node.get("recipient_id");
+            if (recipientNode != null && !recipientNode.isTextual()) throw invalidRequest();
+            // 原来靠"字段个数相等"兜住它的存在，现在 recipient_id 可缺省，这里必须显式判空——
+            // 否则少传 expected_version 会变成 NPE(500) 而不是 400。
             JsonNode version = node.get("expected_version");
-            if (!version.isIntegralNumber() || !version.canConvertToLong() || version.longValue() < 0) throw invalidRequest();
+            if (version == null || !version.isIntegralNumber() || !version.canConvertToLong() || version.longValue() < 0) throw invalidRequest();
             String kind = node.get("source_kind").textValue().trim(), type = node.get("handoff_type").textValue().trim();
             if (!HandoffRules.SOURCE_KINDS.contains(kind)) throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_KIND", "source_kind 无效");
             if (!HandoffRules.HANDOFF_TYPES.contains(type)) throw invalidRequest();
-            return new CreateRequest(kind, node.get("source_id").textValue(), type, node.get("recipient_id").textValue(), version.longValue());
+            return new CreateRequest(kind, node.get("source_id").textValue(), type,
+                    recipientNode == null ? null : recipientNode.textValue(), version.longValue());
         } catch (java.io.IOException ex) {
             throw invalidRequest();
         }
@@ -270,10 +291,38 @@ public class HandoffSubmissionService {
 
     private static String operation(String kind, String sourceId, String type, String recipientId, long expected) {
         // 长度前缀序列化：ID 可含分隔符，直接拼接会把不同请求误判为 replay。
-        return framed("handoff") + framed(kind) + framed(sourceId) + framed(type) + framed(recipientId) + framed(Long.toString(expected));
+        // 接收方可缺省（决策 18-14）：缺省时以空串入键。ID 本身不可能是空串，所以"没传接收方"和"传了某个接收方"不会撞同一个键。
+        return framed("handoff") + framed(kind) + framed(sourceId) + framed(type)
+                + framed(recipientId == null ? "" : recipientId) + framed(Long.toString(expected));
     }
     private static String framed(String value) { return value.getBytes(StandardCharsets.UTF_8).length + ":" + value; }
     private static ApiException invalidRequest() { return new ApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "请求体无效"); }
+    /**
+     * 定下这次交接发给谁（决策 18-14）。
+     *
+     * 风险通知不传接收方时取该类型的默认接收方——上级就那一个，每次让值班员选一遍既慢又容易选错。
+     * **处罚移送不给默认**：移送给谁是案件的一部分，默认一个等于替办案人做主。
+     * 一个默认都没有又没传，答 400 而不是随手挑一个：挑出来的未必是该收的人，
+     * 而这种错要等回执回来（甚至更久）才看得出来。
+     */
+    private RecipientRow resolveRecipient(String recipientId, String handoffType) {
+        if (recipientId != null && !recipientId.isBlank()) {
+            RecipientRow chosen = repository.findEnabledRecipient(recipientId, handoffType);
+            if (chosen == null) throw new ApiException(HttpStatus.NOT_FOUND, "RECIPIENT_NOT_FOUND", "接收方不存在或不可用");
+            return chosen;
+        }
+        if (!HandoffRules.TYPE_RISK_NOTICE.equals(handoffType)) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "RECIPIENT_REQUIRED", "请指定接收方");
+        }
+        RecipientRow fallback = repository.findDefaultRecipient(handoffType);
+        if (fallback != null) return fallback;
+        // 没标默认，但该类型只有一个启用接收方（决策 18-16）：只有一个的时候没有可选的余地，
+        // 再要求值班员显式指定就是让他把唯一的答案抄一遍。零个或多个才是真的没法替他决定。
+        RecipientRow sole = repository.findSoleEnabledRecipient(handoffType);
+        if (sole != null) return sole;
+        throw new ApiException(HttpStatus.BAD_REQUEST, "RECIPIENT_REQUIRED", "未配置默认接收方，请指定接收方");
+    }
+
     private static ApiException alreadyExists() { return new ApiException(HttpStatus.CONFLICT, "HANDOFF_ALREADY_EXISTS", "该事项已向此接收方提交过交接"); }
 
     private final HandoffChannelPort channel;

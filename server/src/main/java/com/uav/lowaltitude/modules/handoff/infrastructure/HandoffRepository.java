@@ -41,6 +41,33 @@ public class HandoffRepository {
         return count != null && count > 0;
     }
 
+    /**
+     * 该类型标了默认的那个接收方（决策 18-14）；没有就返回 null。
+     *
+     * 取 MIN(recipient_id) 兜底不是随便挑：迁移只会标一个默认，但库是共享的、有人手工多标一个也不会报错，
+     * 那时"随处理顺序变"比"稳定地取同一个"更难查——同一条风险两次通知可能落到不同接收方。
+     */
+    public RecipientRow findDefaultRecipient(String handoffType) {
+        List<RecipientRow> rows = jdbc.query("SELECT recipient_id,display_name,handoff_type FROM handoff_recipient"
+                + " WHERE handoff_type=:type AND enabled=TRUE AND is_default=TRUE"
+                + " ORDER BY recipient_id FETCH FIRST 1 ROWS ONLY",
+                Map.of("type", handoffType), HandoffRepository::recipient);
+        return rows.isEmpty() ? null : rows.get(0);
+    }
+
+    /**
+     * 该类型**恰好只有一个**启用接收方时返回它，否则返回 null（决策 18-16）。
+     *
+     * 取两行再判断，而不是 COUNT 后再查一次：两条语句之间目录可能被改，
+     * "数出 1 个"和"取到的那一个"就未必是同一件事。
+     */
+    public RecipientRow findSoleEnabledRecipient(String handoffType) {
+        List<RecipientRow> rows = jdbc.query("SELECT recipient_id,display_name,handoff_type FROM handoff_recipient"
+                + " WHERE handoff_type=:type AND enabled=TRUE ORDER BY recipient_id FETCH FIRST 2 ROWS ONLY",
+                Map.of("type", handoffType), HandoffRepository::recipient);
+        return rows.size() == 1 ? rows.get(0) : null;
+    }
+
     public RecipientRow findEnabledRecipient(String recipientId, String handoffType) {
         List<RecipientRow> rows = jdbc.query("SELECT recipient_id,display_name,handoff_type FROM handoff_recipient"
                 + " WHERE enabled=TRUE AND handoff_type=:type AND recipient_id=:id", Map.of("type", handoffType, "id", recipientId),
@@ -67,6 +94,15 @@ public class HandoffRepository {
         jdbc.update("INSERT INTO handoff (handoff_id,source_kind,source_id,risk_id,event_id,handoff_type,recipient_id,source_version,"
                 + "owner_org_id,district_id,source_mode,submitted_by,created_at) VALUES (:id,:kind,:source,:risk,:event,:type,:recipient,"
                 + ":version,:org,:district,:mode,:submitter,:created)", params);
+    }
+
+    /**
+     * 投递之后回填处理结果（决策 18-14）。交接行在投递之前就落库了，所以这里是一次 UPDATE 而不是插入时带上——
+     * 反过来把插入推迟到投递之后，会让"渠道没接通"时连交接记录都没有，材料就白提交了。
+     */
+    public void updateReceiptResult(String handoffId, String receiptResult) {
+        jdbc.update("UPDATE handoff SET receipt_result=:result WHERE handoff_id=:id",
+                Map.of("id", handoffId, "result", receiptResult));
     }
 
     public void insertSnapshot(String handoffId, int schemaVersion, String json, OffsetDateTime at) {
@@ -140,6 +176,7 @@ public class HandoffRepository {
         add(where, "h.source_kind", "kind", query.sourceKind);
         add(where, "h.source_id", "source", query.sourceId);
         add(where, "d.delivery_status", "delivery", query.deliveryStatus);
+        add(where, "d.receipt_status", "receipt", query.receiptStatus);
         add(where, "h.source_mode", "mode", query.sourceMode);
         if (query.createdFrom != null) {
             where.sql.append(" AND h.created_at>=:created_from AND h.created_at<:created_to");
@@ -167,7 +204,7 @@ public class HandoffRepository {
     }
     private static String select() {
         return "SELECT h.handoff_id,h.source_kind,h.source_id,h.handoff_type,h.recipient_id,rc.display_name,h.source_version,h.owner_org_id,"
-                + "h.district_id,h.source_mode,h.submitted_by,h.created_at,d.delivery_status,d.receipt_status,d.blocked_reason,"
+                + "h.district_id,h.source_mode,h.submitted_by,h.created_at,h.receipt_result,d.delivery_status,d.receipt_status,d.blocked_reason,"
                 + "org_ref.name AS owner_org_name,dist_ref.name AS district_name,su.name AS submitted_by_name,"
                 // 来源业务编号：风险取来源风险编号，无人机事件取其告警的来源告警编号。
                 + "COALESCE(fr.source_risk_id,al.source_alarm_id) AS source_no";
@@ -192,7 +229,7 @@ public class HandoffRepository {
         return new HandoffRow(rs.getString("handoff_id"), rs.getString("source_kind"), rs.getString("source_id"), rs.getString("handoff_type"),
                 rs.getString("recipient_id"), rs.getString("display_name"), rs.getLong("source_version"), rs.getString("owner_org_id"),
                 rs.getString("district_id"), rs.getString("source_mode"), rs.getString("submitted_by"), time(rs, "created_at"),
-                rs.getString("delivery_status"), rs.getString("receipt_status"), rs.getString("blocked_reason"),
+                rs.getString("delivery_status"), rs.getString("receipt_status"), rs.getString("receipt_result"), rs.getString("blocked_reason"),
                 rs.getString("owner_org_name"), rs.getString("district_name"), rs.getString("submitted_by_name"), rs.getString("source_no"));
     }
     private static DeliveryRow delivery(ResultSet rs, int ignored) throws SQLException {
@@ -209,11 +246,16 @@ public class HandoffRepository {
 
     private static final class Where { final StringBuilder sql = new StringBuilder(); final Map<String, Object> params = new HashMap<>(); }
     public record HandoffQuery(String sourceKind, String sourceId, String deliveryStatus, OffsetDateTime createdFrom, OffsetDateTime createdTo,
-            String sourceMode) { public static HandoffQuery empty() { return new HandoffQuery(null, null, null, null, null, null); } }
+            String sourceMode, String receiptStatus) {
+        public HandoffQuery(String sourceKind, String sourceId, String deliveryStatus, OffsetDateTime createdFrom, OffsetDateTime createdTo, String sourceMode) {
+            this(sourceKind, sourceId, deliveryStatus, createdFrom, createdTo, sourceMode, null);
+        }
+        public static HandoffQuery empty() { return new HandoffQuery(null, null, null, null, null, null); }
+    }
     public record RecipientRow(String recipientId, String displayName, String handoffType) { }
     public record HandoffRow(String handoffId, String sourceKind, String sourceId, String handoffType, String recipientId, String recipientName,
             long sourceVersion, String ownerOrgId, String districtId, String sourceMode, String submittedBy, OffsetDateTime createdAt,
-            String deliveryStatus, String receiptStatus, String blockedReason,
+            String deliveryStatus, String receiptStatus, String receiptResult, String blockedReason,
             String ownerOrgName, String districtName, String submittedByName, String sourceNo) { }
     public record DeliveryRow(String deliveryId, String handoffId, int attemptNo, String deliveryStatus, String receiptStatus, String blockedReason,
             OffsetDateTime createdAt, OffsetDateTime submittedAt, OffsetDateTime deliveredAt, OffsetDateTime acknowledgedAt) { }

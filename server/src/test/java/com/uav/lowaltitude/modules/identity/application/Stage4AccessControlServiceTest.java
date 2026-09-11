@@ -105,14 +105,19 @@ class Stage4AccessControlServiceTest {
         assertThat(jdbc.queryForObject("""
                 select count(*) from app_role_permission
                 where permission_code in ('alarm:verify', 'risk:read', 'risk:verify')
-                  and role_code not in ('ROLE-ADMIN', 'ROLE-DEMO-REVIEWER')
+                  and role_code <> 'ROLE-ADMIN' and role_code not like 'ROLE-DEMO-%'
                 """, Integer.class)).isZero();   // 演示复核员是 local/test 种子角色（15-34），不是生产角色
-        // 演示复核员在这组码里只许持 risk:read（15-34），不许 alarm:verify / risk:verify。
+        // 按名放行之外再钉死内容：每个演示角色各自持哪几个都列出来（第六个演示角色一出现就会红）。
         assertThat(jdbc.queryForList("""
-                select permission_code || '=' || permission_level from app_role_permission
+                select role_code || ' ' || permission_code || '=' || permission_level from app_role_permission
                 where permission_code in ('alarm:verify', 'risk:read', 'risk:verify')
-                  and role_code = 'ROLE-DEMO-REVIEWER' order by permission_code
-                """, String.class)).containsExactly("risk:read=READ");
+                  and role_code like 'ROLE-DEMO-%' order by role_code, permission_code
+                """, String.class)).containsExactly(
+                        // 审计员经飞行监管页拿到风险读；值班员另有核实操作权。
+                        "ROLE-DEMO-AUDIT risk:read=READ",
+                        "ROLE-DEMO-DUTY alarm:verify=OP", "ROLE-DEMO-DUTY risk:read=READ",
+                        "ROLE-DEMO-REVIEWER risk:read=READ");
+
     }
 
     @Test

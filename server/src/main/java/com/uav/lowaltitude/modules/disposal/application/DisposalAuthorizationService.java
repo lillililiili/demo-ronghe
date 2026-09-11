@@ -77,6 +77,9 @@ public class DisposalAuthorizationService {
         access.require(PermissionCode.DISPOSAL_REQUEST);
         CreateRequest request = parseCreate(rawRequest);
         DisposalRules.requireKnown(request.actionType(), DisposalRules.ACTION_TYPES, "处置动作类型无效");
+        // 风险单独给码（决策 18-14）：它不在主体名单里，但落进泛泛的"类型无效"就把一句能读懂的话
+        // ——"风险请走通知上级"——换成了值班员看不懂的校验错误。答复保持与之前一致。
+        if ("RISK".equals(request.subjectKind())) throw riskSubjectNotSupported();
         DisposalRules.requireKnown(request.subjectKind(), DisposalRules.SUBJECT_KINDS, "处置主体类型无效");
         DisposalRules.requireKnown(request.channel(), DisposalRules.CHANNELS, "执行通道无效");
         String subjectId = text(request.subjectId(), "subject_id");
@@ -329,8 +332,13 @@ public class DisposalAuthorizationService {
             return new Subject(target.targetId(), target.targetId(), target.ownerOrgId(), target.districtId(),
                     target.sourceMode());
         }
-        // RISK 主体本期没有可信的状态来源，接进来只会造出看似可用其实无依据的授权（决策 13-24）。
-        throw new ApiException(HttpStatus.BAD_REQUEST, "SUBJECT_KIND_NOT_SUPPORTED",
+        // 兜底：主体名单已在入口挡过一遍，走到这里说明名单里新添了一种主体却没在上面实现。
+        // 与其抛内部错误，不如仍旧答那句能读懂的话。
+        throw riskSubjectNotSupported();
+    }
+
+    private static ApiException riskSubjectNotSupported() {
+        return new ApiException(HttpStatus.BAD_REQUEST, "SUBJECT_KIND_NOT_SUPPORTED",
                 "本期只支持对已核实的无人机事件或目标发起处置授权");
     }
 

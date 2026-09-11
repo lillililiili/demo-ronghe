@@ -34,7 +34,7 @@ class Stage9AccessControlServiceTest {
     private static final String ROLE = "ROLE-STAGE9-DUTY";
     private static final String ORG = "stage9-org-a";
     private static final String DISTRICT = "stage9-district-a";
-    private static final List<String> STAGE9_CODES = List.of("airport:manage", "airport:read", "airspace:manage", "flight:authorize", "risk:evaluate");
+    private static final List<String> STAGE9_CODES = List.of("airport:manage", "airport:read", "airspace:manage", "risk:evaluate");
 
     @Autowired AccessControlService accessControlService;
     @Autowired AccessService accessService;
@@ -64,10 +64,10 @@ class Stage9AccessControlServiceTest {
 
     @Test
     void catalogsStage9ActionsWithoutGrantingProductionRoles() {
-        List<Map<String, Object>> rows = jdbc.queryForList("select permission_code, permission_kind, route_key from app_permission where permission_code in ('airspace:manage','airport:read','airport:manage','risk:evaluate','flight:authorize') order by permission_code");
+        List<Map<String, Object>> rows = jdbc.queryForList("select permission_code, permission_kind, route_key from app_permission where permission_code in ('airspace:manage','airport:read','airport:manage','risk:evaluate') order by permission_code");
         assertThat(rows).extracting(row -> row.get("permission_code")).containsExactlyElementsOf(STAGE9_CODES);
         assertThat(rows).allSatisfy(row -> { assertThat(row.get("permission_kind")).isEqualTo("ACTION"); assertThat(row.get("route_key")).isNull(); });
-        assertThat(jdbc.queryForObject("select count(*) from app_role_permission where permission_code in ('airspace:manage','airport:read','airport:manage','risk:evaluate','flight:authorize') and role_code<>'ROLE-ADMIN'", Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from app_role_permission where permission_code in ('airspace:manage','airport:read','airport:manage','risk:evaluate') and role_code<>'ROLE-ADMIN'", Integer.class)).isZero();
         for (String code : STAGE9_CODES) assertThat(java.util.Arrays.stream(PermissionCode.values()).map(PermissionCode::value)).contains(code);
     }
 

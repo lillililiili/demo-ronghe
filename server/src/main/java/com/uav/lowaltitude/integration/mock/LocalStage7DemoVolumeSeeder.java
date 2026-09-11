@@ -89,9 +89,9 @@ public class LocalStage7DemoVolumeSeeder implements ApplicationRunner {
         plan("vol-status-completed", 22, "S7-SN-VOL-DONE", 118.295, 37.275, 10, 100, dayStart.minusSeconds(86_400 - 3_600), dayStart.minusSeconds(86_400 - 7_200), created);
         plan("vol-status-cancelled", 23, "S7-SN-VOL-CANC", 118.255, 37.295, 10, 100, dayStart.plusSeconds(86_400 + 3_600), dayStart.plusSeconds(86_400 + 7_200), created);
         plan("vol-status-today", 24, "S7-SN-VOL-TODAY", 118.245, 37.285, 10, 100, dayStart.plusSeconds(14 * 3_600), dayStart.plusSeconds(15 * 3_600), created);
-        jdbc.update("update flight_plan set status_code='EXECUTING' where plan_id=? and status_code='APPROVED' and version=0", planId("vol-status-executing"));
-        jdbc.update("update flight_plan set status_code='COMPLETED' where plan_id=? and status_code='APPROVED' and version=0", planId("vol-status-completed"));
-        jdbc.update("update flight_plan set status_code='CANCELLED' where plan_id=? and status_code='APPROVED' and version=0", planId("vol-status-cancelled"));
+        jdbc.update("update flight_plan set status_code='EXECUTING' where plan_id=? and status_code='PENDING' and version=0", planId("vol-status-executing"));
+        jdbc.update("update flight_plan set status_code='COMPLETED' where plan_id=? and status_code='PENDING' and version=0", planId("vol-status-completed"));
+        jdbc.update("update flight_plan set status_code='CANCELLED' where plan_id=? and status_code='PENDING' and version=0", planId("vol-status-cancelled"));
     }
 
     /** 挂在阶段七/体量计划上的风险事实，原因码只用前端字典已收录的值。 */
@@ -164,7 +164,7 @@ public class LocalStage7DemoVolumeSeeder implements ApplicationRunner {
                 + " select ?,?,1,CAST(? AS GEOMETRY),100,?,?,'AMSL',?,? where not exists (select 1 from route_version where route_version_id=?)",
                 rv, route, line, min, max, ts(start), ts(at), rv);
         jdbc.update("insert into flight_plan (plan_id,plan_no,status_code,source_id,source_mode,uav_sn,start_at,end_at,route_version_id,owner_org_id,district_id,created_at,updated_at,version)"
-                + " select ?,?,'APPROVED',?,'mock',?,?,?,?,?,?,?,?,0 where not exists (select 1 from flight_plan where plan_id=?)",
+                + " select ?,?,'PENDING',?,'mock',?,?,?,?,?,?,?,?,0 where not exists (select 1 from flight_plan where plan_id=?)",
                 plan, String.format("JH-S7-%03d", seq), SOURCE_ID, sn, ts(start), ts(end), rv, ORG, DISTRICT, ts(at), ts(at), plan);
     }
 

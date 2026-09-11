@@ -42,11 +42,14 @@ class LocalStage2AccessSeederTest {
     void localSeedExplicitlyGrantsOnlyTheSyntheticAdministrator() {
         // 期望值直接从 PermissionCode 目录生成：新增动作时种子必须自动补齐，测试不再手抄清单而过期。
         assertThat(actionGrants(jdbc)).containsExactlyElementsOf(expectedAdminGrants());
-        // 阶段 15 起本地/测试种子另造演示复核员角色（15-3），它是唯一被允许持动作码的非管理员角色；
-        // 断言只列出这一个名字：再出现第二个持码角色仍然要红。
+        // 本地/测试种子另造了几个演示角色（15-3 的复核员，阶段 18 的四个业务角色），它们是仅有的被允许
+        // 持动作码的非管理员角色。**逐个列出名字**：再冒出第六个持码角色仍然要红——
+        // 换成"凡是 ROLE-DEMO- 开头的都放行"就等于把这条守卫拆了，谁新造一个演示角色都不会有人知道。
         assertThat(jdbc.queryForList("select distinct role_code from app_role_permission where permission_code like '%:%'"
                 + " and role_code<>'ROLE-ADMIN' order by role_code", String.class))
-                .as("non-admin roles holding action codes").containsExactly("ROLE-DEMO-REVIEWER");
+                .as("non-admin roles holding action codes")
+                .containsExactly("ROLE-DEMO-AUDIT", "ROLE-DEMO-AUTH", "ROLE-DEMO-DUTY",
+                        "ROLE-DEMO-OPS", "ROLE-DEMO-REVIEWER");
         assertThat(jdbc.queryForObject(
                 "select scope_mode from app_user where account='admin1'", String.class))
                 .isEqualTo("ALL");

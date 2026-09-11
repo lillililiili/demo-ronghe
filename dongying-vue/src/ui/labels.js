@@ -26,11 +26,16 @@ export const REASON_CODE_LABEL = {
   SPACE_OBJECT_ALTITUDE_UNKNOWN: '异物进入航线走廊，高度未知', SPACE_OBJECT_IN_CORRIDOR: '异物进入航线走廊',
   SPACE_OBJECT_NEAR_ROUTE: '异物邻近航线',
   PROHIBITED_AIRSPACE_OVERLAP: '穿越禁飞空域', ALTITUDE_DATUM_OR_RANGE_UNKNOWN: '高度基准或范围未知', CORRIDOR_WIDTH_UNKNOWN: '航线走廊宽度未知',
-  TIME_UNTRUSTED: '时间不可信', LOCATION_UNTRUSTED: '位置不可信'
+  TIME_UNTRUSTED: '时间不可信', LOCATION_UNTRUSTED: '位置不可信',
+  SPACE_OBJECT_NEAR_ROUTE: '异物邻近航线', SPACE_OBJECT_IN_CORRIDOR: '异物进入航线走廊', SPACE_OBJECT_ALTITUDE_UNKNOWN: '异物高度未知', SPACE_OBJECT_IN_AIRPORT_ZONE: '异物进入机场保护区'
 };
-export const PLAN_STATUS_LABEL = { PENDING: '待执行', APPROVED: '已批准', EXECUTING: '执行中', COMPLETED: '已完成', CANCELLED: '已取消' };
+/* 计划状态没有"已批准"这一档（平台不审批，来源送来的计划一律待执行；迁移 V202609100001 已把历史 APPROVED 并入 PENDING）。
+   保留 APPROVED 的映射只为旧数据不把代码漏到屏幕上；筛选项与统计口径都不再区分。 */
+export const PLAN_STATUS_LABEL = { PENDING: '待执行', APPROVED: '待执行', EXECUTING: '执行中', COMPLETED: '已完成', CANCELLED: '已取消' };
+/* 计划视角的匹配结论：引擎的 NONE 在目标视角叫"无匹配计划"，在计划这一行要说成"未匹配感知目标"。 */
+export const PLAN_ROW_MATCH_LABEL = { FULL: '完全匹配', PARTIAL: '部分匹配', NONE: '未匹配感知目标', UNDETERMINED: '不可判定', NOT_APPLICABLE: '不适用' };
 // 与 legacy ui.js STAT_C 同色：待执行蓝、执行中青、已完成绿、终态灰。
-export const PLAN_STATUS_TAG = { PENDING: 't-blue', APPROVED: 't-cyan', EXECUTING: 't-cyan', COMPLETED: 't-green', CANCELLED: 't-gray' };
+export const PLAN_STATUS_TAG = { PENDING: 't-blue', APPROVED: 't-blue', EXECUTING: 't-cyan', COMPLETED: 't-green', CANCELLED: 't-gray' };
 export const HANDOFF_TYPE_LABEL = { RISK_NOTICE: '风险通报', UAV_PUNISHMENT: '处罚交接' };
 export const HANDOFF_KIND_LABEL = { RISK: '飞行风险', UAV_EVENT: '无人机事件', DEVICE_INCIDENT: '设备异常' };
 /* PERSON/VEHICLE/SHIP/REMOTE_CONTROLLER 来自凌云协议 A 的 objectType（阶段 8.5 直连切片）。 */
@@ -134,7 +139,7 @@ export const CASE_EVENT_KIND_LABEL = {
   FILE: '立案', ASSIGN: '指派承办人', LEAD_ADDED: '新增待补线索', LEAD_RESOLVED: '线索已补齐',
   DISCRETION_DRAFTED: '拟定裁量', DISCRETION_CONFIRMED: '确认裁量', DOCUMENT_ISSUED: '出具决定书',
   DOCUMENT_REVOKED: '作废决定书', REVIEW_REQUESTED: '提请复核', REVIEWED: '完成复核',
-  CLOSED: '结案', WITHDRAWN: '撤案', CLOSE: '结案', WITHDRAW: '撤案'
+  CLOSED: '结案', WITHDRAWN: '撤案', CLOSE: '结案', WITHDRAW: '撤案', REVIEW_CONCLUDED: '复核完成', REVIEW_REQUESTED: '提请复核'
 };
 /* 契约 §2.3 的错误码：每条都译成能据以行动的话，错误码本身不上屏。 */
 export const PUNISHMENT_BLOCKED_LABEL = {
@@ -180,6 +185,9 @@ export const CONCLUSION_LABEL = { CONFIRMED: '核实属实', EXCLUDED: '已排�
 export const RISK_CONCLUSION_LABEL = { CONFIRMED: '核验通过', EXCLUDED: '已排除' };
 export const DELIVERY_STATUS_LABEL = { PENDING_DELIVERY: '待投递', SUBMITTED: '已发送', DELIVERED: '已送达', FAILED: '发送失败' };
 export const RECEIPT_STATUS_LABEL = { NOT_EXPECTED: '不需回执', PENDING: '等待回执', ACKNOWLEDGED: '已回执', TIMEOUT: '回执超时' };
+/* 回执带回来的处理结果（决策 18-14）：风险到"通知上级"为止，回执"已驱离"就算闭环，不再往处置走。
+   与回执状态是两件事——"已回执"说的是对方回了，"已驱离"说的是对方做了什么。 */
+export const RECEIPT_RESULT_LABEL = { DISPERSED: '已驱离', NOT_DISPERSED: '未驱离' };
 /* HANDOFF_MATERIALS_NOT_DEFINED（决策 13-25）：反制/干扰完成事实已经有了，卡住的是处罚交接的材料包定义，
    与“通知渠道未接通”不是一回事，两句必须分开说。 */
 export const HANDOFF_BLOCKED_LABEL = {
@@ -215,7 +223,7 @@ export const RULE_RESULT_LABEL = { PASS: '通过', FAIL: '不通过', UNDETERMIN
 // UNDETERMINED 是引擎判不了，不是等人来确认：与 LegalityPage、复核弹窗保持同一个说法。
 export const LEGALITY_LABEL = { LEGAL: '合法', ABNORMAL: '异常', ILLEGAL: '非法', UNDETERMINED: '不可判定', NOT_APPLICABLE: '不适用' };
 // 阶段 9 计划与实际对照：段可用性、计划匹配、高度关系与外部授权登记。
-export const SECTION_AVAILABILITY_LABEL = { FORBIDDEN: '无权限查看', NO_EVALUATION: '尚无引擎研判', UNAVAILABLE: '暂不可用' };
+export const SECTION_AVAILABILITY_LABEL = { FORBIDDEN: '无权限查看', NO_EVALUATION: '尚无研判', UNAVAILABLE: '暂不可用' };
 export const PLAN_MATCH_LABEL = { FULL: '完全匹配', PARTIAL: '部分匹配', NONE: '无匹配计划', UNDETERMINED: '不可判定', NOT_APPLICABLE: '不适用' };
 export const PLAN_MATCH_TAG = { FULL: 't-green', PARTIAL: 't-amber', NONE: 't-amber', UNDETERMINED: 't-gray', NOT_APPLICABLE: 't-gray' };
 export const ALTITUDE_RELATION_LABEL = {

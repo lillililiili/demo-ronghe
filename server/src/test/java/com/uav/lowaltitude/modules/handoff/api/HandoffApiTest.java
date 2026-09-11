@@ -144,6 +144,88 @@ class HandoffApiTest {
         assertThat(handoffCount(riskId)).isZero();
     }
 
+    /**
+     * 决策 18-14 / 18-16：风险通知不该再让值班员选接收方——上级就那一个，每次问一遍既慢又容易选错。
+     * 不传接收方时依次找：标了默认的那个 → 该类型唯一的启用接收方 → 都没有才 400。
+     * 三条用例分别钉这三档，缺任何一条这套回落规则都可能悄悄退化成另一种。
+     */
+    @Test
+    void riskNoticeWithoutRecipientFallsBackToTheDefaultOne() throws Exception {
+        String risk = "risk-handoff-dflt-" + UUID.randomUUID().toString().substring(0, 8);
+        insertNotifiableRisk(risk, session);
+        // 库里本来就有一个默认接收方；不先让开，命中哪一个就取决于 ID 排序，这条用例等于没钉住任何东西。
+        List<String> defaults = riskNoticeDefaults();
+        jdbc.update("update handoff_recipient set is_default=false where handoff_type='RISK_NOTICE'");
+        jdbc.update("update handoff_recipient set is_default=true where recipient_id=?", recipientId);
+        String withoutRecipient = "{\"source_kind\":\"RISK\",\"source_id\":\"" + risk
+                + "\",\"handoff_type\":\"RISK_NOTICE\",\"expected_version\":1}";
+
+        MvcResult result;
+        try {
+            result = create(session, withoutRecipient, "default-" + UUID.randomUUID())
+                    .andExpect(status().isCreated()).andReturn();
+        } finally {
+            restoreRiskNoticeDefaults(defaults);
+        }
+        JsonNode body = objectMapper.readTree(result.getResponse().getContentAsString()).path("data");
+        assertThat(body.path("recipient_id").asText()).isEqualTo(recipientId);
+        // 本类固定跑"未接通"渠道：回执结果是上级给的，没投出去就不该有；空值字段照本接口惯例整条不出现。
+        assertThat(body.has("receipt_result")).isFalse();
+    }
+
+    /** 决策 18-16：一个默认都没标，但该类型只有一个启用接收方——只有一个的时候没有可选的余地，不该再要求他抄一遍。 */
+    @Test
+    void riskNoticeWithoutRecipientUsesTheOnlyEnabledOneWhenNoneIsDefault() throws Exception {
+        String risk = "risk-handoff-dflt-" + UUID.randomUUID().toString().substring(0, 8);
+        insertNotifiableRisk(risk, session);
+        List<String> defaults = riskNoticeDefaults();
+        List<String> others = jdbc.queryForList("select recipient_id from handoff_recipient"
+                + " where handoff_type='RISK_NOTICE' and enabled=true and recipient_id<>?", String.class, recipientId);
+        jdbc.update("update handoff_recipient set is_default=false where handoff_type='RISK_NOTICE'");
+        for (String id : others) jdbc.update("update handoff_recipient set enabled=false where recipient_id=?", id);
+        String withoutRecipient = "{\"source_kind\":\"RISK\",\"source_id\":\"" + risk
+                + "\",\"handoff_type\":\"RISK_NOTICE\",\"expected_version\":1}";
+        MvcResult result;
+        try {
+            result = create(session, withoutRecipient, "sole-" + UUID.randomUUID())
+                    .andExpect(status().isCreated()).andReturn();
+        } finally {
+            for (String id : others) jdbc.update("update handoff_recipient set enabled=true where recipient_id=?", id);
+            restoreRiskNoticeDefaults(defaults);
+        }
+        assertThat(objectMapper.readTree(result.getResponse().getContentAsString())
+                .path("data").path("recipient_id").asText()).isEqualTo(recipientId);
+    }
+
+    /** 决策 18-16：有好几个启用接收方又没标默认，服务端替不了值班员决定发给谁——这时才 400。 */
+    @Test
+    void riskNoticeWithoutRecipientIsRejectedWhenSeveralAreEnabledAndNoneIsDefault() throws Exception {
+        String risk = "risk-handoff-dflt-" + UUID.randomUUID().toString().substring(0, 8);
+        insertNotifiableRisk(risk, session);
+        // 自己再插一个，"有好几个"就不依赖库里恰好还剩几个接收方——那正是这条规则的分界点。
+        insertRecipient("recipient-test-second-" + UUID.randomUUID().toString().substring(0, 6), "RISK_NOTICE", true);
+        List<String> defaults = riskNoticeDefaults();
+        jdbc.update("update handoff_recipient set is_default=false where handoff_type='RISK_NOTICE'");
+        String withoutRecipient = "{\"source_kind\":\"RISK\",\"source_id\":\"" + risk
+                + "\",\"handoff_type\":\"RISK_NOTICE\",\"expected_version\":1}";
+        try {
+            create(session, withoutRecipient, "nodefault-" + UUID.randomUUID())
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.error.code").value("RECIPIENT_REQUIRED"));
+        } finally {
+            restoreRiskNoticeDefaults(defaults);
+        }
+    }
+
+    private List<String> riskNoticeDefaults() {
+        return jdbc.queryForList("select recipient_id from handoff_recipient"
+                + " where handoff_type='RISK_NOTICE' and is_default=true", String.class);
+    }
+
+    private void restoreRiskNoticeDefaults(List<String> defaults) {
+        for (String id : defaults) jdbc.update("update handoff_recipient set is_default=true where recipient_id=?", id);
+    }
+
     @Test
     void unknownDisabledOrWrongTypeRecipientIsNotFound() throws Exception {
         String disabled = "recipient-test-off-" + UUID.randomUUID().toString().substring(0, 6);

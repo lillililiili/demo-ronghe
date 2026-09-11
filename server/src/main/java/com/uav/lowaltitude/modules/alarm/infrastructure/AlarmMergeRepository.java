@@ -66,10 +66,10 @@ public class AlarmMergeRepository {
         params.put("source_alarm", row.sourceAlarmId()); params.put("type", row.alarmType()); params.put("severity", row.severity());
         params.put("occurred", row.occurredAt()); params.put("received", row.receivedAt()); params.put("detail", row.detailJson());
         params.put("mode", row.sourceMode()); params.put("org", row.ownerOrgId()); params.put("district", row.districtId());
-        params.put("created", row.receivedAt());
+        params.put("created", row.receivedAt()); params.put("alarm_no", row.alarmNo());
         // 显式 JSON 转换同时兼容 H2 与 PostgreSQL JSONB。
-        jdbc.update("INSERT INTO alarm (alarm_id,target_id,source_id,source_alarm_id,alarm_type,severity,occurred_at,received_at,detail,source_mode,owner_org_id,district_id,created_at)"
-                + " VALUES (:id,:target,:source,:source_alarm,:type,:severity,:occurred,:received,CAST(:detail AS JSON),:mode,:org,:district,:created)", params);
+        jdbc.update("INSERT INTO alarm (alarm_id,target_id,source_id,source_alarm_id,alarm_type,severity,occurred_at,received_at,detail,source_mode,owner_org_id,district_id,created_at,alarm_no)"
+                + " VALUES (:id,:target,:source,:source_alarm,:type,:severity,:occurred,:received,CAST(:detail AS JSON),:mode,:org,:district,:created,:alarm_no)", params);
     }
 
     public GroupRow lockOpenGroup(String targetId, String alarmType) {
@@ -151,7 +151,7 @@ public class AlarmMergeRepository {
     public record TargetScope(String targetId, String ownerOrgId, String districtId) { }
     public record AlarmLink(String alarmId, String eventId) { }
     public record AlarmInsert(String alarmId, String targetId, String sourceId, String sourceAlarmId, String alarmType, String severity,
-            OffsetDateTime occurredAt, OffsetDateTime receivedAt, String detailJson, String sourceMode, String ownerOrgId, String districtId) { }
+            OffsetDateTime occurredAt, OffsetDateTime receivedAt, String detailJson, String sourceMode, String ownerOrgId, String districtId, String alarmNo) { }
     public record GroupRow(String groupId, String targetId, String alarmType, String ruleSetId, String state, String currentSeverity,
             String firstAlarmId, String latestAlarmId, int hitCount, OffsetDateTime windowOpenedAt, OffsetDateTime windowExpiresAt,
             OffsetDateTime lastHitAt, String ownerOrgId, String districtId, long version) { }

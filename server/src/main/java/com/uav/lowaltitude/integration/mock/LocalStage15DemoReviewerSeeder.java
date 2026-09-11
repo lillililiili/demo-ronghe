@@ -73,6 +73,8 @@ public class LocalStage15DemoReviewerSeeder implements ApplicationRunner {
             new String[]{PermissionCode.ALARM_READ.value(), "READ"},
             new String[]{PermissionCode.TARGET_READ.value(), "READ"},
             new String[]{PermissionCode.HANDOFF_READ.value(), "READ"},
+            // 处罚页要看案件证据（决策 18-12）：复核人判不了"证据够不够"就复核不了案子。
+            new String[]{PermissionCode.EVIDENCE_READ.value(), "READ"},
             // 决策 15-34：15-31 给了 sensing/flights 两个菜单，却没给这两页要读的东西——
             // 菜单点得开、一进去满屏 403，比没有菜单更让人以为系统坏了。
             // 这几个码是助手 E2E 实测 403 的那些接口各自要的：

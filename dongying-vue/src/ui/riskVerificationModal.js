@@ -46,8 +46,8 @@ export function openRiskVerification({ risk, refresh, onDone } = {}) {
   openFormModal({
     title: '人工核验',
     width: '560px',
-    warning: '核验通过只进入“待通知”，不表示已通知上级；排除表示核验后判定无需通报。通知上级与交接在阶段 5 接入。',
-    notice: [readableNo(risk.source_risk_id) ? `风险 ${readableNo(risk.source_risk_id)}` : '风险事件', labelOf(RISK_TYPE_LABEL, risk.risk_type, ''), verifyOrdinal(expectedVersion)].filter(Boolean).join(' · '),
+    warning: '核验通过只进入“待通知”，不表示已通知上级；排除表示核验后判定无需通报。通知上级在飞行风险页操作。',
+    notice: [risk.risk_no || readableNo(risk.source_risk_id) ? `风险 ${risk.risk_no || readableNo(risk.source_risk_id)}` : '风险事件', labelOf(RISK_TYPE_LABEL, risk.risk_type, ''), verifyOrdinal(expectedVersion)].filter(Boolean).join(' · '),
     fields: [
       { key: 'conclusion', label: '核验结论', type: 'radio', required: true, options: [
         { value: 'CONFIRMED', label: '核验通过（转待通知）' },

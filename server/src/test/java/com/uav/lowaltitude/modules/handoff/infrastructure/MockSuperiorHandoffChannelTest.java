@@ -27,6 +27,16 @@ class MockSuperiorHandoffChannelTest {
         assertThat(outcome.acknowledgedAt()).isEqualTo(at.plusSeconds(2));
         assertThat(HandoffRules.DELIVERY_STATUSES).contains(outcome.deliveryStatus());
         assertThat(HandoffRules.RECEIPT_STATUSES).contains(outcome.receiptStatus());
+        // 风险通知问的是"人劝走了没有"，所以回执带结果。
+        assertThat(outcome.receiptResult()).isEqualTo("DISPERSED");
+    }
+
+    /** 处罚交接交的是案卷，上级签收就是签收，没有"驱离与否"这回事——别拿风险通知的结果套上去。 */
+    @Test
+    void punishmentHandoffHasNoDispersalResult() {
+        HandoffDispatch punishment = new HandoffDispatch("h-2", "UAV_EVENT", "e-1", HandoffRules.TYPE_UAV_PUNISHMENT,
+                "rcpt-2", "公安机关", "{}", at);
+        assertThat(new MockSuperiorHandoffChannel().deliver(punishment).receiptResult()).isNull();
     }
 
     @Test
@@ -36,5 +46,6 @@ class MockSuperiorHandoffChannelTest {
         assertThat(outcome.receiptStatus()).isEqualTo(HandoffRules.NOT_EXPECTED);
         assertThat(outcome.blockedReason()).isEqualTo(HandoffRules.CHANNEL_NOT_CONNECTED);
         assertThat(outcome.deliveredAt()).isNull();
+        assertThat(outcome.receiptResult()).isNull();
     }
 }

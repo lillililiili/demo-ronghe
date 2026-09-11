@@ -4,7 +4,7 @@
    也不把"结果未知"说成成功。 */
 import { apiRequestTimed, buildQuery, readSessionToken } from './apiClient.js';
 
-export const PUNISHMENT_UNAVAILABLE_TEXT = '处罚案件服务尚未接入';
+export const PUNISHMENT_UNAVAILABLE_TEXT = '处罚案件功能暂不可用';
 
 export function newPunishmentIdempotencyKey(action = 'case') {
   return `punishment-${action}-${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;

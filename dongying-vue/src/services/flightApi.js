@@ -17,11 +17,8 @@ export const flightApi = {
   routeVersions: (id, params) => apiRequest(`/routes/${encodeURIComponent(id)}/versions${query(params)}`),
   routeVersion: id => apiRequest(`/route-versions/${encodeURIComponent(id)}`),
   conflicts: id => apiRequest(`/flight-plans/${encodeURIComponent(id)}/airspace-conflicts`),
-  // 阶段 9：对照聚合五段各自带 availability（缺权限的段不带任何数量）；外部授权登记只增，不改变计划状态。
-  actuals: id => apiRequest(`/flight-plans/${encodeURIComponent(id)}/actuals`),
-  authorizations: id => apiRequest(`/flight-plans/${encodeURIComponent(id)}/authorizations`),
-  recordAuthorization: (id, body, idempotencyKey) =>
-    apiRequest(`/flight-plans/${encodeURIComponent(id)}/authorizations`, { method: 'POST', body, mutation: true, idempotencyKey })
+  // 阶段 9：对照聚合各段自带 availability（缺权限的段不带任何数量）。
+  actuals: id => apiRequest(`/flight-plans/${encodeURIComponent(id)}/actuals`)
 };
 
 // 后端分页才是计划真源；全量读取也必须逐页请求，不能回退到 window.MOCK 补齐数据。

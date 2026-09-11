@@ -73,8 +73,17 @@ import com.uav.lowaltitude.platform.time.AppClock;
 public class SystemManagementService {
 
     private static final Set<String> BUILTIN_ROLES = Set.of("ROLE-ADMIN");
-    private static final Set<String> PROTECTED_CUSTOM_PERMISSIONS = Set.of(
-            "users", "roles", "audit", "countermeasure");
+    /**
+     * 矩阵里不能授给自定义角色的模块（决策 15-2，18-13 修订）。
+     * `audit` 已经不在里面：看审计日志是审计员的本职，把它一并收成超管专有是规则过严。
+     */
+    private static final Set<String> PROTECTED_MATRIX_PERMISSIONS = Set.of("users", "roles", "countermeasure");
+    /**
+     * 动作码里不能授给自定义角色的域。这里仍然含 `audit`，与矩阵**不是同一条线**：
+     * 矩阵的 `audit` 是"看审计日志"，而审计域的动作是对日志本身动手（目录里还没有这类行，
+     * 用例造的那条叫清空审计日志）。看得见和能清空是两回事，放开前者不等于放开后者。
+     */
+    private static final Set<String> PROTECTED_ACTION_DOMAINS = Set.of("users", "roles", "audit", "countermeasure");
     private static final String DEFAULT_USER_SCOPE_MODE = "ALL";
 
     private final IdentityAdminMapper mapper;
@@ -773,10 +782,10 @@ public class SystemManagementService {
             if (menu && AccessService.level(level) < AccessService.level("READ")) {
                 throw bad("MENU_REQUIRES_READ", "开启菜单必须至少具备查看权限");
             }
-            if (!"ROLE-ADMIN".equals(roleCode) && PROTECTED_CUSTOM_PERMISSIONS.contains(item.permissionCode())) {
+            if (!"ROLE-ADMIN".equals(roleCode) && PROTECTED_MATRIX_PERMISSIONS.contains(item.permissionCode())) {
                 if (!"NONE".equals(level) || menu) {
                     throw bad("SYSTEM_PERMISSION_PROTECTED",
-                            "自定义角色不能取得用户、角色、审计或反制/干扰权限");
+                            "自定义角色不能取得用户、角色或反制/干扰权限");
                 }
                 menu = false;
             }
@@ -863,9 +872,10 @@ public class SystemManagementService {
             if (action == null || !seen.add(item.permissionCode())) {
                 throw bad("INVALID_PERMISSION", "动作权限项不存在或重复");
             }
-            // 用户、角色、审计这些域的动作不能授给自定义角色——与矩阵同一条红线（决策 15-2）。
+            // 用户、角色、审计这些域的动作不能授给自定义角色（决策 15-2）。
             // 目前目录里还没有这类动作行，这条守卫先于它们存在，否则谁加谁就顺手把它授出去了。
-            if (PROTECTED_CUSTOM_PERMISSIONS.contains(action.getModuleCode())) {
+            // 18-13 放开的是矩阵里的 `audit`（看审计日志），不是审计域的动作（对日志本身动手）。
+            if (PROTECTED_ACTION_DOMAINS.contains(action.getModuleCode())) {
                 throw bad("SYSTEM_PERMISSION_PROTECTED", "自定义角色不能取得用户、角色或审计域的动作权限");
             }
             if (!"NONE".equals(item.level())) granted.add(item);

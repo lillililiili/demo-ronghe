@@ -30,7 +30,7 @@ const toolbarHtml = computed(() => {
   return `<div class="toolbar-fields">${U.field('统计区间', `<span class="mono" style="font-size:12px;color:var(--txt-2);padding:0 4px">${range}</span>`)}</div>
       <div class="toolbar-actions">
       <button class="btn pri" id="stExp"${disabled}>${U.icon('download')} 导出数据</button>
-      <span class="toolbar-note">当前页按近30天全量统计，没有按日/类型/区域切片的数据源</span></div>`;
+      <span class="toolbar-note">当前按近 30 天全量统计，暂不支持按日、类型、区域筛选</span></div>`;
 });
 
 const kpiList = computed(() => {

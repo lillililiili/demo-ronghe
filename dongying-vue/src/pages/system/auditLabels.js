@@ -8,7 +8,7 @@ export const MODULE_LABELS = {
   statistics: '运行统计',
   risk: '飞行风险', handoff: '业务交接', workbench: '工作台', assessment: '合法性研判', rules: '规则引擎', flights: '飞行计划',
   airspace: '空域规则', fusion: '融合感知', disposal: '处置授权', punishment: '处罚案件', evidence: '证据管理', airport: '机场基础数据',
-  alarm: '告警事件', device: '设备管理', mqtt: '设备接入',
+  mqtt: '设备接入',
   system: '系统'
 };
 
@@ -56,7 +56,8 @@ export const ACTION_LABELS = {
   rule_evaluation_triggered: '手动触发空间风险评估', eo_track_requested: '下发光电跟踪', eo_track_ended: '停止光电跟踪',
   mqtt_broker_create: '登记消息接入连接', mqtt_broker_enable: '启用消息接入连接', mqtt_broker_disable: '停用消息接入连接', mqtt_broker_update: '修改消息接入连接', mqtt_device_register: '登记接入设备', mqtt_device_bind: '绑定接入设备',
   device_created: '登记设备', device_updated: '修改设备', device_enabled: '启用设备', device_disabled: '停用设备', device_command_issued: '下发设备指令', device_incident_rebooted: '远程重启设备', device_incident_recovered: '确认设备恢复',
-  countermeasure_command_issued: '下发反制指令', commission_task_created: '创建调测任务', commission_task_cancelled: '取消调测任务'
+  countermeasure_command_issued: '下发反制指令', commission_task_created: '创建调测任务', commission_task_cancelled: '取消调测任务',
+  device_incident_recovery_checked: '检查设备恢复', device_incident_rebooted: '远程重启设备'
 };
 
 const METHOD_LABELS = { GET: '查询', POST: '提交', PUT: '更新', PATCH: '更新', DELETE: '删除' };
@@ -74,11 +75,25 @@ const PATH_LABELS = [
   ['/stats', '运行统计']
 ];
 
+/* 服务端偶尔会写单复数不一致的模块码（实测审计里同时出现 risk 与 risks、alarms 与 alarm）。
+   归一只做显示，不进筛选项——否则下拉里会出现两个"飞行风险"。 */
+const MODULE_ALIASES = { risks: 'risk', alarm: 'alarms', rule: 'rules', device: 'devices', user: 'users', role: 'roles' };
+
 export const moduleOptions = Object.entries(MODULE_LABELS).map(([value, label]) => ({ value, label }));
 export const actionOptions = Object.entries(ACTION_LABELS).map(([value, label]) => ({ value, label }));
 
 export function moduleText(code) {
-  return MODULE_LABELS[code] || code || '—';
+  if (!code) return '—';
+  return MODULE_LABELS[code] || MODULE_LABELS[MODULE_ALIASES[code]] || code;
+}
+
+/* 本机回环地址在屏幕上没有意义：值班员看到 0:0:0:0:0:0:0:1 只会以为是坏数据。
+   原始值仍进 title，排查时拿得到。 */
+const LOOPBACK = new Set(['127.0.0.1', '::1', '0:0:0:0:0:0:0:1', '::ffff:127.0.0.1', 'localhost']);
+export function ipText(ip) {
+  const value = String(ip || '').trim();
+  if (!value) return '—';
+  return LOOPBACK.has(value) ? '本机' : value;
 }
 
 export function actionText(action) {

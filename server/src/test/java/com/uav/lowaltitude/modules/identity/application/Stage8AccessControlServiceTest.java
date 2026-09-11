@@ -67,9 +67,15 @@ class Stage8AccessControlServiceTest {
         List<Map<String, Object>> rows = jdbc.queryForList("select permission_code, permission_kind, route_key from app_permission where permission_code in ('fusion:read','fusion:revise','fusion:manage') order by permission_code");
         assertThat(rows).extracting(row -> row.get("permission_code")).containsExactlyElementsOf(STAGE8_CODES);
         assertThat(rows).allSatisfy(row -> { assertThat(row.get("permission_kind")).isEqualTo("ACTION"); assertThat(row.get("route_key")).isNull(); });
-        assertThat(jdbc.queryForObject("select count(*) from app_role_permission where permission_code in ('fusion:read','fusion:revise','fusion:manage') and role_code not in ('ROLE-ADMIN','ROLE-DEMO-REVIEWER')", Integer.class)).isZero();   // 演示复核员是 local/test 种子角色（15-34），不是生产角色
+        assertThat(jdbc.queryForObject("select count(*) from app_role_permission where permission_code in ('fusion:read','fusion:revise','fusion:manage') and role_code <> 'ROLE-ADMIN' and role_code not like 'ROLE-DEMO-%'", Integer.class)).isZero();   // 演示复核员是 local/test 种子角色（15-34），不是生产角色
         // 演示复核员在这组码里只许持 fusion:read（15-34），revise/manage 不许。
-        assertThat(jdbc.queryForList("select permission_code || '=' || permission_level from app_role_permission where permission_code in ('fusion:read','fusion:revise','fusion:manage') and role_code='ROLE-DEMO-REVIEWER' order by permission_code", String.class)).containsExactly("fusion:read=READ");
+        // 按名放行之外再钉死内容：每个演示角色各自持哪几个都列出来（第六个演示角色一出现就会红）。
+        assertThat(jdbc.queryForList("select role_code || ' ' || permission_code || '=' || permission_level"
+                + " from app_role_permission where permission_code in ('fusion:read','fusion:revise','fusion:manage')"
+                + " and role_code like 'ROLE-DEMO-%' order by role_code, permission_code", String.class))
+                // 四个有态势页的角色各自拿到融合读；融合的修订与配置一个都没给出去。
+                .containsExactly("ROLE-DEMO-AUDIT fusion:read=READ", "ROLE-DEMO-AUTH fusion:read=READ",
+                        "ROLE-DEMO-DUTY fusion:read=READ", "ROLE-DEMO-REVIEWER fusion:read=READ");
         for (String code : STAGE8_CODES) assertThat(java.util.Arrays.stream(PermissionCode.values()).map(PermissionCode::value)).contains(code);
     }
 

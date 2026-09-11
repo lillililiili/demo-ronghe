@@ -60,8 +60,9 @@ public class EvidenceAssociationService {
             "CASE", "AUTHORIZATION");
     static final Set<String> MODES = Set.of("mock", "replay", "live");
     private static final long MAX_BYTES = 32L * 1024 * 1024;
-    private static final Set<String> LIST_PARAMS = Set.of("page", "size", "kind_code", "status",
+    private static final Set<String> LIST_PARAMS = Set.of("page", "size", "kind_code", "status", "custody",
             "subject_kind", "subject_id", "q");
+    private static final Set<String> CUSTODIES = Set.of("KEPT", "NEARING", "DUE", "HELD");
 
     private final AccessControlService access;
     private final AccessService menuAccess;
@@ -524,7 +525,7 @@ public class EvidenceAssociationService {
             return hasKind ? subject(single("subject_kind")) : null;
         }
         String subjectId() { return values.containsKey("subject_id") ? id(single("subject_id")) : null; }
-        FileQuery query() { return new FileQuery(kindCode(), status(), subjectKind(), subjectId(), q()); }
+        FileQuery query() { return new FileQuery(kindCode(), status(), subjectKind(), subjectId(), q(), optionalEnum("custody", CUSTODIES)); }
         private int integer(String name, int fallback) {
             if (!values.containsKey(name)) return fallback;
             try {

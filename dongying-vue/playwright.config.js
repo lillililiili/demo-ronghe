@@ -13,6 +13,8 @@ const API_TARGET = process.env.APP_API_PROXY_TARGET || 'http://127.0.0.1:8081';
 
 export default defineConfig({
   testDir: './e2e',
+  // 第一条用例之前先确认后端在：后端不在时整套会红成一片"越权请求"，而真因只是连接被拒。
+  globalSetup: './e2e/support/global-setup.js',
   /* 用例之间不共享状态（每条自己登录 + 自己的 context），可以并行；
      但并行度压在个位数：后端与 dev server 是本机共享的，不该被这套用例压垮。 */
   fullyParallel: true,

@@ -25,6 +25,7 @@ export function fmtEvidenceTime(ms) {
 
 export function custodyTag(f) {
   const U = window.UI;
+  if (f?.status === 'DESTROYED') return U.tag('已销毁', 't-gray');
   const code = f?.custody || (f?.held ? 'HELD' : '');
   if (!code) return '—';
   return U.tag(labelOf(EVIDENCE_CUSTODY_LABEL, code, code), EVIDENCE_CUSTODY_TAG[code] || 't-gray');
@@ -33,6 +34,7 @@ export function custodyTag(f) {
 function retainUntilText(f) {
   if (f.retain_until == null) return '—';
   const date = fmtEvidenceTime(f.retain_until);
+  if (f.status === 'DESTROYED') return date;
   if (f.custody === 'HELD') return `${date}　<span style="color:var(--txt-3);font-size:11px">冻结中，到期亦不清理</span>`;
   if (f.custody === 'DUE') return `${date}　<span style="color:var(--txt-3);font-size:11px">已到期，文件仍保管</span>`;
   if (f.custody === 'NEARING') return `${date}　<span style="color:var(--txt-3);font-size:11px">30 天内到期</span>`;
@@ -79,7 +81,9 @@ export function renderEvidenceFileDetail(f, options = {}) {
         ? `<button class="btn pri" style="width:100%;justify-content:center" data-evact="download">${U.icon('download')} 下载</button>`
         : `<button class="btn pri" style="width:100%;justify-content:center" disabled title="${esc(DOWNLOAD_BLOCKED[f.status] || '文件不可下载')}">${U.icon('download')} 下载</button>`}
     <div style="display:flex;gap:8px;margin-top:8px">
-      <button class="btn" style="flex:1" data-evact="verify">校验哈希</button>
+      ${f.status === 'INGESTING'
+        ? `<button class="btn" style="flex:1" disabled title="文件还在入库中，入库完成后才能校验">校验哈希</button>`
+        : `<button class="btn" style="flex:1" data-evact="verify">校验哈希</button>`}
       ${f.held
         ? `<button class="btn" style="flex:1" data-evact="release" data-hold="${esc(activeHold?.hold_id || '')}">解除冻结</button>`
         : `<button class="btn" style="flex:1" data-evact="hold">冻结</button>`}

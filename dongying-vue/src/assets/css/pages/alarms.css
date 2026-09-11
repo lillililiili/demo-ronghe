@@ -6,3 +6,14 @@
 .hist-tag{display:inline-block;margin-right:6px;padding:0 6px;border-radius:4px;
   font-size:11px;line-height:18px;color:var(--txt-3);
   border:1px dashed rgba(140,160,190,.45);background:rgba(140,160,190,.08)}
+
+/* ---------- 筛选条一行放下（阶段 18 对照原版） ----------
+   四个下拉在 1440 宽下要占 748px，比工具栏可用宽度多十几像素，"区域"就被挤到第二行，
+   看着像两组筛选。原版的控件是可收缩的（flex 基准 8.5em），这里恢复同样的做法：
+   不换行、按可用宽度收窄，选项文字过长时由控件自己省略。 */
+.alarms-page .toolbar-fields{flex-wrap:nowrap}
+.alarms-page .toolbar .field{min-width:0}
+/* 收窄的是控件，不是标签：标签一起收缩就会被从左边裁掉（"类别"只剩"别"）。 */
+.alarms-page .toolbar .field>label{flex:none}
+.alarms-page .toolbar .field .naive-control-bridge:not(.is-check){flex:1 1 8.5em;min-width:0}
+.alarms-page .toolbar .field .n-select{width:auto;min-width:0;max-width:144px}

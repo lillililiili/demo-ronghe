@@ -15,7 +15,7 @@ import { expect, test } from '@playwright/test';
 import {
   BIGSCREEN_KEY, ROUTE_KEYS, deniedTitle, expectReachable, landingKey, pageTitle, permissionKey
 } from './support/matrix.js';
-import { ACCOUNTS, apiLogin, collectPageSignals, seedSession, unexpectedFailures } from './support/session.js';
+import { ACCOUNTS, DISABLED_ACCOUNT, apiLogin, collectPageSignals, PASSWORD, seedSession, unexpectedFailures } from './support/session.js';
 
 const VIEWPORT_WIDTHS = [1280, 1366, 1440];
 
@@ -153,4 +153,65 @@ test('矩阵自检：整张矩阵里必须存在"应被拦下"的组合', async 
   expect(blocked.length,
     '整张矩阵里没有任何"应被拦下"的组合——拒绝路径一次都没被执行，全绿不代表拦得住')
     .toBeGreaterThan(0);
+});
+
+/**
+ * 角色覆盖自检：**每一个有人使用的角色，矩阵里都要有一个账号代表它**。
+ *
+ * 没有这一条，演示种子哪天没跑成功、或某个角色改了名，`ACCOUNTS` 里的账号登不上会被逐条 skip，
+ * 矩阵悄悄缩回只剩超管——**少测了四五个角色，报表上和"全测过了"长得一模一样**。
+ * 这正是本项目反复踩的那个形状：没跑到的检查，看起来和跑过且通过的检查完全相同。
+ *
+ * 判据取"有人使用的角色"而不是"全部角色"：没有任何用户的角色本来也没法登录去验，
+ * 把它算进来只会让这条自检变成一条永远红的噪声。
+ */
+test('矩阵自检：每个有人使用的角色都有账号代表', async ({ request }) => {
+  const admin = await apiLogin(request, 'admin1');
+  test.skip(admin === null, 'admin1 不可登录，无从取得角色清单。这不是通过，是没跑。');
+
+  const listed = await request.get('/api/v1/roles', { headers: { Authorization: `Bearer ${admin.sessionId}` } });
+  expect(listed.ok(), '取不到角色清单，这条自检没有比对对象').toBeTruthy();
+  const rolesWithUsers = ((await listed.json())?.data || [])
+    .filter(role => (role.user_count ?? 0) > 0)
+    .map(role => role.role_code)
+    .sort();
+
+  const covered = [];
+  const missing = [];
+  for (const { account } of ACCOUNTS) {
+    const session = await apiLogin(request, account);
+    if (session === null) missing.push(account);
+    else covered.push(session.roleCode);
+  }
+  expect(missing, `这些账号登不上，矩阵实际没有覆盖它们所代表的角色：${missing.join('、')}。`
+    + '多半是演示种子没落地——此时其余用例会逐条 skip 而不是红，很容易被当成全绿').toEqual([]);
+
+  expect([...new Set(covered)].sort(),
+    '有人使用的角色必须都在矩阵里有代表；对不上说明种子加了新角色而覆盖清单没跟上')
+    .toEqual(rolesWithUsers);
+});
+
+/**
+ * 已停用的账号**必须登不上**。
+ *
+ * 这条验的是认证不是访问矩阵，所以不进上面的循环。它的价值在于：停用是一个**动作**，
+ * 而"停用之后还能登"在页面上看不出来——只有拿这个账号真去登一次才知道。
+ */
+test(`已停用的账号 ${DISABLED_ACCOUNT.account} 必须登不上`, async ({ request }) => {
+  const response = await request.post('/api/v1/auth/login', {
+    data: { account: DISABLED_ACCOUNT.account, password: PASSWORD }
+  });
+  const envelope = await response.json();
+
+  // 先自证这个账号确实存在：不存在的账号也登不上，那样这条用例什么也没证明。
+  const admin = await apiLogin(request, 'admin1');
+  test.skip(admin === null, 'admin1 不可登录，无法确认停用账号是否存在。这不是通过，是没跑。');
+  const users = await request.get(`/api/v1/users?keyword=${DISABLED_ACCOUNT.account}&page=1&size=5`,
+    { headers: { Authorization: `Bearer ${admin.sessionId}` } });
+  const found = ((await users.json())?.data?.items || [])
+    .some(user => user.account === DISABLED_ACCOUNT.account);
+  expect(found, `演示库里没有 ${DISABLED_ACCOUNT.account} 这个账号——`
+    + '不存在的账号当然登不上，这条用例就成了空转').toBeTruthy();
+
+  expect(envelope.ok, `已停用的账号仍然登录成功了——停用没有真正生效`).toBeFalsy();
 });

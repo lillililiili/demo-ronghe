@@ -139,7 +139,7 @@ public class RiskReadService {
 
     private static List<String> exportRow(RiskRepository.RiskRow row) {
         // 枚举列翻中文（决策 15-32），与告警同一套字典，免得两张表对同一个码给出两个说法。
-        return java.util.Arrays.asList(row.sourceRiskId(),
+        return java.util.Arrays.asList(row.displayNo(),
                 com.uav.lowaltitude.platform.export.CsvLabels.riskType(row.riskType()),
                 com.uav.lowaltitude.platform.export.CsvLabels.severity(row.severity()),
                 com.uav.lowaltitude.platform.export.CsvLabels.riskState(row.state()),
@@ -181,7 +181,7 @@ public class RiskReadService {
                 row.heightRelation(), row.sourceCode(), row.sourceMode(), row.ownerOrgId(), row.districtId(), row.version(),
                 RiskState.verifiable(row.state())&&visible(PermissionCode.RISK_VERIFY) ? List.of("VERIFY") : List.of(),
                 row.sourceName(), row.ownerOrgName(), row.districtName(), planId == null ? null : row.planNo(), targetId == null ? null : row.targetNo(),
-                spaceFact(row));
+                spaceFact(row), row.displayNo());
     }
 
     private boolean visible(PermissionCode permission){try{access.require(permission);return true;}catch(ApiException ignored){return false;}}

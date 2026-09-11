@@ -275,6 +275,19 @@ public class EvidenceRepository {
         }
         if (query.kindCode() != null) { sql.append(" AND f.kind_code=:kind"); params.put("kind", query.kindCode()); }
         if (query.status() != null) { sql.append(" AND f.status=:status"); params.put("status", query.status()); }
+        // 保管状态与读取时 EvidenceRetention.custody 同一口径：冻结优先，其余按到期日与当前时刻比较。
+        if (query.custody() != null) {
+            String held = "EXISTS (SELECT 1 FROM evidence_hold eh WHERE eh.evidence_id=f.evidence_id AND eh.released_at IS NULL)";
+            java.time.Instant now = java.time.Instant.now();
+            params.put("custody_now", java.sql.Timestamp.from(now));
+            params.put("custody_nearing", java.sql.Timestamp.from(now.plus(java.time.Duration.ofDays(com.uav.lowaltitude.modules.evidence.domain.EvidenceRetention.NEARING_DAYS))));
+            switch (query.custody()) {
+                case "HELD" -> sql.append(" AND ").append(held);
+                case "DUE" -> sql.append(" AND NOT ").append(held).append(" AND f.retain_until IS NOT NULL AND f.retain_until<=:custody_now");
+                case "NEARING" -> sql.append(" AND NOT ").append(held).append(" AND f.retain_until IS NOT NULL AND f.retain_until>:custody_now AND f.retain_until<=:custody_nearing");
+                default -> sql.append(" AND NOT ").append(held).append(" AND (f.retain_until IS NULL OR f.retain_until>:custody_nearing)");
+            }
+        }
         if (query.q() != null) {
             sql.append(" AND (LOWER(f.evidence_no) LIKE :q OR LOWER(f.original_name) LIKE :q OR LOWER(f.evidence_id) LIKE :q)");
             params.put("q", "%" + query.q().toLowerCase() + "%");
@@ -336,7 +349,9 @@ public class EvidenceRepository {
 
     private record Where(StringBuilder sql, Map<String, Object> params) { }
 
-    public record FileQuery(String kindCode, String status, String subjectKind, String subjectId, String q) { }
+    public record FileQuery(String kindCode, String status, String subjectKind, String subjectId, String q, String custody) {
+        public FileQuery(String kindCode, String status, String subjectKind, String subjectId, String q) { this(kindCode, status, subjectKind, subjectId, q, null); }
+    }
 
     public record FileInsert(String evidenceId, String evidenceNo, String kindCode, String originalName,
             String contentType, String storageBackend, String objectKey, Long sizeBytes, String sha256,

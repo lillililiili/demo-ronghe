@@ -122,11 +122,21 @@ test('处罚页的处置授权行：按钮集合与服务端 allowed_actions 一
   }
 });
 
-/** 取一条带主体的交接（处罚页的授权面板按交接的 source_kind/source_id 列授权）。 */
+/**
+ * 取一条带主体的交接（处罚页的授权面板按交接的 source_kind/source_id 列授权）。
+ *
+ * **从列表末尾往前找，而不是取第一条**：处罚页默认选中的是**第一条**交接，
+ * 访问矩阵那些用例打开 `#/punish` 看到的就是它。这条用例会在选中的主体上建一条授权再撤回，
+ * 如果用的也是第一条，两边就会在并发（3 个 worker）下互相干扰——
+ * 实测表现为 `reviewer1 #/punish` 时红时绿，两遍数字对不上。
+ * 用末尾那条，等于给这条用例一个别人不会浏览的主体，干扰就没有了。
+ */
 async function pickHandoffSubject(request, sessionId) {
   const listed = await request.get('/api/v1/handoffs?page=1&size=50',
     { headers: { Authorization: `Bearer ${sessionId}` } });
-  for (const handoff of (await listed.json())?.data?.items || []) {
+  const handoffs = (await listed.json())?.data?.items || [];
+  for (let i = handoffs.length - 1; i >= 0; i--) {
+    const handoff = handoffs[i];
     if (handoff.source_kind && handoff.source_id) {
       return { handoffId: handoff.handoff_id, subjectKind: handoff.source_kind, subjectId: handoff.source_id };
     }

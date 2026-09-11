@@ -26,7 +26,9 @@ public class WorkbenchReadRepository {
     public static final String UAV_EVENT = "UAV_EVENT";
     public static final String RISK = "RISK";
     public static final String DEVICE_INCIDENT = "DEVICE_INCIDENT";
-    private static final String ORDER = " ORDER BY u.severity_rank DESC, u.received_at DESC, u.kind ASC, u.source_id DESC";
+    /* 队列次序（决策 16-10，按原版工作台改回）：可操作的排前面（2），等回执的居中（1），终态沉底（0）；同档再按等级、接收时间。
+       终态：误报、已通知、已排除、已恢复——它们已经没有"下一步"，不能占住队首。 */
+    private static final String ORDER = " ORDER BY u.action_rank DESC, u.severity_rank DESC, u.received_at DESC, u.kind ASC, u.source_id DESC";
 
     private final NamedParameterJdbcTemplate jdbc;
     private final DeviceBusinessScopeRepository deviceScope;
@@ -128,10 +130,11 @@ public class WorkbenchReadRepository {
     private static String uavBranch(AccessDecision access, Map<String, Object> params) {
         StringBuilder sql = new StringBuilder("SELECT CAST('UAV_EVENT' AS VARCHAR(32)) AS kind, e.event_id AS source_id, e.state_code AS state,"
                 + " a.severity AS severity, " + rank("a.severity") + " AS severity_rank, " + ms("a.received_at") + " AS received_at, "
+                + " CASE e.state_code WHEN 'FALSE_POSITIVE' THEN 0 ELSE 2 END AS action_rank, "
                 + ms("a.occurred_at") + " AS occurred_at, " + ms("e.updated_at") + " AS updated_at, e.version AS version,"
                 + " a.source_mode AS source_mode, a.owner_org_id AS owner_org_id, a.district_id AS district_id, a.alarm_type AS type_code,"
                 + " CAST(NULL AS VARCHAR(2000)) AS reason_text, CAST(NULL AS VARCHAR(64)) AS device_no, CAST(NULL AS VARCHAR(128)) AS device_name,"
-                + " a.alarm_id AS related_id, CAST(a.source_alarm_id AS VARCHAR(64)) AS source_no"
+                + " a.alarm_id AS related_id, CAST(COALESCE(a.alarm_no, a.source_alarm_id) AS VARCHAR(64)) AS source_no"
                 + " FROM uav_event e JOIN alarm a ON a.alarm_id=e.alarm_id AND a.owner_org_id=e.owner_org_id AND a.district_id=e.district_id"
                 + " WHERE EXISTS (SELECT 1 FROM app_org o WHERE o.org_id=e.owner_org_id AND o.enabled=TRUE)"
                 + " AND EXISTS (SELECT 1 FROM app_district d WHERE d.district_id=e.district_id AND d.enabled=TRUE)");
@@ -143,10 +146,11 @@ public class WorkbenchReadRepository {
     private static String riskBranch(AccessDecision access, Map<String, Object> params) {
         StringBuilder sql = new StringBuilder("SELECT CAST('RISK' AS VARCHAR(32)) AS kind, r.risk_id AS source_id, r.state_code AS state,"
                 + " r.severity AS severity, " + rank("r.severity") + " AS severity_rank, " + ms("r.received_at") + " AS received_at, "
+                + " CASE r.state_code WHEN 'NOTIFIED' THEN 0 WHEN 'EXCLUDED' THEN 0 ELSE 2 END AS action_rank, "
                 + ms("r.occurred_at") + " AS occurred_at, " + ms("r.updated_at") + " AS updated_at, r.version AS version,"
                 + " r.source_mode AS source_mode, r.owner_org_id AS owner_org_id, r.district_id AS district_id, r.risk_type AS type_code,"
                 + " CAST(r.reason_text AS VARCHAR(2000)) AS reason_text, CAST(NULL AS VARCHAR(64)) AS device_no, CAST(NULL AS VARCHAR(128)) AS device_name,"
-                + " CAST(NULL AS VARCHAR(36)) AS related_id, CAST(r.source_risk_id AS VARCHAR(64)) AS source_no"
+                + " CAST(NULL AS VARCHAR(36)) AS related_id, CAST(COALESCE(r.risk_no, r.source_risk_id) AS VARCHAR(64)) AS source_no"
                 + " FROM flight_risk r JOIN integration_source s ON s.source_id=r.source_id AND s.source_mode=r.source_mode"
                 + " JOIN flight_plan p ON p.plan_id=r.plan_id AND p.route_version_id=r.route_version_id"
                 + " AND p.owner_org_id=r.owner_org_id AND p.district_id=r.district_id"
@@ -160,6 +164,7 @@ public class WorkbenchReadRepository {
     private String deviceBranch(AccessDecision access, Map<String, Object> params) {
         return "SELECT CAST('DEVICE_INCIDENT' AS VARCHAR(32)) AS kind, di.incident_id AS source_id, di.stage AS state,"
                 + " di.severity AS severity, " + rank("di.severity") + " AS severity_rank, di.detected_at AS received_at,"
+                + " CASE di.stage WHEN 'RECOVERED' THEN 0 WHEN 'PROCESSING' THEN 1 ELSE 2 END AS action_rank,"
                 + " CAST(NULL AS BIGINT) AS occurred_at, di.closed_at AS updated_at, CAST(NULL AS BIGINT) AS version,"
                 + " di.source_mode AS source_mode, di.owner_org_id AS owner_org_id, di.district_id AS district_id, di.incident_type AS type_code,"
                 + " CAST(di.reason AS VARCHAR(2000)) AS reason_text, di.device_no AS device_no, di.device_name AS device_name, di.device_id AS related_id, CAST(di.device_no AS VARCHAR(64)) AS source_no"
@@ -182,6 +187,11 @@ public class WorkbenchReadRepository {
         StringBuilder sql = new StringBuilder(" WHERE 1=1");
         add(sql, params, "u.state", "state", query.state());
         add(sql, params, "u.severity", "severity", query.severity());
+        // severity_min：工作台"高等级事项"卡片要的是"高及以上"，等级序与排序用的 rank 同一口径。
+        if (query.severityMin() != null) {
+            sql.append(" AND u.severity_rank >= :severity_min_rank");
+            params.put("severity_min_rank", switch (query.severityMin()) { case "CRITICAL" -> 4; case "HIGH" -> 3; case "MEDIUM" -> 2; default -> 1; });
+        }
         add(sql, params, "u.owner_org_id", "owner_org_id", query.ownerOrgId());
         add(sql, params, "u.district_id", "district_id", query.districtId());
         add(sql, params, "u.source_mode", "source_mode", query.sourceMode());
@@ -224,7 +234,7 @@ public class WorkbenchReadRepository {
 
     /** 各支的范围决定；null 表示该支没有读权限（或未配置），不进入 UNION。 */
     public record Branches(AccessDecision uav, AccessDecision risk, AccessDecision device) { }
-    public record WorkbenchQuery(String kind, String state, String severity, Long occurredFrom, Long occurredTo,
+    public record WorkbenchQuery(String kind, String state, String severity, String severityMin, Long occurredFrom, Long occurredTo,
             String ownerOrgId, String districtId, String sourceMode) {
         boolean matchesKind(String candidate) { return kind == null || kind.equals(candidate); }
     }

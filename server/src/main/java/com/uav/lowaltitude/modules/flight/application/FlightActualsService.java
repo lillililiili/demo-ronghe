@@ -15,8 +15,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.uav.lowaltitude.modules.flight.api.FlightActualsDtos.ActualsDto;
 import com.uav.lowaltitude.modules.flight.api.FlightActualsDtos.AltitudeRelationDto;
-import com.uav.lowaltitude.modules.flight.api.FlightActualsDtos.AuthorizationDto;
-import com.uav.lowaltitude.modules.flight.api.FlightActualsDtos.AuthorizationsDto;
 import com.uav.lowaltitude.modules.flight.api.FlightActualsDtos.HitDetailDto;
 import com.uav.lowaltitude.modules.flight.api.FlightActualsDtos.LatestRisksDto;
 import com.uav.lowaltitude.modules.flight.api.FlightActualsDtos.LegalityDto;
@@ -26,8 +24,6 @@ import com.uav.lowaltitude.modules.flight.infrastructure.FlightActualsRepository
 import com.uav.lowaltitude.modules.flight.infrastructure.FlightActualsRepository.EvaluationRow;
 import com.uav.lowaltitude.modules.flight.infrastructure.FlightReadRepository;
 import com.uav.lowaltitude.modules.flight.infrastructure.FlightReadRepository.PlanRow;
-import com.uav.lowaltitude.modules.flight.infrastructure.PlanAuthorizationRepository;
-import com.uav.lowaltitude.modules.flight.infrastructure.PlanAuthorizationRepository.AuthorizationRow;
 import com.uav.lowaltitude.modules.identity.application.AccessControlService;
 import com.uav.lowaltitude.modules.identity.domain.AccessDecision;
 import com.uav.lowaltitude.modules.identity.domain.PermissionCode;
@@ -61,14 +57,12 @@ public class FlightActualsService {
     private final AccessControlService access;
     private final FlightReadRepository plans;
     private final FlightActualsRepository evaluations;
-    private final PlanAuthorizationRepository authorizations;
     private final RiskRepository risks;
     private final ObjectMapper json;
 
     public FlightActualsService(AccessControlService access, FlightReadRepository plans, FlightActualsRepository evaluations,
-            PlanAuthorizationRepository authorizations, RiskRepository risks, ObjectMapper json) {
-        this.access = access; this.plans = plans; this.evaluations = evaluations;
-        this.authorizations = authorizations; this.risks = risks; this.json = json;
+            RiskRepository risks, ObjectMapper json) {
+        this.access = access; this.plans = plans; this.evaluations = evaluations; this.risks = risks; this.json = json;
     }
 
     @Transactional(readOnly = true)
@@ -82,7 +76,7 @@ public class FlightActualsService {
 
         return new ActualsDto(plan.planId(), plan.planNo(), match(assessment, evaluation, hits),
                 altitudeRelation(assessment, evaluation, hits), latestRisks(plan.planId()),
-                legality(assessment, evaluation), authorizations(plan.planId()));
+                legality(assessment, evaluation));
     }
 
     private PlanRow requirePlan(String planId, AccessDecision flight) {
@@ -135,16 +129,6 @@ public class FlightActualsService {
                 millis(evaluation.evaluatedAt()), evaluation.paramStatus());
     }
 
-    /** 授权登记的可见范围就是所属计划的可见范围：能看到计划的人就能看到登记在它名下的授权文号。 */
-    private AuthorizationsDto authorizations(String planId) {
-        return new AuthorizationsDto(AVAILABLE, authorizations.list(planId).stream().map(FlightActualsService::authorization).toList());
-    }
-
-    static AuthorizationDto authorization(AuthorizationRow row) {
-        return new AuthorizationDto(row.authorizationId(), row.documentNo(), row.issuer(), row.grantedFrom().toEpochMilli(),
-                row.grantedTo().toEpochMilli(), row.scopeNote(), row.recordedBy(), row.recordedByName(),
-                row.recordedAt().toEpochMilli(), row.sourceKind());
-    }
 
     private static RiskItemDto risk(RiskRow row) {
         return new RiskItemDto(row.riskId(), row.sourceRiskId(), row.riskType(), row.severity(), row.state(),

@@ -25,7 +25,10 @@
 .maptip.is-interactive{pointer-events:auto}
 .maptip .kv dt{color:#718394}.maptip .kv dd{color:#293f51}
 .maptip .kv{gap:3px 10px;font-size:12px}
-.mapscale{position:absolute;left:12px;bottom:27px;font-size:11px;color:#405568;text-shadow:0 1px 2px #fff;z-index:5}
+/* 比例尺让开左上角那一列缩放按钮：按钮列从顶部往下排约 110px，地图一矮（飞行计划页的
+   航线小地图只有 140 多像素高）就会和贴着底边的比例尺叠在一起，把"复位"按钮压住。
+   融合感知页此前已经单独躲到 52px，这里统一。 */
+.mapscale{position:absolute;left:52px;bottom:27px;font-size:11px;color:#405568;text-shadow:0 1px 2px #fff;z-index:5}
 .mapscale .bar{height:4px;border:1px solid #405568;border-top:0;width:70px}
 .mapwrap .mapstatus{max-width:calc(100% - 104px);white-space:normal;pointer-events:auto;line-height:1.5;text-align:center}
 .mapwrap .mapstatus[hidden],.mapwrap .mapcredit[hidden],.mapwrap .mapstatus button[hidden]{display:none}
@@ -36,3 +39,7 @@
 .mapwrap .maplibregl-ctrl-attrib a{color:inherit}
 .mapwrap .maplibregl-ctrl-bottom-left{z-index:3;max-width:calc(100% - 80px)}
 @media(prefers-reduced-motion:reduce){.mapstatus.is-loading:before{animation:none}}
+/* 右上角「重新定位」：回到本页数据所在位置（上一次 fitTo / centerAt 的焦点）。 */
+.mapwrap .map-refocus{position:absolute;right:10px;top:10px;z-index:5;width:auto;height:28px;padding:0 10px;border-radius:5px;background:rgba(255,255,255,.96);border:1px solid rgba(61,80,94,.2);color:#334a5d;font-size:12px;display:flex;align-items:center;gap:4px;cursor:pointer;box-shadow:0 2px 8px rgba(39,59,72,.15)}
+.mapwrap .map-refocus:hover{border-color:#3484c5;color:#1769a6;background:#fff}
+.mapwrap.is-fullscreen .map-refocus{top:14px;right:14px}

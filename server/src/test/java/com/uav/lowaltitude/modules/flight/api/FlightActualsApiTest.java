@@ -66,7 +66,6 @@ class FlightActualsApiTest {
 
     @AfterEach
     void cleanup() {
-        jdbc.update("delete from flight_plan_authorization where plan_id in (select plan_id from flight_plan where owner_org_id=?)", orgId);
         jdbc.update("delete from flight_risk where owner_org_id=?", orgId);
         jdbc.update("delete from rule_evaluation where owner_org_id=?", orgId);
         if (runId != null) jdbc.update("delete from rule_run where run_id=?", runId);
@@ -92,7 +91,6 @@ class FlightActualsApiTest {
     void everySectionIsFilledWhenAllPermissionsAreGranted() throws Exception {
         String evaluationId = evaluation("FULL", "LEGAL", hits("120"));
         for (int i = 0; i < 6; i++) risk("R-" + i, "MEDIUM", T0.plusSeconds(60L * i));
-        authorization("SW-2026-001", T0, T0.plusSeconds(7200));
 
         JsonNode data = getJson(fullSession, planId);
         assertThat(data.path("plan_id").asText()).isEqualTo(planId);
@@ -121,17 +119,12 @@ class FlightActualsApiTest {
         assertThat(data.path("legality").path("legal_status").asText()).isEqualTo("LEGAL");
         assertThat(data.path("legality").path("evaluation_id").asText()).isEqualTo(evaluationId);
         assertThat(data.path("legality").path("param_status").asText()).isEqualTo("DEMO");
-
-        assertThat(data.path("authorizations").path("availability").asText()).isEqualTo("AVAILABLE");
-        assertThat(data.path("authorizations").path("items")).hasSize(1);
-        assertThat(data.path("authorizations").path("items").get(0).path("document_no").asText()).isEqualTo("SW-2026-001");
     }
 
     @Test
     void sectionsWithoutPermissionAreForbiddenAndCarryNoNumbers() throws Exception {
         evaluation("FULL", "LEGAL", hits("120"));
         risk("R-X", "HIGH", T0);
-        authorization("SW-2026-002", T0, T0.plusSeconds(7200));
 
         JsonNode data = getJson(flightOnlySession, planId);
         // 缺 assessment:read 时研判段只剩 availability：连"有没有研判""匹配到几条"都不能泄露。
@@ -147,9 +140,8 @@ class FlightActualsApiTest {
         assertThat(data.path("legality").has("param_status")).isFalse();
         assertThat(data.path("latest_risks").path("availability").asText()).isEqualTo("FORBIDDEN");
         assertThat(data.path("latest_risks").has("items")).isFalse();
-        // 授权登记只需要 flight:read，因此仍然可见。
-        assertThat(data.path("authorizations").path("availability").asText()).isEqualTo("AVAILABLE");
-        assertThat(data.path("authorizations").path("items")).hasSize(1);
+        // 外部授权登记段已按 F8 裁定撤除：响应里不再出现 authorizations。
+        assertThat(data.has("authorizations")).isFalse();
     }
 
     @Test
@@ -159,11 +151,9 @@ class FlightActualsApiTest {
         assertThat(data.path("match").has("plan_match_code")).isFalse();
         assertThat(data.path("legality").path("availability").asText()).isEqualTo("NO_EVALUATION");
         assertThat(data.path("altitude_relation").path("availability").asText()).isEqualTo("NO_EVALUATION");
-        // 有权限但没有数据不是"无权限"：风险与授权照常返回空列表。
+        // 有权限但没有数据不是"无权限"：风险照常返回空列表。
         assertThat(data.path("latest_risks").path("availability").asText()).isEqualTo("AVAILABLE");
         assertThat(data.path("latest_risks").path("items")).isEmpty();
-        assertThat(data.path("authorizations").path("availability").asText()).isEqualTo("AVAILABLE");
-        assertThat(data.path("authorizations").path("items")).isEmpty();
     }
 
     @Test
@@ -260,12 +250,6 @@ class FlightActualsApiTest {
                 + " values (?,?,?,?,?,null,null,null,'FOREIGN_OBJECT',?,'PENDING_VERIFICATION','BIRD_FLOCK','沿线鸟群',?,?,null,null,'UNKNOWN','mock',?,?,?,?,0)",
                 UUID.randomUUID().toString(), sourceId, sourceRiskId, planId, routeVersionId, severity, ts(receivedAt), ts(receivedAt),
                 orgId, district, ts(receivedAt), ts(receivedAt));
-    }
-
-    private void authorization(String documentNo, Instant from, Instant to) {
-        jdbc.update("insert into flight_plan_authorization (authorization_id,plan_id,document_no,issuer,granted_from,granted_to,scope_note,"
-                + "recorded_by,recorded_at,source_kind) values (?,?,?,?,?,?,?,?,?,'MANUAL')",
-                UUID.randomUUID().toString(), planId, documentNo, "东营市空管办", ts(from), ts(to), null, userId, ts(T0));
     }
 
     private void route(String id, String number, String owner, String districtId) {

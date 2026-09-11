@@ -36,12 +36,11 @@ public enum PermissionCode {
     EVIDENCE_LINK("evidence:link"),
     EVIDENCE_HOLD("evidence:hold"),
     EVIDENCE_DESTROY("evidence:destroy"),
-    // 阶段 9：空域写/导入、机场基础数据、空间风险评估触发、飞行计划外部授权登记。
+    // 阶段 9：空域写/导入、机场基础数据、空间风险评估触发。飞行计划外部授权登记（flight:authorize）已按 F8 裁定撤除。
     AIRSPACE_MANAGE("airspace:manage"),
     AIRPORT_READ("airport:read"),
     AIRPORT_MANAGE("airport:manage"),
     RISK_EVALUATE("risk:evaluate"),
-    FLIGHT_AUTHORIZE("flight:authorize"),
     // 阶段 13：处置授权域（反制/干扰/驱离/诱骗的申请、审批、执行、停止）。执行还需协作者 A 的 devices.op（设备控制面）。
     DISPOSAL_READ("disposal:read"),
     DISPOSAL_REQUEST("disposal:request"),

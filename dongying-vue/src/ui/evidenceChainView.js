@@ -97,7 +97,7 @@ export function renderEvidenceChainHtml(chain, state = {}) {
       ${records.length > 8 ? `<div style="font-size:11px;color:var(--txt-3);margin-top:6px">另有 ${records.length - 8} 项，可在「证据管理」查看文件台账</div>` : ''}`;
   const integrity = chain.integrity
     ? `<div style="font-size:11px;color:var(--txt-3);line-height:1.7;margin-top:8px">
-        链校验 ${esc(chain.integrity.algorithm)}　<span class="mono" style="word-break:break-all">${esc(chain.integrity.checksum || '')}</span>
+        <span title="${esc(chain.integrity.algorithm)} ${esc(chain.integrity.checksum || '')}">链校验已生成（悬停查看摘要）</span>
         　${Number(chain.integrity.member_count) || 0} 项　${esc(fmtEvidenceTime(chain.integrity.computed_at))}
       </div>` : '';
   const lineage = lineageHtml(chain.lineage, chain.current_target_id, chain.historical_target_ids);
@@ -127,7 +127,7 @@ function lineageHtml(lineage, currentId, historical) {
   }).join('');
   return U.sect('目标 ID 变更回溯', `
     <div class="warnbox" style="margin-bottom:8px;padding:7px 9px;font-size:11.5px;line-height:1.6">
-      当前归属目标 <span class="mono">${esc(currentId || '—')}</span>。ID 变更不得导致证据链断裂；下方为合并前判定（来自研判只增记录，不虚构合法性字段）。
+      当前归属目标 <span class="mono">${esc(currentId || '—')}</span>。ID 变更不得导致证据链断裂；下方为合并前判定（来自研判历史记录，不虚构合法性字段）。
     </div>
     ${U.kv([
       ['历史目标', hist],

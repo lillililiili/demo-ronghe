@@ -1,6 +1,6 @@
 <script>
 const S = {
-  st: { page: 1, size: 10, kind: '', status: '', refKind: '', kw: '', selId: null }
+  st: { page: 1, size: 10, kind: '', status: '', custody: '', refKind: '', kw: '', selId: null }
 };
 export default {};
 </script>
@@ -14,13 +14,14 @@ import UPagination from '@/components/UPagination.vue';
 import UPanel from '@/components/UPanel.vue';
 import { toast } from '@/ui/nv.js';
 import { closeModal, openFormModal } from '@/ui/formModal.js';
+import { openConfirm } from '@/ui/confirm.js';
+/* 会改状态的动作先问一句；openConfirm 的 onConfirm 回调改成 Promise 便于顺序写。 */
+function confirmAction(options) { return new Promise(resolve => openConfirm({ ...options, onConfirm: () => { resolve(true); return true; }, onCancel: () => resolve(false) })); }
 import {
   destroyEvidenceFile, downloadEvidenceContent, exportEvidenceCsv, getEvidenceFile, holdEvidenceFile,
   linkEvidenceFile, listEvidenceFiles, releaseEvidenceHold, verifyEvidenceFile
 } from '@/services/evidenceApi.js';
-import {
-  EVIDENCE_KIND_LABEL, EVIDENCE_STATUS_LABEL, EVIDENCE_SUBJECT_LABEL, labelOf
-} from '@/ui/labels.js';
+import { EVIDENCE_CUSTODY_LABEL, EVIDENCE_KIND_LABEL, EVIDENCE_STATUS_LABEL, EVIDENCE_SUBJECT_LABEL, labelOf } from '@/ui/labels.js';
 import { custodyTag, renderEvidenceFileDetail, saveEvidenceBlob, sizeText } from '@/ui/evidenceFileDetail.js';
 
 const U = window.UI;
@@ -37,6 +38,7 @@ const kpis = ref({ total: 0, available: 0, held: 0, broken: 0 });
 const KIND_OPTS = [{ v: '', t: '全部' }, ...Object.entries(EVIDENCE_KIND_LABEL).map(([v, t]) => ({ v, t }))];
 const STATUS_OPTS = [{ v: '', t: '全部' }, ...Object.entries(EVIDENCE_STATUS_LABEL).map(([v, t]) => ({ v, t }))];
 const REF_OPTS = [{ v: '', t: '全部' }, ...Object.entries(EVIDENCE_SUBJECT_LABEL).map(([v, t]) => ({ v, t }))];
+const CUSTODY_OPTS = [{ v: '', t: '全部' }, ...Object.entries(EVIDENCE_CUSTODY_LABEL).map(([v, t]) => ({ v, t }))];
 const SC = {
   PENDING: 't-gray', AVAILABLE: 't-green', MISSING: 't-orange', CORRUPT: 't-red', DESTROYED: 't-gray'
 };
@@ -62,6 +64,7 @@ const ledgerBody = `<div class="toolbar">
   <div class="toolbar-fields">
     ${U.field('类型', U.select('kind', KIND_OPTS, st.kind))}
     ${U.field('文件状态', U.select('status', STATUS_OPTS, st.status))}
+    ${U.field('保管状态', U.select('custody', CUSTODY_OPTS, st.custody))}
     ${U.field('关联对象', U.select('refKind', REF_OPTS, st.refKind))}
     <input class="ip" id="evKw" placeholder="编号 / 文件名" value="${esc(st.kw)}">
   </div>
@@ -75,6 +78,7 @@ function query() {
   const values = { page: st.page, size: st.size };
   if (st.kind) values.kind_code = st.kind;
   if (st.status) values.status = st.status;
+  if (st.custody) values.custody = st.custody;
   if (st.kw) values.q = st.kw;
   return values;
 }
@@ -140,7 +144,7 @@ function paintList() {
         <div style="font-size:11px;color:var(--txt-3)">${esc(f.content_type || '')}</div>`
     },
     { t: '取证时刻', w: '124px', cls: 'num', render: f => `<div>${esc(fmt(f.captured_at).slice(5, 16))}</div>` },
-    { t: '大小', w: '72px', align: 'right', cls: 'num', render: f => sizeText(f.size_bytes) },
+    { t: '大小', w: '72px', align: 'right', cls: 'num', render: f => (f.status === 'DESTROYED' ? '—' : sizeText(f.size_bytes)) },
     { t: '文件状态', w: '86px', render: f => U.tag(labelOf(EVIDENCE_STATUS_LABEL, f.status, f.status), SC[f.status] || 't-gray') },
     {
       t: '留存', w: '118px',
@@ -173,6 +177,8 @@ async function doDownload() {
 
 async function doVerify() {
   if (!st.selId) return;
+  const ok = await confirmAction({ title: '校验哈希', message: '将按台账记录的哈希重新读取文件并比对；比对结果会更新文件状态（可能变为"文件缺失"或"哈希不符"）并记入审计。是否继续？', confirmText: '开始校验' });
+  if (!ok) return;
   try {
     const result = await verifyEvidenceFile(st.selId, idem());
     toast(result.matches ? '哈希一致' : `校验结果：${labelOf(EVIDENCE_STATUS_LABEL, result.status, result.status)}`, result.matches ? 'ok' : 'warn');
@@ -230,6 +236,8 @@ function doDestroy() {
 
 async function doRelease(holdId) {
   if (!st.selId || !holdId) return;
+  const ok = await confirmAction({ title: '解除冻结', message: '解除法律冻结后，该文件到期即可被清理。是否确认解除？', confirmText: '解除冻结', positiveType: 'warning' });
+  if (!ok) return;
   try {
     await releaseEvidenceHold(st.selId, holdId, idem());
     toast('已解除冻结', 'ok');

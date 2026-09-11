@@ -50,7 +50,7 @@ public class WorkbenchReadService {
             "owner_org_id", "district_id", "source_mode", "page", "size");
     private static final Map<String, Set<String>> STATES = Map.of(
             UAV_EVENT, Set.of("PENDING_VERIFICATION", "EVIDENCE_REQUIRED", "CONFIRMED", "FALSE_POSITIVE"),
-            RISK, Set.of("PENDING_VERIFICATION", "PENDING_NOTIFICATION", "NOTIFIED", "EXCLUDED"),
+            RISK, Set.of("PENDING_VERIFICATION", "PENDING_NOTIFICATION", "NOTIFIED", "ACKNOWLEDGED", "EXCLUDED"),
             DEVICE_INCIDENT, Set.of("PENDING", "PROCESSING", "PENDING_VERIFICATION", "RECOVERED"));
     private static final Set<String> SEVERITIES = Set.of("LOW", "MEDIUM", "HIGH", "CRITICAL");
     private static final Set<String> SOURCE_MODES = Set.of("mock", "replay", "live");
@@ -63,12 +63,12 @@ public class WorkbenchReadService {
     private static final Map<String, String> INCIDENT_TYPE_LABEL = Map.of("OFFLINE", "设备离线", "ABNORMAL", "设备异常", "DEGRADED", "性能降级",
             "ADAPTER_TIMEOUT", "适配器超时", "REBOOT_FAILED", "重启失败",
             // 设备域实际写入的异常类型码（LocalDeviceSeeder / 演示种子）；没收录会把英文码摆到工作台标题上。
-            "DEVICE_OFFLINE", "设备离线", "LINK_DEGRADED", "链路降级", "STATE_UNKNOWN", "状态未知");
+            "DEVICE_OFFLINE", "设备离线", "LINK_DEGRADED", "链路降级", "STATE_UNKNOWN", "状态未知", "MQTT_HEARTBEAT_TIMEOUT", "MQTT 心跳超时");
     private static final Map<String, String> SOURCE_MODE_LABEL = Map.of("mock", "模拟", "replay", "回放", "live", "实时");
     private static final Map<String, String> UAV_STATE_LABEL = Map.of("PENDING_VERIFICATION", "待核实", "EVIDENCE_REQUIRED", "证据待补充",
             "CONFIRMED", "已核实，待处置", "FALSE_POSITIVE", "误报");
     private static final Map<String, String> RISK_STATE_LABEL = Map.of("PENDING_VERIFICATION", "待核验", "PENDING_NOTIFICATION", "待通知",
-            "NOTIFIED", "已通知", "EXCLUDED", "已排除");
+            "NOTIFIED", "已通知", "ACKNOWLEDGED", "已回执", "EXCLUDED", "已排除");
     private static final Map<String, String> DEVICE_STAGE_LABEL = Map.of("PENDING", "待处理", "PROCESSING", "处理中",
             "PENDING_VERIFICATION", "待验证", "RECOVERED", "已恢复");
 
@@ -215,7 +215,8 @@ public class WorkbenchReadService {
                 List<String> actions = new ArrayList<>();
                 String blocked = null;
                 if ("PROCESSING".equals(row.state())) blocked = "WAITING_RECEIPT";
-                else if ("PENDING".equals(row.state()) && capabilities.monitoringOperate()) actions.add("REBOOT");
+                else if ("PENDING".equals(row.state()) && capabilities.monitoringOperate())
+                    actions.add("MQTT_HEARTBEAT_TIMEOUT".equals(row.typeCode()) ? "VERIFY_RECOVERY" : "REBOOT");
                 else if ("PENDING_VERIFICATION".equals(row.state()) && capabilities.monitoringOperate()) actions.add("VERIFY_RECOVERY");
                 yield new ItemDto(DEVICE_INCIDENT, row.sourceId(), row.sourceNo(), row.state(), row.severity(), row.receivedAt(), null, row.updatedAt(), null,
                         "设备异常 · " + label(INCIDENT_TYPE_LABEL, row.typeCode()) + " · " + row.deviceNo(),

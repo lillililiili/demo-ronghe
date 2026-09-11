@@ -7,7 +7,7 @@ import org.springframework.http.HttpStatus;
 import com.uav.lowaltitude.platform.api.ApiException;
 
 /**
- * 交接规则：交接是独立于源状态的记录，提交只表示材料入库，不推进源风险、不表示送达或办结。
+ * 交接规则：提交成功推进风险为已通知，可信确认回执推进已回执；投递事实独立记录，不表示处罚办结。
  *
  * 阶段 13（决策 13-6）起，UAV_PUNISHMENT 不再一律阻断：处置授权域上线后，"该事件已被反制/干扰且完成"
  * 成了库里可查的事实，处罚交接因此有了可信前提。没有完成授权时仍然阻断——阻断的理由从
@@ -66,7 +66,7 @@ public final class HandoffRules {
 
     /** 只有核验后的待通知风险可以交接；待核验、已排除都不是可通知状态。 */
     public static void requireNotifiable(String riskState) {
-        if (!"PENDING_NOTIFICATION".equals(riskState)) {
+        if (!Set.of("PENDING_NOTIFICATION", "NOTIFIED", "ACKNOWLEDGED").contains(riskState)) {
             throw new ApiException(HttpStatus.CONFLICT, "INVALID_TRANSITION", "当前风险状态不允许提交通知交接");
         }
     }

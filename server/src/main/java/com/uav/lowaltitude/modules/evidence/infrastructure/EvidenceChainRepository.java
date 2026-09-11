@@ -196,6 +196,23 @@ public class EvidenceChainRepository {
                 rs.getString("status"), longOrNull(rs, "created_at")));
     }
 
+    public List<CommandRow> linkedAuthorizations(String eventId, Collection<String> targetIds) {
+        if (eventId == null && targetIds.isEmpty()) return List.of();
+        Map<String, Object> params = new HashMap<>();
+        params.put("eventId", eventId);
+        params.put("limit", FETCH);
+        String targetClause = "";
+        if (!targetIds.isEmpty()) {
+            params.put("targets", targetIds);
+            targetClause = " OR (subject_kind='TARGET' AND subject_id IN (:targets))";
+        }
+        return jdbc.query("SELECT authorization_id,authorization_no,status,created_at FROM disposal_authorization"
+                + " WHERE (subject_kind='UAV_EVENT' AND subject_id=:eventId)" + targetClause
+                + " ORDER BY created_at,authorization_id FETCH FIRST :limit ROWS ONLY", params,
+                (rs, i) -> new CommandRow(rs.getString("authorization_id"), rs.getString("authorization_no"),
+                        rs.getString("authorization_id"), rs.getString("status"), rs.getTimestamp("created_at").getTime()));
+    }
+
     public List<VerificationRow> verifications(Collection<String> eventIds) {
         if (eventIds.isEmpty()) return List.of();
         return jdbc.query("""

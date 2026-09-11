@@ -399,6 +399,8 @@ class Stage9PostgresTest {
                 String.class, LocalStage9SpaceRiskSeeder.ROUTE_VERSION);
         assertThat(routeDatum).as("阶段 3 演示航线声明了高度基准").isEqualTo("AMSL");
         String inside = spaceTarget("inside", "BIRD_FLOCK", 118.025, 37.025, null, new BigDecimal("100.00"), observedAt);
+        // MQTT 当前只有主类别；空间计算不能漏掉它，也不能把回放来源改成 live。
+        jdbc.update("update target set subtype=null,source_mode='replay' where target_id=?", inside);
         String insideOtherDatum = spaceTarget("datum", "BIRD_FLOCK", 118.0255, 37.0255, new BigDecimal("100.00"), null, observedAt);
         String far = spaceTarget("far", "BIRD_FLOCK", 118.025, 37.031, null, new BigDecimal("100.00"), observedAt);
         double insideDistance = distanceToRoute(inside), farDistance = distanceToRoute(far);
@@ -411,6 +413,8 @@ class Stage9PostgresTest {
         // targets_seen 是**去重后的目标数**，而风险按 (计划, 目标) 生成（source_risk_id 含 plan_id）：
         // 同一元组下有多条时间重叠的计划时，风险数会大于目标数，这不是重复入库。
         assertThat(run.risksCreated()).as("走廊内目标必须产出风险").isPositive();
+        assertThat(jdbc.queryForList("select distinct source_mode from flight_risk where target_id=?", String.class, inside))
+                .containsExactly("replay");
         assertThat(run.targetsSeen()).as("三个夹具目标都被观测到（含走廊外那个）").isGreaterThanOrEqualTo(3);
         // "看到"与"判成风险"是两件事：走廊外的目标计入 targets_seen 但不产生风险，页面不能把两者混为一谈。
         // 只统计本用例自己的三个夹具目标（种子另有两条演示风险，按自身归属过滤才不会串味）。

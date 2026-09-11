@@ -259,7 +259,7 @@ class UavEventVerificationApiTest {
         Mockito.doAnswer(invocation -> {
             EventRow real = (EventRow) invocation.callRealMethod();
             if (real == null || !staleOnce.getAndSet(false)) return real;
-            return new EventRow(real.eventId(), real.alarmId(), real.targetId(), "PENDING_VERIFICATION", real.ownerOrgId(), real.districtId(), real.createdAt(), real.updatedAt(), 0L);
+            return new EventRow(real.eventId(), real.alarmId(), real.targetId(), "PENDING_VERIFICATION", real.ownerOrgId(), real.districtId(), real.createdAt(), real.updatedAt(), 0L, real.sourceMode());
         }).when(target).lock(ArgumentMatchers.eq(eventId), ArgumentMatchers.any());
         mvc.perform(verify("FALSE_POSITIVE", "第二位核实人持旧版本", 0, "stale-second-" + UUID.randomUUID()))
                 .andExpect(status().isConflict()).andExpect(jsonPath("$.error.code").value("VERSION_CONFLICT"));

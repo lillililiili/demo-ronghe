@@ -105,6 +105,30 @@ class LegalityEvaluationServiceTest {
     }
 
     @Test
+    void birdInProhibitedAirspaceCannotBecomeIllegalUavAlarm() {
+        jdbc.update("update target set object_type_code='BIRD' where target_id=?", targetId);
+        spatial.hits = List.of(covers("PROHIBITED"));
+        RunHandle run = runs.start(code, RunMode.ACTIVE, "MANUAL", null, null, now());
+        EvaluationResult result = service.evaluate(subject(targetId), RunMode.ACTIVE, now(), run.runId());
+        assertThat(result.legalStatus()).isEqualTo(RuleContracts.LegalStatus.NOT_APPLICABLE);
+        assertThat(result.assessmentId()).isNull();
+        assertThat(hooks.outcomes).hasSize(1);
+        assertThat(hooks.outcomes.get(0).alarmEligible()).isFalse();
+    }
+
+    @Test
+    void unidentifiedObjectIsUndeterminedEvenInsideProhibitedAirspace() {
+        jdbc.update("update target set object_type_code='UNKNOWN' where target_id=?", targetId);
+        spatial.hits = List.of(covers("PROHIBITED"));
+        RunHandle run = runs.start(code, RunMode.ACTIVE, "MANUAL", null, null, now());
+        EvaluationResult result = service.evaluate(subject(targetId), RunMode.ACTIVE, now(), run.runId());
+        assertThat(result.legalStatus()).isEqualTo(RuleContracts.LegalStatus.UNDETERMINED);
+        assertThat(result.assessmentId()).isNull();
+        assertThat(hooks.outcomes).hasSize(1);
+        assertThat(hooks.outcomes.get(0).alarmEligible()).isFalse();
+    }
+
+    @Test
     void shadowModeRecordsEvaluationWithoutProjectionOrAlarm() {
         spatial.hits = List.of(covers("PROHIBITED"));
         // 影子运行只取 shadow_version_id：没有影子版本必须 409，不能悄悄退回生效版本。

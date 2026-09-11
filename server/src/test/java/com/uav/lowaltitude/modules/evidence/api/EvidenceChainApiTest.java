@@ -174,6 +174,26 @@ class EvidenceChainApiTest {
     }
 
     @Test
+    void eventChainIncludesDomainAuthorizationOnlyWhenDisposalIsReadable() throws Exception {
+        String token = fullReader();
+        String authorization = UUID.randomUUID().toString();
+        jdbc.update("""
+                insert into disposal_authorization (authorization_id,authorization_no,action_type,subject_kind,subject_id,
+                target_id,channel,reason,requested_by,requested_at,status,policy_version,owner_org_id,district_id,
+                source_mode,version,created_at,updated_at)
+                select ?,?,'DISPERSAL','UAV_EVENT',?,?,'MANUAL','证据链回归',user_id,current_timestamp,'REQUESTED',
+                'demo-v1',?,?,'mock',0,current_timestamp,current_timestamp from app_session where session_id=?
+                """, authorization, "AUTH-TEST-" + suffix, eventId, targetId, org, district, token);
+        grantAction(token, "disposal:read");
+        JsonNode data = chain(token, "EVENT", eventId);
+        assertThat(data.get("coverage").get("AUTHORIZATION").get("status").asText()).isEqualTo("PRESENT");
+        assertThat(data.toString()).contains(authorization);
+        String restricted = fullReader();
+        JsonNode hidden = chain(restricted, "EVENT", eventId);
+        assertThat(hidden.toString()).doesNotContain(authorization);
+    }
+
+    @Test
     void eventChainAggregatesPresentTypesAndFlagsAbsentAuthorization() throws Exception {
         String token = fullReader();
         evidenceId = ingest(token, "shot.jpg", "EO_STILL", "EVENT", eventId);

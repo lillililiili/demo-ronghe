@@ -40,6 +40,10 @@ public class SpaceRiskRepository {
                         jsonText(rs.getObject("aliases")), rs.getBoolean("enabled")));
     }
 
+    public String targetSourceMode(String targetId) {
+        return jdbc.queryForObject("SELECT source_mode FROM target WHERE target_id=:id", Map.of("id", targetId), String.class);
+    }
+
     // ---- 空间事实 ----
 
     public SpaceFactRow findFact(String riskId) {

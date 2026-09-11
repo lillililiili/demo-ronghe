@@ -4,6 +4,7 @@ import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
@@ -368,6 +369,32 @@ public class DeviceRepository {
                 WHERE i.incident_id=?
                 """, incidentId);
         return rows.isEmpty() ? null : rows.get(0);
+    }
+
+    /** 锁状态行串行化建单与心跳更新；从未收到心跳、停用设备都不视作离线异常。 */
+    public List<Map<String, Object>> lockMqttConnectivity() {
+        return jdbc.queryForList("""
+                SELECT s.device_id,s.connectivity,s.last_heartbeat_at,d.source_mode
+                FROM ops_device_state s JOIN ops_device d ON d.device_id=s.device_id
+                WHERE d.enabled=TRUE AND s.last_heartbeat_at IS NOT NULL
+                  AND (EXISTS (SELECT 1 FROM mqtt_device_binding b JOIN mqtt_broker m ON m.broker_id=b.broker_id
+                               WHERE b.ops_device_id=d.device_id AND m.enabled=TRUE)
+                    OR EXISTS (SELECT 1 FROM eo_device_binding b JOIN mqtt_broker m ON m.broker_id=b.broker_id
+                               WHERE b.ops_device_id=d.device_id AND m.enabled=TRUE))
+                ORDER BY s.device_id FOR UPDATE
+                """);
+    }
+
+    public boolean openMqttIncident(String deviceId, long now, boolean simulated) {
+        String id = UUID.randomUUID().toString();
+        return jdbc.update("""
+                INSERT INTO device_incident (incident_id,device_id,incident_no,incident_type,severity,stage,detected_at,reason,simulated,block_reason)
+                SELECT ?,?,?,'MQTT_HEARTBEAT_TIMEOUT','HIGH','PENDING',?,?,?,?
+                WHERE NOT EXISTS (SELECT 1 FROM device_incident WHERE device_id=?
+                    AND incident_type='MQTT_HEARTBEAT_TIMEOUT' AND stage<>'RECOVERED')
+                """, id, deviceId, "INC-" + id.replace("-", ""), now,
+                "有效 MQTT 心跳超时；请检查设备电源、网络和发布进程", simulated,
+                "协议未定义重启指令；恢复心跳后执行平台恢复核验", deviceId) == 1;
     }
 
     public int startIncidentReboot(String incidentId, String commandId) {

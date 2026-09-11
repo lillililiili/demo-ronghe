@@ -149,13 +149,27 @@ class EoEdgeMqttTest {
 
     @Test void fusionEventWithAlarmEnqueuesTrackingAndMissingFieldsDoNot() {
         String targetId = insertTarget();
-        insertStable(targetId, "{\"alarm_active\":true,\"class_code\":\"UAV\",\"latest_state\":{\"longitude\":104.0,\"latitude\":30.5,\"altitude_raw\":42.1,\"speed_mps\":10,\"heading_deg\":90}}");
+        receive(heartbeat(binding, 0, null), 100, false);
+        insertOpenAlarm(targetId);
+        // 稳定事件产生时告警尚未建立的真实时序：自动跟踪必须按当前业务状态重新判断，不能只信旧 payload。
+        insertStable(targetId, "{\"alarm_active\":false,\"class_code\":\"UAV\",\"latest_state\":{\"longitude\":104.0,\"latitude\":30.5,\"altitude_raw\":42.1,\"speed_mps\":10,\"heading_deg\":90}}");
         assertThat(autoTrack.poll()).isGreaterThan(0);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM eo_tracking_task WHERE target_id=?", Long.class, targetId)).isOne();
         String other = insertTarget();
         insertStable(other, "{\"status\":\"STABLE\"}");
         autoTrack.poll();
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM eo_tracking_task WHERE target_id=?", Long.class, other)).isZero();
+    }
+
+    @Test void automaticTrackingWaitsForAnOnlineCameraAndRetriesTheSameStableEvent() {
+        String targetId = insertTarget();
+        insertOpenAlarm(targetId);
+        insertStable(targetId, "{\"class_code\":\"UAV\",\"latest_state\":{\"longitude\":104.0,\"latitude\":30.5}}");
+        assertThat(autoTrack.poll()).isZero();
+        receive(heartbeat(binding, 0, null), 101, false);
+        assertThat(autoTrack.poll()).isOne();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM eo_tracking_task WHERE target_id=?", Long.class, targetId)).isOne();
+        assertThat(autoTrack.poll()).isZero();
     }
 
     @Test void realMqttPublishesBeginTrackingAndReceivesReport() throws Exception {
@@ -238,6 +252,18 @@ class EoEdgeMqttTest {
     private void insertStable(String targetId, String payload) {
         jdbc.update("INSERT INTO fusion_event(event_id,event_type,target_id,payload,occurred_at,created_at) VALUES (?,'STATUS_STABLE',?,CAST(? AS JSON),CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)",
                 UUID.randomUUID().toString(), targetId, payload);
+    }
+    private void insertOpenAlarm(String targetId) {
+        String alarmId = UUID.randomUUID().toString();
+        jdbc.update("""
+                INSERT INTO alarm(alarm_id,target_id,source_id,source_alarm_id,alarm_type,severity,received_at,
+                    source_mode,owner_org_id,district_id,created_at)
+                VALUES (?,?,?,?, 'UAV_INTRUSION','HIGH',CURRENT_TIMESTAMP,'replay',?,?,CURRENT_TIMESTAMP)
+                """, alarmId, targetId, binding.sourceId(), "EO-A-" + alarmId, org, district);
+        jdbc.update("""
+                INSERT INTO uav_event(event_id,alarm_id,state_code,owner_org_id,district_id,created_at,updated_at,version)
+                VALUES (?,?,'PENDING_VERIFICATION',?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,0)
+                """, UUID.randomUUID().toString(), alarmId, org, district);
     }
     private BrokerInput input(int port) {
         return new BrokerInput("EO MQTT", "127.0.0.1", port, false, null, null, "127.0.0.1/32", "replay", org, district, null);

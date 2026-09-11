@@ -40,7 +40,7 @@ public class PostgisSpaceRiskSpatialAdapter implements SpaceRiskSpatialPort {
         // targets_seen 但不生成风险。用 INNER JOIN 会让这类目标在查询层就消失，"无计划只计数"变成永不可达的死代码。
         // planId 为 null 时决策表直接返回不生成；距离为 null 时走廊关系为 UNKNOWN，同样不生成。
         return jdbc.query("""
-                SELECT survivor.target_id, survivor.target_no, sub.subtype_code, p.plan_id, p.route_version_id,
+                SELECT DISTINCT survivor.target_id, survivor.target_no, sub.subtype_code, p.plan_id, p.route_version_id,
                        ST_Distance(rv.centerline::geography, ls.location::geography) AS distance_m,
                        rv.corridor_width_m / 2 AS half_width_m,
                        COALESCE(ls.height_agl_m, ls.altitude_amsl_m) AS altitude_m,
@@ -50,11 +50,11 @@ public class PostgisSpaceRiskSpatialAdapter implements SpaceRiskSpatialPort {
                        ST_X(ls.location) AS longitude, ST_Y(ls.location) AS latitude,
                        survivor.owner_org_id, survivor.district_id, ls.observed_at
                 FROM target t
-                JOIN space_object_subtype sub
-                  ON sub.enabled = TRUE
-                 AND CAST(sub.aliases AS TEXT) LIKE CONCAT('%"', t.subtype, '"%')
                 LEFT JOIN target_current_alias alias ON alias.historical_target_id = t.target_id
                 JOIN target survivor ON survivor.target_id = COALESCE(alias.current_target_id, t.target_id)
+                JOIN space_object_subtype sub
+                  ON sub.enabled = TRUE
+                 AND CAST(sub.aliases AS TEXT) LIKE CONCAT('%"', COALESCE(NULLIF(survivor.subtype,''),survivor.object_type_code), '"%')
                 JOIN target_latest_state ls ON ls.target_id = survivor.target_id
                 LEFT JOIN flight_plan p
                   ON p.owner_org_id = survivor.owner_org_id AND p.district_id = survivor.district_id
@@ -85,11 +85,11 @@ public class PostgisSpaceRiskSpatialAdapter implements SpaceRiskSpatialPort {
                             WHEN ls.altitude_amsl_m IS NOT NULL THEN 'AMSL' END AS altitude_datum,
                        ls.observed_at
                 FROM target t
-                JOIN space_object_subtype sub
-                  ON sub.enabled = TRUE
-                 AND CAST(sub.aliases AS TEXT) LIKE CONCAT('%"', t.subtype, '"%')
                 LEFT JOIN target_current_alias alias ON alias.historical_target_id = t.target_id
                 JOIN target survivor ON survivor.target_id = COALESCE(alias.current_target_id, t.target_id)
+                JOIN space_object_subtype sub
+                  ON sub.enabled = TRUE
+                 AND CAST(sub.aliases AS TEXT) LIKE CONCAT('%"', COALESCE(NULLIF(survivor.subtype,''),survivor.object_type_code), '"%')
                 JOIN target_latest_state ls ON ls.target_id = survivor.target_id
                 JOIN airport a ON a.enabled = TRUE
                  AND a.owner_org_id = survivor.owner_org_id AND a.district_id = survivor.district_id

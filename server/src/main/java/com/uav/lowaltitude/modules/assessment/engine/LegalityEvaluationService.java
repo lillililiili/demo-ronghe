@@ -123,7 +123,9 @@ public class LegalityEvaluationService {
         List<HitDetail> hits = new ArrayList<>();
         List<String> candidateIds = List.of();
         boolean usable = freshness == Freshness.FRESH || freshness == Freshness.REPLAY;
-        if (usable) {
+        String objectType = resolved.targetId() == null ? null : repository.objectType(resolved.targetId());
+        boolean uav = "UAV".equals(objectType);
+        if (usable && uav) {
             List<PlanFact> candidates = candidates(resolved, ruleParams, effectiveAsOf, members);
             candidateIds = candidates.stream().map(PlanFact::planId).toList();
             EvaluationContext collecting = new EvaluationContext(resolved.subject(), state, track, null, List.of(), effectiveAsOf, freshness, mode, resolved.sourceMode());
@@ -138,6 +140,12 @@ public class LegalityEvaluationService {
         }
         EvaluationContext context = new EvaluationContext(resolved.subject(), state, track, planMatch, airspaces, effectiveAsOf, freshness, mode, resolved.sourceMode());
         Decision verdict = decision.decide(context, hits, ruleParams);
+        // 无人机飞行规则不能把鸟类/人员当作无计划飞行；识别中也不能先认定为无人机。
+        if (usable && !uav) {
+            verdict = objectType == null || "UNKNOWN".equals(objectType)
+                    ? Decision.undetermined(java.util.Set.of("OBJECT_TYPE_UNKNOWN"), List.of())
+                    : Decision.notApplicable("NON_UAV_OBJECT");
+        }
 
         String evaluationId = UUID.randomUUID().toString();
         PlanFact plan = planMatch.plan();

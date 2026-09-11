@@ -94,7 +94,7 @@ public class UavEventVerificationService {
                 expectedVersion + 1, actor.userId(), at);
         audit.record(actor.userId(), actor.account(), actor.roleCode(), "alarm", "uav_event_verified", "uav_event", id,
                 "conclusion=" + conclusion + "; version=" + (expectedVersion + 1), "SUCCESS", "", "");
-        return dto(new EventRow(event.eventId(), event.alarmId(), event.targetId(), next, event.ownerOrgId(), event.districtId(), event.createdAt(), at, expectedVersion + 1));
+        return dto(new EventRow(event.eventId(), event.alarmId(), event.targetId(), next, event.ownerOrgId(), event.districtId(), event.createdAt(), at, expectedVersion + 1, event.sourceMode()));
     }
 
     private UavEventDto dto(EventRow event) {

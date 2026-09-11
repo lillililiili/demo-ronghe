@@ -37,6 +37,7 @@ class HandoffApiTest {
     @Autowired JdbcTemplate jdbc;
     @Autowired ObjectMapper objectMapper;
     @SpyBean AuditService audit;
+    @SpyBean com.uav.lowaltitude.modules.handoff.domain.HandoffChannelPort channel;
     private String session;
     private String riskId;
     private String recipientId;
@@ -290,7 +291,67 @@ class HandoffApiTest {
     }
 
     @Test
-    void successStoresHeaderSnapshotFirstDeliveryAndAuditWithoutTouchingRisk() throws Exception {
+    void acknowledgedDeliveryRecordsBothStagesAndPreservesSnapshotVersion() throws Exception {
+        var at = java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC);
+        org.mockito.Mockito.doReturn(new com.uav.lowaltitude.modules.handoff.domain.HandoffChannelPort.DeliveryOutcome(
+                "DELIVERED", "ACKNOWLEDGED", null, at, at, at)).when(channel).deliver(org.mockito.ArgumentMatchers.any());
+        String id = created(session, body("RISK", riskId, "RISK_NOTICE", recipientId, 1), "ack-" + UUID.randomUUID());
+        assertThat(state(riskId)).isEqualTo("ACKNOWLEDGED");
+        assertThat(jdbc.queryForObject("select version from flight_risk where risk_id=?", Long.class, riskId)).isEqualTo(3);
+        mvc.perform(get("/api/v1/handoffs/{id}", id).header("Authorization", bearer(session)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.material.risk.state").value("PENDING_NOTIFICATION"))
+                .andExpect(jsonPath("$.data.material.risk.version").value(1));
+        create(session, body("RISK", riskId, "RISK_NOTICE", recipientId, 3), "again-" + UUID.randomUUID())
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.error.code").value("HANDOFF_ALREADY_EXISTS"));
+        assertThat(handoffCount(riskId)).isOne();
+        mvc.perform(get("/api/v1/risks/{id}", riskId).header("Authorization", bearer(session)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.state").value("ACKNOWLEDGED"));
+        mvc.perform(get("/api/v1/risks?state=ACKNOWLEDGED").header("Authorization", bearer(session)))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void confirmationAfterEarlierSubmissionAdvancesOnlyOnceAndNeverRegresses() throws Exception {
+        created(session, body("RISK", riskId, "RISK_NOTICE", recipientId, 1), "submit-" + UUID.randomUUID());
+        assertThat(state(riskId)).isEqualTo("NOTIFIED");
+        var at = java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC);
+        org.mockito.Mockito.doReturn(new com.uav.lowaltitude.modules.handoff.domain.HandoffChannelPort.DeliveryOutcome(
+                "DELIVERED", "ACKNOWLEDGED", null, at, at, at)).when(channel).deliver(org.mockito.ArgumentMatchers.any());
+        String second = "recipient-test-" + UUID.randomUUID().toString().substring(0, 8);
+        insertRecipient(second, "RISK_NOTICE", true);
+        created(session, body("RISK", riskId, "RISK_NOTICE", second, 2), "ack-later-" + UUID.randomUUID());
+        assertThat(state(riskId)).isEqualTo("ACKNOWLEDGED");
+        String third = "recipient-test-" + UUID.randomUUID().toString().substring(0, 8);
+        insertRecipient(third, "RISK_NOTICE", true);
+        org.mockito.Mockito.doReturn(com.uav.lowaltitude.modules.handoff.domain.HandoffChannelPort.DeliveryOutcome.notConnected())
+                .when(channel).deliver(org.mockito.ArgumentMatchers.any());
+        created(session, body("RISK", riskId, "RISK_NOTICE", third, 3), "third-" + UUID.randomUUID());
+        assertThat(state(riskId)).isEqualTo("ACKNOWLEDGED");
+        assertThat(jdbc.queryForObject("select version from flight_risk where risk_id=?", Long.class, riskId)).isEqualTo(3L);
+    }
+
+    @Test
+    void simulatedAcknowledgmentCannotCloseLiveRisk() throws Exception {
+        jdbc.update("update flight_risk set source_id='rule-engine-space-risk-live',source_mode='live' where risk_id=?", riskId);
+        var at = java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC);
+        org.mockito.Mockito.doReturn(true).when(channel).simulated();
+        org.mockito.Mockito.doReturn(new com.uav.lowaltitude.modules.handoff.domain.HandoffChannelPort.DeliveryOutcome(
+                "DELIVERED", "ACKNOWLEDGED", null, at, at, at)).when(channel).deliver(org.mockito.ArgumentMatchers.any());
+        created(session, body("RISK", riskId, "RISK_NOTICE", recipientId, 1), "live-mock-" + UUID.randomUUID());
+        assertThat(state(riskId)).isEqualTo("NOTIFIED");
+    }
+
+    @Test
+    void deliveredWithoutAcknowledgmentRemainsNotified() throws Exception {
+        var at = java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC);
+        org.mockito.Mockito.doReturn(new com.uav.lowaltitude.modules.handoff.domain.HandoffChannelPort.DeliveryOutcome(
+                "DELIVERED", "PENDING", null, at, at, null)).when(channel).deliver(org.mockito.ArgumentMatchers.any());
+        created(session, body("RISK", riskId, "RISK_NOTICE", recipientId, 1), "noack-" + UUID.randomUUID());
+        assertThat(state(riskId)).isEqualTo("NOTIFIED");
+    }
+
+    @Test
+    void submissionMarksNotifiedEvenWhenChannelIsUnavailable() throws Exception {
         MvcResult result = create(session, body("RISK", riskId, "RISK_NOTICE", recipientId, 1), "ok-" + UUID.randomUUID())
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.data.source_kind").value("RISK"))
@@ -305,8 +366,8 @@ class HandoffApiTest {
                 .andReturn();
         String handoffId = objectMapper.readTree(result.getResponse().getContentAsString()).path("data").path("handoff_id").asText();
         assertThat(handoffId).isNotBlank();
-        assertThat(state(riskId)).isEqualTo("PENDING_NOTIFICATION");
-        assertThat(jdbc.queryForObject("select version from flight_risk where risk_id=?", Long.class, riskId)).isEqualTo(1L);
+        assertThat(state(riskId)).isEqualTo("NOTIFIED");
+        assertThat(jdbc.queryForObject("select version from flight_risk where risk_id=?", Long.class, riskId)).isEqualTo(2L);
         assertThat(handoffCount(riskId)).isEqualTo(1L);
         assertThat(jdbc.queryForObject("select count(*) from handoff_material_snapshot where handoff_id=? and schema_version=1", Long.class, handoffId)).isEqualTo(1L);
         assertThat(jdbc.queryForObject("select count(*) from handoff_delivery where handoff_id=? and attempt_no=1 and delivery_status='PENDING_DELIVERY' and receipt_status='NOT_EXPECTED' and blocked_reason='CHANNEL_NOT_CONNECTED' and submitted_at is null and delivered_at is null and acknowledged_at is null", Long.class, handoffId)).isEqualTo(1L);
@@ -318,7 +379,7 @@ class HandoffApiTest {
     void secondUserWithDifferentKeyGetsAlreadyExistsAndOnlyOneHandoffRemains() throws Exception {
         String other = user(true, true, true, false, false);
         create(session, body("RISK", riskId, "RISK_NOTICE", recipientId, 1), "first-" + UUID.randomUUID()).andExpect(status().isCreated());
-        create(other, body("RISK", riskId, "RISK_NOTICE", recipientId, 1), "second-" + UUID.randomUUID())
+        create(other, body("RISK", riskId, "RISK_NOTICE", recipientId, 2), "second-" + UUID.randomUUID())
                 .andExpect(status().isConflict()).andExpect(jsonPath("$.error.code").value("HANDOFF_ALREADY_EXISTS"))
                 .andExpect(jsonPath("$.error.handoff_id").doesNotExist());
         assertThat(handoffCount(riskId)).isEqualTo(1L);

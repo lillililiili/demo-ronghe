@@ -39,9 +39,12 @@ const clkHtml = computed(() => `${U.icon('clock')} ${store.timeStr}`);
    用服务端 total 求和；无权限（403）或任何失败都清空数字，不回退旧 Mock 计数。 */
 const bellN = ref(null);
 let bellSeq = 0;
-async function refreshBell() {
+let bellFetchedAt = 0;
+const BELL_TTL_MS = 20_000;
+async function refreshBell(force = false) {
   const seq = ++bellSeq;
-  if (!canAlarms.value) { bellN.value = null; return; }
+  if (!canAlarms.value) { bellN.value = null; bellFetchedAt = 0; return; }
+  if (!force && bellN.value != null && Date.now() - bellFetchedAt < BELL_TTL_MS) return;
   try {
     const [pending, evidence] = await Promise.all([
       listAlarms({ state: 'PENDING_VERIFICATION', page: 1, size: 1 }),
@@ -49,9 +52,10 @@ async function refreshBell() {
     ]);
     if (seq !== bellSeq) return;
     bellN.value = (pending?.total || 0) + (evidence?.total || 0);
+    bellFetchedAt = Date.now();
   } catch {
     // 403 表示无 alarm:read；其余失败同样是结果未知。两种情况都不显示数字，避免用旧值冒充事实。
-    if (seq === bellSeq) bellN.value = null;
+    if (seq === bellSeq) { bellN.value = null; bellFetchedAt = 0; }
   }
 }
 const bellText = computed(() => (bellN.value === null ? '' : String(bellN.value)));
@@ -108,21 +112,22 @@ async function onMenu(k) {
   }
 }
 
+function onAccessChange() { refreshBell(true); }
 onMounted(() => {
   clkTimer = setInterval(tick, 1000);
   document.addEventListener('fullscreenchange', onFsChange);
   document.addEventListener('click', closeMenu);
   // 登录/退出/权限刷新会触发 mock-access-change；路由切换后重取，核实完成回到其他页也能看到新数。
-  window.addEventListener('mock-access-change', refreshBell);
+  window.addEventListener('mock-access-change', onAccessChange);
   stopBellRoute = router.afterEach(() => { refreshBell(); });
-  refreshBell();
+  refreshBell(true);
 });
 onBeforeUnmount(() => {
   // 阶段 12：search.js 已删除，window.SEARCH 不再存在，这行随之移除。
   clearInterval(clkTimer);
   document.removeEventListener('fullscreenchange', onFsChange);
   document.removeEventListener('click', closeMenu);
-  window.removeEventListener('mock-access-change', refreshBell);
+  window.removeEventListener('mock-access-change', onAccessChange);
   stopBellRoute?.(); stopBellRoute = null;
   bellSeq++;
 });

@@ -153,11 +153,12 @@ public class SpaceRiskEvaluationService {
 
     private String ingest(SpaceObservation observation, Decision decision, String sourceRiskId, OffsetDateTime from) {
         OffsetDateTime now = clock.now().atOffset(ZoneOffset.UTC);
-        return ingestion.ingest(new TrustedRiskFact(sourceId(), sourceRiskId, observation.planId(), observation.routeVersionId(),
+        String mode = repository.targetSourceMode(observation.targetId());
+        return ingestion.ingest(new TrustedRiskFact(sourceId(mode), sourceRiskId, observation.planId(), observation.routeVersionId(),
                 null, observation.targetId(), null, RISK_TYPE, decision.severity(), decision.reasonCode(),
                 reasonText(observation, decision), observation.observedAt(), now,
                 // 高度与基准必须成对：只有数值没有基准时两者都不写，绝不猜基准。
-                observation.altitudeDatum() == null ? null : observation.altitudeM(), observation.altitudeDatum(), sourceMode()));
+                observation.altitudeDatum() == null ? null : observation.altitudeM(), observation.altitudeDatum(), mode));
     }
 
     private String ingestAirport(AirportProximity proximity, String sourceRiskId, OffsetDateTime from) {
@@ -165,9 +166,10 @@ public class SpaceRiskEvaluationService {
         String text = "机场区域异物：" + proximity.airportName()
                 + (proximity.distanceToProcedureM() == null ? "" : "，距进离场程序 " + proximity.distanceToProcedureM().setScale(0, java.math.RoundingMode.HALF_UP) + " 米")
                 + (proximity.distanceToProtectedM() == null ? "" : "，距保护目标 " + proximity.distanceToProtectedM().setScale(0, java.math.RoundingMode.HALF_UP) + " 米");
-        return ingestion.ingest(new TrustedRiskFact(sourceId(), sourceRiskId, proximity.planId(), proximity.routeVersionId(),
+        String mode = repository.targetSourceMode(proximity.targetId());
+        return ingestion.ingest(new TrustedRiskFact(sourceId(mode), sourceRiskId, proximity.planId(), proximity.routeVersionId(),
                 null, proximity.targetId(), null, RISK_TYPE, "MEDIUM", REASON_AIRPORT_ZONE, text, proximity.observedAt(), now,
-                proximity.altitudeDatum() == null ? null : proximity.altitudeM(), proximity.altitudeDatum(), sourceMode()));
+                proximity.altitudeDatum() == null ? null : proximity.altitudeM(), proximity.altitudeDatum(), mode));
     }
 
     private static String reasonText(SpaceObservation observation, Decision decision) {
@@ -181,9 +183,15 @@ public class SpaceRiskEvaluationService {
         return text.toString();
     }
 
-    /** 来源模式跟随部署：PostGIS 上是真实评估（live），H2 不会走到这里。 */
-    private String sourceMode() { return spatial.available() ? "live" : "mock"; }
-    private String sourceId() { return spatial.available() ? SOURCE_LIVE : SOURCE_MOCK; }
+    /** PostGIS 是计算能力，不是目标来源；回放和模拟目标绝不能因用了真实空间计算就变成 live。 */
+    private String sourceId(String mode) {
+        return switch (mode) {
+            case "live" -> SOURCE_LIVE;
+            case "mock" -> SOURCE_MOCK;
+            case "replay" -> "rule-engine-space-risk-replay";
+            default -> throw new IllegalStateException("未知目标来源模式");
+        };
+    }
 
     private static String ruleVersionId(RuleVersionRow version, String ruleCode) {
         return "space-risk-" + ruleCode.toLowerCase(java.util.Locale.ROOT) + "-v" + version.versionNo();

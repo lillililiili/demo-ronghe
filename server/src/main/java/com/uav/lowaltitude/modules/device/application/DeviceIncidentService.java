@@ -56,6 +56,8 @@ public class DeviceIncidentService {
         Map<String, Object> incident = requiredIncident(incidentId);
         String stage = text(incident, "stage");
         String deviceId = text(incident, "device_id");
+        if ("MQTT_HEARTBEAT_TIMEOUT".equals(text(incident, "incident_type")))
+            throw new ApiException(HttpStatus.CONFLICT, "REBOOT_NOT_SUPPORTED", "该 MQTT 协议未定义重启指令，请恢复心跳后执行恢复核验");
         if (!"PENDING".equals(stage)) {
             DeviceService.Command replayed = replayReboot(incident, user, deviceId, key, reason.trim());
             if (replayed != null) return replayed;
@@ -84,7 +86,9 @@ public class DeviceIncidentService {
             return recoveryFromRow(repository.findRecoveryCheck(text(replay, "response_body")));
         }
         Map<String, Object> incident = requiredIncident(incidentId);
-        if (!"PENDING_VERIFICATION".equals(text(incident, "stage")))
+        boolean heartbeatIncident = "MQTT_HEARTBEAT_TIMEOUT".equals(text(incident, "incident_type"));
+        String expectedStage = text(incident, "stage");
+        if (!"PENDING_VERIFICATION".equals(expectedStage) && !(heartbeatIncident && "PENDING".equals(expectedStage)))
             throw new ApiException(HttpStatus.CONFLICT, "INVALID_TRANSITION", "当前阶段不能做恢复校验");
         Map<String, Object> device = repository.find(text(incident, "device_id"));
         if (device == null) throw new ApiException(HttpStatus.NOT_FOUND, "DEVICE_NOT_FOUND", "设备不存在");
@@ -93,7 +97,14 @@ public class DeviceIncidentService {
         String health = text(device, "health_code");
         String result;
         String reason;
-        if (connectivity == null || "UNKNOWN".equals(connectivity)) {
+        if (heartbeatIncident) {
+            Long heartbeat = longValue(device, "last_heartbeat_at");
+            boolean fresh = heartbeat != null && heartbeat > longNumber(incident, "detected_at")
+                    && heartbeat <= clock.nowMillis() && clock.nowMillis() - heartbeat <= 30_000;
+            result = "ONLINE".equals(connectivity) && fresh ? "PASS" : "FAIL";
+            reason = "PASS".equals(result) ? "离线事件恢复核验：事件发生后收到新心跳且设备在线；未推定其他健康指标"
+                    : "尚未取得事件发生后的新鲜在线心跳";
+        } else if (connectivity == null || "UNKNOWN".equals(connectivity)) {
             result = "UNKNOWN";
             reason = "设备连接状态未知，不能关闭异常";
         } else if ("ONLINE".equals(connectivity) && !hasAlarm && "GOOD".equals(health)) {
@@ -109,7 +120,7 @@ public class DeviceIncidentService {
         String checkId = UUID.randomUUID().toString();
         repository.insertRecoveryCheck(checkId, incidentId, user.userId(), now, result, RULE_VERSION, json(snapshot), reason);
         repository.insertIdempotency(key, user.userId(), hash, checkId, now);
-        if ("PASS".equals(result) && repository.closeIncident(incidentId, "PENDING_VERIFICATION", now) != 1)
+        if ("PASS".equals(result) && repository.closeIncident(incidentId, expectedStage, now) != 1)
             throw new ApiException(HttpStatus.CONFLICT, "INVALID_TRANSITION", "当前阶段不能关闭异常");
         audit.record(user.userId(), user.account(), "device_incident_recovery_checked", "device_incident",
                 incidentId, result + ":" + reason, null);
@@ -131,7 +142,10 @@ public class DeviceIncidentService {
     private IncidentDetail detail(Map<String, Object> row, boolean operate) {
         DeviceService.Incident incident = toIncident(row);
         Map<String, Object> check = repository.latestRecoveryCheck(incident.incidentId());
-        return new IncidentDetail(incident, check == null ? null : checkView(check), allowedActions(incident.stage(), operate));
+        List<String> actions = "MQTT_HEARTBEAT_TIMEOUT".equals(incident.incidentType())
+                ? (operate && "PENDING".equals(incident.stage()) ? List.of("VERIFY_RECOVERY") : List.of())
+                : allowedActions(incident.stage(), operate);
+        return new IncidentDetail(incident, check == null ? null : checkView(check), actions);
     }
 
     private RecoveryResult recoveryFromRow(Map<String, Object> check) {

@@ -228,6 +228,8 @@ public class EoEdgeRepository {
     public Binding idleDevice(String org, String district) {
         return jdbc.query(BINDING_SELECT + """
                 WHERE s.owner_org_id=? AND s.district_id=? AND d.enabled=TRUE
+                AND EXISTS (SELECT 1 FROM mqtt_broker b WHERE b.broker_id=m.broker_id AND b.enabled=TRUE)
+                AND EXISTS (SELECT 1 FROM ops_device_state ds WHERE ds.device_id=m.ops_device_id AND ds.connectivity='ONLINE')
                 AND (m.work_state IS NULL OR m.work_state=0)
                 AND NOT EXISTS (SELECT 1 FROM eo_tracking_task t WHERE t.ops_device_id=m.ops_device_id AND t.status IN ('OPEN','ENDING'))
                 ORDER BY m.ops_device_id FETCH FIRST 1 ROWS ONLY
@@ -247,6 +249,8 @@ public class EoEdgeRepository {
     public Binding idleDeviceById(String opsDeviceId, String org, String district) {
         return jdbc.query(BINDING_SELECT + """
                 WHERE m.ops_device_id=? AND s.owner_org_id=? AND s.district_id=? AND d.enabled=TRUE
+                AND EXISTS (SELECT 1 FROM mqtt_broker b WHERE b.broker_id=m.broker_id AND b.enabled=TRUE)
+                AND EXISTS (SELECT 1 FROM ops_device_state ds WHERE ds.device_id=m.ops_device_id AND ds.connectivity='ONLINE')
                 AND (m.work_state IS NULL OR m.work_state=0)
                 AND NOT EXISTS (SELECT 1 FROM eo_tracking_task t WHERE t.ops_device_id=m.ops_device_id AND t.status IN ('OPEN','ENDING'))
                 """, this::binding, opsDeviceId, org, district).stream().findFirst().orElse(null);
@@ -267,6 +271,60 @@ public class EoEdgeRepository {
                 AND (created_at>? OR (created_at=? AND event_id>?))
                 ORDER BY created_at,event_id FETCH FIRST ? ROWS ONLY
                 """, Timestamp.from(createdAt.toInstant()), Timestamp.from(createdAt.toInstant()), eventId, batch);
+    }
+    /**
+     * 当前仍需要自动跟踪的目标，只取每个目标最新的稳定事件作为引导数据。
+     * 直接读取当前告警/风险状态，避免稳定事件先产生、规则引擎稍后建告警时错过自动跟踪。
+     * 没有空闲设备时记录会留在候选集中供下次轮询；同一稳定事件已经建过任务后不再重复执行。
+     */
+    public List<Map<String, Object>> autoTrackCandidates(int batch) {
+        return jdbc.queryForList("""
+                SELECT e.event_id,e.target_id,CAST(e.payload AS VARCHAR) AS payload_text,e.created_at,e.occurred_at
+                FROM fusion_event e
+                WHERE e.event_type='STATUS_STABLE'
+                AND NOT EXISTS (
+                    SELECT 1 FROM fusion_event newer
+                    WHERE newer.event_type='STATUS_STABLE' AND newer.target_id=e.target_id
+                    AND (newer.created_at>e.created_at OR (newer.created_at=e.created_at AND newer.event_id>e.event_id))
+                )
+                AND (
+                    EXISTS (
+                        SELECT 1 FROM uav_event ue JOIN alarm a ON a.alarm_id=ue.alarm_id
+                        WHERE a.target_id=e.target_id AND ue.state_code IN ('PENDING_VERIFICATION','EVIDENCE_REQUIRED')
+                    )
+                    OR EXISTS (
+                        SELECT 1 FROM flight_risk r
+                        WHERE r.target_id=e.target_id AND r.state_code IN ('PENDING_VERIFICATION','PENDING_NOTIFICATION')
+                        AND r.severity IN ('HIGH','CRITICAL')
+                    )
+                )
+                AND NOT EXISTS (
+                    SELECT 1 FROM eo_tracking_task t
+                    WHERE t.fusion_event_id=e.event_id OR (t.target_id=e.target_id AND t.status IN ('OPEN','ENDING'))
+                )
+                ORDER BY e.created_at,e.event_id FETCH FIRST ? ROWS ONLY
+                """, batch);
+    }
+    /** 在线设备上已不再满足告警/高风险条件的自动任务，由后台下发 EndTracking 释放设备。 */
+    public List<Map<String, Object>> automaticTasksToEnd(int batch) {
+        return jdbc.queryForList("""
+                SELECT t.task_id,t.ops_device_id,t.target_id
+                FROM eo_tracking_task t
+                JOIN eo_device_binding m ON m.ops_device_id=t.ops_device_id
+                JOIN mqtt_broker b ON b.broker_id=m.broker_id AND b.enabled=TRUE
+                JOIN ops_device_state ds ON ds.device_id=t.ops_device_id AND ds.connectivity='ONLINE'
+                WHERE t.status='OPEN' AND t.fusion_event_id IS NOT NULL
+                AND NOT EXISTS (
+                    SELECT 1 FROM uav_event ue JOIN alarm a ON a.alarm_id=ue.alarm_id
+                    WHERE a.target_id=t.target_id AND ue.state_code IN ('PENDING_VERIFICATION','EVIDENCE_REQUIRED')
+                )
+                AND NOT EXISTS (
+                    SELECT 1 FROM flight_risk r
+                    WHERE r.target_id=t.target_id AND r.state_code IN ('PENDING_VERIFICATION','PENDING_NOTIFICATION')
+                    AND r.severity IN ('HIGH','CRITICAL')
+                )
+                ORDER BY t.created_at,t.task_id FETCH FIRST ? ROWS ONLY
+                """, batch);
     }
     public Map<String, Object> target(String targetId) {
         return jdbc.queryForList("SELECT target_id,target_no,owner_org_id,district_id FROM target WHERE target_id=?", targetId)

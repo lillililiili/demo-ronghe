@@ -13,6 +13,30 @@ export const MODULE_LABELS = {
 };
 
 export const ACTION_LABELS = {
+  commission_create: '创建设备调测任务',
+  commission_connect: '检查调测连接',
+  commission_configuration: '检查调测配置',
+  commission_start: '开始设备调测',
+  commission_cancel: '取消设备调测',
+  device_create: '登记设备',
+  device_update: '修改设备',
+  device_enable: '启用设备',
+  device_disable: '停用设备',
+  device_reboot_requested: '申请重启设备',
+  device_incident_reboot_requested: '申请重启异常设备',
+  device_incident_recovery_checked: '检查设备是否恢复',
+  lingyun_control_requested: '下发凌云设备控制指令',
+  countermeasure_4ch_requested: '下发四通道反制指令',
+  integration_source_create: '登记数据来源',
+  integration_source_update: '修改数据来源',
+  integration_source_enable: '启用数据来源',
+  integration_source_disable: '停用数据来源',
+  mqtt_device_update: '修改接入设备',
+  mqtt_device_enable: '启用接入设备',
+  mqtt_device_disable: '停用接入设备',
+  risk_notified: '提交通知',
+  risk_acknowledged: '收到通知确认回执',
+  plan_authorization_recorded: '登记飞行计划授权',
   login_success: '登录成功',
   login_fail: '登录失败',
   logout: '退出登录',
@@ -60,8 +84,39 @@ export const ACTION_LABELS = {
   device_incident_recovery_checked: '检查设备恢复', device_incident_rebooted: '远程重启设备'
 };
 
-const METHOD_LABELS = { GET: '查询', POST: '提交', PUT: '更新', PATCH: '更新', DELETE: '删除' };
+const METHOD_LABELS = { GET: '查询', POST: '提交', PUT: '更新', PATCH: '更新', DELETE: '删除', HEAD: '检查', OPTIONS: '检查' };
 const PATH_LABELS = [
+  ['/device-incidents', '设备异常处理'],
+  ['/device-commands', '设备指令'],
+  ['/eo-tracking-tasks', '光电跟踪任务'],
+  ['/mqtt-brokers', '消息接入连接'],
+  ['/integration-sources', '数据来源'],
+  ['/disposal-authorizations', '处置授权'],
+  ['/punishment-cases', '处罚案件'],
+  ['/decision-documents', '处罚决定书'],
+  ['/penalty-rules', '处罚规则'],
+  ['/evidence-chains', '证据链'],
+  ['/evidence-files', '证据文件'],
+  ['/evidence', '证据'],
+  ['/uav-events', '无人机事件'],
+  ['/space-risks', '空间风险'],
+  ['/risks', '飞行风险'],
+  ['/flight-plans', '飞行计划'],
+  ['/route-versions', '航线版本'],
+  ['/routes', '航线'],
+  ['/airspace', '空域'],
+  ['/airports', '机场资料'],
+  ['/legality-', '合法性研判'],
+  ['/rule-', '规则引擎'],
+  ['/fusion', '融合配置'],
+  ['/targets', '目标'],
+  ['/handoffs', '业务交接'],
+  ['/workbench', '工作台'],
+  ['/access-change', '权限变更'],
+  ['/report', '统计报表'],
+  ['/menus', '菜单'],
+  ['/me', '当前账号信息'],
+  ['/orgs', '组织'],
   ['/organizations', '组织'],
   ['/districts', '区域'],
   ['/users', '用户'],
@@ -99,8 +154,9 @@ export function ipText(ip) {
 export function actionText(action) {
   if (!action) return '—';
   if (ACTION_LABELS[action]) return ACTION_LABELS[action];
-  const match = /^(GET|POST|PUT|PATCH|DELETE)\s+(\S+)/i.exec(action);
-  if (!match) return action;
+  const match = /^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+(\S+)/i.exec(action);
+  // 未知动作不将内部英文编码直接呈现为操作名称；原始审计编码仍保留在接口与导出中。
+  if (!match) return /[\u4e00-\u9fff]/.test(action) ? action : '未配置名称的操作';
   const method = METHOD_LABELS[match[1].toUpperCase()] || match[1];
   const resource = PATH_LABELS.find(([prefix]) => match[2].includes(prefix));
   return resource ? `${method}${resource[1]}` : `${method}接口`;

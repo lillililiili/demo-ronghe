@@ -135,7 +135,7 @@ class Stage5PostgresTest {
                 routeVersionId, routeId, T0, T0);
         jdbc.update("insert into flight_plan (plan_id,plan_no,status_code,source_mode,route_version_id,owner_org_id,district_id,created_at,updated_at,version) values (?,?,'PENDING','mock',?,?,?,?,?,0)",
                 planId, "PLAN-S5-" + suffix, routeVersionId, org, district, T0, T0);
-        // 已核验风险：PENDING_NOTIFICATION、version=1，带一条核验历史；交接提交不得改动这两个值。
+        // 已核验风险：PENDING_NOTIFICATION、version=1，带一条核验历史；提交将风险推进已通知，快照保留这两个原值。
         jdbc.update("insert into flight_risk (risk_id,source_id,source_risk_id,plan_id,route_version_id,risk_type,severity,state_code,reason_code,reason_text,received_at,height_relation,source_mode,owner_org_id,district_id,created_at,updated_at,version) values (?,?,?,?,?,'FLIGHT_OPERATION','HIGH','PENDING_NOTIFICATION','ROUTE_DEVIATION','阶段五验证风险',?,'UNKNOWN','mock',?,?,?,?,1)",
                 riskId, source, "RISK-S5-" + suffix, planId, routeVersionId, T0.plusSeconds(2), org, district, T0, T0.plusSeconds(10));
         jdbc.update("insert into handoff_recipient (recipient_id,display_name,handoff_type,enabled,created_at,updated_at) values (?,?,'RISK_NOTICE',true,?,?),(?,?,'RISK_NOTICE',true,?,?)",
@@ -238,7 +238,7 @@ class Stage5PostgresTest {
         assertThat(jdbc.queryForObject(
                 "select count(*) from handoff_delivery where handoff_id=? and attempt_no=1 and delivery_status='PENDING_DELIVERY' and receipt_status='NOT_EXPECTED' and blocked_reason='CHANNEL_NOT_CONNECTED' and submitted_at is null and delivered_at is null and acknowledged_at is null",
                 Long.class, handoffId)).isEqualTo(1L);
-        assertRiskUntouched();
+        assertRiskNotified();
     }
 
     @Test
@@ -250,7 +250,7 @@ class Stage5PostgresTest {
         assertThat(statuses).containsExactly(201, 409);
         MvcResult rejected = results.stream().filter(r -> r.getResponse().getStatus() == 409).findFirst().orElseThrow();
         JsonNode error = json.readTree(rejected.getResponse().getContentAsString()).path("error");
-        assertThat(error.path("code").asText()).isEqualTo("HANDOFF_ALREADY_EXISTS");
+        assertThat(error.path("code").asText()).isEqualTo("VERSION_CONFLICT");
         assertThat(error.has("handoff_id")).isFalse();
         MvcResult winner = results.stream().filter(r -> r.getResponse().getStatus() == 201).findFirst().orElseThrow();
         String handoffId = json.readTree(winner.getResponse().getContentAsString()).path("data").path("handoff_id").asText();
@@ -272,27 +272,31 @@ class Stage5PostgresTest {
         assertThat(jdbc.queryForObject("select count(*) from audit_log where action='handoff_created' and object_type='handoff' and result='SUCCESS' and object_id in (select handoff_id from handoff where source_id=?)", Long.class, riskId)).isEqualTo(1L);
         assertThat(jdbc.queryForObject("select count(*) from idempotency_request where user_id=?", Long.class, winnerUser)).isEqualTo(1L);
         assertThat(jdbc.queryForObject("select count(*) from idempotency_request where user_id=?", Long.class, loserUser)).isZero();
-        assertRiskUntouched();
+        assertRiskNotified();
     }
 
     @Test
-    void differentRecipientsEachGetTheirOwnHandoffWithoutTouchingRisk() throws Exception {
+    void differentRecipientsEachGetTheirOwnHandoffWithVersionRetry() throws Exception {
         List<MvcResult> results = race(
                 create(sessionA, riskId, recipientA, 1, "pair-handoff-a-" + UUID.randomUUID()),
                 create(sessionB, riskId, recipientB, 1, "pair-handoff-b-" + UUID.randomUUID()));
-        assertThat(results.stream().map(r -> r.getResponse().getStatus()).toList()).containsExactly(201, 201);
+        assertThat(results.stream().map(r -> r.getResponse().getStatus()).sorted().toList()).containsExactly(201, 409);
+        int loser = results.get(0).getResponse().getStatus() == 409 ? 0 : 1;
+        assertThat(json.readTree(results.get(loser).getResponse().getContentAsString()).path("error").path("code").asText()).isEqualTo("VERSION_CONFLICT");
+        assertThat(mvc.perform(create(loser == 0 ? sessionA : sessionB, riskId, loser == 0 ? recipientA : recipientB, 2,
+                "retry-version-" + UUID.randomUUID())).andReturn().getResponse().getStatus()).isEqualTo(201);
         List<String> recipients = jdbc.queryForList(
                 "select recipient_id from handoff where source_kind='RISK' and source_id=? and handoff_type='RISK_NOTICE' order by recipient_id", String.class, riskId);
         assertThat(recipients).containsExactlyInAnyOrder(recipientA, recipientB);
         assertThat(jdbc.queryForObject("select count(*) from handoff_delivery d join handoff h on h.handoff_id=d.handoff_id where h.source_id=? and d.attempt_no=1", Long.class, riskId)).isEqualTo(2L);
         assertThat(jdbc.queryForObject("select count(*) from handoff_material_snapshot s join handoff h on h.handoff_id=s.handoff_id where h.source_id=?", Long.class, riskId)).isEqualTo(2L);
-        assertRiskUntouched();
+        assertRiskNotified();
     }
 
-    /** 交接提交只锁风险用于串行化和版本核对，绝不推进风险状态或版本；“已通知”需要真实送达事实。 */
-    private void assertRiskUntouched() {
-        assertThat(jdbc.queryForObject("select state_code from flight_risk where risk_id=?", String.class, riskId)).isEqualTo("PENDING_NOTIFICATION");
-        assertThat(jdbc.queryForObject("select version from flight_risk where risk_id=?", Long.class, riskId)).isEqualTo(1L);
+    /** 提交推进已通知及版本，核验历史保持不变。 */
+    private void assertRiskNotified() {
+        assertThat(jdbc.queryForObject("select state_code from flight_risk where risk_id=?", String.class, riskId)).isEqualTo("NOTIFIED");
+        assertThat(jdbc.queryForObject("select version from flight_risk where risk_id=?", Long.class, riskId)).isEqualTo(2L);
         assertThat(jdbc.queryForObject("select count(*) from flight_risk_verification where risk_id=?", Long.class, riskId)).isEqualTo(1L);
     }
 

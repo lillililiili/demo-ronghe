@@ -41,11 +41,14 @@ public class DisposalReadService {
     private final DisposalPolicyRepository policies;
     private final DisposalReceiptSync receipts;
     private final ObjectMapper json;
+    private final com.uav.lowaltitude.modules.device.application.DeviceAccessPolicy deviceAccess;
 
     public DisposalReadService(AccessControlService access, DisposalRepository repository,
-            DisposalPolicyRepository policies, DisposalReceiptSync receipts, ObjectMapper json) {
+            DisposalPolicyRepository policies, DisposalReceiptSync receipts, ObjectMapper json,
+            com.uav.lowaltitude.modules.device.application.DeviceAccessPolicy deviceAccess) {
         this.access = access; this.repository = repository; this.policies = policies;
         this.receipts = receipts; this.json = json;
+        this.deviceAccess = deviceAccess;
     }
 
     @Transactional(readOnly = true)
@@ -105,6 +108,8 @@ public class DisposalReadService {
     private AuthorizationDto dto(AuthorizationRow row, List<String> eventKinds, Set<String> permissions,
                                  DisposalPolicy policy) {
         AuthUser actor = AuthContext.require();
+        Set<String> actions = DisposalRules.allowedActions(row.status(), row.channel(), row.requestedBy(), actor.userId(), permissions);
+        if (!DisposalRules.MANUAL.equals(row.channel()) && !permissions.contains("devices.op")) actions.remove(DisposalRules.EXECUTE);
         return new AuthorizationDto(row.authorizationId(), row.authorizationNo(), row.actionType(), row.subjectKind(),
                 row.subjectId(), row.targetId(), row.deviceId(), row.channel(), row.reason(), row.requestedBy(),
                 row.requestedByName(), millis(row.requestedAt()), row.approvedBy(), row.approvedByName(),
@@ -113,8 +118,7 @@ public class DisposalReadService {
                 row.resultCode(), row.resultDetail(), DisposalRules.deviceStopResult(row.channel(), eventKinds),
                 DisposalRules.executionBlockReason(row.status(), eventKinds), row.policyVersion(), policy == null ? null : policy.schemaStatus(), row.ownerOrgId(), row.districtId(),
                 row.sourceMode(), row.version(),
-                List.copyOf(DisposalRules.allowedActions(row.status(), row.channel(), row.requestedBy(),
-                        actor.userId(), permissions)));
+                List.copyOf(actions));
     }
 
     private EventDto event(EventRow row) {
@@ -143,6 +147,8 @@ public class DisposalReadService {
             try { access.require(code); held.add(code.value()); }
             catch (ApiException denied) { /* 没有这项权限就不加，不是错误 */ }
         }
+        try { deviceAccess.requireDevicesOperate(); held.add("devices.op"); }
+        catch (ApiException denied) { /* 设备通道还需设备控制权限；人工通道不受影响。 */ }
         return held;
     }
 

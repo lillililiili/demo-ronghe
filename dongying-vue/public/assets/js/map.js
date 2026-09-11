@@ -45,6 +45,7 @@
     this.data = { airspaces: [], devices: [], targets: [], alarms: [] };
     this.layers = Object.assign({ device: true, track: true, nofly: true, suit: true, limit: true, alarm: true }, opt.layers);
     this.online = false; this.map = null;
+    this.maxZoom = Number.isFinite(opt.maxZoom) ? Math.max(12, Math.min(24, Number(opt.maxZoom))) : 18;
     this.zoom = opt.zoom || 1; this.ox = 0; this.oy = 0; this.t = 0; this.hover = null; this.sel = null;
     this._pendingCenter = CENTER.slice();
     this._isDefaultView = true;
@@ -148,7 +149,7 @@
       const coverage = this._coverageBounds;
       const map = new runtime.maplibre.Map({
         container: this.baseEl, style: runtime.style, center: this._pendingCenter,
-        zoom: this._levelForScale(this.zoom), minZoom: this._minLevel(), maxZoom: 18,
+        zoom: this._levelForScale(this.zoom), minZoom: this._minLevel(), maxZoom: this.maxZoom,
         maxBounds: coverage ? [[coverage[0], coverage[1]], [coverage[2], coverage[3]]] : undefined,
         bearing: 0, pitch: 0, dragRotate: false, pitchWithRotate: false,
         touchPitch: false, renderWorldCopies: false, attributionControl: false,
@@ -176,6 +177,13 @@
         clearTimeout(this._loadTimer);
         this.online = true;
         this._applyCameraLimits();
+        map.resize();
+        if (this._pendingFit && this.w > 0 && this.h > 0) {
+          const f = this._pendingFit; this._pendingFit = null;
+          this.fitTo(f.coordinates, f.padding);
+        } else if (!this._isDefaultView) {
+          map.jumpTo({ center: this._pendingCenter, zoom: this._levelForScale(this.zoom) });
+        }
         this._syncView(); this._status('ready'); this.draw();
       });
       this.draw();
@@ -306,10 +314,16 @@
     this.cv.height = Math.max(1, Math.round(r.height * dpr));
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this._applyDefaultView();
-    if (this._pendingFit && this.w > 0 && this.h > 0) { const f = this._pendingFit; this._pendingFit = null; this.fitTo(f.coordinates, f.padding); return; }
     if (this.map) {
       this.map.resize();
       this._applyCameraLimits();
+    }
+    if (this._pendingFit && this.w > 0 && this.h > 0) {
+      const f = this._pendingFit; this._pendingFit = null;
+      this.fitTo(f.coordinates, f.padding);
+      return;
+    }
+    if (this.map) {
       const zoom = this._levelForScale(this.zoom);
       this._pendingCenter = this._clampCenter(this._pendingCenter[0], this._pendingCenter[1], zoom);
       this.zoom = Math.pow(2, zoom - this._fitLevelForWidth());
@@ -354,6 +368,7 @@
   MapView.prototype._applyCameraLimits = function () {
     if (!this.map) return;
     this.map.setMinZoom(this._minLevel());
+    this.map.setMaxZoom(this.maxZoom);
   };
 
   // 首屏与复位落到数据范围内；缩小/平移也不能超出覆盖范围。
@@ -366,7 +381,7 @@
 
   MapView.prototype._levelForScale = function (scale) {
     const fit = this._fitLevelForWidth();
-    return Math.max(this._minLevel(), Math.min(18, fit + Math.log2(Math.max(.01, Number(scale) || 1))));
+    return Math.max(this._minLevel(), Math.min(this.maxZoom, fit + Math.log2(Math.max(.01, Number(scale) || 1))));
   };
 
   MapView.prototype._fallbackPx = function (lon, lat) {
@@ -414,7 +429,7 @@
     const usableW = Math.max(1, this.w * (1 - 2 * padding)), usableH = Math.max(1, this.h * (1 - 2 * padding));
     const dx = Math.max(maxX - minX, 1e-7), dy = Math.max(maxY - minY, 1e-7);
     let level = Math.log2(Math.min(usableW / dx, usableH / dy) / 512);
-    level = Math.max(this._minLevel(), Math.min(17, level));
+    level = Math.max(this._minLevel(), Math.min(this.maxZoom, level));
     this._isDefaultView = false;
     this.zoom = Math.pow(2, level - this._fitLevelForWidth());
     const center = geographic((minX + maxX) / 2, (minY + maxY) / 2);

@@ -1,12 +1,7 @@
 package com.uav.lowaltitude.modules.device.application;
 
-import java.sql.Timestamp;
-import java.time.Instant;
-import java.time.OffsetDateTime;
-import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 
 import org.springframework.beans.factory.annotation.Value;
@@ -21,7 +16,6 @@ import com.uav.lowaltitude.modules.device.infrastructure.EoEdgeRepository;
 
 @Service
 public class EoAutoTrackService {
-    private static final Set<String> HIGH = Set.of("HIGH", "CRITICAL");
     private final EoEdgeRepository edges;
     private final EoEdgeCommandService commands;
     private final ObjectMapper json;
@@ -46,43 +40,37 @@ public class EoAutoTrackService {
     public int poll() {
         var cursor = edges.lockCursor();
         if (cursor == null) return 0;
-        OffsetDateTime created = time(cursor.get("last_created_at"));
-        String eventId = String.valueOf(cursor.get("last_event_id"));
         int handled = 0;
-        OffsetDateTime lastCreated = created;
-        String lastEvent = eventId;
-        for (var row : edges.pendingStableEvents(created, eventId, batch)) {
-            OffsetDateTime at = time(row.get("created_at"));
-            String id = String.valueOf(row.get("event_id"));
-            consider(row);
-            lastCreated = at; lastEvent = id; handled++;
+        for (var task : edges.automaticTasksToEnd(batch)) {
+            Binding device = edges.binding(String.valueOf(task.get("ops_device_id")), true);
+            if (device == null || !device.enabled()) continue;
+            commands.enqueue(device, EoEdgeCommandService.END, EoEdgeCommandService.TOPIC_END,
+                    "AUTO_TRACK_CONDITION_CLEARED");
+            handled++;
         }
-        if (handled > 0) edges.advanceCursor(lastCreated, lastEvent);
+        for (var row : edges.autoTrackCandidates(batch)) {
+            if (consider(row)) handled++;
+        }
         return handled;
     }
 
-    private void consider(Map<String, Object> row) {
+    private boolean consider(Map<String, Object> row) {
         String eventId = String.valueOf(row.get("event_id"));
         String targetId = String.valueOf(row.get("target_id"));
         JsonNode payload = node(row.get("payload_text"));
-        if (!trigger(payload)) return;
         JsonNode latest = payload.path("latest_state");
-        if (!latest.path("longitude").isNumber() || !latest.path("latitude").isNumber()) return;
+        if (!latest.path("longitude").isNumber() || !latest.path("latitude").isNumber()) return false;
         String classCode = payload.path("class_code").isTextual() ? payload.path("class_code").asText() : null;
-        if (!"UAV".equals(classCode) && !"BIRD".equals(classCode)) return;
-        if (edges.targetHasOpenTask(targetId)) return;
+        if (!"UAV".equals(classCode) && !"BIRD".equals(classCode)) return false;
+        if (edges.targetHasOpenTask(targetId)) return false;
         var target = edges.target(targetId);
-        if (target == null || target.get("owner_org_id") == null || target.get("district_id") == null) return;
+        if (target == null || target.get("owner_org_id") == null || target.get("district_id") == null) return false;
         Binding device = edges.idleDevice(String.valueOf(target.get("owner_org_id")), String.valueOf(target.get("district_id")));
-        if (device == null) return;
+        if (device == null) return false;
         String notes = missingNotes(latest);
         Map<String, Object> bootstrap = bootstrap(targetId, classCode, latest, payload);
         commands.enqueueBegin(device, UUID.randomUUID().toString(), targetId, eventId, notes, bootstrap, null);
-    }
-
-    private boolean trigger(JsonNode payload) {
-        if (payload.path("alarm_active").isBoolean() && payload.path("alarm_active").asBoolean()) return true;
-        return payload.path("max_risk_severity").isTextual() && HIGH.contains(payload.path("max_risk_severity").asText());
+        return true;
     }
 
     private Map<String, Object> bootstrap(String targetId, String classCode, JsonNode latest, JsonNode payload) {
@@ -136,11 +124,5 @@ public class EoAutoTrackService {
             if (parsed != null && parsed.isTextual()) parsed = json.readTree(parsed.asText());
             return parsed == null || parsed.isMissingNode() ? json.createObjectNode() : parsed;
         } catch (Exception ex) { return json.createObjectNode(); }
-    }
-    private static OffsetDateTime time(Object value) {
-        if (value instanceof OffsetDateTime t) return t;
-        if (value instanceof Timestamp t) return t.toInstant().atOffset(ZoneOffset.UTC);
-        if (value instanceof Instant i) return i.atOffset(ZoneOffset.UTC);
-        return Instant.EPOCH.atOffset(ZoneOffset.UTC);
     }
 }

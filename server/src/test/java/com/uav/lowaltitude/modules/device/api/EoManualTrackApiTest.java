@@ -65,6 +65,8 @@ class EoManualTrackApiTest {
         configuration.enable(brokerId, 0, true, key());
         assertThat(mqtt.claim(brokerId, owner, clock.nowMillis())).isTrue();
         binding = register("edge-man-" + UUID.randomUUID().toString().substring(0, 6), "eo-man-1");
+        jdbc.update("UPDATE ops_device_state SET connectivity='ONLINE',last_heartbeat_at=? WHERE device_id=?",
+                clock.nowMillis(), binding.opsDeviceId());
     }
 
     @AfterEach void cleanup() {

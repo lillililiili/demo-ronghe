@@ -91,7 +91,7 @@ class ProductionStage9SeedIsolationTest {
                     .containsExactly("BALLOON", "BIRD_FLOCK", "KITE", "OTHER_OBJECT", "SKY_LANTERN");
             assertThat(jdbc.queryForList(
                     "select source_id from integration_source where source_id like 'rule-engine-space-risk-%' and enabled=true and credential_ref is null order by source_id",
-                    String.class)).containsExactly("rule-engine-space-risk-live", "rule-engine-space-risk-mock");
+                    String.class)).containsExactly("rule-engine-space-risk-live", "rule-engine-space-risk-mock", "rule-engine-space-risk-replay");
 
             // 闸二：Job 即使注册并被属性打开，也不产生任何 C04/C05 行。
             assertThat(jdbc.queryForObject("select count(*) from space_risk_fact", Integer.class)).isZero();

@@ -48,6 +48,8 @@ class MqttIngressTest {
     @Autowired AppClock clock;
     @Autowired JdbcTemplate jdbc;
     @Autowired PlatformTransactionManager transactions;
+    @Autowired com.uav.lowaltitude.modules.device.infrastructure.DeviceRepository deviceRepository;
+    @Autowired DeviceIncidentService incidents;
     @TempDir Path temporary;
     String org,district,owner,brokerId;
 
@@ -91,6 +93,36 @@ class MqttIngressTest {
     }
     private long inboxCount(Binding b) { return jdbc.queryForObject("SELECT COUNT(*) FROM inbox_message WHERE source=?",Long.class,b.source()); }
     private static String key() { return UUID.randomUUID().toString(); }
+
+    @Test void heartbeatOutageCreatesOneIncidentAndOnlyFreshHeartbeatCanRecoverIt() throws Exception {
+        Binding b = register("radar");
+        MqttConnectivityIncidentJob job = new MqttConnectivityIncidentJob(deviceRepository, clock);
+        Runnable reconcile = () -> new TransactionTemplate(transactions).executeWithoutResult(s -> job.reconcile());
+        reconcile.run();
+        String count = "SELECT COUNT(*) FROM device_incident WHERE device_id=?";
+        assertThat(jdbc.queryForObject(count, Long.class, b.opsDeviceId())).isZero();
+        receive(b, heartbeat("radar", 0, clock.nowMillis()), false, 1, false, false);
+        jdbc.update("UPDATE ops_device_state SET last_heartbeat_at=? WHERE device_id=?", clock.nowMillis()-31_000, b.opsDeviceId());
+        repository.expire(clock.nowMillis());
+        reconcile.run();
+        reconcile.run();
+        assertThat(jdbc.queryForObject(count, Long.class, b.opsDeviceId())).isOne();
+        String incident = jdbc.queryForObject("SELECT incident_id FROM device_incident WHERE device_id=?", String.class, b.opsDeviceId());
+        assertThat(incidents.get(incident).allowedActions()).containsExactly("VERIFY_RECOVERY");
+        assertThatThrownBy(() -> incidents.reboot(incident, key(), "测试重启能力"))
+                .hasMessageContaining("未定义重启指令");
+        assertThat(incidents.recoveryCheck(incident, key()).result()).isEqualTo("FAIL");
+        Thread.sleep(5);
+        receive(b, heartbeat("radar", 0, clock.nowMillis()), false, 2, false, false);
+        String recoveryKey = key();
+        assertThat(incidents.recoveryCheck(incident, recoveryKey).result()).isEqualTo("PASS");
+        assertThat(incidents.recoveryCheck(incident, recoveryKey).result()).isEqualTo("PASS");
+        assertThat(incidents.get(incident).incident().stage()).isEqualTo("RECOVERED");
+        jdbc.update("UPDATE ops_device_state SET last_heartbeat_at=? WHERE device_id=?", clock.nowMillis()-31_000, b.opsDeviceId());
+        repository.expire(clock.nowMillis());
+        reconcile.run();
+        assertThat(jdbc.queryForObject(count, Long.class, b.opsDeviceId())).isEqualTo(2);
+    }
 
     @Test void threeTypesCreateBothIdentitiesAndReceiveOnlyTargetsIntoInbox() {
         for(String type:List.of("radar","5ga","tdoa","aoa","dcd","rid")) {

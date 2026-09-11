@@ -10,6 +10,8 @@ public interface HandoffChannelPort {
 
     DeliveryOutcome deliver(HandoffDispatch dispatch);
 
+    default boolean simulated() { return false; }
+
     record HandoffDispatch(String handoffId, String sourceKind, String sourceId, String handoffType,
                            String recipientId, String recipientName, String snapshot, OffsetDateTime at) { }
 

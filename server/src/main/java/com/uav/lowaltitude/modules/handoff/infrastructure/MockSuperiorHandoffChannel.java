@@ -15,6 +15,7 @@ import com.uav.lowaltitude.modules.handoff.domain.HandoffRules;
 @Component
 @ConditionalOnProperty(prefix = "app.handoff", name = "channel", havingValue = "mock")
 public class MockSuperiorHandoffChannel implements HandoffChannelPort {
+    @Override public boolean simulated() { return true; }
 
     @Override
     public DeliveryOutcome deliver(HandoffDispatch dispatch) {

@@ -231,6 +231,11 @@ public class RuleEngineRepository {
         return rows.isEmpty() ? null : rows.get(0);
     }
 
+    public String objectType(String targetId) {
+        return jdbc.queryForObject("SELECT object_type_code FROM target WHERE target_id=:id",
+                Map.of("id", targetId), String.class);
+    }
+
     public StateRow latestState(String targetId) {
         List<StateRow> rows = jdbc.query("SELECT " + locationColumns("s.location", "") + "," + locationColumns("s.pilot_location", "pilot_")
                 + ",s.altitude_amsl_m,s.height_agl_m,s.speed_mps,s.heading_deg,"

@@ -33,7 +33,7 @@ public class RiskReadService {
             "sort", "order", "target_type");
     /* risk_type 在库里是自由文本（阶段 4 的 CHECK 只要求非空），已有数据用 ROUTE_DEVIATION 等值；
        这里不做白名单，否则会把合法的既有类型判成参数错误。SPACE_OBJECT 只是其中一个取值。 */
-    private static final Set<String> STATES=Set.of("PENDING_VERIFICATION","PENDING_NOTIFICATION","NOTIFIED","EXCLUDED");
+    private static final Set<String> STATES=Set.of("PENDING_VERIFICATION","PENDING_NOTIFICATION","NOTIFIED","ACKNOWLEDGED","EXCLUDED");
     private static final Set<String> SEVERITIES=Set.of("LOW","MEDIUM","HIGH","CRITICAL");
     private static final Set<String> SOURCE_MODES=Set.of("mock","replay","live");
     private final AccessControlService access;

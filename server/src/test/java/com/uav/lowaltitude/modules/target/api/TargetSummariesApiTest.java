@@ -92,8 +92,8 @@ class TargetSummariesApiTest {
     @Test
     void onlyTheLatestOfEachKindIsReported() throws Exception {
         String targetId = target();
-        risk(targetId, "LOW", "EXCLUDED");
-        risk(targetId, "HIGH", "PENDING_VERIFICATION");
+        risk(targetId, "LOW", "EXCLUDED", Instant.parse("2026-09-08T01:00:00Z"));
+        risk(targetId, "HIGH", "PENDING_VERIFICATION", Instant.parse("2026-09-08T05:00:00Z"));
         JsonNode detail = detail(targetId);
         // 悬浮卡回答的是"现在怎么样"，不是历史。给最早那条会让处置人员按已经排除的风险去判断。
         assertThat(detail.path("risk_summary").path("severity").asText()).isEqualTo("HIGH");
@@ -221,8 +221,12 @@ class TargetSummariesApiTest {
     }
 
     private void risk(String targetId, String severity, String state) {
+        risk(targetId, severity, state, Instant.now());
+    }
+
+    private void risk(String targetId, String severity, String state, Instant occurredAt) {
         String id = "sum-risk-" + UUID.randomUUID().toString().substring(0, 8);
-        Timestamp at = Timestamp.from(Instant.now());
+        Timestamp at = Timestamp.from(occurredAt);
         // flight_risk 的必填面比看上去宽：计划、航线版本、来源、事由都不能空。
         // 复用阶段 3 的种子计划与航线，而不是再造一套——夹具越自成体系，越容易和真实形状脱节。
         jdbc.update("insert into integration_source (source_id,source_code,name,enabled,source_mode,created_at,"

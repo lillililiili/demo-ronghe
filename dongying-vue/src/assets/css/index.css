@@ -19,6 +19,7 @@
 @import './layout/bigscreen-mode.css';
 @import './components/map-layers.css';
 @import './components/content.css';
+@import './components/evidence-chain.css';
 @import './visual-2026.css';
 @import './themes.css';
 @import './pages/flights.css';

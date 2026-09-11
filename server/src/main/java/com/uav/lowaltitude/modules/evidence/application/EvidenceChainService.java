@@ -153,6 +153,15 @@ public class EvidenceChainService {
         if (alarmRead) addAlarms(buckets.get("ALARM"), repository.alarms(alarmId, family));
         if (assessmentRead) addJudgments(buckets.get("JUDGMENT"), repository.judgments(family));
         addCommands(buckets.get("AUTHORIZATION"), repository.linkedCommands(eventId, family), decision);
+        if (probe(PermissionCode.DISPOSAL_READ)) {
+            for (CommandRow row : cap(repository.linkedAuthorizations(eventId, family))) {
+                if (subjects.subjectVisible("AUTHORIZATION", row.authorizationId(), decision)) {
+                    buckets.get("AUTHORIZATION").add(new RecordDto("AUTHORIZATION", row.authorizationId(), row.createdAt(),
+                            EvidenceChainChecksum.fingerprintAuthorization(row.status(), row.authorizationId()), "PRESENT",
+                            new AuthorizationSummary(row.commandNo(), row.authorizationId(), row.status())));
+                }
+            }
+        }
 
         LinkedHashSet<String> eventIds = new LinkedHashSet<>();
         if (eventId != null) eventIds.add(eventId);

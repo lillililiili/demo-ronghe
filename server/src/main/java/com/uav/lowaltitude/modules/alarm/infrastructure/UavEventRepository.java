@@ -60,7 +60,7 @@ public class UavEventRepository {
 
     private EventRow one(String eventId, AccessDecision access, boolean lock) {
         Where where = where(access); where.parameters.put("event_id", eventId); where.sql.append(" AND e.event_id=:event_id");
-        List<EventRow> rows = jdbc.query("SELECT e.event_id,e.alarm_id,a.target_id,e.state_code,e.owner_org_id,e.district_id,e.created_at,e.updated_at,e.version FROM uav_event e JOIN alarm a ON a.alarm_id=e.alarm_id" + where.sql + (lock ? " FOR UPDATE" : ""), where.parameters, UavEventRepository::event);
+        List<EventRow> rows = jdbc.query("SELECT e.event_id,e.alarm_id,a.target_id,a.source_mode,e.state_code,e.owner_org_id,e.district_id,e.created_at,e.updated_at,e.version FROM uav_event e JOIN alarm a ON a.alarm_id=e.alarm_id" + where.sql + (lock ? " FOR UPDATE" : ""), where.parameters, UavEventRepository::event);
         return rows.isEmpty() ? null : rows.get(0);
     }
 
@@ -78,7 +78,7 @@ public class UavEventRepository {
     private static EventRow event(ResultSet rs, int ignored) throws SQLException {
         return new EventRow(rs.getString("event_id"), rs.getString("alarm_id"), rs.getString("target_id"),
                 rs.getString("state_code"), rs.getString("owner_org_id"), rs.getString("district_id"),
-                time(rs, "created_at"), time(rs, "updated_at"), rs.getLong("version"));
+                time(rs, "created_at"), time(rs, "updated_at"), rs.getLong("version"), rs.getString("source_mode"));
     }
     private static VerificationRow verification(ResultSet rs, int ignored) throws SQLException {
         return new VerificationRow(rs.getString("history_id"), rs.getString("previous_state"), rs.getString("resulting_state"), rs.getString("conclusion"), rs.getString("note"), rs.getLong("version"), rs.getString("actor_id"), time(rs, "created_at"), rs.getString("actor_name"));
@@ -88,7 +88,7 @@ public class UavEventRepository {
     }
     private record Where(StringBuilder sql, Map<String, Object> parameters) { }
     public record EventRow(String eventId, String alarmId, String targetId, String state, String ownerOrgId,
-            String districtId, OffsetDateTime createdAt, OffsetDateTime updatedAt, long version) { }
+            String districtId, OffsetDateTime createdAt, OffsetDateTime updatedAt, long version, String sourceMode) { }
     public record VerificationRow(String historyId, String previousState, String resultingState, String conclusion,
             String note, long version, String actorId, OffsetDateTime createdAt, String actorName) { }
 }

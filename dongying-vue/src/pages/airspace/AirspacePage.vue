@@ -496,7 +496,7 @@ onUnmounted(() => { document.removeEventListener('click', onDocumentClick); dest
         </div>
 
         <div v-if="error" class="empty">{{ error }}</div>
-        <div v-else-if="loading" class="empty">正在读取空域…</div>
+        <div v-else-if="loading && !airspaces.length" class="empty">正在读取空域…</div>
         <div v-else-if="!airspaces.length" class="empty">没有符合条件的空域。</div>
         <div v-else class="scroll airspace-list">
           <table class="tb">

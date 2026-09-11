@@ -44,7 +44,29 @@ async function decode(response) {
   return envelope.data;
 }
 
+const inflightGets = new Map();
+
+function getDedupeKey(path, options) {
+  const method = String(options.method || 'GET').toUpperCase();
+  if (method !== 'GET' || options.body != null || options.mutation) return '';
+  return path;
+}
+
 export async function apiRequest(path, options = {}) {
+  const key = getDedupeKey(path, options);
+  if (key) {
+    const pending = inflightGets.get(key);
+    if (pending) return pending;
+  }
+  const run = sendRequest(path, options);
+  if (key) {
+    inflightGets.set(key, run);
+    run.finally(() => { if (inflightGets.get(key) === run) inflightGets.delete(key); });
+  }
+  return run;
+}
+
+async function sendRequest(path, options) {
   const headers = new Headers(options.headers || {});
   headers.set('Accept', 'application/json');
   if (options.body != null && !(options.body instanceof FormData)) headers.set('Content-Type', 'application/json');
@@ -65,6 +87,24 @@ export async function apiRequest(path, options = {}) {
     if (response.status === 401 && path !== '/auth/login') window.dispatchEvent(new CustomEvent('api:unauthorized', { detail: error }));
     throw error;
   }
+}
+
+/** 限制并发，避免一页同时打出几十个只读请求把连接打满。 */
+export async function mapPool(items, limit, mapper) {
+  const list = Array.isArray(items) ? items : [];
+  if (!list.length) return [];
+  const n = Math.max(1, Number(limit) || 1);
+  const out = new Array(list.length);
+  let next = 0;
+  async function worker() {
+    while (next < list.length) {
+      const i = next;
+      next += 1;
+      out[i] = await mapper(list[i], i);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(n, list.length) }, () => worker()));
+  return out;
 }
 
 /* 把非空查询参数序列化为 ?a=b；各业务 api 共用，避免每个文件各写一份。 */

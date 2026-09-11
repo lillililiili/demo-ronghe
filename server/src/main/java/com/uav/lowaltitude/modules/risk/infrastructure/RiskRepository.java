@@ -110,6 +110,29 @@ public class RiskRepository {
                 Map.of("at", at, "id", riskId));
     }
 
+    public int markNotified(String riskId, long expectedVersion, OffsetDateTime at) {
+        return jdbc.update("UPDATE flight_risk SET state_code='NOTIFIED',updated_at=:at,version=version+1"
+                + " WHERE risk_id=:id AND version=:version AND state_code='PENDING_NOTIFICATION'",
+                Map.of("at", at, "id", riskId, "version", expectedVersion));
+    }
+
+    public int markAcknowledged(String riskId, long expectedVersion, OffsetDateTime at) {
+        return jdbc.update("UPDATE flight_risk SET state_code='ACKNOWLEDGED',updated_at=:at,version=version+1"
+                + " WHERE risk_id=:id AND version=:version AND state_code IN ('PENDING_NOTIFICATION','NOTIFIED')",
+                Map.of("at", at, "id", riskId, "version", expectedVersion));
+    }
+
+    public boolean notificationRecorded(String riskId) {
+        Long total = jdbc.queryForObject("SELECT COUNT(*) FROM flight_risk WHERE risk_id=:id"
+                + " AND state_code IN ('NOTIFIED','ACKNOWLEDGED')", Map.of("id", riskId), Long.class);
+        return total != null && total > 0;
+    }
+
+    public long currentVersion(String riskId) {
+        Long version = jdbc.queryForObject("SELECT version FROM flight_risk WHERE risk_id=:id", Map.of("id", riskId), Long.class);
+        return version == null ? -1 : version;
+    }
+
     public void appendVerification(String historyId, String riskId, String conclusion, String note,
             String fromState, String toState, long expectedVersion, String verifiedBy, OffsetDateTime at) {
         jdbc.update("INSERT INTO flight_risk_verification (history_id,risk_id,version,previous_state,resulting_state,conclusion,note,actor_id,created_at)"

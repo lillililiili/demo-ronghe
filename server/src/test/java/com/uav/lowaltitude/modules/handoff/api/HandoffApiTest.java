@@ -294,7 +294,7 @@ class HandoffApiTest {
     void acknowledgedDeliveryRecordsBothStagesAndPreservesSnapshotVersion() throws Exception {
         var at = java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC);
         org.mockito.Mockito.doReturn(new com.uav.lowaltitude.modules.handoff.domain.HandoffChannelPort.DeliveryOutcome(
-                "DELIVERED", "ACKNOWLEDGED", null, at, at, at)).when(channel).deliver(org.mockito.ArgumentMatchers.any());
+                "DELIVERED", "ACKNOWLEDGED", null, null, at, at, at)).when(channel).deliver(org.mockito.ArgumentMatchers.any());
         String id = created(session, body("RISK", riskId, "RISK_NOTICE", recipientId, 1), "ack-" + UUID.randomUUID());
         assertThat(state(riskId)).isEqualTo("ACKNOWLEDGED");
         assertThat(jdbc.queryForObject("select version from flight_risk where risk_id=?", Long.class, riskId)).isEqualTo(3);
@@ -316,7 +316,7 @@ class HandoffApiTest {
         assertThat(state(riskId)).isEqualTo("NOTIFIED");
         var at = java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC);
         org.mockito.Mockito.doReturn(new com.uav.lowaltitude.modules.handoff.domain.HandoffChannelPort.DeliveryOutcome(
-                "DELIVERED", "ACKNOWLEDGED", null, at, at, at)).when(channel).deliver(org.mockito.ArgumentMatchers.any());
+                "DELIVERED", "ACKNOWLEDGED", null, null, at, at, at)).when(channel).deliver(org.mockito.ArgumentMatchers.any());
         String second = "recipient-test-" + UUID.randomUUID().toString().substring(0, 8);
         insertRecipient(second, "RISK_NOTICE", true);
         created(session, body("RISK", riskId, "RISK_NOTICE", second, 2), "ack-later-" + UUID.randomUUID());
@@ -336,7 +336,7 @@ class HandoffApiTest {
         var at = java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC);
         org.mockito.Mockito.doReturn(true).when(channel).simulated();
         org.mockito.Mockito.doReturn(new com.uav.lowaltitude.modules.handoff.domain.HandoffChannelPort.DeliveryOutcome(
-                "DELIVERED", "ACKNOWLEDGED", null, at, at, at)).when(channel).deliver(org.mockito.ArgumentMatchers.any());
+                "DELIVERED", "ACKNOWLEDGED", null, null, at, at, at)).when(channel).deliver(org.mockito.ArgumentMatchers.any());
         created(session, body("RISK", riskId, "RISK_NOTICE", recipientId, 1), "live-mock-" + UUID.randomUUID());
         assertThat(state(riskId)).isEqualTo("NOTIFIED");
     }
@@ -345,7 +345,7 @@ class HandoffApiTest {
     void deliveredWithoutAcknowledgmentRemainsNotified() throws Exception {
         var at = java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC);
         org.mockito.Mockito.doReturn(new com.uav.lowaltitude.modules.handoff.domain.HandoffChannelPort.DeliveryOutcome(
-                "DELIVERED", "PENDING", null, at, at, null)).when(channel).deliver(org.mockito.ArgumentMatchers.any());
+                "DELIVERED", "PENDING", null, null, at, at, null)).when(channel).deliver(org.mockito.ArgumentMatchers.any());
         created(session, body("RISK", riskId, "RISK_NOTICE", recipientId, 1), "noack-" + UUID.randomUUID());
         assertThat(state(riskId)).isEqualTo("NOTIFIED");
     }

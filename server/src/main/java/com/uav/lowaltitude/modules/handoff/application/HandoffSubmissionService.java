@@ -42,6 +42,7 @@ import com.uav.lowaltitude.modules.identity.application.IdempotencyGuard;
 import com.uav.lowaltitude.modules.identity.domain.AccessDecision;
 import com.uav.lowaltitude.modules.identity.domain.PermissionCode;
 import com.uav.lowaltitude.modules.risk.api.RiskDtos.RiskDto;
+import com.uav.lowaltitude.modules.risk.application.RiskNotificationService;
 import com.uav.lowaltitude.modules.risk.application.RiskReadService;
 import com.uav.lowaltitude.modules.risk.infrastructure.RiskRepository;
 import com.uav.lowaltitude.modules.risk.infrastructure.RiskRepository.RiskRow;
@@ -69,16 +70,19 @@ public class HandoffSubmissionService {
     private final DisposalCompletionPort disposals;
     private final UavEventRepository events;
     private final HandoffMaterialAssembler materials;
+    private final RiskNotificationService notifications;
 
     public HandoffSubmissionService(AccessControlService access, HandoffRepository repository, RiskRepository risks, RiskReadService riskRead,
             IdempotencyGuard idempotency, AppClock clock, AuditService audit, ObjectMapper objectMapper,
-            DisposalCompletionPort disposals, UavEventRepository events, HandoffMaterialAssembler materials, HandoffChannelPort channel) {
+            DisposalCompletionPort disposals, UavEventRepository events, HandoffMaterialAssembler materials, HandoffChannelPort channel,
+            RiskNotificationService notifications) {
         this.channel = channel;
         this.access = access; this.repository = repository; this.risks = risks; this.riskRead = riskRead;
         this.idempotency = idempotency; this.clock = clock; this.audit = audit; this.objectMapper = objectMapper;
         this.disposals = disposals;
         this.events = events;
         this.materials = materials;
+        this.notifications = notifications;
     }
 
     /**
@@ -135,17 +139,21 @@ public class HandoffSubmissionService {
         DeliveryOutcome outcome = dispatch(handoffId, request.sourceKind(), sourceId, request.handoffType(), recipient, snapshot, at);
         repository.insertDelivery(delivery(handoffId, outcome, at));
         if (outcome.receiptResult() != null) repository.updateReceiptResult(handoffId, outcome.receiptResult());
-        // 决策 18-14：风险的闭环判据是回执"已驱离"，不是"送到了"。确认驱离这条风险就走完了；
-        // 状态停在"待通知"会让值班台一直把它当未办事项。未驱离则保持待通知——事还没完，还得继续跟。
-        // 源风险已在本事务里加锁，这一步与交接落库同生共死；不另记审计动作，而是把结果写进这条交接的审计详情，
-        // 否则查审计的人会看到风险状态变了却找不到任何一条记录说明为什么。
-        boolean closed = HandoffRules.TYPE_RISK_NOTICE.equals(request.handoffType())
-                && HandoffRules.RECEIPT_DISPERSED.equals(outcome.receiptResult())
-                && risks.markNotified(sourceId, at) == 1;
+        String riskState = "";
+        if (HandoffRules.TYPE_RISK_NOTICE.equals(request.handoffType())) {
+            notifications.submitted(sourceId, risk.version(), handoffId, at);
+            riskState = "; risk_state=NOTIFIED";
+            boolean trustAck = "ACKNOWLEDGED".equals(outcome.receiptStatus())
+                    && !("live".equals(risk.sourceMode()) && channel.simulated());
+            if (trustAck) {
+                notifications.acknowledged(sourceId, risks.currentVersion(sourceId), handoffId, at);
+                riskState = "; risk_state=ACKNOWLEDGED";
+            }
+        }
         audit.record(actor.userId(), actor.account(), actor.roleCode(), "handoff", "handoff_created", "handoff", handoffId,
                 "source_kind=" + request.sourceKind() + "; source_id=" + sourceId + "; handoff_type=" + request.handoffType()
                         + "; recipient_id=" + recipientId + "; source_version=" + risk.version()
-                        + (closed ? "; risk_state=NOTIFIED" : ""), "SUCCESS", "", "");
+                        + riskState, "SUCCESS", "", "");
         return new CreatedDto(handoffId, request.sourceKind(), sourceId, request.handoffType(), recipientId, risk.version(),
                 outcome.deliveryStatus(), outcome.receiptStatus(), outcome.receiptResult(), outcome.blockedReason(),
                 at.toInstant().toEpochMilli());

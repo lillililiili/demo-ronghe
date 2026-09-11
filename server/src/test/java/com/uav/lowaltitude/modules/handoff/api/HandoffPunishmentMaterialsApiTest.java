@@ -70,6 +70,8 @@ class HandoffPunishmentMaterialsApiTest {
         jdbc.update("delete from evidence_file where evidence_id like 'pm-evi-%'");
         jdbc.update("delete from disposal_authorization_event where authorization_id in"
                 + " (select authorization_id from disposal_authorization where subject_id like 'pm-event-%')");
+        jdbc.update("delete from disposal_authorization where subject_id like 'pm-event-%'"
+                + " and chained_from_authorization_id is not null");
         jdbc.update("delete from disposal_authorization where subject_id like 'pm-event-%'");
         jdbc.update("delete from uav_event_verification where event_id like 'pm-event-%'");
         jdbc.update("delete from uav_event where event_id like 'pm-event-%'");

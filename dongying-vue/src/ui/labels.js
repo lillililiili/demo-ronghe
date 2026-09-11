@@ -4,14 +4,17 @@ export const SOURCE_MODE_LABEL = { mock: '模拟', replay: '回放', live: '实�
 // RULE_LEGALITY 是阶段 7 规则引擎判定违规后自动生成的告警类型；叫「飞行违规」而不叫「合法性研判告警」，免得与飞行监管菜单下的「合法性研判」页混淆（决策 15-53）。
 export const ALARM_TYPE_LABEL = { UAV_INTRUSION: '无人机入侵', UAV: '无人机告警', RULE_LEGALITY: '飞行违规' };
 
-/* 业务编号才上屏。引擎写入的标识（eval:<uuid>、C04:<规则集>:<计划>:…）和裸 UUID 是内部 ID，
-   只能进 title 提示；这类值返回空串，调用方按"没有编号"处理（显示 — 或不渲染）。 */
+/* 优先展示业务编号；已知引擎来源确定映射为 ALM/RSK 显示编号。
+   其他内部来源键及裸 UUID 只进 title 提示，返回空串表示没有可展示编号。 */
 const ENGINE_ID = /^[A-Za-z][A-Za-z0-9_-]*:/;
 /* 本地种子的主键（seed-…）也是内部 id，不是业务编号。 */
 const SEED_ID = /^seed-/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-export function readableNo(value) {
+export function readableNo(value, riskId) {
   const text = value == null ? '' : String(value).trim();
+  // 规则来源键一一映射为稳定显示编号，保留全部 UUID 位，跨页一致且不改原始来源键。
+  if (/^eval:[0-9a-f-]{36}$/i.test(text)) return `ALM-${text.slice(5).replaceAll('-', '').toUpperCase()}`;
+  if (/^C0[45]:/.test(text) && UUID.test(String(riskId || ''))) return `RSK-${riskId.replaceAll('-', '').toUpperCase()}`;
   if (!text || ENGINE_ID.test(text) || UUID.test(text) || SEED_ID.test(text)) return '';
   return text;
 }
@@ -19,6 +22,9 @@ export function readableNo(value) {
 export const RISK_TYPE_LABEL = { FLIGHT_OPERATION: '飞行作业风险', AIRSPACE: '空域风险', SPACE_OBJECT: '空中异物风险', FOREIGN_OBJECT: '空中异物风险' };
 export const REASON_CODE_LABEL = {
   ROUTE_DEVIATION: '偏离报备航线', AIRSPACE_CONFLICT: '空域冲突', ALTITUDE_UNKNOWN: '高度信息缺失', SOURCE_MISMATCH: '来源不一致',
+  OBJECT_TYPE_UNKNOWN: '目标类别尚未确定', NON_UAV_OBJECT: '非无人机目标，不适用无人机合法性规则',
+  SPACE_OBJECT_ALTITUDE_UNKNOWN: '异物进入航线走廊，高度未知', SPACE_OBJECT_IN_CORRIDOR: '异物进入航线走廊',
+  SPACE_OBJECT_NEAR_ROUTE: '异物邻近航线',
   PROHIBITED_AIRSPACE_OVERLAP: '穿越禁飞空域', ALTITUDE_DATUM_OR_RANGE_UNKNOWN: '高度基准或范围未知', CORRIDOR_WIDTH_UNKNOWN: '航线走廊宽度未知',
   TIME_UNTRUSTED: '时间不可信', LOCATION_UNTRUSTED: '位置不可信'
 };
@@ -41,6 +47,23 @@ export const SOURCE_TYPE_LABEL = {
 export const SCHEMA_STATUS_LABEL = { CONFIRMED: '已联调确认', DEMO: '按凌云协议 v8.6 建模，待联调' };
 /* 处置授权（阶段 13）：动作、状态、执行通道。同一个码全站只有一个说法，页面一律经 labelOf 取词。 */
 export const DISPOSAL_ACTION_LABEL = { COUNTERMEASURE: '联动反制', JAMMING: '信号干扰', DISPERSAL: '驱离', DECOY: '诱骗' };
+/* 告警列表「状态」列的处置进度展示：uav_event.state 仍是核实结论，不把反制中写进库。 */
+export const ALARM_PROGRESS_LABEL = {
+  HANDED_OFF: '已移送处罚',
+  JAMMING_ACTIVE: '干扰中',
+  JAMMING_DONE: '已干扰',
+  COUNTERMEASURE_ACTIVE: '反制中',
+  COUNTERMEASURE_DONE: '已反制',
+  PENDING_APPROVAL: '待审批'
+};
+export const ALARM_PROGRESS_TAG = {
+  HANDED_OFF: 't-green',
+  JAMMING_ACTIVE: 't-red',
+  JAMMING_DONE: 't-cyan',
+  COUNTERMEASURE_ACTIVE: 't-orange',
+  COUNTERMEASURE_DONE: 't-cyan',
+  PENDING_APPROVAL: 't-amber'
+};
 /* 状态回答“现在在哪一步”，与执行结果（成功/失败）分开说，不要混成一句。 */
 /* 未了结的授权：服务端对同一主体同类动作只允许一条（ACTIVE_AUTHORIZATION_EXISTS），页面据此禁用再次发起。 */
 export const DISPOSAL_ACTIVE_STATUSES = ['REQUESTED', 'APPROVED', 'EXECUTING'];
@@ -175,7 +198,7 @@ export const DEVICE_EVENT_TYPE_LABEL = {
   INCIDENT_OPENED: '异常产生', INCIDENT_RECOVERED: '异常恢复', DEVICE_OFFLINE: '设备离线', LINK_DEGRADED: '链路降级'
 };
 export const SEVERITY_TAG = { CRITICAL: 't-red', HIGH: 't-red', MEDIUM: 't-amber', LOW: 't-blue' };
-export const RISK_STATE_LABEL = { PENDING_VERIFICATION: '待核验', PENDING_NOTIFICATION: '待通知', NOTIFIED: '已通知', EXCLUDED: '已排除' };
+export const RISK_STATE_LABEL = { PENDING_VERIFICATION: '待核验', PENDING_NOTIFICATION: '待通知', NOTIFIED: '已通知', ACKNOWLEDGED: '已回执', EXCLUDED: '已排除' };
 /** 版本号翻译成次数：version 0 表示尚未核实，返回空串由调用方整段不渲染。 */
 /* 阶段 9 空间安全风险：异物细类、高度带与走廊关系。
    气球/风筝/孔明灯只在细类语境出现，与 INFERRED_SUBTYPE_LABEL 同义但键不同（服务端字典码）。 */

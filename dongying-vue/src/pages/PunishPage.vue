@@ -780,7 +780,7 @@ onMounted(() => {
             </div>
           </UPanel>
 
-          <UPanel title="处罚案件、文书与证据" sub="按所选处罚交接办理：立案 → 指派 → 裁量 → 复核 → 决定书 → 结案" panel-style="margin-top:12px" nopad>
+          <UPanel title="处罚案件、文书与证据" sub="按所选处罚交接办理：立案 → 指派 → 裁量 → 复核 → 决定书 → 结案" panel-style="margin-top:12px;flex:none">
             <div class="pn-not-built">
               <div class="pn-not-built-item" data-not-built="case">
                 <div class="pn-not-built-head"><b>处罚案件管理</b>
@@ -898,7 +898,7 @@ onMounted(() => {
             </div>
           </UPanel>
 
-          <UPanel v-if="documentPreview.open" title="决定书全文" sub="平台内预览与复制，不提供下载" panel-style="margin-top:12px" nopad>
+          <UPanel v-if="documentPreview.open" title="决定书全文" sub="平台内预览与复制，不提供下载" panel-style="margin-top:12px;flex:none">
             <div class="pn-doc-preview">
               <div v-if="documentPreview.error" class="pn-sub pn-wrap">{{ documentPreview.error }}</div>
               <pre v-else class="pn-doc-text">{{ documentPreview.text }}</pre>
@@ -916,8 +916,12 @@ onMounted(() => {
 
 <style scoped>
 .pn-body { display: flex; flex-direction: column; min-height: 0; overflow: auto; }
+.pn-body > :deep(.panel) { flex: none; }
+.pn-body > :deep(.panel > .pb) { flex: none; min-height: auto; overflow: visible; }
 .pn-forbidden, .pn-note { margin: 0 0 12px; }
 .pn-main { align-items: stretch; gap: var(--gap); height: calc(100vh - 314px); min-height: 560px; flex: none; }
+.pn-not-built { display: grid; gap: 14px; padding: 12px; }
+.pn-not-built-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .pn-list { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .pn-toolbar { padding: 10px; }
 .pn-error { margin: 8px 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

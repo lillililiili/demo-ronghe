@@ -26,17 +26,18 @@ import { handoffApi } from '@/services/handoffApi.js';
 import { openFormModal } from '@/ui/formModal.js';
 import { closeModal } from '@/ui/modal.js';
 import { toast } from '@/ui/nv.js';
-import { exportAlarmsCsv, getAlarm, getUavEvent, listAlarmDistricts, listAlarms, listUavVerifications } from '@/services/alarmApi.js';
+import { exportAlarmsCsv, getAlarm, getUavEvent, listAlarmDistricts, listAlarms } from '@/services/alarmApi.js';
 import { getEvidenceChain } from '@/services/evidenceApi.js';
 import { openUavVerification } from '@/ui/uavVerificationModal.js';
 import { targetApi } from '@/services/targetApi.js';
-import { ALARM_TYPE_LABEL, DISPOSAL_ACTIVE_STATUSES, DISPOSAL_ACTION_LABEL, disposalStatusText, labelOf, LEGALITY_LABEL, readableNo, SOURCE_MODE_LABEL as MODE_TEXT, targetTypeLabel, verificationOrdinal } from '@/ui/labels.js';
+import { ALARM_PROGRESS_LABEL, ALARM_PROGRESS_TAG, ALARM_TYPE_LABEL, DISPOSAL_ACTIVE_STATUSES, DISPOSAL_ACTION_LABEL, disposalStatusText, labelOf, LEGALITY_LABEL, readableNo, SOURCE_MODE_LABEL as MODE_TEXT, targetTypeLabel } from '@/ui/labels.js';
 import { openEvidenceFileModal } from '@/ui/evidenceFileDetail.js';
-import { renderEvidenceChainHtml } from '@/ui/evidenceChainView.js';
+import { openEvidenceChainTypeModal, renderEvidenceChainHtml } from '@/ui/evidenceChainView.js';
 import { disposalApi, isDisposalUnavailable } from '@/services/disposalApi.js';
 import { DISPOSAL_UNAVAILABLE_TEXT, openDisposalRequest } from '@/ui/disposalAuthModal.js';
 import { canRouteAction, hasPermission } from '@/services/accessControl.js';
 import { deviceApi } from '@/services/deviceApi.js';
+import { openTrackReplay, trackPointsOf } from '@/ui/trackReplayModal.js';
 
 const U = window.UI;
 usePageChrome('alarms');
@@ -53,13 +54,14 @@ const SEVERITY = {
   CRITICAL: { t: '紧急', c: 't-red', tone: 'bad' }, HIGH: { t: '高', c: 't-red', tone: 'bad' },
   MEDIUM: { t: '中', c: 't-amber', tone: 'warn' }, LOW: { t: '低', c: 't-blue', tone: 'info' }
 };
-/* CONFIRMED 只表示「已核实，待处置」——反制、干扰、处罚交接都未接入，页面不得出现「反制中 / 已处置」。 */
+/* CONFIRMED 仍是核实结论。列表「状态」列在已核实后按处置进度改写展示，不改 uav_event.state。 */
 const STATE = {
   PENDING_VERIFICATION: { t: '待核实', c: 't-amber', color: '#ffb020' },
   EVIDENCE_REQUIRED: { t: '证据待补充', c: 't-orange', color: '#ff8b3d' },
   CONFIRMED: { t: '已核实，待处置', c: 't-cyan', color: '#22d3ee' },
   FALSE_POSITIVE: { t: '误报', c: 't-blue', color: '#8fbaff' }
 };
+const STATE_FILTER = { ...STATE, CONFIRMED: { ...STATE.CONFIRMED, t: '已核实（含处置中）' } };
 const NO_EVENT = { t: '未建事件', c: 't-gray', color: '#8ca0be' };
 const SOURCE_MODE = { mock: { t: MODE_TEXT.mock, c: 't-purple' }, replay: { t: MODE_TEXT.replay, c: 't-amber' }, live: { t: MODE_TEXT.live, c: 't-green' } };
 /* 类别来自共享字典；区域来自本页的区域字典接口，读不到就把下拉标成"不可用"并在 title 说明原因。 */
@@ -71,7 +73,8 @@ const regionOpts = () => (districtError.value
   : [{ v: '全部', t: '全部' }, ...districts.value.map(d => ({ v: d.district_id, t: d.name }))]);
 
 const LEVEL_OPTS = [{ v: '全部', t: '全部' }, { v: 'CRITICAL', t: '紧急' }, { v: 'HIGH', t: '高' }, { v: 'MEDIUM', t: '中' }, { v: 'LOW', t: '低' }];
-const STATUS_OPTS = [{ v: '全部', t: '全部' }, ...Object.entries(STATE).map(([v, s]) => ({ v, t: s.t }))];
+const STATUS_OPTS = [{ v: '全部', t: '全部' }, ...Object.entries(STATE_FILTER).map(([v, s]) => ({ v, t: s.t }))];
+const pageProgress = {};
 
 /* ---------- 通用小工具：服务端字符串一律转义后才进 innerHTML ---------- */
 const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
@@ -86,13 +89,39 @@ function fmt(ms) {
 const clock = ms => fmt(ms).slice(11) || '—';
 const sevOf = a => SEVERITY[a.severity] || { t: esc(a.severity || '—'), c: 't-gray', tone: 'info' };
 const stateOf = a => a.event_id ? (STATE[a.state] || { t: esc(a.state || '状态未知'), c: 't-gray', color: '#8ca0be' }) : NO_EVENT;
-const stateText = code => (STATE[code] || { t: esc(code || '—') }).t;
+function deriveAlarmProgress(auths, handoffs) {
+  if ((handoffs || []).some(h => !h.handoff_type || h.handoff_type === 'UAV_PUNISHMENT')) return 'HANDED_OFF';
+  const latest = type => {
+    const rows = (auths || []).filter(row => row.action_type === type);
+    if (!rows.length) return null;
+    return rows.reduce((a, b) => (Number(b.requested_at || 0) >= Number(a.requested_at || 0) ? b : a));
+  };
+  const jam = latest('JAMMING'), cm = latest('COUNTERMEASURE');
+  const live = status => status === 'APPROVED' || status === 'EXECUTING';
+  if (jam && live(jam.status)) return 'JAMMING_ACTIVE';
+  if (jam && jam.status === 'COMPLETED') return 'JAMMING_DONE';
+  if (jam && jam.status === 'REQUESTED') return 'PENDING_APPROVAL';
+  if (cm && live(cm.status)) return 'COUNTERMEASURE_ACTIVE';
+  if (cm && cm.status === 'COMPLETED') return 'COUNTERMEASURE_DONE';
+  if (cm && cm.status === 'REQUESTED') return 'PENDING_APPROVAL';
+  return null;
+}
+function displayState(a) {
+  if (!a || a.state !== 'CONFIRMED' || !a.event_id) return stateOf(a);
+  let key = pageProgress[a.event_id];
+  if (cur.alarm && cur.alarm.alarm_id === a.alarm_id) {
+    const fromDetail = deriveAlarmProgress(Object.values(disposal.byAction), disposal.handoff ? [disposal.handoff] : []);
+    if (fromDetail) key = fromDetail;
+  }
+  if (!key || !ALARM_PROGRESS_LABEL[key]) return stateOf(a);
+  return { t: ALARM_PROGRESS_LABEL[key], c: ALARM_PROGRESS_TAG[key] || 't-cyan', color: '#22d3ee' };
+}
 const typeOf = a => ALARM_TYPE_LABEL[a.alarm_type] || esc(a.alarm_type || '—');
 /* 只上屏业务编号；引擎标识（eval:…）不是编号，列里显示 —，内部 ID 留在 title。 */
 const noOf = a => readableNo(a.alarm_no) || '—';
 const modeOf = a => SOURCE_MODE[a.source_mode] || { t: esc(a.source_mode || '—'), c: 't-gray' };
 const sevTag = a => U.tag(sevOf(a).t, sevOf(a).c);
-const stateTag = a => U.tag(stateOf(a).t, stateOf(a).c);
+const stateTag = a => U.tag(displayState(a).t, displayState(a).c);
 function messageOf(e) {
   if (!e) return '请求失败，请稍后重试';
   if (e.status === 401) return '登录已失效，请重新登录';
@@ -112,7 +141,7 @@ function coord(loc, issues, field) {
 /* ---------- 页面数据（服务端事实的一次性快照，不作为状态机真源） ---------- */
 const list = { rows: [], loading: false, error: '' };
 let listSeq = 0, detailSeq = 0;
-const emptyDetail = () => ({ alarm: null, event: null, history: [], historyTotal: 0, loading: false, error: '', eventError: '',
+const emptyDetail = () => ({ alarm: null, event: null, loading: false, error: '',
   target: null, targetLoading: false, targetError: '', track: null, trackError: '',
   chain: null, chainLoading: false, chainError: '', chainUnavailable: '',
   eoTask: null, eoTaskError: '' });
@@ -124,11 +153,11 @@ sessionStorage.removeItem('alarm.sel');
 /* ---------- KPI：全部由服务端 total 得出；无法由后端得出的指标显示「尚未接入」 ---------- */
 /* 当前选中事件的处置授权：按动作类型取最新一条，供流程步骤与按钮显示真实状态。
    读不到（13.1 未落地时是 404）就记下原因并显示“尚未接入”，绝不假装“无授权”。 */
-const disposal = reactive({ byAction: {}, unavailable: false, error: '' });
+const disposal = reactive({ byAction: {}, unavailable: false, error: '', handoff: null });
 const DISPOSAL_ACTIVE = ['APPROVED', 'EXECUTING'];
 
 async function loadEventDisposals(eventId) {
-  disposal.byAction = {}; disposal.unavailable = false; disposal.error = '';
+  disposal.byAction = {}; disposal.unavailable = false; disposal.error = ''; disposal.handoff = null;
   if (!eventId) return;
   try {
     const page = await disposalApi.list({ subject_kind: 'UAV_EVENT', subject_id: eventId, page: 1, size: 50 });
@@ -141,6 +170,10 @@ async function loadEventDisposals(eventId) {
     disposal.unavailable = isDisposalUnavailable(error);
     disposal.error = disposal.unavailable ? DISPOSAL_UNAVAILABLE_TEXT : messageOf(error);
   }
+  try {
+    const page = await handoffApi.listHandoffs({ source_kind: 'UAV_EVENT', source_id: eventId, page: 1, size: 5 });
+    disposal.handoff = (page?.items || []).find(row => row.handoff_type === 'UAV_PUNISHMENT') || (page?.items || [])[0] || null;
+  } catch { disposal.handoff = null; }
 }
 
 const KPI_DEFS = [
@@ -320,11 +353,18 @@ function disposalSteps(a, ev) {
       n: name,
       t: disposalStatusText(auth),
       done: auth.status === 'COMPLETED',
-      act: DISPOSAL_ACTIVE.includes(auth.status),
+      act: DISPOSAL_ACTIVE_STATUSES.includes(auth.status),
       applicable: true
     };
   };
-  const tail = [step('COUNTERMEASURE'), step('JAMMING'), { n: '处置', t: '', done: false, act: false, applicable: true }];
+  const punish = disposal.handoff;
+  const tail = [step('COUNTERMEASURE'), step('JAMMING'), {
+    n: '处置',
+    t: punish ? '已移送' : '待移送',
+    done: !!punish,
+    act: false,
+    applicable: true
+  }];
   if (!ev) return [trigger, { n: '人工核实', t: '未建事件', done: false, act: false }, ...tail];
   if (ev.state === 'FALSE_POSITIVE') return [trigger, { n: '人工核实', t: '误报', done: true, act: false }];
   if (ev.state === 'CONFIRMED') return [trigger, { n: '人工核实', t: '属实', done: true, act: false }, ...tail];
@@ -338,37 +378,28 @@ function disposalActions(a, ev) {
   if ((ev.allowed_actions || []).includes('VERIFY')) return `<button class="btn pri" data-al="verify">人工核实</button>`;
   if (ev.state === 'CONFIRMED') {
     /* 已核实的事件可以发起联动反制申请：按钮本身只负责“提申请”，能不能执行由审批与时限决定。 */
-    /* 已有未了结的联动反制申请（待审批/已批准/执行中）时服务端会拒绝再发起（ACTIVE_AUTHORIZATION_EXISTS），按钮直接禁用。 */
-    const active = disposal.byAction.COUNTERMEASURE;
-    const activeText = active && DISPOSAL_ACTIVE_STATUSES.includes(active.status) ? `已有联动反制申请（${disposalStatusText(active)}），了结前不能再次发起` : '';
+    /* 已有未了结的反制或干扰时服务端会拒绝再发起同类授权，按钮直接禁用。 */
+    const cm = disposal.byAction.COUNTERMEASURE, jam = disposal.byAction.JAMMING;
+    const active = [cm, jam].find(row => row && DISPOSAL_ACTIVE_STATUSES.includes(row.status));
+    const completed = [cm, jam].some(row => row && row.status === 'COMPLETED');
+    const jamLive = jam && DISPOSAL_ACTIVE_STATUSES.includes(jam.status);
+    const activeText = active ? `已有处置申请（${labelOf(DISPOSAL_ACTION_LABEL, active.action_type)} ${disposalStatusText(active)}），了结前不能再次发起` : '';
     const counter = disposal.unavailable || disposal.error
       ? dis('counter', `${U.icon('bolt')} 发起联动反制`, esc(disposal.error || DISPOSAL_UNAVAILABLE_TEXT), 'danger')
       : activeText
         ? dis('counter', `${U.icon('bolt')} 发起联动反制`, esc(activeText), 'danger')
         : `<button class="btn danger" data-al="counter">${U.icon('bolt')} 发起联动反制</button>`;
-    /* 阶段 14：处罚移送已接入。按钮只负责提交交接，能不能提交（已核实、有已完成授权、未重复）由服务端判，
-       前端不预判（决策 14-18）。 */
-    return counter + ` <button class="btn" data-al="punish">提交处罚交接</button>`;
+    const punish = disposal.handoff
+      ? dis('punish', '提交处罚交接', '已提交处罚交接')
+      : jamLive
+        ? dis('punish', '提交处罚交接', '信号干扰尚未完成')
+        : !completed
+          ? dis('punish', '提交处罚交接', '需先完成反制或干扰')
+          : `<button class="btn" data-al="punish">提交处罚交接</button>`;
+    return counter + ` ${punish}`;
   }
   if (ev.state === 'FALSE_POSITIVE') return '';
   return dis('verify', '人工核实', '当前账号缺少核实权限（alarm:verify），或事件不在可核实状态');
-}
-
-function historyHtml() {
-  if (!cur.event) return `<div class="empty">尚未创建核实事件</div>`;
-  if (cur.eventError) return `<div class="empty">${esc(cur.eventError)}</div>`;
-  if (!cur.history.length) return `<div class="empty">暂无核实历史</div>`;
-  const more = cur.historyTotal > cur.history.length ? `<div class="empty">仅显示前 ${cur.history.length} 条，共 ${U.num(cur.historyTotal)} 条</div>` : '';
-  /* 说明文本是用户输入：这里只留占位 span，innerHTML 写入后再以 textContent 填充，不进 v-html。 */
-  return U.timeline(cur.history.map((h, i) => ({
-    time: clock(h.created_at),
-    label: `${stateText(h.previous_state)} → ${stateText(h.resulting_state)}（第${Number(h.version)}次核实）`,
-    desc: `操作人 ${esc(h.actor_name || h.actor_id || '—')} · <span data-note="${i}"></span>`,
-    color: (STATE[h.resulting_state] || NO_EVENT).color
-  }))) + more;
-}
-function fillNotes(host) {
-  host.querySelectorAll('[data-note]').forEach(n => { const h = cur.history[Number(n.dataset.note)]; n.textContent = h ? String(h.note == null ? '' : h.note) : ''; });
 }
 
 function detailHtml() {
@@ -381,6 +412,7 @@ function detailHtml() {
   }
   if (stEl) stEl.innerHTML = stateTag(a);
   const ev = cur.event, t = cur.target, ls = t && t.latest_state;
+  const replayN = replayPointCount();
   const targetType = !a.target_id ? '—' : cur.targetLoading ? '读取中…' : cur.targetError ? '读取失败' : esc(t ? targetTypeLabel(t.subtype, t.object_type_code) : '—');
   const altSpeed = ls ? `${ls.altitude_amsl_m == null ? '—' : esc(ls.altitude_amsl_m)} m / ${ls.speed_mps == null ? '—' : esc(ls.speed_mps)} m/s` : '— m / — m/s';
   return `${U.detailHero({
@@ -390,7 +422,7 @@ function detailHtml() {
   })}
     ${U.metricStrip([
       { label: '告警等级', value: sevOf(a).t, tone: sevOf(a).tone, icon: 'alert' },
-      { label: '处置状态', value: stateOf(a).t, tone: a.state === 'CONFIRMED' || a.state === 'FALSE_POSITIVE' ? 'info' : 'warn', icon: 'play' },
+      { label: '处置状态', value: displayState(a).t, tone: a.state === 'CONFIRMED' || a.state === 'FALSE_POSITIVE' ? 'info' : 'warn', icon: 'play' },
       { label: '目标类型', value: targetType, icon: 'plane' }
     ], { compact: true })}
     ${U.sect('处置流程', U.steps(disposalSteps(a, ev)), { icon: 'trend' })}
@@ -401,36 +433,39 @@ function detailHtml() {
     ['关联目标', a.target_id ? `<span class="mono" title="${esc(a.target_id)}">${esc(a.target_no || a.target_id)}</span>` : '无关联目标或无目标读取权限'],
     ['目标类型', targetType],
     ['高度/速度', altSpeed],
-    ['数据来源', `${esc(a.source_name || a.source_code || '—')}（${modeOf(a).t}）`],
-    ['核实事件', ev ? (verificationOrdinal(ev.version, '已') || '已建核实事件，尚未核实') : (a.event_id ? '已建核实事件（详情读取失败）' : '尚未创建核实事件')]
+    ['数据来源', `${esc(a.source_name || a.source_code || '—')}（${modeOf(a).t}）`]
   ], { surface: true, density: 'compact' }), { icon: 'alert' })}
-    ${U.sect('核实历史', historyHtml(), { icon: 'trend' })}
     ${renderEvidenceChainHtml(cur.chain, {
       loading: cur.chainLoading, error: cur.chainError, unavailable: cur.chainUnavailable
     })}
     ${U.detailActions(`
       <button class="btn" data-al="video" disabled title="协议未提供实时视频流">${U.icon('video')} 实时视频</button>
-      <button class="btn" data-al="replay" ${((cur.track && cur.track.points) || []).length ? '' : 'disabled '}title="${((cur.track && cur.track.points) || []).length ? '定位到已加载的实测轨迹点，不是视频' : '没有已加载的轨迹点'}">${U.icon('trend')} 轨迹回放</button>
+      <button class="btn" data-al="replay" ${replayN > 1 ? '' : 'disabled '}title="${replayN > 1 ? '按实测轨迹在地图上走航线回放，不是视频' : '没有足够的轨迹点'}">${U.icon('trend')} 轨迹回放</button>
       ${eoTrackActions(a)}
       ${disposalActions(a, ev)}`)}`;
 }
 
 function eoTrackActions(a) {
+  const open = cur.eoTask && (cur.eoTask.status === 'OPEN' || cur.eoTask.status === 'ENDING');
+  // 跟踪由后台自动启停。误报结束处置后不再提供人工启动入口。
+  if (a.state === 'FALSE_POSITIVE') {
+    return open ? U.tag('正在自动结束', 't-blue') : '';
+  }
   const canEo = canRouteAction('devices', 'op');
   if (!canEo) {
-    return `<button class="btn" data-al="eo-track" disabled title="需要设备管理的操作权限">光电跟踪</button>`;
+    return `<button class="btn" data-al="eo-track" disabled title="需要设备管理的操作权限">人工补跟踪</button>`;
   }
   if (!a.target_id) {
-    return `<button class="btn" data-al="eo-track" disabled title="该告警没有关联目标">光电跟踪</button>`;
+    return `<button class="btn" data-al="eo-track" disabled title="该告警没有关联目标，无法引导光电设备">人工补跟踪</button>`;
   }
-  const open = cur.eoTask && (cur.eoTask.status === 'OPEN' || cur.eoTask.status === 'ENDING');
-  const begin = `<button class="btn" data-al="eo-track" title="向光电下发 BeginTracking，不是地图镜头跟随"${open ? ' disabled' : ''}>光电跟踪</button>`;
-  const stop = `<button class="btn" data-al="eo-stop" ${open ? '' : 'disabled '}title="${open ? '结束跟踪并释放光电' : '当前没有进行中的光电跟踪'}">停止跟踪</button>`;
-  return begin + stop;
+  if (open) {
+    return U.tag(cur.eoTask.status === 'ENDING' ? '正在自动结束' : '自动跟踪中', 't-cyan');
+  }
+  return `<button class="btn" data-al="eo-track" title="自动跟踪未启动时，手动补发跟踪指令">人工补跟踪</button>`;
 }
 
 function paintList() { const host = el('alList'); if (host) host.innerHTML = listHtml(); }
-function paintDetail() { const host = el('alDetail'); if (!host) return; host.innerHTML = detailHtml(); fillNotes(host); }
+function paintDetail() { const host = el('alDetail'); if (host) host.innerHTML = detailHtml(); }
 
 /* ---------- 地图：只有响应含 target_id（服务端已按 target:read 与范围元组裁剪）才读目标/轨迹 ---------- */
 function focusMap() {
@@ -469,7 +504,7 @@ function focusMap() {
   map.sel = target.id;
   map.setData({
     airspaces: [], devices: [], targets: [target],
-    alarms: [{ id: a.alarm_id, targetId: target.id, type: typeOf(a), level: sevOf(a).t, time: fmt(a.received_at), status: stateOf(a).t }]
+    alarms: [{ id: a.alarm_id, targetId: target.id, type: typeOf(a), level: sevOf(a).t, time: fmt(a.received_at), status: displayState(a).t }]
   });
   if (map.w) map.centerAt(last.lon, last.lat);
   const trackNote = pts.length > 1 ? `实测轨迹 · ${pts.length} 点` : cur.trackError ? `轨迹读取失败：${esc(cur.trackError)}` : '仅最新位置，无可信轨迹点';
@@ -495,12 +530,31 @@ async function loadList() {
       st.page = Math.max(1, Math.ceil(totalCount.value / st.size));
       return loadList();
     }
+    await loadPageProgress(list.rows, my);
+    if (my !== listSeq) return;
   } catch (e) {
     if (my !== listSeq) return;
     // API 失败只显示错误并允许重试，绝不回退 Mock 列表。
     list.rows = []; totalCount.value = 0; list.loading = false; list.error = messageOf(e);
   }
   paintList();
+}
+
+async function loadPageProgress(rows, seq) {
+  const ids = [...new Set((rows || []).map(row => row.event_id).filter(Boolean))];
+  const next = {};
+  await Promise.all(ids.map(async id => {
+    try {
+      const [disp, hands] = await Promise.all([
+        disposalApi.list({ subject_kind: 'UAV_EVENT', subject_id: id, page: 1, size: 50 }),
+        handoffApi.listHandoffs({ source_kind: 'UAV_EVENT', source_id: id, page: 1, size: 5 }).catch(() => ({ items: [] }))
+      ]);
+      next[id] = deriveAlarmProgress(disp?.items || [], hands?.items || []);
+    } catch { next[id] = null; }
+  }));
+  if (seq !== listSeq) return;
+  Object.keys(pageProgress).forEach(key => { delete pageProgress[key]; });
+  Object.assign(pageProgress, next);
 }
 
 async function selectAlarm(id) {
@@ -516,12 +570,11 @@ async function selectAlarm(id) {
     cur.alarm = alarm;
     if (alarm.event_id) {
       try {
-        const [ev, hist] = await Promise.all([getUavEvent(alarm.event_id), listUavVerifications(alarm.event_id, { page: 1, size: 100 })]);
+        cur.event = await getUavEvent(alarm.event_id);
         if (my !== detailSeq) return;
-        cur.event = ev; cur.history = Array.isArray(hist && hist.items) ? hist.items : []; cur.historyTotal = Number(hist && hist.total) || 0;
         await loadEventDisposals(alarm.event_id);
         if (my !== detailSeq) return;
-      } catch (e) { if (my !== detailSeq) return; cur.eventError = messageOf(e); }
+      } catch { if (my !== detailSeq) return; }
     }
   } catch (e) {
     if (my !== detailSeq) return;
@@ -605,29 +658,25 @@ async function loadEoTask(my) {
 async function beginEoTrack() {
   const a = cur.alarm;
   if (!a || !a.target_id) return toast('该告警没有关联目标', 'err');
+  if (a.state === 'FALSE_POSITIVE') return toast('该告警已判定为误报，不能再启动跟踪', 'err');
   try {
-    cur.eoTask = await deviceApi.beginEoTrack(a.target_id, { reason: '值班员点选' });
-    toast('已下发光电跟踪', 'ok');
+    cur.eoTask = await deviceApi.beginEoTrack(a.target_id, { reason: '自动跟踪未启动，值班员人工补发' });
+    toast('已补发光电跟踪指令', 'ok');
     paintDetail();
   } catch (e) { toast(e.message || '光电跟踪失败', 'err'); }
 }
 
-function replayLoadedTrack() {
-  const pts = ((cur.track && cur.track.points) || []).map(p => coord(p.location)).filter(Boolean);
-  if (!pts.length) return toast('没有已加载的轨迹点，无法回放', 'err');
-  const last = pts[pts.length - 1];
-  if (map && last) map.centerAt(last.lon, last.lat);
-  toast(`已定位到实测轨迹（${pts.length} 点），不是视频回放`, 'ok');
+function replayPointCount() {
+  return trackPointsOf((cur.track && cur.track.points) || []).length;
 }
 
-async function endEoTrack() {
-  const taskId = cur.eoTask && cur.eoTask.task_id;
-  if (!taskId) return toast('当前没有进行中的光电跟踪', 'err');
-  try {
-    cur.eoTask = await deviceApi.endEoTrack(taskId);
-    toast('已请求停止光电跟踪', 'ok');
-    paintDetail();
-  } catch (e) { toast(e.message || '停止光电跟踪失败', 'err'); }
+async function replayLoadedTrack() {
+  await openTrackReplay({
+    target: cur.target,
+    trackId: cur.track && cur.track.id,
+    points: (cur.track && cur.track.points) || [],
+    alarm: cur.alarm
+  });
 }
 
 async function refreshAfterWrite() {
@@ -752,11 +801,13 @@ onMounted(async () => {
     else if (k === 'retry-detail' && st.selId) selectAlarm(st.selId);
     else if (k === 'chain-retry' && st.selId) loadChain(detailSeq);
     else if (k === 'eo-track') beginEoTrack();
-    else if (k === 'eo-stop') endEoTrack();
     else if (k === 'replay') replayLoadedTrack();
   });
   U.on(view, '[data-ev-file]', 'click', (e, btn) => {
     if (btn.dataset.evFile) openEvidenceFileModal(btn.dataset.evFile);
+  });
+  U.on(view, '[data-ev-chain-type]', 'click', (e, btn) => {
+    if (btn.dataset.evChainType) openEvidenceChainTypeModal({ chain: cur.chain, type: btn.dataset.evChainType });
   });
   el('alLoc').onclick = () => { if (map) map.resetView(2.2); focusMap(); };
   const expBtn = el('alExp');
@@ -768,11 +819,10 @@ onMounted(async () => {
   // safe-default：深链 > 上次选中 > 当前页首条；用户可见可改
   const id = deepId || st.selId || (list.rows[0] && list.rows[0].alarm_id) || null;
   if (id) {
-    const pending = selectAlarm(id);
+    selectAlarm(id);
     // 深链/默认选中的行可能落在列表滚动区外：把选中行滚到列表可视区中部。
     const selTr = document.querySelector('#alList tr.on');
     if (selTr && selTr.scrollIntoView) selTr.scrollIntoView({ block: 'center' });
-    await pending;
   }
 });
 </script>
@@ -790,11 +840,6 @@ onMounted(async () => {
           </div>
         </UPanel>
         <div class="col" style="flex:4;min-width:0">
-          <!-- 操作引导（用户裁定 2026-08-30：多处补黄字引导） -->
-          <div class="warnbox" style="margin:0;padding:8px 11px;font-size:12px;flex:none">
-            演示动线：点左侧<b>告警列表</b>任一行 → 地图定位关联目标 → 下方详情底部点
-            「<b>人工核实</b>」推进处置；已核实的事件可点「<b>发起联动反制</b>」提交处置申请（需另一人审批后才能执行），并可「<b>提交处罚交接</b>」。
-            实时视频协议未提供；轨迹回放仅定位已加载轨迹点，不是视频。</div>
           <UPanel title="关联目标定位与轨迹" panel-style="height:244px;max-height:50%;flex:none" nopad
             body-style="padding:6px" :extra="mapExtra" :body-html="mapBody" />
           <UPanel title="告警详情与处置" panel-style="flex:1;min-height:0" nopad

@@ -56,6 +56,8 @@ class DisposalExecutionTest {
     void cleanup() {
         jdbc.update("delete from disposal_authorization_event where authorization_id in"
                 + " (select authorization_id from disposal_authorization where subject_id like 'exec-event-%')");
+        jdbc.update("delete from disposal_authorization where subject_id like 'exec-event-%'"
+                + " and chained_from_authorization_id is not null");
         jdbc.update("delete from disposal_authorization where subject_id like 'exec-event-%'");
         jdbc.update("delete from uav_event where event_id like 'exec-event-%'");
         jdbc.update("delete from alarm where alarm_id like 'exec-alarm-%'");
@@ -64,6 +66,8 @@ class DisposalExecutionTest {
     @Test
     void manualChannelRunsThroughToCompleted() throws Exception {
         String id = approved("MANUAL", null);
+        assertThat(jdbc.queryForObject("select source_mode from disposal_authorization where authorization_id=?",
+                String.class, id)).isEqualTo("mock");
         execute(id, 1).andExpect(status().isOk()).andExpect(jsonPath("$.data.status").value("EXECUTING"));
         mvc.perform(post("/api/v1/disposal-authorizations/{id}/manual-result", id)
                         .header("Authorization", bearer(approver)).header("Idempotency-Key", key())
@@ -71,6 +75,70 @@ class DisposalExecutionTest {
                         .content("{\"expected_version\":2,\"result\":\"SUCCEEDED\",\"detail\":\"演示：已驱离\"}"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.status").value("COMPLETED"));
         assertThat(kinds(id)).containsExactly("REQUEST", "APPROVE", "EXECUTE", "MANUAL_RESULT");
+        String jam = jammingOf(id);
+        assertThat(jam).as("反制完成后应自动接一条信号干扰授权").isNotNull();
+        assertThat(statusOf(jam)).isEqualTo("APPROVED");
+        assertThat(jdbc.queryForObject("select action_type from disposal_authorization where authorization_id=?",
+                String.class, jam)).isEqualTo("JAMMING");
+        assertThat(jdbc.queryForObject("select channel from disposal_authorization where authorization_id=?",
+                String.class, jam)).isEqualTo("MANUAL");
+        assertThat(kinds(jam)).containsExactly("REQUEST", "APPROVE");
+    }
+
+    @Test
+    void failedCountermeasureDoesNotChainJamming() throws Exception {
+        String id = approved("MANUAL", null);
+        execute(id, 1).andExpect(status().isOk());
+        mvc.perform(post("/api/v1/disposal-authorizations/{id}/manual-result", id)
+                        .header("Authorization", bearer(approver)).header("Idempotency-Key", key())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"expected_version\":2,\"result\":\"FAILED\",\"detail\":\"现场未驱离\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.status").value("FAILED"));
+        assertThat(jammingOf(id)).isNull();
+    }
+
+    @Test
+    void existingJammingIsNotReplacedByAutoChain() throws Exception {
+        String eventId = event("CONFIRMED");
+        String jamBody = "{\"action_type\":\"JAMMING\",\"subject_kind\":\"UAV_EVENT\",\"subject_id\":\""
+                + eventId + "\",\"channel\":\"MANUAL\",\"reason\":\"先手选干扰\"}";
+        String existing = body(mvc.perform(post("/api/v1/disposal-authorizations")
+                        .header("Authorization", bearer(requester)).header("Idempotency-Key", key())
+                        .contentType(MediaType.APPLICATION_JSON).content(jamBody))
+                .andExpect(status().isCreated())).path("data").path("authorization_id").asText();
+        String cmBody = "{\"action_type\":\"COUNTERMEASURE\",\"subject_kind\":\"UAV_EVENT\",\"subject_id\":\""
+                + eventId + "\",\"channel\":\"MANUAL\",\"reason\":\"再走反制\"}";
+        String counter = body(mvc.perform(post("/api/v1/disposal-authorizations")
+                        .header("Authorization", bearer(requester)).header("Idempotency-Key", key())
+                        .contentType(MediaType.APPLICATION_JSON).content(cmBody))
+                .andExpect(status().isCreated())).path("data").path("authorization_id").asText();
+        mvc.perform(post("/api/v1/disposal-authorizations/{id}/approve", counter)
+                        .header("Authorization", bearer(approver)).header("Idempotency-Key", key())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"expected_version\":0}"))
+                .andExpect(status().isOk());
+        execute(counter, 1).andExpect(status().isOk());
+        mvc.perform(post("/api/v1/disposal-authorizations/{id}/manual-result", counter)
+                        .header("Authorization", bearer(approver)).header("Idempotency-Key", key())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"expected_version\":2,\"result\":\"SUCCEEDED\",\"detail\":\"反制完成\"}"))
+                .andExpect(status().isOk());
+        assertThat(jammingOf(counter)).isNull();
+        assertThat(jdbc.queryForObject("select count(*) from disposal_authorization where subject_id=? and action_type='JAMMING'",
+                Long.class, eventId)).isEqualTo(1L);
+        assertThat(statusOf(existing)).isEqualTo("REQUESTED");
+    }
+
+    @Test
+    void deviceExecutionActionRequiresDeviceControlPermission() throws Exception {
+        String id = approved("LINGYUN_B", anyDevice());
+        jdbc.update("delete from app_role_permission where permission_code='devices' and role_code in "
+                + "(select u.role_code from app_user u join app_session s on s.user_id=u.user_id where s.session_id=?)", approver);
+        String body = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get(
+                "/api/v1/disposal-authorizations/{id}", id).header("Authorization", bearer(approver)))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        assertThat(objectMapper.readTree(body).path("data").path("allowed_actions").toString()).doesNotContain("EXECUTE");
+        assertThat(jdbc.queryForObject("select status from disposal_authorization where authorization_id=?", String.class, id))
+                .isEqualTo("APPROVED");
     }
 
     @Test
@@ -232,6 +300,11 @@ class DisposalExecutionTest {
     private String commandId(String id) {
         return jdbc.queryForObject("select execution_command_id from disposal_authorization where authorization_id=?",
                 String.class, id);
+    }
+
+    private String jammingOf(String parentId) {
+        return jdbc.query("select authorization_id from disposal_authorization where chained_from_authorization_id=?",
+                rs -> rs.next() ? rs.getString(1) : null, parentId);
     }
 
     /** H2 把 JSON 列再包一层字符串；与 DisposalPolicyRepository.parse 同一解法。 */

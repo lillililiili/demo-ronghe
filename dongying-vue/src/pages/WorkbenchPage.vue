@@ -346,7 +346,7 @@ async function openUavPunishModal(d) {
   });
 }
 
-/* 通知上级 = 提交 RISK_NOTICE 交接：接收方来自服务端目录；成功只表示材料入库（PENDING_DELIVERY），风险仍为“待通知”。 */
+/* 通知上级 = 提交 RISK_NOTICE 交接：接收方来自服务端目录；提交成功风险变为“已通知”，可信确认回执后变为“已回执”。 */
 async function openNotifyModal(risk, summary) {
   const riskId = risk.risk_id;
   // 风险详情接口的动作词典只有 VERIFY，NOTIFY 只出现在工作台事项里；放行依据取工作台 allowed_actions 或回读状态仍为待通知，
@@ -361,8 +361,8 @@ async function openNotifyModal(risk, summary) {
   openFormModal({
     title: '通知上级 · 提交交接',
     width: '560px',
-    warning: '提交后由通知渠道投递并回执，送达与回执以投递记录为准；不表示处罚办结，风险状态保持“待通知”。',
-    notice: [readableNo(risk.source_risk_id) ? `风险 ${readableNo(risk.source_risk_id)}` : '风险事件', labelOf(RISK_TYPE_LABEL, risk.risk_type, ''), Number(risk.version) > 0 ? `已第${Number(risk.version)}次核验` : '尚未核验'].filter(Boolean).join(' · '),
+    warning: '提交后由通知渠道投递并回执，送达与回执以投递记录为准；不表示处罚办结，提交成功后为已通知，收到确认回执后为已回执。',
+    notice: [readableNo(risk.source_risk_id, risk.risk_id) ? `风险 ${readableNo(risk.source_risk_id, risk.risk_id)}` : '风险事件', labelOf(RISK_TYPE_LABEL, risk.risk_type, ''), Number(risk.version) > 0 ? `已第${Number(risk.version)}次核验` : '尚未核验'].filter(Boolean).join(' · '),
     fields: options.length
       ? [{ key: 'recipient_id', label: '接收方', type: 'select', required: true, options, placeholder: '选择逻辑接收部门' }]
       : [{ key: 'unconfigured', type: 'html', html: '<div class="warnbox">接收方未配置：交接接收方目录为空，无法提交；不会以默认部门补值。</div>' }],
@@ -521,7 +521,7 @@ async function enter() {
   if (!authUser.value) return;
   // 先拉队列，确认这个账号读得到工作台，再去拉三个计数；读不到就一个都不发。
   await loadQueue();
-  await loadSummary();
+  loadSummary();
 }
 function tick() {
   if (!authUser.value || forbidden.value) return;
@@ -619,7 +619,7 @@ onUnmounted(() => {
               <div><small>{{ kindLabel[selected.kind] }}</small><h2>{{ selected.summary.title }}</h2>
                 <p v-if="selected.summary.sourceNo" class="mono" :title="selected.summary.sourceId">{{ selected.summary.sourceNo }}</p></div>
             </div>
-            <div class="wb-title-tags"><span class="tag" :class="tagClass(selected.summary)">{{ selected.summary.level }}</span><span class="tag t-cyan">{{ selected.summary.sourceStatus }}</span><span v-if="verificationOrdinal(selected.summary.version)" class="tag t-gray">已{{ verificationOrdinal(selected.summary.version) }}</span></div>
+            <div class="wb-title-tags"><span class="tag" :class="tagClass(selected.summary)">{{ selected.summary.level }}</span><span class="tag t-cyan">{{ selected.summary.sourceStatus }}</span></div>
             <div v-if="selected.summary.todo" class="wb-title-next">
               <span><small>下一步</small><b>{{ selected.summary.todo.action }}</b></span>
               <button class="btn pri" type="button" :disabled="!selected.summary.todo.allowed || acting" :title="selected.summary.todo.blocker || ''" @click="primaryAction">{{ selected.summary.todo.action }}</button>
@@ -640,7 +640,7 @@ onUnmounted(() => {
           </section>
 
           <section class="wb-flow-card panel">
-            <div class="ph"><h3>{{ selected.kind === 'RISK' ? '飞行计划风险流程' : selected.kind === 'UAV_EVENT' ? '无人机事件处置流程' : '设备异常处置流程' }}</h3><span class="sub">按当前状态推导；设备重启须等回执后再做恢复校验</span></div>
+            <div class="ph"><h3>{{ selected.kind === 'RISK' ? '飞行计划风险流程' : selected.kind === 'UAV_EVENT' ? '无人机事件处置流程' : '设备异常处置流程' }}</h3><span class="sub">{{ selected.kind === 'DEVICE_INCIDENT' ? '按异常类型与核验结果展示；心跳恢复不代表执行过重启' : '按当前业务状态展示' }}</span></div>
             <div class="wb-flow" :style="{ '--wb-flow-count': selected.steps.length }">
               <div v-for="(s,i) in selected.steps" :key="s.n" :class="['wb-flow-step',{done:s.done,active:s.act}]">
                 <span>{{ s.done ? '✓' : i + 1 }}</span><b>{{ s.n }}</b><small>{{ s.done ? (s.t || '已完成') : s.t ? s.t : s.act ? '当前环节' : '待处理' }}</small>

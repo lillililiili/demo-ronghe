@@ -1,7 +1,7 @@
 /* “我的工作台”统一事件适配层：把后端工作台摘要映射成页面视图模型，并提供导航与源对象读取。
  * 这里只统一入口、分类和待办提示，不改写三类业务各自的状态机，也不再写任何内存状态：
  * 队列、计数、详情全部来自 GET /workbench/items；核实委托 alarmApi/riskApi，通知委托 handoffApi（待领导接线）。 */
-import { DELIVERY_STATUS_LABEL, DISPOSAL_ACTIVE_STATUSES, disposalStatusText, readableNo, RISK_STATE_LABEL, SEVERITY_LABEL, SEVERITY_TAG, SOURCE_MODE_LABEL, labelOf } from '@/ui/labels.js';
+import { DELIVERY_STATUS_LABEL, DISPOSAL_ACTION_LABEL, DISPOSAL_ACTIVE_STATUSES, disposalStatusText, readableNo, RISK_STATE_LABEL, SEVERITY_LABEL, SEVERITY_TAG, SOURCE_MODE_LABEL, labelOf } from '@/ui/labels.js';
 import { disposalApi } from '@/services/disposalApi.js';
 import { getWorkbenchItem, listWorkbenchItems } from '@/services/workbenchApi.js';
 import { getAlarm, getUavEvent } from '@/services/alarmApi.js';
@@ -23,7 +23,7 @@ export const STATE_LABEL = {
 };
 /* 旧设备阶段词表：保留导出名，供仍按中文阶段渲染的消费者使用。 */
 export const DEVICE_STAGES = ['待处理', '处理中', '待验证', '已恢复'];
-export const CLOSED_STATES = new Set(['FALSE_POSITIVE', 'NOTIFIED', 'EXCLUDED', 'RECOVERED']);
+export const CLOSED_STATES = new Set(['FALSE_POSITIVE', 'ACKNOWLEDGED', 'EXCLUDED', 'RECOVERED']);
 
 export const BLOCKED_REASON_LABEL = {
   COUNTERMEASURE_NOT_CONNECTED: '联动反制与信号干扰尚未接入：属实后停留在“已核实，待处置”，不表示反制或处罚交接已执行',
@@ -57,10 +57,11 @@ function nextStep(item) {
     return null;
   }
   if (item.kind === 'RISK') {
+    if (item.state === 'NOTIFIED') return { action: '等待确认回执', kind: 'notification-wait', allowed: false, blocker: '尚未取得接收方确认', hint: '通知已提交；请查看通报记录中的投递结果与阻断原因，取得确认回执后为已回执。' };
     if (actions.includes('VERIFY')) return { action: '人工核验', kind: 'verify', allowed: true, blocker: null, hint: '核验通过只进入“待通知”，不表示已通知上级。' };
     if (item.state === 'PENDING_VERIFICATION') return { action: '人工核验', kind: 'verify', allowed: false, blocker: '需要 risk:verify 核验权限', hint: '当前账号只能查看，不能提交核验结论。' };
     if (item.state === 'PENDING_NOTIFICATION') {
-      if (actions.includes('NOTIFY')) return { action: '通知上级', kind: 'notify', allowed: true, blocker: null, hint: '提交交接材料后风险仍保持“待通知”；提交成功只表示材料入库，不等于已发送或已送达。' };
+      if (actions.includes('NOTIFY')) return { action: '通知上级', kind: 'notify', allowed: true, blocker: null, hint: '提交成功后为已通知，收到确认回执后为已回执；发送结果与阻断原因另行显示。' };
       return { action: '通知上级', kind: 'notify', allowed: false, blocker: blocked || '需要 handoff:create 交接权限', hint: '风险已核验通过，等待通知上级。' };
     }
     return null;
@@ -76,7 +77,7 @@ function nextStep(item) {
 /* 后端事项 → 页面摘要（只做字段映射与文案，不推导任何服务端未给出的事实）。 */
 export function summarize(item) {
   return {
-    key: keyOf(item), kind: item.kind, kindLabel: kindLabel[item.kind] || item.kind, sourceId: item.source_id, sourceNo: readableNo(item.source_no),
+    key: keyOf(item), kind: item.kind, kindLabel: kindLabel[item.kind] || item.kind, sourceId: item.source_id, sourceNo: readableNo(item.source_no, item.source_id),
     title: item.title || '', summary: item.summary || '',
     severity: item.severity, level: severityLabel(item.severity), levelTag: severityTag(item.severity),
     state: item.state, sourceStatus: stateLabel(item.kind, item.state),
@@ -96,21 +97,23 @@ export function summarize(item) {
  * @param {object|null} [counter] 该事件最新的 COUNTERMEASURE 授权；`null` 表示没有；`undefined` 表示没读到
  * @param {object|null} [punishHandoff] 处罚交接；`null` 表示没有；`undefined` 表示没读到
  */
-export function uavSteps(state, counter, punishHandoff) {
-  const verified = ['CONFIRMED', 'FALSE_POSITIVE'].includes(state);
-  const counterStep = () => {
-    if (state === 'FALSE_POSITIVE') return { n: '联动反制', done: false, act: false, t: '误报终止' };
-    if (counter === undefined) return { n: '联动反制', done: false, act: false, t: '未接入' };
-    if (!counter) return { n: '联动反制', done: false, act: false, t: '尚无授权' };
+export function uavSteps(state, counter, punishHandoff, jam) {
+  const received = { n: '告警接收', done: true };
+  if (state === 'FALSE_POSITIVE') {
+    return [received, { n: '人工核实', done: true, act: false, t: '误报' }];
+  }
+  const verified = state === 'CONFIRMED';
+  const authStep = (name, row) => {
+    if (row === undefined) return { n: name, done: false, act: false, t: '未接入' };
+    if (!row) return { n: name, done: false, act: false, t: '尚无授权' };
     return {
-      n: '联动反制',
-      done: counter.status === 'COMPLETED',
-      act: ['APPROVED', 'EXECUTING'].includes(counter.status),
-      t: disposalStatusText(counter)
+      n: name,
+      done: row.status === 'COMPLETED',
+      act: DISPOSAL_ACTIVE_STATUSES.includes(row.status),
+      t: disposalStatusText(row)
     };
   };
   const punishStep = () => {
-    if (state === 'FALSE_POSITIVE') return { n: '通知处罚部门', done: false, act: false, t: '误报终止' };
     if (punishHandoff === undefined) return { n: '通知处罚部门', done: false, act: false, t: '未接入' };
     if (!punishHandoff) return { n: '通知处罚部门', done: false, act: false, t: '尚未移送' };
     return {
@@ -121,9 +124,10 @@ export function uavSteps(state, counter, punishHandoff) {
     };
   };
   return [
-    { n: '告警接收', done: true },
-    { n: '人工核实', done: verified, act: !verified, t: state === 'EVIDENCE_REQUIRED' ? '证据待补充' : null },
-    counterStep(),
+    received,
+    { n: '人工核实', done: verified, act: !verified, t: state === 'EVIDENCE_REQUIRED' ? '证据待补充' : (verified ? '属实' : null) },
+    authStep('联动反制', counter),
+    authStep('信号干扰', jam),
     punishStep()
   ];
 }
@@ -133,15 +137,21 @@ export function riskSteps(state) {
   if (state === 'EXCLUDED') return [
     { n: '风险发现', done: true }, { n: '人工核验', done: true }, { n: '已排除', done: true, t: '核验后判定无需通报' }
   ];
-  const idx = state === 'NOTIFIED' ? 3 : state === 'PENDING_NOTIFICATION' ? 2 : 1;
+  const idx = state === 'ACKNOWLEDGED' ? 4 : state === 'NOTIFIED' ? 3 : state === 'PENDING_NOTIFICATION' ? 2 : 1;
   return [
     { n: '风险发现', done: true },
     { n: '人工核验', done: idx >= 2, act: idx === 1 },
-    { n: '通知上级', done: idx >= 3, act: idx === 2, t: idx === 2 ? HANDOFF_NOT_WIRED : null }
+    { n: '通知上级', done: idx >= 3, act: idx === 2, t: idx >= 3 ? '已通知' : '待提交通知' },
+    { n: '接收方确认', done: idx >= 4, act: idx === 3, t: idx >= 4 ? '已回执' : idx === 3 ? '等待确认回执，请查看投递记录' : '尚未通知' }
   ];
 }
 
-export function deviceSteps(state) {
+export function deviceSteps(state, incidentType) {
+  if (incidentType === 'MQTT_HEARTBEAT_TIMEOUT') return [
+    { n: '心跳超时检出', done: true },
+    { n: '检查连接并恢复心跳', done: state === 'RECOVERED', act: state !== 'RECOVERED', t: state === 'RECOVERED' ? '已核验新鲜心跳' : '检查电源、网络与发布进程' },
+    { n: '恢复校验与关闭', done: state === 'RECOVERED', t: state === 'RECOVERED' ? '已恢复' : '恢复心跳后执行校验' }
+  ];
   const order = ['PENDING', 'PROCESSING', 'PENDING_VERIFICATION', 'RECOVERED'];
   const idx = Math.max(0, order.indexOf(state));
   const current = { PENDING: '待下发重启', PROCESSING: '等待回执', PENDING_VERIFICATION: '待恢复校验' };
@@ -151,8 +161,8 @@ export function deviceSteps(state) {
   }));
 }
 
-export function stepsOf(kind, state, counter, punishHandoff) {
-  return kind === 'UAV_EVENT' ? uavSteps(state, counter, punishHandoff) : kind === 'RISK' ? riskSteps(state) : deviceSteps(state);
+export function stepsOf(kind, state, counter, punishHandoff, incidentType, jam) {
+  return kind === 'UAV_EVENT' ? uavSteps(state, counter, punishHandoff, jam) : kind === 'RISK' ? riskSteps(state) : deviceSteps(state, incidentType);
 }
 
 /** 拉取一页工作台队列；返回摘要与同快照的计数/可用性。 */
@@ -178,22 +188,32 @@ export async function getWorkbenchDetail(kind, sourceId) {
   const data = await getWorkbenchItem(kind, sourceId);
   const summary = summarize(data.item);
   // 反制状态来自处置授权（阶段 13）：读不到时传 undefined，流程条显示“未接入”而不是“尚无授权”。
-  const counter = kind === 'UAV_EVENT' ? await latestCountermeasure(sourceId) : undefined;
-  // 已有未了结的联动反制申请时，服务端会以 ACTIVE_AUTHORIZATION_EXISTS 拒绝再次发起；按钮直接禁用并说明原因。
-  if (summary.todo?.kind === 'countermeasure' && counter && DISPOSAL_ACTIVE_STATUSES.includes(counter.status)) {
-    summary.todo = { ...summary.todo, allowed: false, blocker: `已有联动反制申请（${disposalStatusText(counter)}），了结前不能再次发起`, hint: '等该申请审批、执行或停止后，才能再次发起联动反制。' };
+  const counter = kind === 'UAV_EVENT' ? await latestDisposal(sourceId, 'COUNTERMEASURE') : undefined;
+  const jam = kind === 'UAV_EVENT' ? await latestDisposal(sourceId, 'JAMMING') : undefined;
+  // 已有未了结的联动反制或信号干扰时，服务端会拒绝再发起同类授权；按钮直接禁用并说明原因。
+  const activeAuth = [counter, jam].find(row => row && DISPOSAL_ACTIVE_STATUSES.includes(row.status));
+  if (summary.todo?.kind === 'countermeasure' && activeAuth) {
+    summary.todo = { ...summary.todo, allowed: false, blocker: `已有处置申请（${labelOf(DISPOSAL_ACTION_LABEL, activeAuth.action_type)} ${disposalStatusText(activeAuth)}），了结前不能再次发起`, hint: '等该申请审批、执行或停止后，才能再次发起联动反制。' };
   }
   // 风险已提交过通知（交接记录存在且未失败）时，服务端对同一接收方会 409：按钮直接禁用并说明（决策 15-50）。
   const submitted = (data.timeline || []).find(t => t.entry_type === 'HANDOFF' && t.delivery_status && t.delivery_status !== 'FAILED');
   if (summary.todo?.kind === 'notify' && submitted) {
-    summary.todo = { ...summary.todo, allowed: false, blocker: `已提交通知（${labelOf(DELIVERY_STATUS_LABEL, submitted.delivery_status)}），不能重复提交`, hint: '交接材料已入库，等待投递或回执；风险状态保持「待通知」。' };
+    summary.todo = { ...summary.todo, allowed: false, blocker: `已提交通知（${labelOf(DELIVERY_STATUS_LABEL, submitted.delivery_status)}），不能重复提交`, hint: '交接材料已入库；请核对投递与回执，再刷新源风险状态。' };
   }
   const punishHandoff = kind === 'UAV_EVENT'
     ? (data.availability?.handoffs === 'FORBIDDEN'
       ? undefined
       : (data.timeline || []).find(t => t.entry_type === 'HANDOFF' && t.handoff_type === 'UAV_PUNISHMENT') || null)
     : undefined;
-  if (summary.todo?.kind === 'countermeasure' && counter && counter.status === 'COMPLETED') {
+  const jamLive = jam && DISPOSAL_ACTIVE_STATUSES.includes(jam.status);
+  const disposed = (counter && counter.status === 'COMPLETED') || (jam && jam.status === 'COMPLETED');
+  if (summary.todo?.kind === 'countermeasure' && jamLive) {
+    summary.todo = {
+      action: '信号干扰进行中', kind: 'jamming-wait', allowed: false,
+      blocker: `信号干扰${disposalStatusText(jam)}`,
+      hint: '反制完成后已自动发起信号干扰，完成后再提交处罚交接。'
+    };
+  } else if (summary.todo?.kind === 'countermeasure' && disposed) {
     if (punishHandoff && punishHandoff.delivery_status !== 'FAILED') {
       summary.todo = {
         action: '提交处罚交接', kind: 'punish', allowed: false,
@@ -207,13 +227,17 @@ export async function getWorkbenchDetail(kind, sourceId) {
       };
     }
   }
-  return { kind, summary, item: data.item, timeline: data.timeline || [], availability: data.availability || {}, steps: stepsOf(kind, data.item.state, counter, punishHandoff) };
+  const incidentType = (data.timeline || []).find(t => t.incident_type)?.incident_type;
+  if (summary.todo?.kind === 'device-verify' && incidentType === 'MQTT_HEARTBEAT_TIMEOUT') {
+    summary.todo = { ...summary.todo, hint: '恢复事件发生后的新鲜心跳，再执行校验；通过才关闭异常，失败保持待处理。' };
+  }
+  return { kind, summary, item: data.item, timeline: data.timeline || [], availability: data.availability || {}, steps: stepsOf(kind, data.item.state, counter, punishHandoff, incidentType, jam) };
 }
 
-/** 该事件最新的联动反制授权：没有返回 null，读不到返回 undefined（两者在流程条上说法不同）。 */
-async function latestCountermeasure(eventId) {
+/** 该事件某类处置授权的最新一条：没有返回 null，读不到返回 undefined（两者在流程条上说法不同）。 */
+async function latestDisposal(eventId, actionType) {
   try {
-    const page = await disposalApi.list({ subject_kind: 'UAV_EVENT', subject_id: eventId, action_type: 'COUNTERMEASURE', page: 1, size: 20 });
+    const page = await disposalApi.list({ subject_kind: 'UAV_EVENT', subject_id: eventId, action_type: actionType, page: 1, size: 20 });
     const rows = page?.items || [];
     if (!rows.length) return null;
     return rows.reduce((latest, row) => (Number(row.requested_at || 0) >= Number(latest.requested_at || 0) ? row : latest), rows[0]);

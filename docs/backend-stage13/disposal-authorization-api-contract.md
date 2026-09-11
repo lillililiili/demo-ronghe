@@ -1,5 +1,7 @@
 # 处置授权 API 契约（阶段 13，v1.1）
 
+2026-09-10 修订：UAV_EVENT 授权的 `source_mode` 继承源告警，TARGET 授权继承目标，均不硬编码 live。页面新增独立“处置与处罚 → 处置授权”队列，先审批、执行、核对结果，再提交处罚交接。
+
 > 状态：v1.3（2026-09-09，四通道原生 TCP 设置：`COUNTERMEASURE`→`SET_MASK 0x0F`，`JAMMING`→`0x0D`，停止=全关 `0x00`；DECOY/DISPERSAL 走四通道 400。v1.2 为 A 开通 `dec`/`ifr`/`bsc`；v1.1 为 2026-09-08 验收修订；v1.0 冻结稿 2026-09-07）。依据：计划 `docs/superpowers/plans/2026-09-07-collaborator-b-stage-13-disposal-authorization.md`、决策 13-1…13-9、协作者 A 的 P5 与四通道 REST。通用约定同前：`{ok,data}` 包络、snake_case、字符串 ID、epoch ms、`page,size→items/page/size/total`、先鉴权再解析、精确 `(owner_org_id,district_id)` 元组、越权 404、`Idempotency-Key` + `expected_version`。
 
 ## 1. 资源
@@ -46,9 +48,9 @@
 
 ## 4. 与其它模块
 - `HandoffRules`：`UAV_PUNISHMENT` 前提 = 该 `uav_event` 存在 `COMPLETED` 授权（13-6）。
-- 工作台：已核实事件的"联动反制"动作可用（打开申请）；步骤"反制"完成 = 存在 COMPLETED 授权。
+- 工作台：已核实事件的"联动反制"动作可用（打开申请）；反制完成后自动接信号干扰（13-34）；处罚交接在至少一条授权 `COMPLETED` 且干扰未进行中时作为下一步。
 - 处罚页"反制与公安信号干扰授权记录"区块 = 按主体列出授权及事件。
-- 告警页 KPI：联动反制 = 今日 `COUNTERMEASURE` 授权数（按状态分）；信号干扰同理。
+- 告警页 KPI：联动反制 = 今日 `COUNTERMEASURE` 授权数（按状态分）；信号干扰同理。列表「状态」列在 `CONFIRMED` 上按处置进度展示，不改 `uav_event.state_code`。
 
 ## 5. 待确认（客户 Q5）
 授权条件、审批层级、时限、急停能力、哪些设备可自动执行。确认前策略 `demo-v1` 全部 DEMO，页面标注"演示策略，待业务确认"。

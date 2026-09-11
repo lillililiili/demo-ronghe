@@ -96,6 +96,26 @@ public class DisposalExecutionGateway {
         return new Accepted(commandId);
     }
 
+    /** 链式自动下发：用既定执行人，不读当前会话。自检顺序与 {@link #dispatch} 相同。 */
+    public Result dispatchAs(AuthUser user, String deviceId, String idempotencyKey, String authorizationId,
+                             DisposalPolicy policy, String actionType, Map<String, Object> operationParams, String reason) {
+        DisposalPolicy.Command command = policy.command(actionType);
+        if (LingyunControlEnvelope.family(command.operationCmd()) == null) {
+            return new Rejected(EVENT_PROTOCOL_NOT_OPENED, "DEVICE_CONTROL_UNAVAILABLE",
+                    "指令码 " + command.operationCmd() + " 对应的设备类型缩写尚未确认，协议面未开通，不能下发");
+        }
+        if (!bound(deviceId)) {
+            return new Rejected(EVENT_NOT_BOUND, "DEVICE_NOT_BOUND", "该设备未登记凌云 MQTT，不能按协议 B 下发处置指令");
+        }
+        Map<String, Object> device = devices.find(deviceId);
+        if (device != null && !operable(device)) {
+            return new Rejected(EVENT_OFFLINE, "DEVICE_OFFLINE", "设备未启用或不在线，暂不能下发处置指令");
+        }
+        String commandId = control.enqueueUnchecked(user, deviceId, idempotencyKey, authorizationId,
+                command.operationType(), command.operationCmd(), operationParams, reason);
+        return new Accepted(commandId);
+    }
+
     /**
      * 经四通道网络控制器下发。COUNTERMEASURE→全开 0x0F，JAMMING→驱离 0x0D。
      * DISPERSAL/DECOY 不是该设备的能力，400 且不发射。
@@ -115,6 +135,25 @@ public class DisposalExecutionGateway {
         int mask = DisposalRules.JAMMING.equals(actionType)
                 ? Countermeasure4ChCodec.MASK_DRIVE_AWAY : Countermeasure4ChCodec.MASK_FORCE_LAND;
         String commandId = countermeasure.enqueue(deviceId, idempotencyKey, authorizationId,
+                Countermeasure4ChControlService.ACTION_MASK, null, mask, reason);
+        return new Accepted(commandId);
+    }
+
+    public Result dispatch4chAs(AuthUser user, String deviceId, String idempotencyKey, String authorizationId,
+                                String actionType, String reason) {
+        if (DisposalRules.DISPERSAL.equals(actionType) || DisposalRules.DECOY.equals(actionType))
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR",
+                    "四通道网络控制器不能执行驱离或诱骗，请改用驱鸟炮或诱骗设备");
+        Map<String, Object> device = devices.find(deviceId);
+        if (device == null)
+            throw new ApiException(HttpStatus.NOT_FOUND, "DEVICE_NOT_FOUND", "设备不存在");
+        if (!DeviceProtocolCodes.COUNTERMEASURE_TCP_4CH_V2_0.equals(String.valueOf(device.get("protocol_code"))))
+            return noCapability(DisposalRules.COUNTERMEASURE_4CH);
+        if (!operable(device))
+            return new Rejected(EVENT_OFFLINE, "DEVICE_OFFLINE", "设备未启用或不在线，暂不能下发处置指令");
+        int mask = DisposalRules.JAMMING.equals(actionType)
+                ? Countermeasure4ChCodec.MASK_DRIVE_AWAY : Countermeasure4ChCodec.MASK_FORCE_LAND;
+        String commandId = countermeasure.enqueueUnchecked(user, deviceId, idempotencyKey, authorizationId,
                 Countermeasure4ChControlService.ACTION_MASK, null, mask, reason);
         return new Accepted(commandId);
     }

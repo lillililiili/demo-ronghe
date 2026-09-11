@@ -299,14 +299,14 @@ onMounted(loadAll);
 .role-api-list > button { display:grid; gap:5px; width:100%; padding:12px; border:1px solid transparent; border-radius:7px; text-align:left; color:var(--txt); background:transparent; cursor:pointer; }
 .role-api-list > button:hover, .role-api-list > button.on { border-color:var(--blue); background:color-mix(in srgb, var(--blue) 12%, transparent); }
 .role-api-list span, .role-api-list small, .locked-note { color:var(--txt-3); }
-.role-api-detail { display:flex; min-width:0; min-height:0; flex-direction:column; overflow:hidden; padding:18px; }
+.role-api-detail { display:flex; min-width:0; min-height:0; flex-direction:column; overflow:auto; padding:18px; }
 .role-summary { justify-content:space-between; align-items:flex-start; }
 .role-summary h2, .role-summary p { margin:0; }.role-summary p { margin-top:7px; color:var(--txt-3); }
 .role-summary-actions { display:grid; justify-items:end; gap:6px; }.role-summary-actions > div { display:flex; gap:8px; }
 .delete-note { color:var(--orange, #f4a261); }
-.permission-table-wrap { margin-top:14px; border:1px solid var(--line); border-radius:7px; overflow:hidden; }
+.permission-table-wrap { flex:none; height:220px; margin-top:14px; border:1px solid var(--line); border-radius:7px; overflow:hidden; }
 .permission-table-wrap :deep(.u-field) { min-width:130px; }
-.permission-footer { justify-content:flex-end; margin-top:16px; }.permission-footer > span { margin-right:auto; color:var(--txt-3); }
+.permission-footer { flex:none; justify-content:flex-end; margin-top:16px; padding-bottom:8px; }.permission-footer > span { margin-right:auto; color:var(--txt-3); }
 .system-error { flex:none; margin:12px 16px; padding:11px 13px; border:1px solid var(--red); border-radius:6px; color:var(--red); background:color-mix(in srgb, var(--red) 10%, transparent); }
 @media (max-width:900px) { .role-api-body { grid-template-columns:1fr; }.role-api-list { max-height:220px; border-right:0; border-bottom:1px solid var(--line); }.role-summary { flex-direction:column; } }
 </style>

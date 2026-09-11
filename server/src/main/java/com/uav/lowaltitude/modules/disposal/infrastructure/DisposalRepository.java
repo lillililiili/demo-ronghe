@@ -17,6 +17,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import com.uav.lowaltitude.modules.disposal.domain.DisposalRules;
 import com.uav.lowaltitude.modules.identity.domain.AccessDecision;
 import com.uav.lowaltitude.modules.identity.domain.ScopeMode;
+import com.uav.lowaltitude.platform.security.AuthUser;
 
 /** 处置授权持久化。事件表只增：本类不提供任何 UPDATE/DELETE 事件的方法，PG 侧另有触发器兜底。 */
 @Repository
@@ -81,6 +82,32 @@ public class DisposalRepository {
     /* ---- 写 ---- */
 
     public void insert(AuthorizationInsert row) {
+        Map<String, Object> p = insertParams(row);
+        jdbc.update("INSERT INTO disposal_authorization (authorization_id,authorization_no,action_type,subject_kind,subject_id,"
+                + "target_id,device_id,channel,reason,requested_by,requested_at,status,policy_version,owner_org_id,district_id,"
+                + "source_mode,version,created_at,updated_at) VALUES (:id,:no,:action,:kind,:subject,:target,:device,:channel,"
+                + ":reason,:by,:at,:status,:policy,:org,:district,:mode,0,:at,:at)", p);
+    }
+
+    /**
+     * 反制完成后自动接上的信号干扰：一次插入即 APPROVED，并带齐审批人、时限与来源授权。
+     * 审批约束要求这四列同生同灭，不能先按 REQUESTED 插入再补。
+     */
+    public void insertChainedApproved(AuthorizationInsert row, String chainedFrom, String approvedBy,
+                                      OffsetDateTime approvedAt, OffsetDateTime validFrom, OffsetDateTime validUntil,
+                                      String decisionNote) {
+        Map<String, Object> p = insertParams(row);
+        p.put("chained", chainedFrom); p.put("approver", approvedBy); p.put("approvedAt", approvedAt);
+        p.put("from", validFrom); p.put("until", validUntil); p.put("note", decisionNote);
+        jdbc.update("INSERT INTO disposal_authorization (authorization_id,authorization_no,action_type,subject_kind,subject_id,"
+                + "target_id,device_id,channel,reason,requested_by,requested_at,approved_by,approved_at,decision_note,"
+                + "valid_from,valid_until,status,policy_version,owner_org_id,district_id,source_mode,"
+                + "chained_from_authorization_id,version,created_at,updated_at) VALUES (:id,:no,:action,:kind,:subject,:target,"
+                + ":device,:channel,:reason,:by,:at,:approver,:approvedAt,:note,:from,:until,:status,:policy,:org,:district,"
+                + ":mode,:chained,0,:at,:at)", p);
+    }
+
+    private static Map<String, Object> insertParams(AuthorizationInsert row) {
         Map<String, Object> p = new HashMap<>();
         p.put("id", row.authorizationId()); p.put("no", row.authorizationNo()); p.put("action", row.actionType());
         p.put("kind", row.subjectKind()); p.put("subject", row.subjectId()); p.put("target", row.targetId());
@@ -88,10 +115,7 @@ public class DisposalRepository {
         p.put("by", row.requestedBy()); p.put("at", row.requestedAt()); p.put("policy", row.policyVersion());
         p.put("org", row.ownerOrgId()); p.put("district", row.districtId()); p.put("mode", row.sourceMode());
         p.put("status", row.status());
-        jdbc.update("INSERT INTO disposal_authorization (authorization_id,authorization_no,action_type,subject_kind,subject_id,"
-                + "target_id,device_id,channel,reason,requested_by,requested_at,status,policy_version,owner_org_id,district_id,"
-                + "source_mode,version,created_at,updated_at) VALUES (:id,:no,:action,:kind,:subject,:target,:device,:channel,"
-                + ":reason,:by,:at,:status,:policy,:org,:district,:mode,0,:at,:at)", p);
+        return p;
     }
 
     /** 审批：只在版本未变时落笔，返回 0 表示已被别人改过，调用方据此报 409。 */
@@ -193,6 +217,44 @@ public class DisposalRepository {
                 + " AND subject_id=:subject AND status='COMPLETED'",
                 Map.of("kind", subjectKind, "subject", subjectId), Long.class);
         return total != null && total > 0;
+    }
+
+    /** 该反制是否已经接出过信号干扰。系统链式用，不跟调用者范围。 */
+    public boolean chainedFrom(String parentAuthorizationId) {
+        Long total = jdbc.queryForObject("SELECT COUNT(*) FROM disposal_authorization WHERE chained_from_authorization_id=:id",
+                Map.of("id", parentAuthorizationId), Long.class);
+        return total != null && total > 0;
+    }
+
+    /** 该主体是否已有任一信号干扰授权（含手选），有则不再自动接。 */
+    public boolean actionExists(String subjectKind, String subjectId, String actionType) {
+        Long total = jdbc.queryForObject("SELECT COUNT(*) FROM disposal_authorization WHERE subject_kind=:kind"
+                + " AND subject_id=:subject AND action_type=:action",
+                Map.of("kind", subjectKind, "subject", subjectId, "action", actionType), Long.class);
+        return total != null && total > 0;
+    }
+
+    /** 系统链式读取，不加范围谓词：来源授权刚完成，不能因为执行人不在范围里就把链停掉。 */
+    public AuthorizationRow findUnlocked(String id) {
+        List<AuthorizationRow> rows = jdbc.query("SELECT " + COLUMNS + " FROM disposal_authorization a"
+                + " WHERE a.authorization_id=:id", Map.of("id", id), DisposalRepository::row);
+        return rows.isEmpty() ? null : rows.get(0);
+    }
+
+    public String latestExecuteActor(String authorizationId) {
+        List<String> actors = jdbc.query("SELECT actor_id FROM disposal_authorization_event WHERE authorization_id=:id"
+                + " AND event_kind='EXECUTE' AND actor_id IS NOT NULL ORDER BY occurred_at DESC, event_id DESC LIMIT 1",
+                Map.of("id", authorizationId), (rs, i) -> rs.getString(1));
+        return actors.isEmpty() ? null : actors.get(0);
+    }
+
+    public AuthUser actor(String userId) {
+        if (userId == null || userId.isBlank()) return null;
+        List<AuthUser> rows = jdbc.query("SELECT user_id,account,name,role_code,permission_version,must_change_password,scope_mode"
+                + " FROM app_user WHERE user_id=:id", Map.of("id", userId), (rs, i) -> new AuthUser(
+                rs.getString("user_id"), rs.getString("account"), rs.getString("name"), rs.getString("role_code"),
+                rs.getInt("permission_version"), rs.getBoolean("must_change_password"), rs.getString("scope_mode")));
+        return rows.isEmpty() ? null : rows.get(0);
     }
 
     /**

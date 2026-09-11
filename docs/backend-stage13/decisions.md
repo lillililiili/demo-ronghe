@@ -21,6 +21,7 @@
 | 13-17 | 到期任务不建 `disposal_lease` 表：并发保护做进条件更新（`rowcount==1` 才写 EXPIRE 事件，同事务），多实例不会产生第二条事件 | 租约只省无用功，正确性来自条件更新；不往阶段 7 的租约表伸手 |
 | 13-18 | 告警页两项 KPI 口径为"当前进行中"（`EXECUTING` 计数，副标题"另有 N 起已批准待执行"），不是当日计数 | 列表接口无日期参数；KPI 标签本就是"反制中/干扰中" |
 | 13-19 | 信号干扰不新增按钮：与"发起联动反制"共用同一入口，弹窗内选择动作类型（反制/干扰） | 13-7 禁止改页面结构 |
+| 13-34 | `COUNTERMEASURE` 进入 `COMPLETED` 后（设备回执或人工成功）自动生成一条 `JAMMING` 授权：复制设备/通道，沿用原申请人与批准人，状态直接 `APPROVED`，不再二次审批；`chained_from_authorization_id` 唯一。设备通道尝试用原执行人下发，受阻则停在已批准；人工通道等人登记结果。已有任一 `JAMMING` 或已经链式过则跳过。失败不回滚反制完成。告警列表 `state` 仍是核实结论，展示列按授权/交接推导反制中/已反制/干扰中/已干扰/已移送处罚 | 产品主线「一次联动反制 → 先反制再自动干扰」；不改 `uav_event` 状态机 |
 | 13-20 | 编号：当日计数行在独立事务（REQUIRES_NEW）用 `INSERT … SELECT … WHERE NOT EXISTS` 建行，主事务里 `SELECT … FOR UPDATE` + `UPDATE +1`；号段允许空缺 | H2 PG 兼容模式不解析 `ON CONFLICT`；PG 下并发首插撞唯一键会把整个事务打成 aborted，独立事务只废内层；编号要求不重复不要求连续 |
 | 13-21 | `allowed_actions` 按状态逐一断言且按权限裁剪（只有执行权只得 EXECUTE、只有停止权只得 STOP） | E1 注入证伪发现原用例只测 REQUESTED 状态，漏掉权限判断也能绿；否则只读用户会在 APPROVED 详情页看到可点的"执行" |
 | 13-22 | 事件词表加 `PROTOCOL_NOT_OPENED`（A 返回 `PROTOCOL_UNSUPPORTED`），`DEVICE_CONTROL_UNAVAILABLE` 只表示设备无自动执行能力（4CH，B 侧预检）；四种 `execution_block_reason` 与事件一一对应：DEVICE_CONTROL_UNAVAILABLE→DEVICE_CAPABILITY、PROTOCOL_NOT_OPENED→PROTOCOL_NOT_OPENED、DEVICE_NOT_BOUND→NOT_BOUND、DEVICE_OFFLINE→DEVICE_OFFLINE | 审查 13 第 7 轮补充：由 `event_kind` 推导时一种事件不能对两种原因；一一对应最不易被改回二分 |

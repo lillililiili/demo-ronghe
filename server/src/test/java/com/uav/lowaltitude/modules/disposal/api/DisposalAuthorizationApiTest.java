@@ -58,6 +58,8 @@ class DisposalAuthorizationApiTest {
         jdbc.update("delete from disposal_authorization_event where authorization_id in"
                 + " (select authorization_id from disposal_authorization"
                 + "  where subject_id like 'dsp-event-%' or subject_id like 'dsp-target-%')");
+        jdbc.update("delete from disposal_authorization where chained_from_authorization_id is not null"
+                + " and (subject_id like 'dsp-event-%' or subject_id like 'dsp-target-%')");
         jdbc.update("delete from disposal_authorization where subject_id like 'dsp-event-%'"
                 + " or subject_id like 'dsp-target-%'");
         jdbc.update("delete from target_current_alias where historical_target_id like 'dsp-target-%'");

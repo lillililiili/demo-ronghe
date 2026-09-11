@@ -142,6 +142,8 @@ export function openDisposalRequest({ actionType, actionOptions, subjectKind, su
     title: pickable ? '发起处置申请' : `发起${labelOf(DISPOSAL_ACTION_LABEL, actionType)}申请`,
     width: '600px',
     warning: '提交后进入待审批：审批人必须是另一个人，批准后才可执行。'
+      + ((pickable && choices.includes('COUNTERMEASURE')) || actionType === 'COUNTERMEASURE'
+        ? '选择联动反制时，执行完成将自动发起信号干扰，不再二次审批。' : '')
       + (demo ? '当前为演示策略，时限与条件待业务确认。' : ''),
     introHtml: `<dl class="kv">${intro}</dl>`,
     fields: [
@@ -152,7 +154,7 @@ export function openDisposalRequest({ actionType, actionOptions, subjectKind, su
         { value: 'COUNTERMEASURE_4CH', label: '四通道反制设备（经网络控制器下发，回执以设备为准）' },
         { value: 'MANUAL', label: '人工执行（现场处置后登记结果）' }
       ] },
-      { key: 'device_id', label: '执行设备', placeholder: '经设备执行时必填：设备编号；人工执行可留空' },
+      { key: 'device_id', label: '执行设备 ID', placeholder: '填写设备详情中的 ID（UUID），不是设备编号；人工执行可留空' },
       { key: 'reason', label: '申请事由', type: 'textarea', required: true, minRows: 3, placeholder: '必填：为什么需要这次处置（现场情况、已采取的措施、影响范围）' }
     ],
     initial: { action_type: actionType, channel: 'LINGYUN_B', device_id: '', reason: '' },

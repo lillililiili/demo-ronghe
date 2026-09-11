@@ -40,11 +40,14 @@ public class DisposalReceiptSync {
     private final DeviceRepository devices;
     private final AppClock clock;
     private final ObjectMapper json;
+    private final DisposalJammingChain jammingChain;
     private final boolean scheduledEnabled;
 
     public DisposalReceiptSync(DisposalRepository repository, DeviceRepository devices, AppClock clock,
-            ObjectMapper json, @Value("${app.disposal.receipt-sync.enabled:false}") boolean scheduledEnabled) {
+            ObjectMapper json, DisposalJammingChain jammingChain,
+            @Value("${app.disposal.receipt-sync.enabled:false}") boolean scheduledEnabled) {
         this.repository = repository; this.devices = devices; this.clock = clock; this.json = json;
+        this.jammingChain = jammingChain;
         this.scheduledEnabled = scheduledEnabled;
     }
 
@@ -84,6 +87,9 @@ public class DisposalReceiptSync {
         repository.insertEvent(UUID.randomUUID().toString(), row.authorizationId(),
                 DisposalRules.COMPLETED.equals(next) ? "COMPLETE" : "FAIL", null, null,
                 write(Map.of("status", next)), at);
+        if (DisposalRules.COMPLETED.equals(next) && DisposalRules.COUNTERMEASURE.equals(row.actionType())) {
+            jammingChain.scheduleAfterComplete(row.authorizationId());
+        }
     }
 
     private static String text(Object value) { return value == null ? null : String.valueOf(value); }

@@ -49,7 +49,20 @@ public class LingyunControlService {
     @Transactional
     public String enqueue(String deviceId, String idempotencyKey, String authorizationId, Integer operationType,
                           Integer operationCmd, Map<String, Object> params, String reason) {
-        AuthUser user = access.requireDevicesOperate();
+        return enqueue(access.requireDevicesOperate(), deviceId, idempotencyKey, authorizationId, operationType,
+                operationCmd, params, reason);
+    }
+
+    /** 反制完成后自动接下发：调用方已选定执行人，不再从当前会话取 devices.op。 */
+    @Transactional
+    public String enqueueUnchecked(AuthUser user, String deviceId, String idempotencyKey, String authorizationId,
+                                   Integer operationType, Integer operationCmd, Map<String, Object> params, String reason) {
+        if (user == null) throw new ApiException(HttpStatus.UNAUTHORIZED, "UNAUTHENTICATED", "未登录");
+        return enqueue(user, deviceId, idempotencyKey, authorizationId, operationType, operationCmd, params, reason);
+    }
+
+    private String enqueue(AuthUser user, String deviceId, String idempotencyKey, String authorizationId,
+                           Integer operationType, Integer operationCmd, Map<String, Object> params, String reason) {
         if (idempotencyKey == null || idempotencyKey.isBlank() || idempotencyKey.length() > 96)
             throw bad("VALIDATION_ERROR", "Idempotency-Key 必填且最长 96 个字符");
         if (authorizationId == null || authorizationId.trim().length() < 2 || authorizationId.trim().length() > 64)

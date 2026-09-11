@@ -54,6 +54,7 @@ public class DisposalAuthorizationService {
     private final DisposalPolicyRepository policies;
     private final UavEventRepository events;
     private final DisposalExecutionGateway gateway;
+    private final DisposalJammingChain jammingChain;
     private final IdempotencyGuard idempotency;
     private final AppClock clock;
     private final AuditService audit;
@@ -61,9 +62,11 @@ public class DisposalAuthorizationService {
 
     public DisposalAuthorizationService(AccessControlService access, DisposalRepository repository,
             DisposalPolicyRepository policies, UavEventRepository events, DisposalExecutionGateway gateway,
-            IdempotencyGuard idempotency, AppClock clock, AuditService audit, ObjectMapper json) {
+            DisposalJammingChain jammingChain, IdempotencyGuard idempotency, AppClock clock, AuditService audit,
+            ObjectMapper json) {
         this.access = access; this.repository = repository; this.policies = policies; this.events = events;
-        this.gateway = gateway; this.idempotency = idempotency; this.clock = clock; this.audit = audit; this.json = json;
+        this.gateway = gateway; this.jammingChain = jammingChain; this.idempotency = idempotency; this.clock = clock;
+        this.audit = audit; this.json = json;
     }
 
     /* ---- 申请 ---- */
@@ -222,6 +225,9 @@ public class DisposalAuthorizationService {
         event(id, "MANUAL_RESULT", actor.userId(), body.detail(), Map.of("status", status, "result", body.result()), at);
         audit(actor, "disposal_manual_result", id, "authorization_no=" + row.authorizationNo()
                 + "; result=" + body.result());
+        if (DisposalRules.COMPLETED.equals(status) && DisposalRules.COUNTERMEASURE.equals(row.actionType())) {
+            jammingChain.scheduleAfterComplete(id);
+        }
         return result(id, status, row.version() + 1, null, "MANUAL_" + body.result());
     }
 
@@ -307,7 +313,7 @@ public class DisposalAuthorizationService {
             // 未核实的事件不该被反制：先确认"确实是它"，再谈能不能动手（策略可关，但要明示）。
             if (policy.requiresConfirmedEvent(actionType) && !"CONFIRMED".equals(row.state()))
                 throw conflict("POLICY_REQUIRES_CONFIRMED_EVENT", "该动作要求事件已核实为属实");
-            return new Subject(subjectId, row.targetId(), row.ownerOrgId(), row.districtId(), "live");
+            return new Subject(subjectId, row.targetId(), row.ownerOrgId(), row.districtId(), row.sourceMode());
         }
         if ("TARGET".equals(kind)) {
             // 态势页的"派发驱离"直接对着目标发（决策 13-24）。驱离在 demo-v1 里不要求已核实事件，

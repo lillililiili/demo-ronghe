@@ -21,10 +21,10 @@ import org.springframework.stereotype.Repository;
 @Repository
 public class FusionEventContextRepository {
     /**
-     * uav_event 的"未关闭"状态与 alarm 模块 UavEventState.OPEN 一致（PENDING_VERIFICATION / EVIDENCE_REQUIRED）；
+     * uav_event 的"未关闭"状态与 alarm 模块 UavEventState.OPEN 一致（PENDING_VERIFICATION）；
      * CONFIRMED / FALSE_POSITIVE 是核实结论，事件到此关闭。这里复制一份而不是引用，是为了不让融合层依赖 alarm 模块内部类。
      */
-    static final Set<String> OPEN_UAV_EVENT_STATES = Set.of("PENDING_VERIFICATION", "EVIDENCE_REQUIRED");
+    static final Set<String> OPEN_UAV_EVENT_STATES = Set.of("PENDING_VERIFICATION");
     /** flight_risk 的"未关闭"状态：待核验 / 待通知；NOTIFIED（已交接）与 EXCLUDED（已排除）都不再算当前风险。 */
     static final Set<String> OPEN_RISK_STATES = Set.of("PENDING_VERIFICATION", "PENDING_NOTIFICATION");
     /** 迁移 022 的 ck_stage4_risk_severity 字典，按严重程度升序；取最高等级时按此排序而不是按字符串比较。 */

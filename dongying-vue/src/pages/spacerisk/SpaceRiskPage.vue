@@ -16,7 +16,7 @@ import { authUser } from '@/services/auth.js';
 import {
   labelOf, SEVERITY_LABEL, SEVERITY_TAG, RISK_STATE_LABEL, SOURCE_MODE_LABEL,
   SPACE_OBJECT_SUBTYPE_LABEL, ALTITUDE_BAND_LABEL, CORRIDOR_RELATION_LABEL, OBJECT_TREND_LABEL,
-  DELIVERY_STATUS_LABEL, HANDOFF_TYPE_LABEL, verificationOrdinal
+  DELIVERY_STATUS_LABEL, HANDOFF_TYPE_LABEL
 } from '@/ui/labels.js';
 
 const U = window.UI;
@@ -452,8 +452,6 @@ onUnmounted(() => {
             <dt>所属区域</dt><dd>{{ detail.district_name || '—' }}</dd>
             <dt>关联计划</dt><dd><span v-if="detail.plan_no" :title="detail.plan_id">{{ detail.plan_no }}</span><span v-else>—</span></dd>
             <dt v-if="detail.target_no">关联目标</dt><dd v-if="detail.target_no"><span :title="detail.target_id">{{ detail.target_no }}</span></dd>
-            <dt v-if="verificationOrdinal(detail.version)">核验进度</dt>
-            <dd v-if="verificationOrdinal(detail.version)">{{ verificationOrdinal(detail.version) }}</dd>
           </dl>
 
           <div class="sect"><h5>判定依据</h5>

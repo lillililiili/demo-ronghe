@@ -31,8 +31,10 @@ import com.uav.lowaltitude.modules.punishment.domain.PunishmentRules;
  * 待补线索既有已解决也有未解决的。阶段 14 的契约夹具（{@link LocalStage14PunishmentSeeder}）只造一件 INVESTIGATING，
  * 正面路径留给浏览器走；这里不改它，只在它之后补量。
  *
- * 每件案子的来源都是完整的一条链：告警 → 已核实事件（带一条人工核实记录）→ UAV_PUNISHMENT 交接（快照 v2 走服务层同一个组装器，
- * 决策 14-28）→ 案件。一事件一案（14-5），所以六件案子各自挂在自建的六个事件上；机构/区域/来源只引用阶段 4/13 已有的行。
+ * 每件案子的来源都走演示主线：告警 → 已核实事件（带一条人工核实记录）→ 已完成联动反制 → 已完成信号干扰
+ * （人工通道、干扰 chained_from 反制，决策 13-34）→ UAV_PUNISHMENT 交接（快照 v2 走服务层同一个组装器，决策 14-28）→ 案件。
+ * 一事件一案（14-5），所以六件案子各自挂在自建的六个事件上；机构/区域/来源只引用阶段 4/13 已有的行。
+ * 告警页按钮不允许跳过反制/干扰直接移送；种子直插必须把这两步写全，否则流程条会显示「尚无授权」却已移送。
  *
  * 案件本身按阶段 14 的状态机（14-7）在内存里"走一遍"，再把**走完之后**的行落库：
  * 案件行的 status/version/officer/decided_at… 与事件流、裁量版本、复核、文书逐条对应——
@@ -86,13 +88,13 @@ public class LocalDemoVolumePunishmentSeeder implements ApplicationRunner {
 
         // 1. 刚立案：没有承办人、没有裁量，页面上只有"指派"可点。
         CaseBuilder filed = newCase(1, "PERSON", "演示当事人·甲", true);
-        source(filed, officer);
+        source(filed, officer, reviewer);
         file(filed, officer, "体量夹具：刚从处罚交接立案，尚未指派承办人");
         persist(filed, officer);
 
         // 2. 调查中（复核退回）：确认过一版裁量，复核认为证据不足退回；承办人补齐了一条线索、另一条还挂着，并已重拟草稿。
         CaseBuilder investigating = newCase(2, "PERSON", "演示当事人·乙", false);
-        source(investigating, officer);
+        source(investigating, officer, reviewer);
         file(investigating, officer, "体量夹具：复核退回后继续调查");
         assign(investigating, officer);
         Discretion first = draft(investigating, officer, pr08, PunishmentRules.FINE, reference(pr08),
@@ -109,7 +111,7 @@ public class LocalDemoVolumePunishmentSeeder implements ApplicationRunner {
 
         // 3. 复核中：裁量已确认，等 reviewer1 来复核；这是浏览器里两人链路的起点。
         CaseBuilder underReview = newCase(3, "ORG", "演示当事单位·丙", true);
-        source(underReview, officer);
+        source(underReview, officer, reviewer);
         file(underReview, officer, "体量夹具：待复核");
         assign(underReview, officer);
         Discretion pending = draft(underReview, officer, pr03, PunishmentRules.FINE, reference(pr03),
@@ -119,7 +121,7 @@ public class LocalDemoVolumePunishmentSeeder implements ApplicationRunner {
 
         // 4. 已决定：第一版裁量偏重被复核要求改正（REVISED），第二版维持（UPHELD）；出具过一份决定书又作废，等待重新出具。
         CaseBuilder decided = newCase(4, "PERSON", "演示当事人·丁", false);
-        source(decided, officer);
+        source(decided, officer, reviewer);
         file(decided, officer, "体量夹具：已决定，决定书作废待重出");
         assign(decided, officer);
         Discretion heavy = draft(decided, officer, pr01, PunishmentRules.WARNING_AND_FINE, pr01.fineMax(),
@@ -137,7 +139,7 @@ public class LocalDemoVolumePunishmentSeeder implements ApplicationRunner {
 
         // 5. 已结案：一版裁量、一次维持、一份有效决定书、结案。
         CaseBuilder closed = newCase(5, "ORG", "演示当事单位·戊", false);
-        source(closed, officer);
+        source(closed, officer, reviewer);
         file(closed, officer, "体量夹具：已结案");
         assign(closed, officer);
         Discretion upheld = draft(closed, officer, pr02, PunishmentRules.FINE, reference(pr02),
@@ -150,7 +152,7 @@ public class LocalDemoVolumePunishmentSeeder implements ApplicationRunner {
 
         // 6. 撤案：当事人始终无法认定（party_type=UNKNOWN，名称必须为空，14-12），线索挂着就撤了。
         CaseBuilder withdrawn = newCase(6, PunishmentRules.PARTY_UNKNOWN, null, false);
-        source(withdrawn, officer);
+        source(withdrawn, officer, reviewer);
         file(withdrawn, officer, "体量夹具：撤案");
         assign(withdrawn, officer);
         addLead(withdrawn, officer, "PARTY_IDENTITY", "现场未能控制无人机，也未查到实名登记信息");
@@ -211,12 +213,17 @@ public class LocalDemoVolumePunishmentSeeder implements ApplicationRunner {
      * 告警与事件的形状与 {@link LocalStage13DisposalSeeder#alarmAndConfirmedEvent} 一致（阶段 4 夹具的 CONFIRMED 变体）：
      * 事件直接写成 CONFIRMED、version=1，并补一条 version=1 的人工核实记录（决策 14-31）——
      * 材料包里的 verifications 才有"谁在什么时候认定属实"。
-     * 没有处置授权：阶段 13 的授权夹具是另一条链的契约，这里不复制；快照的 disposals 段按 14-28 省略键。
+     * 处置授权按演示主线写全：已完成联动反制，再接一条 chained 的已完成信号干扰（决策 13-6 / 13-34）。
+     * 审批人用 reviewer1，与申请人 admin1 分开（策略 two_person_rule）。
      */
-    private void source(CaseBuilder c, Person submitter) {
+    private void source(CaseBuilder c, Person submitter, Person approver) {
         Instant occurred = c.filedAt.minus(Duration.ofHours(2));
         Instant verified = occurred.plus(Duration.ofMinutes(30));
         Instant submitted = occurred.plus(Duration.ofHours(1));
+        Instant cmAt = verified.plus(Duration.ofMinutes(2));
+        Instant cmDone = verified.plus(Duration.ofMinutes(12));
+        Instant jamAt = cmDone;
+        Instant jamDone = verified.plus(Duration.ofMinutes(22));
         String alarmNo = ALARM_NO_PREFIX + String.format("%02d", c.seq);
         // 目标只引用阶段 4 已有的共享目标；不存在就落 NULL，不自建目标。
         String target = c.withTarget ? jdbc.query("SELECT target_id FROM target WHERE target_id='seed-stage4-target-shared'",
@@ -237,12 +244,21 @@ public class LocalDemoVolumePunishmentSeeder implements ApplicationRunner {
                 + " WHERE EXISTS (SELECT 1 FROM uav_event WHERE event_id=?)"
                 + " AND NOT EXISTS (SELECT 1 FROM uav_event_verification WHERE event_id=?)",
                 c.verificationId, c.eventId, submitter.id(), ts(verified), c.eventId, c.eventId);
+        completedAuthorization(c.cmAuthId, c.cmNo, c.eventId, "COUNTERMEASURE", null, submitter, approver, cmAt, cmDone,
+                "本地演示：人工反制完成，目标已受控");
+        String cmId = completedAuthId(c.eventId, "COUNTERMEASURE");
+        if (cmId != null) {
+            completedAuthorization(c.jamAuthId, c.jamNo, c.eventId, "JAMMING", cmId, submitter, approver, jamAt, jamDone,
+                    "本地演示：反制完成后自动干扰已完成");
+        }
         // 交接：source_mode 从告警取（14-22），快照走服务层同一个组装器（14-28），投递停在"通道未接入"。
         jdbc.update("INSERT INTO handoff (handoff_id,source_kind,source_id,risk_id,event_id,handoff_type,recipient_id,"
                 + "source_version,owner_org_id,district_id,source_mode,submitted_by,created_at)"
                 + " SELECT ?,'UAV_EVENT',?,NULL,?,'UAV_PUNISHMENT',?,1,e.owner_org_id,e.district_id,a.source_mode,?,?"
                 + " FROM uav_event e JOIN alarm a ON a.alarm_id=e.alarm_id WHERE e.event_id=?"
                 + " AND EXISTS (SELECT 1 FROM handoff_recipient WHERE recipient_id=?)"
+                + " AND EXISTS (SELECT 1 FROM disposal_authorization WHERE subject_kind='UAV_EVENT' AND subject_id=e.event_id"
+                + "   AND status='COMPLETED')"
                 + " AND NOT EXISTS (SELECT 1 FROM handoff WHERE handoff_id=?"
                 + "   OR (source_kind='UAV_EVENT' AND source_id=? AND handoff_type='UAV_PUNISHMENT' AND recipient_id=?))",
                 c.handoffId, c.eventId, c.eventId, RECIPIENT, submitter.id(), ts(submitted), c.eventId, RECIPIENT,
@@ -264,6 +280,60 @@ public class LocalDemoVolumePunishmentSeeder implements ApplicationRunner {
         } catch (Exception ex) {
             throw new IllegalStateException("cannot serialize demo volume punishment snapshot for " + eventId, ex);
         }
+    }
+
+    /** 人工通道已完成授权。干扰行把 chained_from 指到反制，与服务路径 13-34 同形。 */
+    private void completedAuthorization(String id, String no, String eventId, String actionType, String chainedFrom,
+            Person requester, Person approver, Instant at, Instant done, String resultDetail) {
+        Instant validUntil = at.plus(Duration.ofMinutes(30));
+        String reason = "本地演示：处罚体量夹具按主线完成联动反制";
+        if ("JAMMING".equals(actionType)) {
+            String parentNo = chainedFrom == null ? null
+                    : jdbc.query("SELECT authorization_no FROM disposal_authorization WHERE authorization_id=?",
+                            rs -> rs.next() ? rs.getString(1) : null, chainedFrom);
+            reason = parentNo == null ? "反制完成后自动发起信号干扰"
+                    : "反制完成后自动发起信号干扰（来源 " + parentNo + "）";
+        }
+        String decision = "COUNTERMEASURE".equals(actionType) ? "本地演示：批准反制" : "反制完成后自动批准，不再二次审批";
+        jdbc.update("INSERT INTO disposal_authorization (authorization_id,authorization_no,action_type,subject_kind,subject_id,"
+                + "target_id,device_id,channel,reason,requested_by,requested_at,approved_by,approved_at,decision_note,"
+                + "valid_from,valid_until,status,execution_command_id,result_code,result_detail,policy_version,"
+                + "owner_org_id,district_id,source_mode,chained_from_authorization_id,version,created_at,updated_at)"
+                + " SELECT ?,?,?,'UAV_EVENT',?,NULL,NULL,'MANUAL',?,?,?,?,?,?,?,?,'COMPLETED',NULL,'MANUAL_SUCCEEDED',?,"
+                + "'demo-v1',e.owner_org_id,e.district_id,'mock',?,1,?,?"
+                + " FROM uav_event e WHERE e.event_id=? AND e.state_code='CONFIRMED'"
+                + " AND NOT EXISTS (SELECT 1 FROM disposal_authorization WHERE authorization_id=? OR authorization_no=?"
+                + "   OR (subject_kind='UAV_EVENT' AND subject_id=? AND action_type=?))",
+                id, no, actionType, eventId, reason, requester.id(), ts(at), approver.id(), ts(at), decision,
+                ts(at), ts(validUntil), resultDetail, chainedFrom, ts(at), ts(done),
+                eventId, id, no, eventId, actionType);
+        authorizationEvent(id, "REQUEST", requester.id(), at);
+        authorizationEvent(id, "APPROVE", approver.id(), at.plusSeconds(60));
+        authorizationEvent(id, "EXECUTE", requester.id(), at.plusSeconds(120));
+        authorizationEvent(id, "MANUAL_RESULT", requester.id(), done);
+    }
+
+    private String completedAuthId(String eventId, String actionType) {
+        return jdbc.query("SELECT authorization_id FROM disposal_authorization WHERE subject_kind='UAV_EVENT' AND subject_id=?"
+                + " AND action_type=? AND status='COMPLETED' ORDER BY requested_at ASC",
+                rs -> rs.next() ? rs.getString(1) : null, eventId, actionType);
+    }
+
+    private void authorizationEvent(String authorizationId, String kind, String actor, Instant at) {
+        String kindKey = switch (kind) {
+            case "REQUEST" -> "rq";
+            case "APPROVE" -> "ap";
+            case "EXECUTE" -> "ex";
+            case "MANUAL_RESULT" -> "mr";
+            default -> kind.toLowerCase();
+        };
+        // VARCHAR(36)：seed-vol-pcase-jam-01-mr = 23。
+        String eventId = authorizationId + "-" + kindKey;
+        jdbc.update("INSERT INTO disposal_authorization_event (event_id,authorization_id,event_kind,actor_id,note,snapshot,occurred_at)"
+                + " SELECT ?,?,?,?,'本地演示夹具',NULL,?"
+                + " WHERE EXISTS (SELECT 1 FROM disposal_authorization WHERE authorization_id=?)"
+                + " AND NOT EXISTS (SELECT 1 FROM disposal_authorization_event WHERE event_id=?)",
+                eventId, authorizationId, kind, actor, ts(at), authorizationId, eventId);
     }
 
     /* ---- 案件历史：与 PunishmentCaseService 的每个动作逐一对应 ---- */
@@ -485,6 +555,7 @@ public class LocalDemoVolumePunishmentSeeder implements ApplicationRunner {
     private static final class CaseBuilder {
         final int seq;
         final String caseId, caseNo, alarmId, eventId, verificationId, handoffId, deliveryId;
+        final String cmAuthId, jamAuthId, cmNo, jamNo;
         final String partyType, partyName;
         final boolean withTarget;
         final Instant filedAt;
@@ -510,6 +581,10 @@ public class LocalDemoVolumePunishmentSeeder implements ApplicationRunner {
             this.verificationId = "seed-vol-pcase-verify-" + nn;
             this.handoffId = "seed-vol-pcase-handoff-" + nn;
             this.deliveryId = "seed-vol-pcase-delivery-" + nn;
+            this.cmAuthId = "seed-vol-pcase-cm-" + nn;
+            this.jamAuthId = "seed-vol-pcase-jam-" + nn;
+            this.cmNo = "AUTH-20260908-94" + nn;
+            this.jamNo = "AUTH-20260908-95" + nn;
             this.partyType = partyType; this.partyName = partyName; this.withTarget = withTarget;
             this.filedAt = filedAt; this.at = filedAt;
         }

@@ -145,7 +145,10 @@
       if (this._dead || controller.signal.aborted) { runtime.release(); return; }
       this._release = runtime.release;
       this._coverageBounds = runtime.bounds;
-      this._applyDefaultView();
+      // 构造后立刻 fitTo 时覆盖范围还是内置东营框；包头真正的 bounds 更宽。
+      // 航线若落在框外、包内，必须在建引擎前按真实覆盖重算，否则 load 只会跳到被夹紧的空视野。
+      if (this._focus && this._focus.kind === 'fit') this.fitTo(this._focus.coordinates, this._focus.padding);
+      else this._applyDefaultView();
       const coverage = this._coverageBounds;
       const map = new runtime.maplibre.Map({
         container: this.baseEl, style: runtime.style, center: this._pendingCenter,
@@ -181,6 +184,8 @@
         if (this._pendingFit && this.w > 0 && this.h > 0) {
           const f = this._pendingFit; this._pendingFit = null;
           this.fitTo(f.coordinates, f.padding);
+        } else if (this._focus && this._focus.kind === 'fit') {
+          this.fitTo(this._focus.coordinates, this._focus.padding);
         } else if (!this._isDefaultView) {
           map.jumpTo({ center: this._pendingCenter, zoom: this._levelForScale(this.zoom) });
         }

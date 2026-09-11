@@ -33,6 +33,7 @@ import com.uav.lowaltitude.modules.handoff.domain.HandoffChannelPort.DeliveryOut
  * 回执结果（是否已驱离）只有在真的投出去、上级真的回了话之后才存在，
  * 所以这里换成模拟上级渠道跑——{@link HandoffApiTest} 固定跑未接通渠道，证不了这一段。
  * 风险状态按现行口径：提交成功即已通知，渠道确认回执即已回执；驱离结果单独记在交接上。
+ * 缺省模拟渠道只送到等待回执；带结果的回执用例在下面显式打桩，不依赖渠道默认立刻已回执。
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -78,7 +79,23 @@ class HandoffReceiptResultApiTest {
     }
 
     @Test
+    void defaultMockRiskNoticeDeliversAndLeavesRiskNotified() throws Exception {
+        String json = "{\"source_kind\":\"RISK\",\"source_id\":\"" + riskId + "\",\"handoff_type\":\"RISK_NOTICE\""
+                + ",\"recipient_id\":\"" + recipientId + "\",\"expected_version\":1}";
+        mvc.perform(post("/api/v1/handoffs").header("Authorization", "Bearer " + session)
+                        .header("Idempotency-Key", "wait-" + UUID.randomUUID())
+                        .contentType(MediaType.APPLICATION_JSON).content(json))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.delivery_status").value("DELIVERED"))
+                .andExpect(jsonPath("$.data.receipt_status").value("PENDING"))
+                .andExpect(jsonPath("$.data.receipt_result").doesNotExist());
+        assertThat(jdbc.queryForObject("select state_code from flight_risk where risk_id=?", String.class, riskId))
+                .isEqualTo("NOTIFIED");
+    }
+
+    @Test
     void riskNoticeCarriesTheReceiptResultBackAndKeepsIt() throws Exception {
+        stubAcknowledged("DISPERSED");
         String json = "{\"source_kind\":\"RISK\",\"source_id\":\"" + riskId + "\",\"handoff_type\":\"RISK_NOTICE\""
                 + ",\"recipient_id\":\"" + recipientId + "\",\"expected_version\":1}";
         MvcResult result = mvc.perform(post("/api/v1/handoffs").header("Authorization", "Bearer " + session)
@@ -100,7 +117,7 @@ class HandoffReceiptResultApiTest {
         mvc.perform(get("/api/v1/handoffs?source_kind=RISK&source_id={id}", riskId).header("Authorization", "Bearer " + session))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.items[0].receipt_result").value("DISPERSED"));
-        // 模拟渠道同步返回确认回执：提交事务里连续记已通知、已回执，刷新看到最终已回执。
+        // 渠道确认回执时提交事务里连续记已通知、已回执，刷新看到最终已回执。
         assertThat(jdbc.queryForObject("select state_code from flight_risk where risk_id=?", String.class, riskId))
                 .isEqualTo("ACKNOWLEDGED");
     }
@@ -108,11 +125,7 @@ class HandoffReceiptResultApiTest {
     /** 未驱离只记在交接回执结果上；风险仍按渠道确认回执进入已回执。 */
     @Test
     void aNotDispersedReceiptRecordsTheResultButDoesNotBlockAcknowledgment() throws Exception {
-        org.mockito.Mockito.doAnswer(invocation -> {
-            DeliveryOutcome real = (DeliveryOutcome) invocation.callRealMethod();
-            return new DeliveryOutcome(real.deliveryStatus(), real.receiptStatus(), "NOT_DISPERSED", real.blockedReason(),
-                    real.submittedAt(), real.deliveredAt(), real.acknowledgedAt());
-        }).when(channel).deliver(org.mockito.ArgumentMatchers.any());
+        stubAcknowledged("NOT_DISPERSED");
 
         String json = "{\"source_kind\":\"RISK\",\"source_id\":\"" + riskId + "\",\"handoff_type\":\"RISK_NOTICE\""
                 + ",\"recipient_id\":\"" + recipientId + "\",\"expected_version\":1}";
@@ -123,6 +136,12 @@ class HandoffReceiptResultApiTest {
                 .andExpect(jsonPath("$.data.receipt_result").value("NOT_DISPERSED"));
         assertThat(jdbc.queryForObject("select state_code from flight_risk where risk_id=?", String.class, riskId))
                 .isEqualTo("ACKNOWLEDGED");
+    }
+
+    private void stubAcknowledged(String receiptResult) {
+        var at = java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC);
+        org.mockito.Mockito.doReturn(new DeliveryOutcome("DELIVERED", "ACKNOWLEDGED", receiptResult, null, at, at, at))
+                .when(channel).deliver(org.mockito.ArgumentMatchers.any());
     }
 
     private void insertNotifiableRisk(String id) {

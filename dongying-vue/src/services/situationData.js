@@ -32,7 +32,7 @@ export const LEGAL_FALLBACK = '待确认';
 const SEVERITY_LEVEL = { CRITICAL: '高', HIGH: '高', MEDIUM: '中', LOW: '低' };
 const DEVICE_STATUS = { ONLINE: '在线', OFFLINE: '离线', ABNORMAL: '异常', UNKNOWN: '未知' };
 /** 未关闭的告警状态：地图与 HUD 只展示还在处理中的。 */
-export const OPEN_ALARM_STATES = ['PENDING_VERIFICATION', 'EVIDENCE_REQUIRED', 'CONFIRMED'];
+export const OPEN_ALARM_STATES = ['PENDING_VERIFICATION', 'CONFIRMED'];
 
 function num(value) {
   if (value === null || value === undefined || value === '') return null;

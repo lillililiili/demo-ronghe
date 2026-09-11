@@ -6,6 +6,7 @@ import { openFormModal } from './formModal.js';
 import { closeModal } from './modal.js';
 import { toast } from './nv.js';
 import { disposalApi, isDisposalUnavailable, newDisposalIdempotencyKey } from '@/services/disposalApi.js';
+import { deviceApi } from '@/services/deviceApi.js';
 import { isUncertainOutcome } from '@/services/apiClient.js';
 import { DISPOSAL_ACTION_LABEL, DISPOSAL_BLOCK_REASON_LABEL, DISPOSAL_CHANNEL_LABEL, DISPOSAL_STATUS_LABEL, disposalStatusText, labelOf } from '@/ui/labels.js';
 
@@ -108,6 +109,24 @@ async function submit({ scope, action, call, refresh, onDone, okText }) {
   }
 }
 
+const DEVICE_CONNECTIVITY_SHORT = { ONLINE: '在线', OFFLINE: '离线', ABNORMAL: '异常', UNKNOWN: '未知' };
+
+function deviceOptionLabel(device) {
+  const title = [device.device_no, device.name].filter(Boolean).join(' · ') || '未命名设备';
+  const bits = [];
+  if (device.device_type_name) bits.push(device.device_type_name);
+  const conn = DEVICE_CONNECTIVITY_SHORT[device.connectivity];
+  if (conn && device.connectivity !== 'ONLINE') bits.push(conn);
+  return bits.length ? `${title}（${bits.join(' · ')}）` : title;
+}
+
+async function loadEnabledDeviceOptions() {
+  const page = await deviceApi.list({ page: 1, size: 200, enabled: true, sort: 'device_no_asc' });
+  return (page?.items || []).filter(device => device.device_id).map(device => ({
+    value: device.device_id, label: deviceOptionLabel(device)
+  }));
+}
+
 /**
  * 申请授权。
  * @param {object} o
@@ -120,8 +139,23 @@ async function submit({ scope, action, call, refresh, onDone, okText }) {
  */
 export function openDisposalRequest({ actionType, actionOptions, subjectKind, subjectId, subjectText, policy, refresh, onDone } = {}) {
   if (!actionType || !subjectKind || !subjectId) { toast('缺少处置对象，无法发起申请', 'err'); return false; }
+  void showDisposalRequestForm({ actionType, actionOptions, subjectKind, subjectId, subjectText, policy, refresh, onDone });
+  return true;
+}
+
+async function showDisposalRequestForm({ actionType, actionOptions, subjectKind, subjectId, subjectText, policy, refresh, onDone }) {
   const choices = (actionOptions || []).filter(Boolean);
   const pickable = choices.length > 1;
+  let deviceOptions = [];
+  let deviceHelp = '经设备执行时按编号与名称选择；人工执行可不选。';
+  try {
+    deviceOptions = await loadEnabledDeviceOptions();
+    if (!deviceOptions.length) deviceHelp = '没有启用中的设备。可改用人工执行，或到设备管理接入后再申请。';
+  } catch (error) {
+    deviceHelp = error?.status === 403
+      ? '当前账号没有设备台账读取权限，无法列出执行设备；可改用人工执行。'
+      : (error?.message || '读取执行设备失败，可改用人工执行。');
+  }
   /* GET /disposal-policies 实际返回的是策略数组，参数在 params 下、DEMO 标记是 schema_status；
      这里一并兼容扁平形状，避免接口小改动就把时限提示悄悄变没。 */
   const current = Array.isArray(policy) ? policy[0] : policy;
@@ -154,10 +188,12 @@ export function openDisposalRequest({ actionType, actionOptions, subjectKind, su
         { value: 'COUNTERMEASURE_4CH', label: '四通道反制设备（经网络控制器下发，回执以设备为准）' },
         { value: 'MANUAL', label: '人工执行（现场处置后登记结果）' }
       ] },
-      { key: 'device_id', label: '执行设备 ID', placeholder: '填写设备详情中的 ID（UUID），不是设备编号；人工执行可留空' },
+      { key: 'device_id', label: '执行设备', type: 'select', clearable: true, filterable: true,
+        placeholder: '请选择执行设备', options: deviceOptions, help: deviceHelp,
+        visibleWhen: m => m.channel !== 'MANUAL' },
       { key: 'reason', label: '申请事由', type: 'textarea', required: true, minRows: 3, placeholder: '必填：为什么需要这次处置（现场情况、已采取的措施、影响范围）' }
     ],
-    initial: { action_type: actionType, channel: 'LINGYUN_B', device_id: '', reason: '' },
+    initial: { action_type: actionType, channel: 'LINGYUN_B', device_id: null, reason: '' },
     confirmText: '提交申请',
     danger: true,
     validate: m => {
@@ -171,7 +207,7 @@ export function openDisposalRequest({ actionType, actionOptions, subjectKind, su
       action: 'request',
       call: key => disposalApi.create({
         action_type: chosen || actionType, subject_kind: subjectKind, subject_id: subjectId,
-        channel, device_id: String(deviceId || '').trim() || undefined, reason: String(reason).trim()
+        channel, device_id: channel === 'MANUAL' ? undefined : (String(deviceId || '').trim() || undefined), reason: String(reason).trim()
       }, key),
       refresh,
       onDone,

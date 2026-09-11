@@ -6,8 +6,6 @@ import { toast } from './nv.js';
 import { riskApi, newRiskIdempotencyKey } from '@/services/riskApi.js';
 import { isUncertainOutcome } from '@/services/apiClient.js';
 import { RISK_TYPE_LABEL, labelOf, readableNo } from '@/ui/labels.js';
-/* 版本号是乐观锁，不是给人看的；对人只说「第几次核验」。 */
-const verifyOrdinal = version => (Number(version) > 0 ? `已第${Number(version)}次核验` : '尚未核验');
 
 export const RISK_STATE_TEXT = {
   PENDING_VERIFICATION: '待核验',
@@ -46,7 +44,7 @@ export function openRiskVerification({ risk, refresh, onDone } = {}) {
   openFormModal({
     title: '人工核验',
     width: '560px',
-    notice: [risk.risk_no || readableNo(risk.source_risk_id) ? `风险 ${risk.risk_no || readableNo(risk.source_risk_id)}` : '风险事件', labelOf(RISK_TYPE_LABEL, risk.risk_type, ''), verifyOrdinal(expectedVersion)].filter(Boolean).join(' · '),
+    notice: [risk.risk_no || readableNo(risk.source_risk_id) ? `风险 ${risk.risk_no || readableNo(risk.source_risk_id)}` : '风险事件', labelOf(RISK_TYPE_LABEL, risk.risk_type, '')].filter(Boolean).join(' · '),
     fields: [
       { key: 'conclusion', label: '核验结论', type: 'radio', required: true, options: [
         { value: 'CONFIRMED', label: '核验通过（转待通知）' },
@@ -63,7 +61,7 @@ export function openRiskVerification({ risk, refresh, onDone } = {}) {
         const result = await riskApi.verifyRisk(riskId, { conclusion, note: String(note || '').trim(), expected_version: expectedVersion }, key);
         pendingKeys.delete(riskId);
         closeModal();
-        toast(`核验结论已提交：${riskStateText(result?.state)}（${verifyOrdinal(result?.version)}）`, 'ok');
+        toast(`核验结论已提交：${riskStateText(result?.state)}`, 'ok');
         if (refresh) await refresh(result);
         if (onDone) onDone(result);
       } catch (error) {
@@ -76,7 +74,7 @@ export function openRiskVerification({ risk, refresh, onDone } = {}) {
             // 版本变化与终态要分开说明：前者仍可重新打开表单核验，后者不能再核验。
             const stillVerifiable = (latest.allowed_actions || []).includes('VERIFY');
             toast(stillVerifiable
-              ? `提交结果未确认，已刷新当前状态：风险${verifyOrdinal(latest.version)}（${riskStateText(latest.state)}），请核对历史后重新打开核验表单。`
+              ? `提交结果未确认，已刷新当前状态：${riskStateText(latest.state)}，请核对后重新打开核验表单。`
               : `提交结果未确认，已刷新当前状态：当前风险为「${riskStateText(latest.state)}」，不能再次核验。`, 'err');
             return;
           }

@@ -49,7 +49,7 @@ public class WorkbenchReadService {
     private static final Set<String> ALLOWED = Set.of("kind", "state", "severity", "severity_min", "occurred_from", "occurred_to",
             "owner_org_id", "district_id", "source_mode", "page", "size");
     private static final Map<String, Set<String>> STATES = Map.of(
-            UAV_EVENT, Set.of("PENDING_VERIFICATION", "EVIDENCE_REQUIRED", "CONFIRMED", "FALSE_POSITIVE"),
+            UAV_EVENT, Set.of("PENDING_VERIFICATION", "CONFIRMED", "FALSE_POSITIVE"),
             RISK, Set.of("PENDING_VERIFICATION", "PENDING_NOTIFICATION", "NOTIFIED", "ACKNOWLEDGED", "EXCLUDED"),
             DEVICE_INCIDENT, Set.of("PENDING", "PROCESSING", "PENDING_VERIFICATION", "RECOVERED"));
     private static final Set<String> SEVERITIES = Set.of("LOW", "MEDIUM", "HIGH", "CRITICAL");
@@ -65,7 +65,7 @@ public class WorkbenchReadService {
             // 设备域实际写入的异常类型码（LocalDeviceSeeder / 演示种子）；没收录会把英文码摆到工作台标题上。
             "DEVICE_OFFLINE", "设备离线", "LINK_DEGRADED", "链路降级", "STATE_UNKNOWN", "状态未知", "MQTT_HEARTBEAT_TIMEOUT", "MQTT 心跳超时");
     private static final Map<String, String> SOURCE_MODE_LABEL = Map.of("mock", "模拟", "replay", "回放", "live", "实时");
-    private static final Map<String, String> UAV_STATE_LABEL = Map.of("PENDING_VERIFICATION", "待核实", "EVIDENCE_REQUIRED", "证据待补充",
+    private static final Map<String, String> UAV_STATE_LABEL = Map.of("PENDING_VERIFICATION", "待核实",
             "CONFIRMED", "已核实，待处置", "FALSE_POSITIVE", "误报");
     private static final Map<String, String> RISK_STATE_LABEL = Map.of("PENDING_VERIFICATION", "待核验", "PENDING_NOTIFICATION", "待通知",
             "NOTIFIED", "已通知", "ACKNOWLEDGED", "已回执", "EXCLUDED", "已排除");

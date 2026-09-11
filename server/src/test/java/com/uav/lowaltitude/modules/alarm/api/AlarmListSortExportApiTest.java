@@ -102,7 +102,7 @@ class AlarmListSortExportApiTest {
         assertThat(rawValues("severity", "sort=severity&order=desc"))
                 .containsExactly("CRITICAL", "HIGH", "MEDIUM", "LOW");
         assertThat(rawValues("state", "sort=state&order=desc"))
-                .containsExactly("PENDING_VERIFICATION", "FALSE_POSITIVE", "EVIDENCE_REQUIRED", "CONFIRMED");
+                .containsExactly("PENDING_VERIFICATION", "FALSE_POSITIVE", "CONFIRMED", "CONFIRMED");
     }
 
     /** 某个字段在本用例数据上的原始取值，按接口返回的次序。 */
@@ -139,7 +139,7 @@ class AlarmListSortExportApiTest {
 
     /** 给本用例的告警各挂一条状态互不相同的 uav_event——状态在 uav_event 上，不挂就全是 null，排序断言等于空转。 */
     private void attachEventsWithDistinctStates() {
-        List<String> states = List.of("PENDING_VERIFICATION", "EVIDENCE_REQUIRED", "CONFIRMED", "FALSE_POSITIVE");
+        List<String> states = List.of("PENDING_VERIFICATION", "CONFIRMED", "FALSE_POSITIVE", "CONFIRMED");
         List<String> ids = jdbc.queryForList(
                 "select alarm_id from alarm where alarm_id like 'srt-alarm-%' order by alarm_id", String.class);
         Timestamp at = Timestamp.from(Instant.parse("2026-09-08T06:00:00Z"));
@@ -228,7 +228,7 @@ class AlarmListSortExportApiTest {
                 .containsExactlyInAnyOrder("低", "高", "中");
         // 状态取自 uav_event，与风险的"待核验"不是同一套（告警核实、风险核验）。
         assertThat(rows.stream().map(r -> r[3]).toList())
-                .containsExactlyInAnyOrder("待核实", "证据待补充", "已核实，待处置");
+                .containsExactlyInAnyOrder("待核实", "已核实，待处置", "误报");
         // 类别：字典里有的翻译，没有的原样给出（不写成"未知"，那会把信息抹掉）。
         assertThat(rows.stream().map(r -> r[1]).toList()).contains("无人机入侵");
     }

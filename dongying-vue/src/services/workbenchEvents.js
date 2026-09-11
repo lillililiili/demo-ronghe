@@ -1,7 +1,7 @@
 /* “我的工作台”统一事件适配层：把后端工作台摘要映射成页面视图模型，并提供导航与源对象读取。
  * 这里只统一入口、分类和待办提示，不改写三类业务各自的状态机，也不再写任何内存状态：
  * 队列、计数、详情全部来自 GET /workbench/items；核实委托 alarmApi/riskApi，通知委托 handoffApi（待领导接线）。 */
-import { DELIVERY_STATUS_LABEL, DISPOSAL_ACTION_LABEL, DISPOSAL_ACTIVE_STATUSES, disposalStatusText, readableNo, RISK_STATE_LABEL, SEVERITY_LABEL, SEVERITY_TAG, SOURCE_MODE_LABEL, labelOf } from '@/ui/labels.js';
+import { DELIVERY_STATUS_LABEL, DISPOSAL_ACTION_LABEL, DISPOSAL_ACTIVE_STATUSES, disposalMainlineCompleted, disposalStatusText, readableNo, RISK_STATE_LABEL, SEVERITY_LABEL, SEVERITY_TAG, SOURCE_MODE_LABEL, labelOf } from '@/ui/labels.js';
 import { disposalApi } from '@/services/disposalApi.js';
 import { getWorkbenchItem, listWorkbenchItems } from '@/services/workbenchApi.js';
 import { getAlarm, getUavEvent } from '@/services/alarmApi.js';
@@ -17,7 +17,7 @@ export const kindModule = { UAV_EVENT: '异常告警中心', RISK: '飞行活动
 /* 等级/风险状态字典已上提到 ui/labels.js 与处罚交接页共用；这里保留导出名。 */
 export { SEVERITY_LABEL, SEVERITY_TAG };
 export const STATE_LABEL = {
-  UAV_EVENT: { PENDING_VERIFICATION: '待核实', EVIDENCE_REQUIRED: '证据待补充', CONFIRMED: '已核实，待处置', FALSE_POSITIVE: '误报' },
+  UAV_EVENT: { PENDING_VERIFICATION: '待核实', CONFIRMED: '已核实，待处置', FALSE_POSITIVE: '误报' },
   RISK: RISK_STATE_LABEL,
   DEVICE_INCIDENT: { PENDING: '待处理', PROCESSING: '处理中', PENDING_VERIFICATION: '待验证', RECOVERED: '已恢复' }
 };
@@ -51,7 +51,7 @@ function nextStep(item) {
   const blocked = blockedLabel(item.blocked_reason);
   if (item.kind === 'UAV_EVENT') {
     if (actions.includes('VERIFY')) return { action: '人工核实', kind: 'verify', allowed: true, blocker: null, hint: '核实结论进入无人机事件核实历史；属实只表示已核实、待处置。' };
-    if (item.state === 'PENDING_VERIFICATION' || item.state === 'EVIDENCE_REQUIRED') return { action: '人工核实', kind: 'verify', allowed: false, blocker: '需要 alarm:verify 核实权限', hint: '当前账号只能查看，不能提交核实结论。' };
+    if (item.state === 'PENDING_VERIFICATION') return { action: '人工核实', kind: 'verify', allowed: false, blocker: '需要 alarm:verify 核实权限', hint: '当前账号只能查看，不能提交核实结论。' };
     // 阶段 13：已核实的事件可以发起联动反制申请。按钮只负责提申请，能否执行由审批与时限决定。
     if (item.state === 'CONFIRMED') return { action: '联动反制', kind: 'countermeasure', allowed: true, blocker: null, hint: '发起联动反制申请：需另一位有审批权限的人批准后才能执行' };
     return null;
@@ -94,6 +94,7 @@ export function summarize(item) {
  * 阶段 13：联动反制按该事件的最新授权显示真实状态——完成 = 存在 COMPLETED 授权，
  * 进行中 = APPROVED/EXECUTING；没有授权说“尚无授权”，读不到说“尚未接入”，三者不能混为一谈。
  * 通知处罚部门按该事件 UAV_PUNISHMENT 交接推导：读不到交接说未接入，没有记录说尚未移送。
+ * 已有交接但反制/干扰都未完成时不把末步画成完成——演示主线是核实 → 反制 → 干扰 → 移送。
  * @param {object|null} [counter] 该事件最新的 COUNTERMEASURE 授权；`null` 表示没有；`undefined` 表示没读到
  * @param {object|null} [punishHandoff] 处罚交接；`null` 表示没有；`undefined` 表示没读到
  */
@@ -113,40 +114,46 @@ export function uavSteps(state, counter, punishHandoff, jam) {
       t: disposalStatusText(row)
     };
   };
-  const punishReady = verified && (
-    (counter && (counter.status === 'COMPLETED' || DISPOSAL_ACTIVE_STATUSES.includes(counter.status)))
-    || (jam && (jam.status === 'COMPLETED' || DISPOSAL_ACTIVE_STATUSES.includes(jam.status)))
-  );
+  const jamLive = jam && DISPOSAL_ACTIVE_STATUSES.includes(jam.status);
+  // 待审批 / 执行中不算完成：反制还没批、干扰还没走时，不能把处罚环节点成当前步。
+  const punishReady = verified && !jamLive && disposalMainlineCompleted(counter, jam);
   const punishStep = () => {
     if (punishHandoff === undefined) return { n: '通知处罚部门', done: false, act: false, t: '未接入' };
     if (!punishHandoff) return { n: '通知处罚部门', done: false, act: punishReady, t: punishReady ? '待提交' : '尚未移送' };
+    const skipped = counter !== undefined && jam !== undefined && !disposalMainlineCompleted(counter, jam);
     return {
       n: '通知处罚部门',
-      done: punishHandoff.delivery_status !== 'FAILED',
+      done: punishHandoff.delivery_status !== 'FAILED' && !skipped,
       act: false,
-      t: labelOf(DELIVERY_STATUS_LABEL, punishHandoff.delivery_status, punishHandoff.delivery_status)
+      t: skipped ? '已移送（未完成反制/干扰）'
+        : labelOf(DELIVERY_STATUS_LABEL, punishHandoff.delivery_status, punishHandoff.delivery_status)
     };
   };
   return [
     received,
-    { n: '人工核实', done: verified, act: !verified, t: state === 'EVIDENCE_REQUIRED' ? '证据待补充' : (verified ? '属实' : null) },
+    { n: '人工核实', done: verified, act: !verified, t: verified ? '属实' : null },
     authStep('联动反制', counter),
     authStep('信号干扰', jam),
     punishStep()
   ];
 }
 
-/** 飞行风险流程条：按后端状态推导，排除是核验后的终态分支。 */
-export function riskSteps(state) {
+/**
+ * 飞行风险流程条：按后端状态推导，排除是核验后的终态分支。
+ * 已有未失败的交接时，即使源风险还停在待通知，也进入「接收方确认」——通知上级已经提交过，
+ * 不能再把这一步画成「待提交通知」并放一个置灰的「通知上级」按钮。
+ */
+export function riskSteps(state, submitted) {
   if (state === 'EXCLUDED') return [
     { n: '风险发现', done: true }, { n: '人工核验', done: true }, { n: '已排除', done: true, t: '核验后判定无需通报' }
   ];
-  const idx = state === 'ACKNOWLEDGED' ? 4 : state === 'NOTIFIED' ? 3 : state === 'PENDING_NOTIFICATION' ? 2 : 1;
+  let idx = state === 'ACKNOWLEDGED' ? 4 : state === 'NOTIFIED' ? 3 : state === 'PENDING_NOTIFICATION' ? 2 : 1;
+  if (submitted && idx < 3) idx = 3;
   return [
     { n: '风险发现', done: true },
     { n: '人工核验', done: idx >= 2, act: idx === 1 },
-    { n: '通知上级', done: idx >= 3, act: idx === 2, t: idx >= 3 ? '已通知' : '待提交通知' },
-    { n: '接收方确认', done: idx >= 4, act: idx === 3, t: idx >= 4 ? '已回执' : idx === 3 ? '等待确认回执，请查看投递记录' : '尚未通知' }
+    { n: '通知上级', done: idx >= 3, act: idx === 2, t: idx >= 3 ? (state === 'PENDING_NOTIFICATION' ? '已提交' : '已通知') : '待提交通知' },
+    { n: '接收方确认', done: idx >= 4, act: idx === 3, t: idx >= 4 ? '已回执' : idx === 3 ? '等待确认回执' : '尚未通知' }
   ];
 }
 
@@ -165,8 +172,8 @@ export function deviceSteps(state, incidentType) {
   }));
 }
 
-export function stepsOf(kind, state, counter, punishHandoff, incidentType, jam) {
-  return kind === 'UAV_EVENT' ? uavSteps(state, counter, punishHandoff, jam) : kind === 'RISK' ? riskSteps(state) : deviceSteps(state, incidentType);
+export function stepsOf(kind, state, counter, punishHandoff, incidentType, jam, submitted) {
+  return kind === 'UAV_EVENT' ? uavSteps(state, counter, punishHandoff, jam) : kind === 'RISK' ? riskSteps(state, submitted) : deviceSteps(state, incidentType);
 }
 
 /** 拉取一页工作台队列；返回摘要与同快照的计数/可用性。 */
@@ -197,12 +204,25 @@ export async function getWorkbenchDetail(kind, sourceId) {
   // 已有未了结的联动反制或信号干扰时，服务端会拒绝再发起同类授权；按钮直接禁用并说明原因。
   const activeAuth = [counter, jam].find(row => row && DISPOSAL_ACTIVE_STATUSES.includes(row.status));
   if (summary.todo?.kind === 'countermeasure' && activeAuth) {
-    summary.todo = { ...summary.todo, allowed: false, blocker: `已有处置申请（${labelOf(DISPOSAL_ACTION_LABEL, activeAuth.action_type)} ${disposalStatusText(activeAuth)}），了结前不能再次发起`, hint: '等该申请审批、执行或停止后，才能再次发起联动反制。' };
+    const liveName = labelOf(DISPOSAL_ACTION_LABEL, activeAuth.action_type);
+    summary.todo = {
+      action: liveName, kind: 'countermeasure', allowed: false,
+      blocker: `已有处置申请（${liveName} ${disposalStatusText(activeAuth)}），了结前不能再次发起`,
+      hint: activeAuth.status === 'REQUESTED'
+        ? '申请已提交，须另一人批准并执行完成后，才能通知处罚部门。'
+        : `${liveName}尚未完成，不能通知处罚部门。`
+    };
   }
-  // 风险已提交过通知（交接记录存在且未失败）时，服务端对同一接收方会 409：按钮直接禁用并说明（决策 15-50）。
+  // 风险已提交过通知（交接记录存在且未失败）时，服务端对同一接收方会 409：不能再点「通知上级」（决策 15-50）。
+  // 下一步改成「等待确认回执」，流程进入接收方确认——提交即完成通知上级，与源风险是否已回写成已通知无关。
   const submitted = (data.timeline || []).find(t => t.entry_type === 'HANDOFF' && t.delivery_status && t.delivery_status !== 'FAILED');
   if (summary.todo?.kind === 'notify' && submitted) {
-    summary.todo = { ...summary.todo, allowed: false, blocker: `已提交通知（${labelOf(DELIVERY_STATUS_LABEL, submitted.delivery_status)}），不能重复提交`, hint: '交接材料已入库；请核对投递与回执，再刷新源风险状态。' };
+    const delivery = labelOf(DELIVERY_STATUS_LABEL, submitted.delivery_status, submitted.delivery_status);
+    summary.todo = {
+      action: '等待确认回执', kind: 'notification-wait', allowed: false,
+      blocker: `已提交通知（${delivery}），不能重复提交`,
+      hint: '通知已提交；请查看投递记录中的投递结果与阻断原因，取得确认回执后为已回执。'
+    };
   }
   const punishHandoff = kind === 'UAV_EVENT'
     ? (data.availability?.handoffs === 'FORBIDDEN'
@@ -210,15 +230,15 @@ export async function getWorkbenchDetail(kind, sourceId) {
       : (data.timeline || []).find(t => t.entry_type === 'HANDOFF' && t.handoff_type === 'UAV_PUNISHMENT') || null)
     : undefined;
   const jamLive = jam && DISPOSAL_ACTIVE_STATUSES.includes(jam.status);
-  const disposed = (counter && counter.status === 'COMPLETED') || (jam && jam.status === 'COMPLETED');
+  const disposed = disposalMainlineCompleted(counter, jam);
   const punishDone = punishHandoff && punishHandoff.delivery_status !== 'FAILED';
-  if (summary.todo?.kind === 'countermeasure' && punishDone) {
+  if (summary.todo?.kind === 'countermeasure' && disposed && !jamLive && punishDone) {
     summary.todo = {
       action: '通知处罚部门', kind: 'punish', allowed: false,
       blocker: `已提交处罚交接（${labelOf(DELIVERY_STATUS_LABEL, punishHandoff.delivery_status)}）`,
       hint: '交接材料已入库。'
     };
-  } else if (summary.todo?.kind === 'countermeasure' && (disposed || activeAuth || jamLive)) {
+  } else if (summary.todo?.kind === 'countermeasure' && disposed && !jamLive && !activeAuth) {
     summary.todo = {
       action: '通知处罚部门', kind: 'punish', allowed: true, blocker: null,
       hint: '本期只记录已提交，不调用通知接口。'
@@ -228,7 +248,7 @@ export async function getWorkbenchDetail(kind, sourceId) {
   if (summary.todo?.kind === 'device-verify' && incidentType === 'MQTT_HEARTBEAT_TIMEOUT') {
     summary.todo = { ...summary.todo, hint: '恢复事件发生后的新鲜心跳，再执行校验；通过才关闭异常，失败保持待处理。' };
   }
-  return { kind, summary, item: data.item, timeline: data.timeline || [], availability: data.availability || {}, steps: stepsOf(kind, data.item.state, counter, punishHandoff, incidentType, jam) };
+  return { kind, summary, item: data.item, timeline: data.timeline || [], availability: data.availability || {}, steps: stepsOf(kind, data.item.state, counter, punishHandoff, incidentType, jam, submitted) };
 }
 
 /** 该事件某类处置授权的最新一条：没有返回 null，读不到返回 undefined（两者在流程条上说法不同）。 */

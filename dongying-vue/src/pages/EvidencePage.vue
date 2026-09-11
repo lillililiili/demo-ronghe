@@ -19,7 +19,7 @@ import { openConfirm } from '@/ui/confirm.js';
 function confirmAction(options) { return new Promise(resolve => openConfirm({ ...options, onConfirm: () => { resolve(true); return true; }, onCancel: () => resolve(false) })); }
 import {
   destroyEvidenceFile, downloadEvidenceContent, exportEvidenceCsv, getEvidenceFile, holdEvidenceFile,
-  linkEvidenceFile, listEvidenceFiles, releaseEvidenceHold, verifyEvidenceFile
+  listEvidenceFiles, releaseEvidenceHold, verifyEvidenceFile
 } from '@/services/evidenceApi.js';
 import { EVIDENCE_CUSTODY_LABEL, EVIDENCE_KIND_LABEL, EVIDENCE_STATUS_LABEL, EVIDENCE_SUBJECT_LABEL, labelOf } from '@/ui/labels.js';
 import { custodyTag, renderEvidenceFileDetail, saveEvidenceBlob, sizeText } from '@/ui/evidenceFileDetail.js';
@@ -245,30 +245,6 @@ async function doRelease(holdId) {
   } catch (e) { toast(e.message || '解冻失败', 'err'); }
 }
 
-function doLink() {
-  if (!st.selId) return;
-  const kinds = Object.entries(EVIDENCE_SUBJECT_LABEL).map(([value, label]) => ({ value, label }));
-  openFormModal({
-    title: '关联业务对象',
-    confirmText: '关联',
-    warning: '对象必须已经存在且当前账号可见；案件需要处罚查看权限，处置授权需要处置查看权限。',
-    fields: [
-      { key: 'subject_kind', label: '对象类型', type: 'select', required: true, options: kinds },
-      { key: 'subject_id', label: '对象 ID', type: 'text', required: true, placeholder: '业务对象的 ID' }
-    ],
-    validate: values => {
-      if (!String(values.subject_kind || '').trim()) return '请选择对象类型';
-      if (!String(values.subject_id || '').trim()) return '请填写对象 ID';
-    },
-    onSubmit: async values => {
-      await linkEvidenceFile(st.selId, String(values.subject_kind).trim(), String(values.subject_id).trim(), idem());
-      closeModal();
-      toast('已关联', 'ok');
-      await load();
-    }
-  });
-}
-
 async function doExport() {
   try {
     const blob = await exportEvidenceCsv(query());
@@ -303,7 +279,6 @@ onMounted(() => {
     if (k === 'release') return doRelease(el.dataset.hold);
     if (k === 'destroy') return doDestroy();
     if (k === 'export') return doExport();
-    if (k === 'link') return doLink();
     if (k === 'retry') return load();
   });
   const kw = document.getElementById('evKw');

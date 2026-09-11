@@ -9,7 +9,7 @@ export default {};
 
 <script setup>
 /* 处置处罚管理：业务交接清单只列无人机事件的处罚交接。
-   通知状态是页面口径：已通知 / 未通知。未通知时可点「通知处罚部门」，本期只提示已提交、不调接口。 */
+   通知状态是页面口径：已通知 / 未通知。未通知时可点「通知处罚部门」，先走统一确认弹窗，确认后本期只记录已提交、不调接口。 */
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import UKpis from '@/components/UKpis.vue';
@@ -18,6 +18,7 @@ import AuthorizationQueue from '@/pages/punish/AuthorizationQueue.vue';
 import UPagination from '@/components/UPagination.vue';
 import UControl from '@/components/form/UControl.vue';
 import { toast } from '@/ui/nv.js';
+import { openConfirm } from '@/ui/confirm.js';
 import { UAV_STATE_TEXT as UAV_STATE_LABEL } from '@/ui/uavVerificationModal.js';
 import { handoffApi } from '@/services/handoffApi.js';
 import { getEvidenceChain } from '@/services/evidenceApi.js';
@@ -71,9 +72,19 @@ function notifyLabel(row) { return isNotified(row) ? '已通知' : '未通知'; 
 function notifyTag(row) { return isNotified(row) ? 't-green' : 't-amber'; }
 function notifyTone(row) { return isNotified(row) ? 'good' : 'warn'; }
 
-function notifyDepartment() {
+async function notifyDepartment() {
   const row = selected.value;
   if (!row || isNotified(row)) return;
+  const sourceNo = readableNo(row.source_no, row.source_id) || '该交接';
+  const recipient = row.recipient_name || '处罚接收方';
+  const ok = await new Promise(resolve => openConfirm({
+    title: '通知处罚部门',
+    message: `将把 ${sourceNo} 的处罚交接通知「${recipient}」。确认后只记录已提交通知，不表示处罚已立案或办结。是否继续？`,
+    confirmText: '确认通知',
+    onConfirm: () => { resolve(true); return true; },
+    onCancel: () => resolve(false)
+  }));
+  if (!ok) return;
   const next = new Set(notifiedIds.value);
   next.add(row.handoff_id);
   notifiedIds.value = next;
@@ -384,7 +395,7 @@ onMounted(() => {
                       </dl>
                       <div v-if="selected.material.verifications?.length" class="pn-sub pn-wrap">
                         <div v-for="(vr, i) in selected.material.verifications" :key="i">
-                          第 {{ vr.version }} 次核实 · 结论：{{ labelOf(EVENT_CONCLUSION_LABEL, vr.conclusion, vr.conclusion) }}
+                          核实结论：{{ labelOf(EVENT_CONCLUSION_LABEL, vr.conclusion, vr.conclusion) }}
                           <span v-if="vr.actor_name"> · {{ vr.actor_name }}</span><span v-if="vr.note"> · {{ vr.note }}</span>
                         </div>
                       </div>
@@ -400,7 +411,7 @@ onMounted(() => {
                     </template>
                   </div>
                   <div v-if="!isNotified(selected)" class="detail-actions is-sticky">
-                    <button class="btn pri" type="button" title="本期只记录已提交，不调用通知接口" @click="notifyDepartment">通知处罚部门</button>
+                    <button class="btn pri" type="button" title="先确认再记录已通知；不表示处罚已立案或办结" @click="notifyDepartment">通知处罚部门</button>
                   </div>
                 </template>
               </div>

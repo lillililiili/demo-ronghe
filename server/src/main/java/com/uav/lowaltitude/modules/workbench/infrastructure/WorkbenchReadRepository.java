@@ -27,7 +27,7 @@ public class WorkbenchReadRepository {
     public static final String RISK = "RISK";
     public static final String DEVICE_INCIDENT = "DEVICE_INCIDENT";
     /* 队列次序（决策 16-10，按原版工作台改回）：可操作的排前面（2），等回执的居中（1），终态沉底（0）；同档再按等级、接收时间。
-       终态：误报、已通知、已排除、已恢复——它们已经没有"下一步"，不能占住队首。 */
+       终态：误报、已通知、已回执、已排除、已恢复——它们已经没有"下一步"，不能占住队首。 */
     private static final String ORDER = " ORDER BY u.action_rank DESC, u.severity_rank DESC, u.received_at DESC, u.kind ASC, u.source_id DESC";
 
     private final NamedParameterJdbcTemplate jdbc;
@@ -146,7 +146,7 @@ public class WorkbenchReadRepository {
     private static String riskBranch(AccessDecision access, Map<String, Object> params) {
         StringBuilder sql = new StringBuilder("SELECT CAST('RISK' AS VARCHAR(32)) AS kind, r.risk_id AS source_id, r.state_code AS state,"
                 + " r.severity AS severity, " + rank("r.severity") + " AS severity_rank, " + ms("r.received_at") + " AS received_at, "
-                + " CASE r.state_code WHEN 'NOTIFIED' THEN 0 WHEN 'EXCLUDED' THEN 0 ELSE 2 END AS action_rank, "
+                + " CASE r.state_code WHEN 'NOTIFIED' THEN 0 WHEN 'ACKNOWLEDGED' THEN 0 WHEN 'EXCLUDED' THEN 0 ELSE 2 END AS action_rank, "
                 + ms("r.occurred_at") + " AS occurred_at, " + ms("r.updated_at") + " AS updated_at, r.version AS version,"
                 + " r.source_mode AS source_mode, r.owner_org_id AS owner_org_id, r.district_id AS district_id, r.risk_type AS type_code,"
                 + " CAST(r.reason_text AS VARCHAR(2000)) AS reason_text, CAST(NULL AS VARCHAR(64)) AS device_no, CAST(NULL AS VARCHAR(128)) AS device_name,"

@@ -110,12 +110,12 @@ class UavEventVerificationApiTest {
     }
 
     @Test
-    void evidenceRequiredCanBeVerifiedAgainButTerminalStateCannot() throws Exception {
+    void evidenceRequiredIsRejectedAndTerminalStateCannotBeReopened() throws Exception {
         mvc.perform(verify("EVIDENCE_REQUIRED", "需要补充可信证据", 0, "verify-key-2"))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.data.state").value("EVIDENCE_REQUIRED"));
-        mvc.perform(verify("FALSE_POSITIVE", "补充证据后确认误报", 1, "verify-key-3"))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.error.code").value("INVALID_CONCLUSION"));
+        mvc.perform(verify("FALSE_POSITIVE", "现场确认为误报", 0, "verify-key-3"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.state").value("FALSE_POSITIVE"));
-        mvc.perform(verify("CONFIRMED", "终态不能重开", 2, "verify-key-4"))
+        mvc.perform(verify("CONFIRMED", "终态不能重开", 1, "verify-key-4"))
                 .andExpect(status().isConflict()).andExpect(jsonPath("$.error.code").value("INVALID_TRANSITION"));
     }
 

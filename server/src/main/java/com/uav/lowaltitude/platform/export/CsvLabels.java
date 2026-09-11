@@ -27,7 +27,7 @@ public final class CsvLabels {
      * 告警说"待核实"、风险说"待核验"——这是页面上一直以来的区分（告警核实、风险核验），不是笔误，别去"统一"。
      */
     private static final Map<String, String> UAV_EVENT_STATE = Map.of(
-            "PENDING_VERIFICATION", "待核实", "EVIDENCE_REQUIRED", "证据待补充",
+            "PENDING_VERIFICATION", "待核实",
             "CONFIRMED", "已核实，待处置", "FALSE_POSITIVE", "误报");
 
     private static final Map<String, String> RISK_TYPE = Map.of(

@@ -27,6 +27,7 @@ function isVisible(field) {
       :start-placeholder="field.startPlaceholder || ''" :end-placeholder="field.endPlaceholder || ''"
       :default-time="field.defaultTime"
       :disabled="field.disabled" :readonly="field.readonly" :clearable="field.clearable === true"
+      :filterable="field.filterable === true"
       :min="field.min" :max="field.max" :min-rows="field.minRows || 3" :max-rows="field.maxRows || 6"
       :show-button="field.showButton === true" :layout="field.layout || 'stack'" :html="field.html || ''"
       :box-label="field.boxLabel || ''" :input-props="field.inputProps || {}" />

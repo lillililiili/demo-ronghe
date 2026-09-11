@@ -67,8 +67,8 @@ class LocalStage5HandoffSeederTest {
         assertThat(count("select count(*) from handoff h join handoff_delivery d on d.handoff_id=h.handoff_id where h.handoff_id='seed-stage5-handoff-pending' and d.attempt_no=1 and d.delivery_status='PENDING_DELIVERY' and d.receipt_status='NOT_EXPECTED' and d.blocked_reason='CHANNEL_NOT_CONNECTED' and h.source_mode='mock'")).isEqualTo(1L);
         assertThat(count("select count(*) from handoff h join handoff_delivery d on d.handoff_id=h.handoff_id where h.handoff_id='seed-stage5-handoff-delivered' and d.delivery_status='DELIVERED' and d.delivered_at is not null and h.source_mode='mock'")).isEqualTo(1L);
         assertThat(count("select count(*) from handoff h where h.handoff_id like 'seed-stage5-%' and not exists (select 1 from handoff_material_snapshot s where s.handoff_id=h.handoff_id)")).isZero();
-        assertThat(count("select count(*) from handoff h join flight_risk r on r.risk_id=h.risk_id where h.handoff_id like 'seed-stage5-%' and r.state_code<>'PENDING_NOTIFICATION'")).isZero();
-        assertThat(count("select count(*) from flight_risk where state_code='NOTIFIED'")).isZero();
+        assertThat(count("select count(*) from handoff h join flight_risk r on r.risk_id=h.risk_id where h.handoff_id like 'seed-stage5-%' and r.state_code<>'NOTIFIED'")).isZero();
+        assertThat(count("select count(*) from flight_risk where risk_id like 'seed-stage5-%' and state_code='NOTIFIED'")).isEqualTo(2L);
         // 阶段 14（决策 14-16）起，处罚交接确实会有一条种子夹具，所以不能再断言"全库为零"。
         // 这条断言真正要守的是"**阶段 5 的种子**不造处罚交接"——按前缀收窄，守住原意而不是删掉它。
         assertThat(count("select count(*) from handoff where handoff_type='UAV_PUNISHMENT'"

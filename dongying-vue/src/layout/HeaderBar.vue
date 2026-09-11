@@ -35,8 +35,8 @@ const clkHtml = computed(() => `${U.icon('clock')} ${store.timeStr}`);
    铃铛与告警页共用同一条件：同一个 alarm:read 权限、同一范围谓词、同一状态过滤。
    原因：铃铛数字是“点进去能看到几条待办”的承诺。若这里另算一套（例如读 Mock 或
    自己数状态），就会出现顶栏显示 3 条、告警页却是空列表或 403 的矛盾。
-   因此只向 listAlarms 各取 state=PENDING_VERIFICATION / EVIDENCE_REQUIRED 的 size=1 页，
-   用服务端 total 求和；无权限（403）或任何失败都清空数字，不回退旧 Mock 计数。 */
+   因此只向 listAlarms 取 state=PENDING_VERIFICATION 的 size=1 页，用服务端 total；
+   无权限（403）或任何失败都清空数字，不回退旧 Mock 计数。 */
 const bellN = ref(null);
 let bellSeq = 0;
 let bellFetchedAt = 0;
@@ -46,12 +46,9 @@ async function refreshBell(force = false) {
   if (!canAlarms.value) { bellN.value = null; bellFetchedAt = 0; return; }
   if (!force && bellN.value != null && Date.now() - bellFetchedAt < BELL_TTL_MS) return;
   try {
-    const [pending, evidence] = await Promise.all([
-      listAlarms({ state: 'PENDING_VERIFICATION', page: 1, size: 1 }),
-      listAlarms({ state: 'EVIDENCE_REQUIRED', page: 1, size: 1 })
-    ]);
+    const pending = await listAlarms({ state: 'PENDING_VERIFICATION', page: 1, size: 1 });
     if (seq !== bellSeq) return;
-    bellN.value = (pending?.total || 0) + (evidence?.total || 0);
+    bellN.value = pending?.total || 0;
     bellFetchedAt = Date.now();
   } catch {
     // 403 表示无 alarm:read；其余失败同样是结果未知。两种情况都不显示数字，避免用旧值冒充事实。

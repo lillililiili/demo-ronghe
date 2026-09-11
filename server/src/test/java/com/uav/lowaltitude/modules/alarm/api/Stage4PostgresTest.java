@@ -157,7 +157,7 @@ class Stage4PostgresTest {
     void migrationsIncludingStage4AndPostgresRepeatablesAreAppliedToIsolatedSchema() {
         List<String> versions = jdbc.queryForList(
                 "select version from flyway_schema_history where success=true and version is not null", String.class);
-        assertThat(versions).contains("202609050020", "202609050021", "202609050022");
+        assertThat(versions).contains("202609050020", "202609050021", "202609050022", "202609110001");
         List<String> repeatables = jdbc.queryForList(
                 "select description from flyway_schema_history where success=true and version is null", String.class);
         assertThat(repeatables).anyMatch(d -> d.contains("stage2 postgres constraints"))
@@ -186,6 +186,8 @@ class Stage4PostgresTest {
         assertThatThrownBy(() -> jdbc.update(
                 "insert into uav_event (event_id,alarm_id,state_code,owner_org_id,district_id,created_at,updated_at,version) values (?,?,'DISPOSED',?,?,?,?,0)",
                 id(), alarm, org, district, T0, T0)).isInstanceOf(DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> jdbc.update("update uav_event set state_code='EVIDENCE_REQUIRED' where event_id=?", eventId))
+                .isInstanceOf(DataIntegrityViolationException.class);
 
         // 核实历史按 (event_id,version) 唯一；两条相同版本的历史意味着并发写穿透，数据库必须拒绝。
         jdbc.update("insert into uav_event_verification (history_id,event_id,version,previous_state,resulting_state,conclusion,note,actor_id,created_at) values (?,?,1,'PENDING_VERIFICATION','CONFIRMED','CONFIRMED','约束验证',?,?)",
@@ -196,6 +198,8 @@ class Stage4PostgresTest {
         assertThatThrownBy(() -> jdbc.update(
                 "insert into uav_event_verification (history_id,event_id,version,previous_state,resulting_state,conclusion,note,actor_id,created_at) values (?,?,2,'CONFIRMED','CONFIRMED','CONFIRMED','操作人不存在',?,?)",
                 id(), eventId, "missing-user-" + suffix, T0)).isInstanceOf(DataIntegrityViolationException.class);
+        jdbc.update("insert into uav_event_verification (history_id,event_id,version,previous_state,resulting_state,conclusion,note,actor_id,created_at) values (?,?,2,'PENDING_VERIFICATION','EVIDENCE_REQUIRED','EVIDENCE_REQUIRED','历史结论保留',?,?)",
+                id(), eventId, userA, T0);
 
         // 风险的 (plan_id,route_version_id) 是复合外键：计划存在但航线版本不匹配同样不能入库。
         assertThatThrownBy(() -> jdbc.update(
@@ -224,7 +228,7 @@ class Stage4PostgresTest {
     @Test
     void versionedConditionalUpdatesRejectStaleVersionsInDatabaseAndThroughApi() throws Exception {
         // 数据库层：条件更新命中旧版本必须为 0 行，这是服务层“0 行即 VERSION_CONFLICT”的前提。
-        assertThat(jdbc.update("update uav_event set state_code='EVIDENCE_REQUIRED',updated_at=?,version=version+1 where event_id=? and version=?",
+        assertThat(jdbc.update("update uav_event set state_code='CONFIRMED',updated_at=?,version=version+1 where event_id=? and version=?",
                 T0.plusSeconds(5), eventId, 7L)).isZero();
         assertThat(jdbc.queryForObject("select version from uav_event where event_id=?", Long.class, eventId)).isZero();
         assertThat(jdbc.update("update flight_risk set state_code='EXCLUDED',updated_at=?,version=version+1 where risk_id=? and version=? and state_code='PENDING_VERIFICATION'",

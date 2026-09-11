@@ -15,7 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 告警/无人机事件的演示"体量"夹具：只在 local（不含 test）且 app.dev-seed.enabled=true 时存在。
- * 目的：让告警页与核实弹窗在每个事件状态（待核实/需补证/已确认/误报）、每个等级（CRITICAL/HIGH/MEDIUM/LOW）
+ * 目的：让告警页与核实弹窗在每个事件状态（待核实/已确认/误报）、每个等级（CRITICAL/HIGH/MEDIUM/LOW）
  * 和两种告警类型（UAV_INTRUSION/UAV）下都有记录可看，且发生时间分散在多天，方便排序与筛选。
  * 只复用既有夹具的机构、区域、来源与目标（阶段四共享目标、阶段七契约目标、阶段七体量目标），不新建机构。
  * 已核实的事件按服务路径的写法补核实历史（history.version = 核实后的 event.version），核实人是本地 admin1。
@@ -36,7 +36,7 @@ public class LocalDemoVolumeAlarmSeeder implements ApplicationRunner {
     /** 全部告警挂在阶段七来源上：该来源没有其他告警，(source_id, source_alarm_id) 唯一键不会与规则引擎产生的告警相撞。 */
     private static final String SOURCE_ID = LocalStage7RuleEngineSeeder.SOURCE_ID;
 
-    private static final String PENDING = "PENDING_VERIFICATION", EVIDENCE = "EVIDENCE_REQUIRED", CONFIRMED = "CONFIRMED", FALSE_POSITIVE = "FALSE_POSITIVE";
+    private static final String PENDING = "PENDING_VERIFICATION", CONFIRMED = "CONFIRMED", FALSE_POSITIVE = "FALSE_POSITIVE";
 
     private final JdbcTemplate jdbc;
 
@@ -56,20 +56,19 @@ public class LocalDemoVolumeAlarmSeeder implements ApplicationRunner {
         // 01：已确认 / CRITICAL / 入侵 / 闯入限高空域 H1
         alarm("01", "告警-0901-301", "UAV_INTRUSION", "CRITICAL", LocalStage7RuleEngineSeeder.targetId("airspace-limit"), S7_ORG, S7_DISTRICT, at("2026-09-01T00:10:00Z"));
         confirmed("01", S7_ORG, S7_DISTRICT, at("2026-09-01T00:10:00Z"), actor, at("2026-09-01T01:30:00Z"), "现场核实：目标在限高空域 H1 内以 120 m 飞行，超过限高 60 m，确认属实");
-        // 02：需补证 → 已确认 / HIGH / 入侵 / 穿越禁飞区 P1（两条核实历史）
+        // 02：已确认 / HIGH / 入侵 / 穿越禁飞区 P1
         alarm("02", "告警-0902-302", "UAV_INTRUSION", "HIGH", LocalStage7DemoVolumeSeeder.targetId("vol-prohibited-1"), S7_ORG, S7_DISTRICT, at("2026-09-02T02:20:00Z"));
-        evidenceThenConfirmed("02", S7_ORG, S7_DISTRICT, at("2026-09-02T02:20:00Z"), actor,
-                at("2026-09-02T03:00:00Z"), "轨迹只有 5 个点，需补充禁飞区 P1 的视频取证后再定",
-                at("2026-09-02T06:45:00Z"), "补充视频取证后确认：目标穿越禁飞空域 P1，属实");
+        confirmed("02", S7_ORG, S7_DISTRICT, at("2026-09-02T02:20:00Z"), actor, at("2026-09-02T06:45:00Z"),
+                "目标穿越禁飞空域 P1，属实");
         // 03：误报 / MEDIUM / 无人机告警 / 偏航
         alarm("03", "告警-0903-303", "UAV", "MEDIUM", LocalStage7DemoVolumeSeeder.targetId("vol-deviation-1"), S7_ORG, S7_DISTRICT, at("2026-09-03T04:05:00Z"));
         falsePositive("03", S7_ORG, S7_DISTRICT, at("2026-09-03T04:05:00Z"), actor, at("2026-09-03T05:10:00Z"), "核对计划后判定：偏离量在走廊容差内，属误报");
         // 04：误报 / LOW / 无人机告警 / 已报备合法飞行
         alarm("04", "告警-0904-304", "UAV", "LOW", LocalStage7DemoVolumeSeeder.targetId("vol-legal-1"), S7_ORG, S7_DISTRICT, at("2026-09-04T01:15:00Z"));
         falsePositive("04", S7_ORG, S7_DISTRICT, at("2026-09-04T01:15:00Z"), actor, at("2026-09-04T01:40:00Z"), "该 SN 有已批准计划 JH-S7-011，且在计划窗与走廊内，属误报");
-        // 05：需补证 / HIGH / 无人机告警 / 无计划飞行
+        // 05：待核实 / HIGH / 无人机告警 / 无计划飞行
         alarm("05", "告警-0905-305", "UAV", "HIGH", LocalStage7DemoVolumeSeeder.targetId("vol-no-plan-1"), S7_ORG, S7_DISTRICT, at("2026-09-05T03:30:00Z"));
-        evidenceRequired("05", S7_ORG, S7_DISTRICT, at("2026-09-05T03:30:00Z"), actor, at("2026-09-05T04:00:00Z"), "库内无该 SN 的计划，需向来源单位补充操作人信息后再核实");
+        pending("05", S7_ORG, S7_DISTRICT, at("2026-09-05T03:30:00Z"));
         // 06：待核实 / CRITICAL / 无人机告警 / 临时管制 T1 生效期间飞行
         alarm("06", "告警-0906-306", "UAV", "CRITICAL", LocalStage7RuleEngineSeeder.targetId("boundary"), S7_ORG, S7_DISTRICT, at("2026-09-06T02:00:00Z"));
         pending("06", S7_ORG, S7_DISTRICT, at("2026-09-06T02:00:00Z"));
@@ -79,9 +78,9 @@ public class LocalDemoVolumeAlarmSeeder implements ApplicationRunner {
         // 08：已确认 / LOW / 入侵 / 阶段四共享目标
         alarm("08", "告警-0907-308", "UAV_INTRUSION", "LOW", S4_SHARED_TARGET, S4_ORG, S4_DISTRICT, at("2026-09-07T05:20:00Z"));
         confirmed("08", S4_ORG, S4_DISTRICT, at("2026-09-07T05:20:00Z"), actor, at("2026-09-07T06:00:00Z"), "巡查人员现场确认为同一目标的再次出现，属实");
-        // 09：需补证 / HIGH / 无人机告警 / 夜航
+        // 09：待核实 / HIGH / 无人机告警 / 夜航
         alarm("09", "告警-0908-309", "UAV", "HIGH", LocalStage7DemoVolumeSeeder.targetId("vol-night-1"), S7_ORG, S7_DISTRICT, at("2026-09-08T13:05:00Z"));
-        evidenceRequired("09", S7_ORG, S7_DISTRICT, at("2026-09-08T13:05:00Z"), actor, at("2026-09-08T13:30:00Z"), "夜间画面不清，需调取红外取证后再核实");
+        pending("09", S7_ORG, S7_DISTRICT, at("2026-09-08T13:05:00Z"));
         // 10：误报 / CRITICAL / 入侵 / 来源误判
         alarm("10", "告警-0908-310", "UAV_INTRUSION", "CRITICAL", LocalStage7DemoVolumeSeeder.targetId("vol-no-plan-2"), S7_ORG, S7_DISTRICT, at("2026-09-08T01:00:00Z"));
         falsePositive("10", S7_ORG, S7_DISTRICT, at("2026-09-08T01:00:00Z"), actor, at("2026-09-08T02:15:00Z"), "现场核实为鸟群，来源分类置信度 0.85 误判，属误报");
@@ -112,11 +111,6 @@ public class LocalDemoVolumeAlarmSeeder implements ApplicationRunner {
         event(suffix, PENDING, org, district, occurred.plusSeconds(3), occurred.plusSeconds(3), 0);
     }
 
-    private void evidenceRequired(String suffix, String org, String district, Instant occurred, String actor, Instant verifiedAt, String note) {
-        event(suffix, EVIDENCE, org, district, occurred.plusSeconds(3), verifiedAt, 1);
-        history(suffix, 1, PENDING, EVIDENCE, EVIDENCE, note, actor, verifiedAt);
-    }
-
     private void confirmed(String suffix, String org, String district, Instant occurred, String actor, Instant verifiedAt, String note) {
         event(suffix, CONFIRMED, org, district, occurred.plusSeconds(3), verifiedAt, 1);
         history(suffix, 1, PENDING, CONFIRMED, CONFIRMED, note, actor, verifiedAt);
@@ -125,13 +119,6 @@ public class LocalDemoVolumeAlarmSeeder implements ApplicationRunner {
     private void falsePositive(String suffix, String org, String district, Instant occurred, String actor, Instant verifiedAt, String note) {
         event(suffix, FALSE_POSITIVE, org, district, occurred.plusSeconds(3), verifiedAt, 1);
         history(suffix, 1, PENDING, FALSE_POSITIVE, FALSE_POSITIVE, note, actor, verifiedAt);
-    }
-
-    private void evidenceThenConfirmed(String suffix, String org, String district, Instant occurred, String actor,
-            Instant evidenceAt, String evidenceNote, Instant confirmedAt, String confirmedNote) {
-        event(suffix, CONFIRMED, org, district, occurred.plusSeconds(3), confirmedAt, 2);
-        history(suffix, 1, PENDING, EVIDENCE, EVIDENCE, evidenceNote, actor, evidenceAt);
-        history(suffix, 2, EVIDENCE, CONFIRMED, CONFIRMED, confirmedNote, actor, confirmedAt);
     }
 
     /** 事件与告警同范围（读取链按 a.owner_org_id=e.owner_org_id 关联）；告警没插成时不插事件，避免 FK 让整个种子事务中止。 */

@@ -140,8 +140,7 @@ public class DashboardSnapshotService {
                 canStats ? trend(today) : null,
                 canAssessment ? targetRisk(latestByTarget) : null,
                 new ClosureDto(
-                        canAlarm ? countAlarms(null, null, "PENDING_VERIFICATION")
-                                + countAlarms(null, null, "EVIDENCE_REQUIRED") : null,
+                        canAlarm ? countAlarms(null, null, "PENDING_VERIFICATION") : null,
                         canAlarm ? countAlarms(null, null, "CONFIRMED") : null,
                         pendingHandoffs, EVIDENCE_NOT_BUILT),
                 canDevice ? devices() : null,

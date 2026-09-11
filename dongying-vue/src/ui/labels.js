@@ -72,6 +72,10 @@ export const ALARM_PROGRESS_TAG = {
 /* 状态回答“现在在哪一步”，与执行结果（成功/失败）分开说，不要混成一句。 */
 /* 未了结的授权：服务端对同一主体同类动作只允许一条（ACTIVE_AUTHORIZATION_EXISTS），页面据此禁用再次发起。 */
 export const DISPOSAL_ACTIVE_STATUSES = ['REQUESTED', 'APPROVED', 'EXECUTING'];
+/** 演示主线处罚交接的前提：反制或干扰至少一条已完成。与告警页「提交处罚交接」按钮一致。 */
+export function disposalMainlineCompleted(counter, jam) {
+  return [counter, jam].some(row => row && row.status === 'COMPLETED');
+}
 export const DISPOSAL_STATUS_LABEL = {
   REQUESTED: '待审批', APPROVED: '已批准', REJECTED: '已驳回', EXECUTING: '执行中',
   COMPLETED: '已完成', FAILED: '执行失败', STOPPED: '已停止', EXPIRED: '已过期', CANCELLED: '已撤销'
@@ -180,6 +184,7 @@ export const SUBTYPE_LABEL = {
   QUADCOPTER: '多旋翼无人机', FIXED_WING: '固定翼无人机', VTOL: '垂直起降固定翼', HELICOPTER: '直升机型无人机',
   MIGRATORY_BIRD: '候鸟', BIRD_FLOCK: '鸟群', RAPTOR: '猛禽'
 };
+/* EVIDENCE_REQUIRED 只给核实历史里的旧结论翻译；新核实不能再提交该结论。 */
 export const CONCLUSION_LABEL = { CONFIRMED: '核实属实', EXCLUDED: '已排除', FALSE_POSITIVE: '误报', EVIDENCE_REQUIRED: '证据待补充' };
 /* 飞行风险核验的结论用词与无人机事件不同（核验通过 → 转待通知），与 FlightsPage、riskVerificationModal 保持一致。 */
 export const RISK_CONCLUSION_LABEL = { CONFIRMED: '核验通过', EXCLUDED: '已排除' };
@@ -207,7 +212,6 @@ export const DEVICE_EVENT_TYPE_LABEL = {
 };
 export const SEVERITY_TAG = { CRITICAL: 't-red', HIGH: 't-red', MEDIUM: 't-amber', LOW: 't-blue' };
 export const RISK_STATE_LABEL = { PENDING_VERIFICATION: '待核验', PENDING_NOTIFICATION: '待通知', NOTIFIED: '已通知', ACKNOWLEDGED: '已回执', EXCLUDED: '已排除' };
-/** 版本号翻译成次数：version 0 表示尚未核实，返回空串由调用方整段不渲染。 */
 /* 阶段 9 空间安全风险：异物细类、高度带与走廊关系。
    气球/风筝/孔明灯只在细类语境出现，与 INFERRED_SUBTYPE_LABEL 同义但键不同（服务端字典码）。 */
 export const SPACE_OBJECT_SUBTYPE_LABEL = {
@@ -216,7 +220,7 @@ export const SPACE_OBJECT_SUBTYPE_LABEL = {
 export const ALTITUDE_BAND_LABEL = { CLIMB: '起降爬升段', APPROACH: '进近段', CRUISE: '巡航段', UNKNOWN: '高度未知' };
 export const CORRIDOR_RELATION_LABEL = { INSIDE: '航线走廊内', NEAR: '邻近航线', OUTSIDE: '走廊外', UNKNOWN: '距离未知' };
 export const OBJECT_TREND_LABEL = { RISING: '数量上升', FLAT: '数量平稳', FALLING: '数量下降', UNKNOWN: '趋势未知' };
-export const verificationOrdinal = (version, prefix = '') => (version == null || Number(version) <= 0 ? '' : `${prefix}第${Number(version)}次核实`);
+
 // 规则集代码 → 名称（与种子/迁移里的 rule_set.name 一致）；页面只说名称与第几版，代码留在 title。
 export const RULE_SET_LABEL = { 'LEGALITY-DEMO': '合法性研判演示规则集', 'SPACE-RISK-DEMO': '空中异物风险演示规则集' };
 export const RULE_RESULT_LABEL = { PASS: '通过', FAIL: '不通过', UNDETERMINED: '不可判定' };

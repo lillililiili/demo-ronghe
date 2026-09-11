@@ -34,7 +34,7 @@ let video = null;
 const alarmColor = { 高: 'var(--red)', 中: 'var(--amber)', 低: 'var(--cyan)' };
 const SEVERITY_ZH = { CRITICAL: '高', HIGH: '高', MEDIUM: '中', LOW: '低' };
 const STATE_ZH = {
-  PENDING_VERIFICATION: '待核实', EVIDENCE_REQUIRED: '证据待补充', CONFIRMED: '已核实待处置',
+  PENDING_VERIFICATION: '待核实', CONFIRMED: '已核实待处置',
   FALSE_POSITIVE: '误报'
 };
 const AIRSPACE_KIND = {

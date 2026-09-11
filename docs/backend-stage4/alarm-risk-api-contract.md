@@ -69,11 +69,11 @@ POST /api/v1/uav-events/{event_id}/verifications
 无人机状态：
 
 ```text
-PENDING_VERIFICATION / EVIDENCE_REQUIRED
-  → CONFIRMED / FALSE_POSITIVE / EVIDENCE_REQUIRED
+PENDING_VERIFICATION
+  → CONFIRMED / FALSE_POSITIVE
 ```
 
-证据不足允许再次核实，每次生成独立历史并递增版本；其他终态不由本接口重开。
+核实结论只允许属实或误报。`EVIDENCE_REQUIRED` 不再作为可提交结论或当前事件状态；已落库的核实历史仍可保留该结论。终态不由本接口重开。
 
 ## 飞行风险
 
@@ -101,7 +101,7 @@ PENDING_VERIFICATION → EXCLUDED
 
 | 字段 | 类型/范围 | 无人机事件 | 飞行风险 |
 | --- | --- | --- | --- |
-| `conclusion` | string | `CONFIRMED/FALSE_POSITIVE/EVIDENCE_REQUIRED` | `CONFIRMED/EXCLUDED` |
+| `conclusion` | string | `CONFIRMED/FALSE_POSITIVE` | `CONFIRMED/EXCLUDED` |
 | `note` | string，去首尾空白后 1–1000 字符 | 必填 | 必填 |
 | `expected_version` | JSON integer，`>= 0` 且可装入 Java `long` | 必填 | 必填 |
 

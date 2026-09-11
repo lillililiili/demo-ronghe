@@ -59,7 +59,7 @@ public class LocalStage5HandoffSeeder implements ApplicationRunner {
         // 全新库上迁移先跑、接收方还不存在，所以"标默认"这件事迁移替不了种子做：
         // 不在这里标，演示库起来后风险通知不传接收方就一律 400（决策 18-14 之后页面已经不传了）。
         recipient(RECIPIENT_AVIATION, "民航监管部门（本地演示接收方）", base, true);
-        // 两条风险都停留在“待通知”：本期没有可信送达/回执事实，任何样例都不得把风险推进到 NOTIFIED。
+        // 提交即已通知：待投递样例与已送达历史样例的源风险都是已通知；投递/回执在交接上单独看。
         risk(RISK_PENDING, "seed-stage5-verify-pending", "风险-0905-101", "HIGH", "ROUTE_DEVIATION", "已核验，材料已提交、渠道未接通", base, submitter);
         risk(RISK_HISTORY, "seed-stage5-verify-history", "风险-0905-102", "MEDIUM", "AIRSPACE_CONFLICT", "已核验，历史送达样例（mock）", base.plusSeconds(1), submitter);
         Instant submitted = base.plusSeconds(600);
@@ -73,6 +73,9 @@ public class LocalStage5HandoffSeeder implements ApplicationRunner {
         // 已送达历史只在 local/test 存在且 source_mode=mock；没有任何接口能把生产交接写成这个状态。
         delivery(DELIVERY_DELIVERED, HANDOFF_DELIVERED, "DELIVERED", "ACKNOWLEDGED", null, historySubmitted,
                 historySubmitted.plusSeconds(5), historySubmitted.plusSeconds(60), historySubmitted.plusSeconds(3600));
+        // 已有库上这两条仍可能停在待通知（旧种子直插交接不推进状态）；只改待通知，不覆盖人工改过的行。
+        jdbc.update("UPDATE flight_risk SET state_code='NOTIFIED', version=version+1 WHERE risk_id IN (?,?) AND state_code='PENDING_NOTIFICATION'",
+                RISK_PENDING, RISK_HISTORY);
     }
 
     private void recipient(String id, String name, Instant at, boolean isDefault) {
@@ -85,7 +88,7 @@ public class LocalStage5HandoffSeeder implements ApplicationRunner {
         Instant received = at.plusSeconds(5), verified = at.plusSeconds(300);
         jdbc.update("INSERT INTO flight_risk (risk_id,source_id,source_risk_id,plan_id,route_version_id,risk_type,severity,state_code,"
                 + "reason_code,reason_text,occurred_at,received_at,height_relation,source_mode,owner_org_id,district_id,created_at,updated_at,version)"
-                + " SELECT ?,'seed-stage3-source',?,'seed-stage3-plan-legal','seed-stage3-rv-legal','FLIGHT_OPERATION',?,'PENDING_NOTIFICATION',?,?,?,?,"
+                + " SELECT ?,'seed-stage3-source',?,'seed-stage3-plan-legal','seed-stage3-rv-legal','FLIGHT_OPERATION',?,'NOTIFIED',?,?,?,?,"
                 + "'UNKNOWN','mock','seed-stage3-org','seed-stage3-district',?,?,1 WHERE NOT EXISTS (SELECT 1 FROM flight_risk WHERE risk_id=?)",
                 id, sourceRisk, severity, reason, text, ts(at), ts(received), ts(received), ts(verified), id);
         jdbc.update("UPDATE flight_risk SET source_risk_id=? WHERE risk_id=? AND source_risk_id<>?", sourceRisk, id, sourceRisk);

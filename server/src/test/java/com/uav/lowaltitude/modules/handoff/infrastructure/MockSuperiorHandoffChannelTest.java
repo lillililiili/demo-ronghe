@@ -11,32 +11,34 @@ import com.uav.lowaltitude.modules.handoff.domain.HandoffChannelPort.DeliveryOut
 import com.uav.lowaltitude.modules.handoff.domain.HandoffChannelPort.HandoffDispatch;
 import com.uav.lowaltitude.modules.handoff.domain.HandoffRules;
 
-/** 决策 15-52：模拟上级接口必须立即"已送达 · 已回执"，未接通渠道必须保持"待投递 · 未接通"。 */
+/** 模拟上级：风险通知已送达、等待回执；处罚交接仍模拟签收；未接通渠道保持待投递。 */
 class MockSuperiorHandoffChannelTest {
     private final OffsetDateTime at = OffsetDateTime.of(2026, 9, 8, 12, 0, 0, 0, ZoneOffset.UTC);
     private final HandoffDispatch dispatch = new HandoffDispatch("h-1", "RISK", "r-1", "RISK_NOTICE", "rcpt-1", "民航监管部门", "{}", at);
 
     @Test
-    void mockChannelDeliversAndAcknowledgesImmediately() {
+    void mockRiskNoticeDeliversAndWaitsForReceipt() {
         DeliveryOutcome outcome = new MockSuperiorHandoffChannel().deliver(dispatch);
         assertThat(outcome.deliveryStatus()).isEqualTo("DELIVERED");
-        assertThat(outcome.receiptStatus()).isEqualTo("ACKNOWLEDGED");
+        assertThat(outcome.receiptStatus()).isEqualTo("PENDING");
         assertThat(outcome.blockedReason()).isNull();
+        assertThat(outcome.receiptResult()).isNull();
         assertThat(outcome.submittedAt()).isEqualTo(at);
         assertThat(outcome.deliveredAt()).isEqualTo(at.plusSeconds(1));
-        assertThat(outcome.acknowledgedAt()).isEqualTo(at.plusSeconds(2));
+        assertThat(outcome.acknowledgedAt()).isNull();
         assertThat(HandoffRules.DELIVERY_STATUSES).contains(outcome.deliveryStatus());
         assertThat(HandoffRules.RECEIPT_STATUSES).contains(outcome.receiptStatus());
-        // 风险通知问的是"人劝走了没有"，所以回执带结果。
-        assertThat(outcome.receiptResult()).isEqualTo("DISPERSED");
     }
 
     /** 处罚交接交的是案卷，上级签收就是签收，没有"驱离与否"这回事——别拿风险通知的结果套上去。 */
     @Test
-    void punishmentHandoffHasNoDispersalResult() {
+    void punishmentHandoffAcknowledgesWithoutDispersalResult() {
         HandoffDispatch punishment = new HandoffDispatch("h-2", "UAV_EVENT", "e-1", HandoffRules.TYPE_UAV_PUNISHMENT,
                 "rcpt-2", "公安机关", "{}", at);
-        assertThat(new MockSuperiorHandoffChannel().deliver(punishment).receiptResult()).isNull();
+        DeliveryOutcome outcome = new MockSuperiorHandoffChannel().deliver(punishment);
+        assertThat(outcome.deliveryStatus()).isEqualTo("DELIVERED");
+        assertThat(outcome.receiptStatus()).isEqualTo("ACKNOWLEDGED");
+        assertThat(outcome.receiptResult()).isNull();
     }
 
     @Test

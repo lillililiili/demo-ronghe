@@ -39,7 +39,9 @@ import com.uav.lowaltitude.platform.storage.ObjectStoragePort;
  *
  * 只复用既有夹具：阶段 5 的两个风险通知接收方、阶段 14 的处罚接收方、阶段 4/7 与体量种子的风险、
  * 体量告警种子的已确认事件、阶段 13 的已确认事件、体量目标与计划。不新建机构、区域、来源。
- * 处罚交接的前提是"该事件有已完成的处置授权"（决策 13-6），所以给每个用到的体量事件补一条人工通道的已完成授权；
+ * 处罚交接的前提是"该事件有已完成的处置授权"（决策 13-6），告警页流程条还要求能看见联动反制和信号干扰。
+ * 因此每个用到的体量事件补齐人工通道的已完成反制，再接一条 chained 的已完成干扰（决策 13-34）；
+ * 原先单条授权（驱离/仅干扰/仅反制）仍保留，作为处置列表的形态样例，不替代主线两步。
  * 材料快照 v1 按库内风险事实组装、v2 走服务层同一套 {@link HandoffMaterialAssembler}（决策 14-28），不手写壳子。
  *
  * 证据：AVAILABLE 的文件真实写进 app.evidence-dir，size/sha256 与文件一致，下载与校验都能走通；
@@ -47,8 +49,9 @@ import com.uav.lowaltitude.platform.storage.ObjectStoragePort;
  * DESTROYED 只留元数据与销毁留痕。没有能用图片/视频真实内容的来源：图片种类用 1×1 PNG，录像种类只出现在
  * MISSING/CORRUPT/PENDING 三种"没有可播放内容"的状态里，文书/日志/快照用文本或 JSON 占位并在文件里注明演示。
  *
- * 全部写入都是 WHERE NOT EXISTS：重跑幂等，不 UPDATE 任何已存在的行；行已存在时也不再重写存储文件
+ * 全部写入都是 WHERE NOT EXISTS：重跑幂等，不覆盖人工改过的交接/证据行；行已存在时也不再重写存储文件
  * （否则人为删掉文件演示"缺失"后一重启又被补回）。依赖的种子行不存在时跳过对应记录，不让整个上下文起不来。
+ * 唯一例外：{@link #alignSubmittedRisks()} 把「待通知且已有未失败交接」的源风险补成已通知，与提交接口口径一致。
  */
 @Component
 @Profile("!production & local")
@@ -117,7 +120,8 @@ public class LocalDemoVolumeHandoffEvidenceSeeder implements ApplicationRunner {
         riskHandoff("seed-vol-handoff-r03-police", "seed-vol-risk-03", RECIPIENT_POLICE, actor, t03.plusSeconds(60));
         delivery("seed-vol-delivery-r03-police-1", "seed-vol-handoff-r03-police", 1, DELIVERED, TIMEOUT, null,
                 t03.plusSeconds(60), t03.plusSeconds(65), t03.plusSeconds(120), null);
-        // 待通知的风险：已发送等待回执、发送失败、两次尝试（第一次失败、第二次送达等待回执）、渠道未接通的待投递。
+        // 已提交通知、投递未完成的风险：已发送等待回执、发送失败、两次尝试、渠道未接通的待投递。
+        // 源风险按口径是已通知（提交即已通知）；下面 alignSubmittedRisks 会把仍停在待通知的行补上。
         Instant t02 = at("2026-09-05T02:40:00Z");
         riskHandoff("seed-vol-handoff-r02-police", "seed-vol-risk-02", RECIPIENT_POLICE, actor, t02);
         delivery("seed-vol-delivery-r02-police-1", "seed-vol-handoff-r02-police", 1, SUBMITTED, RECEIPT_PENDING, null,
@@ -139,6 +143,19 @@ public class LocalDemoVolumeHandoffEvidenceSeeder implements ApplicationRunner {
         riskHandoff("seed-vol-handoff-s4c-aviation", "seed-stage4-risk-confirmed", RECIPIENT_AVIATION, actor, tS4);
         delivery("seed-vol-delivery-s4c-aviation-1", "seed-vol-handoff-s4c-aviation", 1, SUBMITTED, NOT_EXPECTED, null,
                 tS4, tS4.plusSeconds(5), null, null);
+        alignSubmittedRisks();
+    }
+
+    /**
+     * 提交通知即已通知（见 docs/风险通知状态口径.md）。体量种子原先直插交接却把源风险留在待通知，
+     * 工作台会把「通知上级」当成当前步并置灰。只把「待通知且已有未失败交接」推进到已通知，已是已通知/已回执的不动。
+     */
+    private void alignSubmittedRisks() {
+        jdbc.update("UPDATE flight_risk SET state_code='NOTIFIED', version=version+1"
+                + " WHERE state_code='PENDING_NOTIFICATION'"
+                + " AND EXISTS (SELECT 1 FROM handoff h WHERE h.source_kind='RISK' AND h.source_id=flight_risk.risk_id"
+                + " AND h.handoff_type='RISK_NOTICE'"
+                + " AND EXISTS (SELECT 1 FROM handoff_delivery d WHERE d.handoff_id=h.handoff_id AND d.delivery_status<>'FAILED'))");
     }
 
     private void riskVerification(String riskId, String historyId, String actor, Instant at, String note) {
@@ -198,32 +215,58 @@ public class LocalDemoVolumeHandoffEvidenceSeeder implements ApplicationRunner {
     /* ------------------------------------------------------------------ 处罚交接 */
 
     /**
-     * 每个用到的体量已确认事件补一条人工通道的已完成授权（形状照阶段 13 的 AUTH_COMPLETED），
-     * 否则处罚交接的前提（决策 13-6）在这些事件上不成立，v2 材料的 disposals 段也会缺。
+     * 每个用到的体量已确认事件补齐主线：已完成反制 + 已完成干扰。
+     * 原先单条授权仍插入（处置列表要覆盖驱离/仅反制/仅干扰），主线两步按动作类型去重，已有则跳过。
      */
     private void completedDisposals(String actor) {
         completedDisposal("seed-vol-auth-e01", "AUTH-20260901-9101", EVENT_01, "JAMMING", S7_ORG, S7_DISTRICT, actor,
-                at("2026-09-01T01:40:00Z"), "本地演示：现场人工干扰驱离，目标离开限高空域");
+                at("2026-09-01T01:40:00Z"), "本地演示：现场人工干扰驱离，目标离开限高空域", null);
         completedDisposal("seed-vol-auth-e02", "AUTH-20260902-9102", EVENT_02, "COUNTERMEASURE", S7_ORG, S7_DISTRICT, actor,
-                at("2026-09-02T07:00:00Z"), "本地演示：人工反制迫降，目标已回收");
+                at("2026-09-02T07:00:00Z"), "本地演示：人工反制迫降，目标已回收", null);
         completedDisposal("seed-vol-auth-e08", "AUTH-20260907-9108", EVENT_08, "DISPERSAL", S4_ORG, S4_DISTRICT, actor,
-                at("2026-09-07T06:10:00Z"), "本地演示：现场劝离操作人");
+                at("2026-09-07T06:10:00Z"), "本地演示：现场劝离操作人", null);
         completedDisposal("seed-vol-auth-e12", "AUTH-20260906-9112", EVENT_12, "JAMMING", S7_ORG, S7_DISTRICT, actor,
-                at("2026-09-06T09:10:00Z"), "本地演示：人工干扰后目标降至计划高度以内");
+                at("2026-09-06T09:10:00Z"), "本地演示：人工干扰后目标降至计划高度以内", null);
+        completedMainline(EVENT_01, S7_ORG, S7_DISTRICT, actor, at("2026-09-01T01:20:00Z"),
+                "seed-vol-auth-e01cm", "AUTH-20260901-9121", "seed-vol-auth-e01jam", "AUTH-20260901-9123");
+        completedMainline(EVENT_02, S7_ORG, S7_DISTRICT, actor, at("2026-09-02T06:50:00Z"),
+                "seed-vol-auth-e02cm", "AUTH-20260902-9122", "seed-vol-auth-e02jam", "AUTH-20260902-9124");
+        completedMainline(EVENT_08, S4_ORG, S4_DISTRICT, actor, at("2026-09-07T05:50:00Z"),
+                "seed-vol-auth-e08cm", "AUTH-20260907-9128", "seed-vol-auth-e08jam", "AUTH-20260907-9129");
+        completedMainline(EVENT_12, S7_ORG, S7_DISTRICT, actor, at("2026-09-06T08:50:00Z"),
+                "seed-vol-auth-e12cm", "AUTH-20260906-9132", "seed-vol-auth-e12jam", "AUTH-20260906-9133");
+    }
+
+    private void completedMainline(String eventId, String org, String district, String actor, Instant cmAt,
+            String cmId, String cmNo, String jamId, String jamNo) {
+        completedDisposal(cmId, cmNo, eventId, "COUNTERMEASURE", org, district, actor, cmAt,
+                "本地演示：主线联动反制已完成", null);
+        String parent = completedAuthId(eventId, "COUNTERMEASURE");
+        if (parent == null) return;
+        completedDisposal(jamId, jamNo, eventId, "JAMMING", org, district, actor, cmAt.plusSeconds(900),
+                "本地演示：反制完成后自动干扰已完成", parent);
+    }
+
+    private String completedAuthId(String eventId, String actionType) {
+        return jdbc.query("SELECT authorization_id FROM disposal_authorization WHERE subject_kind='UAV_EVENT' AND subject_id=?"
+                + " AND action_type=? AND status='COMPLETED' ORDER BY requested_at ASC",
+                rs -> rs.next() ? rs.getString(1) : null, eventId, actionType);
     }
 
     private void completedDisposal(String id, String no, String eventId, String actionType, String org, String district, String actor,
-            Instant at, String resultDetail) {
+            Instant at, String resultDetail, String chainedFrom) {
         Instant validUntil = at.plusSeconds(1_800), done = at.plusSeconds(900);
         jdbc.update("INSERT INTO disposal_authorization (authorization_id,authorization_no,action_type,subject_kind,subject_id,target_id,"
                 + "device_id,channel,reason,requested_by,requested_at,approved_by,approved_at,decision_note,valid_from,valid_until,status,"
-                + "execution_command_id,result_code,result_detail,policy_version,owner_org_id,district_id,source_mode,version,created_at,updated_at)"
+                + "execution_command_id,result_code,result_detail,policy_version,owner_org_id,district_id,source_mode,"
+                + "chained_from_authorization_id,version,created_at,updated_at)"
                 + " SELECT ?,?,?,'UAV_EVENT',?,NULL,NULL,'MANUAL','本地演示：体量交接种子的处置前提',?,?,?,?,'本地演示：已批准',?,?,'COMPLETED',"
-                + "NULL,'MANUAL_SUCCEEDED',?,'demo-v1',?,?,'mock',1,?,?"
+                + "NULL,'MANUAL_SUCCEEDED',?,'demo-v1',?,?,'mock',?,1,?,?"
                 + " WHERE EXISTS (SELECT 1 FROM uav_event WHERE event_id=? AND state_code='CONFIRMED')"
-                + " AND NOT EXISTS (SELECT 1 FROM disposal_authorization WHERE authorization_id=? OR authorization_no=?)",
-                id, no, actionType, eventId, actor, ts(at), actor, ts(at), ts(at), ts(validUntil), resultDetail, org, district, ts(at), ts(done),
-                eventId, id, no);
+                + " AND NOT EXISTS (SELECT 1 FROM disposal_authorization WHERE authorization_id=? OR authorization_no=?"
+                + "   OR (subject_kind='UAV_EVENT' AND subject_id=? AND action_type=?))",
+                id, no, actionType, eventId, actor, ts(at), actor, ts(at), ts(at), ts(validUntil), resultDetail, org, district,
+                chainedFrom, ts(at), ts(done), eventId, id, no, eventId, actionType);
         disposalEvent(id, "REQUEST", actor, at);
         disposalEvent(id, "APPROVE", actor, at.plusSeconds(60));
         disposalEvent(id, "EXECUTE", actor, at.plusSeconds(120));

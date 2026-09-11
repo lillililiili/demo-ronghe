@@ -47,7 +47,7 @@ public class LocalStage4AlarmSeeder implements ApplicationRunner {
         alarm("cross", "seed-stage4-alarm-other-org", "seed-stage4-alarm-other-district", "HIGH", at);
         // createForAlarm 的唯一 alarm_id 是接收链同一语义；重启不覆盖人工已核实 state/version。
         event("pending", "PENDING_VERIFICATION", "seed-stage4-alarm-org", "seed-stage4-alarm-district", at);
-        event("evidence", "EVIDENCE_REQUIRED", "seed-stage4-alarm-org", "seed-stage4-alarm-district", at);
+        event("evidence", "PENDING_VERIFICATION", "seed-stage4-alarm-org", "seed-stage4-alarm-district", at);
         event("same-target-a", "PENDING_VERIFICATION", "seed-stage4-alarm-org", "seed-stage4-alarm-district", at);
         event("same-target-b", "PENDING_VERIFICATION", "seed-stage4-alarm-org", "seed-stage4-alarm-district", at);
         event("cross", "PENDING_VERIFICATION", "seed-stage4-alarm-other-org", "seed-stage4-alarm-other-district", at);

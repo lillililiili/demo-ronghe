@@ -44,7 +44,7 @@
 | `kpis.pending_handoffs` | `delivery_status=PENDING_DELIVERY` 的交接总数 | `null` |
 | `trend` | 近 7 日（含今日）`days[{date,md,total,illegal}]`，以及 `simulated`/`source_mode` | 整块 `null` |
 | `target_risk` | 最新研判 `grade`：`high/medium/low/ungraded`（抽样上限 100 条 latest_only） | 整块 `null` |
-| `closure.pending_verification` | 告警状态 `PENDING_VERIFICATION` 或 `EVIDENCE_REQUIRED` 计数 | `null` |
+| `closure.pending_verification` | 告警状态 `PENDING_VERIFICATION` 计数 | `null` |
 | `closure.confirmed_blocked` | 告警状态 `CONFIRMED` 计数（反制未接入，只计数） | `null` |
 | `closure.pending_handoffs` | 同 KPI | `null` |
 | `closure.evidence` | 恒为 `{status:"NOT_BUILT"}`，本切片不建设证据库 | 同左 |

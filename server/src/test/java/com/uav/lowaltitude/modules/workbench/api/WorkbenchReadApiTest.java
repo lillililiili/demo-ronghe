@@ -142,7 +142,7 @@ class WorkbenchReadApiTest {
     @Test
     void mixedKindsUseOneGlobalOrderAndPagingHasNoDuplicatesOrGaps() throws Exception {
         event("wb-e-critical-" + suffix, "wb-a-critical-" + suffix, "CRITICAL", 1_000, "PENDING_VERIFICATION", org, district);
-        event("wb-e-high-" + suffix, "wb-a-high-" + suffix, "HIGH", 9_000, "EVIDENCE_REQUIRED", org, district);
+        event("wb-e-high-" + suffix, "wb-a-high-" + suffix, "HIGH", 9_000, "PENDING_VERIFICATION", org, district);
         event("wb-e-low-" + suffix, "wb-a-low-" + suffix, "LOW", 8_000, "CONFIRMED", org, district);
         risk("wb-r-high-" + suffix, "HIGH", "PENDING_VERIFICATION", plan, routeVersion, org, district, 9_500);
         risk("wb-r-medium-" + suffix, "MEDIUM", "PENDING_NOTIFICATION", plan, routeVersion, org, district, 7_000);
@@ -269,8 +269,8 @@ class WorkbenchReadApiTest {
     @Test
     void detailTimelineOnlyReadsScopedHistoryAndHandoffsNeedHandoffRead() throws Exception {
         String actor = userOf(full);
-        event("wb-hist-e-" + suffix, "wb-hist-a-" + suffix, "HIGH", 5_000, "EVIDENCE_REQUIRED", org, district);
-        jdbc.update("insert into uav_event_verification (history_id,event_id,version,previous_state,resulting_state,conclusion,note,actor_id,created_at) values (?,?,1,'PENDING_VERIFICATION','EVIDENCE_REQUIRED','EVIDENCE_REQUIRED','需要补充轨迹',?,?)",
+        event("wb-hist-e-" + suffix, "wb-hist-a-" + suffix, "HIGH", 5_000, "CONFIRMED", org, district);
+        jdbc.update("insert into uav_event_verification (history_id,event_id,version,previous_state,resulting_state,conclusion,note,actor_id,created_at) values (?,?,1,'PENDING_VERIFICATION','CONFIRMED','CONFIRMED','现场轨迹复核属实',?,?)",
                 "wb-hist-" + suffix, "wb-hist-e-" + suffix, actor, ts(5_100));
         risk("wb-hist-r-" + suffix, "HIGH", "PENDING_NOTIFICATION", plan, routeVersion, org, district, 3_000);
         jdbc.update("insert into flight_risk_verification (history_id,risk_id,version,previous_state,resulting_state,conclusion,note,actor_id,created_at) values (?,?,1,'PENDING_VERIFICATION','PENDING_NOTIFICATION','CONFIRMED','核验通过',?,?)",
@@ -286,7 +286,7 @@ class WorkbenchReadApiTest {
                 .andExpect(jsonPath("$.data.item.kind").value("UAV_EVENT"))
                 .andExpect(jsonPath("$.data.item.source_id").value("wb-hist-e-" + suffix))
                 .andExpect(jsonPath("$.data.timeline[0].entry_type").value("VERIFICATION"))
-                .andExpect(jsonPath("$.data.timeline[0].conclusion").value("EVIDENCE_REQUIRED"))
+                .andExpect(jsonPath("$.data.timeline[0].conclusion").value("CONFIRMED"))
                 .andExpect(jsonPath("$.data.timeline[0].version").value(1))
                 .andExpect(jsonPath("$.data.timeline[0].actor_id").value(actor))
                 .andExpect(jsonPath("$.data.availability.verifications").value("AVAILABLE"));

@@ -18,6 +18,7 @@ const props = defineProps({
   disabled: Boolean,
   readonly: Boolean,
   clearable: Boolean,
+  filterable: Boolean,
   min: Number,
   max: Number,
   minRows: { type: Number, default: 3 },
@@ -46,7 +47,7 @@ defineExpose({ focus: () => control.value?.focus() });
       <UControl ref="control" v-model="model" :type="type" :options="options" :placeholder="placeholder"
         :start-placeholder="startPlaceholder" :end-placeholder="endPlaceholder" :default-time="defaultTime"
         :disabled="disabled"
-        :readonly="readonly" :clearable="clearable" :min="min" :max="max" :min-rows="minRows" :max-rows="maxRows"
+        :readonly="readonly" :clearable="clearable" :filterable="filterable" :min="min" :max="max" :min-rows="minRows" :max-rows="maxRows"
         :show-button="showButton" :size="controlSize" :layout="layout" :id="id" :box-label="boxLabel || (type === 'checkbox' ? label : '')"
         :html="html" :input-props="inputProps" :status="status">
         <template v-if="$slots.prefix" #prefix><slot name="prefix" /></template>

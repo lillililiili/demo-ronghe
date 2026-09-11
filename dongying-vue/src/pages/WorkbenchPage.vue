@@ -17,7 +17,7 @@ import { disposalApi } from '@/services/disposalApi.js';
 import { openDisposalRequest } from '@/ui/disposalAuthModal.js';
 import { openRiskVerification } from '@/ui/riskVerificationModal.js';
 import { authUser } from '@/services/auth.js';
-import { loadTargetPosition, loadDevicePosition, loadRouteCenterline, installCenterline, centerOf } from '@/services/positionMap.js';
+import { loadTargetPosition, loadDevicePosition, loadRouteCenterline, installCenterline, overlayPoints } from '@/services/positionMap.js';
 import {
   KINDS, kindLabel, kindIcon, AVAILABILITY_LABEL,
   listWorkbenchEvents, workbenchStats, getWorkbenchDetail, loadUavSource, loadRiskSource, openSourcePage, sourcePageLabel, splitKey
@@ -108,7 +108,7 @@ function queueQuery(p, size) {
 }
 function actionRank(item) {
   if (item.kind === 'UAV_EVENT') return item.state === 'FALSE_POSITIVE' ? 0 : 2;
-  if (item.kind === 'RISK') return item.state === 'NOTIFIED' || item.state === 'EXCLUDED' ? 0 : 2;
+  if (item.kind === 'RISK') return item.state === 'NOTIFIED' || item.state === 'ACKNOWLEDGED' || item.state === 'EXCLUDED' ? 0 : 2;
   if (item.state === 'RECOVERED') return 0;
   if (item.state === 'PROCESSING') return 1;
   return 2;
@@ -279,7 +279,7 @@ async function renderPositionMap(data) {
           if (loaded.mapTarget) { targets = [loaded.mapTarget]; center = [loaded.anchor.lon, loaded.anchor.lat]; }
         } catch { /* 目标读不到只影响标记，航线仍画 */ }
       }
-      if (!center && centerline) center = centerOf(centerline);
+      if (!center && centerline) center = centerline[Math.floor(centerline.length / 2)];
       if (!center) note = '风险未关联航线版本或目标，或无相应读取权限，无可信坐标';
     } else {
       const deviceId = linkParamOf(summary.links?.source, 'device_id') || summary.sourceId;
@@ -299,7 +299,10 @@ async function renderPositionMap(data) {
   installCenterline(positionMap, centerline);
   positionMap.setData({ airspaces: [], devices, targets, alarms });
   if (targets.length) positionMap.sel = targets[0].id;
-  if (center) positionMap.centerAt(center[0], center[1]);
+  // 飞行风险按航线（及关联目标）包围盒放大；只 centerAt 会停在全市视野，航线缩成一条细线。
+  const routeFocus = overlayPoints({ centerline, points: targets, anchor: targets[0] || null });
+  if (data.kind === 'RISK' && centerline && routeFocus.length) positionMap.fitTo(routeFocus, 0.34);
+  else if (center) positionMap.centerAt(center[0], center[1]);
 }
 
 /* ---------- 动作：核实/核验/通知/反制委托源模块；设备异常走 incident 重启与恢复校验 ---------- */
@@ -325,6 +328,15 @@ async function runUavAction() {
       return;
     }
     if (td.kind === 'punish') {
+      const sourceNo = d.summary.sourceNo || d.summary.title || '该告警';
+      const ok = await new Promise(resolve => openConfirm({
+        title: '通知处罚部门',
+        message: `将把 ${sourceNo} 通知处罚部门。确认后只记录已提交通知，不表示处罚已立案或办结。是否继续？`,
+        confirmText: '确认通知',
+        onConfirm: () => { resolve(true); return true; },
+        onCancel: () => resolve(false)
+      }));
+      if (!ok) return;
       const next = new Set(notifiedPunishIds.value);
       next.add(eventId);
       notifiedPunishIds.value = next;
@@ -417,7 +429,7 @@ async function openNotifyModal(risk, summary) {
   openFormModal({
     title: '通知上级',
     width: '560px',
-    warning: '提交后由通知渠道投递并回执；回执“已驱离”即闭环，风险不进入处置。',
+    warning: '提交后通知渠道投递；送达后进入接收方确认，等待回执。回执“已驱离”即闭环，风险不进入处置。',
     fields: [],
     confirmText: '提交通知',
     onSubmit: async () => {
@@ -669,7 +681,7 @@ onUnmounted(() => {
           </section>
 
           <section class="wb-flow-card panel">
-            <div class="ph"><h3>{{ selected.kind === 'RISK' ? '飞行计划风险流程' : selected.kind === 'UAV_EVENT' ? '无人机事件处置流程' : '设备异常处置流程' }}</h3><span class="sub">{{ selected.kind === 'DEVICE_INCIDENT' ? '按当前状态推导；设备重启须等回执后再做恢复校验' : selected.kind === 'RISK' ? '按当前状态推导；核验通过后才能通知上级' : '按当前状态推导；核实属实后才能申请反制或移送处罚' }}</span></div>
+            <div class="ph"><h3>{{ selected.kind === 'RISK' ? '飞行计划风险流程' : selected.kind === 'UAV_EVENT' ? '无人机事件处置流程' : '设备异常处置流程' }}</h3><span class="sub">{{ selected.kind === 'DEVICE_INCIDENT' ? '按当前状态推导；设备重启须等回执后再做恢复校验' : selected.kind === 'RISK' ? '按当前状态推导；核验通过后才能通知上级，提交通知后进入接收方确认' : '按当前状态推导；核实属实后才能申请反制或移送处罚' }}</span></div>
             <div class="wb-flow" :style="{ '--wb-flow-count': selected.steps.length }">
               <div v-for="(s,i) in selected.steps" :key="s.n" :class="['wb-flow-step',{done:s.done,active:s.act}]">
                 <span>{{ s.done ? '✓' : i + 1 }}</span><b>{{ s.n }}</b><small>{{ s.done ? (s.t || '已完成') : s.t ? s.t : s.act ? '当前环节' : '待处理' }}</small>

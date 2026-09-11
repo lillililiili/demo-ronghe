@@ -290,7 +290,7 @@ public class EoEdgeRepository {
                 AND (
                     EXISTS (
                         SELECT 1 FROM uav_event ue JOIN alarm a ON a.alarm_id=ue.alarm_id
-                        WHERE a.target_id=e.target_id AND ue.state_code IN ('PENDING_VERIFICATION','EVIDENCE_REQUIRED')
+                        WHERE a.target_id=e.target_id AND ue.state_code='PENDING_VERIFICATION'
                     )
                     OR EXISTS (
                         SELECT 1 FROM flight_risk r
@@ -316,7 +316,7 @@ public class EoEdgeRepository {
                 WHERE t.status='OPEN' AND t.fusion_event_id IS NOT NULL
                 AND NOT EXISTS (
                     SELECT 1 FROM uav_event ue JOIN alarm a ON a.alarm_id=ue.alarm_id
-                    WHERE a.target_id=t.target_id AND ue.state_code IN ('PENDING_VERIFICATION','EVIDENCE_REQUIRED')
+                    WHERE a.target_id=t.target_id AND ue.state_code='PENDING_VERIFICATION'
                 )
                 AND NOT EXISTS (
                     SELECT 1 FROM flight_risk r

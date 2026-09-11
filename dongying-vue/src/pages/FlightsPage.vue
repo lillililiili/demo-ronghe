@@ -1091,8 +1091,10 @@ function showHandoffSubmitted(created) {
     title: created.delivery_status === 'DELIVERED' ? '通知已提交并送达' : '通知已提交，尚未发送', width: '520px', footer: false,
     render: () => h('div', { class: 'rk-notify-done' }, [
       h('div', { class: 'warnbox' }, created.delivery_status === 'DELIVERED'
-        ? `接收方已接收通知${created.receipt_status === 'ACKNOWLEDGED' ? '并回执' : ''}；回执“已驱离”才算闭环，在此之前源风险保持“待通知”。`
-        : '材料已入库等待投递，通知渠道未接通：不表示已发送、已送达；源风险保持“待通知”。'),
+        ? (created.receipt_status === 'ACKNOWLEDGED'
+          ? '接收方已接收通知并回执；回执“已驱离”即闭环。'
+          : '通知已送达，等待接收方确认回执。源风险已是“已通知”，回执回来后为已回执。')
+        : '材料已入库等待投递，通知渠道未接通：不表示已发送、已送达；源风险已是“已通知”，投递状态另行显示。'),
       h('dl', { class: 'kv kv-surface' }, [
         h('dt', '通知编号'), h('dd', { class: 'mono' }, created.handoff_id),
         /* 只有拿到接收方名称才显示这一行：创建应答目前只回内部标识，把它摆上屏等于给人看一串没用的编码
@@ -1121,7 +1123,7 @@ async function openRiskNotify(riskOverride = null) {
   openFormModal({
     title: '通知上级',
     width: '560px',
-    warning: '提交后由通知渠道投递并回执；回执“已驱离”即闭环，风险不进入处置。',
+    warning: '提交后通知渠道投递；送达后进入接收方确认，等待回执。回执“已驱离”即闭环，风险不进入处置。',
     fields: [],
     confirmText: '提交通知',
     onSubmit: async () => {
@@ -1455,7 +1457,7 @@ onUnmounted(() => {
                 <div v-else-if="!riskHistory.length" class="empty">尚无已保存的核验记录</div>
                 <div v-else class="rk-history">
                   <div v-for="item in riskHistory" :key="item.history_id" class="rk-history-item">
-                    <div class="rk-history-head"><span class="tag" :class="item.conclusion === 'EXCLUDED' ? 't-gray' : 't-green'">{{ item.conclusion === 'EXCLUDED' ? '排除' : item.conclusion === 'CONFIRMED' ? '核验通过' : item.conclusion }}</span><span class="mono rk-sub">{{ stateLabel(item.previous_state) }} → {{ stateLabel(item.resulting_state) }} · 第 {{ item.version }} 次核验</span></div>
+                    <div class="rk-history-head"><span class="tag" :class="item.conclusion === 'EXCLUDED' ? 't-gray' : 't-green'">{{ item.conclusion === 'EXCLUDED' ? '排除' : item.conclusion === 'CONFIRMED' ? '核验通过' : item.conclusion }}</span><span class="mono rk-sub">{{ stateLabel(item.previous_state) }} → {{ stateLabel(item.resulting_state) }}</span></div>
                     <div class="rk-wrap">{{ item.note }}</div>
                     <div class="rk-sub">{{ formatTime(item.created_at) }} · 操作人 {{ item.actor_name || item.actor_id }}</div>
                   </div>

@@ -22,6 +22,7 @@ const props = defineProps({
   disabled: Boolean,
   readonly: Boolean,
   clearable: Boolean,
+  filterable: Boolean,
   min: Number,
   max: Number,
   minRows: { type: Number, default: 3 },
@@ -45,7 +46,7 @@ defineExpose({ focus: () => input.value?.focus() });
 <template>
   <div v-if="type === 'html'" class="u-control u-control--html" v-html="html"></div>
   <n-select v-else-if="type === 'select'" :id="id || undefined" v-model:value="model" :options="options"
-    :placeholder="placeholder || '请选择'" :disabled="disabled" :clearable="clearable" :size="size"
+    :placeholder="placeholder || '请选择'" :disabled="disabled" :clearable="clearable" :filterable="filterable" :size="size"
     :consistent-menu-width="SELECT_DROPDOWN.consistentMenuWidth" :menu-props="menuProps" />
   <n-input-number v-else-if="type === 'number'" :id="id || undefined" v-model:value="model" :min="min" :max="max"
     :placeholder="placeholder" :disabled="disabled" :show-button="showButton" :size="size" style="width:100%" />

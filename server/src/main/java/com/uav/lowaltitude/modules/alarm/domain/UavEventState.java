@@ -8,8 +8,8 @@ import com.uav.lowaltitude.platform.api.ApiException;
 
 /** 无人机核实仅改变事件事实；CONFIRMED 绝不代表反制、干扰或交接已执行。 */
 public final class UavEventState {
-    private static final Set<String> OPEN = Set.of("PENDING_VERIFICATION", "EVIDENCE_REQUIRED");
-    private static final Set<String> CONCLUSIONS = Set.of("CONFIRMED", "FALSE_POSITIVE", "EVIDENCE_REQUIRED");
+    private static final Set<String> OPEN = Set.of("PENDING_VERIFICATION");
+    private static final Set<String> CONCLUSIONS = Set.of("CONFIRMED", "FALSE_POSITIVE");
 
     private UavEventState() { }
 

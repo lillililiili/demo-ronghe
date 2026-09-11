@@ -30,7 +30,7 @@ import { exportAlarmsCsv, getAlarm, getUavEvent, listAlarmDistricts, listAlarms 
 import { getEvidenceChain } from '@/services/evidenceApi.js';
 import { openUavVerification } from '@/ui/uavVerificationModal.js';
 import { targetApi } from '@/services/targetApi.js';
-import { ALARM_PROGRESS_LABEL, ALARM_PROGRESS_TAG, ALARM_TYPE_LABEL, DISPOSAL_ACTIVE_STATUSES, DISPOSAL_ACTION_LABEL, disposalStatusText, labelOf, LEGALITY_LABEL, readableNo, SOURCE_MODE_LABEL as MODE_TEXT, targetTypeLabel } from '@/ui/labels.js';
+import { ALARM_PROGRESS_LABEL, ALARM_PROGRESS_TAG, ALARM_TYPE_LABEL, DISPOSAL_ACTIVE_STATUSES, DISPOSAL_ACTION_LABEL, disposalMainlineCompleted, disposalStatusText, labelOf, LEGALITY_LABEL, readableNo, SOURCE_MODE_LABEL as MODE_TEXT, targetTypeLabel } from '@/ui/labels.js';
 import { openEvidenceFileModal } from '@/ui/evidenceFileDetail.js';
 import { openEvidenceChainTypeModal, renderEvidenceChainHtml } from '@/ui/evidenceChainView.js';
 import { disposalApi, isDisposalUnavailable } from '@/services/disposalApi.js';
@@ -57,7 +57,6 @@ const SEVERITY = {
 /* CONFIRMED 仍是核实结论。列表「状态」列在已核实后按处置进度改写展示，不改 uav_event.state。 */
 const STATE = {
   PENDING_VERIFICATION: { t: '待核实', c: 't-amber', color: '#ffb020' },
-  EVIDENCE_REQUIRED: { t: '证据待补充', c: 't-orange', color: '#ff8b3d' },
   CONFIRMED: { t: '已核实，待处置', c: 't-cyan', color: '#22d3ee' },
   FALSE_POSITIVE: { t: '误报', c: 't-blue', color: '#8fbaff' }
 };
@@ -245,7 +244,7 @@ async function loadKpis() {
   const to = from + 86400000, d30 = from - 29 * 86400000;
   const r = await Promise.allSettled([
     count({ occurred_from: from, occurred_to: to }), count({ occurred_from: d30, occurred_to: to }),
-    count({ state: 'PENDING_VERIFICATION' }), count({ state: 'EVIDENCE_REQUIRED' }),
+    count({ state: 'PENDING_VERIFICATION' }),
     count({ state: 'CONFIRMED' }), count({ state: 'FALSE_POSITIVE' }),
     disposalCount('COUNTERMEASURE'), disposalCount('JAMMING')
   ]);
@@ -262,11 +261,11 @@ async function loadKpis() {
   const fail = i => v[i] == null ? '读取失败：' + esc(messageOf(r[i].reason)) : null;
   kpiList.value = [
     { ...KPI_DEFS[0], value: num(v[0]), desc: fail(0) || `近30天 ${num(v[1])} 起（按发生时间统计，发生时间未知者不计）` },
-    { ...KPI_DEFS[1], value: num(v[2]), desc: fail(2) || `另有证据待补充 ${num(v[3])} 起，可再次核实` },
-    disposalKpi(KPI_DEFS[2], r[6], v[6]),
-    disposalKpi(KPI_DEFS[3], r[7], v[7]),
-    { ...KPI_DEFS[4], value: num(v[4]), desc: fail(4) || '已核实、待处置的事件数；反制与处罚交接见详情动作' },
-    { ...KPI_DEFS[5], value: num(v[5]), desc: fail(5) || '人工核实后已排除' }
+    { ...KPI_DEFS[1], value: num(v[2]), desc: fail(2) || '待人工核实的事件数' },
+    disposalKpi(KPI_DEFS[2], r[5], v[5]),
+    disposalKpi(KPI_DEFS[3], r[6], v[6]),
+    { ...KPI_DEFS[4], value: num(v[3]), desc: fail(3) || '已核实、待处置的事件数；反制与处罚交接见详情动作' },
+    { ...KPI_DEFS[5], value: num(v[4]), desc: fail(4) || '人工核实后已排除' }
   ];
 }
 
@@ -343,7 +342,7 @@ function listHtml() {
 function disposalSteps(a, ev) {
   const trigger = { n: '告警触发', t: clock(a.received_at), done: true, act: false };
   /* 反制 / 信号干扰按该事件的最新授权显示状态；读不到时说“尚未接入”，没有授权时说“尚无授权”，
-     两者不能混为一谈。“处置”仍是处罚交接，阶段 4 起就未接入。 */
+     两者不能混为一谈。处置是处罚交接：有交接且反制或干扰已完成才标完成，避免种子直插交接时跳过中间两步。 */
   const step = actionType => {
     const name = labelOf(DISPOSAL_ACTION_LABEL, actionType);
     if (disposal.unavailable || disposal.error) return { n: name, t: disposal.error || DISPOSAL_UNAVAILABLE_TEXT, done: false, act: false, applicable: false };
@@ -357,18 +356,21 @@ function disposalSteps(a, ev) {
       applicable: true
     };
   };
+  const cm = step('COUNTERMEASURE');
+  const jam = step('JAMMING');
   const punish = disposal.handoff;
-  const tail = [step('COUNTERMEASURE'), step('JAMMING'), {
+  const authUnknown = !!(disposal.unavailable || disposal.error);
+  const mainlineDone = authUnknown || disposalMainlineCompleted(disposal.byAction.COUNTERMEASURE, disposal.byAction.JAMMING);
+  const tail = [cm, jam, {
     n: '处置',
-    t: punish ? '已移送' : '待移送',
-    done: !!punish,
+    t: punish ? (mainlineDone ? '已移送' : '已移送（未完成反制/干扰）') : '待移送',
+    done: !!punish && mainlineDone,
     act: false,
     applicable: true
   }];
   if (!ev) return [trigger, { n: '人工核实', t: '未建事件', done: false, act: false }, ...tail];
   if (ev.state === 'FALSE_POSITIVE') return [trigger, { n: '人工核实', t: '误报', done: true, act: false }];
   if (ev.state === 'CONFIRMED') return [trigger, { n: '人工核实', t: '属实', done: true, act: false }, ...tail];
-  if (ev.state === 'EVIDENCE_REQUIRED') return [trigger, { n: '人工核实', t: '证据待补充', done: false, act: true }, ...tail];
   return [trigger, { n: '人工核实', t: '', done: false, act: true }, ...tail];
 }
 

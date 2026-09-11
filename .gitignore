@@ -13,7 +13,15 @@ dongying-demo
 server/target/
 server/.mvn/wrapper/maven-wrapper.jar
 data/evidence/
+server/data/
 .env
+server/scripts/__pycache__/
+server/scripts/mqtt_*.py
+server/scripts/pending-migrations/
+
+# 本地 MQTT 测试说明与截图，不入库
+docs/测试证据/
+docs/MQTT*.md
 
 # Word/WPS 临时锁文件
 **/.~*

@@ -28,10 +28,10 @@ public class LocalStage3PlanningSeeder implements ApplicationRunner {
     public void run(ApplicationArguments arguments) {
         // 演示记录的时间统一从 AppClock 取得，避免数据库 current_timestamp 让证据、计划时段和审计基准漂移。
         Instant at = clock.now(), start = at.plusSeconds(300), end = start.plusSeconds(3600);
-        org("seed-stage3-org", "SEED-STAGE3", "阶段三演示机构", at);
-        district("seed-stage3-district", "SEED-STAGE3", "阶段三演示区域", at);
-        org("seed-stage3-other-org", "SEED-STAGE3-OTHER", "阶段三跨范围机构", at);
-        district("seed-stage3-other-district", "SEED-STAGE3-OTHER", "阶段三跨范围区域", at);
+        org("seed-stage3-org", "SEED-STAGE3", "飞行计划演示机构", at);
+        district("seed-stage3-district", "SEED-STAGE3", "飞行计划演示区域", at);
+        org("seed-stage3-other-org", "SEED-STAGE3-OTHER", "飞行计划跨范围机构", at);
+        district("seed-stage3-other-district", "SEED-STAGE3-OTHER", "飞行计划跨范围区域", at);
         source(at);
         jdbc.update("insert into rule_version (rule_version_id,rule_code,version_no,status_code,valid_from,source_mode,source_snapshot,created_at) select 'seed-stage3-rule','LOCAL-DEMO-V1',1,'ACTIVE',?,'mock','{}',? where not exists(select 1 from rule_version where rule_version_id='seed-stage3-rule')", ts(at), ts(at));
         // LEGAL 路线刻意远离禁止多边形；不能让相同空间事实仅靠手写结论区分合法/非法。
@@ -70,10 +70,17 @@ public class LocalStage3PlanningSeeder implements ApplicationRunner {
 
     private void source(Instant at) {
         // 所有阶段三夹具显式引用同一固定来源，既验证外键顺序，也让 source_code 筛选可复核。
-        jdbc.update("insert into integration_source (source_id,source_code,name,protocol_code,protocol_version,enabled,source_mode,created_at,updated_at,version) select ?,'STAGE3-PLANNING-MOCK','阶段三规划模拟源','PLANNING_MOCK','1.0',true,'mock',?,?,0 where not exists(select 1 from integration_source where source_id=?)", SOURCE_ID, ts(at), ts(at), SOURCE_ID);
+        jdbc.update("insert into integration_source (source_id,source_code,name,protocol_code,protocol_version,enabled,source_mode,created_at,updated_at,version) select ?,'STAGE3-PLANNING-MOCK','飞行计划模拟源','PLANNING_MOCK','1.0',true,'mock',?,?,0 where not exists(select 1 from integration_source where source_id=?)", SOURCE_ID, ts(at), ts(at), SOURCE_ID);
+        jdbc.update("update integration_source set name='飞行计划模拟源' where source_id=? and name<>'飞行计划模拟源'", SOURCE_ID);
     }
 
-    private void org(String id, String code, String name, Instant at) { jdbc.update("insert into app_org (org_id,org_code,name,enabled,created_at,updated_at,version) select ?,?,?,true,?,?,0 where not exists(select 1 from app_org where org_id=?)", id, code, name, at.toEpochMilli(), at.toEpochMilli(), id); }
-    private void district(String id, String code, String name, Instant at) { jdbc.update("insert into app_district (district_id,district_code,name,enabled,created_at,updated_at,version) select ?,?,?,true,?,?,0 where not exists(select 1 from app_district where district_id=?)", id, code, name, at.toEpochMilli(), at.toEpochMilli(), id); }
+    private void org(String id, String code, String name, Instant at) {
+        jdbc.update("insert into app_org (org_id,org_code,name,enabled,created_at,updated_at,version) select ?,?,?,true,?,?,0 where not exists(select 1 from app_org where org_id=?)", id, code, name, at.toEpochMilli(), at.toEpochMilli(), id);
+        jdbc.update("update app_org set name=? where org_id=? and name<>?", name, id, name);
+    }
+    private void district(String id, String code, String name, Instant at) {
+        jdbc.update("insert into app_district (district_id,district_code,name,enabled,created_at,updated_at,version) select ?,?,?,true,?,?,0 where not exists(select 1 from app_district where district_id=?)", id, code, name, at.toEpochMilli(), at.toEpochMilli(), id);
+        jdbc.update("update app_district set name=? where district_id=? and name<>?", name, id, name);
+    }
     private static Timestamp ts(Instant value) { return Timestamp.from(value); }
 }

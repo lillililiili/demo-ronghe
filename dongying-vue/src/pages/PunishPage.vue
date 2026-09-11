@@ -285,7 +285,7 @@ onMounted(() => {
     <div style="height:100%;display:flex;flex-direction:column;min-height:0">
       <UKpis :list="kpiList" />
       <div class="toolbar" style="display:flex;gap:8px;margin-top:12px">
-        <button class="btn" :class="{ pri: activeTab === 'authorizations' }" @click="activeTab = 'authorizations'">处置授权</button>
+        <button class="btn" :class="{ pri: activeTab === 'authorizations' }" @click="activeTab = 'authorizations'">反制授权</button>
         <button class="btn" :class="{ pri: activeTab === 'handoffs' }" @click="activeTab = 'handoffs'">交接与处罚</button>
       </div>
       <AuthorizationQueue v-if="activeTab === 'authorizations'" />

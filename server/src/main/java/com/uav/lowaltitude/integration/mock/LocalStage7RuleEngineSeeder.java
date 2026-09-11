@@ -91,13 +91,14 @@ public class LocalStage7RuleEngineSeeder implements ApplicationRunner {
     }
 
     private void directories(Instant at) {
-        org(ORG, "SEED-STAGE7", "阶段七演示机构", at);
-        district(DISTRICT, "SEED-STAGE7", "阶段七演示区域", at);
-        org(OTHER_ORG, "SEED-STAGE7-OTHER", "阶段七跨范围机构", at);
-        district(OTHER_DISTRICT, "SEED-STAGE7-OTHER", "阶段七跨范围区域", at);
+        org(ORG, "SEED-STAGE7", "合法性演示机构", at);
+        district(DISTRICT, "SEED-STAGE7", "合法性演示区域", at);
+        org(OTHER_ORG, "SEED-STAGE7-OTHER", "跨范围演示机构", at);
+        district(OTHER_DISTRICT, "SEED-STAGE7-OTHER", "跨范围演示区域", at);
         jdbc.update("insert into integration_source (source_id,source_code,name,protocol_code,protocol_version,enabled,source_mode,created_at,updated_at,version)"
-                + " select ?,'STAGE7-RULE-MOCK','阶段七规则引擎模拟源','RULE_MOCK','1.0',true,'mock',?,?,0 where not exists (select 1 from integration_source where source_id=?)",
+                + " select ?,'STAGE7-RULE-MOCK','合法性研判模拟源','RULE_MOCK','1.0',true,'mock',?,?,0 where not exists (select 1 from integration_source where source_id=?)",
                 SOURCE_ID, ts(at), ts(at), SOURCE_ID);
+        jdbc.update("update integration_source set name='合法性研判模拟源' where source_id=? and name<>'合法性研判模拟源'", SOURCE_ID);
     }
 
     private void ruleSet(Instant at) {
@@ -150,15 +151,16 @@ public class LocalStage7RuleEngineSeeder implements ApplicationRunner {
      * 继续写旧值会在全新库启动时直接撞上 ck_stage9_airspace_kind_code。
      */
     private void airspaces(Instant at) {
-        airspace("p1", "KY-S7-P1", "阶段七禁止空域 P1", AirspaceKind.PROHIBITED, square(118.300, 37.300), null, null, null, T0.minusSeconds(86_400), null, at);
-        airspace("h1", "KY-S7-H1", "阶段七限高空域 H1", AirspaceKind.ALTITUDE_LIMIT, square(118.400, 37.400), 0, 60, "AMSL", T0.minusSeconds(86_400), null, at);
-        airspace("t1", "KY-S7-T1", "阶段七临时管制 T1", AirspaceKind.TEMPORARY_CONTROL, square(118.500, 37.500), null, null, null, T0.minusSeconds(3_600), T0.plusSeconds(3_600), at);
+        airspace("p1", "KY-S7-P1", "演示禁飞空域 P1", AirspaceKind.PROHIBITED, square(118.300, 37.300), null, null, null, T0.minusSeconds(86_400), null, at);
+        airspace("h1", "KY-S7-H1", "演示限高空域 H1", AirspaceKind.ALTITUDE_LIMIT, square(118.400, 37.400), 0, 60, "AMSL", T0.minusSeconds(86_400), null, at);
+        airspace("t1", "KY-S7-T1", "演示临时管制 T1", AirspaceKind.TEMPORARY_CONTROL, square(118.500, 37.500), null, null, null, T0.minusSeconds(3_600), T0.plusSeconds(3_600), at);
     }
 
     private void airspace(String suffix, String no, String name, String kind, String boundary, Integer min, Integer max, String datum, Instant from, Instant to, Instant at) {
         String id = "seed-stage7-airspace-" + suffix, version = "seed-stage7-av-" + suffix;
         jdbc.update("insert into airspace (airspace_id,airspace_no,name,source_id,source_mode,owner_org_id,district_id,created_at,updated_at,version)"
                 + " select ?,?,?,?,'mock',?,?,?,?,0 where not exists (select 1 from airspace where airspace_id=?)", id, no, name, SOURCE_ID, ORG, DISTRICT, ts(at), ts(at), id);
+        jdbc.update("update airspace set name=? where airspace_id=? and name<>?", name, id, name);
         jdbc.update("insert into airspace_version (airspace_version_id,airspace_id,version_no,kind_code,boundary,min_altitude_m,max_altitude_m,altitude_datum,valid_from,valid_to,created_at)"
                 + " select ?,?,1,?,CAST(? AS GEOMETRY),?,?,?,?,?,? where not exists (select 1 from airspace_version where airspace_version_id=?)",
                 version, id, kind, boundary, min, max, datum, ts(from), to == null ? null : ts(to), ts(at), version);
@@ -232,7 +234,8 @@ public class LocalStage7RuleEngineSeeder implements ApplicationRunner {
         String line = String.format(Locale.ROOT, "SRID=4326;LINESTRING (%.4f %.4f,%.4f %.4f)", lon - 0.01, lat, lon + 0.01, lat);
         jdbc.update("insert into route (route_id,route_no,name,enabled,source_id,source_mode,owner_org_id,district_id,created_at,updated_at,version)"
                 + " select ?,?,?,true,?,'mock',?,?,?,?,0 where not exists (select 1 from route where route_id=?)",
-                route, String.format("HX-S7-%03d", seq), "阶段七演示航线（" + scenario + "）", SOURCE_ID, org, district, ts(at), ts(at), route);
+                route, String.format("HX-S7-%03d", seq), "演示航线（" + scenario + "）", SOURCE_ID, org, district, ts(at), ts(at), route);
+        jdbc.update("update route set name=? where route_id=? and name<>?", "演示航线（" + scenario + "）", route, "演示航线（" + scenario + "）");
         jdbc.update("insert into route_version (route_version_id,route_id,version_no,centerline,corridor_width_m,min_altitude_m,max_altitude_m,altitude_datum,valid_from,created_at)"
                 + " select ?,?,1,CAST(? AS GEOMETRY),100,?,?,?,?,? where not exists (select 1 from route_version where route_version_id=?)",
                 rv, route, line, min, max, datum, ts(start), ts(at), rv);
@@ -253,10 +256,12 @@ public class LocalStage7RuleEngineSeeder implements ApplicationRunner {
     private void org(String id, String code, String name, Instant at) {
         jdbc.update("insert into app_org (org_id,org_code,name,enabled,created_at,updated_at,version) select ?,?,?,true,?,?,0 where not exists (select 1 from app_org where org_id=?)",
                 id, code, name, at.toEpochMilli(), at.toEpochMilli(), id);
+        jdbc.update("update app_org set name=? where org_id=? and name<>?", name, id, name);
     }
     private void district(String id, String code, String name, Instant at) {
         jdbc.update("insert into app_district (district_id,district_code,name,enabled,created_at,updated_at,version) select ?,?,?,true,?,?,0 where not exists (select 1 from app_district where district_id=?)",
                 id, code, name, at.toEpochMilli(), at.toEpochMilli(), id);
+        jdbc.update("update app_district set name=? where district_id=? and name<>?", name, id, name);
     }
     private static Timestamp ts(Instant value) { return Timestamp.from(value); }
 }

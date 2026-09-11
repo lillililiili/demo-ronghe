@@ -159,7 +159,8 @@ public class LocalStage7DemoVolumeSeeder implements ApplicationRunner {
         String line = String.format(Locale.ROOT, "SRID=4326;LINESTRING (%.4f %.4f,%.4f %.4f)", lon - 0.01, lat, lon + 0.01, lat);
         jdbc.update("insert into route (route_id,route_no,name,enabled,source_id,source_mode,owner_org_id,district_id,created_at,updated_at,version)"
                 + " select ?,?,?,true,?,'mock',?,?,?,?,0 where not exists (select 1 from route where route_id=?)",
-                route, String.format("HX-S7-%03d", seq), "阶段七演示航线（" + scenario + "）", SOURCE_ID, ORG, DISTRICT, ts(at), ts(at), route);
+                route, String.format("HX-S7-%03d", seq), "演示航线（" + scenario + "）", SOURCE_ID, ORG, DISTRICT, ts(at), ts(at), route);
+        jdbc.update("update route set name=? where route_id=? and name<>?", "演示航线（" + scenario + "）", route, "演示航线（" + scenario + "）");
         jdbc.update("insert into route_version (route_version_id,route_id,version_no,centerline,corridor_width_m,min_altitude_m,max_altitude_m,altitude_datum,valid_from,created_at)"
                 + " select ?,?,1,CAST(? AS GEOMETRY),100,?,?,'AMSL',?,? where not exists (select 1 from route_version where route_version_id=?)",
                 rv, route, line, min, max, ts(start), ts(at), rv);

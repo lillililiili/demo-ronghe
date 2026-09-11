@@ -82,9 +82,10 @@ public class LocalStage13DisposalSeeder implements ApplicationRunner {
         // 自建来源而不是借用阶段 4 的常量：那个常量是私有的，靠字面量去蹭等于建一条看不见的依赖，
         // 别人改了名字这里会在运行期才炸。
         jdbc.update("INSERT INTO integration_source (source_id,source_code,name,enabled,source_mode,created_at,updated_at,version)"
-                + " SELECT ?,'STAGE13-DISPOSAL-MOCK','阶段十三处置授权演示来源',TRUE,'mock',?,?,0"
+                + " SELECT ?,'STAGE13-DISPOSAL-MOCK','处置授权演示源',TRUE,'mock',?,?,0"
                 + " WHERE NOT EXISTS (SELECT 1 FROM integration_source WHERE source_id=?)",
                 SOURCE, ts(at), ts(at), SOURCE);
+        jdbc.update("UPDATE integration_source SET name='处置授权演示源' WHERE source_id=? AND name<>'处置授权演示源'", SOURCE);
         jdbc.update("INSERT INTO alarm (alarm_id,target_id,source_id,source_alarm_id,alarm_type,severity,occurred_at,"
                 + "received_at,source_mode,owner_org_id,district_id,created_at)"
                 + " SELECT ?,NULL,?,?,'UAV_INTRUSION','HIGH',?,?,'mock',?,?,?"

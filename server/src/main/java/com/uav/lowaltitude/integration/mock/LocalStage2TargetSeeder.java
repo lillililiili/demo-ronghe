@@ -66,10 +66,11 @@ public class LocalStage2TargetSeeder implements ApplicationRunner {
                     source_id, source_code, name, protocol_code, protocol_version, enabled,
                     source_mode, created_at, updated_at, version
                 )
-                select ?, 'STAGE2-MOCK-RADAR', '阶段二目标轨迹模拟源', 'RADAR_MOCK', '1.0', true,
+                select ?, 'STAGE2-MOCK-RADAR', '目标轨迹模拟雷达', 'RADAR_MOCK', '1.0', true,
                     'mock', ?, ?, 0
                 where not exists (select 1 from integration_source where source_id = ?)
                 """, SOURCE_ID, CREATED_AT, CREATED_AT, SOURCE_ID);
+        jdbc.update("update integration_source set name = '目标轨迹模拟雷达' where source_id = ? and name <> '目标轨迹模拟雷达'", SOURCE_ID);
     }
 
     private void insertDevice() {
@@ -78,10 +79,11 @@ public class LocalStage2TargetSeeder implements ApplicationRunner {
                     device_id, source_id, external_device_id, device_no, name, device_type_code,
                     enabled, source_mode, owner_org_id, district_id, created_at, updated_at, version
                 )
-                select ?, ?, 'external-radar-seed-001', 'DEV-STAGE2-RADAR-001', '阶段二目标夹具雷达', 'RADAR',
+                select ?, ?, 'external-radar-seed-001', 'DEV-STAGE2-RADAR-001', '目标演示雷达', 'RADAR',
                     true, 'mock', ?, ?, ?, ?, 0
                 where not exists (select 1 from device where device_id = ?)
                 """, DEVICE_ID, SOURCE_ID, OWNER_ORG_ID, DISTRICT_ID, CREATED_AT, CREATED_AT, DEVICE_ID);
+        jdbc.update("update device set name = '目标演示雷达' where device_id = ? and name <> '目标演示雷达'", DEVICE_ID);
     }
 
     private void insertTargetAndLink(TargetSeed seed) {

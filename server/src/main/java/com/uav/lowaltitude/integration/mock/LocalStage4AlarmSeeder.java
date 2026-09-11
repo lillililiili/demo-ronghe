@@ -34,11 +34,12 @@ public class LocalStage4AlarmSeeder implements ApplicationRunner {
     @Override @Transactional
     public void run(ApplicationArguments arguments) {
         Instant at = clock.now();
-        org("seed-stage4-alarm-org", "SEED-STAGE4-ALARM", "阶段四告警演示机构", at);
-        district("seed-stage4-alarm-district", "SEED-STAGE4-ALARM", "阶段四告警演示区域", at);
-        org("seed-stage4-alarm-other-org", "SEED-STAGE4-ALARM-OTHER", "阶段四跨域机构", at);
-        district("seed-stage4-alarm-other-district", "SEED-STAGE4-ALARM-OTHER", "阶段四跨域区域", at);
-        jdbc.update("insert into integration_source (source_id,source_code,name,enabled,source_mode,created_at,updated_at,version) select ?,'STAGE4-ALARM-MOCK','阶段四告警模拟来源',true,'mock',?,?,0 where not exists(select 1 from integration_source where source_id=?)", SOURCE, ts(at), ts(at), SOURCE);
+        org("seed-stage4-alarm-org", "SEED-STAGE4-ALARM", "告警演示机构", at);
+        district("seed-stage4-alarm-district", "SEED-STAGE4-ALARM", "告警演示区域", at);
+        org("seed-stage4-alarm-other-org", "SEED-STAGE4-ALARM-OTHER", "告警跨域机构", at);
+        district("seed-stage4-alarm-other-district", "SEED-STAGE4-ALARM-OTHER", "告警跨域区域", at);
+        jdbc.update("insert into integration_source (source_id,source_code,name,enabled,source_mode,created_at,updated_at,version) select ?,'STAGE4-ALARM-MOCK','告警模拟源',true,'mock',?,?,0 where not exists(select 1 from integration_source where source_id=?)", SOURCE, ts(at), ts(at), SOURCE);
+        jdbc.update("update integration_source set name='告警模拟源' where source_id=? and name<>'告警模拟源'", SOURCE);
         alarm("pending", "seed-stage4-alarm-org", "seed-stage4-alarm-district", "HIGH", at);
         alarm("evidence", "seed-stage4-alarm-org", "seed-stage4-alarm-district", "MEDIUM", at);
         alarm("same-target-a", "seed-stage4-alarm-org", "seed-stage4-alarm-district", "HIGH", at);
@@ -72,7 +73,13 @@ public class LocalStage4AlarmSeeder implements ApplicationRunner {
     }
     private void target(String org, String district, Instant at) { jdbc.update("insert into target (target_id,target_no,source_mode,owner_org_id,district_id,created_at,updated_at,version) select 'seed-stage4-target-shared','目标-0905-101','mock',?,?,?, ?,0 where not exists(select 1 from target where target_id='seed-stage4-target-shared')", org, district, ts(at), ts(at));
         jdbc.update("update target set target_no='目标-0905-101' where target_id='seed-stage4-target-shared' and target_no<>'目标-0905-101'"); }
-    private void org(String id, String code, String name, Instant at) { jdbc.update("insert into app_org (org_id,org_code,name,enabled,created_at,updated_at,version) select ?,?,?,true,?,?,0 where not exists(select 1 from app_org where org_id=?)", id, code, name, at.toEpochMilli(), at.toEpochMilli(), id); }
-    private void district(String id, String code, String name, Instant at) { jdbc.update("insert into app_district (district_id,district_code,name,enabled,created_at,updated_at,version) select ?,?,?,true,?,?,0 where not exists(select 1 from app_district where district_id=?)", id, code, name, at.toEpochMilli(), at.toEpochMilli(), id); }
+    private void org(String id, String code, String name, Instant at) {
+        jdbc.update("insert into app_org (org_id,org_code,name,enabled,created_at,updated_at,version) select ?,?,?,true,?,?,0 where not exists(select 1 from app_org where org_id=?)", id, code, name, at.toEpochMilli(), at.toEpochMilli(), id);
+        jdbc.update("update app_org set name=? where org_id=? and name<>?", name, id, name);
+    }
+    private void district(String id, String code, String name, Instant at) {
+        jdbc.update("insert into app_district (district_id,district_code,name,enabled,created_at,updated_at,version) select ?,?,?,true,?,?,0 where not exists(select 1 from app_district where district_id=?)", id, code, name, at.toEpochMilli(), at.toEpochMilli(), id);
+        jdbc.update("update app_district set name=? where district_id=? and name<>?", name, id, name);
+    }
     private static Timestamp ts(Instant value) { return Timestamp.from(value); }
 }

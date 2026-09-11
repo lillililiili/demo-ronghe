@@ -51,9 +51,11 @@ public class LocalStage5DeviceScopeSeeder implements ApplicationRunner {
     public void run(ApplicationArguments args) {
         Instant at = clock.now();
         jdbc.update("insert into app_org (org_id,org_code,name,enabled,created_at,updated_at,version) select ?,?,?,true,?,?,0 where not exists(select 1 from app_org where org_id=?)",
-                OTHER_ORG_ID, "SEED-STAGE5-OTHER", "阶段五跨范围反例机构", at.toEpochMilli(), at.toEpochMilli(), OTHER_ORG_ID);
+                OTHER_ORG_ID, "SEED-STAGE5-OTHER", "设备跨范围反例机构", at.toEpochMilli(), at.toEpochMilli(), OTHER_ORG_ID);
+        jdbc.update("update app_org set name='设备跨范围反例机构' where org_id=? and name<>'设备跨范围反例机构'", OTHER_ORG_ID);
         jdbc.update("insert into app_district (district_id,district_code,name,enabled,created_at,updated_at,version) select ?,?,?,true,?,?,0 where not exists(select 1 from app_district where district_id=?)",
-                OTHER_DISTRICT_ID, "SEED-STAGE5-OTHER", "阶段五跨范围反例区域", at.toEpochMilli(), at.toEpochMilli(), OTHER_DISTRICT_ID);
+                OTHER_DISTRICT_ID, "SEED-STAGE5-OTHER", "设备跨范围反例区域", at.toEpochMilli(), at.toEpochMilli(), OTHER_DISTRICT_ID);
+        jdbc.update("update app_district set name='设备跨范围反例区域' where district_id=? and name<>'设备跨范围反例区域'", OTHER_DISTRICT_ID);
         for (String deviceNo : PLATFORM_DEVICES) map(deviceNo, PLATFORM_ORG_ID, DONGYING_DISTRICT_ID, at);
         map(CROSS_SCOPE_DEVICE, OTHER_ORG_ID, OTHER_DISTRICT_ID, at);
     }

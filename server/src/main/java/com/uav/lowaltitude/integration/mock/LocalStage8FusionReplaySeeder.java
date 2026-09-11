@@ -39,14 +39,14 @@ public class LocalStage8FusionReplaySeeder implements ApplicationRunner {
     public static final String ORG = stableId("demo-org:platform");
     public static final String DISTRICT = stableId("demo-district:dongying");
     public static final List<SourceSeed> SOURCES = List.of(
-            new SourceSeed(FusionReplayDatasetGenerator.RADAR, "RADAR", "阶段八回放雷达", "seed-stage8-source-radar", "seed-stage8-device-radar", "DEV-STAGE8-RADAR-001"),
-            new SourceSeed(FusionReplayDatasetGenerator.TDOA, "TDOA", "阶段八回放 TDOA", "seed-stage8-source-tdoa", "seed-stage8-device-tdoa", "DEV-STAGE8-TDOA-001"),
-            new SourceSeed(FusionReplayDatasetGenerator.EO, "EO", "阶段八回放光电", "seed-stage8-source-eo", "seed-stage8-device-eo", "DEV-STAGE8-EO-001"),
+            new SourceSeed(FusionReplayDatasetGenerator.RADAR, "RADAR", "回放雷达", "seed-stage8-source-radar", "seed-stage8-device-radar", "DEV-STAGE8-RADAR-001"),
+            new SourceSeed(FusionReplayDatasetGenerator.TDOA, "TDOA", "回放 TDOA", "seed-stage8-source-tdoa", "seed-stage8-device-tdoa", "DEV-STAGE8-TDOA-001"),
+            new SourceSeed(FusionReplayDatasetGenerator.EO, "EO", "回放光电", "seed-stage8-source-eo", "seed-stage8-device-eo", "DEV-STAGE8-EO-001"),
             // 阶段 8.5 新增：AOA 只给方位不给位置，需要一个独立来源才能演示"有身份线索但不参与位置关联"。
-            new SourceSeed(FusionReplayDatasetGenerator.AOA, "AOA", "阶段八点五回放 AOA", "seed-stage85-source-aoa", "seed-stage85-device-aoa", "DEV-STAGE85-AOA-001"),
+            new SourceSeed(FusionReplayDatasetGenerator.AOA, "AOA", "回放无线电测向", "seed-stage85-source-aoa", "seed-stage85-device-aoa", "DEV-STAGE85-AOA-001"),
             // 阶段 16（决策 16-7）：合并/分裂演示自成一个数据集，来源也要自己的——
             // 沿用 S85R1 会让两个数据集写出同一个 (source, record_no)，全新库都装不上。
-            new SourceSeed(FusionReplayDatasetGenerator.RADAR_S16, "RADAR", "阶段十六合并分裂演示雷达", "seed-stage16-source-radar", "seed-stage16-device-radar", "DEV-STAGE16-RADAR-001"));
+            new SourceSeed(FusionReplayDatasetGenerator.RADAR_S16, "RADAR", "合并分裂演示雷达", "seed-stage16-source-radar", "seed-stage16-device-radar", "DEV-STAGE16-RADAR-001"));
     private static final Timestamp CREATED_AT = Timestamp.from(Instant.parse("2026-09-05T00:00:00Z"));
 
     private final JdbcTemplate jdbc;
@@ -125,6 +125,8 @@ public class LocalStage8FusionReplaySeeder implements ApplicationRunner {
                 seed.sourceId(), seed.sourceCode(), seed.name(), seed.sourceType(), CREATED_AT, CREATED_AT, seed.sourceId());
         // 已存在的来源补上类型：迁移 050 新增该列时旧行为 NULL，融合需要它来取缺省精度与权重。
         jdbc.update("update integration_source set source_type=? where source_id=? and source_type is null", seed.sourceType(), seed.sourceId());
+        jdbc.update("update integration_source set name=? where source_id=? and name<>?", seed.name(), seed.sourceId(), seed.name());
+        jdbc.update("update device set name=? where device_id=? and name<>?", seed.name(), seed.deviceId(), seed.name());
         jdbc.update("insert into device (device_id,source_id,external_device_id,device_no,name,device_type_code,enabled,source_mode,owner_org_id,district_id,created_at,updated_at,version)"
                 + " select ?,?,?,?,?,?,true,'replay',?,?,?,?,0 where not exists (select 1 from device where device_id=?)",
                 seed.deviceId(), seed.sourceId(), "external-" + seed.sourceCode(), seed.deviceNo(), seed.name(), seed.sourceType(), ORG, DISTRICT, CREATED_AT, CREATED_AT, seed.deviceId());

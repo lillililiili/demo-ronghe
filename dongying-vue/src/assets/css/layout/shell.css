@@ -70,6 +70,8 @@
 .nav .l2 a.on{background:rgba(61,139,255,.20);color:#fff}
 .nav .l2 a.on em{background:var(--cyan);box-shadow:0 0 0 3px rgba(34,211,238,.2)}
 .nav.mini .l1 span,.nav.mini .l1 .ca,.nav.mini .l2,.nav.mini .opslink{display:none}
+/* 收起时组已展开也不露出二级项：.g1.open .l2 选择器更具体，不补这一条会剩一个点。 */
+.nav.mini .g1.open .l2{display:none}
 .nav .navfoot{margin-top:auto;padding-top:10px;border-top:1px solid var(--line-2)}
 .nav .opslink{color:var(--txt-2);cursor:pointer;font-size:13px;padding:8px 12px;border-radius:6px}
 .nav .opslink:hover{background:rgba(61,139,255,.10);color:#fff}

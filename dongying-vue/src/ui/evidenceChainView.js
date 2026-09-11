@@ -2,7 +2,8 @@ import {
   ALARM_TYPE_LABEL, CONCLUSION_LABEL, DISPOSAL_ACTION_LABEL, EVIDENCE_COVERAGE_LABEL, EVIDENCE_KIND_LABEL,
   EVIDENCE_RECORD_TYPE_LABEL, EVIDENCE_STATUS_LABEL, HANDOFF_TYPE_LABEL, labelOf
 } from '@/ui/labels.js';
-import { escEvidence, fmtEvidenceTime } from '@/ui/evidenceFileDetail.js';
+import { escEvidence, fmtEvidenceTime, openEvidenceFileModal, sizeText } from '@/ui/evidenceFileDetail.js';
+import { openModal } from '@/ui/modal.js';
 
 const TYPE_ICON = {
   TRACK: 'trend', VIDEO: 'video', IMAGE: 'camera', ALARM: 'alert',
@@ -64,10 +65,13 @@ export function renderEvidenceChainHtml(chain, state = {}) {
   const cov = TYPES.map(type => {
     const item = coverage[type] || {};
     const status = item.status || 'ABSENT';
-    return `<div style="display:flex;flex-direction:column;gap:2px;padding:6px;border:1px solid var(--line);border-radius:4px;font-size:11px">
-      <span>${esc(labelOf(EVIDENCE_RECORD_TYPE_LABEL, type, type))}</span>
+    const label = labelOf(EVIDENCE_RECORD_TYPE_LABEL, type, type);
+    return `<button type="button" data-ev-chain-type="${esc(type)}"
+      style="display:flex;flex-direction:column;gap:2px;padding:6px;border:1px solid var(--line);border-radius:4px;font-size:11px;background:transparent;color:inherit;font:inherit;cursor:pointer;text-align:left"
+      title="${esc(label)}" aria-label="${esc(label)}">
+      <span>${esc(label)}</span>
       <span class="tag ${coverageTagClass(status)}">${esc(labelOf(EVIDENCE_COVERAGE_LABEL, status, status))}${item.count ? ` ${item.count}` : ''}</span>
-    </div>`;
+    </button>`;
   }).join('');
   const cards = !records.length
     ? '<div style="color:var(--txt-3);font-size:12px;line-height:1.7">当前事件/目标没有已关联的八类记录。缺项已在上方标为缺失，不编造材料。</div>'
@@ -134,4 +138,89 @@ function lineageHtml(lineage, currentId, historical) {
       ['谱系操作', String(ops.length)]
     ])}
     ${rows || '<div style="color:var(--txt-3);font-size:12px">没有 MERGE/SPLIT 判定快照。</div>'}`);
+}
+
+export function chainTypeCards(chain) {
+  const records = Array.isArray(chain?.records) ? chain.records : [];
+  const coverage = chain?.coverage || {};
+  return TYPES.map(type => {
+    const item = coverage[type] || {};
+    const status = item.status || 'ABSENT';
+    const ofType = records.filter(row => row.record_type === type);
+    const broken = ofType.filter(row => row.availability === 'UNAVAILABLE').length
+      || Number(item.broken_count) || 0;
+    const count = Number(item.count) || ofType.length;
+    const newest = ofType.length ? ofType[ofType.length - 1] : null;
+    const statusText = status === 'PRESENT'
+      ? (broken ? `已收录 ${count} · 异常 ${broken}` : `已收录 ${count}`)
+      : labelOf(EVIDENCE_COVERAGE_LABEL, status, status);
+    const preview = status === 'FORBIDDEN'
+      ? '当前账号没有查看权限'
+      : (newest ? recordHint(newest, chain) : `没有已关联的${labelOf(EVIDENCE_RECORD_TYPE_LABEL, type, type)}`);
+    const label = labelOf(EVIDENCE_RECORD_TYPE_LABEL, type, type);
+    return {
+      type, label, icon: TYPE_ICON[type] || 'folder', status, count, broken,
+      truncated: !!item.truncated, records: ofType, statusText, preview,
+      tagClass: broken ? 't-red' : coverageTagClass(status)
+    };
+  });
+}
+
+export function openEvidenceChainTypeModal({ chain, type }) {
+  const card = chainTypeCards(chain).find(item => item.type === type);
+  if (!card) return;
+  openModal({
+    title: `${card.label}证据`,
+    width: '560px',
+    body: renderTypeDetailHtml(card),
+    on: {
+      file: (_root, btn) => { if (btn.dataset.evFile) openEvidenceFileModal(btn.dataset.evFile); }
+    }
+  });
+}
+
+function renderTypeDetailHtml(card) {
+  const U = window.UI;
+  const esc = escEvidence;
+  if (card.status === 'FORBIDDEN') {
+    return `<div class="empty">当前账号没有查看${esc(card.label)}证据的权限。</div>`;
+  }
+  if (!card.records.length) {
+    return `<div class="empty">${esc(card.preview)}。缺失不是故障，系统不编造材料。</div>`;
+  }
+  const note = card.truncated ? `<div style="font-size:11px;color:var(--txt-3);margin-bottom:8px">该类超过返回上限，弹窗只展示 ${card.records.length} 条。</div>` : '';
+  const items = card.records.map(record => {
+    const file = isFileRecord(record);
+    const bad = record.availability === 'UNAVAILABLE';
+    const action = file
+      ? `<button class="btn" type="button" data-act="file" data-ev-file="${esc(record.record_id)}">查看文件</button>`
+      : '';
+    return `<article style="margin-bottom:10px;padding:8px;border:1px solid var(--line);border-radius:6px">
+      <header style="display:flex;justify-content:space-between;gap:8px;margin-bottom:6px">
+        <b>${esc(recordCaption(record))}</b>
+        <span class="tag ${bad ? 't-red' : 't-gray'}">${bad ? '校验异常' : esc(fmtEvidenceTime(record.occurred_at))}</span>
+      </header>
+      ${U.kv(recordRows(record), { surface: true, density: 'compact' })}
+      ${action}
+    </article>`;
+  }).join('');
+  return `${note}${items}`;
+}
+
+function recordRows(record) {
+  const s = record.summary || {};
+  const rows = [];
+  const add = (label, value) => { if (value != null && value !== '') rows.push([label, value]); };
+  const esc = escEvidence;
+  if (isFileRecord(record)) {
+    add('文件名', esc(s.original_name || '—'));
+    add('证据编号', esc(s.evidence_no || '—'));
+    add('文件类型', esc(labelOf(EVIDENCE_KIND_LABEL, s.kind_code, s.kind_code)));
+    add('文件状态', esc(labelOf(EVIDENCE_STATUS_LABEL, s.status, s.status)));
+    add('大小', esc(sizeText(s.size_bytes)));
+    if (s.sha256) add('SHA-256', `<span class="mono" style="word-break:break-all">${esc(s.sha256)}</span>`);
+    return rows;
+  }
+  add('摘要', esc(recordHint(record)));
+  return rows;
 }

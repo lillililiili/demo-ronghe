@@ -82,6 +82,8 @@ final class AuditLabels {
             Map.entry("super_admin_recovered", "恢复超级管理员"),
             Map.entry("uav_event_verified", "核实无人机事件"),
             Map.entry("risk_verified", "核验飞行风险"),
+            Map.entry("risk_notified", "提交风险通知"),
+            Map.entry("risk_acknowledged", "确认风险回执"),
             Map.entry("handoff_created", "提交业务交接"),
             Map.entry("legality_evaluation_revised", "复核合法性研判"),
             Map.entry("legality_evaluation_recomputed", "重新研判"),

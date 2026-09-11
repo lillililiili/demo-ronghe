@@ -30,8 +30,9 @@ import com.uav.lowaltitude.modules.handoff.domain.HandoffChannelPort;
 import com.uav.lowaltitude.modules.handoff.domain.HandoffChannelPort.DeliveryOutcome;
 
 /**
- * 决策 18-14：回执结果（是否已驱离）只有在真的投出去、上级真的回了话之后才存在，
+ * 回执结果（是否已驱离）只有在真的投出去、上级真的回了话之后才存在，
  * 所以这里换成模拟上级渠道跑——{@link HandoffApiTest} 固定跑未接通渠道，证不了这一段。
+ * 风险状态按现行口径：提交成功即已通知，渠道确认回执即已回执；驱离结果单独记在交接上。
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -99,14 +100,14 @@ class HandoffReceiptResultApiTest {
         mvc.perform(get("/api/v1/handoffs?source_kind=RISK&source_id={id}", riskId).header("Authorization", "Bearer " + session))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.items[0].receipt_result").value("DISPERSED"));
-        // 决策 18-14：回执"已驱离"即闭环。状态停在"待通知"会让值班台一直把这条当未办事项。
+        // 模拟渠道同步返回确认回执：提交事务里连续记已通知、已回执，刷新看到最终已回执。
         assertThat(jdbc.queryForObject("select state_code from flight_risk where risk_id=?", String.class, riskId))
-                .isEqualTo("NOTIFIED");
+                .isEqualTo("ACKNOWLEDGED");
     }
 
-    /** 未驱离说明事还没完：回执照记，但风险必须留在"待通知"上继续跟。 */
+    /** 未驱离只记在交接回执结果上；风险仍按渠道确认回执进入已回执。 */
     @Test
-    void aNotDispersedReceiptRecordsTheResultButLeavesTheRiskPending() throws Exception {
+    void aNotDispersedReceiptRecordsTheResultButDoesNotBlockAcknowledgment() throws Exception {
         org.mockito.Mockito.doAnswer(invocation -> {
             DeliveryOutcome real = (DeliveryOutcome) invocation.callRealMethod();
             return new DeliveryOutcome(real.deliveryStatus(), real.receiptStatus(), "NOT_DISPERSED", real.blockedReason(),
@@ -121,7 +122,7 @@ class HandoffReceiptResultApiTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.data.receipt_result").value("NOT_DISPERSED"));
         assertThat(jdbc.queryForObject("select state_code from flight_risk where risk_id=?", String.class, riskId))
-                .isEqualTo("PENDING_NOTIFICATION");
+                .isEqualTo("ACKNOWLEDGED");
     }
 
     private void insertNotifiableRisk(String id) {

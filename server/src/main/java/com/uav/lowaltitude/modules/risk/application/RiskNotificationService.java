@@ -24,8 +24,8 @@ public class RiskNotificationService {
     public void submitted(String riskId, long version, String handoffId, OffsetDateTime at) {
         if (repository.markNotified(riskId, version, at) == 1) {
             var actor = AuthContext.require();
-            audit.record(actor.userId(), actor.account(), "risk_notified", "flight_risk", riskId,
-                    "handoff_id=" + handoffId + "; notification=SUBMITTED", null);
+            audit.record(actor.userId(), actor.account(), actor.roleCode(), "risk", "risk_notified", "flight_risk", riskId,
+                    "handoff_id=" + handoffId + "; notification=SUBMITTED", "SUCCESS", "", "");
             return;
         }
         if (repository.notificationRecorded(riskId)) return;
@@ -38,7 +38,7 @@ public class RiskNotificationService {
             throw new IllegalStateException("风险通知状态已变更，不能写入成功回执");
         }
         var actor = AuthContext.require();
-        audit.record(actor.userId(), actor.account(), "risk_acknowledged", "flight_risk", riskId,
-                "handoff_id=" + handoffId + "; channel_receipt=ACKNOWLEDGED", null);
+        audit.record(actor.userId(), actor.account(), actor.roleCode(), "risk", "risk_acknowledged", "flight_risk", riskId,
+                "handoff_id=" + handoffId + "; channel_receipt=ACKNOWLEDGED", "SUCCESS", "", "");
     }
 }

@@ -40,7 +40,8 @@ class LocalStage4RiskSeederTest {
     void seedsUnknownHeightAndExactScopeCounterexampleWithoutNotifiedState() {
         assertThat(jdbc.queryForObject("select count(*) from flight_risk where risk_id='seed-stage4-risk-unknown-height' and observed_altitude_m is null and height_relation='UNKNOWN'", Long.class)).isEqualTo(1L);
         assertThat(jdbc.queryForObject("select count(*) from flight_risk where owner_org_id='seed-stage3-other-org' and district_id='seed-stage3-other-district'", Long.class)).isGreaterThan(0L);
-        assertThat(jdbc.queryForObject("select count(*) from flight_risk where state_code='NOTIFIED'", Long.class)).isZero();
+        // 阶段 4 夹具不得写已通知；阶段 5 交接种子会把 seed-stage5-% 推到已通知，不能用全库计数。
+        assertThat(jdbc.queryForObject("select count(*) from flight_risk where risk_id like 'seed-stage4-%' and state_code='NOTIFIED'", Long.class)).isZero();
     }
 
     @Test

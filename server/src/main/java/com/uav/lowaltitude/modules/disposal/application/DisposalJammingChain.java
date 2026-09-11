@@ -102,7 +102,7 @@ public class DisposalJammingChain {
         event(id, "REQUEST", parent.requestedBy(), reason, snap, at);
         event(id, "APPROVE", approver, note, Map.of("status", DisposalRules.APPROVED,
                 "valid_from", at.toInstant().toEpochMilli(), "valid_until", until.toInstant().toEpochMilli(),
-                "chained_from", parent.authorizationId()), at);
+                "chained_from", parent.authorizationId()), at.plusNanos(1_000_000));
         AuthUser requester = repository.actor(parent.requestedBy());
         audit.record(parent.requestedBy(), requester == null ? "" : requester.account(),
                 requester == null ? null : requester.roleCode(), "disposal", "disposal_jamming_chained",

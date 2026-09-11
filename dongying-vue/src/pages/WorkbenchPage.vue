@@ -18,10 +18,9 @@ import { openDisposalRequest } from '@/ui/disposalAuthModal.js';
 import { openRiskVerification } from '@/ui/riskVerificationModal.js';
 import { authUser } from '@/services/auth.js';
 import { loadTargetPosition, loadDevicePosition, loadRouteCenterline, installCenterline, centerOf } from '@/services/positionMap.js';
-import { CONCLUSION_LABEL, RISK_CONCLUSION_LABEL, DELIVERY_STATUS_LABEL, HANDOFF_BLOCKED_LABEL, HANDOFF_TYPE_LABEL, RISK_TYPE_LABEL, labelOf, verificationOrdinal, readableNo } from '@/ui/labels.js';
 import {
   KINDS, kindLabel, kindIcon, AVAILABILITY_LABEL,
-  listWorkbenchEvents, workbenchStats, getWorkbenchDetail, loadUavSource, loadRiskSource, openSourcePage, sourcePageLabel, splitKey, stateLabel
+  listWorkbenchEvents, workbenchStats, getWorkbenchDetail, loadUavSource, loadRiskSource, openSourcePage, sourcePageLabel, splitKey
 } from '@/services/workbenchEvents.js';
 
 const U = window.UI;
@@ -51,6 +50,7 @@ const detail = ref(null);
 const detailLoading = ref(false);
 const detailError = ref('');
 const acting = ref(false);
+const notifiedPunishIds = ref(new Set());
 const mapHost = ref(null);
 let timer = null;
 let queueSeq = 0, detailSeq = 0, summarySeq = 0;
@@ -67,7 +67,13 @@ const currentUser = computed(() => authUser.value ? { name: authUser.value.name 
 const selected = computed(() => detail.value);
 const levels = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'];
 const levelLabel = { CRITICAL: '紧急', HIGH: '高', MEDIUM: '中', LOW: '低' };
-const levelOptions = [{ label: '全部等级', value: 'all' }, ...levels.map(value => ({ label: `${levelLabel[value]}等级`, value }))];
+const SEVERITY_RANK = { CRITICAL: 4, HIGH: 3, MEDIUM: 2, LOW: 1 };
+const HIGH_PLUS = 'HIGH_PLUS';
+const levelOptions = [
+  { label: '全部等级', value: 'all' },
+  { label: '高及以上', value: HIGH_PLUS },
+  ...levels.map(value => ({ label: `${levelLabel[value]}等级`, value }))
+];
 const kindOptions = [{ value: 'all', label: '全部事项' }, ...KINDS.map(value => ({ value, label: kindLabel[value] }))];
 const availabilityNotes = computed(() => KINDS.filter(k => stats.value.availability[k] && stats.value.availability[k] !== 'AVAILABLE')
   .map(k => ({ kind: k, label: kindLabel[k], text: AVAILABILITY_LABEL[stats.value.availability[k]] || stats.value.availability[k] })));
@@ -91,9 +97,44 @@ function messageOf(e, fallback) {
   if (e.status === 404) return '事项不存在或已不在当前数据范围内';
   return e.message || fallback;
 }
+function isHighPlus() { return level.value === HIGH_PLUS; }
 function queueQuery(p, size) {
-  const high = level.value === 'HIGH_PLUS';
-  return { kind: kind.value === 'all' ? undefined : kind.value, severity: level.value === 'all' || high ? undefined : level.value, severity_min: high ? 'HIGH' : undefined, page: p, size };
+  return {
+    kind: kind.value === 'all' ? undefined : kind.value,
+    severity: level.value === 'all' || isHighPlus() ? undefined : level.value,
+    page: p,
+    size
+  };
+}
+function actionRank(item) {
+  if (item.kind === 'UAV_EVENT') return item.state === 'FALSE_POSITIVE' ? 0 : 2;
+  if (item.kind === 'RISK') return item.state === 'NOTIFIED' || item.state === 'EXCLUDED' ? 0 : 2;
+  if (item.state === 'RECOVERED') return 0;
+  if (item.state === 'PROCESSING') return 1;
+  return 2;
+}
+function compareWorkbenchItems(a, b) {
+  const action = actionRank(b) - actionRank(a);
+  if (action) return action;
+  const severity = (SEVERITY_RANK[b.severity] || 0) - (SEVERITY_RANK[a.severity] || 0);
+  if (severity) return severity;
+  const time = (b.receivedAt || 0) - (a.receivedAt || 0);
+  if (time) return time;
+  const kindCmp = String(a.kind || '').localeCompare(String(b.kind || ''));
+  if (kindCmp) return kindCmp;
+  return String(b.sourceId || '').localeCompare(String(a.sourceId || ''));
+}
+/* 高等级卡片 = HIGH + CRITICAL。当前运行的工作台接口不接受 severity_min，改为两次精确筛选后按服务端队列同一口径合并。 */
+async function loadHighPlusQueue() {
+  const base = { kind: kind.value === 'all' ? undefined : kind.value, page: 1, size: 100 };
+  const [critical, high] = await Promise.all([
+    listWorkbenchEvents({ ...base, severity: 'CRITICAL' }),
+    listWorkbenchEvents({ ...base, severity: 'HIGH' })
+  ]);
+  return {
+    items: [...critical.items, ...high.items].sort(compareWorkbenchItems),
+    total: Number(critical.total || 0) + Number(high.total || 0)
+  };
 }
 
 /* ---------- 队列 ---------- */
@@ -105,11 +146,12 @@ async function loadQueue({ append = false, silent = false } = {}) {
   const size = append || !silent ? PAGE_SIZE : Math.min(100, Math.max(PAGE_SIZE, items.value.length));
   if (append) loadingMore.value = true; else if (!silent) loading.value = true;
   try {
-    const data = await listWorkbenchEvents(queueQuery(nextPage, size));
+    const highPlus = isHighPlus();
+    const data = highPlus ? await loadHighPlusQueue() : await listWorkbenchEvents(queueQuery(nextPage, size));
     if (my !== queueSeq) return;
-    items.value = append ? items.value.concat(data.items) : data.items;
+    items.value = highPlus || !append ? data.items : items.value.concat(data.items);
     total.value = data.total;
-    page.value = append ? nextPage : 1;
+    page.value = highPlus || !append ? 1 : nextPage;
     error.value = '';
     ensureSelection();
   } catch (e) {
@@ -148,7 +190,7 @@ async function loadDetail(key, { silent = false } = {}) {
   try {
     const data = await getWorkbenchDetail(parts.kind, parts.sourceId);
     if (my !== detailSeq) return null;
-    detail.value = data;
+    detail.value = applyLocalPunish(data);
     detailError.value = '';
     if (!silent) renderPositionMap(data);
     return data;
@@ -171,8 +213,22 @@ watch([kind, level], () => { loadQueue(); });
 
 function selectEvent(e) { selectedKey.value = e.key; }
 function showKind(value) { kind.value = value; level.value = 'all'; }
-function showHighRisk() { kind.value = 'all'; level.value = 'HIGH_PLUS'; }
+function showHighRisk() { kind.value = 'all'; level.value = HIGH_PLUS; }
 function loadMore() { if (!loadingMore.value) loadQueue({ append: true }); }
+
+function applyLocalPunish(data) {
+  if (!data || data.kind !== 'UAV_EVENT') return data;
+  const id = data.summary?.sourceId;
+  if (!id || !notifiedPunishIds.value.has(id)) return data;
+  return {
+    ...data,
+    summary: {
+      ...data.summary,
+      todo: { action: '通知处罚部门', kind: 'punish', allowed: false, blocker: '已提交', hint: '已提交通知，不表示处罚办结。' }
+    },
+    steps: (data.steps || []).map(step => step.n === '通知处罚部门' ? { ...step, done: true, act: false, t: '已提交' } : step)
+  };
+}
 
 /* 源动作成功或结果未知后：刷新当前事项、队列与计数。 */
 async function refreshAll() {
@@ -269,8 +325,12 @@ async function runUavAction() {
       return;
     }
     if (td.kind === 'punish') {
-      acting.value = false;
-      return openUavPunishModal(d);
+      const next = new Set(notifiedPunishIds.value);
+      next.add(eventId);
+      notifiedPunishIds.value = next;
+      toast('已提交', 'ok');
+      if (detail.value) detail.value = applyLocalPunish(detail.value);
+      return;
     }
     const { event, alarm } = await loadUavSource(eventId);
     openUavVerification({
@@ -348,53 +408,45 @@ async function openUavPunishModal(d) {
   });
 }
 
-/* 通知上级 = 提交 RISK_NOTICE 交接：接收方来自服务端目录；提交成功风险变为“已通知”，可信确认回执后变为“已回执”。 */
+/* 通知上级与飞行计划「全部风险事件」同一弹窗：不选手接收方，服务端按默认接收方处理。 */
 async function openNotifyModal(risk, summary) {
   const riskId = risk.risk_id;
-  // 风险详情接口的动作词典只有 VERIFY，NOTIFY 只出现在工作台事项里；放行依据取工作台 allowed_actions 或回读状态仍为待通知，
-  // 交接权限由 createHandoff 的 403 裁决。expected_version 仍取回读的最新版本。
   const notifiable = (summary?.allowedActions || []).includes('NOTIFY') || risk.state === 'PENDING_NOTIFICATION';
   if (!notifiable) return toast('当前风险不可通知：状态已变化', 'err');
-  let recipients = [];
-  try { recipients = ((await listHandoffRecipients('RISK_NOTICE')) || {}).items || []; }
-  catch (e) { return toast(messageOf(e, '读取接收方目录失败'), 'err'); }
-  const options = recipients.map(r => ({ label: r.display_name, value: r.recipient_id }));
   if (!pendingNotifyKeys.has(riskId)) pendingNotifyKeys.set(riskId, newHandoffIdempotencyKey());
   openFormModal({
-    title: '通知上级 · 提交交接',
+    title: '通知上级',
     width: '560px',
-    warning: '提交后由通知渠道投递并回执，送达与回执以投递记录为准；不表示处罚办结，风险状态保持“待通知”。',
-    notice: [risk.risk_no || readableNo(risk.source_risk_id) ? `风险 ${risk.risk_no || readableNo(risk.source_risk_id)}` : '风险事件', labelOf(RISK_TYPE_LABEL, risk.risk_type, ''), Number(risk.version) > 0 ? `已第${Number(risk.version)}次核验` : '尚未核验'].filter(Boolean).join(' · '),
-    fields: options.length
-      ? [{ key: 'recipient_id', label: '接收方', type: 'select', required: true, options, placeholder: '选择逻辑接收部门' }]
-      : [{ key: 'unconfigured', type: 'html', html: '<div class="warnbox">接收方未配置：交接接收方目录为空，无法提交；不会以默认部门补值。</div>' }],
-    initial: { recipient_id: options.length === 1 ? options[0].value : '' },
-    confirmText: '提交交接',
-    submitEnabled: m => options.length > 0 && !!m.recipient_id,
-    onSubmit: async ({ recipient_id }) => {
+    warning: '提交后由通知渠道投递并回执；回执“已驱离”即闭环，风险不进入处置。',
+    fields: [],
+    confirmText: '提交通知',
+    onSubmit: async () => {
       const key = pendingNotifyKeys.get(riskId);
       try {
-        const result = await createHandoff({ source_kind: 'RISK', source_id: riskId, handoff_type: 'RISK_NOTICE', recipient_id, expected_version: Number(risk.version) }, key);
+        await createHandoff({ source_kind: 'RISK', source_id: riskId, handoff_type: 'RISK_NOTICE', expected_version: Number(risk.version) }, key);
         pendingNotifyKeys.delete(riskId);
         closeModal();
-        toast(`${result?.delivery_status === 'DELIVERED' ? '已提交并送达' + (result?.receipt_status === 'ACKNOWLEDGED' ? '，接收方已回执' : '') : '已提交，尚未发送：交接材料已入库（待投递）'}。<a href="#/punish">前往处置与处罚页查看</a>`, 'ok');
+        toast('已提交通知', 'ok');
         await refreshAll();
       } catch (e) {
-        if (e && e.code === 'HANDOFF_ALREADY_EXISTS') {
+        if (e && (e.code === 'HANDOFF_ALREADY_EXISTS' || e.code === 'IDEMPOTENCY_REPLAY')) {
           pendingNotifyKeys.delete(riskId);
           closeModal();
-          toast('该风险已存在同类型、同接收方的交接，未重复提交。可在处置与处罚页查看。', 'err');
+          toast(e.code === 'HANDOFF_ALREADY_EXISTS' ? '该风险已经提交过通知。' : '该请求此前已提交，请刷新核对。', 'err');
           await refreshAll();
           return;
         }
+        if (e && (e.code === 'VERSION_CONFLICT' || e.code === 'INVALID_TRANSITION' || e.code === 'RECIPIENT_NOT_CONFIGURED' || e.code === 'RECIPIENT_NOT_FOUND')) {
+          pendingNotifyKeys.set(riskId, newHandoffIdempotencyKey());
+          await refreshAll();
+          throw new Error(`提交被拒绝，已刷新当前状态：${messageOf(e, '请核对后重试')}`);
+        }
         if (isUncertainOutcome(e)) {
-          // 409 重放/版本冲突、超时、断网：服务端可能已落库。保留原键，回读事项与计数，不换键重试、不提示成功。
           await refreshAll();
           throw new Error(`提交结果未确认，请刷新核对：${messageOf(e, '未返回明确结果')}`);
         }
-        pendingNotifyKeys.delete(riskId);
         pendingNotifyKeys.set(riskId, newHandoffIdempotencyKey());
-        throw new Error(messageOf(e, '提交交接失败'));
+        throw new Error(messageOf(e, '提交通知失败'));
       }
     }
   });
@@ -484,32 +536,6 @@ function openSource() {
   if (!openSourcePage(selected.value?.summary)) toast('该事项没有可用的站内跳转链接', 'err');
 }
 
-/* 时间线只留一行摘要（标题 + 时间 + 状态变化）；完整字段在上方"记录"面板逐条展示，不重复。
-   枚举一律经共享字典翻译；版本号显示为"第 N 次核实"；可选字段无值时不拼接。 */
-function conclusionLabel(kindValue, code) {
-  return labelOf(kindValue === 'RISK' ? RISK_CONCLUSION_LABEL : CONCLUSION_LABEL, code, '核实');
-}
-function timelineTitle(t, kindValue) {
-  if (t.entry_type === 'VERIFICATION') return `${verificationOrdinal(t.version) || '核实'} · 结论：${conclusionLabel(kindValue, t.conclusion)}`;
-  if (t.entry_type === 'HANDOFF') return `交接已提交 · ${labelOf(DELIVERY_STATUS_LABEL, t.delivery_status)}`;
-  if (t.entry_type === 'DEVICE_INCIDENT_DETECTED') return '设备异常检出';
-  if (t.entry_type === 'DEVICE_INCIDENT_CLOSED') return '设备异常关闭';
-  return t.entry_type;
-}
-function timelineMeta(t, kindValue) {
-  if (t.entry_type === 'VERIFICATION') return `${fmt(t.at)} · 状态：${stateLabel(kindValue, t.previous_state)} → ${stateLabel(kindValue, t.resulting_state)}`;
-  if (t.entry_type === 'HANDOFF') {
-    const parts = [fmt(t.at), `接收方 ${t.recipient_name || '—'}`];
-    const basis = verificationOrdinal(t.source_version, '依据');
-    if (basis) parts.push(basis);
-    if (t.blocked_reason) parts.push(labelOf(HANDOFF_BLOCKED_LABEL, t.blocked_reason));
-    return parts.join(' · ');
-  }
-  const parts = [fmt(t.at)];
-  if (t.stage) parts.push(stateLabel('DEVICE_INCIDENT', t.stage));
-  if (t.reason) parts.push(t.reason);
-  return parts.join(' · ');
-}
 const verifications = computed(() => (selected.value?.timeline || []).filter(t => t.entry_type === 'VERIFICATION'));
 const handoffs = computed(() => (selected.value?.timeline || []).filter(t => t.entry_type === 'HANDOFF'));
 
@@ -555,7 +581,6 @@ onUnmounted(() => {
         <div>
           <div class="wb-eyebrow"><span v-html="icon('home')"></span> 我的工作台</div>
           <h1>{{ currentUser.name }}，这是您当前需要关注的事项</h1>
-          <p>有下一步动作的排前面，等回执的居中，误报、已通知、已排除、已恢复的沉底；同档按等级、接收时间排序。每个事项只呈现一个明确的下一步。<span v-if="stats.asOf" class="wb-asof">数据时刻 {{ fmt(stats.asOf) }}</span></p>
         </div>
         <div class="wb-user-chip">
           <span class="wb-user-avatar" v-html="icon('user')"></span>
@@ -567,7 +592,7 @@ onUnmounted(() => {
         <button class="wb-kpi is-cyan" :class="{ active: kind === 'all' && level === 'all' }" :aria-pressed="kind === 'all' && level === 'all'" @click="showKind('all')">
           <span v-html="icon('clipboard')"></span><em>全部事项</em><b>{{ countText(stats.total) }}</b>
         </button>
-        <button class="wb-kpi is-red" :class="{ active: kind === 'all' && level === 'HIGH_PLUS' }" :aria-pressed="kind === 'all' && level === 'HIGH_PLUS'" @click="showHighRisk">
+        <button class="wb-kpi is-red" :class="{ active: kind === 'all' && level === HIGH_PLUS }" :aria-pressed="kind === 'all' && level === HIGH_PLUS" @click="showHighRisk">
           <span v-html="icon('warning')"></span><em>高等级事项</em><b>{{ countText(highCount) }}</b>
         </button>
         <button class="wb-kpi is-blue" :class="{ active: kind === 'UAV_EVENT' && level === 'all' }" :aria-pressed="kind === 'UAV_EVENT' && level === 'all'" @click="showKind('UAV_EVENT')">
@@ -640,7 +665,7 @@ onUnmounted(() => {
               <div><small>下一步</small><h3>{{ selected.summary.todo.action }}</h3><p>{{ selected.summary.todo.hint }}</p>
                 <span>责任模块：<b>{{ selected.summary.module }}</b></span><span v-if="selected.summary.todo.blocker" class="wb-blocker"> · {{ selected.summary.todo.blocker }}</span></div>
             </div>
-            <div v-else class="wb-complete"><span v-html="icon('check')"></span><div><b>当前事项无待办动作</b><small>{{ selected.summary.blockedLabel || '可在下方查看核实历史与时间线。' }}</small></div></div>
+            <div v-else class="wb-complete"><span v-html="icon('check')"></span><div><b>当前事项无待办动作</b><small>{{ selected.summary.blockedLabel || '可打开源页面查看原始记录。' }}</small></div></div>
           </section>
 
           <section class="wb-flow-card panel">
@@ -678,44 +703,11 @@ onUnmounted(() => {
               <span><small>事项类型</small><b>{{ kindLabel[selected.kind] }}</b></span><i>→</i>
               <span><small>源编号</small><b class="mono" :title="selected.summary.sourceId">{{ selected.summary.sourceNo || '—' }}</b></span><i>→</i>
               <span v-if="selected.kind === 'RISK'"><small>交接记录</small><b>{{ selected.availability.handoffs === 'AVAILABLE' ? `${handoffs.length} 条` : selected.availability.handoffs === 'FORBIDDEN' ? '无读取权限' : '—' }}</b></span>
-              <span v-else-if="selected.kind === 'UAV_EVENT'"><small>核实记录</small><b>{{ verifications.length }} 条</b></span>
+              <span v-else-if="selected.kind === 'UAV_EVENT'"><small>核实</small><b>{{ verifications.length ? '已核实' : '未核实' }}</b></span>
               <span v-else><small>动作</small><b>{{ selected.summary.todo?.allowed ? selected.summary.todo.action : (selected.summary.blockedLabel || selected.summary.todo?.blocker || '—') }}</b></span><i>→</i>
               <span><small>原始记录所在页</small><button class="btn" type="button" :disabled="!selected.summary.links?.source" @click="openSource">打开{{ sourcePageLabel[selected.kind] }}页</button></span>
             </div>
           </section>
-
-          <div class="wb-bottom-grid">
-            <section class="panel wb-records">
-              <div class="ph"><h3>{{ selected.kind === 'RISK' ? '交接与核验记录' : selected.kind === 'UAV_EVENT' ? '核实记录' : '设备异常事实' }}</h3></div>
-              <div class="wb-record-list">
-                <template v-if="selected.kind === 'RISK'">
-                  <div v-if="selected.availability.handoffs === 'FORBIDDEN'" class="empty">交接记录需要 handoff:read 权限</div>
-                  <div v-for="h in handoffs" :key="h.handoff_id" class="wb-record-row"><span v-html="icon('mail')"></span><b :title="h.recipient_id">{{ h.recipient_name || '—' }}</b><small>{{ fmt(h.at) }} · {{ labelOf(HANDOFF_TYPE_LABEL, h.handoff_type) }}<template v-if="verificationOrdinal(h.source_version)"> · {{ verificationOrdinal(h.source_version, '依据') }}</template></small><em>{{ labelOf(DELIVERY_STATUS_LABEL, h.delivery_status) }}</em></div>
-                  <div v-for="v in verifications" :key="'v' + v.version" class="wb-record-row"><span v-html="icon('clipboard')"></span><b>结论：{{ labelOf(RISK_CONCLUSION_LABEL, v.conclusion) }}</b><small>{{ fmt(v.at) }} · 核验人 <span :title="v.actor_id">{{ v.actor_name || '—' }}</span><template v-if="v.note"> · 备注：{{ v.note }}</template></small><em>{{ verificationOrdinal(v.version) }}</em></div>
-                  <div v-if="!handoffs.length && !verifications.length && selected.availability.handoffs !== 'FORBIDDEN'" class="empty">暂无交接或核验记录</div>
-                </template>
-                <template v-else-if="selected.kind === 'UAV_EVENT'">
-                  <div v-for="v in verifications" :key="'v' + v.version" class="wb-record-row"><span v-html="icon('clipboard')"></span><b>结论：{{ labelOf(CONCLUSION_LABEL, v.conclusion) }}</b><small>{{ fmt(v.at) }} · 核实人 <span :title="v.actor_id">{{ v.actor_name || '—' }}</span><template v-if="v.note"> · 备注：{{ v.note }}</template></small><em>{{ verificationOrdinal(v.version) }}</em></div>
-                  <div v-if="!verifications.length" class="empty">暂无核实记录</div>
-                </template>
-                <template v-else>
-                  <div v-for="t in selected.timeline" :key="t.entry_type + t.at" class="wb-record-row"><span v-html="icon('tool')"></span><b>{{ timelineTitle(t, selected.kind) }}</b><small>{{ t.device_no }} · {{ t.device_name }}<template v-if="t.reason"> · {{ t.reason }}</template></small><em>{{ stateLabel('DEVICE_INCIDENT', t.stage) }}</em></div>
-                  <div v-if="!selected.timeline.length" class="empty wb-record-empty">
-                    <span class="wb-record-empty-icon" v-html="icon('tool')"></span>
-                    <b>暂无设备事实</b>
-                    <small>检出与关闭事实会显示在这里；进行中的重启请看当前任务</small>
-                  </div>
-                </template>
-              </div>
-            </section>
-            <section class="panel wb-timeline">
-              <div class="ph"><h3>事项时间线</h3><span class="sub">有范围的核实历史、交接与设备事实</span></div>
-              <div class="wb-timeline-list">
-                <div v-for="t in selected.timeline" :key="t.entry_type + t.at + (t.version || t.handoff_id || '')"><i></i><span><b>{{ timelineTitle(t, selected.kind) }}</b><small>{{ timelineMeta(t, selected.kind) }}</small></span></div>
-                <div v-if="!selected.timeline.length" class="empty">暂无时间线记录</div>
-              </div>
-            </section>
-          </div>
         </main>
         <main v-else class="panel wb-no-selection">
           <div v-if="detailLoading" class="empty">正在读取事项详情…</div>
@@ -728,7 +720,6 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.workbench-page .wb-asof { margin-left: 10px; color: var(--txt-3); font-size: 12px; }
 .workbench-page .wb-inline-error { margin: 10px 0 0; }
 .workbench-page .wb-availability { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .workbench-page .wb-map-unavailable { display: grid; place-items: center; }

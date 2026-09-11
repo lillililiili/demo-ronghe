@@ -113,9 +113,13 @@ export function uavSteps(state, counter, punishHandoff, jam) {
       t: disposalStatusText(row)
     };
   };
+  const punishReady = verified && (
+    (counter && (counter.status === 'COMPLETED' || DISPOSAL_ACTIVE_STATUSES.includes(counter.status)))
+    || (jam && (jam.status === 'COMPLETED' || DISPOSAL_ACTIVE_STATUSES.includes(jam.status)))
+  );
   const punishStep = () => {
     if (punishHandoff === undefined) return { n: '通知处罚部门', done: false, act: false, t: '未接入' };
-    if (!punishHandoff) return { n: '通知处罚部门', done: false, act: false, t: '尚未移送' };
+    if (!punishHandoff) return { n: '通知处罚部门', done: false, act: punishReady, t: punishReady ? '待提交' : '尚未移送' };
     return {
       n: '通知处罚部门',
       done: punishHandoff.delivery_status !== 'FAILED',
@@ -207,25 +211,18 @@ export async function getWorkbenchDetail(kind, sourceId) {
     : undefined;
   const jamLive = jam && DISPOSAL_ACTIVE_STATUSES.includes(jam.status);
   const disposed = (counter && counter.status === 'COMPLETED') || (jam && jam.status === 'COMPLETED');
-  if (summary.todo?.kind === 'countermeasure' && jamLive) {
+  const punishDone = punishHandoff && punishHandoff.delivery_status !== 'FAILED';
+  if (summary.todo?.kind === 'countermeasure' && punishDone) {
     summary.todo = {
-      action: '信号干扰进行中', kind: 'jamming-wait', allowed: false,
-      blocker: `信号干扰${disposalStatusText(jam)}`,
-      hint: '反制完成后已自动发起信号干扰，完成后再提交处罚交接。'
+      action: '通知处罚部门', kind: 'punish', allowed: false,
+      blocker: `已提交处罚交接（${labelOf(DELIVERY_STATUS_LABEL, punishHandoff.delivery_status)}）`,
+      hint: '交接材料已入库。'
     };
-  } else if (summary.todo?.kind === 'countermeasure' && disposed) {
-    if (punishHandoff && punishHandoff.delivery_status !== 'FAILED') {
-      summary.todo = {
-        action: '提交处罚交接', kind: 'punish', allowed: false,
-        blocker: `已提交处罚交接（${labelOf(DELIVERY_STATUS_LABEL, punishHandoff.delivery_status)}）`,
-        hint: '交接材料已入库，可到处罚页立案。'
-      };
-    } else {
-      summary.todo = {
-        action: '提交处罚交接', kind: 'punish', allowed: true, blocker: null,
-        hint: '移送后由处罚部门立案；提交成功只表示材料入库，不表示已发送或已立案。'
-      };
-    }
+  } else if (summary.todo?.kind === 'countermeasure' && (disposed || activeAuth || jamLive)) {
+    summary.todo = {
+      action: '通知处罚部门', kind: 'punish', allowed: true, blocker: null,
+      hint: '本期只记录已提交，不调用通知接口。'
+    };
   }
   const incidentType = (data.timeline || []).find(t => t.incident_type)?.incident_type;
   if (summary.todo?.kind === 'device-verify' && incidentType === 'MQTT_HEARTBEAT_TIMEOUT') {

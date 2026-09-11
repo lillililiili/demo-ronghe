@@ -82,26 +82,119 @@ export async function loadRouteCenterline(routeVersionId) {
   return trustedCenterline(await flightApi.routeVersion(routeVersionId));
 }
 
-/** 在 MapView 的 draw 之后补画一条中心线（青色）。 */
+function polylinePath(ctx, pts) {
+  ctx.beginPath();
+  pts.forEach((pt, index) => { if (index) ctx.lineTo(pt[0], pt[1]); else ctx.moveTo(pt[0], pt[1]); });
+}
+
+function walkPolyline(pts, gap, start, visit) {
+  let remain = start;
+  for (let i = 1; i < pts.length; i++) {
+    const ax = pts[i - 1][0], ay = pts[i - 1][1], bx = pts[i][0], by = pts[i][1];
+    const dx = bx - ax, dy = by - ay, len = Math.hypot(dx, dy);
+    if (len < 1) continue;
+    const ux = dx / len, uy = dy / len;
+    while (remain <= len) {
+      visit(ax + ux * remain, ay + uy * remain, ux, uy);
+      remain += gap;
+    }
+    remain -= len;
+  }
+}
+
+function strokeChevron(ctx, x, y, ux, uy, color) {
+  const s = 5.4;
+  ctx.beginPath();
+  ctx.moveTo(x - ux * 3.4 - uy * s * 0.55, y - uy * 3.4 + ux * s * 0.55);
+  ctx.lineTo(x + ux * 4.6, y + uy * 4.6);
+  ctx.lineTo(x - ux * 3.4 + uy * s * 0.55, y - uy * 3.4 - ux * s * 0.55);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.55;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.stroke();
+}
+
+function strokeTerminal(ctx, pt, label, fill) {
+  ctx.beginPath();
+  ctx.arc(pt[0], pt[1], 8.2, 0, Math.PI * 2);
+  ctx.fillStyle = fill;
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = '#fff';
+  ctx.stroke();
+  ctx.font = '600 10px "PingFang SC",sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#fff';
+  ctx.fillText(label, pt[0], pt[1] + 0.4);
+}
+
+/** 计划航线中心线：白边 + 青色芯 + 方向箭头 + 起终点。只描已有顶点，不插值、不画走廊宽度。 */
+export function strokePlannedRoute(ctx, map, coordinates, { label = '' } = {}) {
+  if (!ctx || !map || !coordinates || coordinates.length < 2) return;
+  const pts = coordinates.map(([lon, lat]) => map.px(lon, lat));
+  if (pts.some(pt => !Number.isFinite(pt[0]) || !Number.isFinite(pt[1]))) return;
+  const still = typeof map._still === 'function' ? map._still() : true;
+  const t = Number(map.t) || 0;
+  const ink = '#14607a';
+  const core = '#2ec4e0';
+  ctx.save();
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  polylinePath(ctx, pts);
+  ctx.strokeStyle = 'rgba(46,196,224,.20)';
+  ctx.lineWidth = 14;
+  ctx.stroke();
+  polylinePath(ctx, pts);
+  ctx.strokeStyle = 'rgba(255,255,255,.96)';
+  ctx.lineWidth = 8;
+  ctx.stroke();
+  polylinePath(ctx, pts);
+  ctx.strokeStyle = ink;
+  ctx.lineWidth = 5.2;
+  ctx.stroke();
+  polylinePath(ctx, pts);
+  ctx.strokeStyle = core;
+  ctx.lineWidth = 2.15;
+  ctx.setLineDash([11, 8]);
+  ctx.lineDashOffset = still ? 0 : -(t * 0.42) % 19;
+  ctx.stroke();
+  ctx.setLineDash([]);
+  walkPolyline(pts, 36, 22, (x, y, ux, uy) => strokeChevron(ctx, x, y, ux, uy, ink));
+  for (let i = 1; i < pts.length - 1; i++) {
+    ctx.beginPath();
+    ctx.arc(pts[i][0], pts[i][1], 3.1, 0, Math.PI * 2);
+    ctx.fillStyle = '#fff';
+    ctx.fill();
+    ctx.strokeStyle = ink;
+    ctx.lineWidth = 1.25;
+    ctx.stroke();
+  }
+  strokeTerminal(ctx, pts[0], '起', '#1a9b6e');
+  strokeTerminal(ctx, pts[pts.length - 1], '终', '#d4533a');
+  if (label) {
+    const mid = pts[pts.length >> 1];
+    ctx.font = '600 10.5px "PingFang SC",sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const width = ctx.measureText(label).width + 10;
+    ctx.fillStyle = 'rgba(8,22,40,.78)';
+    ctx.fillRect(mid[0] - width / 2, mid[1] - 18, width, 15);
+    ctx.fillStyle = '#c8eef6';
+    ctx.fillText(label, mid[0], mid[1] - 10.5);
+  }
+  ctx.restore();
+}
+
+/** 在 MapView 的 draw 之后补画计划航线中心线。 */
 export function installCenterline(map, coordinates) {
   if (!map || !coordinates) return;
   const drawBase = map.draw.bind(map);
   map.draw = function drawWithCenterline() {
     drawBase();
-    const context = this.ctx;
-    if (!context || !this.w) return;
-    context.save();
-    context.beginPath();
-    coordinates.forEach(([lon, lat], index) => {
-      const point = this.px(lon, lat);
-      if (index) context.lineTo(point[0], point[1]);
-      else context.moveTo(point[0], point[1]);
-    });
-    context.strokeStyle = '#22d3ee';
-    context.lineWidth = 2.4;
-    context.lineJoin = 'round';
-    context.stroke();
-    context.restore();
+    if (!this.ctx || !this.w) return;
+    strokePlannedRoute(this.ctx, this, coordinates);
   };
 }
 
@@ -127,7 +220,7 @@ export async function loadAirspaceOverlays(planId) {
   });
 }
 
-/** 在 MapView 的 draw 之后补画空域边界（紫色虚线）与航线中心线（青色）。 */
+/** 在 MapView 的 draw 之后补画空域边界（紫色虚线）与计划航线中心线。 */
 export function installOverlays(map, { centerline = null, airspaces = [] } = {}) {
   if (!map || (!centerline && !airspaces.length)) return;
   const drawBase = map.draw.bind(map);
@@ -151,18 +244,7 @@ export function installOverlays(map, { centerline = null, airspaces = [] } = {})
       context.stroke();
       context.setLineDash([]);
     });
-    if (centerline) {
-      context.beginPath();
-      centerline.forEach(([lon, lat], index) => {
-        const point = this.px(lon, lat);
-        if (index) context.lineTo(point[0], point[1]);
-        else context.moveTo(point[0], point[1]);
-      });
-      context.strokeStyle = '#22d3ee';
-      context.lineWidth = 2.4;
-      context.lineJoin = 'round';
-      context.stroke();
-    }
+    if (centerline) strokePlannedRoute(context, this, centerline);
     context.restore();
   };
 }

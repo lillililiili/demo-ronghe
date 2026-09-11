@@ -11,6 +11,7 @@ import { openRiskVerification } from '@/ui/riskVerificationModal.js';
 import { riskApi } from '@/services/riskApi.js';
 import { flightApi } from '@/services/flightApi.js';
 import { handoffApi } from '@/services/handoffApi.js';
+import { strokePlannedRoute } from '@/services/positionMap.js';
 import { authUser } from '@/services/auth.js';
 import {
   labelOf, SEVERITY_LABEL, SEVERITY_TAG, RISK_STATE_LABEL, SOURCE_MODE_LABEL,
@@ -250,18 +251,7 @@ function renderMap() {
     const context = this.ctx;
     if (!context || !this.w) return;
     context.save();
-    if (line) {
-      context.beginPath();
-      line.forEach(([longitude, latitude], index) => {
-        const point = this.px(longitude, latitude);
-        if (index) context.lineTo(point[0], point[1]); else context.moveTo(point[0], point[1]);
-      });
-      context.setLineDash([6, 4]);
-      context.strokeStyle = 'rgba(61,139,255,.75)';
-      context.lineWidth = 1.6;
-      context.stroke();
-      context.setLineDash([]);
-    }
+    if (line) strokePlannedRoute(context, this, line);
     // 异物标记：画的是评估时刻的位置快照（决策 9-19），颜色只表示风险等级，不表示合法性。
     // 没有快照坐标就不画点——地图上多一个位置错误的标记，比少一个标记危险得多。
     if (spot) {

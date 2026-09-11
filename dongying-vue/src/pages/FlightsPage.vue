@@ -22,7 +22,7 @@ import {
   ALTITUDE_DATUM_LABEL, ALTITUDE_RELATION_LABEL, HANDOFF_TYPE_LABEL, LEGALITY_LABEL, PLAN_MATCH_TAG, PLAN_ROW_MATCH_LABEL, PLAN_STATUS_LABEL, PLAN_STATUS_TAG, REASON_CODE_LABEL, RECEIPT_RESULT_LABEL, RISK_TYPE_LABEL,
   SECTION_AVAILABILITY_LABEL, SOURCE_MODE_LABEL, labelOf, OBJECT_TYPE_LABEL, readableNo } from '@/ui/labels.js';
 import { isUncertainOutcome } from '@/services/apiClient.js';
-import { loadTargetPosition } from '@/services/positionMap.js';
+import { loadTargetPosition, strokePlannedRoute } from '@/services/positionMap.js';
 import { hasPermission } from '@/services/accessControl.js';
 import { authUser } from '@/services/auth.js';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
@@ -136,8 +136,8 @@ let riskDetailToken = 0;
 let riskHistoryToken = 0;
 let riskKpiToken = 0;
 
-const RISK_STATE_LABEL = { PENDING_VERIFICATION: '待核验', PENDING_NOTIFICATION: '待通知', NOTIFIED: '已通知', EXCLUDED: '已排除' };
-const RISK_STATE_TAG = { PENDING_VERIFICATION: 't-amber', PENDING_NOTIFICATION: 't-blue', NOTIFIED: 't-green', EXCLUDED: 't-gray' };
+const RISK_STATE_LABEL = { PENDING_VERIFICATION: '待核验', PENDING_NOTIFICATION: '待通知', NOTIFIED: '已通知', ACKNOWLEDGED: '已回执', EXCLUDED: '已排除' };
+const RISK_STATE_TAG = { PENDING_VERIFICATION: 't-amber', PENDING_NOTIFICATION: 't-blue', NOTIFIED: 't-green', ACKNOWLEDGED: 't-green', EXCLUDED: 't-gray' };
 const RISK_SEVERITY_LABEL = { CRITICAL: '紧急', HIGH: '高', MEDIUM: '中', LOW: '低' };
 const RISK_SEVERITY_TAG = { CRITICAL: 't-red', HIGH: 't-red', MEDIUM: 't-amber', LOW: 't-blue' };
 const RISK_SEVERITY_TONE = { CRITICAL: 'bad', HIGH: 'bad', MEDIUM: 'warn', LOW: 'info' };
@@ -339,6 +339,16 @@ function formatDuration(plan) {
 
 function stateLabel(state) { return RISK_STATE_LABEL[state] || state || '未知'; }
 function stateTag(state) { return RISK_STATE_TAG[state] || 't-gray'; }
+function receiptStatusLabel(risk) {
+  if (risk?.state === 'ACKNOWLEDGED') return '已回执';
+  if (risk?.state === 'NOTIFIED') return '未回执';
+  return '—';
+}
+function receiptStatusTag(risk) {
+  if (risk?.state === 'ACKNOWLEDGED') return 't-green';
+  if (risk?.state === 'NOTIFIED') return 't-amber';
+  return 't-gray';
+}
 function severityLabel(severity) { return RISK_SEVERITY_LABEL[severity] || severity || '未知'; }
 function severityTag(severity) { return RISK_SEVERITY_TAG[severity] || 't-gray'; }
 function heightRelationLabel(value) { return value == null ? '高度关系未知' : HEIGHT_RELATION_LABEL[value] || value; }
@@ -707,22 +717,11 @@ function renderRouteMap() {
       context.stroke();
       context.setLineDash([]);
     });
-    if (coordinates) {
-      // corridor_width_m 是走廊全宽；未做投影缓冲时不能把全宽误当半径，因此地图只画中心线。
-      context.beginPath();
-      coordinates.forEach(([longitude, latitude], index) => {
-        const point = this.px(longitude, latitude);
-        if (index) context.lineTo(point[0], point[1]);
-        else context.moveTo(point[0], point[1]);
-      });
-      context.strokeStyle = '#22d3ee';
-      context.lineWidth = 2.4;
-      context.lineJoin = 'round';
-      context.stroke();
-    }
+    // corridor_width_m 是走廊全宽；未做投影缓冲时不能把全宽误当半径，因此只描中心线样式。
+    if (coordinates) strokePlannedRoute(context, this, coordinates);
     context.restore();
   };
-  if (coordinates) routeMap.fitTo(coordinates);
+  if (coordinates) routeMap.fitTo(coordinates, 0.34);
   else {
     const [longitude, latitude] = target ? [target.lon, target.lat] : airspaces[0].polygons[0][0][0];
     routeMap.centerAt(longitude, latitude);
@@ -994,29 +993,7 @@ function renderRiskMap() {
     if (!context || !this.w) return;
     // 只画已保存航线版本的 WGS-84 中心线与风险自身的位置快照；缺哪样就不画哪样，不以 (0,0) 补位。
     context.save();
-    if (coordinates) {
-      context.beginPath();
-      coordinates.forEach(([longitude, latitude], index) => {
-        const at = this.px(longitude, latitude);
-        if (index) context.lineTo(at[0], at[1]);
-        else context.moveTo(at[0], at[1]);
-      });
-      context.setLineDash([6, 4]);
-      context.strokeStyle = 'rgba(61,139,255,.75)';
-      context.lineWidth = 1.6;
-      context.lineJoin = 'round';
-      context.stroke();
-      context.setLineDash([]);
-      const mid = this.px(...coordinates[coordinates.length >> 1]);
-      context.font = '10.5px "PingFang SC"';
-      context.textAlign = 'center';
-      context.textBaseline = 'middle';
-      const width = context.measureText(label).width + 8;
-      context.fillStyle = 'rgba(4,10,26,.75)';
-      context.fillRect(mid[0] - width / 2, mid[1] - 8, width, 15);
-      context.fillStyle = '#8fbaff';
-      context.fillText(label, mid[0], mid[1]);
-    }
+    if (coordinates) strokePlannedRoute(context, this, coordinates, { label });
     if (point) {
       const at = this.px(point.longitude, point.latitude);
       context.beginPath();
@@ -1145,7 +1122,6 @@ async function openRiskNotify(riskOverride = null) {
     title: '通知上级',
     width: '560px',
     warning: '提交后由通知渠道投递并回执；回执“已驱离”即闭环，风险不进入处置。',
-    notice: [risk.risk_no || readableNo(risk.source_risk_id) ? `风险 ${risk.risk_no || readableNo(risk.source_risk_id)}` : '风险事件', labelOf(RISK_TYPE_LABEL, risk.risk_type, ''), Number(expectedVersion) > 0 ? `已第${Number(expectedVersion)}次核验` : '尚未核验'].filter(Boolean).join(' · '),
     fields: [],
     confirmText: '提交通知',
     onSubmit: async () => {
@@ -1391,6 +1367,7 @@ onUnmounted(() => {
                       @click="toggleRiskSort('received')" @keydown.enter="toggleRiskSort('received')">时间{{ riskSortMark('received') }}</span></th>
                     <th><span class="rk-sort" role="button" tabindex="0" title="按状态排序"
                       @click="toggleRiskSort('state')" @keydown.enter="toggleRiskSort('state')">状态{{ riskSortMark('state') }}</span></th>
+                    <th>回执状态</th>
                   </tr></thead>
                   <tbody>
                     <tr v-for="risk in risks" :key="risk.risk_id" :data-row="risk.risk_id" tabindex="0" :class="{ on: activeRiskId === risk.risk_id }"
@@ -1404,6 +1381,7 @@ onUnmounted(() => {
                       <td style="text-align:center"><span class="tag" :class="severityTag(risk.severity)">{{ severityLabel(risk.severity) }}</span></td>
                       <td class="num" :title="`接收 ${formatTime(risk.received_at)}；发生 ${formatTime(risk.occurred_at)}`">{{ formatClock(risk.received_at) }}</td>
                       <td><span class="tag" :class="stateTag(risk.state)">{{ stateLabel(risk.state) }}</span></td>
+                      <td><span class="tag" :class="receiptStatusTag(risk)">{{ receiptStatusLabel(risk) }}</span></td>
                     </tr>
                   </tbody>
                 </table>

@@ -18,7 +18,7 @@ const filters = reactive({ keyword: '', type_code: null, channel: null, region: 
   connectivity: null, enabled: null, sort: 'priority' });
 const options = ref({ types: [], channels: [], regions: [], vendors: [] });
 // 下拉一改就查（决策 15-56）；关键词仍走查询按钮。
-watch(() => [filters.type_code, filters.channel, filters.region, filters.vendor, filters.connectivity, filters.enabled, filters.sort], () => { page.page = 1; loadList({ keepSelection: false }); });
+watch(() => [filters.type_code, filters.channel, filters.connectivity, filters.sort], () => { page.page = 1; loadList({ keepSelection: false }); });
 const protocols = ref([]);
 const page = reactive({ items: [], page: 1, size: 10, total: 0 });
 const overview = ref({ total: 0, online: 0, offline: 0, abnormal: 0, unknown: 0, alarm: 0, vendor_count: 0, model_count: 0, simulated: false });
@@ -263,14 +263,20 @@ onUnmounted(() => { active = false; detailSequence++; clearInterval(refreshTimer
     <div v-if="error" class="warnbox error-row" role="alert"><span>{{ error }}</span><NButton size="small" @click="bootstrap">重新加载</NButton></div>
     <UPanel title="设备台账" panel-style="flex:1;min-height:0" nopad>
       <div class="toolbar device-toolbar">
-        <UField v-model="filters.keyword" label="关键词" placeholder="设备编号或名称" @keyup.enter="page.page=1;loadList({ keepSelection:false })" />
-        <UField v-model="filters.type_code" type="select" clearable label="设备类型" :options="selectOptions(options.types)" />
-        <UField v-model="filters.channel" type="select" clearable label="接入通道" :options="selectOptions(options.channels)" />
-        <UField v-model="filters.region" type="select" clearable label="区域" :options="selectOptions(options.regions)" />
-        <UField v-model="filters.connectivity" type="select" clearable label="连接状态" :options="optionsOf([['ONLINE','在线'],['OFFLINE','离线'],['ABNORMAL','异常'],['UNKNOWN','未知']])" />
-        <UField v-model="filters.vendor" type="select" clearable label="供应商" :options="selectOptions(options.vendors)" />
-        <UField v-model="filters.enabled" type="select" clearable label="启用状态" :options="optionsOf([[true,'启用'],[false,'停用']])" />
-        <div class="toolbar-actions"><NButton type="primary" @click="page.page=1;loadList({ keepSelection:false })">查询</NButton><NButton @click="resetFilters">重置</NButton><NButton v-if="canReadBrokers" @click="openMqttBrokers(canEditBrokers, isActive)">MQTT 连接</NButton><NButton type="primary" :disabled="!canOperate" @click="openDeviceForm()">接入设备</NButton></div>
+        <div class="device-toolbar-filters">
+          <UField v-model="filters.keyword" size="small" label="关键词" placeholder="设备编号或名称" @keyup.enter="page.page=1;loadList({ keepSelection:false })" />
+          <UField v-model="filters.type_code" type="select" clearable size="small" label="设备类型" :options="selectOptions(options.types)" />
+          <UField v-model="filters.channel" type="select" clearable size="small" label="接入通道" :options="selectOptions(options.channels)" />
+          <UField v-model="filters.connectivity" type="select" clearable size="small" label="连接状态" :options="optionsOf([['ONLINE','在线'],['OFFLINE','离线'],['ABNORMAL','异常'],['UNKNOWN','未知']])" />
+          <div class="device-toolbar-search">
+            <NButton size="small" type="primary" @click="page.page=1;loadList({ keepSelection:false })">查询</NButton>
+            <NButton size="small" @click="resetFilters">重置</NButton>
+          </div>
+        </div>
+        <div class="device-toolbar-ops">
+          <NButton v-if="canReadBrokers" size="small" @click="openMqttBrokers(canEditBrokers, isActive)">MQTT 连接</NButton>
+          <NButton size="small" type="primary" :disabled="!canOperate" @click="openDeviceForm()">接入设备</NButton>
+        </div>
       </div>
       <div class="device-layout">
         <div class="table-pane">
@@ -338,5 +344,19 @@ onUnmounted(() => { active = false; detailSequence++; clearInterval(refreshTimer
 .device-page { display:flex; flex-direction:column; gap:12px; min-width:0; min-height:0; overflow:hidden; flex:1; }
 .device-page :deep(.kpis) { margin-bottom:12px; }
 .device-page :deep(.kpi .dt) { display:none; }
-.error-row{display:flex;align-items:center;justify-content:space-between;gap:12px}.device-toolbar{flex:none;display:grid;grid-template-columns:repeat(5,minmax(120px,1fr)) auto;align-items:end;padding:12px;border-bottom:1px solid var(--line-1)}.device-toolbar :deep(.u-field){min-width:0}.toolbar-actions{display:flex;gap:7px;flex-wrap:wrap;align-items:center}.device-layout{display:grid;grid-template-columns:minmax(0,1fr) 350px;flex:1;min-height:0;overflow:hidden}.table-pane{display:flex;flex-direction:column;min-width:0;min-height:0;border-right:1px solid var(--line-1);overflow:hidden}.device-table-spin{display:flex;flex:1;min-height:0;flex-direction:column}.device-table-spin :deep(.n-spin-container),.device-table-spin :deep(.n-spin-content){display:flex;flex:1;min-height:0;flex-direction:column;overflow:hidden}.table-pane :deep(.n-data-table-tr){cursor:pointer}.table-pane :deep(.active-row .n-data-table-td){background:color-mix(in srgb,var(--blue) 18%,var(--surface-1))!important}.table-actions{display:flex;flex-wrap:nowrap;gap:10px;white-space:nowrap}.muted{color:var(--txt-3)}.pager-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;color:var(--txt-3);border-top:1px solid var(--line-1)}.detail-pane{min-width:0;padding:16px;overflow:auto;background:color-mix(in srgb,var(--panel) 82%,transparent)}.detail-title{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;padding-bottom:14px;border-bottom:1px solid var(--line-1)}.detail-title h3{margin:3px 0 6px;font-size:18px}.detail-title small,.detail-title code{color:var(--txt-3)}.detail-grid{display:grid;grid-template-columns:100px minmax(0,1fr);gap:0;margin:12px 0;font-size:13px}.detail-grid dt,.detail-grid dd{margin:0;padding:9px 0;border-bottom:1px solid var(--line-1);overflow-wrap:anywhere}.detail-grid dt{color:var(--txt-3)}.connection-card{display:grid;gap:9px;margin-top:14px;padding:12px;border:1px solid var(--line-2);border-radius:6px;background:var(--surface-2)}.connection-card code{overflow-wrap:anywhere;color:var(--cyan)}.connection-card small{color:var(--txt-3);line-height:1.5}.empty-block{padding:64px 12px}@media(max-width:1360px){.device-toolbar{grid-template-columns:repeat(3,minmax(140px,1fr))}.device-layout{grid-template-columns:minmax(0,1fr) 320px}.toolbar-actions{grid-column:1/-1}}@media(max-width:980px){.device-layout{grid-template-columns:1fr;overflow:auto}.detail-pane{border-top:1px solid var(--line-1)}}
+.error-row{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.device-toolbar{display:flex;align-items:flex-end;justify-content:space-between;gap:12px 16px;flex-wrap:wrap;flex:none;padding:12px 14px;border-bottom:1px solid var(--line-1)}
+.device-toolbar-filters{display:flex;flex-wrap:wrap;gap:10px 12px;align-items:flex-end;min-width:0}
+.device-toolbar :deep(.u-field){min-width:0;width:176px;flex:none}
+.device-toolbar :deep(.n-input),.device-toolbar :deep(.n-select){width:100%}
+.device-toolbar-search,.device-toolbar-ops{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding-bottom:1px}
+.device-layout{display:grid;grid-template-columns:minmax(0,1fr) 350px;flex:1;min-height:0;overflow:hidden}.table-pane{display:flex;flex-direction:column;min-width:0;min-height:0;border-right:1px solid var(--line-1);overflow:hidden}.device-table-spin{display:flex;flex:1;min-height:0;flex-direction:column}.device-table-spin :deep(.n-spin-container),.device-table-spin :deep(.n-spin-content){display:flex;flex:1;min-height:0;flex-direction:column;overflow:hidden}.table-pane :deep(.n-data-table-tr){cursor:pointer}.table-pane :deep(.active-row .n-data-table-td){background:color-mix(in srgb,var(--blue) 18%,var(--surface-1))!important}.table-actions{display:flex;flex-wrap:nowrap;gap:10px;white-space:nowrap}.muted{color:var(--txt-3)}.pager-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;color:var(--txt-3);border-top:1px solid var(--line-1)}.detail-pane{min-width:0;padding:16px;overflow:auto;background:color-mix(in srgb,var(--panel) 82%,transparent)}.detail-title{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;padding-bottom:14px;border-bottom:1px solid var(--line-1)}.detail-title h3{margin:3px 0 6px;font-size:18px}.detail-title small,.detail-title code{color:var(--txt-3)}.detail-grid{display:grid;grid-template-columns:100px minmax(0,1fr);gap:0;margin:12px 0;font-size:13px}.detail-grid dt,.detail-grid dd{margin:0;padding:9px 0;border-bottom:1px solid var(--line-1);overflow-wrap:anywhere}.detail-grid dt{color:var(--txt-3)}.connection-card{display:grid;gap:9px;margin-top:14px;padding:12px;border:1px solid var(--line-2);border-radius:6px;background:var(--surface-2)}.connection-card code{overflow-wrap:anywhere;color:var(--cyan)}.connection-card small{color:var(--txt-3);line-height:1.5}.empty-block{padding:64px 12px}
+@media(max-width:1360px){
+  .device-layout{grid-template-columns:minmax(0,1fr) 320px}
+}
+@media(max-width:980px){
+  .device-toolbar :deep(.u-field){width:148px;flex:1 1 148px}
+  .device-layout{grid-template-columns:1fr;overflow:auto}
+  .detail-pane{border-top:1px solid var(--line-1)}
+}
 </style>

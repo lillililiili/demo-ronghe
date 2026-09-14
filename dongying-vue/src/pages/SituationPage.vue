@@ -1,543 +1,401 @@
-<script>
-/* 模块级状态：筛选条件默认全量（顶部筛选条已按产品要求移除）；sel 每次进入重置为首个实时目标
-   （legacy render() 行为）。 */
-const S = {
-  flt: { region: '东营市全域', ttype: '全部', risk: '全部', src: '全部' }
-};
-export default {};
-</script>
-
 <script setup>
-/* 融合感知中心（实时态势）。数据全部来自只读接口，本页不再读 window.MOCK（阶段 11）。
-   ⚠ g.TARGET_MEDIA / g.TARGET_ACTIONS 与两条 U.regParams 由 legacy script 模块加载期登记，这里不重复。
-
-   三条贯穿本页的规矩：
-   1. 未知不补默认值：没有 ACTIVE 研判的目标显示"待确认"而不是"合法"（决策 11-3）；
-      没有位置的目标（AOA 只给方位）进列表但地图不画点；没有的数值不渲染成 0 或 —— 整行不出现。
-   2. 后端不可达时显示错误态，绝不回退演示数据——回退会让人以为看到的是真实空情。
-   3. 没有后端能力的按钮禁用并标"未接入"（决策 11-4），不删按钮（删按钮属于改布局）。 */
-import { ref, onMounted, onUnmounted } from 'vue';
+/* 融合感知指挥台：本期显式使用页面私有模拟源。
+   模拟数据不会在接口失败时被当作真实数据，也不会发起任何真实设备指令。 */
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
-import { toast } from '@/ui/nv.js';
-import { targetApi } from '@/services/targetApi.js';
-import { airspaceApi } from '@/services/airspaceApi.js';
-import { deviceApi } from '@/services/deviceApi.js';
-import { listAlarms } from '@/services/alarmApi.js';
-import { legalityApi } from '@/services/legalityApi.js';
-import { DISPOSAL_ACTION_LABEL, RISK_STATE_LABEL, SEVERITY_LABEL,
-  SOURCE_TYPE_LABEL, SCHEMA_STATUS_LABEL, disposalStatusText, labelOf } from '@/ui/labels.js';
-/* 合法性结论沿用核验弹窗里的同一份词表：同一个码全站只能有一个说法。 */
-import { legalStatusText, RULE_REASON_TEXT } from '@/ui/legalityReviewModal.js';
-import { disposalApi } from '@/services/disposalApi.js';
-import { openDisposalRequest } from '@/ui/disposalAuthModal.js';
-import { canRouteAction } from '@/services/accessControl.js';
-import {
-  AIRSPACE_LAYERS, attachBearing, bearingOrigins, legalByTarget, percent, toAirspaces, toAlarms, toDevices, toTargets, toTrack
-} from '@/services/situationData.js';
+import { createSituationMockSource } from '@/pages/situation/situationMock.js';
 
 const U = window.UI;
 usePageChrome('situation');
-const root = ref(null);
 
-let map = null, sel = null;
-let almFocus = null;
-let selAlarmId = null;
-const flt = S.flt;
+const VIEWED_STORAGE_KEY = 'situation.mock.viewed.v1';
+const SCENARIO_STORAGE_KEY = 'situation.mock.started-at.v1';
+const mapHost = ref(null);
+const snapshot = ref({ generatedAt: 0, simulated: true, devices: [], targets: [], alarms: [], airspaces: [] });
+const selection = ref(null);
+const expandedType = ref('');
 const fuseOpen = ref(false);
-const fuseVisible = ref(false);
+const source = createSituationMockSource({ startedAt: loadScenarioStartedAt() });
+const layers = ref({ coverage: true, device: true, track: true, airspace: true });
+const statusAnnouncement = ref('模拟场景准备中');
+let viewedKeys = loadViewedKeys();
+let rawSnapshot = null;
+let map = null;
+let stopSource = null;
+
+function loadScenarioStartedAt() {
+  try {
+    const stored = Number(sessionStorage.getItem(SCENARIO_STORAGE_KEY));
+    if (Number.isFinite(stored) && stored > 0) return stored;
+    const startedAt = Date.now();
+    sessionStorage.setItem(SCENARIO_STORAGE_KEY, String(startedAt));
+    return startedAt;
+  } catch {
+    return Date.now();
+  }
+}
+
+const devices = computed(() => snapshot.value.devices || []);
+const alarms = computed(() => (snapshot.value.alarms || []).slice().sort((a, b) => b.ts - a.ts));
+const targets = computed(() => snapshot.value.targets || []);
+const onlineDeviceCount = computed(() => devices.value.filter(device => device.status === '在线').length);
+const deviceGroups = computed(() => ['RADAR', 'EO', 'FIVE_G_A', 'TDOA'].map(typeCode => {
+  const items = devices.value.filter(device => device.typeCode === typeCode);
+  const sample = items[0] || {};
+  const meters = items.map(device => device.coverage?.kind === 'sector' ? device.coverage.rangeM : device.coverage?.radiusM)
+    .filter(Number.isFinite);
+  const min = meters.length ? Math.min(...meters) : null;
+  const max = meters.length ? Math.max(...meters) : null;
+  const range = min == null ? '参数未知' : min === max ? `${min / 1000} km` : `${min / 1000}–${max / 1000} km`;
+  return {
+    typeCode, label: sample.type || typeCode, icon: sample.icon, color: sample.color,
+    items, total: items.length, online: items.filter(device => device.status === '在线').length,
+    hasNew: items.some(device => device.newAlert),
+    rangeText: typeCode === 'EO' ? `单站 ${range} 定向视场` : `单站 ${range} 有效范围`
+  };
+}));
+const newAlarmCount = computed(() => alarms.value.filter(alarm => alarm.isNew).length);
+const selectedTarget = computed(() => {
+  if (selection.value?.kind !== 'target') return null;
+  return targets.value.find(target => target.id === selection.value.id) || null;
+});
+const fusionDevices = computed(() => {
+  const ids = new Set(selectedTarget.value?.sourceDeviceIds || []);
+  return devices.value.filter(device => ids.has(device.id));
+});
+const fusionConfidence = computed(() => selectedTarget.value?.fusedConf ?? null);
+const clockText = computed(() => formatClock(snapshot.value.generatedAt));
 const fuseIcon = U.icon('radar');
 
-/* 接口数据（模块内可变，不进模板；模板只用 fuseVisible/fuseOpen 两个 ref） */
-let liveTargets = [];
-let liveAlarms = [];
-let liveAirspaces = [];
-let liveDevices = [];
-let selDetail = null;
-let sourceOnline = {};
-let timers = [];
-
-/* 轮询节奏（决策 11-5）：目标与告警变化快，空域与设备是慢变基础数据。 */
-const FAST_POLL_MS = 5000, SLOW_POLL_MS = 60000;
-
-function toggleFuse() {
-  if (!fuseVisible.value) return;
-  fuseOpen.value = !fuseOpen.value;
+function loadViewedKeys() {
+  try {
+    const value = JSON.parse(sessionStorage.getItem(VIEWED_STORAGE_KEY) || '[]');
+    return new Set(Array.isArray(value) ? value.map(String) : []);
+  } catch {
+    return new Set();
+  }
 }
 
-function matchFilter(t) {
-  if (flt.region !== '东营市全域' && t.district !== flt.region) return false;
-  if (flt.ttype !== '全部' && t.type !== flt.ttype) return false;
-  return true;
-}
-const shownTargets = () => liveTargets.filter(matchFilter);
-const latestAlarmIdOf = id => {
-  const as = shownAlarms().filter(a => a.targetId === id);
-  if (!as.length) return null;
-  return as.slice().sort((x, y) => y.ts - x.ts)[0].id;
-};
-function shownAlarms() {
-  const ids = new Set(shownTargets().map(t => t.id));
-  return liveAlarms.filter(a => {
-    if (flt.region !== '东营市全域' && a.district !== flt.region) return false;
-    if (flt.ttype !== '全部') return ids.has(a.targetId);
-    return true;
-  });
+function alarmKey(alarm) {
+  return `${alarm?.id || ''}:${Number(alarm?.ts || 0)}`;
 }
 
-/* ---- 地图悬浮卡 ---- */
-const STATUS_TAG = { '跟踪中': ['t-cyan', '#22d3ee'], '处置中': ['t-orange', '#ff8b3d'], '已处置': ['t-green', '#2fd06e'] };
-function legalColor(t) {
-  return t.legal === '非法' ? '#ff4d5e' : t.legal === '异常' ? '#ff8b3d'
-    : t.legal === '待确认' ? '#ffb020' : t.legal === '不适用' ? '#8ca0be' : '#2fd06e';
+function persistViewedKeys() {
+  sessionStorage.setItem(VIEWED_STORAGE_KEY, JSON.stringify([...viewedKeys]));
 }
-function statusTag(t) {
-  if (!t.status) return '';
-  const [cls, col] = STATUS_TAG[t.status] || ['t-gray', '#8ca0be'];
-  return `<span class="tag ${cls}"><span class="dot-s" style="background:${col}"></span>${t.status}</span>`;
+
+function isNewAlarm(alarm) {
+  return !viewedKeys.has(alarmKey(alarm));
 }
+
 function esc(value) {
-  return String(value == null ? '' : value).replace(/[&<>"']/g, ch =>
-    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
+  return String(value == null ? '' : value).replace(/[&<>"']/g, char => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[char]);
 }
-function tipActions(t) {
-  const isUav = t.type === '无人机';
-  const latest = alarmsOf(t.id).slice().sort((x, y) => y.ts - x.ts)[0] || null;
-  const id = esc(t.id);
-  const almBtn = latest
-    ? `<button type="button" class="btn warn" data-tip-act="alarm" data-tip-id="${id}"
-         title="转到「告警事件」并定位到该告警">⚠ 查看告警 →</button>`
-    : '';
-  /* 没有后端能力的按钮一律"保留 + 禁用 + 标注"，不删（决策 11-4 / 11-7）：删按钮属于改布局，
-     而留着能点、点了弹一句假的成功提示，比禁用更糟——那会让人以为通知真的发出去了。 */
-  const canEo = canRouteAction('devices', 'op');
-  const eoTitle = canEo
-    ? '向光电下发 BeginTracking，不是地图镜头跟随'
-    : '需要设备管理的操作权限';
-  const eoBtn = `<button type="button" class="btn" data-tip-act="eo-track" data-tip-id="${id}" ${canEo ? '' : 'disabled '}title="${eoTitle}">光电跟踪</button>`;
-  const videoBtn = `<button type="button" class="btn" disabled title="协议未提供实时视频流">${U.icon('video')} 实时视频</button>`;
-  /* 阶段 13：驱离改为走处置授权——按钮只负责“提申请”，批准与执行由授权流程决定，
-     点了不会有任何设备动作，也不会弹假成功。 */
-  const driveBtn = `<button type="button" class="btn" data-tip-act="drive" data-tip-id="${id}">派发驱离</button>`;
-  /* "转风险监测"保持可用：它是 #/risk 深链的三个生产者之一（阶段 9 决策 9-15 专门保住的），去掉会断掉这条跳转。 */
-  const riskBtn = `<button type="button" class="btn" data-tip-act="risk" data-tip-id="${id}">转风险监测 →</button>`;
-  if (isUav) {
-    return `<div class="maptip-track-acts">${videoBtn}${eoBtn}${almBtn}</div>`;
-  }
-  /* 类型还没认出来的目标，说不上"非无人机"，也谈不上驱离：先核验、先转风险监测。 */
-  const unclassified = !t.type || /未分类|未识别|识别中|未知/.test(String(t.type));
-  if (unclassified) {
-    return `<div class="maptip-track-note">目标类型尚未认定，先核验；认定后再决定反制或驱离</div>
-    <div class="maptip-track-acts is-grid">${videoBtn}${riskBtn}${almBtn}</div>`;
-  }
-  return `<div class="maptip-track-note">非无人机不进入反制流程，仅评估与驱离</div>
-    <div class="maptip-track-acts is-grid">${videoBtn}${driveBtn}${riskBtn}${almBtn}</div>`;
+
+function formatClock(value) {
+  if (!Number(value)) return '—';
+  return new Date(Number(value)).toLocaleTimeString('zh-CN', { hour12: false });
 }
-function renderTargetTip(t) {
-  const lon = Number.isFinite(t.lon) ? t.lon.toFixed(3) : '—';
-  const lat = Number.isFinite(t.lat) ? t.lat.toFixed(3) : '—';
-  return `<div class="maptip-track">
-    <header class="maptip-track-hd">
-      <div class="maptip-track-id">
-        <b style="color:${legalColor(t)}">${esc(t.id)}</b>
-        <span class="maptip-track-type">${esc(t.typeLabel || t.type)}</span>
-      </div>
-      ${statusTag(t)}
-    </header>
-    <div class="maptip-track-tags">${esc(t.legal)}</div>
-    <div class="maptip-track-metrics">
-      <div class="maptip-metric">
-        <span class="maptip-metric-ic">${U.icon('trend')}</span>
-        <span><small>飞行速度</small><b>${t.speed == null ? '—' : esc(t.speed)}<em>m/s</em></b></span>
-      </div>
-      <div class="maptip-metric">
-        <span class="maptip-metric-ic">${U.icon('chart')}</span>
-        <span><small>当前高度</small><b>${t.alt == null ? '—' : esc(t.alt)}<em>m</em></b></span>
-      </div>
-    </div>
-    <div class="maptip-track-geo"><span>经纬度</span><span class="mono">${t.posValid ? `${lon}°E, ${lat}°N` : '未提供位置'}</span></div>
-    ${tipSummaryRows(t)}
-    ${tipActions(t)}
-  </div>`;
+
+function reportAge(value) {
+  if (!Number(value) || !snapshot.value.generatedAt) return '未上报';
+  const seconds = Math.max(0, Math.round((snapshot.value.generatedAt - Number(value)) / 1000));
+  if (seconds < 5) return '刚刚';
+  if (seconds < 60) return `${seconds} 秒前`;
+  return `${Math.floor(seconds / 60)} 分钟前`;
 }
-/* 风险 / 合法性 / 处置三行：服务端给了才渲染，缺哪行不渲染哪行（不写"—"占位，那会让人以为查过且为空）。 */
-function tipSummaryRows(t) {
-  const rows = [];
-  const risk = t.riskSummary;
-  if (risk?.severity) {
-    rows.push(['风险等级', `${esc(labelOf(SEVERITY_LABEL, risk.severity))}${risk.state ? ` · ${esc(labelOf(RISK_STATE_LABEL, risk.state))}` : ''}`]);
+
+function iconHtml(device) {
+  return U.icon(device.icon || 'device');
+}
+
+function statusClass(status) {
+  return status === '在线' ? 'is-online' : status === '离线' ? 'is-offline' : 'is-warning';
+}
+
+function toggleDeviceType(typeCode) {
+  expandedType.value = expandedType.value === typeCode ? '' : typeCode;
+}
+
+function decorate(next) {
+  const nextAlarms = (next.alarms || []).map(alarm => ({ ...alarm, isNew: isNewAlarm(alarm) }));
+  const targetAlarms = new Map();
+  nextAlarms.forEach(alarm => {
+    const rows = targetAlarms.get(alarm.targetId) || [];
+    rows.push(alarm);
+    targetAlarms.set(alarm.targetId, rows);
+  });
+  const nextDevices = (next.devices || []).map(device => {
+    const relatedAlerts = (device.relatedAlerts || []).map(alarm => ({ ...alarm, isNew: isNewAlarm(alarm) }));
+    return { ...device, relatedAlerts, newAlert: relatedAlerts.some(alarm => alarm.isNew) };
+  });
+  const nextTargets = (next.targets || []).map(target => {
+    const related = targetAlarms.get(target.id) || [];
+    return {
+      ...target,
+      activeRisk: related.length > 0,
+      newAlert: related.some(alarm => alarm.isNew),
+      relatedAlarms: related
+    };
+  });
+  return { ...next, alarms: nextAlarms, devices: nextDevices, targets: nextTargets };
+}
+
+function applySnapshot(next) {
+  rawSnapshot = next;
+  const decorated = decorate(next);
+  snapshot.value = decorated;
+  const count = decorated.alarms.filter(alarm => alarm.isNew).length;
+  statusAnnouncement.value = count
+    ? `模拟数据已更新，${count} 条新异常`
+    : '模拟数据已更新，当前无未查看异常';
+  if (!map) return;
+  map.setData({
+    airspaces: decorated.airspaces,
+    devices: decorated.devices,
+    targets: decorated.targets,
+    alarms: []
+  });
+  if (selection.value) map.pinHit(selection.value.kind, selection.value.id);
+}
+
+function markViewed(rows) {
+  const list = (Array.isArray(rows) ? rows : [rows]).filter(Boolean);
+  if (!list.length) return;
+  let changed = false;
+  list.forEach(alarm => {
+    const key = alarmKey(alarm);
+    if (!viewedKeys.has(key)) {
+      viewedKeys.add(key);
+      changed = true;
+    }
+  });
+  if (!changed) return;
+  persistViewedKeys();
+  if (rawSnapshot) applySnapshot(rawSnapshot);
+}
+
+function selectDevice(device) {
+  if (!device) return;
+  markViewed(device.relatedAlerts || []);
+  selection.value = { kind: 'device', id: device.id };
+  fuseOpen.value = false;
+  if (map) {
+    map.sel = null;
+    map.centerAt(device.lon, device.lat, { scale: map.zoom });
+    map.pinHit('device', device.id);
   }
-  const legality = t.legalitySummary;
-  if (legality?.legal_status || legality?.violation_reasons?.length) {
-    // 违规事由用的是规则引擎的原因码（与合法性页、复核弹窗同一张表），不是风险的 reason_code。
-    const reasons = (legality.violation_reasons || []).map(code => esc(labelOf(RULE_REASON_TEXT, code))).join('、');
-    rows.push(['违规事由', reasons || esc(legalStatusText(legality.legal_status))]);
+}
+
+function selectTarget(target) {
+  if (!target) return;
+  markViewed(target.relatedAlarms || []);
+  selection.value = { kind: 'target', id: target.id };
+  if (map) {
+    map.sel = target.id;
+    map.centerAt(target.lon, target.lat, { scale: map.zoom });
+    map.pinHit('target', target.id);
   }
-  const disposal = t.disposalSummary;
-  if (disposal?.status) {
-    rows.push(['处置状态', `${esc(labelOf(DISPOSAL_ACTION_LABEL, disposal.action_type))} · ${esc(disposalStatusText(disposal))}`]);
-  }
-  return rows.map(([k, v]) => `<div class="maptip-track-geo"><span>${k}</span><span>${v}</span></div>`).join('');
+}
+
+function selectAlarm(alarm) {
+  markViewed(alarm);
+  selectTarget(targets.value.find(target => target.id === alarm.targetId));
+}
+
+function clearSelection() {
+  selection.value = null;
+  fuseOpen.value = false;
+  if (!map) return;
+  map.sel = null;
+  map.clearPinnedHit();
+}
+
+function renderDeviceTip(device) {
+  const coverage = device.coverage || { status: 'unknown' };
+  const unavailable = coverage.status === 'unavailable';
+  const coverageState = coverage.status === 'unknown' ? '覆盖参数未知'
+    : unavailable ? `${device.coverageText}（当前不可用）` : device.coverageText;
+  const related = (device.relatedAlerts || []).slice(0, 2);
+  return `<section class="sit-map-pop sit-map-pop-device" style="--sensor:${esc(device.color)}">
+    <header><span class="sit-map-pop-icon">${iconHtml(device)}</span><span><b>${esc(device.name)}</b><small class="mono">${esc(device.id)}</small></span>
+      <button type="button" data-tip-act="close" aria-label="关闭设备详情">${U.icon('close')}</button></header>
+    <div class="sit-map-pop-status"><span class="sit-state ${statusClass(device.status)}">${esc(device.status)}</span><span>最新上报 ${esc(reportAge(device.lastReportAt))}</span></div>
+    <dl><dt>覆盖参数</dt><dd class="${unavailable ? 'is-unavailable' : ''}">${esc(coverageState)}</dd>
+      <dt>参数来源</dt><dd>${esc(coverage.sourceLabel || '未提供')}</dd>
+      <dt>更新时间</dt><dd class="mono">${formatClock(coverage.updatedAt)}</dd></dl>
+    <div class="sit-map-pop-alerts"><b>相关设备告警</b>${related.length
+      ? related.map(alarm => `<span class="${alarm.isNew ? 'is-new' : ''}">${esc(alarm.title)} · ${alarm.isNew ? '新异常' : '已查看，风险持续'}</span>`).join('')
+      : '<span>当前无关联告警</span>'}</div>
+  </section>`;
+}
+
+function renderTargetTip(target) {
+  const alarm = (target.relatedAlarms || [])[0];
+  const sourceNames = devices.value.filter(device => (target.sourceDeviceIds || []).includes(device.id)).map(device => device.type).join(' / ');
+  return `<section class="sit-map-pop sit-map-pop-target${target.newAlert ? ' is-new' : ''}">
+    <header><span class="sit-map-pop-icon">${U.icon('plane')}</span><span><b>${esc(target.id)}</b><small>${esc(target.typeLabel)}</small></span>
+      <button type="button" data-tip-act="close" aria-label="关闭无人机详情">${U.icon('close')}</button></header>
+    <div class="sit-map-pop-status"><span class="sit-state ${target.activeRisk ? 'is-risk' : 'is-online'}">${target.activeRisk ? '风险持续' : '跟踪中'}</span><span>${alarm ? esc(alarm.type) : '暂无关联异常'}</span></div>
+    <div class="sit-target-metrics"><span><small>高度</small><b>${esc(target.alt)} m</b></span><span><small>速度</small><b>${esc(target.speed)} m/s</b></span><span><small>融合置信</small><b>${esc(target.fusedConf)}%</b></span></div>
+    <p>感知来源：${esc(sourceNames || '未提供')}</p>
+    <div class="sit-map-pop-note">${target.activeRisk ? '已查看，风险状态仍保留。' : '目标处于模拟实时跟踪中。'}</div>
+    <div class="sit-map-pop-actions"><button type="button" disabled title="模拟态不下发真实设备指令">光电跟踪 · 模拟态</button></div>
+  </section>`;
 }
 
 function renderMapTip(hit) {
-  if (hit.kind !== 'target' || !hit.data) return null;
-  return renderTargetTip(hit.data);
+  if (hit?.kind === 'device') return renderDeviceTip(hit.data);
+  if (hit?.kind === 'target') return renderTargetTip(hit.data);
+  return null;
 }
-function selectTarget(t) {
-  if (!t) return;
-  sel = t;
-  almFocus = null;
-  selAlarmId = latestAlarmIdOf(sel.id);
-  if (map) map.sel = sel.id;
-  loadSelected();
-  refresh();
+
+function onMapPick(hit) {
+  if (hit?.kind === 'device') selectDevice(devices.value.find(device => device.id === hit.data.id));
+  if (hit?.kind === 'target') selectTarget(targets.value.find(target => target.id === hit.data.id));
 }
-function onTipAction(act, hit) {
-  const t = hit && hit.data;
-  if (!t) return;
-  const live = liveTargets.find(x => x.id === t.id);
-  if (live && (!sel || live.id !== sel.id)) selectTarget(live);
-  if (act === 'alarm') {
-    const a = alarmsOf(t.id).slice().sort((x, y) => y.ts - x.ts)[0];
-    if (!a) return toast('该目标暂无关联告警记录', 'err');
-    sessionStorage.setItem('alarm.sel', a.alarmId || a.id);
-    location.hash = '#/alarms';
+
+function onTipAction(action) {
+  if (action === 'close') clearSelection();
+}
+
+function toggleLayer(key) {
+  layers.value = { ...layers.value, [key]: !layers.value[key] };
+  if (!map) return;
+  if (key === 'airspace') {
+    ['nofly', 'limit', 'suit'].forEach(layer => map.setLayer(layer, layers.value.airspace));
     return;
   }
-  /* video / notify 两个按钮仍是禁用态，点不到，因此没有对应分支——
-     没有能力就不要留一条会弹出假成功提示的处理路径。 */
-  if (act === 'drive') { requestDispersal(t); return; }
-  if (act === 'risk') { toast('正在跳转飞行计划风险事件…'); setTimeout(() => location.hash = '#/risk', 600); }
-  if (act === 'eo-track') { requestEoTrack(t); }
+  map.setLayer(key, layers.value[key]);
 }
 
-async function requestEoTrack(t) {
-  if (!t?.id) return;
-  try {
-    await deviceApi.beginEoTrack(t.id, { reason: '值班员点选' });
-    toast('已下发光电跟踪', 'ok');
-  } catch (error) {
-    toast(error.message || '光电跟踪失败', 'err');
-  }
+function toggleFuse() {
+  if (selectedTarget.value) fuseOpen.value = !fuseOpen.value;
 }
 
-/* 对目标发起驱离申请：主体是目标本身（契约 subject_kind=TARGET）。
-   策略读不到只影响提示文字，不阻断申请；能不能真的执行由审批与设备通道决定。 */
-async function requestDispersal(t) {
-  let policy = null;
-  try { policy = await disposalApi.policies(); } catch { policy = null; }
-  openDisposalRequest({
-    actionType: 'DISPERSAL',
-    subjectKind: 'TARGET',
-    subjectId: t.id,
-    subjectText: t.no || t.id,
-    policy
+function onVisibilityChange() {
+  if (document.hidden) source.pause();
+  else source.resume();
+  if (map?.setPaused) map.setPaused(document.hidden);
+}
+
+onMounted(() => {
+  map = new window.MapView(mapHost.value, {
+    maxDev: 120,
+    maxAlarm: 0,
+    zoom: 1,
+    legend: false,
+    fusionProfile: true,
+    sensorIconScale: .82,
+    maxDpr: 2,
+    layers: { alarm: false, coverage: true },
+    interactiveTip: true,
+    renderTip: renderMapTip,
+    onTipAction,
+    onPick: onMapPick,
+    onEmptyPick: clearSelection
   });
-}
-
-/* ---- 融合卡：来源来自目标详情的 source_links，在线态来自 /fusion/status ---- */
-function hasFuseData(t) {
-  return !!(t && selDetail && Array.isArray(selDetail.source_links) && selDetail.source_links.length);
-}
-
-let sourceConfidence = {};
-
-function paintFuse() {
-  const has = hasFuseData(sel);
-  fuseVisible.value = has;
-  if (!has) { fuseOpen.value = false; return; }
-  const t = sel;
-  const conf = t.fusedConf;
-  const chips = selDetail.source_links.map(link => {
-    const online = sourceOnline[link.source_id] !== false;
-    const name = labelOf(SOURCE_TYPE_LABEL, link.source_type, link.source_name || '未知来源');
-    const demo = link.schema_status === 'DEMO'
-      ? `<em class="mono" title="${esc(labelOf(SCHEMA_STATUS_LABEL, link.schema_status))}">待联调</em>` : '';
-    const col = online ? '#3d8bff' : '#5a6c88';
-    /* 置信度条用的是**目标级** fusion_confidence——读接口没有按来源分路的置信度，
-       所以 title 里说清它是整条融合链路的置信度，不让人误以为这是这一路自己的数。无值就整条不渲染。 */
-    /* 有这一路自己的身份置信度就用它；没有才退回目标级融合置信度，两者的提示语不同，不混为一谈。 */
-    const own = sourceConfidence[link.source_code] ?? sourceConfidence[link.source_id];
-    const value = own?.confidence ?? conf;
-    const barTitle = own?.confidence != null ? '该来源的身份置信度' : '目标融合置信度（非单一来源）';
-    const bar = value == null ? ''
-      : `<span class="bar" title="${barTitle}"><i style="width:${value}%;background:${col}"></i></span>`;
-    return `<div class="sit-fuse-ch${online ? '' : ' off'}">
-      <span class="dot-s" style="background:${col}"></span>
-      <b>${esc(name)}</b>${demo}${bar}
-    </div>`;
-  }).join('');
-  const col = conf != null && conf >= 80 ? '#79e5a5' : '#ffd07a';
-  const meta = document.getElementById('stFuseMeta');
-  if (meta) meta.innerHTML = conf == null ? '置信度未提供' : `置信度 <b class="mono" style="color:${col}">${conf}%</b>`;
-  const orbPct = document.getElementById('stFuseOrbPct');
-  if (orbPct) {
-    orbPct.textContent = conf == null ? '—' : conf + '%';
-    orbPct.style.color = col;
-  }
-  const level = selDetail.degradation && selDetail.degradation.determined ? selDetail.degradation.level : null;
-  document.getElementById('stFuse').innerHTML = `
-    <div class="sit-fuse">
-      <div class="sit-fuse-copy">
-        <div><b>${esc(t.typeLabel || t.type)}</b> ${U.legal(t.legal)}</div>
-        ${level ? `<div><b style="color:#79e6f6">融合降级：${esc(level)}</b></div>` : ''}
-      </div>
-      <div class="sit-fuse-chs">${chips}</div>
-    </div>`;
-}
-
-/* ---- 告警列表 ---- */
-function paintAlarms() {
-  const box = document.getElementById('stAlarms');
-  if (!box) return;
-  if (loadError) {
-    box.innerHTML = `<div class="warnbox">${esc(loadError)}</div>`;
-    return;
-  }
-  const list = shownAlarms();
-  if (!list.length) {
-    box.innerHTML = '<div class="empty">当前无告警<br>点选地图目标或等待新告警</div>';
-    return;
-  }
-  box.innerHTML = list.slice(0, 12).map(a => {
-    const live = liveTargets.some(t => t.id === a.targetId);
-    return `
-    <div class="a lv-${a.level}${live ? '' : ' hist'}" data-alm="${esc(a.targetId)}" data-alm-id="${esc(a.id)}"
-      title="${live ? '点击：在地图上跟踪该目标' : '该目标已离开实时跟踪窗口'}"
-      ${a.id === selAlarmId
-      ? 'style="border:1px solid var(--cyan);background:rgba(34,211,238,.08)"' : ''}>
-      <div class="r1"><span class="id">${esc(a.targetId)}</span>
-        ${U.tag(a.level === '高' ? '高风险' : a.level === '中' ? '中风险' : '低风险')}
-        <span style="margin-left:auto" class="mono">${a.ts ? new Date(a.ts).toLocaleTimeString('zh-CN', { hour12: false }) : ''}</span></div>
-      <div class="r2"><span>${esc(a.district)}</span>
-        <span>${live ? '' : '<span class="hist-tag" title="目标已离开实时跟踪窗口">非实时</span>'}</span></div>
-    </div>`; }).join('');
-}
-
-function alarmsOf(id) { return liveAlarms.filter(a => a.targetId === id); }
-
-function applyFilter() {
-  const ts = shownTargets();
-  if (map) map.setData({
-    airspaces: liveAirspaces,
-    devices: liveDevices,
-    targets: ts, alarms: []
-  });
-  if (ts.length && (!sel || !ts.some(t => t.id === sel.id))) {
-    sel = ts[0];
-    if (map) map.sel = sel.id;
-    loadSelected();
-  }
-  paintAlarms();
-}
-
-function refresh() {
-  paintFuse(); paintAlarms();
-}
-
-/* ---- 取数 ---- */
-let loadError = '';
-
-function messageOf(reason) {
-  if (reason && reason.status === 403) return '当前账号没有查看融合感知数据的权限。';
-  return (reason && reason.message) || '读取失败，请稍后重试。';
-}
-
-/* 研判分页上限是 100（size=200 会被服务端判为分页参数无效），因此按页取到 total 为止。
-   取不到就整体退化为"待确认"，不是"合法"——宁可全场标待确认，也不能凭空给出一个合法结论。 */
-const EVALUATION_PAGE_SIZE = 100, EVALUATION_MAX_PAGES = 10;
-async function loadEvaluations() {
-  const items = [];
-  for (let page = 1; page <= EVALUATION_MAX_PAGES; page++) {
-    const result = await legalityApi.listEvaluations({
-      latest_only: true, mode: 'ACTIVE', size: EVALUATION_PAGE_SIZE, page
-    });
-    items.push(...(result.items || []));
-    if (items.length >= (result.total || 0) || !(result.items || []).length) break;
-  }
-  return { items };
-}
-
-async function loadTargetsAndAlarms() {
-  try {
-    const [targetPage, evaluationPage, alarmPage] = await Promise.all([
-      targetApi.listAll({ size: 100 }),
-      loadEvaluations().catch(() => ({ items: [] })),
-      listAlarms({ size: 100 }).catch(() => ({ items: [] }))
-    ]);
-    liveTargets = attachBearing(toTargets(targetPage.items || [], legalByTarget(evaluationPage.items || [])), deviceOrigins);
-    liveAlarms = toAlarms(alarmPage.items || []);
-    loadError = '';
-  } catch (reason) {
-    // 后端不可达时如实报错，绝不回退演示数据。
-    loadError = messageOf(reason);
-    liveTargets = []; liveAlarms = [];
-  }
-  applyFilter();
-  refresh();
-}
-
-let deviceOrigins = {};
-
-async function loadAirspacesAndDevices() {
-  try {
-    const page = await airspaceApi.list({ size: 100, valid_at: Date.now() });
-    const details = await Promise.all((page.items || []).map(item =>
-      airspaceApi.detail(item.airspace_id).catch(() => null)));
-    liveAirspaces = toAirspaces(details.filter(Boolean));
-  } catch { liveAirspaces = []; }
-  try {
-    const page = await deviceApi.list({ size: 200 });
-    liveDevices = toDevices(page.items || []);
-    // 方位线的起点按 device_id 取原始坐标；设备列表刷新后给已加载的目标补上。
-    deviceOrigins = bearingOrigins(page.items || []);
-    attachBearing(liveTargets, deviceOrigins);
-  } catch { liveDevices = []; }
-  applyFilter();
-}
-
-async function loadFusionStatus() {
-  try {
-    const status = await targetApi.fusionStatus();
-    const map2 = {};
-    for (const source of (status && status.sources) || []) map2[source.source_id] = source.online !== false;
-    sourceOnline = map2;
-  } catch { sourceOnline = {}; }
-}
-
-async function loadSelected() {
-  if (!sel) { selDetail = null; return; }
-  const targetId = sel.targetId;
-  /* 详情与轨迹分开取：轨迹读不到（无权限、无轨迹）不该把已经拿到的融合详情一起丢掉，
-     否则融合面板会因为一次无关的失败而整块消失。 */
-  try {
-    const detail = await targetApi.detail(targetId);
-    if (!sel || sel.targetId !== targetId) return;
-    selDetail = detail;
-    sel.fusedConf = percent(detail.latest_state && detail.latest_state.fusion_confidence);
-  } catch { selDetail = null; }
-  /* 分路置信度来自观测（阶段 15 的 identity_confidence）：按来源取最近一条。
-     读不到就退回目标级融合置信度，并在提示里说清那不是这一路自己的数。 */
-  try {
-    const page = await targetApi.observations(targetId, { size: 50 });
-    const bySource = {};
-    for (const row of page?.items || []) {
-      if (row.identity_confidence == null) continue;
-      const key = row.source_code || row.source_id;
-      const prev = bySource[key];
-      if (!prev || Number(row.observed_at || 0) >= Number(prev.observedAt || 0)) {
-        bySource[key] = { confidence: percent(row.identity_confidence), observedAt: Number(row.observed_at || 0) };
-      }
-    }
-    sourceConfidence = bySource;
-  } catch { sourceConfidence = {}; }
-  try {
-    const tracks = await targetApi.tracksAll(targetId, { size: 20 });
-    const open = (tracks.items || [])[0];
-    if (open) {
-      const points = await targetApi.pointsAll(open.track_id, { size: 200 });
-      if (sel && sel.targetId === targetId) sel.track = toTrack(points.items || []);
-    }
-  } catch { /* 没有轨迹就不画轨迹线，其余照常显示 */ }
-  if (map) map.setData({ airspaces: liveAirspaces, devices: liveDevices, targets: shownTargets(), alarms: [] });
-  refresh();
-}
-
-onUnmounted(() => {
-  timers.forEach(clearInterval);
-  timers = [];
-  if (map) map.destroy();
-  map = null;
+  stopSource = source.start(applySnapshot);
+  document.addEventListener('visibilitychange', onVisibilityChange);
 });
 
-onMounted(async () => {
-  const view = root.value;
-  map = new window.MapView(document.getElementById('stMap'), {
-    maxDev: 46, maxAlarm: 0, zoom: 1.06, legend: false, layers: { alarm: false },
-    interactiveTip: true, renderTip: renderMapTip, onTipAction,
-    onPick: p => {
-      if (p.kind === 'target') {
-        const t = liveTargets.find(x => x.id === p.data.id);
-        if (t) selectTarget(t);
-      }
-    }
-  });
-
-  /* 图层控制浮层：字典改为本页本地常量（决策 11-6），与 map.js 的图层键一致。 */
-  const lyBox = document.createElement('div');
-  lyBox.className = 'maplayers';
-  const layerLabel = k => [...new Set(AIRSPACE_LAYERS.filter(a => a.layer === k).map(a => a.legend))].join(' / ');
-  const layerColor = k => (AIRSPACE_LAYERS.find(a => a.layer === k) || {}).color;
-  const LY = [
-    ['device', '设备点位', '<span class="sw dot" style="background:#22d3ee"></span>'],
-    ['track', '无人机轨迹', '<span class="sw ln" style="border-color:#2fd06e"></span>']
-  ].concat([...new Set(AIRSPACE_LAYERS.map(a => a.layer))].map(k =>
-    [k, layerLabel(k), `<span class="sw ln" style="border-color:${layerColor(k)}"></span>`]));
-  lyBox.classList.add('collapsed');
-  lyBox.innerHTML = `<div class="lyt" role="button" tabindex="0" aria-label="展开或收起图层与图例">图层与图例 <span class="lg-arrow">▸</span></div>` +
-    LY.map(([k, n, sw]) => `<label><input type="checkbox" data-layer="${k}" checked>${sw}${n}</label>`).join('');
-  document.getElementById('stMap').appendChild(lyBox);
-  lyBox.querySelector('.lyt').addEventListener('click', () => {
-    const c = lyBox.classList.toggle('collapsed');
-    lyBox.querySelector('.lg-arrow').textContent = c ? '▸' : '▾';
-  });
-  U.on(view, '[data-layer]', 'change', (e, el) => map.setLayer(el.dataset.layer, el.checked));
-  U.on(view, '[data-alm]', 'click', (e, el) => {
-    selAlarmId = el.dataset.almId;
-    const t = liveTargets.find(x => x.id === el.dataset.alm);
-    if (!t) return toast('该告警未关联到当前实时目标', 'err');
-    almFocus = null;
-    selectTarget(t);
-    if (map && map.w && t.posValid) map.centerAt(t.lon, t.lat);
-  });
-
-  await loadFusionStatus();
-  await loadAirspacesAndDevices();
-  await loadTargetsAndAlarms();
-
-  const ctx = U.consume('situation');
-  if (ctx && ctx.target) {
-    const t = liveTargets.find(x => x.id === ctx.target || x.targetId === ctx.target);
-    if (t) { selectTarget(t); if (map && map.w && t.posValid) map.centerAt(t.lon, t.lat); }
-    else toast('该目标已脱离实时跟踪窗口，已显示当前追踪目标');
-  }
-
-  timers.push(setInterval(loadTargetsAndAlarms, FAST_POLL_MS));
-  timers.push(setInterval(() => { loadAirspacesAndDevices(); loadFusionStatus(); }, SLOW_POLL_MS));
+onUnmounted(() => {
+  document.removeEventListener('visibilitychange', onVisibilityChange);
+  if (stopSource) stopSource();
+  stopSource = null;
+  source.stop();
+  if (map) map.destroy();
+  map = null;
 });
 </script>
 
 <template>
-  <div class="view situation-page" id="view" ref="root">
-    <div class="sit-stage">
-      <div id="stMap" class="sit-map"></div>
-      <aside class="sit-hud sit-hud-alarms" aria-label="实时告警列表">
-        <header class="sit-hud-hd">
-          <h3>实时告警</h3>
-          <a class="lnk" href="#/alarms">查看更多 ›</a>
+  <div id="view" class="view situation-page" @keydown.esc="clearSelection">
+    <main class="sit-stage" aria-label="融合感知实时地图">
+      <div id="stMap" ref="mapHost" class="sit-map"></div>
+
+      <div class="sit-live-pill" aria-label="当前使用非生产模拟数据">
+        <span class="sit-live-dot" aria-hidden="true"></span>
+        <b>模拟数据</b>
+        <span>非生产实时数据</span>
+        <span>{{ targets.length }} 架监测目标</span>
+        <time class="mono">{{ clockText }}</time>
+      </div>
+      <p class="sr-only" role="status" aria-live="polite" aria-atomic="true">{{ statusAnnouncement }}</p>
+
+      <aside class="sit-glass sit-device-dock" aria-labelledby="sit-device-title">
+        <header class="sit-dock-head">
+          <span><small>SENSING FIELD</small><b id="sit-device-title">感知设备</b></span>
+          <em><i></i>{{ onlineDeviceCount }} 在线 / {{ devices.length - onlineDeviceCount }} 离线</em>
         </header>
-        <div class="sit-hud-bd alarm" id="stAlarms"></div>
+        <div class="sit-device-list">
+          <section v-for="group in deviceGroups" :key="group.typeCode" class="sit-device-group" :style="{ '--sensor': group.color }">
+            <button type="button" class="sit-device-row"
+              :class="{ 'is-selected': group.items.some(device => selection?.kind === 'device' && selection.id === device.id), 'has-new': group.hasNew }"
+              :aria-expanded="expandedType === group.typeCode" :aria-controls="`sit-device-${group.typeCode}`"
+              :aria-label="`${expandedType === group.typeCode ? '收起' : '展开'}${group.label}设备，共${group.total}台`"
+              @click="toggleDeviceType(group.typeCode)">
+              <span class="sit-device-icon" v-html="iconHtml(group)"></span>
+              <span class="sit-device-copy"><b>{{ group.label }}<small>{{ group.total }} 台</small></b><em>{{ group.rangeText }}</em></span>
+              <span class="sit-device-state"><b>{{ group.online }}/{{ group.total }}</b><small>{{ expandedType === group.typeCode ? '收起' : '展开' }}</small></span>
+            </button>
+            <div v-show="expandedType === group.typeCode" :id="`sit-device-${group.typeCode}`" class="sit-device-node-list">
+              <button v-for="device in group.items" :key="device.id" type="button" class="sit-device-node"
+                :class="[{ 'is-selected': selection?.kind === 'device' && selection.id === device.id, 'has-new': device.newAlert }, statusClass(device.status)]"
+                :aria-pressed="selection?.kind === 'device' && selection.id === device.id"
+                :aria-label="`查看${device.type}设备 ${device.name}`" @click="selectDevice(device)">
+                <span><i></i><b>{{ device.name }}</b><small class="mono">{{ device.id }}</small></span>
+                <em>{{ device.status }} · {{ reportAge(device.lastReportAt) }}</em>
+              </button>
+            </div>
+          </section>
+        </div>
+        <footer>共 {{ devices.length }} 台模拟设备；覆盖参数为公开指标量级，非现场实测。</footer>
       </aside>
-      <aside v-show="fuseVisible" class="sit-fuse-dock" :class="{ 'is-open': fuseOpen }" aria-label="多源融合结果">
+
+      <aside class="sit-glass sit-alert-dock" aria-labelledby="sit-alert-title">
+        <header class="sit-dock-head">
+          <span><small>UAV ANOMALIES</small><b id="sit-alert-title">无人机实时异常</b></span>
+          <em :class="{ 'has-new': newAlarmCount }">{{ newAlarmCount ? `${newAlarmCount} 条未查看` : '已全部查看' }}</em>
+        </header>
+        <div class="sit-alert-list">
+          <button v-for="alarm in alarms" :key="alarmKey(alarm)" type="button" class="sit-alert-row"
+            :class="[{ 'is-new': alarm.isNew, 'is-selected': selection?.kind === 'target' && selection.id === alarm.targetId }, `level-${alarm.level}`]"
+            :aria-pressed="selection?.kind === 'target' && selection.id === alarm.targetId"
+            :aria-label="`查看${alarm.targetId}的${alarm.type}，${alarm.isNew ? '新异常' : '已查看，风险持续'}`" @click="selectAlarm(alarm)">
+            <span class="sit-alert-level">{{ alarm.level }}</span>
+            <span class="sit-alert-copy"><b class="mono">{{ alarm.targetId }}</b><em>{{ alarm.type }} · {{ alarm.district }}</em></span>
+            <span class="sit-alert-meta"><time class="mono">{{ formatClock(alarm.ts) }}</time><b>{{ alarm.isNew ? '新异常' : '已查看，风险持续' }}</b></span>
+          </button>
+        </div>
+        <footer>查看只停止提示动画，不改变风险状态。</footer>
+      </aside>
+
+      <nav class="sit-layerbar" aria-label="地图图层">
+        <button type="button" :aria-pressed="layers.coverage" @click="toggleLayer('coverage')">覆盖范围</button>
+        <button type="button" :aria-pressed="layers.device" @click="toggleLayer('device')">设备点位</button>
+        <button type="button" :aria-pressed="layers.track" @click="toggleLayer('track')">无人机轨迹</button>
+        <button type="button" :aria-pressed="layers.airspace" @click="toggleLayer('airspace')">防控空域</button>
+      </nav>
+
+      <aside v-if="selectedTarget" class="sit-fuse-dock" :class="{ 'is-open': fuseOpen }" aria-label="多源融合结果">
         <button type="button" class="sit-fuse-orb" :aria-expanded="fuseOpen"
           :aria-label="fuseOpen ? '收起多源融合' : '展开多源融合'" @click="toggleFuse">
-          <span class="sit-fuse-orb-cap">
-            <small>多源融合</small>
-            <b>置信度 <span id="stFuseOrbPct" class="mono">—</span></b>
-          </span>
-          <span class="sit-fuse-orb-ball" aria-hidden="true">
-            <span class="sit-fuse-orb-icon" v-html="fuseIcon"></span>
-          </span>
-          <span class="sit-fuse-orb-hint">{{ fuseOpen ? '点击收起' : '点击展开' }}</span>
+          <span class="sit-fuse-orb-cap"><small>多源融合</small><b>{{ fusionConfidence ?? '—' }}%</b></span>
+          <span class="sit-fuse-orb-ball" aria-hidden="true"><span v-html="fuseIcon"></span></span>
         </button>
-        <div class="sit-fuse-panel" role="region">
-          <header class="sit-hud-hd">
-            <h3>多源融合</h3>
-            <span class="sit-hud-sub" id="stFuseMeta"></span>
-          </header>
-          <div class="sit-hud-bd" id="stFuse"></div>
-        </div>
+        <section class="sit-glass sit-fuse-panel">
+          <header class="sit-dock-head"><span><small>FUSION LINKS</small><b>{{ selectedTarget.id }}</b></span><em>{{ fusionConfidence }}% 置信</em></header>
+          <div class="sit-fuse-links">
+            <span v-for="device in fusionDevices" :key="device.id" :style="{ '--sensor': device.color }">
+              <i></i><b>{{ device.type }}</b><em>{{ device.status }}</em>
+            </span>
+          </div>
+          <p>各来源为模拟链路，不代表现场已联调。</p>
+        </section>
       </aside>
-    </div>
+    </main>
   </div>
 </template>

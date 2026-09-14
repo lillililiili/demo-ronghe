@@ -2,6 +2,10 @@
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 let enginePromise;
 const archives = new Map();
+const MANAGED_CONFIG_URL = '/map-data/control/map-config.json';
+const BUILTIN_CONFIG_URL = '/map-config.json';
+let activeRuntimeKey = '';
+let monitorStarted = false;
 
 function localUrl(value, base = window.location.href) {
   if (typeof value !== 'string' || !value.trim()) throw new Error('地图配置缺少资源地址');
@@ -14,9 +18,52 @@ function localUrl(value, base = window.location.href) {
 
 async function json(url, signal) {
   const response = await fetch(url, { signal, cache: 'no-cache', redirect: 'error' });
-  if (!response.ok) throw new Error(`地图资源返回 HTTP ${response.status}`);
+  if (!response.ok) {
+    const error = new Error(`地图资源返回 HTTP ${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
   if (!(response.headers.get('Content-Type') || '').includes('json')) throw new Error('地图配置返回了网页而非 JSON，请重启开发服务或检查静态目录映射');
   return response.json();
+}
+
+function runtimeKey(config) {
+  return `${config?.revision ?? 'builtin'}:${config?.package_id || config?.manifest || ''}`;
+}
+
+async function readRuntimeConfig(signal) {
+  const managedUrl = localUrl(MANAGED_CONFIG_URL);
+  try {
+    const config = await json(managedUrl, signal);
+    return { config, configUrl: managedUrl, managed: true };
+  } catch (error) {
+    if (error?.name === 'AbortError') throw error;
+    const builtinUrl = localUrl(BUILTIN_CONFIG_URL);
+    const config = await json(builtinUrl, signal);
+    return { config, configUrl: builtinUrl, managed: false };
+  }
+}
+
+async function checkForRuntimeChange() {
+  if (document.visibilityState === 'hidden') return;
+  try {
+    const response = await fetch(localUrl(MANAGED_CONFIG_URL), { cache: 'no-store', redirect: 'error' });
+    if (!response.ok) return;
+    const config = await response.json();
+    const key = runtimeKey(config);
+    if (!activeRuntimeKey) { activeRuntimeKey = key; return; }
+    if (key === activeRuntimeKey) return;
+    activeRuntimeKey = key;
+    window.dispatchEvent(new CustomEvent('offline-map:change', { detail: config }));
+  } catch { /* 管理指针暂不可用时保持当前已加载地图。 */ }
+}
+
+function startRuntimeMonitor() {
+  if (monitorStarted) return;
+  monitorStarted = true;
+  window.setInterval(checkForRuntimeChange, 30000);
+  window.addEventListener('focus', checkForRuntimeChange);
+  document.addEventListener('visibilitychange', checkForRuntimeChange);
 }
 
 function loadEngine() {
@@ -41,29 +88,43 @@ function acquireArchive(engine, url) {
     const source = {
       getKey: () => url,
       async getBytes(offset, length, signal, etag) {
-        const request = new AbortController();
-        const abort = () => request.abort();
-        const signals = [controller.signal, signal].filter(Boolean);
-        signals.forEach(s => s.addEventListener('abort', abort, { once: true }));
-        if (signals.some(s => s.aborted)) request.abort();
-        const timer = setTimeout(abort, 15000);
+        const parents = [controller.signal, signal].filter(Boolean);
+        const cancelled = () => parents.some(s => s.aborted);
+        const read = async () => {
+          if (cancelled()) throw new DOMException('Aborted', 'AbortError');
+          const request = new AbortController();
+          const abort = () => request.abort();
+          parents.forEach(s => s.addEventListener('abort', abort, { once: true }));
+          const timer = setTimeout(abort, 20000);
+          try {
+            const response = await fetch(url, {
+              signal: request.signal,
+              headers: { Range: `bytes=${offset}-${offset + length - 1}` },
+              redirect: 'error'
+            });
+            if (etag && response.headers.get('ETag') && response.headers.get('ETag') !== etag) {
+              await response.body?.cancel();
+              throw new engine.pmtiles.EtagMismatch('地图包已更新，请重新读取');
+            }
+            const range = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(response.headers.get('Content-Range') || '');
+            if (response.status !== 206 || !range || Number(range[1]) !== offset || Number(range[2]) !== Math.min(offset + length, Number(range[3])) - 1) {
+              await response.body?.cancel();
+              throw new Error('地图服务器未正确支持 Range 分段读取（需要 HTTP 206）');
+            }
+            const data = await response.arrayBuffer();
+            if (data.byteLength !== Number(range[2]) - offset + 1) throw new Error('地图分段数据长度不完整');
+            return { data, etag: response.headers.get('ETag') || undefined };
+          } finally {
+            clearTimeout(timer);
+            parents.forEach(s => s.removeEventListener('abort', abort));
+          }
+        };
         try {
-          const response = await fetch(url, { signal: request.signal, headers: { Range: `bytes=${offset}-${offset + length - 1}` }, cache: 'no-cache', redirect: 'error' });
-          if (etag && response.headers.get('ETag') && response.headers.get('ETag') !== etag) {
-            await response.body?.cancel();
-            throw new engine.pmtiles.EtagMismatch('地图包已更新，请重新读取');
-          }
-          const range = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(response.headers.get('Content-Range') || '');
-          if (response.status !== 206 || !range || Number(range[1]) !== offset || Number(range[2]) !== Math.min(offset + length, Number(range[3])) - 1) {
-            await response.body?.cancel();
-            throw new Error('地图服务器未正确支持 Range 分段读取（需要 HTTP 206）');
-          }
-          const data = await response.arrayBuffer();
-          if (data.byteLength !== Number(range[2]) - offset + 1) throw new Error('地图分段数据长度不完整');
-          return { data, etag: response.headers.get('ETag') || undefined };
-        } finally {
-          clearTimeout(timer);
-          signals.forEach(s => s.removeEventListener('abort', abort));
+          return await read();
+        } catch (error) {
+          // 缩放取消的请求不要重试；超时或瞬时失败再读一次。
+          if (cancelled()) throw error;
+          return await read();
         }
       }
     };
@@ -89,42 +150,69 @@ function acquireArchive(engine, url) {
 }
 
 export async function prepareOfflineMap(signal) {
-  const engine = await loadEngine();
+  startRuntimeMonitor();
+  // 引擎代码与运行指针互不依赖，同时读取，避免首屏串行等待。
+  const [engine, runtimeConfig] = await Promise.all([
+    loadEngine(),
+    readRuntimeConfig(signal)
+  ]);
   signal.throwIfAborted();
-  const configUrl = localUrl('/map-config.json');
-  const config = await json(configUrl, signal);
+  const { config, configUrl } = runtimeConfig;
+  activeRuntimeKey = runtimeKey(config);
   const manifestUrl = localUrl(config.manifest, configUrl);
   const manifest = await json(manifestUrl, signal);
   if (manifest.version !== 1 || manifest.coordinateSystem !== 'WGS84' || !manifest.archive || !manifest.style) {
     throw new Error('地图清单格式错误，需要 version=1 和 WGS84 数据');
   }
   const styleUrl = localUrl(manifest.style, manifestUrl);
-  const style = await json(styleUrl, signal);
   const url = localUrl(manifest.archive, manifestUrl);
-  if (style.version !== 8 || !style.sources?.protomaps || Object.keys(style.sources).length !== 1 || style.imports) {
-    throw new Error('底图样式必须仅使用本地 protomaps 数据源');
-  }
-  style.sources.protomaps = { type: 'vector', url: `pmtiles://${url}`, attribution: '© OpenStreetMap contributors · Protomaps（开发数据）' };
-  const assetUrl = value => localUrl(value, styleUrl).replaceAll('%7B', '{').replaceAll('%7D', '}');
-  if (style.glyphs) style.glyphs = assetUrl(style.glyphs);
-  for (const faces of Object.values(style['font-faces'] || {})) {
-    if (!Array.isArray(faces)) throw new Error('不支持的字体配置');
-    faces.forEach(face => { face.url = assetUrl(face.url); });
-  }
-  if (style.sprite) {
-    if (typeof style.sprite !== 'string') throw new Error('不支持的图标清单格式');
-    style.sprite = assetUrl(style.sprite);
-  }
   const lease = acquireArchive(engine, url);
   signal.addEventListener('abort', lease.release, { once: true });
   const release = () => { signal.removeEventListener('abort', lease.release); lease.release(); };
   try {
-    const header = await lease.archive.getHeader();
+    // 样式文件和 PMTiles 头互不依赖，并行取得后再统一校验。
+    const [style, header] = await Promise.all([
+      json(styleUrl, signal),
+      lease.archive.getHeader()
+    ]);
     signal.throwIfAborted();
+    if (style.version !== 8 || !style.sources?.protomaps || Object.keys(style.sources).length !== 1 || style.imports) {
+      throw new Error('底图样式必须仅使用本地 protomaps 数据源');
+    }
+    const maxZoom = Number.isFinite(Number(manifest.maxZoom)) ? Number(manifest.maxZoom) : 15;
+    style.sources.protomaps = {
+      type: 'vector',
+      url: `pmtiles://${url}`,
+      attribution: '© OpenStreetMap contributors · Protomaps（开发数据）',
+      minzoom: 0,
+      // 包内只有到 Z15 的瓦片；声明 maxzoom 让引擎对 Z16–Z18 做过缩放，而不是去要没有的瓦片。
+      maxzoom: maxZoom
+    };
+    const assetUrl = value => localUrl(value, styleUrl).replaceAll('%7B', '{').replaceAll('%7D', '}');
+    if (style.glyphs) style.glyphs = assetUrl(style.glyphs);
+    for (const faces of Object.values(style['font-faces'] || {})) {
+      if (!Array.isArray(faces)) throw new Error('不支持的字体配置');
+      faces.forEach(face => { face.url = assetUrl(face.url); });
+    }
+    if (style.sprite) {
+      if (typeof style.sprite !== 'string') throw new Error('不支持的图标清单格式');
+      style.sprite = assetUrl(style.sprite);
+    }
     if (header.tileType !== 1 || header.maxZoom < 15) throw new Error('地图包不是预期的 Z0–Z15 矢量数据');
     const bounds = [header.minLon, header.minLat, header.maxLon, header.maxLat];
     if (!bounds.every(Number.isFinite) || bounds[0] >= bounds[2] || bounds[1] >= bounds[3]) throw new Error('地图包覆盖范围无效');
-    return { maplibre: engine.maplibre, style, manifest, bounds, release, transformRequest: url => ({ url: url.startsWith('pmtiles://') ? url : localUrl(url) }) };
+    return {
+      maplibre: engine.maplibre, style, manifest, bounds, release,
+      runtime: {
+        managed: runtimeConfig.managed,
+        revision: config.revision ?? null,
+        packageId: config.package_id || '',
+        cityCode: config.city_code || '370500',
+        cityName: config.city_name || '东营市',
+        clearBusinessOverlays: Boolean(config.clear_business_overlays)
+      },
+      transformRequest: url => ({ url: url.startsWith('pmtiles://') ? url : localUrl(url) })
+    };
   } catch (error) { release(); throw error; }
 }
 

@@ -9,6 +9,13 @@ server {
         add_header Cache-Control "no-store";
         try_files $uri =404;
     }
+    location = /map-data/control/map-config.json {
+        alias /srv/map-data/control/map-config.json;
+        add_header Cache-Control "no-store, max-age=0" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        default_type application/json;
+        limit_except GET { deny all; }
+    }
     location ^~ /map-data/ {
         alias /srv/map-data/;
         autoindex off;
@@ -16,7 +23,7 @@ server {
         gzip off;
         max_ranges 1;
         etag on;
-        add_header Cache-Control "no-cache";
+        add_header Cache-Control "public, max-age=31536000, immutable";
         add_header X-Content-Type-Options "nosniff";
         default_type application/octet-stream;
         types {

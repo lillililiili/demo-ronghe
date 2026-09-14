@@ -43,11 +43,14 @@
     if (box.__map) box.__map.destroy();
     this.box = box; this.opt = opt;
     this.data = { airspaces: [], devices: [], targets: [], alarms: [] };
-    this.layers = Object.assign({ device: true, track: true, nofly: true, suit: true, limit: true, alarm: true }, opt.layers);
+    this.layers = Object.assign({ coverage: true, device: true, track: true, nofly: true, suit: true, limit: true, alarm: true }, opt.layers);
     this.online = false; this.map = null;
     this.maxZoom = Number.isFinite(opt.maxZoom) ? Math.max(12, Math.min(24, Number(opt.maxZoom))) : 18;
     this.zoom = opt.zoom || 1; this.ox = 0; this.oy = 0; this.t = 0; this.hover = null; this.sel = null;
     this._pendingCenter = CENTER.slice();
+    this._activeCityCode = '370500';
+    this._activeCityName = '东营市';
+    this._clearBusinessOverlays = false;
     this._isDefaultView = true;
     this._defaultScale = this.zoom;
     box.classList.add('mapwrap');
@@ -101,9 +104,19 @@
     this.box.querySelector('.mapcredit').hidden = state === 'ready';
   };
 
+  MapView.prototype._isTransientMapError = function (error) {
+    if (!error) return true;
+    if (error.name === 'AbortError' || error.code === 20) return true;
+    const status = Number(error.status);
+    if (status === 404 || status === 204 || status === 416) return true;
+    const message = String(error.message || error);
+    return /abort|AbortError|The user aborted|cancelled|canceled/i.test(message);
+  };
+
   MapView.prototype._disposeBase = function () {
     clearTimeout(this._loadTimer);
     clearTimeout(this._failureTimer);
+    clearTimeout(this._glLostTimer);
     if (this._loadController) this._loadController.abort();
     if (this.map) {
       const map = this.map; this.map = null;
@@ -145,14 +158,23 @@
       if (this._dead || controller.signal.aborted) { runtime.release(); return; }
       this._release = runtime.release;
       this._coverageBounds = runtime.bounds;
+      this._applyRuntimePolicy(runtime.runtime || {});
       // 构造后立刻 fitTo 时覆盖范围还是内置东营框；包头真正的 bounds 更宽。
       // 航线若落在框外、包内，必须在建引擎前按真实覆盖重算，否则 load 只会跳到被夹紧的空视野。
       if (this._focus && this._focus.kind === 'fit') this.fitTo(this._focus.coordinates, this._focus.padding);
       else this._applyDefaultView();
       const coverage = this._coverageBounds;
+      if (this.opt.outsideColor) {
+        const background = (runtime.style.layers || []).find(layer => layer.type === 'background');
+        if (background) {
+          background.paint = Object.assign({}, background.paint, { 'background-color': this.opt.outsideColor });
+        }
+      }
       const map = new runtime.maplibre.Map({
         container: this.baseEl, style: runtime.style, center: this._pendingCenter,
         zoom: this._levelForScale(this.zoom), minZoom: this._minLevel(), maxZoom: this.maxZoom,
+        /* 地图包只覆盖有限区域。始终约束相机并以“覆盖视口”计算最低缩放，
+           宁可裁掉少量边缘，也不能让任何业务页面露出包外空白。 */
         maxBounds: coverage ? [[coverage[0], coverage[1]], [coverage[2], coverage[3]]] : undefined,
         bearing: 0, pitch: 0, dragRotate: false, pitchWithRotate: false,
         touchPitch: false, renderWorldCopies: false, attributionControl: false,
@@ -170,11 +192,24 @@
       on('dragstart', () => { this._dragged = true; this._boxLeave(); });
       // 非展示用：拖拽结束后 250ms 内抑制误点击，必须用墙钟而非 M.now()
       on('dragend', () => { this._suppressClickUntil = Date.now() + 250; this._dragged = false; });
-      on('webglcontextlost', () => this._fallback(new Error('WebGL 上下文丢失，可尝试重试')));
+      on('webglcontextlost', () => {
+        // 浏览器通常会立刻恢复上下文；等几秒再降级，避免一次丢上下文就把底图拆掉。
+        clearTimeout(this._glLostTimer);
+        this._glLostTimer = setTimeout(() => {
+          if (!this._dead && this.map === map) this._fallback(new Error('WebGL 上下文丢失，可尝试重试'));
+        }, 3000);
+      });
+      on('webglcontextrestored', () => clearTimeout(this._glLostTimer));
       on('error', event => {
-        // 在事件派发完成后清理引擎，避免 remove 造成重入。
+        // 缩放会取消上一档瓦片请求，汉字标注还会去拉空的官方 PBF 字形——这些都是单块资源失败。
+        // 地图已经出来之后不能因此拆掉整张底图；只有首屏还没 load 的致命错误才降级示意图。
+        const error = event.error || new Error('离线资源读取失败');
+        if (this._dead || this.map !== map) return;
+        if (this._isTransientMapError(error) || this.online) return;
         clearTimeout(this._failureTimer);
-        this._failureTimer = setTimeout(() => this._fallback(event.error || new Error('离线资源读取失败')), 0);
+        this._failureTimer = setTimeout(() => {
+          if (!this._dead && this.map === map && !this.online) this._fallback(error);
+        }, 0);
       });
       on('load', () => {
         clearTimeout(this._loadTimer);
@@ -224,6 +259,7 @@
       if (self._dragged || Date.now() < (self._suppressClickUntil || 0)) return;
       self._boxMove(e);
       if (self.hover && self.opt.onPick) self.opt.onPick(self.hover);
+      else if (!self.hover && typeof self.opt.onEmptyPick === 'function') self.opt.onEmptyPick();
     };
     this._boxMove = e => {
       if (e.target.closest && e.target.closest('.maptip')) {
@@ -240,7 +276,7 @@
       self.hover = null;
       self._tipHovering = false;
       if (self.baseEl) self.baseEl.style.cursor = '';
-      if (self.opt.pinSelTip) self._hit();
+      if (self._pinnedKey || self.opt.pinSelTip) self._hit();
       else self._hideTip(true);
     };
     this.box.addEventListener('click', this._boxClick, true);
@@ -308,12 +344,46 @@
       self.draw();
     };
     window.addEventListener('mousemove', this._winMove);
+    this._runtimeChange = event => {
+      if (self._dead) return;
+      self._applyRuntimePolicy({
+        cityCode: event.detail?.city_code,
+        cityName: event.detail?.city_name,
+        clearBusinessOverlays: Boolean(event.detail?.clear_business_overlays)
+      });
+      self._coverageBounds = null;
+      self._focus = null;
+      self.resetView();
+      self._initOffline();
+    };
+    window.addEventListener('offline-map:change', this._runtimeChange);
+  };
+
+  MapView.prototype._applyRuntimePolicy = function (runtime) {
+    const wasHidden = this._clearBusinessOverlays;
+    const shouldHide = Boolean(runtime.clearBusinessOverlays);
+    this._activeCityCode = runtime.cityCode || this._activeCityCode || '370500';
+    this._activeCityName = runtime.cityName || this._activeCityName || '东营市';
+    this._clearBusinessOverlays = shouldHide;
+    if (shouldHide && !wasHidden) {
+      this._heldBusinessData = this.data;
+      this.data = { airspaces: [], devices: [], targets: [], alarms: [] };
+      this.sel = this.hover = null;
+      this._pinnedKey = '';
+      this._hideTip(true);
+      this._paintAirspaceLegend();
+    } else if (!shouldHide && wasHidden) {
+      this.data = this._heldBusinessData || { airspaces: [], devices: [], targets: [], alarms: [] };
+      this._heldBusinessData = null;
+      this._paintAirspaceLegend();
+    }
   };
 
   MapView.prototype._resize = function () {
     if (this._dead) return;
     const r = this.box.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
+    const maxDpr = Number.isFinite(Number(this.opt.maxDpr)) ? Math.max(1, Number(this.opt.maxDpr)) : Infinity;
+    const dpr = Math.min(maxDpr, window.devicePixelRatio || 1);
     this.w = r.width; this.h = r.height;
     this.cv.width = Math.max(1, Math.round(r.width * dpr));
     this.cv.height = Math.max(1, Math.round(r.height * dpr));
@@ -338,7 +408,8 @@
   };
 
   MapView.prototype._fitLevelForWidth = function () {
-    const a = merc(B.lon0, B.lat1), b = merc(B.lon1, B.lat0);
+    const [west, south, east, north] = this._viewBounds();
+    const a = merc(west, north), b = merc(east, south);
     return Math.log2(Math.min(Math.max(1, this.w - 40) / (b[0] - a[0]), Math.max(1, this.h - 40) / (b[1] - a[1])) / 512);
   };
 
@@ -379,8 +450,10 @@
   // 首屏与复位落到数据范围内；缩小/平移也不能超出覆盖范围。
   MapView.prototype._applyDefaultView = function () {
     if (!this._isDefaultView) return;
+    const bounds = this._viewBounds();
+    const center = [(bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2];
     const level = this._levelForScale(this._defaultScale);
-    this._pendingCenter = this._clampCenter(CENTER[0], CENTER[1], level);
+    this._pendingCenter = this._clampCenter(center[0], center[1], level);
     this.zoom = Math.pow(2, level - this._fitLevelForWidth());
   };
 
@@ -467,7 +540,8 @@
     this.ox = this.oy = 0;
     this._isDefaultView = true;
     this._defaultScale = scale == null ? 1 : scale;
-    this._pendingCenter = CENTER.slice();
+    const bounds = this._viewBounds();
+    this._pendingCenter = [(bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2];
     this._applyDefaultView();
     if (this.map) this.map.jumpTo({ center: this._pendingCenter, zoom: this._levelForScale(this.zoom) });
     this.draw();
@@ -478,7 +552,13 @@
   const warnedMissingLayer = new Set();
 
 
-  MapView.prototype.setData = function (d) { Object.assign(this.data, d); this._paintAirspaceLegend(); this.draw(); return this; };
+  MapView.prototype.setData = function (d) {
+    if (this._clearBusinessOverlays) {
+      this._heldBusinessData = Object.assign(this._heldBusinessData || { airspaces: [], devices: [], targets: [], alarms: [] }, d);
+      return this;
+    }
+    Object.assign(this.data, d); this._paintAirspaceLegend(); this.draw(); return this;
+  };
   /* 图例里的空域行由**当前数据**推导（阶段 12 去 mock.js）：图上画了哪几类就列哪几类，
      没有空域就整行不显示——留一个空条目比不显示更糟，那会让人以为图例坏了。 */
   MapView.prototype._paintAirspaceLegend = function () {
@@ -491,6 +571,30 @@
     slot.style.display = seen.size ? '' : 'none';
   };
   MapView.prototype.setLayer = function (k, v) { this.layers[k] = v; this.draw(); return this; };
+  /* 融合感知页可从 Canvas 外的等价键盘入口固定设备或目标气泡。 */
+  MapView.prototype.pinHit = function (kind, id) {
+    this._pinnedKey = kind && id ? kind + ':' + id : '';
+    this.mx = this.my = NaN;
+    this._hit();
+    return this;
+  };
+  MapView.prototype.clearPinnedHit = function () {
+    this._pinnedKey = '';
+    this._tipHovering = false;
+    this._hideTip(true);
+    return this;
+  };
+  MapView.prototype.setPaused = function (paused) {
+    this._paused = !!paused;
+    if (this._paused && this._raf) {
+      cancelAnimationFrame(this._raf);
+      this._raf = null;
+    } else if (!this._paused) {
+      this._loop();
+      this.draw();
+    }
+    return this;
+  };
   /* 米→像素：用当前纬度上 1° 经度的像素长度换算，粗略但足够画精度圈；不用于任何判定。 */
   MapView.prototype._metersToPx = function (meters, lat) {
     const a = this.px(0, lat), b = this.px(1, lat);
@@ -512,6 +616,7 @@
     if (this._boxWheel) this.box.removeEventListener('wheel', this._boxWheel, true);
     if (this._winUp) window.removeEventListener('mouseup', this._winUp);
     if (this._winMove) window.removeEventListener('mousemove', this._winMove);
+    if (this._runtimeChange) window.removeEventListener('offline-map:change', this._runtimeChange);
     if (this._boxKey) this.box.removeEventListener('keydown', this._boxKey);
     clearTimeout(this._tipHideTimer);
     if (this.tip) {
@@ -543,6 +648,7 @@
       if (this._dead || this._tipHovering) return;
       this.tip.style.display = 'none';
       this._tipKeyShown = '';
+      this._tipDataShown = null;
       this._tipAt = null;
     };
     if (immediate) {
@@ -565,8 +671,10 @@
 
   MapView.prototype._showTip = function (hit) {
     const key = this._tipKey(hit);
-    if (this._tipKeyShown !== key) {
+    if (this.opt.interactiveTip) this.tip.setAttribute('aria-label', hit.kind === 'device' ? '设备详情' : hit.kind === 'target' ? '无人机详情' : '地图详情');
+    if (this._tipKeyShown !== key || this._tipDataShown !== hit.data) {
       this._tipKeyShown = key;
+      this._tipDataShown = hit.data;
       this._tipAt = null;
       let html = hit.tip;
       if (typeof this.opt.renderTip === 'function') {
@@ -575,6 +683,7 @@
       }
       this.tip.innerHTML = html;
       this.tip.classList.toggle('is-track', hit.kind === 'target' && typeof this.opt.renderTip === 'function');
+      this.tip.classList.toggle('is-device', hit.kind === 'device' && typeof this.opt.renderTip === 'function');
     }
     this.tip.style.display = 'block';
     if (this._tipAt && Math.abs(this._tipAt[0] - hit.x) < 0.5 && Math.abs(this._tipAt[1] - hit.y) < 0.5) return;
@@ -599,6 +708,9 @@
       : (Number.isFinite(this.mx) && Number.isFinite(this.my) ? best : null);
 
     let shown = this.hover;
+    if (!shown && this._pinnedKey) {
+      shown = pts.find(p => this._tipKey(p) === this._pinnedKey) || null;
+    }
     if (!shown && this.opt.pinSelTip && this.sel) {
       shown = pts.find(p => p.kind === 'target' && p.data && p.data.id === this.sel) || null;
     }
@@ -615,12 +727,17 @@
   };
 
   MapView.prototype._loop = function () {
+    if (this._raf || this._dead || this._paused) return;
     const self = this;
-    (function f() {
-      if (self._dead) return;
+    const f = function () {
+      self._raf = null;
+      if (self._dead || self._paused) return;
       if (!self.box.isConnected) { self.destroy(); return; }
-      self.t += 1; self.draw(); self._raf = requestAnimationFrame(f);
-    })();
+      self.t += 1;
+      self.draw();
+      self._raf = requestAnimationFrame(f);
+    };
+    this._raf = requestAnimationFrame(f);
   };
 
   /* AOA 方位线：从上报设备射出一条带不确定扇区的射线，末端标「仅方位」。
@@ -655,6 +772,123 @@
     return this._still() ? 0 : (this.t % period) / period;
   };
 
+  MapView.prototype._targetAnchor = function (target) {
+    const movement = target && target.movement;
+    if (!this._still() && movement && Number.isFinite(Number(movement.fromLon)) && Number.isFinite(Number(movement.fromLat))
+      && Number.isFinite(Number(movement.toLon)) && Number.isFinite(Number(movement.toLat))) {
+      const duration = Number(movement.endsAt) - Number(movement.startedAt);
+      const raw = duration > 0 ? (Date.now() - Number(movement.startedAt)) / duration : 1;
+      const p = Math.max(0, Math.min(1, raw));
+      const eased = p * p * (3 - 2 * p);
+      return {
+        lon: Number(movement.fromLon) + (Number(movement.toLon) - Number(movement.fromLon)) * eased,
+        lat: Number(movement.fromLat) + (Number(movement.toLat) - Number(movement.fromLat)) * eased
+      };
+    }
+    if (Number.isFinite(Number(target && target.lon)) && Number.isFinite(Number(target && target.lat))) {
+      return { lon: Number(target.lon), lat: Number(target.lat) };
+    }
+    const track = target && target.track || [];
+    return track.length ? track[track.length - 1] : null;
+  };
+
+  const SENSOR_COLORS = { RADAR: '#2dcfd0', EO: '#8e7dff', FIVE_G_A: '#4b9cff', TDOA: '#f1a43a' };
+
+  MapView.prototype._sensorColor = function (device) {
+    return device.color || SENSOR_COLORS[device.typeCode] || '#2dcfd0';
+  };
+
+  MapView.prototype._drawDeviceCoverage = function (c, device, P) {
+    const coverage = device.coverage || {};
+    if (coverage.status === 'unknown') return;
+    const radiusM = coverage.kind === 'sector' ? Number(coverage.rangeM) : Number(coverage.radiusM);
+    if (!Number.isFinite(radiusM) || radiusM <= 0) return;
+    const origin = P(device.lon, device.lat);
+    const radius = this._metersToPx(radiusM, device.lat);
+    if (!Number.isFinite(radius) || radius <= 0) return;
+    const unavailable = coverage.status === 'unavailable' || device.status !== '在线';
+    const color = unavailable ? '#94a3b8' : this._sensorColor(device);
+    const start = coverage.kind === 'sector' ? (Number(coverage.azimuthDeg) - Number(coverage.fovDeg) / 2 - 90) * Math.PI / 180 : 0;
+    const end = coverage.kind === 'sector' ? (Number(coverage.azimuthDeg) + Number(coverage.fovDeg) / 2 - 90) * Math.PI / 180 : Math.PI * 2;
+    c.save();
+    c.beginPath();
+    if (coverage.kind === 'sector') { c.moveTo(origin[0], origin[1]); c.arc(origin[0], origin[1], radius, start, end); c.closePath(); }
+    else c.arc(origin[0], origin[1], radius, 0, Math.PI * 2);
+    c.fillStyle = unavailable ? 'rgba(100,116,139,.055)' : color + '12';
+    c.fill();
+    c.setLineDash(unavailable ? [8, 7] : [4, 5]);
+    c.lineDashOffset = unavailable || this._still() ? 0 : -(this.t * .18) % 9;
+    c.strokeStyle = unavailable ? 'rgba(148,163,184,.72)' : color + '9c';
+    c.lineWidth = unavailable ? 1.35 : 1.15; c.stroke(); c.setLineDash([]);
+
+    if (!unavailable && !this._still()) {
+      if (device.typeCode === 'RADAR') {
+        const angle = this._phase(180) * Math.PI * 2 - Math.PI / 2;
+        const gradient = c.createRadialGradient(origin[0], origin[1], 0, origin[0], origin[1], radius);
+        gradient.addColorStop(0, color + '3d'); gradient.addColorStop(1, color + '02');
+        c.beginPath(); c.moveTo(origin[0], origin[1]); c.arc(origin[0], origin[1], radius, angle - .32, angle); c.closePath();
+        c.fillStyle = gradient; c.fill();
+        c.beginPath(); c.moveTo(origin[0], origin[1]); c.lineTo(origin[0] + Math.cos(angle) * radius, origin[1] + Math.sin(angle) * radius);
+        c.strokeStyle = color + 'b8'; c.lineWidth = 1.3; c.stroke();
+      } else if (device.typeCode === 'EO') {
+        const sweep = start + (end - start) * (.08 + .84 * (Math.sin(this.t / 34) + 1) / 2);
+        c.beginPath(); c.moveTo(origin[0], origin[1]); c.lineTo(origin[0] + Math.cos(sweep) * radius, origin[1] + Math.sin(sweep) * radius);
+        c.strokeStyle = color + 'c4'; c.lineWidth = 1.5; c.stroke();
+      } else if (device.typeCode === 'FIVE_G_A') {
+        for (let i = 0; i < 3; i++) {
+          const wave = (this._phase(120) + i / 3) % 1;
+          c.beginPath(); c.arc(origin[0], origin[1], Math.max(8, radius * wave), 0, Math.PI * 2);
+          c.strokeStyle = color + Math.round((1 - wave) * 92).toString(16).padStart(2, '0'); c.lineWidth = 1.2; c.stroke();
+        }
+      } else if (device.typeCode === 'TDOA') {
+        for (let i = 0; i < 3; i++) {
+          const wave = (this._phase(150) + i / 3) % 1;
+          c.beginPath(); c.arc(origin[0], origin[1], Math.max(7, radius * wave), 0, Math.PI * 2);
+          c.strokeStyle = color + Math.round((1 - wave) * 84).toString(16).padStart(2, '0'); c.lineWidth = 1; c.stroke();
+        }
+      }
+    }
+    c.restore();
+  };
+
+  MapView.prototype._drawFusionDevice = function (c, device, q) {
+    const color = device.status === '在线' ? this._sensorColor(device) : '#94a3b8';
+    const alerting = !!device.newAlert;
+    const phase = this._phase(96);
+    const scale = Number.isFinite(Number(this.opt.sensorIconScale))
+      ? Math.max(.65, Math.min(1.25, Number(this.opt.sensorIconScale))) : 1;
+    c.save(); c.translate(q[0], q[1]); c.scale(scale, scale);
+    if (alerting) {
+      c.beginPath(); c.arc(0, 0, 15 + phase * 9, 0, Math.PI * 2);
+      c.strokeStyle = `rgba(255,91,97,${this._still() ? .85 : (1 - phase) * .7 + .15})`; c.lineWidth = 2; c.stroke();
+    } else if (device.alarm) {
+      c.beginPath(); c.arc(0, 0, 16, 0, Math.PI * 2); c.strokeStyle = 'rgba(255,91,97,.78)'; c.lineWidth = 1.5; c.stroke();
+    }
+    c.shadowColor = color; c.shadowBlur = device.status === '在线' ? 14 : 0;
+    c.beginPath(); c.arc(0, 0, 12, 0, Math.PI * 2); c.fillStyle = 'rgba(5,20,37,.92)'; c.fill();
+    c.strokeStyle = color; c.lineWidth = 1.6; c.stroke(); c.shadowBlur = 0;
+    c.strokeStyle = color; c.fillStyle = color; c.lineWidth = 1.45; c.lineCap = 'round'; c.lineJoin = 'round';
+    if (device.typeCode === 'RADAR') {
+      c.beginPath(); c.arc(0, 1, 7, Math.PI, Math.PI * 2); c.stroke();
+      c.beginPath(); c.moveTo(-7, 1); c.lineTo(7, 1); c.moveTo(0, 1); c.lineTo(0, 7); c.moveTo(-4, 7); c.lineTo(4, 7); c.stroke();
+      c.beginPath(); c.moveTo(0, 1); c.lineTo(5, -5); c.stroke();
+    } else if (device.typeCode === 'EO') {
+      c.strokeRect(-6.5, -4.5, 10, 8);
+      c.beginPath(); c.arc(-1.5, -.5, 2.2, 0, 7); c.stroke();
+      c.beginPath(); c.moveTo(3.5, -2.8); c.lineTo(7, -5); c.lineTo(7, 4); c.lineTo(3.5, 2.1); c.stroke();
+      c.beginPath(); c.arc(0, 6, 2.2, 0, 7); c.stroke();
+    } else if (device.typeCode === 'FIVE_G_A') {
+      c.beginPath(); c.moveTo(0, -6); c.lineTo(-4.5, 7); c.lineTo(4.5, 7); c.closePath(); c.stroke();
+      c.beginPath(); c.moveTo(-6, 1); c.quadraticCurveTo(-9, -1, -6, -4); c.moveTo(6, 1); c.quadraticCurveTo(9, -1, 6, -4); c.stroke();
+      c.beginPath(); c.arc(0, -6, 1.7, 0, 7); c.fill();
+    } else {
+      [[0, -7], [-6, 5], [6, 5]].forEach(p => { c.beginPath(); c.arc(p[0], p[1], 2.2, 0, 7); c.fill(); });
+      c.beginPath(); c.moveTo(0, -7); c.lineTo(-6, 5); c.lineTo(6, 5); c.closePath(); c.stroke();
+      c.beginPath(); c.arc(0, 1, 2.6, 0, 7); c.stroke();
+    }
+    c.restore();
+  };
+
   MapView.prototype._drawTrackArrow = function (c, a, b, col) {
     const dx = b[0] - a[0], dy = b[1] - a[1], len = Math.hypot(dx, dy);
     if (len < 22) return;
@@ -669,9 +903,17 @@
 
   MapView.prototype._drawUav = function (c, t, q, col, isSel) {
     const heading = Number.isFinite(+t.heading) ? +t.heading : 0;
-    const mk = t.legal === '合法' ? '#22d3ee' : '#ff4d5e';
+    const mk = t.activeRisk ? '#ff5b61' : t.legal === '合法' ? '#22d3ee' : '#ff4d5e';
     c.save();
     c.translate(q[0], q[1]);
+    if (t.newAlert) {
+      const alertPhase = this._phase(96);
+      c.beginPath(); c.arc(0, 0, 14 + alertPhase * 13, 0, 7);
+      c.strokeStyle = `rgba(255,91,97,${this._still() ? .9 : (1 - alertPhase) * .78 + .12})`;
+      c.lineWidth = this._still() ? 2.6 : 2.1; c.stroke();
+    } else if (t.activeRisk) {
+      c.beginPath(); c.arc(0, 0, 13, 0, 7); c.strokeStyle = 'rgba(255,91,97,.92)'; c.lineWidth = 2; c.stroke();
+    }
     if (isSel) {
       const ph = this._phase(50);
       c.beginPath(); c.arc(0, 0, 12 + ph * 12, 0, 7);
@@ -726,6 +968,7 @@
     gr.addColorStop(0, '#f5f1e8'); gr.addColorStop(1, '#edf2e6');
     c.fillStyle = gr; c.fillRect(0, 0, W, H);
 
+    if (this._activeCityCode === '370500') {
     /* 海域 */
     c.beginPath();
     COAST.forEach((p, i) => { const q = P(p[0], p[1]); i ? c.lineTo(q[0], q[1]) : c.moveTo(q[0], q[1]); });
@@ -756,6 +999,22 @@
       c.strokeStyle = 'rgba(255,255,255,.94)'; c.lineWidth = 4; c.strokeText(l.n, q[0], q[1]);
       c.fillStyle = l.c; c.fillText(l.n, q[0], q[1]);
     });
+    } else {
+      /* 其他城市的包不可用时只显示其覆盖范围网格，避免误画东营海岸与地名。 */
+      const bounds = this._viewBounds();
+      c.strokeStyle = 'rgba(91,116,126,.13)'; c.lineWidth = 1;
+      for (let i = 0; i <= 8; i++) {
+        const lon = bounds[0] + (bounds[2] - bounds[0]) * i / 8;
+        const lat = bounds[1] + (bounds[3] - bounds[1]) * i / 8;
+        let a = P(lon, bounds[1]), b = P(lon, bounds[3]);
+        c.beginPath(); c.moveTo(a[0], a[1]); c.lineTo(b[0], b[1]); c.stroke();
+        a = P(bounds[0], lat); b = P(bounds[2], lat);
+        c.beginPath(); c.moveTo(a[0], a[1]); c.lineTo(b[0], b[1]); c.stroke();
+      }
+      c.textAlign = 'center'; c.textBaseline = 'middle';
+      c.font = '15px "PingFang SC",sans-serif'; c.fillStyle = '#526b80';
+      c.fillText(this._activeCityName || '当前城市', W / 2, H / 2);
+    }
 
     this._paintLayers(c, W, H);
   };
@@ -764,6 +1023,13 @@
   MapView.prototype._paintLayers = function (c, W, H) {
     const P = (a, b) => this.px(a, b);
     const picks = [];
+
+    /* 四源覆盖只在融合感知开关下启用，避免改变告警页、飞行页等共享地图。 */
+    if (this.opt.fusionProfile && this.layers.coverage) {
+      (this.data.devices || []).slice(0, this.opt.maxDev || 90).forEach(device => {
+        this._drawDeviceCoverage(c, device, P);
+      });
+    }
 
     /* 空域 */
     (this.data.airspaces || []).forEach(a => {
@@ -833,14 +1099,18 @@
       (this.data.devices || []).slice(0, this.opt.maxDev || 90).forEach(d => {
         const q = P(d.lon, d.lat);
         if (q[0] < -20 || q[0] > W + 20 || q[1] < -20 || q[1] > H + 20) return;
-        const col = d.status === '在线' ? (d.alarm ? '#d97706' : '#008fb3') : d.status === '离线' ? '#64748b' : '#dc2638';
-        c.beginPath(); c.arc(q[0], q[1], 4.4, 0, 7); c.fillStyle = 'rgba(255,255,255,.9)'; c.fill();
-        c.beginPath(); c.arc(q[0], q[1], 2.35, 0, 7); c.fillStyle = col; c.fill();
-        c.beginPath(); c.arc(q[0], q[1], 5.2, 0, 7); c.strokeStyle = col + '70'; c.lineWidth = .9; c.stroke();
-        if (d.alarm) {
-          const r = 7 + (this.t % 60) / 60 * 9;
-          c.beginPath(); c.arc(q[0], q[1], r, 0, 7);
-          c.strokeStyle = `rgba(255,176,32,${(1 - (this.t % 60) / 60) * .7})`; c.stroke();
+        const col = d.status === '在线' ? (this.opt.fusionProfile ? this._sensorColor(d) : (d.alarm ? '#d97706' : '#008fb3')) : d.status === '离线' ? '#64748b' : '#dc2638';
+        if (this.opt.fusionProfile) {
+          this._drawFusionDevice(c, d, q);
+        } else {
+          c.beginPath(); c.arc(q[0], q[1], 4.4, 0, 7); c.fillStyle = 'rgba(255,255,255,.9)'; c.fill();
+          c.beginPath(); c.arc(q[0], q[1], 2.35, 0, 7); c.fillStyle = col; c.fill();
+          c.beginPath(); c.arc(q[0], q[1], 5.2, 0, 7); c.strokeStyle = col + '70'; c.lineWidth = .9; c.stroke();
+          if (d.alarm) {
+            const r = 7 + (this.t % 60) / 60 * 9;
+            c.beginPath(); c.arc(q[0], q[1], r, 0, 7);
+            c.strokeStyle = `rgba(255,176,32,${(1 - (this.t % 60) / 60) * .7})`; c.stroke();
+          }
         }
         picks.push({
           x: q[0], y: q[1], kind: 'device', data: d,
@@ -909,9 +1179,7 @@
         }
         /* 锚点：目标自身的最新可信坐标优先于轨迹末点——轨迹可能只到上一帧，而 latest_state 才是当前位置；
            两者都没有时不画（不用 (0,0) 或旧点冒充）。 */
-        const anchor = Number.isFinite(Number(t.lon)) && Number.isFinite(Number(t.lat))
-          ? { lon: Number(t.lon), lat: Number(t.lat) }
-          : tr.length ? tr[tr.length - 1] : null;
+        const anchor = this._targetAnchor(t);
         if (!anchor) { if (dim) c.restore(); return; }
         const q = P(anchor.lon, anchor.lat);
         /* 阶段 8：融合精度圈（米→像素按当前比例尺），只在选中且 accuracyM 为有限正数时画，不臆造精度。 */

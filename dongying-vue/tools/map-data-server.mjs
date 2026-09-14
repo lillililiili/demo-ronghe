@@ -10,6 +10,12 @@ const within = (root, target) => {
 
 // 开发与 preview 共用；不遍历、不监听、不复制外置资源。
 export function mapDataServer(directory) {
+  let rootPromise;
+  const immutableFiles = new Map();
+  const resolveRoot = () => {
+    if (!rootPromise) rootPromise = realpath(directory).catch(error => { rootPromise = null; throw error; });
+    return rootPromise;
+  };
   return async (req, res, next) => {
     const raw = (req.url || '').split('?')[0];
     if (!raw.startsWith('/map-data/')) return next();
@@ -18,18 +24,31 @@ export function mapDataServer(directory) {
     try {
       const name = decodeURIComponent(raw.slice('/map-data/'.length));
       if (/[\\\0:]/.test(name) || name.split('/').some(p => p === '..' || p.startsWith('.'))) return finish(403, 'Forbidden');
-      const root = await realpath(directory);
+      const root = await resolveRoot();
       const candidate = path.resolve(root, name);
       if (!within(root, candidate)) return finish(403, 'Forbidden');
-      const file = await realpath(candidate);
-      if (!within(root, file)) return finish(403, 'Forbidden');
-      const info = await stat(file);
-      const mime = types[path.extname(file).toLowerCase()];
+      const immutable = raw.startsWith('/map-data/packages/');
+      let metadata = immutable ? immutableFiles.get(candidate) : null;
+      if (!metadata) {
+        const file = await realpath(candidate);
+        if (!within(root, file)) return finish(403, 'Forbidden');
+        const info = await stat(file);
+        const mime = types[path.extname(file).toLowerCase()];
+        metadata = { file, info, mime };
+        if (immutable) immutableFiles.set(candidate, metadata);
+      }
+      const { file, info, mime } = metadata;
       if (!info.isFile() || !mime) return finish(404, 'Not found');
       res.setHeader('Content-Type', mime);
       res.setHeader('X-Content-Type-Options', 'nosniff');
       res.setHeader('Accept-Ranges', 'bytes');
-      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Cache-Control', raw === '/map-data/control/map-config.json'
+        ? 'no-store, max-age=0'
+        : immutable
+          ? 'public, max-age=31536000, immutable'
+        : mime.includes('pmtiles') || mime.includes('protobuf') || mime.includes('font') || mime.includes('png')
+          ? 'public, max-age=600'
+          : 'no-cache');
       const etag = `"${info.size.toString(16)}-${Math.trunc(info.mtimeMs).toString(16)}"`;
       res.setHeader('ETag', etag);
       let start = 0, end = info.size - 1;

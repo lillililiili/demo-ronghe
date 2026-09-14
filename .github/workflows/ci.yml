@@ -15,8 +15,8 @@ jobs:
       run:
         working-directory: dongying-vue
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -29,7 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: server
+        working-directory: platform/server
     # PostgreSQL/PostGIS 服务：让靠 POSTGRES_TEST_URL 门禁的专项用例（空间判定、只增触发器、并发、分两步升级）
     # 在 CI 上真的跑起来，而不是静默跳过（决策 15-9）。
     services:
@@ -52,12 +52,18 @@ jobs:
       POSTGRES_TEST_USER: uav
       POSTGRES_TEST_PASSWORD: uav
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      # 后端已迁移到独立的平台仓库；这里检出唯一后端真源，避免继续依赖本仓库已删除的 server/。
+      - name: Checkout platform backend
+        uses: actions/checkout@v5
+        with:
+          repository: lillililiili/houtaiguanli
+          path: platform
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 17
           cache: maven
+          cache-dependency-path: platform/server/pom.xml
       - run: chmod +x mvnw
       - name: Create isolation databases for the PostgreSQL suites
         run: |
@@ -78,10 +84,10 @@ jobs:
       - name: Package (tests already ran above)
         run: ./mvnw -B -DskipTests package
       - name: Upload server jar for the E2E job
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: server-jar
-          path: server/target/low-altitude-server-*.jar
+          path: platform/server/target/low-altitude-server-*.jar
           retention-days: 3
       - name: Test summary (run / failures / errors / skipped)
         if: always()
@@ -122,17 +128,17 @@ jobs:
       run:
         working-directory: dongying-vue
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Detect Playwright config
         id: pw
         run: |
           if [ -f playwright.config.js ]; then echo "present=true" >> "$GITHUB_OUTPUT"; else echo "present=false" >> "$GITHUB_OUTPUT"; echo "::notice::dongying-vue/playwright.config.js 不存在，E2E 作业无用例可跑"; fi
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         if: steps.pw.outputs.present == 'true'
         with:
           distribution: temurin
           java-version: 17
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         if: steps.pw.outputs.present == 'true'
         with:
           name: server-jar
@@ -153,7 +159,7 @@ jobs:
             sleep 2
           done
           echo "::error::backend did not become healthy in 180s"; tail -n 200 "${{ runner.temp }}/backend.log"; exit 1
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         if: steps.pw.outputs.present == 'true'
         with:
           node-version: 22
@@ -170,7 +176,7 @@ jobs:
       - name: Backend log (on failure)
         if: failure() && steps.pw.outputs.present == 'true'
         run: tail -n 300 "${{ runner.temp }}/backend.log" || true
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         if: failure() && steps.pw.outputs.present == 'true'
         with:
           name: playwright-report

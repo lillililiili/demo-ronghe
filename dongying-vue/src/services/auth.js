@@ -90,7 +90,7 @@ export async function changePassword(currentPassword, newPassword) {
 }
 
 window.addEventListener('api:unauthorized', () => {
-  const current = location.hash.slice(1) || '/workbench';
+  const current = location.hash.slice(1) || '/situation';
   clearSession();
   if (!location.hash.startsWith('#/login')) location.hash = `#/login?redirect=${encodeURIComponent(current)}`;
 });

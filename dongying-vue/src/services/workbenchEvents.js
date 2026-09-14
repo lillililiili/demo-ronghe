@@ -10,7 +10,7 @@ import { riskApi } from '@/services/riskApi.js';
 export const KINDS = ['UAV_EVENT', 'RISK', 'DEVICE_INCIDENT'];
 export const kindLabel = { UAV_EVENT: '无人机告警', RISK: '飞行计划风险', DEVICE_INCIDENT: '设备告警' };
 /* 事项的原始记录所在页（与侧栏菜单同名），供"打开 XX 页"按钮用；跳转目标见 openSourcePage。 */
-export const sourcePageLabel = { UAV_EVENT: '告警事件', RISK: '飞行计划', DEVICE_INCIDENT: '设备实时监测' };
+export const sourcePageLabel = { UAV_EVENT: '告警事件', RISK: '飞行计划', DEVICE_INCIDENT: '后台管理系统' };
 export const kindIcon = { UAV_EVENT: 'plane', RISK: 'plan', DEVICE_INCIDENT: 'device' };
 export const kindModule = { UAV_EVENT: '异常告警中心', RISK: '飞行活动管理 · 全部风险事件', DEVICE_INCIDENT: '设备实时监测' };
 
@@ -303,8 +303,7 @@ export function openSourcePage(summary) {
     return navigateTo('#/alarms');
   }
   if (summary.kind === 'RISK') return stash('risk', { risk: summary.sourceId });
-  const deviceId = linkParam(link, 'device_id');
-  return deviceId ? stash('monitor', { device: deviceId }) : false;
+  return false;
 }
 navigateTo.test = link => typeof link === 'string' && /^#\/[a-z][a-z0-9-]*(?:\?[^#]*)?$/.test(link);
 

@@ -51,7 +51,7 @@
 | `devices` | `GET /device-monitor/overview` 的 total/online/offline/abnormal/alarm/online_rate/simulated | 整块 `null` |
 | `flights.today` / `flights.executing` | 今日窗口计划总数、`status_code=EXECUTING` 数 | 整块 `null` |
 | `alarms.items` | 今日告警最多 8 条，按 `received_at DESC` | `[]` |
-| `map.targets` | 有 WGS-84 位置的目标（最多 100） | `[]` |
+| `map.targets` | 有 WGS-84 位置的目标（最多 100，按 `last_seen` 倒序，不按今日窗口过滤） | `[]` |
 | `map.devices` | 有经纬度的启用设备（最多 46）；非 WGS-84 不画 | `[]` |
 | `map.airspaces` | 当前有效版本且含边界的空域（最多 40） | `[]` |
 | `map.alarms` | 今日告警中能关联到已返回目标位置的点（最多 8） | `[]` |

@@ -8,7 +8,8 @@ Set-StrictMode -Version Latest
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $frontendDir = Join-Path $repoRoot 'dongying-vue'
-$composeFile = Join-Path $repoRoot 'deploy\compose.yml'
+$platformRoot = Join-Path (Split-Path -Parent $repoRoot) 'houtaiguanli'
+$composeFile = Join-Path $platformRoot 'deploy\compose.yml'
 $mapDataCandidates = @(
     (Join-Path $repoRoot 'map-data\dongying-dev\manifest.json'),
     (Join-Path (Split-Path -Parent $repoRoot) 'map-data\dongying-dev\manifest.json')
@@ -61,9 +62,11 @@ else {
 }
 
 Write-Host ''
-Write-Host 'Local development dependencies are ready. Run these commands in two PowerShell windows:'
+Write-Host 'Local development dependencies are ready. Run these commands in three PowerShell windows:'
 Write-Host '  cd dongying-vue; npm run dev'
-Write-Host "  cd server; .\mvnw.cmd spring-boot:run `"-Dspring-boot.run.profiles=local`""
+Write-Host "  cd ..\houtaiguanli\server; .\mvnw.cmd spring-boot:run `"-Dspring-boot.run.profiles=local`""
+Write-Host '  cd ..\houtaiguanli\ruoyi-ui; npm run dev'
 Write-Host ''
-Write-Host 'Frontend: http://127.0.0.1:5173/'
+Write-Host 'Business frontend: http://127.0.0.1:5173/'
+Write-Host 'Admin frontend: http://127.0.0.1:5175/'
 Write-Host 'Backend health: http://127.0.0.1:8080/actuator/health'

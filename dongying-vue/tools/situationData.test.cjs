@@ -107,7 +107,28 @@ async function main() {
   ]);
   check('没有经纬度的设备不进地图', devices.length, 1);
   check('设备状态走字典', devices[0].status, '在线');
+  check('告警标记来自 has_alarm', S.toDevices([
+    { device_id: 'd4', longitude: 118.5, latitude: 37.4, has_alarm: true }
+  ])[0].alarm, true);
   check('未知连接状态不猜成在线', S.toDevices([{ device_id: 'd3', longitude: 1, latitude: 1, connectivity: 'WAT' }])[0].status, '未知');
+
+  /* ---- 覆盖参数 ---- */
+  const circle = S.normalizeCoverage({ kind: 'circle', radiusM: 50000, sourceLabel: '配置中心', updatedAt: 123 }, true);
+  check('圆形覆盖半径保留', [circle.kind, circle.radiusM, circle.status], ['circle', 50000, 'available']);
+  check('圆形覆盖摘要', S.coverageSummary(circle), '50 km 覆盖半径');
+  const sector = S.normalizeCoverage({ kind: 'sector', rangeM: 55000, azimuthDeg: 378, fovDeg: 76 }, true);
+  check('扇形方位归一到 0-360°', sector.azimuthDeg, 18);
+  check('扇形覆盖参数保留', [sector.rangeM, sector.fovDeg], [55000, 76]);
+  const unknown = S.normalizeCoverage({ kind: 'circle' }, true);
+  check('半径缺失时覆盖未知', unknown.status, 'unknown');
+  check('未知覆盖不补确定半径', unknown.radiusM, undefined);
+  const offline = S.normalizeCoverage({ kind: 'circle', radiusM: 52000 }, false);
+  check('离线设备的配置范围强制不可用', offline.status, 'unavailable');
+  ok('可用圆形内点命中', S.coverageContainsPoint({ lon: 118.5, lat: 37.4, coverage: circle }, { lon: 118.6, lat: 37.4 }));
+  ok('可用圆形外点不命中', !S.coverageContainsPoint({ lon: 118.5, lat: 37.4, coverage: circle }, { lon: 119.3, lat: 37.4 }));
+  ok('不可用覆盖不参与有效范围判定', !S.coverageContainsPoint({ lon: 118.5, lat: 37.4, coverage: offline }, { lon: 118.5, lat: 37.4 }));
+  ok('扇形内点命中', S.coverageContainsPoint({ lon: 118.42, lat: 37.15, coverage: sector }, { lon: 118.48, lat: 37.35 }));
+  ok('扇形背向点不命中', !S.coverageContainsPoint({ lon: 118.42, lat: 37.15, coverage: sector }, { lon: 118.42, lat: 37.0 }));
 
   /* ---- 合法性 ---- */
   const legal = S.legalByTarget([
@@ -155,6 +176,11 @@ async function main() {
   ]);
   check('没有坐标的轨迹点丢弃', track.length, 2);
   check('kind 小写透传', track.map(p => p.kind), ['meas', 'pred']);
+  const nested = S.toTrack([
+    { location: { longitude: 118.4, latitude: 37.4 }, point_kind: 'MEAS' },
+    { location: { longitude: null, latitude: 37.5 }, point_kind: 'MEAS' }
+  ]);
+  check('读接口 location 嵌套坐标也能装配', nested, [{ lon: 118.4, lat: 37.4, kind: 'meas' }]);
 
   /* ---- 只报方位的目标 ---- */
   // 字段名按服务端实际返回：方位角与观测设备都在 latest_state 里（bearing_deg / bearing_device_id）。

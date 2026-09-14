@@ -14,13 +14,13 @@
  *     测试会跟着一起挪、照样全绿——而那正是需要有人确认一次的改动。
  *     这里写死，改了就红一次，逼人看一眼。
  * ========================================================================== */
-import { REDIRECT, ROUTES, pageTitle } from '../../src/config/navModel.js';
+import { MIGRATED_ADMIN_KEYS, REDIRECT, ROUTES, pageTitle } from '../../src/config/navModel.js';
 
 /* 权限承载关系（与 services/accessControl.js 的 ROUTE_ALIAS 对应，见上文 ②）。 */
 const PERMISSION_ALIAS = { overview: 'situation', risk: 'flights', airspace: 'flights' };
 
 /* 登录与改密不进业务导航/权限矩阵（navModel.js 自注），别的都要测。 */
-const NOT_A_BUSINESS_PAGE = new Set(['login', 'change-password']);
+const NOT_A_BUSINESS_PAGE = new Set(['login', 'change-password', ...MIGRATED_ADMIN_KEYS]);
 
 /* 大屏不走 PageHost：App.vue 直接挂 BigScreenApp，是另一套外壳，单独一条用例。 */
 export const BIGSCREEN_KEY = 'bigscreen';
@@ -48,7 +48,6 @@ export function deniedTitle(key) {
  * 这样验的是"前端的判断与后端的授权是否一致"——小接线阶段最容易飘的正是这条缝。
  */
 export function expectReachable(key, menuKeys) {
-  if (key === 'workbench') return true;   // accessControl.js 恒放行
   return menuKeys.includes(permissionKey(key));
 }
 

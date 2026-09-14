@@ -9,6 +9,7 @@ import {
 } from '@vicons/ionicons5';
 import { dateZhCN, theme, themeOverrides, zhCN } from '@/ui/theme.js';
 import { getDashboardSnapshot } from '@/services/dashboardApi.js';
+import { attachTracks } from '@/services/mapTracks.js';
 import { airspaceKindMeta } from '@/services/situationData.js';
 import { ALARM_TYPE_LABEL, LEGALITY_LABEL, OBJECT_TYPE_LABEL, labelOf, targetTypeLabel } from '@/ui/labels.js';
 
@@ -228,20 +229,25 @@ function mapDevices(items) {
     id: d.device_id, name: d.name, type: d.device_type_name, channel: d.channel,
     status: ({ ONLINE: '在线', OFFLINE: '离线', ABNORMAL: '异常', UNKNOWN: '未知' })[d.connectivity] || d.connectivity || '未知',
     alarm: !!d.has_alarm, lon: Number(d.longitude), lat: Number(d.latitude)
-  }));
+  })).filter(d => Number.isFinite(d.lon) && Number.isFinite(d.lat));
 }
 
 function mapTargets(items) {
-  return (items || []).map(t => ({
-    id: t.target_id,
-    type: t.object_type_code === 'UAV' ? '无人机' : labelOf(OBJECT_TYPE_LABEL, t.object_type_code, t.object_type_code || '目标'),
-    subtype: targetTypeLabel(t.subtype, t.object_type_code),
-    lon: Number(t.longitude), lat: Number(t.latitude),
-    alt: t.altitude_amsl_m, speed: t.speed_mps, heading: t.heading_deg,
-    legal: labelOf(LEGALITY_LABEL, t.legal_status, t.legal_status),
-    risk: GRADE_ZH[t.grade] || t.grade,
-    fusedConf: t.fusion_confidence == null ? null : Math.round(Number(t.fusion_confidence) * 100)
-  }));
+  return (items || []).map(t => {
+    const lon = Number(t.longitude), lat = Number(t.latitude);
+    if (!Number.isFinite(lon) || !Number.isFinite(lat)) return null;
+    return {
+      id: t.target_no || t.target_id,
+      targetId: t.target_id,
+      type: t.object_type_code === 'UAV' ? '无人机' : labelOf(OBJECT_TYPE_LABEL, t.object_type_code, t.object_type_code || '目标'),
+      subtype: targetTypeLabel(t.subtype, t.object_type_code),
+      lon, lat, posValid: true, track: [],
+      alt: t.altitude_amsl_m, speed: t.speed_mps, heading: t.heading_deg,
+      legal: labelOf(LEGALITY_LABEL, t.legal_status, t.legal_status),
+      risk: GRADE_ZH[t.grade] || t.grade,
+      fusedConf: t.fusion_confidence == null ? null : Math.round(Number(t.fusion_confidence) * 100)
+    };
+  }).filter(Boolean);
 }
 
 function mapAlarms(items) {
@@ -278,11 +284,13 @@ function renderMap() {
   hint.textContent = '点击地图上的无人机查看实时视频（演示画面）';
   mapEl.value.appendChild(hint);
   const layer = snapshot.value?.map || {};
-  map.setData({
-    airspaces: mapAirspaces(layer.airspaces),
-    devices: mapDevices(layer.devices),
-    targets: mapTargets(layer.targets),
-    alarms: mapAlarms(layer.alarms)
+  const airspaces = mapAirspaces(layer.airspaces);
+  const devices = mapDevices(layer.devices);
+  const targets = mapTargets(layer.targets);
+  const alarms = mapAlarms(layer.alarms);
+  map.setData({ airspaces, devices, targets, alarms });
+  attachTracks(targets).then(() => {
+    if (map && mapEl.value) map.setData({ airspaces, devices, targets, alarms });
   });
 }
 
@@ -402,14 +410,14 @@ onBeforeUnmount(() => {
 
         <aside class="bs-col">
           <section class="panel">
-            <div class="ph"><h3>设备健康与异常</h3><div class="bs-panel-meta"><span class="sub">{{ deviceSummary }}</span><button class="bs-module-link" @click="go('monitor')">进入监测 →</button></div></div>
+            <div class="ph"><h3>设备健康与异常</h3><div class="bs-panel-meta"><span class="sub">{{ deviceSummary }}</span></div></div>
             <div class="pb bs-visual-body bs-device-visual">
               <div class="bs-device-chart-wrap">
-                <div ref="deviceChartEl" class="bs-panel-chart is-ring is-clickable" role="link" tabindex="0" aria-label="进入设备监测" @click="go('monitor')" @keydown.enter="go('monitor')" @keydown.space.prevent="go('monitor')"></div>
+                <div ref="deviceChartEl" class="bs-panel-chart is-ring" aria-label="设备健康分布图"></div>
                 <div class="bs-device-legend">
-                  <button @click="go('monitor')"><i class="is-offline"></i><span>离线</span><b>{{ dash(deviceLegend.offline) }}</b></button>
-                  <button @click="go('monitor')"><i class="is-abnormal"></i><span>异常</span><b>{{ dash(deviceLegend.abnormal) }}</b></button>
-                  <button @click="go('monitor')"><i class="is-alarm"></i><span>告警设备</span><b>{{ dash(deviceLegend.alarm) }}</b></button>
+                  <div><i class="is-offline"></i><span>离线</span><b>{{ dash(deviceLegend.offline) }}</b></div>
+                  <div><i class="is-abnormal"></i><span>异常</span><b>{{ dash(deviceLegend.abnormal) }}</b></div>
+                  <div><i class="is-alarm"></i><span>告警设备</span><b>{{ dash(deviceLegend.alarm) }}</b></div>
                 </div>
               </div>
             </div>

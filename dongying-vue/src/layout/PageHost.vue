@@ -8,10 +8,11 @@
    CH.disposeAll() 不会误杀下一页的图表。 */
 import { computed } from 'vue';
 import { useRoute } from 'vue-router';
-import { routeKey } from '@/config/navModel.js';
+import { MIGRATED_ADMIN_KEYS, routeKey } from '@/config/navModel.js';
 import { useAppStore } from '@/stores/app.js';
 import { VUE_PAGES } from '@/pages/registry.js';
 import AccessDeniedPage from '@/pages/AccessDeniedPage.vue';
+import MigratedAdminPage from '@/pages/MigratedAdminPage.vue';
 import { canAccessRoute } from '@/services/accessControl.js';
 
 const route = useRoute();
@@ -19,10 +20,12 @@ const store = useAppStore();
 const k = computed(() => routeKey(route));
 const allowed = computed(() => { store.accessRevision; return canAccessRoute(k.value); });
 const vueComp = computed(() => VUE_PAGES[k.value] || null);
+const migrated = computed(() => MIGRATED_ADMIN_KEYS.has(k.value));
 </script>
 
 <template>
-  <AccessDeniedPage v-if="!allowed" />
+  <MigratedAdminPage v-if="migrated" :page-key="k" />
+  <AccessDeniedPage v-else-if="!allowed" />
   <component v-else-if="vueComp" :is="vueComp" :key="k + ':' + store.remountKey" />
   <AccessDeniedPage v-else />
 </template>

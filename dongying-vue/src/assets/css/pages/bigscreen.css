@@ -210,13 +210,14 @@ body[data-theme] .bs-kpis .kpi::after{
 .bs-device-chart-wrap{display:grid;grid-template-columns:47% minmax(0,1fr);align-items:center;flex:1;min-height:0}
 .bs-panel-chart.is-ring{width:100%;height:100%;min-height:100px}
 .bs-device-legend{display:flex;min-width:0;flex-direction:column;gap:7px;padding-right:4px}
-.bs-device-legend button{
+.bs-device-legend button,.bs-device-legend>div{
   display:grid;grid-template-columns:7px minmax(0,1fr) auto;align-items:center;gap:7px;padding:6px 8px;
   border:1px solid rgba(48,135,207,.24);border-radius:3px;background:rgba(5,24,46,.68);
   color:#c4d4e7;font:inherit;text-align:left;cursor:pointer;
   box-shadow:inset 0 0 0 1px rgba(94,205,255,.035),0 0 9px rgba(34,146,236,.04)
 }
 .bs-device-legend button:hover{border-color:rgba(45,207,208,.48);background:rgba(12,43,73,.7)}
+.bs-device-legend>div{cursor:default}
 .bs-device-legend i{width:7px;height:7px;border-radius:50%;background:#71859e}
 .bs-device-legend i.is-abnormal,.bs-device-legend i.is-alarm{background:var(--red);box-shadow:0 0 7px rgba(255,91,97,.58)}
 .bs-device-legend span{overflow:hidden;color:#8299b5;font-size:10.5px;text-overflow:ellipsis;white-space:nowrap}

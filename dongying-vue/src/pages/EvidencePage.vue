@@ -43,8 +43,7 @@ const SC = {
   PENDING: 't-gray', AVAILABLE: 't-green', MISSING: 't-orange', CORRUPT: 't-red', DESTROYED: 't-gray'
 };
 const SUBJECT_ROUTE = {
-  EVENT: 'alarms', DEVICE: 'devices', TARGET: 'situation', PLAN: 'flights',
-  COMMAND: 'monitor', COMMISSION: 'commission', CASE: 'punish', AUTHORIZATION: 'punish'
+  EVENT: 'alarms', TARGET: 'situation', PLAN: 'flights', CASE: 'punish', AUTHORIZATION: 'punish'
 };
 
 const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
@@ -266,7 +265,7 @@ onMounted(() => {
   U.on(view, '[data-ev-go]', 'click', (e, el) => {
     const [kind, id] = el.dataset.evGo.split('|');
     const page = SUBJECT_ROUTE[kind];
-    if (!page) return toast('该对象没有页面入口', 'err');
+    if (!page) return toast(['DEVICE', 'COMMAND', 'COMMISSION'].includes(kind) ? '该功能已迁移至后台管理系统' : '该对象没有页面入口', 'err');
     location.hash = '#/' + page;
     void id;
   });

@@ -4,14 +4,8 @@
    monitor 已迁移为后端状态驱动页面，不再读取或消耗 legacy 随机序列。 */
 import { defineAsyncComponent } from 'vue';
 import StatsPage from './StatsPage.vue';
-import UsersPage from './UsersPage.vue';
-import RolesPage from './RolesPage.vue';
-import ArchivePage from './ArchivePage.vue';
 import EvidencePage from './EvidencePage.vue';
 import AlarmsPage from './AlarmsPage.vue';
-import CommissionPage from './CommissionPage.vue';
-import DevicesPage from './DevicesPage.vue';
-import MonitorPage from './MonitorPage.vue';
 import SituationPage from './SituationPage.vue';
 import PunishPage from './PunishPage.vue';
 import LegalityPage from './LegalityPage.vue';
@@ -24,14 +18,8 @@ const FlightsPage = defineAsyncComponent(() => import('./FlightsPage.vue'));
 export const VUE_PAGES = {
   workbench: WorkbenchPage,
   stats: StatsPage,
-  users: UsersPage,
-  roles: RolesPage,
-  archive: ArchivePage,
   evidence: EvidencePage,
   alarms: AlarmsPage,
-  commission: CommissionPage,
-  devices: DevicesPage,
-  monitor: MonitorPage,
   flights: FlightsPage,
   /* airspace 仍与 flights 共用组件。#/risk 由 router 重定向到 #/flights?tab=events，
      不再作为独立「空间安全风险」页渲染。 */

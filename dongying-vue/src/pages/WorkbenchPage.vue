@@ -545,6 +545,7 @@ function primaryAction() {
   return runDeviceAction();
 }
 function openSource() {
+  if (selected.value?.summary?.kind === 'DEVICE_INCIDENT') return toast('设备实时监测已迁移至后台管理系统', 'err');
   if (!openSourcePage(selected.value?.summary)) toast('该事项没有可用的站内跳转链接', 'err');
 }
 
@@ -717,7 +718,7 @@ onUnmounted(() => {
               <span v-if="selected.kind === 'RISK'"><small>交接记录</small><b>{{ selected.availability.handoffs === 'AVAILABLE' ? `${handoffs.length} 条` : selected.availability.handoffs === 'FORBIDDEN' ? '无读取权限' : '—' }}</b></span>
               <span v-else-if="selected.kind === 'UAV_EVENT'"><small>核实</small><b>{{ verifications.length ? '已核实' : '未核实' }}</b></span>
               <span v-else><small>动作</small><b>{{ selected.summary.todo?.allowed ? selected.summary.todo.action : (selected.summary.blockedLabel || selected.summary.todo?.blocker || '—') }}</b></span><i>→</i>
-              <span><small>原始记录所在页</small><button class="btn" type="button" :disabled="!selected.summary.links?.source" @click="openSource">打开{{ sourcePageLabel[selected.kind] }}页</button></span>
+              <span><small>原始记录所在页</small><button v-if="selected.kind !== 'DEVICE_INCIDENT'" class="btn" type="button" :disabled="!selected.summary.links?.source" @click="openSource">打开{{ sourcePageLabel[selected.kind] }}页</button><b v-else>已迁移至后台管理系统</b></span>
             </div>
           </section>
         </main>

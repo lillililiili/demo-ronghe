@@ -7,15 +7,16 @@
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
  */
 import { createRouter, createWebHashHistory } from 'vue-router';
-import { REDIRECT, ROUTES, PAGE_THEME, pageTitle, routeKey } from '@/config/navModel.js';
+import { HOME_KEY, REDIRECT, ROUTES, PAGE_THEME, pageTitle, routeKey } from '@/config/navModel.js';
 import PageHost from '@/layout/PageHost.vue';
 import { authRestoreError, authSession, isAuthenticated, needsPasswordChange, restoreSession } from '@/services/auth.js';
 
 /* hash 模式与旧版地址完全兼容：#/situation、#/legality、旧书签、UI.goto 写
    location.hash 都直接命中。REDIRECT 表用 router redirect 实现（等价旧版
    location.replace，不污染历史）。 */
+const HOME_PATH = '/' + HOME_KEY;
 const routes = [
-  { path: '/', redirect: '/workbench' },
+  { path: '/', redirect: HOME_PATH },
   ...Object.keys(REDIRECT).map(k => ({
     path: '/' + k, redirect: '/' + REDIRECT[k]
   })),
@@ -35,9 +36,11 @@ export { routeKey };
 
 /* 只接受系统内已知单段页面，不接受外站、嵌套路径和登录自循环。 */
 export function loginDestination(value) {
-  if (typeof value !== 'string' || !/^\/[a-z][a-z0-9-]*(?:\?[^#]*)?$/.test(value)) return '/workbench';
+  if (typeof value !== 'string' || !/^\/[a-z][a-z0-9-]*(?:\?[^#]*)?$/.test(value)) return HOME_PATH;
   const key = value.slice(1).split('?')[0];
-  return key !== 'login' && ROUTES[key] ? value : '/workbench';
+  if (key === 'login' || !ROUTES[key]) return HOME_PATH;
+  if (REDIRECT[key]) return '/' + REDIRECT[key];
+  return value;
 }
 router.beforeEach(async to => {
   await restoreSession();
@@ -49,7 +52,7 @@ router.beforeEach(async to => {
     : true;
   if (!isAuthenticated()) return { path: '/login', query: { redirect: loginDestination(to.fullPath) }, replace: true };
   if (needsPasswordChange() && key !== 'change-password') return { path: '/change-password', replace: true };
-  if (!needsPasswordChange() && key === 'change-password') return { path: '/workbench', replace: true };
+  if (!needsPasswordChange() && key === 'change-password') return { path: HOME_PATH, replace: true };
   return true;
 });
 

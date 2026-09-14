@@ -29,3 +29,6 @@ docs/MQTT*.md
 # Playwright 产物（阶段 15 E2E）
 dongying-vue/test-results/
 dongying-vue/playwright-report/
+
+# Offline map packages are runtime data managed by the administration service.
+map-data/

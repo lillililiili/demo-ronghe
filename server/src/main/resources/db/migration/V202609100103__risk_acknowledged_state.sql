@@ -1,4 +1,0 @@
--- 通知提交记 NOTIFIED，确认回执记 ACKNOWLEDGED。
-ALTER TABLE flight_risk DROP CONSTRAINT ck_stage4_risk_state;
-ALTER TABLE flight_risk ADD CONSTRAINT ck_stage4_risk_state
-    CHECK (state_code IN ('PENDING_VERIFICATION','PENDING_NOTIFICATION','NOTIFIED','ACKNOWLEDGED','EXCLUDED'));

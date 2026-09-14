@@ -40,6 +40,79 @@ function num(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+const COVERAGE_STATES = ['available', 'unavailable', 'unknown'];
+
+/**
+ * 设备覆盖参数的统一形状。未知参数绝不补默认半径；设备不在线时，
+ * 即使有配置范围也只能标为 unavailable，不能画成正在有效监测。
+ */
+export function normalizeCoverage(coverage, online = true) {
+  const raw = coverage || {};
+  const kind = raw.kind === 'sector' ? 'sector' : raw.kind === 'circle' ? 'circle' : null;
+  const radiusM = num(raw.radiusM ?? raw.radius_m);
+  const rangeM = num(raw.rangeM ?? raw.range_m ?? raw.distanceM ?? raw.distance_m);
+  const azimuthDeg = num(raw.azimuthDeg ?? raw.azimuth_deg ?? raw.bearingDeg ?? raw.bearing_deg);
+  const fovDeg = num(raw.fovDeg ?? raw.fov_deg ?? raw.horizontalFovDeg ?? raw.horizontal_fov_deg);
+  const geometryValid = kind === 'circle'
+    ? radiusM !== null && radiusM > 0
+    : kind === 'sector' && rangeM !== null && rangeM > 0
+      && azimuthDeg !== null && fovDeg !== null && fovDeg > 0 && fovDeg <= 360;
+  if (!geometryValid) {
+    return {
+      kind,
+      status: 'unknown',
+      sourceLabel: raw.sourceLabel || raw.source_label || '参数来源未提供',
+      updatedAt: num(raw.updatedAt ?? raw.updated_at)
+    };
+  }
+  const requested = COVERAGE_STATES.includes(raw.status) ? raw.status : 'available';
+  return {
+    kind,
+    status: online && requested !== 'unavailable' ? requested : 'unavailable',
+    radiusM: kind === 'circle' ? radiusM : null,
+    rangeM: kind === 'sector' ? rangeM : null,
+    azimuthDeg: kind === 'sector' ? ((azimuthDeg % 360) + 360) % 360 : null,
+    fovDeg: kind === 'sector' ? fovDeg : null,
+    sourceLabel: raw.sourceLabel || raw.source_label || '参数来源未提供',
+    updatedAt: num(raw.updatedAt ?? raw.updated_at)
+  };
+}
+
+export function coverageSummary(coverage) {
+  if (!coverage || coverage.status === 'unknown') return '覆盖参数未知';
+  if (coverage.kind === 'sector') {
+    return `${Math.round(coverage.azimuthDeg)}°方位 · ${Math.round(coverage.fovDeg)}°视场 · ${(coverage.rangeM / 1000).toFixed(0)} km`;
+  }
+  return `${(coverage.radiusM / 1000).toFixed(0)} km 覆盖半径`;
+}
+
+function distanceMeters(aLon, aLat, bLon, bLat) {
+  const rad = Math.PI / 180;
+  const y = (bLat - aLat) * rad;
+  const x = (bLon - aLon) * rad * Math.cos((aLat + bLat) * .5 * rad);
+  return Math.hypot(x, y) * 6371000;
+}
+
+function bearingDegrees(aLon, aLat, bLon, bLat) {
+  const rad = Math.PI / 180;
+  const a = aLat * rad, b = bLat * rad, d = (bLon - aLon) * rad;
+  const y = Math.sin(d) * Math.cos(b);
+  const x = Math.cos(a) * Math.sin(b) - Math.sin(a) * Math.cos(b) * Math.cos(d);
+  return (Math.atan2(y, x) / rad + 360) % 360;
+}
+
+/** 仅用于展示层验证航迹是否落在已知且可用的覆盖几何内，不参与任何业务判定。 */
+export function coverageContainsPoint(device, point) {
+  const coverage = device && device.coverage;
+  if (!device || !point || coverage?.status !== 'available') return false;
+  const distance = distanceMeters(device.lon, device.lat, point.lon, point.lat);
+  if (coverage.kind === 'circle') return distance <= coverage.radiusM;
+  if (coverage.kind !== 'sector' || distance > coverage.rangeM) return false;
+  const bearing = bearingDegrees(device.lon, device.lat, point.lon, point.lat);
+  const delta = Math.abs(((bearing - coverage.azimuthDeg + 540) % 360) - 180);
+  return delta <= coverage.fovDeg / 2;
+}
+
 /** MultiPolygon → 每个多边形的全部环（第 0 环是外环，其余是孔洞，决策 16-3）。
     外环画不出来（点数不足）就整个多边形不画；坐标里有非数字则整条几何作废。 */
 export function polygonRings(boundary) {
@@ -124,15 +197,21 @@ export function toDevices(devices) {
   for (const device of devices || []) {
     const lon = num(device.longitude), lat = num(device.latitude);
     if (lon === null || lat === null) continue;
+    const status = DEVICE_STATUS[device.connectivity] || '未知';
     out.push({
+      deviceId: device.device_id,
       id: device.device_no || device.device_id,
       name: device.name || device.device_no || '',
       lon,
       lat,
-      status: DEVICE_STATUS[device.connectivity] || '未知',
-      alarm: false,
+      status,
+      alarm: !!(device.has_alarm || device.alarm),
       type: device.device_type_name || device.device_type || '',
-      channel: device.channel || ''
+      typeCode: device.device_type_code || device.type_code || '',
+      channel: device.channel || '',
+      lastReportAt: num(device.observed_at ?? device.last_heartbeat_at ?? device.received_at),
+      relatedAlerts: Array.isArray(device.related_alerts) ? device.related_alerts : [],
+      coverage: normalizeCoverage(device.coverage, status === '在线')
     });
   }
   return out;
@@ -250,11 +329,13 @@ export function toAlarms(alarms) {
   return out.sort((left, right) => right.ts - left.ts);
 }
 
-/** 轨迹点 → map.js 的 track 数组；kind 小写透传（map.js 用它区分实测点与预测点）。 */
+/** 轨迹点 → map.js 的 track 数组；kind 小写透传（map.js 用它区分实测点与预测点）。
+    读接口把坐标放在 location 里（与 latest_state 同形）；顶层 longitude 只作为兼容。 */
 export function toTrack(points) {
   const out = [];
   for (const point of points || []) {
-    const lon = num(point.longitude), lat = num(point.latitude);
+    const loc = point && point.location ? point.location : point;
+    const lon = num(loc && loc.longitude), lat = num(loc && loc.latitude);
     if (lon === null || lat === null) continue;
     out.push({ lon, lat, kind: String(point.point_kind || point.kind || 'meas').toLowerCase() });
   }

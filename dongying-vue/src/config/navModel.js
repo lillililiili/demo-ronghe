@@ -4,9 +4,12 @@
  * 导航的组织原则（原 app.js 注释）：甲方看到的是**业务系统**，不是技术后台。
  * ========================================================================== */
 
+/* 登录后默认落地页；侧栏不展示、旧书签会重定向到这里。 */
+export const HOME_KEY = 'situation';
+
 /* kids 存在即为可展开的一级模块；没有 kids 的一级模块直接就是页面。 */
 export const NAV = [
-  { k: 'workbench', t: '我的工作台', icon: 'home' },
+  /* 「我的工作台」已按用户裁定隐藏（2026-09-13），融合感知即首页 */
   /* 「综合态势」页已按用户裁定整页删除（2026-08-28），融合感知即首页 */
   {
     t: '感知监测', icon: 'radar', kids: [
@@ -31,23 +34,9 @@ export const NAV = [
       { k: 'evidence', t: '证据管理' }
     ]
   },
-  /* 用户指令（2026-09-02）：用户管理与角色管理拆分为独立菜单，
-     与日志归档共同归入「系统管理」组。 */
-  {
-    t: '运维管理', icon: 'tool', kids: [
-      { k: 'devices', t: '设备管理' },
-      { k: 'monitor', t: '设备实时监测' },
-      { k: 'commission', t: '设备接入调测' }
-    ]
-  },
-  {
-    t: '系统管理', icon: 'shield', kids: [
-      { k: 'users', t: '用户管理' },
-      { k: 'roles', t: '角色管理' },
-      { k: 'archive', t: '审计日志' }
-    ]
-  }
 ];
+
+export const MIGRATED_ADMIN_KEYS = new Set(['devices', 'monitor', 'commission', 'users', 'roles', 'archive']);
 
 /* 菜单外路由（原「目标事件工作台」已删，保留空数组以便后续复用）。 */
 export const EXTRA = [];
@@ -61,12 +50,20 @@ export const ROUTES = (function () {
   });
   EXTRA.forEach(e => { r[e.k] = { t: e.t, p: e.parent, ph: 'alarms' }; });
   r.overview = { t: '融合感知', p: '感知监测', ph: 'situation' };
+  /* 已隐藏、不再挂菜单：仍要有中文名，否则无权访问提示会把英文路由键摆出来。 */
+  r.workbench = { t: '我的工作台', p: null, ph: null };
   /* 已实现但暂不挂菜单的页面（决策 12-8）：仍要有中文名，否则"无权访问"提示会把英文路由键摆给用户看。
      名称与迁移 060 的权限目录一致。 */
   r.airspace = { t: '空域与航线规则', p: '飞行监管', ph: 'flights' };
   /* 旧书签 #/risk 会重定向到飞行计划「全部风险事件」；名称仅用于万一落到无权页时的提示。 */
   r.risk = { t: '空间安全风险', p: '飞行监管', ph: 'flights' };
   r.bigscreen = { t: '低空安全监控大屏', p: null, ph: null };
+  r.devices = { t: '设备管理', p: '运维管理', ph: null };
+  r.monitor = { t: '设备实时监测', p: '运维管理', ph: null };
+  r.commission = { t: '设备接入调测', p: '运维管理', ph: null };
+  r.users = { t: '用户管理', p: '系统管理', ph: null };
+  r.roles = { t: '角色管理', p: '系统管理', ph: null };
+  r.archive = { t: '审计日志', p: '系统管理', ph: null };
   r.login = { t: '登录', p: null, ph: null }; // 独立入口，不加入业务导航/权限矩阵
   r['change-password'] = { t: '修改密码', p: null, ph: null };
   return r;
@@ -76,17 +73,15 @@ export const PAGE_THEME = {
   login: 'login', 'change-password': 'login',
   workbench: 'overview',
   bigscreen: 'overview',
-  situation: 'sensing', monitor: 'sensing',
+  situation: 'sensing',
   flights: 'flight', legality: 'flight', risk: 'flight', airspace: 'flight',
   alarms: 'incident', punish: 'incident',
-  stats: 'analytics', evidence: 'analytics',
-  devices: 'operations', commission: 'operations',
-  users: 'system', roles: 'system', archive: 'system'
+  stats: 'analytics', evidence: 'analytics'
 };
 
 /* 旧地址重定向：目标页已删、语义由别的页承接时，hash 直接改写到承接页。
    #/risk 要带 tab=events，在 router/index.js 单独处理，不放这张纯 path 表。 */
-export const REDIRECT = { overview: 'situation' };
+export const REDIRECT = { overview: HOME_KEY, workbench: HOME_KEY };
 
 export const pageTitle = k => (ROUTES[k] || { t: k }).t;
 
@@ -95,10 +90,10 @@ export function groupOf(k) {
   return r && r.p ? r.p : null;
 }
 
-/* 空路径默认进入“我的工作台”；截掉 ?query。
+/* 空路径默认进入融合感知；截掉 ?query。
    放这里（而不是 router/index.js）是为了避免 PageHost ↔ router 循环依赖。 */
 export function routeKey(route) {
   let p = route.params.page;
   if (Array.isArray(p)) p = p[0];
-  return ((p || 'workbench') + '').split('?')[0];
+  return ((p || HOME_KEY) + '').split('?')[0];
 }

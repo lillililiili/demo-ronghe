@@ -35,7 +35,7 @@ import { openEvidenceFileModal } from '@/ui/evidenceFileDetail.js';
 import { openEvidenceChainTypeModal, renderEvidenceChainHtml } from '@/ui/evidenceChainView.js';
 import { disposalApi, isDisposalUnavailable } from '@/services/disposalApi.js';
 import { DISPOSAL_UNAVAILABLE_TEXT, openDisposalRequest } from '@/ui/disposalAuthModal.js';
-import { canRouteAction, hasPermission } from '@/services/accessControl.js';
+import { hasModuleAction, hasPermission } from '@/services/accessControl.js';
 import { deviceApi } from '@/services/deviceApi.js';
 import { openTrackReplay, trackPointsOf } from '@/ui/trackReplayModal.js';
 
@@ -453,7 +453,7 @@ function eoTrackActions(a) {
   if (a.state === 'FALSE_POSITIVE') {
     return open ? U.tag('正在自动结束', 't-blue') : '';
   }
-  const canEo = canRouteAction('devices', 'op');
+  const canEo = hasModuleAction('devices', 'op');
   if (!canEo) {
     return `<button class="btn" data-al="eo-track" disabled title="需要设备管理的操作权限">人工补跟踪</button>`;
   }
@@ -648,7 +648,7 @@ async function loadTarget(my) {
 async function loadEoTask(my) {
   const a = cur.alarm;
   cur.eoTask = null; cur.eoTaskError = '';
-  if (!a || !a.target_id || !canRouteAction('devices', 'op')) return;
+  if (!a || !a.target_id || !hasModuleAction('devices', 'op')) return;
   try {
     cur.eoTask = await deviceApi.currentEoTrack(a.target_id);
   } catch (e) {

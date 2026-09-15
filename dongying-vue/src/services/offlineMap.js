@@ -33,20 +33,14 @@ function runtimeKey(config) {
 
 async function readRuntimeConfig(signal) {
   const managedUrl = localUrl(MANAGED_CONFIG_URL);
-  const builtinUrl = localUrl(BUILTIN_CONFIG_URL);
-  // 两份小配置并行读取：尚未通过后台启用地图时，不再先等待运行指针 404，
-  // 再串行请求内置配置；后台版本存在时仍具有绝对优先级。
-  const builtinResult = json(builtinUrl, signal)
-    .then(config => ({ config }))
-    .catch(error => ({ error }));
   try {
     const config = await json(managedUrl, signal);
     return { config, configUrl: managedUrl, managed: true };
   } catch (error) {
     if (error?.name === 'AbortError') throw error;
-    const result = await builtinResult;
-    if (result.error) throw result.error;
-    return { config: result.config, configUrl: builtinUrl, managed: false };
+    const builtinUrl = localUrl(BUILTIN_CONFIG_URL);
+    const config = await json(builtinUrl, signal);
+    return { config, configUrl: builtinUrl, managed: false };
   }
 }
 
@@ -78,8 +72,6 @@ function loadEngine() {
       const maplibre = lib.default || lib;
       // v6 的 Worker 是独立 ESM；必须经过 Vite worker 管线合并其共享模块。
       maplibre.setWorkerUrl(workerUrl);
-      // 提前创建共享 Worker 池，避免第一个 Map 实例再同步承担 Worker 启动成本。
-      maplibre.prewarm();
       const protocol = new pmtiles.Protocol();
       maplibre.addProtocol('pmtiles', protocol.tile);
       return { maplibre, pmtiles, protocol };
@@ -187,9 +179,6 @@ export async function prepareOfflineMap(signal) {
     if (style.version !== 8 || !style.sources?.protomaps || Object.keys(style.sources).length !== 1 || style.imports) {
       throw new Error('底图样式必须仅使用本地 protomaps 数据源');
     }
-    // 地图包里的三个字族都指向同一份 8 MiB 中文 OTF，MapLibre 会按字族重复下载。
-    // 中文改由 MapView 的 localIdeographFontFamily 在本机离线栅格化；拉丁字形继续走包内 glyphs。
-    delete style['font-faces'];
     const maxZoom = Number.isFinite(Number(manifest.maxZoom)) ? Number(manifest.maxZoom) : 15;
     style.sources.protomaps = {
       type: 'vector',
@@ -228,6 +217,3 @@ export async function prepareOfflineMap(signal) {
 }
 
 window.OfflineMap = { prepare: prepareOfflineMap };
-
-// 应用外壳加载时即开始准备地图引擎；登录与会话恢复期间可并行完成大模块解析。
-loadEngine().catch(() => { /* 地图实例创建时会重试并进入可见降级流程。 */ });

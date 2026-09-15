@@ -1,6 +1,8 @@
 /* 融合感知页私有的确定性演示源。所有编号都带 SIM，页面同时显示“模拟数据”，
    不会在真实数据请求失败时暗中回退到这里。 */
-import { coverageContainsPoint, coverageSummary, normalizeCoverage } from '../../services/situationData.js';
+import {
+  airspaceKindMeta, coverageContainsPoint, coverageSummary, normalizeCoverage, targetIconKind
+} from '../../services/situationData.js';
 
 export const MOCK_TICK_MS = 1000;
 export const MOCK_TRACK_LIMIT = 48;
@@ -11,6 +13,8 @@ const SENSOR_META = {
   FIVE_G_A: { label: '5G-A', color: '#4b9cff', icon: 'bolt' },
   TDOA: { label: 'TDOA', color: '#f1a43a', icon: 'api' }
 };
+
+const STATUS_CODE = { '在线': 'ONLINE', '异常': 'ABNORMAL', '离线': 'OFFLINE', '未知': 'UNKNOWN' };
 
 /* 按东营全域的主要城镇与重点区域布点。这里只表达“多站组网”的页面形态，
    不是现场台账；单站能力采用公开资料中的保守量级，避免再画几十公里的确定覆盖。 */
@@ -45,25 +49,31 @@ function createDeviceSeeds() {
     seeds.push({
       deviceId: `sim-radar-${site.code.toLowerCase()}`, id: `SIM-RADAR-${site.code}`,
       name: `${site.label}低空雷达`, typeCode: 'RADAR', ...radar, status: '在线', channel: '低空雷达探测',
-      alarm: false, coverage: { kind: 'circle', radiusM: 5000 }
+      alarm: false, coverage: { kind: 'circle', radiusM: 5000 }, relatedAlerts: []
     });
 
     const eo = offsetPoint(site, -900, -1200);
+    const eoAbnormal = site.code === 'KL';
     seeds.push({
       deviceId: `sim-eo-${site.code.toLowerCase()}`, id: `SIM-EO-${site.code}`,
-      name: `${site.label}光电转台`, typeCode: 'EO', ...eo, status: '在线', channel: '光电确认与跟踪',
-      alarm: false, coverage: { kind: 'sector', rangeM: 2000, azimuthDeg: bearingDegrees(eo, site), fovDeg: 45 }
+      name: `${site.label}光电转台`, typeCode: 'EO', ...eo, status: eoAbnormal ? '异常' : '在线', channel: '光电确认与跟踪',
+      alarm: eoAbnormal, coverage: { kind: 'sector', rangeM: 2000, azimuthDeg: bearingDegrees(eo, site), fovDeg: 45 },
+      relatedAlerts: eoAbnormal ? [{ id: 'SIM-DEV-ALM-EO-01', level: '中', title: '云台方位反馈异常', state: '风险持续' }] : []
     });
 
     [[-1500, 200], [1500, -300]].forEach(([eastM, northM], index) => {
       const point = offsetPoint(site, eastM, northM);
       const offline = site.code === 'PORT' && index === 1;
+      const abnormal = site.code === 'GR' && index === 0;
+      const onlineAlarm = site.code === 'DY' && index === 0;
       seeds.push({
         deviceId: `sim-5ga-${site.code.toLowerCase()}-${index + 1}`, id: `SIM-5GA-${site.code}-${index + 1}`,
         name: `${site.label}5G-A通感站${index + 1}`, typeCode: 'FIVE_G_A', ...point,
-        status: offline ? '离线' : '在线', channel: '5G-A通感', alarm: offline,
+        status: offline ? '离线' : abnormal ? '异常' : '在线', channel: '5G-A通感', alarm: offline || abnormal || onlineAlarm,
         coverage: { kind: 'circle', radiusM: 1000 },
-        relatedAlerts: offline ? [{ id: 'SIM-DEV-ALM-5GA-01', level: '中', title: '回传链路中断', state: '风险持续' }] : []
+        relatedAlerts: offline ? [{ id: 'SIM-DEV-ALM-5GA-01', level: '中', title: '回传链路中断', state: '风险持续' }]
+          : abnormal ? [{ id: 'SIM-DEV-ALM-5GA-03', level: '中', title: '通感时钟偏差超阈', state: '风险持续' }]
+            : onlineAlarm ? [{ id: 'SIM-DEV-ALM-5GA-02', level: '低', title: '上行信号质量下降', state: '风险持续' }] : []
       });
     });
 
@@ -115,7 +125,11 @@ const ROUTE_VARIANTS = [
 export const MOCK_ROUTES = DEPLOYMENTS.flatMap((site, siteIndex) => ROUTE_VARIANTS.map((variant, variantIndex) => {
   const index = siteIndex * ROUTE_VARIANTS.length + variantIndex;
   const number = String(index + 1).padStart(3, '0');
-  const points = loopPoints(site, variant.radiusM, variant.squash, siteIndex * .41 + variantIndex * .72);
+  /* 三类无人机分别落在光电视场、5G-A 站和 TDOA 节点附近，
+     不用“设备类型可探测”代替真实几何覆盖关系。 */
+  const center = variantIndex === 1 ? offsetPoint(site, -1500, 200)
+    : variantIndex === 2 ? offsetPoint(site, 0, 1800) : site;
+  const points = loopPoints(center, variant.radiusM, variant.squash, siteIndex * .41 + variantIndex * .72);
   return {
     id: `SIM-UAV-${number}`, targetId: `sim-target-${number}`, type: '无人机', district: site.district,
     ...variant, legal: index === 0 ? '非法' : index === 1 ? '待确认' : variant.legal,
@@ -123,6 +137,64 @@ export const MOCK_ROUTES = DEPLOYMENTS.flatMap((site, siteIndex) => ROUTE_VARIAN
     fusedConf: 86 + index % 10, points
   };
 }));
+
+const FOREIGN_VARIANTS = [
+  { id: 'SIM-OBJ-001', site: DEPLOYMENTS[0], center: offsetPoint(DEPLOYMENTS[0], 0, 0), objectTypeCode: 'BIRD', subtypeCode: 'BIRD_FLOCK', type: '鸟类', typeLabel: '鸟群', speed: 10.5, alt: 72, radiusM: 360, squash: .46 },
+  { id: 'SIM-OBJ-002', site: DEPLOYMENTS[5], center: offsetPoint(DEPLOYMENTS[5], -1500, 200), objectTypeCode: 'UNKNOWN', subtypeCode: 'BALLOON', type: '未分类', typeLabel: '气球', speed: 2.2, alt: 165, radiusM: 120, squash: .72 },
+  { id: 'SIM-OBJ-003', site: DEPLOYMENTS[3], center: offsetPoint(DEPLOYMENTS[3], -1800, -1400), objectTypeCode: 'UNKNOWN', subtypeCode: 'KITE', type: '未分类', typeLabel: '风筝', speed: .6, alt: 48, radiusM: 36, squash: .55 },
+  { id: 'SIM-OBJ-004', site: DEPLOYMENTS[4], center: offsetPoint(DEPLOYMENTS[4], 0, 0), objectTypeCode: 'UNKNOWN', subtypeCode: 'SKY_LANTERN', type: '未分类', typeLabel: '孔明灯', speed: 1.5, alt: 96, radiusM: 82, squash: .8 },
+  { id: 'SIM-OBJ-005', site: DEPLOYMENTS[2], center: offsetPoint(DEPLOYMENTS[2], -1500, 200), objectTypeCode: 'UNKNOWN', subtypeCode: 'OTHER_OBJECT', type: '未分类', typeLabel: '其他异物', speed: 3.2, alt: 138, radiusM: 170, squash: .62 },
+  { id: 'SIM-OBJ-006', site: DEPLOYMENTS[1], center: offsetPoint(DEPLOYMENTS[1], 0, 1800), objectTypeCode: 'BIRD', subtypeCode: 'MIGRATORY_BIRD', type: '鸟类', typeLabel: '候鸟', speed: 8.2, alt: 110, radiusM: 250, squash: .5 }
+];
+
+export const MOCK_FOREIGN_ROUTES = FOREIGN_VARIANTS.map((variant, index) => {
+  const points = loopPoints(variant.center, variant.radiusM, variant.squash, .34 + index * .61);
+  return {
+    ...variant,
+    targetId: `sim-object-${String(index + 1).padStart(3, '0')}`,
+    district: variant.site.district,
+    iconKind: targetIconKind(variant.objectTypeCode, variant.subtypeCode),
+    legal: '不适用',
+    fusedConf: 78 + index * 3,
+    durationMs: Math.round(routeLength(points) / variant.speed * 1000),
+    points
+  };
+});
+
+export const MOCK_TARGET_ROUTES = [...MOCK_ROUTES.map(route => ({
+  ...route, objectTypeCode: 'UAV', subtypeCode: route.typeLabel === '垂直起降固定翼' ? 'VTOL' : 'QUADCOPTER', iconKind: 'uav'
+})), ...MOCK_FOREIGN_ROUTES];
+
+function planCoordinates(site, offsets) {
+  return offsets.map(([eastM, northM]) => {
+    const point = offsetPoint(site, eastM, northM);
+    return [point.lon, point.lat];
+  });
+}
+
+const PLAN_SEEDS = [
+  { id: 'SIM-PLAN-001', routeVersionId: 'SIM-RV-001', planNo: 'SIM-FP-20260914-001', statusCode: 'EXECUTING', site: DEPLOYMENTS[0], offsets: [[-1250, -420], [0, 0], [1380, 520]], startMin: -30, endMin: 30, uavId: 'SIM-UAV-001' },
+  { id: 'SIM-PLAN-002', routeVersionId: 'SIM-RV-002', planNo: 'SIM-FP-20260914-002', statusCode: 'EXECUTING', site: DEPLOYMENTS[1], offsets: [[-1000, -520], [120, 60], [1180, 630]], startMin: -10, endMin: 50, uavId: 'SIM-UAV-004' },
+  { id: 'SIM-PLAN-003', routeVersionId: 'SIM-RV-003', planNo: 'SIM-FP-20260914-003', statusCode: 'PENDING', site: DEPLOYMENTS[5], offsets: [[-2300, -80], [-1500, 200], [-320, 620]], startMin: 40, endMin: 100, uavId: 'SIM-UAV-016' },
+  { id: 'SIM-PLAN-004', routeVersionId: 'SIM-RV-004', planNo: 'SIM-FP-20260914-004', statusCode: 'PENDING', site: DEPLOYMENTS[4], offsets: [[-1100, -620], [0, 0], [1260, 470]], startMin: 80, endMin: 140, uavId: 'SIM-UAV-013' },
+  { id: 'SIM-PLAN-005', routeVersionId: 'SIM-RV-005', planNo: 'SIM-FP-20260914-005', statusCode: 'COMPLETED', site: DEPLOYMENTS[3], offsets: [[-2300, -1620], [-1800, -1400], [-620, -760]], startMin: -180, endMin: -120, uavId: 'SIM-UAV-010' },
+  { id: 'SIM-PLAN-006', routeVersionId: 'SIM-RV-006', planNo: 'SIM-FP-20260914-006', statusCode: 'COMPLETED', site: DEPLOYMENTS[2], offsets: [[-1100, -520], [0, 0], [930, 680]], startMin: -90, endMin: -30, uavId: 'SIM-UAV-007' }
+];
+
+export function createMockFlightPlans(startedAt = Date.now()) {
+  return PLAN_SEEDS.map(seed => ({
+    id: seed.id,
+    planId: seed.id,
+    routeVersionId: seed.routeVersionId,
+    planNo: seed.planNo,
+    statusCode: seed.statusCode,
+    startAt: startedAt + seed.startMin * 60000,
+    endAt: startedAt + seed.endMin * 60000,
+    uavId: seed.uavId,
+    coordinates: planCoordinates(seed.site, seed.offsets),
+    sourceMode: 'mock'
+  }));
+}
 
 function clone(value) {
   return typeof structuredClone === 'function'
@@ -147,18 +219,23 @@ export function createMockDevices(now = Date.now(), scenarioStartedAt = now) {
   return DEVICE_SEEDS.map((seed, index) => {
     const meta = SENSOR_META[seed.typeCode];
     const online = seed.status === '在线';
+    const availabilityReason = seed.status === '异常' ? '设备异常，覆盖能力不可用'
+      : seed.status === '离线' ? '设备离线，覆盖能力不可用' : '';
     const coverage = normalizeCoverage({
       ...seed.coverage,
+      availabilityReason,
       sourceLabel: '公开指标参考 · 前端演示配置',
       updatedAt: scenarioStartedAt - (online ? 4000 + index * 900 : 78000)
     }, online);
     return {
       ...clone(seed),
       relatedAlerts: (seed.relatedAlerts || []).map(alert => ({ ...alert, ts: scenarioStartedAt - 1000 })),
+      statusCode: STATUS_CODE[seed.status] || 'UNKNOWN',
+      hasAlarm: !!seed.alarm,
       color: meta.color,
       type: meta.label,
       icon: meta.icon,
-      lastReportAt: online ? now - 1800 : scenarioStartedAt - 78000,
+      lastReportAt: online ? now - 1800 : seed.status === '异常' ? now - 9800 : scenarioStartedAt - 78000,
       coverage,
       coverageText: coverageSummary(coverage)
     };
@@ -181,19 +258,75 @@ export function routeIsCovered(route, devices) {
 }
 
 function airspaces() {
-  const rings = [[
-    [118.49, 37.40], [118.65, 37.42], [118.68, 37.56], [118.52, 37.59], [118.49, 37.40]
-  ]];
-  return [{
-    id: 'SIM-NFZ-01', name: '演示重点防控区', type: '重点防控区', color: '#ff5b61', layer: 'nofly',
-    rings, center: { lon: 118.585, lat: 37.495 }, limit: true, limitTx: '120 m', unit: '前端演示配置'
-  }];
+  /* 与后台空域种类保持一致。边界仅用于展示多类型图层，不代表真实管制边界。 */
+  const seeds = [
+    {
+      id: 'SIM-AS-PRO-01', name: '东营城区演示禁飞空域', kindCode: 'PROHIBITED', limitTx: '禁止飞行',
+      rings: [[[118.535, 37.423], [118.625, 37.426], [118.635, 37.485], [118.553, 37.493], [118.535, 37.423]]],
+      center: { lon: 118.585, lat: 37.458 }
+    },
+    {
+      id: 'SIM-AS-TMP-01', name: '东营港演示临时管制区', kindCode: 'TEMPORARY_CONTROL', limitTx: '120 m',
+      rings: [[[118.900, 38.035], [119.030, 38.037], [119.052, 38.102], [118.932, 38.126], [118.900, 38.035]]],
+      center: { lon: 118.976, lat: 38.080 }
+    },
+    {
+      id: 'SIM-AS-ALT-01', name: '利津演示限高区域', kindCode: 'ALTITUDE_LIMIT', limitTx: '150 m',
+      rings: [[[118.188, 37.454], [118.301, 37.444], [118.326, 37.510], [118.214, 37.538], [118.188, 37.454]]],
+      center: { lon: 118.257, lat: 37.491 }
+    },
+    {
+      id: 'SIM-AS-RES-01', name: '垦利演示重点防控区域', kindCode: 'RESTRICTED', limitTx: '180 m',
+      rings: [[[118.505, 37.555], [118.607, 37.548], [118.626, 37.623], [118.532, 37.646], [118.505, 37.555]]],
+      center: { lon: 118.566, lat: 37.597 }
+    },
+    {
+      id: 'SIM-AS-PER-01', name: '广饶演示适飞空域', kindCode: 'PERMITTED', limitTx: '300 m',
+      rings: [[[118.338, 37.010], [118.477, 37.014], [118.496, 37.088], [118.360, 37.105], [118.338, 37.010]]],
+      center: { lon: 118.417, lat: 37.059 }
+    }
+  ];
+  return seeds.map(seed => {
+    const meta = airspaceKindMeta(seed.kindCode);
+    return {
+      ...seed,
+      type: meta.type,
+      color: meta.color,
+      layer: meta.layer,
+      limit: true,
+      unit: '前端演示配置'
+    };
+  });
+}
+
+function createMockRisks(startedAt, elapsed) {
+  const risks = [
+    {
+      id: 'SIM-RISK-001', riskId: 'SIM-RISK-001', riskType: 'SPACE_OBJECT', severity: 'HIGH', level: '高',
+      state: 'PENDING_VERIFICATION', planId: 'SIM-PLAN-001', routeVersionId: 'SIM-RV-001', targetId: 'SIM-OBJ-001',
+      occurredAt: startedAt - 8000, ts: startedAt - 8000, reasonText: '鸟群进入执行中航线走廊',
+      spaceFact: { subtypeCode: 'BIRD_FLOCK', subtypeName: '鸟群', distanceToRouteM: 42, corridorRelation: 'INSIDE' }
+    },
+    {
+      id: 'SIM-RISK-003', riskId: 'SIM-RISK-003', riskType: 'SPACE_OBJECT', severity: 'LOW', level: '低',
+      state: 'NOTIFIED', planId: 'SIM-PLAN-005', routeVersionId: 'SIM-RV-005', targetId: 'SIM-OBJ-003',
+      occurredAt: startedAt - 132 * 60000, ts: startedAt - 132 * 60000, reasonText: '历史风筝邻近已完成航线，风险已通知',
+      spaceFact: { subtypeCode: 'KITE', subtypeName: '风筝', distanceToRouteM: 180, corridorRelation: 'NEAR' }
+    }
+  ];
+  if (elapsed >= 18000) risks.push({
+    id: 'SIM-RISK-002', riskId: 'SIM-RISK-002', riskType: 'SPACE_OBJECT', severity: 'MEDIUM', level: '中',
+    state: 'PENDING_NOTIFICATION', planId: 'SIM-PLAN-003', routeVersionId: 'SIM-RV-003', targetId: 'SIM-OBJ-002',
+    occurredAt: startedAt + 18000, ts: startedAt + 18000, reasonText: '气球邻近待执行航线',
+    spaceFact: { subtypeCode: 'BALLOON', subtypeName: '气球', distanceToRouteM: 236, corridorRelation: 'NEAR' }
+  });
+  return risks.sort((left, right) => right.occurredAt - left.occurredAt);
 }
 
 export function createSituationMockSource(options = {}) {
   const tickMs = options.tickMs || MOCK_TICK_MS;
   const startedAt = options.startedAt ?? Date.now();
-  const tracks = new Map(MOCK_ROUTES.map(route => [route.id, []]));
+  const tracks = new Map(MOCK_TARGET_ROUTES.map(route => [route.id, []]));
   let timer = null;
   let listener = null;
   let pausedAt = null;
@@ -204,22 +337,22 @@ export function createSituationMockSource(options = {}) {
   function snapshot(at = Date.now()) {
     const elapsed = scenarioElapsed(at);
     const devices = createMockDevices(at, startedAt);
-    const targets = MOCK_ROUTES.map((route, index) => {
+    const targets = MOCK_TARGET_ROUTES.map((route, index) => {
       const from = routePosition(route, elapsed);
       const to = routePosition(route, elapsed + tickMs);
       const history = tracks.get(route.id);
       const last = history[history.length - 1];
-      if (!last || Math.hypot(last.lon - from.lon, last.lat - from.lat) > 0.00001) {
-        history.push({ ...from, kind: 'meas' });
+      if (!last || last.observedAt !== at) {
+        history.push({ ...from, kind: 'meas', observedAt: at });
         if (history.length > MOCK_TRACK_LIMIT) history.splice(0, history.length - MOCK_TRACK_LIMIT);
       }
-      const secondActive = index === 1 && elapsed >= 12000;
+      const secondActive = route.objectTypeCode === 'UAV' && index === 1 && elapsed >= 12000;
       const sourceDeviceIds = devices
         .filter(device => coverageContainsPoint(device, from))
         .map(device => device.id);
       return {
         ...route,
-        legal: secondActive ? '异常' : route.legal,
+        legal: route.objectTypeCode === 'UAV' ? (secondActive ? '异常' : route.legal) : '不适用',
         sourceDeviceIds,
         lon: to.lon,
         lat: to.lat,
@@ -239,7 +372,17 @@ export function createSituationMockSource(options = {}) {
       id: 'SIM-ALM-002', alarmId: 'SIM-ALM-002', targetId: 'SIM-UAV-002', level: '中',
       type: '高度异常', state: 'ACTIVE', ts: startedAt + 12000, district: MOCK_ROUTES[1].district, riskText: '风险持续'
     });
-    return { generatedAt: at, startedAt, simulated: true, devices, targets, alarms, airspaces: airspaces() };
+    return {
+      generatedAt: at,
+      startedAt,
+      simulated: true,
+      devices,
+      targets,
+      alarms,
+      flightPlans: createMockFlightPlans(startedAt),
+      risks: createMockRisks(startedAt, elapsed),
+      airspaces: airspaces()
+    };
   }
 
   function emit() {

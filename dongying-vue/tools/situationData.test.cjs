@@ -70,6 +70,7 @@ async function main() {
   const drawn = S.toAirspaces([airspace('PROHIBITED', SQUARE_WITH_HOLE)]);
   check('可画空域产出一条', drawn.length, 1);
   check('空域带上颜色', drawn[0].color, '#ff4d5e');
+  check('空域带上稳定种类码', drawn[0].kindCode, 'PROHIBITED');
   // 阶段 12：map.js 的图层归属直接读这个字段（决策 12-3），缺了会掉进按类型名的回落分支。
   check('空域带上 layer（map.js 据此决定图层归属）', drawn[0].layer, 'nofly');
   // 阶段 12 起 map.js 删掉了按 type 猜图层的回落：漏传 layer 的空域不画、只告警。
@@ -107,10 +108,14 @@ async function main() {
   ]);
   check('没有经纬度的设备不进地图', devices.length, 1);
   check('设备状态走字典', devices[0].status, '在线');
+  check('设备保留稳定状态码', devices[0].statusCode, 'ONLINE');
   check('告警标记来自 has_alarm', S.toDevices([
     { device_id: 'd4', longitude: 118.5, latitude: 37.4, has_alarm: true }
   ])[0].alarm, true);
   check('未知连接状态不猜成在线', S.toDevices([{ device_id: 'd3', longitude: 1, latitude: 1, connectivity: 'WAT' }])[0].status, '未知');
+  const abnormalDevice = S.toDevices([{ device_id: 'd5', longitude: 118.4, latitude: 37.4, connectivity: 'ABNORMAL', coverage: { kind: 'circle', radius_m: 1000 } }])[0];
+  check('异常连接状态单独映射', [abnormalDevice.statusCode, abnormalDevice.status], ['ABNORMAL', '异常']);
+  check('异常设备覆盖不参与有效监测', abnormalDevice.coverage.status, 'unavailable');
 
   /* ---- 覆盖参数 ---- */
   const circle = S.normalizeCoverage({ kind: 'circle', radiusM: 50000, sourceLabel: '配置中心', updatedAt: 123 }, true);
@@ -149,6 +154,7 @@ async function main() {
   ], legal);
   check('细类走共享字典，不把 QUADCOPTER 之类的码摆上屏', targets[0].typeLabel, '多旋翼无人机');
   check('大类仍是稳定的中文（筛选与"是不是无人机"依赖它）', targets[0].type, '无人机');
+  check('目标保留大类、细类与图标键', [targets[0].objectTypeCode, targets[0].subtypeCode, targets[0].iconKind], ['UAV', 'QUADCOPTER', 'uav']);
   check('有位置的目标 posValid=true', targets[0].posValid, true);
   check('置信度按百分比', targets[0].fusedConf, 87);
   check('有研判的目标用研判结论', targets[0].legal, '合法');
@@ -157,6 +163,30 @@ async function main() {
   check('没有位置就不给经度，不补 0', targets[1].lon, null);
   check('没有研判的目标是待确认，不是合法', targets[1].legal, '待确认');
   check('没有置信度不补 0', targets[1].fusedConf, null);
+  const foreignTargets = S.toTargets([
+    { target_id: 'bird', object_type_code: 'BIRD', subtype: 'BIRD_FLOCK', latest_state: { location: { longitude: 118.5, latitude: 37.5 } } },
+    { target_id: 'balloon', object_type_code: 'UNKNOWN', subtype: 'BALLOON', latest_state: { location: { longitude: 118.5, latitude: 37.5 } } },
+    { target_id: 'kite', object_type_code: 'UNKNOWN', subtype: 'KITE', latest_state: { location: { longitude: 118.5, latitude: 37.5 } } },
+    { target_id: 'lantern', object_type_code: 'UNKNOWN', subtype: 'SKY_LANTERN', latest_state: { location: { longitude: 118.5, latitude: 37.5 } } },
+    { target_id: 'other', object_type_code: 'UNKNOWN', subtype: 'OTHER_OBJECT', latest_state: { location: { longitude: 118.5, latitude: 37.5 } } }
+  ], {});
+  check('五种异物映射到不同图标', foreignTargets.map(target => target.iconKind), ['bird', 'balloon', 'kite', 'lantern', 'unknown']);
+  ok('非无人机合法性统一为不适用', foreignTargets.every(target => target.legal === '不适用'));
+
+  /* ---- 航线风险口径 ---- */
+  ok('待核验空中异物风险会点亮航线', S.routeRiskIsActive({ state: 'PENDING_VERIFICATION', riskType: 'SPACE_OBJECT', planId: 'p1', routeVersionId: 'r1' }));
+  ok('待通知兼容 FOREIGN_OBJECT 类型', S.routeRiskIsActive({ state: 'PENDING_NOTIFICATION', risk_type: 'FOREIGN_OBJECT', plan_id: 'p1', route_version_id: 'r1' }));
+  ok('已通知风险不再点亮实时航线', !S.routeRiskIsActive({ state: 'NOTIFIED', riskType: 'SPACE_OBJECT', planId: 'p1', routeVersionId: 'r1' }));
+  ok('缺少航线版本的风险不得点亮其他航线', !S.routeRiskIsActive({ state: 'PENDING_VERIFICATION', riskType: 'SPACE_OBJECT', planId: 'p1' }));
+  ok('风险按计划与航线版本双键关联', S.riskMatchesPlan(
+    { planId: 'p1', routeVersionId: 'r1' }, { id: 'p1', routeVersionId: 'r1' }
+  ));
+  ok('同计划的旧航线版本不能关联当前航线', !S.riskMatchesPlan(
+    { planId: 'p1', routeVersionId: 'r0' }, { planId: 'p1', routeVersionId: 'r1' }
+  ));
+  ok('双键关联兼容后台 snake_case 字段', S.riskMatchesPlan(
+    { plan_id: 'p2', route_version_id: 'r2' }, { plan_id: 'p2', route_version_id: 'r2' }
+  ));
 
   /* ---- 告警 ---- */
   const alarms = S.toAlarms([

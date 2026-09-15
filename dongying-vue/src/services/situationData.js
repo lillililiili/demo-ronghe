@@ -33,6 +33,36 @@ const SEVERITY_LEVEL = { CRITICAL: '高', HIGH: '高', MEDIUM: '中', LOW: '低'
 const DEVICE_STATUS = { ONLINE: '在线', OFFLINE: '离线', ABNORMAL: '异常', UNKNOWN: '未知' };
 /** 未关闭的告警状态：地图与 HUD 只展示还在处理中的。 */
 export const OPEN_ALARM_STATES = ['PENDING_VERIFICATION', 'CONFIRMED'];
+/** 融合域已确认的“当前风险”口径：通知/回执/排除都不再点亮实时航线。 */
+export const OPEN_ROUTE_RISK_STATES = ['PENDING_VERIFICATION', 'PENDING_NOTIFICATION'];
+
+/** 空中目标的稳定图标键。气球/风筝/孔明灯是推断细类，不伪造为设备原生大类。 */
+export function targetIconKind(objectTypeCode, subtypeCode) {
+  if (objectTypeCode === 'UAV') return 'uav';
+  if (objectTypeCode === 'BIRD' || ['BIRD_FLOCK', 'MIGRATORY_BIRD', 'RAPTOR'].includes(subtypeCode)) return 'bird';
+  if (subtypeCode === 'BALLOON') return 'balloon';
+  if (subtypeCode === 'KITE') return 'kite';
+  if (subtypeCode === 'LANTERN' || subtypeCode === 'SKY_LANTERN') return 'lantern';
+  return 'unknown';
+}
+
+export function routeRiskIsActive(risk) {
+  return !!risk && OPEN_ROUTE_RISK_STATES.includes(risk.state)
+    && ['SPACE_OBJECT', 'FOREIGN_OBJECT'].includes(risk.riskType || risk.risk_type)
+    && !!(risk.planId || risk.plan_id) && !!(risk.routeVersionId || risk.route_version_id);
+}
+
+/** 风险只能关联到同一计划的同一条航线版本，避免旧版本风险误点亮当前航线。 */
+export function riskMatchesPlan(risk, plan) {
+  if (!risk || !plan) return false;
+  const riskPlanId = risk.planId || risk.plan_id;
+  const riskRouteVersionId = risk.routeVersionId || risk.route_version_id;
+  const planId = plan.planId || plan.plan_id || plan.id;
+  const routeVersionId = plan.routeVersionId || plan.route_version_id;
+  return !!riskPlanId && !!riskRouteVersionId && !!planId && !!routeVersionId
+    && String(riskPlanId) === String(planId)
+    && String(riskRouteVersionId) === String(routeVersionId);
+}
 
 function num(value) {
   if (value === null || value === undefined || value === '') return null;
@@ -61,6 +91,7 @@ export function normalizeCoverage(coverage, online = true) {
     return {
       kind,
       status: 'unknown',
+      availabilityReason: raw.availabilityReason || raw.availability_reason || '覆盖参数未知',
       sourceLabel: raw.sourceLabel || raw.source_label || '参数来源未提供',
       updatedAt: num(raw.updatedAt ?? raw.updated_at)
     };
@@ -73,6 +104,7 @@ export function normalizeCoverage(coverage, online = true) {
     rangeM: kind === 'sector' ? rangeM : null,
     azimuthDeg: kind === 'sector' ? ((azimuthDeg % 360) + 360) % 360 : null,
     fovDeg: kind === 'sector' ? fovDeg : null,
+    availabilityReason: raw.availabilityReason || raw.availability_reason || (online ? '' : '设备非在线，覆盖能力不可用'),
     sourceLabel: raw.sourceLabel || raw.source_label || '参数来源未提供',
     updatedAt: num(raw.updatedAt ?? raw.updated_at)
   };
@@ -174,6 +206,7 @@ export function toAirspaces(details) {
         id: polygons.length > 1 ? `${airspaceNo}#${index + 1}` : airspaceNo,
         airspaceId: detail.airspace_id,
         name: detail.name || airspaceNo || '',
+        kindCode: meta.kindCode,
         type: meta.type,
         color: meta.color,
         layer: meta.layer,
@@ -198,6 +231,7 @@ export function toDevices(devices) {
     const lon = num(device.longitude), lat = num(device.latitude);
     if (lon === null || lat === null) continue;
     const status = DEVICE_STATUS[device.connectivity] || '未知';
+    const hasAlarm = !!(device.has_alarm || device.alarm);
     out.push({
       deviceId: device.device_id,
       id: device.device_no || device.device_id,
@@ -205,7 +239,9 @@ export function toDevices(devices) {
       lon,
       lat,
       status,
-      alarm: !!(device.has_alarm || device.alarm),
+      statusCode: DEVICE_STATUS[device.connectivity] ? device.connectivity : 'UNKNOWN',
+      alarm: hasAlarm,
+      hasAlarm,
       type: device.device_type_name || device.device_type || '',
       typeCode: device.device_type_code || device.type_code || '',
       channel: device.channel || '',
@@ -245,14 +281,19 @@ export function toTargets(targets, legalMap) {
     const location = state && state.location ? state.location : null;
     const lon = num(location && location.longitude), lat = num(location && location.latitude);
     const posValid = lon !== null && lat !== null;
+    const objectTypeCode = target.object_type_code || 'UNKNOWN';
+    const subtypeCode = target.subtype || '';
     return {
       id: target.target_no || target.target_id,
       targetId: target.target_id,
       // type 是筛选与"是不是无人机"的判定依据，必须是稳定的大类；
       // typeLabel 才是上屏用的名字（有细类就用细类），两者都走共享字典，本页不另建一套中文。
-      type: labelOf(OBJECT_TYPE_LABEL, target.object_type_code, '未分类'),
-      typeLabel: targetTypeLabel(target.subtype, target.object_type_code, '未分类'),
-      legal: legal[target.target_id] || LEGAL_FALLBACK,
+      type: labelOf(OBJECT_TYPE_LABEL, objectTypeCode, '未分类'),
+      typeLabel: targetTypeLabel(subtypeCode, objectTypeCode, '未分类'),
+      objectTypeCode,
+      subtypeCode,
+      iconKind: targetIconKind(objectTypeCode, subtypeCode),
+      legal: objectTypeCode === 'UAV' ? (legal[target.target_id] || LEGAL_FALLBACK) : '不适用',
       lon: posValid ? lon : null,
       lat: posValid ? lat : null,
       posValid,

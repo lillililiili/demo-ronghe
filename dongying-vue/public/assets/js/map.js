@@ -42,11 +42,11 @@
     opt = opt || {};
     if (box.__map) box.__map.destroy();
     this.box = box; this.opt = opt;
-    this.data = { airspaces: [], devices: [], targets: [], alarms: [] };
-    this.layers = Object.assign({ coverage: true, device: true, track: true, nofly: true, suit: true, limit: true, alarm: true }, opt.layers);
+    this.data = { airspaces: [], devices: [], targets: [], alarms: [], flightPlans: [], risks: [] };
+    this.layers = Object.assign({ coverage: true, device: true, track: true, flightPlan: true, nofly: true, suit: true, limit: true, alarm: true }, opt.layers);
     this.online = false; this.map = null;
     this.maxZoom = Number.isFinite(opt.maxZoom) ? Math.max(12, Math.min(24, Number(opt.maxZoom))) : 18;
-    this.zoom = opt.zoom || 1; this.ox = 0; this.oy = 0; this.t = 0; this.hover = null; this.sel = null;
+    this.zoom = opt.zoom || 1; this.ox = 0; this.oy = 0; this.t = 0; this.hover = null; this.sel = null; this.planSel = null;
     this._pendingCenter = CENTER.slice();
     this._activeCityCode = '370500';
     this._activeCityName = '东营市';
@@ -178,7 +178,9 @@
         maxBounds: coverage ? [[coverage[0], coverage[1]], [coverage[2], coverage[3]]] : undefined,
         bearing: 0, pitch: 0, dragRotate: false, pitchWithRotate: false,
         touchPitch: false, renderWorldCopies: false, attributionControl: false,
-        localIdeographFontFamily: false, fadeDuration: 0,
+        // 汉字优先由浏览器本地字体栅格化，避免首屏重复下载 8 MiB 的 SC 字体文件。
+        // 拉丁字符仍继续使用地图包内 PBF 字形，离线部署不会产生外网请求。
+        localIdeographFontFamily: 'Microsoft YaHei, PingFang SC, sans-serif', fadeDuration: 0,
         transformRequest: runtime.transformRequest
       });
       this.map = map;
@@ -554,7 +556,7 @@
 
   MapView.prototype.setData = function (d) {
     if (this._clearBusinessOverlays) {
-      this._heldBusinessData = Object.assign(this._heldBusinessData || { airspaces: [], devices: [], targets: [], alarms: [] }, d);
+      this._heldBusinessData = Object.assign(this._heldBusinessData || { airspaces: [], devices: [], targets: [], alarms: [], flightPlans: [], risks: [] }, d);
       return this;
     }
     Object.assign(this.data, d); this._paintAirspaceLegend(); this.draw(); return this;
@@ -671,7 +673,7 @@
 
   MapView.prototype._showTip = function (hit) {
     const key = this._tipKey(hit);
-    if (this.opt.interactiveTip) this.tip.setAttribute('aria-label', hit.kind === 'device' ? '设备详情' : hit.kind === 'target' ? '无人机详情' : '地图详情');
+    if (this.opt.interactiveTip) this.tip.setAttribute('aria-label', hit.kind === 'device' ? '设备详情' : hit.kind === 'target' ? '目标详情' : hit.kind === 'plan' ? '计划详情' : '地图详情');
     if (this._tipKeyShown !== key || this._tipDataShown !== hit.data) {
       this._tipKeyShown = key;
       this._tipDataShown = hit.data;
@@ -684,6 +686,7 @@
       this.tip.innerHTML = html;
       this.tip.classList.toggle('is-track', hit.kind === 'target' && typeof this.opt.renderTip === 'function');
       this.tip.classList.toggle('is-device', hit.kind === 'device' && typeof this.opt.renderTip === 'function');
+      this.tip.classList.toggle('is-plan', hit.kind === 'plan' && typeof this.opt.renderTip === 'function');
     }
     this.tip.style.display = 'block';
     if (this._tipAt && Math.abs(this._tipAt[0] - hit.x) < 0.5 && Math.abs(this._tipAt[1] - hit.y) < 0.5) return;
@@ -700,7 +703,13 @@
     } else if (Number.isFinite(this.mx) && Number.isFinite(this.my)) {
       let bd = 14;
       for (const p of pts) {
-        const d = Math.hypot(p.x - this.mx, p.y - this.my);
+        const d = p.segments ? p.segments.reduce((nearest, segment) => {
+          const ax = segment[0][0], ay = segment[0][1], bx = segment[1][0], by = segment[1][1];
+          const dx = bx - ax, dy = by - ay;
+          const lengthSquared = dx * dx + dy * dy;
+          const ratio = lengthSquared ? Math.max(0, Math.min(1, ((this.mx - ax) * dx + (this.my - ay) * dy) / lengthSquared)) : 0;
+          return Math.min(nearest, Math.hypot(this.mx - (ax + dx * ratio), this.my - (ay + dy * ratio)));
+        }, Infinity) : Math.hypot(p.x - this.mx, p.y - this.my);
         if (d < bd) { bd = d; best = p; }
       }
     }
@@ -807,18 +816,19 @@
     const radius = this._metersToPx(radiusM, device.lat);
     if (!Number.isFinite(radius) || radius <= 0) return;
     const unavailable = coverage.status === 'unavailable' || device.status !== '在线';
-    const color = unavailable ? '#94a3b8' : this._sensorColor(device);
+    const abnormal = device.statusCode === 'ABNORMAL' || device.status === '异常';
+    const color = unavailable ? (abnormal ? '#f1a43a' : '#94a3b8') : this._sensorColor(device);
     const start = coverage.kind === 'sector' ? (Number(coverage.azimuthDeg) - Number(coverage.fovDeg) / 2 - 90) * Math.PI / 180 : 0;
     const end = coverage.kind === 'sector' ? (Number(coverage.azimuthDeg) + Number(coverage.fovDeg) / 2 - 90) * Math.PI / 180 : Math.PI * 2;
     c.save();
     c.beginPath();
     if (coverage.kind === 'sector') { c.moveTo(origin[0], origin[1]); c.arc(origin[0], origin[1], radius, start, end); c.closePath(); }
     else c.arc(origin[0], origin[1], radius, 0, Math.PI * 2);
-    c.fillStyle = unavailable ? 'rgba(100,116,139,.055)' : color + '12';
+    c.fillStyle = unavailable ? (abnormal ? 'rgba(241,164,58,.045)' : 'rgba(100,116,139,.055)') : color + '12';
     c.fill();
     c.setLineDash(unavailable ? [8, 7] : [4, 5]);
     c.lineDashOffset = unavailable || this._still() ? 0 : -(this.t * .18) % 9;
-    c.strokeStyle = unavailable ? 'rgba(148,163,184,.72)' : color + '9c';
+    c.strokeStyle = unavailable ? (abnormal ? 'rgba(241,164,58,.72)' : 'rgba(148,163,184,.72)') : color + '9c';
     c.lineWidth = unavailable ? 1.35 : 1.15; c.stroke(); c.setLineDash([]);
 
     if (!unavailable && !this._still()) {
@@ -852,7 +862,9 @@
   };
 
   MapView.prototype._drawFusionDevice = function (c, device, q) {
-    const color = device.status === '在线' ? this._sensorColor(device) : '#94a3b8';
+    const abnormal = device.statusCode === 'ABNORMAL' || device.status === '异常';
+    const offline = device.statusCode === 'OFFLINE' || device.status === '离线';
+    const color = device.status === '在线' ? this._sensorColor(device) : abnormal ? '#f1a43a' : '#94a3b8';
     const alerting = !!device.newAlert;
     const phase = this._phase(96);
     const scale = Number.isFinite(Number(this.opt.sensorIconScale))
@@ -886,7 +898,71 @@
       c.beginPath(); c.moveTo(0, -7); c.lineTo(-6, 5); c.lineTo(6, 5); c.closePath(); c.stroke();
       c.beginPath(); c.arc(0, 1, 2.6, 0, 7); c.stroke();
     }
+    if (abnormal) {
+      c.beginPath(); c.moveTo(7, -11); c.lineTo(12, -2); c.lineTo(2, -2); c.closePath();
+      c.fillStyle = '#f1a43a'; c.fill();
+      c.fillStyle = '#071624'; c.font = 'bold 7px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText('!', 7, -5);
+    } else if (offline) {
+      c.beginPath(); c.moveTo(-8, 8); c.lineTo(8, -8); c.strokeStyle = '#cbd5e1'; c.lineWidth = 1.8; c.stroke();
+    }
     c.restore();
+  };
+
+  const PLAN_STYLE = {
+    PENDING: { color: '#3d8bff', dash: [10, 7], alpha: .9 },
+    EXECUTING: { color: '#22d3ee', dash: [], alpha: 1 },
+    COMPLETED: { color: '#2fd06e', dash: [3, 7], alpha: .58 }
+  };
+
+  MapView.prototype._drawFlightPlans = function (c, P, picks) {
+    (this.data.flightPlans || []).forEach(plan => {
+      const coordinates = Array.isArray(plan.coordinates) ? plan.coordinates : [];
+      if (coordinates.length < 2) return;
+      const pts = coordinates.map(point => P(Number(point[0]), Number(point[1])));
+      if (pts.some(point => !Number.isFinite(point[0]) || !Number.isFinite(point[1]))) return;
+      const style = PLAN_STYLE[plan.statusCode];
+      if (!style) return;
+      const activeRisk = Number(plan.activeRiskCount) > 0;
+      const selected = this.planSel === plan.id;
+      const path = () => {
+        c.beginPath();
+        pts.forEach((point, index) => index ? c.lineTo(point[0], point[1]) : c.moveTo(point[0], point[1]));
+      };
+      c.save(); c.lineJoin = 'round'; c.lineCap = 'round'; c.globalAlpha = style.alpha;
+      if (activeRisk) {
+        const phase = this._phase(96);
+        path(); c.setLineDash([]);
+        c.strokeStyle = `rgba(255,77,94,${plan.newRisk && !this._still() ? .13 + (1 - phase) * .19 : .18})`;
+        c.lineWidth = plan.newRisk && !this._still() ? 15 + phase * 7 : 15; c.stroke();
+        path(); c.strokeStyle = 'rgba(255,77,94,.9)'; c.lineWidth = 7; c.stroke();
+      }
+      if (selected) {
+        path(); c.setLineDash([]); c.strokeStyle = 'rgba(255,255,255,.94)'; c.lineWidth = activeRisk ? 10 : 9; c.stroke();
+      } else {
+        path(); c.setLineDash([]); c.strokeStyle = 'rgba(7,28,48,.76)'; c.lineWidth = activeRisk ? 5.2 : 6.2; c.stroke();
+      }
+      path(); c.setLineDash(style.dash);
+      c.lineDashOffset = plan.statusCode === 'EXECUTING' && !this._still() ? -(this.t * .35) % 17 : 0;
+      c.strokeStyle = style.color; c.lineWidth = 2.5; c.stroke(); c.setLineDash([]);
+      if (plan.statusCode === 'EXECUTING') {
+        for (let index = 1; index < pts.length; index++) this._drawTrackArrow(c, pts[index - 1], pts[index], style.color);
+      }
+      const middle = pts[Math.floor(pts.length / 2)];
+      const label = `${plan.planNo || plan.id} · ${plan.statusLabel || plan.statusCode}${activeRisk ? ` · ${plan.activeRiskCount}条风险` : ''}`;
+      c.font = '600 9.5px "PingFang SC",sans-serif';
+      const width = Math.min(210, c.measureText(label).width + 12);
+      c.fillStyle = activeRisk ? 'rgba(92,18,30,.9)' : 'rgba(5,22,39,.82)';
+      c.fillRect(middle[0] - width / 2, middle[1] - 20, width, 16);
+      c.fillStyle = activeRisk ? '#fff0f1' : '#dff8ff'; c.textAlign = 'center'; c.textBaseline = 'middle';
+      c.save(); c.beginPath(); c.rect(middle[0] - width / 2 + 4, middle[1] - 19, width - 8, 14); c.clip();
+      c.fillText(label, middle[0], middle[1] - 12); c.restore();
+      c.restore();
+      picks.push({
+        x: middle[0], y: middle[1], kind: 'plan', data: plan,
+        segments: pts.slice(1).map((point, index) => [pts[index], point]),
+        tip: `<b>${html(plan.planNo || plan.id)}</b><dl class="kv" style="margin-top:6px"><dt>状态</dt><dd>${html(plan.statusLabel || plan.statusCode)}</dd><dt>风险</dt><dd>${activeRisk ? html(plan.activeRiskCount) + '条当前风险' : '无当前风险'}</dd></dl>`
+      });
+    });
   };
 
   MapView.prototype._drawTrackArrow = function (c, a, b, col) {
@@ -901,9 +977,13 @@
     c.strokeStyle = col; c.lineWidth = 1.35; c.lineJoin = 'round'; c.stroke();
   };
 
-  MapView.prototype._drawUav = function (c, t, q, col, isSel) {
+  const TARGET_COLORS = { bird: '#72d6ff', balloon: '#b38cff', kite: '#ff9b55', lantern: '#f8c65b', unknown: '#94a3b8' };
+
+  MapView.prototype._drawTarget = function (c, t, q, col, isSel) {
     const heading = Number.isFinite(+t.heading) ? +t.heading : 0;
     const mk = t.activeRisk ? '#ff5b61' : t.legal === '合法' ? '#22d3ee' : '#ff4d5e';
+    const iconKind = t.iconKind || (t.objectTypeCode === 'UAV' || t.type === '无人机' ? 'uav' : 'unknown');
+    const iconColor = iconKind === 'uav' ? col : (TARGET_COLORS[iconKind] || TARGET_COLORS.unknown);
     c.save();
     c.translate(q[0], q[1]);
     if (t.newAlert) {
@@ -933,19 +1013,31 @@
       c.beginPath(); c.arc(0, 0, 10 + ph * 10, 0, 7);
       c.strokeStyle = `rgba(255,77,94,${(1 - ph) * .75 + .15})`; c.lineWidth = 1.5; c.stroke();
     }
-    c.beginPath(); c.arc(0, 0, 8.2, 0, 7);
-    c.fillStyle = 'rgba(255,255,255,.72)'; c.fill();
-    c.rotate(heading * Math.PI / 180);
-    c.strokeStyle = col; c.lineWidth = 1.45; c.lineCap = 'round';
-    [[-5.2, -5.2], [5.2, -5.2], [5.2, 5.2], [-5.2, 5.2]].forEach(([x, y]) => {
-      c.beginPath(); c.moveTo(0, 0); c.lineTo(x, y); c.stroke();
-      c.beginPath(); c.arc(x, y, 2.15, 0, 7); c.fillStyle = 'rgba(255,255,255,.92)'; c.fill();
-      c.strokeStyle = col; c.stroke();
-    });
-    c.beginPath();
-    c.moveTo(0, -6.8); c.lineTo(2.6, 4.2); c.lineTo(0, 2.2); c.lineTo(-2.6, 4.2);
-    c.closePath(); c.fillStyle = col; c.fill();
-    c.strokeStyle = 'rgba(255,255,255,.55)'; c.lineWidth = .8; c.stroke();
+    c.beginPath(); c.arc(0, 0, 9, 0, 7); c.fillStyle = 'rgba(5,24,41,.9)'; c.fill();
+    c.strokeStyle = iconColor; c.lineWidth = 1.4; c.stroke();
+    if (['uav', 'bird', 'kite'].includes(iconKind)) c.rotate(heading * Math.PI / 180);
+    c.strokeStyle = iconColor; c.fillStyle = iconColor; c.lineWidth = 1.45; c.lineCap = 'round'; c.lineJoin = 'round';
+    if (iconKind === 'uav') {
+      [[-5.2, -5.2], [5.2, -5.2], [5.2, 5.2], [-5.2, 5.2]].forEach(([x, y]) => {
+        c.beginPath(); c.moveTo(0, 0); c.lineTo(x, y); c.stroke();
+        c.beginPath(); c.arc(x, y, 2.15, 0, 7); c.fillStyle = 'rgba(255,255,255,.92)'; c.fill(); c.strokeStyle = iconColor; c.stroke();
+      });
+      c.beginPath(); c.moveTo(0, -6.8); c.lineTo(2.6, 4.2); c.lineTo(0, 2.2); c.lineTo(-2.6, 4.2); c.closePath(); c.fillStyle = iconColor; c.fill();
+    } else if (iconKind === 'bird') {
+      c.beginPath(); c.moveTo(-7, 2); c.quadraticCurveTo(-3, -5, 0, 0); c.quadraticCurveTo(3, -5, 7, 2); c.quadraticCurveTo(3, 0, 0, 3); c.quadraticCurveTo(-3, 0, -7, 2); c.stroke();
+    } else if (iconKind === 'balloon') {
+      c.beginPath(); c.ellipse(0, -2, 4.5, 5.5, 0, 0, 7); c.stroke();
+      c.beginPath(); c.moveTo(-2, 3); c.lineTo(0, 5.5); c.lineTo(2, 3); c.moveTo(-1.5, 6); c.lineTo(1.5, 6); c.stroke();
+    } else if (iconKind === 'kite') {
+      c.beginPath(); c.moveTo(0, -6); c.lineTo(5, 0); c.lineTo(0, 6); c.lineTo(-5, 0); c.closePath(); c.stroke();
+      c.beginPath(); c.moveTo(0, 6); c.quadraticCurveTo(4, 8, 2, 10); c.stroke();
+    } else if (iconKind === 'lantern') {
+      c.beginPath(); c.moveTo(-4, -5); c.quadraticCurveTo(0, -7, 4, -5); c.lineTo(3, 5); c.quadraticCurveTo(0, 7, -3, 5); c.closePath(); c.stroke();
+      c.beginPath(); c.moveTo(-3, 2); c.lineTo(3, 2); c.stroke();
+    } else {
+      c.beginPath(); c.moveTo(0, -6); c.lineTo(6, 0); c.lineTo(0, 6); c.lineTo(-6, 0); c.closePath(); c.stroke();
+      c.beginPath(); c.arc(0, 0, 1.7, 0, 7); c.fill();
+    }
     c.restore();
   };
 
@@ -960,7 +1052,7 @@
     const P = (a, b) => this.px(a, b);
     c.clearRect(0, 0, W, H);
 
-    /* 离线详细底图由 MapLibre 渲染；Canvas 只画业务叠加层。 */
+    /* 离线详细底图真正加载完成前继续显示简化地图，避免露出 MapLibre 的灰色初始化画布。 */
     if (this.online && this.map) { this._drawOverlays(c, W, H); return; }
 
     /* 简化示意图：保持业务可操作，不读取任何历史图片瓦片。 */
@@ -1061,10 +1153,17 @@
         ring.forEach((p, i) => { const q = P(p[0], p[1]); i ? c.lineTo(q[0], q[1]) : c.moveTo(q[0], q[1]); });
         c.closePath();
       });
-      c.fillStyle = a.color + '14'; c.fill('evenodd');
-      c.setLineDash([6, 4]); c.lineWidth = 1.35; c.strokeStyle = ink + 'd9'; c.stroke(); c.setLineDash([]);
-      // 仅禁飞区保留稀疏纹理作为强语义，其他类型让出底图细节。
-      if (key === 'nofly') {
+      const areaStyle = ({
+        PROHIBITED: { dash: [8, 4], fill: '1f', width: 1.8, hatch: true },
+        TEMPORARY_CONTROL: { dash: [3, 4], fill: '16', width: 1.6 },
+        ALTITUDE_LIMIT: { dash: [10, 4, 2, 4], fill: '16', width: 1.55 },
+        RESTRICTED: { dash: [6, 4], fill: '14', width: 1.55 },
+        PERMITTED: { dash: [], fill: '12', width: 1.5 }
+      })[a.kindCode] || { dash: [6, 4], fill: '14', width: 1.35, hatch: key === 'nofly' };
+      c.fillStyle = a.color + areaStyle.fill; c.fill('evenodd');
+      c.setLineDash(areaStyle.dash); c.lineWidth = areaStyle.width; c.strokeStyle = ink + 'e6'; c.stroke(); c.setLineDash([]);
+      // 仅禁飞空域保留稀疏纹理作为强语义，其他类型让出底图细节。
+      if (areaStyle.hatch) {
         c.save(); c.clip('evenodd');
         c.strokeStyle = ink + '1f'; c.lineWidth = .8;
         const bb = rings.reduce((m, ring) => ring.reduce((n, p) => { const q = P(p[0], p[1]); return [Math.min(n[0], q[0]), Math.min(n[1], q[1]), Math.max(n[2], q[0]), Math.max(n[3], q[1])]; }, m), [1e9, 1e9, -1e9, -1e9]);
@@ -1094,12 +1193,15 @@
       });
     });
 
+    /* 融合感知计划航线：仅专用模式启用，避免改变其他地图。 */
+    if (this.opt.fusionProfile && this.layers.flightPlan) this._drawFlightPlans(c, P, picks);
+
     /* 设备点位 */
     if (this.layers.device) {
       (this.data.devices || []).slice(0, this.opt.maxDev || 90).forEach(d => {
         const q = P(d.lon, d.lat);
         if (q[0] < -20 || q[0] > W + 20 || q[1] < -20 || q[1] > H + 20) return;
-        const col = d.status === '在线' ? (this.opt.fusionProfile ? this._sensorColor(d) : (d.alarm ? '#d97706' : '#008fb3')) : d.status === '离线' ? '#64748b' : '#dc2638';
+        const col = d.status === '在线' ? (this.opt.fusionProfile ? this._sensorColor(d) : (d.alarm ? '#d97706' : '#008fb3')) : d.status === '离线' ? '#64748b' : '#f1a43a';
         if (this.opt.fusionProfile) {
           this._drawFusionDevice(c, d, q);
         } else {
@@ -1134,8 +1236,10 @@
         const dim = selOnMap && !isSel;
         if (dim) { c.save(); c.globalAlpha = .35; }
         // §4.2：非无人机目标不做合法性判定，'不适用' 单列中性色，不得与「合法」同色
-        const col = t.legal === '非法' ? '#ff4d5e' : t.legal === '异常' ? '#ff8b3d'
-          : t.legal === '待确认' ? '#ffb020' : t.legal === '不适用' ? '#8ca0be' : '#2fd06e';
+        const targetClassColor = TARGET_COLORS[t.iconKind] || TARGET_COLORS.unknown;
+        const col = t.objectTypeCode && t.objectTypeCode !== 'UAV' ? targetClassColor
+          : t.legal === '非法' ? '#ff4d5e' : t.legal === '异常' ? '#ff8b3d'
+            : t.legal === '待确认' ? '#ffb020' : t.legal === '不适用' ? '#8ca0be' : '#2fd06e';
         /* AOA 目标只有方位角，没有经纬度（协议 v8.6）—— 画成从设备射出的方位线。
            当点画等于凭空给了一个平台并不知道的位置。 */
         if (t.posValid === false) { this._drawBearing(c, t, P, col); if (dim) c.restore(); return; }
@@ -1191,7 +1295,7 @@
             c.fillStyle = col + '14'; c.fill(); c.setLineDash([]); c.restore();
           }
         }
-        this._drawUav(c, t, q, col, isSel);
+        this._drawTarget(c, t, q, col, isSel);
         if (dim) c.restore();
         const altitudeTx = t.alt == null ? '—' : html(t.alt) + ' m AMSL';
         const speedTx = t.speed == null ? '—' : html(t.speed) + ' m/s';

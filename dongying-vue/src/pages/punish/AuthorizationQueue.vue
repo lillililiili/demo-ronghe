@@ -7,10 +7,10 @@ import { disposalApi } from '@/services/disposalApi.js';
 import { DISPOSAL_ACTION_LABEL, DISPOSAL_CHANNEL_LABEL, SOURCE_MODE_LABEL, disposalStatusText, labelOf } from '@/ui/labels.js';
 import { openDisposalApproval, openDisposalExecution, openDisposalManualResult, openDisposalStop } from '@/ui/disposalAuthModal.js';
 
-const rows = ref([]), page = ref(1), total = ref(0), status = ref('REQUESTED');
+const rows = ref([]), page = ref(1), total = ref(0), status = ref('');
 const loading = ref(false), error = ref('');
 const pageSize = ref(20);
-const options = [{ label: '全部状态', value: '' }, ...['REQUESTED', 'APPROVED', 'EXECUTING', 'COMPLETED', 'FAILED', 'REJECTED', 'EXPIRED', 'STOPPED', 'CANCELLED'].map(value => ({ value, label: disposalStatusText({ status: value }) }))];
+const options = [{ label: '全部状态', value: '' }, ...['REQUESTED', 'APPROVED', 'EXECUTING', 'FAILED', 'REJECTED', 'EXPIRED', 'STOPPED', 'CANCELLED'].map(value => ({ value, label: disposalStatusText({ status: value }) }))];
 const actions = [
   { codes: ['APPROVE', 'REJECT'], label: '审批', open: openDisposalApproval },
   { codes: ['EXECUTE'], label: '执行', open: openDisposalExecution },
@@ -19,13 +19,23 @@ const actions = [
 ];
 let request = 0, detailRequest = 0, active = true;
 function allowed(row) { return actions.filter(a => a.codes.some(code => row?.allowed_actions?.includes(code))); }
+function formatRequestedAt(value) {
+  if (value == null || value === '') return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  return date.toLocaleString('zh-CN', { hour12: false });
+}
 async function load(next = page.value) {
   const seq = ++request;
   loading.value = true; error.value = '';
   try {
-    const result = await disposalApi.list({ page: next, size: pageSize.value, ...(status.value ? { status: status.value } : {}) });
+    const result = await disposalApi.list({
+      page: next, size: pageSize.value,
+      ...(status.value ? { status: status.value } : { exclude_status: 'COMPLETED' })
+    });
     if (!active || seq !== request) return;
-    rows.value = result?.items || []; total.value = result?.total || 0; page.value = next;
+    const items = (result?.items || []).filter(row => row.status !== 'COMPLETED');
+    rows.value = items; total.value = result?.total || 0; page.value = next;
   } catch (e) {
     if (active && seq === request) { error.value = e.message || '读取处置授权失败'; rows.value = []; }
   } finally { if (active && seq === request) loading.value = false; }
@@ -59,17 +69,19 @@ onUnmounted(() => { active = false; request++; });
     <div v-if="error" class="warnbox" role="alert">{{ error }}</div>
     <div class="scroll table-scroll table-shell">
       <table class="tb">
-        <thead><tr><th>授权编号</th><th>动作 / 来源</th><th>申请人</th><th>审批人</th><th>执行通道</th><th>状态 / 结果</th><th>操作</th></tr></thead>
+        <thead><tr><th>授权编号</th><th>动作 / 来源</th><th>申请人</th><th>申请时间</th><th>审批人</th><th>执行通道</th><th>状态 / 结果</th><th>操作</th></tr></thead>
         <tbody>
           <tr v-for="row in rows" :key="row.authorization_id">
             <td><span class="mono" :title="row.authorization_id">{{ row.authorization_no }}</span></td>
             <td>{{ labelOf(DISPOSAL_ACTION_LABEL, row.action_type) }} · {{ labelOf(SOURCE_MODE_LABEL, row.source_mode) }}</td>
-            <td>{{ row.requested_by_name || '未提供' }}</td><td>{{ row.approved_by_name || '待审批' }}</td>
+            <td>{{ row.requested_by_name || '未提供' }}</td>
+            <td class="num" :title="formatRequestedAt(row.requested_at)">{{ formatRequestedAt(row.requested_at) }}</td>
+            <td>{{ row.approved_by_name || '待审批' }}</td>
             <td>{{ labelOf(DISPOSAL_CHANNEL_LABEL, row.channel) }}</td>
             <td>{{ disposalStatusText(row) }}<div v-if="row.result_code">{{ row.result_code }}</div></td>
             <td><div class="actions"><button v-for="action in allowed(row)" :key="action.label" class="btn" @click="act(action, row)">{{ action.label }}</button></div></td>
           </tr>
-          <tr v-if="!loading && !rows.length"><td colspan="7" class="empty">当前筛选下没有可见授权，可切换“全部状态”查看已处理记录。</td></tr>
+          <tr v-if="!loading && !rows.length"><td colspan="8" class="empty">当前筛选下没有可见授权。</td></tr>
         </tbody>
       </table>
     </div>
@@ -83,6 +95,7 @@ onUnmounted(() => { active = false; request++; });
 .toolbar { display:flex; gap:12px; flex-wrap:wrap; align-items:end; margin-bottom:12px; flex:none; }
 .actions { display:flex; gap:8px; flex-wrap:wrap; }
 .tb td { overflow-wrap:anywhere; }
+.tb td.num { white-space:nowrap; font-variant-numeric:tabular-nums; }
 .table-scroll { flex:1; min-height:0; }
 .pager { display:flex; justify-content:flex-end; flex:none; padding-top:10px; }
 .warnbox { flex:none; }

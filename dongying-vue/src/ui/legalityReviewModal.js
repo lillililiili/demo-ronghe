@@ -24,16 +24,16 @@ export const RULE_RESULT_TEXT = { PASS: '通过', FAIL: '不通过', UNDETERMINE
 export const RULE_REASON_TEXT = {
   INSIDE_RESTRICTED_AIRSPACE: '进入禁飞/限制空域', AIRSPACE_ALTITUDE_EXCEEDED: '超过空域限高', ROUTE_DEVIATION: '偏离报备航线',
   TIME_WINDOW_OVERRUN: '超出计划时间窗', NIGHT_FLIGHT: '夜间飞行', PLAN_ALTITUDE_EXCEEDED: '超出计划高度带', TEMPORARY_RESTRICTION_ACTIVE: '临时管制生效中',
-  NO_AUTHORIZATION: '无飞行授权', BOUNDARY_POLICY_UNKNOWN: '边界接触政策未定', POSITION_UNKNOWN: '位置未知',
-  ALTITUDE_DATUM_OR_RANGE_UNKNOWN: '高度基准或范围未知', VERSION_AMBIGUOUS: '空域版本歧义', CORRIDOR_WIDTH_UNKNOWN: '航线走廊宽度未知',
-  ROUTE_GEOMETRY_UNKNOWN: '航线几何未知', PLAN_TIME_UNKNOWN: '计划时间未知', PILOT_POSITION_UNAVAILABLE: '飞手位置未知', NO_PLAN: '无计划',
+  NO_AUTHORIZATION: '无飞行授权', BOUNDARY_POLICY_UNKNOWN: '碰到空域边界时如何判定，规则尚未明确', POSITION_UNKNOWN: '位置未知',
+  ALTITUDE_DATUM_OR_RANGE_UNKNOWN: '高度基准或范围未知', VERSION_AMBIGUOUS: '无法确定应使用哪一版空域规则', CORRIDOR_WIDTH_UNKNOWN: '航线走廊宽度未知',
+  ROUTE_GEOMETRY_UNKNOWN: '航线位置无法确认', PLAN_TIME_UNKNOWN: '计划时间未知', PILOT_POSITION_UNAVAILABLE: '飞手位置未知', NO_PLAN: '无计划',
   STATE_STALE: '状态已过期', NO_STATE: '无目标状态', LOW_CONFIDENCE: '置信度不足', CONFIDENCE_UNKNOWN: '置信度未知', TRACK_DEGRADED: '轨迹点不足',
   TRACK_BRIDGED: '轨迹存在断点', PLAN_MATCH_UNDETERMINED: '计划匹配不可判定', PLAN_MATCHER_UNAVAILABLE: '计划匹配不可用',
   NO_PLAN_CANDIDATE: '没有候选计划', PLAN_AMBIGUOUS: '多个计划同优', IDENTITY_CLUE_MISSING: '身份线索缺失', PLAN_IDENTITY_UNKNOWN: '计划未登记机身序列号',
   IDENTITY_MISMATCH: '身份不匹配', TIME_WINDOW_MISMATCH: '时间窗不匹配', CORRIDOR_MISMATCH: '不在航线走廊内',
   TAKEOFF_POINT_UNAVAILABLE: '起降点未知', PILOT_UNIT_UNAVAILABLE: '飞手/单位未知'
 };
-export const MERGE_KIND_TEXT = { CREATED: '已生成告警', MERGED: '并入既有告警', UPGRADED: '升级生成告警', DOWNGRADED: '降级并入', MANUAL_ESCALATION: '人工转告警', BLOCKED: '告警被阻断', SUPPRESSED_SHADOW: '影子运行不告警' };
+export const MERGE_KIND_TEXT = { CREATED: '已生成告警', MERGED: '并入既有告警', UPGRADED: '升级生成告警', DOWNGRADED: '降低等级后合并到已有告警', MANUAL_ESCALATION: '人工转告警', BLOCKED: '暂未生成告警', SUPPRESSED_SHADOW: '仅试算，不生成告警' };
 export const CONCLUSION_TEXT = { CONFIRM: '确认', REJECT: '驳回', OVERRIDE: '改判', RECOMPUTE: '重新研判', ESCALATE: '转告警' };
 export const legalStatusText = code => LEGAL_STATUS_TEXT[code] || (code ? String(code) : '—');
 
@@ -43,7 +43,7 @@ const RULE_SET_LABEL = { 'LEGALITY-DEMO': '合法性研判演示规则集', 'SPA
 const PARAM_KEY_TEXT = {
   time_window_min: '计划时间窗（分钟）', corridor_tolerance_m: '走廊容差（米）', tolerance_m: '偏离容差（米）', grace_min: '时间窗宽限（分钟）',
   timezone: '时区', night_from: '夜航开始（时）', night_to: '夜航结束（时）', vlos_m: '目视视距（米）', kinds: '适用空域类型',
-  fresh_seconds: '轨迹新鲜度（秒）', track_points: '取用轨迹点数', conf_min: '置信度下限', min_points: '最少轨迹点数', gap_seconds: '允许断点（秒）',
+  fresh_seconds: '轨迹数据最长有效时间（秒）', track_points: '取用轨迹点数', conf_min: '置信度下限', min_points: '最少轨迹点数', gap_seconds: '允许断点（秒）',
   no_plan_status: '无计划时的结论', ignore_undetermined_rules: '不可判定时不影响结论的规则', dedup_window_min: '告警合并窗口（分钟）',
   upgrade_window_min: '告警升级窗口（分钟）', auto_close_min: '告警自动关闭（分钟）', severity_by_grade: '等级对应告警级别',
   plan_window_pad_min: '计划前后延伸（分钟）', corridor_near_m: '邻近范围（米）'
@@ -217,7 +217,7 @@ export function openLegalityRecompute({ evaluation, refresh, onDone } = {}) {
     warning: '将按当前激活规则集重新评估；旧研判保留并标记为"已被重算取代"，其复核记录不会被覆盖。',
     introHtml: intro(evaluation),
     fields: [
-      { key: 'note', label: '重算说明', type: 'textarea', required: true, minRows: 4, placeholder: '必填，1–1000 字：为何需要重新研判（如规则集已更新、输入事实已补充）' }
+      { key: 'note', label: '重算说明', type: 'textarea', required: true, minRows: 4, placeholder: '必填，1–1000 字：为何需要重新研判（如判定规则已更新、飞行记录已补齐）' }
     ],
     initial: { note: '' },
     confirmText: '重新研判',

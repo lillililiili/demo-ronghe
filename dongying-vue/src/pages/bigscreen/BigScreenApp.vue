@@ -65,10 +65,10 @@ const rowLimit = computed(() => viewportHeight.value < 760 ? 2 : viewportHeight.
 const kpis = computed(() => {
   const k = snapshot.value?.kpis || {};
   return [
-    { label: '今日感知目标', value: dash(k.sensed_today), color: '#ffd53d', page: 'situation' },
+    { label: '今日感知目标', value: dash(k.sensed_today), color: 'var(--blue)', page: 'situation' },
     { label: '今日告警', value: dash(k.alarms_today), color: 'var(--cyan)', page: 'alarms' },
     { label: '待研判目标', value: dash(k.pending_assessment), color: 'var(--amber)', page: 'legality' },
-    { label: '交接待办', value: dash(k.pending_handoffs), color: 'var(--red)', page: 'punish' }
+    { label: '交接待办', value: dash(k.pending_handoffs), color: 'var(--amber)', page: 'punish' }
   ];
 });
 
@@ -167,7 +167,7 @@ function renderCharts() {
     data: [
       { name: '高风险', value: risk.high, c: window.CH.C.red },
       { name: '中风险', value: risk.medium, c: window.CH.C.amber },
-      { name: '低风险', value: risk.low, c: window.CH.C.green },
+      { name: '低风险', value: risk.low, c: window.CH.C.blue },
       { name: '未定级', value: risk.ungraded, c: window.CH.C.gray }
     ],
     centerLabel: '重点目标', centerValue: riskTotal, showPct: false,
@@ -227,6 +227,7 @@ function mapAirspaces(items) {
 function mapDevices(items) {
   return (items || []).map(d => ({
     id: d.device_id, name: d.name, type: d.device_type_name, channel: d.channel,
+    typeCode: d.device_type_code || '',
     status: ({ ONLINE: '在线', OFFLINE: '离线', ABNORMAL: '异常', UNKNOWN: '未知' })[d.connectivity] || d.connectivity || '未知',
     alarm: !!d.has_alarm, lon: Number(d.longitude), lat: Number(d.latitude)
   })).filter(d => Number.isFinite(d.lon) && Number.isFinite(d.lat));
@@ -374,7 +375,7 @@ onBeforeUnmount(() => {
       <div class="bs-grid">
         <aside class="bs-col">
           <section class="panel">
-            <div class="ph"><h3>感知与违法趋势</h3><div class="bs-panel-meta"><span class="sub">{{ snapshot?.trend?.simulated ? '近 7 日 · 样本事实' : '近 7 日' }}</span><button class="bs-module-link" @click="go('stats')">进入统计 →</button></div></div>
+            <div class="ph"><h3>感知与违法趋势</h3><div class="bs-panel-meta"><span class="sub">{{ snapshot?.trend?.simulated ? '近 7 日 · 演示数据' : '近 7 日' }}</span><button class="bs-module-link" @click="go('stats')">进入统计 →</button></div></div>
             <div class="pb"><div ref="trendEl" class="bs-chart" role="img" aria-label="近七日感知目标与非法目标趋势"></div></div>
           </section>
 
@@ -386,7 +387,7 @@ onBeforeUnmount(() => {
           </section>
 
           <section class="panel">
-            <div class="ph"><h3>处置闭环待办</h3><button class="bs-module-link" @click="go('alarms')">进入处置 →</button></div>
+            <div class="ph"><h3>待处理事项</h3><button class="bs-module-link" @click="go('alarms')">进入处置 →</button></div>
             <div class="pb bs-action-grid">
               <button v-for="item in closureItems" :key="item.label" class="bs-action-card" :class="`is-${item.tone}`" :aria-label="`${item.label} ${item.value}，进入对应业务页面`" @click="go(item.page)">
                 <n-icon class="bs-action-icon" :component="item.icon" aria-hidden="true" />

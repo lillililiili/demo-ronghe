@@ -2,7 +2,8 @@
 /* ---------- 焦点与可达性 ---------- */
 .btn:focus-visible,input.ip:focus-visible,select.sel:focus-visible,
 table.tb tbody tr:focus-visible,.tree .tn:focus-visible,.tabs .tab:focus-visible,
-.pager .pg:focus-visible,.lnk:focus-visible{
+.pager .pg:focus-visible,.lnk:focus-visible,
+.nav a:focus-visible,.nav [role="button"]:focus-visible,.icon-btn:focus-visible,summary:focus-visible{
   outline:2px solid var(--cyan);outline-offset:1px;border-radius:4px;
 }
 button{touch-action:manipulation}

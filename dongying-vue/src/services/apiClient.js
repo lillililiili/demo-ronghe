@@ -31,15 +31,15 @@ function idempotencyKey() {
 async function decode(response) {
   const contentType = response.headers.get('content-type') || '';
   if (!contentType.includes('application/json')) {
-    if (!response.ok) throw new ApiError(`服务返回异常（状态码 ${response.status}）`, 'HTTP_ERROR', response.status);
+    if (!response.ok) throw new ApiError('系统暂时无法处理，请稍后重试；仍有问题请联系管理员。', 'HTTP_ERROR', response.status);
     return response;
   }
   let envelope;
   try { envelope = await response.json(); }
-  catch { throw new ApiError('服务响应格式无效', 'INVALID_RESPONSE', response.status); }
+  catch { throw new ApiError('系统返回的数据无法读取，请刷新页面；仍有问题请联系管理员。', 'INVALID_RESPONSE', response.status); }
   if (!response.ok || envelope?.ok !== true) {
     const error = envelope?.error || {};
-    throw new ApiError(error.message || `请求失败（HTTP ${response.status}）`, error.code || 'REQUEST_FAILED', response.status);
+    throw new ApiError(error.message || '操作未完成，请刷新后查看最新状态。', error.code || 'REQUEST_FAILED', response.status);
   }
   return envelope.data;
 }
@@ -61,7 +61,9 @@ export async function apiRequest(path, options = {}) {
   const run = sendRequest(path, options);
   if (key) {
     inflightGets.set(key, run);
-    run.finally(() => { if (inflightGets.get(key) === run) inflightGets.delete(key); });
+    const clear = () => { if (inflightGets.get(key) === run) inflightGets.delete(key); };
+    // 清理分支同时消费拒绝，避免网络错误已由调用方处理后又产生悬空 rejected Promise。
+    run.then(clear, clear);
   }
   return run;
 }
@@ -79,7 +81,7 @@ async function sendRequest(path, options) {
     const body = options.body == null || options.body instanceof FormData ? options.body : JSON.stringify(options.body);
     response = await fetch(`${API_BASE}${path}`, { ...options, headers, body });
   } catch {
-    throw new ApiError('无法连接后端服务，请确认服务已启动后重试。', 'NETWORK_ERROR', 0);
+    throw new ApiError('暂时连不上系统，请检查网络后刷新；刚提交过操作的，请先查看是否已保存。', 'NETWORK_ERROR', 0);
   }
   try {
     return await decode(response);
@@ -124,7 +126,7 @@ export async function apiRequestTimed(path, options = {}, timeoutMs = 15_000) {
   const timeout = globalThis.setTimeout(() => controller.abort(), timeoutMs);
   try { return await apiRequest(path, { ...options, signal: controller.signal }); }
   catch (error) {
-    if (controller.signal.aborted) throw new ApiError('请求超时，请核对最新状态。', 'TIMEOUT', 408);
+    if (controller.signal.aborted) throw new ApiError('系统响应超时，请刷新后查看最新记录；刚提交过的操作可能已保存，请勿重复提交。', 'TIMEOUT', 408);
     throw error;
   } finally { globalThis.clearTimeout(timeout); }
 }
@@ -140,7 +142,7 @@ export async function apiDownload(path) {
   if (token) headers.set('Authorization', `Bearer ${token}`);
   let response;
   try { response = await fetch(`${API_BASE}${path}`, { headers }); }
-  catch { throw new ApiError('无法连接后端服务，请稍后重试。', 'NETWORK_ERROR', 0); }
+  catch { throw new ApiError('暂时连不上系统，请检查网络后重试。', 'NETWORK_ERROR', 0); }
   if (!response.ok) {
     await decode(response);
     return null;
@@ -154,7 +156,7 @@ export async function apiBinary(path) {
   if (token) headers.set('Authorization', `Bearer ${token}`);
   let response;
   try { response = await fetch(`${API_BASE}${path}`, { headers }); }
-  catch { throw new ApiError('无法连接后端服务，请稍后重试。', 'NETWORK_ERROR', 0); }
+  catch { throw new ApiError('暂时连不上系统，请检查网络后重试。', 'NETWORK_ERROR', 0); }
   const contentType = response.headers.get('content-type') || '';
   if (contentType.includes('application/json')) {
     await decode(response);

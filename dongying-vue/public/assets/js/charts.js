@@ -3,8 +3,10 @@
  * ========================================================================== */
 (function (g) {
   'use strict';
-  const C = { blue: '#4b9cff', cyan: '#2dcfd0', green: '#41d49a', amber: '#f1a43a', orange: '#f58245', red: '#ff5b61', purple: '#8e7dff', pink: '#e96fab', gray: '#7589a4' };
-  const PALETTE = [C.blue, C.green, C.amber, C.red, C.purple, C.cyan, C.orange, C.gray];
+  const C = Object.fromEntries(['blue','cyan','green','amber','orange','red','purple','pink','gray'].map(name => [name, null]));
+  Object.keys(C).forEach(name => Object.defineProperty(C, name, { enumerable: true, get: () => getComputedStyle(document.documentElement).getPropertyValue('--' + name).trim() }));
+  const PALETTE = ['blue','green','amber','red','purple','cyan','orange','pink'];
+  PALETTE.forEach((name, index) => Object.defineProperty(PALETTE, index, { get: () => C[name] }));
   const AX = {
     axisLine: { lineStyle: { color: 'rgba(130,174,218,.16)' } },
     axisLabel: { color: '#879bb4', fontSize: 11, margin: 11 },
@@ -55,7 +57,7 @@
       name: s.name, type: 'line', data: s.data, smooth: s.smooth !== false,
       symbol: 'circle', symbolSize: s.symbolSize || 5,
       yAxisIndex: s.yAxisIndex || 0,
-      lineStyle: { width: 2.2, color: s.color || PALETTE[i], shadowColor: (s.color || PALETTE[i]) + '44', shadowBlur: 7 },
+      lineStyle: { width: 2.2, color: s.color || PALETTE[i], shadowColor: (s.color || PALETTE[i]) + 'aa', shadowBlur: 7 },
       itemStyle: { color: s.color || PALETTE[i], borderWidth: 2, borderColor: '#0b192a' },
       label: s.label ? { show: true, color: s.color || PALETTE[i], fontSize: 10, position: 'top' } : { show: false },
       areaStyle: s.area ? {
@@ -89,7 +91,7 @@
         itemStyle: {
           borderRadius: [5, 5, 1, 1],
           color: s.colorBy ? (p => s.colorBy(p)) : new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: s.color || PALETTE[i] }, { offset: 1, color: (s.color || PALETTE[i]) + '44' }])
+            { offset: 0, color: s.color || PALETTE[i] }, { offset: 1, color: (s.color || PALETTE[i]) + 'aa' }])
         }
       }))
     });
@@ -147,7 +149,7 @@
     const showCenter = o.centerText !== false;
     return make(el, {
       tooltip: Object.assign({ trigger: 'item', formatter: p => p.value == null ? '' : `${p.name}<br/><b>${p.value.toLocaleString()}</b> (${p.percent}%)` }, TIP),
-      legend,
+      legend: Object.assign({}, legend, { data: o.data.map(d => d.name) }),
       series: [{
         type: 'pie', radius, center,
         avoidLabelOverlap: true, labelLine: { show: false },

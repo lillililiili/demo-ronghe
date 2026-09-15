@@ -42,6 +42,7 @@ export const deviceApi = {
       method: 'POST', body, headers: { 'Idempotency-Key': key }
     }),
   currentEoTrack: targetId => apiRequest(`/targets/${targetId}/eo-tracking-tasks`),
+  eoTrackAvailability: targetId => apiRequest(`/targets/${targetId}/eo-tracking-availability`),
   endEoTrack: (taskId, key = newIdempotencyKey('eo-track-end')) =>
     apiRequest(`/eo-tracking-tasks/${taskId}/end`, {
       method: 'POST', body: {}, headers: { 'Idempotency-Key': key }

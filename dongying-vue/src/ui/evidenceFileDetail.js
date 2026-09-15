@@ -70,13 +70,13 @@ export function renderEvidenceFileDetail(f, options = {}) {
     ? Math.max(0, Math.round((f.stored_at - f.captured_at) / 1000)) : null;
   const emptyLinks = mode === 'modal'
     ? '<div style="color:var(--txt-3);font-size:12px">无引用。</div>'
-    : '<div style="color:var(--txt-3);font-size:12px">尚未关联到告警、目标或其它业务对象。</div>';
+    : '<div style="color:var(--txt-3);font-size:12px">这份证据还没有用于告警、目标或其他事项。</div>';
   const canDestroy = mode === 'page' && f.status !== 'DESTROYED' && !f.held && f.custody === 'DUE';
   const actions = f.status === 'DESTROYED'
     ? `<div style="font-size:12px;color:var(--txt-3);line-height:1.8">文件内容已销毁，台账编号、哈希和销毁记录保留，不能再下载。</div>`
     : mode === 'modal'
     ? `<button class="btn pri" style="width:100%;justify-content:center" data-act="download">${U.icon('download')} 下载</button>
-       <div style="margin-top:8px;font-size:11px;color:var(--txt-3);line-height:1.8">只读查看。下载须经鉴权并记入访问记录。</div>`
+       <div style="margin-top:8px;font-size:11px;color:var(--txt-3);line-height:1.8">此处可查看证据信息。有权限的人员可以下载，系统会记录下载人和时间。</div>`
     : `${f.status === 'AVAILABLE'
         ? `<button class="btn pri" style="width:100%;justify-content:center" data-evact="download">${U.icon('download')} 下载</button>`
         : `<button class="btn pri" style="width:100%;justify-content:center" disabled title="${esc(DOWNLOAD_BLOCKED[f.status] || '文件不可下载')}">${U.icon('download')} 下载</button>`}

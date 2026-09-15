@@ -413,7 +413,7 @@ onUnmounted(() => {
         <div v-else class="sr-table-wrap">
           <div v-if="noticesError" class="empty">{{ noticesError }}</div>
           <table v-else class="tb">
-            <thead><tr><th>接收方</th><th>通报类型</th><th>提交时间</th><th>投递状态</th></tr></thead>
+            <thead><tr><th>接收方</th><th>通报类型</th><th>提交时间</th><th>发送情况</th></tr></thead>
             <tbody>
               <tr v-for="notice in notices" :key="notice.handoff_id">
                 <td><span :title="notice.handoff_id">{{ notice.recipient_name || '—' }}</span></td>
@@ -461,9 +461,9 @@ onUnmounted(() => {
               <dt v-if="spaceFact.object_count != null">数量</dt>
               <dd v-if="spaceFact.object_count != null">约 {{ spaceFact.object_count }}</dd>
               <dt>数量趋势</dt><dd>{{ labelOf(OBJECT_TREND_LABEL, spaceFact.trend) }}</dd>
-              <dt v-if="unknownNotes.length">尚缺事实</dt>
+              <dt v-if="unknownNotes.length">还缺哪些信息</dt>
               <dd v-if="unknownNotes.length">{{ unknownNotes.join('、') }}（不参与等级上调）</dd>
-              <dt>观察窗口</dt><dd>{{ shortTime(spaceFact.window_from) }} — {{ shortTime(spaceFact.window_to) }}</dd>
+              <dt>监测时段</dt><dd>{{ shortTime(spaceFact.window_from) }} — {{ shortTime(spaceFact.window_to) }}</dd>
             </dl>
             <div v-else class="empty">该事件没有异物判定记录</div>
             <p v-if="detail.reason_text" class="sr-reason">{{ detail.reason_text }}</p>

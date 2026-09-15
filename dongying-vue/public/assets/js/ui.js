@@ -76,6 +76,85 @@
   };
   const icon = n => `<svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="${P[n] || P.home}"/></svg>`;
 
+  /* 设备类型视觉字典：协议 A v8.6 / B v2.4 附录 + 当前设备台账类型。
+     图形只表示种类，状态颜色仍由页面决定；不按设备名称猜测种类。
+     雷达/光电复用现有 UI 图标，其余复用已安装 @vicons/ionicons5 的原始 SVG。
+     Ionicons (MIT), Copyright (c) 2015-present Ionic: https://github.com/ionic-team/ionicons */
+  /* Ionicons SVG license (MIT)
+     Copyright (c) 2015-present Ionic (http://ionic.io/)
+     Permission is hereby granted, free of charge, to any person obtaining a copy
+     of this software and associated documentation files (the "Software"), to deal
+     in the Software without restriction, including without limitation the rights
+     to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+     copies of the Software, and to permit persons to whom the Software is
+     furnished to do so, subject to the following conditions:
+     The above copyright notice and this permission notice shall be included in
+     all copies or substantial portions of the Software.
+     THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+     IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+     FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+     AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+     LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+     THE SOFTWARE. */
+  const DEVICE_SVG = {
+    "CellularOutline": "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" viewBox=\"0 0 512 512\"><rect x=\"416\" y=\"96\" width=\"64\" height=\"320\" rx=\"8\" ry=\"8\" fill=\"none\" stroke=\"currentColor\" stroke-linejoin=\"round\" stroke-width=\"32\"></rect><rect x=\"288\" y=\"176\" width=\"64\" height=\"240\" rx=\"8\" ry=\"8\" fill=\"none\" stroke=\"currentColor\" stroke-linejoin=\"round\" stroke-width=\"32\"></rect><rect x=\"160\" y=\"240\" width=\"64\" height=\"176\" rx=\"8\" ry=\"8\" fill=\"none\" stroke=\"currentColor\" stroke-linejoin=\"round\" stroke-width=\"32\"></rect><rect x=\"32\" y=\"304\" width=\"64\" height=\"112\" rx=\"8\" ry=\"8\" fill=\"none\" stroke=\"currentColor\" stroke-linejoin=\"round\" stroke-width=\"32\"></rect></svg>",
+    "PulseOutline": "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" viewBox=\"0 0 512 512\"><path fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"32\" d=\"M48 320h64l64-256l64 384l64-224l32 96h64\"></path><circle cx=\"432\" cy=\"320\" r=\"32\" fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"32\"></circle></svg>",
+    "ShieldOutline": "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" viewBox=\"0 0 512 512\"><path d=\"M463.1 112.37C373.68 96.33 336.71 84.45 256 48c-80.71 36.45-117.68 48.33-207.1 64.37C32.7 369.13 240.58 457.79 256 464c15.42-6.21 223.3-94.87 207.1-351.63z\" fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"32\"></path></svg>",
+    "NavigateOutline": "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" viewBox=\"0 0 512 512\"><path d=\"M448 64L64 240.14h200a8 8 0 0 1 8 8V448z\" fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"32\"></path></svg>",
+    "FlashOutline": "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" viewBox=\"0 0 512 512\"><path d=\"M315.27 33L96 304h128l-31.51 173.23a2.36 2.36 0 0 0 2.33 2.77h0a2.36 2.36 0 0 0 1.89-.95L416 208H288l31.66-173.25a2.45 2.45 0 0 0-2.44-2.75h0a2.42 2.42 0 0 0-1.95 1z\" fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"32\"></path></svg>",
+    "CarSportOutline": "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" viewBox=\"0 0 512 512\"><path d=\"M469.71 234.6c-7.33-9.73-34.56-16.43-46.08-33.94s-20.95-55.43-50.27-70S288 112 256 112s-88 4-117.36 18.63s-38.75 52.52-50.27 70s-38.75 24.24-46.08 33.97S29.8 305.84 32.94 336s9 48 9 48h86c14.08 0 18.66-5.29 47.46-8c31.6-3 62.6-4 80.6-4s50 1 81.58 4c28.8 2.73 33.53 8 47.46 8h85s5.86-17.84 9-48s-2.04-91.67-9.33-101.4z\" fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"32\"></path><path fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"32\" d=\"M400 384h56v16h-56z\"></path><path fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"32\" d=\"M56 384h56v16H56z\"></path><path d=\"M364.47 309.16c-5.91-6.83-25.17-12.53-50.67-16.35S279 288 256.2 288s-33.17 1.64-57.61 4.81s-42.79 8.81-50.66 16.35C136.12 320.6 153.42 333.44 167 335c13.16 1.5 39.47.95 89.31.95s76.15.55 89.31-.95c13.56-1.65 29.62-13.6 18.85-25.84z\" fill=\"currentColor\"></path><path d=\"M431.57 243.05a3.23 3.23 0 0 0-3.1-3c-11.81-.42-23.8.42-45.07 6.69a93.88 93.88 0 0 0-30.08 15.06c-2.28 1.78-1.47 6.59 1.39 7.1a455.32 455.32 0 0 0 52.82 3.1c10.59 0 21.52-3 23.55-12.44a52.41 52.41 0 0 0 .49-16.51z\" fill=\"currentColor\"></path><path d=\"M80.43 243.05a3.23 3.23 0 0 1 3.1-3c11.81-.42 23.8.42 45.07 6.69a93.88 93.88 0 0 1 30.08 15.06c2.28 1.78 1.47 6.59-1.39 7.1a455.32 455.32 0 0 1-52.82 3.1c-10.59 0-21.52-3-23.55-12.44a52.41 52.41 0 0 1-.49-16.51z\" fill=\"currentColor\"></path><path fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"32\" d=\"M432 192h16\"></path><path fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"32\" d=\"M64 192h16\"></path><path d=\"M78 211s46.35-12 178-12s178 12 178 12\" fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"32\"></path></svg>",
+    "ScanOutline": "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" viewBox=\"0 0 512 512\"><path d=\"M336 448h56a56 56 0 0 0 56-56v-56\" fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"32\"></path><path d=\"M448 176v-56a56 56 0 0 0-56-56h-56\" fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"32\"></path><path d=\"M176 448h-56a56 56 0 0 1-56-56v-56\" fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"32\"></path><path d=\"M64 176v-56a56 56 0 0 1 56-56h56\" fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"32\"></path></svg>",
+    "CompassOutline": "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" viewBox=\"0 0 512 512\"><path d=\"M448 256c0-106-86-192-192-192S64 150 64 256s86 192 192 192s192-86 192-192z\" fill=\"none\" stroke=\"currentColor\" stroke-miterlimit=\"10\" stroke-width=\"32\"></path><path d=\"M350.67 150.93l-117.2 46.88a64 64 0 0 0-35.66 35.66l-46.88 117.2a8 8 0 0 0 10.4 10.4l117.2-46.88a64 64 0 0 0 35.66-35.66l46.88-117.2a8 8 0 0 0-10.4-10.4zM256 280a24 24 0 1 1 24-24a24 24 0 0 1-24 24z\" fill=\"currentColor\"></path></svg>",
+    "RadioOutline": "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" viewBox=\"0 0 512 512\"><circle cx=\"256\" cy=\"256.02\" r=\"32\" fill=\"currentColor\"></circle><path d=\"M184.25 192.25a96 96 0 0 0 0 127.52\" fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"32\"></path><path d=\"M327.77 319.77a96 96 0 0 0 0-127.52\" fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"32\"></path><path d=\"M133.28 141.28a168 168 0 0 0 0 229.44\" fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"32\"></path><path d=\"M378.72 370.72a168 168 0 0 0 0-229.44\" fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"32\"></path><path d=\"M435 416a240.34 240.34 0 0 0 0-320\" fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"32\"></path><path d=\"M77 96a240.34 240.34 0 0 0 0 320\" fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"32\"></path></svg>",
+    "CodeWorkingOutline": "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" viewBox=\"0 0 512 512\"><circle cx=\"256\" cy=\"256\" r=\"26\" fill=\"currentColor\"></circle><circle cx=\"346\" cy=\"256\" r=\"26\" fill=\"currentColor\"></circle><circle cx=\"166\" cy=\"256\" r=\"26\" fill=\"currentColor\"></circle><path fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"32\" d=\"M160 368L32 256l128-112\"></path><path fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"32\" d=\"M352 368l128-112l-128-112\"></path></svg>",
+    "MegaphoneOutline": "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" viewBox=\"0 0 512 512\"><path d=\"M407.94 52.22S321.3 160 240 160H80a16 16 0 0 0-16 16v96a16 16 0 0 0 16 16h160c81.3 0 167.94 108.23 167.94 108.23c6.06 8 24.06 2.52 24.06-9.83V62c0-12.31-17-18.82-24.06-9.78z\" fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"32\"></path><path d=\"M64 256s-16-6-16-32s16-32 16-32\" fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"32\"></path><path d=\"M448 246s16-4.33 16-22s-16-22-16-22\" fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"32\"></path><path fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"32\" d=\"M256 160v128\"></path><path fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"32\" d=\"M112 160v128\"></path><path d=\"M144 288v168a8 8 0 0 0 8 8h53a16 16 0 0 0 15.29-20.73C211.91 416.39 192 386.08 192 336h16a16 16 0 0 0 16-16v-16a16 16 0 0 0-16-16h-16\" fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"32\"></path></svg>",
+    "IdCardOutline": "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" viewBox=\"0 0 512 512\"><rect x=\"96\" y=\"32\" width=\"320\" height=\"448\" rx=\"48\" fill=\"none\" stroke=\"currentColor\" stroke-linejoin=\"round\" stroke-width=\"32\"></rect><path fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"32\" d=\"M208 80h96\"></path><path d=\"M333.48 284.51A39.65 39.65 0 0 0 304 272c-11.6 0-22.09 4.41-29.54 12.43s-11.2 19.12-10.34 31C265.83 338.91 283.72 358 304 358s38.14-19.09 39.87-42.55c.88-11.78-2.82-22.77-10.39-30.94z\" fill=\"currentColor\"></path><path d=\"M371.69 448H236.31a12.05 12.05 0 0 1-9.31-4.17a13 13 0 0 1-2.76-10.92c3.25-17.56 13.38-32.31 29.3-42.66C267.68 381.06 285.6 376 304 376s36.32 5.06 50.46 14.25c15.92 10.35 26.05 25.1 29.3 42.66a13 13 0 0 1-2.76 10.92a12.05 12.05 0 0 1-9.31 4.17z\" fill=\"currentColor\"></path></svg>",
+    "HardwareChipOutline": "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" viewBox=\"0 0 512 512\"><rect x=\"80\" y=\"80\" width=\"352\" height=\"352\" rx=\"48\" ry=\"48\" fill=\"none\" stroke=\"currentColor\" stroke-linejoin=\"round\" stroke-width=\"32\"></rect><rect x=\"144\" y=\"144\" width=\"224\" height=\"224\" rx=\"16\" ry=\"16\" fill=\"none\" stroke=\"currentColor\" stroke-linejoin=\"round\" stroke-width=\"32\"></rect><path fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"32\" d=\"M256 80V48\"></path><path fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"32\" d=\"M336 80V48\"></path><path fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"32\" d=\"M176 80V48\"></path><path fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"32\" d=\"M256 464v-32\"></path><path fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"32\" d=\"M336 464v-32\"></path><path fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"32\" d=\"M176 464v-32\"></path><path fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"32\" d=\"M432 256h32\"></path><path fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"32\" d=\"M432 336h32\"></path><path fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"32\" d=\"M432 176h32\"></path><path fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"32\" d=\"M48 256h32\"></path><path fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"32\" d=\"M48 336h32\"></path><path fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"32\" d=\"M48 176h32\"></path></svg>"
+};
+  const DEVICE_TYPES = [
+    ['radar', '雷达', 'radar', ['RADAR', '雷达设备', '1']],
+    ['eo', '光电', 'camera', ['EO', 'OE', '光电设备', '3']],
+    ['5ga', '5G-A 基站', 'CellularOutline', ['5GA', 'FIVE_G_A', '5G-A', '5G-A基站', '0']],
+    ['spec', '频谱设备', 'PulseOutline', ['SPEC', '频谱', '2']],
+    ['cm', '反制设备', 'ShieldOutline', ['CM', 'COUNTERMEASURE', '反制', '4']],
+    ['dec', '诱骗设备', 'NavigateOutline', ['DEC', '诱骗', '5']],
+    ['ifr', '干扰设备', 'FlashOutline', ['IFR', '干扰', '6']],
+    ['cv', '指挥车', 'CarSportOutline', ['CV', '7']],
+    ['isrs', '察打一体', 'ScanOutline', ['ISRS', '侦打一体', '8']],
+    ['aoa', 'AOA', 'CompassOutline', ['AOA', '无线电测向（AOA）', '9']],
+    ['tdoa', 'TDOA', 'RadioOutline', ['TDOA', '10']],
+    ['dcd', '协议破解', 'CodeWorkingOutline', ['DCD', '协议破解设备', '11']],
+    ['bsc', '驱鸟炮', 'MegaphoneOutline', ['BSC', '驱鸟炮设备', '12']],
+    ['rid', 'RemoteID', 'IdCardOutline', ['RID', 'REMOTEID', 'RemoteID设备', '102']],
+    ['fusion', '融合感知箱', 'HardwareChipOutline', ['FUSION_BOX', '融合终端']]
+  ];
+  const DEVICE_ALIASES = new Map();
+  const UNKNOWN_DEVICE = Object.freeze({ key: 'unknown', label: '设备类型未知', icon: 'device' });
+  DEVICE_TYPES.forEach(([key, label, glyph, aliases]) => {
+    const meta = Object.freeze({ key, label, icon: glyph });
+    [key, label, ...aliases].forEach(alias => DEVICE_ALIASES.set(alias.toUpperCase(), meta));
+  });
+  function deviceMeta(device) {
+    const values = typeof device === 'object' && device !== null
+      ? [device.device_type_code, device.typeCode, device.device_type_abbr, device.deviceTypeAbbr,
+        device.source_type, device.deviceType, device.device_type_name, device.type]
+      : [device];
+    for (const value of values) {
+      if (value == null || String(value).trim() === '') continue;
+      const found = DEVICE_ALIASES.get(String(value).trim().toUpperCase());
+      if (found) return found;
+    }
+    return UNKNOWN_DEVICE;
+  }
+  function deviceIcon(device) {
+    const meta = deviceMeta(device);
+    let svg = DEVICE_SVG[meta.icon] || icon(meta.icon);
+    if (!svg.includes('class=')) svg = svg.replace('<svg ', '<svg class="svg-icon" aria-hidden="true" focusable="false" ');
+    // 静态受信任图标；设备接口只用于枚举查询，不插入返回的 HTML。
+    return svg.replace('<svg ', '<svg width="1em" height="1em" data-device-icon="' + meta.key + '" ');
+  }
+
   /* ---- 数值格式 ---- */
   const num = n => (n == null ? '—' : Number(n).toLocaleString('en-US'));
   const pct = (a, b, d) => b ? (a / b * 100).toFixed(d == null ? 1 : d) + '%' : '0%';
@@ -168,19 +247,22 @@
   }
 
   /* ---- KPI ---- */
-  const KC = { blue: '#4b9cff', cyan: '#2dcfd0', green: '#41d49a', amber: '#f1a43a', orange: '#f58245', red: '#ff5b61', purple: '#8e7dff', pink: '#e96fab' };
+  // 保留 UI.KC 公共契约，经典脚本加载早于 CSS，因此按需读取 token。
+  const KC = {};
+  ['blue','cyan','green','amber','orange','red','purple','pink'].forEach(name => {
+    Object.defineProperty(KC, name, { enumerable: true, get: () => getComputedStyle(document.documentElement).getPropertyValue('--' + name).trim() });
+  });
   function kpis(list, opts) {
     opts = opts || {};
     const wrapCls = ['kpis', opts.variant ? 'kpis-' + opts.variant : '', opts.density ? 'density-' + opts.density : '', opts.className || ''].filter(Boolean).join(' ');
     return `<div class="${wrapCls}">` + list.map(k => {
-      const c = KC[k.color] || KC.blue;
       // k.attr（如 data-kpi="非法"）为 opt-in 可点击卡：加手型/焦点态；k.active 标当前激活。
       // 不传时输出与既有调用方完全一致，其余页面零影响。
       const click = k.attr ? ` ${k.attr} tabindex="0" role="button"` : '';
-      return `<div class="kpi kpi-${k.color || 'blue'} ${k.className || ''}${k.attr ? ' is-clickable' : ''}${k.active ? ' is-active' : ''}"${click}${k.active ? ` style="--kpi-c:${c}"` : ''}>
-        <div class="ic" style="background:${c}22;border:1px solid ${c}55;color:${c}">${icon(k.icon || 'chart')}</div>
+      return `<div class="kpi kpi-${k.color || 'blue'} ${k.className || ''}${k.attr ? ' is-clickable' : ''}${k.active ? ' is-active' : ''}"${click}${k.desc ? ` title="${String(k.desc).replace(/<[^>]*>/g, '').replace(/"/g, '&quot;')}"` : ''}>
+        <div class="ic">${icon(k.icon || 'chart')}</div>
         <div class="tx"><div class="lb" title="${String(k.label).replace(/"/g, '&quot;')}">${k.label}</div>
-          <div class="vl" style="color:${c}">${k.value}${k.unit ? `<span style="font-size:13px;color:var(--txt-2);margin-left:3px">${k.unit}</span>` : ''}</div></div></div>`;
+          <div class="vl">${k.value}${k.unit ? `<span class="unit">${k.unit}</span>` : ''}</div>${k.caption ? `<div class="dt">${k.caption}</div>` : ''}</div></div>`;
     }).join('') + `</div>`;
   }
 
@@ -488,7 +570,7 @@
   });
 
   g.UI = {
-    icon, num, pct, money, delta, tag, risk, legal, dotState, stateIcon, panel, detailHero, kpis, table, cell, pager,
+    icon, deviceMeta, deviceIcon, num, pct, money, delta, tag, risk, legal, dotState, stateIcon, panel, detailHero, kpis, table, cell, pager,
     checked, bindCheckAll, goto, consume, selectRow, srcTag, confPct, modelTag, regParams, paramGroups,
     kv, sect, metricStrip, detailActions, codeBlock, steps, timeline, modal, closeModal, toast, field, select, input, bars, on, KC,
     legalBasis, basisHtml, verdictHtml

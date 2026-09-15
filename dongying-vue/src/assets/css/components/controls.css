@@ -15,10 +15,9 @@ input.ip:focus,select.sel:focus{border-color:var(--blue);box-shadow:0 0 0 2px rg
 select.sel{cursor:pointer}
 select.sel option{background:#0a1a3f}
 .btn{
-  display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 15px;border-radius:6px;cursor:pointer;
-  background:linear-gradient(135deg,#123864,#174675);border:1px solid #2f78ba;color:#d9ecff;font-size:13.5px;
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 3px 10px rgba(15,62,108,.2);
-  font-family:inherit;transition:.15s;white-space:nowrap;
+  --btn-c:var(--blue);display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 15px;border-radius:6px;cursor:pointer;
+  background:color-mix(in srgb,var(--btn-c) 15%,var(--surface-1));border:1px solid color-mix(in srgb,var(--btn-c) 52%,transparent);color:var(--txt);font-size:13px;
+  font-family:inherit;transition:background-color .15s,border-color .15s,box-shadow .15s;white-space:nowrap;
 }
 a.btn{text-decoration:none}   /* 顶栏「大屏展示」等以 <a> 承载的按钮 */
 .svg-icon{width:1em;height:1em;display:inline-block;fill:none;stroke:currentColor;stroke-width:1.8;vertical-align:-.12em;flex:none}
@@ -28,15 +27,18 @@ a.btn{text-decoration:none}   /* 顶栏「大屏展示」等以 <a> 承载的按
 .inline-icon{display:inline-flex;align-items:center;gap:5px}
 .inline-icon>.svg-icon{width:15px;height:15px}
 .status-icon>.svg-icon{width:1em;height:1em}
-.btn:hover{background:linear-gradient(135deg,#18508a,#2165a5);border-color:#55a6ef;color:#fff;box-shadow:0 5px 14px rgba(29,98,164,.28)}
-.btn.pri{background:linear-gradient(135deg,#2f6fe0,#3d8bff);border-color:#4d97ff;color:#fff}
-.btn.pri:hover{filter:brightness(1.15)}
-.btn.danger{background:linear-gradient(135deg,#9f303a,#c5424c);border-color:#e15a63;color:#fff;box-shadow:0 5px 14px rgba(159,48,58,.24)}
-.btn.danger:hover{background:linear-gradient(135deg,#b93944,#db5059);border-color:#ff747c;color:#fff;box-shadow:0 7px 18px rgba(159,48,58,.32)}
-.btn.warn{background:linear-gradient(135deg,#c97912,#e69a24);border-color:#f2ad3f;color:#07111f;box-shadow:0 5px 14px rgba(201,121,18,.24)}
-.btn.warn:hover{background:linear-gradient(135deg,#dc8b1d,#f0aa32);border-color:#ffc45f;color:#07111f;box-shadow:0 7px 18px rgba(201,121,18,.32)}
-.btn.ghost{background:#102f50;border-color:#2c6b9f;color:#bfe0ff;box-shadow:none}
-.btn[disabled]{opacity:.4;cursor:not-allowed}
+.btn:hover:not(:disabled):not([aria-disabled="true"]):not([aria-busy="true"]){background:color-mix(in srgb,var(--btn-c) 28%,var(--surface-2));border-color:var(--btn-c);box-shadow:0 0 12px color-mix(in srgb,var(--btn-c) 18%,transparent)}
+.btn.pri{background:linear-gradient(135deg,var(--action-blue),color-mix(in srgb,var(--action-blue) 72%,var(--blue)));border-color:var(--blue);color:#fff;box-shadow:0 3px 12px color-mix(in srgb,var(--blue) 24%,transparent)}
+.btn.pri:hover:not(:disabled):not([aria-disabled="true"]):not([aria-busy="true"]){background:var(--action-blue);border-color:var(--cyan)}
+.btn.danger{--btn-c:var(--red);background:var(--action-red);color:#fff}
+.btn.warn{--btn-c:var(--amber);background:var(--amber);color:var(--canvas)}
+.btn.success{--btn-c:var(--green);background:var(--green);color:var(--canvas)}
+.btn.warn:hover:not(:disabled),.btn.success:hover:not(:disabled){background:color-mix(in srgb,var(--btn-c) 85%,white);color:var(--canvas)}
+.btn.ghost{background:color-mix(in srgb,var(--blue) 8%,var(--surface-1));color:var(--blue);box-shadow:none}
+.btn:active:not(:disabled):not([aria-disabled="true"]){box-shadow:inset 0 2px 6px rgba(0,0,0,.3)}
+.btn[aria-busy="true"],.btn.is-loading{cursor:progress;border-style:dashed;box-shadow:none}
+.btn:disabled,.btn[disabled],.btn[aria-disabled="true"]{opacity:1;background:var(--surface-2);border-color:var(--line);color:var(--txt-3);box-shadow:none;cursor:not-allowed}
+.btn:disabled>.svg-icon{opacity:.45}
 .btn.big{height:38px;font-size:14px;padding:0 18px}
 /* 工具栏两段式（决策 12-15）：左边筛选项区，右边动作区。
    平铺 .field 与按钮时，控件一换行就把按钮和说明文字挤成孤行，读的人分不清哪一行是筛选、哪一行是操作。 */

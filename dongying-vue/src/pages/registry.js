@@ -9,22 +9,21 @@ import AlarmsPage from './AlarmsPage.vue';
 import SituationPage from './SituationPage.vue';
 import PunishPage from './PunishPage.vue';
 import LegalityPage from './LegalityPage.vue';
-import WorkbenchPage from './WorkbenchPage.vue';
 
 /* FlightsPage 依赖尚未入库的 positionMap.js；同步 import 会让登录与其它页一起挂。
    异步加载后，缺文件只影响飞行/空域/风险页。 */
 const FlightsPage = defineAsyncComponent(() => import('./FlightsPage.vue'));
+const AirspacePage = defineAsyncComponent(() => import('./airspace/AirspacePage.vue'));
 
 export const VUE_PAGES = {
-  workbench: WorkbenchPage,
   stats: StatsPage,
   evidence: EvidencePage,
   alarms: AlarmsPage,
   flights: FlightsPage,
-  /* airspace 仍与 flights 共用组件。#/risk 由 router 重定向到 #/flights?tab=events，
-     不再作为独立「空间安全风险」页渲染。 */
+  /* #/risk 由 router 重定向到 #/flights?tab=events，不再作为独立「空间安全风险」页渲染。
+     airspace 自 2026-09-13 起是独立页（设计稿 v2），访问权限仍由飞行计划菜单承载（accessControl 的别名）。 */
   risk: FlightsPage,
-  airspace: FlightsPage,
+  airspace: AirspacePage,
   situation: SituationPage,
   punish: PunishPage,
   legality: LegalityPage

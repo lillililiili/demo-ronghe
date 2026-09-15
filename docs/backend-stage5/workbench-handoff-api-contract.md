@@ -86,7 +86,7 @@ POST 头：`Idempotency-Key`（8–128）。body 只允许 `source_kind,source_i
 
 规则：
 
-- `source_kind=RISK` 且源风险当前状态 `PENDING_NOTIFICATION`，否则 409 `INVALID_TRANSITION`；`expected_version` 不等于当前版本 409 `VERSION_CONFLICT`。创建前锁定源风险。**回执确认"已驱离"时把风险推进到"已通知"并把版本 +1**（决策 18-14：闭环判据是回执已驱离，不是送到了；停在"待通知"会让值班台一直把它当未办事项）——只对 `RISK_NOTICE` 且回执为 `DISPERSED` 生效，`NOT_DISPERSED` 与未接通渠道都保持"待通知"。推进与交接落库在同一事务、同一把源风险的锁下；这一步不新记审计动作，结果写在该笔交接的审计详情里（`risk_state=NOTIFIED`），否则查审计的人会看到风险状态变了却找不到任何一条记录说明为什么。
+- `source_kind=RISK` 且源风险当前状态 `PENDING_NOTIFICATION`，否则 409 `INVALID_TRANSITION`；`expected_version` 不等于当前版本 409 `VERSION_CONFLICT`。创建前锁定源风险。**回执确认"已驱离"时把风险推进到"已通知"并把版本 +1**（决策 18-14：闭环判据是回执已驱离，不是送到了；停在"待通知"会让值班台一直把它当未办事项）——只对 `RISK_NOTICE` 且回执为 `DISPERSED` 生效，`NOT_DISPERSED` 与未接通渠道都保持"待通知"。推进与交接落库在同一事务、同一把源风险的锁下；**模拟渠道的回执不闭合真实风险**（决策 19-6）：模拟上级渠道由属性 `app.handoff.channel=mock` 打开、不是靠 profile，生产上一旦配错就会立刻回一个"已驱离"，把真实感知来的风险闭合成"已通知"，而根本没有人通知过谁。所以渠道自报为模拟时，`source_mode=live` 的风险一律保持"待通知"；交接照常受理、回执照常记录，挡住的只是闭环这一步。mock 与 replay 都是演示数据，闭环照常，不影响验收。这一步不新记审计动作，结果写在该笔交接的审计详情里（`risk_state=NOTIFIED`），否则查审计的人会看到风险状态变了却找不到任何一条记录说明为什么。
 - `handoff_type=UAV_PUNISHMENT`（任何 `source_kind`）本期一律 409 `HANDOFF_PREREQUISITE_UNAVAILABLE`。其余未知 `source_kind/handoff_type` 400。
 - 接收方从 `handoff_recipient` 中 `enabled=true` 且 `handoff_type` 匹配的行选择；目录为空 409 `RECIPIENT_NOT_CONFIGURED`；给定 `recipient_id` 不在可用目录 404 `RECIPIENT_NOT_FOUND`。生产不自动插入接收方。
 - `recipient_id` 可缺省（决策 18-14）：不传时依次找：该 `handoff_type` 下 `is_default=true` 且 `enabled=true` 的接收方 → 该类型**恰好只有一个**启用接收方时用它（决策 18-16：只有一个的时候没有可选的余地，再要求值班员显式指定就是让他把唯一的答案抄一遍）→ 零个或多个且都没标默认，才 400 `RECIPIENT_REQUIRED`。缺省只是"由服务端定收件人"，其余校验与显式传值完全一致，落库与响应里的 `recipient_id` 都是实际生效的那个。幂等键按"客户端这次发的请求"计算：不传接收方与显式传了默认接收方是两个不同的键。

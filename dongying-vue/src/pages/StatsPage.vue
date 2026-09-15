@@ -47,7 +47,7 @@ const kpiList = computed(() => {
     { label: '非法飞行次数', value: U.num(stats.illegal), color: 'red', icon: 'alert', desc: `占比 ${U.pct(stats.illegal, stats.total)}` },
     { label: '处罚案件数', value: U.num(stats.punish), color: 'orange', icon: 'gavel', desc: `近30天立案` },
     { label: '接入设备总数', value: U.num(devices ? devices.total : null), color: 'cyan', icon: 'device', desc: deviceDesc },
-    { label: '高风险目标数', value: U.num(stats.highRisk), color: 'purple', icon: 'zone', desc: `占比 ${U.pct(stats.highRisk, stats.total)}` }
+    { label: '高风险目标数', value: U.num(stats.highRisk), color: 'red', icon: 'zone', desc: `占比 ${U.pct(stats.highRisk, stats.total)}` }
   ];
 });
 
@@ -99,7 +99,7 @@ function drawCharts(CH) {
       { name: '处罚案件', data: stats.days.map(d => d.punish), color: CH.C.amber }
     ]
   });
-  const rc = { '超高风险': '#c0392b', '高风险': '#ff4d5e', '中风险': '#ffb020', '低风险': '#2fd06e', '未识别': '#8ca0be' };
+  const rc = { '超高风险': CH.C.red, '高风险': CH.C.red, '中风险': CH.C.amber, '低风险': CH.C.blue, '未识别': CH.C.gray };
   CH.bar(document.getElementById('sRisk'), {
     x: stats.byRisk.map(r => r.name), legend: false, yName: '数量',
     series: [{ name: '数量', data: stats.byRisk.map(r => r.value), colorBy: p => rc[stats.byRisk[p.dataIndex].name] }]

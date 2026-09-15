@@ -19,21 +19,23 @@ export function readableNo(value, riskId) {
   return text;
 }
 // SPACE_OBJECT 是阶段 9 C04 评估写入的风险类型；FOREIGN_OBJECT 是同一业务概念的早期写法，两者中文一致。
-export const RISK_TYPE_LABEL = { FLIGHT_OPERATION: '飞行作业风险', AIRSPACE: '空域风险', SPACE_OBJECT: '空中异物风险', FOREIGN_OBJECT: '空中异物风险' };
+export const RISK_TYPE_LABEL = { FLIGHT_OPERATION: '飞行作业风险', AIRSPACE: '空域风险', SPACE_OBJECT: '空中异物风险', FOREIGN_OBJECT: '空中异物风险', WEATHER: '气象风险' };
+export const RISK_TYPE_OPTIONS = ['FLIGHT_OPERATION', 'AIRSPACE', 'SPACE_OBJECT', 'WEATHER'].map(value => ({ label: RISK_TYPE_LABEL[value], value }));
 export const REASON_CODE_LABEL = {
+  WEATHER_STRONG_WIND: '大风预警', WEATHER_THUNDERSTORM: '雷雨预警', WEATHER_LOW_VISIBILITY: '低能见度预警',
   ROUTE_DEVIATION: '偏离报备航线', AIRSPACE_CONFLICT: '空域冲突', ALTITUDE_UNKNOWN: '高度信息缺失', SOURCE_MISMATCH: '来源不一致',
   OBJECT_TYPE_UNKNOWN: '目标类别尚未确定', NON_UAV_OBJECT: '非无人机目标，不适用无人机合法性规则',
   SPACE_OBJECT_ALTITUDE_UNKNOWN: '异物进入航线走廊，高度未知', SPACE_OBJECT_IN_CORRIDOR: '异物进入航线走廊',
   SPACE_OBJECT_NEAR_ROUTE: '异物邻近航线',
   PROHIBITED_AIRSPACE_OVERLAP: '穿越禁飞空域', ALTITUDE_DATUM_OR_RANGE_UNKNOWN: '高度基准或范围未知', CORRIDOR_WIDTH_UNKNOWN: '航线走廊宽度未知',
-  TIME_UNTRUSTED: '时间不可信', LOCATION_UNTRUSTED: '位置不可信',
+  TIME_UNTRUSTED: '时间无法确认', LOCATION_UNTRUSTED: '位置无法确认',
   SPACE_OBJECT_NEAR_ROUTE: '异物邻近航线', SPACE_OBJECT_IN_CORRIDOR: '异物进入航线走廊', SPACE_OBJECT_ALTITUDE_UNKNOWN: '异物高度未知', SPACE_OBJECT_IN_AIRPORT_ZONE: '异物进入机场保护区'
 };
 /* 计划状态没有"已批准"这一档（平台不审批，来源送来的计划一律待执行；迁移 V202609100001 已把历史 APPROVED 并入 PENDING）。
    保留 APPROVED 的映射只为旧数据不把代码漏到屏幕上；筛选项与统计口径都不再区分。 */
 export const PLAN_STATUS_LABEL = { PENDING: '待执行', APPROVED: '待执行', EXECUTING: '执行中', COMPLETED: '已完成', CANCELLED: '已取消' };
 /* 计划视角的匹配结论：引擎的 NONE 在目标视角叫"无匹配计划"，在计划这一行要说成"未匹配感知目标"。 */
-export const PLAN_ROW_MATCH_LABEL = { FULL: '完全匹配', PARTIAL: '部分匹配', NONE: '未匹配感知目标', UNDETERMINED: '不可判定', NOT_APPLICABLE: '不适用' };
+export const PLAN_ROW_MATCH_LABEL = { FULL: '完全匹配', PARTIAL: '部分匹配', NONE: '未找到对应飞机', UNDETERMINED: '不可判定', NOT_APPLICABLE: '不适用' };
 // 与 legacy ui.js STAT_C 同色：待执行蓝、执行中青、已完成绿、终态灰。
 export const PLAN_STATUS_TAG = { PENDING: 't-blue', APPROVED: 't-blue', EXECUTING: 't-cyan', COMPLETED: 't-green', CANCELLED: 't-gray' };
 export const HANDOFF_TYPE_LABEL = { RISK_NOTICE: '风险通报', UAV_PUNISHMENT: '处罚交接' };
@@ -102,6 +104,7 @@ export const ACTION_CODE_LABEL = {
   'device:read': '查看设备', 'target:read': '查看目标',
   'alarm:read': '查看告警', 'alarm:verify': '核实无人机事件',
   'flight:read': '查看飞行计划',
+  'flight:verify': '核实计划执行',
   'route:read': '查看航线', 'airspace:read': '查看空域', 'airspace:manage': '维护空域',
   'assessment:read': '查看研判', 'assessment:evaluate': '发起研判', 'assessment:revise': '修订研判结论', 'assessment:escalate': '上报研判',
   'risk:read': '查看风险', 'risk:verify': '核验风险', 'risk:evaluate': '触发风险评估',
@@ -155,7 +158,7 @@ export const PUNISHMENT_BLOCKED_LABEL = {
   FINE_OUT_OF_RANGE: '罚款金额超出该档位区间',
   PENALTY_TYPE_NOT_ALLOWED: '该违法事由不允许这种处罚种类',
   VALIDATION_ERROR: '填写内容不符合要求',
-  UNKNOWN_FIELD: '提交了未知字段',
+  UNKNOWN_FIELD: '提交的内容包含系统不支持的项目，请刷新页面后重新填写',
   NOT_FOUND: '记录不存在或不在当前权限范围内'
 };
 
@@ -188,7 +191,7 @@ export const SUBTYPE_LABEL = {
 export const CONCLUSION_LABEL = { CONFIRMED: '核实属实', EXCLUDED: '已排除', FALSE_POSITIVE: '误报', EVIDENCE_REQUIRED: '证据待补充' };
 /* 飞行风险核验的结论用词与无人机事件不同（核验通过 → 转待通知），与 FlightsPage、riskVerificationModal 保持一致。 */
 export const RISK_CONCLUSION_LABEL = { CONFIRMED: '核验通过', EXCLUDED: '已排除' };
-export const DELIVERY_STATUS_LABEL = { PENDING_DELIVERY: '待投递', SUBMITTED: '已发送', DELIVERED: '已送达', FAILED: '发送失败' };
+export const DELIVERY_STATUS_LABEL = { PENDING_DELIVERY: '等待发送', SUBMITTED: '已发送', DELIVERED: '已送达', FAILED: '发送失败' };
 export const RECEIPT_STATUS_LABEL = { NOT_EXPECTED: '不需回执', PENDING: '等待回执', ACKNOWLEDGED: '已回执', TIMEOUT: '回执超时' };
 /* 回执带回来的处理结果（决策 18-14）：风险到"通知上级"为止，回执"已驱离"就算闭环，不再往处置走。
    与回执状态是两件事——"已回执"说的是对方回了，"已驱离"说的是对方做了什么。 */
@@ -197,19 +200,33 @@ export const RECEIPT_RESULT_LABEL = { DISPERSED: '已驱离', NOT_DISPERSED: '�
    与“通知渠道未接通”不是一回事，两句必须分开说。 */
 export const HANDOFF_BLOCKED_LABEL = {
   CHANNEL_NOT_CONNECTED: '通知渠道未接通',
-  HANDOFF_MATERIALS_NOT_DEFINED: '处罚交接的材料包尚未定义，暂不能提交'
+  HANDOFF_MATERIALS_NOT_DEFINED: '尚未设置处罚部门需要接收哪些材料，请联系管理员后再提交'
 };
 export const SEVERITY_LABEL = { CRITICAL: '紧急', HIGH: '高', MEDIUM: '中', LOW: '低' };
 /* 设备域展示字典（决策 15-58 巡检补）：连接状态与设备事件流的类型码。未收录的码原样返回，便于对照排查。 */
-export const DEVICE_CONNECTIVITY_LABEL = { ONLINE: '在线', OFFLINE: '离线', ABNORMAL: '异常', DEGRADED: '降级', UNKNOWN: '未知' };
+export const DEVICE_CONNECTIVITY_LABEL = { ONLINE: '在线', OFFLINE: '离线', ABNORMAL: '异常', DEGRADED: '通信质量下降', UNKNOWN: '未知' };
 export const DEVICE_EVENT_TYPE_LABEL = {
   STATE_RECEIVED: '状态上报', INBOX_RECEIVED: '报文接收', HEARTBEAT: '心跳', HEARTBEAT_RECEIVE: '心跳接收', HEARTBEAT_UPDATED: '心跳更新',
   STATE_UNKNOWN: '状态未知', COMMAND_FAILED: '指令失败', DEVICE_ENABLED: '设备启用', DEVICE_DISABLED: '设备停用',
   CATALOG_CREATED: '台账登记', CATALOG_UPDATED: '台账修改',
   REBOOT_QUEUED: '重启已排队', REBOOT_SUCCEEDED: '重启成功', REBOOT_FAILED: '重启失败', REBOOT_TIMED_OUT: '重启超时', REBOOT_CANCELLED: '重启已取消',
   LINGYUN_CONTROL_QUEUED: '凌云控制已排队', LINGYUN_CONTROL_TIMED_OUT: '凌云控制超时', EO_TRACK_QUEUED: '光电跟踪已排队', EO_COMMAND_TIMED_OUT: '光电指令超时',
-  INCIDENT_OPENED: '异常产生', INCIDENT_RECOVERED: '异常恢复', DEVICE_OFFLINE: '设备离线', LINK_DEGRADED: '链路降级'
+  INCIDENT_OPENED: '异常产生', INCIDENT_RECOVERED: '异常恢复', DEVICE_OFFLINE: '设备离线', LINK_DEGRADED: '通信质量下降'
 };
+/* MQTT 接入层的连接状态与接收诊断码（协议 A/C 适配器写入 mqtt_receive_diagnostic 的 outcome / reason）。
+   NONE 在融合降级里不是"没降级"，是本帧一个来源都没有；三源齐全才是没降级。 */
+export const MQTT_CONNECTION_LABEL = { CONNECTED: '已连接', CONNECTING: '连接中', DISCONNECTED: '未连接', ONLINE: '在线', OFFLINE: '离线', ERROR: '连接错误' };
+export const MQTT_DIAGNOSTIC_OUTCOME_LABEL = { ACCEPTED: '已受理', DUPLICATE: '重复', CONFLICT: '冲突', IGNORED: '已忽略', REJECTED: '已拒收' };
+export const MQTT_DIAGNOSTIC_REASON_LABEL = {
+  INBOX_RECEIVED: '目标报文入库', STATIC_UPDATED: '工参已更新', HEARTBEAT_UPDATED: '心跳已更新', STALE_STATIC: '工参时间早于已收到的',
+  SAME_MESSAGE: '同一报文重发', KEY_PAYLOAD_CONFLICT: '同序号内容不同', MQTT_REDELIVERY: '传输层重投', TRACK_NOT_OPEN: '没有进行中的跟踪任务',
+  TRACK_ENDED: '跟踪已结束', CAMERA_STATUS: '相机状态已更新', COMMAND_FAILED: '设备返回失败',
+  DEVICE_NOT_REGISTERED: '设备未登记', DEVICE_DISABLED: '设备已停用', SOURCE_MODE_MISMATCH: '来源模式不匹配',
+  RETAINED_NOT_REALTIME: '保留消息不是实时数据', QOS1_REQUIRED: '不是 QoS 1', IDENTITY_MISMATCH: '主题与报文身份不一致',
+  INVALID_ENVELOPE: '报文格式不合法', INVALID_TOPIC: '主题不合法', PAYLOAD_TOO_LARGE: '报文过大', UNSUPPORTED_TYPE: '设备类型不支持',
+  UNKNOWN_EVENT: '未知事件', PROTOCOL_EVENT_UNSUPPORTED: '协议事件暂不支持'
+};
+export const FUSION_DEGRADATION_LABEL = { THREE_SOURCE: '三路监测数据齐全', FUSION_BOX_ONLY: '部分监测数据缺失', SINGLE_SOURCE: '仅有一路监测数据', NONE: '当前没有监测数据' };
 export const SEVERITY_TAG = { CRITICAL: 't-red', HIGH: 't-red', MEDIUM: 't-amber', LOW: 't-blue' };
 export const RISK_STATE_LABEL = { PENDING_VERIFICATION: '待核验', PENDING_NOTIFICATION: '待通知', NOTIFIED: '已通知', ACKNOWLEDGED: '已回执', EXCLUDED: '已排除' };
 /* 阶段 9 空间安全风险：异物细类、高度带与走廊关系。
@@ -234,7 +251,7 @@ export const ALTITUDE_RELATION_LABEL = {
   ABOVE: '高于计划高度带', WITHIN: '在计划高度带内', BELOW: '低于计划高度带', UNDETERMINED: '不可判定'
 };
 export const EVIDENCE_KIND_LABEL = {
-  EO_VIDEO: '光电录像', EO_STILL: '光电抓拍图', TRACK_SNAPSHOT: '雷达轨迹快照',
+  EO_VIDEO: '光电录像', EO_STILL: '光电抓拍图', TRACK_SNAPSHOT: '雷达轨迹记录',
   NOTICE_RECEIPT: '通报单回执', COMMISSION_REPORT: '调测报告', COMMAND_LOG: '指令报文与回执',
   SCENE_PHOTO: '现场照片', PENALTY_DOCUMENT: '处罚文书'
 };
@@ -279,7 +296,7 @@ export const AIRSPACE_ORIGIN_LABEL = { MANUAL: '人工新建', GEOJSON_IMPORT: '
 export const IMPORT_STATUS_LABEL = { STAGED: '待确认', CONFIRMED: '已确认', DISCARDED: '已放弃' };
 /** 导入被拒绝的原因：每条都要能让操作者知道该改文件的哪一处。 */
 export const IMPORT_ISSUE_LABEL = {
-  GEOMETRY_MISSING: '缺少边界几何', GEOMETRY_INVALID: '边界几何无效', GEOMETRY_NOT_SUPPORTED: '边界只支持面或多面',
+  GEOMETRY_MISSING: '缺少空域边界', GEOMETRY_INVALID: '空域边界格式有误', GEOMETRY_NOT_SUPPORTED: '边界只支持面或多面',
   RING_NOT_CLOSED: '边界闭合环未闭合', RING_TOO_SHORT: '边界至少需要三个顶点', COORDINATE_INVALID: '坐标不是数字',
   COORDINATE_OUT_OF_RANGE: '坐标超出经纬度范围', KIND_MISSING: '缺少空域种类', KIND_NOT_SUPPORTED: '空域种类不在字典内',
   ALTITUDE_INCOMPLETE: '高度带缺少上下限或基准', ALTITUDE_DATUM_NOT_SUPPORTED: '高度基准只支持离地或海拔',

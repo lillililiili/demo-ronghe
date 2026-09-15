@@ -54,7 +54,7 @@ function messageOf(error, fallback) {
   if (error.code === 'DEVICE_NOT_BOUND') return '设备未登记凌云连接，未下发指令；请运维补登记后重试。';
   // 离线是现场问题，与"未登记"（运维）和"不支持"（换通道）的补救方都不同（13-14）。
   if (error.code === 'DEVICE_OFFLINE') return '设备未启用或不在线，未下发指令；请现场处理后重试。';
-  if (error.code === 'TARGET_NOT_ACTIVE') return '该目标最近没有观测记录，无法确认它仍在活动，不能对它派发处置。';
+  if (error.code === 'TARGET_NOT_ACTIVE') return '最近没有监测到这个目标，无法确认它还在现场，暂时不能下发处置指令。';
   if (error.code === 'POLICY_REQUIRES_CONFIRMED_EVENT') return '该动作要求事件先经人工核实，请先完成核实再申请。';
   return error.message || fallback;
 }

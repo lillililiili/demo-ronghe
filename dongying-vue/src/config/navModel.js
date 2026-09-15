@@ -19,7 +19,9 @@ export const NAV = [
   {
     t: '飞行监管', icon: 'plan', kids: [
       { k: 'flights', t: '飞行计划' },
-      { k: 'legality', t: '合法性研判' }
+      { k: 'legality', t: '合法性研判' },
+      /* 2026-09-13 挂回菜单（设计稿 v2）：访问权限由飞行计划承载，见 accessControl.js 的 ROUTE_ALIAS。 */
+      { k: 'airspace', t: '空域管理' }
     ]
   },
   {
@@ -52,9 +54,6 @@ export const ROUTES = (function () {
   r.overview = { t: '融合感知', p: '感知监测', ph: 'situation' };
   /* 已隐藏、不再挂菜单：仍要有中文名，否则无权访问提示会把英文路由键摆出来。 */
   r.workbench = { t: '我的工作台', p: null, ph: null };
-  /* 已实现但暂不挂菜单的页面（决策 12-8）：仍要有中文名，否则"无权访问"提示会把英文路由键摆给用户看。
-     名称与迁移 060 的权限目录一致。 */
-  r.airspace = { t: '空域与航线规则', p: '飞行监管', ph: 'flights' };
   /* 旧书签 #/risk 会重定向到飞行计划「全部风险事件」；名称仅用于万一落到无权页时的提示。 */
   r.risk = { t: '空间安全风险', p: '飞行监管', ph: 'flights' };
   r.bigscreen = { t: '低空安全监控大屏', p: null, ph: null };
@@ -71,7 +70,6 @@ export const ROUTES = (function () {
 
 export const PAGE_THEME = {
   login: 'login', 'change-password': 'login',
-  workbench: 'overview',
   bigscreen: 'overview',
   situation: 'sensing',
   flights: 'flight', legality: 'flight', risk: 'flight', airspace: 'flight',

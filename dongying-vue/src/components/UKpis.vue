@@ -11,17 +11,15 @@ const props = defineProps({
   className: { type: String, default: '' }
 });
 
-const KC = { blue: '#4b9cff', cyan: '#2dcfd0', green: '#41d49a', amber: '#f1a43a', orange: '#f58245', red: '#ff5b61', purple: '#8e7dff', pink: '#e96fab' };
 const wrapCls = computed(() => ['kpis', props.variant ? 'kpis-' + props.variant : '', props.density ? 'density-' + props.density : '', props.className || ''].filter(Boolean).join(' '));
 /* 与 ui.js kpis() 完全同构：整组输出为一段 html。 */
 const html = computed(() => props.list.map(k => {
   const icon = window.UI.icon;
-  const c = KC[k.color] || KC.blue;
   const click = k.attr ? ` ${k.attr} tabindex="0" role="button"` : '';
-  return `<div class="kpi kpi-${k.color || 'blue'} ${k.className || ''}${k.attr ? ' is-clickable' : ''}${k.active ? ' is-active' : ''}"${click}${k.active ? ` style="--kpi-c:${c}"` : ''}>
-    <div class="ic" style="background:${c}22;border:1px solid ${c}55;color:${c}">${icon(k.icon || 'chart')}</div>
+  return `<div class="kpi kpi-${k.color || 'blue'} ${k.className || ''}${k.attr ? ' is-clickable' : ''}${k.active ? ' is-active' : ''}"${click}${k.desc ? ` title="${String(k.desc).replace(/<[^>]*>/g, '').replace(/"/g, '&quot;')}"` : ''}>
+    <div class="ic">${icon(k.icon || 'chart')}</div>
     <div class="tx"><div class="lb" title="${String(k.label).replace(/"/g, '&quot;')}">${k.label}</div>
-      <div class="vl" style="color:${c}">${k.value}${k.unit ? `<span style="font-size:13px;color:var(--txt-2);margin-left:3px">${k.unit}</span>` : ''}</div></div></div>`;
+      <div class="vl">${k.value}${k.unit ? `<span class="unit">${k.unit}</span>` : ''}</div>${k.caption ? `<div class="dt">${k.caption}</div>` : ''}</div></div>`;
 }).join(''));
 </script>
 

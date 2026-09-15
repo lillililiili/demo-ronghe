@@ -173,7 +173,7 @@ function reportAge(value) {
 }
 
 function iconHtml(device) {
-  return U.icon(device.icon || 'device');
+  return U.deviceIcon(device);
 }
 
 function statusClass(status) {

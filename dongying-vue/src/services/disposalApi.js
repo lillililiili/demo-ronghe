@@ -10,8 +10,15 @@ export function newDisposalIdempotencyKey(action = 'request') {
 const base = '/disposal-authorizations';
 const one = id => `${base}/${encodeURIComponent(id)}`;
 const write = (path, body, idempotencyKey) => apiRequestTimed(path, { method: 'POST', body, mutation: true, idempotencyKey });
+const emergency = eventId => `/uav-events/${encodeURIComponent(eventId)}/emergency-stop`;
+const stopped = (eventId, stopId) => `${emergency(eventId)}/${encodeURIComponent(stopId)}`;
 
 export const disposalApi = {
+  emergencyOverview: eventId => apiRequestTimed(emergency(eventId)),
+  emergencyStop: (eventId, idempotencyKey) => write(emergency(eventId), {}, idempotencyKey),
+  emergencyNote: (eventId, stopId, note, idempotencyKey) => write(`${stopped(eventId, stopId)}/notes`, { note }, idempotencyKey),
+  emergencyRetry: (eventId, stopId, deviceId, idempotencyKey) => write(`${stopped(eventId, stopId)}/devices/${encodeURIComponent(deviceId)}/retry`, {}, idempotencyKey),
+  emergencyConfirm: (eventId, stopId, deviceId, note, idempotencyKey) => write(`${stopped(eventId, stopId)}/devices/${encodeURIComponent(deviceId)}/manual-confirm`, { note }, idempotencyKey),
   list: params => apiRequestTimed(`${base}${buildQuery(params)}`),
   detail: id => apiRequestTimed(one(id)),
   events: (id, params) => apiRequestTimed(`${one(id)}/events${buildQuery(params)}`),

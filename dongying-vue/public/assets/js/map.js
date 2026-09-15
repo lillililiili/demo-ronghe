@@ -70,7 +70,7 @@
       <div class="mapctl">
         <button type="button" class="mb" data-z="in" aria-label="放大">${g.UI.icon('zoomIn')}</button><button type="button" class="mb" data-z="out" aria-label="缩小">${g.UI.icon('zoomOut')}</button><button type="button" class="mb" data-z="fit" aria-label="复位">${g.UI.icon('expand')}</button>
       </div>
-      <button type="button" class="mb map-refocus" data-z="refocus" title="回到本页数据所在的位置">⌖ 重新定位</button>
+      <button type="button" class="mb map-refocus" data-z="refocus" title="回到本页数据所在的位置">${g.UI.icon('location')} 重新定位</button>
       ${legendHtml}
       <div class="maptip"></div>
       <div class="mapscale"><span></span><div class="bar"></div></div>
@@ -861,6 +861,24 @@
     c.restore();
   };
 
+  // 地图与 Vue 列表共用 UI.deviceIcon 的受信任 SVG；只缓存小尺寸栅格，不新增地图实例。
+  const deviceGlyphs = new Map();
+  function drawDeviceGlyph(context, device, x, y, size, color) {
+    const ink = /^#[0-9a-f]{3,8}$/i.test(color) ? color : '#94a3b8';
+    const key = g.UI.deviceMeta(device).key + ':' + ink;
+    let glyph = deviceGlyphs.get(key);
+    if (!glyph) {
+      let svg = g.UI.deviceIcon(device).replace(/ (?:width|height)="1em"/g, '');
+      if (!svg.includes('xmlns=')) svg = svg.replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" ');
+      svg = svg.replace('<svg ', '<svg width="64" height="64" fill="none" stroke="' + ink + '" stroke-width="1.8" style="color:' + ink + '" ');
+      glyph = new Image();
+      glyph.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+      if (deviceGlyphs.size >= 128) deviceGlyphs.delete(deviceGlyphs.keys().next().value);
+      deviceGlyphs.set(key, glyph);
+    }
+    if (glyph.complete && glyph.naturalWidth) context.drawImage(glyph, x - size / 2, y - size / 2, size, size);
+  }
+
   MapView.prototype._drawFusionDevice = function (c, device, q) {
     const abnormal = device.statusCode === 'ABNORMAL' || device.status === '异常';
     const offline = device.statusCode === 'OFFLINE' || device.status === '离线';
@@ -880,24 +898,7 @@
     c.beginPath(); c.arc(0, 0, 12, 0, Math.PI * 2); c.fillStyle = 'rgba(5,20,37,.92)'; c.fill();
     c.strokeStyle = color; c.lineWidth = 1.6; c.stroke(); c.shadowBlur = 0;
     c.strokeStyle = color; c.fillStyle = color; c.lineWidth = 1.45; c.lineCap = 'round'; c.lineJoin = 'round';
-    if (device.typeCode === 'RADAR') {
-      c.beginPath(); c.arc(0, 1, 7, Math.PI, Math.PI * 2); c.stroke();
-      c.beginPath(); c.moveTo(-7, 1); c.lineTo(7, 1); c.moveTo(0, 1); c.lineTo(0, 7); c.moveTo(-4, 7); c.lineTo(4, 7); c.stroke();
-      c.beginPath(); c.moveTo(0, 1); c.lineTo(5, -5); c.stroke();
-    } else if (device.typeCode === 'EO') {
-      c.strokeRect(-6.5, -4.5, 10, 8);
-      c.beginPath(); c.arc(-1.5, -.5, 2.2, 0, 7); c.stroke();
-      c.beginPath(); c.moveTo(3.5, -2.8); c.lineTo(7, -5); c.lineTo(7, 4); c.lineTo(3.5, 2.1); c.stroke();
-      c.beginPath(); c.arc(0, 6, 2.2, 0, 7); c.stroke();
-    } else if (device.typeCode === 'FIVE_G_A') {
-      c.beginPath(); c.moveTo(0, -6); c.lineTo(-4.5, 7); c.lineTo(4.5, 7); c.closePath(); c.stroke();
-      c.beginPath(); c.moveTo(-6, 1); c.quadraticCurveTo(-9, -1, -6, -4); c.moveTo(6, 1); c.quadraticCurveTo(9, -1, 6, -4); c.stroke();
-      c.beginPath(); c.arc(0, -6, 1.7, 0, 7); c.fill();
-    } else {
-      [[0, -7], [-6, 5], [6, 5]].forEach(p => { c.beginPath(); c.arc(p[0], p[1], 2.2, 0, 7); c.fill(); });
-      c.beginPath(); c.moveTo(0, -7); c.lineTo(-6, 5); c.lineTo(6, 5); c.closePath(); c.stroke();
-      c.beginPath(); c.arc(0, 1, 2.6, 0, 7); c.stroke();
-    }
+    drawDeviceGlyph(c, device, 0, 0, 18, color);
     if (abnormal) {
       c.beginPath(); c.moveTo(7, -11); c.lineTo(12, -2); c.lineTo(2, -2); c.closePath();
       c.fillStyle = '#f1a43a'; c.fill();
@@ -1205,14 +1206,16 @@
         if (this.opt.fusionProfile) {
           this._drawFusionDevice(c, d, q);
         } else {
-          c.beginPath(); c.arc(q[0], q[1], 4.4, 0, 7); c.fillStyle = 'rgba(255,255,255,.9)'; c.fill();
-          c.beginPath(); c.arc(q[0], q[1], 2.35, 0, 7); c.fillStyle = col; c.fill();
-          c.beginPath(); c.arc(q[0], q[1], 5.2, 0, 7); c.strokeStyle = col + '70'; c.lineWidth = .9; c.stroke();
+          c.save();
+          c.beginPath(); c.roundRect(q[0] - 12, q[1] - 12, 24, 24, 5);
+          c.fillStyle = 'rgba(5,20,37,.94)'; c.fill();
+          c.strokeStyle = col; c.lineWidth = 1.5; c.stroke();
+          drawDeviceGlyph(c, d, q[0], q[1], 18, col);
           if (d.alarm) {
-            const r = 7 + (this.t % 60) / 60 * 9;
-            c.beginPath(); c.arc(q[0], q[1], r, 0, 7);
-            c.strokeStyle = `rgba(255,176,32,${(1 - (this.t % 60) / 60) * .7})`; c.stroke();
+            c.beginPath(); c.arc(q[0] + 10, q[1] - 10, 3, 0, Math.PI * 2);
+            c.fillStyle = '#ffb020'; c.fill();
           }
+          c.restore();
         }
         picks.push({
           x: q[0], y: q[1], kind: 'device', data: d,

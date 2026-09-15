@@ -13,6 +13,7 @@ export const riskApi = {
   /* 区域字典按页取（15-22），语义同 /alarms/districts。 */
   listDistricts: () => apiRequestTimed('/risks/districts'),
   getRisk: riskId => apiRequestTimed(`/risks/${encodeURIComponent(riskId)}`),
+  getWeatherFact: riskId => apiRequestTimed(`/risks/${encodeURIComponent(riskId)}/weather-fact`),
   listRiskVerifications: (riskId, params) => apiRequestTimed(`/risks/${encodeURIComponent(riskId)}/verifications${buildQuery(params)}`),
   verifyRisk: (riskId, body, idempotencyKey) => apiRequestTimed(`/risks/${encodeURIComponent(riskId)}/verifications`, {
     method: 'POST', body, mutation: true, idempotencyKey

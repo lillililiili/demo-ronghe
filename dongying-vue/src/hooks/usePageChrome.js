@@ -11,7 +11,7 @@ import { closeModal } from '@/ui/modal.js';
 export function usePageChrome(k) {
   const store = useAppStore();
   store.crumbCtx = null;
-  store.openGrp = groupOf(k) || store.openGrp;
+  store.closedNavGroups = store.closedNavGroups.filter(t => t !== groupOf(k));
   onUnmounted(() => {
     window.CH.disposeAll();
     closeModal();          // 桥接层 closeModal 内部也会收掉 legacy 的 U.modal

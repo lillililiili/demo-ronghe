@@ -13,8 +13,11 @@ const cur = computed(() => routeKey(route));
 const cbsHtml = computed(() => {
   const k = cur.value, r = ROUTES[k] || { t: k };
   const parts = [`<a href="#/${HOME_KEY}">首页</a>`];
-  if (r.p) parts.push(`<a href="#/${r.ph}">${r.p}</a>`);
-  parts.push(`<span class="c on">${r.t}</span>`);
+  if (k === HOME_KEY) parts[0] = `<span class="c on">融合感知</span>`;
+  else {
+    if (r.p) parts.push(`<a href="#/${r.ph}">${r.p}</a>`);
+    parts.push(`<span class="c on">${r.t}</span>`);
+  }
   if (store.crumbCtx) parts.push(`<span class="c ctx">${store.crumbCtx}</span>`);
   return parts.join('<b>›</b>');
 });

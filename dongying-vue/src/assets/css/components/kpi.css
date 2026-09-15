@@ -1,5 +1,15 @@
 
-/* KPI */
+/* KPI：语义色只从 tokens.css 获取，Vue 与 legacy 共用。 */
+.kpi{--kpi-c:var(--blue)}
+.kpi-blue{--kpi-c:var(--blue)}
+.kpi-cyan{--kpi-c:var(--cyan)}
+.kpi-green{--kpi-c:var(--green)}
+.kpi-amber{--kpi-c:var(--amber)}
+.kpi-orange{--kpi-c:var(--orange)}
+.kpi-red{--kpi-c:var(--red)}
+.kpi-purple{--kpi-c:var(--purple)}
+.kpi-pink{--kpi-c:var(--pink)}
+.kpi-gray{--kpi-c:var(--gray)}
 /* 列数不写死：此前 repeat(6,1fr) 让 KPI 不足 6 个的页面留出空轨道，
    卡片又被挤到放不下 12.5px 的中文标签而静默裁切（overflow:hidden 且无省略号）。
    ── auto-fit 别改回 repeat(6,1fr) ──
@@ -18,17 +28,18 @@
 .kpi{
   display:flex;align-items:center;gap:12px;padding:14px 15px;border-radius:var(--r);
   background:linear-gradient(135deg,rgba(13,35,80,.9),rgba(8,20,50,.75));
-  border:1px solid var(--line);position:relative;overflow:hidden;
+  border:1px solid color-mix(in srgb,var(--kpi-c) 38%,transparent);position:relative;overflow:hidden;
 }
 .kpi:after{content:"";position:absolute;inset:0;pointer-events:none;
   background:radial-gradient(120px 60px at 100% 0%,rgba(61,139,255,.16),transparent 70%)}
-.kpi .ic{width:48px;height:48px;flex:none;border-radius:10px;display:flex;align-items:center;justify-content:center}
+.kpi .ic{color:var(--kpi-c);background:color-mix(in srgb,var(--kpi-c) 16%,transparent);border:1px solid color-mix(in srgb,var(--kpi-c) 52%,transparent);width:48px;height:48px;flex:none;border-radius:10px;display:flex;align-items:center;justify-content:center}
 .kpi .ic svg{width:24px;height:24px;stroke-width:1.6;fill:none;stroke:currentColor}
 .kpi .tx{min-width:0}
-.kpi .lb{font-size:13.5px;color:var(--txt-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kpi .lb{font-size:13.5px;color:var(--txt-2);line-height:1.45;overflow-wrap:anywhere}
 .fc h5{min-width:0}
 .fc{min-width:0}
-.kpi .vl{font-size:34px;font-weight:700;line-height:1.25;font-family:"DIN Alternate","Bahnschrift",Menlo,sans-serif;letter-spacing:.5px;font-variant-numeric:tabular-nums}
-/* 统计卡片不再展示描述行，避免各页残留口径说明。 */
-.kpi .dt{display:none}
+.kpi .vl{color:var(--kpi-c);font-size:34px;font-weight:700;line-height:1.25;font-family:"DIN Alternate","Bahnschrift",Menlo,sans-serif;letter-spacing:.5px;font-variant-numeric:tabular-nums}
+/* 只展示调用方明确给出的短说明，完整统计口径保留在卡片提示中。 */
+.kpi .dt{margin-top:3px;color:var(--txt-3);font-size:11px;line-height:1.4}
+.kpi .unit{font-size:13px;color:var(--txt-2);margin-left:3px}
 .up{color:var(--red)} .dn{color:var(--green)} .flat{color:var(--txt-3)}

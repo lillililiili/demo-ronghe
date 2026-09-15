@@ -2,7 +2,7 @@
 /* 模块级页面状态：跨导航保留分页、筛选、选中项与证据页签；业务事实始终重新读取标准 API。 */
 const S = {
   st: {
-    page: 1, size: 10, legal: 'ILLEGAL', district: '', review: '',
+    page: 1, size: 10, legal: '', district: '', review: '', plan: '',
     selectedEvaluationId: null, revisionPage: 1, revisionPageSize: 10,
     evidenceTab: 'space'
   }
@@ -17,6 +17,8 @@ import { UField } from '@/components/form/index.js';
 import UPagination from '@/components/UPagination.vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import { legalityApi } from '@/services/legalityApi.js';
+import { flightApi } from '@/services/flightApi.js';
+import { hasPermission } from '@/services/accessControl.js';
 import { loadTargetPosition, loadRouteCenterline, loadAirspaceOverlays, installOverlays, overlayPoints } from '@/services/positionMap.js';
 import { RULE_SET_LABEL, SOURCE_MODE_LABEL, labelOf } from '@/ui/labels.js';
 import {
@@ -64,16 +66,11 @@ const resultMeta = {
   NOT_APPLICABLE: { className: 'is-warn' }
 };
 const tabs = [
-  { value: 'ILLEGAL', label: '系统判定非法' },
-  { value: 'ABNORMAL', label: '系统判定异常' },
-  { value: 'UNDETERMINED', label: '不可判定' },
-  { value: 'LEGAL', label: '系统自动通过' }
-];
-const groups = [
-  { code: 'ILLEGAL', label: '系统判定非法', tone: 'red' },
-  { code: 'ABNORMAL', label: '系统判定异常', tone: 'amber' },
-  { code: 'UNDETERMINED', label: '不可判定', tone: 'amber' },
-  { code: 'LEGAL', label: '系统自动通过', tone: 'green' }
+  { value: '', label: '全部目标' },
+  { value: 'LEGAL', label: '合法' },
+  { value: 'ABNORMAL', label: '异常' },
+  { value: 'ILLEGAL', label: '非法' },
+  { value: 'UNDETERMINED', label: '不可判定' }
 ];
 const evidenceTabs = [
   { value: 'space', label: '空间证据' },
@@ -88,26 +85,66 @@ const districtOptions = computed(() => {
   if (st.district && !values.has(st.district)) values.set(st.district, st.district);
   return [{ label: '全部区域', value: '' }, ...[...values.entries()].sort().map(([value, label]) => ({ label, value }))];
 });
+/* 按计划筛选（决策 19-1）：下拉取当前可见的计划；没有飞行计划读取权限就整块不显示——
+   服务端对无权限的 plan_id 直接拒绝，画一个点了就报错的下拉没有意义。 */
+const canReadPlans = computed(() => hasPermission('flights.read'));
+const plans = ref([]);
+const plansError = ref('');
+const planOptions = computed(() => {
+  const options = [{ label: '全部计划', value: '' }];
+  plans.value.forEach(plan => options.push({ label: plan.plan_no || plan.plan_id, value: plan.plan_id }));
+  if (st.plan && !plans.value.some(plan => plan.plan_id === st.plan)) options.push({ label: '当前所选计划', value: st.plan });
+  return options;
+});
+async function loadPlans() {
+  if (!canReadPlans.value) { plans.value = []; return; }
+  try {
+    const page = await flightApi.list({ page: 1, size: 100 });
+    plans.value = page.items || [];
+    plansError.value = '';
+  } catch (error) {
+    plans.value = [];
+    plansError.value = formatApiError(error, '读取飞行计划失败');
+  }
+}
+/* 研判详情里的"所属飞行计划"：编号与归属单位取研判自带的字段，序列号再读一次计划详情。
+   服务端没有飞手字段，这一项不编。 */
+const planDetail = ref(null);
+async function loadPlanDetail(evaluation) {
+  planDetail.value = null;
+  const planId = evaluation?.plan_id;
+  if (!planId || !canReadPlans.value) return;
+  try {
+    const detail = await flightApi.detail(planId);
+    if (selectedEvaluation.value?.plan_id === planId) planDetail.value = detail;
+  } catch { planDetail.value = null; }
+}
+function openPlan(planId) {
+  if (!planId) return;
+  if (UI?.goto) UI.goto('flights', { plan: planId });
+  else location.hash = `#/flights?plan=${encodeURIComponent(planId)}`;
+}
+
 const selectedConclusion = computed(() => conclusionMeta[selectedEvaluation.value?.legal_status]
   || { label: '尚未选择研判', tone: 'amber' });
 const selectedQueueIndex = computed(() => items.value.findIndex(item => item.evaluation_id === selectedEvaluation.value?.evaluation_id));
 const primaryReason = computed(() => evaluationReason(selectedEvaluation.value));
 const allowed = computed(() => selectedEvaluation.value?.allowed_actions || []);
-const selectedHit = computed(() => selectedEvaluation.value?.hit_details?.[selectedHitIndex.value] || null);
 const c01Facts = computed(() => selectedEvaluation.value?.hit_details?.find(hit => hit.rule_code === 'C01')?.facts || null);
 const demoParams = computed(() => selectedEvaluation.value?.param_status === 'DEMO');
 
 function kpiPlaceholder(desc) {
   return [
-    { label: '今日研判', value: '—', color: 'blue', icon: 'check', desc },
-    { label: '可告警研判', value: '—', color: 'red', icon: 'alert', desc },
-    { label: '已人工复核', value: '—', color: 'green', icon: 'check', desc },
-    { label: '误报率', value: '—', color: 'amber', icon: 'alert', desc }
+    { label: '研判总数', value: '—', color: 'blue', icon: 'database', desc },
+    { label: '合法', value: '—', color: 'green', icon: 'shield', desc },
+    { label: '异常', value: '—', color: 'amber', icon: 'warning', desc },
+    { label: '非法', value: '—', color: 'red', icon: 'ban', desc },
+    { label: '不可判定', value: '—', color: 'gray', icon: 'clock', desc }
   ];
 }
-
-function groupedItems(code) {
-  return items.value.filter(item => (item.legal_status === code) || (code === 'UNDETERMINED' && item.legal_status === 'NOT_APPLICABLE'));
+function tabCount(index) { return kpiList.value[index]?.value ?? '—'; }
+function evidenceIcon(kind) {
+  return { target: 'radar', track: 'location', flight_plan: 'clipboard', route_version: 'plane', airspace_version: 'zone', rule_set_version: 'shield', rule_version: 'shield', alarm: 'bell', risk: 'warning' }[kind] || 'file';
 }
 
 function resultText(code) { return RULE_RESULT_TEXT[code] || code || '未提供'; }
@@ -143,10 +180,6 @@ function shortTime(value) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? '时间未知' : date.toLocaleTimeString('zh-CN', { hour12: false });
 }
-function percent(ratio) {
-  if (!ratio || ratio.value === null || ratio.value === undefined) return '—';
-  return `${(Number(ratio.value) * 100).toFixed(1)}%`;
-}
 function evaluationReason(item) {
   if (!item) return '尚未取得研判详情';
   if (item.legal_status === 'LEGAL') return item.unknown_reasons?.length ? `全部检查通过（${item.unknown_reasons.length} 项无法判定）` : '全部检查通过';
@@ -160,9 +193,9 @@ function reasonList(codes) {
 }
 function subjectLabel(item) {
   if (!item) return '未选择研判';
-  if (item.target_no || item.target_id) return item.target_no || '目标（编号不可见）';
-  if (item.plan_no || item.plan_id) return item.plan_no || '计划（编号不可见）';
-  return '主体不可见';
+  if (item.target_no || item.target_id) return item.target_no || '目标（未提供编号）';
+  if (item.plan_no || item.plan_id) return item.plan_no || '计划（未提供编号）';
+  return '没有可查看的目标或计划';
 }
 /* 命中事实与参数的键都是引擎内部名；上屏用中文，数值取一位小数，内部 id 不上屏。 */
 const FACT_KEY_TEXT = {
@@ -170,7 +203,7 @@ const FACT_KEY_TEXT = {
   distance_m: '距中心线（米）', deviation_m: '偏离量（米）', half_width_m: '走廊半宽（米）', tolerance_m: '容差（米）', corridor_tolerance_m: '走廊容差（米）',
   altitude_m: '高度（米）', max_altitude_m: '最大高度（米）', min_altitude_m: '最小高度（米）', limit_m: '限高（米）', margin_m: '余量（米）',
   time_window: '时间窗', corridor: '走廊', identity: '身份', confidence: '置信度', candidate_count: '候选计划数', match_reason: '匹配原因',
-  start_at: '开始', end_at: '结束', observed_at: '观测时刻', night_from: '夜航起', night_to: '夜航止', kinds: '空域类型'
+  start_at: '开始', end_at: '结束', observed_at: '监测时间', night_from: '夜航起', night_to: '夜航止', kinds: '空域类型'
 };
 const DIM_TEXT = { MATCH: '匹配', MISMATCH: '不匹配', UNDETERMINED: '不可判定', PASS: '通过', FAIL: '不通过', UNKNOWN: '未知' };
 function factKeyText(key) { return FACT_KEY_TEXT[key] || key.replace(/_/g, ' '); }
@@ -230,7 +263,13 @@ function invalidateDetail() {
 }
 
 function queryParams() {
-  return { mode: 'ACTIVE', latest_only: true, legal_status: st.legal, district_id: st.district, review_state: st.review || undefined, page: st.page, size: st.size };
+  return {
+    mode: 'ACTIVE', latest_only: true, legal_status: st.legal, district_id: st.district,
+    review_state: st.review || undefined,
+    // 按计划筛选（决策 19-1）：服务端 legality-evaluations 支持 plan_id，需要飞行计划读取权限。
+    plan_id: st.plan || undefined,
+    page: st.page, size: st.size
+  };
 }
 
 async function loadQueue(options = {}) {
@@ -293,6 +332,7 @@ async function selectEvaluationById(evaluationId) {
     if (token !== detailToken) return;
     selectedEvaluation.value = data;
     st.revisionPage = 1;
+    loadPlanDetail(data);
     await loadRevisions();
   } catch (error) {
     if (token !== detailToken) return;
@@ -343,40 +383,38 @@ function onRecompute() {
 }
 
 async function loadKpi() {
-  // 当日窗口按北京时间取 [今日 00:00, 明日 00:00)，不随浏览器所在时区漂移；北京无夏令时，固定 UTC+8。无权限显示“无权限”而不是 0。
-  const timezone = 'Asia/Shanghai';
-  // 非展示用：把当下折算成北京时区的年月日，用来拼查询窗口，不上屏。
-  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
-  const pick = type => Number(parts.find(part => part.type === type)?.value);
-  const from = new Date(Date.UTC(pick('year'), pick('month') - 1, pick('day')) - 8 * 60 * 60 * 1000);
-  const to = new Date(from.getTime() + 24 * 60 * 60 * 1000);
-  /* 四格按原版口径：今日研判 / 合法 / 非法 / 不可判定（阶段 18）。
-     服务端的规则效果汇总里没有按判定结论的计数，所以后三格各取一次研判列表的 total——
-     四次查询用同一个窗口与同一组条件（正式模式、每个目标只取最新一次），数字才对得上。
-     判为"异常"的既不算合法也不算非法，不进这三格，所以三格之和可能小于第一格。
-     原来的可告警 / 已复核 / 误报率并入第一格的说明行，不再各占一格。 */
-  const scope = { mode: 'ACTIVE', latest_only: true, from: from.getTime(), to: to.getTime(), page: 1, size: 1 };
-  let summary = null;
-  try { summary = await legalityApi.ruleEffectsSummary({ from: from.getTime(), to: to.getTime(), timezone }); } catch { summary = null; }
+  /* 各状态统计沿用队列的区域 / 复核 / 计划条件；异常单独读取服务端总数，不由其余状态相减推算。 */
+  const scope = {
+    mode: 'ACTIVE', latest_only: true,
+    district_id: st.district || undefined,
+    review_state: st.review || undefined,
+    plan_id: st.plan || undefined,
+    page: 1, size: 1
+  };
+  const filterNote = [
+    st.district ? `区域：${districtOptions.value.find(option => option.value === st.district)?.label || st.district}` : '',
+    st.review ? `复核：${reviewOptions.find(option => option.value === st.review)?.label || st.review}` : '',
+    st.plan ? `计划：${planOptions.value.find(option => option.value === st.plan)?.label || st.plan}` : ''
+  ].filter(Boolean).join(' · ');
+  const scopeText = filterNote ? `当前筛选：${filterNote}` : '当前筛选：全部';
   try {
-    const [all, legal, illegal, undetermined] = await Promise.all([
+    const [all, legal, abnormal, illegal, undetermined] = await Promise.all([
       legalityApi.listEvaluations(scope),
       legalityApi.listEvaluations({ ...scope, legal_status: 'LEGAL' }),
+      legalityApi.listEvaluations({ ...scope, legal_status: 'ABNORMAL' }),
       legalityApi.listEvaluations({ ...scope, legal_status: 'ILLEGAL' }),
       legalityApi.listEvaluations({ ...scope, legal_status: 'UNDETERMINED' })
     ]);
-    const effect = summary
-      ? `；可告警 ${summary.alarm_worthy ?? '—'} · 已人工复核 ${summary.reviewed ?? '—'} · 误报率 ${percent(summary.false_positive_rate)}`
-      : '';
     kpiList.value = [
-      { label: '今日研判', value: String(all.total ?? '—'), color: 'blue', icon: 'check', desc: `正式模式 · 北京时间当日（影子运行不计）${effect}` },
-      { label: '合法', value: String(legal.total ?? '—'), color: 'green', icon: 'check', desc: '计划、时间、空域、航线都对得上' },
-      { label: '非法', value: String(illegal.total ?? '—'), color: 'red', icon: 'alert', desc: '没有有效计划，或进入了任何计划都不能批准的空域、时段' },
-      { label: '不可判定', value: String(undetermined.total ?? '—'), color: 'amber', icon: 'alert', desc: '关键数据缺失或有偏差，要人工核实后才能定性；判为"异常"的不计入这三格' }
+      { label: '研判总数', value: String(all.total ?? '—'), color: 'blue', icon: 'database', desc: `正式模式，每个目标只取最新一次；${scopeText}` },
+      { label: '合法', value: String(legal.total ?? '—'), color: 'green', icon: 'shield', desc: '计划、时间、空域、航线都对得上' },
+      { label: '异常', value: String(abnormal.total ?? '—'), color: 'amber', icon: 'warning', desc: '系统判定存在偏差的最新研判' },
+      { label: '非法', value: String(illegal.total ?? '—'), color: 'red', icon: 'ban', desc: '没有有效计划，或进入了任何计划都不能批准的空域、时段' },
+      { label: '不可判定', value: String(undetermined.total ?? '—'), color: 'gray', icon: 'clock', desc: '关键数据缺失或有偏差，要人工核实后才能定性' }
     ];
   } catch (error) {
     if (error?.status === 403) kpiList.value = kpiPlaceholder('无权限').map(card => ({ ...card, value: '无权限' }));
-    else kpiList.value = kpiPlaceholder(formatApiError(error, '读取规则效果汇总失败')).map(card => ({ ...card, value: '读取失败' }));
+    else kpiList.value = kpiPlaceholder(formatApiError(error, '读取研判统计失败')).map(card => ({ ...card, value: '读取失败' }));
   }
 }
 
@@ -402,6 +440,7 @@ function chooseTab(value) {
 function onRegionChange() {
   st.page = 1;
   loadQueue();
+  loadKpi();   // 四格跟随筛选（决策 19-2）：条件一变就重算，否则上面的数与下面的列表对不上
 }
 function onPage(next) {
   st.page = next;
@@ -451,16 +490,16 @@ async function renderEvidenceMap(evaluation) {
   let centerline = null, airspaces = [], loaded = null;
   const missing = [];
   if (evaluation.route_version_id) { try { centerline = await loadRouteCenterline(evaluation.route_version_id); } catch { centerline = null; } }
-  if (!centerline) missing.push(evaluation.plan_id ? '航线几何不可用' : '无匹配计划，无航线');
+  if (!centerline) missing.push(evaluation.plan_id ? '航线位置无法确认' : '无匹配计划，无航线');
   if (evaluation.plan_id) { try { airspaces = await loadAirspaceOverlays(evaluation.plan_id); } catch { airspaces = []; } }
   if (evaluation.target_id) {
     try { loaded = await loadTargetPosition(evaluation.target_id, { legal: legalStatusText(evaluation.legal_status) }); } catch { loaded = null; }
     if (!loaded?.mapTarget) missing.push('目标坐标未知');
-  } else missing.push('目标不可见');
+  } else missing.push('没有可查看的目标记录');
   if (my !== evidenceMapSeq) return;
   const targets = loaded?.mapTarget ? [loaded.mapTarget] : [];
   const points = overlayPoints({ centerline, airspaces, points: loaded?.points || [], anchor: loaded?.anchor || null });
-  if (!points.length) { evidenceMapNote.value = `无可信几何，地图不绘制：${missing.join('；')}`; return; }
+  if (!points.length) { evidenceMapNote.value = `暂时无法在地图上显示：${missing.join('；')}`; return; }
   const drawn = [];
   if (targets.length) drawn.push(loaded.points.length > 1 ? `目标轨迹 ${loaded.points.length} 点` : '目标最新位置');
   if (centerline) drawn.push('计划航线');
@@ -478,10 +517,21 @@ async function renderEvidenceMap(evaluation) {
 onMounted(() => {
   const context = UI.consume('legality');
   const targetId = context?.target || null;
+  /* 从飞行计划页过来时带着计划（决策 19-1）：预置"计划"筛选，其余筛选放开，
+     否则一进来就被默认的"系统判定非法"挡住，看着像这条计划没有研判。 */
+  const planId = context?.plan || new URLSearchParams((location.hash.split('?')[1] || '')).get('plan') || '';
+  if (planId) {
+    st.plan = planId;
+    st.legal = '';
+    st.district = '';
+    st.review = '';
+    st.page = 1;
+  }
   if (targetId) {
     st.district = '';
     st.page = 1;
   }
+  loadPlans();
   loadQueue({ targetId });
   loadKpi();
   loadShadowHint();
@@ -491,57 +541,54 @@ onMounted(() => {
 <template>
   <div class="view legality-workbench" id="view" ref="root">
     <div class="lg-shell">
-      <div id="lgKpi" class="lg-kpi-host" aria-label="今日合法性判定统计">
-        <UKpis :list="kpiList" />
-      </div>
-
       <div class="lg-workspace">
-        <section class="lg-queue-panel" aria-label="待人工复核目标队列">
-          <header class="lg-panel-head">
-            <h2>待人工复核 <span id="lgQueueN">{{ totalCount }}</span></h2>
-            <span class="lg-head-spacer"></span>
-            <UField class="lg-region-filter" variant="toolbar" label="区域" v-model="st.district" type="select"
-              :options="districtOptions" :disabled="loading" @update:model-value="onRegionChange" />
-            <UField class="lg-region-filter" variant="toolbar" label="复核" v-model="st.review" type="select"
-              :options="reviewOptions" :disabled="loading" @update:model-value="onRegionChange" />
-          </header>
-
+        <div class="lg-main-column">
+          <div id="lgKpi" class="lg-kpi-host" aria-label="合法性研判统计（跟随当前筛选）">
+            <UKpis :list="kpiList" />
+          </div>
+        <section class="lg-queue-panel" aria-label="合法性判定目标列表">
           <div class="lg-queue-tabs" role="tablist" aria-label="判定状态筛选">
-            <button v-for="tab in tabs" :key="tab.value" type="button" role="tab"
+            <button v-for="(tab, index) in tabs" :key="tab.value" type="button" role="tab"
               :aria-selected="st.legal === tab.value" :class="{ 'is-active': st.legal === tab.value }"
-              @click="chooseTab(tab.value)">{{ tab.label }}</button>
+              @click="chooseTab(tab.value)">{{ tab.label }} <span>({{ tabCount(index) }})</span></button>
+          </div>
+          <div class="lg-queue-filters" role="group" aria-label="队列筛选">
+            <UField class="lg-region-filter" variant="filter" label="区域" v-model="st.district" type="select" size="small"
+              :options="districtOptions" :disabled="loading" @update:model-value="onRegionChange" />
+            <UField class="lg-region-filter" variant="filter" label="复核" v-model="st.review" type="select" size="small"
+              :options="reviewOptions" :disabled="loading" @update:model-value="onRegionChange" />
+            <UField v-if="canReadPlans" class="lg-region-filter" variant="filter" label="计划" v-model="st.plan" type="select" size="small"
+              :options="planOptions" :disabled="loading" :title="plansError || '只看某一条飞行计划的研判'" @update:model-value="onRegionChange" />
           </div>
 
           <div id="lgList" class="lg-list-host">
-            <div class="lg-queue-columns" aria-hidden="true">
-              <span>目标 / 时间</span><span>系统判定</span><span>风险等级</span><span>区域</span><span>主要原因</span>
-            </div>
-            <div class="lg-queue-scroll">
-              <div v-if="shadowHint" class="lg-inline-error lg-shadow-hint" role="status">{{ shadowHint }}</div>
-              <div v-if="listError" class="empty lg-state-error" role="alert">{{ listError }}</div>
-              <div v-else-if="loading" class="empty">正在读取研判…</div>
-              <div v-else-if="deepLinkNotice" class="empty lg-state-warn" role="status">{{ deepLinkNotice }}</div>
-              <template v-else>
-                <section v-for="group in groups" v-show="st.legal === group.code"
-                  :key="group.code" class="lg-queue-group" :class="`is-${group.tone}`">
-                  <div class="lg-group-head">
-                    <span class="lg-group-caret">›</span><b>{{ group.label }}（{{ groupedItems(group.code).length }}）</b>
-                    <span>每目标最新一条</span>
-                  </div>
-                  <div class="lg-group-rows">
-                    <button v-for="item in groupedItems(group.code)" :key="item.evaluation_id" type="button"
-                      class="lg-queue-row" :class="{ 'is-selected': selectedEvaluation?.evaluation_id === item.evaluation_id }"
-                      :aria-current="selectedEvaluation?.evaluation_id === item.evaluation_id" @click="selectEvaluation(item)">
-                      <span class="lg-row-target"><b class="mono" :title="item.evaluation_id">{{ subjectLabel(item) }}</b><small>{{ shortTime(item.evaluated_at) }} · {{ reviewText(item) }}</small></span>
-                      <span class="lg-row-verdict">{{ legalStatusText(item.legal_status) }}</span>
-                      <span class="lg-row-risk">{{ gradeText(item) }}</span>
-                      <span class="lg-row-region">{{ item.district_name || item.district_id || '未知' }}</span>
-                      <span class="lg-row-reason" :title="evaluationReason(item)">{{ evaluationReason(item) }}</span>
-                    </button>
-                  </div>
-                </section>
-                <div v-if="!items.length" class="empty">当前分组下没有研判记录。没有记录不代表合法，也可能是还没有生效的规则集。</div>
-              </template>
+            <div v-if="shadowHint" class="lg-inline-error lg-shadow-hint" role="status">{{ shadowHint }}</div>
+            <div v-if="listError" class="empty lg-state-error" role="alert">{{ listError }}</div>
+            <div v-else-if="loading" class="empty">正在读取研判…</div>
+            <div v-else-if="deepLinkNotice" class="empty lg-state-warn" role="status">{{ deepLinkNotice }}</div>
+            <div v-else class="lg-table-scroll">
+              <table class="lg-target-table" aria-label="目标判定结果">
+                <thead><tr><th>目标编号</th><th>匹配计划</th><th>所在区域</th><th>判定结果</th><th>违规 / 未知原因</th><th>研判时间</th><th>操作</th></tr></thead>
+                <tbody>
+                  <tr v-for="item in items" :key="item.evaluation_id"
+                    :class="{ 'is-selected': selectedEvaluation?.evaluation_id === item.evaluation_id }" @click="selectEvaluation(item)">
+                    <td><button class="lg-target-link" type="button" @click.stop="selectEvaluation(item)">
+                      <span class="lg-target-icon" v-html="UI.icon(item.target_id ? 'radar' : 'clipboard')"></span>
+                      <span class="lg-row-target"><b class="mono" :title="item.evaluation_id">{{ subjectLabel(item) }}</b><small>{{ reviewText(item) }}</small></span>
+                    </button></td>
+                    <td><span class="lg-plan-cell" :class="item.plan_match_code === 'FULL' ? 'is-pass' : item.plan_match_code === 'NONE' ? 'is-fail' : 'is-warn'" :title="planMatchDetail(item)">
+                      <span v-html="UI.icon(item.plan_match_code === 'FULL' ? 'check' : item.plan_match_code === 'NONE' ? 'cross' : 'clock')"></span>
+                      <span class="lg-plan-number">{{ item.plan_no || (item.plan_id ? '已关联计划' : '无匹配计划') }}</span>
+                    </span></td>
+                    <td :title="item.district_name || item.district_id">{{ item.district_name || item.district_id || '未知' }}</td>
+                    <td class="lg-verdict-cell"><span class="lg-status-tag" :class="`is-${conclusionMeta[item.legal_status]?.tone || 'amber'}`">{{ legalStatusText(item.legal_status) }}</span><small class="lg-row-risk" :title="`风险等级：${gradeText(item)}`">{{ gradeText(item) }}</small></td>
+                    <td><span class="lg-reason-cell" :title="evaluationReason(item)">{{ evaluationReason(item) }}</span></td>
+                    <td class="lg-time-cell" :title="formatTime(item.evaluated_at)">{{ formatTime(item.evaluated_at) }}</td>
+                    <td><button class="lg-icon-btn" type="button" :aria-label="`查看 ${subjectLabel(item)} 的判定依据`" title="查看判定依据" @click.stop="selectEvaluation(item)" v-html="UI.icon('list')"></button></td>
+                  </tr>
+                </tbody>
+              </table>
+              <div v-if="!items.length" class="empty">当前筛选下没有研判记录。没有记录不代表合法，也可能是还没有生效的规则集。</div>
             </div>
           </div>
 
@@ -552,85 +599,40 @@ onMounted(() => {
           </footer>
         </section>
 
+        </div>
+
         <section class="lg-review-panel" aria-label="合法性研判详情">
           <span id="lgSt" class="lg-hidden-status">{{ selectedConclusion.label }}</span>
           <div id="lgDetail" class="lg-detail-host">
-            <header class="lg-review-head">
-              <b>{{ subjectLabel(selectedEvaluation) }}</b>
-              <span :title="selectedEvaluation?.evaluation_id">{{ selectedEvaluation ? `研判时间 ${formatTime(selectedEvaluation.evaluated_at)}` : '引擎研判' }}</span>
-              <span v-if="selectedEvaluation" class="tag" :class="demoParams ? 't-amber' : 't-green'">{{ demoParams ? '演示参数' : '已确认参数' }}</span>
-              <span class="lg-head-spacer"></span>
-              <button class="lg-icon-btn" type="button" :disabled="selectedQueueIndex <= 0"
-                aria-label="上一条" @click="moveSelection(-1)">←</button>
-              <button class="lg-icon-btn is-next" type="button"
-                :disabled="selectedQueueIndex < 0 || selectedQueueIndex >= items.length - 1"
-                aria-label="下一条" @click="moveSelection(1)">→</button>
-            </header>
-
             <div v-if="detailError" class="empty lg-state-error" role="alert">{{ detailError }}</div>
             <div v-else-if="detailLoading" class="empty">正在读取研判详情…</div>
             <div v-else-if="!selectedEvaluation" class="empty">请选择一条研判</div>
             <template v-else>
-              <div class="lg-history-strip" aria-label="研判链与复核历史">
-                <button v-if="selectedEvaluation.supersedes_evaluation_id" type="button"
-                  :title="selectedEvaluation.supersedes_evaluation_id" @click="selectEvaluationById(selectedEvaluation.supersedes_evaluation_id)">← 被取代的旧研判</button>
-                <button type="button" class="is-active" :title="selectedEvaluation.evaluation_id">{{ legalStatusText(selectedEvaluation.legal_status) }} · {{ formatTime(selectedEvaluation.evaluated_at) }}</button>
-                <button v-if="selectedEvaluation.superseded_by_evaluation_id" type="button"
-                  :title="selectedEvaluation.superseded_by_evaluation_id" @click="selectEvaluationById(selectedEvaluation.superseded_by_evaluation_id)">重算后的新研判 →</button>
-                <UPagination v-if="revisionsTotal > 0" v-model:page="st.revisionPage" v-model:page-size="st.revisionPageSize"
-                  :item-count="revisionsTotal" :prefix="`复核历史共 ${revisionsTotal.toLocaleString()} 条`"
-                  @update:page="onRevisionPage" @update:page-size="onRevisionPageSize" />
-              </div>
-
               <div class="lg-detail-scroll">
-                <section class="lg-verdict-card" :class="`is-${selectedConclusion.tone}`">
-                  <div class="lg-verdict-block">
-                    <span class="lg-verdict-icon">✓</span>
-                    <div><small>系统结论</small><strong>{{ selectedConclusion.label }}</strong>
-                      <span>{{ sourceText(selectedEvaluation.source_mode) }} · 等级 {{ gradeText(selectedEvaluation) }}</span></div>
-                  </div>
-                  <div class="lg-core-reason"><small>核心依据 / 未知原因</small><b>{{ primaryReason }}</b>
-                    <span>{{ selectedEvaluation.violation_reasons?.length ? `违规：${reasonList(selectedEvaluation.violation_reasons)}` : '' }}{{ selectedEvaluation.unknown_reasons?.length ? `　未知：${reasonList(selectedEvaluation.unknown_reasons)}` : '' }}{{ !selectedEvaluation.violation_reasons?.length && !selectedEvaluation.unknown_reasons?.length ? '仅展示已保存字段，不在前端生成结论' : '' }}</span></div>
-                  <div class="lg-target-facts">
-                    <dl>
-                      <dt>关联目标</dt><dd :title="selectedEvaluation.target_id">{{ selectedEvaluation.target_no || (selectedEvaluation.target_id ? '已关联目标' : '不可见或无关联') }}</dd>
-                      <dt>关联轨迹</dt><dd :title="selectedEvaluation.track_id">{{ selectedEvaluation.track_id ? '已关联轨迹' : '不可见或无关联' }}</dd>
-                      <dt>计划匹配</dt><dd :title="selectedEvaluation.plan_id">{{ planMatchDetail(selectedEvaluation) }}</dd>
-                      <dt>航线版本</dt><dd :title="selectedEvaluation.route_version_id">{{ selectedEvaluation.route_version_id ? '已关联航线版本' : '不可见或无关联' }}</dd>
-                    </dl>
-                  </div>
-                  <div class="lg-review-state">
-                    <span class="tag" :class="selectedEvaluation.review?.state === 'PENDING_REVIEW' ? 't-amber' : 't-gray'">{{ reviewText(selectedEvaluation) }}{{ selectedEvaluation.review?.version > 0 ? ` · 第${selectedEvaluation.review.version}次复核` : '' }}</span>
-                    <dl>
-                      <dt>研判时间</dt><dd>{{ formatTime(selectedEvaluation.evaluated_at) }}</dd>
-                      <dt>规则版本</dt><dd :title="selectedEvaluation.rule_set_code">{{ ruleVersionText(selectedEvaluation) }}{{ demoParams ? '（演示参数）' : '' }}</dd>
-                      <dt>人工结论</dt><dd>{{ selectedEvaluation.review?.manual_status ? legalStatusText(selectedEvaluation.review.manual_status) : '—' }}</dd>
-                      <dt>告警结果</dt><dd>{{ outcomeText(selectedEvaluation) }}</dd>
-                    </dl>
-                  </div>
-                </section>
-
                 <section class="lg-basis-card">
-                  <header>判定依据表 <span>点击行查看命中事实与参数</span></header>
-                  <div class="lg-basis-columns"><span>序号</span><span>规则 / 检查项</span><span>判定结果</span><span>参数状态</span><span>原因码</span></div>
-                  <div v-if="!selectedEvaluation.hit_details?.length" class="empty">未提供单项检查</div>
-                  <button v-for="(hit, index) in selectedEvaluation.hit_details || []"
-                    :key="`${hit.rule_code}-${index}`" type="button" class="lg-basis-row" :class="{ 'is-selected': selectedHitIndex === index }"
-                    :title="hit.message || ''" @click="toggleHit(index)">
-                    <span>{{ index + 1 }}</span>
-                    <span><b class="mono">{{ hit.rule_code || '未知规则' }}</b><small>{{ ruleName(hit.rule_code) }}</small></span>
-                    <span :class="resultClass(hit.result_code)">{{ resultText(hit.result_code) }}</span>
-                    <span>{{ hit.params?.some(p => p.status === 'DEMO') ? '演示值' : (hit.params?.length ? '已确认' : '—') }}</span>
-                    <span>{{ hit.reason_code ? ruleReasonText(hit.reason_code) : (hit.facts?.match_reason ? ruleReasonText(hit.facts.match_reason) : '—') }}</span>
-                  </button>
-                  <div v-if="selectedHit" class="lg-rule-focus" :class="resultClass(selectedHit.result_code)">
-                    <b>{{ selectedHit.rule_code }} {{ ruleName(selectedHit.rule_code) }}</b>
-                    <span>{{ selectedHit.message || '未提供解释' }}</span>
+                  <header>判定依据 <span :title="ruleVersionText(selectedEvaluation)">{{ ruleVersionText(selectedEvaluation) }}</span></header>
+                  <div class="lg-selected-subject"><b :title="subjectLabel(selectedEvaluation)">{{ subjectLabel(selectedEvaluation) }}</b><span>{{ demoParams ? '演示参数' : '已确认参数' }}</span>
+                    <button class="lg-icon-btn lg-previous" type="button" :disabled="selectedQueueIndex <= 0" aria-label="上一条" @click="moveSelection(-1)" v-html="UI.icon('arrowRight')"></button>
+                    <button class="lg-icon-btn" type="button" :disabled="selectedQueueIndex < 0 || selectedQueueIndex >= items.length - 1" aria-label="下一条" @click="moveSelection(1)" v-html="UI.icon('arrowRight')"></button>
                   </div>
+                  <div class="lg-check-list">
+                    <div v-if="!selectedEvaluation.hit_details?.length" class="empty">未提供单项检查</div>
+                    <button v-for="(hit, index) in selectedEvaluation.hit_details || []"
+                      :key="`${hit.rule_code}-${index}`" type="button" class="lg-check-item"
+                      :class="[resultClass(hit.result_code), { 'is-selected': selectedHitIndex === index }]"
+                      :aria-expanded="selectedHitIndex === index" :title="hit.message || ''" @click="toggleHit(index)">
+                      <span class="lg-check-icon" v-html="UI.icon(hit.result_code === 'PASS' ? 'check' : hit.result_code === 'FAIL' ? 'cross' : 'clock')"></span>
+                      <span class="lg-check-copy"><b>{{ ruleName(hit.rule_code) }}<em>{{ resultText(hit.result_code) }}</em></b>
+                        <small class="lg-check-description">{{ hit.message || (hit.reason_code ? ruleReasonText(hit.reason_code) : '未提供说明') }}</small>
+                        <small v-if="selectedHitIndex === index">{{ hit.rule_code }} · {{ hit.params?.some(p => p.status === 'DEMO') ? '演示参数' : (hit.params?.length ? '已确认参数' : '未提供参数') }}</small>
+                      </span>
+                    </button>
+                  </div>
+                  <footer class="lg-result-summary">综合判定结果：<span class="lg-status-tag" :class="`is-${selectedConclusion.tone}`">{{ selectedConclusion.label }}</span></footer>
                 </section>
 
                 <section class="lg-evidence-card">
-                  <header>证据与相关资源 <span>只读取研判字段及其精确输入版本</span></header>
+                  <header>证据链 <span :title="subjectLabel(selectedEvaluation)">{{ subjectLabel(selectedEvaluation) }}</span></header>
                   <div class="lg-evidence-tabs" role="tablist" aria-label="研判证据">
                     <button v-for="tab in evidenceTabs" :key="tab.value" type="button" class="lg-evidence-tab"
                       :class="{ 'is-active': st.evidenceTab === tab.value }" role="tab"
@@ -639,12 +641,12 @@ onMounted(() => {
                   <div class="lg-evidence-body">
                     <template v-if="st.evidenceTab === 'space'">
                       <div class="lg-evidence-copy">
-                        <h4>证据引用 <span>研判时读取的精确输入</span></h4>
-                        <dl v-if="selectedEvaluation.evidence_references?.length">
-                          <template v-for="(reference, index) in selectedEvaluation.evidence_references" :key="`${reference.kind}-${reference.id}-${index}`">
-                            <dt>{{ referenceKindText(reference.kind) }}</dt><dd :title="reference.id">{{ referenceText(reference) }}</dd>
-                          </template>
-                        </dl>
+                        <ol v-if="selectedEvaluation.evidence_references?.length" class="lg-evidence-timeline">
+                          <li v-for="(reference, index) in selectedEvaluation.evidence_references" :key="`${reference.kind}-${reference.id}-${index}`">
+                            <span class="lg-evidence-icon" v-html="UI.icon(evidenceIcon(reference.kind))"></span>
+                            <div><b>{{ referenceKindText(reference.kind) }}</b><p :title="reference.id">{{ referenceText(reference) }}</p></div>
+                          </li>
+                        </ol>
                         <p v-else>未提供证据引用</p>
                         <p class="lg-muted">{{ evidenceMapNote }}</p>
                       </div>
@@ -654,10 +656,10 @@ onMounted(() => {
                       </div>
                     </template>
                     <div v-else-if="st.evidenceTab === 'plan'" class="lg-evidence-wide">
-                      <h4>计划匹配与身份 <span>研判时保存的事实</span></h4>
+                      <h4>计划匹配与身份 <span>判定时记录的情况</span></h4>
                       <dl class="lg-resource-grid">
                         <dt>匹配等级</dt><dd>{{ planMatchText(selectedEvaluation.plan_match_code) }}{{ c01Facts?.match_reason ? `（${ruleReasonText(c01Facts.match_reason)}）` : '' }}</dd>
-                        <dt>计划编号</dt><dd class="mono" :title="selectedEvaluation.plan_id">{{ selectedEvaluation.plan_no || (selectedEvaluation.plan_id ? '已关联计划' : '无匹配计划或不可见') }}</dd>
+                        <dt>计划编号</dt><dd class="mono" :title="selectedEvaluation.plan_id">{{ selectedEvaluation.plan_no || (selectedEvaluation.plan_id ? '已关联计划' : '没有可查看的对应计划') }}</dd>
                         <dt>关联目标</dt><dd class="mono" :title="selectedEvaluation.target_id">{{ selectedEvaluation.target_no || (selectedEvaluation.target_id ? '已关联' : '不可见') }}</dd>
                         <dt>时间窗</dt><dd>{{ dimText(c01Facts?.dimensions?.time_window) }}</dd>
                         <dt>走廊</dt><dd>{{ dimText(c01Facts?.dimensions?.corridor) }}</dd>
@@ -679,9 +681,66 @@ onMounted(() => {
                         </li>
                       </ul>
                       <p v-else>尚无复核历史</p>
+                <UPagination v-if="revisionsTotal > 0" v-model:page="st.revisionPage" v-model:page-size="st.revisionPageSize"
+                  :item-count="revisionsTotal" :prefix="`复核历史共 ${revisionsTotal.toLocaleString()} 条`"
+                  @update:page="onRevisionPage" @update:page-size="onRevisionPageSize" />
                     </div>
                   </div>
                 </section>
+                <details class="lg-more-details">
+                  <summary>目标详情与复核记录</summary>
+              <div class="lg-history-strip" aria-label="研判链与复核历史">
+                <button v-if="selectedEvaluation.supersedes_evaluation_id" type="button"
+                  :title="selectedEvaluation.supersedes_evaluation_id" @click="selectEvaluationById(selectedEvaluation.supersedes_evaluation_id)">← 被取代的旧研判</button>
+                <button type="button" class="is-active" :title="selectedEvaluation.evaluation_id">{{ legalStatusText(selectedEvaluation.legal_status) }} · {{ formatTime(selectedEvaluation.evaluated_at) }}</button>
+                <button v-if="selectedEvaluation.superseded_by_evaluation_id" type="button"
+                  :title="selectedEvaluation.superseded_by_evaluation_id" @click="selectEvaluationById(selectedEvaluation.superseded_by_evaluation_id)">查看重新判定的结果 →</button>
+
+              </div>
+
+                <section class="lg-verdict-card" :class="`is-${selectedConclusion.tone}`">
+                  <div class="lg-verdict-block">
+                    <span class="lg-verdict-icon" v-html="UI.icon(selectedConclusion.tone === 'green' ? 'shield' : 'warning')"></span>
+                    <div><small>系统结论</small><strong>{{ selectedConclusion.label }}</strong>
+                      <span>{{ sourceText(selectedEvaluation.source_mode) }} · 等级 {{ gradeText(selectedEvaluation) }}</span></div>
+                  </div>
+                  <div class="lg-core-reason"><small>核心依据 / 未知原因</small><b>{{ primaryReason }}</b>
+                    <span>{{ selectedEvaluation.violation_reasons?.length ? `违规：${reasonList(selectedEvaluation.violation_reasons)}` : '' }}{{ selectedEvaluation.unknown_reasons?.length ? `　未知：${reasonList(selectedEvaluation.unknown_reasons)}` : '' }}{{ !selectedEvaluation.violation_reasons?.length && !selectedEvaluation.unknown_reasons?.length ? '这里显示本次保存的判定结果' : '' }}</span></div>
+                  <div class="lg-target-facts">
+                    <dl>
+                      <dt>关联目标</dt><dd :title="selectedEvaluation.target_id">{{ selectedEvaluation.target_no || (selectedEvaluation.target_id ? '已关联目标' : '没有可查看的相关记录') }}</dd>
+                      <dt>关联轨迹</dt><dd :title="selectedEvaluation.track_id">{{ selectedEvaluation.track_id ? '已关联轨迹' : '没有可查看的相关记录' }}</dd>
+                      <dt>计划匹配</dt><dd :title="selectedEvaluation.plan_id">{{ planMatchDetail(selectedEvaluation) }}</dd>
+                      <!-- 决策 19-1：研判的主视角是计划。有计划就把编号做成入口，能直接过去看计划本身。
+                           匹配等级为"无匹配"时它只是**候选**计划，标题要说清楚，不能写成"所属"。 -->
+                      <dt>{{ selectedEvaluation.plan_match_code === 'NONE' ? '候选计划' : '所属计划' }}</dt><dd :title="selectedEvaluation.plan_id">
+                        <template v-if="selectedEvaluation.plan_no && selectedEvaluation.plan_id">
+                          <button type="button" class="lg-link-btn" title="打开飞行计划页并选中这条计划"
+                            @click="openPlan(selectedEvaluation.plan_id)">{{ selectedEvaluation.plan_no }}</button>
+                          <span v-if="selectedEvaluation.plan_match_code === 'NONE'" class="lg-muted">（未匹配上这条计划）</span>
+                        </template>
+                        <template v-else-if="selectedEvaluation.plan_id">已关联计划（未提供编号）</template>
+                        <template v-else>无匹配计划</template>
+                      </dd>
+                      <dt v-if="selectedEvaluation.owner_org_name">归属单位</dt>
+                      <dd v-if="selectedEvaluation.owner_org_name" :title="selectedEvaluation.owner_org_id">{{ selectedEvaluation.owner_org_name }}</dd>
+                      <dt v-if="planDetail?.uav_sn">无人机序列号</dt>
+                      <dd v-if="planDetail?.uav_sn" class="mono">{{ planDetail.uav_sn }}</dd>
+                      <dt>航线版本</dt><dd :title="selectedEvaluation.route_version_id">{{ selectedEvaluation.route_version_id ? '已关联航线版本' : '没有可查看的相关记录' }}</dd>
+                    </dl>
+                  </div>
+                  <div class="lg-review-state">
+                    <span class="tag" :class="selectedEvaluation.review?.state === 'PENDING_REVIEW' ? 't-amber' : 't-gray'">{{ reviewText(selectedEvaluation) }}{{ selectedEvaluation.review?.version > 0 ? ` · 第${selectedEvaluation.review.version}次复核` : '' }}</span>
+                    <dl>
+                      <dt>研判时间</dt><dd>{{ formatTime(selectedEvaluation.evaluated_at) }}</dd>
+                      <dt>规则版本</dt><dd :title="selectedEvaluation.rule_set_code">{{ ruleVersionText(selectedEvaluation) }}{{ demoParams ? '（演示参数）' : '' }}</dd>
+                      <dt>人工结论</dt><dd>{{ selectedEvaluation.review?.manual_status ? legalStatusText(selectedEvaluation.review.manual_status) : '—' }}</dd>
+                      <dt>告警结果</dt><dd>{{ outcomeText(selectedEvaluation) }}</dd>
+                    </dl>
+                  </div>
+                </section>
+
+                </details>
               </div>
 
               <footer class="lg-action-dock">
@@ -690,7 +749,7 @@ onMounted(() => {
                   <button class="btn pri" type="button" :disabled="!allowed.includes('REVIEW')"
                     :title="allowed.includes('REVIEW') ? '记录人工复核结论' : '当前不可复核：已复核、已被取代或缺少复核权限'" @click="onReview">人工复核</button>
                   <button class="btn" type="button" :disabled="!allowed.includes('RECOMPUTE')"
-                    :title="allowed.includes('RECOMPUTE') ? '按当前生效规则集重新研判' : '当前不可重算：已被取代或缺少评估权限'" @click="onRecompute">重新研判</button>
+                    :title="allowed.includes('RECOMPUTE') ? '按当前生效规则集重新研判' : '已有更新的判定结果，或你没有重新研判的权限'" @click="onRecompute">重新研判</button>
                 </div>
               </footer>
             </template>
@@ -701,62 +760,73 @@ onMounted(() => {
   </div>
 </template>
 
-<style>
-.legality-workbench{--lg-blue:#4b9cff;--lg-red:#ff5b61;--lg-green:#41d49a;--lg-amber:#f1a43a;overflow:hidden!important;padding:10px 12px 12px!important}
+<style scoped>
+.legality-workbench{--lg-blue:var(--blue);--lg-red:var(--red);--lg-green:var(--green);--lg-amber:var(--amber);--lg-line:rgba(39,112,185,.28);--lg-surface:#04172e;overflow:hidden!important;padding:16px!important;background:#020e20}
 .legality-workbench *{box-sizing:border-box}
-.legality-workbench button{font:inherit}
-.legality-workbench button:focus-visible,.legality-workbench select:focus-visible{outline:2px solid var(--lg-blue);outline-offset:2px}
-.legality-workbench .lg-shell{height:100%;min-height:0;display:flex;flex-direction:column;gap:10px}
-.legality-workbench .lg-kpi-host{flex:none}.legality-workbench .lg-kpi-host>.kpis{grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.legality-workbench .lg-kpi-host .kpi{min-width:0}
-.legality-workbench .lg-workspace{min-height:0;flex:1;display:grid;grid-template-columns:minmax(430px,32%) minmax(0,1fr);gap:10px}
-.legality-workbench .lg-queue-panel,.legality-workbench .lg-review-panel{min-width:0;min-height:0;display:flex;flex-direction:column;border:1px solid rgba(130,174,218,.17);border-radius:8px;background:#091827;overflow:hidden;box-shadow:0 10px 24px rgba(0,0,0,.14)}
-.legality-workbench .lg-panel-head,.legality-workbench .lg-review-head{height:46px;min-height:46px;display:flex;align-items:center;gap:8px;padding:0 10px;border-bottom:1px solid rgba(130,174,218,.12);background:#0b1b2d}
-/* 标题不参与收缩：右边两个下拉与三个图标按钮一挤，"待人工复核 7" 就断成两行，
-   把 46px 高的头部撑破（阶段 18）。要让位的是下拉，不是标题。 */
-.legality-workbench .lg-panel-head h2{margin:0;color:#dfe9f5;font-size:14px;font-weight:650;flex:none;white-space:nowrap}.legality-workbench .lg-panel-head h2 span{color:var(--lg-amber)}
-.legality-workbench .lg-panel-head .lg-region-filter{min-width:0;flex:0 1 auto}
-.legality-workbench .lg-head-spacer{flex:1}
-.legality-workbench .lg-region-filter{display:flex;align-items:center;gap:6px;color:#7f93aa;font-size:11px}.legality-workbench .lg-region-filter .n-select{width:112px}
-.legality-workbench .lg-icon-btn{width:32px;height:30px;display:flex;align-items:center;justify-content:center;border:1px solid rgba(130,174,218,.16);border-radius:5px;background:#0b1b2d;color:#91a6bd;cursor:pointer}.legality-workbench .lg-icon-btn:hover{color:#dce9f8;border-color:rgba(75,156,255,.5)}
-.legality-workbench .lg-icon-btn .svg-icon{width:15px;height:15px;fill:none;stroke:currentColor}.legality-workbench .lg-review-head .lg-icon-btn .svg-icon{transform:rotate(180deg)}.legality-workbench .lg-review-head .lg-icon-btn.is-next .svg-icon{transform:none}
-.legality-workbench .lg-queue-tabs{height:42px;min-height:42px;display:flex;align-items:center;gap:7px;padding:6px 10px;border-bottom:1px solid rgba(130,174,218,.09)}
-.legality-workbench .lg-queue-tabs button{height:28px;padding:0 12px;border:1px solid transparent;border-radius:5px;background:transparent;color:#8498af;font-size:11.5px;cursor:pointer}.legality-workbench .lg-queue-tabs button:hover{color:#dfeaf7}.legality-workbench .lg-queue-tabs button.is-active{border-color:rgba(255,91,97,.25);background:rgba(255,91,97,.1);color:#ff7a80}
-.legality-workbench .lg-list-host{min-height:0;flex:1;display:flex;flex-direction:column}
-.legality-workbench .lg-queue-columns,.legality-workbench .lg-queue-row{display:grid;grid-template-columns:minmax(112px,1.3fr) minmax(72px,.75fr) minmax(70px,.72fr) minmax(58px,.62fr) minmax(100px,1.1fr);align-items:center;column-gap:7px}
-.legality-workbench .lg-queue-columns{height:34px;min-height:34px;padding:0 12px;color:#8195ad;font-size:11px;border-bottom:1px solid rgba(130,174,218,.1);background:#0a1a2c}
-.legality-workbench .lg-queue-scroll{min-height:0;flex:1;overflow:auto;scrollbar-width:thin}
-.legality-workbench .lg-queue-group{border-bottom:1px solid rgba(130,174,218,.09)}
-.legality-workbench .lg-group-head{width:100%;height:32px;padding:0 11px;display:flex;align-items:center;gap:7px;border:0;border-bottom:1px solid rgba(130,174,218,.07);background:#0b1d30;color:#93a7bd;text-align:left;cursor:pointer}.legality-workbench .lg-group-head b{font-size:11.5px}.legality-workbench .lg-group-head>span:last-child{margin-left:auto;color:#61758d;font-size:10px}
-.legality-workbench .lg-group-caret{width:13px;height:13px;display:flex;align-items:center;justify-content:center}.legality-workbench .lg-group-caret .svg-icon{width:10px;height:10px;fill:none;stroke:currentColor;transform:rotate(90deg)}
-.legality-workbench .lg-queue-group.is-red .lg-group-head b{color:#ff686f}.legality-workbench .lg-queue-group.is-amber .lg-group-head b{color:#e6a130}.legality-workbench .lg-queue-group.is-green .lg-group-head b{color:#37c488}
-.legality-workbench .lg-queue-row{width:100%;min-height:49px;padding:5px 12px;border:0;border-bottom:1px solid rgba(130,174,218,.065);background:#091827;color:#b7c5d5;text-align:left;cursor:pointer}.legality-workbench .lg-queue-row:hover{background:#0d2238}.legality-workbench .lg-queue-row.is-selected{background:#0f2b4c;box-shadow:inset 2px 0 var(--lg-blue),inset 0 0 0 1px rgba(75,156,255,.5)}
-.legality-workbench .lg-queue-row>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.legality-workbench .lg-row-target{display:flex;flex-direction:column}.legality-workbench .lg-row-target b{color:#d8e5f3;font-size:11px}.legality-workbench .lg-row-target small{color:#70859d;font-size:10px}.legality-workbench .lg-row-note{display:block;margin-top:2px;color:#c5a7ff;font-size:9px}.legality-workbench .lg-row-note.is-amber{color:#e7ad55}.legality-workbench .lg-row-region,.legality-workbench .lg-row-reason{font-size:10.5px}
-.legality-workbench .lg-pager{min-height:50px;padding:5px 8px;border-top:1px solid rgba(130,174,218,.1);background:#091725}
-.legality-workbench .lg-hidden-status{display:none}.legality-workbench .lg-detail-host{height:100%;min-height:0;display:flex;flex-direction:column}.legality-workbench .lg-review-head{color:#879bb2;font-size:12px}.legality-workbench .lg-review-head b{color:#c8d7e8}.legality-workbench .lg-review-head>.tag{margin-left:4px}
-.legality-workbench .lg-detail-scroll{min-height:0;flex:1;overflow:auto;padding:9px;scrollbar-width:thin}
-.legality-workbench .lg-verdict-card{min-height:116px;display:grid;grid-template-columns:1.05fr 1.55fr 1.05fr .92fr;border:1px solid rgba(130,174,218,.13);border-radius:7px;background:#0b1b2d;overflow:hidden}.legality-workbench .lg-verdict-card>div{min-width:0;padding:12px;border-right:1px solid rgba(130,174,218,.1)}.legality-workbench .lg-verdict-card>div:last-child{border-right:0}
-.legality-workbench .lg-verdict-block{display:flex;align-items:center;gap:10px}.legality-workbench .lg-verdict-icon{width:38px;height:38px;flex:none;display:flex;align-items:center;justify-content:center;border-radius:50%;background:rgba(255,91,97,.11);color:var(--lg-red)}.legality-workbench .lg-verdict-icon .svg-icon{width:20px;height:20px;fill:none;stroke:currentColor}.legality-workbench .lg-verdict-block>div{min-width:0;display:flex;flex-direction:column}.legality-workbench .lg-verdict-card small{color:#7f92a8;font-size:10px}.legality-workbench .lg-verdict-block strong{margin:2px 0;color:var(--lg-red);font-size:24px;font-weight:600}.legality-workbench .lg-verdict-card.is-green .lg-verdict-block strong,.legality-workbench .lg-verdict-card.is-green .lg-verdict-icon{color:var(--lg-green)}.legality-workbench .lg-verdict-card.is-amber .lg-verdict-block strong,.legality-workbench .lg-verdict-card.is-amber .lg-verdict-icon{color:var(--lg-amber)}.legality-workbench .lg-verdict-block span,.legality-workbench .lg-core-reason span{color:#788ca3;font-size:10px}
-.legality-workbench .lg-core-reason{display:flex;flex-direction:column;justify-content:center}.legality-workbench .lg-core-reason b{margin:7px 0;color:#e3edf8;font-size:14px;white-space:normal}.legality-workbench .lg-target-facts dl,.legality-workbench .lg-review-state dl{margin:0;display:grid;grid-template-columns:64px minmax(0,1fr);gap:5px 7px;font-size:10px}.legality-workbench .lg-target-facts dt,.legality-workbench .lg-review-state dt{color:#6f839b}.legality-workbench .lg-target-facts dd,.legality-workbench .lg-review-state dd{margin:0;color:#b9c7d6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.legality-workbench .lg-review-state{display:flex;flex-direction:column;gap:7px}.legality-workbench .lg-review-state>.tag{align-self:flex-start}
-.legality-workbench .lg-basis-card,.legality-workbench .lg-evidence-card{margin-top:9px;border:1px solid rgba(130,174,218,.12);border-radius:7px;background:#091827;overflow:hidden}.legality-workbench .lg-basis-card>header,.legality-workbench .lg-evidence-card>header{height:34px;display:flex;align-items:center;gap:5px;padding:0 11px;color:#d5e1ee;font-size:12px;border-bottom:1px solid rgba(130,174,218,.09)}.legality-workbench .lg-basis-card>header span,.legality-workbench .lg-evidence-card>header span{color:#667b93;font-size:10px}
-.legality-workbench .lg-basis-columns,.legality-workbench .lg-basis-row{display:grid;grid-template-columns:45px minmax(140px,1fr) minmax(102px,.72fr) minmax(92px,.66fr) minmax(220px,2.35fr);align-items:center;column-gap:8px}.legality-workbench .lg-basis-columns{height:28px;padding:0 10px;background:#0b1c2f;color:#6f849b;font-size:10px}.legality-workbench .lg-basis-row{width:100%;height:26px;min-height:26px;padding:2px 10px;border:0;border-top:1px solid rgba(130,174,218,.055);background:transparent;color:#aebdcd;text-align:left;font-size:10.5px;cursor:pointer}.legality-workbench .lg-basis-row:hover{background:#0d2238}.legality-workbench .lg-basis-row.is-selected{background:#10305a;box-shadow:inset 0 0 0 1px #2f82ef}.legality-workbench .lg-basis-row>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.legality-workbench .lg-basis-row>span:nth-child(2){display:flex;align-items:baseline;gap:6px}.legality-workbench .lg-basis-row small{color:#61768e}.legality-workbench .lg-basis-row .is-pass{color:#38c98a}.legality-workbench .lg-basis-row .is-warn{color:#e4a22e}.legality-workbench .lg-basis-row .is-fail{color:#ff656c}.legality-workbench .lg-basis-row .svg-icon{width:12px;height:12px;vertical-align:-2px}
-.legality-workbench .lg-evidence-tabs{height:36px;display:flex;align-items:end;gap:3px;padding:4px 8px 0;border-bottom:1px solid rgba(130,174,218,.09);background:#0a1a2c}.legality-workbench .lg-evidence-tab{height:31px;padding:0 12px;display:flex;align-items:center;gap:5px;border:1px solid rgba(130,174,218,.08);border-bottom:0;border-radius:5px 5px 0 0;background:#0b1b2d;color:#7c91a9;font-size:10.5px;cursor:pointer}.legality-workbench .lg-evidence-tab.is-active{background:#103666;color:#dbeaff;border-color:rgba(75,156,255,.35)}.legality-workbench .lg-evidence-tab .svg-icon{width:12px;height:12px;fill:none;stroke:currentColor}
-.legality-workbench .lg-evidence-body{height:175px;min-height:175px;display:grid;grid-template-columns:minmax(260px,35%) minmax(0,1fr);gap:9px;padding:8px}.legality-workbench .lg-evidence-copy,.legality-workbench .lg-evidence-wide{min-width:0;overflow:auto;padding:7px 10px;border:1px solid rgba(130,174,218,.08);border-radius:6px;background:#0a1a2b}.legality-workbench .lg-evidence-wide{grid-column:1/-1}.legality-workbench .lg-evidence-copy h4,.legality-workbench .lg-evidence-wide h4{margin:0 0 5px;color:#cbd9e7;font-size:11.5px}.legality-workbench .lg-evidence-copy h4 span,.legality-workbench .lg-evidence-wide h4 span{color:#657a92;font-size:10px}.legality-workbench .lg-evidence-copy p,.legality-workbench .lg-evidence-wide p{margin:4px 0;color:#8fa1b5;font-size:10px;line-height:1.45}.legality-workbench .lg-evidence-copy dl{margin:5px 0;display:grid;grid-template-columns:67px 1fr;gap:3px;font-size:9.5px}.legality-workbench .lg-evidence-copy dt{color:#657b93}.legality-workbench .lg-evidence-copy dd{margin:0;color:#b5c4d4}.legality-workbench .lg-evidence-alert{padding-left:7px;border-left:2px solid var(--lg-red);color:#d59b9f!important}.legality-workbench .lg-link-btn{padding:0;border:0;background:transparent;color:var(--lg-blue);font-size:10px;cursor:pointer}.legality-workbench .lg-rule-focus{display:inline-flex;align-items:center;gap:5px;padding:4px 8px;border-radius:4px;background:#0d2238}.legality-workbench .lg-rule-focus.is-pass{color:var(--lg-green)}.legality-workbench .lg-rule-focus.is-warn{color:var(--lg-amber)}.legality-workbench .lg-rule-focus.is-fail{color:var(--lg-red)}.legality-workbench .lg-muted{color:#6e839a!important}
-.legality-workbench .lg-map-wrap{position:relative;min-width:0;min-height:159px;border:1px solid rgba(130,174,218,.12);border-radius:6px;overflow:hidden;background:#dbe7ef}.legality-workbench .lg-map-host{position:absolute;inset:0}.legality-workbench .lg-map-legend{position:absolute;left:50%;bottom:5px;transform:translateX(-50%);display:flex;gap:13px;padding:3px 9px;border-radius:4px;background:rgba(5,15,27,.88);color:#c4d2e0;font-size:9px;white-space:nowrap}.legality-workbench .lg-map-legend span:before{content:"";display:inline-block;width:14px;height:3px;margin-right:4px;vertical-align:2px;background:currentColor}.legality-workbench .lg-map-legend .is-zone{color:#d84d52}.legality-workbench .lg-map-legend .is-plan{color:#4b9cff}.legality-workbench .lg-map-legend .is-track{color:#ff5b61}
-.legality-workbench .lg-action-dock{min-height:52px;padding:6px 9px;border-top:1px solid rgba(130,174,218,.12);background:#081522}.legality-workbench .lg-action-dock .detail-actions{margin:0;padding:0;background:transparent;border:0}.legality-workbench .lg-action-dock .btn{height:38px!important;font-size:14px}.legality-workbench .detail-sect{margin-inline:0}
-.legality-workbench .lg-icon-btn{width:auto;min-width:32px;padding:0 7px;font-size:10px}.legality-workbench .lg-icon-btn:disabled{cursor:not-allowed;opacity:.45}
-.legality-workbench .lg-group-head{cursor:default}.legality-workbench .lg-inline-error{padding:8px 11px;border-bottom:1px solid rgba(255,91,97,.2);background:rgba(255,91,97,.08);color:#ff9da2;font-size:10.5px;line-height:1.5}
-.legality-workbench .lg-state-error{color:#ff9da2}.legality-workbench .lg-state-warn{color:#e6b867}
-.legality-workbench .lg-history-strip{flex:none;display:flex;align-items:center;gap:6px;min-height:48px;padding:5px 8px;border-bottom:1px solid rgba(130,174,218,.1);overflow-x:auto;background:#091725}
-.legality-workbench .lg-history-strip>button{flex:none;max-width:220px;height:30px;padding:0 9px;border:1px solid rgba(130,174,218,.15);border-radius:5px;background:#0b1b2d;color:#8498af;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;cursor:pointer}.legality-workbench .lg-history-strip>button.is-active{border-color:rgba(75,156,255,.55);background:#10305a;color:#dceaff}
-.legality-workbench .lg-history-strip>.pager{margin-left:auto;flex:none;min-height:34px;padding:0;background:transparent;border:0}
-.legality-workbench .lg-map-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;color:#53677c;background:linear-gradient(135deg,#dbe7ef,#cbdbe6);font-size:12px;line-height:1.7}
-.legality-workbench .lg-resource-grid{margin:6px 0 10px;display:grid;grid-template-columns:110px minmax(0,1fr);gap:6px 10px;font-size:10.5px}.legality-workbench .lg-resource-grid dt{color:#657b93}.legality-workbench .lg-resource-grid dd{margin:0;color:#b5c4d4;overflow-wrap:anywhere}
-.legality-workbench .lg-reference-list{margin:5px 0;padding-left:18px;color:#b5c4d4;font-size:10.5px}.legality-workbench .lg-reference-list li{margin:3px 0;overflow-wrap:anywhere}
-.legality-workbench .detail-actions{display:flex;gap:8px}.legality-workbench .detail-actions .btn:disabled{cursor:not-allowed;opacity:.48}
-@media (max-width:1320px){.legality-workbench .lg-workspace{grid-template-columns:minmax(410px,38%) minmax(0,1fr)}.legality-workbench .lg-verdict-card{grid-template-columns:1fr 1.4fr 1fr}.legality-workbench .lg-review-state{grid-column:1/-1;border-top:1px solid rgba(130,174,218,.1)!important}.legality-workbench .lg-verdict-card{min-height:154px}.legality-workbench .lg-review-state{flex-direction:row;align-items:center}.legality-workbench .lg-review-state dl{flex:1;grid-template-columns:60px 1fr 60px 1fr}}
-@media (max-width:1040px){.legality-workbench{overflow:auto!important}.legality-workbench .lg-shell{height:auto;min-height:100%}.legality-workbench .lg-kpi-host>.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.legality-workbench .lg-workspace{grid-template-columns:1fr}.legality-workbench .lg-queue-panel{min-height:620px}.legality-workbench .lg-review-panel{min-height:720px}.legality-workbench .lg-evidence-body{grid-template-columns:1fr}.legality-workbench .lg-map-wrap{min-height:260px}}
-@media (prefers-reduced-motion:reduce){.legality-workbench *{scroll-behavior:auto!important;transition:none!important}}
-.legality-workbench .lg-shadow-hint{border-bottom-color:rgba(241,164,58,.25);background:rgba(241,164,58,.08);color:#e7b86a}
-.legality-workbench .lg-basis-card .lg-rule-focus{display:flex;flex-direction:column;gap:3px;margin:6px 10px;padding:6px 9px;font-size:10.5px;line-height:1.45}.legality-workbench .lg-basis-card .lg-rule-focus b{color:#dbe7f5}.legality-workbench .lg-basis-card .lg-rule-focus>span{color:#aebdcd;white-space:normal}
-.legality-workbench .lg-review-head .tag{margin-left:4px;font-size:10px;line-height:1.5}.legality-workbench .lg-revision-list li{line-height:1.5}
+.legality-workbench button{font:inherit;cursor:pointer}
+.legality-workbench button:focus-visible,.legality-workbench summary:focus-visible{outline:2px solid var(--cyan);outline-offset:-2px}
+.lg-shell,.lg-workspace{height:100%;min-height:0}
+.lg-workspace{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.lg-main-column{min-width:0;min-height:0;display:flex;flex-direction:column;gap:16px}
+.lg-kpi-host{flex:none}
+.legality-workbench .lg-kpi-host :deep(.kpis){display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}
+.legality-workbench .lg-kpi-host :deep(.kpi){position:relative;min-width:0;min-height:108px;padding:17px 18px;border:1px solid color-mix(in srgb,var(--kpi-c) 32%,transparent);border-radius:6px;background:linear-gradient(125deg,color-mix(in srgb,var(--kpi-c) 9%,#031429),#031429);box-shadow:inset 0 1px 0 color-mix(in srgb,var(--kpi-c) 10%,transparent);display:block}
+.legality-workbench .lg-kpi-host :deep(.kpi:before),.legality-workbench .lg-kpi-host :deep(.kpi:after){display:none}
+.legality-workbench .lg-kpi-host :deep(.kpi-gray){--kpi-c:#99b2d2}
+.legality-workbench .lg-kpi-host :deep(.ic){position:absolute;left:17px;top:17px;width:20px;height:20px;padding:0;border:0;background:none;color:var(--kpi-c)}
+.legality-workbench .lg-kpi-host :deep(.ic .svg-icon){width:19px;height:19px;stroke:currentColor;fill:none;stroke-width:1.8}
+.legality-workbench .lg-kpi-host :deep(.tx){display:block;min-width:0}
+.legality-workbench .lg-kpi-host :deep(.lb){margin:0 0 10px;padding-left:28px;color:var(--kpi-c);font-size:15px;font-weight:600;line-height:22px}
+.legality-workbench .lg-kpi-host :deep(.vl){color:var(--kpi-c);font-size:36px;font-weight:600;line-height:1.2;font-variant-numeric:tabular-nums}
+.lg-queue-panel{flex:1;min-height:0;display:flex;flex-direction:column;border:1px solid var(--lg-line);border-radius:6px;background:var(--lg-surface);overflow:hidden}
+.lg-queue-tabs{display:flex;align-items:stretch;min-height:50px;border-bottom:1px solid var(--lg-line);background:linear-gradient(90deg,#062449,#04172e)}
+.lg-queue-tabs button{position:relative;padding:0 18px;border:0;border-right:1px solid rgba(39,112,185,.08);background:transparent;color:#91aac9;font-size:14px;white-space:nowrap}
+.lg-queue-tabs button:hover{color:#d5eeff;background:rgba(0,159,255,.06)}
+.lg-queue-tabs button.is-active{color:var(--cyan);background:rgba(0,159,255,.1)}
+.lg-queue-tabs button.is-active:after{content:"";position:absolute;bottom:0;left:14px;right:14px;height:2px;background:var(--cyan);box-shadow:0 0 8px rgba(0,172,255,.45)}
+.lg-queue-tabs button span{font-size:12px}
+.lg-queue-filters{display:flex;align-items:center;gap:14px;min-height:54px;padding:8px 14px;border-bottom:1px solid var(--lg-line)}
+.lg-region-filter{min-width:0;flex:1;margin:0}
+.lg-region-filter :deep(.u-field-label){font-size:12px;white-space:nowrap}
+.lg-list-host{min-height:0;flex:1;display:flex;flex-direction:column}
+.lg-table-scroll{flex:1;min-height:0;overflow:auto;scrollbar-width:thin}
+.lg-target-table{border-collapse:separate;border-spacing:0;width:100%;min-width:720px;table-layout:fixed;font-size:13px;color:#b9cce4}
+.lg-target-table th{white-space:nowrap;position:sticky;top:0;z-index:1;height:46px;padding:10px;background:#0a284b;color:#bdd1ee;text-align:left;font-size:12px;font-weight:600;border-bottom:1px solid var(--lg-line)}
+.lg-target-table td{height:62px;padding:9px;border-bottom:1px solid var(--lg-line);border-right:1px solid rgba(39,112,185,.13);overflow:hidden;text-overflow:ellipsis}
+.lg-target-table th:nth-child(1){width:20%}.lg-target-table th:nth-child(2){width:19%}.lg-target-table th:nth-child(3){width:13%}.lg-target-table th:nth-child(4){width:12%}.lg-target-table th:nth-child(5){width:17%}.lg-target-table th:nth-child(6){width:14%}.lg-target-table th:nth-child(7){width:5%;text-align:center}
+.lg-target-table tbody tr{cursor:pointer}.lg-target-table tbody tr:hover{background:#072344}.lg-target-table tbody tr.is-selected{background:#092b4d;box-shadow:inset 3px 0 var(--cyan)}
+.lg-target-link{display:flex;align-items:center;gap:8px;width:100%;padding:0;border:0;background:none;text-align:left;color:inherit}
+.lg-target-icon{display:flex;align-items:center;justify-content:center;flex:none;width:28px;height:28px;border-radius:4px;background:#0d2a4e;color:#86cfff}
+.lg-row-target{display:flex;flex-direction:column;min-width:0;gap:5px}.lg-row-target b{overflow-wrap:anywhere;white-space:normal;color:#c6e0f7;font-size:12px;font-weight:500}.lg-row-target small{font-size:11px;color:#738fac}
+.lg-plan-cell{display:flex;align-items:center;gap:6px;font-size:12px;overflow-wrap:anywhere}.lg-plan-cell>span:first-child{display:flex;flex:none}.lg-plan-number{min-width:0;word-break:break-all;overflow-wrap:anywhere;white-space:normal;line-height:1.5}
+.lg-status-tag{display:inline-flex;justify-content:center;align-items:center;min-width:58px;padding:4px 8px;border:1px solid currentColor;border-radius:4px;font-size:13px;white-space:nowrap;line-height:1.4}
+.lg-status-tag.is-green{color:var(--green);background:rgba(23,181,140,.12);border-color:rgba(23,181,140,.28)}.lg-status-tag.is-red{color:var(--red);background:rgba(244,70,88,.12);border-color:rgba(244,70,88,.28)}.lg-status-tag.is-amber{color:var(--amber);background:rgba(230,162,58,.12);border-color:rgba(230,162,58,.28)}
+.lg-verdict-cell .lg-row-risk{display:block;margin-top:5px;color:#819bb7;font-size:11px;white-space:nowrap}.lg-reason-cell{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:12px;line-height:1.6}.lg-time-cell{font-size:12px;line-height:1.6;font-variant-numeric:tabular-nums}
+.lg-icon-btn{display:inline-flex;justify-content:center;align-items:center;width:28px;height:28px;border:0;border-radius:3px;background:transparent;color:#65b6f8}.lg-icon-btn:hover{background:rgba(0,162,255,.12)}
+.legality-workbench :deep(.svg-icon){width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7}
+.lg-pager{min-height:52px;padding:8px 12px;margin:0;border-top:1px solid var(--lg-line);background:#04172e;overflow:auto}
+.lg-review-panel{min-width:0;min-height:0}.lg-hidden-status{display:none}.lg-detail-host{height:100%;min-height:0;display:flex;flex-direction:column}.lg-detail-scroll{min-height:0;flex:1;overflow:auto;scrollbar-width:thin;display:flex;flex-direction:column;gap:12px}
+.lg-basis-card,.lg-evidence-card,.lg-more-details{flex:none;min-width:0;border:1px solid var(--lg-line);border-radius:5px;background:var(--lg-surface);overflow:hidden}
+.lg-basis-card>header,.lg-evidence-card>header{display:flex;align-items:center;gap:10px;min-height:42px;padding:10px 16px;border-bottom:1px solid var(--lg-line);background:linear-gradient(100deg,#0a2e58,#051a35);font-size:15px;font-weight:600;color:#d1e7ff}
+.lg-basis-card>header span,.lg-evidence-card>header span{flex:1;min-width:0;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px;font-weight:400;color:#7798be}
+.lg-basis-card{display:flex;flex-direction:column;max-height:49%;min-height:230px}.lg-check-list{padding:5px 12px;overflow:auto;min-height:0;scrollbar-width:thin}.lg-selected-subject{display:flex;align-items:center;gap:8px;padding:8px 16px;border-bottom:1px solid var(--lg-line);font-size:11px;color:#7f9ec2}.lg-selected-subject b{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#afcce8;font-weight:500}.lg-selected-subject>span{flex:none;color:var(--amber)}.lg-check-item{display:flex;align-items:flex-start;gap:12px;width:100%;padding:8px 6px;border:0;border-radius:3px;background:transparent;text-align:left}.lg-check-item:hover,.lg-check-item.is-selected{background:rgba(25,104,187,.14)}
+.lg-check-icon{display:flex;align-items:center;justify-content:center;flex:none;width:21px;height:21px;margin-top:1px;border-radius:5px;color:#dbf7ff;background:var(--green)}
+.lg-check-item.is-fail .lg-check-icon{background:var(--red)}.lg-check-item.is-warn .lg-check-icon{background:var(--amber);color:#152137}
+.lg-check-copy{min-width:0;flex:1}.lg-check-copy b{display:flex;gap:8px;justify-content:space-between;color:#c5d9ee;font-size:13px;font-weight:600;line-height:1.6}.lg-check-copy em{font-size:11px;font-style:normal;font-weight:400;color:var(--green)}.lg-check-item.is-fail em{color:var(--red)}.lg-check-item.is-warn em{color:var(--amber)}
+.lg-check-description{display:-webkit-box!important;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}.lg-check-item.is-selected .lg-check-description{-webkit-line-clamp:unset}.lg-check-copy small{display:block;margin-top:3px;color:#7f9ec2;font-size:12px;line-height:1.65;overflow-wrap:anywhere}
+.lg-rule-focus{margin:0 16px 12px;padding:10px;border:1px solid var(--lg-line);border-radius:4px;font-size:12px;line-height:1.7}.lg-rule-focus b,.lg-rule-focus>span{display:block}
+.lg-result-summary{flex:none;display:flex;align-items:center;gap:12px;min-height:51px;padding:9px 16px;border-top:1px solid var(--lg-line);color:#c1d3eb;font-size:14px}
+.lg-evidence-card{display:flex;flex-direction:column;min-height:180px;flex:1}.lg-evidence-card>header,.lg-evidence-tabs{flex:none}.lg-evidence-body{min-height:0;overflow:auto;scrollbar-width:thin}.lg-evidence-tabs{display:flex;border-bottom:1px solid var(--lg-line)}.lg-evidence-tab{flex:1;padding:11px 4px;border:0;border-bottom:2px solid transparent;background:transparent;color:#7895b7;font-size:11px!important;white-space:nowrap}.lg-evidence-tab.is-active{color:var(--cyan);border-bottom-color:var(--cyan);background:rgba(0,162,255,.05)}
+.lg-evidence-body{padding:12px 16px;font-size:12px;line-height:1.6;color:#9bb4d0}.lg-evidence-body h4{margin:0 0 10px;color:#c7deee;font-size:13px}.lg-evidence-body h4 span{display:block;color:#728fae;font-size:11px;font-weight:400}.lg-evidence-body p{margin:4px 0}
+.lg-evidence-timeline{list-style:none;margin:0 0 12px;padding:0}.lg-evidence-timeline li{position:relative;display:flex;gap:12px;min-height:70px;padding:10px 0}.lg-evidence-timeline li:not(:last-child):before{content:"";position:absolute;left:11px;top:35px;bottom:-8px;width:1px;background:rgba(0,163,248,.4)}.lg-evidence-timeline li+li{border-top:1px solid rgba(39,112,185,.17)}.lg-evidence-icon{display:flex;justify-content:center;align-items:center;width:24px;height:24px;flex:none;border-radius:50%;background:#073c67;color:var(--cyan)}.lg-evidence-timeline b{color:#54c7fa;font-size:13px}.lg-evidence-timeline p{overflow-wrap:anywhere;color:#8caaca;font-size:12px}
+.lg-map-wrap{position:relative;min-height:185px;margin-top:10px;overflow:hidden;border:1px solid var(--lg-line);border-radius:4px;background:#09213a}.lg-map-host{position:absolute;inset:0}.lg-map-legend{position:absolute;left:5px;right:5px;bottom:5px;display:flex;justify-content:center;gap:10px;padding:3px;background:rgba(3,17,34,.88);font-size:9px}.lg-map-legend .is-zone{color:var(--red)}.lg-map-legend .is-plan{color:var(--blue)}.lg-map-legend .is-track{color:var(--amber)}
+.lg-resource-grid,.lg-target-facts dl,.lg-review-state dl{display:grid;grid-template-columns:90px minmax(0,1fr);gap:7px;margin:8px 0;font-size:12px}.lg-resource-grid dt,.lg-target-facts dt,.lg-review-state dt{color:#7793b0}.lg-resource-grid dd,.lg-target-facts dd,.lg-review-state dd{margin:0;overflow-wrap:anywhere;color:#bad0e5}
+.lg-more-details{max-height:45%;overflow:auto;scrollbar-width:thin}.lg-selected-subject .lg-icon-btn{flex:none;width:22px;height:22px}.lg-previous :deep(svg){transform:rotate(180deg)}.lg-icon-btn:disabled{opacity:.35;cursor:not-allowed}.lg-evidence-wide :deep(.pager){overflow:auto;max-width:100%}.lg-more-details summary{padding:12px 16px;color:#9dbbdb;font-size:12px;cursor:pointer}.lg-history-strip{display:flex;flex-wrap:wrap;gap:6px;padding:8px 12px;border-top:1px solid var(--lg-line)}.lg-history-strip button{padding:6px;border:1px solid var(--lg-line);border-radius:4px;background:#082445;color:#a3c5e5;font-size:11px}.lg-history-strip :deep(.pager){max-width:100%;overflow:auto}
+.lg-verdict-card{padding:12px 16px}.lg-verdict-block{display:flex;align-items:center;gap:10px}.lg-verdict-icon{display:flex;color:var(--amber)}.lg-verdict-block>div{display:flex;flex-direction:column;gap:4px}.lg-verdict-block strong{font-size:22px;color:var(--red)}.lg-verdict-card.is-green strong{color:var(--green)}.lg-verdict-card.is-amber strong{color:var(--amber)}.lg-verdict-block small,.lg-verdict-block span,.lg-core-reason{font-size:12px;color:#93aecc}.lg-core-reason{display:flex;flex-direction:column;gap:5px;margin:14px 0}.lg-core-reason b{color:#c8ddef}.lg-target-facts,.lg-review-state{border-top:1px solid var(--lg-line);padding-top:10px;margin-top:10px}.lg-review-state>.tag{font-size:11px}
+.lg-action-dock{flex:none;padding:12px 0 0}.detail-actions{display:flex;gap:8px;margin:0}.lg-action-dock .btn{flex:1;min-width:0;height:40px!important;border-radius:4px;font-size:13px;background:#052246;border-color:#1264ad;color:#55c4ff}.lg-action-dock .btn.pri{background:linear-gradient(100deg,#075fa2,#08366a);color:#b8ecff}.detail-actions .btn:disabled{cursor:not-allowed;opacity:.45}
+.lg-link-btn{border:0;padding:0;background:transparent;color:var(--cyan);font-size:12px}.lg-reference-list{padding-left:16px;font-size:12px;line-height:1.8}.lg-muted{color:#7691b0!important}.is-pass{color:var(--green)}.is-fail,.lg-state-error,.lg-evidence-alert{color:var(--red)}.is-warn,.lg-state-warn{color:var(--amber)}.lg-inline-error{padding:10px 14px;border-bottom:1px solid var(--lg-line);font-size:12px;line-height:1.6;color:var(--amber)}.empty{padding:28px 16px;font-size:13px;line-height:1.8}
+@media(min-width:1800px){.lg-queue-panel{display:grid;grid-template-columns:minmax(0,1fr) 490px;grid-template-rows:54px minmax(0,1fr) auto}.lg-queue-tabs{min-height:54px}.lg-queue-filters{gap:10px;padding:8px 10px}.lg-list-host,.lg-pager{grid-column:1/-1}.lg-queue-tabs button{padding:0 15px}.lg-target-table{font-size:14px}.lg-target-table td{height:76px}.lg-target-table th{height:48px}.lg-main-column{gap:18px}.legality-workbench .lg-kpi-host :deep(.kpi){min-height:120px}.legality-workbench .lg-kpi-host :deep(.vl){font-size:40px}}
+@media(max-width:1399px){.legality-workbench{padding:12px!important}.lg-workspace{gap:12px;grid-template-columns:repeat(2,minmax(0,1fr))}.lg-main-column{gap:12px}.legality-workbench .lg-kpi-host :deep(.kpis){gap:8px}.legality-workbench .lg-kpi-host :deep(.kpi){padding:14px 10px;min-height:100px}.legality-workbench .lg-kpi-host :deep(.ic){left:10px;top:14px;width:17px}.legality-workbench .lg-kpi-host :deep(.lb){padding-left:23px;font-size:12px}.legality-workbench .lg-kpi-host :deep(.vl){font-size:30px}.lg-queue-tabs button{flex:1;padding:0 7px;font-size:12px}.lg-queue-tabs button span{font-size:11px}.lg-queue-filters{gap:8px;padding:7px 10px}}
+@media(max-width:1040px){.legality-workbench{overflow:auto!important}.lg-shell,.lg-workspace{height:auto;min-height:100%}.lg-workspace{grid-template-columns:minmax(0,1fr)}.lg-queue-panel{height:560px;flex:auto}.lg-detail-scroll{overflow:visible}.lg-basis-card{max-height:none}.lg-evidence-card{min-height:300px}.lg-more-details{max-height:none}.lg-review-panel{min-height:0}.lg-map-wrap{min-height:250px}}
+@media(prefers-reduced-motion:reduce){.legality-workbench *{transition:none!important;scroll-behavior:auto!important}}
 </style>

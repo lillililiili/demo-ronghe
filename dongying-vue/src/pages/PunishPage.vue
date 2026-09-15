@@ -384,8 +384,8 @@ onMounted(() => {
                       </div>
                     </template>
                   </div>
-                  <div class="sect"><h4>材料快照 <span v-if="selected.material?.schema_version" class="tag t-gray">第 {{ selected.material.schema_version }} 版</span></h4>
-                    <div v-if="!selected.material" class="empty">这条交接没有材料快照。</div>
+                  <div class="sect"><h4>提交时的材料 <span v-if="selected.material?.schema_version" class="tag t-gray">第 {{ selected.material.schema_version }} 版</span></h4>
+                    <div v-if="!selected.material" class="empty">这条交接没有提交时的材料。</div>
                     <template v-else>
                       <dl v-if="selected.material.event" class="kv kv-surface">
                         <dt>事件编号</dt><dd class="mono" :title="selected.material.event.event_id">{{ readableNo(selected.material.event.source_alarm_id) || '未提供' }}</dd>
@@ -406,8 +406,8 @@ onMounted(() => {
                           <span v-if="d.approved_by_name"> · 审批人：{{ d.approved_by_name }}</span>
                         </div>
                       </div>
-                      <div v-if="!selected.material.event" class="empty">快照中没有事件材料。</div>
-                      <div class="pn-note-text">交接材料只含结构化字段；没有文件、哈希或下载链接，也不生成证据台账。</div>
+                      <div v-if="!selected.material.event" class="empty">提交时未附上事件材料。</div>
+                      <div class="pn-note-text">本次提交的是文字信息，没有附带可下载的证据文件。</div>
                     </template>
                   </div>
                   <div v-if="!isNotified(selected)" class="detail-actions is-sticky">

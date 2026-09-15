@@ -38,6 +38,8 @@ import { DISPOSAL_UNAVAILABLE_TEXT, openDisposalRequest } from '@/ui/disposalAut
 import { hasModuleAction, hasPermission } from '@/services/accessControl.js';
 import { deviceApi } from '@/services/deviceApi.js';
 import { openTrackReplay, trackPointsOf } from '@/ui/trackReplayModal.js';
+import EmergencyStopPanel from '@/components/disposal/EmergencyStopPanel.vue';
+import { requiresStopFollowup } from '@/components/disposal/emergencyStopView.js';
 
 const U = window.UI;
 usePageChrome('alarms');
@@ -46,6 +48,8 @@ const root = ref(null);
    底层对象仍是 S.st，跨导航记忆不变 */
 const st = reactive(S.st);
 const totalCount = ref(0);
+const emergencyEvent = ref(null);
+const emergencyInfo = ref(null);
 let map = null;
 onUnmounted(() => { if (map) map.destroy(); map = null; });
 
@@ -107,6 +111,9 @@ function deriveAlarmProgress(auths, handoffs) {
 }
 function displayState(a) {
   if (!a || a.state !== 'CONFIRMED' || !a.event_id) return stateOf(a);
+  if (emergencyInfo.value?.event_id === a.event_id && requiresStopFollowup(emergencyInfo.value)) {
+    return { t: '处置已中止，设备待核查', c: 't-amber', color: '#f1a43a' };
+  }
   let key = pageProgress[a.event_id];
   if (cur.alarm && cur.alarm.alarm_id === a.alarm_id) {
     const fromDetail = deriveAlarmProgress(Object.values(disposal.byAction), disposal.handoff ? [disposal.handoff] : []);
@@ -154,25 +161,31 @@ sessionStorage.removeItem('alarm.sel');
    读不到（13.1 未落地时是 404）就记下原因并显示“尚未接入”，绝不假装“无授权”。 */
 const disposal = reactive({ byAction: {}, unavailable: false, error: '', handoff: null });
 const DISPOSAL_ACTIVE = ['APPROVED', 'EXECUTING'];
+let disposalSeq = 0;
 
 async function loadEventDisposals(eventId) {
+  const seq = ++disposalSeq;
+  const isCurrent = () => seq === disposalSeq && eventId === cur.alarm?.event_id;
   disposal.byAction = {}; disposal.unavailable = false; disposal.error = ''; disposal.handoff = null;
   if (!eventId) return;
   try {
     const page = await disposalApi.list({ subject_kind: 'UAV_EVENT', subject_id: eventId, page: 1, size: 50 });
+    if (!isCurrent()) return;
     // 同一动作可能申请过多次：按申请时间取最新一条代表当前状态。
     for (const row of page?.items || []) {
       const prev = disposal.byAction[row.action_type];
       if (!prev || Number(row.requested_at || 0) >= Number(prev.requested_at || 0)) disposal.byAction[row.action_type] = row;
     }
   } catch (error) {
+    if (!isCurrent()) return;
     disposal.unavailable = isDisposalUnavailable(error);
     disposal.error = disposal.unavailable ? DISPOSAL_UNAVAILABLE_TEXT : messageOf(error);
   }
   try {
     const page = await handoffApi.listHandoffs({ source_kind: 'UAV_EVENT', source_id: eventId, page: 1, size: 5 });
+    if (!isCurrent()) return;
     disposal.handoff = (page?.items || []).find(row => row.handoff_type === 'UAV_PUNISHMENT') || (page?.items || [])[0] || null;
-  } catch { disposal.handoff = null; }
+  } catch { if (isCurrent()) disposal.handoff = null; }
 }
 
 const KPI_DEFS = [
@@ -180,8 +193,8 @@ const KPI_DEFS = [
   { label: '待核实', color: 'amber', icon: 'alert' },
   { label: '反制中', color: 'orange', icon: 'radar' },
   { label: '干扰中', color: 'red', icon: 'radar' },
-  { label: '待处置', color: 'green', icon: 'check' },
-  { label: '误报', color: 'purple', icon: 'check' }
+  { label: '待处置', color: 'cyan', icon: 'alert' },
+  { label: '误报', color: 'blue', icon: 'check' }
 ];
 const kpiList = ref(KPI_DEFS.map(k => ({ ...k, value: '…', desc: '' })));
 /* 区域字典：读不到就只留"全部"，并在筛选项 title 说明——不能凭当前页的数据拼一份看着像全量的区域列表。 */
@@ -293,7 +306,7 @@ const mapBody = `<div id="alMap" style="flex:1;min-height:0"></div>
 /* 列头排序走服务端 sort/order（契约只支持这四个键）；不支持的列保持禁用并说明——
    在前端对当前一页重排会得出一个与全局顺序不符的假名次。 */
 const SORT_KEYS = { ts: 'received_at', occurred: 'occurred_at', level: 'severity', status: 'state' };
-const SORT_NOT_SUPPORTED = '服务端不支持按该列排序；在前端对当前一页重排会给出与全局顺序不符的名次';
+const SORT_NOT_SUPPORTED = '这一列暂不支持排序，请使用支持排序的列';
 function sortTh(key, label) {
   const field = SORT_KEYS[key];
   if (!field) {
@@ -350,7 +363,7 @@ function disposalSteps(a, ev) {
     if (!auth) return { n: name, t: '尚无授权', done: false, act: false, applicable: true };
     return {
       n: name,
-      t: disposalStatusText(auth),
+      t: auth.status === 'STOPPED' && emergencyInfo.value?.latest_stop ? '已中止；设备反馈见急停区' : disposalStatusText(auth),
       done: auth.status === 'COMPLETED',
       act: DISPOSAL_ACTIVE_STATUSES.includes(auth.status),
       applicable: true
@@ -386,12 +399,17 @@ function disposalActions(a, ev) {
     const completed = [cm, jam].some(row => row && row.status === 'COMPLETED');
     const jamLive = jam && DISPOSAL_ACTIVE_STATUSES.includes(jam.status);
     const activeText = active ? `已有处置申请（${labelOf(DISPOSAL_ACTION_LABEL, active.action_type)} ${disposalStatusText(active)}），了结前不能再次发起` : '';
-    const counter = disposal.unavailable || disposal.error
+    const stopPending = emergencyInfo.value?.event_id === a.event_id && requiresStopFollowup(emergencyInfo.value);
+    const counter = stopPending
+      ? dis('counter', `${U.icon('bolt')} 发起联动反制`, '设备停止尚未确认，请先完成急停区的现场核查', 'danger')
+      : disposal.unavailable || disposal.error
       ? dis('counter', `${U.icon('bolt')} 发起联动反制`, esc(disposal.error || DISPOSAL_UNAVAILABLE_TEXT), 'danger')
       : activeText
         ? dis('counter', `${U.icon('bolt')} 发起联动反制`, esc(activeText), 'danger')
         : `<button class="btn danger" data-al="counter">${U.icon('bolt')} 发起联动反制</button>`;
-    const punish = disposal.handoff
+    const punish = stopPending
+      ? dis('punish', '提交处罚交接', '设备停止尚未确认，请先核查设备反馈')
+      : disposal.handoff
       ? dis('punish', '提交处罚交接', '已提交处罚交接')
       : jamLive
         ? dis('punish', '提交处罚交接', '信号干扰尚未完成')
@@ -467,7 +485,23 @@ function eoTrackActions(a) {
 }
 
 function paintList() { const host = el('alList'); if (host) host.innerHTML = listHtml(); }
-function paintDetail() { const host = el('alDetail'); if (host) host.innerHTML = detailHtml(); }
+function paintDetail() {
+  const eventId = cur.alarm?.event_id || null;
+  if (emergencyEvent.value?.id !== eventId) emergencyInfo.value = null;
+  emergencyEvent.value = eventId ? { id: eventId, label: noOf(cur.alarm) } : null;
+  const host = el('alDetail'); if (host) host.innerHTML = detailHtml();
+}
+function updateEmergency(data) {
+  if (data && data.event_id !== emergencyEvent.value?.id) return;
+  emergencyInfo.value = data;
+  paintList();
+  const host = el('alDetail'); if (host) host.innerHTML = detailHtml();
+}
+async function refreshEmergency(eventId) {
+  if (eventId !== cur.alarm?.event_id) return;
+  await Promise.all([loadEventDisposals(eventId), loadList(), loadKpis()]);
+  if (eventId === cur.alarm?.event_id) paintDetail();
+}
 
 /* ---------- 地图：只有响应含 target_id（服务端已按 target:read 与范围元组裁剪）才读目标/轨迹 ---------- */
 function focusMap() {
@@ -489,7 +523,7 @@ function focusMap() {
     return c ? { lon: c.lon, lat: c.lat, alt: p.altitude_amsl_m == null ? null : Number(p.altitude_amsl_m), t: p.sort_time, kind: 'meas' } : null;
   }).filter(Boolean);
   const last = pos || (pts.length ? pts[pts.length - 1] : null);
-  if (!t || !last) return setInfo(warn(`关联目标 ${esc(t?.target_no || a.target_no || a.target_id)} 坐标未知或不可信，不以 (0,0) 补位，无法定位`));
+  if (!t || !last) return setInfo(warn(`关联目标 ${esc(t?.target_no || a.target_no || a.target_id)} 位置无法确认，暂时无法定位`));
   const subtype = targetTypeLabel(t.subtype, t.object_type_code, '目标');
   const target = {
     id: t.target_no || t.target_id, lon: last.lon, lat: last.lat,
@@ -509,10 +543,10 @@ function focusMap() {
     alarms: [{ id: a.alarm_id, targetId: target.id, type: typeOf(a), level: sevOf(a).t, time: fmt(a.received_at), status: displayState(a).t }]
   });
   if (map.w) map.centerAt(last.lon, last.lat);
-  const trackNote = pts.length > 1 ? `实测轨迹 · ${pts.length} 点` : cur.trackError ? `轨迹读取失败：${esc(cur.trackError)}` : '仅最新位置，无可信轨迹点';
+  const trackNote = pts.length > 1 ? `实测轨迹 · ${pts.length} 点` : cur.trackError ? `轨迹读取失败：${esc(cur.trackError)}` : '只有最近一次位置，没有可显示的飞行轨迹';
   if (srcEl) srcEl.innerHTML = pts.length > 1
     ? `<span class="tag t-amber" title="/api/v1/targets/{id}/tracks 最新一条轨迹的最近点位（WGS84）">实测轨迹</span> <span style="color:#8fbaff">实${pts.length}</span>`
-    : `<span class="tag t-gray" title="${cur.trackError ? esc(cur.trackError) : '该目标暂无可信轨迹点'}">无轨迹</span>`;
+    : `<span class="tag t-gray" title="${cur.trackError ? esc(cur.trackError) : '暂时没有可显示的飞行轨迹'}">无轨迹</span>`;
   setInfo(`<span class="mono" style="color:var(--txt-2)" title="${esc(t.target_id)}">${esc(t.target_no || t.target_id)}</span> · ${esc(subtype)} · 合法性 ${esc(target.legal)} · 高度 ${target.alt == null ? '—' : esc(target.alt) + ' m'} · ${trackNote}`,
     `${t.target_no || t.target_id}｜${subtype}｜高度 ${target.alt == null ? '—' : target.alt + ' m'}\n${trackNote}`);
 }
@@ -561,6 +595,8 @@ async function loadPageProgress(rows, seq) {
 
 async function selectAlarm(id) {
   const my = ++detailSeq;
+  ++disposalSeq;
+  disposal.byAction = {}; disposal.handoff = null; disposal.error = ''; disposal.unavailable = false;
   st.selId = id; st.sel = null;
   cur = emptyDetail(); cur.loading = true;
   const listEl = el('alList');
@@ -604,7 +640,7 @@ async function loadChain(my) {
   try {
     if (a.event_id) cur.chain = await getEvidenceChain('EVENT', a.event_id);
     else if (a.target_id) cur.chain = await getEvidenceChain('TARGET', a.target_id);
-    else cur.chainUnavailable = '无核实事件且无关联目标，无法汇总证据链。';
+    else cur.chainUnavailable = '还没有核实记录或相关目标，暂时无法汇总证据。';
   } catch (e) {
     if (my !== detailSeq) return;
     cur.chainError = e.status === 403 ? '当前账号没有证据查看权限，无法读取证据链' : messageOf(e);
@@ -845,7 +881,11 @@ onMounted(async () => {
           <UPanel title="关联目标定位与轨迹" panel-style="height:244px;max-height:50%;flex:none" nopad
             body-style="padding:6px" :extra="mapExtra" :body-html="mapBody" />
           <UPanel title="告警详情与处置" panel-style="flex:1;min-height:0" nopad
-            extra='<span id="alSt"></span>' body-html='<div id="alDetail" style="flex:1;overflow:auto;padding:12px"></div>' />
+            extra='<span id="alSt"></span>' body-style="overflow:auto;display:block">
+            <EmergencyStopPanel v-if="emergencyEvent" :key="emergencyEvent.id" :event-id="emergencyEvent.id"
+              :event-label="emergencyEvent.label" @updated="updateEmergency" @changed="refreshEmergency" />
+            <div id="alDetail" style="padding:12px"></div>
+          </UPanel>
         </div>
       </div>
     </div>

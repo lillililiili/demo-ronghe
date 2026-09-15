@@ -81,7 +81,7 @@ export function openCaseFile({ handoff, refresh, onDone } = {}) {
   openFormModal({
     title: '立案',
     width: '600px',
-    warning: '立案后案件号由服务端按日生成；当事人信息不确定时选「暂不确定」，不要先填一个占位值。',
+    warning: '立案后系统会自动生成案件号。当事人信息还没查清时，请选「暂不确定」，不要填写猜测的信息。',
     introHtml: introOf([['处罚交接', esc(handoff.handoff_no || handoff.handoff_id)], ['来源事件', esc(handoff.source_id || '')]]),
     fields: [
       { key: 'party_type', label: '当事人类型', type: 'radio', required: true, options: [

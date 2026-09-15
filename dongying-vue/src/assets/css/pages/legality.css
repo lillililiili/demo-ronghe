@@ -18,10 +18,10 @@
 .filter-chip[data-chip-set]:hover{border-color:rgba(120,170,255,.6);color:var(--txt)}
 .filter-chip.on{background:rgba(61,139,255,.3);border-color:#4b9cff;color:#e8f2ff;font-weight:600}
 /* 选中行左缘加色条：仅底色变化在长列表里不够醒目 */
-table.tb tbody tr.on{box-shadow:inset 3px 0 0 var(--blue)}
+body[data-page="legality"] table.tb tbody tr.on{box-shadow:inset 3px 0 0 var(--page-accent)}
 /* 地图图例/图层浮层默认折叠为小条，点标题展开 */
-.maplegend .lg-hd{cursor:pointer;user-select:none;color:#405568;font-weight:600}
-.maplegend .lg-hd:hover{color:#1769a6}
+.maplegend .lg-hd{cursor:pointer;user-select:none;color:var(--txt);font-weight:600}
+.maplegend .lg-hd:hover{color:var(--cyan)}
 .maplegend.collapsed .li{display:none}
 .maplayers .lyt{cursor:pointer;user-select:none;color:#607486}
 .maplayers .lyt:hover{color:#1769a6}

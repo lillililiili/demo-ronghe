@@ -19,7 +19,7 @@ npm run dev
 
 - 业务前台：http://127.0.0.1:5173
 - 后台管理端：http://127.0.0.1:5175
-- 统一 API：http://127.0.0.1:8080
+- 统一 API：http://127.0.0.1:8081
 
 前端说明见 [`dongying-vue/README.md`](dongying-vue/README.md)，后台与后端说明见 [`../houtaiguanli/README.md`](../houtaiguanli/README.md)。
 

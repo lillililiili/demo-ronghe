@@ -73,6 +73,7 @@ export async function loadDevicePosition(deviceId) {
     mapDevice: {
       id: device.device_no || device.device_id || deviceId, name: device.name || device.device_no || '设备', lon, lat,
       type: device.device_type_name || device.device_type_code || '设备', channel: device.channel || '—',
+      typeCode: device.device_type_code || '',
       status: connectivity === 'ONLINE' ? '在线' : connectivity === 'OFFLINE' ? '离线' : '异常', alarm: false
     }
   };

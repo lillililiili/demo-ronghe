@@ -366,11 +366,13 @@ export function createSituationMockSource(options = {}) {
     });
     const alarms = [{
       id: 'SIM-ALM-001', alarmId: 'SIM-ALM-001', targetId: 'SIM-UAV-001', level: '高',
-      type: '禁飞区入侵', state: 'ACTIVE', ts: startedAt - 5000, district: MOCK_ROUTES[0].district, riskText: '风险持续'
+      type: '禁飞区入侵', state: 'ACTIVE', eventState: 'CONFIRMED', ts: startedAt - 5000,
+      district: MOCK_ROUTES[0].district, riskText: '风险持续'
     }];
     if (elapsed >= 12000) alarms.push({
       id: 'SIM-ALM-002', alarmId: 'SIM-ALM-002', targetId: 'SIM-UAV-002', level: '中',
-      type: '高度异常', state: 'ACTIVE', ts: startedAt + 12000, district: MOCK_ROUTES[1].district, riskText: '风险持续'
+      type: '高度异常', state: 'ACTIVE', eventState: 'PENDING_VERIFICATION', ts: startedAt + 12000,
+      district: MOCK_ROUTES[1].district, riskText: '风险持续'
     });
     return {
       generatedAt: at,

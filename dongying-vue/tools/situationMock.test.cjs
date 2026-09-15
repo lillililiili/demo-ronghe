@@ -55,6 +55,8 @@ async function main() {
   const after = source.snapshot(startedAt + 12001);
   check('12 秒前只有初始异常', before.alarms.map(alarm => alarm.id), ['SIM-ALM-001']);
   check('12 秒后新增第二条异常', after.alarms.map(alarm => alarm.id), ['SIM-ALM-001', 'SIM-ALM-002']);
+  check('高等级禁飞告警已核实，可直接反制', before.alarms[0].eventState, 'CONFIRMED');
+  check('中等级高度异常待核实', after.alarms[1].eventState, 'PENDING_VERIFICATION');
   ok('目标快照提供位置插值区间', after.targets.every(target => target.movement && target.movement.endsAt > target.movement.startedAt));
   ok('每架目标都由至少一个当前可用站点监测', after.targets.every(target => target.sourceDeviceIds.length > 0));
   check('当天六条计划三种状态各两条', after.flightPlans.reduce((counts, plan) => {

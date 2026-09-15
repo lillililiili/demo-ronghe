@@ -7,17 +7,19 @@ test.describe.configure({ mode: 'serial', timeout: 120_000 });
 
 const VIEWED_KEY = 'situation.mock.viewed.v1';
 const STARTED_KEY = 'situation.mock.started-at.v1';
+const UAV_FLOW_KEY = 'situation.mock.uav-flow.v1';
 
 async function openFreshSituation(context, page, request, { ageMs = 0 } = {}) {
   const session = await apiLogin(request, 'admin1');
   test.skip(session === null, '本地开发管理员不存在，无法验证融合感知页。');
   await seedSession(context, session.sessionId);
   await page.goto('/#/situation');
-  await page.evaluate(([viewed, started, age]) => {
+  await page.evaluate(([viewed, started, flow, age]) => {
     sessionStorage.removeItem(viewed);
+    sessionStorage.removeItem(flow);
     if (age > 0) sessionStorage.setItem(started, String(Date.now() - age));
     else sessionStorage.removeItem(started);
-  }, [VIEWED_KEY, STARTED_KEY, ageMs]);
+  }, [VIEWED_KEY, STARTED_KEY, UAV_FLOW_KEY, ageMs]);
   await page.reload();
   await expect(page.locator('.situation-page')).toBeVisible();
 }
@@ -103,6 +105,15 @@ test('四源模拟态、设备气泡和查看状态保持正确语义', async ({
   await expect(firstAlarm).not.toHaveClass(/is-new/);
   await expect(firstAlarm).toContainText('已查看，风险持续');
   await expect(page.locator('.sit-map-pop-target .sit-map-pop-note')).toHaveCount(0);
+  await expect(page.locator('.sit-map-pop-target')).toContainText('光电跟踪中');
+  await expect(page.locator('.sit-map-pop-target').getByRole('button', { name: '反制' })).toBeVisible();
+  await expect(page.locator('.sit-map-pop-target').getByRole('button', { name: '误报' })).toHaveCount(0);
+  await expect(page.locator('.sit-map-pop-target').getByRole('button', { name: '通知处罚部门' })).toHaveCount(0);
+  const eoVideo = page.locator('.sit-map-pop-target').getByRole('button', { name: '光电视频' });
+  if (await eoVideo.count()) {
+    await eoVideo.click();
+    await expect(page.getByText('暂未接入')).toBeVisible();
+  }
   await expect(page.getByText('已处理', { exact: false })).toHaveCount(0);
 
   await page.reload();

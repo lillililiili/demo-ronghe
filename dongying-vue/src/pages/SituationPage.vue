@@ -5,7 +5,14 @@ import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import { createSituationMockSource } from '@/pages/situation/situationMock.js';
 import { riskMatchesPlan, routeRiskIsActive } from '@/services/situationData.js';
+import {
+  UAV_FLOW_STORAGE_KEY, applyUavFlow, eoCanMonitor, skipCountermeasureApproval,
+  uavProcessAction, uavProcessStatus
+} from '@/pages/situation/situationUavFlow.js';
 import { closeModal, openFormModal } from '@/ui/formModal.js';
+import { openConfirm } from '@/ui/confirm.js';
+import { openDisposalRequest } from '@/ui/disposalAuthModal.js';
+import { disposalApi } from '@/services/disposalApi.js';
 import {
   CORRIDOR_RELATION_LABEL, PLAN_STATUS_LABEL, RISK_STATE_LABEL, SEVERITY_LABEL, labelOf
 } from '@/ui/labels.js';
@@ -28,6 +35,7 @@ const layers = ref({ coverage: true, device: true, track: true, flightPlan: true
 const statusAnnouncement = ref('模拟场景准备中');
 let viewedKeys = loadViewedKeys();
 let riskActions = loadRiskActions();
+let uavFlow = loadUavFlow();
 let rawSnapshot = null;
 let map = null;
 let stopSource = null;
@@ -45,7 +53,10 @@ function loadScenarioStartedAt() {
 }
 
 const devices = computed(() => snapshot.value.devices || []);
-const alarms = computed(() => (snapshot.value.alarms || []).slice().sort((a, b) => b.ts - a.ts));
+const alarms = computed(() => (snapshot.value.alarms || [])
+  .filter(alarm => alarm.eventState !== 'FALSE_POSITIVE')
+  .slice()
+  .sort((a, b) => b.ts - a.ts));
 const targets = computed(() => snapshot.value.targets || []);
 const flightPlans = computed(() => snapshot.value.flightPlans || []);
 const risks = computed(() => snapshot.value.risks || []);
@@ -118,6 +129,26 @@ function persistRiskActions() {
   sessionStorage.setItem(RISK_ACTION_STORAGE_KEY, JSON.stringify(Object.fromEntries(riskActions)));
 }
 
+function loadUavFlow() {
+  try {
+    const value = JSON.parse(sessionStorage.getItem(UAV_FLOW_STORAGE_KEY) || '{}');
+    return new Map(value && typeof value === 'object' && !Array.isArray(value) ? Object.entries(value) : []);
+  } catch {
+    return new Map();
+  }
+}
+
+function persistUavFlow() {
+  sessionStorage.setItem(UAV_FLOW_STORAGE_KEY, JSON.stringify(Object.fromEntries(uavFlow)));
+}
+
+function saveUavFlow(alarmId, patch) {
+  const current = uavFlow.get(alarmId) || {};
+  uavFlow.set(alarmId, { ...current, ...patch });
+  persistUavFlow();
+  if (rawSnapshot) applySnapshot(rawSnapshot);
+}
+
 function isNewEvent(item) {
   return !viewedKeys.has(eventKey(item));
 }
@@ -174,7 +205,7 @@ function toggleDeviceType(typeCode) {
 }
 
 function decorate(next) {
-  const nextAlarms = (next.alarms || []).map(alarm => ({ ...alarm, isNew: isNewEvent(alarm) }));
+  const nextAlarms = (next.alarms || []).map(alarm => applyUavFlow({ ...alarm, isNew: isNewEvent(alarm) }, uavFlow));
   const nextRisks = (next.risks || []).filter(risk => !riskActions.has(eventKey(risk))).map(risk => ({
     ...risk,
     active: routeRiskIsActive(risk),
@@ -206,12 +237,13 @@ function decorate(next) {
   });
   const nextTargets = (next.targets || []).map(target => {
     const relatedAlarms = targetAlarms.get(target.id) || [];
+    const openAlarms = relatedAlarms.filter(alarm => alarm.eventState !== 'FALSE_POSITIVE');
     const relatedRisks = targetRisks.get(target.id) || [];
     const activeRisks = relatedRisks.filter(risk => risk.active);
     return {
       ...target,
-      activeRisk: relatedAlarms.length > 0 || activeRisks.length > 0,
-      newAlert: relatedAlarms.some(alarm => alarm.isNew) || activeRisks.some(risk => risk.isNew),
+      activeRisk: openAlarms.length > 0 || activeRisks.length > 0,
+      newAlert: openAlarms.some(alarm => alarm.isNew) || activeRisks.some(risk => risk.isNew),
       relatedAlarms,
       relatedRisks
     };
@@ -381,19 +413,39 @@ function renderDeviceTip(device) {
   </section>`;
 }
 
+function renderUavActions(target) {
+  if (target.objectTypeCode !== 'UAV') return '';
+  const alarm = (target.relatedAlarms || [])[0];
+  if (!alarm) return '';
+  const buttons = [];
+  if (eoCanMonitor(target, devices.value)) {
+    buttons.push('<button type="button" data-tip-act="eo-video">光电视频</button>');
+  }
+  const process = uavProcessAction(alarm);
+  if (process === 'false-positive') buttons.push('<button type="button" data-tip-act="false-positive">误报</button>');
+  if (process === 'counter') buttons.push('<button type="button" class="is-danger" data-tip-act="counter">反制</button>');
+  if (process === 'punish') buttons.push('<button type="button" data-tip-act="punish">通知处罚部门</button>');
+  return buttons.length ? `<div class="sit-map-pop-actions">${buttons.join('')}</div>` : '';
+}
+
 function renderTargetTip(target) {
   const alarm = (target.relatedAlarms || [])[0];
   const routeRisk = (target.relatedRisks || []).find(risk => risk.active);
   const sourceNames = devices.value.filter(device => (target.sourceDeviceIds || []).includes(device.id)).map(device => device.type).join(' / ');
   const summary = alarm?.type || routeRisk?.reasonText || '暂无关联异常';
+  const processStatus = alarm ? uavProcessStatus(alarm) : '';
+  const stateText = processStatus || (target.activeRisk ? '风险持续' : '跟踪中');
+  const stateClass = alarm?.eventState === 'FALSE_POSITIVE' || processStatus === '已移送处罚' || processStatus === '已干扰'
+    ? 'is-online' : (target.activeRisk || processStatus === '信号干扰中' || processStatus === '待审批' ? 'is-risk' : 'is-online');
   return `<section class="sit-map-pop sit-map-pop-target${target.newAlert ? ' is-new' : ''}" style="--sensor:${target.objectTypeCode === 'UAV' ? '#2fd06e' : '#72d6ff'}">
     <header><span class="sit-map-pop-icon">${U.icon(targetIconName(target))}</span><span><b>${esc(target.id)}</b><small>${esc(target.typeLabel)}</small></span>
       <button type="button" data-tip-act="close" aria-label="关闭目标详情">${U.icon('close')}</button></header>
-    <div class="sit-map-pop-status"><span class="sit-state ${target.activeRisk ? 'is-risk' : 'is-online'}">${target.activeRisk ? '风险持续' : '跟踪中'}</span><span>${esc(summary)}</span></div>
+    <div class="sit-map-pop-status"><span class="sit-state ${stateClass}">${esc(stateText)}</span><span>${esc(summary)}</span></div>
     <div class="sit-target-metrics"><span><small>高度</small><b>${esc(formatMetric(target.alt, ' m'))}</b></span><span><small>速度</small><b>${esc(formatMetric(target.speed, ' m/s'))}</b></span><span><small>融合置信</small><b>${esc(formatMetric(target.fusedConf, '%'))}</b></span></div>
     <p>感知来源：${esc(sourceNames || '未提供')}</p>
-    ${target.activeRisk ? '' : '<div class="sit-map-pop-note">目标处于模拟实时跟踪中。</div>'}
-    <div class="sit-map-pop-actions"><button type="button" disabled title="模拟态不下发真实设备指令">光电跟踪 · 模拟态</button></div>
+    ${target.objectTypeCode === 'UAV' ? '<p class="sit-eo-track">光电跟踪中</p>' : ''}
+    ${target.activeRisk || alarm ? '' : '<div class="sit-map-pop-note">目标处于模拟实时跟踪中。</div>'}
+    ${renderUavActions(target)}
   </section>`;
 }
 
@@ -426,11 +478,108 @@ function onMapPick(hit) {
   if (hit?.kind === 'plan') selectPlan(flightPlans.value.find(plan => plan.id === hit.data.id));
 }
 
+function targetAlarm(target) {
+  return (target?.relatedAlarms || [])[0] || null;
+}
+
+function openFalsePositive(target) {
+  const alarm = targetAlarm(target);
+  if (!alarm) return toast('没有关联告警，无法核实', 'err');
+  openFormModal({
+    title: `人工核实 · ${esc(alarm.targetId)}`,
+    width: '600px',
+    introHtml: `<dl class="kv"><dt>当前状态</dt><dd>${esc(uavProcessStatus(alarm))}</dd><dt>告警</dt><dd>${esc(alarm.type)}</dd><dt>关联目标</dt><dd class="mono">${esc(target.id)}</dd></dl>`,
+    fields: [
+      { key: 'conclusion', label: '核实结论', type: 'radio', required: true, options: [
+        { value: 'CONFIRMED', label: '属实（置为“已核实，待处置”）' },
+        { value: 'FALSE_POSITIVE', label: '误报（终态）' }
+      ] },
+      { key: 'note', label: '核实说明', type: 'textarea', required: true, minRows: 4, placeholder: '必填，1–1000 字：现场确认、轨迹复核、飞手联系结果等依据' }
+    ],
+    initial: { conclusion: 'FALSE_POSITIVE', note: '' },
+    confirmText: '提交核实结论',
+    validate: m => {
+      const n = String(m.note || '').trim();
+      return !n ? '核实说明为必填项' : n.length > 1000 ? `核实说明不能超过 1000 字（当前 ${n.length} 字）` : '';
+    },
+    onSubmit: async ({ conclusion, note }) => {
+      saveUavFlow(alarm.id, {
+        eventState: conclusion,
+        disposalStage: 'none',
+        handoff: false,
+        note: String(note).trim()
+      });
+      closeModal();
+      toast(conclusion === 'FALSE_POSITIVE' ? '核实完成：误报' : '核实完成：已核实，待处置', 'ok');
+    }
+  });
+}
+
+async function openCountermeasure(target) {
+  const alarm = targetAlarm(target);
+  if (!alarm) return toast('没有关联告警，无法发起反制', 'err');
+  if (alarm.eventState !== 'CONFIRMED') return toast('请先完成核实', 'err');
+  let policy = null;
+  try { policy = await disposalApi.policies(); } catch { policy = null; }
+  const skipApproval = skipCountermeasureApproval(alarm, target);
+  openDisposalRequest({
+    actionType: 'COUNTERMEASURE',
+    actionOptions: ['COUNTERMEASURE', 'JAMMING'],
+    subjectKind: 'UAV_EVENT',
+    subjectId: alarm.id,
+    subjectText: target.id,
+    policy,
+    okText: result => (skipApproval ? '已进入信号干扰中' : `申请已提交：${result?.authorization_no || ''} 待审批`),
+    submit: async body => {
+      saveUavFlow(alarm.id, {
+        eventState: 'CONFIRMED',
+        disposalStage: skipApproval ? 'jamming' : 'requested',
+        handoff: false,
+        actionType: body.action_type,
+        channel: body.channel,
+        deviceId: body.device_id,
+        reason: body.reason
+      });
+      return { authorization_no: skipApproval ? '' : `SIM-${alarm.id}`, status: skipApproval ? 'EXECUTING' : 'REQUESTED' };
+    }
+  });
+}
+
+async function openPunish(target) {
+  const alarm = targetAlarm(target);
+  if (!alarm) return toast('没有关联告警，无法移送处罚', 'err');
+  const sourceNo = target.id;
+  const recipient = '处罚接收方';
+  const ok = await new Promise(resolve => openConfirm({
+    title: '通知处罚部门',
+    message: `将把 ${sourceNo} 的处罚交接通知「${recipient}」。确认后只记录已提交通知，不表示处罚已立案或办结。是否继续？`,
+    confirmText: '确认通知',
+    onConfirm: () => { resolve(true); return true; },
+    onCancel: () => resolve(false)
+  }));
+  if (!ok) return;
+  saveUavFlow(alarm.id, { eventState: 'CONFIRMED', disposalStage: 'completed', handoff: true });
+  toast('已提交', 'ok');
+}
+
 function onTipAction(action, hit) {
   if (action === 'close') return clearSelection();
-  const plan = hit?.kind === 'plan' ? flightPlans.value.find(item => item.id === hit.data.id) : null;
+  if (action === 'eo-video') {
+    toast('暂未接入', 'err');
+    return;
+  }
+  const plan = hit?.kind === 'plan'
+    ? flightPlans.value.find(item => item.id === hit.data.id)
+    : (selection.value?.kind === 'plan' ? flightPlans.value.find(item => item.id === selection.value.id) : null);
   if (action === 'exclude-risk') openRiskActionModal(plan, 'exclude');
   if (action === 'notify-superior') openRiskActionModal(plan, 'notify');
+  const target = hit?.kind === 'target'
+    ? targets.value.find(item => item.id === hit.data.id)
+    : (selection.value?.kind === 'target' ? selectedTarget.value : null);
+  if (!target) return;
+  if (action === 'false-positive') openFalsePositive(target);
+  if (action === 'counter') openCountermeasure(target);
+  if (action === 'punish') openPunish(target);
 }
 
 function toggleLayer(key) {

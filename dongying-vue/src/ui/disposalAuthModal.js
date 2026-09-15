@@ -136,14 +136,16 @@ async function loadEnabledDeviceOptions() {
  * @param {string} o.subjectId
  * @param {string} [o.subjectText] 主体的可读说明（编号/名称），只读展示
  * @param {object} [o.policy] GET /disposal-policies 的结果，用于显示时限与 DEMO 标注
+ * @param {(body: object, key: string) => Promise<object>} [o.submit] 自定义提交；融合感知模拟源用来复用同一弹窗但不打真实授权接口
+ * @param {(result: object) => string} [o.okText] 成功提示；缺省为“申请已提交…待审批”
  */
-export function openDisposalRequest({ actionType, actionOptions, subjectKind, subjectId, subjectText, policy, refresh, onDone } = {}) {
+export function openDisposalRequest({ actionType, actionOptions, subjectKind, subjectId, subjectText, policy, refresh, onDone, submit: customSubmit, okText } = {}) {
   if (!actionType || !subjectKind || !subjectId) { toast('缺少处置对象，无法发起申请', 'err'); return false; }
-  void showDisposalRequestForm({ actionType, actionOptions, subjectKind, subjectId, subjectText, policy, refresh, onDone });
+  void showDisposalRequestForm({ actionType, actionOptions, subjectKind, subjectId, subjectText, policy, refresh, onDone, customSubmit, okText });
   return true;
 }
 
-async function showDisposalRequestForm({ actionType, actionOptions, subjectKind, subjectId, subjectText, policy, refresh, onDone }) {
+async function showDisposalRequestForm({ actionType, actionOptions, subjectKind, subjectId, subjectText, policy, refresh, onDone, customSubmit, okText }) {
   const choices = (actionOptions || []).filter(Boolean);
   const pickable = choices.length > 1;
   let deviceOptions = [];
@@ -205,13 +207,17 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
     onSubmit: ({ action_type: chosen, channel, device_id: deviceId, reason }) => submit({
       scope: `${subjectKind}:${subjectId}:${chosen || actionType}`,
       action: 'request',
-      call: key => disposalApi.create({
-        action_type: chosen || actionType, subject_kind: subjectKind, subject_id: subjectId,
-        channel, device_id: channel === 'MANUAL' ? undefined : (String(deviceId || '').trim() || undefined), reason: String(reason).trim()
-      }, key),
+      call: key => {
+        const body = {
+          action_type: chosen || actionType, subject_kind: subjectKind, subject_id: subjectId,
+          channel, device_id: channel === 'MANUAL' ? undefined : (String(deviceId || '').trim() || undefined),
+          reason: String(reason).trim()
+        };
+        return customSubmit ? customSubmit(body, key) : disposalApi.create(body, key);
+      },
       refresh,
       onDone,
-      okText: result => `申请已提交：${result?.authorization_no || ''} 待审批`
+      okText: okText || (result => `申请已提交：${result?.authorization_no || ''} 待审批`)
     })
   });
   return true;

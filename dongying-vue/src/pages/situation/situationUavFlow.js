@@ -1,6 +1,7 @@
 /* 融合感知无人机异常卡片的处置步骤。
-   误报 / 反制 / 通知处罚部门三者互斥，口径对齐告警页：待核实 → 已核实后反制 → 完成后移送。
+   误报与反制并列展示；处置完成后再通知处罚部门。
    高异常且融合置信高时，反制跳过两人审批，直接进入信号干扰中。 */
+import { coverageContainsPoint } from '../../services/situationData.js';
 
 export const UAV_FLOW_STORAGE_KEY = 'situation.mock.uav-flow.v1';
 export const HIGH_FUSION_CONFIDENCE = 85;
@@ -14,10 +15,16 @@ export function skipCountermeasureApproval(alarm, target) {
 }
 
 export function eoCanMonitor(target, devices = []) {
-  if (!target || target.objectTypeCode !== 'UAV') return false;
-  const ids = new Set(target.sourceDeviceIds || []);
-  return devices.some(device => device.typeCode === 'EO' && ids.has(device.id)
-    && device.coverage?.status === 'available');
+  if (!target) return false;
+  return devices.some(device => device.typeCode === 'EO' && coverageContainsPoint(device, target));
+}
+
+export function showEoVideo(target, devices = []) {
+  if (!eoCanMonitor(target, devices)) return false;
+  if (target.objectTypeCode === 'UAV') {
+    return (target.relatedAlarms || []).some(alarm => alarm.eventState !== 'FALSE_POSITIVE');
+  }
+  return (target.relatedRisks || []).some(risk => risk.active);
 }
 
 export function applyUavFlow(alarm, flow = {}) {
@@ -31,14 +38,12 @@ export function applyUavFlow(alarm, flow = {}) {
   };
 }
 
-/** 当前应显示的流程按钮：false-positive / counter / punish；没有则不画。 */
-export function uavProcessAction(alarm) {
-  if (!alarm || alarm.eventState === 'FALSE_POSITIVE') return null;
-  if (alarm.eventState !== 'CONFIRMED') return 'false-positive';
-  if (alarm.handoff) return null;
-  if (alarm.disposalStage === 'jamming' || alarm.disposalStage === 'completed') return 'punish';
-  if (alarm.disposalStage === 'requested') return null;
-  return 'counter';
+/** 当前应显示的流程按钮：误报与反制并列；处置完成后显示处罚交接。 */
+export function uavProcessActions(alarm) {
+  if (!alarm || alarm.eventState === 'FALSE_POSITIVE' || alarm.handoff) return [];
+  if (alarm.disposalStage === 'jamming' || alarm.disposalStage === 'completed') return ['punish'];
+  if (alarm.disposalStage === 'requested') return [];
+  return ['false-positive', 'counter'];
 }
 
 export function uavProcessStatus(alarm) {

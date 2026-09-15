@@ -6,8 +6,8 @@ import { usePageChrome } from '@/hooks/usePageChrome.js';
 import { createSituationMockSource } from '@/pages/situation/situationMock.js';
 import { riskMatchesPlan, routeRiskIsActive } from '@/services/situationData.js';
 import {
-  UAV_FLOW_STORAGE_KEY, applyUavFlow, eoCanMonitor, skipCountermeasureApproval,
-  uavProcessAction, uavProcessStatus
+  UAV_FLOW_STORAGE_KEY, applyUavFlow, showEoVideo, skipCountermeasureApproval,
+  uavProcessActions, uavProcessStatus
 } from '@/pages/situation/situationUavFlow.js';
 import { closeModal, openFormModal } from '@/ui/formModal.js';
 import { openConfirm } from '@/ui/confirm.js';
@@ -413,18 +413,18 @@ function renderDeviceTip(device) {
   </section>`;
 }
 
-function renderUavActions(target) {
-  if (target.objectTypeCode !== 'UAV') return '';
+function renderTargetActions(target) {
   const alarm = (target.relatedAlarms || [])[0];
-  if (!alarm) return '';
   const buttons = [];
-  if (eoCanMonitor(target, devices.value)) {
+  if (showEoVideo(target, devices.value)) {
     buttons.push('<button type="button" data-tip-act="eo-video">光电视频</button>');
   }
-  const process = uavProcessAction(alarm);
-  if (process === 'false-positive') buttons.push('<button type="button" data-tip-act="false-positive">误报</button>');
-  if (process === 'counter') buttons.push('<button type="button" class="is-danger" data-tip-act="counter">反制</button>');
-  if (process === 'punish') buttons.push('<button type="button" data-tip-act="punish">通知处罚部门</button>');
+  if (target.objectTypeCode === 'UAV' && alarm) {
+    const process = uavProcessActions(alarm);
+    if (process.includes('false-positive')) buttons.push('<button type="button" data-tip-act="false-positive">误报</button>');
+    if (process.includes('counter')) buttons.push('<button type="button" class="is-danger" data-tip-act="counter">反制</button>');
+    if (process.includes('punish')) buttons.push('<button type="button" data-tip-act="punish">通知处罚部门</button>');
+  }
   return buttons.length ? `<div class="sit-map-pop-actions">${buttons.join('')}</div>` : '';
 }
 
@@ -445,7 +445,7 @@ function renderTargetTip(target) {
     <p>感知来源：${esc(sourceNames || '未提供')}</p>
     ${target.objectTypeCode === 'UAV' ? '<p class="sit-eo-track">光电跟踪中</p>' : ''}
     ${target.activeRisk || alarm ? '' : '<div class="sit-map-pop-note">目标处于模拟实时跟踪中。</div>'}
-    ${renderUavActions(target)}
+    ${renderTargetActions(target)}
   </section>`;
 }
 

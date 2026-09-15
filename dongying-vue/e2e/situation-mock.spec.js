@@ -107,7 +107,7 @@ test('四源模拟态、设备气泡和查看状态保持正确语义', async ({
   await expect(page.locator('.sit-map-pop-target .sit-map-pop-note')).toHaveCount(0);
   await expect(page.locator('.sit-map-pop-target')).toContainText('光电跟踪中');
   await expect(page.locator('.sit-map-pop-target').getByRole('button', { name: '反制' })).toBeVisible();
-  await expect(page.locator('.sit-map-pop-target').getByRole('button', { name: '误报' })).toHaveCount(0);
+  await expect(page.locator('.sit-map-pop-target').getByRole('button', { name: '误报' })).toBeVisible();
   await expect(page.locator('.sit-map-pop-target').getByRole('button', { name: '通知处罚部门' })).toHaveCount(0);
   const eoVideo = page.locator('.sit-map-pop-target').getByRole('button', { name: '光电视频' });
   if (await eoVideo.count()) {
@@ -140,6 +140,16 @@ test('航线风险与异物、计划同步标记，查看不改变业务状态',
     return { activeRiskCount: plan.activeRiskCount, newRisk: plan.newRisk, targetNew: target.newAlert };
   });
   expect(before).toEqual({ activeRiskCount: 1, newRisk: true, targetNew: true });
+  await page.evaluate(() => {
+    const map = document.querySelector('#stMap').__map;
+    const target = map.data.targets.find(item => item.id === 'SIM-OBJ-002');
+    map.opt.onPick({ kind: 'target', data: target });
+  });
+  await expect(page.locator('.sit-map-pop-target')).toContainText('SIM-OBJ-002');
+  await expect(page.locator('.sit-map-pop-target').getByRole('button', { name: '光电视频' })).toBeVisible();
+  await page.locator('.sit-map-pop-target').getByRole('button', { name: '光电视频' }).click();
+  await expect(page.getByText('暂未接入')).toBeVisible();
+
   await newRisk.focus();
   await page.keyboard.press('Enter');
   await expect(newRisk).not.toHaveClass(/is-new/);

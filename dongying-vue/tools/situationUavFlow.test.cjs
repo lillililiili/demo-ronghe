@@ -18,23 +18,26 @@ async function main() {
   const done = { ...high, disposalStage: 'completed' };
   const handed = { ...done, handoff: true };
 
-  check('待核实只显示误报', F.uavProcessAction(pending), 'false-positive');
-  check('已核实待处置显示反制', F.uavProcessAction(confirmed), 'counter');
-  check('待审批不再显示反制', F.uavProcessAction(requested), null);
-  check('信号干扰中显示通知处罚', F.uavProcessAction(jamming), 'punish');
-  check('完成后显示通知处罚', F.uavProcessAction(done), 'punish');
-  check('已移送不再显示流程按钮', F.uavProcessAction(handed), null);
-  check('误报终态无流程按钮', F.uavProcessAction({ eventState: 'FALSE_POSITIVE' }), null);
+  check('待核实同时显示误报和反制', F.uavProcessActions(pending), ['false-positive', 'counter']);
+  check('已核实待处置仍同时显示误报和反制', F.uavProcessActions(confirmed), ['false-positive', 'counter']);
+  check('待审批不再显示反制', F.uavProcessActions(requested), []);
+  check('信号干扰中显示通知处罚', F.uavProcessActions(jamming), ['punish']);
+  check('完成后显示通知处罚', F.uavProcessActions(done), ['punish']);
+  check('已移送不再显示流程按钮', F.uavProcessActions(handed), []);
+  check('误报终态无流程按钮', F.uavProcessActions({ eventState: 'FALSE_POSITIVE' }), []);
 
   check('高异常且置信 87 跳过审批', F.skipCountermeasureApproval(high, { fusedConf: 87 }), true);
   check('中异常即使高置信也要审批', F.skipCountermeasureApproval(confirmed, { fusedConf: 90 }), false);
   check('高异常但置信不足仍要审批', F.skipCountermeasureApproval(high, { fusedConf: 70 }), false);
 
-  const eo = { typeCode: 'EO', id: 'SIM-EO-DY', coverage: { status: 'available' } };
-  const uav = { objectTypeCode: 'UAV', sourceDeviceIds: ['SIM-EO-DY'] };
-  check('光电可用且观测到该机才出视频按钮', F.eoCanMonitor(uav, [eo]), true);
-  check('光电离线不出视频按钮', F.eoCanMonitor(uav, [{ ...eo, coverage: { status: 'unavailable' } }]), false);
-  check('异物卡片不出光电视频', F.eoCanMonitor({ objectTypeCode: 'BIRD', sourceDeviceIds: ['SIM-EO-DY'] }, [eo]), false);
+  const eo = { typeCode: 'EO', id: 'SIM-EO-DY', lon: 118.5, lat: 37.4, coverage: { kind: 'circle', status: 'available', radiusM: 2000 } };
+  const uav = { objectTypeCode: 'UAV', lon: 118.51, lat: 37.4, relatedAlarms: [{ eventState: 'CONFIRMED' }] };
+  const balloon = { objectTypeCode: 'UNKNOWN', lon: 118.51, lat: 37.4, relatedRisks: [{ active: true }] };
+  const idleBird = { objectTypeCode: 'BIRD', lon: 118.51, lat: 37.4, relatedRisks: [] };
+  check('光电可用且目标在视场内才出视频按钮', F.eoCanMonitor(uav, [eo]), true);
+  check('光电离线不出视频按钮', F.eoCanMonitor(uav, [{ ...eo, coverage: { ...eo.coverage, status: 'unavailable' } }]), false);
+  check('有航线风险且在视场内的异物出光电视频', F.showEoVideo(balloon, [eo]), true);
+  check('无航线风险的异物不出光电视频', F.showEoVideo(idleBird, [eo]), false);
 
   console.log(failed ? `\n${passed} 条通过，${failed} 条失败` : `全部通过：${passed} 条`);
   process.exit(failed ? 1 : 0);

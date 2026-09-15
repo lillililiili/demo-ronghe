@@ -140,7 +140,7 @@ export const MOCK_ROUTES = DEPLOYMENTS.flatMap((site, siteIndex) => ROUTE_VARIAN
 
 const FOREIGN_VARIANTS = [
   { id: 'SIM-OBJ-001', site: DEPLOYMENTS[0], center: offsetPoint(DEPLOYMENTS[0], 0, 0), objectTypeCode: 'BIRD', subtypeCode: 'BIRD_FLOCK', type: '鸟类', typeLabel: '鸟群', speed: 10.5, alt: 72, radiusM: 360, squash: .46 },
-  { id: 'SIM-OBJ-002', site: DEPLOYMENTS[5], center: offsetPoint(DEPLOYMENTS[5], -1500, 200), objectTypeCode: 'UNKNOWN', subtypeCode: 'BALLOON', type: '未分类', typeLabel: '气球', speed: 2.2, alt: 165, radiusM: 120, squash: .72 },
+  { id: 'SIM-OBJ-002', site: DEPLOYMENTS[5], center: offsetPoint(DEPLOYMENTS[5], -320, 200), objectTypeCode: 'UNKNOWN', subtypeCode: 'BALLOON', type: '未分类', typeLabel: '气球', speed: 2.2, alt: 165, radiusM: 120, squash: .72 },
   { id: 'SIM-OBJ-003', site: DEPLOYMENTS[3], center: offsetPoint(DEPLOYMENTS[3], -1800, -1400), objectTypeCode: 'UNKNOWN', subtypeCode: 'KITE', type: '未分类', typeLabel: '风筝', speed: .6, alt: 48, radiusM: 36, squash: .55 },
   { id: 'SIM-OBJ-004', site: DEPLOYMENTS[4], center: offsetPoint(DEPLOYMENTS[4], 0, 0), objectTypeCode: 'UNKNOWN', subtypeCode: 'SKY_LANTERN', type: '未分类', typeLabel: '孔明灯', speed: 1.5, alt: 96, radiusM: 82, squash: .8 },
   { id: 'SIM-OBJ-005', site: DEPLOYMENTS[2], center: offsetPoint(DEPLOYMENTS[2], -1500, 200), objectTypeCode: 'UNKNOWN', subtypeCode: 'OTHER_OBJECT', type: '未分类', typeLabel: '其他异物', speed: 3.2, alt: 138, radiusM: 170, squash: .62 },

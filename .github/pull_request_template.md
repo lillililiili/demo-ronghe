@@ -6,16 +6,12 @@
 
 - [ ] 前端 Vue
 - [ ] legacy 脚本或 Mock
-- [ ] 后端 API/业务逻辑
-- [ ] 数据库迁移
 - [ ] 配置/部署/文档
 
-## 数据库与数据安全
+## 数据与安全
 
-- [ ] 未修改或删除已经应用的 Flyway 迁移
-- [ ] 新迁移使用唯一版本，并验证可从空库顺序执行
-- [ ] 未提交真实凭据、令牌、日志、数据库备份或未脱敏数据
-- [ ] 不涉及数据库变更
+- [ ] 未提交真实凭据、令牌、日志或未脱敏数据
+- [ ] 未在源码或生产构建中写入地图密钥和开发安全码
 
 ## 接口契约
 
@@ -26,10 +22,7 @@
 <!-- 仅勾选实际运行且通过的检查，并补充失败或未运行原因。 -->
 
 - [ ] `npm run build`
-- [ ] `node tools/scan.cjs` 与 `node tools/falsify.cjs`
-- [ ] `.\mvnw.cmd test`
-- [ ] `.\mvnw.cmd "-Dtest=AuthApiTest,SystemManagementApiTest" test`
-- [ ] `.\mvnw.cmd package`
-- [ ] PostgreSQL/PostGIS 迁移验证
+- [ ] `node tools/scan.cjs`
+- [ ] `npx playwright test e2e/admin-migration.spec.js`
 - [ ] 受影响页面的真实浏览器验证
 - [ ] `git diff --check`

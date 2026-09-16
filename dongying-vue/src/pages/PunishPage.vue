@@ -417,9 +417,11 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.pn-body { display: flex; flex-direction: column; min-height: 0; overflow: auto; }
+.pn-body { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
 .pn-forbidden, .pn-note { margin: 0 0 12px; }
-.pn-main { align-items: stretch; gap: var(--gap); height: calc(100vh - 314px); min-height: 560px; flex: none; }
+/* 清单和详情各自滚动；主体填满剩余高度，避免固定最小高度撑出外层滚动条。 */
+.pn-main { align-items: stretch; gap: var(--gap); min-height: 0; flex: 1; overflow: hidden; }
+.pn-main :deep(.panel > .pb) { display: flex; flex-direction: column; overflow: hidden; }
 .pn-list { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .pn-toolbar { padding: 10px; }
 .pn-error { margin: 8px 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -429,6 +431,6 @@ onMounted(() => {
 .pn-sub { font-size: 11px; color: var(--txt-3); white-space: normal; line-height: 1.4; overflow-wrap: anywhere; }
 .pn-wrap { white-space: normal; line-height: 1.4; overflow-wrap: anywhere; }
 .pager { display: flex; justify-content: flex-end; padding: 10px; }
-.pn-detail { flex: 1; overflow: auto; padding: 12px; }
+.pn-detail { flex: 1; min-height: 0; overflow: auto; padding: 12px; }
 .pn-note-text { margin: 6px 0 4px; font-size: 11px; color: var(--txt-3); line-height: 1.6; }
 </style>

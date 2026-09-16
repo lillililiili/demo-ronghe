@@ -16,10 +16,10 @@ body::before{
   inset:0;
   z-index:0;
   pointer-events:none;
-  background-image:linear-gradient(rgba(7,17,31,.82),rgba(7,17,31,.94)),url('/assets/img/brand/ambient-aerial.png');
+  background-image:var(--ambient-gradient),linear-gradient(rgba(4,13,33,.82),rgba(4,13,33,.94)),url('/assets/img/brand/ambient-aerial.png');
   background-size:cover;
   background-position:center;
-  opacity:.34;
+  opacity:.65;
 }
 #app{position:relative;z-index:1;min-width:0}
 ::selection{background:rgba(75,156,255,.3);color:#fff}
@@ -34,14 +34,14 @@ body::before{
   min-width:0;
   gap:18px;
   padding:0 22px 0 18px;
-  background:linear-gradient(100deg,var(--surface-1),var(--canvas));
+  background:var(--header-gradient);
   border-bottom:1px solid var(--line-2);
-  box-shadow:0 8px 24px rgba(0,0,0,.14);
+  box-shadow:0 8px 24px rgba(0,0,0,.24),0 1px 18px var(--glow-blue),inset 0 -1px var(--highlight);
   backdrop-filter:blur(14px);
 }
 .hdr .logo{gap:11px;font-size:19px;letter-spacing:.3px;min-width:0}
 .hdr .logo img{width:40px;height:40px;object-fit:contain;flex:none}
-.hdr .logo b{background:none;color:#f4f8ff;white-space:nowrap;font-weight:650}
+.hdr .logo b{background:none;color:var(--txt);text-shadow:0 0 18px var(--glow-cyan);white-space:nowrap;font-weight:650}
 .hdr .meta{gap:14px;font-size:12.5px}
 .hdr .meta .it{height:32px;color:var(--txt-2)}
 .hdr .meta .it>.svg-icon{width:15px;height:15px;color:var(--txt-3)}
@@ -58,13 +58,13 @@ body::before{
 .nav{
   width:var(--nav-w);
   padding:14px 9px 10px;
-  background:linear-gradient(180deg,var(--surface-1),var(--canvas));
+  background:radial-gradient(ellipse at 0% 15%,var(--glow-blue),transparent 65%),linear-gradient(180deg,var(--surface-1),var(--canvas));
   border-right:1px solid var(--line-2);
   gap:3px;
   backdrop-filter:blur(12px);
 }
 .nav.mini{width:56px}
-.nav .l1{min-height:42px;gap:10px;padding:9px 10px;border-radius:7px;font-size:13.5px;color:#8fa3bd}
+.nav .l1{min-height:42px;gap:10px;padding:9px 10px;border-radius:7px;font-size:13.5px;color:var(--txt-2)}
 .nav .l1 i{color:var(--nav-accent,var(--blue));filter:drop-shadow(0 0 5px color-mix(in srgb,var(--nav-accent,var(--blue)) 28%,transparent))}
 .nav .l1 i,.nav .l1 i svg{width:18px;height:18px}
 .nav .l1:hover{background:rgba(75,156,255,.08);color:#dceaff}
@@ -76,7 +76,7 @@ body::before{
 }
 .nav .g1.has>.l1{color:var(--txt);border-color:color-mix(in srgb,var(--nav-accent) 42%,transparent);background:linear-gradient(90deg,color-mix(in srgb,var(--nav-accent) 20%,transparent),transparent);box-shadow:inset 3px 0 var(--nav-accent)}
 .nav .l2{margin-left:18px;border-left-color:rgba(125,165,210,.11);padding-bottom:4px}
-.nav .l2 a{padding:7px 8px;font-size:12.5px;border-radius:6px;color:#7f94ae}
+.nav .l2 a{padding:7px 8px;font-size:12.5px;border-radius:6px;color:var(--txt-3)}
 .nav .l2 a:hover{background:rgba(75,156,255,.07);color:#dceaff}
 .nav .l2 a.on{background:color-mix(in srgb,var(--nav-accent) 18%,transparent);color:var(--txt);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--nav-accent) 34%,transparent)}
 .nav .l2 a.on em{background:var(--nav-accent);box-shadow:0 0 7px color-mix(in srgb,var(--nav-accent) 50%,transparent)}
@@ -100,13 +100,13 @@ body[data-page="overview"] .crumb{display:none}
 
 /* Surfaces and hierarchy */
 .panel{
-  background:linear-gradient(160deg,var(--surface-2),var(--surface-1));
+  background:var(--surface-gradient);
   border:1px solid var(--line);
   border-radius:var(--r);
   box-shadow:var(--shadow-soft);
   backdrop-filter:blur(10px);
 }
-.panel:hover{border-color:rgba(125,165,210,.2)}
+.panel:hover{border-color:color-mix(in srgb,var(--page-accent) 65%,transparent)}
 .panel>.ph{min-height:45px;padding:9px 13px;border-bottom:1px solid var(--line-2)}
 .panel>.ph h3{font-size:14.5px;font-weight:600;color:#dfe9f6;letter-spacing:.1px}
 .panel>.ph h3:before{display:none}
@@ -123,7 +123,7 @@ body[data-page="overview"] .crumb{display:none}
   min-height:96px;
   padding:12px 13px;
   gap:11px;
-  background:rgba(13,29,49,.8);
+  background:var(--surface-gradient);
   border:1px solid var(--line);
   box-shadow:none;
 }
@@ -151,24 +151,24 @@ body[data-page="overview"] .kpi .vl{font-size:32px}
 table.tb{font-size:12.25px;border-spacing:0}
 table.tb th{
   padding:8px 10px;
-  background:#102238;
-  color:#91a6bf;
+  background:var(--table-head-gradient);
+  color:var(--txt-2);
   font-weight:500;
   border-bottom:1px solid var(--line);
 }
-table.tb td{padding:8px 10px;color:#a8b8cc;border-bottom:1px solid rgba(125,165,210,.075)}
+table.tb td{padding:8px 10px;color:var(--txt-2);border-bottom:1px solid rgba(125,165,210,.075)}
 table.tb tbody tr{transition:background-color .15s ease}
 table.tb tbody tr:hover{background:rgba(75,156,255,.07)}
 table.tb tbody tr.on{background:rgba(75,156,255,.12);box-shadow:inset 2px 0 0 var(--blue)}
 table.tb.density-compact th,table.tb.density-compact td{padding:6px 8px;font-size:11.75px}
-.pmx th{background:#102238;color:#91a6bf}
+.pmx th{background:var(--table-head-gradient);color:var(--txt-2)}
 .pmx td:first-child,.pmx th:first-child{background:#0e1f34}
 
 /* Forms and actions */
 input.ip,select.sel{
   height:32px;
   padding:5px 9px;
-  background:#0a1626;
+  background:var(--surface-1);
   border-color:rgba(125,165,210,.18);
   border-radius:6px;
   color:#dce7f4;
@@ -178,28 +178,28 @@ select.sel option{background:#0b1727}
 input.ip:hover,select.sel:hover{border-color:rgba(125,165,210,.3)}
 input.ip:focus,select.sel:focus,.search-input:focus-within{border-color:var(--blue);box-shadow:0 0 0 3px rgba(75,156,255,.11)}
 .field>label{font-size:12.5px;color:#8fa3bc}
-.search-input{height:32px;background:#0a1626;border-color:rgba(125,165,210,.18);border-radius:6px}
+.search-input{height:32px;background:var(--surface-1);border-color:rgba(125,165,210,.18);border-radius:6px}
 .btn{min-height:32px;gap:6px;padding:5px 11px;border-radius:6px;font-size:13px;font-weight:500}
 .toolbar{gap:9px;padding:9px 11px;border-color:var(--line-2);background:rgba(7,17,31,.26)}
-.lnk{color:#65aaff}.lnk:hover{color:#9bc9ff;text-decoration:none}
+.lnk{color:var(--cyan)}.lnk:hover{color:#9bc9ff;text-decoration:none}
 
 /* Tags and feedback */
 .tag{padding:1px 7px;border-radius:5px;font-size:12px;line-height:1.65}
 .warnbox{border-color:rgba(241,164,58,.25);background:rgba(241,164,58,.07);border-radius:7px;color:#e4c799}
-.empty{padding:26px;color:#61758e}
-.toast{top:76px;background:#11243a;border-color:rgba(125,165,210,.22);border-radius:8px;box-shadow:var(--shadow)}
+.empty{padding:26px;color:var(--txt-3)}
+.toast{top:76px;background:var(--surface-2);border-color:rgba(125,165,210,.22);border-radius:8px;box-shadow:var(--shadow)}
 
 /* Dialogs, drawers and menus */
 .mask{background:rgba(2,8,15,.68);backdrop-filter:blur(5px)}
-.modal{background:#0c1b2d;border-color:rgba(125,165,210,.2);border-radius:10px;box-shadow:0 28px 80px rgba(0,0,0,.46)}
+.modal{background:var(--surface-gradient);border-color:var(--line);border-radius:10px;box-shadow:var(--shadow),inset 0 1px var(--highlight)}
 .modal>.mh{min-height:50px;border-color:var(--line-2)}
 .modal>.mf{background:rgba(7,17,31,.38);border-color:var(--line-2)}
 .modal>.mh .x,.drawer .dh .x{width:30px;height:30px;border-radius:6px}
 .modal>.mh .x:hover,.drawer .dh .x:hover{background:rgba(75,156,255,.1)}
-.drawer{background:#0b192a;border-color:rgba(125,165,210,.18);box-shadow:-20px 0 60px rgba(0,0,0,.35)}
-.drawer .dh{min-height:54px;background:#0d1d30;border-color:var(--line-2)}
+.drawer{background:var(--surface-1);border-color:rgba(125,165,210,.18);box-shadow:-20px 0 60px rgba(0,0,0,.35)}
+.drawer .dh{min-height:54px;background:var(--surface-2);border-color:var(--line-2)}
 .drawer-mask{background:rgba(2,8,15,.58);backdrop-filter:blur(3px)}
-.usermenu{top:58px;right:16px;width:180px;padding:7px;background:#0d1d30;border-color:rgba(125,165,210,.2);border-radius:8px;box-shadow:var(--shadow)}
+.usermenu{top:58px;right:16px;width:180px;padding:7px;background:var(--surface-2);border-color:rgba(125,165,210,.2);border-radius:8px;box-shadow:var(--shadow)}
 .usermenu .mi{min-height:36px;border-radius:6px;color:#a7b7cb}
 .usermenu .mi:hover{background:rgba(75,156,255,.1);color:#fff}
 

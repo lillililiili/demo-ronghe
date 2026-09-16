@@ -1,5 +1,13 @@
 
 /* ---------- 布局 ---------- */
+/* 仅绘制在顶栏内部的光带，不占布局空间，也不遮挡控件。 */
+.hdr::after{
+  content:"";position:absolute;left:0;right:0;bottom:0;height:1px;pointer-events:none;
+  background:linear-gradient(90deg,transparent,var(--blue),var(--cyan),var(--purple),transparent);
+  background-size:200% 100%;box-shadow:0 0 10px var(--glow-cyan);
+  animation:header-neon-flow 8s ease-in-out infinite alternate;
+}
+@keyframes header-neon-flow{from{background-position:0% 50%}to{background-position:100% 50%}}
 #app{display:flex;flex-direction:column;height:100vh}
 /* 头部与页脚同样保持最小宽度，随内容横向滚动 */
 .hdr{

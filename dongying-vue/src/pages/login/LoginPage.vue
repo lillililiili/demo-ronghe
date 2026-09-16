@@ -117,6 +117,10 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+/* 环境光只覆盖背景图片，不改变表单布局或点击区域。 */
+.login-background { filter:brightness(.62) saturate(1.15); }
+.login-page::before { content:""; position:fixed; inset:0; z-index:-1; pointer-events:none; background:var(--login-overlay); }
+
 .login-page {
   position: fixed;
   inset: 0;
@@ -126,10 +130,10 @@ onBeforeUnmount(() => {
   background: var(--canvas);
   font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
 }
-.login-background { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center; z-index: -1; pointer-events: none; }
+.login-background { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center; z-index: -2; pointer-events: none; }
 .login-brand { position: absolute; top: 10.6%; left: 4.3%; }
 .login-logo { display: block; width: clamp(180px, 18vw, 320px); height: auto; margin-left: -1.2vw; }
-.login-brand h1 { margin: 22px 0 18px; font-size: clamp(32px, 3.05vw, 60px); font-weight: 650; line-height: 1.4; letter-spacing: .035em; }
+.login-brand h1 { text-shadow:0 2px 12px var(--canvas),0 0 28px var(--glow-cyan); margin: 22px 0 18px; font-size: clamp(32px, 3.05vw, 60px); font-weight: 650; line-height: 1.4; letter-spacing: .035em; }
 .login-brand h1 span { display: block; }
 .login-card { position: absolute; width: clamp(420px, 31vw, 600px); right: 6.9%; top: 50%; transform: translateY(-50%); padding: clamp(36px, 2.8vw, 54px); border: 1px solid var(--login-line); border-radius: 10px; background: var(--login-card); box-shadow: var(--login-shadow); backdrop-filter: blur(18px); }
 .login-form { display: flex; flex-direction: column; gap: 28px; }

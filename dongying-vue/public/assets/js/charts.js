@@ -7,20 +7,22 @@
   Object.keys(C).forEach(name => Object.defineProperty(C, name, { enumerable: true, get: () => getComputedStyle(document.documentElement).getPropertyValue('--' + name).trim() }));
   const PALETTE = ['blue','green','amber','red','purple','cyan','orange','pink'];
   PALETTE.forEach((name, index) => Object.defineProperty(PALETTE, index, { get: () => C[name] }));
+  // Classic scripts load before CSS: resolve presentation tokens when charts read them.
+  const token = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   const AX = {
-    axisLine: { lineStyle: { color: 'rgba(130,174,218,.16)' } },
-    axisLabel: { color: '#879bb4', fontSize: 11, margin: 11 },
+    axisLine: { lineStyle: { get color() { return token('--chart-axis'); } } },
+    axisLabel: { get color() { return token('--txt-3'); }, fontSize: 11, margin: 11 },
     axisTick: { show: false },
-    splitLine: { lineStyle: { color: 'rgba(130,174,218,.075)', type: 'dashed' } }
+    splitLine: { lineStyle: { get color() { return token('--chart-grid'); }, type: 'dashed' } }
   };
   const TIP = {
-    backgroundColor: 'rgba(8,20,35,.96)', borderColor: 'rgba(126,174,226,.24)',
-    textStyle: { color: '#edf5ff', fontSize: 12 }, confine: true,
+    get backgroundColor() { return token('--chart-tooltip'); }, get borderColor() { return token('--line'); },
+    textStyle: { get color() { return token('--txt'); }, fontSize: 12 }, confine: true,
     padding: [9, 11],
     extraCssText: 'box-shadow:0 16px 40px rgba(0,0,0,.34);border-radius:9px;backdrop-filter:blur(10px);',
-    axisPointer: { lineStyle: { color: 'rgba(75,156,255,.45)' } }
+    axisPointer: { lineStyle: { get color() { return token('--blue'); } } }
   };
-  const LEG = { textStyle: { color: '#9aacbf', fontSize: 11 }, itemWidth: 10, itemHeight: 8, icon: 'roundRect' };
+  const LEG = { textStyle: { get color() { return token('--txt-2'); }, fontSize: 11 }, itemWidth: 10, itemHeight: 8, icon: 'roundRect' };
 
   const insts = [];
   /* 同一容器再次 init 前必须卸掉旧实例。切页签用 innerHTML 清画布不会清

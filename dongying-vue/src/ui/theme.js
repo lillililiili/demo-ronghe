@@ -61,6 +61,16 @@ export const loginThemeOverrides = {
 };
 
 export const themeOverrides = {
+  Button: {
+    textColorPrimary: v('--txt'),
+    textColorHoverPrimary: v('--txt'),
+    textColorPressedPrimary: v('--txt'),
+    colorPrimary: v('--action-blue'),
+    colorHoverPrimary: shade(v('--action-blue'), 0.1),
+    colorPressedPrimary: shade(v('--action-blue'), -0.1),
+    borderPrimary: `1px solid ${blue}`,
+    borderHoverPrimary: `1px solid ${cyan}`
+  },
   common: {
     primaryColor: blue,
     primaryColorHover: shade(blue, 0.08),

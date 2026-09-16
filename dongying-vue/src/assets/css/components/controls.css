@@ -16,8 +16,8 @@ select.sel{cursor:pointer}
 select.sel option{background:#0a1a3f}
 .btn{
   --btn-c:var(--blue);display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 15px;border-radius:6px;cursor:pointer;
-  background:color-mix(in srgb,var(--btn-c) 15%,var(--surface-1));border:1px solid color-mix(in srgb,var(--btn-c) 52%,transparent);color:var(--txt);font-size:13px;
-  font-family:inherit;transition:background-color .15s,border-color .15s,box-shadow .15s;white-space:nowrap;
+  background:linear-gradient(135deg,color-mix(in srgb,var(--btn-c) 28%,var(--surface-1)),var(--surface-1));box-shadow:inset 0 1px var(--highlight);border:1px solid color-mix(in srgb,var(--btn-c) 52%,transparent);color:var(--txt);font-size:13px;
+  font-family:inherit;transition:background-color .18s,border-color .18s,box-shadow .18s;white-space:nowrap;
 }
 a.btn{text-decoration:none}   /* 顶栏「大屏展示」等以 <a> 承载的按钮 */
 .svg-icon{width:1em;height:1em;display:inline-block;fill:none;stroke:currentColor;stroke-width:1.8;vertical-align:-.12em;flex:none}
@@ -28,7 +28,7 @@ a.btn{text-decoration:none}   /* 顶栏「大屏展示」等以 <a> 承载的按
 .inline-icon>.svg-icon{width:15px;height:15px}
 .status-icon>.svg-icon{width:1em;height:1em}
 .btn:hover:not(:disabled):not([aria-disabled="true"]):not([aria-busy="true"]){background:color-mix(in srgb,var(--btn-c) 28%,var(--surface-2));border-color:var(--btn-c);box-shadow:0 0 12px color-mix(in srgb,var(--btn-c) 18%,transparent)}
-.btn.pri{background:linear-gradient(135deg,var(--action-blue),color-mix(in srgb,var(--action-blue) 72%,var(--blue)));border-color:var(--blue);color:#fff;box-shadow:0 3px 12px color-mix(in srgb,var(--blue) 24%,transparent)}
+.btn.pri{background:var(--action-gradient);border-color:var(--blue);color:#fff;box-shadow:inset 0 1px var(--highlight),0 0 16px var(--glow-blue)}
 .btn.pri:hover:not(:disabled):not([aria-disabled="true"]):not([aria-busy="true"]){background:var(--action-blue);border-color:var(--cyan)}
 .btn.danger{--btn-c:var(--red);background:var(--action-red);color:#fff}
 .btn.warn{--btn-c:var(--amber);background:var(--amber);color:var(--canvas)}

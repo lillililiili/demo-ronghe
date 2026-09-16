@@ -1,37 +1,50 @@
 /* 主题 token 唯一真源。Naive UI 通过 src/ui/theme.js 运行时读取这些变量。
    不要在 Vue 主题配置或组件里手抄色值；新全局变量加在这里。 */
 :root{
-  --canvas:#060f25;
-  --surface-1:#0a1833;
-  --surface-2:#102342;
-  --surface-3:#163054;
-  --surface-hover:#1b3a60;
+  --canvas:#040d21;
+  --surface-1:#081b38;
+  --surface-2:#102c52;
+  --surface-3:#143761;
+  --surface-hover:#194878;
   --bg-0:var(--canvas);
   --bg-1:var(--surface-1);
   --bg-2:var(--surface-2);
   --bg-3:var(--surface-3);
-  --panel:rgba(13,28,47,.92);
-  --panel-2:rgba(10,23,39,.82);
-  --line:rgba(93,159,240,.26);
-  --line-2:rgba(93,159,240,.14);
-  --txt:#edf5ff;
-  --txt-2:#a7b7cb;
-  --txt-3:#92a7c4;
-  --blue:#4da3ff;
-  --cyan:#26def1;
-  --green:#43e39a;
-  --amber:#ffd15a;
-  --orange:#ff963f;
-  --red:#ff6278;
-  --purple:#b18aff;
-  --pink:#ff79b7;
-  --indigo:#9294ff;
+  --panel:rgba(8,27,56,.96);
+  --panel-2:rgba(8,27,56,.88);
+  --line:rgba(54,148,255,.48);
+  --line-2:rgba(54,148,255,.22);
+  --txt:#edf7ff;
+  --txt-2:#bed3ec;
+  --txt-3:#96b4d5;
+  --blue:#3694ff;
+  --cyan:#26e5ff;
+  --green:#36edac;
+  --amber:#ffcf52;
+  --orange:#ff9b45;
+  --red:#ff647e;
+  --purple:#b58aff;
+  --pink:#ff7bc8;
+  --indigo:#939bff;
   --gray:#95a8c4;
-  --action-blue:#176bdb;
+  --action-blue:#0864d9;
   --action-red:#ba2949;
   --page-accent:var(--blue);
-  --shadow:0 12px 32px rgba(0,0,0,.22);
-  --shadow-soft:0 6px 18px rgba(0,0,0,.16);
+  --shadow:0 16px 40px rgba(0,4,18,.48),0 0 24px rgba(54,148,255,.16);
+  --shadow-soft:0 8px 22px rgba(0,4,18,.28),inset 0 1px 0 rgba(161,225,255,.12);
+  /* 霓虹主题的展示变量；不参与尺寸、布局和业务状态判定。 */
+  --highlight:rgba(190,239,255,.24);
+  --glow-blue:rgba(54,148,255,.30);
+  --glow-cyan:rgba(38,229,255,.24);
+  --surface-gradient:linear-gradient(145deg,var(--surface-2),var(--surface-1) 72%);
+  --header-gradient:linear-gradient(105deg,var(--surface-2),var(--canvas) 58%,var(--surface-1));
+  --action-gradient:linear-gradient(120deg,var(--action-blue),#157bc7);
+  --table-head-gradient:linear-gradient(180deg,#153e6a,#0d294c);
+  --ambient-gradient:radial-gradient(ellipse at 12% 0%,rgba(54,148,255,.22),transparent 50%),radial-gradient(ellipse at 95% 80%,rgba(181,138,255,.12),transparent 48%);
+  --chart-grid:rgba(112,183,255,.14);
+  --chart-axis:rgba(112,183,255,.30);
+  --chart-tooltip:#0b2447;
+  --login-overlay:linear-gradient(100deg,rgba(4,13,33,.42),rgba(4,13,33,.18) 48%,rgba(4,13,33,.68)),radial-gradient(ellipse at 75% 45%,rgba(38,229,255,.14),transparent 58%);
   --r:8px;
   --header-h:64px;
   --nav-w:176px;
@@ -40,16 +53,16 @@
   --table-font-size:13px;
   --table-compact-font-size:12.25px;
   --table-detail-font-size:11.5px;
-  /* 晨雾登录页专用：不改变已登录业务页面的主题。 */
-  --login-card:rgba(18,30,48,.74);
-  --login-input:rgba(24,39,61,.24);
-  --login-line:rgba(220,233,250,.30);
+  /* 登录与修改密码沿用独立变量，与业务页共用深蓝高光色系。 */
+  --login-card:linear-gradient(145deg,rgba(16,44,82,.92),rgba(4,19,43,.94));
+  --login-input:rgba(4,19,43,.72);
+  --login-line:rgba(80,200,255,.52);
   --login-text:#f3f7fd;
-  --login-muted:#d5dfed;
+  --login-muted:#c0d8f2;
   --login-action:#0865e8;
   --login-action-hover:#247cf4;
   --login-action-pressed:#0954bb;
-  --login-link:#82baff;
+  --login-link:#66deff;
   --login-error:#ffb8bd;
-  --login-shadow:0 18px 48px rgba(2,12,27,.22);
+  --login-shadow:0 24px 64px rgba(2,12,27,.52),0 0 42px rgba(38,229,255,.16),inset 0 1px 0 rgba(190,239,255,.24);
 }

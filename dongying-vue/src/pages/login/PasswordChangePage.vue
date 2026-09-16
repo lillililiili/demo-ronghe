@@ -64,8 +64,12 @@ async function submit() {
 </template>
 
 <style scoped>
-.password-page { position:fixed; inset:0; display:grid; place-items:center; padding:24px; overflow:auto; color:var(--login-text); }
-.password-background { position:fixed; inset:0; z-index:-1; width:100%; height:100%; object-fit:cover; }
+/* 环境光只覆盖背景图片，不改变表单布局或点击区域。 */
+.password-background { filter:brightness(.62) saturate(1.15); }
+.password-page::before { content:""; position:fixed; inset:0; z-index:-1; pointer-events:none; background:var(--login-overlay); }
+
+.password-page { isolation:isolate; position:fixed; inset:0; display:grid; place-items:center; padding:24px; overflow:auto; color:var(--login-text); }
+.password-background { position:fixed; inset:0; z-index:-2; width:100%; height:100%; object-fit:cover; }
 .password-card { width:min(560px, 100%); padding:36px; border:1px solid var(--login-line); border-radius:12px; background:var(--login-card); box-shadow:var(--login-shadow); backdrop-filter:blur(18px); }
 .password-heading { display:flex; gap:16px; align-items:flex-start; margin-bottom:28px; }
 .password-heading > .n-icon { flex:none; font-size:34px; color:var(--login-link); }

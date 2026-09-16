@@ -4,8 +4,6 @@ import { defineStore } from 'pinia';
 export const useAppStore = defineStore('app', {
   state: () => ({
     crumbCtx: null,       // 面包屑尾部业务上下文，APP.setCrumb 写入，换页清空
-    closedNavGroups: [],  // 手动收起的模块；默认全部展开，各组独立切换
-    navMini: false,       // 侧栏折叠
     bigscreen: false,     // 大屏模式
     remountKey: 0,        // APP.rerender() 自增，PageHost 监听后整页重挂
     accessRevision: 0,    // 当前用户、菜单或操作权限变化时自增，驱动外壳重新判权

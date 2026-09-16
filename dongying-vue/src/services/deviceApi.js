@@ -49,6 +49,13 @@ export const deviceApi = {
     }),
   currentEoTrack: targetId => apiRequest(`/targets/${targetId}/eo-tracking-tasks`),
   eoTrackAvailability: targetId => apiRequest(`/targets/${targetId}/eo-tracking-availability`),
+  prepareAirspaceDemoTarget: (targetId, frame) => apiRequest(`/local/airspace-demo/targets/${targetId}`, {
+    method: 'PUT', body: { frame }
+  }),
+  beginAirspaceDemoTrack: (targetId, frame, key = newIdempotencyKey('demo-eo-track')) =>
+    apiRequest(`/local/airspace-demo/targets/${targetId}/eo-tracking-tasks`, {
+      method: 'POST', body: { frame }, headers: { 'Idempotency-Key': key }
+    }),
   endEoTrack: (taskId, key = newIdempotencyKey('eo-track-end')) =>
     apiRequest(`/eo-tracking-tasks/${taskId}/end`, {
       method: 'POST', body: {}, headers: { 'Idempotency-Key': key }

@@ -74,7 +74,7 @@ export const ALARM_PROGRESS_TAG = {
 /* 状态回答“现在在哪一步”，与执行结果（成功/失败）分开说，不要混成一句。 */
 /* 未了结的授权：服务端对同一主体同类动作只允许一条（ACTIVE_AUTHORIZATION_EXISTS），页面据此禁用再次发起。 */
 export const DISPOSAL_ACTIVE_STATUSES = ['REQUESTED', 'APPROVED', 'EXECUTING'];
-/** 演示主线处罚交接的前提：反制或干扰至少一条已完成。与告警页「提交处罚交接」按钮一致。 */
+/** 只回答是否已有反制/干扰完成记录；处罚移送不以此为前提。 */
 export function disposalMainlineCompleted(counter, jam) {
   return [counter, jam].some(row => row && row.status === 'COMPLETED');
 }

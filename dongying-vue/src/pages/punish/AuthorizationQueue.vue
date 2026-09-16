@@ -8,6 +8,7 @@ import { DISPOSAL_ACTION_LABEL, DISPOSAL_CHANNEL_LABEL, SOURCE_MODE_LABEL, dispo
 import { openDisposalApproval, openDisposalExecution, openDisposalManualResult, openDisposalStop } from '@/ui/disposalAuthModal.js';
 import EmergencyStopPanel from '@/components/disposal/EmergencyStopPanel.vue';
 
+const props = defineProps({ initialAuthorizationId: { type: String, default: '' } });
 const rows = ref([]), selected = ref(null), page = ref(1), total = ref(0), status = ref('');
 const loading = ref(false), error = ref('');
 const pageSize = ref(20);
@@ -66,12 +67,12 @@ async function show(id) {
 }
 function resize(size) { pageSize.value = size; load(1); }
 function act(action, row) { action.open({ authorization: row, refresh: () => refresh(row.authorization_id) }); }
-onMounted(() => load());
+onMounted(() => props.initialAuthorizationId ? show(props.initialAuthorizationId) : load());
 onUnmounted(() => { active = false; request++; detailRequest++; });
 </script>
 
 <template>
-  <UPanel title="处置授权" sub="先申请、由另一人审批、执行并核对设备回执，再提交处罚交接"
+  <UPanel title="处置授权" sub="先申请并取得有效授权，再执行和核查现场结果；处罚移送按违法事实独立办理"
     panel-style="flex:1;min-height:0;margin-top:12px;overflow:hidden"
     body-style="display:flex;flex-direction:column;min-height:0;overflow:hidden">
     <div class="toolbar">

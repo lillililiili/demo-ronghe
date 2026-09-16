@@ -8,17 +8,14 @@ import {
   disposalStage, showEoVideo, uavProcessActions, uavProcessStatus
 } from '@/pages/situation/situationFlow.js';
 import { closeModal, openFormModal } from '@/ui/formModal.js';
-import { openConfirm } from '@/ui/confirm.js';
-import { openDisposalRequest } from '@/ui/disposalAuthModal.js';
-import { disposalApi } from '@/services/disposalApi.js';
 import { getUavEvent, verifyUavEvent } from '@/services/alarmApi.js';
 import { riskApi, newRiskIdempotencyKey } from '@/services/riskApi.js';
-import { handoffApi, newHandoffIdempotencyKey } from '@/services/handoffApi.js';
 import { isUncertainOutcome } from '@/services/apiClient.js';
 import {
   CORRIDOR_RELATION_LABEL, PLAN_STATUS_LABEL, RISK_STATE_LABEL, SEVERITY_LABEL, labelOf
 } from '@/ui/labels.js';
 import { toast } from '@/ui/nv.js';
+import { getAlarm } from '@/services/alarmApi.js';
 
 const U = window.UI;
 usePageChrome('situation');
@@ -463,8 +460,7 @@ function renderTargetActions(target) {
   if (target.objectTypeCode === 'UAV' && alarm) {
     const process = uavProcessActions(alarm);
     if (process.includes('false-positive')) buttons.push('<button type="button" data-tip-act="false-positive">误报</button>');
-    if (process.includes('counter')) buttons.push('<button type="button" class="is-danger" data-tip-act="counter">反制</button>');
-    if (process.includes('punish')) buttons.push('<button type="button" data-tip-act="punish">通知处罚部门</button>');
+    if (alarm.eventState !== 'FALSE_POSITIVE') buttons.push('<button type="button" data-tip-act="disposal-flow">处置流程</button>');
   }
   return buttons.length ? `<div class="sit-map-pop-actions">${buttons.join('')}</div>` : '';
 }
@@ -558,81 +554,24 @@ function openFalsePositive(target) {
   });
 }
 
-async function openCountermeasure(target) {
+async function openLinkedDisposal(target) {
   const alarm = targetAlarm(target);
-  if (!alarm?.eventId) return toast('没有关联无人机事件，无法发起反制', 'err');
-  let event;
-  try {
-    event = await getUavEvent(alarm.eventId);
-    if (event.state === 'PENDING_VERIFICATION') {
-      try {
-        event = await verifyUavEvent(alarm.eventId, {
-          conclusion: 'CONFIRMED', note: '融合感知页发起反制前复核：目标与告警轨迹一致。', expected_version: Number(event.version)
-        }, actionIdempotencyKey('situation-counter-confirm'));
-      } catch (error) {
-        if (!isUncertainOutcome(error)) throw error;
-        const readback = await getUavEvent(alarm.eventId);
-        if (readback.state !== 'CONFIRMED') throw error;
-        event = readback;
-      }
-    }
-    if (event.state !== 'CONFIRMED') return toast('该事件当前状态不允许发起反制', 'err');
-  } catch (error) {
-    return toast(error?.message || '读取无人机事件失败', 'err');
+  // 只有数据源明确提供业务告警 ID 才深链；页面私有模拟 ID 不冒充服务端事件。
+  if (alarm?.alarmId) {
+    try {
+      const linked = await getAlarm(alarm.alarmId);
+      if (!linked?.event_id) return toast('这条告警尚未建立可办理的无人机事件', 'err');
+      sessionStorage.setItem('alarm.sel', linked.alarm_id);
+      window.location.hash = '/alarms';
+    } catch (error) { toast(error.message || '无法读取关联告警，请稍后重试', 'err'); }
+    return;
   }
-  let policy = null;
-  try { policy = await disposalApi.policies(); } catch { policy = null; }
-  openDisposalRequest({
-    actionType: 'COUNTERMEASURE',
-    actionOptions: ['COUNTERMEASURE', 'JAMMING'],
-    subjectKind: 'UAV_EVENT',
-    subjectId: alarm.eventId,
-    subjectText: target.id,
-    policy,
-    refresh: async () => {
-      const page = await disposalApi.list({ subject_kind: 'UAV_EVENT', subject_id: alarm.eventId, page: 1, size: 100 });
-      return page?.items?.[0] || null;
-    },
-    onDone: () => { void source.refresh(); }
+  openFormModal({
+    title: '进入告警处置流程',
+    notice: '该目标尚未关联可办理的告警记录。请在告警事件中查看已关联的事件及其处置进度。',
+    fields: [], confirmText: '打开告警事件',
+    onSubmit: () => { closeModal(); window.location.hash = '/alarms'; }
   });
-}
-
-async function openPunish(target) {
-  const alarm = targetAlarm(target);
-  if (!alarm?.eventId) return toast('没有关联无人机事件，无法移送处罚', 'err');
-  if (alarm.disposalStage !== 'completed') return toast('处置尚未完成，不能移送处罚', 'err');
-  let recipients;
-  try { recipients = (await handoffApi.listHandoffRecipients('UAV_PUNISHMENT'))?.items || []; }
-  catch (error) { return toast(error?.message || '读取处罚接收方失败', 'err'); }
-  if (!recipients.length) return toast('尚未配置处罚接收方，请到专门业务页处理', 'err');
-  if (recipients.length > 1) return toast('存在多个处罚接收方，请到专门业务页选择后提交', 'err');
-  const sourceNo = target.id;
-  const recipient = recipients[0];
-  const ok = await new Promise(resolve => openConfirm({
-    title: '通知处罚部门',
-    message: `将把 ${sourceNo} 的处罚交接通知「${recipient.display_name}」。确认后只代表材料已提交，不表示处罚已立案或办结。是否继续？`,
-    confirmText: '确认通知',
-    onConfirm: () => { resolve(true); return true; },
-    onCancel: () => resolve(false)
-  }));
-  if (!ok) return;
-  try {
-    const event = await getUavEvent(alarm.eventId);
-    await handoffApi.createHandoff({
-      source_kind: 'UAV_EVENT', source_id: alarm.eventId, handoff_type: 'UAV_PUNISHMENT',
-      recipient_id: recipient.recipient_id, expected_version: Number(event.version)
-    }, newHandoffIdempotencyKey());
-  } catch (error) {
-    if (!isUncertainOutcome(error)) return toast(error?.message || '处罚交接提交失败', 'err');
-    const existing = await handoffApi.listHandoffs({
-      source_kind: 'UAV_EVENT', source_id: alarm.eventId, page: 1, size: 100
-    }).catch(() => null);
-    if (!(existing?.items || []).some(row => row.handoff_type === 'UAV_PUNISHMENT')) {
-      return toast('提交结果未确认，请到处罚业务页核对', 'err');
-    }
-  }
-  await source.refresh();
-  toast('处罚交接已提交', 'ok');
 }
 
 function onTipAction(action, hit) {
@@ -651,8 +590,7 @@ function onTipAction(action, hit) {
     : (selection.value?.kind === 'target' ? selectedTarget.value : null);
   if (!target) return;
   if (action === 'false-positive') openFalsePositive(target);
-  if (action === 'counter') openCountermeasure(target);
-  if (action === 'punish') openPunish(target);
+  if (action === 'disposal-flow') openLinkedDisposal(target);
 }
 
 function toggleLayer(key) {

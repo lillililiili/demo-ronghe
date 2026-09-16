@@ -1,16 +1,14 @@
 <script setup>
-/* 侧栏导航 —— 结构与 class 逐字对应旧 renderNav() 的输出（.g1/.l1/.l2/.gh/.ca/
-   .on/.has/.open/.mini/.navfoot/.fold），CSS 原样命中。 */
+/* 固定分组导航：标题仅作分类，业务页面入口始终可见。 */
 import { computed } from 'vue';
 import { useRoute } from 'vue-router';
-import { NAV, PAGE_THEME, routeKey } from '@/config/navModel.js';
+import { NAV, routeKey } from '@/config/navModel.js';
 import { useAppStore } from '@/stores/app.js';
 import { canAccessRoute } from '@/services/accessControl.js';
 
 const route = useRoute();
 const store = useAppStore();
 const cur = computed(() => routeKey(route));
-const moduleColor = n => ({ sensing: 'cyan', flight: 'indigo', incident: 'orange', analytics: 'purple' }[PAGE_THEME[n.k || n.kids?.[0]?.k]] || 'blue');
 const icon = name => window.UI.icon(name);
 const visibleNav = computed(() => {
   store.accessRevision;
@@ -19,31 +17,32 @@ const visibleNav = computed(() => {
     : Object.assign({}, n, { kids: n.kids.filter(c => canAccessRoute(c.k)) }))
     .filter(n => n && (n.k || n.kids.length));
 });
-
-function toggleGrp(t) {
-  store.closedNavGroups = store.closedNavGroups.includes(t)
-    ? store.closedNavGroups.filter(group => group !== t)
-    : [...store.closedNavGroups, t];
-}
-function fold() {
-  store.navMini = !store.navMini;
-  window.dispatchEvent(new Event('resize'));
-}
 </script>
 
 <template>
-  <nav class="nav" id="nav" :class="{ mini: store.navMini }">
+  <nav class="nav" id="nav" aria-label="业务导航">
     <template v-for="n in visibleNav" :key="n.t">
       <a v-if="n.k" class="l1" :class="{ on: cur === n.k }" :href="'#/' + n.k" :data-k="n.k"
-        :title="store.navMini ? n.t : undefined" :aria-label="n.t">
-        <i v-html="icon(n.icon)"></i><span>{{ n.t }}</span></a>
-      <div v-else class="g1" :style="{ '--nav-accent': `var(--${moduleColor(n)})` }" :class="{ open: !store.closedNavGroups.includes(n.t), has: n.kids.some(c => c.k === cur) }">
-        <div class="l1 gh" role="button" tabindex="0" :aria-expanded="!store.closedNavGroups.includes(n.t)" @keydown.enter.prevent="toggleGrp(n.t)" @keydown.space.prevent="toggleGrp(n.t)" :title="store.navMini ? n.t : undefined" :aria-label="n.t" :data-grp="n.t" @click="toggleGrp(n.t)"><i v-html="icon(n.icon)"></i><span>{{ n.t }}</span><b class="ca">›</b></div>
-        <div class="l2"><a v-for="c in n.kids" :key="c.k" :class="{ on: cur === c.k }" :href="'#/' + c.k" :data-k="c.k" :title="store.navMini ? c.t : undefined" :aria-label="c.t"><em></em><span>{{ c.t }}</span></a></div>
-      </div>
+        :aria-label="n.t" :aria-current="cur === n.k ? 'page' : undefined">
+        <i aria-hidden="true" v-html="icon(n.icon)"></i><span>{{ n.t }}</span>
+      </a>
+      <section v-else class="g1" :aria-label="n.t">
+        <h2 class="grp">{{ n.t }}</h2>
+        <a v-for="c in n.kids" :key="c.k" class="l1" :class="{ on: cur === c.k }" :href="'#/' + c.k" :data-k="c.k"
+          :aria-label="c.t" :aria-current="cur === c.k ? 'page' : undefined">
+          <i aria-hidden="true" v-html="icon(c.icon || n.icon)"></i><span>{{ c.t }}</span>
+        </a>
+      </section>
     </template>
-    <div class="navfoot">
-      <div class="fold" id="fold" :title="store.navMini ? '展开菜单' : undefined" @click="fold">{{ store.navMini ? '»' : '« 收起菜单' }}</div>
-    </div>
   </nav>
 </template>
+
+<style scoped>
+.nav { --nav-accent: var(--blue); }
+.nav .g1 { flex: none; }
+.nav .grp { margin: 0; padding: 14px 10px 6px; font-size: 11px; line-height: 1.5; font-weight: 500; letter-spacing: 1px; color: var(--txt-3); }
+.nav .g1:first-child .grp { padding-top: 4px; }
+.nav a.l1 { flex: none; }
+.nav a.l1.on { border-color: color-mix(in srgb, var(--nav-accent) 45%, transparent); background: linear-gradient(90deg, color-mix(in srgb, var(--nav-accent) 24%, transparent), color-mix(in srgb, var(--nav-accent) 6%, transparent)); box-shadow: inset 3px 0 var(--nav-accent); }
+.nav a.l1:focus-visible { outline: 2px solid var(--nav-accent); outline-offset: -2px; }
+</style>

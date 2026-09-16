@@ -2,6 +2,7 @@
 import { nextTick, ref, watch } from 'vue';
 import { canAccessRoute } from '@/services/accessControl.js';
 import AirspaceRiskEventDetail from './AirspaceRiskEventDetail.vue';
+import RiskOpticalPanel from '@/pages/flights/components/RiskOpticalPanel.vue';
 import { RISK_TYPE_LABEL, RISK_STATE_LABEL, SEVERITY_LABEL,
   SOURCE_MODE_LABEL, targetTypeLabel, labelOf } from '@/ui/labels.js';
 
@@ -61,6 +62,7 @@ function openTarget(row) { window.UI?.goto?.('situation', { target: row.target.t
             <dt v-if="!row.risk">记录情况</dt><dd v-if="!row.risk">{{ row.target.demo ? '模拟观测，不生成业务风险记录。' : row.target.risk_summary ? '仅有风险摘要，完整记录未在本次读取结果中。' : '暂未查到关联风险记录，是否存在风险需进一步核实。' }}</dd>
           </template>
         </dl></section>
+        <RiskOpticalPanel v-if="row.target" :key="row.target.target_id" :target="row.target" />
       </section>
     <footer v-if="row.target && !row.target.demo && canAccessRoute('situation')" class="detail-footer">
       <button class="btn ghost" type="button" @click="openTarget(row)">查看目标</button>

@@ -7,33 +7,33 @@
 /* 登录后默认落地页；侧栏不展示、旧书签会重定向到这里。 */
 export const HOME_KEY = 'situation';
 
-/* kids 存在即为可展开的一级模块；没有 kids 的一级模块直接就是页面。 */
+/* kids 表示固定展示的业务分组；没有 kids 的一级模块直接就是页面。 */
 export const NAV = [
   /* 「我的工作台」已按用户裁定隐藏（2026-09-13），融合感知即首页 */
   /* 「综合态势」页已按用户裁定整页删除（2026-08-28），融合感知即首页 */
   {
     t: '感知监测', icon: 'radar', kids: [
-      { k: 'situation', t: '融合感知' }
+      { k: 'situation', t: '融合感知', icon: 'radar' }
     ]
   },
   {
     t: '飞行监管', icon: 'plan', kids: [
-      { k: 'flights', t: '飞行计划' },
-      { k: 'legality', t: '合法性研判' },
+      { k: 'flights', t: '飞行计划', icon: 'plan' },
+      { k: 'legality', t: '合法性研判', icon: 'check' },
       /* 2026-09-13 挂回菜单（设计稿 v2）：访问权限由飞行计划承载，见 accessControl.js 的 ROUTE_ALIAS。 */
-      { k: 'airspace', t: '空域管理' }
+      { k: 'airspace', t: '空域管理', icon: 'zone' }
     ]
   },
   {
     t: '事件处置', icon: 'alert', kids: [
-      { k: 'alarms', t: '告警事件' },
-      { k: 'punish', t: '处置与处罚' }
+      { k: 'alarms', t: '告警事件', icon: 'alert' },
+      { k: 'punish', t: '处置与处罚', icon: 'gavel' }
     ]
   },
   {
     t: '分析报告', icon: 'chart', kids: [
-      { k: 'stats', t: '运行统计' },
-      { k: 'evidence', t: '证据管理' }
+      { k: 'stats', t: '运行统计', icon: 'chart' },
+      { k: 'evidence', t: '证据管理', icon: 'archive' }
     ]
   },
 ];

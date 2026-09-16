@@ -1,4 +1,5 @@
-// 独立的模拟观测样例，不写入目标、风险或设备接口。坐标与规模均为示意值。
+// 模拟观测不生成风险；打开追踪区时由 local 后端按样例和帧建立 mock 目标。
+// 坐标与规模均为示意值，帧参数与 LocalAirspaceDemoTargetService 保持一致。
 import { pointRelation } from './airspaceRiskModel.js';
 
 export const DEMO_FRAMES = 7;
@@ -61,7 +62,7 @@ export function buildAirspaceDemo(frame, now) {
     return { target_id: `airspace-demo-${sample.id}`, target_no: sample.name, object_type_code: sample.subtype === 'BIRD_FLOCK' ? 'BIRD' : 'UNKNOWN',
       subtype: sample.subtype, source_mode: 'mock', district_id: DEMO_DISTRICT, district_name: '模拟场景区域',
       last_seen_at: now, latest_state: { observed_at: now, location: { longitude: current.lon, latitude: current.lat }, altitude_amsl_m: current.height },
-      demo: { scene, relation, severity: sample.severity, distance, previousDistance: before, altitude: current.height, datum: 'AMSL',
+      demo: { frame: step, scene, relation, severity: sample.severity, distance, previousDistance: before, altitude: current.height, datum: 'AMSL',
         count: current.count, unit: sample.subtype === 'BIRD_FLOCK' ? '只' : '个', countDelta: current.count - previous.count,
         horizontal, vertical, trail, speed: Math.hypot(sample.dx, sample.dy) / 10, verticalSpeed: sample.dh / 10 } };
   });

@@ -16,6 +16,7 @@ import UKpis from '@/components/UKpis.vue';
 import { UField } from '@/components/form/index.js';
 import UPagination from '@/components/UPagination.vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
+import { legalityReviewFocus } from '@/ui/legalityReviewFocus.js';
 import { legalityApi } from '@/services/legalityApi.js';
 import { flightApi } from '@/services/flightApi.js';
 import { hasPermission } from '@/services/accessControl.js';
@@ -46,6 +47,7 @@ const detailError = ref('');
 const revisionsError = ref('');
 const deepLinkNotice = ref('');
 const selectedHitIndex = ref(-1);
+const showAllChecks = ref(false);
 const kpiList = ref(kpiPlaceholder('正在读取规则效果汇总…'));
 const shadowHint = ref('');
 let listToken = 0;
@@ -130,6 +132,17 @@ const selectedConclusion = computed(() => conclusionMeta[selectedEvaluation.valu
 const selectedQueueIndex = computed(() => items.value.findIndex(item => item.evaluation_id === selectedEvaluation.value?.evaluation_id));
 const primaryReason = computed(() => evaluationReason(selectedEvaluation.value));
 const allowed = computed(() => selectedEvaluation.value?.allowed_actions || []);
+const reviewFocus = computed(() => legalityReviewFocus(selectedEvaluation.value));
+const checkRows = computed(() => (selectedEvaluation.value?.hit_details || []).map((hit, index) => ({ hit, index }))
+  .filter(({ hit }) => showAllChecks.value || ['FAIL', 'UNDETERMINED'].includes(hit.result_code)));
+const secondaryCheckCount = computed(() => (selectedEvaluation.value?.hit_details || []).filter(hit => !['FAIL', 'UNDETERMINED'].includes(hit.result_code)).length);
+const unlistedUnknowns = computed(() => reviewFocus.value.unknownReasons.filter(code => !(selectedEvaluation.value?.hit_details || []).some(hit => hit.reason_code === code)));
+function chooseReviewQueue() {
+  const active = st.review === 'PENDING_REVIEW' && st.legal === 'UNDETERMINED';
+  st.review = active ? '' : 'PENDING_REVIEW';
+  st.legal = active ? '' : 'UNDETERMINED';
+  onRegionChange();
+}
 const c01Facts = computed(() => selectedEvaluation.value?.hit_details?.find(hit => hit.rule_code === 'C01')?.facts || null);
 const demoParams = computed(() => selectedEvaluation.value?.param_status === 'DEMO');
 
@@ -182,7 +195,7 @@ function shortTime(value) {
 }
 function evaluationReason(item) {
   if (!item) return '尚未取得研判详情';
-  if (item.legal_status === 'LEGAL') return item.unknown_reasons?.length ? `全部检查通过（${item.unknown_reasons.length} 项无法判定）` : '全部检查通过';
+  if (item.legal_status === 'LEGAL') return item.unknown_reasons?.length ? `系统判定合法，另有 ${item.unknown_reasons.length} 项未知信息` : '全部检查通过';
   if (item.violation_reasons?.length) return ruleReasonText(item.violation_reasons[0]);
   if (item.unknown_reasons?.length) return ruleReasonText(item.unknown_reasons[0]);
   if (item.legal_status === 'LEGAL') return '全部检查通过';
@@ -258,6 +271,7 @@ function invalidateDetail() {
   revisions.value = [];
   revisionsTotal.value = 0;
   selectedHitIndex.value = -1;
+  showAllChecks.value = false;
   detailError.value = '';
   revisionsError.value = '';
 }
@@ -325,6 +339,7 @@ async function selectEvaluationById(evaluationId) {
   const token = ++detailToken;
   S.st.selectedEvaluationId = evaluationId;
   selectedHitIndex.value = -1;
+  showAllChecks.value = false;
   detailError.value = '';
   detailLoading.value = true;
   try {
@@ -553,6 +568,7 @@ onMounted(() => {
               @click="chooseTab(tab.value)">{{ tab.label }} <span>({{ tabCount(index) }})</span></button>
           </div>
           <div class="lg-queue-filters" role="group" aria-label="队列筛选">
+            <button class="btn sm lg-review-filter" type="button" :class="{ pri: st.review === 'PENDING_REVIEW' && st.legal === 'UNDETERMINED' }" :aria-pressed="st.review === 'PENDING_REVIEW' && st.legal === 'UNDETERMINED'" :disabled="loading" title="查看不可判定且待人工复核的目标" @click="chooseReviewQueue">信息待核对</button>
             <UField class="lg-region-filter" variant="filter" label="区域" v-model="st.district" type="select" size="small"
               :options="districtOptions" :disabled="loading" @update:model-value="onRegionChange" />
             <UField class="lg-region-filter" variant="filter" label="复核" v-model="st.review" type="select" size="small"
@@ -609,26 +625,40 @@ onMounted(() => {
             <div v-else-if="!selectedEvaluation" class="empty">请选择一条研判</div>
             <template v-else>
               <div class="lg-detail-scroll">
+                <section class="lg-focus-card" aria-label="系统结论与人工核对重点">
+                  <div class="lg-focus-verdict"><span>系统结论</span><strong class="lg-status-tag" :class="`is-${selectedConclusion.tone}`">{{ selectedConclusion.label }}</strong><span>{{ reviewText(selectedEvaluation) }}</span></div>
+                  <p class="lg-focus-basis">{{ primaryReason }}</p>
+                  <p class="lg-muted">{{ formatTime(selectedEvaluation.evaluated_at) }} · {{ sourceText(selectedEvaluation.source_mode) }}{{ demoParams ? ' · 演示参数' : '' }}</p>
+                  <p v-if="selectedEvaluation.review?.manual_status" class="lg-focus-manual">人工结论：<b>{{ legalStatusText(selectedEvaluation.review.manual_status) }}</b>（原始系统结论保留）</p>
+                  <div class="lg-focus-task" :class="{ 'needs-review': reviewFocus.needsReview }">
+                    <b>{{ reviewFocus.title }}</b><p>{{ reviewFocus.note }}</p>
+                    <ul v-if="unlistedUnknowns.length"><li v-for="code in unlistedUnknowns" :key="code">{{ ruleReasonText(code) }}</li></ul>
+                    <p v-if="reviewFocus.needsReview && !allowed.includes('REVIEW')" class="lg-state-warn">当前账号或记录状态不允许复核，可查看依据与历史。</p>
+                  </div>
+                  <p class="lg-focus-outcome">告警结果：{{ outcomeText(selectedEvaluation) }}</p>
+                </section>
                 <section class="lg-basis-card">
-                  <header>判定依据 <span :title="ruleVersionText(selectedEvaluation)">{{ ruleVersionText(selectedEvaluation) }}</span></header>
+                  <header>判定依据与差异 <span :title="ruleVersionText(selectedEvaluation)">{{ ruleVersionText(selectedEvaluation) }}</span></header>
                   <div class="lg-selected-subject"><b :title="subjectLabel(selectedEvaluation)">{{ subjectLabel(selectedEvaluation) }}</b><span>{{ demoParams ? '演示参数' : '已确认参数' }}</span>
                     <button class="lg-icon-btn lg-previous" type="button" :disabled="selectedQueueIndex <= 0" aria-label="上一条" @click="moveSelection(-1)" v-html="UI.icon('arrowRight')"></button>
                     <button class="lg-icon-btn" type="button" :disabled="selectedQueueIndex < 0 || selectedQueueIndex >= items.length - 1" aria-label="下一条" @click="moveSelection(1)" v-html="UI.icon('arrowRight')"></button>
                   </div>
                   <div class="lg-check-list">
                     <div v-if="!selectedEvaluation.hit_details?.length" class="empty">未提供单项检查</div>
-                    <button v-for="(hit, index) in selectedEvaluation.hit_details || []"
+                    <p v-if="selectedEvaluation.hit_details?.length && !checkRows.length" class="lg-check-empty">没有不通过或不可判定的单项检查，可展开查看完整依据。</p>
+                    <button v-for="{ hit, index } in checkRows"
                       :key="`${hit.rule_code}-${index}`" type="button" class="lg-check-item"
                       :class="[resultClass(hit.result_code), { 'is-selected': selectedHitIndex === index }]"
                       :aria-expanded="selectedHitIndex === index" :title="hit.message || ''" @click="toggleHit(index)">
                       <span class="lg-check-icon" v-html="UI.icon(hit.result_code === 'PASS' ? 'check' : hit.result_code === 'FAIL' ? 'cross' : 'clock')"></span>
                       <span class="lg-check-copy"><b>{{ ruleName(hit.rule_code) }}<em>{{ resultText(hit.result_code) }}</em></b>
                         <small class="lg-check-description">{{ hit.message || (hit.reason_code ? ruleReasonText(hit.reason_code) : '未提供说明') }}</small>
+                        <small v-if="selectedHitIndex === index && hit.facts && Object.keys(hit.facts).length">判定时事实：{{ factText(hit.facts) }}</small>
                         <small v-if="selectedHitIndex === index">{{ hit.rule_code }} · {{ hit.params?.some(p => p.status === 'DEMO') ? '演示参数' : (hit.params?.length ? '已确认参数' : '未提供参数') }}</small>
                       </span>
                     </button>
                   </div>
-                  <footer class="lg-result-summary">综合判定结果：<span class="lg-status-tag" :class="`is-${selectedConclusion.tone}`">{{ selectedConclusion.label }}</span></footer>
+                  <footer v-if="secondaryCheckCount" class="lg-result-summary"><button type="button" class="lg-link-btn" :aria-expanded="showAllChecks" @click="showAllChecks = !showAllChecks">{{ showAllChecks ? '收起通过及不适用项' : `查看通过及不适用项（${secondaryCheckCount}）` }}</button></footer>
                 </section>
 
                 <section class="lg-evidence-card">
@@ -744,12 +774,16 @@ onMounted(() => {
               </div>
 
               <footer class="lg-action-dock">
-<!-- 动作以服务端 allowed_actions 为准：权限或状态任一不满足即禁用。 -->
                 <div class="detail-actions">
-                  <button class="btn pri" type="button" :disabled="!allowed.includes('REVIEW')"
-                    :title="allowed.includes('REVIEW') ? '记录人工复核结论' : '当前不可复核：已复核、已被取代或缺少复核权限'" @click="onReview">人工复核</button>
-                  <button class="btn" type="button" :disabled="!allowed.includes('RECOMPUTE')"
-                    :title="allowed.includes('RECOMPUTE') ? '按当前生效规则集重新研判' : '已有更新的判定结果，或你没有重新研判的权限'" @click="onRecompute">重新研判</button>
+                  <button v-if="reviewFocus.superseded && selectedEvaluation.superseded_by_evaluation_id" class="btn pri" type="button" @click="selectEvaluationById(selectedEvaluation.superseded_by_evaluation_id)">查看最新研判</button>
+                  <button v-else-if="reviewFocus.needsReview" class="btn pri" type="button" :disabled="!allowed.includes('REVIEW')" @click="onReview">{{ reviewFocus.unresolved ? '核对信息缺口' : '核对判定依据' }}</button>
+                  <details v-if="allowed.includes('RECOMPUTE') || (allowed.includes('REVIEW') && !reviewFocus.needsReview && !reviewFocus.superseded)" :key="selectedEvaluation.evaluation_id" class="lg-secondary-actions">
+                    <summary>更多操作</summary>
+                    <div>
+                      <button v-if="allowed.includes('REVIEW') && !reviewFocus.needsReview && !reviewFocus.superseded" class="btn" type="button" @click="onReview">补充人工纠正</button>
+                      <button v-if="allowed.includes('RECOMPUTE')" class="btn" type="button" @click="onRecompute">重新研判</button>
+                    </div>
+                  </details>
                 </div>
               </footer>
             </template>
@@ -766,7 +800,7 @@ onMounted(() => {
 .legality-workbench button{font:inherit;cursor:pointer}
 .legality-workbench button:focus-visible,.legality-workbench summary:focus-visible{outline:2px solid var(--cyan);outline-offset:-2px}
 .lg-shell,.lg-workspace{height:100%;min-height:0}
-.lg-workspace{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.lg-workspace{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:16px}
 .lg-main-column{min-width:0;min-height:0;display:flex;flex-direction:column;gap:16px}
 .lg-kpi-host{flex:none}
 .legality-workbench .lg-kpi-host :deep(.kpis){display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}
@@ -809,24 +843,26 @@ onMounted(() => {
 .lg-basis-card,.lg-evidence-card,.lg-more-details{flex:none;min-width:0;border:1px solid var(--lg-line);border-radius:5px;background:var(--lg-surface);overflow:hidden}
 .lg-basis-card>header,.lg-evidence-card>header{display:flex;align-items:center;gap:10px;min-height:42px;padding:10px 16px;border-bottom:1px solid var(--lg-line);background:linear-gradient(100deg,#0a2e58,#051a35);font-size:15px;font-weight:600;color:#d1e7ff}
 .lg-basis-card>header span,.lg-evidence-card>header span{flex:1;min-width:0;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px;font-weight:400;color:#7798be}
-.lg-basis-card{display:flex;flex-direction:column;max-height:49%;min-height:230px}.lg-check-list{padding:5px 12px;overflow:auto;min-height:0;scrollbar-width:thin}.lg-selected-subject{display:flex;align-items:center;gap:8px;padding:8px 16px;border-bottom:1px solid var(--lg-line);font-size:11px;color:#7f9ec2}.lg-selected-subject b{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#afcce8;font-weight:500}.lg-selected-subject>span{flex:none;color:var(--amber)}.lg-check-item{display:flex;align-items:flex-start;gap:12px;width:100%;padding:8px 6px;border:0;border-radius:3px;background:transparent;text-align:left}.lg-check-item:hover,.lg-check-item.is-selected{background:rgba(25,104,187,.14)}
+.lg-basis-card{display:flex;flex-direction:column;max-height:none;min-height:0}.lg-check-list{padding:5px 12px;overflow:auto;max-height:320px;min-height:0;scrollbar-width:thin}.lg-selected-subject{display:flex;align-items:center;gap:8px;padding:8px 16px;border-bottom:1px solid var(--lg-line);font-size:11px;color:#7f9ec2}.lg-selected-subject b{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#afcce8;font-weight:500}.lg-selected-subject>span{flex:none;color:var(--amber)}.lg-check-item{display:flex;align-items:flex-start;gap:12px;width:100%;padding:8px 6px;border:0;border-radius:3px;background:transparent;text-align:left}.lg-check-item:hover,.lg-check-item.is-selected{background:rgba(25,104,187,.14)}
 .lg-check-icon{display:flex;align-items:center;justify-content:center;flex:none;width:21px;height:21px;margin-top:1px;border-radius:5px;color:#dbf7ff;background:var(--green)}
 .lg-check-item.is-fail .lg-check-icon{background:var(--red)}.lg-check-item.is-warn .lg-check-icon{background:var(--amber);color:#152137}
 .lg-check-copy{min-width:0;flex:1}.lg-check-copy b{display:flex;gap:8px;justify-content:space-between;color:#c5d9ee;font-size:13px;font-weight:600;line-height:1.6}.lg-check-copy em{font-size:11px;font-style:normal;font-weight:400;color:var(--green)}.lg-check-item.is-fail em{color:var(--red)}.lg-check-item.is-warn em{color:var(--amber)}
 .lg-check-description{display:-webkit-box!important;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}.lg-check-item.is-selected .lg-check-description{-webkit-line-clamp:unset}.lg-check-copy small{display:block;margin-top:3px;color:#7f9ec2;font-size:12px;line-height:1.65;overflow-wrap:anywhere}
 .lg-rule-focus{margin:0 16px 12px;padding:10px;border:1px solid var(--lg-line);border-radius:4px;font-size:12px;line-height:1.7}.lg-rule-focus b,.lg-rule-focus>span{display:block}
 .lg-result-summary{flex:none;display:flex;align-items:center;gap:12px;min-height:51px;padding:9px 16px;border-top:1px solid var(--lg-line);color:#c1d3eb;font-size:14px}
-.lg-evidence-card{display:flex;flex-direction:column;min-height:180px;flex:1}.lg-evidence-card>header,.lg-evidence-tabs{flex:none}.lg-evidence-body{min-height:0;overflow:auto;scrollbar-width:thin}.lg-evidence-tabs{display:flex;border-bottom:1px solid var(--lg-line)}.lg-evidence-tab{flex:1;padding:11px 4px;border:0;border-bottom:2px solid transparent;background:transparent;color:#7895b7;font-size:11px!important;white-space:nowrap}.lg-evidence-tab.is-active{color:var(--cyan);border-bottom-color:var(--cyan);background:rgba(0,162,255,.05)}
+.lg-evidence-card{display:flex;flex-direction:column;min-height:300px;flex:none}.lg-evidence-card>header,.lg-evidence-tabs{flex:none}.lg-evidence-body{min-height:0;overflow:auto;scrollbar-width:thin}.lg-evidence-tabs{display:flex;border-bottom:1px solid var(--lg-line)}.lg-evidence-tab{flex:1;padding:11px 4px;border:0;border-bottom:2px solid transparent;background:transparent;color:#7895b7;font-size:11px!important;white-space:nowrap}.lg-evidence-tab.is-active{color:var(--cyan);border-bottom-color:var(--cyan);background:rgba(0,162,255,.05)}
 .lg-evidence-body{padding:12px 16px;font-size:12px;line-height:1.6;color:#9bb4d0}.lg-evidence-body h4{margin:0 0 10px;color:#c7deee;font-size:13px}.lg-evidence-body h4 span{display:block;color:#728fae;font-size:11px;font-weight:400}.lg-evidence-body p{margin:4px 0}
 .lg-evidence-timeline{list-style:none;margin:0 0 12px;padding:0}.lg-evidence-timeline li{position:relative;display:flex;gap:12px;min-height:70px;padding:10px 0}.lg-evidence-timeline li:not(:last-child):before{content:"";position:absolute;left:11px;top:35px;bottom:-8px;width:1px;background:rgba(0,163,248,.4)}.lg-evidence-timeline li+li{border-top:1px solid rgba(39,112,185,.17)}.lg-evidence-icon{display:flex;justify-content:center;align-items:center;width:24px;height:24px;flex:none;border-radius:50%;background:#073c67;color:var(--cyan)}.lg-evidence-timeline b{color:#54c7fa;font-size:13px}.lg-evidence-timeline p{overflow-wrap:anywhere;color:#8caaca;font-size:12px}
 .lg-map-wrap{position:relative;min-height:185px;margin-top:10px;overflow:hidden;border:1px solid var(--lg-line);border-radius:4px;background:#09213a}.lg-map-host{position:absolute;inset:0}.lg-map-legend{position:absolute;left:5px;right:5px;bottom:5px;display:flex;justify-content:center;gap:10px;padding:3px;background:rgba(3,17,34,.88);font-size:9px}.lg-map-legend .is-zone{color:var(--red)}.lg-map-legend .is-plan{color:var(--blue)}.lg-map-legend .is-track{color:var(--amber)}
 .lg-resource-grid,.lg-target-facts dl,.lg-review-state dl{display:grid;grid-template-columns:90px minmax(0,1fr);gap:7px;margin:8px 0;font-size:12px}.lg-resource-grid dt,.lg-target-facts dt,.lg-review-state dt{color:#7793b0}.lg-resource-grid dd,.lg-target-facts dd,.lg-review-state dd{margin:0;overflow-wrap:anywhere;color:#bad0e5}
-.lg-more-details{max-height:45%;overflow:auto;scrollbar-width:thin}.lg-selected-subject .lg-icon-btn{flex:none;width:22px;height:22px}.lg-previous :deep(svg){transform:rotate(180deg)}.lg-icon-btn:disabled{opacity:.35;cursor:not-allowed}.lg-evidence-wide :deep(.pager){overflow:auto;max-width:100%}.lg-more-details summary{padding:12px 16px;color:#9dbbdb;font-size:12px;cursor:pointer}.lg-history-strip{display:flex;flex-wrap:wrap;gap:6px;padding:8px 12px;border-top:1px solid var(--lg-line)}.lg-history-strip button{padding:6px;border:1px solid var(--lg-line);border-radius:4px;background:#082445;color:#a3c5e5;font-size:11px}.lg-history-strip :deep(.pager){max-width:100%;overflow:auto}
+.lg-more-details{max-height:none;overflow:auto;scrollbar-width:thin}.lg-selected-subject .lg-icon-btn{flex:none;width:22px;height:22px}.lg-previous :deep(svg){transform:rotate(180deg)}.lg-icon-btn:disabled{opacity:.35;cursor:not-allowed}.lg-evidence-wide :deep(.pager){overflow:auto;max-width:100%}.lg-more-details summary{padding:12px 16px;color:#9dbbdb;font-size:12px;cursor:pointer}.lg-history-strip{display:flex;flex-wrap:wrap;gap:6px;padding:8px 12px;border-top:1px solid var(--lg-line)}.lg-history-strip button{padding:6px;border:1px solid var(--lg-line);border-radius:4px;background:#082445;color:#a3c5e5;font-size:11px}.lg-history-strip :deep(.pager){max-width:100%;overflow:auto}
 .lg-verdict-card{padding:12px 16px}.lg-verdict-block{display:flex;align-items:center;gap:10px}.lg-verdict-icon{display:flex;color:var(--amber)}.lg-verdict-block>div{display:flex;flex-direction:column;gap:4px}.lg-verdict-block strong{font-size:22px;color:var(--red)}.lg-verdict-card.is-green strong{color:var(--green)}.lg-verdict-card.is-amber strong{color:var(--amber)}.lg-verdict-block small,.lg-verdict-block span,.lg-core-reason{font-size:12px;color:#93aecc}.lg-core-reason{display:flex;flex-direction:column;gap:5px;margin:14px 0}.lg-core-reason b{color:#c8ddef}.lg-target-facts,.lg-review-state{border-top:1px solid var(--lg-line);padding-top:10px;margin-top:10px}.lg-review-state>.tag{font-size:11px}
 .lg-action-dock{flex:none;padding:12px 0 0}.detail-actions{display:flex;gap:8px;margin:0}.lg-action-dock .btn{flex:1;min-width:0;height:40px!important;border-radius:4px;font-size:13px;background:#052246;border-color:#1264ad;color:#55c4ff}.lg-action-dock .btn.pri{background:linear-gradient(100deg,#075fa2,#08366a);color:#b8ecff}.detail-actions .btn:disabled{cursor:not-allowed;opacity:.45}
 .lg-link-btn{border:0;padding:0;background:transparent;color:var(--cyan);font-size:12px}.lg-reference-list{padding-left:16px;font-size:12px;line-height:1.8}.lg-muted{color:#7691b0!important}.is-pass{color:var(--green)}.is-fail,.lg-state-error,.lg-evidence-alert{color:var(--red)}.is-warn,.lg-state-warn{color:var(--amber)}.lg-inline-error{padding:10px 14px;border-bottom:1px solid var(--lg-line);font-size:12px;line-height:1.6;color:var(--amber)}.empty{padding:28px 16px;font-size:13px;line-height:1.8}
+.lg-focus-card{flex:none;border:1px solid var(--lg-line);border-radius:5px;padding:14px 16px;background:var(--lg-surface);font-size:12px;line-height:1.6;overflow-wrap:anywhere}
+.lg-focus-verdict{display:flex;align-items:center;gap:10px;flex-wrap:wrap;color:var(--muted)}.lg-focus-verdict>span:first-child{color:var(--text);font-size:14px}.lg-focus-card p{margin:7px 0}.lg-focus-basis{color:var(--text)}.lg-focus-task{border-top:1px solid var(--lg-line);padding-top:10px;margin-top:10px;color:var(--muted)}.lg-focus-task>b{color:var(--text)}.lg-focus-task.needs-review>b{color:var(--amber)}.lg-focus-task ul{padding-left:18px;margin:6px 0}.lg-focus-outcome{color:var(--muted)}.lg-focus-manual{color:var(--cyan)}.lg-check-empty{font-size:12px;line-height:1.6;color:var(--muted);padding:0 4px}.lg-secondary-actions{position:relative;flex:none}.lg-secondary-actions>summary{padding:10px 14px;border:1px solid var(--lg-line);border-radius:4px;color:var(--cyan);cursor:pointer;list-style:none;font-size:13px}.lg-secondary-actions>div{position:absolute;bottom:calc(100% + 8px);right:0;z-index:5;min-width:180px;padding:8px;background:var(--lg-surface);border:1px solid var(--lg-line);border-radius:4px;box-shadow:0 4px 20px #0006;display:flex;flex-direction:column;gap:6px}.lg-review-filter{white-space:nowrap}
 @media(min-width:1800px){.lg-queue-panel{display:grid;grid-template-columns:minmax(0,1fr) 490px;grid-template-rows:54px minmax(0,1fr) auto}.lg-queue-tabs{min-height:54px}.lg-queue-filters{gap:10px;padding:8px 10px}.lg-list-host,.lg-pager{grid-column:1/-1}.lg-queue-tabs button{padding:0 15px}.lg-target-table{font-size:14px}.lg-target-table td{height:76px}.lg-target-table th{height:48px}.lg-main-column{gap:18px}.legality-workbench .lg-kpi-host :deep(.kpi){min-height:120px}.legality-workbench .lg-kpi-host :deep(.vl){font-size:40px}}
-@media(max-width:1399px){.legality-workbench{padding:12px!important}.lg-workspace{gap:12px;grid-template-columns:repeat(2,minmax(0,1fr))}.lg-main-column{gap:12px}.legality-workbench .lg-kpi-host :deep(.kpis){gap:8px}.legality-workbench .lg-kpi-host :deep(.kpi){padding:14px 10px;min-height:100px}.legality-workbench .lg-kpi-host :deep(.ic){left:10px;top:14px;width:17px}.legality-workbench .lg-kpi-host :deep(.lb){padding-left:23px;font-size:12px}.legality-workbench .lg-kpi-host :deep(.vl){font-size:30px}.lg-queue-tabs button{flex:1;padding:0 7px;font-size:12px}.lg-queue-tabs button span{font-size:11px}.lg-queue-filters{gap:8px;padding:7px 10px}}
+@media(max-width:1399px){.legality-workbench{padding:12px!important}.lg-workspace{gap:12px;grid-template-columns:minmax(0,3fr) minmax(0,2fr)}.lg-main-column{gap:12px}.legality-workbench .lg-kpi-host :deep(.kpis){gap:8px}.legality-workbench .lg-kpi-host :deep(.kpi){padding:14px 10px;min-height:100px}.legality-workbench .lg-kpi-host :deep(.ic){left:10px;top:14px;width:17px}.legality-workbench .lg-kpi-host :deep(.lb){padding-left:23px;font-size:12px}.legality-workbench .lg-kpi-host :deep(.vl){font-size:30px}.lg-queue-tabs button{flex:1;padding:0 7px;font-size:12px}.lg-queue-tabs button span{font-size:11px}.lg-queue-filters{gap:8px;padding:7px 10px}}
 @media(max-width:1040px){.legality-workbench{overflow:auto!important}.lg-shell,.lg-workspace{height:auto;min-height:100%}.lg-workspace{grid-template-columns:minmax(0,1fr)}.lg-queue-panel{height:560px;flex:auto}.lg-detail-scroll{overflow:visible}.lg-basis-card{max-height:none}.lg-evidence-card{min-height:300px}.lg-more-details{max-height:none}.lg-review-panel{min-height:0}.lg-map-wrap{min-height:250px}}
 @media(prefers-reduced-motion:reduce){.legality-workbench *{transition:none!important;scroll-behavior:auto!important}}
 </style>

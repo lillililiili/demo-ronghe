@@ -9,7 +9,7 @@ export default {};
 
 <script setup>
 /* 处置处罚管理：业务交接清单只列无人机事件的处罚交接。
-   通知状态是页面口径：已通知 / 未通知。未通知时可点「通知处罚部门」，先走统一确认弹窗，确认后本期只记录已提交、不调接口。 */
+   通知与案件结果读取服务端，页面不再用本地标记代替送达。 */
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import UKpis from '@/components/UKpis.vue';
@@ -18,9 +18,10 @@ import AuthorizationQueue from '@/pages/punish/AuthorizationQueue.vue';
 import UPagination from '@/components/UPagination.vue';
 import UControl from '@/components/form/UControl.vue';
 import { toast } from '@/ui/nv.js';
-import { openConfirm } from '@/ui/confirm.js';
 import { UAV_STATE_TEXT as UAV_STATE_LABEL } from '@/ui/uavVerificationModal.js';
 import { handoffApi } from '@/services/handoffApi.js';
+import AdvisoryRecords from '@/components/disposal/AdvisoryRecords.vue';
+import PunishmentOutcome from '@/pages/punish/PunishmentOutcome.vue';
 import { getEvidenceChain } from '@/services/evidenceApi.js';
 import {
   ALARM_TYPE_LABEL, CONCLUSION_LABEL as EVENT_CONCLUSION_LABEL,
@@ -31,7 +32,8 @@ import { chainTypeCards, openEvidenceChainTypeModal } from '@/ui/evidenceChainVi
 
 usePageChrome('punish');
 const root = ref(null);
-const activeTab = ref('handoffs');
+const authorizationId = new URLSearchParams(location.hash.split('?')[1] || '').get('authorization') || '';
+const activeTab = ref(authorizationId ? 'authorizations' : 'handoffs');
 const U = window.UI;
 
 const UAV_KIND = 'UAV_EVENT';
@@ -60,35 +62,21 @@ const chain = ref(null);
 const chainLoading = ref(false);
 const chainError = ref('');
 const legacyLinkNote = ref('');
-const notifiedIds = ref(new Set());
 let listToken = 0, kpiToken = 0, detailToken = 0, chainToken = 0;
 
 function isNotified(row) {
   if (!row) return false;
-  if (notifiedIds.value.has(row.handoff_id)) return true;
   return row.delivery_status === 'DELIVERED' || row.receipt_status === 'ACKNOWLEDGED';
 }
 function notifyLabel(row) { return isNotified(row) ? '已通知' : '未通知'; }
 function notifyTag(row) { return isNotified(row) ? 't-green' : 't-amber'; }
 function notifyTone(row) { return isNotified(row) ? 'good' : 'warn'; }
 
-async function notifyDepartment() {
+async function refreshDelivery() {
   const row = selected.value;
-  if (!row || isNotified(row)) return;
-  const sourceNo = readableNo(row.source_no, row.source_id) || '该交接';
-  const recipient = row.recipient_name || '处罚接收方';
-  const ok = await new Promise(resolve => openConfirm({
-    title: '通知处罚部门',
-    message: `将把 ${sourceNo} 的处罚交接通知「${recipient}」。确认后只记录已提交通知，不表示处罚已立案或办结。是否继续？`,
-    confirmText: '确认通知',
-    onConfirm: () => { resolve(true); return true; },
-    onCancel: () => resolve(false)
-  }));
-  if (!ok) return;
-  const next = new Set(notifiedIds.value);
-  next.add(row.handoff_id);
-  notifiedIds.value = next;
-  toast('已提交', 'ok');
+  if (!row) return;
+  await loadList(page.value, row.handoff_id);
+  await loadKpis();
 }
 
 const kpiList = computed(() => {
@@ -288,7 +276,7 @@ onMounted(() => {
         <button class="btn" :class="{ pri: activeTab === 'authorizations' }" @click="activeTab = 'authorizations'">反制授权</button>
         <button class="btn" :class="{ pri: activeTab === 'handoffs' }" @click="activeTab = 'handoffs'">交接与处罚</button>
       </div>
-      <AuthorizationQueue v-if="activeTab === 'authorizations'" />
+      <AuthorizationQueue v-if="activeTab === 'authorizations'" :initial-authorization-id="authorizationId" />
       <div v-show="activeTab === 'handoffs'" id="pnBody" class="pn-body" style="margin-top:12px;flex:1;min-height:0">
         <div v-if="forbidden" class="warnbox pn-forbidden">
           当前账号没有查看业务交接的权限（handoff:read）。交接清单、材料与通知状态不可读取；本页不展示任何演示数据。
@@ -399,6 +387,10 @@ onMounted(() => {
                           <span v-if="vr.actor_name"> · {{ vr.actor_name }}</span><span v-if="vr.note"> · {{ vr.note }}</span>
                         </div>
                       </div>
+                      <div v-if="selected.material.advisory_records?.length" class="pn-sub pn-wrap">
+                        <h4>移送时的联系与观察记录</h4>
+                        <AdvisoryRecords :records="selected.material.advisory_records" />
+                      </div>
                       <div v-if="selected.material.disposals?.length" class="pn-sub pn-wrap">
                         <div v-for="d in selected.material.disposals" :key="d.authorization_id">
                           <span class="mono" :title="d.authorization_id">{{ d.authorization_no }}</span>
@@ -410,8 +402,9 @@ onMounted(() => {
                       <div class="pn-note-text">本次提交的是文字信息，没有附带可下载的证据文件。</div>
                     </template>
                   </div>
+                  <PunishmentOutcome :key="selected.handoff_id" :handoff-id="selected.handoff_id" />
                   <div v-if="!isNotified(selected)" class="detail-actions is-sticky">
-                    <button class="btn pri" type="button" title="先确认再记录已通知；不表示处罚已立案或办结" @click="notifyDepartment">通知处罚部门</button>
+                    <button class="btn pri" type="button" title="重新读取通道送达状态，不重复提交材料" :disabled="listLoading" @click="refreshDelivery">刷新送达状态</button>
                   </div>
                 </template>
               </div>

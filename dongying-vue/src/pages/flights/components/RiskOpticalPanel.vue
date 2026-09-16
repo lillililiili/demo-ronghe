@@ -4,17 +4,24 @@ import { deviceApi } from '@/services/deviceApi.js';
 import { hasModuleAction } from '@/services/accessControl.js';
 import SimulatedRiskVideo from './SimulatedRiskVideo.vue';
 
-const props = defineProps({ risk: { type: Object, required: true } });
+const props = defineProps({
+  risk: { type: Object, default: null },
+  target: { type: Object, default: null }
+});
+const targetId = computed(() => props.target?.target_id || props.risk?.target_id);
+const subtype = computed(() => props.target?.subtype || props.risk?.space_fact?.subtype_code);
+const demo = computed(() => props.target?.demo);
 const task = ref(null), command = ref(null), loading = ref(false), busy = ref(false), error = ref('');
 const availability = ref(null);
 let generation = 0, refreshTimer = null;
 let alive = true;
+let preparedTarget = null;
 const permission = computed(() => hasModuleAction('devices', 'op'));
 // 异物风险保留目标缺失说明；其他风险只有关联目标时才适用光电追踪。
-const visible = computed(() => props.risk.risk_type !== 'WEATHER'
-  && (['SPACE_OBJECT', 'FOREIGN_OBJECT'].includes(props.risk.risk_type) || !!props.risk.target_id));
-const canRead = computed(() => visible.value && !!props.risk.target_id && permission.value);
-const blocked = computed(() => !props.risk.target_id ? '监测目标尚未就绪，请刷新风险记录后重试。'
+const visible = computed(() => !!props.target || (props.risk?.risk_type !== 'WEATHER'
+  && (['SPACE_OBJECT', 'FOREIGN_OBJECT'].includes(props.risk?.risk_type) || !!targetId.value)));
+const canRead = computed(() => visible.value && !!targetId.value && permission.value);
+const blocked = computed(() => !targetId.value ? '监测目标尚未就绪，请刷新记录后重试。'
   : !permission.value ? '当前账号没有设备操作权限，无法查询或发起光电追踪。'
     : availability.value?.block_reason || '');
 const active = computed(() => ['OPEN', 'ENDING'].includes(task.value?.status));
@@ -32,12 +39,17 @@ const statusText = computed(() => {
 });
 async function refresh(silent = false) {
   clearTimeout(refreshTimer);
-  const current = ++generation, target = props.risk.target_id;
+  const current = ++generation, target = targetId.value;
   if (!silent) { task.value = null; command.value = null; availability.value = null; }
   error.value = ''; loading.value = false;
   if (!canRead.value) return;
   loading.value = !silent;
   try {
+    if (demo.value && preparedTarget !== target) {
+      await deviceApi.prepareAirspaceDemoTarget(target, demo.value.frame);
+      if (current !== generation) return;
+      preparedTarget = target;
+    }
     const result = await deviceApi.currentEoTrack(target);
     if (current !== generation) return;
     if (task.value?.command_id !== result?.command_id || !result) command.value = null;
@@ -68,7 +80,8 @@ async function begin() {
   const current = ++generation;
   busy.value = true; error.value = '';
   try {
-    await deviceApi.beginEoTrack(props.risk.target_id, { reason: '风险详情人工发起光电追踪' });
+    if (demo.value) await deviceApi.beginAirspaceDemoTrack(targetId.value, demo.value.frame);
+    else await deviceApi.beginEoTrack(targetId.value, { reason: props.risk ? '风险详情人工发起光电追踪' : '监测目标详情人工发起光电追踪' });
     if (current === generation) await refresh();
   } catch (e) { if (current === generation) error.value = e.message || '光电追踪下发失败'; }
   finally { busy.value = false; }
@@ -84,14 +97,14 @@ async function end() {
   } catch (e) { if (current === generation) error.value = e.message || '结束光电追踪下发失败'; }
   finally { busy.value = false; }
 }
-watch([() => props.risk.risk_id, () => props.risk.target_id, canRead], () => refresh(), { immediate: true });
+watch([() => props.risk?.risk_id, targetId, canRead], () => refresh(), { immediate: true });
 onUnmounted(() => { alive = false; generation++; clearTimeout(refreshTimer); });
 </script>
 
 <template>
   <section v-if="visible" class="sect optical-panel">
     <h4>光电追踪与视频 <span v-if="videoVisible" class="tag t-amber">模拟视频</span></h4>
-    <SimulatedRiskVideo v-if="videoVisible" :key="risk.risk_id" :subtype="risk.space_fact?.subtype_code" />
+    <SimulatedRiskVideo v-if="videoVisible" :key="targetId" :subtype="subtype" />
     <div v-if="canRead" class="tracking-status" role="status">{{ statusText }}</div>
     <p v-if="blocked || (!loading && !error)" class="tracking-note">{{ blocked || (active ? '已有跟踪任务，无需重复发起；可刷新状态查看进度。' : '发起并建立跟踪任务后，才展示模拟画面。') }}</p>
     <p v-if="error" class="warnbox" role="alert">{{ error }}</p>

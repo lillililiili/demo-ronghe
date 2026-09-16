@@ -5,6 +5,7 @@ import { openFormModal } from './formModal.js';
 import { openConfirm } from './confirm.js';
 import { closeModal, openModal } from './modal.js';
 import { toast } from './nv.js';
+import { legalityReviewFocus } from './legalityReviewFocus.js';
 import { legalityApi } from '@/services/legalityApi.js';
 import { isUncertainOutcome } from '@/services/apiClient.js';
 
@@ -22,6 +23,7 @@ export const RULE_CODE_TEXT = {
 };
 export const RULE_RESULT_TEXT = { PASS: '通过', FAIL: '不通过', UNDETERMINED: '不可判定', NOT_APPLICABLE: '不适用' };
 export const RULE_REASON_TEXT = {
+  OBJECT_TYPE_UNKNOWN: '目标类型尚未确定', NON_UAV_OBJECT: '非无人机目标，不适用无人机合法性判定',
   INSIDE_RESTRICTED_AIRSPACE: '进入禁飞/限制空域', AIRSPACE_ALTITUDE_EXCEEDED: '超过空域限高', ROUTE_DEVIATION: '偏离报备航线',
   TIME_WINDOW_OVERRUN: '超出计划时间窗', NIGHT_FLIGHT: '夜间飞行', PLAN_ALTITUDE_EXCEEDED: '超出计划高度带', TEMPORARY_RESTRICTION_ACTIVE: '临时管制生效中',
   NO_AUTHORIZATION: '无飞行授权', BOUNDARY_POLICY_UNKNOWN: '碰到空域边界时如何判定，规则尚未明确', POSITION_UNKNOWN: '位置未知',
@@ -152,15 +154,16 @@ export function openLegalityReview({ evaluation, refresh, onDone } = {}) {
   const expectedVersion = Number(evaluation.review?.version ?? 0);
   const action = 'revise';
   holdKey(evaluationId, action);
+  const focus = legalityReviewFocus(evaluation);
   const overrideOptions = ['LEGAL', 'ABNORMAL', 'ILLEGAL', 'UNDETERMINED']
     .filter(code => code !== evaluation.legal_status)
     .map(code => ({ value: code, label: legalStatusText(code) }));
 
   openFormModal({
-    title: '人工复核 · ' + esc(evaluation.target_no || evaluation.plan_no || '研判'),
+    title: (focus.unresolved ? '核对信息缺口 · ' : '核对判定依据 · ') + esc(evaluation.target_no || evaluation.plan_no || '研判'),
     width: '620px',
     warning: '复核只记录人工结论：「确认」采纳系统结论；「驳回」表示系统误判（告警与合并组不会删除，统计计误报）；「改判」需选择人工结论。复核不执行反制、不改告警核实状态。',
-    introHtml: intro(evaluation),
+    introHtml: `<p>${esc(focus.note)}</p>${intro(evaluation)}`,
     fields: [
       { key: 'conclusion', label: '复核结论', type: 'radio', required: true, options: [
         { value: 'CONFIRM', label: `确认（采纳系统结论「${legalStatusText(evaluation.legal_status)}」）` },
@@ -169,7 +172,7 @@ export function openLegalityReview({ evaluation, refresh, onDone } = {}) {
       ] },
       { key: 'override_status', label: '人工结论', type: 'select', options: overrideOptions, placeholder: '请选择改判结论',
         visibleWhen: model => model.conclusion === 'OVERRIDE' },
-      { key: 'note', label: '复核说明', type: 'textarea', required: true, minRows: 4, placeholder: '必填，1–1000 字：现场核对、计划核实、飞手联系等依据' }
+      { key: 'note', label: '核对说明', type: 'textarea', required: true, minRows: 3, placeholder: focus.unresolved ? '补充了哪些缺失信息、依据是什么；无需重复填写上方已有数据（1–1000 字）' : '说明核对结果；如与系统结论不同，写明差异及依据（1–1000 字）' }
     ],
     initial: { conclusion: 'CONFIRM', override_status: null, note: '' },
     confirmText: '提交复核结论',

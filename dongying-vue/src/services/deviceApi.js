@@ -17,6 +17,12 @@ export const deviceApi = {
   onboard: (body, key = newIdempotencyKey('onboard')) => apiRequest('/devices/onboard', { method: 'POST', body, headers: { 'Idempotency-Key': key } }),
   update: (id, body, key = newIdempotencyKey('device-update')) => apiRequest(`/devices/${id}`, { method: 'PUT', body, headers: { 'Idempotency-Key': key } }),
   setEnabled: (id, body, key = newIdempotencyKey('device-enabled')) => apiRequest(`/devices/${id}/enabled`, { method: 'PATCH', body, headers: { 'Idempotency-Key': key } }),
+  saveSensingProfile: (id, body, key = newIdempotencyKey('sensing-profile')) => apiRequest(`/devices/${encodeURIComponent(id)}/sensing-profile`, {
+    method: 'PUT', body, mutation: true, idempotencyKey: key
+  }),
+  deleteSensingProfile: (id, expectedVersion, key = newIdempotencyKey('sensing-profile-delete')) => apiRequest(`/devices/${encodeURIComponent(id)}/sensing-profile`, {
+    method: 'DELETE', body: { expected_version: expectedVersion }, mutation: true, idempotencyKey: key
+  }),
   overview: () => apiRequest('/device-monitor/overview'),
   tree: params => apiRequest(`/device-monitor/tree${query(params)}`),
   state: id => apiRequest(`/devices/${id}/state`),

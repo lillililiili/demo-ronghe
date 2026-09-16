@@ -1,18 +1,20 @@
 <script setup>
-/* 融合感知指挥台：本期显式使用页面私有模拟源。
-   模拟数据不会在接口失败时被当作真实数据，也不会发起任何真实设备指令。 */
+/* 融合感知指挥台：页面结构保持不变，全部业务状态来自后端领域接口。 */
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
-import { createSituationMockSource } from '@/pages/situation/situationMock.js';
+import { createSituationApiSource } from '@/pages/situation/situationApiSource.js';
 import { riskMatchesPlan, routeRiskIsActive } from '@/services/situationData.js';
 import {
-  UAV_FLOW_STORAGE_KEY, applyUavFlow, showEoVideo, skipCountermeasureApproval,
-  uavProcessActions, uavProcessStatus
-} from '@/pages/situation/situationUavFlow.js';
+  disposalStage, showEoVideo, uavProcessActions, uavProcessStatus
+} from '@/pages/situation/situationFlow.js';
 import { closeModal, openFormModal } from '@/ui/formModal.js';
 import { openConfirm } from '@/ui/confirm.js';
 import { openDisposalRequest } from '@/ui/disposalAuthModal.js';
 import { disposalApi } from '@/services/disposalApi.js';
+import { getUavEvent, verifyUavEvent } from '@/services/alarmApi.js';
+import { riskApi, newRiskIdempotencyKey } from '@/services/riskApi.js';
+import { handoffApi, newHandoffIdempotencyKey } from '@/services/handoffApi.js';
+import { isUncertainOutcome } from '@/services/apiClient.js';
 import {
   CORRIDOR_RELATION_LABEL, PLAN_STATUS_LABEL, RISK_STATE_LABEL, SEVERITY_LABEL, labelOf
 } from '@/ui/labels.js';
@@ -21,36 +23,21 @@ import { toast } from '@/ui/nv.js';
 const U = window.UI;
 usePageChrome('situation');
 
-const VIEWED_STORAGE_KEY = 'situation.mock.viewed.v1';
-const SCENARIO_STORAGE_KEY = 'situation.mock.started-at.v1';
-const RISK_ACTION_STORAGE_KEY = 'situation.mock.risk-actions.v1';
+const VIEWED_STORAGE_KEY = 'situation.viewed.v1';
 const mapHost = ref(null);
-const snapshot = ref({ generatedAt: 0, simulated: true, devices: [], targets: [], alarms: [], flightPlans: [], risks: [], airspaces: [] });
+const snapshot = ref({ generatedAt: 0, sourceMode: 'unknown', simulated: false, devices: [], targets: [], alarms: [], flightPlans: [], risks: [], airspaces: [], handoffs: [] });
 const selection = ref(null);
 const expandedType = ref('');
 const alertTab = ref('target');
 const fuseOpen = ref(false);
-const source = createSituationMockSource({ startedAt: loadScenarioStartedAt() });
+const source = createSituationApiSource();
 const layers = ref({ coverage: true, device: true, track: true, flightPlan: true, airspace: true });
-const statusAnnouncement = ref('模拟场景准备中');
+const statusAnnouncement = ref('正在连接融合感知服务');
 let viewedKeys = loadViewedKeys();
-let riskActions = loadRiskActions();
-let uavFlow = loadUavFlow();
 let rawSnapshot = null;
 let map = null;
 let stopSource = null;
-
-function loadScenarioStartedAt() {
-  try {
-    const stored = Number(sessionStorage.getItem(SCENARIO_STORAGE_KEY));
-    if (Number.isFinite(stored) && stored > 0) return stored;
-    const startedAt = Date.now();
-    sessionStorage.setItem(SCENARIO_STORAGE_KEY, String(startedAt));
-    return startedAt;
-  } catch {
-    return Date.now();
-  }
-}
+let lastSourceErrorAt = 0;
 
 const devices = computed(() => snapshot.value.devices || []);
 const alarms = computed(() => (snapshot.value.alarms || [])
@@ -93,10 +80,16 @@ const selectedTarget = computed(() => {
 });
 const fusionDevices = computed(() => {
   const ids = new Set(selectedTarget.value?.sourceDeviceIds || []);
-  return devices.value.filter(device => ids.has(device.id));
+  return devices.value.filter(device => ids.has(device.fusionDeviceId || device.deviceId));
 });
 const fusionConfidence = computed(() => selectedTarget.value?.fusedConf ?? null);
 const clockText = computed(() => formatClock(snapshot.value.generatedAt));
+const sourceModeText = computed(() => snapshot.value.sourceMode === 'replay' ? '回放数据'
+  : snapshot.value.sourceMode === 'live' ? '实时数据'
+    : snapshot.value.sourceMode === 'mixed' ? '混合数据' : '来源待确认');
+const sourceModeDetail = computed(() => snapshot.value.sourceMode === 'replay' ? 'MQTT 测试回放来源'
+  : snapshot.value.sourceMode === 'live' ? '现场实时接入来源'
+    : snapshot.value.sourceMode === 'mixed' ? '实时与回放来源并存' : '后端暂未返回来源状态');
 const fuseIcon = U.icon('radar');
 
 function loadViewedKeys() {
@@ -108,45 +101,12 @@ function loadViewedKeys() {
   }
 }
 
-function loadRiskActions() {
-  try {
-    const value = JSON.parse(sessionStorage.getItem(RISK_ACTION_STORAGE_KEY) || '{}');
-    return new Map(value && typeof value === 'object' && !Array.isArray(value) ? Object.entries(value) : []);
-  } catch {
-    return new Map();
-  }
-}
-
 function eventKey(item) {
   return `${item?.id || ''}:${Number(item?.occurredAt ?? item?.ts ?? 0)}`;
 }
 
 function persistViewedKeys() {
   sessionStorage.setItem(VIEWED_STORAGE_KEY, JSON.stringify([...viewedKeys]));
-}
-
-function persistRiskActions() {
-  sessionStorage.setItem(RISK_ACTION_STORAGE_KEY, JSON.stringify(Object.fromEntries(riskActions)));
-}
-
-function loadUavFlow() {
-  try {
-    const value = JSON.parse(sessionStorage.getItem(UAV_FLOW_STORAGE_KEY) || '{}');
-    return new Map(value && typeof value === 'object' && !Array.isArray(value) ? Object.entries(value) : []);
-  } catch {
-    return new Map();
-  }
-}
-
-function persistUavFlow() {
-  sessionStorage.setItem(UAV_FLOW_STORAGE_KEY, JSON.stringify(Object.fromEntries(uavFlow)));
-}
-
-function saveUavFlow(alarmId, patch) {
-  const current = uavFlow.get(alarmId) || {};
-  uavFlow.set(alarmId, { ...current, ...patch });
-  persistUavFlow();
-  if (rawSnapshot) applySnapshot(rawSnapshot);
 }
 
 function isNewEvent(item) {
@@ -189,6 +149,10 @@ function formatMetric(value, unit = '') {
   return Number.isFinite(Number(value)) ? `${Number(value)}${unit}` : '未提供';
 }
 
+function actionIdempotencyKey(prefix) {
+  return `${prefix}-${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
+}
+
 function planForRisk(risk) {
   return flightPlans.value.find(plan => riskMatchesPlan(risk, plan)) || null;
 }
@@ -205,8 +169,20 @@ function toggleDeviceType(typeCode) {
 }
 
 function decorate(next) {
-  const nextAlarms = (next.alarms || []).map(alarm => applyUavFlow({ ...alarm, isNew: isNewEvent(alarm) }, uavFlow));
-  const nextRisks = (next.risks || []).filter(risk => !riskActions.has(eventKey(risk))).map(risk => ({
+  const targetsByInternalId = new Map((next.targets || []).map(target => [target.targetId, target]));
+  const punishmentEvents = new Set((next.handoffs || [])
+    .filter(row => row.source_kind === 'UAV_EVENT' && row.handoff_type === 'UAV_PUNISHMENT' && row.delivery_status !== 'FAILED')
+    .map(row => row.source_id));
+  const nextAlarms = (next.alarms || []).map(alarm => {
+    const target = targetsByInternalId.get(alarm.targetInternalId);
+    return {
+      ...alarm,
+      isNew: isNewEvent(alarm),
+      disposalStage: disposalStage(target?.disposalSummary),
+      handoff: punishmentEvents.has(alarm.eventId)
+    };
+  });
+  const nextRisks = (next.risks || []).map(risk => ({
     ...risk,
     active: routeRiskIsActive(risk),
     isNew: routeRiskIsActive(risk) && isNewEvent(risk)
@@ -273,8 +249,8 @@ function applySnapshot(next) {
   snapshot.value = decorated;
   const count = decorated.alarms.filter(alarm => alarm.isNew).length + decorated.risks.filter(risk => risk.isNew).length;
   statusAnnouncement.value = count
-    ? `模拟数据已更新，${count} 条新风险`
-    : '模拟数据已更新，当前无未查看异常';
+    ? `融合感知数据已更新，${count} 条新风险`
+    : '融合感知数据已更新，当前无未查看异常';
   if (!map) return;
   map.setData({
     airspaces: decorated.airspaces,
@@ -285,6 +261,15 @@ function applySnapshot(next) {
     alarms: []
   });
   if (selection.value) map.pinHit(selection.value.kind, selection.value.id);
+}
+
+function onSourceError(error, segment) {
+  statusAnnouncement.value = `${segment}数据刷新失败，已保留上次真实结果`;
+  const at = Date.now();
+  if (at - lastSourceErrorAt > 15_000) {
+    lastSourceErrorAt = at;
+    toast(`${segment}刷新失败：${error?.message || '服务异常'}；已保留上次结果`, 'err');
+  }
 }
 
 function markViewed(rows) {
@@ -326,6 +311,7 @@ function selectTarget(target) {
     map.centerAt(target.lon, target.lat, { scale: map.zoom });
     map.pinHit('target', target.id);
   }
+  source.loadTargetDetail(target.targetId).catch(error => onSourceError(error, '目标来源链路'));
 }
 
 function selectAlarm(alarm) {
@@ -355,15 +341,70 @@ function selectRisk(risk) {
   selectPlan(planForRisk(risk), false);
 }
 
-function submitMockRiskAction(plan, action) {
+async function readRiskAfterUncertain(riskId, acceptedStates) {
+  try {
+    const latest = await riskApi.getRisk(riskId);
+    return acceptedStates.includes(latest?.state) ? latest : null;
+  } catch {
+    return null;
+  }
+}
+
+async function verifyRiskState(risk, conclusion, note, acceptedStates) {
+  const latest = await riskApi.getRisk(risk.riskId);
+  if (acceptedStates.includes(latest.state)) return latest;
+  try {
+    return await riskApi.verifyRisk(risk.riskId, {
+      conclusion, note, expected_version: Number(latest.version)
+    }, newRiskIdempotencyKey());
+  } catch (error) {
+    if (isUncertainOutcome(error)) {
+      const readback = await readRiskAfterUncertain(risk.riskId, acceptedStates);
+      if (readback) return readback;
+    }
+    throw error;
+  }
+}
+
+async function notifyRisk(risk, recipients) {
+  let latest = await riskApi.getRisk(risk.riskId);
+  if (['NOTIFIED', 'ACKNOWLEDGED'].includes(latest.state)) return latest;
+  if (latest.state === 'PENDING_VERIFICATION') {
+    latest = await verifyRiskState(risk, 'CONFIRMED', '融合感知页一键通知前复核：轨迹、计划与空间风险事实一致。',
+      ['PENDING_NOTIFICATION', 'NOTIFIED', 'ACKNOWLEDGED']);
+  }
+  if (['NOTIFIED', 'ACKNOWLEDGED'].includes(latest.state)) return latest;
+  if (latest.state !== 'PENDING_NOTIFICATION') throw new Error('当前风险状态不允许通知');
+  if (recipients.length !== 1) throw new Error(recipients.length ? '存在多个风险接收方，请到风险业务页选择' : '尚未配置风险接收方');
+  try {
+    return await handoffApi.createHandoff({
+      source_kind: 'RISK', source_id: risk.riskId, handoff_type: 'RISK_NOTICE',
+      recipient_id: recipients[0].recipient_id, expected_version: Number(latest.version)
+    }, newHandoffIdempotencyKey());
+  } catch (error) {
+    if (isUncertainOutcome(error)) {
+      const readback = await readRiskAfterUncertain(risk.riskId, ['NOTIFIED', 'ACKNOWLEDGED']);
+      if (readback) return readback;
+    }
+    throw error;
+  }
+}
+
+async function submitRiskAction(plan, action) {
   const activeRisks = (plan?.activeRisks || []).filter(risk => routeRiskIsActive(risk));
   if (!activeRisks.length) return toast('当前航线已无可提交的风险', 'err');
-  const state = action === 'exclude' ? 'EXCLUDED' : 'NOTIFIED';
-  activeRisks.forEach(risk => riskActions.set(eventKey(risk), { state, submittedAt: Date.now() }));
-  persistRiskActions();
+  let recipients = [];
+  if (action === 'notify') recipients = (await handoffApi.listHandoffRecipients('RISK_NOTICE'))?.items || [];
+  const settled = await Promise.allSettled(activeRisks.map(risk => action === 'exclude'
+    ? verifyRiskState(risk, 'EXCLUDED', '融合感知页批量排除：当前风险尚未通知，经人工操作确认排除。', ['EXCLUDED'])
+    : notifyRisk(risk, recipients)));
   closeModal();
-  if (rawSnapshot) applySnapshot(rawSnapshot);
-  toast(action === 'exclude' ? '已提交（前端模拟）：风险已排除' : '已提交（前端模拟）：已通知上级', 'ok');
+  await source.refresh();
+  const succeeded = settled.filter(result => result.status === 'fulfilled').length;
+  const failed = settled.length - succeeded;
+  if (!failed) return toast(action === 'exclude' ? `已排除 ${succeeded} 条风险` : `已通知 ${succeeded} 条风险`, 'ok');
+  const firstError = settled.find(result => result.status === 'rejected')?.reason;
+  toast(`已成功 ${succeeded} 条，失败 ${failed} 条：${firstError?.message || '请查看最新状态'}`, 'err');
 }
 
 function openRiskActionModal(plan, action) {
@@ -375,12 +416,12 @@ function openRiskActionModal(plan, action) {
     title: isExclude ? '排除风险' : '通知上级',
     width: '560px',
     warning: isExclude
-      ? `提交后将把该航线当前风险标记为“已排除”，取消红色高亮，并从右上航线风险列表移除。${countText}本期仅记录前端模拟结果，不调用真实接口。`
-      : `提交后通知渠道投递；送达后进入接收方确认，等待回执。回执“已驱离”即闭环，风险不进入处置。${countText}本期仅记录前端模拟结果，不调用真实接口。`,
+      ? `提交后将把该航线所有尚未通知的当前风险正式标记为“已排除”，并写入核验历史。${countText}`
+      : `待核验风险将先以固定审计说明确认，再向唯一风险接收方提交交接；送达和回执状态以后端记录为准。${countText}`,
     fields: [],
     danger: isExclude,
     confirmText: isExclude ? '确认排除' : '提交通知',
-    onSubmit: async () => submitMockRiskAction(plan, action)
+    onSubmit: async () => submitRiskAction(plan, action)
   });
 }
 
@@ -431,7 +472,8 @@ function renderTargetActions(target) {
 function renderTargetTip(target) {
   const alarm = (target.relatedAlarms || [])[0];
   const routeRisk = (target.relatedRisks || []).find(risk => risk.active);
-  const sourceNames = devices.value.filter(device => (target.sourceDeviceIds || []).includes(device.id)).map(device => device.type).join(' / ');
+  const sourceNames = devices.value.filter(device => (target.sourceDeviceIds || []).includes(device.fusionDeviceId || device.deviceId))
+    .map(device => device.type).join(' / ');
   const summary = alarm?.type || routeRisk?.reasonText || '暂无关联异常';
   const processStatus = alarm ? uavProcessStatus(alarm) : '';
   const stateText = processStatus || (target.activeRisk ? '风险持续' : '跟踪中');
@@ -444,7 +486,7 @@ function renderTargetTip(target) {
     <div class="sit-target-metrics"><span><small>高度</small><b>${esc(formatMetric(target.alt, ' m'))}</b></span><span><small>速度</small><b>${esc(formatMetric(target.speed, ' m/s'))}</b></span><span><small>融合置信</small><b>${esc(formatMetric(target.fusedConf, '%'))}</b></span></div>
     <p>感知来源：${esc(sourceNames || '未提供')}</p>
     ${target.objectTypeCode === 'UAV' ? '<p class="sit-eo-track">光电跟踪中</p>' : ''}
-    ${target.activeRisk || alarm ? '' : '<div class="sit-map-pop-note">目标处于模拟实时跟踪中。</div>'}
+    ${target.activeRisk || alarm ? '' : '<div class="sit-map-pop-note">目标处于持续跟踪中。</div>'}
     ${renderTargetActions(target)}
   </section>`;
 }
@@ -484,82 +526,113 @@ function targetAlarm(target) {
 
 function openFalsePositive(target) {
   const alarm = targetAlarm(target);
-  if (!alarm) return toast('没有关联告警，无法核实', 'err');
+  if (!alarm?.eventId) return toast('没有关联无人机事件，无法核实', 'err');
   openFormModal({
     title: `人工核实 · ${esc(alarm.targetId)}`,
     width: '600px',
     introHtml: `<dl class="kv"><dt>当前状态</dt><dd>${esc(uavProcessStatus(alarm))}</dd><dt>告警</dt><dd>${esc(alarm.type)}</dd><dt>关联目标</dt><dd class="mono">${esc(target.id)}</dd></dl>`,
-    fields: [
-      { key: 'conclusion', label: '核实结论', type: 'radio', required: true, options: [
-        { value: 'CONFIRMED', label: '属实（置为“已核实，待处置”）' },
-        { value: 'FALSE_POSITIVE', label: '误报（终态）' }
-      ] },
-      { key: 'note', label: '核实说明', type: 'textarea', required: true, minRows: 4, placeholder: '必填，1–1000 字：现场确认、轨迹复核、飞手联系结果等依据' }
-    ],
-    initial: { conclusion: 'FALSE_POSITIVE', note: '' },
-    confirmText: '提交核实结论',
-    validate: m => {
-      const n = String(m.note || '').trim();
-      return !n ? '核实说明为必填项' : n.length > 1000 ? `核实说明不能超过 1000 字（当前 ${n.length} 字）` : '';
+    fields: [{ key: 'note', label: '核实说明', type: 'textarea', required: true, minRows: 4,
+      placeholder: '必填，1–1000 字：现场确认、轨迹复核、飞手联系结果等依据' }],
+    initial: { note: '' },
+    confirmText: '提交误报结论',
+    validate: model => {
+      const note = String(model.note || '').trim();
+      return !note ? '核实说明为必填项' : note.length > 1000 ? `核实说明不能超过 1000 字（当前 ${note.length} 字）` : '';
     },
-    onSubmit: async ({ conclusion, note }) => {
-      saveUavFlow(alarm.id, {
-        eventState: conclusion,
-        disposalStage: 'none',
-        handoff: false,
-        note: String(note).trim()
-      });
+    onSubmit: async ({ note }) => {
+      const latest = await getUavEvent(alarm.eventId);
+      if (latest.state === 'FALSE_POSITIVE') { closeModal(); await source.refresh(); return; }
+      try {
+        await verifyUavEvent(alarm.eventId, {
+          conclusion: 'FALSE_POSITIVE', note: String(note).trim(), expected_version: Number(latest.version)
+        }, actionIdempotencyKey('situation-false-positive'));
+      } catch (error) {
+        if (!isUncertainOutcome(error)) throw error;
+        const readback = await getUavEvent(alarm.eventId).catch(() => null);
+        if (readback?.state !== 'FALSE_POSITIVE') throw error;
+      }
       closeModal();
-      toast(conclusion === 'FALSE_POSITIVE' ? '核实完成：误报' : '核实完成：已核实，待处置', 'ok');
+      await source.refresh();
+      toast('核实完成：误报', 'ok');
     }
   });
 }
 
 async function openCountermeasure(target) {
   const alarm = targetAlarm(target);
-  if (!alarm) return toast('没有关联告警，无法发起反制', 'err');
-  if (alarm.eventState !== 'CONFIRMED') return toast('请先完成核实', 'err');
+  if (!alarm?.eventId) return toast('没有关联无人机事件，无法发起反制', 'err');
+  let event;
+  try {
+    event = await getUavEvent(alarm.eventId);
+    if (event.state === 'PENDING_VERIFICATION') {
+      try {
+        event = await verifyUavEvent(alarm.eventId, {
+          conclusion: 'CONFIRMED', note: '融合感知页发起反制前复核：目标与告警轨迹一致。', expected_version: Number(event.version)
+        }, actionIdempotencyKey('situation-counter-confirm'));
+      } catch (error) {
+        if (!isUncertainOutcome(error)) throw error;
+        const readback = await getUavEvent(alarm.eventId);
+        if (readback.state !== 'CONFIRMED') throw error;
+        event = readback;
+      }
+    }
+    if (event.state !== 'CONFIRMED') return toast('该事件当前状态不允许发起反制', 'err');
+  } catch (error) {
+    return toast(error?.message || '读取无人机事件失败', 'err');
+  }
   let policy = null;
   try { policy = await disposalApi.policies(); } catch { policy = null; }
-  const skipApproval = skipCountermeasureApproval(alarm, target);
   openDisposalRequest({
     actionType: 'COUNTERMEASURE',
     actionOptions: ['COUNTERMEASURE', 'JAMMING'],
     subjectKind: 'UAV_EVENT',
-    subjectId: alarm.id,
+    subjectId: alarm.eventId,
     subjectText: target.id,
     policy,
-    okText: result => (skipApproval ? '已进入信号干扰中' : `申请已提交：${result?.authorization_no || ''} 待审批`),
-    submit: async body => {
-      saveUavFlow(alarm.id, {
-        eventState: 'CONFIRMED',
-        disposalStage: skipApproval ? 'jamming' : 'requested',
-        handoff: false,
-        actionType: body.action_type,
-        channel: body.channel,
-        deviceId: body.device_id,
-        reason: body.reason
-      });
-      return { authorization_no: skipApproval ? '' : `SIM-${alarm.id}`, status: skipApproval ? 'EXECUTING' : 'REQUESTED' };
-    }
+    refresh: async () => {
+      const page = await disposalApi.list({ subject_kind: 'UAV_EVENT', subject_id: alarm.eventId, page: 1, size: 100 });
+      return page?.items?.[0] || null;
+    },
+    onDone: () => { void source.refresh(); }
   });
 }
 
 async function openPunish(target) {
   const alarm = targetAlarm(target);
-  if (!alarm) return toast('没有关联告警，无法移送处罚', 'err');
+  if (!alarm?.eventId) return toast('没有关联无人机事件，无法移送处罚', 'err');
+  if (alarm.disposalStage !== 'completed') return toast('处置尚未完成，不能移送处罚', 'err');
+  let recipients;
+  try { recipients = (await handoffApi.listHandoffRecipients('UAV_PUNISHMENT'))?.items || []; }
+  catch (error) { return toast(error?.message || '读取处罚接收方失败', 'err'); }
+  if (!recipients.length) return toast('尚未配置处罚接收方，请到专门业务页处理', 'err');
+  if (recipients.length > 1) return toast('存在多个处罚接收方，请到专门业务页选择后提交', 'err');
   const sourceNo = target.id;
-  const recipient = '处罚接收方';
+  const recipient = recipients[0];
   const ok = await new Promise(resolve => openConfirm({
     title: '通知处罚部门',
-    message: `将把 ${sourceNo} 的处罚交接通知「${recipient}」。确认后只记录已提交通知，不表示处罚已立案或办结。是否继续？`,
+    message: `将把 ${sourceNo} 的处罚交接通知「${recipient.display_name}」。确认后只代表材料已提交，不表示处罚已立案或办结。是否继续？`,
     confirmText: '确认通知',
     onConfirm: () => { resolve(true); return true; },
     onCancel: () => resolve(false)
   }));
   if (!ok) return;
-  saveUavFlow(alarm.id, { eventState: 'CONFIRMED', disposalStage: 'completed', handoff: true });
-  toast('已提交', 'ok');
+  try {
+    const event = await getUavEvent(alarm.eventId);
+    await handoffApi.createHandoff({
+      source_kind: 'UAV_EVENT', source_id: alarm.eventId, handoff_type: 'UAV_PUNISHMENT',
+      recipient_id: recipient.recipient_id, expected_version: Number(event.version)
+    }, newHandoffIdempotencyKey());
+  } catch (error) {
+    if (!isUncertainOutcome(error)) return toast(error?.message || '处罚交接提交失败', 'err');
+    const existing = await handoffApi.listHandoffs({
+      source_kind: 'UAV_EVENT', source_id: alarm.eventId, page: 1, size: 100
+    }).catch(() => null);
+    if (!(existing?.items || []).some(row => row.handoff_type === 'UAV_PUNISHMENT')) {
+      return toast('提交结果未确认，请到处罚业务页核对', 'err');
+    }
+  }
+  await source.refresh();
+  toast('处罚交接已提交', 'ok');
 }
 
 function onTipAction(action, hit) {
@@ -618,7 +691,7 @@ onMounted(() => {
     onPick: onMapPick,
     onEmptyPick: clearSelection
   });
-  stopSource = source.start(applySnapshot);
+  stopSource = source.start(applySnapshot, onSourceError);
   document.addEventListener('visibilitychange', onVisibilityChange);
 });
 
@@ -637,10 +710,10 @@ onUnmounted(() => {
     <main class="sit-stage" aria-label="融合感知实时地图">
       <div id="stMap" ref="mapHost" class="sit-map"></div>
 
-      <div class="sit-live-pill" aria-label="当前使用非生产模拟数据">
+      <div class="sit-live-pill" :aria-label="`当前数据来源：${sourceModeText}`">
         <span class="sit-live-dot" aria-hidden="true"></span>
-        <b>模拟数据</b>
-        <span>非生产实时数据</span>
+        <b>{{ sourceModeText }}</b>
+        <span>{{ sourceModeDetail }}</span>
         <span>监测目标 {{ targets.length }} · 无人机 {{ uavCount }} · 异物 {{ foreignObjectCount }}</span>
         <time class="mono">{{ clockText }}</time>
       </div>
@@ -673,7 +746,7 @@ onUnmounted(() => {
             </div>
           </section>
         </div>
-        <footer>共 {{ devices.length }} 台模拟设备；覆盖参数为公开指标量级，非现场实测。</footer>
+        <footer>共 {{ devices.length }} 台感知设备；覆盖范围以设备台账配置为准，未知或不可用范围不会绘制。</footer>
       </aside>
 
       <aside class="sit-glass sit-alert-dock" aria-labelledby="sit-alert-title">
@@ -730,7 +803,7 @@ onUnmounted(() => {
               <i></i><b>{{ device.type }}</b><em>{{ device.status }}</em>
             </span>
           </div>
-          <p>各来源为模拟链路，不代表现场已联调。</p>
+          <p>来源链路及在线状态均由后端融合服务返回。</p>
         </section>
       </aside>
     </main>

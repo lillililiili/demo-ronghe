@@ -116,6 +116,12 @@ async function main() {
   const abnormalDevice = S.toDevices([{ device_id: 'd5', longitude: 118.4, latitude: 37.4, connectivity: 'ABNORMAL', coverage: { kind: 'circle', radius_m: 1000 } }])[0];
   check('异常连接状态单独映射', [abnormalDevice.statusCode, abnormalDevice.status], ['ABNORMAL', '异常']);
   check('异常设备覆盖不参与有效监测', abnormalDevice.coverage.status, 'unavailable');
+  check('后端小写设备缩写归一为页面稳定码', S.toDevices([
+    { device_id: 'd6', fusion_device_id: 'fusion-d6', longitude: 118.4, latitude: 37.4, connectivity: 'ONLINE', device_type_code: '5ga' }
+  ])[0].typeCode, 'FIVE_G_A');
+  check('设备保留融合域内部 ID 用于来源链路关联', S.toDevices([
+    { device_id: 'd6', fusion_device_id: 'fusion-d6', longitude: 118.4, latitude: 37.4 }
+  ])[0].fusionDeviceId, 'fusion-d6');
 
   /* ---- 覆盖参数 ---- */
   const circle = S.normalizeCoverage({ kind: 'circle', radiusM: 50000, sourceLabel: '配置中心', updatedAt: 123 }, true);
@@ -211,6 +217,13 @@ async function main() {
     { location: { longitude: null, latitude: 37.5 }, point_kind: 'MEAS' }
   ]);
   check('读接口 location 嵌套坐标也能装配', nested, [{ lon: 118.4, lat: 37.4, kind: 'meas' }]);
+  const refreshed = S.attachRecentTracks(
+    [{ targetId: 't1', lon: 118.5, lat: 37.5, posValid: true, sourceDeviceIds: [] }],
+    { items: [{ target_id: 't1', points: [{ location: { longitude: 118.5, latitude: 37.5 } }] }] },
+    [{ targetId: 't1', lon: 118.4, lat: 37.4, posValid: true, sourceDeviceIds: ['fusion-d6'] }],
+    1000, 5000
+  );
+  check('快轮询保留已由详情接口加载的真实来源链路', refreshed[0].sourceDeviceIds, ['fusion-d6']);
 
   /* ---- 只报方位的目标 ---- */
   // 字段名按服务端实际返回：方位角与观测设备都在 latest_state 里（bearing_deg / bearing_device_id）。
@@ -232,6 +245,9 @@ async function main() {
   check('方位线起点取设备真实坐标', bearingTargets[0].fromDeviceLon, 118.5);
   check('设备没坐标就不画方位线', bearingTargets[1].azimuth, undefined);
   check('已有位置的目标不画方位线', bearingTargets[2].azimuth, undefined);
+  check('装配后的设备仍可作为方位线起点', S.bearingOrigins([
+    { deviceId: 'd4', lon: 118.6, lat: 37.5 }
+  ]).d4, { lon: 118.6, lat: 37.5 });
 
   /* ---- percent ---- */
   check('置信度四舍五入', S.percent(0.876), 88);

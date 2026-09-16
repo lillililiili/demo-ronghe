@@ -31,6 +31,17 @@ export const LEGAL_FALLBACK = '待确认';
 
 const SEVERITY_LEVEL = { CRITICAL: '高', HIGH: '高', MEDIUM: '中', LOW: '低' };
 const DEVICE_STATUS = { ONLINE: '在线', OFFLINE: '离线', ABNORMAL: '异常', UNKNOWN: '未知' };
+const DEVICE_PRESENTATION = {
+  RADAR: { icon: 'radar', color: '#36d1dc' },
+  EO: { icon: 'camera', color: '#a97bff' },
+  FIVE_G_A: { icon: 'bolt', color: '#2fd06e' },
+  TDOA: { icon: 'api', color: '#ffb020' }
+};
+const DEVICE_TYPE_CODE = {
+  RADAR: 'RADAR', radar: 'RADAR', EO: 'EO', eo: 'EO',
+  FIVE_G_A: 'FIVE_G_A', five_g_a: 'FIVE_G_A', '5GA': 'FIVE_G_A', '5ga': 'FIVE_G_A',
+  TDOA: 'TDOA', tdoa: 'TDOA'
+};
 /** 未关闭的告警状态：地图与 HUD 只展示还在处理中的。 */
 export const OPEN_ALARM_STATES = ['PENDING_VERIFICATION', 'CONFIRMED'];
 /** 融合域已确认的“当前风险”口径：通知/回执/排除都不再点亮实时航线。 */
@@ -78,7 +89,8 @@ const COVERAGE_STATES = ['available', 'unavailable', 'unknown'];
  */
 export function normalizeCoverage(coverage, online = true) {
   const raw = coverage || {};
-  const kind = raw.kind === 'sector' ? 'sector' : raw.kind === 'circle' ? 'circle' : null;
+  const rawKind = String(raw.kind || raw.coverage_kind || '').toLowerCase();
+  const kind = rawKind === 'sector' ? 'sector' : rawKind === 'circle' ? 'circle' : null;
   const radiusM = num(raw.radiusM ?? raw.radius_m);
   const rangeM = num(raw.rangeM ?? raw.range_m ?? raw.distanceM ?? raw.distance_m);
   const azimuthDeg = num(raw.azimuthDeg ?? raw.azimuth_deg ?? raw.bearingDeg ?? raw.bearing_deg);
@@ -96,7 +108,8 @@ export function normalizeCoverage(coverage, online = true) {
       updatedAt: num(raw.updatedAt ?? raw.updated_at)
     };
   }
-  const requested = COVERAGE_STATES.includes(raw.status) ? raw.status : 'available';
+  const rawStatus = String(raw.status || '').toLowerCase();
+  const requested = COVERAGE_STATES.includes(rawStatus) ? rawStatus : 'available';
   return {
     kind,
     status: online && requested !== 'unavailable' ? requested : 'unavailable',
@@ -232,8 +245,13 @@ export function toDevices(devices) {
     if (lon === null || lat === null) continue;
     const status = DEVICE_STATUS[device.connectivity] || '未知';
     const hasAlarm = !!(device.has_alarm || device.alarm);
+    const rawTypeCode = device.device_type_code || device.type_code || '';
+    const typeCode = DEVICE_TYPE_CODE[rawTypeCode] || String(rawTypeCode).toUpperCase();
+    const presentation = DEVICE_PRESENTATION[typeCode] || { icon: 'device', color: '#72d6ff' };
+    const coverage = normalizeCoverage(device.coverage, status === '在线');
     out.push({
       deviceId: device.device_id,
+      fusionDeviceId: device.fusion_device_id || device.device_id,
       id: device.device_no || device.device_id,
       name: device.name || device.device_no || '',
       lon,
@@ -243,11 +261,16 @@ export function toDevices(devices) {
       alarm: hasAlarm,
       hasAlarm,
       type: device.device_type_name || device.device_type || '',
-      typeCode: device.device_type_code || device.type_code || '',
+      typeCode,
+      icon: presentation.icon,
+      color: presentation.color,
       channel: device.channel || '',
       lastReportAt: num(device.observed_at ?? device.last_heartbeat_at ?? device.received_at),
       relatedAlerts: Array.isArray(device.related_alerts) ? device.related_alerts : [],
-      coverage: normalizeCoverage(device.coverage, status === '在线')
+      coverage,
+      coverageText: coverageSummary(coverage),
+      sourceMode: device.source_mode || '',
+      simulated: !!device.simulated
     });
   }
   return out;
@@ -293,7 +316,9 @@ export function toTargets(targets, legalMap) {
       objectTypeCode,
       subtypeCode,
       iconKind: targetIconKind(objectTypeCode, subtypeCode),
-      legal: objectTypeCode === 'UAV' ? (legal[target.target_id] || LEGAL_FALLBACK) : '不适用',
+      legal: objectTypeCode === 'UAV'
+        ? (legal[target.target_id] || LEGAL_TEXT[target.legality_summary?.legal_status] || LEGAL_FALLBACK)
+        : '不适用',
       lon: posValid ? lon : null,
       lat: posValid ? lat : null,
       posValid,
@@ -303,6 +328,10 @@ export function toTargets(targets, legalMap) {
       fusedConf: percent(state && state.fusion_confidence),
       uavSn: target.uav_sn || '',
       district: target.district_name || '',
+      lastSeenAt: num(target.last_seen_at),
+      sourceMode: target.source_mode || '',
+      sourceDeviceIds: Array.isArray(target.source_links)
+        ? target.source_links.map(link => link.device_id).filter(Boolean) : [],
       /* 阶段 15 追加的三段摘要：缺哪段就是 null，页面缺哪行不渲染哪行，不写"—"占位。 */
       riskSummary: target.risk_summary || null,
       legalitySummary: target.legality_summary || null,
@@ -324,9 +353,12 @@ export function toTargets(targets, legalMap) {
 export function bearingOrigins(devices) {
   const origins = {};
   for (const device of devices || []) {
-    const lon = num(device.longitude), lat = num(device.latitude);
-    if (lon === null || lat === null || !device.device_id) continue;
-    origins[device.device_id] = { lon, lat };
+    const lon = num(device.longitude ?? device.lon), lat = num(device.latitude ?? device.lat);
+    const deviceId = device.device_id || device.deviceId;
+    const fusionDeviceId = device.fusion_device_id || device.fusionDeviceId;
+    if (lon === null || lat === null || !deviceId) continue;
+    origins[deviceId] = { lon, lat };
+    if (fusionDeviceId) origins[fusionDeviceId] = { lon, lat };
   }
   return origins;
 }
@@ -359,12 +391,17 @@ export function toAlarms(alarms) {
     out.push({
       id: alarm.alarm_no || alarm.alarm_id,
       alarmId: alarm.alarm_id,
+      eventId: alarm.event_id || null,
       targetId: alarm.target_no || alarm.target_id,
+      targetInternalId: alarm.target_id || null,
       level: SEVERITY_LEVEL[alarm.severity] || '低',
       type: alarm.alarm_type || '',
       state: alarm.state,
-      ts: num(alarm.raised_at) || 0,
-      district: alarm.district_name || ''
+      eventState: alarm.state,
+      severity: alarm.severity,
+      ts: num(alarm.occurred_at ?? alarm.raised_at ?? alarm.received_at) || 0,
+      district: alarm.district_name || '',
+      sourceMode: alarm.source_mode || ''
     });
   }
   return out.sort((left, right) => right.ts - left.ts);
@@ -381,4 +418,111 @@ export function toTrack(points) {
     out.push({ lon, lat, kind: String(point.point_kind || point.kind || 'meas').toLowerCase() });
   }
   return out;
+}
+
+export function toFlightPlans(plans, routeVersions = {}) {
+  const out = [];
+  for (const plan of plans || []) {
+    const route = plan.route || {};
+    const routeVersionId = route.route_version_id;
+    const version = routeVersions[routeVersionId];
+    const coordinates = version?.centerline?.coordinates;
+    if (!plan.plan_id || !routeVersionId || !Array.isArray(coordinates) || coordinates.length < 2) continue;
+    const valid = coordinates.every(point => Array.isArray(point) && num(point[0]) !== null && num(point[1]) !== null);
+    if (!valid) continue;
+    out.push({
+      id: plan.plan_id,
+      planId: plan.plan_id,
+      planNo: plan.plan_no || plan.plan_id,
+      routeVersionId,
+      statusCode: plan.status_code,
+      startAt: num(plan.start_at),
+      endAt: num(plan.end_at),
+      uavId: plan.uav_sn || '',
+      coordinates: coordinates.map(point => [Number(point[0]), Number(point[1])]),
+      sourceMode: plan.source_mode || plan.source?.source_mode || ''
+    });
+  }
+  return out;
+}
+
+/** 设备事件只附着到同一内部 device_id；事件流没有告警 ID 时使用自身 event_id。 */
+export function attachDeviceEvents(devices, events) {
+  const grouped = new Map();
+  for (const event of events || []) {
+    if (!event?.device_id) continue;
+    const rows = grouped.get(event.device_id) || [];
+    rows.push({
+      id: event.event_id,
+      level: SEVERITY_LEVEL[event.level_code] || '低',
+      title: event.message || event.event_type || '设备事件',
+      state: event.event_type || '',
+      occurredAt: num(event.occurred_at) || 0
+    });
+    grouped.set(event.device_id, rows);
+  }
+  return (devices || []).map(device => ({
+    ...device,
+    relatedAlerts: (grouped.get(device.deviceId) || []).sort((a, b) => b.occurredAt - a.occurredAt)
+  }));
+}
+
+export function toRisks(risks) {
+  return (risks || []).map(risk => {
+    const fact = risk.space_fact || null;
+    return {
+      id: risk.risk_no || risk.risk_id,
+      riskId: risk.risk_id,
+      riskType: risk.risk_type,
+      severity: risk.severity,
+      level: SEVERITY_LEVEL[risk.severity] || '低',
+      state: risk.state,
+      version: num(risk.version) ?? 0,
+      planId: risk.plan_id,
+      routeVersionId: risk.route_version_id,
+      targetId: risk.target_no || risk.target_id,
+      targetInternalId: risk.target_id || null,
+      occurredAt: num(risk.occurred_at ?? risk.received_at) || 0,
+      ts: num(risk.occurred_at ?? risk.received_at) || 0,
+      reasonText: risk.reason_text || '',
+      sourceMode: risk.source_mode || '',
+      spaceFact: fact ? {
+        subtypeCode: fact.subtype_code,
+        subtypeName: fact.subtype_name,
+        distanceToRouteM: num(fact.distance_to_route_m),
+        corridorRelation: fact.corridor_relation,
+        altitudeBand: fact.altitude_band,
+        objectCount: num(fact.object_count),
+        trend: fact.trend,
+        longitude: num(fact.longitude),
+        latitude: num(fact.latitude)
+      } : null
+    };
+  });
+}
+
+/** 将批量近期轨迹合并到目标，并用相邻两次真实位置生成五秒插值。 */
+export function attachRecentTracks(targets, recentTracks, previousTargets = [], generatedAt = Date.now(), durationMs = 5000) {
+  const tracks = new Map((recentTracks?.items || []).map(item => [item.target_id, toTrack(item.points)]));
+  const previous = new Map((previousTargets || []).map(target => [target.targetId, target]));
+  return (targets || []).map(target => {
+    const before = previous.get(target.targetId);
+    const moved = before?.posValid && target.posValid && (before.lon !== target.lon || before.lat !== target.lat);
+    return {
+      ...target,
+      track: tracks.get(target.targetId) || target.track || [],
+      sourceDeviceIds: target.sourceDeviceIds?.length ? target.sourceDeviceIds : (before?.sourceDeviceIds || []),
+      movement: moved ? {
+        fromLon: before.lon, fromLat: before.lat, toLon: target.lon, toLat: target.lat,
+        startedAt: generatedAt, endsAt: generatedAt + durationMs
+      } : null
+    };
+  });
+}
+
+export function attachTargetSourceLinks(targets, targetId, detail) {
+  const links = Array.isArray(detail?.source_links) ? detail.source_links : [];
+  return (targets || []).map(target => target.targetId === targetId
+    ? { ...target, sourceDeviceIds: links.map(link => link.device_id).filter(Boolean) }
+    : target);
 }

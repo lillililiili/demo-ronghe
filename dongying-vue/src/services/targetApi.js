@@ -37,6 +37,7 @@ export const targetApi = {
   /* 观测（阶段 15 起带 identity_confidence / bearing_deg / device_id）：态势页据此显示分路置信度与方位线。 */
   observations: (targetId, params) => apiRequest(`/targets/${id(targetId)}/observations${query(params)}`),
   points: (trackId, params) => apiRequest(`/tracks/${id(trackId)}/points${query(params)}`),
+  recentTracks: params => apiRequest(`/tracks/recent${query(params)}`),
   listAll(params) {
     return allPages(page => this.list(page), params);
   },

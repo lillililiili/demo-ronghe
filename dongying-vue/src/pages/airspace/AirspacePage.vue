@@ -6,6 +6,7 @@
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { airspaceApi } from '@/services/airspaceApi.js';
 import { flightApi } from '@/services/flightApi.js';
+import { strokePlannedRoute } from '@/services/positionMap.js';
 import { airspaceKindMeta, polygonRings, toAirspaces } from '@/services/situationData.js';
 import { openFormModal } from '@/ui/formModal.js';
 import { closeModal } from '@/ui/modal.js';
@@ -34,7 +35,8 @@ usePageChrome('airspace');
 const KIND_CODES = ['PROHIBITED', 'RESTRICTED', 'ALTITUDE_LIMIT', 'PERMITTED', 'TEMPORARY_CONTROL'];
 const KIND_OPTIONS = [{ label: '全部种类', value: '' }].concat(KIND_CODES.map(value => ({ label: AIRSPACE_KIND_LABEL[value], value })));
 const VALIDITY_OPTIONS = [{ label: '全部', value: '' }, { label: '当前生效', value: 'now' }, { label: '当前未生效', value: 'off' }];
-const ROUTE_COLOR = '#22d3ee'; // 青色：与临时管制区的绿色区分开
+const ROUTE_COLOR = '#22d3ee'; // 监测位置与模拟参考颜色
+const PLAN_COLOR = '#8ca0a8'; // 计划几何统一灰色
 const PAGE_MAX = 100;
 // 用户确认仅从本页日常列表移除的测试空域；服务端版本和历史研判引用继续保留。
 const OMITTED_TEST_AIRSPACE_IDS = new Set([
@@ -338,13 +340,11 @@ function installOverlay() {
     if (camera !== referenceCamera) clearReferenceTip();
     referenceCamera = camera;
     c.save();
-    // 合法航线：青色虚线，不标名——十几条航线的名字叠在一起谁也看不清，名字在飞行计划页看
+    // 计划航线：灰色虚线，不标名——十几条航线的名字叠在一起谁也看不清，名字在飞行计划页看
     if (showRoutes.value) routeLines.value.forEach(line => {
       referenceShapes.push({ id: line.id, name: line.name, type: '合法航线',
         note: '当前启用航线的中心线。', points: line.points.map(point => this.px(...point)) });
-      c.beginPath();
-      line.points.forEach(([lon, lat], index) => { const p = this.px(lon, lat); index ? c.lineTo(p[0], p[1]) : c.moveTo(p[0], p[1]); });
-      c.setLineDash([8, 5]); c.lineWidth = 2; c.strokeStyle = ROUTE_COLOR; c.stroke(); c.setLineDash([]);
+      strokePlannedRoute(c, this, line.points, { color: PLAN_COLOR, terminals: false, arrows: false });
     });
     // 选中空域：实线加粗描边
     const polygons = selectedPolygons();
@@ -356,18 +356,18 @@ function installOverlay() {
     }
     if (bottomTab.value === 'monitor' && monitor.isDemo && monitor.showLayer) drawDemoOverlay(c, this);
     const markerRows = bottomTab.value === 'monitor' ? [...riskList.targetMapRows.filter(row => row.demo),
-      ...riskList.riskMapRows.filter(row => ['BIRD', 'BIRD_FLOCK', 'BALLOON'].includes(row.space_fact?.subtype_code))] : [];
+      ...riskList.riskMapRows.filter(row => ['SPACE_OBJECT', 'FOREIGN_OBJECT'].includes(row.risk_type))] : [];
     objectMarkers.value = markerRows.map(row => {
       const [x, y] = this.px(...row.point), demo = row.demo;
       return { id: demo ? row.target_id : row.risk_id, kind: demo ? 'target' : 'risk', x, y, leftward: x > this.w - 200,
         active: demo ? monitor.activeId === row.target_id : risks.activeId === row.risk_id,
-        bird: ['BIRD', 'BIRD_FLOCK'].includes(demo ? row.subtype : row.space_fact?.subtype_code),
+        subtype: demo ? row.subtype : row.space_fact?.subtype_code,
         color: demo ? RISK_COLORS[demo.severity] : riskColor(row), title: demo ? row.target_no : row.space_fact?.subtype_name || row.risk_no,
         note: demo ? `${Math.round(demo.distance)} 米 · ${demo.count}${demo.unit} · 模拟` : `事件位置${row.source_mode === 'mock' ? ' · 模拟' : ''}` };
     }).filter(marker => marker.x >= 0 && marker.y >= 0 && marker.x <= this.w && marker.y <= this.h);
     // 独立风险只用发生时的可信位置快照；圆点颜色沿用服务端等级，排除项灰显。
     if (bottomTab.value === 'monitor') riskList.riskMapRows.forEach(risk => {
-      if (['BIRD', 'BIRD_FLOCK', 'BALLOON'].includes(risk.space_fact?.subtype_code)) return;
+      if (['SPACE_OBJECT', 'FOREIGN_OBJECT'].includes(risk.risk_type)) return;
       const [x, y] = this.px(...risk.point);
       const active = risks.activeId === risk.risk_id;
       c.beginPath(); c.arc(x, y, active ? 9 : 6, 0, Math.PI * 2);
@@ -394,10 +394,13 @@ function drawDemoOverlay(ctx, view) {
     const points = scene.geometry.map(p => view.px(...p));
     ctx.strokeStyle = ROUTE_COLOR; ctx.fillStyle = '#0d2635'; ctx.lineWidth = 2;
     ctx.beginPath();
-    if (points.length > 1) points.forEach((p, i) => i ? ctx.lineTo(...p) : ctx.moveTo(...p));
+    if (scene.id === 'route') {
+      strokePlannedRoute(ctx, view, scene.geometry, { color: PLAN_COLOR, terminals: false });
+    } else if (points.length > 1) points.forEach((p, i) => i ? ctx.lineTo(...p) : ctx.moveTo(...p));
+    else if (scene.id === 'dock') { window.UI.drawBusinessIcon(ctx, 'nest', ...points[0], 36); }
     else { ctx.arc(...points[0], 7, 0, Math.PI * 2); ctx.fill(); }
     if (scene.kind === 'polygon') { ctx.closePath(); ctx.fillStyle = 'rgba(34,211,238,.10)'; ctx.fill(); ctx.setLineDash([6, 4]); }
-    ctx.stroke();
+    if (scene.id !== 'route') ctx.stroke();
     ctx.setLineDash([]);
     ctx.font = '12px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
     const labelX = points[0][0] + 12, labelY = points[0][1] - 10;
@@ -665,7 +668,7 @@ onUnmounted(() => {
           <span class="sw" :style="{ borderColor: item.color, background: item.color + '33' }"></span>{{ item.label }}
         </button>
         <button v-if="routesAvailable && routeLines.length" type="button" class="legend-item" :class="{ off: !showRoutes }" @click="showRoutes = !showRoutes">
-          <span class="sw ln" :style="{ borderColor: ROUTE_COLOR }"></span>合法航线
+          <span class="sw ln" :style="{ borderColor: PLAN_COLOR }"></span>计划航线
         </button>
         <div v-if="!legendKinds.length && !loading" class="legend-empty">图上暂无空域</div>
         <button v-if="bottomTab === 'monitor' && monitor.canRead" type="button" class="legend-item risk-layer-toggle" :class="{ off: !monitor.showLayer }" :aria-pressed="monitor.showLayer" @click="monitor.showLayer = !monitor.showLayer"><span class="target-dot"></span>近期目标位置</button>
@@ -722,6 +725,16 @@ onUnmounted(() => {
           </dl>
           <div v-if="selected.load_error" class="warnbox">{{ selected.load_error }}</div>
           <div v-if="detailError" class="warnbox">{{ detailError }}</div>
+
+          <section class="drawer-response-plan" aria-label="本空域处置预案">
+            <div><b>处置预案</b><span class="tag t-amber">关联信息待接入</span></div>
+            <p>暂时无法查看本空域采用的预案，也无法确认预案是否生效。</p>
+            <details :key="selected.airspace_id">
+              <summary>预案在哪里配置</summary>
+              <p>预案由后台管理端统一配置、发布并关联空域；配置与关联查询能力尚待接入。</p>
+              <p>本页查看适用预案；合法性研判查看触发依据；告警事件查看飞手短信、电话录音通知、现场情况和反制授权。</p>
+            </details>
+          </section>
 
           <section class="drawer-risk-summary">
             <b>范围内风险记录</b>
@@ -852,6 +865,11 @@ onUnmounted(() => {
 .drawer-risk-summary { display: flex; flex-direction: column; gap: 6px; padding: 12px 0; margin-top: 10px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); font-size: 13px; }
 .drawer-risk-summary small { color: var(--txt-3); line-height: 1.5; }
 .drawer-risk-summary .linkbtn { text-align: left; }
+.drawer-response-plan { margin-top: 14px; padding: 14px 0; border-top: 1px solid var(--line); font-size: 13px; overflow-wrap: anywhere; }
+.drawer-response-plan > div { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.drawer-response-plan p { margin: 8px 0; line-height: 1.65; color: var(--txt-2); }
+.drawer-response-plan summary { cursor: pointer; color: var(--cyan); }
+.drawer-response-plan summary:focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; }
 .airspace-bottom-tabs { grid-area: tabs; display: flex; gap: 6px; flex: none; border-bottom: 1px solid var(--line); }
 .airspace-tabs { display: flex; gap: 6px; }
 .airspace-bottom-tabs button { border: 0; border-bottom: 2px solid transparent; background: transparent; padding: 8px 16px; color: var(--txt-3); cursor: pointer; font-size: 14px; }

@@ -63,7 +63,7 @@ async function submit() {
     <div v-if="introHtml" class="controlled-form__intro" v-html="introHtml"></div>
     <UFieldGrid :fields="fields" :model="model" :columns="columns" />
     <div v-if="notice" class="info-line controlled-form__message">{{ notice }}</div>
-    <UFormFooter v-if="!hideFooter" :confirm-text="busy ? '正在处理…' : confirmText" :danger="danger" :disabled="!canSubmit" :loading="busy"
+    <UFormFooter v-if="!hideFooter" :confirm-text="busy ? '正在处理' : confirmText" :danger="danger" :disabled="!canSubmit" :loading="busy"
       @cancel="onCancel" @confirm="submit" />
   </n-form>
 </template>

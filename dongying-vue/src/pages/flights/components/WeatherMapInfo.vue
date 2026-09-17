@@ -75,6 +75,6 @@ summary span { font-weight: 400; color: var(--amber); }
 .weather-legend div { display: flex; align-items: center; gap: 6px; margin-top: 5px; }
 i { display: inline-block; width: 17px; flex: none; }
 .area { height: 9px; border: 1px dashed currentColor; background: color-mix(in srgb, currentColor 25%, transparent); }
-.route { border-top: 3px dashed #269bad; }
+.route { border-top: 2px dashed #269bad; }
 .overlap { border-top: 4px solid #a855f7; }
 </style>

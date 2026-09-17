@@ -12,7 +12,7 @@ const page = ref(1), size = ref(10);
 const options = [5, 15, 60].map(value => ({ value, label: `最近 ${value} 分钟` }));
 const modes = [{ value: 'demo', label: '模拟演示' }, { value: 'live', label: '接口监测数据' }];
 const scenes = [{ value: '', label: '全部重点区域' }, ...DEMO_SCENES.map(item => ({ value: item.id, label: item.label }))];
-const birdIcon = window.UI.icon('bird');
+const targetIcon = window.UI.targetIcon;
 const pageRows = computed(() => props.monitor.filtered.slice((page.value - 1) * size.value, page.value * size.value));
 watch(() => props.monitor.filtered.map(row => row.target_id).join(','), () => { page.value = 1; });
 watch(() => props.monitor.activeId, id => {
@@ -52,7 +52,7 @@ function openTarget(row) { window.UI?.goto?.('situation', { target: row.target_i
       <table class="tb">
         <thead><tr><th>目标 / 类型</th><template v-if="monitor.isDemo"><th>重点区域 / 距离</th><th>高度</th><th>数量</th><th>运动趋势（10 秒）</th></template><template v-else><th>最近发现</th><th>位置情况</th><th>来源</th><th>关联风险记录</th></template><th>操作</th></tr></thead>
         <tbody><tr v-for="row in pageRows" :key="row.target_id" :class="{ on: monitor.activeId === row.target_id }">
-          <td><b class="target-name"><span v-if="row.subtype === 'BIRD_FLOCK'" class="target-icon" v-html="birdIcon"></span>{{ row.target_no || '未编号目标' }}</b><small>{{ targetTypeLabel(row.subtype, row.object_type_code, '未分类') }}<template v-if="row.demo"> · <span class="tag" :class="row.demo.severity === 'HIGH' ? 't-red' : 't-amber'">{{ SEVERITY_LABEL[row.demo.severity] }} · 模拟</span></template></small></td>
+          <td><b class="target-name"><span class="target-icon" v-html="targetIcon(row)"></span>{{ row.target_no || '未编号目标' }}</b><small>{{ targetTypeLabel(row.subtype, row.object_type_code, '未分类') }}<template v-if="row.demo"> · <span class="tag" :class="row.demo.severity === 'HIGH' ? 't-red' : 't-amber'">{{ SEVERITY_LABEL[row.demo.severity] }} · 模拟</span></template></small></td>
           <template v-if="monitor.isDemo && row.demo">
             <td><b>{{ row.demo.scene.label }} · {{ Math.round(row.demo.distance) }} 米<template v-if="row.demo.relation"> · {{ { INSIDE: '界内', OUTSIDE: '界外', BOUNDARY: '边界上' }[row.demo.relation] }}</template></b><small>{{ row.demo.scene.distanceLabel }} · 前帧 {{ Math.round(row.demo.previousDistance) }} 米</small></td>
             <td><b>{{ row.demo.altitude }} 米</b><small>海拔高度（AMSL）</small></td>

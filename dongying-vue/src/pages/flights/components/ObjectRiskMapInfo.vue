@@ -3,8 +3,8 @@ import { computed } from 'vue';
 const props = defineProps({ risk: Object, marker: Object, title: String, color: String, heat: Boolean, heatCount: Number,
   trail: Array, trailIndex: Number, trailVisible: Boolean, playing: Boolean, trackError: String });
 defineEmits(['toggle-heat', 'toggle-trail', 'toggle-play', 'step']);
-const birdIcon = window.UI.icon('bird');
-const bird = computed(() => ['BIRD', 'BIRD_FLOCK'].includes(props.risk.space_fact?.subtype_code));
+const targetIcon = computed(() => window.UI.targetIcon(props.risk));
+const statusIcon = window.UI.icon('warning');
 const fact = computed(() => props.risk.space_fact || {});
 const time = value => value == null ? '时间未知' : new Date(value).toLocaleString('zh-CN', { hour12: false });
 const currentTime = computed(() => time(props.trail?.[props.trailIndex]?.t));
@@ -12,7 +12,7 @@ const currentTime = computed(() => time(props.trail?.[props.trailIndex]?.t));
 
 <template>
   <div v-if="marker" class="object-marker" :style="{ left: `${marker.x}px`, top: `${marker.y}px`, color }">
-    <span class="object-symbol"><span v-if="bird" v-html="birdIcon"></span><span v-else class="object-dot"></span></span>
+    <span class="object-symbol"><span v-html="targetIcon"></span></span><span class="object-risk-state" aria-hidden="true" v-html="statusIcon"></span>
     <div class="object-label" :class="{ leftward: marker.leftward }"><b>{{ title }}</b><span>事件位置<template v-if="risk.source_mode === 'mock'"> · 模拟</template></span></div>
   </div>
   <div class="object-map-tools" @click.stop>
@@ -32,7 +32,7 @@ const currentTime = computed(() => time(props.trail?.[props.trailIndex]?.t));
   </div>
   <details class="object-legend" @click.stop>
     <summary>图例</summary>
-    <div>异物标记颜色表示风险等级</div><div>青色：关联航线与走廊</div><div v-if="trailVisible">紫色：关联目标轨迹片段</div>
+    <div>主体图形表示异物类型，警示角标颜色表示风险等级</div><div>青色：关联航线与走廊</div><div v-if="trailVisible">紫色：关联目标轨迹片段</div>
     <div v-if="heat">本页 {{ heatCount }} 条{{ risk.source_mode === 'mock' ? '模拟' : risk.source_mode === 'replay' ? '回放' : '' }}事件的位置分布，不代表鸟群大小。</div>
     <div>通知状态不改变地图上的风险等级。</div>
   </details>
@@ -40,9 +40,9 @@ const currentTime = computed(() => time(props.trail?.[props.trailIndex]?.t));
 
 <style scoped>
 .object-marker { position: absolute; z-index: 6; width: 30px; height: 30px; transform: translate(-50%, -50%); pointer-events: none; }
-.object-symbol { display: grid; place-items: center; width: 30px; height: 30px; background: var(--surface-1); border: 2px solid currentColor; border-radius: 50%; box-shadow: 0 0 0 5px color-mix(in srgb, currentColor 12%, transparent); }
-.object-symbol :deep(svg) { width: 19px; height: 19px; }.object-symbol span { display: flex; }
-.object-dot { width: 7px; height: 7px; background: currentColor; border-radius: 50%; }
+.object-symbol { display: grid; place-items: center; width: 30px; height: 30px; background:transparent;border:0;box-shadow:none; }
+.object-symbol :deep(svg) { width:30px;height:30px; }.object-symbol span { display: flex; }
+.object-risk-state{position:absolute;right:-5px;bottom:-5px;display:flex}.object-risk-state :deep(svg){width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:2}
 .object-label { position: absolute; left: 38px; top: -3px; min-width: 94px; background: rgba(13,31,47,.84); border-left: 2px solid currentColor; border-radius: 4px; padding: 5px 8px; display: grid; gap: 2px; font-size: 11px; white-space: nowrap; }
 .object-label b { color: var(--txt-1); }.object-label span { font-size: 9px; color: var(--txt-2); }.object-label.leftward { left: auto; right: 8px; transform: translateX(-30px); }
 .object-map-tools,.object-location-note,.object-playback,.object-legend { position: absolute; z-index: 5; background: rgba(15,32,49,.72); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid rgba(210,228,245,.24); color: var(--txt-2); border-radius: 6px; font-size: 11px; padding: 5px 7px; }

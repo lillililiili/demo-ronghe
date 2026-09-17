@@ -8,6 +8,42 @@
 
 后续页面文案与可收起图例调整见[页面文案与图例调整](../页面文案与图例调整-2026-09-14.md)。页面将“回告”表达为“通知报送单位”，业务接口与记录含义不变；该轮按用户要求未运行测试或构建。
 
+## 2026-09-16：合法性页统一红绿灰轨迹
+
+### 同日追加：公共地图与其他页面补齐
+
+- 公共地图此前仍使用目标合法性给整条轨迹着色，且计划线随待执行、执行中、已完成和风险变色。现计划几何统一灰色，实测逐段读取走廊关系；未知黄色，非无人机保留类别色。融合感知、空域页图例同步更新。
+- 融合感知、事项定位、告警地图和回放保留 `point_id/track_id/point_seq/observed_at`、点型和显式断点。无效点两侧、不同轨迹、序号缺失和时间倒序不连接；预测、推算与实测分开。融合感知刷新不再生成五秒位置插值。
+- 融合感知点选无人机后，复用该目标研判轨迹接口，按同一观测点 ID、轨迹、时间和坐标匹配后台关系。只缓存同一研判；后续新点和另一版本的研判保持未知，失败不替换原观测，也不退回合法性颜色。无需增加后端接口。
+- 回放只绘制当前播放时刻及之前的点，拖动进度后重新截取；断点保留，模拟／回放来源在弹窗标明。
+
+追加代码清单：`public/assets/js/map.js` 的 `strokePlannedRoute/strokeObservedTrack/trackContinuous/_targetAnchor/_drawFlightPlans/draw` 统一绘制与断点；`services/trackPoints.js` 的 `measuredMapPoints/applyTrackComparison` 保留观测并精确关联后台事实；`situationData.js` 的 `toTrack/attachRecentTracks`、`positionMap.js` 的 `loadTargetPosition`、`AlarmsPage.vue` 的 `focusMap` 复用观测转换；`trajectoryDrawing.js` 的 `strokePlanComparison` 复用公共绘制；`situationApiSource.js` 的 `withComparison/loadTargetDetail/refreshFast` 读取并缓存选中目标的分段结果；`trackReplayModal.js` 的 `trackPointsOf/withHeadings/mapTargetOf` 和 `TrackReplayModal.vue` 的 `paint` 保留断点、来源和回放时刻；`SituationPage.vue/situation.css/AirspacePage.vue` 的模板、样式与航线叠加层同步图例；`dongying-vue/AGENTS.md` 更正旧的“可传状态色”约定。
+
+追加验证：7 组临时断言覆盖颜色、无效点、时间倒序、跨轨迹、点型转换、精确观测匹配与不补运动；133 文件扫描、经典脚本语法检查、旧地址迁移 1 项回归通过。生产构建直接调用本项目 Vite 通过，常规 npm 命令仍因已有跨项目链接失败。真实浏览器已点选当前无人机并收到分段接口 200、看到红色偏离片段；四档视口无横向溢出。回放验收使用浏览器内存中的明确模拟点，验证首帧仅一个点、进度末端四个点、关闭后清理；空域、合法性、飞行计划与大屏切页检查无脚本异常。未新增或改写业务观测，未修改后端，未重复执行后端测试。
+
+用户确认规则已写入根目录与业务前端 AGENTS.md：符合规划的已飞片段绿色，偏离片段红色，计划底线灰色；观测中断保留缺口，不补造或平滑已有轨迹。灰色线保留规划参考，不能仅凭缺少观测认定未起飞。
+
+合法性页新增只读 `GET /api/v1/legality-evaluations/{evaluationId}/trajectory`，复用本节轨迹响应。后台固定该研判的目标、航线版本及 `min(as_of, evaluated_at)`，复用已有 PostGIS 距离与版本绑定的轨迹间隔；优先同目标最新融合轨迹，原始轨迹退路需核对归属。不同于计划的最新目标入口，不能因一条计划有多个目标而串数据。关联航线不可见时拒绝读取；无可比对航线则保留 UNKNOWN，不假定红或绿。
+
+两页共用轨迹画法：实测点之间只有连续时才连线，缺点、跨轨迹、时间倒序或超时断开；预测和弥合不混成已飞实测。合法性页的位置图标单独读取，不再重复读取整条轨迹。地图初始视野优先覆盖当前轨迹、位置和计划线，避免周边大空域把轨迹缩小。原计划接口及业务状态保持兼容。
+
+本轮验证：后端轨迹、实际对照及认证相关 22 项测试通过，package 成功；前端绘制断言、132 文件控件扫描、旧管理地址迁移测试通过。常规 npm 构建仍受已有跨项目 Vite 链接影响，直接调用本项目 Vite 完成生产构建。实际本地接口与浏览器确认同一目标的绿/红片段、灰色计划线、无计划 UNKNOWN、研判截止时间、刷新及 1280×720 / 1366×768 / 1920×1080 无横向溢出，页面无脚本异常。底图加载完成后的截图已核对；本次未重造观测数据，未执行全量后端测试。两仓库 git diff --check 通过。
+
+### 代码变更说明
+
+| 文件 / 类 | 方法 / 区块 | 作用与变化 |
+| --- | --- | --- |
+| 根目录及 dongying-vue/AGENTS.md | 无具体方法，地图约定 | 固定真实时序、断点和红绿灰规则 |
+| LegalityPage.vue | renderEvidenceMap、地图图例 | 读取当前研判分段结果，绘制红绿实际轨迹与灰色计划线 |
+| legalityApi.js | trajectory | 读取研判专属轨迹接口 |
+| positionMap.js | loadTargetPosition(positionOnly) | 仅取位置，避免重复加载轨迹 |
+| services/trajectoryDrawing.js | trustedTrajectoryPoints、strokePlanComparison | 两页共享可信点、分段颜色、灰色计划线与断点绘制 |
+| pages/flights/planTrajectory.js | 绘制函数再导出 | 飞行计划沿用共享绘制，保留原文案转换 |
+| FlightTrajectoryService | readEvaluation、compare、read | 固定研判关联并复用后台空间对照，原计划接口兼容 |
+| FlightTrajectoryController | evaluationTrajectory | 新增只读路由 |
+| LegalityTrajectoryServiceTest | 6 项用例 | 固定目标/航线/时间、红绿关系、未知、断点及权限 |
+| server/README.md、docs/flow-map.md | 无具体方法，契约与流程 | 同步前后台约定；管理端未发现该接口消费者 |
+
 ## 2026-09-14 追加：页面超时及各类轨迹演示
 
 用户已明确授权重启后端、更新核实/回告表，并补齐执行、未执行5条、计划匹配、计划偏离等演示数据。

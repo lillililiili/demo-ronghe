@@ -106,12 +106,12 @@ onUnmounted(() => { alive = false; generation++; clearTimeout(refreshTimer); });
     <h4>光电追踪与视频 <span v-if="videoVisible" class="tag t-amber">模拟视频</span></h4>
     <SimulatedRiskVideo v-if="videoVisible" :key="targetId" :subtype="subtype" />
     <div v-if="canRead" class="tracking-status" role="status">{{ statusText }}</div>
-    <p v-if="blocked || (!loading && !error)" class="tracking-note">{{ blocked || (active ? '已有跟踪任务，无需重复发起；可刷新状态查看进度。' : '发起并建立跟踪任务后，才展示模拟画面。') }}</p>
+    <p v-if="blocked" class="tracking-note">{{ blocked }}</p>
     <p v-if="error" class="warnbox" role="alert">{{ error }}</p>
     <div v-if="canRead" class="tracking-actions">
-      <button v-if="!active" class="btn" :disabled="busy || loading || !!error || !availability?.available" :title="error ? '跟踪状态未确认，请先刷新跟踪状态' : loading ? '正在读取跟踪状态' : blocked" @click="begin">{{ busy ? '正在下发…' : '发起光电追踪' }}</button>
-      <button v-if="task?.status === 'OPEN'" class="btn danger" :disabled="!permission || busy || loading" @click="end">{{ busy ? '正在结束…' : '结束追踪' }}</button>
-      <button class="btn" :disabled="loading || busy" @click="refresh()">{{ loading ? '正在读取…' : '刷新跟踪状态' }}</button>
+      <button v-if="!active" class="btn" :disabled="busy || loading || !!error || !availability?.available" :title="error ? '跟踪状态未确认，请先刷新跟踪状态' : loading ? '正在读取跟踪状态' : blocked" @click="begin">{{ busy ? '正在下发' : '发起光电追踪' }}</button>
+      <button v-if="task?.status === 'OPEN'" class="btn danger" :disabled="!permission || busy || loading" @click="end">{{ busy ? '正在结束' : '结束追踪' }}</button>
+      <button class="btn" :disabled="loading || busy" @click="refresh()">{{ loading ? '正在读取' : '刷新跟踪状态' }}</button>
     </div>
   </section>
 </template>

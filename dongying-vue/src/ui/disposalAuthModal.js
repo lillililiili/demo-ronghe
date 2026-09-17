@@ -135,17 +135,19 @@ async function loadEnabledDeviceOptions() {
  * @param {'UAV_EVENT'|'RISK'|'TARGET'} o.subjectKind
  * @param {string} o.subjectId
  * @param {string} [o.subjectText] 主体的可读说明（编号/名称），只读展示
+ * @param {string} [o.initialReason] 已保存的现场事实草稿，提交前由用户核对
+ * @param {() => boolean} [o.isCurrent] 所属事件及页面是否仍有效，阻止迟到表单串到其他事件
  * @param {object} [o.policy] GET /disposal-policies 的结果，用于显示时限与 DEMO 标注
  * @param {(body: object, key: string) => Promise<object>} [o.submit] 自定义提交；融合感知模拟源用来复用同一弹窗但不打真实授权接口
  * @param {(result: object) => string} [o.okText] 成功提示；缺省为“申请已提交…待审批”
  */
-export function openDisposalRequest({ actionType, actionOptions, subjectKind, subjectId, subjectText, policy, refresh, onDone, submit: customSubmit, okText } = {}) {
+export function openDisposalRequest({ actionType, actionOptions, subjectKind, subjectId, subjectText, initialReason = '', isCurrent = () => true, policy, refresh, onDone, submit: customSubmit, okText } = {}) {
   if (!actionType || !subjectKind || !subjectId) { toast('缺少处置对象，无法发起申请', 'err'); return false; }
-  void showDisposalRequestForm({ actionType, actionOptions, subjectKind, subjectId, subjectText, policy, refresh, onDone, customSubmit, okText });
+  void showDisposalRequestForm({ actionType, actionOptions, subjectKind, subjectId, subjectText, initialReason, isCurrent, policy, refresh, onDone, customSubmit, okText });
   return true;
 }
 
-async function showDisposalRequestForm({ actionType, actionOptions, subjectKind, subjectId, subjectText, policy, refresh, onDone, customSubmit, okText }) {
+async function showDisposalRequestForm({ actionType, actionOptions, subjectKind, subjectId, subjectText, initialReason, isCurrent, policy, refresh, onDone, customSubmit, okText }) {
   const choices = (actionOptions || []).filter(Boolean);
   const pickable = choices.length > 1;
   let deviceOptions = [];
@@ -158,6 +160,7 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
       ? '当前账号没有设备台账读取权限，无法列出执行设备；可改用人工执行。'
       : (error?.message || '读取执行设备失败，可改用人工执行。');
   }
+  if (!isCurrent()) return false;
   /* GET /disposal-policies 实际返回的是策略数组，参数在 params 下、DEMO 标记是 schema_status；
      这里一并兼容扁平形状，避免接口小改动就把时限提示悄悄变没。 */
   const current = Array.isArray(policy) ? policy[0] : policy;
@@ -182,6 +185,7 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
         ? '选择联动反制时，执行完成将自动发起信号干扰，不再二次审批。' : '')
       + (demo ? '当前为演示策略，时限与条件待业务确认。' : ''),
     introHtml: `<dl class="kv">${intro}</dl>`,
+    notice: initialReason ? '已带入保存的现场记录，请核对并补充本次申请事由；历史记录不代表目标当前仍在场。' : '',
     fields: [
       ...(pickable ? [{ key: 'action_type', label: '动作类型', type: 'radio', required: true,
         options: choices.map(a => ({ value: a, label: labelOf(DISPOSAL_ACTION_LABEL, a) })) }] : []),
@@ -193,13 +197,15 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
       { key: 'device_id', label: '执行设备', type: 'select', clearable: true, filterable: true,
         placeholder: '请选择执行设备', options: deviceOptions, help: deviceHelp,
         visibleWhen: m => m.channel !== 'MANUAL' },
-      { key: 'reason', label: '申请事由', type: 'textarea', required: true, minRows: 3, placeholder: '必填：为什么需要这次处置（现场情况、已采取的措施、影响范围）' }
+      { key: 'reason', label: '申请事由', type: 'textarea', required: true, minRows: 3, placeholder: '2–500 字：核对已带入的现场情况，补充本次处置事由' }
     ],
-    initial: { action_type: actionType, channel: 'LINGYUN_B', device_id: null, reason: '' },
+    initial: { action_type: actionType, channel: 'LINGYUN_B', device_id: null, reason: initialReason },
     confirmText: '提交申请',
     danger: true,
     validate: m => {
-      if (!String(m.reason || '').trim()) return '申请事由为必填项';
+      if (!isCurrent()) return '事件已切换，请关闭后从当前事件重新申请';
+      const reason = String(m.reason || '').trim();
+      if (reason.length < 2 || reason.length > 500) return `申请事由需为 2–500 字，当前 ${reason.length} 字；请核对并调整，现场原始记录会保留。`;
       // 服务端要求：经设备执行的处置必须指定设备。这里先拦，免得填完事由才被打回。
       if (m.channel !== 'MANUAL' && !String(m.device_id || '').trim()) return '经设备执行的处置必须指定执行设备';
       return null;
@@ -208,6 +214,7 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
       scope: `${subjectKind}:${subjectId}:${chosen || actionType}`,
       action: 'request',
       call: key => {
+        if (!isCurrent()) throw new Error('事件已切换，请关闭后从当前事件重新申请');
         const body = {
           action_type: chosen || actionType, subject_kind: subjectKind, subject_id: subjectId,
           channel, device_id: channel === 'MANUAL' ? undefined : (String(deviceId || '').trim() || undefined),

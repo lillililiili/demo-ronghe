@@ -6,6 +6,8 @@ import { airspaceApi } from '@/services/airspaceApi.js';
 import { riskApi } from '@/services/riskApi.js';
 import { handoffApi } from '@/services/handoffApi.js';
 import { mapPool } from '@/services/apiClient.js';
+import { legalityApi } from '@/services/legalityApi.js';
+import { applyTrackComparison } from '@/services/trackPoints.js';
 import {
   attachBearing, attachDeviceEvents, attachRecentTracks, attachTargetSourceLinks,
   bearingOrigins, toAirspaces, toAlarms, toDevices, toFlightPlans, toRisks, toTargets
@@ -69,6 +71,15 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
   let emit = () => {};
   let report = () => {};
   const routeVersions = new Map();
+  const trajectoryComparisons = new Map();
+
+  function withComparison(targets) {
+    return targets.map(target => {
+      const saved = trajectoryComparisons.get(target.targetId);
+      if (!saved || saved.evaluationId !== target.legalitySummary?.evaluation_id) return target;
+      return { ...target, track: applyTrackComparison(target.track, saved.data) };
+    });
+  }
 
   function publish(generatedAt) {
     snapshot = { ...snapshot, generatedAt, sourceMode: sourceMode(snapshot), simulated: false };
@@ -88,7 +99,7 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
         const page = await targetApi.listAll({ seen_from: observedFrom, seen_to: generatedAt, include_merged: false });
         const recent = await targetApi.recentTracks({ observed_from: observedFrom, observed_to: generatedAt, points_per_target: 24 });
         const converted = attachBearing(toTargets(page.items), bearingOrigins(snapshot.devices));
-        return attachRecentTracks(converted, recent, snapshot.targets, generatedAt, fastMs);
+        return withComparison(attachRecentTracks(converted, recent, snapshot.targets));
       }, value => { snapshot = { ...snapshot, targets: value }; }),
       retain('alarms', () => allPages(listAlarms, {
         occurred_from: day.from, occurred_to: day.to, sort: 'occurred_at', order: 'desc'
@@ -184,6 +195,20 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
       const detail = await targetApi.detail(targetId);
       snapshot = { ...snapshot, targets: attachTargetSourceLinks(snapshot.targets, targetId, detail) };
       publish(now());
+      const evaluationId = detail.legality_summary?.evaluation_id;
+      if (evaluationId && detail.object_type_code === 'UAV') {
+        try {
+          const saved = trajectoryComparisons.get(targetId);
+          const data = saved?.evaluationId === evaluationId ? saved.data : await legalityApi.trajectory(evaluationId);
+          if (stopped) return detail;
+          if (data.target_id !== targetId) throw new Error('轨迹比对结果与当前目标不一致');
+          trajectoryComparisons.set(targetId, { evaluationId, data });
+          snapshot = { ...snapshot, targets: withComparison(snapshot.targets) };
+          publish(now());
+        } catch (error) {
+          if (!stopped) report(error, '轨迹分段比对（未比对的观测保持未知）');
+        }
+      }
       return detail;
     },
     current() { return snapshot; }

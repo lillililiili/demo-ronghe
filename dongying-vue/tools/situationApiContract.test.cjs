@@ -74,9 +74,13 @@ async function main() {
         if (failTargets) throw new Error('intentional target outage');
         return { items: [targetRow], total: 1 };
       },
-      recentTracks: async () => ({ items: [{ target_id: 't1', points: [
-        { location: { longitude: 118.5, latitude: 37.4 }, point_kind: 'MEAS' },
-        { location: { longitude: 118.51, latitude: 37.41 }, point_kind: 'PRED' }
+      recentTracks: async () => ({ items: [{ target_id: 't1', track_id: 'track-1', points: [
+        { point_id: 'point-1', track_id: 'track-1', point_seq: 1, observed_at: now - 1000,
+          sort_time: now - 1000, time_basis: 'OBSERVED', received_at: now - 900,
+          location: { longitude: 118.5, latitude: 37.4, coordinate_system: 'WGS84' }, point_kind: 'MEAS' },
+        { point_id: 'point-2', track_id: 'track-1', point_seq: 2, observed_at: now,
+          sort_time: now, time_basis: 'OBSERVED', received_at: now + 100,
+          location: { longitude: 118.51, latitude: 37.41, coordinate_system: 'WGS84' }, point_kind: 'PRED' }
       ] }] }),
       fusionStatus: async () => ({ status: 'RUNNING' }),
       detail: async () => ({ source_links: [{ device_id: 'd0' }] })
@@ -103,6 +107,9 @@ async function main() {
   check('只保留启用的四类融合设备并完整分页', first.devices.length, 100);
   check('回放来源由真实响应推导', first.sourceMode, 'replay');
   check('批量近期轨迹接入目标', first.targets[0].track.length, 2);
+  check('近期轨迹保留观测身份、时间与点类型', first.targets[0].track.map(point =>
+    [point.point_id, point.track_id, point.point_seq, point.t, point.kind]),
+  [['point-1', 'track-1', 1, now - 1000, 'meas'], ['point-2', 'track-1', 2, now, 'pred']]);
   check('计划航线读取版本中心线', first.flightPlans[0].coordinates, [[118.4, 37.3], [118.6, 37.5]]);
   check('选中目标后按内部 device_id 关联来源', (await source.loadTargetDetail('t1')).source_links[0].device_id, 'd0');
 

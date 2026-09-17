@@ -16,6 +16,9 @@ import {
 } from '@/ui/labels.js';
 import { toast } from '@/ui/nv.js';
 import { getAlarm } from '@/services/alarmApi.js';
+import SituationAdvisoryCard from './situation/SituationAdvisoryCard.vue';
+import SituationAlarmPopup from './situation/SituationAlarmPopup.vue';
+import { autoSmsView } from '@/components/disposal/autoSmsView.js';
 
 const U = window.UI;
 usePageChrome('situation');
@@ -24,6 +27,7 @@ const VIEWED_STORAGE_KEY = 'situation.viewed.v1';
 const mapHost = ref(null);
 const snapshot = ref({ generatedAt: 0, sourceMode: 'unknown', simulated: false, devices: [], targets: [], alarms: [], flightPlans: [], risks: [], airspaces: [], handoffs: [] });
 const selection = ref(null);
+const advisorySummaries = ref({});
 const expandedType = ref('');
 const alertTab = ref('target');
 const fuseOpen = ref(false);
@@ -75,6 +79,14 @@ const selectedTarget = computed(() => {
   if (selection.value?.kind !== 'target') return null;
   return targets.value.find(target => target.id === selection.value.id) || null;
 });
+const selectedUavAlarm = computed(() => {
+  if (selection.value?.kind === 'alarm' || selection.value?.alarmId) {
+    const alarmId = selection.value.alarmId || selection.value.id;
+    return alarms.value.find(item => item.alarmId === alarmId) || null;
+  }
+  return selectedTarget.value?.objectTypeCode === 'UAV' ? targetAlarm(selectedTarget.value) : null;
+});
+const showAlarmPopup = computed(() => alertTab.value === 'target' && !!selectedUavAlarm.value);
 const fusionDevices = computed(() => {
   const ids = new Set(selectedTarget.value?.sourceDeviceIds || []);
   return devices.value.filter(device => ids.has(device.fusionDeviceId || device.deviceId));
@@ -137,9 +149,8 @@ function statusClass(status) {
   return status === '在线' ? 'is-online' : status === '离线' ? 'is-offline' : 'is-warning';
 }
 
-function targetIconName(target) {
-  return target?.iconKind === 'uav' ? 'plane' : target?.iconKind === 'bird' ? 'bird'
-    : target?.iconKind === 'unknown' ? 'alert' : 'zone';
+function targetIconHtml(target) {
+  return U.targetIcon(target);
 }
 
 function formatMetric(value, unit = '') {
@@ -257,7 +268,7 @@ function applySnapshot(next) {
     risks: decorated.risks,
     alarms: []
   });
-  if (selection.value) map.pinHit(selection.value.kind, selection.value.id);
+  if (selection.value && selection.value.kind !== 'alarm') map.pinHit(selection.value.kind, selection.value.id);
 }
 
 function onSourceError(error, segment) {
@@ -298,10 +309,11 @@ function selectDevice(device) {
   }
 }
 
-function selectTarget(target) {
+function selectTarget(target, alarmId) {
   if (!target) return;
+  alertTab.value = 'target';
   markViewed([...(target.relatedAlarms || []), ...(target.relatedRisks || []).filter(risk => risk.active)]);
-  selection.value = { kind: 'target', id: target.id };
+  selection.value = { kind: 'target', id: target.id, alarmId };
   if (map) {
     map.sel = target.id;
     map.planSel = null;
@@ -314,7 +326,26 @@ function selectTarget(target) {
 function selectAlarm(alarm) {
   markViewed(alarm);
   alertTab.value = 'target';
-  selectTarget(targets.value.find(target => target.id === alarm.targetId));
+  const target = targets.value.find(target => target.targetId === alarm.targetInternalId);
+  if (target) selectTarget(target, alarm.alarmId);
+  else {
+    // 目标不在当前监测窗口，仍查看被点击的同一事件，不能沿用前一个目标。
+    selection.value = { kind: 'alarm', id: alarm.alarmId };
+    fuseOpen.value = false;
+    if (map) { map.sel = null; map.planSel = null; map.clearPinnedHit(); }
+  }
+}
+
+function alarmAnchor() {
+  const target = selectedTarget.value;
+  return map && Number.isFinite(target?.lon) && Number.isFinite(target?.lat)
+    ? map.px(target.lon, target.lat) : null;
+}
+
+function isSelectedAlarm(alarm) {
+  return selection.value?.kind === 'alarm' ? selection.value.id === alarm.alarmId
+    : selection.value?.kind === 'target' && selection.value.id === alarm.targetId
+      && (!selection.value.alarmId || selection.value.alarmId === alarm.alarmId);
 }
 
 function selectPlan(plan, markRisks = true) {
@@ -452,7 +483,7 @@ function renderDeviceTip(device) {
 }
 
 function renderTargetActions(target) {
-  const alarm = (target.relatedAlarms || [])[0];
+  const alarm = targetAlarm(target);
   const buttons = [];
   if (showEoVideo(target, devices.value)) {
     buttons.push('<button type="button" data-tip-act="eo-video">光电视频</button>');
@@ -466,7 +497,9 @@ function renderTargetActions(target) {
 }
 
 function renderTargetTip(target) {
-  const alarm = (target.relatedAlarms || [])[0];
+  const alarm = targetAlarm(target);
+  const notification = alarm?.eventId ? advisorySummaries.value[alarm.eventId] : null;
+  const sms = notification ? autoSmsView(notification) : null;
   const routeRisk = (target.relatedRisks || []).find(risk => risk.active);
   const sourceNames = devices.value.filter(device => (target.sourceDeviceIds || []).includes(device.fusionDeviceId || device.deviceId))
     .map(device => device.type).join(' / ');
@@ -476,11 +509,12 @@ function renderTargetTip(target) {
   const stateClass = alarm?.eventState === 'FALSE_POSITIVE' || processStatus === '已移送处罚' || processStatus === '已干扰'
     ? 'is-online' : (target.activeRisk || processStatus === '信号干扰中' || processStatus === '待审批' ? 'is-risk' : 'is-online');
   return `<section class="sit-map-pop sit-map-pop-target${target.newAlert ? ' is-new' : ''}" style="--sensor:${target.objectTypeCode === 'UAV' ? '#2fd06e' : '#72d6ff'}">
-    <header><span class="sit-map-pop-icon">${U.icon(targetIconName(target))}</span><span><b>${esc(target.id)}</b><small>${esc(target.typeLabel)}</small></span>
+    <header><span class="sit-map-pop-icon">${targetIconHtml(target)}</span><span><b>${esc(target.id)}</b><small>${esc(target.typeLabel)}</small></span>
       <button type="button" data-tip-act="close" aria-label="关闭目标详情">${U.icon('close')}</button></header>
     <div class="sit-map-pop-status"><span class="sit-state ${stateClass}">${esc(stateText)}</span><span>${esc(summary)}</span></div>
     <div class="sit-target-metrics"><span><small>高度</small><b>${esc(formatMetric(target.alt, ' m'))}</b></span><span><small>速度</small><b>${esc(formatMetric(target.speed, ' m/s'))}</b></span><span><small>融合置信</small><b>${esc(formatMetric(target.fusedConf, '%'))}</b></span></div>
     <p>感知来源：${esc(sourceNames || '未提供')}</p>
+    ${alarm?.eventId ? `<p class="sit-map-pop-note">短信通知：${esc(sms?.title || '正在读取通知状态')}${sms?.updatedAt ? ` · ${esc(formatClock(sms.updatedAt))}` : ''}</p>` : ''}
     ${target.objectTypeCode === 'UAV' ? '<p class="sit-eo-track">光电跟踪中</p>' : ''}
     ${target.activeRisk || alarm ? '' : '<div class="sit-map-pop-note">目标处于持续跟踪中。</div>'}
     ${renderTargetActions(target)}
@@ -517,7 +551,17 @@ function onMapPick(hit) {
 }
 
 function targetAlarm(target) {
-  return (target?.relatedAlarms || [])[0] || null;
+  const related = target?.relatedAlarms || [];
+  if (selection.value?.kind === 'target' && selection.value.id === target?.id && selection.value.alarmId) {
+    return related.find(row => row.alarmId === selection.value.alarmId) || null;
+  }
+  return related.find(row => row.eventState !== 'FALSE_POSITIVE') || null;
+}
+
+function updateNotification(value) {
+  if (value.event_id !== selectedUavAlarm.value?.eventId) return;
+  advisorySummaries.value = { [value.event_id]: value };
+  if (map && selection.value?.kind === 'target') map.pinHit('target', selection.value.id);
 }
 
 function openFalsePositive(target) {
@@ -556,6 +600,10 @@ function openFalsePositive(target) {
 
 async function openLinkedDisposal(target) {
   const alarm = targetAlarm(target);
+  return openAlarmDisposal(alarm);
+}
+
+async function openAlarmDisposal(alarm) {
   // 只有数据源明确提供业务告警 ID 才深链；页面私有模拟 ID 不冒充服务端事件。
   if (alarm?.alarmId) {
     try {
@@ -620,7 +668,7 @@ onMounted(() => {
     zoom: 1,
     legend: false,
     fusionProfile: true,
-    sensorIconScale: .82,
+    sensorIconScale: 1,
     maxDpr: 2,
     layers: { alarm: false, coverage: true },
     interactiveTip: true,
@@ -644,7 +692,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div id="view" class="view situation-page" @keydown.esc="clearSelection">
+  <div id="view" class="view situation-page" :class="{ 'has-alarm-popup': showAlarmPopup }" @keydown.esc="clearSelection">
     <main class="sit-stage" aria-label="融合感知实时地图">
       <div id="stMap" ref="mapHost" class="sit-map"></div>
 
@@ -678,7 +726,7 @@ onUnmounted(() => {
                 :class="[{ 'is-selected': selection?.kind === 'device' && selection.id === device.id, 'has-new': device.newAlert }, statusClass(device.status)]"
                 :aria-pressed="selection?.kind === 'device' && selection.id === device.id"
                 :aria-label="`查看${device.type}设备 ${device.name}，${device.status}${device.hasAlarm ? '，存在告警' : ''}`" @click="selectDevice(device)">
-                <span><i></i><b>{{ device.name }}</b><small class="mono">{{ device.id }}</small></span>
+                <span><span class="sit-node-icon" v-html="iconHtml(device)"></span><b>{{ device.name }}</b><small class="mono">{{ device.id }}</small></span>
                 <em>{{ device.status }} · {{ reportAge(device.lastReportAt) }}</em>
               </button>
             </div>
@@ -698,8 +746,8 @@ onUnmounted(() => {
         </div>
         <div v-if="alertTab === 'target'" class="sit-alert-list" role="tabpanel" aria-label="目标异常">
           <button v-for="alarm in alarms" :key="eventKey(alarm)" type="button" class="sit-alert-row"
-            :class="[{ 'is-new': alarm.isNew, 'is-selected': selection?.kind === 'target' && selection.id === alarm.targetId }, `level-${alarm.level}`]"
-            :aria-pressed="selection?.kind === 'target' && selection.id === alarm.targetId"
+            :class="[{ 'is-new': alarm.isNew, 'is-selected': isSelectedAlarm(alarm) }, `level-${alarm.level}`]"
+            :aria-pressed="isSelectedAlarm(alarm)"
             :aria-label="`查看${alarm.targetId}的${alarm.type}，${alarm.isNew ? '新异常' : '已查看，风险持续'}`" @click="selectAlarm(alarm)">
             <span class="sit-alert-level">{{ alarm.level }}</span>
             <span class="sit-alert-copy"><b class="mono">{{ alarm.targetId }}</b><em>{{ alarm.type }} · {{ alarm.district }}</em></span>
@@ -716,8 +764,22 @@ onUnmounted(() => {
             <span class="sit-alert-meta"><time class="mono">{{ formatClock(risk.occurredAt) }}</time><b>{{ risk.isNew ? '新风险' : labelOf(RISK_STATE_LABEL, risk.state) }}</b></span>
           </button>
         </div>
-        <footer>查看只停止提示动画；当前风险仍按业务状态保留。</footer>
       </aside>
+
+      <SituationAlarmPopup v-if="showAlarmPopup" :key="selectedUavAlarm.alarmId" :get-anchor="alarmAnchor">
+        <div v-if="selectedTarget" @click="onTipAction($event.target.closest('[data-tip-act]')?.dataset.tipAct, { kind: 'target', data: selectedTarget })"
+          v-html="renderTargetTip(selectedTarget)"></div>
+        <section v-else class="sit-map-pop">
+          <header><span class="sit-map-pop-icon" v-html="U.businessIcon('uav')"></span><span><b>{{ selectedUavAlarm.targetId }}</b><small>无人机告警</small></span>
+            <button type="button" aria-label="关闭告警详情" @click="clearSelection" v-html="U.icon('close')"></button></header>
+          <div class="sit-map-pop-status"><span class="sit-state is-risk">{{ selectedUavAlarm.level }}风险</span><span>{{ selectedUavAlarm.type }}</span></div>
+          <p>{{ selectedUavAlarm.district }} · 告警时间 {{ formatClock(selectedUavAlarm.ts) }}</p>
+        </section>
+        <p v-if="!alarmAnchor()" class="sit-alarm-position-note">当前未取得该目标的有效位置，无法定位无人机；以下保留此事件的信息。</p>
+        <SituationAdvisoryCard v-if="selectedUavAlarm.eventId" :event-id="selectedUavAlarm.eventId" :alarm-label="selectedUavAlarm.id"
+          @updated="updateNotification" @open="openAlarmDisposal(selectedUavAlarm)" />
+        <p v-else class="sit-alarm-position-note">此告警未关联无人机事件，暂无可读取的通知记录。</p>
+      </SituationAlarmPopup>
 
       <nav class="sit-layerbar" aria-label="地图图层">
         <button type="button" :aria-pressed="layers.coverage" @click="toggleLayer('coverage')">覆盖范围</button>
@@ -725,7 +787,7 @@ onUnmounted(() => {
         <button type="button" :aria-pressed="layers.track" @click="toggleLayer('track')">目标轨迹</button>
         <button type="button" :aria-pressed="layers.flightPlan" @click="toggleLayer('flightPlan')">计划航线</button>
         <button type="button" :aria-pressed="layers.airspace" :aria-label="`防控空域，共${airspaces.length}个区域`" @click="toggleLayer('airspace')">防控空域 {{ airspaces.length }}</button>
-        <span class="sit-plan-key" aria-label="航线状态图例"><i class="is-pending"></i>待执行<i class="is-executing"></i>执行中<i class="is-completed"></i>已完成<i class="is-risk"></i>当前风险</span>
+        <span class="sit-plan-key" aria-label="航线与轨迹图例"><span><i class="is-within"></i>符合航线</span><span><i class="is-outside"></i>偏离航线</span><span><i class="is-plan"></i>未飞计划线</span><span><i class="is-unknown"></i>关系未知</span></span>
       </nav>
 
       <aside v-if="selectedTarget" class="sit-fuse-dock" :class="{ 'is-open': fuseOpen }" aria-label="多源融合结果">
@@ -738,7 +800,7 @@ onUnmounted(() => {
           <header class="sit-dock-head"><span><small>FUSION LINKS</small><b>{{ selectedTarget.id }}</b></span><em>{{ fusionConfidence }}% 置信</em></header>
           <div class="sit-fuse-links">
             <span v-for="device in fusionDevices" :key="device.id" :style="{ '--sensor': device.color }">
-              <i></i><b>{{ device.type }}</b><em>{{ device.status }}</em>
+              <span class="sit-node-icon" v-html="iconHtml(device)"></span><b>{{ device.type }}</b><em>{{ device.status }}</em>
             </span>
           </div>
           <p>来源链路及在线状态均由后端融合服务返回。</p>
@@ -747,3 +809,11 @@ onUnmounted(() => {
     </main>
   </div>
 </template>
+
+<style scoped>
+.situation-page.has-alarm-popup :deep(.maptip.is-track){display:none!important}
+.sit-alarm-position-note{margin:0;padding:10px 12px;color:var(--muted);font-size:12px;line-height:1.5}
+.situation-page .sit-alert-copy>b,.situation-page .sit-alert-copy>em,.situation-page :deep(.sit-map-pop header b){white-space:normal;overflow:visible;overflow-wrap:anywhere;text-overflow:initial}
+.situation-page .sit-alert-row{flex-shrink:0;grid-template-columns:34px minmax(0,1fr)}
+.situation-page .sit-alert-meta{grid-column:2;flex-direction:row;justify-content:space-between;flex-wrap:wrap;white-space:normal}
+</style>

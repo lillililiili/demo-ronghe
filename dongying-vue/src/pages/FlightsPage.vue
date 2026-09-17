@@ -313,7 +313,7 @@ const riskKpis = computed(() => {
     { label: '风险事件', value: value('all'), color: 'blue', icon: 'alert', desc: desc('all', '当前权限范围内总数') },
     { label: '高风险事件', value: value('high'), color: 'red', icon: 'alert', desc: desc('high', 'severity=HIGH 的总数') },
     { label: '气象风险', value: value('weather'), color: 'amber', icon: 'alert', desc: desc('weather', '当前权限范围内的气象风险总数') },
-    { label: '异物风险', value: value('bird'), color: 'green', icon: 'bird', desc: desc('bird', '当前权限范围内的空中异物风险总数') },
+    { label: '异物风险', value: value('bird'), color: 'green', icon: 'business:bird', desc: desc('bird', '当前权限范围内的空中异物风险总数') },
     { label: '待核验', value: value('pending'), color: 'amber', icon: 'check', desc: desc('pending', 'state=PENDING_VERIFICATION 的总数') },
     { label: '异物涉及航线', value: routesInvolved.value.text, color: 'purple', icon: 'zone', desc: routesInvolved.value.desc }
   ];
@@ -356,7 +356,7 @@ const riskMapMissingNote = computed(() => {
   if (selectedRisk.value.route_version_id && !riskMapCoords.value) missing.push('相关航线的位置无法确认');
   return missing.join('；');
 });
-const riskHeroIcon = computed(() => (window.UI?.icon ? window.UI.icon(selectedRisk.value?.risk_type === 'WEATHER' ? 'alert' : 'bird') : ''));
+const riskHeroIcon = computed(() => selectedRisk.value?.risk_type === 'WEATHER' ? window.UI.icon('alert') : window.UI.targetIcon(selectedRisk.value));
 /* 详情卡网格第一列固定留给图标；没有图标元素时文字会落进 40px 列，所以计划卡也必须输出图标。 */
 function riskReasonText(risk) {
   let text = risk.reason_text || '未提供';
@@ -391,7 +391,7 @@ const notifyBlockReason = computed(() => {
 });
 const verifyBlockReason = computed(() => {
   if (!selectedRisk.value) return '';
-  if (canVerifyRisk.value) return '提交核验通过或排除结论';
+  if (canVerifyRisk.value) return selectedRisk.value.state === 'PENDING_NOTIFICATION' ? '将已确认的风险改判为排除，保留原核验记录' : '提交核验通过或排除结论';
   if (selectedRisk.value.state !== 'PENDING_VERIFICATION') return `当前状态「${stateLabel(selectedRisk.value.state)}」不允许核验`;
   return '未授予核验权限：缺少 risk:verify 权限或对象不在当前范围';
 });
@@ -467,7 +467,7 @@ const riskRecords = computed(() => risks.value.map(risk => ({
 function riskMessageOf(reason, fallback) {
   if (!reason) return fallback;
   if (reason.status === 401) return '登录已失效，请重新登录。';
-  if (reason.status === 403) return '当前账号没有查看飞行风险的权限（risk:read）。';
+  if (reason.status === 403) return '当前账号没有查看飞行风险的权限。';
   if (reason.code === 'TIMEOUT' || reason.code === 'NETWORK_ERROR') return '服务连接超时或不可用，请稍后重试。';
   return reason.message || fallback;
 }
@@ -1281,7 +1281,7 @@ function openRiskVerify() {
 function handoffMessageOf(error, fallback) {
   if (!error) return fallback;
   if (error.status === 401) return '登录已失效，请重新登录。';
-  if (error.status === 403) return '当前账号没有提交或查看交接的权限（handoff:create / handoff:read）。';
+  if (error.status === 403) return '当前账号没有提交或查看交接的权限。';
   if (error.code === 'NETWORK_ERROR' || error.code === 'TIMEOUT') return '服务连接超时或不可用，请稍后重试。';
   return error.message || fallback;
 }
@@ -1326,11 +1326,7 @@ function showHandoffSubmitted(created) {
           : '通知已送达，正在等待对方确认收到。')
         : '通知材料已保存，但发送功能尚未接通，通知还没有发出去。请查看下方发送情况。'),
       h('dl', { class: 'kv kv-surface' }, [
-        /* 只有拿到接收方名称才显示这一行：创建应答目前只回内部标识，把它摆上屏等于给人看一串没用的编码
-           （名称在通知记录里读得到）。 */
-        ...(created.recipient_name
-          ? [h('dt', '接收方'), h('dd', { title: created.recipient_id || '' }, created.recipient_name)]
-          : []),
+        h('dt', '通知对象'), h('dd', '上级'),
         h('dt', '发送情况'), h('dd', `${NOTICE_DELIVERY_LABEL[created.delivery_status] || created.delivery_status || '未知'} · ${NOTICE_BLOCKED_LABEL[created.blocked_reason] || created.blocked_reason || '无异常提示'}`)
       ]),
       h('div', { class: 'detail-actions' }, [
@@ -1612,8 +1608,8 @@ onUnmounted(() => {
               v-model:boundary-visible="weatherBoundaryVisible" v-model:opened="weatherOpened" @toggle-layer="toggleWeatherLayer" />
           </div>
           <div v-else class="empty rk-map-empty">{{ riskMapNote }}<button v-if="riskWeatherError && selectedRisk" class="btn" type="button" @click="loadRiskDetail(selectedRisk.risk_id)">重试</button></div>
-          <div v-if="selectedRisk?.risk_type !== 'WEATHER' && !objectRiskSelected" class="rk-legend" title="圆点表示发现风险时的位置，颜色表示风险等级；蓝色虚线表示相关航线。没有位置记录的内容不显示。">
-            <span style="color:#8fbaff">蓝虚线</span>=相关航线 · 圆点=风险位置
+          <div v-if="selectedRisk?.risk_type !== 'WEATHER' && !objectRiskSelected" class="rk-legend" title="圆点表示发现风险时的位置，颜色表示风险等级；青色虚线表示相关航线。没有位置记录的内容不显示。">
+            <span style="color:#269bad">青色虚线</span>=相关航线 · 圆点=风险位置
             <span style="color:#ff4d5e">高</span>/<span style="color:#ffb020">中</span>/<span style="color:#3d8bff">低</span>
             <span v-if="riskMapMissingNote" style="color:var(--txt-3)"> · {{ riskMapMissingNote }}</span>
           </div>
@@ -1657,7 +1653,7 @@ onUnmounted(() => {
                 <dt v-if="selectedRisk.assessment_id">关联研判</dt><dd v-if="selectedRisk.assessment_id" :title="selectedRisk.assessment_id">已关联研判记录</dd>
                 <dt v-if="selectedRisk.target_id">关联目标</dt><dd v-if="selectedRisk.target_id" class="mono" :title="selectedRisk.target_id">{{ selectedRisk.space_fact?.subtype_name || '关联感知目标' }}</dd>
                 <dt v-if="selectedRisk.track_id">关联轨迹</dt><dd v-if="selectedRisk.track_id" :title="selectedRisk.track_id">已关联轨迹</dd>
-              </dl><div class="rk-note">{{ selectedRisk.risk_type === 'WEATHER' ? '这里展示收到的气象风险记录，起飞前仍需核对最新预警及其影响时段。' : '这里展示发现风险时记录的情况，不代表目标现在的位置；是否违规请查看合法性研判。' }}</div></div>
+              </dl><div class="rk-note">{{ selectedRisk.risk_type === 'WEATHER' ? '起飞前请核对最新预警和有效时段。' : '位置为发现时快照；违规结论见合法性研判。' }}</div></div>
               <div class="sect"><h4>核验历史 <span class="tag t-gray">{{ riskHistoryTotal }}</span></h4>
                 <div v-if="riskHistoryLoading" class="empty">正在读取核验历史…</div>
                 <div v-else-if="riskHistoryError" class="warnbox rk-error">{{ riskHistoryError }}</div>
@@ -1679,7 +1675,8 @@ onUnmounted(() => {
                 <div v-else-if="!notices.length" class="empty">这条风险尚无通知记录。</div>
                 <div v-else class="rk-history">
                   <article v-for="notice in notices" :key="notice.handoff_id" class="rk-history-item">
-                    <div class="rk-history-head"><b>{{ notice.recipient_name || '接收方未提供' }}</b><span class="tag" :class="NOTICE_DELIVERY_TAG[notice.delivery_status] || 't-gray'">{{ NOTICE_DELIVERY_LABEL[notice.delivery_status] || '发送状态未知' }}</span></div>
+                    <div class="rk-history-head"><b>通知上级</b><span class="tag" :class="NOTICE_DELIVERY_TAG[notice.delivery_status] || 't-gray'">{{ NOTICE_DELIVERY_LABEL[notice.delivery_status] || '发送状态未知' }}</span></div>
+                    <details v-if="notice.recipient_name && notice.recipient_name !== '上级'"><summary>原通知对象记录</summary><p>{{ notice.recipient_name }}</p></details>
                     <p>{{ labelOf(HANDOFF_TYPE_LABEL, notice.handoff_type) }} · {{ formatTime(notice.created_at) }}</p>
                     <p>对方回复：{{ receiptText(notice) }}</p>
                     <p v-if="notice.blocked_reason">未完成原因：{{ NOTICE_BLOCKED_LABEL[notice.blocked_reason] || notice.blocked_reason }}</p>
@@ -1692,8 +1689,8 @@ onUnmounted(() => {
               <p v-if="selectedRisk.state === 'PENDING_VERIFICATION' && !canVerifyRisk" class="workspace-action-note">{{ verifyBlockReason }}</p>
               <p v-else-if="selectedRisk.state === 'PENDING_NOTIFICATION' && !canNotifyRisk" class="workspace-action-note">{{ notifyBlockReason }}</p>
               <div v-if="canVerifyRisk || canNotifyRisk || ['PENDING_VERIFICATION', 'PENDING_NOTIFICATION'].includes(selectedRisk.state)" class="detail-actions is-sticky">
-                <button v-if="selectedRisk.state === 'PENDING_VERIFICATION' || canVerifyRisk" class="btn pri" type="button" :disabled="!canVerifyRisk" :title="verifyBlockReason" @click="openRiskVerify">人工核验</button>
-                <button v-if="['PENDING_VERIFICATION', 'PENDING_NOTIFICATION'].includes(selectedRisk.state) || canNotifyRisk" class="btn" :class="{ pri: canNotifyRisk }" type="button" :disabled="!canNotifyRisk" :title="notifyBlockReason" @click="openRiskNotify()">通知上级</button>
+                <button v-if="selectedRisk.state === 'PENDING_VERIFICATION' || (selectedRisk.state === 'PENDING_NOTIFICATION' && canVerifyRisk)" class="btn" :class="{ pri: selectedRisk.state === 'PENDING_VERIFICATION', ghost: selectedRisk.state === 'PENDING_NOTIFICATION' }" type="button" :disabled="!canVerifyRisk" :title="verifyBlockReason" @click="openRiskVerify">{{ selectedRisk.state === 'PENDING_NOTIFICATION' ? '改判为排除' : '人工核验' }}</button>
+                <button v-if="selectedRisk.state === 'PENDING_NOTIFICATION' || canNotifyRisk" class="btn" :class="{ pri: canNotifyRisk }" type="button" :disabled="!canNotifyRisk" :title="notifyBlockReason" @click="openRiskNotify()">通知上级</button>
               </div>
             </template>
           </div>
@@ -1731,7 +1728,7 @@ onUnmounted(() => {
                   <li><span class="legend-line within" aria-hidden="true"></span>范围内</li>
                   <li><span class="legend-line outside" aria-hidden="true"></span>偏离计划</li>
                   <li><span class="legend-line unknown" aria-hidden="true"></span>范围未确定</li>
-                  <li><span class="legend-line unobserved" aria-hidden="true"></span>未测到轨迹</li>
+                  <li><span class="legend-line unobserved" aria-hidden="true"></span>计划航线</li>
                 </ul>
                 <div class="plan-map-legend-note">缺失的轨迹不连线</div>
               </details>
@@ -1739,7 +1736,7 @@ onUnmounted(() => {
             <div v-if="routeGeometryLoading || airspaceLoading" class="empty">正在加载航线和空域边界…</div>
             <div v-else-if="routeGeometryError || airspaceError" class="warnbox">{{ routeGeometryError || airspaceError }}</div>
             <div v-else-if="!hasMapContent" class="empty">航线位置或空域边界无法确认，暂时不能在地图上显示。</div>
-            <div v-if="matchedTrackNote" class="map-note">{{ matchedTrackNote }}<template v-if="trajectory?.param_status === 'DEMO'"> 当前使用演示设置判断轨迹是否中断。</template></div>
+            <div v-if="matchedTrackNote" class="map-note">{{ matchedTrackNote }}<span v-if="trajectory?.param_status === 'DEMO'" class="tag t-amber">演示参数</span></div>
           </UPanel>
           <UPanel title="计划详情与风险" class="workspace-detail" nopad>
             <div class="detail-body">

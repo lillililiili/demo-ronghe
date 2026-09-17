@@ -4,26 +4,14 @@ import { h } from 'vue';
 import { openModal } from './modal.js';
 import { toast } from './nv.js';
 import { targetApi } from '@/services/targetApi.js';
-import { coordOf } from '@/services/positionMap.js';
+import { measuredMapPoints } from '@/services/trackPoints.js';
 import { ALARM_TYPE_LABEL, LEGALITY_LABEL, labelOf, readableNo, targetTypeLabel } from '@/ui/labels.js';
 import TrackReplayModal from '@/components/modals/TrackReplayModal.vue';
 
 let replaySeq = 0;
 
 export function trackPointsOf(raw) {
-  const points = [];
-  for (const item of raw || []) {
-    const c = coordOf(item.location);
-    if (!c) continue;
-    const kind = String(item.point_kind || item.kind || 'meas').toLowerCase();
-    points.push({
-      lon: c.lon,
-      lat: c.lat,
-      alt: item.altitude_amsl_m == null ? null : Number(item.altitude_amsl_m),
-      t: item.sort_time,
-      kind: kind === 'bridge' || kind === 'pred' ? kind : 'meas'
-    });
-  }
+  const points = measuredMapPoints(raw || []);
   return withHeadings(points);
 }
 
@@ -41,7 +29,7 @@ function withHeadings(points) {
   let heading = 0;
   return points.map((point, i) => {
     const next = points[i + 1];
-    if (next) {
+    if (next && window.MapView.trackContinuous(point, next)) {
       const h = headingBetween(point, next);
       if (h != null) heading = h;
     }
@@ -75,6 +63,7 @@ function mapTargetOf(target, alarm) {
   const id = t.target_no || alarm?.target_no || t.target_id || alarm?.target_id || '目标';
   return {
     id,
+    sourceMode: t.source_mode || '',
     type: targetTypeLabel(null, t.object_type_code, '目标'),
     subtype: targetTypeLabel(t.subtype, t.object_type_code, '目标'),
     legal: t.legality_summary && t.legality_summary.legal_status

@@ -7,13 +7,28 @@ import { newHandoffIdempotencyKey } from '@/services/handoffApi.js';
 const submissions = reactive(new Map());
 export function deviceNoticeState(planId, deviceId) {
   const key = `${authUser.value?.user_id || ''}:${planId}:${deviceId}`;
-  if (!submissions.has(key)) submissions.set(key, { pending: false, key: null, task: null, error: '' });
+  if (!submissions.has(key)) submissions.set(key, { pending: false, key: null, task: null, error: '', reading: false, readError: '', readGeneration: 0 });
   return submissions.get(key);
+}
+
+export async function loadDeviceMaintenanceNotice(planId, deviceId) {
+  if (!planId || !deviceId) return;
+  const state = deviceNoticeState(planId, deviceId);
+  if (state.reading || state.pending) return;
+  const generation = ++state.readGeneration;
+  state.reading = true; state.readError = '';
+  try {
+    const result = await apiRequestTimed(`/flight-plans/${encodeURIComponent(planId)}/device-maintenance-tasks?device_id=${encodeURIComponent(deviceId)}`);
+    if (generation === state.readGeneration) state.task = result.items?.[0] || null;
+  } catch (error) {
+    if (generation === state.readGeneration) state.readError = error.message || '运维通知记录读取失败，请重试';
+  } finally { if (generation === state.readGeneration) state.reading = false; }
 }
 
 export async function notifyDeviceAbnormal(planId, deviceId) {
   const state = deviceNoticeState(planId, deviceId);
   if (state.pending) return null;
+  state.readGeneration++; state.reading = false;
   state.pending = true;
   state.error = '';
   state.key ||= newHandoffIdempotencyKey();

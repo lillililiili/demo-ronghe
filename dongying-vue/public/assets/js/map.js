@@ -58,9 +58,10 @@
        opt.legendOpen:true 可保持展开。文案用业务语言，技术编号（A03/A04）移入 title。 */
     const legendHtml = opt.legend === false ? '' : `<div class="maplegend${opt.legendOpen ? '' : ' collapsed'}">
         <div class="lg-hd" role="button" tabindex="0" aria-label="展开或收起图例">图例 <span class="lg-arrow">${opt.legendOpen ? '▾' : '▸'}</span></div>
-        <div class="li"><span class="sw" style="border-color:#2fd06e"></span>合法目标轨迹</div>
-        <div class="li"><span class="sw" style="border-color:#8ca0be"></span>不适用（异物 §4.2）</div>
-        <div class="li"><span class="sw" style="border-color:#ff4d5e"></span>非法/告警目标</div>
+        <div class="li"><span class="sw" style="border-color:#2fd06e"></span>符合航线的已飞轨迹</div>
+        <div class="li"><span class="sw" style="border-color:#ff4d5e"></span>偏离航线的已飞轨迹</div>
+        <div class="li"><span class="sw" style="border-color:#8ca0a8;border-top-style:dashed"></span>计划航线（未飞部分灰色）</div>
+        <div class="li"><span class="sw" style="border-color:#ffb020"></span>航线关系未知</div>
         <div class="li" title="弥合段（A03）"><span class="sw" style="border-color:#ff8b3d;border-top-style:dotted"></span>推算补全段</div>
         <div class="li" title="预测段（A04）"><span class="sw" style="border-color:#22d3ee;border-top-style:dotted"></span>预测延伸段</div>
         <div class="li"><span style="width:14px;text-align:center;color:#22d3ee">●</span>设备点位</div>
@@ -782,19 +783,7 @@
   };
 
   MapView.prototype._targetAnchor = function (target) {
-    const movement = target && target.movement;
-    if (!this._still() && movement && Number.isFinite(Number(movement.fromLon)) && Number.isFinite(Number(movement.fromLat))
-      && Number.isFinite(Number(movement.toLon)) && Number.isFinite(Number(movement.toLat))) {
-      const duration = Number(movement.endsAt) - Number(movement.startedAt);
-      const raw = duration > 0 ? (Date.now() - Number(movement.startedAt)) / duration : 1;
-      const p = Math.max(0, Math.min(1, raw));
-      const eased = p * p * (3 - 2 * p);
-      return {
-        lon: Number(movement.fromLon) + (Number(movement.toLon) - Number(movement.fromLon)) * eased,
-        lat: Number(movement.fromLat) + (Number(movement.toLat) - Number(movement.fromLat)) * eased
-      };
-    }
-    if (Number.isFinite(Number(target && target.lon)) && Number.isFinite(Number(target && target.lat))) {
+    if (Number.isFinite(target?.lon) && Number.isFinite(target?.lat)) {
       return { lon: Number(target.lon), lat: Number(target.lat) };
     }
     const track = target && target.track || [];
@@ -861,58 +850,162 @@
     c.restore();
   };
 
-  // 地图与 Vue 列表共用 UI.deviceIcon 的受信任 SVG；只缓存小尺寸栅格，不新增地图实例。
-  const deviceGlyphs = new Map();
-  function drawDeviceGlyph(context, device, x, y, size, color) {
-    const ink = /^#[0-9a-f]{3,8}$/i.test(color) ? color : '#94a3b8';
-    const key = g.UI.deviceMeta(device).key + ':' + ink;
-    let glyph = deviceGlyphs.get(key);
-    if (!glyph) {
-      let svg = g.UI.deviceIcon(device).replace(/ (?:width|height)="1em"/g, '');
-      if (!svg.includes('xmlns=')) svg = svg.replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" ');
-      svg = svg.replace('<svg ', '<svg width="64" height="64" fill="none" stroke="' + ink + '" stroke-width="1.8" style="color:' + ink + '" ');
-      glyph = new Image();
-      glyph.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
-      if (deviceGlyphs.size >= 128) deviceGlyphs.delete(deviceGlyphs.keys().next().value);
-      deviceGlyphs.set(key, glyph);
+  // 类型始终由彩色主体表达；状态角标不覆盖主体，历史记录不闪烁。
+  let markerColors;
+  function markerPalette() {
+    if (!markerColors) { const css = getComputedStyle(document.documentElement); const token = name => css.getPropertyValue('--' + name).trim();
+      markerColors = { online:token('green'), offline:token('gray'), fault:token('red'), stale:token('amber'), unknown:token('purple'), history:token('amber'), selected:token('blue'), alarm:token('icon-alarm') }; }
+    return markerColors;
+  }
+  // 固定像素、沿图形透明轮廓的报警红光，不代表探测或风险范围。
+  function applyAlarmGlow(c, item) {
+    if (!g.UI.mapAlarmActive(item)) return;
+    const reduced = g.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    const pulse = reduced ? .65 : (1 - Math.cos(performance.now() / 1400 * Math.PI * 2)) / 2;
+    c.shadowColor = markerPalette().alarm + Math.round(255 * (.25 + .75 * pulse)).toString(16).padStart(2, '0');
+    c.shadowBlur = 5 + 15 * pulse;
+    c.shadowOffsetX = c.shadowOffsetY = 0;
+  }
+  function drawMarkerState(c, state, x, y) {
+    c.save(); c.translate(x,y); c.lineWidth = 2; c.lineCap = 'round'; c.lineJoin = 'round';
+    const colors = markerPalette();
+    c.strokeStyle = colors[state] || colors.unknown;
+    c.beginPath();
+    if (state === 'online') { c.moveTo(-4,0); c.lineTo(-1,3); c.lineTo(5,-4); }
+    else if (state === 'offline') { c.moveTo(-3,-3); c.lineTo(3,3); c.moveTo(3,-3); c.lineTo(-3,3); }
+    else if (state === 'fault') { c.moveTo(0,-5); c.lineTo(5,4); c.lineTo(-5,4); c.closePath(); c.moveTo(0,-1); c.lineTo(0,1); }
+    else if (state === 'stale' || state === 'history') { c.arc(0,0,4,0,Math.PI*2); c.moveTo(0,-2); c.lineTo(0,0); c.lineTo(2,1); }
+    else { c.moveTo(-3,-3); c.bezierCurveTo(-3,-7,5,-6,3,-2); c.lineTo(0,0); c.moveTo(0,3); c.lineTo(0,3.2); }
+    c.stroke(); c.restore();
+  }
+  MapView.prototype._drawFusionDevice = function (c, device, q) {
+    const state = device.stale === true || device.freshness === 'STALE' || device.statusCode === 'STALE' ? 'stale'
+      : device.statusCode === 'ABNORMAL' || device.status === '异常' ? 'fault'
+      : device.statusCode === 'OFFLINE' || device.status === '离线' ? 'offline'
+      : device.statusCode === 'ONLINE' || device.status === '在线' ? 'online' : 'unknown';
+    const key = g.UI.deviceMeta(device).key;
+    const scale = Number.isFinite(Number(this.opt.sensorIconScale)) ? Math.max(.65, Math.min(1.25, Number(this.opt.sensorIconScale))) : 1;
+    c.save(); c.translate(q[0],q[1]);
+    applyAlarmGlow(c, device);
+    g.UI.drawBusinessIcon(c, key === 'unknown' ? 'unknown-device' : key, 0, 0, 38 * scale);
+    c.shadowBlur = 0; c.shadowColor = 'transparent';
+    drawMarkerState(c, state, 14 * scale, 14 * scale);
+    if ((device.alarm || device.hasAlarm) && state !== 'fault') drawMarkerState(c, 'history', -14 * scale, 14 * scale);
+    if (this._pinnedKey === 'device:' + device.id) { c.beginPath(); c.moveTo(-11,22); c.lineTo(11,22); c.strokeStyle = markerPalette().selected; c.lineWidth = 3; c.stroke(); }
+    c.restore();
+  };
+
+  // 各业务页共用的计划线绘制：屏幕坐标仅做投影，不平滑、补点或改变航线几何。
+  MapView.strokePlannedRoute = function (c, pts, options = {}) {
+    if (!c || !Array.isArray(pts) || pts.length < 2
+      || pts.some(p => !Array.isArray(p) || !Number.isFinite(p[0]) || !Number.isFinite(p[1]))) return;
+    const color = '#8ca0a8'; // 计划几何不代表已飞，状态和风险不得把计划线染成红绿。
+    const { dash = [7, 5], selected = false, risk = false,
+      terminals = true, vertices = false, arrows = true, label = '', width = 0, height = 0 } = options;
+    const path = () => {
+      c.beginPath();
+      pts.forEach((p, i) => i ? c.lineTo(p[0], p[1]) : c.moveTo(p[0], p[1]));
+    };
+    c.save(); c.lineJoin = 'round'; c.lineCap = 'round'; c.lineDashOffset = 0;
+    // 细衬线只提高底图上的对比；宽度为像素，不表示航线走廊或风险影响范围。
+    path(); c.setLineDash([]); c.strokeStyle = 'rgba(255,255,255,.8)';
+    c.lineWidth = selected ? 4 : 3.5; c.stroke();
+    path(); c.setLineDash(dash); c.strokeStyle = color; c.lineWidth = selected ? 2.4 : 1.8; c.stroke();
+    c.setLineDash([]);
+    let lastArrow = null;
+    if (arrows) for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1], b = pts[i], dx = b[0] - a[0], dy = b[1] - a[1], len = Math.hypot(dx, dy);
+      const x = (a[0] + b[0]) / 2, y = (a[1] + b[1]) / 2;
+      if (len < 100 || (lastArrow && Math.hypot(x - lastArrow[0], y - lastArrow[1]) < 100)) continue;
+      if (width && height && (x < 0 || x > width || y < 0 || y > height)) continue;
+      const ux = dx / len, uy = dy / len;
+      c.beginPath(); c.moveTo(x - ux * 4 - uy * 3, y - uy * 4 + ux * 3);
+      c.lineTo(x + ux * 3, y + uy * 3); c.lineTo(x - ux * 4 + uy * 3, y - uy * 4 - ux * 3);
+      c.strokeStyle = color; c.lineWidth = 1.5; c.stroke(); lastArrow = [x, y];
     }
-    if (glyph.complete && glyph.naturalWidth) context.drawImage(glyph, x - size / 2, y - size / 2, size, size);
+    if (vertices) {
+      let last = pts[0];
+      for (const p of pts.slice(1, -1)) {
+        if (Math.hypot(p[0] - last[0], p[1] - last[1]) < 24) continue;
+        c.beginPath(); c.arc(p[0], p[1], 2.5, 0, Math.PI * 2);
+        c.fillStyle = '#fff'; c.fill(); c.strokeStyle = color; c.lineWidth = 1.2; c.stroke(); last = p;
+      }
+    }
+    if (terminals) {
+      const first = pts[0], last = pts[pts.length - 1];
+      const samePlace = first[0] === last[0] && first[1] === last[1];
+      const close = Math.hypot(first[0] - last[0], first[1] - last[1]) < 40;
+      const ends = samePlace ? [[first, '起 / 终', 1]] : [[first, '起', -1], [last, '终', close ? 1 : -1]];
+      for (const [p, text, side] of ends) {
+        c.beginPath(); c.arc(p[0], p[1], 4, 0, Math.PI * 2);
+        c.fillStyle = '#fff'; c.fill(); c.strokeStyle = color; c.lineWidth = 1.6; c.stroke();
+        c.font = '600 10px "PingFang SC",sans-serif'; c.textAlign = 'left'; c.textBaseline = 'middle';
+        c.lineWidth = 3; c.strokeStyle = 'rgba(255,255,255,.94)';
+        c.strokeText(text, p[0] + 7, p[1] + side * 11); c.fillStyle = '#294b60'; c.fillText(text, p[0] + 7, p[1] + side * 11);
+      }
+    }
+    if (label) drawRouteLabel(c, pts[Math.floor(pts.length / 2)], label, width, height, risk);
+    c.restore();
+  };
+
+  function drawRouteLabel(c, at, text, width, height, risk) {
+    c.font = '500 11px "PingFang SC",sans-serif';
+    const limit = Math.max(40, Math.min(230, width ? width - 28 : 230)), lines = [];
+    let line = '';
+    for (const char of String(text)) {
+      if (line && c.measureText(line + char).width > limit) { lines.push(line); line = ''; }
+      line += char;
+    }
+    if (line) lines.push(line);
+    const w = Math.max(...lines.map(row => c.measureText(row).width)) + 12, h = lines.length * 16 + 8;
+    const x = width ? Math.max(6, Math.min(width - w - 6, at[0] - w / 2)) : at[0] - w / 2;
+    const y = height ? Math.max(6, Math.min(height - h - 6, at[1] - h - 12)) : at[1] - h - 12;
+    c.fillStyle = risk ? 'rgba(92,28,36,.92)' : 'rgba(16,38,53,.9)'; c.fillRect(x, y, w, h);
+    c.fillStyle = '#e8f3fa'; c.textAlign = 'left'; c.textBaseline = 'top';
+    lines.forEach((row, i) => c.fillText(row, x + 6, y + 4 + i * 16));
   }
 
-  MapView.prototype._drawFusionDevice = function (c, device, q) {
-    const abnormal = device.statusCode === 'ABNORMAL' || device.status === '异常';
-    const offline = device.statusCode === 'OFFLINE' || device.status === '离线';
-    const color = device.status === '在线' ? this._sensorColor(device) : abnormal ? '#f1a43a' : '#94a3b8';
-    const alerting = !!device.newAlert;
-    const phase = this._phase(96);
-    const scale = Number.isFinite(Number(this.opt.sensorIconScale))
-      ? Math.max(.65, Math.min(1.25, Number(this.opt.sensorIconScale))) : 1;
-    c.save(); c.translate(q[0], q[1]); c.scale(scale, scale);
-    if (alerting) {
-      c.beginPath(); c.arc(0, 0, 15 + phase * 9, 0, Math.PI * 2);
-      c.strokeStyle = `rgba(255,91,97,${this._still() ? .85 : (1 - phase) * .7 + .15})`; c.lineWidth = 2; c.stroke();
-    } else if (device.alarm) {
-      c.beginPath(); c.arc(0, 0, 16, 0, Math.PI * 2); c.strokeStyle = 'rgba(255,91,97,.78)'; c.lineWidth = 1.5; c.stroke();
-    }
-    c.shadowColor = color; c.shadowBlur = device.status === '在线' ? 14 : 0;
-    c.beginPath(); c.arc(0, 0, 12, 0, Math.PI * 2); c.fillStyle = 'rgba(5,20,37,.92)'; c.fill();
-    c.strokeStyle = color; c.lineWidth = 1.6; c.stroke(); c.shadowBlur = 0;
-    c.strokeStyle = color; c.fillStyle = color; c.lineWidth = 1.45; c.lineCap = 'round'; c.lineJoin = 'round';
-    drawDeviceGlyph(c, device, 0, 0, 18, color);
-    if (abnormal) {
-      c.beginPath(); c.moveTo(7, -11); c.lineTo(12, -2); c.lineTo(2, -2); c.closePath();
-      c.fillStyle = '#f1a43a'; c.fill();
-      c.fillStyle = '#071624'; c.font = 'bold 7px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText('!', 7, -5);
-    } else if (offline) {
-      c.beginPath(); c.moveTo(-8, 8); c.lineTo(8, -8); c.strokeStyle = '#cbd5e1'; c.lineWidth = 1.8; c.stroke();
+  const TRACK_COLORS = { WITHIN: '#2fd06e', OUTSIDE: '#ff4d5e', UNKNOWN: '#ffb020', BOUNDARY: '#ffb020' };
+  const trackPointValid = p => p && Number.isFinite(p.lon) && Number.isFinite(p.lat)
+    && Math.abs(p.lon) <= 180 && Math.abs(p.lat) <= 90;
+  const trackTime = p => p.t ?? p.observed_at;
+  MapView.trackContinuous = function (a, b) {
+    return trackPointValid(a) && trackPointValid(b) && !b.break_before
+      && !!a.track_id && a.track_id === b.track_id
+      && Number.isFinite(a.point_seq) && b.point_seq === a.point_seq + 1
+      && Number.isFinite(trackTime(a)) && Number.isFinite(trackTime(b)) && trackTime(b) > trackTime(a);
+  };
+  MapView.strokeObservedTrack = function (c, project, points, { hot = true, neutralColor = null } = {}) {
+    c.save();
+    let previous = null;
+    for (const point of points || []) {
+      if (!trackPointValid(point)) { previous = null; continue; }
+      const kind = point.kind || 'meas';
+      const color = kind === 'bridge' ? '#ff8b3d' : kind === 'pred' ? '#22d3ee'
+        : neutralColor || TRACK_COLORS[point.corridor_relation] || TRACK_COLORS.UNKNOWN;
+      const [x, y] = project(point.lon, point.lat);
+      // 预测、弥合不可接成实测线；类型转换处保留缺口。
+      if (MapView.trackContinuous(previous, point) && (previous.kind || 'meas') === kind) {
+        const relations = [previous.corridor_relation, point.corridor_relation];
+        const relation = relations.every(value => value === 'WITHIN') ? 'WITHIN'
+          : relations.includes('OUTSIDE') ? 'OUTSIDE' : 'UNKNOWN';
+        const [px, py] = project(previous.lon, previous.lat);
+        c.beginPath(); c.moveTo(px, py); c.lineTo(x, y);
+        c.setLineDash(kind === 'bridge' ? [3, 6] : kind === 'pred' ? [2, 5] : []);
+        c.lineDashOffset = 0; c.lineWidth = hot ? 2.2 : 1.5;
+        c.strokeStyle = kind === 'meas' ? neutralColor || TRACK_COLORS[relation] : color;
+        c.stroke();
+      }
+      c.setLineDash([]); c.beginPath(); c.arc(x, y, hot ? 2 : 1.5, 0, Math.PI * 2);
+      c.fillStyle = color; c.fill();
+      previous = point;
     }
     c.restore();
   };
 
   const PLAN_STYLE = {
-    PENDING: { color: '#3d8bff', dash: [10, 7], alpha: .9 },
-    EXECUTING: { color: '#22d3ee', dash: [], alpha: 1 },
-    COMPLETED: { color: '#2fd06e', dash: [3, 7], alpha: .58 }
+    PENDING: { alpha: .9 }, APPROVED: { alpha: .9 },
+    EXECUTING: { alpha: 1 }, COMPLETED: { alpha: .72 }
   };
 
   MapView.prototype._drawFlightPlans = function (c, P, picks) {
@@ -925,50 +1018,23 @@
       if (!style) return;
       const activeRisk = Number(plan.activeRiskCount) > 0;
       const selected = this.planSel === plan.id;
-      const path = () => {
-        c.beginPath();
-        pts.forEach((point, index) => index ? c.lineTo(point[0], point[1]) : c.moveTo(point[0], point[1]));
-      };
-      c.save(); c.lineJoin = 'round'; c.lineCap = 'round'; c.globalAlpha = style.alpha;
-      if (activeRisk) {
-        const phase = this._phase(96);
-        path(); c.setLineDash([]);
-        c.strokeStyle = `rgba(255,77,94,${plan.newRisk && !this._still() ? .13 + (1 - phase) * .19 : .18})`;
-        c.lineWidth = plan.newRisk && !this._still() ? 15 + phase * 7 : 15; c.stroke();
-        path(); c.strokeStyle = 'rgba(255,77,94,.9)'; c.lineWidth = 7; c.stroke();
-      }
-      if (selected) {
-        path(); c.setLineDash([]); c.strokeStyle = 'rgba(255,255,255,.94)'; c.lineWidth = activeRisk ? 10 : 9; c.stroke();
-      } else {
-        path(); c.setLineDash([]); c.strokeStyle = 'rgba(7,28,48,.76)'; c.lineWidth = activeRisk ? 5.2 : 6.2; c.stroke();
-      }
-      path(); c.setLineDash(style.dash);
-      c.lineDashOffset = plan.statusCode === 'EXECUTING' && !this._still() ? -(this.t * .35) % 17 : 0;
-      c.strokeStyle = style.color; c.lineWidth = 2.5; c.stroke(); c.setLineDash([]);
-      if (plan.statusCode === 'EXECUTING') {
-        for (let index = 1; index < pts.length; index++) this._drawTrackArrow(c, pts[index - 1], pts[index], style.color);
-      }
       const middle = pts[Math.floor(pts.length / 2)];
       const label = `${plan.planNo || plan.id} · ${plan.statusLabel || plan.statusCode}${activeRisk ? ` · ${plan.activeRiskCount}条风险` : ''}`;
-      c.font = '600 9.5px "PingFang SC",sans-serif';
-      const width = Math.min(210, c.measureText(label).width + 12);
-      c.fillStyle = activeRisk ? 'rgba(92,18,30,.9)' : 'rgba(5,22,39,.82)';
-      c.fillRect(middle[0] - width / 2, middle[1] - 20, width, 16);
-      c.fillStyle = activeRisk ? '#fff0f1' : '#dff8ff'; c.textAlign = 'center'; c.textBaseline = 'middle';
-      c.save(); c.beginPath(); c.rect(middle[0] - width / 2 + 4, middle[1] - 19, width - 8, 14); c.clip();
-      c.fillText(label, middle[0], middle[1] - 12); c.restore();
+      c.save(); c.globalAlpha = style.alpha;
+      MapView.strokePlannedRoute(c, pts, { ...style, selected, risk: activeRisk,
+        terminals: selected, vertices: selected, arrows: selected, label: selected ? label : '', width: this.w, height: this.h });
       c.restore();
       picks.push({
         x: middle[0], y: middle[1], kind: 'plan', data: plan,
         segments: pts.slice(1).map((point, index) => [pts[index], point]),
-        tip: `<b>${html(plan.planNo || plan.id)}</b><dl class="kv" style="margin-top:6px"><dt>状态</dt><dd>${html(plan.statusLabel || plan.statusCode)}</dd><dt>风险</dt><dd>${activeRisk ? html(plan.activeRiskCount) + '条当前风险' : '无当前风险'}</dd></dl>`
+        tip: `<b>${html(plan.planNo || plan.id)}</b><dl class="kv"><dt>状态</dt><dd>${html(plan.statusLabel || plan.statusCode)}</dd><dt>风险</dt><dd>${activeRisk ? html(plan.activeRiskCount) + '条当前风险' : '无当前风险'}</dd></dl>`
       });
     });
   };
 
   MapView.prototype._drawTrackArrow = function (c, a, b, col) {
     const dx = b[0] - a[0], dy = b[1] - a[1], len = Math.hypot(dx, dy);
-    if (len < 22) return;
+    if (len < 100) return;
     const ux = dx / len, uy = dy / len;
     const mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2, s = 5.5;
     c.beginPath();
@@ -981,64 +1047,13 @@
   const TARGET_COLORS = { bird: '#72d6ff', balloon: '#b38cff', kite: '#ff9b55', lantern: '#f8c65b', unknown: '#94a3b8' };
 
   MapView.prototype._drawTarget = function (c, t, q, col, isSel) {
-    const heading = Number.isFinite(+t.heading) ? +t.heading : 0;
-    const mk = t.activeRisk ? '#ff5b61' : t.legal === '合法' ? '#22d3ee' : '#ff4d5e';
-    const iconKind = t.iconKind || (t.objectTypeCode === 'UAV' || t.type === '无人机' ? 'uav' : 'unknown');
-    const iconColor = iconKind === 'uav' ? col : (TARGET_COLORS[iconKind] || TARGET_COLORS.unknown);
     c.save();
-    c.translate(q[0], q[1]);
-    if (t.newAlert) {
-      const alertPhase = this._phase(96);
-      c.beginPath(); c.arc(0, 0, 14 + alertPhase * 13, 0, 7);
-      c.strokeStyle = `rgba(255,91,97,${this._still() ? .9 : (1 - alertPhase) * .78 + .12})`;
-      c.lineWidth = this._still() ? 2.6 : 2.1; c.stroke();
-    } else if (t.activeRisk) {
-      c.beginPath(); c.arc(0, 0, 13, 0, 7); c.strokeStyle = 'rgba(255,91,97,.92)'; c.lineWidth = 2; c.stroke();
-    }
-    if (isSel) {
-      const ph = this._phase(50);
-      c.beginPath(); c.arc(0, 0, 12 + ph * 12, 0, 7);
-      c.strokeStyle = mk + Math.round(((1 - ph) * .8 + .2) * 255).toString(16).padStart(2, '0');
-      c.lineWidth = 2.6; c.stroke();
-      c.beginPath(); c.arc(0, 0, 9, 0, 7);
-      c.strokeStyle = mk; c.lineWidth = 1.8; c.stroke();
-      const B = 15, L = 6;
-      c.strokeStyle = mk; c.lineWidth = 2;
-      [[-1, -1], [1, -1], [1, 1], [-1, 1]].forEach(([sx, sy]) => {
-        c.beginPath();
-        c.moveTo(sx * B, sy * (B - L)); c.lineTo(sx * B, sy * B); c.lineTo(sx * (B - L), sy * B);
-        c.stroke();
-      });
-    } else if (t.tracked) {
-      const ph = this._phase(50);
-      c.beginPath(); c.arc(0, 0, 10 + ph * 10, 0, 7);
-      c.strokeStyle = `rgba(255,77,94,${(1 - ph) * .75 + .15})`; c.lineWidth = 1.5; c.stroke();
-    }
-    c.beginPath(); c.arc(0, 0, 9, 0, 7); c.fillStyle = 'rgba(5,24,41,.9)'; c.fill();
-    c.strokeStyle = iconColor; c.lineWidth = 1.4; c.stroke();
-    if (['uav', 'bird', 'kite'].includes(iconKind)) c.rotate(heading * Math.PI / 180);
-    c.strokeStyle = iconColor; c.fillStyle = iconColor; c.lineWidth = 1.45; c.lineCap = 'round'; c.lineJoin = 'round';
-    if (iconKind === 'uav') {
-      [[-5.2, -5.2], [5.2, -5.2], [5.2, 5.2], [-5.2, 5.2]].forEach(([x, y]) => {
-        c.beginPath(); c.moveTo(0, 0); c.lineTo(x, y); c.stroke();
-        c.beginPath(); c.arc(x, y, 2.15, 0, 7); c.fillStyle = 'rgba(255,255,255,.92)'; c.fill(); c.strokeStyle = iconColor; c.stroke();
-      });
-      c.beginPath(); c.moveTo(0, -6.8); c.lineTo(2.6, 4.2); c.lineTo(0, 2.2); c.lineTo(-2.6, 4.2); c.closePath(); c.fillStyle = iconColor; c.fill();
-    } else if (iconKind === 'bird') {
-      c.beginPath(); c.moveTo(-7, 2); c.quadraticCurveTo(-3, -5, 0, 0); c.quadraticCurveTo(3, -5, 7, 2); c.quadraticCurveTo(3, 0, 0, 3); c.quadraticCurveTo(-3, 0, -7, 2); c.stroke();
-    } else if (iconKind === 'balloon') {
-      c.beginPath(); c.ellipse(0, -2, 4.5, 5.5, 0, 0, 7); c.stroke();
-      c.beginPath(); c.moveTo(-2, 3); c.lineTo(0, 5.5); c.lineTo(2, 3); c.moveTo(-1.5, 6); c.lineTo(1.5, 6); c.stroke();
-    } else if (iconKind === 'kite') {
-      c.beginPath(); c.moveTo(0, -6); c.lineTo(5, 0); c.lineTo(0, 6); c.lineTo(-5, 0); c.closePath(); c.stroke();
-      c.beginPath(); c.moveTo(0, 6); c.quadraticCurveTo(4, 8, 2, 10); c.stroke();
-    } else if (iconKind === 'lantern') {
-      c.beginPath(); c.moveTo(-4, -5); c.quadraticCurveTo(0, -7, 4, -5); c.lineTo(3, 5); c.quadraticCurveTo(0, 7, -3, 5); c.closePath(); c.stroke();
-      c.beginPath(); c.moveTo(-3, 2); c.lineTo(3, 2); c.stroke();
-    } else {
-      c.beginPath(); c.moveTo(0, -6); c.lineTo(6, 0); c.lineTo(0, 6); c.lineTo(-6, 0); c.closePath(); c.stroke();
-      c.beginPath(); c.arc(0, 0, 1.7, 0, 7); c.fill();
-    }
+    applyAlarmGlow(c, t);
+    g.UI.drawBusinessIcon(c, g.UI.targetIconKey(t), q[0], q[1], isSel ? 42 : 36, t.heading);
+    c.shadowBlur = 0; c.shadowColor = 'transparent';
+    if (t.activeRisk) drawMarkerState(c, 'fault', q[0]+15, q[1]+14);
+    if (t.stale === true || t.freshness === 'STALE') drawMarkerState(c, 'stale', q[0]-15, q[1]+14);
+    if (isSel) { c.beginPath(); c.moveTo(q[0]-12,q[1]+23); c.lineTo(q[0]+12,q[1]+23); c.strokeStyle = markerPalette().selected; c.lineWidth = 3; c.stroke(); }
     c.restore();
   };
 
@@ -1197,26 +1212,29 @@
     /* 融合感知计划航线：仅专用模式启用，避免改变其他地图。 */
     if (this.opt.fusionProfile && this.layers.flightPlan) this._drawFlightPlans(c, P, picks);
 
+    // 只错开屏幕图形；位置、覆盖范围、感知关联线与轨迹仍使用原始坐标。
+    const occupiedIcons = [];
+    const iconPoint = anchor => {
+      if (anchor[0] < 0 || anchor[0] > W || anchor[1] < 0 || anchor[1] > H) return anchor;
+      const free = p => p[0] >= 18 && p[0] <= W-18 && p[1] >= 18 && p[1] <= H-18
+        && occupiedIcons.every(q => Math.hypot(p[0]-q[0],p[1]-q[1]) >= 40);
+      let point = anchor;
+      if (!free(point)) search: for (const radius of [40,60,80]) {
+        for (let i=0;i<8;i++) { const a=i*Math.PI/4, candidate=[anchor[0]+radius*Math.cos(a),anchor[1]+radius*Math.sin(a)];
+          if (free(candidate)) { point=candidate; break search; } }
+      }
+      occupiedIcons.push(point);
+      if (point !== anchor) { c.save(); c.beginPath(); c.moveTo(...anchor); c.lineTo(...point); c.strokeStyle=markerPalette().offline; c.globalAlpha=.7; c.lineWidth=1; c.stroke(); c.restore(); }
+      return point;
+    };
     /* 设备点位 */
     if (this.layers.device) {
       (this.data.devices || []).slice(0, this.opt.maxDev || 90).forEach(d => {
-        const q = P(d.lon, d.lat);
-        if (q[0] < -20 || q[0] > W + 20 || q[1] < -20 || q[1] > H + 20) return;
+        const anchor = P(d.lon, d.lat);
+        if (anchor[0] < -20 || anchor[0] > W + 20 || anchor[1] < -20 || anchor[1] > H + 20) return;
+        const q = iconPoint(anchor);
         const col = d.status === '在线' ? (this.opt.fusionProfile ? this._sensorColor(d) : (d.alarm ? '#d97706' : '#008fb3')) : d.status === '离线' ? '#64748b' : '#f1a43a';
-        if (this.opt.fusionProfile) {
-          this._drawFusionDevice(c, d, q);
-        } else {
-          c.save();
-          c.beginPath(); c.roundRect(q[0] - 12, q[1] - 12, 24, 24, 5);
-          c.fillStyle = 'rgba(5,20,37,.94)'; c.fill();
-          c.strokeStyle = col; c.lineWidth = 1.5; c.stroke();
-          drawDeviceGlyph(c, d, q[0], q[1], 18, col);
-          if (d.alarm) {
-            c.beginPath(); c.arc(q[0] + 10, q[1] - 10, 3, 0, Math.PI * 2);
-            c.fillStyle = '#ffb020'; c.fill();
-          }
-          c.restore();
-        }
+        this._drawFusionDevice(c, d, q);
         picks.push({
           x: q[0], y: q[1], kind: 'device', data: d,
           tip: `<b>${d.name}</b><dl class="kv" style="margin-top:6px">
@@ -1246,44 +1264,11 @@
         /* AOA 目标只有方位角，没有经纬度（协议 v8.6）—— 画成从设备射出的方位线。
            当点画等于凭空给了一个平台并不知道的位置。 */
         if (t.posValid === false) { this._drawBearing(c, t, P, col); if (dim) c.restore(); return; }
-        const tr = t.track || [];
-        if (tr.length > 1) {
-          /* F0202:按点型分段 —— 实测=实线+光晕 / 弥合=橙色虚线(A03) / 预测=青色点线(A04) */
-          const hot = t.tracked || isSel;
-          const STYLE = {
-            meas: { dash: isSel && !this._still() ? [8, 5] : [], col: col + (hot ? 'ee' : 'b0'), w: hot ? 2.4 : 1.6, glow: true, anim: isSel && !this._still() },
-            bridge: { dash: [3, 6], col: '#ff8b3d', w: 2, anim: false },
-            pred: { dash: [2, 5], col: '#22d3ee', w: 1.6, anim: false }
-          };
-          let bridgeLabelAt = null;
-          for (let i = 1; i < tr.length; i++) {
-            const kind = tr[i].kind || 'meas';
-            const st = STYLE[kind] || STYLE.meas;
-            const a = P(tr[i - 1].lon, tr[i - 1].lat), b = P(tr[i].lon, tr[i].lat);
-            if (st.glow) {
-              c.setLineDash([]); c.lineCap = 'round';
-              c.beginPath(); c.moveTo(a[0], a[1]); c.lineTo(b[0], b[1]);
-              c.strokeStyle = col + '2e'; c.lineWidth = st.w + 4; c.stroke();
-            }
-            c.beginPath(); c.moveTo(a[0], a[1]); c.lineTo(b[0], b[1]);
-            c.setLineDash(st.dash); c.lineDashOffset = st.anim ? -(this.t * .6) % 13 : 0;
-            c.strokeStyle = st.col; c.lineWidth = st.w; c.lineCap = 'round'; c.stroke();
-            if (isSel && kind === 'meas' && i % 3 === 0) this._drawTrackArrow(c, a, b, col);
-            if (kind === 'bridge' && !bridgeLabelAt) bridgeLabelAt = a;
-            if (kind !== 'meas' && hot) {
-              c.setLineDash([]);
-              c.beginPath(); c.arc(b[0], b[1], 2.2, 0, 7);
-              c.strokeStyle = st.col; c.lineWidth = 1.2; c.stroke();
-            }
-          }
-          c.setLineDash([]); c.lineCap = 'butt';
-          if (bridgeLabelAt && hot) {
-            c.font = '9.5px "PingFang SC"'; c.fillStyle = '#ffb083'; c.textAlign = 'left';
-            c.fillText('注意：断裂-弥合', bridgeLabelAt[0] + 6, bridgeLabelAt[1] - 5);
-          }
-          const s = P(tr[0].lon, tr[0].lat);
-          c.beginPath(); c.arc(s[0], s[1], 3, 0, 7); c.fillStyle = '#2fd06e'; c.fill();
-        }
+        MapView.strokeObservedTrack(c, P, t.track || [], {
+          hot: t.tracked || isSel,
+          // 非无人机保持类别色；无人机轨迹只读取逐点走廊关系，不借目标合法性染色。
+          neutralColor: t.objectTypeCode && t.objectTypeCode !== 'UAV' ? targetClassColor : null
+        });
         /* 锚点：目标自身的最新可信坐标优先于轨迹末点——轨迹可能只到上一帧，而 latest_state 才是当前位置；
            两者都没有时不画（不用 (0,0) 或旧点冒充）。 */
         const anchor = this._targetAnchor(t);
@@ -1298,12 +1283,13 @@
             c.fillStyle = col + '14'; c.fill(); c.setLineDash([]); c.restore();
           }
         }
-        this._drawTarget(c, t, q, col, isSel);
+        const displayPoint = iconPoint(q);
+        this._drawTarget(c, t, displayPoint, col, isSel);
         if (dim) c.restore();
         const altitudeTx = t.alt == null ? '—' : html(t.alt) + ' m AMSL';
         const speedTx = t.speed == null ? '—' : html(t.speed) + ' m/s';
         picks.push({
-          x: q[0], y: q[1], kind: 'target', data: t,
+          x: displayPoint[0], y: displayPoint[1], kind: 'target', data: t,
           tip: `<div class="maptip-uav"><b style="color:${col}">${html(t.id)}</b>
             <div class="maptip-uav-meta">${html(t.subtype || t.type)}</div>
             <div class="maptip-uav-tags">${html(t.legal)}${t.violation ? ' · ' + html(t.violation) : ''} · ${html(t.risk)}</div></div>`
@@ -1324,12 +1310,13 @@
         const lon = t.lon, lat = t.lat;
         const q = P(lon, lat);
         const col = a.level === '高' ? '#ff4d5e' : a.level === '中' ? '#ffb020' : '#3d8bff';
-        const ph = (this.t % 70) / 70;
-        c.beginPath(); c.arc(q[0], q[1], 5 + ph * 12, 0, 7);
-        c.strokeStyle = col + Math.round((1 - ph) * 180).toString(16).padStart(2, '0'); c.lineWidth = 1.4; c.stroke();
-        c.beginPath(); c.arc(q[0], q[1], 5, 0, 7); c.fillStyle = col; c.fill();
-        c.fillStyle = '#fff'; c.font = 'bold 8px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
-        c.fillText('!', q[0], q[1]);
+        c.save();
+        applyAlarmGlow(c, { ...a, stale: t.stale, freshness: t.freshness });
+        c.beginPath(); c.moveTo(q[0],q[1]-9); c.lineTo(q[0]+9,q[1]+7); c.lineTo(q[0]-9,q[1]+7); c.closePath();
+        c.fillStyle = markerPalette().alarm; c.fill();
+        c.shadowBlur = 0; c.strokeStyle = '#fff'; c.lineWidth = 1.4; c.stroke();
+        c.beginPath(); c.moveTo(q[0],q[1]-3); c.lineTo(q[0],q[1]+1); c.moveTo(q[0],q[1]+4); c.lineTo(q[0],q[1]+4.2);
+        c.lineWidth = 2; c.lineCap = 'round'; c.stroke(); c.restore();
         picks.push({
           x: q[0], y: q[1], kind: 'alarm', data: a,
           tip: `<b style="color:${col}">${a.type}</b><dl class="kv" style="margin-top:6px">

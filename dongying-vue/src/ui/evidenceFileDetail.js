@@ -1,6 +1,7 @@
-import { toast } from '@/ui/nv.js';
+import { h } from 'vue';
 import { openModal } from '@/ui/modal.js';
-import { downloadEvidenceContent, getEvidenceFile } from '@/services/evidenceApi.js';
+import EvidencePreviewModal from '@/components/evidence/EvidencePreviewModal.vue';
+import { hasPermission } from '@/services/accessControl.js';
 import { EVIDENCE_CUSTODY_LABEL, EVIDENCE_CUSTODY_TAG, EVIDENCE_KIND_LABEL, EVIDENCE_STATUS_LABEL, EVIDENCE_SUBJECT_LABEL, SOURCE_MODE_LABEL, labelOf, readableNo } from '@/ui/labels.js';
 /* 只有在库文件能下载：其余状态按钮禁用并说明（决策 15-58）。 */
 const DOWNLOAD_BLOCKED = { PENDING: '文件还在入库中，暂不能下载', MISSING: '文件缺失，不能下载', CORRUPT: '文件哈希不符，不能下载' };
@@ -72,14 +73,13 @@ export function renderEvidenceFileDetail(f, options = {}) {
     ? '<div style="color:var(--txt-3);font-size:12px">无引用。</div>'
     : '<div style="color:var(--txt-3);font-size:12px">这份证据还没有用于告警、目标或其他事项。</div>';
   const canDestroy = mode === 'page' && f.status !== 'DESTROYED' && !f.held && f.custody === 'DUE';
-  const actions = f.status === 'DESTROYED'
+  const actions = mode === 'preview' ? '' : f.status === 'DESTROYED'
     ? `<div style="font-size:12px;color:var(--txt-3);line-height:1.8">文件内容已销毁，台账编号、哈希和销毁记录保留，不能再下载。</div>`
     : mode === 'modal'
-    ? `<button class="btn pri" style="width:100%;justify-content:center" data-act="download">${U.icon('download')} 下载</button>
-       <div style="margin-top:8px;font-size:11px;color:var(--txt-3);line-height:1.8">此处可查看证据信息。有权限的人员可以下载，系统会记录下载人和时间。</div>`
-    : `${f.status === 'AVAILABLE'
+    ? `<button class="btn pri" style="width:100%;justify-content:center" data-act="download">${U.icon('download')} 下载</button>`
+    : `${f.status === 'AVAILABLE' && hasPermission('evidence:download')
         ? `<button class="btn pri" style="width:100%;justify-content:center" data-evact="download">${U.icon('download')} 下载</button>`
-        : `<button class="btn pri" style="width:100%;justify-content:center" disabled title="${esc(DOWNLOAD_BLOCKED[f.status] || '文件不可下载')}">${U.icon('download')} 下载</button>`}
+        : `<button class="btn pri" style="width:100%;justify-content:center" disabled>${U.icon('download')} ${f.status === 'AVAILABLE' ? '未获原件下载权限' : esc(DOWNLOAD_BLOCKED[f.status] || '文件不可下载')}</button>`}
     <div style="display:flex;gap:8px;margin-top:8px">
       ${f.status === 'INGESTING'
         ? `<button class="btn" style="flex:1" disabled title="文件还在入库中，入库完成后才能校验">校验哈希</button>`
@@ -99,13 +99,15 @@ export function renderEvidenceFileDetail(f, options = {}) {
     meta: [['类型', kind], ['大小', sizeText(f.size_bytes)]]
   })}
   ${U.sect('文件信息', U.kv([
-    ['类型', U.tag(kind, 't-cyan')],
-    ['MIME / 大小', `${esc(f.content_type || '')} · ${sizeText(f.size_bytes)}`],
-    ['SHA-256', `<span class="mono" style="word-break:break-all">${esc(f.sha256 || '—')}</span>`],
     ['取证时刻', fmtEvidenceTime(f.captured_at)],
-    ['上传时间', fmtEvidenceTime(f.stored_at) + (ingestSec != null ? `　<span style="color:var(--txt-3);font-size:11px">相对取证 ${ingestSec}s</span>` : '')],
+    ['上传时间', fmtEvidenceTime(f.stored_at)],
     ['来源模式', esc(labelOf(SOURCE_MODE_LABEL, f.source_mode, '—'))]
   ]))}
+  <details class="sect"><summary>文件校验信息</summary>${U.kv([
+    ['文件格式', esc(f.content_type || '—')],
+    ['SHA-256', `<span class="mono" style="overflow-wrap:anywhere">${esc(f.sha256 || '—')}</span>`],
+    ...(ingestSec != null ? [['入库间隔', `${ingestSec} 秒`]] : [])
+  ])}</details>
   ${U.sect('保管', U.kv([
     ['文件状态', U.tag(status, SC[f.status] || 't-gray')],
     ['法律冻结', f.held ? `<span class="tag t-purple">冻结中</span> ${esc(activeHold?.reason || '')}` : '<span class="tag t-gray">未冻结</span>'],
@@ -125,28 +127,17 @@ export function renderEvidenceFileDetail(f, options = {}) {
         <span class="${mode === 'page' ? 'lnk' : ''}" title="${esc(r.subject_id)}" ${mode === 'page' ? `data-ev-go="${esc(r.subject_kind)}|${esc(r.subject_id)}"` : ''}>${esc((r.subject_no !== r.subject_id && readableNo(r.subject_no)) || `已关联${labelOf(EVIDENCE_SUBJECT_LABEL, r.subject_kind, '对象')}`)}</span>
       </div>`).join('')
     : emptyLinks)}
-  ${U.sect('操作', actions)}`;
+  ${actions ? U.sect('操作', `<button class="btn" type="button" style="width:100%;justify-content:center;margin-bottom:8px" data-evact="preview">打开内容预览</button>${actions}`) : ''}`;
 }
 
-export async function openEvidenceFileModal(evidenceId) {
-  try {
-    const file = await getEvidenceFile(evidenceId);
-    openModal({
-      title: '证据文件',
-      width: '480px',
-      body: renderEvidenceFileDetail(file, { mode: 'modal' }),
-      on: {
-        download: async () => {
-          try {
-            const packed = await downloadEvidenceContent(evidenceId);
-            if (!packed) return;
-            saveEvidenceBlob(packed.blob, packed.filename);
-            toast('已开始下载', 'ok');
-          } catch (e) { toast(e.message || '下载失败', 'err'); }
-        }
-      }
-    });
-  } catch (e) {
-    toast(e.message || '证据详情加载失败', 'err');
-  }
+export function openEvidenceFileModal(evidenceId, options = {}) {
+  // 立即打开单层预览，元数据/原件的迟到响应由组件隔离；不能等请求回来覆盖其他弹窗。
+  const handle = openModal({
+    title: '证据预览', width: '960px', footer: false,
+    render: () => h(EvidencePreviewModal, {
+      evidenceId, files: options.files || [], returnLabel: options.returnLabel || '返回事项详情',
+      onReturn: () => { handle.close(); options.onReturn?.(); }
+    })
+  });
+  return handle;
 }

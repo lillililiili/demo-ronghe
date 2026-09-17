@@ -22,6 +22,7 @@ import { UAV_STATE_TEXT as UAV_STATE_LABEL } from '@/ui/uavVerificationModal.js'
 import { handoffApi } from '@/services/handoffApi.js';
 import AdvisoryRecords from '@/components/disposal/AdvisoryRecords.vue';
 import PunishmentOutcome from '@/pages/punish/PunishmentOutcome.vue';
+import RecipientSnapshotFields from '@/components/notifications/RecipientSnapshotFields.vue';
 import { getEvidenceChain } from '@/services/evidenceApi.js';
 import {
   ALARM_TYPE_LABEL, CONCLUSION_LABEL as EVENT_CONCLUSION_LABEL,
@@ -115,7 +116,7 @@ function formatClock(value) {
 function messageOf(reason, fallback) {
   if (!reason) return fallback;
   if (reason.status === 401) return '登录已失效，请重新登录。';
-  if (reason.status === 403) return '当前账号没有查看业务交接的权限（handoff:read）。';
+  if (reason.status === 403) return '当前账号没有查看业务交接的权限。';
   if (reason.status === 404) return '交接记录不存在或不在当前权限范围内。';
   if (reason.code === 'NETWORK_ERROR' || reason.code === 'TIMEOUT') return '服务连接超时或不可用，请稍后重试。';
   return reason.message || fallback;
@@ -279,7 +280,7 @@ onMounted(() => {
       <AuthorizationQueue v-if="activeTab === 'authorizations'" :initial-authorization-id="authorizationId" />
       <div v-show="activeTab === 'handoffs'" id="pnBody" class="pn-body" style="margin-top:12px;flex:1;min-height:0">
         <div v-if="forbidden" class="warnbox pn-forbidden">
-          当前账号没有查看业务交接的权限（handoff:read）。交接清单、材料与通知状态不可读取；本页不展示任何演示数据。
+          当前账号没有查看业务交接的权限，无法读取交接清单、材料和通知状态。
           <button class="btn" type="button" :disabled="listLoading" @click="retryList">重试</button>
         </div>
         <template v-else>
@@ -344,6 +345,7 @@ onMounted(() => {
                     <dt>来源编号</dt><dd class="mono" :title="selected.handoff_id">{{ readableNo(selected.source_no, selected.source_id) || '未提供' }}</dd>
                     <dt>来源事项</dt><dd :title="selected.source_id">{{ label(KIND_LABEL, selected.source_kind) }}</dd>
                     <dt>接收方</dt><dd :title="selected.recipient_id">{{ selected.recipient_name || '未提供' }}</dd>
+                    <RecipientSnapshotFields :snapshot="selected.recipient_snapshot" historical />
                     <dt>提交时间</dt><dd>{{ formatTime(selected.created_at) }}</dd>
                     <dt>提交人</dt><dd :title="selected.submitted_by">{{ selected.submitted_by_name || selected.submitted_by || '未提供' }}</dd>
                     <dt>所属范围</dt><dd :title="`${selected.owner_org_id || ''} / ${selected.district_id || ''}`">{{ selected.owner_org_name || '—' }} / {{ selected.district_name || '—' }}</dd>

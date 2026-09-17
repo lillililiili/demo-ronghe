@@ -36,29 +36,31 @@ function messageOf(error, fallback) {
  */
 export function openRiskVerification({ risk, refresh, onDone } = {}) {
   if (!risk) return false;
-  if (!(risk.allowed_actions || []).includes('VERIFY')) { toast('当前风险不可核验或缺少核验权限', 'err'); return false; }
+  if (!['PENDING_VERIFICATION', 'PENDING_NOTIFICATION'].includes(risk.state) || !(risk.allowed_actions || []).includes('VERIFY')) { toast('当前风险不可核验或缺少核验权限', 'err'); return false; }
+  // 待通知时服务端只允许改判为排除，不能再次提交核验通过。
+  const exclusionOnly = risk.state === 'PENDING_NOTIFICATION';
   const riskId = risk.risk_id;
   const expectedVersion = Number(risk.version);
   if (!pendingKeys.has(riskId)) pendingKeys.set(riskId, newRiskIdempotencyKey());
 
   openFormModal({
-    title: '人工核验',
+    title: exclusionOnly ? '改判为排除' : '人工核验',
     width: '560px',
     notice: [risk.risk_no || readableNo(risk.source_risk_id) ? `风险 ${risk.risk_no || readableNo(risk.source_risk_id)}` : '风险事件', labelOf(RISK_TYPE_LABEL, risk.risk_type, '')].filter(Boolean).join(' · '),
     fields: [
-      { key: 'conclusion', label: '核验结论', type: 'radio', required: true, options: [
+      ...(exclusionOnly ? [] : [{ key: 'conclusion', label: '核验结论', type: 'radio', required: true, options: [
         { value: 'CONFIRMED', label: '核验通过（转待通知）' },
         { value: 'EXCLUDED', label: '排除（误检 / 非管控风险）' }
-      ] },
-      { key: 'note', label: '核验说明', type: 'textarea', required: true, minRows: 4, placeholder: '填写现场确认、航线与高度复核等依据（1–1000 字）' }
+      ] }]),
+      { key: 'note', label: exclusionOnly ? '改判依据' : '核验说明', type: 'textarea', required: true, minRows: 4, placeholder: exclusionOnly ? '说明为何将已确认的风险改判为排除（1–1000 字）' : '填写现场确认、航线与高度复核等依据（1–1000 字）' }
     ],
-    initial: { conclusion: 'CONFIRMED', note: '' },
-    confirmText: '提交核验结论',
-    validate: m => { const n = String(m.note || '').trim(); return !n ? '核验说明为必填项' : n.length > 1000 ? `核验说明不能超过 1000 字（当前 ${n.length} 字）` : ''; },
+    initial: { conclusion: exclusionOnly ? 'EXCLUDED' : 'CONFIRMED', note: '' },
+    confirmText: exclusionOnly ? '提交排除结论' : '提交核验结论',
+    validate: m => { const n = String(m.note || '').trim(), label = exclusionOnly ? '改判依据' : '核验说明'; return !n ? `${label}为必填项` : n.length > 1000 ? `${label}不能超过 1000 字（当前 ${n.length} 字）` : ''; },
     onSubmit: async ({ conclusion, note }) => {
       const key = pendingKeys.get(riskId);
       try {
-        const result = await riskApi.verifyRisk(riskId, { conclusion, note: String(note || '').trim(), expected_version: expectedVersion }, key);
+        const result = await riskApi.verifyRisk(riskId, { conclusion: exclusionOnly ? 'EXCLUDED' : conclusion, note: String(note || '').trim(), expected_version: expectedVersion }, key);
         pendingKeys.delete(riskId);
         closeModal();
         toast(`核验结论已提交：${riskStateText(result?.state)}`, 'ok');

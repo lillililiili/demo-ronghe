@@ -242,6 +242,7 @@ function mapTargets(items) {
       targetId: t.target_id,
       type: t.object_type_code === 'UAV' ? '无人机' : labelOf(OBJECT_TYPE_LABEL, t.object_type_code, t.object_type_code || '目标'),
       subtype: targetTypeLabel(t.subtype, t.object_type_code),
+      subtypeCode: t.subtype, objectTypeCode: t.object_type_code,
       lon, lat, posValid: true, track: [],
       alt: t.altitude_amsl_m, speed: t.speed_mps, heading: t.heading_deg,
       legal: labelOf(LEGALITY_LABEL, t.legal_status, t.legal_status),

@@ -13,6 +13,7 @@ export const legalityApi = {
   /* 阶段 7：引擎研判读取 */
   listEvaluations: params => apiRequestTimed(`/legality-evaluations${buildQuery(params)}`),
   getEvaluation: evaluationId => apiRequestTimed(`/legality-evaluations/${encode(evaluationId)}`),
+  trajectory: evaluationId => apiRequestTimed(`/legality-evaluations/${encode(evaluationId)}/trajectory`),
   listRevisions: (evaluationId, params) => apiRequestTimed(`/legality-evaluations/${encode(evaluationId)}/revisions${buildQuery(params)}`),
 
   /* 阶段 7：写动作（Idempotency-Key 由调用方保留，直到服务端给出明确结果） */

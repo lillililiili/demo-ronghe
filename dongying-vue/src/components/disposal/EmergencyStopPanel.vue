@@ -14,7 +14,7 @@ const { overview, stop, followup, loading, busy, error, uncertain, forbidden, re
     feedbackOpen.value = true; emit('changed', eventId);
   });
 // 加载本身不代表存在可停止的处置，避免首次读取和轮询时先展开急停区再收起。
-const visible = computed(() => error.value || uncertain.value || overview.value?.applicable || stop.value);
+const visible = computed(() => uncertain.value || overview.value?.applicable || stop.value);
 const summary = computed(() => stopSummary(overview.value));
 const historicalStop = computed(() => !!stop.value && overview.value?.applicable);
 const actions = computed(() => overview.value?.allowed_actions || []);
@@ -64,19 +64,23 @@ defineExpose({ refresh, showFeedback, showNote });
 </script>
 
 <template>
+  <div v-if="error && !visible" ref="host" class="es-query-notice" role="alert" :data-event-id="eventId">
+    <span><strong>暂时无法核对急停状态</strong>：{{ error }}</span>
+    <button v-if="!forbidden" type="button" class="btn" :disabled="loading || busy" @click="refresh">重新查询</button>
+  </div>
   <section v-if="visible" ref="host" class="emergency-stop-panel" aria-label="反制与干扰急停" :data-event-id="eventId">
     <header class="es-header">
       <div><h3>反制与干扰</h3><p v-if="eventLabel" class="es-muted">{{ eventLabel }}</p></div>
       <div v-if="!stop || overview?.applicable" class="es-stop-area">
         <button type="button" class="btn es-stop-button" :disabled="!canStop" @click="halt">
-          <span aria-hidden="true" v-html="icon('stop')"></span>{{ busy ? '正在提交…' : actionLabel }}
+          <span aria-hidden="true" v-html="icon('stop')"></span>{{ busy ? '正在提交' : actionLabel }}
         </button>
         <small>停止本事件反制及关联干扰</small>
       </div>
       <span v-else class="es-stopped">本次处置已中止</span>
     </header>
     <div class="es-content">
-      <div v-if="loading && !overview" class="es-muted" role="status">正在读取当前处置状态…</div>
+      <div v-if="loading && !overview" class="es-muted" role="status">正在读取当前处置状态</div>
       <div v-if="error" class="es-status is-error" role="alert">
         <strong>暂时无法核对急停状态</strong><p>{{ error }}</p>
         <button v-if="!forbidden" type="button" class="btn" :disabled="loading || busy" @click="refresh">重新查询</button>
@@ -109,7 +113,7 @@ defineExpose({ refresh, showFeedback, showNote });
             <p v-if="device.confirmed_at" class="es-muted">现场确认：{{ device.confirmed_by_name || '姓名未提供' }} · {{ stopTime(device.confirmed_at) }}</p>
             <p v-if="device.confirmation_note">确认依据：{{ device.confirmation_note }}</p>
             <div class="es-actions">
-              <button v-if="device.allowed_actions?.includes('QUERY')" type="button" class="btn" :disabled="busy || loading" @click="refresh">{{ loading ? '查询中…' : '查询反馈' }}</button>
+              <button v-if="device.allowed_actions?.includes('QUERY')" type="button" class="btn" :disabled="busy || loading" @click="refresh">{{ loading ? '查询中' : '查询反馈' }}</button>
               <button v-if="device.allowed_actions?.includes('RETRY_STOP')" type="button" class="btn" :disabled="disabled" @click="retry(device)">重试停止</button>
               <button v-if="device.allowed_actions?.includes('MANUAL_CONFIRM')" type="button" class="btn" :disabled="disabled" @click="startConfirmation(device)">登记现场核查</button>
             </div>
@@ -138,6 +142,9 @@ defineExpose({ refresh, showFeedback, showNote });
 </template>
 
 <style scoped>
+.es-query-notice { display:flex; align-items:center; flex-wrap:wrap; gap:8px 12px; min-width:0; padding:8px 12px; color:var(--amber); font-size:13px; }
+.es-query-notice > span { flex:1 1 240px; min-width:0; overflow-wrap:anywhere; }
+.es-query-notice > .btn { flex:none; }
 .emergency-stop-panel { background:var(--surface-1); border:1px solid var(--line); border-radius:var(--r); min-width:0; color:var(--txt); }
 .es-header { position:sticky; top:0; z-index:2; display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:12px; padding:14px; background:var(--surface-1); border-bottom:1px solid var(--line); border-radius:var(--r) var(--r) 0 0; }
 .es-header h3 { margin:0; font-size:15px; }

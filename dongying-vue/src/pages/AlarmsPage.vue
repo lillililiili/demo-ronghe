@@ -17,6 +17,7 @@ export default {};
    沿用 HEAD 版本的 DOM 结构与 class 名，只替换数据源与状态口径。
    地图（MapView）在 onUnmounted 销毁；usePageChrome 先注册，故卸载顺序
    与旧版 route() 一致：CH.disposeAll → map.destroy → closeModal。 */
+import { measuredMapPoints } from '@/services/trackPoints.js';
 import { ref, reactive, onMounted, onUnmounted } from 'vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import UPagination from '@/components/UPagination.vue';
@@ -40,7 +41,7 @@ import { deviceApi } from '@/services/deviceApi.js';
 import { openTrackReplay, trackPointsOf } from '@/ui/trackReplayModal.js';
 import EmergencyStopPanel from '@/components/disposal/EmergencyStopPanel.vue';
 import UavAdvisoryPanel from '@/components/disposal/UavAdvisoryPanel.vue';
-import { advisoryProgress } from '@/components/disposal/advisoryView.js';
+import { advisoryProgress, advisoryRequestReason } from '@/components/disposal/advisoryView.js';
 import { uavAdvisoryApi } from '@/services/uavAdvisoryApi.js';
 import { requiresStopFollowup } from '@/components/disposal/emergencyStopView.js';
 
@@ -56,7 +57,7 @@ const emergencyInfo = ref(null);
 const advisorySubject = ref(null);
 const advisorySummaries = new Map();
 let map = null;
-onUnmounted(() => { if (map) map.destroy(); map = null; });
+onUnmounted(() => { ++listSeq; ++detailSeq; ++disposalSeq; if (map) map.destroy(); map = null; });
 
 /* ---------- 契约词典（阶段 4 固定） ---------- */
 const SEVERITY = {
@@ -305,11 +306,11 @@ const listPanelBody = `<div class="toolbar">
     </div>
   </div>
   <div id="alList" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>`;
-const mapExtra = `<span id="alMapSrc" style="font-size:11px;color:var(--txt-3);white-space:nowrap"></span>
-  <button class="btn" id="alLoc" style="height:24px;font-size:11.5px;flex:none" title="重新定位到当前告警的关联目标">${U.icon('location')} 定位</button>`;
-const mapBody = `<div id="alMap" style="flex:1;min-height:0"></div>
-    <div id="alMapInfo" style="flex:none;height:19px;line-height:19px;padding:2px 2px 0;font-size:10.5px;
-      color:var(--txt-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>`;
+const mapExtra = `<span id="alMapSrc" style="font-size:11px;color:var(--txt-3)"></span>
+  <button class="btn" id="alLoc" style="height:24px;font-size:11.5px;flex:none" title="重新显示当前告警的完整轨迹与目标位置">${U.icon('location')} 定位</button>`;
+const mapBody = `<div id="alMap" style="flex:1;min-height:80px"></div>
+    <div id="alMapInfo" style="flex:none;line-height:1.5;padding:4px 2px 0;font-size:11px;
+      color:var(--txt-2);white-space:normal;overflow-wrap:anywhere"></div>`;
 
 /* 列头排序走服务端 sort/order（契约只支持这四个键）；不支持的列保持禁用并说明——
    在前端对当前一页重排会得出一个与全局顺序不符的假名次。 */
@@ -339,8 +340,7 @@ function queryOf() {
 
 function summaryOf(a) {
   const text = `${typeOf(a)} · 来源 ${esc(a.source_name || a.source_code || '—')}（${modeOf(a).t}）· 发生 ${fmt(a.occurred_at) || '未知'}`;
-  return `<div title="${text}" style="white-space:normal;line-height:1.5;
-        max-height:34px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">${text}</div>`;
+  return `<div style="white-space:normal;line-height:1.5;overflow-wrap:anywhere">${text}</div>`;
 }
 
 function listHtml() {
@@ -362,9 +362,9 @@ function listHtml() {
 /* 核实后操作统一由 UavAdvisoryPanel 承载，避免旧流程重复提供反制/移送入口。 */
 function disposalActions(a, ev) {
   if (!ev) return '<button class="btn" disabled>尚未创建核实事件</button>';
-  if ((ev.allowed_actions || []).includes('VERIFY')) return '<button class="btn pri" data-al="verify">人工核实</button>';
+  if ((ev.allowed_actions || []).includes('VERIFY')) return '<button class="btn" data-al="verify">核实事件事实</button>';
   if (ev.state === 'CONFIRMED' || ev.state === 'FALSE_POSITIVE') return '';
-  return '<button class="btn" disabled title="当前账号没有核实权限">人工核实</button>';
+  return '<span>当前账号没有事件核实权限</span>';
 }
 function advisoryProps(a, ev) {
   if (!a?.event_id || !ev) return null;
@@ -411,8 +411,8 @@ function detailHtml() {
   })}
     ${U.metricStrip([
       { label: '告警等级', value: sevOf(a).t, tone: sevOf(a).tone, icon: 'alert' },
-      { label: '处置状态', value: displayState(a).t, tone: a.state === 'CONFIRMED' || a.state === 'FALSE_POSITIVE' ? 'info' : 'warn', icon: 'play' },
-      { label: '目标类型', value: targetType, icon: 'plane' }
+      { label: '事件状态', value: displayState(a).t, tone: a.state === 'CONFIRMED' || a.state === 'FALSE_POSITIVE' ? 'info' : 'warn', icon: 'play' },
+      { label: '目标类型', value: targetType, icon: 'business:' + U.targetIconKey(t) }
     ], { compact: true })}
     ${U.sect('告警信息', U.kv([
     ['告警类型', typeOf(a)], ['告警等级', sevTag(a)],
@@ -430,7 +430,8 @@ function detailHtml() {
       <button class="btn" data-al="video" disabled title="协议未提供实时视频流">${U.icon('video')} 实时视频</button>
       <button class="btn" data-al="replay" ${replayN > 1 ? '' : 'disabled '}title="${replayN > 1 ? '按实测轨迹在地图上走航线回放，不是视频' : '没有足够的轨迹点'}">${U.icon('trend')} 轨迹回放</button>
       ${eoTrackActions(a)}
-      ${disposalActions(a, ev)}`)}`;
+      ${disposalActions(a, ev)}`)}
+    ${ev?.state === 'PENDING_VERIFICATION' ? '<p style="margin:8px 16px;font-size:12px;line-height:1.65;color:var(--muted)">事件事实尚待核实；符合后台条件且通道已启用的飞手短信、电话录音通知可先行执行。现场补充与反制申请仍按各自条件办理。</p>' : ''}`;
 }
 
 function eoTrackActions(a) {
@@ -482,16 +483,13 @@ function focusMap() {
   map.sel = null;
   map.setData({ airspaces: [], devices: [], targets: [], alarms: [] });
   if (srcEl) srcEl.textContent = '';
-  if (!a) return setInfo(cur.loading ? '正在读取告警…' : '请选择告警');
+  if (!a) return setInfo(cur.loading ? '正在读取告警' : '请选择告警');
   if (!a.target_id) return setInfo(warn('无关联目标或无目标读取权限，无法定位'));
-  if (cur.targetLoading) return setInfo('正在读取关联目标…');
+  if (cur.targetLoading) return setInfo('正在读取关联目标');
   if (cur.targetError) return setInfo(warn(`关联目标 ${esc(a.target_no || a.target_id)} 读取失败：${esc(cur.targetError)}`));
   const t = cur.target, ls = t && t.latest_state;
   const pos = ls ? coord(ls.location, ls.field_issues, 'location') : null;
-  const pts = ((cur.track && cur.track.points) || []).map(p => {
-    const c = coord(p.location);
-    return c ? { lon: c.lon, lat: c.lat, alt: p.altitude_amsl_m == null ? null : Number(p.altitude_amsl_m), t: p.sort_time, kind: 'meas' } : null;
-  }).filter(Boolean);
+  const pts = measuredMapPoints(cur.track?.points || []);
   const last = pos || (pts.length ? pts[pts.length - 1] : null);
   if (!t || !last) return setInfo(warn(`关联目标 ${esc(t?.target_no || a.target_no || a.target_id)} 位置无法确认，暂时无法定位`));
   const subtype = targetTypeLabel(t.subtype, t.object_type_code, '目标');
@@ -505,17 +503,21 @@ function focusMap() {
     legal: t.legality_summary && t.legality_summary.legal_status
       ? labelOf(LEGALITY_LABEL, t.legality_summary.legal_status, t.legality_summary.legal_status) : '—',
     risk: t.risk_summary && t.risk_summary.severity ? esc(t.risk_summary.severity) : '—', tracked: true,
-    track: pts.length > 1 ? pts : []
+    track: pts
   };
   map.sel = target.id;
   map.setData({
     airspaces: [], devices: [], targets: [target],
     alarms: [{ id: a.alarm_id, targetId: target.id, type: typeOf(a), level: sevOf(a).t, time: fmt(a.received_at), status: displayState(a).t }]
   });
-  if (map.w) map.centerAt(last.lon, last.lat);
-  const trackNote = pts.length > 1 ? `实测轨迹 · ${pts.length} 点` : cur.trackError ? `轨迹读取失败：${esc(cur.trackError)}` : '只有最近一次位置，没有可显示的飞行轨迹';
+  if (pts.length > 1) map.fitTo([...pts.map(p => [p.lon, p.lat]), [last.lon, last.lat]], 0.18);
+  else map.centerAt(last.lon, last.lat);
+  const source = labelOf(MODE_TEXT, cur.track?.source_mode || t.source_mode, '来源未知');
+  const trackNote = pts.length > 1 ? `${esc(source)} · 轨迹 ${pts.length} 点；黄色表示航线关系未知`
+    : cur.trackError ? `轨迹读取失败：${esc(cur.trackError)}`
+      : pts.length === 1 ? '仅有一个轨迹点，无法连成飞行轨迹' : '没有可显示的飞行轨迹';
   if (srcEl) srcEl.innerHTML = pts.length > 1
-    ? `<span class="tag t-amber" title="/api/v1/targets/{id}/tracks 最新一条轨迹的最近点位（WGS84）">实测轨迹</span> <span style="color:#8fbaff">实${pts.length}</span>`
+    ? `<span class="tag t-amber">${esc(source)}轨迹</span> <span style="color:#8fbaff">${pts.length} 点</span>`
     : `<span class="tag t-gray" title="${cur.trackError ? esc(cur.trackError) : '暂时没有可显示的飞行轨迹'}">无轨迹</span>`;
   setInfo(`<span class="mono" style="color:var(--txt-2)" title="${esc(t.target_id)}">${esc(t.target_no || t.target_id)}</span> · ${esc(subtype)} · 合法性 ${esc(target.legal)} · 高度 ${target.alt == null ? '—' : esc(target.alt) + ' m'} · ${trackNote}`,
     `${t.target_no || t.target_id}｜${subtype}｜高度 ${target.alt == null ? '—' : target.alt + ' m'}\n${trackNote}`);
@@ -639,14 +641,13 @@ async function loadTarget(my) {
     cur.target = t;
     try {
       const tracks = await targetApi.tracks(a.target_id, { page: 1, size: 1 });
+      if (my !== detailSeq) return;
       const track = tracks && Array.isArray(tracks.items) ? tracks.items[0] : null;
       if (track) {
-        // 点位按时间升序分页：先取第一页得到 total，再取最后一页即最近 ≤100 个点位。
-        let points = await targetApi.points(track.track_id, { page: 1, size: 100 });
-        const total = Number(points && points.total) || 0;
-        if (total > 100) points = await targetApi.points(track.track_id, { page: Math.ceil(total / 100), size: 100 });
+        // 点位按时序读取全部分页，不能用最后一页的余数替代完整轨迹。
+        const points = await targetApi.pointsAll(track.track_id);
         if (my !== detailSeq) return;
-        cur.track = { id: track.track_id, points: Array.isArray(points && points.items) ? points.items : [] };
+        cur.track = { id: track.track_id, source_mode: track.source_mode, points: Array.isArray(points && points.items) ? points.items : [] };
       }
     } catch (e) { if (my !== detailSeq) return; cur.trackError = messageOf(e); }
   } catch (e) {
@@ -655,8 +656,10 @@ async function loadTarget(my) {
   }
   if (my !== detailSeq) return;
   cur.targetLoading = false;
-  await loadEoTask(my);
   paintDetail(); focusMap();
+  await loadEoTask(my);
+  if (my !== detailSeq) return;
+  paintDetail();
 }
 
 async function loadEoTask(my) {
@@ -664,7 +667,9 @@ async function loadEoTask(my) {
   cur.eoTask = null; cur.eoTaskError = '';
   if (!a || !a.target_id || !hasModuleAction('devices', 'op')) return;
   try {
-    cur.eoTask = await deviceApi.currentEoTrack(a.target_id);
+    const task = await deviceApi.currentEoTrack(a.target_id);
+    if (my !== detailSeq) return;
+    cur.eoTask = task;
   } catch (e) {
     if (my !== detailSeq) return;
     if (e.status !== 404) cur.eoTaskError = messageOf(e);
@@ -715,8 +720,11 @@ function verifyModal() {
 async function counterModal() {
   const a = cur.alarm, ev = cur.event;
   if (!a || !ev) return toast('尚未创建核实事件，无法发起处置申请', 'err');
+  const requestSeq = detailSeq;
+  const isCurrent = () => detailSeq === requestSeq && cur.event?.event_id === ev.event_id;
   let policy = null;
   try { policy = await disposalApi.policies(); } catch { policy = null; }   // 策略读不到只影响提示文字，不阻断申请
+  if (!isCurrent()) return;
   /* 决策 13-19：信号干扰与联动反制共用这一个入口，动作类型在弹窗里选，不给页面新增按钮。 */
   openDisposalRequest({
     actionType: 'COUNTERMEASURE',
@@ -724,6 +732,8 @@ async function counterModal() {
     subjectKind: 'UAV_EVENT',
     subjectId: ev.event_id,
     subjectText: readableNo(a.alarm_no) || typeOf(a),
+    initialReason: advisoryRequestReason(advisorySummaries.get(ev.event_id)),
+    isCurrent,
     policy,
     // refreshAfterWrite 会重读列表、详情（内含授权）与 KPI，详情重读后步骤与按钮即反映新状态。
     refresh: async () => {
@@ -826,7 +836,7 @@ onMounted(async () => {
   U.on(view, '[data-ev-chain-type]', 'click', (e, btn) => {
     if (btn.dataset.evChainType) openEvidenceChainTypeModal({ chain: cur.chain, type: btn.dataset.evChainType });
   });
-  el('alLoc').onclick = () => { if (map) map.resetView(2.2); focusMap(); };
+  el('alLoc').onclick = focusMap;
   const expBtn = el('alExp');
   if (expBtn) expBtn.onclick = () => exportCsv();
   loadDistricts();

@@ -1,4 +1,5 @@
-const COLORS = { WITHIN: '#2fd06e', OUTSIDE: '#ff4d5e', UNKNOWN: '#ffb020', BOUNDARY: '#ffb020' };
+export { trustedTrajectoryPoints, strokePlanComparison } from '@/services/trajectoryDrawing.js';
+
 const NOTE_TEXT = [
   ['颜色只表示实测位置与计划走廊的横向关系，不代表合法性；缺失轨迹断开，不补点。', '颜色表示是否偏离计划航线；是否违规请查看合法性研判。'],
   ['已有计划匹配记录，但计划时段内没有可用实测点，计划线保留灰色虚线。', '已找到对应飞机，但这段时间没有可显示的轨迹，地图只显示灰色计划线。'],
@@ -12,36 +13,4 @@ const NOTE_TEXT = [
 ];
 export function trajectoryNoteText(note) {
   return NOTE_TEXT.reduce((text, [original, label]) => text.split(original).join(label), String(note || '暂时没有可显示的飞行轨迹'));
-}
-
-export function trustedTrajectoryPoints(data) {
-  return (data?.points || []).map(point => {
-    const lon = point.longitude, lat = point.latitude;
-    if (typeof lon !== 'number' || typeof lat !== 'number' || !Number.isFinite(lon) || !Number.isFinite(lat)
-      || Math.abs(lon) > 180 || Math.abs(lat) > 90) return null;
-    return { ...point, lon, lat };
-  });
-}
-
-export function strokePlanComparison(ctx, map, centerline, points) {
-  ctx.save();
-  if (centerline?.length) {
-    ctx.beginPath(); centerline.forEach(([lon, lat], i) => { const [x, y] = map.px(lon, lat); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
-    ctx.strokeStyle = '#8ca0a8'; ctx.lineWidth = 2.5; ctx.setLineDash([7, 6]); ctx.stroke(); ctx.setLineDash([]);
-  }
-  let previous = null;
-  for (const point of points) {
-    if (!point) { previous = null; continue; }
-    const [x, y] = map.px(point.lon, point.lat);
-    if (previous && !point.break_before && point.track_id === previous.track_id && point.point_seq === previous.point_seq + 1) {
-      const [px, py] = map.px(previous.lon, previous.lat);
-      const relations = [previous.corridor_relation, point.corridor_relation];
-      const relation = relations.every(value => value === 'WITHIN') ? 'WITHIN'
-        : relations.includes('OUTSIDE') ? 'OUTSIDE' : 'UNKNOWN';
-      ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(x, y); ctx.lineWidth = 3; ctx.strokeStyle = COLORS[relation]; ctx.stroke();
-    }
-    ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fillStyle = COLORS[point.corridor_relation] || COLORS.UNKNOWN; ctx.fill();
-    previous = point;
-  }
-  ctx.restore();
 }

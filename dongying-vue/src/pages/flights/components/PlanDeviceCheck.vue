@@ -72,8 +72,8 @@ article { padding: 8px 0; border-top: 1px solid var(--line); }
 summary { cursor: pointer; }
 footer { margin-top: 8px; color: var(--txt-3); font-size: 11px; }
 .device-heading b { min-width: 0; overflow-wrap: anywhere; }
-.device-type-icon { display: inline-flex; flex-shrink: 0; padding: 4px; font-size: 20px; border: 1px solid color-mix(in srgb, currentColor 45%, transparent); border-radius: 5px; color: var(--gray); background: color-mix(in srgb, currentColor 12%, transparent); }
-.device-type-icon :deep(svg) { width: 20px; height: 20px; }
+.device-type-icon { display:inline-flex;flex-shrink:0;padding:4px;font-size:24px;border:0;color:var(--gray);background:transparent; }
+.device-type-icon :deep(svg) { width:24px;height:24px; }
 .device-type-icon.is-abnormal { color: var(--red); }
 .device-type-icon.is-historical { color: var(--amber); }
 .device-type-icon.is-normal { color: var(--green); }

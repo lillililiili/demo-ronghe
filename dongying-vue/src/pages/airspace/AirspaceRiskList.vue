@@ -118,8 +118,8 @@ function summary(row) {
         <button class="linkbtn notes-toggle" type="button" :aria-expanded="notesOpen" aria-controls="airspace-monitor-notes" @click="notesOpen = !notesOpen; filtersOpen = false">监测说明 <span>{{ notesOpen ? '收起' : '展开' }}</span></button>
       </div>
       <div v-show="notesOpen" id="airspace-monitor-notes" class="monitor-notes">
-        <p v-if="monitor.isDemo">模拟监测展示机巢起降点周边及空域目标，每 10 秒切换；距离为水平距离，高度为海拔高度，趋势对比前一帧。重点区域仅筛选模拟监测。</p>
-        <p>风险显示发生时的位置，监测显示最近位置；已通知不代表风险已解除。</p>
+        <p v-if="monitor.isDemo">模拟观测每 10 秒更新；距离为水平距离，高度为海拔高度。</p>
+        <p>风险位置为发现时快照，监测位置为最近观测；通知与风险解除分别记录。</p>
         <p v-if="risks.onlySelected && selected">按 {{ selected.name }} 的平面范围筛选（含边界），不直接判定进入管制高度或违规。</p>
       </div>
     </div>
@@ -131,7 +131,7 @@ function summary(row) {
     <div v-if="monitor.loading || risks.loading" class="list-note" role="status">正在读取数据，已读取的内容先显示。</div>
     <div v-if="risks.timeError" class="empty" role="alert">{{ risks.timeError }}</div>
     <div v-else-if="risks.onlySelected && selected && !risks.polygons.length" class="empty">这片空域没有可用的当前边界，请切换“当前区县全部”查看。</div>
-    <div v-else-if="!list.rows.length" class="empty">{{ monitor.loading || risks.loading ? '正在读取…' : monitor.error || risks.error || !monitor.canRead || !risks.canRead ? '当前可读取的数据中没有匹配项，完整情况暂时无法确认。' : '当前筛选下没有记录，不代表空域安全。' }}</div>
+    <div v-else-if="!list.rows.length" class="empty">{{ monitor.loading || risks.loading ? '正在读取' : monitor.error || risks.error || !monitor.canRead || !risks.canRead ? '可读取的数据中没有匹配项，完整情况待确认。' : '当前筛选下没有记录。' }}</div>
     <div v-else ref="recordScroll" class="risk-record-scroll" aria-label="风险记录列表">
       <button v-for="row in list.pageRows" :key="row.key" class="risk-record" :class="{ on: list.active?.key === row.key }" type="button" :aria-pressed="list.active?.key === row.key" :aria-label="`${title(row)}，查看详情`" @click="emit('inspect', row)">
         <span class="record-heading"><b>{{ title(row) }}</b><span class="tag" :class="SEVERITY_TAG[row.severity] || 't-gray'">{{ labelOf(SEVERITY_LABEL, row.severity, '未判定') }}</span></span>

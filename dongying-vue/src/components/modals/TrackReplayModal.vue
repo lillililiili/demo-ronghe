@@ -79,7 +79,7 @@ function paint() {
       alt: point.alt,
       heading: point.heading,
       tracked: true,
-      track: props.points
+      track: props.points.slice(0, Math.round(Number(idx.value)) + 1)
     }]
   });
   if (!fitted) fitCourse();
@@ -174,7 +174,7 @@ onUnmounted(() => {
       <span class="inline-icon" v-html="U.icon('flag')"></span>
       告警时刻落在本段轨迹内：{{ alarmText }}
     </div>
-    <div class="track-replay-note">回放的是该目标最新一条轨迹的实测点，不是视频，也不是飞行计划航线。</div>
+    <div class="track-replay-note"><b v-if="['mock', 'replay'].includes(mapTarget.sourceMode)">模拟／回放来源。</b>只显示回放时刻之前的观测轨迹，断点保留；黄色表示航线关系未知，预测与推算点另作标记。</div>
     <UFormFooter hide-cancel confirm-text="关闭" @confirm="close" />
   </div>
 </template>

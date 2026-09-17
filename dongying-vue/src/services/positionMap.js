@@ -3,6 +3,7 @@
    - 感知目标：/targets/{id} 的 latest_state.location 作锚点；/targets/{id}/tracks 最新一条轨迹的点位作轨迹。
    - 航线：/route-versions/{id} 的 centerline（LineString，WGS84）。
    - 设备：/devices/{id} 的 longitude/latitude。 */
+import { measuredMapPoints } from './trackPoints.js';
 import { targetApi } from './targetApi.js';
 import { deviceApi } from './deviceApi.js';
 import { flightApi } from './flightApi.js';
@@ -27,37 +28,45 @@ export function trustedCenterline(version) {
   return coordinates.length > 1 && coordinates.every(([lon, lat]) => Number.isFinite(lon) && Number.isFinite(lat)) ? coordinates : null;
 }
 
-/** 目标位置与轨迹；legal 是给标记着色用的合法性文案（不知道就传 '—'）。 */
-export async function loadTargetPosition(targetId, { legal = '—', risk = '—' } = {}) {
+/** fusedBefore：研判地图优先读取该时刻之前的融合轨迹；无融合轨迹时使用研判引用的 trackId。
+ * 其他位置入口仍沿用最新轨迹。legal 只用于目标标记着色。 */
+export async function loadTargetPosition(targetId, { legal = '—', risk = '—', fusedBefore = null, trackId = null, positionOnly = false } = {}) {
   const target = await targetApi.detail(targetId);
   const ls = target?.latest_state;
   const pos = ls ? coordOf(ls.location, ls.field_issues, 'location') : null;
   let points = [];
   let trackError = '';
+  let trackLayer = null;
   try {
-    const tracks = await targetApi.tracks(targetId, { page: 1, size: 1 });
-    const track = tracks?.items?.[0];
+    if (!positionOnly) {
+    const historical = fusedBefore != null;
+    const tracks = await targetApi.tracks(targetId, {
+      page: 1, size: 1, ...(historical ? { layer: 'FUSED', started_from: 0, started_to: fusedBefore } : {})
+    });
+    const track = tracks?.items?.[0] || (historical && trackId ? { track_id: trackId } : null);
     if (track) {
-      let page = await targetApi.points(track.track_id, { page: 1, size: 100 });
+      trackLayer = track.layer || null;
+      let page = historical
+        ? await targetApi.pointsAll(track.track_id, { size: 100, time_from: 0, time_to: fusedBefore })
+        : await targetApi.points(track.track_id, { page: 1, size: 100 });
       const total = Number(page?.total || 0);
-      if (total > 100) page = await targetApi.points(track.track_id, { page: Math.ceil(total / 100), size: 100 });
-      points = (page?.items || []).map(p => {
-        const c = coordOf(p.location);
-        return c ? { lon: c.lon, lat: c.lat, alt: p.altitude_amsl_m == null ? null : Number(p.altitude_amsl_m), t: p.sort_time, kind: 'meas' } : null;
-      }).filter(Boolean);
+      if (!historical && total > 100) page = await targetApi.points(track.track_id, { page: Math.ceil(total / 100), size: 100 });
+      points = measuredMapPoints(page?.items || []);
+    }
     }
   } catch (error) { trackError = error?.message || '轨迹读取失败'; }
   const anchor = pos || (points.length ? points[points.length - 1] : null);
-  if (!anchor) return { target, anchor: null, mapTarget: null, points, trackError };
+  if (!anchor) return { target, anchor: null, mapTarget: null, points, trackError, trackLayer };
   const mapTarget = {
     id: target.target_no || target.target_id, lon: anchor.lon, lat: anchor.lat,
     alt: ls?.altitude_amsl_m == null ? null : Number(ls.altitude_amsl_m),
     speed: ls?.speed_mps == null ? null : Number(ls.speed_mps),
-    heading: ls?.heading_deg == null ? 0 : Number(ls.heading_deg),
+    heading: ls?.heading_deg == null ? null : Number(ls.heading_deg),
+    objectTypeCode: target.object_type_code, subtypeCode: target.subtype,
     type: targetTypeLabel(null, target.object_type_code, '目标'), subtype: targetTypeLabel(target.subtype, target.object_type_code, '目标'),
-    legal, risk, tracked: true, track: points.length > 1 ? points : []
+    legal, risk, tracked: true, track: points
   };
-  return { target, anchor, mapTarget, points, trackError };
+  return { target, anchor, mapTarget, points, trackError, trackLayer, positionSource: pos ? 'latest' : 'track' };
 }
 
 /** 设备点位；台账没有坐标时 mapDevice 为 null。 */
@@ -83,109 +92,11 @@ export async function loadRouteCenterline(routeVersionId) {
   return trustedCenterline(await flightApi.routeVersion(routeVersionId));
 }
 
-function polylinePath(ctx, pts) {
-  ctx.beginPath();
-  pts.forEach((pt, index) => { if (index) ctx.lineTo(pt[0], pt[1]); else ctx.moveTo(pt[0], pt[1]); });
-}
-
-function walkPolyline(pts, gap, start, visit) {
-  let remain = start;
-  for (let i = 1; i < pts.length; i++) {
-    const ax = pts[i - 1][0], ay = pts[i - 1][1], bx = pts[i][0], by = pts[i][1];
-    const dx = bx - ax, dy = by - ay, len = Math.hypot(dx, dy);
-    if (len < 1) continue;
-    const ux = dx / len, uy = dy / len;
-    while (remain <= len) {
-      visit(ax + ux * remain, ay + uy * remain, ux, uy);
-      remain += gap;
-    }
-    remain -= len;
-  }
-}
-
-function strokeChevron(ctx, x, y, ux, uy, color) {
-  const s = 5.4;
-  ctx.beginPath();
-  ctx.moveTo(x - ux * 3.4 - uy * s * 0.55, y - uy * 3.4 + ux * s * 0.55);
-  ctx.lineTo(x + ux * 4.6, y + uy * 4.6);
-  ctx.lineTo(x - ux * 3.4 + uy * s * 0.55, y - uy * 3.4 - ux * s * 0.55);
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 1.55;
-  ctx.lineJoin = 'round';
-  ctx.lineCap = 'round';
-  ctx.stroke();
-}
-
-function strokeTerminal(ctx, pt, label, fill) {
-  ctx.beginPath();
-  ctx.arc(pt[0], pt[1], 8.2, 0, Math.PI * 2);
-  ctx.fillStyle = fill;
-  ctx.fill();
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = '#fff';
-  ctx.stroke();
-  ctx.font = '600 10px "PingFang SC",sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillStyle = '#fff';
-  ctx.fillText(label, pt[0], pt[1] + 0.4);
-}
-
-/** 计划航线中心线：白边 + 青色芯 + 方向箭头 + 起终点。只描已有顶点，不插值、不画走廊宽度。 */
-export function strokePlannedRoute(ctx, map, coordinates, { label = '' } = {}) {
+/** 计划航线统一走 MapView 静态绘制；只投影已有中心线，不生成航点或改变几何。 */
+export function strokePlannedRoute(ctx, map, coordinates, options = {}) {
   if (!ctx || !map || !coordinates || coordinates.length < 2) return;
-  const pts = coordinates.map(([lon, lat]) => map.px(lon, lat));
-  if (pts.some(pt => !Number.isFinite(pt[0]) || !Number.isFinite(pt[1]))) return;
-  const still = typeof map._still === 'function' ? map._still() : true;
-  const t = Number(map.t) || 0;
-  const ink = '#14607a';
-  const core = '#2ec4e0';
-  ctx.save();
-  ctx.lineJoin = 'round';
-  ctx.lineCap = 'round';
-  polylinePath(ctx, pts);
-  ctx.strokeStyle = 'rgba(46,196,224,.20)';
-  ctx.lineWidth = 14;
-  ctx.stroke();
-  polylinePath(ctx, pts);
-  ctx.strokeStyle = 'rgba(255,255,255,.96)';
-  ctx.lineWidth = 8;
-  ctx.stroke();
-  polylinePath(ctx, pts);
-  ctx.strokeStyle = ink;
-  ctx.lineWidth = 5.2;
-  ctx.stroke();
-  polylinePath(ctx, pts);
-  ctx.strokeStyle = core;
-  ctx.lineWidth = 2.15;
-  ctx.setLineDash([11, 8]);
-  ctx.lineDashOffset = still ? 0 : -(t * 0.42) % 19;
-  ctx.stroke();
-  ctx.setLineDash([]);
-  walkPolyline(pts, 36, 22, (x, y, ux, uy) => strokeChevron(ctx, x, y, ux, uy, ink));
-  for (let i = 1; i < pts.length - 1; i++) {
-    ctx.beginPath();
-    ctx.arc(pts[i][0], pts[i][1], 3.1, 0, Math.PI * 2);
-    ctx.fillStyle = '#fff';
-    ctx.fill();
-    ctx.strokeStyle = ink;
-    ctx.lineWidth = 1.25;
-    ctx.stroke();
-  }
-  strokeTerminal(ctx, pts[0], '起', '#1a9b6e');
-  strokeTerminal(ctx, pts[pts.length - 1], '终', '#d4533a');
-  if (label) {
-    const mid = pts[pts.length >> 1];
-    ctx.font = '600 10.5px "PingFang SC",sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    const width = ctx.measureText(label).width + 10;
-    ctx.fillStyle = 'rgba(8,22,40,.78)';
-    ctx.fillRect(mid[0] - width / 2, mid[1] - 18, width, 15);
-    ctx.fillStyle = '#c8eef6';
-    ctx.fillText(label, mid[0], mid[1] - 10.5);
-  }
-  ctx.restore();
+  const points = coordinates.map(([lon, lat]) => map.px(lon, lat));
+  window.MapView.strokePlannedRoute(ctx, points, { width: map.w, height: map.h, ...options });
 }
 
 /** 在 MapView 的 draw 之后补画计划航线中心线。 */

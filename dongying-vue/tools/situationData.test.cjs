@@ -5,6 +5,10 @@
    这里钉住的都是"补默认值就会出错"的地方：没有研判的目标、没有位置的目标、
    认不出种类的空域、没有当前版本的空域、没有经纬度的设备。 */
 
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+
 let passed = 0, failed = 0;
 
 function check(name, actual, expected) {
@@ -212,18 +216,48 @@ async function main() {
   ]);
   check('没有坐标的轨迹点丢弃', track.length, 2);
   check('kind 小写透传', track.map(p => p.kind), ['meas', 'pred']);
+  // 对齐 TargetReadService.point / LocationDto：坐标系、观测身份和时间都由后端提供。
+  const pointRow = (extra = {}) => ({
+    point_id: 'point-1', track_id: 'track-1', point_seq: 1,
+    observed_at: 1000, sort_time: 1000, time_basis: 'OBSERVED', received_at: 1100,
+    location: { longitude: 118.4, latitude: 37.4, coordinate_system: 'WGS84' },
+    point_kind: 'MEAS', altitude_amsl_m: 120, ...extra
+  });
   const nested = S.toTrack([
-    { location: { longitude: 118.4, latitude: 37.4 }, point_kind: 'MEAS' },
-    { location: { longitude: null, latitude: 37.5 }, point_kind: 'MEAS' }
+    pointRow(),
+    pointRow({ point_id: 'point-2', location: { longitude: null, latitude: 37.5, coordinate_system: 'WGS84' } })
   ]);
-  check('读接口 location 嵌套坐标也能装配', nested, [{ lon: 118.4, lat: 37.4, kind: 'meas' }]);
+  check('读接口 location 嵌套坐标及观测身份完整装配', nested, [{
+    lon: 118.4, lat: 37.4, point_id: 'point-1', track_id: 'track-1', point_seq: 1,
+    t: 1000, alt: 120, kind: 'meas', corridor_relation: 'UNKNOWN', break_before: true
+  }]);
+  check('嵌套坐标缺少坐标系时不猜成 WGS84', S.toTrack([
+    pointRow({ location: { longitude: 118.4, latitude: 37.4 } })
+  ]), []);
+  // 执行实际地图连续性判定，不在测试里复制连线规则；无需创建地图或浏览器 DOM。
+  const mapContext = { window: {} };
+  vm.runInNewContext(fs.readFileSync(path.resolve(__dirname, '../public/assets/js/map.js'), 'utf8'), mapContext);
+  const continuous = mapContext.window.MapView.trackContinuous;
+  const pair = S.toTrack([pointRow(), pointRow({ point_id: 'point-2', point_seq: 2, observed_at: 2000, sort_time: 2000 })]);
+  ok('同轨迹连续序号且时刻递增才允许连线', continuous(pair[0], pair[1]));
+  const noTime = S.toTrack([pointRow(), pointRow({ point_id: 'point-2', point_seq: 2, observed_at: null, sort_time: null })]);
+  check('缺少观测和排序时刻不伪造时间', noTime[1].t, null);
+  ok('缺少时刻的有效坐标只保留观测点，不与前点连线', !continuous(noTime[0], noTime[1]));
+  const differentTracks = S.toTrack([pointRow(), pointRow({ point_id: 'point-2', track_id: 'track-2', point_seq: 2, observed_at: 2000 })]);
+  ok('序号和时间相邻也不能跨 track 连线', !continuous(differentTracks[0], differentTracks[1]));
+  const interrupted = S.toTrack([pointRow(), pointRow({ location: null }),
+    pointRow({ point_id: 'point-2', point_seq: 2, observed_at: 2000 })]);
+  check('过滤无效坐标后仍保留后一个点的断点', interrupted[1].break_before, true);
+  ok('丢弃坏坐标后不重新接起两侧的观测点', !continuous(interrupted[0], interrupted[1]));
   const refreshed = S.attachRecentTracks(
     [{ targetId: 't1', lon: 118.5, lat: 37.5, posValid: true, sourceDeviceIds: [] }],
-    { items: [{ target_id: 't1', points: [{ location: { longitude: 118.5, latitude: 37.5 } }] }] },
-    [{ targetId: 't1', lon: 118.4, lat: 37.4, posValid: true, sourceDeviceIds: ['fusion-d6'] }],
-    1000, 5000
+    { items: [{ target_id: 't1', track_id: 'track-1', points: [pointRow({
+      location: { longitude: 118.5, latitude: 37.5, coordinate_system: 'WGS84' }
+    })] }] },
+    [{ targetId: 't1', lon: 118.4, lat: 37.4, posValid: true, sourceDeviceIds: ['fusion-d6'] }]
   );
   check('快轮询保留已由详情接口加载的真实来源链路', refreshed[0].sourceDeviceIds, ['fusion-d6']);
+  check('快轮询保留本次接口返回的真实轨迹', refreshed[0].track.map(point => point.point_id), ['point-1']);
 
   /* ---- 只报方位的目标 ---- */
   // 字段名按服务端实际返回：方位角与观测设备都在 latest_state 里（bearing_deg / bearing_device_id）。

@@ -1,6 +1,32 @@
 /* 主题 token 唯一真源。Naive UI 通过 src/ui/theme.js 运行时读取这些变量。
    不要在 Vue 主题配置或组件里手抄色值；新全局变量加在这里。 */
 :root{
+  /* 用户确认：无框鲜彩设备、目标、设施；类别色与状态、航迹色分离。 */
+  --icon-alarm: #ff243b;
+  --icon-radar:#00d982;
+  --icon-eo:#ff941a;
+  --icon-tdoa:#a64bff;
+  --icon-aoa:#9752ff;
+  --icon-5ga:#00baff;
+  --icon-spec:#00ccd9;
+  --icon-cm:#ff625c;
+  --icon-dec:#ffb300;
+  --icon-ifr:#ff4f40;
+  --icon-cv:#159eff;
+  --icon-isrs:#00c8c7;
+  --icon-dcd:#a24dff;
+  --icon-bsc:#ffc400;
+  --icon-rid:#00b5ff;
+  --icon-fusion:#168fff;
+  --icon-uav:#00b8ff;
+  --icon-bird:#00dba9;
+  --icon-balloon:#b958ff;
+  --icon-kite:#ff9a19;
+  --icon-lantern:#ffc43a;
+  --icon-nest:#139eff;
+  --icon-unknown:#b067ff;
+  --icon-unknown-device:#20c9fa;
+
   --canvas:#040d21;
   --surface-1:#081b38;
   --surface-2:#102c52;

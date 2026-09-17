@@ -150,23 +150,50 @@ export async function apiDownload(path) {
   return response.blob();
 }
 
-export async function apiBinary(path) {
+export async function apiBinary(path, { signal, maxBytes } = {}) {
   const headers = new Headers({ Accept: '*/*' });
   const token = readSessionToken();
   if (token) headers.set('Authorization', `Bearer ${token}`);
   let response;
-  try { response = await fetch(`${API_BASE}${path}`, { headers }); }
-  catch { throw new ApiError('暂时连不上系统，请检查网络后重试。', 'NETWORK_ERROR', 0); }
-  const contentType = response.headers.get('content-type') || '';
-  if (contentType.includes('application/json')) {
-    await decode(response);
-    return null;
+  try { response = await fetch(`${API_BASE}${path}`, { headers, signal, cache: 'no-store' }); }
+  catch (error) {
+    if (signal?.aborted) throw error;
+    throw new ApiError('暂时连不上系统，请检查网络后重试。', 'NETWORK_ERROR', 0);
   }
-  if (!response.ok) throw new ApiError(`服务返回异常（状态码 ${response.status}）`, 'HTTP_ERROR', response.status);
-  const blob = await response.blob();
+  const contentType = response.headers.get('content-type') || '';
+  if (!response.ok) {
+    try { await decode(response); }
+    catch (error) {
+      if (response.status === 401) window.dispatchEvent(new CustomEvent('api:unauthorized', { detail: error }));
+      throw error;
+    }
+  }
+  if (maxBytes && Number(response.headers.get('content-length')) > maxBytes) {
+    await response.body?.cancel();
+    throw new ApiError('文件超过预览大小上限，可按权限下载原件。', 'FILE_TOO_LARGE', 413);
+  }
+  // 成功 JSON 是证据原件，不能把它误当 {ok,data,error} 接口包装。
+  let blob;
+  if (maxBytes && response.body) {
+    const reader = response.body.getReader();
+    const chunks = []; let size = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > maxBytes) {
+          await reader.cancel();
+          throw new ApiError('文件超过预览大小上限，可按权限下载原件。', 'FILE_TOO_LARGE', 413);
+        }
+        chunks.push(value);
+      }
+      blob = new Blob(chunks, { type: contentType });
+    } finally { reader.releaseLock(); }
+  } else blob = await response.blob();
   const disposition = response.headers.get('content-disposition') || '';
   const utf = /filename\*=UTF-8''([^;]+)/i.exec(disposition);
   const plain = /filename="?([^"]+)"?/i.exec(disposition);
   const filename = decodeURIComponent((utf && utf[1]) || (plain && plain[1]) || 'download');
-  return { blob, filename };
+  return { blob, filename, contentType };
 }

@@ -25,12 +25,12 @@ let cancelled = false;
 const toolbarHtml = computed(() => {
   const range = S.value
     ? `${S.value.from} 至 ${S.value.to}（近30天全量）`
-    : (loading.value ? '加载中…' : '—');
+    : (loading.value ? '正在加载' : '—');
   const disabled = !S.value || exporting.value ? ' disabled' : '';
   return `<div class="toolbar-fields">${U.field('统计区间', `<span class="mono" style="font-size:12px;color:var(--txt-2);padding:0 4px">${range}</span>`)}</div>
       <div class="toolbar-actions">
       <button class="btn pri" id="stExp"${disabled}>${U.icon('download')} 导出数据</button>
-      <span class="toolbar-note">当前按近 30 天全量统计，暂不支持按日、类型、区域筛选</span></div>`;
+      </div>`;
 });
 
 const kpiList = computed(() => {
@@ -56,7 +56,7 @@ const rankHtml = computed(() => {
   const top = S.value.partners || [];
   return U.table([
     { t: '#', w: '34px', align: 'center', render: (r, i) => i < 3 ? `<span class="tag ${['t-red', 't-orange', 't-amber'][i]}">${i + 1}</span>` : i + 1 },
-    { t: '主体', w: '118px', render: r => `<div style="width:112px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${r.name}">${
+    { t: '主体', w: '118px', render: r => `<div style="white-space:normal;overflow-wrap:anywhere" title="${r.name}">${
       r.name.includes('未知') ? `<span style="color:#ff8b95">${r.name}</span>` : r.name}</div>` },
     { t: '案件', w: '42px', align: 'right', cls: 'num', render: r => r.n },
     { t: '罚款', w: '48px', align: 'right', cls: 'num', render: r => r.fine ? (r.fine / 1000) + 'k' : '—' }

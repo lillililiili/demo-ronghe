@@ -7,6 +7,7 @@
 
 /* 用相对路径而不是 @/ 别名：本模块要能被 node 直接 import 跑单测（tools/situationData.test.cjs），
    而别名只有 Vite 认得。文案一律走共享字典，本页不另建一套中文。 */
+import { measuredMapPoints } from './trackPoints.js';
 import { OBJECT_TYPE_LABEL, labelOf, targetTypeLabel } from '../ui/labels.js';
 
 /* 空域图层字典（决策 11-6 定名与配色，12-3 定归属来源）。
@@ -410,14 +411,7 @@ export function toAlarms(alarms) {
 /** 轨迹点 → map.js 的 track 数组；kind 小写透传（map.js 用它区分实测点与预测点）。
     读接口把坐标放在 location 里（与 latest_state 同形）；顶层 longitude 只作为兼容。 */
 export function toTrack(points) {
-  const out = [];
-  for (const point of points || []) {
-    const loc = point && point.location ? point.location : point;
-    const lon = num(loc && loc.longitude), lat = num(loc && loc.latitude);
-    if (lon === null || lat === null) continue;
-    out.push({ lon, lat, kind: String(point.point_kind || point.kind || 'meas').toLowerCase() });
-  }
-  return out;
+  return measuredMapPoints(points);
 }
 
 export function toFlightPlans(plans, routeVersions = {}) {
@@ -501,23 +495,15 @@ export function toRisks(risks) {
   });
 }
 
-/** 将批量近期轨迹合并到目标，并用相邻两次真实位置生成五秒插值。 */
-export function attachRecentTracks(targets, recentTracks, previousTargets = [], generatedAt = Date.now(), durationMs = 5000) {
+/** 批量轨迹仅显示已有观测位置，不在刷新间隔补出无人机运动。 */
+export function attachRecentTracks(targets, recentTracks, previousTargets = []) {
   const tracks = new Map((recentTracks?.items || []).map(item => [item.target_id, toTrack(item.points)]));
   const previous = new Map((previousTargets || []).map(target => [target.targetId, target]));
-  return (targets || []).map(target => {
-    const before = previous.get(target.targetId);
-    const moved = before?.posValid && target.posValid && (before.lon !== target.lon || before.lat !== target.lat);
-    return {
-      ...target,
-      track: tracks.get(target.targetId) || target.track || [],
-      sourceDeviceIds: target.sourceDeviceIds?.length ? target.sourceDeviceIds : (before?.sourceDeviceIds || []),
-      movement: moved ? {
-        fromLon: before.lon, fromLat: before.lat, toLon: target.lon, toLat: target.lat,
-        startedAt: generatedAt, endsAt: generatedAt + durationMs
-      } : null
-    };
-  });
+  return (targets || []).map(target => ({
+    ...target,
+    track: tracks.get(target.targetId) || target.track || [],
+    sourceDeviceIds: target.sourceDeviceIds?.length ? target.sourceDeviceIds : (previous.get(target.targetId)?.sourceDeviceIds || [])
+  }));
 }
 
 export function attachTargetSourceLinks(targets, targetId, detail) {

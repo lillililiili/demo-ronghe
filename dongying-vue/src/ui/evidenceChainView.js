@@ -60,7 +60,7 @@ export function chainTypeCards(chain) {
       truncated: !!item.truncated, records: ofType, statusText, preview,
       tagClass: broken ? 't-red' : coverageTagClass(status),
       cardClass: broken ? 'is-broken' : (status === 'PRESENT' ? 'is-present' : status === 'FORBIDDEN' ? 'is-forbidden' : 'is-absent'),
-      ariaLabel: `${label}，${statusText}，点击查看详情`
+      ariaLabel: `${label}，${statusText}，${ofType.some(isFileRecord) ? '点击直接预览' : '点击查看记录'}`
     };
   });
 }
@@ -68,6 +68,12 @@ export function chainTypeCards(chain) {
 export function openEvidenceChainTypeModal({ chain, type }) {
   const card = chainTypeCards(chain).find(item => item.type === type);
   if (!card) return;
+  const files = card.records.filter(isFileRecord).map(record => ({
+    ...record.summary, evidence_id: record.record_id
+  }));
+  if (files.length) {
+    return openEvidenceFileModal(files[0].evidence_id, { files, returnLabel: '返回事项详情' });
+  }
   openModal({
     title: `${card.label}证据`,
     width: '560px',
@@ -81,7 +87,7 @@ export function openEvidenceChainTypeModal({ chain, type }) {
 export function renderEvidenceChainHtml(chain, state = {}) {
   const U = window.UI;
   const esc = escEvidence;
-  if (state.loading) return U.sect('证据链', '<div class="empty">正在读取证据链…</div>', { icon: 'folder' });
+  if (state.loading) return U.sect('证据链', '<div class="empty">正在读取证据链</div>', { icon: 'folder' });
   if (state.error) {
     return U.sect('证据链', `<div class="empty">${esc(state.error)}
       <button class="btn" type="button" data-al="chain-retry" style="margin-top:8px">重试</button></div>`, { icon: 'folder' });

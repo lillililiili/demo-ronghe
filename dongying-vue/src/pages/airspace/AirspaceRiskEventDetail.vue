@@ -39,8 +39,10 @@ const notifyReason = computed(() => submitted.value ? `已提交通知（${deliv
   : noticesLoading.value ? '正在读取通知记录' : noticesError.value ? '通知记录读取失败，请刷新核对后再提交'
     : risk.value?.state === 'PENDING_VERIFICATION' ? '人工核验通过后可通知上级'
     : canNotify.value ? '将风险情况通知上级，并等待对方回复处理结果' : '当前状态不允许通知');
-const verifyReason = computed(() => canVerify.value ? '提交核验通过或排除结论' : '未授予核验权限，或当前风险状态不允许核验');
-const icon = computed(() => window.UI?.icon(risk.value?.risk_type === 'WEATHER' ? 'alert' : 'bird') || '');
+const verifyReason = computed(() => canVerify.value
+  ? risk.value.state === 'PENDING_NOTIFICATION' ? '将已确认的风险改判为排除，保留原核验记录' : '提交核验通过或排除结论'
+  : '未授予核验权限，或当前风险状态不允许核验');
+const icon = computed(() => risk.value?.risk_type === 'WEATHER' ? window.UI.icon('alert') : window.UI.targetIcon(risk.value));
 const reasonText = computed(() => {
   let text = risk.value?.reason_text || '未提供';
   for (const value of [risk.value?.target_no, risk.value?.target_id, risk.value?.plan_no, risk.value?.plan_id, risk.value?.source_risk_id, risk.value?.risk_id]) {
@@ -170,7 +172,7 @@ onUnmounted(() => { alive = false; generation++; historyRequest++; noticeRequest
             <dt v-if="risk.assessment_id">关联研判</dt><dd v-if="risk.assessment_id">已关联研判记录</dd>
             <dt v-if="risk.target_id">关联目标</dt><dd v-if="risk.target_id">{{ risk.space_fact?.subtype_name || '关联感知目标' }}</dd>
             <dt v-if="risk.track_id">关联轨迹</dt><dd v-if="risk.track_id">已关联轨迹</dd>
-          </dl><p class="rk-note">{{ risk.risk_type === 'WEATHER' ? '这里展示收到的气象风险记录，起飞前仍需核对最新预警及其影响时段。' : '这里展示发现风险时记录的情况，不代表目标现在的位置；是否违规请查看合法性研判。' }}</p></section>
+          </dl><p class="rk-note">{{ risk.risk_type === 'WEATHER' ? '起飞前请核对最新预警和有效时段。' : '位置为发现时快照；违规结论见合法性研判。' }}</p></section>
           <section class="sect"><h4>核验历史 <span class="tag t-gray">{{ historyTotal }}</span></h4>
             <div v-if="historyLoading" class="empty">正在读取核验历史…</div>
             <div v-else-if="historyError" class="warnbox" role="alert">{{ historyError }}<button class="btn" type="button" @click="loadHistory(historyPage)">重试</button></div>
@@ -186,7 +188,8 @@ onUnmounted(() => { alive = false; generation++; historyRequest++; noticeRequest
           <div class="workspace-section-heading"><h4>通知与回执</h4><button class="btn ghost" :disabled="noticesLoading" @click="loadNotices">刷新记录</button></div>
           <div v-if="noticesError" class="warnbox" role="alert">{{ noticesError }}</div><div v-else-if="noticesLoading" class="empty">正在读取通知记录…</div><div v-else-if="!notices.length" class="empty">这条风险尚无通知记录。</div>
           <div v-else class="rk-history"><article v-for="notice in notices" :key="notice.handoff_id" class="rk-history-item">
-            <div class="rk-history-head"><b>{{ notice.recipient_name || '接收方未提供' }}</b><span class="tag" :class="deliveryTags[notice.delivery_status] || 't-gray'">{{ deliveryLabels[notice.delivery_status] || '发送状态未知' }}</span></div>
+            <div class="rk-history-head"><b>通知上级</b><span class="tag" :class="deliveryTags[notice.delivery_status] || 't-gray'">{{ deliveryLabels[notice.delivery_status] || '发送状态未知' }}</span></div>
+            <details v-if="notice.recipient_name && notice.recipient_name !== '上级'"><summary>原通知对象记录</summary><p>{{ notice.recipient_name }}</p></details>
             <p>{{ labelOf(HANDOFF_TYPE_LABEL, notice.handoff_type) }} · {{ time(notice.created_at) }}</p><p>对方回复：{{ receiptText(notice) }}</p>
             <p v-if="notice.blocked_reason">未完成原因：{{ notice.blocked_reason === 'CHANNEL_NOT_CONNECTED' ? '通知渠道未接通' : notice.blocked_reason }}</p>
             <a v-if="canAccessRoute('punish')" class="lnk" :href="`#/punish?handoff=${encodeURIComponent(notice.handoff_id)}`">查看交接详情 →</a>
@@ -198,8 +201,8 @@ onUnmounted(() => { alive = false; generation++; historyRequest++; noticeRequest
     <div v-if="risk && !loading && !error && (canVerify || canNotify || ['PENDING_VERIFICATION', 'PENDING_NOTIFICATION'].includes(risk.state))" class="risk-process-actions">
       <p v-if="risk.state === 'PENDING_VERIFICATION' && !canVerify">{{ verifyReason }}</p><p v-else-if="risk.state === 'PENDING_NOTIFICATION' && !canNotify">{{ notifyReason }}</p>
       <p v-if="risk.state === 'PENDING_VERIFICATION' && canVerify">核验通过后可通知上级。</p>
-      <button v-if="risk.state === 'PENDING_VERIFICATION' || canVerify" class="btn pri" :disabled="!canVerify" :title="verifyReason" @click="verify">人工核验</button>
-      <button v-if="['PENDING_VERIFICATION', 'PENDING_NOTIFICATION'].includes(risk.state) || canNotify" class="btn" :class="{ pri: canNotify }" :disabled="!canNotify" :title="notifyReason" @click="notify">通知上级</button>
+      <button v-if="risk.state === 'PENDING_VERIFICATION' || (risk.state === 'PENDING_NOTIFICATION' && canVerify)" class="btn" :class="{ pri: risk.state === 'PENDING_VERIFICATION', ghost: risk.state === 'PENDING_NOTIFICATION' }" :disabled="!canVerify" :title="verifyReason" @click="verify">{{ risk.state === 'PENDING_NOTIFICATION' ? '改判为排除' : '人工核验' }}</button>
+      <button v-if="risk.state === 'PENDING_NOTIFICATION' || canNotify" class="btn" :class="{ pri: canNotify }" :disabled="!canNotify" :title="notifyReason" @click="notify">通知上级</button>
     </div>
   </div>
 </template>

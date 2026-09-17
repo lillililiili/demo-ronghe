@@ -12,6 +12,7 @@ function query(params = {}) {
 export const flightApi = {
   list: params => apiRequest(`/flight-plans${query(params)}`),
   detail: id => apiRequest(`/flight-plans/${encodeURIComponent(id)}`),
+  subjects: id => apiRequestTimed(`/flight-plans/${encodeURIComponent(id)}/subjects`),
   routes: params => apiRequest(`/routes${query(params)}`),
   route: id => apiRequest(`/routes/${encodeURIComponent(id)}`),
   routeVersions: (id, params) => apiRequest(`/routes/${encodeURIComponent(id)}/versions${query(params)}`),

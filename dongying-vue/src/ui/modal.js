@@ -24,6 +24,7 @@ const { modal } = createDiscreteApi(['modal'], {
 });
 
 let cur = null;
+let currentOptions = null;
 let pendingOpen = null;
 let pageScrollLocked = false;
 let lockedView = null;
@@ -82,6 +83,7 @@ export function unlockPageScroll() {
 }
 
 export function closeModal() {
+  currentOptions = null;
   pendingOpen = null;                       // 同一 tick 里还没真正打开的请求一并取消
   if (cur) { const c = cur; cur = null; try { c.destroy(); } catch (e) { } }
   unlockPageScroll();
@@ -100,10 +102,14 @@ export function openModal(o) {
     pendingOpen = null;
     reallyOpen(o);
   });
+  // 异步提交只可关闭自己打开的弹窗，不能在响应迟到时关掉后开的表单。
+  const isCurrent = () => pendingOpen ? pendingOpen === o : currentOptions === o;
+  return { isCurrent, close: () => { if (isCurrent()) closeModal(); } };
 }
 
 function reallyOpen(o) {
   closeModal();
+  currentOptions = o;
   const handle = e => {
     const card = e.currentTarget.closest('.n-card') || e.currentTarget;
     if (e.target.closest('[data-close]')) closeModal();

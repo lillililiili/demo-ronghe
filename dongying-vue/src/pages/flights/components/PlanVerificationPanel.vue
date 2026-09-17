@@ -3,6 +3,7 @@ import { computed, onUnmounted, ref, watch } from 'vue';
 import { flightApi } from '@/services/flightApi.js';
 import { isUncertainOutcome } from '@/services/apiClient.js';
 import PlanDeviceCheck from '@/pages/flights/components/PlanDeviceCheck.vue';
+import RecipientSnapshotFields from '@/components/notifications/RecipientSnapshotFields.vue';
 const props = defineProps({ plan: { type: Object, required: true }, match: { type: Object, default: null } });
 const emit = defineEmits(['map-devices']);
 const data = ref(null), loading = ref(false), error = ref(''), errorStatus = ref(0), busy = ref(false);
@@ -44,7 +45,8 @@ const needsVerification = computed(() => {
 });
 const showPanel = computed(() => !!data.value && (needsVerification.value || hasHistory.value));
 const feedbackExists = computed(() => data.value?.feedback?.some(item => item.verification_id === latest.value?.verification_id));
-const canNotify = computed(() => !!(data.value?.can_feedback && data.value.recipient_id && data.value.recipient_name));
+const canNotify = computed(() => !!(data.value?.can_feedback && data.value.recipient_id && data.value.recipient_name && !data.value.recipient_blocked_reason));
+const recipientName = computed(() => data.value?.recipient_snapshot?.org_name || data.value?.recipient_snapshot?.recipient_name || data.value?.recipient_name);
 const canFeedback = computed(() => canNotify.value && latest.value && !feedbackExists.value);
 function date(value) { return value == null ? '未记录' : new Date(value).toLocaleString('zh-CN', { hour12: false }); }
 function isAutomatic(record) { return ['AUTO_DEVICE_ABNORMAL','SUSPECTED_NOT_TAKEN_OFF','CHECK_INCOMPLETE'].includes(record?.conclusion); }
@@ -62,8 +64,11 @@ function notificationMessage(result) {
   return '检查结果已保存，通知已提交，可在记录中查看发送进度。';
 }
 async function verify() {
-  if (!needsVerification.value || !data.value?.can_verify || !canNotify.value || !deviceCheck.value || busy.value) return;
+  if (!needsVerification.value || !data.value?.can_verify || !deviceCheck.value || busy.value) return;
   const id = props.plan.plan_id, revision = data.value.revision, receiver = data.value.recipient_id;
+  const shouldNotify = canNotify.value;
+  const notificationBlocker = data.value.recipient_blocked_reason
+    || (!receiver || !data.value.recipient_name ? '尚未配置计划反馈接收对象' : '你没有发送通知的权限');
   const isCurrent = () => !disposed && props.plan.plan_id === id;
   busy.value = true;
   actionNotice.value = '';
@@ -73,6 +78,10 @@ async function verify() {
     saved = true;
     if (!isCurrent()) return;
     if (!verification?.verification_id) throw new Error('未收到检查记录编号，请刷新核对。');
+    if (!shouldNotify) {
+      actionNotice.value = `检查结果已保存，未提交通知：${notificationBlocker}。`;
+      return;
+    }
     const result = await flightApi.feedbackPlan(id, { verification_id: verification.verification_id, recipient_id: receiver }, crypto.randomUUID());
     if (isCurrent()) actionNotice.value = notificationMessage(result);
   } catch (reason) {
@@ -123,10 +132,11 @@ onUnmounted(() => { disposed = true; token++; });
       <p v-if="actionNotice" class="workflow-note" role="status">{{ actionNotice }}</p>
       <PlanDeviceCheck v-if="needsVerification" :key="plan.plan_id" :plan="plan" @checked="deviceCheck = $event" @map-devices="emit('map-devices', { planId: plan.plan_id, check: $event })" />
       <p v-if="needsVerification && !latest && blockerText" class="workflow-note">{{ blockerText }}</p>
-      <div class="workflow-actions"><button v-if="needsVerification && !latest" class="btn pri" type="button" :disabled="!data.can_verify || !canNotify || !deviceCheck || busy" :title="blockerText" @click="verify">{{ busy ? '正在检查并通知…' : '通知报送单位确认' }}</button><button v-else-if="latest && !feedbackExists" class="btn pri" type="button" :disabled="!canFeedback || busy" @click="feedback">{{ busy ? '正在提交…' : '继续通知报送单位' }}</button><button v-if="hasHistory" class="btn ghost" type="button" :disabled="busy" @click="reload">刷新记录</button></div>
+      <div class="workflow-actions"><button v-if="needsVerification && !latest" class="btn pri" type="button" :disabled="!data.can_verify || !deviceCheck || busy" :title="blockerText" @click="verify">{{ busy ? (canNotify ? '正在检查并通知' : '正在保存检查') : (canNotify ? '通知报送单位确认' : '保存检查结果') }}</button><button v-else-if="latest && !feedbackExists" class="btn pri" type="button" :disabled="!canFeedback || busy" @click="feedback">{{ busy ? '正在提交' : '继续通知报送单位' }}</button><button v-if="hasHistory" class="btn ghost" type="button" :disabled="busy" @click="reload">刷新记录</button></div>
       <template v-if="!feedbackExists && (latest || needsVerification)">
-        <p v-if="!data.recipient_id || !data.recipient_name" class="workflow-note">尚未设置接收单位，请联系管理员设置后再通知。</p>
-        <p v-else class="workflow-note">接收单位：{{ data.recipient_name }}<template v-if="!data.can_feedback"> · 你没有发送通知的权限</template><template v-else-if="!latest"> · 自动附上设备检查结果，请对方确认是否起飞</template></p>
+        <p v-if="!data.recipient_id || !data.recipient_name" class="workflow-note">{{ data.recipient_blocked_reason || '尚未设置接收单位，请联系管理员设置后再通知。' }}</p>
+        <p v-else class="workflow-note">接收单位：{{ recipientName }}<template v-if="data.recipient_blocked_reason"> · {{ data.recipient_blocked_reason }}</template><template v-else-if="!data.can_feedback"> · 你没有发送通知的权限</template><template v-else-if="!latest"> · 自动附上设备检查结果，请对方确认是否起飞</template></p>
+        <dl v-if="data.recipient_snapshot" class="kv recipient-summary"><RecipientSnapshotFields :snapshot="data.recipient_snapshot" /></dl>
       </template>
       <article v-for="group in recordGroups" :key="group.key" class="verification-record">
         <b>{{ group.verification ? (conclusions[group.verification.conclusion] || '未知结论') : '核实内容暂不可用' }}</b>
@@ -137,7 +147,8 @@ onUnmounted(() => { disposed = true; token++; });
             <dt>{{ isAutomatic(group.verification) ? '提交人 / 时间' : '核实人 / 时间' }}</dt><dd>{{ group.verification.handled_by_name }} / {{ date(group.verification.handled_at) }}</dd>
           </template>
           <template v-for="item in group.notifications" :key="item.feedback_id">
-            <dt class="notification-start">接收单位</dt><dd class="notification-start">{{ item.recipient_name }}</dd>
+            <dt class="notification-start">接收单位</dt><dd class="notification-start">{{ item.recipient_snapshot?.org_name || item.recipient_snapshot?.recipient_name || item.recipient_name }}</dd>
+            <RecipientSnapshotFields :snapshot="item.recipient_snapshot" historical />
             <dt>通知提交时间</dt><dd>{{ date(item.created_at) }}</dd>
             <dt>发送情况</dt><dd>{{ delivery[item.delivery_status] || '暂不清楚' }}</dd>
             <dt>对方是否收到</dt><dd>{{ receipt[item.receipt_status] || '暂不清楚' }}<template v-if="item.acknowledged_at"> · {{ date(item.acknowledged_at) }}</template></dd>
@@ -145,7 +156,7 @@ onUnmounted(() => { disposed = true; token++; });
             <template v-if="item.blocked_reason"><dt>未完成原因</dt><dd>{{ item.blocked_reason === 'CHANNEL_NOT_CONNECTED' ? '通知功能尚未接通，记录已保存但还未发出。' : item.blocked_reason }}</dd></template>
           </template>
         </dl>
-        <details v-if="group.verification && group.verification.verification_id === latest?.verification_id && needsVerification && data.can_verify" class="record-more"><summary>更多操作</summary><button class="btn ghost" type="button" :disabled="busy || !canNotify || !deviceCheck" @click="verify">重新检查并通知</button></details>
+        <details v-if="group.verification && group.verification.verification_id === latest?.verification_id && needsVerification && data.can_verify" class="record-more"><summary>更多操作</summary><button class="btn ghost" type="button" :disabled="busy || !deviceCheck" @click="verify">{{ canNotify ? '重新检查并通知' : '重新检查并保存' }}</button></details>
       </article>
     </template>
   </section>
@@ -155,6 +166,7 @@ onUnmounted(() => { disposed = true; token++; });
 .record-more { margin-top: 8px; font-size: 12px; color: var(--txt-3); }
 .record-more summary { cursor: pointer; }
 .workflow-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.recipient-summary { margin-top: 8px; }
 .verification-record { margin-top: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 6px; }
 .verification-record .kv { margin-top: 8px; }
 .verification-record .notification-start { padding-top: 10px; }

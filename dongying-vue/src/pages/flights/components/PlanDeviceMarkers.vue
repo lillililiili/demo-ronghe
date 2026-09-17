@@ -4,7 +4,8 @@ import DeviceAbnormalNoticeButton from './DeviceAbnormalNoticeButton.vue';
 import { deviceCheckStatus } from '@/pages/flights/planDeviceCheck.js';
 const props = defineProps({ markers: { type: Array, default: () => [] }, planId: { type: String, default: '' } });
 // 图标来自系统内置资源，不插入设备接口返回的 HTML。
-const { deviceIcon, deviceMeta } = window.UI;
+const { deviceIcon, deviceMeta, icon: windowIcon } = window.UI;
+const mapAlarmActive = window.UI.mapAlarmActive;
 const layer = ref(null), size = ref({ width: 0, height: 0 });
 const legendBox = ref(null);
 let observer;
@@ -61,7 +62,7 @@ const placedMarkers = computed(() => {
       :class="{ historical: !marker.abnormal, leftward: marker.leftward, downward: marker.downward }"
       :style="{ left: `${marker.displayX}px`, top: `${marker.displayY}px` }">
       <button class="device-point" type="button" :aria-label="`${marker.name}，${deviceMeta(marker).label}，${deviceCheckStatus(marker)}，查看设备信息`">
-        <span aria-hidden="true" v-html="deviceIcon(marker)"></span>
+        <span class="map-business-symbol" :class="{ 'map-alarm-active': mapAlarmActive(marker) }" aria-hidden="true" v-html="deviceIcon(marker)"></span><span class="device-status-corner" aria-hidden="true" v-html="windowIcon(marker.abnormal ? 'warning' : 'clock')"></span>
       </button>
       <div class="device-map-card">
         <b>{{ marker.name }}</b>
@@ -82,15 +83,17 @@ const placedMarkers = computed(() => {
 .device-map-marker { position: absolute; width: 36px; height: 36px; transform: translate(-50%, -50%); color: var(--red); pointer-events: auto; }
 .device-map-marker:hover, .device-map-marker:focus-within { z-index: 1; }
 .device-map-marker.historical { color: var(--amber); }
-.device-point { display: grid; place-items: center; width: 36px; height: 36px; padding: 5px; border: 1px solid currentColor; border-radius: 7px; color: inherit; background: var(--surface-1); cursor: pointer; font-size: 24px; box-shadow: 0 0 9px 2px color-mix(in srgb, currentColor 35%, transparent); }
+.device-point { position:relative;display:grid;place-items:center;width:36px;height:36px;padding:0;border:0;color:inherit;background:transparent;cursor:pointer;font-size:32px;box-shadow:none; }
 .device-point span { display: flex; }
-.device-point :deep(svg) { width: 24px; height: 24px; }
+.device-point :deep(.business-icon) { width:38px;height:38px; }
+.device-status-corner{position:absolute;right:-4px;bottom:-4px;}
+.device-status-corner :deep(svg){width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:2;}
 .device-map-card { position: absolute; left: calc(100% - 4px); bottom: 50%; width: 180px; display: grid; gap: 5px; padding: 9px 11px; border: 1px solid currentColor; border-radius: 7px; background: var(--surface-1, #102033); box-shadow: 0 3px 12px #0004; visibility: hidden; opacity: 0; pointer-events: none; font-size: 12px; }
 .device-map-marker:hover .device-map-card, .device-map-marker:focus-within .device-map-card { visibility: visible; opacity: 1; pointer-events: auto; }
 .leftward .device-map-card { left: auto; right: calc(100% - 4px); }
 .downward .device-map-card { bottom: auto; top: 50%; }
 .device-map-card b { color: var(--txt); overflow-wrap: anywhere; }
 .device-type { color: var(--txt-2); }
-.device-point:hover { background: var(--surface-2); border-width: 2px; }
+.device-point:hover { transform:scale(1.08); }
 .device-point:focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; }
 </style>

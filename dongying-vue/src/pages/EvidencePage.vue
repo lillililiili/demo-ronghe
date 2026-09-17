@@ -8,10 +8,11 @@ export default {};
 <script setup>
 /* 证据文件台账：只读证据关联服务。八类证据链在告警/处罚详情汇总，本页不自存第二份文件。
    legacy evidence.js 仍会在 index.html 注册 COM-03 参数，这里不再登记。 */
-import { ref, reactive, onMounted } from 'vue';
+import { ref, reactive, onMounted, onBeforeUnmount } from 'vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import UPagination from '@/components/UPagination.vue';
 import UPanel from '@/components/UPanel.vue';
+import EvidencePreview from '@/components/evidence/EvidencePreview.vue';
 import { toast } from '@/ui/nv.js';
 import { closeModal, openFormModal } from '@/ui/formModal.js';
 import { openConfirm } from '@/ui/confirm.js';
@@ -22,7 +23,7 @@ import {
   listEvidenceFiles, releaseEvidenceHold, verifyEvidenceFile
 } from '@/services/evidenceApi.js';
 import { EVIDENCE_CUSTODY_LABEL, EVIDENCE_KIND_LABEL, EVIDENCE_STATUS_LABEL, EVIDENCE_SUBJECT_LABEL, labelOf } from '@/ui/labels.js';
-import { custodyTag, renderEvidenceFileDetail, saveEvidenceBlob, sizeText } from '@/ui/evidenceFileDetail.js';
+import { custodyTag, openEvidenceFileModal, renderEvidenceFileDetail, saveEvidenceBlob, sizeText } from '@/ui/evidenceFileDetail.js';
 
 const U = window.UI;
 usePageChrome('evidence');
@@ -33,6 +34,7 @@ const loading = ref(false);
 const error = ref('');
 const items = ref([]);
 const detailRow = ref(null);
+let detailSequence = 0;
 const kpis = ref({ total: 0, available: 0, held: 0, broken: 0 });
 
 const KIND_OPTS = [{ v: '', t: '全部' }, ...Object.entries(EVIDENCE_KIND_LABEL).map(([v, t]) => ({ v, t }))];
@@ -111,10 +113,17 @@ async function load() {
 }
 
 async function loadDetail() {
+  const own = ++detailSequence;
+  const selected = st.selId;
+  detailRow.value = null;
+  paintDetail();
   if (!st.selId) { detailRow.value = null; paintDetail(); return; }
   try {
-    detailRow.value = await getEvidenceFile(st.selId);
+    const file = await getEvidenceFile(selected);
+    if (own !== detailSequence || selected !== st.selId) return;
+    detailRow.value = file;
   } catch (e) {
+    if (own !== detailSequence) return;
     detailRow.value = null;
     toast(e.message || '证据详情加载失败', 'err');
   }
@@ -139,7 +148,7 @@ function paintList() {
     },
     {
       t: '文件',
-      render: f => `<div title="${esc(f.original_name)}" style="white-space:normal;line-height:1.4;max-height:31px;overflow:hidden">${esc(f.original_name)}</div>
+      render: f => `<div style="white-space:normal;line-height:1.4;overflow-wrap:anywhere">${esc(f.original_name)}</div>
         <div style="font-size:11px;color:var(--txt-3)">${esc(f.content_type || '')}</div>`
     },
     { t: '取证时刻', w: '124px', cls: 'num', render: f => `<div>${esc(fmt(f.captured_at).slice(5, 16))}</div>` },
@@ -272,6 +281,7 @@ onMounted(() => {
   U.on(view, '[data-evact]', 'click', (e, el) => {
     if (el.disabled) return;
     const k = el.dataset.evact;
+    if (k === 'preview' && st.selId) return openEvidenceFileModal(st.selId, { files: items.value, returnLabel: '返回证据台账' });
     if (k === 'download') return doDownload();
     if (k === 'verify') return doVerify();
     if (k === 'hold') return doHold();
@@ -283,6 +293,7 @@ onMounted(() => {
   const kw = document.getElementById('evKw');
   if (kw) kw.oninput = e => { st.kw = e.target.value.trim(); st.page = 1; load(); };
 });
+onBeforeUnmount(() => { detailSequence += 1; });
 </script>
 
 <template>
@@ -297,8 +308,12 @@ onMounted(() => {
               :prefix="`共 ${totalCount.toLocaleString()} 条`" @update:page="onPage" @update:page-size="onPageSize" />
           </div>
         </UPanel>
-        <UPanel title="证据详情" panel-style="width:452px;flex:none" nopad
-          body-html='<div id="evDetail" style="flex:1;overflow:auto;padding:12px"></div>' />
+        <UPanel title="证据详情" panel-style="width:452px;max-width:45%;flex:none" nopad>
+          <div style="flex:1;min-height:0;overflow:auto;padding:12px">
+            <EvidencePreview v-if="detailRow" :key="detailRow.evidence_id" :file="detailRow" compact />
+            <div id="evDetail"></div>
+          </div>
+        </UPanel>
       </div>
     </div>
   </div>

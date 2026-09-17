@@ -74,7 +74,7 @@
     check: 'M5 12l4 4L19 6',
     cross: 'M6 6l12 12M18 6 6 18'
   };
-  const icon = n => `<svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="${P[n] || P.home}"/></svg>`;
+  const icon = n => typeof n === 'string' && n.startsWith('business:') ? businessIcon(n.slice(9)) : `<svg class="svg-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false" stroke-linecap="round" stroke-linejoin="round"><path d="${P[n] || P.home}"/></svg>`;
 
   /* 设备类型视觉字典：协议 A v8.6 / B v2.4 附录 + 当前设备台账类型。
      图形只表示种类，状态颜色仍由页面决定；不按设备名称猜测种类。
@@ -147,13 +147,49 @@
     }
     return UNKNOWN_DEVICE;
   }
-  function deviceIcon(device) {
-    const meta = deviceMeta(device);
-    let svg = DEVICE_SVG[meta.icon] || icon(meta.icon);
-    if (!svg.includes('class=')) svg = svg.replace('<svg ', '<svg class="svg-icon" aria-hidden="true" focusable="false" ');
-    // 静态受信任图标；设备接口只用于枚举查询，不插入返回的 HTML。
-    return svg.replace('<svg ', '<svg width="1em" height="1em" data-device-icon="' + meta.key + '" ');
+  // 无框鲜彩图标只接入业务内容；普通 icon() 与导航/操作图标继续使用原契约。
+  const BUSINESS_KEYS = new Set(['radar','eo','tdoa','aoa','5ga','spec','cm','dec','ifr','cv','isrs','dcd','bsc','rid','fusion','uav','bird','balloon','kite','lantern','nest','unknown','unknown-device']);
+  const businessKey = key => BUSINESS_KEYS.has(key) ? key : 'unknown';
+  const businessIconUrl = key => '/assets/img/business/' + businessKey(key) + '.svg';
+  function businessIcon(key) {
+    key = businessKey(key);
+    return `<svg class="svg-icon business-icon" data-business-icon="${key}" viewBox="0 0 64 64" width="1em" height="1em" aria-hidden="true" focusable="false"><image href="${businessIconUrl(key)}" width="64" height="64"/></svg>`;
   }
+  function deviceIcon(device) {
+    const key = deviceMeta(device).key;
+    return businessIcon(key === 'unknown' ? 'unknown-device' : key).replace('<svg ', `<svg data-device-icon="${key}" `);
+  }
+  function targetIconKey(target) {
+    if (typeof target === 'string') target = { subtype: target };
+    target ||= {};
+    if (['uav','bird','balloon','kite','lantern','unknown'].includes(target.iconKind)) return target.iconKind;
+    const type = target.objectTypeCode || target.object_type_code || target.type;
+    if (type === 'UAV' || type === '无人机') return 'uav';
+    const subtype = target.subtypeCode || target.subtype_code || target.subtype || target.space_fact?.subtype_code;
+    return ({ BIRD:'bird', BIRD_FLOCK:'bird', 鸟类:'bird', 鸟群:'bird', BALLOON:'balloon', 气球:'balloon',
+      KITE:'kite', 风筝:'kite', SKY_LANTERN:'lantern', LANTERN:'lantern', 孔明灯:'lantern', UAV:'uav' })[subtype] || 'unknown';
+  }
+  const targetIcon = target => businessIcon(targetIconKey(target));
+  // 只读取已有当前状态；历史关联、已结束、失联或过期不触发红光。
+  function mapAlarmActive(item = {}) {
+    if (item.stale === true || item.freshness === 'STALE' || item.historical === true
+      || ['STALE','OFFLINE','DISABLED'].includes(item.statusCode || item.connectivity)
+      || ['离线','已停用','已失联','已结束'].includes(item.status)
+      || ['RESOLVED','CLOSED','DISMISSED','FALSE_POSITIVE','ARCHIVED'].includes(item.state || item.eventState)) return false;
+    return item.activeRisk === true || item.abnormal === true || item.statusCode === 'ABNORMAL'
+      || item.status === '异常' || ['PENDING_VERIFICATION','CONFIRMED'].includes(item.state || item.eventState);
+  }
+  const businessImages = new Map();
+  function drawBusinessIcon(context, key, x, y, size, heading = null) {
+    key = businessKey(key);
+    let image = businessImages.get(key);
+    if (!image) { image = new Image(); image.src = businessIconUrl(key); businessImages.set(key, image); }
+    if (!image.complete || !image.naturalWidth) return;
+    context.save(); context.translate(x, y);
+    if (key === 'uav' && typeof heading === 'number' && Number.isFinite(heading) && heading >= 0 && heading < 360) context.rotate(heading * Math.PI / 180);
+    context.drawImage(image, -size / 2, -size / 2, size, size); context.restore();
+  }
+
 
   /* ---- 数值格式 ---- */
   const num = n => (n == null ? '—' : Number(n).toLocaleString('en-US'));
@@ -570,7 +606,7 @@
   });
 
   g.UI = {
-    icon, deviceMeta, deviceIcon, num, pct, money, delta, tag, risk, legal, dotState, stateIcon, panel, detailHero, kpis, table, cell, pager,
+    icon, deviceMeta, deviceIcon, businessIcon, businessIconUrl, targetIconKey, targetIcon, drawBusinessIcon, mapAlarmActive, num, pct, money, delta, tag, risk, legal, dotState, stateIcon, panel, detailHero, kpis, table, cell, pager,
     checked, bindCheckAll, goto, consume, selectRow, srcTag, confPct, modelTag, regParams, paramGroups,
     kv, sect, metricStrip, detailActions, codeBlock, steps, timeline, modal, closeModal, toast, field, select, input, bars, on, KC,
     legalBasis, basisHtml, verdictHtml

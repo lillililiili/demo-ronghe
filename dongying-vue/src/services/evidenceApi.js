@@ -1,4 +1,7 @@
 import { apiBinary, apiDownload, apiRequestTimed, buildQuery } from '@/services/apiClient.js';
+import { createPreviewRequestQueue } from '@/services/evidencePreviewQueue.js';
+
+const thumbnailQueue = createPreviewRequestQueue(3);
 
 export function listEvidenceFiles(values) {
   return apiRequestTimed(`/evidence-files${buildQuery(values)}`);
@@ -56,7 +59,14 @@ export function downloadEvidenceContent(id) {
   return apiBinary(`/evidence-files/${encodeURIComponent(id)}/content`);
 }
 
-export async function ingestEvidenceFile({ file, kindCode, ownerOrgId, districtId, capturedAt, subjectKind, subjectId, idempotencyKey }) {
+export function previewEvidenceContent(id, { signal, thumbnail = false } = {}) {
+  const request = () => apiBinary(`/evidence-files/${encodeURIComponent(id)}/${thumbnail ? 'thumbnail' : 'preview'}`, {
+    signal, maxBytes: 32 * 1024 * 1024
+  });
+  return thumbnail ? thumbnailQueue(request, signal) : request();
+}
+
+export async function ingestEvidenceFile({ file, kindCode, ownerOrgId, districtId, capturedAt, subjectKind, subjectId, sourceDeviceId, captureLongitude, captureLatitude, idempotencyKey }) {
   const body = new FormData();
   body.append('file', file);
   body.append('kind_code', kindCode);
@@ -65,5 +75,8 @@ export async function ingestEvidenceFile({ file, kindCode, ownerOrgId, districtI
   if (capturedAt != null) body.append('captured_at', String(capturedAt));
   if (subjectKind) body.append('subject_kind', subjectKind);
   if (subjectId) body.append('subject_id', subjectId);
+  if (sourceDeviceId) body.append('source_device_id', sourceDeviceId);
+  if (captureLongitude != null) body.append('capture_longitude', String(captureLongitude));
+  if (captureLatitude != null) body.append('capture_latitude', String(captureLatitude));
   return apiRequestTimed('/evidence-files', { method: 'POST', body, mutation: true, idempotencyKey }, 60_000);
 }

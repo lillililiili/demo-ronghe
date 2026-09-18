@@ -2,7 +2,7 @@
 /* 模块级页面状态：跨导航保留分页、筛选、选中项与证据页签；业务事实始终重新读取标准 API。 */
 const S = {
   st: {
-    page: 1, size: 10, legal: '', district: '', review: '', plan: '',
+    page: 1, size: 10, legal: 'ATTENTION', district: '', review: '', plan: '',
     selectedEvaluationId: null, revisionPage: 1, revisionPageSize: 10,
     evidenceTab: 'space'
   }
@@ -73,6 +73,7 @@ const resultMeta = {
   NOT_APPLICABLE: { className: 'is-warn' }
 };
 const tabs = [
+  { value: 'ATTENTION', label: '待处理' },
   { value: '', label: '全部无人机' },
   { value: 'LEGAL', label: '合法' },
   { value: 'ABNORMAL', label: '异常' },
@@ -85,7 +86,7 @@ const evidenceTabs = [
   { value: 'review', label: '复核历史与告警' }
 ];
 
-const reviewOptions = [{ label: '全部', value: '' }, { label: '信息待核对', value: 'NEEDS_REVIEW' }, { label: '未人工复核', value: 'PENDING_REVIEW' }, { label: '已确认', value: 'CONFIRMED' }, { label: '已驳回', value: 'REJECTED' }, { label: '已改判', value: 'OVERRIDDEN' }];
+const reviewOptions = [{ label: '全部', value: '' }, { label: '待复核', value: 'NEEDS_REVIEW' }, { label: '已确认', value: 'CONFIRMED' }, { label: '已驳回', value: 'REJECTED' }, { label: '已改判', value: 'OVERRIDDEN' }];
 const districtOptions = computed(() => {
   const values = new Map();
   items.value.forEach(item => { if (item.district_id) values.set(item.district_id, item.district_name || item.district_id); });
@@ -134,7 +135,6 @@ function openPlan(planId) {
 
 const selectedConclusion = computed(() => conclusionMeta[selectedEvaluation.value?.legal_status]
   || { label: '尚未选择研判', tone: 'amber' });
-const selectedQueueIndex = computed(() => items.value.findIndex(item => item.evaluation_id === selectedEvaluation.value?.evaluation_id));
 const primaryReason = computed(() => evaluationReason(selectedEvaluation.value));
 const allowed = computed(() => selectedEvaluation.value?.allowed_actions || []);
 const reviewFocus = computed(() => legalityReviewFocus(selectedEvaluation.value));
@@ -151,11 +151,6 @@ const additionalReasons = computed(() => {
   if (reviewFocus.value.showTask) [...assuranceReasons.value, ...unlistedUnknowns.value].forEach(code => shown.add(ruleReasonText(code)));
   return [...new Set([...(item.violation_reasons || []), ...(item.unknown_reasons || [])].map(ruleReasonText))].filter(text => text && !shown.has(text));
 });
-function chooseReviewQueue() {
-  const active = st.review === 'NEEDS_REVIEW';
-  st.review = active ? '' : 'NEEDS_REVIEW';
-  onRegionChange();
-}
 const c01Facts = computed(() => selectedEvaluation.value?.hit_details?.find(hit => hit.rule_code === 'C01')?.facts || null);
 const demoParams = computed(() => selectedEvaluation.value?.param_status === 'DEMO');
 const canOpenAlarm = computed(() => !!selectedEvaluation.value?.alarm_id && canAccessRoute('alarms') && hasPermission('alarms.read'));
@@ -269,7 +264,9 @@ function reviewText(item) {
 }
 function conclusionQualificationText(item) {
   if (!['LEGAL', 'ILLEGAL'].includes(item?.legal_status)) return '';
-  return legalityReviewFocus(item).needsReview ? '暂不能可靠确认' : '';
+  const focus = legalityReviewFocus(item);
+  if (!focus.needsReview) return '';
+  return !focus.assuranceProvided || focus.assuranceStatus === 'UNAVAILABLE' ? '可靠性未知' : '待复核';
 }
 function planMatchDetail(item) {
   const base = planMatchText(item?.plan_match_code);
@@ -308,9 +305,10 @@ function invalidateDetail() {
 
 function queryParams() {
   return {
-    ...uavScope, legal_status: st.legal, district_id: st.district,
-    review_state: st.review && st.review !== 'NEEDS_REVIEW' ? st.review : undefined,
-    needs_review: st.review === 'NEEDS_REVIEW' ? true : undefined,
+    ...uavScope, legal_status: st.legal === 'ATTENTION' ? undefined : st.legal, district_id: st.district,
+    needs_attention: st.legal === 'ATTENTION' ? true : undefined,
+    review_state: st.review && !['NEEDS_REVIEW', 'PENDING_REVIEW'].includes(st.review) ? st.review : undefined,
+    needs_review: ['NEEDS_REVIEW', 'PENDING_REVIEW'].includes(st.review) ? true : undefined,
     // 按计划筛选（决策 19-1）：服务端 legality-evaluations 支持 plan_id，需要飞行计划读取权限。
     plan_id: st.plan || undefined,
     page: st.page, size: st.size
@@ -446,13 +444,15 @@ async function loadKpi() {
   /* 各状态统计沿用队列的区域 / 复核 / 计划条件；异常单独读取服务端总数，不由其余状态相减推算。 */
   const scope = {
     ...uavScope,
+    needs_attention: st.legal === 'ATTENTION' ? true : undefined,
     district_id: st.district || undefined,
-    review_state: st.review && st.review !== 'NEEDS_REVIEW' ? st.review : undefined,
-    needs_review: st.review === 'NEEDS_REVIEW' ? true : undefined,
+    review_state: st.review && !['NEEDS_REVIEW', 'PENDING_REVIEW'].includes(st.review) ? st.review : undefined,
+    needs_review: ['NEEDS_REVIEW', 'PENDING_REVIEW'].includes(st.review) ? true : undefined,
     plan_id: st.plan || undefined,
     page: 1, size: 1
   };
   const filterNote = [
+    st.legal === 'ATTENTION' ? '待处理（不可判定或待复核）' : '',
     st.district ? `区域：${districtOptions.value.find(option => option.value === st.district)?.label || st.district}` : '',
     st.review ? `复核：${reviewOptions.find(option => option.value === st.review)?.label || st.review}` : '',
     st.plan ? `计划：${planOptions.value.find(option => option.value === st.plan)?.label || st.plan}` : ''
@@ -496,7 +496,7 @@ async function loadShadowHint() {
 function chooseTab(value) {
   st.legal = value;
   st.page = 1;
-  loadQueue();
+  void loadQueue().then(loadKpi);
 }
 function onRegionChange() {
   st.page = 1;
@@ -519,10 +519,6 @@ function onRevisionPageSize(next) {
   st.revisionPageSize = next;
   st.revisionPage = 1;
   loadRevisions();
-}
-function moveSelection(offset) {
-  const next = items.value[selectedQueueIndex.value + offset];
-  if (next) selectEvaluation(next);
 }
 function toggleHit(index) {
   selectedHitIndex.value = selectedHitIndex.value === index ? -1 : index;
@@ -609,6 +605,8 @@ async function renderEvidenceMap(evaluation) {
 }
 
 onMounted(() => {
+  // 兼容旧页面保留的选项值；初始复核状态不等于实际仍需人工处理。
+  if (st.review === 'PENDING_REVIEW') st.review = 'NEEDS_REVIEW';
   const context = UI.consume('legality');
   const targetId = context?.target || null;
   /* 从飞行计划页过来时带着计划（决策 19-1）：预置"计划"筛选，其余筛选放开，
@@ -654,7 +652,6 @@ onMounted(() => {
             <UField v-if="canReadPlans" class="lg-region-filter" variant="form" label="计划" v-model="st.plan" type="select" size="small"
               :options="planOptions" :disabled="loading" :title="plansError || '只看某一条飞行计划的研判'" @update:model-value="onRegionChange" />
             </div>
-            <button class="btn sm lg-review-filter" type="button" :class="{ pri: st.review === 'NEEDS_REVIEW' }" :aria-pressed="st.review === 'NEEDS_REVIEW'" :disabled="loading" title="查看算法依据不足、结果不可用或旧记录未提供可靠性的待处理研判" @click="chooseReviewQueue">信息待核对</button>
           </div>
 
           <div id="lgList" class="lg-list-host">
@@ -670,14 +667,20 @@ onMounted(() => {
                     :class="{ 'is-selected': selectedEvaluation?.evaluation_id === item.evaluation_id }" @click="selectEvaluation(item)">
                     <td><button class="lg-target-link" type="button" @click.stop="selectEvaluation(item)">
                       <span class="lg-target-icon" v-html="item.target_id ? UI.targetIcon(item) : UI.icon('clipboard')"></span>
-                      <span class="lg-row-target"><b class="mono" :title="item.evaluation_id">{{ subjectLabel(item) }}</b><small>{{ reviewText(item) }}</small></span>
+                      <span class="lg-row-target"><b class="mono" :title="item.evaluation_id">{{ subjectLabel(item) }}</b><small v-if="!conclusionQualificationText(item)">{{ reviewText(item) }}</small></span>
                     </button></td>
                     <td><span class="lg-plan-cell" :class="item.plan_match_code === 'FULL' ? 'is-pass' : item.plan_match_code === 'NONE' ? 'is-fail' : 'is-warn'" :title="planMatchDetail(item)">
                       <span v-html="UI.icon(item.plan_match_code === 'FULL' ? 'check' : item.plan_match_code === 'NONE' ? 'cross' : 'clock')"></span>
                       <span class="lg-plan-number">{{ item.plan_no || (item.plan_id ? '已关联计划' : '无匹配计划') }}</span>
                     </span></td>
                     <td :title="item.district_name || item.district_id">{{ item.district_name || item.district_id || '未知' }}</td>
-                    <td class="lg-verdict-cell"><span class="lg-status-tag" :class="`is-${conclusionMeta[item.legal_status]?.tone || 'amber'}`">{{ legalStatusText(item.legal_status) }}</span><small v-if="conclusionQualificationText(item)" class="lg-state-warn">{{ conclusionQualificationText(item) }}</small><small class="lg-row-risk" :title="`风险等级：${gradeText(item)}`">{{ gradeText(item) }}</small></td>
+                    <td class="lg-verdict-cell">
+                      <div class="lg-verdict-tags">
+                        <span class="lg-status-tag" :class="`is-${conclusionMeta[item.legal_status]?.tone || 'amber'}`">{{ legalStatusText(item.legal_status) }}</span>
+                        <span v-if="conclusionQualificationText(item)" class="lg-status-tag is-amber lg-qualification-tag">{{ conclusionQualificationText(item) }}</span>
+                      </div>
+                      <small class="lg-row-risk" :title="`风险等级：${gradeText(item)}`">{{ gradeText(item) }}</small>
+                    </td>
                     <td><span class="lg-reason-cell" :title="evaluationReason(item)">{{ evaluationReason(item) }}</span></td>
                     <td class="lg-time-cell" :title="formatTime(item.evaluated_at)">{{ formatTime(item.evaluated_at) }}</td>
                   </tr>
@@ -728,8 +731,6 @@ onMounted(() => {
                 <section class="lg-basis-card">
                   <header>{{ reviewFocus.needsReview ? '触发依据与待核对信息' : '判定依据' }}</header>
                   <div class="lg-selected-subject"><b :title="subjectLabel(selectedEvaluation)">{{ subjectLabel(selectedEvaluation) }}</b>
-                    <button class="lg-icon-btn lg-previous" type="button" :disabled="selectedQueueIndex <= 0" aria-label="上一条" @click="moveSelection(-1)" v-html="UI.icon('arrowRight')"></button>
-                    <button class="lg-icon-btn" type="button" :disabled="selectedQueueIndex < 0 || selectedQueueIndex >= items.length - 1" aria-label="下一条" @click="moveSelection(1)" v-html="UI.icon('arrowRight')"></button>
                   </div>
                   <div class="lg-check-list">
                     <div v-if="!selectedEvaluation.hit_details?.length" class="empty">未提供单项检查</div>
@@ -893,22 +894,22 @@ onMounted(() => {
 .lg-filter-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,140px),1fr));flex:1 1 444px;min-width:0;gap:12px}
 .lg-region-filter{min-width:0;margin:0}
 .lg-region-filter :deep(label){font-size:12px;line-height:18px;color:var(--txt-3)}
-.lg-queue-filters>.lg-review-filter{flex:none;min-height:34px;margin-left:auto;padding:0 12px}
 .lg-list-host{min-height:0;flex:1;display:flex;flex-direction:column}
 .lg-table-scroll{flex:1;min-height:0;overflow:auto;scrollbar-width:thin}
 .lg-target-table{border-collapse:separate;border-spacing:0;width:100%;min-width:720px;table-layout:fixed;font-size:13px;color:var(--txt-2)}
 .lg-target-table th{white-space:nowrap;position:sticky;top:0;z-index:1;height:46px;padding:10px;background:var(--surface-2);color:var(--txt-3);text-align:left;font-size:12px;font-weight:600;border-bottom:1px solid var(--line-2)}
 .lg-target-table td{height:62px;padding:9px;border-bottom:1px solid var(--line-2);white-space:normal;overflow-wrap:anywhere}
-.lg-target-table th:nth-child(1){width:20%}.lg-target-table th:nth-child(2){width:19%}.lg-target-table th:nth-child(3){width:13%}.lg-target-table th:nth-child(4){width:12%}.lg-target-table th:nth-child(5){width:17%}.lg-target-table th:nth-child(6){width:auto}
+.lg-target-table th:nth-child(1){width:20%}.lg-target-table th:nth-child(2){width:19%}.lg-target-table th:nth-child(3){width:13%}.lg-target-table th:nth-child(4){width:110px}.lg-target-table th:nth-child(5){width:17%}.lg-target-table th:nth-child(6){width:auto}
 .lg-target-table tbody tr{cursor:pointer}.lg-target-table tbody tr:hover{background:rgba(75,156,255,.07)}.lg-target-table tbody tr.is-selected{background:color-mix(in srgb,var(--lg-accent) 14%,transparent);box-shadow:inset 2px 0 0 var(--lg-accent)}
 .lg-target-link{display:flex;align-items:center;gap:8px;width:100%;padding:0;border:0;background:none;text-align:left;color:inherit}
 .lg-target-icon{display:flex;align-items:center;justify-content:center;flex:none;width:28px;height:28px;border-radius:4px;background:var(--surface-2);color:var(--blue)}
 .lg-row-target{display:flex;flex-direction:column;min-width:0;gap:5px}.lg-row-target b{overflow-wrap:anywhere;white-space:normal;color:var(--txt);font-size:12px;font-weight:500}.lg-row-target small{font-size:11px;color:var(--txt-3)}
 .lg-plan-cell{display:flex;align-items:center;gap:6px;font-size:12px;overflow-wrap:anywhere}.lg-plan-cell>span:first-child{display:flex;flex:none}.lg-plan-number{min-width:0;word-break:break-all;overflow-wrap:anywhere;white-space:normal;line-height:1.5}
 .lg-status-tag{display:inline-flex;justify-content:center;align-items:center;min-width:58px;padding:4px 8px;border:1px solid currentColor;border-radius:4px;font-size:13px;white-space:nowrap;line-height:1.4}
+.lg-verdict-tags{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
+.lg-qualification-tag{min-width:0;padding:3px 6px;font-size:11px}
 .lg-status-tag.is-green{color:var(--green);background:rgba(23,181,140,.12);border-color:rgba(23,181,140,.28)}.lg-status-tag.is-red{color:var(--red);background:rgba(244,70,88,.12);border-color:rgba(244,70,88,.28)}.lg-status-tag.is-amber{color:var(--amber);background:rgba(230,162,58,.12);border-color:rgba(230,162,58,.28)}
 .lg-verdict-cell .lg-row-risk{display:block;margin-top:5px;color:var(--txt-3);font-size:11px;white-space:nowrap}.lg-reason-cell{display:block;overflow-wrap:anywhere;font-size:12px;line-height:1.6}.lg-time-cell{font-size:12px;line-height:1.6;font-variant-numeric:tabular-nums}
-.lg-icon-btn{display:inline-flex;justify-content:center;align-items:center;width:28px;height:28px;border:0;border-radius:6px;background:transparent;color:var(--blue)}.lg-icon-btn:hover{background:color-mix(in srgb,var(--blue) 14%,transparent)}
 .legality-workbench :deep(.svg-icon){width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7}
 .lg-pager{min-height:48px;padding:6px 10px;margin:0;border-top:1px solid var(--line-2);overflow:auto}
 .lg-review-panel{min-width:0;min-height:0}.lg-hidden-status{display:none}.lg-detail-host{height:100%;min-height:0;display:flex;flex-direction:column}.lg-detail-scroll{min-height:0;flex:1;overflow:auto;scrollbar-width:thin;display:flex;flex-direction:column;gap:12px}
@@ -927,12 +928,12 @@ onMounted(() => {
 .lg-evidence-timeline{list-style:none;margin:0 0 12px;padding:0}.lg-evidence-timeline li{position:relative;display:flex;gap:12px;min-height:70px;padding:10px 0}.lg-evidence-timeline li:not(:last-child):before{content:"";position:absolute;left:11px;top:35px;bottom:-8px;width:1px;background:var(--line)}.lg-evidence-timeline li+li{border-top:1px solid var(--line-2)}.lg-evidence-icon{display:flex;justify-content:center;align-items:center;width:24px;height:24px;flex:none;border-radius:50%;background:var(--surface-2);color:var(--cyan)}.lg-evidence-timeline b{color:var(--blue);font-size:13px}.lg-evidence-timeline p{overflow-wrap:anywhere;color:var(--txt-3);font-size:12px}
 .lg-map-wrap{position:relative;min-height:185px;margin-top:10px;overflow:hidden;border:1px solid var(--lg-line);border-radius:4px;background:var(--surface-1)}.lg-map-host{position:absolute;inset:0}.lg-map-legend{position:absolute;z-index:3;flex-wrap:wrap;left:5px;right:5px;bottom:5px;display:flex;justify-content:center;gap:10px;padding:3px;background:var(--panel);font-size:9px}.lg-map-legend .is-zone{color:#a97bff}.lg-map-legend .is-plan{color:#8ca0a8}.lg-map-legend .is-plan::before{content:"";display:inline-block;width:14px;margin-right:4px;vertical-align:middle;border-top:2px dashed currentColor}.lg-map-legend .is-track{color:var(--txt-2)}
 .lg-resource-grid,.lg-target-facts dl,.lg-review-state dl{display:grid;grid-template-columns:90px minmax(0,1fr);gap:7px;margin:8px 0;font-size:12px}.lg-resource-grid dt,.lg-target-facts dt,.lg-review-state dt{color:var(--txt-3)}.lg-resource-grid dd,.lg-target-facts dd,.lg-review-state dd{margin:0;overflow-wrap:anywhere;color:var(--txt-2)}
-.lg-more-details{max-height:none;overflow:auto;scrollbar-width:thin}.lg-selected-subject .lg-icon-btn{flex:none;width:22px;height:22px}.lg-previous :deep(svg){transform:rotate(180deg)}.lg-icon-btn:disabled{opacity:.35;cursor:not-allowed}.lg-evidence-wide :deep(.pager){overflow:auto;max-width:100%}.lg-more-details summary{padding:12px 16px;color:var(--txt-2);font-size:12px;cursor:pointer}.lg-history-strip{display:flex;flex-wrap:wrap;gap:6px;padding:8px 12px;border-top:1px solid var(--lg-line)}.lg-history-strip button{padding:6px;border:1px solid var(--lg-line);border-radius:4px;background:var(--surface-2);color:var(--txt-2);font-size:11px}.lg-history-strip :deep(.pager){max-width:100%;overflow:auto}
+.lg-more-details{max-height:none;overflow:auto;scrollbar-width:thin}.lg-evidence-wide :deep(.pager){overflow:auto;max-width:100%}.lg-more-details summary{padding:12px 16px;color:var(--txt-2);font-size:12px;cursor:pointer}.lg-history-strip{display:flex;flex-wrap:wrap;gap:6px;padding:8px 12px;border-top:1px solid var(--lg-line)}.lg-history-strip button{padding:6px;border:1px solid var(--lg-line);border-radius:4px;background:var(--surface-2);color:var(--txt-2);font-size:11px}.lg-history-strip :deep(.pager){max-width:100%;overflow:auto}
 .lg-verdict-card{padding:12px 16px}.lg-verdict-block{display:flex;align-items:center;gap:10px}.lg-verdict-icon{display:flex;color:var(--amber)}.lg-verdict-block>div{display:flex;flex-direction:column;gap:4px}.lg-verdict-block strong{font-size:22px;color:var(--red)}.lg-verdict-card.is-green strong{color:var(--green)}.lg-verdict-card.is-amber strong{color:var(--amber)}.lg-verdict-block small,.lg-verdict-block span,.lg-core-reason{font-size:12px;color:var(--txt-2)}.lg-core-reason{display:flex;flex-direction:column;gap:5px;margin:14px 0}.lg-core-reason b{color:var(--txt)}.lg-target-facts,.lg-review-state{border-top:1px solid var(--lg-line);padding-top:10px;margin-top:10px}.lg-review-state>.tag{font-size:11px}
 .lg-action-dock{flex:none;padding:12px 0 0}.detail-actions{display:flex;gap:8px;margin:0}.lg-action-dock .btn{flex:1;min-width:0;height:40px!important;font-size:13px}.detail-actions .btn:disabled{cursor:not-allowed;opacity:.45}
 .lg-link-btn{border:0;padding:0;background:transparent;color:var(--blue);font-size:12px}.lg-reference-list{padding-left:16px;font-size:12px;line-height:1.8}.lg-muted{color:var(--txt-3)!important}.is-pass{color:var(--green)}.is-fail,.lg-state-error,.lg-evidence-alert{color:var(--red)}.is-warn,.lg-state-warn{color:var(--amber)}.lg-inline-error{padding:10px 14px;border-bottom:1px solid var(--lg-line);font-size:12px;line-height:1.6;color:var(--amber)}.empty{padding:28px 16px;font-size:13px;line-height:1.8}
 .lg-focus-card{flex:none;border:1px solid var(--line);border-radius:var(--r);padding:14px 16px;background:var(--lg-surface);box-shadow:var(--shadow-soft);font-size:12px;line-height:1.6;overflow-wrap:anywhere}
-.lg-focus-verdict{display:flex;align-items:center;gap:10px;flex-wrap:wrap;color:var(--txt-3)}.lg-focus-verdict>span:first-child{color:var(--txt);font-size:14px}.lg-focus-card p{margin:7px 0}.lg-focus-basis{color:var(--txt)}.lg-focus-task{border-top:1px solid var(--lg-line);padding-top:10px;margin-top:10px;color:var(--txt-3)}.lg-focus-task>b{color:var(--txt)}.lg-focus-task.needs-review>b{color:var(--amber)}.lg-focus-task ul{padding-left:18px;margin:6px 0}.lg-focus-outcome{color:var(--txt-3)}.lg-focus-manual{color:var(--blue)}.lg-check-empty{font-size:12px;line-height:1.6;color:var(--txt-3);padding:0 4px}.lg-secondary-actions{position:relative;flex:none}.lg-secondary-actions>summary{padding:10px 14px;border:1px solid var(--line);border-radius:6px;color:var(--blue);cursor:pointer;list-style:none;font-size:13px}.lg-secondary-actions>div{position:absolute;bottom:calc(100% + 8px);right:0;z-index:5;min-width:180px;padding:8px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow-soft);display:flex;flex-direction:column;gap:6px}.lg-review-filter{white-space:nowrap}
+.lg-focus-verdict{display:flex;align-items:center;gap:10px;flex-wrap:wrap;color:var(--txt-3)}.lg-focus-verdict>span:first-child{color:var(--txt);font-size:14px}.lg-focus-card p{margin:7px 0}.lg-focus-basis{color:var(--txt)}.lg-focus-task{border-top:1px solid var(--lg-line);padding-top:10px;margin-top:10px;color:var(--txt-3)}.lg-focus-task>b{color:var(--txt)}.lg-focus-task.needs-review>b{color:var(--amber)}.lg-focus-task ul{padding-left:18px;margin:6px 0}.lg-focus-outcome{color:var(--txt-3)}.lg-focus-manual{color:var(--blue)}.lg-check-empty{font-size:12px;line-height:1.6;color:var(--txt-3);padding:0 4px}.lg-secondary-actions{position:relative;flex:none}.lg-secondary-actions>summary{padding:10px 14px;border:1px solid var(--line);border-radius:6px;color:var(--blue);cursor:pointer;list-style:none;font-size:13px}.lg-secondary-actions>div{position:absolute;bottom:calc(100% + 8px);right:0;z-index:5;min-width:180px;padding:8px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow-soft);display:flex;flex-direction:column;gap:6px}
 @media(min-width:1800px){.lg-queue-tabs{min-height:54px}.lg-queue-tabs button{padding:0 15px}.lg-target-table{font-size:14px}.lg-target-table td{height:76px}.lg-target-table th{height:48px}.lg-main-column{gap:18px}}
 @media(max-width:1399px){.lg-workspace{gap:12px;grid-template-columns:minmax(0,3fr) minmax(0,2fr)}.lg-main-column{gap:12px}.lg-queue-tabs button{flex:1;padding:0 7px;font-size:12px}.lg-queue-tabs button span{font-size:11px}.lg-queue-filters{padding:10px}}
 @media(max-width:1040px){.legality-workbench{overflow:auto!important}.lg-shell,.lg-workspace{height:auto;min-height:100%}.lg-workspace{grid-template-columns:minmax(0,1fr)}.lg-queue-panel{height:560px;flex:auto}.lg-detail-scroll{overflow:visible}.lg-basis-card{max-height:none}.lg-evidence-card{min-height:300px}.lg-more-details{max-height:none}.lg-review-panel{min-height:0}.lg-map-wrap{min-height:250px}}

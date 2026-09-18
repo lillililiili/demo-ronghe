@@ -8,11 +8,12 @@ import { DISPOSAL_ACTION_LABEL, DISPOSAL_BLOCK_REASON_LABEL, DISPOSAL_CHANNEL_LA
 import { openDisposalApproval, openDisposalExecution, openDisposalManualResult, openDisposalStop } from '@/ui/disposalAuthModal.js';
 import EmergencyStopPanel from '@/components/disposal/EmergencyStopPanel.vue';
 
-const props = defineProps({ initialAuthorizationId: { type: String, default: '' } });
-const rows = ref([]), selected = ref(null), page = ref(1), total = ref(0), status = ref('');
+const props = defineProps({ initialAuthorizationId: { type: String, default: '' }, eventId: { type: String, default: '' }, initialStatus: { type: String, default: '' } });
+const emit = defineEmits(['event']);
+const rows = ref([]), selected = ref(null), page = ref(1), total = ref(0), status = ref(props.initialStatus);
 const loading = ref(false), error = ref('');
 const pageSize = ref(20);
-const options = [{ label: '全部状态', value: '' }, ...['REQUESTED', 'APPROVED', 'EXECUTING', 'FAILED', 'REJECTED', 'EXPIRED', 'STOPPED', 'CANCELLED'].map(value => ({ value, label: disposalStatusText({ status: value }) }))];
+const options = [{ label: '全部状态', value: '' }, ...['REQUESTED', 'APPROVED', 'EXECUTING', 'COMPLETED', 'FAILED', 'REJECTED', 'EXPIRED', 'STOPPED', 'CANCELLED'].map(value => ({ value, label: disposalStatusText({ status: value }) }))];
 const actions = [
   { codes: ['APPROVE', 'REJECT'], label: '审批', open: openDisposalApproval },
   { codes: ['EXECUTE'], label: '执行', open: openDisposalExecution },
@@ -46,10 +47,11 @@ async function load(next = page.value) {
   try {
     const result = await disposalApi.list({
       page: next, size: pageSize.value,
-      ...(status.value ? { status: status.value } : { exclude_status: 'COMPLETED' })
+      ...(props.eventId ? { subject_kind: 'UAV_EVENT', subject_id: props.eventId } : {}),
+      ...(status.value ? { status: status.value } : {})
     });
     if (!active || seq !== request) return;
-    const items = (result?.items || []).filter(row => row.status !== 'COMPLETED');
+    const items = result?.items || [];
     rows.value = items; total.value = result?.total || 0; page.value = next;
   } catch (e) {
     if (active && seq === request) { error.value = e.message || '读取处置授权失败'; rows.value = []; }
@@ -57,9 +59,11 @@ async function load(next = page.value) {
 }
 async function refresh(id) {
   const seq = ++detailRequest;
+  selected.value = null; emergencyInfo.value = null;
   try {
     const detail = await disposalApi.detail(id);
     if (active && seq === detailRequest) {
+      if (props.eventId && (detail.subject_kind !== 'UAV_EVENT' || detail.subject_id !== props.eventId)) throw new Error('授权记录不属于当前告警事件');
       selected.value = detail;
       await load();
     }
@@ -79,10 +83,11 @@ onUnmounted(() => { active = false; request++; detailRequest++; });
 </script>
 
 <template>
-  <UPanel title="处置授权" sub="先申请并取得有效授权，再执行和核查现场结果；处罚移送按违法事实独立办理"
+  <UPanel :title="eventId ? '当前事件的反制授权与执行' : '反制授权与执行'" sub="按现有权限办理审批、执行和急停；移送与处罚独立办理"
     panel-style="flex:1;min-height:0;margin-top:12px;overflow:hidden"
     body-style="display:flex;flex-direction:column;min-height:0;overflow:hidden">
     <div class="toolbar">
+      <span v-if="eventId">仅显示当前告警事件的授权记录</span>
       <label>授权状态 <UControl type="select" v-model="status" :options="options" :input-props="{ 'aria-label': '授权状态' }" @update:model-value="load(1)" /></label>
       <button class="btn" :disabled="loading" @click="load()">{{ loading ? '正在读取' : '刷新授权' }}</button>
     </div>
@@ -101,7 +106,7 @@ onUnmounted(() => { active = false; request++; detailRequest++; });
             <td>{{ labelOf(DISPOSAL_CHANNEL_LABEL, row.channel) }}</td>
             <td>{{ statusText(row) }}<div v-if="blockReasonText(row)">受阻原因：{{ blockReasonText(row) }}</div><div v-if="row.result_code">{{ row.result_code }}</div></td>
             <td><div class="actions"><button v-for="action in selected?.authorization_id === row.authorization_id ? [] : allowed(row)" :key="action.label" class="btn" @click="act(action, row)">{{ action.label }}</button>
-              <button v-if="usesEmergency(row)" type="button" class="btn" @click="show(row.authorization_id)">查看处置与急停</button>
+              <button type="button" class="btn" @click="show(row.authorization_id)">{{ usesEmergency(row) ? '查看处置与急停' : '查看授权详情' }}</button>
             </div></td>
           </tr>
           <tr v-if="!loading && !rows.length"><td colspan="9" class="empty">当前筛选下没有可见授权。</td></tr>
@@ -111,9 +116,10 @@ onUnmounted(() => { active = false; request++; detailRequest++; });
     <footer class="pager">
       <UPagination :page="page" :page-size="pageSize" :item-count="total" @update:page="load" @update:page-size="resize" />
     </footer>
-    <section v-if="selected" class="sect" aria-label="所选授权详情">
+    <section v-if="selected" class="sect authorization-detail" aria-label="所选授权详情">
       <EmergencyStopPanel v-if="usesEmergency(selected)" :key="selected.subject_id" :event-id="selected.subject_id"
         @updated="emergencyInfo = $event" @changed="refreshEmergency" />
+      <button v-if="selected.subject_kind === 'UAV_EVENT'" type="button" class="btn" @click="emit('event', selected.subject_id)">查看关联告警</button>
       <h4>{{ selected.authorization_no }} · {{ statusText(selected) }}</h4>
       <p>{{ selected.reason }}</p>
       <p>{{ modeText(selected) }} · {{ operatorLabel(selected) }}：{{ selected.requested_by_name || '未提供' }} · 审批人：{{ approverText(selected) }}</p>
@@ -128,7 +134,8 @@ onUnmounted(() => { active = false; request++; detailRequest++; });
 .toolbar { display:flex; gap:12px; flex-wrap:wrap; align-items:end; margin-bottom:12px; flex:none; }
 .actions { display:flex; gap:8px; flex-wrap:wrap; }
 .tb td { overflow-wrap:anywhere; }
-.tb td.num { white-space:nowrap; font-variant-numeric:tabular-nums; }
+.authorization-detail { flex:1; min-height:160px; overflow:auto; }
+.tb td.num { white-space:normal; font-variant-numeric:tabular-nums; }
 .table-scroll { flex:1; min-height:0; }
 .pager { display:flex; justify-content:flex-end; flex:none; padding-top:10px; }
 .warnbox { flex:none; }

@@ -17,8 +17,10 @@ export default {};
    沿用 HEAD 版本的 DOM 结构与 class 名，只替换数据源与状态口径。
    地图（MapView）在 onUnmounted 销毁；usePageChrome 先注册，故卸载顺序
    与旧版 route() 一致：CH.disposeAll → map.destroy → closeModal。 */
+import { useRoute } from 'vue-router';
+import AuthorizationQueue from '@/pages/alarms/AuthorizationQueue.vue';
 import { measuredMapPoints } from '@/services/trackPoints.js';
-import { ref, reactive, onMounted, onUnmounted } from 'vue';
+import { ref, reactive, onMounted, onUnmounted, watch } from 'vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import UPagination from '@/components/UPagination.vue';
 import UPanel from '@/components/UPanel.vue';
@@ -46,9 +48,31 @@ import { requiresStopFollowup } from '@/components/disposal/emergencyStopView.js
 const U = window.UI;
 usePageChrome('alarms');
 const root = ref(null);
+const route = useRoute();
+const activeTab = ref('alarms');
+const authorizationScope = ref({ eventId: '', authorizationId: '', status: '' });
+let authorizationKey = 0;
+function openAuthorizations(value = {}) {
+  authorizationScope.value = { eventId: value.eventId || '', authorizationId: value.authorizationId || '', status: value.status || '', key: ++authorizationKey };
+  activeTab.value = 'authorizations';
+}
+watch(() => [route.query.tab, route.query.authorization, route.query.event], ([tab, id, event]) => {
+  if (tab === 'authorizations' || id) openAuthorizations({ authorizationId: typeof id === 'string' ? id : '', eventId: typeof event === 'string' ? event : '' });
+}, { immediate: true });
 /* reactive 代理同一份模块级状态：n-pagination 的 :page/:page-size 需要响应式，
    底层对象仍是 S.st，跨导航记忆不变 */
 const st = reactive(S.st);
+let authorizationEventRequest = 0, authorizationPageActive = true;
+onUnmounted(() => { authorizationPageActive = false; ++authorizationEventRequest; });
+async function showAuthorizationEvent(eventId) {
+  const request = ++authorizationEventRequest, scope = authorizationScope.value;
+  try {
+    const event = await getUavEvent(eventId);
+    if (!authorizationPageActive || request !== authorizationEventRequest || activeTab.value !== 'authorizations' || scope !== authorizationScope.value) return;
+    activeTab.value = 'alarms';
+    await selectAlarm(event.alarm_id);
+  } catch (error) { toast(error.message || '读取关联告警失败', 'err'); }
+}
 const totalCount = ref(0);
 const emergencyEvent = ref(null);
 const emergencyInfo = ref(null);
@@ -799,7 +823,14 @@ onMounted(async () => {
   <div class="view" id="view" ref="root" style="overflow:hidden">
     <div class="alarms-page" style="height:100%;min-height:0;display:flex;flex-direction:column">
       <UKpis :list="kpiList" />
-      <div class="row" style="margin-top:12px;flex:1;min-height:0">
+      <nav class="alarm-workspace-tabs" aria-label="告警事件工作区">
+        <button type="button" class="btn" :class="{ pri: activeTab === 'alarms' }" :aria-pressed="activeTab === 'alarms'" @click="activeTab = 'alarms'">告警与处置</button>
+        <button type="button" class="btn" :class="{ pri: activeTab === 'authorizations' }" :aria-pressed="activeTab === 'authorizations'" @click="openAuthorizations()">反制授权与执行</button>
+        <button v-if="activeTab === 'authorizations' && authorizationScope.eventId" type="button" class="btn" @click="openAuthorizations()">查看全部授权</button>
+      </nav>
+      <AuthorizationQueue v-if="activeTab === 'authorizations'" :key="authorizationScope.key"
+        @event="showAuthorizationEvent" :event-id="authorizationScope.eventId" :initial-authorization-id="authorizationScope.authorizationId" :initial-status="authorizationScope.status" />
+      <div v-show="activeTab === 'alarms'" class="row" style="margin-top:12px;flex:1;min-height:0">
         <UPanel title="告警列表" panel-style="flex:6;min-width:0" nopad>
           <div style="display:contents" v-html="listPanelBody"></div>
           <div class="pager">
@@ -821,7 +852,7 @@ onMounted(async () => {
               :authorization-id="advisorySubject.authorizationId"
               :handoff-id="advisorySubject.handoffId"
               :refresh-authorization="refreshAdvisoryAuthorization"
-              @updated="updateAdvisory" />
+              @updated="updateAdvisory" @authorization="openAuthorizations" />
             <div id="alDetailActions" style="padding:0 12px 12px"></div>
           </UPanel>
         </div>
@@ -831,6 +862,8 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.alarm-workspace-tabs { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; flex:none; }
+.alarm-workspace-tabs .btn { white-space:normal; height:auto; min-height:34px; }
 .alarms-page :deep(.detail-hero-title),
 .alarms-page :deep(.detail-hero-id) {
   display: block;

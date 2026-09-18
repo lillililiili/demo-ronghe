@@ -3,11 +3,8 @@ import { computed, onUnmounted } from 'vue';
 import AutoSmsNotice from './AutoSmsNotice.vue';
 import AutoVoiceNotice from './AutoVoiceNotice.vue';
 import { useUavAdvisory } from '@/hooks/useUavAdvisory.js';
-import { ADVISORY_KIND, advisoryRequestReason, isAdvisoryContact, lastObservation, orderedRecords, OBSERVATION_DANGER, OBSERVATION_OUTCOME } from './advisoryView.js';
-import { openDisposalDirect, openDisposalRequest } from '@/ui/disposalAuthModal.js';
+import { ADVISORY_KIND, isAdvisoryContact, lastObservation, orderedRecords, OBSERVATION_DANGER, OBSERVATION_OUTCOME } from './advisoryView.js';
 import { openCounterBasis } from './counterBasisModal.js';
-import { readSessionToken } from '@/services/apiClient.js';
-import { toast } from '@/ui/nv.js';
 
 const props = defineProps({
   eventId: { type: String, required: true }, eventLabel: String, confirmed: Boolean,
@@ -15,7 +12,7 @@ const props = defineProps({
   authorizationId: { type: String, default: '' }, counterActive: Boolean,
   handoffId: { type: String, default: '' }, refreshAuthorization: Function
 });
-const emit = defineEmits(['updated']);
+const emit = defineEmits(['updated', 'authorization']);
 const { data, loading, error, load } = useUavAdvisory(() => props.eventId, result => emit('updated', result));
 let alive = true;
 onUnmounted(() => { alive = false; });
@@ -27,48 +24,18 @@ const observationPredatesContact = computed(() => {
 });
 const current = computed(() => data.value?.event_id === props.eventId && !loading.value && !error.value);
 const transferredId = computed(() => data.value?.auto_handoff?.handoff_id || props.handoffId);
-const canDirectCounter = computed(() => current.value && props.confirmed && !props.counterActive && !props.counterBlock && !!data.value?.can_direct_counter);
-const canRequestCounter = computed(() => current.value && props.confirmed && !props.counterActive && !props.counterBlock
-  && !data.value?.can_direct_counter && !!data.value?.can_request_counter);
 const canPrepareCounter = computed(() => current.value && props.confirmed && !props.counterActive && !props.counterBlock && data.value?.can_write === true);
-const counterReason = computed(() => props.counterBlock || (!current.value ? (error.value || '正在读取反制条件，请稍候。')
-  : props.counterActive ? '已有未结束的处置，请查看授权记录继续办理。'
-    : !props.confirmed ? (data.value?.counter_block_reason || '当前事件状态不允许反制。')
-      : data.value?.counter_block_reason || (!(canDirectCounter.value || canRequestCounter.value) ? '反制资格尚未确认，请更新记录后重试。' : '')));
 const handoffTitle = computed(() => {
   if (transferredId.value) return ['MANUAL_CONFIRMATION', 'RULE_ILLEGAL'].includes(data.value?.auto_handoff?.trigger_source) ? '已自动移送到处罚' : '已移送到处罚';
   return ({ WAITING: '等待自动移送到处罚', BLOCKED: '自动移送暂不可办理',
     DISABLED: '自动移送尚未启用', FAILED: '自动移送失败' })[data.value?.auto_handoff?.status] || '自动移送状态暂不可用';
 });
 const time = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '未提供';
-function openAuthorization() {
-  if (props.authorizationId) window.location.hash = `/punish?authorization=${encodeURIComponent(props.authorizationId)}`;
-}
 function openHandoff() {
   if (transferredId.value) window.location.hash = `/punish?handoff=${encodeURIComponent(transferredId.value)}`;
 }
-const refreshCounter = async () => {
-  const latest = props.refreshAuthorization ? await props.refreshAuthorization() : null;
-  await load();
-  return latest;
-};
-function startCounter(direct) {
-  if (direct ? !canDirectCounter.value : !canRequestCounter.value) return;
-  const eventId = props.eventId;
-  const session = readSessionToken();
-  const options = {
-    actionType: 'COUNTERMEASURE', subjectKind: 'UAV_EVENT', subjectId: eventId,
-    subjectText: props.eventLabel || eventId, initialReason: advisoryRequestReason(data.value),
-    isCurrent: () => alive && props.eventId === eventId && data.value?.event_id === eventId && readSessionToken() === session
-      && (direct ? canDirectCounter.value : canRequestCounter.value),
-    refresh: refreshCounter
-  };
-  return direct ? openDisposalDirect(options) : openDisposalRequest(options);
-}
-function manualCounter() {
-  if (canDirectCounter.value) return startCounter(true);
-  if (canRequestCounter.value) return startCounter(false);
-  if (!canPrepareCounter.value) return toast(counterReason.value, 'warn');
+function recordSituation() {
+  if (!canPrepareCounter.value) return;
   const eventId = props.eventId;
   return openCounterBasis({ data: data.value, reload: load,
     isCurrent: () => alive && props.eventId === eventId && canPrepareCounter.value });
@@ -83,7 +50,7 @@ function manualCounter() {
     <template v-if="data">
       <AutoSmsNotice compact :data="data" :disabled="!current" @changed="load()" />
       <AutoVoiceNotice compact :data="data" :disabled="!current" @changed="load()" />
-      <div class="ua-parallel-status" aria-label="现场与授权分别记录">
+      <div class="ua-parallel-status" aria-label="现场情况与人工补充">
         <section aria-label="现场情况">
           <h4>现场情况</h4>
           <template v-if="observation">
@@ -92,14 +59,9 @@ function manualCounter() {
             <p v-if="observationPredatesContact" class="ua-note">此记录早于最近一次联系，不代表当前现场结论。</p>
           </template>
           <p v-else class="ua-note"><template v-if="contact">已保存{{ ADVISORY_KIND[contact.kind] || '联系记录' }}；</template>尚无现场观察记录，无法确认是否飞离。</p>
-        </section>
-        <section aria-label="反制授权">
-          <h4>反制授权</h4>
-          <p v-if="counterStatus">{{ counterActive ? '本次' : '最近一次' }}授权：{{ counterStatus }}</p>
           <div class="ua-actions">
-            <button type="button" class="btn danger" @click="manualCounter">手动反制</button>
+            <button type="button" class="btn" :disabled="!canPrepareCounter" @click="recordSituation">人工补充现场情况</button>
           </div>
-          <button v-if="authorizationId" type="button" class="ua-link" @click="openAuthorization">查看授权记录</button>
         </section>
       </div>
       <div v-if="confirmed || data.auto_handoff || transferredId" class="ua-handoff" aria-label="处罚移送进度">

@@ -5,15 +5,15 @@ import { newDisposalIdempotencyKey } from '@/services/disposalApi.js';
 import { isUncertainOutcome, readSessionToken } from '@/services/apiClient.js';
 import { OBSERVATION_DANGER, OBSERVATION_OUTCOME } from './advisoryView.js';
 
-// 仅在人主动发起反制且缺依据时补录事实；保存不会申请授权或下发设备指令。
+// 补录联系与现场事实；保存不会申请授权或下发设备指令。
 export function openCounterBasis({ data, reload, isCurrent }) {
   const eventId = data.event_id, version = data.event_version, session = readSessionToken();
   const key = newDisposalIdempotencyKey('counter-basis');
   let pendingBody = null;
   const observing = values => values.kind !== 'CONTACT_RECORDED';
   const modal = openFormModal({
-    title: '补充反制依据', width: '600px', confirmText: '保存依据',
-    notice: data.counter_block_reason || '请按当前现场事实补充反制依据。',
+    title: '记录联系与现场情况', width: '600px', confirmText: '保存记录',
+    notice: '按实际情况记录联系结果或现场观察。保存后会更新处置条件。',
     warning: '保存依据不会启动反制。普通处置需有联系后的现场核查；确属紧急情况时填写紧急事由。目标失联不能当作仍在区域或已飞离。',
     fields: [
       { key: 'kind', label: '补充内容', type: 'radio', required: true, options: [
@@ -52,7 +52,7 @@ export function openCounterBasis({ data, reload, isCurrent }) {
         if (!current()) return;
         modal.close();
         await reload();
-        toast('依据已保存，请核对最新反制条件后手动发起。', 'ok');
+        toast('记录已保存，处置条件已更新。', 'ok');
       } catch (error) {
         if (!current()) return;
         if (error.code === 'VERSION_CONFLICT') {

@@ -130,7 +130,6 @@ onBeforeUnmount(() => {
     <div class="track-summary">
       <b>轨迹回放 <span v-if="details">{{ points.length }} 点</span></b>
       <span class="tag t-gray">{{ sourceNote }}</span>
-      <button v-if="points.length" class="btn" type="button" @click="fit">查看完整范围</button>
     </div>
     <p v-if="!points.length" class="track-notice" role="status">没有可用的观测位置，无法显示轨迹。</p>
     <template v-else>
@@ -173,7 +172,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .evidence-track-preview { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .track-summary, .track-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-.track-summary > button, .track-controls > span { margin-left: auto; }
+.track-controls > span { margin-left: auto; }
 .track-summary b { font-size: 15px; }.track-summary b span { color: var(--cyan); margin-left: 8px; }
 .evidence-track-map { position: relative; height: clamp(240px, 38vh, 420px); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 .track-controls, .track-time-labels { font-size: 12px; color: var(--txt-2); }

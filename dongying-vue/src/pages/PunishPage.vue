@@ -14,7 +14,6 @@ import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import UKpis from '@/components/UKpis.vue';
 import UPanel from '@/components/UPanel.vue';
-import AuthorizationQueue from '@/pages/punish/AuthorizationQueue.vue';
 import UPagination from '@/components/UPagination.vue';
 import UControl from '@/components/form/UControl.vue';
 import { UAV_STATE_TEXT as UAV_STATE_LABEL } from '@/ui/uavVerificationModal.js';
@@ -35,7 +34,7 @@ import { chainTypeCards, openEvidenceChainTypeModal } from '@/ui/evidenceChainVi
 usePageChrome('punish');
 const root = ref(null);
 const authorizationId = new URLSearchParams(location.hash.split('?')[1] || '').get('authorization') || '';
-const activeTab = ref(authorizationId ? 'authorizations' : 'handoffs');
+
 const U = window.UI;
 
 const UAV_KIND = 'UAV_EVENT';
@@ -247,6 +246,7 @@ function consumeDeepLink() {
 }
 
 onMounted(() => {
+  if (authorizationId) { window.location.replace(`#/alarms?tab=authorizations&authorization=${encodeURIComponent(authorizationId)}`); return; }
   const requested = consumeDeepLink();
   if (requested) { Object.assign(filters, { delivery_status: '', receipt_status: '', created: null }); S.selectedHandoffId = requested; }
   loadKpis();
@@ -258,12 +258,7 @@ onMounted(() => {
   <div class="view" id="view" ref="root" style="overflow:hidden">
     <div style="height:100%;display:flex;flex-direction:column;min-height:0">
       <UKpis :list="kpiList" class-name="pn-kpis" />
-      <div class="toolbar" style="display:flex;gap:8px;margin-top:12px">
-        <button class="btn" :class="{ pri: activeTab === 'authorizations' }" @click="activeTab = 'authorizations'">反制授权</button>
-        <button class="btn" :class="{ pri: activeTab === 'handoffs' }" @click="activeTab = 'handoffs'">交接与处罚</button>
-      </div>
-      <AuthorizationQueue v-if="activeTab === 'authorizations'" :initial-authorization-id="authorizationId" />
-      <div v-show="activeTab === 'handoffs'" id="pnBody" class="pn-body" style="margin-top:12px;flex:1;min-height:0">
+      <div id="pnBody" class="pn-body" style="margin-top:12px;flex:1;min-height:0">
         <div v-if="forbidden" class="warnbox pn-forbidden">
           当前账号没有查看业务交接的权限，无法读取交接清单、材料和通知状态。
           <button class="btn" type="button" :disabled="listLoading" @click="retryList">重试</button>

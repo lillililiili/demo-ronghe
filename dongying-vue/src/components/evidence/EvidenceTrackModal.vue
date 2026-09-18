@@ -1,19 +1,15 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
-import { canAccessRoute, hasPermission } from '@/services/accessControl.js';
+import { hasPermission } from '@/services/accessControl.js';
 import { getEvidenceTrackPoints } from '@/services/evidenceApi.js';
-import { closeModal } from '@/ui/modal.js';
 import EvidenceTrackPreview from './EvidenceTrackPreview.vue';
 import EvidencePreviewModal from './EvidencePreviewModal.vue';
 
 const props = defineProps({ records: { type: Array, required: true }, truncated: Boolean,
-  restricted: Boolean, subjectKind: String, subjectId: String, onReturn: { type: Function, required: true } });
+  restricted: Boolean, onReturn: { type: Function, required: true } });
 const selected = ref(0);
 const record = computed(() => props.records[selected.value]);
 const isFile = computed(() => !!record.value?.summary?.kind_code);
-const canViewDetails = computed(() => canAccessRoute('evidence') && hasPermission('evidence:read') && hasPermission('target:read'));
-const detailHref = computed(() => props.subjectKind && props.subjectId && record.value
-  ? `#/evidence?${new URLSearchParams({ subjectKind: props.subjectKind, subjectId: props.subjectId, track: record.value.record_id })}` : '');
 const loading = ref(false);
 const error = ref('');
 const snapshot = ref(null);
@@ -48,11 +44,6 @@ onBeforeUnmount(() => { sequence += 1; window.removeEventListener('auth-access-c
     <p v-if="truncated" class="track-record-note">当前只展示部分轨迹证据。</p>
     <EvidencePreviewModal v-if="isFile" :key="record.record_id" :evidence-id="record.record_id" :on-return="onReturn" />
     <template v-else>
-      <div class="track-record-toolbar">
-        <button class="btn" type="button" @click="onReturn">返回事项详情</button>
-        <a v-if="detailHref && canViewDetails" class="btn track-details" :href="detailHref" @click="closeModal">查看证据详情</a>
-        <span v-else-if="!canViewDetails" class="track-details">无证据详情查看权限</span>
-      </div>
       <p v-if="loading" class="track-record-message" role="status">正在读取这份证据关联的轨迹观测点</p>
       <div v-else-if="error" class="track-record-message" role="alert">{{ error }} <button class="btn" type="button" @click="load">重新读取</button></div>
       <EvidenceTrackPreview v-else-if="snapshot" :key="record.record_id" :snapshot="snapshot" />
@@ -62,10 +53,7 @@ onBeforeUnmount(() => { sequence += 1; window.removeEventListener('auth-access-c
 
 <style scoped>
 .evidence-track-modal { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
-.track-records, .track-record-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.track-records { justify-content: center; font-size: 12px; }
-.track-details { margin-left: auto; }
+.track-records { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: center; font-size: 12px; }
 .track-record-note { margin: 0; font-size: 12px; color: var(--orange); line-height: 1.7; }
-.track-record-toolbar span { margin-left: auto; color: var(--txt-3); font-size: 12px; }
 .track-record-message { padding: 24px; border: 1px solid var(--line); border-radius: 8px; text-align: center; line-height: 1.7; }
 </style>

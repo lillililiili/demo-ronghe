@@ -979,6 +979,7 @@ async function loadRisks(nextPage = riskPage.value, requestedId = null) {
   riskLoading.value = true;
   riskError.value = '';
   let query = {};
+  let nextRiskId = null;
   try {
     query = riskQuery();
     const data = await riskApi.listRisks({ ...query, page: nextPage, size: riskSize.value });
@@ -988,14 +989,14 @@ async function loadRisks(nextPage = riskPage.value, requestedId = null) {
     riskTotal.value = data.total;
     if (requestedId) {
       // 深链 ID 不在当前分页时仍按精确 ID 读详情；失败必须显式报错，不能默认打开无关风险。
-      await loadRiskDetail(requestedId);
-      return;
+      nextRiskId = requestedId;
+    } else {
+      const wanted = S.selectedRiskId;
+      // safe-default: 普通列表进入时首行会高亮，用户可见且可立即改选；深链路径已在上方严格处理。
+      const next = risks.value.find(item => item.risk_id === wanted) || risks.value[0] || null;
+      nextRiskId = next?.risk_id || null;
+      if (!nextRiskId) clearRiskDetail();
     }
-    const wanted = S.selectedRiskId;
-    // safe-default: 普通列表进入时首行会高亮，用户可见且可立即改选；深链路径已在上方严格处理。
-    const next = risks.value.find(item => item.risk_id === wanted) || risks.value[0] || null;
-    if (next) await loadRiskDetail(next.risk_id);
-    else clearRiskDetail();
   } catch (requestError) {
     if (token !== riskListToken) return;
     risks.value = [];
@@ -1008,6 +1009,8 @@ async function loadRisks(nextPage = riskPage.value, requestedId = null) {
   } finally {
     if (token === riskListToken) riskLoading.value = false;
   }
+  // 列表完成即展示；详情和地图失败不能清空已成功读取的列表。
+  if (token === riskListToken && nextRiskId) await loadRiskDetail(nextRiskId);
 }
 
 async function loadRiskKpis() {
@@ -1108,11 +1111,16 @@ async function loadRiskDetail(riskId) {
     if (token === riskDetailToken) riskDetailLoading.value = false;
   }
   if (!detail || token !== riskDetailToken) return;
-  // 三样几何各读各的，谁失败都不挡另外两样；全部到齐后只建一次图，避免先到的被后到的重建掉视野。
-  await Promise.all([loadRiskTargetPosition(detail, token), loadRiskRouteGeometry(detail, token), loadRiskWeather(detail, token)]);
-  if (token !== riskDetailToken) return;
-  await nextTick();
-  renderRiskMap();
+  // 先绘制风险快照；独立位置请求完成后合并当前几何，慢请求不阻挡已取得的数据。
+  async function updateMap() {
+    await nextTick();
+    if (token !== riskDetailToken) return;
+    renderRiskMap();
+  }
+  await updateMap();
+  await Promise.allSettled([
+    loadRiskTargetPosition(detail, token), loadRiskRouteGeometry(detail, token), loadRiskWeather(detail, token)
+  ].map(async request => { await request; await updateMap(); }));
 }
 
 function resetRiskWeather() {
@@ -1184,7 +1192,6 @@ async function loadRiskRouteGeometry(risk, token) {
   } catch (requestError) {
     if (token !== riskDetailToken) return;
     riskMapError.value = `航线位置加载失败：${riskMessageOf(requestError, '你没有查看该航线的权限，或航线记录已不存在')}`;
-    destroyRouteMap();
   } finally {
     if (token === riskDetailToken) riskMapLoading.value = false;
   }
@@ -1691,11 +1698,11 @@ onUnmounted(() => {
                 </div>
                 <p v-if="noticesTotal > notices.length && !noticesLoading" class="workspace-selection-note">共 {{ noticesTotal }} 条通知记录，当前展示最近 {{ notices.length }} 条。</p>
               </section>
-              <p v-if="selectedRisk.state === 'PENDING_VERIFICATION' && canVerifyRisk" class="workspace-action-note">核验通过后可通知上级。</p>
-              <p v-if="selectedRisk.state === 'PENDING_VERIFICATION' && !canVerifyRisk" class="workspace-action-note">{{ verifyBlockReason }}</p>
+              <p v-if="riskTab === 'event' && selectedRisk.state === 'PENDING_VERIFICATION' && canVerifyRisk" class="workspace-action-note">核验通过后可通知上级。</p>
+              <p v-if="riskTab === 'event' && selectedRisk.state === 'PENDING_VERIFICATION' && !canVerifyRisk" class="workspace-action-note">{{ verifyBlockReason }}</p>
               <p v-else-if="selectedRisk.state === 'PENDING_NOTIFICATION' && !canNotifyRisk" class="workspace-action-note">{{ notifyBlockReason }}</p>
-              <div v-if="canVerifyRisk || canNotifyRisk || ['PENDING_VERIFICATION', 'PENDING_NOTIFICATION'].includes(selectedRisk.state)" class="detail-actions is-sticky">
-                <button v-if="selectedRisk.state === 'PENDING_VERIFICATION' || (selectedRisk.state === 'PENDING_NOTIFICATION' && canVerifyRisk)" class="btn" :class="{ pri: selectedRisk.state === 'PENDING_VERIFICATION', ghost: selectedRisk.state === 'PENDING_NOTIFICATION' }" type="button" :disabled="!canVerifyRisk" :title="verifyBlockReason" @click="openRiskVerify">{{ selectedRisk.state === 'PENDING_NOTIFICATION' ? '改判为排除' : '人工核验' }}</button>
+              <div v-if="(riskTab === 'event' && (canVerifyRisk || selectedRisk.state === 'PENDING_VERIFICATION')) || canNotifyRisk || selectedRisk.state === 'PENDING_NOTIFICATION'" class="detail-actions is-sticky">
+                <button v-if="riskTab === 'event' && (selectedRisk.state === 'PENDING_VERIFICATION' || (selectedRisk.state === 'PENDING_NOTIFICATION' && canVerifyRisk))" class="btn" :class="{ pri: selectedRisk.state === 'PENDING_VERIFICATION', ghost: selectedRisk.state === 'PENDING_NOTIFICATION' }" type="button" :disabled="!canVerifyRisk" :title="verifyBlockReason" @click="openRiskVerify">{{ selectedRisk.state === 'PENDING_NOTIFICATION' ? '改判为排除' : '人工核验' }}</button>
                 <button v-if="selectedRisk.state === 'PENDING_NOTIFICATION' || canNotifyRisk" class="btn" :class="{ pri: canNotifyRisk }" type="button" :disabled="!canNotifyRisk" :title="notifyBlockReason" @click="openRiskNotify()">通知上级</button>
               </div>
             </template>

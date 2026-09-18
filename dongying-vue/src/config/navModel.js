@@ -27,7 +27,7 @@ export const NAV = [
   {
     t: '事件处置', icon: 'alert', kids: [
       { k: 'alarms', t: '告警事件', icon: 'alert' },
-      { k: 'punish', t: '处置与处罚', icon: 'gavel' }
+      { k: 'punish', t: '移送与处罚', icon: 'gavel' }
     ]
   },
   {

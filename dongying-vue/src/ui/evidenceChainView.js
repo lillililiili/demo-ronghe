@@ -75,8 +75,7 @@ export function openEvidenceChainTypeModal({ chain, type }) {
   if (type === 'TRACK' && card.records.length) {
     const handle = openModal({ title: '轨迹证据', width: '1180px', footer: false,
       render: () => h(EvidenceTrackModal, { records: card.records, truncated: card.truncated,
-        restricted: card.restricted, subjectKind: chain.subject_kind, subjectId: chain.subject_id,
-        onReturn: () => handle.close() }) });
+        restricted: card.restricted, onReturn: () => handle.close() }) });
     return handle;
   }
   const files = card.records.filter(isFileRecord).map(record => ({

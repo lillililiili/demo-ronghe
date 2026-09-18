@@ -185,6 +185,8 @@
         transformRequest: runtime.transformRequest
       });
       this.map = map;
+      // 主题在运行时生成地块纹理图片；必须在样式加载完成前挂上 styleimagemissing。
+      if (typeof runtime.decorate === 'function') runtime.decorate(map);
       this._applyCameraLimits();
       map.touchZoomRotate.disableRotation();
       map.addControl(new runtime.maplibre.AttributionControl({ compact: false }), 'bottom-left');
@@ -859,15 +861,10 @@
   }
   // 固定像素、沿图形透明轮廓的报警红光，不代表探测或风险范围。
   function applyAlarmGlow(c, item) {
-    if (!g.UI.mapAlarmActive(item)) return;
-    const reduced = g.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-    const pulse = reduced ? .65 : (1 - Math.cos(performance.now() / 1400 * Math.PI * 2)) / 2;
-    c.shadowColor = markerPalette().alarm + Math.round(255 * (.25 + .75 * pulse)).toString(16).padStart(2, '0');
-    c.shadowBlur = 5 + 15 * pulse;
-    c.shadowOffsetX = c.shadowOffsetY = 0;
+    g.UI.applyAlarmGlow(c, item);
   }
   function drawMarkerState(c, state, x, y) {
-    c.save(); c.translate(x,y); c.lineWidth = 2; c.lineCap = 'round'; c.lineJoin = 'round';
+    c.save(); c.translate(x,y); c.scale(.8,.8); c.lineWidth = 2; c.lineCap = 'round'; c.lineJoin = 'round';
     const colors = markerPalette();
     c.strokeStyle = colors[state] || colors.unknown;
     c.beginPath();
@@ -887,11 +884,11 @@
     const scale = Number.isFinite(Number(this.opt.sensorIconScale)) ? Math.max(.65, Math.min(1.25, Number(this.opt.sensorIconScale))) : 1;
     c.save(); c.translate(q[0],q[1]);
     applyAlarmGlow(c, device);
-    g.UI.drawBusinessIcon(c, key === 'unknown' ? 'unknown-device' : key, 0, 0, 38 * scale);
+    g.UI.drawBusinessIcon(c, key === 'unknown' ? 'unknown-device' : key, 0, 0, 24 * scale);
     c.shadowBlur = 0; c.shadowColor = 'transparent';
-    drawMarkerState(c, state, 14 * scale, 14 * scale);
-    if ((device.alarm || device.hasAlarm) && state !== 'fault') drawMarkerState(c, 'history', -14 * scale, 14 * scale);
-    if (this._pinnedKey === 'device:' + device.id) { c.beginPath(); c.moveTo(-11,22); c.lineTo(11,22); c.strokeStyle = markerPalette().selected; c.lineWidth = 3; c.stroke(); }
+    drawMarkerState(c, state, 10 * scale, 10 * scale);
+    if ((device.alarm || device.hasAlarm) && state !== 'fault') drawMarkerState(c, 'history', -10 * scale, 10 * scale);
+    if (this._pinnedKey === 'device:' + device.id) { c.beginPath(); c.moveTo(-8,16 * scale); c.lineTo(8,16 * scale); c.strokeStyle = markerPalette().selected; c.lineWidth = 3; c.stroke(); }
     c.restore();
   };
 
@@ -1049,11 +1046,11 @@
   MapView.prototype._drawTarget = function (c, t, q, col, isSel) {
     c.save();
     applyAlarmGlow(c, t);
-    g.UI.drawBusinessIcon(c, g.UI.targetIconKey(t), q[0], q[1], isSel ? 42 : 36, t.heading);
+    g.UI.drawBusinessIcon(c, g.UI.targetIconKey(t), q[0], q[1], isSel ? 26 : 22, t.heading);
     c.shadowBlur = 0; c.shadowColor = 'transparent';
-    if (t.activeRisk) drawMarkerState(c, 'fault', q[0]+15, q[1]+14);
-    if (t.stale === true || t.freshness === 'STALE') drawMarkerState(c, 'stale', q[0]-15, q[1]+14);
-    if (isSel) { c.beginPath(); c.moveTo(q[0]-12,q[1]+23); c.lineTo(q[0]+12,q[1]+23); c.strokeStyle = markerPalette().selected; c.lineWidth = 3; c.stroke(); }
+    if (t.activeRisk) drawMarkerState(c, 'fault', q[0]+10, q[1]+10);
+    if (t.stale === true || t.freshness === 'STALE') drawMarkerState(c, 'stale', q[0]-10, q[1]+10);
+    if (isSel) { c.beginPath(); c.moveTo(q[0]-9,q[1]+17); c.lineTo(q[0]+9,q[1]+17); c.strokeStyle = markerPalette().selected; c.lineWidth = 3; c.stroke(); }
     c.restore();
   };
 
@@ -1072,8 +1069,9 @@
     if (this.online && this.map) { this._drawOverlays(c, W, H); return; }
 
     /* 简化示意图：保持业务可操作，不读取任何历史图片瓦片。 */
+    const palette = this._basePalette ||= g.OfflineMap.palette();
     const gr = c.createLinearGradient(0, 0, 0, H);
-    gr.addColorStop(0, '#f5f1e8'); gr.addColorStop(1, '#edf2e6');
+    gr.addColorStop(0, palette.land); gr.addColorStop(1, palette.background);
     c.fillStyle = gr; c.fillRect(0, 0, W, H);
 
     if (this._activeCityCode === '370500') {
@@ -1082,35 +1080,35 @@
     COAST.forEach((p, i) => { const q = P(p[0], p[1]); i ? c.lineTo(q[0], q[1]) : c.moveTo(q[0], q[1]); });
     const e1 = P(B.lon1 + 1, B.lat0 - 1), e2 = P(B.lon1 + 1, B.lat1 + 1);
     c.lineTo(e1[0], e1[1]); c.lineTo(e2[0], e2[1]); c.closePath();
-    c.fillStyle = '#b9dce8'; c.fill();
-    c.strokeStyle = 'rgba(88,151,178,.62)'; c.lineWidth = 1.2; c.stroke();
+    c.fillStyle = palette.water; c.fill();
+    c.strokeStyle = palette['water-line']; c.lineWidth = 1.2; c.stroke();
 
     /* 经纬网 */
-    c.strokeStyle = 'rgba(91,116,126,.10)'; c.lineWidth = 1;
+    c.strokeStyle = palette.grid; c.lineWidth = 1;
     for (let lo = 118.0; lo <= 119.3; lo += 0.1) { const a = P(lo, B.lat0), b = P(lo, B.lat1); c.beginPath(); c.moveTo(a[0], a[1]); c.lineTo(b[0], b[1]); c.stroke(); }
     for (let la = 37.0; la <= 38.2; la += 0.1) { const a = P(B.lon0, la), b = P(B.lon1, la); c.beginPath(); c.moveTo(a[0], a[1]); c.lineTo(b[0], b[1]); c.stroke(); }
 
     /* 道路 */
-    c.strokeStyle = 'rgba(196,155,105,.62)'; c.lineWidth = 2.2;
+    c.strokeStyle = palette['road-major']; c.lineWidth = 2.2;
     ROADS.forEach(r => { c.beginPath(); r.forEach((p, i) => { const q = P(p[0], p[1]); i ? c.lineTo(q[0], q[1]) : c.moveTo(q[0], q[1]); }); c.stroke(); });
 
     /* 黄河 */
-    c.strokeStyle = 'rgba(84,157,187,.72)'; c.lineWidth = 2.6; c.lineCap = 'round';
+    c.strokeStyle = palette.water; c.lineWidth = 6; c.lineCap = 'round';
     c.beginPath(); RIVER.forEach((p, i) => { const q = P(p[0], p[1]); i ? c.lineTo(q[0], q[1]) : c.moveTo(q[0], q[1]); }); c.stroke();
-    c.strokeStyle = 'rgba(168,218,232,.65)'; c.lineWidth = 6; c.stroke();
+    c.strokeStyle = palette['water-line']; c.lineWidth = 2.6; c.stroke();
 
     /* 地名 */
     c.textAlign = 'center'; c.textBaseline = 'middle';
     LABELS.forEach(l => {
       const q = P(l.lon, l.lat);
       c.font = `${l.s}px "PingFang SC",sans-serif`;
-      c.strokeStyle = 'rgba(255,255,255,.94)'; c.lineWidth = 4; c.strokeText(l.n, q[0], q[1]);
-      c.fillStyle = l.c; c.fillText(l.n, q[0], q[1]);
+      c.strokeStyle = palette.halo; c.lineWidth = 4; c.strokeText(l.n, q[0], q[1]);
+      c.fillStyle = palette.label; c.fillText(l.n, q[0], q[1]);
     });
     } else {
       /* 其他城市的包不可用时只显示其覆盖范围网格，避免误画东营海岸与地名。 */
       const bounds = this._viewBounds();
-      c.strokeStyle = 'rgba(91,116,126,.13)'; c.lineWidth = 1;
+      c.strokeStyle = palette.grid; c.lineWidth = 1;
       for (let i = 0; i <= 8; i++) {
         const lon = bounds[0] + (bounds[2] - bounds[0]) * i / 8;
         const lat = bounds[1] + (bounds[3] - bounds[1]) * i / 8;
@@ -1120,7 +1118,7 @@
         c.beginPath(); c.moveTo(a[0], a[1]); c.lineTo(b[0], b[1]); c.stroke();
       }
       c.textAlign = 'center'; c.textBaseline = 'middle';
-      c.font = '15px "PingFang SC",sans-serif'; c.fillStyle = '#526b80';
+      c.font = '15px "PingFang SC",sans-serif'; c.fillStyle = palette.label;
       c.fillText(this._activeCityName || '当前城市', W / 2, H / 2);
     }
 

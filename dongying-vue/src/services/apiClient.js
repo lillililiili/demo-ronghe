@@ -48,7 +48,7 @@ const inflightGets = new Map();
 
 function getDedupeKey(path, options) {
   const method = String(options.method || 'GET').toUpperCase();
-  if (method !== 'GET' || options.body != null || options.mutation) return '';
+  if (method !== 'GET' || options.body != null || options.mutation || options.dedupe === false) return '';
   return path;
 }
 

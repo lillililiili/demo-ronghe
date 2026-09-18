@@ -61,14 +61,17 @@ function messageOf(error, fallback) {
 
 /** 授权摘要：业务编号上屏，内部 ID 只进 title；空值整行不渲染。 */
 function summaryHtml(auth, extra = []) {
+  const direct = auth?.authorization_mode === 'DIRECT';
+  const status = auth?.status ? disposalStatusText(auth) : '';
   const rows = [
     ['授权编号', auth?.authorization_no ? `<span class="mono" title="${esc(auth.authorization_id)}">${esc(auth.authorization_no)}</span>` : ''],
     ['动作类型', auth?.action_type ? esc(labelOf(DISPOSAL_ACTION_LABEL, auth.action_type)) : ''],
-    ['当前状态', auth?.status ? esc(disposalStatusText(auth)) : ''],
+    ['授权方式', direct ? '免逐次审批' : auth?.authorization_mode === 'REVIEW' ? '申请审批' : ''],
+    ['当前状态', esc(status)],
     ['执行受阻', auth?.execution_block_reason ? esc(labelOf(DISPOSAL_BLOCK_REASON_LABEL, auth.execution_block_reason)) : ''],
     ['执行通道', auth?.channel ? esc(labelOf(DISPOSAL_CHANNEL_LABEL, auth.channel)) : ''],
-    ['申请人', esc(auth?.requested_by_name || auth?.requested_by || '')],
-    ['审批人', esc(auth?.approved_by_name || auth?.approved_by || '')],
+    [direct ? '直接操作人' : '申请人', esc(auth?.requested_by_name || auth?.requested_by || '')],
+    ['审批人', direct ? '不适用（免逐次审批）' : esc(auth?.approved_by_name || auth?.approved_by || '')],
     ['有效至', time(auth?.valid_until)],
     ...extra
   ].filter(([, v]) => v);
@@ -139,15 +142,22 @@ async function loadEnabledDeviceOptions() {
  * @param {() => boolean} [o.isCurrent] 所属事件及页面是否仍有效，阻止迟到表单串到其他事件
  * @param {object} [o.policy] GET /disposal-policies 的结果，用于显示时限与 DEMO 标注
  * @param {(body: object, key: string) => Promise<object>} [o.submit] 自定义提交；融合感知模拟源用来复用同一弹窗但不打真实授权接口
- * @param {(result: object) => string} [o.okText] 成功提示；缺省为“申请已提交…待审批”
+ * @param {(result: object) => string} [o.okText] 成功提示；缺省为“申请已提交，待审批”
  */
 export function openDisposalRequest({ actionType, actionOptions, subjectKind, subjectId, subjectText, initialReason = '', isCurrent = () => true, policy, refresh, onDone, submit: customSubmit, okText } = {}) {
   if (!actionType || !subjectKind || !subjectId) { toast('缺少处置对象，无法发起申请', 'err'); return false; }
-  void showDisposalRequestForm({ actionType, actionOptions, subjectKind, subjectId, subjectText, initialReason, isCurrent, policy, refresh, onDone, customSubmit, okText });
+  void showDisposalRequestForm({ actionType, actionOptions, subjectKind, subjectId, subjectText, initialReason, isCurrent, policy, refresh, onDone, customSubmit, okText, direct: false });
   return true;
 }
 
-async function showDisposalRequestForm({ actionType, actionOptions, subjectKind, subjectId, subjectText, initialReason, isCurrent, policy, refresh, onDone, customSubmit, okText }) {
+/** 免逐次审批直接处置。资格与业务前置条件仍由 direct-execute 在服务端重新校验。 */
+export function openDisposalDirect({ actionType, subjectKind, subjectId, subjectText, initialReason = '', isCurrent = () => true, policy, refresh, onDone } = {}) {
+  if (!actionType || !subjectKind || !subjectId) { toast('缺少处置对象，无法直接反制', 'err'); return false; }
+  void showDisposalRequestForm({ actionType, subjectKind, subjectId, subjectText, initialReason, isCurrent, policy, refresh, onDone, direct: true });
+  return true;
+}
+
+async function showDisposalRequestForm({ actionType, actionOptions, subjectKind, subjectId, subjectText, initialReason, isCurrent, policy, refresh, onDone, customSubmit, okText, direct = false }) {
   const choices = (actionOptions || []).filter(Boolean);
   const pickable = choices.length > 1;
   let deviceOptions = [];
@@ -174,13 +184,15 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
   const intro = [
     pickable ? null : ['动作类型', esc(labelOf(DISPOSAL_ACTION_LABEL, actionType))],
     ['处置对象', esc(subjectText || subjectId)],
-    limitText ? ['批准后有效时长', esc(limitText)] : null
+    limitText ? [direct ? '授权有效时长' : '批准后有效时长', esc(limitText)] : null
   ].filter(Boolean).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join('');
 
   openFormModal({
-    title: pickable ? '发起处置申请' : `发起${labelOf(DISPOSAL_ACTION_LABEL, actionType)}申请`,
+    title: direct ? `直接${labelOf(DISPOSAL_ACTION_LABEL, actionType)}` : pickable ? '发起处置申请' : `发起${labelOf(DISPOSAL_ACTION_LABEL, actionType)}申请`,
     width: '600px',
-    warning: '提交后进入待审批：审批人必须是另一个人，批准后才可执行。'
+    warning: (direct
+      ? '本次使用免逐次审批权限。服务端仍会核对目标、范围、时效、设备操作权限和急停状态；提交后以设备回执为准。'
+      : '提交后进入待审批：审批人必须是另一个人，批准后才可执行。')
       + ((pickable && choices.includes('COUNTERMEASURE')) || actionType === 'COUNTERMEASURE'
         ? '选择联动反制时，执行完成将自动发起信号干扰，不再二次审批。' : '')
       + (demo ? '当前为演示策略，时限与条件待业务确认。' : ''),
@@ -190,17 +202,17 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
       ...(pickable ? [{ key: 'action_type', label: '动作类型', type: 'radio', required: true,
         options: choices.map(a => ({ value: a, label: labelOf(DISPOSAL_ACTION_LABEL, a) })) }] : []),
       { key: 'channel', label: '执行通道', type: 'radio', required: true, options: [
-        { value: 'LINGYUN_B', label: '凌云协议 B 设备（批准后可自动执行）' },
+        { value: 'LINGYUN_B', label: direct ? '凌云协议 B 设备（提交后由服务端直接下发）' : '凌云协议 B 设备（批准后可自动执行）' },
         { value: 'COUNTERMEASURE_4CH', label: '四通道反制设备（经网络控制器下发，回执以设备为准）' },
         { value: 'MANUAL', label: '人工执行（现场处置后登记结果）' }
       ] },
       { key: 'device_id', label: '执行设备', type: 'select', clearable: true, filterable: true,
         placeholder: '请选择执行设备', options: deviceOptions, help: deviceHelp,
         visibleWhen: m => m.channel !== 'MANUAL' },
-      { key: 'reason', label: '申请事由', type: 'textarea', required: true, minRows: 3, placeholder: '2–500 字：核对已带入的现场情况，补充本次处置事由' }
+      { key: 'reason', label: direct ? '直接反制事由' : '申请事由', type: 'textarea', required: true, minRows: 3, placeholder: '2–500 字：核对已带入的现场情况，补充本次处置事由' }
     ],
     initial: { action_type: actionType, channel: 'LINGYUN_B', device_id: null, reason: initialReason },
-    confirmText: '提交申请',
+    confirmText: direct ? '确认直接反制' : '提交申请',
     danger: true,
     validate: m => {
       if (!isCurrent()) return '事件已切换，请关闭后从当前事件重新申请';
@@ -212,7 +224,7 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
     },
     onSubmit: ({ action_type: chosen, channel, device_id: deviceId, reason }) => submit({
       scope: `${subjectKind}:${subjectId}:${chosen || actionType}`,
-      action: 'request',
+      action: direct ? 'direct' : 'request',
       call: key => {
         if (!isCurrent()) throw new Error('事件已切换，请关闭后从当前事件重新申请');
         const body = {
@@ -220,11 +232,17 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
           channel, device_id: channel === 'MANUAL' ? undefined : (String(deviceId || '').trim() || undefined),
           reason: String(reason).trim()
         };
-        return customSubmit ? customSubmit(body, key) : disposalApi.create(body, key);
+        return customSubmit ? customSubmit(body, key) : direct ? disposalApi.directExecute(body, key) : disposalApi.create(body, key);
       },
       refresh,
       onDone,
-      okText: okText || (result => `申请已提交：${result?.authorization_no || ''} 待审批`)
+      okText: okText || (result => direct
+        ? channel === 'MANUAL'
+          ? `直接反制已受理：${result?.authorization_no || ''}，请在现场执行后登记人工结果。`
+          : result?.execution_block_reason
+            ? `免逐次审批授权已创建：${result?.authorization_no || ''}，执行受阻，请查看授权记录。`
+            : `直接反制已受理：${result?.authorization_no || ''}，正在等待设备回执。`
+        : `申请已提交：${result?.authorization_no || ''} 待审批`)
     })
   });
   return true;

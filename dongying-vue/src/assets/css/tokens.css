@@ -1,6 +1,32 @@
 /* 主题 token 唯一真源。Naive UI 通过 src/ui/theme.js 运行时读取这些变量。
    不要在 Vue 主题配置或组件里手抄色值；新全局变量加在这里。 */
 :root{
+  /* 地图参考色（2026-09-17 大屏调）："浅一点、亮眼一点、不发乌"——亮度比夜间版高一档，
+     同时把饱和度拉高，避免中亮度的蓝灰发灰发乌。色相统一在 215–220°，只有植被/湿地允许偏青。
+     亮度阶梯：农田 < 陆地 < 居住区 < 商业/工业 < 建筑，每档 6–8%；放大时 earth 再随缩放提亮（mapTheme）。
+     业务标注（空域/航线/目标）仍是全图唯一的高饱和暖色，这里不参与业务配色。 */
+  --map-background:#061a3d;   /* 远海/瓦片外：深而饱和的海蓝 */
+  --map-land:#10295a;         /* 陆地基色，L≈18%，饱和度高，不灰 */
+  --map-green:#0e3446;        /* 农田：青绿，干净不发乌；按要素 id 拼四档深浅 */
+  --map-forest:#124238;       /* 公园/林地/草地：更绿一档 */
+  --map-wetland:#1e4150;      /* 湿地/滩涂（黄河口）：青灰偏亮 */
+  --map-urban:#234f92;        /* 居住区：比陆地亮 12% */
+  --map-urban-dense:#2d62b0;  /* 商业/工业/机场：再亮 7% */
+  --map-building:#3a78cc;     /* 建筑（Z14+ 才有数据）：城区之上最亮的一档 */
+  --map-water:#1a55b8;        /* 水面：饱和蓝，明显亮于陆地 */
+  --map-water-line:#3f8ff0;   /* 河流线/海岸线光晕 */
+  --map-road:#3378c8;         /* 县乡道：中蓝，Z12 起带弱光晕 */
+  --map-road-major:#62aef5;   /* 省道/城市主干 */
+  --map-road-highway:#a6dcff; /* 高速/国道：蓝白亮芯 */
+  --map-road-casing:#0a1e45;  /* 道路描边：比陆地略暗 */
+  --map-boundary:#2f63a8;     /* 区县界 */
+  --map-label:#dbe9fb;        /* 市/区县名 */
+  --map-label-muted:#93b6df;  /* 乡镇名/道路名 */
+  --map-halo:#071a3c;         /* 文字底框色（宽 halo 当底框） */
+  --map-grid:rgba(57,112,152,.16);
+  --map-glow:rgba(80,160,240,.22);   /* 路网/城区光晕 */
+  --map-shade:rgba(3,10,36,.55);     /* 程序化山影的背光面 */
+  --map-highlight:rgba(150,200,255,.12); /* 程序化山影的受光面：压低，向光坡刷太多白会让整图发乌 */
   /* 用户确认：无框鲜彩设备、目标、设施；类别色与状态、航迹色分离。 */
   --icon-alarm: #ff243b;
   --icon-radar:#00d982;
@@ -27,17 +53,18 @@
   --icon-unknown:#b067ff;
   --icon-unknown-device:#20c9fa;
 
-  --canvas:#040d21;
-  --surface-1:#081b38;
-  --surface-2:#102c52;
-  --surface-3:#143761;
-  --surface-hover:#194878;
+  /* 界面面板改为低饱和的深石板色（色相不变、饱和度砍半），和地图的饱和蓝拉开；地图在面板里才能"跳"出来。 */
+  --canvas:#050a14;
+  --surface-1:#0b1422;
+  --surface-2:#121d30;
+  --surface-3:#18263c;
+  --surface-hover:#1f3149;
   --bg-0:var(--canvas);
   --bg-1:var(--surface-1);
   --bg-2:var(--surface-2);
   --bg-3:var(--surface-3);
-  --panel:rgba(8,27,56,.96);
-  --panel-2:rgba(8,27,56,.88);
+  --panel:rgba(11,20,34,.96);
+  --panel-2:rgba(11,20,34,.88);
   --line:rgba(54,148,255,.48);
   --line-2:rgba(54,148,255,.22);
   --txt:#edf7ff;

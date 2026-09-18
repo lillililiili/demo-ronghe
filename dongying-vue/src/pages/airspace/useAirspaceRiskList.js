@@ -7,7 +7,7 @@ export function useAirspaceRiskList(monitor, risks, selected) {
     const records = new Map((risks.canRead ? risks.locatedRows : []).map(risk => [risk.risk_id, {
       key: `risk:${risk.risk_id}`, risk, target: null,
       type: risk.risk_type === 'FOREIGN_OBJECT' ? 'SPACE_OBJECT' : risk.risk_type,
-      severity: risk.severity, state: risk.state, at: risk.occurred_at,
+      severity: risk.severity, state: risk.state, at: risk.occurred_at, activeRisk: window.UI.abnormalActive(risk),
     }]));
     const observations = [];
     for (const target of monitor.canRead ? monitor.recent : []) {
@@ -17,7 +17,9 @@ export function useAirspaceRiskList(monitor, risks, selected) {
         type: target.demo ? 'SPACE_OBJECT' : '',
         severity: target.demo?.severity || target.risk_summary?.severity || '',
         state: target.demo ? 'DEMO' : target.risk_summary?.state || 'UNRECORDED',
-        at: target.risk_summary?.occurred_at ?? target.last_seen_at });
+        at: target.risk_summary?.occurred_at ?? target.last_seen_at,
+        // 历史摘要和演示等级不能代替当前风险记录。
+        activeRisk: window.UI.abnormalActive({ ...target, risk_summary: null }) });
     }
     return [...records.values(), ...observations];
   });

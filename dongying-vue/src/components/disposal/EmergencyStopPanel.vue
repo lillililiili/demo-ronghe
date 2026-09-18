@@ -1,7 +1,7 @@
 <script setup>
 import { computed, nextTick, ref, toRef, watch } from 'vue';
 import { UField } from '@/components/form/index.js';
-import { DISPOSAL_ACTION_LABEL, DISPOSAL_STATUS_LABEL, SOURCE_MODE_LABEL, labelOf } from '@/ui/labels.js';
+import { SOURCE_MODE_LABEL, labelOf } from '@/ui/labels.js';
 import { useEmergencyStop } from './useEmergencyStop.js';
 import { deviceStopText, stopActionLabel, stopSummary, stopTime } from './emergencyStopView.js';
 
@@ -15,6 +15,7 @@ const { overview, stop, followup, loading, busy, error, uncertain, forbidden, re
   });
 // 加载本身不代表存在可停止的处置，避免首次读取和轮询时先展开急停区再收起。
 const visible = computed(() => uncertain.value || overview.value?.applicable || stop.value);
+const hasDetails = computed(() => (loading.value && !overview.value) || error.value || uncertain.value || overview.value?.block_reason || stop.value);
 const summary = computed(() => stopSummary(overview.value));
 const historicalStop = computed(() => !!stop.value && overview.value?.applicable);
 const actions = computed(() => overview.value?.allowed_actions || []);
@@ -69,17 +70,16 @@ defineExpose({ refresh, showFeedback, showNote });
     <button v-if="!forbidden" type="button" class="btn" :disabled="loading || busy" @click="refresh">重新查询</button>
   </div>
   <section v-if="visible" ref="host" class="emergency-stop-panel" aria-label="反制与干扰急停" :data-event-id="eventId">
-    <header class="es-header">
+    <header class="es-header" :class="{ 'is-standalone': !hasDetails }">
       <div><h3>反制与干扰</h3><p v-if="eventLabel" class="es-muted">{{ eventLabel }}</p></div>
       <div v-if="!stop || overview?.applicable" class="es-stop-area">
         <button type="button" class="btn es-stop-button" :disabled="!canStop" @click="halt">
           <span aria-hidden="true" v-html="icon('stop')"></span>{{ busy ? '正在提交' : actionLabel }}
         </button>
-        <small>停止本事件反制及关联干扰</small>
       </div>
       <span v-else class="es-stopped">本次处置已中止</span>
     </header>
-    <div class="es-content">
+    <div v-if="hasDetails" class="es-content">
       <div v-if="loading && !overview" class="es-muted" role="status">正在读取当前处置状态</div>
       <div v-if="error" class="es-status is-error" role="alert">
         <strong>暂时无法核对急停状态</strong><p>{{ error }}</p>
@@ -87,12 +87,6 @@ defineExpose({ refresh, showFeedback, showNote });
       </div>
       <div v-if="uncertain" class="es-status is-warning" role="status"><strong>请求结果未知</strong><p>{{ uncertain }}</p><button type="button" class="btn" :disabled="loading || busy" @click="refresh">查询当前结果</button><button v-if="retryReady" type="button" class="btn" :disabled="loading || busy" @click="retryPending">重试同一请求</button><p v-if="retryReady">已查询但尚未证实原请求结果；重试会沿用原请求标识。</p></div>
       <div v-if="overview?.block_reason" class="es-blocker">{{ overview.block_reason }}</div>
-      <dl v-if="overview?.authorizations?.length" class="es-authorizations">
-        <div v-for="authorization in overview.authorizations" :key="authorization.authorization_id">
-          <dt>{{ labelOf(DISPOSAL_ACTION_LABEL, authorization.action_type, '处置') }}</dt>
-          <dd>{{ authorization.status === 'STOPPED' ? '已中止' : labelOf(DISPOSAL_STATUS_LABEL, authorization.status, '状态未知') }}</dd>
-        </div>
-      </dl>
       <p v-if="historicalStop" class="es-history-label">上次处置的停止记录（当前处置尚未中止）</p>
       <div v-if="stop" class="es-status" :class="'is-' + summary.tone" role="status" aria-live="polite">
         <strong>{{ summary.title }}</strong><p>{{ summary.detail }}</p>
@@ -147,10 +141,11 @@ defineExpose({ refresh, showFeedback, showNote });
 .es-query-notice > .btn { flex:none; }
 .emergency-stop-panel { background:var(--surface-1); border:1px solid var(--line); border-radius:var(--r); min-width:0; color:var(--txt); }
 .es-header { position:sticky; top:0; z-index:2; display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:12px; padding:14px; background:var(--surface-1); border-bottom:1px solid var(--line); border-radius:var(--r) var(--r) 0 0; }
+.es-header.is-standalone { border-bottom:0; border-radius:var(--r); }
 .es-header h3 { margin:0; font-size:15px; }
 .es-header p { margin:4px 0 0; overflow-wrap:anywhere; }
 .es-stop-area { display:flex; flex-direction:column; align-items:flex-end; gap:5px; }
-.es-stop-area small, .es-muted { color:var(--txt-2); }
+.es-muted { color:var(--txt-2); }
 .es-stop-button { min-height:44px; padding:9px 16px; background:color-mix(in srgb, var(--red) 65%, var(--canvas)); border-color:var(--red); color:var(--txt); font-weight:600; }
 .es-stop-button:not(:disabled):hover { background:color-mix(in srgb, var(--red) 80%, var(--canvas)); }
 .es-stop-button:focus-visible { outline:2px solid var(--red); outline-offset:3px; }
@@ -163,9 +158,6 @@ defineExpose({ refresh, showFeedback, showNote });
 .es-status.is-success { background:color-mix(in srgb, var(--green) 12%, var(--surface-1)); color:var(--green); }
 .es-status.is-neutral { background:var(--surface-2); color:var(--txt-2); }
 .es-blocker { margin-bottom:12px; color:var(--amber); overflow-wrap:anywhere; }
-.es-authorizations { margin:0; }
-.es-authorizations > div { display:grid; grid-template-columns:100px 1fr; gap:10px; border-bottom:1px solid var(--line); padding:9px 0; }
-.es-authorizations dt { color:var(--txt-2); }.es-authorizations dd { margin:0; }
 .es-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
 .es-link { background:transparent; border-color:transparent; color:var(--blue); }
 .es-feedback, .es-form, .es-history { margin-top:14px; padding-top:12px; border-top:1px solid var(--line); }
@@ -174,5 +166,5 @@ defineExpose({ refresh, showFeedback, showNote });
 .es-needs-check { color:var(--amber); }.es-note, .es-footer { padding-top:12px; }
 .es-history-label { font-weight:600; padding-bottom:6px; }
 .es-history ol { list-style:none; padding:0; margin:10px 0; }.es-history li { display:grid; gap:4px; padding:8px 0; border-bottom:1px solid var(--line); overflow-wrap:anywhere; }.es-history time { color:var(--txt-2); font-size:12px; }
-@media (max-width:600px) { .es-stop-area { width:100%; align-items:stretch; }.es-stop-area small { text-align:center; }.es-authorizations > div { grid-template-columns:88px 1fr; } }
+@media (max-width:600px) { .es-stop-area { width:100%; align-items:stretch; } }
 </style>

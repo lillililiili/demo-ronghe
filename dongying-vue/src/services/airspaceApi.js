@@ -13,6 +13,7 @@ function query(params = {}) {
 export const airspaceApi = {
   list: params => apiRequest(`/airspaces${query(params)}`),
   detail: id => apiRequest(`/airspaces/${encodeURIComponent(id)}`),
+  responsePlan: (id, params) => apiRequest(`/airspaces/${encodeURIComponent(id)}/response-plan${query(params)}`),
   versions: (id, params) => apiRequest(`/airspaces/${encodeURIComponent(id)}/versions${query(params)}`),
   version: id => apiRequest(`/airspace-versions/${encodeURIComponent(id)}`),
   conflicts: planId => apiRequest(`/flight-plans/${encodeURIComponent(planId)}/airspace-conflicts`),

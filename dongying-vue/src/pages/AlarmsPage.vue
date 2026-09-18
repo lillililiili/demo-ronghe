@@ -23,25 +23,23 @@ import { usePageChrome } from '@/hooks/usePageChrome.js';
 import UPagination from '@/components/UPagination.vue';
 import UPanel from '@/components/UPanel.vue';
 import UKpis from '@/components/UKpis.vue';
-import { handoffApi, newHandoffIdempotencyKey } from '@/services/handoffApi.js';
-import { openFormModal } from '@/ui/formModal.js';
-import { closeModal } from '@/ui/modal.js';
+import { handoffApi } from '@/services/handoffApi.js';
 import { toast } from '@/ui/nv.js';
 import { exportAlarmsCsv, getAlarm, getUavEvent, listAlarmDistricts, listAlarms } from '@/services/alarmApi.js';
 import { getEvidenceChain } from '@/services/evidenceApi.js';
 import { openUavVerification } from '@/ui/uavVerificationModal.js';
 import { targetApi } from '@/services/targetApi.js';
-import { ALARM_PROGRESS_LABEL, ALARM_PROGRESS_TAG, ALARM_TYPE_LABEL, DISPOSAL_ACTIVE_STATUSES, DISPOSAL_ACTION_LABEL, disposalStatusText, labelOf, LEGALITY_LABEL, readableNo, SOURCE_MODE_LABEL as MODE_TEXT, targetTypeLabel } from '@/ui/labels.js';
+import { ALARM_PROGRESS_LABEL, ALARM_PROGRESS_TAG, ALARM_TYPE_LABEL, DISPOSAL_ACTIVE_STATUSES, DISPOSAL_ACTION_LABEL, disposalStatusText, labelOf, LEGALITY_LABEL, readableNo, sourceDescription, SOURCE_MODE_LABEL as MODE_TEXT, targetTypeLabel } from '@/ui/labels.js';
 import { openEvidenceFileModal } from '@/ui/evidenceFileDetail.js';
 import { openEvidenceChainTypeModal, renderEvidenceChainHtml } from '@/ui/evidenceChainView.js';
 import { disposalApi, isDisposalUnavailable } from '@/services/disposalApi.js';
-import { DISPOSAL_UNAVAILABLE_TEXT, openDisposalRequest } from '@/ui/disposalAuthModal.js';
+import { DISPOSAL_UNAVAILABLE_TEXT } from '@/ui/disposalAuthModal.js';
 import { hasModuleAction, hasPermission } from '@/services/accessControl.js';
 import { deviceApi } from '@/services/deviceApi.js';
 import { openTrackReplay, trackPointsOf } from '@/ui/trackReplayModal.js';
 import EmergencyStopPanel from '@/components/disposal/EmergencyStopPanel.vue';
 import UavAdvisoryPanel from '@/components/disposal/UavAdvisoryPanel.vue';
-import { advisoryProgress, advisoryRequestReason } from '@/components/disposal/advisoryView.js';
+import { advisoryProgress } from '@/components/disposal/advisoryView.js';
 import { uavAdvisoryApi } from '@/services/uavAdvisoryApi.js';
 import { requiresStopFollowup } from '@/components/disposal/emergencyStopView.js';
 
@@ -116,11 +114,13 @@ function deriveAlarmProgress(auths, handoffs) {
   return null;
 }
 function displayState(a) {
-  if (!a || a.state !== 'CONFIRMED' || !a.event_id) return stateOf(a);
+  if (!a?.event_id || !['CONFIRMED', 'PENDING_VERIFICATION'].includes(a.state)) return stateOf(a);
+  const handedOff = !!advisorySummaries.get(a.event_id)?.auto_handoff?.handoff_id || pageProgress[a.event_id] === 'HANDED_OFF';
+  if (a.state !== 'CONFIRMED' && !handedOff) return stateOf(a);
   if (emergencyInfo.value?.event_id === a.event_id && requiresStopFollowup(emergencyInfo.value)) {
     return { t: '处置已中止，设备待核查', c: 't-amber', color: '#f1a43a' };
   }
-  let key = pageProgress[a.event_id];
+  let key = handedOff ? 'HANDED_OFF' : pageProgress[a.event_id];
   if (cur.alarm && cur.alarm.alarm_id === a.alarm_id) {
     const fromDetail = deriveAlarmProgress(Object.values(disposal.byAction), disposal.handoff ? [disposal.handoff] : []);
     if (fromDetail) key = fromDetail;
@@ -132,7 +132,7 @@ function displayState(a) {
   return { t: ALARM_PROGRESS_LABEL[key], c: ALARM_PROGRESS_TAG[key] || 't-cyan', color: '#22d3ee' };
 }
 const typeOf = a => ALARM_TYPE_LABEL[a.alarm_type] || esc(a.alarm_type || '—');
-/* 只上屏业务编号；引擎标识（eval:…）不是编号，列里显示 —，内部 ID 留在 title。 */
+/* 只上屏业务编号；引擎标识（例如 eval 前缀）不是编号，列里显示 —，内部 ID 留在 title。 */
 const noOf = a => readableNo(a.alarm_no) || '—';
 const modeOf = a => SOURCE_MODE[a.source_mode] || { t: esc(a.source_mode || '—'), c: 't-gray' };
 const sevTag = a => U.tag(sevOf(a).t, sevOf(a).c);
@@ -195,6 +195,15 @@ async function loadEventDisposals(eventId) {
     if (!isCurrent()) return;
     disposal.handoff = (page?.items || []).find(row => row.handoff_type === 'UAV_PUNISHMENT') || (page?.items || [])[0] || null;
   } catch { if (isCurrent()) disposal.handoff = null; }
+  return Object.values(disposal.byAction).sort((a, b) => Number(b.requested_at || 0) - Number(a.requested_at || 0))[0] || null;
+}
+
+async function refreshAdvisoryAuthorization() {
+  const eventId = cur.alarm?.event_id;
+  if (!eventId) return null;
+  const latest = await loadEventDisposals(eventId);
+  if (eventId === cur.alarm?.event_id) { paintList(); paintDetailContent(); }
+  return latest;
 }
 
 const KPI_DEFS = [
@@ -205,7 +214,7 @@ const KPI_DEFS = [
   { label: '待处置', color: 'cyan', icon: 'alert' },
   { label: '误报', color: 'blue', icon: 'check' }
 ];
-const kpiList = ref(KPI_DEFS.map(k => ({ ...k, value: '…', desc: '' })));
+const kpiList = ref(KPI_DEFS.map(k => ({ ...k, value: '读取中', desc: '' })));
 /* 区域字典：读不到就只留"全部"，并在筛选项 title 说明——不能凭当前页的数据拼一份看着像全量的区域列表。 */
 async function loadDistricts() {
   try {
@@ -339,12 +348,12 @@ function queryOf() {
 }
 
 function summaryOf(a) {
-  const text = `${typeOf(a)} · 来源 ${esc(a.source_name || a.source_code || '—')}（${modeOf(a).t}）· 发生 ${fmt(a.occurred_at) || '未知'}`;
+  const text = `来源 ${esc(sourceDescription(a.source_name, a.source_code, a.source_mode, '—'))}· 发生 ${fmt(a.occurred_at) || '未知'}`;
   return `<div style="white-space:normal;line-height:1.5;overflow-wrap:anywhere">${text}</div>`;
 }
 
 function listHtml() {
-  if (list.loading && !list.rows.length) return `<div class="empty">正在读取告警列表…</div>`;
+  if (list.loading && !list.rows.length) return `<div class="empty">正在读取告警列表</div>`;
   if (list.error) return `<div class="empty">${esc(list.error)}<br><button class="btn" data-al="retry" style="margin-top:10px">重试</button></div>`;
   return U.table([
     {
@@ -359,7 +368,7 @@ function listHtml() {
   ], list.rows, { rowId: a => a.alarm_id, activeId: cur.alarm && cur.alarm.alarm_id });
 }
 
-/* 核实后操作统一由 UavAdvisoryPanel 承载，避免旧流程重复提供反制/移送入口。 */
+/* 事件事实核实保留原入口；处罚移送由后台调度，处置面板只读取进度。 */
 function disposalActions(a, ev) {
   if (!ev) return '<button class="btn" disabled>尚未创建核实事件</button>';
   if ((ev.allowed_actions || []).includes('VERIFY')) return '<button class="btn" data-al="verify">核实事件事实</button>';
@@ -375,12 +384,11 @@ function advisoryProps(a, ev) {
     id: a.event_id, label: noOf(a), confirmed: ev.state === 'CONFIRMED',
     counterBlock: stopPending ? '上次处置的设备停止尚未确认，请先核查。'
       : disposal.error || (disposal.unavailable ? DISPOSAL_UNAVAILABLE_TEXT : '')
-        || (active ? `已有${disposalStatusText(active)}的申请，请到反制授权继续办理。` : ''),
+        || (active ? '已有未结束的处置授权，请到反制授权继续办理。' : ''),
     counterActive: !!active,
     counterStatus: latest ? disposalStatusText(latest) : '',
     authorizationId: (active || latest)?.authorization_id || '',
-    handoffId: disposal.handoff?.handoff_id || '',
-    handoffBlock: stopPending ? '设备停止尚未确认，请先完成现场核查。' : ''
+    handoffId: disposal.handoff?.handoff_id || ''
   };
 }
 function updateAdvisory(summary) {
@@ -388,50 +396,53 @@ function updateAdvisory(summary) {
   advisorySummaries.set(summary.event_id, summary);
   if (cur.event) cur.event.version = summary.event_version;
   paintList();
-  const host = el('alDetail'); if (host) host.innerHTML = detailHtml();
+  paintDetailContent();
 }
 
 function detailHtml() {
-  const a = cur.alarm, stEl = el('alSt');
+  const a = cur.alarm;
   if (!a) {
-    if (stEl) stEl.innerHTML = '';
-    if (cur.loading) return '<div class="empty">正在读取告警详情…</div>';
+    if (cur.loading) return '<div class="empty">正在读取告警详情</div>';
     if (cur.error) return `<div class="empty">${esc(cur.error)}<br><button class="btn" data-al="retry-detail" style="margin-top:10px">重试</button></div>`;
     return '<div class="empty">请选择告警</div>';
   }
-  if (stEl) stEl.innerHTML = stateTag(a);
-  const ev = cur.event, t = cur.target, ls = t && t.latest_state;
-  const replayN = replayPointCount();
-  const targetType = !a.target_id ? '—' : cur.targetLoading ? '读取中…' : cur.targetError ? '读取失败' : esc(t ? targetTypeLabel(t.subtype, t.object_type_code) : '—');
+  const t = cur.target, ls = t && t.latest_state;
+  const targetType = !a.target_id ? '—' : cur.targetLoading ? '读取中' : cur.targetError ? '读取失败' : esc(t ? targetTypeLabel(t.subtype, t.object_type_code) : '—');
   const altSpeed = ls ? `${ls.altitude_amsl_m == null ? '—' : esc(ls.altitude_amsl_m)} m / ${ls.speed_mps == null ? '—' : esc(ls.speed_mps)} m/s` : '— m / — m/s';
   return `${U.detailHero({
     icon: 'alert', subtitle: '告警事件', title: typeOf(a), id: esc(noOf(a)),
-    tags: [sevTag(a), stateTag(a)],
-    meta: [['区域', esc(a.district_name || a.district_id || '—')], ['时间', clock(a.received_at)]]
+    tags: [sevTag(a), stateTag(a)]
   })}
-    ${U.metricStrip([
-      { label: '告警等级', value: sevOf(a).t, tone: sevOf(a).tone, icon: 'alert' },
-      { label: '事件状态', value: displayState(a).t, tone: a.state === 'CONFIRMED' || a.state === 'FALSE_POSITIVE' ? 'info' : 'warn', icon: 'play' },
-      { label: '目标类型', value: targetType, icon: 'business:' + U.targetIconKey(t) }
-    ], { compact: true })}
     ${U.sect('告警信息', U.kv([
-    ['告警类型', typeOf(a)], ['告警等级', sevTag(a)],
     ['触发时间', fmt(a.occurred_at) || '未知'], ['接收时间', fmt(a.received_at) || '—'],
     ['所在区域', esc(a.district_name || a.district_id || '—')], ['所属机构', esc(a.owner_org_name || a.owner_org_id || '—')],
     ['关联目标', a.target_id ? `<span class="mono" title="${esc(a.target_id)}">${esc(a.target_no || a.target_id)}</span>` : '无关联目标或无目标读取权限'],
     ['目标类型', targetType],
     ['高度/速度', altSpeed],
-    ['数据来源', `${esc(a.source_name || a.source_code || '—')}（${modeOf(a).t}）`]
+    ['数据来源', `${esc(sourceDescription(a.source_name, a.source_code, a.source_mode, '—'))}`]
   ], { surface: true, density: 'compact' }), { icon: 'alert' })}
     ${renderEvidenceChainHtml(cur.chain, {
       loading: cur.chainLoading, error: cur.chainError, unavailable: cur.chainUnavailable
-    })}
-    ${U.detailActions(`
+    })}`;
+}
+
+function detailActionsHtml() {
+  const a = cur.alarm, ev = cur.event;
+  if (!a) return '';
+  const replayN = replayPointCount();
+  return `${U.detailActions(`
       <button class="btn" data-al="video" disabled title="协议未提供实时视频流">${U.icon('video')} 实时视频</button>
       <button class="btn" data-al="replay" ${replayN > 1 ? '' : 'disabled '}title="${replayN > 1 ? '按实测轨迹在地图上走航线回放，不是视频' : '没有足够的轨迹点'}">${U.icon('trend')} 轨迹回放</button>
       ${eoTrackActions(a)}
       ${disposalActions(a, ev)}`)}
     ${ev?.state === 'PENDING_VERIFICATION' ? '<p style="margin:8px 16px;font-size:12px;line-height:1.65;color:var(--muted)">事件事实尚待核实；符合后台条件且通道已启用的飞手短信、电话录音通知可先行执行。现场补充与反制申请仍按各自条件办理。</p>' : ''}`;
+}
+
+function paintDetailContent() {
+  const host = el('alDetail');
+  if (host) host.innerHTML = detailHtml();
+  const actions = el('alDetailActions');
+  if (actions) actions.innerHTML = detailActionsHtml();
 }
 
 function eoTrackActions(a) {
@@ -459,14 +470,14 @@ function paintDetail() {
   if (emergencyEvent.value?.id !== eventId) emergencyInfo.value = null;
   emergencyEvent.value = eventId ? { id: eventId, label: noOf(cur.alarm) } : null;
   advisorySubject.value = advisoryProps(cur.alarm, cur.event);
-  const host = el('alDetail'); if (host) host.innerHTML = detailHtml();
+  paintDetailContent();
 }
 function updateEmergency(data) {
   if (data && data.event_id !== emergencyEvent.value?.id) return;
   emergencyInfo.value = data;
   advisorySubject.value = advisoryProps(cur.alarm, cur.event);
   paintList();
-  const host = el('alDetail'); if (host) host.innerHTML = detailHtml();
+  paintDetailContent();
 }
 async function refreshEmergency(eventId) {
   if (eventId !== cur.alarm?.event_id) return;
@@ -494,7 +505,12 @@ function focusMap() {
   if (!t || !last) return setInfo(warn(`关联目标 ${esc(t?.target_no || a.target_no || a.target_id)} 位置无法确认，暂时无法定位`));
   const subtype = targetTypeLabel(t.subtype, t.object_type_code, '目标');
   const target = {
-    id: t.target_no || t.target_id, lon: last.lon, lat: last.lat,
+    id: t.target_no || t.target_id, targetId: t.target_id, lon: last.lon, lat: last.lat,
+    objectTypeCode: t.object_type_code, subtypeCode: t.subtype,
+    activeRisk: U.abnormalActive(a), historical: !U.abnormalActive(a),
+    // 末次观测可能已过期，但未解除告警仍需提示；不据此重写观测位置。
+    statusCode: t.status_code || t.track_status?.status || '',
+    freshness: t.freshness || '', stale: t.stale === true,
     alt: ls && ls.altitude_amsl_m != null ? Number(ls.altitude_amsl_m) : null,
     speed: ls && ls.speed_mps != null ? Number(ls.speed_mps) : null,
     heading: ls && ls.heading_deg != null ? Number(ls.heading_deg) : 0,
@@ -508,18 +524,18 @@ function focusMap() {
   map.sel = target.id;
   map.setData({
     airspaces: [], devices: [], targets: [target],
-    alarms: [{ id: a.alarm_id, targetId: target.id, type: typeOf(a), level: sevOf(a).t, time: fmt(a.received_at), status: displayState(a).t }]
+    alarms: [{ id: a.alarm_id, targetId: target.id, state: a.state, eventState: a.state, type: typeOf(a), level: sevOf(a).t, time: fmt(a.received_at), status: displayState(a).t }]
   });
   if (pts.length > 1) map.fitTo([...pts.map(p => [p.lon, p.lat]), [last.lon, last.lat]], 0.18);
   else map.centerAt(last.lon, last.lat);
   const source = labelOf(MODE_TEXT, cur.track?.source_mode || t.source_mode, '来源未知');
-  const trackNote = pts.length > 1 ? `${esc(source)} · 轨迹 ${pts.length} 点；黄色表示航线关系未知`
+  const trackNote = pts.length > 1 ? '黄色表示航线关系未知'
     : cur.trackError ? `轨迹读取失败：${esc(cur.trackError)}`
       : pts.length === 1 ? '仅有一个轨迹点，无法连成飞行轨迹' : '没有可显示的飞行轨迹';
   if (srcEl) srcEl.innerHTML = pts.length > 1
     ? `<span class="tag t-amber">${esc(source)}轨迹</span> <span style="color:#8fbaff">${pts.length} 点</span>`
     : `<span class="tag t-gray" title="${cur.trackError ? esc(cur.trackError) : '暂时没有可显示的飞行轨迹'}">无轨迹</span>`;
-  setInfo(`<span class="mono" style="color:var(--txt-2)" title="${esc(t.target_id)}">${esc(t.target_no || t.target_id)}</span> · ${esc(subtype)} · 合法性 ${esc(target.legal)} · 高度 ${target.alt == null ? '—' : esc(target.alt) + ' m'} · ${trackNote}`,
+  setInfo(`合法性 ${esc(target.legal)} · ${trackNote}`,
     `${t.target_no || t.target_id}｜${subtype}｜高度 ${target.alt == null ? '—' : target.alt + ' m'}\n${trackNote}`);
 }
 
@@ -716,79 +732,6 @@ function verifyModal() {
   });
 }
 
-/* 发起联动反制申请：主体是这条已核实的无人机事件，策略与时限由服务端返回，前端不预设。 */
-async function counterModal() {
-  const a = cur.alarm, ev = cur.event;
-  if (!a || !ev) return toast('尚未创建核实事件，无法发起处置申请', 'err');
-  const requestSeq = detailSeq;
-  const isCurrent = () => detailSeq === requestSeq && cur.event?.event_id === ev.event_id;
-  let policy = null;
-  try { policy = await disposalApi.policies(); } catch { policy = null; }   // 策略读不到只影响提示文字，不阻断申请
-  if (!isCurrent()) return;
-  /* 决策 13-19：信号干扰与联动反制共用这一个入口，动作类型在弹窗里选，不给页面新增按钮。 */
-  openDisposalRequest({
-    actionType: 'COUNTERMEASURE',
-    actionOptions: ['COUNTERMEASURE', 'JAMMING'],
-    subjectKind: 'UAV_EVENT',
-    subjectId: ev.event_id,
-    subjectText: readableNo(a.alarm_no) || typeOf(a),
-    initialReason: advisoryRequestReason(advisorySummaries.get(ev.event_id)),
-    isCurrent,
-    policy,
-    // refreshAfterWrite 会重读列表、详情（内含授权）与 KPI，详情重读后步骤与按钮即反映新状态。
-    refresh: async () => {
-      await refreshAfterWrite();
-      return disposal.byAction.COUNTERMEASURE || disposal.byAction.JAMMING || null;
-    }
-  });
-}
-
-const handoffKeys = new Map();
-function newHandoffKey(eventId, recipientId) {
-  const scope = `${eventId}:${recipientId}`;
-  if (!handoffKeys.has(scope)) handoffKeys.set(scope, newHandoffIdempotencyKey());
-  return handoffKeys.get(scope);
-}
-
-/* 提交处罚交接：选接收方后提交，expected_version 取当前事件版本（缺它服务端回 400，不是 409）。 */
-async function punishModal() {
-  const a = cur.alarm, ev = cur.event;
-  if (!a || !ev) return toast('尚未创建核实事件，无法移送处罚', 'err');
-  let recipients = [];
-  try {
-    const page = await handoffApi.listHandoffRecipients('UAV_PUNISHMENT');
-    recipients = page?.items || page || [];
-  } catch (error) {
-    return toast(messageOf(error) || '读取处罚接收方失败', 'err');
-  }
-  if (!recipients.length) return toast('没有可用的处罚接收方，请先在系统管理里配置', 'err');
-  openFormModal({
-    title: '提交处罚交接',
-    width: '560px',
-    warning: '短信劝离成功、未使用反制的事件，也可根据违法事实移送。提交时会保存联系、观察与已有处置材料；是否处罚及罚款金额由处罚部门依法决定。',
-    fields: [{ key: 'recipient_id', label: '接收方', type: 'select', required: true,
-      options: recipients.map(r => ({ value: r.recipient_id, label: r.display_name || r.recipient_id })) }],
-    initial: { recipient_id: recipients[0].recipient_id },
-    confirmText: '提交移送',
-    validate: m => (m.recipient_id ? null : '请选择接收方'),
-    onSubmit: async ({ recipient_id: recipientId }) => {
-      try {
-        await handoffApi.createHandoff({
-          source_kind: 'UAV_EVENT', source_id: ev.event_id, handoff_type: 'UAV_PUNISHMENT',
-          recipient_id: recipientId, expected_version: Number(ev.version)
-        }, newHandoffKey(ev.event_id, recipientId));
-        closeModal();
-        handoffKeys.delete(`${ev.event_id}:${recipientId}`); // 明确成功后丢弃本事件的幂等键
-        toast('已移送，可到处罚页立案', 'ok');
-        await refreshAfterWrite();
-      } catch (error) {
-        // 服务端校验核实、版本、接收方与重复交接；不以反制完成为前提。
-        throw new Error(messageOf(error) || '提交处罚交接失败');
-      }
-    }
-  });
-}
-
 function onPage(p2) { st.page = p2; loadList(); }
 function onPageSize(s2) { st.size = s2; st.page = 1; loadList(); }
 
@@ -822,8 +765,6 @@ onMounted(async () => {
     if (btn.disabled) return;
     const k = btn.dataset.al;
     if (k === 'verify') verifyModal();
-    else if (k === 'counter') counterModal();
-    else if (k === 'punish') punishModal();
     else if (k === 'retry') loadList();
     else if (k === 'retry-detail' && st.selId) selectAlarm(st.selId);
     else if (k === 'chain-retry' && st.selId) loadChain(detailSeq);
@@ -870,19 +811,33 @@ onMounted(async () => {
           <UPanel title="关联目标定位与轨迹" panel-style="height:244px;max-height:50%;flex:none" nopad
             body-style="padding:6px" :extra="mapExtra" :body-html="mapBody" />
           <UPanel title="告警详情与处置" panel-style="flex:1;min-height:0" nopad
-            extra='<span id="alSt"></span>' body-style="overflow:auto;display:block">
-            <UavAdvisoryPanel v-if="advisorySubject" :key="advisorySubject.id"
+            body-style="overflow:auto;display:block">
+            <EmergencyStopPanel v-if="emergencyEvent" :key="`emergency-${emergencyEvent.id}`" :event-id="emergencyEvent.id"
+              @updated="updateEmergency" @changed="refreshEmergency" />
+            <div id="alDetail" style="padding:12px"></div>
+            <UavAdvisoryPanel v-if="advisorySubject" :key="`advisory-${advisorySubject.id}`"
               :event-id="advisorySubject.id" :event-label="advisorySubject.label" :confirmed="advisorySubject.confirmed"
               :counter-block="advisorySubject.counterBlock" :counter-status="advisorySubject.counterStatus" :counter-active="advisorySubject.counterActive"
               :authorization-id="advisorySubject.authorizationId"
-              :handoff-id="advisorySubject.handoffId" :handoff-block="advisorySubject.handoffBlock"
-              @updated="updateAdvisory" @counter="counterModal" @punish="punishModal" />
-            <EmergencyStopPanel v-if="emergencyEvent" :key="emergencyEvent.id" :event-id="emergencyEvent.id"
-              :event-label="emergencyEvent.label" @updated="updateEmergency" @changed="refreshEmergency" />
-            <div id="alDetail" style="padding:12px"></div>
+              :handoff-id="advisorySubject.handoffId"
+              :refresh-authorization="refreshAdvisoryAuthorization"
+              @updated="updateAdvisory" />
+            <div id="alDetailActions" style="padding:0 12px 12px"></div>
           </UPanel>
         </div>
       </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+.alarms-page :deep(.detail-hero-title),
+.alarms-page :deep(.detail-hero-id) {
+  display: block;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: unset;
+  -webkit-line-clamp: unset;
+  overflow-wrap: anywhere;
+}
+</style>

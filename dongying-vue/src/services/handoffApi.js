@@ -1,7 +1,7 @@
 import { apiRequestTimed, buildQuery } from './apiClient.js';
 
 /* 阶段 5 交接适配层：只包装后端 /handoff-recipients 与 /handoffs 接口，不复制任何状态机。
-   提交成功只表示材料入库（PENDING_DELIVERY），不表示已发送、已送达或处罚办结。
+   提交成功保证材料入库；后端尝试投递，发送与送达以返回事实为准，不表示处罚办结。
    超时/断网由 apiClient 统一抛 TIMEOUT/NETWORK_ERROR；页面用 isUncertainOutcome 判断“结果未知”。 */
 
 export function newHandoffIdempotencyKey() {
@@ -30,4 +30,14 @@ export function listHandoffDeliveries(handoffId, params) {
   return apiRequestTimed(`/handoffs/${encodeURIComponent(handoffId)}/deliveries${buildQuery(params)}`);
 }
 
-export const handoffApi = { listHandoffRecipients, createHandoff, listHandoffs, getHandoff, listHandoffDeliveries };
+export function getHandoffNotification(handoffId) {
+  return apiRequestTimed(`/handoffs/${encodeURIComponent(handoffId)}/notifications`);
+}
+
+export function notifyHandoff(handoffId, expectedAttemptNo, idempotencyKey) {
+  return apiRequestTimed(`/handoffs/${encodeURIComponent(handoffId)}/notifications`, {
+    method: 'POST', mutation: true, idempotencyKey, body: { expected_attempt_no: expectedAttemptNo }
+  });
+}
+
+export const handoffApi = { listHandoffRecipients, createHandoff, listHandoffs, getHandoff, listHandoffDeliveries, getHandoffNotification, notifyHandoff };

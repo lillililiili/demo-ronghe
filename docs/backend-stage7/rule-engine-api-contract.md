@@ -130,7 +130,7 @@ GET  /api/v1/rule-sets/{code}/activations                rule:read   resulting_v
 GET  /api/v1/rule-runs?mode&trigger_kind&from&to         rule:read   started_at DESC, run_id DESC
 GET  /api/v1/rule-runs/{id}                              rule:read
 POST /api/v1/legality-evaluations                        assessment:evaluate(+源读) {subject_kind TARGET|PLAN, subject_id, mode ACTIVE|SHADOW} → 201 {run_id, evaluation}
-GET  /api/v1/legality-evaluations?mode&latest_only&legal_status&plan_match&review_state&subject_kind&target_id&plan_id&from&to&owner_org_id&district_id&source_mode   assessment:read  排序 evaluated_at DESC, evaluation_id DESC
+GET  /api/v1/legality-evaluations?mode&latest_only&legal_status&plan_match&review_state&subject_kind&target_id&object_type_code&plan_id&from&to&owner_org_id&district_id&source_mode   assessment:read  排序 evaluated_at DESC, evaluation_id DESC
 GET  /api/v1/legality-evaluations/{id}                   assessment:read  {…, hit_details, review:{state,manual_status,version}, allowed_actions, supersedes_evaluation_id, superseded_by_evaluation_id, alarm_id?, assessment_id}
 GET  /api/v1/legality-evaluations/{id}/revisions         assessment:read  version ASC
 POST /api/v1/legality-evaluations/{id}/revisions         assessment:revise {conclusion CONFIRM|REJECT|OVERRIDE, override_status?, note, expected_version}
@@ -141,6 +141,10 @@ GET  /api/v1/rule-effects/summary?mode&from&to&timezone&source_mode&owner_org_id
 ```
 
 `summary`：`evaluations, alarm_worthy, alarms_created, alarms_merged, convergence_ratio, reviewed, false_positive_rate(REJECTED/reviewed), miss_rate(OVERRIDE 由 LEGAL|UNDETERMINED 改为 ILLEGAL|ABNORMAL / reviewed), manual_override_rate((REJECTED+OVERRIDDEN)/reviewed)`；分母 0 → `{value:null, availability:"NO_DENOMINATOR"}`。`allowed_actions`：PENDING_REVIEW 且有 revise → `REVIEW`；非 SUPERSEDED 且有 evaluate → `RECOMPUTE`；`legal_status ≠ LEGAL` 且无 `alarm_id` 且有 escalate → `ESCALATE`。`hit_details` 元素：`{rule_code, rule_version_id, result_code, reason_code, severity, facts{…}, params[{key,value,status}], evidence[{kind,id}], message}`。
+
+2026-09-17 无人机页面范围：列表增加可选 `object_type_code=UAV|BIRD|UNKNOWN`，使用该参数另需 `target:read`；按关联目标当前类别及与研判一致的组织/区域元组，在计数和分页前统一筛选。不带参数保持已有调用范围。列表和详情增加顶层 `object_type_code`，与目标引用遵循同一权限及可见范围，无法读取目标时省略。合法性页列表、统计和深链固定使用 UAV，不要求有匹配计划；类别未知、非无人机和无关联目标的计划不会被视为 UAV。详情类别变化时前台清空该条详情并重新读取列表与统计，不改历史结论。后端无数据库迁移或规则行为变化。
+
+本轮验收：新增范围测试修复前按预期失败，H2 三类回归共 30 条通过；隔离浏览器覆盖混合类型、分页、状态统计、无计划无人机、类别变化后回读、计划筛选、非无人机深链、刷新和三档视口。实际本地 `houtaiguanli` 库原范围 112 条、UAV 范围 76 条，页面和刷新均显示 76 条，列表、详情、轨迹、复核历史与五项统计请求成功。首次六路并发复现 15 秒超时后，前台改为列表优先、统计依次读取；实测列表首次约 3.3 秒、刷新约 1.9 秒，单项统计约 1–4.4 秒。独立 PostgreSQL 测试库因 PostGIS/连接初始化失败未完成自动回归，不用实际库只读检查冒充该测试已通过；未执行真实设备、通知或业务写动作。
 
 ## 稳定错误码
 
@@ -157,3 +161,37 @@ GET  /api/v1/rule-effects/summary?mode&from&to&timezone&source_mode&owner_org_id
 ## 尚未接入
 
 飞手位置/超视距、身份线索（TDOA/5G-A）、起降点、飞手/单位、真实规则参数确认、处置（转入处置按钮禁用）。
+
+## 2026-09-17：算法证据充分性与人工复核分流
+
+本节扩展原 C01–C03 分类结果，不改变既有 `legal_status`、风险评分或通知/处置状态机。算法版本 `EVIDENCE_SUFFICIENCY_V1` 在每次研判事务内读取同一目标状态、轨迹质量、计划匹配、规则参数和命中事实，计算该结论能否自动采纳；它不是经过统计校准的正确概率。
+
+`rule_evaluation` 新增三个可空列：`decision_algorithm_version VARCHAR(64)`、`decision_assurance_code VARCHAR(32)`、`decision_assurance_reasons JSON`（PostgreSQL 为 JSONB）。新研判 INSERT 时一起写入并冻结；三个字段同时为空表示历史未保存算法结果，禁止回填成已验证。H2/PG 检查约束要求新值成组有效；PG 追加触发器阻止更改这三列。迁移为 `V202609170020` 与 PostgreSQL 专用 `V202609170020.1`，不修改旧迁移。
+
+`GET /legality-evaluations` 列表和详情均增加：
+
+```json
+{
+  "decision_assurance": {
+    "algorithm_version": "EVIDENCE_SUFFICIENCY_V1",
+    "status": "SUFFICIENT",
+    "review_required": false,
+    "reasons": [],
+    "accuracy_status": "NOT_VALIDATED"
+  }
+}
+```
+
+- `SUFFICIENT`：有效输入满足既有质量门。合法结果还要求计划身份完整匹配、必要检查完整且无阻断项；非法结果须有确定的禁飞/空域限高/临管违规事实。明确违规可以独立于计划匹配成立，不因无关未知而强制复核。
+- `INSUFFICIENT`：保存本次阻断原因。无匹配计划本身不证明无授权，身份缺失不证明属于该计划，只有 ABNORMAL 风险结论不擅自改成非法。
+- `NOT_APPLICABLE`：本次不适用实际飞行判定，保留原原因。
+- `UNAVAILABLE`：只读层对三个新列均为 NULL 的旧记录返回，`algorithm_version` 按全局 null 规则省略，原因 `ALGORITHM_RESULT_UNAVAILABLE`。三列不完整、非法状态或原因 JSON 格式不合法时返回既有 `INTERNAL_ERROR`，不降级成可靠结果。
+- `accuracy_status=NOT_VALIDATED`：功能测试与模拟回放不等于统计准确率验证，不返回虚构百分比。
+
+真实观测需确认参与质量判断的 `fresh_seconds / track_points / conf_min / min_points / gap_seconds`；判非法时继续校验支撑该违规的参数，判合法时校验必要检查及忽略未知规则的配置。模拟/回放可按演示参数验算，来源与参数标识原样保留，不冒充真实算法验收。
+
+`review_required` 独立于操作者权限：仅 ACTIVE、结论不是 NOT_APPLICABLE、复核头仍为 PENDING_REVIEW、尚未被取代且充分性为 INSUFFICIENT 或旧记录未知时为 true。已复核、影子模式和不适用不重复要求人工操作。原 `review.state` 是复核头状态，不单独表示系统必须等待人工；`allowed_actions` 继续表示有权进行的动作，REVIEW 可供自愿纠错，不等于强制复核任务。
+
+列表新增可选 `needs_review=true|false`。未传不增加条件；显式 false 与未传不同。与 DTO 使用同一业务条件，在 count 与列表分页前筛选，继续叠加组织/区域、目标类别、最新研判等既有条件。`信息待核对` 使用 `needs_review=true`，不能固定筛选 `legal_status=UNDETERMINED` 或在分页后删行。
+
+前端根据分流结果隐藏或显示右侧“核对信息缺口”。可靠合法与可靠非法都没有主复核要求；低可靠合法/非法保留原标签并标识“暂不能可靠确认”。无提交权限时只读原因；旧响应缺新字段显示未提供算法可靠性结果；复核、重新研判、刷新与重新登录均回读服务端，保留原结论、来源及历史。

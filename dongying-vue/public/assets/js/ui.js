@@ -170,14 +170,31 @@
       KITE:'kite', 风筝:'kite', SKY_LANTERN:'lantern', LANTERN:'lantern', 孔明灯:'lantern', UAV:'uav' })[subtype] || 'unknown';
   }
   const targetIcon = target => businessIcon(targetIconKey(target));
-  // 只读取已有当前状态；历史关联、已结束、失联或过期不触发红光。
-  function mapAlarmActive(item = {}) {
-    if (item.stale === true || item.freshness === 'STALE' || item.historical === true
-      || ['STALE','OFFLINE','DISABLED'].includes(item.statusCode || item.connectivity)
-      || ['离线','已停用','已失联','已结束'].includes(item.status)
-      || ['RESOLVED','CLOSED','DISMISSED','FALSE_POSITIVE','ARCHIVED'].includes(item.state || item.eventState)) return false;
-    return item.activeRisk === true || item.abnormal === true || item.statusCode === 'ABNORMAL'
-      || item.status === '异常' || ['PENDING_VERIFICATION','CONFIRMED'].includes(item.state || item.eventState);
+  // 统一读取当前异常事实：离线、故障、数据失效和未解除事件均提示；历史关联本身不构成当前异常。
+  function abnormalActive(item = {}) {
+    if (!item || item.historical === true) return false;
+    const states = [item.state, item.eventState, item.event_state, item.statusCode, item.status,
+      item.connectivity, item.health_code, item.health, item.freshness].filter(Boolean);
+    if (states.some(state => ['RESOLVED','CLOSED','DISMISSED','EXCLUDED','FALSE_POSITIVE','ARCHIVED',
+      'COMPLETED','ENDED','CANCELLED','已解除','已关闭','已排除','误报','已结束','已恢复'].includes(state))) return false;
+    if (item.activeRisk === true || item.abnormal === true || item.stale === true
+      || item.has_alarm === true || item.hasAlarm === true) return true;
+    if (states.some(state => ['ABNORMAL','OFFLINE','DISCONNECTED','FAULT','ERROR','FAILED','TIMED_OUT',
+      'TIMEOUT','BAD','DEGRADED','STALE','ALARM','PENDING_VERIFICATION','CONFIRMED',
+      '异常','离线','故障','告警','数据过期','已失联','待核实'].includes(state))) return true;
+    // 通知与回执不等于风险解除；普通通知任务不能因同名状态被当作风险。
+    return !!item.risk_id && ['PENDING_NOTIFICATION','NOTIFIED','ACKNOWLEDGED'].includes(item.state);
+  }
+  const mapAlarmActive = abnormalActive;
+  let alarmMotionQuery, alarmGlowColor;
+  function applyAlarmGlow(context, item) {
+    if (!context || !abnormalActive(item)) return;
+    alarmMotionQuery ||= g.matchMedia?.('(prefers-reduced-motion: reduce)');
+    const pulse = alarmMotionQuery?.matches ? .75 : (1 - Math.cos(performance.now() / 1400 * Math.PI * 2)) / 2;
+    alarmGlowColor ||= getComputedStyle(document.documentElement).getPropertyValue('--icon-alarm').trim() || '#ff243b';
+    context.shadowColor = alarmGlowColor;
+    context.shadowBlur = 6 + 22 * pulse;
+    context.shadowOffsetX = context.shadowOffsetY = 0;
   }
   const businessImages = new Map();
   function drawBusinessIcon(context, key, x, y, size, heading = null) {
@@ -606,7 +623,7 @@
   });
 
   g.UI = {
-    icon, deviceMeta, deviceIcon, businessIcon, businessIconUrl, targetIconKey, targetIcon, drawBusinessIcon, mapAlarmActive, num, pct, money, delta, tag, risk, legal, dotState, stateIcon, panel, detailHero, kpis, table, cell, pager,
+    icon, deviceMeta, deviceIcon, businessIcon, businessIconUrl, targetIconKey, targetIcon, drawBusinessIcon, abnormalActive, mapAlarmActive, applyAlarmGlow, num, pct, money, delta, tag, risk, legal, dotState, stateIcon, panel, detailHero, kpis, table, cell, pager,
     checked, bindCheckAll, goto, consume, selectRow, srcTag, confPct, modelTag, regParams, paramGroups,
     kv, sect, metricStrip, detailActions, codeBlock, steps, timeline, modal, closeModal, toast, field, select, input, bars, on, KC,
     legalBasis, basisHtml, verdictHtml

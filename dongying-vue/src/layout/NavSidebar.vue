@@ -43,6 +43,6 @@ const visibleNav = computed(() => {
 .nav .grp { margin: 0; padding: 14px 10px 6px; font-size: 11px; line-height: 1.5; font-weight: 500; letter-spacing: 1px; color: var(--txt-3); }
 .nav .g1:first-child .grp { padding-top: 4px; }
 .nav a.l1 { flex: none; }
-.nav a.l1.on { border-color: color-mix(in srgb, var(--nav-accent) 70%, transparent); background: linear-gradient(90deg, color-mix(in srgb, var(--nav-accent) 34%, transparent), color-mix(in srgb, var(--nav-accent) 6%, transparent)); box-shadow: inset 3px 0 var(--nav-accent), inset 0 1px var(--highlight), 0 0 16px color-mix(in srgb, var(--nav-accent) 18%, transparent); }
+.nav a.l1.on { border-color: color-mix(in srgb, var(--nav-accent) 70%, transparent); background: var(--surface-hover); box-shadow: inset 3px 0 var(--nav-accent), inset 0 1px var(--highlight), 0 0 16px color-mix(in srgb, var(--nav-accent) 18%, transparent); }
 .nav a.l1:focus-visible { outline: 2px solid var(--nav-accent); outline-offset: -2px; }
 </style>

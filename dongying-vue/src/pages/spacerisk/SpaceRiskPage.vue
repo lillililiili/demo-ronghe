@@ -256,6 +256,8 @@ function renderMap() {
     // 没有快照坐标就不画点——地图上多一个位置错误的标记，比少一个标记危险得多。
     if (spot) {
       const [x, y] = this.px(spot.longitude, spot.latitude);
+      context.save();
+      U.applyAlarmGlow(context, detail.value);
       context.beginPath();
       context.arc(x, y, 5, 0, Math.PI * 2);
       context.fillStyle = spot.color;
@@ -265,6 +267,7 @@ function renderMap() {
       context.strokeStyle = spot.color + 'aa';
       context.lineWidth = 1.4;
       context.stroke();
+      context.restore();
     }
     context.restore();
   };

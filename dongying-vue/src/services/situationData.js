@@ -258,9 +258,14 @@ export function toDevices(devices) {
       lon,
       lat,
       status,
+      connectivity: device.connectivity || 'UNKNOWN',
       statusCode: DEVICE_STATUS[device.connectivity] ? device.connectivity : 'UNKNOWN',
       alarm: hasAlarm,
       hasAlarm,
+      // has_alarm 来自当前设备状态快照；历史 relatedAlerts 不参与当前故障判断。
+      health_code: device.health_code || 'UNKNOWN',
+      activeRisk: device.active_risk === true || device.activeRisk === true,
+      abnormal: device.abnormal === true || device.has_alarm === true,
       type: device.device_type_name || device.device_type || '',
       typeCode,
       icon: presentation.icon,
@@ -330,6 +335,13 @@ export function toTargets(targets, legalMap) {
       uavSn: target.uav_sn || '',
       district: target.district_name || '',
       lastSeenAt: num(target.last_seen_at),
+      trackStatus: target.track_status?.status || '',
+      statusCode: target.status_code || target.track_status?.status || '',
+      freshness: target.freshness || '',
+      stale: target.stale === true,
+      historical: target.historical === true,
+      activeRisk: target.active_risk === true || target.activeRisk === true,
+      abnormal: target.abnormal === true,
       sourceMode: target.source_mode || '',
       sourceDeviceIds: Array.isArray(target.source_links)
         ? target.source_links.map(link => link.device_id).filter(Boolean) : [],
@@ -466,7 +478,7 @@ export function toRisks(risks) {
     const fact = risk.space_fact || null;
     return {
       id: risk.risk_no || risk.risk_id,
-      riskId: risk.risk_id,
+      riskId: risk.risk_id, risk_id: risk.risk_id,
       riskType: risk.risk_type,
       severity: risk.severity,
       level: SEVERITY_LEVEL[risk.severity] || '低',

@@ -87,6 +87,7 @@ const selectedUavAlarm = computed(() => {
   return selectedTarget.value?.objectTypeCode === 'UAV' ? targetAlarm(selectedTarget.value) : null;
 });
 const showAlarmPopup = computed(() => alertTab.value === 'target' && !!selectedUavAlarm.value);
+const showAlarmAdvisoryCard = computed(() => showAlarmPopup.value && !!selectedUavAlarm.value?.eventId);
 const fusionDevices = computed(() => {
   const ids = new Set(selectedTarget.value?.sourceDeviceIds || []);
   return devices.value.filter(device => ids.has(device.fusionDeviceId || device.deviceId));
@@ -226,7 +227,7 @@ function decorate(next) {
     const activeRisks = relatedRisks.filter(risk => risk.active);
     return {
       ...target,
-      activeRisk: openAlarms.length > 0 || activeRisks.length > 0,
+      activeRisk: target.activeRisk || openAlarms.length > 0 || activeRisks.length > 0,
       newAlert: openAlarms.some(alarm => alarm.isNew) || activeRisks.some(risk => risk.isNew),
       relatedAlarms,
       relatedRisks
@@ -482,7 +483,7 @@ function renderDeviceTip(device) {
   </section>`;
 }
 
-function renderTargetActions(target) {
+function renderTargetActions(target, hasAdvisoryCard = false) {
   const alarm = targetAlarm(target);
   const buttons = [];
   if (showEoVideo(target, devices.value)) {
@@ -491,12 +492,12 @@ function renderTargetActions(target) {
   if (target.objectTypeCode === 'UAV' && alarm) {
     const process = uavProcessActions(alarm);
     if (process.includes('false-positive')) buttons.push('<button type="button" data-tip-act="false-positive">误报</button>');
-    if (alarm.eventState !== 'FALSE_POSITIVE') buttons.push('<button type="button" data-tip-act="disposal-flow">处置流程</button>');
+    if (alarm.eventState !== 'FALSE_POSITIVE' && !hasAdvisoryCard) buttons.push('<button type="button" data-tip-act="disposal-flow">处置流程</button>');
   }
   return buttons.length ? `<div class="sit-map-pop-actions">${buttons.join('')}</div>` : '';
 }
 
-function renderTargetTip(target) {
+function renderTargetTip(target, hasAdvisoryCard = false) {
   const alarm = targetAlarm(target);
   const notification = alarm?.eventId ? advisorySummaries.value[alarm.eventId] : null;
   const sms = notification ? autoSmsView(notification) : null;
@@ -512,12 +513,11 @@ function renderTargetTip(target) {
     <header><span class="sit-map-pop-icon">${targetIconHtml(target)}</span><span><b>${esc(target.id)}</b><small>${esc(target.typeLabel)}</small></span>
       <button type="button" data-tip-act="close" aria-label="关闭目标详情">${U.icon('close')}</button></header>
     <div class="sit-map-pop-status"><span class="sit-state ${stateClass}">${esc(stateText)}</span><span>${esc(summary)}</span></div>
-    <div class="sit-target-metrics"><span><small>高度</small><b>${esc(formatMetric(target.alt, ' m'))}</b></span><span><small>速度</small><b>${esc(formatMetric(target.speed, ' m/s'))}</b></span><span><small>融合置信</small><b>${esc(formatMetric(target.fusedConf, '%'))}</b></span></div>
+    <div class="sit-target-metrics"><span><small>高度</small><b>${esc(formatMetric(target.alt, ' m'))}</b></span><span><small>速度</small><b>${esc(formatMetric(target.speed, ' m/s'))}</b></span></div>
     <p>感知来源：${esc(sourceNames || '未提供')}</p>
-    ${alarm?.eventId ? `<p class="sit-map-pop-note">短信通知：${esc(sms?.title || '正在读取通知状态')}${sms?.updatedAt ? ` · ${esc(formatClock(sms.updatedAt))}` : ''}</p>` : ''}
+    ${alarm?.eventId && !hasAdvisoryCard ? `<p class="sit-map-pop-note">短信通知：${esc(sms?.title || '正在读取通知状态')}${sms?.updatedAt ? ` · ${esc(formatClock(sms.updatedAt))}` : ''}</p>` : ''}
     ${target.objectTypeCode === 'UAV' ? '<p class="sit-eo-track">光电跟踪中</p>' : ''}
-    ${target.activeRisk || alarm ? '' : '<div class="sit-map-pop-note">目标处于持续跟踪中。</div>'}
-    ${renderTargetActions(target)}
+    ${renderTargetActions(target, hasAdvisoryCard)}
   </section>`;
 }
 
@@ -768,7 +768,7 @@ onUnmounted(() => {
 
       <SituationAlarmPopup v-if="showAlarmPopup" :key="selectedUavAlarm.alarmId" :get-anchor="alarmAnchor">
         <div v-if="selectedTarget" @click="onTipAction($event.target.closest('[data-tip-act]')?.dataset.tipAct, { kind: 'target', data: selectedTarget })"
-          v-html="renderTargetTip(selectedTarget)"></div>
+          v-html="renderTargetTip(selectedTarget, showAlarmAdvisoryCard)"></div>
         <section v-else class="sit-map-pop">
           <header><span class="sit-map-pop-icon" v-html="U.businessIcon('uav')"></span><span><b>{{ selectedUavAlarm.targetId }}</b><small>无人机告警</small></span>
             <button type="button" aria-label="关闭告警详情" @click="clearSelection" v-html="U.icon('close')"></button></header>
@@ -776,7 +776,7 @@ onUnmounted(() => {
           <p>{{ selectedUavAlarm.district }} · 告警时间 {{ formatClock(selectedUavAlarm.ts) }}</p>
         </section>
         <p v-if="!alarmAnchor()" class="sit-alarm-position-note">当前未取得该目标的有效位置，无法定位无人机；以下保留此事件的信息。</p>
-        <SituationAdvisoryCard v-if="selectedUavAlarm.eventId" :event-id="selectedUavAlarm.eventId" :alarm-label="selectedUavAlarm.id"
+        <SituationAdvisoryCard v-if="showAlarmAdvisoryCard" :event-id="selectedUavAlarm.eventId" :alarm-label="selectedUavAlarm.id"
           @updated="updateNotification" @open="openAlarmDisposal(selectedUavAlarm)" />
         <p v-else class="sit-alarm-position-note">此告警未关联无人机事件，暂无可读取的通知记录。</p>
       </SituationAlarmPopup>
@@ -797,7 +797,7 @@ onUnmounted(() => {
           <span class="sit-fuse-orb-ball" aria-hidden="true"><span v-html="fuseIcon"></span></span>
         </button>
         <section class="sit-glass sit-fuse-panel">
-          <header class="sit-dock-head"><span><small>FUSION LINKS</small><b>{{ selectedTarget.id }}</b></span><em>{{ fusionConfidence }}% 置信</em></header>
+          <header class="sit-dock-head"><span><small>FUSION LINKS</small><b>{{ selectedTarget.id }}</b></span></header>
           <div class="sit-fuse-links">
             <span v-for="device in fusionDevices" :key="device.id" :style="{ '--sensor': device.color }">
               <span class="sit-node-icon" v-html="iconHtml(device)"></span><b>{{ device.type }}</b><em>{{ device.status }}</em>

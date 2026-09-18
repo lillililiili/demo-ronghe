@@ -15,7 +15,7 @@ import { openFormModal } from '@/ui/formModal.js';
 import { closeModal } from '@/ui/modal.js';
 import { toast } from '@/ui/nv.js';
 import { ALTITUDE_DATUM_LABEL, HANDOFF_TYPE_LABEL, REASON_CODE_LABEL,
-  RECEIPT_RESULT_LABEL, RISK_STATE_LABEL, RISK_TYPE_LABEL, SEVERITY_LABEL, SEVERITY_TAG, SOURCE_MODE_LABEL, labelOf } from '@/ui/labels.js';
+  RECEIPT_RESULT_LABEL, RISK_STATE_LABEL, RISK_TYPE_LABEL, SEVERITY_LABEL, SEVERITY_TAG, sourceDescription, labelOf } from '@/ui/labels.js';
 import RiskOpticalPanel from '@/pages/flights/components/RiskOpticalPanel.vue';
 
 const props = defineProps({ riskId: { type: String, required: true } });
@@ -148,24 +148,18 @@ onUnmounted(() => { alive = false; generation++; historyRequest++; noticeRequest
       <template v-else-if="risk">
         <div class="detail-hero detail-hero-micro"><div class="detail-hero-inner">
           <div class="detail-hero-icon" v-html="icon"></div>
-          <div class="detail-hero-copy"><div class="detail-hero-eyebrow">空域风险</div><div class="detail-hero-title">{{ labelOf(RISK_TYPE_LABEL, risk.risk_type, '风险事件') }}</div><div v-if="risk.risk_no" class="detail-hero-id">{{ risk.risk_no }}</div></div>
+          <div class="detail-hero-copy"><div class="detail-hero-eyebrow">空域风险</div><div class="detail-hero-title">{{ labelOf(RISK_TYPE_LABEL, risk.risk_type, '风险类型未提供') }}</div><div v-if="risk.risk_no" class="detail-hero-id">{{ risk.risk_no }}</div></div>
           <div class="detail-hero-side"><div class="detail-hero-tags"><span class="tag" :class="SEVERITY_TAG[risk.severity] || 't-gray'">{{ labelOf(SEVERITY_LABEL, risk.severity, '未知') }}</span><span class="tag" :class="stateTags[risk.state] || 't-gray'">{{ labelOf(RISK_STATE_LABEL, risk.state, '未知') }}</span></div></div>
         </div></div>
         <template v-if="tab === 'event'">
-          <div class="metric-strip is-compact">
-            <div class="metric-item"><span class="metric-copy"><small>风险等级</small><b>{{ labelOf(SEVERITY_LABEL, risk.severity, '未知') }}</b></span></div>
-            <div class="metric-item"><span class="metric-copy"><small>当前状态</small><b>{{ labelOf(RISK_STATE_LABEL, risk.state, '未知') }}</b></span></div>
-            <template v-if="risk.risk_type !== 'WEATHER'"><div class="metric-item"><span class="metric-copy"><small>测得高度</small><b>{{ altitude(risk) }}</b></span></div><div class="metric-item"><span class="metric-copy"><small>高度关系</small><b>{{ labelOf(heightLabels, risk.height_relation, '高度关系未知') }}</b></span></div></template>
-          </div>
           <RiskOpticalPanel v-if="risk.risk_type !== 'WEATHER'" :key="risk.risk_id" :risk="risk" />
           <section class="sect"><h4>事件信息</h4><dl class="kv kv-surface">
-            <dt>风险类型</dt><dd>{{ labelOf(RISK_TYPE_LABEL, risk.risk_type, '未提供') }}</dd>
-            <dt>来源</dt><dd>{{ risk.source_name || risk.source_code || '未提供' }}（{{ labelOf(SOURCE_MODE_LABEL, risk.source_mode, '未提供') }}）</dd>
+            <dt>来源</dt><dd>{{ sourceDescription(risk.source_name, risk.source_code, risk.source_mode) }}</dd>
             <dt>发生时间</dt><dd>{{ time(risk.occurred_at) }}</dd><dt>接收时间</dt><dd>{{ time(risk.received_at) }}</dd>
             <dt>所属范围</dt><dd>{{ risk.owner_org_name || '未知机构' }} / {{ risk.district_name || '未知区域' }}</dd>
           </dl></section>
           <section class="sect"><h4>风险依据</h4><dl class="kv kv-surface">
-            <dt>风险依据</dt><dd>{{ labelOf(REASON_CODE_LABEL, risk.reason_code, '未提供') }}</dd><dt>依据说明</dt><dd>{{ reasonText }}</dd>
+            <dt>触发原因</dt><dd>{{ labelOf(REASON_CODE_LABEL, risk.reason_code, '未提供') }}</dd><dt>依据说明</dt><dd>{{ reasonText }}</dd>
             <template v-if="risk.risk_type !== 'WEATHER'"><dt>测得高度</dt><dd>{{ altitude(risk) }}<span v-if="risk.observed_altitude_m == null" class="rk-hint">尚未测得高度，无法判断是否超高</span></dd><dt>高度关系</dt><dd>{{ labelOf(heightLabels, risk.height_relation, '高度关系未知') }}<span v-if="!risk.height_relation || risk.height_relation === 'UNKNOWN'" class="rk-hint">缺高度或 AGL/AMSL 换算依据</span></dd></template>
             <dt>关联计划</dt><dd><a v-if="risk.plan_id && hasPermission('flight:read') && canAccessRoute('flights')" class="btn ghost" :href="`#/flights?plan=${encodeURIComponent(risk.plan_id)}`">查看关联飞行计划 →</a><span v-else>{{ risk.plan_id ? '已关联' : '没有可查看的相关记录' }}</span></dd>
             <dt>航线版本</dt><dd :title="risk.route_version_id">{{ risk.route_version_id ? '已关联' : '没有可查看的相关记录' }}</dd>
@@ -185,7 +179,7 @@ onUnmounted(() => { alive = false; generation++; historyRequest++; noticeRequest
           </section>
         </template>
         <section v-else class="sect notice-section">
-          <div class="workspace-section-heading"><h4>通知与回执</h4><button class="btn ghost" :disabled="noticesLoading" @click="loadNotices">刷新记录</button></div>
+          <div class="workspace-section-heading"><button class="btn ghost" :disabled="noticesLoading" @click="loadNotices">刷新记录</button></div>
           <div v-if="noticesError" class="warnbox" role="alert">{{ noticesError }}</div><div v-else-if="noticesLoading" class="empty">正在读取通知记录…</div><div v-else-if="!notices.length" class="empty">这条风险尚无通知记录。</div>
           <div v-else class="rk-history"><article v-for="notice in notices" :key="notice.handoff_id" class="rk-history-item">
             <div class="rk-history-head"><b>通知上级</b><span class="tag" :class="deliveryTags[notice.delivery_status] || 't-gray'">{{ deliveryLabels[notice.delivery_status] || '发送状态未知' }}</span></div>
@@ -211,6 +205,7 @@ onUnmounted(() => { alive = false; generation++; historyRequest++; noticeRequest
 .risk-event-content { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; }
 .workspace-detail-tabs { flex: none; padding: 0 10px; }.workspace-detail-tabs .tab { font-size: 12px; padding: 9px 8px; }.workspace-detail-tabs .tag { margin-left: 5px; }
 .rk-detail { flex: 1; min-height: 0; overflow: auto; padding: 12px; }
+.rk-detail .detail-hero-title, .rk-detail .detail-hero-id { display: block; overflow: visible; white-space: normal; text-overflow: unset; -webkit-line-clamp: unset; overflow-wrap: anywhere; }
 .kv { grid-template-columns: minmax(70px, auto) minmax(0, 1fr); }.kv dd { min-width: 0; overflow-wrap: anywhere; }
 .metric-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }.metric-copy b { overflow-wrap: anywhere; }
 .workspace-section-heading { display: flex; justify-content: space-between; align-items: center; gap: 8px; }

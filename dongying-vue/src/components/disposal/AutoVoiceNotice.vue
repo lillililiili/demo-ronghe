@@ -6,11 +6,12 @@ import { toast } from '@/ui/nv.js';
 import { newHandoffIdempotencyKey } from '@/services/handoffApi.js';
 import { uavAdvisoryApi } from '@/services/uavAdvisoryApi.js';
 
-const props = defineProps({ data: Object, disabled: Boolean });
+const props = defineProps({ data: Object, disabled: Boolean, compact: Boolean });
 const emit = defineEmits(['changed']);
 let alive = true;
 onUnmounted(() => { alive = false; });
 const view = computed(() => autoVoiceView(props.data));
+const compactTitle = computed(() => ({ DISABLED: '未启用', WAITING: '等待拨打', CALLING: '正在拨打', SIMULATED_PLAYED: '已接通并播完', FAILED: '通知失败', UNAVAILABLE: '暂不可用', BLOCKED: '拨打已暂停', UNKNOWN: '通话结果未确认' })[props.data?.auto_voice?.status] || view.value.title);
 const time = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '';
 function retry() {
   if (!view.value.canRetry || props.disabled) return;
@@ -43,30 +44,38 @@ function retry() {
 </script>
 
 <template>
-  <section class="auto-voice-notice" aria-label="飞手电话录音通知" :data-state="data?.auto_voice?.status">
-    <header><b>飞手电话录音通知</b><span v-if="view.simulated" class="tag t-amber">模拟电话</span></header>
-    <p class="avn-title" :class="`avn-${view.tone}`">{{ view.title }}</p>
-    <p v-if="view.reason">{{ view.reason }}</p>
-    <dl v-if="view.recipient || view.recordingName || view.triggeredAt || view.updatedAt || view.answeredAt || view.playbackCompletedAt">
-      <template v-if="view.recipient"><dt>接收飞手</dt><dd>{{ view.recipient }}<small v-if="view.recipientHint" style="display:block">{{ view.recipientHint }}</small></dd></template>
-      <template v-if="view.recordingName"><dt>通知录音</dt><dd>{{ view.recordingName }}</dd></template>
-      <template v-if="view.triggeredAt"><dt>触发时间</dt><dd>{{ time(view.triggeredAt) }}</dd></template>
-      <template v-if="view.answeredAt"><dt>{{ view.simulated ? '模拟接通' : '接通时间' }}</dt><dd>{{ time(view.answeredAt) }}</dd></template>
-      <template v-if="view.playbackCompletedAt"><dt>{{ view.simulated ? '模拟播完' : '播放完成' }}</dt><dd>{{ time(view.playbackCompletedAt) }}</dd></template>
-      <template v-if="view.updatedAt && view.updatedAt !== view.triggeredAt"><dt>状态更新</dt><dd>{{ time(view.updatedAt) }}</dd></template>
-    </dl>
-    <p v-if="!view.recipient" class="avn-muted">未提供接收飞手信息</p>
-    <details v-if="view.source || view.evaluatedAt || view.dataUpdatedAt" :key="data?.event_id">
-      <summary>查看拨打依据与时间</summary>
-      <p v-if="view.source">{{ view.source === 'RULE_ILLEGAL' ? '系统违规研判' : view.source === 'MANUAL_CONFIRMATION' ? '人工确认与当前观测' : '后台通知记录' }}</p>
-      <p v-if="view.evaluatedAt">研判时间：{{ time(view.evaluatedAt) }}</p>
-      <p v-if="view.dataUpdatedAt">观测时间：{{ time(view.dataUpdatedAt) }}</p>
-    </details>
-    <p class="avn-muted">接通与录音播放完成分别以回执为准，不代表飞手已理解或目标已飞离。</p>
-    <button v-if="view.canRetry" type="button" class="btn sm" :disabled="disabled" @click="retry">重新拨打飞手电话</button>
+  <section class="auto-voice-notice" :class="{ 'is-compact': compact }" aria-label="飞手电话录音通知" :data-state="data?.auto_voice?.status">
+    <component :is="compact ? 'details' : 'div'" :key="data?.event_id">
+      <summary v-if="compact" class="notice-summary">
+        <b>飞手电话</b><span class="notice-result" :class="`avn-${view.tone}`">{{ compactTitle }}</span>
+        <span v-if="view.simulated" class="tag t-amber">模拟</span><span class="notice-toggle">详情</span>
+      </summary>
+      <header v-if="!compact"><b>飞手电话录音通知</b><span v-if="view.simulated" class="tag t-amber">模拟电话</span></header>
+      <p v-if="!compact" class="avn-title" :class="`avn-${view.tone}`">{{ view.title }}</p>
+      <p v-if="view.reason">{{ view.reason }}</p>
+      <dl v-if="view.recipient || view.recordingName || view.triggeredAt || view.updatedAt || view.answeredAt || view.playbackCompletedAt">
+        <template v-if="view.recipient"><dt>接收飞手</dt><dd>{{ view.recipient }}<small v-if="view.recipientHint" style="display:block">{{ view.recipientHint }}</small></dd></template>
+        <template v-if="view.recordingName"><dt>通知录音</dt><dd>{{ view.recordingName }}</dd></template>
+        <template v-if="view.triggeredAt"><dt>触发时间</dt><dd>{{ time(view.triggeredAt) }}</dd></template>
+        <template v-if="view.answeredAt"><dt>{{ view.simulated ? '模拟接通' : '接通时间' }}</dt><dd>{{ time(view.answeredAt) }}</dd></template>
+        <template v-if="view.playbackCompletedAt"><dt>{{ view.simulated ? '模拟播完' : '播放完成' }}</dt><dd>{{ time(view.playbackCompletedAt) }}</dd></template>
+        <template v-if="view.updatedAt && view.updatedAt !== view.triggeredAt"><dt>状态更新</dt><dd>{{ time(view.updatedAt) }}</dd></template>
+      </dl>
+      <p v-if="!view.recipient" class="avn-muted">未提供接收飞手信息</p>
+      <details v-if="view.source || view.evaluatedAt || view.dataUpdatedAt" :key="data?.event_id">
+        <summary>查看拨打依据与时间</summary>
+        <p v-if="view.source">{{ view.source === 'RULE_ILLEGAL' ? '系统违规研判' : view.source === 'MANUAL_CONFIRMATION' ? '人工确认与当前观测' : '后台通知记录' }}</p>
+        <p v-if="view.evaluatedAt">研判时间：{{ time(view.evaluatedAt) }}</p>
+        <p v-if="view.dataUpdatedAt">观测时间：{{ time(view.dataUpdatedAt) }}</p>
+      </details>
+      <p class="avn-muted">接通与录音播放完成分别以回执为准，不代表飞手已理解或目标已飞离。</p>
+      <button v-if="view.canRetry" type="button" class="btn sm" :disabled="disabled" @click="retry">重新拨打飞手电话</button>
+    </component>
   </section>
 </template>
 
 <style scoped>
+.auto-voice-notice.is-compact{padding:9px 10px;margin-top:8px}.notice-summary{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;min-height:24px;list-style:none}.notice-summary::-webkit-details-marker{display:none}.notice-summary b{font-size:12px;color:var(--txt)}.notice-result{font-size:12px;font-weight:600}.notice-toggle{margin-left:auto;color:var(--muted);font-size:11px;text-decoration:underline;text-underline-offset:3px}summary:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
+
 .auto-voice-notice{margin-top:10px;padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--bg-soft);min-width:0}.auto-voice-notice header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;font-size:13px}.auto-voice-notice p{font-size:12px;line-height:1.6;margin:7px 0;overflow-wrap:anywhere}.auto-voice-notice .avn-title{font-size:14px;font-weight:600}.avn-success{color:var(--green)}.avn-warning{color:var(--amber)}.avn-muted{color:var(--muted)}.auto-voice-notice dl{display:grid;grid-template-columns:60px minmax(0,1fr);gap:5px 8px;font-size:11px;margin:10px 0}.auto-voice-notice dt{color:var(--muted)}.auto-voice-notice dd{margin:0;overflow-wrap:anywhere}.auto-voice-notice .btn{margin-top:6px;white-space:normal;height:auto;min-height:30px}.auto-voice-notice summary{font-size:11px;color:var(--muted);cursor:pointer}.auto-voice-notice button:focus-visible,.auto-voice-notice summary:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
 </style>

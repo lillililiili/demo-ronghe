@@ -33,7 +33,14 @@ export const RULE_REASON_TEXT = {
   TRACK_BRIDGED: '轨迹存在断点', PLAN_MATCH_UNDETERMINED: '计划匹配不可判定', PLAN_MATCHER_UNAVAILABLE: '计划匹配不可用',
   NO_PLAN_CANDIDATE: '没有候选计划', PLAN_AMBIGUOUS: '多个计划同优', IDENTITY_CLUE_MISSING: '身份线索缺失', PLAN_IDENTITY_UNKNOWN: '计划未登记机身序列号',
   IDENTITY_MISMATCH: '身份不匹配', TIME_WINDOW_MISMATCH: '时间窗不匹配', CORRIDOR_MISMATCH: '不在航线走廊内',
-  TAKEOFF_POINT_UNAVAILABLE: '起降点未知', PILOT_UNIT_UNAVAILABLE: '飞手/单位未知'
+  TAKEOFF_POINT_UNAVAILABLE: '起降点未知', PILOT_UNIT_UNAVAILABLE: '飞手/单位未知',
+  RULE_CHECKS_INCOMPLETE: '必要检查尚未完整执行', PLAN_AUTHORIZATION_UNVERIFIED: '缺少可核验的计划授权依据',
+  BINARY_CONCLUSION_UNRESOLVED: '尚不能明确判为合法或非法', DEMO_RULE_PARAMETERS: '真实观测采用了未经确认的演示参数',
+  PARAMETER_STATUS_UNKNOWN: '规则参数确认状态未知', ALGORITHM_RESULT_UNAVAILABLE: '该记录未保存判定可靠性结果',
+  DECISIVE_EVIDENCE_MISSING: '缺少支撑结论的明确事实'
+};
+export const DECISION_ASSURANCE_STATUS_TEXT = {
+  SUFFICIENT: '判定依据充分', INSUFFICIENT: '判定依据不足', UNAVAILABLE: '判定可靠性不可用', NOT_APPLICABLE: '不适用'
 };
 export const MERGE_KIND_TEXT = { CREATED: '已生成告警', MERGED: '并入既有告警', UPGRADED: '升级生成告警', DOWNGRADED: '降低等级后合并到已有告警', MANUAL_ESCALATION: '人工转告警', BLOCKED: '暂未生成告警', SUPPRESSED_SHADOW: '仅试算，不生成告警' };
 export const CONCLUSION_TEXT = { CONFIRM: '确认', REJECT: '驳回', OVERRIDE: '改判', RECOMPUTE: '重新研判', ESCALATE: '转告警' };
@@ -74,6 +81,7 @@ function paramValueText(key, value) {
 export const reviewStateText = code => REVIEW_STATE_TEXT[code] || (code ? String(code) : '—');
 export const planMatchText = code => PLAN_MATCH_TEXT[code] || (code ? String(code) : '—');
 export const ruleReasonText = code => RULE_REASON_TEXT[code] || (code ? String(code) : '');
+export const decisionAssuranceStatusText = code => DECISION_ASSURANCE_STATUS_TEXT[code] || (code ? String(code) : '判定可靠性未提供');
 
 /* 每个研判 × 动作各保留一把幂等键：超时/409/断网时不换键，明确失败（4xx）后才换新键。 */
 const pendingKeys = new Map();
@@ -129,10 +137,14 @@ async function settleUncertain({ error, evaluationId, action, expectedVersion, r
 }
 
 function intro(evaluation) {
+  const assurance = evaluation.decision_assurance;
   const rows = [
     ['复核次数', Number(evaluation.review?.version ?? 0) > 0 ? `已第${Number(evaluation.review.version)}次复核` : '尚未复核'],
     ['系统结论', esc(legalStatusText(evaluation.legal_status)) + (evaluation.grade ? `　等级 ${esc(GRADE_TEXT[evaluation.grade] || evaluation.grade)}` : '')],
     ['复核状态', esc(reviewStateText(evaluation.review?.state))],
+    ['判定可靠性', esc(assurance ? decisionAssuranceStatusText(assurance.status) : '旧记录未提供判定可靠性')],
+    assurance?.algorithm_version ? ['算法版本', esc(assurance.algorithm_version)] : null,
+    assurance?.reasons?.length ? ['可靠性原因', esc(assurance.reasons.map(ruleReasonText).join('、'))] : null,
     ['计划匹配', esc(planMatchText(evaluation.plan_match_code)) + (evaluation.plan_no ? `　${esc(evaluation.plan_no)}` : '')],
     evaluation.violation_reasons?.length ? ['违规原因', esc(evaluation.violation_reasons.map(ruleReasonText).join('、'))] : null,
     evaluation.unknown_reasons?.length ? ['未知原因', esc(evaluation.unknown_reasons.map(ruleReasonText).join('、'))] : null
@@ -160,7 +172,7 @@ export function openLegalityReview({ evaluation, refresh, onDone } = {}) {
     .map(code => ({ value: code, label: legalStatusText(code) }));
 
   openFormModal({
-    title: (focus.unresolved ? '核对信息缺口 · ' : '核对判定依据 · ') + esc(evaluation.target_no || evaluation.plan_no || '研判'),
+    title: (focus.needsReview ? '核对信息缺口 · ' : '补充人工纠正 · ') + esc(evaluation.target_no || evaluation.plan_no || '研判'),
     width: '620px',
     warning: '复核只记录人工结论：「确认」采纳系统结论；「驳回」表示系统误判（告警与合并组不会删除，统计计误报）；「改判」需选择人工结论。复核不执行反制、不改告警核实状态。',
     introHtml: `<p>${esc(focus.note)}</p>${intro(evaluation)}`,
@@ -172,7 +184,7 @@ export function openLegalityReview({ evaluation, refresh, onDone } = {}) {
       ] },
       { key: 'override_status', label: '人工结论', type: 'select', options: overrideOptions, placeholder: '请选择改判结论',
         visibleWhen: model => model.conclusion === 'OVERRIDE' },
-      { key: 'note', label: '核对说明', type: 'textarea', required: true, minRows: 3, placeholder: focus.unresolved ? '补充了哪些缺失信息、依据是什么；无需重复填写上方已有数据（1–1000 字）' : '说明核对结果；如与系统结论不同，写明差异及依据（1–1000 字）' }
+      { key: 'note', label: '核对说明', type: 'textarea', required: true, minRows: 3, placeholder: focus.needsReview ? '补充了哪些缺失信息、依据是什么；无需重复填写上方已有数据（1–1000 字）' : '说明需要纠正的事实及依据（1–1000 字）' }
     ],
     initial: { conclusion: 'CONFIRM', override_status: null, note: '' },
     confirmText: '提交复核结论',
@@ -295,7 +307,7 @@ export function openLegalityManualEvaluate({ targetId, targetNo, refresh, onDone
   holdKey(targetId, action);
   openConfirm({
     title: '手动评估',
-    content: `将按当前生效规则集对目标 ${targetNo || targetId} 立即评估一次，生成新的研判并进入待复核队列（不影响既有研判与复核）。是否继续？`,
+    content: `将按当前生效规则集对目标 ${targetNo || targetId} 立即评估一次并生成新的研判（不影响既有研判与复核）。是否继续？`,
     confirmText: '立即评估',
     onConfirm: async () => {
       const key = holdKey(targetId, action);

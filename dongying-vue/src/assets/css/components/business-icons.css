@@ -20,8 +20,13 @@
 .situation-page .sit-device-node:has(.business-icon) b{white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere}
 .situation-page .sit-device-node:has(.business-icon)>em{white-space:normal;overflow-wrap:anywhere}
 
-/* 当前报警采用 1.4 秒红光呼吸，主体不消失；历史/过期不加此类。 */
+/* 红光仅用于地图上的异常图标，主体与类别色持续可见。 */
 .map-alarm-active{animation:business-alarm-glow 1.4s ease-in-out infinite}
-@keyframes business-alarm-glow{0%,100%{filter:drop-shadow(0 0 3px color-mix(in srgb,var(--icon-alarm) 25%,transparent))}50%{filter:drop-shadow(0 0 8px var(--icon-alarm)) drop-shadow(0 0 3px var(--icon-alarm))}}
-@media(prefers-reduced-motion:reduce){.map-alarm-active{animation:none;filter:drop-shadow(0 0 6px var(--icon-alarm))}}
+@keyframes business-alarm-glow{
+  0%,100%{filter:drop-shadow(0 0 3px color-mix(in srgb,var(--icon-alarm) 45%,transparent))}
+  50%{filter:drop-shadow(0 0 11px var(--icon-alarm)) drop-shadow(0 0 4px var(--icon-alarm))}
+}
+@media(prefers-reduced-motion:reduce){
+  .map-alarm-active{animation:none;filter:drop-shadow(0 0 8px var(--icon-alarm))}
+}
 .situation-page .sit-device-row.is-offline .sit-device-icon:has(.business-icon){filter:none}

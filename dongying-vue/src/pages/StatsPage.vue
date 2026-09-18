@@ -43,9 +43,9 @@ const kpiList = computed(() => {
       ? `在线 ${devices.online} · ${devices.onlineRate == null ? '—' : devices.onlineRate + '%'}`
       : '当前无台账设备';
   return [
-    { label: '飞行/目标总次数', value: U.num(stats.total), color: 'blue', icon: 'radar', desc: `${stats.from} 至 ${stats.to}` },
+    { label: '飞行/目标总次数', value: U.num(stats.total), color: 'blue', icon: 'radar' },
     { label: '非法飞行次数', value: U.num(stats.illegal), color: 'red', icon: 'alert', desc: `占比 ${U.pct(stats.illegal, stats.total)}` },
-    { label: '处罚案件数', value: U.num(stats.punish), color: 'orange', icon: 'gavel', desc: `近30天立案` },
+    { label: '处罚案件数', value: U.num(stats.punish), color: 'orange', icon: 'gavel', desc: '立案数量' },
     { label: '接入设备总数', value: U.num(devices ? devices.total : null), color: 'cyan', icon: 'device', desc: deviceDesc },
     { label: '高风险目标数', value: U.num(stats.highRisk), color: 'red', icon: 'zone', desc: `占比 ${U.pct(stats.highRisk, stats.total)}` }
   ];
@@ -204,7 +204,7 @@ function onRegionTab(e) {
     <UKpis v-if="S" :list="kpiList" />
 
     <div v-if="S" class="row" style="height:270px;margin-top:12px">
-      <UPanel title="近30天目标趋势" panel-style="flex:1.5">
+      <UPanel title="目标趋势" panel-style="flex:1.5">
         <div id="sTrend" style="height:100%"></div>
       </UPanel>
       <UPanel title="各风险等级分布" sub="数量 | 占比" panel-style="flex:.75"><div id="sRisk" style="height:100%"></div></UPanel>
@@ -225,7 +225,7 @@ function onRegionTab(e) {
         <div id="sRegion" style="height:100%"></div>
       </UPanel>
       <UPanel title="处置/处罚统计" panel-style="flex:1"><div id="sPen" style="height:100%"></div></UPanel>
-      <UPanel title="违规主体排行" sub="近30天" panel-style="width:288px" nopad :body-html="rankHtml" />
+      <UPanel title="违规主体排行" panel-style="width:288px" nopad :body-html="rankHtml" />
     </div>
   </div>
 </template>

@@ -67,8 +67,7 @@ const kpis = computed(() => {
   return [
     { label: '今日感知目标', value: dash(k.sensed_today), color: 'var(--blue)', page: 'situation' },
     { label: '今日告警', value: dash(k.alarms_today), color: 'var(--cyan)', page: 'alarms' },
-    { label: '待研判目标', value: dash(k.pending_assessment), color: 'var(--amber)', page: 'legality' },
-    { label: '交接待办', value: dash(k.pending_handoffs), color: 'var(--amber)', page: 'punish' }
+    { label: '待研判目标', value: dash(k.pending_assessment), color: 'var(--amber)', page: 'legality' }
   ];
 });
 
@@ -87,19 +86,16 @@ const targetSummary = computed(() => {
   const risk = snapshot.value?.target_risk;
   const n = snapshot.value?.kpis?.sensed_today;
   if (!risk) return n == null ? '—' : `今日 ${n}`;
-  return `高 ${risk.high} · 中 ${risk.medium} · 低 ${risk.low} · 未定级 ${risk.ungraded}`;
+  return ''; // 风险分布数值由下方图表统一显示。
 });
 const deviceSummary = computed(() => {
   const d = snapshot.value?.devices;
   if (!d) return avail('devices') ? '—' : '无读取权限';
-  const rate = d.online_rate == null ? '—' : `${d.online_rate}%`;
-  return `在线率 ${rate} · 关注 ${d.abnormal + d.alarm}`;
+  return `关注 ${d.abnormal + d.alarm}`;
 });
 const alarmSummary = computed(() => {
   if (!avail('alarms')) return '无读取权限';
-  const total = snapshot.value?.kpis?.alarms_today;
-  const pending = snapshot.value?.closure?.pending_verification;
-  return `今日 ${dash(total)} 条 · 待核实 ${dash(pending)}`;
+  return ''; // 今日总数与待核实数分别由顶部指标和待处理事项显示。
 });
 const deviceLegend = computed(() => snapshot.value?.devices || { offline: '—', abnormal: '—', alarm: '—' });
 
@@ -228,18 +224,26 @@ function mapDevices(items) {
   return (items || []).map(d => ({
     id: d.device_id, name: d.name, type: d.device_type_name, channel: d.channel,
     typeCode: d.device_type_code || '',
+    connectivity: d.connectivity, statusCode: d.connectivity,
+    health_code: d.health_code || 'UNKNOWN',
+    activeRisk: d.active_risk === true || d.activeRisk === true,
+    abnormal: d.abnormal === true || d.has_alarm === true,
     status: ({ ONLINE: '在线', OFFLINE: '离线', ABNORMAL: '异常', UNKNOWN: '未知' })[d.connectivity] || d.connectivity || '未知',
     alarm: !!d.has_alarm, lon: Number(d.longitude), lat: Number(d.latitude)
   })).filter(d => Number.isFinite(d.lon) && Number.isFinite(d.lat));
 }
 
-function mapTargets(items) {
+function mapTargets(items, alarmItems = []) {
   return (items || []).map(t => {
     const lon = Number(t.longitude), lat = Number(t.latitude);
     if (!Number.isFinite(lon) || !Number.isFinite(lat)) return null;
     return {
       id: t.target_no || t.target_id,
       targetId: t.target_id,
+      // 当前同一目标告警决定提示；历史最高风险/旧研判不等于活动告警。
+      activeRisk: (alarmItems || []).some(alarm => alarm.target_id === t.target_id && window.UI.abnormalActive(alarm)),
+      statusCode: t.status_code || t.track_status?.status || '',
+      freshness: t.freshness || '', stale: t.stale === true, historical: t.historical === true,
       type: t.object_type_code === 'UAV' ? '无人机' : labelOf(OBJECT_TYPE_LABEL, t.object_type_code, t.object_type_code || '目标'),
       subtype: targetTypeLabel(t.subtype, t.object_type_code),
       subtypeCode: t.subtype, objectTypeCode: t.object_type_code,
@@ -254,7 +258,7 @@ function mapTargets(items) {
 
 function mapAlarms(items) {
   return (items || []).map(a => ({
-    targetId: a.target_id,
+    id: a.alarm_id, targetId: a.target_id, state: a.state, eventState: a.state,
     type: labelOf(ALARM_TYPE_LABEL, a.alarm_type, a.alarm_type),
     level: SEVERITY_ZH[a.severity] || a.severity,
     time: formatTime(a.received_at),
@@ -288,7 +292,7 @@ function renderMap() {
   const layer = snapshot.value?.map || {};
   const airspaces = mapAirspaces(layer.airspaces);
   const devices = mapDevices(layer.devices);
-  const targets = mapTargets(layer.targets);
+  const targets = mapTargets(layer.targets, layer.alarms);
   const alarms = mapAlarms(layer.alarms);
   map.setData({ airspaces, devices, targets, alarms });
   attachTracks(targets).then(() => {
@@ -381,7 +385,7 @@ onBeforeUnmount(() => {
           </section>
 
           <section class="panel" data-module="target-dynamics">
-            <div class="ph"><h3>重点目标风险态势</h3><div class="bs-panel-meta"><span class="sub">{{ targetSummary }}</span><button class="bs-module-link" @click="go('legality')">进入研判 →</button></div></div>
+            <div class="ph"><h3>重点目标风险态势</h3><div class="bs-panel-meta"><span v-if="targetSummary" class="sub">{{ targetSummary }}</span><button class="bs-module-link" @click="go('legality')">进入研判 →</button></div></div>
             <div class="pb bs-visual-body">
               <div ref="targetChartEl" class="bs-panel-chart is-clickable" role="link" tabindex="0" aria-label="查看重点目标合法性研判" @click="go('legality')" @keydown.enter="go('legality')" @keydown.space.prevent="go('legality')"></div>
             </div>
@@ -433,7 +437,7 @@ onBeforeUnmount(() => {
           </section>
 
           <section class="panel">
-            <div class="ph"><h3>实时告警</h3><div class="bs-panel-meta"><span class="sub">{{ alarmSummary }}</span><button class="bs-module-link" @click="go('alarms')">进入告警 →</button></div></div>
+            <div class="ph"><h3>实时告警</h3><div class="bs-panel-meta"><span v-if="alarmSummary" class="sub">{{ alarmSummary }}</span><button class="bs-module-link" @click="go('alarms')">进入告警 →</button></div></div>
             <div class="pb bs-table-body">
               <n-data-table class="bs-naive-table" :columns="alarmColumns" :data="alarmRows" :pagination="false" :bordered="false" :single-line="true" table-layout="auto" size="small" :row-props="alarmRowProps" />
             </div>
@@ -447,7 +451,7 @@ onBeforeUnmount(() => {
         <div v-if="selectedTarget" class="bs-video-modal">
           <div class="bs-video-meta"><span>{{ opticalDevice?.name || '光电设备' }} · 可见光 · 演示画面</span><span class="bs-video-state"><i></i>实时预览</span></div>
           <div ref="videoEl" id="bsVideoModal"></div>
-          <div class="bs-video-info"><span>目标编号 <b class="mono">{{ selectedTarget.id }}</b></span><span>目标类型 <b>{{ selectedTarget.type }}</b></span><span>合法性 <b>{{ selectedTarget.legal || '待确认' }}</b></span><span>风险等级 <b>{{ selectedTarget.risk || '—' }}</b></span></div>
+          <div class="bs-video-info"><span>目标类型 <b>{{ selectedTarget.type }}</b></span><span>合法性 <b>{{ selectedTarget.legal || '待确认' }}</b></span><span>风险等级 <b>{{ selectedTarget.risk || '—' }}</b></span></div>
         </div>
       </n-card>
     </n-modal>

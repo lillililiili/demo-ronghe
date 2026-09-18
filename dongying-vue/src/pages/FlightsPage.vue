@@ -20,7 +20,7 @@ import { openModal, closeModal } from '@/ui/modal.js';
 import { toast } from '@/ui/nv.js';
 import {
   ALTITUDE_DATUM_LABEL, ALTITUDE_RELATION_LABEL, HANDOFF_TYPE_LABEL, LEGALITY_LABEL, PLAN_MATCH_TAG, PLAN_ROW_MATCH_LABEL, PLAN_STATUS_LABEL, PLAN_STATUS_TAG, REASON_CODE_LABEL, RECEIPT_RESULT_LABEL, RISK_TYPE_LABEL,
-  SECTION_AVAILABILITY_LABEL, SOURCE_MODE_LABEL, labelOf, OBJECT_TYPE_LABEL, readableNo, RISK_TYPE_OPTIONS } from '@/ui/labels.js';
+  SECTION_AVAILABILITY_LABEL, SOURCE_MODE_LABEL, sourceDescription, labelOf, OBJECT_TYPE_LABEL, readableNo, RISK_TYPE_OPTIONS } from '@/ui/labels.js';
 import { isUncertainOutcome } from '@/services/apiClient.js';
 import { loadTargetPosition, strokePlannedRoute } from '@/services/positionMap.js';
 import { hasPermission } from '@/services/accessControl.js';
@@ -32,6 +32,7 @@ import RiskOpticalPanel from '@/pages/flights/components/RiskOpticalPanel.vue';
 import PlanVerificationPanel from '@/pages/flights/components/PlanVerificationPanel.vue';
 import PlanFilingDetails from '@/pages/flights/components/PlanFilingDetails.vue';
 import PlanDeviceMarkers from '@/pages/flights/components/PlanDeviceMarkers.vue';
+import PlanRiskRecords from '@/pages/flights/components/PlanRiskRecords.vue';
 import FlightRecordList from '@/pages/flights/components/FlightRecordList.vue';
 import FlightListPager from '@/pages/flights/components/FlightListPager.vue';
 import WeatherMapInfo from '@/pages/flights/components/WeatherMapInfo.vue';
@@ -44,6 +45,7 @@ import UPagination from '@/components/UPagination.vue';
 import UControl from '@/components/form/UControl.vue';
 
 usePageChrome('flights');
+const abnormalActive = window.UI.abnormalActive;
 
 const filters = reactive(S.filters);
 const page = ref(S.page);
@@ -76,14 +78,15 @@ const mapHost = ref(null);
 const planDeviceCheck = ref(null);
 const deviceMarkers = ref([]);
 const mapDevices = computed(() => planDeviceCheck.value?.plan_id === selected.value?.plan_id
-  ? (planDeviceCheck.value?.rows || []).filter(row => (row.abnormal || row.incidents?.length) && row.position) : []);
+  ? (planDeviceCheck.value?.rows || []).filter(row => (abnormalActive(row) || row.incidents?.length) && row.position) : []);
 const routeLoaded = ref(false);
 /* 全页只允许一个活动 MapView：航线页签与风险页签共用同一变量，切换前先 destroyRouteMap()。 */
 let routeMap = null;
 
 /* ---------- 风险页签状态（数据只来自 riskApi，不读 window.MOCK / RISK_IMPL） ---------- */
 const EVENT_RISK_TYPES = ['SPACE_OBJECT', 'FOREIGN_OBJECT', 'WEATHER'];
-const EVENT_RISK_SCOPE = { risk_types: EVENT_RISK_TYPES.join(',') };
+const DISPLAY_RISK_SCOPE = { exclude_demo_samples: true };
+const EVENT_RISK_SCOPE = { ...DISPLAY_RISK_SCOPE, risk_types: EVENT_RISK_TYPES.join(',') };
 const riskFilters = reactive(S.riskFilters);
 if (!EVENT_RISK_TYPES.includes(riskFilters.risk_type)) riskFilters.risk_type = '';
 if (riskFilters.target_type === undefined) riskFilters.target_type = '';
@@ -208,7 +211,6 @@ const RISK_STATE_LABEL = { PENDING_VERIFICATION: '待核验', PENDING_NOTIFICATI
 const RISK_STATE_TAG = { PENDING_VERIFICATION: 't-amber', PENDING_NOTIFICATION: 't-blue', NOTIFIED: 't-green', ACKNOWLEDGED: 't-green', EXCLUDED: 't-gray' };
 const RISK_SEVERITY_LABEL = { CRITICAL: '紧急', HIGH: '高', MEDIUM: '中', LOW: '低' };
 const RISK_SEVERITY_TAG = { CRITICAL: 't-red', HIGH: 't-red', MEDIUM: 't-amber', LOW: 't-blue' };
-const RISK_SEVERITY_TONE = { CRITICAL: 'bad', HIGH: 'bad', MEDIUM: 'warn', LOW: 'info' };
 /* 与迁移 022 的 CHECK 枚举一致：UNKNOWN / WITHIN / OUTSIDE；未知不判断安全。 */
 const HEIGHT_RELATION_LABEL = { UNKNOWN: '高度关系未知', WITHIN: '在航线高度范围内', OUTSIDE: '超出航线高度范围' };
 const HISTORY_PAGE_SIZE = 10;
@@ -281,9 +283,9 @@ const kpiList = computed(() => {
   const k = planKpis.value, m = pageMatchCounts.value;
   return [
     { label: '今日报备计划', value: n(k.today), color: 'blue', icon: 'plan', caption: '计划时段与今天相交', desc: '计划时段与今天相交的计划数' },
-    { label: '执行中', value: n(k.executing), color: 'cyan', icon: 'radar', caption: '计划状态：执行中', desc: '状态为执行中' },
-    { label: '待执行', value: n(k.pending), color: 'blue', icon: 'plan', caption: '计划状态：待执行', desc: '未到计划时段' },
-    { label: '已完成', value: n(k.completed), color: 'green', icon: 'check', caption: '计划状态：已完成', desc: '状态为已完成' },
+    { label: '执行中', value: n(k.executing), color: 'cyan', icon: 'radar', desc: '状态为执行中' },
+    { label: '待执行', value: n(k.pending), color: 'blue', icon: 'plan', desc: '未到计划时段' },
+    { label: '已完成', value: n(k.completed), color: 'green', icon: 'check', desc: '状态为已完成' },
     { label: '计划未匹配到目标', value: String(m.unmatched), color: 'amber', icon: 'alert', caption: '仅统计本页计划', desc: '本页执行中或已完成的计划中，还没找到对应飞机的数量' },
     { label: '偏离报备计划', value: String(m.deviated), color: 'red', icon: 'alert', caption: '仅统计本页计划', desc: '本页：研判已记录走廊不匹配' }
   ];
@@ -365,7 +367,6 @@ function riskReasonText(risk) {
   }
   return text;
 }
-const planHeroIcon = computed(() => (window.UI?.icon ? window.UI.icon('plan') : ''));
 const canVerifyRisk = computed(() => Boolean(selectedRisk.value?.allowed_actions?.includes('VERIFY')));
 /* 通知按钮：服务端 allowed_actions 含 NOTIFY 为准；旧版详情不带 NOTIFY 时按“待通知”放开。
    /auth/me 的 permission_codes 不含 `handoff:create` 动作码，前端不预判权限，由服务端 403 裁决。 */
@@ -635,43 +636,57 @@ async function loadMatchedTarget(plan) {
 /* ---------- 本航线风险（按 legacy「按航线看」区块）：沿线风险直接给「通知上级」入口，状态机与写入口仍是风险页签那一套 ---------- */
 const ROUTE_RISK_DAYS = 7; // 与 legacy 一致的演示缺省值，业务方未确认
 const routeRisks = reactive({ loading: false, error: '', items: [], total: 0, loaded: false });
+let routeRisksToken = 0;
 async function loadRouteRisks(plan) {
-  routeRisks.items = []; routeRisks.total = 0; routeRisks.error = ''; routeRisks.loaded = false;
+  const token = ++routeRisksToken;
+  routeRisks.items = []; routeRisks.total = 0; routeRisks.error = ''; routeRisks.loaded = false; routeRisks.loading = false;
   if (!plan?.route?.route_version_id || ['COMPLETED', 'CANCELLED'].includes(plan.status_code)) return;
   routeRisks.loading = true;
   try {
     const now = Date.now();
     // 按计划关联读取所有类型，气象风险不要求关联感知目标或异物空间事实。
-    const data = await riskApi.listRisks({ plan_id: plan.plan_id, occurred_from: now - ROUTE_RISK_DAYS * 86400000, occurred_to: now + 86400000, page: 1, size: 50 });
-    if (activeTab.value !== 'route' || selected.value?.plan_id !== plan.plan_id) return;
+    const data = await riskApi.listRisks({ ...DISPLAY_RISK_SCOPE, plan_id: plan.plan_id, occurred_from: now - ROUTE_RISK_DAYS * 86400000, occurred_to: now + 86400000, page: 1, size: 50 });
+    if (token !== routeRisksToken || activeTab.value !== 'route' || selected.value?.plan_id !== plan.plan_id) return;
     routeRisks.items = data.items || [];
     routeRisks.total = data.total || 0;
     routeRisks.loaded = true;
   } catch (requestError) {
-    if (activeTab.value !== 'route' || selected.value?.plan_id !== plan.plan_id) return;
+    if (token !== routeRisksToken || activeTab.value !== 'route' || selected.value?.plan_id !== plan.plan_id) return;
     routeRisks.error = requestError.message || '读取本航线风险失败';
   } finally {
-    if (selected.value?.plan_id === plan.plan_id) routeRisks.loading = false;
+    if (token === routeRisksToken) routeRisks.loading = false;
   }
 }
-const routeRiskHeader = computed(() => {
-  if (planEnded.value || !selected.value?.route?.route_version_id || !routeRisks.loaded) return '';
-  const objects = routeRisks.items.filter(item => ['SPACE_OBJECT', 'FOREIGN_OBJECT'].includes(item.risk_type)).length;
-  const weather = routeRisks.items.filter(item => item.risk_type === 'WEATHER').length;
-  return routeRisks.items.length ? `（近 ${ROUTE_RISK_DAYS} 天 · 共 ${routeRisks.total} 起 · 当前展示异物 ${objects} / 气象 ${weather}）` : `（近 ${ROUTE_RISK_DAYS} 天）`;
-});
+const routeRiskRecords = computed(() => routeRisks.items.map(item => {
+  const fact = item.space_fact;
+  const position = [];
+  if (fact?.distance_to_route_m != null) position.push(`距航线中心线 ${(fact.distance_to_route_m / 1000).toFixed(2)} km`);
+  if (fact?.target_altitude_raw != null) position.push(`高度 ${fact.target_altitude_raw} m`);
+  return {
+    id: item.risk_id, title: riskTitle(item), severity: item.severity,
+    severityLabel: `${severityLabel(item.severity)}风险`, severityClass: severityTag(item.severity),
+    stateLabel: stateLabel(item.state), stateClass: stateTag(item.state),
+    sourceLabel: labelOf(SOURCE_MODE_LABEL, item.source_mode, '来源未提供'),
+    occurredAt: formatTime(item.occurred_at),
+    relationText: fact ? corridorText(item) : '', positionText: position.join(' · '),
+    reason: item.reason_text || '', canNotify: canNotifyItem(item)
+  };
+}));
+function notifyRouteRisk(riskId) {
+  const item = routeRisks.items.find(risk => risk.risk_id === riskId);
+  if (item) openRiskNotify(item);
+}
+// 与服务端展示筛选相同，仅防止旧样例书签重新打开；不依据 mock/replay 模式一概隐藏。
+function isDisplayDemoRisk(item) {
+  return item?.source_mode === 'mock' && (item.source_code === 'WEATHER-DEMO'
+    || String(item.source_risk_id || '').startsWith('pending-plan-notice-demo-'));
+}
 function corridorText(item) {
   const relation = item.space_fact?.corridor_relation;
   if (relation === 'INSIDE') return '走廊内';
   if (relation === 'NEAR') return '邻近';
   if (relation === 'OUTSIDE') return '走廊外';
-  return severityLabel(item.severity);
-}
-function corridorTag(item) {
-  const relation = item.space_fact?.corridor_relation;
-  if (relation === 'INSIDE') return 't-red';
-  if (relation === 'NEAR') return 't-amber';
-  return RISK_SEVERITY_TAG[item.severity] || 't-gray';
+  return '走廊关系未确定';
 }
 function riskTitle(item) {
   const fact = item.space_fact;
@@ -747,14 +762,6 @@ const planAltitudeText = computed(() => {
 /* C01 的 message 里带着原始原因码（例如 CORRIDOR_MISMATCH），不能直接上屏；只取 facts 里的原因码翻译。 */
 /* 参数状态是规则集版本级的事实：DEMO 版本得出的结论不能被当成已确认口径使用，必须在结论旁边说明。 */
 const demoParams = computed(() => actuals.value?.match?.param_status === 'DEMO');
-
-/* 指标条与下方"计划与实际对照"读同一条研判，避免同屏出现两个说法。 */
-const matchMetricText = computed(() => {
-  const section = actuals.value?.match;
-  if (!showComparison.value) return '—';
-  if (!section) return actualsLoading.value ? '读取中' : '—';
-  return hasRouteDeviation(section) ? '计划偏离' : sectionReady(section) ? labelOf(PLAN_ROW_MATCH_LABEL, section.plan_match_code) : matchMetricNote(section);
-});
 
 const matchReasonText = computed(() => {
   const reason = actuals.value?.match?.hit_details_c01?.[0]?.facts?.match_reason;
@@ -1021,7 +1028,7 @@ async function loadRiskKpis() {
 
 async function loadRoutesInvolved(token) {
   try {
-    const summary = await riskApi.spaceRiskSummary({});
+    const summary = await riskApi.spaceRiskSummary(DISPLAY_RISK_SCOPE);
     if (token !== riskKpiToken) return;
     const metric = summary?.routes_involved ?? summary?.metrics?.routes_involved ?? null;
     routesSummary.value = metric && typeof metric === 'object'
@@ -1079,6 +1086,9 @@ async function loadRiskDetail(riskId) {
     if (token !== riskDetailToken) return;
     if (!EVENT_RISK_TYPES.includes(risk.risk_type)) {
       throw new Error('这条记录属于空域或飞行计划风险，不在本列表的展示范围内。');
+    }
+    if (isDisplayDemoRisk(risk)) {
+      throw new Error('这条记录是预设展示样例，已从业务风险展示中移除。');
     }
     detail = risk;
     selectedRisk.value = risk;
@@ -1186,7 +1196,7 @@ function renderRiskMap() {
   if (activeTab.value !== 'events' || !riskMapHost.value) return;
   const coordinates = riskMapCoords.value;
   const point = riskPoint.value;
-  const target = riskTarget.value;
+  const target = riskTarget.value ? { ...riskTarget.value, activeRisk: abnormalActive(selectedRisk.value) } : null;
   const weather = riskWeather.value;
   const ring = weatherRing.value;
   /* 视野按"这条风险相关的全部几何"收：风险点、关联目标、航线中心线三样有几样算几样。
@@ -1224,6 +1234,8 @@ function renderRiskMap() {
     if (ring && weatherVisible.value) drawWeatherArea(context, this, weather, ring, coordinates, weatherColor.value, weatherKind.value, simulatedWeather.value, weatherBoundaryVisible.value);
     if (coordinates) strokePlannedRoute(context, this, coordinates, { label });
     if (point && !objectRiskSelected.value) {
+      context.save();
+      window.UI.applyAlarmGlow(context, selectedRisk.value);
       const at = this.px(point.longitude, point.latitude);
       context.beginPath();
       context.arc(at[0], at[1], 5, 0, Math.PI * 2);
@@ -1234,6 +1246,7 @@ function renderRiskMap() {
       context.strokeStyle = point.color;
       context.lineWidth = 1.4;
       context.stroke();
+      context.restore();
     }
     context.restore();
   };
@@ -1625,26 +1638,19 @@ onUnmounted(() => {
             <template v-else>
               <div class="detail-hero detail-hero-micro"><div class="detail-hero-inner">
                 <div class="detail-hero-icon" v-html="riskHeroIcon"></div>
-                <div class="detail-hero-copy"><div class="detail-hero-eyebrow">飞行风险</div><div class="detail-hero-title">{{ labelOf(RISK_TYPE_LABEL, selectedRisk.risk_type, '风险事件') }}</div><div v-if="selectedRisk.risk_no" class="detail-hero-id">{{ selectedRisk.risk_no }}</div></div>
+                <div class="detail-hero-copy"><div class="detail-hero-eyebrow">飞行风险</div><div class="detail-hero-title">{{ labelOf(RISK_TYPE_LABEL, selectedRisk.risk_type, '风险类型未提供') }}</div><div v-if="selectedRisk.risk_no" class="detail-hero-id">{{ selectedRisk.risk_no }}</div></div>
                 <div class="detail-hero-side"><div class="detail-hero-tags"><span class="tag" :class="severityTag(selectedRisk.severity)">{{ severityLabel(selectedRisk.severity) }}</span><span class="tag" :class="stateTag(selectedRisk.state)">{{ stateLabel(selectedRisk.state) }}</span></div></div>
               </div></div>
               <template v-if="riskTab === 'event'">
-              <div class="metric-strip is-compact">
-                <div class="metric-item" :class="RISK_SEVERITY_TONE[selectedRisk.severity] ? 'is-' + RISK_SEVERITY_TONE[selectedRisk.severity] : ''"><span class="metric-copy"><small>风险等级</small><b>{{ severityLabel(selectedRisk.severity) }}</b></span></div>
-                <div class="metric-item"><span class="metric-copy"><small>当前状态</small><b>{{ stateLabel(selectedRisk.state) }}</b></span></div>
-                <div v-if="selectedRisk.risk_type !== 'WEATHER'" class="metric-item"><span class="metric-copy"><small>测得高度</small><b>{{ altitudeText(selectedRisk) }}</b></span></div>
-                <div v-if="selectedRisk.risk_type !== 'WEATHER'" class="metric-item"><span class="metric-copy"><small>高度关系</small><b>{{ heightRelationLabel(selectedRisk.height_relation) }}</b></span></div>
-              </div>
               <RiskOpticalPanel v-if="selectedRisk.risk_type !== 'WEATHER'" :key="selectedRisk.risk_id" :risk="selectedRisk" />
               <div class="sect"><h4>事件信息</h4><dl class="kv kv-surface">
-                <dt>风险类型</dt><dd>{{ labelOf(RISK_TYPE_LABEL, selectedRisk.risk_type, '未提供') }}</dd>
-                <dt>来源</dt><dd>{{ selectedRisk.source_name || selectedRisk.source_code || '未提供' }}（{{ labelOf(SOURCE_MODE_LABEL, selectedRisk.source_mode, '未提供') }}）</dd>
+                <dt>来源</dt><dd>{{ sourceDescription(selectedRisk.source_name, selectedRisk.source_code, selectedRisk.source_mode) }}</dd>
                 <dt>发生时间</dt><dd>{{ formatTime(selectedRisk.occurred_at) }}</dd>
                 <dt>接收时间</dt><dd>{{ formatTime(selectedRisk.received_at) }}</dd>
                 <dt>所属范围</dt><dd>{{ selectedRisk.owner_org_name || '未知机构' }} / {{ selectedRisk.district_name || '未知区域' }}</dd>
               </dl></div>
               <div class="sect"><h4>风险依据</h4><dl class="kv kv-surface">
-                <dt>风险依据</dt><dd>{{ labelOf(REASON_CODE_LABEL, selectedRisk.reason_code, '未提供') }}</dd>
+                <dt>触发原因</dt><dd>{{ labelOf(REASON_CODE_LABEL, selectedRisk.reason_code, '未提供') }}</dd>
                 <dt>依据说明</dt><dd class="rk-wrap">{{ riskReasonText(selectedRisk) }}</dd>
                 <template v-if="selectedRisk.risk_type !== 'WEATHER'"><dt>测得高度</dt><dd>{{ altitudeText(selectedRisk) }}<span v-if="selectedRisk.observed_altitude_m == null" class="rk-hint">尚未测得高度，无法判断是否超高</span></dd>
                 <dt>高度关系</dt><dd>{{ heightRelationLabel(selectedRisk.height_relation) }}<span v-if="!selectedRisk.height_relation || selectedRisk.height_relation === 'UNKNOWN'" class="rk-hint">缺高度或 AGL/AMSL 换算依据</span></dd></template>
@@ -1669,7 +1675,7 @@ onUnmounted(() => {
               </div>
               </template>
               <section v-else class="sect notice-section">
-                <div class="workspace-section-heading"><h4>通知与回执</h4><button class="btn ghost" type="button" :disabled="noticesLoading" @click="loadRiskNotices(activeRiskId)">刷新记录</button></div>
+                <div class="workspace-section-heading"><button class="btn ghost" type="button" :disabled="noticesLoading" @click="loadRiskNotices(activeRiskId)">刷新记录</button></div>
                 <div v-if="noticesError" class="warnbox" role="alert">{{ noticesError }}</div>
                 <div v-else-if="noticesLoading" class="empty">正在读取通知记录…</div>
                 <div v-else-if="!notices.length" class="empty">这条风险尚无通知记录。</div>
@@ -1718,7 +1724,6 @@ onUnmounted(() => {
 
         <UPanel title="计划航线与实际飞行" class="workspace-map" nopad body-style="padding:6px">
             <!-- UPanel 的 sub/extra 使用 v-html；API 航线编号只能经 Vue 文本插值输出。 -->
-            <div class="map-summary">{{ selected?.route?.name || '请选择计划' }}</div>
             <div class="plan-map-frame" :class="{ unavailable: !hasMapContent }">
               <div ref="mapHost" class="route-map"></div>
               <PlanDeviceMarkers :markers="deviceMarkers" :plan-id="selected?.plan_id" />
@@ -1744,8 +1749,7 @@ onUnmounted(() => {
           <div v-else-if="detailError" class="warnbox">{{ detailError }} <button v-if="S.selectedPlanId" class="btn" type="button" @click="loadDetail(S.selectedPlanId)">重试</button></div>
           <div v-else-if="!selected" class="empty">请选择计划</div>
           <template v-else>
-            <div class="detail-hero detail-hero-compact"><div class="detail-hero-inner"><div class="detail-hero-icon" v-html="planHeroIcon"></div><div class="detail-hero-copy"><div class="detail-hero-eyebrow">飞行计划</div><div class="detail-hero-title">{{ selected.route?.name || '飞行计划' }}</div><div class="detail-hero-id mono">{{ formatTime(selected.start_at) }}</div></div></div></div>
-            <div class="metric-strip is-compact"><div v-for="metric in [['执行状态', labelOf(PLAN_STATUS_LABEL, selected.status_code)], ['计划时长', formatDuration(selected)], ['航线版本', `v${selected.route?.version_no ?? '—'}`], ['目标匹配', matchMetricText]]" :key="metric[0]" class="metric-item"><div class="metric-copy"><small>{{ metric[0] }}</small><b>{{ metric[1] }}</b></div></div></div>
+            <div class="metric-strip is-compact"><div v-for="metric in [['执行状态', labelOf(PLAN_STATUS_LABEL, selected.status_code)], ['计划时长', formatDuration(selected)]]" :key="metric[0]" class="metric-item"><div class="metric-copy"><small>{{ metric[0] }}</small><b>{{ metric[1] }}</b></div></div></div>
             <PlanFilingDetails :plan="selected" :route-version="routeVersion" :route-loading="routeGeometryLoading" :route-error="routeGeometryError" />
             <section v-if="showComparison" class="sect"><h4>计划与实际对照</h4>
               <div v-if="actualsLoading" class="empty">正在读取…</div>
@@ -1764,27 +1768,9 @@ onUnmounted(() => {
               </template>
             </section>
             <PlanVerificationPanel :key="selected.plan_id" :plan="selected" :match="actuals?.match || null" @map-devices="updatePlanDeviceMap" />
-            <section v-if="showRouteRisks" class="sect"><h4>本计划的风险记录<span v-if="routeRiskHeader" class="muted route-risk-head">{{ routeRiskHeader }}</span></h4>
-              <div v-if="routeRisks.loading" class="empty">正在读取…</div>
-              <div v-else-if="routeRisks.error" class="warnbox">{{ routeRisks.error }}</div>
-              <div v-else-if="!routeRisks.items.length" class="route-risk-ok">暂未查到这份计划的风险记录，请继续关注天气和现场情况</div>
-              <div v-else class="conflict-list">
-                <div v-for="item in routeRisks.items" :key="item.risk_id" class="conflict-item" :title="item.risk_id">
-                  <div class="route-risk-line">
-                    <span><span class="tag" :class="corridorTag(item)">{{ corridorText(item) }}</span> {{ riskTitle(item) }} <a class="lnk mono" href="#/flights?tab=events" @click.prevent="jumpToRisk(item.risk_id)">查看风险详情</a></span>
-                    <span v-if="item.space_fact?.distance_to_route_m != null" class="muted mono">距中心线 {{ (item.space_fact.distance_to_route_m / 1000).toFixed(2) }} km<template v-if="item.space_fact?.target_altitude_raw != null"> · {{ item.space_fact.target_altitude_raw }}m</template></span>
-                  </div>
-                  <div v-if="item.reason_text" class="route-risk-line">
-                    <span class="muted">{{ item.reason_text }}</span>
-                  </div>
-                  <div class="route-risk-line">
-                    <span class="tag t-gray">{{ stateLabel(item.state) }}</span>
-                    <button v-if="canNotifyItem(item)" class="btn" type="button" title="将风险情况通知上级，并等待对方回复处理结果" @click="openRiskNotify(item)">通知上级</button>
-                  </div>
-                </div>
-              </div>
-              <div v-if="routeRisks.total > routeRisks.items.length" class="rk-note">当前展示前 {{ routeRisks.items.length }} 起，共 {{ routeRisks.total }} 起；其余请在“全部风险事件”中按计划筛选查看。</div>
-            </section>
+            <PlanRiskRecords v-if="showRouteRisks" :records="routeRiskRecords" :loading="routeRisks.loading"
+              :error="routeRisks.error" :total="routeRisks.total" :days="ROUTE_RISK_DAYS"
+              @select="jumpToRisk" @notify="notifyRouteRisk" @retry="loadRouteRisks(selected)" />
             <!-- 与 legacy 一致的唯一动作：跳到合法性研判页并选中本计划匹配到的目标（决策 15-48）。 -->
             <div v-if="planLegalityReady" class="detail-actions" style="margin-top:12px">
               <button class="btn pri" type="button" style="flex:1;justify-content:center"
@@ -1802,6 +1788,7 @@ onUnmounted(() => {
 .flights-page { min-width: 0; min-height: 0; height: 100%; display: flex; flex-direction: column; overflow: hidden; }
 .flights-page > .tabs { flex: none; }
 .flights-page :deep(.kpis) { flex: none; }
+.flights-page .detail-hero-title,.flights-page .detail-hero-id { display: block; white-space: normal; overflow: visible; overflow-wrap: anywhere; text-overflow: clip; -webkit-line-clamp: unset; }
 .flight-main,.risk-main { display: grid; grid-template-columns: minmax(250px, .95fr) minmax(300px, 1.35fr) minmax(300px, 1.1fr); grid-template-rows: minmax(0, 1fr); margin-top: 12px; flex: 1; min-height: 0; align-items: stretch; gap: 12px; }
 .workspace-list { grid-column: 1; grid-row: 1; }
 .workspace-map { grid-column: 2; grid-row: 1; }
@@ -1854,11 +1841,6 @@ onUnmounted(() => {
 .map-summary,.map-note { flex: none; padding: 3px 4px; font-size: 11px; color: var(--txt-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .detail-body { flex: 1; min-height: 0; overflow: auto; padding: 12px; }
 .pager { flex: none; display:flex; justify-content:flex-end; padding:10px; }
-.conflict-list { display: grid; gap: 8px; margin-top: 8px; }
-.route-risk-head { font-weight: normal; font-size: 12px; margin-left: 4px; }
-.route-risk-ok { color: #79e5a5; font-size: 12.5px; padding: 6px 0; }
-.route-risk-line { display: flex; justify-content: space-between; gap: 8px; align-items: center; flex-wrap: wrap; }
-.conflict-item { display: grid; gap: 3px; padding: 8px; border: 1px solid var(--line); border-radius: 6px; font-size: 12px; }
 .muted { color: var(--txt-3); font-size: 12px; }
 .sect-title { margin-top: 14px; font-weight: 600; }
 /* 两个页签共用列表—地图—详情的阅读顺序，地图始终只有一个实例。 */

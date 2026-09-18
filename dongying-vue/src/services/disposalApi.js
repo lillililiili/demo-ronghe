@@ -26,6 +26,7 @@ export const disposalApi = {
 
   /* body: { action_type, subject_kind, subject_id, device_id?, channel, reason } */
   create: (body, idempotencyKey) => write(base, body, idempotencyKey),
+  directExecute: (body, idempotencyKey) => write(`${base}/direct-execute`, body, idempotencyKey),
   /* 以下写操作都带 expected_version：并发下由服务端判 409，前端不猜。 */
   approve: (id, body, idempotencyKey) => write(`${one(id)}/approve`, body, idempotencyKey),
   reject: (id, body, idempotencyKey) => write(`${one(id)}/reject`, body, idempotencyKey),

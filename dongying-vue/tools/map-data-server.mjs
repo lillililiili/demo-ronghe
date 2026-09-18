@@ -2,7 +2,7 @@ import { createReadStream } from 'node:fs';
 import { realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 
-const types = { '.json': 'application/json; charset=utf-8', '.pmtiles': 'application/vnd.pmtiles', '.pbf': 'application/x-protobuf', '.png': 'image/png', '.otf': 'font/otf', '.txt': 'text/plain; charset=utf-8' };
+const types = { '.json': 'application/json; charset=utf-8', '.pmtiles': 'application/vnd.pmtiles', '.pbf': 'application/x-protobuf', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.otf': 'font/otf', '.txt': 'text/plain; charset=utf-8' };
 const within = (root, target) => {
   const rel = path.relative(root, target);
   return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
@@ -46,7 +46,7 @@ export function mapDataServer(directory) {
         ? 'no-store, max-age=0'
         : immutable
           ? 'public, max-age=31536000, immutable'
-        : mime.includes('pmtiles') || mime.includes('protobuf') || mime.includes('font') || mime.includes('png')
+        : mime.includes('pmtiles') || mime.includes('protobuf') || mime.includes('font') || mime.startsWith('image/')
           ? 'public, max-age=600'
           : 'no-cache');
       const etag = `"${info.size.toString(16)}-${Math.trunc(info.mtimeMs).toString(16)}"`;

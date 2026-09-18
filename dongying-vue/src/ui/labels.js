@@ -1,6 +1,14 @@
 /* 业务代码 → 中文文案字典（全站共用）。
    规则：页面只展示名称与业务编号，内部 ID 只能进 title 提示；未收录的代码原样返回，不猜测含义。 */
 export const SOURCE_MODE_LABEL = { mock: '模拟', replay: '回放', live: '实时' };
+// 来源名称已有同一模式后缀时不再追加；不同模式及未知模式仍明确保留。
+export function sourceDescription(name, code, mode, fallback = '未提供') {
+  const source = String(name || code || fallback).trim();
+  const modeText = labelOf(SOURCE_MODE_LABEL, mode, '来源模式未记录');
+  const suffixes = [`（${modeText}）`, `(${modeText})`, `（${modeText}来源）`, `(${modeText}来源)`];
+  return SOURCE_MODE_LABEL[mode] && suffixes.some(suffix => source.endsWith(suffix))
+    ? source : `${source}（${modeText}）`;
+}
 // RULE_LEGALITY 是阶段 7 规则引擎判定违规后自动生成的告警类型；叫「飞行违规」而不叫「合法性研判告警」，免得与飞行监管菜单下的「合法性研判」页混淆（决策 15-53）。
 export const ALARM_TYPE_LABEL = { UAV_INTRUSION: '无人机入侵', UAV: '无人机告警', RULE_LEGALITY: '飞行违规' };
 
@@ -256,7 +264,7 @@ export const EVIDENCE_KIND_LABEL = {
   SCENE_PHOTO: '现场照片', PENALTY_DOCUMENT: '处罚文书'
 };
 export const EVIDENCE_STATUS_LABEL = {
-  PENDING: '入库中', AVAILABLE: '在库', MISSING: '文件缺失', CORRUPT: '哈希不符', DESTROYED: '已销毁'
+  PENDING: '入库中', AVAILABLE: '在库', MISSING: '文件缺失', CORRUPT: '文件内容不一致', DESTROYED: '已销毁'
 };
 export const EVIDENCE_CUSTODY_LABEL = {
   KEPT: '保管中', NEARING: '临近到期', DUE: '已到期', HELD: '冻结保管'
@@ -321,6 +329,11 @@ export const labelOf = (map, code, fallback = '—') => (code == null || code ==
  */
 export const disposalStatusText = auth => {
   const status = auth?.status;
+  if (auth?.authorization_mode === 'DIRECT' && status === 'APPROVED') {
+    return auth?.execution_block_reason
+      ? '免逐次审批授权有效；执行受阻'
+      : '免逐次审批授权有效；待执行';
+  }
   if (status !== 'STOPPED') return labelOf(DISPOSAL_STATUS_LABEL, status);
   const result = auth?.device_stop_result;
   return DISPOSAL_STOP_RESULT_LABEL[result] || '授权已撤销；设备急停结果未知';

@@ -15,6 +15,21 @@ export function getEvidenceChain(subjectKind, subjectId) {
   return apiRequestTimed(`/evidence-chains/${encodeURIComponent(subjectKind)}/${encodeURIComponent(subjectId)}`);
 }
 
+/** 精确读取证据关联的轨迹；离开该记录后停止后续分页，不切到目标最新轨迹。 */
+export async function getEvidenceTrackPoints(trackId, { isCurrent = () => true } = {}) {
+  const items = [];
+  let total = 0;
+  for (let page = 1; isCurrent(); page += 1) {
+    const result = await apiRequestTimed(`/tracks/${encodeURIComponent(trackId)}/points${buildQuery({ page, size: 100 })}`);
+    if (!isCurrent()) return null;
+    const batch = Array.isArray(result?.items) ? result.items : [];
+    total = Number(result?.total) || 0;
+    items.push(...batch);
+    if (!batch.length || items.length >= total) break;
+  }
+  return { items, total };
+}
+
 export function listEvidenceAccessLogs(id, values) {
   return apiRequestTimed(`/evidence-files/${encodeURIComponent(id)}/access-logs${buildQuery(values)}`);
 }

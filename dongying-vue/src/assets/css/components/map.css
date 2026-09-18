@@ -1,9 +1,17 @@
 
 @import 'maplibre-gl/dist/maplibre-gl.css';
 /* 地图 */
-.mapwrap{position:relative;width:100%;height:100%;overflow:hidden;border-radius:6px;background:#edf2e9}
-.mapwrap>.mapbase{position:absolute;inset:0;z-index:0;background:#edf2e9}
+.mapwrap{position:relative;width:100%;height:100%;overflow:hidden;border-radius:6px;background:var(--map-background)}
+.mapwrap>.mapbase{position:absolute;inset:0;z-index:0;background:var(--map-background)}
 .mapwrap>canvas.mapoverlay{position:absolute;inset:0;z-index:2;width:100%;height:100%;pointer-events:none}
+/* 夜间大屏质感：细颗粒，压在底图之上、业务叠加层之下，不接收鼠标。
+   山影和地块纹理由地图图层（mapTheme 的 hillshade / fill-pattern）承担，随地图平移缩放。
+   颗粒是深色的（只加暗不加亮，浅色噪点会让整图蒙一层白），不能盖住任何标注。
+   不做四角暗角：在小面板里暗角会被读成"面板边框在发光"。 */
+.mapwrap::after{content:'';position:absolute;inset:0;z-index:1;pointer-events:none;
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .02 0 0 0 0 .06 0 0 0 0 .14 0 0 0 .09 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size:160px 160px}
 .mapstatus{position:absolute;left:50%;top:10px;z-index:4;transform:translateX(-50%);pointer-events:none;
   padding:5px 10px;border:1px solid rgba(71,91,106,.18);border-radius:5px;background:var(--surface-2);
   color:var(--txt-2);font-size:11px;line-height:1.2;white-space:nowrap;box-shadow:0 4px 14px rgba(43,64,78,.14)}
@@ -28,14 +36,14 @@
 /* 比例尺让开左上角那一列缩放按钮：按钮列从顶部往下排约 110px，地图一矮（飞行计划页的
    航线小地图只有 140 多像素高）就会和贴着底边的比例尺叠在一起，把"复位"按钮压住。
    融合感知页此前已经单独躲到 52px，这里统一。 */
-.mapscale{position:absolute;left:52px;bottom:27px;font-size:11px;color:#405568;text-shadow:0 1px 2px #fff;z-index:5}
-.mapscale .bar{height:4px;border:1px solid #405568;border-top:0;width:70px}
+.mapscale{position:absolute;left:52px;bottom:27px;font-size:11px;color:var(--map-label);text-shadow:0 1px 2px var(--map-halo);z-index:5}
+.mapscale .bar{height:4px;border:1px solid var(--map-label);border-top:0;width:70px}
 .mapwrap .mapstatus{max-width:calc(100% - 104px);white-space:normal;pointer-events:auto;line-height:1.5;text-align:center}
 .mapwrap .mapstatus[hidden],.mapwrap .mapcredit[hidden],.mapwrap .mapstatus button[hidden]{display:none}
 .mapwrap .mapstatus button{margin-left:8px;padding:2px 7px;border:1px solid currentColor;border-radius:4px;background:transparent;color:inherit;cursor:pointer;font:inherit}
 .mapwrap .mapctl button:focus-visible,.mapwrap .mapstatus button:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
-.mapwrap .mapcredit{position:absolute;left:6px;bottom:2px;z-index:3;font-size:10px;line-height:18px;color:#405568;background:rgba(255,255,255,.9);padding:0 4px;pointer-events:none}
-.mapwrap .maplibregl-ctrl-attrib{font-size:10px;line-height:18px;max-width:calc(100% - 4px);color:#405568;background:rgba(255,255,255,.92)}
+.mapwrap .mapcredit{position:absolute;left:6px;bottom:2px;z-index:3;font-size:10px;line-height:18px;color:var(--map-label-muted);background:var(--map-background);padding:0 4px;pointer-events:none}
+.mapwrap .maplibregl-ctrl-attrib{font-size:10px;line-height:18px;max-width:calc(100% - 4px);color:var(--map-label-muted);background:var(--map-background)}
 .mapwrap .maplibregl-ctrl-attrib a{color:inherit}
 .mapwrap .maplibregl-ctrl-bottom-left{z-index:3;max-width:calc(100% - 80px)}
 @media(prefers-reduced-motion:reduce){.mapstatus.is-loading:before{animation:none}}

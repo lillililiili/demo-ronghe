@@ -2,7 +2,7 @@
 /* 模块级状态：跨导航保持筛选、分页与选中项（legacy 约定）。 */
 const S = {
   page: 1, size: 20, selectedHandoffId: null,
-  filters: { notify_status: '', created: null }
+  filters: { delivery_status: '', receipt_status: '', created: null }
 };
 export default {};
 </script>
@@ -17,11 +17,12 @@ import UPanel from '@/components/UPanel.vue';
 import AuthorizationQueue from '@/pages/punish/AuthorizationQueue.vue';
 import UPagination from '@/components/UPagination.vue';
 import UControl from '@/components/form/UControl.vue';
-import { toast } from '@/ui/nv.js';
 import { UAV_STATE_TEXT as UAV_STATE_LABEL } from '@/ui/uavVerificationModal.js';
 import { handoffApi } from '@/services/handoffApi.js';
 import AdvisoryRecords from '@/components/disposal/AdvisoryRecords.vue';
 import PunishmentOutcome from '@/pages/punish/PunishmentOutcome.vue';
+import PunishmentNotification from '@/pages/punish/PunishmentNotification.vue';
+import { DELIVERY_OPTIONS, RECEIPT_OPTIONS, deliveryView, receiptView, statusQuery } from '@/pages/punish/handoffStatus.js';
 import RecipientSnapshotFields from '@/components/notifications/RecipientSnapshotFields.vue';
 import { getEvidenceChain } from '@/services/evidenceApi.js';
 import {
@@ -40,11 +41,8 @@ const U = window.UI;
 const UAV_KIND = 'UAV_EVENT';
 const KIND_LABEL = HANDOFF_KIND_LABEL;
 const TYPE_LABEL = HANDOFF_TYPE_LABEL;
-const notifyOptions = [
-  { label: '全部通知状态', value: '' },
-  { label: '未通知', value: 'UNNOTIFIED' },
-  { label: '已通知', value: 'NOTIFIED' }
-];
+const deliveryOptions = [{ label: '全部送达状态', value: '' }, ...DELIVERY_OPTIONS];
+const receiptOptions = [{ label: '全部签收状态', value: '' }, ...RECEIPT_OPTIONS];
 
 const forbidden = ref(false);
 const filters = reactive(S.filters);
@@ -54,8 +52,8 @@ const handoffs = ref([]);
 const total = ref(0);
 const page = ref(S.page);
 const size = ref(S.size);
-const kpiTotals = ref({ all: null, pending: null, delivered: null });
-const kpiFailed = ref({ all: false, pending: false, delivered: false });
+const kpiTotals = ref({});
+const kpiFailed = ref({});
 const detailLoading = ref(false);
 const detailError = ref('');
 const selected = ref(null);
@@ -65,43 +63,32 @@ const chainError = ref('');
 const legacyLinkNote = ref('');
 let listToken = 0, kpiToken = 0, detailToken = 0, chainToken = 0;
 
-function isNotified(row) {
-  if (!row) return false;
-  return row.delivery_status === 'DELIVERED' || row.receipt_status === 'ACKNOWLEDGED';
-}
-function notifyLabel(row) { return isNotified(row) ? '已通知' : '未通知'; }
-function notifyTag(row) { return isNotified(row) ? 't-green' : 't-amber'; }
-function notifyTone(row) { return isNotified(row) ? 'good' : 'warn'; }
-
-async function refreshDelivery() {
-  const row = selected.value;
-  if (!row) return;
-  await loadList(page.value, row.handoff_id);
-  await loadKpis();
+function updateNotificationStatus(data) {
+  if (selected.value?.handoff_id !== data.handoff_id) return;
+  const changed = selected.value.delivery_status !== data.delivery_status || selected.value.receipt_status !== data.receipt_status;
+  const fields = { delivery_status: data.delivery_status, receipt_status: data.receipt_status, latest_delivery: data.latest_delivery, blocked_reason: data.latest_delivery?.blocked_reason || null };
+  Object.assign(selected.value, fields);
+  const row = handoffs.value.find(item => item.handoff_id === data.handoff_id);
+  if (row) Object.assign(row, fields);
+  if (changed) loadKpis();
 }
 
 const kpiList = computed(() => {
-  const value = key => (kpiFailed.value[key] ? '—' : kpiTotals.value[key] == null ? '…' : Number(kpiTotals.value[key]).toLocaleString('en-US'));
-  const desc = (key, text) => (kpiFailed.value[key] ? '总数读取失败' : text);
-  if (forbidden.value) return [
-    { label: '交接总数', value: '—', color: 'blue', icon: 'gavel', desc: '无 handoff:read 权限' },
-    { label: '未通知', value: '—', color: 'amber', icon: 'alert', desc: '无 handoff:read 权限' },
-    { label: '已通知', value: '—', color: 'green', icon: 'check', desc: '无 handoff:read 权限' }
-  ];
+  const value = key => (forbidden.value || kpiFailed.value[key] ? '—' : kpiTotals.value[key] == null ? '读取中' : Number(kpiTotals.value[key]).toLocaleString('en-US'));
+  const desc = (key, text) => forbidden.value ? '没有查看业务交接的权限' : kpiFailed.value[key] ? '总数读取失败' : text;
   return [
-    { label: '交接总数', value: value('all'), color: 'blue', icon: 'gavel', desc: desc('all', '无人机事件处罚交接') },
-    { label: '未通知', value: value('pending'), color: 'amber', icon: 'alert', desc: desc('pending', '尚未通知处罚部门') },
-    { label: '已通知', value: value('delivered'), color: 'green', icon: 'check', desc: desc('delivered', '已通知处罚部门') }
+    { label: '交接总数', value: value('all'), color: 'blue', icon: 'gavel', desc: desc('all', '无人机事件处罚交接总数') },
+    ...DELIVERY_OPTIONS.map(item => ({ label: item.label, value: value(item.value), color: item.color, icon: item.icon,
+      desc: desc(item.value, item.value === 'SUBMITTED' ? '已提交但送达尚未确认，包含处理中和结果未知' : `最近一次投递：${item.label}`) }))
   ];
-});
-
-const detailExtra = computed(() => {
-  const row = selected.value;
-  if (!row) return '';
-  return `<span class="tag ${notifyTag(row)}">${notifyLabel(row)}</span>`;
 });
 
 function label(map, value, fallback = '未知') { return value == null || value === '' ? fallback : (map[value] || value); }
+function materialAuthorizationMode(row) {
+  if (row?.authorization_mode === 'DIRECT') return '免逐次审批';
+  if (row?.authorization_mode === 'REVIEW') return '申请审批';
+  return '';
+}
 function formatTime(value) {
   if (value === null || value === undefined) return '—';
   const date = new Date(value);
@@ -123,9 +110,7 @@ function messageOf(reason, fallback) {
 }
 
 function listQuery() {
-  const query = { source_kind: UAV_KIND };
-  if (filters.notify_status === 'NOTIFIED') query.delivery_status = 'DELIVERED';
-  if (filters.notify_status === 'UNNOTIFIED') query.delivery_status = 'PENDING_DELIVERY';
+  const query = { source_kind: UAV_KIND, ...statusQuery(filters.delivery_status, filters.receipt_status) };
   const range = Array.isArray(filters.created) ? filters.created : null;
   if (range && range[0] != null && range[1] != null) {
     if (!(Number(range[0]) < Number(range[1]))) throw new Error('提交时间范围必须满足开始时间早于结束时间。');
@@ -138,7 +123,7 @@ function listQuery() {
 async function loadKpis() {
   const token = ++kpiToken;
   const base = { source_kind: UAV_KIND };
-  const queries = { all: { ...base }, pending: { ...base, delivery_status: 'PENDING_DELIVERY' }, delivered: { ...base, delivery_status: 'DELIVERED' } };
+  const queries = { all: { ...base }, ...Object.fromEntries(DELIVERY_OPTIONS.map(item => [item.value, { ...base, delivery_status: item.value }])) };
   await Promise.all(Object.keys(queries).map(async key => {
     try {
       const data = await handoffApi.listHandoffs({ ...queries[key], page: 1, size: 1 });
@@ -202,7 +187,7 @@ async function loadDetail(handoffId) {
   }
 }
 
-watch(() => filters.notify_status, () => applyFilters());
+watch(() => [filters.delivery_status, filters.receipt_status], () => applyFilters());
 function applyFilters() {
   try { listQuery(); } catch (validation) { listError.value = validation.message; return; }
   S.selectedHandoffId = null;
@@ -263,7 +248,7 @@ function consumeDeepLink() {
 
 onMounted(() => {
   const requested = consumeDeepLink();
-  if (requested) { Object.assign(filters, { notify_status: '', created: null }); S.selectedHandoffId = requested; }
+  if (requested) { Object.assign(filters, { delivery_status: '', receipt_status: '', created: null }); S.selectedHandoffId = requested; }
   loadKpis();
   loadList(requested ? 1 : page.value, requested);
 });
@@ -272,7 +257,7 @@ onMounted(() => {
 <template>
   <div class="view" id="view" ref="root" style="overflow:hidden">
     <div style="height:100%;display:flex;flex-direction:column;min-height:0">
-      <UKpis :list="kpiList" />
+      <UKpis :list="kpiList" class-name="pn-kpis" />
       <div class="toolbar" style="display:flex;gap:8px;margin-top:12px">
         <button class="btn" :class="{ pri: activeTab === 'authorizations' }" @click="activeTab = 'authorizations'">反制授权</button>
         <button class="btn" :class="{ pri: activeTab === 'handoffs' }" @click="activeTab = 'handoffs'">交接与处罚</button>
@@ -290,7 +275,8 @@ onMounted(() => {
               <div id="pnList" class="pn-list">
                 <div class="toolbar pn-toolbar">
                   <div class="toolbar-fields">
-                    <div class="field"><label>通知状态</label><UControl v-model="filters.notify_status" type="select" :options="notifyOptions" :disabled="listLoading" size="small" /></div>
+                    <div class="field pn-status-filter"><label>送达状态</label><UControl v-model="filters.delivery_status" type="select" :options="deliveryOptions" :disabled="listLoading" size="small" /></div>
+                    <div class="field pn-status-filter"><label>签收回执</label><UControl v-model="filters.receipt_status" type="select" :options="receiptOptions" :disabled="listLoading" size="small" /></div>
                     <div class="field pn-range"><label>提交时间</label><UControl v-model="filters.created" type="datetimerange" clearable :disabled="listLoading" size="small" start-placeholder="开始" end-placeholder="结束" /></div>
                   </div>
                   <div class="toolbar-actions">
@@ -298,7 +284,7 @@ onMounted(() => {
                   </div>
                 </div>
                 <div v-if="listError" class="warnbox pn-error">{{ listError }} <button class="btn" type="button" :disabled="listLoading" @click="retryList">重试</button></div>
-                <div v-if="listLoading && !handoffs.length" class="empty">正在读取交接清单…</div>
+                <div v-if="listLoading && !handoffs.length" class="empty">正在读取交接清单</div>
                 <div v-else-if="!listError && !handoffs.length" class="empty">当前筛选与权限范围内暂无无人机事件处罚交接。</div>
                 <div v-else-if="handoffs.length" class="scroll table-scroll table-shell" style="flex:1">
                   <table class="tb">
@@ -307,7 +293,8 @@ onMounted(() => {
                       <th>来源事项</th>
                       <th>接收方</th>
                       <th>提交时间</th>
-                      <th>通知状态</th>
+                      <th class="pn-status">送达状态</th>
+                      <th class="pn-status">签收回执</th>
                     </tr></thead>
                     <tbody>
                       <tr v-for="row in handoffs" :key="row.handoff_id" :data-row="row.handoff_id" tabindex="0" :class="{ on: selected?.handoff_id === row.handoff_id || (!selected && S.selectedHandoffId === row.handoff_id) }"
@@ -316,7 +303,8 @@ onMounted(() => {
                         <td><span class="tag t-cyan" :title="row.source_id">{{ label(KIND_LABEL, row.source_kind) }}</span></td>
                         <td><div class="pn-wrap" :title="row.recipient_id">{{ row.recipient_name || '—' }}</div><div class="pn-sub">{{ labelOf(SOURCE_MODE_LABEL, row.source_mode, '') }}</div></td>
                         <td class="num" :title="formatTime(row.created_at)">{{ formatClock(row.created_at) }}</td>
-                        <td><span class="tag" :class="notifyTag(row)">{{ notifyLabel(row) }}</span></td>
+                        <td class="pn-status"><span class="tag" :class="deliveryView(row).tag">{{ deliveryView(row).label }}</span></td>
+                        <td class="pn-status"><span class="tag" :class="receiptView(row).tag">{{ receiptView(row).label }}</span></td>
                       </tr>
                     </tbody>
                   </table>
@@ -325,24 +313,17 @@ onMounted(() => {
               </div>
             </UPanel>
 
-            <UPanel title="交接详情" panel-style="flex:4;min-width:340px" nopad :extra="detailExtra">
+            <UPanel title="交接详情" panel-style="flex:4;min-width:340px" nopad>
               <div id="pnDetail" class="pn-detail">
-                <div v-if="detailLoading" class="empty">正在读取交接详情…</div>
+                <div v-if="detailLoading" class="empty">正在读取交接详情</div>
                 <div v-else-if="detailError" class="warnbox pn-error">{{ detailError }} <button class="btn" type="button" @click="retryDetail">重试</button></div>
                 <div v-else-if="!selected" class="empty">{{ handoffs.length ? '请选择交接记录' : '暂无可显示的交接记录' }}</div>
                 <template v-else>
                   <div class="detail-hero detail-hero-micro"><div class="detail-hero-inner">
                     <div class="detail-hero-icon" v-html="U?.icon ? U.icon('clipboard') : ''"></div>
-                    <div class="detail-hero-copy"><div class="detail-hero-eyebrow">业务交接</div><div class="detail-hero-title">{{ label(TYPE_LABEL, selected.handoff_type) }}</div><div v-if="readableNo(selected.source_no, selected.source_id)" class="detail-hero-id mono" :title="selected.handoff_id">{{ readableNo(selected.source_no, selected.source_id) }}</div></div>
-                    <div class="detail-hero-side"><div class="detail-hero-tags"><span class="tag" :class="notifyTag(selected)">{{ notifyLabel(selected) }}</span></div></div>
+                    <div class="detail-hero-copy"><div class="detail-hero-eyebrow">业务交接</div><div class="detail-hero-title">{{ label(TYPE_LABEL, selected.handoff_type) }}</div><div class="detail-hero-id mono" :title="selected.handoff_id">{{ readableNo(selected.source_no, selected.source_id) || '来源编号未提供' }}</div></div>
                   </div></div>
-                  <div class="metric-strip is-compact">
-                    <div class="metric-item" :class="'is-' + notifyTone(selected)"><span class="metric-copy"><small>通知状态</small><b>{{ notifyLabel(selected) }}</b></span></div>
-                    <div class="metric-item"><span class="metric-copy"><small>接收方</small><b>{{ selected.recipient_name || '—' }}</b></span></div>
-                    <div class="metric-item"><span class="metric-copy"><small>提交时间</small><b>{{ formatClock(selected.created_at) }}</b></span></div>
-                  </div>
                   <div class="sect"><h4>交接信息</h4><dl class="kv kv-surface">
-                    <dt>来源编号</dt><dd class="mono" :title="selected.handoff_id">{{ readableNo(selected.source_no, selected.source_id) || '未提供' }}</dd>
                     <dt>来源事项</dt><dd :title="selected.source_id">{{ label(KIND_LABEL, selected.source_kind) }}</dd>
                     <dt>接收方</dt><dd :title="selected.recipient_id">{{ selected.recipient_name || '未提供' }}</dd>
                     <RecipientSnapshotFields :snapshot="selected.recipient_snapshot" historical />
@@ -354,7 +335,7 @@ onMounted(() => {
                     <span class="tag t-gray">{{ chainTotal }} 项</span>
                     <span v-if="chainBroken" class="tag t-red">{{ chainBroken }} 份校验异常</span>
                   </h4>
-                    <div v-if="chainLoading" class="empty">正在读取证据链…</div>
+                    <div v-if="chainLoading" class="empty">正在读取证据链</div>
                     <div v-else-if="chainError" class="warnbox pn-error">{{ chainError }} <button class="btn" type="button" @click="loadChain(selected)">重试</button></div>
                     <template v-else-if="chain">
                       <div class="ev-chain-grid">
@@ -378,7 +359,7 @@ onMounted(() => {
                     <div v-if="!selected.material" class="empty">这条交接没有提交时的材料。</div>
                     <template v-else>
                       <dl v-if="selected.material.event" class="kv kv-surface">
-                        <dt>事件编号</dt><dd class="mono" :title="selected.material.event.event_id">{{ readableNo(selected.material.event.source_alarm_id) || '未提供' }}</dd>
+                        <template v-if="!readableNo(selected.material.event.source_alarm_id) || readableNo(selected.material.event.source_alarm_id) !== readableNo(selected.source_no, selected.source_id)"><dt>提交时事件编号</dt><dd class="mono" :title="selected.material.event.event_id">{{ readableNo(selected.material.event.source_alarm_id) || '未提供' }}</dd></template>
                         <dt>告警类型</dt><dd>{{ labelOf(ALARM_TYPE_LABEL, selected.material.event.alarm_type, '未提供') }}</dd>
                         <dt>提交时状态</dt><dd>{{ labelOf(UAV_STATE_LABEL, selected.material.event.state, '未提供') }}</dd>
                         <dt>发生时间</dt><dd>{{ formatTime(selected.material.event.occurred_at) }}</dd>
@@ -397,17 +378,18 @@ onMounted(() => {
                         <div v-for="d in selected.material.disposals" :key="d.authorization_id">
                           <span class="mono" :title="d.authorization_id">{{ d.authorization_no }}</span>
                           · {{ labelOf(DISPOSAL_ACTION_LABEL, d.action_type) }} · {{ disposalStatusText(d) }}
-                          <span v-if="d.approved_by_name"> · 审批人：{{ d.approved_by_name }}</span>
+                          <span v-if="materialAuthorizationMode(d)"> · 授权方式：{{ materialAuthorizationMode(d) }}</span>
+                          <span v-if="d.authorization_mode === 'DIRECT'"> · 直接操作人：{{ d.requested_by_name || '未提供' }} · 审批人：不适用（免逐次审批）</span>
+                          <span v-else-if="d.authorization_mode === 'REVIEW' && d.requested_by_name"> · 申请人：{{ d.requested_by_name }}</span>
+                          <span v-if="d.authorization_mode !== 'DIRECT' && d.approved_by_name"> · 审批人：{{ d.approved_by_name }}</span>
                         </div>
                       </div>
                       <div v-if="!selected.material.event" class="empty">提交时未附上事件材料。</div>
                       <div class="pn-note-text">本次提交的是文字信息，没有附带可下载的证据文件。</div>
                     </template>
                   </div>
+                  <PunishmentNotification :key="selected.handoff_id" :handoff-id="selected.handoff_id" :recipient-name="selected.recipient_name" @status="updateNotificationStatus" />
                   <PunishmentOutcome :key="selected.handoff_id" :handoff-id="selected.handoff_id" />
-                  <div v-if="!isNotified(selected)" class="detail-actions is-sticky">
-                    <button class="btn pri" type="button" title="重新读取通道送达状态，不重复提交材料" :disabled="listLoading" @click="refreshDelivery">刷新送达状态</button>
-                  </div>
                 </template>
               </div>
             </UPanel>
@@ -425,14 +407,22 @@ onMounted(() => {
 .pn-main { align-items: stretch; gap: var(--gap); min-height: 0; flex: 1; overflow: hidden; }
 .pn-main :deep(.panel > .pb) { display: flex; flex-direction: column; overflow: hidden; }
 .pn-list { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-.pn-toolbar { padding: 10px; }
+.pn-toolbar { padding: 10px; flex-wrap: wrap; }
+.pn-toolbar .toolbar-fields { flex-wrap: wrap; flex: 1; min-width: 0; }
+.pn-toolbar .pn-status-filter { flex: 1 1 180px; min-width: 180px; }
+.pn-toolbar .pn-range { flex: 1 1 320px; min-width: 0; }
+.pn-status { min-width: 110px; white-space: nowrap; }
+.pn-status .tag { white-space: nowrap; height: auto; }
+:deep(.pn-kpis) { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+:deep(.pn-kpis .lb) { white-space: normal; overflow-wrap: anywhere; }
 .pn-error { margin: 8px 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .tb tr { cursor: pointer; }
 .tb tr.on { background: rgba(34, 211, 238, .12); }
-.pn-id { display: inline-block; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+.pn-id { display: inline-block; max-width: 160px; white-space: normal; overflow-wrap: anywhere; vertical-align: bottom; }
 .pn-sub { font-size: 11px; color: var(--txt-3); white-space: normal; line-height: 1.4; overflow-wrap: anywhere; }
 .pn-wrap { white-space: normal; line-height: 1.4; overflow-wrap: anywhere; }
 .pager { display: flex; justify-content: flex-end; padding: 10px; }
 .pn-detail { flex: 1; min-height: 0; overflow: auto; padding: 12px; }
+.pn-detail .detail-hero-title, .pn-detail .detail-hero-id { display: block; overflow: visible; white-space: normal; text-overflow: unset; -webkit-line-clamp: unset; overflow-wrap: anywhere; }
 .pn-note-text { margin: 6px 0 4px; font-size: 11px; color: var(--txt-3); line-height: 1.6; }
 </style>

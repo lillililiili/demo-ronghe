@@ -16,6 +16,7 @@ import { usePageChrome } from '@/hooks/usePageChrome.js';
 import UPanel from '@/components/UPanel.vue';
 import UControl from '@/components/form/UControl.vue';
 import AirspaceRiskList from './AirspaceRiskList.vue';
+import AirspaceResponsePlan from './AirspaceResponsePlan.vue';
 import AirspaceRiskDrawer from './AirspaceRiskDrawer.vue';
 import { useAirspaceRiskList } from './useAirspaceRiskList.js';
 import { useAirspaceRisks } from './useAirspaceRisks.js';
@@ -361,6 +362,7 @@ function installOverlay() {
       const [x, y] = this.px(...row.point), demo = row.demo;
       return { id: demo ? row.target_id : row.risk_id, kind: demo ? 'target' : 'risk', x, y, leftward: x > this.w - 200,
         active: demo ? monitor.activeId === row.target_id : risks.activeId === row.risk_id,
+        activeRisk: !demo && window.UI.abnormalActive(row),
         subtype: demo ? row.subtype : row.space_fact?.subtype_code,
         color: demo ? RISK_COLORS[demo.severity] : riskColor(row), title: demo ? row.target_no : row.space_fact?.subtype_name || row.risk_no,
         note: demo ? `${Math.round(demo.distance)} 米 · ${demo.count}${demo.unit} · 模拟` : `事件位置${row.source_mode === 'mock' ? ' · 模拟' : ''}` };
@@ -370,18 +372,24 @@ function installOverlay() {
       if (['SPACE_OBJECT', 'FOREIGN_OBJECT'].includes(risk.risk_type)) return;
       const [x, y] = this.px(...risk.point);
       const active = risks.activeId === risk.risk_id;
+      c.save();
+      window.UI.applyAlarmGlow(c, risk);
       c.beginPath(); c.arc(x, y, active ? 9 : 6, 0, Math.PI * 2);
       c.fillStyle = riskColor(risk); c.fill();
       c.lineWidth = active ? 3 : 2; c.strokeStyle = '#fff'; c.stroke();
       if (active) { c.beginPath(); c.arc(x, y, 14, 0, Math.PI * 2); c.lineWidth = 2; c.strokeStyle = riskColor(risk); c.stroke(); }
+      c.restore();
     });
     // 蓝色方点表示近期监测位置，不借风险颜色暗示目标危险或安全。
     if (bottomTab.value === 'monitor') riskList.targetMapRows.forEach(target => {
       if (target.demo) return;
       const [x, y] = this.px(...target.point);
       const radius = monitor.activeId === target.target_id ? 8 : 5;
+      c.save();
+      window.UI.applyAlarmGlow(c, { activeRisk: riskList.rows.find(row => row.target?.target_id === target.target_id)?.activeRisk === true });
       c.fillStyle = ROUTE_COLOR; c.fillRect(x - radius, y - radius, radius * 2, radius * 2);
       c.strokeStyle = '#fff'; c.lineWidth = 2; c.strokeRect(x - radius, y - radius, radius * 2, radius * 2);
+      c.restore();
     });
     c.restore();
   };
@@ -397,7 +405,7 @@ function drawDemoOverlay(ctx, view) {
     if (scene.id === 'route') {
       strokePlannedRoute(ctx, view, scene.geometry, { color: PLAN_COLOR, terminals: false });
     } else if (points.length > 1) points.forEach((p, i) => i ? ctx.lineTo(...p) : ctx.moveTo(...p));
-    else if (scene.id === 'dock') { window.UI.drawBusinessIcon(ctx, 'nest', ...points[0], 36); }
+    else if (scene.id === 'dock') { window.UI.drawBusinessIcon(ctx, 'nest', ...points[0], 24); }
     else { ctx.arc(...points[0], 7, 0, Math.PI * 2); ctx.fill(); }
     if (scene.kind === 'polygon') { ctx.closePath(); ctx.fillStyle = 'rgba(34,211,238,.10)'; ctx.fill(); ctx.setLineDash([6, 4]); }
     if (scene.id !== 'route') ctx.stroke();
@@ -726,15 +734,7 @@ onUnmounted(() => {
           <div v-if="selected.load_error" class="warnbox">{{ selected.load_error }}</div>
           <div v-if="detailError" class="warnbox">{{ detailError }}</div>
 
-          <section class="drawer-response-plan" aria-label="本空域处置预案">
-            <div><b>处置预案</b><span class="tag t-amber">关联信息待接入</span></div>
-            <p>暂时无法查看本空域采用的预案，也无法确认预案是否生效。</p>
-            <details :key="selected.airspace_id">
-              <summary>预案在哪里配置</summary>
-              <p>预案由后台管理端统一配置、发布并关联空域；配置与关联查询能力尚待接入。</p>
-              <p>本页查看适用预案；合法性研判查看触发依据；告警事件查看飞手短信、电话录音通知、现场情况和反制授权。</p>
-            </details>
-          </section>
+          <AirspaceResponsePlan :key="selected.airspace_id" :airspace-id="selected.airspace_id" />
 
           <section class="drawer-risk-summary">
             <b>范围内风险记录</b>
@@ -753,7 +753,6 @@ onUnmounted(() => {
         </div>
         <div class="drawer-actions">
           <button class="btn" type="button" :disabled="!selectedPolygons().length" @click="locate">定位</button>
-          <span class="toolbar-note">规则变更由上级下发</span>
         </div>
       </aside>
     </div>
@@ -770,8 +769,8 @@ onUnmounted(() => {
       <div ref="riskSection" class="unified-risk-section"><AirspaceRiskList :list="riskList" :monitor="monitor" :risks="risks" :selected="selected" @inspect="inspectRiskRow" /></div>
     </section>
     <section v-show="bottomTab === 'rules'" id="airspace-rules-panel" role="tabpanel" aria-labelledby="airspace-rules-tab" class="airspace-tab-content">
-    <UPanel title="空域列表" :sub="`共 ${counts.total} 条 · 生效中 ${counts.active} · 临时管制 ${counts.temporary}`" panel-style="flex:1;min-height:0" nopad class-name="airspace-list-panel">
-      <div v-if="error" class="empty">{{ error }}</div>
+    <UPanel :title="`共 ${counts.total} 条 · 生效中 ${counts.active} · 临时管制 ${counts.temporary}`" panel-style="flex:1;min-height:0" nopad class-name="airspace-list-panel">
+      <div v-if="error" class="empty">空域列表暂不可用</div>
       <div v-else-if="loading && !all.length" class="empty">正在读取空域…</div>
       <div v-else-if="!filtered.length" class="empty">没有符合条件的空域。</div>
       <div v-else class="scroll airspace-list" aria-label="空域记录列表">

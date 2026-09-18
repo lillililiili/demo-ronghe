@@ -52,7 +52,10 @@ onUnmounted(() => { generation++; controller?.abort(); clearInterval(timer); emi
           <p>距航线 {{ (Number(row.distance_m) / 1000).toFixed(2) }} 公里 · 最近在线上报：{{ date(row.last_heartbeat_at) }}</p>
           <p v-if="row.abnormal">{{ ['BAD','DEGRADED'].includes(row.health_code) ? '设备运行异常' : '设备当前有异常' }} · 状态上报时间：{{ date(row.observed_at) }}</p>
           <p v-if="row.abnormal && !row.incidents?.length">尚无对应时段的告警记录，异常开始时间不明。</p>
-          <p v-for="item in row.incidents" :key="item.incident_id">{{ item.reason }} · {{ date(item.detected_at) }}<span v-if="item.closed_at">（{{ date(item.closed_at) }} 已关闭）</span><span v-else>（尚未关闭）</span></p>
+          <details v-if="row.incidents?.length" class="incident-records">
+            <summary>告警记录（{{ row.incidents.length }} 条）</summary>
+            <p v-for="item in row.incidents" :key="item.incident_id">{{ item.reason }} · {{ date(item.detected_at) }}<span v-if="item.closed_at">（{{ date(item.closed_at) }} 已关闭）</span><span v-else>（尚未关闭）</span></p>
+          </details>
           <p v-if="!row.complete">该设备信息不完整。</p>
         </article>
       </div>
@@ -69,7 +72,8 @@ p { color: var(--txt-3); margin: 5px 0; line-height: 1.5; overflow-wrap: anywher
 .check-summary { color: var(--txt-1); }
 .device-rows { max-height: 230px; overflow: auto; }
 article { padding: 8px 0; border-top: 1px solid var(--line); }
-summary { cursor: pointer; }
+.incident-records summary { width: fit-content; max-width: 100%; color: var(--cyan); cursor: pointer; line-height: 1.5; overflow-wrap: anywhere; }
+.incident-records summary:focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; }
 footer { margin-top: 8px; color: var(--txt-3); font-size: 11px; }
 .device-heading b { min-width: 0; overflow-wrap: anywhere; }
 .device-type-icon { display:inline-flex;flex-shrink:0;padding:4px;font-size:24px;border:0;color:var(--gray);background:transparent; }

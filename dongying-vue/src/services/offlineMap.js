@@ -1,5 +1,7 @@
 // 挂载前注册桥接；经典 MapView 和业务页面不依赖具体引擎。
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
+import { applyMapTheme, mapPalette, installThemeImages } from './mapTheme';
+import { proceduralDemTile } from './proceduralTerrain';
 let enginePromise;
 const archives = new Map();
 const MANAGED_CONFIG_URL = '/map-data/control/map-config.json';
@@ -74,6 +76,8 @@ function loadEngine() {
       maplibre.setWorkerUrl(workerUrl);
       const protocol = new pmtiles.Protocol();
       maplibre.addProtocol('pmtiles', protocol.tile);
+      // 装饰性山影的高程瓦片在本机按噪声生成，不是网络源。
+      maplibre.addProtocol('procdem', proceduralDemTile);
       return { maplibre, pmtiles, protocol };
     }).catch(error => { enginePromise = null; throw error; });
   }
@@ -201,8 +205,13 @@ export async function prepareOfflineMap(signal) {
     if (header.tileType !== 1 || header.maxZoom < 15) throw new Error('地图包不是预期的 Z0–Z15 矢量数据');
     const bounds = [header.minLon, header.minLat, header.maxLon, header.maxLat];
     if (!bounds.every(Number.isFinite) || bounds[0] >= bounds[2] || bounds[1] >= bounds[3]) throw new Error('地图包覆盖范围无效');
+    // 影像瓦片是随包部署的静态目录，同源校验与其他资源一致；没有 imagery 字段就只画矢量。
+    const imagery = manifest.imagery?.tiles ? {
+      tiles: assetUrl(manifest.imagery.tiles), minzoom: manifest.imagery.minZoom ?? 7, maxzoom: manifest.imagery.maxZoom ?? 12,
+      attribution: manifest.imagery.attribution || '', bounds
+    } : null;
     return {
-      maplibre: engine.maplibre, style, manifest, bounds, release,
+      maplibre: engine.maplibre, style: applyMapTheme(style, { imagery }), manifest, bounds, release,
       runtime: {
         managed: runtimeConfig.managed,
         revision: config.revision ?? null,
@@ -211,9 +220,10 @@ export async function prepareOfflineMap(signal) {
         cityName: config.city_name || '东营市',
         clearBusinessOverlays: Boolean(config.clear_business_overlays)
       },
-      transformRequest: url => ({ url: url.startsWith('pmtiles://') ? url : localUrl(url) })
+      decorate: installThemeImages,
+      transformRequest: url => ({ url: url.startsWith('pmtiles://') || url.startsWith('procdem://') ? url : localUrl(url) })
     };
   } catch (error) { release(); throw error; }
 }
 
-window.OfflineMap = { prepare: prepareOfflineMap };
+window.OfflineMap = { prepare: prepareOfflineMap, palette: mapPalette };

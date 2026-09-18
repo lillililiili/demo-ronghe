@@ -4,7 +4,7 @@ import UPanel from '@/components/UPanel.vue';
 import UControl from '@/components/form/UControl.vue';
 import UPagination from '@/components/UPagination.vue';
 import { disposalApi } from '@/services/disposalApi.js';
-import { DISPOSAL_ACTION_LABEL, DISPOSAL_CHANNEL_LABEL, SOURCE_MODE_LABEL, disposalStatusText, labelOf } from '@/ui/labels.js';
+import { DISPOSAL_ACTION_LABEL, DISPOSAL_BLOCK_REASON_LABEL, DISPOSAL_CHANNEL_LABEL, SOURCE_MODE_LABEL, disposalStatusText, labelOf } from '@/ui/labels.js';
 import { openDisposalApproval, openDisposalExecution, openDisposalManualResult, openDisposalStop } from '@/ui/disposalAuthModal.js';
 import EmergencyStopPanel from '@/components/disposal/EmergencyStopPanel.vue';
 
@@ -24,8 +24,15 @@ function allowed(row) { return actions.filter(a => a.codes.some(code => row?.all
   && !(row?.subject_kind === 'UAV_EVENT' && ['COUNTERMEASURE', 'JAMMING'].includes(row.action_type) && a.codes.includes('STOP'))); }
 const usesEmergency = row => row?.subject_kind === 'UAV_EVENT' && ['COUNTERMEASURE', 'JAMMING'].includes(row.action_type);
 const emergencyInfo = ref(null);
+const modeText = row => row?.authorization_mode === 'DIRECT' ? '免逐次审批' : row?.authorization_mode === 'REVIEW' ? '申请审批' : '方式未知';
+const operatorLabel = row => row?.authorization_mode === 'DIRECT' ? '直接操作人' : '申请人';
+const approverText = row => row?.authorization_mode === 'DIRECT' ? '不适用（免逐次审批）' : (row?.approved_by_name || '待审批');
 const statusText = row => row?.status === 'STOPPED' && emergencyInfo.value?.latest_stop && row.subject_id === emergencyInfo.value.event_id
-  ? '授权已中止；设备反馈见急停区' : disposalStatusText(row);
+  ? '授权已中止；设备反馈见急停区'
+  : disposalStatusText(row);
+const blockReasonText = row => row?.execution_block_reason
+  ? labelOf(DISPOSAL_BLOCK_REASON_LABEL, row.execution_block_reason)
+  : '';
 async function refreshEmergency() { if (selected.value) await refresh(selected.value.authorization_id); else await load(); }
 function formatRequestedAt(value) {
   if (value == null || value === '') return '—';
@@ -76,28 +83,28 @@ onUnmounted(() => { active = false; request++; detailRequest++; });
     panel-style="flex:1;min-height:0;margin-top:12px;overflow:hidden"
     body-style="display:flex;flex-direction:column;min-height:0;overflow:hidden">
     <div class="toolbar">
-      <label>授权状态 <UControl type="select" v-model="status" :options="options" :input-props="{ 'aria-label': '授权状态' }" /></label>
-      <button class="btn" :disabled="loading" @click="load(1)">{{ loading ? '正在读取…' : '查询授权' }}</button>
-      <button class="btn" :disabled="loading" @click="load()">刷新状态</button>
+      <label>授权状态 <UControl type="select" v-model="status" :options="options" :input-props="{ 'aria-label': '授权状态' }" @update:model-value="load(1)" /></label>
+      <button class="btn" :disabled="loading" @click="load()">{{ loading ? '正在读取' : '刷新授权' }}</button>
     </div>
     <div v-if="error" class="warnbox" role="alert">{{ error }}</div>
     <div class="scroll table-scroll table-shell">
       <table class="tb">
-        <thead><tr><th>授权编号</th><th>动作 / 来源</th><th>申请人</th><th>申请时间</th><th>审批人</th><th>执行通道</th><th>状态 / 结果</th><th>操作</th></tr></thead>
+        <thead><tr><th>授权编号</th><th>授权方式</th><th>动作 / 来源</th><th>操作人</th><th>申请时间</th><th>审批人</th><th>执行通道</th><th>状态 / 结果</th><th>操作</th></tr></thead>
         <tbody>
           <tr v-for="row in rows" :key="row.authorization_id">
             <td><span class="mono" :title="row.authorization_id">{{ row.authorization_no }}</span></td>
+            <td>{{ modeText(row) }}</td>
             <td>{{ labelOf(DISPOSAL_ACTION_LABEL, row.action_type) }} · {{ labelOf(SOURCE_MODE_LABEL, row.source_mode) }}</td>
             <td>{{ row.requested_by_name || '未提供' }}</td>
             <td class="num" :title="formatRequestedAt(row.requested_at)">{{ formatRequestedAt(row.requested_at) }}</td>
-            <td>{{ row.approved_by_name || '待审批' }}</td>
+            <td>{{ approverText(row) }}</td>
             <td>{{ labelOf(DISPOSAL_CHANNEL_LABEL, row.channel) }}</td>
-            <td>{{ statusText(row) }}<div v-if="row.result_code">{{ row.result_code }}</div></td>
-            <td><div class="actions"><button v-for="action in allowed(row)" :key="action.label" class="btn" @click="act(action, row)">{{ action.label }}</button>
+            <td>{{ statusText(row) }}<div v-if="blockReasonText(row)">受阻原因：{{ blockReasonText(row) }}</div><div v-if="row.result_code">{{ row.result_code }}</div></td>
+            <td><div class="actions"><button v-for="action in selected?.authorization_id === row.authorization_id ? [] : allowed(row)" :key="action.label" class="btn" @click="act(action, row)">{{ action.label }}</button>
               <button v-if="usesEmergency(row)" type="button" class="btn" @click="show(row.authorization_id)">查看处置与急停</button>
             </div></td>
           </tr>
-          <tr v-if="!loading && !rows.length"><td colspan="8" class="empty">当前筛选下没有可见授权。</td></tr>
+          <tr v-if="!loading && !rows.length"><td colspan="9" class="empty">当前筛选下没有可见授权。</td></tr>
         </tbody>
       </table>
     </div>
@@ -106,10 +113,11 @@ onUnmounted(() => { active = false; request++; detailRequest++; });
     </footer>
     <section v-if="selected" class="sect" aria-label="所选授权详情">
       <EmergencyStopPanel v-if="usesEmergency(selected)" :key="selected.subject_id" :event-id="selected.subject_id"
-        :event-label="selected.authorization_no" @updated="emergencyInfo = $event" @changed="refreshEmergency" />
+        @updated="emergencyInfo = $event" @changed="refreshEmergency" />
       <h4>{{ selected.authorization_no }} · {{ statusText(selected) }}</h4>
       <p>{{ selected.reason }}</p>
-      <p>{{ labelOf(SOURCE_MODE_LABEL, selected.source_mode) }} · 申请人：{{ selected.requested_by_name || '未提供' }} · 审批人：{{ selected.approved_by_name || '待审批' }}</p>
+      <p>{{ modeText(selected) }} · {{ operatorLabel(selected) }}：{{ selected.requested_by_name || '未提供' }} · 审批人：{{ approverText(selected) }}</p>
+      <p v-if="blockReasonText(selected)">执行受阻：{{ blockReasonText(selected) }}</p>
       <p v-if="selected.result_code">设备结果：{{ selected.result_code }} · {{ selected.result_detail }}</p>
       <div class="actions"><button v-for="action in allowed(selected)" :key="action.label" class="btn" @click="act(action, selected)">{{ action.label }}</button></div>
     </section>

@@ -111,7 +111,7 @@
 .bs-module-link:hover{color:#8fe8ff;text-shadow:0 0 9px rgba(45,207,208,.5)}
 
 /* ---------- 中列 KPI ---------- */
-.bs-kpis{flex:none;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.bs-kpis{flex:none;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
 .bs-kpis .kpi{
   --tone:var(--kpi-tone,var(--blue));--kpi-c:var(--tone);appearance:none;isolation:isolate;position:relative;display:flex;
   min-height:136px;flex-direction:column;justify-content:center;gap:1px;padding:10px 8px 9px;

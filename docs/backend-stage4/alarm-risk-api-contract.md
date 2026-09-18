@@ -153,3 +153,10 @@ JSON 语法、结构、未知/重复/缺失键或字段类型错误返回 `INVAL
 ### 气象风险范围（2026-09-14 追加）
 
 `GET /api/v1/risks/{riskId}/weather-fact` 按既有风险读取权限和对象范围返回气象位置/时段快照，无事实时 data 缺省。完整字段、模拟边界和地图行为见 [飞行计划气象风险](../backend-stage19/flight-weather-risk.md#接口与存储)。不改变风险列表、核验及通知状态机。
+## 2026-09-16 补充：业务风险展示样例过滤
+
+`GET /risks`、`GET /risks/export.csv` 与 `GET /space-risks/summary` 新增可选 `exclude_demo_samples=true|false`，默认 `false`，其他参数及权限保持原约定。飞行计划的计划风险记录、全部风险列表、对应统计及导出显式传 `true`。
+
+开启时，仅排除 `source_mode=mock` 且来源代码为 `WEATHER-DEMO` 或来源风险编号以 `pending-plan-notice-demo-` 开头的预设展示样例；服务端在分页、计数、汇总与导出前应用同一条件。保留其他 `mock/replay/live` 风险，包括 MQTT 接入后由规则引擎生成的异物风险。不能按演示规则集编号过滤，因为实际评估器也可能使用该规则集。
+
+该参数不删除或修改风险、核验、通知、回执与审计记录。后端按 ID 读取详情仍保留原契约；飞行计划页面的旧预设样例链接显示已从展示中移除的提示。当前样例缺少气象实况判定，不将其改名为 MQTT 风险。

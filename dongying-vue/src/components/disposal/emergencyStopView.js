@@ -15,10 +15,10 @@ export function requiresStopFollowup(overview) {
 }
 
 export function stopActionLabel(overview) {
-  if (typeof overview?.requires_device_stop === 'boolean') return overview.requires_device_stop ? '急停本次处置' : '撤销本次处置';
+  if (typeof overview?.requires_device_stop === 'boolean') return overview.requires_device_stop ? '急停本次处置' : '撤销本次反制';
   const rows = overview?.authorizations || [];
   return rows.length && rows.every(row => ['APPROVED', 'REQUESTED'].includes(row.status))
-    ? '撤销本次处置' : '急停本次处置';
+    ? '撤销本次反制' : '急停本次处置';
 }
 
 export function stopSummary(overview) {

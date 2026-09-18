@@ -15,9 +15,7 @@ body[data-theme] .panel{
   border-color:color-mix(in srgb,var(--page-accent) 42%,transparent);
   box-shadow:var(--shadow-soft),0 0 18px color-mix(in srgb,var(--page-accent) 9%,transparent);
 }
-body[data-theme] .panel>.ph{
-  background:linear-gradient(90deg,color-mix(in srgb,var(--page-accent) 22%,transparent),transparent 80%);
-}
+/* 面板标题栏不再刷主题色渐变：横向的亮色晕在深底上像一层光雾（用户 2026-09-17 要求去掉）。 */
 body[data-theme] .panel>.ph h3:before{
   content:"";display:block;width:4px;height:14px;border-radius:4px;
   background:linear-gradient(180deg,var(--page-accent),color-mix(in srgb,var(--page-accent) 42%,transparent));

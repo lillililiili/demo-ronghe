@@ -31,6 +31,7 @@ import { exportAlarmsCsv, getAlarm, getUavEvent, listAlarmDistricts, listAlarms 
 import { getEvidenceChain } from '@/services/evidenceApi.js';
 import { openUavVerification } from '@/ui/uavVerificationModal.js';
 import { targetApi } from '@/services/targetApi.js';
+import { mapPool } from '@/services/apiClient.js';
 import { ALARM_PROGRESS_LABEL, ALARM_PROGRESS_TAG, ALARM_TYPE_LABEL, DISPOSAL_ACTIVE_STATUSES, DISPOSAL_ACTION_LABEL, disposalStatusText, labelOf, LEGALITY_LABEL, readableNo, sourceDescription, SOURCE_MODE_LABEL as MODE_TEXT, targetTypeLabel } from '@/ui/labels.js';
 import { openEvidenceFileModal } from '@/ui/evidenceFileDetail.js';
 import { openEvidenceChainTypeModal, renderEvidenceChainHtml } from '@/ui/evidenceChainView.js';
@@ -106,6 +107,7 @@ const regionOpts = () => (districtError.value
 const LEVEL_OPTS = [{ v: '全部', t: '全部' }, { v: 'CRITICAL', t: '紧急' }, { v: 'HIGH', t: '高' }, { v: 'MEDIUM', t: '中' }, { v: 'LOW', t: '低' }];
 const STATUS_OPTS = [{ v: '全部', t: '全部' }, ...Object.entries(STATE_FILTER).map(([v, s]) => ({ v, t: s.t }))];
 const pageProgress = {};
+const pendingProgress = new Set();
 
 /* ---------- 通用小工具：服务端字符串一律转义后才进 innerHTML ---------- */
 const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
@@ -151,6 +153,7 @@ function displayState(a) {
   }
   if (!key || !ALARM_PROGRESS_LABEL[key]) {
     const summary = advisorySummaries.get(a.event_id);
+    if (!summary && pendingProgress.has(a.event_id)) return { t: '已核实，处置进度读取中', c: 't-gray', color: '#8ca0be' };
     return summary ? { t: advisoryProgress(summary), c: 't-cyan', color: '#22d3ee' } : stateOf(a);
   }
   return { t: ALARM_PROGRESS_LABEL[key], c: ALARM_PROGRESS_TAG[key] || 't-cyan', color: '#22d3ee' };
@@ -578,8 +581,8 @@ async function loadList() {
       st.page = Math.max(1, Math.ceil(totalCount.value / st.size));
       return loadList();
     }
-    await loadPageProgress(list.rows, my);
-    if (my !== listSeq) return;
+    // 先呈现列表并允许选中详情，逐行补充信息不占用列表加载状态。
+    void loadPageProgress(list.rows, my).then(() => { if (my === listSeq) paintList(); });
   } catch (e) {
     if (my !== listSeq) return;
     // API 失败只显示错误并允许重试，绝不回退 Mock 列表。
@@ -592,7 +595,12 @@ async function loadPageProgress(rows, seq) {
   const ids = [...new Set((rows || []).map(row => row.event_id).filter(Boolean))];
   const next = {};
   const summaries = new Map();
-  await Promise.all(ids.map(async id => {
+  Object.keys(pageProgress).forEach(key => { delete pageProgress[key]; });
+  advisorySummaries.clear();
+  pendingProgress.clear();
+  ids.forEach(id => pendingProgress.add(id));
+  await mapPool(ids, 4, async id => {
+    if (seq !== listSeq) return;
     try {
       const [disp, hands, advisory] = await Promise.all([
         disposalApi.list({ subject_kind: 'UAV_EVENT', subject_id: id, page: 1, size: 50 }),
@@ -602,8 +610,9 @@ async function loadPageProgress(rows, seq) {
       summaries.set(id, advisory);
       next[id] = deriveAlarmProgress(disp?.items || [], hands?.items || []);
     } catch { next[id] = null; }
-  }));
+  });
   if (seq !== listSeq) return;
+  pendingProgress.clear();
   Object.keys(pageProgress).forEach(key => { delete pageProgress[key]; });
   Object.assign(pageProgress, next);
   for (const [id, summary] of summaries) {

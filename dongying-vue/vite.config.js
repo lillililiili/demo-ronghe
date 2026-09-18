@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { externalMapData } from './tools/map-data-server.mjs';
+import { mapWorkerAssets } from './tools/map-worker-server.mjs';
 
 const rootDir = fileURLToPath(new URL('.', import.meta.url));
 const mapManifest = directory => path.join(directory, 'dongying-dev', 'manifest.json');
@@ -28,6 +29,7 @@ export default defineConfig(() => {
     },
     plugins: [
       vue(),
+      mapWorkerAssets(),
       externalMapData(resolveMapDataDirectory())
     ],
     // 旧高德 VITE_* 值不再暴露给浏览器；地图地址走独立静态配置。

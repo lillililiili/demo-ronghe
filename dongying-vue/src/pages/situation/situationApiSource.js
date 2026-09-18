@@ -82,6 +82,7 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
   }
 
   function publish(generatedAt) {
+    if (stopped || paused) return;
     snapshot = { ...snapshot, generatedAt, sourceMode: sourceMode(snapshot), simulated: false };
     emit(snapshot);
   }
@@ -96,8 +97,10 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
     const observedFrom = generatedAt - TARGET_WINDOW_MS;
     const tasks = [
       retain('targets', async () => {
-        const page = await targetApi.listAll({ seen_from: observedFrom, seen_to: generatedAt, include_merged: false });
-        const recent = await targetApi.recentTracks({ observed_from: observedFrom, observed_to: generatedAt, points_per_target: 24 });
+        const [page, recent] = await Promise.all([
+          targetApi.listAll({ seen_from: observedFrom, seen_to: generatedAt, include_merged: false }),
+          targetApi.recentTracks({ observed_from: observedFrom, observed_to: generatedAt, points_per_target: 24 })
+        ]);
         const converted = attachBearing(toTargets(page.items), bearingOrigins(snapshot.devices));
         return withComparison(attachRecentTracks(converted, recent, snapshot.targets));
       }, value => { snapshot = { ...snapshot, targets: value }; }),
@@ -154,12 +157,16 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
     running = true;
     const generatedAt = now();
     try {
-      if (forceSlow || generatedAt - lastSlowAt >= slowMs) {
-        await refreshSlow(generatedAt);
-        lastSlowAt = generatedAt;
+      // 实时目标与风险优先发起；资料请求并行，不再串在实时数据之前。
+      const fast = refreshFast(generatedAt).then(() => publish(generatedAt));
+      const needsSlow = forceSlow || generatedAt - lastSlowAt >= slowMs;
+      const slow = needsSlow ? refreshSlow(generatedAt).then(() => { lastSlowAt = generatedAt; }) : Promise.resolve();
+      await Promise.all([fast, slow]);
+      if (needsSlow) {
+        // 两组完成顺序不固定，只报方位的目标须按最终设备位置再关联一次。
+        snapshot = { ...snapshot, targets: attachBearing(snapshot.targets, bearingOrigins(snapshot.devices)) };
+        publish(generatedAt);
       }
-      await refreshFast(generatedAt);
-      publish(generatedAt);
     } finally {
       running = false;
       if (!stopped && !paused) timer = globalThis.setTimeout(() => cycle(false), fastMs);

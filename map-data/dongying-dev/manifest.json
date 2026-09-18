@@ -15,5 +15,11 @@
   ],
   "minZoom": 0,
   "maxZoom": 15,
-  "displayMaxZoom": 18
+  "displayMaxZoom": 18,
+  "imagery": {
+    "tiles": "./imagery/{z}/{x}/{y}.jpg",
+    "minZoom": 7,
+    "maxZoom": 12,
+    "attribution": "Sentinel-2 cloudless 2025 by EOX（开发数据）"
+  }
 }

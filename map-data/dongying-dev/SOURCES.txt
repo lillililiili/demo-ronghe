@@ -9,3 +9,6 @@
 © OpenStreetMap contributors；OSM 数据采用 ODbL：https://www.openstreetmap.org/copyright
 Protomaps 底图及样式：https://github.com/protomaps/basemaps（BSD-3-Clause）；数据来源还包括 Natural Earth 等，见 sources/metadata.json。
 全量哈希见 checksums.json；变更地图、样式或字体后必须重新生成并检查。
+影像（开发样例，非正式交付数据）：imagery/{z}/{x}/{y}.jpg，Z7–Z12，658 张，约 9 MB。
+来源：EOX Sentinel-2 cloudless 2025（https://s2maps.eu），WMTS s2cloudless-2025_3857。
+授权：CC BY-NC-SA 4.0（非商业），仅用于开发联调；正式交付改用 Copernicus 数据空间的 Sentinel-2 L2A（自注册，允许商用、需署名），用 dongying-vue/tools/fetch-imagery.mjs 换模板重跑即可。

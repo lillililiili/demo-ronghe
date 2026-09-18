@@ -20,7 +20,11 @@ server {
         alias /srv/map-data/;
         autoindex off;
         disable_symlinks on;
-        gzip off;
+        # 仅压缩文本与字形；PMTiles 与影像保持原始字节和 Range 语义。
+        gzip on;
+        gzip_min_length 1024;
+        gzip_types application/json application/x-protobuf text/plain;
+        gzip_vary on;
         max_ranges 1;
         etag on;
         add_header Cache-Control "public, max-age=31536000, immutable";

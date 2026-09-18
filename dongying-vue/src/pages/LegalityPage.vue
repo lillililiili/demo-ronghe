@@ -341,6 +341,8 @@ async function loadQueue(options = {}) {
     items.value = data.items || [];
     totalCount.value = data.total || 0;
     st.page = data.page || st.page;
+    // 队列不等待默认选中项的详情与复核历史。
+    loading.value = false;
     if (options.skipSelection) return;
     if (deepLink) { await selectEvaluation(deepLink); return; }
     if (deepLinkNotice.value) return;
@@ -387,6 +389,7 @@ async function selectEvaluationById(evaluationId) {
       return;
     }
     selectedEvaluation.value = data;
+    detailLoading.value = false;
     st.revisionPage = 1;
     loadPlanDetail(data);
     await loadRevisions();

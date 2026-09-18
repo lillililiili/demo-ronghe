@@ -18,8 +18,8 @@ function localUrl(value, base = window.location.href) {
   return url.href;
 }
 
-async function json(url, signal) {
-  const response = await fetch(url, { signal, cache: 'no-cache', redirect: 'error' });
+async function json(url, signal, cache = 'no-cache') {
+  const response = await fetch(url, { signal, cache, redirect: 'error' });
   if (!response.ok) {
     const error = new Error(`地图资源返回 HTTP ${response.status}`);
     error.status = response.status;
@@ -33,17 +33,47 @@ function runtimeKey(config) {
   return `${config?.revision ?? 'builtin'}:${config?.package_id || config?.manifest || ''}`;
 }
 
+function preferLocalIdeographs(style) {
+  // MapLibre 6 的 font-faces 优先于 localIdeographFontFamily。仅移除随包提供的
+  // 完整中文后备字体，让 MapView 已配置的系统中文字体生效；保留其他语言/定制字体。
+  const localRanges = new Set(['U+2E80-9FFF', 'U+F900-FAFF', 'U+FF00-FFEF']);
+  for (const [stack, faces] of Object.entries(style['font-faces'] || {})) {
+    const remaining = faces.filter(face => !(
+      /\/NotoSansSC-Regular\.otf(?:[?#]|$)/.test(face.url) &&
+      Array.isArray(face['unicode-range']) && face['unicode-range'].length > 0 &&
+      face['unicode-range'].every(range => localRanges.has(range))
+    ));
+    if (remaining.length) style['font-faces'][stack] = remaining;
+    else delete style['font-faces'][stack];
+  }
+  if (style['font-faces'] && !Object.keys(style['font-faces']).length) delete style['font-faces'];
+}
+
 async function readRuntimeConfig(signal) {
   const managedUrl = localUrl(MANAGED_CONFIG_URL);
+  const builtinUrl = localUrl(BUILTIN_CONFIG_URL);
+  // 默认配置很小，和后台指针并行读取；后台指针存在时仍优先使用它。
+  // 先处理后备请求的拒绝，避免指针成功时出现无人接收的异步错误。
+  const builtin = json(builtinUrl, signal).then(config => ({ config }), error => ({ error }));
   try {
     const config = await json(managedUrl, signal);
     return { config, configUrl: managedUrl, managed: true };
   } catch (error) {
     if (error?.name === 'AbortError') throw error;
-    const builtinUrl = localUrl(BUILTIN_CONFIG_URL);
-    const config = await json(builtinUrl, signal);
-    return { config, configUrl: builtinUrl, managed: false };
+    const result = await builtin;
+    if (result.error) throw result.error;
+    return { config: result.config, configUrl: builtinUrl, managed: false };
   }
+}
+
+async function readMapManifest(signal) {
+  const runtimeConfig = await readRuntimeConfig(signal);
+  const manifestUrl = localUrl(runtimeConfig.config.manifest, runtimeConfig.configUrl);
+  const manifest = await json(manifestUrl, signal, 'default');
+  if (manifest.version !== 1 || manifest.coordinateSystem !== 'WGS84' || !manifest.archive || !manifest.style) {
+    throw new Error('地图清单格式错误，需要 version=1 和 WGS84 数据');
+  }
+  return { runtimeConfig, manifest, manifestUrl, styleUrl: localUrl(manifest.style, manifestUrl) };
 }
 
 async function checkForRuntimeChange() {
@@ -72,8 +102,8 @@ function loadEngine() {
   if (!enginePromise) {
     enginePromise = Promise.all([import('maplibre-gl'), import('pmtiles')]).then(([lib, pmtiles]) => {
       const maplibre = lib.default || lib;
-      // v6 的 Worker 是独立 ESM；必须经过 Vite worker 管线合并其共享模块。
-      maplibre.setWorkerUrl(workerUrl);
+      // 开发时使用同版本发行文件，避开内联源码映射；正式构建继续合并 Worker 模块。
+      maplibre.setWorkerUrl(import.meta.env.DEV ? '/map-engine/maplibre-gl-worker.mjs' : workerUrl);
       const protocol = new pmtiles.Protocol();
       maplibre.addProtocol('pmtiles', protocol.tile);
       // 装饰性山影的高程瓦片在本机按噪声生成，不是网络源。
@@ -155,20 +185,16 @@ function acquireArchive(engine, url) {
 
 export async function prepareOfflineMap(signal) {
   startRuntimeMonitor();
-  // 引擎代码与运行指针互不依赖，同时读取，避免首屏串行等待。
-  const [engine, runtimeConfig] = await Promise.all([
-    loadEngine(),
-    readRuntimeConfig(signal)
-  ]);
+  // 清单和样式不依赖地图引擎；引擎下载期间直接推进资源链。
+  const manifestTask = readMapManifest(signal);
+  const styleTask = manifestTask.then(({ styleUrl }) => json(styleUrl, signal, 'default'));
+  // 引擎失败或页面取消时也要接住已启动的样式请求；下面仍会正常抛出其错误。
+  styleTask.catch(() => {});
+  const [engine, resources] = await Promise.all([loadEngine(), manifestTask]);
   signal.throwIfAborted();
-  const { config, configUrl } = runtimeConfig;
+  const { runtimeConfig, manifest, manifestUrl, styleUrl } = resources;
+  const { config } = runtimeConfig;
   activeRuntimeKey = runtimeKey(config);
-  const manifestUrl = localUrl(config.manifest, configUrl);
-  const manifest = await json(manifestUrl, signal);
-  if (manifest.version !== 1 || manifest.coordinateSystem !== 'WGS84' || !manifest.archive || !manifest.style) {
-    throw new Error('地图清单格式错误，需要 version=1 和 WGS84 数据');
-  }
-  const styleUrl = localUrl(manifest.style, manifestUrl);
   const url = localUrl(manifest.archive, manifestUrl);
   const lease = acquireArchive(engine, url);
   signal.addEventListener('abort', lease.release, { once: true });
@@ -176,7 +202,7 @@ export async function prepareOfflineMap(signal) {
   try {
     // 样式文件和 PMTiles 头互不依赖，并行取得后再统一校验。
     const [style, header] = await Promise.all([
-      json(styleUrl, signal),
+      styleTask,
       lease.archive.getHeader()
     ]);
     signal.throwIfAborted();
@@ -198,6 +224,7 @@ export async function prepareOfflineMap(signal) {
       if (!Array.isArray(faces)) throw new Error('不支持的字体配置');
       faces.forEach(face => { face.url = assetUrl(face.url); });
     }
+    preferLocalIdeographs(style);
     if (style.sprite) {
       if (typeof style.sprite !== 'string') throw new Error('不支持的图标清单格式');
       style.sprite = assetUrl(style.sprite);

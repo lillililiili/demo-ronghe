@@ -489,6 +489,8 @@ async function loadPlans(nextPage = page.value, requestedId = null) {
     total.value = data.total;
     plans.value = data.items;
     routeLoaded.value = true;
+    // 列表已可浏览，详情、轨迹和实际对照各自显示加载状态。
+    loading.value = false;
     loadRowActuals(plans.value);
     loadPlanKpis();
     if (requestedId) { await loadDetail(requestedId); return; }
@@ -1795,6 +1797,9 @@ onUnmounted(() => {
 .flights-page { min-width: 0; min-height: 0; height: 100%; display: flex; flex-direction: column; overflow: hidden; }
 .flights-page > .tabs { flex: none; }
 .flights-page :deep(.kpis) { flex: none; }
+.flights-page :deep(.kpi .lb) { font-size: 14px; }
+.flights-page :deep(.kpi .vl) { font-size: 31px; }
+.flights-page :deep(.kpi .dt) { font-size: 12px; }
 .flights-page .detail-hero-title,.flights-page .detail-hero-id { display: block; white-space: normal; overflow: visible; overflow-wrap: anywhere; text-overflow: clip; -webkit-line-clamp: unset; }
 .flight-main,.risk-main { display: grid; grid-template-columns: minmax(250px, .95fr) minmax(300px, 1.35fr) minmax(300px, 1.1fr); grid-template-rows: minmax(0, 1fr); margin-top: 12px; flex: 1; min-height: 0; align-items: stretch; gap: 12px; }
 .workspace-list { grid-column: 1; grid-row: 1; }

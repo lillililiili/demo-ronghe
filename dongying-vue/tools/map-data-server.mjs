@@ -1,5 +1,7 @@
 import { createReadStream } from 'node:fs';
 import { realpath, stat } from 'node:fs/promises';
+import { pipeline } from 'node:stream';
+import { createGzip } from 'node:zlib';
 import path from 'node:path';
 
 const types = { '.json': 'application/json; charset=utf-8', '.pmtiles': 'application/vnd.pmtiles', '.pbf': 'application/x-protobuf', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.otf': 'font/otf', '.txt': 'text/plain; charset=utf-8' };
@@ -39,7 +41,16 @@ export function mapDataServer(directory) {
       }
       const { file, info, mime } = metadata;
       if (!info.isFile() || !mime) return finish(404, 'Not found');
+      const compressible = mime.includes('json') || mime.includes('protobuf') || mime.startsWith('text/');
+      const gzip = compressible && info.size >= 1024 && !req.headers.range &&
+        (req.headers['accept-encoding'] || '').split(',').some(value => {
+          const [encoding, ...parameters] = value.trim().toLowerCase().split(';');
+          const quality = parameters.map(p => p.trim()).find(p => p.startsWith('q='));
+          return encoding === 'gzip' && (!quality || Number(quality.slice(2)) > 0);
+        });
       res.setHeader('Content-Type', mime);
+      if (compressible) res.setHeader('Vary', 'Accept-Encoding');
+      if (gzip) res.setHeader('Content-Encoding', 'gzip');
       res.setHeader('X-Content-Type-Options', 'nosniff');
       res.setHeader('Accept-Ranges', 'bytes');
       res.setHeader('Cache-Control', raw === '/map-data/control/map-config.json'
@@ -49,8 +60,19 @@ export function mapDataServer(directory) {
         : mime.includes('pmtiles') || mime.includes('protobuf') || mime.includes('font') || mime.startsWith('image/')
           ? 'public, max-age=600'
           : 'no-cache');
-      const etag = `"${info.size.toString(16)}-${Math.trunc(info.mtimeMs).toString(16)}"`;
+      const etag = `"${info.size.toString(16)}-${Math.trunc(info.mtimeMs).toString(16)}${gzip ? '-gzip' : ''}"`;
       res.setHeader('ETag', etag);
+      res.setHeader('Last-Modified', info.mtime.toUTCString());
+      // 可变清单/样式仍需校验，但未变化时只返回响应头，不反复传输整份文件。
+      // 条件请求先于 Range 处理；运行指针始终读取，不能被 304 缓存遮住版本切换。
+      const ifNoneMatch = req.headers['if-none-match'];
+      const unchanged = ifNoneMatch
+        ? ifNoneMatch.split(',').some(value => value.trim() === '*' || value.trim().replace(/^W\//, '') === etag)
+        : req.headers['if-modified-since'] && Math.floor(info.mtimeMs / 1000) * 1000 <= Date.parse(req.headers['if-modified-since']);
+      if (raw !== '/map-data/control/map-config.json' && unchanged) {
+        res.statusCode = 304;
+        return res.end();
+      }
       let start = 0, end = info.size - 1;
       const range = req.headers.range;
       if (range && (!req.headers['if-range'] || req.headers['if-range'] === etag)) {
@@ -64,12 +86,11 @@ export function mapDataServer(directory) {
         res.statusCode = 206;
         res.setHeader('Content-Range', `bytes ${start}-${end}/${info.size}`);
       }
-      res.setHeader('Content-Length', Math.max(0, end - start + 1));
+      if (!gzip) res.setHeader('Content-Length', Math.max(0, end - start + 1));
       if (req.method === 'HEAD' || !info.size) return res.end();
       const stream = createReadStream(file, { start, end });
-      res.on('close', () => stream.destroy());
-      stream.on('error', () => res.destroy());
-      stream.pipe(res);
+      // JSON/PBF 按需压缩；Range 始终保持原始字节。pipeline 在断连时清理整个流链。
+      pipeline(...(gzip ? [stream, createGzip(), res] : [stream, res]), () => {});
     } catch (error) {
       finish(error instanceof URIError ? 400 : ['ENOENT', 'ENOTDIR'].includes(error.code) ? 404 : 403, 'Map resource unavailable');
     }

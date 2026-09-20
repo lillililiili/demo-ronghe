@@ -728,7 +728,7 @@ onMounted(() => {
                     <button v-if="canOpenAlarm" class="btn sm" type="button" @click="openRelatedAlarm">查看此告警的处置进度</button>
                     <p v-else-if="selectedEvaluation.alarm_id" class="lg-muted">当前账号没有告警页面查看权限。</p>
                     <p v-else-if="selectedEvaluation.alarm_outcome_kind && selectedEvaluation.alarm_outcome_kind !== 'SUPPRESSED_SHADOW'" class="lg-muted">未提供可查看的关联告警，请核对关联记录或访问权限。</p>
-                    <p class="lg-muted">飞手短信、电话录音通知、现场情况和反制授权在告警事件中查看；本页研判结论不代表通知已完成或反制已获准。</p>
+                    <p class="lg-muted">飞手短信、电话录音通知和反制授权在告警事件中查看；本页研判结论不代表通知已完成或反制已获准。</p>
                   </div>
                 </section>
                 <section class="lg-basis-card">

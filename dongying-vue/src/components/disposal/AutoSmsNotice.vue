@@ -11,7 +11,7 @@ const emit = defineEmits(['changed']);
 let alive = true;
 onUnmounted(() => { alive = false; });
 const view = computed(() => autoSmsView(props.data));
-const compactTitle = computed(() => ({ WAITING: '等待发送', SENDING: '正在发送', SIMULATED_DELIVERED: '已送达', FAILED: '发送失败', UNAVAILABLE: '通道未接通', BLOCKED: '发送已暂停', DISABLED: '未启用' })[props.data?.auto_sms?.status] || view.value.title);
+const compactTitle = computed(() => ({ WAITING: '等待发送', SENDING: '正在发送', SIMULATED_DELIVERED: '已送达', FAILED: '发送失败', UNAVAILABLE: '通道未接通', BLOCKED: '暂不满足发送条件', DISABLED: '未启用' })[props.data?.auto_sms?.status] || view.value.title);
 const time = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '';
 function retry() {
   if (!view.value.canRetry || props.disabled) return;
@@ -43,7 +43,7 @@ function retry() {
 
 <template>
   <section class="auto-sms-notice" :class="{ 'is-compact': compact }" aria-label="飞手短信通知" :data-state="data?.auto_sms?.status">
-    <component :is="compact ? 'details' : 'div'" :key="data?.event_id">
+    <component :is="compact ? 'details' : 'div'" :key="data?.event_id" :open="compact && data?.auto_sms?.status === 'BLOCKED'">
       <summary v-if="compact" class="notice-summary">
         <b>飞手短信</b><span class="notice-result" :class="`asn-${view.tone}`">{{ compactTitle }}</span>
         <span v-if="view.simulated" class="tag t-amber">模拟</span><span class="notice-toggle">详情</span>
@@ -51,6 +51,7 @@ function retry() {
       <header v-if="!compact"><b>飞手短信</b><span v-if="view.simulated" class="tag t-amber">模拟短信</span></header>
       <p v-if="!compact" class="asn-title" :class="`asn-${view.tone}`">{{ view.title }}</p>
       <p v-if="view.reason">{{ view.reason }}</p>
+      <p v-if="view.guidance">{{ view.guidance }}</p>
       <dl v-if="view.recipient || view.triggeredAt || view.updatedAt">
         <template v-if="view.recipient"><dt>接收飞手</dt><dd>{{ view.recipient }}<small v-if="view.recipientHint" style="display:block">{{ view.recipientHint }}</small></dd></template>
         <template v-if="view.triggeredAt"><dt>触发时间</dt><dd>{{ time(view.triggeredAt) }}</dd></template>

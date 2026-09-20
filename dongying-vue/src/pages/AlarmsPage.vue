@@ -32,7 +32,7 @@ import { getEvidenceChain } from '@/services/evidenceApi.js';
 import { openUavVerification } from '@/ui/uavVerificationModal.js';
 import { targetApi } from '@/services/targetApi.js';
 import { mapPool } from '@/services/apiClient.js';
-import { ALARM_PROGRESS_LABEL, ALARM_PROGRESS_TAG, ALARM_TYPE_LABEL, DISPOSAL_ACTIVE_STATUSES, DISPOSAL_ACTION_LABEL, disposalStatusText, labelOf, LEGALITY_LABEL, readableNo, sourceDescription, SOURCE_MODE_LABEL as MODE_TEXT, targetTypeLabel } from '@/ui/labels.js';
+import { ALARM_PROGRESS_LABEL, ALARM_PROGRESS_TAG, ALARM_TYPE_LABEL, DISPOSAL_ACTION_LABEL, labelOf, LEGALITY_LABEL, readableNo, sourceDescription, SOURCE_MODE_LABEL as MODE_TEXT, targetTypeLabel } from '@/ui/labels.js';
 import { openEvidenceFileModal } from '@/ui/evidenceFileDetail.js';
 import { openEvidenceChainTypeModal, renderEvidenceChainHtml } from '@/ui/evidenceChainView.js';
 import { disposalApi, isDisposalUnavailable } from '@/services/disposalApi.js';
@@ -42,7 +42,7 @@ import { deviceApi } from '@/services/deviceApi.js';
 import { openTrackReplay, trackPointsOf } from '@/ui/trackReplayModal.js';
 import EmergencyStopPanel from '@/components/disposal/EmergencyStopPanel.vue';
 import UavAdvisoryPanel from '@/components/disposal/UavAdvisoryPanel.vue';
-import { advisoryProgress } from '@/components/disposal/advisoryView.js';
+import CounterLaunch from '@/pages/alarms/CounterLaunch.vue';
 import { uavAdvisoryApi } from '@/services/uavAdvisoryApi.js';
 import { requiresStopFollowup } from '@/components/disposal/emergencyStopView.js';
 
@@ -87,13 +87,13 @@ const SEVERITY = {
   CRITICAL: { t: '紧急', c: 't-red', tone: 'bad' }, HIGH: { t: '高', c: 't-red', tone: 'bad' },
   MEDIUM: { t: '中', c: 't-amber', tone: 'warn' }, LOW: { t: '低', c: 't-blue', tone: 'info' }
 };
-/* CONFIRMED 仍是核实结论。列表「状态」列在已核实后按处置进度改写展示，不改 uav_event.state。 */
+/* 通知阻断不覆盖核实结论；有现场、授权或移送事实时再展示对应处置进度。 */
 const STATE = {
   PENDING_VERIFICATION: { t: '待核实', c: 't-amber', color: '#ffb020' },
-  CONFIRMED: { t: '已核实，待处置', c: 't-cyan', color: '#22d3ee' },
+  CONFIRMED: { t: '告警已确认', c: 't-cyan', color: '#22d3ee' },
   FALSE_POSITIVE: { t: '误报', c: 't-blue', color: '#8fbaff' }
 };
-const STATE_FILTER = { ...STATE, CONFIRMED: { ...STATE.CONFIRMED, t: '已核实（含处置中）' } };
+const STATE_FILTER = { ...STATE, CONFIRMED: { ...STATE.CONFIRMED, t: '告警已确认（含处置中）' } };
 const NO_EVENT = { t: '未建事件', c: 't-gray', color: '#8ca0be' };
 const SOURCE_MODE = { mock: { t: MODE_TEXT.mock, c: 't-purple' }, replay: { t: MODE_TEXT.replay, c: 't-amber' }, live: { t: MODE_TEXT.live, c: 't-green' } };
 /* 类别来自共享字典；区域来自本页的区域字典接口，读不到就把下拉标成"不可用"并在 title 说明原因。 */
@@ -154,7 +154,7 @@ function displayState(a) {
   if (!key || !ALARM_PROGRESS_LABEL[key]) {
     const summary = advisorySummaries.get(a.event_id);
     if (!summary && pendingProgress.has(a.event_id)) return { t: '已核实，处置进度读取中', c: 't-gray', color: '#8ca0be' };
-    return summary ? { t: advisoryProgress(summary), c: 't-cyan', color: '#22d3ee' } : stateOf(a);
+    return stateOf(a);
   }
   return { t: ALARM_PROGRESS_LABEL[key], c: ALARM_PROGRESS_TAG[key] || 't-cyan', color: '#22d3ee' };
 }
@@ -225,13 +225,6 @@ async function loadEventDisposals(eventId) {
   return Object.values(disposal.byAction).sort((a, b) => Number(b.requested_at || 0) - Number(a.requested_at || 0))[0] || null;
 }
 
-async function refreshAdvisoryAuthorization() {
-  const eventId = cur.alarm?.event_id;
-  if (!eventId) return null;
-  const latest = await loadEventDisposals(eventId);
-  if (eventId === cur.alarm?.event_id) { paintList(); paintDetailContent(); }
-  return latest;
-}
 
 const KPI_DEFS = [
   { label: '今日告警总数', color: 'blue', icon: 'alert' },
@@ -404,17 +397,8 @@ function disposalActions(a, ev) {
 }
 function advisoryProps(a, ev) {
   if (!a?.event_id || !ev) return null;
-  const active = Object.values(disposal.byAction).find(row => DISPOSAL_ACTIVE_STATUSES.includes(row.status));
-  const stopPending = emergencyInfo.value?.event_id === a.event_id && requiresStopFollowup(emergencyInfo.value);
-  const latest = active || Object.values(disposal.byAction).sort((a, b) => Number(b.requested_at || 0) - Number(a.requested_at || 0))[0];
   return {
     id: a.event_id, label: noOf(a), confirmed: ev.state === 'CONFIRMED',
-    counterBlock: stopPending ? '上次处置的设备停止尚未确认，请先核查。'
-      : disposal.error || (disposal.unavailable ? DISPOSAL_UNAVAILABLE_TEXT : '')
-        || (active ? '已有未结束的处置授权，请到反制授权继续办理。' : ''),
-    counterActive: !!active,
-    counterStatus: latest ? disposalStatusText(latest) : '',
-    authorizationId: (active || latest)?.authorization_id || '',
     handoffId: disposal.handoff?.handoff_id || ''
   };
 }
@@ -462,7 +446,7 @@ function detailActionsHtml() {
       <button class="btn" data-al="replay" ${replayN > 1 ? '' : 'disabled '}title="${replayN > 1 ? '按实测轨迹在地图上走航线回放，不是视频' : '没有足够的轨迹点'}">${U.icon('trend')} 轨迹回放</button>
       ${eoTrackActions(a)}
       ${disposalActions(a, ev)}`)}
-    ${ev?.state === 'PENDING_VERIFICATION' ? '<p style="margin:8px 16px;font-size:12px;line-height:1.65;color:var(--muted)">事件事实尚待核实；符合后台条件且通道已启用的飞手短信、电话录音通知可先行执行。现场补充与反制申请仍按各自条件办理。</p>' : ''}`;
+    ${ev?.state === 'PENDING_VERIFICATION' ? '<p style="margin:8px 16px;font-size:12px;line-height:1.65;color:var(--muted)">事件事实尚待核实；符合后台条件且通道已启用的飞手短信、电话录音通知可先行执行。反制申请仍按权限与有效依据办理。</p>' : ''}`;
 }
 
 function paintDetailContent() {
@@ -834,7 +818,7 @@ onMounted(async () => {
       <UKpis :list="kpiList" />
       <nav class="alarm-workspace-tabs" aria-label="告警事件工作区">
         <button type="button" class="btn" :class="{ pri: activeTab === 'alarms' }" :aria-pressed="activeTab === 'alarms'" @click="activeTab = 'alarms'">告警与处置</button>
-        <button type="button" class="btn" :class="{ pri: activeTab === 'authorizations' }" :aria-pressed="activeTab === 'authorizations'" @click="openAuthorizations()">反制授权与执行</button>
+        <button type="button" class="btn" :class="{ pri: activeTab === 'authorizations' }" :aria-pressed="activeTab === 'authorizations'" @click="openAuthorizations()">反制办理</button>
         <button v-if="activeTab === 'authorizations' && authorizationScope.eventId" type="button" class="btn" @click="openAuthorizations()">查看全部授权</button>
       </nav>
       <AuthorizationQueue v-if="activeTab === 'authorizations'" :key="authorizationScope.key"
@@ -856,13 +840,13 @@ onMounted(async () => {
               @updated="updateEmergency" @changed="refreshEmergency" />
             <div id="alDetail" style="padding:12px"></div>
             <UavAdvisoryPanel v-if="advisorySubject" :key="`advisory-${advisorySubject.id}`"
-              :event-id="advisorySubject.id" :event-label="advisorySubject.label" :confirmed="advisorySubject.confirmed"
-              :counter-block="advisorySubject.counterBlock" :counter-status="advisorySubject.counterStatus" :counter-active="advisorySubject.counterActive"
-              :authorization-id="advisorySubject.authorizationId"
+              :event-id="advisorySubject.id" :confirmed="advisorySubject.confirmed"
               :handoff-id="advisorySubject.handoffId"
-              :refresh-authorization="refreshAdvisoryAuthorization"
-              @updated="updateAdvisory" @authorization="openAuthorizations" />
+              @updated="updateAdvisory" />
             <div id="alDetailActions" style="padding:0 12px 12px"></div>
+            <CounterLaunch v-if="advisorySubject" :key="`counter-${advisorySubject.id}`"
+              :event-id="advisorySubject.id" :event-label="advisorySubject.label" :active="activeTab === 'alarms'"
+              @records="openAuthorizations" />
           </UPanel>
         </div>
       </div>

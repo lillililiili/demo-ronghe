@@ -9,7 +9,7 @@ import { ALARM_TYPE_LABEL, labelOf, readableNo } from '@/ui/labels.js';
 
 export const UAV_STATE_TEXT = {
   PENDING_VERIFICATION: '待人工核实',
-  CONFIRMED: '已核实，待处置',
+  CONFIRMED: '告警已确认',
   FALSE_POSITIVE: '误报'
 };
 export const uavStateText = code => UAV_STATE_TEXT[code] || (code ? String(code) : '—');
@@ -56,7 +56,7 @@ export function openUavVerification({ event, alarm, refresh, onDone } = {}) {
     introHtml: `<dl class="kv">${intro}</dl>`,
     fields: [
       { key: 'conclusion', label: '核实结论', type: 'radio', required: true, options: [
-        { value: 'CONFIRMED', label: '属实（置为“已核实，待处置”）' },
+        { value: 'CONFIRMED', label: '属实（置为“告警已确认”）' },
         { value: 'FALSE_POSITIVE', label: '误报（终态）' }
       ] },
       { key: 'note', label: '核实说明', type: 'textarea', required: true, minRows: 4, placeholder: '必填，1–1000 字：现场确认、轨迹复核、飞手联系结果等依据' }

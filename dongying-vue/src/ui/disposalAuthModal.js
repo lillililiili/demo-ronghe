@@ -49,7 +49,7 @@ function messageOf(error, fallback) {
   // 联调实测到的两个码：策略限制每个主体同时只能有一条未了结授权；本期主体只支持无人机事件与目标。
   if (error.code === 'ACTIVE_AUTHORIZATION_EXISTS') return '该对象已有一条未了结的同类处置授权，请先撤销或等它结束再申请。';
   if (error.code === 'SUBJECT_KIND_NOT_SUPPORTED') return '本期只能对已核实的无人机事件或目标发起处置授权。';
-  if (error.code === 'DEVICE_CONTROL_UNAVAILABLE') return '该设备不支持自动执行，未下发指令；可改为登记人工执行结果。';
+  if (error.code === 'DEVICE_CONTROL_UNAVAILABLE') return '该设备不支持所需反制动作，未下发指令；请检查设备能力与接入配置。';
   // 未登记连接是可补救的配置问题，与“设备根本不支持自动执行”不是一回事，两句必须分开说。
   if (error.code === 'DEVICE_NOT_BOUND') return '设备未登记凌云连接，未下发指令；请运维补登记后重试。';
   // 离线是现场问题，与"未登记"（运维）和"不支持"（换通道）的补救方都不同（13-14）。
@@ -138,7 +138,7 @@ async function loadEnabledDeviceOptions() {
  * @param {'UAV_EVENT'|'RISK'|'TARGET'} o.subjectKind
  * @param {string} o.subjectId
  * @param {string} [o.subjectText] 主体的可读说明（编号/名称），只读展示
- * @param {string} [o.initialReason] 已保存的现场事实草稿，提交前由用户核对
+ * @param {string} [o.initialReason] 申请事由草稿，提交前由用户核对
  * @param {() => boolean} [o.isCurrent] 所属事件及页面是否仍有效，阻止迟到表单串到其他事件
  * @param {object} [o.policy] GET /disposal-policies 的结果，用于显示时限与 DEMO 标注
  * @param {(body: object, key: string) => Promise<object>} [o.submit] 自定义提交；融合感知模拟源用来复用同一弹窗但不打真实授权接口
@@ -146,29 +146,27 @@ async function loadEnabledDeviceOptions() {
  */
 export function openDisposalRequest({ actionType, actionOptions, subjectKind, subjectId, subjectText, initialReason = '', isCurrent = () => true, policy, refresh, onDone, submit: customSubmit, okText } = {}) {
   if (!actionType || !subjectKind || !subjectId) { toast('缺少处置对象，无法发起申请', 'err'); return false; }
-  void showDisposalRequestForm({ actionType, actionOptions, subjectKind, subjectId, subjectText, initialReason, isCurrent, policy, refresh, onDone, customSubmit, okText, direct: false });
-  return true;
+  return showDisposalRequestForm({ actionType, actionOptions, subjectKind, subjectId, subjectText, initialReason, isCurrent, policy, refresh, onDone, customSubmit, okText, direct: false });
 }
 
 /** 免逐次审批直接处置。资格与业务前置条件仍由 direct-execute 在服务端重新校验。 */
 export function openDisposalDirect({ actionType, subjectKind, subjectId, subjectText, initialReason = '', isCurrent = () => true, policy, refresh, onDone } = {}) {
   if (!actionType || !subjectKind || !subjectId) { toast('缺少处置对象，无法直接反制', 'err'); return false; }
-  void showDisposalRequestForm({ actionType, subjectKind, subjectId, subjectText, initialReason, isCurrent, policy, refresh, onDone, direct: true });
-  return true;
+  return showDisposalRequestForm({ actionType, subjectKind, subjectId, subjectText, initialReason, isCurrent, policy, refresh, onDone, direct: true });
 }
 
 async function showDisposalRequestForm({ actionType, actionOptions, subjectKind, subjectId, subjectText, initialReason, isCurrent, policy, refresh, onDone, customSubmit, okText, direct = false }) {
   const choices = (actionOptions || []).filter(Boolean);
   const pickable = choices.length > 1;
   let deviceOptions = [];
-  let deviceHelp = '经设备执行时按编号与名称选择；人工执行可不选。';
+  let deviceHelp = '按设备编号与名称选择执行设备。';
   try {
     deviceOptions = await loadEnabledDeviceOptions();
-    if (!deviceOptions.length) deviceHelp = '没有启用中的设备。可改用人工执行，或到设备管理接入后再申请。';
+    if (!deviceOptions.length) deviceHelp = '没有启用中的设备，请联系运维接入设备后再申请。';
   } catch (error) {
     deviceHelp = error?.status === 403
-      ? '当前账号没有设备台账读取权限，无法列出执行设备；可改用人工执行。'
-      : (error?.message || '读取执行设备失败，可改用人工执行。');
+      ? '当前账号没有设备台账读取权限，无法选择执行设备。'
+      : (error?.message || '读取执行设备失败，请稍后重试。');
   }
   if (!isCurrent()) return false;
   /* GET /disposal-policies 实际返回的是策略数组，参数在 params 下、DEMO 标记是 schema_status；
@@ -197,19 +195,17 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
         ? '选择联动反制时，执行完成将自动发起信号干扰，不再二次审批。' : '')
       + (demo ? '当前为演示策略，时限与条件待业务确认。' : ''),
     introHtml: `<dl class="kv">${intro}</dl>`,
-    notice: initialReason ? '已带入保存的现场记录，请核对并补充本次申请事由；历史记录不代表目标当前仍在场。' : '',
+    notice: initialReason ? '已带入申请事由草稿，请依据当前观测与研判核对。' : '',
     fields: [
       ...(pickable ? [{ key: 'action_type', label: '动作类型', type: 'radio', required: true,
         options: choices.map(a => ({ value: a, label: labelOf(DISPOSAL_ACTION_LABEL, a) })) }] : []),
       { key: 'channel', label: '执行通道', type: 'radio', required: true, options: [
         { value: 'LINGYUN_B', label: direct ? '凌云协议 B 设备（提交后由服务端直接下发）' : '凌云协议 B 设备（批准后可自动执行）' },
-        { value: 'COUNTERMEASURE_4CH', label: '四通道反制设备（经网络控制器下发，回执以设备为准）' },
-        { value: 'MANUAL', label: '人工执行（现场处置后登记结果）' }
+        { value: 'COUNTERMEASURE_4CH', label: '四通道反制设备（经网络控制器下发，回执以设备为准）' }
       ] },
       { key: 'device_id', label: '执行设备', type: 'select', clearable: true, filterable: true,
-        placeholder: '请选择执行设备', options: deviceOptions, help: deviceHelp,
-        visibleWhen: m => m.channel !== 'MANUAL' },
-      { key: 'reason', label: direct ? '直接反制事由' : '申请事由', type: 'textarea', required: true, minRows: 3, placeholder: '2–500 字：核对已带入的现场情况，补充本次处置事由' }
+        placeholder: '请选择执行设备', options: deviceOptions, help: deviceHelp, required: true },
+      { key: 'reason', label: direct ? '直接反制事由' : '申请事由', type: 'textarea', required: true, minRows: 3, placeholder: '2–500 字：依据当前观测与研判，说明本次处置事由' }
     ],
     initial: { action_type: actionType, channel: 'LINGYUN_B', device_id: null, reason: initialReason },
     confirmText: direct ? '确认直接反制' : '提交申请',
@@ -217,9 +213,10 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
     validate: m => {
       if (!isCurrent()) return '事件已切换，请关闭后从当前事件重新申请';
       const reason = String(m.reason || '').trim();
-      if (reason.length < 2 || reason.length > 500) return `申请事由需为 2–500 字，当前 ${reason.length} 字；请核对并调整，现场原始记录会保留。`;
+      if (reason.length < 2 || reason.length > 500) return `申请事由需为 2–500 字，当前 ${reason.length} 字；请核对并调整。`;
       // 服务端要求：经设备执行的处置必须指定设备。这里先拦，免得填完事由才被打回。
-      if (m.channel !== 'MANUAL' && !String(m.device_id || '').trim()) return '经设备执行的处置必须指定执行设备';
+      if (!['LINGYUN_B', 'COUNTERMEASURE_4CH'].includes(m.channel)) return '仅支持设备执行';
+      if (!String(m.device_id || '').trim()) return '经设备执行的处置必须指定执行设备';
       return null;
     },
     onSubmit: ({ action_type: chosen, channel, device_id: deviceId, reason }) => submit({
@@ -229,7 +226,7 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
         if (!isCurrent()) throw new Error('事件已切换，请关闭后从当前事件重新申请');
         const body = {
           action_type: chosen || actionType, subject_kind: subjectKind, subject_id: subjectId,
-          channel, device_id: channel === 'MANUAL' ? undefined : (String(deviceId || '').trim() || undefined),
+          channel, device_id: String(deviceId || '').trim(),
           reason: String(reason).trim()
         };
         return customSubmit ? customSubmit(body, key) : direct ? disposalApi.directExecute(body, key) : disposalApi.create(body, key);
@@ -237,9 +234,7 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
       refresh,
       onDone,
       okText: okText || (result => direct
-        ? channel === 'MANUAL'
-          ? `直接反制已受理：${result?.authorization_no || ''}，请在现场执行后登记人工结果。`
-          : result?.execution_block_reason
+        ? result?.execution_block_reason
             ? `免逐次审批授权已创建：${result?.authorization_no || ''}，执行受阻，请查看授权记录。`
             : `直接反制已受理：${result?.authorization_no || ''}，正在等待设备回执。`
         : `申请已提交：${result?.authorization_no || ''} 待审批`)
@@ -252,6 +247,7 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
 export function openDisposalApproval({ authorization, refresh, onDone } = {}) {
   const auth = authorization;
   if (!auth?.authorization_id) { toast('缺少授权记录', 'err'); return false; }
+  if (!['LINGYUN_B', 'COUNTERMEASURE_4CH'].includes(auth.channel)) { toast('仅支持设备反制；旧人工执行记录只供查阅', 'err'); return false; }
   const allowed = auth.allowed_actions || [];
   if (!allowed.includes('APPROVE') && !allowed.includes('REJECT')) { toast('当前授权不可审批或缺少审批权限', 'err'); return false; }
   openFormModal({
@@ -283,12 +279,12 @@ export function openDisposalApproval({ authorization, refresh, onDone } = {}) {
   return true;
 }
 
-/** 执行：凌云 B 或四通道网络控制器下发；人工通道登记现场结果。 */
+/** 执行：仅凌云 B 或四通道网络控制器下发，结果来自设备回执。 */
 export function openDisposalExecution({ authorization, refresh, onDone } = {}) {
   const auth = authorization;
   if (!auth?.authorization_id) { toast('缺少授权记录', 'err'); return false; }
   const autoDevice = auth.channel === 'LINGYUN_B' || auth.channel === 'COUNTERMEASURE_4CH';
-  if (!autoDevice) return openDisposalManualResult({ authorization: auth, refresh, onDone });
+  if (!autoDevice) { toast('仅支持设备执行；旧人工执行记录只供查阅', 'err'); return false; }
   openFormModal({
     title: `执行 · ${auth.authorization_no || '处置授权'}`,
     width: '560px',
@@ -309,42 +305,10 @@ export function openDisposalExecution({ authorization, refresh, onDone } = {}) {
       }, key),
       refresh,
       onDone,
-      /* 执行被阻（本期凌云四种处置码都还没开放）既不是成功也不是失败：如实说明并指向人工结果。 */
+      /* 执行被阻（本期凌云四种处置码都还没开放）既不是成功也不是失败：如实说明设备受阻原因。 */
       okText: result => (result?.execution_block_reason
         ? `未下发：${labelOf(DISPOSAL_BLOCK_REASON_LABEL, result.execution_block_reason)}`
         : `已下发，等待设备回执：${disposalStatusText(result)}`)
-    })
-  });
-  return true;
-}
-
-/** 人工结果：仅人工/无自动执行能力的通道。 */
-export function openDisposalManualResult({ authorization, refresh, onDone } = {}) {
-  const auth = authorization;
-  if (!auth?.authorization_id) { toast('缺少授权记录', 'err'); return false; }
-  openFormModal({
-    title: `登记执行结果 · ${auth.authorization_no || '处置授权'}`,
-    width: '600px',
-    warning: '人工执行：请在现场处置后如实登记结果。',
-    introHtml: summaryHtml(auth),
-    fields: [
-      { key: 'result', label: '执行结果', type: 'radio', required: true, options: [
-        { value: 'SUCCEEDED', label: '执行成功' }, { value: 'FAILED', label: '执行失败' }
-      ] },
-      { key: 'detail', label: '结果说明', type: 'textarea', required: true, minRows: 3, placeholder: '必填：现场处置经过与结果' }
-    ],
-    initial: { result: 'SUCCEEDED', detail: '' },
-    confirmText: '登记结果',
-    validate: m => (String(m.detail || '').trim() ? null : '结果说明为必填项'),
-    onSubmit: ({ result, detail }) => submit({
-      scope: auth.authorization_id,
-      action: 'manual-result',
-      call: key => disposalApi.manualResult(auth.authorization_id, {
-        expected_version: Number(auth.version), result, detail: String(detail).trim()
-      }, key),
-      refresh,
-      onDone,
-      okText: r => `已登记：${disposalStatusText(r)}`
     })
   });
   return true;

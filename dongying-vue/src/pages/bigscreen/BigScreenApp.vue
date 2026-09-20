@@ -35,7 +35,7 @@ let video = null;
 const alarmColor = { 高: 'var(--red)', 中: 'var(--amber)', 低: 'var(--cyan)' };
 const SEVERITY_ZH = { CRITICAL: '高', HIGH: '高', MEDIUM: '中', LOW: '低' };
 const STATE_ZH = {
-  PENDING_VERIFICATION: '待核实', CONFIRMED: '已核实待处置',
+  PENDING_VERIFICATION: '待核实', CONFIRMED: '告警已确认',
   FALSE_POSITIVE: '误报'
 };
 const AIRSPACE_KIND = {
@@ -75,7 +75,7 @@ const closureItems = computed(() => {
   const c = snapshot.value?.closure || {};
   return [
     { label: '待核实告警', value: dash(c.pending_verification), page: 'alarms', tone: 'warn', icon: NotificationsOutline },
-    { label: '已核实待处置', value: dash(c.confirmed_blocked), page: 'alarms', tone: 'bad', icon: RadioOutline },
+    { label: '告警已确认', value: dash(c.confirmed_blocked), page: 'alarms', tone: 'bad', icon: RadioOutline },
     { label: '交接待办', value: dash(c.pending_handoffs), page: 'punish', tone: 'warn', icon: BriefcaseOutline },
     { label: '证据台账', value: dash(c.evidence_files ?? c.evidence_total), page: 'evidence', tone: 'good', icon: DocumentAttachOutline }
   ];

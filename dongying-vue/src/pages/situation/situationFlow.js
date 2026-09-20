@@ -34,6 +34,6 @@ export function uavProcessStatus(alarm) {
   if (alarm.disposalStage === 'jamming') return '信号干扰中';
   if (alarm.disposalStage === 'completed') return '已干扰';
   if (alarm.disposalStage === 'requested') return '待审批';
-  if (alarm.eventState === 'CONFIRMED') return '已核实，待处置';
+  if (alarm.eventState === 'CONFIRMED') return '告警已确认';
   return '待核实';
 }

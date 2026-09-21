@@ -1,11 +1,19 @@
 import { apiBinary, apiDownload, apiRequestTimed, buildQuery } from '@/services/apiClient.js';
 import { createPreviewRequestQueue } from '@/services/evidencePreviewQueue.js';
+import { readDistributionCounts } from '@/services/distributionStatistics.js';
+import { EVIDENCE_KIND_LABEL, EVIDENCE_STATUS_LABEL, EVIDENCE_CUSTODY_LABEL } from '@/ui/labels.js';
 
 const thumbnailQueue = createPreviewRequestQueue(3);
 
 export function listEvidenceFiles(values) {
   return apiRequestTimed(`/evidence-files${buildQuery(values)}`);
 }
+
+export const getEvidenceStatistics = (filters, options) => readDistributionCounts(listEvidenceFiles, filters, [
+  { key: 'by_status', field: 'status', codes: Object.keys(EVIDENCE_STATUS_LABEL) },
+  { key: 'by_kind', field: 'kind_code', codes: Object.keys(EVIDENCE_KIND_LABEL) },
+  { key: 'by_custody', field: 'custody', codes: Object.keys(EVIDENCE_CUSTODY_LABEL) }
+], options);
 
 export function getEvidenceFile(id) {
   return apiRequestTimed(`/evidence-files/${encodeURIComponent(id)}`);

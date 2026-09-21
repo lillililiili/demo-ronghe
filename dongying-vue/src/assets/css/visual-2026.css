@@ -34,14 +34,14 @@ body::before{
   min-width:0;
   gap:18px;
   padding:0 22px 0 18px;
-  background:var(--surface-1);
+  background:var(--header-gradient);
   border-bottom:1px solid var(--line-2);
   box-shadow:0 8px 24px rgba(0,0,0,.24),0 1px 18px var(--glow-blue),inset 0 -1px var(--highlight);
   backdrop-filter:blur(14px);
 }
 .hdr .logo{gap:11px;font-size:19px;letter-spacing:.3px;min-width:0}
 .hdr .logo img{width:40px;height:40px;object-fit:contain;flex:none}
-.hdr .logo b{background:none;color:var(--txt);text-shadow:0 0 18px var(--glow-cyan);white-space:nowrap;font-weight:650}
+.hdr .logo b{background:var(--brand-gradient);-webkit-background-clip:text;background-clip:text;color:transparent;text-shadow:none;white-space:nowrap;font-weight:650}
 .hdr .meta{gap:14px;font-size:12.5px}
 .hdr .meta .it{height:32px;color:var(--txt-2)}
 .hdr .meta .it>.svg-icon{width:15px;height:15px;color:var(--txt-3)}
@@ -88,7 +88,7 @@ body::before{
   height:36px;
   padding:0 16px;
   gap:12px;
-  background:rgba(7,17,31,.6);
+  background:color-mix(in srgb,var(--surface-1) 80%,transparent);
   border-bottom:1px solid var(--line-2);
 }
 .crumb .cbs{font-size:12.5px}

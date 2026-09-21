@@ -39,7 +39,7 @@ export const deviceApi = {
   reboot: (id, reason, idempotencyKey) => apiRequest(`/devices/${id}/commands/reboot`, {
     method: 'POST', body: { reason }, headers: { 'Idempotency-Key': idempotencyKey }
   }),
-  command: id => apiRequest(`/device-commands/${id}`),
+  command: (id, options = {}) => apiRequest(`/device-commands/${id}`, options),
   protocolStatus: id => apiRequest(`/devices/${id}/protocol-status`),
   targets: params => apiRequest(`/sensing/targets${query(params)}`),
   targetTrack: (id, params) => apiRequest(`/sensing/targets/${id}/track${query(params)}`),
@@ -47,7 +47,7 @@ export const deviceApi = {
     apiRequest(`/targets/${targetId}/eo-tracking-tasks`, {
       method: 'POST', body, headers: { 'Idempotency-Key': key }
     }),
-  currentEoTrack: targetId => apiRequest(`/targets/${targetId}/eo-tracking-tasks`),
+  currentEoTrack: (targetId, options = {}) => apiRequest(`/targets/${targetId}/eo-tracking-tasks`, options),
   eoTrackAvailability: targetId => apiRequest(`/targets/${targetId}/eo-tracking-availability`),
   prepareAirspaceDemoTarget: (targetId, frame) => apiRequest(`/local/airspace-demo/targets/${targetId}`, {
     method: 'PUT', body: { frame }

@@ -2,7 +2,7 @@
 import { computed, onUnmounted, ref, watch } from 'vue';
 import { deviceApi } from '@/services/deviceApi.js';
 import { hasModuleAction } from '@/services/accessControl.js';
-import SimulatedRiskVideo from './SimulatedRiskVideo.vue';
+import SimulatedRiskVideo from '@/components/video/SimulatedOpticalVideo.vue';
 
 const props = defineProps({
   risk: { type: Object, default: null },

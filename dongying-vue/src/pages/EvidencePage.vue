@@ -13,6 +13,9 @@ import { useRoute, useRouter } from 'vue-router';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import UPagination from '@/components/UPagination.vue';
 import UPanel from '@/components/UPanel.vue';
+import ModuleStatistics from '@/components/ModuleStatistics.vue';
+import { useModuleStatistics } from '@/hooks/useModuleStatistics.js';
+import { getEvidenceStatistics } from '@/services/evidenceApi.js';
 import EvidencePreview from '@/components/evidence/EvidencePreview.vue';
 import EvidenceTrackDetail from '@/pages/evidence/components/EvidenceTrackDetail.vue';
 import { hasPermission } from '@/services/accessControl.js';
@@ -38,6 +41,11 @@ const totalCount = ref(0);
 const loading = ref(false);
 const error = ref('');
 const items = ref([]);
+const statistics = useModuleStatistics(getEvidenceStatistics, [
+  { key: 'by_status', title: '证据文件状态分布', type: 'bar', labels: EVIDENCE_STATUS_LABEL, colors: { PENDING: 'gray', AVAILABLE: 'green', MISSING: 'orange', CORRUPT: 'red', DESTROYED: 'gray' } },
+  { key: 'by_kind', title: '证据类型占比', type: 'donut', labels: EVIDENCE_KIND_LABEL, colors: { EO_VIDEO: 'blue', EO_STILL: 'green', TRACK_SNAPSHOT: 'cyan', NOTICE_RECEIPT: 'amber', COMMISSION_REPORT: 'purple', COMMAND_LOG: 'orange', SCENE_PHOTO: 'pink', PENALTY_DOCUMENT: 'red' } },
+  { key: 'by_custody', title: '证据保管状态分布', type: 'bar', labels: EVIDENCE_CUSTODY_LABEL, colors: { KEPT: 'green', NEARING: 'amber', DUE: 'orange', HELD: 'purple' } }
+]);
 const detailRow = ref(null);
 const detailLoading = ref(false);
 const detailError = ref('');
@@ -102,21 +110,25 @@ function query() {
 async function load() {
   const own = ++listSequence;
   if (!mounted || trackRequested.value) return;
+  const filters = query();
+  statistics.begin();
   loading.value = true;
   error.value = '';
   if (!hasPermission('evidence:read')) {
     items.value = []; detailRow.value = null; totalCount.value = 0;
     detailSequence += 1; detailLoading.value = false;
     error.value = '当前账号没有查看证据的权限'; detailError.value = error.value;
+    statistics.fail(error.value);
     loading.value = false; paintList(); paintDetail(); return;
   }
   // 精确详情不依赖分页结果；当前筛选未返回该文件也不能改选第一份。
   const exactDetail = fileRequested.value ? loadDetail() : null;
   try {
-    const page = await listEvidenceFiles(query());
+    const page = await listEvidenceFiles(filters);
     if (own !== listSequence || !mounted) return;
     items.value = page.items || [];
     totalCount.value = page.total || 0;
+    void statistics.load(filters);
     if (!fileRequested.value) {
       if (!items.value.some(row => row.evidence_id === st.selId)) st.selId = items.value[0]?.evidence_id || null;
       await loadDetail();
@@ -135,6 +147,7 @@ async function load() {
     items.value = [];
     if (!fileRequested.value) { detailSequence += 1; detailRow.value = null; detailLoading.value = false; paintDetail(); }
     error.value = e.message || '证据台账加载失败';
+    statistics.fail(e);
     paintList();
   } finally {
     if (own === listSequence && mounted) loading.value = false;
@@ -373,7 +386,7 @@ onBeforeUnmount(() => {
     <EvidenceTrackDetail v-if="trackRequested" :subject-kind="queryText(route.query.subjectKind)"
       :subject-id="queryText(route.query.subjectId)" :track-id="queryText(route.query.track)"
       :query-error="trackQueryError" @return="returnToLedger" />
-    <div v-else style="height:100%;display:flex;flex-direction:column;min-height:0">
+    <div v-else style="height:100%;min-height:600px;display:flex;flex-direction:column">
       <div v-if="fileRequested" class="evidence-located-toolbar">
         <span>指定证据记录{{ detailRow && !items.some(item => item.evidence_id === detailRow.evidence_id) ? '，当前证据不在本页列表中' : '' }}</span>
         <button class="btn" type="button" @click="returnToLedger">返回证据台账</button>
@@ -394,6 +407,7 @@ onBeforeUnmount(() => {
           </div>
         </UPanel>
       </div>
+      <ModuleStatistics :state="statistics.state" @retry="load" />
     </div>
   </div>
 </template>

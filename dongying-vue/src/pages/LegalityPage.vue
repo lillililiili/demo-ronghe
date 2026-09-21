@@ -13,6 +13,7 @@ export default {};
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import UKpis from '@/components/UKpis.vue';
+import TargetLiveVideo from '@/components/video/TargetLiveVideo.vue';
 import { UField } from '@/components/form/index.js';
 import UPagination from '@/components/UPagination.vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
@@ -710,6 +711,8 @@ onMounted(() => {
             <div v-else-if="!selectedEvaluation" class="empty">请选择一条研判</div>
             <template v-else>
               <div class="lg-detail-scroll">
+                <TargetLiveVideo :key="selectedEvaluation.evaluation_id" :target-id="selectedEvaluation.target_id || ''"
+                  :context-label="subjectLabel(selectedEvaluation)" />
                 <section class="lg-focus-card" aria-label="系统结论与人工核对重点">
                   <div class="lg-focus-verdict"><span>系统结论</span><strong class="lg-status-tag" :class="`is-${selectedConclusion.tone}`">{{ selectedConclusion.label }}</strong><span>{{ conclusionQualificationText(selectedEvaluation) || reviewText(selectedEvaluation) }}</span></div>
                   <p class="lg-focus-basis">{{ primaryReason }}</p>

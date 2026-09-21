@@ -33,6 +33,7 @@ import PlanVerificationPanel from '@/pages/flights/components/PlanVerificationPa
 import PlanFilingDetails from '@/pages/flights/components/PlanFilingDetails.vue';
 import PlanDeviceMarkers from '@/pages/flights/components/PlanDeviceMarkers.vue';
 import PlanRiskRecords from '@/pages/flights/components/PlanRiskRecords.vue';
+import PlanWeatherForecast from '@/pages/flights/components/PlanWeatherForecast.vue';
 import FlightRecordList from '@/pages/flights/components/FlightRecordList.vue';
 import FlightListPager from '@/pages/flights/components/FlightListPager.vue';
 import WeatherMapInfo from '@/pages/flights/components/WeatherMapInfo.vue';
@@ -74,6 +75,7 @@ function hashWantsEventsTab(raw = location.hash || '') {
   return new URLSearchParams(raw.slice(q + 1)).get('tab') === 'events';
 }
 const activeTab = ref(hashWantsEventsTab() ? 'events' : 'route');
+const planDetailTab = ref('plan');
 const mapHost = ref(null);
 const planDeviceCheck = ref(null);
 const deviceMarkers = ref([]);
@@ -1753,12 +1755,17 @@ onUnmounted(() => {
             <div v-if="matchedTrackNote" class="map-note">{{ matchedTrackNote }}<span v-if="trajectory?.param_status === 'DEMO'" class="tag t-amber">演示参数</span></div>
           </UPanel>
           <UPanel title="计划详情与风险" class="workspace-detail" nopad>
+            <div class="tabs workspace-detail-tabs" role="tablist" aria-label="计划详情内容">
+              <button class="tab" :class="{ on: planDetailTab === 'plan' }" role="tab" :aria-selected="planDetailTab === 'plan'" type="button" @click="planDetailTab = 'plan'">计划信息</button>
+              <button class="tab" :class="{ on: planDetailTab === 'forecast' }" role="tab" :aria-selected="planDetailTab === 'forecast'" type="button" @click="planDetailTab = 'forecast'">天气预报</button>
+            </div>
             <div class="detail-body">
           <div v-if="detailLoading" class="empty">正在读取详情…</div>
           <div v-else-if="detailError" class="warnbox">{{ detailError }} <button v-if="S.selectedPlanId" class="btn" type="button" @click="loadDetail(S.selectedPlanId)">重试</button></div>
           <div v-else-if="!selected" class="empty">请选择计划</div>
           <template v-else>
-            <div class="metric-strip is-compact"><div v-for="metric in [['执行状态', labelOf(PLAN_STATUS_LABEL, selected.status_code)], ['计划时长', formatDuration(selected)]]" :key="metric[0]" class="metric-item"><div class="metric-copy"><small>{{ metric[0] }}</small><b>{{ metric[1] }}</b></div></div></div>
+            <div v-show="planDetailTab === 'plan'">
+              <div class="metric-strip is-compact"><div v-for="metric in [['执行状态', labelOf(PLAN_STATUS_LABEL, selected.status_code)], ['计划时长', formatDuration(selected)]]" :key="metric[0]" class="metric-item"><div class="metric-copy"><small>{{ metric[0] }}</small><b>{{ metric[1] }}</b></div></div></div>
             <PlanFilingDetails :plan="selected" :route-version="routeVersion" :route-loading="routeGeometryLoading" :route-error="routeGeometryError" />
             <section v-if="showComparison" class="sect"><h4>计划与实际对照</h4>
               <div v-if="actualsLoading" class="empty">正在读取…</div>
@@ -1786,6 +1793,8 @@ onUnmounted(() => {
                 :title="matchedTargetId ? '打开合法性研判页，按本计划筛选并选中匹配到的目标' : '打开合法性研判页，按本计划筛选'" @click="goLegality">合法性判定 →</button>
             </div>
             <div v-else-if="planPending" class="rk-note" style="margin-top:12px">计划还没执行，暂不判断实际飞行是否违规。到了起飞时间仍没找到飞机时，请核实起飞情况。</div>
+            </div>
+            <PlanWeatherForecast v-if="planDetailTab === 'forecast'" :key="selected.plan_id" :plan-id="selected.plan_id" />
           </template></div>
           </UPanel>
       </div>

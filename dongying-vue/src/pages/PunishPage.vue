@@ -14,6 +14,9 @@ import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import UKpis from '@/components/UKpis.vue';
 import UPanel from '@/components/UPanel.vue';
+import ModuleStatistics from '@/components/ModuleStatistics.vue';
+import { useModuleStatistics } from '@/hooks/useModuleStatistics.js';
+import { getHandoffStatistics } from '@/services/handoffApi.js';
 import UPagination from '@/components/UPagination.vue';
 import UControl from '@/components/form/UControl.vue';
 import { UAV_STATE_TEXT as UAV_STATE_LABEL } from '@/ui/uavVerificationModal.js';
@@ -48,6 +51,12 @@ const filters = reactive(S.filters);
 const listLoading = ref(false);
 const listError = ref('');
 const handoffs = ref([]);
+let appliedQuery = { source_kind: UAV_KIND };
+const statistics = useModuleStatistics(getHandoffStatistics, [
+  { key: 'by_delivery', title: '处罚送达状态分布', type: 'bar', labels: Object.fromEntries(DELIVERY_OPTIONS.map(item => [item.value, item.label])), colors: Object.fromEntries(DELIVERY_OPTIONS.map(item => [item.value, item.color])) },
+  { key: 'by_receipt', title: '签收回执占比', type: 'donut', labels: Object.fromEntries(RECEIPT_OPTIONS.map(item => [item.value, item.label])), colors: { NOT_EXPECTED: 'gray', PENDING: 'amber', ACKNOWLEDGED: 'green', TIMEOUT: 'red' } },
+  { key: 'by_day', title: '近7日移送趋势', type: 'line', windowed: true, label: code => code.slice(5), note: '按提交时间 · 北京时间' }
+]);
 const total = ref(0);
 const page = ref(S.page);
 const size = ref(S.size);
@@ -69,7 +78,7 @@ function updateNotificationStatus(data) {
   Object.assign(selected.value, fields);
   const row = handoffs.value.find(item => item.handoff_id === data.handoff_id);
   if (row) Object.assign(row, fields);
-  if (changed) loadKpis();
+  if (changed) { loadKpis(); void statistics.load(appliedQuery); }
 }
 
 const kpiList = computed(() => {
@@ -138,14 +147,18 @@ async function loadKpis() {
 
 async function loadList(nextPage = page.value, requestedId = null) {
   const token = ++listToken;
+  statistics.begin();
   listLoading.value = true;
   listError.value = '';
   try {
-    const data = await handoffApi.listHandoffs({ ...listQuery(), page: nextPage, size: size.value });
+    const query = listQuery();
+    const data = await handoffApi.listHandoffs({ ...query, page: nextPage, size: size.value });
     if (token !== listToken) return;
     forbidden.value = false;
     handoffs.value = data.items || [];
     total.value = data.total;
+    appliedQuery = query;
+    void statistics.load(query);
     page.value = data.page;
     S.page = data.page;
     const wanted = requestedId || S.selectedHandoffId;
@@ -158,6 +171,7 @@ async function loadList(nextPage = page.value, requestedId = null) {
     if (token !== listToken) return;
     forbidden.value = requestError.status === 403;
     listError.value = messageOf(requestError, '读取交接清单失败');
+    statistics.fail(requestError);
     handoffs.value = [];
     total.value = 0;
   } finally {
@@ -255,8 +269,8 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="view" id="view" ref="root" style="overflow:hidden">
-    <div style="height:100%;display:flex;flex-direction:column;min-height:0">
+  <div class="view" id="view" ref="root">
+    <div style="height:100%;min-height:600px;display:flex;flex-direction:column">
       <UKpis :list="kpiList" class-name="pn-kpis" />
       <div id="pnBody" class="pn-body" style="margin-top:12px;flex:1;min-height:0">
         <div v-if="forbidden" class="warnbox pn-forbidden">
@@ -391,6 +405,7 @@ onMounted(() => {
           </div>
         </template>
       </div>
+      <ModuleStatistics :state="statistics.state" @retry="retryList" />
     </div>
   </div>
 </template>

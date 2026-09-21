@@ -20,7 +20,7 @@ export default {};
 import { useRoute } from 'vue-router';
 import AuthorizationQueue from '@/pages/alarms/AuthorizationQueue.vue';
 import { measuredMapPoints } from '@/services/trackPoints.js';
-import { ref, reactive, onMounted, onUnmounted, watch } from 'vue';
+import { ref, reactive, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import UPagination from '@/components/UPagination.vue';
 import UPanel from '@/components/UPanel.vue';
@@ -43,6 +43,7 @@ import { openTrackReplay, trackPointsOf } from '@/ui/trackReplayModal.js';
 import EmergencyStopPanel from '@/components/disposal/EmergencyStopPanel.vue';
 import UavAdvisoryPanel from '@/components/disposal/UavAdvisoryPanel.vue';
 import CounterLaunch from '@/pages/alarms/CounterLaunch.vue';
+import TargetLiveVideo from '@/components/video/TargetLiveVideo.vue';
 import { uavAdvisoryApi } from '@/services/uavAdvisoryApi.js';
 import { requiresStopFollowup } from '@/components/disposal/emergencyStopView.js';
 
@@ -78,6 +79,7 @@ const totalCount = ref(0);
 const emergencyEvent = ref(null);
 const emergencyInfo = ref(null);
 const advisorySubject = ref(null);
+const videoSubject = ref(null);
 const advisorySummaries = new Map();
 let map = null;
 onUnmounted(() => { ++listSeq; ++detailSeq; ++disposalSeq; if (map) map.destroy(); map = null; });
@@ -442,7 +444,6 @@ function detailActionsHtml() {
   if (!a) return '';
   const replayN = replayPointCount();
   return `${U.detailActions(`
-      <button class="btn" data-al="video" disabled title="协议未提供实时视频流">${U.icon('video')} 实时视频</button>
       <button class="btn" data-al="replay" ${replayN > 1 ? '' : 'disabled '}title="${replayN > 1 ? '按实测轨迹在地图上走航线回放，不是视频' : '没有足够的轨迹点'}">${U.icon('trend')} 轨迹回放</button>
       ${eoTrackActions(a)}
       ${disposalActions(a, ev)}`)}
@@ -450,6 +451,7 @@ function detailActionsHtml() {
 }
 
 function paintDetailContent() {
+  videoSubject.value = cur.alarm ? { targetId: cur.alarm.target_id || '', label: noOf(cur.alarm) } : null;
   const host = el('alDetail');
   if (host) host.innerHTML = detailHtml();
   const actions = el('alDetailActions');
@@ -497,6 +499,14 @@ async function refreshEmergency(eventId) {
 }
 
 /* ---------- 地图：只有响应含 target_id（服务端已按 target:read 与范围元组裁剪）才读目标/轨迹 ---------- */
+function syncAlarmMap() {
+  if (activeTab.value !== 'alarms') { map?.destroy(); map = null; return; }
+  if (!map && el('alMap')) map = new window.MapView(el('alMap'), {
+    zoom: 2.2, maxDev: 0, maxAlarm: 1, legend: false, layers: { device: false }
+  });
+  focusMap();
+}
+watch(activeTab, async () => { await nextTick(); if (authorizationPageActive) syncAlarmMap(); });
 function focusMap() {
   if (!map) return;
   const info = el('alMapInfo'), srcEl = el('alMapSrc'), a = cur.alarm;
@@ -755,11 +765,7 @@ function onPageSize(s2) { st.size = s2; st.page = 1; loadList(); }
 onMounted(async () => {
   const view = root.value;
   paintList(); paintDetail();
-  map = new window.MapView(el('alMap'), {
-    zoom: 2.2, maxDev: 0, maxAlarm: 1, legend: false, layers: { device: false }
-  });
-  focusMap();
-  requestAnimationFrame(focusMap);
+  syncAlarmMap();
 
   U.on(view, '[data-row]', 'click', (e, row) => { if (row.dataset.row) selectAlarm(row.dataset.row); });
   /* 分页交互已由模板层 <n-pagination> 受控接管（P2），[data-pg]/[data-size] 委托删除 */
@@ -838,6 +844,8 @@ onMounted(async () => {
             body-style="overflow:auto;display:block">
             <EmergencyStopPanel v-if="emergencyEvent" :key="`emergency-${emergencyEvent.id}`" :event-id="emergencyEvent.id"
               @updated="updateEmergency" @changed="refreshEmergency" />
+            <TargetLiveVideo v-if="videoSubject" :key="videoSubject.label" :target-id="videoSubject.targetId"
+              :context-label="videoSubject.label" :active="activeTab === 'alarms'" />
             <div id="alDetail" style="padding:12px"></div>
             <UavAdvisoryPanel v-if="advisorySubject" :key="`advisory-${advisorySubject.id}`"
               :event-id="advisorySubject.id" :confirmed="advisorySubject.confirmed"

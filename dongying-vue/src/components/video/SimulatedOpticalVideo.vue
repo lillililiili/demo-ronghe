@@ -24,6 +24,13 @@ onMounted(() => {
     if (props.subtype === 'BALLOON') {
       ctx.fillStyle = '#e4d6b4'; ctx.beginPath(); ctx.ellipse(x, y, 12, 16, 0, 0, Math.PI * 2); ctx.fill();
       ctx.beginPath(); ctx.moveTo(x, y + 16); ctx.lineTo(x - 5, y + 39); ctx.stroke();
+    } else if (props.subtype === 'UAV') {
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(x - 19, y - 10); ctx.lineTo(x + 19, y + 10);
+      ctx.moveTo(x - 19, y + 10); ctx.lineTo(x + 19, y - 10); ctx.stroke();
+      for (const [dx, dy] of [[-19,-10], [19,10], [-19,10], [19,-10]]) {
+        ctx.beginPath(); ctx.ellipse(x + dx, y + dy, 11, 4, 0, 0, Math.PI * 2); ctx.stroke();
+      }
     } else {
       for (let i = 0; i < 7; i++) {
         const bx = x + (i % 4) * 16 - 24, by = y + Math.floor(i / 4) * 16;

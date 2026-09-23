@@ -199,7 +199,7 @@ export const SUBTYPE_LABEL = {
 export const CONCLUSION_LABEL = { CONFIRMED: '核实属实', EXCLUDED: '已排除', FALSE_POSITIVE: '误报', EVIDENCE_REQUIRED: '证据待补充' };
 /* 飞行风险核验的结论用词与无人机事件不同（核验通过 → 转待通知），与 FlightsPage、riskVerificationModal 保持一致。 */
 export const RISK_CONCLUSION_LABEL = { CONFIRMED: '核验通过', EXCLUDED: '已排除' };
-export const DELIVERY_STATUS_LABEL = { PENDING_DELIVERY: '等待发送', SUBMITTED: '已发送', DELIVERED: '已送达', FAILED: '发送失败' };
+export const DELIVERY_STATUS_LABEL = { PENDING_DELIVERY: '等待发送', SUBMITTED: '送达待确认', DELIVERED: '已送达', FAILED: '发送失败' };
 export const RECEIPT_STATUS_LABEL = { NOT_EXPECTED: '不需回执', PENDING: '等待回执', ACKNOWLEDGED: '已回执', TIMEOUT: '回执超时' };
 /* 回执带回来的处理结果（决策 18-14）：风险到"通知上级"为止，回执"已驱离"就算闭环，不再往处置走。
    与回执状态是两件事——"已回执"说的是对方回了，"已驱离"说的是对方做了什么。 */
@@ -207,6 +207,7 @@ export const RECEIPT_RESULT_LABEL = { DISPERSED: '已驱离', NOT_DISPERSED: '�
 /* HANDOFF_MATERIALS_NOT_DEFINED（决策 13-25）：反制/干扰完成事实已经有了，卡住的是处罚交接的材料包定义，
    与“通知渠道未接通”不是一回事，两句必须分开说。 */
 export const HANDOFF_BLOCKED_LABEL = {
+  DELIVERY_OUTCOME_UNKNOWN: '发送结果未知，请先核对原发送记录',
   CHANNEL_NOT_CONNECTED: '通知渠道未接通',
   HANDOFF_MATERIALS_NOT_DEFINED: '尚未设置处罚部门需要接收哪些材料，请联系管理员后再提交'
 };

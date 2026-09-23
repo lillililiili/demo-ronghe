@@ -27,7 +27,7 @@ const historySize = 10;
 let generation = 0, historyRequest = 0, noticeRequest = 0, alive = true;
 const stateTags = { PENDING_VERIFICATION: 't-amber', PENDING_NOTIFICATION: 't-blue', NOTIFIED: 't-green', ACKNOWLEDGED: 't-green', EXCLUDED: 't-gray' };
 const heightLabels = { UNKNOWN: '高度关系未知', WITHIN: '在航线高度范围内', OUTSIDE: '超出航线高度范围' };
-const deliveryLabels = { PENDING_DELIVERY: '等待发送', SUBMITTED: '已发送', DELIVERED: '已送达', FAILED: '发送失败' };
+const deliveryLabels = { PENDING_DELIVERY: '等待发送', SUBMITTED: '送达待确认', DELIVERED: '已送达', FAILED: '发送失败' };
 const deliveryTags = { PENDING_DELIVERY: 't-amber', SUBMITTED: 't-blue', DELIVERED: 't-green', FAILED: 't-red' };
 const receiptLabels = { NOT_EXPECTED: '不需回执', PENDING: '等待回执', ACKNOWLEDGED: '已回执', TIMEOUT: '回执超时' };
 const submitted = computed(() => notices.value.find(item => item.delivery_status && item.delivery_status !== 'FAILED'));
@@ -185,7 +185,7 @@ onUnmounted(() => { alive = false; generation++; historyRequest++; noticeRequest
             <div class="rk-history-head"><b>通知上级</b><span class="tag" :class="deliveryTags[notice.delivery_status] || 't-gray'">{{ deliveryLabels[notice.delivery_status] || '发送状态未知' }}</span></div>
             <details v-if="notice.recipient_name && notice.recipient_name !== '上级'"><summary>原通知对象记录</summary><p>{{ notice.recipient_name }}</p></details>
             <p>{{ labelOf(HANDOFF_TYPE_LABEL, notice.handoff_type) }} · {{ time(notice.created_at) }}</p><p>对方回复：{{ receiptText(notice) }}</p>
-            <p v-if="notice.blocked_reason">未完成原因：{{ notice.blocked_reason === 'CHANNEL_NOT_CONNECTED' ? '通知渠道未接通' : notice.blocked_reason }}</p>
+            <p v-if="notice.blocked_reason">未完成原因：{{ notice.blocked_reason === 'CHANNEL_NOT_CONNECTED' ? '通知渠道未接通' : notice.blocked_reason === 'DELIVERY_OUTCOME_UNKNOWN' ? '发送结果未知，请先核对原发送记录' : notice.blocked_reason }}</p>
             <a v-if="canAccessRoute('punish')" class="lnk" :href="`#/punish?handoff=${encodeURIComponent(notice.handoff_id)}`">查看交接详情 →</a>
           </article></div>
           <p v-if="noticesTotal > notices.length && !noticesLoading" class="rk-note">共 {{ noticesTotal }} 条通知记录，当前展示最近 {{ notices.length }} 条。</p>

@@ -1,6 +1,6 @@
 export const AUTO_SMS_STATUS = {
   WAITING: '等待自动通知', SENDING: '系统正在发送', SIMULATED_DELIVERED: '已送达',
-  FAILED: '发送失败，需人工处理', UNAVAILABLE: '短信通道未接通',
+  UNKNOWN: '发送结果未知', FAILED: '发送失败，需人工处理', UNAVAILABLE: '短信通道未接通',
   BLOCKED: '暂不满足自动发送条件', DISABLED: '自动通知未启用'
 };
 function reasonText(reason) {
@@ -32,8 +32,8 @@ export function autoSmsView(data) {
   const expired = sms.status === 'BLOCKED' && String(sms.reason || '').startsWith('事件已超过自动通知时效');
   return {
     title: AUTO_SMS_STATUS[sms.status] || '通知结果待确认', reason: reasonText(sms.reason),
-    tone: sms.status === 'SIMULATED_DELIVERED' ? 'success' : ['FAILED', 'UNAVAILABLE', 'BLOCKED'].includes(sms.status) ? 'warning' : 'muted',
-    canRetry: !!sms.can_retry && !['SENDING', 'WAITING', 'SIMULATED_DELIVERED'].includes(sms.status),
+    tone: sms.status === 'SIMULATED_DELIVERED' ? 'success' : ['FAILED', 'UNKNOWN', 'UNAVAILABLE', 'BLOCKED'].includes(sms.status) ? 'warning' : 'muted',
+    canRetry: !!sms.can_retry && !['SENDING', 'WAITING', 'UNKNOWN', 'SIMULATED_DELIVERED'].includes(sms.status),
     updatedAt: sms.updated_at, triggeredAt: sms.triggered_at, evaluatedAt: sms.evaluated_at, dataUpdatedAt: sms.data_updated_at,
     recipient: latest ? latest.recipient_name || recipientSnapshot?.recipient_name : recipientSnapshot ? recipientSnapshot.recipient_name : Number(sms.attempt_count) > 0 ? undefined : data.recipient?.name,
     recipientHint: recipientSnapshot?.contact_hint,

@@ -64,6 +64,7 @@ function deliveryTone(item) {
   return ({ DELIVERED: 't-cyan', FAILED: 't-red', SUBMITTED: 't-blue', PENDING_DELIVERY: 't-amber' })[item.delivery_status] || 't-gray';
 }
 function notificationBlocker(item) {
+  if (item.blocked_reason === 'DELIVERY_OUTCOME_UNKNOWN') return '通知发送结果未知，请先核对原发送记录，不能重复通知。';
   return item.blocked_reason === 'CHANNEL_NOT_CONNECTED' ? '通知功能尚未接通，记录已保存但还未发出。' : item.blocked_reason;
 }
 async function reload() {
@@ -75,6 +76,7 @@ async function reload() {
   finally { if (current === token) loading.value = false; }
 }
 function notificationMessage(result) {
+  if (result?.blocked_reason === 'DELIVERY_OUTCOME_UNKNOWN') return '检查结果已保存，通知发送结果未知，请先核对原发送记录。';
   if (result?.delivery_status === 'DELIVERED') return '检查结果已保存，通知已送达。';
   if (result?.blocked_reason || result?.delivery_status === 'FAILED') return '检查结果已保存，通知尚未发出，请查看记录中的原因。';
   return '检查结果已保存，通知已提交，可在记录中查看发送进度。';
@@ -161,7 +163,7 @@ onUnmounted(() => { disposed = true; token++; });
         <div v-if="!group.notifications.length" class="record-statuses"><span class="tag t-gray">未通知报送单位</span></div>
         <div v-for="item in group.notifications" :key="item.feedback_id" class="notification-summary">
           <div class="record-statuses">
-            <span class="tag" :class="deliveryTone(item)">通知{{ delivery[item.delivery_status] || '结果未知' }}</span>
+            <span class="tag" :class="deliveryTone(item)">通知{{ item.blocked_reason === 'DELIVERY_OUTCOME_UNKNOWN' ? '发送结果未知' : delivery[item.delivery_status] || '结果未知' }}</span>
             <span class="tag" :class="item.receipt_status === 'ACKNOWLEDGED' ? 't-cyan' : item.receipt_status === 'TIMEOUT' ? 't-amber' : 't-gray'">{{ receipt[item.receipt_status] || '回执状态未知' }}</span>
             <span class="tag" :class="item.processing_result ? 't-blue' : 't-gray'">{{ item.processing_result ? '已回复处理结果' : '待回复处理结果' }}</span>
             <span v-if="['MOCK', 'SMS_SIMULATED', 'VOICE_SIMULATED'].includes(item.recipient_snapshot?.channel_type)" class="tag t-gray">模拟通知通道</span>

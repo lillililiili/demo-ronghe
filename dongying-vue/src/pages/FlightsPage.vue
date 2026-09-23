@@ -120,7 +120,7 @@ const noticesError = ref('');
 let noticesToken = 0;
 /* 同一风险的交接幂等键在“结果未知”期间保留；只有服务端给出明确结果后才丢弃或换新。 */
 const pendingHandoffKeys = new Map();
-const NOTICE_DELIVERY_LABEL = { PENDING_DELIVERY: '等待发送', SUBMITTED: '已发送', DELIVERED: '已送达', FAILED: '发送失败' };
+const NOTICE_DELIVERY_LABEL = { PENDING_DELIVERY: '等待发送', SUBMITTED: '送达待确认', DELIVERED: '已送达', FAILED: '发送失败' };
 const NOTICE_DELIVERY_TAG = { PENDING_DELIVERY: 't-amber', SUBMITTED: 't-blue', DELIVERED: 't-green', FAILED: 't-red' };
 const NOTICE_RECEIPT_LABEL = { NOT_EXPECTED: '不需回执', PENDING: '等待回执', ACKNOWLEDGED: '已回执', TIMEOUT: '回执超时' };
 /* 回执状态 + 回执结果连起来读："已回执 · 已驱离"。服务端没给结果就只显示状态，不补空位（决策 18-14）。 */
@@ -129,7 +129,7 @@ function receiptText(notice) {
   const result = labelOf(RECEIPT_RESULT_LABEL, notice.receipt_result, '');
   return result ? `${status} · ${result}` : status;
 }
-const NOTICE_BLOCKED_LABEL = { CHANNEL_NOT_CONNECTED: '通知渠道未接通' };
+const NOTICE_BLOCKED_LABEL = { DELIVERY_OUTCOME_UNKNOWN: '发送结果未知，请先核对原发送记录', CHANNEL_NOT_CONNECTED: '通知渠道未接通' };
 const riskLoading = ref(false);
 const riskError = ref('');
 const selectedRisk = ref(null);

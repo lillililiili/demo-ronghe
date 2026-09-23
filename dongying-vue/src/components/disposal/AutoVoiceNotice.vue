@@ -11,7 +11,14 @@ const emit = defineEmits(['changed']);
 let alive = true;
 onUnmounted(() => { alive = false; });
 const view = computed(() => autoVoiceView(props.data));
-const compactTitle = computed(() => ({ DISABLED: '未启用', WAITING: '等待拨打', CALLING: '正在拨打', SIMULATED_PLAYED: '已接通并播完', FAILED: '通知失败', UNAVAILABLE: '暂不可用', BLOCKED: '拨打已暂停', UNKNOWN: '通话结果未确认' })[props.data?.auto_voice?.status] || view.value.title);
+const compactTitle = computed(() => {
+  const reason = props.data?.auto_voice?.reason || '';
+  if (reason.includes('正在用设备位置观察')) return '观察是否撤离';
+  if (reason.includes('已离开')) return '已撤离，不拨打';
+  if (reason.includes('没有新的位置') || reason.includes('无法判断')) return '无法确认，不拨打';
+  if (reason.includes('尚未送达')) return '等待短信送达';
+  return ({ DISABLED: '未启用', WAITING: '等待拨打', CALLING: '正在拨打', SIMULATED_PLAYED: '已接通并播完', FAILED: '通知失败', UNAVAILABLE: '暂不可用', BLOCKED: '拨打已暂停', UNKNOWN: '通话结果未确认' })[props.data?.auto_voice?.status] || view.value.title;
+});
 const time = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '';
 function retry() {
   if (!view.value.canRetry || props.disabled) return;
@@ -19,7 +26,7 @@ function retry() {
   const key = newHandoffIdempotencyKey();
   const modal = openFormModal({
     title: '重新拨打飞手电话', confirmText: '提交重试', width: '520px',
-    notice: '后台会重新检查当前研判、接收对象、录音模板和通道；提交后以通话回执为准。',
+    notice: '提交后由后台再次确认目标是否仍在告警空域，并按当前飞手和录音通道拨打。',
     warning: view.value.simulated ? '当前使用模拟电话通道，不会拨打真实电话或播放真实录音。' : '',
     fields: [{ key: 'note', label: '重试说明', type: 'textarea', required: true, minRows: 3, placeholder: '说明已经核查或处理了什么问题' }],
     initial: { note: '' },

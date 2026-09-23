@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, reactive, ref } from 'vue';
+import { computed, nextTick, reactive, ref, watch } from 'vue';
 import { NForm } from 'naive-ui';
 import { UFieldGrid, UFormFooter } from '@/components/form/index.js';
 
@@ -24,6 +24,17 @@ const busy = ref(false);
 const error = ref('');
 const errorBox = ref(null);
 const canSubmit = computed(() => !busy.value && (!props.submitEnabled || !!props.submitEnabled(model)));
+
+function optionsOf(field) {
+  const options = typeof field.options === 'function' ? field.options(model) : field.options;
+  return options || [];
+}
+
+watch(() => [model.channel, model.action_type], () => {
+  const field = props.fields.find(item => item.key === 'device_id');
+  if (!field || !model.device_id) return;
+  if (!optionsOf(field).some(item => item.value === model.device_id)) model.device_id = null;
+});
 
 function isEmpty(value) {
   if (value == null) return true;

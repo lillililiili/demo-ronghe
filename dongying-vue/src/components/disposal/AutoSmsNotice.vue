@@ -11,7 +11,7 @@ const emit = defineEmits(['changed']);
 let alive = true;
 onUnmounted(() => { alive = false; });
 const view = computed(() => autoSmsView(props.data));
-const compactTitle = computed(() => ({ WAITING: '等待发送', SENDING: '正在发送', SIMULATED_DELIVERED: '已送达', FAILED: '发送失败', UNAVAILABLE: '通道未接通', BLOCKED: '暂不满足发送条件', DISABLED: '未启用' })[props.data?.auto_sms?.status] || view.value.title);
+const compactTitle = computed(() => ({ WAITING: '等待发送', SENDING: '正在发送', SIMULATED_DELIVERED: '模拟已送达', FAILED: '发送失败', UNAVAILABLE: '通道未接通', BLOCKED: '暂不满足发送条件', DISABLED: '未启用' })[props.data?.auto_sms?.status] || view.value.title);
 const time = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '';
 function retry() {
   if (!view.value.canRetry || props.disabled) return;
@@ -19,7 +19,7 @@ function retry() {
   const key = newHandoffIdempotencyKey();
   const modal = openFormModal({
     title: '重新发送飞手短信', confirmText: '提交重试', width: '520px',
-    notice: '后台会重新检查当前目标、研判和通道条件；提交后以发送记录为准。',
+    notice: '提交后由后台重新发送。模拟短信不会发到真实手机。',
     warning: view.value.simulated ? '当前使用模拟短信，不会发送真实短信。' : '',
     fields: [{ key: 'note', label: '重试说明', type: 'textarea', required: true, minRows: 3, placeholder: '说明已经核查或处理了什么问题' }],
     initial: { note: '' },
@@ -58,10 +58,11 @@ function retry() {
         <template v-if="view.updatedAt && view.updatedAt !== view.triggeredAt"><dt>状态更新</dt><dd>{{ time(view.updatedAt) }}</dd></template>
       </dl>
       <p v-if="!view.recipient" class="asn-recipient">未提供接收飞手信息</p>
+      <p v-if="compact && view.source === 'ALARM_EVENT'">告警建立后由后台自动发送。</p>
       <p v-if="compact && view.source === 'RULE_ILLEGAL'">触发依据来自系统研判，无需等待人工核实后再通知。</p>
       <details v-if="!compact && (view.source || view.evaluatedAt || view.dataUpdatedAt)" :key="data?.event_id">
         <summary>查看发送依据与时间</summary>
-        <p v-if="view.source">{{ view.source === 'RULE_ILLEGAL' ? '触发依据来自系统研判，无需等待人工核实后再通知。' : view.source === 'MANUAL_CONFIRMATION' ? '人工确认与当前观测' : '后台通知记录' }}</p>
+        <p v-if="view.source">{{ view.source === 'ALARM_EVENT' ? '告警建立后由后台自动发送。' : view.source === 'RULE_ILLEGAL' ? '触发依据来自系统研判，无需等待人工核实后再通知。' : view.source === 'MANUAL_CONFIRMATION' ? '人工确认与当前观测' : '后台通知记录' }}</p>
         <p v-if="view.evaluatedAt">研判时间：{{ time(view.evaluatedAt) }}</p>
         <p v-if="view.dataUpdatedAt">观测时间：{{ time(view.dataUpdatedAt) }}</p>
       </details>

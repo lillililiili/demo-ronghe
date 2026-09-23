@@ -6,16 +6,25 @@ import { useUavAdvisory } from '@/hooks/useUavAdvisory.js';
 
 const props = defineProps({
   eventId: { type: String, required: true }, confirmed: Boolean,
-  handoffId: { type: String, default: '' }
+  handoffId: { type: String, default: '' },
+  interval: { type: Number, default: 5000 }
 });
 const emit = defineEmits(['updated']);
-const { data, loading, error, load } = useUavAdvisory(() => props.eventId, result => emit('updated', result));
+const { data, loading, error, load } = useUavAdvisory(() => props.eventId, result => emit('updated', result), props.interval);
 const current = computed(() => data.value?.event_id === props.eventId && !loading.value && !error.value);
-const transferredId = computed(() => data.value?.auto_handoff?.handoff_id || props.handoffId);
+const autoHandoff = computed(() => data.value?.auto_handoff);
+const autoTransferred = computed(() => !!autoHandoff.value?.handoff_id
+  && !['FAILED', 'DISABLED', 'BLOCKED', 'WAITING'].includes(autoHandoff.value.status));
+const transferredId = computed(() => autoTransferred.value ? autoHandoff.value.handoff_id : (props.handoffId || ''));
 const handoffTitle = computed(() => {
-  if (transferredId.value) return ['MANUAL_CONFIRMATION', 'RULE_ILLEGAL'].includes(data.value?.auto_handoff?.trigger_source) ? '已自动移送到处罚' : '已移送到处罚';
-  return ({ WAITING: '等待自动移送到处罚', BLOCKED: '自动移送暂不可办理',
-    DISABLED: '自动移送尚未启用', FAILED: '自动移送失败' })[data.value?.auto_handoff?.status] || '自动移送状态暂不可用';
+  if (autoTransferred.value) {
+    return ['MANUAL_CONFIRMATION', 'RULE_ILLEGAL', 'JAMMING_COMPLETED'].includes(autoHandoff.value?.trigger_source) ? '已自动移送到处罚' : '已移送到处罚';
+  }
+  if (autoHandoff.value?.status) {
+    return ({ WAITING: '等待自动移送到处罚', BLOCKED: '自动移送暂不可办理',
+      DISABLED: '自动移送尚未启用', FAILED: '自动移送失败' })[autoHandoff.value.status] || '自动移送状态暂不可用';
+  }
+  return props.handoffId ? '已移送到处罚' : '自动移送尚未启用';
 });
 function openHandoff() {
   if (transferredId.value) window.location.hash = `/punish?handoff=${encodeURIComponent(transferredId.value)}`;

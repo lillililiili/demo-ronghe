@@ -16,7 +16,6 @@ import { usePageChrome } from '@/hooks/usePageChrome.js';
 import UPanel from '@/components/UPanel.vue';
 import UControl from '@/components/form/UControl.vue';
 import AirspaceRiskList from './AirspaceRiskList.vue';
-import AirspaceResponsePlan from './AirspaceResponsePlan.vue';
 import AirspaceRiskDrawer from './AirspaceRiskDrawer.vue';
 import { useAirspaceRiskList } from './useAirspaceRiskList.js';
 import { useAirspaceRisks } from './useAirspaceRisks.js';
@@ -734,8 +733,6 @@ onUnmounted(() => {
           <div v-if="selected.load_error" class="warnbox">{{ selected.load_error }}</div>
           <div v-if="detailError" class="warnbox">{{ detailError }}</div>
 
-          <AirspaceResponsePlan :key="selected.airspace_id" :airspace-id="selected.airspace_id" />
-
           <section class="drawer-risk-summary">
             <b>范围内风险记录</b>
             <span v-if="!risks.canRead">无风险查看权限</span>
@@ -864,11 +861,6 @@ onUnmounted(() => {
 .drawer-risk-summary { display: flex; flex-direction: column; gap: 6px; padding: 12px 0; margin-top: 10px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); font-size: 13px; }
 .drawer-risk-summary small { color: var(--txt-3); line-height: 1.5; }
 .drawer-risk-summary .linkbtn { text-align: left; }
-.drawer-response-plan { margin-top: 14px; padding: 14px 0; border-top: 1px solid var(--line); font-size: 13px; overflow-wrap: anywhere; }
-.drawer-response-plan > div { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.drawer-response-plan p { margin: 8px 0; line-height: 1.65; color: var(--txt-2); }
-.drawer-response-plan summary { cursor: pointer; color: var(--cyan); }
-.drawer-response-plan summary:focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; }
 .airspace-bottom-tabs { grid-area: tabs; display: flex; gap: 6px; flex: none; border-bottom: 1px solid var(--line); }
 .airspace-tabs { display: flex; gap: 6px; }
 .airspace-bottom-tabs button { border: 0; border-bottom: 2px solid transparent; background: transparent; padding: 8px 16px; color: var(--txt-3); cursor: pointer; font-size: 14px; }

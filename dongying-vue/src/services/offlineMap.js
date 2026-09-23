@@ -133,6 +133,8 @@ function acquireArchive(engine, url) {
           try {
             const response = await fetch(url, {
               signal: request.signal,
+              // Windows Chrome 会把同一 URL 的 Range 响应当成整文件缓存；必须跳过磁盘缓存。
+              cache: 'no-store',
               headers: { Range: `bytes=${offset}-${offset + length - 1}` },
               redirect: 'error'
             });

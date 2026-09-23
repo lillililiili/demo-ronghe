@@ -17,13 +17,18 @@ function isWide(field) {
 function isVisible(field) {
   return typeof field.visibleWhen !== 'function' || field.visibleWhen(props.model);
 }
+
+function fieldOptions(field) {
+  const options = typeof field.options === 'function' ? field.options(props.model) : field.options;
+  return options || [];
+}
 </script>
 
 <template>
   <div class="u-field-grid" :class="{ 'is-two': columns === 2 }">
     <UField v-for="field in fields" v-show="isVisible(field)" :key="field.key" v-model="model[field.key]" :class="{ 'is-wide': isWide(field) }"
       :type="field.type || 'text'" :label="field.label" :required="field.required" :help="field.help"
-      :wide="isWide(field)" :variant="variant" :options="field.options || []" :placeholder="field.placeholder || ''"
+      :wide="isWide(field)" :variant="variant" :options="fieldOptions(field)" :placeholder="field.placeholder || ''"
       :start-placeholder="field.startPlaceholder || ''" :end-placeholder="field.endPlaceholder || ''"
       :default-time="field.defaultTime"
       :disabled="field.disabled" :readonly="field.readonly" :clearable="field.clearable === true"

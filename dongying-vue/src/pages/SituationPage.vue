@@ -18,7 +18,9 @@ import { toast } from '@/ui/nv.js';
 import { getAlarm } from '@/services/alarmApi.js';
 import SituationAdvisoryCard from './situation/SituationAdvisoryCard.vue';
 import SituationAlarmPopup from './situation/SituationAlarmPopup.vue';
+import TargetLiveVideo from '@/components/video/TargetLiveVideo.vue';
 import { autoSmsView } from '@/components/disposal/autoSmsView.js';
+import { autoVoiceView } from '@/components/disposal/autoVoiceView.js';
 
 const U = window.UI;
 usePageChrome('situation');
@@ -31,6 +33,7 @@ const advisorySummaries = ref({});
 const expandedType = ref('');
 const alertTab = ref('target');
 const fuseOpen = ref(false);
+const showTargetVideo = ref(false);
 const source = createSituationApiSource();
 const layers = ref({ coverage: true, device: true, track: true, flightPlan: true, airspace: true });
 const statusAnnouncement = ref('正在连接融合感知服务');
@@ -312,6 +315,7 @@ function selectDevice(device) {
 
 function selectTarget(target, alarmId) {
   if (!target) return;
+  showTargetVideo.value = false;
   alertTab.value = 'target';
   markViewed([...(target.relatedAlarms || []), ...(target.relatedRisks || []).filter(risk => risk.active)]);
   selection.value = { kind: 'target', id: target.id, alarmId };
@@ -395,20 +399,15 @@ async function verifyRiskState(risk, conclusion, note, acceptedStates) {
   }
 }
 
-async function notifyRisk(risk, recipients) {
+async function notifyRisk(risk) {
   let latest = await riskApi.getRisk(risk.riskId);
   if (['NOTIFIED', 'ACKNOWLEDGED'].includes(latest.state)) return latest;
-  if (latest.state === 'PENDING_VERIFICATION') {
-    latest = await verifyRiskState(risk, 'CONFIRMED', '融合感知页一键通知前复核：轨迹、计划与空间风险事实一致。',
-      ['PENDING_NOTIFICATION', 'NOTIFIED', 'ACKNOWLEDGED']);
-  }
-  if (['NOTIFIED', 'ACKNOWLEDGED'].includes(latest.state)) return latest;
+  if (latest.state === 'PENDING_VERIFICATION') throw new Error('这条风险尚未核验，请到飞行计划或空域的风险详情完成核验后再通知上级');
   if (latest.state !== 'PENDING_NOTIFICATION') throw new Error('当前风险状态不允许通知');
-  if (recipients.length !== 1) throw new Error(recipients.length ? '存在多个风险接收方，请到风险业务页选择' : '尚未配置风险接收方');
   try {
     return await handoffApi.createHandoff({
       source_kind: 'RISK', source_id: risk.riskId, handoff_type: 'RISK_NOTICE',
-      recipient_id: recipients[0].recipient_id, expected_version: Number(latest.version)
+      expected_version: Number(latest.version)
     }, newHandoffIdempotencyKey());
   } catch (error) {
     if (isUncertainOutcome(error)) {
@@ -422,11 +421,12 @@ async function notifyRisk(risk, recipients) {
 async function submitRiskAction(plan, action) {
   const activeRisks = (plan?.activeRisks || []).filter(risk => routeRiskIsActive(risk));
   if (!activeRisks.length) return toast('当前航线已无可提交的风险', 'err');
-  let recipients = [];
-  if (action === 'notify') recipients = (await handoffApi.listHandoffRecipients('RISK_NOTICE'))?.items || [];
+  if (action === 'notify' && activeRisks.some(risk => risk.state === 'PENDING_VERIFICATION')) {
+    return toast('存在尚未核验的风险，请到飞行计划或空域的风险详情完成核验后再通知上级', 'err');
+  }
   const settled = await Promise.allSettled(activeRisks.map(risk => action === 'exclude'
     ? verifyRiskState(risk, 'EXCLUDED', '融合感知页批量排除：当前风险尚未通知，经人工操作确认排除。', ['EXCLUDED'])
-    : notifyRisk(risk, recipients)));
+    : notifyRisk(risk)));
   closeModal();
   await source.refresh();
   const succeeded = settled.filter(result => result.status === 'fulfilled').length;
@@ -446,7 +446,7 @@ function openRiskActionModal(plan, action) {
     width: '560px',
     warning: isExclude
       ? `提交后将把该航线所有尚未通知的当前风险正式标记为“已排除”，并写入核验历史。${countText}`
-      : `待核验风险将先以固定审计说明确认，再向唯一风险接收方提交交接；送达和回执状态以后端记录为准。${countText}`,
+      : `只通知已经核验通过、等待通知的风险；尚未核验的请到飞行计划或空域风险详情办理。送达和回执以后端记录为准。${countText}`,
     fields: [],
     danger: isExclude,
     confirmText: isExclude ? '确认排除' : '提交通知',
@@ -457,6 +457,7 @@ function openRiskActionModal(plan, action) {
 function clearSelection() {
   selection.value = null;
   fuseOpen.value = false;
+  showTargetVideo.value = false;
   if (!map) return;
   map.sel = null;
   map.planSel = null;
@@ -501,6 +502,7 @@ function renderTargetTip(target, hasAdvisoryCard = false) {
   const alarm = targetAlarm(target);
   const notification = alarm?.eventId ? advisorySummaries.value[alarm.eventId] : null;
   const sms = notification ? autoSmsView(notification) : null;
+  const voice = notification ? autoVoiceView(notification) : null;
   const routeRisk = (target.relatedRisks || []).find(risk => risk.active);
   const sourceNames = devices.value.filter(device => (target.sourceDeviceIds || []).includes(device.fusionDeviceId || device.deviceId))
     .map(device => device.type).join(' / ');
@@ -515,8 +517,8 @@ function renderTargetTip(target, hasAdvisoryCard = false) {
     <div class="sit-map-pop-status"><span class="sit-state ${stateClass}">${esc(stateText)}</span><span>${esc(summary)}</span></div>
     <div class="sit-target-metrics"><span><small>高度</small><b>${esc(formatMetric(target.alt, ' m'))}</b></span><span><small>速度</small><b>${esc(formatMetric(target.speed, ' m/s'))}</b></span></div>
     <p>感知来源：${esc(sourceNames || '未提供')}</p>
-    ${alarm?.eventId && !hasAdvisoryCard ? `<p class="sit-map-pop-note">短信通知：${esc(sms?.title || '正在读取通知状态')}${sms?.updatedAt ? ` · ${esc(formatClock(sms.updatedAt))}` : ''}</p>` : ''}
-    ${target.objectTypeCode === 'UAV' ? '<p class="sit-eo-track">光电跟踪中</p>' : ''}
+    ${alarm?.eventId && !hasAdvisoryCard ? `<p class="sit-map-pop-note">飞手短信：${esc(sms?.title || '正在读取通知状态')}${sms?.simulated ? '（模拟）' : ''}${sms?.updatedAt ? ` · ${esc(formatClock(sms.updatedAt))}` : ''}</p>
+    <p class="sit-map-pop-note">飞手电话：${esc(voice?.title || '正在读取通知状态')}${voice?.simulated ? '（模拟）' : ''}</p>` : ''}
     ${renderTargetActions(target, hasAdvisoryCard)}
   </section>`;
 }
@@ -625,7 +627,7 @@ async function openAlarmDisposal(alarm) {
 function onTipAction(action, hit) {
   if (action === 'close') return clearSelection();
   if (action === 'eo-video') {
-    toast('暂未接入', 'err');
+    showTargetVideo.value = true;
     return;
   }
   const plan = hit?.kind === 'plan'
@@ -779,7 +781,13 @@ onUnmounted(() => {
         <SituationAdvisoryCard v-if="showAlarmAdvisoryCard" :event-id="selectedUavAlarm.eventId" :alarm-label="selectedUavAlarm.id"
           @updated="updateNotification" @open="openAlarmDisposal(selectedUavAlarm)" />
         <p v-else class="sit-alarm-position-note">此告警未关联无人机事件，暂无可读取的通知记录。</p>
+        <TargetLiveVideo v-if="showTargetVideo && selectedTarget" :key="selectedTarget.targetId || selectedTarget.id"
+          compact default-expanded :target-id="selectedTarget.targetId || ''" :context-label="selectedTarget.id" />
       </SituationAlarmPopup>
+      <aside v-if="showTargetVideo && selectedTarget && !showAlarmPopup" class="sit-video-dock sit-glass" aria-label="当前目标视频">
+        <TargetLiveVideo :key="selectedTarget.targetId || selectedTarget.id" compact default-expanded
+          :target-id="selectedTarget.targetId || ''" :context-label="selectedTarget.id" />
+      </aside>
 
       <nav class="sit-layerbar" aria-label="地图图层">
         <button type="button" :aria-pressed="layers.coverage" @click="toggleLayer('coverage')">覆盖范围</button>
@@ -813,6 +821,7 @@ onUnmounted(() => {
 <style scoped>
 .situation-page.has-alarm-popup :deep(.maptip.is-track){display:none!important}
 .sit-alarm-position-note{margin:0;padding:10px 12px;color:var(--muted);font-size:12px;line-height:1.5}
+.sit-video-dock{position:absolute;z-index:12;left:12px;bottom:72px;width:min(360px,calc(100% - 24px));padding:10px;overflow:auto}
 .situation-page .sit-alert-copy>b,.situation-page .sit-alert-copy>em,.situation-page :deep(.sit-map-pop header b){white-space:normal;overflow:visible;overflow-wrap:anywhere;text-overflow:initial}
 .situation-page .sit-alert-row{flex-shrink:0;grid-template-columns:34px minmax(0,1fr)}
 .situation-page .sit-alert-meta{grid-column:2;flex-direction:row;justify-content:space-between;flex-wrap:wrap;white-space:normal}

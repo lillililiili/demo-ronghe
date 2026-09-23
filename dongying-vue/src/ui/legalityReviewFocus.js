@@ -24,24 +24,23 @@ export function legalityReviewFocus(evaluation) {
   const applicable = !!evaluation && evaluation.mode !== 'SHADOW'
     && evaluation.legal_status !== 'NOT_APPLICABLE' && !superseded;
   const reliable = assuranceStatus === 'SUFFICIENT' && assurance?.review_required === false;
-  // 是否仍需人工处理由服务端业务分流决定；allowed_actions 只表示当前账号能否提交。
-  // 兼容旧服务时，缺少 decision_assurance 不能被当作可靠自动结论。
-  const needsReview = applicable && !reviewed
-    && (assuranceProvided ? assurance?.review_required === true : true);
+  // 缺少算法结果是可靠性未知，不能冒充明确待复核。
+  const needsReview = applicable && !reviewed && assuranceProvided && assurance?.review_required === true;
   const canReview = (evaluation?.allowed_actions || []).includes('REVIEW');
-  const showTask = needsReview || reviewed || superseded;
+  const showTask = needsReview || reviewed || superseded || (applicable && !assuranceProvided && !reviewed);
   const title = superseded ? '已有更新的研判' : reviewed ? '已完成人工复核'
-    : needsReview ? '需要核对的信息缺口' : '当前无需人工复核';
+    : needsReview ? '需要核对的信息缺口'
+      : !assuranceProvided && applicable ? '判定可靠性未知' : '当前无需人工复核';
   const note = superseded ? '请查看最新结果；本次结论与复核历史继续保留。'
     : reviewed ? '下方保留原始系统结论；人工结论与说明可在复核历史查看。'
-      : needsReview && !assuranceProvided ? '本条记录未提供算法可靠性结果，当前不能把系统结论视为可靠自动结论，请核对信息缺口。'
-        : needsReview && assuranceStatus === 'UNAVAILABLE' ? '本条记录的算法可靠性结果不可用，请根据下列原因核对信息缺口。'
-          : needsReview ? '本次算法依据不足，当前结论暂不能可靠确认，请根据下列原因核对信息缺口。'
+      : needsReview && assuranceStatus === 'UNAVAILABLE' ? '本条记录的算法可靠性结果不可用，请根据下列原因核对信息缺口。'
+        : needsReview ? '本次算法依据不足，当前结论暂不能可靠确认，请根据下列原因核对信息缺口。'
+          : !assuranceProvided && applicable ? '本条记录未保存算法可靠性结果，不能当作明确待复核，也不能把系统结论视为可靠自动结论。'
             : reliable ? '本次算法依据充分，系统已自动采纳结论；如发现新证据，可在更多操作中补充人工纠正。'
               : '当前记录不需要人工复核，可查看判定依据与历史。';
   return {
     unknownReasons, assuranceReasons, uncertainHits, failedHits, unresolved,
-    assuranceProvided, assuranceStatus, reliable, superseded, reviewed,
+    assuranceProvided, assuranceStatus, reliable, superseded, reviewed, applicable,
     needsReview, canReview, showTask, title, note
   };
 }

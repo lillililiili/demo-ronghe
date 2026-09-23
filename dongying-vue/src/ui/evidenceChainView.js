@@ -82,7 +82,7 @@ export function openEvidenceChainTypeModal({ chain, type }) {
     ...record.summary, evidence_id: record.record_id
   }));
   if (files.length) {
-    return openEvidenceFileModal(files[0].evidence_id, { files, returnLabel: '返回事项详情' });
+    return openEvidenceFileModal(files[files.length - 1].evidence_id, { files, returnLabel: '返回事项详情' });
   }
   openModal({
     title: `${card.label}证据`,

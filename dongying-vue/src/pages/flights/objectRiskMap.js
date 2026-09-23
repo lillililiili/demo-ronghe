@@ -50,6 +50,10 @@ export function drawObjectRisk(ctx, map, { snapshot, trail, trailIndex, showTrai
     for (let i = 1; i <= end; i++) {
       // 缺少连续采样时断开，不把两个远隔时刻连成实际飞行轨迹。
       if (trail[i].t - trail[i - 1].t > 30000 || trail[i].t <= trail[i - 1].t) continue;
+      if (trail[i].break_before) continue;
+      if (trail[i].track_id && trail[i - 1].track_id && trail[i].track_id !== trail[i - 1].track_id) continue;
+      if (Number.isFinite(trail[i].point_seq) && Number.isFinite(trail[i - 1].point_seq)
+        && trail[i].point_seq !== trail[i - 1].point_seq + 1) continue;
       const a = map.px(trail[i - 1].lon, trail[i - 1].lat), b = map.px(trail[i].lon, trail[i].lat);
       ctx.beginPath(); ctx.moveTo(...a); ctx.lineTo(...b); ctx.strokeStyle = '#bd55e4';
       ctx.globalAlpha = .3 + .7 * i / Math.max(end, 1); ctx.lineWidth = 2; ctx.stroke();

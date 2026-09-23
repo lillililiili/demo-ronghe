@@ -85,6 +85,12 @@ onUnmounted(() => { active = false; ++sequence; });
 </script>
 
 <template>
+  <Teleport to="#pnNotifyDock">
+    <template v-if="needsNotification">
+      <button class="btn pri notify-send" type="button" :disabled="!result.can_notify || loading || sending || !!error" @click="notifyDepartment">{{ sending ? '正在通知' : buttonLabel }}</button>
+      <p v-if="!result.can_notify" class="notify-block">{{ result.blocked_reason || '当前暂不能通知，请核对通知记录。' }}</p>
+    </template>
+  </Teleport>
   <section class="sect punishment-notification" aria-label="处罚部门通知">
     <header>
       <h4>处罚部门通知</h4>
@@ -102,17 +108,13 @@ onUnmounted(() => { active = false; ++sequence; });
         <template v-if="result.latest_delivery?.acknowledged_at"><dt>签收时间</dt><dd>{{ date(result.latest_delivery.acknowledged_at) }}</dd></template>
       </dl>
       <p v-if="result.simulated" class="notification-mode">模拟通知通道，不代表真实通知或真实回执。</p>
-      <template v-if="needsNotification">
-        <p v-if="!result.can_notify">{{ result.blocked_reason || '当前暂不能通知，请核对通知记录。' }}</p>
-        <button class="btn pri" type="button" :disabled="!result.can_notify || loading || sending || !!error" @click="notifyDepartment">{{ sending ? '正在通知' : buttonLabel }}</button>
-      </template>
     </template>
     <p class="notification-help">查询仅更新送达和签收记录，不会再次发送。处罚决定及办理进度见“处罚办理结果”。</p>
   </section>
 </template>
 
 <style scoped>
-.punishment-notification header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.punishment-notification header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .punishment-notification h4{margin:0}
 .punishment-notification p{font-size:13px;line-height:1.6;overflow-wrap:anywhere}
 .notification-help{color:var(--muted)}

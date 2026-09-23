@@ -69,6 +69,7 @@ export const ALARM_PROGRESS_LABEL = {
   JAMMING_DONE: '已干扰',
   COUNTERMEASURE_ACTIVE: '反制中',
   COUNTERMEASURE_DONE: '已反制',
+  COUNTER_STOPPED: '反制已中止',
   PENDING_APPROVAL: '待审批'
 };
 export const ALARM_PROGRESS_TAG = {
@@ -77,6 +78,7 @@ export const ALARM_PROGRESS_TAG = {
   JAMMING_DONE: 't-cyan',
   COUNTERMEASURE_ACTIVE: 't-orange',
   COUNTERMEASURE_DONE: 't-cyan',
+  COUNTER_STOPPED: 't-amber',
   PENDING_APPROVAL: 't-amber'
 };
 /* 状态回答“现在在哪一步”，与执行结果（成功/失败）分开说，不要混成一句。 */
@@ -96,7 +98,7 @@ export const DISPOSAL_RESULT_LABEL = { SUCCEEDED: '执行成功', FAILED: '执�
 export const DISPOSAL_STOP_RESULT_LABEL = {
   EXECUTED: '授权已撤销；设备急停已受理',
   ALL_OFF_ISSUED: '授权已撤销；已向四通道网络控制器下发全关，回执以设备为准',
-  UNAVAILABLE: '授权已撤销；设备急停未执行（协议未提供）',
+  UNAVAILABLE: '反制已撤销',
   NOT_ATTEMPTED: '授权已撤销；未尝试设备急停',
   NOT_BOUND: '授权已撤销；设备未登记凌云连接，请运维补配置后重试'
 };

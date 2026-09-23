@@ -68,7 +68,7 @@ const SC = {
   PENDING: 't-gray', AVAILABLE: 't-green', MISSING: 't-orange', CORRUPT: 't-red', DESTROYED: 't-gray'
 };
 const SUBJECT_ROUTE = {
-  EVENT: 'alarms', TARGET: 'situation', PLAN: 'flights', CASE: 'punish', AUTHORIZATION: 'punish'
+  EVENT: 'alarms', TARGET: 'situation', PLAN: 'flights', CASE: 'punish', AUTHORIZATION: 'alarms'
 };
 
 const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
@@ -358,8 +358,16 @@ onMounted(() => {
     const [kind, id] = el.dataset.evGo.split('|');
     const page = SUBJECT_ROUTE[kind];
     if (!page) return toast(['DEVICE', 'COMMAND', 'COMMISSION'].includes(kind) ? '该功能已迁移至后台管理系统' : '该对象没有页面入口', 'err');
+    if (kind === 'EVENT' && id) sessionStorage.setItem('alarm.sel', id);
+    if (kind === 'AUTHORIZATION' && id) {
+      location.hash = `#/alarms?tab=authorizations&authorization=${encodeURIComponent(id)}`;
+      return;
+    }
+    if (kind === 'PLAN' && id) {
+      location.hash = `#/flights?plan=${encodeURIComponent(id)}`;
+      return;
+    }
     location.hash = '#/' + page;
-    void id;
   });
   U.on(view, '[data-evact]', 'click', (e, el) => {
     if (el.disabled) return;

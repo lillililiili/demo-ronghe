@@ -16,6 +16,7 @@ export const DISPOSAL_UNAVAILABLE_TEXT = '处置授权功能暂不可用';
    把它们当"结果未知"会让人以为可能已经执行了，比报错更糟。 */
 const DEFINITE_CONFLICT_CODES = new Set([
   'TWO_PERSON_RULE', 'INVALID_TRANSITION', 'AUTHORIZATION_EXPIRED',
+  'EMERGENCY_STOP_UNCONFIRMED', 'ADVISORY_COUNTER_BLOCKED',
   'DEVICE_CONTROL_UNAVAILABLE', 'DEVICE_NOT_BOUND', 'DEVICE_OFFLINE',
   'ACTIVE_AUTHORIZATION_EXISTS', 'SUBJECT_KIND_NOT_SUPPORTED',
   'TARGET_NOT_ACTIVE', 'POLICY_REQUIRES_CONFIRMED_EVENT'
@@ -53,7 +54,9 @@ function messageOf(error, fallback) {
   // 未登记连接是可补救的配置问题，与“设备根本不支持自动执行”不是一回事，两句必须分开说。
   if (error.code === 'DEVICE_NOT_BOUND') return '设备未登记凌云连接，未下发指令；请运维补登记后重试。';
   // 离线是现场问题，与"未登记"（运维）和"不支持"（换通道）的补救方都不同（13-14）。
-  if (error.code === 'DEVICE_OFFLINE') return '设备未启用或不在线，未下发指令；请现场处理后重试。';
+  if (error.code === 'DEVICE_OFFLINE') return '本次没有下发，授权仍是已批准。设备未启用，或当前不在线。没有心跳的设备不能执行，请改选正在上报的设备后重新申请。';
+  if (error.code === 'EMERGENCY_STOP_UNCONFIRMED') return '这台执行设备还有未了结的急停，本次没有下发，授权仍是已批准。请换一台没有未完成急停的设备，或等这台设备的急停了结后再执行。';
+  if (error.code === 'ADVISORY_COUNTER_BLOCKED') return `本次没有下发，授权仍是已批准。${error.message || '当前观测或违规研判已失效。'}`;
   if (error.code === 'TARGET_NOT_ACTIVE') return '最近没有监测到这个目标，无法确认它还在现场，暂时不能下发处置指令。';
   if (error.code === 'POLICY_REQUIRES_CONFIRMED_EVENT') return '该动作要求事件先经人工核实，请先完成核实再申请。';
   return error.message || fallback;
@@ -123,11 +126,19 @@ function deviceOptionLabel(device) {
   return bits.length ? `${title}（${bits.join(' · ')}）` : title;
 }
 
-async function loadEnabledDeviceOptions() {
+const CHANNEL_DEVICE_TYPE = {
+  LINGYUN_B: 'ifr',
+  COUNTERMEASURE_4CH: 'countermeasure'
+};
+
+function devicesForChannel(devices, channel) {
+  const type = CHANNEL_DEVICE_TYPE[channel];
+  return (devices || []).filter(device => device.device_id && device.device_type_code === type);
+}
+
+async function loadEnabledDevices() {
   const page = await deviceApi.list({ page: 1, size: 200, enabled: true, sort: 'device_no_asc' });
-  return (page?.items || []).filter(device => device.device_id).map(device => ({
-    value: device.device_id, label: deviceOptionLabel(device)
-  }));
+  return (page?.items || []).filter(device => device.device_id);
 }
 
 /**
@@ -158,11 +169,11 @@ export function openDisposalDirect({ actionType, subjectKind, subjectId, subject
 async function showDisposalRequestForm({ actionType, actionOptions, subjectKind, subjectId, subjectText, initialReason, isCurrent, policy, refresh, onDone, customSubmit, okText, direct = false }) {
   const choices = (actionOptions || []).filter(Boolean);
   const pickable = choices.length > 1;
-  let deviceOptions = [];
-  let deviceHelp = '按设备编号与名称选择执行设备。';
+  let devices = [];
+  let deviceHelp = '只显示当前执行通道可以下发的设备。';
   try {
-    deviceOptions = await loadEnabledDeviceOptions();
-    if (!deviceOptions.length) deviceHelp = '没有启用中的设备，请联系运维接入设备后再申请。';
+    devices = await loadEnabledDevices();
+    if (!devices.length) deviceHelp = '没有启用中的设备，请联系运维接入设备后再申请。';
   } catch (error) {
     deviceHelp = error?.status === 403
       ? '当前账号没有设备台账读取权限，无法选择执行设备。'
@@ -204,7 +215,9 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
         { value: 'COUNTERMEASURE_4CH', label: '四通道反制设备（经网络控制器下发，回执以设备为准）' }
       ] },
       { key: 'device_id', label: '执行设备', type: 'select', clearable: true, filterable: true,
-        placeholder: '请选择执行设备', options: deviceOptions, help: deviceHelp, required: true },
+        placeholder: '请选择执行设备',
+        options: model => devicesForChannel(devices, model.channel).map(device => ({ value: device.device_id, label: deviceOptionLabel(device) })),
+        help: deviceHelp, required: true },
       { key: 'reason', label: direct ? '直接反制事由' : '申请事由', type: 'textarea', required: true, minRows: 3, placeholder: '2–500 字：依据当前观测与研判，说明本次处置事由' }
     ],
     initial: { action_type: actionType, channel: 'LINGYUN_B', device_id: null, reason: initialReason },
@@ -216,7 +229,9 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
       if (reason.length < 2 || reason.length > 500) return `申请事由需为 2–500 字，当前 ${reason.length} 字；请核对并调整。`;
       // 服务端要求：经设备执行的处置必须指定设备。这里先拦，免得填完事由才被打回。
       if (!['LINGYUN_B', 'COUNTERMEASURE_4CH'].includes(m.channel)) return '仅支持设备执行';
-      if (!String(m.device_id || '').trim()) return '经设备执行的处置必须指定执行设备';
+      const matched = devicesForChannel(devices, m.channel);
+      if (!matched.length) return '当前执行通道没有可下发的设备';
+      if (!matched.some(device => device.device_id === m.device_id)) return '执行设备与所选通道不一致，请重新选择';
       return null;
     },
     onSubmit: ({ action_type: chosen, channel, device_id: deviceId, reason }) => submit({

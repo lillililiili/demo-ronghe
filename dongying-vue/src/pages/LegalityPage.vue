@@ -258,6 +258,7 @@ function dimText(value) { return value ? (DIM_TEXT[value] || value) : '未评估
 function reviewText(item) {
   const focus = legalityReviewFocus(item);
   if (focus.superseded || focus.reviewed) return reviewStateText(item?.review?.state);
+  if (!focus.assuranceProvided && focus.applicable) return '可靠性未知';
   if (focus.needsReview) return '信息待核对';
   if (focus.reliable) return '系统自动判定';
   if (item?.decision_assurance?.status === 'NOT_APPLICABLE') return '不适用';

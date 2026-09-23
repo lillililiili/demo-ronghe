@@ -6,7 +6,7 @@ import { readSessionToken } from '@/services/apiClient.js';
 import { openDisposalRequest, openDisposalDirect } from '@/ui/disposalAuthModal.js';
 import { openModal } from '@/ui/modal.js';
 
-const props = defineProps({ eventId: { type: String, required: true }, eventLabel: String, active: Boolean });
+const props = defineProps({ eventId: { type: String, required: true }, eventLabel: String, active: Boolean, showLaunch: Boolean });
 const emit = defineEmits(['records']);
 const busy = ref(false);
 let generation = 0, mounted = true, feedback = null;
@@ -59,7 +59,7 @@ async function launch() {
 <template>
   <section class="counter-launch" aria-label="反制操作">
     <div class="counter-launch-actions">
-      <button class="btn" type="button" :disabled="busy" :aria-busy="busy" @click="launch">{{ busy ? '正在检查反制条件' : '发起反制' }}</button>
+      <button v-if="showLaunch" class="btn" type="button" :disabled="busy" :aria-busy="busy" @click="launch">{{ busy ? '正在检查反制条件' : '发起反制' }}</button>
       <button class="btn" type="button" @click="emit('records', { eventId })">查看本事件反制记录</button>
     </div>
   </section>

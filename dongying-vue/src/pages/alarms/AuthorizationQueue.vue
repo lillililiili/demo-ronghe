@@ -13,7 +13,7 @@ import { openDisposalApproval, openDisposalExecution, openDisposalStop } from '@
 import EmergencyStopPanel from '@/components/disposal/EmergencyStopPanel.vue';
 import TargetLiveVideo from '@/components/video/TargetLiveVideo.vue';
 import AuthorizationTargetMap from './AuthorizationTargetMap.vue';
-import { canStop, nextStep, primaryCode, readPending, resultText, usesEmergency } from './authorizationQueueView.js';
+import { canStop, cardStopLabel, nextStep, primaryCode, readPending, resultText, usesEmergency } from './authorizationQueueView.js';
 
 const props = defineProps({ initialAuthorizationId: { type: String, default: '' }, eventId: { type: String, default: '' }, initialStatus: { type: String, default: '' } });
 const emit = defineEmits(['event']);
@@ -31,7 +31,7 @@ const mainLabel = row => row.execution_block_reason ? '查看原因' : ({ APPROV
 const modeText = row => row?.authorization_mode === 'DIRECT' ? '免逐次审批' : row?.authorization_mode === 'REVIEW' ? '申请审批' : '方式未知';
 const approverText = row => row?.authorization_mode === 'DIRECT' ? '不适用（免逐次审批）' : (row?.approved_by_name || (row.status === 'REQUESTED' ? '待审批' : '未提供'));
 const statusText = row => row?.status === 'STOPPED' && emergencyInfo.value?.latest_stop && row.subject_id === emergencyInfo.value.event_id
-  ? '授权已中止；设备反馈见停止区' : disposalStatusText(row);
+  ? '反制已中止' : disposalStatusText(row);
 const blockReasonText = row => row?.execution_block_reason ? labelOf(DISPOSAL_BLOCK_REASON_LABEL, row.execution_block_reason) : '';
 const subjects = ref({});
 const subjectKey = row => `${row.subject_kind}:${row.subject_id}`;
@@ -59,7 +59,7 @@ async function readSubject(row) {
       text = target.target_no || '目标编号未提供';
       targetId = target.target_id || '';
     } else { text = '关联对象信息不可用'; }
-    if (active) subjects.value[key] = { text, extra, targetId, fallback: !text || text.includes('未提供') || text.includes('不可用') };
+    if (active) subjects.value[key] = { text, extra, targetId, fallback: !targetId };
   } catch {
     if (active) subjects.value[key] = { text: '关联对象读取失败', fallback: true };
   }
@@ -165,11 +165,11 @@ onUnmounted(() => { active = false; request++; detailRequest++; });
               <span class="record-status">{{ statusText(row) }}</span>
               <span class="source-mode">{{ labelOf(DISPOSAL_ACTION_LABEL, row.action_type) }} · {{ labelOf(SOURCE_MODE_LABEL, row.source_mode) }}</span>
               <span class="source-mode">申请于 {{ formatTime(row.requested_at) }}</span>
-              <span class="record-next">{{ nextStep(row, userId) }}</span>
+              <span v-if="nextStep(row, userId)" class="record-next">{{ nextStep(row, userId) }}</span>
             </button>
             <div v-if="selected?.authorization_id !== row.authorization_id && (mainCode(row) || canStop(row))" class="record-actions">
               <button v-if="mainCode(row)" type="button" class="btn" :disabled="loading || detailLoading" @click="mainAction(row)">{{ mainLabel(row) }}</button>
-              <button v-if="canStop(row)" type="button" class="btn stop-btn" :disabled="loading || detailLoading" @click="stopAction(row)">{{ usesEmergency(row) ? '停止 / 急停' : '停止处置' }}</button>
+              <button v-if="canStop(row)" type="button" class="btn stop-btn" :disabled="loading || detailLoading" @click="stopAction(row)">{{ cardStopLabel(row) }}</button>
             </div>
           </article>
           <p v-if="loading" class="queue-empty" role="status">正在读取办理记录</p>
@@ -185,16 +185,16 @@ onUnmounted(() => { active = false; request++; detailRequest++; });
           <div class="target-observation" aria-label="目标观察">
             <TargetLiveVideo v-if="['UAV_EVENT', 'TARGET'].includes(selected.subject_kind)" :key="selected.authorization_id"
               :default-expanded="true" :compact="true" :target-id="selectedSubject?.targetId || ''" :context-label="subjectText(selected)"
-              :unavailable-reason="selectedSubject?.fallback ? subjectText(selected) : ''" />
+              :unavailable-reason="selectedSubject?.fallback && !selectedSubject?.targetId ? subjectText(selected) : ''" />
             <AuthorizationTargetMap v-if="['UAV_EVENT', 'TARGET'].includes(selected.subject_kind)" :key="`map-${selected.authorization_id}`"
-              :target-id="selectedSubject?.targetId || ''" :unavailable-reason="selectedSubject?.fallback ? subjectText(selected) : ''" />
+              :target-id="selectedSubject?.targetId || ''" :unavailable-reason="selectedSubject?.fallback && !selectedSubject?.targetId ? subjectText(selected) : ''" />
             <div v-else class="queue-empty">此记录没有可关联的无人机目标，保留办理及历史资料供查阅。</div>
           </div>
           <aside class="handling-panel" aria-label="当前办理与授权资料">
             <div class="current-handling">
               <span class="section-label">当前进展</span>
               <h3>{{ statusText(selected) }}</h3>
-              <p>{{ nextStep(selected, userId) }}</p>
+              <p v-if="nextStep(selected, userId)">{{ nextStep(selected, userId) }}</p>
               <p v-if="resultText(selected)" class="result-text">{{ resultText(selected) }}</p>
               <p v-if="blockReasonText(selected)" class="block-reason">执行受阻：{{ blockReasonText(selected) }}</p>
               <div v-if="mainCode(selected) || (canStop(selected) && !usesEmergency(selected))" class="actions authorization-actions">
@@ -204,7 +204,7 @@ onUnmounted(() => { active = false; request++; detailRequest++; });
             </div>
             <EmergencyStopPanel v-if="usesEmergency(selected)" :key="selected.subject_id" :event-id="selected.subject_id"
               @updated="emergencyInfo = $event" @changed="refreshCurrent" />
-            <details :key="selected.authorization_id" class="authorization-dossier">
+            <details :key="selected.authorization_id" class="authorization-dossier" open>
               <summary>授权资料与办理记录</summary>
               <dl class="detail-facts">
                 <dt>授权编号</dt><dd>{{ selected.authorization_no || selected.authorization_id }}</dd>

@@ -53,8 +53,13 @@ export function mapDataServer(directory) {
       if (gzip) res.setHeader('Content-Encoding', 'gzip');
       res.setHeader('X-Content-Type-Options', 'nosniff');
       res.setHeader('Accept-Ranges', 'bytes');
+      const range = req.headers.range;
+      // Range 分段必须返回真实字节。对 PMTiles 回 304 时，Chrome 会把空正文或其它分段
+      // 缓存当成当前分段，包头变成全 0，解析报 Wrong magic number。
       res.setHeader('Cache-Control', raw === '/map-data/control/map-config.json'
         ? 'no-store, max-age=0'
+        : range
+          ? 'no-store'
         : immutable
           ? 'public, max-age=31536000, immutable'
         : mime.includes('pmtiles') || mime.includes('protobuf') || mime.includes('font') || mime.startsWith('image/')
@@ -63,18 +68,15 @@ export function mapDataServer(directory) {
       const etag = `"${info.size.toString(16)}-${Math.trunc(info.mtimeMs).toString(16)}${gzip ? '-gzip' : ''}"`;
       res.setHeader('ETag', etag);
       res.setHeader('Last-Modified', info.mtime.toUTCString());
-      // 可变清单/样式仍需校验，但未变化时只返回响应头，不反复传输整份文件。
-      // 条件请求先于 Range 处理；运行指针始终读取，不能被 304 缓存遮住版本切换。
       const ifNoneMatch = req.headers['if-none-match'];
       const unchanged = ifNoneMatch
         ? ifNoneMatch.split(',').some(value => value.trim() === '*' || value.trim().replace(/^W\//, '') === etag)
         : req.headers['if-modified-since'] && Math.floor(info.mtimeMs / 1000) * 1000 <= Date.parse(req.headers['if-modified-since']);
-      if (raw !== '/map-data/control/map-config.json' && unchanged) {
+      if (!range && raw !== '/map-data/control/map-config.json' && unchanged) {
         res.statusCode = 304;
         return res.end();
       }
       let start = 0, end = info.size - 1;
-      const range = req.headers.range;
       if (range && (!req.headers['if-range'] || req.headers['if-range'] === etag)) {
         const match = /^bytes=(\d*)-(\d*)$/.exec(range);
         if (!match || (!match[1] && !match[2])) { res.setHeader('Content-Range', `bytes */${info.size}`); return finish(416, 'Invalid range'); }

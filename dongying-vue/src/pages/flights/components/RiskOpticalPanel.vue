@@ -26,7 +26,7 @@ const blocked = computed(() => !targetId.value ? '监测目标尚未就绪，请
     : availability.value?.block_reason || '');
 const active = computed(() => ['OPEN', 'ENDING'].includes(task.value?.status));
 const videoVisible = computed(() => task.value?.status === 'OPEN'
-  && command.value?.status === 'SUCCEEDED');
+  && command.value?.status === 'SUCCEEDED' && command.value?.simulated === true);
 const statusText = computed(() => {
   if (loading.value) return '正在读取跟踪状态';
   if (error.value) return '跟踪状态未确认';

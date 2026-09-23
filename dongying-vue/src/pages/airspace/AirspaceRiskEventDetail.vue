@@ -186,13 +186,13 @@ onUnmounted(() => { alive = false; generation++; historyRequest++; noticeRequest
             <details v-if="notice.recipient_name && notice.recipient_name !== '上级'"><summary>原通知对象记录</summary><p>{{ notice.recipient_name }}</p></details>
             <p>{{ labelOf(HANDOFF_TYPE_LABEL, notice.handoff_type) }} · {{ time(notice.created_at) }}</p><p>对方回复：{{ receiptText(notice) }}</p>
             <p v-if="notice.blocked_reason">未完成原因：{{ notice.blocked_reason === 'CHANNEL_NOT_CONNECTED' ? '通知渠道未接通' : notice.blocked_reason === 'DELIVERY_OUTCOME_UNKNOWN' ? '发送结果未知，请先核对原发送记录' : notice.blocked_reason }}</p>
-            <a v-if="canAccessRoute('punish')" class="lnk" :href="`#/punish?handoff=${encodeURIComponent(notice.handoff_id)}`">查看交接详情 →</a>
+            <p class="rk-note">风险通知记录留在本页，不进入处罚办理。</p>
           </article></div>
           <p v-if="noticesTotal > notices.length && !noticesLoading" class="rk-note">共 {{ noticesTotal }} 条通知记录，当前展示最近 {{ notices.length }} 条。</p>
         </section>
       </template>
     </div>
-    <div v-if="risk && !loading && !error && (canVerify || canNotify || ['PENDING_VERIFICATION', 'PENDING_NOTIFICATION'].includes(risk.state))" class="risk-process-actions">
+    <div v-if="risk && !loading && !error && tab === 'event' && (canVerify || canNotify || ['PENDING_VERIFICATION', 'PENDING_NOTIFICATION'].includes(risk.state))" class="risk-process-actions">
       <p v-if="risk.state === 'PENDING_VERIFICATION' && !canVerify">{{ verifyReason }}</p><p v-else-if="risk.state === 'PENDING_NOTIFICATION' && !canNotify">{{ notifyReason }}</p>
       <p v-if="risk.state === 'PENDING_VERIFICATION' && canVerify">核验通过后可通知上级。</p>
       <button v-if="risk.state === 'PENDING_VERIFICATION' || (risk.state === 'PENDING_NOTIFICATION' && canVerify)" class="btn" :class="{ pri: risk.state === 'PENDING_VERIFICATION', ghost: risk.state === 'PENDING_NOTIFICATION' }" :disabled="!canVerify" :title="verifyReason" @click="verify">{{ risk.state === 'PENDING_NOTIFICATION' ? '改判为排除' : '人工核验' }}</button>

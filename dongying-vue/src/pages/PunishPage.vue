@@ -323,6 +323,7 @@ onMounted(() => {
             </UPanel>
 
             <UPanel title="交接详情" panel-style="flex:4;min-width:340px" nopad>
+              <div id="pnNotifyDock" class="pn-notify-dock"></div>
               <div id="pnDetail" class="pn-detail">
                 <div v-if="detailLoading" class="empty">正在读取交接详情</div>
                 <div v-else-if="detailError" class="warnbox pn-error">{{ detailError }} <button class="btn" type="button" @click="retryDetail">重试</button></div>
@@ -432,6 +433,41 @@ onMounted(() => {
 .pn-sub { font-size: 11px; color: var(--txt-3); white-space: normal; line-height: 1.4; overflow-wrap: anywhere; }
 .pn-wrap { white-space: normal; line-height: 1.4; overflow-wrap: anywhere; }
 .pager { display: flex; justify-content: flex-end; padding: 10px; }
+.pn-notify-dock:empty { display: none; }
+.pn-notify-dock:not(:empty) {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: color-mix(in srgb, var(--surface-1) 88%, var(--blue));
+  border-bottom: 1px solid color-mix(in srgb, var(--cyan) 55%, transparent);
+  box-shadow: 0 10px 22px rgba(4, 12, 32, .35);
+}
+.pn-notify-dock :deep(.notify-send) {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 16px;
+  font-size: 16px;
+  font-weight: 650;
+  white-space: normal;
+  height: auto;
+}
+.pn-notify-dock :deep(.notify-send:disabled) {
+  opacity: 1;
+  color: #fff;
+  background: color-mix(in srgb, var(--blue) 42%, var(--surface-1));
+  border-color: var(--cyan);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--cyan) 50%, transparent);
+  cursor: not-allowed;
+}
+.pn-notify-dock :deep(.notify-block) {
+  margin: 0;
+  color: var(--amber);
+  font-size: 13px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
 .pn-detail { flex: 1; min-height: 0; overflow: auto; padding: 12px; }
 .pn-detail .detail-hero-title, .pn-detail .detail-hero-id { display: block; overflow: visible; white-space: normal; text-overflow: unset; -webkit-line-clamp: unset; overflow-wrap: anywhere; }
 .pn-note-text { margin: 6px 0 4px; font-size: 11px; color: var(--txt-3); line-height: 1.6; }

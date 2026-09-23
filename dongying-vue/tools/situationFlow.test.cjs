@@ -25,12 +25,14 @@ async function main() {
   const target = { lon: 118.51, lat: 37.4, objectTypeCode: 'UAV', relatedAlarms: [{ eventState: 'CONFIRMED' }] };
   check('目标位于可用 EO 覆盖内时可跟踪', flow.eoCanMonitor(target, [eo]), true);
   check('离线 EO 覆盖不能冒充可跟踪', flow.eoCanMonitor(target, [{ ...eo, coverage: { ...eo.coverage, status: 'unavailable' } }]), false);
-  check('真实处置执行中映射为干扰中', flow.disposalStage({ status: 'EXECUTING' }), 'jamming');
-  check('真实处置完成后才显示处罚动作', flow.uavProcessActions({ eventState: 'CONFIRMED', disposalStage: 'completed' }), ['punish']);
+  check('干扰执行中不冒充反制', flow.disposalStage({ status: 'EXECUTING', actionType: 'JAMMING' }), 'jamming');
+  check('反制执行中不冒充干扰', flow.disposalStage({ status: 'EXECUTING', actionType: 'COUNTERMEASURE' }), 'counter');
+  check('处置完成后不再显示误报入口', flow.uavProcessActions({ eventState: 'CONFIRMED', disposalStage: 'countered' }), []);
   check('审批中不显示前端伪成功动作', flow.uavProcessActions({ eventState: 'CONFIRMED', disposalStage: 'requested' }), []);
   check('未处置事件显示误报与反制', flow.uavProcessActions({ eventState: 'PENDING_VERIFICATION', disposalStage: 'none' }), ['false-positive', 'counter']);
   check('误报事件不再显示动作', flow.uavProcessActions({ eventState: 'FALSE_POSITIVE', disposalStage: 'none' }), []);
-  check('处罚交接完成后显示已移送', flow.uavProcessStatus({ eventState: 'CONFIRMED', disposalStage: 'completed', handoff: true }), '已移送处罚');
+  check('处罚交接完成后显示已移送', flow.uavProcessStatus({ eventState: 'CONFIRMED', disposalStage: 'countered', handoff: true }), '已移送处罚');
+  check('反制完成不写成已干扰', flow.uavProcessStatus({ eventState: 'CONFIRMED', disposalStage: 'countered' }), '反制已完成');
 
   console.log(failed ? `\n${passed} 条通过，${failed} 条失败` : `全部通过：${passed} 条`);
   process.exitCode = failed ? 1 : 0;

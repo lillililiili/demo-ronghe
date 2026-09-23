@@ -1340,7 +1340,6 @@ async function refreshAfterNotify(riskId) {
 /* 成功提示只用 Vue 节点渲染服务端 ID，不走 innerHTML；链接指向通知记录详情。
    风险到"通知上级"为止（决策 18-14），所以这里说的是投递与回执，不再提处罚办结。 */
 function showHandoffSubmitted(created) {
-  const link = `#/punish?handoff=${encodeURIComponent(created.handoff_id)}`;
   openModal({
     title: created.delivery_status === 'DELIVERED' ? '通知已提交并送达' : '通知已提交，尚未发送', width: '520px', footer: false,
     render: () => h('div', { class: 'rk-notify-done' }, [
@@ -1354,8 +1353,7 @@ function showHandoffSubmitted(created) {
         h('dt', '发送情况'), h('dd', `${NOTICE_DELIVERY_LABEL[created.delivery_status] || created.delivery_status || '未知'} · ${NOTICE_BLOCKED_LABEL[created.blocked_reason] || created.blocked_reason || '无异常提示'}`)
       ]),
       h('div', { class: 'detail-actions' }, [
-        h('button', { class: 'btn', type: 'button', onClick: () => closeModal() }, '关闭'),
-        h('a', { class: 'btn pri', href: link, onClick: () => closeModal() }, '查看通知记录')
+        h('button', { class: 'btn pri', type: 'button', onClick: () => closeModal() }, '查看本页通知与回执')
       ])
     ])
   });
@@ -1697,7 +1695,7 @@ onUnmounted(() => {
                     <p>{{ labelOf(HANDOFF_TYPE_LABEL, notice.handoff_type) }} · {{ formatTime(notice.created_at) }}</p>
                     <p>对方回复：{{ receiptText(notice) }}</p>
                     <p v-if="notice.blocked_reason">未完成原因：{{ NOTICE_BLOCKED_LABEL[notice.blocked_reason] || notice.blocked_reason }}</p>
-                    <a class="lnk" :href="`#/punish?handoff=${encodeURIComponent(notice.handoff_id)}`">查看交接详情 →</a>
+                    <p class="rk-note">风险通知记录留在本页，不进入处罚办理。</p>
                   </article>
                 </div>
                 <p v-if="noticesTotal > notices.length && !noticesLoading" class="workspace-selection-note">共 {{ noticesTotal }} 条通知记录，当前展示最近 {{ notices.length }} 条。</p>

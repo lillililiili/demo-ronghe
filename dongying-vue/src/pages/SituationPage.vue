@@ -1,6 +1,6 @@
 <script setup>
 /* 融合感知指挥台：页面结构保持不变，全部业务状态来自后端领域接口。 */
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, h, onMounted, onUnmounted, ref, watch } from 'vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import { createSituationApiSource } from '@/pages/situation/situationApiSource.js';
 import { riskMatchesPlan, routeRiskIsActive } from '@/services/situationData.js';
@@ -18,6 +18,8 @@ import { toast } from '@/ui/nv.js';
 import { getAlarm } from '@/services/alarmApi.js';
 import SituationAdvisoryCard from './situation/SituationAdvisoryCard.vue';
 import SituationAlarmPopup from './situation/SituationAlarmPopup.vue';
+import { openModal } from '@/ui/modal.js';
+import TargetLiveVideo from '@/components/video/TargetLiveVideo.vue';
 import { autoSmsView } from '@/components/disposal/autoSmsView.js';
 
 const U = window.UI;
@@ -27,6 +29,8 @@ const VIEWED_STORAGE_KEY = 'situation.viewed.v1';
 const mapHost = ref(null);
 const snapshot = ref({ generatedAt: 0, sourceMode: 'unknown', simulated: false, devices: [], targets: [], alarms: [], flightPlans: [], risks: [], airspaces: [], handoffs: [] });
 const selection = ref(null);
+let videoModal;
+watch(selection, () => { videoModal?.close(); videoModal = null; }, { flush: 'sync' });
 const advisorySummaries = ref({});
 const expandedType = ref('');
 const alertTab = ref('target');
@@ -625,7 +629,10 @@ async function openAlarmDisposal(alarm) {
 function onTipAction(action, hit) {
   if (action === 'close') return clearSelection();
   if (action === 'eo-video') {
-    toast('暂未接入', 'err');
+    const target = hit?.kind === 'target' ? targets.value.find(item => item.id === hit.data.id) : selectedTarget.value;
+    if (!target) return;
+    videoModal = openModal({ title: '光电视频', width: 780, footer: false,
+      render: () => h(TargetLiveVideo, { key: target.id, targetId: target.id, contextLabel: target.label || target.name || '当前目标', defaultExpanded: true }) });
     return;
   }
   const plan = hit?.kind === 'plan'
@@ -682,6 +689,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  videoModal?.close();
   document.removeEventListener('visibilitychange', onVisibilityChange);
   if (stopSource) stopSource();
   stopSource = null;

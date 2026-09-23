@@ -13,16 +13,16 @@ const props = defineProps({
   defaultExpanded: { type: Boolean, default: false },
   compact: { type: Boolean, default: false }
 });
-const expanded = ref(props.defaultExpanded), preview = ref(false), task = ref(null), command = ref(null);
+const expanded = ref(props.defaultExpanded), preview = ref(false), video = ref(null);
 const loading = ref(false), checked = ref(false), error = ref('');
 const permitted = computed(() => hasModuleAction('devices', 'op'));
-const state = computed(() => targetVideoState(props.targetId, task.value, command.value));
+const state = computed(() => targetVideoState(props.targetId, video.value));
 const reason = computed(() => props.unavailableReason || (!props.targetId ? '未提供可读取的关联目标，无法定位视频。' : '')
   || (!permitted.value ? '当前账号没有读取光电跟踪的设备操作权限。' : ''));
 let generation = 0, timer, controller, alive = true;
 function clear() {
   ++generation; clearTimeout(timer); controller?.abort(); preview.value = false;
-  task.value = null; command.value = null; error.value = ''; loading.value = false; checked.value = false;
+  video.value = null; error.value = ''; loading.value = false; checked.value = false;
 }
 async function refresh() {
   clearTimeout(timer);
@@ -35,16 +35,14 @@ async function refresh() {
   const current = () => alive && token === generation && props.active && expanded.value && props.targetId === id;
   loading.value = true; error.value = '';
   try {
-    const nextTask = await deviceApi.currentEoTrack(id, options);
+    const nextVideo = await deviceApi.targetVideo(id, options);
     if (!current()) return;
-    if (nextTask && nextTask.target_id !== id) throw new Error('跟踪任务与当前目标不一致，已停止显示。');
-    if (task.value?.task_id !== nextTask?.task_id || task.value?.command_id !== nextTask?.command_id) preview.value = false;
-    const nextCommand = nextTask?.status === 'OPEN' && nextTask.command_id ? await deviceApi.command(nextTask.command_id, options) : null;
-    if (!current()) return;
-    task.value = nextTask; command.value = nextCommand;
+    if (!nextVideo || nextVideo.target_id !== id) throw new Error('视频与当前目标不一致，已停止显示。');
+    if (video.value?.task_id !== nextVideo.task_id || video.value?.command_id !== nextVideo.command_id) preview.value = false;
+    video.value = nextVideo;
     if (!state.value.simulated) preview.value = false;
   } catch (e) {
-    if (current()) { task.value = null; command.value = null; preview.value = false; error.value = pending.signal.aborted ? '视频关联状态读取超时，请重试。' : e.message || '视频关联状态读取失败，请重试。'; }
+    if (current()) { video.value = null; preview.value = false; error.value = pending.signal.aborted ? '视频关联状态读取超时，请重试。' : e.message || '视频关联状态读取失败，请重试。'; }
   } finally {
     clearTimeout(deadline);
     if (current()) {
@@ -54,7 +52,7 @@ async function refresh() {
   }
 }
 function toggle() { expanded.value = !expanded.value; }
-watch([() => props.targetId, () => props.contextLabel, () => props.active, reason], () => { clear(); if (expanded.value) refresh(); });
+watch([() => props.targetId, () => props.contextLabel, () => props.active, reason], () => { clear(); if (expanded.value) refresh(); }, { flush: 'sync' });
 watch(expanded, open => { clear(); if (open) refresh(); }, { immediate: true });
 onUnmounted(() => { alive = false; clear(); });
 </script>
@@ -74,7 +72,7 @@ onUnmounted(() => { alive = false; clear(); });
       <template v-else>
         <p v-if="loading && !checked" role="status">正在读取视频关联状态</p>
         <p v-else role="status">{{ state.message }}</p>
-        <SimulatedOpticalVideo v-if="preview && state.simulated" :key="`${targetId}:${task.task_id}`" subtype="UAV" />
+        <SimulatedOpticalVideo v-if="preview && state.simulated" :key="`${targetId}:${video.task_id}`" subtype="UAV" />
         <button v-if="state.simulated && !preview" type="button" class="btn" @click="preview = true">播放模拟画面</button>
       </template>
       <button v-if="!reason && !compact" class="btn refresh-video" type="button" :disabled="loading" @click="refresh">{{ loading ? '正在读取' : '刷新视频状态' }}</button>

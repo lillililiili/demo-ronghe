@@ -216,6 +216,7 @@ sessionStorage.removeItem('alarm.sel');
 const disposal = reactive({ byAction: {}, unavailable: false, error: '', handoff: null });
 const DISPOSAL_ACTIVE = ['APPROVED', 'EXECUTING'];
 let disposalSeq = 0;
+let progressReloadFor = '';
 
 async function loadEventDisposals(eventId) {
   const seq = ++disposalSeq;
@@ -241,6 +242,39 @@ async function loadEventDisposals(eventId) {
     disposal.handoff = (page?.items || []).find(row => row.handoff_type === 'UAV_PUNISHMENT') || null;
   } catch { if (isCurrent()) disposal.handoff = null; }
   return Object.values(disposal.byAction).sort((a, b) => Number(b.requested_at || 0) - Number(a.requested_at || 0))[0] || null;
+}
+
+/** 打开的告警跟着后台自动核实、反制和通知更新，不清空当前进度。 */
+async function refreshEventDisposals(eventId) {
+  const seq = ++disposalSeq;
+  const isCurrent = () => seq === disposalSeq && eventId === cur.alarm?.event_id;
+  if (!eventId || eventId !== cur.alarm?.event_id) return;
+  try {
+    const page = await disposalApi.list({ subject_kind: 'UAV_EVENT', subject_id: eventId, page: 1, size: 50 });
+    if (!isCurrent()) return;
+    const next = {};
+    for (const row of page?.items || []) {
+      const prev = next[row.action_type];
+      if (!prev || Number(row.requested_at || 0) >= Number(prev.requested_at || 0)) next[row.action_type] = row;
+    }
+    disposal.byAction = next;
+    disposal.unavailable = false;
+    disposal.error = '';
+  } catch (error) {
+    if (!isCurrent()) return;
+    disposal.unavailable = isDisposalUnavailable(error);
+    disposal.error = disposal.unavailable ? DISPOSAL_UNAVAILABLE_TEXT : messageOf(error);
+  }
+  try {
+    const page = await handoffApi.listHandoffs({ source_kind: 'UAV_EVENT', source_id: eventId, page: 1, size: 5 });
+    if (!isCurrent()) return;
+    disposal.handoff = (page?.items || []).find(row => row.handoff_type === 'UAV_PUNISHMENT') || null;
+  } catch { if (isCurrent()) disposal.handoff = null; }
+  if (!isCurrent()) return;
+  pageProgress[eventId] = deriveAlarmProgress(Object.values(disposal.byAction), disposal.handoff ? [disposal.handoff] : []);
+  advisorySubject.value = advisoryProps(cur.alarm, cur.event);
+  paintList();
+  paintDetailContent();
 }
 
 
@@ -437,6 +471,16 @@ function updateAdvisory(summary) {
   if (cur.event) cur.event.version = summary.event_version;
   paintList();
   paintDetailContent();
+  const stillPending = cur.alarm.state !== 'CONFIRMED' && cur.alarm.state !== 'FALSE_POSITIVE';
+  if (summary.notify_phase && stillPending) {
+    const mark = `${summary.event_id}:${summary.event_version}`;
+    if (progressReloadFor !== mark) {
+      progressReloadFor = mark;
+      void refreshAfterWrite();
+    }
+    return;
+  }
+  void refreshEventDisposals(summary.event_id);
 }
 async function refreshOpenAdvisory(eventId) {
   if (!eventId) return;

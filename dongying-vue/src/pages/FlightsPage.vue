@@ -638,21 +638,28 @@ async function loadMatchedTarget(plan) {
 }
 
 /* ---------- 本航线风险（按 legacy「按航线看」区块）：沿线风险直接给「通知上级」入口，状态机与写入口仍是风险页签那一套 ---------- */
-const ROUTE_RISK_DAYS = 7; // 与 legacy 一致的演示缺省值，业务方未确认
-const routeRisks = reactive({ loading: false, error: '', items: [], total: 0, loaded: false });
+const routeRisks = reactive({ loading: false, error: '', items: [], total: 0, currentTotal: 0, uncertainTotal: 0, asOf: null, page: 1, size: 50, loaded: false });
 let routeRisksToken = 0;
-async function loadRouteRisks(plan) {
+let routeRisksTimer;
+async function loadRouteRisks(plan, pageNumber = 1) {
   const token = ++routeRisksToken;
-  routeRisks.items = []; routeRisks.total = 0; routeRisks.error = ''; routeRisks.loaded = false; routeRisks.loading = false;
+  Object.assign(routeRisks, { items: [], total: 0, currentTotal: 0, uncertainTotal: 0, asOf: null, error: '', loaded: false, loading: false, page: pageNumber });
   if (!plan?.route?.route_version_id || ['COMPLETED', 'CANCELLED'].includes(plan.status_code)) return;
   routeRisks.loading = true;
   try {
-    const now = Date.now();
-    // 按计划关联读取所有类型，气象风险不要求关联感知目标或异物空间事实。
-    const data = await riskApi.listRisks({ ...DISPLAY_RISK_SCOPE, plan_id: plan.plan_id, occurred_from: now - ROUTE_RISK_DAYS * 86400000, occurred_to: now + 86400000, page: 1, size: 50 });
+    const data = await riskApi.listCurrentRisks({ ...DISPLAY_RISK_SCOPE, plan_id: plan.plan_id, page: pageNumber, size: routeRisks.size });
     if (token !== routeRisksToken || activeTab.value !== 'route' || selected.value?.plan_id !== plan.plan_id) return;
-    routeRisks.items = data.items || [];
-    routeRisks.total = data.total || 0;
+    if (!Array.isArray(data.items) || !['total', 'current_total', 'uncertain_total', 'as_of'].every(key => Number.isFinite(data[key]))) {
+      throw new Error('当前风险数据不完整，请重新读取');
+    }
+    if (pageNumber > 1 && !data.items.length && data.total <= (pageNumber - 1) * routeRisks.size) {
+      return loadRouteRisks(plan, Math.max(1, Math.ceil(data.total / routeRisks.size)));
+    }
+    routeRisks.items = data.items.map(item => ({ ...item.risk, current_status: item.current_status, current_reason: item.current_reason }));
+    routeRisks.total = data.total;
+    routeRisks.currentTotal = data.current_total;
+    routeRisks.uncertainTotal = data.uncertain_total;
+    routeRisks.asOf = data.as_of;
     routeRisks.loaded = true;
   } catch (requestError) {
     if (token !== routeRisksToken || activeTab.value !== 'route' || selected.value?.plan_id !== plan.plan_id) return;
@@ -670,6 +677,7 @@ const routeRiskRecords = computed(() => routeRisks.items.map(item => {
     id: item.risk_id, title: riskTitle(item), severity: item.severity,
     severityLabel: `${severityLabel(item.severity)}风险`, severityClass: severityTag(item.severity),
     stateLabel: stateLabel(item.state), stateClass: stateTag(item.state),
+    currentStatus: item.current_status, currentReason: item.current_reason,
     sourceLabel: labelOf(SOURCE_MODE_LABEL, item.source_mode, '来源未提供'),
     occurredAt: formatTime(item.occurred_at),
     relationText: fact ? corridorText(item) : '', positionText: position.join(' · '),
@@ -1547,6 +1555,12 @@ onMounted(() => {
   window.addEventListener('hashchange', syncTabByRoute);
   S.tabHash = '';
   syncTabByRoute();
+  // 只刷新读取结果；不以轮询代替风险研判或触发通知。
+  routeRisksTimer = window.setInterval(() => {
+    if (!document.hidden && activeTab.value === 'route' && showRouteRisks.value && !routeRisks.loading) {
+      loadRouteRisks(selected.value, routeRisks.page);
+    }
+  }, 30000);
 });
 
 watch(page, value => { S.page = value; });
@@ -1558,6 +1572,8 @@ watch(riskTab, value => { S.riskTab = value; });
 watch(activeRiskId, id => loadRiskNotices(id), { immediate: true });
 
 onUnmounted(() => {
+  clearInterval(routeRisksTimer);
+  routeRisksToken++;
   noticesToken++;
   planListToken++;
   planDetailToken++;
@@ -1783,8 +1799,11 @@ onUnmounted(() => {
             </section>
             <PlanVerificationPanel :key="selected.plan_id" :plan="selected" :match="actuals?.match || null" @map-devices="updatePlanDeviceMap" />
             <PlanRiskRecords v-if="showRouteRisks" :records="routeRiskRecords" :loading="routeRisks.loading"
-              :error="routeRisks.error" :total="routeRisks.total" :days="ROUTE_RISK_DAYS"
-              @select="jumpToRisk" @notify="notifyRouteRisk" @retry="loadRouteRisks(selected)" />
+              :error="routeRisks.error" :total="routeRisks.total" :current-total="routeRisks.currentTotal"
+              :uncertain-total="routeRisks.uncertainTotal" :as-of="routeRisks.asOf ? formatTime(routeRisks.asOf) : ''"
+              :page="routeRisks.page" :size="routeRisks.size"
+              @select="jumpToRisk" @notify="notifyRouteRisk" @retry="loadRouteRisks(selected, routeRisks.page)"
+              @page="loadRouteRisks(selected, $event)" />
             <!-- 与 legacy 一致的唯一动作：跳到合法性研判页并选中本计划匹配到的目标（决策 15-48）。 -->
             <div v-if="planLegalityReady" class="detail-actions" style="margin-top:12px">
               <button class="btn pri" type="button" style="flex:1;justify-content:center"
@@ -1792,7 +1811,7 @@ onUnmounted(() => {
             </div>
             <div v-else-if="planPending" class="rk-note" style="margin-top:12px">计划还没执行，暂不判断实际飞行是否违规。到了起飞时间仍没找到飞机时，请核实起飞情况。</div>
             </div>
-            <PlanWeatherForecast v-if="planDetailTab === 'forecast'" :key="selected.plan_id" :plan-id="selected.plan_id" />
+            <PlanWeatherForecast v-if="planDetailTab === 'forecast'" :key="selected.plan_id" :plan-id="selected.plan_id" :start-at="selected.start_at" :end-at="selected.end_at" />
           </template></div>
           </UPanel>
       </div>

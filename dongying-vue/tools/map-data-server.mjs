@@ -23,10 +23,12 @@ export function mapDataServer(directory) {
     if (!raw.startsWith('/map-data/')) return next();
     const finish = (code, message) => { res.statusCode = code; res.end(message); };
     if (!['GET', 'HEAD'].includes(req.method)) { res.setHeader('Allow', 'GET, HEAD'); return finish(405, 'Method not allowed'); }
+    let rootAvailable = false;
     try {
       const name = decodeURIComponent(raw.slice('/map-data/'.length));
       if (/[\\\0:]/.test(name) || name.split('/').some(p => p === '..' || p.startsWith('.'))) return finish(403, 'Forbidden');
       const root = await resolveRoot();
+      rootAvailable = true;
       const candidate = path.resolve(root, name);
       if (!within(root, candidate)) return finish(403, 'Forbidden');
       const immutable = raw.startsWith('/map-data/packages/');
@@ -94,6 +96,11 @@ export function mapDataServer(directory) {
       // JSON/PBF 按需压缩；Range 始终保持原始字节。pipeline 在断连时清理整个流链。
       pipeline(...(gzip ? [stream, createGzip(), res] : [stream, res]), () => {});
     } catch (error) {
+      // 尚未发布后台地图包时，这个可选指针可以不存在；真实资源及根目录错误仍正常报错。
+      if (rootAvailable && raw === '/map-data/control/map-config.json' && error.code === 'ENOENT') {
+        res.setHeader('Cache-Control', 'no-store, max-age=0');
+        return finish(204);
+      }
       finish(error instanceof URIError ? 400 : ['ENOENT', 'ENOTDIR'].includes(error.code) ? 404 : 403, 'Map resource unavailable');
     }
   };

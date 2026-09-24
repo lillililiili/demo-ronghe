@@ -1,0 +1,67 @@
+/* Map workstation: task tabs, quiet object library, a single contextual editor. */
+.simulator-workspace{--radius:10px;--border:#25496f;--panel:#0b2a50;background:#061a35}
+.simulator-workspace .header{background:#09264b;border-bottom-color:#27537b;gap:16px}
+.simulator-workspace h1{font-size:20px;letter-spacing:.03em}
+.simulator-workspace .subtitle{letter-spacing:.06em}
+.simulator-workspace .badge.amber{background:#493c21;color:#ffdc86;border:1px solid #7b6533;border-radius:5px;padding:5px 9px}
+.simulator-workspace .scenario-bar{gap:20px;padding:12px 18px}
+.simulator-workspace .scene-name input{width:340px;background:transparent;border-color:transparent;padding-left:0}
+.simulator-workspace .scene-name input:focus{border-color:var(--cyan);padding-left:10px}
+.simulator-workspace main{gap:10px}
+.simulator-workspace .workspace{grid-template-columns:220px minmax(0,1fr) 292px;gap:10px}
+.simulator-workspace[data-workspace=inputs] .workspace{grid-template-columns:190px minmax(0,1fr) 420px}
+.simulator-workspace .panel-heading{min-height:48px;padding:12px 14px}
+.simulator-workspace .panel-heading h2{font-size:14px;line-height:1.5;overflow-wrap:anywhere}
+.simulator-workspace .panel-heading>.muted{font-size:10px;flex-shrink:0}
+.simulator-workspace .objects{background:#092447}
+.simulator-workspace .objects .object-row{border-radius:6px;margin:3px 0;padding:10px 8px}
+.simulator-workspace .object-row.active{background:#114264;border-color:#2c718e;box-shadow:inset 2px 0 #44d3eb}
+.simulator-workspace .object-row strong{line-height:1.6}
+.simulator-workspace .group-title{padding:15px 8px 8px;color:#88a8c8;font-size:11px}
+.simulator-workspace .group-title small{border-radius:4px;background:#123659;min-width:20px;text-align:center;padding:2px}
+.simulator-workspace[data-workspace=objects] [data-object-group=plan],.simulator-workspace[data-workspace=objects] [data-object-group=zone],.simulator-workspace[data-workspace=routes] [data-object-group=site],.simulator-workspace[data-workspace=routes] [data-object-group=target]{display:none}
+.workspace-tabs{display:flex;gap:20px;padding:0 16px;background:#0c2e55;border-bottom:1px solid var(--border);flex:none}
+.workspace-tabs button{position:relative;padding:13px 0;border:0;border-radius:0;background:none;color:#a6c1dc;font-size:12px}
+.workspace-tabs button[aria-selected=true]{color:#78e9ff;font-weight:600}
+.workspace-tabs button[aria-selected=true]:after{content:"";position:absolute;bottom:-1px;left:0;right:0;height:2px;background:#3dd4ee}
+.simulator-workspace .map-toolbar{padding:8px 12px;background:#0a2648;border-bottom:1px solid var(--border)}
+.simulator-workspace .map-toolbar>div{display:flex;gap:8px;flex-wrap:wrap}
+.simulator-workspace .map-toolbar button{display:flex;align-items:center;gap:7px;background:transparent;border-color:transparent;padding:6px 9px;font-size:11px}
+.simulator-workspace .map-toolbar button:hover{background:#143e65;border-color:#36739b}
+.simulator-workspace .map-toolbar button[aria-pressed=true]{background:#144461;color:#8aeaff;border-color:#2d788e}
+.simulator-workspace .map-toolbar img{width:21px;height:21px;object-fit:contain}
+.simulator-workspace .map-hint{padding:6px 9px;font-size:10px;background:#072443d9;border-color:#28557b}
+.simulator-workspace .map-legend{bottom:32px}
+.simulator-workspace .inspector{background:#0b2a50}
+.simulator-workspace .inspector-context{background:transparent;padding:0 0 13px;border-bottom:1px solid var(--border);border-radius:0}
+.simulator-workspace .inspector .field>span{color:#aac8e3;font-size:11px}
+.simulator-workspace .inspector input,.simulator-workspace .inspector select{background:#08203f;border-color:#294d76}
+.simulator-workspace .risks{height:166px;background:#092548}
+.simulator-workspace .risk-heading{min-height:47px;padding:8px 14px}
+.simulator-workspace .risk-heading>div:first-child{gap:10px;flex-wrap:wrap}
+.simulator-workspace .risk-heading h2{font-size:13px}
+.simulator-workspace #risk-count{margin-left:5px;color:#79d7ee;font-size:12px}
+.simulator-workspace .risk-card{background:transparent;border-color:#244b70;min-height:45px;border-radius:6px}
+.simulator-workspace .risk-card.active{background:#123e5e;border-color:#2c9db5}
+.simulator-workspace .risk-list{padding:8px 12px;gap:7px}
+.simulator-workspace .risk-actions{gap:8px;flex-wrap:wrap}
+.simulator-workspace .risk-actions>button{font-size:11px;padding:5px 9px}
+.simulator-workspace.risks-collapsed .risks{height:auto}
+.simulator-workspace.risks-collapsed .filter-group{display:none}
+.simulator-workspace .mqtt-bar{background:#092649;padding:8px 18px;gap:8px}
+.simulator-workspace .mqtt-bar button{font-size:11px;padding:5px 9px;background:transparent}
+.simulator-workspace footer{background:#081f3e;min-height:58px;padding:10px 18px}
+.simulator-workspace footer .prototype-label{display:none}
+.input-dock{min-height:0;overflow:hidden;background:#0b2a50}
+.input-dock iframe{border:0;display:block;width:100%;height:100%;min-height:320px;color-scheme:dark}
+@media(min-width:1650px){.simulator-workspace .workspace{grid-template-columns:240px minmax(0,1fr) 320px}.simulator-workspace[data-workspace=inputs] .workspace{grid-template-columns:210px minmax(0,1fr) 460px}}
+@media(max-width:1200px){.simulator-workspace .workspace{grid-template-columns:185px minmax(0,1fr) 265px}.simulator-workspace[data-workspace=inputs] .workspace{grid-template-columns:minmax(0,1fr) 390px}.simulator-workspace[data-workspace=inputs] .objects{display:none}.workspace-tabs{gap:14px;padding:0 12px}.simulator-workspace .header-right{gap:8px}.simulator-workspace .header{flex-wrap:wrap}.simulator-workspace .scene-name input{width:270px}}
+@media(max-width:1000px){.simulator-workspace .workspace{grid-template-columns:190px minmax(0,1fr)}.simulator-workspace .inspector{grid-column:1/-1}.simulator-workspace .risks{height:auto}.simulator-workspace .risk-list{max-height:210px}.simulator-workspace .input-dock{min-height:520px}.simulator-workspace .map-panel{height:520px}.simulator-workspace .scenario-bar{flex-wrap:wrap}}
+@media(max-width:760px){.simulator-workspace .workspace,.simulator-workspace[data-workspace=inputs] .workspace{display:flex;flex-direction:column}.simulator-workspace .map-panel{order:0;height:420px;flex:none}.simulator-workspace .objects{order:1;height:230px}.simulator-workspace .inspector,.simulator-workspace .input-dock{order:2}.simulator-workspace .input-dock{height:650px}.simulator-workspace .scene-name input{width:auto;flex:1}.simulator-workspace .header-right{flex-wrap:wrap}.simulator-workspace .risk-heading .muted{display:inline}.simulator-workspace .workspace-tabs{gap:18px}.simulator-workspace .risk-list{grid-template-columns:1fr}.simulator-workspace .scenario-bar{gap:12px}.simulator-workspace .scene-name{width:100%}}
+
+.simulator-workspace #risk-enabled-count{display:inline;color:#79c9d9}
+.simulator-workspace.risks-collapsed .risk-heading{border-bottom:0}
+
+.notification-progress{margin-top:18px;padding-top:12px;border-top:1px solid #275078;font-size:12px;line-height:1.7;overflow-wrap:anywhere}.notification-progress dl{display:grid;grid-template-columns:auto minmax(0,1fr);gap:6px 10px}.notification-progress dd{margin:0}.notification-progress dt,.notification-progress small{color:#9cbfe0}.notification-progress small{display:block}.notification-progress p{margin:8px 0}
+
+.notification-progress{margin:0 0 16px;padding:0 0 14px;border-top:0;border-bottom:1px solid #275078}.notification-progress .subheading{margin:0 0 8px;padding:0;border:0}

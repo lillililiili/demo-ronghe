@@ -12,6 +12,7 @@ export const legalityApi = {
 
   /* 阶段 7：引擎研判读取 */
   listEvaluations: params => apiRequestTimed(`/legality-evaluations${buildQuery(params)}`),
+  summarizeEvaluations: params => apiRequestTimed(`/legality-evaluations/summary${buildQuery(params)}`),
   getEvaluation: evaluationId => apiRequestTimed(`/legality-evaluations/${encode(evaluationId)}`),
   trajectory: evaluationId => apiRequestTimed(`/legality-evaluations/${encode(evaluationId)}/trajectory`),
   listRevisions: (evaluationId, params) => apiRequestTimed(`/legality-evaluations/${encode(evaluationId)}/revisions${buildQuery(params)}`),

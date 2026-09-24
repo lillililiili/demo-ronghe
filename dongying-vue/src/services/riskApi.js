@@ -7,6 +7,7 @@ export function newRiskIdempotencyKey() {
 // 只经 apiRequestTimed 访问服务端：超时统一抛 TIMEOUT/408，页面按“结果未知”回读，绝不回退 window.MOCK。
 export const riskApi = {
   listRisks: params => apiRequestTimed(`/risks${buildQuery(params)}`),
+  listCurrentRisks: params => apiRequestTimed(`/risks/current${buildQuery(params)}`),
   /* 导出与列表同参（含 sort/order 与筛选）；文件名取服务端的 Content-Disposition。
      上限 5000 行由服务端判，超限回 400 EXPORT_TOO_LARGE。 */
   exportRisksCsv: params => apiBinary(`/risks/export.csv${buildQuery(params)}`),

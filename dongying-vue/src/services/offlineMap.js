@@ -18,8 +18,9 @@ function localUrl(value, base = window.location.href) {
   return url.href;
 }
 
-async function json(url, signal, cache = 'no-cache') {
+async function json(url, signal, cache = 'no-cache', optional = false) {
   const response = await fetch(url, { signal, cache, redirect: 'error' });
+  if (optional && response.status === 204) return null;
   if (!response.ok) {
     const error = new Error(`地图资源返回 HTTP ${response.status}`);
     error.status = response.status;
@@ -56,14 +57,14 @@ async function readRuntimeConfig(signal) {
   // 先处理后备请求的拒绝，避免指针成功时出现无人接收的异步错误。
   const builtin = json(builtinUrl, signal).then(config => ({ config }), error => ({ error }));
   try {
-    const config = await json(managedUrl, signal);
-    return { config, configUrl: managedUrl, managed: true };
+    const config = await json(managedUrl, signal, 'no-cache', true);
+    if (config) return { config, configUrl: managedUrl, managed: true };
   } catch (error) {
     if (error?.name === 'AbortError') throw error;
-    const result = await builtin;
-    if (result.error) throw result.error;
-    return { config: result.config, configUrl: builtinUrl, managed: false };
   }
+  const result = await builtin;
+  if (result.error) throw result.error;
+  return { config: result.config, configUrl: builtinUrl, managed: false };
 }
 
 async function readMapManifest(signal) {
@@ -80,7 +81,7 @@ async function checkForRuntimeChange() {
   if (document.visibilityState === 'hidden') return;
   try {
     const response = await fetch(localUrl(MANAGED_CONFIG_URL), { cache: 'no-store', redirect: 'error' });
-    if (!response.ok) return;
+    if (!response.ok || response.status === 204) return;
     const config = await response.json();
     const key = runtimeKey(config);
     if (!activeRuntimeKey) { activeRuntimeKey = key; return; }

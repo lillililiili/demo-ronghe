@@ -10,7 +10,7 @@ const props = defineProps({
   contextLabel: { type: String, default: '' },
   unavailableReason: { type: String, default: '' },
   active: { type: Boolean, default: true },
-  defaultExpanded: { type: Boolean, default: false },
+  defaultExpanded: { type: Boolean, default: true },
   compact: { type: Boolean, default: false }
 });
 const expanded = ref(props.defaultExpanded), preview = ref(false), video = ref(null);

@@ -32,10 +32,10 @@ onUnmounted(() => { generation++; controller?.abort(); clearInterval(timer); emi
 
 <template>
   <div class="device-check">
-    <header><b>设备自动检查</b><div class="device-actions"><button v-if="permitted" class="btn ghost" type="button" :disabled="loading || [401,403].includes(errorStatus)" @click="reload">{{ loading ? '更新中…' : '重新检查' }}</button></div></header>
+    <header><b>设备自动检查</b><div class="device-actions"><button v-if="permitted" class="btn ghost" type="button" :disabled="loading || [401,403].includes(errorStatus)" @click="reload">{{ loading ? '更新中' : '重新检查' }}</button></div></header>
     <p v-if="!permitted">没有设备监测查看权限，请联系管理员。</p>
     <p v-else-if="error" role="alert">{{ error }}</p>
-    <p v-else-if="loading && !result">正在读取附近设备状态和告警…</p>
+    <p v-else-if="loading && !result">正在读取附近设备状态和告警</p>
     <p v-if="result && (loading || error)">{{ loading ? '正在更新，下方保留上次检查结果。' : '本次更新失败，下方是上次检查结果。' }}</p>
     <template v-if="permitted && result">
       <p v-if="result.mqtt_simulation"><span class="tag t-gray">MQTT 模拟数据</span></p>
@@ -46,7 +46,11 @@ onUnmounted(() => { generation++; controller?.abort(); clearInterval(timer); emi
       <p v-if="!result.complete && rows.length">部分信息不完整，请核查下方设备。</p>
       <div v-if="rows.length" class="device-rows">
         <article v-for="row in rows" :key="row.device_id">
-          <div class="device-heading"><span class="device-type-icon" :title="deviceMeta(row).label" :class="row.abnormal ? 'is-abnormal' : row.incidents?.length ? 'is-historical' : deviceCheckStatus(row) === '正常' ? 'is-normal' : ''" v-html="deviceIcon(row)"></span><b>{{ row.name }}</b><span v-if="row.simulated" class="tag t-gray">模拟设备</span><span class="tag" :class="row.abnormal ? 't-red' : row.incidents?.length ? 't-amber' : deviceCheckStatus(row) === '正常' ? 't-green' : 't-gray'">{{ deviceCheckStatus(row) }}</span><DeviceAbnormalNoticeButton class="device-detail-link" :plan-id="plan.plan_id" :device="row" /></div>
+          <div class="device-heading">
+            <span class="device-type-icon" :title="deviceMeta(row).label" :class="row.abnormal ? 'is-abnormal' : row.incidents?.length ? 'is-historical' : deviceCheckStatus(row) === '正常' ? 'is-normal' : ''" v-html="deviceIcon(row)"></span>
+            <b>{{ row.name }}</b>
+            <div class="device-status"><span v-if="row.simulated" class="tag t-gray">模拟设备</span><span class="tag" :class="row.abnormal ? 't-red' : row.incidents?.length ? 't-amber' : deviceCheckStatus(row) === '正常' ? 't-green' : 't-gray'">{{ deviceCheckStatus(row) }}</span></div>
+          </div>
           <p>{{ deviceMeta(row).label }}</p>
           <p v-if="!row.position">暂时无法取得设备位置。</p>
           <p>距航线 {{ (Number(row.distance_m) / 1000).toFixed(2) }} 公里 · 最近在线上报：{{ date(row.last_heartbeat_at) }}</p>
@@ -57,6 +61,7 @@ onUnmounted(() => { generation++; controller?.abort(); clearInterval(timer); emi
             <p v-for="item in row.incidents" :key="item.incident_id">{{ item.reason }} · {{ date(item.detected_at) }}<span v-if="item.closed_at">（{{ date(item.closed_at) }} 已关闭）</span><span v-else>（尚未关闭）</span></p>
           </details>
           <p v-if="!row.complete">该设备信息不完整。</p>
+          <DeviceAbnormalNoticeButton class="device-detail-link" :plan-id="plan.plan_id" :device="row" />
         </article>
       </div>
       <footer>检查于 {{ date(result.checked_at) }} · 每 30 秒更新</footer>
@@ -70,16 +75,19 @@ header,.device-heading,.device-actions,footer { display: flex; align-items: cent
 header { justify-content: space-between; }
 p { color: var(--txt-3); margin: 5px 0; line-height: 1.5; overflow-wrap: anywhere; }
 .check-summary { color: var(--txt-1); }
-.device-rows { max-height: 230px; overflow: auto; }
+.device-rows { min-width: 0; }
 article { padding: 8px 0; border-top: 1px solid var(--line); }
 .incident-records summary { width: fit-content; max-width: 100%; color: var(--cyan); cursor: pointer; line-height: 1.5; overflow-wrap: anywhere; }
 .incident-records summary:focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; }
 footer { margin-top: 8px; color: var(--txt-3); font-size: 11px; }
+.device-heading { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 8px; }
 .device-heading b { min-width: 0; overflow-wrap: anywhere; }
+.device-status { grid-column: 2; display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.device-status .tag { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .device-type-icon { display:inline-flex;flex-shrink:0;padding:4px;font-size:24px;border:0;color:var(--gray);background:transparent; }
 .device-type-icon :deep(svg) { width:24px;height:24px; }
 .device-type-icon.is-abnormal { color: var(--red); }
 .device-type-icon.is-historical { color: var(--amber); }
 .device-type-icon.is-normal { color: var(--green); }
-.device-detail-link { margin-left: auto; flex-shrink: 0; }
+.device-detail-link { display: flex; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
 </style>

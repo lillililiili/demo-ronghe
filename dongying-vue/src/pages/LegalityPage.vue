@@ -2,7 +2,7 @@
 /* 模块级页面状态：跨导航保留分页、筛选、选中项与证据页签；业务事实始终重新读取标准 API。 */
 const S = {
   st: {
-    page: 1, size: 10, legal: 'ATTENTION', district: '', review: '', plan: '',
+    page: 1, size: 10, legal: 'ATTENTION', district: '', review: '', reviewLocation: '', plan: '',
     selectedEvaluationId: null, revisionPage: 1, revisionPageSize: 10,
     evidenceTab: 'space'
   }
@@ -19,7 +19,6 @@ import UPagination from '@/components/UPagination.vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import { legalityReviewFocus } from '@/ui/legalityReviewFocus.js';
 import { legalityApi } from '@/services/legalityApi.js';
-import { mapPool } from '@/services/apiClient.js';
 import { flightApi } from '@/services/flightApi.js';
 import { canAccessRoute, hasPermission } from '@/services/accessControl.js';
 import { loadTargetPosition, loadRouteCenterline, loadAirspaceOverlays, installOverlays, overlayPoints } from '@/services/positionMap.js';
@@ -28,7 +27,7 @@ import { RULE_SET_LABEL, SOURCE_MODE_LABEL, labelOf } from '@/ui/labels.js';
 import {
   openLegalityReview, openLegalityRecompute,
   legalStatusText, reviewStateText, planMatchText, ruleReasonText,
-  decisionAssuranceStatusText, RULE_CODE_TEXT, RULE_RESULT_TEXT, MERGE_KIND_TEXT, CONCLUSION_TEXT, GRADE_TEXT
+  RULE_CODE_TEXT, RULE_RESULT_TEXT, MERGE_KIND_TEXT, CONCLUSION_TEXT, GRADE_TEXT
 } from '@/ui/legalityReviewModal.js';
 
 usePageChrome('legality');
@@ -88,6 +87,8 @@ const evidenceTabs = [
 ];
 
 const reviewOptions = [{ label: '全部', value: '' }, { label: '待复核', value: 'NEEDS_REVIEW' }, { label: '已确认', value: 'CONFIRMED' }, { label: '已驳回', value: 'REJECTED' }, { label: '已改判', value: 'OVERRIDDEN' }];
+const reviewLocationOptions = [{ label: '全部', value: '' }, { label: '告警页面', value: 'ALARM' }, { label: '合法性判定页面', value: 'LEGALITY' }];
+const hasAlarmFilter = computed(() => st.reviewLocation === 'ALARM' ? true : st.reviewLocation === 'LEGALITY' ? false : undefined);
 const districtOptions = computed(() => {
   const values = new Map();
   items.value.forEach(item => { if (item.district_id) values.set(item.district_id, item.district_name || item.district_id); });
@@ -116,18 +117,6 @@ async function loadPlans() {
     plansError.value = formatApiError(error, '读取飞行计划失败');
   }
 }
-/* 研判详情里的"所属飞行计划"：编号与归属单位取研判自带的字段，序列号再读一次计划详情。
-   服务端没有飞手字段，这一项不编。 */
-const planDetail = ref(null);
-async function loadPlanDetail(evaluation) {
-  planDetail.value = null;
-  const planId = evaluation?.plan_id;
-  if (!planId || !canReadPlans.value) return;
-  try {
-    const detail = await flightApi.detail(planId);
-    if (selectedEvaluation.value?.plan_id === planId) planDetail.value = detail;
-  } catch { planDetail.value = null; }
-}
 function openPlan(planId) {
   if (!planId) return;
   if (UI?.goto) UI.goto('flights', { plan: planId });
@@ -144,16 +133,11 @@ const checkRows = computed(() => (selectedEvaluation.value?.hit_details || []).m
 const secondaryCheckCount = computed(() => (selectedEvaluation.value?.hit_details || []).filter(hit => !['FAIL', 'UNDETERMINED'].includes(hit.result_code)).length);
 const unlistedUnknowns = computed(() => reviewFocus.value.unknownReasons.filter(code => !(selectedEvaluation.value?.hit_details || []).some(hit => hit.reason_code === code)));
 const assuranceReasons = computed(() => reviewFocus.value.assuranceReasons || []);
-// 摘要、单项依据和核对任务已说明的原因不在补充资料里再列一遍。
-const additionalReasons = computed(() => {
-  const item = selectedEvaluation.value;
-  if (!item) return [];
-  const shown = new Set([primaryReason.value, ...(item.hit_details || []).map(hit => hit.message || ruleReasonText(hit.reason_code))]);
-  if (reviewFocus.value.showTask) [...assuranceReasons.value, ...unlistedUnknowns.value].forEach(code => shown.add(ruleReasonText(code)));
-  return [...new Set([...(item.violation_reasons || []), ...(item.unknown_reasons || [])].map(ruleReasonText))].filter(text => text && !shown.has(text));
-});
 const c01Facts = computed(() => selectedEvaluation.value?.hit_details?.find(hit => hit.rule_code === 'C01')?.facts || null);
 const demoParams = computed(() => selectedEvaluation.value?.param_status === 'DEMO');
+// 告警关联可能因权限被隐藏；已有触发结果却没有可读 ID 时不能退回本页复核。
+const reviewInAlarm = computed(() => !!selectedEvaluation.value?.alarm_id
+  || (!!selectedEvaluation.value?.alarm_outcome_kind && selectedEvaluation.value.alarm_outcome_kind !== 'SUPPRESSED_SHADOW'));
 const canOpenAlarm = computed(() => !!selectedEvaluation.value?.alarm_id && canAccessRoute('alarms') && hasPermission('alarms.read'));
 function openRelatedAlarm() {
   if (!canOpenAlarm.value) return;
@@ -199,11 +183,6 @@ function referenceText(reference) {
   if (reference.kind === 'target' && current.target_id === reference.id && current.target_no) return current.target_no;
   if (reference.kind === 'flight_plan' && current.plan_id === reference.id && current.plan_no) return current.plan_no;
   return `已引用${referenceKindText(reference.kind)}`;
-}
-function ruleVersionText(item) {
-  if (!item?.rule_set_code) return '未提供';
-  const name = labelOf(RULE_SET_LABEL, item.rule_set_code);
-  return item.rule_set_version_no == null ? name : `${name} 第${item.rule_set_version_no}版`;
 }
 function formatTime(value) {
   if (value === null || value === undefined) return '未知';
@@ -311,6 +290,7 @@ function queryParams() {
     needs_attention: st.legal === 'ATTENTION' ? true : undefined,
     review_state: st.review && !['NEEDS_REVIEW', 'PENDING_REVIEW'].includes(st.review) ? st.review : undefined,
     needs_review: ['NEEDS_REVIEW', 'PENDING_REVIEW'].includes(st.review) ? true : undefined,
+    has_alarm: hasAlarmFilter.value,
     // 按计划筛选（决策 19-1）：服务端 legality-evaluations 支持 plan_id，需要飞行计划读取权限。
     plan_id: st.plan || undefined,
     page: st.page, size: st.size
@@ -319,6 +299,10 @@ function queryParams() {
 
 async function loadQueue(options = {}) {
   const token = ++listToken;
+  if (options.refreshKpi) {
+    kpiToken += 1;
+    kpiList.value = kpiPlaceholder();
+  }
   loading.value = true;
   listError.value = '';
   deepLinkNotice.value = '';
@@ -338,7 +322,11 @@ async function loadQueue(options = {}) {
         deepLinkNotice.value = `目标 ${options.targetId} 的研判定位失败：${formatApiError(error, '读取研判失败')}`;
       }
     }
-    const data = await legalityApi.listEvaluations(queryParams());
+    // 深链先确定分组；列表结束即读一次统计，避免两路重查询争抢数据库。
+    // 统计不等待默认选中详情及复核历史；列表失败时也独立尝试读取。
+    const data = await legalityApi.listEvaluations(queryParams()).finally(() => {
+      if (options.refreshKpi && token === listToken) void loadKpi();
+    });
     if (token !== listToken) return;
     items.value = data.items || [];
     totalCount.value = data.total || 0;
@@ -387,13 +375,12 @@ async function selectEvaluationById(evaluationId) {
         ? '该目标不属于无人机，相关风险请在空域监测或全部风险事件中查看。'
         : '该目标尚未明确识别为无人机，不展示无人机合法性研判。';
       st.page = 1;
-      void loadQueue({ keepSelection: true, skipSelection: true }).then(loadKpi);
+      void loadQueue({ keepSelection: true, skipSelection: true, refreshKpi: true });
       return;
     }
     selectedEvaluation.value = data;
     detailLoading.value = false;
     st.revisionPage = 1;
-    loadPlanDetail(data);
     await loadRevisions();
   } catch (error) {
     if (token !== detailToken) return;
@@ -431,12 +418,12 @@ async function loadRevisions() {
 /* 写动作完成或结果未知后的回读：详情 + 队列 + KPI 都以服务端为准；返回最新详情供弹窗核对版本。 */
 async function refreshAfterAction(result) {
   const id = result?.evaluation_id || selectedEvaluation.value?.evaluation_id;
-  await loadQueue({ keepSelection: true, selectId: id });
-  loadKpi();
+  await loadQueue({ keepSelection: true, selectId: id, refreshKpi: true });
   return selectedEvaluation.value;
 }
 
 function onReview() {
+  if (reviewInAlarm.value) { openRelatedAlarm(); return; }
   openLegalityReview({ evaluation: selectedEvaluation.value, refresh: refreshAfterAction });
 }
 function onRecompute() {
@@ -453,29 +440,27 @@ async function loadKpi() {
     district_id: st.district || undefined,
     review_state: st.review && !['NEEDS_REVIEW', 'PENDING_REVIEW'].includes(st.review) ? st.review : undefined,
     needs_review: ['NEEDS_REVIEW', 'PENDING_REVIEW'].includes(st.review) ? true : undefined,
-    plan_id: st.plan || undefined,
-    page: 1, size: 1
+    has_alarm: hasAlarmFilter.value,
+    plan_id: st.plan || undefined
   };
   const filterNote = [
     st.legal === 'ATTENTION' ? '待处理（不可判定或待复核）' : '',
     st.district ? `区域：${districtOptions.value.find(option => option.value === st.district)?.label || st.district}` : '',
     st.review ? `复核：${reviewOptions.find(option => option.value === st.review)?.label || st.review}` : '',
+    st.reviewLocation ? `核实位置：${reviewLocationOptions.find(option => option.value === st.reviewLocation)?.label || st.reviewLocation}` : '',
     st.plan ? `计划：${planOptions.value.find(option => option.value === st.plan)?.label || st.plan}` : ''
   ].filter(Boolean).join(' · ');
   const scopeText = filterNote ? `当前筛选：${filterNote}` : '当前筛选：全部';
   try {
-    // 最新研判计数仍以服务端为准；限制并发，避免与列表同时发起六路重查询。
-    const [all, legal, abnormal, illegal, undetermined] = await mapPool(
-      ['', 'LEGAL', 'ABNORMAL', 'ILLEGAL', 'UNDETERMINED'], 1,
-      legalStatus => token === kpiToken ? legalityApi.listEvaluations({ ...scope, legal_status: legalStatus }) : null
-    );
+    // 后端一次聚合，与列表共用筛选和权限；不为统计装配五份列表及关联详情。
+    const counts = await legalityApi.summarizeEvaluations(scope);
     if (token !== kpiToken) return;
     kpiList.value = [
-      { label: '研判总数', value: String(all.total ?? '—'), color: 'blue', icon: 'database', desc: `正式模式，每架无人机只取最新一次；${scopeText}` },
-      { label: '合法', value: String(legal.total ?? '—'), color: 'green', icon: 'shield', desc: '计划、时间、空域、航线都对得上' },
-      { label: '异常', value: String(abnormal.total ?? '—'), color: 'amber', icon: 'warning', desc: '系统判定存在偏差的最新研判' },
-      { label: '非法', value: String(illegal.total ?? '—'), color: 'red', icon: 'ban', desc: '没有有效计划，或进入了任何计划都不能批准的空域、时段' },
-      { label: '不可判定', value: String(undetermined.total ?? '—'), color: 'gray', icon: 'clock', desc: '关键数据缺失或有偏差，要人工核实后才能定性' }
+      { label: '研判总数', value: String(counts.total ?? '—'), color: 'blue', icon: 'database', desc: `正式模式，每架无人机只取最新一次；${scopeText}` },
+      { label: '合法', value: String(counts.legal ?? '—'), color: 'green', icon: 'shield', desc: '计划、时间、空域、航线都对得上' },
+      { label: '异常', value: String(counts.abnormal ?? '—'), color: 'amber', icon: 'warning', desc: '系统判定存在偏差的最新研判' },
+      { label: '非法', value: String(counts.illegal ?? '—'), color: 'red', icon: 'ban', desc: '没有有效计划，或进入了任何计划都不能批准的空域、时段' },
+      { label: '不可判定', value: String(counts.undetermined ?? '—'), color: 'gray', icon: 'clock', desc: '关键数据缺失或有偏差，要人工核实后才能定性' }
     ];
   } catch (error) {
     if (token !== kpiToken) return;
@@ -501,11 +486,11 @@ async function loadShadowHint() {
 function chooseTab(value) {
   st.legal = value;
   st.page = 1;
-  void loadQueue().then(loadKpi);
+  void loadQueue({ refreshKpi: true });
 }
 function onRegionChange() {
   st.page = 1;
-  void loadQueue().then(loadKpi);
+  void loadQueue({ refreshKpi: true });
 }
 function onPage(next) {
   st.page = next;
@@ -622,14 +607,16 @@ onMounted(() => {
     st.legal = '';
     st.district = '';
     st.review = '';
+    st.reviewLocation = '';
     st.page = 1;
   }
   if (targetId) {
     st.district = '';
+    st.reviewLocation = '';
     st.page = 1;
   }
   loadPlans();
-  void loadQueue({ targetId }).then(loadKpi);
+  void loadQueue({ targetId, refreshKpi: true });
   loadShadowHint();
 });
 </script>
@@ -654,6 +641,8 @@ onMounted(() => {
               :options="districtOptions" :disabled="loading" @update:model-value="onRegionChange" />
             <UField class="lg-region-filter" variant="form" label="复核" v-model="st.review" type="select" size="small"
               :options="reviewOptions" :disabled="loading" @update:model-value="onRegionChange" />
+            <UField class="lg-region-filter lg-review-location-filter" variant="form" label="核实位置" v-model="st.reviewLocation" type="select" size="small"
+              :options="reviewLocationOptions" :disabled="loading" @update:model-value="onRegionChange" />
             <UField v-if="canReadPlans" class="lg-region-filter" variant="form" label="计划" v-model="st.plan" type="select" size="small"
               :options="planOptions" :disabled="loading" :title="plansError || '只看某一条飞行计划的研判'" @update:model-value="onRegionChange" />
             </div>
@@ -724,14 +713,14 @@ onMounted(() => {
                     <b>{{ reviewFocus.title }}</b><p>{{ reviewFocus.note }}</p>
                     <ul v-if="assuranceReasons.length"><li v-for="code in assuranceReasons" :key="code">{{ ruleReasonText(code) }}</li></ul>
                     <ul v-if="unlistedUnknowns.length"><li v-for="code in unlistedUnknowns" :key="code">{{ ruleReasonText(code) }}</li></ul>
-                    <p v-if="reviewFocus.needsReview && !allowed.includes('REVIEW')" class="lg-state-warn">当前账号或记录状态不允许复核，可查看依据与历史。</p>
+                    <p v-if="reviewFocus.needsReview && !reviewInAlarm && !allowed.includes('REVIEW')" class="lg-state-warn">当前账号或记录状态不允许复核，可查看依据与历史。</p>
                   </div>
                   <div class="lg-response-result" aria-label="规则触发与处置去向">
                     <b>规则触发结果</b>
                     <p>{{ outcomeText(selectedEvaluation) }}</p>
-                    <button v-if="canOpenAlarm" class="btn sm" type="button" @click="openRelatedAlarm">查看此告警的处置进度</button>
-                    <p v-else-if="selectedEvaluation.alarm_id" class="lg-muted">当前账号没有告警页面查看权限。</p>
-                    <p v-else-if="selectedEvaluation.alarm_outcome_kind && selectedEvaluation.alarm_outcome_kind !== 'SUPPRESSED_SHADOW'" class="lg-muted">未提供可查看的关联告警，请核对关联记录或访问权限。</p>
+                    <button v-if="canOpenAlarm && reviewFocus.superseded" class="btn sm" type="button" @click="openRelatedAlarm">查看此告警的处置进度</button>
+                    <p v-if="selectedEvaluation.alarm_id && !canOpenAlarm" class="lg-muted">当前账号没有告警页面查看权限。</p>
+                    <p v-else-if="reviewInAlarm && !selectedEvaluation.alarm_id" class="lg-muted">未提供可查看的关联告警，请核对关联记录或访问权限。</p>
                     <p class="lg-muted">飞手短信、电话录音通知和反制授权在告警事件中查看；本页研判结论不代表通知已完成或反制已获准。</p>
                   </div>
                 </section>
@@ -822,50 +811,17 @@ onMounted(() => {
                     </div>
                   </div>
                 </section>
-                <details class="lg-more-details">
-                  <summary>关联资料与判定信息</summary>
-              <div v-if="selectedEvaluation.supersedes_evaluation_id || (selectedEvaluation.superseded_by_evaluation_id && !reviewFocus.superseded)" class="lg-history-strip" aria-label="关联研判">
-                <button v-if="selectedEvaluation.supersedes_evaluation_id" type="button"
-                  :title="selectedEvaluation.supersedes_evaluation_id" @click="selectEvaluationById(selectedEvaluation.supersedes_evaluation_id)">← 被取代的旧研判</button>
-                <button v-if="selectedEvaluation.superseded_by_evaluation_id && !reviewFocus.superseded" type="button"
-                  :title="selectedEvaluation.superseded_by_evaluation_id" @click="selectEvaluationById(selectedEvaluation.superseded_by_evaluation_id)">查看重新判定的结果 →</button>
-
-              </div>
-
-                <section class="lg-verdict-card" :class="`is-${selectedConclusion.tone}`">
-                  <div v-if="additionalReasons.length" class="lg-core-reason"><small>其他判定依据</small><span>{{ additionalReasons.join('；') }}</span></div>
-                  <div class="lg-target-facts">
-                    <dl>
-                      <dt>关联轨迹</dt><dd :title="selectedEvaluation.track_id">{{ selectedEvaluation.track_id ? '已关联轨迹' : '没有可查看的相关记录' }}</dd>
-                      <dt v-if="selectedEvaluation.owner_org_name">归属单位</dt>
-                      <dd v-if="selectedEvaluation.owner_org_name" :title="selectedEvaluation.owner_org_id">{{ selectedEvaluation.owner_org_name }}</dd>
-                      <dt v-if="planDetail?.uav_sn">无人机序列号</dt>
-                      <dd v-if="planDetail?.uav_sn" class="mono">{{ planDetail.uav_sn }}</dd>
-                      <dt>航线版本</dt><dd :title="selectedEvaluation.route_version_id">{{ selectedEvaluation.route_version_id ? '已关联航线版本' : '没有可查看的相关记录' }}</dd>
-                    </dl>
-                  </div>
-                  <div class="lg-review-state">
-                    <span v-if="selectedEvaluation.review?.version > 0" class="tag t-gray">累计复核 {{ selectedEvaluation.review.version }} 次</span>
-                    <dl>
-                      <dt>规则版本</dt><dd :title="selectedEvaluation.rule_set_code">{{ ruleVersionText(selectedEvaluation) }}{{ demoParams ? '（演示参数）' : '' }}</dd>
-                      <dt>判定可靠性</dt><dd>{{ selectedEvaluation.decision_assurance ? decisionAssuranceStatusText(selectedEvaluation.decision_assurance.status) : '旧记录未提供判定可靠性' }}</dd>
-                      <dt v-if="selectedEvaluation.decision_assurance?.algorithm_version">算法版本</dt><dd v-if="selectedEvaluation.decision_assurance?.algorithm_version" class="mono">{{ selectedEvaluation.decision_assurance.algorithm_version }}</dd>
-                      <dt v-if="selectedEvaluation.decision_assurance?.accuracy_status === 'NOT_VALIDATED'">准确率状态</dt><dd v-if="selectedEvaluation.decision_assurance?.accuracy_status === 'NOT_VALIDATED'">实测准确率未验证</dd>
-                    </dl>
-                  </div>
-                </section>
-
-                </details>
               </div>
 
               <footer class="lg-action-dock">
                 <div class="detail-actions">
                   <button v-if="reviewFocus.superseded && selectedEvaluation.superseded_by_evaluation_id" class="btn pri" type="button" @click="selectEvaluationById(selectedEvaluation.superseded_by_evaluation_id)">查看最新研判</button>
+                  <button v-else-if="reviewInAlarm" class="btn pri" type="button" :disabled="!canOpenAlarm" @click="openRelatedAlarm">前往告警页面</button>
                   <button v-else-if="reviewFocus.needsReview" class="btn pri" type="button" :disabled="!allowed.includes('REVIEW')" @click="onReview">核对信息缺口</button>
-                  <details v-if="allowed.includes('RECOMPUTE') || (allowed.includes('REVIEW') && !reviewFocus.needsReview && !reviewFocus.superseded)" :key="selectedEvaluation.evaluation_id" class="lg-secondary-actions">
+                  <details v-if="allowed.includes('RECOMPUTE') || (allowed.includes('REVIEW') && !reviewInAlarm && !reviewFocus.needsReview && !reviewFocus.superseded)" :key="selectedEvaluation.evaluation_id" class="lg-secondary-actions">
                     <summary>更多操作</summary>
                     <div>
-                      <button v-if="allowed.includes('REVIEW') && !reviewFocus.needsReview && !reviewFocus.superseded" class="btn" type="button" @click="onReview">补充人工纠正</button>
+                      <button v-if="allowed.includes('REVIEW') && !reviewInAlarm && !reviewFocus.needsReview && !reviewFocus.superseded" class="btn" type="button" @click="onReview">补充人工纠正</button>
                       <button v-if="allowed.includes('RECOMPUTE')" class="btn" type="button" @click="onRecompute">重新研判</button>
                     </div>
                   </details>
@@ -920,7 +876,7 @@ onMounted(() => {
 .legality-workbench :deep(.svg-icon){width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7}
 .lg-pager{min-height:48px;padding:6px 10px;margin:0;border-top:1px solid var(--line-2);overflow:auto}
 .lg-review-panel{min-width:0;min-height:0}.lg-hidden-status{display:none}.lg-detail-host{height:100%;min-height:0;display:flex;flex-direction:column}.lg-detail-scroll{min-height:0;flex:1;overflow:auto;scrollbar-width:thin;display:flex;flex-direction:column;gap:12px}
-.lg-basis-card,.lg-evidence-card,.lg-more-details{flex:none;min-width:0;border:1px solid var(--line);border-radius:var(--r);background:var(--lg-surface);box-shadow:var(--shadow-soft);overflow:hidden}
+.lg-basis-card,.lg-evidence-card{flex:none;min-width:0;border:1px solid var(--line);border-radius:var(--r);background:var(--lg-surface);box-shadow:var(--shadow-soft);overflow:hidden}
 .lg-basis-card>header,.lg-evidence-card>header{display:flex;align-items:center;gap:10px;min-height:42px;padding:10px 16px;border-bottom:1px solid var(--line-2);background:none;font-size:14.5px;font-weight:600;color:var(--txt)}
 .lg-basis-card>header span,.lg-evidence-card>header span{flex:1;min-width:0;text-align:right;white-space:normal;overflow-wrap:anywhere;font-size:11px;font-weight:400;color:var(--txt-3)}
 .lg-basis-card{display:flex;flex-direction:column;max-height:none;min-height:0}.lg-check-list{padding:5px 12px;overflow:auto;max-height:320px;min-height:0;scrollbar-width:thin}.lg-selected-subject{display:flex;align-items:center;gap:8px;padding:8px 16px;border-bottom:1px solid var(--lg-line);font-size:11px;color:var(--txt-3)}.lg-selected-subject b{flex:1;min-width:0;overflow-wrap:anywhere;white-space:normal;color:var(--txt);font-weight:500}.lg-selected-subject>span{flex:none;color:var(--amber)}.lg-check-item{display:flex;align-items:flex-start;gap:12px;width:100%;padding:8px 6px;border:0;border-radius:3px;background:transparent;text-align:left}.lg-check-item:hover,.lg-check-item.is-selected{background:color-mix(in srgb,var(--lg-accent) 12%,transparent)}
@@ -934,15 +890,15 @@ onMounted(() => {
 .lg-evidence-body{padding:12px 16px;font-size:12px;line-height:1.6;color:var(--txt-2)}.lg-evidence-body h4{margin:0 0 10px;color:var(--txt);font-size:13px}.lg-evidence-body h4 span{display:block;color:var(--txt-3);font-size:11px;font-weight:400}.lg-evidence-body p{margin:4px 0}
 .lg-evidence-timeline{list-style:none;margin:0 0 12px;padding:0}.lg-evidence-timeline li{position:relative;display:flex;gap:12px;min-height:70px;padding:10px 0}.lg-evidence-timeline li:not(:last-child):before{content:"";position:absolute;left:11px;top:35px;bottom:-8px;width:1px;background:var(--line)}.lg-evidence-timeline li+li{border-top:1px solid var(--line-2)}.lg-evidence-icon{display:flex;justify-content:center;align-items:center;width:24px;height:24px;flex:none;border-radius:50%;background:var(--surface-2);color:var(--cyan)}.lg-evidence-timeline b{color:var(--blue);font-size:13px}.lg-evidence-timeline p{overflow-wrap:anywhere;color:var(--txt-3);font-size:12px}
 .lg-map-wrap{position:relative;min-height:185px;margin-top:10px;overflow:hidden;border:1px solid var(--lg-line);border-radius:4px;background:var(--surface-1)}.lg-map-host{position:absolute;inset:0}.lg-map-legend{position:absolute;z-index:3;flex-wrap:wrap;left:5px;right:5px;bottom:5px;display:flex;justify-content:center;gap:10px;padding:3px;background:var(--panel);font-size:9px}.lg-map-legend .is-zone{color:#a97bff}.lg-map-legend .is-plan{color:#8ca0a8}.lg-map-legend .is-plan::before{content:"";display:inline-block;width:14px;margin-right:4px;vertical-align:middle;border-top:2px dashed currentColor}.lg-map-legend .is-track{color:var(--txt-2)}
-.lg-resource-grid,.lg-target-facts dl,.lg-review-state dl{display:grid;grid-template-columns:90px minmax(0,1fr);gap:7px;margin:8px 0;font-size:12px}.lg-resource-grid dt,.lg-target-facts dt,.lg-review-state dt{color:var(--txt-3)}.lg-resource-grid dd,.lg-target-facts dd,.lg-review-state dd{margin:0;overflow-wrap:anywhere;color:var(--txt-2)}
-.lg-more-details{max-height:none;overflow:auto;scrollbar-width:thin}.lg-evidence-wide :deep(.pager){overflow:auto;max-width:100%}.lg-more-details summary{padding:12px 16px;color:var(--txt-2);font-size:12px;cursor:pointer}.lg-history-strip{display:flex;flex-wrap:wrap;gap:6px;padding:8px 12px;border-top:1px solid var(--lg-line)}.lg-history-strip button{padding:6px;border:1px solid var(--lg-line);border-radius:4px;background:var(--surface-2);color:var(--txt-2);font-size:11px}.lg-history-strip :deep(.pager){max-width:100%;overflow:auto}
-.lg-verdict-card{padding:12px 16px}.lg-verdict-block{display:flex;align-items:center;gap:10px}.lg-verdict-icon{display:flex;color:var(--amber)}.lg-verdict-block>div{display:flex;flex-direction:column;gap:4px}.lg-verdict-block strong{font-size:22px;color:var(--red)}.lg-verdict-card.is-green strong{color:var(--green)}.lg-verdict-card.is-amber strong{color:var(--amber)}.lg-verdict-block small,.lg-verdict-block span,.lg-core-reason{font-size:12px;color:var(--txt-2)}.lg-core-reason{display:flex;flex-direction:column;gap:5px;margin:14px 0}.lg-core-reason b{color:var(--txt)}.lg-target-facts,.lg-review-state{border-top:1px solid var(--lg-line);padding-top:10px;margin-top:10px}.lg-review-state>.tag{font-size:11px}
+.lg-resource-grid{display:grid;grid-template-columns:90px minmax(0,1fr);gap:7px;margin:8px 0;font-size:12px}.lg-resource-grid dt{color:var(--txt-3)}.lg-resource-grid dd{margin:0;overflow-wrap:anywhere;color:var(--txt-2)}
+.lg-evidence-wide :deep(.pager){overflow:auto;max-width:100%}
+
 .lg-action-dock{flex:none;padding:12px 0 0}.detail-actions{display:flex;gap:8px;margin:0}.lg-action-dock .btn{flex:1;min-width:0;height:40px!important;font-size:13px}.detail-actions .btn:disabled{cursor:not-allowed;opacity:.45}
 .lg-link-btn{border:0;padding:0;background:transparent;color:var(--blue);font-size:12px}.lg-reference-list{padding-left:16px;font-size:12px;line-height:1.8}.lg-muted{color:var(--txt-3)!important}.is-pass{color:var(--green)}.is-fail,.lg-state-error,.lg-evidence-alert{color:var(--red)}.is-warn,.lg-state-warn{color:var(--amber)}.lg-inline-error{padding:10px 14px;border-bottom:1px solid var(--lg-line);font-size:12px;line-height:1.6;color:var(--amber)}.empty{padding:28px 16px;font-size:13px;line-height:1.8}
 .lg-focus-card{flex:none;border:1px solid var(--line);border-radius:var(--r);padding:14px 16px;background:var(--lg-surface);box-shadow:var(--shadow-soft);font-size:12px;line-height:1.6;overflow-wrap:anywhere}
 .lg-focus-verdict{display:flex;align-items:center;gap:10px;flex-wrap:wrap;color:var(--txt-3)}.lg-focus-verdict>span:first-child{color:var(--txt);font-size:14px}.lg-focus-card p{margin:7px 0}.lg-focus-basis{color:var(--txt)}.lg-focus-task{border-top:1px solid var(--lg-line);padding-top:10px;margin-top:10px;color:var(--txt-3)}.lg-focus-task>b{color:var(--txt)}.lg-focus-task.needs-review>b{color:var(--amber)}.lg-focus-task ul{padding-left:18px;margin:6px 0}.lg-focus-outcome{color:var(--txt-3)}.lg-focus-manual{color:var(--blue)}.lg-check-empty{font-size:12px;line-height:1.6;color:var(--txt-3);padding:0 4px}.lg-secondary-actions{position:relative;flex:none}.lg-secondary-actions>summary{padding:10px 14px;border:1px solid var(--line);border-radius:6px;color:var(--blue);cursor:pointer;list-style:none;font-size:13px}.lg-secondary-actions>div{position:absolute;bottom:calc(100% + 8px);right:0;z-index:5;min-width:180px;padding:8px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow-soft);display:flex;flex-direction:column;gap:6px}
 @media(min-width:1800px){.lg-queue-tabs{min-height:54px}.lg-queue-tabs button{padding:0 15px}.lg-target-table{font-size:14px}.lg-target-table td{height:76px}.lg-target-table th{height:48px}.lg-main-column{gap:18px}}
 @media(max-width:1399px){.lg-workspace{gap:12px;grid-template-columns:minmax(0,3fr) minmax(0,2fr)}.lg-main-column{gap:12px}.lg-queue-tabs button{flex:1;padding:0 7px;font-size:12px}.lg-queue-tabs button span{font-size:11px}.lg-queue-filters{padding:10px}}
-@media(max-width:1040px){.legality-workbench{overflow:auto!important}.lg-shell,.lg-workspace{height:auto;min-height:100%}.lg-workspace{grid-template-columns:minmax(0,1fr)}.lg-queue-panel{height:560px;flex:auto}.lg-detail-scroll{overflow:visible}.lg-basis-card{max-height:none}.lg-evidence-card{min-height:300px}.lg-more-details{max-height:none}.lg-review-panel{min-height:0}.lg-map-wrap{min-height:250px}}
+@media(max-width:1040px){.legality-workbench{overflow:auto!important}.lg-shell,.lg-workspace{height:auto;min-height:100%}.lg-workspace{grid-template-columns:minmax(0,1fr)}.lg-queue-panel{height:560px;flex:auto}.lg-detail-scroll{overflow:visible}.lg-basis-card{max-height:none}.lg-evidence-card{min-height:300px}.lg-review-panel{min-height:0}.lg-map-wrap{min-height:250px}}
 @media(prefers-reduced-motion:reduce){.legality-workbench *{transition:none!important;scroll-behavior:auto!important}}
 </style>

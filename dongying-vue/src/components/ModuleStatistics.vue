@@ -50,14 +50,19 @@ onBeforeUnmount(() => { generation += 1; dispose(); });
       <span>{{ state.error }}</span><button type="button" class="btn" @click="$emit('retry')">重试统计</button>
     </div>
     <div v-else class="statistics-grid">
-      <UPanel v-for="group in state.groups" :key="group.key" :title="group.title" :sub="group.note || ''" class="statistics-panel">
+      <UPanel v-for="group in state.groups" :key="group.key" :title="group.title" :sub="group.note || ''" class="statistics-panel" :class="{ 'statistics-receipt-panel': group.key === 'by_receipt' }">
         <div v-if="!state.total" class="statistics-message">当前筛选条件下暂无数据</div>
         <div v-else :class="['statistics-content', { 'statistics-donut': group.type === 'donut' }]">
           <div data-stat-chart class="statistics-chart" role="img" :aria-label="`${group.title}，共 ${group.total} 条`"></div>
           <ul v-if="group.type === 'donut'" class="statistics-legend" :class="{ 'statistics-legend-dense': group.data.length > 5 }" :aria-label="group.title">
             <li v-for="row in group.data" :key="row.name">
               <span class="statistics-swatch" :style="{ background: `var(--${row.color})` }" aria-hidden="true"></span>
-              <span>{{ row.name }} <b>{{ row.value.toLocaleString() }}</b>（{{ percent(row.value) }}）</span>
+              <template v-if="group.key === 'by_receipt'">
+                <span class="receipt-label">{{ row.name }}</span>
+                <b class="receipt-count">{{ row.value.toLocaleString() }}</b>
+                <span class="receipt-percent">{{ percent(row.value) }}</span>
+              </template>
+              <span v-else>{{ row.name }} <b>{{ row.value.toLocaleString() }}</b>（{{ percent(row.value) }}）</span>
             </li>
           </ul>
         </div>
@@ -83,6 +88,20 @@ onBeforeUnmount(() => { generation += 1; dispose(); });
 .statistics-legend li { display: flex; align-items: baseline; gap: 5px; overflow-wrap: anywhere; }
 .statistics-legend b { font-weight: 500; font-variant-numeric: tabular-nums; }
 .statistics-swatch { flex: none; width: 12px; height: 8px; border-radius: 3px; }
+.statistics-receipt-panel { container-type: inline-size; }
+.statistics-receipt-panel .statistics-donut { grid-template-columns: minmax(110px, .85fr) minmax(0, 1.15fr); gap: 16px; padding: 0 6px; }
+.statistics-receipt-panel .statistics-chart { width: 100%; max-width: 180px; justify-self: center; }
+.statistics-receipt-panel .statistics-legend { gap: 10px; }
+.statistics-receipt-panel .statistics-legend li { display: grid; grid-template-columns: 10px minmax(0, 1fr) minmax(2ch, auto) 6ch; align-items: center; column-gap: 8px; }
+.statistics-receipt-panel .statistics-swatch { width: 10px; height: 8px; }
+.receipt-label { white-space: normal; overflow-wrap: anywhere; }
+.receipt-count, .receipt-percent { text-align: right; font-variant-numeric: tabular-nums; }
+.receipt-percent { color: var(--txt-3); }
+@container (max-width: 370px) {
+  .statistics-receipt-panel .statistics-donut { grid-template-columns: minmax(0, 1fr); gap: 0; padding: 0 8px 8px; }
+  .statistics-receipt-panel .statistics-chart { height: 118px; }
+  .statistics-receipt-panel .statistics-legend { width: 100%; gap: 6px; }
+}
 .statistics-message { min-height: 146px; display: flex; align-items: center; justify-content: center; gap: 12px; padding: 16px; color: var(--txt-2); flex-wrap: wrap; }
 @media (max-width: 900px) { .statistics-grid { grid-template-columns: minmax(0, 1fr); } }
 </style>

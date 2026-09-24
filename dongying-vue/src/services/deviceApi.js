@@ -47,6 +47,7 @@ export const deviceApi = {
     apiRequest(`/targets/${targetId}/eo-tracking-tasks`, {
       method: 'POST', body, headers: { 'Idempotency-Key': key }
     }),
+  targetVideo: (targetId, options = {}) => apiRequest(`/targets/${encodeURIComponent(targetId)}/video`, options),
   currentEoTrack: (targetId, options = {}) => apiRequest(`/targets/${targetId}/eo-tracking-tasks`, options),
   eoTrackAvailability: targetId => apiRequest(`/targets/${targetId}/eo-tracking-availability`),
   prepareAirspaceDemoTarget: (targetId, frame) => apiRequest(`/local/airspace-demo/targets/${targetId}`, {

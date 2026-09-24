@@ -1,6 +1,6 @@
 <script setup>
 /* 融合感知指挥台：页面结构保持不变，全部业务状态来自后端领域接口。 */
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, h, onMounted, onUnmounted, ref, watch } from 'vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import { createSituationApiSource } from '@/pages/situation/situationApiSource.js';
 import { riskMatchesPlan, routeRiskIsActive } from '@/services/situationData.js';
@@ -31,7 +31,9 @@ const snapshot = ref({ generatedAt: 0, sourceMode: 'unknown', simulated: false, 
 const selection = ref(null);
 const advisorySummaries = ref({});
 const expandedType = ref('');
+const devicesExpanded = ref(true);
 const alertTab = ref('target');
+const alertsExpanded = ref(true);
 const fuseOpen = ref(false);
 const showTargetVideo = ref(false);
 const source = createSituationApiSource();
@@ -508,7 +510,8 @@ function renderTargetTip(target, hasAdvisoryCard = false) {
     .map(device => device.type).join(' / ');
   const summary = alarm?.type || routeRisk?.reasonText || '暂无关联异常';
   const processStatus = alarm ? uavProcessStatus(alarm) : '';
-  const stateText = processStatus || (target.activeRisk ? '风险持续' : '跟踪中');
+  const stateText = processStatus || (target.activeRisk ? '风险持续'
+    : target.stale || target.freshness === 'STALE' ? '数据已过期' : '已观测');
   const stateClass = alarm?.eventState === 'FALSE_POSITIVE' || processStatus === '已移送处罚' || processStatus === '已干扰'
     ? 'is-online' : (target.activeRisk || processStatus === '信号干扰中' || processStatus === '待审批' ? 'is-risk' : 'is-online');
   return `<section class="sit-map-pop sit-map-pop-target${target.newAlert ? ' is-new' : ''}" style="--sensor:${target.objectTypeCode === 'UAV' ? '#2fd06e' : '#72d6ff'}">
@@ -516,8 +519,9 @@ function renderTargetTip(target, hasAdvisoryCard = false) {
       <button type="button" data-tip-act="close" aria-label="关闭目标详情">${U.icon('close')}</button></header>
     <div class="sit-map-pop-status"><span class="sit-state ${stateClass}">${esc(stateText)}</span><span>${esc(summary)}</span></div>
     <div class="sit-target-metrics"><span><small>高度</small><b>${esc(formatMetric(target.alt, ' m'))}</b></span><span><small>速度</small><b>${esc(formatMetric(target.speed, ' m/s'))}</b></span></div>
+    <p>最后上报：${esc(formatClock(target.lastSeenAt))} · ${esc(reportAge(target.lastSeenAt))}</p>
     <p>感知来源：${esc(sourceNames || '未提供')}</p>
-    ${alarm?.eventId && !hasAdvisoryCard ? `<p class="sit-map-pop-note">飞手短信：${esc(sms?.title || '正在读取通知状态')}${sms?.simulated ? '（模拟）' : ''}${sms?.updatedAt ? ` · ${esc(formatClock(sms.updatedAt))}` : ''}</p>
+    ${alarm?.eventId && !hasAdvisoryCard ? `<p class="sit-map-pop-note">短信通知：${esc(sms?.title || '正在读取通知状态')}${sms?.simulated ? '（模拟）' : ''}${sms?.updatedAt ? ` · ${esc(formatClock(sms.updatedAt))}` : ''}</p>
     <p class="sit-map-pop-note">飞手电话：${esc(voice?.title || '正在读取通知状态')}${voice?.simulated ? '（模拟）' : ''}</p>` : ''}
     ${renderTargetActions(target, hasAdvisoryCard)}
   </section>`;
@@ -702,17 +706,19 @@ onUnmounted(() => {
         <span class="sit-live-dot" aria-hidden="true"></span>
         <b>{{ sourceModeText }}</b>
         <span>{{ sourceModeDetail }}</span>
-        <span>监测目标 {{ targets.length }} · 无人机 {{ uavCount }} · 异物 {{ foreignObjectCount }}</span>
+        <span>今日目标 {{ targets.length }} · 无人机 {{ uavCount }} · 异物 {{ foreignObjectCount }}（北京时间）</span>
         <time class="mono">{{ clockText }}</time>
       </div>
       <p class="sr-only" role="status" aria-live="polite" aria-atomic="true">{{ statusAnnouncement }}</p>
 
-      <aside class="sit-glass sit-device-dock" aria-labelledby="sit-device-title">
+      <aside class="sit-glass sit-device-dock" :class="{ 'is-collapsed': !devicesExpanded }" aria-labelledby="sit-device-title">
         <header class="sit-dock-head">
           <span><small>SENSING FIELD</small><b id="sit-device-title">感知设备</b></span>
           <em class="sit-device-summary"><i></i>{{ deviceStatusCounts.ONLINE }}在线 <span>{{ deviceStatusCounts.ABNORMAL }}异常</span> {{ deviceStatusCounts.OFFLINE }}离线</em>
+          <button type="button" class="sit-device-toggle" :aria-expanded="devicesExpanded" aria-controls="sit-device-content sit-device-footer"
+            :aria-label="devicesExpanded ? '收起感知设备' : '展开感知设备'" @click="devicesExpanded = !devicesExpanded">{{ devicesExpanded ? '收起' : '展开' }}</button>
         </header>
-        <div class="sit-device-list">
+        <div v-show="devicesExpanded" id="sit-device-content" class="sit-device-list">
           <section v-for="group in deviceGroups" :key="group.typeCode" class="sit-device-group" :style="{ '--sensor': group.color }">
             <button type="button" class="sit-device-row"
               :class="{ 'is-selected': group.items.some(device => selection?.kind === 'device' && selection.id === device.id), 'has-new': group.hasNew }"
@@ -734,14 +740,17 @@ onUnmounted(() => {
             </div>
           </section>
         </div>
-        <footer>共 {{ devices.length }} 台感知设备；覆盖范围以设备台账配置为准，未知或不可用范围不会绘制。</footer>
+        <footer v-show="devicesExpanded" id="sit-device-footer">共 {{ devices.length }} 台感知设备；覆盖范围以设备台账配置为准，未知或不可用范围不会绘制。</footer>
       </aside>
 
-      <aside class="sit-glass sit-alert-dock" aria-labelledby="sit-alert-title">
+      <aside class="sit-glass sit-alert-dock" :class="{ 'is-collapsed': !alertsExpanded }" aria-labelledby="sit-alert-title">
         <header class="sit-dock-head">
           <span><small>TARGET / ROUTE RISK</small><b id="sit-alert-title">实时风险</b></span>
           <em :class="{ 'has-new': newAlarmCount + newRiskCount }">{{ newAlarmCount + newRiskCount ? `${newAlarmCount + newRiskCount} 条未查看` : `${activeRiskCount} 条当前风险` }}</em>
+          <button type="button" class="sit-alert-toggle" :aria-expanded="alertsExpanded" aria-controls="sit-alert-content"
+            :aria-label="alertsExpanded ? '收起实时风险' : '展开实时风险'" @click="alertsExpanded = !alertsExpanded">{{ alertsExpanded ? '收起' : '展开' }}</button>
         </header>
+        <div v-show="alertsExpanded" id="sit-alert-content" class="sit-alert-content">
         <div class="sit-risk-tabs" role="tablist" aria-label="风险类型">
           <button type="button" role="tab" :aria-selected="alertTab === 'target'" @click="alertTab = 'target'">目标异常 <b>{{ alarms.length }}</b></button>
           <button type="button" role="tab" :aria-selected="alertTab === 'route'" @click="alertTab = 'route'">航线风险 <b>{{ risks.length }}</b></button>
@@ -765,6 +774,7 @@ onUnmounted(() => {
             <span class="sit-alert-copy"><b class="mono">{{ planForRisk(risk)?.planNo || risk.planId }}</b><em>{{ risk.spaceFact?.subtypeName || '空中异物' }} · {{ riskFactText(risk) }}</em></span>
             <span class="sit-alert-meta"><time class="mono">{{ formatClock(risk.occurredAt) }}</time><b>{{ risk.isNew ? '新风险' : labelOf(RISK_STATE_LABEL, risk.state) }}</b></span>
           </button>
+        </div>
         </div>
       </aside>
 
@@ -819,6 +829,15 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.situation-page .sit-alert-dock>.sit-dock-head,.situation-page .sit-device-dock>.sit-dock-head{flex-wrap:wrap;gap:8px;flex-shrink:0}
+.situation-page .sit-device-dock>.sit-dock-head>span{flex-basis:85px}
+.situation-page .sit-alert-dock>.sit-dock-head>span{flex-basis:120px}
+.situation-page .sit-alert-dock>.sit-dock-head small{overflow-wrap:anywhere}
+.situation-page .sit-alert-dock.is-collapsed>.sit-dock-head,.situation-page .sit-device-dock.is-collapsed>.sit-dock-head{border-bottom:0}
+.sit-alert-content{display:flex;flex-direction:column;min-height:0}
+.sit-alert-toggle,.sit-device-toggle{flex:none;min-height:32px;padding:4px 8px;border:1px solid var(--sit-line);border-radius:6px;background:var(--surface-2);color:var(--txt);font:inherit;font-size:12px;cursor:pointer}
+.sit-alert-toggle:hover,.sit-device-toggle:hover{border-color:var(--cyan);color:var(--cyan)}
+.sit-alert-toggle:focus-visible,.sit-device-toggle:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
 .situation-page.has-alarm-popup :deep(.maptip.is-track){display:none!important}
 .sit-alarm-position-note{margin:0;padding:10px 12px;color:var(--muted);font-size:12px;line-height:1.5}
 .sit-video-dock{position:absolute;z-index:12;left:12px;bottom:72px;width:min(360px,calc(100% - 24px));padding:10px;overflow:auto}

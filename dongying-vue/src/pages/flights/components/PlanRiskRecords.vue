@@ -5,33 +5,44 @@ const props = defineProps({
   records: { type: Array, default: () => [] },
   loading: Boolean,
   error: { type: String, default: '' },
-  total: { type: Number, default: null },
-  days: { type: Number, default: 7 }
+  total: { type: Number, default: 0 },
+  currentTotal: { type: Number, default: 0 },
+  uncertainTotal: { type: Number, default: 0 },
+  asOf: { type: String, default: '' },
+  page: { type: Number, default: 1 },
+  size: { type: Number, default: 50 }
 });
-const emit = defineEmits(['select', 'notify', 'retry']);
-const recordCount = computed(() => props.total ?? props.records.length);
+const emit = defineEmits(['select', 'notify', 'retry', 'page']);
+const pages = computed(() => Math.max(1, Math.ceil(props.total / props.size)));
+const groups = computed(() => [
+  { title: '当前仍存在', records: props.records.filter(record => record.currentStatus === 'CURRENT') },
+  { title: '状态待确认', records: props.records.filter(record => record.currentStatus !== 'CURRENT') }
+].filter(group => group.records.length));
 </script>
 
 <template>
-  <section class="plan-risk-records" aria-label="本计划的风险记录" :aria-busy="loading">
+  <section class="plan-risk-records" aria-label="本计划当前风险" :aria-busy="loading">
     <header class="risk-section-head">
-      <h3>本计划的风险记录</h3>
-      <p>近 {{ days }} 天<span aria-hidden="true"> · </span><template v-if="!loading && !error">共 <strong>{{ recordCount }}</strong> 起</template><template v-else>读取风险记录</template></p>
+      <h3>本计划当前风险</h3>
+      <p v-if="!loading && !error">当前 <strong>{{ currentTotal }}</strong> 起<span v-if="uncertainTotal"> · 状态待确认 <strong>{{ uncertainTotal }}</strong> 起</span></p>
+      <button v-if="!error" class="btn" type="button" :disabled="loading" @click="emit('retry')">刷新</button>
     </header>
 
-    <div v-if="loading" class="risk-list-message" role="status">正在读取本计划的风险记录</div>
+    <div v-if="loading" class="risk-list-message" role="status">正在读取本计划当前风险</div>
     <div v-else-if="error" class="risk-list-message risk-list-error" role="alert">
-      <strong>风险记录读取失败</strong>
+      <strong>当前风险读取失败</strong>
       <p>{{ error }}</p>
       <button class="btn" type="button" @click="emit('retry')">重新读取</button>
     </div>
     <div v-else-if="!records.length" class="risk-list-message" role="status">
-      <strong>暂无可展示的关联风险记录</strong>
+      <strong>暂无已确认仍存在的关联风险</strong>
       <p>没有记录不代表当前飞行条件已确认安全。</p>
     </div>
     <template v-else>
+      <section v-for="group in groups" :key="group.title" class="risk-presence-group" :aria-label="group.title">
+      <h4 class="risk-group-title">{{ group.title }}</h4>
       <ul class="plan-risk-list">
-        <li v-for="record in records" :key="record.id" class="plan-risk-record" :class="record.severityClass || 't-gray'">
+        <li v-for="record in group.records" :key="record.id" class="plan-risk-record" :class="record.severityClass || 't-gray'">
           <div class="risk-record-main">
             <span class="risk-severity">{{ record.severityLabel || record.severity || '等级未判定' }}</span>
             <h4>{{ record.title || '风险记录' }}</h4>
@@ -44,14 +55,21 @@ const recordCount = computed(() => props.total ?? props.records.length);
             <span v-if="record.positionText">{{ record.positionText }}</span>
           </div>
           <p v-if="record.reason" class="risk-record-reason">{{ record.reason }}</p>
+          <p v-if="record.currentStatus !== 'CURRENT'" class="risk-presence-reason">{{ record.currentReason || '缺少当前风险依据' }}</p>
           <div class="risk-record-actions">
             <button class="risk-detail-button" type="button" :aria-label="`查看${record.title || '风险'}详情`" @click="emit('select', record.id)">查看风险详情</button>
             <button v-if="record.canNotify" class="btn risk-notify-button" type="button" :aria-label="`${record.title || '风险'}，通知上级`" @click="emit('notify', record.id)">通知上级</button>
           </div>
         </li>
       </ul>
-      <p v-if="recordCount > records.length" class="risk-list-more">当前展示前 {{ records.length }} 起，其余记录可在“全部风险事件”查看。</p>
+      </section>
+      <nav v-if="pages > 1" class="risk-pagination" aria-label="当前风险分页">
+        <button class="btn" type="button" :disabled="page <= 1" @click="emit('page', page - 1)">上一页</button>
+        <span>第 {{ page }} / {{ pages }} 页</span>
+        <button class="btn" type="button" :disabled="page >= pages" @click="emit('page', page + 1)">下一页</button>
+      </nav>
     </template>
+    <p v-if="!loading && !error && asOf" class="risk-list-more">更新于 {{ asOf }}</p>
   </section>
 </template>
 
@@ -62,6 +80,9 @@ const recordCount = computed(() => props.total ?? props.records.length);
 .risk-section-head p { margin: 0; color: var(--txt-3); font-size: 12px; line-height: 1.6; }
 .risk-section-head strong { color: var(--txt-2); font-weight: 600; font-variant-numeric: tabular-nums; }
 .plan-risk-list { list-style: none; padding: 0; margin: 0; }
+.risk-group-title { margin: 14px 0 0; color: var(--txt-2); font-size: 13px; font-weight: 500; }
+.risk-presence-reason { margin: 0; color: var(--amber); font-size: 12px; line-height: 1.8; }
+.risk-pagination { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding-top: 12px; font-size: 12px; }
 .plan-risk-record { position: relative; display: grid; gap: 8px; min-width: 0; padding: 15px 0 15px 14px; border-bottom: 1px solid var(--line-2); }
 .plan-risk-record::before { content: ''; position: absolute; top: 18px; bottom: 18px; left: 0; width: 3px; border-radius: 2px; background: var(--tag-c, var(--gray)); }
 .plan-risk-record:last-child { border-bottom: 0; }

@@ -1,0 +1,349 @@
+{
+  "version": 1,
+  "name": "五组演示：偏航、禁飞、无计划、鸟群、故障",
+  "duration": 15,
+  "sites": [
+    {
+      "id": "s-main",
+      "name": "无人机探测组",
+      "x": 420.0,
+      "y": 292.0,
+      "devices": [
+        {
+          "id": "main-radar",
+          "name": "无人机演示雷达",
+          "kind": "radar",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2
+        },
+        {
+          "id": "main-tdoa",
+          "name": "无人机身份演示TDOA",
+          "kind": "tdoa",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2
+        }
+      ]
+    },
+    {
+      "id": "s-bird",
+      "name": "航线风险探测组",
+      "x": 480.0,
+      "y": 360.0,
+      "devices": [
+        {
+          "id": "bird-radar",
+          "name": "鸟群演示雷达",
+          "kind": "radar",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2
+        }
+      ]
+    },
+    {
+      "id": "s-fault",
+      "name": "独立设备故障组",
+      "x": 520.0,
+      "y": 360.0,
+      "devices": [
+        {
+          "id": "fault-radar",
+          "name": "故障恢复演示雷达",
+          "kind": "radar",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2
+        }
+      ]
+    }
+  ],
+  "plans": [
+    {
+      "id": "deviation-plan",
+      "name": "01 巡检计划·先沿线后偏离",
+      "points": [
+        [
+          390.0,
+          276.0
+        ],
+        [
+          402.0,
+          276.0
+        ],
+        [
+          420.0,
+          276.0
+        ]
+      ],
+      "min": 20,
+      "max": 120,
+      "width": 100,
+      "start": "00:00",
+      "end": "23:59",
+      "altitudeDatum": "AGL"
+    },
+    {
+      "id": "zone-plan",
+      "name": "02 禁飞区闯入关联计划",
+      "points": [
+        [
+          470.0,
+          276.0
+        ],
+        [
+          500.0,
+          276.0
+        ],
+        [
+          506.0,
+          288.0
+        ]
+      ],
+      "min": 20,
+      "max": 120,
+      "width": 100,
+      "start": "00:00",
+      "end": "23:59",
+      "altitudeDatum": "AGL"
+    },
+    {
+      "id": "bird-plan",
+      "name": "04 鸟群影响计划",
+      "points": [
+        [
+          450.0,
+          350.0
+        ],
+        [
+          490.0,
+          350.0
+        ],
+        [
+          500.0,
+          350.0
+        ]
+      ],
+      "min": 20,
+      "max": 120,
+      "width": 100,
+      "start": "00:00",
+      "end": "23:59",
+      "altitudeDatum": "AGL"
+    }
+  ],
+  "zones": [
+    {
+      "id": "restricted-zone",
+      "name": "02 演示禁飞区",
+      "points": [
+        [
+          476.0,
+          268.0
+        ],
+        [
+          516.0,
+          268.0
+        ],
+        [
+          516.0,
+          296.0
+        ],
+        [
+          476.0,
+          296.0
+        ]
+      ],
+      "max": 120,
+      "altitudeDatum": "AGL",
+      "start": "00:00",
+      "end": "23:59"
+    }
+  ],
+  "targets": [
+    {
+      "id": "deviation-uav",
+      "name": "01 巡检无人机·先沿线后偏航",
+      "kind": "uav",
+      "path": [
+        [
+          390.0,
+          276.0
+        ],
+        [
+          399.0,
+          276.0
+        ],
+        [
+          404.0,
+          276.0
+        ],
+        [
+          408.0,
+          284.0
+        ],
+        [
+          420.0,
+          290.0
+        ]
+      ],
+      "planId": "deviation-plan",
+      "deviceId": "main-tdoa",
+      "height": 80,
+      "heightAgl": 60,
+      "probability": 0.98,
+      "speed": 4,
+      "count": 1,
+      "secondaryDeviceId": "main-radar",
+      "pilotPoint": [
+        390.0,
+        276.0
+      ]
+    },
+    {
+      "id": "zone-uav",
+      "name": "02 闯入禁飞区域无人机",
+      "kind": "uav",
+      "path": [
+        [
+          470.0,
+          276.0
+        ],
+        [
+          480.0,
+          276.0
+        ],
+        [
+          500.0,
+          276.0
+        ],
+        [
+          506.0,
+          288.0
+        ]
+      ],
+      "planId": "zone-plan",
+      "deviceId": "main-tdoa",
+      "height": 80,
+      "heightAgl": 60,
+      "probability": 0.98,
+      "speed": 4,
+      "count": 1,
+      "secondaryDeviceId": "main-radar",
+      "pilotPoint": [
+        470.0,
+        276.0
+      ]
+    },
+    {
+      "id": "unmatched-uav",
+      "name": "03 无匹配计划无人机",
+      "kind": "uav",
+      "path": [
+        [
+          390.0,
+          316.0
+        ],
+        [
+          410.0,
+          316.0
+        ],
+        [
+          420.0,
+          320.0
+        ]
+      ],
+      "planId": "",
+      "deviceId": "main-tdoa",
+      "height": 80,
+      "heightAgl": 60,
+      "probability": 0.98,
+      "speed": 4,
+      "count": 1,
+      "secondaryDeviceId": "main-radar",
+      "pilotPoint": [
+        390.0,
+        316.0
+      ]
+    },
+    {
+      "id": "birds",
+      "name": "04 航线鸟群",
+      "kind": "bird",
+      "path": [
+        [
+          460.0,
+          358.0
+        ],
+        [
+          460.0,
+          353.0
+        ],
+        [
+          460.0,
+          350.0
+        ],
+        [
+          490.0,
+          350.0
+        ]
+      ],
+      "planId": "bird-plan",
+      "deviceId": "bird-radar",
+      "height": 80,
+      "heightAgl": 60,
+      "probability": 0.98,
+      "speed": 4,
+      "count": 3
+    }
+  ],
+  "risks": [
+    {
+      "id": "r-deviation",
+      "name": "01 沿计划飞行后偏航",
+      "type": "deviation",
+      "enabled": true,
+      "targetId": "deviation-uav",
+      "planId": "deviation-plan",
+      "deviceId": "main-tdoa"
+    },
+    {
+      "id": "r-zone",
+      "name": "02 闯入禁飞区",
+      "type": "zone",
+      "enabled": true,
+      "targetId": "zone-uav",
+      "planId": "zone-plan",
+      "zoneId": "restricted-zone",
+      "deviceId": "main-tdoa"
+    },
+    {
+      "id": "r-unmatched",
+      "name": "03 无计划待核实",
+      "type": "no-plan",
+      "enabled": true,
+      "targetId": "unmatched-uav",
+      "deviceId": "main-tdoa"
+    },
+    {
+      "id": "r-bird",
+      "name": "04 鸟群进入计划航线",
+      "type": "bird",
+      "enabled": true,
+      "targetId": "birds",
+      "planId": "bird-plan",
+      "deviceId": "bird-radar"
+    },
+    {
+      "id": "r-fault",
+      "name": "05 雷达故障后恢复",
+      "type": "fault",
+      "enabled": true,
+      "deviceId": "fault-radar",
+      "at": 60,
+      "seconds": 120
+    }
+  ]
+}

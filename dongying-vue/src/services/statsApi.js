@@ -9,8 +9,10 @@ function query(params = {}) {
   return text ? `?${text}` : '';
 }
 
+const number = value => value == null ? null : Number(value);
+
 function named(list) {
-  return (list || []).map(item => ({ name: item.name, value: item.value || 0 }));
+  return (list || []).map(item => ({ name: item.name, value: number(item.value) }));
 }
 
 export function mapOperations(data) {
@@ -21,18 +23,20 @@ export function mapOperations(data) {
     to: data.to,
     sourceMode: data.source_mode,
     simulated: !!data.simulated,
-    total: summary.total || 0,
-    illegal: summary.illegal || 0,
-    punish: summary.punish || 0,
-    highRisk: summary.high_risk || 0,
-    altTotal: data.alt_total || 0,
+    generatedAt: data.generated_at ?? null,
+    availability: data.availability || {},
+    total: number(summary.total),
+    illegal: number(summary.illegal),
+    punish: number(summary.punish),
+    highRisk: number(summary.high_risk),
+    altTotal: number(data.alt_total),
     days: (data.days || []).map(day => ({
-      date: day.date, md: day.md, total: day.total || 0, illegal: day.illegal || 0,
-      punish: day.punish || 0, highRisk: day.high_risk || 0
+      date: day.date, md: day.md, total: number(day.total), illegal: number(day.illegal),
+      punish: number(day.punish), highRisk: number(day.high_risk)
     })),
     regions: (data.regions || []).map(row => ({
-      name: row.name, total: row.total || 0, illegal: row.illegal || 0,
-      punish: row.punish || 0, highRisk: row.high_risk || 0
+      name: row.name, total: number(row.total), illegal: number(row.illegal),
+      punish: number(row.punish), highRisk: number(row.high_risk)
     })),
     byRisk: named(data.by_risk),
     byType: named(data.by_type),
@@ -41,10 +45,10 @@ export function mapOperations(data) {
     altBands: named(data.alt_bands),
     byPenalty: named(data.by_penalty),
     partners: (data.partners || []).map(row => ({
-      name: row.name, n: row.case_count || 0, fine: row.fine || 0
+      name: row.name, n: number(row.case_count), fine: number(row.fine)
     })),
     devices: devices
-      ? { total: devices.total || 0, online: devices.online || 0, onlineRate: devices.online_rate }
+      ? { total: number(devices.total), online: number(devices.online), onlineRate: devices.online_rate }
       : null
   };
 }

@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>通知收件箱 · 东营低空平台</title><link rel="stylesheet" href="style.css?v=20260924-response-1"><link rel="stylesheet" href="external.css?v=20260924-response-1"></head>
+<body class="external-page">
+<header class="header"><div class="brand"><img src="assets/fusion.svg" alt=""><div><h1>通知收件箱</h1><span class="subtitle">飞手短信与电话 · 风险与处罚通知</span></div></div><nav class="sim-topnav" aria-label="模拟器页面"><a href="/">信号地图</a><a aria-current="page" href="/external.html">通知收件箱</a></nav><div class="header-right"><span class="badge amber">模拟环境</span><span id="external-status" class="connection">尚未登录系统</span><button id="login-toggle" type="button">登录系统</button></div></header>
+<main class="external-layout"><aside class="panel external-sidebar"><h2>收到的通知</h2>
+<button data-tab="sms" type="button"><span>飞手短信<small>短信通知内容</small></span></button>
+<button data-tab="voice" type="button"><span>飞手电话<small>电话录音通知内容</small></span></button>
+<button data-tab="risk" class="active" type="button"><span>风险通知<small>通知上级</small></span></button>
+<button data-tab="punishment" type="button"><span>处罚通知<small>处罚接收对象</small></span></button>
+<div class="input-links"><h2>计划与气象</h2><a href="/?input=plans">飞行计划输入<span>进入地图</span></a><a href="/?input=weather">气象预报输入<span>进入地图</span></a></div>
+<p>模拟通道记录，只读展示。</p></aside>
+<section class="external-content"><div class="external-heading"><div><span class="eyebrow">通知记录</span><h2 id="tab-title">风险通知</h2><p id="tab-intro">查看通知上级的模拟消息与已保存内容。</p></div><button id="refresh" type="button">刷新系统数据</button></div><div id="external-message" role="status" aria-live="polite"></div><div id="external-access" class="external-note warn" role="status" hidden></div><div id="external-body"></div></section></main>
+<dialog id="login-dialog"><form id="login-form"><h2>登录系统</h2><p>登录一次，即可使用信号地图、计划与气象输入和通知收件箱。</p><label>系统 API 地址<input name="api" type="url" required value="http://127.0.0.1:8081/api/v1"></label><label>账号<input name="account" required autocomplete="username"></label><label>密码<input name="password" type="password" required autocomplete="current-password"></label><p id="login-error" role="alert"></p><div class="external-actions"><button id="login-cancel" type="button">取消</button><button class="primary" type="submit">登录系统</button></div></form></dialog>
+<script src="external-workspace.js?v=20260924-login-1"></script><script src="external-contract.js?v=20260924-response-1"></script><script src="weather-form.js?v=20260924-response-1"></script><script src="external.js?v=20260924-login-1"></script></body></html>

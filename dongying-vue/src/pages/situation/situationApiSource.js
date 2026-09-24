@@ -16,7 +16,7 @@ import {
 const DEVICE_TYPES = new Set(['RADAR', 'EO', 'FIVE_G_A', 'TDOA']);
 const FAST_MS = 5_000;
 const SLOW_MS = 60_000;
-const TARGET_WINDOW_MS = 5 * 60_000;
+const RECENT_TRACK_WINDOW_MS = 5 * 60_000;
 
 async function allPages(load, params = {}) {
   const items = [];
@@ -94,12 +94,13 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
 
   async function refreshFast(generatedAt) {
     const day = shanghaiDay(generatedAt);
-    const observedFrom = generatedAt - TARGET_WINDOW_MS;
+    const observedFrom = day.from;
     const tasks = [
       retain('targets', async () => {
         const [page, recent] = await Promise.all([
           targetApi.listAll({ seen_from: observedFrom, seen_to: generatedAt, include_merged: false }),
-          targetApi.recentTracks({ observed_from: observedFrom, observed_to: generatedAt, points_per_target: 24 })
+          // 近期轨迹接口最多允许 1 小时；目标保留整日，实时尾迹继续沿用 5 分钟窗口。
+          targetApi.recentTracks({ observed_from: Math.max(day.from, generatedAt - RECENT_TRACK_WINDOW_MS), observed_to: generatedAt, points_per_target: 24 })
         ]);
         const converted = attachBearing(toTargets(page.items), bearingOrigins(snapshot.devices));
         return withComparison(attachRecentTracks(converted, recent, snapshot.targets));

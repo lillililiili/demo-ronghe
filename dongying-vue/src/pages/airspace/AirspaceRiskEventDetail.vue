@@ -185,7 +185,7 @@ onUnmounted(() => { alive = false; generation++; historyRequest++; noticeRequest
             <div class="rk-history-head"><b>通知上级</b><span class="tag" :class="deliveryTags[notice.delivery_status] || 't-gray'">{{ deliveryLabels[notice.delivery_status] || '发送状态未知' }}</span></div>
             <details v-if="notice.recipient_name && notice.recipient_name !== '上级'"><summary>原通知对象记录</summary><p>{{ notice.recipient_name }}</p></details>
             <p>{{ labelOf(HANDOFF_TYPE_LABEL, notice.handoff_type) }} · {{ time(notice.created_at) }}</p><p>对方回复：{{ receiptText(notice) }}</p>
-            <p v-if="notice.blocked_reason">未完成原因：{{ notice.blocked_reason === 'CHANNEL_NOT_CONNECTED' ? '通知渠道未接通' : notice.blocked_reason }}</p>
+            <p v-if="notice.blocked_reason">未完成原因：{{ notice.blocked_reason === 'CHANNEL_NOT_CONNECTED' ? '通知渠道未接通' : notice.blocked_reason === 'DELIVERY_OUTCOME_UNKNOWN' ? '发送结果未知，请先核对原发送记录' : notice.blocked_reason }}</p>
             <p class="rk-note">风险通知记录留在本页，不进入处罚办理。</p>
           </article></div>
           <p v-if="noticesTotal > notices.length && !noticesLoading" class="rk-note">共 {{ noticesTotal }} 条通知记录，当前展示最近 {{ notices.length }} 条。</p>

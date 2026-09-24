@@ -11,7 +11,7 @@ const emit = defineEmits(['changed']);
 let alive = true;
 onUnmounted(() => { alive = false; });
 const view = computed(() => autoSmsView(props.data));
-const compactTitle = computed(() => ({ WAITING: '等待发送', SENDING: '正在发送', SIMULATED_DELIVERED: '模拟已送达', FAILED: '发送失败', UNAVAILABLE: '通道未接通', BLOCKED: '暂不满足发送条件', DISABLED: '未启用' })[props.data?.auto_sms?.status] || view.value.title);
+const compactTitle = computed(() => ({ WAITING: '等待发送', SENDING: '正在发送', SIMULATED_DELIVERED: '模拟已送达', UNKNOWN: '发送结果未知', FAILED: '发送失败', UNAVAILABLE: '通道未接通', BLOCKED: '暂不满足发送条件', DISABLED: '未启用' })[props.data?.auto_sms?.status] || view.value.title);
 const time = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '';
 function retry() {
   if (!view.value.canRetry || props.disabled) return;

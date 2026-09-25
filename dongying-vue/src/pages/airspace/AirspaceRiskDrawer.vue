@@ -74,7 +74,7 @@ function openTarget(row) { window.UI?.goto?.('situation', { target: row.target.t
 </template>
 
 <style scoped>
-.risk-map-detail { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.risk-map-detail { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; background: var(--surface-gradient); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 .detail-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
 .detail-head h3 { margin: 0; font-size: 14px; }
 .detail-close { display: grid; place-items: center; width: 30px; height: 30px; border: 0; border-radius: 4px; background: transparent; color: var(--txt-2); font-size: 22px; cursor: pointer; }

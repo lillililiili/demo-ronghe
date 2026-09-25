@@ -20,7 +20,7 @@ const statusIcon = window.UI.icon('warning');
 .object-symbol { display: grid; place-items: center; width: 30px; height: 30px; box-sizing: border-box; background:transparent;border:0;box-shadow:none; }
 .object-symbol :deep(svg) { width:22px;height:22px; }.object-symbol span { display: flex; }
 .object-risk-state{position:absolute;right:0;bottom:0;display:flex}.object-risk-state :deep(svg){width:10px;height:10px;fill:none;stroke:currentColor;stroke-width:2}
-.object-label { position: absolute; left: 38px; top: -3px; min-width: 94px; background: rgba(13,31,47,.88); border-left: 2px solid currentColor; border-radius: 4px; padding: 5px 8px; display: grid; gap: 2px; text-align: left; font-size: 11px; white-space: nowrap; }
+.object-label { position: absolute; left: 38px; top: -3px; min-width: 94px; background: var(--surface-gradient); border-left: 2px solid currentColor; border-radius: 4px; padding: 5px 8px; display: grid; gap: 2px; text-align: left; font-size: 11px; white-space: nowrap; }
 .object-marker:not(.active):not(:hover):not(:focus-visible) .object-label { display: none; }
 .object-label b { color: var(--txt-1); }.object-label > span { font-size: 10px; color: var(--txt-2); }.object-label.leftward { left: auto; right: 38px; }
 .object-marker:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; }

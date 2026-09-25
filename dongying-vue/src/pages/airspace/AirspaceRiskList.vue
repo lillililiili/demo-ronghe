@@ -152,7 +152,7 @@ function summary(row) {
 
 <style scoped>
 .airspace-risk-list { display: contents; }
-.monitor-controls { grid-area: filters; border: 1px solid var(--line); border-radius: 8px; min-width: 0; position: relative; z-index: 3; flex: none; border-bottom: 1px solid var(--line); background: var(--panel-2); }
+.monitor-controls { grid-area: filters; border: 1px solid var(--line); border-radius: 8px; min-width: 0; position: relative; z-index: 3; flex: none; border-bottom: 1px solid var(--line); background: var(--surface-gradient); }
 .monitor-control-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; padding: 8px 12px; border-bottom: 1px solid var(--line-2); }
 .monitor-control-head h3 { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--txt); font-size: 14px; white-space: nowrap; }
 .monitor-title-icon { display: flex; color: var(--cyan); }
@@ -193,9 +193,9 @@ function summary(row) {
 .risk-record-scroll::-webkit-scrollbar { width: 10px; }
 .risk-record-scroll::-webkit-scrollbar-track { background: var(--panel-2); }
 .risk-record-scroll::-webkit-scrollbar-thumb { background: var(--txt-3); border: 2px solid var(--panel-2); border-radius: 6px; }
-.risk-record { display: grid; flex: none; gap: 4px; width: 100%; min-width: 0; padding: 8px; text-align: left; background: var(--surface-1); color: var(--txt); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
+.risk-record { display: grid; flex: none; gap: 4px; width: 100%; min-width: 0; padding: 8px; text-align: left; background: var(--surface-gradient); color: var(--txt); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
 .record-heading .tag { padding: 1px 5px; font-size: 11px; line-height: 16px; }
-.risk-record:hover { border-color: var(--page-accent); }.risk-record.on { border-color: var(--page-accent); box-shadow: inset 3px 0 var(--page-accent); background: color-mix(in srgb, var(--page-accent) 9%, var(--surface-1)); }
+.risk-record:hover { border-color: var(--page-accent); }.risk-record.on { border-color: var(--page-accent); box-shadow: inset 3px 0 var(--page-accent); background: var(--surface-selected); }
 .risk-record:focus-visible { outline: 2px solid var(--page-accent); outline-offset: -2px; }
 .record-heading { display: flex; align-items: flex-start; gap: 6px; justify-content: space-between; }.record-heading b { min-width: 0; overflow-wrap: anywhere; font-size: 13px; line-height: 1.5; }.record-heading .tag { flex: none; }
 .record-state { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--txt-3); font-size: 11px; }.record-state .tag { padding: 0 5px; font-size: 10px; }

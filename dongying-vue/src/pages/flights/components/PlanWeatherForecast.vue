@@ -142,7 +142,7 @@ function sourceMode(value) { return SOURCE_MODE_LABEL[value] || (present(value) 
 .weather-summary dd { min-width: 0; overflow-wrap: anywhere; }
 .weather-summary small { display: block; margin-top: 3px; color: var(--txt-3); font-size: 11px; }
 .forecast-periods { display: grid; gap: 10px; }
-.forecast-period { min-width: 0; padding: 11px; border: 1px solid var(--line-2); border-radius: 8px; background: color-mix(in srgb, var(--surface-2) 72%, transparent); }
+.forecast-period { min-width: 0; padding: 11px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--surface-gradient); }
 .forecast-period header { display: grid; gap: 4px; padding-bottom: 9px; border-bottom: 1px solid var(--line-2); }
 .forecast-period header strong { font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 .forecast-period header span { color: var(--cyan); font-size: 13px; overflow-wrap: anywhere; }

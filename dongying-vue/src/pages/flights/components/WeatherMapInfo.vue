@@ -49,7 +49,7 @@ onUnmounted(() => clearInterval(ticker));
 </template>
 
 <style scoped>
-.weather-controls,.weather-card,.weather-legend,.weather-scale { position: absolute; z-index: 5; color: var(--txt-1); background: rgba(15, 32, 49, .68); border: 1px solid rgba(210, 228, 245, .3); border-radius: 8px; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); box-shadow: 0 3px 12px #0002; font-size: 11px; }
+.weather-controls,.weather-card,.weather-legend,.weather-scale { position: absolute; z-index: 5; color: var(--txt-1); background: var(--surface-gradient); border: 1px solid var(--line); border-radius: 8px; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); box-shadow: 0 3px 12px #0002; font-size: 11px; }
 .weather-controls { left: 56px; top: 48px; display: flex; flex-wrap: wrap; gap: 3px; padding: 3px; max-width: calc(100% - 66px); }
 .weather-title { display: flex; align-items: center; gap: 6px; padding: 4px 7px; font-size: 11px; }
 .weather-title span { color: var(--amber); font-size: 10px; font-weight: 400; }

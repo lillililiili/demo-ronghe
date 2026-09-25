@@ -62,14 +62,17 @@ export const loginThemeOverrides = {
 
 export const themeOverrides = {
   Button: {
-    textColorPrimary: v('--txt'),
-    textColorHoverPrimary: v('--txt'),
-    textColorPressedPrimary: v('--txt'),
+    textColorPrimary: v('--action-text'),
+    textColorHoverPrimary: v('--action-text'),
+    textColorPressedPrimary: v('--action-text'),
     colorPrimary: v('--action-blue'),
-    colorHoverPrimary: shade(v('--action-blue'), 0.1),
-    colorPressedPrimary: shade(v('--action-blue'), -0.1),
+    colorHoverPrimary: v('--action-hover'),
+    colorPressedPrimary: v('--action-pressed'),
     borderPrimary: `1px solid ${blue}`,
-    borderHoverPrimary: `1px solid ${cyan}`
+    borderHoverPrimary: `1px solid ${blue}`,
+    color: v('--input-bg'), colorHover: v('--surface-hover'),
+    colorPressed: v('--surface-selected'),
+    border: `1px solid ${v('--control-line')}`
   },
   common: {
     primaryColor: blue,
@@ -95,7 +98,7 @@ export const themeOverrides = {
     modalColor: v('--surface-3') || '#12243a',
     popoverColor: v('--surface-3') || '#12243a',
     tableColor: v('--surface-1') || '#0b1727',
-    inputColor: v('--surface-1') || '#0b1727',
+    inputColor: v('--input-bg'),
     actionColor: v('--surface-2') || '#0e1d30',
     hoverColor: v('--surface-hover') || '#142a44',
 
@@ -116,6 +119,16 @@ export const themeOverrides = {
     fontFamily,
     boxShadow2: v('--shadow') || '0 12px 32px rgba(0,0,0,.22)'
   },
+  Input: {
+    color: v('--input-bg'), colorFocus: v('--input-bg'),
+    border: `1px solid ${v('--control-line')}`,
+    boxShadowFocus: v('--focus-ring')
+  },
+  InternalSelection: {
+    color: v('--input-bg'), colorActive: v('--input-bg'),
+    border: `1px solid ${v('--control-line')}`,
+    boxShadowFocus: v('--focus-ring'), boxShadowActive: v('--focus-ring')
+  },
   Message: {
     /* 旧 .toast：实色深底 + 语义色描边，最大宽度防长文案撑爆 */
     maxWidth: '520px'
@@ -133,12 +146,12 @@ export const themeOverrides = {
     itemBorderRadius: '5px'
   },
   DataTable: {
-    thColor: v('--surface-2') || '#0e1d30',
+    thColor: v('--surface-3'),
     thColorHover: v('--surface-hover') || '#142a44',
     tdColor: v('--surface-1') || '#0b1727',
     tdColorHover: v('--surface-hover') || '#142a44',
     tdColorStriped: v('--surface-2') || '#0e1d30',
-    thTextColor: v('--txt-2') || '#a7b7cb',
+    thTextColor: v('--txt'),
     tdTextColor: v('--txt-2') || '#a7b7cb',
     borderColor: v('--line') || 'rgba(125,165,210,.16)',
     thFontWeight: '600'

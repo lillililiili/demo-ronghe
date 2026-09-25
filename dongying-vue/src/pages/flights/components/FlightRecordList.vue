@@ -23,9 +23,9 @@ const emit = defineEmits(['select']);
 
 <style scoped>
 .flight-record-list { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 8px; padding: 10px; }
-.flight-record { flex: none; display: grid; gap: 7px; width: 100%; min-width: 0; text-align: left; padding: 11px; background: var(--surface-1); color: var(--txt); border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }
+.flight-record { flex: none; display: grid; gap: 7px; width: 100%; min-width: 0; text-align: left; padding: 11px; background: var(--surface-gradient); color: var(--txt); border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }
 .flight-record:hover { border-color: var(--page-accent); }
-.flight-record.selected { border-color: var(--page-accent); background: color-mix(in srgb, var(--page-accent) 9%, var(--surface-1)); box-shadow: inset 3px 0 var(--page-accent); }
+.flight-record.selected { border-color: var(--page-accent); background: var(--surface-selected); box-shadow: inset 3px 0 var(--page-accent); }
 .flight-record:focus-visible { outline: 2px solid var(--page-accent); outline-offset: -2px; }
 .record-heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 7px; }
 .record-heading b { flex: 1; min-width: 100px; line-height: 1.5; font-size: 14px; overflow-wrap: anywhere; }

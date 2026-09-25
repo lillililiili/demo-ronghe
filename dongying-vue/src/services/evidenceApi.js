@@ -20,8 +20,13 @@ export function getEvidenceFile(id) {
 }
 
 export function getEvidenceChain(subjectKind, subjectId) {
-  return apiRequestTimed(`/evidence-chains/${encodeURIComponent(subjectKind)}/${encodeURIComponent(subjectId)}`);
+  return apiRequestTimed(`/evidence-ledger/materials/${encodeURIComponent(subjectKind)}/${encodeURIComponent(subjectId)}`);
 }
+
+export const listEvidenceLedger = values => apiRequestTimed(`/evidence-ledger${buildQuery(values)}`);
+export const getEvidenceLedgerStatistics = values => apiRequestTimed(`/evidence-ledger/stats${buildQuery(values)}`);
+export const getEvidenceRecord = (kind, id, context = {}) => apiRequestTimed(`/evidence-ledger/records/${encodeURIComponent(kind)}/${encodeURIComponent(id)}${buildQuery(context)}`);
+export const exportEvidenceLedger = values => apiDownload(`/evidence-ledger/export.csv${buildQuery(values)}`);
 
 /** 精确读取证据关联的轨迹；离开该记录后停止后续分页，不切到目标最新轨迹。 */
 export async function getEvidenceTrackPoints(trackId, { isCurrent = () => true } = {}) {

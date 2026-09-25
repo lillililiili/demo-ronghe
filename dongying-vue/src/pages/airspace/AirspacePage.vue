@@ -830,7 +830,7 @@ onUnmounted(() => {
 .airspace-bar .toolbar { border-bottom: 0; }
 
 /* 参照飞行计划：左侧记录、中间地图、右侧详情，各栏独立滚动。 */
-.airspace-stage { grid-area: map; position: relative; isolation: isolate; display: flex; flex-direction: column; min-width: 0; min-height: 0; border: 1px solid var(--line); border-radius: var(--r, 8px); overflow: hidden; background: var(--panel); }
+.airspace-stage { grid-area: map; position: relative; isolation: isolate; display: flex; flex-direction: column; min-width: 0; min-height: 0; border: 1px solid var(--line); border-radius: var(--r, 8px); overflow: hidden; background: var(--surface-gradient); }
 .map-heading { flex: none; margin: 0; padding: 12px; border-bottom: 1px solid var(--line); font-size: 14px; }
 .airspace-detail-slot { grid-area: detail; display: flex; min-height: 0; min-width: 0; }
 .airspace-page:not(.has-detail) .airspace-stage { grid-column: 2 / -1; }
@@ -876,7 +876,7 @@ onUnmounted(() => {
 .airspace-map-empty { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); z-index: 6; padding: 6px 14px; border-radius: 20px; font-size: 12.5px; background: rgba(7,18,45,.92); border: 1px solid var(--line); color: var(--txt-2); white-space: nowrap; }
 .airspace-map-empty { top: 50%; transform: translate(-50%, -50%); }
 
-.airspace-drawer { display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.airspace-drawer { display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; background: var(--surface-gradient); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 .drawer-head { display: flex; align-items: flex-start; gap: 8px; padding: 12px 12px 8px; border-bottom: 1px solid var(--line-2); }
 .drawer-title { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .drawer-title b { font-size: 14.5px; color: var(--txt); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -892,8 +892,8 @@ onUnmounted(() => {
 .linkbtn:hover { text-decoration: underline; }
 
 .airspace-list { overflow: auto; flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding: 8px; }
-.airspace-rule-card { display: grid; gap: 7px; flex: none; width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-1); color: var(--txt-2); font: inherit; font-size: 12px; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
-.airspace-rule-card.on { border-color: var(--page-accent); box-shadow: inset 3px 0 var(--page-accent); background: color-mix(in srgb, var(--page-accent) 9%, var(--surface-1)); }
+.airspace-rule-card { display: grid; gap: 7px; flex: none; width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-gradient); color: var(--txt-2); font: inherit; font-size: 12px; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+.airspace-rule-card.on { border-color: var(--page-accent); box-shadow: inset 3px 0 var(--page-accent); background: var(--surface-selected); }
 .airspace-rule-card:focus-visible { outline: 2px solid var(--cyan); outline-offset: -2px; }
 .rule-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 6px; color: var(--txt); }.rule-card-head b { min-width: 0; }.rule-card-head .tag { flex: none; }
 .rule-card-open { color: var(--page-accent); font-size: 11px; }

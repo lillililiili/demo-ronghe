@@ -428,7 +428,7 @@ onMounted(() => {
 :deep(.pn-kpis .lb) { white-space: normal; overflow-wrap: anywhere; }
 .pn-error { margin: 8px 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .tb tr { cursor: pointer; }
-.tb tr.on { background: rgba(34, 211, 238, .12); }
+.tb tr.on { background: var(--surface-selected); }
 .pn-id { display: inline-block; max-width: 160px; white-space: normal; overflow-wrap: anywhere; vertical-align: bottom; }
 .pn-sub { font-size: 11px; color: var(--txt-3); white-space: normal; line-height: 1.4; overflow-wrap: anywhere; }
 .pn-wrap { white-space: normal; line-height: 1.4; overflow-wrap: anywhere; }

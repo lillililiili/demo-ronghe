@@ -1,18 +1,20 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { hasPermission } from '@/services/accessControl.js';
-import { getEvidenceTrackPoints } from '@/services/evidenceApi.js';
+import { getEvidenceRecord, getEvidenceTrackPoints } from '@/services/evidenceApi.js';
 import EvidenceTrackPreview from './EvidenceTrackPreview.vue';
 import EvidencePreviewModal from './EvidencePreviewModal.vue';
 
 const props = defineProps({ records: { type: Array, required: true }, truncated: Boolean,
-  restricted: Boolean, onReturn: { type: Function, required: true } });
+  restricted: Boolean, subjectKind: String, subjectId: String, onReturn: { type: Function, required: true } });
 const selected = ref(0);
 const record = computed(() => props.records[selected.value]);
 const isFile = computed(() => !!record.value?.summary?.kind_code);
 const loading = ref(false);
 const error = ref('');
 const snapshot = ref(null);
+const detailHref = computed(() => `#/evidence?${new URLSearchParams({ track: record.value.record_id,
+  ...(props.subjectKind && props.subjectId ? { subjectKind: props.subjectKind, subjectId: props.subjectId } : {}) })}`);
 let sequence = 0;
 async function load() {
   const own = ++sequence;
@@ -21,9 +23,12 @@ async function load() {
   if (!hasPermission('target:read')) { error.value = '当前账号没有查看轨迹观测点的权限'; return; }
   loading.value = true;
   try {
+    await getEvidenceRecord('TRACK', record.value.record_id, props.subjectKind && props.subjectId
+      ? { subject_kind: props.subjectKind, subject_id: props.subjectId } : {});
+    if (own !== sequence) return;
     const page = await getEvidenceTrackPoints(record.value.record_id, { isCurrent: () => own === sequence });
     if (own !== sequence) return;
-    snapshot.value = { points: page };
+    snapshot.value = { points: page, source_mode: record.value.summary?.source_mode };
   } catch (e) { if (own === sequence) error.value = e.message || '轨迹观测点读取失败'; }
   finally { if (own === sequence) loading.value = false; }
 }
@@ -47,6 +52,7 @@ onBeforeUnmount(() => { sequence += 1; window.removeEventListener('auth-access-c
       <p v-if="loading" class="track-record-message" role="status">正在读取这份证据关联的轨迹观测点</p>
       <div v-else-if="error" class="track-record-message" role="alert">{{ error }} <button class="btn" type="button" @click="load">重新读取</button></div>
       <EvidenceTrackPreview v-else-if="snapshot" :key="record.record_id" :snapshot="snapshot" />
+      <a class="btn" :href="detailHref" @click="onReturn()">查看证据详情</a>
     </template>
   </section>
 </template>

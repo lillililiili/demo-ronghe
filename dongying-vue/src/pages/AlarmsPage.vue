@@ -63,6 +63,23 @@ watch(() => [route.query.tab, route.query.authorization, route.query.event], ([t
 /* reactive 代理同一份模块级状态：n-pagination 的 :page/:page-size 需要响应式，
    底层对象仍是 S.st，跨导航记忆不变 */
 const st = reactive(S.st);
+let evidenceEventSequence = 0;
+async function openEvidenceEvent() {
+  const id = typeof route.query.event === 'string' ? route.query.event : '';
+  if (!id || route.query.tab === 'authorizations' || route.query.authorization) return false;
+  const own = ++evidenceEventSequence;
+  activeTab.value = 'alarms';
+  try {
+    const event = await getUavEvent(id);
+    if (!authorizationPageActive || own !== evidenceEventSequence || route.query.event !== id) return true;
+    await selectAlarm(event.alarm_id);
+  } catch (error) {
+    if (!authorizationPageActive || own !== evidenceEventSequence || route.query.event !== id) return true;
+    ++detailSeq; st.selId = null; cur = emptyDetail(); cur.error = error.message || '关联告警不可见'; paintDetail();
+  }
+  return true;
+}
+watch(() => route.query.event, () => { if (root.value) openEvidenceEvent(); });
 let authorizationEventRequest = 0, authorizationPageActive = true;
 onUnmounted(() => { authorizationPageActive = false; ++authorizationEventRequest; });
 async function showAuthorizationEvent(eventId) {
@@ -908,6 +925,7 @@ onMounted(async () => {
 
   loadKpis();
   await loadList();
+  if (await openEvidenceEvent()) return;
   // safe-default：深链 > 上次选中 > 当前页首条；用户可见可改
   const id = deepId || st.selId || (list.rows[0] && list.rows[0].alarm_id) || null;
   if (id) {

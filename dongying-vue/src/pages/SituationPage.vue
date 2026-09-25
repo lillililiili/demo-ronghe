@@ -1,6 +1,7 @@
 <script setup>
 /* 融合感知指挥台：页面结构保持不变，全部业务状态来自后端领域接口。 */
-import { computed, h, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, h, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { useRoute } from 'vue-router';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import { createSituationApiSource } from '@/pages/situation/situationApiSource.js';
 import { riskMatchesPlan, routeRiskIsActive } from '@/services/situationData.js';
@@ -18,6 +19,7 @@ import { toast } from '@/ui/nv.js';
 import { getAlarm } from '@/services/alarmApi.js';
 import SituationAdvisoryCard from './situation/SituationAdvisoryCard.vue';
 import SituationAlarmPopup from './situation/SituationAlarmPopup.vue';
+import { selectionLayout } from './situation/selectionLayout.js';
 import TargetLiveVideo from '@/components/video/TargetLiveVideo.vue';
 import { autoSmsView } from '@/components/disposal/autoSmsView.js';
 import { autoVoiceView } from '@/components/disposal/autoVoiceView.js';
@@ -44,6 +46,7 @@ let rawSnapshot = null;
 let map = null;
 let stopSource = null;
 let lastSourceErrorAt = 0;
+let selectionResizeObserver = null;
 
 const devices = computed(() => snapshot.value.devices || []);
 const alarms = computed(() => (snapshot.value.alarms || [])
@@ -51,6 +54,16 @@ const alarms = computed(() => (snapshot.value.alarms || [])
   .slice()
   .sort((a, b) => b.ts - a.ts));
 const targets = computed(() => snapshot.value.targets || []);
+const evidenceRoute = useRoute();
+let evidenceTargetHandled = '';
+watch(() => [evidenceRoute.query.target, snapshot.value.generatedAt], ([id, generatedAt]) => {
+  if (typeof id !== 'string' || !id) { evidenceTargetHandled = ''; return; }
+  if (!generatedAt || id === evidenceTargetHandled) return;
+  const target = targets.value.find(item => item.targetId === id);
+  evidenceTargetHandled = id;
+  if (target) selectTarget(target);
+  else { clearSelection(); toast('指定目标不在今日感知范围内，可返回证据管理查看该目标的历史材料。', 'warn'); }
+}, { flush: 'post' });
 const flightPlans = computed(() => snapshot.value.flightPlans || []);
 const risks = computed(() => snapshot.value.risks || []);
 const airspaces = computed(() => snapshot.value.airspaces || []);
@@ -84,6 +97,9 @@ const selectedTarget = computed(() => {
   if (selection.value?.kind !== 'target') return null;
   return targets.value.find(target => target.id === selection.value.id) || null;
 });
+const selectedDevice = computed(() => selection.value?.kind === 'device'
+  ? devices.value.find(device => device.id === selection.value.id) : null);
+const showSelectionPopup = computed(() => !!selectedDevice.value || !!selectedTarget.value || showAlarmPopup.value);
 const selectedUavAlarm = computed(() => {
   if (selection.value?.kind === 'alarm' || selection.value?.alarmId) {
     const alarmId = selection.value.alarmId || selection.value.id;
@@ -310,8 +326,8 @@ function selectDevice(device) {
   if (map) {
     map.sel = null;
     map.planSel = null;
-    map.centerAt(device.lon, device.lat, { scale: map.zoom });
     map.pinHit('device', device.id);
+    focusSelection();
   }
 }
 
@@ -324,8 +340,8 @@ function selectTarget(target, alarmId) {
   if (map) {
     map.sel = target.id;
     map.planSel = null;
-    map.centerAt(target.lon, target.lat, { scale: map.zoom });
     map.pinHit('target', target.id);
+    focusSelection();
   }
   source.loadTargetDetail(target.targetId).catch(error => onSourceError(error, '目标来源链路'));
 }
@@ -345,8 +361,20 @@ function selectAlarm(alarm) {
 
 function alarmAnchor() {
   const target = selectedTarget.value;
-  return map && Number.isFinite(target?.lon) && Number.isFinite(target?.lat)
+  return map && target?.posValid !== false && Number.isFinite(target?.lon) && Number.isFinite(target?.lat)
     ? map.px(target.lon, target.lat) : null;
+}
+
+async function focusSelection(enlarge = true) {
+  const current = selection.value;
+  await nextTick();
+  if (!map || current !== selection.value) return;
+  const item = selectedDevice.value || selectedTarget.value;
+  if (!item || item.posValid === false || !Number.isFinite(item.lon) || !Number.isFinite(item.lat)) return;
+  const { point } = selectionLayout(mapHost.value.parentElement);
+  // 放大至便于辨认的级别；切换对象不累乘缩放，也不缩小用户已经放大的地图。
+  const scale = enlarge ? Math.max(map.zoom, 8) : map.zoom;
+  map.centerAt(item.lon, item.lat, { scale, offset: [point[0] - map.w / 2, point[1] - map.h / 2] });
 }
 
 function isSelectedAlarm(alarm) {
@@ -684,10 +712,13 @@ onMounted(() => {
     onEmptyPick: clearSelection
   });
   stopSource = source.start(applySnapshot, onSourceError);
+  selectionResizeObserver = new ResizeObserver(() => focusSelection(false));
+  selectionResizeObserver.observe(mapHost.value);
   document.addEventListener('visibilitychange', onVisibilityChange);
 });
 
 onUnmounted(() => {
+  selectionResizeObserver?.disconnect();
   document.removeEventListener('visibilitychange', onVisibilityChange);
   if (stopSource) stopSource();
   stopSource = null;
@@ -698,7 +729,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div id="view" class="view situation-page" :class="{ 'has-alarm-popup': showAlarmPopup }" @keydown.esc="clearSelection">
+  <div id="view" class="view situation-page" :class="{ 'has-selection-popup': showSelectionPopup }" @keydown.esc="clearSelection">
     <main class="sit-stage" aria-label="融合感知实时地图">
       <div id="stMap" ref="mapHost" class="sit-map"></div>
 
@@ -778,20 +809,23 @@ onUnmounted(() => {
         </div>
       </aside>
 
-      <SituationAlarmPopup v-if="showAlarmPopup" :key="selectedUavAlarm.alarmId" :get-anchor="alarmAnchor">
-        <div v-if="selectedTarget" @click="onTipAction($event.target.closest('[data-tip-act]')?.dataset.tipAct, { kind: 'target', data: selectedTarget })"
+      <SituationAlarmPopup v-if="showSelectionPopup" :key="`${selection.kind}:${selection.id}`" :get-anchor="alarmAnchor"
+        :label="selectedDevice ? '设备详情' : showAlarmPopup ? '无人机告警详情' : '目标详情'">
+        <div v-if="selectedDevice" @click="onTipAction($event.target.closest('[data-tip-act]')?.dataset.tipAct, { kind: 'device', data: selectedDevice })"
+          v-html="renderDeviceTip(selectedDevice)"></div>
+        <div v-else-if="selectedTarget" @click="onTipAction($event.target.closest('[data-tip-act]')?.dataset.tipAct, { kind: 'target', data: selectedTarget })"
           v-html="renderTargetTip(selectedTarget, showAlarmAdvisoryCard)"></div>
-        <section v-else class="sit-map-pop">
+        <section v-else-if="selectedUavAlarm" class="sit-map-pop">
           <header><span class="sit-map-pop-icon" v-html="U.businessIcon('uav')"></span><span><b>{{ selectedUavAlarm.targetId }}</b><small>无人机告警</small></span>
             <button type="button" aria-label="关闭告警详情" @click="clearSelection" v-html="U.icon('close')"></button></header>
           <div class="sit-map-pop-status"><span class="sit-state is-risk">{{ selectedUavAlarm.level }}风险</span><span>{{ selectedUavAlarm.type }}</span></div>
           <p>{{ selectedUavAlarm.district }} · 告警时间 {{ formatClock(selectedUavAlarm.ts) }}</p>
         </section>
-        <p v-if="!alarmAnchor()" class="sit-alarm-position-note">当前未取得该目标的有效位置，无法定位无人机；以下保留此事件的信息。</p>
+        <p v-if="showAlarmPopup && !alarmAnchor()" class="sit-alarm-position-note">当前未取得该目标的有效位置，无法定位无人机；以下保留此事件的信息。</p>
         <SituationAdvisoryCard v-if="showAlarmAdvisoryCard" :event-id="selectedUavAlarm.eventId" :alarm-label="selectedUavAlarm.id"
           @updated="updateNotification" @open="openAlarmDisposal(selectedUavAlarm)" />
-        <p v-else class="sit-alarm-position-note">此告警未关联无人机事件，暂无可读取的通知记录。</p>
-        <TargetLiveVideo v-if="showTargetVideo && selectedTarget" :key="selectedTarget.targetId || selectedTarget.id"
+        <p v-else-if="showAlarmPopup" class="sit-alarm-position-note">此告警未关联无人机事件，暂无可读取的通知记录。</p>
+        <TargetLiveVideo v-if="showAlarmPopup && showTargetVideo && selectedTarget" :key="selectedTarget.targetId || selectedTarget.id"
           compact default-expanded :target-id="selectedTarget.targetId || ''" :context-label="selectedTarget.id" />
       </SituationAlarmPopup>
       <aside v-if="showTargetVideo && selectedTarget && !showAlarmPopup" class="sit-video-dock sit-glass" aria-label="当前目标视频">
@@ -838,7 +872,7 @@ onUnmounted(() => {
 .sit-alert-toggle,.sit-device-toggle{flex:none;min-height:32px;padding:4px 8px;border:1px solid var(--sit-line);border-radius:6px;background:var(--surface-2);color:var(--txt);font:inherit;font-size:12px;cursor:pointer}
 .sit-alert-toggle:hover,.sit-device-toggle:hover{border-color:var(--cyan);color:var(--cyan)}
 .sit-alert-toggle:focus-visible,.sit-device-toggle:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
-.situation-page.has-alarm-popup :deep(.maptip.is-track){display:none!important}
+.situation-page.has-selection-popup :deep(.maptip){display:none!important}
 .sit-alarm-position-note{margin:0;padding:10px 12px;color:var(--muted);font-size:12px;line-height:1.5}
 .sit-video-dock{position:absolute;z-index:12;left:12px;bottom:72px;width:min(360px,calc(100% - 24px));padding:10px;overflow:auto}
 .situation-page .sit-alert-copy>b,.situation-page .sit-alert-copy>em,.situation-page :deep(.sit-map-pop header b){white-space:normal;overflow:visible;overflow-wrap:anywhere;text-overflow:initial}

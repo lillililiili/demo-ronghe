@@ -759,7 +759,10 @@ onMounted(() => {
                         <ol v-if="selectedEvaluation.evidence_references?.length" class="lg-evidence-timeline">
                           <li v-for="(reference, index) in selectedEvaluation.evidence_references" :key="`${reference.kind}-${reference.id}-${index}`">
                             <span class="lg-evidence-icon" v-html="UI.icon(evidenceIcon(reference.kind))"></span>
-                            <div><b>{{ referenceKindText(reference.kind) }}</b><p :title="reference.id">{{ referenceText(reference) }}</p></div>
+                            <div><b>{{ referenceKindText(reference.kind) }}</b><p :title="reference.id">{{ referenceText(reference) }}</p>
+                              <a v-if="reference.kind === 'track' && reference.id && selectedEvaluation.target_id && hasPermission('evidence:read')"
+                                class="btn" :href="`#/evidence?${new URLSearchParams({ track: reference.id, subjectKind: 'TARGET', subjectId: selectedEvaluation.target_id })}`">查看轨迹证据</a>
+                            </div>
                           </li>
                         </ol>
                         <p v-else>未提供证据引用</p>
@@ -838,7 +841,7 @@ onMounted(() => {
 <style scoped>
 .lg-response-result{margin-top:12px;padding-top:12px;border-top:1px solid var(--line);font-size:13px;overflow-wrap:anywhere}.lg-response-result p{margin:7px 0;line-height:1.6}.lg-response-result .btn{white-space:normal;height:auto;min-height:30px}
 /* 2026-09-17 统一到全站面板风格：面板 = .panel 同款（surface-gradient + line + shadow-soft），文字/线条/强调色全部走 token，不再自带一套配色。 */
-.legality-workbench{--lg-line:var(--line-2);--lg-surface:var(--surface-gradient);--lg-accent:var(--page-accent);overflow:hidden!important}
+.legality-workbench{--lg-line:var(--line-2);--lg-surface:var(--surface-gradient);--lg-accent:var(--blue);overflow:hidden!important}
 .legality-workbench *{box-sizing:border-box}
 .legality-workbench button{font:inherit;cursor:pointer}
 .legality-workbench button:focus-visible,.legality-workbench summary:focus-visible{outline:2px solid var(--cyan);outline-offset:-2px}
@@ -860,10 +863,10 @@ onMounted(() => {
 .lg-list-host{min-height:0;flex:1;display:flex;flex-direction:column}
 .lg-table-scroll{flex:1;min-height:0;overflow:auto;scrollbar-width:thin}
 .lg-target-table{border-collapse:separate;border-spacing:0;width:100%;min-width:720px;table-layout:fixed;font-size:13px;color:var(--txt-2)}
-.lg-target-table th{white-space:nowrap;position:sticky;top:0;z-index:1;height:46px;padding:10px;background:var(--surface-2);color:var(--txt-3);text-align:left;font-size:12px;font-weight:600;border-bottom:1px solid var(--line-2)}
+.lg-target-table th{white-space:nowrap;position:sticky;top:0;z-index:1;height:46px;padding:10px;background:var(--table-head-gradient);color:var(--txt-2);text-align:left;font-size:12px;font-weight:600;border-bottom:1px solid var(--line-2)}
 .lg-target-table td{height:62px;padding:9px;border-bottom:1px solid var(--line-2);white-space:normal;overflow-wrap:anywhere}
 .lg-target-table th:nth-child(1){width:20%}.lg-target-table th:nth-child(2){width:19%}.lg-target-table th:nth-child(3){width:13%}.lg-target-table th:nth-child(4){width:110px}.lg-target-table th:nth-child(5){width:17%}.lg-target-table th:nth-child(6){width:auto}
-.lg-target-table tbody tr{cursor:pointer}.lg-target-table tbody tr:hover{background:rgba(75,156,255,.07)}.lg-target-table tbody tr.is-selected{background:color-mix(in srgb,var(--lg-accent) 14%,transparent);box-shadow:inset 2px 0 0 var(--lg-accent)}
+.lg-target-table tbody tr{cursor:pointer}.lg-target-table tbody tr:hover{background:var(--surface-hover)}.lg-target-table tbody tr.is-selected{background:var(--surface-selected);box-shadow:inset 2px 0 0 var(--lg-accent)}
 .lg-target-link{display:flex;align-items:center;gap:8px;width:100%;padding:0;border:0;background:none;text-align:left;color:inherit}
 .lg-target-icon{display:flex;align-items:center;justify-content:center;flex:none;width:28px;height:28px;border-radius:4px;background:var(--surface-2);color:var(--blue)}
 .lg-row-target{display:flex;flex-direction:column;min-width:0;gap:5px}.lg-row-target b{overflow-wrap:anywhere;white-space:normal;color:var(--txt);font-size:12px;font-weight:500}.lg-row-target small{font-size:11px;color:var(--txt-3)}

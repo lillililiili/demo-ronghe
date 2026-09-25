@@ -4,6 +4,13 @@
   const root = document.querySelector('.simulator-workspace');
   const frame = document.querySelector('#input-frame');
   let inputTab = 'plans';
+  const sceneTools = document.querySelector('#scene-tools');
+  document.addEventListener('click', event => {
+    if (!sceneTools.contains(event.target)) sceneTools.open = false;
+  });
+  sceneTools.addEventListener('keydown', event => {
+    if (event.key === 'Escape') { sceneTools.open = false; sceneTools.querySelector('summary').focus(); }
+  });
   function syncFrame() {
     frame.contentWindow?.postMessage({type:'simulator-input-view', tab:inputTab, visible:root.dataset.workspace==='inputs'}, location.origin);
   }

@@ -53,25 +53,33 @@
   --icon-unknown:#b067ff;
   --icon-unknown-device:#20c9fa;
 
-  /* 2026-09-19 用户参考图：深宝蓝底、亮蓝卡片层次；状态与地图色独立保留。 */
-  --canvas:#060c20;
-  --surface-1:#0b1736;
-  --surface-2:#122951;
-  --surface-3:#193660;
-  --surface-hover:#1b3b70;
+  /* 2026-09-24 用户参考图：深海军蓝与轻微蓝色明暗层级；状态与地图色独立保留。 */
+  --canvas:#060f23;
+  --surface-1:#06162f;
+  --surface-2:#081c3c;
+  --surface-3:#0c2950;
+  --surface-hover:#0e2d56;
+  --input-bg:#08152b;
+  --surface-selected:#103b70;
+  --nav-selected:rgba(47,140,255,.16);
+  --control-line:#32649b;
+  --action-hover:#459aff;
+  --action-pressed:#1775e5;
+  --action-text:#060f23;
+  --focus-ring:0 0 0 2px rgba(47,140,255,.24);
   --bg-0:var(--canvas);
   --bg-1:var(--surface-1);
   --bg-2:var(--surface-2);
   --bg-3:var(--surface-3);
-  --panel:rgba(11,23,54,.96);
-  --panel-2:rgba(11,23,54,.88);
-  --line:rgba(54,148,255,.34);
-  --line-2:rgba(54,148,255,.18);
-  --txt:#edf7ff;
-  --txt-2:#bed3ec;
-  --txt-3:#96b4d5;
-  --blue:#3694ff;
-  --cyan:#26e5ff;
+  --panel:var(--surface-2);
+  --panel-2:var(--surface-2);
+  --line:#1b3c68;
+  --line-2:#142e50;
+  --txt:#e8f1ff;
+  --txt-2:#c1d0e8;
+  --txt-3:#8da4c5;
+  --blue:#2f8cff;
+  --cyan:#16cff3;
   --green:#36edac;
   --amber:#ffcf52;
   --orange:#ff9b45;
@@ -80,27 +88,27 @@
   --pink:#ff7bc8;
   --indigo:#939bff;
   --gray:#95a8c4;
-  --action-blue:#0864d9;
+  --action-blue:#2f8cff;
   --action-red:#ba2949;
   --page-accent:var(--blue);
-  --shadow:0 16px 40px rgba(0,4,18,.48),0 0 24px rgba(54,148,255,.16);
-  --shadow-soft:0 8px 22px rgba(0,4,18,.28),inset 0 1px 0 rgba(161,225,255,.12);
-  /* 霓虹主题的展示变量；不参与尺寸、布局和业务状态判定。 */
-  --highlight:rgba(190,239,255,.24);
-  --glow-blue:rgba(54,148,255,.30);
-  --glow-cyan:rgba(38,229,255,.24);
-  --surface-gradient:linear-gradient(180deg,var(--surface-2),var(--surface-1) 78%);
-  --header-gradient:linear-gradient(105deg,#0d1c40,#0a1432 64%,#0b1839);
-  --brand-gradient:linear-gradient(90deg,#8fd0ff,var(--txt));
-  --kpi-art-overlay:linear-gradient(92deg,rgba(11,25,60,.97),rgba(14,30,68,.84) 52%,rgba(14,30,68,.68));
-  --action-gradient:linear-gradient(120deg,var(--action-blue),#157bc7);
-  --table-head-gradient:linear-gradient(180deg,#153e6a,#0d294c);
-  --ambient-gradient:radial-gradient(ellipse at 12% 0%,rgba(54,148,255,.22),transparent 50%),radial-gradient(ellipse at 95% 80%,rgba(181,138,255,.12),transparent 48%);
+  --shadow:0 8px 24px rgba(0,6,20,.24);
+  --shadow-soft:none;
+  /* 保留旧展示变量名称以兼容消费者；面板保留轻微蓝色明暗，操作面用实色，不参与业务状态判定。 */
+  --highlight:transparent;
+  --glow-blue:transparent;
+  --glow-cyan:transparent;
+  --surface-gradient:linear-gradient(135deg,#0b2954 0%,#081e40 46%,#06162f 100%);
+  --header-gradient:var(--surface-1);
+  --brand-gradient:none;
+  --kpi-art-overlay:none;
+  --action-gradient:var(--action-blue);
+  --table-head-gradient:linear-gradient(180deg,#0c2d58,#092242);
+  --ambient-gradient:none;
   --chart-grid:rgba(112,183,255,.14);
   --chart-axis:rgba(112,183,255,.30);
   --chart-tooltip:#0b2447;
   --login-overlay:linear-gradient(100deg,rgba(4,13,33,.42),rgba(4,13,33,.18) 48%,rgba(4,13,33,.68)),radial-gradient(ellipse at 75% 45%,rgba(38,229,255,.14),transparent 58%);
-  --r:8px;
+  --r:6px;
   --header-h:64px;
   --nav-w:176px;
   --gap:12px;
@@ -109,7 +117,7 @@
   --table-compact-font-size:12.25px;
   --table-detail-font-size:11.5px;
   /* 登录与修改密码沿用独立变量，与业务页共用深蓝高光色系。 */
-  --login-card:linear-gradient(145deg,rgba(16,44,82,.92),rgba(4,19,43,.94));
+  --login-card:var(--surface-gradient);
   --login-input:rgba(4,19,43,.72);
   --login-line:rgba(80,200,255,.52);
   --login-text:#f3f7fd;
@@ -119,5 +127,5 @@
   --login-action-pressed:#0954bb;
   --login-link:#66deff;
   --login-error:#ffb8bd;
-  --login-shadow:0 24px 64px rgba(2,12,27,.52),0 0 42px rgba(38,229,255,.16),inset 0 1px 0 rgba(190,239,255,.24);
+  --login-shadow:var(--shadow);
 }

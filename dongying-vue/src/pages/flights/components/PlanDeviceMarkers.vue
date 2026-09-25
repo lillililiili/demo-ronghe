@@ -90,7 +90,7 @@ const placedMarkers = computed(() => {
 .device-point :deep(.business-icon) { width:24px;height:24px; }
 .device-status-corner{position:absolute;right:0;bottom:0;}
 .device-status-corner :deep(svg){width:10px;height:10px;fill:none;stroke:currentColor;stroke-width:2;}
-.device-map-card { position: absolute; left: calc(100% - 4px); bottom: 50%; width: min(300px, var(--device-card-width)); max-height: var(--device-card-height); overflow-y: auto; overscroll-behavior: contain; display: grid; gap: 5px; padding: 9px 11px; border: 1px solid currentColor; border-radius: 7px; background: var(--surface-1, #102033); box-shadow: 0 3px 12px #0004; visibility: hidden; opacity: 0; pointer-events: none; font-size: 12px; }
+.device-map-card { position: absolute; left: calc(100% - 4px); bottom: 50%; width: min(300px, var(--device-card-width)); max-height: var(--device-card-height); overflow-y: auto; overscroll-behavior: contain; display: grid; gap: 5px; padding: 9px 11px; border: 1px solid currentColor; border-radius: 7px; background: var(--surface-gradient); box-shadow: 0 3px 12px #0004; visibility: hidden; opacity: 0; pointer-events: none; font-size: 12px; }
 .device-map-marker:hover .device-map-card, .device-map-marker:focus-within .device-map-card { visibility: visible; opacity: 1; pointer-events: auto; }
 .leftward .device-map-card { left: auto; right: calc(100% - 4px); }
 .downward .device-map-card { bottom: auto; top: 50%; }

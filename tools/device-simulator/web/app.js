@@ -69,15 +69,15 @@ function renderMap(){
   const project=p=>map.project(p), points=items=>items.map(project), attr=items=>items.map(p=>p.join(',')).join(' ');
   let svg='';
   state.zones.forEach(z=>{const ps=points(z.points);svg+=`<polygon class="map-geometry" data-action="select" data-kind="zone" data-id="${z.id}" points="${attr(ps)}" fill="#e5ad432b" stroke="#efb849" stroke-width="2.5"/>`;const p=ps[1]||ps[0];if(p)svg+=label(p[0]+20,p[1]+35,z.name);});
-  state.plans.forEach(p=>{const ps=points(p.points);svg+=`<polyline class="map-geometry" data-action="select" data-kind="plan" data-id="${p.id}" points="${attr(ps)}" fill="none" stroke="#b4c3d5" stroke-width="3" stroke-dasharray="10 7"/>`;svg+=ps.map(([x,y])=>`<circle cx="${x}" cy="${y}" r="4" fill="#285076" stroke="#e5f3ff" stroke-width="1.5"/>`).join('');const q=ps[Math.floor(ps.length/2)];if(q)svg+=label(q[0],q[1]-40,p.name);});
-  state.targets.forEach(t=>{const ps=points(t.path),color=t.kind==='bird'?'#41ddbf':t.kind==='balloon'?'#c797ff':'#39dafa';svg+=`<polyline class="map-geometry" data-action="select" data-kind="target" data-id="${t.id}" points="${attr(ps)}" fill="none" stroke="${color}" stroke-width="2.5"/>`;svg+=ps.map(([x,y])=>`<circle cx="${x}" cy="${y}" r="3.5" fill="${color}" stroke="#b6f5ff" stroke-width="1.4"/>`).join('');});
+  state.plans.forEach(p=>{const ps=points(p.points);svg+=`<polyline class="map-geometry" data-action="select" data-kind="plan" data-id="${p.id}" points="${attr(ps)}" fill="none" stroke="#8190a1" stroke-width="3" stroke-dasharray="10 7"/>`;svg+=ps.map(([x,y])=>`<circle cx="${x}" cy="${y}" r="4" fill="#285076" stroke="#e5f3ff" stroke-width="1.5"/>`).join('');const q=ps[Math.floor(ps.length/2)];if(q)svg+=label(q[0],q[1]-40,p.name);});
+  state.targets.forEach(t=>{const ps=points(t.path),color=t.kind==='bird'?'#16866d':t.kind==='balloon'?'#9261c2':'#2867e8';svg+=`<polyline class="map-geometry" data-action="select" data-kind="target" data-id="${t.id}" points="${attr(ps)}" fill="none" stroke="${color}" stroke-width="2.5"/>`;svg+=ps.map(([x,y])=>`<circle cx="${x}" cy="${y}" r="3.5" fill="${color}" stroke="#ffffff" stroke-width="1.4"/>`).join('');});
   const departing=state.targets.find(t=>t.id===activeTarget());
-  if(departing?.departurePath?.length){const ps=points(departing.departurePath);svg+=`<polyline points="${attr(ps)}" fill="none" stroke="#c1a2ff" stroke-width="2.5" stroke-dasharray="5 5"/>`+ps.map(([x,y])=>`<circle cx="${x}" cy="${y}" r="4" fill="#c1a2ff"/>`).join('');const last=ps.at(-1);svg+=label(last[0],last[1]+25,'撤离航线（预设）');}
+  if(departing?.departurePath?.length){const ps=points(departing.departurePath);svg+=`<polyline points="${attr(ps)}" fill="none" stroke="#9261c2" stroke-width="2.5" stroke-dasharray="5 5"/>`+ps.map(([x,y])=>`<circle cx="${x}" cy="${y}" r="4" fill="#9261c2"/>`).join('');const last=ps.at(-1);svg+=label(last[0],last[1]+25,'撤离航线（预设）');}
   state.sites.forEach(s=>{const [x,y]=project([s.x,s.y]);svg+=siteMarker({...s,x,y});});
   state.targets.forEach(t=>{const p=project(position(t));svg+=marker('target',t.id,t.kind,p[0],p[1],t.name,activeTarget()===t.id);});
   $('#map-layers').innerHTML=svg;
   const drawn=points(draw?.points||[]);
-  $('#draw-layer').innerHTML=drawn.length?`<polyline points="${attr(drawn)}" fill="none" stroke="${draw.mode==='zone'?'#ffd470':'#71e9ff'}" stroke-width="3" stroke-dasharray="6 4"/>${drawn.map(([x,y])=>`<circle cx="${x}" cy="${y}" r="5" fill="#e1faff"/>`).join('')}`:'';
+  $('#draw-layer').innerHTML=drawn.length?`<polyline points="${attr(drawn)}" fill="none" stroke="${draw.mode==='zone'?'#b58028':'#2867e8'}" stroke-width="3" stroke-dasharray="6 4"/>${drawn.map(([x,y])=>`<circle cx="${x}" cy="${y}" r="5" fill="#2867e8"/>`).join('')}`:'';
 }
 window.addEventListener('simulator-map:render',renderMap);
 window.addEventListener('simulator-map:ready',()=>{window.SimulatorMap.fit(scenePoints());renderMap();});

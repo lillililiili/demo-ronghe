@@ -73,3 +73,6 @@ pre.code .k{color:#7fd0ff} pre.code .s{color:#9ae6a0} pre.code .n{color:#ffc978}
 .mono{font-family:Menlo,monospace}
 .right{text-align:right} .center{text-align:center}
 .scroll{overflow:auto;min-height:0}
+
+/* 与业务面板共用轻微蓝色明暗；Naive 的 color token 继续使用实色。 */
+.n-card,.n-dialog,.n-drawer .n-drawer-content{background-image:var(--surface-gradient);border-color:var(--line)}

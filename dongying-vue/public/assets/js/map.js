@@ -527,8 +527,12 @@
     options = options || {};
     this._isDefaultView = false;
     if (Number.isFinite(options.scale)) this.setZoom(options.scale);
-    if (!options._replay) this._focus = { kind: 'center', lon, lat, scale: this.zoom };
-    this._pendingCenter = this._clampCenter(lon, lat, this._levelForScale(this.zoom));
+    const offset = Array.isArray(options.offset) ? options.offset : [0, 0];
+    if (!options._replay) this._focus = { kind: 'center', lon, lat, scale: this.zoom, offset };
+    const level = this._levelForScale(this.zoom);
+    const point = merc(lon, lat), size = 512 * Math.pow(2, level);
+    const center = geographic(point[0] - offset[0] / size, point[1] - offset[1] / size);
+    this._pendingCenter = this._clampCenter(center[0], center[1], level);
     if (this.map) this.map.setCenter(this._pendingCenter);
     this.draw();
     return this;
@@ -539,7 +543,7 @@
     const focus = this._focus;
     if (!focus) return this.resetView();
     if (focus.kind === 'fit') return this.fitTo(focus.coordinates, focus.padding);
-    return this.centerAt(focus.lon, focus.lat, { scale: focus.scale, _replay: true });
+    return this.centerAt(focus.lon, focus.lat, { scale: focus.scale, offset: focus.offset, _replay: true });
   };
   MapView.prototype.resetView = function (scale) {
     this.ox = this.oy = 0;
@@ -1129,6 +1133,7 @@
   MapView.prototype._paintLayers = function (c, W, H) {
     const P = (a, b) => this.px(a, b);
     const picks = [];
+    let selectedMarker = null;
 
     /* 四源覆盖只在融合感知开关下启用，避免改变告警页、飞行页等共享地图。 */
     if (this.opt.fusionProfile && this.layers.coverage) {
@@ -1211,8 +1216,16 @@
     if (this.opt.fusionProfile && this.layers.flightPlan) this._drawFlightPlans(c, P, picks);
 
     // 只错开屏幕图形；位置、覆盖范围、感知关联线与轨迹仍使用原始坐标。
-    const occupiedIcons = [];
-    const iconPoint = anchor => {
+    const selectedDevice = this.opt.fusionProfile && this.layers.device
+      ? (this.data.devices || []).slice(0, this.opt.maxDev || 90).find(d => this._pinnedKey === 'device:' + d.id) : null;
+    const selectedTarget = this.opt.fusionProfile && this.layers.track
+      ? (this.data.targets || []).find(t => this._pinnedKey === 'target:' + t.id && t.posValid !== false
+        && (!t.layerKey || this.layers[t.layerKey] !== false)) : null;
+    const selectedAnchor = selectedDevice || (selectedTarget && this._targetAnchor(selectedTarget));
+    const occupiedIcons = selectedAnchor ? [P(selectedAnchor.lon, selectedAnchor.lat)] : [];
+    const iconPoint = (anchor, selected) => {
+      // 当前选中图标固定在真实投影点，周围图标为它让位。
+      if (selected) return anchor;
       if (anchor[0] < 0 || anchor[0] > W || anchor[1] < 0 || anchor[1] > H) return anchor;
       const free = p => p[0] >= 18 && p[0] <= W-18 && p[1] >= 18 && p[1] <= H-18
         && occupiedIcons.every(q => Math.hypot(p[0]-q[0],p[1]-q[1]) >= 40);
@@ -1230,9 +1243,11 @@
       (this.data.devices || []).slice(0, this.opt.maxDev || 90).forEach(d => {
         const anchor = P(d.lon, d.lat);
         if (anchor[0] < -20 || anchor[0] > W + 20 || anchor[1] < -20 || anchor[1] > H + 20) return;
-        const q = iconPoint(anchor);
+        const isSelected = selectedDevice === d;
+        const q = iconPoint(anchor, isSelected);
         const col = d.status === '在线' ? (this.opt.fusionProfile ? this._sensorColor(d) : (d.alarm ? '#d97706' : '#008fb3')) : d.status === '离线' ? '#64748b' : '#f1a43a';
-        this._drawFusionDevice(c, d, q);
+        if (isSelected) selectedMarker = { q, draw: () => this._drawFusionDevice(c, d, q) };
+        else this._drawFusionDevice(c, d, q);
         picks.push({
           x: q[0], y: q[1], kind: 'device', data: d,
           tip: `<b>${d.name}</b><dl class="kv" style="margin-top:6px">
@@ -1245,8 +1260,7 @@
 
     /* 目标轨迹 */
     if (this.layers.track) {
-      /* 选中态可见性（用户实测"不明显"后强化）：有选中目标时其余目标整体压暗，
-         对比是最强的可见性手段；选中者叠加 强脉冲 + 稳定内圈 + 四角定位括号。 */
+      /* 保留其他目标的既有弱化效果，融合感知选中图标最后绘制。 */
       const selOnMap = !!this.sel && (this.data.targets || []).some(x => x.id === this.sel);
       (this.data.targets || []).forEach((t, ti) => {
         // 阶段 8：目标可声明所属图层（如 raw-track 原始轨迹层），未声明即 track；未知图层键默认可见。
@@ -1281,8 +1295,9 @@
             c.fillStyle = col + '14'; c.fill(); c.setLineDash([]); c.restore();
           }
         }
-        const displayPoint = iconPoint(q);
-        this._drawTarget(c, t, displayPoint, col, isSel);
+        const displayPoint = iconPoint(q, selectedTarget === t);
+        if (selectedTarget === t) selectedMarker = { q: displayPoint, draw: () => this._drawTarget(c, t, displayPoint, col, isSel) };
+        else this._drawTarget(c, t, displayPoint, col, isSel);
         if (dim) c.restore();
         const altitudeTx = t.alt == null ? '—' : html(t.alt) + ' m AMSL';
         const speedTx = t.speed == null ? '—' : html(t.speed) + ' m/s';
@@ -1322,6 +1337,25 @@
             <dt>时间</dt><dd>${a.time.slice(11)}</dd><dt>状态</dt><dd>${a.status}</dd></dl>`
         });
       });
+    }
+    if (selectedMarker) {
+      const { q, draw } = selectedMarker;
+      c.save();
+      c.translate(q[0], q[1]); c.scale(1.25, 1.25); c.translate(-q[0], -q[1]);
+      draw();
+      c.restore();
+      // 静态焦点角标与异常红光分开，不改变设备类别色或告警状态。
+      c.save(); c.translate(q[0], q[1]); c.setLineDash([]);
+      c.beginPath();
+      for (const sx of [-1, 1]) for (const sy of [-1, 1]) {
+        c.moveTo(sx * 15, sy * 27); c.lineTo(sx * 27, sy * 27); c.lineTo(sx * 27, sy * 15);
+      }
+      c.strokeStyle = '#071b38'; c.lineWidth = 6; c.stroke();
+      c.strokeStyle = '#b6f5ff'; c.lineWidth = 2.5; c.stroke();
+      c.font = '600 12px "PingFang SC",sans-serif'; c.textAlign = 'center';
+      c.strokeStyle = '#071b38'; c.lineWidth = 4; c.strokeText('已选中', 0, 45);
+      c.fillStyle = '#b6f5ff'; c.fillText('已选中', 0, 45);
+      c.restore();
     }
     this._pickPts = picks;
     if (this.opt.pinSelTip || (this.opt.interactiveTip && this.tip && this.tip.style.display !== 'none')) this._hit();

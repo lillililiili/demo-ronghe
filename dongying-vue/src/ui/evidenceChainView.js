@@ -6,19 +6,22 @@ import { escEvidence, fmtEvidenceTime, openEvidenceFileModal, sizeText } from '@
 import { openModal } from '@/ui/modal.js';
 import { evidenceDisplayType } from '@/services/evidenceTrackData.js';
 import EvidenceTrackModal from '@/components/evidence/EvidenceTrackModal.vue';
+import EvidenceCommandModal from '@/components/evidence/EvidenceCommandModal.vue';
+import { EVIDENCE_CATEGORY_LABEL, COMMAND_TYPE_LABEL } from '@/services/evidenceLedger.js';
 
-const TYPE_ICON = { TRACK: 'trend', VIDEO: 'video', IMAGE: 'camera' };
+const TYPE_ICON = { TRACK: 'trend', VIDEO: 'video', IMAGE: 'camera', COMMAND: 'list' };
 const COVERAGE_TAG = { PRESENT: 't-green', ABSENT: 't-orange', FORBIDDEN: 't-gray' };
 const ABSENT_HINT = {
   TRACK: '没有已关联的实测轨迹',
   VIDEO: '没有已关联的录像文件',
-  IMAGE: '没有已关联的图像文件'
+  IMAGE: '没有已关联的图片文件', COMMAND: '没有已关联的实际指令或日志'
 };
-/* 接口仍返回八类；页面只展示轨迹/视频/图像。告警、判定、授权、处置、操作是办理记录，不上证据区。 */
-const EVIDENCE_MATERIAL_TYPES = ['TRACK', 'VIDEO', 'IMAGE'];
+/* 统一读取明确关联的四类材料；审批与实际设备命令分开。 */
+const EVIDENCE_MATERIAL_TYPES = ['VIDEO', 'TRACK', 'IMAGE', 'COMMAND'];
 
 export function isFileRecord(record) {
   const summary = record && record.summary;
+  if (summary?.source_kind) return summary.source_kind === 'FILE';
   return !!(summary && (summary.kind_code || summary.evidence_no || summary.sha256));
 }
 
@@ -34,6 +37,7 @@ export function recordCaption(record) {
 
 export function recordHint(record) {
   const summary = record.summary || {};
+  if (summary.source_kind === 'COMMAND') return `${COMMAND_TYPE_LABEL[summary.original_name] || summary.original_name} · ${summary.evidence_no}`;
   if (summary.original_name) return summary.original_name;
   if (summary.evidence_no) return summary.evidence_no;
   if (summary.layer) return summary.point_count != null ? `${summary.layer} · ${summary.point_count} 点` : summary.layer;
@@ -49,16 +53,16 @@ export function chainTypeCards(chain) {
     const restricted = item.status === 'FORBIDDEN';
     const status = ofType.length ? 'PRESENT' : restricted ? 'FORBIDDEN' : 'ABSENT';
     const broken = ofType.filter(row => row.availability === 'UNAVAILABLE').length;
-    const count = ofType.length;
-    const truncated = !!item.truncated || (type === 'TRACK' && !!coverage.IMAGE?.truncated);
+    const count = Number.isSafeInteger(item.count) ? item.count : ofType.length;
+    const truncated = !!item.truncated;
     const newest = ofType.length ? ofType[ofType.length - 1] : null;
     const statusText = status === 'PRESENT'
       ? (broken ? `已收录 ${count} · 异常 ${broken}` : `已收录 ${count}`)
-      : status === 'ABSENT' && truncated ? '本次未返回' : labelOf(EVIDENCE_COVERAGE_LABEL, status, status);
+      : status === 'ABSENT' ? (truncated ? '本次未返回' : '暂无关联') : labelOf(EVIDENCE_COVERAGE_LABEL, status, status);
     const preview = status === 'FORBIDDEN'
       ? '当前账号没有查看权限'
       : (newest ? recordHint(newest) : truncated ? '仅返回部分记录，完整材料状态待确认' : ABSENT_HINT[type]);
-    const label = labelOf(EVIDENCE_RECORD_TYPE_LABEL, type, type);
+    const label = EVIDENCE_CATEGORY_LABEL[type] || type;
     return {
       type, label, icon: TYPE_ICON[type] || 'folder', status, count, broken, restricted,
       truncated, records: ofType, statusText, preview,
@@ -72,10 +76,16 @@ export function chainTypeCards(chain) {
 export function openEvidenceChainTypeModal({ chain, type }) {
   const card = chainTypeCards(chain).find(item => item.type === type);
   if (!card) return;
+  if (type === 'COMMAND' && card.records.length) {
+    const handle = openModal({ title: '指令证据', width: '760px', footer: false,
+      render: () => h(EvidenceCommandModal, { records: card.records, context: { subject_kind: chain.subject_kind, subject_id: chain.subject_id },
+        truncated: card.truncated, onReturn: () => handle.close() }) });
+    return handle;
+  }
   if (type === 'TRACK' && card.records.length) {
     const handle = openModal({ title: '轨迹证据', width: '1180px', footer: false,
       render: () => h(EvidenceTrackModal, { records: card.records, truncated: card.truncated,
-        restricted: card.restricted, onReturn: () => handle.close() }) });
+        restricted: card.restricted, subjectKind: chain.subject_kind, subjectId: chain.subject_id, onReturn: () => handle.close() }) });
     return handle;
   }
   const files = card.records.filter(isFileRecord).map(record => ({

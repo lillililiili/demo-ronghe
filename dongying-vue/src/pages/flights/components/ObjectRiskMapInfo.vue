@@ -44,9 +44,9 @@ const currentTime = computed(() => time(props.trail?.[props.trailIndex]?.t));
 .object-symbol { display: grid; place-items: center; width: 30px; height: 30px; background:transparent;border:0;box-shadow:none; }
 .object-symbol :deep(svg) { width:22px;height:22px; }.object-symbol span { display: flex; }
 .object-risk-state{position:absolute;right:0;bottom:0;display:flex}.object-risk-state :deep(svg){width:10px;height:10px;fill:none;stroke:currentColor;stroke-width:2}
-.object-label { position: absolute; left: 38px; top: -3px; min-width: 94px; background: rgba(13,31,47,.84); border-left: 2px solid currentColor; border-radius: 4px; padding: 5px 8px; display: grid; gap: 2px; font-size: 11px; white-space: nowrap; }
+.object-label { position: absolute; left: 38px; top: -3px; min-width: 94px; background: var(--surface-gradient); border-left: 2px solid currentColor; border-radius: 4px; padding: 5px 8px; display: grid; gap: 2px; font-size: 11px; white-space: nowrap; }
 .object-label b { color: var(--txt-1); }.object-label span { font-size: 9px; color: var(--txt-2); }.object-label.leftward { left: auto; right: 8px; transform: translateX(-30px); }
-.object-map-tools,.object-location-note,.object-playback,.object-legend { position: absolute; z-index: 5; background: rgba(15,32,49,.72); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid rgba(210,228,245,.24); color: var(--txt-2); border-radius: 6px; font-size: 11px; padding: 5px 7px; }
+.object-map-tools,.object-location-note,.object-playback,.object-legend { position: absolute; z-index: 5; background: var(--surface-gradient); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid var(--line); color: var(--txt-2); border-radius: 6px; font-size: 11px; padding: 5px 7px; }
 .object-map-tools { top: 48px; left: 56px; display: flex; gap: 4px; max-width: calc(100% - 66px); flex-wrap: wrap; }
 button { cursor: pointer; border: 0; border-radius: 4px; color: inherit; background: transparent; font: inherit; padding: 4px 6px; }button[aria-pressed=true] { color: var(--cyan); background: #ffffff12; }button:disabled { opacity: .4; cursor: default; }
 button:focus-visible,summary:focus-visible { outline: 2px solid var(--cyan); outline-offset: 1px; }

@@ -4,15 +4,14 @@
    地图内容由 MapView 独立管理，本文件只处理外层页面与容器视觉。
    ============================================================ */
 .bs-body{
-  overflow:hidden;background:#030b17 url('/assets/img/bigscreen/cockpit-glow-bg.png') no-repeat center/cover;
+  overflow:hidden;background:var(--canvas);
   background-attachment:fixed
 }
 .bs-root{
   position:relative;z-index:1;display:flex;flex-direction:column;height:100vh;min-width:1280px;
-  padding:0 14px 14px;background:rgba(1,8,19,.28);isolation:isolate
+  padding:0 14px 14px;background:var(--canvas);isolation:isolate
 }
-.bs-root::before{
-  content:"";position:absolute;z-index:-1;inset:0;pointer-events:none;
+.bs-root::before{content:none;position:absolute;z-index:-1;inset:0;pointer-events:none;
   background:url('/assets/img/bigscreen/cockpit-glow-bg.png') no-repeat center/cover;opacity:.72;
   filter:saturate(1.34) contrast(1.12)
 }
@@ -20,13 +19,8 @@
 /* ---------- 顶部指挥标题带 ---------- */
 .bs-hdr{
   flex:none;height:64px;display:grid;grid-template-columns:minmax(320px,1fr) auto minmax(320px,1fr);
-  align-items:center;margin:0 -14px 12px;padding:0 22px;
-  background-color:rgba(2,11,25,.78);background-image:url('/assets/img/bigscreen/cockpit-glow-bg.png');
-  background-repeat:no-repeat;background-position:center 3%;background-size:cover;background-blend-mode:screen;
-  border-bottom:1px solid rgba(61,207,255,.55);
-  box-shadow:0 10px 34px rgba(0,0,0,.32),0 2px 20px rgba(19,151,255,.13),inset 0 -1px 0 rgba(97,231,255,.16);
-  backdrop-filter:blur(9px)
-}
+  align-items:center;margin:0 -14px 12px;padding:0 22px;background-color:var(--surface-1);background-image:none;
+  background-repeat:no-repeat;background-position:center 3%;background-size:cover;background-blend-mode:screen;border-bottom:1px solid var(--line);box-shadow:none;backdrop-filter:none}
 .bs-hdr-l{display:flex;align-items:center;gap:10px;color:#b9cbe0;font-size:13px;letter-spacing:.2px;white-space:nowrap}
 .bs-hdr-l img{width:30px;height:30px;flex:none;object-fit:contain;filter:drop-shadow(0 0 10px rgba(60,190,255,.75))}
 .bs-hdr-t{display:flex;align-items:center;gap:14px;white-space:nowrap}
@@ -60,26 +54,14 @@
 
 /* ---------- 指挥舱面板 ---------- */
 .bs-col .panel{
-  flex:1;min-height:0;overflow:hidden;border-color:rgba(35,176,255,.58);border-radius:3px;
-  background-color:rgba(3,17,35,.76);background-image:url('/assets/img/bigscreen/cockpit-glow-bg.png');
-  background-repeat:no-repeat;background-position:center;background-size:220% auto;background-blend-mode:screen;
-  backdrop-filter:blur(4px) saturate(1.2);
-  outline:1px solid rgba(93,209,255,.11);outline-offset:-4px;
-  box-shadow:0 0 0 1px rgba(1,8,18,.9),0 12px 32px rgba(0,0,0,.28),0 0 10px rgba(29,160,255,.16),0 0 28px rgba(25,139,255,.08),inset 0 0 0 1px rgba(95,218,255,.1),inset 0 0 18px rgba(45,207,208,.055),inset 0 0 38px rgba(25,132,220,.1)
-}
-.bs-col .panel:hover{
-  border-color:rgba(90,226,255,.94);outline-color:rgba(118,230,255,.25);
-  box-shadow:0 0 0 1px rgba(1,8,18,.9),0 12px 34px rgba(0,0,0,.3),0 0 11px rgba(66,207,255,.35),0 0 30px rgba(29,171,255,.18),inset 0 0 0 1px rgba(133,235,255,.18),inset 0 0 42px rgba(22,126,220,.14)
-}
+  flex:1;min-height:0;overflow:hidden;border-color:var(--line);border-radius:var(--r);background-color:var(--surface-2);background-image:none;
+  background-repeat:no-repeat;background-position:center;background-size:220% auto;background-blend-mode:screen;backdrop-filter:none;outline:none;outline-offset:-4px;box-shadow:none}
+.bs-col .panel:hover{border-color:var(--line);outline-color:rgba(118,230,255,.25);box-shadow:none;outline:none;}
 .bs-col .panel>.ph{
-  min-height:44px;padding:8px 12px;border-bottom-color:rgba(44,153,226,.19);
-  background:rgba(10,42,77,.48);box-shadow:inset 0 -1px 12px rgba(45,173,255,.045)
-}
+  min-height:44px;padding:8px 12px;border-bottom-color:var(--line);background:var(--surface-3);box-shadow:none}
 .bs-col .panel>.ph h3{color:#edf6ff;font-size:14.5px;font-weight:650;letter-spacing:.25px}
 .bs-col .panel>.ph h3::before{
-  display:block;width:3px;height:15px;border-radius:1px;background:var(--cyan);
-  box-shadow:0 0 5px currentColor,0 0 14px rgba(45,207,208,.85)
-}
+  display:block;width:3px;height:15px;border-radius:1px;background:var(--cyan);box-shadow:none}
 .bs-col .panel>.ph .sub{color:#8299b5;font-size:11.5px}
 .bs-grid .panel>.pb{display:flex;flex-direction:column;overflow:hidden;padding:8px 10px}
 .bs-chart{flex:1;min-height:118px}
@@ -115,16 +97,11 @@
 .bs-kpis .kpi{
   --tone:var(--kpi-tone,var(--blue));--kpi-c:var(--tone);appearance:none;isolation:isolate;position:relative;display:flex;
   min-height:136px;flex-direction:column;justify-content:center;gap:1px;padding:10px 8px 9px;
-  border:1px solid color-mix(in srgb,var(--tone) 44%,#173c62);border-radius:3px;
-  background-color:rgba(5,23,46,.76);background-image:url('/assets/img/bigscreen/cockpit-glow-bg.png');
+  border:1px solid color-mix(in srgb,var(--tone) 44%,#173c62);border-radius:var(--r);background-color:var(--surface-2);background-image:none;
   background-repeat:no-repeat;background-position:center 6%;background-size:190% auto;background-blend-mode:screen;
-  color:var(--tone);text-align:center;font:inherit;cursor:pointer;
-  outline:1px solid color-mix(in srgb,var(--tone) 16%,transparent);outline-offset:-4px;
-  box-shadow:0 0 0 1px rgba(1,8,18,.9),0 10px 26px rgba(0,0,0,.28),0 0 9px color-mix(in srgb,var(--tone) 19%,transparent),0 0 24px color-mix(in srgb,var(--tone) 10%,transparent),inset 0 0 0 1px color-mix(in srgb,var(--tone) 13%,transparent),inset 0 0 32px color-mix(in srgb,var(--tone) 12%,transparent);
-  backdrop-filter:blur(6px) saturate(1.16);
+  color:var(--tone);text-align:center;font:inherit;cursor:pointer;outline:none;outline-offset:-4px;box-shadow:none;backdrop-filter:none;
   transition:transform .16s ease,border-color .16s ease,box-shadow .16s ease;
-  animation:none
-}
+  animation:none;border-color:var(--line);}
 body[data-theme] .bs-kpis .kpi::before{
   opacity:.72;filter:saturate(1.2) contrast(1.08);background-position:center!important
 }
@@ -132,15 +109,11 @@ body[data-theme] .bs-kpis .kpi::after{
   background:none;box-shadow:inset 0 0 0 1px rgba(255,255,255,.018)
 }
 .bs-kpis .kpi:hover{
-  z-index:2;transform:translateY(-2px);border-color:var(--tone);
-  outline-color:color-mix(in srgb,var(--tone) 32%,transparent);
-  box-shadow:0 0 0 1px rgba(1,8,18,.9),0 12px 28px rgba(0,0,0,.27),0 0 12px color-mix(in srgb,var(--tone) 36%,transparent),0 0 30px color-mix(in srgb,var(--tone) 22%,transparent),inset 0 0 0 1px color-mix(in srgb,var(--tone) 24%,transparent),inset 0 0 38px color-mix(in srgb,var(--tone) 15%,transparent)
-}
+  z-index:2;transform:translateY(-2px);border-color:var(--blue);
+  outline-color:color-mix(in srgb,var(--tone) 32%,transparent);box-shadow:none;outline:none;}
 .bs-kpis .kpi .v{
   position:relative;z-index:1;font-family:"DIN Alternate","Bahnschrift",Menlo,sans-serif;
-  font-size:45px;font-weight:750;line-height:1;font-variant-numeric:tabular-nums;letter-spacing:.5px;
-  text-shadow:0 0 12px color-mix(in srgb,currentColor 42%,transparent)
-}
+  font-size:45px;font-weight:750;line-height:1;font-variant-numeric:tabular-nums;letter-spacing:.5px;text-shadow:none}
 .bs-kpis .kpi .ring{
   position:relative;z-index:1;width:150px;height:43px;margin:0 auto;background:currentColor;
   -webkit-mask:url('/assets/img/bigscreen/kpi-ring.svg') no-repeat center/contain;
@@ -253,11 +226,9 @@ body[data-theme] .bs-kpis .kpi::after{
 
 /* ---------- 参考效果图：双层切角装甲框 ---------- */
 .bs-col .panel{
-  --frame-cut:9px;padding:1px;border:0;outline:0;
+  --frame-cut:9px;padding:1px;border:0;outline:none;
   clip-path:polygon(0 var(--frame-cut),var(--frame-cut) 0,calc(100% - var(--frame-cut)) 0,100% var(--frame-cut),100% calc(100% - var(--frame-cut)),calc(100% - var(--frame-cut)) 100%,var(--frame-cut) 100%,0 calc(100% - var(--frame-cut)));
-  background:#25cfff;filter:drop-shadow(0 0 4px rgba(37,207,255,.54)) drop-shadow(0 0 13px rgba(32,143,255,.18));
-  box-shadow:none
-}
+  background:#25cfff;filter:drop-shadow(0 0 4px rgba(37,207,255,.54)) drop-shadow(0 0 13px rgba(32,143,255,.18));box-shadow:none;background-color:var(--surface-2);background-image:none;border-color:var(--line);border-radius:var(--r);backdrop-filter:none;}
 .bs-col .panel::before{
   content:"";position:absolute;z-index:0;inset:1px;width:auto;height:auto;pointer-events:none;
   clip-path:polygon(0 8px,8px 0,calc(100% - 8px) 0,100% 8px,100% calc(100% - 8px),calc(100% - 8px) 100%,8px 100%,0 calc(100% - 8px));
@@ -272,18 +243,15 @@ body[data-theme] .bs-kpis .kpi::after{
   box-shadow:inset 0 0 0 1px rgba(79,211,255,.25),inset 0 0 18px rgba(29,160,255,.08)
 }
 .bs-col .panel:hover{
-  background:#68e5ff;filter:drop-shadow(0 0 6px rgba(70,223,255,.72)) drop-shadow(0 0 18px rgba(32,143,255,.28));
-  box-shadow:none
-}
+  background:#68e5ff;filter:drop-shadow(0 0 6px rgba(70,223,255,.72)) drop-shadow(0 0 18px rgba(32,143,255,.28));box-shadow:none;border-color:var(--line);outline:none;}
 .bs-grid .panel>.ph,.bs-grid .panel>.pb{position:relative;z-index:1}
 .bs-grid .panel>.ph::after,.bs-grid .panel>.pb::after{display:none}
 
 .bs-kpis .kpi{
-  --frame-cut:10px;border:0;outline:0;overflow:hidden;
+  --frame-cut:10px;border:0;outline:none;overflow:hidden;
   clip-path:polygon(0 var(--frame-cut),var(--frame-cut) 0,calc(100% - var(--frame-cut)) 0,100% var(--frame-cut),100% calc(100% - var(--frame-cut)),calc(100% - var(--frame-cut)) 100%,var(--frame-cut) 100%,0 calc(100% - var(--frame-cut)));
   background:color-mix(in srgb,var(--tone) 70%,#0876a8);box-shadow:none;
-  animation:bs-kpi-frame-breathe 4.6s ease-in-out infinite alternate
-}
+  animation:bs-kpi-frame-breathe 4.6s ease-in-out infinite alternate;background-color:var(--surface-2);background-image:none;border-color:var(--line);border-radius:var(--r);backdrop-filter:none;}
 body[data-theme] .bs-kpis .kpi::before{
   content:"";position:absolute;z-index:0;inset:1px;pointer-events:none;opacity:1;
   clip-path:polygon(0 9px,9px 0,calc(100% - 9px) 0,100% 9px,100% calc(100% - 9px),calc(100% - 9px) 100%,9px 100%,0 calc(100% - 9px));
@@ -297,8 +265,7 @@ body[data-theme] .bs-kpis .kpi::after{
   background:none;box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--tone) 26%,transparent),inset 0 0 20px color-mix(in srgb,var(--tone) 8%,transparent)
 }
 .bs-kpis .kpi:hover{
-  background:var(--tone);box-shadow:none;filter:brightness(1.12) drop-shadow(0 0 7px color-mix(in srgb,var(--tone) 74%,transparent)) drop-shadow(0 0 18px color-mix(in srgb,var(--tone) 30%,transparent))
-}
+  background:var(--tone);box-shadow:none;filter:brightness(1.12) drop-shadow(0 0 7px color-mix(in srgb,var(--tone) 74%,transparent)) drop-shadow(0 0 18px color-mix(in srgb,var(--tone) 30%,transparent));border-color:var(--blue);outline:none;}
 .bs-kpis .kpi>*{position:relative;z-index:1}
 @keyframes bs-kpi-frame-breathe{
   from{filter:brightness(.96) drop-shadow(0 0 3px color-mix(in srgb,var(--tone) 30%,transparent))}
@@ -369,3 +336,19 @@ body[data-theme] .bs-kpis .kpi::after{
 @media (prefers-reduced-motion:reduce){
   .bs-root *,.bs-root *::before,.bs-root *::after{animation:none!important;transition-duration:.01ms!important}
 }
+
+/* 2026-09-24 参考主题：收敛大屏装饰，不改变地图/业务状态效果。 */
+.bs-hdr-t span{color:var(--txt);text-shadow:none}
+.bs-hdr-l img,.bs-hdr-t::before,.bs-hdr-t::after,.bs-kpis .kpi .ring{filter:none}
+.bs-grid .panel::before,.bs-grid .panel::after,.bs-grid .panel>.ph::after,.bs-grid .panel>.pb::after,
+body[data-theme] .bs-kpis .kpi::before,body[data-theme] .bs-kpis .kpi::after{content:none;animation:none}
+
+.bs-col .panel,.bs-col .panel:hover,.bs-kpis .kpi,.bs-kpis .kpi:hover{background:var(--surface-gradient);border:1px solid var(--line);border-radius:var(--r);clip-path:none;filter:none;animation:none;box-shadow:none}
+.bs-kpis .kpi:hover{border-color:var(--blue)}
+.bs-action-card,.bs-action-card.is-bad,.bs-device-legend button{background:var(--surface-gradient);border-color:var(--line);border-radius:var(--r);clip-path:none;box-shadow:none;outline:none}
+.bs-action-card:hover,.bs-action-card.is-bad:hover,.bs-device-legend button:hover{background:var(--surface-hover);border-color:var(--blue);box-shadow:none}
+.bs-action-card:focus-visible,.bs-device-legend button:focus-visible{outline:2px solid var(--cyan);outline-offset:-2px}
+.bs-action-icon{filter:none}
+.bs-device-legend i.is-abnormal,.bs-device-legend i.is-alarm,.bs-video-state i{box-shadow:none}
+.bs-map-link{background:var(--surface-gradient);border-color:var(--line);box-shadow:none}
+.bs-video-card.n-card{background:var(--surface-gradient);border-color:var(--line);box-shadow:var(--shadow)}

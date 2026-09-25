@@ -15,8 +15,7 @@ input.ip:focus,select.sel:focus{border-color:var(--blue);box-shadow:0 0 0 2px rg
 select.sel{cursor:pointer}
 select.sel option{background:#0a1a3f}
 .btn{
-  --btn-c:var(--blue);display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 15px;border-radius:6px;cursor:pointer;
-  background:linear-gradient(135deg,color-mix(in srgb,var(--btn-c) 28%,var(--surface-1)),var(--surface-1));box-shadow:inset 0 1px var(--highlight);border:1px solid color-mix(in srgb,var(--btn-c) 52%,transparent);color:var(--txt);font-size:13px;
+  --btn-c:var(--blue);display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 15px;border-radius:6px;cursor:pointer;background:var(--input-bg);box-shadow:none;border:1px solid var(--control-line);color:var(--txt);font-size:13px;
   font-family:inherit;transition:background-color .18s,border-color .18s,box-shadow .18s;white-space:nowrap;
 }
 a.btn{text-decoration:none}   /* 顶栏「大屏展示」等以 <a> 承载的按钮 */
@@ -27,9 +26,9 @@ a.btn{text-decoration:none}   /* 顶栏「大屏展示」等以 <a> 承载的按
 .inline-icon{display:inline-flex;align-items:center;gap:5px}
 .inline-icon>.svg-icon{width:15px;height:15px}
 .status-icon>.svg-icon{width:1em;height:1em}
-.btn:hover:not(:disabled):not([aria-disabled="true"]):not([aria-busy="true"]){background:color-mix(in srgb,var(--btn-c) 28%,var(--surface-2));border-color:var(--btn-c);box-shadow:0 0 12px color-mix(in srgb,var(--btn-c) 18%,transparent)}
-.btn.pri{background:var(--action-gradient);border-color:var(--blue);color:#fff;box-shadow:inset 0 1px var(--highlight),0 0 16px var(--glow-blue)}
-.btn.pri:hover:not(:disabled):not([aria-disabled="true"]):not([aria-busy="true"]){background:var(--action-blue);border-color:var(--cyan)}
+.btn:hover:not(:disabled):not([aria-disabled="true"]):not([aria-busy="true"]){background:var(--surface-hover);border-color:var(--btn-c);box-shadow:none}
+.btn.pri{background:var(--action-blue);border-color:var(--blue);color:var(--action-text);box-shadow:none}
+.btn.pri:hover:not(:disabled):not([aria-disabled="true"]):not([aria-busy="true"]){background:var(--action-hover);border-color:var(--blue)}
 .btn.danger{--btn-c:var(--red);background:var(--action-red);color:#fff}
 .btn.warn{--btn-c:var(--amber);background:var(--amber);color:var(--canvas)}
 .btn.success{--btn-c:var(--green);background:var(--green);color:var(--canvas)}
@@ -80,3 +79,6 @@ td.ck .naive-control-bridge,th.ck .naive-control-bridge{display:flex;justify-con
 .pager .pg.on{background:var(--blue);border-color:var(--blue);color:#fff}
 .pager .pg.dis{opacity:.35;cursor:not-allowed}
 .pager .pg.dis:hover{border-color:var(--line);color:var(--txt-2)}
+
+.btn.pri:active:not(:disabled):not([aria-disabled="true"]){background:var(--action-pressed);color:var(--action-text)}
+.btn:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}

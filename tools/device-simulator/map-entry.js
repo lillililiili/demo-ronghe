@@ -20,6 +20,7 @@ function showError(message) {
 }
 const bridge = window.SimulatorMap = {
   ready: false,
+  coordinates(point) { return coordinates(point); },
   project(point) {
     const p = map.project(coordinates(point));
     return [p.x, p.y];

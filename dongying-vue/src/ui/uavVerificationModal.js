@@ -58,16 +58,14 @@ export function openUavVerification({ event, alarm, refresh, onDone } = {}) {
       { key: 'conclusion', label: '核实结论', type: 'radio', required: true, options: [
         { value: 'CONFIRMED', label: '属实（置为“告警已确认”）' },
         { value: 'FALSE_POSITIVE', label: '误报（终态）' }
-      ] },
-      { key: 'note', label: '核实说明', type: 'textarea', required: true, minRows: 4, placeholder: '必填，1–1000 字：现场确认、轨迹复核、飞手联系结果等依据' }
+      ] }
     ],
-    initial: { conclusion: 'CONFIRMED', note: '' },
+    initial: { conclusion: 'CONFIRMED' },
     confirmText: '提交核实结论',
-    validate: m => { const n = String(m.note || '').trim(); return !n ? '核实说明为必填项' : n.length > 1000 ? `核实说明不能超过 1000 字（当前 ${n.length} 字）` : ''; },
-    onSubmit: async ({ conclusion, note }) => {
+    onSubmit: async ({ conclusion }) => {
       const key = pendingKeys.get(eventId);
       try {
-        const result = await verifyUavEvent(eventId, { conclusion, note: String(note || '').trim(), expected_version: expectedVersion }, key);
+        const result = await verifyUavEvent(eventId, { conclusion, expected_version: expectedVersion }, key);
         pendingKeys.delete(eventId);
         closeModal();
         toast(`核实完成：${uavStateText(result?.state)}`, 'ok');

@@ -164,10 +164,10 @@ export function openLeadResolve({ punishmentCase, lead, refresh, onDone } = {}) 
     title: '标记线索已补齐',
     width: '560px',
     introHtml: introOf([['线索类别', esc(labelOf(LEAD_KIND_LABEL, lead.kind))], ['原始要求', esc(lead.description || '')]]),
-    fields: [{ key: 'note', label: '补齐说明', type: 'textarea', required: true, minRows: 3, placeholder: '必填：补到了什么' }],
+    fields: [{ key: 'note', label: '补齐说明（选填）', type: 'textarea', minRows: 3, placeholder: '可补充材料或事实说明，最多 500 字' }],
     initial: { note: '' },
     confirmText: '标记已补齐',
-    validate: m => (String(m.note || '').trim() ? null : '补齐说明为必填项'),
+    validate: m => (String(m.note || '').trim().length > 500 ? '补齐说明不能超过 500 字' : null),
     onSubmit: ({ note }) => submit({
       scope: `${c.case_id}:${lead.lead_id}`, action: 'lead-resolve',
       call: key => punishmentApi.resolveLead(c.case_id, lead.lead_id, { note: String(note).trim(), expected_version: Number(c.version) }, key),
@@ -291,7 +291,7 @@ export function openCaseReview({ punishmentCase, refresh, onDone } = {}) {
     fields: [
       { key: 'conclusion', label: '复核结论', type: 'radio', required: true,
         options: Object.keys(REVIEW_CONCLUSION_LABEL).map(k => ({ value: k, label: REVIEW_CONCLUSION_LABEL[k] })) },
-      { key: 'note', label: '复核说明', type: 'textarea', required: true, minRows: 3, placeholder: '必填：复核依据与理由' },
+      { key: 'note', label: '复核说明（选填）', type: 'textarea', minRows: 3, placeholder: '可补充复核依据与理由，最多 1000 字' },
       /* 结论选"维持"时这两项直接隐藏（14-33）：维持原裁量却附待补线索是自相矛盾的，
          与其让人填完再被服务端打回，不如根本不给填。表单支持 visibleWhen 按当前取值实时判断。 */
       { key: 'lead_kind', label: '待补线索类别', type: 'select', visibleWhen: m => m.conclusion !== 'UPHELD',
@@ -302,7 +302,7 @@ export function openCaseReview({ punishmentCase, refresh, onDone } = {}) {
     initial: { conclusion: 'UPHELD', note: '', lead_kind: '', lead_description: '' },
     confirmText: '提交复核结论',
     validate: m => {
-      if (!String(m.note || '').trim()) return '复核说明为必填项';
+      if (String(m.note || '').trim().length > 1000) return '复核说明不能超过 1000 字';
       if (m.conclusion === 'UPHELD' && (m.lead_kind || String(m.lead_description || '').trim())) {
         return '维持原裁量时不能附待补线索；如需补充请选“需修正”或“证据不足”';
       }

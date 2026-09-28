@@ -3,18 +3,21 @@ import AutoSmsNotice from '@/components/disposal/AutoSmsNotice.vue';
 import AutoVoiceNotice from '@/components/disposal/AutoVoiceNotice.vue';
 import AdvisoryRecords from '@/components/disposal/AdvisoryRecords.vue';
 import { useUavAdvisory } from '@/hooks/useUavAdvisory.js';
-const props = defineProps({ eventId: { type: String, required: true }, alarmLabel: String, targetLabel: String });
-const emit = defineEmits(['updated', 'open']);
-const { data, loading, error, load } = useUavAdvisory(() => props.eventId, value => emit('updated', value));
+import CounterLaunch from '@/pages/alarms/CounterLaunch.vue';
+const props = defineProps({ eventId: { type: String, required: true }, alarmLabel: String, targetLabel: String, canLaunch: Boolean });
+const emit = defineEmits(['updated', 'open', 'records']);
+const { data, loading, error, load } = useUavAdvisory(() => props.eventId, value => emit('updated', value), 1000);
 </script>
 
 <template>
   <section class="sit-advisory-card" aria-label="当前目标通知">
+    <CounterLaunch v-if="canLaunch && !error && data?.event_id === eventId && data?.counter_launch_visible === true"
+      :key="eventId" :event-id="eventId" :event-label="alarmLabel" active show-launch :show-records="false" @records="emit('records', $event)" />
     <header><div><b>{{ targetLabel || '通知记录' }}</b><small>{{ alarmLabel }}</small></div><button class="btn sm" type="button" :disabled="loading" @click="load()">{{ error ? '重试' : '刷新' }}</button></header>
     <p v-if="error" role="alert">{{ error }} 当前发送结果未确认。</p>
     <p v-else-if="loading && !data">正在读取通知状态</p>
-    <AutoSmsNotice v-if="data" :data="data" :disabled="!!error || loading" @changed="load()" />
-    <AutoVoiceNotice v-if="data" :data="data" :disabled="!!error || loading" @changed="load()" />
+    <AutoSmsNotice v-if="data" compact :data="data" :disabled="!!error || loading" @changed="load()" />
+    <AutoVoiceNotice v-if="data" compact :data="data" :disabled="!!error || loading" @changed="load()" />
     <details v-if="data?.records?.length"><summary>联系与观察记录（{{ data.records.length }}）</summary><AdvisoryRecords :records="data.records" /></details>
     <button class="sit-advisory-open" type="button" @click="emit('open')">查看此事件的处置详情</button>
   </section>

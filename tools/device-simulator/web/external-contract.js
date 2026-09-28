@@ -5,7 +5,7 @@
     const start=Math.max(now+5*60000,Number.isFinite(validFrom)&&validFrom>0?validFrom:0);
     const end=Math.min(start+60*60000,Number.isFinite(validTo)&&validTo>0?validTo:Infinity);
     if(end<=start)throw Error('航线有效期不足，无法生成起止时间；请选择其它航线版本');
-    return {message_id:messageId,route_version_id:route?.route_version_id||'',uav_sn:'SIM-UAV-'+now.toString(36).toUpperCase(),start_at:start,end_at:end};
+    return {message_id:messageId,route_version_id:route?.route_version_id||'',uav_sn:'SIM-UAV-'+now.toString(36).toUpperCase(),start_at:start,end_at:end,filing:{source_id:'local-flight-plan-simulator'}};
   }
   function weatherSampleForPlan(plan, now, messageId){
     const start=Number(plan?.start_at);

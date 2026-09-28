@@ -27,12 +27,6 @@ function shade(hex, amount) {
     .map(x => x.toString(16).padStart(2, '0')).join('');
 }
 
-const blue = v('--blue') || '#4b9cff';
-const red = v('--red') || '#ff5b61';
-const green = v('--green') || '#41d49a';
-const amber = v('--amber') || '#f1a43a';
-const cyan = v('--cyan') || '#2dcfd0';
-
 /* 字体栈照抄 reset.css body 基线；行高 1.65（Naive 默认 1.6，必须显式覆盖） */
 const fontFamily = getComputedStyle(document.body).fontFamily
   || `-apple-system,"PingFang SC","Microsoft YaHei",sans-serif`;
@@ -60,111 +54,124 @@ export const loginThemeOverrides = {
   }
 };
 
-export const themeOverrides = {
-  Button: {
-    textColorPrimary: v('--action-text'),
-    textColorHoverPrimary: v('--action-text'),
-    textColorPressedPrimary: v('--action-text'),
-    colorPrimary: v('--action-blue'),
-    colorHoverPrimary: v('--action-hover'),
-    colorPressedPrimary: v('--action-pressed'),
-    borderPrimary: `1px solid ${blue}`,
-    borderHoverPrimary: `1px solid ${blue}`,
-    color: v('--input-bg'), colorHover: v('--surface-hover'),
-    colorPressed: v('--surface-selected'),
-    border: `1px solid ${v('--control-line')}`
-  },
-  common: {
-    primaryColor: blue,
-    primaryColorHover: shade(blue, 0.08),
-    primaryColorPressed: shade(blue, -0.08),
-    primaryColorSuppl: shade(blue, 0.08),
-    infoColor: cyan,
-    infoColorHover: shade(cyan, 0.08),
-    infoColorPressed: shade(cyan, -0.08),
-    successColor: green,
-    successColorHover: shade(green, 0.08),
-    successColorPressed: shade(green, -0.08),
-    warningColor: amber,
-    warningColorHover: shade(amber, 0.08),
-    warningColorPressed: shade(amber, -0.08),
-    errorColor: red,
-    errorColorHover: shade(red, 0.08),
-    errorColorPressed: shade(red, -0.08),
+/* 大屏在每次挂载时读取自身路由色值，业务组件保留独立主题。 */
+export function createThemeOverrides() {
+  const css = getComputedStyle(document.documentElement);
+  const v = name => css.getPropertyValue(name).trim();
+  const blue = v('--blue') || '#4b9cff';
+  const red = v('--red') || '#ff5b61';
+  const green = v('--green') || '#41d49a';
+  const amber = v('--amber') || '#f1a43a';
+  const cyan = v('--cyan') || '#2dcfd0';
 
-    bodyColor: v('--canvas') || '#07111f',
-    /* 浮层用实色面：--panel 是半透明，弹窗/下拉叠在内容上会透出脏色 */
-    cardColor: v('--surface-2') || '#0e1d30',
-    modalColor: v('--surface-3') || '#12243a',
-    popoverColor: v('--surface-3') || '#12243a',
-    tableColor: v('--surface-1') || '#0b1727',
-    inputColor: v('--input-bg'),
-    actionColor: v('--surface-2') || '#0e1d30',
-    hoverColor: v('--surface-hover') || '#142a44',
+  return {
+    Button: {
+      textColorPrimary: v('--action-text'),
+      textColorHoverPrimary: v('--action-text'),
+      textColorPressedPrimary: v('--action-text'),
+      colorPrimary: v('--action-blue'),
+      colorHoverPrimary: v('--action-hover'),
+      colorPressedPrimary: v('--action-pressed'),
+      borderPrimary: `1px solid ${blue}`,
+      borderHoverPrimary: `1px solid ${blue}`,
+      color: v('--input-bg'), colorHover: v('--surface-hover'),
+      colorPressed: v('--surface-selected'),
+      border: `1px solid ${v('--control-line')}`
+    },
+    common: {
+      primaryColor: blue,
+      primaryColorHover: shade(blue, 0.08),
+      primaryColorPressed: shade(blue, -0.08),
+      primaryColorSuppl: shade(blue, 0.08),
+      infoColor: cyan,
+      infoColorHover: shade(cyan, 0.08),
+      infoColorPressed: shade(cyan, -0.08),
+      successColor: green,
+      successColorHover: shade(green, 0.08),
+      successColorPressed: shade(green, -0.08),
+      warningColor: amber,
+      warningColorHover: shade(amber, 0.08),
+      warningColorPressed: shade(amber, -0.08),
+      errorColor: red,
+      errorColorHover: shade(red, 0.08),
+      errorColorPressed: shade(red, -0.08),
 
-    borderColor: v('--line') || 'rgba(125,165,210,.16)',
-    dividerColor: v('--line-2') || 'rgba(125,165,210,.09)',
+      bodyColor: v('--canvas') || '#07111f',
+      /* 浮层用实色面：--panel 是半透明，弹窗/下拉叠在内容上会透出脏色 */
+      cardColor: v('--surface-2') || '#0e1d30',
+      modalColor: v('--surface-3') || '#12243a',
+      popoverColor: v('--surface-3') || '#12243a',
+      tableColor: v('--surface-1') || '#0b1727',
+      inputColor: v('--input-bg'),
+      actionColor: v('--surface-2') || '#0e1d30',
+      hoverColor: v('--surface-hover') || '#142a44',
 
-    textColorBase: v('--txt') || '#edf5ff',
-    textColor1: v('--txt') || '#edf5ff',
-    textColor2: v('--txt-2') || '#a7b7cb',
-    textColor3: v('--txt-3') || '#71859e',
-    placeholderColor: v('--txt-3') || '#71859e',
+      borderColor: v('--line') || 'rgba(125,165,210,.16)',
+      dividerColor: v('--line-2') || 'rgba(125,165,210,.09)',
 
-    borderRadius: v('--r') || '8px',
-    borderRadiusSmall: '6px',            // 对齐 .sel/.ip 的现状圆角
-    fontSize: '14px',
-    fontSizeMedium: '14px',
-    lineHeight: '1.65',
-    fontFamily,
-    boxShadow2: v('--shadow') || '0 12px 32px rgba(0,0,0,.22)'
-  },
-  Input: {
-    color: v('--input-bg'), colorFocus: v('--input-bg'),
-    border: `1px solid ${v('--control-line')}`,
-    boxShadowFocus: v('--focus-ring')
-  },
-  InternalSelection: {
-    color: v('--input-bg'), colorActive: v('--input-bg'),
-    border: `1px solid ${v('--control-line')}`,
-    boxShadowFocus: v('--focus-ring'), boxShadowActive: v('--focus-ring')
-  },
-  Message: {
-    /* 旧 .toast：实色深底 + 语义色描边，最大宽度防长文案撑爆 */
-    maxWidth: '520px'
-  },
-  Select: {
-    peers: {
-      InternalSelectMenu: {
-        optionHeightMedium: '34px',
-        optionHeightSmall: '32px'
+      textColorBase: v('--txt') || '#edf5ff',
+      textColor1: v('--txt') || '#edf5ff',
+      textColor2: v('--txt-2') || '#a7b7cb',
+      textColor3: v('--txt-3') || '#71859e',
+      placeholderColor: v('--txt-3') || '#71859e',
+
+      borderRadius: v('--r') || '8px',
+      borderRadiusSmall: '6px',            // 对齐 .sel/.ip 的现状圆角
+      fontSize: '14px',
+      fontSizeMedium: '14px',
+      lineHeight: '1.65',
+      fontFamily,
+      boxShadow2: v('--shadow') || '0 12px 32px rgba(0,0,0,.22)'
+    },
+    Input: {
+      color: v('--input-bg'), colorFocus: v('--input-bg'),
+      border: `1px solid ${v('--control-line')}`,
+      boxShadowFocus: v('--focus-ring')
+    },
+    InternalSelection: {
+      color: v('--input-bg'), colorActive: v('--input-bg'),
+      border: `1px solid ${v('--control-line')}`,
+      boxShadowFocus: v('--focus-ring'), boxShadowActive: v('--focus-ring')
+    },
+    Message: {
+      /* 旧 .toast：实色深底 + 语义色描边，最大宽度防长文案撑爆 */
+      maxWidth: '520px'
+    },
+    Select: {
+      peers: {
+        InternalSelectMenu: {
+          optionHeightMedium: '34px',
+          optionHeightSmall: '32px'
+        }
       }
+    },
+    Pagination: {
+      /* 对齐旧 .pg / .pg.on 的观感（方块页码、主色高亮） */
+      itemBorderRadius: '5px'
+    },
+    DataTable: {
+      thColor: v('--surface-3'),
+      thColorHover: v('--surface-hover') || '#142a44',
+      tdColor: v('--surface-1') || '#0b1727',
+      tdColorHover: v('--surface-hover') || '#142a44',
+      tdColorStriped: v('--surface-2') || '#0e1d30',
+      thTextColor: v('--txt'),
+      tdTextColor: v('--txt-2') || '#a7b7cb',
+      borderColor: v('--line') || 'rgba(125,165,210,.16)',
+      thFontWeight: '600'
+    },
+    Dialog: {
+      titleFontSize: '16px',
+      padding: '20px 24px 22px',
+      contentMargin: '14px 0 22px',
+      actionSpace: '10px',
+      borderRadius: '10px',
+      closeMargin: '20px 22px 0 0'
     }
-  },
-  Pagination: {
-    /* 对齐旧 .pg / .pg.on 的观感（方块页码、主色高亮） */
-    itemBorderRadius: '5px'
-  },
-  DataTable: {
-    thColor: v('--surface-3'),
-    thColorHover: v('--surface-hover') || '#142a44',
-    tdColor: v('--surface-1') || '#0b1727',
-    tdColorHover: v('--surface-hover') || '#142a44',
-    tdColorStriped: v('--surface-2') || '#0e1d30',
-    thTextColor: v('--txt'),
-    tdTextColor: v('--txt-2') || '#a7b7cb',
-    borderColor: v('--line') || 'rgba(125,165,210,.16)',
-    thFontWeight: '600'
-  },
-  Dialog: {
-    titleFontSize: '16px',
-    padding: '20px 24px 22px',
-    contentMargin: '14px 0 22px',
-    actionSpace: '10px',
-    borderRadius: '10px',
-    closeMargin: '20px 22px 0 0'
-  }
-};
+  };
+}
+
+export const themeOverrides = createThemeOverrides();
 
 /* --page-accent 页面级强调色刻意不接入组件库：其消费者全在 B 类展示串与
    全局样式类里（detail-hero/sect/tabs），组件库 primaryColor 全局固定为 --blue。

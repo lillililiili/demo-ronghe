@@ -27,7 +27,9 @@ export function uavProcessActions(alarm) {
   if (!alarm || alarm.eventState === 'FALSE_POSITIVE' || alarm.handoff) return [];
   if (['jamming', 'counter', 'active', 'requested'].includes(alarm.disposalStage)) return [];
   if (['jammed', 'countered', 'completed'].includes(alarm.disposalStage)) return [];
-  return ['false-positive', 'counter'];
+  if (alarm.eventState === 'PENDING_VERIFICATION') return ['verify'];
+  if (alarm.eventState === 'CONFIRMED') return ['counter'];
+  return [];
 }
 
 export function uavProcessStatus(alarm) {

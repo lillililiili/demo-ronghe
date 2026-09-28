@@ -28,9 +28,9 @@ function retry() {
     title: '重新拨打飞手电话', confirmText: '提交重试', width: '520px',
     notice: '提交后由后台再次确认目标是否仍在告警空域，并按当前飞手和录音通道拨打。',
     warning: view.value.simulated ? '当前使用模拟电话通道，不会拨打真实电话或播放真实录音。' : '',
-    fields: [{ key: 'note', label: '重试说明', type: 'textarea', required: true, minRows: 3, placeholder: '说明已经核查或处理了什么问题' }],
+    fields: [{ key: 'note', label: '重试说明（选填）', type: 'textarea', minRows: 3, placeholder: '可补充已核查或处理的问题，最多 1000 字' }],
     initial: { note: '' },
-    validate: value => String(value.note || '').trim() ? null : '请填写重试说明',
+    validate: value => String(value.note || '').trim().length > 1000 ? '重试说明不能超过 1000 字' : null,
     onSubmit: async value => {
       const current = () => alive && id === props.data?.event_id && modal.isCurrent();
       if (!current()) throw new Error('事件已切换，请关闭后重新操作');

@@ -16,7 +16,7 @@ test('video component discards stale responses and clears playback on task chang
   const vue = await import('vue');
   const { targetVideoState } = await import('../src/components/video/targetVideoState.js');
   let source = fs.readFileSync(require('node:path').resolve(__dirname, '../src/components/video/TargetLiveVideo.vue'), 'utf8').split('<script setup>')[1].split('</script>')[0];
-  source = source.replace(/^import .*;\n/gm, '').replace(/const props = defineProps\([\s\S]*?\n\}\);/, '');
+  source = source.replace(/^import .*;\r?\n/gm, '').replace(/const props = defineProps\([\s\S]*?\r?\n\}\);/, '');
   const props = vue.reactive({ targetId: 'one', active: true, defaultExpanded: true, contextLabel: '', unavailableReason: '' });
   const permission = vue.ref(true), requests = [], unmounts = [];
   const deviceApi = { targetVideo: id => new Promise((resolve, reject) => requests.push({ id, resolve, reject })) };

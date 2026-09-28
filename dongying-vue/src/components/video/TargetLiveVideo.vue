@@ -11,7 +11,8 @@ const props = defineProps({
   unavailableReason: { type: String, default: '' },
   active: { type: Boolean, default: true },
   defaultExpanded: { type: Boolean, default: true },
-  compact: { type: Boolean, default: false }
+  compact: { type: Boolean, default: false },
+  subtype: { type: String, default: 'UAV' }
 });
 const expanded = ref(props.defaultExpanded), preview = ref(false), video = ref(null);
 const loading = ref(false), checked = ref(false), error = ref('');
@@ -60,9 +61,9 @@ onUnmounted(() => { alive = false; clear(); });
 <template>
   <section class="target-live-video" :class="{ compact }" aria-label="实时视频">
     <header>
-      <strong>实时视频</strong>
+      <slot name="title"><strong>实时视频</strong></slot>
       <div class="video-toolbar"><button v-if="compact && expanded && !reason" type="button" class="btn" :disabled="loading" @click="refresh">刷新</button>
-      <button class="btn" type="button" :aria-expanded="expanded" @click="toggle">{{ expanded ? '收起视频' : '查看视频' }}</button></div>
+      <slot name="actions"><button class="btn" type="button" :aria-expanded="expanded" @click="toggle">{{ expanded ? '收起视频' : '查看视频' }}</button></slot></div>
     </header>
     <div v-if="expanded && active" class="video-content">
       <p v-if="compact && state.simulated" class="video-context">当前目标画面，不代表历史事发画面</p>
@@ -72,7 +73,7 @@ onUnmounted(() => { alive = false; clear(); });
       <template v-else>
         <p v-if="loading && !checked" role="status">正在读取视频关联状态</p>
         <p v-else role="status">{{ state.message }}</p>
-        <SimulatedOpticalVideo v-if="preview && state.simulated" :key="`${targetId}:${video.task_id}`" subtype="UAV" />
+        <SimulatedOpticalVideo v-if="preview && state.simulated" :key="`${targetId}:${video.task_id}`" :subtype="subtype" />
         <button v-if="state.simulated && !preview" type="button" class="btn" @click="preview = true">播放模拟画面</button>
       </template>
       <button v-if="!reason && !compact" class="btn refresh-video" type="button" :disabled="loading" @click="refresh">{{ loading ? '正在读取' : '刷新视频状态' }}</button>

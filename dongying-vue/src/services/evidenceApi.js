@@ -87,8 +87,8 @@ export function downloadEvidenceContent(id) {
   return apiBinary(`/evidence-files/${encodeURIComponent(id)}/content`);
 }
 
-export function previewEvidenceContent(id, { signal, thumbnail = false } = {}) {
-  const request = () => apiBinary(`/evidence-files/${encodeURIComponent(id)}/${thumbnail ? 'thumbnail' : 'preview'}`, {
+export function previewEvidenceContent(id, { signal, thumbnail = false, page } = {}) {
+  const request = () => apiBinary(`/evidence-files/${encodeURIComponent(id)}/${thumbnail ? 'thumbnail' : 'preview'}${page == null ? '' : buildQuery({ page })}`, {
     signal, maxBytes: 32 * 1024 * 1024
   });
   return thumbnail ? thumbnailQueue(request, signal) : request();

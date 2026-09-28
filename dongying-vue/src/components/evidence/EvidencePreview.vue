@@ -19,6 +19,9 @@ const error = ref('');
 const imageWidth = ref(0);
 const imageHeight = ref(0);
 const downloading = ref(false);
+const pdfPage = ref(1);
+const pdfPageCount = ref(0);
+const isPdf = computed(() => props.file?.content_type?.split(';')[0].toLowerCase() === 'application/pdf');
 let controller;
 let sequence = 0;
 let timer;
@@ -49,8 +52,10 @@ function clear() {
   url.value = ''; text.value = ''; mime.value = ''; error.value = ''; loading.value = false;
   imageWidth.value = 0; imageHeight.value = 0;
 }
-async function load() {
+async function load(requestedPage = 1) {
   clear();
+  pdfPage.value = Number.isInteger(requestedPage) ? requestedPage : 1;
+  pdfPageCount.value = 0;
   if (unavailable.value) return;
   const id = props.file?.evidence_id;
   if (!id) return;
@@ -60,7 +65,7 @@ async function load() {
   let timedOut = false;
   timer = setTimeout(() => { timedOut = true; request.abort(); }, 30_000);
   try {
-    const result = await previewEvidenceContent(id, { signal: request.signal });
+    const result = await previewEvidenceContent(id, { signal: request.signal, page: isPdf.value ? pdfPage.value : undefined });
     if (own !== sequence || request.signal.aborted) return;
     const type = result.blob.type.split(';')[0].toLowerCase();
     if (!['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'application/pdf', 'video/mp4', 'video/webm', 'text/plain', 'application/json'].includes(type)) {
@@ -72,6 +77,7 @@ async function load() {
       text.value = raw;
     } else url.value = URL.createObjectURL(result.blob);
     mime.value = type;
+    pdfPageCount.value = result.pageCount || 0;
   } catch (e) {
     if (own !== sequence) return;
     error.value = timedOut ? '证据内容读取超时，请重试' : e.message || '证据内容读取失败，请重试';
@@ -89,7 +95,7 @@ async function download() {
   } catch (e) { toast(e.message || '下载失败', 'err'); }
   finally { downloading.value = false; }
 }
-watch(() => [props.file?.evidence_id, props.file?.status, props.file?.version, canPreview.value], load, { immediate: true });
+watch(() => [props.file?.evidence_id, props.file?.status, props.file?.version, canPreview.value], () => load(), { immediate: true });
 function accessChanged() { clear(); if (canPreview.value) load(); }
 window.addEventListener('auth-access-change', accessChanged);
 onBeforeUnmount(() => { clear(); window.removeEventListener('auth-access-change', accessChanged); });
@@ -108,14 +114,18 @@ onBeforeUnmount(() => { clear(); window.removeEventListener('auth-access-change'
       <div class="preview-main">
         <div v-if="unavailable" class="preview-message" role="status">{{ unavailable }}</div>
         <div v-else-if="loading" class="preview-message" role="status">正在读取证据内容</div>
-        <div v-else-if="error" class="preview-message" role="alert">{{ error }}<button type="button" class="btn" @click="load">重新读取</button></div>
+        <div v-else-if="error" class="preview-message" role="alert">{{ error }}<button type="button" class="btn" @click="load(pdfPage)">重新读取</button></div>
         <template v-else-if="url || isText">
+          <div v-if="isPdf && pdfPageCount" class="preview-toolbar" aria-label="PDF翻页">
+            <button type="button" class="btn" :disabled="pdfPage <= 1" @click="load(pdfPage - 1)">上一页</button>
+            <span>第 {{ pdfPage }} / {{ pdfPageCount }} 页</span>
+            <button type="button" class="btn" :disabled="pdfPage >= pdfPageCount" @click="load(pdfPage + 1)">下一页</button>
+          </div>
           <div v-if="mime.startsWith('image/')" class="preview-image-scroll">
             <img :src="url" :alt="file?.original_name || '证据图像'" @load="imageLoaded" @error="mediaError">
           </div>
           <EvidenceVideoPlayer v-else-if="mime.startsWith('video/')" :key="url" :src="url" :can-download="canDownload" @error="mediaError" />
-          <!-- 仅已校验PDF的本页Blob可进入这里；sandbox会禁用Chrome内置PDF阅读器。 -->
-          <iframe v-else-if="mime === 'application/pdf'" :key="url" :src="canDownload ? url : `${url}#toolbar=0&navpanes=0`" title="证据 PDF 预览" referrerpolicy="no-referrer" @error="mediaError" />
+          <p v-else-if="mime === 'application/pdf'" class="preview-message" role="status">PDF分页预览暂不可用，请重试或按权限下载原件。</p>
           <EvidenceTrackPreview v-else-if="isTrack && parsedTrackJson" :snapshot="parsedTrackJson" :file="file" :details="details" />
           <template v-else-if="isText">
             <p v-if="isTrack" class="preview-message" role="status">这份轨迹暂不能回放，可在证据详情查看原始记录。</p>

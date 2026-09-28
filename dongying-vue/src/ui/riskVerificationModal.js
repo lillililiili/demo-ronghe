@@ -52,11 +52,11 @@ export function openRiskVerification({ risk, refresh, onDone } = {}) {
         { value: 'CONFIRMED', label: '核验通过（转待通知）' },
         { value: 'EXCLUDED', label: '排除（误检 / 非管控风险）' }
       ] }]),
-      { key: 'note', label: exclusionOnly ? '改判依据' : '核验说明', type: 'textarea', required: true, minRows: 4, placeholder: exclusionOnly ? '说明为何将已确认的风险改判为排除（1–1000 字）' : '填写现场确认、航线与高度复核等依据（1–1000 字）' }
+      { key: 'note', label: exclusionOnly ? '改判依据（选填）' : '核验说明（选填）', type: 'textarea', minRows: 4, placeholder: exclusionOnly ? '可补充改判为排除的依据，最多 1000 字' : '可补充现场确认、航线与高度复核等依据，最多 1000 字' }
     ],
     initial: { conclusion: exclusionOnly ? 'EXCLUDED' : 'CONFIRMED', note: '' },
     confirmText: exclusionOnly ? '提交排除结论' : '提交核验结论',
-    validate: m => { const n = String(m.note || '').trim(), label = exclusionOnly ? '改判依据' : '核验说明'; return !n ? `${label}为必填项` : n.length > 1000 ? `${label}不能超过 1000 字（当前 ${n.length} 字）` : ''; },
+    validate: m => { const n = String(m.note || '').trim(), label = exclusionOnly ? '改判依据' : '核验说明'; return n.length > 1000 ? `${label}不能超过 1000 字（当前 ${n.length} 字）` : ''; },
     onSubmit: async ({ conclusion, note }) => {
       const key = pendingKeys.get(riskId);
       try {

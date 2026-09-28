@@ -27,9 +27,10 @@ class ExternalAuthenticationRequired(ValueError):
 class ExternalBridge:
     """Shared in-memory system login and allowlisted external interface calls."""
     PREFIX = '/local-interface-simulator'
-    READ = {PREFIX + '/context'}
-    WRITE = {PREFIX + '/plans', PREFIX + '/weather', PREFIX + '/bindings'}
+    READ = {PREFIX + '/context', PREFIX + '/airspaces/context', PREFIX + '/plan-options'}
+    WRITE = {PREFIX + '/plans', PREFIX + '/weather', PREFIX + '/bindings', PREFIX + '/airspaces'}
     RECEIPT = re.compile(r'^/local-interface-simulator/messages/[A-Za-z0-9_-]{1,64}/receipt$')
+    PLAN_FILING = re.compile(r'^/local-interface-simulator/plans/[A-Za-z0-9_-]{1,36}/filing$')
 
     def __init__(self):
         self.lock = threading.RLock()
@@ -40,7 +41,7 @@ class ExternalBridge:
 
     @classmethod
     def allowed(cls, method, path):
-        return method == 'GET' and path in cls.READ or method == 'POST' and (path in cls.WRITE or bool(cls.RECEIPT.fullmatch(path)))
+        return method == 'GET' and (path in cls.READ or bool(cls.PLAN_FILING.fullmatch(path))) or method == 'POST' and (path in cls.WRITE or bool(cls.RECEIPT.fullmatch(path)) or bool(cls.PLAN_FILING.fullmatch(path)))
 
     def status(self):
         with self.lock:

@@ -205,11 +205,18 @@ function injectUrbanLayers(style, p, tintOpacity = 1) {
    styleimagemissing，这里用 canvas 画一张 128px（pixelRatio 2 → 64 css px）无缝平铺纹理交给它。
    纹理全部半透明，只叠在色块之上加"颗粒"，不改变颜色阶梯。 */
 export function installThemeImages(map) {
+  const install = kind => {
+    const id = `theme-tex-${kind}`;
+    if (map.hasImage(id)) return;
+    const image = makeTexture(kind);
+    if (image) map.addImage(id, image, { pixelRatio: 2 });
+  };
+  const installAll = () => ['farm', 'forest', 'urban'].forEach(install);
+  map.on('style.load', installAll);
+  if (map.isStyleLoaded()) installAll();
   map.on('styleimagemissing', event => {
     const kind = /^theme-tex-(\w+)$/.exec(event.id)?.[1];
-    if (!kind || map.hasImage(event.id)) return;
-    const image = makeTexture(kind);
-    if (image) map.addImage(event.id, image, { pixelRatio: 2 });
+    if (kind) install(kind);
   });
 }
 

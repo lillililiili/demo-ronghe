@@ -587,6 +587,11 @@
     this._hit();
     return this;
   };
+  // 详情锚定屏幕上可点击的图标；密集点位的图标可能与真实投影点错开。
+  MapView.prototype.getHitPoint = function (kind, id) {
+    const hit = (this._pickPts || []).find(point => point.kind === kind && point.data?.id === id);
+    return hit ? [hit.x, hit.y] : null;
+  };
   MapView.prototype.clearPinnedHit = function () {
     this._pinnedKey = '';
     this._tipHovering = false;
@@ -708,7 +713,7 @@
     if (this._tipHovering && this._tipKeyShown) {
       best = pts.find(p => this._tipKey(p) === this._tipKeyShown) || null;
     } else if (Number.isFinite(this.mx) && Number.isFinite(this.my)) {
-      let bd = 14;
+      let bd = Infinity, bestPriority = -1;
       for (const p of pts) {
         const d = p.segments ? p.segments.reduce((nearest, segment) => {
           const ax = segment[0][0], ay = segment[0][1], bx = segment[1][0], by = segment[1][1];
@@ -717,7 +722,13 @@
           const ratio = lengthSquared ? Math.max(0, Math.min(1, ((this.mx - ax) * dx + (this.my - ay) * dy) / lengthSquared)) : 0;
           return Math.min(nearest, Math.hypot(this.mx - (ax + dx * ratio), this.my - (ay + dy * ratio)));
         }, Infinity) : Math.hypot(p.x - this.mx, p.y - this.my);
-        if (d < bd) { bd = d; best = p; }
+        // 融合感知优先命中最上层图标，避免下方航线抢走设备点击。
+        const marker = this.opt.fusionProfile && (p.kind === 'device' || p.kind === 'target');
+        const priority = marker ? 1 : 0;
+        const radius = marker ? 24 : 14;
+        if (d < radius && (priority > bestPriority || (priority === bestPriority && d < bd))) {
+          bd = d; best = p; bestPriority = priority;
+        }
       }
     }
     this.hover = (this._tipHovering && best) ? best
@@ -1221,11 +1232,9 @@
     const selectedTarget = this.opt.fusionProfile && this.layers.track
       ? (this.data.targets || []).find(t => this._pinnedKey === 'target:' + t.id && t.posValid !== false
         && (!t.layerKey || this.layers[t.layerKey] !== false)) : null;
-    const selectedAnchor = selectedDevice || (selectedTarget && this._targetAnchor(selectedTarget));
-    const occupiedIcons = selectedAnchor ? [P(selectedAnchor.lon, selectedAnchor.lat)] : [];
-    const iconPoint = (anchor, selected) => {
-      // 当前选中图标固定在真实投影点，周围图标为它让位。
-      if (selected) return anchor;
+    const occupiedIcons = [];
+    const iconPoint = anchor => {
+      // 避让只由点位和绘制顺序决定；选中仅改变高亮，不能让同址设备互换位置。
       if (anchor[0] < 0 || anchor[0] > W || anchor[1] < 0 || anchor[1] > H) return anchor;
       const free = p => p[0] >= 18 && p[0] <= W-18 && p[1] >= 18 && p[1] <= H-18
         && occupiedIcons.every(q => Math.hypot(p[0]-q[0],p[1]-q[1]) >= 40);
@@ -1244,7 +1253,7 @@
         const anchor = P(d.lon, d.lat);
         if (anchor[0] < -20 || anchor[0] > W + 20 || anchor[1] < -20 || anchor[1] > H + 20) return;
         const isSelected = selectedDevice === d;
-        const q = iconPoint(anchor, isSelected);
+        const q = iconPoint(anchor);
         const col = d.status === '在线' ? (this.opt.fusionProfile ? this._sensorColor(d) : (d.alarm ? '#d97706' : '#008fb3')) : d.status === '离线' ? '#64748b' : '#f1a43a';
         if (isSelected) selectedMarker = { q, draw: () => this._drawFusionDevice(c, d, q) };
         else this._drawFusionDevice(c, d, q);
@@ -1295,7 +1304,7 @@
             c.fillStyle = col + '14'; c.fill(); c.setLineDash([]); c.restore();
           }
         }
-        const displayPoint = iconPoint(q, selectedTarget === t);
+        const displayPoint = iconPoint(q);
         if (selectedTarget === t) selectedMarker = { q: displayPoint, draw: () => this._drawTarget(c, t, displayPoint, col, isSel) };
         else this._drawTarget(c, t, displayPoint, col, isSel);
         if (dim) c.restore();

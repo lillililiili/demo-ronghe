@@ -40,6 +40,9 @@ const uavScope = { mode: 'ACTIVE', latest_only: true, object_type_code: 'UAV' };
 const items = ref([]);
 const totalCount = ref(0);
 const selectedEvaluation = ref(null);
+function trackEvidenceHref(trackId) {
+  return `#/evidence?${new URLSearchParams({ track: trackId, subjectKind: 'TARGET', subjectId: selectedEvaluation.value.target_id })}`;
+}
 const revisions = ref([]);
 const revisionsTotal = ref(0);
 const loading = ref(false);
@@ -761,7 +764,7 @@ onMounted(() => {
                             <span class="lg-evidence-icon" v-html="UI.icon(evidenceIcon(reference.kind))"></span>
                             <div><b>{{ referenceKindText(reference.kind) }}</b><p :title="reference.id">{{ referenceText(reference) }}</p>
                               <a v-if="reference.kind === 'track' && reference.id && selectedEvaluation.target_id && hasPermission('evidence:read')"
-                                class="btn" :href="`#/evidence?${new URLSearchParams({ track: reference.id, subjectKind: 'TARGET', subjectId: selectedEvaluation.target_id })}`">查看轨迹证据</a>
+                                class="btn" :href="trackEvidenceHref(reference.id)">查看轨迹证据</a>
                             </div>
                           </li>
                         </ol>

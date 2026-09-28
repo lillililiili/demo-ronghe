@@ -72,6 +72,7 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
   let report = () => {};
   const routeVersions = new Map();
   const trajectoryComparisons = new Map();
+  const failedSegments = new Set();
 
   function withComparison(targets) {
     return targets.map(target => {
@@ -83,13 +84,14 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
 
   function publish(generatedAt) {
     if (stopped || paused) return;
-    snapshot = { ...snapshot, generatedAt, sourceMode: sourceMode(snapshot), simulated: false };
+    snapshot = { ...snapshot, generatedAt, sourceMode: sourceMode(snapshot), simulated: false,
+      failedSegments: [...failedSegments] };
     emit(snapshot);
   }
 
   async function retain(name, task, apply) {
-    try { apply(await task()); }
-    catch (error) { report(error, name); }
+    try { apply(await task()); failedSegments.delete(name); }
+    catch (error) { failedSegments.add(name); report(error, name); }
   }
 
   async function refreshFast(generatedAt) {
@@ -125,8 +127,10 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
       // 部分旧后端不会消费 enabled 查询参数；前端仍须严格隐藏已停用的历史回放设备。
       const enabledRows = rows.filter(row => row.enabled !== false);
       let events = [];
-      try { events = (await deviceApi.events({ after_seq: 0, limit: 200 }))?.items || []; }
-      catch (error) { report(error, 'device-events'); }
+      try {
+        events = (await deviceApi.events({ after_seq: 0, limit: 200, latest: true }))?.items || [];
+        failedSegments.delete('device-events');
+      } catch (error) { failedSegments.add('device-events'); report(error, 'device-events'); }
       return attachDeviceEvents(toDevices(enabledRows).filter(row => DEVICE_TYPES.has(row.typeCode)), events);
     }, value => { snapshot = { ...snapshot, devices: value }; });
 

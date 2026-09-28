@@ -24,18 +24,26 @@ def metres(a, b):
     a, b = coordinates(a), coordinates(b)
     return math.hypot((b[0]-a[0])*111320*math.cos(math.radians((a[1]+b[1])/2)), (b[1]-a[1])*111320)
 
-def position(target, elapsed):
+def target_motion(target, elapsed):
+    """Return position and east/north velocity from the same active path segment."""
     motion = target.get('_notification_motion') or {}
-    if motion.get('suppress'): return motion['origin']
+    if motion.get('suppress'): return motion['origin'], 0.0, 0.0
     points = motion.get('path') or target['path']
-    distance = max(0, elapsed-motion.get('at_elapsed', 0)) * motion.get('speed', target['speed']) if motion.get('path') else elapsed * target['speed']
+    speed = motion.get('speed', target['speed']) if motion.get('path') else target['speed']
+    distance = max(0, elapsed-motion.get('at_elapsed', 0)) * speed if motion.get('path') else elapsed * speed
     for a, b in zip(points, points[1:]):
         length = metres(a, b)
         if length > distance:
             u = distance / length
-            return [a[0]+u*(b[0]-a[0]), a[1]+u*(b[1]-a[1])]
+            start, end = coordinates(a), coordinates(b)
+            east = (end[0]-start[0])*111320*math.cos(math.radians((start[1]+end[1])/2))
+            north = (end[1]-start[1])*111320
+            return [a[0]+u*(b[0]-a[0]), a[1]+u*(b[1]-a[1])], speed*east/length, speed*north/length
         distance -= length
-    return points[-1]
+    return points[-1], 0.0, 0.0
+
+def position(target, elapsed):
+    return target_motion(target, elapsed)[0]
 
 def point_list(points, minimum, label):
     if not isinstance(points, list) or not minimum <= len(points) <= 2000:
@@ -212,8 +220,12 @@ def messages(scene, devices, targets, manifest, elapsed, now, last_sent, sequenc
             if (t.get('_notification_motion') or {}).get('suppress'): continue
             if device_id not in (t['deviceId'], t.get('secondaryDeviceId')):
                 continue
-            lon, lat = coordinates(position(t, elapsed))
+            point, speed_x, speed_y = target_motion(t, elapsed)
+            lon, lat = coordinates(point)
             ext = {'objectType': 30 if t['kind']=='uav' else 40}
+            if d['kind'] in ('radar', '5ga'):
+                # Protocol A: X east, Y north, Z up. Current paths have constant height.
+                ext.update(speedX=speed_x, speedY=speed_y, speedZ=0.0)
             if 'probability' in t:
                 ext['probability'] = t['probability']
             if t['kind'] == 'uav':
@@ -222,7 +234,7 @@ def messages(scene, devices, targets, manifest, elapsed, now, last_sent, sequenc
                     ext['pilotLon'], ext['pilotLat'] = coordinates(t['pilotPoint'])
             for member in range(int(t['count']) if t['kind']=='bird' else 1):
                 objects.append({'objectId': index*1000+member, 'time': now, 'longitude': lon+member%10*.00002, 'latitude': lat+member//10*.00002,
-                                'altitude': t['height'], 'extension': ext,
+                                'altitude': t['height'], 'speed': math.hypot(speed_x, speed_y), 'extension': ext,
                                 **({'height': t['heightAgl']} if 'heightAgl' in t else {})})
         if objects and d['kind'] in KINDS:
             out.append((f"bridge/{manifest['provider']}/device_data/{d['kind']}/{external}",

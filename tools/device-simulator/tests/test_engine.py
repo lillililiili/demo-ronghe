@@ -1,4 +1,5 @@
 import copy
+import math
 import sys
 import unittest
 from pathlib import Path
@@ -11,6 +12,68 @@ def scene():
             'risks':[{'id':'r1','name':'无匹配计划','type':'no-plan','enabled':True,'targetId':'t1','deviceId':'d1'}]}
 
 class EngineTests(unittest.TestCase):
+    def motion_packet(self, target, elapsed, kind='radar'):
+        raw = scene()
+        raw['sites'][0]['devices'][0]['kind'] = kind
+        raw['targets'][0].update(target)
+        compiled, devices, targets, _ = compile_scene(raw)
+        # Runtime motion is added only after the scenario has been validated.
+        if '_notification_motion' in target:
+            targets['t1']['_notification_motion'] = target['_notification_motion']
+        manifest = {'provider': 'test', 'devices': {'d1': {'external_id': 'external'}},
+                    'targets': {'t1': {'uav_sn': 'TEST'}}}
+        packets = messages(compiled, devices, targets, manifest, elapsed, 1000, {}, 1)
+        return next(payload['objects'][0] for _, payload in packets if 'objects' in payload)
+
+    def test_speed_and_axes_follow_turns_and_stop_at_endpoint(self):
+        target = scene()['targets'][0]
+        corner = metres(target['path'][0], target['path'][1]) / target['speed']
+        end = corner + metres(target['path'][1], target['path'][2]) / target['speed']
+        for elapsed, east, north in [(0, 5, 0), (corner, 0, -5), (end, 0, 0), (end+1, 0, 0)]:
+            with self.subTest(elapsed=elapsed):
+                packet = self.motion_packet({}, elapsed)
+                self.assertAlmostEqual(packet['speed'], math.hypot(east, north))
+                self.assertAlmostEqual(packet['extension']['speedX'], east)
+                self.assertAlmostEqual(packet['extension']['speedY'], north)
+                self.assertEqual(packet['extension']['speedZ'], 0)
+
+    def test_diagonal_axes_match_scalar_speed_and_existing_position(self):
+        target = dict(scene()['targets'][0], path=[[450,300],[460,290]], speed=8)
+        packet = self.motion_packet(target, 2)
+        ext = packet['extension']
+        self.assertAlmostEqual(packet['speed'], 8)
+        self.assertGreater(ext['speedX'], 0)
+        self.assertGreater(ext['speedY'], 0)
+        self.assertAlmostEqual(math.hypot(ext['speedX'], ext['speedY']), 8)
+        self.assertEqual([packet['longitude'], packet['latitude']], coordinates(position(target, 2)))
+
+    def test_single_point_zero_speed_and_duplicate_points(self):
+        for target in [{'path': [[450,300]]}, {'speed': 0},
+                       {'path': [[450,300],[450,300]]}]:
+            with self.subTest(target=target):
+                packet = self.motion_packet(target, 1)
+                self.assertEqual(packet['speed'], 0)
+                self.assertEqual(packet['extension']['speedX'], 0)
+                self.assertEqual(packet['extension']['speedY'], 0)
+        packet = self.motion_packet({'path': [[450,300],[450,300],[451,300]]}, 0)
+        self.assertEqual(packet['speed'], 5)
+
+    def test_departure_uses_runtime_speed_and_stops_at_new_endpoint(self):
+        motion = {'path': [[450,300],[450,290]], 'at_elapsed': 10, 'speed': 2,
+                  'origin': [450,300]}
+        packet = self.motion_packet({'_notification_motion': motion}, 11)
+        self.assertAlmostEqual(packet['speed'], 2)
+        self.assertAlmostEqual(packet['extension']['speedY'], 2)
+        packet = self.motion_packet({'_notification_motion': motion}, 1000)
+        self.assertEqual(packet['speed'], 0)
+
+    def test_protocol_specific_velocity_fields(self):
+        for kind in ('radar', '5ga', 'tdoa'):
+            with self.subTest(kind=kind):
+                packet = self.motion_packet({}, 0, kind)
+                self.assertEqual(packet['speed'], 5)
+                self.assertEqual('speedX' in packet['extension'], kind in ('radar', '5ga'))
+
     def test_explicit_pilot_position_is_transmitted_without_inventing_one(self):
         s=scene();s['targets'][0]['pilotPoint']=[450,300]
         s,d,t,_=compile_scene(s)
@@ -26,6 +89,10 @@ class EngineTests(unittest.TestCase):
         m={'provider':'test','devices':{'d1':{'external_id':'radar'},'d2':{'external_id':'tdoa'}},'targets':{'t1':{'uav_sn':'TEST'}}}
         objects=[p['objects'][0] for _,p in messages(s,d,t,m,1,1000,{},1) if 'objects' in p]
         self.assertEqual(len(objects),2)
+        # Common target facts agree; velocity axes belong to radar/5G-A extensions.
+        for obj in objects:
+            for key in ('speedX', 'speedY', 'speedZ'):
+                obj['extension'].pop(key, None)
         self.assertEqual(objects[0],objects[1])
     def test_secondary_sensor_must_exist_and_support_targets(self):
         s=scene();s['targets'][0]['secondaryDeviceId']='missing'

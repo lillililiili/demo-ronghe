@@ -29,7 +29,11 @@ async function main() {
   check('反制执行中不冒充干扰', flow.disposalStage({ status: 'EXECUTING', actionType: 'COUNTERMEASURE' }), 'counter');
   check('处置完成后不再显示误报入口', flow.uavProcessActions({ eventState: 'CONFIRMED', disposalStage: 'countered' }), []);
   check('审批中不显示前端伪成功动作', flow.uavProcessActions({ eventState: 'CONFIRMED', disposalStage: 'requested' }), []);
-  check('未处置事件显示误报与反制', flow.uavProcessActions({ eventState: 'PENDING_VERIFICATION', disposalStage: 'none' }), ['false-positive', 'counter']);
+  check('待核实事件只显示核实', flow.uavProcessActions({ eventState: 'PENDING_VERIFICATION', disposalStage: 'none' }), ['verify']);
+  check('核实属实后显示反制候选入口并移除核实', flow.uavProcessActions({ eventState: 'CONFIRMED', disposalStage: 'none' }), ['counter']);
+  check('未知状态不开放核实或反制', flow.uavProcessActions({ eventState: 'UNKNOWN', disposalStage: 'none' }), []);
+  check('执行中不重复发起反制', flow.uavProcessActions({ eventState: 'CONFIRMED', disposalStage: 'counter' }), []);
+  check('已移送不再发起反制', flow.uavProcessActions({ eventState: 'CONFIRMED', handoff: true }), []);
   check('误报事件不再显示动作', flow.uavProcessActions({ eventState: 'FALSE_POSITIVE', disposalStage: 'none' }), []);
   check('处罚交接完成后显示已移送', flow.uavProcessStatus({ eventState: 'CONFIRMED', disposalStage: 'countered', handoff: true }), '已移送处罚');
   check('反制完成不写成已干扰', flow.uavProcessStatus({ eventState: 'CONFIRMED', disposalStage: 'countered' }), '反制已完成');

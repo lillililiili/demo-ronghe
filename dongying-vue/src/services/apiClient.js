@@ -195,5 +195,5 @@ export async function apiBinary(path, { signal, maxBytes } = {}) {
   const utf = /filename\*=UTF-8''([^;]+)/i.exec(disposition);
   const plain = /filename="?([^"]+)"?/i.exec(disposition);
   const filename = decodeURIComponent((utf && utf[1]) || (plain && plain[1]) || 'download');
-  return { blob, filename, contentType };
+  return { blob, filename, contentType, pageCount: Number(response.headers.get('X-Pdf-Page-Count')) || null };
 }

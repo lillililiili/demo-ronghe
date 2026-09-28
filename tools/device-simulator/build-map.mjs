@@ -1,9 +1,9 @@
 // Run from dongying-vue using its existing Vite and map dependencies.
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
 const root = path.dirname(fileURLToPath(import.meta.url));
 const frontend = path.resolve(root, '../../dongying-vue');
-const { build } = await import(path.join(frontend, 'node_modules/vite/dist/node/index.js'));
+const { build } = await import(pathToFileURL(path.join(frontend, 'node_modules/vite/dist/node/index.js')).href);
 await build({
   configFile: false, root: frontend, publicDir: false, base: '/map-runtime/',
   resolve: { alias: {

@@ -112,7 +112,6 @@ function messageOf(error, fallback) {
 function trimNote(value) { return String(value || '').trim(); }
 function validateNote(value, label = '说明') {
   const note = trimNote(value);
-  if (!note) return `${label}为必填项`;
   if (note.length > 1000) return `${label}不能超过 1000 字（当前 ${note.length} 字）`;
   return '';
 }
@@ -184,7 +183,7 @@ export function openLegalityReview({ evaluation, refresh, onDone } = {}) {
       ] },
       { key: 'override_status', label: '人工结论', type: 'select', options: overrideOptions, placeholder: '请选择改判结论',
         visibleWhen: model => model.conclusion === 'OVERRIDE' },
-      { key: 'note', label: '核对说明', type: 'textarea', required: true, minRows: 3, placeholder: focus.needsReview ? '补充了哪些缺失信息、依据是什么；无需重复填写上方已有数据（1–1000 字）' : '说明需要纠正的事实及依据（1–1000 字）' }
+      { key: 'note', label: '核对说明（选填）', type: 'textarea', minRows: 3, placeholder: focus.needsReview ? '可补充缺失信息及依据，最多 1000 字' : '可补充需要纠正的事实及依据，最多 1000 字' }
     ],
     initial: { conclusion: 'CONFIRM', override_status: null, note: '' },
     confirmText: '提交复核结论',
@@ -232,7 +231,7 @@ export function openLegalityRecompute({ evaluation, refresh, onDone } = {}) {
     warning: '将按当前激活规则集重新评估；旧研判保留并标记为"已被重算取代"，其复核记录不会被覆盖。',
     introHtml: intro(evaluation),
     fields: [
-      { key: 'note', label: '重算说明', type: 'textarea', required: true, minRows: 4, placeholder: '必填，1–1000 字：为何需要重新研判（如判定规则已更新、飞行记录已补齐）' }
+      { key: 'note', label: '重算说明（选填）', type: 'textarea', minRows: 4, placeholder: '可补充重新研判的原因，最多 1000 字' }
     ],
     initial: { note: '' },
     confirmText: '重新研判',
@@ -272,7 +271,7 @@ export function openLegalityEscalation({ evaluation, refresh, onDone } = {}) {
     warning: '转告警会创建一条来源告警与待核实无人机事件；后续核实、反制与处罚交接仍在告警页按既有流程执行。',
     introHtml: intro(evaluation),
     fields: [
-      { key: 'note', label: '转告警说明', type: 'textarea', required: true, minRows: 4, placeholder: '必填，1–1000 字：为何需要人工转告警' }
+      { key: 'note', label: '转告警说明（选填）', type: 'textarea', minRows: 4, placeholder: '可补充人工转告警的原因，最多 1000 字' }
     ],
     initial: { note: '' },
     confirmText: '创建告警',

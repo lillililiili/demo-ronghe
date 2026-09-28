@@ -20,7 +20,10 @@ export function legalityReviewFocus(evaluation) {
   const unresolved = assuranceStatus === 'INSUFFICIENT' || assuranceStatus === 'UNAVAILABLE'
     || unknownReasons.length > 0 || uncertainHits.length > 0;
   const superseded = !!evaluation?.superseded_by_evaluation_id || evaluation?.review?.state === 'SUPERSEDED';
-  const reviewed = Number(evaluation?.review?.version) > 0 && evaluation?.review?.state !== 'PENDING_REVIEW';
+  const verification = evaluation?.alarm_verification;
+  const alarmVerified = !!evaluation?.event_id && verification?.event_id === evaluation.event_id
+    && Number(verification.version) > 0 && ['CONFIRMED', 'FALSE_POSITIVE'].includes(verification.conclusion);
+  const reviewed = alarmVerified || (Number(evaluation?.review?.version) > 0 && evaluation?.review?.state !== 'PENDING_REVIEW');
   const applicable = !!evaluation && evaluation.mode !== 'SHADOW'
     && evaluation.legal_status !== 'NOT_APPLICABLE' && !superseded;
   const reliable = assuranceStatus === 'SUFFICIENT' && assurance?.review_required === false;
@@ -28,11 +31,12 @@ export function legalityReviewFocus(evaluation) {
   const needsReview = applicable && !reviewed && assuranceProvided && assurance?.review_required === true;
   const canReview = (evaluation?.allowed_actions || []).includes('REVIEW');
   const showTask = needsReview || reviewed || superseded || (applicable && !assuranceProvided && !reviewed);
-  const title = superseded ? '已有更新的研判' : reviewed ? '已完成人工复核'
+  const title = superseded ? '已有更新的研判' : alarmVerified ? '已在关联告警中完成核实' : reviewed ? '已完成人工复核'
     : needsReview ? '需要核对的信息缺口'
       : !assuranceProvided && applicable ? '判定可靠性未知' : '当前无需人工复核';
   const note = superseded ? '请查看最新结果；本次结论与复核历史继续保留。'
-    : reviewed ? '下方保留原始系统结论；人工结论与说明可在复核历史查看。'
+    : alarmVerified ? `关联告警核实结果：${verification.conclusion === 'FALSE_POSITIVE' ? '误报' : '确认事件'}。${verification.note ? `说明：${verification.note}。` : ''}原始系统判定与依据继续保留，可前往同一告警查看核实历史。`
+      : reviewed ? '下方保留原始系统结论；人工结论与说明可在复核历史查看。'
       : needsReview && assuranceStatus === 'UNAVAILABLE' ? '本条记录的算法可靠性结果不可用，请根据下列原因核对信息缺口。'
         : needsReview ? '本次算法依据不足，当前结论暂不能可靠确认，请根据下列原因核对信息缺口。'
           : !assuranceProvided && applicable ? '本条记录未保存算法可靠性结果，不能当作明确待复核，也不能把系统结论视为可靠自动结论。'

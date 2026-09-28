@@ -31,12 +31,14 @@ onMounted(() => {
       for (const [dx, dy] of [[-19,-10], [19,10], [-19,10], [19,-10]]) {
         ctx.beginPath(); ctx.ellipse(x + dx, y + dy, 11, 4, 0, 0, Math.PI * 2); ctx.stroke();
       }
-    } else {
+    } else if (['BIRD', 'BIRD_FLOCK', 'MIGRATORY_BIRD', 'RAPTOR'].includes(props.subtype)) {
       for (let i = 0; i < 7; i++) {
         const bx = x + (i % 4) * 16 - 24, by = y + Math.floor(i / 4) * 16;
         const wing = Math.sin(t * 7 + i) * 5;
         ctx.beginPath(); ctx.moveTo(bx - 6, by + wing); ctx.lineTo(bx, by); ctx.lineTo(bx + 6, by + wing); ctx.stroke();
       }
+    } else {
+      ctx.fillStyle = '#dcecf4'; ctx.font = '13px sans-serif'; ctx.fillText('模拟目标', x - 26, y);
     }
     ctx.strokeStyle = '#7aefba'; ctx.lineWidth = 1; ctx.strokeRect(x - 48, y - 33, 96, 78);
     ctx.beginPath(); ctx.moveTo(305, 180); ctx.lineTo(335, 180); ctx.moveTo(320, 165); ctx.lineTo(320, 195); ctx.stroke();

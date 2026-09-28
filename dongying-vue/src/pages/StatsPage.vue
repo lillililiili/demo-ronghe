@@ -3,13 +3,14 @@
    转换约定：
    · 结构进 template，图表初始化进数据到达后的 drawCharts（等价 legacy mount 时机）
    · 数值/标签等叶子仍用 window.UI 的字符串生成器（U.num/U.table）
-   · 工具条不再放没有切片数据的时间/类型/区域下拉，避免点了数字不变
+   · 时间范围由服务端按北京时间统计，列表与导出使用同一范围
    · 外壳职责（面包屑/导航组/卸载清理）统一走 usePageChrome
    · 图表与 KPI 读取 GET /api/v1/stats/operations，失败不回退 mock.js */
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import UPanel from '@/components/UPanel.vue';
 import UKpis from '@/components/UKpis.vue';
+import UField from '@/components/form/UField.vue';
 import { statsApi } from '@/services/statsApi.js';
 import { toast } from '@/ui/nv.js';
 
@@ -25,6 +26,10 @@ function metricReason(key) { return S.value?.availability?.[key]?.reason || '暂
 function metricVisible(key) { return S.value?.availability?.[key]?.status !== 'UNAVAILABLE'; }
 const loading = ref(true);
 const exporting = ref(false);
+const dateRange = ref(null);
+const ownerOrgId = ref('');
+const organizationOptions = ref([{ label: '当前权限内全部单位', value: '' }]);
+const organizationError = ref('');
 const error = ref('');
 let cancelled = false;
 const isCount = value => Number.isInteger(value) && value >= 0;
@@ -43,17 +48,6 @@ const penaltyResults = computed(() => {
 });
 const penaltyUnavailableReason = computed(() => !metricVisible('punish') ? metricReason('punish')
   : !metricVisible('by_penalty') ? metricReason('by_penalty') : '处罚结果统计不完整，暂无法展示案件构成');
-
-const toolbarHtml = computed(() => {
-  const range = S.value
-    ? `${S.value.from} 至 ${S.value.to}（当前权限范围）`
-    : (loading.value ? '正在加载' : '—');
-  const disabled = !S.value || exporting.value ? ' disabled' : '';
-  return `<div class="toolbar-fields">${U.field('统计区间', `<span class="mono" style="font-size:12px;color:var(--txt-2);padding:0 4px">${range}</span>`)}</div>
-      <div class="toolbar-actions">
-      <button class="btn pri" id="stExp"${disabled}>${U.icon('download')} 导出数据</button>
-      </div>`;
-});
 
 const kpiList = computed(() => {
   if (!S.value) return [];
@@ -140,39 +134,58 @@ function drawCharts(CH) {
   })?.setOption({ yAxis: { minInterval: 1 } });
 }
 
+let loadSequence = 0;
 async function load() {
+  const sequence = ++loadSequence;
   loading.value = true;
   error.value = '';
   try {
-    const data = await statsApi.operations();
-    if (cancelled) return;
+    const range = dateRange.value;
+    const date = value => new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(value);
+    const query = range?.length === 2 ? { from: date(range[0]), to: date(range[1]) } : {};
+    if (ownerOrgId.value) query.owner_org_id = ownerOrgId.value;
+    const data = await statsApi.operations(query);
+    if (cancelled || sequence !== loadSequence) return;
     S.value = data;
+    if (!dateRange.value) dateRange.value = [Date.parse(`${data.from}T00:00:00+08:00`), Date.parse(`${data.to}T00:00:00+08:00`)];
     await nextTick();
-    if (cancelled) return;
+    if (cancelled || sequence !== loadSequence) return;
     if (window.CH.disposeAll) window.CH.disposeAll();
     drawCharts(window.CH);
   } catch (e) {
-    if (cancelled) return;
+    if (cancelled || sequence !== loadSequence) return;
     S.value = null;
     error.value = e.message || '运行统计加载失败。';
   } finally {
-    if (!cancelled) loading.value = false;
+    if (!cancelled && sequence === loadSequence) loading.value = false;
   }
 }
 
 onMounted(load);
+async function loadOrganizations() {
+  try {
+    const items = await statsApi.organizations();
+    if (cancelled) return;
+    organizationOptions.value = [{ label: '当前权限内全部单位', value: '' }, ...items.map(item => ({ label: item.name, value: item.org_id }))];
+    organizationError.value = '';
+  } catch (e) {
+    if (!cancelled) organizationError.value = e.message || '单位筛选项读取失败';
+  }
+}
+onMounted(loadOrganizations);
 onUnmounted(() => { cancelled = true; window.CH?.disposeAll?.(); });
 
 async function exportCsv() {
   if (!S.value || exporting.value) return;
   exporting.value = true;
   try {
-    const blob = await statsApi.exportCsv({ from: S.value.from, to: S.value.to });
+    const report = S.value;
+    const blob = await statsApi.exportCsv({ from: report.from, to: report.to, owner_org_id: report.ownerOrgId });
     if (!blob) throw new Error('导出失败');
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `运行统计-${S.value.from}-${S.value.to}.csv`;
+    link.download = `运行统计-${report.from}-${report.to}.csv`;
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -185,9 +198,6 @@ async function exportCsv() {
   }
 }
 
-function onToolbarClick(e) {
-  if (e.target.closest('#stExp')) exportCsv();
-}
 function onRegionTab(e) {
   const el = e.target.closest('[data-rt]');
   if (!el || !S.value) return;
@@ -216,7 +226,15 @@ function onRegionTab(e) {
       <span>{{ error }}</span>
       <button class="btn" type="button" @click="load">重试</button>
     </div>
-    <div class="panel mb12" style="flex:none" @click="onToolbarClick"><div class="toolbar" style="border:0" v-html="toolbarHtml"></div></div>
+    <div class="panel mb12" style="flex:none"><div class="toolbar" style="border:0">
+      <div class="toolbar-fields">
+        <UField id="stats-range" v-model="dateRange" type="daterange" label="统计日期（北京时间）" variant="filter" @update:model-value="load" />
+        <UField id="stats-org" v-model="ownerOrgId" type="select" label="单位" variant="filter" :options="organizationOptions" @update:model-value="load" />
+        <span class="muted">{{ S?.ownerOrgId ? organizationOptions.find(item => item.value === S.ownerOrgId)?.label || '所选单位' : '当前权限范围' }} · {{ S ? `${S.from} 至 ${S.to}` : loading ? '正在加载' : '—' }}</span>
+        <span v-if="organizationError" role="alert">{{ organizationError }} <button class="btn sm" @click="loadOrganizations">重试单位列表</button></span>
+      </div>
+      <div class="toolbar-actions"><button class="btn pri" id="stExp" :disabled="loading || !S || exporting" @click="exportCsv">{{ exporting ? '正在导出' : '导出数据' }}</button></div>
+    </div></div>
 
     <div v-if="S" class="stats-basis">{{ sourceLabel }} · 生成于 {{ generatedLabel }}；目标按首次发现时间归属，合法性与风险为生成时状态。</div>
     <UKpis v-if="S" :list="kpiList" />

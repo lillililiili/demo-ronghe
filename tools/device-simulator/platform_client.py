@@ -96,6 +96,11 @@ class Prerequisites:
         zone_ids = {r.get('zoneId') for r in risks if r['type']=='zone' or r['type']=='height' and r.get('basis')!='plan'}
         if not plan_ids and not zone_ids:
             return
+        # A drawn boundary alone does not establish a prohibited area.
+        for zone in scene['zones']:
+            if zone['id'] in zone_ids and zone.get('kindCode') not in (
+                    'PROHIBITED', 'RESTRICTED', 'ALTITUDE_LIMIT', 'PERMITTED', 'TEMPORARY_CONTROL'):
+                raise ValueError(zone['name']+'尚未选择空域类型，请在空域下发中选择后再模拟')
         # Prove the chosen API and seed database share the same broker identity before any write.
         if self.query('SELECT count(*) FROM mqtt_broker WHERE broker_id='+sql(broker['broker_id'])+" AND source_mode='replay' AND enabled=TRUE;") != '1':
             raise ValueError('测试库与当前 API 的 MQTT 连接不一致，已阻止写入')
@@ -137,7 +142,7 @@ class Prerequisites:
             points = ','.join(f'{x} {y}' for x,y in ring)
             start, end = moment(z['start']), moment(z['end'])
             statements += [f"INSERT INTO airspace(airspace_id,airspace_no,name,source_mode,owner_org_id,district_id,created_at,updated_at,version) VALUES ({sql(zid)},{sql(manifest['batch']+'-a'+str(len(manifest['zones'])+1))},{sql('模拟 '+z['name'])},'replay',{owner},{district},now(),now(),0);",
-                f"INSERT INTO airspace_version(airspace_version_id,airspace_id,version_no,kind_code,boundary,min_altitude_m,max_altitude_m,altitude_datum,valid_from,valid_to,change_reason,created_at) VALUES ({sql(vid)},{sql(zid)},1,'PROHIBITED',ST_GeomFromText({sql('MULTIPOLYGON((('+points+')))')},4326),0,{z['max']},{sql(z.get('altitudeDatum', 'AMSL'))},to_timestamp({start}),to_timestamp({end}),'MQTT 地图模拟批次',now());"]
+                f"INSERT INTO airspace_version(airspace_version_id,airspace_id,version_no,kind_code,boundary,min_altitude_m,max_altitude_m,altitude_datum,valid_from,valid_to,change_reason,created_at) VALUES ({sql(vid)},{sql(zid)},1,{sql(z['kindCode'])},ST_GeomFromText({sql('MULTIPOLYGON((('+points+')))')},4326),0,{z['max']},{sql(z.get('altitudeDatum', 'AMSL'))},to_timestamp({start}),to_timestamp({end}),'MQTT 地图模拟批次',now());"]
             manifest['zones'][z['id']] = {'id':zid,'version_id':vid}
         statements.append('COMMIT;')
         self.query('\n'.join(statements))

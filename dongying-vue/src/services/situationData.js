@@ -8,7 +8,7 @@
 /* 用相对路径而不是 @/ 别名：本模块要能被 node 直接 import 跑单测（tools/situationData.test.cjs），
    而别名只有 Vite 认得。文案一律走共享字典，本页不另建一套中文。 */
 import { measuredMapPoints } from './trackPoints.js';
-import { OBJECT_TYPE_LABEL, labelOf, targetTypeLabel } from '../ui/labels.js';
+import { OBJECT_TYPE_LABEL, ALARM_TYPE_LABEL, labelOf, targetTypeLabel } from '../ui/labels.js';
 
 /* 空域图层字典（决策 11-6 定名与配色，12-3 定归属来源）。
    阶段 12 起 mock.js 已删除，map.js 的图层归属直接读这里给出的 `layer` 字段——
@@ -408,7 +408,7 @@ export function toAlarms(alarms) {
       targetId: alarm.target_no || alarm.target_id,
       targetInternalId: alarm.target_id || null,
       level: SEVERITY_LEVEL[alarm.severity] || '低',
-      type: alarm.alarm_type || '',
+      type: labelOf(ALARM_TYPE_LABEL, alarm.alarm_type, '告警类型未提供'),
       state: alarm.state,
       eventState: alarm.state,
       severity: alarm.severity,

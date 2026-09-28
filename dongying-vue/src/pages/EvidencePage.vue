@@ -273,5 +273,8 @@ onBeforeUnmount(() => { mounted = false; listSequence += 1; detailSequence += 1;
   </div></div>
 </template>
 <style scoped>
+.evidence-list .tb { table-layout: fixed; width: 100%; }
+.evidence-list .tb td { white-space: normal; overflow-wrap: anywhere; }
+.evidence-list .tb th:nth-child(2) { min-width: 140px; }
 .evidence-root{height:100%;min-height:600px;display:flex;flex-direction:column}.evidence-row{flex:1;min-height:0;padding-bottom:6px}.evidence-list{flex:1;min-height:0;overflow:auto}.evidence-detail{flex:1;min-height:0;overflow:auto;padding:12px}.evidence-located-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;color:var(--txt-2);font-size:12px;line-height:1.6}.evidence-located-toolbar>button{margin-left:auto}.evidence-record-name{padding:0;background:none;border:0;color:inherit;font:inherit;text-align:left;cursor:pointer;overflow-wrap:anywhere}.cell-sub{font-size:11px;color:var(--txt-3)}.evidence-list td{overflow-wrap:anywhere}.evidence-list th:nth-child(1){width:148px}.evidence-list th:nth-child(3){width:124px}.evidence-list th:nth-child(4){width:72px}.evidence-list th:nth-child(5){width:86px}.evidence-list th:nth-child(6){width:118px}#evDetail :deep(.detail-hero-title),#evDetail :deep(.detail-hero-id){display:block;white-space:normal;overflow:visible;overflow-wrap:anywhere;text-overflow:unset;-webkit-line-clamp:unset;-webkit-box-orient:initial}
 </style>

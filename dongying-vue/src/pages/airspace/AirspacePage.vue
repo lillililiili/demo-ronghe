@@ -1,17 +1,13 @@
 <script setup>
 /* 空域管理：选区查看近期监测目标、历史风险与上级空域规则。
    目标位置和风险发现快照分图层展示，不由前端推导入侵、现场解除或整片空域安全。
-   空域及临时管制区由上级下发，本页只读展示；既有数据包导入用于对接前的数据加载。
+   新空域规则由上级下发，本页只读展示并保留旧资料。
    接口模式读不到就显示原因；模拟演示使用独立样例，不生成服务端业务记录。 */
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { airspaceApi } from '@/services/airspaceApi.js';
 import { flightApi } from '@/services/flightApi.js';
 import { strokePlannedRoute } from '@/services/positionMap.js';
 import { airspaceKindMeta, polygonRings, toAirspaces } from '@/services/situationData.js';
-import { openFormModal } from '@/ui/formModal.js';
-import { closeModal } from '@/ui/modal.js';
-import { toast } from '@/ui/nv.js';
-import { hasPermission } from '@/services/accessControl.js';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import UPanel from '@/components/UPanel.vue';
 import UControl from '@/components/form/UControl.vue';
@@ -26,7 +22,7 @@ import { hitMapReference, REFERENCE_NOTES } from './airspaceReferenceHover.js';
 import { drawObjectRisk } from '@/pages/flights/objectRiskMap.js';
 import {
   AIRSPACE_KIND_LABEL, AIRSPACE_KIND_TAG, ALTITUDE_DATUM_LABEL,
-  IMPORT_ISSUE_LABEL, IMPORT_STATUS_LABEL, labelOf
+  labelOf
 } from '@/ui/labels.js';
 
 usePageChrome('airspace');
@@ -64,8 +60,6 @@ const RISK_COLORS = { CRITICAL: '#ff4d5e', HIGH: '#ff4d5e', MEDIUM: '#ffb020', L
 const riskColor = risk => risk.state === 'EXCLUDED' ? '#8ca0be' : RISK_COLORS[risk.severity] || '#8ca0be';
 const versions = ref([]);
 const detailLoading = ref(false), detailError = ref('');
-const busy = ref(false);
-const importPreview = ref(null);
 const mapHost = ref(null);
 const objectMarkers = ref([]);
 const referenceTip = ref(null);
@@ -75,12 +69,11 @@ let map = null;
 let fittedOnce = false;
 const riskSection = ref(null);
 
-const canManage = computed(() => hasPermission('airspace:manage'));
-const manageBlockedNote = '需要「维护空域」权限，请联系管理员开通';
 
 /* ---------- 文案 ---------- */
 function time(value) { return value == null ? '' : new Date(value).toLocaleString('zh-CN', { hour12: false }); }
 function day(value) { return value == null ? '' : new Date(value).toLocaleDateString('zh-CN'); }
+function sourceLabel(row) { return ({ mock: '模拟', replay: '回放' })[row?.source_mode] || ''; }
 function kindLabel(code) { return labelOf(AIRSPACE_KIND_LABEL, code, '未知种类'); }
 function kindTag(code) { return AIRSPACE_KIND_TAG[code] || 't-gray'; }
 function kindColor(code) { return airspaceKindMeta(code)?.color || '#8ca0be'; }
@@ -195,12 +188,6 @@ const districtOptions = computed(() => {
   if (monitor.isDemo) seen.set(DEMO_DISTRICT, '模拟场景区域');
   return [{ label: '全市', value: '' }].concat([...seen].map(([value, label]) => ({ label, value })));
 });
-const orgOptions = computed(() => {
-  const seen = new Map();
-  all.value.forEach(row => { if (row.owner_org_id && !seen.has(row.owner_org_id)) seen.set(row.owner_org_id, row.owner_org_name || row.owner_org_id); });
-  return [...seen].map(([value, label]) => ({ label, value }));
-});
-
 const filtered = computed(() => {
   const keyword = filters.keyword.trim().toLowerCase();
   return all.value.filter(row => {
@@ -514,128 +501,12 @@ const pendingVersion = computed(() => latestVersion.value && latestVersion.value
 const rowStatus = row => row.load_error ? { text: '读取失败', cls: 't-red' }
   : row.current_version ? { text: '生效中', cls: 't-green' } : { text: '当前未生效', cls: 't-gray' };
 
-function newKey() { return globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`; }
-
-function orgField(key, label) {
-  return orgOptions.value.length
-    ? { key, label, type: 'select', required: true, options: orgOptions.value }
-    : { key, label, required: true, placeholder: '机构标识' };
-}
-function districtField(key, label) {
-  const options = districtOptions.value.slice(1);
-  return options.length
-    ? { key, label, type: 'select', required: true, options }
-    : { key, label, required: true, placeholder: '区域标识' };
-}
-
-/* ---------- 加载数据包（沿用导入批次：解析 → 预览 → 确认/放弃） ---------- */
-function pickFile() {
-  const input = document.createElement('input');
-  input.type = 'file';
-  input.accept = '.json,.geojson,application/geo+json,application/json';
-  input.addEventListener('change', () => {
-    const file = input.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => fillTextarea(String(reader.result || ''));
-    reader.onerror = () => toast('文件读取失败，请改用粘贴。', 'err');
-    reader.readAsText(file);
-  });
-  input.click();
-}
-function fillTextarea(text) {
-  const area = document.querySelector('.nv-modal textarea, .n-modal textarea, .modal textarea');
-  if (!area) { toast('没有找到文件内容输入框，请改用粘贴。', 'err'); return; }
-  const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set;
-  if (setter) setter.call(area, text); else area.value = text;
-  area.dispatchEvent(new Event('input', { bubbles: true }));
-  area.dispatchEvent(new Event('change', { bubbles: true }));
-  toast('文件内容已填入。', 'ok');
-}
-function onDocumentClick(event) {
-  if (event.target?.closest?.('[data-airspace-pick]')) { event.preventDefault(); pickFile(); }
-}
-
-function openImport() {
-  if (!canManage.value) return;
-  const key = newKey();
-  openFormModal({
-    title: '加载空域数据包',
-    notice: '先解析文件里的每一片空域并列出问题，确认后才写入；已有的规则不会被覆盖。',
-    fields: [
-      { key: 'picker', label: '数据包文件', type: 'html', html: '<button type="button" class="btn" data-airspace-pick>选择文件</button>' },
-      { key: 'geojson', label: '文件内容', type: 'textarea', required: true, placeholder: '选择文件后自动填入，也可以直接粘贴' },
-      orgField('owner_org_id', '默认管理单位'),
-      districtField('district_id', '默认所属区县'),
-      { key: 'kind_code', label: '默认种类', type: 'select', options: [{ label: '按文件内容', value: '' }].concat(KIND_OPTIONS.slice(1)) },
-      { key: 'valid_from', label: '默认生效时间', type: 'datetime' }
-    ],
-    initial: { kind_code: '', owner_org_id: orgOptions.value[0]?.value || '', district_id: districtOptions.value[1]?.value || '' },
-    confirmText: '解析并预览',
-    validate: values => { try { JSON.parse(values.geojson); } catch { return '内容不是合法的 JSON'; } return ''; },
-    onSubmit: async values => {
-      if (busy.value) return;
-      busy.value = true;
-      try {
-        const body = { geojson: values.geojson, owner_org_id: String(values.owner_org_id).trim(), district_id: String(values.district_id).trim() };
-        const defaults = {};
-        if (values.kind_code) defaults.kind_code = values.kind_code;
-        if (values.valid_from) defaults.valid_from = new Date(values.valid_from).getTime();
-        if (Object.keys(defaults).length) body.defaults = defaults;
-        const batch = await airspaceApi.stageImport(body, key);
-        closeModal();
-        importPreview.value = batch;
-        toast(`已解析 ${batch.feature_count} 片，其中 ${batch.accepted_count} 片可加载。`, 'ok');
-      } catch (reason) {
-        toast(writeMessage(reason), 'err');
-      } finally { busy.value = false; }
-    }
-  });
-}
-
-async function decideImport(action) {
-  const batch = importPreview.value;
-  if (!batch || busy.value) return;
-  busy.value = true;
-  const key = newKey();
-  try {
-    const body = { expected_version: batch.version };
-    const result = action === 'confirm'
-      ? await airspaceApi.confirmImport(batch.batch_id, body, key)
-      : await airspaceApi.discardImport(batch.batch_id, body, key);
-    importPreview.value = null;
-    toast(action === 'confirm' ? `已加载 ${result.created_airspaces} 片空域。` : '已放弃这个数据包。', 'ok');
-    if (action === 'confirm') { fittedOnce = false; await loadAll(); }
-  } catch (reason) {
-    toast(writeMessage(reason), 'err');
-    try { importPreview.value = await airspaceApi.importBatch(batch.batch_id); } catch { importPreview.value = null; }
-  } finally { busy.value = false; }
-}
-
-function writeMessage(reason) {
-  const code = reason?.code;
-  if (code === 'VERSION_OVERLAP') return '生效时间必须晚于当前版本，请调整后重试。';
-  if (code === 'INVALID_VALIDITY') return '结束时间必须晚于开始时间。';
-  if (code === 'INVALID_GEOJSON') return '无法识别文件中的空域边界，请检查文件格式。';
-  if (code === 'IMPORT_TOO_LARGE') return '数据包过大，请拆分后再加载。';
-  if (code === 'IMPORT_ALREADY_DECIDED') return '这个数据包已经处理过了。';
-  if (code === 'VERSION_CONFLICT') return '这片空域刚被其他人修改，已为你刷新。';
-  if (code === 'IDEMPOTENCY_REPLAY') return '该操作已提交过，请查看最新结果。';
-  if (code === 'DUPLICATE_AIRSPACE_NO' || reason?.status === 409) return reason?.message || '编号已存在，请换一个。';
-  if (reason?.status === 403) return manageBlockedNote;
-  return reason?.message || '操作失败，请稍后重试。';
-}
-
-function issueLabel(code) { return labelOf(IMPORT_ISSUE_LABEL, code, code || ''); }
-
 /* ---------- 生命周期 ---------- */
 onMounted(async () => {
-  document.addEventListener('click', onDocumentClick);
   createMap();
   await Promise.all([loadAll(), loadRoutes()]);
 });
 onUnmounted(() => {
-  document.removeEventListener('click', onDocumentClick);
   destroyMap();
 });
 </script>
@@ -652,8 +523,7 @@ onUnmounted(() => {
           <div class="field"><UControl v-model="filters.keyword" placeholder="搜索名称或编号" clearable :disabled="loading" size="small" /></div>
         </div>
         <div class="toolbar-actions">
-          <span class="toolbar-note">临时管制区由上级下发</span>
-          <button v-if="canManage" class="btn" type="button" :disabled="busy || loading" @click="openImport">加载数据包</button>
+          <span class="toolbar-note">空域规则由上级下发</span>
           <button class="btn ghost" type="button" :disabled="loading || risks.loading || monitor.loading" @click="refreshPage">刷新</button>
         </div>
       </div>
@@ -713,7 +583,7 @@ onUnmounted(() => {
         <div class="drawer-head">
           <div class="drawer-title">
             <b :title="selected.airspace_id">{{ selected.name }}</b>
-            <span class="mono">{{ selected.airspace_no }}</span>
+            <span class="mono">{{ selected.airspace_no }} <span v-if="sourceLabel(selected)" class="tag t-amber">{{ sourceLabel(selected) }}</span></span>
           </div>
           <button type="button" class="drawer-close" aria-label="关闭" @click="clearDetail">×</button>
         </div>
@@ -746,6 +616,7 @@ onUnmounted(() => {
             <small>按当前平面范围匹配发现位置，不代表已判定侵入或超高。</small>
           </section>
 
+          <details v-if="versions.length"><summary>版本历史</summary><dl v-for="version in versions" :key="version.airspace_version_id || version.version_no" class="kv"><dt>版本</dt><dd>{{ version.version_no }}</dd><dt>种类</dt><dd>{{ kindLabel(version.kind_code) }}</dd><dt>生效期</dt><dd>{{ validityText(version) }}</dd><dt>高度</dt><dd>{{ altitudeText(version) }}</dd><dt>变更原因</dt><dd>{{ version.change_reason || '未记录' }}</dd></dl></details>
           <div v-if="selected.current_version && !selectedPolygons().length" class="warnbox">边界数据有问题，图上未绘制。</div>
         </div>
         <div class="drawer-actions">
@@ -773,7 +644,7 @@ onUnmounted(() => {
       <div v-else class="scroll airspace-list" aria-label="空域记录列表">
         <button v-for="row in pageRows" :key="row.airspace_id" type="button" class="airspace-rule-card" :class="{ on: selected?.airspace_id === row.airspace_id }" :aria-pressed="selected?.airspace_id === row.airspace_id" @click="select(row)">
           <span class="rule-card-head"><b>{{ row.name }}</b><span class="tag" :class="rowStatus(row).cls">{{ rowStatus(row).text }}</span></span>
-          <span>{{ row.airspace_no }} · {{ row.current_version ? kindLabel(row.current_version.kind_code) : '当前没有生效版本' }}</span>
+          <span>{{ row.airspace_no }} <span v-if="sourceLabel(row)" class="tag t-amber">{{ sourceLabel(row) }}</span> · {{ row.current_version ? kindLabel(row.current_version.kind_code) : '当前没有生效版本' }}</span>
           <span>{{ altitudeText(row.current_version) }}</span>
           <span>{{ validityShort(row.current_version) }}</span>
           <span class="rule-card-open">{{ selected?.airspace_id === row.airspace_id ? '正在查看' : '查看详情' }}</span>
@@ -788,36 +659,6 @@ onUnmounted(() => {
     </UPanel>
     </section>
 
-    <div v-if="importPreview" class="panel airspace-import">
-      <div class="ph">
-        <h3>数据包预览 · {{ labelOf(IMPORT_STATUS_LABEL, importPreview.status) }}</h3>
-        <p>共 {{ importPreview.feature_count }} 片，其中 {{ importPreview.accepted_count }} 片可加载；确认后才会写入。</p>
-      </div>
-      <div class="scroll airspace-import-list">
-        <table class="tb">
-          <thead><tr><th>序号</th><th>名称</th><th>编号</th><th>种类</th><th>结果</th></tr></thead>
-          <tbody>
-            <tr v-for="item in importPreview.items" :key="item.item_id">
-              <td>{{ item.seq }}</td>
-              <td>{{ item.name || '—' }}</td>
-              <td class="mono">{{ item.airspace_no || '—' }}</td>
-              <td>{{ item.kind_code ? kindLabel(item.kind_code) : '—' }}</td>
-              <td>
-                <span v-if="item.accepted" class="tag t-green">可加载</span>
-                <template v-else>
-                  <span class="tag t-red">不可加载</span>
-                  <span v-for="issue in item.issues" :key="issue.reason_code" class="airspace-import-issue">{{ issueLabel(issue.reason_code) }}</span>
-                </template>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <div class="detail-actions">
-        <button class="btn pri" type="button" :disabled="busy || !importPreview.accepted_count" @click="decideImport('confirm')">确认加载</button>
-        <button class="btn" type="button" :disabled="busy" @click="decideImport('discard')">放弃</button>
-      </div>
-    </div>
   </section>
 </template>
 
@@ -900,5 +741,16 @@ onUnmounted(() => {
 .airspace-import { grid-area: import; flex: none; max-height: 40%; display: flex; flex-direction: column; }
 .airspace-import-list { overflow: auto; }
 .airspace-import-issue { margin-left: 6px; color: var(--txt-2); font-size: 12.5px; }
+
+@media (max-width: 1200px) {
+  .airspace-page { grid-template-columns: minmax(220px, .9fr) minmax(0, 1.4fr); grid-template-rows: auto auto auto minmax(280px, 1fr) auto auto; grid-template-areas: "bar bar" "tabs tabs" "filters filters" "records map" "detail detail" "import import"; }
+  .airspace-detail-slot:not(:empty) { min-height: 280px; max-height: 420px; }
+}
+@media (max-width: 720px) {
+  .airspace-page { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto minmax(240px, auto) 320px auto auto; grid-template-areas: "bar" "tabs" "filters" "records" "map" "detail" "import"; }
+  .airspace-page:not(.has-detail) .airspace-stage { grid-column: 1; }
+  .airspace-bottom-tabs { flex-wrap: wrap; }
+  .drawer-actions { flex-wrap: wrap; }
+}
 
 </style>

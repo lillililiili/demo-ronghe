@@ -21,6 +21,7 @@ export function mapOperations(data) {
   return {
     from: data.from,
     to: data.to,
+    ownerOrgId: data.owner_org_id || null,
     sourceMode: data.source_mode,
     simulated: !!data.simulated,
     generatedAt: data.generated_at ?? null,
@@ -54,6 +55,7 @@ export function mapOperations(data) {
 }
 
 export const statsApi = {
+  organizations: () => apiRequest('/stats/operations/organizations'),
   operations: params => apiRequest(`/stats/operations${query(params)}`).then(mapOperations),
   exportCsv: params => apiDownload(`/stats/operations/export.csv${query(params)}`)
 };

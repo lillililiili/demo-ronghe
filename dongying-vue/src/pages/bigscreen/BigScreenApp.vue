@@ -1,36 +1,41 @@
 <script setup>
-import { computed, h, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { NButton, NCard, NConfigProvider, NDataTable, NIcon, NModal } from 'naive-ui';
+import { computed, h, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
+import { NButton, NConfigProvider, NDataTable, NIcon } from 'naive-ui';
 import {
   BriefcaseOutline,
   DocumentAttachOutline,
+  ExitOutline,
   NotificationsOutline,
-  RadioOutline
+  RadioOutline,
+  ScanOutline
 } from '@vicons/ionicons5';
-import { dateZhCN, theme, themeOverrides, zhCN } from '@/ui/theme.js';
+import { createThemeOverrides, dateZhCN, theme, zhCN } from '@/ui/theme.js';
 import { getDashboardSnapshot } from '@/services/dashboardApi.js';
+import { apiRequest } from '@/services/apiClient.js';
 import { attachTracks } from '@/services/mapTracks.js';
 import { airspaceKindMeta } from '@/services/situationData.js';
 import { ALARM_TYPE_LABEL, LEGALITY_LABEL, OBJECT_TYPE_LABEL, labelOf, targetTypeLabel } from '@/ui/labels.js';
 
+const themeOverrides = createThemeOverrides();
 const clock = ref('');
 const viewportHeight = ref(window.innerHeight);
-const showVideo = ref(false);
-const selectedTarget = ref(null);
 const trendEl = ref(null);
 const targetChartEl = ref(null);
-const deviceChartEl = ref(null);
-const flightChartEl = ref(null);
 const mapEl = ref(null);
-const videoEl = ref(null);
 const loading = ref(true);
 const error = ref('');
 const snapshot = ref(null);
+const targetTypes = ref({ state: 'LOADING', data: null });
+const deviceTypes = ref({ state: 'LOADING', data: null });
+const completedFlights = ref({ state: 'LOADING', data: null });
 
 let clockTimer = null;
 let resizeTimer = null;
 let map = null;
-let video = null;
+let refreshTimer = null;
+let disposed = false;
+let version = 0;
+let detailController = null;
 
 const alarmColor = { 高: 'var(--red)', 中: 'var(--amber)', 低: 'var(--cyan)' };
 const SEVERITY_ZH = { CRITICAL: '高', HIGH: '高', MEDIUM: '中', LOW: '低' };
@@ -59,43 +64,138 @@ function formatTime(ms) {
 }
 function dash(value) { return value == null ? '—' : value; }
 function avail(key) { return snapshot.value?.availability?.[key] === 'AVAILABLE'; }
+function dataState(key) {
+  if (loading.value) return '正在加载';
+  if (error.value) return '数据暂不可用';
+  const state = snapshot.value?.availability?.[key];
+  if (state === 'FORBIDDEN') return '无读取权限';
+  if (state && state !== 'AVAILABLE') return '数据暂不可用';
+  return '暂无数据';
+}
 
-const rowLimit = computed(() => viewportHeight.value < 760 ? 2 : viewportHeight.value < 850 ? 3 : 4);
+const rowLimit = computed(() => viewportHeight.value < 760 ? 4 : viewportHeight.value < 900 ? 5 : viewportHeight.value < 1000 ? 6 : 8);
+
+const detailMessage = detail => ({ LOADING: '正在加载', FORBIDDEN: '无读取权限', UNAVAILABLE: '数据暂不可用' }[detail.state] || '暂无数据');
+const countValid = value => Number.isSafeInteger(value) && value >= 0;
+// 汇总来自完整聚合接口，超过四类时合并尾部，不能用地图样本冒充全量分布。
+function compactGroups(items, fields, sortField) {
+  if (!Array.isArray(items) || items.some(item => fields.some(field => !countValid(item[field])))) return [];
+  const sorted = [...items].sort((a, b) => b[sortField] - a[sortField]);
+  if (sorted.length <= 4) return sorted;
+  return [...sorted.slice(0, 3), sorted.slice(3).reduce((other, item) => {
+    fields.forEach(field => { other[field] += item[field]; });
+    return other;
+  }, { name: '其余类型', ...Object.fromEntries(fields.map(field => [field, 0])) })];
+}
+const targetTypeRows = computed(() => compactGroups(targetTypes.value.data?.by_type, ['value'], 'value'));
+const deviceTypeRows = computed(() => compactGroups(deviceTypes.value.data?.by_type, ['total', 'online'], 'total'));
+const typeMaximum = computed(() => Math.max(1, ...targetTypeRows.value.map(item => item.value)));
+const percent = (part, total) => total > 0 ? Math.min(100, part * 100 / total) : 0;
+const hologram = name => `/assets/img/bigscreen/holograms/${name}.png`;
+// 配图仅表达已知分类；未知或合并分类使用通用图，不推断设备属性。
+function typeArtwork(name, kind) {
+  const key = String(name || '').trim().toUpperCase();
+  const artwork = kind === 'target'
+    ? ({ '鸟': 'bird', '鸟类': 'bird', BIRD: 'bird', '无人机': 'uav', UAV: 'uav' })[key]
+    : ({ '雷达': 'radar', RADAR: 'radar', '光电': 'optical', EO: 'optical', TDOA: 'antenna', AOA: 'antenna' })[key];
+  return artwork ? hologram(artwork) : `/assets/img/business/${kind === 'target' ? 'unknown' : 'unknown-device'}.svg`;
+}
+
+function loadSideDetails(data, currentVersion) {
+  detailController?.abort();
+  const controller = new AbortController();
+  detailController = controller;
+  const timeout = window.setTimeout(() => controller.abort(), 10000);
+  const read = async (destination, key, path, validate) => {
+    const available = data.availability?.[key];
+    if (available !== 'AVAILABLE' || !path) {
+      destination.value = { state: available === 'FORBIDDEN' ? 'FORBIDDEN' : 'UNAVAILABLE', data: null };
+      return;
+    }
+    destination.value = { state: 'LOADING', data: null };
+    try {
+      const result = await apiRequest(path, { signal: controller.signal, dedupe: false });
+      if (disposed || version !== currentVersion) return;
+      const state = validate(result);
+      destination.value = { state, data: state === 'AVAILABLE' ? result : null };
+    } catch (e) {
+      if (!disposed && version === currentVersion) destination.value = { state: e.status === 403 ? 'FORBIDDEN' : 'UNAVAILABLE', data: null };
+    }
+  };
+  const { from, to } = data.trend || {};
+  const query = from && to ? new URLSearchParams({ from, to }).toString() : null;
+  // 与快照的“今日计划”保持北京时间同一天，只增加参考图中已完成一列。
+  const asOf = Number(data.as_of);
+  const day = Number.isFinite(asOf) && asOf > 0 ? new Date(asOf + 8 * 3600000).toISOString().slice(0, 10) : null;
+  const dayStart = day ? Date.parse(`${day}T00:00:00+08:00`) : null;
+  const completedQuery = day ? new URLSearchParams({ page: '1', size: '1', status_code: 'COMPLETED', window_from: String(dayStart), window_to: String(dayStart + 86400000) }).toString() : null;
+  void Promise.all([
+    read(targetTypes, 'stats', query ? `/stats/operations?${query}` : null, result => {
+      const status = result?.availability?.by_type?.status;
+      if (status !== 'AVAILABLE') return status === 'FORBIDDEN' ? status : 'UNAVAILABLE';
+      return Array.isArray(result.by_type) && result.by_type.every(row => countValid(row.value)) ? 'AVAILABLE' : 'UNAVAILABLE';
+    }),
+    read(deviceTypes, 'devices', '/device-monitor/overview', result =>
+      Array.isArray(result?.by_type) && result.by_type.every(row => countValid(row.total) && countValid(row.online) && row.online <= row.total) ? 'AVAILABLE' : 'UNAVAILABLE'),
+    read(completedFlights, 'flights', completedQuery ? `/flight-plans?${completedQuery}` : null, result => countValid(result?.total) ? 'AVAILABLE' : 'UNAVAILABLE')
+  ]).finally(() => {
+    clearTimeout(timeout);
+    if (detailController === controller) detailController = null;
+  });
+}
 
 const kpis = computed(() => {
   const k = snapshot.value?.kpis || {};
+  const d = snapshot.value?.devices;
   return [
-    { label: '今日感知目标', value: dash(k.sensed_today), color: 'var(--blue)', page: 'situation' },
-    { label: '今日告警', value: dash(k.alarms_today), color: 'var(--cyan)', page: 'alarms' },
-    { label: '待研判目标', value: dash(k.pending_assessment), color: 'var(--amber)', page: 'legality' }
+    { label: '今日感知目标', value: dash(k.sensed_today), color: 'var(--blue)', image: hologram('uav') },
+    { label: '今日告警', value: dash(k.alarms_today), color: 'var(--cyan)', icon: NotificationsOutline },
+    { label: '待研判目标', value: dash(k.pending_assessment), color: 'var(--amber)', icon: ScanOutline },
+    { label: '设备总数', value: dash(d?.total), color: 'var(--blue)', image: hologram('radar') },
+    { label: '在线设备', value: dash(d?.online), color: 'var(--cyan)', image: hologram('antenna') }
   ];
 });
+
+const flightMetrics = computed(() => [
+  { label: '今日计划', value: snapshot.value?.flights?.today, image: hologram('flight-plan') },
+  { label: '执行中', value: snapshot.value?.flights?.executing, image: hologram('uav') },
+  { label: '已完成', value: completedFlights.value.data?.total, image: hologram('flight-complete'),
+    note: completedFlights.value.state === 'AVAILABLE' ? '' : detailMessage(completedFlights.value) }
+]);
+
+// 每日统计可能包含同一目标跨日出现，累计值不宣称跨日去重。
+function sevenDayTotal(field) {
+  const days = snapshot.value?.trend?.days;
+  if (!Array.isArray(days) || days.length !== 7 ||
+      !days.every(day => Number.isSafeInteger(day?.[field]) && day[field] >= 0)) return null;
+  return days.reduce((sum, day) => sum + day[field], 0);
+}
+const trendTotals = computed(() => [
+  { label: '近7日感知累计', value: sevenDayTotal('total'), tone: 'cyan' },
+  { label: '近7日非法累计', value: sevenDayTotal('illegal'), tone: 'red' }
+]);
 
 const closureItems = computed(() => {
   const c = snapshot.value?.closure || {};
   return [
-    { label: '待核实告警', value: dash(c.pending_verification), page: 'alarms', tone: 'warn', icon: NotificationsOutline },
-    { label: '告警已确认', value: dash(c.confirmed_blocked), page: 'alarms', tone: 'bad', icon: RadioOutline },
-    { label: '交接待办', value: dash(c.pending_handoffs), page: 'punish', tone: 'warn', icon: BriefcaseOutline },
-    { label: '证据台账', value: dash(c.evidence_files ?? c.evidence_total), page: 'evidence', tone: 'good', icon: DocumentAttachOutline }
+    { label: '待核实告警', value: dash(c.pending_verification), tone: 'warn', icon: NotificationsOutline },
+    { label: '告警已确认', value: dash(c.confirmed_blocked), tone: 'bad', icon: RadioOutline },
+    { label: '交接待办', value: dash(c.pending_handoffs), tone: 'warn', icon: BriefcaseOutline },
+    { label: '证据台账', value: dash(c.evidence_files ?? c.evidence_total), tone: 'good', icon: DocumentAttachOutline }
   ];
 });
 
 const targetSummary = computed(() => {
-  if (!avail('assessments') && !avail('targets')) return '无读取权限';
-  const risk = snapshot.value?.target_risk;
-  const n = snapshot.value?.kpis?.sensed_today;
-  if (!risk) return n == null ? '—' : `今日 ${n}`;
-  return ''; // 风险分布数值由下方图表统一显示。
+  return snapshot.value?.target_risk ? '' : dataState('assessments');
 });
 const deviceSummary = computed(() => {
   const d = snapshot.value?.devices;
-  if (!d) return avail('devices') ? '—' : '无读取权限';
-  return `关注 ${d.abnormal + d.alarm}`;
+  if (!d) return dataState('devices');
+  return d.simulated ? '演示数据' : '';
 });
 const alarmSummary = computed(() => {
-  if (!avail('alarms')) return '无读取权限';
-  return ''; // 今日总数与待核实数分别由顶部指标和待处理事项显示。
+  if (!avail('alarms')) return dataState('alarms');
+  return alarmRows.value.length ? `最新 ${alarmRows.value.length} 条` : '';
 });
 const deviceLegend = computed(() => snapshot.value?.devices || { offline: '—', abnormal: '—', alarm: '—' });
 
@@ -107,39 +207,9 @@ const alarmRows = computed(() => (snapshot.value?.alarms?.items || []).slice(0, 
   status: STATE_ZH[row.state] || row.state || '—'
 })));
 
-const opticalDevice = computed(() => (snapshot.value?.map?.devices || []).find(d =>
-  /光电|EO|光学/.test(`${d.device_type_name || ''}${d.channel || ''}${d.name || ''}`)));
-
 const mono = text => h('span', { class: 'mono' }, text);
 const colored = (text, color) => h('span', { style: { color } }, text);
 
-function go(page) {
-  showVideo.value = false;
-  location.hash = '#/' + page;
-}
-
-function goAlarm(row) {
-  sessionStorage.setItem('alarm.sel', row.id);
-  go('alarms');
-}
-
-function rowProps(action, label) {
-  return row => ({
-    class: ['bs-clickable-row', row.level ? `is-${row.level}` : ''],
-    role: 'link',
-    tabindex: 0,
-    'aria-label': label(row),
-    onClick: () => action(row),
-    onKeydown: event => {
-      if (event.key === 'Enter' || event.key === ' ') {
-        event.preventDefault();
-        action(row);
-      }
-    }
-  });
-}
-
-const alarmRowProps = rowProps(goAlarm, row => `查看告警 ${row.id} 详情`);
 const alarmColumns = [
   { title: '时间', key: 'time', render: row => mono(row.time) },
   { title: '告警类型', key: 'type' },
@@ -147,41 +217,31 @@ const alarmColumns = [
   { title: '状态', key: 'status' }
 ];
 
+const riskItems = computed(() => {
+  const r = snapshot.value?.target_risk || {};
+  return [{ name: '高风险', value: r.high, tone: 'red' }, { name: '中风险', value: r.medium, tone: 'amber' }, { name: '低风险', value: r.low, tone: 'blue' }, { name: '未定级', value: r.ungraded, tone: 'gray' }];
+});
+const riskTotal = computed(() => snapshot.value?.target_risk ? riskItems.value.reduce((sum, r) => sum + (r.value || 0), 0) : null);
+
 function renderCharts() {
   if (!window.CH) return;
   const days = snapshot.value?.trend?.days || [];
-  window.CH.line(trendEl.value, {
+  const trend = window.CH.line(trendEl.value, {
     x: days.map(x => x.md),
     series: [
-      { name: '发现目标', data: days.map(x => x.total), color: window.CH.C.blue, area: true },
-      { name: '非法目标', data: days.map(x => x.illegal), color: window.CH.C.red }
+      { name: '发现目标', data: days.map(x => x.total), color: window.CH.C.cyan, area: true, smooth: false },
+      { name: '非法目标', data: days.map(x => x.illegal), color: window.CH.C.red, smooth: false }
     ]
   });
-  const risk = snapshot.value?.target_risk || { high: 0, medium: 0, low: 0, ungraded: 0 };
-  const riskTotal = risk.high + risk.medium + risk.low + risk.ungraded;
-  window.CH.donut(targetChartEl.value, {
-    data: [
-      { name: '高风险', value: risk.high, c: window.CH.C.red },
-      { name: '中风险', value: risk.medium, c: window.CH.C.amber },
-      { name: '低风险', value: risk.low, c: window.CH.C.blue },
-      { name: '未定级', value: risk.ungraded, c: window.CH.C.gray }
-    ],
-    centerLabel: '重点目标', centerValue: riskTotal, showPct: false,
-    narrow: false, center: ['31%', '50%'], radius: ['45%', '66%']
-  });
-  const devices = snapshot.value?.devices;
-  window.CH.ring(deviceChartEl.value, {
-    value: devices?.online_rate ?? 0, label: '设备在线率', color: window.CH.C.cyan, fs: 24
-  });
-  const flights = snapshot.value?.flights;
-  window.CH.bar(flightChartEl.value, {
-    x: ['今日计划', '执行中'], legend: false,
-    grid: { left: 30, right: 8, top: 20, bottom: 24 },
-    series: [{
-      name: '数量',
-      data: [flights?.today ?? 0, flights?.executing ?? 0],
-      width: 24,
-      colorBy: p => p.dataIndex === 1 ? window.CH.C.green : window.CH.C.blue
+  trend?.setOption({ tooltip: { show: false }, legend: { selectedMode: false }, grid: { left: 32, right: 20, top: 30, bottom: 30 }, series: [{ silent: true, symbol: 'none', lineStyle: { width: 1.5 } }, { silent: true, symbol: 'none', lineStyle: { width: 1.5 } }] });
+  window.CH.make(targetChartEl.value, {
+    animation: false, tooltip: { show: false },
+    series: [{ type: 'pie', silent: true, selectedMode: false,
+      radius: ['64%', '87%'], center: ['50%', '50%'], startAngle: 90,
+      padAngle: 3, itemStyle: { borderRadius: 5 },
+      emptyCircleStyle: { color: getComputedStyle(document.documentElement).getPropertyValue('--bs-risk-ring').trim() },
+      label: { show: false }, labelLine: { show: false },
+      data: riskItems.value.filter(r => r.value > 0).map(r => ({ name: r.name, value: r.value, itemStyle: { color: window.CH.C[r.tone] } }))
     }]
   });
 }
@@ -267,61 +327,20 @@ function mapAlarms(items) {
   }));
 }
 
-function openVideo(target) {
-  if (!target || target.type !== '无人机') return;
-  selectedTarget.value = target;
-  showVideo.value = true;
-}
-
 function renderMap() {
-  if (!mapEl.value) return;
-  if (map) { map.destroy(); map = null; }
-  map = new window.MapView(mapEl.value, {
-    zoom: 1.06, maxDev: 46, maxAlarm: 8,
-    onPick: pick => {
-      if (!pick || pick.kind !== 'target' || !pick.data || pick.data.type !== '无人机') return;
-      map.sel = pick.data.id;
-      map.draw();
-      openVideo(pick.data);
-    }
-  });
-  const hint = document.createElement('div');
-  hint.className = 'bs-map-hint';
-  hint.textContent = '点击地图上的无人机查看实时视频（演示画面）';
-  mapEl.value.appendChild(hint);
+  if (!mapEl.value || disposed) return;
+  if (!map) map = new window.MapView(mapEl.value, { zoom: 1.06, maxDev: 46, maxAlarm: 8, legend: false });
   const layer = snapshot.value?.map || {};
   const airspaces = mapAirspaces(layer.airspaces);
   const devices = mapDevices(layer.devices);
   const targets = mapTargets(layer.targets, layer.alarms);
   const alarms = mapAlarms(layer.alarms);
   map.setData({ airspaces, devices, targets, alarms });
+  const currentMap = map, currentVersion = version;
   attachTracks(targets).then(() => {
-    if (map && mapEl.value) map.setData({ airspaces, devices, targets, alarms });
+    if (!disposed && map === currentMap && currentVersion === version) map.setData({ airspaces, devices, targets, alarms });
   });
 }
-
-function destroyVideo() {
-  if (video) video.destroy();
-  video = null;
-}
-
-async function mountVideo() {
-  destroyVideo();
-  if (!showVideo.value || !selectedTarget.value) return;
-  await nextTick();
-  if (!videoEl.value) return;
-  video = new window.EOVideo(videoEl.value, {
-    height: Math.max(300, Math.min(430, window.innerHeight * .46)),
-    targetId: selectedTarget.value.id,
-    device: opticalDevice.value?.name,
-    locked: false
-  });
-}
-
-watch([showVideo, selectedTarget], ([visible]) => {
-  if (visible) mountVideo();
-  else destroyVideo();
-}, { flush: 'post' });
 
 function handleResize() {
   clearTimeout(resizeTimer);
@@ -329,18 +348,29 @@ function handleResize() {
 }
 
 async function load() {
-  loading.value = true;
+  clearTimeout(refreshTimer);
+  const currentVersion = ++version;
+  loading.value = !snapshot.value;
   error.value = '';
   try {
-    snapshot.value = await getDashboardSnapshot();
+    const data = await getDashboardSnapshot();
+    if (disposed || currentVersion !== version) return;
+    snapshot.value = data;
     await nextTick();
+    if (disposed || currentVersion !== version) return;
     renderCharts();
     renderMap();
+    loadSideDetails(data, currentVersion);
   } catch (e) {
+    if (disposed || currentVersion !== version) return;
     snapshot.value = null;
+    detailController?.abort();
+    targetTypes.value = deviceTypes.value = completedFlights.value = { state: 'UNAVAILABLE', data: null };
     error.value = e.message || '大屏数据加载失败';
+    await nextTick();
+    if (!disposed) { renderCharts(); renderMap(); }
   } finally {
-    loading.value = false;
+    if (!disposed) { loading.value = false; refreshTimer = window.setTimeout(load, 30000); }
   }
 }
 
@@ -352,10 +382,13 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  disposed = true;
+  version++;
+  detailController?.abort();
+  clearTimeout(refreshTimer);
   clearInterval(clockTimer);
   clearTimeout(resizeTimer);
   window.removeEventListener('resize', handleResize);
-  destroyVideo();
   if (map) map.destroy();
   map = null;
   window.CH?.disposeAll?.();
@@ -364,96 +397,100 @@ onBeforeUnmount(() => {
 
 <template>
   <n-config-provider :theme="theme" :theme-overrides="themeOverrides" :locale="zhCN" :date-locale="dateZhCN" style="display: contents">
-    <div class="bs-root">
+    <div class="bs-root bs-display-only">
       <header class="bs-hdr">
         <div class="bs-hdr-l"><img src="/assets/img/brand/logo-mark.png" alt="" width="30" height="30">无人机融合感知与低空安全管理平台</div>
         <div class="bs-hdr-t"><i class="bs-wing" aria-hidden="true"></i><span>低空安全数据大屏</span><i class="bs-wing r" aria-hidden="true"></i></div>
-        <div class="bs-hdr-r"><span class="bs-clock">{{ clock }}</span><n-button class="bs-exit" tag="a" href="#/situation" size="small" ghost title="返回业务系统">退出大屏</n-button></div>
+        <div class="bs-hdr-r"><span class="bs-clock">{{ clock }}</span><n-button class="bs-exit" tag="a" href="#/situation" size="small" ghost aria-label="返回系统" title="退出大屏，返回业务系统"><n-icon :component="ExitOutline" aria-hidden="true"/></n-button></div>
       </header>
-
-      <div v-if="error" class="bs-banner" role="alert">
-        <span>{{ error }}</span>
-        <button type="button" class="bs-module-link" @click="load">重试</button>
-      </div>
-      <div v-else-if="loading" class="bs-banner">正在加载大屏数据…</div>
-
+      <div v-if="error" class="bs-banner" role="alert">{{ error }} · 将自动重新读取</div>
+      <div v-else-if="loading" class="bs-banner">正在加载大屏数据</div>
       <div class="bs-grid">
-        <aside class="bs-col">
+        <aside class="bs-col bs-col-left">
           <section class="panel">
-            <div class="ph"><h3>感知与违法趋势</h3><div class="bs-panel-meta"><span class="sub">{{ snapshot?.trend?.simulated ? '近 7 日 · 演示数据' : '近 7 日' }}</span><button class="bs-module-link" @click="go('stats')">进入统计 →</button></div></div>
-            <div class="pb"><div ref="trendEl" class="bs-chart" role="img" aria-label="近七日感知目标与非法目标趋势"></div></div>
-          </section>
-
-          <section class="panel" data-module="target-dynamics">
-            <div class="ph"><h3>重点目标风险态势</h3><div class="bs-panel-meta"><span v-if="targetSummary" class="sub">{{ targetSummary }}</span><button class="bs-module-link" @click="go('legality')">进入研判 →</button></div></div>
-            <div class="pb bs-visual-body">
-              <div ref="targetChartEl" class="bs-panel-chart is-clickable" role="link" tabindex="0" aria-label="查看重点目标合法性研判" @click="go('legality')" @keydown.enter="go('legality')" @keydown.space.prevent="go('legality')"></div>
+            <div class="ph"><h3>感知与违法趋势</h3><span class="sub">{{ snapshot?.trend?.simulated ? '近 7 日 · 演示数据' : '近 7 日' }}</span></div>
+            <div class="pb bs-trend-body">
+              <div class="bs-trend-totals"><div v-for="item in trendTotals" :key="item.label"><span>{{ item.label }}</span><b :style="{ color: 'var(--' + item.tone + ')' }">{{ dash(item.value) }}</b><small>按日汇总</small></div></div>
+              <div class="bs-trend-plot"><div ref="trendEl" class="bs-chart" role="img" aria-label="近七日感知目标与非法目标趋势"></div><span v-if="!snapshot?.trend?.days?.length" class="bs-chart-empty">{{ dataState('stats') }}</span></div>
             </div>
           </section>
-
-          <section class="panel">
-            <div class="ph"><h3>待处理事项</h3><button class="bs-module-link" @click="go('alarms')">进入处置 →</button></div>
+          <section class="panel" data-module="target-dynamics">
+            <div class="ph"><h3>重点目标风险态势</h3><span v-if="targetSummary" class="sub">{{ targetSummary }}</span></div>
+            <div class="pb bs-risk-body">
+              <div class="bs-risk-pie"><div ref="targetChartEl" class="bs-panel-chart" role="img" aria-label="重点目标风险圆环分布"></div><div class="bs-risk-center"><b>{{ dash(riskTotal) }}</b><span>{{ riskTotal === 0 ? '暂无风险目标' : '重点目标' }}</span></div></div>
+              <div class="bs-risk-values"><div v-for="item in riskItems" :key="item.name"><i :style="{ background: 'var(--' + item.tone + ')' }"></i><span>{{ item.name }}</span><b>{{ dash(item.value) }}</b><small>个</small></div></div>
+            </div>
+          </section>
+          <section class="panel bs-types-panel">
+            <div class="ph"><h3>目标类型分布</h3><span class="sub">近7日{{ targetTypes.data?.simulated ? ' · 演示数据' : '' }}</span></div>
+            <div class="pb bs-type-body">
+              <div class="bs-section-note">按首次发现时间统计新增目标</div>
+              <div v-if="targetTypeRows.length" class="bs-type-list">
+                <div v-for="(item, index) in targetTypeRows" :key="item.name" class="bs-type-row">
+                  <div class="bs-type-art"><img :src="typeArtwork(item.name, 'target')" alt="" aria-hidden="true"><span class="bs-rank">{{ String(index + 1).padStart(2, '0') }}</span></div><span class="bs-type-name">{{ item.name }}</span><b>{{ item.value }}<small> 个</small></b>
+                  <div class="bs-type-track"><i :style="{ width: percent(item.value, typeMaximum) + '%' }"></i></div>
+                </div>
+              </div>
+              <div v-else class="bs-detail-empty">{{ detailMessage(targetTypes) }}</div>
+            </div>
+          </section>
+          <section class="panel bs-closure-panel">
+            <div class="ph"><h3>待处理事项</h3></div>
             <div class="pb bs-action-grid">
-              <button v-for="item in closureItems" :key="item.label" class="bs-action-card" :class="`is-${item.tone}`" :aria-label="`${item.label} ${item.value}，进入对应业务页面`" @click="go(item.page)">
-                <n-icon class="bs-action-icon" :component="item.icon" aria-hidden="true" />
-                <b>{{ item.value }}</b><span>{{ item.label }}</span><small>查看待办 →</small>
-              </button>
+              <div v-for="item in closureItems" :key="item.label" class="bs-action-card" :class="'is-' + item.tone">
+                <div class="bs-icon-orbit"><n-icon class="bs-action-icon" :component="item.icon" aria-hidden="true"/></div>
+                <b>{{ item.value }}</b><span>{{ item.label }}</span>
+              </div>
             </div>
           </section>
         </aside>
-
         <main class="bs-mid">
-          <div class="bs-kpis">
-            <button v-for="item in kpis" :key="item.label" class="kpi" :style="{ '--kpi-tone': item.color }" :aria-label="`${item.label} ${item.value}，进入对应业务页面`" @click="go(item.page)">
-              <div class="v">{{ item.value }}</div><div class="ring"></div><div class="lb">{{ item.label }}</div>
-            </button>
-          </div>
-          <div class="bs-map-shell">
-            <div id="bsMap" ref="mapEl" class="bs-map"></div>
-            <button class="bs-map-link" @click="go('situation')">全域融合态势 · 进入融合感知 →</button>
-          </div>
+          <div class="bs-kpis"><div v-for="item in kpis" :key="item.label" class="kpi" :style="{ '--kpi-tone': item.color }"><div class="bs-kpi-art" aria-hidden="true"><img v-if="item.image" :src="item.image" alt=""><div v-else class="bs-kpi-symbol"><n-icon :component="item.icon"/></div></div><div class="lb">{{ item.label }}</div><div class="v">{{ item.value }}</div></div></div>
+          <div class="bs-map-shell" role="img" aria-label="东营全域融合态势地图，展示目标、设备、空域与航迹"><div id="bsMap" ref="mapEl" class="bs-map" inert></div></div>
         </main>
-
-        <aside class="bs-col">
+        <aside class="bs-col bs-col-right">
           <section class="panel">
-            <div class="ph"><h3>设备健康与异常</h3><div class="bs-panel-meta"><span class="sub">{{ deviceSummary }}</span></div></div>
-            <div class="pb bs-visual-body bs-device-visual">
-              <div class="bs-device-chart-wrap">
-                <div ref="deviceChartEl" class="bs-panel-chart is-ring" aria-label="设备健康分布图"></div>
-                <div class="bs-device-legend">
-                  <div><i class="is-offline"></i><span>离线</span><b>{{ dash(deviceLegend.offline) }}</b></div>
-                  <div><i class="is-abnormal"></i><span>异常</span><b>{{ dash(deviceLegend.abnormal) }}</b></div>
-                  <div><i class="is-alarm"></i><span>告警设备</span><b>{{ dash(deviceLegend.alarm) }}</b></div>
+            <div class="ph"><h3>设备健康与异常</h3><span class="sub">{{ deviceSummary }}</span></div>
+            <div class="pb bs-health-body">
+              <div class="bs-health-metrics">
+                <div class="bs-health-metric"><b>{{ dash(snapshot?.devices?.online_rate) }}<small>%</small></b><div class="bs-stat-base" aria-hidden="true"></div><span>设备在线率</span></div>
+                <div class="bs-health-metric"><b>{{ dash(deviceLegend.offline) }}</b><div class="bs-stat-base" aria-hidden="true"></div><span><i class="is-offline"></i>离线</span></div>
+                <div class="bs-health-metric"><b>{{ dash(deviceLegend.abnormal) }}</b><div class="bs-stat-base" aria-hidden="true"></div><span><i class="is-abnormal"></i>异常</span></div>
+                <div class="bs-health-metric"><b>{{ dash(deviceLegend.alarm) }}</b><div class="bs-stat-base" aria-hidden="true"></div><span><i class="is-alarm"></i>告警</span></div>
+              </div>
+            </div>
+          </section>
+          <section class="panel">
+            <div class="ph"><h3>飞行监管态势</h3><span v-if="!snapshot?.flights" class="sub">{{ dataState('flights') }}</span></div>
+            <div class="pb bs-flight-body">
+              <div class="bs-flight-metrics">
+                <div v-for="item in flightMetrics" :key="item.label" class="bs-flight-metric">
+                  <img :src="item.image" alt="" aria-hidden="true">
+                  <span>{{ item.label }}</span>
+                  <b>{{ dash(item.value) }}</b>
+                  <small v-if="item.note">{{ item.note }}</small>
                 </div>
               </div>
             </div>
           </section>
-
           <section class="panel">
-            <div class="ph"><h3>飞行监管态势</h3><button class="bs-module-link" @click="go('flights')">进入监管 →</button></div>
-            <div class="pb bs-visual-body bs-flight-body">
-              <div ref="flightChartEl" class="bs-panel-chart is-clickable" role="link" tabindex="0" aria-label="进入飞行计划监管" @click="go('flights')" @keydown.enter="go('flights')" @keydown.space.prevent="go('flights')"></div>
+            <div class="ph"><h3>设备类型与在线情况</h3><span v-if="deviceTypes.data?.simulated" class="sub">演示数据</span></div>
+            <div class="pb bs-device-types-body">
+              <div class="bs-device-type-head"><span>设备类型</span><span>在线设备 / 总数</span></div>
+              <div v-if="deviceTypeRows.length" class="bs-device-type-list">
+                <div v-for="item in deviceTypeRows" :key="item.name" class="bs-device-type-row">
+                  <img class="bs-device-art" :src="typeArtwork(item.name, 'device')" alt="" aria-hidden="true"><span>{{ item.name }}</span><b>{{ item.online }}<small> / {{ item.total }}</small></b>
+                </div>
+              </div>
+              <div v-else class="bs-detail-empty">{{ detailMessage(deviceTypes) }}</div>
             </div>
           </section>
-
-          <section class="panel">
-            <div class="ph"><h3>实时告警</h3><div class="bs-panel-meta"><span v-if="alarmSummary" class="sub">{{ alarmSummary }}</span><button class="bs-module-link" @click="go('alarms')">进入告警 →</button></div></div>
-            <div class="pb bs-table-body">
-              <n-data-table class="bs-naive-table" :columns="alarmColumns" :data="alarmRows" :pagination="false" :bordered="false" :single-line="true" table-layout="auto" size="small" :row-props="alarmRowProps" />
-            </div>
+          <section class="panel bs-alarms-panel">
+            <div class="ph"><h3>实时告警</h3><span v-if="alarmSummary" class="sub">{{ alarmSummary }}</span></div>
+            <div class="pb bs-table-body"><n-data-table class="bs-naive-table" :columns="alarmColumns" :data="alarmRows" :pagination="false" :bordered="false" :single-line="true" table-layout="auto" size="small"/></div>
           </section>
         </aside>
       </div>
     </div>
-
-    <n-modal v-model:show="showVideo" :auto-focus="false" @after-leave="destroyVideo">
-      <n-card class="bs-video-card" :title="`实时视频 · ${selectedTarget?.id || ''}`" closable :bordered="true" role="dialog" aria-modal="true" @close="showVideo = false">
-        <div v-if="selectedTarget" class="bs-video-modal">
-          <div class="bs-video-meta"><span>{{ opticalDevice?.name || '光电设备' }} · 可见光 · 演示画面</span><span class="bs-video-state"><i></i>实时预览</span></div>
-          <div ref="videoEl" id="bsVideoModal"></div>
-          <div class="bs-video-info"><span>目标类型 <b>{{ selectedTarget.type }}</b></span><span>合法性 <b>{{ selectedTarget.legal || '待确认' }}</b></span><span>风险等级 <b>{{ selectedTarget.risk || '—' }}</b></span></div>
-        </div>
-      </n-card>
-    </n-modal>
   </n-config-provider>
 </template>

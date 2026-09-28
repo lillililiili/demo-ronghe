@@ -19,7 +19,7 @@
 .simulator-workspace .object-row strong{line-height:1.6}
 .simulator-workspace .group-title{padding:15px 8px 8px;color:#88a8c8;font-size:11px}
 .simulator-workspace .group-title small{border-radius:4px;background:#123659;min-width:20px;text-align:center;padding:2px}
-.simulator-workspace[data-workspace=objects] [data-object-group=plan],.simulator-workspace[data-workspace=objects] [data-object-group=zone],.simulator-workspace[data-workspace=routes] [data-object-group=site],.simulator-workspace[data-workspace=routes] [data-object-group=target]{display:none}
+.simulator-workspace[data-workspace=objects] [data-object-group=plan],.simulator-workspace[data-workspace=objects] [data-object-group=zone],.simulator-workspace[data-workspace=routes] [data-object-group=site],.simulator-workspace[data-workspace=routes] [data-object-group=target],.simulator-workspace[data-workspace=routes] [data-object-group=zone]{display:none}
 .workspace-tabs{display:flex;gap:20px;padding:0 16px;background:#0c2e55;border-bottom:1px solid var(--border);flex:none}
 .workspace-tabs button{position:relative;padding:13px 0;border:0;border-radius:0;background:none;color:#a6c1dc;font-size:12px}
 .workspace-tabs button[aria-selected=true]{color:#78e9ff;font-weight:600}

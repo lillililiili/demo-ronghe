@@ -450,10 +450,14 @@ const planRecords = computed(() => plans.value.map(plan => ({
   note: plan.route?.max_altitude_m == null ? '最大高度未提供' : `最大高度 ${plan.route.max_altitude_m} 米`
 })));
 
-function selectPlan(planId) {
-  const hash = `#/flights?plan=${encodeURIComponent(planId)}`;
+function syncSelectedPlanHash(planId) {
+  const hash = planId ? `#/flights?plan=${encodeURIComponent(planId)}` : '#/flights';
   S.tabHash = hash;
-  location.hash = hash;
+  if (location.hash !== hash) location.hash = hash;
+}
+
+function selectPlan(planId) {
+  syncSelectedPlanHash(planId);
   if (selected.value?.plan_id === planId && !detailError.value) { routeMap?.refocus(); return; }
   loadDetail(planId);
 }
@@ -478,6 +482,10 @@ function riskMessageOf(reason, fallback) {
 let planListToken = 0;
 async function loadPlans(nextPage = page.value, requestedId = null) {
   const token = ++planListToken;
+  // 筛选/翻页后，先前详情即使较晚返回也不能重新选中已离开列表的记录。
+  planDetailToken++;
+  trajectoryToken++;
+  detailLoading.value = false;
   loading.value = true;
   error.value = '';
   try {
@@ -499,6 +507,8 @@ async function loadPlans(nextPage = page.value, requestedId = null) {
     if (!selected.value || !plans.value.some(item => item.plan_id === selected.value.plan_id)) {
       selected.value = plans.value[0] || null;
       S.selectedPlanId = selected.value?.plan_id || null;
+      syncSelectedPlanHash(S.selectedPlanId);
+      detailError.value = '';
       routeVersion.value = null;
       airspaceVersions.value = [];
       conflicts.value = [];

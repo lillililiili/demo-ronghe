@@ -14,7 +14,13 @@ const blocker = computed(() => !props.planId ? '未选择飞行计划' : !hasPer
 const attempts = computed(() => state.value.task?.notification_attempts || []);
 const latestUnknown = computed(() => attempts.value[0]?.outcome_state === 'UNKNOWN');
 const previousDeliveries = computed(() => attempts.value.slice(1).filter(item => item.delivery_status === 'DELIVERED').length);
-const taskText = computed(() => state.value.task?.status === 'HANDLED' ? '运维待办已处理' : '运维待办已生成');
+const taskText = computed(() => {
+  const task = state.value.task;
+  const workflowState = task?.workflow_state || (task?.status === 'HANDLED' ? 'LEGACY_HANDLED' : task?.status);
+  const label = ({ PENDING: '待处理', PROCESSING: '处理中', PENDING_VERIFICATION: '待恢复核验',
+    COMPLETED: '已完成', LEGACY_HANDLED: '历史已反馈' })[workflowState] || '状态待确认';
+  return `运维待办：${label}`;
+});
 const noticeText = computed(() => {
   if (state.value.pending) return state.value.request?.kind === 'resend' ? '正在再次通知' : '正在通知';
   if (state.value.uncertain) return '本次提交结果待确认';
@@ -118,6 +124,7 @@ async function submit(kind) {
       <dl>
         <dt>待办编号</dt><dd>{{ state.task.task_no || state.task.task_id }}</dd>
         <dt>报告时间</dt><dd>{{ date(state.task.reported_at) }}</dd>
+        <template v-if="state.task.handled_by_name"><dt>处理人</dt><dd>{{ state.task.handled_by_name }}</dd></template>
         <template v-if="state.task.handled_at"><dt>处理时间</dt><dd>{{ date(state.task.handled_at) }}</dd></template>
         <template v-if="state.task.handling_note"><dt>处理结果</dt><dd>{{ state.task.handling_note }}</dd></template>
       </dl>

@@ -70,6 +70,15 @@ class ExternalBridgeTests(unittest.TestCase):
         for path in ('/local-interface-simulator/messages/../receipt', '/local-interface-simulator/messages/x%2fy/receipt', '/local-interface-simulator/messages/x/receipt/extra'):
             self.assertFalse(self.bridge.allowed('POST', path))
 
+    def test_filing_paths_are_limited_to_read_and_supplement(self):
+        self.assertTrue(self.bridge.allowed('GET', '/local-interface-simulator/plan-options'))
+        path = '/local-interface-simulator/plans/29f39fa7-088a-425f-9c06-a3557b31b00b/filing'
+        for method in ('GET', 'POST'):
+            self.assertTrue(self.bridge.allowed(method, path))
+        for bad in ('/local-interface-simulator/plans/../filing', path + '?x=1', path + '/extra', '/flight-plans/x'):
+            self.assertFalse(self.bridge.allowed('POST', bad))
+        self.assertFalse(self.bridge.allowed('DELETE', path))
+
     def test_cleared_session_returns_http_401_for_context_and_inbox(self):
         local = http.server.ThreadingHTTPServer(('127.0.0.1', 0), simulator_server.Handler)
         thread = threading.Thread(target=local.serve_forever, daemon=True)

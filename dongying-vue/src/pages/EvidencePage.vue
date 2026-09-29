@@ -150,6 +150,7 @@ async function doVerify() {
 }
 
 function doHold() {
+  if (!hasPermission('evidence:hold')) return toast('当前账号没有冻结证据的权限', 'err');
   if (!st.selId) return;
   const evidenceId = st.selId;
   openFormModal({
@@ -160,6 +161,7 @@ function doHold() {
       if (reason.length < 1 || reason.length > 500) return '原因须为 1 至 500 字';
     },
     onSubmit: async values => {
+      if (!hasPermission('evidence:hold')) throw new Error('当前账号没有冻结证据的权限');
       await holdEvidenceFile(evidenceId, String(values.reason).trim(), idem());
       closeModal();
       toast('已冻结', 'ok');
@@ -169,6 +171,7 @@ function doHold() {
 }
 
 function doDestroy() {
+  if (!hasPermission('evidence:destroy')) return toast('当前账号没有销毁证据的权限', 'err');
   if (!st.selId) return;
   const evidenceId = st.selId;
   const row = detailRow.value;
@@ -191,6 +194,7 @@ function doDestroy() {
       if (approval.length > 64) return '审批号最多 64 字';
     },
     onSubmit: async values => {
+      if (!hasPermission('evidence:destroy')) throw new Error('当前账号没有销毁证据的权限');
       await destroyEvidenceFile(evidenceId, String(values.reason).trim(), String(values.approvalNo || '').trim(), idem());
       closeModal();
       toast('文件已销毁，台账记录保留', 'ok');
@@ -200,11 +204,13 @@ function doDestroy() {
 }
 
 async function doRelease(holdId) {
+  if (!hasPermission('evidence:hold')) return toast('当前账号没有解除冻结的权限', 'err');
   if (!st.selId || !holdId) return;
   const evidenceId = st.selId;
   const ok = await confirmAction({ title: '解除冻结', message: '解除法律冻结后，该文件到期即可被清理。是否确认解除？', confirmText: '解除冻结', positiveType: 'warning' });
   if (!ok) return;
   try {
+    if (!hasPermission('evidence:hold')) throw new Error('当前账号没有解除冻结的权限');
     await releaseEvidenceHold(evidenceId, holdId, idem());
     toast('已解除冻结', 'ok');
     await load();
@@ -239,7 +245,7 @@ onBeforeUnmount(() => { mounted = false; listSequence += 1; detailSequence += 1;
     <div v-if="exact || hasContext" class="evidence-located-toolbar"><span>{{ hasContext ? '当前关联事项的证据' : '指定证据记录' }}</span><button class="btn" @click="returnToLedger">返回全部证据</button></div>
     <div v-if="error" class="warnbox" role="alert">{{ error }}</div>
     <div class="row evidence-row">
-      <UPanel :title="`证据台账（${loading ? '加载中' : error ? '暂不可用' : totalCount}）`" panel-style="flex:1;min-width:0" nopad>
+      <UPanel class="evidence-ledger" :title="`证据台账（${loading ? '加载中' : error ? '暂不可用' : totalCount}）`" panel-style="flex:1;min-width:0" nopad>
         <UFilterBar class="evidence-filters">
           <UField id="evidence-kind" v-model="st.kind" label="类型" type="select" variant="filter" :options="KIND_OPTS" @update:model-value="typeChanged" />
           <UField v-if="st.kind !== 'COMMAND'" id="evidence-status" v-model="st.status" label="文件状态" type="select" variant="filter" :options="STATUS_OPTS" @update:model-value="filterChanged" />

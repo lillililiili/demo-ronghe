@@ -27,7 +27,6 @@ export function useAirspaceRiskList(monitor, risks, selected) {
     if (risks.timeError) return false;
     if (risks.onlySelected && selected.value
       && ![row.risk?.relation, row.target?.relation].some(value => ['INSIDE', 'BOUNDARY'].includes(value))) return false;
-    if (monitor.isDemo && monitor.scene && row.target?.demo && row.target.demo.scene.id !== monitor.scene) return false;
     if (risks.riskType && (row.type || 'UNCLASSIFIED') !== risks.riskType) return false;
     if (risks.severity && row.severity !== risks.severity) return false;
     if (risks.state && row.state !== risks.state) return false;
@@ -49,7 +48,7 @@ export function useAirspaceRiskList(monitor, risks, selected) {
     else page.value = Math.min(page.value, Math.max(1, Math.ceil(rows.value.length / size.value)));
   }
   watch([() => risks.riskType, () => risks.severity, () => risks.state, () => risks.occurred,
-    () => risks.onlySelected, selected, () => monitor.mode, () => monitor.scene, () => monitor.minutes], () => { page.value = 1; });
+    () => risks.onlySelected, selected, () => monitor.minutes], () => { page.value = 1; });
   watch(rows, value => {
     if (!value.some(row => row.risk?.risk_id === risks.activeId)) risks.activeId = '';
     if (!value.some(row => row.target?.target_id === monitor.activeId)) monitor.activeId = '';

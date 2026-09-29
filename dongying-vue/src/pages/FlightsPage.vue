@@ -20,7 +20,7 @@ import { openModal, closeModal } from '@/ui/modal.js';
 import { toast } from '@/ui/nv.js';
 import {
   ALTITUDE_DATUM_LABEL, ALTITUDE_RELATION_LABEL, HANDOFF_TYPE_LABEL, LEGALITY_LABEL, PLAN_MATCH_TAG, PLAN_ROW_MATCH_LABEL, PLAN_STATUS_LABEL, PLAN_STATUS_TAG, REASON_CODE_LABEL, RECEIPT_RESULT_LABEL, RISK_TYPE_LABEL,
-  SECTION_AVAILABILITY_LABEL, SOURCE_MODE_LABEL, sourceDescription, labelOf, OBJECT_TYPE_LABEL, readableNo, RISK_TYPE_OPTIONS } from '@/ui/labels.js';
+  SECTION_AVAILABILITY_LABEL, SOURCE_MODE_LABEL, sourceDescription, notificationBlockedReason, labelOf, OBJECT_TYPE_LABEL, readableNo, RISK_TYPE_OPTIONS, RISK_STATE_LABEL } from '@/ui/labels.js';
 import { isUncertainOutcome } from '@/services/apiClient.js';
 import { loadTargetPosition, strokePlannedRoute } from '@/services/positionMap.js';
 import { hasPermission } from '@/services/accessControl.js';
@@ -122,14 +122,13 @@ let noticesToken = 0;
 const pendingHandoffKeys = new Map();
 const NOTICE_DELIVERY_LABEL = { PENDING_DELIVERY: '等待发送', SUBMITTED: '送达待确认', DELIVERED: '已送达', FAILED: '发送失败' };
 const NOTICE_DELIVERY_TAG = { PENDING_DELIVERY: 't-amber', SUBMITTED: 't-blue', DELIVERED: 't-green', FAILED: 't-red' };
-const NOTICE_RECEIPT_LABEL = { NOT_EXPECTED: '不需回执', PENDING: '等待回执', ACKNOWLEDGED: '已回执', TIMEOUT: '回执超时' };
+const NOTICE_RECEIPT_LABEL = { NOT_EXPECTED: '尚未进入回执阶段', PENDING: '等待回执', ACKNOWLEDGED: '已回执', TIMEOUT: '回执超时' };
 /* 回执状态 + 回执结果连起来读："已回执 · 已驱离"。服务端没给结果就只显示状态，不补空位（决策 18-14）。 */
 function receiptText(notice) {
   const status = NOTICE_RECEIPT_LABEL[notice.receipt_status] || notice.receipt_status || '未知';
   const result = labelOf(RECEIPT_RESULT_LABEL, notice.receipt_result, '');
   return result ? `${status} · ${result}` : status;
 }
-const NOTICE_BLOCKED_LABEL = { DELIVERY_OUTCOME_UNKNOWN: '发送结果未知，请先核对原发送记录', CHANNEL_NOT_CONNECTED: '通知渠道未接通' };
 const riskLoading = ref(false);
 const riskError = ref('');
 const selectedRisk = ref(null);
@@ -209,8 +208,7 @@ let riskDetailToken = 0;
 let riskHistoryToken = 0;
 let riskKpiToken = 0;
 
-const RISK_STATE_LABEL = { PENDING_VERIFICATION: '待核验', PENDING_NOTIFICATION: '待通知', NOTIFIED: '已通知', ACKNOWLEDGED: '已回执', EXCLUDED: '已排除' };
-const RISK_STATE_TAG = { PENDING_VERIFICATION: 't-amber', PENDING_NOTIFICATION: 't-blue', NOTIFIED: 't-green', ACKNOWLEDGED: 't-green', EXCLUDED: 't-gray' };
+const RISK_STATE_TAG = { PENDING_VERIFICATION: 't-amber', PENDING_NOTIFICATION: 't-blue', NOTIFIED: 't-blue', ACKNOWLEDGED: 't-green', EXCLUDED: 't-gray' };
 const RISK_SEVERITY_LABEL = { CRITICAL: '紧急', HIGH: '高', MEDIUM: '中', LOW: '低' };
 const RISK_SEVERITY_TAG = { CRITICAL: 't-red', HIGH: 't-red', MEDIUM: 't-amber', LOW: 't-blue' };
 /* 与迁移 022 的 CHECK 枚举一致：UNKNOWN / WITHIN / OUTSIDE；未知不判断安全。 */
@@ -370,14 +368,13 @@ function riskReasonText(risk) {
   return text;
 }
 const canVerifyRisk = computed(() => Boolean(selectedRisk.value?.allowed_actions?.includes('VERIFY')));
-/* 通知按钮：服务端 allowed_actions 含 NOTIFY 为准；旧版详情不带 NOTIFY 时按“待通知”放开。
-   /auth/me 的 permission_codes 不含 `handoff:create` 动作码，前端不预判权限，由服务端 403 裁决。 */
+/* 通知需要当前会话的 handoff:create 权限；风险接口未返回 NOTIFY 时兼容待通知状态。 */
 /* 已提交过通知（未失败）就不能再点：服务端会 409，页面直接禁用并说明（决策 15-50）。 */
 const submittedNotice = computed(() => notices.value.find(n => n.delivery_status && n.delivery_status !== 'FAILED') || null);
 const canNotifyRisk = computed(() => {
   const risk = selectedRisk.value;
   if (!risk || submittedNotice.value || noticesLoading.value) return false;
-  return (risk.allowed_actions || []).includes('NOTIFY') || risk.state === 'PENDING_NOTIFICATION';
+  return canNotifyItem(risk);
 });
 const notifyBlockReason = computed(() => {
   if (!selectedRisk.value) return '';
@@ -388,6 +385,7 @@ const notifyBlockReason = computed(() => {
     return `已提交通知（${delivery}${result ? ` · 回执${result}` : ''}），不能重复提交`;
   }
   if (noticesLoading.value) return '正在读取交接记录';
+  if (!hasPermission('handoff:create')) return '当前账号没有通知上级的操作权限';
   if (selectedRisk.value.state === 'PENDING_VERIFICATION') return '人工核验通过后可通知上级';
   if (canNotifyRisk.value) return '将风险情况通知上级，并等待对方回复处理结果';
   return `当前状态「${stateLabel(selectedRisk.value.state)}」不允许通知`;
@@ -717,7 +715,7 @@ function riskTitle(item) {
   return labelOf(RISK_TYPE_LABEL, item.risk_type);
 }
 /* 行内只放「通知上级」：以服务端 allowed_actions 为准，旧记录不带 NOTIFY 时按「待通知」放开；重复提交由服务端 409 裁决。 */
-function canNotifyItem(item) { return (item.allowed_actions || []).includes('NOTIFY') || item.state === 'PENDING_NOTIFICATION'; }
+function canNotifyItem(item) { return hasPermission('handoff:create') && ((item.allowed_actions || []).includes('NOTIFY') || item.state === 'PENDING_NOTIFICATION'); }
 function jumpToRisk(riskId) {
   const planId = selected.value?.plan_id;
   const hash = `#/flights?tab=events&risk=${encodeURIComponent(riskId)}${planId ? `&plan=${encodeURIComponent(planId)}` : ''}`;
@@ -1368,7 +1366,7 @@ function showHandoffSubmitted(created) {
         : '通知材料已保存，但发送功能尚未接通，通知还没有发出去。请查看下方发送情况。'),
       h('dl', { class: 'kv kv-surface' }, [
         h('dt', '通知对象'), h('dd', '上级'),
-        h('dt', '发送情况'), h('dd', `${NOTICE_DELIVERY_LABEL[created.delivery_status] || created.delivery_status || '未知'} · ${NOTICE_BLOCKED_LABEL[created.blocked_reason] || created.blocked_reason || '无异常提示'}`)
+        h('dt', '发送情况'), h('dd', `${NOTICE_DELIVERY_LABEL[created.delivery_status] || created.delivery_status || '未知'}${notificationBlockedReason(created) ? ' · ' + notificationBlockedReason(created) : ''}`)
       ]),
       h('div', { class: 'detail-actions' }, [
         h('button', { class: 'btn pri', type: 'button', onClick: () => closeModal() }, '查看本页通知与回执')
@@ -1720,7 +1718,7 @@ onUnmounted(() => {
                     <details v-if="notice.recipient_name && notice.recipient_name !== '上级'"><summary>原通知对象记录</summary><p>{{ notice.recipient_name }}</p></details>
                     <p>{{ labelOf(HANDOFF_TYPE_LABEL, notice.handoff_type) }} · {{ formatTime(notice.created_at) }}</p>
                     <p>对方回复：{{ receiptText(notice) }}</p>
-                    <p v-if="notice.blocked_reason">未完成原因：{{ NOTICE_BLOCKED_LABEL[notice.blocked_reason] || notice.blocked_reason }}</p>
+                    <p v-if="notificationBlockedReason(notice)">未完成原因：{{ notificationBlockedReason(notice) }}</p>
                     <p class="rk-note">风险通知记录留在本页，不进入处罚办理。</p>
                   </article>
                 </div>

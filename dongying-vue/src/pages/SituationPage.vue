@@ -21,6 +21,8 @@ import { toast } from '@/ui/nv.js';
 import { getAlarm } from '@/services/alarmApi.js';
 import SituationAdvisoryCard from './situation/SituationAdvisoryCard.vue';
 import SituationAlarmPopup from './situation/SituationAlarmPopup.vue';
+import SituationRiskGroupPopup from './situation/SituationRiskGroupPopup.vue';
+import { groupRouteRisks } from './situation/routeRiskGroups.js';
 import { selectionLayout } from './situation/selectionLayout.js';
 import TargetLiveVideo from '@/components/video/TargetLiveVideo.vue';
 import { autoSmsView } from '@/components/disposal/autoSmsView.js';
@@ -68,6 +70,9 @@ watch(() => [evidenceRoute.query.target, snapshot.value.generatedAt], ([id, gene
 }, { flush: 'post' });
 const flightPlans = computed(() => snapshot.value.flightPlans || []);
 const risks = computed(() => snapshot.value.risks || []);
+const riskGroups = computed(() => groupRouteRisks(risks.value));
+const selectedRiskGroup = computed(() => selection.value?.kind === 'risk-group'
+  ? riskGroups.value.find(group => group.groupId === selection.value.id) : null);
 const airspaces = computed(() => snapshot.value.airspaces || []);
 const deviceStatusCounts = computed(() => devices.value.reduce((counts, device) => {
   counts[device.statusCode] = (counts[device.statusCode] || 0) + 1;
@@ -93,8 +98,8 @@ const deviceGroups = computed(() => ['RADAR', 'EO', 'FIVE_G_A', 'TDOA'].map(type
   };
 }));
 const newAlarmCount = computed(() => alarms.value.filter(alarm => alarm.isNew).length);
-const newRiskCount = computed(() => risks.value.filter(risk => risk.active && risk.isNew).length);
-const activeRiskCount = computed(() => risks.value.filter(risk => risk.active).length);
+const newRiskCount = computed(() => riskGroups.value.filter(risk => risk.active && risk.isNew).length);
+const activeRiskCount = computed(() => riskGroups.value.filter(risk => risk.active).length);
 const selectedTarget = computed(() => {
   if (selection.value?.kind !== 'target') return null;
   return targets.value.find(target => target.id === selection.value.id) || null;
@@ -104,6 +109,7 @@ const selectedDevice = computed(() => selection.value?.kind === 'device'
 const selectedPlan = computed(() => selection.value?.kind === 'plan'
   ? flightPlans.value.find(plan => plan.id === selection.value.id) : null);
 const selectedRisk = computed(() => {
+  if (selectedRiskGroup.value) return selectedRiskGroup.value;
   const id = selection.value?.riskId || (selection.value?.kind === 'risk' ? selection.value.id : null);
   return id ? risks.value.find(risk => risk.riskId === id) : null;
 });
@@ -214,7 +220,30 @@ function riskFactText(risk) {
   const fact = risk?.spaceFact;
   if (!fact) return '空间事实未提供';
   const relation = labelOf(CORRIDOR_RELATION_LABEL, fact.corridorRelation);
-  return Number.isFinite(Number(fact.distanceToRouteM)) ? `${relation} · ${Math.round(fact.distanceToRouteM)} m` : relation;
+  return fact.distanceToRouteM != null && Number.isFinite(Number(fact.distanceToRouteM)) ? `${relation} · ${Math.round(fact.distanceToRouteM)} m` : relation;
+}
+
+function riskGroupStateText(group) {
+  return Object.entries(group.stateCounts).map(([state, count]) =>
+    `${group.members.length > 1 ? `${count} 条` : ''}${labelOf(RISK_STATE_LABEL, state)}`).join(' · ');
+}
+
+function selectRiskGroup(group) {
+  markViewed(group.members);
+  alertTab.value = 'route';
+  selection.value = { kind: 'risk-group', id: group.groupId };
+  fuseOpen.value = false;
+  if (map) {
+    map.sel = null;
+    map.planSel = planForRisk(group)?.id || null;
+    map.clearPinnedHit();
+    focusSelection(false);
+  }
+}
+
+function openGroupedRiskAction(risk, action) {
+  // 详情按钮仅作用于这一计划，不把组内其他计划或航线上的其他风险一起提交。
+  openRiskActionModal({ activeRisks: [risk] }, action);
 }
 
 function toggleDeviceType(typeCode) {
@@ -300,7 +329,7 @@ function applySnapshot(next) {
   rawSnapshot = next;
   const decorated = decorate(next);
   snapshot.value = decorated;
-  const count = decorated.alarms.filter(alarm => alarm.isNew).length + decorated.risks.filter(risk => risk.isNew).length;
+  const count = decorated.alarms.filter(alarm => alarm.isNew).length + groupRouteRisks(decorated.risks).filter(risk => risk.isNew).length;
   const failed = (next.failedSegments || []).map(segment => ({
     targets: '目标', alarms: '告警', risks: '风险', handoffs: '移送', devices: '设备',
     'device-events': '设备事件', 'flight-plans': '飞行计划', airspaces: '空域', 'fusion-status': '融合状态'
@@ -528,9 +557,9 @@ function openRiskActionModal(plan, action) {
     title: isExclude ? '排除风险' : '通知上级',
     width: '560px',
     warning: isExclude
-      ? `提交后将把该航线所有尚未通知的当前风险正式标记为“已排除”，并写入核验历史。${countText}`
+      ? `提交后将把下列尚未通知的风险正式标记为“已排除”，并写入核验历史。${countText}`
       : `${needsVerification ? '请核对下列风险。确认后将记录核验通过，并继续通知上级。' : '将下列风险通知上级。'}提交后请在通知与回执中查看发送结果。${countText}`,
-    introHtml: isExclude ? '' : `<dl class="kv">${activeRisks.map(risk => `<dt>${esc(risk.id || risk.riskId)}</dt><dd>${esc(risk.reasonText || '风险依据未提供')}<br>${esc(labelOf(RISK_STATE_LABEL, risk.state))}</dd>`).join('')}</dl>`,
+    introHtml: `<dl class="kv">${activeRisks.map(risk => `<dt>${esc(risk.planNo || risk.id || risk.riskId)}</dt><dd>${esc(risk.reasonText || '风险依据未提供')}<br>${esc(labelOf(RISK_STATE_LABEL, risk.state))}</dd>`).join('')}</dl>`,
     fields: [],
     danger: isExclude,
     confirmText: isExclude ? '确认排除' : needsVerification ? '确认属实并通知' : '提交通知',
@@ -837,7 +866,7 @@ onUnmounted(() => {
         <div v-show="alertsExpanded" id="sit-alert-content" class="sit-alert-content">
         <div class="sit-risk-tabs" role="tablist" aria-label="风险类型">
           <button type="button" role="tab" :aria-selected="alertTab === 'target'" @click="alertTab = 'target'">目标异常 <b>{{ alarms.length }}</b></button>
-          <button type="button" role="tab" :aria-selected="alertTab === 'route'" @click="alertTab = 'route'">航线风险 <b>{{ risks.length }}</b></button>
+          <button type="button" role="tab" :aria-selected="alertTab === 'route'" @click="alertTab = 'route'">航线风险 <b>{{ riskGroups.length }}</b></button>
         </div>
         <div v-if="alertTab === 'target'" class="sit-alert-list" role="tabpanel" aria-label="目标异常">
           <button v-for="alarm in alarms" :key="eventKey(alarm)" type="button" class="sit-alert-row"
@@ -850,13 +879,13 @@ onUnmounted(() => {
           </button>
         </div>
         <div v-else class="sit-alert-list" role="tabpanel" aria-label="航线风险">
-          <button v-for="risk in risks" :key="eventKey(risk)" type="button" class="sit-alert-row sit-route-risk-row"
-            :class="[{ 'is-new': risk.isNew, 'is-history': !risk.active, 'is-selected': selection?.kind === 'plan' && selection.riskId === risk.riskId }, `level-${risk.level}`]"
-            :aria-pressed="selection?.kind === 'plan' && selection.riskId === risk.riskId"
-            :aria-label="`查看${planForRisk(risk)?.planNo || risk.planId}的${risk.spaceFact?.subtypeName || '异物'}风险，${risk.isNew ? '新风险' : labelOf(RISK_STATE_LABEL, risk.state)}`" @click="selectRisk(risk)">
+          <button v-for="risk in riskGroups" :key="risk.groupId" type="button" class="sit-alert-row sit-route-risk-row"
+            :class="[{ 'is-new': risk.isNew, 'is-history': !risk.active, 'is-selected': selectedRiskGroup?.groupId === risk.groupId }, `level-${risk.level}`]"
+            :aria-pressed="selectedRiskGroup?.groupId === risk.groupId"
+            :aria-label="`查看${risk.spaceFact?.subtypeName || '航线'}风险，关联${risk.planCount}条计划，${riskGroupStateText(risk)}`" @click="selectRiskGroup(risk)">
             <span class="sit-alert-level">{{ risk.level }}</span>
-            <span class="sit-alert-copy"><b class="mono">{{ planForRisk(risk)?.planNo || risk.planId }}</b><em>{{ risk.spaceFact?.subtypeName || '空中异物' }} · {{ riskFactText(risk) }}</em></span>
-            <span class="sit-alert-meta"><time class="mono">{{ formatClock(risk.occurredAt) }}</time><b>{{ risk.isNew ? '新风险' : labelOf(RISK_STATE_LABEL, risk.state) }}</b></span>
+            <span class="sit-alert-copy"><b>{{ risk.spaceFact?.subtypeName || '航线' }}风险 · 关联 {{ risk.planCount }} 条计划</b><em>{{ riskFactText(risk) }}</em></span>
+            <span class="sit-alert-meta"><time class="mono">{{ formatClock(risk.occurredAt) }}{{ risk.isNew ? ' · 未查看' : '' }}</time><b>{{ riskGroupStateText(risk) }}</b></span>
           </button>
         </div>
         </div>
@@ -869,6 +898,8 @@ onUnmounted(() => {
           v-html="renderDeviceTip(selectedDevice)"></div>
         <div v-else-if="selectedTarget" @click="onTipAction($event.target.closest('[data-tip-act]')?.dataset.tipAct, { kind: 'target', data: selectedTarget })"
           v-html="renderTargetTip(selectedTarget, showAlarmAdvisoryCard)"></div>
+        <SituationRiskGroupPopup v-else-if="selectedRiskGroup" :group="selectedRiskGroup" :plans="flightPlans"
+          @close="clearSelection" @view-plan="selectRisk" @action="openGroupedRiskAction" />
         <div v-else-if="selectedPlan" @click="onTipAction($event.target.closest('[data-tip-act]')?.dataset.tipAct, { kind: 'plan', data: selectedPlan })"
           v-html="renderPlanTip(selectedPlan)"></div>
         <section v-else-if="selectedRisk" class="sit-map-pop">

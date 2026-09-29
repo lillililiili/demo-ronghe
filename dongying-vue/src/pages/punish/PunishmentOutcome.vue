@@ -26,9 +26,10 @@ const money = value => value == null ? '未提供' : `${(Number(value) / 100).to
     <header><h4>处罚办理结果</h4><button type="button" class="btn sm" :disabled="loading" @click="load">刷新结果</button></header>
     <p v-if="loading">正在读取案件办理情况…</p>
     <p v-else-if="error" class="po-muted" role="alert">{{ error }}</p>
-    <p v-else-if="!rows.length" class="po-muted">暂无关联案件结果。当前只完成材料移送，不能据此认定已罚款。</p>
+    <p v-else-if="!rows.length" class="po-muted">暂无关联案件结果；移送、送达及签收均不能据此认定已处罚或已罚款。</p>
     <article v-for="row in rows" :key="row.case_id">
       <p><b>{{ row.case_no }}</b> · {{ labelOf(CASE_STATUS_LABEL, row.status) }} <span v-if="row.source_mode !== 'live'" class="tag t-amber">{{ labelOf(SOURCE_MODE_LABEL, row.source_mode) }}</span></p>
+      <p v-if="row.simulated || row.source_mode !== 'live'" class="po-muted">历史测试案件，仅保留原始记录，不代表真实处罚结果。</p>
       <dl class="kv kv-surface">
         <dt>当事人</dt><dd>{{ row.party_name || '待查明' }}</dd>
         <dt>承办人</dt><dd>{{ row.officer_name || '待指派' }}</dd>

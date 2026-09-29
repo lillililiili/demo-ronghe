@@ -233,7 +233,7 @@ def messages(scene, devices, targets, manifest, elapsed, now, last_sent, sequenc
                 if t.get('pilotPoint') is not None:
                     ext['pilotLon'], ext['pilotLat'] = coordinates(t['pilotPoint'])
             for member in range(int(t['count']) if t['kind']=='bird' else 1):
-                objects.append({'objectId': index*1000+member, 'time': now, 'longitude': lon+member%10*.00002, 'latitude': lat+member//10*.00002,
+                objects.append({'objectId': str(index*1000+member), 'time': now, 'longitude': lon+member%10*.00002, 'latitude': lat+member//10*.00002,
                                 'altitude': t['height'], 'speed': math.hypot(speed_x, speed_y), 'extension': ext,
                                 **({'height': t['heightAgl']} if 'heightAgl' in t else {})})
         if objects and d['kind'] in KINDS:

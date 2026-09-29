@@ -2,7 +2,8 @@
 import { computed, onUnmounted, ref, watch } from 'vue';
 import { deviceApi } from '@/services/deviceApi.js';
 import { hasModuleAction } from '@/services/accessControl.js';
-import SimulatedOpticalVideo from './SimulatedOpticalVideo.vue';
+import AuthenticatedHlsVideo from './AuthenticatedHlsVideo.vue';
+import { authSession } from '@/services/auth.js';
 import { targetVideoState } from './targetVideoState.js';
 
 const props = defineProps({
@@ -14,7 +15,7 @@ const props = defineProps({
   compact: { type: Boolean, default: false },
   subtype: { type: String, default: 'UAV' }
 });
-const expanded = ref(props.defaultExpanded), preview = ref(false), video = ref(null);
+const expanded = ref(props.defaultExpanded), video = ref(null);
 const loading = ref(false), checked = ref(false), error = ref('');
 const permitted = computed(() => hasModuleAction('devices', 'op'));
 const state = computed(() => targetVideoState(props.targetId, video.value));
@@ -22,7 +23,7 @@ const reason = computed(() => props.unavailableReason || (!props.targetId ? '未
   || (!permitted.value ? '当前账号没有读取光电跟踪的设备操作权限。' : ''));
 let generation = 0, timer, controller, alive = true;
 function clear() {
-  ++generation; clearTimeout(timer); controller?.abort(); preview.value = false;
+  ++generation; clearTimeout(timer); controller?.abort();
   video.value = null; error.value = ''; loading.value = false; checked.value = false;
 }
 async function refresh() {
@@ -39,11 +40,9 @@ async function refresh() {
     const nextVideo = await deviceApi.targetVideo(id, options);
     if (!current()) return;
     if (!nextVideo || nextVideo.target_id !== id) throw new Error('视频与当前目标不一致，已停止显示。');
-    if (video.value?.task_id !== nextVideo.task_id || video.value?.command_id !== nextVideo.command_id) preview.value = false;
     video.value = nextVideo;
-    if (!state.value.simulated) preview.value = false;
   } catch (e) {
-    if (current()) { video.value = null; preview.value = false; error.value = pending.signal.aborted ? '视频关联状态读取超时，请重试。' : e.message || '视频关联状态读取失败，请重试。'; }
+    if (current()) { video.value = null; error.value = pending.signal.aborted ? '视频关联状态读取超时，请重试。' : e.message || '视频关联状态读取失败，请重试。'; }
   } finally {
     clearTimeout(deadline);
     if (current()) {
@@ -52,8 +51,9 @@ async function refresh() {
     }
   }
 }
+function reloadVideo() { clear(); refresh(); }
 function toggle() { expanded.value = !expanded.value; }
-watch([() => props.targetId, () => props.contextLabel, () => props.active, reason], () => { clear(); if (expanded.value) refresh(); }, { flush: 'sync' });
+watch([() => props.targetId, () => props.contextLabel, () => props.active, authSession, reason], () => { clear(); if (expanded.value) refresh(); }, { flush: 'sync' });
 watch(expanded, open => { clear(); if (open) refresh(); }, { immediate: true });
 onUnmounted(() => { alive = false; clear(); });
 </script>
@@ -62,21 +62,20 @@ onUnmounted(() => { alive = false; clear(); });
   <section class="target-live-video" :class="{ compact }" aria-label="实时视频">
     <header>
       <slot name="title"><strong>实时视频</strong></slot>
-      <div class="video-toolbar"><button v-if="compact && expanded && !reason" type="button" class="btn" :disabled="loading" @click="refresh">刷新</button>
+      <div class="video-toolbar"><button v-if="compact && expanded && !reason" type="button" class="btn" :disabled="loading" @click="reloadVideo">刷新</button>
       <slot name="actions"><button class="btn" type="button" :aria-expanded="expanded" @click="toggle">{{ expanded ? '收起视频' : '查看视频' }}</button></slot></div>
     </header>
     <div v-if="expanded && active" class="video-content">
-      <p v-if="compact && state.simulated" class="video-context">当前目标画面，不代表历史事发画面</p>
-      <p v-else-if="!compact && contextLabel" class="video-context">{{ contextLabel }} · 当前目标画面，不代表历史事发画面</p>
+      <p v-if="state.playable" class="video-context"><span v-if="!compact && contextLabel">{{ contextLabel }} · </span>当前画面，非事发录像</p>
       <p v-if="reason" role="status">{{ reason }}</p>
       <p v-else-if="error" role="alert" class="video-error">{{ error }}</p>
       <template v-else>
-        <p v-if="loading && !checked" role="status">正在读取视频关联状态</p>
+        <p v-if="loading && !checked" role="status">视频读取中</p>
         <p v-else role="status">{{ state.message }}</p>
-        <SimulatedOpticalVideo v-if="preview && state.simulated" :key="`${targetId}:${video.task_id}`" :subtype="subtype" />
-        <button v-if="state.simulated && !preview" type="button" class="btn" @click="preview = true">播放模拟画面</button>
+        <AuthenticatedHlsVideo v-if="state.playable" :target-id="targetId" :video="video" />
+        <p v-if="state.simulated" class="video-context">测试画面，非现场实拍</p>
       </template>
-      <button v-if="!reason && !compact" class="btn refresh-video" type="button" :disabled="loading" @click="refresh">{{ loading ? '正在读取' : '刷新视频状态' }}</button>
+      <button v-if="!reason && !compact" class="btn refresh-video" type="button" aria-label="刷新视频状态" :disabled="loading" @click="reloadVideo">{{ loading ? '读取中' : '刷新' }}</button>
     </div>
   </section>
 </template>

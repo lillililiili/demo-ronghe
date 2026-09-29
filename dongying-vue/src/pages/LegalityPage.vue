@@ -12,8 +12,9 @@ export default {};
 
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { useRoute } from 'vue-router';
 import UKpis from '@/components/UKpis.vue';
-import TargetLiveVideo from '@/components/video/TargetLiveVideo.vue';
+import TargetTrackingPanel from '@/components/video/TargetTrackingPanel.vue';
 import { UField } from '@/components/form/index.js';
 import UPagination from '@/components/UPagination.vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
@@ -32,6 +33,7 @@ import {
 
 usePageChrome('legality');
 const UI = window.UI;
+const route = useRoute();
 const root = ref(null);
 const st = reactive(S.st);
 /* 列表、统计与目标定位共用服务端无人机范围；未匹配计划的无人机仍参与研判。
@@ -137,7 +139,8 @@ const secondaryCheckCount = computed(() => (selectedEvaluation.value?.hit_detail
 const unlistedUnknowns = computed(() => reviewFocus.value.unknownReasons.filter(code => !(selectedEvaluation.value?.hit_details || []).some(hit => hit.reason_code === code)));
 const assuranceReasons = computed(() => reviewFocus.value.assuranceReasons || []);
 const c01Facts = computed(() => selectedEvaluation.value?.hit_details?.find(hit => hit.rule_code === 'C01')?.facts || null);
-const demoParams = computed(() => selectedEvaluation.value?.param_status === 'DEMO');
+const unconfirmedParams = item => !!item && item.legal_status !== 'NOT_APPLICABLE' && item.param_status !== 'CONFIRMED';
+const parameterNote = item => unconfirmedParams(item) ? '规则参数待业务确认，不能形成正式判定' : '规则参数已确认';
 // 告警关联可能因权限被隐藏；已有触发结果却没有可读 ID 时不能退回本页复核。
 const reviewInAlarm = computed(() => !!selectedEvaluation.value?.alarm_id
   || (!!selectedEvaluation.value?.alarm_outcome_kind && selectedEvaluation.value.alarm_outcome_kind !== 'SUPPRESSED_SHADOW'));
@@ -199,6 +202,7 @@ function shortTime(value) {
 }
 function evaluationReason(item) {
   if (!item) return '尚未取得研判详情';
+  if (unconfirmedParams(item)) return '当前规则参数尚未确认，暂不能形成正式研判结论。';
   if (item.legal_status === 'LEGAL') return item.unknown_reasons?.length ? `系统判定合法，另有 ${item.unknown_reasons.length} 项未知信息` : '全部检查通过';
   if (item.violation_reasons?.length) return ruleReasonText(item.violation_reasons[0]);
   if (item.unknown_reasons?.length) return ruleReasonText(item.unknown_reasons[0]);
@@ -239,6 +243,7 @@ function factText(value) {
 function dimText(value) { return value ? (DIM_TEXT[value] || value) : '未评估'; }
 function reviewText(item) {
   const focus = legalityReviewFocus(item);
+  if (focus.alarmVerified) return '告警已核实';
   if (focus.superseded || focus.reviewed) return reviewStateText(item?.review?.state);
   if (!focus.assuranceProvided && focus.applicable) return '可靠性未知';
   if (focus.needsReview) return '信息待核对';
@@ -247,6 +252,7 @@ function reviewText(item) {
   return reviewStateText(item?.review?.state);
 }
 function conclusionQualificationText(item) {
+  if (unconfirmedParams(item)) return '参数未确认 · 正式判定不可用';
   if (!['LEGAL', 'ILLEGAL'].includes(item?.legal_status)) return '';
   const focus = legalityReviewFocus(item);
   if (!focus.needsReview) return '';
@@ -313,13 +319,13 @@ async function loadQueue(options = {}) {
   try {
     let deepLink = null;
     if (options.targetId) {
-      // target 深链：先按目标定位最新研判，再把队列切到它所属的判定分组；定位失败不自动选择无关研判。
+      // 计划入口同时限定目标与计划；仅目标入口才跟随最新研判的判定分组。
       try {
-        const located = await legalityApi.listEvaluations({ ...uavScope, target_id: options.targetId, page: 1, size: 1 });
+        const located = await legalityApi.listEvaluations({ ...uavScope, target_id: options.targetId, plan_id: st.plan || undefined, page: 1, size: 1 });
         if (token !== listToken) return;
         deepLink = located.items?.[0] || null;
         if (!deepLink) deepLinkNotice.value = `目标 ${options.targetNo || options.targetId} 没有可见的无人机研判记录。`;
-        else st.legal = conclusionMeta[deepLink.legal_status] && deepLink.legal_status !== 'NOT_APPLICABLE' ? deepLink.legal_status : 'UNDETERMINED';
+        else if (!st.plan) st.legal = conclusionMeta[deepLink.legal_status] && deepLink.legal_status !== 'NOT_APPLICABLE' ? deepLink.legal_status : 'UNDETERMINED';
       } catch (error) {
         if (token !== listToken) return;
         deepLinkNotice.value = `目标 ${options.targetId} 的研判定位失败：${formatApiError(error, '读取研判失败')}`;
@@ -597,14 +603,13 @@ async function renderEvidenceMap(evaluation) {
   evidenceMap.fitTo(flightExtent.length ? flightExtent : points);
 }
 
-onMounted(() => {
+function loadNavigation(context = null) {
   // 兼容旧页面保留的选项值；初始复核状态不等于实际仍需人工处理。
   if (st.review === 'PENDING_REVIEW') st.review = 'NEEDS_REVIEW';
-  const context = UI.consume('legality');
-  const targetId = context?.target || null;
+  const targetId = context?.target || (typeof route.query.target === 'string' ? route.query.target : null);
   /* 从飞行计划页过来时带着计划（决策 19-1）：预置"计划"筛选，其余筛选放开，
      否则一进来就被默认的"系统判定非法"挡住，看着像这条计划没有研判。 */
-  const planId = context?.plan || new URLSearchParams((location.hash.split('?')[1] || '')).get('plan') || '';
+  const planId = context?.plan || (typeof route.query.plan === 'string' ? route.query.plan : '');
   if (planId) {
     st.plan = planId;
     st.legal = '';
@@ -613,13 +618,21 @@ onMounted(() => {
     st.reviewLocation = '';
     st.page = 1;
   }
-  if (targetId) {
+  if (targetId && !planId) {
+    st.plan = '';
     st.district = '';
+    st.review = '';
     st.reviewLocation = '';
     st.page = 1;
   }
-  loadPlans();
   void loadQueue({ targetId, refreshKpi: true });
+}
+watch(() => [route.query.target, route.query.plan], () => {
+  if (route.path === '/legality') loadNavigation();
+});
+onMounted(() => {
+  loadPlans();
+  loadNavigation(UI.consume('legality'));
   loadShadowHint();
 });
 </script>
@@ -704,12 +717,13 @@ onMounted(() => {
             <div v-else-if="!selectedEvaluation" class="empty">请选择一条研判</div>
             <template v-else>
               <div class="lg-detail-scroll">
-                <TargetLiveVideo :key="selectedEvaluation.evaluation_id" :target-id="selectedEvaluation.target_id || ''"
-                  :context-label="subjectLabel(selectedEvaluation)" />
+                <TargetTrackingPanel :key="selectedEvaluation.evaluation_id" :target-id="selectedEvaluation.target_id || ''"
+                  :context-label="subjectLabel(selectedEvaluation)" begin-reason="合法性研判详情人工补充光电追踪" />
                 <section class="lg-focus-card" aria-label="系统结论与人工核对重点">
                   <div class="lg-focus-verdict"><span>系统结论</span><strong class="lg-status-tag" :class="`is-${selectedConclusion.tone}`">{{ selectedConclusion.label }}</strong><span>{{ conclusionQualificationText(selectedEvaluation) || reviewText(selectedEvaluation) }}</span></div>
                   <p class="lg-focus-basis">{{ primaryReason }}</p>
-                  <p class="lg-muted">{{ formatTime(selectedEvaluation.evaluated_at) }} · {{ sourceText(selectedEvaluation.source_mode) }}{{ demoParams ? ' · 演示参数' : '' }}</p>
+                  <p class="lg-muted">{{ formatTime(selectedEvaluation.evaluated_at) }} · {{ sourceText(selectedEvaluation.source_mode) }} · {{ parameterNote(selectedEvaluation) }}</p>
+                  <p v-if="unconfirmedParams(selectedEvaluation)" class="lg-muted">原始系统记录：{{ legalStatusText(selectedEvaluation.legal_status) }}；原始依据与历史保留，不能作为当前正式判定。</p>
                   <p class="lg-muted">观测时间：{{ formatTime(selectedEvaluation.observed_at) }}</p>
                   <p v-if="selectedEvaluation.review?.manual_status" class="lg-focus-manual">人工结论：<b>{{ legalStatusText(selectedEvaluation.review.manual_status) }}</b>（原始系统结论保留）</p>
                   <div v-if="reviewFocus.showTask" class="lg-focus-task" :class="{ 'needs-review': reviewFocus.needsReview }">
@@ -742,7 +756,7 @@ onMounted(() => {
                       <span class="lg-check-copy"><b>{{ ruleName(hit.rule_code) }}<em>{{ resultText(hit.result_code) }}</em></b>
                         <small class="lg-check-description">{{ hit.message || (hit.reason_code ? ruleReasonText(hit.reason_code) : '未提供说明') }}</small>
                         <small v-if="selectedHitIndex === index && hit.facts && Object.keys(hit.facts).length">判定时事实：{{ factText(hit.facts) }}</small>
-                        <small v-if="selectedHitIndex === index">{{ hit.rule_code }} · {{ hit.params?.some(p => p.status === 'DEMO') ? '演示参数' : (hit.params?.length ? '已确认参数' : '未提供参数') }}</small>
+                        <small v-if="selectedHitIndex === index">{{ hit.rule_code }} · {{ hit.params?.length && hit.params.every(p => p.status === 'CONFIRMED') ? '已确认参数' : '参数待业务确认' }}</small>
                       </span>
                     </button>
                   </div>

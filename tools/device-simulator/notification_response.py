@@ -18,6 +18,7 @@ class NotificationResponse:
         self.views = {key: {'action': 'WAITING', 'reason': '等待本批次目标与告警', 'updated_at': None} for key in self.targets}
         self.links = {}
         self.motion = {}
+        self.batch_device_ids = None
 
     def start(self):
         if self.targets:
@@ -49,18 +50,47 @@ class NotificationResponse:
             if not items: break
         raise ValueError('关联查询未完整返回，暂不触发飞行行为')
 
+    def matches_identity(self, target, serial):
+        if target.get('source_mode') != 'replay': return False
+        if target.get('uav_sn'):
+            return target['uav_sn'] == serial
+        # Fusion identity clues are not necessarily a registered aircraft serial.
+        # Read the public observations contract and require this run's RF devices.
+        if self.batch_device_ids is None:
+            device_ids = set()
+            for device in self.manifest.get('devices', {}).values():
+                detail = self.platform.call('GET', '/devices/'+device['platform_id'])
+                fusion_id = (detail.get('device') or {}).get('fusion_device_id')
+                if fusion_id: device_ids.add(fusion_id)
+            self.batch_device_ids = device_ids
+        now = int(time.time()*1000)
+        cutoff = max(self.manifest['created_at'], now-5000)
+        observations = self.pages('/targets/'+target['target_id']+'/observations',
+                                  {'time_from': cutoff, 'time_to': now})
+        clues = {row.get('identity_clue') for row in observations
+                 if row.get('source_type') in ('TDOA', '5G_A')
+                 and row.get('source_mode') == 'replay'
+                 and cutoff <= (row.get('observed_at') or 0) <= now
+                 and row.get('identity_clue')}
+        own = any(row.get('identity_clue') == serial
+                  and row.get('source_type') in ('TDOA', '5G_A')
+                  and row.get('source_mode') == 'replay'
+                  and cutoff <= (row.get('observed_at') or 0) <= now
+                  and row.get('device_id') in self.batch_device_ids for row in observations)
+        return own and clues == {serial}
+
     def read(self, key):
         serial = self.manifest['targets'][key]['uav_sn']
         started = self.manifest['created_at']
         link = self.links.setdefault(key, {})
         if not link.get('target_id'):
             rows = self.pages('/targets', {'seen_from': started, 'seen_to': int(time.time()*1000)+1})
-            matches = [row for row in rows if row.get('uav_sn') == serial and row.get('source_mode') == 'replay']
+            matches = [row for row in rows if self.matches_identity(row, serial)]
             if not matches: return {'reason': '等待本批次目标进入系统'}
             if len(matches) != 1: raise ValueError('本批次序列号关联多个目标，暂不触发飞行行为')
             link['target_id'] = matches[0]['target_id']
         target = self.platform.call('GET', '/targets/'+link['target_id'])
-        if target.get('uav_sn') != serial or target.get('source_mode') != 'replay':
+        if not self.matches_identity(target, serial):
             raise ValueError('目标身份或来源已变化，暂不触发飞行行为')
         latest = target.get('latest_state') or {}
         facts = {'target_id': link['target_id'], 'observed_at': latest.get('observed_at'),

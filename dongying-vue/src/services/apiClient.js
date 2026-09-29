@@ -46,10 +46,27 @@ async function decode(response) {
 
 const inflightGets = new Map();
 
+function requireCurrentSession(token) {
+  if (readSessionToken() !== token) throw new ApiError('登录账号已变化，请重新读取当前页面。', 'SESSION_CHANGED', 409);
+}
+
+async function decodeCurrent(response, token, path) {
+  requireCurrentSession(token);
+  try {
+    const data = await decode(response);
+    requireCurrentSession(token);
+    return data;
+  } catch (error) {
+    requireCurrentSession(token);
+    if (response.status === 401 && path !== '/auth/login') window.dispatchEvent(new CustomEvent('api:unauthorized', { detail: error }));
+    throw error;
+  }
+}
+
 function getDedupeKey(path, options) {
   const method = String(options.method || 'GET').toUpperCase();
   if (method !== 'GET' || options.body != null || options.mutation || options.dedupe === false) return '';
-  return path;
+  return `${readSessionToken()}\u0000${path}`;
 }
 
 export async function apiRequest(path, options = {}) {
@@ -81,14 +98,10 @@ async function sendRequest(path, options) {
     const body = options.body == null || options.body instanceof FormData ? options.body : JSON.stringify(options.body);
     response = await fetch(`${API_BASE}${path}`, { ...options, headers, body });
   } catch {
+    requireCurrentSession(token);
     throw new ApiError('暂时连不上系统，请检查网络后刷新；刚提交过操作的，请先查看是否已保存。', 'NETWORK_ERROR', 0);
   }
-  try {
-    return await decode(response);
-  } catch (error) {
-    if (response.status === 401 && path !== '/auth/login') window.dispatchEvent(new CustomEvent('api:unauthorized', { detail: error }));
-    throw error;
-  }
+  return decodeCurrent(response, token, path);
 }
 
 /** 限制并发，避免一页同时打出几十个只读请求把连接打满。 */
@@ -142,12 +155,15 @@ export async function apiDownload(path) {
   if (token) headers.set('Authorization', `Bearer ${token}`);
   let response;
   try { response = await fetch(`${API_BASE}${path}`, { headers }); }
-  catch { throw new ApiError('暂时连不上系统，请检查网络后重试。', 'NETWORK_ERROR', 0); }
+  catch { requireCurrentSession(token); throw new ApiError('暂时连不上系统，请检查网络后重试。', 'NETWORK_ERROR', 0); }
+  requireCurrentSession(token);
   if (!response.ok) {
-    await decode(response);
+    await decodeCurrent(response, token, path);
     return null;
   }
-  return response.blob();
+  const blob = await response.blob();
+  requireCurrentSession(token);
+  return blob;
 }
 
 export async function apiBinary(path, { signal, maxBytes } = {}) {
@@ -157,16 +173,14 @@ export async function apiBinary(path, { signal, maxBytes } = {}) {
   let response;
   try { response = await fetch(`${API_BASE}${path}`, { headers, signal, cache: 'no-store' }); }
   catch (error) {
+    requireCurrentSession(token);
     if (signal?.aborted) throw error;
     throw new ApiError('暂时连不上系统，请检查网络后重试。', 'NETWORK_ERROR', 0);
   }
+  requireCurrentSession(token);
   const contentType = response.headers.get('content-type') || '';
   if (!response.ok) {
-    try { await decode(response); }
-    catch (error) {
-      if (response.status === 401) window.dispatchEvent(new CustomEvent('api:unauthorized', { detail: error }));
-      throw error;
-    }
+    await decodeCurrent(response, token, path);
   }
   if (maxBytes && Number(response.headers.get('content-length')) > maxBytes) {
     await response.body?.cancel();
@@ -180,6 +194,10 @@ export async function apiBinary(path, { signal, maxBytes } = {}) {
     try {
       while (true) {
         const { done, value } = await reader.read();
+        if (readSessionToken() !== token) {
+          await reader.cancel();
+          requireCurrentSession(token);
+        }
         if (done) break;
         size += value.byteLength;
         if (size > maxBytes) {
@@ -191,6 +209,7 @@ export async function apiBinary(path, { signal, maxBytes } = {}) {
       blob = new Blob(chunks, { type: contentType });
     } finally { reader.releaseLock(); }
   } else blob = await response.blob();
+  requireCurrentSession(token);
   const disposition = response.headers.get('content-disposition') || '';
   const utf = /filename\*=UTF-8''([^;]+)/i.exec(disposition);
   const plain = /filename="?([^"]+)"?/i.exec(disposition);

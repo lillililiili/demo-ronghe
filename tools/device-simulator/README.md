@@ -41,7 +41,7 @@ python3 tools/device-simulator/server.py --port 8766 --database houtaiguanli
 
 - 设备注册：现有 `POST /api/v1/devices/onboard`，每次运行独立设备编号及幂等键，source_mode=replay。
 - 雷达、5G-A、TDOA：复用 `LINGYUN_MQTT_V8_6` 工参和 SenseData 契约。QoS 1、retain=false；目标与批次身份固定，观测时间随实际发送更新，按速度和折线距离推进，终点停留，不循环瞬移。鸟群按数量生成独立观测编号、固定小范围编队偏移。
-- 光电：`EO_EDGE_MQTT_20250826` HeartBeat。不会虚构跟踪任务、实时视频或控制执行回执。
+- 光电：`EO_EDGE_MQTT_20250826` HeartBeat，以及真实订阅下发主题后的 BeginTracking / EndTracking / CameraStatus 模拟回执。匹配系统当前任务后才执行；可显式开启本机 TEST VIDEO 水印测试流，不表示现场实拍。
 - 离线：时间窗内停止该设备所有上报，恢复后正常上报；系统按自身超时阈值判离线。故障：协议 A workState=2，窗口结束后恢复原配置。
 - 计划/区域：现有计划接口没有通用写入口，空域创建接口固定为 live。因此复用项目本机模拟脚本的受控 seed 做法，通过 PostgreSQL 事务仅新增 replay 航线、版本、计划及限飞区域。执行前以 broker UUID 核对 API 与数据库一致。完整场景快照在任何写入前落盘，不覆盖或删除旧记录。
 - 计划、区域时段使用**运行当天 Asia/Shanghai**。普通场景遵守页面时间；“超出计划时段”按选择的提前/延后及分钟数，将该目标配套计划定位到本批次开始前后，实际生效时刻可从系统计划回读。
@@ -62,7 +62,7 @@ python3 tools/device-simulator/server.py --port 8766 --database houtaiguanli
 | 类型 / 场景 | 当前能力 |
 | --- | --- |
 | 雷达、5G-A、TDOA | 注册、心跳、工参、无人机/鸟类轨迹、离线与故障调度 |
-| 光电 | 注册、心跳与离线；具体故障码与跟踪任务回执未接入，阻止伪造 |
+| 光电 | 注册、心跳、离线、真实 MQTT 订阅与匹配任务回执；可显式开启带水印本机测试流。未知故障码不造码，指令保持超时 |
 | 气象设备 | 保留地图布设；现有系统没有相应设备 MQTT 契约，明确跳过发送；不伪造温度、风速字段 |
 | 无计划、偏离、限飞区、时间风险 | 发送实际观测及配套资料，结果由现有引擎判断；选中场景不保证产生某个结论 |
 | 超高 | 上报协议原始高度；当前后端将其基准视为未知，不能保证触发超高告警 |
@@ -200,3 +200,35 @@ node --check tools/device-simulator/web/runtime.js
 旧 MQTT 区域配套仍存在，但已去掉固定 PROHIBITED，按区域明确选择的 kindCode 写入，缺少类型时在访问数据库前阻断。历史本地草稿没有类型时，需在空域下发选中边界并选择类型。此修改不代表已完成两条下发路径合并。
 
 变更方法：app.js 的 setDraw/finishDraw/select 负责绘制模式、类型与完成通知；workspace.js 的 sendZones/openAirspace 和消息处理把绘制及回填连接到下发表单；airspace.js 的绘制、选区和类型事件传递所选类型；airspace-form.js 的 payload 校验显式类型；platform_client.py 的 Prerequisites.create 取消固定禁飞类型。index.html/airspace.html/workspace.css 为导航、表单和区域列表模板样式，无具体方法。test_airspace_drawing.cjs、test_airspace_kind.py 和 test_airspace_ui.cjs 覆盖类型保留、未知模式、航线独立、缺失类型阻断；前端19项、Python20项通过。浏览器已完成允许区绘制并自动回填，未提交空域或启动MQTT。
+
+
+## 光电任务与本机测试视频（2026-09-28）
+
+登录后打开“系统连接 → 光电测试视频”，显式选择“启用测试视频”。FFmpeg 可填写本机程序绝对路径；默认 `ffmpeg` 先使用 PATH，Windows 再查已有 WinGet Gyan 安装目录，不安装程序或修改 PATH。源文件留空生成动态测试图，也可填写本机已有视频的绝对路径循环播放；不支持网络视频源或 UNC 路径。所有输出统一为无声 H.264，持续显示 TEST VIDEO、设备编号和任务编号。Windows 使用系统 Arial 字体，Linux 使用已有 DejaVu Sans。
+
+RTSP 默认 `rtsp://127.0.0.1:8554`，只接受回环地址；媒体服务与后端 QA 视频开关需单独开启。后端须启用 local+qa 且非 production，使用有效登录及设备动作权限。前台实际可播放需要后端确认同一任务、设备回执及媒体路径已就绪；模拟器中的“正在推流”只表示编码进程运行。
+
+启动包含光电的 MQTT 批次后，模拟器通过 `/devices/{id}/protocol-status` 读取绑定的上下行主题并等待 SUBACK。收到 BeginTracking 后校验设备、edge、任务 ID、时间及系统当前 OPEN 任务，再发送协议 C codeStatus=200 模拟跟踪回执；持续跟踪时每5秒重新核对当前 OPEN 任务后上报跟踪状态，不等待15秒的视频租约刷新，不补造 aiStatus 位置观测。视频开启时通过受控 PUT `/local-interface-simulator/video-streams/{taskId}` 登记，使用服务端返回的 `qa/<UUID>` 路径推流，每15秒更新租约；重复同任务不新建进程，旧任务不能抢占设备。CameraStatus 只回读当前模拟跟踪状态。
+
+运行记录中分别查看跟踪状态、视频状态、错误及 FFmpeg 退出码。FFmpeg 失败不会伪造跟踪失败码；当前任务登记继续保留，每15秒复核同一OPEN任务后只重试编码进程，供平台显示断流与恢复。停止、暂停、离线、MQTT 断连、会话失效、系统任务结束或服务退出时终止本模拟器持有的编码进程并注销登记。Windows 编码进程归属独立 Job，模拟器进程退出会清理该进程；不会按名称批量关闭其他 FFmpeg。恢复发送不恢复旧视频任务，重启后视频配置回到关闭，旧批次只读。
+
+新实现不改通知收件箱、短信、电话或既有配套 seed，不新增数据库写入。失败注销由后端短租约兜底过期，媒体未就绪不显示 AVAILABLE。端到端模拟视频不属于真实现场设备或历史证据验收。
+
+新增模块 `eo_video.py`，测试 `tests/test_eo_video.py`。含编码中断恢复的新视频测试23项，当前共享工作区Python全量55项及现有Node39项通过；真实FFmpeg水印、Windows Job清理、MQTT与鉴权媒体链路证据由本轮总验收报告记录。
+
+媒体安全补充：启用视频必须填写媒体推流账号（默认qa-publisher）和密码。密码仅留本机服务内存，不在场景、manifest、运行日志或导出保存，状态只显示是否已配置。重新打开连接设置时密码框为空，留空保留内存凭据；重启后需重新输入。媒体服务应使用独立发布/读取账号，业务播放器仍经平台鉴权读取。编码输出不记录包含凭据URL的原始stderr。
+
+可选验收脚本：`tests/run_eo_media_smoke.py --run-local-media-smoke --credentials-file <本机私有媒体凭据文件> --output <证据目录>` 验证真实MQTT、FFmpeg和媒体传输，平台API使用契约替身。`tests/run_eo_platform_smoke.py --run-isolated-platform-smoke --fixture-file <本机私有隔离夹具文件> --credentials-file <本机私有媒体凭据文件> --output <证据目录>` 验证真实平台任务、回执和播放；只接受18091固定隔离API、acceptance目标及replay设备绑定，不能指向正式服务。可加 `--source-file <短视频绝对路径>` 验证循环和静音；默认动态图。脚本不会写数据库，结果按输入类型分别保存；测试凭据与媒体session原值不写证据。
+
+## 通知响应目标关联修复（2026-09-28）
+
+目标详情可能没有登记无人机序列号。通知响应读取公开观测接口，以本批设备近 5 秒的 TDOA/5G_A 身份线索关联唯一 replay 目标；排除未来、过期、雷达身份、非本批设备及冲突身份。每次触发前重新校验，缺少依据保持等待，不补写目标档案或业务状态。`NotificationResponse.matches_identity/read` 实现关联，`tests/test_notification_response.py` 覆盖六类边界；Python 全量54项通过。已实际验证短信后撤离、电话后撤离由连续 MQTT 位置驱动，平台分别判定 LEFT。短信观察3秒、电话观察10秒沿用用户最新确认。
+
+
+## 2026-09-29 运行恢复与会话复核
+
+新批次的场景、日志、回读和进度文件统一使用 UTF-8，兼容读取旧 Windows CP936 中文批次。运行帧结束以及暂停、继续、停止操作均保存原子进度快照；进程重启保留上次可确认进度并停止，不自动续发。进程崩溃瞬间尚未落盘的在途发布仍不视作已确认。
+
+所有运行批次（含不启用通知联动的普通目标）每5秒复核一次系统会话。401按既有共享会话失效流程停止发送；无法校验时中止本批次，不因没有打开收件箱而持续使用失效登录。不会自动重新登录或恢复发送。
+
+验证：Python全套60项通过；UTF-8/Windows默认编码互读、暂停进度、实际进程重启已验。证据见第十二轮联合测试报告；本机回放不代表真实设备或外部通知验收。

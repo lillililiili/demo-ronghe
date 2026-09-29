@@ -28,7 +28,7 @@ export function prepareEvidenceTrack(rows = []) {
     const previous = all[index - 1];
     const connected = previous && !point.break_before && !!point.track_id && previous.track_id === point.track_id
       && Number.isFinite(previous.point_seq) && point.point_seq === previous.point_seq + 1
-      && Number.isFinite(previous.t) && Number.isFinite(point.t) && point.t > previous.t
+      && Number.isFinite(previous.t) && Number.isFinite(point.t) && point.t >= previous.t
       && previous.kind === point.kind;
     // 文件自带的关系字段不等于带计划/走廊依据的后台比对结果。
     return { ...point, point_id: source.point_id, break_before: !connected, corridor_relation: 'UNKNOWN',
@@ -36,9 +36,10 @@ export function prepareEvidenceTrack(rows = []) {
       speed: Number.isFinite(source.speed_mps) ? source.speed_mps : null,
       heading: Number.isFinite(source.heading_deg) ? source.heading_deg : null };
   });
-  const timed = points.every((point, i) => Number.isFinite(point.t) && (!i || point.t > points[i - 1].t));
+  // 多来源融合可在同一观测时刻追加结果；保留序号及全部点，只有倒序才属于异常。
+  const timed = points.every((point, i) => Number.isFinite(point.t) && (!i || point.t >= points[i - 1].t));
   return { points, rejected: input.length - points.length,
     breaks: points.slice(1).filter(point => point.break_before).length,
-    canReplay: points.length > 1 && timed,
+    canReplay: points.length > 1 && timed && points.at(-1).t > points[0].t,
     timingIncomplete: points.length > 0 && !timed };
 }

@@ -37,13 +37,12 @@ import { openEvidenceFileModal } from '@/ui/evidenceFileDetail.js';
 import { openEvidenceChainTypeModal, renderEvidenceChainHtml } from '@/ui/evidenceChainView.js';
 import { disposalApi, isDisposalUnavailable } from '@/services/disposalApi.js';
 import { DISPOSAL_UNAVAILABLE_TEXT } from '@/ui/disposalAuthModal.js';
-import { hasModuleAction, hasPermission } from '@/services/accessControl.js';
-import { deviceApi } from '@/services/deviceApi.js';
+import { hasPermission } from '@/services/accessControl.js';
 import { openTrackReplay, trackPointsOf } from '@/ui/trackReplayModal.js';
 import EmergencyStopPanel from '@/components/disposal/EmergencyStopPanel.vue';
 import UavAdvisoryPanel from '@/components/disposal/UavAdvisoryPanel.vue';
 import CounterLaunch from '@/pages/alarms/CounterLaunch.vue';
-import TargetLiveVideo from '@/components/video/TargetLiveVideo.vue';
+import TargetTrackingPanel from '@/components/video/TargetTrackingPanel.vue';
 import { uavAdvisoryApi } from '@/services/uavAdvisoryApi.js';
 
 const U = window.UI;
@@ -221,7 +220,7 @@ let listSeq = 0, detailSeq = 0;
 const emptyDetail = () => ({ alarm: null, event: null, loading: false, error: '',
   target: null, targetLoading: false, targetError: '', track: null, trackError: '',
   chain: null, chainLoading: false, chainError: '', chainUnavailable: '',
-  eoTask: null, eoTaskError: '' });
+  });
 let cur = emptyDetail();
 /* 深链（sessionStorage alarm.sel）—— 与 legacy render() 同构：mount 后按 ID 直接向服务端取详情 */
 const deepId = sessionStorage.getItem('alarm.sel');
@@ -535,11 +534,10 @@ function detailActionsHtml() {
   const a = cur.alarm, ev = cur.event;
   if (!a) return '';
   const replayN = replayPointCount();
-  return `${U.detailActions(`
+  return `<div class="alarm-observation-actions">
       <button class="btn" data-al="replay" ${replayN > 1 ? '' : 'disabled '}title="${replayN > 1 ? '按实测轨迹在地图上走航线回放，不是视频' : '没有足够的轨迹点'}">${U.icon('trend')} 轨迹回放</button>
-      ${eoTrackActions(a)}
-      ${disposalActions(a, ev)}`)}
-    ${ev?.state === 'PENDING_VERIFICATION' ? '<p style="margin:8px 16px;font-size:12px;line-height:1.65;color:var(--muted)">事件事实尚待核实。核实属实后自动发送飞手短信。</p>' : ''}`;
+      ${disposalActions(a, ev)}</div>
+    ${ev?.state === 'PENDING_VERIFICATION' ? '<p class="alarm-action-note">事件事实尚待核实。核实属实后自动发送飞手短信。</p>' : ''}`;
 }
 
 function paintDetailContent() {
@@ -550,26 +548,28 @@ function paintDetailContent() {
   if (actions) actions.innerHTML = detailActionsHtml();
 }
 
-function eoTrackActions(a) {
-  const open = cur.eoTask && (cur.eoTask.status === 'OPEN' || cur.eoTask.status === 'ENDING');
-  // 跟踪由后台自动启停。误报结束处置后不再提供人工启动入口。
-  if (a.state === 'FALSE_POSITIVE') {
-    return open ? U.tag('正在自动结束', 't-blue') : '';
+let listQueryKey = '';
+function paintList() {
+  const host = el('alList');
+  if (!host) return;
+  const queryKey = JSON.stringify(queryOf());
+  const resetScroll = queryKey !== listQueryKey;
+  listQueryKey = queryKey;
+  const content = document.createElement('template');
+  content.innerHTML = listHtml();
+  const scroll = host.querySelector('.table-scroll');
+  const nextScroll = content.content.querySelector('.table-scroll');
+  if (scroll && nextScroll) {
+    // 通知轮询只更新表格内容，保留用户正在操作的滚动容器及位置。
+    const top = resetScroll ? 0 : scroll.scrollTop;
+    const left = resetScroll ? 0 : scroll.scrollLeft;
+    scroll.replaceChildren(...nextScroll.childNodes);
+    scroll.scrollTop = top;
+    scroll.scrollLeft = left;
+  } else {
+    host.replaceChildren(content.content);
   }
-  const canEo = hasModuleAction('devices', 'op');
-  if (!canEo) {
-    return `<button class="btn" data-al="eo-track" disabled title="需要设备管理的操作权限">人工补跟踪</button>`;
-  }
-  if (!a.target_id) {
-    return `<button class="btn" data-al="eo-track" disabled title="该告警没有关联目标，无法引导光电设备">人工补跟踪</button>`;
-  }
-  if (open) {
-    return U.tag(cur.eoTask.status === 'ENDING' ? '正在自动结束' : '自动跟踪中', 't-cyan');
-  }
-  return `<button class="btn" data-al="eo-track" title="自动跟踪未启动时，手动补发跟踪指令">人工补跟踪</button>`;
 }
-
-function paintList() { const host = el('alList'); if (host) host.innerHTML = listHtml(); }
 function paintDetail() {
   const eventId = cur.alarm?.event_id || null;
   if (emergencyEvent.value?.id !== eventId) emergencyInfo.value = null;
@@ -796,37 +796,6 @@ async function loadTarget(my) {
   if (my !== detailSeq) return;
   cur.targetLoading = false;
   paintDetail(); focusMap();
-  await loadEoTask(my);
-  if (my !== detailSeq) return;
-  paintDetail();
-}
-
-async function loadEoTask(my) {
-  const a = cur.alarm;
-  cur.eoTask = null; cur.eoTaskError = '';
-  if (!a || !a.target_id || !hasModuleAction('devices', 'op')) return;
-  try {
-    const task = await deviceApi.currentEoTrack(a.target_id);
-    if (my !== detailSeq) return;
-    cur.eoTask = task;
-  } catch (e) {
-    if (my !== detailSeq) return;
-    if (e.status !== 404) cur.eoTaskError = messageOf(e);
-  }
-}
-
-async function beginEoTrack() {
-  const a = cur.alarm;
-  const my = detailSeq;
-  if (!a || !a.target_id) return toast('该告警没有关联目标', 'err');
-  if (a.state === 'FALSE_POSITIVE') return toast('该告警已判定为误报，不能再启动跟踪', 'err');
-  try {
-    const task = await deviceApi.beginEoTrack(a.target_id, { reason: '自动跟踪未启动，值班员人工补发' });
-    if (my !== detailSeq || cur.alarm?.alarm_id !== a.alarm_id) return;
-    cur.eoTask = task;
-    toast('已补发光电跟踪指令', 'ok');
-    paintDetail();
-  } catch (e) { toast(e.message || '光电跟踪失败', 'err'); }
 }
 
 function replayPointCount() {
@@ -897,7 +866,6 @@ onMounted(async () => {
     else if (k === 'retry') loadList();
     else if (k === 'retry-detail' && st.selId) selectAlarm(st.selId);
     else if (k === 'chain-retry' && st.selId) loadChain(detailSeq);
-    else if (k === 'eo-track') beginEoTrack();
     else if (k === 'replay') replayLoadedTrack();
   });
   U.on(view, '[data-ev-file]', 'click', (e, btn) => {
@@ -963,18 +931,21 @@ onMounted(async () => {
             body-style="overflow:auto;display:block">
             <EmergencyStopPanel v-if="emergencyEvent" :key="`emergency-${emergencyEvent.id}`" :event-id="emergencyEvent.id"
               @updated="updateEmergency" @changed="refreshEmergency" />
-            <TargetLiveVideo v-if="videoSubject" :key="videoSubject.label" :target-id="videoSubject.targetId"
-              :context-label="videoSubject.label" :active="activeTab === 'alarms'" />
+            <TargetTrackingPanel v-if="videoSubject" :key="videoSubject.label" :target-id="videoSubject.targetId"
+              :context-label="videoSubject.label" :active="activeTab === 'alarms'"
+              begin-reason="告警详情人工补充光电追踪" />
             <div id="alDetail" style="padding:12px"></div>
             <UavAdvisoryPanel v-if="advisorySubject" :key="`advisory-${advisorySubject.id}`"
               :event-id="advisorySubject.id" :confirmed="advisorySubject.confirmed"
               :handoff-id="advisorySubject.handoffId" :interval="1000"
               @updated="updateAdvisory" />
-            <div id="alDetailActions" style="padding:0 12px 12px"></div>
-            <CounterLaunch v-if="advisorySubject" :key="`counter-${advisorySubject.id}`"
-              :event-id="advisorySubject.id" :event-label="advisorySubject.label" :active="activeTab === 'alarms'"
-              :show-launch="showCounterLaunch()"
-              @records="openAuthorizations" />
+            <div class="alarm-action-bar">
+              <div id="alDetailActions" class="alarm-observation"></div>
+              <CounterLaunch v-if="advisorySubject" :key="`counter-${advisorySubject.id}`"
+                :event-id="advisorySubject.id" :event-label="advisorySubject.label" :active="activeTab === 'alarms'"
+                :show-launch="showCounterLaunch()"
+                @records="openAuthorizations" />
+            </div>
           </UPanel>
         </div>
       </div>
@@ -983,6 +954,13 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.alarm-action-bar { display:flex; align-items:flex-start; flex-wrap:wrap; gap:12px 24px; margin:0 12px 12px; padding-top:16px; border-top:1px solid var(--line); }
+.alarm-action-bar:not(:has(.btn, .tag)) { display:none; }
+.alarm-observation { flex:1 1 auto; min-width:0; }
+.alarm-observation:empty { display:none; }
+.alarm-observation :deep(.alarm-observation-actions) { display:flex; align-items:center; flex-wrap:wrap; gap:10px; }
+.alarm-observation :deep(.btn) { min-height:40px; height:auto; padding:8px 14px; white-space:normal; }
+.alarm-observation :deep(.alarm-action-note) { margin:8px 0 0; font-size:12px; line-height:1.65; color:var(--txt-2); }
 .alarm-workspace-tabs { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; flex:none; }
 .alarm-workspace-tabs .btn { white-space:normal; height:auto; min-height:34px; }
 .alarms-page :deep(.detail-hero-title),

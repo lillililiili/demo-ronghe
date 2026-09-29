@@ -134,7 +134,7 @@ onUnmounted(() => { alive = false; invalidate(); });
         <div v-if="actions.length" class="tracking-actions">
           <button v-if="actions.includes('BEGIN')" class="btn" type="button" @click="perform('BEGIN')">人工补跟踪</button>
           <button v-if="actions.includes('RETRY')" class="btn" type="button" @click="perform('RETRY')">重试跟踪</button>
-          <button v-if="actions.includes('PAUSE')" class="btn danger" type="button" title="暂停该目标的自动追踪，三个页面同步生效" @click="perform('PAUSE')">{{ pauseLabel }}</button>
+          <button v-if="actions.includes('PAUSE')" class="btn" type="button" title="暂停该目标的自动追踪，三个页面同步生效" @click="perform('PAUSE')">{{ pauseLabel }}</button>
           <button v-if="actions.includes('RESUME')" class="btn" type="button" @click="perform('RESUME')">恢复自动追踪</button>
         </div>
       </template>

@@ -391,7 +391,7 @@ async function loadKpis() {
 /* ---------- 工具条：只暴露契约支持的过滤；不支持的保留控件但禁用并说明 ---------- */
 const disabledSelect = (name, reason) =>
   `<select class="sel" data-f="${name}" disabled aria-disabled="true" title="${reason}"><option value="全部" selected>全部</option></select>`;
-const listPanelBody = `<div class="toolbar">
+const listPanelBody = `<div class="toolbar alarm-filter-toolbar">
     <div class="toolbar-fields">
       ${U.field('等级', U.select('level', LEVEL_OPTS, st.level))}
       ${U.field('类别', U.select('kind', KIND_OPTS, st.kind))}
@@ -954,6 +954,55 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+/* 按列表面板的实际宽度排布，避免整页断点与下拉桥接层的最小宽度互相挤压。 */
+.alarms-page :deep(.alarm-filter-toolbar) {
+  container: alarm-filters / inline-size;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  flex: none;
+  gap: 12px;
+  padding: 14px 16px;
+}
+.alarms-page :deep(.alarm-filter-toolbar .toolbar-fields) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.65fr) minmax(0, 1fr);
+  gap: 12px 16px;
+  align-items: start;
+}
+.alarms-page :deep(.alarm-filter-toolbar .field) {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  min-width: 0;
+  gap: 6px;
+}
+.alarms-page :deep(.alarm-filter-toolbar .field > label) {
+  line-height: 20px;
+  color: var(--txt-2);
+}
+.alarms-page :deep(.alarm-filter-toolbar .field .naive-control-bridge:not(.is-check)) {
+  flex: none;
+  width: 100%;
+  /* 桥接层将菜单最小宽度写在行内；触发器应服从网格，菜单仍完整展示。 */
+  min-width: 0 !important;
+  max-width: none;
+}
+.alarms-page :deep(.alarm-filter-toolbar .toolbar-actions) {
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-left: 0;
+}
+@container alarm-filters (max-width: 760px) {
+  .alarms-page :deep(.alarm-filter-toolbar .toolbar-fields) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@container alarm-filters (max-width: 460px) {
+  .alarms-page :deep(.alarm-filter-toolbar .toolbar-fields) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 .alarm-action-bar { display:flex; align-items:flex-start; flex-wrap:wrap; gap:12px 24px; margin:0 12px 12px; padding-top:16px; border-top:1px solid var(--line); }
 .alarm-action-bar:not(:has(.btn, .tag)) { display:none; }
 .alarm-observation { flex:1 1 auto; min-width:0; }

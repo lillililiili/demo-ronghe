@@ -131,3 +131,30 @@ body[data-page="stats"] .panel{box-shadow:var(--shadow-soft);border-color:var(--
   .detail-hero{min-height:84px;padding:12px 13px}.detail-hero-icon{width:40px;height:40px}
   body[data-page="devices"] .col-optional{display:none!important}
 }
+
+/* 业务工作台：参考图的宝蓝/青蓝分区，深靛蓝负空间与克制的亮色标题带。 */
+body:not([data-page="bigscreen"]) .hdr{background:var(--header-gradient);border-bottom-color:var(--control-line);box-shadow:0 2px 12px rgba(3,12,25,.15)}
+body:not([data-page="bigscreen"]) .hdr .logo{font-size:18px;letter-spacing:.4px}
+body:not([data-page="bigscreen"]) .hdr .logo img{width:34px;height:34px}
+body:not([data-page="bigscreen"]) .hdr .logo b{font-weight:600;text-shadow:none}
+body:not([data-page="bigscreen"]) .hdr .btn.ghost{background:color-mix(in srgb,var(--surface-1) 48%,transparent);border-color:var(--control-line);color:var(--txt-2)}
+body:not([data-page="bigscreen"]) .nav{background:var(--surface-1);padding:16px 10px 10px;border-right-color:var(--line-2)}
+body:not([data-page="bigscreen"]) .nav .l1{border-radius:8px;padding:10px;gap:10px;color:var(--txt-2)}
+body:not([data-page="bigscreen"]) .nav .l1 i{color:var(--txt-3)}
+body:not([data-page="bigscreen"]) .nav a.l1.on{background:var(--nav-selected);border-color:var(--control-line);color:var(--txt);box-shadow:inset 3px 0 var(--blue)}
+body:not([data-page="bigscreen"]) .nav a.l1.on i{color:var(--txt)}
+body:not([data-page="bigscreen"]) .crumb{height:38px;background:var(--canvas);border-bottom:0;color:var(--txt-3)}
+body:not([data-page="bigscreen"]) .panel{background:var(--surface-gradient);border-color:var(--line);box-shadow:none;border-radius:5px}
+body:not([data-page="bigscreen"]) .panel>.ph{min-height:38px;padding:7px 14px;border-bottom:1px solid var(--line-2);background:linear-gradient(90deg,var(--surface-3),transparent 74%)}
+body:not([data-page="bigscreen"]) .panel>.ph h3{font-size:14px;font-weight:600;letter-spacing:.2px;text-shadow:none}
+body:not([data-page="bigscreen"]) .panel>.ph h3::before{width:3px;height:12px;background:var(--cyan);border-radius:1px;box-shadow:none}
+body:not([data-page="bigscreen"]) .panel>.ph .sub{color:var(--txt-3)}
+body:not([data-page="bigscreen"]) .kpis{gap:12px}
+body:not([data-page="bigscreen"]) .kpi{background:var(--surface-2);border-color:var(--line);border-radius:5px;padding:14px;box-shadow:inset 0 1px color-mix(in srgb,var(--blue) 16%,transparent)}
+body:not([data-page="bigscreen"]) .kpi .lb{font-size:12px;color:var(--txt-2);font-weight:400}
+body:not([data-page="bigscreen"]) .kpi .vl{font-family:'Bahnschrift','Segoe UI',sans-serif;font-size:28px;font-weight:600;line-height:1.25;font-variant-numeric:tabular-nums;text-shadow:none}
+body:not([data-page="bigscreen"]) .kpi .dt{margin-top:6px;font-size:11px;color:var(--txt-3)}
+body:not([data-page="bigscreen"]) .toolbar{background:var(--surface-1);border-color:var(--line-2);border-radius:7px;padding:10px 12px}
+body:not([data-page="bigscreen"]) table.tb th{background:var(--surface-3);font-weight:500;color:var(--txt-2)}
+body:not([data-page="bigscreen"]) table.tb tbody tr:nth-child(even){background:color-mix(in srgb,var(--surface-1) 25%,transparent)}
+body:not([data-page="bigscreen"]) table.tb tbody tr:hover{background:var(--surface-hover)}

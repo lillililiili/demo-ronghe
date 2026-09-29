@@ -872,9 +872,9 @@ onUnmounted(() => {
           <button v-for="alarm in alarms" :key="eventKey(alarm)" type="button" class="sit-alert-row"
             :class="[{ 'is-new': alarm.isNew, 'is-selected': isSelectedAlarm(alarm) }, `level-${alarm.level}`]"
             :aria-pressed="isSelectedAlarm(alarm)"
-            :aria-label="`查看${alarm.targetId}的${alarm.type}，${alarm.isNew ? '新异常' : '已查看，风险持续'}`" @click="selectAlarm(alarm)">
+            :aria-label="`查看${alarm.targetId || alarm.id || '未关联目标告警'}的${alarm.type}，${alarm.isNew ? '新异常' : '已查看，风险持续'}`" @click="selectAlarm(alarm)">
             <span class="sit-alert-level">{{ alarm.level }}</span>
-            <span class="sit-alert-copy"><b class="mono">{{ alarm.targetId }}</b><em>{{ alarm.type }} · {{ alarm.district }}</em></span>
+            <span class="sit-alert-copy"><b class="mono">{{ alarm.targetId || alarm.id || '未关联目标告警' }}</b><em>{{ alarm.type }} · {{ alarm.district }}</em></span>
             <span class="sit-alert-meta"><time class="mono">{{ formatClock(alarm.ts) }}</time><b>{{ alarm.isNew ? '新异常' : '已查看，风险持续' }}</b></span>
           </button>
         </div>
@@ -909,7 +909,7 @@ onUnmounted(() => {
           <p>{{ selectedRisk.reasonText || '风险依据未提供' }}</p><p>当前未取得关联计划，保留此风险的信息。</p>
         </section>
         <section v-else-if="selectedUavAlarm" class="sit-map-pop">
-          <header><span class="sit-map-pop-icon" v-html="U.businessIcon('uav')"></span><span><b>{{ selectedUavAlarm.targetId }}</b><small>无人机告警</small></span>
+          <header><span class="sit-map-pop-icon" v-html="U.businessIcon('uav')"></span><span><b>{{ selectedUavAlarm.targetId || selectedUavAlarm.id || '未关联目标告警' }}</b><small>无人机告警</small></span>
             <button type="button" aria-label="关闭告警详情" @click="clearSelection" v-html="U.icon('close')"></button></header>
           <div class="sit-map-pop-status"><span class="sit-state is-risk">{{ selectedUavAlarm.level }}风险</span><span>{{ selectedUavAlarm.type }}</span></div>
           <p>{{ selectedUavAlarm.district }} · 告警时间 {{ formatClock(selectedUavAlarm.ts) }}</p>

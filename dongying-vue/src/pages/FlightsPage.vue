@@ -909,9 +909,10 @@ function renderRouteMap() {
     context.restore();
     syncDeviceMarkers(this);
   };
-  const extent = [...(coordinates || []), ...points.filter(Boolean).map(p => [p.lon, p.lat]),
-    ...mapDevices.value.map(row => [row.position.lon, row.position.lat])];
-  if (extent.length) routeMap.fitTo(extent, 0.34);
+  // 按计划及实测轨迹的跨度自适应缩放，避免远处设备把短航线挤小。
+  const flightExtent = [...(coordinates || []), ...points.filter(Boolean).map(p => [p.lon, p.lat])];
+  const extent = flightExtent.length ? flightExtent : mapDevices.value.map(row => [row.position.lon, row.position.lat]);
+  if (extent.length) routeMap.fitTo(extent, 0.18);
   else {
     const [longitude, latitude] = target ? [target.lon, target.lat] : airspaces[0].polygons[0][0][0];
     routeMap.centerAt(longitude, latitude);

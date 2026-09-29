@@ -117,7 +117,7 @@ async function submit(kind) {
     <small v-if="state.uncertain">请先刷新状态；重试原提交会沿用同一次提交编号。</small>
     <small v-else-if="showResend && !state.task.can_resend_notification && !busy" class="notice-blocker">
       {{ state.task.resend_blocked_reason || '再次通知暂不可用，请刷新状态。' }}
-      <template v-if="state.task.resend_available_at"> · 可重试时间：{{ date(state.task.resend_available_at) }}</template>
+      <template v-if="state.task.resend_available_at"> · 通知间隔截止：{{ date(state.task.resend_available_at) }}</template>
     </small>
     <details v-if="state.task" :key="state.task.task_id" class="notice-result">
       <summary><span class="expand-label">查看记录</span><span class="collapse-label">收起记录</span></summary>

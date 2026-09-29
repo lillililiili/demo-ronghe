@@ -1,21 +1,39 @@
 <script setup>
-import { computed, ref, toRef } from 'vue';
+import { computed, ref, toRef, watch } from 'vue';
+import UField from '@/components/form/UField.vue';
 import { useEmergencyStop } from './useEmergencyStop.js';
-import { stopActionLabel } from './emergencyStopView.js';
+import { deviceStopText, stopActionLabel, stopSummary, stopTime } from './emergencyStopView.js';
 
 const props = defineProps({ eventId: { type: String, required: true }, eventLabel: { type: String, default: '' } });
 const emit = defineEmits(['updated', 'changed']);
 const host = ref(null);
-const { overview, loading, busy, error, uncertain, forbidden, retryReady, refresh, retryPending, requestStop }
+const { overview, stop, loading, busy, error, uncertain, forbidden, retryReady, refresh, retryPending, requestStop, addNote, retryDevice, confirmDevice }
   = useEmergencyStop(toRef(props, 'eventId'), data => emit('updated', data), eventId => emit('changed', eventId));
 const offered = computed(() => (overview.value?.allowed_actions || []).includes('EMERGENCY_STOP'));
-const visible = computed(() => uncertain.value || !!error.value || (!!overview.value?.applicable && offered.value));
-const hasDetails = computed(() => (loading.value && !overview.value) || error.value || uncertain.value || overview.value?.block_reason);
+const visible = computed(() => uncertain.value || !!error.value || !!stop.value || (!!overview.value?.applicable && offered.value));
+const hasDetails = computed(() => !!stop.value || (loading.value && !overview.value) || error.value || uncertain.value || overview.value?.block_reason);
 const actions = computed(() => overview.value?.allowed_actions || []);
 const canStop = computed(() => actions.value.includes('EMERGENCY_STOP') && !busy.value && !loading.value && !error.value && !uncertain.value);
 const actionLabel = computed(() => stopActionLabel(overview.value));
+const summary = computed(() => stopSummary(overview.value));
+const locked = computed(() => busy.value || loading.value || !!error.value || !!uncertain.value || forbidden.value);
+const note = ref(''), confirming = ref(''), confirmation = ref('');
+const historyLabel = kind => ({ STOP: '发起急停', NOTE: '补充原因', RETRY: '重试停止', MANUAL_CONFIRM: '现场停机核查' })[kind] || '处置记录';
+const allows = (device, action) => (device.allowed_actions || []).includes(action);
 const icon = name => window.UI.icon(name);
 
+watch([() => props.eventId, () => stop.value?.stop_id], () => { note.value = ''; confirming.value = ''; confirmation.value = ''; });
+async function saveNote() {
+  if (locked.value || !actions.value.includes('ADD_NOTE') || !note.value.trim()) return;
+  if (await addNote(note.value.trim())) note.value = '';
+}
+async function retry(device) {
+  if (!locked.value && allows(device, 'RETRY_STOP')) await retryDevice(device);
+}
+async function confirm(device) {
+  if (locked.value || !allows(device, 'MANUAL_CONFIRM') || !confirmation.value.trim()) return;
+  if (await confirmDevice(device, confirmation.value.trim())) { confirming.value = ''; confirmation.value = ''; }
+}
 async function halt() {
   if (!canStop.value) return;
   await requestStop();
@@ -31,7 +49,7 @@ defineExpose({ refresh });
   <section v-if="visible" ref="host" class="emergency-stop-panel" aria-label="反制与干扰急停" :data-event-id="eventId">
     <header class="es-header" :class="{ 'is-standalone': !hasDetails }">
       <div><h3>反制与干扰</h3><p v-if="eventLabel" class="es-muted">{{ eventLabel }}</p></div>
-      <div class="es-stop-area">
+      <div v-if="offered" class="es-stop-area">
         <button type="button" class="btn es-stop-button" :disabled="!canStop" @click="halt">
           <span aria-hidden="true" v-html="icon('stop')"></span>{{ busy ? '正在提交' : actionLabel }}
         </button>
@@ -45,6 +63,33 @@ defineExpose({ refresh });
       </div>
       <div v-if="uncertain" class="es-status is-warning" role="status"><strong>请求结果未知</strong><p>{{ uncertain }}</p><button type="button" class="btn" :disabled="loading || busy" @click="refresh">查询当前结果</button><button v-if="retryReady" type="button" class="btn" :disabled="loading || busy" @click="retryPending">重试同一请求</button><p v-if="retryReady">已查询但尚未证实原请求结果；重试会沿用原请求标识。</p></div>
       <div v-if="overview?.block_reason" class="es-blocker">{{ overview.block_reason }}</div>
+      <div v-if="stop" class="es-feedback">
+        <div class="es-status" :class="'is-' + summary.tone" role="status"><strong>{{ summary.title }}</strong><p v-if="stop.devices?.length !== 1">{{ summary.detail }}</p></div>
+        <p class="es-muted">{{ stop.requested_by_name || '操作人未记录' }} · {{ stopTime(stop.requested_at) }}</p>
+        <p v-if="stop.reason_pending" class="es-needs-check">急停原因待补充</p>
+        <p v-else-if="stop.note">急停原因：{{ stop.note }}</p>
+        <div v-for="device in stop.devices || []" :key="device.device_id" class="es-device">
+          <div class="es-device-title"><strong>{{ device.device_name || '设备名称未记录' }}</strong><span v-if="device.simulated" class="es-muted">模拟设备</span></div>
+          <p>{{ deviceStopText(device) }}</p>
+          <p v-if="device.detail && !['QUEUED', 'WAITING_FEEDBACK', 'CONTROLLER_ALL_OFF_ACK', 'MANUALLY_CONFIRMED', 'NOT_REQUIRED'].includes(device.stop_status) && device.detail !== deviceStopText(device)" class="es-muted">{{ device.detail }}</p>
+          <p v-if="device.confirmed_at">核查人：{{ device.confirmed_by_name || '未记录' }} · {{ stopTime(device.confirmed_at) }}</p>
+          <p v-if="device.confirmation_note">核查依据：{{ device.confirmation_note }}</p>
+          <div class="es-actions">
+            <button v-if="allows(device, 'QUERY')" type="button" class="btn" :disabled="loading || busy || forbidden" @click="refresh">查询设备反馈</button>
+            <button v-if="allows(device, 'RETRY_STOP')" type="button" class="btn" :disabled="locked" @click="retry(device)">重试停止</button>
+            <button v-if="allows(device, 'MANUAL_CONFIRM') && confirming !== device.device_id" type="button" class="btn" :disabled="locked" @click="confirming = device.device_id; confirmation = ''">登记现场停机核查</button>
+          </div>
+          <div v-if="confirming === device.device_id && allows(device, 'MANUAL_CONFIRM')" class="es-form">
+            <UField v-model="confirmation" type="textarea" label="现场停机核查依据" required :disabled="locked" :input-props="{ maxlength: 500 }" help="仅在已现场核实设备实际停止后登记，控制器全关回码不能替代现场核查。" />
+            <div class="es-actions"><button type="button" class="btn" :disabled="locked || !confirmation.trim()" @click="confirm(device)">确认已现场核实停止</button><button type="button" class="btn" :disabled="busy" @click="confirming = ''; confirmation = ''">取消</button></div>
+          </div>
+        </div>
+        <div v-if="actions.includes('ADD_NOTE')" class="es-note">
+          <UField v-model="note" type="textarea" label="补充急停原因" :disabled="locked" :input-props="{ maxlength: 500 }" />
+          <div class="es-actions"><button type="button" class="btn" :disabled="locked || !note.trim()" @click="saveNote">保存原因</button></div>
+        </div>
+        <details v-if="stop.events?.length" class="es-history"><summary>急停处理记录</summary><ol><li v-for="entry in stop.events" :key="entry.event_id"><strong>{{ historyLabel(entry.kind) }} · {{ entry.actor_name || '未记录' }}</strong><time>{{ stopTime(entry.occurred_at) }}</time><span>{{ entry.note }}</span></li></ol></details>
+      </div>
     </div>
   </section>
 </template>

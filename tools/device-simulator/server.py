@@ -18,8 +18,16 @@ from engine import compile_scene, messages, position
 from notification_inbox import read_inbox
 from notification_response import NotificationResponse
 from platform_client import Platform, Prerequisites
+from eo_video import EoSimulator, video_config, public_video_config, sanitize_video_error, DEFAULT_VIDEO
 
 ROOT = Path(__file__).resolve().parent
+
+def read_saved_text(path):
+    """Read UTF-8 batches and the legacy Windows CP936 files without rewriting history."""
+    try:
+        return path.read_text(encoding='utf-8-sig')
+    except UnicodeDecodeError:
+        return path.read_text(encoding='cp936')
 
 class ExternalAuthenticationRequired(ValueError):
     """The external interface session is absent and the browser must log in again."""
@@ -126,12 +134,14 @@ class Runtime:
         self.phase = 'IDLE'; self.error = ''; self.batch = None; self.elapsed = 0
         self.sent = 0; self.logs = []; self.manifest = {}; self.targets = {}; self.scene = {}
         self.cancel = threading.Event(); self.thread = None
+        self.next_session_check = 0
         self.snapshot = {}; self.skipped = []; self.response = None
+        self.video_config = dict(DEFAULT_VIDEO); self.eo = None; self.eo_status = {}
         saved=sorted(self.data_dir.glob('sim-*/manifest.json'),key=lambda p:p.stat().st_mtime)
         if saved:
             try:
-                self.manifest=json.loads(saved[-1].read_text()); self.batch=self.manifest['batch']
-                self.scene=json.loads((saved[-1].parent/'scene.json').read_text())
+                self.manifest=json.loads(read_saved_text(saved[-1])); self.batch=self.manifest['batch']
+                self.scene=json.loads(read_saved_text(saved[-1].parent/'scene.json'))
                 _,_,self.targets,self.skipped=compile_scene(self.scene)
                 for key,motion in self.manifest.get('notification_motion', {}).items():
                     if key in self.targets: self.targets[key]['_notification_motion'] = motion
@@ -139,11 +149,17 @@ class Runtime:
                 if self.phase in ('PREPARING','RUNNING','PAUSED','STOPPING'): self.phase='STOPPED'; self.error='服务重启，上次发送已中断，未自动续发'
                 self.elapsed=self.manifest.get('elapsed',0); self.sent=self.manifest.get('sent',0)
                 readback=saved[-1].parent/'system-readback.json'
-                if readback.exists(): self.snapshot=json.loads(readback.read_text())
+                if readback.exists(): self.snapshot=json.loads(read_saved_text(readback))
                 log_path=saved[-1].parent/'events.ndjson'
                 if log_path.exists():
                     from collections import deque
-                    self.logs=[json.loads(line) for line in deque(log_path.open(),maxlen=200)]
+                    for encoding in ('utf-8-sig', 'cp936'):
+                        try:
+                            with log_path.open(encoding=encoding) as stream:
+                                self.logs=[json.loads(line) for line in deque(stream,maxlen=200)]
+                            break
+                        except UnicodeDecodeError:
+                            if encoding == 'cp936': raise
             except (ValueError,KeyError,OSError): self.phase='IDLE'; self.batch=None; self.manifest={}; self.scene={}; self.targets={}
 
     @property
@@ -156,6 +172,7 @@ class Runtime:
                     'duration':self.scene.get('duration',0)*60, 'sent':self.sent, 'logs':copy.deepcopy(self.logs[-80:]),
                     'positions':{k:position(t,self.elapsed) for k,t in self.targets.items()},
                     'notification_observation':self.response.snapshot() if self.response else self.manifest.get('notification_observation', {}),
+                    'video_config':public_video_config(self.video_config), 'eo':copy.deepcopy(self.eo_status),
                     'skipped':self.skipped, **self.session.status(), 'mqtt_ready':self.platform is not None and self.broker is not None,
                     'broker':{'name':self.broker['name'],'host':self.broker['host'],'port':self.broker['port']} if self.broker else None,
                     'scene':copy.deepcopy(self.scene), 'manifest':copy.deepcopy(self.manifest), 'snapshot':copy.deepcopy(self.snapshot)}
@@ -165,21 +182,26 @@ class Runtime:
         with self.lock:
             self.logs.append(record); self.logs = self.logs[-200:]
             if self.batch:
-                with (self.data_dir/self.batch/'events.ndjson').open('a') as f:
+                with (self.data_dir/self.batch/'events.ndjson').open('a', encoding='utf-8') as f:
                     f.write(json.dumps(record,ensure_ascii=False)+'\n')
 
     def checkpoint(self):
-        self.manifest.update(phase=self.phase,elapsed=self.elapsed,sent=self.sent)
-        if self.response:
-            self.manifest['notification_observation'] = self.response.snapshot()
-            self.manifest['notification_motion'] = {key: copy.deepcopy(t['_notification_motion']) for key,t in self.targets.items() if t.get('_notification_motion')}
-        path = self.data_dir/self.batch/'manifest.json'
-        temp = path.with_suffix('.tmp'); temp.write_text(json.dumps(self.manifest,ensure_ascii=False,indent=2)); temp.replace(path)
+        with self.lock:
+            self.manifest.update(phase=self.phase,elapsed=self.elapsed,sent=self.sent)
+            if self.response:
+                self.manifest['notification_observation'] = self.response.snapshot()
+                self.manifest['notification_motion'] = {key: copy.deepcopy(t['_notification_motion']) for key,t in self.targets.items() if t.get('_notification_motion')}
+            path = self.data_dir/self.batch/'manifest.json'
+            temp = path.with_suffix('.tmp'); temp.write_text(json.dumps(self.manifest,ensure_ascii=False,indent=2), encoding='utf-8'); temp.replace(path)
 
     def connect(self, config):
         with self.lock:
             if self.phase in ('PREPARING','RUNNING','PAUSED','STOPPING'):
                 raise ValueError('请先停止当前任务')
+            video_input = config.get('video')
+            if isinstance(video_input, dict) and 'publisher_password' not in video_input:
+                video_input = {**video_input, 'publisher_password': self.video_config.get('publisher_password', '')}
+            updated_video = video_config(video_input) if 'video' in config else self.video_config
             if config.get('account') or config.get('password'):
                 self.session.connect(config)
             api = self.platform
@@ -193,7 +215,17 @@ class Runtime:
                 raise ValueError('当前版本仅连接本机 replay MQTT，避免误发现场环境')
             self.brokers, self.broker = brokers, broker
             self.mqtt_username, self.mqtt_password = config.get('mqtt_user',''),config.get('mqtt_password','')
+            self.video_config = updated_video
             return {'name':broker['name'],'host':broker['host'],'port':broker['port']}
+
+    def check_session(self, now):
+        if now < self.next_session_check: return
+        platform = self.platform
+        if platform is None: raise ExternalAuthenticationRequired('系统登录已失效，请重新登录')
+        # This must also run for plain movement scenes with no notification polling.
+        # Any failed check stops the publishing loop; only success renews the window.
+        platform.call('GET', '/auth/me')
+        self.next_session_check = now + 5
 
     def start(self, raw):
         scene, devices, targets, skipped = compile_scene(raw)
@@ -208,12 +240,14 @@ class Runtime:
             (self.data_dir/self.batch).mkdir()
             self.scene, self.targets, self.skipped = scene, targets, skipped
             self.elapsed=0; self.sent=0; self.logs=[]; self.snapshot={}; self.error=''; self.response=None
+            self.next_session_check = 0
+            self.eo = None; self.eo_status = {}
             self.manifest={'batch':self.batch,'source_mode':'replay','provider':'map-sim', 'created_at':int(time.time()*1000),
                            'broker_id':self.broker['broker_id'],'devices':{},'plans':{},'zones':{},
                            'targets':{k:{'uav_sn':self.batch+'-u'+str(i)} for i,k in enumerate(targets,1)}}
             self.phase='PREPARING'
             self.checkpoint()
-            (self.data_dir/self.batch/'scene.json').write_text(json.dumps(scene,ensure_ascii=False,indent=2))
+            (self.data_dir/self.batch/'scene.json').write_text(json.dumps(scene,ensure_ascii=False,indent=2), encoding='utf-8')
             self.phase='PREPARING'; self.cancel.clear()
             self.thread=threading.Thread(target=self.run,args=(devices,),daemon=True); self.thread.start()
             return self.status()
@@ -235,6 +269,19 @@ class Runtime:
             def on_connect(c,u,f,code,p):
                 result.append(not code.is_failure); connected.set()
             client.on_connect=on_connect
+            def publish_eo(topic, payload):
+                if self.cancel.is_set() or self.phase != 'RUNNING': return
+                info = client.publish(topic, json.dumps(payload, ensure_ascii=False), qos=1, retain=False)
+                info.wait_for_publish(timeout=5)
+                if not info.is_published(): raise ValueError('光电回执 MQTT 确认超时')
+                self.log('EO_RECEIPT', '模拟光电回执已由 Broker 确认', topic=topic, payload=payload)
+            self.eo = EoSimulator(self.platform, self.manifest, self.video_config, publish_eo, self.log,
+                is_running=lambda: self.phase == 'RUNNING' and not self.cancel.is_set())
+            client.on_message = lambda c,u,m: self.eo.enqueue(m.topic, m.payload, m.retain)
+            subscribed = threading.Event(); subscription_result = []
+            def on_subscribe(c,u,mid,codes,p):
+                subscription_result.append(all(not code.is_failure for code in codes)); subscribed.set()
+            client.on_subscribe = on_subscribe
             if self.mqtt_username:
                 client.username_pw_set(self.mqtt_username,self.mqtt_password)
             if self.broker.get('tls'): client.tls_set()
@@ -242,6 +289,10 @@ class Runtime:
             client.connect(self.broker['host'],int(self.broker['port']),30); client.loop_start()
             if not connected.wait(6) or not result or not result[0]:
                 raise ValueError('MQTT 连接或认证失败')
+            if self.eo.bindings:
+                rc, _ = client.subscribe([(topic, 1) for topic in self.eo.bindings])
+                if rc != 0 or not subscribed.wait(6) or not all(subscription_result):
+                    raise ValueError('光电指令主题订阅失败')
             with self.lock:
                 if self.cancel.is_set(): return
                 self.phase='RUNNING'
@@ -257,11 +308,24 @@ class Runtime:
                     elapsed=self.elapsed; phase=self.phase
                 previous=current
                 if elapsed >= self.scene['duration']*60: break
+                self.check_session(current)
+                if self.cancel.is_set(): break
+                if not client.is_connected(): raise ValueError('MQTT 连接已断开，任务停止')
+                if phase == 'PAUSED' and self.eo.accepting: self.eo.suspend()
+                elif phase == 'RUNNING':
+                    if not self.eo.accepting: self.eo.resume()
+                    self.eo.availability({self.manifest['devices'][key]['platform_id'] for key,d in devices.items()
+                        if d['kind'] == 'eo' and (d['heartbeat'] == '停止心跳' or any(
+                            r.get('enabled') and r['type'] == 'offline' and r['deviceId'] == key
+                            and r['at'] <= elapsed < r['at'] + r['seconds'] for r in self.scene['risks']))})
+                    self.eo.tick()
+                self.eo_status = self.eo.snapshot()
                 if phase=='RUNNING' and elapsed >= next_frame:
                     sequence+=1; next_frame=elapsed+1
                     with self.lock:
                         self.response.apply(self.targets, elapsed, int(time.time()*1000))
                     for topic,payload in messages(self.scene,devices,self.targets,self.manifest,elapsed,int(time.time()*1000),last_sent,sequence):
+                        if payload.get('event') == 'HeartBeat': self.eo.heartbeat(payload)
                         if self.cancel.is_set(): break
                         if not client.is_connected(): raise ValueError('MQTT 连接已断开，任务停止')
                         info=client.publish(topic,json.dumps(payload,ensure_ascii=False),qos=1,retain=False)
@@ -269,16 +333,19 @@ class Runtime:
                         if not info.is_published(): raise ValueError('MQTT 确认超时：当前发送结果未知，任务停止')
                         with self.lock: self.sent+=1
                         self.log('PUBACK','Broker 已确认',topic=topic,payload=payload)
+                    with self.lock: self.checkpoint()
                 self.cancel.wait(.1)
             with self.lock:
                 self.phase='STOPPED' if self.cancel.is_set() else 'COMPLETED'
             self.log('STOP','发送已停止；已有业务记录保留，设备时效由系统判定')
         except Exception as error:
             with self.lock:
-                self.phase='FAILED'; self.error=str(error)[:600]
+                self.phase='FAILED'; self.error=sanitize_video_error(error, self.video_config)[:600]
             self.log('ERROR',self.error)
         finally:
             if self.response: self.response.stop.set()
+            if self.eo:
+                self.eo.suspend(); self.eo_status = self.eo.snapshot()
             if client:
                 client.disconnect(); client.loop_stop()
             with self.lock:
@@ -293,6 +360,7 @@ class Runtime:
             elif action=='pause' and self.phase=='RUNNING': self.phase='PAUSED'
             elif action=='resume' and self.phase=='PAUSED': self.phase='RUNNING'
             else: raise ValueError('当前状态不支持该操作')
+            if self.batch: self.checkpoint()
         return self.status()
 
     def verify(self):
@@ -331,7 +399,7 @@ class Runtime:
         with self.lock:
             if self.batch!=manifest['batch']: raise ValueError('运行批次已变化，请重新回读')
             self.snapshot=result
-        (self.data_dir/self.batch/'system-readback.json').write_text(json.dumps(result,ensure_ascii=False,indent=2))
+        (self.data_dir/self.batch/'system-readback.json').write_text(json.dumps(result,ensure_ascii=False,indent=2), encoding='utf-8')
         return result
 
 class Handler(SimpleHTTPRequestHandler):

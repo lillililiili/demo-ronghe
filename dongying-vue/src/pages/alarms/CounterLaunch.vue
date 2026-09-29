@@ -6,6 +6,7 @@ import { readSessionToken } from '@/services/apiClient.js';
 import { openDisposalRequest, openDisposalDirect } from '@/ui/disposalAuthModal.js';
 import { openModal } from '@/ui/modal.js';
 
+const U = window.UI;
 const props = defineProps({ eventId: { type: String, required: true }, eventLabel: String, active: Boolean, showLaunch: Boolean, showRecords: { type: Boolean, default: true } });
 const emit = defineEmits(['records']);
 const busy = ref(false);
@@ -59,14 +60,20 @@ async function launch() {
 <template>
   <section class="counter-launch" aria-label="反制操作">
     <div class="counter-launch-actions">
-      <button v-if="showLaunch" class="btn" type="button" :disabled="busy" :aria-busy="busy" @click="launch">{{ busy ? '正在检查反制条件' : '发起反制' }}</button>
-      <button v-if="showRecords" class="btn" type="button" @click="emit('records', { eventId })">查看本事件反制记录</button>
+      <button v-if="showRecords" class="btn" type="button" title="查看本事件反制记录" @click="emit('records', { eventId })">
+        <span class="counter-action-icon" aria-hidden="true" v-html="U.icon('clock')"></span>反制记录
+      </button>
+      <button v-if="showLaunch" class="btn pri" type="button" :disabled="busy" :aria-busy="busy" @click="launch">
+        <span class="counter-action-icon" aria-hidden="true" v-html="U.icon('shield')"></span>{{ busy ? '正在检查反制条件' : '发起反制' }}
+      </button>
     </div>
   </section>
 </template>
 
 <style scoped>
-.counter-launch { margin: 0 12px 12px; }
-.counter-launch-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.counter-launch .btn { white-space: normal; height: auto; min-height: 34px; }
+.counter-launch { margin-left: auto; min-width: 0; max-width: 100%; }
+.counter-launch-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 10px; }
+.counter-launch .btn { white-space: normal; height: auto; min-height: 40px; padding: 8px 14px; }
+.counter-action-icon { display: inline-flex; flex: none; }
+.counter-action-icon :deep(.svg-icon) { width: 16px; height: 16px; }
 </style>

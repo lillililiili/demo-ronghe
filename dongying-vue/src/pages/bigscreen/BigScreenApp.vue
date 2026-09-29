@@ -15,6 +15,7 @@ import { apiRequest } from '@/services/apiClient.js';
 import { attachTracks } from '@/services/mapTracks.js';
 import { airspaceKindMeta } from '@/services/situationData.js';
 import { ALARM_TYPE_LABEL, LEGALITY_LABEL, OBJECT_TYPE_LABEL, labelOf, targetTypeLabel } from '@/ui/labels.js';
+import BigScreenBottomStats from './BigScreenBottomStats.vue';
 
 const themeOverrides = createThemeOverrides();
 const clock = ref('');
@@ -25,7 +26,15 @@ const mapEl = ref(null);
 const loading = ref(true);
 const error = ref('');
 const snapshot = ref(null);
-const targetTypes = ref({ state: 'LOADING', data: null });
+const operationsStats = ref({ state: 'LOADING', data: null });
+const targetTypes = computed(() => {
+  const detail = operationsStats.value;
+  if (detail.state !== 'AVAILABLE') return detail;
+  const status = detail.data?.availability?.by_type?.status;
+  if (status !== 'AVAILABLE') return { state: status === 'FORBIDDEN' ? status : 'UNAVAILABLE', data: null };
+  return Array.isArray(detail.data.by_type) && detail.data.by_type.every(row => countValid(row.value))
+    ? detail : { state: 'UNAVAILABLE', data: null };
+});
 const deviceTypes = ref({ state: 'LOADING', data: null });
 const completedFlights = ref({ state: 'LOADING', data: null });
 
@@ -130,11 +139,8 @@ function loadSideDetails(data, currentVersion) {
   const dayStart = day ? Date.parse(`${day}T00:00:00+08:00`) : null;
   const completedQuery = day ? new URLSearchParams({ page: '1', size: '1', status_code: 'COMPLETED', window_from: String(dayStart), window_to: String(dayStart + 86400000) }).toString() : null;
   void Promise.all([
-    read(targetTypes, 'stats', query ? `/stats/operations?${query}` : null, result => {
-      const status = result?.availability?.by_type?.status;
-      if (status !== 'AVAILABLE') return status === 'FORBIDDEN' ? status : 'UNAVAILABLE';
-      return Array.isArray(result.by_type) && result.by_type.every(row => countValid(row.value)) ? 'AVAILABLE' : 'UNAVAILABLE';
-    }),
+    read(operationsStats, 'stats', query ? `/stats/operations?${query}` : null, result =>
+      result?.availability ? 'AVAILABLE' : 'UNAVAILABLE'),
     read(deviceTypes, 'devices', '/device-monitor/overview', result =>
       Array.isArray(result?.by_type) && result.by_type.every(row => countValid(row.total) && countValid(row.online) && row.online <= row.total) ? 'AVAILABLE' : 'UNAVAILABLE'),
     read(completedFlights, 'flights', completedQuery ? `/flight-plans?${completedQuery}` : null, result => countValid(result?.total) ? 'AVAILABLE' : 'UNAVAILABLE')
@@ -365,7 +371,7 @@ async function load() {
     if (disposed || currentVersion !== version) return;
     snapshot.value = null;
     detailController?.abort();
-    targetTypes.value = deviceTypes.value = completedFlights.value = { state: 'UNAVAILABLE', data: null };
+    operationsStats.value = deviceTypes.value = completedFlights.value = { state: 'UNAVAILABLE', data: null };
     error.value = e.message || '大屏数据加载失败';
     await nextTick();
     if (!disposed) { renderCharts(); renderMap(); }
@@ -447,6 +453,7 @@ onBeforeUnmount(() => {
         <main class="bs-mid">
           <div class="bs-kpis"><div v-for="item in kpis" :key="item.label" class="kpi" :style="{ '--kpi-tone': item.color }"><div class="bs-kpi-art" aria-hidden="true"><img v-if="item.image" :src="item.image" alt=""><div v-else class="bs-kpi-symbol"><n-icon :component="item.icon"/></div></div><div class="lb">{{ item.label }}</div><div class="v">{{ item.value }}</div></div></div>
           <div class="bs-map-shell" role="img" aria-label="东营全域融合态势地图，展示目标、设备、空域与航迹"><div id="bsMap" ref="mapEl" class="bs-map" inert></div></div>
+          <BigScreenBottomStats :detail="operationsStats"/>
         </main>
         <aside class="bs-col bs-col-right">
           <section class="panel">

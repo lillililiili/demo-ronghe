@@ -47,16 +47,18 @@ export const deviceApi = {
     apiRequest(`/targets/${targetId}/eo-tracking-tasks`, {
       method: 'POST', body, headers: { 'Idempotency-Key': key }
     }),
+  eoTrackingStatus: (targetId, options = {}) => apiRequest(`/targets/${encodeURIComponent(targetId)}/eo-tracking-status`, options),
+  pauseEoTracking: (targetId, key = newIdempotencyKey('eo-track-pause')) =>
+    apiRequest(`/targets/${encodeURIComponent(targetId)}/eo-tracking-pause`, {
+      method: 'POST', body: {}, headers: { 'Idempotency-Key': key }
+    }),
+  resumeEoTracking: (targetId, key = newIdempotencyKey('eo-track-resume')) =>
+    apiRequest(`/targets/${encodeURIComponent(targetId)}/eo-tracking-resume`, {
+      method: 'POST', body: {}, headers: { 'Idempotency-Key': key }
+    }),
   targetVideo: (targetId, options = {}) => apiRequest(`/targets/${encodeURIComponent(targetId)}/video`, options),
   currentEoTrack: (targetId, options = {}) => apiRequest(`/targets/${targetId}/eo-tracking-tasks`, options),
   eoTrackAvailability: targetId => apiRequest(`/targets/${targetId}/eo-tracking-availability`),
-  prepareAirspaceDemoTarget: (targetId, frame) => apiRequest(`/local/airspace-demo/targets/${targetId}`, {
-    method: 'PUT', body: { frame }
-  }),
-  beginAirspaceDemoTrack: (targetId, frame, key = newIdempotencyKey('demo-eo-track')) =>
-    apiRequest(`/local/airspace-demo/targets/${targetId}/eo-tracking-tasks`, {
-      method: 'POST', body: { frame }, headers: { 'Idempotency-Key': key }
-    }),
   endEoTrack: (taskId, key = newIdempotencyKey('eo-track-end')) =>
     apiRequest(`/eo-tracking-tasks/${taskId}/end`, {
       method: 'POST', body: {}, headers: { 'Idempotency-Key': key }

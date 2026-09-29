@@ -6,13 +6,16 @@ import { COMMAND_STATE_LABEL, COMMAND_TYPE_LABEL, evidenceSubjectLocation } from
 import { EVIDENCE_SUBJECT_LABEL } from '@/ui/labels.js';
 import { fmtEvidenceTime, openEvidenceFileModal } from '@/ui/evidenceFileDetail.js';
 import EvidenceTrackPreview from './EvidenceTrackPreview.vue';
+import { buildCommandView } from './evidenceCommandView.js';
 const props = defineProps({ detail: { type: Object, required: true } });
 const router = useRouter();
 const entry = computed(() => props.detail.entry);
 const command = computed(() => props.detail.command);
+const commandView = computed(() => buildCommandView(command.value || {}));
 const snapshot = ref(null), loading = ref(false), error = ref('');
 let sequence = 0;
 const sourceLabel = computed(() => ({ mock: '模拟来源', replay: '回放来源', live: '现场来源' }[entry.value.source_mode] || '来源未记录'));
+const sourceNote = computed(() => ({ mock: '模拟数据，不代表现场实际执行结果。', replay: '回放数据，非现场实时执行。' }[entry.value.source_mode] || ''));
 async function loadTrack() {
   const own = ++sequence; snapshot.value = null; error.value = ''; loading.value = false;
   if (entry.value.source_kind !== 'TRACK') return;
@@ -31,7 +34,6 @@ function go(link) {
 function accessChanged() { sequence += 1; snapshot.value = null; loading.value = false; error.value = '访问权限已变化，请重新打开当前记录'; }
 window.addEventListener('auth-access-change', accessChanged);
 onBeforeUnmount(() => { sequence += 1; window.removeEventListener('auth-access-change', accessChanged); });
-const receiptLabel = value => ({ ACCEPTED: '设备受理', SUCCEEDED: '执行完成', COMPLETED: '执行完成', FAILED: '执行失败', ACK: '接收回执', RESULT: '执行回执' }[value] || value || '未记录');
 </script>
 
 <template>
@@ -44,23 +46,36 @@ const receiptLabel = value => ({ ACCEPTED: '设备受理', SUCCEEDED: '执行完
       <dl class="kv"><dt>轨迹分层</dt><dd>{{ { RAW: '原始观测', FUSED: '融合轨迹' }[entry.layer] || '未记录' }}</dd><dt>开始时间</dt><dd>{{ fmtEvidenceTime(entry.started_at) }}</dd><dt>结束时间</dt><dd>{{ fmtEvidenceTime(entry.ended_at) }}</dd></dl>
     </template>
     <template v-else-if="command">
-      <section class="sect"><h4>指令记录</h4><dl class="kv">
-        <dt>指令编号</dt><dd>{{ command.command_no }}</dd><dt>执行设备</dt><dd>{{ command.device_name || command.device_no }}</dd>
-        <dt>动作</dt><dd>{{ COMMAND_TYPE_LABEL[command.command_type] || command.command_type }}</dd>
-        <dt v-if="command.reason">操作说明</dt><dd v-if="command.reason">{{ command.reason }}</dd>
-        <dt>创建时间</dt><dd>{{ fmtEvidenceTime(command.created_at) }}</dd><dt>下发时间</dt><dd>{{ command.issued_at == null ? '未记录下发时间' : fmtEvidenceTime(command.issued_at) }}</dd>
-        <dt>当前状态</dt><dd>{{ COMMAND_STATE_LABEL[command.status] || '执行结果未知' }}</dd>
-        <dt v-if="command.completed_at">状态记录时间</dt><dd v-if="command.completed_at">{{ fmtEvidenceTime(command.completed_at) }}</dd>
-        <dt v-if="command.result_detail">结果说明</dt><dd v-if="command.result_detail">{{ command.result_detail }}</dd>
-      </dl></section>
-      <section class="sect"><h4>设备回执</h4><p v-if="!command.receipts?.length">尚未收到设备回执，不能据此认定执行成功或未执行。</p>
-        <article v-for="receipt in command.receipts" :key="receipt.receipt_id" class="receipt">
-          <b>{{ receiptLabel(receipt.receipt_kind) }}</b><span>{{ fmtEvidenceTime(receipt.occurred_at ?? receipt.received_at) }}</span>
-          <div v-if="receipt.device_result_code">结果码：{{ receipt.device_result_code }}</div>
-        </article>
-        <p v-if="command.status === 'TIMED_OUT'" class="warning">回执超时，执行结果仍需确认。</p>
+      <section class="command-overview">
+        <h4>{{ COMMAND_TYPE_LABEL[command.command_type] || '设备操作记录' }}</h4>
+        <p>{{ commandView.action }}</p>
+        <p v-if="sourceNote" class="source-note">{{ sourceNote }}</p>
       </section>
-      <details><summary>原始回执与关联日志</summary><pre>{{ JSON.stringify(command.receipts || [], null, 2) }}</pre>
+      <section class="command-result" :class="`result-${commandView.tone}`" aria-label="执行结果">
+        <strong>{{ commandView.status }}</strong>
+        <p>{{ commandView.explanation }}</p>
+      </section>
+      <section class="sect"><h4>操作信息</h4><dl class="kv">
+        <dt>执行设备</dt><dd>{{ command.device_name || command.device_no || '设备未记录' }}</dd>
+        <dt>发起原因</dt><dd>{{ commandView.reason }}</dd>
+        <dt>发起时间</dt><dd>{{ fmtEvidenceTime(command.created_at) }}</dd>
+        <dt>下发时间</dt><dd>{{ command.issued_at == null ? (command.status === 'QUEUED' ? '尚未下发' : '未记录下发时间') : fmtEvidenceTime(command.issued_at) }}</dd>
+        <dt v-if="command.completed_at != null">最近更新时间</dt><dd v-if="command.completed_at != null">{{ fmtEvidenceTime(command.completed_at) }}</dd>
+      </dl></section>
+      <section v-if="commandView.receipts.length" class="sect"><h4>设备反馈记录</h4>
+        <article v-for="(receipt, index) in commandView.receipts" :key="receipt.id || index" class="receipt">
+          <b>{{ receipt.text }}</b><span>{{ fmtEvidenceTime(receipt.time) }}</span>
+        </article>
+      </section>
+      <details :key="command.command_id || entry.source_id"><summary>查看指令编号、原始报文和关联日志</summary>
+        <dl class="kv raw-facts">
+          <dt>指令编号</dt><dd>{{ command.command_no || '未记录' }}</dd>
+          <dt>原始指令类型</dt><dd>{{ command.command_type }}</dd>
+          <dt>原始操作说明</dt><dd>{{ command.reason || '未记录' }}</dd>
+          <dt>平台记录状态</dt><dd>{{ COMMAND_STATE_LABEL[command.status] || '未知状态' }}（{{ command.status }}）</dd>
+        </dl>
+        <h4>原始结果说明</h4><pre>{{ command.result_detail || '未记录' }}</pre>
+        <h4>原始设备回执</h4><pre>{{ JSON.stringify(command.receipts || [], null, 2) }}</pre>
         <button v-for="file in detail.attachments" :key="file.source_id" class="btn" @click="openEvidenceFileModal(file.source_id)">{{ file.original_name }}</button>
         <p v-if="!detail.attachments?.length">暂无关联日志文件</p>
       </details>
@@ -78,4 +93,5 @@ const receiptLabel = value => ({ ACCEPTED: '设备受理', SUCCEEDED: '执行完
 
 <style scoped>
 .record-detail{min-width:0;display:flex;flex-direction:column;gap:14px;font-size:12px;line-height:1.7}.record-detail p{margin:0}.record-detail dd{overflow-wrap:anywhere}.reference,.receipt{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--line)}.receipt>span{margin-left:auto}.receipt>div{width:100%}.warning{color:var(--orange)}summary{cursor:pointer;color:var(--txt-2)}pre{max-height:280px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}.record-detail :deep(.track-point-facts){grid-template-columns:repeat(2,minmax(0,1fr))}
+.record-detail>.tag{align-self:flex-start}.command-overview h4{margin:0 0 6px;font-size:16px;color:var(--txt)}.command-overview p{color:var(--txt-2)}.command-overview .source-note{margin-top:6px;color:var(--orange)}.command-result{padding:12px 14px;border:1px solid var(--line);border-left:3px solid var(--blue);border-radius:6px;background:var(--surface-1);overflow-wrap:anywhere}.command-result strong{display:block;margin-bottom:5px;font-size:14px}.command-result p{color:var(--txt-2)}.result-warning{border-left-color:var(--orange)}.result-warning strong{color:var(--orange)}.result-success{border-left-color:var(--green)}.result-success strong{color:var(--green)}.result-danger{border-left-color:var(--red)}.result-danger strong{color:var(--red)}.record-detail .kv{grid-template-columns:100px minmax(0,1fr)}.record-detail .kv dd{min-width:0}.raw-facts{margin-top:12px}.receipt b{overflow-wrap:anywhere}summary:focus-visible{outline:2px solid var(--blue);outline-offset:3px}
 </style>

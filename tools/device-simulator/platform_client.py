@@ -66,6 +66,15 @@ class Platform:
                 body['edge_id'] = external + '-edge'
             record = self.call('POST', '/devices/onboard', body, 'sim-onboard-'+external)
             manifest['devices'][device_id] = {'external_id': external, 'edge_id': body.get('edge_id'), 'platform_id': record['device']['device_id'], 'kind': d['kind']}
+            if d['kind'] == 'eo':
+                binding = self.call('GET', '/devices/' + record['device']['device_id'] + '/protocol-status')['details']
+                if binding.get('edge_id') != body['edge_id'] or binding.get('external_device_id') != external:
+                    raise ValueError('系统光电绑定身份不一致')
+                for key in ('dispatcher_topic', 'reporting_topic'):
+                    value = binding.get(key)
+                    if not isinstance(value, str) or not value or any(c in value for c in ('+', '#', '\x00')):
+                        raise ValueError('系统未提供有效光电主题')
+                    manifest['devices'][device_id][key] = value
             checkpoint()
 
 

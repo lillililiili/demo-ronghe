@@ -54,9 +54,9 @@ function messageOf(error, fallback) {
   // 未登记连接是可补救的配置问题，与“设备根本不支持自动执行”不是一回事，两句必须分开说。
   if (error.code === 'DEVICE_NOT_BOUND') return '设备未登记凌云连接，未下发指令；请运维补登记后重试。';
   // 离线是现场问题，与"未登记"（运维）和"不支持"（换通道）的补救方都不同（13-14）。
-  if (error.code === 'DEVICE_OFFLINE') return '本次没有下发，授权仍是已批准。设备未启用，或当前不在线。没有心跳的设备不能执行，请改选正在上报的设备后重新申请。';
-  if (error.code === 'EMERGENCY_STOP_UNCONFIRMED') return '这台执行设备还有未了结的急停，本次没有下发，授权仍是已批准。请换一台没有未完成急停的设备，或等这台设备的急停了结后再执行。';
-  if (error.code === 'ADVISORY_COUNTER_BLOCKED') return `本次没有下发，授权仍是已批准。${error.message || '当前观测或违规研判已失效。'}`;
+  if (error.code === 'DEVICE_OFFLINE') return '本次没有下发。设备未启用，或当前不在线。没有心跳的设备不能执行，请改选正在上报的设备后重新申请。';
+  if (error.code === 'EMERGENCY_STOP_UNCONFIRMED') return '这台执行设备还有未了结的急停，本次没有下发。请换一台没有未完成急停的设备，或等这台设备的急停了结后再执行。';
+  if (error.code === 'ADVISORY_COUNTER_BLOCKED') return `本次没有下发。${error.message || '当前观测或违规研判已失效。'}`;
   if (error.code === 'TARGET_NOT_ACTIVE') return '最近没有监测到这个目标，无法确认它还在现场，暂时不能下发处置指令。';
   if (error.code === 'POLICY_REQUIRES_CONFIRMED_EVENT') return '该动作要求事件先经人工核实，请先完成核实再申请。';
   return error.message || fallback;
@@ -96,7 +96,14 @@ async function submit({ scope, action, call, refresh, onDone, okText }) {
       // 确定失败：换新键（下次是新请求），但仍回读一次详情——执行被阻的具体原因在 DTO 的
       // execution_block_reason 上，错误码只说"不支持自动执行"，两者合起来才是完整事实。
       pendingKeys.delete(id);
-      if (refresh) { try { await refresh(null); } catch { /* 回读失败不掩盖原始错误 */ } }
+      let latest = null;
+      if (refresh) { try { latest = await refresh(null); } catch { /* 回读失败不掩盖原始错误 */ } }
+      // 资格检查可能先于状态检查失败，不能从错误码推断授权仍然有效。
+      if (action === 'execute' && latest?.status && latest.status !== 'APPROVED') {
+        closeModal();
+        toast(`本次没有下发。已重新读取授权：当前为「${disposalStatusText(latest)}」，请按最新状态处理。`, 'err');
+        return;
+      }
       throw new Error(messageOf(error, '提交失败'));
     }
     if (isUncertainOutcome(error)) {

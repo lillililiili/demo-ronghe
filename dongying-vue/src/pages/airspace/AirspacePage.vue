@@ -2,7 +2,7 @@
 /* 空域管理：选区查看近期监测目标、历史风险与上级空域规则。
    目标位置和风险发现快照分图层展示，不由前端推导入侵、现场解除或整片空域安全。
    新空域规则由上级下发，本页只读展示并保留旧资料。
-   接口模式读不到就显示原因；模拟演示使用独立样例，不生成服务端业务记录。 */
+   监测只读取接口数据；读取失败时如实显示原因。 */
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { airspaceApi } from '@/services/airspaceApi.js';
 import { flightApi } from '@/services/flightApi.js';
@@ -17,9 +17,7 @@ import { useAirspaceRiskList } from './useAirspaceRiskList.js';
 import { useAirspaceRisks } from './useAirspaceRisks.js';
 import { useAirspaceMonitor } from './useAirspaceMonitor.js';
 import AirspaceObjectMarkers from './AirspaceObjectMarkers.vue';
-import { DEMO_DISTRICT } from './airspaceMonitorDemo.js';
-import { hitMapReference, REFERENCE_NOTES } from './airspaceReferenceHover.js';
-import { drawObjectRisk } from '@/pages/flights/objectRiskMap.js';
+import { hitMapReference } from './airspaceReferenceHover.js';
 import {
   AIRSPACE_KIND_LABEL, AIRSPACE_KIND_TAG, ALTITUDE_DATUM_LABEL,
   labelOf
@@ -31,7 +29,7 @@ usePageChrome('airspace');
 const KIND_CODES = ['PROHIBITED', 'RESTRICTED', 'ALTITUDE_LIMIT', 'PERMITTED', 'TEMPORARY_CONTROL'];
 const KIND_OPTIONS = [{ label: '全部种类', value: '' }].concat(KIND_CODES.map(value => ({ label: AIRSPACE_KIND_LABEL[value], value })));
 const VALIDITY_OPTIONS = [{ label: '全部', value: '' }, { label: '当前生效', value: 'now' }, { label: '当前未生效', value: 'off' }];
-const ROUTE_COLOR = '#22d3ee'; // 监测位置与模拟参考颜色
+const ROUTE_COLOR = '#22d3ee'; // 监测位置颜色
 const PLAN_COLOR = '#8ca0a8'; // 计划几何统一灰色
 const PAGE_MAX = 100;
 // 用户确认仅从本页日常列表移除的测试空域；服务端版本和历史研判引用继续保留。
@@ -185,7 +183,6 @@ const districtOptions = computed(() => {
   risks.districts.forEach(row => { if (row.district_id) seen.set(row.district_id, row.name || row.district_id); });
   risks.rows.forEach(row => { if (row.district_id && !seen.has(row.district_id)) seen.set(row.district_id, row.district_name || row.district_id); });
   monitor.rows.forEach(row => { if (row.district_id && !seen.has(row.district_id)) seen.set(row.district_id, row.district_name || row.district_id); });
-  if (monitor.isDemo) seen.set(DEMO_DISTRICT, '模拟场景区域');
   return [{ label: '全市', value: '' }].concat([...seen].map(([value, label]) => ({ label, value })));
 });
 const filtered = computed(() => {
@@ -220,13 +217,9 @@ function toggleKind(code) { hiddenKinds.value = { ...hiddenKinds.value, [code]: 
 const mapAirspaces = computed(() => toAirspaces(filtered.value.filter(row => row.current_version && !hiddenKinds.value[row.current_version.kind_code])));
 
 watch([mapAirspaces, showRoutes, () => riskList.riskMapRows, () => risks.activeId,
-  () => riskList.targetMapRows, () => monitor.activeId, () => monitor.showHeat, bottomTab], () => paintMap(false));
+  () => riskList.targetMapRows, () => monitor.activeId, bottomTab], () => paintMap(false));
 watch([() => riskList.active, bottomTab], ([active, tab]) => {
   if (!active || tab !== 'monitor') riskDetailOpen.value = false;
-});
-watch([() => monitor.scene, () => monitor.mode], () => {
-  if (!monitor.isDemo && filters.district === DEMO_DISTRICT) filters.district = '';
-  nextTick(() => paintMap(true));
 });
 function showSelectedRisks() {
   risks.onlySelected = true;
@@ -277,8 +270,7 @@ function locateTarget(target) {
   risks.activeId = '';
   monitor.activeId = target.target_id; monitor.showLayer = true; bottomTab.value = 'monitor';
   const [lon, lat] = target.point;
-  map?.fitTo(target.demo ? [...target.demo.scene.geometry, ...target.demo.trail.map(p => [p.lon, p.lat])]
-    : [[lon - 0.005, lat - 0.005], [lon + 0.005, lat + 0.005]], 0.3);
+  map?.fitTo( [[lon - 0.005, lat - 0.005], [lon + 0.005, lat + 0.005]], 0.3);
   map?.draw();
 }
 function selectObjectMarker(marker) {
@@ -296,8 +288,7 @@ function paintMap(fit) {
   clearReferenceTip();
   map.setData({ airspaces: mapAirspaces.value, devices: [], targets: [], alarms: [] });
   if (fit) {
-    const points = bottomTab.value === 'monitor' && monitor.isDemo && riskList.targetMapRows.length
-      ? riskList.targetMapRows.flatMap(row => [row.point, ...row.demo.scene.geometry]) : allPoints();
+    const points = allPoints();
     if (points.length) { map.fitTo(points, 0.12); fittedOnce = true; }
   }
   map.draw();
@@ -341,7 +332,6 @@ function installOverlay() {
       polygons.forEach(rings => rings.forEach(ring => { ring.forEach(([lon, lat], i) => { const p = this.px(lon, lat); i ? c.lineTo(p[0], p[1]) : c.moveTo(p[0], p[1]); }); c.closePath(); }));
       c.lineWidth = 3; c.strokeStyle = color; c.shadowColor = color; c.shadowBlur = 10; c.stroke(); c.shadowBlur = 0;
     }
-    if (bottomTab.value === 'monitor' && monitor.isDemo && monitor.showLayer) drawDemoOverlay(c, this);
     const markerRows = bottomTab.value === 'monitor' ? [...riskList.targetMapRows.filter(row => row.demo),
       ...riskList.riskMapRows.filter(row => ['SPACE_OBJECT', 'FOREIGN_OBJECT'].includes(row.risk_type))] : [];
     objectMarkers.value = markerRows.map(row => {
@@ -379,37 +369,6 @@ function installOverlay() {
     });
     c.restore();
   };
-}
-
-function drawDemoOverlay(ctx, view) {
-  const rows = riskList.targetMapRows;
-  const scenes = [...new Map(rows.map(row => [row.demo.scene.id, row.demo.scene])).values()];
-  scenes.forEach(scene => {
-    const points = scene.geometry.map(p => view.px(...p));
-    ctx.strokeStyle = ROUTE_COLOR; ctx.fillStyle = '#0d2635'; ctx.lineWidth = 2;
-    ctx.beginPath();
-    if (scene.id === 'route') {
-      strokePlannedRoute(ctx, view, scene.geometry, { color: PLAN_COLOR, terminals: false });
-    } else if (points.length > 1) points.forEach((p, i) => i ? ctx.lineTo(...p) : ctx.moveTo(...p));
-    else if (scene.id === 'dock') { window.UI.drawBusinessIcon(ctx, 'nest', ...points[0], 24); }
-    else { ctx.arc(...points[0], 7, 0, Math.PI * 2); ctx.fill(); }
-    if (scene.kind === 'polygon') { ctx.closePath(); ctx.fillStyle = 'rgba(34,211,238,.10)'; ctx.fill(); ctx.setLineDash([6, 4]); }
-    if (scene.id !== 'route') ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.font = '12px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
-    const labelX = points[0][0] + 12, labelY = points[0][1] - 10;
-    ctx.fillStyle = '#143648'; ctx.fillText(scene.name, labelX, labelY);
-    referenceShapes.push({ id: scene.id, name: scene.name, type: `${scene.label} · 模拟参考`,
-      note: REFERENCE_NOTES[scene.id], points, polygon: scene.kind === 'polygon',
-      labelBox: [labelX - 3, labelY - 14, labelX + ctx.measureText(scene.name).width + 3, labelY + 4] });
-  });
-  const active = monitor.active?.demo;
-  const geometry = active?.scene.geometry;
-  drawObjectRisk(ctx, view, { snapshot: monitor.active ? { lon: monitor.active.point[0], lat: monitor.active.point[1] } : null,
-    trail: active?.trail || [], trailIndex: (active?.trail.length || 1) - 1, showTrail: !!active,
-    heatPoints: rows.map(row => ({ lon: row.point[0], lat: row.point[1] })), showHeat: monitor.showHeat,
-    route: geometry?.length === 1 ? [geometry[0], geometry[0]] : geometry, corridorWidth: null,
-    color: RISK_COLORS[active?.severity] || ROUTE_COLOR });
 }
 
 function clearReferenceTip() { referenceTip.value = null; }
@@ -540,7 +499,7 @@ onUnmounted(() => {
       </div>
 
       <details class="airspace-legend">
-        <summary class="legend-title">图例{{ bottomTab === 'monitor' && monitor.isDemo ? ' · 模拟场景' : '' }}</summary>
+        <summary class="legend-title">图例</summary>
         <button v-for="item in legendKinds" :key="item.code" type="button" class="legend-item" :class="{ off: item.hidden }" :title="item.hidden ? '点击显示' : '点击隐藏'" @click="toggleKind(item.code)">
           <span class="sw" :style="{ borderColor: item.color, background: item.color + '33' }"></span>{{ item.label }}
         </button>
@@ -549,10 +508,7 @@ onUnmounted(() => {
         </button>
         <div v-if="!legendKinds.length && !loading" class="legend-empty">图上暂无空域</div>
         <button v-if="bottomTab === 'monitor' && monitor.canRead" type="button" class="legend-item risk-layer-toggle" :class="{ off: !monitor.showLayer }" :aria-pressed="monitor.showLayer" @click="monitor.showLayer = !monitor.showLayer"><span class="target-dot"></span>近期目标位置</button>
-        <template v-if="bottomTab === 'monitor' && monitor.isDemo && monitor.canRead">
-          <button type="button" class="legend-item" :aria-pressed="monitor.showHeat" @click="monitor.showHeat = !monitor.showHeat">{{ monitor.showHeat ? '隐藏目标热区' : '显示目标热区' }}</button>
-          <span class="legend-empty">模拟等级：红色高、黄色中<br>紫色：所选目标轨迹<br>热区表示目标组位置，不代表数量</span>
-        </template>
+
         <button v-if="bottomTab === 'monitor' && risks.canRead" type="button" class="legend-item risk-layer-toggle" :class="{ off: !risks.showLayer }" :aria-pressed="risks.showLayer" title="红：高/紧急；黄：中；蓝：低；灰：已排除或等级未知" @click="risks.showLayer = !risks.showLayer">
           <span class="risk-dot"></span>风险位置（发生时）
         </button>

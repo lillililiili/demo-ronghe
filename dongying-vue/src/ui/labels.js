@@ -1,6 +1,13 @@
 /* 业务代码 → 中文文案字典（全站共用）。
    规则：页面只展示名称与业务编号，内部 ID 只能进 title 提示；未收录的代码原样返回，不猜测含义。 */
 export const SOURCE_MODE_LABEL = { mock: '模拟', replay: '回放', live: '实时' };
+// 本地模拟回执关联码用于服务端对账，不是发送失败事实。
+export function notificationBlockedReason(notice) {
+  const reason = String(notice?.blocked_reason || '').trim();
+  if (!reason || reason.startsWith('LOCAL_SIMULATOR_WAITING:')) return '';
+  return { DELIVERY_OUTCOME_UNKNOWN: '发送结果未知，请先核对原发送记录',
+    CHANNEL_NOT_CONNECTED: '通知渠道未接通' }[reason] || reason;
+}
 // 来源名称已有同一模式后缀时不再追加；不同模式及未知模式仍明确保留。
 export function sourceDescription(name, code, mode, fallback = '未提供') {
   const source = String(name || code || fallback).trim();
@@ -239,7 +246,7 @@ export const MQTT_DIAGNOSTIC_REASON_LABEL = {
 };
 export const FUSION_DEGRADATION_LABEL = { THREE_SOURCE: '三路监测数据齐全', FUSION_BOX_ONLY: '部分监测数据缺失', SINGLE_SOURCE: '仅有一路监测数据', NONE: '当前没有监测数据' };
 export const SEVERITY_TAG = { CRITICAL: 't-red', HIGH: 't-red', MEDIUM: 't-amber', LOW: 't-blue' };
-export const RISK_STATE_LABEL = { PENDING_VERIFICATION: '待核验', PENDING_NOTIFICATION: '待通知', NOTIFIED: '已通知', ACKNOWLEDGED: '已回执', EXCLUDED: '已排除' };
+export const RISK_STATE_LABEL = { PENDING_VERIFICATION: '待核验', PENDING_NOTIFICATION: '待通知', NOTIFIED: '通知已提交', ACKNOWLEDGED: '已回执', EXCLUDED: '已排除' };
 /* 阶段 9 空间安全风险：异物细类、高度带与走廊关系。
    气球/风筝/孔明灯只在细类语境出现，与 INFERRED_SUBTYPE_LABEL 同义但键不同（服务端字典码）。 */
 export const SPACE_OBJECT_SUBTYPE_LABEL = {

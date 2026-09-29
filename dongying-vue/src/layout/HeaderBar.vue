@@ -62,14 +62,20 @@ const screenLabel = `${U.icon('mon')} 数据大屏`;
 
 /* ---------- 全屏模式 ---------- */
 const bigLabel = computed(() => `${U.icon('fullscreen')} ${store.bigscreen ? '退出全屏' : '全屏'}`);
-function toggleBig() {
-  const on = document.body.classList.toggle('bigscreen');
-  store.bigscreen = on;
-  if (on && document.documentElement.requestFullscreen) {
-    document.documentElement.requestFullscreen().catch(() => { });
-  } else if (!on && document.fullscreenElement && document.exitFullscreen) {
-    document.exitFullscreen().catch(() => { });
+async function toggleBig() {
+  try {
+    if (document.fullscreenElement) {
+      await document.exitFullscreen();
+    } else {
+      if (!document.documentElement.requestFullscreen) throw new Error('Fullscreen unavailable');
+      await document.documentElement.requestFullscreen();
+    }
+  } catch {
+    toast('未能切换全屏，请检查浏览器是否允许全屏显示', 'warn');
   }
+  const on = Boolean(document.fullscreenElement);
+  document.body.classList.toggle('bigscreen', on);
+  store.bigscreen = on;
   window.dispatchEvent(new Event('resize'));
 }
 function onFsChange() {

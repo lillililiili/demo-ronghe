@@ -43,7 +43,9 @@ export function isAuthenticated() { return !!(sessionId.value && user.value); }
 export function needsPasswordChange() { return !!user.value?.must_change_password; }
 
 export async function loadCurrentUser() {
+  const token = readSessionToken();
   const current = await apiRequestTimed('/auth/me', {}, 8_000);
+  if (token !== readSessionToken()) return null;
   user.value = current;
   restoreError.value = null;
   notifyAccessChanged();
@@ -58,14 +60,17 @@ export async function restoreSession() {
     restoreError.value = null;
     return null;
   }
-  if (!restoring.value) {
-    restoring.value = loadCurrentUser().catch(error => {
+  if (!restoring.value || restoring.value.token !== token) {
+    const attempt = { token, promise: null };
+    attempt.promise = loadCurrentUser().catch(error => {
+      if (token !== readSessionToken()) return null;
       if (error?.status === 401) clearSession();
       else restoreError.value = error;
       return null;
-    }).finally(() => { restoring.value = null; });
+    }).finally(() => { if (restoring.value?.promise === attempt.promise) restoring.value = null; });
+    restoring.value = attempt;
   }
-  return restoring.value;
+  return restoring.value.promise;
 }
 
 export async function login({ account, password, remember }) {
@@ -74,19 +79,21 @@ export async function login({ account, password, remember }) {
   sessionId.value = data.session_id;
   storage('localStorage', ACCOUNT_KEY, remember ? data.account : null);
   try { await loadCurrentUser(); }
-  catch (error) { clearSession(); throw error; }
+  catch (error) { if (readSessionToken() === data.session_id) clearSession(); throw error; }
   return { ok: true, persisted };
 }
 
 export async function logout() {
-  try { if (sessionId.value) await apiRequest('/auth/logout', { method: 'POST' }); }
+  const token = readSessionToken();
+  try { if (token) await apiRequest('/auth/logout', { method: 'POST' }); }
   catch { /* 本地会话仍须清除，避免后端不可用时把用户困在旧会话中。 */ }
-  finally { clearSession(); }
+  finally { if (readSessionToken() === token) clearSession(); }
 }
 
 export async function changePassword(currentPassword, newPassword) {
+  const token = readSessionToken();
   await apiRequest('/auth/change-password', { method: 'POST', body: { current_password: currentPassword, new_password: newPassword } });
-  clearSession();
+  if (readSessionToken() === token) clearSession();
 }
 
 window.addEventListener('api:unauthorized', () => {

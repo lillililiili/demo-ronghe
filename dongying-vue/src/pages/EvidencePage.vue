@@ -149,6 +149,7 @@ async function doVerify() {
 }
 
 function doHold() {
+  if (!hasPermission('evidence:hold')) return toast('当前账号没有冻结证据的权限', 'err');
   if (!st.selId) return;
   const evidenceId = st.selId;
   openFormModal({
@@ -159,6 +160,7 @@ function doHold() {
       if (reason.length < 1 || reason.length > 500) return '原因须为 1 至 500 字';
     },
     onSubmit: async values => {
+      if (!hasPermission('evidence:hold')) throw new Error('当前账号没有冻结证据的权限');
       await holdEvidenceFile(evidenceId, String(values.reason).trim(), idem());
       closeModal();
       toast('已冻结', 'ok');
@@ -168,6 +170,7 @@ function doHold() {
 }
 
 function doDestroy() {
+  if (!hasPermission('evidence:destroy')) return toast('当前账号没有销毁证据的权限', 'err');
   if (!st.selId) return;
   const evidenceId = st.selId;
   const row = detailRow.value;
@@ -190,6 +193,7 @@ function doDestroy() {
       if (approval.length > 64) return '审批号最多 64 字';
     },
     onSubmit: async values => {
+      if (!hasPermission('evidence:destroy')) throw new Error('当前账号没有销毁证据的权限');
       await destroyEvidenceFile(evidenceId, String(values.reason).trim(), String(values.approvalNo || '').trim(), idem());
       closeModal();
       toast('文件已销毁，台账记录保留', 'ok');
@@ -199,11 +203,13 @@ function doDestroy() {
 }
 
 async function doRelease(holdId) {
+  if (!hasPermission('evidence:hold')) return toast('当前账号没有解除冻结的权限', 'err');
   if (!st.selId || !holdId) return;
   const evidenceId = st.selId;
   const ok = await confirmAction({ title: '解除冻结', message: '解除法律冻结后，该文件到期即可被清理。是否确认解除？', confirmText: '解除冻结', positiveType: 'warning' });
   if (!ok) return;
   try {
+    if (!hasPermission('evidence:hold')) throw new Error('当前账号没有解除冻结的权限');
     await releaseEvidenceHold(evidenceId, holdId, idem());
     toast('已解除冻结', 'ok');
     await load();
@@ -238,13 +244,13 @@ onBeforeUnmount(() => { mounted = false; listSequence += 1; detailSequence += 1;
     <div v-if="exact || hasContext" class="evidence-located-toolbar"><span>{{ hasContext ? '当前关联事项的证据' : '指定证据记录' }}</span><button class="btn" @click="returnToLedger">返回全部证据</button></div>
     <div v-if="error" class="warnbox" role="alert">{{ error }}</div>
     <div class="row evidence-row">
-      <UPanel :title="`证据台账（${loading ? '加载中' : error ? '暂不可用' : totalCount}）`" panel-style="flex:1;min-width:0" nopad>
-        <div class="toolbar"><div class="toolbar-fields">
-          <UField id="evidence-kind" v-model="st.kind" label="类型" type="select" variant="filter" :options="KIND_OPTS" @update:model-value="typeChanged" />
-          <UField v-if="st.kind !== 'COMMAND'" id="evidence-status" v-model="st.status" label="文件状态" type="select" variant="filter" :options="STATUS_OPTS" @update:model-value="filterChanged" />
-          <UField v-if="st.kind !== 'COMMAND'" id="evidence-custody" v-model="st.custody" label="保管状态" type="select" variant="filter" :options="CUSTODY_OPTS" @update:model-value="filterChanged" />
-          <UField v-if="!hasContext" id="evidence-subject" v-model="st.refKind" label="关联对象" type="select" variant="filter" :options="REF_OPTS" @update:model-value="filterChanged" />
-          <UField id="evidence-keyword" v-model="st.kw" label="查找记录" sr-only variant="filter" placeholder="编号 / 名称" @update:model-value="keywordChanged" />
+      <UPanel class="evidence-ledger" :title="`证据台账（${loading ? '加载中' : error ? '暂不可用' : totalCount}）`" panel-style="flex:1;min-width:0" nopad>
+        <div class="toolbar evidence-filters"><div class="toolbar-fields">
+          <UField id="evidence-kind" v-model="st.kind" label="类型" type="select" :options="KIND_OPTS" @update:model-value="typeChanged" />
+          <UField v-if="st.kind !== 'COMMAND'" id="evidence-status" v-model="st.status" label="文件状态" type="select" :options="STATUS_OPTS" @update:model-value="filterChanged" />
+          <UField v-if="st.kind !== 'COMMAND'" id="evidence-custody" v-model="st.custody" label="保管状态" type="select" :options="CUSTODY_OPTS" @update:model-value="filterChanged" />
+          <UField v-if="!hasContext" id="evidence-subject" v-model="st.refKind" label="关联对象" type="select" :options="REF_OPTS" @update:model-value="filterChanged" />
+          <UField id="evidence-keyword" v-model="st.kw" class="evidence-search" label="查找记录" placeholder="输入编号 / 名称" @update:model-value="keywordChanged" />
         </div><div class="toolbar-actions"><button class="btn" :disabled="loading || !!error" @click="doExport">导出 CSV</button></div></div>
         <div ref="listHost" class="scroll evidence-list">
           <div v-if="loading" class="empty" role="status">正在读取证据</div>
@@ -273,6 +279,22 @@ onBeforeUnmount(() => { mounted = false; listSequence += 1; detailSequence += 1;
   </div></div>
 </template>
 <style scoped>
+.evidence-ledger { container-type: inline-size; container-name: evidence-ledger; }
+.evidence-filters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: end; gap: 12px 16px; padding: 14px 16px; background: var(--surface-1); }
+.evidence-filters .toolbar-fields { display: contents; }
+.evidence-filters .evidence-search { grid-column: 1 / span 3; }
+.evidence-filters .toolbar-actions { grid-column: 4; align-self: end; }
+.evidence-filters .toolbar-actions .btn { min-height: 34px; }
+@container evidence-ledger (min-width: 1000px) {
+  .evidence-filters { grid-template-columns: repeat(4, minmax(128px, 1fr)) minmax(220px, 1.6fr) auto; }
+  .evidence-filters .evidence-search { grid-column: 5; }
+  .evidence-filters .toolbar-actions { grid-column: 6; }
+}
+@container evidence-ledger (max-width: 520px) {
+  .evidence-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .evidence-filters .evidence-search { grid-column: 1 / -1; }
+  .evidence-filters .toolbar-actions { grid-column: 2; }
+}
 .evidence-list .tb { table-layout: fixed; width: 100%; }
 .evidence-list .tb td { white-space: normal; overflow-wrap: anywhere; }
 .evidence-list .tb th:nth-child(2) { min-width: 140px; }

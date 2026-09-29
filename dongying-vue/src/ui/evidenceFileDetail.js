@@ -65,7 +65,8 @@ export function renderEvidenceFileDetail(f, options = {}) {
   const emptyLinks = mode === 'modal'
     ? '<div style="color:var(--txt-3);font-size:12px">无引用。</div>'
     : '<div style="color:var(--txt-3);font-size:12px">这份证据还没有用于告警、目标或其他事项。</div>';
-  const canDestroy = mode === 'page' && f.status !== 'DESTROYED' && !f.held && f.custody === 'DUE';
+  const canHold = hasPermission('evidence:hold');
+  const canDestroy = mode === 'page' && f.status !== 'DESTROYED' && !f.held && f.custody === 'DUE' && hasPermission('evidence:destroy');
   const actions = mode === 'preview' ? '' : f.status === 'DESTROYED'
     ? `<div style="font-size:12px;color:var(--txt-3);line-height:1.8">文件内容已销毁，台账编号、完整性检查依据和销毁记录保留，不能再下载。</div>`
     : mode === 'modal'
@@ -77,7 +78,9 @@ export function renderEvidenceFileDetail(f, options = {}) {
       ${f.status === 'PENDING'
         ? `<button class="btn" style="flex:1" disabled title="文件还在入库中，入库完成后才能校验">检查文件完整性</button>`
         : `<button class="btn" style="flex:1" data-evact="verify">检查文件完整性</button>`}
-      ${f.held
+      ${!canHold
+        ? `<button class="btn" style="flex:1" disabled>${f.held ? '未获解冻权限' : '未获冻结权限'}</button>`
+        : f.held
         ? `<button class="btn" style="flex:1" data-evact="release" data-hold="${esc(activeHold?.hold_id || '')}">解除冻结</button>`
         : `<button class="btn" style="flex:1" data-evact="hold">冻结</button>`}
     </div>

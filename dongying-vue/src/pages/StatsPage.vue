@@ -118,7 +118,19 @@ function drawCharts(CH) {
     grid: { top: 36, bottom: 40 },
     series: [{ name: '数量', data: stats.byRisk.map(r => r.value), colorBy: p => rc[stats.byRisk[p.dataIndex].name] }]
   })?.setOption({ xAxis: { axisLabel: { interval: 0, fontSize: 10 } }, yAxis: { minInterval: 1 } });
-  if (metricVisible('by_type')) CH.donut(document.getElementById('sType'), { data: stats.byType, center: ['30%', '50%'] });
+  if (metricVisible('by_type')) {
+    const total = stats.byType.reduce((sum, item) => sum + item.value, 0);
+    CH.donut(document.getElementById('sType'), { data: stats.byType, center: ['30%', '50%'] })?.setOption({
+      series: [{ stillShowZeroSum: false }],
+      legend: {
+        textStyle: { overflow: 'breakAll', lineHeight: 16 },
+        formatter: name => {
+          const item = stats.byType.find(row => row.name === name);
+          return item ? `${name}  ${item.value.toLocaleString()} (${pctOf(item.value, total)}%)` : name;
+        }
+      }
+    });
+  }
   const regionBox = document.getElementById('sRegion');
   if (regionBox) regionBox.innerHTML = regionTable();
   if (metricVisible('alt_bands') && stats.altTotal > 0) CH.bar(document.getElementById('sAlt'), {

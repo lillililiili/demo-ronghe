@@ -15,7 +15,7 @@ import { openFormModal } from '@/ui/formModal.js';
 import { closeModal } from '@/ui/modal.js';
 import { toast } from '@/ui/nv.js';
 import { ALTITUDE_DATUM_LABEL, HANDOFF_TYPE_LABEL, REASON_CODE_LABEL,
-  RECEIPT_RESULT_LABEL, RISK_STATE_LABEL, RISK_TYPE_LABEL, SEVERITY_LABEL, SEVERITY_TAG, sourceDescription, labelOf } from '@/ui/labels.js';
+  RECEIPT_RESULT_LABEL, RISK_STATE_LABEL, RISK_TYPE_LABEL, SEVERITY_LABEL, SEVERITY_TAG, sourceDescription, notificationBlockedReason, labelOf } from '@/ui/labels.js';
 import RiskOpticalPanel from '@/pages/flights/components/RiskOpticalPanel.vue';
 
 const props = defineProps({ riskId: { type: String, required: true } });
@@ -25,18 +25,19 @@ const history = ref([]), historyTotal = ref(0), historyPage = ref(1), historyLoa
 const notices = ref([]), noticesTotal = ref(0), noticesLoading = ref(false), noticesError = ref('');
 const historySize = 10;
 let generation = 0, historyRequest = 0, noticeRequest = 0, alive = true;
-const stateTags = { PENDING_VERIFICATION: 't-amber', PENDING_NOTIFICATION: 't-blue', NOTIFIED: 't-green', ACKNOWLEDGED: 't-green', EXCLUDED: 't-gray' };
+const stateTags = { PENDING_VERIFICATION: 't-amber', PENDING_NOTIFICATION: 't-blue', NOTIFIED: 't-blue', ACKNOWLEDGED: 't-green', EXCLUDED: 't-gray' };
 const heightLabels = { UNKNOWN: '高度关系未知', WITHIN: '在航线高度范围内', OUTSIDE: '超出航线高度范围' };
 const deliveryLabels = { PENDING_DELIVERY: '等待发送', SUBMITTED: '送达待确认', DELIVERED: '已送达', FAILED: '发送失败' };
 const deliveryTags = { PENDING_DELIVERY: 't-amber', SUBMITTED: 't-blue', DELIVERED: 't-green', FAILED: 't-red' };
-const receiptLabels = { NOT_EXPECTED: '不需回执', PENDING: '等待回执', ACKNOWLEDGED: '已回执', TIMEOUT: '回执超时' };
+const receiptLabels = { NOT_EXPECTED: '尚未进入回执阶段', PENDING: '等待回执', ACKNOWLEDGED: '已回执', TIMEOUT: '回执超时' };
 const submitted = computed(() => notices.value.find(item => item.delivery_status && item.delivery_status !== 'FAILED'));
 const canVerify = computed(() => !loading.value && risk.value?.allowed_actions?.includes('VERIFY'));
-// 沿用飞行计划的 NOTIFY / 旧接口待通知兼容；最终权限由服务端裁决。
-const canNotify = computed(() => !loading.value && !noticesLoading.value && !noticesError.value && !submitted.value
+// 与飞行计划入口一致：当前会话须有通知权限，提交时仍由服务端复核。
+const canNotify = computed(() => hasPermission('handoff:create') && !loading.value && !noticesLoading.value && !noticesError.value && !submitted.value
   && (risk.value?.allowed_actions?.includes('NOTIFY') || risk.value?.state === 'PENDING_NOTIFICATION'));
 const notifyReason = computed(() => submitted.value ? `已提交通知（${deliveryLabels[submitted.value.delivery_status] || '状态未知'} · ${receiptText(submitted.value)}），不能重复提交`
-  : noticesLoading.value ? '正在读取通知记录' : noticesError.value ? '通知记录读取失败，请刷新核对后再提交'
+  : !hasPermission('handoff:create') ? '当前账号没有通知上级的操作权限'
+    : noticesLoading.value ? '正在读取通知记录' : noticesError.value ? '通知记录读取失败，请刷新核对后再提交'
     : risk.value?.state === 'PENDING_VERIFICATION' ? '人工核验通过后可通知上级'
     : canNotify.value ? '将风险情况通知上级，并等待对方回复处理结果' : '当前状态不允许通知');
 const verifyReason = computed(() => canVerify.value
@@ -185,7 +186,7 @@ onUnmounted(() => { alive = false; generation++; historyRequest++; noticeRequest
             <div class="rk-history-head"><b>通知上级</b><span class="tag" :class="deliveryTags[notice.delivery_status] || 't-gray'">{{ deliveryLabels[notice.delivery_status] || '发送状态未知' }}</span></div>
             <details v-if="notice.recipient_name && notice.recipient_name !== '上级'"><summary>原通知对象记录</summary><p>{{ notice.recipient_name }}</p></details>
             <p>{{ labelOf(HANDOFF_TYPE_LABEL, notice.handoff_type) }} · {{ time(notice.created_at) }}</p><p>对方回复：{{ receiptText(notice) }}</p>
-            <p v-if="notice.blocked_reason">未完成原因：{{ notice.blocked_reason === 'CHANNEL_NOT_CONNECTED' ? '通知渠道未接通' : notice.blocked_reason === 'DELIVERY_OUTCOME_UNKNOWN' ? '发送结果未知，请先核对原发送记录' : notice.blocked_reason }}</p>
+            <p v-if="notificationBlockedReason(notice)">未完成原因：{{ notificationBlockedReason(notice) }}</p>
             <p class="rk-note">风险通知记录留在本页，不进入处罚办理。</p>
           </article></div>
           <p v-if="noticesTotal > notices.length && !noticesLoading" class="rk-note">共 {{ noticesTotal }} 条通知记录，当前展示最近 {{ notices.length }} 条。</p>

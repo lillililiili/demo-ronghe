@@ -56,7 +56,7 @@ function notifyDepartment() {
     message: `向「${recipient}」发送这份已提交的处罚交接材料。${result.value.simulated ? '本次使用模拟通道，不会发送真实通知。' : ''}送达和签收不代表处罚已办结。`,
     confirmText: '确认通知',
     onConfirm: async () => {
-      if (!current() || props.handoffId !== id || sending.value) return true;
+      if (!current() || props.handoffId !== id || loading.value || sending.value || error.value || !result.value?.can_notify) return true;
       const request = pending.value || { key: newHandoffIdempotencyKey(), attempt };
       try { savePending(request); }
       catch { error.value = '无法保存本次提交编号，请允许浏览器会话存储后重试。'; return true; }
@@ -66,7 +66,7 @@ function notifyDepartment() {
         if (!current()) return true;
         savePending(null);
         await load();
-        if (current()) toast('通知记录已更新，请查看送达与签收结果。', 'ok');
+        if (current() && !error.value) toast('通知记录已更新，请查看送达与签收结果。', 'ok');
       } catch (e) {
         if (!current()) return true;
         const uncertain = !e.status || e.status >= 500;
@@ -89,6 +89,7 @@ onUnmounted(() => { active = false; ++sequence; });
     <template v-if="needsNotification">
       <button class="btn pri notify-send" type="button" :disabled="!result.can_notify || loading || sending || !!error" @click="notifyDepartment">{{ sending ? '正在通知' : buttonLabel }}</button>
       <p v-if="!result.can_notify" class="notify-block">{{ result.blocked_reason || '当前暂不能通知，请核对通知记录。' }}</p>
+      <p v-else-if="result.simulated" class="notify-block">本次使用模拟通道，不会发送真实通知。</p>
     </template>
   </Teleport>
   <section class="sect punishment-notification" aria-label="处罚部门通知">

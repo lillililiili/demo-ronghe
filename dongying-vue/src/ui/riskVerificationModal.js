@@ -5,14 +5,9 @@ import { closeModal } from './modal.js';
 import { toast } from './nv.js';
 import { riskApi, newRiskIdempotencyKey } from '@/services/riskApi.js';
 import { isUncertainOutcome } from '@/services/apiClient.js';
-import { RISK_TYPE_LABEL, labelOf, readableNo } from '@/ui/labels.js';
+import { RISK_TYPE_LABEL, RISK_STATE_LABEL, labelOf, readableNo } from '@/ui/labels.js';
 
-export const RISK_STATE_TEXT = {
-  PENDING_VERIFICATION: '待核验',
-  PENDING_NOTIFICATION: '待通知',
-  NOTIFIED: '已通知',
-  EXCLUDED: '已排除'
-};
+export const RISK_STATE_TEXT = RISK_STATE_LABEL;
 export const riskStateText = code => RISK_STATE_TEXT[code] || (code ? String(code) : '—');
 
 /* 同一风险的幂等键在“结果未知”期间保留；只有服务端给出明确结果后才丢弃。 */

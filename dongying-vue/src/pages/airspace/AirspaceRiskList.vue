@@ -4,7 +4,6 @@ import UField from '@/components/form/UField.vue';
 import { FunnelOutline } from '@vicons/ionicons5';
 import { RISK_TYPE_LABEL, RISK_TYPE_OPTIONS, RISK_STATE_LABEL,
   SEVERITY_LABEL, SEVERITY_TAG, targetTypeLabel, labelOf } from '@/ui/labels.js';
-import { DEMO_FRAMES, DEMO_SCENES } from './airspaceMonitorDemo.js';
 
 const props = defineProps({ list: { type: Object, required: true }, monitor: { type: Object, required: true },
   risks: { type: Object, required: true }, selected: { type: Object, default: null } });
@@ -25,8 +24,6 @@ const filtersOpen = ref(false);
 const filterToggle = ref(null);
 const filterPanel = ref(null);
 const monitorIcon = window.UI.icon('radar');
-const modes = [{ value: 'demo', label: '模拟演示' }, { value: 'live', label: '接口监测数据' }];
-const scenes = [{ value: '', label: '全部重点区域' }, ...DEMO_SCENES.map(item => ({ value: item.id, label: item.label }))];
 const minutesOptions = [5, 15, 60].map(value => ({ value, label: `最近 ${value} 分钟` }));
 const typeOptions = [{ value: '', label: '全部类型' }, ...RISK_TYPE_OPTIONS, { value: 'UNCLASSIFIED', label: '未分类' }];
 const severityOptions = [{ value: '', label: '全部等级' }, ...Object.entries(SEVERITY_LABEL).map(([value, label]) => ({ value, label }))];
@@ -39,8 +36,7 @@ const scopeOptions = computed(() => [{ value: 'district', label: '当前区县�
 const appliedFilters = computed(() => {
   const { monitor, risks, selected } = props;
   return [
-    monitor.isDemo && monitor.scene ? { key: 'scene', text: `重点区域：${scenes.find(item => item.value === monitor.scene)?.label || monitor.scene}` } : null,
-    !monitor.isDemo && monitor.minutes !== 5 ? { key: 'window', text: `监测窗口：最近 ${monitor.minutes} 分钟` } : null,
+    monitor.minutes !== 5 ? { key: 'window', text: `监测窗口：最近 ${monitor.minutes} 分钟` } : null,
     risks.onlySelected && selected ? { key: 'scope', text: `范围：${selected.name || '所选空域'}` } : null,
     risks.riskType ? { key: 'type', text: `风险类型：${typeOptions.find(item => item.value === risks.riskType)?.label || risks.riskType}` } : null,
     risks.severity ? { key: 'severity', text: `等级：${labelOf(SEVERITY_LABEL, risks.severity, risks.severity)}` } : null,
@@ -51,8 +47,7 @@ const appliedFilters = computed(() => {
 const moreFilterCount = computed(() => appliedFilters.value.filter(item => !['type', 'severity'].includes(item.key)).length);
 function clearFilter(key) {
   const { monitor, risks } = props;
-  if (key === 'scene') monitor.scene = '';
-  else if (key === 'window') monitor.minutes = 5;
+  if (key === 'window') monitor.minutes = 5;
   else if (key === 'scope') risks.onlySelected = false;
   else if (key === 'type') risks.riskType = '';
   else if (key === 'severity') risks.severity = '';
@@ -84,25 +79,18 @@ function summary(row) {
     <div class="monitor-controls">
       <div class="monitor-control-head">
         <h3><span class="monitor-title-icon" aria-hidden="true" v-html="monitorIcon"></span>空域监测</h3>
-        <UField id="airspace-monitor-mode" v-model="monitor.mode" class="monitor-mode" label="监测数据" variant="toolbar" type="select" :options="modes" size="small" />
         <div class="quick-filters" role="group" aria-label="常用筛选">
           <span class="filter-label"><FunnelOutline aria-hidden="true" />筛选</span>
           <UField id="airspace-monitor-type" v-model="risks.riskType" class="quick-type" label="风险类型" variant="toolbar" type="select" :options="typeOptions" size="small" />
           <UField id="airspace-monitor-severity" v-model="risks.severity" class="quick-severity" label="等级" variant="toolbar" type="select" :options="severityOptions" size="small" />
           <button ref="filterToggle" class="btn filter-toggle" type="button" :aria-expanded="filtersOpen" aria-controls="airspace-more-filters" @click="toggleFilters">{{ filtersOpen ? '收起筛选' : '更多筛选' }}<span v-if="moreFilterCount" class="filter-count">{{ moreFilterCount }}</span><span aria-hidden="true">{{ filtersOpen ? '⌃' : '⌄' }}</span></button>
         </div>
-        <div v-if="monitor.isDemo && monitor.canRead" class="playback">
-          <span class="tag t-purple">模拟第 {{ monitor.frame + 1 }}/{{ DEMO_FRAMES }} 帧</span>
-          <button class="btn pri" type="button" @click="monitor.paused = !monitor.paused">{{ monitor.paused ? '播放模拟' : '暂停模拟' }}</button>
-          <button class="btn ghost" type="button" @click="monitor.paused = true; monitor.stepDemo()">下一帧</button>
-        </div>
-        <span v-else-if="!monitor.isDemo && monitor.canRead" class="update">最近 {{ monitor.minutes }} 分钟 · 每 10 秒刷新<template v-if="monitor.updatedAt"> · {{ time(monitor.updatedAt) }}</template></span>
+        <span v-if="monitor.canRead" class="update">最近 {{ monitor.minutes }} 分钟 · 每 10 秒刷新<template v-if="monitor.updatedAt"> · {{ time(monitor.updatedAt) }}</template></span>
       </div>
       <section v-show="filtersOpen" id="airspace-more-filters" ref="filterPanel" tabindex="-1" class="more-filters" aria-label="更多筛选条件" @keydown.esc.stop="closeFilters">
         <div class="filter-panel-head"><b>更多筛选</b><span>选择后即时生效</span><button class="linkbtn" type="button" @click="closeFilters">收起筛选面板</button></div>
         <div class="monitor-filter-grid">
-        <UField v-if="monitor.isDemo" id="airspace-monitor-scene" v-model="monitor.scene" label="重点区域" type="select" :options="scenes" size="small" />
-        <UField v-else id="airspace-monitor-window" v-model="monitor.minutes" label="近期监测窗口" type="select" :options="minutesOptions" size="small" />
+        <UField id="airspace-monitor-window" v-model="monitor.minutes" label="近期监测窗口" type="select" :options="minutesOptions" size="small" />
         <UField id="airspace-monitor-scope" v-model="scope" label="范围" type="select" :options="scopeOptions" size="small" />
         <UField id="airspace-monitor-state" v-model="risks.state" label="状态" type="select" :options="stateOptions" size="small" />
         <UField id="airspace-monitor-time" v-model="risks.occurred" class="monitor-time" label="发生 / 发现时间" type="datetimerange" clearable size="small" start-placeholder="开始时间" end-placeholder="结束时间" />
@@ -118,7 +106,6 @@ function summary(row) {
         <button class="linkbtn notes-toggle" type="button" :aria-expanded="notesOpen" aria-controls="airspace-monitor-notes" @click="notesOpen = !notesOpen; filtersOpen = false">监测说明 <span>{{ notesOpen ? '收起' : '展开' }}</span></button>
       </div>
       <div v-show="notesOpen" id="airspace-monitor-notes" class="monitor-notes">
-        <p v-if="monitor.isDemo">模拟观测每 10 秒更新；距离为水平距离，高度为海拔高度。</p>
         <p>风险位置为发现时快照，监测位置为最近观测；通知与风险解除分别记录。</p>
         <p v-if="risks.onlySelected && selected">按 {{ selected.name }} 的平面范围筛选（含边界），不直接判定进入管制高度或违规。</p>
       </div>

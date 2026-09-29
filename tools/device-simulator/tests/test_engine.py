@@ -12,6 +12,20 @@ def scene():
             'risks':[{'id':'r1','name':'无匹配计划','type':'no-plan','enabled':True,'targetId':'t1','deviceId':'d1'}]}
 
 class EngineTests(unittest.TestCase):
+    def test_object_identifiers_are_strings_and_stable_across_frames(self):
+        raw = scene()
+        compiled, devices, targets, _ = compile_scene(raw)
+        manifest = {'provider': 'test', 'devices': {'d1': {'external_id': 'external'}},
+                    'targets': {'t1': {'uav_sn': 'TEST'}}}
+        ids = []
+        for sequence in (1, 2):
+            packets = messages(compiled, devices, targets, manifest, .01, 1000 + sequence, {}, sequence)
+            objects = next(payload['objects'] for _, payload in packets if 'objects' in payload)
+            self.assertTrue(objects)
+            self.assertTrue(all(isinstance(item['objectId'], str) and item['objectId'] for item in objects))
+            ids.append([item['objectId'] for item in objects])
+        self.assertEqual(ids[0], ids[1])
+
     def motion_packet(self, target, elapsed, kind='radar'):
         raw = scene()
         raw['sites'][0]['devices'][0]['kind'] = kind

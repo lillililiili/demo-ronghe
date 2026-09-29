@@ -44,7 +44,7 @@ export function legalityReviewFocus(evaluation) {
               : '当前记录不需要人工复核，可查看判定依据与历史。';
   return {
     unknownReasons, assuranceReasons, uncertainHits, failedHits, unresolved,
-    assuranceProvided, assuranceStatus, reliable, superseded, reviewed, applicable,
+    assuranceProvided, assuranceStatus, reliable, superseded, alarmVerified, reviewed, applicable,
     needsReview, canReview, showTask, title, note
   };
 }

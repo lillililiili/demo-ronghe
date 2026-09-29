@@ -12,7 +12,7 @@ function riskForm(state = 'PENDING_VERIFICATION') {
     openFormModal: value => { form = value; }, closeModal() {}, toast() {},
     riskApi: { verifyRisk: async (id, body) => { submitted = body; return { state: 'PENDING_NOTIFICATION' }; } },
     newRiskIdempotencyKey: () => 'test-optional-note', isUncertainOutcome: () => false,
-    RISK_TYPE_LABEL: {}, labelOf: () => '', readableNo: () => ''
+    RISK_TYPE_LABEL: {}, RISK_STATE_LABEL: {}, labelOf: () => '', readableNo: () => ''
   });
   vm.runInContext(source, context);
   context.openRiskVerification({ risk: { risk_id: 'test-risk', version: 0, state, allowed_actions: ['VERIFY'] } });

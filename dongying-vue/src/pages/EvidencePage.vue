@@ -9,6 +9,7 @@ import { usePageChrome } from '@/hooks/usePageChrome.js';
 import UPagination from '@/components/UPagination.vue';
 import UPanel from '@/components/UPanel.vue';
 import UField from '@/components/form/UField.vue';
+import UFilterBar from '@/components/form/UFilterBar.vue';
 import ModuleStatistics from '@/components/ModuleStatistics.vue';
 import { useModuleStatistics } from '@/hooks/useModuleStatistics.js';
 import EvidencePreview from '@/components/evidence/EvidencePreview.vue';
@@ -239,13 +240,14 @@ onBeforeUnmount(() => { mounted = false; listSequence += 1; detailSequence += 1;
     <div v-if="error" class="warnbox" role="alert">{{ error }}</div>
     <div class="row evidence-row">
       <UPanel :title="`证据台账（${loading ? '加载中' : error ? '暂不可用' : totalCount}）`" panel-style="flex:1;min-width:0" nopad>
-        <div class="toolbar"><div class="toolbar-fields">
+        <UFilterBar class="evidence-filters">
           <UField id="evidence-kind" v-model="st.kind" label="类型" type="select" variant="filter" :options="KIND_OPTS" @update:model-value="typeChanged" />
           <UField v-if="st.kind !== 'COMMAND'" id="evidence-status" v-model="st.status" label="文件状态" type="select" variant="filter" :options="STATUS_OPTS" @update:model-value="filterChanged" />
           <UField v-if="st.kind !== 'COMMAND'" id="evidence-custody" v-model="st.custody" label="保管状态" type="select" variant="filter" :options="CUSTODY_OPTS" @update:model-value="filterChanged" />
           <UField v-if="!hasContext" id="evidence-subject" v-model="st.refKind" label="关联对象" type="select" variant="filter" :options="REF_OPTS" @update:model-value="filterChanged" />
-          <UField id="evidence-keyword" v-model="st.kw" label="查找记录" sr-only variant="filter" placeholder="编号 / 名称" @update:model-value="keywordChanged" />
-        </div><div class="toolbar-actions"><button class="btn" :disabled="loading || !!error" @click="doExport">导出 CSV</button></div></div>
+          <UField id="evidence-keyword" v-model="st.kw" class="evidence-search" label="查找记录" variant="filter" placeholder="编号 / 名称" @update:model-value="keywordChanged" />
+          <template #actions><button class="btn" :disabled="loading || !!error" @click="doExport">导出 CSV</button></template>
+        </UFilterBar>
         <div ref="listHost" class="scroll evidence-list">
           <div v-if="loading" class="empty" role="status">正在读取证据</div>
           <div v-else-if="error" class="empty"><button class="btn" @click="load">重新读取</button></div>
@@ -273,8 +275,12 @@ onBeforeUnmount(() => { mounted = false; listSequence += 1; detailSequence += 1;
   </div></div>
 </template>
 <style scoped>
+.evidence-filters { --filter-field-width: 128px; }
+.evidence-search { --filter-field-width: 192px; }
 .evidence-list .tb { table-layout: fixed; width: 100%; }
 .evidence-list .tb td { white-space: normal; overflow-wrap: anywhere; }
 .evidence-list .tb th:nth-child(2) { min-width: 140px; }
+.evidence-root .evidence-row { min-height: 440px; flex-shrink: 0; }
+.evidence-root { overflow: auto; }
 .evidence-root{height:100%;min-height:600px;display:flex;flex-direction:column}.evidence-row{flex:1;min-height:0;padding-bottom:6px}.evidence-list{flex:1;min-height:0;overflow:auto}.evidence-detail{flex:1;min-height:0;overflow:auto;padding:12px}.evidence-located-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;color:var(--txt-2);font-size:12px;line-height:1.6}.evidence-located-toolbar>button{margin-left:auto}.evidence-record-name{padding:0;background:none;border:0;color:inherit;font:inherit;text-align:left;cursor:pointer;overflow-wrap:anywhere}.cell-sub{font-size:11px;color:var(--txt-3)}.evidence-list td{overflow-wrap:anywhere}.evidence-list th:nth-child(1){width:148px}.evidence-list th:nth-child(3){width:124px}.evidence-list th:nth-child(4){width:72px}.evidence-list th:nth-child(5){width:86px}.evidence-list th:nth-child(6){width:118px}#evDetail :deep(.detail-hero-title),#evDetail :deep(.detail-hero-id){display:block;white-space:normal;overflow:visible;overflow-wrap:anywhere;text-overflow:unset;-webkit-line-clamp:unset;-webkit-box-orient:initial}
 </style>

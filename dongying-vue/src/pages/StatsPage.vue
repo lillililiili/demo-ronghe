@@ -11,6 +11,7 @@ import { usePageChrome } from '@/hooks/usePageChrome.js';
 import UPanel from '@/components/UPanel.vue';
 import UKpis from '@/components/UKpis.vue';
 import UField from '@/components/form/UField.vue';
+import UFilterBar from '@/components/form/UFilterBar.vue';
 import { statsApi } from '@/services/statsApi.js';
 import { toast } from '@/ui/nv.js';
 
@@ -27,9 +28,6 @@ function metricVisible(key) { return S.value?.availability?.[key]?.status !== 'U
 const loading = ref(true);
 const exporting = ref(false);
 const dateRange = ref(null);
-const ownerOrgId = ref('');
-const organizationOptions = ref([{ label: '当前权限内全部单位', value: '' }]);
-const organizationError = ref('');
 const error = ref('');
 let cancelled = false;
 const isCount = value => Number.isInteger(value) && value >= 0;
@@ -143,7 +141,6 @@ async function load() {
     const range = dateRange.value;
     const date = value => new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(value);
     const query = range?.length === 2 ? { from: date(range[0]), to: date(range[1]) } : {};
-    if (ownerOrgId.value) query.owner_org_id = ownerOrgId.value;
     const data = await statsApi.operations(query);
     if (cancelled || sequence !== loadSequence) return;
     S.value = data;
@@ -162,17 +159,6 @@ async function load() {
 }
 
 onMounted(load);
-async function loadOrganizations() {
-  try {
-    const items = await statsApi.organizations();
-    if (cancelled) return;
-    organizationOptions.value = [{ label: '当前权限内全部单位', value: '' }, ...items.map(item => ({ label: item.name, value: item.org_id }))];
-    organizationError.value = '';
-  } catch (e) {
-    if (!cancelled) organizationError.value = e.message || '单位筛选项读取失败';
-  }
-}
-onMounted(loadOrganizations);
 onUnmounted(() => { cancelled = true; window.CH?.disposeAll?.(); });
 
 async function exportCsv() {
@@ -180,7 +166,7 @@ async function exportCsv() {
   exporting.value = true;
   try {
     const report = S.value;
-    const blob = await statsApi.exportCsv({ from: report.from, to: report.to, owner_org_id: report.ownerOrgId });
+    const blob = await statsApi.exportCsv({ from: report.from, to: report.to });
     if (!blob) throw new Error('导出失败');
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -226,15 +212,10 @@ function onRegionTab(e) {
       <span>{{ error }}</span>
       <button class="btn" type="button" @click="load">重试</button>
     </div>
-    <div class="panel mb12" style="flex:none"><div class="toolbar" style="border:0">
-      <div class="toolbar-fields">
-        <UField id="stats-range" v-model="dateRange" type="daterange" label="统计日期（北京时间）" variant="filter" @update:model-value="load" />
-        <UField id="stats-org" v-model="ownerOrgId" type="select" label="单位" variant="filter" :options="organizationOptions" @update:model-value="load" />
-        <span class="muted">{{ S?.ownerOrgId ? organizationOptions.find(item => item.value === S.ownerOrgId)?.label || '所选单位' : '当前权限范围' }} · {{ S ? `${S.from} 至 ${S.to}` : loading ? '正在加载' : '—' }}</span>
-        <span v-if="organizationError" role="alert">{{ organizationError }} <button class="btn sm" @click="loadOrganizations">重试单位列表</button></span>
-      </div>
-      <div class="toolbar-actions"><button class="btn pri" id="stExp" :disabled="loading || !S || exporting" @click="exportCsv">{{ exporting ? '正在导出' : '导出数据' }}</button></div>
-    </div></div>
+    <div class="panel mb12" style="flex:none"><UFilterBar class="stats-filters">
+        <UField id="stats-range" v-model="dateRange" class="stats-date-filter" type="daterange" label="统计日期（北京时间）" variant="filter" @update:model-value="load" />
+      <template #actions><button class="btn pri" id="stExp" :disabled="loading || !S || exporting" @click="exportCsv">{{ exporting ? '正在导出' : '导出数据' }}</button></template>
+    </UFilterBar></div>
 
     <div v-if="S" class="stats-basis">{{ sourceLabel }} · 生成于 {{ generatedLabel }}；目标按首次发现时间归属，合法性与风险为生成时状态。</div>
     <UKpis v-if="S" :list="kpiList" />
@@ -286,6 +267,8 @@ function onRegionTab(e) {
 </template>
 
 <style scoped>
+.stats-filters { border: 0; }
+.stats-date-filter { --filter-field-width: 340px; }
 .stats-page { container-type:inline-size; }
 .stats-summary-grid { display:grid;grid-template-columns:minmax(0, 1.35fr) minmax(0, 1fr);gap:14px;margin-top:12px;padding-bottom:12px; }
 .stats-summary-grid > .panel { height:320px; }

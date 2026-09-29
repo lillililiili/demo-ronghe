@@ -18,7 +18,8 @@ import ModuleStatistics from '@/components/ModuleStatistics.vue';
 import { useModuleStatistics } from '@/hooks/useModuleStatistics.js';
 import { getHandoffStatistics } from '@/services/handoffApi.js';
 import UPagination from '@/components/UPagination.vue';
-import UControl from '@/components/form/UControl.vue';
+import UField from '@/components/form/UField.vue';
+import UFilterBar from '@/components/form/UFilterBar.vue';
 import { UAV_STATE_TEXT as UAV_STATE_LABEL } from '@/ui/uavVerificationModal.js';
 import { handoffApi } from '@/services/handoffApi.js';
 import AdvisoryRecords from '@/components/disposal/AdvisoryRecords.vue';
@@ -282,16 +283,14 @@ onMounted(() => {
           <div class="row pn-main">
             <UPanel title="业务交接清单" panel-style="flex:6;min-width:0" nopad>
               <div id="pnList" class="pn-list">
-                <div class="toolbar pn-toolbar">
-                  <div class="toolbar-fields">
-                    <div class="field pn-status-filter"><label>送达状态</label><UControl v-model="filters.delivery_status" type="select" :options="deliveryOptions" :disabled="listLoading" size="small" /></div>
-                    <div class="field pn-status-filter"><label>签收回执</label><UControl v-model="filters.receipt_status" type="select" :options="receiptOptions" :disabled="listLoading" size="small" /></div>
-                    <div class="field pn-range"><label>提交时间</label><UControl v-model="filters.created" type="datetimerange" clearable :disabled="listLoading" size="small" start-placeholder="开始" end-placeholder="结束" /></div>
-                  </div>
-                  <div class="toolbar-actions">
-                    <button class="btn" type="button" :disabled="listLoading" @click="applyFilters">查询</button>
-                  </div>
-                </div>
+                <UFilterBar class="pn-toolbar">
+                  <UField id="pn-delivery" v-model="filters.delivery_status" label="送达状态" variant="filter" type="select" :options="deliveryOptions" :disabled="listLoading" />
+                  <UField id="pn-receipt" v-model="filters.receipt_status" label="签收回执" variant="filter" type="select" :options="receiptOptions" :disabled="listLoading" />
+                  <UField id="pn-created" v-model="filters.created" class="pn-range" label="提交时间" variant="filter" type="datetimerange" clearable :disabled="listLoading" start-placeholder="开始时间" end-placeholder="结束时间" />
+                  <template #actions>
+                    <button class="btn pri" type="button" :disabled="listLoading" @click="applyFilters">查询</button>
+                  </template>
+                </UFilterBar>
                 <div v-if="listError" class="warnbox pn-error">{{ listError }} <button class="btn" type="button" :disabled="listLoading" @click="retryList">重试</button></div>
                 <div v-if="listLoading && !handoffs.length" class="empty">正在读取交接清单</div>
                 <div v-else-if="!listError && !handoffs.length" class="empty">当前筛选与权限范围内暂无无人机事件处罚交接。</div>
@@ -412,16 +411,14 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.pn-body { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.pn-body { display: flex; flex-direction: column; min-height: 0; overflow: auto; }
 .pn-forbidden, .pn-note { margin: 0 0 12px; }
-/* 清单和详情各自滚动；主体填满剩余高度，避免固定最小高度撑出外层滚动条。 */
-.pn-main { align-items: stretch; gap: var(--gap); min-height: 0; flex: 1; overflow: hidden; }
+/* 清单和详情各自滚动；筛选换行时保留记录区，矮窗口通过 pn-body 查看下方统计。 */
+.pn-main { align-items: stretch; gap: var(--gap); min-height: 440px; flex: 1 0 440px; overflow: hidden; }
 .pn-main :deep(.panel > .pb) { display: flex; flex-direction: column; overflow: hidden; }
 .pn-list { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-.pn-toolbar { padding: 10px; flex-wrap: wrap; }
-.pn-toolbar .toolbar-fields { flex-wrap: wrap; flex: 1; min-width: 0; }
-.pn-toolbar .pn-status-filter { flex: 1 1 180px; min-width: 180px; }
-.pn-toolbar .pn-range { flex: 1 1 320px; min-width: 0; }
+.pn-toolbar { --filter-field-width: 160px; }
+.pn-range { --filter-field-width: 380px; }
 .pn-status { min-width: 110px; white-space: nowrap; }
 .pn-status .tag { white-space: nowrap; height: auto; }
 :deep(.pn-kpis) { grid-template-columns: repeat(5, minmax(0, 1fr)); }

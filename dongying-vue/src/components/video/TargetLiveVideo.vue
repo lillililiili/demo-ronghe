@@ -66,17 +66,16 @@ onUnmounted(() => { alive = false; clear(); });
       <slot name="actions"><button class="btn" type="button" :aria-expanded="expanded" @click="toggle">{{ expanded ? '收起视频' : '查看视频' }}</button></slot></div>
     </header>
     <div v-if="expanded && active" class="video-content">
-      <p v-if="compact && state.simulated" class="video-context">当前目标画面，不代表历史事发画面</p>
-      <p v-else-if="!compact && contextLabel" class="video-context">{{ contextLabel }} · 当前目标画面，不代表历史事发画面</p>
+      <p v-if="state.playable" class="video-context"><span v-if="!compact && contextLabel">{{ contextLabel }} · </span>当前画面，非事发录像</p>
       <p v-if="reason" role="status">{{ reason }}</p>
       <p v-else-if="error" role="alert" class="video-error">{{ error }}</p>
       <template v-else>
-        <p v-if="loading && !checked" role="status">正在读取视频关联状态</p>
+        <p v-if="loading && !checked" role="status">视频读取中</p>
         <p v-else role="status">{{ state.message }}</p>
         <AuthenticatedHlsVideo v-if="state.playable" :target-id="targetId" :video="video" />
-        <p v-if="state.simulated" class="video-context">测试视频源，仅供联调；不作为正式现场影像。</p>
+        <p v-if="state.simulated" class="video-context">测试画面，非现场实拍</p>
       </template>
-      <button v-if="!reason && !compact" class="btn refresh-video" type="button" :disabled="loading" @click="reloadVideo">{{ loading ? '正在读取' : '刷新视频状态' }}</button>
+      <button v-if="!reason && !compact" class="btn refresh-video" type="button" aria-label="刷新视频状态" :disabled="loading" @click="reloadVideo">{{ loading ? '读取中' : '刷新' }}</button>
     </div>
   </section>
 </template>

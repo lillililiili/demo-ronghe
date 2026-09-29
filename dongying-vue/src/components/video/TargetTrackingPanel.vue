@@ -26,6 +26,16 @@ const statusText = computed(() => ({
   END_UNCONFIRMED: '结束结果未确认', FAILED: '跟踪失败', PAUSED: '自动追踪已暂停',
   BLOCKED: '当前无法追踪', DISABLED: '自动追踪未启用', ENDED: '跟踪已结束'
 })[state.value?.status] || '跟踪状态未确认');
+const statusDetail = computed(() => {
+  const message = (state.value?.message || '')
+    .replace('目标位置已过期或轨迹不可用，不能以失联推断飞离', '位置过期或轨迹不可用，飞离未确认')
+    .replace('已收到跟踪回执；视频可用性独立显示', '')
+    .replace('此目标已暂停自动追踪', '')
+    .replace('自动追踪能力未启用', '')
+    .replace('存在观察需求，等待后台调度可用设备', '')
+    .replace(/^；/, '');
+  return message === statusText.value ? '' : message;
+});
 const pauseLabel = computed(() => ['STARTING', 'TRACKING', 'LOST', 'ENDING', 'END_UNCONFIRMED'].includes(state.value?.status)
   ? '暂停并结束' : '暂停自动追踪');
 let generation = 0, contextGeneration = 0, timer = null, controller = null, alive = true;
@@ -110,7 +120,7 @@ onUnmounted(() => { alive = false; invalidate(); });
 <template>
   <section class="target-tracking-panel" :class="{ compact }" aria-label="光电追踪与视频">
     <div class="tracking-head"><strong>光电追踪</strong>
-      <button v-if="!reason && active" class="btn" type="button" :disabled="loading || busy" @click="refresh()">{{ loading ? '正在读取' : '刷新跟踪状态' }}</button>
+      <button v-if="!reason && active" class="btn" type="button" aria-label="刷新跟踪状态" :disabled="loading || busy" @click="refresh()">{{ loading ? '读取中' : '刷新' }}</button>
     </div>
     <p v-if="reason" role="status">{{ reason }}</p>
     <p v-else-if="!active" role="status">切换回当前页面后读取跟踪状态。</p>
@@ -118,9 +128,8 @@ onUnmounted(() => { alive = false; invalidate(); });
     <template v-else-if="active">
       <p v-if="loading && !state" role="status">正在读取跟踪状态</p>
       <template v-else-if="state">
-        <p role="status">{{ statusText }}<span v-if="state.message && state.message !== statusText"> · {{ state.message }}</span></p>
-        <p v-if="state.demand_reasons?.length" class="tracking-detail">观察需要：{{ state.demand_reasons.map(item => item.label || item.code).join('、') }}</p>
-        <p class="tracking-detail">自动能力：{{ state.auto_enabled === true ? '已启用' : state.auto_enabled === false ? '未启用' : '状态未知' }}<span v-if="state.auto_paused === true"> · 当前目标已暂停</span></p>
+        <p role="status">{{ statusText }}<span v-if="statusDetail"> · {{ statusDetail }}</span></p>
+        <p v-if="state.status !== 'DISABLED' && state.status !== 'PAUSED'" class="tracking-detail">自动追踪{{ state.auto_enabled === true ? '已启用' : state.auto_enabled === false ? '未启用' : '状态未知' }}<span v-if="state.auto_paused === true"> · 已暂停</span></p>
         <p v-if="state.task" class="tracking-detail">任务：{{ state.task.origin === 'AUTO' ? '自动' : state.task.origin === 'MANUAL' ? '人工' : '来源未知' }}<span v-if="state.task.device_name"> · {{ state.task.device_name }}</span></p>
         <div v-if="actions.length" class="tracking-actions">
           <button v-if="actions.includes('BEGIN')" class="btn" type="button" @click="perform('BEGIN')">人工补跟踪</button>
@@ -132,7 +141,8 @@ onUnmounted(() => { alive = false; invalidate(); });
     </template>
     <p v-if="busy" role="status">正在提交操作，随后读取最新状态。</p>
     <p v-if="actionMessage" class="tracking-error" role="alert">{{ actionMessage }}</p>
-    <TargetLiveVideo :target-id="targetId" :context-label="contextLabel" :active="active"
+    <TargetLiveVideo v-if="state && !state.auto_paused && state.status !== 'PAUSED'"
+      :target-id="targetId" :context-label="contextLabel" :active="active"
       :compact="compact" :unavailable-reason="unavailableReason" />
   </section>
 </template>

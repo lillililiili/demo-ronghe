@@ -6,6 +6,8 @@ export function targetVideoState(targetId, video) {
   const labels = { NOT_CONFIGURED: '视频源未接入', WAITING: '等待视频源就绪', AVAILABLE: '视频源已就绪', INTERRUPTED: '视频已中断' };
   const playable = video.status === 'TRACKING' && video.video_status === 'AVAILABLE'
     && video.playback_type === 'HLS' && !!video.task_id && !!video.device_id && !!video.stream_id && !!video.playback_url;
-  return { message: video.reason || labels[video.video_status] || '视频状态未确认', playable,
+  const message = video.reason === '当前目标没有光电跟踪任务，暂无可查看画面。'
+    ? '暂无跟踪画面' : video.reason;
+  return { message: message || labels[video.video_status] || '视频状态未确认', playable,
     simulated: video.simulated === true || ['mock', 'replay'].includes(video.source_mode) };
 }

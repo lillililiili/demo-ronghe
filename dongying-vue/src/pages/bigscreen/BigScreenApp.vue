@@ -194,10 +194,19 @@ const closureItems = computed(() => {
 const targetSummary = computed(() => {
   return snapshot.value?.target_risk ? '' : dataState('assessments');
 });
+// 来源与模拟标记分别表达事实；live 但 simulated=true 仍不能标为真实接入。
+function deviceSourceLabel(data) {
+  const mode = String(data?.source_mode || '').toLowerCase();
+  if (mode === 'mixed') return data.simulated === true ? '混合来源·含模拟数据' : '混合来源';
+  if (mode === 'replay') return '回放数据';
+  if (mode === 'mock' || data?.simulated === true) return '模拟数据';
+  if (mode === 'live' && data.simulated === false) return '';
+  return '来源待确认';
+}
 const deviceSummary = computed(() => {
   const d = snapshot.value?.devices;
   if (!d) return dataState('devices');
-  return d.simulated ? '演示数据' : '';
+  return deviceSourceLabel(d);
 });
 const alarmSummary = computed(() => {
   if (!avail('alarms')) return dataState('alarms');
@@ -452,12 +461,12 @@ onBeforeUnmount(() => {
         </aside>
         <main class="bs-mid">
           <div class="bs-kpis"><div v-for="item in kpis" :key="item.label" class="kpi" :style="{ '--kpi-tone': item.color }"><div class="bs-kpi-art" aria-hidden="true"><img v-if="item.image" :src="item.image" alt=""><div v-else class="bs-kpi-symbol"><n-icon :component="item.icon"/></div></div><div class="lb">{{ item.label }}</div><div class="v">{{ item.value }}</div></div></div>
-          <div class="bs-map-shell" role="img" aria-label="东营全域融合态势地图，展示目标、设备、空域与航迹"><div id="bsMap" ref="mapEl" class="bs-map" inert></div></div>
+          <div class="bs-map-shell" role="region" aria-label="东营全域融合态势地图，可拖动和缩放，展示目标、设备、空域与航迹"><div id="bsMap" ref="mapEl" class="bs-map"></div></div>
           <BigScreenBottomStats :detail="operationsStats"/>
         </main>
         <aside class="bs-col bs-col-right">
           <section class="panel">
-            <div class="ph"><h3>设备健康与异常</h3><span class="sub">{{ deviceSummary }}</span></div>
+            <div class="ph bs-device-heading"><h3>设备健康与异常</h3><span class="sub">{{ deviceSummary }}</span></div>
             <div class="pb bs-health-body">
               <div class="bs-health-metrics">
                 <div class="bs-health-metric"><b>{{ dash(snapshot?.devices?.online_rate) }}<small>%</small></b><div class="bs-stat-base" aria-hidden="true"></div><span>设备在线率</span></div>
@@ -481,7 +490,7 @@ onBeforeUnmount(() => {
             </div>
           </section>
           <section class="panel">
-            <div class="ph"><h3>设备类型与在线情况</h3><span v-if="deviceTypes.data?.simulated" class="sub">演示数据</span></div>
+            <div class="ph bs-device-heading"><h3>设备类型与在线情况</h3><span v-if="deviceTypes.data" class="sub">{{ deviceSourceLabel(deviceTypes.data) }}</span></div>
             <div class="pb bs-device-types-body">
               <div class="bs-device-type-head"><span>设备类型</span><span>在线设备 / 总数</span></div>
               <div v-if="deviceTypeRows.length" class="bs-device-type-list">

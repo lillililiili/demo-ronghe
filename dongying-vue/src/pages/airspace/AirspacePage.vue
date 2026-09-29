@@ -632,12 +632,12 @@ onUnmounted(() => {
 .airspace-detail-slot { grid-area: detail; display: flex; min-height: 0; min-width: 0; }
 .airspace-page:not(.has-detail) .airspace-stage { grid-column: 2 / -1; }
 .airspace-map-area { position: relative; flex: 1; min-width: 0; overflow: hidden; }
-.airspace-reference-tip { position: absolute; z-index: 9; box-sizing: border-box; pointer-events: none; padding: 10px 12px; display: grid; gap: 4px; background: rgba(7,18,45,.96); border: 1px solid var(--cyan); border-radius: 6px; color: var(--txt); font-size: 12px; box-shadow: 0 5px 18px #0003; overflow-wrap: anywhere; }
+.airspace-reference-tip { position: absolute; z-index: 9; box-sizing: border-box; pointer-events: none; padding: 10px 12px; display: grid; gap: 4px; background: var(--surface-3); border: 1px solid var(--cyan); border-radius: 6px; color: var(--txt); font-size: 12px; box-shadow: 0 5px 18px #0003; overflow-wrap: anywhere; }
 .airspace-reference-tip > span { color: var(--cyan); font-size: 11px; }
 .airspace-reference-tip p { margin: 0; line-height: 1.5; }
 .airspace-map { position: absolute; inset: 0; }
 
-.airspace-legend { position: absolute; right: 12px; bottom: 12px; z-index: 6; max-height: calc(100% - 66px); max-width: 220px; overflow: auto; padding: 8px 10px; background: rgba(7,18,45,.92); border: 1px solid var(--line); border-radius: 6px; backdrop-filter: blur(3px); }
+.airspace-legend { position: absolute; right: 12px; bottom: 12px; z-index: 6; max-height: calc(100% - 66px); max-width: 220px; overflow: auto; padding: 8px 10px; background: var(--surface-3); border: 1px solid var(--line); border-radius: 6px; backdrop-filter: none; }
 .airspace-legend > .legend-item { margin-top: 4px; }
 .airspace-legend > .legend-empty { display: block; margin-top: 5px; }
 .airspace-legend:not([open]) > :not(summary) { display: none; }
@@ -653,7 +653,7 @@ onUnmounted(() => {
 .risk-layer-toggle { margin-top: 6px; padding-top: 8px; border-top: 1px solid var(--line); }
 .risk-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--red, #ff4d5e); border: 2px solid #fff; margin: 0 3px; }
 .target-dot { width: 10px; height: 10px; background: var(--cyan, #22d3ee); border: 2px solid #fff; margin: 0 3px; }
-.airspace-risk-tip { position: absolute; z-index: 6; left: 12px; bottom: 12px; max-width: min(420px, 48%); padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; background: rgba(7,18,45,.96); border: 1px solid var(--line); border-radius: 6px; font-size: 12px; }
+.airspace-risk-tip { position: absolute; z-index: 6; left: 12px; bottom: 12px; max-width: min(420px, 48%); padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; background: var(--surface-3); border: 1px solid var(--line); border-radius: 6px; font-size: 12px; }
 .airspace-risk-tip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .drawer-risk-summary { display: flex; flex-direction: column; gap: 6px; padding: 12px 0; margin-top: 10px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); font-size: 13px; }
 .drawer-risk-summary small { color: var(--txt-3); line-height: 1.5; }
@@ -670,7 +670,7 @@ onUnmounted(() => {
 .rule-pager .btn { padding: 4px 7px; font-size: 11px; }
 .rule-pager :deep(.n-select) { width: 95px; margin-left: auto; }
 
-.airspace-map-empty { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); z-index: 6; padding: 6px 14px; border-radius: 20px; font-size: 12.5px; background: rgba(7,18,45,.92); border: 1px solid var(--line); color: var(--txt-2); white-space: nowrap; }
+.airspace-map-empty { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); z-index: 6; padding: 6px 14px; border-radius: 20px; font-size: 12.5px; background: var(--surface-3); border: 1px solid var(--line); color: var(--txt-2); white-space: nowrap; }
 .airspace-map-empty { top: 50%; transform: translate(-50%, -50%); }
 
 .airspace-drawer { display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; background: var(--surface-gradient); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }

@@ -252,7 +252,7 @@ function reviewText(item) {
   return reviewStateText(item?.review?.state);
 }
 function conclusionQualificationText(item) {
-  if (unconfirmedParams(item)) return '参数未确认 · 正式判定不可用';
+  if (unconfirmedParams(item)) return '参数未确认';
   if (!['LEGAL', 'ILLEGAL'].includes(item?.legal_status)) return '';
   const focus = legalityReviewFocus(item);
   if (!focus.needsReview) return '';
@@ -890,7 +890,7 @@ onMounted(() => {
 .lg-plan-cell{display:flex;align-items:center;gap:6px;font-size:12px;overflow-wrap:anywhere}.lg-plan-cell>span:first-child{display:flex;flex:none}.lg-plan-number{min-width:0;word-break:break-all;overflow-wrap:anywhere;white-space:normal;line-height:1.5}
 .lg-status-tag{display:inline-flex;justify-content:center;align-items:center;min-width:58px;padding:4px 8px;border:1px solid currentColor;border-radius:4px;font-size:13px;white-space:nowrap;line-height:1.4}
 .lg-verdict-tags{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
-.lg-qualification-tag{min-width:0;padding:3px 6px;font-size:11px}
+.lg-qualification-tag{min-width:0;max-width:100%;padding:3px 6px;font-size:11px;white-space:normal;overflow-wrap:anywhere}
 .lg-status-tag.is-green{color:var(--green);background:rgba(23,181,140,.12);border-color:rgba(23,181,140,.28)}.lg-status-tag.is-red{color:var(--red);background:rgba(244,70,88,.12);border-color:rgba(244,70,88,.28)}.lg-status-tag.is-amber{color:var(--amber);background:rgba(230,162,58,.12);border-color:rgba(230,162,58,.28)}
 .lg-verdict-cell .lg-row-risk{display:block;margin-top:5px;color:var(--txt-3);font-size:11px;white-space:nowrap}.lg-reason-cell{display:block;overflow-wrap:anywhere;font-size:12px;line-height:1.6}.lg-time-cell{font-size:12px;line-height:1.6;font-variant-numeric:tabular-nums}
 .legality-workbench :deep(.svg-icon){width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7}

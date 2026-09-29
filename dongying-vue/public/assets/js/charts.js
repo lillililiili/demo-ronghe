@@ -60,7 +60,7 @@
       symbol: 'circle', symbolSize: s.symbolSize || 5,
       yAxisIndex: s.yAxisIndex || 0,
       lineStyle: { width: 2.2, color: s.color || PALETTE[i], shadowColor: (s.color || PALETTE[i]) + 'aa', shadowBlur: 7 },
-      itemStyle: { color: s.color || PALETTE[i], borderWidth: 2, borderColor: '#0b192a' },
+      itemStyle: { color: s.color || PALETTE[i], borderWidth: 2, borderColor: token('--chart-border') },
       label: s.label ? { show: true, color: s.color || PALETTE[i], fontSize: 10, position: 'top' } : { show: false },
       areaStyle: s.area ? {
         color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
@@ -72,8 +72,8 @@
       tooltip: Object.assign({ trigger: 'axis' }, TIP),
       legend: o.legend === false ? { show: false } : Object.assign({ right: 6, top: 2 }, LEG),
       xAxis: Object.assign({ type: 'category', data: o.x, boundaryGap: false }, AX, { splitLine: { show: false } }),
-      yAxis: [Object.assign({ type: 'value', name: o.yName, scale: !!o.yScale, nameTextStyle: { color: '#6c86ad', fontSize: 10 } }, AX)]
-        .concat(o.y2 ? [Object.assign({ type: 'value', name: o.y2, nameTextStyle: { color: '#6c86ad', fontSize: 10 } }, AX, { splitLine: { show: false } })] : []),
+      yAxis: [Object.assign({ type: 'value', name: o.yName, scale: !!o.yScale, nameTextStyle: { color: token('--chart-caption'), fontSize: 10 } }, AX)]
+        .concat(o.y2 ? [Object.assign({ type: 'value', name: o.y2, nameTextStyle: { color: token('--chart-caption'), fontSize: 10 } }, AX, { splitLine: { show: false } })] : []),
       series
     });
   }
@@ -85,11 +85,11 @@
       tooltip: Object.assign({ trigger: 'axis', axisPointer: { type: 'shadow' } }, TIP),
       legend: o.legend === false ? { show: false } : Object.assign({ right: 6, top: 2 }, LEG),
       xAxis: Object.assign({ type: 'category', data: o.x }, AX, { splitLine: { show: false } }),
-      yAxis: Object.assign({ type: 'value', name: o.yName, nameTextStyle: { color: '#6c86ad', fontSize: 10 } }, AX),
+      yAxis: Object.assign({ type: 'value', name: o.yName, nameTextStyle: { color: token('--chart-caption'), fontSize: 10 } }, AX),
       series: o.series.map((s, i) => ({
         name: s.name, type: 'bar', data: s.data, barMaxWidth: s.width || 26,
         stack: s.stack, showBackground: true, backgroundStyle: { color: 'rgba(125,165,210,.035)', borderRadius: [4, 4, 0, 0] },
-        label: s.label !== false ? { show: true, position: 'top', color: '#9fb6d9', fontSize: 10, formatter: s.fmt } : { show: false },
+        label: s.label !== false ? { show: true, position: 'top', color: token('--chart-legend'), fontSize: 10, formatter: s.fmt } : { show: false },
         itemStyle: {
           borderRadius: [5, 5, 1, 1],
           color: s.colorBy ? (p => s.colorBy(p)) : new echarts.graphic.LinearGradient(0, 0, 0, 1, [
@@ -105,10 +105,10 @@
       grid: Object.assign({ left: 96, right: 44, top: 8, bottom: 8 }, o.grid),
       tooltip: Object.assign({ trigger: 'axis', axisPointer: { type: 'shadow' } }, TIP),
       xAxis: Object.assign({ type: 'value', show: false }, AX),
-      yAxis: Object.assign({ type: 'category', data: o.y, inverse: true }, AX, { splitLine: { show: false }, axisLine: { show: false }, axisLabel: { color: '#8ba3c7', fontSize: 11, width: 90, overflow: 'truncate' } }),
+      yAxis: Object.assign({ type: 'category', data: o.y, inverse: true }, AX, { splitLine: { show: false }, axisLine: { show: false }, axisLabel: { color: token('--chart-label'), fontSize: 11, width: 90, overflow: 'truncate' } }),
       series: [{
         type: 'bar', data: o.data, barMaxWidth: 13,
-        label: { show: true, position: 'right', color: '#cfe0f8', fontSize: 11 },
+        label: { show: true, position: 'right', color: token('--chart-value'), fontSize: 11 },
         showBackground: true, backgroundStyle: { color: 'rgba(125,165,210,.035)', borderRadius: 5 },
         itemStyle: {
           borderRadius: 5,
@@ -141,12 +141,12 @@
     const legFs = o.data.length >= 7 ? 10 : 11;
     const legend = o.legend === false ? { show: false } : (narrow
       ? Object.assign({ orient: 'horizontal', bottom: 0, left: 'center', itemGap: 6, itemWidth: 8, itemHeight: 8, type: 'scroll',
-          pageIconColor: '#9fb6d9', pageIconSize: 10, pageTextStyle: { color: '#9fb6d9', fontSize: 10 },
-          textStyle: { color: '#9fb6d9', fontSize: 10 },
+          pageIconColor: token('--chart-legend'), pageIconSize: 10, pageTextStyle: { color: token('--chart-legend'), fontSize: 10 },
+          textStyle: { color: token('--chart-legend'), fontSize: 10 },
           formatter: n => { const d = o.data.find(x => x.name === n); return `${n} ${d ? d.value.toLocaleString() : ''}`; } }, {})
       : Object.assign({ orient: 'vertical', right: 4, top: 'center', itemGap: o.data.length >= 7 ? 6 : 9, type: 'scroll',
-          pageIconColor: '#9fb6d9', pageTextStyle: { color: '#9fb6d9' },
-          textStyle: { color: '#9fb6d9', fontSize: legFs, width: Math.max(90, w - w * parseFloat(center[0]) / 100 - Math.min(w, h) * parseFloat(radius[1]) / 200 - 30), overflow: 'truncate' },
+          pageIconColor: token('--chart-legend'), pageTextStyle: { color: token('--chart-legend') },
+          textStyle: { color: token('--chart-legend'), fontSize: legFs, width: Math.max(90, w - w * parseFloat(center[0]) / 100 - Math.min(w, h) * parseFloat(radius[1]) / 200 - 30), overflow: 'truncate' },
           formatter: n => { const d = o.data.find(x => x.name === n); return `${n}  ${d ? d.value.toLocaleString() : ''}${o.showPct !== false && d ? ' (' + (d.value / total * 100).toFixed(1) + '%)' : ''}`; } }, {}));
     const showCenter = o.centerText !== false;
     return make(el, {
@@ -156,7 +156,7 @@
         type: 'pie', radius, center,
         avoidLabelOverlap: true, labelLine: { show: false },
         label: { show: false },
-        itemStyle: { borderColor: '#0b192a', borderWidth: 3, shadowColor: 'rgba(0,0,0,.18)', shadowBlur: 5 },
+        itemStyle: { borderColor: token('--chart-border'), borderWidth: 3, shadowColor: 'rgba(0,0,0,.18)', shadowBlur: 5 },
         data: o.data.map((d, i) => ({ name: d.name, value: d.value, itemStyle: { color: d.c || (o.colors ? o.colors[i] : PALETTE[i % 8]) } }))
       }].concat(showCenter ? [{
         // 透明占位系列,专门承载几何居中的中心文字(label position:center 以 series center 为锚点)
@@ -165,8 +165,8 @@
           show: true, position: 'center',
           formatter: `{a|${o.centerLabel || '总计'}}\n{b|${(o.centerValue != null ? o.centerValue : total).toLocaleString()}}`,
           rich: {
-            a: { color: '#8ba3c7', fontSize: 11, lineHeight: 16 },
-            b: { color: '#e6f0ff', fontSize: 17, fontWeight: 700, lineHeight: 22, fontFamily: 'Menlo' }
+            a: { color: token('--chart-label'), fontSize: 11, lineHeight: 16 },
+            b: { color: token('--chart-detail'), fontSize: 17, fontWeight: 700, lineHeight: 22, fontFamily: 'Menlo' }
           }
         },
         labelLine: { show: false }, itemStyle: { color: 'transparent' }, tooltip: { show: false },
@@ -183,8 +183,8 @@
         pointer: { show: false }, progress: { show: true, roundCap: true, width: 9, itemStyle: { color: o.color || C.blue } },
         axisLine: { lineStyle: { width: 9, color: [[1, 'rgba(125,165,210,.10)']] } },
         splitLine: { show: false }, axisTick: { show: false }, axisLabel: { show: false },
-        title: { show: !!o.label, offsetCenter: [0, '26%'], color: '#8ba3c7', fontSize: 11 },
-        detail: { valueAnimation: true, offsetCenter: [0, '-4%'], fontSize: o.fs || 20, color: '#e6f0ff', formatter: o.fmt || (v => v + '%') },
+        title: { show: !!o.label, offsetCenter: [0, '26%'], color: token('--chart-label'), fontSize: 11 },
+        detail: { valueAnimation: true, offsetCenter: [0, '-4%'], fontSize: o.fs || 20, color: token('--chart-detail'), formatter: o.fmt || (v => v + '%') },
         data: [{ value: o.value, name: o.label || '' }]
       }]
     });

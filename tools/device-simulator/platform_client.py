@@ -5,6 +5,7 @@ import json
 import os
 import re
 import subprocess
+import time
 import urllib.error
 import urllib.request
 import urllib.parse
@@ -21,7 +22,7 @@ class Platform:
         self.on_unauthorized = None
         self.http = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
-    def call(self, method, path, body=None, key=None):
+    def call(self, method, path, body=None, key=None, *, timeout=12):
         headers = {'Content-Type': 'application/json'}
         if self.token:
             headers['Authorization'] = 'Bearer ' + self.token
@@ -29,7 +30,7 @@ class Platform:
             headers['Idempotency-Key'] = key or str(uuid.uuid4())
         req = urllib.request.Request(self.base+path, data=None if body is None else json.dumps(body).encode(), headers=headers, method=method)
         try:
-            with self.http.open(req, timeout=12) as response:
+            with self.http.open(req, timeout=timeout) as response:
                 value = json.load(response)
         except urllib.error.HTTPError as error:
             if error.code == 401 and self.on_unauthorized:
@@ -76,6 +77,41 @@ class Platform:
                         raise ValueError('系统未提供有效光电主题')
                     manifest['devices'][device_id][key] = value
             checkpoint()
+
+    def wait_for_subscriptions(self, manifest, broker, cancel, timeout=30):
+        """Wait for the backend's SUBACK facts, before publishing even a heartbeat."""
+        deadline = time.monotonic() + timeout
+        pending = [d['external_id'] for d in manifest['devices'].values()]
+        while not cancel.is_set():
+            pending = []
+            # Recheck every device each round: an earlier ready session may disconnect.
+            for device in manifest['devices'].values():
+                if cancel.is_set():
+                    return False
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise ValueError('后台 MQTT 订阅等待超时，未开始发送')
+                status = self.call('GET', '/devices/' + device['platform_id'] + '/protocol-status',
+                                   timeout=min(12, remaining))
+                details = status.get('details') or {}
+                if (status.get('device_id') != device['platform_id']
+                        or status.get('source_mode') != 'replay'
+                        or details.get('broker_id') != broker['broker_id']
+                        or details.get('external_device_id') != device['external_id']):
+                    raise ValueError('后台 MQTT 设备绑定不一致，未开始发送：' + device['external_id'])
+                if not (details.get('connection_state') == 'CONNECTED'
+                        and details.get('broker_enabled') is True
+                        and details.get('subscribed') is True):
+                    pending.append(device['external_id'])
+            if cancel.is_set():
+                return False
+            if not pending and time.monotonic() < deadline:
+                return True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ValueError('后台 MQTT 订阅等待超时，未开始发送：' + '、'.join(pending))
+            cancel.wait(min(.25, remaining))
+        return False
 
 
 def sql(value):

@@ -40,6 +40,7 @@ python3 tools/device-simulator/server.py --port 8766 --database houtaiguanli
 ## 数据流与保护
 
 - 设备注册：现有 `POST /api/v1/devices/onboard`，每次运行独立设备编号及幂等键，source_mode=replay。
+- 首帧保护（2026-09-30）：注册后先通过设备协议状态接口核对本批设备绑定，等待所有设备的后台连接及订阅确认，再开始计时和发送心跳、目标报文。等待上限 30 秒，失败或取消不开始发送；运行记录保存等待、就绪时间，历史缺失报文不补造。Broker 的 PUBACK 仍需与后台回读对账，不能单独证明业务已接收。
 - 雷达、5G-A、TDOA：复用 `LINGYUN_MQTT_V8_6` 工参和 SenseData 契约。QoS 1、retain=false；目标与批次身份固定，观测时间随实际发送更新，按速度和折线距离推进，终点停留，不循环瞬移。鸟群按数量生成独立观测编号、固定小范围编队偏移。
 - 光电：`EO_EDGE_MQTT_20250826` HeartBeat，以及真实订阅下发主题后的 BeginTracking / EndTracking / CameraStatus 模拟回执。匹配系统当前任务后才执行；可显式开启本机 TEST VIDEO 水印测试流，不表示现场实拍。
 - 离线：时间窗内停止该设备所有上报，恢复后正常上报；系统按自身超时阈值判离线。故障：协议 A workState=2，窗口结束后恢复原配置。

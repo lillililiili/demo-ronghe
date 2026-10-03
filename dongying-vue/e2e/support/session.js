@@ -82,16 +82,9 @@ export const EXPECTED_FAILED_RESPONSES = {
   reviewer1: [
     {
       status: 403,
-      match: /^\/api\/v1\/workbench\/items$/,
-      why: '外壳在每个路由上都拉工作台事项（4 次），而该角色没有 dashboard.read。'
-         + '页面自身处理得体（显示"当前账号没有工作台读取权限"），所以不算页面坏了；'
-         + '但"每加载一页必然四次越权请求"已报领导。'
-    },
-    {
-      status: 403,
       match: /^\/api\/v1\/evidence-chains\//,
       why: '告警页选中告警后取证据链，而该角色只有 alarms.read、没有 evidence.read。'
-         + '同上：已报领导，等动作权限接线后应由页面按权限决定发不发这个请求。'
+         + '已报领导，等动作权限接线后应由页面按权限决定发不发这个请求。'
     }
   ]
 };

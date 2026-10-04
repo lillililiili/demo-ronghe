@@ -328,6 +328,8 @@ export function toTargets(targets, legalMap) {
       lon: posValid ? lon : null,
       lat: posValid ? lat : null,
       posValid,
+      // 设备测算的遥控器位置，原样保留给弹窗显示；没有就是 null。
+      pilotLocation: state?.pilot_location || null,
       alt: num(state && state.altitude_amsl_m),
       speed: num(state && state.speed_mps),
       heading: num(state && state.heading_deg),

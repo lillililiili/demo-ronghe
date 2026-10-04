@@ -35,6 +35,7 @@ import {
   disposalStatusText, labelOf, readableNo
 } from '@/ui/labels.js';
 import { chainTypeCards, openEvidenceChainTypeModal } from '@/ui/evidenceChainView.js';
+import { pilotLocationText } from '@/services/pilotLocation.js';
 
 usePageChrome('punish');
 const root = ref(null);
@@ -391,6 +392,7 @@ onMounted(() => {
                         <dt>告警类型</dt><dd>{{ labelOf(ALARM_TYPE_LABEL, selected.material.event.alarm_type, '未提供') }}</dd>
                         <dt>提交时状态</dt><dd>{{ labelOf(UAV_STATE_LABEL, selected.material.event.state, '未提供') }}</dd>
                         <dt>发生时间</dt><dd>{{ formatTime(selected.material.event.occurred_at) }}</dd>
+                        <dt>遥控器位置</dt><dd>{{ pilotLocationText(selected.material.pilot_location) }}</dd>
                       </dl>
                       <div v-if="selected.material.verifications?.length" class="pn-sub pn-wrap">
                         <div v-for="(vr, i) in selected.material.verifications" :key="i">

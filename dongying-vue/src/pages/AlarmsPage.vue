@@ -1,10 +1,11 @@
 <script>
 /* 模块级状态：跨导航保持（legacy 约定）。
    level/status 映射为服务端契约的 severity/state；kind/region 为类别、区域筛选（阶段 15 契约）；
-   sort/order 随列表与导出请求一起发给服务端（阶段 15 契约白名单四个键），页面不做假排序。 */
+   sort/order 随列表与导出请求一起发给服务端（阶段 15 契约白名单四个键），页面不做假排序。
+   默认 priority：未处理在前，其中等级高、等得久的在前，已处理在后（2026-10-04 用户确认）。 */
 const S = {
   st: { page: 1, size: 10, level: '全部', status: '全部', kind: '全部', region: '全部', sel: null, selId: null,
-    sort: 'received_at', order: 'desc' }
+    sort: 'priority', order: 'desc' }
 };
 export default {};
 </script>
@@ -29,6 +30,7 @@ import UKpis from '@/components/UKpis.vue';
 import { handoffApi } from '@/services/handoffApi.js';
 import { toast } from '@/ui/nv.js';
 import { exportAlarmsCsv, getAlarm, getUavEvent, listAlarmDistricts, listAlarms } from '@/services/alarmApi.js';
+import { NO_PILOT_LOCATION, pilotLocationText } from '@/services/pilotLocation.js';
 import { getEvidenceChain } from '@/services/evidenceApi.js';
 import { openUavVerification } from '@/ui/uavVerificationModal.js';
 import { targetApi } from '@/services/targetApi.js';
@@ -429,7 +431,8 @@ function sortTh(key, label) {
 }
 
 function queryOf() {
-  const q = { page: st.page, size: st.size, sort: st.sort, order: st.order };
+  const q = { page: st.page, size: st.size, sort: st.sort };
+  if (st.sort !== 'priority') q.order = st.order;
   if (st.level !== '全部') q.severity = st.level;
   if (st.status !== '全部') q.state = st.status;
   if (st.kind !== '全部') q.alarm_type = st.kind;
@@ -524,6 +527,8 @@ function detailHtml() {
     ['关联目标', a.target_id ? `<span class="mono" title="${esc(a.target_id)}">${esc(a.target_no || a.target_id)}</span>` : '无关联目标或无目标读取权限'],
     ['目标类型', targetType],
     ['高度/速度', altSpeed],
+    ['遥控器位置', !a.target_id ? NO_PILOT_LOCATION : cur.targetLoading ? '读取中' : cur.targetError ? '读取失败'
+      : esc(pilotLocationText(ls && ls.pilot_location))],
     ['数据来源', `${esc(sourceDescription(a.source_name, a.source_code, a.source_mode, '—'))}`]
   ], { surface: true, density: 'compact' }), { icon: 'alert' })}
     ${renderEvidenceChainHtml(cur.chain, {
@@ -880,7 +885,9 @@ onMounted(async () => {
   const toggleSort = (btn) => {
     const field = SORT_KEYS[btn.dataset.sort];
     if (!field) return toast(SORT_NOT_SUPPORTED, 'err');
-    if (st.sort === field) st.order = st.order === 'asc' ? 'desc' : 'asc';
+    // 同一列依次：倒序 → 正序 → 回到默认次序（未处理优先）。
+    if (st.sort === field && st.order === 'asc') { st.sort = 'priority'; st.order = 'desc'; }
+    else if (st.sort === field) st.order = 'asc';
     else { st.sort = field; st.order = 'desc'; }
     st.page = 1;
     loadList();

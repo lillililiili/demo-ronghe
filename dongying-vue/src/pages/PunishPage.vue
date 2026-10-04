@@ -12,6 +12,7 @@ export default {};
    通知与案件结果读取服务端，页面不再用本地标记代替送达。 */
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
+import { useRealtimeRefresh } from '@/hooks/useRealtimeRefresh.js';
 import UKpis from '@/components/UKpis.vue';
 import UPanel from '@/components/UPanel.vue';
 import ModuleStatistics from '@/components/ModuleStatistics.vue';
@@ -214,6 +215,24 @@ function selectHandoff(handoffId) {
   loadDetail(handoffId);
 }
 function retryList() { loadKpis(); loadList(page.value); }
+
+/* 实时刷新：移送或处罚变化后静默重读列表与统计；选中记录本身有变化时才重读详情。 */
+async function realtimeRefresh() {
+  if (listLoading.value || listError.value || !appliedQuery) return;
+  const token = ++listToken;
+  const before = JSON.stringify(handoffs.value.find(item => item.handoff_id === S.selectedHandoffId) || null);
+  void loadKpis();
+  try {
+    const data = await handoffApi.listHandoffs({ ...appliedQuery, page: page.value, size: size.value });
+    if (token !== listToken) return;
+    handoffs.value = data.items || [];
+    total.value = data.total;
+    void statistics.load(appliedQuery);
+    const after = JSON.stringify(handoffs.value.find(item => item.handoff_id === S.selectedHandoffId) || null);
+    if (S.selectedHandoffId && after !== before && after !== 'null') loadDetail(S.selectedHandoffId);
+  } catch { /* 静默刷新失败保留当前列表 */ }
+}
+useRealtimeRefresh(['punishment', 'alarm', 'evidence'], realtimeRefresh, { minIntervalMs: 2_000 });
 function retryDetail() { if (S.selectedHandoffId) loadDetail(S.selectedHandoffId); }
 
 async function loadChain(detail) {

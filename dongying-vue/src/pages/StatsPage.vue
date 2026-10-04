@@ -8,6 +8,7 @@
    · 图表与 KPI 读取 GET /api/v1/stats/operations，失败不回退 mock.js */
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
+import { useRealtimeRefresh } from '@/hooks/useRealtimeRefresh.js';
 import UPanel from '@/components/UPanel.vue';
 import UKpis from '@/components/UKpis.vue';
 import UField from '@/components/form/UField.vue';
@@ -171,6 +172,8 @@ async function load() {
 }
 
 onMounted(load);
+// 统计为按日聚合，业务数据变化后最多每 10 秒重算一次，避免图表频繁重绘。
+useRealtimeRefresh(['alarm', 'target', 'punishment', 'device', 'plan', 'risk'], () => (loading.value ? undefined : load()), { minIntervalMs: 10_000 });
 onUnmounted(() => { cancelled = true; window.CH?.disposeAll?.(); });
 
 async function exportCsv() {

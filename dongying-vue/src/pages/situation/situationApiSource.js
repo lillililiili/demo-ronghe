@@ -6,6 +6,7 @@ import { airspaceApi } from '@/services/airspaceApi.js';
 import { riskApi } from '@/services/riskApi.js';
 import { handoffApi } from '@/services/handoffApi.js';
 import { mapPool } from '@/services/apiClient.js';
+import { onDataChange } from '@/services/realtime.js';
 import { legalityApi } from '@/services/legalityApi.js';
 import { applyTrackComparison } from '@/services/trackPoints.js';
 import {
@@ -16,6 +17,9 @@ import {
 const DEVICE_TYPES = new Set(['RADAR', 'EO', 'FIVE_G_A', 'TDOA']);
 const FAST_MS = 5_000;
 const SLOW_MS = 60_000;
+const NUDGE_GAP_MS = 500;
+const MIN_NUDGE_INTERVAL_MS = 1_000;
+const SLOW_TOPICS = new Set(['device', 'plan', 'airspace', '*']);
 const RECENT_TRACK_WINDOW_MS = 5 * 60_000;
 
 async function allPages(load, params = {}) {
@@ -70,6 +74,7 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
   let lastSlowAt = 0;
   let emit = () => {};
   let report = () => {};
+  let unsubscribe = null;
   const routeVersions = new Map();
   const trajectoryComparisons = new Map();
   const failedSegments = new Set();
@@ -157,14 +162,31 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
     snapshot = { ...snapshot, targets: attachBearing(snapshot.targets, bearingOrigins(snapshot.devices)) };
   }
 
+  /* 后端推送数据变化时立即重读；设备、计划、空域变化顺带刷新资料组。进行中的一轮结束后再补一次。 */
+  let pendingNudge = false;
+  let pendingSlow = false;
+  let lastCycleAt = 0;
+  function nudge(topics) {
+    if (topics.some(topic => SLOW_TOPICS.has(topic))) pendingSlow = true;
+    if (stopped || paused) return;
+    if (running) { pendingNudge = true; return; }
+    clearTimer();
+    const wait = lastCycleAt + MIN_NUDGE_INTERVAL_MS - Date.now();
+    if (wait > 0) timer = globalThis.setTimeout(() => cycle(false), wait);
+    else void cycle(false);
+  }
+
   async function cycle(forceSlow = false) {
     if (stopped || paused || running) return;
     running = true;
+    pendingNudge = false;
+    lastCycleAt = Date.now();
     const generatedAt = now();
     try {
       // 实时目标与风险优先发起；资料请求并行，不再串在实时数据之前。
       const fast = refreshFast(generatedAt).then(() => publish(generatedAt));
-      const needsSlow = forceSlow || generatedAt - lastSlowAt >= slowMs;
+      const needsSlow = forceSlow || pendingSlow || generatedAt - lastSlowAt >= slowMs;
+      pendingSlow = false;
       const slow = needsSlow ? refreshSlow(generatedAt).then(() => { lastSlowAt = generatedAt; }) : Promise.resolve();
       await Promise.all([fast, slow]);
       if (needsSlow) {
@@ -174,7 +196,7 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
       }
     } finally {
       running = false;
-      if (!stopped && !paused) timer = globalThis.setTimeout(() => cycle(false), fastMs);
+      if (!stopped && !paused) timer = globalThis.setTimeout(() => cycle(false), pendingNudge ? NUDGE_GAP_MS : fastMs);
     }
   }
 
@@ -189,6 +211,8 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
       emit = typeof onSnapshot === 'function' ? onSnapshot : () => {};
       report = typeof onError === 'function' ? onError : () => {};
       stopped = false;
+      unsubscribe?.();
+      unsubscribe = onDataChange(['target', 'alarm', 'risk', 'punishment', 'legality', ...SLOW_TOPICS], topics => nudge(topics));
       paused = typeof document !== 'undefined' && document.hidden;
       if (!paused) void cycle(true);
       return () => api.stop();
@@ -200,7 +224,7 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
       clearTimer();
       if (!running) void cycle(true);
     },
-    stop() { stopped = true; paused = false; clearTimer(); },
+    stop() { stopped = true; paused = false; clearTimer(); unsubscribe?.(); unsubscribe = null; },
     async refresh() { await cycle(true); },
     async loadTargetDetail(targetId) {
       if (!targetId) return null;

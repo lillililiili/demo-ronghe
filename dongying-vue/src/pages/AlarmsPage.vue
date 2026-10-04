@@ -22,6 +22,7 @@ import AuthorizationQueue from '@/pages/alarms/AuthorizationQueue.vue';
 import { measuredMapPoints } from '@/services/trackPoints.js';
 import { ref, reactive, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
+import { useRealtimeRefresh } from '@/hooks/useRealtimeRefresh.js';
 import UPagination from '@/components/UPagination.vue';
 import UPanel from '@/components/UPanel.vue';
 import UKpis from '@/components/UKpis.vue';
@@ -654,16 +655,16 @@ function focusMap() {
 }
 
 /* ---------- 数据加载 ---------- */
-async function loadList() {
+async function loadList({ quiet = false } = {}) {
   const my = ++listSeq;
-  list.loading = true; list.error = '';
-  paintList();
+  // 实时刷新静默重读：保留当前列表直到新数据到达，不闪加载状态。
+  if (!quiet) { list.loading = true; list.error = ''; paintList(); }
   try {
     const page = await listAlarms(queryOf());
     if (my !== listSeq) return;
     list.rows = Array.isArray(page && page.items) ? page.items : [];
     totalCount.value = Number(page && page.total) || 0;
-    list.loading = false;
+    list.loading = false; list.error = '';
     if (!list.rows.length && st.page > 1 && totalCount.value) {
       st.page = Math.max(1, Math.ceil(totalCount.value / st.size));
       return loadList();
@@ -833,6 +834,19 @@ function verifyModal() {
     refresh: async () => { await refreshAfterWrite(); return cur.event; }
   });
 }
+
+/* 实时刷新：告警、研判、处置、证据或移送变化后静默重读列表与统计；
+   选中告警本身有变化时才重读详情，避免详情区随每次信号闪烁。 */
+async function realtimeRefresh() {
+  if (list.loading) return;
+  const selId = st.selId;
+  const rowKey = () => JSON.stringify(list.rows.find(row => row.alarm_id === selId) || null);
+  const before = rowKey();
+  await Promise.all([loadList({ quiet: true }), loadKpis()]);
+  const after = rowKey();
+  if (selId && st.selId === selId && !cur.loading && after !== before && after !== 'null') await selectAlarm(selId);
+}
+useRealtimeRefresh(['alarm', 'legality', 'disposal', 'evidence', 'punishment'], realtimeRefresh, { minIntervalMs: 2_000 });
 
 function onPage(p2) { st.page = p2; loadList(); }
 function onPageSize(s2) { st.size = s2; st.page = 1; loadList(); }

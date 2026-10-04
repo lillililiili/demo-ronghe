@@ -6,6 +6,7 @@ export default {};
 import { computed, nextTick, ref, reactive, watch, onMounted, onBeforeUnmount } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
+import { useRealtimeRefresh } from '@/hooks/useRealtimeRefresh.js';
 import UPagination from '@/components/UPagination.vue';
 import UPanel from '@/components/UPanel.vue';
 import UField from '@/components/form/UField.vue';
@@ -107,6 +108,19 @@ async function load() {
     error.value = e.message || '证据台账读取失败'; statistics.fail(e);
   } finally { if (mounted && own === listSequence) loading.value = false; }
 }
+/* 实时刷新：证据、告警或处置变化后静默重读列表和统计，保留选中项、详情与滚动位置。 */
+async function realtimeRefresh() {
+  if (!mounted || loading.value || error.value || !hasPermission('evidence:read') || routeError.value) return;
+  const own = ++listSequence;
+  try {
+    const filters = query(), result = await listEvidenceLedger(filters);
+    if (!mounted || own !== listSequence) return;
+    items.value = result.items || []; totalCount.value = result.total;
+    void statistics.load(filters);
+  } catch { /* 静默刷新失败保留当前列表，下次信号或手动刷新再读 */ }
+}
+useRealtimeRefresh(['evidence', 'alarm', 'disposal'], realtimeRefresh, { minIntervalMs: 2_000 });
+
 async function syncLocation() {
   clearDetail(); listSequence += 1;
   if (exact.value && !routeError.value) { const key = exactKeys.value[0]; st.selId = text(route.query[key]); st.sourceKind = { file: 'FILE', track: 'TRACK', command: 'COMMAND' }[key]; }

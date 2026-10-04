@@ -1,5 +1,6 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { useRealtimeRefresh } from '@/hooks/useRealtimeRefresh.js';
 import UPanel from '@/components/UPanel.vue';
 import UControl from '@/components/form/UControl.vue';
 import UPagination from '@/components/UPagination.vue';
@@ -69,9 +70,10 @@ function formatTime(value) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? '时间未知' : date.toLocaleString('zh-CN', { hour12: false });
 }
-async function load(next = page.value) {
+async function load(next = page.value, { quiet = false } = {}) {
   const seq = ++request, mode = view.value, filter = status.value;
-  loading.value = true; error.value = ''; loadedAt.value = ''; rows.value = []; total.value = 0;
+  // 实时刷新静默重读：保留当前列表直到新数据到达。
+  if (!quiet) { loading.value = true; error.value = ''; loadedAt.value = ''; rows.value = []; total.value = 0; }
   const current = () => active && seq === request;
   const scope = props.eventId ? { subject_kind: 'UAV_EVENT', subject_id: props.eventId } : {};
   try {
@@ -88,8 +90,9 @@ async function load(next = page.value) {
       if (!rows.value.length && next > 1 && total.value > 0) return load(Math.max(1, Math.ceil(total.value / pageSize.value)));
     }
     loadedAt.value = formatTime(Date.now());
+    error.value = '';
   } catch (e) {
-    if (current()) { error.value = e.message || '读取办理记录失败'; rows.value = []; total.value = 0; }
+    if (current() && !quiet) { error.value = e.message || '读取办理记录失败'; rows.value = []; total.value = 0; }
   } finally { if (current()) loading.value = false; }
 }
 function closeDetail() { ++detailRequest; selected.value = null; emergencyInfo.value = null; detailError.value = ''; detailLoading.value = false; }
@@ -134,6 +137,17 @@ function changePage(next) { if (view.value === 'pending') page.value = next; els
 function resize(size) { pageSize.value = size; if (view.value === 'pending') page.value = 1; else load(1); }
 async function refreshCurrent() { subjects.value = {}; if (selected.value) await show(selected.value.authorization_id, false, true); else await load(); }
 onMounted(() => props.initialAuthorizationId ? show(props.initialAuthorizationId, false, true) : load());
+/* 实时刷新：处置授权变化后静默重读列表；选中授权本身有变化时才重读详情。 */
+useRealtimeRefresh(['disposal', 'alarm'], async () => {
+  if (loading.value || detailLoading.value) return;
+  const id = selected.value?.authorization_id;
+  const before = JSON.stringify(rows.value.find(row => row.authorization_id === id) || null);
+  await load(page.value, { quiet: true });
+  const after = JSON.stringify(rows.value.find(row => row.authorization_id === id) || null);
+  if (id && selected.value?.authorization_id === id && after !== before && after !== 'null') {
+    try { await refresh(id, false); } catch { /* refresh 已显示原因 */ }
+  }
+}, { minIntervalMs: 2_000 });
 onUnmounted(() => { active = false; request++; detailRequest++; });
 </script>
 

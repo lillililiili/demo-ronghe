@@ -18,6 +18,7 @@ import TargetTrackingPanel from '@/components/video/TargetTrackingPanel.vue';
 import { UField } from '@/components/form/index.js';
 import UPagination from '@/components/UPagination.vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
+import { useRealtimeRefresh } from '@/hooks/useRealtimeRefresh.js';
 import { legalityReviewFocus } from '@/ui/legalityReviewFocus.js';
 import { legalityApi } from '@/services/legalityApi.js';
 import { flightApi } from '@/services/flightApi.js';
@@ -630,6 +631,22 @@ onMounted(() => {
   loadNavigation(UI.consume('legality'));
   loadShadowHint();
 });
+
+/* 实时刷新：研判、告警、计划或空域变化后重读当前筛选下的队列和统计，保留选中项；
+   选中行本身有变化时才重读详情，避免详情区随每次信号闪烁。 */
+async function realtimeRefresh() {
+  if (!pageActive || loading.value) return;
+  const selectedId = S.st.selectedEvaluationId;
+  const rowKey = id => JSON.stringify(items.value.find(item => item.evaluation_id === id) || null);
+  const before = rowKey(selectedId);
+  await loadQueue({ keepSelection: true, skipSelection: true });
+  void loadKpi();
+  const after = rowKey(selectedId);
+  if (selectedId && S.st.selectedEvaluationId === selectedId && after !== before && after !== 'null') {
+    await selectEvaluationById(selectedId);
+  }
+}
+useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, { minIntervalMs: 2_000 });
 </script>
 
 <template>

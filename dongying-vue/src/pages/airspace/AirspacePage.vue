@@ -4,6 +4,7 @@
    新空域规则由上级下发，本页只读展示并保留旧资料。
    监测只读取接口数据；读取失败时如实显示原因。 */
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
+import { useRealtimeRefresh } from '@/hooks/useRealtimeRefresh.js';
 import { airspaceApi } from '@/services/airspaceApi.js';
 import { flightApi } from '@/services/flightApi.js';
 import { strokePlannedRoute } from '@/services/positionMap.js';
@@ -278,6 +279,16 @@ function selectObjectMarker(marker) {
   else { const row = riskList.riskMapRows.find(item => item.risk_id === marker.id); if (row) viewRisk(row); }
 }
 function refreshPage() { return Promise.all([loadAll(), loadRoutes(), risks.reload(), monitor.reload()]); }
+/* 实时刷新：按变化类别只重读受影响的部分；空域详情、选中项与地图视野保留。 */
+useRealtimeRefresh(['airspace', 'plan', 'risk', 'target'], topics => {
+  const all = topics.includes('*');
+  const tasks = [];
+  if ((all || topics.includes('airspace')) && !loading.value) tasks.push(loadAll());
+  if (all || topics.includes('plan')) tasks.push(loadRoutes());
+  if (all || topics.includes('risk')) tasks.push(risks.reload());
+  if (all || topics.includes('target')) tasks.push(monitor.reload());
+  return Promise.all(tasks);
+}, { minIntervalMs: 1_500 });
 watch(() => filters.district, district => {
   if (selected.value && district && selected.value.district_id !== district) clearDetail();
 });

@@ -1,5 +1,6 @@
 <script setup>
 import { computed, h, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
+import { useRealtimeRefresh } from '@/hooks/useRealtimeRefresh.js';
 import { NButton, NConfigProvider, NDataTable, NIcon } from 'naive-ui';
 import {
   BriefcaseOutline,
@@ -388,6 +389,9 @@ async function load() {
     if (!disposed) { loading.value = false; refreshTimer = window.setTimeout(load, 30000); }
   }
 }
+
+// 业务数据变化后最多每 5 秒重读一次快照；30 秒定时器保留为推送不可用时的兜底。
+useRealtimeRefresh(['alarm', 'target', 'device', 'risk', 'plan', 'airspace', 'punishment', 'disposal'], () => load(), { minIntervalMs: 5_000 });
 
 onMounted(() => {
   clock.value = formatClock(new Date());

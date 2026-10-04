@@ -10,6 +10,7 @@ export default {};
 <script setup>
 import { computed, h, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { flightApi } from '@/services/flightApi.js';
+import { useRealtimeRefresh } from '@/hooks/useRealtimeRefresh.js';
 import { airspaceApi } from '@/services/airspaceApi.js';
 import { riskApi } from '@/services/riskApi.js';
 import { openRiskVerification } from '@/ui/riskVerificationModal.js';
@@ -1571,6 +1572,53 @@ onMounted(() => {
     }
   }, 30000);
 });
+
+/* 实时刷新：计划、空域、风险或目标变化后静默重读当前页签的列表和统计，保留筛选、分页与选中项；
+   选中行本身有变化时才重读详情，避免详情和地图随每次信号重建。 */
+async function realtimeRefreshPlans(topics) {
+  if (loading.value || error.value) return;
+  if (topics.some(topic => ['plan', 'airspace', '*'].includes(topic))) {
+    const token = ++planListToken;
+    const selectedId = selected.value?.plan_id;
+    const before = JSON.stringify(plans.value.find(item => item.plan_id === selectedId) || null);
+    try {
+      const data = await flightApi.list({ page: page.value, size: size.value, status_code: filters.status_code });
+      if (token !== planListToken || activeTab.value !== 'route') return;
+      total.value = data.total;
+      plans.value = data.items;
+      loadRowActuals(plans.value);
+      loadPlanKpis();
+      const after = JSON.stringify(plans.value.find(item => item.plan_id === selectedId) || null);
+      if (selectedId && after !== before && after !== 'null' && !detailLoading.value) await loadDetail(selectedId);
+    } catch { /* 静默刷新失败保留当前列表 */ }
+  }
+  if (showRouteRisks.value && selected.value && !routeRisks.loading
+    && topics.some(topic => ['risk', 'target', '*'].includes(topic))) {
+    loadRouteRisks(selected.value, routeRisks.page);
+  }
+}
+
+async function realtimeRefreshRisks() {
+  if (riskLoading.value || riskError.value) return;
+  const token = ++riskListToken;
+  const selectedId = S.selectedRiskId;
+  const before = JSON.stringify(risks.value.find(item => item.risk_id === selectedId) || null);
+  void loadRiskKpis();
+  try {
+    const data = await riskApi.listRisks({ ...riskQuery(), page: riskPage.value, size: riskSize.value });
+    if (token !== riskListToken) return;
+    risks.value = data.items || [];
+    riskTotal.value = data.total;
+    const after = JSON.stringify(risks.value.find(item => item.risk_id === selectedId) || null);
+    if (selectedId && after !== before && after !== 'null') await loadRiskDetail(selectedId);
+  } catch { /* 静默刷新失败保留当前列表 */ }
+}
+
+useRealtimeRefresh(['plan', 'airspace', 'risk', 'target'], async topics => {
+  if (activeTab.value === 'events') {
+    if (topics.some(topic => ['risk', 'plan', '*'].includes(topic))) await realtimeRefreshRisks();
+  } else await realtimeRefreshPlans(topics);
+}, { minIntervalMs: 2_000 });
 
 watch(page, value => { S.page = value; });
 watch(size, value => { S.size = value; });

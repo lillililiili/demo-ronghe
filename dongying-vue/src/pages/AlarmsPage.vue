@@ -655,8 +655,9 @@ function focusMap() {
 }
 
 /* ---------- 数据加载 ---------- */
-async function loadList({ quiet = false } = {}) {
+async function loadList({ quiet = false, progress = true } = {}) {
   const my = ++listSeq;
+  const previousEvents = list.rows.map(row => row.event_id).join();
   // 实时刷新静默重读：保留当前列表直到新数据到达，不闪加载状态。
   if (!quiet) { list.loading = true; list.error = ''; paintList(); }
   try {
@@ -670,7 +671,10 @@ async function loadList({ quiet = false } = {}) {
       return loadList();
     }
     // 先呈现列表并允许选中详情，逐行补充信息不占用列表加载状态。
-    void loadPageProgress(list.rows, my).then(() => { if (my === listSeq) paintList(); });
+    // 实时刷新只在处置、移送变化或本页事件换了时重读逐行进度，告警本身变化不连带每行再读两三次。
+    if (progress || list.rows.map(row => row.event_id).join() !== previousEvents) {
+      void loadPageProgress(list.rows, my).then(() => { if (my === listSeq) paintList(); });
+    }
   } catch (e) {
     if (my !== listSeq) return;
     // API 失败只显示错误并允许重试，绝不回退 Mock 列表。
@@ -835,18 +839,28 @@ function verifyModal() {
   });
 }
 
-/* 实时刷新：告警、研判、处置、证据或移送变化后静默重读列表与统计；
+/* 实时刷新：告警、处置或移送变化后静默重读列表；统计卡片 9 个计数请求，最多每 10 秒重读一次。
    选中告警本身有变化时才重读详情，避免详情区随每次信号闪烁。 */
-async function realtimeRefresh() {
+const KPI_MIN_INTERVAL_MS = 10_000;
+let kpiAt = 0, kpiTimer = null;
+function realtimeKpis() {
+  if (kpiTimer) return;
+  const wait = kpiAt + KPI_MIN_INTERVAL_MS - Date.now();
+  kpiTimer = setTimeout(() => { kpiTimer = null; kpiAt = Date.now(); void loadKpis(); }, Math.max(0, wait));
+}
+onUnmounted(() => clearTimeout(kpiTimer));
+async function realtimeRefresh(topics) {
   if (list.loading) return;
   const selId = st.selId;
   const rowKey = () => JSON.stringify(list.rows.find(row => row.alarm_id === selId) || null);
   const before = rowKey();
-  await Promise.all([loadList({ quiet: true }), loadKpis()]);
+  const progress = topics.some(topic => topic === '*' || topic === 'disposal' || topic === 'punishment');
+  realtimeKpis();
+  await loadList({ quiet: true, progress });
   const after = rowKey();
   if (selId && st.selId === selId && !cur.loading && after !== before && after !== 'null') await selectAlarm(selId);
 }
-useRealtimeRefresh(['alarm', 'legality', 'disposal', 'evidence', 'punishment'], realtimeRefresh, { minIntervalMs: 2_000 });
+useRealtimeRefresh(['alarm', 'disposal', 'punishment'], realtimeRefresh, { minIntervalMs: 2_000 });
 
 function onPage(p2) { st.page = p2; loadList(); }
 function onPageSize(s2) { st.size = s2; st.page = 1; loadList(); }

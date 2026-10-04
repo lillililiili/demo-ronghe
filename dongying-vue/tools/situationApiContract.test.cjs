@@ -27,7 +27,7 @@ async function loadSource(deps) {
   source = `const { deviceApi, targetApi, listAlarms, listAllFlightPlans, flightApi, airspaceApi,
     riskApi, handoffApi, mapPool, attachBearing, attachDeviceEvents, attachRecentTracks,
     attachTargetSourceLinks, bearingOrigins, toAirspaces, toAlarms, toDevices, toFlightPlans,
-    toRisks, toTargets } = globalThis.__situationContractDeps;\n${source}`;
+    toRisks, toTargets, onDataChange } = globalThis.__situationContractDeps;\n${source}`;
   globalThis.__situationContractDeps = deps;
   return import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}#${Date.now()}`);
 }
@@ -44,6 +44,8 @@ async function main() {
   let clock = now;
   const targetQueries = [];
   const trackQueries = [];
+  const calls = { alarms: 0, risks: 0, handoffs: 0, plans: 0 };
+  let pushHandler = null;
   const devices = Array.from({ length: 101 }, (_, index) => ({
     device_id: `d${index}`, device_no: `DEV-${index}`, name: `设备${index}`,
     device_type_code: index === 0 ? 'EO' : 'RADAR', device_type_name: index === 0 ? '光电' : '雷达',
@@ -92,14 +94,15 @@ async function main() {
       fusionStatus: async () => ({ status: 'RUNNING' }),
       detail: async () => ({ source_links: [{ device_id: 'd0' }] })
     },
-    listAlarms: async () => ({ items: [], total: 0 }),
-    listAllFlightPlans: async () => [planRow],
+    listAlarms: async () => { calls.alarms++; return { items: [], total: 0 }; },
+    listAllFlightPlans: async () => { calls.plans++; return [planRow]; },
     flightApi: { routeVersion: async () => ({ route_version_id: 'rv1', centerline: {
       coordinates: [[118.4, 37.3], [118.6, 37.5]]
     } }) },
     airspaceApi: { list: async () => ({ items: [], total: 0 }), detail: async value => value },
-    riskApi: { listRisks: async () => ({ items: [], total: 0 }) },
-    handoffApi: { listHandoffs: async () => ({ items: [], total: 0 }) }
+    riskApi: { listRisks: async () => { calls.risks++; return { items: [], total: 0 }; } },
+    handoffApi: { listHandoffs: async () => { calls.handoffs++; return { items: [], total: 0 }; } },
+    onDataChange: (_topics, handler) => { pushHandler = handler; return () => { if (pushHandler === handler) pushHandler = null; }; }
   };
   const { createSituationApiSource } = await loadSource(deps);
   globalThis.document = { hidden: false };
@@ -152,6 +155,40 @@ async function main() {
   check('跨天后实时尾迹不混入昨天', trackQueries.at(-1).observed_from, Date.parse('2026-09-22T16:00:00Z'));
   check('跨天后旧目标退出当天地图而不改历史', snapshots.at(-1).targets, []);
   source.stop();
+
+  // 推送触发的一轮只重读变化的分组；定时兜底拉长到不会在测试期间触发。
+  const pushed = createSituationApiSource({ fastMs: 60_000, slowMs: 60_000, now: () => clock });
+  const pushedSnapshots = [];
+  pushed.start(value => pushedSnapshots.push(value), () => {});
+  while (pushedSnapshots.length < 2) await delay(5);
+  const counts = () => ({ targets: targetCalls, devices: devicePages.length, ...calls });
+  async function afterPush(topics, until) {
+    const before = counts();
+    pushHandler(topics);
+    const started = Date.now();
+    while (!until(before, counts()) && Date.now() - started < 3_000) await delay(5);
+    await delay(50);
+    const after = counts();
+    return Object.fromEntries(Object.keys(after).map(key => [key, after[key] - before[key]]));
+  }
+  check('目标变化只读目标，不连带告警、风险、移送和设备',
+    await afterPush(['target'], (a, b) => b.targets > a.targets),
+    { targets: 1, devices: 0, alarms: 0, risks: 0, handoffs: 0, plans: 0 });
+  check('告警变化只读告警',
+    await afterPush(['alarm'], (a, b) => b.alarms > a.alarms),
+    { targets: 0, devices: 0, alarms: 1, risks: 0, handoffs: 0, plans: 0 });
+  check('计划变化只读计划资料组',
+    await afterPush(['plan'], (a, b) => b.plans > a.plans),
+    { targets: 0, devices: 0, alarms: 0, risks: 0, handoffs: 0, plans: 1 });
+  check('设备在线状态刚读过时不重读设备列表',
+    await afterPush(['device_state'], () => false),
+    { targets: 0, devices: 0, alarms: 0, risks: 0, handoffs: 0, plans: 0 });
+  clock += 11_000;
+  check('设备在线状态 10 秒后再变化才重读设备列表',
+    await afterPush(['device_state'], (a, b) => b.devices > a.devices),
+    { targets: 0, devices: 2, alarms: 0, risks: 0, handoffs: 0, plans: 0 });
+  pushed.stop();
+  ok('停止后取消订阅', pushHandler === null);
   delete globalThis.document;
   delete globalThis.__situationContractDeps;
 

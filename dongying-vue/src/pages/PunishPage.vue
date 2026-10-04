@@ -232,7 +232,7 @@ async function realtimeRefresh() {
     if (S.selectedHandoffId && after !== before && after !== 'null') loadDetail(S.selectedHandoffId);
   } catch { /* 静默刷新失败保留当前列表 */ }
 }
-useRealtimeRefresh(['punishment', 'alarm', 'evidence'], realtimeRefresh, { minIntervalMs: 2_000 });
+useRealtimeRefresh(['punishment', 'evidence'], realtimeRefresh, { minIntervalMs: 2_000 });
 function retryDetail() { if (S.selectedHandoffId) loadDetail(S.selectedHandoffId); }
 
 async function loadChain(detail) {

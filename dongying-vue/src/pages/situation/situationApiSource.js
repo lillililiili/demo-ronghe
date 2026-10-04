@@ -19,7 +19,17 @@ const FAST_MS = 5_000;
 const SLOW_MS = 60_000;
 const NUDGE_GAP_MS = 500;
 const MIN_NUDGE_INTERVAL_MS = 1_000;
-const SLOW_TOPICS = new Set(['device', 'plan', 'airspace', '*']);
+// 推送只重读变化的那一组：目标变化只读目标与尾迹，不再连带告警、风险、移送一起重读；
+// 设备资料、计划、空域各自只重读本组。设备在线状态随每次上报变化，最多每 10 秒重读一次设备组。
+const SLOW_SEGMENTS = ['devices', 'flight-plans', 'airspaces', 'fusion-status'];
+const SLOW_TOPIC_SEGMENTS = {
+  device: ['devices'], device_state: ['devices'], plan: ['flight-plans'], airspace: ['airspaces'], '*': SLOW_SEGMENTS
+};
+const DEVICE_STATE_MIN_MS = 10_000;
+const FAST_SEGMENTS = ['targets', 'alarms', 'risks', 'handoffs'];
+const TOPIC_SEGMENTS = {
+  target: ['targets'], legality: ['targets'], alarm: ['alarms'], risk: ['risks'], punishment: ['handoffs'], '*': FAST_SEGMENTS
+};
 const RECENT_TRACK_WINDOW_MS = 5 * 60_000;
 
 async function allPages(load, params = {}) {
@@ -99,11 +109,12 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
     catch (error) { failedSegments.add(name); report(error, name); }
   }
 
-  async function refreshFast(generatedAt) {
+  async function refreshFast(generatedAt, segments = FAST_SEGMENTS) {
     const day = shanghaiDay(generatedAt);
     const observedFrom = day.from;
+    const wanted = new Set(segments);
     const tasks = [
-      retain('targets', async () => {
+      wanted.has('targets') && retain('targets', async () => {
         const [page, recent] = await Promise.all([
           targetApi.listAll({ seen_from: observedFrom, seen_to: generatedAt, include_merged: false }),
           // 近期轨迹接口最多允许 1 小时；目标保留整日，实时尾迹继续沿用 5 分钟窗口。
@@ -112,22 +123,24 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
         const converted = attachBearing(toTargets(page.items), bearingOrigins(snapshot.devices));
         return withComparison(attachRecentTracks(converted, recent, snapshot.targets));
       }, value => { snapshot = { ...snapshot, targets: value }; }),
-      retain('alarms', () => allPages(listAlarms, {
+      wanted.has('alarms') && retain('alarms', () => allPages(listAlarms, {
         occurred_from: day.from, occurred_to: day.to, sort: 'occurred_at', order: 'desc'
       }), value => { snapshot = { ...snapshot, alarms: toAlarms(value) }; }),
-      retain('risks', () => allPages(riskApi.listRisks, {
+      wanted.has('risks') && retain('risks', () => allPages(riskApi.listRisks, {
         occurred_from: day.from, occurred_to: day.to, sort: 'occurred_at', order: 'desc'
       }), value => { snapshot = { ...snapshot, risks: toRisks(value) }; }),
-      retain('handoffs', () => allPages(handoffApi.listHandoffs, {
+      wanted.has('handoffs') && retain('handoffs', () => allPages(handoffApi.listHandoffs, {
         created_from: day.from, created_to: day.to
       }), value => { snapshot = { ...snapshot, handoffs: value }; })
     ];
-    await Promise.all(tasks);
+    await Promise.all(tasks.filter(Boolean));
   }
 
-  async function refreshSlow(generatedAt) {
+  async function refreshSlow(generatedAt, segments = SLOW_SEGMENTS) {
     const day = shanghaiDay(generatedAt);
-    const deviceTask = retain('devices', async () => {
+    const wanted = new Set(segments);
+    if (wanted.has('devices')) lastDevicesAt = generatedAt;
+    const deviceTask = wanted.has('devices') && retain('devices', async () => {
       const rows = await allPages(deviceApi.list, { enabled: true });
       // 部分旧后端不会消费 enabled 查询参数；前端仍须严格隐藏已停用的历史回放设备。
       const enabledRows = rows.filter(row => row.enabled !== false);
@@ -139,7 +152,7 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
       return attachDeviceEvents(toDevices(enabledRows).filter(row => DEVICE_TYPES.has(row.typeCode)), events);
     }, value => { snapshot = { ...snapshot, devices: value }; });
 
-    const planTask = retain('flight-plans', async () => {
+    const planTask = wanted.has('flight-plans') && retain('flight-plans', async () => {
       const plans = (await listAllFlightPlans({ window_from: day.from, window_to: day.to }))
         .filter(plan => ['PENDING', 'APPROVED', 'EXECUTING', 'COMPLETED'].includes(plan.status_code));
       const ids = [...new Set(plans.map(plan => plan.route?.route_version_id).filter(Boolean))];
@@ -149,45 +162,59 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
       return toFlightPlans(plans, Object.fromEntries(routeVersions));
     }, value => { snapshot = { ...snapshot, flightPlans: value }; });
 
-    const airspaceTask = retain('airspaces', async () => {
+    const airspaceTask = wanted.has('airspaces') && retain('airspaces', async () => {
       const rows = await allPages(airspaceApi.list, { valid_at: generatedAt });
       const details = await mapPool(rows, 6, row => airspaceApi.detail(row.airspace_id));
       return toAirspaces(details);
     }, value => { snapshot = { ...snapshot, airspaces: value }; });
 
-    const fusionTask = retain('fusion-status', () => targetApi.fusionStatus(), value => {
+    const fusionTask = wanted.has('fusion-status') && retain('fusion-status', () => targetApi.fusionStatus(), value => {
       snapshot = { ...snapshot, fusionStatus: value };
     });
-    await Promise.all([deviceTask, planTask, airspaceTask, fusionTask]);
+    await Promise.all([deviceTask, planTask, airspaceTask, fusionTask].filter(Boolean));
     snapshot = { ...snapshot, targets: attachBearing(snapshot.targets, bearingOrigins(snapshot.devices)) };
   }
 
-  /* 后端推送数据变化时立即重读；设备、计划、空域变化顺带刷新资料组。进行中的一轮结束后再补一次。 */
+  /* 后端推送数据变化时立即重读变化的那一组；设备、计划、空域变化顺带刷新资料组。进行中的一轮结束后再补一次。 */
   let pendingNudge = false;
-  let pendingSlow = false;
+  let pendingSegments = new Set();
+  let pendingSlowSegments = new Set();
   let lastCycleAt = 0;
+  let lastDevicesAt = 0;
   function nudge(topics) {
-    if (topics.some(topic => SLOW_TOPICS.has(topic))) pendingSlow = true;
+    topics.forEach(topic => {
+      if (topic === 'device_state' && now() - lastDevicesAt < DEVICE_STATE_MIN_MS) return;
+      (SLOW_TOPIC_SEGMENTS[topic] || []).forEach(segment => pendingSlowSegments.add(segment));
+    });
+    topics.forEach(topic => (TOPIC_SEGMENTS[topic] || []).forEach(segment => pendingSegments.add(segment)));
+    if (!pendingSlowSegments.size && !pendingSegments.size) return;
     if (stopped || paused) return;
     if (running) { pendingNudge = true; return; }
     clearTimer();
     const wait = lastCycleAt + MIN_NUDGE_INTERVAL_MS - Date.now();
-    if (wait > 0) timer = globalThis.setTimeout(() => cycle(false), wait);
-    else void cycle(false);
+    if (wait > 0) timer = globalThis.setTimeout(() => cycle(false, true), wait);
+    else void cycle(false, true);
   }
 
-  async function cycle(forceSlow = false) {
+  async function cycle(forceSlow = false, nudged = false) {
     if (stopped || paused || running) return;
     running = true;
     pendingNudge = false;
+    // 定时兜底的一轮读全部；推送触发的一轮只读变化的分组。
+    const segments = nudged ? [...pendingSegments] : FAST_SEGMENTS;
+    pendingSegments = new Set();
     lastCycleAt = Date.now();
     const generatedAt = now();
     try {
       // 实时目标与风险优先发起；资料请求并行，不再串在实时数据之前。
-      const fast = refreshFast(generatedAt).then(() => publish(generatedAt));
-      const needsSlow = forceSlow || pendingSlow || generatedAt - lastSlowAt >= slowMs;
-      pendingSlow = false;
-      const slow = needsSlow ? refreshSlow(generatedAt).then(() => { lastSlowAt = generatedAt; }) : Promise.resolve();
+      const fast = refreshFast(generatedAt, segments).then(() => publish(generatedAt));
+      const fullSlow = forceSlow || generatedAt - lastSlowAt >= slowMs;
+      const slowSegments = fullSlow ? SLOW_SEGMENTS : [...pendingSlowSegments];
+      pendingSlowSegments = new Set();
+      const needsSlow = slowSegments.length > 0;
+      const slow = needsSlow
+        ? refreshSlow(generatedAt, slowSegments).then(() => { if (fullSlow) lastSlowAt = generatedAt; })
+        : Promise.resolve();
       await Promise.all([fast, slow]);
       if (needsSlow) {
         // 两组完成顺序不固定，只报方位的目标须按最终设备位置再关联一次。
@@ -196,7 +223,7 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
       }
     } finally {
       running = false;
-      if (!stopped && !paused) timer = globalThis.setTimeout(() => cycle(false), pendingNudge ? NUDGE_GAP_MS : fastMs);
+      if (!stopped && !paused) timer = globalThis.setTimeout(() => cycle(false, pendingNudge), pendingNudge ? NUDGE_GAP_MS : fastMs);
     }
   }
 
@@ -212,7 +239,7 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
       report = typeof onError === 'function' ? onError : () => {};
       stopped = false;
       unsubscribe?.();
-      unsubscribe = onDataChange(['target', 'alarm', 'risk', 'punishment', 'legality', ...SLOW_TOPICS], topics => nudge(topics));
+      unsubscribe = onDataChange([...new Set([...Object.keys(TOPIC_SEGMENTS), ...Object.keys(SLOW_TOPIC_SEGMENTS)])], topics => nudge(topics));
       paused = typeof document !== 'undefined' && document.hidden;
       if (!paused) void cycle(true);
       return () => api.stop();

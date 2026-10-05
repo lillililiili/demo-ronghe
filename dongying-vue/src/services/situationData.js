@@ -32,10 +32,10 @@ export const LEGAL_FALLBACK = '待确认';
 
 const SEVERITY_LEVEL = { CRITICAL: '高', HIGH: '高', MEDIUM: '中', LOW: '低' };
 const DEVICE_STATUS = { ONLINE: '在线', OFFLINE: '离线', ABNORMAL: '异常', UNKNOWN: '未知' };
-// 态势页按融合来源目录与已纳入态势展示的设备档案展示，顺序由此表统一维护。
+// 现场只有融合感知箱（雷达、光电、反制）、TDOA、5G-A 和气象设备（2026-10-05 业务确认），
+// 态势页只展示这几类，顺序由此表统一维护；台账里其他类型不上态势页。
 export const SITUATION_DEVICE_TYPE_ORDER = [
-  'RADAR', 'EO', 'FIVE_G_A', 'SPEC', 'COUNTERMEASURE', 'DEC', 'IFR', 'CV', 'ISRS',
-  'TDOA', 'AOA', 'DCD', 'BSC', 'RID', 'FUSION_BOX'
+  'RADAR', 'EO', 'COUNTERMEASURE', 'FUSION_BOX', 'TDOA', 'FIVE_G_A', 'WEATHER'
 ];
 const DEVICE_PRESENTATION = {
   RADAR: { icon: 'radar', color: '#36d1dc' },
@@ -52,6 +52,7 @@ const DEVICE_PRESENTATION = {
   BSC: { icon: 'bsc', color: '#e89548' },
   RID: { icon: 'rid', color: '#4ca8ff' },
   FUSION_BOX: { icon: 'fusion', color: '#37c7a0' },
+  WEATHER: { icon: 'weather', color: '#3bc4ff' },
   COUNTERMEASURE: { icon: 'cm', color: '#ff7b72' }
 };
 const DEVICE_TYPE_CODE = {
@@ -64,7 +65,7 @@ const DEVICE_TYPE_CODE = {
   TDOA: 'TDOA', tdoa: 'TDOA', AOA: 'AOA', aoa: 'AOA',
   DCD: 'DCD', dcd: 'DCD', BSC: 'BSC', bsc: 'BSC', RID: 'RID', rid: 'RID',
   REMOTEID: 'RID', remoteid: 'RID',
-  WEATHER: 'FUSION_BOX', weather: 'FUSION_BOX', WEATHER_SENSOR: 'FUSION_BOX', weather_sensor: 'FUSION_BOX',
+  WEATHER: 'WEATHER', weather: 'WEATHER', WEATHER_SENSOR: 'WEATHER', weather_sensor: 'WEATHER',
   FUSION_BOX: 'FUSION_BOX', fusion_box: 'FUSION_BOX',
   COUNTERMEASURE: 'COUNTERMEASURE', countermeasure: 'COUNTERMEASURE'
 };

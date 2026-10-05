@@ -148,7 +148,8 @@ async function main() {
     { device_id: 'weather-1', longitude: 118.4, latitude: 37.4, connectivity: 'ONLINE', device_type_code: 'weather', simulated: true },
     { device_id: 'countermeasure-1', longitude: 118.4, latitude: 37.4, connectivity: 'ONLINE', device_type_code: 'countermeasure', simulated: true }
   ]);
-  check('模拟器气象设备归一为融合箱展示类型', [simulatorDevices[0].typeCode, simulatorDevices[0].icon], ['FUSION_BOX', 'fusion']);
+  check('模拟器气象设备单独归为气象设备类型', [simulatorDevices[0].typeCode, simulatorDevices[0].icon], ['WEATHER', 'weather']);
+  check('态势页只列现场设备类型', S.SITUATION_DEVICE_TYPE_ORDER, ['RADAR', 'EO', 'COUNTERMEASURE', 'FUSION_BOX', 'TDOA', 'FIVE_G_A', 'WEATHER']);
   check('模拟器反制设备保留反制展示类型', [simulatorDevices[1].typeCode, simulatorDevices[1].icon], ['COUNTERMEASURE', 'cm']);
   check('设备保留融合域内部 ID 用于来源链路关联', S.toDevices([
     { device_id: 'd6', fusion_device_id: 'fusion-d6', longitude: 118.4, latitude: 37.4 }

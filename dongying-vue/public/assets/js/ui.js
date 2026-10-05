@@ -127,7 +127,8 @@
     ['dcd', '协议破解', 'CodeWorkingOutline', ['DCD', '协议破解设备', '11']],
     ['bsc', '驱鸟炮', 'MegaphoneOutline', ['BSC', '驱鸟炮设备', '12']],
     ['rid', 'RemoteID', 'IdCardOutline', ['RID', 'REMOTEID', 'RemoteID设备', '102']],
-    ['fusion', '融合感知箱', 'HardwareChipOutline', ['FUSION_BOX', '融合终端', 'WEATHER', 'WEATHER_SENSOR', '气象设备']]
+    ['fusion', '融合感知箱', 'HardwareChipOutline', ['FUSION_BOX', '融合终端']],
+    ['weather', '气象设备', 'cloud', ['WEATHER', 'WEATHER_SENSOR', '天气传感器', '1001']]
   ];
   const DEVICE_ALIASES = new Map();
   const UNKNOWN_DEVICE = Object.freeze({ key: 'unknown', label: '设备类型未知', icon: 'device' });
@@ -148,7 +149,7 @@
     return UNKNOWN_DEVICE;
   }
   // 无框鲜彩图标只接入业务内容；普通 icon() 与导航/操作图标继续使用原契约。
-  const BUSINESS_KEYS = new Set(['radar','eo','tdoa','aoa','5ga','spec','cm','dec','ifr','cv','isrs','dcd','bsc','rid','fusion','uav','bird','balloon','kite','lantern','nest','unknown','unknown-device']);
+  const BUSINESS_KEYS = new Set(['radar','eo','tdoa','aoa','5ga','spec','cm','dec','ifr','cv','isrs','dcd','bsc','rid','fusion','weather','uav','bird','balloon','kite','lantern','nest','unknown','unknown-device']);
   const businessKey = key => BUSINESS_KEYS.has(key) ? key : 'unknown';
   const businessIconUrl = key => '/assets/img/business/' + businessKey(key) + '.svg';
   function businessIcon(key) {

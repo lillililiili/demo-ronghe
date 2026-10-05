@@ -29,6 +29,7 @@
 | `bsc.svg` | 驱鸟炮 | `--icon-bsc` |
 | `rid.svg` | RemoteID | `--icon-rid` |
 | `fusion.svg` | 融合感知箱 | `--icon-fusion` |
+| `weather.svg` | 气象设备 | `--icon-weather` |
 | `uav.svg` | 无人机 | `--icon-uav` |
 | `bird.svg` | 鸟类 | `--icon-bird` |
 | `balloon.svg` | 气球（推断 subtype） | `--icon-balloon` |

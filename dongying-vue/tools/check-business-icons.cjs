@@ -11,7 +11,7 @@ vm.runInNewContext(fs.readFileSync(path.join(root, 'public/assets/js/ui.js'), 'u
   window, Image, document: { addEventListener(){} }, getComputedStyle: () => ({ getPropertyValue: () => '#00b8ff' })
 });
 const U = window.UI;
-const cases = { RADAR:'radar', EO:'eo', FIVE_G_A:'5ga', TDOA:'tdoa', AOA:'aoa', SPEC:'spec', CM:'cm', DEC:'dec', IFR:'ifr', CV:'cv', ISRS:'isrs', DCD:'dcd', BSC:'bsc', RID:'rid', FUSION_BOX:'fusion' };
+const cases = { RADAR:'radar', EO:'eo', FIVE_G_A:'5ga', TDOA:'tdoa', AOA:'aoa', SPEC:'spec', CM:'cm', DEC:'dec', IFR:'ifr', CV:'cv', ISRS:'isrs', DCD:'dcd', BSC:'bsc', RID:'rid', FUSION_BOX:'fusion', WEATHER:'weather', WEATHER_SENSOR:'weather' };
 for (const [type, key] of Object.entries(cases)) {
   assert.match(U.deviceIcon({ typeCode: type }), new RegExp(`data-business-icon="${key}"`));
   assert.match(U.deviceIcon({ typeCode: type, status:'离线' }), new RegExp(`data-business-icon="${key}"`));
@@ -38,10 +38,10 @@ assert.equal(rotations.length,2);
 assert.equal(images.length,2); // 同类型地图图形复用缓存。
 const dir = path.join(root,'public/assets/img/business');
 const files = fs.readdirSync(dir).filter(file=>file.endsWith('.svg'));
-assert.equal(files.length,23);
+assert.equal(files.length,24);
 for (const file of files) {
   const svg = fs.readFileSync(path.join(dir,file),'utf8');
   assert.match(svg, /viewBox="0 0 64 64"/);
   assert.doesNotMatch(svg, /<(script|foreignObject|image|text)\b|(?:fill|stop-color)="(?:black|#000(?:000)?)"/i);
 }
-console.log('PASS: 15 device mappings; six target types; 23 transparent SVG assets; safe unknown fallback; category preserved offline; valid numeric UAV heading only; bounded image cache.');
+console.log('PASS: 17 device mappings; six target types; 24 transparent SVG assets; safe unknown fallback; category preserved offline; valid numeric UAV heading only; bounded image cache.');

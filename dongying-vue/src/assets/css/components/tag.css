@@ -12,3 +12,14 @@
 .t-gray{--tag-c:var(--gray)}
 .tag{color:var(--tag-c,var(--txt-2));background:color-mix(in srgb,var(--tag-c,var(--gray)) 10%,transparent);border-color:color-mix(in srgb,var(--tag-c,var(--gray)) 48%,transparent);box-shadow:none}
 .dot-s{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:5px;vertical-align:1px}
+
+/* 语义色与 Demo 同源，标签使用浅色文字 + 半透明底。 */
+body:not([data-page="bigscreen"]) .tag{color:var(--tag-text,var(--tag-c,var(--txt-2)));background:color-mix(in srgb,var(--tag-c,var(--gray)) 16%,transparent);border-color:color-mix(in srgb,var(--tag-c,var(--gray)) 40%,transparent);border-radius:4px}
+body:not([data-page="bigscreen"]) .t-red{--tag-text:var(--tag-red-text)}
+body:not([data-page="bigscreen"]) .t-orange{--tag-text:var(--tag-orange-text)}
+body:not([data-page="bigscreen"]) .t-amber{--tag-text:var(--tag-amber-text)}
+body:not([data-page="bigscreen"]) .t-green{--tag-text:var(--tag-green-text)}
+body:not([data-page="bigscreen"]) .t-blue{--tag-text:var(--tag-blue-text)}
+body:not([data-page="bigscreen"]) .t-cyan{--tag-text:var(--tag-cyan-text)}
+body:not([data-page="bigscreen"]) .t-purple{--tag-text:var(--tag-purple-text)}
+body:not([data-page="bigscreen"]) .t-gray{--tag-text:var(--tag-gray-text)}

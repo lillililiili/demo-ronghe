@@ -11,7 +11,10 @@ const time = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: 
   <ol class="advisory-records">
     <li v-for="row in rows" :key="row.record_id">
       <div class="ar-heading"><b>{{ ADVISORY_KIND[row.kind] || '处置记录' }}</b><span v-if="row.trigger_mode === 'AUTO'" class="tag t-cyan">系统自动</span><span v-if="row.simulated" class="tag t-amber">模拟</span></div>
-      <p v-if="row.kind === 'OBSERVATION'">{{ OBSERVATION_OUTCOME[row.outcome] || '结果未知' }} · 危险度{{ OBSERVATION_DANGER[row.danger] || '待核查' }}<span v-if="row.urgent"> · 紧急处置申请依据</span></p>
+      <template v-if="row.kind === 'OBSERVATION'">
+        <p>{{ OBSERVATION_OUTCOME[row.outcome] || '结果未知' }} · 危险度{{ OBSERVATION_DANGER[row.danger] || '待核查' }}<span v-if="row.urgent"> · 当时标记为紧急</span></p>
+        <p class="ar-muted">仅作历史留存，不作为当前飞离或反制依据。</p>
+      </template>
       <p v-else>{{ row.recipient_name || '接收主体未提供' }}<span v-if="row.kind === 'SMS_SIMULATED'"> · {{ row.delivery_status === 'SIMULATED_DELIVERED' ? '模拟送达' : '模拟发送记录' }}，未发送真实短信</span><span v-else-if="row.kind === 'VOICE_SIMULATED'"> · {{ AUTO_VOICE_STATUS[row.delivery_status] || '通话结果未确认' }}，未拨打真实电话</span></p>
       <p v-if="row.contact_basis" class="ar-muted">联系依据：{{ row.contact_basis }}</p>
       <p v-if="row.content">{{ row.content }}</p>

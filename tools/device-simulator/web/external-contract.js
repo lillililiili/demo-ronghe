@@ -43,6 +43,30 @@
     }
     return next;
   }
+  function sceneRouteMatches(route, plan, tolerance=1e-5){
+    const expected=route?.centerline?.coordinates, actual=plan?.points;
+    if(!Array.isArray(expected)||!Array.isArray(actual)||expected.length<2||expected.length!==actual.length)return false;
+    return expected.every((point,index)=>Array.isArray(point)&&Array.isArray(actual[index])&&point.length>=2&&actual[index].length>=2&&
+      Number.isFinite(Number(point[0]))&&Number.isFinite(Number(point[1]))&&Number.isFinite(Number(actual[index][0]))&&Number.isFinite(Number(actual[index][1]))&&
+      Math.abs(Number(point[0])-Number(actual[index][0]))<=tolerance&&Math.abs(Number(point[1])-Number(actual[index][1]))<=tolerance);
+  }
+  function matchingSceneRoute(plan,routes,expiredRoutes){
+    const candidates=[],seen=new Set();
+    for(const route of [...(routes||[]),...(expiredRoutes||[])]){
+      if(!route||seen.has(route.route_version_id))continue;
+      seen.add(route.route_version_id);candidates.push(route);
+    }
+    return candidates.find(route=>sceneRouteMatches(route,plan))||null;
+  }
+  function sceneRouteValidityMessage(route,data,now=Date.now()){
+    if(!route)return '';
+    const validFrom=Number(route.valid_from),validTo=Number(route.valid_to);
+    const start=Number(data?.start_at),end=Number(data?.end_at);
+    if(Number.isFinite(validFrom)&&Number.isFinite(start)&&start<validFrom)return '地图计划开始时间早于平台航线版本生效时间，请重新生成当前有效期内的地图计划。';
+    if(Number.isFinite(validTo)&&Number.isFinite(end)&&end>validTo)return '当前地图计划对应的平台航线版本已过期，请重新生成当前有效的地图计划航线。';
+    if(Number.isFinite(validTo)&&validTo<=now&&(!Number.isFinite(start)||!Number.isFinite(end)))return '当前地图计划对应的平台航线版本已过期，请重新生成当前有效的地图计划航线。';
+    return '';
+  }
   function submitResultText(path,result){
     if(path==='/local-interface-simulator/bindings')return result.enabled?'系统确认：模拟接收已启用。等待平台原流程产生通知。':'系统确认：模拟接收已停用。';
     return null;
@@ -50,7 +74,7 @@
   function unavailableNotice(context){
     return Array.isArray(context?.unavailable_sections)?context.unavailable_sections.filter(value=>typeof value==='string'&&value.trim()).join('；'):'';
   }
-  const api={planSampleForRoute,weatherSampleForPlan,receiptChoices,applyInputFields,submitResultText,unavailableNotice};
+  const api={planSampleForRoute,weatherSampleForPlan,receiptChoices,applyInputFields,sceneRouteMatches,matchingSceneRoute,sceneRouteValidityMessage,submitResultText,unavailableNotice};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   root.ExternalContract=api;
 })(typeof window!=='undefined'?window:globalThis);

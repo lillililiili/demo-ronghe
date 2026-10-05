@@ -69,3 +69,18 @@ export async function loadRiskPages(list, params = {}, isCurrent = () => true) {
   }
   return [...new Map(rows.map(row => [row.risk_id, row])).values()];
 }
+
+// 气象范围与空域有交集才纳入范围筛选，不以图标锚点代替整片范围。
+export function weatherAreaRelation(ring, polygons) {
+  if (!ring || !polygons?.length) return 'UNKNOWN';
+  if (ring.some(point => pointRelation(point, polygons) !== 'OUTSIDE')) return 'INSIDE';
+  if (polygons.some(([outer]) => outer.some(point => pointRelation(point, [[ring]]) !== 'OUTSIDE'))) return 'INSIDE';
+  const cross = (a, b, c) => (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+  for (const rings of polygons) for (const boundary of rings) {
+    for (let i = 1; i < ring.length; i++) for (let j = 1; j < boundary.length; j++) {
+      const a = ring[i - 1], b = ring[i], c = boundary[j - 1], d = boundary[j];
+      if (cross(a, b, c) * cross(a, b, d) < 0 && cross(c, d, a) * cross(c, d, b) < 0) return 'INSIDE';
+    }
+  }
+  return 'OUTSIDE';
+}

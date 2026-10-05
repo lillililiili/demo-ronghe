@@ -127,7 +127,7 @@
     ['dcd', '协议破解', 'CodeWorkingOutline', ['DCD', '协议破解设备', '11']],
     ['bsc', '驱鸟炮', 'MegaphoneOutline', ['BSC', '驱鸟炮设备', '12']],
     ['rid', 'RemoteID', 'IdCardOutline', ['RID', 'REMOTEID', 'RemoteID设备', '102']],
-    ['fusion', '融合感知箱', 'HardwareChipOutline', ['FUSION_BOX', '融合终端']]
+    ['fusion', '融合感知箱', 'HardwareChipOutline', ['FUSION_BOX', '融合终端', 'WEATHER', 'WEATHER_SENSOR', '气象设备']]
   ];
   const DEVICE_ALIASES = new Map();
   const UNKNOWN_DEVICE = Object.freeze({ key: 'unknown', label: '设备类型未知', icon: 'device' });
@@ -173,6 +173,9 @@
   // 统一读取当前异常事实：离线、故障、数据失效和未解除事件均提示；历史关联本身不构成当前异常。
   function abnormalActive(item = {}) {
     if (!item || item.historical === true) return false;
+    const presence = item.current_status || item.currentStatus;
+    if (item.risk_id && ['CLEARED', 'EXCLUDED', 'NOT_STARTED'].includes(presence)) return false;
+    if (item.risk_id && presence === 'UNKNOWN' && item.state !== 'EXCLUDED') return true;
     const states = [item.state, item.eventState, item.event_state, item.statusCode, item.status,
       item.connectivity, item.health_code, item.health, item.freshness].filter(Boolean);
     if (states.some(state => ['RESOLVED','CLOSED','DISMISSED','EXCLUDED','FALSE_POSITIVE','ARCHIVED',

@@ -232,7 +232,7 @@ async function loadChain(detail) {
   } catch (requestError) {
     if (token !== chainToken) return;
     chainError.value = requestError.status === 403
-      ? '当前账号没有 evidence:read，无法读取证据链。'
+      ? '当前账号无权查看关联证据，请联系管理员。'
       : (requestError.message || '证据链读取失败');
   } finally {
     if (token === chainToken) chainLoading.value = false;
@@ -255,7 +255,7 @@ function consumeDeepLink() {
   if (!context) return fromHash;
   const handoffId = context.handoffId || context.handoff_id || fromHash || null;
   if (!handoffId && context.caseId) {
-    legacyLinkNote.value = `本期未建设处罚案件对象：旧案件深链 ${String(context.caseId)} 无对应记录，下方为真实交接清单。`;
+    legacyLinkNote.value = '原链接无法定位交接记录，请从下方清单选择。';
   }
   return typeof handoffId === 'string' && handoffId ? handoffId : null;
 }
@@ -293,7 +293,7 @@ onMounted(() => {
                 </UFilterBar>
                 <div v-if="listError" class="warnbox pn-error">{{ listError }} <button class="btn" type="button" :disabled="listLoading" @click="retryList">重试</button></div>
                 <div v-if="listLoading && !handoffs.length" class="empty">正在读取交接清单</div>
-                <div v-else-if="!listError && !handoffs.length" class="empty">当前筛选与权限范围内暂无无人机事件处罚交接。</div>
+                <div v-else-if="!listError && !handoffs.length" class="empty">暂无符合筛选条件的交接记录</div>
                 <div v-else-if="handoffs.length" class="scroll table-scroll table-shell" style="flex:1">
                   <table class="tb">
                     <thead><tr>
@@ -322,7 +322,6 @@ onMounted(() => {
             </UPanel>
 
             <UPanel title="交接详情" panel-style="flex:4;min-width:340px" nopad>
-              <div id="pnNotifyDock" class="pn-notify-dock"></div>
               <div id="pnDetail" class="pn-detail">
                 <div v-if="detailLoading" class="empty">正在读取交接详情</div>
                 <div v-else-if="detailError" class="warnbox pn-error">{{ detailError }} <button class="btn" type="button" @click="retryDetail">重试</button></div>
@@ -332,15 +331,15 @@ onMounted(() => {
                     <div class="detail-hero-icon" v-html="U?.icon ? U.icon('clipboard') : ''"></div>
                     <div class="detail-hero-copy"><div class="detail-hero-eyebrow">业务交接</div><div class="detail-hero-title">{{ label(TYPE_LABEL, selected.handoff_type) }}</div><div class="detail-hero-id mono" :title="selected.handoff_id">{{ readableNo(selected.source_no, selected.source_id) || '来源编号未提供' }}</div></div>
                   </div></div>
-                  <div class="sect"><h4>交接信息</h4><dl class="kv kv-surface">
-                    <dt>来源事项</dt><dd :title="selected.source_id">{{ label(KIND_LABEL, selected.source_kind) }}</dd>
-                    <dt>接收方</dt><dd :title="selected.recipient_id">{{ selected.recipient_name || '未提供' }}</dd>
+                  <div class="sect pn-section pn-section-info"><h4>交接信息</h4><dl class="kv kv-surface">
+                    <dt>来源事项</dt><dd :title="selected.source_id"><span class="tag t-cyan">{{ label(KIND_LABEL, selected.source_kind) }}</span></dd>
+                    <dt>接收方</dt><dd class="pn-recipient" :title="selected.recipient_id">{{ selected.recipient_name || '未提供' }}</dd>
                     <RecipientSnapshotFields :snapshot="selected.recipient_snapshot" historical />
                     <dt>提交时间</dt><dd>{{ formatTime(selected.created_at) }}</dd>
-                    <dt>提交人</dt><dd :title="selected.submitted_by">{{ selected.submitted_by_name || selected.submitted_by || '未提供' }}</dd>
+                    <dt>提交人</dt><dd :title="selected.submitted_by">{{ selected.submitted_by_name || '姓名未记录' }}</dd>
                     <dt>所属范围</dt><dd :title="`${selected.owner_org_id || ''} / ${selected.district_id || ''}`">{{ selected.owner_org_name || '—' }} / {{ selected.district_name || '—' }}</dd>
                   </dl></div>
-                  <div class="sect"><h4>证据链
+                  <div class="sect pn-section pn-section-evidence"><h4>当前关联证据
                     <span class="tag t-gray">{{ chainTotal }} 项</span>
                     <span v-if="chainBroken" class="tag t-red">{{ chainBroken }} 份校验异常</span>
                   </h4>
@@ -359,24 +358,23 @@ onMounted(() => {
                           <span class="ev-chain-card-preview">{{ item.preview }}</span>
                         </button>
                       </div>
-                      <div v-if="chain.integrity" class="ev-chain-integrity" :title="chain.integrity.checksum">
-                        链校验 {{ chain.integrity.algorithm }}
-                      </div>
                     </template>
                   </div>
-                  <div class="sect"><h4>提交时的材料 <span v-if="selected.material?.schema_version" class="tag t-gray">第 {{ selected.material.schema_version }} 版</span></h4>
-                    <div v-if="!selected.material" class="empty">这条交接没有提交时的材料。</div>
+                  <div class="sect pn-section pn-section-material"><h4>移送材料</h4>
+                    <div v-if="!selected.material" class="empty">暂无材料</div>
                     <template v-else>
-                      <dl v-if="selected.material.event" class="kv kv-surface">
-                        <template v-if="!readableNo(selected.material.event.source_alarm_id) || readableNo(selected.material.event.source_alarm_id) !== readableNo(selected.source_no, selected.source_id)"><dt>提交时事件编号</dt><dd class="mono" :title="selected.material.event.event_id">{{ readableNo(selected.material.event.source_alarm_id) || '未提供' }}</dd></template>
-                        <dt>告警类型</dt><dd>{{ labelOf(ALARM_TYPE_LABEL, selected.material.event.alarm_type, '未提供') }}</dd>
-                        <dt>提交时状态</dt><dd>{{ labelOf(UAV_STATE_LABEL, selected.material.event.state, '未提供') }}</dd>
-                        <dt>发生时间</dt><dd>{{ formatTime(selected.material.event.occurred_at) }}</dd>
-                      </dl>
+                      <div v-if="selected.material.event" class="pn-material-summary">
+                        <p>{{ labelOf(ALARM_TYPE_LABEL, selected.material.event.alarm_type, '未提供') }} · 移送时{{ labelOf(UAV_STATE_LABEL, selected.material.event.state, '状态未提供') }}</p>
+                        <p class="pn-material-meta">发生于 {{ formatTime(selected.material.event.occurred_at) }}</p>
+                      </div>
+                      <p v-else class="pn-material-meta">无事件材料</p>
+                      <p v-if="selected.material.evidence_omitted" class="pn-material-meta">当前无权查看移送时证据</p>
+                      <details :key="selected.handoff_id" class="pn-material-details">
+                        <summary><span class="pn-material-expand">查看详细材料</span><span class="pn-material-collapse">收起详细材料</span></summary>
+                        <div class="pn-material-content">
                       <div v-if="selected.material.verifications?.length" class="pn-sub pn-wrap">
                         <div v-for="(vr, i) in selected.material.verifications" :key="i">
                           核实结论：{{ labelOf(EVENT_CONCLUSION_LABEL, vr.conclusion, vr.conclusion) }}
-                          <span v-if="vr.actor_name"> · {{ vr.actor_name }}</span><span v-if="vr.note"> · {{ vr.note }}</span>
                         </div>
                       </div>
                       <div v-if="selected.material.advisory_records?.length" class="pn-sub pn-wrap">
@@ -385,22 +383,33 @@ onMounted(() => {
                       </div>
                       <div v-if="selected.material.disposals?.length" class="pn-sub pn-wrap">
                         <div v-for="d in selected.material.disposals" :key="d.authorization_id">
-                          <span class="mono" :title="d.authorization_id">{{ d.authorization_no }}</span>
-                          · {{ labelOf(DISPOSAL_ACTION_LABEL, d.action_type) }} · {{ disposalStatusText(d) }}
-                          <span v-if="materialAuthorizationMode(d)"> · 授权方式：{{ materialAuthorizationMode(d) }}</span>
-                          <span v-if="d.authorization_mode === 'DIRECT'"> · 直接操作人：{{ d.requested_by_name || '未提供' }} · 审批人：不适用（免逐次审批）</span>
-                          <span v-else-if="d.authorization_mode === 'REVIEW' && d.requested_by_name"> · 申请人：{{ d.requested_by_name }}</span>
-                          <span v-if="d.authorization_mode !== 'DIRECT' && d.approved_by_name"> · 审批人：{{ d.approved_by_name }}</span>
+                          {{ labelOf(DISPOSAL_ACTION_LABEL, d.action_type) }} · {{ disposalStatusText(d) }}
+                          <span v-if="materialAuthorizationMode(d)" class="tag t-gray">{{ materialAuthorizationMode(d) }}</span>
+                          <p class="pn-material-meta">
+                            {{ d.authorization_mode === 'DIRECT' ? '发起人' : '申请人' }}：{{ d.requested_by_name || '未记录' }}
+                            <span v-if="d.authorization_mode !== 'DIRECT' && d.approved_by_name"> · 审批人：{{ d.approved_by_name }}</span>
+                          </p>
                         </div>
                       </div>
-                      <div v-if="!selected.material.event" class="empty">提交时未附上事件材料。</div>
-                      <div class="pn-note-text">本次提交的是文字信息，没有附带可下载的证据文件。</div>
+                      <div v-if="!selected.material.evidence_omitted" class="pn-sub pn-wrap">
+                        <h4>移送时证据</h4>
+                        <template v-if="selected.material.evidence?.length">
+                          <div>{{ selected.material.evidence.length }} 份 · 按移送时保存</div>
+                          <div v-for="evidence in selected.material.evidence" :key="evidence.evidence_id">
+                            <a class="pn-frozen-link" :href="`#/evidence?file=${encodeURIComponent(evidence.evidence_id)}`">{{ evidence.evidence_no || '查看证据记录' }}</a>
+                          </div>
+                        </template>
+                        <p v-else class="pn-material-meta">移送时未关联证据</p>
+                      </div>
+                        </div>
+                      </details>
                     </template>
                   </div>
                   <PunishmentNotification :key="selected.handoff_id" :handoff-id="selected.handoff_id" :recipient-name="selected.recipient_name" @status="updateNotificationStatus" />
-                  <PunishmentOutcome :key="selected.handoff_id" :handoff-id="selected.handoff_id" />
+                  <PunishmentOutcome class="pn-section pn-section-outcome" :key="selected.handoff_id" :handoff-id="selected.handoff_id" />
                 </template>
               </div>
+              <div id="pnNotifyDock" class="pn-notify-dock"></div>
             </UPanel>
           </div>
         </template>
@@ -411,6 +420,9 @@ onMounted(() => {
 </template>
 
 <style scoped>
+.pn-frozen-link { color: var(--cyan); text-decoration: underline; overflow-wrap: anywhere; }
+.pn-frozen-link:hover { color: var(--txt); }
+.pn-frozen-link:focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; }
 .pn-body { display: flex; flex-direction: column; min-height: 0; overflow: auto; }
 .pn-forbidden, .pn-note { margin: 0 0 12px; }
 /* 清单和详情各自滚动；筛选换行时保留记录区，矮窗口通过 pn-body 查看下方统计。 */
@@ -434,31 +446,32 @@ onMounted(() => {
 .pn-notify-dock:not(:empty) {
   flex: none;
   display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px;
-  background: color-mix(in srgb, var(--surface-1) 88%, var(--blue));
-  border-bottom: 1px solid color-mix(in srgb, var(--cyan) 55%, transparent);
-  box-shadow: 0 10px 22px rgba(4, 12, 32, .35);
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  padding: 12px 16px;
+  background: var(--surface-1);
+  border-top: 1px solid var(--line);
 }
 .pn-notify-dock :deep(.notify-send) {
-  width: 100%;
-  min-height: 44px;
-  padding: 10px 16px;
-  font-size: 16px;
-  font-weight: 650;
+  flex: none;
+  margin-left: auto;
+  min-height: 36px;
+  max-width: 100%;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 500;
   white-space: normal;
   height: auto;
 }
-.pn-notify-dock :deep(.notify-send:disabled) {
-  opacity: 1;
-  color: #fff;
-  background: color-mix(in srgb, var(--blue) 42%, var(--surface-1));
-  border-color: var(--cyan);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--cyan) 50%, transparent);
-  cursor: not-allowed;
+.pn-notify-dock :deep(.notify-send:focus-visible) {
+  outline: 2px solid var(--cyan);
+  outline-offset: 3px;
 }
 .pn-notify-dock :deep(.notify-block) {
+  flex: 1 1 160px;
+  min-width: 0;
   margin: 0;
   color: var(--amber);
   font-size: 13px;
@@ -467,5 +480,40 @@ onMounted(() => {
 }
 .pn-detail { flex: 1; min-height: 0; overflow: auto; padding: 12px; }
 .pn-detail .detail-hero-title, .pn-detail .detail-hero-id { display: block; overflow: visible; white-space: normal; text-overflow: unset; -webkit-line-clamp: unset; overflow-wrap: anywhere; }
-.pn-note-text { margin: 6px 0 4px; font-size: 11px; color: var(--txt-3); line-height: 1.6; }
+/* 按信息用途配色，状态标签仍沿用既有语义色。 */
+.pn-detail .detail-hero.detail-hero-micro {
+  background: color-mix(in srgb, var(--indigo) 8%, var(--surface-1));
+  border-color: color-mix(in srgb, var(--indigo) 32%, var(--line));
+  border-left: 3px solid var(--indigo);
+}
+.pn-detail .detail-hero-icon {
+  color: var(--purple);
+  background: color-mix(in srgb, var(--purple) 12%, var(--surface-1));
+  border-color: color-mix(in srgb, var(--purple) 40%, transparent);
+}
+.pn-detail .detail-hero-eyebrow { color: var(--purple); }
+.pn-detail .detail-hero-id { color: var(--cyan); }
+.pn-detail .pn-section-info { --pn-accent: var(--cyan); }
+.pn-detail .pn-section-evidence { --pn-accent: var(--purple); }
+.pn-detail .pn-section-material { --pn-accent: var(--orange); }
+.pn-material-summary p { margin: 0; line-height: 1.6; }
+.pn-material-summary { color: var(--txt); font-size: 13px; }
+.pn-material-meta { margin: 3px 0 6px; color: var(--txt-2); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.pn-material-details { margin-top: 6px; font-size: 12px; }
+.pn-material-details > summary { width: fit-content; padding: 4px 0; color: var(--orange); cursor: pointer; }
+.pn-material-details > summary:hover { color: var(--txt); }
+.pn-material-details > summary:focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; border-radius: 3px; }
+.pn-material-details:not([open]) .pn-material-collapse, .pn-material-details[open] .pn-material-expand { display: none; }
+.pn-material-content { display: grid; gap: 10px; padding: 8px 0 0 12px; margin-top: 4px; border-left: 1px solid var(--line); }
+.pn-detail :deep(.punishment-notification) { --pn-accent: var(--blue); }
+.pn-detail .pn-section-outcome { --pn-accent: var(--indigo); }
+.pn-detail :deep(:is(.pn-section, .punishment-notification) h4) { color: color-mix(in srgb, var(--pn-accent) 72%, var(--txt)); }
+.pn-detail :deep(:is(.pn-section, .punishment-notification) h4::before) { background: var(--pn-accent); }
+.pn-detail :deep(:is(.pn-section, .punishment-notification) .kv-surface) {
+  background: color-mix(in srgb, var(--pn-accent) 5%, var(--surface-1));
+  border-color: color-mix(in srgb, var(--pn-accent) 24%, var(--line));
+}
+.pn-detail :deep(:is(.pn-section, .punishment-notification) .kv-surface > dd) { color: var(--txt); }
+.pn-detail :deep(:is(.pn-section, .punishment-notification) .kv-surface > dt) { color: var(--txt-2); }
+.pn-detail :deep(:is(.pn-section, .punishment-notification) .kv-surface > .pn-recipient) { color: var(--cyan); font-weight: 600; }
 </style>

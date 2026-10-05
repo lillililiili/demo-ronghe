@@ -4,9 +4,12 @@ import math
 import re
 import time
 
-KINDS = {'radar': 1, 'tdoa': 10, '5ga': 0}
-LABELS = {'radar': '雷达', 'tdoa': 'TDOA', '5ga': '5G-A', 'eo': '光电', '5da': '5D-A', 'weather': '气象设备'}
+KINDS = {'radar': 1, 'tdoa': 10, '5ga': 0, 'weather': 1001, 'countermeasure': 1002}
+LABELS = {'radar': '雷达', 'tdoa': 'TDOA', '5ga': '5G-A', 'eo': '光电', '5da': '5D-A', 'weather': '气象设备', 'countermeasure': '反制设备'}
+HEARTBEAT_KINDS = frozenset((*KINDS, 'eo'))
+TARGET_REPORT_KINDS = frozenset(('radar', 'tdoa', '5ga'))
 RISK_TYPES = {'zone', 'deviation', 'no-plan', 'height', 'time', 'bird', 'balloon', 'offline', 'fault'}
+AUXILIARY_DEVICE_RADIUS_METRES = 5000
 
 def number(value, low, high, label):
     try:
@@ -24,23 +27,87 @@ def metres(a, b):
     a, b = coordinates(a), coordinates(b)
     return math.hypot((b[0]-a[0])*111320*math.cos(math.radians((a[1]+b[1])/2)), (b[1]-a[1])*111320)
 
+
+def target_path_distance(target, device):
+    return min(metres(point, [device['x'], device['y']]) for point in target['path'])
+
 def target_motion(target, elapsed):
     """Return position and east/north velocity from the same active path segment."""
+    point, east, north, _, _ = _motion_sample(target, elapsed)
+    return point, east, north
+
+
+def _motion_sample(target, elapsed):
+    """Sample a time-parametrized route; return point, E/N velocity, altitude and climb rate."""
     motion = target.get('_notification_motion') or {}
-    if motion.get('suppress'): return motion['origin'], 0.0, 0.0
-    points = motion.get('path') or target['path']
-    speed = motion.get('speed', target['speed']) if motion.get('path') else target['speed']
-    distance = max(0, elapsed-motion.get('at_elapsed', 0)) * speed if motion.get('path') else elapsed * speed
-    for a, b in zip(points, points[1:]):
-        length = metres(a, b)
-        if length > distance:
-            u = distance / length
-            start, end = coordinates(a), coordinates(b)
-            east = (end[0]-start[0])*111320*math.cos(math.radians((start[1]+end[1])/2))
-            north = (end[1]-start[1])*111320
-            return [a[0]+u*(b[0]-a[0]), a[1]+u*(b[1]-a[1])], speed*east/length, speed*north/length
-        distance -= length
-    return points[-1], 0.0, 0.0
+    if motion.get('suppress'):
+        return motion['origin'], 0.0, 0.0, target['height'], 0.0
+    departing = bool(motion.get('path'))
+    points = motion['path'] if departing else target['path']
+    if departing:
+        original = dict(target)
+        original.pop('_notification_motion', None)
+        departure_altitude = _motion_sample(original, motion.get('at_elapsed', 0))[3]
+        heights = [departure_altitude] * len(points)
+    else:
+        heights = target.get('altitudePath') or [target['height']] * len(points)
+    speed = motion.get('speed', target['speed']) if departing else target['speed']
+    mode = 'once' if departing else target.get('motionMode', 'once')
+    dwell = [0] * len(points) if departing else target.get('dwellSeconds') or [0] * len(points)
+    elapsed = max(0.0, elapsed - motion.get('at_elapsed', 0)) if departing else max(0.0, elapsed)
+    if len(points) == 1 or speed <= 0:
+        return points[0], 0.0, 0.0, heights[0], 0.0
+    indices = list(range(len(points)))
+    if mode == 'loop':
+        indices.append(0)
+    elif mode == 'pingpong':
+        indices.extend(range(len(points) - 2, -1, -1))
+    sections = []
+    for a, b in zip(indices, indices[1:]):
+        sections.append(('hold', a, a, dwell[a]))
+        length = metres(points[a], points[b])
+        if length:
+            sections.append(('move', a, b, length / speed))
+    if mode == 'once':
+        sections.append(('hold', indices[-1], indices[-1], dwell[indices[-1]]))
+    cycle = sum(section[3] for section in sections)
+    if cycle == 0:
+        return points[-1], 0.0, 0.0, heights[-1], 0.0
+    if mode != 'once':
+        elapsed %= cycle
+    elif elapsed >= cycle:
+        return points[-1], 0.0, 0.0, heights[-1], 0.0
+    for action, a, b, seconds in sections:
+        if elapsed < seconds:
+            if action == 'hold':
+                return points[a], 0.0, 0.0, heights[a], 0.0
+            fraction = elapsed / seconds
+            point = [points[a][axis] + fraction * (points[b][axis] - points[a][axis]) for axis in (0, 1)]
+            start, end = coordinates(points[a]), coordinates(points[b])
+            east = (end[0] - start[0]) * 111320 * math.cos(math.radians((start[1] + end[1]) / 2)) / seconds
+            north = (end[1] - start[1]) * 111320 / seconds
+            vertical = (heights[b] - heights[a]) / seconds
+            return point, east, north, heights[a] + fraction * (heights[b] - heights[a]), vertical
+        elapsed -= seconds
+    return points[-1], 0.0, 0.0, heights[-1], 0.0
+
+
+def target_sample(target, elapsed):
+    """Geographic observation shared by MQTT and normalized ingestion."""
+    point, east, north, altitude, vertical = _motion_sample(target, elapsed)
+    longitude, latitude = coordinates(point)
+    horizontal = math.hypot(east, north)
+    return {'longitude': longitude, 'latitude': latitude, 'altitude': altitude,
+            'height_agl': altitude if target.get('altitudeDatum', 'AMSL') == 'AGL' else target.get('heightAgl'),
+            'speed_x': east, 'speed_y': north, 'speed_z': vertical,
+            'speed': math.hypot(horizontal, vertical),
+            'heading': (math.degrees(math.atan2(east, north)) + 360) % 360 if horizontal else 0.0}
+
+
+def target_reporting(target, elapsed):
+    """A finite silence window suppresses reports without claiming departure."""
+    return not any(window['at'] <= elapsed < window['at'] + window['seconds']
+                   for window in target.get('silenceWindows', []))
 
 def position(target, elapsed):
     return target_motion(target, elapsed)[0]
@@ -57,11 +124,18 @@ def point_list(points, minimum, label):
         number(lat, -85, 85, label+'纬度')
     return result
 
+def duration_reached(scene, elapsed):
+    """Zero explicitly means continuous; finite scenes keep their original deadline."""
+    return scene['duration'] > 0 and elapsed >= scene['duration'] * 60
+
+
 def compile_scene(raw):
     s = copy.deepcopy(raw)
     if not isinstance(s, dict):
         raise ValueError('场景格式错误')
-    s['duration'] = number(s.get('duration'), .05, 20, '时长')
+    if isinstance(s.get('duration'), bool):
+        raise ValueError('时长格式无效')
+    s['duration'] = 0 if s.get('duration') == 0 else number(s.get('duration'), .05, 20, '时长')
     for collection in ['sites', 'targets', 'plans', 'zones', 'risks']:
         rows = s.get(collection)
         if not isinstance(rows, list) or len(rows) > 200:
@@ -87,12 +161,12 @@ def compile_scene(raw):
             if d['kind']=='eo' and d['health']=='故障':
                 raise ValueError('光电故障码尚未确认，请使用正常心跳或离线模拟')
             d['interval'] = number(d.get('interval'), 1, 300, '心跳间隔')
-            if d['kind'] in ('5da', 'weather') or d.get('send') is False:
+            if d['kind'] == '5da' or d.get('send') is False:
                 skipped.append(d.get('name', d['id']))
             else:
                 devices[d['id']] = dict(d, x=site['x'], y=site['y'])
     if not devices or len(devices) > 100:
-        raise ValueError('请配置 1 至 100 台可发送设备：雷达、TDOA、光电（5D-A 与气象协议待接入）')
+        raise ValueError('请配置 1 至 100 台可发送设备')
     plans = {p['id']: p for p in s['plans']}
     zones = {z['id']: z for z in s['zones']}
     targets = {t['id']: t for t in s['targets']}
@@ -127,6 +201,31 @@ def compile_scene(raw):
         if not t['path']:
             raise ValueError('目标轨迹为空')
         t['height'] = number(t.get('height'), 0, 10000, '目标海拔高度')
+        if t.get('motionMode', 'once') not in ('once', 'loop', 'pingpong'):
+            raise ValueError('轨迹运动方式无效')
+        t['motionMode'] = t.get('motionMode', 'once')
+        if t.get('altitudeDatum', 'AMSL') not in ('AMSL', 'AGL'):
+            raise ValueError('目标高度基准无效')
+        t['altitudeDatum'] = t.get('altitudeDatum', 'AMSL')
+        if t.get('altitudePath') is not None:
+            if not isinstance(t['altitudePath'], list) or len(t['altitudePath']) != len(t['path']):
+                raise ValueError('航点高度数量须与轨迹节点一致')
+            t['altitudePath'] = [number(value, 0, 10000, '航点高度') for value in t['altitudePath']]
+        if t.get('dwellSeconds') is not None:
+            if not isinstance(t['dwellSeconds'], list) or len(t['dwellSeconds']) != len(t['path']):
+                raise ValueError('航点停留数量须与轨迹节点一致')
+            t['dwellSeconds'] = [number(value, 0, 86400, '航点停留时间') for value in t['dwellSeconds']]
+        windows = t.get('silenceWindows', [])
+        if not isinstance(windows, list) or len(windows) > 100:
+            raise ValueError('暂停上报时段无效')
+        for window in windows:
+            if not isinstance(window, dict):
+                raise ValueError('暂停上报时段无效')
+            window['at'] = number(window.get('at'), 0, 86400, '暂停开始时间')
+            window['seconds'] = number(window.get('seconds'), .1, 86400, '暂停持续时间')
+            if window['at'] + window['seconds'] > 86400:
+                raise ValueError('暂停上报时段不能超过一天')
+        t['silenceWindows'] = windows
         if t.get('pilotPoint') is not None:
             t['pilotPoint'] = point_list([t['pilotPoint']], 1, '模拟飞手位置')[0]
         for key, limit, label in [('heightAgl', 10000, '模拟离地高度'), ('probability', 1, '模拟识别概率')]:
@@ -138,7 +237,24 @@ def compile_scene(raw):
         t['count'] = number(t.get('count',1), 1, 100, '目标数量')
         if not t['count'].is_integer(): raise ValueError('目标数量必须为整数')
         if t.get('kind') not in ('uav', 'bird', 'balloon'):
-            raise ValueError('未知目标类型')
+            if t.get('kind') not in ('unknown', 'identifying', 'person', 'vehicle', 'ship', 'remote_controller'):
+                raise ValueError('未知目标类型')
+        default_transport = 'normalized' if t['kind'] == 'balloon' else 'mqtt'
+        if t.get('transport', default_transport) not in ('mqtt', 'normalized'):
+            raise ValueError('目标上报通道无效')
+        t['transport'] = t.get('transport', default_transport)
+        if t['kind'] == 'balloon' and t['transport'] != 'normalized':
+            raise ValueError('气球须通过规范化观测入口上报')
+        if t['altitudeDatum'] == 'AGL' and t['transport'] != 'normalized':
+            raise ValueError('AGL 高度须通过规范化观测入口上报')
+        source = devices.get(t.get('deviceId'))
+        if not source or source['kind'] not in TARGET_REPORT_KINDS:
+            raise ValueError(t.get('name', '目标') + '：须选择已启用的雷达、TDOA 或 5G-A 上报设备')
+        secondary = t.get('secondaryDeviceId')
+        if secondary and (secondary == t['deviceId'] or secondary not in devices):
+            raise ValueError(t.get('name', '目标') + '：辅助上报设备须为另一台已启用的周边设备')
+        if secondary and target_path_distance(t, devices[secondary]) > AUXILIARY_DEVICE_RADIUS_METRES:
+            raise ValueError(t.get('name', '目标') + '：辅助上报设备须位于目标轨迹周边 5 公里内')
     active = []
     for r in s['risks']:
         if not r.get('enabled'):
@@ -148,9 +264,10 @@ def compile_scene(raw):
         if r.get('deviceId') not in devices:
             raise ValueError(r['name'] + '：关联设备未启用或协议未接入')
         if r['type'] in ('offline', 'fault'):
-            r['at'] = number(r.get('at'), 0, s['duration']*60, '触发时间')
-            r['seconds'] = number(r.get('seconds'), 1, s['duration']*60, '持续时间')
-            if r['at']+r['seconds'] > s['duration']*60:
+            window = s['duration'] * 60 if s['duration'] else 86400
+            r['at'] = number(r.get('at'), 0, window, '触发时间')
+            r['seconds'] = number(r.get('seconds'), 1, window, '持续时间')
+            if r['at']+r['seconds'] > window:
                 raise ValueError(r['name'] + '超出任务时长')
             if r['type'] == 'fault' and devices[r['deviceId']]['kind'] == 'eo':
                 raise ValueError('光电故障码未确认；可模拟光电离线，不能伪造故障码')
@@ -158,13 +275,10 @@ def compile_scene(raw):
             t = targets.get(r.get('targetId'))
             if not t:
                 raise ValueError(r['name'] + '缺少关联目标')
-            if t['kind'] == 'balloon':
-                raise ValueError('现有 MQTT 目标协议无气球分类码，不能当鸟群或未知目标发送')
-            if devices[r['deviceId']]['kind'] not in KINDS:
+            if devices[r['deviceId']]['kind'] not in TARGET_REPORT_KINDS:
                 raise ValueError(r['name'] + '须选择支持目标上报的雷达或 TDOA')
-            secondary = t.get('secondaryDeviceId')
-            if secondary and (secondary == r['deviceId'] or secondary not in devices or devices[secondary]['kind'] not in KINDS):
-                raise ValueError(r['name'] + '辅助上报设备须为另一台已启用的雷达、TDOA 或 5G-A')
+            if r['deviceId'] != t['deviceId']:
+                raise ValueError(r['name'] + '：关联设备须与目标上报设备一致')
             if r['type'] == 'no-plan' and t.get('planId'):
                 raise ValueError('无计划场景的目标不能关联计划')
             if r['type'] in ('zone', 'height') and r.get('basis') != 'plan' and r.get('zoneId') not in zones:
@@ -181,15 +295,7 @@ def compile_scene(raw):
                 r['offset'] = number(r.get('offset'), 1, 1440, '超出时长')
                 if r.get('mode') not in ('开始前提前飞行','结束后继续飞行'): raise ValueError('时间场景无效')
             active.append((r, t))
-    # One device and one coherent identity per target; reject conflicting sources instead of overwriting.
-    linked = {}
-    for r, t in active:
-        if t['id'] in linked and linked[t['id']]['deviceId'] != r['deviceId']:
-            raise ValueError(t['name'] + '被不同风险指定了不同上报设备')
-        linked[t['id']] = dict(t, deviceId=r['deviceId'])
-    if not any(r.get('enabled') for r in s['risks']):
-        raise ValueError('请勾选本次运行的风险场景')
-    return s, devices, linked, skipped
+    return s, devices, targets, skipped
 
 def messages(scene, devices, targets, manifest, elapsed, now, last_sent, sequence):
     out = []
@@ -203,6 +309,10 @@ def messages(scene, devices, targets, manifest, elapsed, now, last_sent, sequenc
         external = entry['external_id']
         if elapsed-last_sent.get(device_id, -1000) >= d['interval']:
             kind = d['kind']
+            if kind not in HEARTBEAT_KINDS:
+                # 未确认上报报文的模拟器对象可以登记和调测，但不伪造设备工参。
+                last_sent[device_id] = elapsed
+                continue
             if kind == 'eo':
                 payload = {'event': 'HeartBeat', 'edgeId': entry['edge_id'], 'timestamp': now,
                            'metadata': {'deviceId': external, 'codeStatus': 200, 'workState': 0, 'cameraStatus': {}}}
@@ -218,14 +328,17 @@ def messages(scene, devices, targets, manifest, elapsed, now, last_sent, sequenc
         objects = []
         for index, t in enumerate(targets.values(), 1):
             if (t.get('_notification_motion') or {}).get('suppress'): continue
+            if t['transport'] != 'mqtt' or not target_reporting(t, elapsed): continue
             if device_id not in (t['deviceId'], t.get('secondaryDeviceId')):
                 continue
-            point, speed_x, speed_y = target_motion(t, elapsed)
-            lon, lat = coordinates(point)
-            ext = {'objectType': 30 if t['kind']=='uav' else 40}
+            sample = target_sample(t, elapsed)
+            lon, lat = sample['longitude'], sample['latitude']
+            ext = {'objectType': {'unknown': 0, 'identifying': 255, 'person': 3,
+                                  'vehicle': 7, 'ship': 50, 'remote_controller': 100,
+                                  'bird': 40, 'uav': 30}[t['kind']]}
             if d['kind'] in ('radar', '5ga'):
-                # Protocol A: X east, Y north, Z up. Current paths have constant height.
-                ext.update(speedX=speed_x, speedY=speed_y, speedZ=0.0)
+                # Protocol A: X east, Y north, Z up.
+                ext.update(speedX=sample['speed_x'], speedY=sample['speed_y'], speedZ=sample['speed_z'])
             if 'probability' in t:
                 ext['probability'] = t['probability']
             if t['kind'] == 'uav':
@@ -234,9 +347,12 @@ def messages(scene, devices, targets, manifest, elapsed, now, last_sent, sequenc
                     ext['pilotLon'], ext['pilotLat'] = coordinates(t['pilotPoint'])
             for member in range(int(t['count']) if t['kind']=='bird' else 1):
                 objects.append({'objectId': str(index*1000+member), 'time': now, 'longitude': lon+member%10*.00002, 'latitude': lat+member//10*.00002,
-                                'altitude': t['height'], 'speed': math.hypot(speed_x, speed_y), 'extension': ext,
+                                'altitude': sample['altitude'], 'speed': sample['speed'], 'extension': ext,
                                 **({'height': t['heightAgl']} if 'heightAgl' in t else {})})
-        if objects and d['kind'] in KINDS:
+        # Only the confirmed target-reporting device protocols emit target objects.
+        # EO, weather, and countermeasure devices remain selectable as nearby
+        # auxiliary devices but their own protocol payloads must not be invented.
+        if objects and d['kind'] in TARGET_REPORT_KINDS:
             out.append((f"bridge/{manifest['provider']}/device_data/{d['kind']}/{external}",
                         {'deviceId': external, 'ptTime': now, 'msgCnt': sequence, 'objects': objects}))
     return out

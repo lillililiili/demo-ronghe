@@ -4,7 +4,7 @@ import { computed, h, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import { createSituationApiSource } from '@/pages/situation/situationApiSource.js';
-import { riskMatchesPlan, routeRiskIsActive } from '@/services/situationData.js';
+import { currentMapSnapshot, riskMatchesPlan, routeRiskIsActive, SITUATION_DEVICE_TYPE_ORDER, targetClassCounts } from '@/services/situationData.js';
 import {
   disposalStage, uavProcessActions, uavProcessStatus
 } from '@/pages/situation/situationFlow.js';
@@ -21,9 +21,12 @@ import { toast } from '@/ui/nv.js';
 import { getAlarm } from '@/services/alarmApi.js';
 import SituationAdvisoryCard from './situation/SituationAdvisoryCard.vue';
 import SituationAlarmPopup from './situation/SituationAlarmPopup.vue';
+import WeatherRiskMarkers from '@/components/WeatherRiskMarkers.vue';
+import { weatherAnchor } from '@/services/weatherRiskGeometry.js';
 import SituationRiskGroupPopup from './situation/SituationRiskGroupPopup.vue';
 import { groupRouteRisks } from './situation/routeRiskGroups.js';
 import { selectionLayout } from './situation/selectionLayout.js';
+import { createSituationMarkerLayout } from './situation/markerLayout.js';
 import TargetLiveVideo from '@/components/video/TargetLiveVideo.vue';
 import { autoSmsView } from '@/components/disposal/autoSmsView.js';
 import { autoVoiceView } from '@/components/disposal/autoVoiceView.js';
@@ -33,6 +36,7 @@ usePageChrome('situation');
 
 const VIEWED_STORAGE_KEY = 'situation.viewed.v1';
 const mapHost = ref(null);
+const weatherLayer = ref(null);
 const snapshot = ref({ generatedAt: 0, sourceMode: 'unknown', simulated: false, devices: [], targets: [], alarms: [], flightPlans: [], risks: [], airspaces: [], handoffs: [] });
 const selection = ref(null);
 const advisorySummaries = ref({});
@@ -51,6 +55,7 @@ let map = null;
 let stopSource = null;
 let lastSourceErrorAt = 0;
 let selectionResizeObserver = null;
+let expiryTimer = null;
 
 const devices = computed(() => snapshot.value.devices || []);
 const alarms = computed(() => (snapshot.value.alarms || [])
@@ -66,7 +71,7 @@ watch(() => [evidenceRoute.query.target, snapshot.value.generatedAt], ([id, gene
   const target = targets.value.find(item => item.targetId === id);
   evidenceTargetHandled = id;
   if (target) selectTarget(target);
-  else { clearSelection(); toast('指定目标不在今日感知范围内，可返回证据管理查看该目标的历史材料。', 'warn'); }
+  else { clearSelection(); toast('指定目标没有当前有效观测，可返回证据管理查看该目标的历史材料。', 'warn'); }
 }, { flush: 'post' });
 const flightPlans = computed(() => snapshot.value.flightPlans || []);
 const risks = computed(() => snapshot.value.risks || []);
@@ -78,9 +83,14 @@ const deviceStatusCounts = computed(() => devices.value.reduce((counts, device) 
   counts[device.statusCode] = (counts[device.statusCode] || 0) + 1;
   return counts;
 }, { ONLINE: 0, ABNORMAL: 0, OFFLINE: 0, UNKNOWN: 0 }));
-const uavCount = computed(() => targets.value.filter(target => target.objectTypeCode === 'UAV').length);
-const foreignObjectCount = computed(() => targets.value.length - uavCount.value);
-const deviceGroups = computed(() => ['RADAR', 'EO', 'FIVE_G_A', 'TDOA'].map(typeCode => {
+const targetCounts = computed(() => targetClassCounts(targets.value));
+const deviceGroups = computed(() => {
+  const presentTypes = [...new Set(devices.value.map(device => device.typeCode).filter(Boolean))];
+  const orderedTypes = [
+    ...SITUATION_DEVICE_TYPE_ORDER.filter(typeCode => presentTypes.includes(typeCode)),
+    ...presentTypes.filter(typeCode => !SITUATION_DEVICE_TYPE_ORDER.includes(typeCode))
+  ];
+  return orderedTypes.map(typeCode => {
   const items = devices.value.filter(device => device.typeCode === typeCode);
   const sample = items[0] || {};
   const meters = items.map(device => device.coverage?.kind === 'sector' ? device.coverage.rangeM : device.coverage?.radiusM)
@@ -96,7 +106,8 @@ const deviceGroups = computed(() => ['RADAR', 'EO', 'FIVE_G_A', 'TDOA'].map(type
     hasNew: items.some(device => device.newAlert),
     rangeText: typeCode === 'EO' ? `单站 ${range} 定向视场` : `单站 ${range} 有效范围`
   };
-}));
+  });
+});
 const newAlarmCount = computed(() => alarms.value.filter(alarm => alarm.isNew).length);
 const newRiskCount = computed(() => riskGroups.value.filter(risk => risk.active && risk.isNew).length);
 const activeRiskCount = computed(() => riskGroups.value.filter(risk => risk.active).length);
@@ -147,10 +158,12 @@ const fusionDevices = computed(() => {
 });
 const fusionConfidence = computed(() => selectedTarget.value?.fusedConf ?? null);
 const clockText = computed(() => formatClock(snapshot.value.generatedAt));
-const sourceModeText = computed(() => snapshot.value.sourceMode === 'replay' ? '回放数据'
+const sourceModeText = computed(() => snapshot.value.simulated ? '含模拟数据'
+  : snapshot.value.sourceMode === 'replay' ? '回放数据'
   : snapshot.value.sourceMode === 'live' ? '实时数据'
     : snapshot.value.sourceMode === 'mixed' ? '混合数据' : '来源待确认');
-const sourceModeDetail = computed(() => snapshot.value.sourceMode === 'replay' ? 'MQTT 测试回放来源'
+const sourceModeDetail = computed(() => snapshot.value.simulated ? '当前视图包含模拟记录，不能作为现场验收依据'
+  : snapshot.value.sourceMode === 'replay' ? 'MQTT 测试回放来源'
   : snapshot.value.sourceMode === 'live' ? '现场实时接入来源'
     : snapshot.value.sourceMode === 'mixed' ? '实时与回放来源并存' : '后端暂未返回来源状态');
 const fuseIcon = U.icon('radar');
@@ -224,7 +237,9 @@ function riskFactText(risk) {
 }
 
 function riskGroupStateText(group) {
-  return Object.entries(group.stateCounts).map(([state, count]) =>
+  const presence = group.currentStatus === 'UNKNOWN' ? '位置未知／待确认 · '
+    : group.currentStatus === 'CLEARED' ? '已解除 · ' : '';
+  return presence + Object.entries(group.stateCounts).map(([state, count]) =>
     `${group.members.length > 1 ? `${count} 条` : ''}${labelOf(RISK_STATE_LABEL, state)}`).join(' · ');
 }
 
@@ -327,8 +342,9 @@ function decorate(next) {
 
 function applySnapshot(next) {
   rawSnapshot = next;
-  const decorated = decorate(next);
+  const decorated = decorate(currentMapSnapshot(next));
   snapshot.value = decorated;
+  if (selection.value?.kind === 'target' && !decorated.targets.some(target => target.id === selection.value.id)) clearSelection();
   const count = decorated.alarms.filter(alarm => alarm.isNew).length + groupRouteRisks(decorated.risks).filter(risk => risk.isNew).length;
   const failed = (next.failedSegments || []).map(segment => ({
     targets: '目标', alarms: '告警', risks: '风险', handoffs: '移送', devices: '设备',
@@ -342,10 +358,10 @@ function applySnapshot(next) {
   if (!map) return;
   map.setData({
     airspaces: decorated.airspaces,
-    devices: decorated.devices,
+    devices: decorated.devices.filter(device => Number.isFinite(device.lon) && Number.isFinite(device.lat)),
     targets: decorated.targets,
     flightPlans: decorated.flightPlans,
-    risks: decorated.risks,
+    risks: decorated.risks.filter(risk => risk.mapVisible !== false),
     alarms: []
   });
   if (selection.value && ['device', 'target', 'plan'].includes(selection.value.kind)) map.pinHit(selection.value.kind, selection.value.id);
@@ -470,6 +486,18 @@ function selectPlan(plan, markRisks = true, riskId = null) {
   }
 }
 
+function selectWeatherRisk(risk) {
+  selectRisk(risk);
+  const point = weatherAnchor(risk.weather_fact);
+  if (point && map) {
+    const layout = selectionLayout(mapHost.value.parentElement).point;
+    nextTick(() => {
+      if (selectedRisk.value?.riskId !== risk.riskId || !map) return;
+      map.centerAt(point[0], point[1], { scale: map.zoom, offset: [layout[0] - map.w / 2, layout[1] - map.h / 2] });
+    });
+  }
+}
+
 function selectRisk(risk) {
   if (!risk) return;
   markViewed(risk);
@@ -575,6 +603,7 @@ function clearSelection() {
   map.sel = null;
   map.planSel = null;
   map.clearPinnedHit();
+  map.draw();
 }
 
 function renderDeviceTip(device) {
@@ -587,6 +616,8 @@ function renderDeviceTip(device) {
     <header><span class="sit-map-pop-icon">${iconHtml(device)}</span><span><b>${esc(device.name)}</b><small class="mono">${esc(device.id)}</small></span>
       <button type="button" data-tip-act="close" aria-label="关闭设备详情">${U.icon('close')}</button></header>
     <div class="sit-map-pop-status"><span class="sit-state ${statusClass(device.status)}">${esc(device.status)}</span><span>最新上报 ${esc(reportAge(device.lastReportAt))}</span></div>
+    ${device.posValid === false ? '<p class="sit-map-pop-note">未提供安装坐标，暂不显示地图点位。</p>' : ''}
+    ${device.simulated ? '<p class="sit-map-pop-note">模拟设备数据（非现场验收）</p>' : ''}
     <dl><dt>覆盖参数</dt><dd class="${unavailable ? 'is-unavailable' : ''}">${esc(coverageState)}</dd>
       ${coverage.availabilityReason ? `<dt>可用性</dt><dd class="is-unavailable">${esc(coverage.availabilityReason)}</dd>` : ''}
       <dt>参数来源</dt><dd>${esc(coverage.sourceLabel || '未提供')}</dd>
@@ -670,6 +701,7 @@ function onMapPick(hit) {
   if (hit?.kind === 'device') selectDevice(devices.value.find(device => device.id === hit.data.id));
   if (hit?.kind === 'target') selectTarget(targets.value.find(target => target.id === hit.data.id));
   if (hit?.kind === 'plan') selectPlan(flightPlans.value.find(plan => plan.id === hit.data.id));
+  if (hit?.kind === 'weather') selectWeatherRisk(hit.data);
 }
 
 function targetAlarm(target) {
@@ -773,7 +805,7 @@ function toggleFuse() {
 
 function onVisibilityChange() {
   if (document.hidden) source.pause();
-  else source.resume();
+  else { if (rawSnapshot) applySnapshot(rawSnapshot); source.resume(); }
   if (map?.setPaused) map.setPaused(document.hidden);
 }
 
@@ -784,6 +816,9 @@ onMounted(() => {
     zoom: 1,
     legend: false,
     fusionProfile: true,
+    layoutMarkers: createSituationMarkerLayout(),
+    getExternalMarkers: view => weatherLayer.value?.getMarkers(view) || [],
+    drawUnderMarkers: view => weatherLayer.value?.draw(view),
     sensorIconScale: 1,
     maxDpr: 2,
     layers: { alarm: false, coverage: true },
@@ -794,12 +829,17 @@ onMounted(() => {
     onEmptyPick: clearSelection
   });
   stopSource = source.start(applySnapshot, onSourceError);
+  // 独立于网络轮询：请求失败或迟迟未返回时，旧点仍按期退出地图。
+  expiryTimer = window.setInterval(() => {
+    if (!document.hidden && rawSnapshot && snapshot.value.targets.some(target => target.mapExpiresAt <= Date.now())) applySnapshot(rawSnapshot);
+  }, 1000);
   selectionResizeObserver = new ResizeObserver(() => focusSelection(false));
   selectionResizeObserver.observe(mapHost.value);
   document.addEventListener('visibilitychange', onVisibilityChange);
 });
 
 onUnmounted(() => {
+  window.clearInterval(expiryTimer);
   selectionResizeObserver?.disconnect();
   document.removeEventListener('visibilitychange', onVisibilityChange);
   if (stopSource) stopSource();
@@ -814,12 +854,13 @@ onUnmounted(() => {
   <div id="view" class="view situation-page" :class="{ 'has-selection-popup': showSelectionPopup }" @keydown.esc="clearSelection">
     <main class="sit-stage" aria-label="融合感知实时地图">
       <div id="stMap" ref="mapHost" class="sit-map"></div>
+      <WeatherRiskMarkers ref="weatherLayer" :risks="risks" :selected-id="selectedRisk?.riskId" shared-layout control-target="#situation-weather-control" @select="selectWeatherRisk" />
 
       <div class="sit-live-pill" :aria-label="`当前数据来源：${sourceModeText}`">
         <span class="sit-live-dot" aria-hidden="true"></span>
         <b>{{ sourceModeText }}</b>
         <span>{{ sourceModeDetail }}</span>
-        <span>今日目标 {{ targets.length }} · 无人机 {{ uavCount }} · 异物 {{ foreignObjectCount }}（北京时间）</span>
+        <span>当前目标 {{ targets.length }} · 无人机 {{ targetCounts.uav }} · 异物 {{ targetCounts.foreign }} · 未分类 {{ targetCounts.unknown }}<template v-if="targetCounts.other"> · 其他 {{ targetCounts.other }}</template>（北京时间）</span>
         <time class="mono">{{ clockText }}</time>
       </div>
       <p class="sr-only" role="status" aria-live="polite" aria-atomic="true">{{ statusAnnouncement }}</p>
@@ -853,7 +894,7 @@ onUnmounted(() => {
             </div>
           </section>
         </div>
-        <footer v-show="devicesExpanded" id="sit-device-footer">共 {{ devices.length }} 台感知设备；覆盖范围以设备台账配置为准，未知或不可用范围不会绘制。</footer>
+        <footer v-show="devicesExpanded" id="sit-device-footer">共 {{ devices.length }} 台感知设备；在线设备显示上报脉冲，覆盖范围仍以设备台账配置为准。</footer>
       </aside>
 
       <aside class="sit-glass sit-alert-dock" :class="{ 'is-collapsed': !alertsExpanded }" aria-labelledby="sit-alert-title">
@@ -937,10 +978,12 @@ onUnmounted(() => {
 
       <nav class="sit-layerbar" aria-label="地图图层">
         <button type="button" :aria-pressed="layers.coverage" @click="toggleLayer('coverage')">覆盖范围</button>
+        <span class="sit-scan-key" aria-label="在线设备上报脉冲"><i aria-hidden="true"></i>上报脉冲</span>
         <button type="button" :aria-pressed="layers.device" @click="toggleLayer('device')">设备点位</button>
         <button type="button" :aria-pressed="layers.track" @click="toggleLayer('track')">目标轨迹</button>
         <button type="button" :aria-pressed="layers.flightPlan" @click="toggleLayer('flightPlan')">计划航线</button>
         <button type="button" :aria-pressed="layers.airspace" :aria-label="`防控空域，共${airspaces.length}个区域`" @click="toggleLayer('airspace')">防控空域 {{ airspaces.length }}</button>
+        <span id="situation-weather-control"></span>
         <span class="sit-plan-key" aria-label="航线与轨迹图例"><span><i class="is-within"></i>符合航线</span><span><i class="is-outside"></i>偏离航线</span><span><i class="is-plan"></i>未飞计划线</span><span><i class="is-unknown"></i>关系未知</span></span>
       </nav>
 

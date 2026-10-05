@@ -1,6 +1,7 @@
 """Current system API registration and explicit local replay prerequisite seeding."""
 import copy
 import datetime as dt
+import hashlib
 import json
 import os
 import re
@@ -10,6 +11,25 @@ import urllib.request
 import urllib.parse
 import uuid
 from engine import coordinates
+
+
+def stable_device_identity(device_id, kind):
+    """Return the simulator's long-lived external identity for one logical device.
+
+    Batch IDs belong to scenarios and are intentionally used for targets, plans and
+    evidence. Device registrations are different: the same logical simulator
+    device must resolve to the same platform binding after a restart. The EO API
+    limits external IDs to 32 characters, so the readable prefix is shortened with
+    a deterministic hash when necessary.
+    """
+    raw_kind = re.sub(r'[^A-Za-z0-9_-]', '-', str(kind)).strip('-_') or 'device'
+    raw_id = re.sub(r'[^A-Za-z0-9_-]', '-', str(device_id)).strip('-_') or 'device'
+    candidate = f'map-sim-{raw_kind}-{raw_id}'
+    limit = 32 if raw_kind == 'eo' else 56
+    if len(candidate) <= limit:
+        return candidate
+    digest = hashlib.sha256(f'{kind}:{device_id}'.encode('utf-8')).hexdigest()[:8]
+    return candidate[:limit - 9] + '-' + digest
 
 class Platform:
     def __init__(self, base, token=None):
@@ -45,6 +65,56 @@ class Platform:
             raise ValueError('系统接口未成功：' + path)
         return value.get('data')
 
+    def _existing_device(self, body):
+        """Find and validate a previously registered stable simulator device."""
+        query = urllib.parse.urlencode({'page': 1, 'size': 100, 'keyword': body['device_no'], 'sort': 'device_no_asc'})
+        page = self.call('GET', '/devices?' + query)
+        matches = [item for item in page.get('items', []) if item.get('device_no') == body['device_no']]
+        if not matches:
+            return None
+        if len(matches) > 1:
+            raise ValueError('稳定设备编号出现重复记录：' + body['device_no'])
+        device_id = matches[0].get('device_id')
+        if not device_id:
+            raise ValueError('稳定设备记录缺少平台设备 ID：' + body['device_no'])
+        detail = self.call('GET', '/devices/' + urllib.parse.quote(str(device_id), safe=''))
+        device = detail.get('device') or {}
+        mismatches = []
+        if detail.get('external_device_id') != body['external_device_id']:
+            mismatches.append('external_device_id')
+        if device.get('source_mode') != body['source_mode']:
+            mismatches.append('source_mode')
+        if detail.get('protocol_code') != body['protocol_code']:
+            mismatches.append('protocol_code')
+        if device.get('enabled') is False:
+            mismatches.append('设备已停用')
+        status = self.call('GET', '/devices/' + urllib.parse.quote(str(device_id), safe='') + '/protocol-status')
+        details = status.get('details') or {}
+        for key in ('broker_id', 'provider_code', 'external_device_id', 'edge_id', 'device_type_abbr'):
+            expected = body.get(key)
+            actual = details.get(key)
+            if expected is not None and actual is not None and expected != actual:
+                mismatches.append(key)
+        if mismatches:
+            raise ValueError('稳定设备身份冲突（' + body['device_no'] + '）：' + '、'.join(dict.fromkeys(mismatches)))
+        mutable = ('name', 'vendor', 'model', 'longitude', 'latitude', 'altitude_m')
+        changed = [key for key in mutable if device.get(key) is not None and device.get(key) != body.get(key)]
+        if changed:
+            version = device.get('version')
+            if version is None:
+                raise ValueError('稳定设备缺少版本，无法同步位置：' + body['device_no'])
+            update = dict(body, version=version)
+            sync_key = 'sim-sync-' + hashlib.sha256((body['external_device_id'] + ':' + str(version)).encode('utf-8')).hexdigest()[:24]
+            detail = self.call('PUT', '/devices/' + urllib.parse.quote(str(device_id), safe=''), update, sync_key)
+        detail['_reused'] = True
+        return detail
+
+    def _onboard_or_reuse(self, body, key):
+        existing = self._existing_device(body)
+        if existing is not None:
+            return existing
+        return self.call('POST', '/devices/onboard', body, key)
+
     def login(self, account, password):
         self.token = self.call('POST', '/auth/login', {'account': account, 'password': password})['session_id']
         self.me=self.call('GET', '/auth/me')
@@ -54,8 +124,8 @@ class Platform:
         return [b for b in self.call('GET', '/mqtt-brokers') if b.get('source_mode')=='replay' and b.get('enabled')]
 
     def prepare_devices(self, devices, broker, manifest, checkpoint):
-        for index, (device_id, d) in enumerate(devices.items(), 1):
-            external = manifest['batch'] + '-' + str(index)
+        for device_id, d in devices.items():
+            external = stable_device_identity(device_id, d['kind'])
             lon, lat = coordinates([d['x'], d['y']])
             body = dict(protocol_code='EO_EDGE_MQTT_20250826' if d['kind']=='eo' else 'LINGYUN_MQTT_V8_6',
                         broker_id=broker['broker_id'], provider_code=manifest['provider'], external_device_id=external,
@@ -64,7 +134,7 @@ class Platform:
                         vendor='地图场景模拟器', model='MQTT-SIM', longitude=lon, latitude=lat, altitude_m=0)
             if d['kind'] == 'eo':
                 body['edge_id'] = external + '-edge'
-            record = self.call('POST', '/devices/onboard', body, 'sim-onboard-'+external)
+            record = self._onboard_or_reuse(body, 'sim-onboard-'+external)
             manifest['devices'][device_id] = {'external_id': external, 'edge_id': body.get('edge_id'), 'platform_id': record['device']['device_id'], 'kind': d['kind']}
             if d['kind'] == 'eo':
                 binding = self.call('GET', '/devices/' + record['device']['device_id'] + '/protocol-status')['details']
@@ -83,15 +153,28 @@ def sql(value):
 
 class Prerequisites:
     """Only enabled by an explicit CLI database argument; never modifies existing rows."""
-    def __init__(self, database, container='deploy-db-1'):
+    def __init__(self, database, container='deploy-db-1', schema=None):
         if database and not re.fullmatch(r'[A-Za-z0-9_]{1,63}', database):
             raise ValueError('数据库名无效')
+        if schema is not None:
+            if not isinstance(schema, str) or not re.fullmatch(r'[a-z_][a-z0-9_]{0,62}', schema):
+                raise ValueError('schema 名无效：仅支持小写字母或下划线开头的 1–63 位小写字母、数字、下划线')
+            if not database:
+                raise ValueError('--schema 必须同时指定 --database')
         self.database, self.container = database, container
+        self.schema = schema
 
     def query(self, statement):
         if not self.database:
             raise ValueError('计划/区域尚未配套：请用 --database 指定当前本机测试库启动模拟器')
-        result = subprocess.run(['docker','exec','-i',self.container,'psql','-U','uav','-d',self.database,'-qAt','-v','ON_ERROR_STOP=1'], input=statement, text=True, capture_output=True, timeout=20)
+        command = ['docker', 'exec', '-i']
+        if self.schema is not None:
+            # Per-process only: never fall back to public business tables or load a psqlrc override.
+            command += ['-e', 'PGOPTIONS=-c search_path=' + self.schema]
+        command += [self.container, 'psql', '-U', 'uav', '-d', self.database, '-qAt', '-v', 'ON_ERROR_STOP=1']
+        if self.schema is not None:
+            command += ['-X']
+        result = subprocess.run(command, input=statement, text=True, capture_output=True, timeout=20)
         if result.returncode:
             raise ValueError('测试库配套失败：'+result.stderr.strip()[:600])
         return result.stdout.strip()
@@ -118,6 +201,7 @@ class Prerequisites:
             h,m = map(int, hhmm.split(':'))
             return origin.replace(hour=h, minute=m, second=0, microsecond=0).timestamp()
         owner, district = sql(broker['owner_org_id']), sql(broker['district_id'])
+        geometry_function = 'public.ST_GeomFromText' if self.schema is not None else 'ST_GeomFromText'
         statements = ['BEGIN;']
         for p in scene['plans']:
             if p['id'] not in plan_ids:
@@ -126,7 +210,7 @@ class Prerequisites:
             route_no = manifest['batch']+'-r'+str(len(manifest['plans'])+1)
             points = ','.join(f'{x} {y}' for x,y in map(coordinates,p['points']))
             statements += [f"INSERT INTO route(route_id,route_no,name,enabled,source_mode,owner_org_id,district_id,created_at,updated_at,version) VALUES ({sql(rid)},{sql(route_no)},{sql('模拟 '+p['name'])},TRUE,'replay',{owner},{district},now(),now(),0);",
-                f"INSERT INTO route_version(route_version_id,route_id,version_no,centerline,corridor_width_m,min_altitude_m,max_altitude_m,altitude_datum,valid_from,change_reason,created_at) VALUES ({sql(vid)},{sql(rid)},1,ST_GeomFromText({sql('LINESTRING('+points+')')},4326),{p['width']},{p['min']},{p['max']},{sql(p.get('altitudeDatum', 'AMSL'))},to_timestamp({now/1000-86400}),'MQTT 地图模拟批次',now());"]
+                f"INSERT INTO route_version(route_version_id,route_id,version_no,centerline,corridor_width_m,min_altitude_m,max_altitude_m,altitude_datum,valid_from,change_reason,created_at) VALUES ({sql(vid)},{sql(rid)},1,{geometry_function}({sql('LINESTRING('+points+')')},4326),{p['width']},{p['min']},{p['max']},{sql(p.get('altitudeDatum', 'AMSL'))},to_timestamp({now/1000-86400}),'MQTT 地图模拟批次',now());"]
             related = [t for t in targets.values() if t.get('planId')==p['id'] or any(r.get('targetId')==t['id'] and r.get('planId')==p['id'] for r in risks)]
             for t in related or [None]:
                 pid = str(uuid.uuid4()); start, end = moment(p['start']), moment(p['end'])
@@ -151,7 +235,7 @@ class Prerequisites:
             points = ','.join(f'{x} {y}' for x,y in ring)
             start, end = moment(z['start']), moment(z['end'])
             statements += [f"INSERT INTO airspace(airspace_id,airspace_no,name,source_mode,owner_org_id,district_id,created_at,updated_at,version) VALUES ({sql(zid)},{sql(manifest['batch']+'-a'+str(len(manifest['zones'])+1))},{sql('模拟 '+z['name'])},'replay',{owner},{district},now(),now(),0);",
-                f"INSERT INTO airspace_version(airspace_version_id,airspace_id,version_no,kind_code,boundary,min_altitude_m,max_altitude_m,altitude_datum,valid_from,valid_to,change_reason,created_at) VALUES ({sql(vid)},{sql(zid)},1,{sql(z['kindCode'])},ST_GeomFromText({sql('MULTIPOLYGON((('+points+')))')},4326),0,{z['max']},{sql(z.get('altitudeDatum', 'AMSL'))},to_timestamp({start}),to_timestamp({end}),'MQTT 地图模拟批次',now());"]
+                f"INSERT INTO airspace_version(airspace_version_id,airspace_id,version_no,kind_code,boundary,min_altitude_m,max_altitude_m,altitude_datum,valid_from,valid_to,change_reason,created_at) VALUES ({sql(vid)},{sql(zid)},1,{sql(z['kindCode'])},{geometry_function}({sql('MULTIPOLYGON((('+points+')))')},4326),0,{z['max']},{sql(z.get('altitudeDatum', 'AMSL'))},to_timestamp({start}),to_timestamp({end}),'MQTT 地图模拟批次',now());"]
             manifest['zones'][z['id']] = {'id':zid,'version_id':vid}
         statements.append('COMMIT;')
         self.query('\n'.join(statements))

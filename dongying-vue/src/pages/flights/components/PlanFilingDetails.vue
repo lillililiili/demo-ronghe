@@ -1,4 +1,5 @@
 <script setup>
+import { userFacingMessage } from '@/ui/labels.js';
 import { computed, onUnmounted, ref, watch } from 'vue';
 import { flightApi } from '@/services/flightApi.js';
 
@@ -44,7 +45,7 @@ const altitude = computed(() => {
   <section class="sect plan-filing">
     <div class="workspace-section-heading"><h4>计划信息</h4></div>
     <dl class="kv kv-surface">
-      <dt>计划编号</dt><dd>{{ value(plan.plan_no) }} <span v-if="plan.source_mode === 'mock'" class="tag t-gray">模拟计划</span></dd>
+      <dt>计划编号</dt><dd>{{ value(plan.plan_no) }} <span v-if="plan.source_mode === 'mock'" class="tag t-amber">模拟计划</span></dd>
       <dt>报备单位</dt><dd>
         <span>{{ value(subjects?.operator_org_name || filing.operator_name) }}</span>
         <small v-if="subjects?.operator_org_id && filing.operator_name && subjects.operator_org_name !== filing.operator_name">申报时名称：{{ filing.operator_name }}</small>
@@ -69,27 +70,27 @@ const altitude = computed(() => {
       <dl v-if="subjects.feedback_recipient" class="kv kv-surface">
         <dt>计划反馈对象</dt><dd>{{ subjects.feedback_recipient.org_name || subjects.feedback_recipient.recipient_name || '尚未配置' }}</dd>
         <template v-if="subjects.feedback_recipient.contact_name"><dt>联系人员</dt><dd>{{ subjects.feedback_recipient.contact_name }}<small v-if="subjects.feedback_recipient.contact_hint">{{ subjects.feedback_recipient.contact_hint }}</small></dd></template>
-        <dt>通知准备情况</dt><dd>{{ subjects.feedback_recipient.blocked_reason || (subjects.feedback_recipient.configured ? '接收配置已就绪，发送前会再次校验' : '接收配置尚未就绪') }}</dd>
+        <dt>通知准备情况</dt><dd>{{ userFacingMessage(subjects.feedback_recipient.blocked_reason) || (subjects.feedback_recipient.configured ? '接收配置已就绪，发送前会再次校验' : '接收配置尚未就绪，请联系管理员核对接收单位和通知渠道。') }}</dd>
       </dl>
       <p v-else>计划反馈接收对象尚未配置。</p>
       <button class="btn ghost" type="button" @click="loadSubjects">刷新关联信息</button>
     </details>
-    <h4>起降点与时间</h4>
-    <dl class="kv kv-surface">
-      <dt>起飞点</dt><dd>{{ value(filing.takeoff_site_name) }}<small v-if="position(filing.takeoff_longitude, filing.takeoff_latitude)">{{ position(filing.takeoff_longitude, filing.takeoff_latitude) }}</small></dd>
-      <dt>降落点</dt><dd>{{ value(filing.landing_site_name) }}<small v-if="position(filing.landing_longitude, filing.landing_latitude)">{{ position(filing.landing_longitude, filing.landing_latitude) }}</small></dd>
-      <dt>时间窗口</dt><dd>{{ time(plan.start_at) }} ～ {{ time(plan.end_at) }}</dd>
+    <h4 class="schedule-heading">起降点与时间</h4>
+    <dl class="filing-cards">
+      <div class="filing-card takeoff-card"><dt>起飞点</dt><dd>{{ value(filing.takeoff_site_name) }}<small v-if="position(filing.takeoff_longitude, filing.takeoff_latitude)">{{ position(filing.takeoff_longitude, filing.takeoff_latitude) }}</small></dd></div>
+      <div class="filing-card landing-card"><dt>降落点</dt><dd>{{ value(filing.landing_site_name) }}<small v-if="position(filing.landing_longitude, filing.landing_latitude)">{{ position(filing.landing_longitude, filing.landing_latitude) }}</small></dd></div>
+      <div class="filing-card schedule-card"><dt>时间窗口</dt><dd><span>{{ time(plan.start_at) }}</span><span class="time-divider">至</span><span>{{ time(plan.end_at) }}</span></dd></div>
     </dl>
-    <h4>报备航线</h4>
+    <h4 class="route-heading">报备航线</h4>
     <dl class="kv kv-surface">
-      <dt>航线名称</dt><dd>{{ value(plan.route?.name) }}</dd>
+      <dt>航线名称</dt><dd class="route-name">{{ value(plan.route?.name) }}</dd>
       <dt>航线编号</dt><dd>{{ value(plan.route?.route_no) }}</dd>
-      <dt>使用版本</dt><dd>{{ plan.route?.version_no == null ? '未提供' : `v${plan.route.version_no}` }}</dd>
+      <dt>使用版本</dt><dd><span class="tag" :class="plan.route?.version_no == null ? 't-gray' : 't-purple'">{{ plan.route?.version_no == null ? '未提供' : `v${plan.route.version_no}` }}</span></dd>
       <template v-if="routeLoading"><dt>航线范围</dt><dd>正在读取</dd></template>
       <template v-else-if="routeError"><dt>航线范围</dt><dd class="muted">{{ routeError }}</dd></template>
       <template v-else>
-        <dt>飞行高度</dt><dd>{{ altitude }}</dd>
-        <dt>航线宽度</dt><dd>{{ routeVersion?.corridor_width_m == null ? '未提供' : `${routeVersion.corridor_width_m} 米` }}</dd>
+        <div class="filing-card altitude-card"><dt>飞行高度</dt><dd>{{ altitude }}</dd></div>
+        <div class="filing-card width-card"><dt>航线宽度</dt><dd>{{ routeVersion?.corridor_width_m == null ? '未提供' : `${routeVersion.corridor_width_m} 米` }}</dd></div>
       </template>
     </dl>
   </section>
@@ -98,11 +99,27 @@ const altitude = computed(() => {
 <style scoped>
 .workspace-section-heading { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
 .workspace-section-heading h4 { margin: 0; }
+.plan-filing h4 { --section-color: var(--blue); border-left: 3px solid var(--section-color); padding-left: 8px; color: var(--txt); font-size: 13px; line-height: 1.6; }
+.plan-filing h4::before { display: none; }
+.plan-filing .schedule-heading { --section-color: var(--cyan); }
+.plan-filing .route-heading { --section-color: var(--purple); }
 .plan-filing > h4 { margin-top: 12px; }
 .plan-filing .kv-surface { padding: 7px 0; border: 0; border-bottom: 1px solid var(--line-2); border-radius: 0; background: transparent; }
 .plan-filing dd { min-width: 0; overflow-wrap: anywhere; }
 .plan-filing dd small { display: block; color: var(--txt-3); font-size: 11px; line-height: 1.6; margin-top: 3px; }
-.plan-filing .tag { margin-left: 4px; }
+.plan-filing .tag { margin: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.plan-filing .route-name { color: var(--purple); }
+.filing-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 8px 0; }
+.filing-card { --fact-color: var(--cyan); min-width: 0; display: grid; gap: 5px; padding: 9px 10px; border: 1px solid color-mix(in srgb, var(--fact-color) 28%, transparent); border-left: 3px solid var(--fact-color); border-radius: 6px; background: color-mix(in srgb, var(--fact-color) 6%, transparent); font-size: 12px; line-height: 1.6; }
+.filing-card dt { color: var(--fact-color); }
+.filing-card dd { margin: 0; color: var(--txt); }
+.landing-card { --fact-color: var(--purple); }
+.schedule-card { --fact-color: var(--blue); grid-column: 1 / -1; }
+.schedule-card dd { display: flex; flex-wrap: wrap; gap: 3px 8px; }
+.time-divider { color: var(--txt-3); }
+.kv-surface > .filing-card { grid-column: 1 / -1; grid-template-columns: 70px minmax(0, 1fr); gap: 8px; }
+.altitude-card { --fact-color: var(--cyan); }
+.width-card { --fact-color: var(--purple); }
 .subjects-note, .subjects-details { margin: 8px 0; font-size: 12px; line-height: 1.7; color: var(--txt-3); overflow-wrap: anywhere; }
 .subjects-details summary { cursor: pointer; color: var(--txt-2); }
 .subjects-details p { margin: 7px 0; }

@@ -590,7 +590,32 @@
   // 详情锚定屏幕上可点击的图标；密集点位的图标可能与真实投影点错开。
   MapView.prototype.getHitPoint = function (kind, id) {
     const hit = (this._pickPts || []).find(point => point.kind === kind && point.data?.id === id);
-    return hit ? [hit.x, hit.y] : null;
+    return hit ? [hit.x, hit.y] : this._markerLayout?.points.get(kind + ':' + id)?.point || null;
+  };
+  // 可选的页面布局器；未配置的其他地图保持原绘制方式。
+  MapView.prototype.expandMarkerGroup = function (key) {
+    this._expandedMarkerKey = key || '';
+    if (!this._dead) this.draw();
+  };
+  MapView.prototype._layoutMarkers = function (P, W, H) {
+    if (typeof this.opt.layoutMarkers !== 'function') return null;
+    const items = [];
+    const add = (kind, data, point, extra = {}) => {
+      if (!point || !point.every(Number.isFinite)) return;
+      items.push({ kind, data, x: point[0], y: point[1], abnormal: !!g.UI.abnormalActive(data), ...extra });
+    };
+    if (this.layers.device) (this.data.devices || []).slice(0, this.opt.maxDev || 90)
+      .forEach(device => add('device', device, P(device.lon, device.lat)));
+    if (this.layers.track) (this.data.targets || []).forEach(target => {
+      if (target.posValid === false || (target.layerKey && this.layers[target.layerKey] === false)) return;
+      const anchor = this._targetAnchor(target);
+      if (anchor) add('target', target, P(anchor.lon, anchor.lat));
+    });
+    (this.opt.getExternalMarkers?.(this) || []).forEach(item => add(item.kind, item.data, item.point || P(item.lon, item.lat), item));
+    this._markerLayout = this.opt.layoutMarkers(items, { width: W, height: H,
+      selectedKey: this._pinnedKey || '', expandedKey: this._expandedMarkerKey || '',
+      obstacles: this._markerObstacles || [] });
+    return this._markerLayout;
   };
   MapView.prototype.clearPinnedHit = function () {
     this._pinnedKey = '';
@@ -811,6 +836,36 @@
 
   MapView.prototype._sensorColor = function (device) {
     return device.color || SENSOR_COLORS[device.typeCode] || '#2dcfd0';
+  };
+
+  /* 设备上报脉冲：这是“当前仍在上报”的状态提示，不代表真实覆盖半径。
+     覆盖范围仍只由设备台账的 sensing profile 绘制，避免用装饰动画伪造探测能力。 */
+  MapView.prototype._drawDeviceScanPulse = function (c, device, P) {
+    if (!device || !Number.isFinite(Number(device.lon)) || !Number.isFinite(Number(device.lat))) return;
+    const origin = P(Number(device.lon), Number(device.lat));
+    if (!origin || !origin.every(Number.isFinite)) return;
+    const state = device.statusCode === 'ONLINE' || device.status === '在线' ? 'online'
+      : device.statusCode === 'ABNORMAL' || device.status === '异常' ? 'fault'
+        : device.statusCode === 'STALE' || device.freshness === 'STALE' ? 'stale' : 'offline';
+    const color = state === 'online' ? this._sensorColor(device)
+      : state === 'fault' || state === 'stale' ? '#f1a43a' : '#94a3b8';
+    const still = this._still();
+    c.save();
+    c.lineWidth = state === 'online' ? 1.1 : 1;
+    c.setLineDash(state === 'online' ? [2, 3] : [3, 4]);
+    c.globalAlpha = state === 'online' ? .72 : .46;
+    c.beginPath(); c.arc(origin[0], origin[1], state === 'offline' ? 9 : 11, 0, Math.PI * 2);
+    c.strokeStyle = color; c.stroke();
+    c.setLineDash([]);
+    if (state === 'online' && !still) {
+      for (let index = 0; index < 2; index++) {
+        const wave = (this._phase(140) + index / 2) % 1;
+        c.globalAlpha = (1 - wave) * .46;
+        c.beginPath(); c.arc(origin[0], origin[1], 8 + wave * 23, 0, Math.PI * 2);
+        c.strokeStyle = color; c.lineWidth = 1.1; c.stroke();
+      }
+    }
+    c.restore();
   };
 
   MapView.prototype._drawDeviceCoverage = function (c, device, P) {
@@ -1061,6 +1116,14 @@
   MapView.prototype._drawTarget = function (c, t, q, col, isSel) {
     c.save();
     applyAlarmGlow(c, t);
+    // 无人机轮廓较细：补一层贴近主体的红光，避免单层宽阴影被底图吞没。
+    // 强度复用设备红光的当前帧，保持相同周期与减少动态效果偏好。
+    if (g.UI.targetIconKey(t) === 'uav' && g.UI.abnormalActive(t)) {
+      const outerBlur = c.shadowBlur;
+      c.shadowBlur = 2 + outerBlur / 7;
+      g.UI.drawBusinessIcon(c, 'uav', q[0], q[1], isSel ? 26 : 22, t.heading);
+      c.shadowBlur = outerBlur;
+    }
     g.UI.drawBusinessIcon(c, g.UI.targetIconKey(t), q[0], q[1], isSel ? 26 : 22, t.heading);
     c.shadowBlur = 0; c.shadowColor = 'transparent';
     if (t.activeRisk) drawMarkerState(c, 'fault', q[0]+10, q[1]+10);
@@ -1145,11 +1208,24 @@
     const P = (a, b) => this.px(a, b);
     const picks = [];
     let selectedMarker = null;
+    const markerLayout = this._layoutMarkers(P, W, H);
+
+    // 气象先于空域、航线和业务点位绘制，两种底图模式使用相同顺序。
+    if (typeof this.opt.drawUnderMarkers === 'function') {
+      c.save(); this.opt.drawUnderMarkers(this); c.restore();
+    }
 
     /* 四源覆盖只在融合感知开关下启用，避免改变告警页、飞行页等共享地图。 */
     if (this.opt.fusionProfile && this.layers.coverage) {
       (this.data.devices || []).slice(0, this.opt.maxDev || 90).forEach(device => {
         this._drawDeviceCoverage(c, device, P);
+      });
+    }
+
+    /* 所有有坐标的设备都显示同一套上报脉冲；它和覆盖范围是两种不同事实。 */
+    if (this.opt.fusionProfile && this.layers.device) {
+      (this.data.devices || []).slice(0, this.opt.maxDev || 90).forEach(device => {
+        this._drawDeviceScanPulse(c, device, P);
       });
     }
 
@@ -1233,7 +1309,18 @@
       ? (this.data.targets || []).find(t => this._pinnedKey === 'target:' + t.id && t.posValid !== false
         && (!t.layerKey || this.layers[t.layerKey] !== false)) : null;
     const occupiedIcons = [];
-    const iconPoint = anchor => {
+    const iconPoint = (anchor, kind, id) => {
+      if (markerLayout) {
+        const item = markerLayout.points.get(kind + ':' + id);
+        if (!item?.visible) return null;
+        const point = item.point;
+        if (Math.hypot(point[0] - anchor[0], point[1] - anchor[1]) > 2) {
+          c.save(); c.beginPath(); c.moveTo(...anchor); c.lineTo(...point);
+          c.strokeStyle = markerPalette().offline; c.globalAlpha = .7; c.lineWidth = 1; c.stroke();
+          c.beginPath(); c.arc(anchor[0], anchor[1], 2, 0, Math.PI * 2); c.fillStyle = markerPalette().offline; c.fill(); c.restore();
+        }
+        return point;
+      }
       // 避让只由点位和绘制顺序决定；选中仅改变高亮，不能让同址设备互换位置。
       if (anchor[0] < 0 || anchor[0] > W || anchor[1] < 0 || anchor[1] > H) return anchor;
       const free = p => p[0] >= 18 && p[0] <= W-18 && p[1] >= 18 && p[1] <= H-18
@@ -1253,7 +1340,8 @@
         const anchor = P(d.lon, d.lat);
         if (anchor[0] < -20 || anchor[0] > W + 20 || anchor[1] < -20 || anchor[1] > H + 20) return;
         const isSelected = selectedDevice === d;
-        const q = iconPoint(anchor);
+        const q = iconPoint(anchor, 'device', d.id);
+        if (!q) return;
         const col = d.status === '在线' ? (this.opt.fusionProfile ? this._sensorColor(d) : (d.alarm ? '#d97706' : '#008fb3')) : d.status === '离线' ? '#64748b' : '#f1a43a';
         if (isSelected) selectedMarker = { q, draw: () => this._drawFusionDevice(c, d, q) };
         else this._drawFusionDevice(c, d, q);
@@ -1304,7 +1392,8 @@
             c.fillStyle = col + '14'; c.fill(); c.setLineDash([]); c.restore();
           }
         }
-        const displayPoint = iconPoint(q);
+        const displayPoint = iconPoint(q, 'target', t.id);
+        if (!displayPoint) { if (dim) c.restore(); return; }
         if (selectedTarget === t) selectedMarker = { q: displayPoint, draw: () => this._drawTarget(c, t, displayPoint, col, isSel) };
         else this._drawTarget(c, t, displayPoint, col, isSel);
         if (dim) c.restore();

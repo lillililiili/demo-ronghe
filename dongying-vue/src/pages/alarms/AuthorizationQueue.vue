@@ -7,13 +7,13 @@ import { disposalApi } from '@/services/disposalApi.js';
 import { authUser } from '@/services/auth.js';
 import { getAlarm, getUavEvent } from '@/services/alarmApi.js';
 import { targetApi } from '@/services/targetApi.js';
-import { hasPermission } from '@/services/accessControl.js';
+import { canAccessRoute, hasPermission } from '@/services/accessControl.js';
 import { DISPOSAL_ACTION_LABEL, DISPOSAL_BLOCK_REASON_LABEL, DISPOSAL_CHANNEL_LABEL, SOURCE_MODE_LABEL, disposalStatusText, labelOf } from '@/ui/labels.js';
 import { openDisposalApproval, openDisposalExecution, openDisposalStop } from '@/ui/disposalAuthModal.js';
 import EmergencyStopPanel from '@/components/disposal/EmergencyStopPanel.vue';
 import TargetLiveVideo from '@/components/video/TargetLiveVideo.vue';
 import AuthorizationTargetMap from './AuthorizationTargetMap.vue';
-import { canStop, cardStopLabel, nextStep, primaryCode, readPending, resultText, usesEmergency } from './authorizationQueueView.js';
+import { canStop, cardStopLabel, executionEvidenceHref, nextStep, primaryCode, readPending, resultText, usesEmergency } from './authorizationQueueView.js';
 
 const props = defineProps({ initialAuthorizationId: { type: String, default: '' }, eventId: { type: String, default: '' }, initialStatus: { type: String, default: '' } });
 const emit = defineEmits(['event']);
@@ -25,6 +25,8 @@ const options = [{ label: '全部状态', value: '' }, ...['REQUESTED', 'APPROVE
 const selectedSubject = computed(() => selected.value ? subjects.value[subjectKey(selected.value)] : null);
 const actions = { APPROVE: openDisposalApproval, EXECUTE: openDisposalExecution };
 const userId = computed(() => authUser.value?.user_id);
+const feedbackHref = computed(() => canAccessRoute('evidence') && hasPermission('evidence:read') && hasPermission('monitoring.read')
+  ? executionEvidenceHref(selected.value) : '');
 const visibleRows = computed(() => view.value === 'pending' ? rows.value.slice((page.value - 1) * pageSize.value, page.value * pageSize.value) : rows.value);
 const mainCode = row => primaryCode(row, userId.value);
 const mainLabel = row => row.execution_block_reason ? '查看原因' : ({ APPROVE: '审批', EXECUTE: '执行' }[mainCode(row)] || (row.status === 'FAILED' ? '查看原因' : row.status === 'EXECUTING' && row.channel !== 'MANUAL' ? '查看执行情况' : '查看详情'));
@@ -196,6 +198,7 @@ onUnmounted(() => { active = false; request++; detailRequest++; });
               <h3>{{ statusText(selected) }}</h3>
               <p v-if="nextStep(selected, userId)">{{ nextStep(selected, userId) }}</p>
               <p v-if="resultText(selected)" class="result-text">{{ resultText(selected) }}</p>
+              <a v-if="feedbackHref" class="btn" :href="feedbackHref">查看本次设备反馈</a>
               <p v-if="blockReasonText(selected)" class="block-reason">执行受阻：{{ blockReasonText(selected) }}</p>
               <div v-if="mainCode(selected) || (canStop(selected) && !usesEmergency(selected))" class="actions authorization-actions">
                 <button v-if="mainCode(selected)" type="button" class="btn pri" :disabled="detailLoading" @click="actions[mainCode(selected)]({ authorization: selected, refresh: () => refresh(selected.authorization_id) })">{{ ({ APPROVE: '审批', EXECUTE: '执行' })[mainCode(selected)] }}</button>

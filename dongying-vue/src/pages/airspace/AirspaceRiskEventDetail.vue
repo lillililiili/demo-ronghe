@@ -7,6 +7,7 @@ export default {};
 <script setup>
 import { computed, onUnmounted, ref, watch } from 'vue';
 import { riskApi } from '@/services/riskApi.js';
+import { weatherRiskIcon } from '@/ui/weatherRiskIcon.js';
 import { handoffApi, newHandoffIdempotencyKey } from '@/services/handoffApi.js';
 import { isUncertainOutcome } from '@/services/apiClient.js';
 import { hasPermission, canAccessRoute } from '@/services/accessControl.js';
@@ -43,7 +44,7 @@ const notifyReason = computed(() => submitted.value ? `已提交通知（${deliv
 const verifyReason = computed(() => canVerify.value
   ? risk.value.state === 'PENDING_NOTIFICATION' ? '将已确认的风险改判为排除，保留原核验记录' : '提交核验通过或排除结论'
   : '未授予核验权限，或当前风险状态不允许核验');
-const icon = computed(() => risk.value?.risk_type === 'WEATHER' ? window.UI.icon('alert') : window.UI.targetIcon(risk.value));
+const icon = computed(() => risk.value?.risk_type === 'WEATHER' ? weatherRiskIcon(risk.value) : window.UI.targetIcon(risk.value));
 const reasonText = computed(() => {
   let text = risk.value?.reason_text || '未提供';
   for (const value of [risk.value?.target_no, risk.value?.target_id, risk.value?.plan_no, risk.value?.plan_id, risk.value?.source_risk_id, risk.value?.risk_id]) {
@@ -80,19 +81,24 @@ async function load() {
   risk.value = null; error.value = ''; loading.value = true;
   try {
     const data = await riskApi.getRisk(id);
-    if (!alive || token !== generation || id !== props.riskId) return null;
-    risk.value = data;
+    if (!acceptRisk(data, id, token)) return null;
     await Promise.all([loadHistory(), loadNotices()]);
     return data;
   } catch (e) { if (alive && token === generation) error.value = message(e, '风险详情读取失败'); return null; }
   finally { if (alive && token === generation) loading.value = false; }
 }
+function acceptRisk(data, id, token) {
+  if (!alive || token !== generation || id !== props.riskId) return false;
+  risk.value = data;
+  emit('updated', data);
+  return true;
+}
 async function refreshAfterAction(id) {
+  if (!alive || id !== props.riskId) return null;
+  const token = ++generation;
   const latest = await riskApi.getRisk(id);
-  if (alive && id === props.riskId) {
-    risk.value = latest;
+  if (acceptRisk(latest, id, token)) {
     await Promise.all([loadHistory(), loadNotices()]);
-    if (alive) emit('updated', latest);
   }
   return latest;
 }
@@ -143,6 +149,12 @@ onUnmounted(() => { alive = false; generation++; historyRequest++; noticeRequest
       <button class="tab" :class="{ on: tab === 'event' }" role="tab" :aria-selected="tab === 'event'" type="button" @click="tab = 'event'">风险详情</button>
       <button class="tab" :class="{ on: tab === 'notice' }" role="tab" :aria-selected="tab === 'notice'" type="button" @click="tab = 'notice'">通知与回执<span v-if="noticesTotal && !noticesLoading" class="tag t-gray">{{ noticesTotal }}</span></button>
     </div>
+    <div v-if="risk && !loading && !error && tab === 'event' && (canVerify || canNotify || ['PENDING_VERIFICATION', 'PENDING_NOTIFICATION'].includes(risk.state))" class="risk-process-actions">
+      <p v-if="risk.state === 'PENDING_VERIFICATION' && !canVerify">{{ verifyReason }}</p><p v-else-if="risk.state === 'PENDING_NOTIFICATION' && !canNotify">{{ notifyReason }}</p>
+      <p v-if="risk.state === 'PENDING_VERIFICATION' && canVerify">核验通过后可通知上级。</p>
+      <button v-if="risk.state === 'PENDING_VERIFICATION' || (risk.state === 'PENDING_NOTIFICATION' && canVerify)" class="btn" :class="{ pri: risk.state === 'PENDING_VERIFICATION', ghost: risk.state === 'PENDING_NOTIFICATION' }" :disabled="!canVerify" :title="verifyReason" @click="verify">{{ risk.state === 'PENDING_NOTIFICATION' ? '改判为排除' : '人工核验' }}</button>
+      <button v-if="risk.state === 'PENDING_NOTIFICATION' || canNotify" class="btn" :class="{ pri: canNotify }" :disabled="!canNotify" :title="notifyReason" @click="notify">通知上级</button>
+    </div>
     <div class="rk-detail" :data-risk-id="riskId">
       <div v-if="loading" class="empty" role="status">正在读取风险详情与核验历史…</div>
       <div v-else-if="error" class="warnbox" role="alert">{{ error }}<button class="btn" type="button" @click="load">重试</button></div>
@@ -160,6 +172,7 @@ onUnmounted(() => { alive = false; generation++; historyRequest++; noticeRequest
             <dt>所属范围</dt><dd>{{ risk.owner_org_name || '未知机构' }} / {{ risk.district_name || '未知区域' }}</dd>
           </dl></section>
           <section class="sect"><h4>风险依据</h4><dl class="kv kv-surface">
+            <template v-if="risk.current_status"><dt>当前风险</dt><dd>{{ ({ CURRENT: '当前仍存在', CLEARED: '已确认解除', UNKNOWN: '状态待确认', EXCLUDED: '已排除', NOT_STARTED: '尚未生效' })[risk.current_status] || '状态待确认' }}<span class="rk-hint">{{ risk.current_reason }}</span></dd></template>
             <dt>触发原因</dt><dd>{{ labelOf(REASON_CODE_LABEL, risk.reason_code, '未提供') }}</dd><dt>依据说明</dt><dd>{{ reasonText }}</dd>
             <template v-if="risk.risk_type !== 'WEATHER'"><dt>测得高度</dt><dd>{{ altitude(risk) }}<span v-if="risk.observed_altitude_m == null" class="rk-hint">尚未测得高度，无法判断是否超高</span></dd><dt>高度关系</dt><dd>{{ labelOf(heightLabels, risk.height_relation, '高度关系未知') }}<span v-if="!risk.height_relation || risk.height_relation === 'UNKNOWN'" class="rk-hint">缺高度或 AGL/AMSL 换算依据</span></dd></template>
             <dt>关联计划</dt><dd><a v-if="risk.plan_id && hasPermission('flight:read') && canAccessRoute('flights')" class="btn ghost" :href="`#/flights?plan=${encodeURIComponent(risk.plan_id)}`">查看关联飞行计划 →</a><span v-else>{{ risk.plan_id ? '已关联' : '没有可查看的相关记录' }}</span></dd>
@@ -193,12 +206,6 @@ onUnmounted(() => { alive = false; generation++; historyRequest++; noticeRequest
         </section>
       </template>
     </div>
-    <div v-if="risk && !loading && !error && tab === 'event' && (canVerify || canNotify || ['PENDING_VERIFICATION', 'PENDING_NOTIFICATION'].includes(risk.state))" class="risk-process-actions">
-      <p v-if="risk.state === 'PENDING_VERIFICATION' && !canVerify">{{ verifyReason }}</p><p v-else-if="risk.state === 'PENDING_NOTIFICATION' && !canNotify">{{ notifyReason }}</p>
-      <p v-if="risk.state === 'PENDING_VERIFICATION' && canVerify">核验通过后可通知上级。</p>
-      <button v-if="risk.state === 'PENDING_VERIFICATION' || (risk.state === 'PENDING_NOTIFICATION' && canVerify)" class="btn" :class="{ pri: risk.state === 'PENDING_VERIFICATION', ghost: risk.state === 'PENDING_NOTIFICATION' }" :disabled="!canVerify" :title="verifyReason" @click="verify">{{ risk.state === 'PENDING_NOTIFICATION' ? '改判为排除' : '人工核验' }}</button>
-      <button v-if="risk.state === 'PENDING_NOTIFICATION' || canNotify" class="btn" :class="{ pri: canNotify }" :disabled="!canNotify" :title="notifyReason" @click="notify">通知上级</button>
-    </div>
   </div>
 </template>
 
@@ -214,5 +221,5 @@ onUnmounted(() => { alive = false; generation++; historyRequest++; noticeRequest
 .rk-history { display: grid; gap: 8px; margin-top: 8px; }.rk-history-item { display: grid; gap: 4px; padding: 8px; border: 1px solid var(--line); border-radius: 6px; font-size: 12px; overflow-wrap: anywhere; }
 .rk-history-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }.rk-history-item p { margin: 0; color: var(--txt-3); line-height: 1.6; }
 .history-pager { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 8px; font-size: 11px; }
-.risk-process-actions { flex: none; padding: 10px 12px; border-top: 1px solid var(--line); display: flex; gap: 8px; flex-wrap: wrap; }.risk-process-actions p { flex-basis: 100%; margin: 0; color: var(--txt-3); font-size: 12px; line-height: 1.6; }
+.risk-process-actions { position: sticky; top: 0; z-index: 7; flex: none; padding: 10px 12px; border-bottom: 1px solid var(--line); background: var(--surface-2); display: flex; gap: 8px; flex-wrap: wrap; }.risk-process-actions p { flex-basis: 100%; margin: 0; color: var(--txt-3); font-size: 12px; line-height: 1.6; }
 </style>

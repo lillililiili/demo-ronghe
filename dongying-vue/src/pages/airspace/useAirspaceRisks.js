@@ -2,10 +2,13 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { riskApi } from '@/services/riskApi.js';
 import { hasPermission } from '@/services/accessControl.js';
 import { polygonRings } from '@/services/situationData.js';
-import { loadRiskPages, pointRelation, riskSnapshotPoint } from './airspaceRiskModel.js';
+import { useWeatherRiskFacts } from '@/hooks/useWeatherRiskFacts.js';
+import { weatherAnchor, weatherPolygon } from '@/services/weatherRiskGeometry.js';
+import { loadRiskPages, pointRelation, riskSnapshotPoint, weatherAreaRelation } from './airspaceRiskModel.js';
 
 export function useAirspaceRisks(district, selected) {
   const rows = ref([]), loading = ref(false), error = ref(''), errorStatus = ref(0);
+  const weatherRows = useWeatherRiskFacts(rows);
   const severity = ref(''), state = ref(''), riskType = ref(''), onlySelected = ref(false), showLayer = ref(true);
   const activeId = ref('');
   const occurred = ref(null);
@@ -36,6 +39,12 @@ export function useAirspaceRisks(district, selected) {
 
   const polygons = computed(() => polygonRings(selected.value?.current_version?.boundary));
   const locatedRows = computed(() => rows.value.map(risk => {
+    if (risk.risk_type === 'WEATHER') {
+      const weather = weatherRows.value.find(row => row.risk_id === risk.risk_id);
+      const ring = weatherPolygon(weather?.weather_fact);
+      return { ...risk, ...weather, point: weatherAnchor(weather?.weather_fact),
+        relation: weatherAreaRelation(ring, polygons.value) };
+    }
     const point = riskSnapshotPoint(risk);
     return { ...risk, point, relation: pointRelation(point, polygons.value) };
   }));

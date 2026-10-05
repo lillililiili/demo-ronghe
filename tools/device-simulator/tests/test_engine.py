@@ -88,6 +88,53 @@ class EngineTests(unittest.TestCase):
                 self.assertEqual(packet['speed'], 5)
                 self.assertEqual('speedX' in packet['extension'], kind in ('radar', '5ga'))
 
+    def test_simulator_only_devices_publish_replay_presence_heartbeat(self):
+        raw = scene()
+        raw['sites'][0]['devices'].extend([
+            {'id': 'weather-1', 'name': '气象设备', 'kind': 'weather', 'health': '正常', 'heartbeat': '持续上报', 'interval': 1},
+            {'id': 'counter-1', 'name': '反制设备', 'kind': 'countermeasure', 'health': '正常', 'heartbeat': '持续上报', 'interval': 1},
+        ])
+        compiled, devices, targets, _ = compile_scene(raw)
+        self.assertEqual({'d1', 'weather-1', 'counter-1'}, set(devices))
+        manifest = {'provider': 'test', 'devices': {
+            'd1': {'external_id': 'radar'}, 'weather-1': {'external_id': 'weather'},
+            'counter-1': {'external_id': 'counter'}}, 'targets': {'t1': {'uav_sn': 'TEST'}}}
+        packets = messages(compiled, devices, targets, manifest, 0, 1000, {}, 1)
+        heartbeats = {topic: payload for topic, payload in packets if '/device/' in topic}
+        self.assertEqual(heartbeats['bridge/test/device/weather/weather']['deviceType'], 1001)
+        self.assertEqual(heartbeats['bridge/test/device/countermeasure/counter']['deviceType'], 1002)
+        self.assertEqual(heartbeats['bridge/test/device/weather/weather']['workState'], 1)
+        self.assertEqual(heartbeats['bridge/test/device/countermeasure/counter']['workState'], 1)
+
+    def test_each_supported_sensor_type_publishes_a_status_report(self):
+        raw = scene()
+        raw['targets'] = []
+        raw['risks'] = []
+        raw['sites'][0]['devices'].extend([
+            {'id': 'eo-1', 'name': '光电', 'kind': 'eo', 'health': '正常', 'heartbeat': '持续上报', 'interval': 1},
+            {'id': '5ga-1', 'name': '5G-A', 'kind': '5ga', 'health': '正常', 'heartbeat': '持续上报', 'interval': 1},
+            {'id': 'tdoa-1', 'name': 'TDOA', 'kind': 'tdoa', 'health': '正常', 'heartbeat': '持续上报', 'interval': 1},
+        ])
+        compiled, devices, targets, _ = compile_scene(raw)
+        manifest = {'provider': 'test', 'devices': {
+            'd1': {'external_id': 'radar'}, 'eo-1': {'external_id': 'eo', 'edge_id': 'eo'},
+            '5ga-1': {'external_id': '5ga'}, 'tdoa-1': {'external_id': 'tdoa'}}, 'targets': {}}
+        packets = messages(compiled, devices, targets, manifest, 0, 1000, {}, 1)
+        topics = {topic for topic, _ in packets}
+        self.assertIn('iot-reporting/cmlc/edge/eo', topics)
+        self.assertIn('bridge/test/device/5ga/5ga', topics)
+        self.assertIn('bridge/test/device/tdoa/tdoa', topics)
+
+    def test_countermeasure_device_is_registered_for_logical_commissioning(self):
+        s = scene()
+        s['sites'][0]['devices'].append({
+            'id': 'cm1', 'name': '四通道反制设备', 'kind': 'countermeasure',
+            'health': '正常', 'heartbeat': '持续上报', 'interval': 1,
+        })
+        _, devices, _, skipped = compile_scene(s)
+        self.assertIn('cm1', devices)
+        self.assertNotIn('四通道反制设备', skipped)
+
     def test_explicit_pilot_position_is_transmitted_without_inventing_one(self):
         s=scene();s['targets'][0]['pilotPoint']=[450,300]
         s,d,t,_=compile_scene(s)
@@ -108,9 +155,31 @@ class EngineTests(unittest.TestCase):
             for key in ('speedX', 'speedY', 'speedZ'):
                 obj['extension'].pop(key, None)
         self.assertEqual(objects[0],objects[1])
-    def test_secondary_sensor_must_exist_and_support_targets(self):
+    def test_secondary_device_must_exist(self):
         s=scene();s['targets'][0]['secondaryDeviceId']='missing'
         with self.assertRaises(ValueError):compile_scene(s)
+
+    def test_nearby_eo_can_be_selected_without_fabricating_target_report(self):
+        s=scene();s['sites'][0]['devices'].append({
+            'id':'eo-1','name':'光电','kind':'eo','health':'正常','heartbeat':'持续上报','interval':1,
+        });s['targets'][0]['secondaryDeviceId']='eo-1'
+        s,d,t,_=compile_scene(s)
+        m={'provider':'test','devices':{
+            'd1':{'external_id':'radar'},'eo-1':{'external_id':'eo','edge_id':'eo'}},
+            'targets':{'t1':{'uav_sn':'TEST'}}}
+        packets=messages(s,d,t,m,1,1000,{},1)
+        objects=[p['objects'][0] for _,p in packets if 'objects' in p]
+        self.assertEqual(len(objects),1)
+        self.assertIn('iot-reporting/cmlc/edge/eo',{topic for topic,_ in packets})
+
+    def test_secondary_sensor_must_be_near_the_target_path(self):
+        s=scene()
+        s['sites'].append({'id':'s2','name':'远端设备组','x':1000,'y':300,'devices':[
+            {'id':'d2','name':'远端雷达','kind':'radar','health':'正常','heartbeat':'持续上报','interval':1}
+        ]})
+        s['targets'][0]['secondaryDeviceId']='d2'
+        with self.assertRaisesRegex(ValueError,'5 公里'):
+            compile_scene(s)
     def test_explicit_simulated_quality_and_agl_are_transmitted(self):
         s=scene();s['targets'][0].update(probability=.98,heightAgl=60)
         s,d,t,_=compile_scene(s)
@@ -145,8 +214,8 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(messages(s,d,t,m,1,1000,{},1)[0][1]['workState'],2)
         self.assertEqual(messages(s,d,t,m,3,3000,{},2)[0][1]['workState'],1)
     def test_unsupported_is_not_falsified(self):
-        s=scene();s['targets'][0]['kind']='balloon'
-        with self.assertRaisesRegex(ValueError,'气球分类码'): compile_scene(s)
+        s=scene();s['targets'][0].update(kind='balloon', transport='mqtt')
+        with self.assertRaisesRegex(ValueError,'规范化观测'): compile_scene(s)
     def test_invalid_numbers_and_dangling_refs(self):
         for field,value in [('speed',float('nan')),('height',-1)]:
             s=scene();s['targets'][0][field]=value

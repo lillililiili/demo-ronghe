@@ -1,7 +1,9 @@
 <script setup>
+import { userFacingMessage } from '@/ui/labels.js';
 import { computed } from 'vue';
 import AutoSmsNotice from './AutoSmsNotice.vue';
 import AutoVoiceNotice from './AutoVoiceNotice.vue';
+import AdvisoryRecords from './AdvisoryRecords.vue';
 import { useUavAdvisory } from '@/hooks/useUavAdvisory.js';
 
 const props = defineProps({
@@ -12,6 +14,8 @@ const props = defineProps({
 const emit = defineEmits(['updated']);
 const { data, loading, error, load } = useUavAdvisory(() => props.eventId, result => emit('updated', result), props.interval);
 const current = computed(() => data.value?.event_id === props.eventId && !loading.value && !error.value);
+const historicalObservations = computed(() => data.value?.event_id === props.eventId
+  ? (data.value.records || []).filter(row => row.kind === 'OBSERVATION') : []);
 const autoHandoff = computed(() => data.value?.auto_handoff);
 const autoTransferred = computed(() => !!autoHandoff.value?.handoff_id
   && !['FAILED', 'DISABLED', 'BLOCKED', 'WAITING'].includes(autoHandoff.value.status));
@@ -22,7 +26,8 @@ const handoffTitle = computed(() => {
   }
   if (autoHandoff.value?.status) {
     return ({ WAITING: '等待自动移送到处罚', BLOCKED: '自动移送暂不可办理',
-      DISABLED: '自动移送尚未启用', FAILED: '自动移送失败' })[autoHandoff.value.status] || '自动移送状态暂不可用';
+      DISABLED: '自动移送尚未启用', FAILED: '自动移送失败',
+      INDEPENDENT: '移送按事件事实另行判断', NOT_REQUIRED: '当前不等待反制或干扰' })[autoHandoff.value.status] || '自动移送状态暂不可用';
   }
   return props.handoffId ? '已移送到处罚' : '自动移送尚未启用';
 });
@@ -39,9 +44,13 @@ function openHandoff() {
     <template v-if="data">
       <AutoSmsNotice compact :data="data" :disabled="!current" @changed="load()" />
       <AutoVoiceNotice compact :data="data" :disabled="!current" @changed="load()" />
+      <details v-if="historicalObservations.length" class="ua-history">
+        <summary>历史现场观察记录（{{ historicalObservations.length }}）</summary>
+        <AdvisoryRecords :records="historicalObservations" />
+      </details>
       <div v-if="confirmed || data.auto_handoff || transferredId" class="ua-handoff" aria-label="处罚移送进度">
         <p>{{ handoffTitle }}<button v-if="transferredId" type="button" class="ua-link" @click="openHandoff">查看处罚交接</button></p>
-        <p v-if="!transferredId && data.auto_handoff?.reason" class="ua-note">{{ data.auto_handoff.reason }}</p>
+        <p v-if="!transferredId && data.auto_handoff?.reason" class="ua-note">{{ userFacingMessage(data.auto_handoff.reason) }}</p>
       </div>
     </template>
   </section>
@@ -53,5 +62,6 @@ function openHandoff() {
 .ua-note{color:var(--muted);font-size:12px!important;line-height:1.6}.ua-error{font-size:13px;color:var(--red);line-height:1.6}
 .ua-link{padding:0;border:0;background:none;color:var(--muted);font:inherit;font-size:12px;cursor:pointer;text-decoration:underline;text-underline-offset:3px;white-space:normal}
 .ua-handoff{margin-top:12px;padding-top:12px;border-top:1px solid var(--line)}.ua-handoff p{display:flex;flex-wrap:wrap;gap:8px 12px;font-size:13px;line-height:1.65;margin:0;overflow-wrap:anywhere}.ua-handoff .ua-note{margin-top:6px}
+.ua-history{margin-top:12px}.ua-history summary{cursor:pointer;font-size:13px;line-height:1.6}.ua-history summary:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
 .uav-advisory button:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}.uav-advisory button:disabled{opacity:.5;cursor:not-allowed}
 </style>

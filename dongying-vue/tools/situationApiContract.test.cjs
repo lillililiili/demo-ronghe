@@ -27,7 +27,7 @@ async function loadSource(deps) {
   source = `const { deviceApi, targetApi, listAlarms, listAllFlightPlans, flightApi, airspaceApi,
     riskApi, handoffApi, mapPool, attachBearing, attachDeviceEvents, attachRecentTracks,
     attachTargetSourceLinks, bearingOrigins, toAirspaces, toAlarms, toDevices, toFlightPlans,
-    toRisks, toTargets } = globalThis.__situationContractDeps;\n${source}`;
+    toRisks, toTargets, SITUATION_DEVICE_TYPE_ORDER } = globalThis.__situationContractDeps;\n${source}`;
   globalThis.__situationContractDeps = deps;
   return import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}#${Date.now()}`);
 }
@@ -51,6 +51,9 @@ async function main() {
     longitude: 118.5 + index / 100000, latitude: 37.4, connectivity: 'ONLINE', source_mode: 'replay',
     coverage: { kind: 'CIRCLE', status: 'AVAILABLE', radius_m: 5000, source_label: '接口配置' }
   }));
+  devices[1].longitude = null;
+  devices[1].latitude = null;
+  devices[1].simulated = true;
   const targetRow = {
     target_id: 't1', target_no: 'MB-1', object_type_code: 'UAV', source_mode: 'replay', last_seen_at: now - 2 * 60 * 60_000,
     freshness: 'STALE', stale: true,
@@ -119,7 +122,9 @@ async function main() {
     [first.targets[0].lastSeenAt, first.targets[0].freshness, first.targets[0].stale],
     [targetRow.last_seen_at, 'STALE', true]);
   check('设备列表按 total 继续读取第二页', devicePages, [1, 2]);
-  check('只保留启用的四类融合设备并完整分页', first.devices.length, 100);
+  check('只保留启用的态势设备类型并完整分页', first.devices.length, 100);
+  check('API 无坐标设备仍保留在感知列表', first.devices.find(row => row.deviceId === 'd1')?.posValid, false);
+  check('模拟来源标记不能被发布快照重置', first.simulated, true);
   check('回放来源由真实响应推导', first.sourceMode, 'replay');
   check('批量近期轨迹接入目标', first.targets[0].track.length, 2);
   check('近期轨迹保留观测身份、时间与点类型', first.targets[0].track.map(point =>

@@ -61,21 +61,22 @@ onUnmounted(() => { alive = false; clear(); });
 <template>
   <section class="target-live-video" :class="{ compact }" aria-label="实时视频">
     <header>
-      <slot name="title"><strong>实时视频</strong></slot>
-      <div class="video-toolbar"><button v-if="compact && expanded && !reason" type="button" class="btn" :disabled="loading" @click="reloadVideo">刷新</button>
+      <div class="video-heading">
+        <slot name="title"><strong>实时视频</strong></slot>
+        <span v-if="state.simulated" class="video-context">测试视频 · 非现场</span>
+        <span v-else-if="state.playable" class="video-context">当前画面 · 非事发录像</span>
+      </div>
+      <div class="video-toolbar"><button v-if="expanded && !reason" type="button" class="btn" aria-label="刷新视频状态" :disabled="loading" @click="reloadVideo">刷新</button>
       <slot name="actions"><button class="btn" type="button" :aria-expanded="expanded" @click="toggle">{{ expanded ? '收起视频' : '查看视频' }}</button></slot></div>
     </header>
     <div v-if="expanded && active" class="video-content">
-      <p v-if="state.playable" class="video-context"><span v-if="!compact && contextLabel">{{ contextLabel }} · </span>当前画面，非事发录像</p>
       <p v-if="reason" role="status">{{ reason }}</p>
       <p v-else-if="error" role="alert" class="video-error">{{ error }}</p>
       <template v-else>
         <p v-if="loading && !checked" role="status">视频读取中</p>
-        <p v-else role="status">{{ state.message }}</p>
+        <p v-else-if="!state.playable" role="status">{{ state.message }}</p>
         <AuthenticatedHlsVideo v-if="state.playable" :target-id="targetId" :video="video" />
-        <p v-if="state.simulated" class="video-context">测试画面，非现场实拍</p>
       </template>
-      <button v-if="!reason && !compact" class="btn refresh-video" type="button" aria-label="刷新视频状态" :disabled="loading" @click="reloadVideo">{{ loading ? '读取中' : '刷新' }}</button>
     </div>
   </section>
 </template>
@@ -83,14 +84,14 @@ onUnmounted(() => { alive = false; clear(); });
 <style scoped>
 .target-live-video { flex:none; border:1px solid var(--line); border-radius:var(--r); background:var(--surface-1); margin:8px 12px; min-width:0; }
 .video-toolbar { display:flex; gap:6px; flex-wrap:wrap; }
+.video-heading { display:flex; align-items:center; gap:8px; flex-wrap:wrap; min-width:0; }
 .compact header { padding:8px 12px; }
 .compact .video-content { padding-bottom:4px; }
-header { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 12px; }
+header { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 12px; flex-wrap:wrap; }
 strong { font-size:14px; }
 .video-content { padding:0 12px 12px; }
 p { margin:0 0 10px; font-size:13px; line-height:1.6; white-space:normal; overflow-wrap:anywhere; }
 .video-context { color:var(--txt-2); font-size:12px; }
 .video-error { color:var(--amber); }
 .btn { min-height:34px; height:auto; white-space:normal; }
-.refresh-video { margin:8px 0 0 8px; }
 </style>

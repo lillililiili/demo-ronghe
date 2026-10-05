@@ -161,9 +161,23 @@ dialog::backdrop { background: #20314940; }
 .embedded-input .external-card { border-color: var(--border); }
 .weather-periods fieldset, #weather-json { border-color: var(--border); }
 .weather-periods legend, #weather-json summary { color: #405b78; }
+.plan-route-card { background: #f7faff; border-color: #cbd9ee; }
+.plan-route-card.empty { background: #fbfcfe; }
+.plan-route-card strong { color: #203149; }
+.plan-route-card small { color: #63758a; }
+.plan-route-kicker { color: #2867e8; }
+.plan-route-card button { color: #245bbb; border-color: #b7c9e8; background: #edf3ff; }
+.plan-route-card button:hover { background: #e1ebff; }
 
 @media (min-width: 1650px) {
   .simulator-workspace .workspace { grid-template-columns: 250px minmax(0, 1fr) 330px; }
+}
+@media (min-width: 1001px) {
+  body.simulator-workspace { height: auto; min-height: 100dvh; overflow-y: auto; }
+  body.simulator-workspace main { flex: none; min-height: 0; }
+  body.simulator-workspace .workspace { height: 80vh; min-height: 0; flex: none; }
+  body.simulator-workspace .risks { height: 260px; flex: none; }
+  body.simulator-workspace .risk-list { max-height: 198px; overflow-y: auto; overscroll-behavior: contain; }
 }
 @media (max-width: 1280px) {
   .header, .simulator-workspace .header { gap: 16px; padding: 12px 20px; }

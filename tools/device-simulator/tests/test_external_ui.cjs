@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const {weatherSampleForPlan, receiptChoices} = require('../web/external-contract.js');
+const {weatherSampleForPlan, receiptChoices, matchingSceneRoute, sceneRouteMatches, sceneRouteValidityMessage} = require('../web/external-contract.js');
 
 test('historical forecast sample overlaps the plan and is published no later than its period', () => {
   const now = Date.UTC(2026, 8, 24);
@@ -98,4 +98,21 @@ test('selecting another route realigns draft times to that route', () => {
   assert.equal(next.start_at,route.valid_from);
   assert.equal(next.end_at,route.valid_to);
   assert.equal(next.uav_sn,'CUSTOM');
+});
+
+test('map scene route only matches the platform route with the same ordered centerline', () => {
+  const route={route_version_id:'rv-1',centerline:{coordinates:[[118.5912,37.4436],[118.60332,37.44852]]}};
+  const scene={id:'p1',points:[[118.5912,37.4436],[118.60332,37.44852]]};
+  assert.equal(sceneRouteMatches(route,scene),true);
+  assert.equal(matchingSceneRoute(scene,[{route_version_id:'rv-other',centerline:{coordinates:[[118.5912,37.4436],[118.604,37.44852]]}},route]).route_version_id,'rv-1');
+  assert.equal(sceneRouteMatches(route,{...scene,points:[...scene.points].reverse()}),false);
+});
+
+test('map scene can identify an expired platform route for a precise validity warning', () => {
+  const expired={route_version_id:'rv-expired',valid_from:100,valid_to:200,
+    centerline:{coordinates:[[118.5912,37.4436],[118.60332,37.44852]]}};
+  const scene={id:'p-expired',points:[[118.5912,37.4436],[118.60332,37.44852]]};
+  assert.equal(matchingSceneRoute(scene,[],[expired]).route_version_id,'rv-expired');
+  assert.match(sceneRouteValidityMessage(expired,{start_at:150,end_at:250},300),/已过期/);
+  assert.equal(sceneRouteValidityMessage(expired,{start_at:150,end_at:200},300),'');
 });

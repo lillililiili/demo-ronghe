@@ -16,7 +16,7 @@ def _read_many(rows, reader):
     return [item for items, _ in results for item in items], [error for _, error in results if error]
 
 def read_inbox(platform, kind, page=1):
-    if kind not in ('sms', 'voice', 'risk', 'punishment') or not 1 <= page <= 10000:
+    if kind not in ('sms', 'voice', 'risk', 'punishment', 'plan_feedback', 'device_maintenance') or not 1 <= page <= 10000:
         raise ValueError('通知类别或页码无效')
     if kind in ('sms', 'voice'):
         context = platform.call('GET', '/local-interface-simulator/context')
@@ -36,6 +36,49 @@ def read_inbox(platform, kind, page=1):
         errors += [value for value in context.get('unavailable_sections', []) if '告警' in value]
         scope = '最近 100 个可见模拟告警中的通知记录'
         more = False
+    elif kind == 'plan_feedback':
+        plans = platform.call('GET', f'/flight-plans?page={page}&size=20')
+        visible = [row for row in plans.get('items', []) if row.get('source_mode') in ('mock', 'replay')
+                   and SAFE_ID.fullmatch(row.get('plan_id', ''))]
+        def feedback(plan):
+            history = platform.call('GET', '/flight-plans/'+plan['plan_id']+'/verifications')
+            verifications = {row.get('verification_id'): row for row in history.get('verifications', [])}
+            result = []
+            for row in history.get('feedback', []):
+                if not SAFE_ID.fullmatch(row.get('feedback_id', '')): continue
+                verification = verifications.get(row.get('verification_id')) or {}
+                status = row.get('delivery_status') or 'UNKNOWN'
+                result.append({'id': row['feedback_id'], 'kind': kind, 'subject': plan.get('plan_no') or plan['plan_id'],
+                    'recipient': row.get('recipient_name'),
+                    'content': verification.get('evidence') or row.get('processing_result') or '计划核实回告内容未提供，请展开查看原始记录。',
+                    'status': status, 'receipt_status': row.get('receipt_status'), 'received': status == 'DELIVERED',
+                    'at': row.get('delivered_at') or row.get('submitted_at') or row.get('created_at'),
+                    'time_label': '送达时间' if row.get('delivered_at') else '发送记录时间',
+                    'reason': row.get('blocked_reason'), 'details': {'feedback': row, 'verification': verification}})
+            return result
+        rows, errors = _read_many(visible, feedback)
+        more = plans.get('total', 0) > page * 20
+        scope = '当前账号可见的模拟飞行计划 · 每页最多 20 个关联计划'
+    elif kind == 'device_maintenance':
+        tasks = platform.call('GET', f'/device-maintenance-tasks?status=ALL&page={page}&size=20')
+        rows = []
+        for task in tasks.get('items', []):
+            if task.get('simulated') is not True: continue
+            for attempt in task.get('notification_attempts') or []:
+                if not SAFE_ID.fullmatch(attempt.get('attempt_id', '')): continue
+                status = attempt.get('delivery_status') or 'UNKNOWN'
+                recipient = attempt.get('recipient_snapshot') or {}
+                rows.append({'id': attempt['attempt_id'], 'kind': kind,
+                    'subject': task.get('device_name') or task.get('device_no') or task.get('task_id'),
+                    'recipient': recipient.get('recipient_name'),
+                    'content': task.get('reason') or '设备运维通知事由未提供，请展开查看原始记录。',
+                    'status': status, 'receipt_status': attempt.get('receipt_status'), 'received': status == 'DELIVERED',
+                    'at': attempt.get('delivered_at') or attempt.get('submitted_at') or attempt.get('requested_at'),
+                    'time_label': '送达时间' if attempt.get('delivered_at') else '发送记录时间',
+                    'reason': attempt.get('blocked_reason'), 'details': {'task': task, 'notification': attempt}})
+        errors = []
+        more = tasks.get('total', 0) > page * 20
+        scope = '当前账号可见的模拟设备运维通知 · 每页最多 20 个关联任务'
     else:
         handoff_type = 'RISK_NOTICE' if kind == 'risk' else 'UAV_PUNISHMENT'
         source_kind = 'RISK' if kind == 'risk' else 'UAV_EVENT'

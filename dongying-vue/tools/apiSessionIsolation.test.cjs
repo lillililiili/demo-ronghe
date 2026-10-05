@@ -4,13 +4,15 @@ const { readFileSync } = require('node:fs');
 const path = require('node:path');
 
 function client() {
+  const labels = readFileSync(path.join(__dirname, '../src/ui/labels.js'), 'utf8').replace(/^export /gm, '');
+  const userFacingMessage = new Function(labels + '\nreturn userFacingMessage;')();
   const source = readFileSync(path.join(__dirname, '../src/services/apiClient.js'), 'utf8')
-    .replace(/import\.meta\.env/g, '{}').replace(/^export /gm, '');
+    .replace(/^import .*;\r?\n/gm, '').replace(/import\.meta\.env/g, '{}').replace(/^export /gm, '');
   const storage = new Map(), events = [], requests = [];
   const sessionStorage = { getItem: key => storage.get(key), setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) };
   const fetch = (url, options) => new Promise((resolve, reject) => requests.push({ url, options, resolve, reject }));
-  const api = new Function('fetch', 'sessionStorage', 'window', 'CustomEvent', source + '\nreturn {apiRequest,apiDownload,apiBinary,writeSessionToken,readSessionToken};')(
-    fetch, sessionStorage, { dispatchEvent: event => events.push(event) }, class { constructor(type, options) { this.type = type; this.detail = options.detail; } });
+  const api = new Function('userFacingMessage', 'fetch', 'sessionStorage', 'window', 'CustomEvent', source + '\nreturn {apiRequest,apiDownload,apiBinary,writeSessionToken,readSessionToken};')(
+    userFacingMessage, fetch, sessionStorage, { dispatchEvent: event => events.push(event) }, class { constructor(type, options) { this.type = type; this.detail = options.detail; } });
   api.writeSessionToken('session-A');
   return { ...api, events, requests };
 }

@@ -82,3 +82,19 @@ td.ck .naive-control-bridge,th.ck .naive-control-bridge{display:flex;justify-con
 
 .btn.pri:active:not(:disabled):not([aria-disabled="true"]){background:var(--action-pressed);color:var(--action-text)}
 .btn:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+
+/* Demo 控件配色，保留现有尺寸、换行和禁用逻辑；大屏不使用本覆盖。 */
+body:not([data-page="bigscreen"]) :is(.btn,input.ip,select.sel,.search-input){border-radius:var(--control-radius)}
+body:not([data-page="bigscreen"]) .btn{background:var(--button-bg);border-color:var(--button-line);color:var(--button-text)}
+body:not([data-page="bigscreen"]) .btn:hover:not(:disabled):not([aria-disabled="true"]):not([aria-busy="true"]){background:var(--button-hover);color:var(--action-text)}
+body:not([data-page="bigscreen"]) :is(.btn.pri,.n-button--primary-type){background:var(--action-gradient);border-color:var(--action-border);color:var(--action-text)}
+body:not([data-page="bigscreen"]) .btn.pri:hover:not(:disabled):not([aria-disabled="true"]):not([aria-busy="true"]){background:var(--action-gradient);filter:brightness(1.15)}
+body:not([data-page="bigscreen"]) .btn.ghost{background:transparent}
+body:not([data-page="bigscreen"]) .btn:is(.danger,.warn,.success){background:color-mix(in srgb,var(--btn-c) 16%,transparent);border-color:color-mix(in srgb,var(--btn-c) 50%,transparent)}
+body:not([data-page="bigscreen"]) .btn.danger{color:var(--tag-red-text)}
+body:not([data-page="bigscreen"]) .btn.warn{color:var(--tag-amber-text)}
+body:not([data-page="bigscreen"]) .btn.success{color:var(--tag-green-text)}
+body:not([data-page="bigscreen"]) .btn:is(.danger,.warn,.success):hover:not(:disabled):not([aria-disabled="true"]):not([aria-busy="true"]){background:color-mix(in srgb,var(--btn-c) 34%,transparent);color:var(--action-text)}
+body:not([data-page="bigscreen"]) .btn:is(:disabled,[disabled],[aria-disabled="true"]){opacity:.4;cursor:not-allowed;filter:none}
+body:not([data-page="bigscreen"]) :is(input.ip,select.sel,.search-input):focus-within{border-color:var(--blue);box-shadow:var(--focus-ring)}
+body:not([data-page="bigscreen"]) select.sel option{background:var(--surface-2)}

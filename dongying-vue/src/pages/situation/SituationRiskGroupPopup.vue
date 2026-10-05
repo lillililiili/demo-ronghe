@@ -16,6 +16,7 @@ const planFor = risk => props.plans.find(plan => riskMatchesPlan(risk, plan));
       <button type="button" aria-label="关闭风险详情" @click="$emit('close')" v-html="U.icon('close')"></button>
     </header>
     <p>{{ group.reasonText || '风险依据未提供' }}</p>
+    <p v-if="group.currentReason" class="group-note">{{ group.currentReason }}</p>
     <p v-if="group.members.length > 1" class="group-note">同一观测合并展示，各计划处理状态分别保留。</p>
     <article v-for="risk in group.members" :key="risk.riskId" class="group-plan">
       <b>{{ planFor(risk)?.planNo || risk.planNo || '关联计划资料未取得' }}</b>

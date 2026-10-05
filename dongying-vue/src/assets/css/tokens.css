@@ -138,6 +138,81 @@
   --login-shadow:var(--shadow);
 }
 
+/* 2026-09-29：普通业务页严格采用 demo-0826 配色；大屏与地图各自独立。 */
+:root:not(:has(body[data-page="bigscreen"])){
+  --canvas:#04091c;
+  --surface-1:#071231;
+  --surface-2:#0a1a3f;
+  --surface-3:#0d2350;
+  --surface-hover:rgba(61,139,255,.10);
+  --surface-selected:rgba(61,139,255,.18);
+  --panel:rgba(10,26,63,.72);
+  --panel-2:rgba(8,20,50,.55);
+  --surface-gradient:var(--panel);
+  --line:rgba(64,158,255,.22);
+  --line-2:rgba(64,158,255,.12);
+  --control-line:var(--line);
+  --txt:#e6f0ff;
+  --txt-2:#9fb6d9;
+  --txt-3:#6c86ad;
+  --blue:#3d8bff;
+  --cyan:#22d3ee;
+  --green:#2fd06e;
+  --amber:#ffb020;
+  --orange:#ff8b3d;
+  --red:#ff4d5e;
+  --purple:#a97bff;
+  --pink:#ff5fa2;
+  --gray:#8ca0be;
+  --action-blue:#3d8bff;
+  --action-hover:#5398ff;
+  --action-pressed:#2f6fe0;
+  --action-red:rgba(255,77,94,.16);
+  --action-gradient:linear-gradient(135deg,#2f6fe0,#3d8bff);
+  --action-border:#4d97ff;
+  --input-bg:rgba(4,12,32,.8);
+  --button-bg:rgba(61,139,255,.14);
+  --button-hover:rgba(61,139,255,.30);
+  --button-line:rgba(61,139,255,.42);
+  --button-text:#bcd6ff;
+  --focus-ring:0 0 0 2px rgba(61,139,255,.18);
+  --header-gradient:linear-gradient(90deg,rgba(9,24,60,.95),rgba(7,18,45,.85));
+  --sidebar-gradient:linear-gradient(180deg,rgba(8,20,50,.85),rgba(5,12,32,.85));
+  --nav-selected:linear-gradient(90deg,rgba(61,139,255,.30),rgba(61,139,255,.06));
+  --nav-selected-line:rgba(61,139,255,.45);
+  --brand-gradient:linear-gradient(90deg,#8fd0ff,#e6f0ff);
+  --avatar-gradient:linear-gradient(135deg,#3d8bff,#22d3ee);
+  --kpi-gradient:linear-gradient(135deg,rgba(13,35,80,.9),rgba(8,20,50,.75));
+  --kpi-art-overlay:radial-gradient(120px 60px at 100% 0%,rgba(61,139,255,.16),transparent 70%);
+  --table-head-gradient:#13294e;
+  --table-heading:#bcd6ff;
+  --table-line:rgba(64,158,255,.08);
+  --ambient-gradient:radial-gradient(1200px 700px at 15% -10%,rgba(41,98,255,.20),transparent 60%),radial-gradient(1000px 600px at 100% 0%,rgba(34,211,238,.12),transparent 55%),linear-gradient(180deg,#04091c 0%,#061029 40%,#04091c 100%);
+  --shadow:0 8px 32px rgba(0,0,0,.45);
+  --chart-grid:rgba(64,158,255,.12);
+  --chart-axis:rgba(64,158,255,.22);
+  --chart-tooltip:#0a1a3f;
+  --tag-red-text:#ff8b95;
+  --tag-orange-text:#ffb083;
+  --tag-amber-text:#ffd07a;
+  --tag-green-text:#79e5a5;
+  --tag-blue-text:#8fbaff;
+  --tag-cyan-text:#79e6f6;
+  --tag-purple-text:#c8adff;
+  --tag-gray-text:#a8bcd8;
+  --link-hover:#7fb4ff;
+  --modal-base:#0b1e4a;
+  --modal-gradient:linear-gradient(180deg,#0b1e4a,#071231);
+  --modal-line:rgba(64,158,255,.45);
+  --toast-bg:rgba(11,30,74,.97);
+  --mask-bg:rgba(2,6,18,.72);
+  --scroll-thumb:rgba(90,150,220,.45);
+  --scroll-hover:rgba(120,180,255,.75);
+  --scroll-track:rgba(255,255,255,.04);
+  --r:8px;
+  --control-radius:5px;
+}
+
 /* 路由标识来自 router.afterEach；图表与组件均读取同一个根节点色值。 */
 :root:has(body[data-page="bigscreen"]){
   /* 仅数据大屏使用参考图样式：深靛蓝底、宝蓝面板与青蓝高亮；状态与地图色独立保留。 */

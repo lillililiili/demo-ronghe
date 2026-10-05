@@ -52,6 +52,7 @@
 
 .situation-page .sit-layerbar{position:absolute;z-index:7;left:68px;bottom:14px;display:flex;gap:5px;padding:5px;border:1px solid var(--sit-line);border-radius:11px;background:rgba(5,21,37,.8);box-shadow:0 10px 26px rgba(0,8,20,.24);backdrop-filter:blur(14px)}
 .situation-page .sit-layerbar button{min-height:36px;padding:0 12px;border:1px solid transparent;border-radius:7px;background:transparent;color:#8da8bd;font:500 11px/1.2 inherit;cursor:pointer}.situation-page .sit-layerbar button:hover{color:#eefaff;background:rgba(47,103,145,.28)}.situation-page .sit-layerbar button[aria-pressed="true"]{color:#e9fbff;border-color:rgba(66,194,221,.32);background:rgba(29,103,132,.42);box-shadow:inset 0 0 12px rgba(45,207,208,.08)}
+.situation-page .sit-scan-key{display:inline-flex;align-items:center;gap:5px;padding:0 8px;border-left:1px solid var(--line-2);color:var(--txt-2);font-size:9px;white-space:nowrap}.situation-page .sit-scan-key i{width:10px;height:10px;border:1px solid var(--cyan);border-radius:50%;box-shadow:0 0 0 3px color-mix(in srgb,var(--cyan) 12%,transparent)}
 .situation-page .sit-plan-key{display:flex;flex-wrap:wrap;align-items:center;gap:5px 10px;margin-left:3px;padding:0 7px;border-left:1px solid rgba(145,190,226,.16);color:#8fa8bc;font-size:9px}.situation-page .sit-plan-key>span{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}.situation-page .sit-plan-key i{width:15px;height:0;border-top:2px solid}.situation-page .sit-plan-key .is-within{border-color:#2fd06e}.situation-page .sit-plan-key .is-outside{border-color:#ff4d5e}.situation-page .sit-plan-key .is-plan{border-color:#8ca0a8;border-top-style:dashed}.situation-page .sit-plan-key .is-unknown{border-color:#ffb020}
 
 .situation-page .sit-fuse-dock{position:absolute;z-index:8;right:16px;bottom:14px;width:104px;display:flex;flex-direction:column;align-items:center;overflow:visible}.situation-page .sit-fuse-orb{position:relative;z-index:2;display:flex;width:104px;flex-direction:column;align-items:center;gap:5px;padding:0;border:0;background:none;color:#e8f8ff;font:inherit;cursor:pointer}.situation-page .sit-fuse-orb-cap{display:flex;flex-direction:column;align-items:center;text-shadow:0 2px 8px #06121f}.situation-page .sit-fuse-orb-cap small{color:#9fc8de;font-size:9.5px;letter-spacing:.08em}.situation-page .sit-fuse-orb-cap b{color:#dff9ff;font:650 12px/1.2 Menlo,Consolas,monospace}
@@ -70,3 +71,25 @@
 @media (max-width:1366px){.situation-page .sit-device-dock{width:276px}.situation-page .sit-alert-dock{width:306px}.situation-page .sit-device-dock,.situation-page .sit-alert-dock{top:10px}.situation-page .sit-device-dock{left:10px}.situation-page .sit-alert-dock{right:10px}.situation-page .sit-dock-head{padding:10px 11px 8px}.situation-page .sit-device-list,.situation-page .sit-alert-list{gap:5px;padding:7px}.situation-page .sit-device-row{grid-template-columns:36px minmax(0,1fr) auto;padding:6px}.situation-page .sit-device-icon{width:34px;height:34px}.situation-page .sit-device-copy>b small{max-width:88px}.situation-page .sit-live-pill{top:10px}.situation-page .sit-alert-row{padding:7px}.situation-page .sit-layerbar button{min-height:34px;padding:0 8px}.situation-page .sit-plan-key{gap:4px;padding:0 5px;font-size:8.5px}}
 @media (max-width:1100px){.situation-page .sit-device-dock{width:252px}.situation-page .sit-alert-dock{width:278px}.situation-page .sit-device-copy>b small,.situation-page .sit-device-dock>footer{display:none}.situation-page .sit-live-pill>span:not(.sit-live-dot):not(.sr-only){display:none}.situation-page .sit-layerbar{left:58px}.situation-page .sit-layerbar button{padding:0 7px;font-size:10px}.situation-page .sit-plan-key{display:none}}
 @media (prefers-reduced-motion:reduce){.situation-page *,.situation-page *:before,.situation-page *:after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
+
+/* 2026-09-29 Demo 配色：只调整地图外的业务面板及控件，底图和业务图标独立。 */
+.situation-page{color:var(--txt)}
+.situation-page .sit-glass,.situation-page .sit-glass:hover,.situation-page .sit-glass:focus-within{background:var(--panel);border-color:var(--line);backdrop-filter:blur(4px)}
+.situation-page .sit-dock-head{background:transparent}
+.situation-page :is(.sit-dock-head small,.sit-device-state>small,.sit-device-node small,.sit-alert-meta time,.sit-device-dock>footer,.sit-alert-dock>footer){color:var(--txt-3)}
+.situation-page :is(.sit-device-copy>b small,.sit-device-copy>em,.sit-device-state,.sit-device-node>em,.sit-alert-copy>em,.sit-plan-key){color:var(--txt-2)}
+.situation-page :is(.sit-device-state>b,.sit-device-node,.sit-live-pill b){color:var(--txt)}
+.situation-page :is(.sit-device-row,.sit-alert-row,.sit-device-node){background:var(--panel-2);border-color:var(--line-2)}
+.situation-page :is(.sit-device-row,.sit-alert-row,.sit-device-node):hover{background:var(--surface-hover);border-color:var(--line)}
+.situation-page :is(.sit-device-row,.sit-alert-row,.sit-device-node).is-selected{background:var(--surface-selected);border-color:var(--blue);box-shadow:inset 3px 0 var(--cyan)}
+.situation-page :is(.sit-risk-tabs button,.sit-layerbar button){color:var(--button-text);background:var(--button-bg);border-color:var(--button-line)}
+.situation-page :is(.sit-risk-tabs button,.sit-layerbar button):hover{color:var(--action-text);background:var(--button-hover)}
+.situation-page :is(.sit-risk-tabs button[aria-selected="true"],.sit-layerbar button[aria-pressed="true"]){color:var(--action-text);background:var(--surface-selected);border-color:var(--blue);box-shadow:inset 0 -2px var(--cyan)}
+.situation-page :is(.sit-live-pill,.sit-layerbar,.sit-map-pop){background:var(--surface-1);border-color:var(--line);color:var(--txt-2)}
+.situation-page .sit-live-pill time{color:var(--cyan);border-color:var(--line-2)}
+.situation-page .sit-device-summary>span,.situation-page .sit-device-node.is-warning>em{color:var(--tag-amber-text)}
+.situation-page .sit-alert-level{background:color-mix(in srgb,var(--red) 16%,transparent);border-color:color-mix(in srgb,var(--red) 40%,transparent);color:var(--tag-red-text)}
+.situation-page .level-中 .sit-alert-level{background:color-mix(in srgb,var(--amber) 16%,transparent);border-color:color-mix(in srgb,var(--amber) 40%,transparent);color:var(--tag-amber-text)}
+.situation-page .level-低 .sit-alert-level{background:color-mix(in srgb,var(--blue) 16%,transparent);border-color:color-mix(in srgb,var(--blue) 40%,transparent);color:var(--tag-blue-text)}
+.situation-page .sit-alert-meta b,.situation-page .sit-alert-row:not(.is-new) .sit-alert-meta b{color:var(--tag-red-text)}
+.situation-page :is(.sit-device-dock>footer,.sit-alert-dock>footer){border-color:var(--line-2)}

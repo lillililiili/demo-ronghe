@@ -10,6 +10,16 @@
     frame.contentWindow.postMessage({type:'simulator-airspace-zones',selected_id:pendingZoneId,zones:state.zones.filter(z=>z.points.length>=3).map(z=>({id:z.id,name:z.name,kind_code:z.kindCode||'',boundary:{type:'Polygon',coordinates:[z.points.map(p=>window.SimulatorMap.coordinates(p)).concat([window.SimulatorMap.coordinates(z.points[0])])]}}))},location.origin);
     pendingZoneId=null;
   }
+  function sendPlans() {
+    if (!window.SimulatorMap?.ready || !frame.contentWindow) return;
+    const selectedPlanId = typeof selected !== 'undefined' && selected?.kind === 'plan' ? selected.id : '';
+    const payload = {type:'simulator-plan-drafts',plans:state.plans.filter(plan=>Array.isArray(plan.points)&&plan.points.length>=2).map(plan=>({
+      id:plan.id,name:plan.name,points:plan.points.map(point=>window.SimulatorMap.coordinates(point)),start:plan.start,end:plan.end,
+      min:plan.min,max:plan.max,width:plan.width,altitudeDatum:plan.altitudeDatum||'AMSL'
+    }))};
+    if (selectedPlanId) payload.selected_id = selectedPlanId;
+    frame.contentWindow.postMessage(payload,location.origin);
+  }
   function openAirspace(id) {
     const alreadyOpen=frame.dataset.view==='airspaces';pendingZoneId=id;inputTab='airspaces';
     document.querySelectorAll('[data-input-tab]').forEach(item=>item.setAttribute('aria-pressed',String(item.dataset.inputTab==='airspaces')));
@@ -24,9 +34,10 @@
     if (event.key === 'Escape') { sceneTools.open = false; sceneTools.querySelector('summary').focus(); }
   });
   function syncFrame() {
-    const url = inputTab==='airspaces'?'/airspace.html?embed=1':'/external.html?embed=1&tab='+inputTab;
+    const url = inputTab==='airspaces'?'/airspace.html?embed=1':'/external.html?embed=1&tab='+inputTab+'&v=20261005-route-selection-sync-1';
     if (root.dataset.workspace==='inputs' && frame.dataset.view !== (inputTab==='airspaces'?'airspaces':'external')) { frame.dataset.view=inputTab==='airspaces'?'airspaces':'external'; frame.src=url; }
     frame.contentWindow?.postMessage({type:'simulator-input-view', tab:inputTab, visible:root.dataset.workspace==='inputs'}, location.origin);
+    if(inputTab==='plans')sendPlans();
   }
   function revealInput() {
     // On stacked layouts the form sits below the map, outside the visible viewport.
@@ -75,6 +86,11 @@
   window.addEventListener('message', event => {
     if (event.origin!==location.origin || event.source!==frame.contentWindow) return;
     if (event.data?.type==='simulator-input-ready') {syncFrame();if(pendingZoneId)sendZones();}
+    if (event.data?.type==='simulator-plan-draw') {
+      if(draw)return toast('请先完成或取消当前绘制');
+      workspace('routes');setDraw('plan',event.data.id||null);
+      if (window.matchMedia('(max-width:760px)').matches) document.querySelector('.map-panel').scrollIntoView({block:'start',behavior:'instant'});
+    }
     if (event.data?.type==='simulator-airspace-login') document.querySelector('[data-action=connection]').click();
     if (event.data?.type==='simulator-airspace-draw') {
       if(!airspaceKinds[event.data.kind_code])return toast('请先选择空域类型');
@@ -92,6 +108,7 @@
     if (event.data?.type==='simulator-airspace-zones') sendZones();
   });
   frame.addEventListener('load', syncFrame);
+  window.addEventListener('simulator-map:ready', sendPlans);
   const initial = new URLSearchParams(location.search).get('input');
   if (['plans','weather','airspaces'].includes(initial)) {
     inputTab=initial;

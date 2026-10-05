@@ -1,4 +1,5 @@
 <script setup>
+import { userFacingMessage } from '@/ui/labels.js';
 import { computed, onUnmounted, ref, watch } from 'vue';
 import { flightApi } from '@/services/flightApi.js';
 import PlanDeviceCheck from '@/pages/flights/components/PlanDeviceCheck.vue';
@@ -90,7 +91,7 @@ onUnmounted(() => { token++; });
             <span v-if="['MOCK', 'SMS_SIMULATED', 'VOICE_SIMULATED'].includes(item.recipient_snapshot?.channel_type)" class="tag t-gray">模拟通知通道</span>
           </div>
           <p class="record-meta">通知提交于 {{ date(item.created_at) }} · {{ item.recipient_snapshot?.org_name || item.recipient_snapshot?.recipient_name || item.recipient_name || '接收单位未记录' }}</p>
-          <p v-if="item.blocked_reason" class="record-blocker">{{ notificationBlocker(item) }}</p>
+          <p v-if="item.blocked_reason" class="record-blocker">{{ userFacingMessage(notificationBlocker(item)) }}</p>
           <details class="record-details">
             <summary><span class="detail-expand">查看通知详情</span><span class="detail-collapse">收起通知详情</span></summary>
             <dl class="kv">

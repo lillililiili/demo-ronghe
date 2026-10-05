@@ -117,7 +117,7 @@ const NOTIFY_PHASE = {
   AUTO_SMS: { t: '自动短信', c: 't-cyan', color: '#22d3ee' },
   WATCHING: { t: '观察中', c: 't-amber', color: '#f1a43a' },
   AUTO_CALL: { t: '自动电话', c: 't-cyan', color: '#22d3ee' },
-  AWAIT_COUNTER: { t: '待反制', c: 't-orange', color: '#fb923c' }
+  AWAIT_COUNTER: { t: '待处置决策', c: 't-orange', color: '#fb923c' }
 };
 const SOURCE_MODE = { mock: { t: MODE_TEXT.mock, c: 't-purple' }, replay: { t: MODE_TEXT.replay, c: 't-amber' }, live: { t: MODE_TEXT.live, c: 't-green' } };
 /* 类别来自共享字典；区域来自本页的区域字典接口，读不到就把下拉标成"不可用"并在 title 说明原因。 */
@@ -169,6 +169,9 @@ function deriveAlarmProgress(auths, handoffs) {
 }
 function displayState(a) {
   if (!a?.event_id || !['CONFIRMED', 'PENDING_VERIFICATION'].includes(a.state)) return stateOf(a);
+  const noCounter = advisorySummaries.get(a.event_id)?.no_counter;
+  if (noCounter?.decision_active === true) return { t: '不反制 · 处置已结束', c: 't-cyan', color: '#22d3ee' };
+  if (noCounter?.review_required === true) return { t: '风险变化待决策', c: 't-amber', color: '#f1a43a' };
   const autoHandoff = advisorySummaries.get(a.event_id)?.auto_handoff;
   const autoTransferred = !!autoHandoff?.handoff_id && !['FAILED', 'DISABLED', 'BLOCKED', 'WAITING'].includes(autoHandoff.status);
   const handedOff = autoTransferred || pageProgress[a.event_id] === 'HANDED_OFF';
@@ -187,6 +190,7 @@ function displayState(a) {
   return { t: ALARM_PROGRESS_LABEL[key], c: ALARM_PROGRESS_TAG[key] || 't-cyan', color: '#22d3ee' };
 }
 function showCounterLaunch() {
+  if (advisoryLive.value?.no_counter?.decision_active === true) return false;
   if (advisoryLive.value?.counter_launch_visible !== true || !cur.alarm?.event_id) return false;
   const key = deriveAlarmProgress(Object.values(disposal.byAction), disposal.handoff ? [disposal.handoff] : [])
     || pageProgress[cur.alarm.event_id];
@@ -295,12 +299,12 @@ async function refreshEventDisposals(eventId) {
 
 
 const KPI_DEFS = [
-  { label: '今日告警总数', color: 'blue', icon: 'alert' },
-  { label: '待核实', color: 'amber', icon: 'alert' },
-  { label: '反制中', color: 'orange', icon: 'radar' },
-  { label: '干扰中', color: 'red', icon: 'radar' },
-  { label: '待处置', color: 'cyan', icon: 'alert' },
-  { label: '误报', color: 'blue', icon: 'check' }
+  { label: '今日告警总数', caption: '按发生时间统计', color: 'blue', icon: 'alert' },
+  { label: '今日待核实', caption: '按发生时间统计', color: 'amber', icon: 'alert' },
+  { label: '当前反制中', caption: '实时状态', color: 'orange', icon: 'radar' },
+  { label: '当前干扰中', caption: '实时状态', color: 'red', icon: 'radar' },
+  { label: '今日已确认', caption: '按发生时间统计', color: 'cyan', icon: 'alert' },
+  { label: '今日误报', caption: '按发生时间统计', color: 'blue', icon: 'check' }
 ];
 const kpiList = ref(KPI_DEFS.map(k => ({ ...k, value: '读取中', desc: '' })));
 /* 区域字典：读不到就只留"全部"，并在筛选项 title 说明——不能凭当前页的数据拼一份看着像全量的区域列表。 */
@@ -357,14 +361,17 @@ async function loadKpis() {
   const disposalCount = actionType => Promise.all(DISPOSAL_ACTIVE.map(status =>
     disposalApi.list({ action_type: actionType, status, page: 1, size: 1 }).then(p => Number(p && p.total) || 0)
   )).then(([approved, executing]) => ({ approved, executing }));
-  // 非展示用：算 KPI 查询窗口（今日 / 近 30 天）的时间戳边界，只当查询参数发给服务端。
-  const now = new Date();
-  const from = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const to = from + 86400000, d30 = from - 29 * 86400000;
+  // 告警类 KPI 统一按今日发生时间统计；处置类 KPI 保留当前实时状态口径。
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).formatToParts(Date.now()).filter(part => part.type !== 'literal').map(part => [part.type, Number(part.value)]));
+  const from = Date.UTC(parts.year, parts.month - 1, parts.day) - 8 * 60 * 60_000;
+  const to = from + 86400000;
   const r = await Promise.allSettled([
-    count({ occurred_from: from, occurred_to: to }), count({ occurred_from: d30, occurred_to: to }),
-    count({ state: 'PENDING_VERIFICATION' }),
-    count({ state: 'CONFIRMED' }), count({ state: 'FALSE_POSITIVE' }),
+    count({ occurred_from: from, occurred_to: to }),
+    count({ occurred_from: from, occurred_to: to, state: 'PENDING_VERIFICATION' }),
+    count({ occurred_from: from, occurred_to: to, state: 'CONFIRMED' }),
+    count({ occurred_from: from, occurred_to: to, state: 'FALSE_POSITIVE' }),
     disposalCount('COUNTERMEASURE'), disposalCount('JAMMING')
   ]);
   const v = r.map(x => x.status === 'fulfilled' ? x.value : null);
@@ -379,12 +386,12 @@ async function loadKpis() {
   };
   const fail = i => v[i] == null ? '读取失败：' + esc(messageOf(r[i].reason)) : null;
   kpiList.value = [
-    { ...KPI_DEFS[0], value: num(v[0]), desc: fail(0) || `近30天 ${num(v[1])} 起（按发生时间统计，发生时间未知者不计）` },
-    { ...KPI_DEFS[1], value: num(v[2]), desc: fail(2) || '待人工核实的事件数' },
-    disposalKpi(KPI_DEFS[2], r[5], v[5]),
-    disposalKpi(KPI_DEFS[3], r[6], v[6]),
-    { ...KPI_DEFS[4], value: num(v[3]), desc: fail(3) || '已核实、待处置的事件数；反制与处罚交接见详情动作' },
-    { ...KPI_DEFS[5], value: num(v[4]), desc: fail(4) || '人工核实后已排除' }
+    { ...KPI_DEFS[0], value: num(v[0]), desc: fail(0) || '北京时间今天发生的告警数量；发生时间未知者不计' },
+    { ...KPI_DEFS[1], value: num(v[1]), desc: fail(1) || '北京时间今天发生且待人工核实的告警数量' },
+    disposalKpi(KPI_DEFS[2], r[4], v[4]),
+    disposalKpi(KPI_DEFS[3], r[5], v[5]),
+    { ...KPI_DEFS[4], value: num(v[2]), desc: fail(2) || '北京时间今天发生且已确认属实的告警数量，包含处置已结束的记录' },
+    { ...KPI_DEFS[5], value: num(v[3]), desc: fail(3) || '北京时间今天发生且人工核实后已排除的告警数量' }
   ];
 }
 
@@ -501,6 +508,13 @@ function updateAdvisory(summary) {
 async function refreshOpenAdvisory(eventId) {
   if (!eventId) return;
   try { updateAdvisory(await uavAdvisoryApi.get(eventId)); } catch { /* 列表回读仍会补上通知阶段 */ }
+}
+function updateNoCounter(status) {
+  if (!status?.event_id || status.event_id !== cur.alarm?.event_id) return;
+  const previous = advisorySummaries.get(status.event_id);
+  if (previous && status.event_version < previous.event_version) return;
+  updateAdvisory({ ...previous, event_id: status.event_id, event_version: status.event_version, no_counter: status, _fetchedAt: Date.now() });
+  void refreshOpenAdvisory(status.event_id);
 }
 
 function detailHtml() {
@@ -928,23 +942,26 @@ onMounted(async () => {
           <UPanel title="关联目标定位与轨迹" panel-style="height:244px;max-height:50%;flex:none" nopad
             body-style="padding:6px" :extra="mapExtra" :body-html="mapBody" />
           <UPanel title="告警详情与处置" panel-style="flex:1;min-height:0" nopad
-            body-style="overflow:auto;display:block">
-            <EmergencyStopPanel v-if="emergencyEvent" :key="`emergency-${emergencyEvent.id}`" :event-id="emergencyEvent.id"
-              @updated="updateEmergency" @changed="refreshEmergency" />
-            <TargetTrackingPanel v-if="videoSubject" :key="videoSubject.label" :target-id="videoSubject.targetId"
-              :context-label="videoSubject.label" :active="activeTab === 'alarms'"
-              begin-reason="告警详情人工补充光电追踪" />
-            <div id="alDetail" style="padding:12px"></div>
-            <UavAdvisoryPanel v-if="advisorySubject" :key="`advisory-${advisorySubject.id}`"
-              :event-id="advisorySubject.id" :confirmed="advisorySubject.confirmed"
-              :handoff-id="advisorySubject.handoffId" :interval="1000"
-              @updated="updateAdvisory" />
+            body-style="overflow:auto;display:flex;flex-direction:column;padding:0">
             <div class="alarm-action-bar">
-              <div id="alDetailActions" class="alarm-observation"></div>
               <CounterLaunch v-if="advisorySubject" :key="`counter-${advisorySubject.id}`"
                 :event-id="advisorySubject.id" :event-label="advisorySubject.label" :active="activeTab === 'alarms'"
-                :show-launch="showCounterLaunch()"
+                :show-launch="showCounterLaunch()" :confirmed="advisorySubject.confirmed" :summary="advisoryLive"
+                @decision="updateNoCounter"
                 @records="openAuthorizations" />
+              <div id="alDetailActions" class="alarm-observation"></div>
+            </div>
+            <div class="alarm-detail-content">
+              <EmergencyStopPanel v-if="emergencyEvent" :key="`emergency-${emergencyEvent.id}`" :event-id="emergencyEvent.id"
+                @updated="updateEmergency" @changed="refreshEmergency" />
+              <TargetTrackingPanel v-if="videoSubject" :key="videoSubject.label" :target-id="videoSubject.targetId"
+                :context-label="videoSubject.label" :active="activeTab === 'alarms'"
+                begin-reason="告警详情人工补充光电追踪" />
+              <div id="alDetail" style="padding:12px"></div>
+              <UavAdvisoryPanel v-if="advisorySubject" :key="`advisory-${advisorySubject.id}`"
+                :event-id="advisorySubject.id" :confirmed="advisorySubject.confirmed"
+                :handoff-id="advisorySubject.handoffId" :interval="1000"
+                @updated="updateAdvisory" />
             </div>
           </UPanel>
         </div>
@@ -1003,13 +1020,14 @@ onMounted(async () => {
     grid-template-columns: minmax(0, 1fr);
   }
 }
-.alarm-action-bar { display:flex; align-items:flex-start; flex-wrap:wrap; gap:12px 24px; margin:0 12px 12px; padding-top:16px; border-top:1px solid var(--line); }
+.alarm-action-bar { position:sticky; top:0; z-index:10; display:flex; flex-direction:column; align-items:stretch; gap:10px; margin:0; padding:10px 12px; border-bottom:1px solid var(--line); background:var(--panel); box-shadow:0 4px 12px color-mix(in srgb, var(--bg-1) 22%, transparent); }
 .alarm-action-bar:not(:has(.btn, .tag)) { display:none; }
-.alarm-observation { flex:1 1 auto; min-width:0; }
+.alarm-observation { order:2; flex:0 0 auto; min-width:0; }
 .alarm-observation:empty { display:none; }
-.alarm-observation :deep(.alarm-observation-actions) { display:flex; align-items:center; flex-wrap:wrap; gap:10px; }
+.alarm-observation :deep(.alarm-observation-actions) { display:flex; align-items:center; justify-content:flex-start; flex-wrap:wrap; gap:10px; }
 .alarm-observation :deep(.btn) { min-height:40px; height:auto; padding:8px 14px; white-space:normal; }
 .alarm-observation :deep(.alarm-action-note) { margin:8px 0 0; font-size:12px; line-height:1.65; color:var(--txt-2); }
+.alarm-detail-content { min-width:0; }
 .alarm-workspace-tabs { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; flex:none; }
 .alarm-workspace-tabs .btn { white-space:normal; height:auto; min-height:34px; }
 .alarms-page :deep(.detail-hero-title),

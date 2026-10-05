@@ -11,8 +11,20 @@ import tempfile
 import time
 from urllib.parse import urlparse, quote, urlunparse
 
-DEFAULT_VIDEO = {'enabled': False, 'ffmpeg': 'ffmpeg', 'source': '', 'rtsp_base': 'rtsp://127.0.0.1:8554',
-                 'publisher_user': 'qa-publisher', 'publisher_password': ''}
+def default_video_config():
+    """Build opt-in defaults from the launch environment without persisting credentials."""
+    enabled = os.environ.get('QA_VIDEO_ENABLED', '').strip().lower() in ('1', 'true', 'yes', 'on')
+    return {
+        'enabled': enabled,
+        'ffmpeg': 'ffmpeg',
+        'source': '',
+        'rtsp_base': os.environ.get('QA_VIDEO_RTSP_BASE', 'rtsp://127.0.0.1:8554'),
+        'publisher_user': os.environ.get('QA_VIDEO_PUBLISH_USER', 'qa-publisher'),
+        'publisher_password': os.environ.get('QA_VIDEO_PUBLISH_PASSWORD', ''),
+    }
+
+
+DEFAULT_VIDEO = default_video_config()
 SAFE_ID = re.compile(r'[A-Za-z0-9_-]{1,128}')
 
 

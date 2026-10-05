@@ -10,15 +10,19 @@ import threading
 import time
 import uuid
 import subprocess
+from contextlib import nullcontext
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import urlparse, unquote, parse_qs
 from urllib.request import Request, build_opener, ProxyHandler, HTTPRedirectHandler
 from urllib.error import HTTPError, URLError
-from engine import compile_scene, messages, position
+from engine import compile_scene, duration_reached, messages, position
 from notification_inbox import read_inbox
 from notification_response import NotificationResponse
-from platform_client import Platform, Prerequisites
+from platform_client import Platform, Prerequisites, sql
 from eo_video import EoSimulator, video_config, public_video_config, sanitize_video_error, DEFAULT_VIDEO
+from realtime_control import RealtimeController, prepare_scene
+from full_scenario import full_scene, allocate_identities
+from fullchain import FullChain
 
 ROOT = Path(__file__).resolve().parent
 
@@ -36,7 +40,7 @@ class ExternalBridge:
     """Shared in-memory system login and allowlisted external interface calls."""
     PREFIX = '/local-interface-simulator'
     READ = {PREFIX + '/context', PREFIX + '/airspaces/context', PREFIX + '/plan-options'}
-    WRITE = {PREFIX + '/plans', PREFIX + '/weather', PREFIX + '/bindings', PREFIX + '/airspaces'}
+    WRITE = set(map(PREFIX.__add__, ('/plans', '/weather', '/weather-risks', '/bindings', '/airspaces', '/countermeasure-device', '/routes', '/observation-devices', '/target-observations', '/weather-devices', '/weather-observations')))
     RECEIPT = re.compile(r'^/local-interface-simulator/messages/[A-Za-z0-9_-]{1,64}/receipt$')
     PLAN_FILING = re.compile(r'^/local-interface-simulator/plans/[A-Za-z0-9_-]{1,36}/filing$')
 
@@ -59,6 +63,8 @@ class ExternalBridge:
         if not isinstance(config, dict) or not config.get('account') or not config.get('password'):
             raise ValueError('请输入系统账号和密码')
         with self.lock:
+            if self.runtime and getattr(self.runtime, 'realtime', None) and self.runtime.realtime.active():
+                raise ValueError('请先停止全部收发，再重新登录或切换账号')
             if self.runtime and self.runtime.phase in ('PREPARING','RUNNING','PAUSED','STOPPING'):
                 raise ValueError('请先停止当前任务，再重新登录或切换账号')
             platform = Platform(config.get('api', 'http://127.0.0.1:8081/api/v1'))
@@ -122,10 +128,22 @@ class NoMapRedirect(HTTPRedirectHandler):
 
 MAP_HTTP = build_opener(ProxyHandler({}), NoMapRedirect())
 
+def validate_isolated_qa(database, schema, data_dir):
+    if not isinstance(database, str) or not re.fullmatch(r'stage456_verify_[a-z0-9_]+', database):
+        raise ValueError('隔离场景模式必须使用 stage456_verify_* 测试数据库')
+    if not isinstance(schema, str) or not re.fullmatch(r'monitor_events_[a-f0-9]{32}', schema):
+        raise ValueError('隔离场景模式必须使用 monitor_events_<32位小写十六进制> schema')
+    directory, shared = Path(data_dir).resolve(), (ROOT / '.data').resolve()
+    if directory == shared or shared in directory.parents:
+        raise ValueError('隔离场景模式必须通过 --data-dir 指定共享 .data 以外的独立批次目录')
+
 class Runtime:
-    def __init__(self, data_dir, database=None, container='deploy-db-1', session=None):
+    def __init__(self, data_dir, database=None, container='deploy-db-1', session=None, schema=None, isolated_qa_scene=False):
+        if isolated_qa_scene:
+            validate_isolated_qa(database, schema, data_dir)
+        self.isolated_qa_scene = isolated_qa_scene
+        self.seed = Prerequisites(database, container, schema=schema)
         self.data_dir = Path(data_dir); self.data_dir.mkdir(parents=True, exist_ok=True)
-        self.seed = Prerequisites(database, container)
         self.session = session or ExternalBridge()
         self.session.runtime = self
         self.lock = self.session.lock
@@ -133,15 +151,25 @@ class Runtime:
         self.mqtt_password = ''; self.mqtt_username = ''
         self.phase = 'IDLE'; self.error = ''; self.batch = None; self.elapsed = 0
         self.sent = 0; self.logs = []; self.manifest = {}; self.targets = {}; self.scene = {}
+        self.source_scene = None
+        self.fullchain = None
         self.cancel = threading.Event(); self.thread = None
         self.next_session_check = 0
         self.snapshot = {}; self.skipped = []; self.response = None
         self.video_config = dict(DEFAULT_VIDEO); self.eo = None; self.eo_status = {}
+        self.realtime = None
+        self.mqtt_connected = False
+        self.mqtt_reconnect_count = 0
+        self.mqtt_disconnected_at = None
+        self.last_published_at = None
+        self.session_verified_at = None
         saved=sorted(self.data_dir.glob('sim-*/manifest.json'),key=lambda p:p.stat().st_mtime)
         if saved:
             try:
                 self.manifest=json.loads(read_saved_text(saved[-1])); self.batch=self.manifest['batch']
                 self.scene=json.loads(read_saved_text(saved[-1].parent/'scene.json'))
+                source_file=saved[-1].parent/'source-scene.json'
+                if source_file.exists(): self.source_scene=json.loads(read_saved_text(source_file))
                 _,_,self.targets,self.skipped=compile_scene(self.scene)
                 for key,motion in self.manifest.get('notification_motion', {}).items():
                     if key in self.targets: self.targets[key]['_notification_motion'] = motion
@@ -174,7 +202,15 @@ class Runtime:
                     'notification_observation':self.response.snapshot() if self.response else self.manifest.get('notification_observation', {}),
                     'video_config':public_video_config(self.video_config), 'eo':copy.deepcopy(self.eo_status),
                     'skipped':self.skipped, **self.session.status(), 'mqtt_ready':self.platform is not None and self.broker is not None,
+                    'mqtt_connected':self.mqtt_connected, 'last_published_at':self.last_published_at,
+                     'mqtt_reconnect_count':self.mqtt_reconnect_count,
+                     'mqtt_disconnected_at':self.mqtt_disconnected_at,
+                    'session_verified_at':self.session_verified_at,
+                    'scene_mode':'isolated_qa' if self.isolated_qa_scene else 'realtime',
+                    'realtime':self.realtime.snapshot() if self.realtime else None,
                     'broker':{'name':self.broker['name'],'host':self.broker['host'],'port':self.broker['port']} if self.broker else None,
+                    'source_scene':copy.deepcopy(self.source_scene),
+                    'coverage':copy.deepcopy(self.manifest.get('fullchain',{})),
                     'scene':copy.deepcopy(self.scene), 'manifest':copy.deepcopy(self.manifest), 'snapshot':copy.deepcopy(self.snapshot)}
 
     def log(self, kind, message, **extra):
@@ -225,10 +261,38 @@ class Runtime:
         # This must also run for plain movement scenes with no notification polling.
         # Any failed check stops the publishing loop; only success renews the window.
         platform.call('GET', '/auth/me')
+        self.session_verified_at = int(time.time()*1000)
         self.next_session_check = now + 5
 
+    def wait_for_mqtt_reconnect(self, client, timeout=30):
+        """Wait for paho's bounded automatic reconnect between publish frames."""
+        if client.is_connected():
+            return True
+        started = time.monotonic()
+        self.log('MQTT_RECONNECT', 'MQTT 连接中断，等待客户端自动重连', timeout=timeout)
+        while time.monotonic() - started < timeout:
+            if self.cancel.is_set():
+                return False
+            if client.is_connected():
+                self.log('MQTT_RECONNECTED', 'MQTT 已恢复，继续发送后续帧')
+                return True
+            self.cancel.wait(.25)
+        return False
+
     def start(self, raw):
+        with self.realtime.operation_lock if self.realtime else nullcontext():
+            return self._start(raw)
+
+    def _start(self, raw):
+        source_scene = copy.deepcopy(raw)
+        if self.realtime:
+            raw = prepare_scene(raw, self.realtime.config)
         scene, devices, targets, skipped = compile_scene(raw)
+        if self.realtime:
+            if self.seed.database:
+                raise ValueError('实时收发不使用数据库配套，请通过资料输入接口提交计划与空域')
+            if not raw.get('fullchain', {}).get('enabled'):
+                self.realtime.start()
         with self.lock:
             if self.phase in ('PREPARING','RUNNING','PAUSED','STOPPING') or self.thread and self.thread.is_alive():
                 raise ValueError('已有任务运行中')
@@ -236,18 +300,27 @@ class Runtime:
                 raise ExternalAuthenticationRequired('请先登录系统')
             if not self.broker:
                 self.connect({})
+            if self.isolated_qa_scene:
+                if self.broker['host'] not in ('127.0.0.1', 'localhost'):
+                    raise ValueError('隔离场景模式仅连接本机 replay MQTT')
+                if self.seed.query('SELECT count(*) FROM mqtt_broker WHERE broker_id=' + sql(self.broker['broker_id']) + " AND source_mode='replay' AND enabled=TRUE;") != '1':
+                    raise ValueError('隔离测试库与当前 API 的 MQTT 连接不一致，已阻止启动')
             self.batch='sim-'+time.strftime('%m%d%H%M%S')+'-'+uuid.uuid4().hex[:4]
             (self.data_dir/self.batch).mkdir()
             self.scene, self.targets, self.skipped = scene, targets, skipped
+            self.source_scene = source_scene
             self.elapsed=0; self.sent=0; self.logs=[]; self.snapshot={}; self.error=''; self.response=None
             self.next_session_check = 0
+            self.mqtt_reconnect_count = 0; self.mqtt_disconnected_at = None; self.last_published_at = None
             self.eo = None; self.eo_status = {}
             self.manifest={'batch':self.batch,'source_mode':'replay','provider':'map-sim', 'created_at':int(time.time()*1000),
                            'broker_id':self.broker['broker_id'],'devices':{},'plans':{},'zones':{},
-                           'targets':{k:{'uav_sn':self.batch+'-u'+str(i)} for i,k in enumerate(targets,1)}}
+                           'targets':allocate_identities(scene,self.batch)}
+            self.fullchain = None
             self.phase='PREPARING'
             self.checkpoint()
             (self.data_dir/self.batch/'scene.json').write_text(json.dumps(scene,ensure_ascii=False,indent=2), encoding='utf-8')
+            (self.data_dir/self.batch/'source-scene.json').write_text(json.dumps(source_scene,ensure_ascii=False,indent=2), encoding='utf-8')
             self.phase='PREPARING'; self.cancel.clear()
             self.thread=threading.Thread(target=self.run,args=(devices,),daemon=True); self.thread.start()
             return self.status()
@@ -258,7 +331,26 @@ class Runtime:
             self.log('PREPARE','正在为本批次注册模拟设备与配套资料')
             if self.seed.database and self.platform.me.get('role_code') != 'ROLE-ADMIN':
                 raise ValueError('本机计划/区域 seed 仅允许测试系统管理员运行')
-            self.seed.create(self.scene,self.targets,self.broker,self.manifest,self.manifest['created_at'])
+            if self.scene.get('fullchain', {}).get('enabled'):
+                self.fullchain = FullChain(self.platform, self.scene, self.manifest, self.broker,
+                                          self.checkpoint, cancelled=self.cancel.is_set)
+                self.fullchain.prepare()
+                if self.cancel.is_set(): return
+                if self.realtime: self.realtime.start()
+            else:
+                # The normal web scenario is also a platform-facing replay.  With
+                # no explicit --database the old branch silently skipped plans and
+                # airspaces, leaving them visible only in the simulator draft.
+                # Publish those scene facts through the authorized API path so the
+                # business frontend can read the same batch.  MQTT-only scenes do
+                # not need the extra preparation request.
+                if self.seed.database:
+                    self.seed.create(self.scene,self.targets,self.broker,self.manifest,self.manifest['created_at'])
+                elif self.scene.get('plans') or self.scene.get('zones') or any(
+                        t.get('transport') == 'normalized' for t in self.scene.get('targets', [])):
+                    self.fullchain = FullChain(self.platform, self.scene, self.manifest, self.broker,
+                                              self.checkpoint, cancelled=self.cancel.is_set)
+                    self.fullchain.prepare()
             self.checkpoint()
             if self.cancel.is_set(): return
             self.platform.prepare_devices(devices,self.broker,self.manifest,self.checkpoint)
@@ -271,10 +363,18 @@ class Runtime:
             if self.cancel.is_set(): return
             from paho.mqtt import client as mqtt
             connected=threading.Event(); result=[]
-            client=mqtt.Client(mqtt.CallbackAPIVersion.VERSION2,client_id=self.batch,protocol=mqtt.MQTTv311,reconnect_on_failure=False)
+            client=mqtt.Client(mqtt.CallbackAPIVersion.VERSION2,client_id=self.batch,protocol=mqtt.MQTTv311,reconnect_on_failure=True)
+            client.reconnect_delay_set(min_delay=1, max_delay=8)
             def on_connect(c,u,f,code,p):
+                self.mqtt_connected = not code.is_failure
                 result.append(not code.is_failure); connected.set()
             client.on_connect=on_connect
+            def on_disconnect(*args):
+                if self.mqtt_connected:
+                    self.mqtt_reconnect_count += 1
+                    self.mqtt_disconnected_at = int(time.time()*1000)
+                self.mqtt_connected = False
+            client.on_disconnect = on_disconnect
             def publish_eo(topic, payload):
                 if self.cancel.is_set() or self.phase != 'RUNNING': return
                 info = client.publish(topic, json.dumps(payload, ensure_ascii=False), qos=1, retain=False)
@@ -283,11 +383,23 @@ class Runtime:
                 self.log('EO_RECEIPT', '模拟光电回执已由 Broker 确认', topic=topic, payload=payload)
             self.eo = EoSimulator(self.platform, self.manifest, self.video_config, publish_eo, self.log,
                 is_running=lambda: self.phase == 'RUNNING' and not self.cancel.is_set())
-            client.on_message = lambda c,u,m: self.eo.enqueue(m.topic, m.payload, m.retain)
+            def receive_command(c,u,m):
+                if self.realtime and self.realtime.config['mode']=='abnormal' and self.realtime.config['command_mode']=='no_receipt':
+                    self.log('COMMAND_IGNORED','异常模式：光电指令不执行、不回执',topic=m.topic)
+                    return
+                self.eo.enqueue(m.topic, m.payload, m.retain)
+            client.on_message = receive_command
             subscribed = threading.Event(); subscription_result = []
             def on_subscribe(c,u,mid,codes,p):
                 subscription_result.append(all(not code.is_failure for code in codes)); subscribed.set()
             client.on_subscribe = on_subscribe
+            def restore_subscriptions():
+                if not self.eo.bindings:
+                    return
+                subscribed.clear(); subscription_result.clear()
+                rc, _ = client.subscribe([(topic, 1) for topic in self.eo.bindings])
+                if rc != 0 or not subscribed.wait(6) or not all(subscription_result):
+                    raise ValueError('光电指令主题订阅失败')
             if self.mqtt_username:
                 client.username_pw_set(self.mqtt_username,self.mqtt_password)
             if self.broker.get('tls'): client.tls_set()
@@ -295,10 +407,7 @@ class Runtime:
             client.connect(self.broker['host'],int(self.broker['port']),30); client.loop_start()
             if not connected.wait(6) or not result or not result[0]:
                 raise ValueError('MQTT 连接或认证失败')
-            if self.eo.bindings:
-                rc, _ = client.subscribe([(topic, 1) for topic in self.eo.bindings])
-                if rc != 0 or not subscribed.wait(6) or not all(subscription_result):
-                    raise ValueError('光电指令主题订阅失败')
+            restore_subscriptions()
             with self.lock:
                 if self.cancel.is_set(): return
                 self.phase='RUNNING'
@@ -313,10 +422,13 @@ class Runtime:
                     if self.phase=='RUNNING': self.elapsed+=current-previous
                     elapsed=self.elapsed; phase=self.phase
                 previous=current
-                if elapsed >= self.scene['duration']*60: break
+                if duration_reached(self.scene, elapsed): break
                 self.check_session(current)
                 if self.cancel.is_set(): break
-                if not client.is_connected(): raise ValueError('MQTT 连接已断开，任务停止')
+                if not client.is_connected():
+                    if not self.wait_for_mqtt_reconnect(client):
+                        raise ValueError('MQTT 连接在 30 秒内未恢复，任务停止')
+                    restore_subscriptions()
                 if phase == 'PAUSED' and self.eo.accepting: self.eo.suspend()
                 elif phase == 'RUNNING':
                     if not self.eo.accepting: self.eo.resume()
@@ -330,14 +442,21 @@ class Runtime:
                     sequence+=1; next_frame=elapsed+1
                     with self.lock:
                         self.response.apply(self.targets, elapsed, int(time.time()*1000))
+                    if self.fullchain: self.fullchain.tick(self.targets,elapsed,sequence)
                     for topic,payload in messages(self.scene,devices,self.targets,self.manifest,elapsed,int(time.time()*1000),last_sent,sequence):
                         if payload.get('event') == 'HeartBeat': self.eo.heartbeat(payload)
                         if self.cancel.is_set(): break
-                        if not client.is_connected(): raise ValueError('MQTT 连接已断开，任务停止')
+                        if not client.is_connected():
+                            if not self.wait_for_mqtt_reconnect(client):
+                                raise ValueError('MQTT 连接在 30 秒内未恢复，任务停止')
+                            restore_subscriptions()
                         info=client.publish(topic,json.dumps(payload,ensure_ascii=False),qos=1,retain=False)
                         info.wait_for_publish(timeout=5)
                         if not info.is_published(): raise ValueError('MQTT 确认超时：当前发送结果未知，任务停止')
-                        with self.lock: self.sent+=1
+                        with self.lock:
+                            self.sent+=1
+                            self.last_published_at=int(time.time()*1000)
+                            if self.fullchain: self.fullchain.record_mqtt(payload)
                         self.log('PUBACK','Broker 已确认',topic=topic,payload=payload)
                     with self.lock: self.checkpoint()
                 self.cancel.wait(.1)
@@ -354,6 +473,9 @@ class Runtime:
                 self.eo.suspend(); self.eo_status = self.eo.snapshot()
             if client:
                 client.disconnect(); client.loop_stop()
+            self.mqtt_connected = False
+            if self.fullchain and self.realtime:
+                self.realtime.stop()
             with self.lock:
                 if self.phase in ('STOPPING','PREPARING'): self.phase='STOPPED'
             self.checkpoint()
@@ -369,6 +491,18 @@ class Runtime:
             if self.batch: self.checkpoint()
         return self.status()
 
+    def stop_all(self):
+        if self.realtime is None:
+            return self.control('stop')
+        with self.realtime.operation_lock:
+            self.control('stop')
+            return self.realtime.stop()
+
+    def require_realtime(self):
+        if self.realtime is None:
+            raise ValueError('隔离场景模式不启用实时通知与反制接收端' if self.isolated_qa_scene else '实时收发模块未加载')
+        return self.realtime
+
     def verify(self):
         with self.lock:
             manifest=copy.deepcopy(self.manifest); api=self.platform
@@ -376,35 +510,78 @@ class Runtime:
             raise ValueError('还没有已注册的模拟设备')
         result={'at':int(time.time()*1000),'devices':[],'plans':[],'zones':[]}
         for d in manifest['devices'].values():
+            if d.get('kind') == 'normalized': continue  # Fusion source IDs are not ops_device IDs.
             data=api.call('GET','/devices/'+d['platform_id'])
             result['devices'].append(data)
         for p in manifest['plans'].values():
             for pid in p['ids']: result['plans'].append(api.call('GET','/flight-plans/'+pid))
         for z in manifest['zones'].values(): result['zones'].append(api.call('GET','/airspaces/'+z['id']))
         # Restrict target results to this run's unique serials or source device links.
-        candidates=api.call('GET',f"/targets?page=1&size=100&seen_from={manifest['created_at']}&seen_to={int(time.time()*1000)+1}")
-        external={d['external_id'] for d in manifest['devices'].values()}
-        serials={t['uav_sn'] for t in manifest['targets'].values()}
+        seen_to=int(time.time()*1000)+1
+        candidates={'items':[],'total':0};page=1
+        while True:
+            part=api.call('GET',f"/targets?page={page}&size=100&seen_from={manifest['created_at']}&seen_to={seen_to}")
+            candidates['items'].extend(part.get('items',[]));candidates['total']=part.get('total',0)
+            if not part.get('items') or len(candidates['items'])>=candidates['total']:break
+            page+=1
         platform_ids={d['platform_id'] for d in manifest['devices'].values()}
         platform_ids.update(d.get('device',{}).get('fusion_device_id') for d in result['devices'])
         platform_ids.discard(None)
         result['targets']=[]
         for item in candidates.get('items',[]):
             detail=api.call('GET','/targets/'+item['target_id'])
-            text=json.dumps(detail)
             if any(link.get('device_id') in platform_ids for link in detail.get('source_links',[])): result['targets'].append(detail)
         result['evaluations']=[]; result['alarms']=[]; result['read_errors']=[]
+        result['tracks']=[];result['track_point_count']=0;result['observations_count']=0;result['normalized_observations_count']=0
+        result['category_observations']={};result['target_observations']=[]
         for target in result['targets']:
             target_id=target.get('target_id') or target.get('target',{}).get('target_id')
             if not target_id: continue
+            try:
+                observations=api.call('GET',f'/targets/{target_id}/observations?page=1&size=1')
+                result['observations_count']+=observations.get('total',0)
+                category='balloon' if target.get('subtype')=='BALLOON' else (target.get('object_type_code') or 'identifying').lower()
+                result['category_observations'][category]=result['category_observations'].get(category,0)+observations.get('total',0)
+                result['target_observations'].append({'target_id':target_id,'category':category,'count':observations.get('total',0),'latest':observations.get('items',[])})
+                if any(link.get('device_id')==manifest.get('normalized_source',{}).get('device_id') for link in target.get('source_links',[])):
+                    result['normalized_observations_count']+=observations.get('total',0)
+                track_page=1;track_count=0
+                while True:
+                    tracks=api.call('GET',f'/targets/{target_id}/tracks?page={track_page}&size=100')
+                    for track in tracks.get('items',[]):
+                        points=api.call('GET',f"/tracks/{track['track_id']}/points?page=1&size=1")
+                        result['track_point_count']+=points.get('total',0)
+                        result['tracks'].append({**track,'point_count':points.get('total',0)})
+                    track_count+=len(tracks.get('items',[]))
+                    if not tracks.get('items') or track_count>=tracks.get('total',track_count):break
+                    track_page+=1
+            except ValueError as error: result['read_errors'].append(str(error))
             for kind,path in [('evaluations','/legality-evaluations'),('alarms','/alarms')]:
                 try: result[kind].extend(api.call('GET',path+'?page=1&size=100&target_id='+target_id).get('items',[]))
                 except ValueError as error: result['read_errors'].append(str(error))
-        result['target_scan_limit']=100
+        result['target_scan_pages']=page
         result['target_candidates_total']=candidates.get('total',0)
+        if manifest.get('weather_device'):
+            wid=manifest['weather_device']['device_id']
+            try:
+                result['weather_latest']=api.call('GET',f'/weather-sensors/{wid}/latest-observation')
+                result['weather_count']=api.call('GET',f'/weather-sensors/{wid}/observations?page=1&size=1')['total']
+            except ValueError as error:result['read_errors'].append(str(error))
         with self.lock:
             if self.batch!=manifest['batch']: raise ValueError('运行批次已变化，请重新回读')
             self.snapshot=result
+            coverage=self.manifest.get('fullchain',{}).get('coverage',{})
+            for key in ('normalized','weather-observations'):
+                if key in coverage:
+                    coverage[key]['readback_at']=result['at']
+                    if key=='weather-observations':coverage[key]['processed']=result.get('weather_count')
+                    elif not result['read_errors']:coverage[key]['processed']=result['normalized_observations_count']
+            if not result['read_errors']:
+                for key,row in coverage.items():
+                    if key.startswith('mqtt-'):
+                        row.update(processed=result['category_observations'].get(key[5:],0),readback_at=result['at'],
+                                   processed_label='该类别关联目标观测总数')
+            self.checkpoint()
         (self.data_dir/self.batch/'system-readback.json').write_text(json.dumps(result,ensure_ascii=False,indent=2), encoding='utf-8')
         return result
 
@@ -456,6 +633,13 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.respond({'error': str(error)}, 401 if isinstance(error, ExternalAuthenticationRequired) or '返回 401' in str(error) else 400)
 
         if self.path=='/api/status': return self.respond(runtime.status())
+        if self.path=='/api/full-scene': return self.respond(full_scene())
+        if self.path in ('/api/realtime/status', '/api/realtime/config'):
+            try:
+                realtime = runtime.require_realtime()
+                return self.respond(realtime.snapshot() if self.path.endswith('/status') else realtime.config)
+            except ValueError as error:
+                return self.respond({'error': str(error)}, 409)
         if self.path=='/api/export':
             data={**runtime.status(),'scene':runtime.scene}
             return self.respond(data)
@@ -475,8 +659,15 @@ class Handler(SimpleHTTPRequestHandler):
             elif self.path=='/api/external/request': result=external_bridge.request(body)
             elif self.path=='/api/connect': result=runtime.connect(body)
             elif self.path=='/api/start': result=runtime.start(body)
+            elif self.path=='/api/full-scene': result=full_scene(body.get('categories'))
             elif self.path=='/api/control': result=runtime.control(body['action'])
             elif self.path=='/api/verify': result=runtime.verify()
+            elif self.path=='/api/realtime/config': result=runtime.require_realtime().configure(body)
+            elif self.path=='/api/realtime/control':
+                if body.get('action')=='start': result=runtime.require_realtime().start()
+                elif body.get('action')=='stop_all':
+                    result=runtime.stop_all()
+                else: raise ValueError('未知收发操作')
             else: return self.respond({'error':'接口不存在'},404)
             self.respond(result)
         except (ValueError,KeyError,TypeError) as error:
@@ -484,19 +675,42 @@ class Handler(SimpleHTTPRequestHandler):
         except Exception:
             self.respond({'error':'操作失败，请检查模拟器服务配置'},500)
 
-if __name__=='__main__':
+def parse_args(argv=None):
     parser=argparse.ArgumentParser()
     parser.add_argument('--port',type=int,default=8766)
+    parser.add_argument('--isolated-qa-scene',action='store_true',help='隔离测试库原场景模式；不启动实时通知与反制接收端')
     parser.add_argument('--database',help='显式启用本机测试库的计划/区域配套；只新增 replay 批次')
+    parser.add_argument('--schema',help='测试库隔离 schema；须同时指定 --database，省略则保持默认搜索路径')
     parser.add_argument('--container',default='deploy-db-1')
     parser.add_argument('--data-dir',default=str(ROOT/'.data'))
     parser.add_argument('--map-origin',default='http://localhost:5173',help='当前业务前台地图服务，只允许本机地址')
-    args=parser.parse_args()
+    args=parser.parse_args(argv)
+    try:
+        Prerequisites(args.database, args.container, schema=args.schema)
+        if args.isolated_qa_scene:
+            validate_isolated_qa(args.database, args.schema, args.data_dir)
+            if not 1 <= args.port <= 65535 or args.port == 8766:
+                raise ValueError('隔离场景模式必须用 --port 指定 8766 以外的独立有效端口')
+        elif args.database is not None or args.schema is not None:
+            raise ValueError('默认实时模式不使用数据库配套；隔离测试须显式传入 --isolated-qa-scene')
+    except ValueError as error:
+        parser.error(str(error))
     origin=urlparse(args.map_origin)
     if origin.scheme not in ('http','https') or origin.hostname not in ('localhost','127.0.0.1','::1') or origin.username or origin.password or origin.path not in ('','/') or origin.query or origin.fragment:
         parser.error('地图服务必须是本机 HTTP/HTTPS origin')
+    return args
+
+def create_runtime(args, session=None):
+    instance = Runtime(args.data_dir, args.database, args.container, session=session,
+                       schema=args.schema, isolated_qa_scene=args.isolated_qa_scene)
+    if not args.isolated_qa_scene:
+        instance.realtime = RealtimeController(instance, args.port)
+    return instance
+
+if __name__=='__main__':
+    args=parse_args()
     subprocess.run(['node',str(ROOT/'build-map.mjs')],cwd=ROOT.parents[1]/'dongying-vue',check=True)
-    runtime=Runtime(args.data_dir,args.database,args.container,session=external_bridge)
+    runtime=create_runtime(args,session=external_bridge)
     server=ThreadingHTTPServer(('127.0.0.1',args.port),Handler)
     server.map_origin=args.map_origin.rstrip('/')
     print(f'设备 MQTT 模拟器 http://127.0.0.1:{args.port}/',flush=True)
@@ -504,5 +718,6 @@ if __name__=='__main__':
     except KeyboardInterrupt: pass
     finally:
         runtime.cancel.set()
+        if runtime.realtime: runtime.realtime.stop()
         if runtime.thread: runtime.thread.join(timeout=15)
         server.server_close()

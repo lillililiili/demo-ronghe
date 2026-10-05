@@ -1,4 +1,5 @@
 <script setup>
+import { userFacingMessage } from '@/ui/labels.js';
 import { computed, onUnmounted } from 'vue';
 import { autoVoiceView } from './autoVoiceView.js';
 import { openFormModal } from '@/ui/formModal.js';
@@ -59,7 +60,7 @@ function retry() {
       </summary>
       <header v-if="!compact"><b>飞手电话录音通知</b><span v-if="view.simulated" class="tag t-amber">模拟电话</span></header>
       <p v-if="!compact" class="avn-title" :class="`avn-${view.tone}`">{{ view.title }}</p>
-      <p v-if="view.reason">{{ view.reason }}</p>
+      <p v-if="view.reason">{{ userFacingMessage(view.reason) }}</p>
       <dl v-if="view.recipient || view.recordingName || view.triggeredAt || view.updatedAt || view.answeredAt || view.playbackCompletedAt">
         <template v-if="view.recipient"><dt>接收飞手</dt><dd>{{ view.recipient }}<small v-if="view.recipientHint" style="display:block">{{ view.recipientHint }}</small></dd></template>
         <template v-if="view.recordingName"><dt>通知录音</dt><dd>{{ view.recordingName }}</dd></template>

@@ -1,4 +1,5 @@
 <script setup>
+import { userFacingMessage } from '@/ui/labels.js';
 import { computed, onUnmounted, watch } from 'vue';
 import { hasPermission } from '@/services/accessControl.js';
 import { toast } from '@/ui/nv.js';
@@ -94,7 +95,7 @@ async function submit(kind) {
     </div>
     <small v-if="state.task">{{ taskText }}<template v-if="attempts.length > 1"> · 共 {{ attempts.length }} 次通知记录</template></small>
     <small v-if="previousDeliveries && state.task?.notification_delivery_status !== 'DELIVERED'">此前已有 {{ previousDeliveries }} 次送达记录，本次结果不改变历史送达事实。</small>
-    <small v-if="!state.pending && !state.uncertain && !latestUnknown && state.task?.notification_blocked_reason" class="notice-blocker">{{ state.task.notification_blocked_reason }}</small>
+    <small v-if="!state.pending && !state.uncertain && !latestUnknown && state.task?.notification_blocked_reason" class="notice-blocker">{{ userFacingMessage(state.task.notification_blocked_reason) }}</small>
     <div class="notice-actions">
       <button v-if="showCreate" class="device-notice-button" type="button"
         :disabled="!!blocker || busy || !!state.readError" :aria-label="'通知' + device.name + '设备异常'" @click="submit('create')">
@@ -116,7 +117,7 @@ async function submit(kind) {
     <small v-if="state.error" role="alert">{{ state.error }}</small>
     <small v-if="state.uncertain">请先刷新状态；重试原提交会沿用同一次提交编号。</small>
     <small v-else-if="showResend && !state.task.can_resend_notification && !busy" class="notice-blocker">
-      {{ state.task.resend_blocked_reason || '再次通知暂不可用，请刷新状态。' }}
+      {{ userFacingMessage(state.task.resend_blocked_reason) || '再次通知暂不可用，请刷新状态。' }}
       <template v-if="state.task.resend_available_at"> · 通知间隔截止：{{ date(state.task.resend_available_at) }}</template>
     </small>
     <details v-if="state.task" :key="state.task.task_id" class="notice-result">
@@ -142,7 +143,7 @@ async function submit(kind) {
             <dt>回执情况</dt><dd>{{ attempt.outcome_state === 'UNKNOWN' ? '回执状态未知' : attempt.outcome_state === 'NOT_SENT' ? '尚未产生回执' : receiptText(attempt.receipt_status) }}</dd>
             <template v-if="attempt.acknowledged_at"><dt>回执时间</dt><dd>{{ date(attempt.acknowledged_at) }}</dd></template>
             <template v-if="attempt.receipt_result"><dt>回执内容</dt><dd>{{ attempt.receipt_result }}</dd></template>
-            <template v-if="attempt.blocked_reason"><dt>未完成原因</dt><dd>{{ attempt.blocked_reason }}</dd></template>
+            <template v-if="attempt.blocked_reason"><dt>未完成原因</dt><dd>{{ userFacingMessage(attempt.blocked_reason) }}</dd></template>
           </dl>
         </li>
       </ol>
@@ -150,7 +151,7 @@ async function submit(kind) {
         <RecipientSnapshotFields :snapshot="state.task.recipient_snapshot" historical show-name />
         <dt>通知结果</dt><dd>{{ deliveryText(state.task.notification_delivery_status) }}</dd>
         <dt>回执情况</dt><dd>{{ receiptText(state.task.notification_receipt_status) }}</dd>
-        <template v-if="state.task.notification_blocked_reason"><dt>未完成原因</dt><dd>{{ state.task.notification_blocked_reason }}</dd></template>
+        <template v-if="state.task.notification_blocked_reason"><dt>未完成原因</dt><dd>{{ userFacingMessage(state.task.notification_blocked_reason) }}</dd></template>
       </dl>
       <small>通知送达、待办处理与设备恢复分别记录。</small>
     </details>

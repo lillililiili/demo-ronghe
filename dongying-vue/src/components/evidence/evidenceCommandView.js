@@ -35,16 +35,22 @@ function readableReason(value) {
     ? '操作原因尚未转为中文，可展开原始记录查看' : value;
 }
 function receiptView(receipt, type) {
-  const feedback = receipt.receipt_kind === 'PROTOCOL_C' ? eoFeedback(receipt.payload, type) : null;
   const kind = receipt.receipt_kind;
+  const late = kind === 'PROTOCOL_B_LATE';
+  const lingyun = kind === 'PROTOCOL_B' || late;
+  const known = lingyun && ['PROTOCOL_B_OK', 'PROTOCOL_B_FAILED'].includes(receipt.device_result_code);
+  const feedback = kind === 'PROTOCOL_C' ? eoFeedback(receipt.payload, type) : known
+    ? { success: receipt.device_result_code === 'PROTOCOL_B_OK', text: (late ? '迟到设备反馈：' : '设备反馈：')
+      + (receipt.device_result_code === 'PROTOCOL_B_OK' ? '执行完成' : '执行失败') + (late ? '（原任务）' : '') } : null;
   const outcome = feedback ? (feedback.success ? 'success' : 'failure')
     : kind === 'SUCCEEDED' ? 'success' : kind === 'FAILED' ? 'failure' : null;
   const labels = { ACCEPTED: '设备已受理指令，等待执行结果', ACK: '设备已接收指令，等待执行结果',
     SUCCEEDED: '设备反馈：执行完成', FAILED: '设备反馈：执行失败', COMPLETED: '已收到设备执行反馈',
-    RESULT: '已收到设备结果反馈', PROTOCOL_C: '已收到光电设备反馈，具体结果待核对' };
+    RESULT: '已收到设备结果反馈', PROTOCOL_B: '已收到设备反馈，具体结果待核对',
+    PROTOCOL_B_LATE: '迟到设备反馈：具体结果待核对（原任务）', PROTOCOL_C: '已收到光电设备反馈，具体结果待核对' };
   return { id: receipt.receipt_id, time: receipt.occurred_at ?? receipt.received_at,
     text: feedback?.text || labels[kind] || '已收到设备反馈，类型尚未识别', outcome,
-    terminal: outcome != null || kind === 'COMPLETED' };
+    late, terminal: !late && (outcome != null || kind === 'COMPLETED') };
 }
 
 export function buildCommandView(command = {}) {
@@ -58,6 +64,10 @@ export function buildCommandView(command = {}) {
   if ((success && failure) || (command.status === 'SUCCEEDED' && (failure || legacy?.success === false))
       || (command.status === 'FAILED' && (success || legacy?.success === true))) {
     return { ...view, status: '记录不一致，结果待核对', explanation: '平台状态与已保存的设备反馈不一致，请核对原始记录。' };
+  }
+  if (['TIMED_OUT', 'CANCELLED'].includes(command.status) && receipts.some(row => row.late)) {
+    return { ...view, status: command.status === 'TIMED_OUT' ? '原任务超时，已收到迟到反馈' : '原任务已取消，已收到迟到反馈',
+      explanation: '迟到反馈已保存在原任务下，保留原超时或取消结论，不自动重发或续链；请结合实际设备状态核查。' };
   }
   switch (command.status) {
     case 'QUEUED': return { ...view, status: '等待下发', tone: 'neutral', explanation: '指令已进入队列，尚未下发到设备。' };

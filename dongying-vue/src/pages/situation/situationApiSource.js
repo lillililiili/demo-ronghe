@@ -11,10 +11,11 @@ import { legalityApi } from '@/services/legalityApi.js';
 import { applyTrackComparison } from '@/services/trackPoints.js';
 import {
   attachBearing, attachDeviceEvents, attachRecentTracks, attachTargetSourceLinks,
-  bearingOrigins, toAirspaces, toAlarms, toDevices, toFlightPlans, toRisks, toTargets
+  bearingOrigins, SITUATION_DEVICE_TYPE_ORDER, toAirspaces, toAlarms, toDevices, toFlightPlans, toRisks, toTargets
 } from '@/services/situationData.js';
 
-const DEVICE_TYPES = new Set(['RADAR', 'EO', 'FIVE_G_A', 'TDOA']);
+// 态势地图保留设备台账中已支持的感知与联动态设备，类型集合由数据装配层统一维护。
+const DEVICE_TYPES = new Set(SITUATION_DEVICE_TYPE_ORDER);
 const FAST_MS = 5_000;
 const SLOW_MS = 60_000;
 const NUDGE_GAP_MS = 500;
@@ -99,7 +100,9 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
 
   function publish(generatedAt) {
     if (stopped || paused) return;
-    snapshot = { ...snapshot, generatedAt, sourceMode: sourceMode(snapshot), simulated: false,
+    const simulated = ['devices', 'targets', 'alarms', 'flightPlans', 'risks', 'handoffs']
+      .some(key => snapshot[key].some(row => row.simulated === true || row.sourceMode === 'mock' || row.source_mode === 'mock'));
+    snapshot = { ...snapshot, generatedAt, sourceMode: sourceMode(snapshot), simulated,
       failedSegments: [...failedSegments] };
     emit(snapshot);
   }
@@ -149,7 +152,7 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
         events = (await deviceApi.events({ after_seq: 0, limit: 200, latest: true }))?.items || [];
         failedSegments.delete('device-events');
       } catch (error) { failedSegments.add('device-events'); report(error, 'device-events'); }
-      return attachDeviceEvents(toDevices(enabledRows).filter(row => DEVICE_TYPES.has(row.typeCode)), events);
+      return attachDeviceEvents(toDevices(enabledRows, { includeUnlocated: true }).filter(row => DEVICE_TYPES.has(row.typeCode)), events);
     }, value => { snapshot = { ...snapshot, devices: value }; });
 
     const planTask = wanted.has('flight-plans') && retain('flight-plans', async () => {

@@ -13,6 +13,7 @@ import { flightApi } from '@/services/flightApi.js';
 import { useRealtimeRefresh } from '@/hooks/useRealtimeRefresh.js';
 import { airspaceApi } from '@/services/airspaceApi.js';
 import { riskApi } from '@/services/riskApi.js';
+import { weatherRiskIcon } from '@/ui/weatherRiskIcon.js';
 import { openRiskVerification } from '@/ui/riskVerificationModal.js';
 import { RULE_REASON_TEXT } from '@/ui/legalityReviewModal.js';
 import { handoffApi, newHandoffIdempotencyKey } from '@/services/handoffApi.js';
@@ -37,6 +38,7 @@ import PlanRiskRecords from '@/pages/flights/components/PlanRiskRecords.vue';
 import PlanWeatherForecast from '@/pages/flights/components/PlanWeatherForecast.vue';
 import FlightRecordList from '@/pages/flights/components/FlightRecordList.vue';
 import FlightListPager from '@/pages/flights/components/FlightListPager.vue';
+import { isSimulatedWeatherRisk } from '@/services/weatherRiskGeometry.js';
 import WeatherMapInfo from '@/pages/flights/components/WeatherMapInfo.vue';
 import ObjectRiskMapInfo from '@/pages/flights/components/ObjectRiskMapInfo.vue';
 import { objectSnapshot, objectTrackPoints, drawObjectRisk } from '@/pages/flights/objectRiskMap.js';
@@ -192,9 +194,9 @@ const riskWeatherLoading = ref(false);
 const weatherVisible = ref(true);
 const weatherOpened = ref(false);
 const weatherBoundaryVisible = ref(false);
+const weatherOpacity = ref(.4);
 const weatherKind = computed(() => weatherLayerKind(selectedRisk.value?.reason_code));
-const simulatedWeather = computed(() => selectedRisk.value?.source_mode === 'mock' && selectedRisk.value?.source_code === 'WEATHER-DEMO'
-  && ['WEATHER_STRONG_WIND', 'WEATHER_THUNDERSTORM', 'WEATHER_LOW_VISIBILITY'].includes(selectedRisk.value?.reason_code));
+const simulatedWeather = computed(() => isSimulatedWeatherRisk(selectedRisk.value));
 const weatherRing = computed(() => weatherPolygon(riskWeather.value));
 const weatherTitle = computed(() => labelOf(REASON_CODE_LABEL, selectedRisk.value?.reason_code));
 const weatherColor = computed(() => ({ WEATHER_THUNDERSTORM: '#e15c75', WEATHER_STRONG_WIND: '#cf8418', WEATHER_LOW_VISIBILITY: '#8376cb' }[selectedRisk.value?.reason_code] || '#8376cb'));
@@ -254,24 +256,44 @@ const canReadRoute = computed(() => actionAllowed('route:read') !== false);
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / size.value)));
 const sourceModeOptions = [{ label: '全部', value: '' }, ...Object.keys(SOURCE_MODE_LABEL).map(value => ({ label: SOURCE_MODE_LABEL[value], value }))];
 const statusOptions = [{ label: '全部状态', value: '' }, ...['PENDING', 'EXECUTING', 'COMPLETED', 'CANCELLED'].map(value => ({ label: PLAN_STATUS_LABEL[value], value }))];
-/* 6 个 KPI（决策 15-56）：前四个取服务端 size=1 的 total（今日=计划时段与今天相交；待执行=待执行+已批准），
-   后两个只能按本页已读到的对照结论统计（服务端没有跨计划的匹配汇总），desc 里写明"本页"。 */
+/* 6 个 KPI（决策 15-56）：前四个取服务端 size=1 的 total，统一限定为计划时段与今天相交
+   （待执行=待执行+已批准）；后两个只能按本页已读到的对照结论统计（服务端没有跨计划的匹配汇总），
+   也限定为本页今天的计划。 */
 const planKpis = ref({ today: null, executing: null, pending: null, completed: null, failed: false });
+const DAY_MS = 86_400_000;
+function todayWindow() {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).formatToParts(Date.now()).filter(part => part.type !== 'literal').map(part => [part.type, Number(part.value)]));
+  const from = Date.UTC(parts.year, parts.month - 1, parts.day) - 8 * 60 * 60_000;
+  return { from, to: from + DAY_MS };
+}
+function planOverlapsToday(plan, window = todayWindow()) {
+  if (plan?.start_at == null || plan?.end_at == null) return false;
+  const start = Number(plan?.start_at);
+  const end = Number(plan?.end_at);
+  return Number.isFinite(start) && Number.isFinite(end) && start < window.to && end > window.from;
+}
 async function loadPlanKpis() {
   // 非展示用：只作"今日"查询窗口的边界，不在界面上显示时刻
-  const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
+  const window = todayWindow();
   const total = async params => Number((await flightApi.list({ ...params, page: 1, size: 1 })).total) || 0;
   try {
     const [today, executing, pending, approved, completed] = await Promise.all([
-      total({ window_from: dayStart.getTime(), window_to: dayStart.getTime() + 86_400_000 }),
-      total({ status_code: 'EXECUTING' }), total({ status_code: 'PENDING' }), total({ status_code: 'APPROVED' }), total({ status_code: 'COMPLETED' })
+      total({ window_from: window.from, window_to: window.to }),
+      total({ window_from: window.from, window_to: window.to, status_code: 'EXECUTING' }),
+      total({ window_from: window.from, window_to: window.to, status_code: 'PENDING' }),
+      total({ window_from: window.from, window_to: window.to, status_code: 'APPROVED' }),
+      total({ window_from: window.from, window_to: window.to, status_code: 'COMPLETED' })
     ]);
     planKpis.value = { today, executing, pending: pending + approved, completed, failed: false };
   } catch { planKpis.value = { today: null, executing: null, pending: null, completed: null, failed: true }; }
 }
 const pageMatchCounts = computed(() => {
+  const window = todayWindow();
   let unmatched = 0, deviated = 0;
   plans.value.forEach(plan => {
+    if (!planOverlapsToday(plan, window)) return;
     const section = rowActuals[plan.plan_id];
     if (!section) return;
     if (['EXECUTING', 'COMPLETED'].includes(plan.status_code) && section.availability === 'NO_EVALUATION') unmatched += 1;
@@ -283,12 +305,12 @@ const kpiList = computed(() => {
   const n = value => (value == null ? (planKpis.value.failed ? '—' : '…') : Number(value).toLocaleString('en-US'));
   const k = planKpis.value, m = pageMatchCounts.value;
   return [
-    { label: '今日报备计划', value: n(k.today), color: 'blue', icon: 'plan', caption: '计划时段与今天相交', desc: '计划时段与今天相交的计划数' },
-    { label: '执行中', value: n(k.executing), color: 'cyan', icon: 'radar', desc: '状态为执行中' },
-    { label: '待执行', value: n(k.pending), color: 'blue', icon: 'plan', desc: '未到计划时段' },
-    { label: '已完成', value: n(k.completed), color: 'green', icon: 'check', desc: '状态为已完成' },
-    { label: '计划未匹配到目标', value: String(m.unmatched), color: 'amber', icon: 'alert', caption: '仅统计本页计划', desc: '本页执行中或已完成的计划中，还没找到对应飞机的数量' },
-    { label: '偏离报备计划', value: String(m.deviated), color: 'red', icon: 'alert', caption: '仅统计本页计划', desc: '本页：研判已记录走廊不匹配' }
+    { label: '今日报备计划', value: n(k.today), color: 'blue', icon: 'plan', caption: '北京时间今天', desc: '计划时段与北京时间今天相交的计划数' },
+    { label: '执行中', value: n(k.executing), color: 'cyan', icon: 'radar', caption: '今日计划', desc: '北京时间今天计划中当前状态为执行中的数量' },
+    { label: '待执行', value: n(k.pending), color: 'blue', icon: 'plan', caption: '今日计划', desc: '北京时间今天计划中尚未开始的数量，包含已批准计划' },
+    { label: '已完成', value: n(k.completed), color: 'green', icon: 'check', caption: '今日计划', desc: '北京时间今天计划中状态为已完成的数量' },
+    { label: '计划未匹配到目标', value: String(m.unmatched), color: 'amber', icon: 'alert', caption: '本页今日计划', desc: '本页北京时间今天执行中或已完成的计划中，还没找到对应飞机的数量' },
+    { label: '偏离报备计划', value: String(m.deviated), color: 'red', icon: 'alert', caption: '本页今日计划', desc: '本页北京时间今天计划中，研判已记录走廊不匹配的数量' }
   ];
 });
 const trustedCenterline = computed(() => trustedCoordinates(routeVersion.value));
@@ -359,7 +381,7 @@ const riskMapMissingNote = computed(() => {
   if (selectedRisk.value.route_version_id && !riskMapCoords.value) missing.push('相关航线的位置无法确认');
   return missing.join('；');
 });
-const riskHeroIcon = computed(() => selectedRisk.value?.risk_type === 'WEATHER' ? window.UI.icon('alert') : window.UI.targetIcon(selectedRisk.value));
+const riskHeroIcon = computed(() => selectedRisk.value?.risk_type === 'WEATHER' ? weatherRiskIcon(selectedRisk.value) : window.UI.targetIcon(selectedRisk.value));
 /* 详情卡网格第一列固定留给图标；没有图标元素时文字会落进 40px 列，所以计划卡也必须输出图标。 */
 function riskReasonText(risk) {
   let text = risk.reason_text || '未提供';
@@ -441,13 +463,18 @@ function relatedIdText(id, permissionCode) {
   return '没有可查看的相关记录';
 }
 
-const planRecords = computed(() => plans.value.map(plan => ({
-  id: plan.plan_id, title: plan.route?.name || '未命名航线',
-  status: labelOf(PLAN_STATUS_LABEL, plan.status_code), statusClass: PLAN_STATUS_TAG[plan.status_code] || 't-gray',
-  subtitle: `${formatTime(plan.start_at)} 起`,
-  facts: [{ label: '计划时长', value: formatDuration(plan) }, { label: '目标匹配', value: rowMatch(plan).text }],
-  note: plan.route?.max_altitude_m == null ? '最大高度未提供' : `最大高度 ${plan.route.max_altitude_m} 米`
-})));
+const planRecords = computed(() => plans.value.map(plan => {
+  const match = rowMatch(plan);
+  return {
+    id: plan.plan_id, title: plan.route?.name || '未命名航线',
+    status: labelOf(PLAN_STATUS_LABEL, plan.status_code), statusClass: PLAN_STATUS_TAG[plan.status_code] || 't-gray',
+    subtitle: `${formatTime(plan.start_at)} 起`,
+    facts: [{ label: '计划时长', value: formatDuration(plan) }, { label: '目标匹配', value: match.text,
+      className: match.tag ? `tag ${match.text === '计划偏离' ? 't-orange' : match.tag}` : '' }],
+    note: plan.route?.max_altitude_m == null ? '最大高度未提供' : `最大高度 ${plan.route.max_altitude_m} 米`,
+    noteClass: plan.route?.max_altitude_m == null ? '' : 'record-altitude'
+  };
+}));
 
 function syncSelectedPlanHash(planId) {
   const hash = planId ? `#/flights?plan=${encodeURIComponent(planId)}` : '#/flights';
@@ -1236,6 +1263,10 @@ function renderRiskMap() {
   if (target && Number.isFinite(target.lon) && Number.isFinite(target.lat)) focus.push([target.lon, target.lat]);
   routeMap = new window.MapView(riskMapHost.value, {
     zoom: focus.length ? 3.2 : 1, maxDev: 0, legend: false,
+    drawUnderMarkers: view => {
+      if (ring && weatherVisible.value) drawWeatherArea(view.ctx, view, weather, ring, coordinates, weatherColor.value,
+        weatherKind.value, simulatedWeather.value, weatherBoundaryVisible.value, weatherOpacity.value);
+    },
     layers: { device: false, track: !!target && !objectRiskSelected.value, alarm: false }
   });
   routeMap.setData({ airspaces: [], devices: [], targets: target && !objectRiskSelected.value ? [target] : [], alarms: [] });
@@ -1260,7 +1291,6 @@ function renderRiskMap() {
         if (!objectMarker.value || Math.abs(objectMarker.value.x - x) > .2 || Math.abs(objectMarker.value.y - y) > .2 || objectMarker.value.leftward !== leftward) objectMarker.value = { x, y, leftward };
       }
     }
-    if (ring && weatherVisible.value) drawWeatherArea(context, this, weather, ring, coordinates, weatherColor.value, weatherKind.value, simulatedWeather.value, weatherBoundaryVisible.value);
     if (coordinates) strokePlannedRoute(context, this, coordinates, { label });
     if (point && !objectRiskSelected.value) {
       context.save();
@@ -1700,7 +1730,7 @@ onUnmounted(() => {
               @toggle-heat="toggleObjectHeat" @toggle-trail="toggleObjectTrail" @toggle-play="toggleObjectPlayback" @step="stepObjectTrail" />
             <WeatherMapInfo v-if="weatherRing" :fact="riskWeather" :title="weatherTitle" :severity="severityLabel(selectedRisk.severity)"
               :source="selectedRisk.source_name" :color="weatherColor" :visible="weatherVisible" :kind="weatherKind" :simulated="simulatedWeather"
-              v-model:boundary-visible="weatherBoundaryVisible" v-model:opened="weatherOpened" @toggle-layer="toggleWeatherLayer" />
+              v-model:boundary-visible="weatherBoundaryVisible" v-model:opened="weatherOpened" v-model:opacity="weatherOpacity" @toggle-layer="toggleWeatherLayer" />
           </div>
           <div v-else class="empty rk-map-empty">{{ riskMapNote }}<button v-if="riskWeatherError && selectedRisk" class="btn" type="button" @click="loadRiskDetail(selectedRisk.risk_id)">重试</button></div>
           <div v-if="selectedRisk?.risk_type !== 'WEATHER' && !objectRiskSelected" class="rk-legend" title="圆点表示发现风险时的位置，颜色表示风险等级；青色虚线表示相关航线。没有位置记录的内容不显示。">
@@ -1713,6 +1743,10 @@ onUnmounted(() => {
 
         <UPanel title="风险详情与处理" class="workspace-detail" nopad>
           <div class="tabs workspace-detail-tabs"><button class="tab" :class="{ on: riskTab === 'event' }" type="button" @click="switchRiskTab('event')">风险详情</button><button class="tab" :class="{ on: riskTab === 'notice' }" type="button" @click="switchRiskTab('notice')">通知与回执<span v-if="noticesTotal && !noticesLoading" class="tag t-gray">{{ noticesTotal }}</span></button></div>
+          <div v-if="(riskTab === 'event' && (canVerifyRisk || selectedRisk?.state === 'PENDING_VERIFICATION')) || canNotifyRisk || selectedRisk?.state === 'PENDING_NOTIFICATION'" class="detail-actions is-sticky">
+            <button v-if="riskTab === 'event' && (selectedRisk?.state === 'PENDING_VERIFICATION' || (selectedRisk?.state === 'PENDING_NOTIFICATION' && canVerifyRisk))" class="btn" :class="{ pri: selectedRisk?.state === 'PENDING_VERIFICATION', ghost: selectedRisk?.state === 'PENDING_NOTIFICATION' }" type="button" :disabled="!canVerifyRisk" :title="verifyBlockReason" @click="openRiskVerify">{{ selectedRisk?.state === 'PENDING_NOTIFICATION' ? '改判为排除' : '人工核验' }}</button>
+            <button v-if="selectedRisk?.state === 'PENDING_NOTIFICATION' || canNotifyRisk" class="btn" :class="{ pri: canNotifyRisk }" type="button" :disabled="!canNotifyRisk" :title="notifyBlockReason" @click="openRiskNotify()">通知上级</button>
+          </div>
           <div id="rkDetail" class="rk-detail" :data-risk-id="selectedRisk?.risk_id || null">
             <div v-if="riskDetailLoading" class="empty">正在读取风险详情与核验历史…</div>
             <div v-else-if="riskDetailError" class="warnbox rk-error">{{ riskDetailError }} <button class="btn" type="button" @click="retryRiskDetail">重试</button></div>
@@ -1732,6 +1766,7 @@ onUnmounted(() => {
                 <dt>所属范围</dt><dd>{{ selectedRisk.owner_org_name || '未知机构' }} / {{ selectedRisk.district_name || '未知区域' }}</dd>
               </dl></div>
               <div class="sect"><h4>风险依据</h4><dl class="kv kv-surface">
+                <template v-if="selectedRisk.current_status"><dt>当前风险</dt><dd>{{ ({ CURRENT: '当前仍存在', CLEARED: '已确认解除', UNKNOWN: '状态待确认', EXCLUDED: '已排除', NOT_STARTED: '尚未生效' })[selectedRisk.current_status] || '状态待确认' }}<span class="rk-hint">{{ selectedRisk.current_reason }}</span></dd></template>
                 <dt>触发原因</dt><dd>{{ labelOf(REASON_CODE_LABEL, selectedRisk.reason_code, '未提供') }}</dd>
                 <dt>依据说明</dt><dd class="rk-wrap">{{ riskReasonText(selectedRisk) }}</dd>
                 <template v-if="selectedRisk.risk_type !== 'WEATHER'"><dt>测得高度</dt><dd>{{ altitudeText(selectedRisk) }}<span v-if="selectedRisk.observed_altitude_m == null" class="rk-hint">尚未测得高度，无法判断是否超高</span></dd>
@@ -1776,10 +1811,6 @@ onUnmounted(() => {
               <p v-if="riskTab === 'event' && selectedRisk.state === 'PENDING_VERIFICATION' && canVerifyRisk" class="workspace-action-note">核验通过后可通知上级。</p>
               <p v-if="riskTab === 'event' && selectedRisk.state === 'PENDING_VERIFICATION' && !canVerifyRisk" class="workspace-action-note">{{ verifyBlockReason }}</p>
               <p v-else-if="selectedRisk.state === 'PENDING_NOTIFICATION' && !canNotifyRisk" class="workspace-action-note">{{ notifyBlockReason }}</p>
-              <div v-if="(riskTab === 'event' && (canVerifyRisk || selectedRisk.state === 'PENDING_VERIFICATION')) || canNotifyRisk || selectedRisk.state === 'PENDING_NOTIFICATION'" class="detail-actions is-sticky">
-                <button v-if="riskTab === 'event' && (selectedRisk.state === 'PENDING_VERIFICATION' || (selectedRisk.state === 'PENDING_NOTIFICATION' && canVerifyRisk))" class="btn" :class="{ pri: selectedRisk.state === 'PENDING_VERIFICATION', ghost: selectedRisk.state === 'PENDING_NOTIFICATION' }" type="button" :disabled="!canVerifyRisk" :title="verifyBlockReason" @click="openRiskVerify">{{ selectedRisk.state === 'PENDING_NOTIFICATION' ? '改判为排除' : '人工核验' }}</button>
-                <button v-if="selectedRisk.state === 'PENDING_NOTIFICATION' || canNotifyRisk" class="btn" :class="{ pri: canNotifyRisk }" type="button" :disabled="!canNotifyRisk" :title="notifyBlockReason" @click="openRiskNotify()">通知上级</button>
-              </div>
             </template>
           </div>
         </UPanel>
@@ -1836,20 +1867,23 @@ onUnmounted(() => {
           <div v-else-if="!selected" class="empty">请选择计划</div>
           <template v-else>
             <div v-show="planDetailTab === 'plan'">
-              <div class="metric-strip is-compact"><div v-for="metric in [['执行状态', labelOf(PLAN_STATUS_LABEL, selected.status_code)], ['计划时长', formatDuration(selected)]]" :key="metric[0]" class="metric-item"><div class="metric-copy"><small>{{ metric[0] }}</small><b>{{ metric[1] }}</b></div></div></div>
+              <div class="metric-strip is-compact plan-metrics">
+                <div class="metric-item" :class="PLAN_STATUS_TAG[selected.status_code] || 't-gray'"><div class="metric-copy"><small>执行状态</small><b>{{ labelOf(PLAN_STATUS_LABEL, selected.status_code) }}</b></div></div>
+                <div class="metric-item duration-metric"><div class="metric-copy"><small>计划时长</small><b>{{ formatDuration(selected) }}</b></div></div>
+              </div>
             <PlanFilingDetails :plan="selected" :route-version="routeVersion" :route-loading="routeGeometryLoading" :route-error="routeGeometryError" />
-            <section v-if="showComparison" class="sect"><h4>计划与实际对照</h4>
+            <section v-if="showComparison" class="sect plan-comparison"><h4>计划与实际对照</h4>
               <div v-if="actualsLoading" class="empty">正在读取…</div>
               <div v-else-if="actualsError" class="warnbox">{{ actualsError }}</div>
               <div v-else-if="!sectionReady(actuals?.match)" class="warnbox">{{ matchSectionNote(actuals?.match) }}</div>
               <template v-else>
                 <dl class="kv kv-surface" :title="actuals.match.evaluation_id">
-                  <dt>计划匹配</dt><dd>{{ hasRouteDeviation(actuals.match) ? '计划偏离' : labelOf(PLAN_ROW_MATCH_LABEL, actuals.match.plan_match_code) }}</dd>
+                  <dt>计划匹配</dt><dd><span class="tag" :class="hasRouteDeviation(actuals.match) ? 't-amber' : PLAN_MATCH_TAG[actuals.match.plan_match_code] || 't-gray'">{{ hasRouteDeviation(actuals.match) ? '计划偏离' : labelOf(PLAN_ROW_MATCH_LABEL, actuals.match.plan_match_code) }}</span></dd>
                   <dt>研判时间</dt><dd>{{ formatTime(actuals.match.evaluated_at) }}</dd>
-                  <dt>高度关系</dt><dd>{{ planAltitudeText }}</dd>
-                  <template v-if="altitudeBandText"><dt>计划高度带</dt><dd>{{ altitudeBandText }}</dd></template>
-                  <template v-if="targetAltitudeText"><dt>实际高度</dt><dd>{{ targetAltitudeText }}</dd></template>
-                  <template v-if="matchReasonText"><dt>匹配原因</dt><dd>{{ matchReasonText }}</dd></template>
+                  <dt>高度关系</dt><dd><span class="tag" :class="sectionReady(actuals?.altitude_relation) ? ({ WITHIN: 't-green', ABOVE: 't-amber', BELOW: 't-amber' }[actuals.altitude_relation.relation] || 't-gray') : 't-gray'">{{ planAltitudeText }}</span></dd>
+                  <div v-if="altitudeBandText" class="comparison-fact planned-altitude"><dt>计划高度带</dt><dd>{{ altitudeBandText }}</dd></div>
+                  <div v-if="targetAltitudeText" class="comparison-fact actual-altitude"><dt>实际高度</dt><dd>{{ targetAltitudeText }}</dd></div>
+                  <template v-if="matchReasonText"><dt>匹配原因</dt><dd class="comparison-reason">{{ matchReasonText }}</dd></template>
                 </dl>
                 <div v-if="demoParams"><span class="tag t-amber">参数为演示值，尚未确认</span></div>
               </template>
@@ -1861,15 +1895,15 @@ onUnmounted(() => {
               :page="routeRisks.page" :size="routeRisks.size"
               @select="jumpToRisk" @notify="notifyRouteRisk" @retry="loadRouteRisks(selected, routeRisks.page)"
               @page="loadRouteRisks(selected, $event)" />
-            <!-- 与 legacy 一致的唯一动作：跳到合法性研判页并选中本计划匹配到的目标（决策 15-48）。 -->
-            <div v-if="planLegalityReady" class="detail-actions" style="margin-top:12px">
-              <button class="btn pri" type="button" style="flex:1;justify-content:center"
-                :title="matchedTargetId ? '打开合法性研判页，按本计划筛选并选中匹配到的目标' : '打开合法性研判页，按本计划筛选'" @click="goLegality">合法性判定 →</button>
-            </div>
-            <div v-else-if="planPending" class="rk-note" style="margin-top:12px">计划还没执行，暂不判断实际飞行是否违规。到了起飞时间仍没找到飞机时，请核实起飞情况。</div>
+            <div v-if="planPending" class="rk-note" style="margin-top:12px">计划还没执行，暂不判断实际飞行是否违规。到了起飞时间仍没找到飞机时，请核实起飞情况。</div>
             </div>
             <PlanWeatherForecast v-if="planDetailTab === 'forecast'" :key="selected.plan_id" :plan-id="selected.plan_id" :start-at="selected.start_at" :end-at="selected.end_at" />
           </template></div>
+          <!-- 与 legacy 一致的唯一动作：跳到合法性研判页并选中本计划匹配到的目标（决策 15-48）。 -->
+          <div v-if="planDetailTab === 'plan' && planLegalityReady" class="detail-actions plan-legality-actions">
+            <button class="btn pri" type="button"
+              :title="matchedTargetId ? '打开合法性研判页，按本计划筛选并选中匹配到的目标' : '打开合法性研判页，按本计划筛选'" @click="goLegality">合法性判定 →</button>
+          </div>
           </UPanel>
       </div>
     </template>
@@ -1901,9 +1935,25 @@ onUnmounted(() => {
 .workspace-map-context { flex: none; display: grid; gap: 4px; padding: 7px; font-size: 12px; overflow-wrap: anywhere; }
 .workspace-map-context span { color: var(--txt-3); font-size: 11px; }
 .workspace-detail .metric-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.flights-page :deep(.kpi) { border-top: 2px solid var(--kpi-c, var(--blue)); background: var(--kpi-gradient); }
+.flights-page .plan-metrics .metric-item { border: 1px solid color-mix(in srgb, var(--metric-color) 25%, transparent); border-top: 2px solid var(--metric-color); background: color-mix(in srgb, var(--metric-color) 7%, transparent); border-radius: 6px; padding: 9px 12px; }
+.plan-metrics .metric-item { --metric-color: var(--txt-3); }
+.plan-metrics .t-blue { --metric-color: var(--blue); }
+.plan-metrics .t-cyan { --metric-color: var(--cyan); }
+.plan-metrics .t-green { --metric-color: var(--green); }
+.plan-metrics .duration-metric { --metric-color: var(--purple); }
+.plan-metrics .metric-copy b { color: var(--metric-color); font-size: 16px; }
 .workspace-detail .detail-actions { flex-wrap: wrap; }
+.workspace-detail .plan-legality-actions { flex: none; justify-content: stretch; margin: 0; padding: 10px 12px 12px; border: 0; border-top: 1px solid var(--line); border-radius: 0 0 var(--r) var(--r); background: var(--surface-3); }
+.workspace-detail .plan-legality-actions .btn { flex: 1; justify-content: center; }
 .workspace-detail .kv { grid-template-columns: minmax(70px, auto) minmax(0, 1fr); }
 .workspace-detail .kv dd { min-width: 0; overflow-wrap: anywhere; }
+.plan-comparison .tag { max-width: 100%; white-space: normal; overflow-wrap: anywhere; line-height: 1.6; }
+.plan-comparison .comparison-fact { --fact-color: var(--cyan); grid-column: 1 / -1; display: grid; grid-template-columns: 80px minmax(0, 1fr); align-items: baseline; gap: 8px; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--fact-color) 28%, transparent); border-left: 3px solid var(--fact-color); border-radius: 6px; background: color-mix(in srgb, var(--fact-color) 6%, transparent); }
+.plan-comparison .actual-altitude { --fact-color: var(--purple); }
+.comparison-fact dt { color: var(--fact-color); }
+.comparison-fact dd { margin: 0; color: var(--txt); }
+.comparison-reason { color: var(--txt); }
 .workspace-detail-tabs { flex: none; padding: 0 10px; }
 .workspace-detail-tabs .tab { font-size: 12px; padding: 9px 8px; }
 .workspace-detail-tabs .tag { margin-left: 5px; }

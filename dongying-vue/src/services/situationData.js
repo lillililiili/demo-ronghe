@@ -32,16 +32,41 @@ export const LEGAL_FALLBACK = '待确认';
 
 const SEVERITY_LEVEL = { CRITICAL: '高', HIGH: '高', MEDIUM: '中', LOW: '低' };
 const DEVICE_STATUS = { ONLINE: '在线', OFFLINE: '离线', ABNORMAL: '异常', UNKNOWN: '未知' };
+// 态势页按融合来源目录与已纳入态势展示的设备档案展示，顺序由此表统一维护。
+export const SITUATION_DEVICE_TYPE_ORDER = [
+  'RADAR', 'EO', 'FIVE_G_A', 'SPEC', 'COUNTERMEASURE', 'DEC', 'IFR', 'CV', 'ISRS',
+  'TDOA', 'AOA', 'DCD', 'BSC', 'RID', 'FUSION_BOX'
+];
 const DEVICE_PRESENTATION = {
   RADAR: { icon: 'radar', color: '#36d1dc' },
   EO: { icon: 'camera', color: '#a97bff' },
   FIVE_G_A: { icon: 'bolt', color: '#2fd06e' },
-  TDOA: { icon: 'api', color: '#ffb020' }
+  SPEC: { icon: 'spec', color: '#57a7ff' },
+  DEC: { icon: 'dec', color: '#f0b54a' },
+  IFR: { icon: 'ifr', color: '#ff6d7a' },
+  CV: { icon: 'cv', color: '#63c6ff' },
+  ISRS: { icon: 'isrs', color: '#ff8b5a' },
+  TDOA: { icon: 'api', color: '#ffb020' },
+  AOA: { icon: 'aoa', color: '#ff8b3d' },
+  DCD: { icon: 'dcd', color: '#8bd450' },
+  BSC: { icon: 'bsc', color: '#e89548' },
+  RID: { icon: 'rid', color: '#4ca8ff' },
+  FUSION_BOX: { icon: 'fusion', color: '#37c7a0' },
+  COUNTERMEASURE: { icon: 'cm', color: '#ff7b72' }
 };
 const DEVICE_TYPE_CODE = {
-  RADAR: 'RADAR', radar: 'RADAR', EO: 'EO', eo: 'EO',
+  RADAR: 'RADAR', radar: 'RADAR', EO: 'EO', eo: 'EO', OE: 'EO', oe: 'EO',
   FIVE_G_A: 'FIVE_G_A', five_g_a: 'FIVE_G_A', '5GA': 'FIVE_G_A', '5ga': 'FIVE_G_A',
-  TDOA: 'TDOA', tdoa: 'TDOA'
+  SPEC: 'SPEC', spec: 'SPEC',
+  CM: 'COUNTERMEASURE', cm: 'COUNTERMEASURE',
+  DEC: 'DEC', dec: 'DEC', IFR: 'IFR', ifr: 'IFR', CV: 'CV', cv: 'CV',
+  ISRS: 'ISRS', isrs: 'ISRS',
+  TDOA: 'TDOA', tdoa: 'TDOA', AOA: 'AOA', aoa: 'AOA',
+  DCD: 'DCD', dcd: 'DCD', BSC: 'BSC', bsc: 'BSC', RID: 'RID', rid: 'RID',
+  REMOTEID: 'RID', remoteid: 'RID',
+  WEATHER: 'FUSION_BOX', weather: 'FUSION_BOX', WEATHER_SENSOR: 'FUSION_BOX', weather_sensor: 'FUSION_BOX',
+  FUSION_BOX: 'FUSION_BOX', fusion_box: 'FUSION_BOX',
+  COUNTERMEASURE: 'COUNTERMEASURE', countermeasure: 'COUNTERMEASURE'
 };
 /** 未关闭的告警状态：地图与 HUD 只展示还在处理中的。 */
 export const OPEN_ALARM_STATES = ['PENDING_VERIFICATION', 'CONFIRMED'];
@@ -58,10 +83,50 @@ export function targetIconKind(objectTypeCode, subtypeCode) {
   return 'unknown';
 }
 
+/** 未分类不等于异物；已知地面对象也不并入空中异物。 */
+export function targetClassCounts(targets) {
+  const counts = { uav: 0, foreign: 0, unknown: 0, other: 0 };
+  for (const target of targets || []) {
+    const type = target.objectTypeCode;
+    if (type === 'UAV') counts.uav++;
+    else if (['PERSON', 'VEHICLE', 'SHIP', 'REMOTE_CONTROLLER'].includes(type)) counts.other++;
+    else if (type === 'BIRD' || ['BIRD_FLOCK', 'MIGRATORY_BIRD', 'RAPTOR', 'BALLOON', 'KITE', 'LANTERN', 'SKY_LANTERN', 'OTHER_OBJECT'].includes(target.subtypeCode)) counts.foreign++;
+    else counts.unknown++;
+  }
+  return counts;
+}
+
 export function routeRiskIsActive(risk) {
   return !!risk && OPEN_ROUTE_RISK_STATES.includes(risk.state)
+    && risk.mapVisible !== false && !['UNKNOWN', 'CLEARED'].includes(risk.currentStatus)
     && ['SPACE_OBJECT', 'FOREIGN_OBJECT'].includes(risk.riskType || risk.risk_type)
     && !!(risk.planId || risk.plan_id) && !!(risk.routeVersionId || risk.route_version_id);
+}
+
+/** 仅控制实时地图可见性，不推进告警、授权或风险状态。到期时间由后端现行融合配置给出。 */
+export function targetIsCurrent(target, now = Date.now()) {
+  const observedAt = target?.observedAt;
+  const expiresAt = target?.mapExpiresAt;
+  return Number.isFinite(observedAt) && Number.isFinite(expiresAt)
+    && observedAt <= now && now < expiresAt && expiresAt > observedAt
+    && target.stale !== true && target.historical !== true
+    && !['STALE', 'NO_STATE'].includes(target.freshness)
+    && !['TERMINATED', 'LOST', 'OFFLINE'].includes(target.statusCode);
+}
+
+/** 保留当天风险记录；失去当前目标的风险只退出地图，不伪造已解除。 */
+export function currentMapSnapshot(snapshot, now = Date.now()) {
+  const targets = (snapshot.targets || []).filter(target => targetIsCurrent(target, now));
+  const locatedIds = new Set(targets.filter(target => target.posValid).map(target => target.targetId));
+  const risks = (snapshot.risks || []).map(risk => {
+    if (!['SPACE_OBJECT', 'FOREIGN_OBJECT'].includes(risk.riskType)) return risk;
+    const missingPosition = !locatedIds.has(risk.targetInternalId);
+    const currentStatus = missingPosition && risk.currentStatus !== 'CLEARED' ? 'UNKNOWN' : risk.currentStatus;
+    return { ...risk, mapVisible: !missingPosition && !['UNKNOWN', 'CLEARED'].includes(currentStatus),
+      currentStatus, currentReason: missingPosition && currentStatus !== 'CLEARED'
+        ? '目标位置未知或已过期，风险状态待确认' : risk.currentReason };
+  });
+  return { ...snapshot, targets, risks };
 }
 
 /** 风险只能关联到同一计划的同一条航线版本，避免旧版本风险误点亮当前航线。 */
@@ -238,16 +303,19 @@ export function toAirspaces(details) {
   return out;
 }
 
-/** 设备 → 地图点位；没有经纬度就不画（画到 (0,0) 等于凭空造一台设备在几内亚湾）。 */
-export function toDevices(devices) {
+/** 设备列表可保留无坐标记录；默认地图调用仍只返回可定位设备。 */
+export function toDevices(devices, { includeUnlocated = false } = {}) {
   const out = [];
   for (const device of devices || []) {
     const lon = num(device.longitude), lat = num(device.latitude);
-    if (lon === null || lat === null) continue;
+    if (!includeUnlocated && (lon === null || lat === null)) continue;
     const status = DEVICE_STATUS[device.connectivity] || '未知';
     const hasAlarm = !!(device.has_alarm || device.alarm);
     const rawTypeCode = device.device_type_code || device.type_code || '';
-    const typeCode = DEVICE_TYPE_CODE[rawTypeCode] || String(rawTypeCode).toUpperCase();
+    const normalizedTypeCode = String(rawTypeCode).trim();
+    const typeCode = DEVICE_TYPE_CODE[normalizedTypeCode]
+      || DEVICE_TYPE_CODE[normalizedTypeCode.toUpperCase()]
+      || normalizedTypeCode.toUpperCase();
     const presentation = DEVICE_PRESENTATION[typeCode] || { icon: 'device', color: '#72d6ff' };
     const coverage = normalizeCoverage(device.coverage, status === '在线');
     out.push({
@@ -257,6 +325,7 @@ export function toDevices(devices) {
       name: device.name || device.device_no || '',
       lon,
       lat,
+      posValid: lon !== null && lat !== null,
       status,
       connectivity: device.connectivity || 'UNKNOWN',
       statusCode: DEVICE_STATUS[device.connectivity] ? device.connectivity : 'UNKNOWN',
@@ -337,6 +406,8 @@ export function toTargets(targets, legalMap) {
       uavSn: target.uav_sn || '',
       district: target.district_name || '',
       lastSeenAt: num(target.last_seen_at),
+      observedAt: num(state?.observed_at),
+      mapExpiresAt: num(target.map_expires_at),
       trackStatus: target.track_status?.status || '',
       statusCode: target.status_code || target.track_status?.status || '',
       freshness: target.freshness || '',
@@ -361,7 +432,7 @@ export function toTargets(targets, legalMap) {
 }
 
 /**
- * 只报方位的目标 → 方位线的起点。按 device_id 建索引（toDevices 会丢掉无坐标设备并改用 device_no 作 id，
+ * 只报方位的目标 → 方位线的起点。按 device_id 建索引（toDevices 改用 device_no 作 id，
  * 这里要的是原始 device_id 与真实坐标）。设备没坐标就不进这张表——没有起点就不画线，
  * 凭方位角在地图上随便找个原点等于伪造位置。
  */
@@ -485,6 +556,8 @@ export function toRisks(risks) {
       severity: risk.severity,
       level: SEVERITY_LEVEL[risk.severity] || '低',
       state: risk.state,
+      currentStatus: risk.current_status || '',
+      currentReason: risk.current_reason || '',
       version: num(risk.version) ?? 0,
       planId: risk.plan_id,
       planNo: risk.plan_no || '',

@@ -64,3 +64,45 @@ test('损坏 JSON、未知代码和未知指令不会泄露为主说明或被推
   assert.doesNotMatch(view.action + view.reason + view.explanation, /NEW_ACTION|UNKNOWN_REASON/);
   assert.equal(buildCommandView(command({ reason: '值班员交接，停止跟踪' })).reason, '值班员交接，停止跟踪');
 });
+
+test('凌云正常回执明确成功与失败，未知结果不推断成功', () => {
+  for (const [status, code, tone] of [['SUCCEEDED', 'PROTOCOL_B_OK', 'success'], ['FAILED', 'PROTOCOL_B_FAILED', 'danger']]) {
+    const view = buildCommandView({command_type:'LINGYUN_CONTROL', status, receipts:[{receipt_kind:'PROTOCOL_B', device_result_code:code}]});
+    assert.equal(view.tone, tone);
+    assert.match(view.status, /设备反馈执行/);
+  }
+  assert.notEqual(buildCommandView({status:'SUCCEEDED', receipts:[{receipt_kind:'PROTOCOL_B', device_result_code:'UNKNOWN'}]}).tone, 'success');
+});
+
+test('迟到成功和失败留在原任务，不覆盖超时或取消结论', () => {
+  for (const status of ['TIMED_OUT','CANCELLED']) for (const code of ['PROTOCOL_B_OK','PROTOCOL_B_FAILED','UNKNOWN']) {
+    const input = {command_type:'LINGYUN_CONTROL',status,receipts:[{receipt_kind:'PROTOCOL_B_LATE',device_result_code:code}]};
+    const before = JSON.stringify(input), view = buildCommandView(input);
+    assert.match(view.status, status === 'TIMED_OUT' ? /超时.*迟到/ : /取消.*迟到/);
+    assert.equal(view.tone,'warning');
+    assert.match(view.explanation,/不自动重发或续链/);
+    assert.match(view.receipts[0].text,/迟到设备反馈/);
+    assert.equal(view.receipts[0].terminal,false);
+    if(code === 'UNKNOWN') assert.equal(view.receipts[0].outcome,null);
+    assert.equal(JSON.stringify(input),before);
+  }
+});
+
+import { nextStep, resultText, executionEvidenceHref } from '../src/pages/alarms/authorizationQueueView.js';
+test('普通授权超时说明实际结果待核查，不能当作设备未执行', () => {
+  for (const code of ['ADAPTER_TIMEOUT','DEVICE_TIMED_OUT','TIMED_OUT']) {
+    const row={status:'FAILED',channel:'LINGYUN_B',result_code:code};
+    assert.match(nextStep(row,'u'),/实际执行结果待核查/);
+    assert.match(resultText(row),/不代表设备未执行/);
+    assert.match(resultText(row),/避免重复下发/);
+  }
+  assert.equal(nextStep({status:'FAILED',channel:'LINGYUN_B',result_code:'PROTOCOL_B_FAILED'},'u'),'执行失败，请查看原因');
+});
+test('授权设备反馈链接精确绑定原命令和授权，不猜测缺失关联', () => {
+  const row={channel:'LINGYUN_B',execution_command_id:'cmd /1',authorization_id:'auth /1'};
+  const href=executionEvidenceHref(row), params=new URLSearchParams(href.split('?')[1]);
+  assert.equal(params.get('command'),'cmd /1');
+  assert.equal(params.get('subjectKind'),'AUTHORIZATION');
+  assert.equal(params.get('subjectId'),'auth /1');
+  for(const missing of [{...row,execution_command_id:null},{...row,authorization_id:null},{...row,channel:'MANUAL'}]) assert.equal(executionEvidenceHref(missing),'');
+});

@@ -1,10 +1,12 @@
+import { userFacingMessage } from '@/ui/labels.js';
+
 const publicBase = String(import.meta.env.APP_PUBLIC_API_BASE_URL || '/api').replace(/\/$/, '');
 const API_BASE = publicBase.endsWith('/v1') ? publicBase : `${publicBase}/v1`;
 const SESSION_KEY = 'dongying.api.session.v1';
 
 export class ApiError extends Error {
   constructor(message, code = 'REQUEST_FAILED', status = 0) {
-    super(message || '请求失败');
+    super(userFacingMessage(message || '请求失败'));
     this.name = 'ApiError';
     this.code = code;
     this.status = status;
@@ -31,7 +33,7 @@ function idempotencyKey() {
 async function decode(response) {
   const contentType = response.headers.get('content-type') || '';
   if (!contentType.includes('application/json')) {
-    if (!response.ok) throw new ApiError('系统暂时无法处理，请稍后重试；仍有问题请联系管理员。', 'HTTP_ERROR', response.status);
+    if (!response.ok) throw new ApiError('系统暂时无法处理，请稍后查看最新记录；若刚提交过操作，请先核对结果，避免重复提交。', 'HTTP_ERROR', response.status);
     return response;
   }
   let envelope;

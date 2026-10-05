@@ -100,24 +100,24 @@ function sourceMode(value) { return SOURCE_MODE_LABEL[value] || (present(value) 
     </div>
     <template v-else-if="forecast && (status === 'READY' || status === 'STALE')">
       <dl class="kv kv-surface weather-summary">
-        <dt>预报区域</dt><dd>{{ forecast.area_name || '未提供' }}</dd>
-        <dt>数据来源</dt><dd>{{ forecast.provider_name || '未提供' }}<small>{{ sourceMode(forecast.source_mode) }}</small></dd>
+        <dt>预报区域</dt><dd><span class="tag" :class="forecast.area_name ? 't-cyan' : 't-gray'">{{ forecast.area_name || '未提供' }}</span></dd>
+        <dt>数据来源</dt><dd>{{ forecast.provider_name || '未提供' }}<small><span class="tag" :class="({ live: 't-blue', mock: 't-amber', replay: 't-purple' })[forecast.source_mode] || 't-gray'">{{ sourceMode(forecast.source_mode) }}</span></small></dd>
         <dt>发布时间<br>（北京时间）</dt><dd>{{ time(forecast.published_at) }}</dd>
       </dl>
       <div v-if="!planWindow" class="weather-state"><strong>计划飞行时段不完整</strong><p>无法确定对应的天气预报时段。</p></div>
       <div v-else-if="periods.length" class="forecast-periods">
         <article v-for="(item, index) in periods" :key="`${item.from ?? 'unknown'}-${item.to ?? 'unknown'}-${index}`" class="forecast-period">
-          <header><strong>{{ periodTime(item) }}</strong><span>{{ item.summary || '天气现象未提供' }}</span></header>
+          <header><strong>{{ periodTime(item) }}</strong><span class="tag" :class="item.summary ? 't-cyan' : 't-gray'">{{ item.summary || '天气现象未提供' }}</span></header>
           <dl class="weather-grid">
-            <div v-if="hasField(item, 'temperature_c')"><dt>温度</dt><dd>{{ amount(item.temperature_c, '°C') }}</dd></div>
-            <div v-if="hasField(item, 'wind_speed_ms')"><dt>风速</dt><dd>{{ amount(item.wind_speed_ms, ' m/s') }}</dd></div>
-            <div v-if="hasField(item, 'gust_ms')"><dt>阵风</dt><dd>{{ amount(item.gust_ms, ' m/s') }}</dd></div>
-            <div v-if="hasField(item, 'wind_direction_deg')"><dt>风向</dt><dd>{{ direction(item.wind_direction_deg) }}</dd></div>
-            <div v-if="hasField(item, 'precipitation_probability_pct')"><dt>降水概率</dt><dd>{{ amount(item.precipitation_probability_pct, '%') }}</dd></div>
-            <div v-if="hasField(item, 'precipitation_mm')"><dt>降水量</dt><dd>{{ amount(item.precipitation_mm, ' mm') }}</dd></div>
-            <div v-if="hasField(item, 'humidity_pct')"><dt>湿度</dt><dd>{{ amount(item.humidity_pct, '%') }}</dd></div>
-            <div v-if="hasField(item, 'pressure_hpa')"><dt>气压</dt><dd>{{ amount(item.pressure_hpa, ' hPa') }}</dd></div>
-            <div v-if="hasField(item, 'visibility_km')"><dt>能见度</dt><dd>{{ amount(item.visibility_km, ' km') }}</dd></div>
+            <div v-if="hasField(item, 'temperature_c')" class="weather-temperature"><dt>温度</dt><dd>{{ amount(item.temperature_c, '°C') }}</dd></div>
+            <div v-if="hasField(item, 'wind_speed_ms')" class="weather-wind"><dt>风速</dt><dd>{{ amount(item.wind_speed_ms, ' m/s') }}</dd></div>
+            <div v-if="hasField(item, 'gust_ms')" class="weather-gust"><dt>阵风</dt><dd>{{ amount(item.gust_ms, ' m/s') }}</dd></div>
+            <div v-if="hasField(item, 'wind_direction_deg')" class="weather-direction"><dt>风向</dt><dd>{{ direction(item.wind_direction_deg) }}</dd></div>
+            <div v-if="hasField(item, 'precipitation_probability_pct')" class="weather-rain"><dt>降水概率</dt><dd>{{ amount(item.precipitation_probability_pct, '%') }}</dd></div>
+            <div v-if="hasField(item, 'precipitation_mm')" class="weather-rain"><dt>降水量</dt><dd>{{ amount(item.precipitation_mm, ' mm') }}</dd></div>
+            <div v-if="hasField(item, 'humidity_pct')" class="weather-humidity"><dt>湿度</dt><dd>{{ amount(item.humidity_pct, '%') }}</dd></div>
+            <div v-if="hasField(item, 'pressure_hpa')" class="weather-pressure"><dt>气压</dt><dd>{{ amount(item.pressure_hpa, ' hPa') }}</dd></div>
+            <div v-if="hasField(item, 'visibility_km')" class="weather-visibility"><dt>能见度</dt><dd>{{ amount(item.visibility_km, ' km') }}</dd></div>
           </dl>
         </article>
       </div>
@@ -135,6 +135,7 @@ function sourceMode(value) { return SOURCE_MODE_LABEL[value] || (present(value) 
 
 <style scoped>
 .plan-weather { min-width: 0; }
+.plan-weather .tag { max-width: 100%; white-space: normal; overflow-wrap: anywhere; line-height: 1.6; }
 .weather-state { display: grid; justify-items: center; gap: 10px; padding: 38px 16px; text-align: center; color: var(--txt-2); }
 .weather-state strong { color: var(--txt); font-size: 15px; }
 .weather-state p { margin: 0; max-width: 38em; color: var(--txt-3); font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
@@ -145,10 +146,14 @@ function sourceMode(value) { return SOURCE_MODE_LABEL[value] || (present(value) 
 .forecast-period { min-width: 0; padding: 11px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--surface-gradient); }
 .forecast-period header { display: grid; gap: 4px; padding-bottom: 9px; border-bottom: 1px solid var(--line-2); }
 .forecast-period header strong { font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
-.forecast-period header span { color: var(--cyan); font-size: 13px; overflow-wrap: anywhere; }
-.weather-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; margin: 10px 0 0; }
-.weather-grid div { min-width: 0; }
-.weather-grid dt { color: var(--txt-3); font-size: 11px; }
-.weather-grid dd { margin: 3px 0 0; color: var(--txt); font-size: 12px; overflow-wrap: anywhere; }
+.forecast-period header .tag { justify-self: start; font-size: 12px; }
+.weather-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 10px 0 0; }
+.weather-grid div { --weather-accent: var(--cyan); min-width: 0; padding: 9px 10px; border: 1px solid color-mix(in srgb, var(--weather-accent) 28%, transparent); border-left: 3px solid var(--weather-accent); border-radius: 6px; background: color-mix(in srgb, var(--weather-accent) 6%, transparent); }
+.weather-grid .weather-temperature { --weather-accent: var(--amber); }
+.weather-grid .weather-gust, .weather-grid .weather-pressure { --weather-accent: var(--purple); }
+.weather-grid .weather-direction, .weather-grid .weather-rain { --weather-accent: var(--blue); }
+.weather-grid .weather-humidity, .weather-grid .weather-visibility { --weather-accent: var(--green); }
+.weather-grid dt { color: var(--weather-accent); font-size: 11px; }
+.weather-grid dd { margin: 4px 0 0; color: var(--txt); font-size: 14px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
 @media (max-width: 760px) { .weather-grid { grid-template-columns: minmax(0, 1fr); } }
 </style>

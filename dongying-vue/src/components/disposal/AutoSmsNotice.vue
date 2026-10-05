@@ -1,4 +1,5 @@
 <script setup>
+import { userFacingMessage } from '@/ui/labels.js';
 import { computed, onUnmounted } from 'vue';
 import { autoSmsView } from './autoSmsView.js';
 import { openFormModal } from '@/ui/formModal.js';
@@ -50,7 +51,7 @@ function retry() {
       </summary>
       <header v-if="!compact"><b>飞手短信</b><span v-if="view.simulated" class="tag t-amber">模拟短信</span></header>
       <p v-if="!compact" class="asn-title" :class="`asn-${view.tone}`">{{ view.title }}</p>
-      <p v-if="view.reason">{{ view.reason }}</p>
+      <p v-if="view.reason">{{ userFacingMessage(view.reason) }}</p>
       <p v-if="view.guidance">{{ view.guidance }}</p>
       <dl v-if="view.recipient || view.triggeredAt || view.updatedAt">
         <template v-if="view.recipient"><dt>接收飞手</dt><dd>{{ view.recipient }}<small v-if="view.recipientHint" style="display:block">{{ view.recipientHint }}</small></dd></template>

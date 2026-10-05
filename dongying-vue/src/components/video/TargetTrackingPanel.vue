@@ -119,7 +119,10 @@ onUnmounted(() => { alive = false; invalidate(); });
 
 <template>
   <section class="target-tracking-panel" :class="{ compact }" aria-label="光电追踪与视频">
-    <div class="tracking-head"><strong>光电追踪</strong>
+    <div class="tracking-head">
+      <div class="tracking-summary"><strong>光电追踪</strong>
+        <span v-if="active && !reason && !readError && state" class="tracking-status" role="status">{{ statusText }}</span>
+      </div>
       <button v-if="!reason && active" class="btn" type="button" aria-label="刷新跟踪状态" :disabled="loading || busy" @click="refresh()">{{ loading ? '读取中' : '刷新' }}</button>
     </div>
     <p v-if="reason" role="status">{{ reason }}</p>
@@ -128,9 +131,7 @@ onUnmounted(() => { alive = false; invalidate(); });
     <template v-else-if="active">
       <p v-if="loading && !state" role="status">正在读取跟踪状态</p>
       <template v-else-if="state">
-        <p role="status">{{ statusText }}<span v-if="statusDetail"> · {{ statusDetail }}</span></p>
-        <p v-if="state.status !== 'DISABLED' && state.status !== 'PAUSED'" class="tracking-detail">自动追踪{{ state.auto_enabled === true ? '已启用' : state.auto_enabled === false ? '未启用' : '状态未知' }}<span v-if="state.auto_paused === true"> · 已暂停</span></p>
-        <p v-if="state.task" class="tracking-detail">任务：{{ state.task.origin === 'AUTO' ? '自动' : state.task.origin === 'MANUAL' ? '人工' : '来源未知' }}<span v-if="state.task.device_name"> · {{ state.task.device_name }}</span></p>
+        <p v-if="statusDetail" class="tracking-detail" role="status">{{ statusDetail }}</p>
         <div v-if="actions.length" class="tracking-actions">
           <button v-if="actions.includes('BEGIN')" class="btn" type="button" @click="perform('BEGIN')">人工补跟踪</button>
           <button v-if="actions.includes('RETRY')" class="btn" type="button" @click="perform('RETRY')">重试跟踪</button>
@@ -150,11 +151,15 @@ onUnmounted(() => { alive = false; invalidate(); });
 <style scoped>
 .target-tracking-panel { margin:8px 12px; padding:10px 12px; border:1px solid var(--line); border-radius:var(--r); background:var(--surface-1); min-width:0; }
 .tracking-head { display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; }
+.tracking-summary { display:flex; align-items:center; gap:10px; flex-wrap:wrap; min-width:0; }
+.tracking-status { color:var(--txt-2); font-size:12px; overflow-wrap:anywhere; }
 strong { font-size:14px; }
 p { margin:8px 0; font-size:13px; line-height:1.6; overflow-wrap:anywhere; }
 .tracking-detail { color:var(--txt-2); }
 .tracking-error { color:var(--amber); }
 .tracking-actions { display:flex; gap:8px; flex-wrap:wrap; margin:10px 0; }
 .btn { min-height:34px; height:auto; white-space:normal; }
-.target-tracking-panel :deep(.target-live-video) { margin:10px 0 0; }
+.target-tracking-panel :deep(.target-live-video) { margin:10px 0 0; border:0; border-top:1px solid var(--line); border-radius:0; background:transparent; }
+.target-tracking-panel :deep(.target-live-video header) { padding:10px 0; flex-wrap:wrap; }
+.target-tracking-panel :deep(.video-content) { padding:0; }
 </style>

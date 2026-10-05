@@ -72,11 +72,12 @@ export function createThemeOverrides() {
       colorPrimary: v('--action-blue'),
       colorHoverPrimary: v('--action-hover'),
       colorPressedPrimary: v('--action-pressed'),
-      borderPrimary: `1px solid ${blue}`,
-      borderHoverPrimary: `1px solid ${blue}`,
-      color: v('--input-bg'), colorHover: v('--surface-hover'),
+      borderPrimary: `1px solid ${v('--action-border') || blue}`,
+      borderHoverPrimary: `1px solid ${v('--action-border') || blue}`,
+      color: v('--button-bg') || v('--input-bg'), colorHover: v('--button-hover') || v('--surface-hover'),
+      ...(v('--button-bg') ? { textColor: v('--button-text'), borderRadiusMedium: v('--control-radius') } : {}),
       colorPressed: v('--surface-selected'),
-      border: `1px solid ${v('--control-line')}`
+      border: `1px solid ${v('--button-line') || v('--control-line')}`
     },
     common: {
       primaryColor: blue,
@@ -99,8 +100,8 @@ export function createThemeOverrides() {
       bodyColor: v('--canvas') || '#07111f',
       /* 浮层用实色面：--panel 是半透明，弹窗/下拉叠在内容上会透出脏色 */
       cardColor: v('--surface-2') || '#0e1d30',
-      modalColor: v('--surface-3') || '#12243a',
-      popoverColor: v('--surface-3') || '#12243a',
+      modalColor: v('--modal-base') || v('--surface-3') || '#12243a',
+      popoverColor: (v('--modal-base') ? v('--surface-2') : v('--surface-3')) || '#12243a',
       tableColor: v('--surface-1') || '#0b1727',
       inputColor: v('--input-bg'),
       actionColor: v('--surface-2') || '#0e1d30',
@@ -116,7 +117,7 @@ export function createThemeOverrides() {
       placeholderColor: v('--txt-3') || '#71859e',
 
       borderRadius: v('--r') || '8px',
-      borderRadiusSmall: '6px',            // 对齐 .sel/.ip 的现状圆角
+      borderRadiusSmall: v('--control-radius') || '6px',            // 对齐 .sel/.ip 的现状圆角
       fontSize: '14px',
       fontSizeMedium: '14px',
       lineHeight: '1.65',
@@ -124,11 +125,13 @@ export function createThemeOverrides() {
       boxShadow2: v('--shadow') || '0 12px 32px rgba(0,0,0,.22)'
     },
     Input: {
+      ...(v('--control-radius') ? { borderRadius: v('--control-radius') } : {}),
       color: v('--input-bg'), colorFocus: v('--input-bg'),
       border: `1px solid ${v('--control-line')}`,
       boxShadowFocus: v('--focus-ring')
     },
     InternalSelection: {
+      ...(v('--control-radius') ? { borderRadius: v('--control-radius') } : {}),
       color: v('--input-bg'), colorActive: v('--input-bg'),
       border: `1px solid ${v('--control-line')}`,
       boxShadowFocus: v('--focus-ring'), boxShadowActive: v('--focus-ring')
@@ -150,12 +153,12 @@ export function createThemeOverrides() {
       itemBorderRadius: '5px'
     },
     DataTable: {
-      thColor: v('--surface-3'),
+      thColor: v('--table-heading') ? v('--table-head-gradient') : v('--surface-3'),
       thColorHover: v('--surface-hover') || '#142a44',
       tdColor: v('--surface-1') || '#0b1727',
       tdColorHover: v('--surface-hover') || '#142a44',
       tdColorStriped: v('--surface-2') || '#0e1d30',
-      thTextColor: v('--txt'),
+      thTextColor: v('--table-heading') || v('--txt'),
       tdTextColor: v('--txt-2') || '#a7b7cb',
       borderColor: v('--line') || 'rgba(125,165,210,.16)',
       thFontWeight: '600'

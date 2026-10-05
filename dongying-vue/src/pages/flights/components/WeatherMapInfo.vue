@@ -1,8 +1,8 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { weatherLayerGradient } from '@/pages/flights/weatherMap.js';
-const props = defineProps({ fact: Object, title: String, severity: String, source: String, color: String, visible: Boolean, opened: Boolean, kind: String, simulated: Boolean, boundaryVisible: Boolean });
-defineEmits(['toggle-layer', 'update:opened', 'update:boundary-visible']);
+const props = defineProps({ fact: Object, title: String, severity: String, source: String, color: String, visible: Boolean, opened: Boolean, kind: String, simulated: Boolean, boundaryVisible: Boolean, opacity: { type: Number, default: .4 } });
+defineEmits(['toggle-layer', 'update:opened', 'update:boundary-visible', 'update:opacity']);
 const gradient = computed(() => weatherLayerGradient(props.kind));
 const time = value => Number.isFinite(value) ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '未提供';
 const now = ref(Date.now());
@@ -39,6 +39,7 @@ onUnmounted(() => clearInterval(ticker));
   </div>
   <details class="weather-legend" @click.stop>
     <summary>图例<span v-if="fact.source_mode === 'mock'"> · 模拟气象</span></summary>
+    <div class="weather-opacity" aria-label="气象不透明度"><span>不透明度</span><button v-for="value in [.25, .4, .6]" :key="value" type="button" :aria-pressed="opacity === value" @click="$emit('update:opacity', value)">{{ Math.round(value * 100) }}%</button></div>
     <div><i class="area" :style="{ color }"></i>预警范围</div>
     <div><i class="route"></i>关联航线</div>
     <div><i class="overlap"></i>区域内航段</div>
@@ -70,6 +71,7 @@ p { margin: 7px 0 0; padding-top: 7px; border-top: 1px solid var(--line); color:
 .scale-ramp { height: 5px; margin: 5px 0 3px; border-radius: 3px; }
 .scale-labels { display: flex; justify-content: space-between; color: var(--txt-2); font-size: 9px; }
 .texture-note { max-width: 150px; line-height: 1.5; color: var(--txt-2); }
+.weather-opacity button[aria-pressed="true"] { color:var(--cyan); background:var(--surface-selected); }
 summary { cursor: pointer; font-weight: 600; }
 summary span { font-weight: 400; color: var(--amber); }
 .weather-legend div { display: flex; align-items: center; gap: 6px; margin-top: 5px; }

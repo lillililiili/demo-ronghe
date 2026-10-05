@@ -17,7 +17,7 @@ export const DISPOSAL_UNAVAILABLE_TEXT = '处置授权功能暂不可用';
 const DEFINITE_CONFLICT_CODES = new Set([
   'TWO_PERSON_RULE', 'INVALID_TRANSITION', 'AUTHORIZATION_EXPIRED',
   'EMERGENCY_STOP_UNCONFIRMED', 'ADVISORY_COUNTER_BLOCKED',
-  'DEVICE_CONTROL_UNAVAILABLE', 'DEVICE_NOT_BOUND', 'DEVICE_OFFLINE',
+  'DEVICE_CONTROL_UNAVAILABLE', 'DEVICE_NOT_BOUND', 'DEVICE_OFFLINE', 'DEVICE_NOT_OPERABLE', 'DEVICE_BUSY',
   'ACTIVE_AUTHORIZATION_EXISTS', 'SUBJECT_KIND_NOT_SUPPORTED',
   'TARGET_NOT_ACTIVE', 'POLICY_REQUIRES_CONFIRMED_EVENT'
 ]);
@@ -55,6 +55,8 @@ function messageOf(error, fallback) {
   if (error.code === 'DEVICE_NOT_BOUND') return '设备未登记凌云连接，未下发指令；请运维补登记后重试。';
   // 离线是现场问题，与"未登记"（运维）和"不支持"（换通道）的补救方都不同（13-14）。
   if (error.code === 'DEVICE_OFFLINE') return '本次没有下发。设备未启用，或当前不在线。没有心跳的设备不能执行，请改选正在上报的设备后重新申请。';
+  if (error.code === 'DEVICE_BUSY') return '本次没有下发。设备仍有未完成的指令或调测任务，请等待任务结束后重试。';
+  if (error.code === 'DEVICE_NOT_OPERABLE') return `本次没有下发。${error.message || '设备当前不可执行，请检查启用、在线和故障状态。'}`;
   if (error.code === 'EMERGENCY_STOP_UNCONFIRMED') return '这台执行设备还有未了结的急停，本次没有下发。请换一台没有未完成急停的设备，或等这台设备的急停了结后再执行。';
   if (error.code === 'ADVISORY_COUNTER_BLOCKED') return `本次没有下发。${error.message || '当前观测或违规研判已失效。'}`;
   if (error.code === 'TARGET_NOT_ACTIVE') return '最近没有监测到这个目标，无法确认它还在现场，暂时不能下发处置指令。';

@@ -3,6 +3,11 @@ import { stopActionLabel } from '../../components/disposal/emergencyStopView.js'
 export const deviceChannel = row => ['LINGYUN_B', 'COUNTERMEASURE_4CH'].includes(row?.channel);
 export const usesEmergency = row => deviceChannel(row) && row?.subject_kind === 'UAV_EVENT' && ['COUNTERMEASURE', 'JAMMING'].includes(row.action_type);
 export const canStop = row => deviceChannel(row) && row?.allowed_actions?.includes('STOP');
+const receiptTimedOut = row => ['ADAPTER_TIMEOUT', 'DEVICE_TIMED_OUT', 'TIMED_OUT'].includes(row?.result_code);
+export function executionEvidenceHref(row) {
+  if (!deviceChannel(row) || !row.execution_command_id || !row.authorization_id) return '';
+  return `#/evidence?${new URLSearchParams({ command: row.execution_command_id, subjectKind: 'AUTHORIZATION', subjectId: row.authorization_id })}`;
+}
 export function cardStopLabel(row) {
   if (!usesEmergency(row)) return '停止处置';
   return stopActionLabel({ authorizations: [row] });
@@ -24,13 +29,14 @@ export function nextStep(row, userId) {
   if (row.status === 'REQUESTED') return row.requested_by === userId ? '等待其他审批人员处理' : '等待审批，当前无需操作';
   if (row.status === 'EXECUTING') return '等待设备反馈';
   if (row.status === 'APPROVED') return '等待有权限的人员执行';
-  if (row.status === 'FAILED') return '执行失败，请查看原因';
+  if (row.status === 'FAILED') return receiptTimedOut(row) ? '回执超时，实际执行结果待核查' : '执行失败，请查看原因';
   if (row.status === 'EXPIRED') return '授权已过期，不能继续执行';
   if (row.status === 'STOPPED') return '';
   if (['COMPLETED', 'REJECTED', 'CANCELLED'].includes(row.status)) return '当前无需操作，可查看记录';
   return '状态未明确，请查看详情';
 }
-export const resultText = row => ({
+export const resultText = row => receiptTimedOut(row)
+  ? '超时不代表设备未执行；请查看设备反馈并核查实际状态，避免重复下发。' : ({
   MANUAL_SUCCEEDED: '人工登记执行成功', MANUAL_FAILED: '人工登记执行失败',
   DEVICE_SUCCEEDED: '设备反馈执行成功', DEVICE_FAILED: '设备反馈执行失败',
   DEVICE_TIMED_OUT: '等待设备反馈超时', DEVICE_CANCELLED: '设备指令已取消',

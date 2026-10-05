@@ -17,6 +17,7 @@ import AirspaceRiskDrawer from './AirspaceRiskDrawer.vue';
 import { useAirspaceRiskList } from './useAirspaceRiskList.js';
 import { useAirspaceRisks } from './useAirspaceRisks.js';
 import { useAirspaceMonitor } from './useAirspaceMonitor.js';
+import WeatherRiskMarkers from '@/components/WeatherRiskMarkers.vue';
 import AirspaceObjectMarkers from './AirspaceObjectMarkers.vue';
 import { hitMapReference } from './airspaceReferenceHover.js';
 import {
@@ -37,7 +38,11 @@ const PAGE_MAX = 100;
 const OMITTED_TEST_AIRSPACE_IDS = new Set([
   'e404332c-9d6f-4f03-8def-8c0e3720db31', // 重启自检临时管制区 · 自检-临管-24153
   '1fc27dfe-bb41-4051-bc8c-602157c2c95f', // 测试临时管制区 · 临管-2026-001
-  'seed-stage3-airspace-prohibited' // 禁止演示空域 · 空域-001
+  'seed-stage3-airspace-prohibited', // 禁止演示空域 · 空域-001
+  // 设备模拟器旧批次重复空域；保留后台历史版本，不再进入日常空域卡片列表。
+  '2b805638-cbf0-4541-8a25-1cf43bbd6c46',
+  '99452f43-737c-44a3-9441-5c303cd0c70c',
+  '2995f0eb-d574-4ed3-abec-d57dab1d79c9'
 ]);
 
 /* ---------- 状态 ---------- */
@@ -60,6 +65,7 @@ const riskColor = risk => risk.state === 'EXCLUDED' ? '#8ca0be' : RISK_COLORS[ri
 const versions = ref([]);
 const detailLoading = ref(false), detailError = ref('');
 const mapHost = ref(null);
+const weatherLayer = ref(null);
 const objectMarkers = ref([]);
 const referenceTip = ref(null);
 let referenceShapes = [];
@@ -74,7 +80,10 @@ function time(value) { return value == null ? '' : new Date(value).toLocaleStrin
 function day(value) { return value == null ? '' : new Date(value).toLocaleDateString('zh-CN'); }
 function sourceLabel(row) { return ({ mock: '模拟', replay: '回放' })[row?.source_mode] || ''; }
 function kindLabel(code) { return labelOf(AIRSPACE_KIND_LABEL, code, '未知种类'); }
-function kindTag(code) { return AIRSPACE_KIND_TAG[code] || 't-gray'; }
+function kindTag(code) {
+  return ({ RESTRICTED: 't-orange', TEMPORARY_CONTROL: 't-purple', TEMPORARY: 't-purple' })[code] || AIRSPACE_KIND_TAG[code] || 't-gray';
+}
+function kindAccent(code) { return code ? `var(--${kindTag(code).slice(2)})` : 'var(--line)'; }
 function kindColor(code) { return airspaceKindMeta(code)?.color || '#8ca0be'; }
 function messageOf(reason) {
   if (!reason) return '读取失败，请稍后重试。';
@@ -356,7 +365,7 @@ function installOverlay() {
     }).filter(marker => marker.x >= 0 && marker.y >= 0 && marker.x <= this.w && marker.y <= this.h);
     // 独立风险只用发生时的可信位置快照；圆点颜色沿用服务端等级，排除项灰显。
     if (bottomTab.value === 'monitor') riskList.riskMapRows.forEach(risk => {
-      if (['SPACE_OBJECT', 'FOREIGN_OBJECT'].includes(risk.risk_type)) return;
+      if (['SPACE_OBJECT', 'FOREIGN_OBJECT', 'WEATHER'].includes(risk.risk_type)) return;
       const [x, y] = this.px(...risk.point);
       const active = risks.activeId === risk.risk_id;
       c.save();
@@ -423,6 +432,7 @@ function createMap() {
   if (!mapHost.value || !window.MapView) return;
   map = new window.MapView(mapHost.value, {
     zoom: 1, maxDev: 0, legend: false, layers: { device: false, track: false, alarm: false },
+    drawUnderMarkers: view => weatherLayer.value?.draw(view),
     onPick: pick => {
       if (pick?.kind !== 'airspace') return;
       const row = all.value.find(item => item.airspace_id === pick.data.airspaceId);
@@ -504,6 +514,7 @@ onUnmounted(() => {
       <div class="airspace-map-area" @mousemove="onReferenceMove" @mouseleave="clearReferenceTip" @pointerdown.capture="clearReferenceTip" @wheel.capture="clearReferenceTip">
       <div ref="mapHost" class="airspace-map"></div>
       <AirspaceObjectMarkers :markers="objectMarkers" @select="selectObjectMarker" />
+      <WeatherRiskMarkers ref="weatherLayer" :risks="riskList.rows.map(row => row.risk).filter(Boolean)" :visible="bottomTab === 'monitor' && risks.showLayer" :selected-id="risks.activeId" control-target="#airspace-weather-control" control-inline @select="viewRisk" />
       <div v-if="referenceTip" class="airspace-reference-tip" role="tooltip"
         :style="{ left: `${referenceTip.x}px`, top: `${referenceTip.y}px`, width: `${referenceTip.width}px` }">
         <b>{{ referenceTip.name }}</b><span>{{ referenceTip.type }}</span><p>{{ referenceTip.note }}</p>
@@ -525,6 +536,7 @@ onUnmounted(() => {
         </button>
         <span v-if="risks.canRead && risks.loading" class="legend-empty">风险读取中…</span>
         <button v-else-if="risks.error" class="linkbtn" type="button" @click="showRiskRecords">风险读取失败，查看原因</button>
+        <span id="airspace-weather-control"></span>
       </details>
 
       <div v-if="bottomTab === 'monitor' && monitor.active && !riskDetailOpen" class="airspace-risk-tip">
@@ -556,9 +568,9 @@ onUnmounted(() => {
         </div>
         <div class="drawer-body scroll">
           <dl class="kv">
-            <dt>种类</dt><dd><span class="tag" :class="kindTag(selected.current_version?.kind_code)">{{ selected.current_version ? kindLabel(selected.current_version.kind_code) : '当前没有生效版本' }}</span></dd>
-            <dt>高度</dt><dd>{{ altitudeText(selected.current_version) }}</dd>
-            <dt>生效期</dt><dd>{{ validityText(selected.current_version) }}</dd>
+            <div class="key-fact fact-kind"><dt>种类</dt><dd><span class="tag" :class="kindTag(selected.current_version?.kind_code)">{{ selected.current_version ? kindLabel(selected.current_version.kind_code) : '当前没有生效版本' }}</span></dd></div>
+            <div class="key-fact fact-altitude"><dt>高度</dt><dd>{{ altitudeText(selected.current_version) }}</dd></div>
+            <div class="key-fact fact-validity"><dt>生效期</dt><dd>{{ validityText(selected.current_version) }}</dd></div>
             <dt>管理单位</dt><dd>{{ selected.owner_org_name || '未记录' }}</dd>
             <dt>所属区县</dt><dd>{{ selected.district_name || '未记录' }}</dd>
             <dt>面积</dt><dd>{{ areaText(selected.current_version) }}</dd>
@@ -604,17 +616,20 @@ onUnmounted(() => {
       <div ref="riskSection" class="unified-risk-section"><AirspaceRiskList :list="riskList" :monitor="monitor" :risks="risks" :selected="selected" @inspect="inspectRiskRow" /></div>
     </section>
     <section v-show="bottomTab === 'rules'" id="airspace-rules-panel" role="tabpanel" aria-labelledby="airspace-rules-tab" class="airspace-tab-content">
-    <UPanel :title="`共 ${counts.total} 条 · 生效中 ${counts.active} · 临时管制 ${counts.temporary}`" panel-style="flex:1;min-height:0" nopad class-name="airspace-list-panel">
+    <UPanel :title="`<span class='rule-count count-all'>全部 <b>${counts.total}</b></span><span class='rule-count count-active'>生效中 <b>${counts.active}</b></span><span class='rule-count count-temporary'>临时管制 <b>${counts.temporary}</b></span>`" panel-style="flex:1;min-height:0" nopad class-name="airspace-list-panel">
       <div v-if="error" class="empty">空域列表暂不可用</div>
       <div v-else-if="loading && !all.length" class="empty">正在读取空域…</div>
       <div v-else-if="!filtered.length" class="empty">没有符合条件的空域。</div>
       <div v-else class="scroll airspace-list" aria-label="空域记录列表">
-        <button v-for="row in pageRows" :key="row.airspace_id" type="button" class="airspace-rule-card" :class="{ on: selected?.airspace_id === row.airspace_id }" :aria-pressed="selected?.airspace_id === row.airspace_id" @click="select(row)">
+        <button v-for="row in pageRows" :key="row.airspace_id" type="button" class="airspace-rule-card" :class="{ on: selected?.airspace_id === row.airspace_id }" :style="{ '--rule-color': kindAccent(row.current_version?.kind_code) }" :aria-pressed="selected?.airspace_id === row.airspace_id" @click="select(row)">
           <span class="rule-card-head"><b>{{ row.name }}</b><span class="tag" :class="rowStatus(row).cls">{{ rowStatus(row).text }}</span></span>
-          <span>{{ row.airspace_no }} <span v-if="sourceLabel(row)" class="tag t-amber">{{ sourceLabel(row) }}</span> · {{ row.current_version ? kindLabel(row.current_version.kind_code) : '当前没有生效版本' }}</span>
-          <span>{{ altitudeText(row.current_version) }}</span>
-          <span>{{ validityShort(row.current_version) }}</span>
-          <span class="rule-card-open">{{ selected?.airspace_id === row.airspace_id ? '正在查看' : '查看详情' }}</span>
+          <span v-if="row.airspace_no" class="rule-card-code">{{ row.airspace_no }}</span>
+          <span v-if="row.current_version && altitudeText(row.current_version) !== '未填写'">{{ altitudeText(row.current_version) }}</span>
+          <span v-if="row.current_version?.valid_from" class="rule-card-validity">{{ validityShort(row.current_version) }}</span>
+          <span class="rule-card-footer">
+            <span v-if="row.current_version || sourceLabel(row)" class="rule-card-tags"><span v-if="row.current_version" class="tag" :class="kindTag(row.current_version.kind_code)">{{ kindLabel(row.current_version.kind_code) }}</span><span v-if="sourceLabel(row)" class="tag t-amber">{{ sourceLabel(row) }}</span></span>
+            <span class="rule-card-open">{{ selected?.airspace_id === row.airspace_id ? '正在查看' : '查看详情' }}</span>
+          </span>
         </button>
       </div>
       <div class="rule-pager">
@@ -669,6 +684,9 @@ onUnmounted(() => {
 .drawer-risk-summary { display: flex; flex-direction: column; gap: 6px; padding: 12px 0; margin-top: 10px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); font-size: 13px; }
 .drawer-risk-summary small { color: var(--txt-3); line-height: 1.5; }
 .drawer-risk-summary .linkbtn { text-align: left; }
+.drawer-risk-summary > b { border-left: 3px solid var(--amber); padding-left: 8px; color: var(--txt); }
+.drawer-body > details { padding: 7px 0; }
+.drawer-body > details > summary { color: var(--txt-2); border-left: 3px solid var(--purple); padding-left: 8px; }
 .airspace-bottom-tabs { grid-area: tabs; display: flex; gap: 6px; flex: none; border-bottom: 1px solid var(--line); }
 .airspace-tabs { display: flex; gap: 6px; }
 .airspace-bottom-tabs button { border: 0; border-bottom: 2px solid transparent; background: transparent; padding: 8px 16px; color: var(--txt-3); cursor: pointer; font-size: 14px; }
@@ -685,14 +703,20 @@ onUnmounted(() => {
 .airspace-map-empty { top: 50%; transform: translate(-50%, -50%); }
 
 .airspace-drawer { display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; background: var(--surface-gradient); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
-.drawer-head { display: flex; align-items: flex-start; gap: 8px; padding: 12px 12px 8px; border-bottom: 1px solid var(--line-2); }
+.drawer-head { display: flex; align-items: flex-start; gap: 8px; padding: 12px 12px 8px; border-top: 2px solid var(--blue); border-bottom: 1px solid var(--line-2); }
 .drawer-title { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.drawer-title b { font-size: 14.5px; color: var(--txt); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drawer-title b { font-size: 14.5px; color: var(--txt); white-space: normal; overflow-wrap: anywhere; }
 .drawer-title .mono { font-size: 12px; color: var(--txt-3); }
 .drawer-close { background: none; border: 0; color: var(--txt-3); font-size: 20px; line-height: 1; cursor: pointer; padding: 0 2px; }
 .drawer-close:hover { color: var(--txt); }
 .drawer-body { flex: 1; min-height: 0; overflow: auto; padding: 10px 12px; }
 .drawer-body .kv { gap: 7px 12px; font-size: 13px; }
+.drawer-body .key-fact { --fact-color: var(--blue); grid-column: 1 / -1; display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: 10px; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--fact-color) 22%, transparent); border-left: 2px solid var(--fact-color); border-radius: 6px; background: color-mix(in srgb, var(--fact-color) 5%, transparent); }
+.drawer-body .fact-altitude { --fact-color: var(--purple); }
+.drawer-body .fact-validity { --fact-color: var(--cyan); }
+.key-fact dt { color: var(--fact-color); }
+.key-fact dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.key-fact .tag { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .drawer-body .pending { color: #ffd07a; }
 .drawer-actions { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line-2); }
 .sect-title { margin: 12px 0 6px; font-size: 12px; color: var(--txt-3); letter-spacing: .5px; }
@@ -700,11 +724,24 @@ onUnmounted(() => {
 .linkbtn:hover { text-decoration: underline; }
 
 .airspace-list { overflow: auto; flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding: 8px; }
-.airspace-rule-card { display: grid; gap: 7px; flex: none; width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-gradient); color: var(--txt-2); font: inherit; font-size: 12px; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
-.airspace-rule-card.on { border-color: var(--page-accent); box-shadow: inset 3px 0 var(--page-accent); background: var(--surface-selected); }
+.airspace-rule-card { display: grid; gap: 5px; flex: none; width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-left: 3px solid var(--rule-color, var(--line)); border-radius: 8px; background: var(--panel); color: var(--txt-2); font: inherit; font-size: 12px; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+.airspace-rule-card.on { border-color: var(--cyan); box-shadow: inset 2px 0 var(--cyan); }
 .airspace-rule-card:focus-visible { outline: 2px solid var(--cyan); outline-offset: -2px; }
-.rule-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 6px; color: var(--txt); }.rule-card-head b { min-width: 0; }.rule-card-head .tag { flex: none; }
-.rule-card-open { color: var(--page-accent); font-size: 11px; }
+.rule-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; color: var(--txt); }.rule-card-head b { min-width: 0; font-size: 14px; line-height: 1.6; }.rule-card-head .tag { flex: none; font-size: 10px; padding: 2px 7px; }
+.rule-card-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.rule-card-open { margin-left: auto; color: var(--blue); font-size: 11px; }
+.on .rule-card-open { color: var(--cyan); }
+.rule-card-code { color: var(--txt-3); font-size: 11px; }
+.rule-card-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.rule-card-tags .tag { font-size: 11px; padding: 2px 8px; }
+.rule-card-validity { display: flex; align-items: center; gap: 6px; font-size: 11px; }
+.rule-card-validity::before { content: ''; width: 5px; height: 5px; flex: none; border-radius: 50%; background: var(--cyan); }
+.airspace-list-panel :deep(.ph h3) { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-weight: 400; }
+.airspace-list-panel :deep(.ph h3::before) { display: none; }
+.airspace-list-panel :deep(.rule-count) { --count-color: var(--blue); display: inline-flex; align-items: center; gap: 5px; padding: 3px 7px; border: 1px solid color-mix(in srgb, var(--count-color) 32%, transparent); border-radius: 5px; color: var(--count-color); background: color-mix(in srgb, var(--count-color) 9%, transparent); font-size: 11px; }
+.airspace-list-panel :deep(.count-active) { --count-color: var(--green); }
+.airspace-list-panel :deep(.count-temporary) { --count-color: var(--purple); }
+.airspace-list-panel :deep(.rule-count b) { font-family: Bahnschrift, sans-serif; font-size: 15px; }
 .airspace-import { grid-area: import; flex: none; max-height: 40%; display: flex; flex-direction: column; }
 .airspace-import-list { overflow: auto; }
 .airspace-import-issue { margin-left: 6px; color: var(--txt-2); font-size: 12.5px; }

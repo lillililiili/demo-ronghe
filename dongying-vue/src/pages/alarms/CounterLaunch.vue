@@ -1,15 +1,22 @@
 <script setup>
-import { h, ref, watch, onUnmounted } from 'vue';
+import { h, ref, computed, watch, onUnmounted } from 'vue';
 import { uavAdvisoryApi } from '@/services/uavAdvisoryApi.js';
 import { disposalApi } from '@/services/disposalApi.js';
 import { readSessionToken } from '@/services/apiClient.js';
 import { openDisposalRequest, openDisposalDirect } from '@/ui/disposalAuthModal.js';
 import { openModal } from '@/ui/modal.js';
+import { toast } from '@/ui/nv.js';
+import { noCounterApi } from '@/services/noCounterApi.js';
+import NoCounterDecisionModal from './NoCounterDecisionModal.vue';
+import NoCounterBasis from './NoCounterBasis.vue';
 
 const U = window.UI;
-const props = defineProps({ eventId: { type: String, required: true }, eventLabel: String, active: Boolean, showLaunch: Boolean, showRecords: { type: Boolean, default: true } });
-const emit = defineEmits(['records']);
+const props = defineProps({ eventId: { type: String, required: true }, eventLabel: String, active: Boolean, confirmed: Boolean, summary: Object, showLaunch: Boolean, showRecords: { type: Boolean, default: true } });
+const emit = defineEmits(['records', 'decision']);
 const busy = ref(false);
+const noCounter = computed(() => props.summary?.event_id === props.eventId ? props.summary.no_counter : null);
+const completed = computed(() => noCounter.value?.decision_active === true);
+const time = value => value == null ? '未提供' : new Date(value).toLocaleString('zh-CN', { hour12: false });
 let generation = 0, mounted = true, feedback = null;
 watch(() => [props.eventId, props.active], () => { ++generation; busy.value = false; feedback?.close(); }, { flush: 'sync' });
 onUnmounted(() => { mounted = false; ++generation; feedback?.close(); });
@@ -55,15 +62,58 @@ async function launch() {
     if (request === generation) busy.value = false;
   }
 }
+
+async function decideNoCounter() {
+  if (busy.value || !props.active) return;
+  const id = props.eventId, token = readSessionToken(), request = ++generation;
+  const isCurrent = () => mounted && props.active && props.eventId === id && request === generation && token === readSessionToken();
+  busy.value = true;
+  try {
+    const status = await noCounterApi.get(id);
+    if (!isCurrent()) return;
+    if (status?.event_id !== id) throw new Error('未取得当前事件的处置条件，请刷新后重试。');
+    emit('decision', status);
+    if (status.can_decide !== true) {
+      showFeedback('暂不能确认不反制', status.block_reason || '当前状态暂不能办理，请核对最新依据。');
+      return;
+    }
+    const modal = openModal({
+      title: '确认不反制', width: '580px', footer: false,
+      render: () => h(NoCounterDecisionModal, {
+        status, eventLabel: props.eventLabel, isCurrent: () => isCurrent() && modal.isCurrent(),
+        onClose: () => modal.close(),
+        onRefreshed: result => { if (isCurrent()) emit('decision', result); },
+        onSaved: result => {
+          if (!isCurrent()) return;
+          emit('decision', result); modal.close();
+          toast(result.decision_active ? '已记录不反制决定，本次处置已结束' : '已记录决定，当前风险已有变化，请核对最新状态', result.decision_active ? 'ok' : 'err');
+        }
+      })
+    });
+    feedback = modal;
+  } catch (cause) {
+    if (isCurrent()) showFeedback('处置条件读取失败', cause?.message || '读取当前依据失败，请稍后重试。');
+  } finally { if (request === generation) busy.value = false; }
+}
 </script>
 
 <template>
-  <section class="counter-launch" aria-label="反制操作">
+  <section class="counter-launch" aria-label="处置选择">
+    <div v-if="completed" class="counter-decision is-completed">
+      <header><h3>已决定不反制</h3><span class="tag t-cyan">本次处置已结束</span></header>
+      <dl><dt>处置决定</dt><dd>{{ noCounter.decision?.reason }}</dd><dt>决定人员</dt><dd>{{ noCounter.decision?.actor_name || '未提供' }}</dd><dt>决定时间</dt><dd>{{ time(noCounter.decision?.decided_at) }}</dd></dl>
+      <p>保留告警与决定记录，继续监测；出现新的风险依据时重新判断。</p>
+      <details><summary>查看决定依据</summary><NoCounterBasis :basis="noCounter.decision?.basis" /></details>
+    </div>
+    <div v-else-if="confirmed" class="counter-decision">
+      <div class="counter-choice-actions">
+        <button class="btn no-counter-choice" type="button" :disabled="busy || !active || noCounter?.can_decide !== true" :title="noCounter?.block_reason || ''" @click="decideNoCounter">{{ busy ? '正在检查处置条件' : '无风险不反制' }}</button>
+        <button v-if="showLaunch" class="btn pri" type="button" :disabled="busy || !active" :aria-busy="busy" @click="launch"><span class="counter-action-icon" aria-hidden="true" v-html="U.icon('shield')"></span>发起反制</button>
+      </div>
+      <details v-if="noCounter?.decision"><summary>此前不反制决定</summary><p>{{ noCounter.decision.actor_name || '未提供' }} · {{ time(noCounter.decision.decided_at) }}</p><p>{{ noCounter.decision.reason }}</p><NoCounterBasis :basis="noCounter.decision.basis" /></details>
+    </div>
     <div class="counter-launch-actions">
-      <button v-if="showRecords" class="btn" type="button" title="查看本事件反制记录" @click="emit('records', { eventId })">
-        <span class="counter-action-icon" aria-hidden="true" v-html="U.icon('clock')"></span>反制记录
-      </button>
-      <button v-if="showLaunch" class="btn pri" type="button" :disabled="busy" :aria-busy="busy" @click="launch">
+      <button v-if="showLaunch && !confirmed && !completed" class="btn pri" type="button" :disabled="busy || !active" :aria-busy="busy" @click="launch">
         <span class="counter-action-icon" aria-hidden="true" v-html="U.icon('shield')"></span>{{ busy ? '正在检查反制条件' : '发起反制' }}
       </button>
     </div>
@@ -71,7 +121,8 @@ async function launch() {
 </template>
 
 <style scoped>
-.counter-launch { margin-left: auto; min-width: 0; max-width: 100%; }
+.counter-launch { margin-left: auto; min-width: 0; max-width: 100%; width:100%; }
+.counter-decision{padding:13px;border:1px solid var(--control-line);border-radius:var(--r);background:var(--surface-3);margin-bottom:10px}.counter-decision header{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}.counter-decision h3{margin:0;font-size:13px;font-weight:600}.counter-decision p{font-size:12px;line-height:1.8;color:var(--txt-2);margin:9px 0}.counter-choice-actions{display:flex;flex-wrap:wrap;gap:9px;margin-top:0}.counter-choice-actions>.btn{flex:1;min-width:130px}.counter-decision .no-counter-choice{border-color:var(--cyan);color:var(--cyan);background:var(--input-bg)}.counter-decision .counter-block{color:var(--txt-3)}.counter-decision .counter-review{color:var(--amber)}.counter-decision.is-completed{border-color:var(--cyan)}.counter-decision dl{display:grid;grid-template-columns:70px minmax(0,1fr);gap:7px 12px;font-size:12px;line-height:1.65;margin:13px 0}.counter-decision dt{color:var(--txt-3)}.counter-decision dd{margin:0;color:var(--txt-2);overflow-wrap:anywhere}.counter-decision summary{cursor:pointer;color:var(--txt-3);font-size:12px}.counter-decision summary:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
 .counter-launch-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 10px; }
 .counter-launch .btn { white-space: normal; height: auto; min-height: 40px; padding: 8px 14px; }
 .counter-action-icon { display: inline-flex; flex: none; }

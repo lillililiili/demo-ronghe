@@ -106,11 +106,23 @@ async function main() {
   check('种类认不出的空域不画', S.toAirspaces([airspace('MYSTERY', SQUARE_WITH_HOLE)]).length, 0);
 
   /* ---- 设备 ---- */
+  check('目标分类计数区分无人机、异物、未分类与地面对象', S.targetClassCounts([
+    { objectTypeCode: 'UAV', subtypeCode: 'BIRD_FLOCK' },
+    { objectTypeCode: 'BIRD' }, { objectTypeCode: 'UNKNOWN', subtypeCode: 'BALLOON' },
+    { objectTypeCode: 'UNKNOWN', subtypeCode: 'OTHER_OBJECT' },
+    { objectTypeCode: 'UNKNOWN' }, {}, { objectTypeCode: 'NEW_CODE' },
+    { objectTypeCode: 'VEHICLE' }
+  ]), { uav: 1, foreign: 3, unknown: 3, other: 1 });
+  check('空目标列表分类均为零', S.targetClassCounts([]), { uav: 0, foreign: 0, unknown: 0, other: 0 });
   const devices = S.toDevices([
     { device_id: 'd1', device_no: 'DEV-1', name: '雷达一号', longitude: 118.5, latitude: 37.4, connectivity: 'ONLINE' },
     { device_id: 'd2', device_no: 'DEV-2', name: '无坐标设备', connectivity: 'OFFLINE' }
   ]);
   check('没有经纬度的设备不进地图', devices.length, 1);
+  const unlocated = S.toDevices([{ device_id: 'tcp-qa', device_no: 'TCP-QA', connectivity: 'ONLINE', simulated: true }], { includeUnlocated: true })[0];
+  check('感知列表保留无坐标设备及明确模拟状态', [unlocated.deviceId, unlocated.status, unlocated.simulated, unlocated.posValid], ['tcp-qa', '在线', true, false]);
+  check('无坐标列表设备不伪造原点', [unlocated.lon, unlocated.lat], [null, null]);
+  check('无坐标列表设备仍不能成为方位线起点', S.bearingOrigins([unlocated]), {});
   check('设备状态走字典', devices[0].status, '在线');
   check('设备保留稳定状态码', devices[0].statusCode, 'ONLINE');
   check('告警标记来自 has_alarm', S.toDevices([
@@ -123,6 +135,21 @@ async function main() {
   check('后端小写设备缩写归一为页面稳定码', S.toDevices([
     { device_id: 'd6', fusion_device_id: 'fusion-d6', longitude: 118.4, latitude: 37.4, connectivity: 'ONLINE', device_type_code: '5ga' }
   ])[0].typeCode, 'FIVE_G_A');
+  const extendedTypes = S.toDevices([
+    { device_id: 'aoa', longitude: 118.4, latitude: 37.4, connectivity: 'ONLINE', device_type_code: 'aoa' },
+    { device_id: 'dcd', longitude: 118.4, latitude: 37.4, connectivity: 'ONLINE', device_type_code: 'dcd' },
+    { device_id: 'rid', longitude: 118.4, latitude: 37.4, connectivity: 'ONLINE', device_type_code: 'rid' },
+    { device_id: 'oe', longitude: 118.4, latitude: 37.4, connectivity: 'ONLINE', device_type_code: 'oe' }
+  ]);
+  check('态势页新增设备类型统一归一并使用正式图标', extendedTypes.map(device => [device.typeCode, device.icon]), [
+    ['AOA', 'aoa'], ['DCD', 'dcd'], ['RID', 'rid'], ['EO', 'camera']
+  ]);
+  const simulatorDevices = S.toDevices([
+    { device_id: 'weather-1', longitude: 118.4, latitude: 37.4, connectivity: 'ONLINE', device_type_code: 'weather', simulated: true },
+    { device_id: 'countermeasure-1', longitude: 118.4, latitude: 37.4, connectivity: 'ONLINE', device_type_code: 'countermeasure', simulated: true }
+  ]);
+  check('模拟器气象设备归一为融合箱展示类型', [simulatorDevices[0].typeCode, simulatorDevices[0].icon], ['FUSION_BOX', 'fusion']);
+  check('模拟器反制设备保留反制展示类型', [simulatorDevices[1].typeCode, simulatorDevices[1].icon], ['COUNTERMEASURE', 'cm']);
   check('设备保留融合域内部 ID 用于来源链路关联', S.toDevices([
     { device_id: 'd6', fusion_device_id: 'fusion-d6', longitude: 118.4, latitude: 37.4 }
   ])[0].fusionDeviceId, 'fusion-d6');
@@ -284,6 +311,32 @@ async function main() {
   ]).d4, { lon: 118.6, lat: 37.5 });
 
   /* ---- percent ---- */
+  const clock = 100_000;
+  const live = { targetId: 'live', observedAt: clock - 1000, mapExpiresAt: clock + 1000, posValid: true };
+  check('有效观测仍显示', S.targetIsCurrent(live, clock), true);
+  check('到期边界隐藏', S.targetIsCurrent(live, clock + 1000), false);
+  check('没有后端到期依据不显示实时目标', S.targetIsCurrent({ ...live, mapExpiresAt: null }, clock), false);
+  check('未来观测不能冒充当前', S.targetIsCurrent({ ...live, observedAt: clock + 1 }, clock), false);
+  check('终止目标隐藏', S.targetIsCurrent({ ...live, statusCode: 'TERMINATED' }, clock), false);
+  check('过期状态优先隐藏', S.targetIsCurrent({ ...live, stale: true }, clock), false);
+  const objectRisk = { riskId: 'r1', targetInternalId: 'live', riskType: 'SPACE_OBJECT',
+    state: 'PENDING_VERIFICATION', currentStatus: 'CURRENT', planId: 'p1', routeVersionId: 'rv1' };
+  const mapSource = { targets: [live], alarms: [{ alarmId: 'a1', state: 'CONFIRMED' }], risks: [objectRisk,
+    { riskId: 'weather', riskType: 'WEATHER', state: 'PENDING_NOTIFICATION' }] };
+  const expired = S.currentMapSnapshot(mapSource, clock + 1000);
+  check('到期目标退出地图', expired.targets.length, 0);
+  check('关联风险标记同步隐藏', expired.risks[0].mapVisible, false);
+  check('停报风险状态待确认', expired.risks[0].currentStatus, 'UNKNOWN');
+  check('停报不修改事件办理状态', expired.risks[0].state, 'PENDING_VERIFICATION');
+  check('停报告警保留', expired.alarms, mapSource.alarms);
+  check('固定气象风险保持原样', expired.risks[1], mapSource.risks[1]);
+  check('原始风险事实不修改', mapSource.risks[0].currentStatus, 'CURRENT');
+  check('未知位置不计作当前航线风险', S.routeRiskIsActive(expired.risks[0]), false);
+  const restored = S.currentMapSnapshot({ ...mapSource, targets: [{ ...live, observedAt: clock + 1500, mapExpiresAt: clock + 16500 }] }, clock + 2000);
+  check('恢复上报目标重现', restored.targets.length, 1);
+  check('恢复有效位置风险重现', restored.risks[0].mapVisible, true);
+  check('确认解除风险不再显示', S.currentMapSnapshot({ ...mapSource, risks: [{ ...objectRisk, currentStatus: 'CLEARED' }] }, clock).risks[0].mapVisible, false);
+
   check('置信度四舍五入', S.percent(0.876), 88);
   check('没有置信度返回 null', S.percent(null), null);
   check('置信度为 0 不当成缺失', S.percent(0), 0);

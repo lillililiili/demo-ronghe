@@ -7,6 +7,7 @@ const statusIcon = window.UI.icon('warning');
 <template>
   <div class="airspace-object-markers">
     <button v-for="marker in markers" :key="`${marker.kind}:${marker.id}`" class="object-marker" :class="{ active: marker.active }" type="button"
+      :data-risk-id="marker.kind === 'risk' ? marker.id : null" :data-target-id="marker.kind === 'target' ? marker.id : null"
       :style="{ left: `${marker.x}px`, top: `${marker.y}px`, color: marker.color }" :aria-label="`定位${marker.title}`" :aria-pressed="marker.active" @click.stop="$emit('select', marker)">
       <span class="object-symbol" :class="{ 'map-alarm-active': marker.activeRisk }"><span v-html="targetIcon(marker)"></span></span><span class="object-risk-state" aria-hidden="true" v-html="statusIcon"></span>
       <span class="object-label" :class="{ leftward: marker.leftward }"><b>{{ marker.title }}</b><span>{{ marker.note }}</span></span>

@@ -14,7 +14,7 @@ import { createThemeOverrides, dateZhCN, theme, zhCN } from '@/ui/theme.js';
 import { getDashboardSnapshot } from '@/services/dashboardApi.js';
 import { apiRequest } from '@/services/apiClient.js';
 import { attachTracks } from '@/services/mapTracks.js';
-import { airspaceKindMeta } from '@/services/situationData.js';
+import { airspaceKindMeta, targetIsCurrent } from '@/services/situationData.js';
 import { ALARM_TYPE_LABEL, LEGALITY_LABEL, OBJECT_TYPE_LABEL, labelOf, targetTypeLabel } from '@/ui/labels.js';
 import BigScreenBottomStats from './BigScreenBottomStats.vue';
 
@@ -326,6 +326,7 @@ function mapTargets(items, alarmItems = []) {
       activeRisk: (alarmItems || []).some(alarm => alarm.target_id === t.target_id && window.UI.abnormalActive(alarm)),
       statusCode: t.status_code || t.track_status?.status || '',
       freshness: t.freshness || '', stale: t.stale === true, historical: t.historical === true,
+      observedAt: t.observed_at, mapExpiresAt: t.map_expires_at,
       type: t.object_type_code === 'UAV' ? '无人机' : labelOf(OBJECT_TYPE_LABEL, t.object_type_code, t.object_type_code || '目标'),
       subtype: targetTypeLabel(t.subtype, t.object_type_code),
       subtypeCode: t.subtype, objectTypeCode: t.object_type_code,
@@ -335,7 +336,7 @@ function mapTargets(items, alarmItems = []) {
       risk: GRADE_ZH[t.grade] || t.grade,
       fusedConf: t.fusion_confidence == null ? null : Math.round(Number(t.fusion_confidence) * 100)
     };
-  }).filter(Boolean);
+  }).filter(target => target && targetIsCurrent(target));
 }
 
 function mapAlarms(items) {
@@ -356,11 +357,16 @@ function renderMap() {
   const airspaces = mapAirspaces(layer.airspaces);
   const devices = mapDevices(layer.devices);
   const targets = mapTargets(layer.targets, layer.alarms);
-  const alarms = mapAlarms(layer.alarms);
+  const targetIds = new Set(targets.map(target => target.targetId));
+  const alarms = mapAlarms((layer.alarms || []).filter(alarm => targetIds.has(alarm.target_id)));
   map.setData({ airspaces, devices, targets, alarms });
   const currentMap = map, currentVersion = version;
   attachTracks(targets, { cache: trackCache, maxAgeMs: TRACK_MAX_AGE_MS }).then(() => {
-    if (!disposed && map === currentMap && currentVersion === version) map.setData({ airspaces, devices, targets, alarms });
+    if (!disposed && map === currentMap && currentVersion === version) {
+      const current = targets.filter(target => targetIsCurrent(target));
+      const ids = new Set(current.map(target => target.targetId));
+      map.setData({ airspaces, devices, targets: current, alarms: alarms.filter(alarm => ids.has(alarm.targetId)) });
+    }
   });
 }
 
@@ -403,7 +409,14 @@ useRealtimeRefresh(['alarm', 'target', 'device', 'risk', 'plan', 'airspace', 'pu
 
 onMounted(() => {
   clock.value = formatClock(new Date());
-  clockTimer = window.setInterval(() => { clock.value = formatClock(new Date()); }, 1000);
+  clockTimer = window.setInterval(() => {
+    clock.value = formatClock(new Date());
+    if (!map) return;
+    const targets = (map.data.targets || []).filter(target => targetIsCurrent(target));
+    if (targets.length === map.data.targets.length) return;
+    const ids = new Set(targets.map(target => target.targetId));
+    map.setData({ targets, alarms: (map.data.alarms || []).filter(alarm => ids.has(alarm.targetId)) });
+  }, 1000);
   window.addEventListener('resize', handleResize);
   load();
 });

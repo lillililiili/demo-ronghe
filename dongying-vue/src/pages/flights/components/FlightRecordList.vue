@@ -16,7 +16,7 @@ const emit = defineEmits(['select']);
       <span v-if="item.subtitle" class="record-subtitle">{{ item.subtitle }}</span>
       <span v-if="item.summary" class="record-summary">{{ item.summary }}</span>
       <span v-if="!compact" class="record-facts"><span v-for="fact in item.facts" :key="fact.label"><small>{{ fact.label }}</small><span :class="fact.className">{{ fact.value }}</span></span></span>
-      <span class="record-bottom"><span>{{ item.note }}</span><span class="record-open">{{ item.id === selectedId ? '正在查看' : '查看详情' }}</span></span>
+      <span class="record-bottom"><span :class="item.noteClass">{{ item.note }}</span><span class="record-open">{{ item.id === selectedId ? '正在查看' : '查看详情' }}</span></span>
     </button>
   </div>
 </template>
@@ -30,7 +30,7 @@ const emit = defineEmits(['select']);
 .record-heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 7px; }
 .record-heading b { flex: 1; min-width: 100px; line-height: 1.5; font-size: 14px; overflow-wrap: anywhere; }
 .record-subtitle,.record-summary,.record-bottom { font-size: 11px; line-height: 1.6; color: var(--txt-3); overflow-wrap: anywhere; }
-.record-summary { color: var(--txt-2); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.record-summary { color: var(--txt-2); white-space: normal; }
 .record-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .record-facts > span { display: grid; gap: 3px; font-size: 12px; min-width: 0; overflow-wrap: anywhere; }
 .record-facts small { font-size: 10px; color: var(--txt-3); }
@@ -41,6 +41,19 @@ const emit = defineEmits(['select']);
 .compact .record-heading { align-items: center; gap: 5px; }
 .compact .record-heading b { font-size: 12px; min-width: 60px; }
 .compact .record-heading .tag { font-size: 10px; padding: 1px 6px; width: auto; }
-.compact .record-summary { -webkit-line-clamp: 1; }
 .compact .record-bottom { border: 0; padding-top: 0; font-size: 10px; }
+
+.flight-record-list:not(.compact) .flight-record { padding: 14px; gap: 10px; background: var(--panel); }
+.flight-record-list:not(.compact) .flight-record.selected { border-color: var(--cyan); box-shadow: inset 3px 0 var(--cyan); }
+.flight-record-list:not(.compact) .record-heading { gap: 10px; }
+.flight-record-list:not(.compact) .record-heading b { line-height: 1.65; }
+.flight-record-list:not(.compact) .record-heading .tag { padding: 2px 8px; border-radius: 5px; font-size: 11px; }
+.flight-record-list:not(.compact) .record-facts { gap: 10px; }
+.flight-record-list:not(.compact) .record-facts > span { padding: 8px 10px; border: 1px solid var(--line-2); background: var(--panel-2); border-radius: 6px; align-content: start; gap: 6px; }
+.flight-record-list:not(.compact) .record-facts > span > span { justify-self: start; font-size: 12px; }
+.flight-record-list:not(.compact) .record-subtitle { color: var(--txt-2); }
+.flight-record-list:not(.compact) .record-bottom { border-top-color: var(--line-2); padding-top: 9px; }
+.flight-record-list:not(.compact) .record-open { color: var(--blue); }
+.flight-record-list:not(.compact) .selected .record-open { color: var(--cyan); }
+.record-altitude { display: inline-flex; align-items: center; color: var(--tag-purple-text); background: color-mix(in srgb, var(--purple) 10%, transparent); border: 1px solid color-mix(in srgb, var(--purple) 25%, transparent); border-radius: 4px; padding: 2px 6px; }
 </style>

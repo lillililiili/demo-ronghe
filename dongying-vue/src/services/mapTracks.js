@@ -2,6 +2,7 @@
    取数放这里：读 /targets/{id}/tracks 最新一条的点，再交给 toTrack。 */
 import { targetApi } from './targetApi.js';
 import { toTrack } from './situationData.js';
+import { rememberTrack, reuseCachedTracks } from './trackCache.js';
 
 const BATCH = 6;
 
@@ -28,7 +29,11 @@ export async function fetchTrackPoints(targetId) {
   return toTrack(page.items || []);
 }
 
-export async function attachTracks(targets, { max = 40 } = {}) {
+/* 传入 cache 时，maxAgeMs 内拉过的航迹直接复用，不再请求（见 trackCache.js）。
+   大屏每次数据变化都会重读快照，不复用的话每次要给几十个目标各发两个请求。 */
+export async function attachTracks(targets, { max = 40, cache = null, maxAgeMs = 0 } = {}) {
+  const now = Date.now();
+  if (cache) reuseCachedTracks(targets, cache, maxAgeMs, now);
   const pending = (targets || []).filter(target =>
     target && target.targetId && target.posValid !== false && !target.trackLoaded).slice(0, max);
   for (let i = 0; i < pending.length; i += BATCH) {
@@ -36,6 +41,7 @@ export async function attachTracks(targets, { max = 40 } = {}) {
       try { target.track = await fetchTrackPoints(target.targetId); }
       catch { target.track = target.track || []; }
       target.trackLoaded = true;
+      if (cache) rememberTrack(cache, target, now);
     }));
   }
   return targets;

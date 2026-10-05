@@ -27,6 +27,11 @@ const mapEl = ref(null);
 const loading = ref(true);
 const error = ref('');
 const snapshot = ref(null);
+// 航迹 30 秒内复用（与改造前大屏 30 秒轮询的航迹新鲜度一致）；目标当前位置仍随每次快照实时更新。
+const TRACK_MAX_AGE_MS = 30_000;
+const trackCache = new Map();
+const SIDE_MIN_INTERVAL_MS = 30_000;
+let sideLoadedAt = 0;
 const operationsStats = ref({ state: 'LOADING', data: null });
 const targetTypes = computed(() => {
   const detail = operationsStats.value;
@@ -111,7 +116,7 @@ function typeArtwork(name, kind) {
   return artwork ? hologram(artwork) : `/assets/img/business/${kind === 'target' ? 'unknown' : 'unknown-device'}.svg`;
 }
 
-function loadSideDetails(data, currentVersion) {
+function loadSideDetails(data) {
   detailController?.abort();
   const controller = new AbortController();
   detailController = controller;
@@ -122,14 +127,15 @@ function loadSideDetails(data, currentVersion) {
       destination.value = { state: available === 'FORBIDDEN' ? 'FORBIDDEN' : 'UNAVAILABLE', data: null };
       return;
     }
-    destination.value = { state: 'LOADING', data: null };
+    // 重读时保留已有数据，避免每次推送触发的刷新都闪一下“加载中”。
+    if (destination.value.state !== 'AVAILABLE') destination.value = { state: 'LOADING', data: null };
     try {
       const result = await apiRequest(path, { signal: controller.signal, dedupe: false });
-      if (disposed || version !== currentVersion) return;
+      if (disposed || controller !== detailController) return;
       const state = validate(result);
       destination.value = { state, data: state === 'AVAILABLE' ? result : null };
     } catch (e) {
-      if (!disposed && version === currentVersion) destination.value = { state: e.status === 403 ? 'FORBIDDEN' : 'UNAVAILABLE', data: null };
+      if (!disposed && controller === detailController) destination.value = { state: e.status === 403 ? 'FORBIDDEN' : 'UNAVAILABLE', data: null };
     }
   };
   const { from, to } = data.trend || {};
@@ -353,7 +359,7 @@ function renderMap() {
   const alarms = mapAlarms(layer.alarms);
   map.setData({ airspaces, devices, targets, alarms });
   const currentMap = map, currentVersion = version;
-  attachTracks(targets).then(() => {
+  attachTracks(targets, { cache: trackCache, maxAgeMs: TRACK_MAX_AGE_MS }).then(() => {
     if (!disposed && map === currentMap && currentVersion === version) map.setData({ airspaces, devices, targets, alarms });
   });
 }
@@ -376,11 +382,13 @@ async function load() {
     if (disposed || currentVersion !== version) return;
     renderCharts();
     renderMap();
-    loadSideDetails(data, currentVersion);
+    // 侧栏统计不必跟着每次推送重读：至少间隔 30 秒，与改造前的轮询节奏一致。
+    if (Date.now() - sideLoadedAt >= SIDE_MIN_INTERVAL_MS) { sideLoadedAt = Date.now(); loadSideDetails(data); }
   } catch (e) {
     if (disposed || currentVersion !== version) return;
     snapshot.value = null;
     detailController?.abort();
+    sideLoadedAt = 0;
     operationsStats.value = deviceTypes.value = completedFlights.value = { state: 'UNAVAILABLE', data: null };
     error.value = e.message || '大屏数据加载失败';
     await nextTick();

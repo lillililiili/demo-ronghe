@@ -2,7 +2,7 @@
 /* 模块级页面状态：跨导航保留分页、筛选、选中项与证据页签；业务事实始终重新读取标准 API。 */
 const S = {
   st: {
-    page: 1, size: 10, legal: 'ATTENTION', district: '', review: '', reviewLocation: '', plan: '',
+    page: 1, size: 10, legal: '', district: '', review: '', reviewLocation: '', plan: '',
     selectedEvaluationId: null, revisionPage: 1, revisionPageSize: 10,
     evidenceTab: 'space'
   }
@@ -78,10 +78,8 @@ const resultMeta = {
   NOT_APPLICABLE: { className: 'is-warn' }
 };
 const tabs = [
-  { value: 'ATTENTION', label: '待处理' },
   { value: '', label: '全部无人机' },
   { value: 'LEGAL', label: '合法' },
-  { value: 'ABNORMAL', label: '异常' },
   { value: 'ILLEGAL', label: '非法' },
   { value: 'UNDETERMINED', label: '不可判定' }
 ];
@@ -156,7 +154,6 @@ function kpiPlaceholder(desc) {
   return [
     { label: '研判总数', value: '—', color: 'blue', icon: 'database', desc },
     { label: '合法', value: '—', color: 'green', icon: 'shield', desc },
-    { label: '异常', value: '—', color: 'amber', icon: 'warning', desc },
     { label: '非法', value: '—', color: 'red', icon: 'ban', desc },
     { label: '不可判定', value: '—', color: 'gray', icon: 'clock', desc }
   ];
@@ -202,7 +199,9 @@ function shortTime(value) {
 }
 function evaluationReason(item) {
   if (!item) return '尚未取得研判详情';
-  if (unconfirmedParams(item)) return '当前规则参数尚未确认，暂不能形成正式研判结论。';
+  const violations = (item.violation_reasons || []).map(ruleReasonText).join('、');
+  if (unconfirmedParams(item)) return `${violations ? `${violations}；` : ''}规则参数未确认，暂不可判定。`;
+  if (item.original_legal_status === 'ABNORMAL') return `${violations ? `${violations}；` : ''}历史记录未明确合法或非法，保留原始依据。`;
   if (item.legal_status === 'LEGAL') return item.unknown_reasons?.length ? `系统判定合法，另有 ${item.unknown_reasons.length} 项未知信息` : '全部检查通过';
   if (item.violation_reasons?.length) return ruleReasonText(item.violation_reasons[0]);
   if (item.unknown_reasons?.length) return ruleReasonText(item.unknown_reasons[0]);
@@ -295,8 +294,7 @@ function invalidateDetail() {
 
 function queryParams() {
   return {
-    ...uavScope, legal_status: st.legal === 'ATTENTION' ? undefined : st.legal, district_id: st.district,
-    needs_attention: st.legal === 'ATTENTION' ? true : undefined,
+    ...uavScope, legal_status: st.legal, district_id: st.district,
     review_state: st.review && !['NEEDS_REVIEW', 'PENDING_REVIEW'].includes(st.review) ? st.review : undefined,
     needs_review: ['NEEDS_REVIEW', 'PENDING_REVIEW'].includes(st.review) ? true : undefined,
     has_alarm: hasAlarmFilter.value,
@@ -442,10 +440,9 @@ function onRecompute() {
 async function loadKpi() {
   if (!pageActive) return;
   const token = ++kpiToken;
-  /* 各状态统计沿用队列的区域 / 复核 / 计划条件；异常单独读取服务端总数，不由其余状态相减推算。 */
+  /* 三类结论统计与队列共用服务端筛选，历史未定性的异常计入不可判定。 */
   const scope = {
     ...uavScope,
-    needs_attention: st.legal === 'ATTENTION' ? true : undefined,
     district_id: st.district || undefined,
     review_state: st.review && !['NEEDS_REVIEW', 'PENDING_REVIEW'].includes(st.review) ? st.review : undefined,
     needs_review: ['NEEDS_REVIEW', 'PENDING_REVIEW'].includes(st.review) ? true : undefined,
@@ -453,7 +450,6 @@ async function loadKpi() {
     plan_id: st.plan || undefined
   };
   const filterNote = [
-    st.legal === 'ATTENTION' ? '待处理（不可判定或待复核）' : '',
     st.district ? `区域：${districtOptions.value.find(option => option.value === st.district)?.label || st.district}` : '',
     st.review ? `复核：${reviewOptions.find(option => option.value === st.review)?.label || st.review}` : '',
     st.reviewLocation ? `核实位置：${reviewLocationOptions.find(option => option.value === st.reviewLocation)?.label || st.reviewLocation}` : '',
@@ -467,9 +463,8 @@ async function loadKpi() {
     kpiList.value = [
       { label: '研判总数', value: String(counts.total ?? '—'), color: 'blue', icon: 'database', desc: `正式模式，每架无人机只取最新一次；${scopeText}` },
       { label: '合法', value: String(counts.legal ?? '—'), color: 'green', icon: 'shield', desc: '计划、时间、空域、航线都对得上' },
-      { label: '异常', value: String(counts.abnormal ?? '—'), color: 'amber', icon: 'warning', desc: '系统判定存在偏差的最新研判' },
-      { label: '非法', value: String(counts.illegal ?? '—'), color: 'red', icon: 'ban', desc: '没有有效计划，或进入了任何计划都不能批准的空域、时段' },
-      { label: '不可判定', value: String(counts.undetermined ?? '—'), color: 'gray', icon: 'clock', desc: '关键数据缺失或有偏差，要人工核实后才能定性' }
+      { label: '非法', value: String(counts.illegal ?? '—'), color: 'red', icon: 'ban', desc: '按规则判定违反空域、航线、高度或飞行时间要求' },
+      { label: '不可判定', value: String(counts.undetermined ?? '—'), color: 'gray', icon: 'clock', desc: '依据不足、参数未确认或历史记录尚未明确定性' }
     ];
   } catch (error) {
     if (token !== kpiToken) return;
@@ -723,7 +718,7 @@ onMounted(() => {
                   <div class="lg-focus-verdict"><span>系统结论</span><strong class="lg-status-tag" :class="`is-${selectedConclusion.tone}`">{{ selectedConclusion.label }}</strong><span>{{ conclusionQualificationText(selectedEvaluation) || reviewText(selectedEvaluation) }}</span></div>
                   <p class="lg-focus-basis">{{ primaryReason }}</p>
                   <p class="lg-muted">{{ formatTime(selectedEvaluation.evaluated_at) }} · {{ sourceText(selectedEvaluation.source_mode) }} · {{ parameterNote(selectedEvaluation) }}</p>
-                  <p v-if="unconfirmedParams(selectedEvaluation)" class="lg-muted">原始系统记录：{{ legalStatusText(selectedEvaluation.legal_status) }}；原始依据与历史保留，不能作为当前正式判定。</p>
+                  <p v-if="selectedEvaluation.original_legal_status || unconfirmedParams(selectedEvaluation)" class="lg-muted">原始系统记录：{{ legalStatusText(selectedEvaluation.original_legal_status || selectedEvaluation.legal_status) }}；原始依据与历史保留，不能作为当前正式判定。</p>
                   <p class="lg-muted">观测时间：{{ formatTime(selectedEvaluation.observed_at) }}</p>
                   <p v-if="selectedEvaluation.review?.manual_status" class="lg-focus-manual">人工结论：<b>{{ legalStatusText(selectedEvaluation.review.manual_status) }}</b>（原始系统结论保留）</p>
                   <div v-if="reviewFocus.showTask" class="lg-focus-task" :class="{ 'needs-review': reviewFocus.needsReview }">

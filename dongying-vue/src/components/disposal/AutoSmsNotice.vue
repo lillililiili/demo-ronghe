@@ -59,11 +59,10 @@ function retry() {
         <template v-if="view.updatedAt && view.updatedAt !== view.triggeredAt"><dt>状态更新</dt><dd>{{ time(view.updatedAt) }}</dd></template>
       </dl>
       <p v-if="!view.recipient" class="asn-recipient">未提供接收飞手信息</p>
-      <p v-if="compact && view.source === 'ALARM_EVENT'">告警建立后由后台自动发送。</p>
-      <p v-if="compact && view.source === 'RULE_ILLEGAL'">触发依据来自系统研判，无需等待人工核实后再通知。</p>
+      <p v-if="compact && (view.source === 'ALARM_EVENT' || view.source === 'RULE_ILLEGAL')">核实属实后才由后台自动发送。</p>
       <details v-if="!compact && (view.source || view.evaluatedAt || view.dataUpdatedAt)" :key="data?.event_id">
         <summary>查看发送依据与时间</summary>
-        <p v-if="view.source">{{ view.source === 'ALARM_EVENT' ? '告警建立后由后台自动发送。' : view.source === 'RULE_ILLEGAL' ? '触发依据来自系统研判，无需等待人工核实后再通知。' : view.source === 'MANUAL_CONFIRMATION' ? '人工确认与当前观测' : '后台通知记录' }}</p>
+        <p v-if="view.source">{{ view.source === 'ALARM_EVENT' || view.source === 'RULE_ILLEGAL' ? '核实属实后才由后台自动发送。' : view.source === 'MANUAL_CONFIRMATION' ? '人工确认与当前观测' : '后台通知记录' }}</p>
         <p v-if="view.evaluatedAt">研判时间：{{ time(view.evaluatedAt) }}</p>
         <p v-if="view.dataUpdatedAt">观测时间：{{ time(view.dataUpdatedAt) }}</p>
       </details>

@@ -166,7 +166,7 @@ export function openLegalityReview({ evaluation, refresh, onDone } = {}) {
   const action = 'revise';
   holdKey(evaluationId, action);
   const focus = legalityReviewFocus(evaluation);
-  const overrideOptions = ['LEGAL', 'ABNORMAL', 'ILLEGAL', 'UNDETERMINED']
+  const overrideOptions = ['LEGAL', 'ILLEGAL', 'UNDETERMINED']
     .filter(code => code !== evaluation.legal_status)
     .map(code => ({ value: code, label: legalStatusText(code) }));
 

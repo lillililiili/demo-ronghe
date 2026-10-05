@@ -355,6 +355,12 @@ class Runtime:
             if self.cancel.is_set(): return
             self.platform.prepare_devices(devices,self.broker,self.manifest,self.checkpoint)
             if self.cancel.is_set(): return
+            self.log('WAIT_SUBSCRIPTIONS','等待后台确认本批全部设备的 MQTT 订阅')
+            if not self.platform.wait_for_subscriptions(self.manifest, self.broker, self.cancel): return
+            self.manifest['subscriptions_ready_at'] = int(time.time()*1000)
+            self.log('SUBSCRIPTIONS_READY','后台已确认本批全部设备订阅，准备开始发送')
+            self.checkpoint()
+            if self.cancel.is_set(): return
             from paho.mqtt import client as mqtt
             connected=threading.Event(); result=[]
             client=mqtt.Client(mqtt.CallbackAPIVersion.VERSION2,client_id=self.batch,protocol=mqtt.MQTTv311,reconnect_on_failure=True)

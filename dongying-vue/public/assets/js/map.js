@@ -75,7 +75,7 @@
       ${legendHtml}
       <div class="maptip"></div>
       <div class="mapscale"><span></span><div class="bar"></div></div>
-      <div class="mapstatus is-loading" role="status" aria-live="polite"><span>底图加载中…</span><button type="button" data-map-retry hidden>重试</button></div>
+      <div class="mapstatus is-loading" role="status" aria-live="polite"><span>底图加载中</span><button type="button" data-map-retry hidden>重试</button></div>
       <div class="mapcredit">简化示意图 · 非精确行政边界</div>`;
     box.__map = this;          // 便于调试与外部程序化控制
     this.baseEl = box.querySelector('.mapbase');
@@ -99,7 +99,7 @@
     this.baseEl.setAttribute('aria-busy', String(state === 'loading'));
     this.statusEl.hidden = state === 'ready';
     this.statusEl.className = 'mapstatus is-' + state;
-    this.statusEl.querySelector('span').textContent = state === 'loading' ? '底图加载中…' : '离线地图不可用，已切换简化示意图';
+    this.statusEl.querySelector('span').textContent = state === 'loading' ? '底图加载中' : '离线地图不可用，已切换简化示意图';
     this.statusEl.querySelector('button').hidden = state !== 'fallback';
     this.statusEl.title = error ? error.message || String(error) : '';
     this.box.querySelector('.mapcredit').hidden = state === 'ready';
@@ -116,6 +116,7 @@
 
   MapView.prototype._disposeBase = function () {
     clearTimeout(this._loadTimer);
+    clearInterval(this._readyTimer);
     clearTimeout(this._failureTimer);
     clearTimeout(this._glLostTimer);
     if (this._loadController) this._loadController.abort();
@@ -191,9 +192,29 @@
       map.touchZoomRotate.disableRotation();
       map.addControl(new runtime.maplibre.AttributionControl({ compact: false }), 'bottom-left');
       const on = (name, fn) => { map.on(name, fn); this._mapEvents.push([name, fn]); };
+      const vectorReady = () => !!map.getSource('protomaps') && map.isSourceLoaded('protomaps');
+      let initialFailure = null;
+      const finishLoading = () => {
+        if (this._dead || this.map !== map || this.online || initialFailure) return;
+        clearTimeout(this._loadTimer);
+        clearInterval(this._readyTimer);
+        this.online = true;
+        this._applyCameraLimits();
+        map.resize();
+        if (this._pendingFit && this.w > 0 && this.h > 0) {
+          const f = this._pendingFit; this._pendingFit = null;
+          this.fitTo(f.coordinates, f.padding);
+        } else if (this._focus && this._focus.kind === 'fit') {
+          this.fitTo(this._focus.coordinates, this._focus.padding);
+        } else if (!this._isDefaultView) {
+          map.jumpTo({ center: this._pendingCenter, zoom: this._levelForScale(this.zoom) });
+        }
+        this._syncView(); this._status('ready'); this.draw();
+      };
       on('movestart', event => { if (event.originalEvent) this._isDefaultView = false; });
       on('move', () => { this._syncView(); this.draw(); this._hit(); });
-      on('render', () => { this.draw(); });
+      // 已绘制的矢量底图先显示，影像和装饰山影不阻塞首屏。
+      on('render', () => { if (!this.online && vectorReady()) finishLoading(); this.draw(); });
       on('dragstart', () => { this._dragged = true; this._boxLeave(); });
       // 非展示用：拖拽结束后 250ms 内抑制误点击，必须用墙钟而非 M.now()
       on('dragend', () => { this._suppressClickUntil = Date.now() + 250; this._dragged = false; });
@@ -211,26 +232,19 @@
         const error = event.error || new Error('离线资源读取失败');
         if (this._dead || this.map !== map) return;
         if (this._isTransientMapError(error) || this.online) return;
+        if (['imagery', 'procdem'].includes(event.sourceId)) return;
+        initialFailure = error;
         clearTimeout(this._failureTimer);
         this._failureTimer = setTimeout(() => {
           if (!this._dead && this.map === map && !this.online) this._fallback(error);
         }, 0);
       });
-      on('load', () => {
-        clearTimeout(this._loadTimer);
-        this.online = true;
-        this._applyCameraLimits();
-        map.resize();
-        if (this._pendingFit && this.w > 0 && this.h > 0) {
-          const f = this._pendingFit; this._pendingFit = null;
-          this.fitTo(f.coordinates, f.padding);
-        } else if (this._focus && this._focus.kind === 'fit') {
-          this.fitTo(this._focus.coordinates, this._focus.padding);
-        } else if (!this._isDefaultView) {
-          map.jumpTo({ center: this._pendingCenter, zoom: this._levelForScale(this.zoom) });
-        }
-        this._syncView(); this._status('ready'); this.draw();
-      });
+      on('load', finishLoading);
+      // 最后一批影像 404 可能只结束请求、不调度渲染；就绪后补一帧，避免等用户缩放。
+      // 检查只到首屏成功为止，重试、切页和销毁均清理，不改变地图视野。
+      this._readyTimer = setInterval(() => {
+        if (!this._dead && this.map === map && !this.online && !initialFailure && vectorReady()) map.triggerRepaint();
+      }, 250);
       this.draw();
     }).catch(error => {
       if (!this._dead && !controller.signal.aborted) this._fallback(error);

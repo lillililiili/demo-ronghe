@@ -2,7 +2,7 @@
 /* 模块级状态：跨导航保持（legacy 约定）。
    level/status 映射为服务端契约的 severity/state；kind/region 为类别、区域筛选（阶段 15 契约）；
    sort/order 随列表与导出请求一起发给服务端（阶段 15 契约白名单四个键），页面不做假排序。
-   默认 priority：未处理在前，其中等级高、等得久的在前，已处理在后（2026-10-04 用户确认）。 */
+   默认 priority：接收不满 5 分钟的未处理告警置顶（2026-10-05 用户确认），其余未处理在前（等级高、等得久的在前），已处理在后（2026-10-04 用户确认）。 */
 const S = {
   st: { page: 1, size: 10, level: '全部', status: '全部', kind: '全部', region: '全部', sel: null, selId: null,
     sort: 'priority', order: 'desc' }

@@ -353,8 +353,6 @@ class FullChain:
                     'published_at':now,'valid_from':now,'valid_to':end,
                     'polygon':[[118.56,37.42],[118.67,37.42],[118.67,37.50],[118.56,37.50],[118.56,37.42]],
                     'wind_speed_mps':18 if i==0 else 5,'wind_from_degrees':90,'visibility_m':300 if i==2 else 10000})
-        if not self.manifest.get('realtime_plan_id'):
-            self.state['warnings'].append('当前分类没有计划，四通道反制接收端本批次不启用；其它收发继续')
         self.checkpoint()
 
     def tick(self, targets, elapsed, sequence):

@@ -103,8 +103,8 @@ class LifecycleTests(unittest.TestCase):
         self.assertIsNone(self.controller.snapshot()['notifications']['lease_expires_at'])
         self.assertTrue(any(c[2] and c[2].get('enabled') is False for c in self.proxy.calls))
 
-    def test_missing_plan_leaves_no_live_transports(self):
-        with self.assertRaisesRegex(ValueError, '模拟计划'):
+    def test_missing_scope_leaves_no_live_transports(self):
+        with self.assertRaisesRegex(ValueError, '所属单位和区县'):
             self.controller.start()
         self.assertFalse(self.controller.active())
         self.assertIsNone(self.controller.presence_lock)

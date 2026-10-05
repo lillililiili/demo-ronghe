@@ -13,11 +13,14 @@ from realtime_notification_receiver import Receiver, ReceiverError, InstanceLock
 
 ACTIVE = {'PREPARING', 'RUNNING', 'PAUSED', 'STOPPING'}
 DEFAULT_CONFIG = {'mode': 'normal', 'continuous': True, 'notifications_enabled': True,
-                  'countermeasure_enabled': True, 'countermeasure_plan_id': '',
+                  'countermeasure_enabled': True, 'countermeasure_scope': '',
                   'command_mode': 'success', 'play_seconds': 3, 'outcomes': {}}
 
 
 def validate_config(value):
+    if isinstance(value, dict) and 'countermeasure_plan_id' in value:
+        # 旧设置文件：反制设备曾借计划取单位与区县，现在直接选单位与区县，旧值丢弃。
+        value = {k: v for k, v in value.items() if k != 'countermeasure_plan_id'}
     if not isinstance(value, dict) or set(value) - set(DEFAULT_CONFIG):
         raise ValueError('实时收发配置包含未知字段')
     config = {**copy.deepcopy(DEFAULT_CONFIG), **copy.deepcopy(value)}
@@ -31,9 +34,9 @@ def validate_config(value):
     seconds = config['play_seconds']
     if type(seconds) not in (float, int) or not math.isfinite(seconds) or not 0 < seconds <= 60:
         raise ValueError('电话播放时长须大于 0 且不超过 60 秒')
-    plan = config['countermeasure_plan_id']
-    if not isinstance(plan, str) or (plan and not re.fullmatch(r'[A-Za-z0-9_-]{1,36}', plan)):
-        raise ValueError('反制设备关联计划 ID 无效')
+    scope = config['countermeasure_scope']
+    if not isinstance(scope, str) or (scope and not re.fullmatch(r'[A-Za-z0-9_-]{1,64}\|[A-Za-z0-9_-]{1,64}', scope)):
+        raise ValueError('反制设备所属单位与区县无效')
     modes = config['outcomes']
     if not isinstance(modes, dict) or set(modes) - KINDS:
         raise ValueError('通知渠道无效')
@@ -159,14 +162,17 @@ class RealtimeController:
             client = BridgeClient(self.runtime.session)
             client.call('GET', '/local-interface-simulator/context')
             self.session_verified_at = int(time.time() * 1000)
-            full_scene = getattr(self.runtime,'scene',{}).get('fullchain',{}).get('enabled')
-            missing_batch_plan = full_scene and not getattr(self.runtime,'manifest',{}).get('realtime_plan_id')
-            if config['countermeasure_enabled'] and not missing_batch_plan:
-                plan_id = config['countermeasure_plan_id'] or getattr(self.runtime, 'manifest', {}).get('realtime_plan_id')
-                if not plan_id:
-                    raise ValueError('请在实时收发设置中选择反制设备关联的模拟计划')
+            if config['countermeasure_enabled']:
+                # 反制设备属于单位与区县，不跟飞行计划绑定；没选时跟随模拟器连接的单位与区县。
+                if config['countermeasure_scope']:
+                    org, district = config['countermeasure_scope'].split('|', 1)
+                else:
+                    broker = getattr(self.runtime, 'broker', None) or {}
+                    org, district = broker.get('owner_org_id'), broker.get('district_id')
+                if not org or not district:
+                    raise ValueError('请在实时收发设置中选择反制设备所属单位和区县')
                 device = client.call('POST', '/local-interface-simulator/countermeasure-device',
-                                     {'plan_id': plan_id})
+                                     {'owner_org_id': org, 'district_id': district})
                 detail = device.get('device', {}) if isinstance(device, dict) else {}
                 connection = (detail.get('connection') or {}) if isinstance(detail, dict) else {}
                 host = connection.get('host') or '127.0.0.1'

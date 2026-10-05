@@ -48,22 +48,22 @@
   }
   async function settings() {
     const config = await api('realtime/config');
-    let plans = [], warning='';
+    let scopes = [], warning='';
     if(liveState?.connected) {
-      try { const context=await api('external/request',{method:'GET',path:'/local-interface-simulator/context'}); plans=context.plans || []; }
+      try { const context=await api('external/request',{method:'GET',path:'/local-interface-simulator/airspaces/context'}); scopes=context.scopes || []; }
       catch(error) { warning=error.message; }
     }
-    const options = {'':'请选择已有模拟计划'};
-    for(const plan of plans) options[plan.plan_id]=plan.plan_no || plan.plan_id;
-    if(config.countermeasure_plan_id && !options[config.countermeasure_plan_id]) options[config.countermeasure_plan_id]=`${config.countermeasure_plan_id}（不在当前读取范围）`;
+    const options = {'':'跟随模拟器连接的单位与区县'};
+    for(const scope of scopes) options[`${scope.owner_org_id}|${scope.district_id}`]=`${scope.owner_org_name || scope.owner_org_id} · ${scope.district_name || scope.district_id}`;
+    if(config.countermeasure_scope && !options[config.countermeasure_scope]) options[config.countermeasure_scope]='已保存的单位与区县（不在当前读取范围）';
     openDialog('实时收发设置',`<form id="realtime-form">
       <p class="field-note">修改只影响下一次启动。已有通知保留首次接收时的处理方式；混合模式保留正常目标上报，同时按所选通知结果模拟异常回执。</p>
       ${choice('mode','运行模式',config.mode,{normal:'正常',abnormal:'异常',mixed:'混合'})}
       ${choice('continuous','运行时长',config.continuous,{true:'持续运行，手动停止',false:'使用场景时长'})}
       ${choice('notifications_enabled','六类通知接收',config.notifications_enabled,{true:'启用',false:'关闭'})}
       ${choice('countermeasure_enabled','本机模拟反制设备',config.countermeasure_enabled,{true:'启用',false:'关闭'})}
-      ${choice('countermeasure_plan_id','反制设备归属计划',config.countermeasure_plan_id,options)}
-      <p class="field-note">从计划取得单位与区域，不授予反制权限。无可选计划时先在“资料输入”提交模拟计划。</p>
+      ${choice('countermeasure_scope','反制设备所属单位与区县',config.countermeasure_scope,options)}
+      <p class="field-note">反制设备长期部署在某个单位与区县，不跟飞行计划绑定；这里只决定设备归属，不授予反制权限。</p>
       <label class="realtime-field">模拟电话播放时长（秒）<input name="play_seconds" type="number" min="0.1" max="60" step="0.1" value="${esc(config.play_seconds)}" required></label>
       <fieldset id="realtime-abnormal"><legend>异常与混合模式参数</legend>
       ${choice('command_mode','设备指令',config.command_mode,{success:'正常执行回执',no_receipt:'不执行、不回执',unchanged:'四通道状态不变，光电正常'})}
@@ -76,7 +76,7 @@
     form.addEventListener('submit',async event=>{
       event.preventDefault();
       const next={...config,outcomes:{...config.outcomes}};
-      for(const key of ['mode','command_mode','countermeasure_plan_id']) next[key]=form.elements[key].value;
+      for(const key of ['mode','command_mode','countermeasure_scope']) next[key]=form.elements[key].value;
       for(const key of ['continuous','notifications_enabled','countermeasure_enabled']) next[key]=form.elements[key].value==='true';
       next.play_seconds=Number(form.elements.play_seconds.value);
       for(const kind of Object.keys(kinds)) next.outcomes[kind]=form.elements[kind].value;

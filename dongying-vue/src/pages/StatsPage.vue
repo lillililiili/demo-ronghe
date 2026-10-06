@@ -152,12 +152,16 @@ async function load() {
   error.value = '';
   try {
     const range = dateRange.value;
-    const date = value => new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(value);
+    /* 日期框选的是"哪一天"，不是某个时刻。naive 的 daterange 按浏览器本地时区渲染时间戳，
+       所以初值和回读都按本地自然日来：以前初值写死 +08:00、回读又按 Asia/Shanghai 格式化，
+       浏览器不在 +8 时框里显示的日期会比实际统计的差一天（TC-RPT-001 现场记录）。
+       这几天按北京自然日统计——标签已写明，后端也这样解释，所以选中的那一天原样送过去。 */
+    const date = value => new Intl.DateTimeFormat('sv-SE', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(value);
     const query = range?.length === 2 ? { from: date(range[0]), to: date(range[1]) } : {};
     const data = await statsApi.operations(query);
     if (cancelled || sequence !== loadSequence) return;
     S.value = data;
-    if (!dateRange.value) dateRange.value = [Date.parse(`${data.from}T00:00:00+08:00`), Date.parse(`${data.to}T00:00:00+08:00`)];
+    if (!dateRange.value) dateRange.value = [Date.parse(`${data.from}T00:00:00`), Date.parse(`${data.to}T00:00:00`)];
     await nextTick();
     if (cancelled || sequence !== loadSequence) return;
     if (window.CH.disposeAll) window.CH.disposeAll();

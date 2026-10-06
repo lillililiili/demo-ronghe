@@ -23,7 +23,8 @@ import AuthorizationQueue from '@/pages/alarms/AuthorizationQueue.vue';
 import { measuredMapPoints } from '@/services/trackPoints.js';
 import { ref, reactive, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
-import { useRealtimeRefresh } from '@/hooks/useRealtimeRefresh.js';
+import { refreshFailureText, shouldRetryRefresh, useRealtimeRefresh } from '@/hooks/useRealtimeRefresh.js';
+import { patchHtml } from '@/ui/domPatch.js';
 import UPagination from '@/components/UPagination.vue';
 import UPanel from '@/components/UPanel.vue';
 import UKpis from '@/components/UKpis.vue';
@@ -222,7 +223,7 @@ function coord(loc, issues, field) {
 }
 
 /* ---------- 页面数据（服务端事实的一次性快照，不作为状态机真源） ---------- */
-const list = { rows: [], loading: false, error: '' };
+const list = { rows: [], loading: false, error: '', refreshError: '' };
 let listSeq = 0, detailSeq = 0;
 const emptyDetail = () => ({ alarm: null, event: null, loading: false, error: '',
   target: null, targetLoading: false, targetError: '', track: null, trackError: '',
@@ -295,9 +296,14 @@ async function refreshEventDisposals(eventId) {
   } catch { if (isCurrent()) disposal.handoff = null; }
   if (!isCurrent()) return;
   pageProgress[eventId] = deriveAlarmProgress(Object.values(disposal.byAction), disposal.handoff ? [disposal.handoff] : []);
-  advisorySubject.value = advisoryProps(cur.alarm, cur.event);
+  setSubject(advisorySubject, advisoryProps(cur.alarm, cur.event));
   paintList();
   paintDetailContent();
+}
+
+/* 子组件（急停、处置进度、视频）的输入只在内容真的变了时才换新对象，刷新时不连带它们重画。 */
+function setSubject(target, value) {
+  if (JSON.stringify(target.value) !== JSON.stringify(value)) target.value = value;
 }
 
 
@@ -455,7 +461,11 @@ function summaryOf(a) {
 function listHtml() {
   if (list.loading && !list.rows.length) return `<div class="empty">正在读取告警列表</div>`;
   if (list.error) return `<div class="empty">${esc(list.error)}<br><button class="btn" data-al="retry" style="margin-top:10px">重试</button></div>`;
-  return U.table([
+  // 自动刷新失败时保留上次读到的列表，说明正在重试，不把列表换成错误页。
+  const note = list.refreshError
+    ? `<div id="alRefreshNote" class="alarm-refresh-note" role="status">自动刷新失败（${esc(list.refreshError)}），正在重试；下面是上次读到的列表。</div>`
+    : '';
+  return note + U.table([
     {
       t: sortTh('ts', '告警编号 / 时间'), w: '108px', cls: 'num',
       render: a => U.cell(esc(noOf(a)), clock(a.received_at), { mono: true, title: esc(a.alarm_id) })
@@ -465,7 +475,7 @@ function listHtml() {
     { t: sortTh('district', '关联目标 / 区域'), w: '146px', render: a => U.cell(a.target_id ? esc(a.target_no || a.target_id) : '—', esc(a.district_name || a.district_id || '—'), { mono: true, title: a.target_id ? esc(a.target_id) : '无关联目标或无目标读取权限' }) },
     { t: '告警内容', render: summaryOf },
     { t: sortTh('status', '状态'), w: '86px', render: stateTag }
-  ], list.rows, { rowId: a => a.alarm_id, activeId: cur.alarm && cur.alarm.alarm_id });
+  ], list.rows, { rowId: a => a.alarm_id, activeId: st.selId });
 }
 
 /* 事件事实核实保留原入口；处罚移送由后台调度，处置面板只读取进度。 */
@@ -483,6 +493,12 @@ function advisoryProps(a, ev) {
       ? (disposal.handoff.handoff_id || '') : ''
   };
 }
+/* 处置进度面板每秒读一次通知摘要。只有本页用到的字段（通知阶段、反制入口、不反制决定、自动移送）
+   变了才重画列表和详情、重读处置记录；没变就不动页面，免得每秒重画、按钮点不中（BUG-06）。 */
+const advisoryPageKey = s => JSON.stringify([s.event_version, s.notify_phase || '', s.counter_launch_visible === true,
+  s.no_counter?.decision_active === true, s.no_counter?.review_required === true,
+  s.auto_handoff?.handoff_id || '', s.auto_handoff?.status || '']);
+const advisoryContent = s => JSON.stringify({ ...s, _fetchedAt: undefined });
 function updateAdvisory(summary) {
   if (!summary?.event_id) return;
   const fetchedAt = summary._fetchedAt || Date.now();
@@ -490,12 +506,14 @@ function updateAdvisory(summary) {
   if (current && (summary.event_version < current.event_version || (current._fetchedAt && fetchedAt < current._fetchedAt))) return;
   summary = { ...summary, _fetchedAt: fetchedAt };
   advisorySummaries.set(summary.event_id, summary);
+  const pageChanged = !current || advisoryPageKey(current) !== advisoryPageKey(summary);
   if (summary.event_id !== cur.alarm?.event_id) {
-    paintList();
+    if (pageChanged) paintList();
     return;
   }
-  advisoryLive.value = summary;
+  if (!advisoryLive.value || advisoryContent(advisoryLive.value) !== advisoryContent(summary)) advisoryLive.value = summary;
   if (cur.event) cur.event.version = summary.event_version;
+  if (!pageChanged) return;
   paintList();
   paintDetailContent();
   const stillPending = cur.alarm.state !== 'CONFIRMED' && cur.alarm.state !== 'FALSE_POSITIVE';
@@ -503,7 +521,8 @@ function updateAdvisory(summary) {
     const mark = `${summary.event_id}:${summary.event_version}`;
     if (progressReloadFor !== mark) {
       progressReloadFor = mark;
-      void refreshAfterWrite();
+      // 后台已经核实并开始通知：静默重读列表和当前告警，不清空正在看的详情。
+      void Promise.all([loadList({ quiet: true }), refreshSelected(), loadKpis()]).catch(() => {});
     }
     return;
   }
@@ -560,12 +579,11 @@ function detailActionsHtml() {
     ${ev?.state === 'PENDING_VERIFICATION' ? '<p class="alarm-action-note">事件事实尚待核实。核实属实后自动发送飞手短信。</p>' : ''}`;
 }
 
+/* 详情和动作区就地更新：内容没变不动节点，“核实”等按钮在刷新时保持原节点，点得中。 */
 function paintDetailContent() {
-  videoSubject.value = cur.alarm ? { targetId: cur.alarm.target_id || '', label: noOf(cur.alarm) } : null;
-  const host = el('alDetail');
-  if (host) host.innerHTML = detailHtml();
-  const actions = el('alDetailActions');
-  if (actions) actions.innerHTML = detailActionsHtml();
+  setSubject(videoSubject, cur.alarm ? { targetId: cur.alarm.target_id || '', label: noOf(cur.alarm) } : null);
+  patchHtml(el('alDetail'), detailHtml());
+  patchHtml(el('alDetailActions'), detailActionsHtml());
 }
 
 let listQueryKey = '';
@@ -575,33 +593,23 @@ function paintList() {
   const queryKey = JSON.stringify(queryOf());
   const resetScroll = queryKey !== listQueryKey;
   listQueryKey = queryKey;
-  const content = document.createElement('template');
-  content.innerHTML = listHtml();
-  const scroll = host.querySelector('.table-scroll');
-  const nextScroll = content.content.querySelector('.table-scroll');
-  if (scroll && nextScroll) {
-    // 通知轮询只更新表格内容，保留用户正在操作的滚动容器及位置。
-    const top = resetScroll ? 0 : scroll.scrollTop;
-    const left = resetScroll ? 0 : scroll.scrollLeft;
-    scroll.replaceChildren(...nextScroll.childNodes);
-    scroll.scrollTop = top;
-    scroll.scrollLeft = left;
-  } else {
-    host.replaceChildren(content.content);
-  }
+  // 就地更新：没变的行保持原节点，滚动位置不丢；换了筛选、排序或页码才回到顶部。
+  patchHtml(host, listHtml());
+  const scroll = resetScroll && host.querySelector('.table-scroll');
+  if (scroll) { scroll.scrollTop = 0; scroll.scrollLeft = 0; }
 }
 function paintDetail() {
   const eventId = cur.alarm?.event_id || null;
   if (emergencyEvent.value?.id !== eventId) emergencyInfo.value = null;
-  emergencyEvent.value = eventId ? { id: eventId, label: noOf(cur.alarm) } : null;
-  advisorySubject.value = advisoryProps(cur.alarm, cur.event);
+  setSubject(emergencyEvent, eventId ? { id: eventId, label: noOf(cur.alarm) } : null);
+  setSubject(advisorySubject, advisoryProps(cur.alarm, cur.event));
   if (advisoryLive.value?.event_id !== eventId) advisoryLive.value = null;
   paintDetailContent();
 }
 function updateEmergency(data) {
   if (data && data.event_id !== emergencyEvent.value?.id) return;
   emergencyInfo.value = data;
-  advisorySubject.value = advisoryProps(cur.alarm, cur.event);
+  setSubject(advisorySubject, advisoryProps(cur.alarm, cur.event));
   paintList();
   paintDetailContent();
 }
@@ -684,7 +692,7 @@ async function loadList({ quiet = false, progress = true } = {}) {
     if (my !== listSeq) return;
     list.rows = Array.isArray(page && page.items) ? page.items : [];
     totalCount.value = Number(page && page.total) || 0;
-    list.loading = false; list.error = '';
+    list.loading = false; list.error = ''; list.refreshError = '';
     if (!list.rows.length && st.page > 1 && totalCount.value) {
       st.page = Math.max(1, Math.ceil(totalCount.value / st.size));
       return loadList();
@@ -696,8 +704,17 @@ async function loadList({ quiet = false, progress = true } = {}) {
     }
   } catch (e) {
     if (my !== listSeq) return;
+    if (quiet && list.rows.length && !list.error) {
+      // 自动刷新失败：保留上次读到的列表并注明，错误抛给实时刷新按退避重试。
+      list.refreshError = refreshFailureText(e);
+      paintList();
+      throw e;
+    }
     // API 失败只显示错误并允许重试，绝不回退 Mock 列表。
-    list.rows = []; totalCount.value = 0; list.loading = false; list.error = messageOf(e);
+    list.rows = []; totalCount.value = 0; list.loading = false; list.error = messageOf(e); list.refreshError = '';
+    paintList();
+    if (quiet) throw e;
+    return;
   }
   paintList();
 }
@@ -793,15 +810,16 @@ async function loadChain(my) {
   paintDetail();
 }
 
-async function loadTarget(my) {
+/* quiet：告警有变化时静默重读目标和轨迹，新数据到达前保留已显示的内容，读取失败也不清掉已显示的目标。 */
+async function loadTarget(my, { quiet = false } = {}) {
   const a = cur.alarm;
   if (!a || !a.target_id) return;
-  cur.targetLoading = true;
-  focusMap();
+  if (!quiet) { cur.targetLoading = true; focusMap(); }
   try {
     const t = await targetApi.detail(a.target_id);
     if (my !== detailSeq) return;
     cur.target = t;
+    cur.targetError = '';
     try {
       const tracks = await targetApi.tracks(a.target_id, { page: 1, size: 1 });
       if (my !== detailSeq) return;
@@ -811,11 +829,12 @@ async function loadTarget(my) {
         const points = await targetApi.pointsAll(track.track_id);
         if (my !== detailSeq) return;
         cur.track = { id: track.track_id, source_mode: track.source_mode, points: Array.isArray(points && points.items) ? points.items : [] };
+        cur.trackError = '';
       }
-    } catch (e) { if (my !== detailSeq) return; cur.trackError = messageOf(e); }
+    } catch (e) { if (my !== detailSeq) return; if (!quiet || !cur.track) cur.trackError = messageOf(e); }
   } catch (e) {
     if (my !== detailSeq) return;
-    cur.targetError = messageOf(e);
+    if (!quiet || !cur.target) cur.targetError = messageOf(e);
   }
   if (my !== detailSeq) return;
   cur.targetLoading = false;
@@ -847,6 +866,60 @@ async function refreshAfterWrite() {
   ]);
 }
 
+/* 静默重读当前打开的告警：新数据到达前保留已显示的详情，内容没变就不重画；关联目标换了才重读目标和轨迹，
+   急停、处置进度和视频面板不卸载重建。读取暂时失败（断网、超时、5xx）时保留原详情并抛出，由实时刷新退避重试；
+   告警已不可见（403/404 等）时如实显示原因。详情还没读出来（上次失败）时按正常选中重读。 */
+async function refreshSelected(id = st.selId) {
+  if (!id || id !== st.selId || cur.loading) return;
+  if (!cur.alarm) { await selectAlarm(id); return; }
+  const my = detailSeq;
+  const isCurrent = () => my === detailSeq && st.selId === id;
+  let alarm, event = null;
+  try {
+    alarm = await getAlarm(id);
+    if (!isCurrent()) return;
+    if (alarm.event_id) {
+      try { event = await getUavEvent(alarm.event_id); } catch (e) { if (shouldRetryRefresh(e)) throw e; }
+      if (!isCurrent()) return;
+    }
+  } catch (e) {
+    if (!isCurrent()) return;
+    if (shouldRetryRefresh(e)) throw e;
+    ++detailSeq; ++disposalSeq;
+    cur = emptyDetail(); cur.error = messageOf(e);
+    paintDetail(); focusMap();
+    return;
+  }
+  const before = cur.alarm, beforeEvent = cur.event;
+  const targetChanged = alarm.target_id !== before.target_id;
+  const chainChanged = targetChanged || alarm.event_id !== before.event_id || JSON.stringify(event) !== JSON.stringify(beforeEvent);
+  cur.alarm = alarm; cur.event = event;
+  if (alarm.event_id) await refreshEventDisposals(alarm.event_id);
+  else { ++disposalSeq; disposal.byAction = {}; disposal.handoff = null; disposal.error = ''; disposal.unavailable = false; }
+  if (!isCurrent()) return;
+  paintList();
+  paintDetail();
+  if (targetChanged) {
+    cur.target = null; cur.track = null; cur.targetError = ''; cur.trackError = '';
+    await loadTarget(my);
+  } else if (alarm.target_id && JSON.stringify(alarm) !== JSON.stringify(before)) {
+    await loadTarget(my, { quiet: true });
+  }
+  if (chainChanged && isCurrent()) await refreshChain(my);
+}
+
+/* 证据链静默重读：读到新内容再替换，读取失败保留已显示的证据链；原来就没读出来的按正常流程重读。 */
+async function refreshChain(my) {
+  const a = cur.alarm;
+  if (!a || my !== detailSeq) return;
+  if (!cur.chain || cur.chainError || cur.chainUnavailable || !hasPermission('evidence.read')) return loadChain(my);
+  try {
+    const chain = a.event_id ? await getEvidenceChain('EVENT', a.event_id) : await getEvidenceChain('TARGET', a.target_id);
+    if (my !== detailSeq || cur.alarm?.alarm_id !== a.alarm_id) return;
+    if (JSON.stringify(chain) !== JSON.stringify(cur.chain)) { cur.chain = chain; paintDetailContent(); }
+  } catch { /* 保留已显示的证据链，下次变化再读 */ }
+}
+
 /* ---------- 人工核实：共享弹窗（与工作台同一实现，幂等键保留与 409/超时回读在弹窗内处理） ---------- */
 function verifyModal() {
   const a = cur.alarm, ev = cur.event;
@@ -858,28 +931,42 @@ function verifyModal() {
   });
 }
 
-/* 实时刷新：告警、处置或移送变化后静默重读列表；统计卡片 9 个计数请求，最多每 10 秒重读一次。
-   选中告警本身有变化时才重读详情，避免详情区随每次信号闪烁。 */
+/* 实时刷新：告警、处置或移送变化后静默重读列表，两次至少间隔 2 秒，内容没变就不动页面。
+   统计卡片 9 个计数请求，最多每 10 秒重读一次；逐行处置进度每行要读两三个接口，信号密集时也最多每 10 秒一次，
+   到点自动补上。当前打开的告警：本行变了、重连补读（"*"）时静默重读详情；处置或移送变化时重读它的处置记录，
+   反制做完后进度和详情马上跟着变（BUG-08）。读取失败抛给实时刷新，按退避重试。 */
 const KPI_MIN_INTERVAL_MS = 10_000;
-let kpiAt = 0, kpiTimer = null;
+const PROGRESS_MIN_INTERVAL_MS = 10_000;
+let kpiAt = 0, kpiTimer = null, progressAt = 0, progressTimer = null;
 function realtimeKpis() {
   if (kpiTimer) return;
   const wait = kpiAt + KPI_MIN_INTERVAL_MS - Date.now();
   kpiTimer = setTimeout(() => { kpiTimer = null; kpiAt = Date.now(); void loadKpis(); }, Math.max(0, wait));
 }
-onUnmounted(() => clearTimeout(kpiTimer));
+function takeProgress(wanted) {
+  if (!wanted) return false;
+  const wait = progressAt + PROGRESS_MIN_INTERVAL_MS - Date.now();
+  if (wait <= 0) { progressAt = Date.now(); return true; }
+  if (!progressTimer) progressTimer = setTimeout(() => { progressTimer = null; realtime.trigger(['disposal']); }, wait);
+  return false;
+}
+onUnmounted(() => { clearTimeout(kpiTimer); clearTimeout(progressTimer); });
 async function realtimeRefresh(topics) {
   if (list.loading) return;
+  const all = topics.includes('*');
+  const disposalChanged = all || topics.some(topic => topic === 'disposal' || topic === 'punishment');
   const selId = st.selId;
   const rowKey = () => JSON.stringify(list.rows.find(row => row.alarm_id === selId) || null);
   const before = rowKey();
-  const progress = topics.some(topic => topic === '*' || topic === 'disposal' || topic === 'punishment');
   realtimeKpis();
-  await loadList({ quiet: true, progress });
+  await loadList({ quiet: true, progress: takeProgress(disposalChanged) });
+  if (!selId || st.selId !== selId || cur.loading) return;
   const after = rowKey();
-  if (selId && st.selId === selId && !cur.loading && after !== before && after !== 'null') await selectAlarm(selId);
+  const rowChanged = after !== before && after !== 'null';
+  if (all || rowChanged) await refreshSelected(selId);
+  else if (disposalChanged && cur.alarm?.event_id) await refreshEventDisposals(cur.alarm.event_id);
 }
-useRealtimeRefresh(['alarm', 'disposal', 'punishment'], realtimeRefresh, { minIntervalMs: 2_000 });
+const realtime = useRealtimeRefresh(['alarm', 'disposal', 'punishment'], realtimeRefresh, { minIntervalMs: 2_000 });
 
 function onPage(p2) { st.page = p2; loadList(); }
 function onPageSize(s2) { st.size = s2; st.page = 1; loadList(); }
@@ -1063,6 +1150,7 @@ onMounted(async () => {
 .alarm-observation :deep(.btn) { min-height:40px; height:auto; padding:8px 14px; white-space:normal; }
 .alarm-observation :deep(.alarm-action-note) { margin:8px 0 0; font-size:12px; line-height:1.65; color:var(--txt-2); }
 .alarm-detail-content { min-width:0; }
+.alarms-page :deep(.alarm-refresh-note) { flex:none; margin:0 16px 8px; padding:6px 10px; border:1px solid var(--line); border-radius:6px; font-size:12px; line-height:1.6; color:var(--amber); overflow-wrap:anywhere; }
 .alarm-workspace-tabs { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; flex:none; }
 .alarm-workspace-tabs .btn { white-space:normal; height:auto; min-height:34px; }
 .alarms-page :deep(.detail-hero-title),

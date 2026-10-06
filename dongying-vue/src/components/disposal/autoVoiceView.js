@@ -1,7 +1,8 @@
 export const AUTO_VOICE_STATUS = {
   DISABLED: '电话录音通知未启用', WAITING: '等待自动拨打', CALLING: '系统正在拨打',
   SIMULATED_PLAYED: '模拟接通并播放完成', FAILED: '电话通知失败，需人工处理',
-  UNAVAILABLE: '电话录音通知暂不可用', BLOCKED: '自动电话通知已暂停', UNKNOWN: '通话结果未确认'
+  UNAVAILABLE: '电话录音通知暂不可用', BLOCKED: '自动电话通知已暂停', UNKNOWN: '通话结果未确认',
+  NOT_REQUIRED: '不需要拨打飞手电话'
 };
 
 export function autoVoiceView(data) {
@@ -13,7 +14,9 @@ export function autoVoiceView(data) {
     .sort((a, b) => Number(b.created_at) - Number(a.created_at))[0];
   const recipientSnapshot = latest ? latest.recipient_snapshot : voice.recipient_snapshot;
   return {
-    title: AUTO_VOICE_STATUS[voice.status] || '通话结果未确认', reason: voice.reason || '',
+    // 短信因超过通知时效停发时，电话也不自动拨打，要先核对最新情况。
+    title: String(voice.reason || '').includes('超过自动通知时效') && voice.status === 'BLOCKED' ? '超过时效，不自动拨打'
+      : AUTO_VOICE_STATUS[voice.status] || '通话结果未确认', reason: voice.reason || '',
     tone: voice.status === 'SIMULATED_PLAYED' ? 'success'
       : ['FAILED', 'UNAVAILABLE', 'BLOCKED', 'UNKNOWN'].includes(voice.status) ? 'warning' : 'muted',
     // 结果未知不能通过重拨猜测，后端允许且结果明确失败时才开放重试。

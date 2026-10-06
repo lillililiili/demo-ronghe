@@ -1,11 +1,20 @@
 export const AUTO_SMS_STATUS = {
   WAITING: '等待自动通知', SENDING: '系统正在发送', SIMULATED_DELIVERED: '模拟已送达',
   UNKNOWN: '发送结果未知', FAILED: '发送失败，需人工处理', UNAVAILABLE: '短信通道未接通',
-  BLOCKED: '暂不满足自动发送条件', DISABLED: '自动通知未启用'
+  BLOCKED: '暂不满足自动发送条件', DISABLED: '自动通知未启用', NOT_REQUIRED: '不需要发送短信'
 };
+/* 后端时效提示的开头，与 AutoSmsService.STALE_REASON 一致；旧记录只有前半句。 */
+export const STALE_PREFIX = '事件已超过自动通知时效';
+export const RECHECK_SOURCE = 'MANUAL_RECHECK';
+export function smsExpired(sms) {
+  return !!sms && !['SIMULATED_DELIVERED', 'SENDING', 'UNKNOWN', 'NOT_REQUIRED'].includes(sms.status)
+    && String(sms.reason || '').startsWith(STALE_PREFIX);
+}
 function reasonText(reason) {
   // 只剥离已知的演示参数尾注，未知失败原因完整保留。
-  const text = String(reason || '').replace(/；本地演示策略：目标和研判有效期\d+秒，事件及人工确认有效期\d+秒$/, '');
+  const text = String(reason || '').replace(/；本地演示策略：目标和研判有效期\d+秒，事件及人工确认有效期\d+秒$/, '')
+    // 标题已写“需核对最新情况”，原因只留后半句。
+    .replace(/^事件已超过自动通知时效，需核对最新情况：/, '');
   const labels = {
     '事件已超过自动通知时效': '原告警已超过自动发送时效；本次核实不会更新原告警和目标观测时间。',
     '缺少近期目标观测，不能确认目标仍在场': '缺少近期观测，目标位置待确认',
@@ -23,6 +32,7 @@ function reasonText(reason) {
     '模拟短信接口未返回有效送达结果，可在条件仍满足时补发': '未收到有效送达结果',
     '等待后台检查触发条件': '',
     '已登记补发，等待后台发送': '已登记补发',
+    '已核对最新情况并登记发送，等待后台发送': '已核对最新情况并登记发送，等待后台发送',
     '没有可通知的执行飞手，不能发送短信': '没有可通知的执行飞手，不能发送短信'
   };
   return Object.prototype.hasOwnProperty.call(labels, text) ? labels[text] : text;
@@ -32,18 +42,22 @@ export function autoSmsView(data) {
   if (!sms) return { title: '自动通知状态暂不可用', reason: '', tone: 'muted', canRetry: false };
   const latest = [...(data.records || [])].reverse().find(row => row.kind === 'SMS_SIMULATED');
   const recipientSnapshot = latest ? latest.recipient_snapshot : sms.recipient_snapshot;
-  const expired = sms.status === 'BLOCKED' && String(sms.reason || '').startsWith('事件已超过自动通知时效');
+  // 告警超过通知时效才走到发送：不再自动发短信和打电话，先请人核对最新情况（2026-10-06）。
+  const expired = smsExpired(sms);
+  const canRetry = !!sms.can_retry && !['SENDING', 'WAITING', 'UNKNOWN', 'SIMULATED_DELIVERED', 'NOT_REQUIRED'].includes(sms.status);
   return {
-    title: AUTO_SMS_STATUS[sms.status] || '通知结果待确认', reason: reasonText(sms.reason),
-    tone: sms.status === 'SIMULATED_DELIVERED' ? 'success' : ['FAILED', 'UNKNOWN', 'UNAVAILABLE', 'BLOCKED'].includes(sms.status) ? 'warning' : 'muted',
-    canRetry: !!sms.can_retry && !['SENDING', 'WAITING', 'UNKNOWN', 'SIMULATED_DELIVERED'].includes(sms.status),
+    title: expired ? '需核对最新情况' : AUTO_SMS_STATUS[sms.status] || '通知结果待确认', reason: reasonText(sms.reason),
+    tone: sms.status === 'SIMULATED_DELIVERED' ? 'success' : expired || ['FAILED', 'UNKNOWN', 'UNAVAILABLE', 'BLOCKED'].includes(sms.status) ? 'warning' : 'muted',
+    canRetry, expired, recheck: expired && canRetry,
     updatedAt: sms.updated_at, triggeredAt: sms.triggered_at, evaluatedAt: sms.evaluated_at, dataUpdatedAt: sms.data_updated_at,
     recipient: latest ? latest.recipient_name || recipientSnapshot?.recipient_name : recipientSnapshot ? recipientSnapshot.recipient_name : Number(sms.attempt_count) > 0 ? undefined : data.recipient?.name,
     recipientHint: recipientSnapshot?.contact_hint,
     simulated: data.sms_mode === 'SIMULATED' || sms.status === 'SIMULATED_DELIVERED',
     source: sms.trigger_source, policy: sms.policy_code,
-    guidance: expired
-      ? '请核对目标的最新观测和关联研判。测试自动通知需使用持续上报的新模拟场景，并配齐飞手信息；反复核实或刷新旧告警不会重新发送。'
-      : ''
+    guidance: !expired ? ''
+      : canRetry ? '请先核对目标现在的位置和违规情况。确认仍需提醒飞手时，点“核对后发送飞手短信”；目标已离开或情况已变化，可以不再发送。'
+        : sms.status === 'BLOCKED' && !String(sms.reason || '').includes('；同时')
+          ? '请先核对目标现在的位置和违规情况。需要有权限的人员核对后才能登记发送。'
+          : '请先核对目标现在的位置和违规情况。'
   };
 }

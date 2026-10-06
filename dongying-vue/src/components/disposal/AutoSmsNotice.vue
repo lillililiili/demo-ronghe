@@ -12,26 +12,38 @@ const emit = defineEmits(['changed']);
 let alive = true;
 onUnmounted(() => { alive = false; });
 const view = computed(() => autoSmsView(props.data));
-const compactTitle = computed(() => ({ WAITING: '等待发送', SENDING: '正在发送', SIMULATED_DELIVERED: '模拟已送达', UNKNOWN: '发送结果未知', FAILED: '发送失败', UNAVAILABLE: '通道未接通', BLOCKED: '暂不满足发送条件', DISABLED: '未启用' })[props.data?.auto_sms?.status] || view.value.title);
+const compactTitle = computed(() => view.value.expired ? '需核对最新情况'
+  : ({ WAITING: '等待发送', SENDING: '正在发送', SIMULATED_DELIVERED: '模拟已送达', UNKNOWN: '发送结果未知', FAILED: '发送失败', UNAVAILABLE: '通道未接通', BLOCKED: '暂不满足发送条件', DISABLED: '未启用', NOT_REQUIRED: '不需要发送' })[props.data?.auto_sms?.status] || view.value.title);
+const SOURCE_TEXT = { ALARM_EVENT: '核实属实后才由后台自动发送。', RULE_ILLEGAL: '核实属实后才由后台自动发送。',
+  MANUAL_RECHECK: '告警超过通知时效后，有人核对了最新情况并登记发送。', MANUAL_CONFIRMATION: '人工确认与当前观测' };
+const sourceText = computed(() => SOURCE_TEXT[view.value.source] || (view.value.source ? '后台通知记录' : ''));
 const time = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '';
 function retry() {
   if (!view.value.canRetry || props.disabled) return;
   const id = props.data.event_id, version = props.data.event_version;
   const key = newHandoffIdempotencyKey();
+  // 超过通知时效后的发送要先核对最新情况，并由提交人确认（2026-10-06）。
+  const recheck = view.value.recheck;
   const modal = openFormModal({
-    title: '重新发送飞手短信', confirmText: '提交重试', width: '520px',
-    notice: '提交后由后台重新发送。模拟短信不会发到真实手机。',
+    title: recheck ? '核对最新情况后发送飞手短信' : '重新发送飞手短信', confirmText: recheck ? '登记发送' : '提交重试', width: '520px',
+    notice: recheck ? '提交后由后台发送这一条短信；之后仍按短信送达、观察位置、拨打电话的顺序继续。模拟短信不会发到真实手机。'
+      : '提交后由后台重新发送。模拟短信不会发到真实手机。',
     warning: view.value.simulated ? '当前使用模拟短信，不会发送真实短信。' : '',
-    fields: [{ key: 'note', label: '重试说明（选填）', type: 'textarea', minRows: 3, placeholder: '可补充已核查或处理的问题，最多 1000 字' }],
-    initial: { note: '' },
-    validate: value => String(value.note || '').trim().length > 1000 ? '重试说明不能超过 1000 字' : null,
+    fields: [
+      ...(recheck ? [{ key: 'checked', label: '核对结果', type: 'checkbox', boxLabel: '我已核对目标现在的位置和违规情况，仍需要提醒飞手' }] : []),
+      { key: 'note', label: recheck ? '核对说明（选填）' : '重试说明（选填）', type: 'textarea', minRows: 3, placeholder: recheck ? '可写明核对了什么，最多 1000 字' : '可补充已核查或处理的问题，最多 1000 字' }
+    ],
+    initial: { note: '', checked: false },
+    submitEnabled: value => !recheck || value.checked === true,
+    validate: value => recheck && value.checked !== true ? '请先确认已核对最新情况'
+      : String(value.note || '').trim().length > 1000 ? (recheck ? '核对说明不能超过 1000 字' : '重试说明不能超过 1000 字') : null,
     onSubmit: async value => {
       const current = () => alive && id === props.data?.event_id && modal.isCurrent();
       if (!current()) throw new Error('事件已切换，请关闭后重新操作');
       try {
         await uavAdvisoryApi.retrySms(id, { expected_version: version, note: String(value.note).trim() }, key);
         if (!current()) return;
-        modal.close(); emit('changed'); toast('已提交重试，请查看后台发送结果', 'ok');
+        modal.close(); emit('changed'); toast(recheck ? '已登记发送，请查看后台发送结果' : '已提交重试，请查看后台发送结果', 'ok');
       } catch (error) {
         if (!current()) return;
         emit('changed');
@@ -44,7 +56,7 @@ function retry() {
 
 <template>
   <section class="auto-sms-notice" :class="{ 'is-compact': compact }" aria-label="飞手短信通知" :data-state="data?.auto_sms?.status">
-    <component :is="compact ? 'details' : 'div'" :key="data?.event_id" :open="compact && data?.auto_sms?.status === 'BLOCKED'">
+    <component :is="compact ? 'details' : 'div'" :key="data?.event_id" :open="compact && (data?.auto_sms?.status === 'BLOCKED' || view.expired)">
       <summary v-if="compact" class="notice-summary">
         <b>飞手短信</b><span class="notice-result" :class="`asn-${view.tone}`">{{ compactTitle }}</span>
         <span v-if="view.simulated" class="tag t-amber">模拟</span><span class="notice-toggle">详情</span>
@@ -59,15 +71,15 @@ function retry() {
         <template v-if="view.updatedAt && view.updatedAt !== view.triggeredAt"><dt>状态更新</dt><dd>{{ time(view.updatedAt) }}</dd></template>
       </dl>
       <p v-if="!view.recipient" class="asn-recipient">未提供接收飞手信息</p>
-      <p v-if="compact && (view.source === 'ALARM_EVENT' || view.source === 'RULE_ILLEGAL')">核实属实后才由后台自动发送。</p>
+      <p v-if="compact && ['ALARM_EVENT', 'RULE_ILLEGAL', 'MANUAL_RECHECK'].includes(view.source)">{{ sourceText }}</p>
       <details v-if="!compact && (view.source || view.evaluatedAt || view.dataUpdatedAt)" :key="data?.event_id">
         <summary>查看发送依据与时间</summary>
-        <p v-if="view.source">{{ view.source === 'ALARM_EVENT' || view.source === 'RULE_ILLEGAL' ? '核实属实后才由后台自动发送。' : view.source === 'MANUAL_CONFIRMATION' ? '人工确认与当前观测' : '后台通知记录' }}</p>
+        <p v-if="view.source">{{ sourceText }}</p>
         <p v-if="view.evaluatedAt">研判时间：{{ time(view.evaluatedAt) }}</p>
         <p v-if="view.dataUpdatedAt">观测时间：{{ time(view.dataUpdatedAt) }}</p>
       </details>
       <p class="asn-recipient">送达不代表飞手已读，也不代表目标已飞离。</p>
-      <button v-if="view.canRetry" type="button" class="btn sm" :disabled="disabled" @click="retry">重新发送飞手短信</button>
+      <button v-if="view.canRetry" type="button" class="btn sm" :disabled="disabled" @click="retry">{{ view.recheck ? '核对后发送飞手短信' : '重新发送飞手短信' }}</button>
     </component>
   </section>
 </template>

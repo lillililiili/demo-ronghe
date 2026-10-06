@@ -1,6 +1,6 @@
 <script>
 /* 跨导航只保留筛选、分页与选中 ID；业务事实仍每次从只读 API 重取，不能缓存成 Mock 副本。 */
-const S = { filters: { status_code: '' }, page: 1, size: 20, selectedPlanId: null, tab: 'route', tabHash: '',
+const S = { filters: { status_code: '', keyword: '', today: false }, page: 1, size: 20, selectedPlanId: null, tab: 'route', tabHash: '',
   /* 风险页签：筛选只收契约允许的字段；目标类型筛选与任意排序契约不支持，只保留禁用控件。 */
   riskFilters: { severity: '', state: '', risk_type: '', plan_id: '', owner_org_id: '', district_id: '', source_mode: '', occurred: null },
   riskPage: 1, riskSize: 10, selectedRiskId: null, riskTab: 'event' };
@@ -45,6 +45,7 @@ import { objectSnapshot, objectTrackPoints, drawObjectRisk } from '@/pages/fligh
 import { weatherPolygon, insideWeather, drawWeatherArea, weatherLayerKind } from '@/pages/flights/weatherMap.js';
 import { strokePlanComparison, trustedTrajectoryPoints, trajectoryNoteText } from '@/pages/flights/planTrajectory.js';
 import { hasRouteDeviation } from '@/pages/flights/planMatch.js';
+import { PLAN_KEYWORD_MAX, activePlanKpi, beijingDayWindow, planKpiFilters, planListQuery, planNumberText, planWindowText, normalizePlanKeyword, upstreamPlanNotice } from '@/pages/flights/planFilters.js';
 import UPagination from '@/components/UPagination.vue';
 import UControl from '@/components/form/UControl.vue';
 
@@ -52,6 +53,10 @@ usePageChrome('flights');
 const abnormalActive = window.UI.abnormalActive;
 
 const filters = reactive(S.filters);
+/* 输入框里的关键词；回车或“查询”后才写入 filters.keyword，避免每敲一字就重读列表。 */
+const keywordDraft = ref(filters.keyword);
+/* 上级计划接口状态（ZT-21）：读不到时为 null，不提示。 */
+const upstreamStatus = ref(null);
 const page = ref(S.page);
 const size = ref(S.size);
 const total = ref(0);
@@ -260,13 +265,9 @@ const statusOptions = [{ label: '全部状态', value: '' }, ...['PENDING', 'EXE
    （待执行=待执行+已批准）；后两个只能按本页已读到的对照结论统计（服务端没有跨计划的匹配汇总），
    也限定为本页今天的计划。 */
 const planKpis = ref({ today: null, executing: null, pending: null, completed: null, failed: false });
-const DAY_MS = 86_400_000;
+/* 与“只看今天”的列表筛选共用同一窗口，点卡片后列表数量与卡片一致。 */
 function todayWindow() {
-  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit'
-  }).formatToParts(Date.now()).filter(part => part.type !== 'literal').map(part => [part.type, Number(part.value)]));
-  const from = Date.UTC(parts.year, parts.month - 1, parts.day) - 8 * 60 * 60_000;
-  return { from, to: from + DAY_MS };
+  return beijingDayWindow();
 }
 function planOverlapsToday(plan, window = todayWindow()) {
   if (plan?.start_at == null || plan?.end_at == null) return false;
@@ -301,18 +302,35 @@ const pageMatchCounts = computed(() => {
   });
   return { unmatched, deviated };
 });
+/* 前四张卡可点击：列表改为只看北京时间今天该状态的计划，选中卡高亮，再点一次恢复全部。
+   后两张只统计本页、服务端没有对应筛选，不做成可点击，免得只筛本页造成误解。 */
+const PLAN_KPI_CARDS = [
+  { key: 'today', label: '今日报备计划', color: 'blue', icon: 'plan', caption: '北京时间今天', desc: '计划时段与北京时间今天相交的计划数' },
+  { key: 'executing', label: '执行中', color: 'cyan', icon: 'radar', caption: '今日计划', desc: '北京时间今天计划中当前状态为执行中的数量' },
+  { key: 'pending', label: '待执行', color: 'blue', icon: 'plan', caption: '今日计划', desc: '北京时间今天计划中尚未开始的数量，包含已批准计划' },
+  { key: 'completed', label: '已完成', color: 'green', icon: 'check', caption: '今日计划', desc: '北京时间今天计划中状态为已完成的数量' }
+];
 const kpiList = computed(() => {
   const n = value => (value == null ? (planKpis.value.failed ? '—' : '…') : Number(value).toLocaleString('en-US'));
-  const k = planKpis.value, m = pageMatchCounts.value;
+  const k = planKpis.value, m = pageMatchCounts.value, chosen = activePlanKpi(filters);
   return [
-    { label: '今日报备计划', value: n(k.today), color: 'blue', icon: 'plan', caption: '北京时间今天', desc: '计划时段与北京时间今天相交的计划数' },
-    { label: '执行中', value: n(k.executing), color: 'cyan', icon: 'radar', caption: '今日计划', desc: '北京时间今天计划中当前状态为执行中的数量' },
-    { label: '待执行', value: n(k.pending), color: 'blue', icon: 'plan', caption: '今日计划', desc: '北京时间今天计划中尚未开始的数量，包含已批准计划' },
-    { label: '已完成', value: n(k.completed), color: 'green', icon: 'check', caption: '今日计划', desc: '北京时间今天计划中状态为已完成的数量' },
+    ...PLAN_KPI_CARDS.map(({ key, desc, ...card }) => ({
+      ...card, value: n(k[key]), active: chosen === key, attr: `data-plan-kpi="${key}" aria-pressed="${chosen === key}"`,
+      desc: `${desc}；${chosen === key ? '再次点击查看全部计划' : '点击只看这些计划'}`
+    })),
     { label: '计划未匹配到目标', value: String(m.unmatched), color: 'amber', icon: 'alert', caption: '本页今日计划', desc: '本页北京时间今天执行中或已完成的计划中，还没找到对应飞机的数量' },
     { label: '偏离报备计划', value: String(m.deviated), color: 'red', icon: 'alert', caption: '本页今日计划', desc: '本页北京时间今天计划中，研判已记录走廊不匹配的数量' }
   ];
 });
+/* 生效条件提示：“今日计划”与统计卡口径相同（北京时间今天），点卡片后不在工具栏里另占位置。 */
+const planFilterSummary = computed(() => {
+  const parts = [];
+  if (filters.today) parts.push('今日计划');
+  if (filters.status_code) parts.push(labelOf(PLAN_STATUS_LABEL, filters.status_code));
+  if (filters.keyword) parts.push(`关键词“${filters.keyword}”`);
+  return parts.length ? `筛选：${parts.join(' · ')}，共 ${total.value} 条` : '';
+});
+const upstreamNotice = computed(() => upstreamPlanNotice(upstreamStatus.value, formatTime));
 const trustedCenterline = computed(() => trustedCoordinates(routeVersion.value));
 const trustedAirspaces = computed(() => trustedAirspaceOverlays());
 const hasMapContent = computed(() => Boolean(trustedCenterline.value?.length || trustedAirspaces.value.length || trajectoryPoints.value.some(Boolean) || mapDevices.value.length));
@@ -468,7 +486,8 @@ const planRecords = computed(() => plans.value.map(plan => {
   return {
     id: plan.plan_id, title: plan.route?.name || '未命名航线',
     status: labelOf(PLAN_STATUS_LABEL, plan.status_code), statusClass: PLAN_STATUS_TAG[plan.status_code] || 't-gray',
-    subtitle: `${formatTime(plan.start_at)} 起`,
+    // 同名航线常有多份计划（不同批次或时段），行内必须带编号与时段才能区分。
+    subtitle: `计划编号 ${planNumberText(plan)} · ${planWindowText(plan)}`,
     facts: [{ label: '计划时长', value: formatDuration(plan) }, { label: '目标匹配', value: match.text,
       className: match.tag ? `tag ${match.text === '计划偏离' ? 't-orange' : match.tag}` : '' }],
     note: plan.route?.max_altitude_m == null ? '最大高度未提供' : `最大高度 ${plan.route.max_altitude_m} 米`,
@@ -516,11 +535,7 @@ async function loadPlans(nextPage = page.value, requestedId = null) {
   loading.value = true;
   error.value = '';
   try {
-    const data = await flightApi.list({
-      page: nextPage,
-      size: size.value,
-      status_code: filters.status_code
-    });
+    const data = await flightApi.list(planListQuery(filters, { page: nextPage, size: size.value }));
     if (token !== planListToken || activeTab.value !== 'route') return;
     page.value = data.page;
     total.value = data.total;
@@ -530,6 +545,7 @@ async function loadPlans(nextPage = page.value, requestedId = null) {
     loading.value = false;
     loadRowActuals(plans.value);
     loadPlanKpis();
+    loadUpstreamStatus();
     if (requestedId) { await loadDetail(requestedId); return; }
     if (!selected.value || !plans.value.some(item => item.plan_id === selected.value.plan_id)) {
       selected.value = plans.value[0] || null;
@@ -982,9 +998,55 @@ function refreshPlans() {
   loadPlans(page.value);
 }
 
-function chooseStatus(value) { filters.status_code = value; applyFilters(); }
-// 下拉一改就查（与 legacy 一致）；关键词仍走回车/查询。
-watch(() => filters.status_code, () => applyFilters());
+/* 下拉一改就查（与 legacy 一致）；关键词走回车/查询。不用 watch：深链清筛选时不能再抢先重读一次列表。 */
+function chooseStatus(value) {
+  if ((value || '') === filters.status_code) return;
+  filters.status_code = value || '';
+  applyFilters();
+}
+function applyKeyword() {
+  const keyword = normalizePlanKeyword(keywordDraft.value);
+  keywordDraft.value = keyword;
+  filters.keyword = keyword;
+  applyFilters();
+}
+/* 点输入框的清除按钮即恢复不按关键词筛选。 */
+function keywordInput(value) {
+  if (!String(value ?? '').trim() && filters.keyword) applyKeyword();
+}
+/* 读取中也可点：新请求会作废未返回的旧请求（含定时重读），不能让点击无反应。 */
+function choosePlanKpi(key) {
+  Object.assign(filters, planKpiFilters(filters, key));
+  keywordDraft.value = filters.keyword;
+  applyFilters();
+}
+function planKpiKey(event) { return event.target?.closest?.('[data-plan-kpi]')?.dataset.planKpi || ''; }
+function onPlanKpiClick(event) { const key = planKpiKey(event); if (key) choosePlanKpi(key); }
+function onPlanKpiKeydown(event) {
+  const key = planKpiKey(event);
+  if (!key || (event.key !== 'Enter' && event.key !== ' ')) return;
+  event.preventDefault();
+  choosePlanKpi(key);
+}
+/* 统计卡整组由 v-html 重绘（选中态、数字变化都会整组替换），焦点在卡上时会被甩回页首。
+   重绘前记下焦点所在的卡，重绘后放回同一张卡；焦点已在别处时不抢。 */
+let refocusPlanKpi = '';
+watch(kpiList, () => { refocusPlanKpi = document.activeElement?.closest?.('[data-plan-kpi]')?.dataset.planKpi || ''; }, { flush: 'pre' });
+watch(kpiList, () => {
+  const key = refocusPlanKpi;
+  refocusPlanKpi = '';
+  if (key && (!document.activeElement || document.activeElement === document.body)) {
+    document.querySelector(`[data-plan-kpi="${key}"]`)?.focus({ preventScroll: true });
+  }
+}, { flush: 'post' });
+function clearPlanFilters() {
+  Object.assign(filters, { status_code: '', keyword: '', today: false });
+  keywordDraft.value = '';
+  applyFilters();
+}
+async function loadUpstreamStatus() {
+  try { upstreamStatus.value = await flightApi.upstreamStatus(); } catch { upstreamStatus.value = null; }
+}
 function changePage(nextPage) { if (nextPage !== page.value) loadPlans(nextPage); }
 function changePageSize(nextSize) { size.value = nextSize; routeLoaded.value = false; loadPlans(1); }
 
@@ -1554,7 +1616,8 @@ function showRouteTab(requestedId = null) {
   activeTab.value = 'route';
   destroyRouteMap();
   if (requestedId) {
-    filters.status_code = '';
+    Object.assign(filters, { status_code: '', keyword: '', today: false });
+    keywordDraft.value = '';
     selected.value = null;
     routeVersion.value = null;
     airspaceVersions.value = [];
@@ -1621,12 +1684,14 @@ async function realtimeRefreshPlans(topics) {
     const selectedId = selected.value?.plan_id;
     const before = JSON.stringify(plans.value.find(item => item.plan_id === selectedId) || null);
     try {
-      const data = await flightApi.list({ page: page.value, size: size.value, status_code: filters.status_code });
+      // 与列表同一份筛选（状态、关键词、今天范围）重读，实时刷新不能把搜索结果冲掉。
+      const data = await flightApi.list(planListQuery(filters, { page: page.value, size: size.value }));
       if (token !== planListToken || activeTab.value !== 'route') return;
       total.value = data.total;
       plans.value = data.items;
       loadRowActuals(plans.value);
       loadPlanKpis();
+      loadUpstreamStatus();
       const after = JSON.stringify(plans.value.find(item => item.plan_id === selectedId) || null);
       if (selectedId && after !== before && after !== 'null' && !detailLoading.value) await loadDetail(selectedId);
     } catch { /* 静默刷新失败保留当前列表 */ }
@@ -1828,20 +1893,26 @@ onUnmounted(() => {
     </template>
 
     <template v-else>
-      <UKpis :list="kpiList" />
+      <UKpis :list="kpiList" @click="onPlanKpiClick" @keydown="onPlanKpiKeydown" />
+      <div v-if="upstreamNotice" class="warnbox plan-upstream-notice" role="status"><b>{{ upstreamNotice.title }}</b>{{ upstreamNotice.detail }}</div>
       <div v-if="error" class="warnbox">{{ error }}</div>
       <div class="row flight-main">
         <UPanel title="飞行计划" class="workspace-list" nopad>
           <div class="toolbar plan-toolbar">
-            <div class="toolbar-fields">
-              <div class="field"><label>状态</label><UControl v-model="filters.status_code" type="select" :options="statusOptions" :disabled="loading" /></div>
+            <div class="plan-filter-row">
+              <div class="field"><label for="plan-keyword">搜索</label><UControl id="plan-keyword" v-model="keywordDraft" clearable size="small" placeholder="计划编号/航线/无人机" :maxlength="PLAN_KEYWORD_MAX" :disabled="loading" @keyup.enter="applyKeyword" @update:model-value="keywordInput" /></div>
+              <button class="btn" type="button" :disabled="loading" @click="applyKeyword">查询</button>
+            </div>
+            <div class="plan-filter-row">
+              <div class="field"><label>状态</label><UControl :model-value="filters.status_code" type="select" size="small" :options="statusOptions" :disabled="loading" @update:model-value="chooseStatus" /></div>
               <button class="btn ghost" type="button" :disabled="loading" @click="refreshPlans">刷新计划</button>
             </div>
           </div>
+          <p v-if="planFilterSummary" class="workspace-selection-note plan-filter-note"><span>{{ planFilterSummary }}</span><button class="btn ghost" type="button" :disabled="loading" @click="clearPlanFilters">清除筛选</button></p>
           <p v-if="!loading && selected && !plans.some(plan => plan.plan_id === selected.plan_id)" class="workspace-selection-note">正在查看关联计划；本页列表未包含该计划。</p>
           <div v-if="loading" class="empty">正在读取飞行计划…</div>
           <div v-else-if="error" class="empty"><button class="btn" type="button" @click="loadPlans(page, S.selectedPlanId)">重新读取计划</button></div>
-          <div v-else-if="!plans.length" class="empty">暂无可访问的飞行计划</div>
+          <div v-else-if="!plans.length" class="empty">{{ planFilterSummary ? '没有符合筛选条件的计划' : upstreamNotice ? '本系统暂无计划；上级计划数据暂时取不到，不代表上级没有计划' : '暂无可访问的飞行计划' }}</div>
           <FlightRecordList v-else :items="planRecords" :selected-id="selected?.plan_id || null" label="飞行计划列表" @select="selectPlan" />
           <FlightListPager :page="page" :page-size="size" :total="total" :loading="loading" @update:page="changePage" @update:page-size="changePageSize" />
         </UPanel>
@@ -1921,7 +1992,7 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.flights-page { min-width: 0; min-height: 0; height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+.flights-page { min-width: 0; min-height: 0; height: 100%; display: flex; flex-direction: column; overflow-x: hidden; overflow-y: auto; }
 .flights-page > .tabs { flex: none; }
 .flights-page :deep(.kpis) { flex: none; }
 .flights-page :deep(.kpi .lb) { font-size: 14px; }
@@ -1929,6 +2000,9 @@ onUnmounted(() => {
 .flights-page :deep(.kpi .dt) { font-size: 12px; }
 .flights-page .detail-hero-title,.flights-page .detail-hero-id { display: block; white-space: normal; overflow: visible; overflow-wrap: anywhere; text-overflow: clip; -webkit-line-clamp: unset; }
 .flight-main,.risk-main { display: grid; grid-template-columns: minmax(250px, .95fr) minmax(300px, 1.35fr) minmax(300px, 1.1fr); grid-template-rows: minmax(0, 1fr); margin-top: 12px; flex: 1; min-height: 0; align-items: stretch; gap: 12px; }
+/* 计划页签多了上级接口提示、搜索行和筛选提示；视口较矮（1280×720、1366×768）时主区不再被压到看不全一条计划，
+   改为在页面区域内纵向滚动。风险页签不受影响。 */
+.flight-main { min-height: 500px; }
 .workspace-list { grid-column: 1; grid-row: 1; }
 .workspace-map { grid-column: 2; grid-row: 1; }
 .workspace-detail { grid-column: 3; grid-row: 1; }
@@ -1972,9 +2046,20 @@ onUnmounted(() => {
 .workspace-selection-note { flex: none; margin: 0; padding: 8px 12px; color: var(--txt-3); font-size: 11px; line-height: 1.6; }
 .notice-section .rk-history-item p { margin: 0; color: var(--txt-3); line-height: 1.6; overflow-wrap: anywhere; }
 .plan-toolbar { flex: none; }
-.flights-page .workspace-list .plan-toolbar { display: grid; grid-template-columns: minmax(0, 1fr); align-items: end; gap: 10px; }
-.flights-page .workspace-list .plan-toolbar .toolbar-fields { grid-template-columns: minmax(0, 1fr); }
-.plan-toolbar .toolbar-actions .btn { height: 34px; }
+/* 搜索与状态两行与风险页签的快捷筛选同尺寸（小号控件、10px 字段名），给列表多留高度。 */
+.flights-page .workspace-list .plan-toolbar { display: grid; grid-template-columns: minmax(0, 1fr); align-items: end; gap: 7px; padding: 9px; }
+.flights-page .workspace-list .plan-filter-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 6px; }
+.flights-page .workspace-list .plan-filter-row .field { gap: 3px; }
+.flights-page .workspace-list .plan-filter-row label { font-size: 10px; }
+.flights-page .workspace-list .plan-filter-row > .btn { min-height: 28px; height: 28px; padding: 0 10px; white-space: nowrap; }
+.plan-filter-note { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--line); color: var(--txt-2); }
+.plan-filter-note span { min-width: 0; overflow-wrap: anywhere; }
+.plan-filter-note .btn { flex: none; padding: 2px 8px; font-size: 11px; }
+.plan-upstream-notice { flex: none; margin-top: 8px; padding: 6px 12px; font-size: 12px; line-height: 1.55; }
+.plan-upstream-notice b { margin-right: 8px; }
+/* 选中的统计卡：加粗描边、底色微染并标“筛选中”，不只靠颜色区分。 */
+.flights-page :deep(.kpi.is-active) { border-color: var(--kpi-c); box-shadow: inset 0 0 0 2px var(--kpi-c); background: color-mix(in srgb, var(--kpi-c) 12%, var(--panel)); }
+.flights-page :deep(.kpi.is-active::after) { content: '筛选中'; display: block; position: absolute; inset: 6px 8px auto auto; z-index: 1; padding: 0 6px; border: 1px solid color-mix(in srgb, var(--kpi-c) 50%, transparent); border-radius: 4px; background: color-mix(in srgb, var(--kpi-c) 18%, transparent); color: var(--kpi-c); font-size: 10px; font-weight: 600; line-height: 16px; }
 .route-geometry { overflow-wrap: anywhere; line-height: 1.7; }
 .plan-map-frame { flex: 1; min-height: 0; position: relative; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 .plan-map-frame.unavailable { display: none; }

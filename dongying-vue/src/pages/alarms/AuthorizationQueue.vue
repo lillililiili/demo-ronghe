@@ -14,7 +14,7 @@ import { openDisposalApproval, openDisposalExecution, openDisposalStop } from '@
 import EmergencyStopPanel from '@/components/disposal/EmergencyStopPanel.vue';
 import TargetLiveVideo from '@/components/video/TargetLiveVideo.vue';
 import AuthorizationTargetMap from './AuthorizationTargetMap.vue';
-import { canStop, cardStopLabel, executionEvidenceHref, nextStep, primaryCode, readPending, resultText, usesEmergency } from './authorizationQueueView.js';
+import { canStop, cardStopLabel, executeBlockedReason, executionEvidenceHref, nextStep, primaryCode, readPending, resultText, usesEmergency } from './authorizationQueueView.js';
 
 const props = defineProps({ initialAuthorizationId: { type: String, default: '' }, eventId: { type: String, default: '' }, initialStatus: { type: String, default: '' } });
 const emit = defineEmits(['event']);
@@ -30,6 +30,7 @@ const feedbackHref = computed(() => canAccessRoute('evidence') && hasPermission(
   ? executionEvidenceHref(selected.value) : '');
 const visibleRows = computed(() => view.value === 'pending' ? rows.value.slice((page.value - 1) * pageSize.value, page.value * pageSize.value) : rows.value);
 const mainCode = row => primaryCode(row, userId.value);
+const executeHint = row => executeBlockedReason(row, userId.value, hasPermission);
 const mainLabel = row => row.execution_block_reason ? '查看原因' : ({ APPROVE: '审批', EXECUTE: '执行' }[mainCode(row)] || (row.status === 'FAILED' ? '查看原因' : row.status === 'EXECUTING' && row.channel !== 'MANUAL' ? '查看执行情况' : '查看详情'));
 const modeText = row => row?.authorization_mode === 'DIRECT' ? '免逐次审批' : row?.authorization_mode === 'REVIEW' ? '申请审批' : '方式未知';
 const approverText = row => row?.authorization_mode === 'DIRECT' ? '不适用（免逐次审批）' : (row?.approved_by_name || (row.status === 'REQUESTED' ? '待审批' : '未提供'));
@@ -211,6 +212,7 @@ onUnmounted(() => { active = false; request++; detailRequest++; });
               <span class="section-label">当前进展</span>
               <h3>{{ statusText(selected) }}</h3>
               <p v-if="nextStep(selected, userId)">{{ nextStep(selected, userId) }}</p>
+              <p v-if="executeHint(selected)" class="permission-note">{{ executeHint(selected) }}</p>
               <p v-if="resultText(selected)" class="result-text">{{ resultText(selected) }}</p>
               <a v-if="feedbackHref" class="btn" :href="feedbackHref">查看本次设备反馈</a>
               <p v-if="blockReasonText(selected)" class="block-reason">执行受阻：{{ blockReasonText(selected) }}</p>
@@ -283,7 +285,7 @@ onUnmounted(() => { active = false; request++; detailRequest++; });
 .target-observation :deep(.target-live-video) { margin:0; }
 .handling-panel { background:var(--surface-gradient); border:1px solid var(--line); border-radius:var(--r); }
 .current-handling { padding:16px; }.current-handling h3 { margin:6px 0 10px; font-size:21px; line-height:1.4; overflow-wrap:anywhere; }.current-handling p { margin:6px 0; line-height:1.6; font-size:13px; overflow-wrap:anywhere; }
-.block-reason { color:var(--amber); }.authorization-actions { margin-top:14px; }
+.block-reason, .permission-note { color:var(--amber); }.authorization-actions { margin-top:14px; }
 .handling-panel :deep(.emergency-stop-panel) { border:0; border-top:1px solid var(--line); border-bottom:1px solid var(--line); border-radius:0; }
 .handling-panel :deep(.es-header) { position:static; border-radius:0; padding:14px 16px; }
 .handling-panel :deep(.es-header h3) { font-size:13px; color:var(--txt-2); }.handling-panel :deep(.es-stop-area) { width:100%; align-items:stretch; }

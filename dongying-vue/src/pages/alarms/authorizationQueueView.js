@@ -19,6 +19,20 @@ export function primaryCode(row, userId) {
   if (row?.status === 'APPROVED' && actions.includes('EXECUTE')) return 'EXECUTE';
   return '';
 }
+// 已批准、走设备通道、但当前账号不能下发时说清原因（BUG-02：以前只显示“等待有权限的人员执行”，不知道缺什么）。
+// 只解释，不放开按钮：按钮仍只看后端 allowed_actions；can 传 hasPermission，口径与后端裁剪 EXECUTE 的条件一致。
+export function executeBlockedReason(row, userId, can = () => false) {
+  if (!deviceChannel(row) || row?.status !== 'APPROVED' || row.execution_block_reason
+    || (row.allowed_actions || []).includes('EXECUTE')) return '';
+  if (row.authorization_mode === 'DIRECT') {
+    if (row.requested_by !== userId) return '这是免逐次审批的直接反制，只能由发起人本人下发执行。';
+    if (!can('disposal:direct')) return '这是免逐次审批的直接反制，当前账号没有直接反制权限，不能下发执行。';
+  } else if (!can('disposal:execute')) {
+    return '当前账号没有“执行处置”权限，不能下发设备执行；请由处置授权人执行，或请管理员调整角色权限。';
+  }
+  if (!can('devices.op')) return '下发设备反制还需要设备操作权限，当前账号没有，不能下发执行；请由处置授权人执行，或请管理员调整角色权限。';
+  return '';
+}
 export function nextStep(row, userId) {
   if (row.channel === 'MANUAL') return '历史人工执行记录，仅供查阅';
   if (!deviceChannel(row)) return '执行通道未知，请查看详情';

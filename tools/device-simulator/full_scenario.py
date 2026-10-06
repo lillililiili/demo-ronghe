@@ -45,7 +45,9 @@ def full_scene(categories=None):
         row = {'id': key, 'name': name, 'kind': kind, 'path': [[x,y],[x+24,y],[x+24,y+18],[x,y+18]],
                'motionMode': 'loop', 'height': 80, 'heightAgl': 60, 'altitudeDatum': 'AMSL',
                'speed': 4, 'count': 1, 'probability': .98, 'planId': '',
-               'deviceId': 'tdoa' if kind == 'uav' else 'radar', 'notificationBehavior': 'none', **fields}
+               'deviceId': 'tdoa' if kind == 'uav' else 'radar', 'notificationBehavior': 'none',
+               # 无人机由 TDOA 和雷达两路上报：只有一路时平台融合置信度不够，研判只能“不可判定”，异常飞行也不出告警。
+               **({'secondaryDeviceId': 'radar'} if kind == 'uav' else {}), **fields}
         if kind == 'uav': row['pilotPoint'] = [x-5,y-5]
         scene['targets'].append(row)
         return row

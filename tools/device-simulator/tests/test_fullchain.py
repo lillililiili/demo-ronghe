@@ -69,6 +69,19 @@ class FullChainTests(unittest.TestCase):
             self.assertEqual(item['external_track_id'],item['external_target_id'])
             self.assertEqual('uav_sn' in item,targets[key]['kind']=='uav')
 
+    def test_airspace_version_update_keeps_name_and_owner(self):
+        # 平台要求空域版本更新保持原名称和归属；改名会被拒（409），整批模拟在第 2 分钟停下。
+        chain,p,m,s=self.setup_chain();chain.prepare()
+        targets={t['id']:t for t in s['targets']}
+        no='sim-map-airspace-zone-temporary_control'
+        original=next(body for _,path,body,_ in p.calls if path.endswith('/airspaces') and body.get('airspace_no')==no)
+        chain.tick(targets,120,2)
+        update=[body for _,path,body,_ in p.calls if path.endswith('/airspaces') and body.get('airspace_no')==no][-1]
+        self.assertEqual(update['revision'],original['revision']+1)
+        self.assertEqual(update['action'],'UPSERT')
+        for key in ('name','owner_org_id','district_id','kind_code','boundary'):
+            self.assertEqual(update[key],original[key],key)
+
     def test_checkpoint_reprepare_does_not_create_other_objects(self):
         chain,p,m,s=self.setup_chain(); chain.prepare(); n=len(p.calls)
         chain.prepare()

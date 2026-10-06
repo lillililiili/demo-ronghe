@@ -398,10 +398,17 @@ def messages(scene, devices, targets, manifest, elapsed, now, last_sent, sequenc
         objects = []
         for index, t in enumerate(targets.values(), 1):
             if (t.get('_notification_motion') or {}).get('suppress'): continue
-            if t['transport'] != 'mqtt' or not target_reporting(t, elapsed): continue
-            if device_id not in (t['deviceId'], t.get('secondaryDeviceId')):
+            if not target_reporting(t, elapsed): continue
+            # MQTT 目标由主、辅设备各自上报。规范化观测的目标由主设备走规范化入口，选了辅助上报设备时辅助设备照常发 MQTT 目标报文：
+            # 平台要看到两路来源，融合置信度才够研判；只有一路时只能判“不可判定”，不出告警。
+            normalized = t['transport'] != 'mqtt'
+            if device_id not in ((t.get('secondaryDeviceId'),) if normalized else (t['deviceId'], t.get('secondaryDeviceId'))):
                 continue
+            # 气球只能经规范化入口上报，设备协议里没有气球类别，辅助设备不替它发 MQTT 报文。
+            if t['kind'] == 'balloon': continue
             sample = target_sample(t, elapsed)
+            # 辅助设备报的离地高度与规范化观测一致（AGL 目标按逐航点高度），两路不打架。
+            height = sample['height_agl'] if normalized else t.get('heightAgl')
             lon, lat = sample['longitude'], sample['latitude']
             ext = {'objectType': {'unknown': 0, 'identifying': 255, 'person': 3,
                                   'vehicle': 7, 'ship': 50, 'remote_controller': 100,
@@ -418,7 +425,7 @@ def messages(scene, devices, targets, manifest, elapsed, now, last_sent, sequenc
             for member in range(int(t['count']) if t['kind']=='bird' else 1):
                 objects.append({'objectId': str(index*1000+member), 'time': now, 'longitude': lon+member%10*.00002, 'latitude': lat+member//10*.00002,
                                 'altitude': sample['altitude'], 'speed': sample['speed'], 'extension': ext,
-                                **({'height': t['heightAgl']} if 'heightAgl' in t else {})})
+                                **({'height': height} if height is not None else {})})
         # Only the confirmed target-reporting device protocols emit target objects.
         # EO, weather, and countermeasure devices remain selectable as nearby
         # auxiliary devices but their own protocol payloads must not be invented.

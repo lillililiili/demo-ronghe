@@ -411,8 +411,9 @@ class FullChain:
             zone_state = self.manifest.get('zones', {}).get('zone-temporary_control', {})
             if original and elapsed>=120:
                 revision=int(zone_state.get('revision') or original['body'].get('revision') or 1) + 1
+                # 平台要求版本更新保持原空域名称和归属（改名会被拒 409，整批停下），这里只出新版本、新生效时间。
                 body=copy.deepcopy(original['body']);body.update(message_id=self.message('zone-update-r'+str(revision)),revision=revision,
-                    valid_from=now,name='模拟临时管制区更新',change_reason='本批次空域版本更新')
+                    valid_from=now,change_reason='本批次空域版本更新')
                 result=self.request('zone-update',PREFIX+'/airspaces',body)
                 zone_state['revision']=int(result.get('revision') or revision)
                 zone_state['receipt']=result

@@ -168,6 +168,37 @@ class EngineTests(unittest.TestCase):
             for key in ('speedX', 'speedY', 'speedZ'):
                 obj['extension'].pop(key, None)
         self.assertEqual(objects[0],objects[1])
+    def test_normalized_target_still_reports_through_secondary_sensor(self):
+        # 规范化观测的目标由主设备走规范化入口；辅助设备照常发 MQTT 目标报文，平台才有两路来源，研判不会只剩“不可判定”。
+        from engine import target_sample
+        s=scene();s['sites'][0]['devices'].append(dict(s['sites'][0]['devices'][0],id='d2',kind='tdoa'))
+        s['targets'][0].update(altitudeDatum='AGL',secondaryDeviceId='d2',heightAgl=30,altitudePath=[40,60,60])
+        s,d,t,_=compile_scene(s)
+        self.assertEqual(s['targets'][0]['transport'],'normalized')
+        m={'provider':'test','devices':{'d1':{'external_id':'radar'},'d2':{'external_id':'tdoa'}},'targets':{'t1':{'uav_sn':'TEST'}}}
+        reports=[p for _,p in messages(s,d,t,m,0,1000,{},1) if 'objects' in p]
+        self.assertEqual([p['deviceId'] for p in reports],['tdoa'])
+        obj=reports[0]['objects'][0]
+        self.assertEqual(obj['extension']['uavSN'],'TEST')
+        # 离地高度与规范化观测一致（按逐航点高度），不是静态的模拟离地高度。
+        self.assertEqual(obj['height'],target_sample(t['t1'],0)['height_agl'])
+        self.assertEqual(obj['height'],40)
+
+    def test_normalized_target_without_secondary_sends_no_mqtt_object(self):
+        s=scene();s['targets'][0]['altitudeDatum']='AMSL'
+        s,d,t,_=compile_scene(s)
+        m={'provider':'test','devices':{'d1':{'external_id':'radar'}},'targets':{'t1':{'uav_sn':'TEST'}}}
+        self.assertEqual([p for _,p in messages(s,d,t,m,0,1000,{},1) if 'objects' in p],[])
+
+    def test_balloon_with_secondary_sensor_stays_normalized_only(self):
+        # 设备协议里没有气球类别：气球选了辅助上报设备也不发 MQTT 报文，更不能让整批报错停下。
+        s=scene();s['sites'][0]['devices'].append(dict(s['sites'][0]['devices'][0],id='d2',kind='tdoa'))
+        s['targets'][0].update(kind='balloon',transport='normalized',secondaryDeviceId='d2')
+        s['risks']=[]
+        s,d,t,_=compile_scene(s)
+        m={'provider':'test','devices':{'d1':{'external_id':'radar'},'d2':{'external_id':'tdoa'}},'targets':{'t1':{}}}
+        self.assertEqual([p for _,p in messages(s,d,t,m,0,1000,{},1) if 'objects' in p],[])
+
     def test_secondary_device_must_exist(self):
         s=scene();s['targets'][0]['secondaryDeviceId']='missing'
         with self.assertRaises(ValueError):compile_scene(s)

@@ -59,6 +59,8 @@ class NotificationResponse:
         if self.batch_device_ids is None:
             device_ids = set()
             for device in self.manifest.get('devices', {}).values():
+                # 规范化观测源不在设备台账里（按设备查会 404，撤离观察每秒失败一次），它的观测也不算射频身份证据。
+                if device.get('kind') == 'normalized': continue
                 detail = self.platform.call('GET', '/devices/'+device['platform_id'])
                 fusion_id = (detail.get('device') or {}).get('fusion_device_id')
                 if fusion_id: device_ids.add(fusion_id)

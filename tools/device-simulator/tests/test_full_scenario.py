@@ -23,6 +23,14 @@ class FullScenarioTests(unittest.TestCase):
         self.assertEqual(devices['eo']['coverage']['kind'], 'sector')
         self.assertNotIn('coverage', devices['tdoa'])
 
+    def test_uavs_are_reported_by_two_sensors(self):
+        # 只有一路来源时平台融合置信度不够，研判只能“不可判定”；全量场景的无人机由 TDOA、雷达两路上报，异常飞行才出告警。
+        from full_scenario import full_scene
+        from engine import compile_scene
+        uavs = [t for t in compile_scene(full_scene(['uav']))[2].values() if t['kind'] == 'uav']
+        self.assertEqual(len(uavs), 8)
+        self.assertEqual({(t['deviceId'], t.get('secondaryDeviceId')) for t in uavs}, {('tdoa', 'radar')})
+
     def test_fresh_copy_and_shared_serial_allocation(self):
         from full_scenario import full_scene, allocate_identities
         first, second = full_scene(), full_scene()

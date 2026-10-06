@@ -1,3 +1,5 @@
+import { PILOT_CONTACT_MISSING_TITLE, pilotContactMissing } from './autoSmsView.js';
+
 export const AUTO_VOICE_STATUS = {
   DISABLED: '电话录音通知未启用', WAITING: '等待自动拨打', CALLING: '系统正在拨打',
   SIMULATED_PLAYED: '模拟接通并播放完成', FAILED: '电话通知失败，需人工处理',
@@ -12,9 +14,13 @@ export function autoVoiceView(data) {
   const latest = [...(data.records || [])].filter(row => row.kind === 'VOICE_SIMULATED')
     .sort((a, b) => Number(b.created_at) - Number(a.created_at))[0];
   const recipientSnapshot = latest ? latest.recipient_snapshot : voice.recipient_snapshot;
+  // 缺飞手电话时不再显示“等待短信送达/等待拨打”，直接写明缺什么（BLOCK-03）。
+  const missing = pilotContactMissing(data, voice.status);
   return {
-    title: AUTO_VOICE_STATUS[voice.status] || '通话结果未确认', reason: voice.reason || '',
-    tone: voice.status === 'SIMULATED_PLAYED' ? 'success'
+    title: missing ? PILOT_CONTACT_MISSING_TITLE : AUTO_VOICE_STATUS[voice.status] || '通话结果未确认',
+    reason: missing ? '上级下发的飞行计划里没有执行飞手的电话，无法给飞手打电话。' : voice.reason || '',
+    pilotContactMissing: missing,
+    tone: missing ? 'warning' : voice.status === 'SIMULATED_PLAYED' ? 'success'
       : ['FAILED', 'UNAVAILABLE', 'BLOCKED', 'UNKNOWN'].includes(voice.status) ? 'warning' : 'muted',
     // 结果未知不能通过重拨猜测，后端允许且结果明确失败时才开放重试。
     canRetry: voice.can_retry === true && ['FAILED', 'UNAVAILABLE', 'BLOCKED'].includes(voice.status),

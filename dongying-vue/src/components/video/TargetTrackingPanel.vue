@@ -15,9 +15,11 @@ const props = defineProps({
 });
 const state = ref(null), loading = ref(false), busy = ref(false);
 const readError = ref(''), actionMessage = ref('');
-const permitted = computed(() => hasModuleAction('devices', 'op'));
+// 查看跟踪状态只要设备查看权限（与后端 eo-tracking-status 一致，OBS-03）；补跟踪、暂停等按钮仍只来自后端 allowed_actions。
+const permitted = computed(() => hasModuleAction('devices', 'read'));
+const canOperate = computed(() => hasModuleAction('devices', 'op'));
 const reason = computed(() => props.unavailableReason || (!props.targetId ? '没有关联目标，无法读取光电追踪。' : '')
-  || (!permitted.value ? '当前账号没有设备操作权限，无法读取光电追踪。' : ''));
+  || (!permitted.value ? '当前账号没有设备查看权限，无法读取光电追踪。' : ''));
 const actions = computed(() => !reason.value && !readError.value && !busy.value && !loading.value && state.value
   && Array.isArray(state.value.allowed_actions) ? state.value.allowed_actions : []);
 const statusText = computed(() => ({
@@ -132,6 +134,7 @@ onUnmounted(() => { alive = false; invalidate(); });
       <p v-if="loading && !state" role="status">正在读取跟踪状态</p>
       <template v-else-if="state">
         <p v-if="statusDetail" class="tracking-detail" role="status">{{ statusDetail }}</p>
+        <p v-if="!canOperate" class="tracking-detail" role="note">当前账号只能查看光电追踪；补跟踪、暂停等操作需要设备操作权限。</p>
         <div v-if="actions.length" class="tracking-actions">
           <button v-if="actions.includes('BEGIN')" class="btn" type="button" @click="perform('BEGIN')">人工补跟踪</button>
           <button v-if="actions.includes('RETRY')" class="btn" type="button" @click="perform('RETRY')">重试跟踪</button>

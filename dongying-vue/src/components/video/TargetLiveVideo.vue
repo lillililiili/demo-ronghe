@@ -17,10 +17,11 @@ const props = defineProps({
 });
 const expanded = ref(props.defaultExpanded), video = ref(null);
 const loading = ref(false), checked = ref(false), error = ref('');
-const permitted = computed(() => hasModuleAction('devices', 'op'));
+// 看画面只是读取：与后端 /targets/{id}/video 一致只要设备查看权限（OBS-03，值班员要能看光电画面）。
+const permitted = computed(() => hasModuleAction('devices', 'read'));
 const state = computed(() => targetVideoState(props.targetId, video.value));
 const reason = computed(() => props.unavailableReason || (!props.targetId ? '未提供可读取的关联目标，无法定位视频。' : '')
-  || (!permitted.value ? '当前账号没有读取光电跟踪的设备操作权限。' : ''));
+  || (!permitted.value ? '当前账号没有设备查看权限，无法查看光电画面。' : ''));
 let generation = 0, timer, controller, alive = true;
 function clear() {
   ++generation; clearTimeout(timer); controller?.abort();

@@ -10,6 +10,8 @@ export const exportAlarmsCsv = values => apiBinary(`/alarms/export.csv${buildQue
    服务端未就绪时会回 404，页面据此显示"不可用"，不静默改读别的接口。 */
 export const listAlarmDistricts = () => apiRequestTimed('/alarms/districts');
 export const getAlarm = alarmId => apiRequestTimed(`/alarms/${encodeURIComponent(alarmId)}`);
+/* 告警升级记录（2026-10-06）：同一架无人机再次违规时原告警的升级经过，按升级先后分页。 */
+export const listAlarmEscalations = (alarmId, values) => apiRequestTimed(`/alarms/${encodeURIComponent(alarmId)}/escalations${buildQuery(values)}`);
 export const getUavEvent = eventId => apiRequestTimed(`/uav-events/${encodeURIComponent(eventId)}`);
 export const listUavVerifications = (eventId, values) => apiRequestTimed(`/uav-events/${encodeURIComponent(eventId)}/verifications${buildQuery(values)}`);
 export const verifyUavEvent = (eventId, body, idempotencyKey) => apiRequestTimed(`/uav-events/${encodeURIComponent(eventId)}/verifications`, {

@@ -357,7 +357,10 @@ export function toDevices(devices, { includeUnlocated = false } = {}) {
       coverage,
       coverageText: coverageSummary(coverage),
       sourceMode: device.source_mode || '',
-      simulated: !!device.simulated
+      simulated: !!device.simulated,
+      // 最近感知数据"平台接收 − 设备报文时刻"（ZT-20）；超过后端阈值时 time_untrusted=true，页面写明"设备时间不准"。
+      reportLagMs: num(device.report_lag_ms),
+      timeUntrusted: device.time_untrusted === true
     });
   }
   return out;
@@ -419,6 +422,11 @@ export function toTargets(targets, legalMap) {
       district: target.district_name || '',
       lastSeenAt: num(target.last_seen_at),
       observedAt: num(state?.observed_at),
+      receivedAt: num(state?.received_at),
+      // 报文时刻不可信（ZT-20，后端 observed_at 的 TIME_UNTRUSTED）：设备时钟慢或数据积压，页面写明"数据过期/设备时间不准"。
+      timeUntrusted: hasTimeUntrusted(state),
+      reportLagMs: hasTimeUntrusted(state) && num(state?.received_at) !== null && num(state?.observed_at) !== null
+        ? num(state.received_at) - num(state.observed_at) : null,
       mapExpiresAt: num(target.map_expires_at),
       trackStatus: target.track_status?.status || '',
       statusCode: target.status_code || target.track_status?.status || '',
@@ -441,6 +449,21 @@ export function toTargets(targets, legalMap) {
       layerKey: 'track'
     };
   });
+}
+
+function hasTimeUntrusted(state) {
+  return Array.isArray(state?.field_issues)
+    && state.field_issues.some(issue => issue?.field === 'observed_at' && issue?.reason_code === 'TIME_UNTRUSTED');
+}
+
+/** 报文时刻落后于接收时刻多少（"约 2 分钟""约 1 分 30 秒""约 45 秒"）；没有可用差值返回空串，不编一个数。 */
+export function clockLagText(lagMs) {
+  const value = num(lagMs);
+  if (value === null || value <= 0) return '';
+  const seconds = Math.round(value / 1000);
+  if (seconds < 60) return `约 ${seconds} 秒`;
+  const minutes = Math.floor(seconds / 60), rest = seconds % 60;
+  return rest ? `约 ${minutes} 分 ${rest} 秒` : `约 ${minutes} 分钟`;
 }
 
 /**

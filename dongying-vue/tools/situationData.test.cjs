@@ -211,6 +211,35 @@ async function main() {
   check('五种异物映射到不同图标', foreignTargets.map(target => target.iconKind), ['bird', 'balloon', 'kite', 'lantern', 'unknown']);
   ok('非无人机合法性统一为不适用', foreignTargets.every(target => target.legal === '不适用'));
 
+  /* ---- 报文时刻不可信（ZT-20）：设备时钟慢两分钟时不能显示成"已观测" ---- */
+  const laggingTargets = S.toTargets([
+    { target_id: 'lag', object_type_code: 'UAV', latest_state: { observed_at: 1_000_000, received_at: 1_120_000,
+      field_issues: [{ field: 'observed_at', reason_code: 'TIME_UNTRUSTED' }], location: { longitude: 118.5, latitude: 37.5 } } },
+    // 接收比报文晚 5 s 但后端没有标不可信：前端不自己按差值猜。
+    { target_id: 'ok', object_type_code: 'UAV', latest_state: { observed_at: 1_000_000, received_at: 1_005_000,
+      field_issues: [{ field: 'heading_deg', reason_code: 'NOT_REPORTED' }], location: { longitude: 118.5, latitude: 37.5 } } }
+  ], {});
+  check('后端标了 observed_at 不可信的目标带 timeUntrusted', [laggingTargets[0].timeUntrusted, laggingTargets[0].reportLagMs, laggingTargets[0].receivedAt], [true, 120000, 1120000]);
+  check('后端没标就不算不可信，也不报差值', [laggingTargets[1].timeUntrusted, laggingTargets[1].reportLagMs], [false, null]);
+  const laggingDevices = S.toDevices([
+    { device_id: 'tdoa-lag', longitude: 118.5, latitude: 37.4, connectivity: 'ONLINE', report_lag_ms: 120000, time_untrusted: true },
+    { device_id: 'tdoa-ok', longitude: 118.5, latitude: 37.4, connectivity: 'ONLINE' }
+  ]);
+  check('设备时间不准随设备摘要带出', [laggingDevices[0].timeUntrusted, laggingDevices[0].reportLagMs], [true, 120000]);
+  check('没有感知水位的设备不算时间不准', [laggingDevices[1].timeUntrusted, laggingDevices[1].reportLagMs], [false, null]);
+  check('落后两分钟写成约 2 分钟', S.clockLagText(120000), '约 2 分钟');
+  check('不足整分写出秒数', S.clockLagText(90000), '约 1 分 30 秒');
+  check('一分钟以内按秒', S.clockLagText(45000), '约 45 秒');
+  check('没有差值不编数字', [S.clockLagText(null), S.clockLagText(0)], ['', '']);
+
+  /* ---- 类别变化（ZT-04）：识别中→无人机→鸟，系统改判与人工修订都写明从什么改成什么 ---- */
+  const L = await import('../src/ui/labels.js');
+  const at = value => `T${value}`;
+  check('原来没有类别的按未分类写', L.classChangeText({ changed_at: 1, from_class_code: null, to_class_code: 'UAV', operator_kind: 'SYSTEM' }, at), 'T1 系统识别：未分类 → 无人机');
+  check('无人机改成鸟类', L.classChangeText({ changed_at: 2, from_class_code: 'UAV', to_class_code: 'BIRD', operator_kind: 'SYSTEM' }, at), 'T2 系统识别：无人机 → 鸟类');
+  check('人工修订单独说明', L.classChangeText({ changed_at: 3, from_class_code: 'BIRD', to_class_code: 'UAV', operator_kind: 'USER' }, at), 'T3 人工修订：鸟类 → 无人机');
+  check('没有新类别的记录不显示', L.classChangeText({ changed_at: 4, from_class_code: 'UAV' }, at), '');
+
   /* ---- 航线风险口径 ---- */
   ok('待核验空中异物风险会点亮航线', S.routeRiskIsActive({ state: 'PENDING_VERIFICATION', riskType: 'SPACE_OBJECT', planId: 'p1', routeVersionId: 'r1' }));
   ok('待通知兼容 FOREIGN_OBJECT 类型', S.routeRiskIsActive({ state: 'PENDING_NOTIFICATION', risk_type: 'FOREIGN_OBJECT', plan_id: 'p1', route_version_id: 'r1' }));

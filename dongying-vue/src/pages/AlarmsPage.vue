@@ -38,7 +38,7 @@ import { getEvidenceChain } from '@/services/evidenceApi.js';
 import { openUavVerification } from '@/ui/uavVerificationModal.js';
 import { targetApi } from '@/services/targetApi.js';
 import { mapPool } from '@/services/apiClient.js';
-import { ALARM_PROGRESS_LABEL, ALARM_PROGRESS_TAG, ALARM_TYPE_LABEL, DISPOSAL_ACTION_LABEL, labelOf, LEGALITY_LABEL, readableNo, sourceDescription, SOURCE_MODE_LABEL as MODE_TEXT, targetTypeLabel } from '@/ui/labels.js';
+import { ALARM_PROGRESS_LABEL, ALARM_PROGRESS_TAG, ALARM_TYPE_LABEL, classChangeText, DISPOSAL_ACTION_LABEL, labelOf, LEGALITY_LABEL, readableNo, sourceDescription, SOURCE_MODE_LABEL as MODE_TEXT, targetTypeLabel } from '@/ui/labels.js';
 import { openEvidenceFileModal } from '@/ui/evidenceFileDetail.js';
 import { openEvidenceChainTypeModal, renderEvidenceChainHtml } from '@/ui/evidenceChainView.js';
 import { disposalApi, isDisposalUnavailable } from '@/services/disposalApi.js';
@@ -558,6 +558,18 @@ function updateNoCounter(status) {
   void refreshOpenAdvisory(status.event_id);
 }
 
+/* ZT-04：目标类别中途变化（未分类→无人机、无人机→鸟类）如实写出，最多三条、新的在前。
+   告警、通知与研判保留产生时的结论，不删除不改写；告警之后才改的类别单独提示。 */
+function classChangeRow(t, a) {
+  const changes = Array.isArray(t?.class_changes) ? t.class_changes.filter(change => change?.to_class_code) : [];
+  if (!changes.length) return null;
+  const lines = changes.slice(0, 3).map(change => esc(classChangeText(change, value => fmt(value) || '时间未知')));
+  const occurredAt = Number(a.occurred_at);
+  const afterAlarm = Number.isFinite(occurredAt) && occurredAt > 0 && changes.some(change => Number(change.changed_at) > occurredAt);
+  return ['类别变化', lines.join('<br>') + (afterAlarm ? '<br>告警产生后目标类别已变更；本告警及其通知按产生时的类别保留。' : ''),
+    afterAlarm ? { tone: 'warn' } : {}];
+}
+
 function detailHtml() {
   const a = cur.alarm;
   if (!a) {
@@ -580,6 +592,7 @@ function detailHtml() {
     ['所在区域', esc(a.district_name || a.district_id || '—')], ['所属机构', esc(a.owner_org_name || a.owner_org_id || '—')],
     ['关联目标', a.target_id ? `<span class="mono" title="${esc(a.target_id)}">${esc(a.target_no || a.target_id)}</span>` : '无关联目标或无目标读取权限'],
     ['目标类型', targetType],
+    ...(cur.targetLoading || cur.targetError ? [] : [classChangeRow(t, a)].filter(Boolean)),
     ['高度/速度', altSpeed],
     ['遥控器位置', !a.target_id ? NO_PILOT_LOCATION : cur.targetLoading ? '读取中' : cur.targetError ? '读取失败'
       : esc(pilotLocationText(ls && ls.pilot_location))],

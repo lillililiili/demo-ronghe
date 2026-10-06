@@ -304,6 +304,17 @@ export function toAirspaces(details) {
   return out;
 }
 
+/**
+ * 感知设备分组的状态说明（ZT-18）：状态未知的设备单独计数，不并入在线，也不被漏掉；
+ * 一台都不在线时直接写“全部不在线”，不能只显示“0在线”让人以为只是没设备。
+ */
+export function deviceGroupState({ total = 0, online = 0, abnormal = 0, offline = 0, unknown = 0 } = {}) {
+  const down = total > 0 && online === 0;
+  const detail = [`${abnormal}异常`, `${offline}离线`];
+  if (unknown > 0) detail.push(`${unknown}状态未知`);
+  return { down, headline: down ? '全部不在线' : `${online}在线`, detail: detail.join(' · ') };
+}
+
 /** 设备列表可保留无坐标记录；默认地图调用仍只返回可定位设备。 */
 export function toDevices(devices, { includeUnlocated = false } = {}) {
   const out = [];

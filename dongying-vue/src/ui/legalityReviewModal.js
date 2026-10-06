@@ -24,7 +24,7 @@ export const RULE_CODE_TEXT = {
 export const RULE_RESULT_TEXT = { PASS: '通过', FAIL: '不通过', UNDETERMINED: '不可判定', NOT_APPLICABLE: '不适用' };
 export const RULE_REASON_TEXT = {
   OBJECT_TYPE_UNKNOWN: '目标类型尚未确定', NON_UAV_OBJECT: '非无人机目标，不适用无人机合法性判定',
-  INSIDE_RESTRICTED_AIRSPACE: '进入禁飞/限制空域', AIRSPACE_ALTITUDE_EXCEEDED: '超过空域限高', ROUTE_DEVIATION: '偏离报备航线',
+  INSIDE_RESTRICTED_AIRSPACE: '进入禁飞/限制空域', AIRSPACE_ALTITUDE_EXCEEDED: '超过空域限高', ROUTE_DEVIATION: '偏航（偏离报备航线）',
   TIME_WINDOW_OVERRUN: '超出计划时间窗', NIGHT_FLIGHT: '夜间飞行', PLAN_ALTITUDE_EXCEEDED: '超出计划高度带', TEMPORARY_RESTRICTION_ACTIVE: '临时管制生效中',
   NO_AUTHORIZATION: '无飞行授权', BOUNDARY_POLICY_UNKNOWN: '碰到空域边界时如何判定，规则尚未明确', POSITION_UNKNOWN: '位置未知',
   ALTITUDE_DATUM_OR_RANGE_UNKNOWN: '高度基准或范围未知', VERSION_AMBIGUOUS: '无法确定应使用哪一版空域规则', CORRIDOR_WIDTH_UNKNOWN: '航线走廊宽度未知',
@@ -42,7 +42,7 @@ export const RULE_REASON_TEXT = {
 export const DECISION_ASSURANCE_STATUS_TEXT = {
   SUFFICIENT: '判定依据充分', INSUFFICIENT: '判定依据不足', UNAVAILABLE: '判定可靠性不可用', NOT_APPLICABLE: '不适用'
 };
-export const MERGE_KIND_TEXT = { CREATED: '已生成告警', MERGED: '并入既有告警', UPGRADED: '升级生成告警', DOWNGRADED: '降低等级后合并到已有告警', MANUAL_ESCALATION: '人工转告警', BLOCKED: '暂未生成告警', SUPPRESSED_SHADOW: '仅试算，不生成告警' };
+export const MERGE_KIND_TEXT = { CREATED: '已生成告警', MERGED: '并入既有告警', UPGRADED: '升级生成告警', DOWNGRADED: '降低等级后合并到已有告警', MANUAL_ESCALATION: '人工转告警', ESCALATED: '升级既有告警', BLOCKED: '暂未生成告警', SUPPRESSED_SHADOW: '仅试算，不生成告警' };
 export const CONCLUSION_TEXT = { CONFIRM: '确认', REJECT: '驳回', OVERRIDE: '改判', RECOMPUTE: '重新研判', ESCALATE: '转告警' };
 export const legalStatusText = code => LEGAL_STATUS_TEXT[code] || (code ? String(code) : '—');
 
@@ -268,13 +268,14 @@ export function openLegalityEscalation({ evaluation, refresh, onDone } = {}) {
   openFormModal({
     title: '转告警 · ' + esc(evaluationId),
     width: '600px',
-    warning: '转告警会创建一条来源告警与待核实无人机事件；后续核实、反制与处罚交接仍在告警页按既有流程执行。',
+    // 2026-10-06（BUG-16）：同一架无人机已有正在处理的告警时，服务端把这次转告警并入并升级那条告警，不再另起一条。
+    warning: '这架无人机已有正在处理的告警时，转告警会并入并升级那条告警，记下操作人和说明，不再另起一条；没有时新建告警和待核实事件。后续核实、反制与处罚交接仍在告警页按原流程办理。',
     introHtml: intro(evaluation),
     fields: [
       { key: 'note', label: '转告警说明（选填）', type: 'textarea', minRows: 4, placeholder: '可补充人工转告警的原因，最多 1000 字' }
     ],
     initial: { note: '' },
-    confirmText: '创建告警',
+    confirmText: '转告警',
     danger: true,
     validate: m => validateNote(m.note, '转告警说明'),
     onSubmit: async ({ note }) => {
@@ -283,7 +284,7 @@ export function openLegalityEscalation({ evaluation, refresh, onDone } = {}) {
         const result = await legalityApi.escalateEvaluation(evaluationId, { note: trimNote(note), expected_version: expectedVersion }, key);
         releaseKey(evaluationId, action);
         closeModal();
-        toast(`已创建告警 ${result?.alarm_id || ''}，无人机事件 ${result?.event_id || ''} 待核实`, 'ok');
+        toast(`已转告警：告警 ${result?.alarm_id || ''}，无人机事件 ${result?.event_id || ''}`, 'ok');
         if (refresh) await refresh(result);
         if (onDone) onDone(result);
       } catch (error) {

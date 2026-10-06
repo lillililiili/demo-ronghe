@@ -29,7 +29,9 @@ import UPanel from '@/components/UPanel.vue';
 import UKpis from '@/components/UKpis.vue';
 import { handoffApi } from '@/services/handoffApi.js';
 import { toast } from '@/ui/nv.js';
-import { exportAlarmsCsv, getAlarm, getUavEvent, listAlarmDistricts, listAlarms } from '@/services/alarmApi.js';
+import { exportAlarmsCsv, getAlarm, getUavEvent, listAlarmDistricts, listAlarmEscalations, listAlarms } from '@/services/alarmApi.js';
+import { escalationBrief, escalationRecords, reasonListText } from '@/ui/alarmEscalation.js';
+import { ruleReasonText } from '@/ui/legalityReviewModal.js';
 import { NO_PILOT_LOCATION, pilotLocationText } from '@/services/pilotLocation.js';
 import { getEvidenceChain } from '@/services/evidenceApi.js';
 import { openUavVerification } from '@/ui/uavVerificationModal.js';
@@ -205,6 +207,17 @@ const noOf = a => readableNo(a.alarm_no) || '—';
 const modeOf = a => SOURCE_MODE[a.source_mode] || { t: esc(a.source_mode || '—'), c: 't-gray' };
 const sevTag = a => U.tag(sevOf(a).t, sevOf(a).c);
 const stateTag = a => U.tag(displayState(a).t, displayState(a).c);
+/* 告警升级（2026-10-06，BUG-11/BUG-16）：同一架无人机再次违规时服务端升级原告警，不再另起一条。
+   severity 已是升级后的当前等级；违规原因按出现顺序累计（偏航写“偏航”）；升级经过另读升级记录。 */
+const severityText = code => SEVERITY[code]?.t || (code === 'UNKNOWN' ? '未定级' : '');
+const reasonsOf = a => reasonListText(a?.violation_reasons, ruleReasonText);
+const briefOf = a => escalationBrief(a, severityText);
+function escalationTag(a) {
+  const brief = briefOf(a);
+  if (!brief) return '';
+  const title = `${brief.level}，共升级 ${brief.count} 次${brief.at ? `，最近 ${fmt(brief.at)}` : ''}`;
+  return `<span class="tag ${brief.raised ? 't-red' : 't-amber'}" title="${esc(title)}">${brief.raised ? `已升级 ${esc(brief.level)}` : '新增原因'}</span>`;
+}
 function messageOf(e) {
   if (!e) return '请求失败，请稍后重试';
   if (e.status === 401) return '登录已失效，请重新登录';
@@ -227,6 +240,7 @@ let listSeq = 0, detailSeq = 0;
 const emptyDetail = () => ({ alarm: null, event: null, loading: false, error: '',
   target: null, targetLoading: false, targetError: '', track: null, trackError: '',
   chain: null, chainLoading: false, chainError: '', chainUnavailable: '',
+  escalations: [], escalationsTotal: 0, escalationsLoading: false, escalationsError: ''
   });
 let cur = emptyDetail();
 /* 深链（sessionStorage alarm.sel）—— 与 legacy render() 同构：mount 后按 ID 直接向服务端取详情 */
@@ -449,7 +463,11 @@ function queryOf() {
 
 function summaryOf(a) {
   const text = `来源 ${esc(sourceDescription(a.source_name, a.source_code, a.source_mode, '—'))}· 发生 ${fmt(a.occurred_at) || '未知'}`;
-  return `<div style="white-space:normal;line-height:1.5;overflow-wrap:anywhere">${text}</div>`;
+  const reasons = reasonsOf(a), tag = escalationTag(a);
+  /* 原因行不参与撑开列宽（表格按内容自然拓宽），跟随来源行的宽度折行，最多两行，全文在悬停提示与详情里。 */
+  const head = reasons || tag ? `<div style="width:0;min-width:100%;color:var(--txt);display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden"
+    title="${esc(reasons)}">${tag}${tag && reasons ? ' ' : ''}${reasons ? esc(reasons) : ''}</div>` : '';
+  return `<div style="white-space:normal;line-height:1.5;overflow-wrap:anywhere">${head}${text}</div>`;
 }
 
 function listHtml() {
@@ -531,12 +549,15 @@ function detailHtml() {
   const t = cur.target, ls = t && t.latest_state;
   const targetType = !a.target_id ? '—' : cur.targetLoading ? '读取中' : cur.targetError ? '读取失败' : esc(t ? targetTypeLabel(t.subtype, t.object_type_code) : '—');
   const altSpeed = ls ? `${ls.altitude_amsl_m == null ? '—' : esc(ls.altitude_amsl_m)} m / ${ls.speed_mps == null ? '—' : esc(ls.speed_mps)} m/s` : '— m / — m/s';
+  const reasons = reasonsOf(a), brief = briefOf(a);
   return `${U.detailHero({
     icon: 'alert', subtitle: '告警事件', title: typeOf(a), id: esc(noOf(a)),
     tags: [sevTag(a), stateTag(a)]
   })}
     ${U.sect('告警信息', U.kv([
     ['触发时间', fmt(a.occurred_at) || '未知'], ['接收时间', fmt(a.received_at) || '—'],
+    ...(reasons ? [['违规原因', esc(reasons)]] : []),
+    ...(brief ? [['告警升级', esc(`${brief.level}，共 ${brief.count} 次${brief.at ? `，最近 ${fmt(brief.at)}` : ''}`)]] : []),
     ['所在区域', esc(a.district_name || a.district_id || '—')], ['所属机构', esc(a.owner_org_name || a.owner_org_id || '—')],
     ['关联目标', a.target_id ? `<span class="mono" title="${esc(a.target_id)}">${esc(a.target_no || a.target_id)}</span>` : '无关联目标或无目标读取权限'],
     ['目标类型', targetType],
@@ -545,9 +566,31 @@ function detailHtml() {
       : esc(pilotLocationText(ls && ls.pilot_location))],
     ['数据来源', `${esc(sourceDescription(a.source_name, a.source_code, a.source_mode, '—'))}`]
   ], { surface: true, density: 'compact' }), { icon: 'alert' })}
+    ${escalationHtml(brief)}
     ${renderEvidenceChainHtml(cur.chain, {
       loading: cur.chainLoading, error: cur.chainError, unavailable: cur.chainUnavailable
     })}`;
+}
+
+/* 升级记录：按升级先后列出每一次是系统研判还是人工转告警、等级怎么变、新增了什么原因、谁在什么时候做的。 */
+function escalationHtml(brief) {
+  if (!brief) return '';
+  let body;
+  if (cur.escalationsLoading) body = '<div class="empty">正在读取升级记录</div>';
+  else if (cur.escalationsError) {
+    body = `<div class="empty">${esc(cur.escalationsError)}<br><button class="btn" data-al="escalations-retry" style="margin-top:8px">重试</button></div>`;
+  } else {
+    const rows = escalationRecords(cur.escalations, { severityText, reasonText: ruleReasonText, fmt });
+    body = !rows.length ? '<div class="empty">暂未读到升级记录</div>'
+      : `<ol class="alarm-escalation-list">${rows.map(r => `<li>
+          <div class="alarm-escalation-head"><b>${esc(r.title)}</b>${U.tag(esc(r.level), r.raised ? 't-red' : 't-gray')}</div>
+          <div>${esc(r.added)}</div>
+          ${r.note ? `<div>说明：${esc(r.note)}</div>` : ''}
+          <div class="alarm-escalation-meta">${esc(r.actor)} · ${esc(r.time)}</div>
+        </li>`).join('')}</ol>${cur.escalationsTotal > rows.length
+        ? `<p class="alarm-escalation-meta">共升级 ${cur.escalationsTotal} 次，这里列出前 ${rows.length} 次。</p>` : ''}`;
+  }
+  return U.sect('升级记录', body, { icon: 'trend', badge: `${brief.count} 次` });
 }
 
 function detailActionsHtml() {
@@ -760,9 +803,31 @@ async function selectAlarm(id) {
     cur.error = messageOf(e);
   }
   if (cur.alarm && (cur.alarm.event_id || cur.alarm.target_id)) cur.chainLoading = true;
+  if (briefOf(cur.alarm)) cur.escalationsLoading = true;
   cur.loading = false;
   paintDetail(); focusMap();
-  await Promise.all([loadTarget(my), loadChain(my)]);
+  await Promise.all([loadTarget(my), loadChain(my), loadEscalations(my)]);
+}
+
+/* 升级记录只在告警升级过时读取；读不到只影响这一块，可单独重试，不影响告警详情与处置。 */
+const ESCALATION_PAGE_SIZE = 50;
+async function loadEscalations(my) {
+  const a = cur.alarm;
+  if (!a || my !== detailSeq || !briefOf(a)) return;
+  cur.escalationsLoading = true; cur.escalationsError = '';
+  paintDetailContent();
+  try {
+    const page = await listAlarmEscalations(a.alarm_id, { page: 1, size: ESCALATION_PAGE_SIZE });
+    if (my !== detailSeq) return;
+    cur.escalations = Array.isArray(page?.items) ? page.items : [];
+    cur.escalationsTotal = Number(page?.total) || cur.escalations.length;
+  } catch (e) {
+    if (my !== detailSeq) return;
+    cur.escalations = []; cur.escalationsTotal = 0;
+    cur.escalationsError = e?.status === 403 ? '当前账号没有查看升级记录的权限' : messageOf(e);
+  }
+  cur.escalationsLoading = false;
+  paintDetailContent();
 }
 
 async function loadChain(my) {
@@ -915,6 +980,7 @@ onMounted(async () => {
     else if (k === 'retry') loadList();
     else if (k === 'retry-detail' && st.selId) selectAlarm(st.selId);
     else if (k === 'chain-retry' && st.selId) loadChain(detailSeq);
+    else if (k === 'escalations-retry' && st.selId) loadEscalations(detailSeq);
     else if (k === 'replay') replayLoadedTrack();
   });
   U.on(view, '[data-ev-file]', 'click', (e, btn) => {
@@ -1063,6 +1129,11 @@ onMounted(async () => {
 .alarm-observation :deep(.btn) { min-height:40px; height:auto; padding:8px 14px; white-space:normal; }
 .alarm-observation :deep(.alarm-action-note) { margin:8px 0 0; font-size:12px; line-height:1.65; color:var(--txt-2); }
 .alarm-detail-content { min-width:0; }
+.alarm-detail-content :deep(.alarm-escalation-list) { list-style:none; margin:0; padding:0; }
+.alarm-detail-content :deep(.alarm-escalation-list li) { padding:8px 0; font-size:12px; line-height:1.65; color:var(--txt-2); overflow-wrap:anywhere; }
+.alarm-detail-content :deep(.alarm-escalation-list li + li) { border-top:1px solid var(--line-2); }
+.alarm-detail-content :deep(.alarm-escalation-head) { display:flex; align-items:center; flex-wrap:wrap; gap:8px; color:var(--txt); }
+.alarm-detail-content :deep(.alarm-escalation-meta) { margin:0; color:var(--txt-3); }
 .alarm-workspace-tabs { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; flex:none; }
 .alarm-workspace-tabs .btn { white-space:normal; height:auto; min-height:34px; }
 .alarms-page :deep(.detail-hero-title),

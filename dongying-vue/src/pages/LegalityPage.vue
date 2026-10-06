@@ -18,7 +18,7 @@ import TargetTrackingPanel from '@/components/video/TargetTrackingPanel.vue';
 import { UField } from '@/components/form/index.js';
 import UPagination from '@/components/UPagination.vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
-import { useRealtimeRefresh } from '@/hooks/useRealtimeRefresh.js';
+import { refreshFailureText, useRealtimeRefresh } from '@/hooks/useRealtimeRefresh.js';
 import { legalityReviewFocus } from '@/ui/legalityReviewFocus.js';
 import { legalityApi } from '@/services/legalityApi.js';
 import { flightApi } from '@/services/flightApi.js';
@@ -52,6 +52,7 @@ const loading = ref(false);
 const detailLoading = ref(false);
 const revisionsLoading = ref(false);
 const listError = ref('');
+const refreshError = ref('');
 const detailError = ref('');
 const revisionsError = ref('');
 const deepLinkNotice = ref('');
@@ -307,12 +308,17 @@ function queryParams() {
 
 async function loadQueue(options = {}) {
   const token = ++listToken;
+  // quiet：实时刷新静默重读，保留当前队列直到新数据到达，不切到“正在读取”，行和按钮不重建；
+  // 失败时保留已显示的队列并注明，错误抛给实时刷新按退避重试。队列原本就读取失败时按正常流程重读。
+  const quiet = !!options.quiet && !listError.value;
   if (options.refreshKpi) {
     kpiToken += 1;
     kpiList.value = kpiPlaceholder();
   }
-  loading.value = true;
-  listError.value = '';
+  if (!quiet) {
+    loading.value = true;
+    listError.value = '';
+  }
   deepLinkNotice.value = '';
   if (!options.keepSelection) invalidateDetail();
   try {
@@ -339,6 +345,7 @@ async function loadQueue(options = {}) {
     items.value = data.items || [];
     totalCount.value = data.total || 0;
     st.page = data.page || st.page;
+    refreshError.value = '';
     // 队列不等待默认选中项的详情与复核历史。
     loading.value = false;
     if (options.skipSelection) return;
@@ -352,10 +359,16 @@ async function loadQueue(options = {}) {
     else invalidateDetail();
   } catch (error) {
     if (token !== listToken) return;
+    if (quiet) {
+      refreshError.value = refreshFailureText(error, '读取研判失败');
+      throw error;
+    }
     invalidateDetail();
     items.value = [];
     totalCount.value = 0;
     listError.value = formatApiError(error, '读取研判失败');
+    refreshError.value = '';
+    if (options.quiet) throw error;
   } finally {
     if (token === listToken) loading.value = false;
   }
@@ -632,14 +645,14 @@ onMounted(() => {
   loadShadowHint();
 });
 
-/* 实时刷新：研判、告警、计划或空域变化后重读当前筛选下的队列和统计，保留选中项；
-   选中行本身有变化时才重读详情，避免详情区随每次信号闪烁。 */
+/* 实时刷新：研判、告警、计划或空域变化后静默重读当前筛选下的队列和统计，保留选中项；
+   选中行本身有变化时才重读详情，避免详情区随每次信号闪烁。队列读取失败时抛出，由实时刷新按退避重试。 */
 async function realtimeRefresh() {
   if (!pageActive || loading.value) return;
   const selectedId = S.st.selectedEvaluationId;
   const rowKey = id => JSON.stringify(items.value.find(item => item.evaluation_id === id) || null);
   const before = rowKey(selectedId);
-  await loadQueue({ keepSelection: true, skipSelection: true });
+  await loadQueue({ keepSelection: true, skipSelection: true, quiet: true });
   void loadKpi();
   const after = rowKey(selectedId);
   if (selectedId && S.st.selectedEvaluationId === selectedId && after !== before && after !== 'null') {
@@ -678,6 +691,7 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
 
           <div id="lgList" class="lg-list-host">
             <div v-if="shadowHint" class="lg-inline-error lg-shadow-hint" role="status">{{ shadowHint }}</div>
+            <div v-if="refreshError && !listError" class="lg-inline-error" role="status">自动刷新失败（{{ refreshError }}），正在重试；下面是上次读到的结果。</div>
             <div v-if="listError" class="empty lg-state-error" role="alert">{{ listError }}</div>
             <div v-else-if="loading" class="empty">正在读取研判…</div>
             <div v-else-if="deepLinkNotice" class="empty lg-state-warn" role="status">{{ deepLinkNotice }}</div>

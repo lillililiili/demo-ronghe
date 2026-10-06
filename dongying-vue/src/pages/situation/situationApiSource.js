@@ -8,6 +8,7 @@ import { handoffApi } from '@/services/handoffApi.js';
 import { mapPool } from '@/services/apiClient.js';
 import { onDataChange } from '@/services/realtime.js';
 import { legalityApi } from '@/services/legalityApi.js';
+import { hasPermission } from '@/services/accessControl.js';
 import { applyTrackComparison } from '@/services/trackPoints.js';
 import {
   attachBearing, attachDeviceEvents, attachRecentTracks, attachTargetSourceLinks,
@@ -32,6 +33,13 @@ const TOPIC_SEGMENTS = {
   target: ['targets'], legality: ['targets'], alarm: ['alarms'], risk: ['risks'], punishment: ['handoffs'], '*': FAST_SEGMENTS
 };
 const RECENT_TRACK_WINDOW_MS = 5 * 60_000;
+/* 各组数据的读取权限与后端接口一致（ZT-09）：没有权限的组不发请求、不报“刷新失败”，地图上这一类保持为空。
+   飞行计划同时要读航线版本，两项权限都要有。登录后权限有变化、后端答复 403 时同样按没有权限处理，本页不再重复请求。 */
+const SEGMENT_PERMISSIONS = {
+  targets: ['target:read'], alarms: ['alarm:read'], risks: ['risk:read'], handoffs: ['handoff:read'],
+  devices: ['devices.read'], 'device-events': ['monitoring.read'], 'flight-plans': ['flight:read', 'route:read'],
+  airspaces: ['airspace:read'], 'fusion-status': ['target:read']
+};
 
 async function allPages(load, params = {}) {
   const items = [];
@@ -89,6 +97,14 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
   const routeVersions = new Map();
   const trajectoryComparisons = new Map();
   const failedSegments = new Set();
+  const deniedSegments = new Set();
+  const permitted = name => !deniedSegments.has(name) && (SEGMENT_PERMISSIONS[name] || []).every(code => hasPermission(code));
+  function deny(name) {
+    deniedSegments.add(name);
+    failedSegments.delete(name);
+  }
+  // 重新登录或权限刷新后，按新权限重新判断哪些组可以读。
+  const accessChanged = () => { deniedSegments.clear(); };
 
   function withComparison(targets) {
     return targets.map(target => {
@@ -103,13 +119,17 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
     const simulated = ['devices', 'targets', 'alarms', 'flightPlans', 'risks', 'handoffs']
       .some(key => snapshot[key].some(row => row.simulated === true || row.sourceMode === 'mock' || row.source_mode === 'mock'));
     snapshot = { ...snapshot, generatedAt, sourceMode: sourceMode(snapshot), simulated,
-      failedSegments: [...failedSegments] };
+      failedSegments: [...failedSegments], deniedSegments: Object.keys(SEGMENT_PERMISSIONS).filter(name => !permitted(name)) };
     emit(snapshot);
   }
 
-  async function retain(name, task, apply) {
+  async function retain(name, task, apply, empty) {
+    if (!permitted(name)) { failedSegments.delete(name); apply(empty); return; }
     try { apply(await task()); failedSegments.delete(name); }
-    catch (error) { failedSegments.add(name); report(error, name); }
+    catch (error) {
+      if (error?.status === 403) { deny(name); apply(empty); return; }
+      failedSegments.add(name); report(error, name);
+    }
   }
 
   async function refreshFast(generatedAt, segments = FAST_SEGMENTS) {
@@ -125,16 +145,16 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
         ]);
         const converted = attachBearing(toTargets(page.items), bearingOrigins(snapshot.devices));
         return withComparison(attachRecentTracks(converted, recent, snapshot.targets));
-      }, value => { snapshot = { ...snapshot, targets: value }; }),
+      }, value => { snapshot = { ...snapshot, targets: value }; }, []),
       wanted.has('alarms') && retain('alarms', () => allPages(listAlarms, {
         occurred_from: day.from, occurred_to: day.to, sort: 'occurred_at', order: 'desc'
-      }), value => { snapshot = { ...snapshot, alarms: toAlarms(value) }; }),
+      }), value => { snapshot = { ...snapshot, alarms: toAlarms(value) }; }, []),
       wanted.has('risks') && retain('risks', () => allPages(riskApi.listRisks, {
         occurred_from: day.from, occurred_to: day.to, sort: 'occurred_at', order: 'desc'
-      }), value => { snapshot = { ...snapshot, risks: toRisks(value) }; }),
+      }), value => { snapshot = { ...snapshot, risks: toRisks(value) }; }, []),
       wanted.has('handoffs') && retain('handoffs', () => allPages(handoffApi.listHandoffs, {
         created_from: day.from, created_to: day.to
-      }), value => { snapshot = { ...snapshot, handoffs: value }; })
+      }), value => { snapshot = { ...snapshot, handoffs: value }; }, [])
     ];
     await Promise.all(tasks.filter(Boolean));
   }
@@ -148,12 +168,17 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
       // 部分旧后端不会消费 enabled 查询参数；前端仍须严格隐藏已停用的历史回放设备。
       const enabledRows = rows.filter(row => row.enabled !== false);
       let events = [];
-      try {
-        events = (await deviceApi.events({ after_seq: 0, limit: 200, latest: true }))?.items || [];
-        failedSegments.delete('device-events');
-      } catch (error) { failedSegments.add('device-events'); report(error, 'device-events'); }
+      if (permitted('device-events')) {
+        try {
+          events = (await deviceApi.events({ after_seq: 0, limit: 200, latest: true }))?.items || [];
+          failedSegments.delete('device-events');
+        } catch (error) {
+          if (error?.status === 403) deny('device-events');
+          else { failedSegments.add('device-events'); report(error, 'device-events'); }
+        }
+      } else failedSegments.delete('device-events');
       return attachDeviceEvents(toDevices(enabledRows, { includeUnlocated: true }).filter(row => DEVICE_TYPES.has(row.typeCode)), events);
-    }, value => { snapshot = { ...snapshot, devices: value }; });
+    }, value => { snapshot = { ...snapshot, devices: value }; }, []);
 
     const planTask = wanted.has('flight-plans') && retain('flight-plans', async () => {
       const plans = (await listAllFlightPlans({ window_from: day.from, window_to: day.to }))
@@ -163,17 +188,17 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
         routeVersions.set(id, await flightApi.routeVersion(id));
       });
       return toFlightPlans(plans, Object.fromEntries(routeVersions));
-    }, value => { snapshot = { ...snapshot, flightPlans: value }; });
+    }, value => { snapshot = { ...snapshot, flightPlans: value }; }, []);
 
     const airspaceTask = wanted.has('airspaces') && retain('airspaces', async () => {
       const rows = await allPages(airspaceApi.list, { valid_at: generatedAt });
       const details = await mapPool(rows, 6, row => airspaceApi.detail(row.airspace_id));
       return toAirspaces(details);
-    }, value => { snapshot = { ...snapshot, airspaces: value }; });
+    }, value => { snapshot = { ...snapshot, airspaces: value }; }, []);
 
     const fusionTask = wanted.has('fusion-status') && retain('fusion-status', () => targetApi.fusionStatus(), value => {
       snapshot = { ...snapshot, fusionStatus: value };
-    });
+    }, null);
     await Promise.all([deviceTask, planTask, airspaceTask, fusionTask].filter(Boolean));
     snapshot = { ...snapshot, targets: attachBearing(snapshot.targets, bearingOrigins(snapshot.devices)) };
   }
@@ -242,6 +267,7 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
       report = typeof onError === 'function' ? onError : () => {};
       stopped = false;
       unsubscribe?.();
+      globalThis.addEventListener?.('auth-access-change', accessChanged);
       unsubscribe = onDataChange([...new Set([...Object.keys(TOPIC_SEGMENTS), ...Object.keys(SLOW_TOPIC_SEGMENTS)])], topics => nudge(topics));
       paused = typeof document !== 'undefined' && document.hidden;
       if (!paused) void cycle(true);
@@ -254,7 +280,10 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
       clearTimer();
       if (!running) void cycle(true);
     },
-    stop() { stopped = true; paused = false; clearTimer(); unsubscribe?.(); unsubscribe = null; },
+    stop() {
+      stopped = true; paused = false; clearTimer(); unsubscribe?.(); unsubscribe = null;
+      globalThis.removeEventListener?.('auth-access-change', accessChanged);
+    },
     async refresh() { await cycle(true); },
     async loadTargetDetail(targetId) {
       if (!targetId) return null;

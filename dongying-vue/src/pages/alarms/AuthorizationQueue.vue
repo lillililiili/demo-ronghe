@@ -41,7 +41,7 @@ const subjects = ref({});
 const subjectKey = row => `${row.subject_kind}:${row.subject_id}`;
 const subjectText = row => subjects.value[subjectKey(row)]?.text || `${({ UAV_EVENT: '告警事件', TARGET: '目标', RISK: '风险事件' }[row.subject_kind] || '关联对象')}编号读取中`;
 const subjectExtra = row => subjects.value[subjectKey(row)]?.fallback ? `记录 ${row.authorization_no || row.authorization_id}` : subjects.value[subjectKey(row)]?.extra || '';
-let request = 0, detailRequest = 0, active = true;
+let request = 0, detailRequest = 0, active = true, loadFailure = null;
 watch(visibleRows, items => { for (const row of items) void readSubject(row); });
 watch(selected, row => { if (row) void readSubject(row); });
 async function readSubject(row) {
@@ -95,7 +95,10 @@ async function load(next = page.value, { quiet = false } = {}) {
     loadedAt.value = formatTime(Date.now());
     error.value = '';
   } catch (e) {
-    if (current() && !quiet) { error.value = e.message || '读取办理记录失败'; rows.value = []; total.value = 0; }
+    if (!current()) return;
+    if (!quiet) { error.value = e.message || '读取办理记录失败'; rows.value = []; total.value = 0; loadFailure = e; }
+    // 静默重读失败保留当前列表，交给实时刷新稍后重试。
+    else throw e;
   } finally { if (current()) loading.value = false; }
 }
 function closeDetail() { ++detailRequest; selected.value = null; emergencyInfo.value = null; detailError.value = ''; detailLoading.value = false; }
@@ -145,17 +148,41 @@ function changePage(next) { if (view.value === 'pending') page.value = next; els
 function resize(size) { pageSize.value = size; if (view.value === 'pending') page.value = 1; else load(1); }
 async function refreshCurrent() { subjects.value = {}; if (selected.value) await show(selected.value.authorization_id, false, true); else await load(); }
 onMounted(() => props.initialAuthorizationId ? show(props.initialAuthorizationId, false, true) : load());
-/* 实时刷新：处置授权变化后静默重读列表；选中授权本身有变化时才重读详情。 */
-useRealtimeRefresh(['disposal', 'alarm'], async () => {
-  if (loading.value || detailLoading.value) return;
+/* 静默重读当前打开的授权详情：不清空、不闪“正在读取”，内容变了才替换。
+   记录已移出当前列表时也照常更新（例如“待我处理”里开始执行后不再列出，详情仍要显示执行结果）。 */
+async function refreshSelectedQuietly() {
   const id = selected.value?.authorization_id;
-  const before = JSON.stringify(rows.value.find(row => row.authorization_id === id) || null);
-  await load(page.value, { quiet: true });
-  const after = JSON.stringify(rows.value.find(row => row.authorization_id === id) || null);
-  if (id && selected.value?.authorization_id === id && after !== before && after !== 'null') {
-    try { await refresh(id, false); } catch { /* refresh 已显示原因 */ }
+  if (!id) return;
+  const seq = detailRequest;
+  let detail;
+  try { detail = await disposalApi.detail(id); }
+  catch (e) {
+    if (!active || seq !== detailRequest || selected.value?.authorization_id !== id) return;
+    // 记录已不可见或无权查看：如实提示，不再重试；其他失败交给实时刷新退避重试。
+    if ([403, 404].includes(e?.status)) { detailError.value = e.message || '授权记录已不可见'; return; }
+    throw e;
   }
+  if (!active || seq !== detailRequest || selected.value?.authorization_id !== id) return;
+  if (props.eventId && (detail.subject_kind !== 'UAV_EVENT' || detail.subject_id !== props.eventId)) return;
+  detailError.value = '';
+  if (JSON.stringify(detail) !== JSON.stringify(selected.value)) selected.value = detail;
+}
+/* 实时刷新：处置授权或告警变化后静默重读列表，并静默重读打开的详情（BUG-08：执行完成后不再停在“执行中”）。
+   列表曾整页读取失败时改为整页重读，失败交给实时刷新退避重试。 */
+useRealtimeRefresh(['disposal', 'alarm'], async topics => {
+  if (loading.value || detailLoading.value) return;
+  if (error.value) {
+    await load(page.value);
+    // 抛出原错误：断网、5xx 按退避重试，没有权限等再读也不会好的不重试。
+    if (error.value) throw loadFailure || new Error(error.value);
+  } else await load(page.value, { quiet: true });
+  if (topics.some(topic => topic === 'disposal' || topic === '*')) await refreshSelectedQuietly();
 }, { minIntervalMs: 2_000 });
+/* 设备在线状态会改变“执行受阻”原因：已批准或执行中的详情随设备状态变化静默重读，最多 5 秒一次。 */
+useRealtimeRefresh(['device_state'], async () => {
+  if (loading.value || detailLoading.value || !['APPROVED', 'EXECUTING'].includes(selected.value?.status)) return;
+  await refreshSelectedQuietly();
+}, { minIntervalMs: 5_000 });
 onUnmounted(() => { active = false; request++; detailRequest++; });
 </script>
 

@@ -526,6 +526,8 @@ function riskMessageOf(reason, fallback) {
 
 let planListToken = 0;
 let planRefreshTimer = 0;
+// 最近一次列表读取失败的原因，实时刷新据此判断是否值得退避重试（没有权限、登录失效不重试）。
+let planFailure = null, riskFailure = null;
 async function loadPlans(nextPage = page.value, requestedId = null) {
   const token = ++planListToken;
   // 筛选/翻页后，先前详情即使较晚返回也不能重新选中已离开列表的记录。
@@ -573,6 +575,7 @@ async function loadPlans(nextPage = page.value, requestedId = null) {
     airspaceError.value = '';
     destroyRouteMap();
     routeLoaded.value = false;
+    planFailure = requestError;
     error.value = requestError.message || '读取飞行计划失败';
   } finally {
     if (token === planListToken) loading.value = false;
@@ -1115,6 +1118,7 @@ async function loadRisks(nextPage = riskPage.value, requestedId = null) {
     }
   } catch (requestError) {
     if (token !== riskListToken) return;
+    riskFailure = requestError;
     risks.value = [];
     riskTotal.value = 0;
     clearRiskDetail();
@@ -1679,7 +1683,13 @@ onMounted(() => {
 /* 实时刷新：计划、空域、风险或目标变化后静默重读当前页签的列表和统计，保留筛选、分页与选中项；
    选中行本身有变化时才重读详情，避免详情和地图随每次信号重建。 */
 async function realtimeRefreshPlans(topics) {
-  if (loading.value || error.value) return;
+  if (loading.value) return;
+  if (error.value) {
+    // 列表上次读取失败：按正常流程重读，仍失败时抛给实时刷新退避重试。
+    await loadPlans(page.value);
+    if (error.value) throw planFailure || new Error(error.value);
+    return;
+  }
   if (topics.some(topic => ['plan', 'airspace', '*'].includes(topic))) {
     const token = ++planListToken;
     const selectedId = selected.value?.plan_id;
@@ -1695,7 +1705,10 @@ async function realtimeRefreshPlans(topics) {
       loadUpstreamStatus();
       const after = JSON.stringify(plans.value.find(item => item.plan_id === selectedId) || null);
       if (selectedId && after !== before && after !== 'null' && !detailLoading.value) await loadDetail(selectedId);
-    } catch { /* 静默刷新失败保留当前列表 */ }
+    } catch (requestError) {
+      // 静默刷新失败保留当前列表，抛给实时刷新退避重试。
+      if (token === planListToken) throw requestError;
+    }
   }
   if (showRouteRisks.value && selected.value && !routeRisks.loading
     && topics.some(topic => ['risk', 'target', '*'].includes(topic))) {
@@ -1704,7 +1717,13 @@ async function realtimeRefreshPlans(topics) {
 }
 
 async function realtimeRefreshRisks() {
-  if (riskLoading.value || riskError.value) return;
+  if (riskLoading.value) return;
+  if (riskError.value) {
+    // 风险列表上次读取失败：按正常流程重读，仍失败时抛给实时刷新退避重试。
+    await loadRisks(riskPage.value);
+    if (riskError.value) throw riskFailure || new Error(riskError.value);
+    return;
+  }
   const token = ++riskListToken;
   const selectedId = S.selectedRiskId;
   const before = JSON.stringify(risks.value.find(item => item.risk_id === selectedId) || null);
@@ -1716,7 +1735,10 @@ async function realtimeRefreshRisks() {
     riskTotal.value = data.total;
     const after = JSON.stringify(risks.value.find(item => item.risk_id === selectedId) || null);
     if (selectedId && after !== before && after !== 'null') await loadRiskDetail(selectedId);
-  } catch { /* 静默刷新失败保留当前列表 */ }
+  } catch (requestError) {
+    // 静默刷新失败保留当前列表，抛给实时刷新退避重试。
+    if (token === riskListToken) throw requestError;
+  }
 }
 
 useRealtimeRefresh(['plan', 'airspace', 'risk', 'target'], async topics => {

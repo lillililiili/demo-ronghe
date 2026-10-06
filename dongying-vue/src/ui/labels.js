@@ -401,6 +401,16 @@ export const airspaceVersionOrdinal = versionNo => (versionNo == null || Number(
 
 /** 取中文文案；代码为空返回 fallback，未收录返回代码本身。 */
 export const labelOf = (map, code, fallback = '—') => (code == null || code === '' ? fallback : (map[code] || String(code)));
+
+/* 目标类别变化（ZT-04）：目标详情 class_changes（新的在前）。系统改判来自融合识别，人工修订来自目标修订；
+   告警、研判与通知保留产生时的结论，页面只写明"类别已由 X 改为 Y"。原来没有类别的按"未分类"写，与目标列表同一说法。 */
+export function classChangeText(change, formatTime = value => String(value ?? '')) {
+  if (!change || !change.to_class_code) return '';
+  const from = labelOf(OBJECT_TYPE_LABEL, change.from_class_code || 'UNKNOWN');
+  const to = labelOf(OBJECT_TYPE_LABEL, change.to_class_code);
+  const by = change.operator_kind === 'SYSTEM' ? '系统识别' : '人工修订';
+  return `${formatTime(change.changed_at)} ${by}：${from} → ${to}`;
+}
 /** 目标类型文案：优先细分类型，其次大类。 */
 /**
  * 授权状态的上屏文案。STOPPED 必须带“设备急停到底做没做”的限定语（决策 13-10/13-11）：

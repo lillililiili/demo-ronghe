@@ -4,7 +4,7 @@ import { computed, h, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import { createSituationApiSource } from '@/pages/situation/situationApiSource.js';
-import { currentMapSnapshot, riskMatchesPlan, routeRiskIsActive, SITUATION_DEVICE_TYPE_ORDER, targetClassCounts } from '@/services/situationData.js';
+import { clockLagText, currentMapSnapshot, riskMatchesPlan, routeRiskIsActive, SITUATION_DEVICE_TYPE_ORDER, targetClassCounts } from '@/services/situationData.js';
 import {
   disposalStage, situationAlarmNeedsAttention, situationRouteRiskVisible,
   uavProcessActions, uavProcessStatus
@@ -641,6 +641,7 @@ function renderDeviceTip(device) {
       <button type="button" data-tip-act="close" aria-label="关闭设备详情">${U.icon('close')}</button></header>
     <div class="sit-map-pop-status"><span class="sit-state ${statusClass(device.status)}">${esc(device.status)}</span><span>最新上报 ${esc(reportAge(device.lastReportAt))}</span></div>
     ${device.posValid === false ? '<p class="sit-map-pop-note">未提供安装坐标，暂不显示地图点位。</p>' : ''}
+    ${device.timeUntrusted ? `<p class="sit-map-pop-note">设备时间不准：最近感知数据的报文时刻比平台收到时早${esc(clockLagText(device.reportLagMs) || '较多')}（设备时钟慢或数据积压），相关目标会标为“数据过期”。请核对设备时间。</p>` : ''}
     ${device.simulated ? '<p class="sit-map-pop-note">模拟设备数据（非现场验收）</p>' : ''}
     <dl><dt>覆盖参数</dt><dd class="${unavailable ? 'is-unavailable' : ''}">${esc(coverageState)}</dd>
       ${coverage.availabilityReason ? `<dt>可用性</dt><dd class="is-unavailable">${esc(coverage.availabilityReason)}</dd>` : ''}
@@ -673,16 +674,20 @@ function renderTargetTip(target, hasAdvisoryCard = false) {
     .map(device => device.type).join(' / ');
   const summary = alarm?.type || routeRisk?.reasonText || '暂无关联异常';
   const processStatus = alarm ? uavProcessStatus(alarm) : '';
+  // 报文时刻不可信（ZT-20）不能显示成"已观测"：写明数据过期、设备时间不准。
   const stateText = processStatus || (target.activeRisk ? '风险持续'
-    : target.stale || target.freshness === 'STALE' ? '数据已过期' : '已观测');
+    : target.timeUntrusted ? '数据过期 · 设备时间不准'
+      : target.stale || target.freshness === 'STALE' ? '数据已过期' : '已观测');
   const stateClass = alarm?.eventState === 'FALSE_POSITIVE' || processStatus === '已移送处罚' || processStatus === '已干扰'
-    ? 'is-online' : (target.activeRisk || processStatus === '信号干扰中' || processStatus === '待审批' ? 'is-risk' : 'is-online');
+    ? 'is-online' : (target.activeRisk || processStatus === '信号干扰中' || processStatus === '待审批' ? 'is-risk'
+      : !processStatus && target.timeUntrusted ? 'is-warning' : 'is-online');
   return `<section class="sit-map-pop sit-map-pop-target${target.newAlert ? ' is-new' : ''}" style="--sensor:${target.objectTypeCode === 'UAV' ? '#2fd06e' : '#72d6ff'}">
     <header><span class="sit-map-pop-icon">${targetIconHtml(target)}</span><span><b>${esc(target.id)}</b><small>${esc(target.typeLabel)}</small></span>
       <button type="button" data-tip-act="close" aria-label="关闭目标详情">${U.icon('close')}</button></header>
     <div class="sit-map-pop-status"><span class="sit-state ${stateClass}">${esc(stateText)}</span><span>${esc(summary)}</span></div>
     <div class="sit-target-metrics"><span><small>高度</small><b>${esc(formatMetric(target.alt, ' m'))}</b></span><span><small>速度</small><b>${esc(formatMetric(target.speed, ' m/s'))}</b></span></div>
     <p>最后上报：${esc(formatClock(target.lastSeenAt))} · ${esc(reportAge(target.lastSeenAt))}</p>
+    ${target.timeUntrusted ? `<p class="sit-map-pop-note">数据过期：报文时刻比平台收到时早${esc(clockLagText(target.reportLagMs) || '较多')}，设备时间不准或数据积压，图上位置可能不是当前位置；超过新鲜时限的数据不做合法性判定。平台收到：${esc(formatClock(target.receivedAt))}</p>` : ''}
     ${target.objectTypeCode === 'UAV' ? `<p>遥控器位置：${esc(pilotLocationText(target.pilotLocation))}</p>` : ''}
     <div class="sit-target-source"><span>感知来源：${esc(sourceNames || '未提供')}</span><button type="button" data-tip-act="eo-video" aria-expanded="${showTargetVideo.value}" aria-controls="situation-video-window">${showTargetVideo.value ? '收起视频' : '实时视频'}</button></div>
     ${alarm?.eventId && !hasAdvisoryCard ? `<p class="sit-map-pop-note">短信通知：${esc(sms?.title || '正在读取通知状态')}${sms?.simulated ? '（模拟）' : ''}${sms?.updatedAt ? ` · ${esc(formatClock(sms.updatedAt))}` : ''}</p>
@@ -918,7 +923,7 @@ onUnmounted(() => {
                 :aria-pressed="selection?.kind === 'device' && selection.id === device.id"
                 :aria-label="`查看${device.type}设备 ${device.name}，${device.status}${device.hasAlarm ? '，存在告警' : ''}`" @click="selectDevice(device)">
                 <span><span class="sit-node-icon" v-html="iconHtml(device)"></span><b>{{ device.name }}</b><small class="mono">{{ device.id }}</small></span>
-                <em>{{ device.status }} · {{ reportAge(device.lastReportAt) }}</em>
+                <em>{{ device.status }} · {{ reportAge(device.lastReportAt) }}<template v-if="device.timeUntrusted"> · 设备时间不准</template></em>
               </button>
             </div>
           </section>

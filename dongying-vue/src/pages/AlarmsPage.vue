@@ -828,20 +828,24 @@ async function selectAlarm(id) {
 
 /* 升级记录只在告警升级过时读取；读不到只影响这一块，可单独重试，不影响告警详情与处置。 */
 const ESCALATION_PAGE_SIZE = 50;
-async function loadEscalations(my) {
+/* quiet：打开的告警又升级了（实时刷新），已显示的记录保留到新记录读到为止，读取失败也不清掉。 */
+async function loadEscalations(my, { quiet = false } = {}) {
   const a = cur.alarm;
   if (!a || my !== detailSeq || !briefOf(a)) return;
-  cur.escalationsLoading = true; cur.escalationsError = '';
-  paintDetailContent();
+  const keep = quiet && cur.escalations.length > 0;
+  if (!keep) { cur.escalationsLoading = true; cur.escalationsError = ''; paintDetailContent(); }
   try {
     const page = await listAlarmEscalations(a.alarm_id, { page: 1, size: ESCALATION_PAGE_SIZE });
     if (my !== detailSeq) return;
     cur.escalations = Array.isArray(page?.items) ? page.items : [];
     cur.escalationsTotal = Number(page?.total) || cur.escalations.length;
+    cur.escalationsError = '';
   } catch (e) {
     if (my !== detailSeq) return;
-    cur.escalations = []; cur.escalationsTotal = 0;
-    cur.escalationsError = e?.status === 403 ? '当前账号没有查看升级记录的权限' : messageOf(e);
+    if (!keep) {
+      cur.escalations = []; cur.escalationsTotal = 0;
+      cur.escalationsError = e?.status === 403 ? '当前账号没有查看升级记录的权限' : messageOf(e);
+    }
   }
   cur.escalationsLoading = false;
   paintDetailContent();
@@ -959,6 +963,8 @@ async function refreshSelected(id = st.selId) {
   }
   const before = cur.alarm, beforeEvent = cur.event;
   const targetChanged = alarm.target_id !== before.target_id;
+  // 打开着的告警被升级（同一架无人机的新违规并入，BUG-16/BUG-11）时，升级记录跟着重读。
+  const escalationChanged = (alarm.escalation_count ?? 0) !== (before.escalation_count ?? 0) || alarm.escalated_at !== before.escalated_at;
   const chainChanged = targetChanged || alarm.event_id !== before.event_id || JSON.stringify(event) !== JSON.stringify(beforeEvent);
   cur.alarm = alarm; cur.event = event;
   if (alarm.event_id) await refreshEventDisposals(alarm.event_id);
@@ -973,6 +979,7 @@ async function refreshSelected(id = st.selId) {
     await loadTarget(my, { quiet: true });
   }
   if (chainChanged && isCurrent()) await refreshChain(my);
+  if (escalationChanged && isCurrent()) await loadEscalations(my, { quiet: true });
 }
 
 /* 证据链静默重读：读到新内容再替换，读取失败保留已显示的证据链；原来就没读出来的按正常流程重读。 */

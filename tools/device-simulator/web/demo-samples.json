@@ -138,6 +138,7 @@
     {
       "id": "restricted-zone",
       "name": "02 演示禁飞区",
+      "kindCode": "PROHIBITED",
       "points": [
         [
           476.0,

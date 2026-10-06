@@ -99,6 +99,24 @@ class ExternalBridge:
                 self.invalidate(platform)
             raise
 
+    def connection_scope(self):
+        """Unit and district of the simulator's MQTT connection: the default owner of airspaces issued from the map."""
+        with self.lock:
+            platform, runtime = self.platform, self.runtime
+        if platform is None: raise ExternalAuthenticationRequired('请先登录现有系统')
+        broker = getattr(runtime, 'broker', None)
+        if not broker:
+            try:
+                broker = next((b for b in platform.brokers() if b.get('name') == 'local-lingyun-replay'), None)
+            except ValueError as error:
+                if '返回 401' in str(error):
+                    self.invalidate(platform)
+                    raise
+                return {'owner_org_id': None, 'district_id': None, 'message': '模拟器连接读取失败，请手动选择归属单位与区县'}
+        if not broker or not broker.get('owner_org_id') or not broker.get('district_id'):
+            return {'owner_org_id': None, 'district_id': None, 'message': '未找到启用的回放 MQTT 连接 local-lingyun-replay，请手动选择归属单位与区县'}
+        return {'owner_org_id': broker['owner_org_id'], 'district_id': broker['district_id'], 'broker_name': broker.get('name')}
+
     def request(self, command):
         if not isinstance(command, dict): raise ValueError('请求格式无效')
         method, path = command.get('method'), command.get('path')
@@ -624,6 +642,11 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if not self.safe(): return self.respond({'error':'只允许本机同源访问'},403)
         if self.path=='/api/external/status': return self.respond(external_bridge.status())
+        if self.path=='/api/external/connection-scope':
+            try:
+                return self.respond(external_bridge.connection_scope())
+            except ValueError as error:
+                return self.respond({'error': str(error)}, 401 if isinstance(error, ExternalAuthenticationRequired) or '返回 401' in str(error) else 400)
         if urlparse(self.path).path == '/api/external/inbox':
             params = parse_qs(urlparse(self.path).query)
             try:

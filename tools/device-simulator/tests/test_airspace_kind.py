@@ -1,3 +1,4 @@
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -28,5 +29,13 @@ class AirspaceKindTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'尚未选择空域类型'):
                 seed.create(scene,{},dict(broker_id='b'),manifest,1790467200000)
             self.assertEqual(calls,[])
+
+    def test_demo_sample_zones_can_be_issued_directly(self):
+        # The demo's prohibited zone must carry its kind; a drawn boundary alone is never treated as prohibited.
+        sample=json.loads((Path(__file__).resolve().parents[1]/'web'/'demo-samples.json').read_text(encoding='utf-8'))
+        self.assertTrue(sample['zones'])
+        for zone in sample['zones']:
+            self.assertIn(zone.get('kindCode'),('PROHIBITED','RESTRICTED','ALTITUDE_LIMIT','PERMITTED','TEMPORARY_CONTROL'),zone['name'])
+        self.assertEqual({z['id']:z['kindCode'] for z in sample['zones']}['restricted-zone'],'PROHIBITED')
 
 if __name__=='__main__': unittest.main()

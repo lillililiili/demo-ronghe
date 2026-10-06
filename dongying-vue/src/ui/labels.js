@@ -58,7 +58,8 @@ const USER_MESSAGES = {
   "接收方不存在或不可用": "所选接收单位不存在或已停用，请重新选择或联系管理员。",
   "源对象不存在或不在当前权限范围内": "找不到这条记录，或你没有查看权限。请返回列表重新选择；仍打不开时联系管理员。",
   "服务响应格式无效": "暂时读不到系统返回的信息，请刷新后查看记录；刚提交过的操作不要重复提交。",
-  "请求失败": "这次操作没有完成，请查看最新记录；仍有问题请联系管理员。"
+  "请求失败": "这次操作没有完成，请查看最新记录；仍有问题请联系管理员。",
+  "未登录或会话已失效": "登录已过期，刚才的操作没有完成。请重新登录后再试。"
 };
 
 export function userFacingMessage(value) {
@@ -71,6 +72,8 @@ export function userFacingMessage(value) {
 /* 业务代码 → 中文文案字典（全站共用）。
    规则：页面只展示名称与业务编号，内部 ID 只能进 title 提示；未收录的代码原样返回，不猜测含义。 */
 export const SOURCE_MODE_LABEL = { mock: '模拟', replay: '回放', live: '实时' };
+// 账号数据范围（ZT-14）：由后台用户管理设置，业务数据按它在服务端过滤。
+export const DATA_SCOPE_LABEL = { ALL: '全部单位', OWN_ORG: '本单位', OWN_ORG_TREE: '本单位及下级单位', CUSTOM: '指定单位和区域', NONE: '不能查看业务数据' };
 // 本地模拟回执关联码用于服务端对账，不是发送失败事实。
 export function notificationBlockedReason(notice) {
   const reason = String(notice?.blocked_reason || '').trim();

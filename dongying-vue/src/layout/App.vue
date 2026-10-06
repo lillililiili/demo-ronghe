@@ -12,6 +12,7 @@ import HeaderBar from './HeaderBar.vue';
 import NavSidebar from './NavSidebar.vue';
 import Breadcrumb from './Breadcrumb.vue';
 import PageHost from './PageHost.vue';
+import SessionExpiredModal from './SessionExpiredModal.vue';
 import { useAppStore } from '@/stores/app.js';
 import { canAccessRoute } from '@/services/accessControl.js';
 import { installLegacyControlObserver } from '@/ui/legacyControls.js';
@@ -44,8 +45,10 @@ const bigScreenAllowed = computed(() => {
 const BigScreenApp = defineAsyncComponent(() => import('@/pages/bigscreen/BigScreenApp.vue'));
 const refreshAccess = () => { store.accessRevision++; };
 const handleUnauthorized = () => {
+  // 业务页面里就地重新登录时会话仍在（只标记过期），不跳登录页（ZT-29）。
+  if (isAuthenticated()) return;
   const key = routeKey(route);
-  if (key !== 'login') router.replace({ path: '/login', query: { redirect: route.fullPath } });
+  if (key !== 'login') router.replace({ path: '/login', query: { redirect: route.fullPath, expired: '1' } });
 };
 let stopLegacyControlObserver = null;
 onMounted(() => {
@@ -88,6 +91,7 @@ onBeforeUnmount(() => {
         <PageHost />
       </main>
     </div>
+    <SessionExpiredModal />
   </n-config-provider>
 </template>
 

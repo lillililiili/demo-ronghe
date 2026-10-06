@@ -104,7 +104,8 @@ function esc(value) {
 }
 function messageOf(error, fallback) {
   if (!error) return fallback;
-  if (error.status === 401) return '登录已失效，请重新登录。';
+  // 401 在受理前就被拒绝：这次没有保存，弹窗和已选内容保留，重新登录后再提交（ZT-29）。
+  if (error.status === 401) return '登录已过期，这次提交没有保存。重新登录后请再提交一次。';
   if (error.status === 403) return '当前账号没有执行此动作的权限。';
   if (error.status === 404) return '研判不存在或不在可见范围内。';
   return error.message || fallback;

@@ -42,7 +42,8 @@ function time(value) {
 function messageOf(error, fallback) {
   if (!error) return fallback;
   if (isDisposalUnavailable(error)) return `${DISPOSAL_UNAVAILABLE_TEXT}，无法提交。`;
-  if (error.status === 401) return '登录已失效，请重新登录。';
+  // 401 在受理前就被拒绝：这次没有保存，弹窗和已选内容保留，重新登录后再提交（ZT-29）。
+  if (error.status === 401) return '登录已过期，这次提交没有保存。重新登录后请再提交一次。';
   if (error.status === 403) return '当前账号没有执行该操作的权限。';
   if (error.code === 'TWO_PERSON_RULE') return '审批人不能是申请人，请由另一位有审批权限的人处理。';
   if (error.code === 'AUTHORIZATION_EXPIRED') return '授权已超过时限，不能再执行；如仍需处置请重新申请。';

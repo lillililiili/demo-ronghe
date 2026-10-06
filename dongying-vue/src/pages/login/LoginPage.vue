@@ -81,6 +81,7 @@ onBeforeUnmount(() => {
 
       <section class="login-card" aria-label="账号登录">
         <form class="login-form" @submit.prevent="submit" :aria-busy="busy" novalidate>
+          <p v-if="route.query.expired === '1'" class="login-notice" role="status">登录已过期，请重新登录。</p>
           <UField ref="accountField" id="login-account" v-model="account" label="登录账号" placeholder="登录账号" sr-only size="large"
             :disabled="busy" :status="invalidField === 'account' ? 'error' : undefined"
             :input-props="{ name: 'username', autocomplete: 'username', maxlength: 80, spellcheck: false, 'aria-required': true,
@@ -145,6 +146,7 @@ onBeforeUnmount(() => {
 .login-submit { margin: 12px 0 0; padding: 0; border: 0; }
 .login-submit :deep(.n-button) { width: 100%; font-weight: 600; }
 .login-error { margin: -8px 0; color: var(--login-error); font-size: 13px; line-height: 1.6; }
+.login-notice { margin: 0; padding: 10px 12px; border: 1px solid var(--login-line); border-radius: 6px; color: var(--login-text); background: color-mix(in srgb, var(--login-link), transparent 90%); font-size: 14px; line-height: 1.6; }
 .login-organization { position: absolute; left: 4.3%; bottom: 7%; display: flex; align-items: center; gap: 14px; font-size: clamp(15px, 1.2vw, 21px); }
 .login-organization .n-icon { font-size: 28px; color: var(--login-link); }
 .login-page button:focus-visible { outline: 2px solid var(--login-link); outline-offset: 5px; border-radius: 4px; }

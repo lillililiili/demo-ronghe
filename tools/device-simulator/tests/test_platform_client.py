@@ -94,6 +94,31 @@ class PlatformIdentityTests(unittest.TestCase):
         self.assertEqual(calls[3].args[2]['version'], 4)
         self.assertEqual(result['device']['version'], 5)
 
+    def test_declared_coverage_writes_static_profile_once(self):
+        platform = Platform('http://127.0.0.1:8081/api/v1')
+        record = {'device': {'device_id': 'platform-1', 'coverage': {
+            'status': 'UNKNOWN', 'version': None}}}
+        platform.call = Mock(return_value={
+            'device': {'device_id': 'platform-1', 'coverage': {
+                'kind': 'CIRCLE', 'radius_m': 8000, 'source_label': '测试配置', 'version': 0}}})
+        result = platform._sync_sensing_profile(record,
+            {'kind': 'circle', 'radiusM': 8000, 'sourceLabel': '测试配置'}, 'sim-radar')
+        call = platform.call.call_args
+        self.assertEqual(call.args[0], 'PUT')
+        self.assertEqual(call.args[1], '/devices/platform-1/sensing-profile')
+        self.assertEqual(call.args[2], {'coverage_kind': 'CIRCLE', 'radius_m': 8000.0,
+                                        'range_m': None, 'azimuth_deg': None, 'fov_deg': None,
+                                        'source_label': '测试配置', 'expected_version': 0})
+        self.assertEqual(result['device']['coverage']['version'], 0)
+
+    def test_omitted_coverage_does_not_delete_existing_profile(self):
+        platform = Platform('http://127.0.0.1:8081/api/v1')
+        platform.call = Mock()
+        record = {'device': {'device_id': 'platform-1', 'coverage': {
+            'kind': 'CIRCLE', 'radius_m': 8000, 'source_label': '台账配置', 'version': 2}}}
+        self.assertIs(platform._sync_sensing_profile(record, None, 'sim-radar'), record)
+        platform.call.assert_not_called()
+
 
 class MqttRecoveryTests(unittest.TestCase):
     def test_wait_for_mqtt_reconnect_is_bounded_and_reports_recovery(self):

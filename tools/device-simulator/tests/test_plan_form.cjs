@@ -49,6 +49,18 @@ test('switching scene plans can refresh derived endpoint names',()=>{
  assert.equal(next.filing.landing_site_name,'巡检计划 2终点');
  assert.equal(next.filing.takeoff_longitude,118.70);
 });
+test('scene plan keeps manually edited flight window unless the scene plan changes',()=>{
+ const now=Date.parse('2026-10-03T08:00:00+08:00');
+ const plan={id:'p1',name:'巡检计划 1',start:'09:00',end:'09:30',points:[[118.61,37.42],[118.64,37.45]]};
+ const draft=form.applyScenePlan({filing:{source_id:'s'}},plan,now,{replaceWindow:true});
+ const edited={...draft,start_at:Date.parse('2026-10-03T11:00:00+08:00'),end_at:Date.parse('2026-10-03T11:30:00+08:00')};
+ const rerendered=form.applyScenePlan(edited,plan,now);
+ assert.equal(rerendered.start_at,edited.start_at);
+ assert.equal(rerendered.end_at,edited.end_at);
+ const switched=form.applyScenePlan(edited,plan,now,{replaceWindow:true});
+ assert.equal(switched.start_at,Date.parse('2026-10-03T09:00:00+08:00'));
+ assert.equal(switched.end_at,Date.parse('2026-10-03T09:30:00+08:00'));
+});
 test('scene route fields lock manually entered coordinates and expose draw entry',()=>{
  const html=form.fields({filing:{source_id:'s',takeoff_longitude:118,takeoff_latitude:37}},{scene_plan:{name:'地图航线',start:'09:00',end:'09:30',points:[[118.6,37.4],[118.7,37.5]]}});
  assert.match(html,/地图计划航线/);

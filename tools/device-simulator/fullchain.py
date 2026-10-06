@@ -290,13 +290,24 @@ class FullChain:
                     takeoff_site_name=plan['name']+'起点',landing_site_name=plan['name']+'终点',
                     takeoff_longitude=coordinates(plan['points'][0])[0],takeoff_latitude=coordinates(plan['points'][0])[1],
                     landing_longitude=coordinates(plan['points'][-1])[0],landing_latitude=coordinates(plan['points'][-1])[1])
-                plan_message = stable_simulator_id('sim-map-plan-', plan['id']+'-'+str(number))
+                legacy_plan_message = stable_simulator_id('sim-map-plan-', plan['id']+'-'+str(number))
+                plan_message = legacy_plan_message
                 plan_body={'message_id':plan_message,
                            'route_version_id':route_data['route_version_id'],'uav_sn':serial,
                            'start_at':start,'end_at':finish,'source_mode':'replay',
                            'status_code':plan_status(start, finish, now),'filing':item_filing}
                 existing_plan = inputs['plans'].get(plan_message)
-                if existing_plan and not message_matches_payload(existing_plan, plan_body):
+                if existing_plan is None:
+                    # Older context responses may omit payloads while exposing
+                    # only the content-fingerprint message from a prior run.
+                    # Reuse that sole candidate for backward compatibility;
+                    # an absent or ambiguous candidate still gets a fresh key.
+                    candidates = [(mid, row) for mid, row in inputs['plans'].items()
+                                  if mid.startswith(legacy_plan_message + '-')]
+                    if len(candidates) == 1 and message_matches_payload(candidates[0][1], plan_body):
+                        plan_message, existing_plan = candidates[0]
+                        plan_body['message_id'] = plan_message
+                if not existing_plan or not message_matches_payload(existing_plan, plan_body):
                     plan_message = stable_simulator_id(
                         'sim-map-plan-',
                         f"{plan['id']}-{number}-{payload_fingerprint(payload_without_message_id(plan_body))}")

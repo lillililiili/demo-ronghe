@@ -68,7 +68,7 @@
       <fieldset id="realtime-abnormal"><legend>异常与混合模式参数</legend>
       ${choice('command_mode','设备指令',config.command_mode,{success:'正常执行回执',no_receipt:'不执行、不回执',unchanged:'四通道状态不变，光电正常'})}
       ${Object.entries(kinds).map(([kind,label])=>choice(kind,label,config.outcomes[kind] || 'success',outcomeChoices(kind))).join('')}
-      <p class="field-note">混合模式的设备指令按正常回执；异常模式可模拟设备指令异常。全量场景若选择通知轮换策略，会覆盖此处六类结果。设备离线和故障时窗在“风险场景”设置。</p></fieldset>
+      <p class="field-note">混合模式的设备指令按正常回执；异常模式可模拟设备指令异常。全量场景若选择通知轮换策略，会覆盖此处六类结果。设备离线和故障时窗属于设备诊断联调条件。</p></fieldset>
       <p class="inline-error" role="alert">${esc(warning)}</p><div class="form-actions"><button type="submit" class="primary">保存设置</button></div></form>`);
     const form=document.querySelector('#realtime-form');
     const refresh=()=>{ const mode=form.elements.mode.value;document.querySelector('#realtime-abnormal').disabled=mode==='normal';form.elements.command_mode.disabled=mode!=='abnormal'; };

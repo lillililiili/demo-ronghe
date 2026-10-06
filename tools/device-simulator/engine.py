@@ -20,6 +20,47 @@ def number(value, low, high, label):
         raise ValueError(label + '超出允许范围')
     return value
 
+
+def normalize_coverage_config(raw):
+    """Validate optional static sensing coverage without inventing defaults."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError('设备覆盖参数必须为对象')
+    raw_kind = raw.get('kind', raw.get('coverage_kind', ''))
+    kind = str(raw_kind).strip().lower()
+    source = raw.get('sourceLabel', raw.get('source_label', ''))
+    if not isinstance(source, str) or not source.strip() or len(source.strip()) > 128:
+        raise ValueError('设备覆盖参数来源必须为 1–128 个字符')
+    source = source.strip()
+
+    def value(name, low, high, label):
+        aliases = {'radiusM': 'radius_m', 'rangeM': 'range_m',
+                   'azimuthDeg': 'azimuth_deg', 'fovDeg': 'fov_deg'}
+        raw_value = raw.get(name, raw.get(aliases[name]))
+        if isinstance(raw_value, bool) or raw_value in (None, ''):
+            return None
+        return number(raw_value, low, high, label)
+
+    if kind == 'circle':
+        radius = value('radiusM', 0, 1_000_000, '圆形覆盖半径')
+        aliases = {'rangeM': 'range_m', 'azimuthDeg': 'azimuth_deg', 'fovDeg': 'fov_deg'}
+        if radius is None or radius <= 0 or any(raw.get(key, raw.get(aliases[key])) not in (None, '')
+                                               for key in ('rangeM', 'azimuthDeg', 'fovDeg')):
+            raise ValueError('圆形覆盖只允许提供正数 radiusM')
+        return {'kind': 'circle', 'radiusM': radius, 'sourceLabel': source}
+    if kind == 'sector':
+        range_m = value('rangeM', 0, 1_000_000, '扇形覆盖距离')
+        azimuth = value('azimuthDeg', 0, 360, '扇形覆盖方位')
+        fov = value('fovDeg', 0, 360, '扇形覆盖视场')
+        if (range_m is None or range_m <= 0 or azimuth is None or azimuth >= 360
+                or fov is None or fov <= 0 or fov > 360
+                or raw.get('radiusM', raw.get('radius_m')) not in (None, '')):
+            raise ValueError('扇形覆盖需要有效的 rangeM、azimuthDeg 和 fovDeg')
+        return {'kind': 'sector', 'rangeM': range_m, 'azimuthDeg': azimuth,
+                'fovDeg': fov, 'sourceLabel': source}
+    raise ValueError('设备覆盖类型只能为 circle 或 sector')
+
 def coordinates(point):
     return [118.56 + point[0] * .00012, 37.50 - point[1] * .00012]
 
@@ -30,6 +71,22 @@ def metres(a, b):
 
 def target_path_distance(target, device):
     return min(metres(point, [device['x'], device['y']]) for point in target['path'])
+
+
+def auto_target_for_risk(risk, targets):
+    """Select the simulator observation source without making it a user input."""
+    risk_type = risk.get('type')
+    target_kind = 'bird' if risk_type == 'bird' else 'balloon' if risk_type == 'balloon' else 'uav'
+    candidates = [target for target in targets.values() if target.get('kind') == target_kind]
+    if risk_type == 'no-plan':
+        candidates = [target for target in candidates if not target.get('planId')]
+    elif risk_type in ('deviation', 'time', 'bird', 'balloon') or (
+            risk_type == 'height' and risk.get('basis') == 'plan'):
+        candidates = [target for target in candidates if target.get('planId') == risk.get('planId')]
+    current = targets.get(risk.get('targetId'))
+    if current in candidates:
+        return current
+    return candidates[0] if candidates else None
 
 def target_motion(target, elapsed):
     """Return position and east/north velocity from the same active path segment."""
@@ -156,6 +213,7 @@ def compile_scene(raw):
             seen_devices.add(d['id'])
             if d.get('kind') not in LABELS:
                 raise ValueError('未知设备类型')
+            d['coverage'] = normalize_coverage_config(d.get('coverage'))
             if d.get('health') not in ('正常', '故障') or d.get('heartbeat') not in ('持续上报', '停止心跳'):
                 raise ValueError('设备状态无效')
             if d['kind']=='eo' and d['health']=='故障':
@@ -204,6 +262,7 @@ def compile_scene(raw):
         if t.get('motionMode', 'once') not in ('once', 'loop', 'pingpong'):
             raise ValueError('轨迹运动方式无效')
         t['motionMode'] = t.get('motionMode', 'once')
+        declared_altitude_datum = t.get('altitudeDatum') in ('AMSL', 'AGL')
         if t.get('altitudeDatum', 'AMSL') not in ('AMSL', 'AGL'):
             raise ValueError('目标高度基准无效')
         t['altitudeDatum'] = t.get('altitudeDatum', 'AMSL')
@@ -239,10 +298,16 @@ def compile_scene(raw):
         if t.get('kind') not in ('uav', 'bird', 'balloon'):
             if t.get('kind') not in ('unknown', 'identifying', 'person', 'vehicle', 'ship', 'remote_controller'):
                 raise ValueError('未知目标类型')
-        default_transport = 'normalized' if t['kind'] == 'balloon' else 'mqtt'
+        # A declared altitude datum is only comparable by the platform when the
+        # target goes through the normalized observation contract. Keep legacy
+        # scenes without a datum on MQTT, but make explicit AMSL/AGL scenes safe
+        # by default and route them through the normalized path.
+        default_transport = 'normalized' if t['kind'] == 'balloon' or declared_altitude_datum else 'mqtt'
         if t.get('transport', default_transport) not in ('mqtt', 'normalized'):
             raise ValueError('目标上报通道无效')
         t['transport'] = t.get('transport', default_transport)
+        if declared_altitude_datum and t['transport'] == 'mqtt':
+            t['transport'] = 'normalized'
         if t['kind'] == 'balloon' and t['transport'] != 'normalized':
             raise ValueError('气球须通过规范化观测入口上报')
         if t['altitudeDatum'] == 'AGL' and t['transport'] != 'normalized':
@@ -261,9 +326,9 @@ def compile_scene(raw):
             continue
         if r['type'] not in RISK_TYPES:
             raise ValueError('未知风险类型')
-        if r.get('deviceId') not in devices:
-            raise ValueError(r['name'] + '：关联设备未启用或协议未接入')
         if r['type'] in ('offline', 'fault'):
+            if r.get('deviceId') not in devices:
+                raise ValueError(r['name'] + '：关联设备未启用或协议未接入')
             window = s['duration'] * 60 if s['duration'] else 86400
             r['at'] = number(r.get('at'), 0, window, '触发时间')
             r['seconds'] = number(r.get('seconds'), 1, window, '持续时间')
@@ -272,9 +337,14 @@ def compile_scene(raw):
             if r['type'] == 'fault' and devices[r['deviceId']]['kind'] == 'eo':
                 raise ValueError('光电故障码未确认；可模拟光电离线，不能伪造故障码')
         else:
-            t = targets.get(r.get('targetId'))
+            t = auto_target_for_risk(r, targets)
             if not t:
-                raise ValueError(r['name'] + '缺少关联目标')
+                raise ValueError(r['name'] + '需要目标观测输入；风险由平台根据目标位置、航线、空域和时间规则自动判定')
+            # Keep the match as an internal simulator fixture detail. The
+            # business risk still uses the plan/airspace reference and the
+            # platform determines the final target association from reports.
+            r['targetId'] = t['id']
+            r['deviceId'] = t['deviceId']
             if devices[r['deviceId']]['kind'] not in TARGET_REPORT_KINDS:
                 raise ValueError(r['name'] + '须选择支持目标上报的雷达或 TDOA')
             if r['deviceId'] != t['deviceId']:
@@ -283,14 +353,14 @@ def compile_scene(raw):
                 raise ValueError('无计划场景的目标不能关联计划')
             if r['type'] in ('zone', 'height') and r.get('basis') != 'plan' and r.get('zoneId') not in zones:
                 raise ValueError(r['name'] + '缺少区域')
-            if r['type'] in ('deviation', 'time', 'bird') or r['type'] == 'height' and r.get('basis') == 'plan':
+            if r['type'] in ('deviation', 'time', 'bird', 'balloon') or r['type'] == 'height' and r.get('basis') == 'plan':
                 if r.get('planId') not in plans:
                     raise ValueError(r['name'] + '缺少计划')
             if r['type'] == 'height':
                 base = plans[r['planId']] if r.get('basis') == 'plan' else zones[r['zoneId']]
-                t['height'] = number(r.get('height'), 0, 10000, '超高高度')
+                t['height'] = number(t.get('height'), 0, 10000, '目标高度')
                 if t['height'] <= base['max']:
-                    raise ValueError('超高场景高度必须大于依据上限')
+                    raise ValueError('超高场景的目标高度必须大于依据上限')
             if r['type'] == 'time':
                 r['offset'] = number(r.get('offset'), 1, 1440, '超出时长')
                 if r.get('mode') not in ('开始前提前飞行','结束后继续飞行'): raise ValueError('时间场景无效')

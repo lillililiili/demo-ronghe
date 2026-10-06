@@ -5,6 +5,7 @@ const test = require('node:test');
 const riskConfig = require('../web/risk-config.js');
 
 const appSource = fs.readFileSync(path.join(__dirname, '../web/app.js'), 'utf8');
+const indexSource = fs.readFileSync(path.join(__dirname, '../web/index.html'), 'utf8');
 const riskFieldsSource = appSource.slice(appSource.indexOf('function riskFields'), appSource.indexOf('function context'));
 
 test('non-device risk uses plan or airspace as its configured reference', () => {
@@ -15,8 +16,11 @@ test('non-device risk uses plan or airspace as its configured reference', () => 
 });
 
 test('non-device risk explains that target association is automatic', () => {
-  assert.match(riskConfig.associationNotice({type: 'bird'}), /设备观测/);
-  assert.match(riskConfig.associationNotice({type: 'bird'}), /自动判定/);
+  const notice = riskConfig.associationNotice({type: 'bird'});
+  assert.match(notice, /只发送鸟群观测/);
+  assert.match(notice, /风险由平台根据目标位置、航线、空域和时间规则自动判定/);
+  assert.match(notice, /不发送风险结论/);
+  assert.doesNotMatch(notice, /目标关联由设备观测与平台规则自动判定/);
   assert.equal(riskConfig.associationNotice({type: 'offline'}), '');
 });
 
@@ -37,4 +41,20 @@ test('risk editor describes automatic target association instead of manual targe
   assert.doesNotMatch(riskFieldsSource, /selectField\('上报设备','deviceId'/);
   assert.match(riskFieldsSource, /associationNotice/);
   assert.doesNotMatch(riskFieldsSource, /当前没有匹配的模拟观测目标，请先在“模拟目标”中配置对应计划或设备来源/);
+});
+
+test('target editor owns observation facts while risk editor keeps rule references', () => {
+  const targetFieldsSource = appSource.slice(appSource.indexOf("if(selected.kind==='target')"), appSource.indexOf("if(['plan','zone'].includes(selected.kind))"));
+  assert.doesNotMatch(riskFieldsSource, /field\([^\n]*(鸟群数量|气球数量|观测高度|模拟高度)/);
+  assert.match(riskFieldsSource, /目标类别、位置\/轨迹、观测高度和鸟群数量在“模拟目标”中设置/);
+  assert.match(targetFieldsSource, /基准高度（米）/);
+  assert.match(targetFieldsSource, /数量（只）/);
+});
+
+test('target observations are added from the target entry while risk conclusions have no add-risk entry', () => {
+  assert.match(indexSource, /data-action="add-target"/);
+  assert.doesNotMatch(indexSource, /data-action="add-risk"/);
+  assert.match(indexSource, /平台风险判定/);
+  assert.match(appSource, /这里添加设备上报的目标观测/);
+  assert.match(appSource, /目标观测请通过图上的“添加目标”产生，风险结论由平台返回/);
 });

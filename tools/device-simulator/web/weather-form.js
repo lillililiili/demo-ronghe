@@ -5,7 +5,8 @@
   function localTime(ms){return Number.isFinite(Number(ms))&&Number(ms)>0?new Date(Number(ms)+8*3600000).toISOString().slice(0,19):'';}
   function timestamp(value){if(!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/.test(value))throw Error('请填写完整的北京时间');const n=Date.parse(value+'+08:00');if(!Number.isFinite(n))throw Error('时间无效');return n;}
   function control(key,label,value,type='text',index='',min,max){return `<label>${esc(label)}<input data-weather-field="${key}" data-period="${index}" aria-label="${esc(label)}${index!==''?' · 时段 '+(index+1):''}" type="${type}" value="${esc(type==='datetime-local'?localTime(value):value)}" ${type==='number'?`min="${min}" max="${max}" step="${['wind_direction_deg','precipitation_probability_pct','humidity_pct'].includes(key)?1:'any'}"`:type==='datetime-local'?'step="1"':'maxlength="128"'} required></label>`;}
-  function fields(data){if(!data||typeof data!=='object'||Array.isArray(data)||(data.periods!==undefined&&(!Array.isArray(data.periods)||data.periods.some(p=>!p||typeof p!=='object'||Array.isArray(p)))))return '<p class="external-note warn">报文结构无效，请展开接口报文修正预报时段。</p>';return `<div class="external-grid">${control('area_name','预报区域',data.area_name)}${control('published_at','发布时间（北京时间）',data.published_at,'datetime-local')}</div><div class="weather-periods">${(Array.isArray(data.periods)?data.periods:[]).map((p,i)=>`<fieldset><legend>预报时段 ${i+1}</legend><div class="external-grid">${control('from','开始时间（北京时间）',p.from,'datetime-local',i)}${control('to','结束时间（北京时间）',p.to,'datetime-local',i)}${specs.map(([key,label,type,min,max])=>control(key,label,p[key],type,i,min,max)).join('')}</div>${data.periods.length>1?`<button type="button" data-weather-remove="${i}">移除此时段</button>`:''}</fieldset>`).join('')}</div><button type="button" id="weather-add-period" ${(data.periods?.length||0)>=48?'disabled':''}>增加预报时段</button>`;}
+  function areaField(data){return control('area_name','预报区域',data?.area_name);}
+  function fields(data){if(!data||typeof data!=='object'||Array.isArray(data)||(data.periods!==undefined&&(!Array.isArray(data.periods)||data.periods.some(p=>!p||typeof p!=='object'||Array.isArray(p)))))return '<p class="external-note warn">报文结构无效，请展开接口报文修正预报时段。</p>';return `<div class="external-grid">${control('published_at','发布时间（北京时间）',data.published_at,'datetime-local')}</div><div class="weather-periods">${(Array.isArray(data.periods)?data.periods:[]).map((p,i)=>`<fieldset><legend>预报时段 ${i+1}</legend><div class="external-grid">${control('from','开始时间（北京时间）',p.from,'datetime-local',i)}${control('to','结束时间（北京时间）',p.to,'datetime-local',i)}${specs.map(([key,label,type,min,max])=>control(key,label,p[key],type,i,min,max)).join('')}</div>${data.periods.length>1?`<button type="button" data-weather-remove="${i}">移除此时段</button>`:''}</fieldset>`).join('')}</div><button type="button" id="weather-add-period" ${(data.periods?.length||0)>=48?'disabled':''}>增加预报时段</button>`;}
   function update(data,key,index,value){const next=structuredClone(data);const numeric=['published_at','from','to',...specs.filter(s=>s[2]==='number').map(s=>s[0])];let parsed=value;if(numeric.includes(key)){if(value==='')parsed=null;else parsed=['published_at','from','to'].includes(key)?timestamp(value):Number(value);}if(index==='')next[key]=parsed;else {if(!next.periods?.[Number(index)])throw Error('预报时段不存在');next.periods[Number(index)][key]=parsed;}return next;}
   function validate(data,now=Date.now()){
     if(typeof data.area_name!=='string'||!data.area_name.trim())throw Error('请填写预报区域');
@@ -20,12 +21,11 @@
     }
     return data;
   }
-  function coverage(data,plan){
-    if(!plan?.start_at||!plan?.end_at)return '所选计划缺少起止时间，暂无法确认预报覆盖范围。';
-    const format=n=>localTime(n).replace('T',' ');
-    const periods=(Array.isArray(data?.periods)?data.periods:[]).filter(p=>p&&Number.isFinite(p.from)&&Number.isFinite(p.to));
-    const overlap=periods.some(p=>p.from<plan.end_at&&p.to>plan.start_at);
-    return `计划时段：${format(plan.start_at)} 至 ${format(plan.end_at)}（北京时间）。`+(overlap?'预报与计划时段有重叠。':'当前预报未覆盖计划时段。')+(periods.length&&periods.every(p=>p.to<Date.now())?'此预报时段已过期。':'');
+  function coverage(data){
+    const area=String(data?.area_name||'').trim();
+    return area
+      ? `预报区域：${area}。提交后由平台系统按预报区域匹配受影响计划。`
+      : '请填写预报区域。提交后由平台系统按预报区域匹配受影响计划。';
   }
-  const api={fields,update,validate,localTime,timestamp,coverage};root.WeatherForm=api;if(typeof module!=='undefined'&&module.exports)module.exports=api;
+  const api={areaField,fields,update,validate,localTime,timestamp,coverage};root.WeatherForm=api;if(typeof module!=='undefined'&&module.exports)module.exports=api;
 })(typeof window!=='undefined'?window:globalThis);

@@ -423,13 +423,13 @@ const verifyBlockReason = computed(() => {
 function formatTime(value) {
   if (value === null || value === undefined) return '未知';
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? '未知' : date.toLocaleString('zh-CN', { hour12: false });
+  return Number.isNaN(date.getTime()) ? '未知' : date.toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' });
 }
 
 function formatClock(value) {
   if (value === null || value === undefined) return '未知';
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? '未知' : date.toLocaleTimeString('zh-CN', { hour12: false });
+  return Number.isNaN(date.getTime()) ? '未知' : date.toLocaleTimeString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' });
 }
 
 function formatDuration(plan) {
@@ -506,6 +506,7 @@ function riskMessageOf(reason, fallback) {
 }
 
 let planListToken = 0;
+let planRefreshTimer = 0;
 async function loadPlans(nextPage = page.value, requestedId = null) {
   const token = ++planListToken;
   // 筛选/翻页后，先前详情即使较晚返回也不能重新选中已离开列表的记录。
@@ -785,7 +786,6 @@ async function loadActuals(plan) {
 }
 
 /* 与 legacy 一致：待执行的计划没有"实际"可对照，已结束的计划不再做航线风险预检。 */
-const planPending = computed(() => ['PENDING', 'APPROVED'].includes(selected.value?.status_code));
 const planEnded = computed(() => ['COMPLETED', 'CANCELLED'].includes(selected.value?.status_code));
 /* 没有事实就不摆空分区：待执行/已取消的计划没有实际飞行可对照；已结束或无走廊的计划没有起飞前航线预检。 */
 /* 有引擎结论就照实显示（状态字段不随时间流转，已批准的计划也可能早已飞过）；没有结论且计划还没飞或已取消，才不摆空分区。 */
@@ -975,6 +975,11 @@ async function loadAirspaceContext(plan) {
 function applyFilters() {
   routeLoaded.value = false;
   loadPlans(1);
+}
+
+function refreshPlans() {
+  if (activeTab.value !== 'route' || loading.value) return;
+  loadPlans(page.value);
 }
 
 function chooseStatus(value) { filters.status_code = value; applyFilters(); }
@@ -1601,6 +1606,10 @@ onMounted(() => {
       loadRouteRisks(selected.value, routeRisks.page);
     }
   }, 30000);
+  // 上级计划可能在页面打开后才到达；定时只重读列表，不触发任何业务动作。
+  planRefreshTimer = window.setInterval(() => {
+    if (!document.hidden && activeTab.value === 'route') refreshPlans();
+  }, 30000);
 });
 
 /* 实时刷新：计划、空域、风险或目标变化后静默重读当前页签的列表和统计，保留筛选、分页与选中项；
@@ -1660,6 +1669,7 @@ watch(activeRiskId, id => loadRiskNotices(id), { immediate: true });
 
 onUnmounted(() => {
   clearInterval(routeRisksTimer);
+  clearInterval(planRefreshTimer);
   routeRisksToken++;
   noticesToken++;
   planListToken++;
@@ -1825,6 +1835,7 @@ onUnmounted(() => {
           <div class="toolbar plan-toolbar">
             <div class="toolbar-fields">
               <div class="field"><label>状态</label><UControl v-model="filters.status_code" type="select" :options="statusOptions" :disabled="loading" /></div>
+              <button class="btn ghost" type="button" :disabled="loading" @click="refreshPlans">刷新计划</button>
             </div>
           </div>
           <p v-if="!loading && selected && !plans.some(plan => plan.plan_id === selected.plan_id)" class="workspace-selection-note">正在查看关联计划；本页列表未包含该计划。</p>
@@ -1895,7 +1906,6 @@ onUnmounted(() => {
               :page="routeRisks.page" :size="routeRisks.size"
               @select="jumpToRisk" @notify="notifyRouteRisk" @retry="loadRouteRisks(selected, routeRisks.page)"
               @page="loadRouteRisks(selected, $event)" />
-            <div v-if="planPending" class="rk-note" style="margin-top:12px">计划还没执行，暂不判断实际飞行是否违规。到了起飞时间仍没找到飞机时，请核实起飞情况。</div>
             </div>
             <PlanWeatherForecast v-if="planDetailTab === 'forecast'" :key="selected.plan_id" :plan-id="selected.plan_id" :start-at="selected.start_at" :end-at="selected.end_at" />
           </template></div>

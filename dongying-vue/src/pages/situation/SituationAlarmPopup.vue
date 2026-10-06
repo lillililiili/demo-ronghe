@@ -4,6 +4,7 @@ import { selectionLayout, selectionPopupPosition } from './selectionLayout.js';
 
 const props = defineProps({
   getAnchor: { type: Function, required: true },
+  getAvoidRect: { type: Function, default: null },
   label: { type: String, default: '无人机告警详情' },
   videoOpen: { type: Boolean, default: false }
 });
@@ -19,11 +20,12 @@ function positionPopup() {
   if (stage && !document.hidden) {
     const layout = selectionLayout(stage, { videoOpen: props.videoOpen, videoExpanded: videoExpanded.value });
     const point = props.getAnchor();
+    const avoidRect = typeof props.getAvoidRect === 'function' ? props.getAvoidRect() : null;
     element.style.width = `${layout.width}px`;
     element.style.maxHeight = `${layout.maxHeight}px`;
     element.style.setProperty('--selection-height', `${layout.maxHeight}px`);
     element.classList.toggle('is-stacked', layout.stacked);
-    const position = selectionPopupPosition(layout, point, element.offsetHeight);
+    const position = selectionPopupPosition(layout, point, element.offsetHeight, avoidRect);
     element.style.left = `${position.left}px`;
     element.style.top = `${position.top}px`;
     element.dataset.positioned = point ? 'target' : 'unavailable';

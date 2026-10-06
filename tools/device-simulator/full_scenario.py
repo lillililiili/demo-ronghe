@@ -26,12 +26,20 @@ def full_scene(categories=None):
                             'area_name':'东营全量模拟区域','summary':'模拟多云转大风'},
                            'airspaceLifecycle': True},
              'sites': [], 'plans': [], 'zones': [], 'targets': [], 'risks': []}
-    device_specs = [('radar', '正常雷达'), ('tdoa', '身份探测'), ('5ga', '5G-A探测'),
-                    ('eo', '光电跟踪'), ('radar-fault', '独立故障雷达'), ('radar-offline', '独立离线雷达')]
+    device_specs = [
+        ('radar', '正常雷达', {'kind': 'circle', 'radiusM': 8000, 'sourceLabel': '全量模拟场景配置'}),
+        ('tdoa', '身份探测', None),
+        ('5ga', '5G-A探测', None),
+        ('eo', '光电跟踪', {'kind': 'sector', 'rangeM': 6000, 'azimuthDeg': 0, 'fovDeg': 120,
+                            'sourceLabel': '全量模拟场景配置'}),
+        ('radar-fault', '独立故障雷达', {'kind': 'circle', 'radiusM': 8000, 'sourceLabel': '全量模拟场景配置'}),
+        ('radar-offline', '独立离线雷达', {'kind': 'circle', 'radiusM': 8000, 'sourceLabel': '全量模拟场景配置'}),
+    ]
     scene['sites'] = [{'id': 'full-site', 'name': '全量模拟设备组', 'x': 420, 'y': 300,
                       'devices': [{'id': key, 'kind': key.split('-')[0], 'name': name,
-                                   'health': '正常', 'heartbeat': '持续上报', 'interval': 2}
-                                  for key, name in device_specs]}]
+                                   'health': '正常', 'heartbeat': '持续上报', 'interval': 2,
+                                   **({'coverage': coverage} if coverage else {})}
+                                  for key, name, coverage in device_specs]}]
 
     def target(key, name, kind, x, y, **fields):
         row = {'id': key, 'name': name, 'kind': kind, 'path': [[x,y],[x+24,y],[x+24,y+18],[x,y+18]],
@@ -68,7 +76,7 @@ def full_scene(categories=None):
             if risk_type:
                 scene['risks'].append({'id':'risk-'+key,'name':name,'type':risk_type,'enabled':True,
                     'targetId':key,'deviceId':row['deviceId'],'planId':row['planId'],
-                    **({'basis':'plan','height':200} if key=='height' else {}),
+                    **({'basis':'plan'} if key=='height' else {}),
                     **({'zoneId':'zone-prohibited'} if key=='prohibited' else {}),
                     **({'mode':'结束后继续飞行','offset':5} if key=='overtime' else {})})
     for i, kind in enumerate(['bird','unknown','identifying','balloon','person','vehicle','ship','remote_controller']):

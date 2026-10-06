@@ -27,7 +27,7 @@ const noticeText = computed(() => {
   if (state.value.uncertain) return '本次提交结果待确认';
   if (latestUnknown.value) return '通知结果未知';
   if (attempts.value[0]?.outcome_state === 'NOT_SENT') return '通知未发出';
-  return deliveryText(state.value.task?.notification_delivery_status);
+  return deliveryText(state.value.task?.notification_delivery_status, state.value.task?.recipient_snapshot);
 });
 const tone = computed(() => state.value.pending || state.value.uncertain || latestUnknown.value ? 't-amber'
   : deliveryTone(state.value.task?.notification_delivery_status));
@@ -41,7 +41,9 @@ const resendLabel = computed(() => state.value.task?.notification_delivery_statu
 const busy = computed(() => state.value.pending || state.value.reading);
 const reload = () => loadDeviceMaintenanceNotice(props.planId, props.device.device_id);
 function date(value) { return value == null ? '未记录' : new Date(value).toLocaleString('zh-CN', { hour12: false }); }
-function deliveryText(status) {
+function backendInbox(snapshot) { return snapshot?.channel_type === 'INTERNAL'; }
+function deliveryText(status, snapshot) {
+  if (backendInbox(snapshot) && status === 'DELIVERED') return '已进入后台运维待办';
   return ({ PENDING_DELIVERY: '待发送', SUBMITTED: '已提交渠道 · 待确认送达', DELIVERED: '已送达', FAILED: '通知失败' })[status] || '通知结果未知';
 }
 function receiptText(status) {
@@ -51,7 +53,7 @@ function deliveryTone(status) { return ({ DELIVERED: 't-cyan', FAILED: 't-red', 
 function isSimulated(snapshot) { return ['MOCK', 'SMS_SIMULATED', 'VOICE_SIMULATED'].includes(snapshot?.channel_type); }
 function attemptOutcome(attempt) {
   return attempt.outcome_state === 'UNKNOWN' ? '通知结果未知'
-    : attempt.outcome_state === 'NOT_SENT' ? '通知未发出' : deliveryText(attempt.delivery_status);
+    : attempt.outcome_state === 'NOT_SENT' ? '通知未发出' : deliveryText(attempt.delivery_status, attempt.recipient_snapshot);
 }
 
 watch(() => [props.planId, props.device.device_id, authUser.value?.user_id], reload, { immediate: true });
@@ -76,7 +78,7 @@ async function submit(kind) {
     const delivered = task.notification_delivery_status === 'DELIVERED';
     const message = task.notification_blocked_reason
       ? '通知尚未完成，原因及本次记录已保留。'
-      : delivered ? (isSimulated(task.recipient_snapshot) ? '模拟通知已送达，本次记录已保存。' : '通知已送达，本次记录已保存。')
+      : delivered ? (backendInbox(task.recipient_snapshot) ? '已直接进入后台运维待办，本次记录已保存。' : isSimulated(task.recipient_snapshot) ? '模拟通知已送达，本次记录已保存。' : '通知已送达，本次记录已保存。')
         : task.reused ? '已读取已有运维待办，通知状态已更新。' : '通知记录已保存，请查看发送结果。';
     toast(message, task.notification_blocked_reason ? 'warn' : 'ok');
   } catch (error) {
@@ -149,7 +151,7 @@ async function submit(kind) {
       </ol>
       <dl v-else>
         <RecipientSnapshotFields :snapshot="state.task.recipient_snapshot" historical show-name />
-        <dt>通知结果</dt><dd>{{ deliveryText(state.task.notification_delivery_status) }}</dd>
+        <dt>通知结果</dt><dd>{{ deliveryText(state.task.notification_delivery_status, state.task.recipient_snapshot) }}</dd>
         <dt>回执情况</dt><dd>{{ receiptText(state.task.notification_receipt_status) }}</dd>
         <template v-if="state.task.notification_blocked_reason"><dt>未完成原因</dt><dd>{{ userFacingMessage(state.task.notification_blocked_reason) }}</dd></template>
       </dl>

@@ -18,6 +18,10 @@ class FullScenarioTests(unittest.TestCase):
         self.assertEqual({z['kindCode'] for z in scene['zones']},
                          {'PERMITTED', 'RESTRICTED', 'PROHIBITED', 'ALTITUDE_LIMIT', 'TEMPORARY_CONTROL'})
         self.assertFalse(next(t for t in scene['targets'] if t['id'] == 'unplanned')['planId'])
+        devices = {row['id']: row for row in scene['sites'][0]['devices']}
+        self.assertEqual(devices['radar']['coverage']['radiusM'], 8000)
+        self.assertEqual(devices['eo']['coverage']['kind'], 'sector')
+        self.assertNotIn('coverage', devices['tdoa'])
 
     def test_fresh_copy_and_shared_serial_allocation(self):
         from full_scenario import full_scene, allocate_identities

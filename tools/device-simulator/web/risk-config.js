@@ -18,8 +18,10 @@
   function associationNotice(risk = {}) {
     if (DEVICE_RISK_TYPES.has(risk.type)) return '';
     const reference = referenceFor(risk);
-    const suffix = reference.label ? `，当前依据为${reference.label}` : '';
-    return `关联目标由设备观测与平台规则自动判定${suffix}。此处不手工选择目标。`;
+    const subject = risk.type === 'bird' ? '鸟群' : risk.type === 'balloon' ? '气球' : '目标';
+    const basis = reference.kind === 'plan' ? '飞行计划/航线'
+      : reference.kind === 'zone' ? '空域边界' : '当前观测条件';
+    return `此处只配置${basis}作为判定依据；模拟器只发送${subject}观测，风险由平台根据目标位置、航线、空域和时间规则自动判定，不发送风险结论。`;
   }
 
   const api = {referenceFor, associationNotice, DEVICE_RISK_TYPES};

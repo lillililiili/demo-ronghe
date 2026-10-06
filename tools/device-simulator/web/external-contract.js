@@ -14,6 +14,10 @@
     const to=Number.isFinite(end)&&end>from?end:from+60*60000;
     return {message_id:messageId,plan_id:plan?.plan_id||'',area_name:'东营模拟预报区域',published_at:Math.min(now,from),periods:[{from,to,summary:'多云',temperature_c:22,wind_speed_ms:3,gust_ms:5,wind_direction_deg:90,precipitation_probability_pct:20,humidity_pct:55}]};
   }
+  function weatherSample(now, messageId){
+    const from=Number.isFinite(Number(now))&&Number(now)>0?Number(now):Date.now();
+    return {message_id:messageId,area_name:'东营区',published_at:from,periods:[{from,to:from+60*60000,summary:'多云',temperature_c:22,wind_speed_ms:3,gust_ms:5,wind_direction_deg:90,precipitation_probability_pct:20,humidity_pct:55}]};
+  }
   function receiptChoices(item){
     if(item.state==='SUBMITTED')return [['DELIVERED','模拟送达'],['FAILED','模拟发送失败'],['TIMEOUT','模拟回执超时']];
     if(item.state==='DELIVERED')return [['ACKNOWLEDGED','模拟签收'],['TIMEOUT','模拟回执超时']];
@@ -23,49 +27,47 @@
   function applyInputFields(data, fields){
     const next={...data,message_id:fields.messageId};
     if(fields.kind==='plans'){
-      const changed=next.route_version_id!==fields.target;
-      next.route_version_id=fields.target;
+      // New upstream plan payloads carry route geometry directly. A blank target
+      // means the UI has no legacy route selector; preserve the embedded route.
+      // The route_version_id branch remains only for old compatible payloads.
+      const target=typeof fields.target==='string'?fields.target.trim():'';
+      const changed=Boolean(target)&&next.route_version_id!==target;
+      if(target)next.route_version_id=target;
       if(changed&&fields.route){
         const sample=planSampleForRoute(fields.route,fields.now,fields.messageId);
         next.start_at=sample.start_at;next.end_at=sample.end_at;
       }
     }
     else{
-      const changed=next.plan_id!==fields.target;
-      next.plan_id=fields.target;
-      if(changed&&fields.plan){
-        const sample=weatherSampleForPlan(fields.plan,fields.now,fields.messageId);
-        const periods=Array.isArray(next.periods)?next.periods.slice():[];
-        periods[0]={...sample.periods[0],...(periods[0]||{}),from:sample.periods[0].from,to:sample.periods[0].to};
-        next.periods=periods;
-        next.published_at=Math.min(Number(next.published_at)||fields.now,sample.periods[0].from);
-      }
+      // A forecast is an area-level fact. It is submitted independently;
+      // plans are matched later by the forecast area on the business side.
+      delete next.plan_id;
     }
     return next;
   }
-  function sceneRouteMatches(route, plan, tolerance=1e-5){
-    const expected=route?.centerline?.coordinates, actual=plan?.points;
-    if(!Array.isArray(expected)||!Array.isArray(actual)||expected.length<2||expected.length!==actual.length)return false;
-    return expected.every((point,index)=>Array.isArray(point)&&Array.isArray(actual[index])&&point.length>=2&&actual[index].length>=2&&
-      Number.isFinite(Number(point[0]))&&Number.isFinite(Number(point[1]))&&Number.isFinite(Number(actual[index][0]))&&Number.isFinite(Number(actual[index][1]))&&
-      Math.abs(Number(point[0])-Number(actual[index][0]))<=tolerance&&Math.abs(Number(point[1])-Number(actual[index][1]))<=tolerance);
+  function applyScenePlanRoute(data, plan, scope){
+    if(!plan||!Array.isArray(plan.points)||plan.points.length<2)return data;
+    const next={...(data||{})};
+    delete next.route_version_id;
+    const owner=scope?.owner_org_id||scope?.ownerOrgId||next.route?.owner_org_id||'';
+    const district=scope?.district_id||scope?.districtId||next.route?.district_id||'';
+    const width=Number(plan.width),min=Number(plan.min),max=Number(plan.max);
+    next.route={
+      name:typeof plan.name==='string'&&plan.name.trim()?plan.name.trim():'上级计划航线',
+      geometry:{type:'LineString',coordinates:plan.points.map(point=>[Number(point[0]),Number(point[1])])},
+      corridor_width_m:Number.isFinite(width)&&width>0?width:100,
+      min_altitude_m:Number.isFinite(min)&&Number.isFinite(max)&&min<=max?min:20,
+      max_altitude_m:Number.isFinite(min)&&Number.isFinite(max)&&min<=max?max:120,
+      altitude_datum:plan.altitudeDatum||'AMSL',owner_org_id:owner,district_id:district
+    };
+    return next;
   }
-  function matchingSceneRoute(plan,routes,expiredRoutes){
-    const candidates=[],seen=new Set();
-    for(const route of [...(routes||[]),...(expiredRoutes||[])]){
-      if(!route||seen.has(route.route_version_id))continue;
-      seen.add(route.route_version_id);candidates.push(route);
-    }
-    return candidates.find(route=>sceneRouteMatches(route,plan))||null;
-  }
-  function sceneRouteValidityMessage(route,data,now=Date.now()){
-    if(!route)return '';
-    const validFrom=Number(route.valid_from),validTo=Number(route.valid_to);
-    const start=Number(data?.start_at),end=Number(data?.end_at);
-    if(Number.isFinite(validFrom)&&Number.isFinite(start)&&start<validFrom)return '地图计划开始时间早于平台航线版本生效时间，请重新生成当前有效期内的地图计划。';
-    if(Number.isFinite(validTo)&&Number.isFinite(end)&&end>validTo)return '当前地图计划对应的平台航线版本已过期，请重新生成当前有效的地图计划航线。';
-    if(Number.isFinite(validTo)&&validTo<=now&&(!Number.isFinite(start)||!Number.isFinite(end)))return '当前地图计划对应的平台航线版本已过期，请重新生成当前有效的地图计划航线。';
-    return '';
+  function refreshUpstreamRouteDraft(data, previousRoutes, nextRoutes){
+    const current=typeof data?.route_version_id==='string'?data.route_version_id.trim():'';
+    const previous=Array.isArray(previousRoutes)&&previousRoutes[0]?.route_version_id;
+    const next=Array.isArray(nextRoutes)&&nextRoutes[0]?.route_version_id;
+    if(!current||!previous||!next||current!==previous||current===next)return data;
+    return {...data,route_version_id:next};
   }
   function submitResultText(path,result){
     if(path==='/local-interface-simulator/bindings')return result.enabled?'系统确认：模拟接收已启用。等待平台原流程产生通知。':'系统确认：模拟接收已停用。';
@@ -74,7 +76,7 @@
   function unavailableNotice(context){
     return Array.isArray(context?.unavailable_sections)?context.unavailable_sections.filter(value=>typeof value==='string'&&value.trim()).join('；'):'';
   }
-  const api={planSampleForRoute,weatherSampleForPlan,receiptChoices,applyInputFields,sceneRouteMatches,matchingSceneRoute,sceneRouteValidityMessage,submitResultText,unavailableNotice};
+  const api={planSampleForRoute,weatherSampleForPlan,weatherSample,receiptChoices,applyInputFields,applyScenePlanRoute,refreshUpstreamRouteDraft,submitResultText,unavailableNotice};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   root.ExternalContract=api;
 })(typeof window!=='undefined'?window:globalThis);

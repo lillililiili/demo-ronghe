@@ -161,6 +161,29 @@ class FullChainTests(unittest.TestCase):
         self.assertNotEqual(new_plan['message_id'], old_plan['message_id'])
         self.assertEqual(new_plan['route_version_id'], 'v' + new_route['message_id'])
 
+    def test_plan_retry_uses_payload_key_when_legacy_message_is_not_in_context(self):
+        from fullchain import FullChain
+
+        class LegacyMessageCollisionPlatform(FakePlatform):
+            def call(self, method, path, body=None, key=None):
+                if path.endswith('/plans') and body['message_id'] == 'sim-map-plan-normal-plan-1':
+                    raise ValueError('同一消息编号的内容已变化，请使用新编号')
+                return super().call(method, path, body, key)
+
+        scene = full_scene(['uav'])
+        manifest = {'batch':'sim-retry', 'created_at':1000000, 'devices':{}, 'plans':{}, 'zones':{},
+                    'targets':allocate_identities(scene,'sim-retry')}
+        platform = LegacyMessageCollisionPlatform()
+
+        FullChain(platform, scene, manifest, {'owner_org_id':'o','district_id':'d'}, lambda:None,
+                  clock=lambda:1000000).prepare()
+
+        plan = next(body for _, path, body, _ in platform.calls if path.endswith('/plans'))
+        legacy = 'sim-map-plan-' + scene['plans'][0]['id'] + '-1'
+        self.assertNotEqual(plan['message_id'], legacy)
+        self.assertTrue(plan['message_id'].startswith(legacy + '-'))
+        self.assertRegex(plan['message_id'], r'-[0-9a-f]{12}$')
+
     def test_route_lookup_preserves_version_window(self):
         from fullchain import FullChain
 

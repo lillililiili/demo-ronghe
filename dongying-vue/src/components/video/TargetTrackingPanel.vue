@@ -11,7 +11,8 @@ const props = defineProps({
   active: { type: Boolean, default: true },
   compact: { type: Boolean, default: false },
   unavailableReason: { type: String, default: '' },
-  beginReason: { type: String, default: '人工补充光电追踪' }
+  beginReason: { type: String, default: '人工补充光电追踪' },
+  eventId: { type: String, default: '' }
 });
 const state = ref(null), loading = ref(false), busy = ref(false);
 const readError = ref(''), actionMessage = ref('');
@@ -146,7 +147,7 @@ onUnmounted(() => { alive = false; invalidate(); });
     <p v-if="busy" role="status">正在提交操作，随后读取最新状态。</p>
     <p v-if="actionMessage" class="tracking-error" role="alert">{{ actionMessage }}</p>
     <TargetLiveVideo v-if="state && !state.auto_paused && state.status !== 'PAUSED'"
-      :target-id="targetId" :context-label="contextLabel" :active="active"
+      :target-id="targetId" :event-id="eventId" :context-label="contextLabel" :active="active"
       :compact="compact" :unavailable-reason="unavailableReason" />
   </section>
 </template>

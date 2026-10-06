@@ -24,6 +24,13 @@ function newKey() {
 function esc(value) {
   return String(value ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 }
+/* 服务端按目标、本次告警的研判和目标数据时效现算的核实依据；缺依据时不能选“属实”，误报不受限。
+   没有返回依据（旧接口或无核实权限）时按原样处理，最终仍以提交时服务端的检查为准。 */
+export function verificationBasisState(event) {
+  const basis = event?.verification_basis;
+  if (!basis || basis.confirmable !== false) return { blocked: false, message: '' };
+  return { blocked: true, message: String(basis.message || '缺少依据，不能核实为属实。确认是误报的，可以核实为误报。') };
+}
 function messageOf(error, fallback) {
   if (!error) return fallback;
   // 401 在受理前就被拒绝：这次没有保存，弹窗和已选内容保留，重新登录后再提交（ZT-29）。
@@ -44,6 +51,7 @@ export function openUavVerification({ event, alarm, refresh, onDone } = {}) {
   if (!(event.allowed_actions || []).includes('VERIFY')) { toast('当前事件不可核实或缺少核实权限', 'err'); return false; }
   const eventId = event.event_id;
   const expectedVersion = Number(event.version);
+  const basis = verificationBasisState(event);
   if (!pendingKeys.has(eventId)) pendingKeys.set(eventId, newKey());
   const intro = [
     ['当前状态', esc(uavStateText(event.state))],
@@ -55,13 +63,16 @@ export function openUavVerification({ event, alarm, refresh, onDone } = {}) {
     title: '人工核实 · ' + esc(readableNo(alarm?.alarm_no) || '核实事件'),
     width: '600px',
     introHtml: `<dl class="kv">${intro}</dl>`,
+    warning: basis.blocked ? esc(basis.message) : '',
     fields: [
       { key: 'conclusion', label: '核实结论', type: 'radio', required: true, options: [
-        { value: 'CONFIRMED', label: '属实（置为“告警已确认”）' },
+        { value: 'CONFIRMED', label: basis.blocked ? '属实（缺少依据，暂不能选）' : '属实（置为“告警已确认”）', disabled: basis.blocked },
         { value: 'FALSE_POSITIVE', label: '误报（终态）' }
       ] }
     ],
-    initial: { conclusion: 'CONFIRMED' },
+    // 缺依据时不预选结论，由核实人明确选择误报。
+    initial: basis.blocked ? {} : { conclusion: 'CONFIRMED' },
+    validate: ({ conclusion }) => (basis.blocked && conclusion === 'CONFIRMED' ? '缺少依据，不能核实为属实。' : ''),
     confirmText: '提交核实结论',
     onSubmit: async ({ conclusion }) => {
       const key = pendingKeys.get(eventId);

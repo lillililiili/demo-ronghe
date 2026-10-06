@@ -624,7 +624,7 @@ function detailActionsHtml() {
 
 /* 详情和动作区就地更新：内容没变不动节点，“核实”等按钮在刷新时保持原节点，点得中。 */
 function paintDetailContent() {
-  setSubject(videoSubject, cur.alarm ? { targetId: cur.alarm.target_id || '', label: noOf(cur.alarm) } : null);
+  setSubject(videoSubject, cur.alarm ? { targetId: cur.alarm.target_id || '', eventId: cur.alarm.event_id || '', label: noOf(cur.alarm) } : null);
   patchHtml(el('alDetail'), detailHtml());
   patchHtml(el('alDetailActions'), detailActionsHtml());
 }
@@ -995,12 +995,23 @@ async function refreshChain(my) {
 }
 
 /* ---------- 人工核实：共享弹窗（与工作台同一实现，幂等键保留与 409/超时回读在弹窗内处理） ---------- */
-function verifyModal() {
-  const a = cur.alarm, ev = cur.event;
+/* 核实依据随目标数据时效变化：打开前重读事件，弹窗按当前依据提示能否核实为属实。 */
+let verifyOpening = false;
+async function verifyModal() {
+  const a = cur.alarm, ev = cur.event, my = detailSeq;
   if (!a || !ev) return toast('尚未创建核实事件，无法核实', 'err');
+  if (verifyOpening) return;
+  verifyOpening = true;
+  let latest;
+  try { latest = await getUavEvent(ev.event_id); }
+  catch (error) { return toast(error.message || '读取核实事件失败，请稍后重试', 'err'); }
+  finally { verifyOpening = false; }
+  if (my !== detailSeq || cur.alarm?.alarm_id !== a.alarm_id) return;
+  cur.event = latest;
+  if (latest.version !== ev.version || latest.state !== ev.state) paintDetail();
   openUavVerification({
     alarm: a,
-    event: ev,
+    event: latest,
     refresh: async () => { await refreshAfterWrite(); return cur.event; }
   });
 }
@@ -1152,7 +1163,7 @@ onMounted(async () => {
               <EmergencyStopPanel v-if="emergencyEvent" :key="`emergency-${emergencyEvent.id}`" :event-id="emergencyEvent.id"
                 @updated="updateEmergency" @changed="refreshEmergency" />
               <TargetTrackingPanel v-if="videoSubject" :key="videoSubject.label" :target-id="videoSubject.targetId"
-                :context-label="videoSubject.label" :active="activeTab === 'alarms'"
+                :event-id="videoSubject.eventId" :context-label="videoSubject.label" :active="activeTab === 'alarms'"
                 begin-reason="告警详情人工补充光电追踪" />
               <div id="alDetail" style="padding:12px"></div>
               <UavAdvisoryPanel v-if="advisorySubject" :key="`advisory-${advisorySubject.id}`"

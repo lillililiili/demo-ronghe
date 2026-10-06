@@ -150,6 +150,8 @@ const videoContext = computed(() => {
   return {
     key: `${selection.value?.kind}:${selection.value?.id}:${risk?.riskId || alarm?.alarmId || ''}:${targetId}`,
     targetId,
+    // 取证关联的告警事件：只取与视频同一目标的无人机告警。
+    eventId: !risk && alarm?.eventId && alarm.targetInternalId === targetId ? alarm.eventId : '',
     label: linked?.id || risk?.targetId || alarm?.targetId || risk?.id || '当前事项',
     subtype: linked?.objectTypeCode === 'UAV' || (!risk && alarm) ? 'UAV' : linked?.subtypeCode || risk?.spaceFact?.subtypeCode || 'UNKNOWN',
     unavailableReason: !targetId ? (risk ? '此风险未关联可读取的目标，暂无可关联的视频。' : '此告警未提供可读取的关联目标，暂无可关联的视频。') : ''
@@ -998,7 +1000,7 @@ onUnmounted(() => {
         <p v-else-if="showAlarmPopup" class="sit-alarm-position-note">此告警未关联无人机事件，暂无可读取的通知记录。</p>
         <template #video="{ expanded, toggleExpanded }">
           <TargetLiveVideo v-if="videoContext" :key="videoContext.key" class="sit-companion-video" compact default-expanded
-            :target-id="videoContext.targetId" :context-label="videoContext.label" :unavailable-reason="videoContext.unavailableReason" :subtype="videoContext.subtype">
+            :target-id="videoContext.targetId" :event-id="videoContext.eventId" :context-label="videoContext.label" :unavailable-reason="videoContext.unavailableReason" :subtype="videoContext.subtype">
             <template #title><div class="sit-video-title"><strong>实时视频</strong><small>{{ videoContext.label }}</small></div></template>
             <template #actions>
               <button type="button" class="btn" :aria-expanded="expanded" @click="toggleExpanded">{{ expanded ? '还原' : '放大' }}</button>

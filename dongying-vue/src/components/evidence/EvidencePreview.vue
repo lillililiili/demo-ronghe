@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { hasPermission } from '@/services/accessControl.js';
 import { downloadEvidenceContent, previewEvidenceContent } from '@/services/evidenceApi.js';
-import { EVIDENCE_KIND_LABEL, EVIDENCE_STATUS_LABEL, EVIDENCE_SUBJECT_LABEL, SOURCE_MODE_LABEL, labelOf } from '@/ui/labels.js';
+import { EVIDENCE_KIND_LABEL, EVIDENCE_PROVENANCE_LABEL, EVIDENCE_STATUS_LABEL, EVIDENCE_SUBJECT_LABEL, SOURCE_MODE_LABEL, labelOf } from '@/ui/labels.js';
 import { fmtEvidenceTime, saveEvidenceBlob } from '@/ui/evidenceFileDetail.js';
 import { toast } from '@/ui/nv.js';
 import EvidenceTrackPreview from './EvidenceTrackPreview.vue';
@@ -140,7 +140,7 @@ onBeforeUnmount(() => { clear(); window.removeEventListener('auth-access-change'
           <div v-if="!embedded || showCapturedTime"><dt>采集时间</dt><dd>{{ fmtEvidenceTime(file.captured_at) }}</dd></div>
           <div><dt>来源设备</dt><dd>{{ file.source_device_name || '未记录' }}</dd></div>
           <div><dt>采集位置</dt><dd v-if="file.capture_longitude != null && file.capture_latitude != null">经度 {{ file.capture_longitude }}，纬度 {{ file.capture_latitude }}（WGS84）</dd><dd v-else>未记录</dd></div>
-          <div v-if="file.capture_provenance"><dt>采集信息依据</dt><dd>{{ file.capture_provenance === 'UPLOADER_DECLARED' ? '入库登记' : file.capture_provenance }}</dd></div>
+          <div v-if="file.capture_provenance"><dt>采集信息依据</dt><dd>{{ labelOf(EVIDENCE_PROVENANCE_LABEL, file.capture_provenance) }}</dd></div>
           <div v-if="imageWidth"><dt>图像尺寸</dt><dd>{{ imageWidth }} × {{ imageHeight }} 像素</dd></div>
           <div v-if="!embedded"><dt>关联事项</dt><dd v-if="file.links?.length"><span v-for="link in file.links" :key="link.link_id">{{ labelOf(EVIDENCE_SUBJECT_LABEL, link.subject_kind, link.subject_kind) }} · {{ link.subject_no || link.subject_id }}</span></dd><dd v-else>无可见关联记录</dd></div>
         </dl>

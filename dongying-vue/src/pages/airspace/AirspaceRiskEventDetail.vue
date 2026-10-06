@@ -113,7 +113,7 @@ function notify() {
   if (!pendingNoticeKeys.has(id)) pendingNoticeKeys.set(id, newHandoffIdempotencyKey());
   openFormModal({
     title: '通知上级', width: '560px', fields: [], confirmText: '提交通知',
-    warning: '提交后，请在通知记录中查看是否送达，并等待对方回复处理结果。对方回复“已驱离”后，本次风险通知流程完成。',
+    warning: '提交后，请在通知记录中查看是否送达，并等待对方回执。对方回执（显示“已回执”）后，本次风险通知流程即完成；对方如果一并回复了处理结果（如“已驱离”），会显示在同一条回执里。',
     onSubmit: async () => {
       let created;
       try {
@@ -172,7 +172,7 @@ onUnmounted(() => { alive = false; generation++; historyRequest++; noticeRequest
             <dt>所属范围</dt><dd>{{ risk.owner_org_name || '未知机构' }} / {{ risk.district_name || '未知区域' }}</dd>
           </dl></section>
           <section class="sect"><h4>风险依据</h4><dl class="kv kv-surface">
-            <template v-if="risk.current_status"><dt>当前风险</dt><dd>{{ ({ CURRENT: '当前仍存在', CLEARED: '已确认解除', UNKNOWN: '状态待确认', EXCLUDED: '已排除', NOT_STARTED: '尚未生效' })[risk.current_status] || '状态待确认' }}<span class="rk-hint">{{ risk.current_reason }}</span></dd></template>
+            <template v-if="risk.current_status"><dt>当前风险</dt><dd>{{ ({ CURRENT: '当前仍存在', CLEARED: '已确认解除', EXPIRED: '有效时段已结束', UNKNOWN: '状态待确认', EXCLUDED: '已排除', NOT_STARTED: '尚未生效' })[risk.current_status] || '状态待确认' }}<span class="rk-hint">{{ risk.current_reason }}</span></dd></template>
             <dt>触发原因</dt><dd>{{ labelOf(REASON_CODE_LABEL, risk.reason_code, '未提供') }}</dd><dt>依据说明</dt><dd>{{ reasonText }}</dd>
             <template v-if="risk.risk_type !== 'WEATHER'"><dt>测得高度</dt><dd>{{ altitude(risk) }}<span v-if="risk.observed_altitude_m == null" class="rk-hint">尚未测得高度，无法判断是否超高</span></dd><dt>高度关系</dt><dd>{{ labelOf(heightLabels, risk.height_relation, '高度关系未知') }}<span v-if="!risk.height_relation || risk.height_relation === 'UNKNOWN'" class="rk-hint">缺高度或 AGL/AMSL 换算依据</span></dd></template>
             <dt>关联计划</dt><dd><a v-if="risk.plan_id && hasPermission('flight:read') && canAccessRoute('flights')" class="btn ghost" :href="`#/flights?plan=${encodeURIComponent(risk.plan_id)}`">查看关联飞行计划 →</a><span v-else>{{ risk.plan_id ? '已关联' : '没有可查看的相关记录' }}</span></dd>

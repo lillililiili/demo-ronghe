@@ -1418,12 +1418,13 @@ async function openRiskNotify(riskOverride = null) {
   const riskId = risk.risk_id;
   const expectedVersion = Number(risk.version);
   if (!pendingHandoffKeys.has(riskId)) pendingHandoffKeys.set(riskId, newHandoffIdempotencyKey());
-  /* 决策 18-14：风险到"通知上级"为止，回执"已驱离"即闭环，不进处置。
+  /* 决策 18-14：风险到"通知上级"为止，不再往处置走。闭环以对方回执为准（OBS-14）：
+     当前上级接口只回"已回执"，处理结果（已驱离/未驱离）是对方愿意补充时才有的附加信息，弹窗不能把它说成完成条件。
      接收方不再让人选——服务端按默认接收方处理；页面少一个选择，就少一处能选错的地方。 */
   openFormModal({
     title: '通知上级',
     width: '560px',
-    warning: '提交后，请在通知记录中查看是否送达，并等待对方回复处理结果。对方回复“已驱离”后，本次风险通知流程完成。',
+    warning: '提交后，请在通知记录中查看是否送达，并等待对方回执。对方回执（显示“已回执”）后，本次风险通知流程即完成；对方如果一并回复了处理结果（如“已驱离”），会显示在同一条回执里。',
     fields: [],
     confirmText: '提交通知',
     onSubmit: async () => {
@@ -1776,7 +1777,7 @@ onUnmounted(() => {
                 <dt>所属范围</dt><dd>{{ selectedRisk.owner_org_name || '未知机构' }} / {{ selectedRisk.district_name || '未知区域' }}</dd>
               </dl></div>
               <div class="sect"><h4>风险依据</h4><dl class="kv kv-surface">
-                <template v-if="selectedRisk.current_status"><dt>当前风险</dt><dd>{{ ({ CURRENT: '当前仍存在', CLEARED: '已确认解除', UNKNOWN: '状态待确认', EXCLUDED: '已排除', NOT_STARTED: '尚未生效' })[selectedRisk.current_status] || '状态待确认' }}<span class="rk-hint">{{ selectedRisk.current_reason }}</span></dd></template>
+                <template v-if="selectedRisk.current_status"><dt>当前风险</dt><dd>{{ ({ CURRENT: '当前仍存在', CLEARED: '已确认解除', EXPIRED: '有效时段已结束', UNKNOWN: '状态待确认', EXCLUDED: '已排除', NOT_STARTED: '尚未生效' })[selectedRisk.current_status] || '状态待确认' }}<span class="rk-hint">{{ selectedRisk.current_reason }}</span></dd></template>
                 <dt>触发原因</dt><dd>{{ labelOf(REASON_CODE_LABEL, selectedRisk.reason_code, '未提供') }}</dd>
                 <dt>依据说明</dt><dd class="rk-wrap">{{ riskReasonText(selectedRisk) }}</dd>
                 <template v-if="selectedRisk.risk_type !== 'WEATHER'"><dt>测得高度</dt><dd>{{ altitudeText(selectedRisk) }}<span v-if="selectedRisk.observed_altitude_m == null" class="rk-hint">尚未测得高度，无法判断是否超高</span></dd>

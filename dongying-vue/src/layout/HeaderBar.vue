@@ -2,13 +2,16 @@
 /* 顶栏：logo / 时钟 / 大屏按钮 / 用户菜单。
    逻辑逐字移植旧 app.js 的 clock() 与 bindBigScreen()；用户菜单 Teleport 到 body
    （旧版就是 append 到 body 的 .usermenu，CSS 上下文保持一致）。 */
-import { h, ref, computed, onMounted, onBeforeUnmount } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { useAppStore } from '@/stores/app.js';
 import { useRouter } from 'vue-router';
-import { authUser, logout } from '@/services/auth.js';
+import { authUser, changePassword, loadCurrentUser, logout, updateProfile } from '@/services/auth.js';
 import { canAccessRoute } from '@/services/accessControl.js';
+import { validatePassword } from '@/services/passwordPolicy.js';
 import { toast } from '@/ui/nv.js';
-import { openModal, closeModal } from '@/ui/modal.js';
+import { closeModal } from '@/ui/modal.js';
+import { openFormModal } from '@/ui/formModal.js';
+import { DATA_SCOPE_LABEL } from '@/ui/labels.js';
 
 const store = useAppStore();
 const router = useRouter();
@@ -57,22 +60,87 @@ function onFsChange() {
   }
 }
 
-/* ---------- 用户菜单：仅保留个人信息与退出登录 ---------- */
+/* ---------- 用户菜单：个人信息、修改密码与退出登录 ---------- */
 const menuOpen = ref(false);
 function toggleMenu(e) {
   e.stopPropagation();
   menuOpen.value = !menuOpen.value;
 }
 function closeMenu() { menuOpen.value = false; }
+
+function esc(value) {
+  return String(value ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+}
+function profileError({ name, phone }) {
+  const value = String(name || '').trim();
+  const tel = String(phone || '').trim();
+  if (!value) return '请填写姓名。';
+  if (value.length > 64) return '姓名不能超过 64 个字。';
+  if (tel.length > 32) return '联系电话不能超过 32 位。';
+  if (!/^[0-9+()\- ]*$/.test(tel)) return '联系电话只能填写数字、空格和 + - ( )。';
+  return '';
+}
+/* 本人只改姓名和联系电话；所属单位、角色、数据范围由后台管理员调整（ZT-28）。 */
+function openProfile() {
+  const u = currentUser.value;
+  const info = [['账号', u.account], ['角色', u.role_name], ['所属单位', u.org_name || '未设置'], ['数据范围', DATA_SCOPE_LABEL[u.data_scope]]]
+    .map(([label, value]) => `<dt>${esc(label)}</dt><dd>${esc(value || '—')}</dd>`).join('');
+  openFormModal({
+    title: '个人信息', width: '480px',
+    introHtml: `<dl class="kv">${info}</dl>`,
+    fields: [
+      { key: 'name', label: '姓名', required: true, inputProps: { maxlength: 64, autocomplete: 'name' } },
+      { key: 'phone', label: '联系电话', placeholder: '选填', inputProps: { maxlength: 32, autocomplete: 'tel' } }
+    ],
+    initial: { name: u.name || '', phone: u.phone || '' },
+    notice: '所属单位、角色和数据范围由系统管理员在后台调整。',
+    confirmText: '保存',
+    validate: profileError,
+    onSubmit: async ({ name, phone }) => {
+      try { await updateProfile({ name: name.trim(), phone: String(phone || '').trim() }); }
+      catch (error) {
+        if (error.code === 'VERSION_CONFLICT') {
+          await loadCurrentUser().catch(() => null);
+          throw new Error('资料刚被其他操作修改过，已读取最新资料；你填写的内容还在，请核对后再保存。');
+        }
+        if (error.status === 401) throw new Error('登录已过期，这次修改没有保存。重新登录后请再保存一次。');
+        throw error;
+      }
+      closeModal();
+      toast('个人资料已保存', 'ok');
+    }
+  });
+}
+/* 主动修改密码。当前密码输错由服务端按表单错误返回，留在弹窗里提示，不会退出登录（ZT-28）。 */
+function openPasswordChange() {
+  openFormModal({
+    title: '修改密码', width: '480px',
+    fields: [
+      { key: 'current', label: '当前密码', type: 'password', required: true, inputProps: { autocomplete: 'current-password', maxlength: 128 } },
+      { key: 'next', label: '新密码', type: 'password', required: true, help: '6–32 位，包含大小写字母、数字和特殊字符，且不能包含账号。',
+        inputProps: { autocomplete: 'new-password', maxlength: 32 } },
+      { key: 'confirm', label: '确认新密码', type: 'password', required: true, inputProps: { autocomplete: 'new-password', maxlength: 32 } }
+    ],
+    initial: { current: '', next: '', confirm: '' },
+    notice: '修改成功后，这个账号在所有地方的登录都会失效，需要用新密码重新登录。',
+    confirmText: '修改密码',
+    validate: ({ next, confirm }) => next !== confirm ? '两次输入的新密码不一致。' : validatePassword(next, currentUser.value.account, '新密码'),
+    onSubmit: async ({ current, next }) => {
+      try { await changePassword(current, next); }
+      catch (error) {
+        if (error.status === 401) throw new Error('登录已过期，这次修改没有保存。重新登录后请再提交一次。');
+        throw error;
+      }
+      closeModal();
+      await router.replace('/login');
+      toast('密码已修改，请用新密码重新登录', 'ok');
+    }
+  });
+}
 async function onMenu(k) {
   closeMenu();
-  if (k === 'me') openModal({
-    title: '个人信息', width: '440px',
-    render: () => h('dl', { class: 'kv' }, [
-      ['账号', currentUser.value.account], ['姓名', currentUser.value.name], ['角色', currentUser.value.role_name],
-      ['所属单位', currentUser.value.org_name || '未设置']
-    ].flatMap(([label, value]) => [h('dt', label), h('dd', String(value || '—'))]))
-  });
+  if (k === 'me') openProfile();
+  else if (k === 'password') openPasswordChange();
   else if (k === 'logout') {
     // 阶段 12：轮播组件已删除，登出时不再需要停它。
     closeModal();
@@ -115,6 +183,7 @@ onBeforeUnmount(() => {
   <Teleport to="body">
     <div class="usermenu" :class="{ open: menuOpen }" @click.stop>
       <div class="mi" data-um="me" @click="onMenu('me')" v-html="U.icon('user') + ' 个人信息'"></div>
+      <div class="mi" data-um="password" @click="onMenu('password')" v-html="U.icon('lock') + ' 修改密码'"></div>
       <div class="sep"></div>
       <div class="mi" data-um="logout" @click="onMenu('logout')" v-html="U.icon('logout') + ' 退出登录'"></div>
     </div>

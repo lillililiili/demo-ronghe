@@ -80,3 +80,15 @@ test('successful files and failed login preserve their existing behavior', async
   c.requests[1].resolve(json(null, 401)); await assert.rejects(login, error => error.status === 401);
   assert.equal(c.events.length, 0);
 });
+test('current 401 says whether a submission was rejected; logout 401 is not an expiry', async () => {
+  const c = client();
+  const save = c.apiRequest('/uav-events/e-1/verify', { method: 'POST', body: { conclusion: 'FALSE_POSITIVE' }, mutation: true });
+  c.requests[0].resolve(json(null, 401)); await assert.rejects(save, error => error.status === 401);
+  const read = c.apiRequest('/alarms');
+  c.requests[1].resolve(json(null, 401)); await assert.rejects(read, error => error.status === 401);
+  assert.deepEqual(c.events.map(event => [event.type, event.detail.submitting, event.detail.error.status]),
+    [['api:unauthorized', true, 401], ['api:unauthorized', false, 401]]);
+  const out = c.apiRequest('/auth/logout', { method: 'POST' });
+  c.requests[2].resolve(json(null, 401)); await assert.rejects(out, error => error.status === 401);
+  assert.equal(c.events.length, 2);
+});

@@ -52,7 +52,11 @@ function requireCurrentSession(token) {
   if (readSessionToken() !== token) throw new ApiError('登录账号已变化，请重新读取当前页面。', 'SESSION_CHANGED', 409);
 }
 
-async function decodeCurrent(response, token, path) {
+// 登录、退出返回 401 不是会话过期：登录是账号或密码不对，退出时会话本来就要作废。
+const SESSION_FREE_PATHS = new Set(['/auth/login', '/auth/logout']);
+
+/* submitting：被拒的是提交类请求，界面据此说明这次提交没有保存（ZT-29）。 */
+async function decodeCurrent(response, token, path, submitting = false) {
   requireCurrentSession(token);
   try {
     const data = await decode(response);
@@ -60,7 +64,7 @@ async function decodeCurrent(response, token, path) {
     return data;
   } catch (error) {
     requireCurrentSession(token);
-    if (response.status === 401 && path !== '/auth/login') window.dispatchEvent(new CustomEvent('api:unauthorized', { detail: error }));
+    if (response.status === 401 && !SESSION_FREE_PATHS.has(path)) window.dispatchEvent(new CustomEvent('api:unauthorized', { detail: { error, submitting } }));
     throw error;
   }
 }
@@ -103,7 +107,8 @@ async function sendRequest(path, options) {
     requireCurrentSession(token);
     throw new ApiError('暂时连不上系统，请检查网络后刷新；刚提交过操作的，请先查看是否已保存。', 'NETWORK_ERROR', 0);
   }
-  return decodeCurrent(response, token, path);
+  const method = String(options.method || 'GET').toUpperCase();
+  return decodeCurrent(response, token, path, method !== 'GET' && method !== 'HEAD');
 }
 
 /** 限制并发，避免一页同时打出几十个只读请求把连接打满。 */

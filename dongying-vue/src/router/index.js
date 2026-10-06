@@ -9,7 +9,7 @@
 import { createRouter, createWebHashHistory } from 'vue-router';
 import { HOME_KEY, REDIRECT, ROUTES, PAGE_THEME, pageTitle, routeKey } from '@/config/navModel.js';
 import PageHost from '@/layout/PageHost.vue';
-import { authRestoreError, authSession, isAuthenticated, needsPasswordChange, restoreSession } from '@/services/auth.js';
+import { authRestoreError, authSession, isAuthenticated, isSessionExpired, needsPasswordChange, restoreSession } from '@/services/auth.js';
 
 /* hash 模式与旧版地址完全兼容：#/situation、#/legality、旧书签、UI.goto 写
    location.hash 都直接命中。REDIRECT 表用 router redirect 实现（等价旧版
@@ -43,14 +43,23 @@ export function loginDestination(value) {
   return value;
 }
 router.beforeEach(async to => {
+  // 登录已过期、重新登录弹窗还开着：留在当前页，免得页面和已填内容随切换丢失（ZT-29）。
+  if (isSessionExpired()) return false;
+  const hadSession = !!authSession.value;
   await restoreSession();
+  if (isSessionExpired()) return false;
   const key = routeKey(to);
   // 后端暂时不可达时保留 Bearer 会话，由外壳展示隔离的重试页；只有明确 401 才清会话。
   if (authSession.value && authRestoreError.value) return true;
   if (key === 'login') return isAuthenticated()
     ? (needsPasswordChange() ? '/change-password' : loginDestination(to.query.redirect))
     : true;
-  if (!isAuthenticated()) return { path: '/login', query: { redirect: loginDestination(to.fullPath) }, replace: true };
+  if (!isAuthenticated()) {
+    // 原来有会话、现在被拒，说明登录已过期，登录页据此提示。
+    const query = { redirect: loginDestination(to.fullPath) };
+    if (hadSession) query.expired = '1';
+    return { path: '/login', query, replace: true };
+  }
   if (needsPasswordChange() && key !== 'change-password') return { path: '/change-password', replace: true };
   if (!needsPasswordChange() && key === 'change-password') return { path: HOME_PATH, replace: true };
   return true;

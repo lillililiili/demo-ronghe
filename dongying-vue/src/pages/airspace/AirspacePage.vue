@@ -4,7 +4,7 @@
    新空域规则由上级下发，本页只读展示并保留旧资料。
    监测只读取接口数据；读取失败时如实显示原因。 */
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
-import { useRealtimeRefresh } from '@/hooks/useRealtimeRefresh.js';
+import { refreshFailureText, useRealtimeRefresh } from '@/hooks/useRealtimeRefresh.js';
 import { airspaceApi } from '@/services/airspaceApi.js';
 import { flightApi } from '@/services/flightApi.js';
 import { strokePlannedRoute } from '@/services/positionMap.js';
@@ -49,7 +49,7 @@ const OMITTED_TEST_AIRSPACE_IDS = new Set([
 const all = ref([]);                // 空域详情（含 current_version），一次读全
 const routeLines = ref([]);         // 合法航线中心线 [{ id, name, points }]
 const routesAvailable = ref(true);  // 无 route:read 时整层不画、图例不列
-const loading = ref(false), error = ref('');
+const loading = ref(false), error = ref(''), refreshError = ref('');
 const filters = reactive({ district: '', kind: '', validity: '', keyword: '' });
 const hiddenKinds = ref({});        // { kindCode: true } → 图上不画
 const showRoutes = ref(true);
@@ -136,8 +136,13 @@ function areaText(version) {
 }
 
 /* ---------- 读取 ---------- */
-async function loadAll() {
-  loading.value = true; error.value = '';
+/* quiet：实时刷新或到点重读。已有列表时读取失败保留原列表并注明，错误抛给实时刷新按退避重试；
+   列表原本就读取失败时按正常流程重读。 */
+async function loadAll({ quiet = false } = {}) {
+  const keep = quiet && all.value.length > 0 && !error.value;
+  let failure = null;
+  loading.value = true;
+  if (!keep) error.value = '';
   try {
     const first = await airspaceApi.list({ page: 1, size: PAGE_MAX });
     let items = first.items || [];
@@ -148,17 +153,67 @@ async function loadAll() {
     const details = await Promise.all(items.map(item => airspaceApi.detail(item.airspace_id)
       .catch(reason => ({ ...item, current_version: null, load_error: reason?.code === 'VERSION_AMBIGUOUS' ? '版本区间重叠，服务端拒绝读取' : messageOf(reason) }))));
     all.value = details;
+    refreshError.value = '';
     if (selected.value) {
       const refreshed = all.value.find(row => row.airspace_id === selected.value.airspace_id);
       if (refreshed) selected.value = refreshed; else clearDetail();
     }
+    await loadUpcomingStarts(details);
   } catch (reason) {
-    all.value = []; clearDetail();
-    error.value = messageOf(reason);
+    failure = reason;
+    if (keep) refreshError.value = refreshFailureText(reason, '读取空域失败');
+    else { all.value = []; clearDetail(); error.value = messageOf(reason); }
   } finally { loading.value = false; }
   await nextTick();
   paintMap(!fittedOnce);
+  scheduleBoundaryReload();
+  if (failure && quiet) throw failure;
 }
+
+/* ---------- 到点生效、到点失效（ZT-07） ----------
+   空域和航线按生效时间到点生效或失效时数据库没有任何变化，不会有推送信号，页面按已知的边界时间自己重读：
+   每片空域当前版本的失效时间（下发新版本时上一版会在新版本生效的时刻关闭）、暂无生效版本的空域最早的待生效时间
+   （按空域版本号缓存，空域有改动才重新读取版本）、正在查看的空域的版本历史，以及航线版本的生效、失效时间。
+   到点后稍等一秒再读；两边时钟略有偏差、读到的仍是旧版本时，每 3 秒再读一次，最多补读 10 次。 */
+const BOUNDARY_GRACE_MS = 1_000;
+const BOUNDARY_RECHECK_MS = 3_000;
+const MAX_TIMER_MS = 2_000_000_000;
+const upcomingStarts = new Map();   // airspace_id → { version, at }
+let routeBoundaries = [];
+let boundaryTimer = 0, boundaryRechecks = 0, pageAlive = true;
+async function loadUpcomingStarts(rows) {
+  const now = Date.now();
+  const idle = rows.filter(row => !row.current_version && !row.load_error);
+  const ids = new Set(idle.map(row => row.airspace_id));
+  [...upcomingStarts.keys()].forEach(id => { if (!ids.has(id)) upcomingStarts.delete(id); });
+  await Promise.all(idle.filter(row => upcomingStarts.get(row.airspace_id)?.version !== row.version).map(async row => {
+    try {
+      const versionPage = await airspaceApi.versions(row.airspace_id, { page: 1, size: 50 });
+      const starts = (versionPage.items || []).map(version => Number(version.valid_from)).filter(at => at > now);
+      upcomingStarts.set(row.airspace_id, { version: row.version, at: starts.length ? Math.min(...starts) : 0 });
+    } catch { /* 读不到版本历史时只靠推送信号和手动刷新 */ }
+  }));
+}
+function scheduleBoundaryReload() {
+  clearTimeout(boundaryTimer);
+  boundaryTimer = 0;
+  if (!pageAlive) return;
+  const now = Date.now();
+  const times = [];
+  let stale = false;
+  // 已过边界却仍是旧状态：服务端时钟略慢或恰好在边界前读的，稍后再读。
+  const due = at => { if (at > now) times.push(at); else if (at) stale = true; };
+  all.value.forEach(row => due(Number(row.current_version?.valid_to) || 0));
+  upcomingStarts.forEach(entry => due(entry.at));
+  versions.value.forEach(version => [version.valid_from, version.valid_to].forEach(at => { if (Number(at) > now) times.push(Number(at)); }));
+  routeBoundaries.forEach(at => { if (at > now) times.push(at); });
+  if (!stale) boundaryRechecks = 0;
+  else if (boundaryRechecks < 10) { boundaryRechecks += 1; times.push(now + BOUNDARY_RECHECK_MS - BOUNDARY_GRACE_MS); }
+  if (!times.length) return;
+  const wait = Math.min(Math.min(...times) - now + BOUNDARY_GRACE_MS, MAX_TIMER_MS);
+  boundaryTimer = setTimeout(() => { boundaryTimer = 0; realtime.trigger(['airspace', 'plan']); }, wait);
+}
+onUnmounted(() => { pageAlive = false; clearTimeout(boundaryTimer); });
 
 /** 合法航线：只画启用的航线当前版本的中心线；没权限就整层不列。 */
 async function loadRoutes() {
@@ -166,9 +221,11 @@ async function loadRoutes() {
     const data = await flightApi.routes({ page: 1, size: 50 });
     const enabled = (data.items || []).filter(route => route.enabled !== false);
     const now = Date.now();
+    const boundaries = [];
     const lines = await Promise.all(enabled.map(async route => {
       try {
         const versionPage = await flightApi.routeVersions(route.route_id, { page: 1, size: 20 });
+        (versionPage.items || []).forEach(v => [v.valid_from, v.valid_to].forEach(at => { if (Number(at) > now) boundaries.push(Number(at)); }));
         const current = (versionPage.items || []).find(v => v.valid_from <= now && (!v.valid_to || v.valid_to > now));
         const coords = current?.centerline?.coordinates;
         if (!Array.isArray(coords) || coords.length < 2) return null;
@@ -178,11 +235,14 @@ async function loadRoutes() {
     }));
     routeLines.value = lines.filter(Boolean);
     routesAvailable.value = true;
+    routeBoundaries = boundaries;
   } catch (reason) {
     routeLines.value = [];
     routesAvailable.value = reason?.status !== 403;
+    routeBoundaries = [];
   }
   paintMap(false);
+  scheduleBoundaryReload();
 }
 
 /* ---------- 筛选与派生 ---------- */
@@ -288,14 +348,15 @@ function selectObjectMarker(marker) {
   else { const row = riskList.riskMapRows.find(item => item.risk_id === marker.id); if (row) viewRisk(row); }
 }
 function refreshPage() { return Promise.all([loadAll(), loadRoutes(), risks.reload(), monitor.reload()]); }
-/* 实时刷新：按变化类别只重读受影响的部分；空域详情、选中项与地图视野保留。 */
-useRealtimeRefresh(['airspace', 'plan', 'risk', 'target'], topics => {
-  const all = topics.includes('*');
+/* 实时刷新：按变化类别只重读受影响的部分；空域详情、选中项与地图视野保留，正在查看的空域的版本历史一并更新。
+   到点生效、失效没有推送信号，由上面的边界计时按同样方式触发。空域列表读取失败时抛出，由实时刷新按退避重试。 */
+const realtime = useRealtimeRefresh(['airspace', 'plan', 'risk', 'target'], topics => {
+  const everything = topics.includes('*');
   const tasks = [];
-  if ((all || topics.includes('airspace')) && !loading.value) tasks.push(loadAll());
-  if (all || topics.includes('plan')) tasks.push(loadRoutes());
-  if (all || topics.includes('risk')) tasks.push(risks.reload());
-  if (all || topics.includes('target')) tasks.push(monitor.reload());
+  if ((everything || topics.includes('airspace')) && !loading.value) tasks.push(loadAll({ quiet: true }), reloadVersions());
+  if (everything || topics.includes('plan')) tasks.push(loadRoutes());
+  if (everything || topics.includes('risk')) tasks.push(risks.reload());
+  if (everything || topics.includes('target')) tasks.push(monitor.reload());
   return Promise.all(tasks);
 }, { minIntervalMs: 1_500 });
 watch(() => filters.district, district => {
@@ -463,11 +524,25 @@ async function select(row, { fit = true } = {}) {
     const versionPage = await airspaceApi.versions(row.airspace_id, { page: 1, size: 50 });
     if (selected.value?.airspace_id !== row.airspace_id) return;
     versions.value = (versionPage.items || []).slice().sort((a, b) => b.version_no - a.version_no);
+    scheduleBoundaryReload();
   } catch (reason) {
     if (selected.value?.airspace_id === row.airspace_id) detailError.value = messageOf(reason);
   } finally {
     if (selected.value?.airspace_id === row.airspace_id) detailLoading.value = false;
   }
+}
+
+/** 静默重读正在查看的空域的版本历史：读到新内容再替换，读取失败保留已显示的内容。 */
+async function reloadVersions() {
+  const row = selected.value;
+  if (!row || detailLoading.value) return;
+  try {
+    const versionPage = await airspaceApi.versions(row.airspace_id, { page: 1, size: 50 });
+    if (selected.value?.airspace_id !== row.airspace_id) return;
+    versions.value = (versionPage.items || []).slice().sort((a, b) => b.version_no - a.version_no);
+    detailError.value = '';
+    scheduleBoundaryReload();
+  } catch { /* 保留已显示的版本历史 */ }
 }
 
 function locate() {
@@ -617,6 +692,7 @@ onUnmounted(() => {
     </section>
     <section v-show="bottomTab === 'rules'" id="airspace-rules-panel" role="tabpanel" aria-labelledby="airspace-rules-tab" class="airspace-tab-content">
     <UPanel :title="`<span class='rule-count count-all'>全部 <b>${counts.total}</b></span><span class='rule-count count-active'>生效中 <b>${counts.active}</b></span><span class='rule-count count-temporary'>临时管制 <b>${counts.temporary}</b></span>`" panel-style="flex:1;min-height:0" nopad class-name="airspace-list-panel">
+      <div v-if="refreshError && !error" class="airspace-refresh-note" role="status">自动刷新失败（{{ refreshError }}），正在重试；下面是上次读到的空域。</div>
       <div v-if="error" class="empty">空域列表暂不可用</div>
       <div v-else-if="loading && !all.length" class="empty">正在读取空域…</div>
       <div v-else-if="!filtered.length" class="empty">没有符合条件的空域。</div>
@@ -701,6 +777,7 @@ onUnmounted(() => {
 
 .airspace-map-empty { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); z-index: 6; padding: 6px 14px; border-radius: 20px; font-size: 12.5px; background: var(--surface-3); border: 1px solid var(--line); color: var(--txt-2); white-space: nowrap; }
 .airspace-map-empty { top: 50%; transform: translate(-50%, -50%); }
+.airspace-refresh-note { flex: none; margin: 8px 12px 0; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; font-size: 12px; line-height: 1.6; color: var(--amber); overflow-wrap: anywhere; }
 
 .airspace-drawer { display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; background: var(--surface-gradient); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 .drawer-head { display: flex; align-items: flex-start; gap: 8px; padding: 12px 12px 8px; border-top: 2px solid var(--blue); border-bottom: 1px solid var(--line-2); }

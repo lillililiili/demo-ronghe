@@ -37,6 +37,8 @@ body[data-theme] .bs-root .bs-kpis .kpi::before,body[data-theme] .bs-root .bs-kp
 body[data-theme] .bs-root .bs-kpis .kpi::after{left:auto;right:0;transform:scaleX(-1)}
 .bs-root .bs-kpis .kpi .lb{font-size:13px;line-height:18px;letter-spacing:0;font-weight:500;color:var(--txt);order:0}
 .bs-root .bs-kpis .kpi .v{font:600 32px/1 'Bahnschrift','Consolas',sans-serif;letter-spacing:0;color:var(--cyan);text-shadow:0 0 5px var(--glow-cyan);order:1}
+/* ZT-17：统计口径说明贴在统计卡下方，负边距吃掉中列的间距，地图仍占满剩余高度。 */
+.bs-kpi-scope{flex:none;margin:-14px 0 0;padding:0 4px 0 10px;color:var(--txt-3);font-size:11px;line-height:14px}
 .bs-map-shell{position:relative;flex:1;min-height:0;cursor:default}
 .bs-map-shell::before,.bs-map-shell::after{content:none}
 .bs-map{position:relative;width:100%;height:100%;border:1px solid var(--line);border-radius:0;overflow:hidden;box-shadow:none;outline:none}

@@ -4,6 +4,7 @@ import { deviceApi } from '@/services/deviceApi.js';
 import { hasModuleAction } from '@/services/accessControl.js';
 import AuthenticatedHlsVideo from './AuthenticatedHlsVideo.vue';
 import { authSession } from '@/services/auth.js';
+import { refreshFailureText, shouldRetryRefresh } from '@/hooks/useRealtimeRefresh.js';
 import { targetVideoState } from './targetVideoState.js';
 
 const props = defineProps({
@@ -24,9 +25,9 @@ const permitted = computed(() => hasModuleAction('devices', 'read'));
 const state = computed(() => targetVideoState(props.targetId, video.value));
 const reason = computed(() => props.unavailableReason || (!props.targetId ? '未提供可读取的关联目标，无法定位视频。' : '')
   || (!permitted.value ? '当前账号没有设备查看权限，无法查看光电画面。' : ''));
-let generation = 0, timer, controller, alive = true;
+let generation = 0, timer, controller, alive = true, retryDelay = 0;
 function clear() {
-  ++generation; clearTimeout(timer); controller?.abort();
+  ++generation; clearTimeout(timer); controller?.abort(); retryDelay = 0;
   video.value = null; error.value = ''; loading.value = false; checked.value = false;
 }
 async function refresh() {
@@ -38,19 +39,29 @@ async function refresh() {
   const deadline = setTimeout(() => pending.abort(), 12000);
   const options = { signal: pending.signal, dedupe: false };
   const current = () => alive && token === generation && props.active && expanded.value && props.targetId === id;
-  loading.value = true; error.value = '';
+  // 失败提示留到读到结果再换，自动重读时不在“读取中”和失败之间来回闪。
+  loading.value = true;
+  let retry = false;
   try {
     const nextVideo = await deviceApi.targetVideo(id, options);
     if (!current()) return;
     if (!nextVideo || nextVideo.target_id !== id) throw new Error('视频与当前目标不一致，已停止显示。');
-    video.value = nextVideo;
+    video.value = nextVideo; error.value = '';
   } catch (e) {
-    if (current()) { video.value = null; error.value = pending.signal.aborted ? '视频关联状态读取超时，请重试。' : e.message || '视频关联状态读取失败，请重试。'; }
+    if (current()) {
+      // 断网、超时、后台重启（5xx）时退避后自己再读，后台恢复后画面自己回来（BUG-07）；没有权限、目标不一致等等人点“刷新”。
+      retry = pending.signal.aborted || shouldRetryRefresh(e);
+      video.value = null;
+      error.value = pending.signal.aborted ? '视频关联状态读取超时，正在自动重试。'
+        : retry ? `视频关联状态暂时读不到（${refreshFailureText(e)}），正在自动重试。`
+          : e.message || '视频关联状态读取失败，请重试。';
+    }
   } finally {
     clearTimeout(deadline);
     if (current()) {
       loading.value = false; checked.value = true;
-      if (!error.value) timer = setTimeout(refresh, 5000);
+      if (!error.value) { retryDelay = 0; timer = setTimeout(refresh, 5000); }
+      else if (retry) { retryDelay = Math.min(retryDelay ? retryDelay * 2 : 5000, 15000); timer = setTimeout(refresh, retryDelay); }
     }
   }
 }

@@ -1,6 +1,15 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 
+// 组件按源码装进 new Function 测；断网重试判断用 useRealtimeRefresh.js 里的真实实现（去掉 vue 和推送服务的依赖）。
+async function retryHelpers() {
+  const fs = require('node:fs');
+  let source = fs.readFileSync(require('node:path').resolve(__dirname, '../src/hooks/useRealtimeRefresh.js'), 'utf8');
+  source = 'const onMounted = () => {}, onUnmounted = () => {}, onDataChange = () => () => {};\n'
+    + source.replace(/import[\s\S]*?from ['"][^'"]+['"];\r?\n/g, '');
+  return import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+}
+
 test('only complete authorized HLS association permits playback; tracking alone never suffices', async () => {
   const { targetVideoState } = await import('../src/components/video/targetVideoState.js');
   const ready = { target_id: 't1', task_id: 'job1', device_id: 'd1', stream_id: 's1', status: 'TRACKING', video_status: 'AVAILABLE', playback_type: 'HLS', playback_url: '/api/v1/targets/t1/video/streams/s1/index.m3u8', source_mode: 'live', simulated: false };
@@ -21,9 +30,10 @@ test('video component discards stale responses and clears playback on task chang
   const props = vue.reactive({ targetId: 'one', active: true, defaultExpanded: true, contextLabel: '', unavailableReason: '' });
   const authSession = vue.ref('session'), permission = vue.ref(true), requests = [], unmounts = [];
   const deviceApi = { targetVideo: id => new Promise((resolve, reject) => requests.push({ id, resolve, reject })) };
-  const run = new Function('props', 'deviceApi', 'hasModuleAction', 'targetVideoState', 'computed', 'ref', 'watch', 'onUnmounted', 'authSession', source + '\nreturn { video, expanded, refresh, clear };');
+  const { shouldRetryRefresh, refreshFailureText } = await retryHelpers();
+  const run = new Function('props', 'deviceApi', 'hasModuleAction', 'targetVideoState', 'computed', 'ref', 'watch', 'onUnmounted', 'authSession', 'shouldRetryRefresh', 'refreshFailureText', source + '\nreturn { video, expanded, refresh, clear };');
   const scope = vue.effectScope();
-  const instance = scope.run(() => run(props, deviceApi, () => permission.value, targetVideoState, vue.computed, vue.ref, vue.watch, cb => unmounts.push(cb), authSession));
+  const instance = scope.run(() => run(props, deviceApi, () => permission.value, targetVideoState, vue.computed, vue.ref, vue.watch, cb => unmounts.push(cb), authSession, shouldRetryRefresh, refreshFailureText));
   const response = (id, task = 'task') => ({ target_id: id, task_id: task, device_id: 'device', command_id: task, status: 'TRACKING', video_status: 'AVAILABLE', stream_id: 'stream', playback_url: '/api/v1/targets/one/video/streams/stream/index.m3u8', simulated: false, playback_type: 'HLS' });
   const flush = async () => { await Promise.resolve(); await vue.nextTick(); };
   try {
@@ -44,7 +54,7 @@ test('video component discards stale responses and clears playback on task chang
     requests[3].resolve(response('two'));
     await flush();
     const failing = instance.refresh();
-    requests[4].reject(new Error('HTTP 403'));
+    requests[4].reject(Object.assign(new Error('HTTP 403'), { status: 403 }));
     await failing;
     assert.equal(instance.video.value, null);
     instance.expanded.value = false;
@@ -143,13 +153,14 @@ const viewOnly = asked => (module, action) => { asked.push(`${module}.${action}`
 
 test('viewing EO video and tracking status needs only device view permission', async () => {
   const vue = await import('vue');
+  const { shouldRetryRefresh, refreshFailureText } = await retryHelpers();
   const { targetVideoState } = await import('../src/components/video/targetVideoState.js');
   const unmounts = [], asked = [], videoReads = [], statusReads = [];
   const scope = vue.effectScope();
   try {
-    const video = new Function('props', 'deviceApi', 'hasModuleAction', 'targetVideoState', 'computed', 'ref', 'watch', 'onUnmounted', 'authSession',
+    const video = new Function('props', 'deviceApi', 'hasModuleAction', 'targetVideoState', 'computed', 'ref', 'watch', 'onUnmounted', 'authSession', 'shouldRetryRefresh', 'refreshFailureText',
       componentScript('TargetLiveVideo.vue') + '\nreturn { reason };');
-    const panel = new Function('props', 'deviceApi', 'hasModuleAction', 'computed', 'ref', 'watch', 'onUnmounted', 'authSession',
+    const panel = new Function('props', 'deviceApi', 'hasModuleAction', 'computed', 'ref', 'watch', 'onUnmounted', 'authSession', 'shouldRetryRefresh', 'refreshFailureText',
       componentScript('TargetTrackingPanel.vue') + '\nreturn { reason, actions, canOperate, state };');
     const props = vue.reactive({ targetId: 'one', active: true, defaultExpanded: true, contextLabel: '', unavailableReason: '', beginReason: '人工补充光电追踪' });
     const deviceApi = {
@@ -157,8 +168,8 @@ test('viewing EO video and tracking status needs only device view permission', a
       eoTrackingStatus: id => { statusReads.push(id); return Promise.resolve({ target_id: id, status: 'TRACKING', allowed_actions: [] }); }
     };
     const { liveVideo, tracking } = scope.run(() => ({
-      liveVideo: video(props, deviceApi, viewOnly(asked), targetVideoState, vue.computed, vue.ref, vue.watch, cb => unmounts.push(cb), vue.ref('session')),
-      tracking: panel(props, deviceApi, viewOnly(asked), vue.computed, vue.ref, vue.watch, cb => unmounts.push(cb), vue.ref('session'))
+      liveVideo: video(props, deviceApi, viewOnly(asked), targetVideoState, vue.computed, vue.ref, vue.watch, cb => unmounts.push(cb), vue.ref('session'), shouldRetryRefresh, refreshFailureText),
+      tracking: panel(props, deviceApi, viewOnly(asked), vue.computed, vue.ref, vue.watch, cb => unmounts.push(cb), vue.ref('session'), shouldRetryRefresh, refreshFailureText)
     }));
     await Promise.resolve(); await vue.nextTick();
     assert.equal(liveVideo.reason.value, '');
@@ -175,16 +186,84 @@ test('viewing EO video and tracking status needs only device view permission', a
   try {
     const props = vue.reactive({ targetId: 'one', active: true, defaultExpanded: true, contextLabel: '', unavailableReason: '', beginReason: '' });
     const deviceApi = { targetVideo: id => { reads.push(id); return new Promise(() => {}); }, eoTrackingStatus: id => { reads.push(id); return new Promise(() => {}); } };
-    const video = new Function('props', 'deviceApi', 'hasModuleAction', 'targetVideoState', 'computed', 'ref', 'watch', 'onUnmounted', 'authSession',
+    const video = new Function('props', 'deviceApi', 'hasModuleAction', 'targetVideoState', 'computed', 'ref', 'watch', 'onUnmounted', 'authSession', 'shouldRetryRefresh', 'refreshFailureText',
       componentScript('TargetLiveVideo.vue') + '\nreturn { reason };');
-    const panel = new Function('props', 'deviceApi', 'hasModuleAction', 'computed', 'ref', 'watch', 'onUnmounted', 'authSession',
+    const panel = new Function('props', 'deviceApi', 'hasModuleAction', 'computed', 'ref', 'watch', 'onUnmounted', 'authSession', 'shouldRetryRefresh', 'refreshFailureText',
       componentScript('TargetTrackingPanel.vue') + '\nreturn { reason };');
     const result = deniedScope.run(() => ({
-      liveVideo: video(props, deviceApi, () => false, targetVideoState, vue.computed, vue.ref, vue.watch, cb => deniedUnmounts.push(cb), vue.ref('session')),
-      tracking: panel(props, deviceApi, () => false, vue.computed, vue.ref, vue.watch, cb => deniedUnmounts.push(cb), vue.ref('session'))
+      liveVideo: video(props, deviceApi, () => false, targetVideoState, vue.computed, vue.ref, vue.watch, cb => deniedUnmounts.push(cb), vue.ref('session'), shouldRetryRefresh, refreshFailureText),
+      tracking: panel(props, deviceApi, () => false, vue.computed, vue.ref, vue.watch, cb => deniedUnmounts.push(cb), vue.ref('session'), shouldRetryRefresh, refreshFailureText)
     }));
     assert.equal(result.liveVideo.reason.value, '当前账号没有设备查看权限，无法查看光电画面。');
     assert.equal(result.tracking.reason.value, '当前账号没有设备查看权限，无法读取光电追踪。');
     assert.deepEqual(reads, [], 'no request is sent without device view permission');
   } finally { deniedUnmounts.forEach(cb => cb()); deniedScope.stop(); }
+});
+
+// BUG-07：后台重启、断网时光电追踪卡片和视频面板退避后自己再读，后台恢复后不用点“刷新”；没有权限等再读也不会好的错误照旧停下。
+test('EO tracking card and video recover by themselves after a backend outage', async () => {
+  const vue = await import('vue');
+  const { targetVideoState } = await import('../src/components/video/targetVideoState.js');
+  const { shouldRetryRefresh, refreshFailureText } = await retryHelpers();
+  const timers = [];
+  const fakeSetTimeout = (fn, ms) => { const timer = { fn, ms, cleared: false }; timers.push(timer); return timer; };
+  const fakeClearTimeout = timer => { if (timer) timer.cleared = true; };
+  const pending = () => timers.filter(timer => !timer.cleared && timer.ms !== 12000);
+  async function fire(ms) {
+    const due = pending();
+    assert.deepEqual(due.map(timer => timer.ms), [ms], `next read is scheduled after ${ms} ms`);
+    due[0].cleared = true;
+    await due[0].fn();
+    await vue.nextTick();
+  }
+  const outage = () => Object.assign(new Error('系统暂时无法处理，请稍后查看最新记录；若刚提交过操作，请先核对结果，避免重复提交。'), { code: 'HTTP_ERROR', status: 500 });
+  const denied = () => Object.assign(new Error('当前账号没有设备查看权限'), { status: 403 });
+  let statusReply = () => Promise.resolve({ target_id: 'one', status: 'TRACKING', allowed_actions: ['PAUSE'] });
+  let videoReply = () => Promise.resolve({ target_id: 'one', task_id: 'task', device_id: 'd1', stream_id: 's1', status: 'TRACKING', video_status: 'AVAILABLE', playback_type: 'HLS', playback_url: '/api/v1/targets/one/video/streams/s1/index.m3u8', simulated: false });
+  const deviceApi = { eoTrackingStatus: () => statusReply(), targetVideo: () => videoReply() };
+  const props = vue.reactive({ targetId: 'one', active: true, defaultExpanded: true, contextLabel: '', unavailableReason: '', beginReason: '人工补充光电追踪' });
+  const unmounts = [], scope = vue.effectScope();
+  const panel = new Function('props', 'deviceApi', 'hasModuleAction', 'computed', 'ref', 'watch', 'onUnmounted', 'authSession', 'shouldRetryRefresh', 'refreshFailureText', 'setTimeout', 'clearTimeout',
+    componentScript('TargetTrackingPanel.vue') + '\nreturn { state, readError, actions };');
+  const video = new Function('props', 'deviceApi', 'hasModuleAction', 'targetVideoState', 'computed', 'ref', 'watch', 'onUnmounted', 'authSession', 'shouldRetryRefresh', 'refreshFailureText', 'setTimeout', 'clearTimeout',
+    componentScript('TargetLiveVideo.vue') + '\nreturn { video, error };');
+  try {
+    const tracking = scope.run(() => panel(props, deviceApi, () => true, vue.computed, vue.ref, vue.watch, cb => unmounts.push(cb), vue.ref('session'), shouldRetryRefresh, refreshFailureText, fakeSetTimeout, fakeClearTimeout));
+    await Promise.resolve(); await vue.nextTick();
+    assert.equal(tracking.state.value.status, 'TRACKING');
+    statusReply = () => Promise.reject(outage());
+    await fire(5000);
+    assert.equal(tracking.state.value.status, 'TRACKING', 'last state kept while the backend is away, so the video panel stays');
+    assert.equal(tracking.readError.value, '跟踪状态暂时读不到（服务暂时不可用），正在自动重试。');
+    assert.deepEqual(tracking.actions.value, [], 'no control buttons while the state cannot be confirmed');
+    await fire(5000);
+    await fire(10000);
+    await fire(15000);
+    statusReply = () => Promise.resolve({ target_id: 'one', status: 'LOST', allowed_actions: [] });
+    await fire(15000);
+    assert.equal(tracking.readError.value, '', 'recovered without clicking refresh');
+    assert.equal(tracking.state.value.status, 'LOST');
+    statusReply = () => Promise.reject(denied());
+    await fire(5000);
+    assert.equal(tracking.state.value, null);
+    assert.deepEqual(pending(), [], 'no automatic re-read after a permission error');
+  } finally { unmounts.splice(0).forEach(cb => cb()); }
+
+  timers.length = 0;
+  try {
+    const live = scope.run(() => video(props, deviceApi, () => true, targetVideoState, vue.computed, vue.ref, vue.watch, cb => unmounts.push(cb), vue.ref('session'), shouldRetryRefresh, refreshFailureText, fakeSetTimeout, fakeClearTimeout));
+    await Promise.resolve(); await vue.nextTick();
+    assert.equal(live.video.value.task_id, 'task');
+    videoReply = () => Promise.reject(Object.assign(new Error('Failed to fetch'), { code: 'NETWORK_ERROR' }));
+    await fire(5000);
+    assert.equal(live.video.value, null);
+    assert.equal(live.error.value, '视频关联状态暂时读不到（暂时连不上系统），正在自动重试。');
+    await fire(5000);
+    await fire(10000);
+    videoReply = () => Promise.resolve({ target_id: 'one', task_id: 'task-2', device_id: 'd1', stream_id: 's1', status: 'TRACKING', video_status: 'AVAILABLE', playback_type: 'HLS', playback_url: '/api/v1/targets/one/video/streams/s1/index.m3u8', simulated: false });
+    await fire(15000);
+    assert.equal(live.error.value, '');
+    assert.equal(live.video.value.task_id, 'task-2', 'video association read again after recovery');
+    assert.deepEqual(pending().map(timer => timer.ms), [5000], 'back to the normal 5 s reading');
+  } finally { unmounts.splice(0).forEach(cb => cb()); scope.stop(); }
 });

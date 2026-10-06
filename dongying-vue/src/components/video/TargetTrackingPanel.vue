@@ -3,6 +3,7 @@ import { computed, onUnmounted, ref, watch } from 'vue';
 import { deviceApi } from '@/services/deviceApi.js';
 import { hasModuleAction } from '@/services/accessControl.js';
 import { authSession } from '@/services/auth.js';
+import { refreshFailureText, shouldRetryRefresh } from '@/hooks/useRealtimeRefresh.js';
 import TargetLiveVideo from './TargetLiveVideo.vue';
 
 const props = defineProps({
@@ -41,12 +42,13 @@ const statusDetail = computed(() => {
 });
 const pauseLabel = computed(() => ['STARTING', 'TRACKING', 'LOST', 'ENDING', 'END_UNCONFIRMED'].includes(state.value?.status)
   ? '暂停并结束' : '暂停自动追踪');
-let generation = 0, contextGeneration = 0, timer = null, controller = null, alive = true;
+let generation = 0, contextGeneration = 0, timer = null, controller = null, alive = true, retryDelay = 0;
 
 function invalidate() {
   ++generation;
   ++contextGeneration;
   clearTimeout(timer);
+  retryDelay = 0;
   controller?.abort();
   controller = null;
   state.value = null;
@@ -66,6 +68,7 @@ async function refresh(silent = false) {
   const deadline = setTimeout(() => pending.abort(), 12000);
   const current = () => alive && token === generation && props.active && props.targetId === id && !reason.value;
   if (!silent) loading.value = true;
+  let retry = false;
   try {
     const result = await deviceApi.eoTrackingStatus(id, { signal: pending.signal, dedupe: false });
     if (!current()) return;
@@ -76,14 +79,25 @@ async function refresh(silent = false) {
     readError.value = '';
   } catch (error) {
     if (current()) {
-      state.value = null;
-      readError.value = pending.signal.aborted ? '跟踪状态读取超时，请重试。' : error.message || '跟踪状态读取失败，请重试。';
+      // 断网、超时、后台重启（5xx）时保留上次的状态（视频面板不跟着消失），退避后自己再读，后台恢复后不用点“刷新”（BUG-07）；
+      // 没有权限、目标不存在等再读也不会好，照旧清掉状态等人处理。
+      retry = pending.signal.aborted || shouldRetryRefresh(error);
+      if (!retry) state.value = null;
+      readError.value = pending.signal.aborted ? '跟踪状态读取超时，正在自动重试。'
+        : retry ? `跟踪状态暂时读不到（${refreshFailureText(error)}），正在自动重试。`
+          : error.message || '跟踪状态读取失败，请重试。';
     }
   } finally {
     clearTimeout(deadline);
     if (current()) {
       loading.value = false;
-      if (!readError.value) timer = setTimeout(() => refresh(true), 5000);
+      if (!readError.value) {
+        retryDelay = 0;
+        timer = setTimeout(() => refresh(true), 5000);
+      } else if (retry) {
+        retryDelay = Math.min(retryDelay ? retryDelay * 2 : 5000, 15000);
+        timer = setTimeout(() => refresh(true), retryDelay);
+      }
     }
   }
 }

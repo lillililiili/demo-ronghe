@@ -86,7 +86,8 @@ python tools/device-simulator/server.py --isolated-qa-scene --port 18767 --datab
 
 ## 数据流与保护
 
-- 设备注册：现有 `POST /api/v1/devices/onboard`，每次运行独立设备编号及幂等键，source_mode=replay。
+- 设备注册：现有 `POST /api/v1/devices/onboard`，source_mode=replay。设备编号和外部身份按场景里的设备固定为 `map-sim-<类型>-<设备 id>`，同一场景的每个批次、服务重启后都复用同一台设备和同一个 MQTT 绑定；只有目标、计划、区域等批次资料随批次新建。全量场景的规范化观测源和气象站同样按单位区域、名称和位置复用（`map-sim-source-*`、`map-sim-weather-*`），只有改了位置才登记新的一台。
+- 旧批次设备清理（2026-10-06）：2026-10-05 以前的版本每批按“批次号-序号”登记一套设备（如 `sim-1004093015-a1b2-3`），批次结束后这些设备一直心跳超时，设备监控里堆积离线设备和 HIGH 设备异常。先用有设备运维权限的账号列出：`python3 retire_legacy_devices.py --account admin1`（密码从环境变量 `SIM_PLATFORM_PASSWORD` 读取，未设置时交互输入；`--api` 默认本机 8081）；核对清单后加 `--apply`，逐台经设备接口先停用、再删除，版本校验、删除原因和审计都由平台记录。只处理同时符合旧批次编号、模拟器厂家/型号、replay 和模拟标记的设备，`map-sim-*` 稳定设备和人工录入的设备不会动。删除后该设备未关闭的设备异常不再出现在异常队列和统计里，原记录保留；仍有未完成指令或调测任务的设备会被平台拒绝删除，脚本列出原因并继续处理其余设备，处理完这些任务后重跑即可。
 - 首帧保护（2026-09-30）：注册后先通过设备协议状态接口核对本批设备绑定，等待所有设备的后台连接及订阅确认，再开始计时和发送心跳、目标报文。等待上限 30 秒，失败或取消不开始发送；运行记录保存等待、就绪时间，历史缺失报文不补造。Broker 的 PUBACK 仍需与后台回读对账，不能单独证明业务已接收。
 - 雷达、5G-A、TDOA：复用 `LINGYUN_MQTT_V8_6` 工参和 SenseData 契约。QoS 1、retain=false；目标与批次身份固定，观测时间随实际发送更新，按速度和折线距离推进，终点停留，不循环瞬移。鸟群按数量生成独立观测编号、固定小范围编队偏移。
 - 光电：`EO_EDGE_MQTT_20250826` HeartBeat，以及真实订阅下发主题后的 BeginTracking / EndTracking / CameraStatus 模拟回执。匹配系统当前任务后才执行；可显式开启本机 TEST VIDEO 水印测试流，不表示现场实拍。
@@ -120,6 +121,7 @@ python tools/device-simulator/server.py --isolated-qa-scene --port 18767 --datab
 
 - `engine.py`：冻结与校验场景、几何距离、运动插值、异常时间窗和 A/C 报文。
 - `platform_client.py`：系统登录/回读、设备注册、本机配套事务。
+- `retire_legacy_devices.py`：列出并（加 `--apply` 时）停用、删除旧版按批次登记的模拟设备；`tests/test_device_reuse.py` 覆盖设备复用与清理范围。
 - `server.py`：同源本地服务、任务线程、生命周期、日志、结果回读；仅绑定 127.0.0.1。
 - `web/`：沿用确认的页面；`runtime.js` 接入实际运行、配置与导入导出。
 - `map-entry.js` / `build-map.mjs`：共用系统地图加载器和主题，真实坐标投影、平移缩放及构建；`web/map-runtime/` 为自动生成资源，不提交。

@@ -33,6 +33,27 @@ def stable_device_identity(device_id, kind):
     digest = hashlib.sha256(f'{kind}:{device_id}'.encode('utf-8')).hexdigest()[:8]
     return candidate[:limit - 9] + '-' + digest
 
+
+SIMULATOR_VENDOR = '地图场景模拟器'
+SIMULATOR_MODEL = 'MQTT-SIM'
+# 2026-10-05 以前每批按“批次号-序号”登记一套设备，例如 sim-1004093015-a1b2-3。
+LEGACY_BATCH_DEVICE_NO = re.compile(r'sim-\d{10}-[0-9a-f]{4}-\d{1,4}')
+LEGACY_RETIRE_REASON = '清理旧版模拟器按批次登记的设备'
+
+
+def legacy_batch_device(item):
+    """Tell whether a device list row is an old per-batch simulator registration.
+
+    Only rows that match every simulator registration fact qualify: the batch
+    numbered device_no, the simulator vendor/model and replay source. Stable
+    map-sim-* devices and anything entered by people never match.
+    """
+    return (isinstance(item, dict)
+            and bool(LEGACY_BATCH_DEVICE_NO.fullmatch(str(item.get('device_no') or '')))
+            and item.get('vendor') == SIMULATOR_VENDOR and item.get('model') == SIMULATOR_MODEL
+            and item.get('source_mode') == 'replay' and item.get('simulated') is True
+            and bool(item.get('device_id')))
+
 class Platform:
     def __init__(self, base, token=None):
         parsed = urllib.parse.urlparse(base)
@@ -167,6 +188,51 @@ class Platform:
     def brokers(self):
         return [b for b in self.call('GET', '/mqtt-brokers') if b.get('source_mode')=='replay' and b.get('enabled')]
 
+    def legacy_batch_devices(self):
+        """Read every old per-batch simulator device still in the device catalog."""
+        found, page = [], 1
+        while True:
+            query = urllib.parse.urlencode({'page': page, 'size': 100, 'keyword': 'sim-', 'vendor': SIMULATOR_VENDOR,
+                                            'sort': 'device_no_asc'})
+            data = self.call('GET', '/devices?' + query) or {}
+            items = data.get('items') or []
+            found.extend(item for item in items if legacy_batch_device(item))
+            if not items or page * 100 >= int(data.get('total') or 0):
+                return found
+            page += 1
+
+    def retire_legacy_batch_devices(self, apply=False):
+        """Disable and then delete old per-batch simulator devices through the device API.
+
+        Without ``apply`` nothing is changed and only the matching rows are listed.
+        Each device goes through the normal disable and delete endpoints, so the
+        platform keeps its own authorization, version checks and audit records.
+        One failed device is reported and the rest continue.
+        """
+        devices = self.legacy_batch_devices()
+        result = {'found': [{'device_id': d['device_id'], 'device_no': d['device_no'], 'name': d.get('name'),
+                             'enabled': d.get('enabled'), 'connectivity': d.get('connectivity')} for d in devices],
+                  'retired': [], 'failed': []}
+        if not apply:
+            return result
+        for item in devices:
+            path = '/devices/' + urllib.parse.quote(str(item['device_id']), safe='')
+            try:
+                version = item.get('version')
+                if item.get('enabled'):
+                    detail = self.call('PATCH', path + '/enabled',
+                                       {'enabled': False, 'version': version, 'reason': LEGACY_RETIRE_REASON},
+                                       'sim-retire-off-' + str(item['device_id']) + '-' + str(version))
+                    version = ((detail or {}).get('device') or {}).get('version')
+                    if version is None:
+                        raise ValueError('停用后未取得设备版本')
+                self.call('DELETE', path, {'version': version, 'reason': LEGACY_RETIRE_REASON},
+                          'sim-retire-del-' + str(item['device_id']) + '-' + str(version))
+                result['retired'].append(item['device_no'])
+            except ValueError as error:
+                result['failed'].append({'device_no': item['device_no'], 'error': str(error)})
+        return result
+
     def prepare_devices(self, devices, broker, manifest, checkpoint):
         for device_id, d in devices.items():
             external = stable_device_identity(device_id, d['kind'])
@@ -175,7 +241,7 @@ class Platform:
                         broker_id=broker['broker_id'], provider_code=manifest['provider'], external_device_id=external,
                         device_type_abbr=d['kind'], source_mode='replay', owner_org_id=broker['owner_org_id'],
                         district_id=broker['district_id'], device_no=external, name='模拟 '+d['name'],
-                        vendor='地图场景模拟器', model='MQTT-SIM', longitude=lon, latitude=lat, altitude_m=0)
+                        vendor=SIMULATOR_VENDOR, model=SIMULATOR_MODEL, longitude=lon, latitude=lat, altitude_m=0)
             if d['kind'] == 'eo':
                 body['edge_id'] = external + '-edge'
             record = self._onboard_or_reuse(body, 'sim-onboard-'+external)

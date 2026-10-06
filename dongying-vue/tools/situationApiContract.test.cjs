@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/* 融合感知 REST 数据源契约测试：分页、串行轮询、暂停恢复、轨迹/航线与失败保留。 */
+/* 融合感知 REST 数据源契约测试：分页、串行轮询、暂停恢复、轨迹/航线与失败保留、按权限读取。 */
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -27,7 +27,7 @@ async function loadSource(deps) {
   source = `const { deviceApi, targetApi, listAlarms, listAllFlightPlans, flightApi, airspaceApi,
     riskApi, handoffApi, mapPool, attachBearing, attachDeviceEvents, attachRecentTracks,
     attachTargetSourceLinks, bearingOrigins, toAirspaces, toAlarms, toDevices, toFlightPlans,
-    toRisks, toTargets, SITUATION_DEVICE_TYPE_ORDER, onDataChange } = globalThis.__situationContractDeps;\n${source}`;
+    toRisks, toTargets, SITUATION_DEVICE_TYPE_ORDER, onDataChange, hasPermission } = globalThis.__situationContractDeps;\n${source}`;
   globalThis.__situationContractDeps = deps;
   return import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}#${Date.now()}`);
 }
@@ -45,6 +45,11 @@ async function main() {
   const targetQueries = [];
   const trackQueries = [];
   const calls = { alarms: 0, risks: 0, handoffs: 0, plans: 0 };
+  let eventCalls = 0;
+  let handoffsForbidden = false;
+  const ALL_CODES = ['target:read', 'alarm:read', 'risk:read', 'handoff:read', 'devices.read', 'monitoring.read',
+    'flight:read', 'route:read', 'airspace:read'];
+  let granted = new Set(ALL_CODES);
   let pushHandler = null;
   const devices = Array.from({ length: 101 }, (_, index) => ({
     device_id: `d${index}`, device_no: `DEV-${index}`, name: `设备${index}`,
@@ -72,7 +77,7 @@ async function main() {
         devicePages.push(page);
         return { items: page === 1 ? devices.slice(0, 100) : devices.slice(100), total: 101 };
       },
-      events: async () => ({ items: [] })
+      events: async () => { eventCalls++; return { items: [] }; }
     },
     targetApi: {
       listAll: async params => {
@@ -104,8 +109,13 @@ async function main() {
     } }) },
     airspaceApi: { list: async () => ({ items: [], total: 0 }), detail: async value => value },
     riskApi: { listRisks: async () => { calls.risks++; return { items: [], total: 0 }; } },
-    handoffApi: { listHandoffs: async () => { calls.handoffs++; return { items: [], total: 0 }; } },
-    onDataChange: (_topics, handler) => { pushHandler = handler; return () => { if (pushHandler === handler) pushHandler = null; }; }
+    handoffApi: { listHandoffs: async () => {
+      calls.handoffs++;
+      if (handoffsForbidden) { const error = new Error('无权访问'); error.status = 403; throw error; }
+      return { items: [], total: 0 };
+    } },
+    onDataChange: (_topics, handler) => { pushHandler = handler; return () => { if (pushHandler === handler) pushHandler = null; }; },
+    hasPermission: code => granted.has(code)
   };
   const { createSituationApiSource } = await loadSource(deps);
   globalThis.document = { hidden: false };
@@ -194,6 +204,47 @@ async function main() {
     { targets: 0, devices: 2, alarms: 0, risks: 0, handoffs: 0, plans: 0 });
   pushed.stop();
   ok('停止后取消订阅', pushHandler === null);
+
+  // ZT-09：值班员没有设备监测（monitoring.read）和风险读取权限：不请求设备事件和风险，也不报刷新失败。
+  granted = new Set(ALL_CODES.filter(code => code !== 'monitoring.read' && code !== 'risk:read'));
+  const duty = createSituationApiSource({ fastMs: 10, slowMs: 10_000, now: () => clock });
+  const dutySnapshots = [];
+  const dutyErrors = [];
+  const eventsBefore = eventCalls;
+  const risksBefore = calls.risks;
+  duty.start(value => dutySnapshots.push(value), (error, segment) => dutyErrors.push(segment));
+  while (dutySnapshots.length < 4) await delay(5);
+  check('没有设备监测权限时不请求设备事件', eventCalls - eventsBefore, 0);
+  check('没有风险权限时不请求风险', calls.risks - risksBefore, 0);
+  check('没有权限的分组不报刷新失败', dutyErrors, []);
+  check('没有权限的分组不算刷新失败', dutySnapshots.at(-1).failedSegments, []);
+  check('快照注明没有权限的分组', dutySnapshots.at(-1).deniedSegments, ['risks', 'device-events']);
+  ok('有权限的设备照常读取', dutySnapshots.at(-1).devices.length === 100);
+
+  // 后端答复 403（登录后权限被收回）：按没有权限处理，不反复请求、不报刷新失败。
+  handoffsForbidden = true;
+  const handoffsBefore = calls.handoffs;
+  const shown = dutySnapshots.length;
+  while (dutySnapshots.length < shown + 4) await delay(5);
+  check('403 的分组只请求一次', calls.handoffs - handoffsBefore, 1);
+  check('403 不报刷新失败', dutyErrors, []);
+  check('403 的分组记为没有权限', dutySnapshots.at(-1).deniedSegments, ['risks', 'handoffs', 'device-events']);
+  duty.stop();
+  handoffsForbidden = false;
+
+  // 飞行计划要连同航线版本一起读：有计划权限、没有航线权限时整组不读，不报刷新失败。
+  granted = new Set(ALL_CODES.filter(code => code !== 'route:read'));
+  const noRoute = createSituationApiSource({ fastMs: 10, slowMs: 10_000, now: () => clock });
+  const noRouteSnapshots = [];
+  const noRouteErrors = [];
+  const plansBefore = calls.plans;
+  noRoute.start(value => noRouteSnapshots.push(value), (error, segment) => noRouteErrors.push(segment));
+  while (noRouteSnapshots.length < 2) await delay(5);
+  check('没有航线权限时不请求飞行计划', calls.plans - plansBefore, 0);
+  check('没有航线权限不报刷新失败', noRouteErrors, []);
+  check('快照注明飞行计划没有权限', noRouteSnapshots.at(-1).deniedSegments, ['flight-plans']);
+  noRoute.stop();
+  granted = new Set(ALL_CODES);
   delete globalThis.document;
   delete globalThis.__situationContractDeps;
 

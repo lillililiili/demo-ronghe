@@ -12,6 +12,8 @@ function query(params = {}) {
 export const flightApi = {
   list: params => apiRequest(`/flight-plans${query(params)}`),
   detail: id => apiRequest(`/flight-plans/${encodeURIComponent(id)}`),
+  // 上级（管服平台）计划接口能否取到数据；只需计划读取权限（ZT-21）。
+  upstreamStatus: () => apiRequestTimed('/flight-plans/upstream-status'),
   subjects: id => apiRequestTimed(`/flight-plans/${encodeURIComponent(id)}/subjects`),
   routes: params => apiRequest(`/routes${query(params)}`),
   route: id => apiRequest(`/routes/${encodeURIComponent(id)}`),

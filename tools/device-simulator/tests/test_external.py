@@ -3,6 +3,7 @@ import http.server
 import json
 import sys
 import threading
+import types
 import unittest
 import urllib.error
 import urllib.request
@@ -15,6 +16,7 @@ from server import ExternalBridge
 
 class FakePlatform(http.server.BaseHTTPRequestHandler):
     calls = []
+    brokers = []
     def log_message(self, *args): pass
     def answer(self, status, value):
         raw = json.dumps(value).encode()
@@ -27,6 +29,7 @@ class FakePlatform(http.server.BaseHTTPRequestHandler):
         self.calls.append((self.command, self.path, self.headers.get('Authorization'), None))
         if self.path == '/auth/me': return self.answer(200, {'ok': True, 'data': {'account': 'operator', 'role_code': 'ROLE-USER', 'session_id': 'secret'}})
         if self.path == '/local-interface-simulator/context': return self.answer(200, {'ok': True, 'data': {'routes': [], 'messages': []}})
+        if self.path == '/mqtt-brokers': return self.answer(200, {'ok': True, 'data': self.brokers})
         return self.answer(404, {'ok': False, 'error': {'message': 'missing'}})
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
@@ -64,6 +67,25 @@ class ExternalBridgeTests(unittest.TestCase):
         value = self.bridge.request({'method': 'POST', 'path': '/local-interface-simulator/plans', 'body': {'message_id': 'demo-1'}, 'key': 'demo-1'})
         self.assertEqual(value['result']['plan_no'], 'MOCK-1')
         self.assertEqual(FakePlatform.calls[-1][2], 'demo-1')
+    def test_connection_scope_defaults_airspace_owner_to_the_simulator_connection(self):
+        with self.assertRaises(simulator_server.ExternalAuthenticationRequired):
+            self.bridge.connection_scope()
+        self.bridge.connect({'api': self.url, 'account': 'operator', 'password': 'pass'})
+        FakePlatform.brokers = [
+            {'broker_id': 'other', 'name': 'local-risk-video-eo', 'source_mode': 'replay', 'enabled': True, 'owner_org_id': 'org-x', 'district_id': 'district-x'},
+            {'broker_id': 'replay', 'name': 'local-lingyun-replay', 'source_mode': 'replay', 'enabled': True, 'owner_org_id': 'org-a', 'district_id': 'district-a'}]
+        self.assertEqual(self.bridge.connection_scope(), {'owner_org_id': 'org-a', 'district_id': 'district-a', 'broker_name': 'local-lingyun-replay'})
+        # Once a run has chosen its broker, that connection decides, without another broker lookup.
+        self.bridge.runtime = types.SimpleNamespace(broker={'name': 'chosen', 'owner_org_id': 'org-b', 'district_id': 'district-b'})
+        before = len(FakePlatform.calls)
+        self.assertEqual(self.bridge.connection_scope(), {'owner_org_id': 'org-b', 'district_id': 'district-b', 'broker_name': 'chosen'})
+        self.assertEqual(len(FakePlatform.calls), before)
+        self.bridge.runtime = types.SimpleNamespace(broker=None)
+        FakePlatform.brokers = [FakePlatform.brokers[0]]
+        missing = self.bridge.connection_scope()
+        self.assertEqual((missing['owner_org_id'], missing['district_id']), (None, None))
+        self.assertIn('请手动选择', missing['message'])
+
     def test_receipt_path_is_strict(self):
         self.bridge.connect({'api': self.url, 'account': 'operator', 'password': 'pass'})
         self.assertTrue(self.bridge.allowed('POST', '/local-interface-simulator/messages/demo_1/receipt'))
@@ -91,7 +113,7 @@ class ExternalBridgeTests(unittest.TestCase):
             with opener.open(base + '/api/external/status') as response:
                 self.assertEqual(json.load(response), {'connected': False, 'api': None, 'session_version': simulator_server.external_bridge.version})
             request = urllib.request.Request(base + '/api/external/request', data=json.dumps({'method': 'GET', 'path': '/local-interface-simulator/context'}).encode(), headers={'Content-Type': 'application/json'}, method='POST')
-            for target in (request, base + '/api/external/inbox?kind=risk&page=1'):
+            for target in (request, base + '/api/external/inbox?kind=risk&page=1', base + '/api/external/connection-scope'):
                 with self.assertRaises(urllib.error.HTTPError) as caught:
                     opener.open(target)
                 self.assertEqual(caught.exception.code, 401)

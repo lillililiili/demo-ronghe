@@ -7,7 +7,7 @@
   let pendingZoneId = null;
   function sendZones() {
     if (!window.SimulatorMap) return;
-    frame.contentWindow.postMessage({type:'simulator-airspace-zones',selected_id:pendingZoneId,zones:state.zones.filter(z=>z.points.length>=3).map(z=>({id:z.id,name:z.name,kind_code:z.kindCode||'',boundary:{type:'Polygon',coordinates:[z.points.map(p=>window.SimulatorMap.coordinates(p)).concat([window.SimulatorMap.coordinates(z.points[0])])]}}))},location.origin);
+    frame.contentWindow.postMessage({type:'simulator-airspace-zones',selected_id:pendingZoneId,zones:state.zones.filter(z=>z.points.length>=3).map(z=>({id:z.id,name:z.name,kind_code:z.kindCode||'',min_altitude_m:z.max==null?null:z.min??0,max_altitude_m:z.max??null,altitude_datum:z.altitudeDatum||'AMSL',boundary:{type:'Polygon',coordinates:[z.points.map(p=>window.SimulatorMap.coordinates(p)).concat([window.SimulatorMap.coordinates(z.points[0])])]}}))},location.origin);
     pendingZoneId=null;
   }
   function sendPlans() {

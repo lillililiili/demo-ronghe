@@ -250,6 +250,17 @@ node --check tools/device-simulator/web/runtime.js
 变更方法：app.js 的 setDraw/finishDraw/select 负责绘制模式、类型与完成通知；workspace.js 的 sendZones/openAirspace 和消息处理把绘制及回填连接到下发表单；airspace.js 的绘制、选区和类型事件传递所选类型；airspace-form.js 的 payload 校验显式类型；platform_client.py 的 Prerequisites.create 取消固定禁飞类型。index.html/airspace.html/workspace.css 为导航、表单和区域列表模板样式，无具体方法。test_airspace_drawing.cjs、test_airspace_kind.py 和 test_airspace_ui.cjs 覆盖类型保留、未知模式、航线独立、缺失类型阻断；前端19项、Python20项通过。浏览器已完成允许区绘制并自动回填，未提交空域或启动MQTT。
 
 
+### 演示空域直接再次下发（2026-10-06）
+
+本条替代上文“修改内容必须更换消息编号”的手工操作。再次载入演示样本后选中其空域即可直接提交，不再因沿用已受理的消息编号返回 409，也不必新建草稿再选归属。
+
+- 选择地图空域：编号取 `sim-map-airspace-<地图区域ID>`，与全量场景 `fullchain.stable_airspace_no` 一致；同名同边界已按其他编号下发过时沿用原编号，不再新增同名空域。名称、种类、边界与高度取自该区域，原因为空时填入默认原因；区域未选类型时保留表单已选类型。演示样本“02 演示禁飞区”已明确为禁飞区（PROHIBITED）。
+- 归属默认值：已有空域沿用其原归属（更新不能改归属）；新空域取模拟器连接的单位与区县（`GET /api/external/connection-scope`：当前运行的 MQTT 连接，未运行时为启用的 `local-lingyun-replay`），找不到时仍需手动选择。
+- 提交前重新读取接收记录：原样重发已受理的消息视为重试，后端返回原回执且不新增版本；其余提交一律作为新一次下发，自动换用未使用的消息编号，修订次序调为最新记录加一，生效/撤销时间晚于上次且不早于提交时，界面说明自动调整的项目。受理后表单立即换用新的消息编号；提交结果未知时保留原编号，原样重试仍为同一次下发。
+- 更新须保持原名称与归属，提交前即提示改回或改用新编号；已撤销的空域不能重复撤销。
+
+变更方法：airspace-form.js 新增 prepareIssue/stableAirspaceNo/zoneAirspaceNo/defaultScope 等纯函数；airspace.js 的选区、提交与刷新调用这些函数；workspace.js 的 sendZones 增加区域高度；server.py 的 ExternalBridge.connection_scope 提供默认归属。test_airspace_ui.cjs 覆盖重放、换号、修订与时间顺延、归属与编号默认值、选区及提交流程；test_external.py 覆盖连接归属，test_airspace_kind.py 覆盖演示样本类型。
+
 ## 光电任务与本机测试视频（2026-09-28）
 
 登录后打开“系统连接 → 光电测试视频”，显式选择“启用测试视频”。FFmpeg 可填写本机程序绝对路径；默认 `ffmpeg` 先使用 PATH，Windows 再查已有 WinGet Gyan 安装目录，不安装程序或修改 PATH。源文件留空生成动态测试图，也可填写本机已有视频的绝对路径循环播放；不支持网络视频源或 UNC 路径。所有输出统一为无声 H.264，持续显示 TEST VIDEO、设备编号和任务编号。Windows 使用系统 Arial 字体，Linux 使用已有 DejaVu Sans。

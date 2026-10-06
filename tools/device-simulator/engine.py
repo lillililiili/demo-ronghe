@@ -204,6 +204,7 @@ def compile_scene(raw):
         if t.get('motionMode', 'once') not in ('once', 'loop', 'pingpong'):
             raise ValueError('轨迹运动方式无效')
         t['motionMode'] = t.get('motionMode', 'once')
+        declared_altitude_datum = t.get('altitudeDatum') in ('AMSL', 'AGL')
         if t.get('altitudeDatum', 'AMSL') not in ('AMSL', 'AGL'):
             raise ValueError('目标高度基准无效')
         t['altitudeDatum'] = t.get('altitudeDatum', 'AMSL')
@@ -239,10 +240,16 @@ def compile_scene(raw):
         if t.get('kind') not in ('uav', 'bird', 'balloon'):
             if t.get('kind') not in ('unknown', 'identifying', 'person', 'vehicle', 'ship', 'remote_controller'):
                 raise ValueError('未知目标类型')
-        default_transport = 'normalized' if t['kind'] == 'balloon' else 'mqtt'
+        # A declared altitude datum is only comparable by the platform when the
+        # target goes through the normalized observation contract. Keep legacy
+        # scenes without a datum on MQTT, but make explicit AMSL/AGL scenes safe
+        # by default and route them through the normalized path.
+        default_transport = 'normalized' if t['kind'] == 'balloon' or declared_altitude_datum else 'mqtt'
         if t.get('transport', default_transport) not in ('mqtt', 'normalized'):
             raise ValueError('目标上报通道无效')
         t['transport'] = t.get('transport', default_transport)
+        if declared_altitude_datum and t['transport'] == 'mqtt':
+            t['transport'] = 'normalized'
         if t['kind'] == 'balloon' and t['transport'] != 'normalized':
             raise ValueError('气球须通过规范化观测入口上报')
         if t['altitudeDatum'] == 'AGL' and t['transport'] != 'normalized':

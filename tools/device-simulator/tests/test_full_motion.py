@@ -102,10 +102,12 @@ class FullMotionTests(unittest.TestCase):
     def test_source_and_array_validation(self):
         for fields in ({'deviceId': 'missing'}, {'altitudePath': [50]},
                        {'dwellSeconds': [-1, 0, 0]}, {'kind': 'balloon', 'transport': 'mqtt'},
-                       {'altitudeDatum': 'AGL'}, {'motionMode': 'teleport'},
+                       {'motionMode': 'teleport'},
                        {'silenceWindows': [{'at': 10, 'seconds': 90000}]}):
             with self.subTest(fields=fields), self.assertRaises(ValueError):
                 fixture(**fields)
+        compiled, _, _, _ = fixture(altitudeDatum='AGL', transport='mqtt')
+        self.assertEqual(compiled['targets'][0]['transport'], 'normalized')
 
 
 if __name__ == '__main__':

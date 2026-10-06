@@ -8,10 +8,23 @@ from engine import compile_scene, messages, position, metres, coordinates
 
 def scene():
     return {'version':1,'name':'隔离验证','duration':.1,'sites':[{'id':'s1','name':'验证组','x':450,'y':300,'devices':[{'id':'d1','name':'雷达','kind':'radar','health':'正常','heartbeat':'持续上报','interval':1}]}],
-            'plans':[],'zones':[],'targets':[{'id':'t1','kind':'uav','name':'验证目标','path':[[450,300],[451,300],[451,301]],'height':50,'speed':5,'planId':'','deviceId':'d1'}],
+            'plans':[],'zones':[],'targets':[{'id':'t1','kind':'uav','name':'验证目标','path':[[450,300],[451,300],[451,301]],'height':50,'speed':5,'planId':'','deviceId':'d1','transport':'mqtt'}],
             'risks':[{'id':'r1','name':'无匹配计划','type':'no-plan','enabled':True,'targetId':'t1','deviceId':'d1'}]}
 
 class EngineTests(unittest.TestCase):
+    def test_declared_altitude_datum_uses_normalized_observation(self):
+        raw = scene()
+        raw['targets'][0].update(altitudeDatum='AMSL', transport='mqtt')
+        compiled, _, targets, _ = compile_scene(raw)
+        self.assertEqual(compiled['targets'][0]['transport'], 'normalized')
+        self.assertEqual(targets['t1']['altitudeDatum'], 'AMSL')
+
+    def test_legacy_target_without_altitude_datum_keeps_mqtt(self):
+        raw = scene()
+        raw['targets'][0].pop('transport')
+        compiled, _, _, _ = compile_scene(raw)
+        self.assertEqual(compiled['targets'][0]['transport'], 'mqtt')
+
     def test_object_identifiers_are_strings_and_stable_across_frames(self):
         raw = scene()
         compiled, devices, targets, _ = compile_scene(raw)

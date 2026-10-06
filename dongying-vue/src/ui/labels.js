@@ -361,6 +361,8 @@ export const EVIDENCE_RECORD_TYPE_LABEL = {
   JUDGMENT: '判定', AUTHORIZATION: '授权', DISPOSAL: '处置', OPERATION: '操作'
 };
 export const EVIDENCE_COVERAGE_LABEL = { PRESENT: '已收录', ABSENT: '缺失', FORBIDDEN: '无权限' };
+/* 采集信息（时间、设备）由谁登记：入库人登记，或平台按光电跟踪任务登记（跟踪画面截图、录像）。 */
+export const EVIDENCE_PROVENANCE_LABEL = { UPLOADER_DECLARED: '入库登记', EO_TRACKING_CAPTURE: '平台按光电跟踪任务登记' };
 
 /* 阶段 9 空域种类：页面的图层配色与筛选都以这个字典为准，历史写法（HEIGHT_LIMIT/TEMPORARY）一并收录，
    便于旧数据在页面上仍有中文，不影响写接口只接受规范值。 */

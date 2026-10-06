@@ -13,7 +13,9 @@ const props = defineProps({
   active: { type: Boolean, default: true },
   defaultExpanded: { type: Boolean, default: true },
   compact: { type: Boolean, default: false },
-  subtype: { type: String, default: 'UAV' }
+  subtype: { type: String, default: 'UAV' },
+  // 截图、录像取证时一并关联的告警事件；没有时只关联目标和光电设备。
+  eventId: { type: String, default: '' }
 });
 const expanded = ref(props.defaultExpanded), video = ref(null);
 const loading = ref(false), checked = ref(false), error = ref('');
@@ -75,7 +77,7 @@ onUnmounted(() => { alive = false; clear(); });
       <template v-else>
         <p v-if="loading && !checked" role="status">视频读取中</p>
         <p v-else-if="!state.playable" role="status">{{ state.message }}</p>
-        <AuthenticatedHlsVideo v-if="state.playable" :target-id="targetId" :video="video" />
+        <AuthenticatedHlsVideo v-if="state.playable" :target-id="targetId" :video="video" :event-id="eventId" />
       </template>
     </div>
   </section>

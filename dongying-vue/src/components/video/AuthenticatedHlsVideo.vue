@@ -5,8 +5,9 @@ import { authSession } from '@/services/auth.js';
 import { readSessionToken } from '@/services/apiClient.js';
 import { targetVideoState } from './targetVideoState.js';
 import { authenticatedHlsLoader, streamUrl } from './authenticatedHlsLoader.js';
+import EoEvidenceCapture from './EoEvidenceCapture.vue';
 
-const props = defineProps({ targetId: { type: String, required: true }, video: { type: Object, required: true } });
+const props = defineProps({ targetId: { type: String, required: true }, video: { type: Object, required: true }, eventId: { type: String, default: '' } });
 const media = ref(null), phase = ref('WAITING'), error = ref('');
 const playable = computed(() => targetVideoState(props.targetId, props.video).playable);
 const text = computed(() => error.value || ({ WAITING: '视频加载中', READY: '视频已加载，请点击播放', PLAYING: '播放中', BUFFERING: '等待视频数据', PAUSED: '视频已暂停', INTERRUPTED: '视频已中断，请刷新视频状态' })[phase.value]);
@@ -61,6 +62,8 @@ onBeforeUnmount(() => { ++sequence; destroy(); });
       @playing="playing" @waiting="waitForData" @stalled="waitForData"
       @pause="!error && (phase = 'PAUSED')" @ended="interrupt()" @error="interrupt()" />
     <p :role="error ? 'alert' : 'status'">{{ text }}</p>
+    <EoEvidenceCapture v-if="!error" :media="media" :target-id="targetId" :video="video" :event-id="eventId"
+      :playing="phase === 'PLAYING' || phase === 'BUFFERING'" />
   </div>
 </template>
 

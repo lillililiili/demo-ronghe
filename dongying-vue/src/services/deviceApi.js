@@ -1,4 +1,4 @@
-import { apiRequest } from './apiClient.js';
+import { apiRequest, apiRequestTimed } from './apiClient.js';
 
 function query(params = {}) {
   const search = new URLSearchParams();
@@ -57,6 +57,20 @@ export const deviceApi = {
       method: 'POST', body: {}, headers: { 'Idempotency-Key': key }
     }),
   targetVideo: (targetId, options = {}) => apiRequest(`/targets/${encodeURIComponent(targetId)}/video`, options),
+  /* 跟踪画面截图（EO_STILL）或录像（EO_VIDEO）存为证据；设备与任务由服务端按当前跟踪任务核定。
+     取证时刻只报“距截图或开始录像过了多少毫秒”，由服务端换算，不依赖本机时钟。
+     上传可能较慢，超时属于“结果未知”，调用方保留同一幂等键重试。 */
+  captureTargetVideo: (targetId, { file, kindCode, streamId, eventId, captureAgeMs }, key = newIdempotencyKey('eo-capture')) => {
+    const body = new FormData();
+    body.append('file', file);
+    body.append('kind_code', kindCode);
+    body.append('stream_id', streamId);
+    if (eventId) body.append('event_id', eventId);
+    if (captureAgeMs != null) body.append('capture_age_ms', String(Math.max(0, Math.round(captureAgeMs))));
+    return apiRequestTimed(`/targets/${encodeURIComponent(targetId)}/video/captures`, {
+      method: 'POST', body, mutation: true, idempotencyKey: key
+    }, 60_000);
+  },
   currentEoTrack: (targetId, options = {}) => apiRequest(`/targets/${targetId}/eo-tracking-tasks`, options),
   eoTrackAvailability: targetId => apiRequest(`/targets/${targetId}/eo-tracking-availability`),
   endEoTrack: (taskId, key = newIdempotencyKey('eo-track-end')) =>

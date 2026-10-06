@@ -19,7 +19,7 @@ const DEFINITE_CONFLICT_CODES = new Set([
   'EMERGENCY_STOP_UNCONFIRMED', 'ADVISORY_COUNTER_BLOCKED',
   'DEVICE_CONTROL_UNAVAILABLE', 'DEVICE_NOT_BOUND', 'DEVICE_OFFLINE', 'DEVICE_NOT_OPERABLE', 'DEVICE_BUSY',
   'ACTIVE_AUTHORIZATION_EXISTS', 'SUBJECT_KIND_NOT_SUPPORTED',
-  'TARGET_NOT_ACTIVE', 'POLICY_REQUIRES_CONFIRMED_EVENT'
+  'TARGET_NOT_ACTIVE', 'POLICY_REQUIRES_CONFIRMED_EVENT', 'DEVICE_UNAVAILABLE'
 ]);
 
 /* 同一授权的幂等键在“结果未知”期间保留；服务端给出明确结果后才丢弃，避免超时重试重复写授权。 */
@@ -48,11 +48,13 @@ function messageOf(error, fallback) {
   if (error.code === 'AUTHORIZATION_EXPIRED') return '授权已超过时限，不能再执行；如仍需处置请重新申请。';
   if (error.code === 'INVALID_TRANSITION') return '该授权的当前状态不允许这一步操作，请刷新后按最新状态处理。';
   // 联调实测到的两个码：策略限制每个主体同时只能有一条未了结授权；本期主体只支持无人机事件与目标。
-  if (error.code === 'ACTIVE_AUTHORIZATION_EXISTS') return '该对象已有一条未了结的同类处置授权，请先撤销或等它结束再申请。';
+  if (error.code === 'ACTIVE_AUTHORIZATION_EXISTS') return '这个对象已有一条还没了结的同类处置授权（待审批、已批准还没执行，或正在执行）。如果那条已经用不上，请到「反制办理」里撤回或撤销它，再重新申请。';
   if (error.code === 'SUBJECT_KIND_NOT_SUPPORTED') return '本期只能对已核实的无人机事件或目标发起处置授权。';
   if (error.code === 'DEVICE_CONTROL_UNAVAILABLE') return '该设备不支持所需反制动作，未下发指令；请检查设备能力与接入配置。';
   // 未登记连接是可补救的配置问题，与“设备根本不支持自动执行”不是一回事，两句必须分开说。
   if (error.code === 'DEVICE_NOT_BOUND') return '设备未登记凌云连接，未下发指令；请运维补登记后重试。';
+  // 申请时就挡下的坏设备：服务端的话已经写明是停用、离线、异常、状态不明还是故障。
+  if (error.code === 'DEVICE_UNAVAILABLE') return error.message || '所选设备现在不能用（停用、离线、故障或状态不明），请换一台设备再申请。';
   // 离线是现场问题，与"未登记"（运维）和"不支持"（换通道）的补救方都不同（13-14）。
   if (error.code === 'DEVICE_OFFLINE') return '本次没有下发。设备未启用，或当前不在线。没有心跳的设备不能执行，请改选正在上报的设备后重新申请。';
   if (error.code === 'DEVICE_BUSY') return '本次没有下发。设备仍有未完成的指令或调测任务，请等待任务结束后重试。';
@@ -60,7 +62,8 @@ function messageOf(error, fallback) {
   if (error.code === 'EMERGENCY_STOP_UNCONFIRMED') return '这台执行设备还有未了结的急停，本次没有下发。请换一台没有未完成急停的设备，或等这台设备的急停了结后再执行。';
   if (error.code === 'ADVISORY_COUNTER_BLOCKED') return `本次没有下发。${error.message || '当前观测或违规研判已失效。'}`;
   if (error.code === 'TARGET_NOT_ACTIVE') return '最近没有监测到这个目标，无法确认它还在现场，暂时不能下发处置指令。';
-  if (error.code === 'POLICY_REQUIRES_CONFIRMED_EVENT') return '该动作要求事件先经人工核实，请先完成核实再申请。';
+  // 服务端会说清真实原因（证据不足、类别不是无人机、告警还没核实……），不再一律说成“先核实”。
+  if (error.code === 'POLICY_REQUIRES_CONFIRMED_EVENT') return error.message || '该动作要求事件先经人工核实，请先完成核实再申请。';
   return error.message || fallback;
 }
 
@@ -124,15 +127,33 @@ async function submit({ scope, action, call, refresh, onDone, okText }) {
   }
 }
 
-const DEVICE_CONNECTIVITY_SHORT = { ONLINE: '在线', OFFLINE: '离线', ABNORMAL: '异常', UNKNOWN: '未知' };
+/**
+ * 设备为什么现在不能拿来申请处置；能用时返回空串（BUG-03 / ZT-18）。
+ * 与服务端申请时的 DEVICE_UNAVAILABLE 同一口径：停用、离线、上报工作异常、状态不明、上报故障。
+ * 设备忙不算：那是一时的，批准后执行时服务端还会再查。
+ */
+export function deviceUnavailableReason(device) {
+  if (!device) return '找不到这台设备';
+  if (device.enabled === false) return '设备已停用';
+  if (device.connectivity === 'OFFLINE') return '设备离线';
+  if (device.connectivity === 'ABNORMAL') return '设备上报工作异常（故障）';
+  if (device.connectivity !== 'ONLINE') return '设备状态不明（没有上报状态）';
+  if (device.health_code === 'BAD') return '设备上报故障';
+  return '';
+}
 
 function deviceOptionLabel(device) {
   const title = [device.device_no, device.name].filter(Boolean).join(' · ') || '未命名设备';
-  const bits = [];
-  if (device.device_type_name) bits.push(device.device_type_name);
-  const conn = DEVICE_CONNECTIVITY_SHORT[device.connectivity];
-  if (conn && device.connectivity !== 'ONLINE') bits.push(conn);
+  const why = deviceUnavailableReason(device);
+  const bits = [device.device_type_name, why ? `不能选：${why}` : ''].filter(Boolean);
   return bits.length ? `${title}（${bits.join(' · ')}）` : title;
+}
+
+/** 执行设备下拉：能用的在前；不能用的置灰、写明原因，不能选。 */
+export function deviceOptions(devices, channel) {
+  return devicesForChannel(devices, channel)
+    .map(device => ({ value: device.device_id, label: deviceOptionLabel(device), disabled: !!deviceUnavailableReason(device) }))
+    .sort((a, b) => Number(a.disabled) - Number(b.disabled));
 }
 
 const CHANNEL_DEVICE_TYPE = {
@@ -179,7 +200,7 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
   const choices = (actionOptions || []).filter(Boolean);
   const pickable = choices.length > 1;
   let devices = [];
-  let deviceHelp = '只显示当前执行通道可以下发的设备。';
+  let deviceHelp = '只显示当前执行通道可以下发的设备；停用、离线、故障或状态不明的设备置灰不能选，括号里写明原因。';
   try {
     devices = await loadEnabledDevices();
     if (!devices.length) deviceHelp = '没有启用中的设备，请联系运维接入设备后再申请。';
@@ -212,7 +233,7 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
       ? '本次使用免逐次审批权限。服务端仍会核对目标、范围、时效、设备操作权限和急停状态；提交后以设备回执为准。'
       : '提交后进入待审批：审批人必须是另一个人，批准后才可执行。')
       + ((pickable && choices.includes('COUNTERMEASURE')) || actionType === 'COUNTERMEASURE'
-        ? '选择联动反制时，执行完成将自动发起信号干扰，不再二次审批。' : '')
+        ? '选择联动反制时，执行完成后会自动接着发起信号干扰：沿用这次授权，不再二次审批，有效期不超过这次授权。' : '')
       + (demo ? '当前为演示策略，时限与条件待业务确认。' : ''),
     introHtml: `<dl class="kv">${intro}</dl>`,
     notice: initialReason ? '已带入申请事由草稿，请依据当前观测与研判核对。' : '',
@@ -225,7 +246,7 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
       ] },
       { key: 'device_id', label: '执行设备', type: 'select', clearable: true, filterable: true,
         placeholder: '请选择执行设备',
-        options: model => devicesForChannel(devices, model.channel).map(device => ({ value: device.device_id, label: deviceOptionLabel(device) })),
+        options: model => deviceOptions(devices, model.channel),
         help: deviceHelp, required: true },
       { key: 'reason', label: direct ? '直接反制事由' : '申请事由', type: 'textarea', required: true, minRows: 3, placeholder: '2–500 字：依据当前观测与研判，说明本次处置事由' }
     ],
@@ -240,7 +261,11 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
       if (!['LINGYUN_B', 'COUNTERMEASURE_4CH'].includes(m.channel)) return '仅支持设备执行';
       const matched = devicesForChannel(devices, m.channel);
       if (!matched.length) return '当前执行通道没有可下发的设备';
-      if (!matched.some(device => device.device_id === m.device_id)) return '执行设备与所选通道不一致，请重新选择';
+      if (matched.every(device => deviceUnavailableReason(device))) return '这个执行通道的设备现在都不能用（停用、离线、故障或状态不明），请换一个执行通道，或等设备恢复后再申请。';
+      const chosen = matched.find(device => device.device_id === m.device_id);
+      if (!chosen) return '执行设备与所选通道不一致，请重新选择';
+      const why = deviceUnavailableReason(chosen);
+      if (why) return `所选设备不能用：${why}。请换一台设备。`;
       return null;
     },
     onSubmit: ({ action_type: chosen, channel, device_id: deviceId, reason }) => submit({
@@ -359,6 +384,42 @@ export function openDisposalStop({ authorization, refresh, onDone } = {}) {
       refresh,
       onDone,
       okText: result => `${disposalStatusText(result)}`
+    })
+  });
+  return true;
+}
+
+/** 撤回待审批的申请，或撤销已批准还没执行的授权（BUG-03）：撤销后同一对象可以重新申请。 */
+export function openDisposalCancel({ authorization, refresh, onDone } = {}) {
+  const auth = authorization;
+  if (!auth?.authorization_id) { toast('缺少授权记录', 'err'); return false; }
+  if (!['REQUESTED', 'APPROVED'].includes(auth.status) || !(auth.allowed_actions || []).includes('CANCEL')) {
+    toast('这条授权现在不能撤销，或当前账号没有撤销权限', 'err');
+    return false;
+  }
+  const approved = auth.status === 'APPROVED';
+  openFormModal({
+    title: `${approved ? '撤销授权' : '撤回申请'} · ${auth.authorization_no || '处置授权'}`,
+    width: '560px',
+    warning: approved
+      ? '这条授权已批准，但还没有下发到设备。撤销后它就作废，不能再执行；同一对象可以马上重新申请。'
+      : '撤回后这条申请作废，不再等待审批；需要时可以重新申请。',
+    introHtml: summaryHtml(auth),
+    fields: [{ key: 'note', label: approved ? '撤销原因' : '撤回原因', type: 'textarea', minRows: 3, placeholder: '选填：例如设备离线，改用其他设备重新申请' }],
+    initial: { note: '' },
+    confirmText: approved ? '撤销授权' : '撤回申请',
+    danger: true,
+    validate: m => (String(m.note || '').trim().length > 500 ? '原因不超过 500 字' : null),
+    onSubmit: ({ note }) => submit({
+      scope: auth.authorization_id,
+      action: 'cancel',
+      call: key => disposalApi.cancel(auth.authorization_id, {
+        expected_version: Number(auth.version),
+        note: String(note || '').trim() || undefined
+      }, key),
+      refresh,
+      onDone,
+      okText: result => `${approved ? '授权已撤销' : '申请已撤回'}，当前为「${disposalStatusText(result)}」。`
     })
   });
   return true;

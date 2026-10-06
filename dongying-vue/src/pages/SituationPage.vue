@@ -4,7 +4,7 @@ import { computed, h, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import { createSituationApiSource } from '@/pages/situation/situationApiSource.js';
-import { currentMapSnapshot, riskMatchesPlan, routeRiskIsActive, SITUATION_DEVICE_TYPE_ORDER, targetClassCounts } from '@/services/situationData.js';
+import { currentMapSnapshot, deviceGroupState, riskMatchesPlan, routeRiskIsActive, SITUATION_DEVICE_TYPE_ORDER, targetClassCounts } from '@/services/situationData.js';
 import {
   disposalStage, situationAlarmNeedsAttention, situationRouteRiskVisible,
   uavProcessActions, uavProcessStatus
@@ -106,6 +106,7 @@ const deviceGroups = computed(() => {
     items, total: items.length, online: items.filter(device => device.statusCode === 'ONLINE').length,
     abnormal: items.filter(device => device.statusCode === 'ABNORMAL').length,
     offline: items.filter(device => device.statusCode === 'OFFLINE').length,
+    unknown: items.filter(device => device.statusCode === 'UNKNOWN').length,
     hasNew: items.some(device => device.newAlert),
     rangeText: typeCode === 'EO' ? `单站 ${range} 定向视场` : `单站 ${range} 有效范围`
   };
@@ -897,20 +898,20 @@ onUnmounted(() => {
       <aside class="sit-glass sit-device-dock" :class="{ 'is-collapsed': !devicesExpanded }" aria-labelledby="sit-device-title">
         <header class="sit-dock-head">
           <span><small>SENSING FIELD</small><b id="sit-device-title">感知设备</b></span>
-          <em class="sit-device-summary"><i></i>{{ deviceStatusCounts.ONLINE }}在线 <span>{{ deviceStatusCounts.ABNORMAL }}异常</span> {{ deviceStatusCounts.OFFLINE }}离线</em>
+          <em class="sit-device-summary"><i></i>{{ deviceStatusCounts.ONLINE }}在线 <span>{{ deviceStatusCounts.ABNORMAL }}异常</span> {{ deviceStatusCounts.OFFLINE }}离线<template v-if="deviceStatusCounts.UNKNOWN"> {{ deviceStatusCounts.UNKNOWN }}状态未知</template></em>
           <button type="button" class="sit-device-toggle" :aria-expanded="devicesExpanded" aria-controls="sit-device-content sit-device-footer"
             :aria-label="devicesExpanded ? '收起感知设备' : '展开感知设备'" @click="devicesExpanded = !devicesExpanded">{{ devicesExpanded ? '收起' : '展开' }}</button>
         </header>
         <div v-show="devicesExpanded" id="sit-device-content" class="sit-device-list">
           <section v-for="group in deviceGroups" :key="group.typeCode" class="sit-device-group" :style="{ '--sensor': group.color }">
             <button type="button" class="sit-device-row"
-              :class="{ 'is-selected': group.items.some(device => selection?.kind === 'device' && selection.id === device.id), 'has-new': group.hasNew }"
+              :class="{ 'is-selected': group.items.some(device => selection?.kind === 'device' && selection.id === device.id), 'has-new': group.hasNew, 'is-offline': deviceGroupState(group).down }"
               :aria-expanded="expandedType === group.typeCode" :aria-controls="`sit-device-${group.typeCode}`"
-              :aria-label="`${expandedType === group.typeCode ? '收起' : '展开'}${group.label}设备，共${group.total}台`"
+              :aria-label="`${expandedType === group.typeCode ? '收起' : '展开'}${group.label}设备，共${group.total}台，${deviceGroupState(group).headline}`"
               @click="toggleDeviceType(group.typeCode)">
               <span class="sit-device-icon" v-html="iconHtml(group)"></span>
               <span class="sit-device-copy"><b>{{ group.label }}<small>{{ group.total }} 台</small></b><em>{{ group.rangeText }}</em></span>
-              <span class="sit-device-state"><b>{{ group.online }}在线</b><small>{{ group.abnormal }}异常 · {{ group.offline }}离线</small></span>
+              <span class="sit-device-state" :class="{ 'is-down': deviceGroupState(group).down }"><b>{{ deviceGroupState(group).headline }}</b><small>{{ deviceGroupState(group).detail }}</small></span>
             </button>
             <div v-show="expandedType === group.typeCode" :id="`sit-device-${group.typeCode}`" class="sit-device-node-list">
               <button v-for="device in group.items" :key="device.id" type="button" class="sit-device-node"

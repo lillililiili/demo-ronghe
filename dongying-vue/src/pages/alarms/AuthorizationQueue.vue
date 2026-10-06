@@ -10,11 +10,11 @@ import { getAlarm, getUavEvent } from '@/services/alarmApi.js';
 import { targetApi } from '@/services/targetApi.js';
 import { canAccessRoute, hasPermission } from '@/services/accessControl.js';
 import { DISPOSAL_ACTION_LABEL, DISPOSAL_BLOCK_REASON_LABEL, DISPOSAL_CHANNEL_LABEL, SOURCE_MODE_LABEL, disposalStatusText, labelOf } from '@/ui/labels.js';
-import { openDisposalApproval, openDisposalExecution, openDisposalStop } from '@/ui/disposalAuthModal.js';
+import { openDisposalApproval, openDisposalCancel, openDisposalExecution, openDisposalStop } from '@/ui/disposalAuthModal.js';
 import EmergencyStopPanel from '@/components/disposal/EmergencyStopPanel.vue';
 import TargetLiveVideo from '@/components/video/TargetLiveVideo.vue';
 import AuthorizationTargetMap from './AuthorizationTargetMap.vue';
-import { canStop, cardStopLabel, executionEvidenceHref, nextStep, primaryCode, readPending, resultText, usesEmergency } from './authorizationQueueView.js';
+import { canCancel, canStop, cancelLabel, cardStopLabel, executionEvidenceHref, nextStep, primaryCode, readPending, resultText, usesEmergency } from './authorizationQueueView.js';
 
 const props = defineProps({ initialAuthorizationId: { type: String, default: '' }, eventId: { type: String, default: '' }, initialStatus: { type: String, default: '' } });
 const emit = defineEmits(['event']);
@@ -130,6 +130,11 @@ function mainAction(row) {
   if (!code || row.execution_block_reason) return show(row.authorization_id);
   actions[code]({ authorization: row, refresh: () => refresh(row.authorization_id) });
 }
+function cancelAction(row) {
+  if (canCancel(row)) openDisposalCancel({ authorization: row, refresh: () => refresh(row.authorization_id) });
+}
+/* 还没执行的授权在卡片上直接给“撤回/撤销”，不再同时摆一个“撤销本次反制”。 */
+const cardStop = row => canStop(row) && !canCancel(row);
 function stopAction(row) {
   if (!canStop(row)) return;
   if (usesEmergency(row)) return show(row.authorization_id, true);
@@ -183,9 +188,10 @@ onUnmounted(() => { active = false; request++; detailRequest++; });
               <span class="source-mode">申请于 {{ formatTime(row.requested_at) }}</span>
               <span v-if="nextStep(row, userId)" class="record-next">{{ nextStep(row, userId) }}</span>
             </button>
-            <div v-if="selected?.authorization_id !== row.authorization_id && (mainCode(row) || canStop(row))" class="record-actions">
+            <div v-if="selected?.authorization_id !== row.authorization_id && (mainCode(row) || cardStop(row) || canCancel(row))" class="record-actions">
               <button v-if="mainCode(row)" type="button" class="btn" :disabled="loading || detailLoading" @click="mainAction(row)">{{ mainLabel(row) }}</button>
-              <button v-if="canStop(row)" type="button" class="btn stop-btn" :disabled="loading || detailLoading" @click="stopAction(row)">{{ cardStopLabel(row) }}</button>
+              <button v-if="cardStop(row)" type="button" class="btn stop-btn" :disabled="loading || detailLoading" @click="stopAction(row)">{{ cardStopLabel(row) }}</button>
+              <button v-if="canCancel(row)" type="button" class="btn stop-btn" :disabled="loading || detailLoading" @click="cancelAction(row)">{{ cancelLabel(row) }}</button>
             </div>
           </article>
           <p v-if="loading" class="queue-empty" role="status">正在读取办理记录</p>
@@ -214,9 +220,10 @@ onUnmounted(() => { active = false; request++; detailRequest++; });
               <p v-if="resultText(selected)" class="result-text">{{ resultText(selected) }}</p>
               <a v-if="feedbackHref" class="btn" :href="feedbackHref">查看本次设备反馈</a>
               <p v-if="blockReasonText(selected)" class="block-reason">执行受阻：{{ blockReasonText(selected) }}</p>
-              <div v-if="mainCode(selected) || (canStop(selected) && !usesEmergency(selected))" class="actions authorization-actions">
+              <div v-if="mainCode(selected) || (canStop(selected) && !usesEmergency(selected)) || canCancel(selected)" class="actions authorization-actions">
                 <button v-if="mainCode(selected)" type="button" class="btn pri" :disabled="detailLoading" @click="actions[mainCode(selected)]({ authorization: selected, refresh: () => refresh(selected.authorization_id) })">{{ ({ APPROVE: '审批', EXECUTE: '执行' })[mainCode(selected)] }}</button>
                 <button v-if="canStop(selected) && !usesEmergency(selected)" type="button" class="btn stop-btn" @click="stopAction(selected)">停止处置</button>
+                <button v-if="canCancel(selected)" type="button" class="btn stop-btn" :disabled="detailLoading" @click="cancelAction(selected)">{{ cancelLabel(selected) }}</button>
               </div>
             </div>
             <EmergencyStopPanel v-if="usesEmergency(selected)" :key="selected.subject_id" :event-id="selected.subject_id"

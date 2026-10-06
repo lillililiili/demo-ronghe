@@ -771,8 +771,10 @@ async function loadChain(my) {
   cur.chainLoading = true; cur.chainError = ''; cur.chainUnavailable = ''; cur.chain = null;
   paintDetail();
   /* 没有证据查看权限就不发这个请求（15-19②）：每选中一条告警都发一次注定被拒的请求，
-     服务端留下一串无意义的拒绝记录，页面上还会显示成“读取失败”，而不是真正的原因。 */
-  if (!hasPermission('evidence.read')) {
+     服务端留下一串无意义的拒绝记录，页面上还会显示成“读取失败”，而不是真正的原因。
+     判断口径与后端证据链接口一致，是“查看证据”动作（evidence:read），不是证据管理菜单的模块等级：
+     值班员没有证据管理菜单，但能看告警的证据链（OBS-03）。 */
+  if (!hasPermission('evidence:read')) {
     cur.chainUnavailable = '当前账号没有证据查看权限，无法汇总证据链。';
     cur.chainLoading = false;
     paintDetail();

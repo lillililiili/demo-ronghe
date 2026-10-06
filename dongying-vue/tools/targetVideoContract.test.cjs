@@ -131,3 +131,60 @@ test('MediaMTX permits only one UUID media session query within the current auth
   assert.throws(() => streamUrl('https://other.example' + path + '?session=' + uuid, context));
   assert.throws(() => streamUrl(path.replace('/t1/', '/t2/') + '?session=' + uuid, context));
 });
+
+// OBS-03：值班员只有设备查看权限，也要能看光电画面和跟踪状态；控制按钮仍只来自后端 allowed_actions。
+function componentScript(file) {
+  const fs = require('node:fs');
+  const source = fs.readFileSync(require('node:path').resolve(__dirname, '../src/components/video/' + file), 'utf8')
+    .split('<script setup>')[1].split('</script>')[0];
+  return source.replace(/^import .*;\r?\n/gm, '').replace(/const props = defineProps\([\s\S]*?\r?\n\}\);/, '');
+}
+const viewOnly = asked => (module, action) => { asked.push(`${module}.${action}`); return module === 'devices' && action === 'read'; };
+
+test('viewing EO video and tracking status needs only device view permission', async () => {
+  const vue = await import('vue');
+  const { targetVideoState } = await import('../src/components/video/targetVideoState.js');
+  const unmounts = [], asked = [], videoReads = [], statusReads = [];
+  const scope = vue.effectScope();
+  try {
+    const video = new Function('props', 'deviceApi', 'hasModuleAction', 'targetVideoState', 'computed', 'ref', 'watch', 'onUnmounted', 'authSession',
+      componentScript('TargetLiveVideo.vue') + '\nreturn { reason };');
+    const panel = new Function('props', 'deviceApi', 'hasModuleAction', 'computed', 'ref', 'watch', 'onUnmounted', 'authSession',
+      componentScript('TargetTrackingPanel.vue') + '\nreturn { reason, actions, canOperate, state };');
+    const props = vue.reactive({ targetId: 'one', active: true, defaultExpanded: true, contextLabel: '', unavailableReason: '', beginReason: '人工补充光电追踪' });
+    const deviceApi = {
+      targetVideo: id => { videoReads.push(id); return new Promise(() => {}); },
+      eoTrackingStatus: id => { statusReads.push(id); return Promise.resolve({ target_id: id, status: 'TRACKING', allowed_actions: [] }); }
+    };
+    const { liveVideo, tracking } = scope.run(() => ({
+      liveVideo: video(props, deviceApi, viewOnly(asked), targetVideoState, vue.computed, vue.ref, vue.watch, cb => unmounts.push(cb), vue.ref('session')),
+      tracking: panel(props, deviceApi, viewOnly(asked), vue.computed, vue.ref, vue.watch, cb => unmounts.push(cb), vue.ref('session'))
+    }));
+    await Promise.resolve(); await vue.nextTick();
+    assert.equal(liveVideo.reason.value, '');
+    assert.equal(tracking.reason.value, '');
+    assert.deepEqual(videoReads, ['one'], 'video association is read with view permission');
+    assert.deepEqual(statusReads, ['one'], 'tracking status is read with view permission');
+    assert.equal(tracking.state.value.status, 'TRACKING');
+    assert.deepEqual(tracking.actions.value, [], 'no control buttons without server actions');
+    assert.equal(tracking.canOperate.value, false, 'view-only accounts get the explanation instead of buttons');
+    assert.ok(asked.includes('devices.read'));
+  } finally { unmounts.forEach(cb => cb()); scope.stop(); }
+
+  const deniedScope = vue.effectScope(), deniedUnmounts = [], reads = [];
+  try {
+    const props = vue.reactive({ targetId: 'one', active: true, defaultExpanded: true, contextLabel: '', unavailableReason: '', beginReason: '' });
+    const deviceApi = { targetVideo: id => { reads.push(id); return new Promise(() => {}); }, eoTrackingStatus: id => { reads.push(id); return new Promise(() => {}); } };
+    const video = new Function('props', 'deviceApi', 'hasModuleAction', 'targetVideoState', 'computed', 'ref', 'watch', 'onUnmounted', 'authSession',
+      componentScript('TargetLiveVideo.vue') + '\nreturn { reason };');
+    const panel = new Function('props', 'deviceApi', 'hasModuleAction', 'computed', 'ref', 'watch', 'onUnmounted', 'authSession',
+      componentScript('TargetTrackingPanel.vue') + '\nreturn { reason };');
+    const result = deniedScope.run(() => ({
+      liveVideo: video(props, deviceApi, () => false, targetVideoState, vue.computed, vue.ref, vue.watch, cb => deniedUnmounts.push(cb), vue.ref('session')),
+      tracking: panel(props, deviceApi, () => false, vue.computed, vue.ref, vue.watch, cb => deniedUnmounts.push(cb), vue.ref('session'))
+    }));
+    assert.equal(result.liveVideo.reason.value, '当前账号没有设备查看权限，无法查看光电画面。');
+    assert.equal(result.tracking.reason.value, '当前账号没有设备查看权限，无法读取光电追踪。');
+    assert.deepEqual(reads, [], 'no request is sent without device view permission');
+  } finally { deniedUnmounts.forEach(cb => cb()); deniedScope.stop(); }
+});

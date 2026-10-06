@@ -27,22 +27,33 @@ function reasonText(reason) {
   };
   return Object.prototype.hasOwnProperty.call(labels, text) ? labels[text] : text;
 }
+/* BLOCK-03（2026-10-06 用户确认）：飞手信息只来自上级计划接口，本系统没有补录页面。后端 pilot_contact_missing
+   为 true（关联计划没有执行飞手，或飞手没有电话）且这条通知还没发出时，直接写明“缺飞手联系方式”；
+   正在发送、已送达、失败或结果未知的以发送记录为准，不改写。电话通知同一口径。 */
+export const PILOT_CONTACT_MISSING_TITLE = '缺飞手联系方式';
+export const PILOT_CONTACT_MISSING_GUIDANCE = '飞手信息以上级下发的计划为准，本系统不能补录；需要时请通过计划报备单位等其他途径联系飞手。';
+export function pilotContactMissing(data, status) {
+  return data?.pilot_contact_missing === true && ['WAITING', 'BLOCKED', 'UNAVAILABLE', 'DISABLED'].includes(status);
+}
 export function autoSmsView(data) {
   const sms = data?.auto_sms;
   if (!sms) return { title: '自动通知状态暂不可用', reason: '', tone: 'muted', canRetry: false };
   const latest = [...(data.records || [])].reverse().find(row => row.kind === 'SMS_SIMULATED');
   const recipientSnapshot = latest ? latest.recipient_snapshot : sms.recipient_snapshot;
   const expired = sms.status === 'BLOCKED' && String(sms.reason || '').startsWith('事件已超过自动通知时效');
+  const missing = pilotContactMissing(data, sms.status);
   return {
-    title: AUTO_SMS_STATUS[sms.status] || '通知结果待确认', reason: reasonText(sms.reason),
-    tone: sms.status === 'SIMULATED_DELIVERED' ? 'success' : ['FAILED', 'UNKNOWN', 'UNAVAILABLE', 'BLOCKED'].includes(sms.status) ? 'warning' : 'muted',
+    title: missing ? PILOT_CONTACT_MISSING_TITLE : AUTO_SMS_STATUS[sms.status] || '通知结果待确认',
+    reason: missing ? '上级下发的飞行计划里没有执行飞手的电话，无法给飞手发短信。' : reasonText(sms.reason),
+    pilotContactMissing: missing,
+    tone: missing ? 'warning' : sms.status === 'SIMULATED_DELIVERED' ? 'success' : ['FAILED', 'UNKNOWN', 'UNAVAILABLE', 'BLOCKED'].includes(sms.status) ? 'warning' : 'muted',
     canRetry: !!sms.can_retry && !['SENDING', 'WAITING', 'UNKNOWN', 'SIMULATED_DELIVERED'].includes(sms.status),
     updatedAt: sms.updated_at, triggeredAt: sms.triggered_at, evaluatedAt: sms.evaluated_at, dataUpdatedAt: sms.data_updated_at,
     recipient: latest ? latest.recipient_name || recipientSnapshot?.recipient_name : recipientSnapshot ? recipientSnapshot.recipient_name : Number(sms.attempt_count) > 0 ? undefined : data.recipient?.name,
     recipientHint: recipientSnapshot?.contact_hint,
     simulated: data.sms_mode === 'SIMULATED' || sms.status === 'SIMULATED_DELIVERED',
     source: sms.trigger_source, policy: sms.policy_code,
-    guidance: expired
+    guidance: missing ? PILOT_CONTACT_MISSING_GUIDANCE : expired
       ? '请核对目标的最新观测和关联研判。测试自动通知需使用持续上报的新模拟场景，并配齐飞手信息；反复核实或刷新旧告警不会重新发送。'
       : ''
   };

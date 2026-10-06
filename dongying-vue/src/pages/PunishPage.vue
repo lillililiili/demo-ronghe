@@ -12,7 +12,7 @@ export default {};
    通知与案件结果读取服务端，页面不再用本地标记代替送达。 */
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
-import { useRealtimeRefresh } from '@/hooks/useRealtimeRefresh.js';
+import { refreshFailureText, useRealtimeRefresh } from '@/hooks/useRealtimeRefresh.js';
 import UKpis from '@/components/UKpis.vue';
 import UPanel from '@/components/UPanel.vue';
 import ModuleStatistics from '@/components/ModuleStatistics.vue';
@@ -53,6 +53,8 @@ const forbidden = ref(false);
 const filters = reactive(S.filters);
 const listLoading = ref(false);
 const listError = ref('');
+const refreshError = ref('');
+let listFailure = null;
 const handoffs = ref([]);
 let appliedQuery = { source_kind: UAV_KIND };
 const statistics = useModuleStatistics(getHandoffStatistics, [
@@ -158,6 +160,7 @@ async function loadList(nextPage = page.value, requestedId = null) {
     const data = await handoffApi.listHandoffs({ ...query, page: nextPage, size: size.value });
     if (token !== listToken) return;
     forbidden.value = false;
+    refreshError.value = '';
     handoffs.value = data.items || [];
     total.value = data.total;
     appliedQuery = query;
@@ -173,6 +176,7 @@ async function loadList(nextPage = page.value, requestedId = null) {
   } catch (requestError) {
     if (token !== listToken) return;
     forbidden.value = requestError.status === 403;
+    listFailure = requestError;
     listError.value = messageOf(requestError, '读取交接清单失败');
     statistics.fail(requestError);
     handoffs.value = [];
@@ -217,21 +221,36 @@ function selectHandoff(handoffId) {
 }
 function retryList() { loadKpis(); loadList(page.value); }
 
-/* 实时刷新：移送或处罚变化后静默重读列表与统计；选中记录本身有变化时才重读详情。 */
+/* 实时刷新：移送或处罚变化后静默重读列表与统计；选中记录本身有变化时才重读详情。
+   静默重读失败时保留当前列表并注明，错误抛给实时刷新按退避重试；清单上次就读取失败时按正常流程重读，
+   没有权限或筛选条件不合法时不重读。 */
 async function realtimeRefresh() {
-  if (listLoading.value || listError.value || !appliedQuery) return;
+  if (listLoading.value || !appliedQuery) return;
+  if (listError.value) {
+    if (forbidden.value) return;
+    try { listQuery(); } catch { return; }
+    void loadKpis();
+    await loadList(page.value);
+    if (listError.value && !forbidden.value) throw listFailure || new Error(listError.value);
+    return;
+  }
   const token = ++listToken;
   const before = JSON.stringify(handoffs.value.find(item => item.handoff_id === S.selectedHandoffId) || null);
   void loadKpis();
   try {
     const data = await handoffApi.listHandoffs({ ...appliedQuery, page: page.value, size: size.value });
     if (token !== listToken) return;
+    refreshError.value = '';
     handoffs.value = data.items || [];
     total.value = data.total;
     void statistics.load(appliedQuery);
     const after = JSON.stringify(handoffs.value.find(item => item.handoff_id === S.selectedHandoffId) || null);
     if (S.selectedHandoffId && after !== before && after !== 'null') loadDetail(S.selectedHandoffId);
-  } catch { /* 静默刷新失败保留当前列表 */ }
+  } catch (requestError) {
+    if (token !== listToken) return;
+    refreshError.value = refreshFailureText(requestError, '读取交接清单失败');
+    throw requestError;
+  }
 }
 useRealtimeRefresh(['punishment', 'evidence'], realtimeRefresh, { minIntervalMs: 2_000 });
 function retryDetail() { if (S.selectedHandoffId) loadDetail(S.selectedHandoffId); }
@@ -312,6 +331,7 @@ onMounted(() => {
                   </template>
                 </UFilterBar>
                 <div v-if="listError" class="warnbox pn-error">{{ listError }} <button class="btn" type="button" :disabled="listLoading" @click="retryList">重试</button></div>
+                <div v-else-if="refreshError" class="warnbox pn-error" role="status">自动刷新失败（{{ refreshError }}），正在重试；下面是上次读到的清单。</div>
                 <div v-if="listLoading && !handoffs.length" class="empty">正在读取交接清单</div>
                 <div v-else-if="!listError && !handoffs.length" class="empty">暂无符合筛选条件的交接记录</div>
                 <div v-else-if="handoffs.length" class="scroll table-scroll table-shell" style="flex:1">

@@ -375,7 +375,8 @@ function handleResize() {
   resizeTimer = window.setTimeout(() => { viewportHeight.value = window.innerHeight; }, 120);
 }
 
-async function load() {
+/* rethrow：实时刷新触发的重读失败时抛出，由实时刷新按 2、4、8 秒……退避重试，不必等 30 秒兜底。 */
+async function load({ rethrow = false } = {}) {
   clearTimeout(refreshTimer);
   const currentVersion = ++version;
   loading.value = !snapshot.value;
@@ -399,13 +400,14 @@ async function load() {
     error.value = e.message || '大屏数据加载失败';
     await nextTick();
     if (!disposed) { renderCharts(); renderMap(); }
+    if (rethrow) throw e;
   } finally {
     if (!disposed) { loading.value = false; refreshTimer = window.setTimeout(load, 30000); }
   }
 }
 
 // 业务数据变化后最多每 5 秒重读一次快照；30 秒定时器保留为推送不可用时的兜底。
-useRealtimeRefresh(['alarm', 'target', 'device', 'risk', 'plan', 'airspace', 'punishment', 'disposal'], () => load(), { minIntervalMs: 5_000 });
+useRealtimeRefresh(['alarm', 'target', 'device', 'risk', 'plan', 'airspace', 'punishment', 'disposal'], () => load({ rethrow: true }), { minIntervalMs: 5_000 });
 
 onMounted(() => {
   clock.value = formatClock(new Date());

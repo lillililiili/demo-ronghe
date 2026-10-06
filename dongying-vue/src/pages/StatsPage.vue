@@ -8,7 +8,7 @@
    · 图表与 KPI 读取 GET /api/v1/stats/operations，失败不回退 mock.js */
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
-import { useRealtimeRefresh } from '@/hooks/useRealtimeRefresh.js';
+import { refreshFailureText, useRealtimeRefresh } from '@/hooks/useRealtimeRefresh.js';
 import UPanel from '@/components/UPanel.vue';
 import UKpis from '@/components/UKpis.vue';
 import UField from '@/components/form/UField.vue';
@@ -146,7 +146,8 @@ function drawCharts(CH) {
 }
 
 let loadSequence = 0;
-async function load() {
+/* quiet：实时刷新重算；失败时保留上次的统计并说明，错误抛给实时刷新按退避重试。 */
+async function load({ quiet = false } = {}) {
   const sequence = ++loadSequence;
   loading.value = true;
   error.value = '';
@@ -164,8 +165,13 @@ async function load() {
     drawCharts(window.CH);
   } catch (e) {
     if (cancelled || sequence !== loadSequence) return;
+    if (quiet && S.value) {
+      error.value = `自动刷新失败（${refreshFailureText(e, '运行统计加载失败')}），正在重试；下面是上次读到的统计。`;
+      throw e;
+    }
     S.value = null;
     error.value = e.message || '运行统计加载失败。';
+    if (quiet) throw e;
   } finally {
     if (!cancelled && sequence === loadSequence) loading.value = false;
   }
@@ -173,7 +179,7 @@ async function load() {
 
 onMounted(load);
 // 统计为按日聚合，业务数据变化后最多每 10 秒重算一次，避免图表频繁重绘。
-useRealtimeRefresh(['alarm', 'target', 'punishment', 'device', 'plan', 'risk'], () => (loading.value ? undefined : load()), { minIntervalMs: 10_000 });
+useRealtimeRefresh(['alarm', 'target', 'punishment', 'device', 'plan', 'risk'], () => (loading.value ? undefined : load({ quiet: true })), { minIntervalMs: 10_000 });
 onUnmounted(() => { cancelled = true; window.CH?.disposeAll?.(); });
 
 async function exportCsv() {

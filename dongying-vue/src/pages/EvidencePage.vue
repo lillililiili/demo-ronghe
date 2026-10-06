@@ -82,6 +82,7 @@ async function loadDetail() {
   } catch (e) { if (mounted && own === detailSequence) detailError.value = e.status === 404 ? '记录不存在、关联已变化或不在当前可见范围内。' : e.message || '证据读取失败'; }
   finally { if (mounted && own === detailSequence) detailLoading.value = false; }
 }
+let listFailure = null;
 async function load() {
   const own = ++listSequence;
   if (!mounted) return;
@@ -105,19 +106,29 @@ async function load() {
   } catch (e) {
     if (!mounted || own !== listSequence) return;
     items.value = []; totalCount.value = 0; if (!exact.value) clearDetail();
+    listFailure = e;
     error.value = e.message || '证据台账读取失败'; statistics.fail(e);
   } finally { if (mounted && own === listSequence) loading.value = false; }
 }
 /* 实时刷新：证据、告警或处置变化后静默重读列表和统计，保留选中项、详情与滚动位置。 */
 async function realtimeRefresh() {
-  if (!mounted || loading.value || error.value || !hasPermission('evidence:read') || routeError.value) return;
+  if (!mounted || loading.value || !hasPermission('evidence:read') || routeError.value) return;
+  if (error.value) {
+    // 台账上次读取失败：按正常流程重读，仍失败时抛给实时刷新退避重试。
+    await load();
+    if (mounted && error.value) throw listFailure || new Error(error.value);
+    return;
+  }
   const own = ++listSequence;
   try {
     const filters = query(), result = await listEvidenceLedger(filters);
     if (!mounted || own !== listSequence) return;
     items.value = result.items || []; totalCount.value = result.total;
     void statistics.load(filters);
-  } catch { /* 静默刷新失败保留当前列表，下次信号或手动刷新再读 */ }
+  } catch (e) {
+    // 静默刷新失败保留当前列表，抛给实时刷新退避重试。
+    if (mounted && own === listSequence) throw e;
+  }
 }
 useRealtimeRefresh(['evidence', 'alarm', 'disposal'], realtimeRefresh, { minIntervalMs: 2_000 });
 

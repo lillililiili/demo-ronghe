@@ -229,12 +229,88 @@ class EngineTests(unittest.TestCase):
     def test_unsupported_is_not_falsified(self):
         s=scene();s['targets'][0].update(kind='balloon', transport='mqtt')
         with self.assertRaisesRegex(ValueError,'规范化观测'): compile_scene(s)
+
+    def test_non_device_risk_auto_matches_observation_target(self):
+        s = scene()
+        s['plans'] = [{'id': 'p1', 'name': '巡检航线', 'points': [[450, 300], [451, 300]],
+                       'min': 20, 'max': 120, 'width': 100, 'start': '09:00', 'end': '09:30'}]
+        s['targets'] = [{
+            'id': 't-balloon', 'kind': 'balloon', 'name': '气球',
+            'path': [[450, 300], [451, 300]], 'height': 55, 'speed': 2,
+            'planId': 'p1', 'deviceId': 'd1', 'transport': 'normalized',
+        }]
+        s['risks'] = [{
+            'id': 'r-balloon', 'name': '气球靠近航线', 'type': 'balloon',
+            'enabled': True, 'planId': 'p1', 'deviceId': 'd1',
+        }]
+        compiled, _, _, _ = compile_scene(s)
+        self.assertEqual(compiled['risks'][0]['targetId'], 't-balloon')
+        self.assertEqual(compiled['risks'][0]['deviceId'], 'd1')
+
+    def test_balloon_risk_requires_a_flight_plan_reference(self):
+        s = scene()
+        s['targets'] = [{
+            'id': 't-balloon', 'kind': 'balloon', 'name': '气球',
+            'path': [[450, 300], [451, 300]], 'height': 55, 'speed': 2,
+            'planId': '', 'deviceId': 'd1', 'transport': 'normalized',
+        }]
+        s['risks'] = [{
+            'id': 'r-balloon', 'name': '气球靠近航线', 'type': 'balloon',
+            'enabled': True, 'planId': '', 'deviceId': 'd1',
+        }]
+        with self.assertRaisesRegex(ValueError, '缺少计划'):
+            compile_scene(s)
+
+    def test_height_risk_uses_target_observation_height(self):
+        s = scene()
+        s['plans'] = [{'id': 'p1', 'name': '巡检航线', 'points': [[450, 300], [451, 300]],
+                       'min': 20, 'max': 120, 'width': 100, 'start': '09:00', 'end': '09:30'}]
+        s['targets'][0].update(planId='p1', height=180)
+        s['risks'] = [{'id': 'r-height', 'name': '超高', 'type': 'height', 'enabled': True,
+                       'planId': 'p1', 'basis': 'plan', 'height': 10}]
+        compile_scene(s)
+        s['targets'][0]['height'] = 100
+        with self.assertRaisesRegex(ValueError, '目标高度必须大于依据上限'):
+            compile_scene(s)
+
+    def test_non_device_risk_without_observation_reports_runtime_input_requirement(self):
+        s = scene()
+        s['plans'] = [{'id': 'p1', 'name': '巡检航线', 'points': [[450, 300], [451, 300]],
+                       'min': 20, 'max': 120, 'width': 100, 'start': '09:00', 'end': '09:30'}]
+        s['targets'] = []
+        s['risks'] = [{
+            'id': 'r-balloon', 'name': '气球靠近航线', 'type': 'balloon',
+            'enabled': True, 'planId': 'p1', 'deviceId': 'd1',
+        }]
+        with self.assertRaisesRegex(ValueError, '需要目标观测输入'):
+            compile_scene(s)
     def test_invalid_numbers_and_dangling_refs(self):
         for field,value in [('speed',float('nan')),('height',-1)]:
             s=scene();s['targets'][0][field]=value
             with self.assertRaises(ValueError):compile_scene(s)
-        s=scene();s['risks'][0]['deviceId']='missing'
+        s=scene();s['risks'][0].update(type='offline', deviceId='missing', at=0, seconds=1)
         with self.assertRaises(ValueError):compile_scene(s)
+
+    def test_optional_coverage_is_validated_without_affecting_mqtt_frames(self):
+        s = scene()
+        s['sites'][0]['devices'][0]['coverage'] = {
+            'kind': 'circle', 'radiusM': 8000, 'sourceLabel': '测试配置'}
+        compiled, devices, _, _ = compile_scene(s)
+        self.assertEqual(compiled['sites'][0]['devices'][0]['coverage']['radiusM'], 8000.0)
+        packets = messages(compiled, devices, {'t1': compiled['targets'][0]},
+                           {'provider': 'test', 'devices': {'d1': {'external_id': 'external'}},
+                            'targets': {'t1': {'uav_sn': 'TEST'}}},
+                           0, 1000, {}, 1)
+        heartbeat = next(payload for topic, payload in packets if '/device/' in topic)
+        self.assertNotIn('coverage', heartbeat)
+
+    def test_invalid_coverage_is_rejected_before_device_registration(self):
+        s = scene()
+        s['sites'][0]['devices'][0]['coverage'] = {
+            'kind': 'sector', 'rangeM': 8000, 'azimuthDeg': 0,
+            'sourceLabel': '缺视场'}
+        with self.assertRaisesRegex(ValueError, '扇形覆盖需要有效'):
+            compile_scene(s)
     def test_freezes_input(self):
         raw=scene(); compiled,*_=compile_scene(raw);raw['targets'][0]['path'][0][0]=0
         self.assertEqual(compiled['targets'][0]['path'][0][0],450)

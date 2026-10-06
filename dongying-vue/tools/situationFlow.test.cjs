@@ -37,6 +37,22 @@ async function main() {
   check('误报事件不再显示动作', flow.uavProcessActions({ eventState: 'FALSE_POSITIVE', disposalStage: 'none' }), []);
   check('处罚交接完成后显示已移送', flow.uavProcessStatus({ eventState: 'CONFIRMED', disposalStage: 'countered', handoff: true }), '已移送处罚');
   check('反制完成不写成已干扰', flow.uavProcessStatus({ eventState: 'CONFIRMED', disposalStage: 'countered' }), '反制已完成');
+  check('待核实告警进入融合感知待办', flow.situationAlarmNeedsAttention({ eventState: 'PENDING_VERIFICATION' }), true);
+  check('已核实且尚未处置的告警显示待反制', flow.situationAlarmNeedsAttention({ eventState: 'CONFIRMED', disposalStage: 'none' }), true);
+  check('已进入处置的告警不重复显示为待反制', flow.situationAlarmNeedsAttention({ eventState: 'CONFIRMED', disposalStage: 'counter' }), false);
+  check('已移送告警不重复显示为待办', flow.situationAlarmNeedsAttention({ eventState: 'CONFIRMED', disposalStage: 'none', handoff: true }), false);
+  check('航线风险待办只显示待通知', flow.situationRouteRiskNeedsAttention({ active: true, state: 'PENDING_NOTIFICATION' }), true);
+  check('航线待核验风险不进入待通知列表', flow.situationRouteRiskNeedsAttention({ active: true, state: 'PENDING_VERIFICATION' }), false);
+  check('失去当前依据的待通知风险不进入列表', flow.situationRouteRiskNeedsAttention({ active: false, state: 'PENDING_NOTIFICATION' }), false);
+  check('待通知航线风险进入融合感知列表', flow.situationRouteRiskVisible({
+    state: 'PENDING_NOTIFICATION', riskType: 'SPACE_OBJECT', planId: 'p1', routeVersionId: 'rv1'
+  }), true);
+  check('待核验航线风险不进入融合感知列表', flow.situationRouteRiskVisible({
+    state: 'PENDING_VERIFICATION', riskType: 'SPACE_OBJECT', planId: 'p1', routeVersionId: 'rv1'
+  }), false);
+  check('没有航线关联的风险不进入航线风险列表', flow.situationRouteRiskVisible({
+    state: 'PENDING_VERIFICATION', riskType: 'SPACE_OBJECT', planId: 'p1'
+  }), false);
 
   console.log(failed ? `\n${passed} 条通过，${failed} 条失败` : `全部通过：${passed} 条`);
   process.exitCode = failed ? 1 : 0;

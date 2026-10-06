@@ -1,7 +1,7 @@
 'use strict';
 const riskConfig = window.SimulatorRiskConfig || {
   referenceFor: () => ({kind:'none',label:''}),
-  associationNotice: () => '关联目标由设备观测与平台规则自动判定。此处不手工选择目标。'
+  associationNotice: () => '此处仅配置规则依据；模拟器只发送目标观测，风险由平台自动判定。'
 };
 const $ = (s, root = document) => root.querySelector(s);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -38,7 +38,7 @@ const initial = {
     {id:'t3',kind:'uav',name:'无人机 03',path:[[112,209],[192,185],[251,211],[311,225]],height:80,speed:6,count:1,planId:'',deviceId:'d1'},
     {id:'t4',kind:'bird',name:'鸟群 01',path:[[338,381],[377,436],[446,454],[509,449]],height:60,speed:6,count:20,planId:'p1',deviceId:'d1'},
     {id:'t5',kind:'balloon',name:'气球 01',path:[[848,399],[882,418],[933,410]],height:55,speed:2,count:1,planId:'p1',deviceId:'d1',transport:'normalized'}],
-  risks:types.map((t,i)=>({id:`r${i+1}`,type:t.id,name:t.name,enabled:i===5,targetId:['t1','t2','t3','t1','t2','t4','t5','',''][i],planId:['','p1','','','p1','p1','p1','',''][i],zoneId:['z1','','','z1','','','','',''][i],deviceId:i===7?'d2':'d1',basis:'zone',height:150,mode:'结束后继续飞行',offset:2,at:2,seconds:60}))
+  risks:types.map((t,i)=>({id:`r${i+1}`,type:t.id,name:t.name,enabled:i===5,targetId:['t1','t2','t3','t1','t2','t4','t5','',''][i],planId:['','p1','','','p1','p1','p1','',''][i],zoneId:['z1','','','z1','','','','',''][i],deviceId:i===7?'d2':'d1',basis:'zone',mode:'结束后继续飞行',offset:2,at:2,seconds:60}))
 };
 let state=structuredClone(initial), selected={kind:'risk',id:'r6'}, filter='全部', draw=null, zoom=1, progress=0, timer=null, dialogType=null, returnFocus=null, toastTimer;
 const storeKey='dongying-mqtt-simulator-v1';
@@ -130,7 +130,7 @@ function syncRiskFixture(r){
 const riskObjects = r => {
   if(getType(r.type)?.group==='设备'){const d=deviceFor(r.deviceId);return d?`${d.siteName} · ${d.name}`:'请选择模拟设备';}
   const reference=riskConfig.referenceFor(r), related=reference.kind==='zone'?lookup('zone',r.zoneId):reference.kind==='plan'?lookup('plan',r.planId):null;
-  return `平台自动关联目标${related?` · ${reference.label}：${related.name}`:r.type==='no-plan'?' · 不关联飞行计划':''}`;
+  return `平台判定风险${related?` · ${reference.label}：${related.name}`:r.type==='no-plan'?' · 无匹配飞行计划':''}`;
 };
 function toast(text){$('#toast').textContent=text;$('#toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('#toast').hidden=true,3800);}
 function dirty(){showRunPositions=false; $('#save-status').textContent='本地草稿有未保存修改'; }
@@ -173,25 +173,25 @@ function renderRisks(){
   $('#risk-enabled-count').textContent=`本次启用 ${state.risks.filter(r=>r.enabled).length} 项`;
   $('#risk-filters').innerHTML=['全部','无人机','空中异物','设备'].map(g=>`<button class="${filter===g?'active':''}" data-action="filter" data-filter="${g}">${g} ${state.risks.filter(r=>g==='全部'||getType(r.type).group===g).length}</button>`).join('');
   const rows=state.risks.filter(r=>filter==='全部'||getType(r.type).group===filter);
-  $('#risk-list').innerHTML=rows.length?rows.map(r=>`<article class="risk-card ${selected.kind==='risk'&&selected.id===r.id?'active':''}"><input type="checkbox" aria-label="本次预演包含${esc(r.name)}" data-risk-toggle="${r.id}" ${r.enabled?'checked':''}>${image(getType(r.type).icon)}<button class="risk-select" data-action="select" data-kind="risk" data-id="${r.id}"><strong>${esc(r.name)}</strong><small>${esc(riskObjects(r))}</small></button><button class="risk-remove" data-action="remove-risk" data-id="${r.id}" aria-label="移除${esc(r.name)}">移除</button></article>`).join(''):'<div class="empty">当前分类没有风险场景<br>点击“添加风险”配置一个场景</div>';
+  $('#risk-list').innerHTML=rows.length?rows.map(r=>`<article class="risk-card ${selected.kind==='risk'&&selected.id===r.id?'active':''}"><input type="checkbox" aria-label="本次预演包含联调条件${esc(r.name)}" data-risk-toggle="${r.id}" ${r.enabled?'checked':''}>${image(getType(r.type).icon)}<button class="risk-select" data-action="select" data-kind="risk" data-id="${r.id}"><strong>${esc(r.name)}</strong><small>${esc(riskObjects(r))}</small></button><button class="risk-remove" data-action="remove-risk" data-id="${r.id}" aria-label="移除联调条件${esc(r.name)}">移除</button></article>`).join(''):'<div class="empty">当前分类没有联调条件<br>请先在“添加目标”、计划或空域输入中配置观测事实</div>';
 }
 function riskFields(r){
   const type=getType(r.type),dev=type.group==='设备';let html=field('风险名称','name',r.name,'text','required maxlength="60"');
   if(dev){html+=selectField('关联设备','deviceId',r.deviceId,opts(devices(),'请选择模拟设备'));html+=field('任务开始后触发（秒）','at',r.at??2,'number','min="0" max="1200" required');html+=field('持续时间（秒）','seconds',r.seconds??60,'number','min="1" max="1200" required');html+=r.type==='offline'?'<div class="readout">停止该设备心跳。实际离线状态以系统超时判定为准；离线期间暂停该设备全部上报。</div>':selectField('模拟工作状态','fault','故障',['故障'])+'<p class="field-note">雷达、TDOA、5G-A 使用协议 workState=2；光电故障码未确认，启动时会阻止该组合。</p>';return html;}
-  const t=syncRiskFixture(r);
-  html+=`<div class="readout">${esc(riskConfig.associationNotice(r))}<br>模拟器会从符合当前依据的设备观测中生成报文，系统回读后以平台关联结果为准。</div>`;
+  html+=`<div class="readout">${esc(riskConfig.associationNotice(r))}<br>设备协议只上报目标或设备观测事实，不携带风险结论；系统回读后以平台风险判定及其依据为准。</div>`;
+  html+='<p class="field-note">目标类别、位置/轨迹、观测高度和鸟群数量在“模拟目标”中设置；此处只配置平台判定所需的飞行计划或空域依据。</p>';
   if(r.type==='height')html+=selectField('比较依据','basis',r.basis||'zone',[{value:'zone',label:'空域限高'},{value:'plan',label:'计划高度'}]);
   if(r.type==='zone'||r.type==='height'&&r.basis!=='plan')html+=selectField('关联区域','zoneId',r.zoneId,opts(state.zones,'请选择限飞区域'));
   if(['deviation','time','bird','balloon'].includes(r.type)||r.type==='height'&&r.basis==='plan')html+=selectField('关联飞行计划','planId',r.planId,opts(state.plans,'请选择飞行计划'));
   if(r.type==='no-plan')html+='<div class="readout">本场景不关联飞行计划。联调后的匹配结果由平台返回。</div>';
-  if(r.type==='height'){const b=r.basis==='plan'?lookup('plan',r.planId):lookup('zone',r.zoneId);html+=`<div class="readout">${r.basis==='plan'?'计划高度上限':'区域限高'}　<strong>${b?esc(b.max)+' m':'未选择'}</strong><br>高度基准　海拔高度</div>`;html+=field('模拟高度（米，协议原值）','height',r.height??150,'number','min="0" max="10000" required');}
-  if(['bird','balloon'].includes(r.type)){html+='<div class="field-grid">'+field(r.type==='bird'?'鸟群数量（只）':'气球数量（个）','count',t?.count??1,'number','min="1" max="10000" required')+field('观测高度（米，协议原值）','height',t?.height??60,'number','min="0" max="10000" required')+'</div><div class="readout">平台高度基准尚未确认，以实际研判为准</div>';}
+  if(r.type==='height'){const b=r.basis==='plan'?lookup('plan',r.planId):lookup('zone',r.zoneId);html+=`<div class="readout">${r.basis==='plan'?'计划高度上限':'区域限高'}　<strong>${b?esc(b.max)+' m':'未选择'}</strong><br>超高事实取自“模拟目标”的基准高度，设备只上报观测值。</div>`;}
+  if(['bird','balloon'].includes(r.type))html+=`<div class="readout">目标位置、轨迹和观测高度由“模拟目标”上报；${r.type==='bird'?'鸟群数量也由目标观测生成。':'气球按单目标观测上报。'}这里不再填写目标属性。</div>`;
   if(r.type==='time'){html+=selectField('时间场景','mode',r.mode||'结束后继续飞行',['开始前提前飞行','结束后继续飞行']);html+=field('超出时长（分钟）','offset',r.offset??2,'number','min="1" max="1440" required');const p=lookup('plan',r.planId);html+=`<div class="readout">计划时段：${p?`${esc(p.start)}—${esc(p.end)}`:'未选择计划'}<br>示例业务时区：Asia/Shanghai</div>`;}
   return html;
 }
 function context(icon,title,sub){return `<div class="inspector-context">${image(icon)}<div><h3>${esc(title)}</h3><p>${esc(sub)}</p></div></div>`;}
 function renderInspector(){
-  const x=lookup(selected.kind,selected.id);if(!x){$('#inspector-title').textContent='对象属性';$('#inspector').innerHTML='<div class="empty">选择地图对象或风险场景<br>在这里编辑参数</div>';return;}
+  const x=lookup(selected.kind,selected.id);if(!x){$('#inspector-title').textContent='对象属性';$('#inspector').innerHTML='<div class="empty">选择地图对象或平台判定条件<br>在这里编辑参数</div>';return;}
   let html='';$('#inspector-title').textContent=x.name;
   if(selected.kind==='risk'){html=riskFields(x);}
   if(selected.kind==='site'){
@@ -210,7 +210,7 @@ function renderInspector(){
     html+=selectField('计划或区域高度基准','altitudeDatum',x.altitudeDatum||'AMSL',[{value:'AMSL',label:'海拔高度 AMSL'},{value:'AGL',label:'离地高度 AGL'}]);
     html+='<div class="readout">与目标同基准高度比较；缺失时由系统保留未知</div>'+btn('redraw-object',selected.kind==='plan'?'重新绘制航线':'重新绘制区域','wide cyan-button');
   }
-  $('#inspector').innerHTML=`<section id="notification-progress" class="notification-progress" hidden></section><form id="inspector-form">${html}<p class="inline-error" role="alert"></p><div class="form-actions"><button type="submit" class="primary">${selected.kind==='risk'?'保存风险设置':'应用设置'}</button></div></form>`;
+  $('#inspector').innerHTML=`<section id="notification-progress" class="notification-progress" hidden></section><form id="inspector-form">${html}<p class="inline-error" role="alert"></p><div class="form-actions"><button type="submit" class="primary">${selected.kind==='risk'?'保存判定条件':'应用设置'}</button></div></form>`;
   window.NotificationUI.estimate();window.NotificationUI.progress();window.NotificationUI.lock();
 }
 function render(){renderTree();renderMap();renderRisks();renderInspector();$('#totals').textContent=`${state.sites.length} 个点位 · ${devices().length} 台设备 · ${state.targets.length} 个目标`;}
@@ -218,7 +218,7 @@ function stop(){clearInterval(timer);timer=null;$('#run-status').textContent='�
 function select(kind,id){window.dispatchEvent(new CustomEvent('simulator:selection',{detail:{kind,id}}));if(!(typeof running==='function'&&running()))stop();selected={kind,id};const object=lookup(kind,id);const target=kind==='risk'?targetFor(object):null;const ps=kind==='site'?[[object.x,object.y]]:object?.points||object?.path||target?.path;render();if(ps?.length)window.SimulatorMap?.fit(ps);}
 function openDialog(title,html){returnFocus=document.activeElement;$('#dialog-title').textContent=title;$('#dialog-body').innerHTML=html;$('#dialog-shell').hidden=false;document.body.style.overflow='hidden';$('#dialog button').focus();}
 function closeDialog(){ $('#dialog-shell').hidden=true;document.body.style.overflow='';dialogType=null;returnFocus?.focus(); }
-function defaultRisk(type){const t=state.targets.find(t=>t.kind===(getType(type).group==='无人机'?'uav':type)&&(type!=='no-plan'||!t.planId));return {id:uid('r'),type,name:getType(type).name,enabled:true,targetId:t?.id||'',planId:['deviation','time','bird','balloon'].includes(type)?state.plans[0]?.id||'':'',zoneId:['zone','height'].includes(type)?state.zones[0]?.id||'':'',deviceId:devices()[0]?.id||'',basis:'zone',height:150,at:2,seconds:60,offset:2};}
+function defaultRisk(type){const t=state.targets.find(t=>t.kind===(getType(type).group==='无人机'?'uav':type)&&(type!=='no-plan'||!t.planId));return {id:uid('r'),type,name:getType(type).name,enabled:true,targetId:t?.id||'',planId:['deviation','time','bird','balloon'].includes(type)?state.plans[0]?.id||'':'',zoneId:['zone','height'].includes(type)?state.zones[0]?.id||'':'',deviceId:devices()[0]?.id||'',basis:'zone',at:2,seconds:60,offset:2};}
 let newRisk;
 function openDeviceGroup(group){
   stop();const config=group||{name:`设备组 ${state.sites.length+1}`,counts:Object.fromEntries(deviceKinds.map(kind=>[kind,1]))};
@@ -228,7 +228,7 @@ function openDeviceGroup(group){
 }
 function groupFormConfig(){const f=$('#device-group-form');return {name:$('[name=groupName]',f).value.trim(),counts:Object.fromEntries(deviceKinds.map(kind=>[kind,$(`[name=include_${kind}]`,f).checked?Number($(`[name=qty_${kind}]`,f).value):0]))};}
 function updateDeviceGroupSummary(){const f=$('#device-group-form');if(!f)return;deviceKinds.forEach(kind=>{const checked=$(`[name=include_${kind}]`,f).checked;$(`[name=qty_${kind}]`,f).disabled=!checked;$(`[data-device-option="${kind}"]`,f).classList.toggle('chosen',checked);});const config=groupFormConfig(),valid=deviceKinds.every(k=>Number.isInteger(config.counts[k])&&config.counts[k]>=0&&config.counts[k]<=20),total=Object.values(config.counts).reduce((a,b)=>a+b,0);$('#group-summary-count').textContent=valid?`${total} 台设备`:'请填写有效数量';$('#group-summary-types').textContent=deviceKinds.filter(k=>config.counts[k]>0).map(k=>`${labels[k]} × ${config.counts[k]}`).join(' · ')||'选择至少一种设备';$('#place-device-group').textContent=valid&&total?`在地图上放置（${total} 台）`:'在地图上放置';}
-function openRisk(type='height',draft){newRisk=draft||defaultRisk(type);dialogType='risk';openDialog('添加风险',`<h3>选择风险类型</h3><div class="type-grid">${types.map(t=>`<button class="type-tile ${type===t.id?'active':''}" data-action="risk-type" data-type="${t.id}">${image(riskIcons[t.id])}${t.name}</button>`).join('')}</div><form id="new-risk-form" class="drawer-form"><h3>${getType(type).name}设置</h3><div id="new-risk-fields">${riskFields(newRisk)}</div><p class="inline-error" role="alert"></p><div class="form-actions">${btn('close-dialog','取消')}<button class="primary" type="submit">添加到场景</button></div></form>`);dialogType='risk';}
+function openRisk(type='height',draft){newRisk=draft||defaultRisk(type);dialogType='risk';openDialog('添加联调判定条件',`<h3>选择平台判定条件</h3><p class="field-note">这里仅配置联调条件；目标观测请通过图上的“添加目标”产生，风险结论由平台返回。</p><div class="type-grid">${types.map(t=>`<button class="type-tile ${type===t.id?'active':''}" data-action="risk-type" data-type="${t.id}">${image(riskIcons[t.id])}${t.name}</button>`).join('')}</div><form id="new-risk-form" class="drawer-form"><h3>${getType(type).name}设置</h3><div id="new-risk-fields">${riskFields(newRisk)}</div><p class="inline-error" role="alert"></p><div class="form-actions">${btn('close-dialog','取消')}<button class="primary" type="submit">加入联调条件</button></div></form>`);dialogType='risk';}
 function setDraw(mode,id=null,targetKind=null,group=null){if(!['site','target','zone','plan','path','departure'].includes(mode))return toast('未知绘制类型');if(!window.SimulatorMap?.ready)return toast('请先加载系统地图，再放置或绘制对象');stop();closeDialog();draw={mode,id,targetKind,group,points:[]};if(mode==='path'&&id)draw.points=[...lookup('target',id).path.slice(0,1)];$('#map-stage').classList.add('drawing');$('#map-hint').textContent=mode==='site'?'点击地图，设置整组设备所在位置':mode==='target'?'点击地图，设置目标初始位置':'依次点击地图添加节点，完成后点击“确认绘制”';$('#draw-controls').hidden=['site','target'].includes(mode);$('#draw-message').textContent=mode==='zone'?'至少绘制 3 个顶点':mode==='departure'?'至少绘制 1 个撤离航点':'至少绘制 2 个节点';$('#group-placement').hidden=mode!=='site';if(mode==='site'){$('#group-placement-text').textContent=group?`${group.name} · ${Object.values(group.counts).reduce((a,b)=>a+b,0)} 台设备`:`重新定位 ${lookup('site',id)?.name||'设备组'}`;$('#edit-pending-group').hidden=!group;}document.querySelectorAll('[data-tool]').forEach(b=>b.classList.toggle('active',b.dataset.tool===mode));renderMap();}
 function cancelDraw(){draw=null;$('#map-stage').classList.remove('drawing');$('#draw-controls').hidden=true;$('#group-placement').hidden=true;$('#map-hint').textContent='选择地图对象，编辑位置与关联';document.querySelectorAll('[data-tool]').forEach(b=>b.classList.remove('active'));renderMap();}
 function intersects(a,b,c,d){const cross=(p,q,r)=>(q[0]-p[0])*(r[1]-p[1])-(q[1]-p[1])*(r[0]-p[0]);return cross(a,b,c)*cross(a,b,d)<0&&cross(c,d,a)*cross(c,d,b)<0;}
@@ -238,15 +238,15 @@ function formValues(form){return Object.fromEntries(new FormData(form));}
 function validateRisk(r,{requireObservation=false}={}){
   const type=getType(r.type);if(!r.name?.trim())return '请输入风险名称';
   const target=type.group==='设备'?null:syncRiskFixture(r);
-  if(type.group!=='设备'&&!target&&requireObservation)return '开始模拟需要设备观测输入；目标关联仍由平台根据观测结果自动判定';
+  if(type.group!=='设备'&&!target&&requireObservation)return '开始模拟需要目标观测输入；风险由平台根据目标位置、航线、空域和时间规则自动判定';
   if((type.group==='设备'||target)&&!deviceFor(r.deviceId))return type.group==='设备'?'请选择关联的模拟设备':'模拟目标没有可用的上报设备';
   if(target&&r.type==='no-plan'&&target.planId)return '无计划场景的模拟目标不能关联计划';
   if(['zone','height'].includes(r.type)&&r.basis!=='plan'&&!lookup('zone',r.zoneId))return '请选择关联区域';
   if(['deviation','time','bird','balloon'].includes(r.type)||r.type==='height'&&r.basis==='plan'){if(!lookup('plan',r.planId))return '请选择关联飞行计划';}
-  if(r.type==='height'){const base=r.basis==='plan'?lookup('plan',r.planId):lookup('zone',r.zoneId);if(Number(r.height)<=Number(base.max))return '超高场景的模拟高度应大于所选依据的高度上限';}
+  if(r.type==='height'&&target){const base=r.basis==='plan'?lookup('plan',r.planId):lookup('zone',r.zoneId);if(Number(target.height)<=Number(base.max))return '超高场景的目标高度应大于所选依据的高度上限';}
   if(type.group==='设备'&&Number(r.at)+Number(r.seconds)>(Number(state.duration)>0?Number(state.duration)*60:86400))return '触发时间与持续时间不能超过任务运行时长';return '';
 }
-function saveRiskFields(r,v){Object.assign(r,v);if(r.type==='height'){if(r.basis==='plan')r.zoneId='';else r.planId='';}if(r.type==='no-plan'){r.planId='';r.zoneId='';}const t=syncRiskFixture(r);if(t){if(['bird','balloon'].includes(r.type)&&v.height!==undefined){t.height=Number(v.height);t.count=Number(v.count);}if(r.type==='height'&&v.height!==undefined)t.height=Number(v.height);}}
+function saveRiskFields(r,v){Object.assign(r,v);if(r.type==='height'){if(r.basis==='plan')r.zoneId='';else r.planId='';}if(r.type==='no-plan'){r.planId='';r.zoneId='';}syncRiskFixture(r);}
 function targetValues(v,x){
   const result={...v,height:Number(v.height),speed:Number(v.speed)};
   delete result.altitudePathInput;delete result.dwellSecondsInput;delete result.silenceWindowsInput;
@@ -306,7 +306,7 @@ window.addEventListener('simulator-map:point',event=>{
 });
 function startPreview(){showRunPositions=false;
   if(timer){stop();toast('预演已暂停');return;}
-  if(!state.risks.some(r=>r.enabled)&&!state.targets.length)return toast('请先添加模拟目标或启用风险场景');
+  if(!state.risks.some(r=>r.enabled)&&!state.targets.length)return toast('请先通过“添加目标”配置观测，或启用已有联调条件');
   if(draw)return toast('请先完成或取消当前绘制');for(const r of state.risks.filter(r=>r.enabled)){const issue=validateRisk(r,{requireObservation:true});if(issue)return toast(r.name+'：'+issue);}
   if(progress>=100)progress=0;$('#preview-bar').hidden=false;$('#run-status').textContent='本地预演中';$('#preview-button').textContent='暂停预演';$('#stop-button').disabled=false;
   timer=setInterval(()=>{progress=Math.min(100,progress+.25);$('#preview-range').value=progress;$('#preview-percent').textContent=`${Math.round(progress)}%`;renderMap();if(progress>=100){stop();toast('轨迹预演结束，模拟配套业务数据');}},100);
@@ -324,7 +324,7 @@ document.addEventListener('click',event=>{
   if(a==='undo-point'){draw?.points.pop();renderMap();return;}
   if(a==='cancel-draw'){cancelDraw();return;}
   if(a==='finish-draw'){finishDraw();return;}
-  if(a==='add-target'){openDialog('添加模拟目标',`<p class="field-note">选择目标类别，再在地图上设置初始位置。</p><div class="type-grid">${targetKinds.map(k=>`<button class="type-tile" data-action="place-target" data-kind="${k}">${image(targetIcon(k))}${labels[k]}</button>`).join('')}</div>`);return;}
+  if(a==='add-target'){openDialog('添加模拟目标',`<p class="field-note">这里添加设备上报的目标观测；选择目标类别，再在地图上设置初始位置。平台会根据目标位置、航线、空域和时间规则自动判定是否形成风险。</p><div class="type-grid">${targetKinds.map(k=>`<button class="type-tile" data-action="place-target" data-kind="${k}">${image(targetIcon(k))}${labels[k]}</button>`).join('')}</div>`);return;}
   if(a==='place-target'){setDraw('target',null,el.dataset.kind);return;}
   if(a==='relocate-site'){setDraw('site',selected.id);return;}
   if(a==='edit-departure-path'){const x=lookup('target',selected.id);Object.assign(x,formValues($('#inspector-form')));dirty();setDraw('departure',selected.id);return;}

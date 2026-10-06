@@ -6,7 +6,8 @@ import { usePageChrome } from '@/hooks/usePageChrome.js';
 import { createSituationApiSource } from '@/pages/situation/situationApiSource.js';
 import { currentMapSnapshot, riskMatchesPlan, routeRiskIsActive, SITUATION_DEVICE_TYPE_ORDER, targetClassCounts } from '@/services/situationData.js';
 import {
-  disposalStage, uavProcessActions, uavProcessStatus
+  disposalStage, situationAlarmNeedsAttention, situationRouteRiskVisible,
+  uavProcessActions, uavProcessStatus
 } from '@/pages/situation/situationFlow.js';
 import { closeModal, openFormModal } from '@/ui/formModal.js';
 import { getUavEvent } from '@/services/alarmApi.js';
@@ -58,11 +59,12 @@ let selectionResizeObserver = null;
 let expiryTimer = null;
 
 const devices = computed(() => snapshot.value.devices || []);
+const targets = computed(() => snapshot.value.targets || []);
+const currentTargetIds = computed(() => new Set(targets.value.map(target => target.targetId).filter(Boolean)));
 const alarms = computed(() => (snapshot.value.alarms || [])
-  .filter(alarm => alarm.eventState !== 'FALSE_POSITIVE')
+  .filter(alarm => currentTargetIds.value.has(alarm.targetInternalId) && situationAlarmNeedsAttention(alarm))
   .slice()
   .sort((a, b) => b.ts - a.ts));
-const targets = computed(() => snapshot.value.targets || []);
 const evidenceRoute = useRoute();
 let evidenceTargetHandled = '';
 watch(() => [evidenceRoute.query.target, snapshot.value.generatedAt], ([id, generatedAt]) => {
@@ -75,7 +77,7 @@ watch(() => [evidenceRoute.query.target, snapshot.value.generatedAt], ([id, gene
 }, { flush: 'post' });
 const flightPlans = computed(() => snapshot.value.flightPlans || []);
 const risks = computed(() => snapshot.value.risks || []);
-const riskGroups = computed(() => groupRouteRisks(risks.value));
+const riskGroups = computed(() => groupRouteRisks(risks.value.filter(situationRouteRiskVisible)));
 const selectedRiskGroup = computed(() => selection.value?.kind === 'risk-group'
   ? riskGroups.value.find(group => group.groupId === selection.value.id) : null);
 const airspaces = computed(() => snapshot.value.airspaces || []);
@@ -443,6 +445,21 @@ function alarmAnchor() {
     ? map.px(target.lon, target.lat) : null;
 }
 
+function selectionAvoidRect() {
+  if (!map) return null;
+  const plan = selectedPlan.value || (selectedRiskGroup.value ? planForRisk(selectedRiskGroup.value) : null);
+  const points = (plan?.coordinates || []).map(point => map.px(point[0], point[1]))
+    .filter(point => point?.every(Number.isFinite));
+  if (points.length >= 2) {
+    const xs = points.map(point => point[0]), ys = points.map(point => point[1]);
+    return { left: Math.min(...xs) - 12, right: Math.max(...xs) + 12,
+      top: Math.min(...ys) - 12, bottom: Math.max(...ys) + 12 };
+  }
+  const point = alarmAnchor();
+  return point ? { left: point[0] - 28, right: point[0] + 28,
+    top: point[1] - 28, bottom: point[1] + 28 } : null;
+}
+
 function selectionLocation() {
   if (selectedDevice.value || selectedTarget.value) return selectedDevice.value || selectedTarget.value;
   const coordinates = selectedPlan.value?.coordinates;
@@ -479,10 +496,16 @@ function selectPlan(plan, markRisks = true, riskId = null) {
   if (map) {
     map.sel = null;
     map.planSel = plan.id;
-    const point = plan.coordinates?.[Math.floor((plan.coordinates?.length || 1) / 2)];
-    if (point) map.centerAt(point[0], point[1], { scale: map.zoom });
     map.pinHit('plan', plan.id);
-    focusSelection(false);
+    const coordinates = Array.isArray(plan.coordinates) ? plan.coordinates : [];
+    if (coordinates.length >= 2 && typeof map.fitTo === 'function') {
+      // 计划需要完整落在可见区域，且保持足够边距让详情弹窗与航线同时可读。
+      map.fitTo(coordinates, 0.38);
+    } else {
+      const point = coordinates[Math.floor(coordinates.length / 2)];
+      if (point) map.centerAt(point[0], point[1], { scale: Math.max(map.zoom, 24) });
+      focusSelection(false);
+    }
   }
 }
 
@@ -677,14 +700,18 @@ function renderPlanTip(plan) {
     ? `风险：${selectedRisk ? labelOf(RISK_STATE_LABEL, selectedRisk.state) : '状态待确认'}`
     : `计划：${plan.statusLabel}`;
   const stateClass = (riskId ? selectedRisk?.active : active.length) ? 'is-risk' : 'is-online';
+  const routePointCount = Array.isArray(plan.coordinates) ? plan.coordinates.length : 0;
   return `<section class="sit-map-pop sit-map-pop-plan" style="--sensor:${active.length ? '#ff5b61' : '#22d3ee'}">
-    <header><span class="sit-map-pop-icon">${U.icon('plan')}</span><span><b>${esc(plan.planNo)}</b><small class="mono">${esc(plan.routeVersionId)}</small></span>
+    <header><span class="sit-map-pop-icon">${U.icon('plan')}</span><span><b>计划详情</b><small class="mono">${esc(plan.planNo)}</small></span>
       <button type="button" data-tip-act="close" aria-label="关闭计划详情">${U.icon('close')}</button></header>
     <div class="sit-map-pop-status"><span class="sit-state ${stateClass}">${esc(stateText)}</span><span>${active.length ? `${active.length} 条当前风险` : '无当前风险'}</span></div>
-    <dl>${riskId ? `<dt>计划状态</dt><dd>${esc(plan.statusLabel)}</dd>` : ''}
-      <dt>计划时段</dt><dd>${esc(formatClock(plan.startAt))} ～ ${esc(formatClock(plan.endAt))}</dd>
+    <dl><dt>计划编号</dt><dd class="mono">${esc(plan.planNo)}</dd>
+      <dt>计划状态</dt><dd>${esc(plan.statusLabel)}</dd>
+      <dt>执行时段</dt><dd>${esc(formatClock(plan.startAt))} ～ ${esc(formatClock(plan.endAt))}</dd>
       <dt>关联无人机</dt><dd class="mono">${esc(plan.uavId || '未提供')}</dd>
-      <dt>历史风险</dt><dd>${risks.length} 条</dd>
+      <dt>航线版本</dt><dd class="mono">${esc(plan.routeVersionId)}</dd>
+      <dt>航线点数</dt><dd>${routePointCount || '未提供'}</dd>
+      <dt>风险记录</dt><dd>${risks.length} 条</dd>
       <dt>最高等级</dt><dd>${highest ? esc(labelOf(SEVERITY_LABEL, highest.severity)) : '无'}</dd></dl>
     ${active.length ? `<div class="sit-map-pop-actions"><button type="button" class="is-danger" data-tip-act="exclude-risk">排除风险</button><button type="button" data-tip-act="notify-superior">通知上级</button></div>` : ''}
   </section>`;
@@ -913,10 +940,10 @@ onUnmounted(() => {
           <button v-for="alarm in alarms" :key="eventKey(alarm)" type="button" class="sit-alert-row"
             :class="[{ 'is-new': alarm.isNew, 'is-selected': isSelectedAlarm(alarm) }, `level-${alarm.level}`]"
             :aria-pressed="isSelectedAlarm(alarm)"
-            :aria-label="`查看${alarm.targetId || alarm.id || '未关联目标告警'}的${alarm.type}，${alarm.isNew ? '新异常' : '已查看，风险持续'}`" @click="selectAlarm(alarm)">
+            :aria-label="`查看${alarm.targetId || alarm.id || '未关联目标告警'}的${alarm.type}，${alarm.eventState === 'PENDING_VERIFICATION' ? '待核实' : '待反制'}`" @click="selectAlarm(alarm)">
             <span class="sit-alert-level">{{ alarm.level }}</span>
             <span class="sit-alert-copy"><b class="mono">{{ alarm.targetId || alarm.id || '未关联目标告警' }}</b><em>{{ alarm.type }} · {{ alarm.district }}</em></span>
-            <span class="sit-alert-meta"><time class="mono">{{ formatClock(alarm.ts) }}</time><b>{{ alarm.isNew ? '新异常' : '已查看，风险持续' }}</b></span>
+            <span class="sit-alert-meta"><time class="mono">{{ formatClock(alarm.ts) }}</time><b>{{ alarm.eventState === 'PENDING_VERIFICATION' ? '待核实' : '待反制' }}{{ alarm.isNew ? ' · 新异常' : '' }}</b></span>
           </button>
         </div>
         <div v-else class="sit-alert-list" role="tabpanel" aria-label="航线风险">
@@ -933,8 +960,9 @@ onUnmounted(() => {
       </aside>
 
       <SituationAlarmPopup v-if="showSelectionPopup" :key="`${selection.kind}:${selection.id}:${selection.riskId || selection.alarmId || ''}`" :get-anchor="alarmAnchor"
+        :get-avoid-rect="selectionAvoidRect"
         :video-open="showTargetVideo && !!videoContext"
-        :label="selectedDevice ? '设备详情' : selectedRisk ? '航线风险详情' : selectedPlan ? '计划详情' : showAlarmPopup ? '无人机告警详情' : '目标详情'">
+        :label="selectedDevice ? '设备详情' : selectedPlan ? '计划详情' : selectedRisk ? '航线风险详情' : showAlarmPopup ? '无人机告警详情' : '目标详情'">
         <div v-if="selectedDevice" @click="onTipAction($event.target.closest('[data-tip-act]')?.dataset.tipAct, { kind: 'device', data: selectedDevice })"
           v-html="renderDeviceTip(selectedDevice)"></div>
         <div v-else-if="selectedTarget" @click="onTipAction($event.target.closest('[data-tip-act]')?.dataset.tipAct, { kind: 'target', data: selectedTarget })"

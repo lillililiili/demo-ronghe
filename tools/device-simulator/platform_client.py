@@ -12,6 +12,7 @@ import urllib.request
 import urllib.parse
 import uuid
 from engine import coordinates
+from engine import normalize_coverage_config
 
 
 def stable_device_identity(device_id, kind):
@@ -116,6 +117,48 @@ class Platform:
             return existing
         return self.call('POST', '/devices/onboard', body, key)
 
+    @staticmethod
+    def _sensing_profile_payload(coverage):
+        config = normalize_coverage_config(coverage)
+        if config is None:
+            return None
+        if config['kind'] == 'circle':
+            return {'coverage_kind': 'CIRCLE', 'radius_m': config['radiusM'],
+                    'range_m': None, 'azimuth_deg': None, 'fov_deg': None,
+                    'source_label': config['sourceLabel']}
+        return {'coverage_kind': 'SECTOR', 'radius_m': None,
+                'range_m': config['rangeM'], 'azimuth_deg': config['azimuthDeg'],
+                'fov_deg': config['fovDeg'], 'source_label': config['sourceLabel']}
+
+    @staticmethod
+    def _sensing_profile_matches(current, desired):
+        current = current or {}
+        return all(current.get(key) == value for key, value in desired.items())
+
+    def _sync_sensing_profile(self, record, coverage, external):
+        """Reconcile an explicitly declared static profile; omitted profiles stay untouched."""
+        desired = self._sensing_profile_payload(coverage)
+        if desired is None:
+            return record
+        device = record.get('device') or {}
+        current = device.get('coverage') or {}
+        current_values = {
+            'coverage_kind': str(current.get('kind') or current.get('coverage_kind') or '').upper() or None,
+            'radius_m': current.get('radius_m', current.get('radiusM')),
+            'range_m': current.get('range_m', current.get('rangeM')),
+            'azimuth_deg': current.get('azimuth_deg', current.get('azimuthDeg')),
+            'fov_deg': current.get('fov_deg', current.get('fovDeg')),
+            'source_label': current.get('source_label', current.get('sourceLabel')),
+        }
+        if self._sensing_profile_matches(current_values, desired):
+            return record
+        version = current.get('version')
+        expected_version = 0 if version is None else int(version)
+        payload = dict(desired, expected_version=expected_version)
+        digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()[:24]
+        return self.call('PUT', '/devices/' + urllib.parse.quote(str(device['device_id']), safe='') + '/sensing-profile',
+                         payload, 'sim-sensing-' + external + '-' + digest)
+
     def login(self, account, password):
         self.token = self.call('POST', '/auth/login', {'account': account, 'password': password})['session_id']
         self.me=self.call('GET', '/auth/me')
@@ -136,6 +179,7 @@ class Platform:
             if d['kind'] == 'eo':
                 body['edge_id'] = external + '-edge'
             record = self._onboard_or_reuse(body, 'sim-onboard-'+external)
+            record = self._sync_sensing_profile(record, d.get('coverage'), external)
             manifest['devices'][device_id] = {'external_id': external, 'edge_id': body.get('edge_id'), 'platform_id': record['device']['device_id'], 'kind': d['kind']}
             if d['kind'] == 'eo':
                 binding = self.call('GET', '/devices/' + record['device']['device_id'] + '/protocol-status')['details']
@@ -151,11 +195,16 @@ class Platform:
     def wait_for_subscriptions(self, manifest, broker, cancel, timeout=30):
         """Wait for the backend's SUBACK facts, before publishing even a heartbeat."""
         deadline = time.monotonic() + timeout
-        pending = [d['external_id'] for d in manifest['devices'].values()]
+        # Normalized fusion sources are stage-2 source/device IDs, not ops_device
+        # MQTT registrations, so they have no protocol-status or subscription.
+        pending = [d['external_id'] for d in manifest['devices'].values()
+                   if d.get('kind') != 'normalized']
         while not cancel.is_set():
             pending = []
             # Recheck every device each round: an earlier ready session may disconnect.
             for device in manifest['devices'].values():
+                if device.get('kind') == 'normalized':
+                    continue
                 if cancel.is_set():
                     return False
                 remaining = deadline - time.monotonic()

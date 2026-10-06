@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const {weatherSampleForPlan, receiptChoices, matchingSceneRoute, sceneRouteMatches, sceneRouteValidityMessage} = require('../web/external-contract.js');
+const {weatherSampleForPlan, receiptChoices} = require('../web/external-contract.js');
 
 test('historical forecast sample overlaps the plan and is published no later than its period', () => {
   const now = Date.UTC(2026, 8, 24);
@@ -38,16 +38,50 @@ test('input selectors update submitted JSON without losing unrelated edits', () 
   assert.equal(original.message_id,'old');
 });
 
-test('changing forecast plan realigns period while preserving weather values', () => {
+test('plan payload keeps its upstream route reference when no selector is shown', () => {
   const {applyInputFields} = require('../web/external-contract.js');
-  const now=Date.UTC(2026,8,24);
-  const plan={plan_id:'next',start_at:now+60000,end_at:now+3600000};
-  const original={message_id:'m1',plan_id:'old',published_at:now,periods:[{from:1,to:2,summary:'雨',temperature_c:5}]};
-  const next=applyInputFields(original,{kind:'weather',target:'next',messageId:'m2',plan,now});
-  assert.equal(next.plan_id,'next');
-  assert.equal(next.message_id,'m2');
-  assert.equal(next.periods[0].from,plan.start_at);
-  assert.equal(next.periods[0].summary,'雨');
+  const next=applyInputFields({message_id:'old',route_version_id:'upstream-route',uav_sn:'CUSTOM-1'},
+    {kind:'plans',target:'',messageId:'new'});
+  assert.equal(next.route_version_id,'upstream-route');
+  assert.equal(next.message_id,'new');
+});
+
+test('scene plan writes route geometry into the upstream plan payload', () => {
+  const {applyScenePlanRoute} = require('../web/external-contract.js');
+  const next=applyScenePlanRoute({message_id:'m',route_version_id:'legacy',route:{owner_org_id:'org-old',district_id:'district-old'}},
+    {name:'巡检计划',points:[[118.6,37.46],[118.61,37.47]],width:80,min:30,max:110,altitudeDatum:'AMSL'},
+    {owner_org_id:'org-new',district_id:'district-new'});
+  assert.equal(Object.hasOwn(next,'route_version_id'),false);
+  assert.deepEqual(next.route.geometry,{type:'LineString',coordinates:[[118.6,37.46],[118.61,37.47]]});
+  assert.equal(next.route.owner_org_id,'org-new');
+  assert.equal(next.route.corridor_width_m,80);
+});
+
+test('refresh adopts a newly available upstream route when the draft still uses the old default', () => {
+  const {refreshUpstreamRouteDraft} = require('../web/external-contract.js');
+  const previous=[{route_version_id:'old-route'}];
+  const next=[{route_version_id:'new-route'}];
+  assert.equal(refreshUpstreamRouteDraft({route_version_id:'old-route',uav_sn:'CUSTOM'},previous,next).route_version_id,'new-route');
+  assert.equal(refreshUpstreamRouteDraft({route_version_id:'manually-edited'},previous,next).route_version_id,'manually-edited');
+});
+
+test('weather samples are independent from flight plans', () => {
+  const {weatherSample} = require('../web/external-contract.js');
+  const now = Date.UTC(2026, 8, 24);
+  const sample = weatherSample(now, 'weather-independent');
+  assert.equal(sample.message_id, 'weather-independent');
+  assert.equal(Object.hasOwn(sample, 'plan_id'), false);
+  assert.equal(sample.periods[0].from, now);
+  assert.equal(sample.periods[0].to, now + 3600000);
+});
+
+test('weather input does not add a flight plan binding when syncing fields', () => {
+  const {applyInputFields} = require('../web/external-contract.js');
+  const next = applyInputFields({message_id:'old', area_name:'东营区', published_at:1, periods:[]},
+    {kind:'weather', target:'', messageId:'new', now:Date.UTC(2026, 8, 24)});
+  assert.equal(next.message_id, 'new');
+  assert.equal(Object.hasOwn(next, 'plan_id'), false);
+  assert.equal(next.area_name, '东营区');
 });
 
 test('binding result reports confirmed binding state', () => {
@@ -98,21 +132,4 @@ test('selecting another route realigns draft times to that route', () => {
   assert.equal(next.start_at,route.valid_from);
   assert.equal(next.end_at,route.valid_to);
   assert.equal(next.uav_sn,'CUSTOM');
-});
-
-test('map scene route only matches the platform route with the same ordered centerline', () => {
-  const route={route_version_id:'rv-1',centerline:{coordinates:[[118.5912,37.4436],[118.60332,37.44852]]}};
-  const scene={id:'p1',points:[[118.5912,37.4436],[118.60332,37.44852]]};
-  assert.equal(sceneRouteMatches(route,scene),true);
-  assert.equal(matchingSceneRoute(scene,[{route_version_id:'rv-other',centerline:{coordinates:[[118.5912,37.4436],[118.604,37.44852]]}},route]).route_version_id,'rv-1');
-  assert.equal(sceneRouteMatches(route,{...scene,points:[...scene.points].reverse()}),false);
-});
-
-test('map scene can identify an expired platform route for a precise validity warning', () => {
-  const expired={route_version_id:'rv-expired',valid_from:100,valid_to:200,
-    centerline:{coordinates:[[118.5912,37.4436],[118.60332,37.44852]]}};
-  const scene={id:'p-expired',points:[[118.5912,37.4436],[118.60332,37.44852]]};
-  assert.equal(matchingSceneRoute(scene,[],[expired]).route_version_id,'rv-expired');
-  assert.match(sceneRouteValidityMessage(expired,{start_at:150,end_at:250},300),/已过期/);
-  assert.equal(sceneRouteValidityMessage(expired,{start_at:150,end_at:200},300),'');
 });

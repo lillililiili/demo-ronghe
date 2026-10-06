@@ -32,6 +32,28 @@ export function uavProcessActions(alarm) {
   return [];
 }
 
+/**
+ * 融合感知右侧只展示仍需要人工关注的当天告警：待核实，或已核实但尚未进入处置流程的待反制。
+ * 已经进入自动/人工处置、已移送或已结束的事件留在告警详情和历史记录中，不继续占用实时待办列表。
+ */
+export function situationAlarmNeedsAttention(alarm) {
+  if (!alarm || alarm.handoff || alarm.eventState === 'FALSE_POSITIVE') return false;
+  if (alarm.eventState === 'PENDING_VERIFICATION') return true;
+  return alarm.eventState === 'CONFIRMED' && (!alarm.disposalStage || alarm.disposalStage === 'none');
+}
+
+/** 航线风险待办只保留当前目标仍在且已经核验、等待通知上级的风险。 */
+export function situationRouteRiskNeedsAttention(risk) {
+  return !!risk && risk.active === true && risk.state === 'PENDING_NOTIFICATION';
+}
+
+/** 融合感知页的航线风险只展示已经核验、等待通知上级的当前风险。 */
+export function situationRouteRiskVisible(risk) {
+  if (!risk || risk.state !== 'PENDING_NOTIFICATION') return false;
+  if (!['SPACE_OBJECT', 'FOREIGN_OBJECT'].includes(risk.riskType || risk.risk_type)) return false;
+  return !!(risk.planId || risk.plan_id) && !!(risk.routeVersionId || risk.route_version_id);
+}
+
 export function uavProcessStatus(alarm) {
   if (!alarm) return '';
   if (alarm.eventState === 'FALSE_POSITIVE') return '误报';

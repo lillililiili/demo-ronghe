@@ -19,7 +19,8 @@ const compactTitle = computed(() => {
   if (reason.includes('已离开')) return '已撤离，不拨打';
   if (reason.includes('没有新的位置') || reason.includes('无法判断')) return '无法确认，不拨打';
   if (reason.includes('尚未送达')) return '等待短信送达';
-  return ({ DISABLED: '未启用', WAITING: '等待拨打', CALLING: '正在拨打', SIMULATED_PLAYED: '已接通并播完', FAILED: '通知失败', UNAVAILABLE: '暂不可用', BLOCKED: '拨打已暂停', UNKNOWN: '通话结果未确认' })[props.data?.auto_voice?.status] || view.value.title;
+  if (reason.includes('超过自动通知时效')) return '超过时效，不拨打';
+  return ({ DISABLED: '未启用', WAITING: '等待拨打', CALLING: '正在拨打', SIMULATED_PLAYED: '已接通并播完', FAILED: '通知失败', UNAVAILABLE: '暂不可用', BLOCKED: '拨打已暂停', UNKNOWN: '通话结果未确认', NOT_REQUIRED: '不需要拨打' })[props.data?.auto_voice?.status] || view.value.title;
 });
 const time = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '';
 function retry() {

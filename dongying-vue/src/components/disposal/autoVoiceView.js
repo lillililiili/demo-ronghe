@@ -3,7 +3,8 @@ import { PILOT_CONTACT_MISSING_TITLE, pilotContactMissing } from './autoSmsView.
 export const AUTO_VOICE_STATUS = {
   DISABLED: '电话录音通知未启用', WAITING: '等待自动拨打', CALLING: '系统正在拨打',
   SIMULATED_PLAYED: '模拟接通并播放完成', FAILED: '电话通知失败，需人工处理',
-  UNAVAILABLE: '电话录音通知暂不可用', BLOCKED: '自动电话通知已暂停', UNKNOWN: '通话结果未确认'
+  UNAVAILABLE: '电话录音通知暂不可用', BLOCKED: '自动电话通知已暂停', UNKNOWN: '通话结果未确认',
+  NOT_REQUIRED: '不需要拨打飞手电话'
 };
 
 export function autoVoiceView(data) {
@@ -17,7 +18,10 @@ export function autoVoiceView(data) {
   // 缺飞手电话时不再显示“等待短信送达/等待拨打”，直接写明缺什么（BLOCK-03）。
   const missing = pilotContactMissing(data, voice.status);
   return {
-    title: missing ? PILOT_CONTACT_MISSING_TITLE : AUTO_VOICE_STATUS[voice.status] || '通话结果未确认',
+    // 短信因超过通知时效停发时，电话也不自动拨打，要先核对最新情况。
+    title: missing ? PILOT_CONTACT_MISSING_TITLE
+      : String(voice.reason || '').includes('超过自动通知时效') && voice.status === 'BLOCKED' ? '超过时效，不自动拨打'
+      : AUTO_VOICE_STATUS[voice.status] || '通话结果未确认',
     reason: missing ? '上级下发的飞行计划里没有执行飞手的电话，无法给飞手打电话。' : voice.reason || '',
     pilotContactMissing: missing,
     tone: missing ? 'warning' : voice.status === 'SIMULATED_PLAYED' ? 'success'

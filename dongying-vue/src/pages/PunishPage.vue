@@ -26,6 +26,7 @@ import { handoffApi } from '@/services/handoffApi.js';
 import AdvisoryRecords from '@/components/disposal/AdvisoryRecords.vue';
 import PunishmentOutcome from '@/pages/punish/PunishmentOutcome.vue';
 import PunishmentNotification from '@/pages/punish/PunishmentNotification.vue';
+import HandoffMaterialFacts from '@/pages/punish/HandoffMaterialFacts.vue';
 import { DELIVERY_OPTIONS, RECEIPT_OPTIONS, deliveryView, receiptView, statusQuery } from '@/pages/punish/handoffStatus.js';
 import RecipientSnapshotFields from '@/components/notifications/RecipientSnapshotFields.vue';
 import { getEvidenceChain } from '@/services/evidenceApi.js';
@@ -407,6 +408,7 @@ onMounted(() => {
                         <p>{{ labelOf(ALARM_TYPE_LABEL, selected.material.event.alarm_type, '未提供') }} · 移送时{{ labelOf(UAV_STATE_LABEL, selected.material.event.state, '状态未提供') }}</p>
                         <p class="pn-material-meta">发生于 {{ formatTime(selected.material.event.occurred_at) }}</p>
                         <p class="pn-material-meta">遥控器位置：{{ pilotLocationText(selected.material.pilot_location) }}</p>
+                        <HandoffMaterialFacts part="summary" :material="selected.material" />
                       </div>
                       <p v-else class="pn-material-meta">无事件材料</p>
                       <p v-if="selected.material.evidence_omitted" class="pn-material-meta">当前无权查看移送时证据</p>
@@ -432,16 +434,7 @@ onMounted(() => {
                           </p>
                         </div>
                       </div>
-                      <div v-if="!selected.material.evidence_omitted" class="pn-sub pn-wrap">
-                        <h4>移送时证据</h4>
-                        <template v-if="selected.material.evidence?.length">
-                          <div>{{ selected.material.evidence.length }} 份 · 按移送时保存</div>
-                          <div v-for="evidence in selected.material.evidence" :key="evidence.evidence_id">
-                            <a class="pn-frozen-link" :href="`#/evidence?file=${encodeURIComponent(evidence.evidence_id)}`">{{ evidence.evidence_no || '查看证据记录' }}</a>
-                          </div>
-                        </template>
-                        <p v-else class="pn-material-meta">移送时未关联证据</p>
-                      </div>
+                      <HandoffMaterialFacts :material="selected.material" :evidence-availability="selected.availability?.evidence || ''" />
                         </div>
                       </details>
                     </template>

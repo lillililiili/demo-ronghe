@@ -339,16 +339,21 @@ class FullChain:
                 min_altitude_m=zone.get('min',0),max_altitude_m=zone['max'],altitude_datum=zone.get('altitudeDatum','AMSL'),
                 valid_from=now,valid_to=end,change_reason='全量模拟批次 '+self.manifest['batch']))
             self.manifest['zones'][zone['id']]={'id':result.get('airspace_id'),'revision':int(result.get('revision') or revision),'receipt':result};self.checkpoint()
+        # 观测源和气象站是长期设备：按登记内容（单位区域、名称、位置）复用同一条，不随批次新建。
         if any(t.get('transport')=='normalized' for t in self.scene['targets']):
-            source=self.request('normalized-source',PREFIX+'/observation-devices',dict(self.scope,
-                message_id=self.message('source'),name=self.message('完整观测'),longitude=118.61,latitude=37.464))
+            source_body=dict(self.scope,name='模拟完整观测源',longitude=118.61,latitude=37.464)
+            source=self.request('normalized-source',PREFIX+'/observation-devices',dict(source_body,
+                message_id=stable_simulator_id('map-sim-source-',payload_fingerprint(source_body))))
             self.manifest['normalized_source']=source
             self.manifest['devices']['normalized-source']={'platform_id':source['device_id'],'kind':'normalized',
                                                          'external_id':source['source_id']}
         if 'weather' in self.scene.get('fullchain',{}).get('categories',[]):
-            sensor=self.request('weather-device',PREFIX+'/weather-devices',dict(self.scope,
-                message_id=self.message('weather-device'),device_no=self.message('weather'),name='模拟气象站 '+self.manifest['batch'],
-                longitude=self.weather.get('longitude',118.61),latitude=self.weather.get('latitude',37.464)))
+            station=dict(self.scope,name='模拟气象站',
+                longitude=self.weather.get('longitude',118.61),latitude=self.weather.get('latitude',37.464))
+            station_key=payload_fingerprint(station)
+            sensor=self.request('weather-device',PREFIX+'/weather-devices',dict(station,
+                message_id=stable_simulator_id('map-sim-weather-device-',station_key),
+                device_no=stable_simulator_id('map-sim-weather-',station_key)))
             self.manifest['weather_device']=sensor
             pid=self.manifest['realtime_plan_id']
             self.request('weather-forecast',PREFIX+'/weather',{'message_id':self.message('forecast'),

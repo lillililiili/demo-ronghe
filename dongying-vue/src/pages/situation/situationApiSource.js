@@ -139,8 +139,11 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
     const tasks = [
       wanted.has('targets') && retain('targets', async () => {
         const [page, recent] = await Promise.all([
-          targetApi.listAll({ seen_from: observedFrom, seen_to: generatedAt, include_merged: false }),
-          // 近期轨迹接口最多允许 1 小时；目标保留整日，实时尾迹继续沿用 5 分钟窗口。
+          // 地图只画此刻还没到期的目标（targetIsCurrent），只取这些（ZT-20 复测 2）：当天目标多时（四百多个）
+          // 每轮分页拉完要几十秒，刚收到的目标等整轮拼完已过 15 秒有效期，被页面当作过期滤掉，图上始终看不到。
+          // 不认 map_visible_at 的旧后端照旧返回当天全部目标，页面照旧筛。
+          targetApi.listAll({ seen_from: observedFrom, seen_to: generatedAt, include_merged: false, map_visible_at: generatedAt }),
+          // 近期轨迹接口最多允许 1 小时；实时尾迹沿用 5 分钟窗口。
           targetApi.recentTracks({ observed_from: Math.max(day.from, generatedAt - RECENT_TRACK_WINDOW_MS), observed_to: generatedAt, points_per_target: 24 })
         ]);
         const converted = attachBearing(toTargets(page.items), bearingOrigins(snapshot.devices));

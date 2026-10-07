@@ -792,15 +792,37 @@
     }
   };
 
+  /* 逐帧动画（脉冲、扫描、虚线流动）只是装饰。没有显卡的电脑或云端浏览器上画一帧可能要一两秒，
+     逐帧重画会占满页面：数据刷新、目标到期清理都排不上队，地图上就长时间“没有目标”。
+     最近 3 帧都慢于 250ms 时，装饰动画改为隔一段时间才画一帧（该帧耗时的 8 倍，至少 2 秒），
+     让出的时间留给数据；数据变化、拖动缩放、底图重绘仍立即重画。只要有一帧恢复正常就回到逐帧动画。
+     costs：最近几次“画了一帧到下一次回调”的间隔（毫秒，含浏览器合成）；返回 0 表示逐帧画。 */
+  const SLOW_FRAME_MS = 250, SLOW_FRAME_COUNT = 3, SLOW_GAP_MIN_MS = 2000, SLOW_GAP_FACTOR = 8;
+  MapView.animationGap = function (costs) {
+    if (!costs || costs.length < SLOW_FRAME_COUNT) return 0;
+    const fastest = Math.min.apply(null, costs.slice(-SLOW_FRAME_COUNT));
+    return fastest > SLOW_FRAME_MS ? Math.max(SLOW_GAP_MIN_MS, fastest * SLOW_GAP_FACTOR) : 0;
+  };
+
   MapView.prototype._loop = function () {
     if (this._raf || this._dead || this._paused) return;
     const self = this;
-    const f = function () {
+    const f = function (now) {
       self._raf = null;
       if (self._dead || self._paused) return;
       if (!self.box.isConnected) { self.destroy(); return; }
-      self.t += 1;
-      self.draw();
+      const costs = self._frameCosts || (self._frameCosts = []);
+      if (self._animDrawnAt != null) {
+        costs.push(now - self._animDrawnAt);
+        if (costs.length > SLOW_FRAME_COUNT) costs.shift();
+        self._animDrawnAt = null;
+      }
+      const gap = MapView.animationGap(costs);
+      if (!gap || now - (self._animLastAt || 0) >= gap) {
+        self.t += 1;
+        self.draw();
+        self._animDrawnAt = self._animLastAt = now;
+      }
       self._raf = requestAnimationFrame(f);
     };
     this._raf = requestAnimationFrame(f);

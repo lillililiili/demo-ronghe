@@ -210,8 +210,11 @@ const closureItems = computed(() => {
   ];
 });
 
+// 风险分档是今日感知目标的分档：要能读目标，还要能读风险（ZT-17 复测 2）。
 const targetSummary = computed(() => {
-  return snapshot.value?.target_risk ? '' : dataState('assessments');
+  if (!snapshot.value?.target_risk) return dataState(avail('targets') ? 'risks' : 'targets');
+  const simulated = snapshot.value?.simulated_included?.sensed_today;
+  return `今日${Number.isFinite(simulated) && simulated > 0 ? SIMULATED_TREND_NOTE : ''}`;
 });
 const deviceSummary = computed(() => (snapshot.value?.devices ? scopeLabel(snapshot.value.devices) : dataState('devices')));
 const flightSummary = computed(() => {
@@ -243,9 +246,18 @@ const alarmColumns = [
   { title: '状态', key: 'status' }
 ];
 
+/* 重点目标风险态势（ZT-17 复测 2）：今日感知目标按各自最新的风险等级分档，与运行统计选今天时的"各风险等级分布"
+   同一份取数、同一套分档，五档相加就是今日感知目标；超高风险与高风险同为红色，与运行统计一致。
+   原先按研判等级抽样 100 条，与运行统计对不上。 */
 const riskItems = computed(() => {
   const r = snapshot.value?.target_risk || {};
-  return [{ name: '高风险', value: r.high, tone: 'red' }, { name: '中风险', value: r.medium, tone: 'amber' }, { name: '低风险', value: r.low, tone: 'blue' }, { name: '未定级', value: r.ungraded, tone: 'gray' }];
+  return [
+    { name: '超高风险', value: r.critical, tone: 'red' },
+    { name: '高风险', value: r.high, tone: 'red' },
+    { name: '中风险', value: r.medium, tone: 'amber' },
+    { name: '低风险', value: r.low, tone: 'blue' },
+    { name: '未识别', value: r.ungraded, tone: 'gray' }
+  ];
 });
 const riskTotal = computed(() => snapshot.value?.target_risk ? riskItems.value.reduce((sum, r) => sum + (r.value || 0), 0) : null);
 
@@ -463,7 +475,7 @@ onBeforeUnmount(() => {
           <section class="panel" data-module="target-dynamics">
             <div class="ph"><h3>重点目标风险态势</h3><span v-if="targetSummary" class="sub">{{ targetSummary }}</span></div>
             <div class="pb bs-risk-body">
-              <div class="bs-risk-pie"><div ref="targetChartEl" class="bs-panel-chart" role="img" aria-label="重点目标风险圆环分布"></div><div class="bs-risk-center"><b>{{ dash(riskTotal) }}</b><span>{{ riskTotal === 0 ? '暂无风险目标' : '重点目标' }}</span></div></div>
+              <div class="bs-risk-pie"><div ref="targetChartEl" class="bs-panel-chart" role="img" aria-label="重点目标风险圆环分布"></div><div class="bs-risk-center"><b>{{ dash(riskTotal) }}</b><span>{{ riskTotal === 0 ? '今日暂无目标' : '今日目标' }}</span></div></div>
               <div class="bs-risk-values"><div v-for="item in riskItems" :key="item.name"><i :style="{ background: 'var(--' + item.tone + ')' }"></i><span>{{ item.name }}</span><b>{{ dash(item.value) }}</b><small>个</small></div></div>
             </div>
           </section>

@@ -128,6 +128,8 @@ async function main() {
   const first = snapshots[0];
   check('目标范围为北京时间当天零点至当前，不依赖机器时区',
     [targetQueries[0].seen_from, targetQueries[0].seen_to], [dayStart, now]);
+  check('只取此刻地图显示还没到期的目标，不再每轮分页拉完当天全部目标（ZT-20 复测 2）',
+    [targetQueries[0].map_visible_at, targetQueries[0].include_merged], [now, false]);
   check('目标范围扩展不突破近期轨迹接口窗口限制',
     trackQueries[0], { observed_from: now - 5 * 60_000, observed_to: now, points_per_target: 24 });
   check('两小时前停止上报的目标仍然可见', first.targets.map(row => row.id), ['MB-1']);

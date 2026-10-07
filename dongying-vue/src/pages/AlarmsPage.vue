@@ -134,8 +134,12 @@ const NOTIFY_PHASE = {
   AWAIT_COUNTER: { t: '待处置决策', c: 't-orange', color: '#fb923c' }
 };
 const SOURCE_MODE = { mock: { t: MODE_TEXT.mock, c: 't-purple' }, replay: { t: MODE_TEXT.replay, c: 't-amber' }, live: { t: MODE_TEXT.live, c: 't-green' } };
-/* 类别来自共享字典；区域来自本页的区域字典接口，读不到就把下拉标成"不可用"并在 title 说明原因。 */
-const KIND_OPTS = [{ v: '全部', t: '全部' }, ...Object.keys(ALARM_TYPE_LABEL).map(v => ({ v, t: ALARM_TYPE_LABEL[v] }))];
+/* 类别按违规原因筛（2026-10-07）：平台自己产生的告警都是"飞行违规"，按告警类型筛只有一项筛得出东西。
+   可选项是规则引擎会写进告警的违规原因（与后端 violation_reason 白名单同一组），文字与列表里的原因一致；
+   区域来自本页的区域字典接口，读不到就把下拉标成"不可用"并在 title 说明原因。 */
+const VIOLATION_REASON_CODES = ['NO_AUTHORIZATION', 'INSIDE_RESTRICTED_AIRSPACE', 'AIRSPACE_ALTITUDE_EXCEEDED',
+  'TEMPORARY_RESTRICTION_ACTIVE', 'ROUTE_DEVIATION', 'TIME_WINDOW_OVERRUN', 'PLAN_ALTITUDE_EXCEEDED', 'NIGHT_FLIGHT', 'BVLOS_EXCEEDED'];
+const KIND_OPTS = [{ v: '全部', t: '全部' }, ...VIOLATION_REASON_CODES.map(v => ({ v, t: ruleReasonText(v) }))];
 const districts = ref([]);
 const districtError = ref('');
 const regionOpts = () => (districtError.value
@@ -449,7 +453,7 @@ const disabledSelect = (name, reason) =>
 const listPanelBody = `<div class="toolbar alarm-filter-toolbar">
     <div class="toolbar-fields">
       ${U.field('等级', U.select('level', LEVEL_OPTS, st.level))}
-      ${U.field('类别', U.select('kind', KIND_OPTS, st.kind))}
+      ${U.field('违规原因', U.select('kind', KIND_OPTS, st.kind))}
       ${U.field('状态', U.select('status', STATUS_OPTS, st.status))}
       ${U.field('区域', U.select('region', regionOpts(), st.region))}
     </div>
@@ -487,7 +491,7 @@ function queryOf() {
   if (st.sort !== 'priority') q.order = st.order;
   if (st.level !== '全部') q.severity = st.level;
   if (STATUS_FILTER[st.status]) Object.assign(q, STATUS_FILTER[st.status].q);
-  if (st.kind !== '全部') q.alarm_type = st.kind;
+  if (VIOLATION_REASON_CODES.includes(st.kind)) q.violation_reason = st.kind;
   if (st.region !== '全部') q.district_id = st.region;
   return q;
 }

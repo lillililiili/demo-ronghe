@@ -697,7 +697,7 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
             <div v-else-if="deepLinkNotice" class="empty lg-state-warn" role="status">{{ deepLinkNotice }}</div>
             <div v-else class="lg-table-scroll">
               <table class="lg-target-table" aria-label="目标判定结果">
-                <thead><tr><th>目标编号</th><th>匹配任务</th><th>所在区域</th><th>判定结果</th><th>违规 / 未知原因</th><th>研判时间</th></tr></thead>
+                <thead><tr><th>编号</th><th>匹配任务</th><th>所在区域</th><th>判定结果</th><th>违规 / 未知原因</th><th>研判时间</th></tr></thead>
                 <tbody>
                   <tr v-for="item in items" :key="item.evaluation_id"
                     :class="{ 'is-selected': selectedEvaluation?.evaluation_id === item.evaluation_id }" @click="selectEvaluation(item)">

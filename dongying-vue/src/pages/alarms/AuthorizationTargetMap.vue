@@ -74,7 +74,7 @@ onUnmounted(() => { alive = false; ++generation; destroyMap(); });
     <p v-if="loading" class="map-note" role="status">正在读取目标位置与轨迹</p>
     <div v-show="!reason && !error" ref="host" class="map-canvas"></div>
     <div v-if="target" class="map-facts">
-      <span>{{ target.target_no || '目标编号未提供' }} · {{ labelOf(SOURCE_MODE_LABEL, trackMode || target.source_mode, '来源未知') }}</span>
+      <span>{{ target.target_no || '编号未提供' }} · {{ labelOf(SOURCE_MODE_LABEL, trackMode || target.source_mode, '来源未知') }}</span>
       <span>末次观测 {{ formatTime(observedAt) }}</span>
       <span v-if="target.stale === true" class="warning">观测已失效，图示位置不代表当前实时位置</span>
       <span v-if="trackError" class="warning">轨迹读取失败：{{ trackError }}</span>

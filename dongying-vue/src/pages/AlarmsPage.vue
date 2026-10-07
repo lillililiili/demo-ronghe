@@ -499,7 +499,7 @@ function listHtml() {
     : '';
   return note + U.table([
     {
-      t: sortTh('ts', '告警编号 / 时间'), w: '108px', cls: 'num',
+      t: sortTh('ts', '编号 / 时间'), w: '108px', cls: 'num',
       render: a => U.cell(esc(noOf(a)), clock(a.received_at), { mono: true, title: esc(a.alarm_id) })
     },
     { t: sortTh('level', '等级'), w: '52px', align: 'center', render: sevTag },

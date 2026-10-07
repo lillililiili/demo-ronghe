@@ -55,12 +55,12 @@ async function readSubject(row) {
       if (!active) return;
       if (!event?.alarm_id) throw new Error('未提供关联告警');
       const alarm = await getAlarm(event.alarm_id);
-      text = alarm.alarm_no || '告警编号未提供';
+      text = alarm.alarm_no || '编号未提供';
       extra = alarm.target_no ? `目标 ${alarm.target_no}` : '';
       targetId = alarm.target_id || '';
     } else if (row.subject_kind === 'TARGET' && hasPermission('target:read')) {
       const target = await targetApi.detail(row.subject_id);
-      text = target.target_no || '目标编号未提供';
+      text = target.target_no || '编号未提供';
       targetId = target.target_id || '';
     } else { text = '关联对象信息不可用'; }
     if (active) subjects.value[key] = { text, extra, targetId, fallback: !targetId };

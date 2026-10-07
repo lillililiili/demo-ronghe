@@ -66,6 +66,8 @@ MQTT 断开、发布确认失败或登录失效仍会停止并显示原因，需
 
 已有计划可从“已有模拟计划”或接收记录点击“读取并补录资料/补录计划资料”，读取当前版本后保存。补录保留原时间、状态、无人机 SN、航线和原上传记录；版本冲突需重新读取。缺失资料不自动编造，没有档案时填写申报名称后仍显示待关联；档案继续在后台用户管理左侧单位机构维护。
 
+“新建飞行任务”有“航线归属单位与区县”下拉，可选项是当前账号已授权的单位与区县（与空域页同一接口）。默认先用模拟器设备数据连接 local-lingyun-replay 的单位与区县，其次沿用第一条已有航线的归属，只有一个可选项时直接用它；都没有时必须选，没选会在提交前用中文提示。
+
 新增代理白名单仅开放 `/local-interface-simulator/plan-options`（GET）和 `/local-interface-simulator/plans/{id}/filing`（GET/POST）。服务端限制模拟/回放计划，并复用单位管理权限及飞手归属、角色和有效性校验，资料和关联一起回滚或成功。本次改动仅覆盖资料输入入口；地图 MQTT 场景的既有批次配套数据不自动回填。
 
 验证命令：`node --test tests/test_plan_form.cjs tests/test_external_ui.cjs tests/test_external_session.cjs`，以及 `python -m unittest discover -s tests -p test_external.py`（在本目录执行）。

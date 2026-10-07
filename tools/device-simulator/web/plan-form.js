@@ -42,6 +42,8 @@
   const f=data.filing;
   if(!f||typeof f!=='object'||Array.isArray(f))throw Error('请填写任务申报资料');
   if(options.requireWindow!==false&&(!Number.isFinite(Number(data.start_at))||Number(data.start_at)<=0||!Number.isFinite(Number(data.end_at))||Number(data.end_at)<=Number(data.start_at)))throw Error('请填写有效的任务飞行时间');
+  const route=data.route&&typeof data.route==='object'&&!Array.isArray(data.route)?data.route:null;
+  if(route&&(!route.owner_org_id||!route.district_id))throw Error('请选择航线归属单位与区县；没有可选项时，请先在后台给当前账号分配单位与区县的数据范围');
   if(!f.source_id)throw Error('请选择任务来源；没有可选来源时请先在后台配置模拟或回放来源');
   for(const [key,label] of names)if(typeof f[key]!=='string'||!f[key].trim()||f[key].length>128)throw Error(`请填写${label}（最多 128 字）`);
   for(const prefix of ['takeoff','landing'])if((f[prefix+'_longitude']==null)!=(f[prefix+'_latitude']==null))throw Error('起降点经纬度必须成对填写');

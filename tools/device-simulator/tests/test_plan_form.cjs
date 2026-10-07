@@ -71,3 +71,12 @@ test('plan validation requires a real flight time window',()=>{
  const filing={source_id:'s',operator_name:'单位',pilot_name:'飞手',takeoff_site_name:'起点',landing_site_name:'终点'};
  assert.throws(()=>form.validate({filing}),/任务飞行时间/);
 });
+test('a new route must name its owner unit and district before the plan is sent',()=>{
+ const filing={source_id:'s',operator_name:'单位',pilot_name:'飞手',takeoff_site_name:'起点',landing_site_name:'终点'};
+ const times={start_at:Date.parse('2026-10-03T09:00:00+08:00'),end_at:Date.parse('2026-10-03T09:30:00+08:00')};
+ const route={name:'巡检计划',geometry:{type:'LineString',coordinates:[[118.6,37.4],[118.7,37.5]]},corridor_width_m:100};
+ assert.throws(()=>form.validate({filing,...times,route:{...route,owner_org_id:'',district_id:''}}),/归属单位与区县/);
+ assert.throws(()=>form.validate({filing,...times,route:{...route,owner_org_id:'org-1'}}),/归属单位与区县/);
+ assert.doesNotThrow(()=>form.validate({filing,...times,route:{...route,owner_org_id:'org-1',district_id:'d-1'}}));
+ assert.doesNotThrow(()=>form.validate({filing,...times,route_version_id:'legacy-route'}));
+});

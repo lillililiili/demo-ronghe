@@ -43,3 +43,11 @@ export function prepareEvidenceTrack(rows = []) {
     canReplay: points.length > 1 && timed && points.at(-1).t > points[0].t,
     timingIncomplete: points.length > 0 && !timed };
 }
+
+/** 证据链里可与轨迹同步播放的光电录像（只取在库的录像文件，采集时刻即录像开始时刻）。 */
+export function chainVideos(records = []) {
+  return (records || []).filter(record => record?.record_type === 'VIDEO' && record.summary?.kind_code === 'EO_VIDEO'
+    && record.availability !== 'UNAVAILABLE' && Number.isFinite(record.occurred_at))
+    .map(record => ({ id: record.record_id, no: record.summary.evidence_no, capturedAt: record.occurred_at,
+      status: record.summary.status }));
+}

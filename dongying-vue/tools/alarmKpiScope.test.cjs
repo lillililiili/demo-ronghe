@@ -11,9 +11,11 @@ function loadKpis(recorded) {
   const body = source.slice(start, source.indexOf('\n}\n', source.indexOf('async function loadKpis()')) + 3);
   const listAlarms = query => { recorded.push(query); return Promise.resolve({ total: query.state ? 4 : 10 }); };
   const disposalApi = { list: () => Promise.resolve({ total: 1 }) };
-  const names = ['ref', 'listAlarms', 'disposalApi', 'DISPOSAL_ACTIVE', 'isDisposalUnavailable', 'DISPOSAL_UNAVAILABLE_TEXT', 'esc', 'messageOf', 'U'];
+  const names = ['ref', 'listAlarms', 'disposalApi', 'DISPOSAL_ACTIVE', 'isDisposalUnavailable', 'DISPOSAL_UNAVAILABLE_TEXT', 'esc', 'messageOf', 'U',
+    'PENDING_DISPOSAL_QUERY'];
   const values = [value => ({ value }), listAlarms, disposalApi, ['APPROVED', 'EXECUTING'], () => false, '处置授权功能暂不可用',
-    String, error => String(error), { num: value => String(value) }];
+    String, error => String(error), { num: value => String(value) },
+    new Function(`${source.match(/^const PENDING_DISPOSAL_QUERY = .*;$/m)[0]} return PENDING_DISPOSAL_QUERY;`)()];
   return new Function(...names, body + '; return { run: loadKpis, kpiList };')(...values);
 }
 
@@ -40,4 +42,10 @@ test('every alarm statistic card counts the same Beijing day and says so', async
     assert.match(byLabel[label].desc, /北京时间今天/);
   }
   for (const label of ['当前反制中', '当前干扰中']) assert.equal(byLabel[label].caption, '实时状态');
+
+  // "待处置"不限日期：属实且处置还没结束的告警，与列表"待处置"筛选同一个后端分组口径。
+  const pending = recorded.filter(q => q.occurred_from == null && q.attention_group);
+  assert.deepEqual(pending.map(q => [q.state, q.attention_group]), [['CONFIRMED', 'CURRENT,AWAITING_CONFIRMATION']]);
+  assert.equal(byLabel['待处置'].caption, '实时，不限日期');
+  assert.equal(byLabel['待处置'].value, '4');
 });

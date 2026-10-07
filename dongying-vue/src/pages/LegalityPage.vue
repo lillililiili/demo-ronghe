@@ -16,6 +16,7 @@ import { useRoute } from 'vue-router';
 import UKpis from '@/components/UKpis.vue';
 import TargetTrackingPanel from '@/components/video/TargetTrackingPanel.vue';
 import { UField } from '@/components/form/index.js';
+import UControl from '@/components/form/UControl.vue';
 import UPagination from '@/components/UPagination.vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import { refreshFailureText, useRealtimeRefresh } from '@/hooks/useRealtimeRefresh.js';
@@ -689,7 +690,7 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
               :options="reviewLocationOptions" :disabled="loading" @update:model-value="onRegionChange" />
             <UField v-if="canReadPlans" class="lg-region-filter" variant="form" label="任务" v-model="st.plan" type="select" size="small"
               :options="planOptions" :disabled="loading" :title="plansError || '只看某一条飞行任务的研判；默认只列今天及以后还没结束的任务'" @update:model-value="onRegionChange" />
-            <label v-if="canReadPlans" class="lg-plan-expired" title="勾选后任务下拉里也列出已经结束的任务"><input v-model="plansIncludeExpired" type="checkbox" :disabled="loading" @change="loadPlans" />含已过期</label>
+            <span v-if="canReadPlans" class="lg-plan-expired" title="勾选后任务下拉里也列出已经结束的任务"><UControl v-model="plansIncludeExpired" type="checkbox" box-label="含已过期" :disabled="loading" @update:model-value="loadPlans" /></span>
             </div>
           </div>
 

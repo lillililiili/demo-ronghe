@@ -661,7 +661,7 @@ function detailActionsHtml() {
   if (!a) return '';
   const replayN = replayPointCount();
   return `<div class="alarm-observation-actions">
-      <button class="btn" data-al="replay" ${replayN > 1 ? '' : 'disabled '}title="${replayN > 1 ? '按实测轨迹在地图上走航线回放，不是视频' : '没有足够的轨迹点'}">${U.icon('trend')} 轨迹回放</button>
+      <button class="btn" data-al="replay" ${replayN > 1 ? '' : 'disabled '}title="${replayN > 1 ? '按实测轨迹回放，有光电录像时同步播放' : '没有足够的轨迹点'}">${U.icon('trend')} 轨迹回放</button>
       ${disposalActions(a, ev)}</div>
     ${ev?.state === 'PENDING_VERIFICATION' ? '<p class="alarm-action-note">事件事实尚待核实。核实属实后自动发送飞手短信。</p>' : ''}`;
 }

@@ -3,30 +3,41 @@ const assert = require('node:assert/strict');
 const { readFileSync } = require('node:fs');
 const path = require('node:path');
 
-/* ZT-17：大屏统计卡原先不分来源，运行统计和大屏趋势只算 live，同一个数两边对不上。
-   统计卡（含它自己补读的"已完成"和设备类型两块）必须跟运行统计同口径只计正式接入，
-   并且把被排除的模拟/回放条数写在屏幕上，不然演示库里一排 0 看着像功能坏了。 */
-const source = readFileSync(path.join(__dirname, '../src/pages/bigscreen/BigScreenApp.vue'), 'utf8');
+/* ZT-17 与 2026-10-07 用户决定：大屏统计卡与运行统计同一口径，由后台决定计入哪些来源——
+   允许模拟的环境算真实设备和设备模拟器的数据，正式环境只算真实设备，系统自带的演示样例都不算。
+   页面不再自己按来源拼查询（免得口径两处各写一份），并且写明其中有多少来自设备模拟器。 */
+const read = file => readFileSync(path.join(__dirname, '../src/pages/bigscreen', file), 'utf8');
+const source = read('BigScreenApp.vue');
+const bottom = read('BigScreenBottomStats.vue');
 
-test('the statistic cards and the counts the big screen reads itself all ask for live only', () => {
-  const completed = source.match(/const completedQuery = [^;]+;/s);
-  assert.ok(completed, '找不到"已完成"计划的查询');
-  assert.match(completed[0], /source_mode: 'live'/, '已完成必须与今日计划同口径');
-  assert.match(source, /'\/device-monitor\/overview\?formal_only=true'/, '设备明细也只能数正式接入设备');
-  // 快照里的统计类计数由后端按 live 过滤，前端不得再按全部来源自己算一遍。
-  assert.doesNotMatch(source, /source_mode: 'mock'|source_mode: 'replay'/);
+test('every count on the big screen comes from the backend statistics scope', () => {
+  // 页面自己不按来源过滤；计数都来自快照或按统计口径的接口。
+  assert.doesNotMatch(source, /source_mode: '/, '页面不能自己按来源拼查询');
+  assert.match(source, /'\/device-monitor\/overview\?statistics_scope=true'/, '设备类型与设备总数同一统计口径');
+  assert.doesNotMatch(source, /formal_only/);
+  // 已完成计划随快照给出，与今日计划、执行中同一口径。
+  assert.match(source, /snapshot\.value\?\.flights\?\.completed/);
+  assert.doesNotMatch(source, /\/flight-plans\?/);
 });
 
-test('the big screen says which rule the statistic cards use and what it left out', () => {
-  assert.match(source, /统计口径：只计正式接入数据，与运行统计一致/);
-  // 办理队列与待研判按全部来源，必须在同一句里讲清楚，否则两类数字还是会被当成一个口径。
-  assert.match(source, /待研判与办理队列按全部来源/);
+test('the big screen says the simulator is counted and how much of the cards came from it', () => {
   const scope = source.match(/const kpiScope = computed\(\(\) => \{.*?\n\}\);/s);
   assert.ok(scope, '找不到统计口径说明');
-  assert.match(scope[0], /simulated_excluded/, '被排除的条数取自后端的 simulated_excluded');
-  assert.match(scope[0], /另有模拟\/回放/);
+  assert.match(scope[0], /simulatorCounted/, '口径说明按后台给的计入来源来写');
+  assert.match(source, /statistics_source_modes/);
+  assert.match(scope[0], /真实设备和设备模拟器的数据都算，系统自带的演示样例不算/);
+  assert.match(scope[0], /只算真实设备的数据/, '正式环境不能写成"模拟器也算"');
+  assert.match(scope[0], /simulated_included/, '来自模拟器的条数取自后台的 simulated_included');
+  assert.match(scope[0], /其中来自设备模拟器/);
   for (const field of ['sensed_today', 'alarms_today', 'flights_today', 'devices']) {
-    assert.match(source, new RegExp(`'${field}'`), `${field} 必须出现在被排除计数里`);
+    assert.match(source, new RegExp(`'${field}'`), `${field} 必须出现在模拟器条数里`);
   }
   assert.match(source, /class="bs-kpi-scope"/, '口径说明要显示在统计卡旁边，不能只写在注释里');
+});
+
+test('old wording that no longer matches the scope is gone', () => {
+  for (const text of [source, bottom]) {
+    assert.doesNotMatch(text, /只计正式接入|另有模拟|演示数据/);
+  }
+  assert.match(bottom, /含设备模拟器的数据/);
 });

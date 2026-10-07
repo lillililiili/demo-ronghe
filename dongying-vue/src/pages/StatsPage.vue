@@ -21,7 +21,8 @@ const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&':
 usePageChrome('stats');
 
 const S = ref(null);
-const sourceLabel = computed(() => ({ mock: '模拟记录', replay: '回放记录', live: '现场记录', mixed: '混合来源（含模拟或回放时保留标识）', unknown: '暂无来源记录' }[S.value?.sourceMode] || '来源未明确'));
+// 统计口径（2026-10-07 起）：真实设备和设备模拟器的数据都算，系统自带的演示样例不算；正式环境只有真实设备。
+const sourceLabel = computed(() => ({ live: '数据来源：真实设备', replay: '数据来源：设备模拟器', mixed: '数据来源：真实设备和设备模拟器', mock: '数据来源：系统自带的演示样例', unknown: '所选时间内暂无数据' }[S.value?.sourceMode] || '数据来源未明确'));
 const generatedLabel = computed(() => S.value?.generatedAt ? new Date(S.value.generatedAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }) + '（北京时间）' : '未知');
 function metricNumber(value) { return value == null ? '暂不可统计' : U.num(value); }
 function metricReason(key) { return S.value?.availability?.[key]?.reason || '暂无可靠统计说明'; }

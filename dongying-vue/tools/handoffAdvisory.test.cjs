@@ -50,6 +50,15 @@ test('handoff submit errors never invite a blind second submit', async () => {
   assert.equal(handoffSubmitError(null), '提交失败，请稍后重试。');
 });
 
+test('the time-window note the backend appends is stripped in both its old and new wording', async () => {
+  const { autoSmsView } = await load('components/disposal/autoSmsView.js');
+  for (const lead of ['本地演示策略', '自动通知时效']) {
+    const view = autoSmsView({ auto_sms: { status: 'BLOCKED', can_retry: false,
+      reason: `事件已超过自动通知时效；${lead}：目标和研判有效期120秒，事件及人工确认有效期300秒` } });
+    assert.equal(view.reason, '原告警已超过自动发送时效；本次核实不会更新原告警和目标观测时间。');
+  }
+});
+
 test('an alert past the notification window asks to check the latest situation before any SMS or call', async () => {
   const { autoSmsView, smsExpired } = await load('components/disposal/autoSmsView.js');
   const reason = '事件已超过自动通知时效，需核对最新情况：告警已超过300秒，情况可能已经变化，系统不再自动发送短信和拨打电话';

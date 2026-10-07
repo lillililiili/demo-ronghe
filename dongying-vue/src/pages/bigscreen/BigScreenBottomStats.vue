@@ -6,7 +6,8 @@ const isCount = value => Number.isSafeInteger(value) && value >= 0;
 const report = computed(() => props.detail.data);
 const available = key => props.detail.state === 'AVAILABLE'
   && ['AVAILABLE', 'PARTIAL'].includes(report.value?.availability?.[key]?.status);
-const source = computed(() => report.value?.simulated ? '近7日 · 演示数据' : '近7日');
+// 统计口径里系统自带的演示样例不算；simulated 为真说明其中有设备模拟器的数据（2026-10-07 起计入）。
+const source = computed(() => report.value?.simulated ? '近7日 · 含设备模拟器的数据' : '近7日');
 
 // 只使用完整统计聚合；地图点和告警列表的有限样本不能替代全量分布。
 const regions = computed(() => {

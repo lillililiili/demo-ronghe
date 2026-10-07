@@ -11,8 +11,8 @@ export function smsExpired(sms) {
     && String(sms.reason || '').startsWith(STALE_PREFIX);
 }
 function reasonText(reason) {
-  // 只剥离已知的演示参数尾注，未知失败原因完整保留。
-  const text = String(reason || '').replace(/；本地演示策略：目标和研判有效期\d+秒，事件及人工确认有效期\d+秒$/, '')
+  // 只剥离已知的时效参数尾注（后台旧文案"本地演示策略"、新文案"自动通知时效"），未知失败原因完整保留。
+  const text = String(reason || '').replace(/；(?:本地演示策略|自动通知时效)：目标和研判有效期\d+秒，事件及人工确认有效期\d+秒$/, '')
     // 标题已写“需核对最新情况”，原因只留后半句。
     .replace(/^事件已超过自动通知时效，需核对最新情况：/, '');
   const labels = {

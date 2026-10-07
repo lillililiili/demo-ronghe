@@ -42,7 +42,6 @@ const targetTypes = computed(() => {
     ? detail : { state: 'UNAVAILABLE', data: null };
 });
 const deviceTypes = ref({ state: 'LOADING', data: null });
-const completedFlights = ref({ state: 'LOADING', data: null });
 
 let clockTimer = null;
 let resizeTimer = null;
@@ -140,36 +139,36 @@ function loadSideDetails(data) {
   };
   const { from, to } = data.trend || {};
   const query = from && to ? new URLSearchParams({ from, to }).toString() : null;
-  // 与快照的“今日计划”保持北京时间同一天，只增加参考图中已完成一列。
-  const asOf = Number(data.as_of);
-  const day = Number.isFinite(asOf) && asOf > 0 ? new Date(asOf + 8 * 3600000).toISOString().slice(0, 10) : null;
-  const dayStart = day ? Date.parse(`${day}T00:00:00+08:00`) : null;
-  // ZT-17：已完成也只数正式接入，和快照里的今日计划、执行中同一口径。
-  const completedQuery = day ? new URLSearchParams({ page: '1', size: '1', status_code: 'COMPLETED', source_mode: 'live', window_from: String(dayStart), window_to: String(dayStart + 86400000) }).toString() : null;
+  // 设备类型与快照的设备数同一统计口径（statistics_scope）；今日已完成计划随快照一起给出（flights.completed）。
   void Promise.all([
     read(operationsStats, 'stats', query ? `/stats/operations?${query}` : null, result =>
       result?.availability ? 'AVAILABLE' : 'UNAVAILABLE'),
-    read(deviceTypes, 'devices', '/device-monitor/overview?formal_only=true', result =>
-      Array.isArray(result?.by_type) && result.by_type.every(row => countValid(row.total) && countValid(row.online) && row.online <= row.total) ? 'AVAILABLE' : 'UNAVAILABLE'),
-    read(completedFlights, 'flights', completedQuery ? `/flight-plans?${completedQuery}` : null, result => countValid(result?.total) ? 'AVAILABLE' : 'UNAVAILABLE')
+    read(deviceTypes, 'devices', '/device-monitor/overview?statistics_scope=true', result =>
+      Array.isArray(result?.by_type) && result.by_type.every(row => countValid(row.total) && countValid(row.online) && row.online <= row.total) ? 'AVAILABLE' : 'UNAVAILABLE')
   ]).finally(() => {
     clearTimeout(timeout);
     if (detailController === controller) detailController = null;
   });
 }
 
-/* ZT-17：统计卡与"运行统计"同口径——只计正式接入（source_mode=live）的数据。
-   模拟与回放不进统计，但必须写出被排除了多少，否则演示库里一排 0 看着像功能坏了。
-   待研判目标和左侧办理队列是"现在要处理什么"，按全部来源计，所以单独说明。 */
-const FORMAL_SCOPE_TEXT = '统计口径：只计正式接入数据，与运行统计一致（待研判与办理队列按全部来源）';
-const EXCLUDED_FIELDS = [['感知', 'sensed_today'], ['告警', 'alarms_today'], ['计划', 'flights_today'], ['设备', 'devices']];
+/* 统计口径（ZT-17；2026-10-07 起设备模拟器的数据也算）：大屏上的计数与"运行统计"同一口径，
+   由后台决定计入哪些来源（statistics_source_modes）：允许模拟的环境算真实设备和设备模拟器，
+   正式环境只算真实设备；系统自带的演示样例都不算。其中来自设备模拟器的条数要写出来，免得被当成现场真实数据。 */
+const simulatorCounted = computed(() => (snapshot.value?.statistics_source_modes || []).includes('replay'));
+const SIMULATOR_FIELDS = [['感知', 'sensed_today'], ['告警', 'alarms_today'], ['计划', 'flights_today'], ['设备', 'devices']];
 const kpiScope = computed(() => {
-  const excluded = snapshot.value?.simulated_excluded || {};
-  const parts = EXCLUDED_FIELDS
-    .filter(([, field]) => Number.isFinite(excluded[field]) && excluded[field] > 0)
-    .map(([label, field]) => `${label} ${excluded[field]}`);
-  return parts.length ? `${FORMAL_SCOPE_TEXT}；另有模拟/回放 ${parts.join(' · ')}，不计入统计` : FORMAL_SCOPE_TEXT;
+  if (!snapshot.value?.statistics_source_modes) return '';
+  if (!simulatorCounted.value) return '统计口径与运行统计一致：只算真实设备的数据';
+  const included = snapshot.value?.simulated_included || {};
+  const parts = SIMULATOR_FIELDS
+    .filter(([, field]) => Number.isFinite(included[field]) && included[field] > 0)
+    .map(([label, field]) => `${label} ${included[field]}`);
+  const text = '统计口径与运行统计一致：真实设备和设备模拟器的数据都算，系统自带的演示样例不算';
+  return parts.length ? `${text}；其中来自设备模拟器：${parts.join(' · ')}` : text;
 });
+const SOURCE_SCOPE_LABEL = { live: '真实设备', mixed: '真实设备 + 设备模拟器', replay: '设备模拟器' };
+const scopeLabel = row => SOURCE_SCOPE_LABEL[row?.source_mode] || '';
+const SIMULATED_TREND_NOTE = ' · 含设备模拟器的数据';
 
 const kpis = computed(() => {
   const k = snapshot.value?.kpis || {};
@@ -186,8 +185,7 @@ const kpis = computed(() => {
 const flightMetrics = computed(() => [
   { label: '今日计划', value: snapshot.value?.flights?.today, image: hologram('flight-plan') },
   { label: '执行中', value: snapshot.value?.flights?.executing, image: hologram('uav') },
-  { label: '已完成', value: completedFlights.value.data?.total, image: hologram('flight-complete'),
-    note: completedFlights.value.state === 'AVAILABLE' ? '' : detailMessage(completedFlights.value) }
+  { label: '已完成', value: snapshot.value?.flights?.completed, image: hologram('flight-complete') }
 ]);
 
 // 每日统计可能包含同一目标跨日出现，累计值不宣称跨日去重。
@@ -215,8 +213,12 @@ const closureItems = computed(() => {
 const targetSummary = computed(() => {
   return snapshot.value?.target_risk ? '' : dataState('assessments');
 });
-// 设备健康改为只统计正式接入后，来源恒为 live，不再需要按 source_mode/simulated 推断标签（ZT-17）。
-const deviceSummary = computed(() => (snapshot.value?.devices ? '只计正式接入' : dataState('devices')));
+const deviceSummary = computed(() => (snapshot.value?.devices ? scopeLabel(snapshot.value.devices) : dataState('devices')));
+const flightSummary = computed(() => {
+  if (!snapshot.value?.flights) return dataState('flights');
+  const simulated = snapshot.value?.simulated_included?.flights_today;
+  return Number.isFinite(simulated) && simulated > 0 ? `其中设备模拟器 ${simulated} 个` : '';
+});
 const alarmSummary = computed(() => {
   if (!avail('alarms')) return dataState('alarms');
   return alarmRows.value.length ? `最新 ${alarmRows.value.length} 条` : '';
@@ -398,7 +400,7 @@ async function load({ rethrow = false } = {}) {
     snapshot.value = null;
     detailController?.abort();
     sideLoadedAt = 0;
-    operationsStats.value = deviceTypes.value = completedFlights.value = { state: 'UNAVAILABLE', data: null };
+    operationsStats.value = deviceTypes.value = { state: 'UNAVAILABLE', data: null };
     error.value = e.message || '大屏数据加载失败';
     await nextTick();
     if (!disposed) { renderCharts(); renderMap(); }
@@ -452,7 +454,7 @@ onBeforeUnmount(() => {
       <div class="bs-grid">
         <aside class="bs-col bs-col-left">
           <section class="panel">
-            <div class="ph"><h3>感知与违法趋势</h3><span class="sub">{{ snapshot?.trend?.simulated ? '近 7 日 · 演示数据' : '近 7 日' }}</span></div>
+            <div class="ph"><h3>感知与违法趋势</h3><span class="sub">近 7 日{{ snapshot?.trend?.simulated ? SIMULATED_TREND_NOTE : '' }}</span></div>
             <div class="pb bs-trend-body">
               <div class="bs-trend-totals"><div v-for="item in trendTotals" :key="item.label"><span>{{ item.label }}</span><b :style="{ color: 'var(--' + item.tone + ')' }">{{ dash(item.value) }}</b><small>按日汇总</small></div></div>
               <div class="bs-trend-plot"><div ref="trendEl" class="bs-chart" role="img" aria-label="近七日感知目标与非法目标趋势"></div><span v-if="!snapshot?.trend?.days?.length" class="bs-chart-empty">{{ dataState('stats') }}</span></div>
@@ -466,7 +468,7 @@ onBeforeUnmount(() => {
             </div>
           </section>
           <section class="panel bs-types-panel">
-            <div class="ph"><h3>目标类型分布</h3><span class="sub">近7日{{ targetTypes.data?.simulated ? ' · 演示数据' : '' }}</span></div>
+            <div class="ph"><h3>目标类型分布</h3><span class="sub">近7日{{ targetTypes.data?.simulated ? SIMULATED_TREND_NOTE : '' }}</span></div>
             <div class="pb bs-type-body">
               <div class="bs-section-note">按首次发现时间统计新增目标</div>
               <div v-if="targetTypeRows.length" class="bs-type-list">
@@ -490,7 +492,7 @@ onBeforeUnmount(() => {
         </aside>
         <main class="bs-mid">
           <div class="bs-kpis"><div v-for="item in kpis" :key="item.label" class="kpi" :style="{ '--kpi-tone': item.color }"><div class="bs-kpi-art" aria-hidden="true"><img v-if="item.image" :src="item.image" alt=""><div v-else class="bs-kpi-symbol"><n-icon :component="item.icon"/></div></div><div class="lb">{{ item.label }}</div><div class="v">{{ item.value }}</div></div></div>
-          <p class="bs-kpi-scope">{{ kpiScope }}</p>
+          <p v-if="kpiScope" class="bs-kpi-scope">{{ kpiScope }}</p>
           <div class="bs-map-shell" role="region" aria-label="东营全域融合态势地图，可拖动和缩放，展示目标、设备、空域与航迹"><div id="bsMap" ref="mapEl" class="bs-map"></div></div>
           <BigScreenBottomStats :detail="operationsStats"/>
         </main>
@@ -507,7 +509,7 @@ onBeforeUnmount(() => {
             </div>
           </section>
           <section class="panel">
-            <div class="ph"><h3>飞行监管态势</h3><span class="sub">{{ snapshot?.flights ? '只计正式接入' : dataState('flights') }}</span></div>
+            <div class="ph"><h3>飞行监管态势</h3><span v-if="flightSummary" class="sub">{{ flightSummary }}</span></div>
             <div class="pb bs-flight-body">
               <div class="bs-flight-metrics">
                 <div v-for="item in flightMetrics" :key="item.label" class="bs-flight-metric">
@@ -520,7 +522,7 @@ onBeforeUnmount(() => {
             </div>
           </section>
           <section class="panel">
-            <div class="ph bs-device-heading"><h3>设备类型与在线情况</h3><span v-if="deviceTypes.data" class="sub">只计正式接入</span></div>
+            <div class="ph bs-device-heading"><h3>设备类型与在线情况</h3><span v-if="deviceTypes.data && scopeLabel(deviceTypes.data)" class="sub">{{ scopeLabel(deviceTypes.data) }}</span></div>
             <div class="pb bs-device-types-body">
               <div class="bs-device-type-head"><span>设备类型</span><span>在线设备 / 总数</span></div>
               <div v-if="deviceTypeRows.length" class="bs-device-type-list">

@@ -117,9 +117,15 @@ const STATE = {
   CONFIRMED: { t: '告警已确认', c: 't-cyan', color: '#22d3ee' },
   FALSE_POSITIVE: { t: '误报', c: 't-blue', color: '#8fbaff' }
 };
-const STATE_FILTER = { ...STATE, CONFIRMED: { ...STATE.CONFIRMED, t: '告警已确认（含处置中）' } };
 /* 待处置：已核实属实、处置还没结束（关注分组不是"历史"）。与列表分组同一个后端口径，不在前端另算。 */
 const PENDING_DISPOSAL_QUERY = { state: 'CONFIRMED', attention_group: 'CURRENT,AWAITING_CONFIRMATION' };
+/* 状态筛选按办理阶段分四项（2026-10-07）：待处置、已处理完与"待处置"卡片同一个后端分组口径，导出同样按它筛。 */
+const STATUS_FILTER = {
+  PENDING_VERIFICATION: { t: '待核实', q: { state: 'PENDING_VERIFICATION' } },
+  PENDING_DISPOSAL: { t: '待处置', q: PENDING_DISPOSAL_QUERY },
+  DISPOSAL_ENDED: { t: '已处理完', q: { state: 'CONFIRMED', attention_group: 'HISTORY' } },
+  FALSE_POSITIVE: { t: '误报', q: { state: 'FALSE_POSITIVE' } }
+};
 const NO_EVENT = { t: '未建事件', c: 't-gray', color: '#8ca0be' };
 const NOTIFY_PHASE = {
   AUTO_SMS: { t: '自动短信', c: 't-cyan', color: '#22d3ee' },
@@ -137,7 +143,7 @@ const regionOpts = () => (districtError.value
   : [{ v: '全部', t: '全部' }, ...districts.value.map(d => ({ v: d.district_id, t: d.name }))]);
 
 const LEVEL_OPTS = [{ v: '全部', t: '全部' }, { v: 'CRITICAL', t: '紧急' }, { v: 'HIGH', t: '高' }, { v: 'MEDIUM', t: '中' }, { v: 'LOW', t: '低' }];
-const STATUS_OPTS = [{ v: '全部', t: '全部' }, ...Object.entries(STATE_FILTER).map(([v, s]) => ({ v, t: s.t }))];
+const STATUS_OPTS = [{ v: '全部', t: '全部' }, ...Object.entries(STATUS_FILTER).map(([v, s]) => ({ v, t: s.t }))];
 const pageProgress = {};
 const pendingProgress = new Set();
 
@@ -480,7 +486,7 @@ function queryOf() {
   const q = { page: st.page, size: st.size, sort: st.sort };
   if (st.sort !== 'priority') q.order = st.order;
   if (st.level !== '全部') q.severity = st.level;
-  if (st.status !== '全部') q.state = st.status;
+  if (STATUS_FILTER[st.status]) Object.assign(q, STATUS_FILTER[st.status].q);
   if (st.kind !== '全部') q.alarm_type = st.kind;
   if (st.region !== '全部') q.district_id = st.region;
   return q;

@@ -34,7 +34,7 @@ test('统计保留真实零值、不可用原因与模拟来源，缺失值不�
   await expect(page.getByText('处罚结果形成情况', { exact: true })).toBeVisible();
   await expect(page.locator('.stats-penalty')).toContainText('统计区间内无立案案件');
   await expect(page.locator('.stats-penalty .penalty-bars')).toHaveCount(0);
-  await expect(page.locator('.stats-basis')).toContainText('回放记录');
+  await expect(page.locator('.stats-basis')).toContainText('数据来源：设备模拟器');
   await expect(page.locator('.stats-basis')).toContainText('北京时间');
   await expect(page.getByText('飞行/目标总次数', { exact: true })).toHaveCount(0);
 });

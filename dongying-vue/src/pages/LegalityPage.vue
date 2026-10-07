@@ -108,10 +108,12 @@ const canReadPlans = computed(() => hasPermission('flights.read'));
 const plans = ref([]);
 const plansError = ref('');
 const plansIncludeExpired = ref(false);
+// 取消“含已过期”后已选的过期任务不在列表里，仍按原名显示
+const planLabelCache = new Map();
 const planOptions = computed(() => {
-  const options = [{ label: plansIncludeExpired.value ? '全部任务' : '全部当前任务', value: '' }];
+  const options = [{ label: '全部任务', value: '' }];
   plans.value.forEach(plan => options.push({ label: planPickerLabel(plan), value: plan.plan_id }));
-  if (st.plan && !plans.value.some(plan => plan.plan_id === st.plan)) options.push({ label: '当前所选任务', value: st.plan });
+  if (st.plan && !plans.value.some(plan => plan.plan_id === st.plan)) options.push({ label: planLabelCache.get(st.plan) || '当前所选任务', value: st.plan });
   return options;
 });
 async function loadPlans() {
@@ -120,6 +122,7 @@ async function loadPlans() {
     const includeExpired = plansIncludeExpired.value;
     const page = await flightApi.list(planPickerQuery({ includeExpired }));
     plans.value = planPickerItems(page.items || [], { includeExpired });
+    plans.value.forEach(plan => planLabelCache.set(plan.plan_id, planPickerLabel(plan)));
     plansError.value = '';
   } catch (error) {
     plans.value = [];
@@ -689,7 +692,7 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
             <UField class="lg-region-filter lg-review-location-filter" variant="form" label="核实位置" v-model="st.reviewLocation" type="select" size="small"
               :options="reviewLocationOptions" :disabled="loading" @update:model-value="onRegionChange" />
             <UField v-if="canReadPlans" class="lg-region-filter" variant="form" label="任务" v-model="st.plan" type="select" size="small"
-              :options="planOptions" :disabled="loading" :title="plansError || '只看某一条飞行任务的研判；默认只列今天及以后还没结束的任务'" @update:model-value="onRegionChange" />
+              :options="planOptions" :disabled="loading" :title="plansError || '只看某一条飞行任务的研判；下拉默认只列今天和以后的任务'" @update:model-value="onRegionChange" />
             <span v-if="canReadPlans" class="lg-plan-expired" title="勾选后任务下拉里也列出已经结束的任务"><UControl v-model="plansIncludeExpired" type="checkbox" box-label="含已过期" :disabled="loading" @update:model-value="loadPlans" /></span>
             </div>
           </div>

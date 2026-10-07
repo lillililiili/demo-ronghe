@@ -24,8 +24,8 @@
   function coverage(data){
     const area=String(data?.area_name||'').trim();
     return area
-      ? `预报区域：${area}。提交后由平台系统按预报区域匹配受影响计划。`
-      : '请填写预报区域。提交后由平台系统按预报区域匹配受影响计划。';
+      ? `预报区域：${area}。提交后由平台系统按预报区域匹配受影响任务。`
+      : '请填写预报区域。提交后由平台系统按预报区域匹配受影响任务。';
   }
   const api={areaField,fields,update,validate,localTime,timestamp,coverage};root.WeatherForm=api;if(typeof module!=='undefined'&&module.exports)module.exports=api;
 })(typeof window!=='undefined'?window:globalThis);

@@ -101,7 +101,7 @@ def plan_window(plan, now):
         start_time = dt.time.fromisoformat(str(plan['start']) + ':00')
         end_time = dt.time.fromisoformat(str(plan['end']) + ':00')
     except (KeyError, TypeError, ValueError) as error:
-        raise ValueError('计划时间格式须为 HH:mm') from error
+        raise ValueError('任务时间格式须为 HH:mm') from error
     local = dt.datetime.fromtimestamp(now / 1000, tz=SHANGHAI)
     start = dt.datetime.combine(local.date(), start_time, SHANGHAI)
     end = dt.datetime.combine(local.date(), end_time, SHANGHAI)
@@ -179,7 +179,7 @@ class FullChain:
                 if message.get('kind') != 'FLIGHT_PLAN' or not message.get('message_id'):
                     continue
                 if message['message_id'] in plans:
-                    raise ValueError('模拟计划消息编号出现重复记录：' + message['message_id'])
+                    raise ValueError('模拟任务消息编号出现重复记录：' + message['message_id'])
                 plans[message['message_id']] = message
             self._inputs = {'routes': routes, 'plans': plans}
         return self._inputs
@@ -341,13 +341,13 @@ class FullChain:
                 if existing_plan:
                     pid = existing_plan.get('subject_id')
                     if not pid:
-                        raise ValueError('稳定模拟计划缺少平台编号：' + plan_message)
+                        raise ValueError('稳定模拟任务缺少平台编号：' + plan_message)
                 else:
                     result=self.request('plan-'+plan['id']+'-'+str(number)+'-'+
                                         payload_fingerprint(plan_identity(plan_body)),
                                         PREFIX+'/plans',plan_body)
                     pid=result.get('subject_id') or result.get('result',{}).get('plan_id') or result.get('plan_id')
-                if not pid: raise ValueError('平台未返回模拟计划编号')
+                if not pid: raise ValueError('平台未返回模拟任务编号')
                 ids.append(pid)
                 if target:self.manifest['targets'][target['id']]['plan_id']=pid
             self.manifest['plans'][plan['id']]={**route,'ids':ids}

@@ -17,7 +17,7 @@ async function loadSubjects() {
   try {
     const result = await flightApi.subjects(id);
     if (current !== requestVersion) return;
-    if (result?.plan_id !== id) throw new Error('关联资料与当前计划不一致，请重新读取。');
+    if (result?.plan_id !== id) throw new Error('关联资料与当前任务不一致，请重新读取。');
     subjects.value = result;
   } catch (error) {
     if (current === requestVersion) subjectsError.value = error.message || '单位与飞手关联信息暂时无法读取';
@@ -43,9 +43,9 @@ const altitude = computed(() => {
 
 <template>
   <section class="sect plan-filing">
-    <div class="workspace-section-heading"><h4>计划信息</h4></div>
+    <div class="workspace-section-heading"><h4>任务信息</h4></div>
     <dl class="kv kv-surface">
-      <dt>计划编号</dt><dd>{{ value(plan.plan_no) }} <span v-if="plan.source_mode === 'mock'" class="tag t-amber">模拟计划</span></dd>
+      <dt>任务编号</dt><dd>{{ value(plan.plan_no) }} <span v-if="plan.source_mode === 'mock'" class="tag t-amber">模拟任务</span></dd>
       <dt>报备单位</dt><dd>
         <span>{{ value(subjects?.operator_org_name || filing.operator_name) }}</span>
         <small v-if="subjects?.operator_org_id && filing.operator_name && subjects.operator_org_name !== filing.operator_name">申报时名称：{{ filing.operator_name }}</small>
@@ -60,19 +60,19 @@ const altitude = computed(() => {
       <template v-if="subjects"><dt>报送单位</dt><dd>{{ subjects.reporting_org_name || '报送单位尚未关联' }}</dd></template>
       <dt>无人机身份</dt><dd><span class="muted">SN：</span>{{ value(plan.uav_sn) }}</dd>
       <dt>所属范围</dt><dd>{{ value(plan.owner_org_name) }} / {{ value(plan.district_name) }}</dd>
-      <dt>计划来源</dt><dd>{{ value(plan.source?.source_name || plan.source?.source_code) }}</dd>
+      <dt>任务来源</dt><dd>{{ value(plan.source?.source_name || plan.source?.source_code) }}</dd>
     </dl>
     <p v-if="subjectsLoading" class="subjects-note" role="status">正在读取单位与飞手关联</p>
     <p v-else-if="subjectsError" class="subjects-note" role="alert">关联信息暂时无法读取：{{ subjectsError }} <button class="btn ghost" type="button" @click="loadSubjects">重试关联信息</button></p>
     <details v-else-if="subjects" class="subjects-details">
       <summary>单位与联系人关联</summary>
-      <p>报备单位、报送单位和飞手档案由后台维护；申报时名称保留在本计划中。</p>
+      <p>报备单位、报送单位和飞手档案由后台维护；申报时名称保留在本任务中。</p>
       <dl v-if="subjects.feedback_recipient" class="kv kv-surface">
-        <dt>计划反馈对象</dt><dd>{{ subjects.feedback_recipient.org_name || subjects.feedback_recipient.recipient_name || '尚未配置' }}</dd>
+        <dt>任务反馈对象</dt><dd>{{ subjects.feedback_recipient.org_name || subjects.feedback_recipient.recipient_name || '尚未配置' }}</dd>
         <template v-if="subjects.feedback_recipient.contact_name"><dt>联系人员</dt><dd>{{ subjects.feedback_recipient.contact_name }}<small v-if="subjects.feedback_recipient.contact_hint">{{ subjects.feedback_recipient.contact_hint }}</small></dd></template>
         <dt>通知准备情况</dt><dd>{{ userFacingMessage(subjects.feedback_recipient.blocked_reason) || (subjects.feedback_recipient.configured ? '接收配置已就绪，发送前会再次校验' : '接收配置尚未就绪，请联系管理员核对接收单位和通知渠道。') }}</dd>
       </dl>
-      <p v-else>计划反馈接收对象尚未配置。</p>
+      <p v-else>任务反馈接收对象尚未配置。</p>
       <button class="btn ghost" type="button" @click="loadSubjects">刷新关联信息</button>
     </details>
     <h4 class="schedule-heading">起降点与时间</h4>

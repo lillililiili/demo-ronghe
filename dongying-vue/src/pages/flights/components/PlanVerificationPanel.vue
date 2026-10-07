@@ -9,7 +9,7 @@ const emit = defineEmits(['map-devices']);
 const data = ref(null), loading = ref(false), error = ref(''), errorStatus = ref(0);
 const checkedAt = ref(Date.now());
 let token = 0;
-const conclusions = { AUTO_DEVICE_ABNORMAL: '系统检测到附近设备异常，是否起飞待确认', SUSPECTED_NOT_TAKEN_OFF: '附近无异常设备，疑似未按计划起飞', CHECK_INCOMPLETE: '设备信息不足，是否起飞待确认', NOT_TAKEN_OFF: '已确认未按计划起飞', DEVICE_ABNORMAL: '已确认监测设备异常，是否起飞还不清楚' };
+const conclusions = { AUTO_DEVICE_ABNORMAL: '系统检测到附近设备异常，是否起飞待确认', SUSPECTED_NOT_TAKEN_OFF: '附近无异常设备，疑似未按任务起飞', CHECK_INCOMPLETE: '设备信息不足，是否起飞待确认', NOT_TAKEN_OFF: '已确认未按任务起飞', DEVICE_ABNORMAL: '已确认监测设备异常，是否起飞还不清楚' };
 const delivery = { PENDING_DELIVERY: '等待发送', SUBMITTED: '已提交发送，等待送达', DELIVERED: '已送达', FAILED: '发送失败' };
 const receipt = { NOT_EXPECTED: '暂不等待对方确认', PENDING: '等待对方确认收到', ACKNOWLEDGED: '对方已确认收到', TIMEOUT: '对方未按时确认收到' };
 const recordGroups = computed(() => {

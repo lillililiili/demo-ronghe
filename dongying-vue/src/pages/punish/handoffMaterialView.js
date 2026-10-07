@@ -31,9 +31,9 @@ export function judgmentViews(material, reasonText = code => String(code || ''))
     basis: BASIS_LABEL[row.basis] || '研判',
     legal: labelOf(LEGALITY_LABEL, row.legal_status, '结论未提供'),
     review: reviewText(row),
-    planMatch: row.plan_match_code ? `计划匹配：${labelOf(PLAN_MATCH_LABEL, row.plan_match_code)}` : '',
+    planMatch: row.plan_match_code ? `任务匹配：${labelOf(PLAN_MATCH_LABEL, row.plan_match_code)}` : '',
     // 无匹配计划时研判里留的是比对过的候选计划，不能写成“报备计划”，和研判页说法一致。
-    plan: !row.plan_no ? '' : row.plan_match_code === 'NONE' ? `候选计划 ${row.plan_no}（未匹配上这条计划）` : `报备计划 ${row.plan_no}`,
+    plan: !row.plan_no ? '' : row.plan_match_code === 'NONE' ? `候选任务 ${row.plan_no}（未匹配上这条任务）` : `报备任务 ${row.plan_no}`,
     reasons: (row.violation_reasons || []).map(reasonText).filter(Boolean),
     unknowns: (row.unknown_reasons || []).map(reasonText).filter(Boolean),
     evaluatedAt: row.evaluated_at ?? null,

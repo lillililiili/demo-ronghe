@@ -52,7 +52,7 @@ const icon = risk => risk.risk_type === 'WEATHER' ? weatherRiskIcon(risk) : wind
 </script>
 
 <template>
-  <div ref="layer" class="plan-risk-map-layer" aria-label="本计划风险位置">
+  <div ref="layer" class="plan-risk-map-layer" aria-label="本任务风险位置">
     <svg class="risk-leaders" aria-hidden="true">
       <g v-for="marker in placedMarkers.filter(item => item.displaced)" :key="marker.id" :class="marker.severityClass">
         <line :x1="marker.x" :y1="marker.y" :x2="marker.displayX" :y2="marker.displayY" />

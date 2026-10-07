@@ -54,7 +54,7 @@ def full_scene(categories=None):
 
     def plan(row, suffix='', **fields):
         key = row['id'] + '-plan' + suffix
-        scene['plans'].append({'id': key, 'name': row['name']+'配套计划',
+        scene['plans'].append({'id': key, 'name': row['name']+'配套任务',
             'points': copy.deepcopy(row['path']) + [copy.deepcopy(row['path'][0])],
             'min': 20, 'max': 150, 'width': 120, 'start': '00:00', 'end': '23:59',
             'altitudeDatum': 'AMSL', **fields})
@@ -62,8 +62,8 @@ def full_scene(categories=None):
 
     if 'uav' in selected:
         for i, (key, name) in enumerate([('normal','正常巡航'),('deviation','偏航'),
-                ('prohibited','进入禁飞区'),('height','超高'),('overtime','超出计划时段'),
-                ('unplanned','无计划'),('departure','通知后撤离'),('lost','停报后恢复')]):
+                ('prohibited','进入禁飞区'),('height','超高'),('overtime','超出任务时段'),
+                ('unplanned','无任务'),('departure','通知后撤离'),('lost','停报后恢复')]):
             row = target(key, name, 'uav', 120 + i * 72, 170,
                          transport='normalized' if key in ('height','overtime','normal') else 'mqtt')
             if key != 'unplanned': plan(row, timeMode='past' if key == 'overtime' else 'current')

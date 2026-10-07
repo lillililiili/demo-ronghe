@@ -1,5 +1,5 @@
 /* 告警页轨迹回放：用目标最新一条轨迹的可信 WGS-84 点在独立地图上走航线。
-   不是视频，也不是飞行计划航线。点位不足两条就不打开。 */
+   不是视频，也不是飞行任务航线。点位不足两条就不打开。 */
 import { h } from 'vue';
 import { openModal } from './modal.js';
 import { toast } from './nv.js';

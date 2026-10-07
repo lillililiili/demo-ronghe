@@ -357,7 +357,7 @@ function applySnapshot(next) {
   const count = decorated.alarms.filter(alarm => alarm.isNew).length + groupRouteRisks(decorated.risks).filter(risk => risk.isNew).length;
   const failed = (next.failedSegments || []).map(segment => ({
     targets: '目标', alarms: '告警', risks: '风险', handoffs: '移送', devices: '设备',
-    'device-events': '设备事件', 'flight-plans': '飞行计划', airspaces: '空域', 'fusion-status': '融合状态'
+    'device-events': '设备事件', 'flight-plans': '飞行任务', airspaces: '空域', 'fusion-status': '融合状态'
   }[segment] || segment));
   statusAnnouncement.value = failed.length
     ? `${failed.join('、')}数据刷新失败，已保留上次结果；恢复后自动重试`
@@ -712,15 +712,15 @@ function renderPlanTip(plan) {
   const selectedRisk = riskId ? risks.find(risk => risk.riskId === riskId) : null;
   const stateText = riskId
     ? `风险：${selectedRisk ? labelOf(RISK_STATE_LABEL, selectedRisk.state) : '状态待确认'}`
-    : `计划：${plan.statusLabel}`;
+    : `任务：${plan.statusLabel}`;
   const stateClass = (riskId ? selectedRisk?.active : active.length) ? 'is-risk' : 'is-online';
   const routePointCount = Array.isArray(plan.coordinates) ? plan.coordinates.length : 0;
   return `<section class="sit-map-pop sit-map-pop-plan" style="--sensor:${active.length ? '#ff5b61' : '#22d3ee'}">
-    <header><span class="sit-map-pop-icon">${U.icon('plan')}</span><span><b>计划详情</b><small class="mono">${esc(plan.planNo)}</small></span>
-      <button type="button" data-tip-act="close" aria-label="关闭计划详情">${U.icon('close')}</button></header>
+    <header><span class="sit-map-pop-icon">${U.icon('plan')}</span><span><b>任务详情</b><small class="mono">${esc(plan.planNo)}</small></span>
+      <button type="button" data-tip-act="close" aria-label="关闭任务详情">${U.icon('close')}</button></header>
     <div class="sit-map-pop-status"><span class="sit-state ${stateClass}">${esc(stateText)}</span><span>${active.length ? `${active.length} 条当前风险` : '无当前风险'}</span></div>
-    <dl><dt>计划编号</dt><dd class="mono">${esc(plan.planNo)}</dd>
-      <dt>计划状态</dt><dd>${esc(plan.statusLabel)}</dd>
+    <dl><dt>任务编号</dt><dd class="mono">${esc(plan.planNo)}</dd>
+      <dt>任务状态</dt><dd>${esc(plan.statusLabel)}</dd>
       <dt>执行时段</dt><dd>${esc(formatClock(plan.startAt))} ～ ${esc(formatClock(plan.endAt))}</dd>
       <dt>关联无人机</dt><dd class="mono">${esc(plan.uavId || '未提供')}</dd>
       <dt>航线版本</dt><dd class="mono">${esc(plan.routeVersionId)}</dd>
@@ -973,9 +973,9 @@ onUnmounted(() => {
           <button v-for="risk in riskGroups" :key="risk.groupId" type="button" class="sit-alert-row sit-route-risk-row"
             :class="[{ 'is-new': risk.isNew, 'is-history': !risk.active, 'is-selected': selectedRiskGroup?.groupId === risk.groupId }, `level-${risk.level}`]"
             :aria-pressed="selectedRiskGroup?.groupId === risk.groupId"
-            :aria-label="`查看${risk.spaceFact?.subtypeName || '航线'}风险，关联${risk.planCount}条计划，${riskGroupStateText(risk)}`" @click="selectRiskGroup(risk)">
+            :aria-label="`查看${risk.spaceFact?.subtypeName || '航线'}风险，关联${risk.planCount}条任务，${riskGroupStateText(risk)}`" @click="selectRiskGroup(risk)">
             <span class="sit-alert-level">{{ risk.level }}</span>
-            <span class="sit-alert-copy"><b>{{ risk.spaceFact?.subtypeName || '航线' }}风险 · 关联 {{ risk.planCount }} 条计划</b><em>{{ riskFactText(risk) }}</em></span>
+            <span class="sit-alert-copy"><b>{{ risk.spaceFact?.subtypeName || '航线' }}风险 · 关联 {{ risk.planCount }} 条任务</b><em>{{ riskFactText(risk) }}</em></span>
             <span class="sit-alert-meta"><time class="mono">{{ formatClock(risk.occurredAt) }}{{ risk.isNew ? ' · 未查看' : '' }}</time><b>{{ riskGroupStateText(risk) }}</b></span>
           </button>
         </div>
@@ -985,7 +985,7 @@ onUnmounted(() => {
       <SituationAlarmPopup v-if="showSelectionPopup" :key="`${selection.kind}:${selection.id}:${selection.riskId || selection.alarmId || ''}`" :get-anchor="alarmAnchor"
         :get-avoid-rect="selectionAvoidRect"
         :video-open="showTargetVideo && !!videoContext"
-        :label="selectedDevice ? '设备详情' : selectedPlan ? '计划详情' : selectedRisk ? '航线风险详情' : showAlarmPopup ? '无人机告警详情' : '目标详情'">
+        :label="selectedDevice ? '设备详情' : selectedPlan ? '任务详情' : selectedRisk ? '航线风险详情' : showAlarmPopup ? '无人机告警详情' : '目标详情'">
         <div v-if="selectedDevice" @click="onTipAction($event.target.closest('[data-tip-act]')?.dataset.tipAct, { kind: 'device', data: selectedDevice })"
           v-html="renderDeviceTip(selectedDevice)"></div>
         <div v-else-if="selectedTarget" @click="onTipAction($event.target.closest('[data-tip-act]')?.dataset.tipAct, { kind: 'target', data: selectedTarget })"
@@ -998,7 +998,7 @@ onUnmounted(() => {
           <header><span class="sit-map-pop-icon" v-html="U.icon('plan')"></span><span><b>{{ selectedRisk.id }}</b><small>航线风险</small></span>
             <button type="button" aria-label="关闭风险详情" @click="clearSelection" v-html="U.icon('close')"></button></header>
           <div class="sit-map-pop-status"><span class="sit-state is-risk">{{ labelOf(RISK_STATE_LABEL, selectedRisk.state) }}</span></div>
-          <p>{{ selectedRisk.reasonText || '风险依据未提供' }}</p><p>当前未取得关联计划，保留此风险的信息。</p>
+          <p>{{ selectedRisk.reasonText || '风险依据未提供' }}</p><p>当前未取得关联任务，保留此风险的信息。</p>
         </section>
         <section v-else-if="selectedUavAlarm" class="sit-map-pop">
           <header><span class="sit-map-pop-icon" v-html="U.businessIcon('uav')"></span><span><b>{{ selectedUavAlarm.targetId || selectedUavAlarm.id || '未关联目标告警' }}</b><small>无人机告警</small></span>
@@ -1034,10 +1034,10 @@ onUnmounted(() => {
         <span class="sit-scan-key" aria-label="在线设备上报脉冲"><i aria-hidden="true"></i>上报脉冲</span>
         <button type="button" :aria-pressed="layers.device" @click="toggleLayer('device')">设备点位</button>
         <button type="button" :aria-pressed="layers.track" @click="toggleLayer('track')">目标轨迹</button>
-        <button type="button" :aria-pressed="layers.flightPlan" @click="toggleLayer('flightPlan')">计划航线</button>
+        <button type="button" :aria-pressed="layers.flightPlan" @click="toggleLayer('flightPlan')">任务航线</button>
         <button type="button" :aria-pressed="layers.airspace" :aria-label="`防控空域，共${airspaces.length}个区域`" @click="toggleLayer('airspace')">防控空域 {{ airspaces.length }}</button>
         <span id="situation-weather-control"></span>
-        <span class="sit-plan-key" aria-label="航线与轨迹图例"><span><i class="is-within"></i>符合航线</span><span><i class="is-outside"></i>偏离航线</span><span><i class="is-plan"></i>未飞计划线</span><span><i class="is-unknown"></i>关系未知</span></span>
+        <span class="sit-plan-key" aria-label="航线与轨迹图例"><span><i class="is-within"></i>符合航线</span><span><i class="is-outside"></i>偏离航线</span><span><i class="is-plan"></i>未飞任务线</span><span><i class="is-unknown"></i>关系未知</span><span><b class="is-start">起</b>起点<b class="is-end">终</b>终点</span></span>
       </nav>
 
       <aside v-if="selectedTarget" class="sit-fuse-dock" :class="{ 'is-open': fuseOpen }" aria-label="多源融合结果">

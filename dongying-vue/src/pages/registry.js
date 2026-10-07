@@ -21,7 +21,7 @@ export const VUE_PAGES = {
   alarms: AlarmsPage,
   flights: FlightsPage,
   /* #/risk 由 router 重定向到 #/flights?tab=events，不再作为独立「空间安全风险」页渲染。
-     airspace 自 2026-09-13 起是独立页（设计稿 v2），访问权限仍由飞行计划菜单承载（accessControl 的别名）。 */
+     airspace 自 2026-09-13 起是独立页（设计稿 v2），访问权限仍由飞行任务菜单承载（accessControl 的别名）。 */
   risk: FlightsPage,
   airspace: AirspacePage,
   situation: SituationPage,

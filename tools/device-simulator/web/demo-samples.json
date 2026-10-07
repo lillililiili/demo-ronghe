@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "name": "五组演示：偏航、禁飞、无计划、鸟群、故障",
+  "name": "五组演示：偏航、禁飞、无任务、鸟群、故障",
   "duration": 15,
   "sites": [
     {
@@ -63,7 +63,7 @@
   "plans": [
     {
       "id": "deviation-plan",
-      "name": "01 巡检计划·先沿线后偏离",
+      "name": "01 巡检任务·先沿线后偏离",
       "points": [
         [
           390.0,
@@ -87,7 +87,7 @@
     },
     {
       "id": "zone-plan",
-      "name": "02 禁飞区闯入关联计划",
+      "name": "02 禁飞区闯入关联任务",
       "points": [
         [
           470.0,
@@ -111,7 +111,7 @@
     },
     {
       "id": "bird-plan",
-      "name": "04 鸟群影响计划",
+      "name": "04 鸟群影响任务",
       "points": [
         [
           450.0,
@@ -240,7 +240,7 @@
     },
     {
       "id": "unmatched-uav",
-      "name": "03 无匹配计划无人机",
+      "name": "03 无匹配任务无人机",
       "kind": "uav",
       "path": [
         [
@@ -303,7 +303,7 @@
   "risks": [
     {
       "id": "r-deviation",
-      "name": "01 沿计划飞行后偏航",
+      "name": "01 沿任务飞行后偏航",
       "type": "deviation",
       "enabled": true,
       "targetId": "deviation-uav",
@@ -322,7 +322,7 @@
     },
     {
       "id": "r-unmatched",
-      "name": "03 无计划待核实",
+      "name": "03 无任务待核实",
       "type": "no-plan",
       "enabled": true,
       "targetId": "unmatched-uav",
@@ -330,7 +330,7 @@
     },
     {
       "id": "r-bird",
-      "name": "04 鸟群进入计划航线",
+      "name": "04 鸟群进入任务航线",
       "type": "bird",
       "enabled": true,
       "targetId": "birds",

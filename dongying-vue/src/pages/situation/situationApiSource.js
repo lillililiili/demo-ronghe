@@ -34,7 +34,7 @@ const TOPIC_SEGMENTS = {
 };
 const RECENT_TRACK_WINDOW_MS = 5 * 60_000;
 /* 各组数据的读取权限与后端接口一致（ZT-09）：没有权限的组不发请求、不报“刷新失败”，地图上这一类保持为空。
-   飞行计划同时要读航线版本，两项权限都要有。登录后权限有变化、后端答复 403 时同样按没有权限处理，本页不再重复请求。 */
+   飞行任务同时要读航线版本，两项权限都要有。登录后权限有变化、后端答复 403 时同样按没有权限处理，本页不再重复请求。 */
 const SEGMENT_PERMISSIONS = {
   targets: ['target:read'], alarms: ['alarm:read'], risks: ['risk:read'], handoffs: ['handoff:read'],
   devices: ['devices.read'], 'device-events': ['monitoring.read'], 'flight-plans': ['flight:read', 'route:read'],

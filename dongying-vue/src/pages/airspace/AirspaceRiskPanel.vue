@@ -60,12 +60,12 @@ function date(value) { return value == null ? '未记录' : new Date(value).toLo
           <dt>接收时间</dt><dd>{{ date(risks.active.received_at) }}</dd>
           <dt>发现时的位置</dt><dd>{{ risks.active.point ? `${risks.active.point[0]}, ${risks.active.point[1]}（经度、纬度）` : '位置未记录，无法定位' }}</dd>
           <dt>测得高度</dt><dd>{{ risks.active.observed_altitude_m == null ? '未记录' : `${risks.active.observed_altitude_m} 米 · ${labelOf(ALTITUDE_DATUM_LABEL, risks.active.observed_altitude_datum, '高度基准未记录')}` }}</dd>
-          <dt>关联计划</dt><dd>{{ risks.active.plan_no || (risks.active.plan_id ? '已关联计划' : '没有可查看的相关计划') }}</dd>
+          <dt>关联任务</dt><dd>{{ risks.active.plan_no || (risks.active.plan_id ? '已关联任务' : '没有可查看的相关任务') }}</dd>
           <dt>来源</dt><dd>{{ risks.active.source_name || risks.active.source_code || '未记录' }} · {{ labelOf(SOURCE_MODE_LABEL, risks.active.source_display_mode || risks.active.source_mode, '来源未记录') }}</dd>
         </dl>
       </article>
       <table class="tb">
-        <thead><tr><th>风险编号 / 类型</th><th>风险事由</th><th>等级</th><th>核验与通知状态</th><th>发生时间</th><th>关联计划（如有）</th><th>位置 / 来源</th><th>操作</th></tr></thead>
+        <thead><tr><th>风险编号 / 类型</th><th>风险事由</th><th>等级</th><th>核验与通知状态</th><th>发生时间</th><th>关联任务（如有）</th><th>位置 / 来源</th><th>操作</th></tr></thead>
         <tbody>
           <tr v-for="risk in pageRows" :key="risk.risk_id" :class="{ on: risks.activeId === risk.risk_id }">
             <td><b>{{ risk.risk_no || '未编业务编号' }}</b><small>{{ labelOf(RISK_TYPE_LABEL, risk.risk_type, '其他风险') }}</small></td>
@@ -73,7 +73,7 @@ function date(value) { return value == null ? '未记录' : new Date(value).toLo
             <td><span class="tag" :class="SEVERITY_TAG[risk.severity] || 't-gray'">{{ labelOf(SEVERITY_LABEL, risk.severity, '未知') }}</span></td>
             <td>{{ labelOf(RISK_STATE_LABEL, risk.state, '未知') }}</td>
             <td>{{ date(risk.occurred_at) }}</td>
-            <td>{{ risk.plan_no || (risk.plan_id ? '已关联计划' : '没有可查看的相关计划') }}</td>
+            <td>{{ risk.plan_no || (risk.plan_id ? '已关联任务' : '没有可查看的相关任务') }}</td>
             <td>{{ risk.point ? (risks.onlySelected && risk.relation === 'BOUNDARY' ? '位于边界，归属待确认' : '已记录发现位置') : '位置未记录' }}<small>{{ labelOf(SOURCE_MODE_LABEL, risk.source_display_mode || risk.source_mode, '来源未记录') }}</small></td>
             <td class="risk-actions"><button class="linkbtn" type="button" :disabled="!risk.point" :title="risk.point ? '定位发现时的位置' : '位置无法确认，暂时无法定位'" @click="emit('locate', risk)">定位</button><button type="button" class="linkbtn" @click="emit('inspect', risk)">查看详情</button></td>
           </tr>

@@ -60,7 +60,7 @@
         <div class="lg-hd" role="button" tabindex="0" aria-label="展开或收起图例">图例 <span class="lg-arrow">${opt.legendOpen ? '▾' : '▸'}</span></div>
         <div class="li"><span class="sw" style="border-color:#2fd06e"></span>符合航线的已飞轨迹</div>
         <div class="li"><span class="sw" style="border-color:#ff4d5e"></span>偏离航线的已飞轨迹</div>
-        <div class="li"><span class="sw" style="border-color:#8ca0a8;border-top-style:dashed"></span>计划航线（未飞部分灰色）</div>
+        <div class="li"><span class="sw" style="border-color:#8ca0a8;border-top-style:dashed"></span>任务航线（未飞部分灰色）</div>
         <div class="li"><span class="sw" style="border-color:#ffb020"></span>航线关系未知</div>
         <div class="li" title="弥合段（A03）"><span class="sw" style="border-color:#ff8b3d;border-top-style:dotted"></span>推算补全段</div>
         <div class="li" title="预测段（A04）"><span class="sw" style="border-color:#22d3ee;border-top-style:dotted"></span>预测延伸段</div>
@@ -724,7 +724,7 @@
 
   MapView.prototype._showTip = function (hit) {
     const key = this._tipKey(hit);
-    if (this.opt.interactiveTip) this.tip.setAttribute('aria-label', hit.kind === 'device' ? '设备详情' : hit.kind === 'target' ? '目标详情' : hit.kind === 'plan' ? '计划详情' : '地图详情');
+    if (this.opt.interactiveTip) this.tip.setAttribute('aria-label', hit.kind === 'device' ? '设备详情' : hit.kind === 'target' ? '目标详情' : hit.kind === 'plan' ? '任务详情' : '地图详情');
     if (this._tipKeyShown !== key || this._tipDataShown !== hit.data) {
       this._tipKeyShown = key;
       this._tipDataShown = hit.data;
@@ -1004,7 +1004,7 @@
   MapView.strokePlannedRoute = function (c, pts, options = {}) {
     if (!c || !Array.isArray(pts) || pts.length < 2
       || pts.some(p => !Array.isArray(p) || !Number.isFinite(p[0]) || !Number.isFinite(p[1]))) return;
-    const color = '#8ca0a8'; // 计划几何不代表已飞，状态和风险不得把计划线染成红绿。
+    const color = '#8ca0a8'; // 任务几何不代表已飞，状态和风险不得把任务线染成红绿。
     const { dash = [7, 5], selected = false, risk = false,
       terminals = true, vertices = false, arrows = true, label = '', width = 0, height = 0 } = options;
     const path = () => {
@@ -1037,19 +1037,41 @@
       }
     }
     if (terminals) {
+      // 起终点沿用高德/百度路线规划的通行画法：绿色“起”、红色“终”水滴标，尖端落在航线端点上。
       const first = pts[0], last = pts[pts.length - 1];
       const samePlace = first[0] === last[0] && first[1] === last[1];
-      const close = Math.hypot(first[0] - last[0], first[1] - last[1]) < 40;
-      const ends = samePlace ? [[first, '起 / 终', 1]] : [[first, '起', -1], [last, '终', close ? 1 : -1]];
-      for (const [p, text, side] of ends) {
-        c.beginPath(); c.arc(p[0], p[1], 4, 0, Math.PI * 2);
-        c.fillStyle = '#fff'; c.fill(); c.strokeStyle = color; c.lineWidth = 1.6; c.stroke();
-        c.font = '600 10px "PingFang SC",sans-serif'; c.textAlign = 'left'; c.textBaseline = 'middle';
-        c.lineWidth = 3; c.strokeStyle = 'rgba(255,255,255,.94)';
-        c.strokeText(text, p[0] + 7, p[1] + side * 11); c.fillStyle = '#294b60'; c.fillText(text, p[0] + 7, p[1] + side * 11);
+      if (samePlace) {
+        MapView.drawRouteTerminal(c, first, 'start', -9);
+        MapView.drawRouteTerminal(c, last, 'end', 9);
+      } else {
+        MapView.drawRouteTerminal(c, first, 'start');
+        MapView.drawRouteTerminal(c, last, 'end');
       }
     }
     if (label) drawRouteLabel(c, pts[Math.floor(pts.length / 2)], label, width, height, risk);
+    c.restore();
+  };
+
+  MapView.ROUTE_TERMINAL_COLORS = { start: '#1fa64a', end: '#e5383b' };
+  /** 航线起终点水滴标：尖端对准端点，头部写“起”/“终”；offset 仅在起终点重合时把两个标左右错开。 */
+  MapView.drawRouteTerminal = function (c, p, kind, offset = 0) {
+    const fill = MapView.ROUTE_TERMINAL_COLORS[kind] || MapView.ROUTE_TERMINAL_COLORS.start;
+    const text = kind === 'end' ? '终' : '起';
+    const r = 8, hx = p[0] + offset, hy = p[1] - 15;
+    c.save(); c.setLineDash([]);
+    c.beginPath();
+    c.moveTo(p[0], p[1]);
+    c.quadraticCurveTo(hx - r * .95, hy + r * .9, hx - r, hy);
+    c.arc(hx, hy, r, Math.PI, 0);
+    c.quadraticCurveTo(hx + r * .95, hy + r * .9, p[0], p[1]);
+    c.closePath();
+    c.shadowColor = 'rgba(0,0,0,.28)'; c.shadowBlur = 3; c.shadowOffsetY = 1;
+    c.fillStyle = fill; c.fill();
+    c.shadowColor = 'transparent'; c.shadowBlur = 0; c.shadowOffsetY = 0;
+    c.strokeStyle = '#fff'; c.lineWidth = 1.4; c.stroke();
+    c.font = '700 10px "PingFang SC","Microsoft YaHei",sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.fillStyle = '#fff'; c.fillText(text, hx, hy + .5);
+    c.beginPath(); c.arc(p[0], p[1], 2, 0, Math.PI * 2); c.fillStyle = fill; c.fill();
     c.restore();
   };
 

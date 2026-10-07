@@ -9,7 +9,7 @@ import { NSlider } from 'naive-ui';
 import { hasPermission } from '@/services/accessControl.js';
 import { previewEvidenceContent } from '@/services/evidenceApi.js';
 import {
-  REPLAY_SPEEDS, clockText, compassText, dateText, durationText, indexAt, pctOf, pointReadout, replayTiming,
+  MAX_VIDEO_MS, REPLAY_SPEEDS, clockText, compassText, dateText, durationText, heightText, indexAt, pctOf, pointReadout, replayTiming,
   videoAt, videosForSpan
 } from './trackReplayModel.js';
 
@@ -73,8 +73,7 @@ const gap = computed(() => {
   const next = props.points[index.value + 1];
   return canReplay.value && !!next?.break_before && clock.value > current.value.t;
 });
-const altText = computed(() => Number.isFinite(current.value?.alt) ? `${Math.round(current.value.alt * 10) / 10} m` : '未记录');
-const aglText = computed(() => Number.isFinite(current.value?.agl) ? `离地 ${Math.round(current.value.agl * 10) / 10} m` : '');
+const altText = computed(() => heightText(current.value?.alt, current.value?.agl));
 const speedText = computed(() => Number.isFinite(readout.value?.speed) ? `${readout.value.speed.toFixed(1)} m/s` : '未记录');
 const headingText = computed(() => compassText(readout.value?.heading));
 const markPcts = computed(() => props.marks
@@ -87,31 +86,46 @@ const canPreview = hasPermission('evidence:preview');
 const spanVideos = computed(() => videosForSpan(props.videos || [], start.value, end.value));
 const media = reactive({});
 const durations = computed(() => Object.fromEntries(Object.entries(media).map(([id, m]) => [id, m.duration])));
-const loadingVideos = computed(() => props.videosLoading || spanVideos.value.some(v => media[v.id]?.state === 'loading'));
 const activeVideo = computed(() => canReplay.value ? videoAt(spanVideos.value, clock.value, durations.value) : null);
 const activeMedia = computed(() => activeVideo.value ? media[activeVideo.value.id] : null);
+/* 按需读取：只在回放走到（或即将走到）某段录像时才下载那一段，看过的留在本窗口内复用，
+   不在打开回放时把所有录像整段下载，也不为没看的录像留下查看记录。 */
+const PREFETCH_MS = 8000;
+function windowOf(video) {
+  const seconds = media[video.id]?.duration;
+  return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : MAX_VIDEO_MS;
+}
+const wantedVideos = computed(() => {
+  if (!canPreview || props.videoNote || !canReplay.value) return [];
+  const lead = PREFETCH_MS * Math.max(1, speed.value);
+  return spanVideos.value.filter(video => clock.value >= video.capturedAt - lead
+    && clock.value < video.capturedAt + windowOf(video));
+});
+const pendingVideo = computed(() => wantedVideos.value.find(video => clock.value >= video.capturedAt
+  && ['loading', undefined].includes(media[video.id]?.state)) || null);
+const failedVideo = computed(() => wantedVideos.value.find(video => clock.value >= video.capturedAt
+  && media[video.id]?.state === 'error') || null);
 const videoBands = computed(() => spanVideos.value.map(video => {
   const seconds = media[video.id]?.duration;
   const from = Math.max(video.capturedAt, start.value);
-  const to = Number.isFinite(seconds) ? Math.min(video.capturedAt + seconds * 1000, end.value) : null;
+  const known = Number.isFinite(seconds) && seconds > 0;
+  const to = known ? Math.min(video.capturedAt + seconds * 1000, end.value) : null;
+  const left = pctOf(from, start.value, end.value);
   return {
-    video,
-    left: pctOf(from, start.value, end.value),
-    width: to == null ? 0 : Math.max(0.6, pctOf(to, start.value, end.value) - pctOf(from, start.value, end.value)),
-    ready: to != null && to > from
+    video, left, known,
+    // 还没读取的录像只知道开始时刻，先画一个短标记，读到时长后再画成完整时段。
+    width: known ? Math.max(0.6, pctOf(to, start.value, end.value) - left) : 0.8
   };
-}).filter(band => band.ready));
-const nextVideo = computed(() => videoBands.value.map(b => b.video).find(v => v.capturedAt > clock.value) || null);
+}).filter(band => !band.known || band.width > 0));
+const nextVideo = computed(() => spanVideos.value.find(v => v.capturedAt > clock.value) || null);
 const videoMessage = computed(() => {
   if (props.videoNote) return props.videoNote;
   if (!canPreview) return '当前账号没有查看录像的权限';
-  if (loadingVideos.value && !videoBands.value.length) return '正在读取这段时间的光电录像';
-  if (!videoBands.value.length) {
-    const failed = spanVideos.value.some(v => media[v.id]?.state === 'error');
-    return failed ? '这段时间的录像读取失败，可到证据管理查看' : '这段轨迹时间内没有光电录像';
-  }
-  if (!activeVideo.value) return '这个时刻没有光电录像';
-  return '';
+  if (props.videosLoading) return '正在查找这段时间的光电录像';
+  if (!spanVideos.value.length) return '这段轨迹时间内没有光电录像';
+  if (pendingVideo.value) return '正在读取这段光电录像';
+  if (failedVideo.value) return '这段录像读取失败，可到证据管理查看';
+  return '这个时刻没有光电录像';
 });
 
 async function readDuration(url) {
@@ -135,13 +149,13 @@ async function readDuration(url) {
   });
 }
 
-async function loadVideos() {
-  if (!canPreview) return;
-  for (const video of spanVideos.value) {
+let loadQueue = Promise.resolve();
+function ensureLoaded(video) {
+  if (!canPreview || media[video.id]) return;
+  if (video.status && video.status !== 'AVAILABLE') { media[video.id] = { state: 'error' }; return; }
+  media[video.id] = { state: 'loading' };
+  loadQueue = loadQueue.then(async () => {
     if (disposed) return;
-    if (media[video.id]) continue;
-    if (video.status && video.status !== 'AVAILABLE') { media[video.id] = { state: 'error' }; continue; }
-    media[video.id] = { state: 'loading' };
     try {
       const result = await previewEvidenceContent(video.id);
       if (disposed) return;
@@ -155,7 +169,7 @@ async function loadVideos() {
     } catch {
       if (!disposed) media[video.id] = { state: 'error' };
     }
-  }
+  });
 }
 
 function syncVideo() {
@@ -318,7 +332,7 @@ watch(layout, async () => {
   if (map && typeof map._resize === 'function') map._resize();
   fitted = false; paint();
 });
-watch(spanVideos, loadVideos);
+watch(wantedVideos, list => list.forEach(ensureLoaded));
 watch([activeVideo, playing, speed], () => nextTick(syncVideo));
 watch(() => activeMedia.value?.url, () => nextTick(syncVideo));
 
@@ -330,7 +344,6 @@ onMounted(async () => {
   while (!hostReady() && Date.now() - began < 2000) await new Promise(r => requestAnimationFrame(r));
   if (disposed) return;
   mountMap();
-  loadVideos();
   playing.value = props.autoplay && canReplay.value && !reducedMotion;
   lastTick = performance.now();
   timer = setInterval(() => {
@@ -370,7 +383,7 @@ defineExpose({ seek, togglePlay });
         <dl class="replay-hud" aria-label="当前点读数">
           <div class="hud-time"><dt>时间</dt><dd class="mono">{{ clockText(shownTime) }}</dd></div>
           <div v-if="details"><dt>日期</dt><dd class="mono">{{ dateText(shownTime) }}</dd></div>
-          <div><dt>高度</dt><dd class="mono">{{ altText }}<small v-if="aglText"> {{ aglText }}</small></dd></div>
+          <div><dt>高度</dt><dd class="mono">{{ altText }}</dd></div>
           <div><dt>速度</dt><dd class="mono" :title="readout?.speedDerived ? '按相邻两个观测点的距离和时间推算' : ''">
             {{ speedText }}<small v-if="readout?.speedDerived"> 推算</small></dd></div>
           <div><dt>方向</dt><dd class="mono">{{ headingText }}</dd></div>
@@ -437,9 +450,9 @@ defineExpose({ seek, togglePlay });
     <div v-if="canReplay" class="replay-timeline">
       <div v-if="videoEnabled || markPcts.length" class="replay-lanes" aria-hidden="true">
         <button v-for="band in videoBands" :key="band.video.id" type="button" class="lane-video"
-          :class="{ on: activeVideo?.id === band.video.id }"
+          :class="{ on: activeVideo?.id === band.video.id, pending: !band.known }"
           :style="{ left: band.left + '%', width: band.width + '%' }"
-          :title="`光电录像 ${band.video.no || ''} ${clockText(band.video.capturedAt)} 开始`" tabindex="-1"
+          :title="`光电录像 ${band.video.no || ''} ${clockText(band.video.capturedAt)} 开始${band.known ? '' : '，点击跳过去播放'}`" tabindex="-1"
           @click="jumpTo(band.video)"></button>
         <span v-for="(mark, i) in markPcts" :key="'m' + i" class="lane-mark" :style="{ left: mark.pct + '%' }"
           :title="mark.title"></span>
@@ -520,6 +533,7 @@ defineExpose({ seek, togglePlay });
 .lane-video { position: absolute; top: 0; height: 8px; padding: 0; border: 0; border-radius: 4px; cursor: pointer;
   background: rgba(34, 211, 238, .55); }
 .lane-video.on { background: rgba(34, 211, 238, .95); }
+.lane-video.pending { min-width: 6px; background: rgba(34, 211, 238, .75); }
 .lane-mark { position: absolute; top: -1px; width: 10px; height: 10px; margin-left: -5px; border-radius: 50%;
   background: var(--red, #ff5b61); box-shadow: 0 0 0 3px rgba(255, 91, 97, .25); pointer-events: auto; }
 .replay-ticks { display: flex; justify-content: space-between; gap: 8px; font-size: 11.5px; color: var(--txt-3); }

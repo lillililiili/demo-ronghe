@@ -43,33 +43,61 @@ export function bearingDegrees(a, b) {
   return (Math.atan2(y, x) / rad + 360) % 360;
 }
 
-/** 两点同属一段连续实测（未断开、同类型、时间前进）才可推算地速。 */
-function joined(a, b) {
-  return !!a && !!b && !b.break_before && (a.kind || 'meas') === (b.kind || 'meas')
-    && Number.isFinite(a.t) && Number.isFinite(b.t) && b.t > a.t;
+/** 同一段连续实测（未断开、同类型）里，往前找最近一个时间更早的点；
+    融合轨迹常有多个来源共用同一观测时刻，跳过同刻点才能算出速度。 */
+function earlierInSegment(points, index) {
+  const point = points[index];
+  if (!point || !Number.isFinite(point.t)) return null;
+  for (let i = index; i > 0; i -= 1) {
+    const here = points[i], before = points[i - 1];
+    if (here.break_before || (before.kind || 'meas') !== (point.kind || 'meas') || !Number.isFinite(before.t)) return null;
+    if (before.t < point.t) return before;
+  }
+  return null;
+}
+
+function laterInSegment(points, index) {
+  const point = points[index];
+  if (!point || !Number.isFinite(point.t)) return null;
+  for (let i = index + 1; i < points.length; i += 1) {
+    const here = points[i];
+    if (here.break_before || (here.kind || 'meas') !== (point.kind || 'meas') || !Number.isFinite(here.t)) return null;
+    if (here.t > point.t) return here;
+  }
+  return null;
 }
 
 /**
- * 当前点的读数：设备上报的速度/航向优先；没有时用与前一观测点的距离和时间推算，并标明是推算。
- * 断点后的第一个点没有可用的前一点，速度显示未记录。
+ * 当前点的读数：设备上报的速度/航向优先；没有时用同一段里前一个更早观测点的距离和时间推算，并标明是推算。
+ * 断点后的第一个观测时刻没有可用的前一点，速度显示未记录。
  */
 export function pointReadout(points, index) {
   const point = points[index];
   if (!point) return null;
-  const previous = points[index - 1];
-  const next = points[index + 1];
+  const previous = earlierInSegment(points, index);
   let speed = Number.isFinite(point.speed) ? point.speed : null;
   let speedDerived = false;
-  if (speed == null && joined(previous, point)) {
+  if (speed == null && previous) {
     speed = distanceMeters(previous, point) / ((point.t - previous.t) / 1000);
     speedDerived = true;
   }
   let heading = Number.isFinite(point.heading) ? point.heading : null;
   if (heading == null) {
-    if (joined(previous, point)) heading = bearingDegrees(previous, point);
-    else if (joined(point, next)) heading = bearingDegrees(point, next);
+    const next = previous ? null : laterInSegment(points, index);
+    if (previous) heading = bearingDegrees(previous, point);
+    else if (next) heading = bearingDegrees(point, next);
   }
   return { point, speed, speedDerived, heading };
+}
+
+/** 高度读数：海拔与离地高度各自有就显示，都没有写未记录。 */
+export function heightText(alt, agl) {
+  const fmt = v => `${Math.round(v * 10) / 10} m`;
+  const hasAlt = Number.isFinite(alt), hasAgl = Number.isFinite(agl);
+  if (hasAlt && hasAgl) return `${fmt(alt)}（离地 ${fmt(agl)}）`;
+  if (hasAlt) return fmt(alt);
+  if (hasAgl) return `离地 ${fmt(agl)}`;
+  return '未记录';
 }
 
 const COMPASS = ['北', '东北', '东', '东南', '南', '西南', '西', '西北'];

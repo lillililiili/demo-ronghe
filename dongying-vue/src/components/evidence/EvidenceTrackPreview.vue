@@ -10,6 +10,8 @@ const props = defineProps({
   details: { type: Boolean, default: false },
   /** 同一事项关联的光电录像，按采集时刻与轨迹同步播放；不传则不显示录像窗。 */
   videos: { type: Array, default: null },
+  videosLoading: Boolean,
+  videoNote: { type: String, default: '' },
 });
 const model = computed(() => prepareEvidenceTrack(trackSnapshotRows(props.snapshot)));
 const points = computed(() => model.value.points);
@@ -35,7 +37,7 @@ const rawText = computed(() => JSON.stringify(props.snapshot, null, 2));
     </div>
     <p v-if="!points.length" class="track-notice" role="status">没有可用的观测位置，无法显示轨迹。</p>
     <template v-else>
-      <TrackReplayPlayer :key="points.length" :points="points" :map-target="mapTarget" :videos="videos"
+      <TrackReplayPlayer :key="points.length" :points="points" :map-target="mapTarget" :videos="videos" :videos-loading="videosLoading" :video-note="videoNote"
         start-at-end :details="details" :map-height="details ? 'clamp(280px, 46vh, 460px)' : 'clamp(240px, 40vh, 420px)'" />
       <p v-if="details" class="track-description">按原始观测点展示，不补点、不平滑；证据快照不带航线比对依据，轨迹统一按“关系未知”（黄色）显示。</p>
       <p v-if="model.timingIncomplete" class="track-notice">观测时间缺失或顺序异常，仅支持逐点查看。</p>

@@ -7,6 +7,7 @@ import { targetApi } from '@/services/targetApi.js';
 import { measuredMapPoints } from '@/services/trackPoints.js';
 import { ALARM_TYPE_LABEL, LEGALITY_LABEL, labelOf, readableNo, targetTypeLabel } from '@/ui/labels.js';
 import TrackReplayModal from '@/components/modals/TrackReplayModal.vue';
+import { clockText } from '@/components/replay/trackReplayModel.js';
 
 let replaySeq = 0;
 
@@ -40,14 +41,6 @@ function withHeadings(points) {
   });
 }
 
-function clockOf(ms) {
-  if (ms == null) return '—';
-  const d = new Date(ms);
-  if (Number.isNaN(d.getTime())) return '—';
-  const p = n => String(n).padStart(2, '0');
-  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
-}
-
 function alarmMarkOf(alarm, points) {
   const start = points[0]?.t;
   const end = points[points.length - 1]?.t;
@@ -57,7 +50,7 @@ function alarmMarkOf(alarm, points) {
   return {
     t: ts,
     pct: Math.max(0, Math.min(100, (ts - start) / (end - start) * 100)),
-    title: `${type} ${clockOf(ts)}`
+    title: `${type} ${clockText(ts)}`
   };
 }
 

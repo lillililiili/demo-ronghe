@@ -118,6 +118,8 @@ const STATE = {
   FALSE_POSITIVE: { t: '误报', c: 't-blue', color: '#8fbaff' }
 };
 const STATE_FILTER = { ...STATE, CONFIRMED: { ...STATE.CONFIRMED, t: '告警已确认（含处置中）' } };
+/* 待处置：已核实属实、处置还没结束（关注分组不是"历史"）。与列表分组同一个后端口径，不在前端另算。 */
+const PENDING_DISPOSAL_QUERY = { state: 'CONFIRMED', attention_group: 'CURRENT,AWAITING_CONFIRMATION' };
 const NO_EVENT = { t: '未建事件', c: 't-gray', color: '#8ca0be' };
 const NOTIFY_PHASE = {
   AUTO_SMS: { t: '自动短信', c: 't-cyan', color: '#22d3ee' },
@@ -331,6 +333,7 @@ function setSubject(target, value) {
 const KPI_DEFS = [
   { label: '今日告警总数', caption: '按发生时间统计', color: 'blue', icon: 'alert' },
   { label: '今日待核实', caption: '按发生时间统计', color: 'amber', icon: 'alert' },
+  { label: '待处置', caption: '实时，不限日期', color: 'pink', icon: 'alert' },
   { label: '当前反制中', caption: '实时状态', color: 'orange', icon: 'radar' },
   { label: '已反制', caption: '累计完成', color: 'green', icon: 'check' },
   { label: '当前干扰中', caption: '实时状态', color: 'red', icon: 'radar' },
@@ -392,7 +395,7 @@ async function loadKpis() {
   const disposalCount = actionType => Promise.all(DISPOSAL_ACTIVE.map(status =>
     disposalApi.list({ action_type: actionType, status, page: 1, size: 1 }).then(p => Number(p && p.total) || 0)
   )).then(([approved, executing]) => ({ approved, executing }));
-  // 告警按今日发生时间统计；执行中按实时状态统计，已反制按累计完成记录统计。
+  // 告警按今日发生时间统计；待处置、执行中按实时状态统计（不限日期），已反制按累计完成记录统计。
   const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit'
   }).formatToParts(Date.now()).filter(part => part.type !== 'literal').map(part => [part.type, Number(part.value)]));
@@ -405,7 +408,8 @@ async function loadKpis() {
     count({ occurred_from: from, occurred_to: to, state: 'FALSE_POSITIVE' }),
     disposalCount('COUNTERMEASURE'), disposalCount('JAMMING'),
     disposalApi.list({ action_type: 'COUNTERMEASURE', status: 'COMPLETED', page: 1, size: 1 })
-      .then(p => ({ completed: Number(p && p.total) || 0 }))
+      .then(p => ({ completed: Number(p && p.total) || 0 })),
+    count(PENDING_DISPOSAL_QUERY)
   ]);
   const v = r.map(x => x.status === 'fulfilled' ? x.value : null);
   const num = x => x == null ? '—' : U.num(x);
@@ -424,11 +428,12 @@ async function loadKpis() {
   kpiList.value = [
     { ...KPI_DEFS[0], value: num(v[0]), desc: fail(0) || '北京时间今天发生的告警数量；发生时间未知者不计' },
     { ...KPI_DEFS[1], value: num(v[1]), desc: fail(1) || '北京时间今天发生且待人工核实的告警数量' },
-    disposalKpi(KPI_DEFS[2], r[4], v[4]),
-    disposalKpi(KPI_DEFS[3], r[6], v[6]),
-    disposalKpi(KPI_DEFS[4], r[5], v[5]),
-    { ...KPI_DEFS[5], value: num(v[2]), desc: fail(2) || '北京时间今天发生且已确认属实的告警数量，包含处置已结束的记录' },
-    { ...KPI_DEFS[6], value: num(v[3]), desc: fail(3) || '北京时间今天发生且人工核实后已排除的告警数量' }
+    { ...KPI_DEFS[2], value: num(v[7]), desc: fail(7) || '已核实属实、处置还没结束的告警数量，不限日期；正在反制、干扰或急停核查中的也算在内，设备反制或干扰完成后不再计入' },
+    disposalKpi(KPI_DEFS[3], r[4], v[4]),
+    disposalKpi(KPI_DEFS[4], r[6], v[6]),
+    disposalKpi(KPI_DEFS[5], r[5], v[5]),
+    { ...KPI_DEFS[6], value: num(v[2]), desc: fail(2) || '北京时间今天发生且已确认属实的告警数量，包含处置已结束的记录' },
+    { ...KPI_DEFS[7], value: num(v[3]), desc: fail(3) || '北京时间今天发生且人工核实后已排除的告警数量' }
   ];
 }
 
@@ -1220,7 +1225,7 @@ onMounted(async () => {
   gap: 4px;
 }
 .alarms-page :deep(.alarm-kpis) {
-  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-columns: repeat(8, minmax(0, 1fr));
   flex: none;
 }
 @media (max-width: 1439px) {

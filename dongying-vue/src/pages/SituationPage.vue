@@ -2,6 +2,7 @@
 /* 融合感知指挥台：页面结构保持不变，全部业务状态来自后端领域接口。 */
 import { computed, h, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
+import { ChevronUpOutline, GitCompareOutline, LocateOutline } from '@vicons/ionicons5';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import { createSituationApiSource } from '@/pages/situation/situationApiSource.js';
 import { clockLagText, currentMapSnapshot, deviceGroupState, riskMatchesPlan, routeRiskIsActive, SITUATION_DEVICE_TYPE_ORDER, targetClassCounts } from '@/services/situationData.js';
@@ -939,15 +940,24 @@ onUnmounted(() => {
 
       <aside class="sit-glass sit-alert-dock" :class="{ 'is-collapsed': !alertsExpanded }" aria-labelledby="sit-alert-title">
         <header class="sit-dock-head">
-          <span><small>TARGET / ROUTE RISK</small><b id="sit-alert-title">实时风险</b></span>
+          <span><b id="sit-alert-title">实时风险</b></span>
           <em :class="{ 'has-new': newAlarmCount + newRiskCount }">{{ newAlarmCount + newRiskCount ? `${newAlarmCount + newRiskCount} 条未查看` : `${activeRiskCount} 条当前风险` }}</em>
           <button type="button" class="sit-alert-toggle" :aria-expanded="alertsExpanded" aria-controls="sit-alert-content"
-            :aria-label="alertsExpanded ? '收起实时风险' : '展开实时风险'" @click="alertsExpanded = !alertsExpanded">{{ alertsExpanded ? '收起' : '展开' }}</button>
+            :aria-label="alertsExpanded ? '收起实时风险' : '展开实时风险'" @click="alertsExpanded = !alertsExpanded">
+            {{ alertsExpanded ? '收起' : '展开' }}
+            <ChevronUpOutline class="sit-alert-chevron" :class="{ 'is-collapsed': !alertsExpanded }" aria-hidden="true" />
+          </button>
         </header>
         <div v-show="alertsExpanded" id="sit-alert-content" class="sit-alert-content">
         <div class="sit-risk-tabs" role="tablist" aria-label="风险类型">
-          <button type="button" role="tab" :aria-selected="alertTab === 'target'" @click="alertTab = 'target'"><span>目标异常</span><b :class="{ 'has-risk': alarms.length > 0 }">{{ alarms.length }}</b></button>
-          <button type="button" role="tab" :aria-selected="alertTab === 'route'" @click="alertTab = 'route'"><span>航线风险</span><b :class="{ 'has-risk': riskGroups.length > 0 }">{{ riskGroups.length }}</b></button>
+          <button type="button" role="tab" :aria-selected="alertTab === 'target'" @click="alertTab = 'target'">
+            <LocateOutline class="sit-risk-icon" aria-hidden="true" />
+            <span>目标异常</span><b :class="{ 'has-risk': alarms.length > 0 }">{{ alarms.length }}</b>
+          </button>
+          <button type="button" role="tab" :aria-selected="alertTab === 'route'" @click="alertTab = 'route'">
+            <GitCompareOutline class="sit-risk-icon" aria-hidden="true" />
+            <span>航线风险</span><b :class="{ 'has-risk': riskGroups.length > 0 }">{{ riskGroups.length }}</b>
+          </button>
         </div>
         <div v-if="alertTab === 'target'" class="sit-alert-list" role="tabpanel" aria-label="目标异常">
           <button v-for="alarm in alarms" :key="eventKey(alarm)" type="button" class="sit-alert-row"
@@ -1053,13 +1063,29 @@ onUnmounted(() => {
 <style scoped>
 .situation-page .sit-alert-dock>.sit-dock-head,.situation-page .sit-device-dock>.sit-dock-head{flex-wrap:wrap;gap:8px;flex-shrink:0}
 .situation-page .sit-device-dock>.sit-dock-head>span{flex-basis:85px}
-.situation-page .sit-alert-dock>.sit-dock-head>span{flex-basis:120px}
-.situation-page .sit-alert-dock>.sit-dock-head small{overflow-wrap:anywhere}
+.situation-page .sit-alert-dock>.sit-dock-head>span{flex-basis:auto}
+.situation-page .sit-alert-dock>.sit-dock-head>em{padding:0;border:0;border-radius:0;background:transparent;font-size:11px;white-space:normal;overflow-wrap:anywhere}
+.situation-page .sit-alert-dock>.sit-dock-head>em.has-new{color:var(--red)}
 .situation-page .sit-alert-dock.is-collapsed>.sit-dock-head,.situation-page .sit-device-dock.is-collapsed>.sit-dock-head{border-bottom:0}
 .sit-alert-content{display:flex;flex-direction:column;min-height:0}
 .sit-alert-toggle,.sit-device-toggle{flex:none;min-height:32px;padding:4px 8px;border:1px solid var(--sit-line);border-radius:6px;background:var(--surface-2);color:var(--txt);font:inherit;font-size:12px;cursor:pointer}
 .sit-alert-toggle:hover,.sit-device-toggle:hover{border-color:var(--cyan);color:var(--cyan)}
 .sit-alert-toggle:focus-visible,.sit-device-toggle:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+.situation-page .sit-alert-toggle{display:inline-flex;align-items:center;gap:5px;min-height:26px;padding:2px 0 2px 10px;border:0;border-left:1px solid var(--control-line);border-radius:0;background:transparent;color:var(--txt-2)}
+.situation-page .sit-alert-toggle:hover{color:var(--txt)}
+.sit-alert-chevron{width:15px;height:15px;flex:none;transition:transform .16s ease}
+.sit-alert-chevron.is-collapsed{transform:rotate(180deg)}
+.situation-page .sit-risk-tabs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));flex:none;gap:0;margin:10px 9px 2px;padding:0;border:1px solid var(--control-line);border-radius:10px;background:var(--button-bg)}
+.situation-page .sit-risk-tabs button{position:relative;display:grid;grid-template-columns:22px minmax(0,1fr) auto;align-items:center;gap:6px;min-width:0;min-height:58px;margin:0;padding:10px;border:0;border-radius:9px;background:transparent;color:var(--txt-2);font-family:inherit;font-size:14px;font-weight:500;line-height:1.4;text-align:left;cursor:pointer;transition:background .16s ease,color .16s ease}
+.situation-page .sit-risk-tabs button>span{white-space:normal;overflow-wrap:anywhere}
+.situation-page .sit-risk-tabs button:hover{background:var(--button-hover);color:var(--txt)}
+.situation-page .sit-risk-tabs button[aria-selected="true"]{background:color-mix(in srgb,var(--blue) 22%,var(--panel));color:var(--txt)}
+.situation-page .sit-risk-tabs button[aria-selected="true"]::after{position:absolute;bottom:2px;left:38px;width:22px;height:3px;border-radius:2px;background:var(--blue);content:""}
+.situation-page .sit-risk-tabs button:focus-visible{outline:2px solid var(--blue);outline-offset:-3px}
+.sit-risk-icon{width:22px;height:22px;color:var(--txt-2)}
+.situation-page .sit-risk-tabs b{display:flex;align-items:center;justify-content:center;min-width:28px;min-height:28px;padding:2px 6px;border-radius:999px;background:color-mix(in srgb,var(--txt-2) 12%,transparent);color:var(--txt-2);font:600 18px/1.2 'Segoe UI',Arial,sans-serif;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.situation-page .sit-risk-tabs b.has-risk{background:color-mix(in srgb,var(--red) 18%,transparent);color:var(--red)}
+@media (max-width:1366px){.situation-page .sit-risk-tabs button{grid-template-columns:20px minmax(0,1fr) auto;gap:5px;padding:9px 8px;font-size:13px}.sit-risk-icon{width:20px;height:20px}.situation-page .sit-risk-tabs button[aria-selected="true"]::after{left:33px}}
 .situation-page.has-selection-popup :deep(.maptip){display:none!important}
 .sit-alarm-position-note{margin:0;padding:10px 12px;color:var(--muted);font-size:12px;line-height:1.5}
 .sit-companion-video{margin:0;border:0;background:transparent}

@@ -1,7 +1,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import Hls from 'hls.js';
-import { authSession } from '@/services/auth.js';
+import { authExpired, authSession } from '@/services/auth.js';
 import { readSessionToken } from '@/services/apiClient.js';
 import { targetVideoState } from './targetVideoState.js';
 import { authenticatedHlsLoader, streamUrl } from './authenticatedHlsLoader.js';
@@ -10,60 +10,100 @@ import EoEvidenceCapture from './EoEvidenceCapture.vue';
 const props = defineProps({ targetId: { type: String, required: true }, video: { type: Object, required: true }, eventId: { type: String, default: '' } });
 const media = ref(null), phase = ref('WAITING'), error = ref('');
 const playable = computed(() => targetVideoState(props.targetId, props.video).playable);
-const text = computed(() => error.value || ({ WAITING: '视频加载中', READY: '视频已加载，请点击播放', PLAYING: '播放中', BUFFERING: '等待视频数据', PAUSED: '视频已暂停', INTERRUPTED: '视频已中断，请刷新视频状态' })[phase.value]);
-let player, sequence = 0, watchdog;
+const text = computed(() => error.value || ({ WAITING: '正在连接直播', PLAYING: '直播中', BUFFERING: '直播缓冲中',
+  RECONNECTING: '直播连接中断，正在自动重连', BLOCKED: '浏览器阻止了自动播放，请点击连接直播', INTERRUPTED: '直播已停止' })[phase.value]);
+let player, sequence = 0, watchdog, reconnectTimer, retryDelay = 0, alive = true;
 function destroy() {
-  clearTimeout(watchdog);
-  player?.destroy(); player = null;
+  clearTimeout(watchdog); watchdog = null;
+  clearTimeout(reconnectTimer); reconnectTimer = null;
+  const previous = player; player = null; previous?.destroy();
   if (media.value) { media.value.pause(); media.value.removeAttribute('src'); media.value.load(); }
 }
-function interrupt(message = '视频已中断，请刷新视频状态') {
+function interrupt(message) {
   ++sequence; error.value = message; phase.value = 'INTERRUPTED'; destroy();
 }
+function canConnect() { return alive && playable.value && !!authSession.value && !authExpired.value; }
+function reconnect(current = sequence) {
+  if (current !== sequence || !canConnect() || error.value || reconnectTimer) return;
+  ++sequence; destroy(); phase.value = 'RECONNECTING';
+  retryDelay = Math.min(retryDelay ? retryDelay * 2 : 1000, 10000);
+  reconnectTimer = setTimeout(() => { reconnectTimer = null; if (canConnect()) start(); }, retryDelay);
+}
+function watchForData(current = sequence) {
+  if (!watchdog) watchdog = setTimeout(() => { watchdog = null; reconnect(current); }, 15000);
+}
 function waitForData() {
-  if (error.value) return;
+  if (error.value || !player || phase.value === 'BLOCKED') return;
   phase.value = 'BUFFERING';
-  clearTimeout(watchdog); watchdog = setTimeout(() => interrupt(), 15000);
+  watchForData();
 }
 function playing() {
   if (error.value || !playable.value || !player) return;
-  clearTimeout(watchdog); phase.value = 'PLAYING';
+  clearTimeout(watchdog); watchdog = null; retryDelay = 0; phase.value = 'PLAYING';
+}
+async function playLive(current = sequence) {
+  if (current !== sequence || !canConnect() || !player || !media.value) return;
+  media.value.muted = true;
+  try { await media.value.play(); }
+  catch (failure) {
+    if (current !== sequence || !canConnect()) return;
+    if (failure.name === 'NotAllowedError') {
+      clearTimeout(watchdog); watchdog = null; phase.value = 'BLOCKED';
+    } else if (failure.name !== 'AbortError') reconnect(current);
+  }
+}
+function resumeLive() {
+  if (!player || error.value || phase.value === 'BLOCKED' || !canConnect()) return;
+  watchForData(); playLive();
 }
 async function start() {
   const current = ++sequence;
   destroy(); error.value = ''; phase.value = 'WAITING';
-  if (!playable.value || !authSession.value) return;
+  if (!canConnect()) return;
   await nextTick();
   if (current !== sequence || !media.value) return;
   if (!Hls.isSupported()) { interrupt('当前浏览器不支持带会话授权的视频播放，请使用支持 MediaSource 的浏览器。'); return; }
   try {
     const options = { origin: location.origin, targetId: props.targetId, streamId: props.video.stream_id };
     const url = streamUrl(props.video.playback_url, options);
-    player = new Hls({ enableWorker: true, loader: authenticatedHlsLoader({ ...options,
+    player = new Hls({ enableWorker: true, liveSyncDurationCount: 3, liveMaxLatencyDurationCount: 6, backBufferLength: 15,
+      loader: authenticatedHlsLoader({ ...options,
       session: authSession.value, readToken: readSessionToken,
-      onUnauthorized: () => window.dispatchEvent(new Event('api:unauthorized')) }) });
+      onUnauthorized: () => {
+        if (current !== sequence) return;
+        interrupt('登录已过期，请重新登录后查看直播');
+        window.dispatchEvent(new Event('api:unauthorized'));
+      } }) });
     player.on(Hls.Events.ERROR, (_event, data) => {
-      if (current === sequence && (data.fatal || data.type === Hls.ErrorTypes.NETWORK_ERROR)) interrupt();
+      if (current !== sequence) return;
+      const status = data.response?.code || data.networkDetails?.status;
+      if (status === 401 || status === 403) { interrupt('当前会话无权读取直播，请重新登录或刷新视频状态'); return; }
+      // HLS 会自行重试非致命网络/缓冲错误；一次丢片不能销毁整条直播。
+      if (!data.fatal) return;
+      if (data.type === Hls.ErrorTypes.NETWORK_ERROR || data.type === Hls.ErrorTypes.MEDIA_ERROR) reconnect(current);
+      else interrupt('当前视频无法解码，请刷新视频状态');
     });
-    player.on(Hls.Events.MANIFEST_PARSED, () => { if (current === sequence) { clearTimeout(watchdog); phase.value = 'READY'; } });
+    player.on(Hls.Events.MANIFEST_PARSED, () => { if (current === sequence) playLive(current); });
     player.attachMedia(media.value);
     player.loadSource(url);
-    watchdog = setTimeout(() => interrupt(), 15000);
+    watchForData(current);
   } catch { interrupt('视频地址或会话无效，请刷新视频状态'); }
 }
 watch([() => props.targetId, () => props.video.task_id, () => props.video.command_id,
-  () => props.video.stream_id, () => props.video.playback_url, playable, authSession], start, { immediate: true, flush: 'post' });
-onBeforeUnmount(() => { ++sequence; destroy(); });
+  () => props.video.stream_id, () => props.video.playback_url, playable, authSession, authExpired],
+  () => { retryDelay = 0; start(); }, { immediate: true, flush: 'post' });
+onBeforeUnmount(() => { alive = false; ++sequence; destroy(); });
 </script>
 
 <template>
   <div class="external-video" :data-player-state="phase">
-    <video v-show="!error" ref="media" controls muted playsinline preload="metadata" aria-label="外部光电视频"
+    <video v-show="!error" ref="media" autoplay muted playsinline disablepictureinpicture preload="auto" aria-label="外部光电直播"
       @playing="playing" @waiting="waitForData" @stalled="waitForData"
-      @pause="!error && (phase = 'PAUSED')" @ended="interrupt()" @error="interrupt()" />
+      @pause="resumeLive" @ended="reconnect()" @error="player && reconnect()" />
     <p :role="error ? 'alert' : 'status'">{{ text }}</p>
+    <button v-if="phase === 'BLOCKED'" class="btn" type="button" @click="playLive()">连接直播</button>
     <EoEvidenceCapture v-if="!error" :media="media" :target-id="targetId" :video="video" :event-id="eventId"
-      :playing="phase === 'PLAYING' || phase === 'BUFFERING'" />
+      :playing="phase === 'PLAYING'" />
   </div>
 </template>
 

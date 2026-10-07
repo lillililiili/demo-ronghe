@@ -164,6 +164,41 @@ class EoVideoTests(unittest.TestCase):
     def test_disabled_video_never_registers_or_spawns(self):
         self.eo.config['enabled']=False; self.begin()
         self.assertFalse(self.processes); self.assertTrue(all(c[0]=='GET' for c in self.api.calls))
+    def test_video_toggle_keeps_current_tracking_and_restarts_only_owned_encoder(self):
+        self.assertTrue(callable(getattr(self.eo,'configure_video',None)), 'running video toggle is missing')
+        self.eo.config['enabled']=False; self.begin()
+        config={**self.eo.config,'enabled':True}
+        self.eo.configure_video(config); self.eo.tick()
+        self.assertEqual(len(self.processes),1)
+        self.eo.configure_video(config); self.eo.tick()
+        self.assertEqual(len(self.processes),1)
+        self.eo.configure_video({**config,'enabled':False})
+        self.assertEqual(self.processes[0].terminated,1)
+        self.assertEqual(self.eo.active['ops-1']['task'],TASK)
+        self.assertNotIn(TASK,self.eo.retired)
+        self.assertEqual(self.eo.snapshot()['devices'][0]['tracking'],'TRACKING')
+        self.assertEqual(self.eo.snapshot()['devices'][0]['video'],'DISABLED')
+        self.assertEqual(self.api.calls[-1][0],'DELETE')
+        self.now+=5; self.eo.tick()
+        self.assertEqual(self.sent[-1][1]['metadata']['workState'],1)
+        self.eo.configure_video(config); self.eo.tick()
+        self.assertEqual(len(self.processes),2)
+        self.assertEqual(self.eo.active['ops-1']['task'],TASK)
+    def test_enable_waits_for_task_and_never_revives_replaced_or_ending_task(self):
+        self.assertTrue(callable(getattr(self.eo,'configure_video',None)), 'running video toggle is missing')
+        import uuid
+        for status in ('OPEN','ENDING'):
+            with self.subTest(status=status):
+                self.eo.config['enabled']=False
+                self.api.task=str(uuid.uuid4()); self.api.status='OPEN'
+                self.eo.handle(BINDING['dispatcher_topic'], self.command(task=self.api.task))
+                if status=='OPEN': self.api.task=str(uuid.uuid4())
+                self.api.status=status
+                self.eo.configure_video({**self.eo.config,'enabled':True}); self.eo.tick()
+                self.assertFalse(self.processes)
+                self.assertFalse(self.eo.active)
+                self.eo.configure_video({**self.eo.config,'enabled':True}); self.eo.tick()
+                self.assertFalse(self.processes)
     def test_camera_status_does_not_spawn(self):
         self.eo.handle(BINDING['dispatcher_topic'],self.command('CameraStatus'))
         self.assertFalse(self.processes); self.assertEqual(self.sent[-1][1]['metadata']['workState'],0)

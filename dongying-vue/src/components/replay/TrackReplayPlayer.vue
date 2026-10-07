@@ -188,9 +188,23 @@ function syncVideo() {
 }
 
 /* ---------- 地图 ---------- */
+/* 弹窗打开时有缩放动画：此时量到的外框比实际布局小，地图按这个尺寸建画布会把目标和轨迹画偏。
+   外框与布局尺寸一致（动画结束）才算就绪。 */
 function hostReady() {
   const el = mapHost.value;
-  return !!el && el.clientWidth >= 80 && el.clientHeight >= 80;
+  if (!el || el.clientWidth < 80 || el.clientHeight < 80) return false;
+  const r = el.getBoundingClientRect();
+  return Math.abs(r.width - el.clientWidth) < 2 && Math.abs(r.height - el.clientHeight) < 2;
+}
+
+/* 地图画布尺寸与容器不符（建图时还在动画、窗口缩放、切换并排）就重新量一次再重画。 */
+function keepMapSized() {
+  if (!map || !hostReady()) return;
+  const el = mapHost.value;
+  if (typeof map._resize !== 'function') return;
+  if (Math.abs((map.w || 0) - el.clientWidth) < 2 && Math.abs((map.h || 0) - el.clientHeight) < 2) return;
+  map._resize();
+  paint();
 }
 
 function paint() {
@@ -224,6 +238,7 @@ function drawOverlay(now) {
   overlayRaf = requestAnimationFrame(drawOverlay);
   if (!overlay || !map || now - overlayDrawnAt < 60) return;
   overlayDrawnAt = now;
+  keepMapSized();
   const box = mapHost.value;
   if (!box) return;
   const dpr = window.devicePixelRatio || 1;

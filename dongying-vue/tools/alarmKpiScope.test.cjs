@@ -6,7 +6,7 @@ const path = require('node:path');
 /* OBS-15：统计卡"今日告警 10"与"待核实 14"对不上——待核实那张卡当初不带日期条件，数的是全部历史。
    告警类的卡必须同一口径（同一个北京时间自然日的发生时间），并各自写明自己数的是什么。 */
 function loadKpis(recorded) {
-  const source = readFileSync(path.join(__dirname, '../src/pages/AlarmsPage.vue'), 'utf8');
+  const source = readFileSync(path.join(__dirname, '../src/pages/AlarmsPage.vue'), 'utf8').replace(/\r\n/g, '\n');
   const start = source.indexOf('const KPI_DEFS = [');
   const body = source.slice(start, source.indexOf('\n}\n', source.indexOf('async function loadKpis()')) + 3);
   const listAlarms = query => { recorded.push(query); return Promise.resolve({ total: query.state ? 4 : 10 }); };

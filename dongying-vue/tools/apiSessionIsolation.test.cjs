@@ -11,8 +11,9 @@ function client() {
   const storage = new Map(), events = [], requests = [];
   const sessionStorage = { getItem: key => storage.get(key), setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) };
   const fetch = (url, options) => new Promise((resolve, reject) => requests.push({ url, options, resolve, reject }));
-  const api = new Function('userFacingMessage', 'fetch', 'sessionStorage', 'window', 'CustomEvent', source + '\nreturn {apiRequest,apiDownload,apiBinary,writeSessionToken,readSessionToken};')(
-    userFacingMessage, fetch, sessionStorage, { dispatchEvent: event => events.push(event) }, class { constructor(type, options) { this.type = type; this.detail = options.detail; } });
+  // 平台时钟校准（serverClock.js）与会话隔离无关，这里给个空实现。
+  const api = new Function('userFacingMessage', 'fetch', 'sessionStorage', 'window', 'CustomEvent', 'noteServerDate', source + '\nreturn {apiRequest,apiDownload,apiBinary,writeSessionToken,readSessionToken};')(
+    userFacingMessage, fetch, sessionStorage, { dispatchEvent: event => events.push(event) }, class { constructor(type, options) { this.type = type; this.detail = options.detail; } }, () => {});
   api.writeSessionToken('session-A');
   return { ...api, events, requests };
 }

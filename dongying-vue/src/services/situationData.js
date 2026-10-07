@@ -9,6 +9,7 @@
 /* 用相对路径而不是 @/ 别名：本模块要能被 node 直接 import 跑单测（tools/situationData.test.cjs），
    而别名只有 Vite 认得。文案一律走共享字典，本页不另建一套中文。 */
 import { measuredMapPoints } from './trackPoints.js';
+import { serverNow } from './serverClock.js';
 import { OBJECT_TYPE_LABEL, ALARM_TYPE_LABEL, labelOf, targetTypeLabel } from '../ui/labels.js';
 import { displayDeviceNo } from '../ui/deviceNumber.js';
 
@@ -106,8 +107,8 @@ export function routeRiskIsActive(risk) {
     && !!(risk.planId || risk.plan_id) && !!(risk.routeVersionId || risk.route_version_id);
 }
 
-/** 仅控制实时地图可见性，不推进告警、授权或风险状态。到期时间由后端现行融合配置给出。 */
-export function targetIsCurrent(target, now = Date.now()) {
+/** 仅控制实时地图可见性，不推进告警、授权或风险状态。到期时间由后端现行融合配置给出；"此刻"按平台时钟（CDX-P01）。 */
+export function targetIsCurrent(target, now = serverNow()) {
   const observedAt = target?.observedAt;
   const expiresAt = target?.mapExpiresAt;
   return Number.isFinite(observedAt) && Number.isFinite(expiresAt)
@@ -118,7 +119,7 @@ export function targetIsCurrent(target, now = Date.now()) {
 }
 
 /** 保留当天风险记录；失去当前目标的风险只退出地图，不伪造已解除。 */
-export function currentMapSnapshot(snapshot, now = Date.now()) {
+export function currentMapSnapshot(snapshot, now = serverNow()) {
   const targets = (snapshot.targets || []).filter(target => targetIsCurrent(target, now));
   const locatedIds = new Set(targets.filter(target => target.posValid).map(target => target.targetId));
   const risks = (snapshot.risks || []).map(risk => {

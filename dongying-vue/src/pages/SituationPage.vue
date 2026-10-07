@@ -5,6 +5,7 @@ import { useRoute } from 'vue-router';
 import { ChevronUpOutline, GitCompareOutline, LocateOutline } from '@vicons/ionicons5';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import { createSituationApiSource } from '@/pages/situation/situationApiSource.js';
+import { serverNow } from '@/services/serverClock.js';
 import { clockLagText, currentMapSnapshot, deviceGroupState, riskMatchesPlan, routeRiskIsActive, SITUATION_DEVICE_TYPE_ORDER, targetClassCounts } from '@/services/situationData.js';
 import {
   disposalStage, situationAlarmNeedsAttention, situationRouteRiskVisible,
@@ -167,6 +168,12 @@ const fusionDevices = computed(() => {
 });
 const fusionConfidence = computed(() => selectedTarget.value?.fusedConf ?? null);
 const clockText = computed(() => formatClock(snapshot.value.generatedAt));
+/* 数据刷新慢（CDX-P01）：地图上的目标只在有效期（十几秒）内显示，最近一轮数据超过 10 秒还没更新，
+   目标会陆续按期退出地图，看起来像"没有目标"。这时明确提示是刷新慢，不让值班员误以为空中没有东西。 */
+const SLOW_REFRESH_SECONDS = 10;
+const nowTick = ref(serverNow());
+const refreshLagSeconds = computed(() => snapshot.value.generatedAt ? Math.max(0, Math.floor((nowTick.value - snapshot.value.generatedAt) / 1000)) : 0);
+const refreshSlow = computed(() => refreshLagSeconds.value >= SLOW_REFRESH_SECONDS);
 const sourceModeText = computed(() => snapshot.value.simulated ? '含模拟数据'
   : snapshot.value.sourceMode === 'replay' ? '回放数据'
   : snapshot.value.sourceMode === 'live' ? '实时数据'
@@ -874,7 +881,8 @@ onMounted(() => {
   stopSource = source.start(applySnapshot, onSourceError);
   // 独立于网络轮询：请求失败或迟迟未返回时，旧点仍按期退出地图。
   expiryTimer = window.setInterval(() => {
-    if (!document.hidden && rawSnapshot && snapshot.value.targets.some(target => target.mapExpiresAt <= Date.now())) applySnapshot(rawSnapshot);
+    nowTick.value = serverNow();
+    if (!document.hidden && rawSnapshot && snapshot.value.targets.some(target => target.mapExpiresAt <= nowTick.value)) applySnapshot(rawSnapshot);
   }, 1000);
   selectionResizeObserver = new ResizeObserver(() => focusSelection(false));
   selectionResizeObserver.observe(mapHost.value);
@@ -905,6 +913,7 @@ onUnmounted(() => {
         <span>{{ sourceModeDetail }}</span>
         <span>当前目标 {{ targets.length }} · 无人机 {{ targetCounts.uav }} · 异物 {{ targetCounts.foreign }} · 未分类 {{ targetCounts.unknown }}<template v-if="targetCounts.other"> · 其他 {{ targetCounts.other }}</template>（北京时间）</span>
         <time class="mono">{{ clockText }}</time>
+        <em v-if="refreshSlow" class="sit-refresh-slow" role="status" :title="`最近一次数据停在 ${clockText}，已有 ${refreshLagSeconds} 秒没有更新；地图上的目标按期退出，可能不全。恢复后自动更新。`">数据刷新慢 · {{ refreshLagSeconds }} 秒未更新</em>
       </div>
       <p class="sr-only" role="status" aria-live="polite" aria-atomic="true">{{ statusAnnouncement }}</p>
 

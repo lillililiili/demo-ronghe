@@ -51,6 +51,7 @@ async function main() {
     'flight:read', 'route:read', 'airspace:read'];
   let granted = new Set(ALL_CODES);
   let pushHandler = null;
+  let alarmsGate = null;
   const devices = Array.from({ length: 101 }, (_, index) => ({
     device_id: `d${index}`, device_no: `DEV-${index}`, name: `设备${index}`,
     device_type_code: index === 0 ? 'EO' : 'RADAR', device_type_name: index === 0 ? '光电' : '雷达',
@@ -102,7 +103,7 @@ async function main() {
       fusionStatus: async () => ({ status: 'RUNNING' }),
       detail: async () => ({ source_links: [{ device_id: 'd0' }] })
     },
-    listAlarms: async () => { calls.alarms++; return { items: [], total: 0 }; },
+    listAlarms: async () => { calls.alarms++; if (alarmsGate) await alarmsGate; return { items: [], total: 0 }; },
     listAllFlightPlans: async () => { calls.plans++; return [planRow]; },
     flightApi: { routeVersion: async () => ({ route_version_id: 'rv1', centerline: {
       coordinates: [[118.4, 37.3], [118.6, 37.5]]
@@ -247,6 +248,23 @@ async function main() {
   check('快照注明飞行计划没有权限', noRouteSnapshots.at(-1).deniedSegments, ['flight-plans']);
   noRoute.stop();
   granted = new Set(ALL_CODES);
+
+  // CDX-P01：同一轮里告警等几组分页读得慢时，目标一读回就先发布到地图，不等整轮读完。
+  let openAlarms;
+  alarmsGate = new Promise(resolve => { openAlarms = resolve; });
+  const early = createSituationApiSource({ fastMs: 60_000, slowMs: 60_000, now: () => clock });
+  const earlySnapshots = [];
+  const alarmsBeforeEarly = calls.alarms;
+  early.start(value => earlySnapshots.push(value), () => {});
+  const earlyStarted = Date.now();
+  while ((!earlySnapshots.length || calls.alarms === alarmsBeforeEarly) && Date.now() - earlyStarted < 3_000) await delay(5);
+  await delay(30);
+  ok('告警还没读完，目标已先发布', earlySnapshots.length === 1 && earlySnapshots[0].generatedAt === clock);
+  openAlarms();
+  alarmsGate = null;
+  while (earlySnapshots.length < 2 && Date.now() - earlyStarted < 3_000) await delay(5);
+  ok('整轮读完后照旧再发布一次', earlySnapshots.length >= 2);
+  early.stop();
   delete globalThis.document;
   delete globalThis.__situationContractDeps;
 

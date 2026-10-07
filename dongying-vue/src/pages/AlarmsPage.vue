@@ -131,7 +131,8 @@ const NOTIFY_PHASE = {
   AUTO_SMS: { t: '自动短信', c: 't-cyan', color: '#22d3ee' },
   WATCHING: { t: '观察中', c: 't-amber', color: '#f1a43a' },
   AUTO_CALL: { t: '自动电话', c: 't-cyan', color: '#22d3ee' },
-  AWAIT_COUNTER: { t: '待处置决策', c: 't-orange', color: '#fb923c' }
+  /* 通知已发完（或发不出去）、无人机还在：等人决定反制还是不反制。不叫"待处置决策"，免得和"待处置"统计看混。 */
+  AWAIT_COUNTER: { t: '待定是否反制', c: 't-orange', color: '#fb923c' }
 };
 const SOURCE_MODE = { mock: { t: MODE_TEXT.mock, c: 't-purple' }, replay: { t: MODE_TEXT.replay, c: 't-amber' }, live: { t: MODE_TEXT.live, c: 't-green' } };
 /* 类别按违规原因筛（2026-10-07）：平台自己产生的告警都是"飞行违规"，按告警类型筛只有一项筛得出东西。
@@ -496,13 +497,20 @@ function queryOf() {
   return q;
 }
 
+/* 违规原因单独成列，列名与"违规原因"筛选一致；没有原因码的告警（演示告警等）显示告警类型。
+   原因定宽折行、最多两行，不把列撑宽挤掉"状态"列；全文在悬停提示与详情里。 */
+function reasonCell(a) {
+  const reasons = reasonsOf(a);
+  const text = reasons ? esc(reasons) : typeOf(a);
+  return U.cell(U.tag(modeOf(a).t, modeOf(a).c),
+    `<span style="display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;white-space:normal;width:9em">${text}</span>`,
+    { title: reasons ? esc(reasons) : '' });
+}
+
+/* 来源和发生时间分两行：挤在一行时这一列最宽，整张表被撑过面板，"状态"列要横向滚动才看得到。 */
 function summaryOf(a) {
-  const text = `来源 ${esc(sourceDescription(a.source_name, a.source_code, a.source_mode, '—'))}· 发生 ${fmt(a.occurred_at) || '未知'}`;
-  const reasons = reasonsOf(a), tag = escalationTag(a);
-  /* 原因行不参与撑开列宽（表格按内容自然拓宽），跟随来源行的宽度折行，最多两行，全文在悬停提示与详情里。 */
-  const head = reasons || tag ? `<div style="width:0;min-width:100%;color:var(--txt);display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden"
-    title="${esc(reasons)}">${tag}${tag && reasons ? ' ' : ''}${reasons ? esc(reasons) : ''}</div>` : '';
-  return `<div style="white-space:normal;line-height:1.5;overflow-wrap:anywhere">${head}${text}</div>`;
+  const tag = escalationTag(a);
+  return `<div style="white-space:normal;line-height:1.5;overflow-wrap:anywhere">${tag ? `<div>${tag}</div>` : ''}<div>来源 ${esc(sourceDescription(a.source_name, a.source_code, a.source_mode, '—'))}</div><div class="cell-sub">发生 ${fmt(a.occurred_at) || '未知'}</div></div>`;
 }
 
 function listHtml() {
@@ -518,7 +526,7 @@ function listHtml() {
       render: a => U.cell(esc(noOf(a)), clock(a.received_at), { mono: true, title: esc(a.alarm_id) })
     },
     { t: sortTh('level', '等级'), w: '52px', align: 'center', render: sevTag },
-    { t: sortTh('kind', '类别 / 类型'), w: '128px', render: a => U.cell(U.tag(modeOf(a).t, modeOf(a).c), typeOf(a)) },
+    { t: sortTh('kind', '违规原因'), w: '136px', render: reasonCell },
     { t: sortTh('district', '关联目标 / 区域'), w: '146px', render: a => U.cell(a.target_id ? esc(a.target_no || a.target_id) : '—', esc(a.district_name || a.district_id || '—'), { mono: true, title: a.target_id ? esc(a.target_id) : '无关联目标或无目标读取权限' }) },
     { t: '告警内容', render: summaryOf },
     { t: sortTh('status', '状态'), w: '86px', render: stateTag }

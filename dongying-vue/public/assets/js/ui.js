@@ -191,13 +191,28 @@
   }
   const mapAlarmActive = abnormalActive;
   let alarmMotionQuery, alarmGlowColor;
-  function applyAlarmGlow(context, item) {
+  function applyAlarmGlow(context, item, x = 0, y = 0, size = 24) {
     if (!context || !abnormalActive(item)) return;
     alarmMotionQuery ||= g.matchMedia?.('(prefers-reduced-motion: reduce)');
-    const pulse = alarmMotionQuery?.matches ? .75 : (1 - Math.cos(performance.now() / 1400 * Math.PI * 2)) / 2;
+    const wave = (1 - Math.cos(performance.now() / 1400 * Math.PI * 2)) / 2;
+    const pulse = alarmMotionQuery?.matches ? .85 : Math.min(1, wave * 1.8);
     alarmGlowColor ||= getComputedStyle(document.documentElement).getPropertyValue('--icon-alarm').trim() || '#ff243b';
+    // 柔和的固定像素红晕提供醒目底光，不绘制范围边界，也不降低主体透明度。
+    const radius = size / 2 + 20;
+    const halo = context.createRadialGradient(x, y, 0, x, y, radius);
+    halo.addColorStop(0, alarmGlowColor);
+    halo.addColorStop(.3, alarmGlowColor);
+    halo.addColorStop(1, 'transparent');
+    context.save();
+    context.shadowBlur = 0; context.filter = 'none';
+    context.globalAlpha *= .04 + .58 * pulse;
+    context.fillStyle = halo;
+    context.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+    context.restore();
     context.shadowColor = alarmGlowColor;
-    context.shadowBlur = 6 + 22 * pulse;
+    // 贴边亮光与外层红晕叠加，避免细线图标的单层宽阴影被底图吞没。
+    context.shadowBlur = 2 + 6 * pulse;
+    context.filter = `drop-shadow(0 0 ${1 + 3 * pulse}px ${alarmGlowColor}) drop-shadow(0 0 ${3 + 11 * pulse}px ${alarmGlowColor})`;
     context.shadowOffsetX = context.shadowOffsetY = 0;
   }
   const businessImages = new Map();

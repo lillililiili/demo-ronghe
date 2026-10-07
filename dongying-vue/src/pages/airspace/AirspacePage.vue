@@ -78,7 +78,7 @@ const riskSection = ref(null);
 /* ---------- 文案 ---------- */
 function time(value) { return value == null ? '' : new Date(value).toLocaleString('zh-CN', { hour12: false }); }
 function day(value) { return value == null ? '' : new Date(value).toLocaleDateString('zh-CN'); }
-function sourceLabel(row) { return ({ mock: '模拟', replay: '回放' })[row?.source_mode] || ''; }
+function sourceLabel(row) { return ({ mock: '模拟', replay: '回放' })[row?.source_display_mode || row?.source_mode] || ''; }
 function kindLabel(code) { return labelOf(AIRSPACE_KIND_LABEL, code, '未知种类'); }
 function kindTag(code) {
   return ({ RESTRICTED: 't-orange', TEMPORARY_CONTROL: 't-purple', TEMPORARY: 't-purple' })[code] || AIRSPACE_KIND_TAG[code] || 't-gray';

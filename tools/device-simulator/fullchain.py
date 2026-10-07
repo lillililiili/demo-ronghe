@@ -6,7 +6,7 @@ import json
 import math
 import re
 import time
-from engine import coordinates
+from engine import coordinates, TARGET_REPORT_KINDS
 
 PREFIX = '/local-interface-simulator'
 CLASSES = {'uav':'UAV','bird':'BIRD','unknown':'UNKNOWN','identifying':None,'balloon':'UNKNOWN',
@@ -55,6 +55,14 @@ def payload_without_message_id(body):
     return {key: value for key, value in body.items() if key != 'message_id'}
 
 
+def plan_identity(body):
+    """Submission identity excludes transport IDs and derived lifecycle state."""
+    identity = payload_without_message_id(body)
+    if identity.get('status_code', 'PENDING') in ('PENDING', 'EXECUTING', 'COMPLETED'):
+        identity.pop('status_code', None)
+    return identity
+
+
 def route_covers_window(route, start, finish):
     """Tell whether an existing route version is valid for the new plan window."""
     if not isinstance(route, dict):
@@ -77,7 +85,7 @@ def message_matches_payload(message, body):
     # Older test doubles and older platform responses did not expose payload;
     # keep their established reuse behavior while using strict comparison for
     # the current API response.
-    return not isinstance(payload, dict) or canonical_payload(payload) == canonical_payload(body)
+    return not isinstance(payload, dict) or canonical_payload(plan_identity(payload)) == canonical_payload(plan_identity(body))
 
 
 def stable_uav_sn(target_id, declared=None):
@@ -235,6 +243,22 @@ class FullChain:
     def message(self, key):
         return self.manifest['batch']+'-'+key
 
+    def observation_devices(self):
+        return {device['id']: dict(device, x=site['x'], y=site['y'])
+                for site in self.scene['sites'] for device in site['devices']
+                if device.get('send') is not False and device['kind'] in TARGET_REPORT_KINDS}
+
+    @staticmethod
+    def target_device_ids(target, devices):
+        # Only the explicitly selected observation devices can contribute.
+        return [key for key in dict.fromkeys((target.get('deviceId'), target.get('secondaryDeviceId')))
+                if key in devices]
+
+    def observation_device_reporting(self, device, elapsed):
+        return device['heartbeat'] != '停止心跳' and not any(
+            risk.get('enabled') and risk['type'] == 'offline' and risk['deviceId'] == device['id']
+            and risk['at'] <= elapsed < risk['at'] + risk['seconds'] for risk in self.scene['risks'])
+
     def prepare(self):
         now=self.manifest['created_at']; end=now+24*3600000
         # Existing configured contacts may be selected; this never asserts a new human verification.
@@ -296,21 +320,22 @@ class FullChain:
                            'route_version_id':route_data['route_version_id'],'uav_sn':serial,
                            'start_at':start,'end_at':finish,'source_mode':'replay',
                            'status_code':plan_status(start, finish, now),'filing':item_filing}
-                existing_plan = inputs['plans'].get(plan_message)
-                if existing_plan is None:
-                    # Older context responses may omit payloads while exposing
-                    # only the content-fingerprint message from a prior run.
-                    # Reuse that sole candidate for backward compatibility;
-                    # an absent or ambiguous candidate still gets a fresh key.
-                    candidates = [(mid, row) for mid, row in inputs['plans'].items()
-                                  if mid.startswith(legacy_plan_message + '-')]
-                    if len(candidates) == 1 and message_matches_payload(candidates[0][1], plan_body):
-                        plan_message, existing_plan = candidates[0]
-                        plan_body['message_id'] = plan_message
+                candidates = [(mid, row) for mid, row in inputs['plans'].items()
+                              if (mid == legacy_plan_message or mid.startswith(legacy_plan_message + '-'))
+                              and message_matches_payload(row, plan_body)]
+                if len(candidates) > 1:
+                    candidates = [(mid, row) for mid, row in candidates if isinstance(row.get('payload'), dict)]
+                # Prefer the earliest receipt; list order and the current state
+                # must not select a later duplicate from an older simulator run.
+                candidates.sort(key=lambda item: (item[1].get('created_at', 0), item[0]))
+                existing_plan = None
+                if candidates:
+                    plan_message, existing_plan = candidates[0]
+                    plan_body['message_id'] = plan_message
                 if not existing_plan or not message_matches_payload(existing_plan, plan_body):
                     plan_message = stable_simulator_id(
                         'sim-map-plan-',
-                        f"{plan['id']}-{number}-{payload_fingerprint(payload_without_message_id(plan_body))}")
+                        f"{plan['id']}-{number}-{payload_fingerprint(plan_identity(plan_body))}")
                     plan_body['message_id'] = plan_message
                     existing_plan = inputs['plans'].get(plan_message)
                 if existing_plan:
@@ -319,7 +344,7 @@ class FullChain:
                         raise ValueError('稳定模拟计划缺少平台编号：' + plan_message)
                 else:
                     result=self.request('plan-'+plan['id']+'-'+str(number)+'-'+
-                                        payload_fingerprint(payload_without_message_id(plan_body)),
+                                        payload_fingerprint(plan_identity(plan_body)),
                                         PREFIX+'/plans',plan_body)
                     pid=result.get('subject_id') or result.get('result',{}).get('plan_id') or result.get('plan_id')
                 if not pid: raise ValueError('平台未返回模拟计划编号')
@@ -339,14 +364,23 @@ class FullChain:
                 min_altitude_m=zone.get('min',0),max_altitude_m=zone['max'],altitude_datum=zone.get('altitudeDatum','AMSL'),
                 valid_from=now,valid_to=end,change_reason='全量模拟批次 '+self.manifest['batch']))
             self.manifest['zones'][zone['id']]={'id':result.get('airspace_id'),'revision':int(result.get('revision') or revision),'receipt':result};self.checkpoint()
-        # 观测源和气象站是长期设备：按登记内容（单位区域、名称、位置）复用同一条，不随批次新建。
-        if any(t.get('transport')=='normalized' for t in self.scene['targets']):
-            source_body=dict(self.scope,name='模拟完整观测源',longitude=118.61,latitude=37.464)
-            source=self.request('normalized-source',PREFIX+'/observation-devices',dict(source_body,
-                message_id=stable_simulator_id('map-sim-source-',payload_fingerprint(source_body))))
-            self.manifest['normalized_source']=source
-            self.manifest['devices']['normalized-source']={'platform_id':source['device_id'],'kind':'normalized',
-                                                         'external_id':source['source_id']}
+        # 观测源和气象站是长期设备：按登记内容（单位区域、名称、位置）复用同一条，不随批次新建（OBS-01）。
+        # 每台参与上报的场景设备各有一个观测源；身份按场景设备和登记内容生成，同样不带批次号。
+        devices = self.observation_devices()
+        selected = {key for target in self.scene['targets'] if target.get('transport') == 'normalized'
+                    for key in self.target_device_ids(target, devices)}
+        sources = self.manifest.setdefault('normalized_sources', {})
+        for key in sorted(selected):
+            device = devices[key]
+            source_key = stable_simulator_id('normalized-', key)
+            longitude, latitude = coordinates([device['x'], device['y']])
+            source_body = dict(self.scope, name=(device['name']+' · 模拟观测')[:128],
+                longitude=longitude, latitude=latitude)
+            source = self.request(source_key, PREFIX+'/observation-devices', dict(source_body,
+                message_id=stable_simulator_id('map-sim-source-', payload_fingerprint(dict(source_body, scene_device_id=key)))))
+            sources[key] = source
+            self.manifest['devices'][source_key] = {'platform_id': source['device_id'], 'kind': 'normalized',
+                'external_id': source['source_id'], 'scene_device_id': key, 'scene_device_kind': device['kind']}
         if 'weather' in self.scene.get('fullchain',{}).get('categories',[]):
             station=dict(self.scope,name='模拟气象站',
                 longitude=self.weather.get('longitude',118.61),latitude=self.weather.get('latitude',37.464))
@@ -362,22 +396,20 @@ class FullChain:
                     'temperature_c':self.weather.get('temperature_c',22),'wind_speed_ms':self.weather.get('wind_speed_ms',6),
                     'gust_ms':self.weather.get('gust_ms',11),'wind_direction_deg':int(self.weather.get('wind_from_degrees',90)),
                     'precipitation_probability_pct':40,'humidity_pct':int(self.weather.get('humidity_percent',65))}]})
-            for i,reason in enumerate(('WEATHER_STRONG_WIND','WEATHER_THUNDERSTORM','WEATHER_LOW_VISIBILITY')):
-                self.request('weather-risk-'+str(i),PREFIX+'/weather-risks',{
-                    'message_id':self.message('wr'+str(i)),'plan_id':pid,'reason_code':reason,
-                    'severity':'HIGH','reason_text':'模拟上游气象预警 '+reason,
-                    'published_at':now,'valid_from':now,'valid_to':end,
-                    'polygon':[[118.56,37.42],[118.67,37.42],[118.67,37.50],[118.56,37.50],[118.56,37.42]],
-                    'wind_speed_mps':18 if i==0 else 5,'wind_from_degrees':90,'visibility_m':300 if i==2 else 10000})
+            # Only submit configured inputs. Risk conclusions belong to the platform's
+            # forecast rules; selecting weather must not inject three preset warnings.
         self.checkpoint()
 
     def tick(self, targets, elapsed, sequence):
         from engine import target_sample, target_reporting
         if self.cancelled():return
-        now=self.clock(); source=self.manifest.get('normalized_source')
-        items=[]
+        now=self.clock()
+        devices = self.observation_devices()
+        sources = self.manifest.get('normalized_sources', {})
+        items_by_device = {}
         for key,target in targets.items():
             if target.get('transport')!='normalized' or not target_reporting(target,elapsed):continue
+            if (target.get('_notification_motion') or {}).get('suppress'):continue
             sample=target_sample(target,elapsed)
             external=self.manifest['targets'][key]['external_id']
             item={'external_target_id':external,'external_track_id':external,'longitude':sample['longitude'],
@@ -389,9 +421,15 @@ class FullChain:
                 item['uav_sn']=self.manifest['targets'][key]['uav_sn']
                 if target.get('pilotPoint'):item['pilot_longitude'],item['pilot_latitude']=coordinates(target['pilotPoint'])
             if target['kind']=='balloon':item['subtype']='BALLOON'
-            items.append(item)
-        if items and source:
-            self.publish('normalized',PREFIX+'/target-observations',{'message_id':self.message('o'+str(sequence)),
+            for device_id in self.target_device_ids(target, devices):
+                if self.observation_device_reporting(devices[device_id], elapsed):
+                    items_by_device.setdefault(device_id, []).append(item)
+        for device_id, items in items_by_device.items():
+            source = sources.get(device_id)
+            if not source:
+                raise ValueError('模拟观测设备尚未登记，请重新启动场景：'+devices[device_id]['name'])
+            self.publish('normalized',PREFIX+'/target-observations',{
+                'message_id':stable_simulator_id(self.message('o'+str(sequence)+'-'), device_id),
                 'source_id':source['source_id'],'observed_at':now,'items':items},len(items))
         sensor=self.manifest.get('weather_device')
         if sensor and elapsed>=self.next_weather:

@@ -883,7 +883,7 @@
   };
 
   MapView.prototype._drawDeviceCoverage = function (c, device, P) {
-    const coverage = device.coverage || {};
+    const coverage = device.displayCoverage || device.coverage || {};
     if (coverage.status === 'unknown') return;
     const radiusM = coverage.kind === 'sector' ? Number(coverage.rangeM) : Number(coverage.radiusM);
     if (!Number.isFinite(radiusM) || radiusM <= 0) return;
@@ -896,6 +896,8 @@
     const start = coverage.kind === 'sector' ? (Number(coverage.azimuthDeg) - Number(coverage.fovDeg) / 2 - 90) * Math.PI / 180 : 0;
     const end = coverage.kind === 'sector' ? (Number(coverage.azimuthDeg) + Number(coverage.fovDeg) / 2 - 90) * Math.PI / 180 : Math.PI * 2;
     c.save();
+    // 降低覆盖范围与扫描动画的叠加强度，保持底图清晰。
+    c.globalAlpha *= .5;
     c.beginPath();
     if (coverage.kind === 'sector') { c.moveTo(origin[0], origin[1]); c.arc(origin[0], origin[1], radius, start, end); c.closePath(); }
     else c.arc(origin[0], origin[1], radius, 0, Math.PI * 2);
@@ -943,9 +945,9 @@
       markerColors = { online:token('green'), offline:token('gray'), fault:token('red'), stale:token('amber'), unknown:token('purple'), history:token('amber'), selected:token('blue'), alarm:token('icon-alarm') }; }
     return markerColors;
   }
-  // 固定像素、沿图形透明轮廓的报警红光，不代表探测或风险范围。
-  function applyAlarmGlow(c, item) {
-    g.UI.applyAlarmGlow(c, item);
+  // 固定像素的底光与图形轮廓红光，不代表探测或风险范围。
+  function applyAlarmGlow(c, item, x = 0, y = 0, size = 24) {
+    g.UI.applyAlarmGlow(c, item, x, y, size);
   }
   function drawMarkerState(c, state, x, y) {
     c.save(); c.translate(x,y); c.scale(.8,.8); c.lineWidth = 2; c.lineCap = 'round'; c.lineJoin = 'round';
@@ -967,9 +969,9 @@
     const key = g.UI.deviceMeta(device).key;
     const scale = Number.isFinite(Number(this.opt.sensorIconScale)) ? Math.max(.65, Math.min(1.25, Number(this.opt.sensorIconScale))) : 1;
     c.save(); c.translate(q[0],q[1]);
-    applyAlarmGlow(c, device);
+    applyAlarmGlow(c, device, 0, 0, 24 * scale);
     g.UI.drawBusinessIcon(c, key === 'unknown' ? 'unknown-device' : key, 0, 0, 24 * scale);
-    c.shadowBlur = 0; c.shadowColor = 'transparent';
+    c.shadowBlur = 0; c.shadowColor = 'transparent'; c.filter = 'none';
     drawMarkerState(c, state, 10 * scale, 10 * scale);
     if ((device.alarm || device.hasAlarm) && state !== 'fault') drawMarkerState(c, 'history', -10 * scale, 10 * scale);
     if (this._pinnedKey === 'device:' + device.id) { c.beginPath(); c.moveTo(-8,16 * scale); c.lineTo(8,16 * scale); c.strokeStyle = markerPalette().selected; c.lineWidth = 3; c.stroke(); }
@@ -1129,17 +1131,9 @@
 
   MapView.prototype._drawTarget = function (c, t, q, col, isSel) {
     c.save();
-    applyAlarmGlow(c, t);
-    // 无人机轮廓较细：补一层贴近主体的红光，避免单层宽阴影被底图吞没。
-    // 强度复用设备红光的当前帧，保持相同周期与减少动态效果偏好。
-    if (g.UI.targetIconKey(t) === 'uav' && g.UI.abnormalActive(t)) {
-      const outerBlur = c.shadowBlur;
-      c.shadowBlur = 2 + outerBlur / 7;
-      g.UI.drawBusinessIcon(c, 'uav', q[0], q[1], isSel ? 26 : 22, t.heading);
-      c.shadowBlur = outerBlur;
-    }
+    applyAlarmGlow(c, t, q[0], q[1], isSel ? 26 : 22);
     g.UI.drawBusinessIcon(c, g.UI.targetIconKey(t), q[0], q[1], isSel ? 26 : 22, t.heading);
-    c.shadowBlur = 0; c.shadowColor = 'transparent';
+    c.shadowBlur = 0; c.shadowColor = 'transparent'; c.filter = 'none';
     if (t.activeRisk) drawMarkerState(c, 'fault', q[0]+10, q[1]+10);
     if (t.stale === true || t.freshness === 'STALE') drawMarkerState(c, 'stale', q[0]-10, q[1]+10);
     if (isSel) { c.beginPath(); c.moveTo(q[0]-9,q[1]+17); c.lineTo(q[0]+9,q[1]+17); c.strokeStyle = markerPalette().selected; c.lineWidth = 3; c.stroke(); }
@@ -1436,10 +1430,10 @@
         const q = P(lon, lat);
         const col = a.level === '高' ? '#ff4d5e' : a.level === '中' ? '#ffb020' : '#3d8bff';
         c.save();
-        applyAlarmGlow(c, { ...a, stale: t.stale, freshness: t.freshness });
+        applyAlarmGlow(c, { ...a, stale: t.stale, freshness: t.freshness }, q[0], q[1], 18);
         c.beginPath(); c.moveTo(q[0],q[1]-9); c.lineTo(q[0]+9,q[1]+7); c.lineTo(q[0]-9,q[1]+7); c.closePath();
         c.fillStyle = markerPalette().alarm; c.fill();
-        c.shadowBlur = 0; c.strokeStyle = '#fff'; c.lineWidth = 1.4; c.stroke();
+        c.shadowBlur = 0; c.filter = 'none'; c.strokeStyle = '#fff'; c.lineWidth = 1.4; c.stroke();
         c.beginPath(); c.moveTo(q[0],q[1]-3); c.lineTo(q[0],q[1]+1); c.moveTo(q[0],q[1]+4); c.lineTo(q[0],q[1]+4.2);
         c.lineWidth = 2; c.lineCap = 'round'; c.stroke(); c.restore();
         picks.push({

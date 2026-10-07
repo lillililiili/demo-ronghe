@@ -167,7 +167,7 @@ onUnmounted(() => { alive = false; generation++; historyRequest++; noticeRequest
         <template v-if="tab === 'event'">
           <RiskOpticalPanel v-if="risk.risk_type !== 'WEATHER'" :key="risk.risk_id" :risk="risk" />
           <section class="sect"><h4>事件信息</h4><dl class="kv kv-surface">
-            <dt>来源</dt><dd>{{ sourceDescription(risk.source_name, risk.source_code, risk.source_mode) }}</dd>
+            <dt>来源</dt><dd>{{ sourceDescription(risk.source_name, risk.source_code, risk.source_display_mode || risk.source_mode) }}</dd>
             <dt>发生时间</dt><dd>{{ time(risk.occurred_at) }}</dd><dt>接收时间</dt><dd>{{ time(risk.received_at) }}</dd>
             <dt>所属范围</dt><dd>{{ risk.owner_org_name || '未知机构' }} / {{ risk.district_name || '未知区域' }}</dd>
           </dl></section>

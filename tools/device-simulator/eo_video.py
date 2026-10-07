@@ -217,6 +217,17 @@ class EoSimulator:
         if event == 'EndTracking':
             if not current and task in self.retired and self._state(binding)['task_id'] == task:
                 self.receipt(binding, event, task); return
+            if not current:
+                # After a simulator restart there is no local activity to stop.
+                # Only acknowledge the exact stop the platform is awaiting; never
+                # infer that an unrelated/newer task has ended from an idle heartbeat.
+                facts = self._details(binding).get('open_task') or {}
+                if facts.get('task_id') != task or facts.get('status') != 'ENDING':
+                    raise ValueError('结束任务不是系统当前待停止任务')
+                self.retired.add(task)
+                self._state(binding).update(task_id=task, tracking='STOPPED')
+                self.receipt(binding, event, task)
+                return
             if not current or current['task'] != task: raise ValueError('结束任务与当前任务不匹配')
             self._stop(device, 'STOPPED')
             self.receipt(binding, event, task)

@@ -20,12 +20,56 @@ class FakePlatform:
         if path.endswith('/routes'): return {'route_id':'r'+body['message_id'], 'route_version_id':'v'+body['message_id']}
         if path.endswith('/plans'): return {'subject_id':'p'+body['message_id'], 'result':{'plan_id':'p'+body['message_id']}}
         if path.endswith('/airspaces'): return {'airspace_id':'a'+body['airspace_no'], 'airspace_version_id':'av', 'revision':body['revision']}
-        if path.endswith('/observation-devices'): return {'device_id':'norm-dev','source_id':'norm-source'}
+        if path.endswith('/observation-devices'): return {'device_id':'device-'+body['message_id'],'source_id':'source-'+body['message_id']}
         if path.endswith('/weather-devices'): return {'device_id':'weather-dev'}
         return {'state':'ACCEPTED'}
 
 
 class FullChainTests(unittest.TestCase):
+    def test_restart_reuses_original_plan_across_lifecycle_and_legacy_duplicates(self):
+        from fullchain import FullChain
+        for hour in (12, 15):
+            with self.subTest(hour=hour):
+                scene = full_scene(['uav'])
+                scene['plans'] = scene['plans'][:1]
+                scene['targets'] = [t for t in scene['targets'] if t.get('planId') == scene['plans'][0]['id']]
+                scene['plans'][0].update(start='11:00', end='14:00')
+                before = int(dt.datetime(2027, 3, 8, 10, tzinfo=dt.timezone(dt.timedelta(hours=8))).timestamp()*1000)
+                after = before + (hour-10)*3600000
+                first = {'batch':'before', 'created_at':before, 'devices':{}, 'plans':{}, 'zones':{},
+                         'targets':allocate_identities(scene,'before')}
+                api = FakePlatform()
+                FullChain(api, scene, first, {'owner_org_id':'o','district_id':'d'}, lambda:None).prepare()
+                route = next(b for _,p,b,_ in api.calls if p.endswith('/routes'))
+                body = next(b for _,p,b,_ in api.calls if p.endswith('/plans'))
+                old = dict(body, message_id=body['message_id']+'-old', status_code='COMPLETED')
+                context = {'routes':[dict(route, route_no=route['message_id'], route_id='r'+route['message_id'],
+                                          route_version_id='v'+route['message_id'])],
+                           'messages':[
+                               {'kind':'FLIGHT_PLAN','message_id':old['message_id'],'subject_id':'duplicate','payload':old,'created_at':before+1},
+                               {'kind':'FLIGHT_PLAN','message_id':body['message_id'],'subject_id':'original','payload':body,'created_at':before}]}
+                restarted = {'batch':'after','created_at':after,'devices':{},'plans':{},'zones':{},
+                             'targets':allocate_identities(scene,'after')}
+                api = FakePlatform(input_context=context)
+                FullChain(api, scene, restarted, {'owner_org_id':'o','district_id':'d'}, lambda:None).prepare()
+                self.assertEqual([p for method,p,_,_ in api.calls if method=='POST' and p.endswith('/plans')], [])
+                self.assertEqual(restarted['plans'][scene['plans'][0]['id']]['ids'], ['original'])
+
+    def test_plan_message_is_stable_when_context_receipts_are_outside_latest_page(self):
+        from fullchain import FullChain
+        messages = []
+        for hour in (10, 12, 16):
+            scene = full_scene(['uav'])
+            scene['plans'] = scene['plans'][:1]
+            scene['plans'][0].update(start='11:00', end='14:00')
+            now = int(dt.datetime(2027, 3, 9, hour, tzinfo=dt.timezone(dt.timedelta(hours=8))).timestamp()*1000)
+            manifest = {'batch':str(hour),'created_at':now,'devices':{},'plans':{},'zones':{},
+                        'targets':allocate_identities(scene,str(hour))}
+            api = FakePlatform()
+            FullChain(api,scene,manifest,{'owner_org_id':'o','district_id':'d'},lambda:None).prepare()
+            messages.append(next(b['message_id'] for _,p,b,_ in api.calls if p.endswith('/plans')))
+        self.assertEqual(len(set(messages)), 1)
+
     def setup_chain(self):
         from fullchain import FullChain
         scene=full_scene()
@@ -44,7 +88,8 @@ class FullChainTests(unittest.TestCase):
             if target['kind']=='uav' and target.get('planId'):
                 self.assertIn(m['targets'][target['id']]['uav_sn'],[b['uav_sn'] for b in plans])
         self.assertTrue(m['realtime_plan_id'])
-        self.assertTrue(m['normalized_source']['source_id'])
+        self.assertTrue(m['normalized_sources'])
+        self.assertTrue(all(row['source_id'] for row in m['normalized_sources'].values()))
         self.assertEqual(m['weather_device']['device_id'],'weather-dev')
         self.assertFalse(any('verifications' in path or '/contacts' in path for _,path,_,_ in calls))
 
@@ -58,6 +103,24 @@ class FullChainTests(unittest.TestCase):
         support=[row['uav_sn'] for row in plans.values() if 'support-uav-p' in row['uav_sn']]
         self.assertTrue(support)
         self.assertTrue(all(serial not in {v.get('uav_sn') for v in m['targets'].values()} for serial in support))
+
+    def test_weather_inputs_never_submit_preset_risk_conclusions(self):
+        for wind, visibility in [(3, 12000), (21, 250)]:
+            with self.subTest(wind=wind, visibility=visibility):
+                chain, platform, manifest, scene = self.setup_chain()
+                chain.weather.update(wind_speed_ms=wind, visibility_m=visibility,
+                                     longitude=119.12, latitude=36.83)
+                chain.prepare()
+                chain.tick({}, 0, 1)
+                paths = [path for _, path, _, _ in platform.calls]
+                self.assertTrue(any(path.endswith('/weather') for path in paths))
+                observation = next(body for _, path, body, _ in platform.calls
+                                   if path.endswith('/weather-observations'))
+                self.assertEqual(observation['wind_speed_ms'], wind)
+                self.assertEqual(observation['visibility_m'], visibility)
+                self.assertEqual(observation['longitude'], 119.12)
+                self.assertFalse(any(path.endswith('/weather-risks') for path in paths),
+                                 'Weather inputs must be evaluated by the platform, not preset as risks')
 
     def test_normalized_observation_uses_batch_external_identity(self):
         chain,p,m,s=self.setup_chain();chain.prepare()

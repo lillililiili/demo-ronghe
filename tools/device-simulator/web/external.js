@@ -118,13 +118,24 @@ function renderMessages(kind){const rows=(context?.messages||[]).filter(row=>row
 function stateText(item){const map={SUBMITTED:'已提交，等待业务处理',DELIVERED:'已送达，等待签收回执',ACKNOWLEDGED:'已签收',FAILED:'发送失败',TIMEOUT:'回执超时，结果未知',ACCEPTED:'系统已受理',REJECTED:'系统已拒绝'};return map[item.state]||item.state||'状态未知';}
 function detail(item){return `<details><summary>查看原始报文与处理结果</summary><pre>${escapeHtml(JSON.stringify({message_id:item.message_id,version:item.version,payload:item.payload,result:item.result},null,2))}</pre></details>`;}
 function renderRecord(item){const outgoing=item.direction==='OUT',subject=item.subject_id,kind=item.kind;let link='';if(['FLIGHT_PLAN','PLAN_FILING'].includes(kind)&&item.result?.plan_id)link=`<a target="_blank" rel="noopener" href="http://localhost:5173/#/flights?plan=${encodeURIComponent(item.result.plan_id)}">查看飞行计划</a>`;if(kind==='UAV_PUNISHMENT'&&subject)link=`<a target="_blank" rel="noopener" href="http://127.0.0.1:5173/#/punish?handoff=${encodeURIComponent(subject)}">查看移送与处罚</a>`;return `<article class="external-record"><header><div><strong>${escapeHtml(kind)} · ${escapeHtml(stateText(item))}</strong><small>${escapeHtml(formatTime(item.created_at))} · 模拟消息</small></div><span class="badge">${outgoing?'平台发出':'平台接收'}</span></header><p>${escapeHtml(item.result?.message||item.result?.status||'业务结果请查看系统记录')}</p>${link}${detail(item)}</article>`;}
+function riskLocationContent(item){
+ if(item.kind!=='risk')return '';
+ const risk=item.details?.material?.risk,location=risk?.location;
+ if(!risk)return '<p class="inbox-receipt">风险位置：位置材料不可查看</p>';
+ const valid=(value,limit)=>typeof value==='number'&&Number.isFinite(value)&&Math.abs(value)<=limit;
+ if(!location||!valid(location.longitude,180)||!valid(location.latitude,90)||location.coordinate_system!=='WGS84')return '<p class="inbox-receipt">风险位置：本次通知未记录有效坐标</p>';
+ const altitudeLabels={AGL:'相对地面',AMSL:'海拔'};
+ const altitude=typeof location.altitude_m==='number'&&Number.isFinite(location.altitude_m)&&altitudeLabels[location.altitude_datum]?`<br>高度：${escapeHtml(location.altitude_m)} 米（${altitudeLabels[location.altitude_datum]}）`:'';
+ const observed=typeof location.observed_at==='number'&&Number.isFinite(location.observed_at)?formatTime(location.observed_at):'未记录';
+ return `<p class="inbox-content">风险位置（发现时）：经度 ${location.longitude.toFixed(6)}°，纬度 ${location.latitude.toFixed(6)}°<br>坐标系：WGS-84<br>观测时间：${escapeHtml(observed)}${altitude}</p>`;
+}
 function inboxRecord(item){
  const subject=item.kind==='risk'&&String(item.subject||'').includes(':')?'风险通知':item.subject;
  const alarmLabels={UAV_INTRUSION:'无人机入侵',UAV:'无人机告警',RULE_LEGALITY:'飞行违规'};
  const content=item.kind==='punishment'&&alarmLabels[item.content]?'移送事由：'+alarmLabels[item.content]:item.content;
  const status={SIMULATED_DELIVERED:'模拟短信已送达',SIMULATED_PLAYED:'模拟接通并完成播放',DELIVERED:'模拟通知已送达',SUBMITTED:'已发出，送达待确认',PENDING_DELIVERY:'待发送',FAILED:'发送失败',UNKNOWN:'结果未知',TIMEOUT:'回执超时，结果未知',ANSWERED:'已接通，播放待确认'};
  const receipt={NOT_EXPECTED:'未进入签收',PENDING:'等待签收回执',ACKNOWLEDGED:'已签收',TIMEOUT:'签收回执超时'};
- return `<article class="inbox-message"><header><div><strong>${escapeHtml(subject||'关联事项未提供')}</strong><small>${escapeHtml(item.time_label||'记录时间')} · ${escapeHtml(formatTime(item.at))}</small></div><span class="inbox-state ${item.received?'received':''}">${escapeHtml(status[item.status]||item.status||'状态未知')}</span></header><div class="inbox-recipient">接收对象 <b>${escapeHtml(item.recipient||'未提供')}</b></div><p class="inbox-content">${escapeHtml(content||'通知内容未提供')}</p>${item.receipt_status?`<p class="inbox-receipt">签收回执：${escapeHtml(receipt[item.receipt_status]||item.receipt_status)}</p>`:''}${item.reason?`<p class="external-note warn">${escapeHtml(item.reason)}</p>`:''}<details data-record="${escapeHtml(item.id)}"><summary>查看完整记录</summary><pre>${escapeHtml(JSON.stringify({subject:item.subject,...item.details},null,2))}</pre></details></article>`;
+ return `<article class="inbox-message"><header><div><strong>${escapeHtml(subject||'关联事项未提供')}</strong><small>${escapeHtml(item.time_label||'记录时间')} · ${escapeHtml(formatTime(item.at))}</small></div><span class="inbox-state ${item.received?'received':''}">${escapeHtml(status[item.status]||item.status||'状态未知')}</span></header><div class="inbox-recipient">接收对象 <b>${escapeHtml(item.recipient||'未提供')}</b></div><p class="inbox-content">${escapeHtml(content||'通知内容未提供')}</p>${riskLocationContent(item)}${item.receipt_status?`<p class="inbox-receipt">签收回执：${escapeHtml(receipt[item.receipt_status]||item.receipt_status)}</p>`:''}${item.reason?`<p class="external-note warn">${escapeHtml(item.reason)}</p>`:''}<details data-record="${escapeHtml(item.id)}"><summary>查看完整记录</summary><pre>${escapeHtml(JSON.stringify({subject:item.subject,...item.details},null,2))}</pre></details></article>`;
 }
 function buildOutput(){
  if(!inbox)return '<div class="external-empty">正在读取通知记录。</div>';

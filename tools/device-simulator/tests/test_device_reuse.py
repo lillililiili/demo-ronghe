@@ -47,15 +47,18 @@ def registrations(platform, suffix):
 
 
 class FullChainDeviceReuseTests(unittest.TestCase):
-    def test_every_batch_registers_the_same_observation_source_and_weather_station(self):
+    def test_every_batch_registers_the_same_observation_sources_and_weather_station(self):
+        # 每台参与上报的场景设备各一个观测源（主线 10-07），身份与批次无关，换批次复用同一批。
         first, second = prepared('sim-1006101010-aaaa'), prepared('sim-1006111111-bbbb')
         for suffix in ('/observation-devices', '/weather-devices'):
             rows = registrations(first, suffix)
-            self.assertEqual(len(rows), 1)
+            self.assertTrue(rows)
             self.assertEqual(rows, registrations(second, suffix))
-            self.assertTrue(rows[0]['message_id'].startswith('map-sim-'))
-            self.assertLessEqual(len(rows[0]['message_id']), 64)
+            self.assertTrue(all(row['message_id'].startswith('map-sim-') for row in rows))
+            self.assertTrue(all(len(row['message_id']) <= 64 for row in rows))
+            self.assertEqual(len({row['message_id'] for row in rows}), len(rows))
             self.assertNotIn('sim-1006101010-aaaa', repr(rows))
+        self.assertEqual(len(registrations(first, '/weather-devices')), 1)
         station = registrations(first, '/weather-devices')[0]
         self.assertTrue(station['device_no'].startswith('map-sim-weather-'))
 

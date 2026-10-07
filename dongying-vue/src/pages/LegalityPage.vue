@@ -22,6 +22,7 @@ import { refreshFailureText, useRealtimeRefresh } from '@/hooks/useRealtimeRefre
 import { legalityReviewFocus } from '@/ui/legalityReviewFocus.js';
 import { legalityApi } from '@/services/legalityApi.js';
 import { flightApi } from '@/services/flightApi.js';
+import { planPickerQuery, planPickerItems, planPickerLabel } from '@/pages/flights/planFilters.js';
 import { canAccessRoute, hasPermission } from '@/services/accessControl.js';
 import { loadTargetPosition, loadRouteCenterline, loadAirspaceOverlays, installOverlays, overlayPoints } from '@/services/positionMap.js';
 import { trustedTrajectoryPoints, strokePlanComparison } from '@/services/trajectoryDrawing.js';
@@ -105,17 +106,19 @@ const districtOptions = computed(() => {
 const canReadPlans = computed(() => hasPermission('flights.read'));
 const plans = ref([]);
 const plansError = ref('');
+const plansIncludeExpired = ref(false);
 const planOptions = computed(() => {
-  const options = [{ label: '全部任务', value: '' }];
-  plans.value.forEach(plan => options.push({ label: plan.plan_no || plan.plan_id, value: plan.plan_id }));
+  const options = [{ label: plansIncludeExpired.value ? '全部任务' : '全部当前任务', value: '' }];
+  plans.value.forEach(plan => options.push({ label: planPickerLabel(plan), value: plan.plan_id }));
   if (st.plan && !plans.value.some(plan => plan.plan_id === st.plan)) options.push({ label: '当前所选任务', value: st.plan });
   return options;
 });
 async function loadPlans() {
   if (!canReadPlans.value) { plans.value = []; return; }
   try {
-    const page = await flightApi.list({ page: 1, size: 100 });
-    plans.value = page.items || [];
+    const includeExpired = plansIncludeExpired.value;
+    const page = await flightApi.list(planPickerQuery({ includeExpired }));
+    plans.value = planPickerItems(page.items || [], { includeExpired });
     plansError.value = '';
   } catch (error) {
     plans.value = [];
@@ -685,7 +688,8 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
             <UField class="lg-region-filter lg-review-location-filter" variant="form" label="核实位置" v-model="st.reviewLocation" type="select" size="small"
               :options="reviewLocationOptions" :disabled="loading" @update:model-value="onRegionChange" />
             <UField v-if="canReadPlans" class="lg-region-filter" variant="form" label="任务" v-model="st.plan" type="select" size="small"
-              :options="planOptions" :disabled="loading" :title="plansError || '只看某一条飞行任务的研判'" @update:model-value="onRegionChange" />
+              :options="planOptions" :disabled="loading" :title="plansError || '只看某一条飞行任务的研判；默认只列今天及以后还没结束的任务'" @update:model-value="onRegionChange" />
+            <label v-if="canReadPlans" class="lg-plan-expired" title="勾选后任务下拉里也列出已经结束的任务"><input v-model="plansIncludeExpired" type="checkbox" :disabled="loading" @change="loadPlans" />含已过期</label>
             </div>
           </div>
 
@@ -902,6 +906,7 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
 .lg-queue-filters{display:flex;flex-wrap:wrap;flex:none;align-items:flex-end;gap:12px;padding:12px 14px;border-bottom:1px solid var(--lg-line)}
 .lg-filter-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,140px),1fr));flex:1 1 444px;min-width:0;gap:12px}
 .lg-region-filter{min-width:0;margin:0}
+.lg-plan-expired{display:inline-flex;align-items:center;gap:4px;align-self:end;font-size:12px;color:var(--txt-3);white-space:nowrap;cursor:pointer}
 .lg-region-filter :deep(label){font-size:12px;line-height:18px;color:var(--txt-3)}
 .lg-list-host{min-height:0;flex:1;display:flex;flex-direction:column}
 .lg-table-scroll{flex:1;min-height:0;overflow:auto;scrollbar-width:thin}

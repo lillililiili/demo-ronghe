@@ -165,6 +165,17 @@ class EoSimulator:
     def snapshot(self):
         return {'enabled': self.config['enabled'], 'devices': copy.deepcopy(list(self.states.values()))}
 
+    def configure_video(self, config):
+        """Called only by the MQTT owner thread; tracking survives video changes."""
+        if config == self.config: return
+        for active in self.active.values():
+            self._kill(active)
+            self._deregister(active)
+            active['next_check'] = self.clock()
+        self.config = copy.deepcopy(config)
+        for state in self.states.values():
+            state.update(video='IDLE' if config['enabled'] else 'DISABLED', error='', exit_code=None)
+
     def _state(self, binding):
         return self.states.setdefault(binding['platform_id'], {'device_id': binding['platform_id'],
             'device': binding['external_id'], 'task_id': None, 'tracking': 'IDLE', 'video': 'DISABLED' if not self.config['enabled'] else 'IDLE', 'error': ''})
@@ -249,7 +260,9 @@ class EoSimulator:
         state = self._state(binding)
         active['next_check'] = self.clock()+15
         try:
-            if not self.config['enabled']: return
+            if not self.config['enabled']:
+                self._deregister(active)
+                return
             registration = self.platform.call('PUT', '/local-interface-simulator/video-streams/' + task,
                                               {'device_id': binding['platform_id']})
             active['registered'] = True

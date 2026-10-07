@@ -218,7 +218,8 @@ class Runtime:
                     'duration':self.scene.get('duration',0)*60, 'sent':self.sent, 'logs':copy.deepcopy(self.logs[-80:]),
                     'positions':{k:position(t,self.elapsed) for k,t in self.targets.items()},
                     'notification_observation':self.response.snapshot() if self.response else self.manifest.get('notification_observation', {}),
-                    'video_config':public_video_config(self.video_config), 'eo':copy.deepcopy(self.eo_status),
+                    'video_config':public_video_config(self.video_config), 'video_control_available':True,
+                    'eo':copy.deepcopy(self.eo_status),
                     'skipped':self.skipped, **self.session.status(), 'mqtt_ready':self.platform is not None and self.broker is not None,
                     'mqtt_connected':self.mqtt_connected, 'last_published_at':self.last_published_at,
                      'mqtt_reconnect_count':self.mqtt_reconnect_count,
@@ -281,6 +282,34 @@ class Runtime:
         platform.call('GET', '/auth/me')
         self.session_verified_at = int(time.time()*1000)
         self.next_session_check = now + 5
+
+    def video_control(self, body):
+        if not isinstance(body, dict) or set(body) - {'enabled', 'config'} or type(body.get('enabled')) is not bool:
+            raise ValueError('视频开关必须为布尔值')
+        settings = body.get('config', {})
+        allowed = {'ffmpeg', 'source', 'rtsp_base', 'publisher_user', 'publisher_password'}
+        if not isinstance(settings, dict) or set(settings) - allowed:
+            raise ValueError('视频配置字段无效')
+        with self.lock:
+            if self.phase in ('PREPARING', 'STOPPING'):
+                raise ValueError('场景正在切换，请稍后操作视频')
+            if settings and (self.video_config['enabled'] or any(
+                    d.get('video') == 'PUBLISHING' for d in self.eo_status.get('devices', []))):
+                raise ValueError('请先停止视频推流，再修改视频设置')
+            if body['enabled'] or settings:
+                if not self.platform: raise ExternalAuthenticationRequired('请先登录系统')
+                self.platform.call('GET', '/auth/me')
+            updated = video_config({**self.video_config, **settings, 'enabled': body['enabled']})
+            self.video_config = updated
+        # Do not touch EO's active tasks or processes from this HTTP thread.
+        return self.status()
+
+    def sync_video(self):
+        with self.lock:
+            config = copy.deepcopy(self.video_config)
+        if self.eo:
+            self.eo.configure_video(config)
+            with self.lock: self.eo_status = self.eo.snapshot()
 
     def wait_for_mqtt_reconnect(self, client, timeout=30):
         """Wait for paho's bounded automatic reconnect between publish frames."""
@@ -447,6 +476,7 @@ class Runtime:
                     if not self.wait_for_mqtt_reconnect(client):
                         raise ValueError('MQTT 连接在 30 秒内未恢复，任务停止')
                     restore_subscriptions()
+                self.sync_video()
                 if phase == 'PAUSED' and self.eo.accepting: self.eo.suspend()
                 elif phase == 'RUNNING':
                     if not self.eo.accepting: self.eo.resume()
@@ -685,6 +715,7 @@ class Handler(SimpleHTTPRequestHandler):
             if self.path=='/api/external/connect': result=external_bridge.connect(body)
             elif self.path=='/api/external/request': result=external_bridge.request(body)
             elif self.path=='/api/connect': result=runtime.connect(body)
+            elif self.path=='/api/video': result=runtime.video_control(body)
             elif self.path=='/api/start': result=runtime.start(body)
             elif self.path=='/api/full-scene': result=full_scene(body.get('categories'))
             elif self.path=='/api/control': result=runtime.control(body['action'])

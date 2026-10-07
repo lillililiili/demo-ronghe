@@ -207,7 +207,14 @@ const typeOf = a => ALARM_TYPE_LABEL[a.alarm_type] || esc(a.alarm_type || '—')
 const noOf = a => readableNo(a.alarm_no) || '—';
 const modeOf = a => SOURCE_MODE[a.source_mode] || { t: esc(a.source_mode || '—'), c: 't-gray' };
 const sevTag = a => U.tag(sevOf(a).t, sevOf(a).c);
-const stateTag = a => U.tag(displayState(a).t, displayState(a).c);
+const OBSERVATION_LABEL = { CURRENT: '观测有效', EXPIRED: '观测已过期', UNKNOWN: '观测待确认' };
+const ATTENTION_LABEL = { CURRENT: '当前事项', AWAITING_CONFIRMATION: '状态待确认', HISTORY: '历史记录' };
+const stateTag = a => {
+  const status = U.tag(displayState(a).t, displayState(a).c);
+  const observation = a.attention_group !== 'HISTORY' && ['EXPIRED', 'UNKNOWN'].includes(a.observation_status)
+    ? U.tag(OBSERVATION_LABEL[a.observation_status], 't-gray') : '';
+  return observation ? `<span class="alarm-state-stack">${status}${observation}</span>` : status;
+};
 /* 告警升级（2026-10-06，BUG-11/BUG-16）：同一架无人机再次违规时服务端升级原告警，不再另起一条。
    severity 已是升级后的当前等级；违规原因按出现顺序累计（偏航写“偏航”）；升级经过另读升级记录。 */
 const severityText = code => SEVERITY[code]?.t || (code === 'UNKNOWN' ? '未定级' : '');
@@ -325,6 +332,7 @@ const KPI_DEFS = [
   { label: '今日告警总数', caption: '按发生时间统计', color: 'blue', icon: 'alert' },
   { label: '今日待核实', caption: '按发生时间统计', color: 'amber', icon: 'alert' },
   { label: '当前反制中', caption: '实时状态', color: 'orange', icon: 'radar' },
+  { label: '已反制', caption: '累计完成', color: 'green', icon: 'check' },
   { label: '当前干扰中', caption: '实时状态', color: 'red', icon: 'radar' },
   { label: '今日已确认', caption: '按发生时间统计', color: 'cyan', icon: 'alert' },
   { label: '今日误报', caption: '按发生时间统计', color: 'blue', icon: 'check' }
@@ -384,7 +392,7 @@ async function loadKpis() {
   const disposalCount = actionType => Promise.all(DISPOSAL_ACTIVE.map(status =>
     disposalApi.list({ action_type: actionType, status, page: 1, size: 1 }).then(p => Number(p && p.total) || 0)
   )).then(([approved, executing]) => ({ approved, executing }));
-  // 告警类 KPI 统一按今日发生时间统计；处置类 KPI 保留当前实时状态口径。
+  // 告警按今日发生时间统计；执行中按实时状态统计，已反制按累计完成记录统计。
   const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit'
   }).formatToParts(Date.now()).filter(part => part.type !== 'literal').map(part => [part.type, Number(part.value)]));
@@ -395,7 +403,9 @@ async function loadKpis() {
     count({ occurred_from: from, occurred_to: to, state: 'PENDING_VERIFICATION' }),
     count({ occurred_from: from, occurred_to: to, state: 'CONFIRMED' }),
     count({ occurred_from: from, occurred_to: to, state: 'FALSE_POSITIVE' }),
-    disposalCount('COUNTERMEASURE'), disposalCount('JAMMING')
+    disposalCount('COUNTERMEASURE'), disposalCount('JAMMING'),
+    disposalApi.list({ action_type: 'COUNTERMEASURE', status: 'COMPLETED', page: 1, size: 1 })
+      .then(p => ({ completed: Number(p && p.total) || 0 }))
   ]);
   const v = r.map(x => x.status === 'fulfilled' ? x.value : null);
   const num = x => x == null ? '—' : U.num(x);
@@ -405,6 +415,9 @@ async function loadKpis() {
       const unavailable = settled?.reason && isDisposalUnavailable(settled.reason);
       return { ...def, value: unavailable ? '尚未接入' : '—', desc: unavailable ? DISPOSAL_UNAVAILABLE_TEXT : '读取失败：' + esc(messageOf(settled?.reason)) };
     }
+    if (value.completed != null) {
+      return { ...def, value: U.num(value.completed), desc: '当前权限范围内累计执行完成的反制记录数，不包含干扰及执行失败的记录' };
+    }
     return { ...def, value: U.num(value.executing), desc: `另有 ${U.num(value.approved)} 起已批准待执行` };
   };
   const fail = i => v[i] == null ? '读取失败：' + esc(messageOf(r[i].reason)) : null;
@@ -412,9 +425,10 @@ async function loadKpis() {
     { ...KPI_DEFS[0], value: num(v[0]), desc: fail(0) || '北京时间今天发生的告警数量；发生时间未知者不计' },
     { ...KPI_DEFS[1], value: num(v[1]), desc: fail(1) || '北京时间今天发生且待人工核实的告警数量' },
     disposalKpi(KPI_DEFS[2], r[4], v[4]),
-    disposalKpi(KPI_DEFS[3], r[5], v[5]),
-    { ...KPI_DEFS[4], value: num(v[2]), desc: fail(2) || '北京时间今天发生且已确认属实的告警数量，包含处置已结束的记录' },
-    { ...KPI_DEFS[5], value: num(v[3]), desc: fail(3) || '北京时间今天发生且人工核实后已排除的告警数量' }
+    disposalKpi(KPI_DEFS[3], r[6], v[6]),
+    disposalKpi(KPI_DEFS[4], r[5], v[5]),
+    { ...KPI_DEFS[5], value: num(v[2]), desc: fail(2) || '北京时间今天发生且已确认属实的告警数量，包含处置已结束的记录' },
+    { ...KPI_DEFS[6], value: num(v[3]), desc: fail(3) || '北京时间今天发生且人工核实后已排除的告警数量' }
   ];
 }
 
@@ -587,6 +601,8 @@ function detailHtml() {
   })}
     ${U.sect('告警信息', U.kv([
     ['触发时间', fmt(a.occurred_at) || '未知'], ['接收时间', fmt(a.received_at) || '—'],
+    ...(a.observation_status ? [['观测状态', esc(OBSERVATION_LABEL[a.observation_status] || '观测待确认')]] : []),
+    ...(a.attention_group ? [['关注分组', esc(ATTENTION_LABEL[a.attention_group] || '状态待确认')]] : []),
     ...(reasons ? [['违规原因', esc(reasons)]] : []),
     ...(brief ? [['告警升级', esc(`${brief.level}，共 ${brief.count} 次${brief.at ? `，最近 ${fmt(brief.at)}` : ''}`)]] : []),
     ['所在区域', esc(a.district_name || a.district_id || '—')], ['所属机构', esc(a.owner_org_name || a.owner_org_id || '—')],
@@ -1061,10 +1077,15 @@ async function realtimeRefresh(topics) {
   if (!selId || st.selId !== selId || cur.loading) return;
   const after = rowKey();
   const rowChanged = after !== before && after !== 'null';
-  if (all || rowChanged) await refreshSelected(selId);
+  const observationChanged = topics.includes('target') || topics.includes('observation-expiry');
+  if (all || rowChanged || (after === 'null' && observationChanged)) await refreshSelected(selId);
   else if (disposalChanged && cur.alarm?.event_id) await refreshEventDisposals(cur.alarm.event_id);
 }
-const realtime = useRealtimeRefresh(['alarm', 'disposal', 'punishment'], realtimeRefresh, { minIntervalMs: 2_000 });
+const realtime = useRealtimeRefresh(['alarm', 'target', 'disposal', 'punishment'], realtimeRefresh, { minIntervalMs: 2_000 });
+// 时间经过不会产生数据库变化事件；只定时重读服务端，不在页面计算过期或修改业务状态。
+let observationRefreshTimer = null;
+onMounted(() => { observationRefreshTimer = setInterval(() => realtime.trigger(['observation-expiry']), 5_000); });
+onUnmounted(() => clearInterval(observationRefreshTimer));
 
 function onPage(p2) { st.page = p2; loadList(); }
 function onPageSize(s2) { st.size = s2; st.page = 1; loadList(); }
@@ -1084,7 +1105,7 @@ onMounted(async () => {
   const toggleSort = (btn) => {
     const field = SORT_KEYS[btn.dataset.sort];
     if (!field) return toast(SORT_NOT_SUPPORTED, 'err');
-    // 同一列依次：倒序 → 正序 → 回到默认次序（未处理优先）。
+    // 同一列依次：倒序 → 正序 → 回到默认次序（当前事项优先）。
     if (st.sort === field && st.order === 'asc') { st.sort = 'priority'; st.order = 'desc'; }
     else if (st.sort === field) st.order = 'asc';
     else { st.sort = field; st.order = 'desc'; }
@@ -1143,7 +1164,7 @@ onMounted(async () => {
 <template>
   <div class="view" id="view" ref="root" style="overflow:hidden">
     <div class="alarms-page" style="height:100%;min-height:0;display:flex;flex-direction:column">
-      <UKpis :list="kpiList" />
+      <UKpis :list="kpiList" class-name="alarm-kpis" />
       <nav class="alarm-workspace-tabs" aria-label="告警事件工作区">
         <button type="button" class="btn" :class="{ pri: activeTab === 'alarms' }" :aria-pressed="activeTab === 'alarms'" @click="activeTab = 'alarms'">告警与处置</button>
         <button type="button" class="btn" :class="{ pri: activeTab === 'authorizations' }" :aria-pressed="activeTab === 'authorizations'" @click="openAuthorizations()">反制办理</button>
@@ -1192,6 +1213,26 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.alarms-page :deep(.alarm-state-stack) {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+.alarms-page :deep(.alarm-kpis) {
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  flex: none;
+}
+@media (max-width: 1439px) {
+  .alarms-page :deep(.alarm-kpis) {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+@media (max-width: 900px) {
+  .alarms-page :deep(.alarm-kpis) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
 /* 按列表面板的实际宽度排布，避免整页断点与下拉桥接层的最小宽度互相挤压。 */
 .alarms-page :deep(.alarm-filter-toolbar) {
   container: alarm-filters / inline-size;

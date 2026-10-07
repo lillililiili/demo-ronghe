@@ -3,6 +3,7 @@ import { computed } from 'vue';
 
 const props = defineProps({
   records: { type: Array, default: () => [] },
+  selectedId: String,
   loading: Boolean,
   error: { type: String, default: '' },
   total: { type: Number, default: 0 },
@@ -12,7 +13,9 @@ const props = defineProps({
   page: { type: Number, default: 1 },
   size: { type: Number, default: 50 }
 });
-const emit = defineEmits(['select', 'notify', 'retry', 'page']);
+const emit = defineEmits(['select', 'locate', 'notify', 'retry', 'page']);
+const recordElements = new Map();
+defineExpose({ focusRecord: id => recordElements.get(id)?.scrollIntoView({ block: 'nearest' }) });
 const pages = computed(() => Math.max(1, Math.ceil(props.total / props.size)));
 const groups = computed(() => [
   { title: '当前仍存在', records: props.records.filter(record => record.currentStatus === 'CURRENT') },
@@ -24,7 +27,7 @@ const groups = computed(() => [
   <section class="plan-risk-records" aria-label="本计划当前风险" :aria-busy="loading">
     <header class="risk-section-head">
       <h3>本计划当前风险</h3>
-      <p v-if="!loading && !error">当前 <strong>{{ currentTotal }}</strong> 起<span v-if="uncertainTotal"> · 状态待确认 <strong>{{ uncertainTotal }}</strong> 起</span></p>
+      <p v-if="!loading && !error">当前 <strong>{{ currentTotal }}</strong> 起<span v-if="uncertainTotal"> · 其中状态待确认 <strong>{{ uncertainTotal }}</strong> 起</span></p>
       <button v-if="!error" class="btn" type="button" :disabled="loading" @click="emit('retry')">刷新</button>
     </header>
 
@@ -35,17 +38,18 @@ const groups = computed(() => [
       <button class="btn" type="button" @click="emit('retry')">重新读取</button>
     </div>
     <div v-else-if="!records.length" class="risk-list-message" role="status">
-      <strong>暂无已确认仍存在的关联风险</strong>
+      <strong>暂无当前关联风险</strong>
       <p>没有记录不代表当前飞行条件已确认安全。</p>
     </div>
     <template v-else>
       <section v-for="group in groups" :key="group.title" class="risk-presence-group" :aria-label="group.title">
       <h4 class="risk-group-title">{{ group.title }}</h4>
       <ul class="plan-risk-list">
-        <li v-for="record in group.records" :key="record.id" class="plan-risk-record" :class="record.severityClass || 't-gray'">
+        <li v-for="record in group.records" :key="record.id" :ref="el => el ? recordElements.set(record.id, el) : recordElements.delete(record.id)"
+          class="plan-risk-record" :data-risk-id="record.id" :class="[record.severityClass || 't-gray', { selected: record.id === selectedId }]">
           <div class="risk-record-main">
             <span class="risk-severity">{{ record.severityLabel || record.severity || '等级未判定' }}</span>
-            <h4>{{ record.title || '风险记录' }}</h4>
+            <h4><span class="risk-map-number">{{ record.number }}</span>{{ record.title || '风险记录' }}</h4>
             <span v-if="record.stateLabel" class="tag risk-state" :class="record.stateClass || 't-gray'">{{ record.stateLabel }}</span>
           </div>
           <div class="risk-record-facts">
@@ -57,6 +61,9 @@ const groups = computed(() => [
           <p v-if="record.reason" class="risk-record-reason">{{ record.reason }}</p>
           <p v-if="record.currentStatus !== 'CURRENT'" class="risk-presence-reason">{{ record.currentReason || '缺少当前风险依据' }}</p>
           <div class="risk-record-actions">
+            <button v-if="record.locatable" class="risk-detail-button" type="button" :aria-label="`地图定位风险${record.number}，${record.title || '风险'}`"
+              :aria-pressed="record.id === selectedId" @click="emit('locate', record.id)">地图定位</button>
+            <span v-else class="risk-location-note">{{ record.locationNote }}</span>
             <button class="risk-detail-button" type="button" :aria-label="`查看${record.title || '风险'}详情`" @click="emit('select', record.id)">查看风险详情</button>
             <button v-if="record.canNotify" class="btn risk-notify-button" type="button" :aria-label="`${record.title || '风险'}，通知上级`" @click="emit('notify', record.id)">通知上级</button>
           </div>
@@ -86,6 +93,9 @@ const groups = computed(() => [
 .plan-risk-record { position: relative; display: grid; gap: 8px; min-width: 0; padding: 15px 0 15px 14px; border-bottom: 1px solid var(--line-2); }
 .plan-risk-record::before { content: ''; position: absolute; top: 18px; bottom: 18px; left: 0; width: 3px; border-radius: 2px; background: var(--tag-c, var(--gray)); }
 .plan-risk-record:last-child { border-bottom: 0; }
+.plan-risk-record.selected { background: color-mix(in srgb, var(--cyan) 9%, transparent); box-shadow: inset 0 0 0 1px var(--cyan); border-radius: 5px; }
+.risk-map-number { display: inline-block; margin-right: 6px; color: var(--tag-c, var(--gray)); font-variant-numeric: tabular-nums; }
+.risk-location-note { color: var(--txt-3); font-size: 12px; }
 .risk-record-main { display: flex; align-items: baseline; flex-wrap: wrap; gap: 5px 8px; min-width: 0; }
 .risk-severity { color: var(--tag-c, var(--gray)); font-size: 12px; font-weight: 600; line-height: 1.7; }
 .risk-record-main h4 { flex: 1 1 130px; margin: 0; min-width: 0; color: var(--txt); font-size: 14px; font-weight: 600; line-height: 1.65; }

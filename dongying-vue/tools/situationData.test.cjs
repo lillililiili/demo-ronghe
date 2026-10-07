@@ -150,6 +150,37 @@ async function main() {
   ]);
   check('模拟器气象设备归一为融合箱展示类型', [simulatorDevices[0].typeCode, simulatorDevices[0].icon], ['FUSION_BOX', 'fusion']);
   check('模拟器反制设备保留反制展示类型', [simulatorDevices[1].typeCode, simulatorDevices[1].icon], ['COUNTERMEASURE', 'cm']);
+  for (const [index, position] of [[0, [118.4, 37.4]], [1, [119.1, 36.8]]]) {
+    for (const type of ['radar', 'tdoa', '5ga', 'EO', 'weather', 'countermeasure']) {
+      const row = { device_id: `scan-${index}-${type}`, name: `设备 ${index}`, longitude: position[0], latitude: position[1],
+        device_type_code: type, simulated: true, connectivity: 'ONLINE', coverage: { status: 'UNKNOWN' } };
+      const simulated = S.toDevices([row])[0];
+      check(`${type} 模拟范围只供展示 ${index}`, [simulated.coverage.status, simulated.displayCoverage.displayOnly], ['unknown', true]);
+      ok(`${type} 模拟参数标注 ${index}`, simulated.displayCoverage.sourceLabel.includes('模拟参数'));
+      ok(`${type} 示意不参与监测判断 ${index}`, !S.coverageContainsPoint(simulated, { lon: position[0], lat: position[1] }));
+      const real = S.toDevices([{ ...row, simulated: false, source_mode: 'live' }])[0];
+      check(`${type} 真实设备不补范围 ${index}`, real.displayCoverage.status, 'unknown');
+      const replay = S.toDevices([{ ...row, simulated: false, source_mode: 'replay' }])[0];
+      check(`${type} 回放不等于模拟 ${index}`, replay.displayCoverage.status, 'unknown');
+      for (const connectivity of ['OFFLINE', 'ABNORMAL', 'UNKNOWN']) {
+        check(`${type} 非在线范围不可用 ${index} ${connectivity}`,
+          S.toDevices([{ ...row, connectivity }])[0].displayCoverage.status, 'unavailable');
+      }
+      const configured = S.toDevices([{ ...row, coverage: { kind: 'CIRCLE', radius_m: 730 + index } }])[0];
+      check(`${type} 已配置范围优先 ${index}`, configured.displayCoverage.radiusM, 730 + index);
+      const incomplete = S.toDevices([{ ...row, coverage: { kind: 'SECTOR', range_m: 730 + index } }])[0];
+      check(`${type} 不掩盖配置缺项 ${index}`, incomplete.displayCoverage.status, 'unknown');
+    }
+  }
+  const simulatedOptical = S.toDevices([{ device_id: 'optical-scan', simulated: true, device_type_code: 'oe',
+    longitude: 118.6, latitude: 37.2, connectivity: 'ONLINE' }])[0];
+  check('模拟光电保留扇形参数和小数距离', [simulatedOptical.displayCoverage.kind, simulatedOptical.displayCoverage.azimuthDeg,
+    simulatedOptical.displayCoverage.fovDeg, simulatedOptical.displayCoverageText], ['sector', 0, 120, '0°方位 · 120°视场 · 1.5 km']);
+  check('没有坐标不补地图范围', S.toDevices([{ device_id: 'no-location', simulated: true, device_type_code: 'radar' }],
+    { includeUnlocated: true })[0].displayCoverage.status, 'unknown');
+  check('没有定义的类型不补模拟范围', S.toDevices([{ device_id: 'unknown-type', simulated: true,
+    device_type_code: 'unsupported', longitude: 118.6, latitude: 37.2 }])[0].displayCoverage.status, 'unknown');
+  check('气象参考范围与反制作用范围分别标明', simulatorDevices.map(device => device.displayCoverage.label), ['气象参考范围', '作用范围']);
   check('设备保留融合域内部 ID 用于来源链路关联', S.toDevices([
     { device_id: 'd6', fusion_device_id: 'fusion-d6', longitude: 118.4, latitude: 37.4 }
   ])[0].fusionDeviceId, 'fusion-d6');

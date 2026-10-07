@@ -1,7 +1,8 @@
 /* 融合感知页的数据装配层：把只读接口的返回整理成 map.js 与 HUD 需要的形状。
    纯函数、不发请求、不碰 DOM，因此可以用 node 直接跑单测（tools/situationData.test.cjs）。
 
-   一条贯穿全文件的规矩：**缺的就是缺的，不补默认值**。
+   业务事实缺失时保持未知。用户确认的模拟扫描示意单独放在 displayCoverage，
+   不回填 coverage，也不参与监测资格判断。
    没有研判的目标显示"待确认"而不是"合法"；没有位置的目标进列表但不画点；
    没有当前生效版本的空域不画。把未知补成一个具体值，屏幕上就再也分不出"确实如此"和"没拿到"。 */
 
@@ -192,9 +193,32 @@ export function normalizeCoverage(coverage, online = true) {
 export function coverageSummary(coverage) {
   if (!coverage || coverage.status === 'unknown') return '覆盖参数未知';
   if (coverage.kind === 'sector') {
-    return `${Math.round(coverage.azimuthDeg)}°方位 · ${Math.round(coverage.fovDeg)}°视场 · ${(coverage.rangeM / 1000).toFixed(0)} km`;
+    return `${Math.round(coverage.azimuthDeg)}°方位 · ${Math.round(coverage.fovDeg)}°视场 · ${Number((coverage.rangeM / 1000).toFixed(2))} km`;
   }
-  return `${(coverage.radiusM / 1000).toFixed(0)} km 覆盖半径`;
+  return `${Number((coverage.radiusM / 1000).toFixed(2))} km 覆盖半径`;
+}
+
+// 经用户确认的模拟展示参数，按类型复用；不代表厂商性能或实际有效监测能力。
+const SIMULATED_MAP_COVERAGE = {
+  RADAR: { kind: 'circle', radiusM: 3000 },
+  TDOA: { kind: 'circle', radiusM: 2000 },
+  FIVE_G_A: { kind: 'circle', radiusM: 2500 },
+  EO: { kind: 'sector', rangeM: 1500, azimuthDeg: 0, fovDeg: 120 },
+  COUNTERMEASURE: { kind: 'circle', radiusM: 1000, label: '作用范围' },
+  WEATHER: { kind: 'circle', radiusM: 1000, label: '气象参考范围' }
+};
+
+function deviceDisplayCoverage(device, coverage, typeCode, rawTypeCode, online) {
+  if (device.simulated !== true || num(device.longitude) === null || num(device.latitude) === null) return coverage;
+  const raw = device.coverage || {};
+  // 显式参数（包括不完整或无效配置）仍按接口显示，不用示意参数掩盖配置问题。
+  if (Object.keys(raw).some(key => /^(kind|coverage_kind|radius_?m|range_?m|distance_?m|azimuth_?deg|bearing_?deg|fov_?deg|horizontal_?fov_?deg)$/i.test(key)
+    && raw[key] != null && raw[key] !== '')) return coverage;
+  const key = ['WEATHER', 'WEATHER_SENSOR'].includes(rawTypeCode.toUpperCase()) ? 'WEATHER' : typeCode;
+  const preset = SIMULATED_MAP_COVERAGE[key];
+  if (!preset) return coverage;
+  return { ...normalizeCoverage({ ...preset, sourceLabel: '模拟参数（仅作地图范围示意）' }, online && device.enabled !== false),
+    displayOnly: true, label: preset.label || '扫描范围' };
 }
 
 function distanceMeters(aLon, aLat, bLon, bLat) {
@@ -318,6 +342,7 @@ export function toDevices(devices, { includeUnlocated = false } = {}) {
       || normalizedTypeCode.toUpperCase();
     const presentation = DEVICE_PRESENTATION[typeCode] || { icon: 'device', color: '#72d6ff' };
     const coverage = normalizeCoverage(device.coverage, status === '在线');
+    const displayCoverage = deviceDisplayCoverage(device, coverage, typeCode, normalizedTypeCode, status === '在线');
     out.push({
       deviceId: device.device_id,
       fusionDeviceId: device.fusion_device_id || device.device_id,
@@ -344,6 +369,8 @@ export function toDevices(devices, { includeUnlocated = false } = {}) {
       relatedAlerts: Array.isArray(device.related_alerts) ? device.related_alerts : [],
       coverage,
       coverageText: coverageSummary(coverage),
+      displayCoverage,
+      displayCoverageText: coverageSummary(displayCoverage),
       sourceMode: device.source_mode || '',
       simulated: !!device.simulated
     });

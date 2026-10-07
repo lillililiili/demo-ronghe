@@ -14,7 +14,7 @@ const currentTime = computed(() => time(props.trail?.[props.trailIndex]?.t));
 <template>
   <div v-if="marker" class="object-marker" :style="{ left: `${marker.x}px`, top: `${marker.y}px`, color }">
     <span class="object-symbol" :class="{ 'map-alarm-active': activeRisk }"><span v-html="targetIcon"></span></span><span class="object-risk-state" aria-hidden="true" v-html="statusIcon"></span>
-    <div class="object-label" :class="{ leftward: marker.leftward }"><b>{{ title }}</b><span>事件位置<template v-if="risk.source_mode === 'mock'"> · 模拟</template></span></div>
+    <div class="object-label" :class="{ leftward: marker.leftward }"><b>{{ title }}</b><span>事件位置<template v-if="(risk.source_display_mode || risk.source_mode) === 'mock'"> · 模拟</template></span></div>
   </div>
   <div class="object-map-tools" @click.stop>
     <button type="button" :aria-pressed="heat" :disabled="!heatCount" :title="heatCount ? '查看本页事件集中在哪些位置' : '本页没有可用的事件位置'" @click="$emit('toggle-heat')">{{ heat ? '隐藏事件热区' : '事件热区' }}</button>
@@ -34,7 +34,7 @@ const currentTime = computed(() => time(props.trail?.[props.trailIndex]?.t));
   <details class="object-legend" @click.stop>
     <summary>图例</summary>
     <div>主体图形表示异物类型，警示角标颜色表示风险等级</div><div>青色：关联航线与走廊</div><div v-if="trailVisible">紫色：关联目标轨迹片段</div>
-    <div v-if="heat">本页 {{ heatCount }} 条{{ risk.source_mode === 'mock' ? '模拟' : risk.source_mode === 'replay' ? '回放' : '' }}事件的位置分布，不代表鸟群大小。</div>
+    <div v-if="heat">本页 {{ heatCount }} 条{{ (risk.source_display_mode || risk.source_mode) === 'mock' ? '模拟' : risk.source_mode === 'replay' ? '回放' : '' }}事件的位置分布，不代表鸟群大小。</div>
     <div>通知状态不改变地图上的风险等级。</div>
   </details>
 </template>

@@ -59,6 +59,7 @@ let selectionResizeObserver = null;
 let expiryTimer = null;
 
 const devices = computed(() => snapshot.value.devices || []);
+const hasSimulatedCoverage = computed(() => devices.value.some(device => device.displayCoverage?.displayOnly));
 const targets = computed(() => snapshot.value.targets || []);
 const currentTargetIds = computed(() => new Set(targets.value.map(target => target.targetId).filter(Boolean)));
 const alarms = computed(() => (snapshot.value.alarms || [])
@@ -95,7 +96,8 @@ const deviceGroups = computed(() => {
   return orderedTypes.map(typeCode => {
   const items = devices.value.filter(device => device.typeCode === typeCode);
   const sample = items[0] || {};
-  const meters = items.map(device => device.coverage?.kind === 'sector' ? device.coverage.rangeM : device.coverage?.radiusM)
+  const meters = items.map(device => device.displayCoverage || device.coverage)
+    .map(coverage => coverage?.kind === 'sector' ? coverage.rangeM : coverage?.radiusM)
     .filter(Number.isFinite);
   const min = meters.length ? Math.min(...meters) : null;
   const max = meters.length ? Math.max(...meters) : null;
@@ -106,7 +108,7 @@ const deviceGroups = computed(() => {
     abnormal: items.filter(device => device.statusCode === 'ABNORMAL').length,
     offline: items.filter(device => device.statusCode === 'OFFLINE').length,
     hasNew: items.some(device => device.newAlert),
-    rangeText: typeCode === 'EO' ? `单站 ${range} 定向视场` : `单站 ${range} 有效范围`
+    rangeText: `${typeCode === 'EO' ? `单站 ${range} 定向视场` : `单站 ${range} 覆盖范围`}${items.some(device => device.displayCoverage?.displayOnly) ? ' · 含模拟参数' : ''}`
   };
   });
 });
@@ -630,10 +632,11 @@ function clearSelection() {
 }
 
 function renderDeviceTip(device) {
-  const coverage = device.coverage || { status: 'unknown' };
+  const coverage = device.displayCoverage || device.coverage || { status: 'unknown' };
+  const coverageText = device.displayCoverageText || device.coverageText;
   const unavailable = coverage.status === 'unavailable';
   const coverageState = coverage.status === 'unknown' ? '覆盖参数未知'
-    : unavailable ? `${device.coverageText}（当前不可用）` : device.coverageText;
+    : unavailable ? `${coverageText}（当前不可用）` : coverageText;
   const related = (device.relatedAlerts || []).slice(0, 2);
   return `<section class="sit-map-pop sit-map-pop-device" style="--sensor:${esc(device.color)}">
     <header><span class="sit-map-pop-icon">${iconHtml(device)}</span><span><b>${esc(device.name)}</b><small class="mono">${esc(device.id)}</small></span>
@@ -641,10 +644,10 @@ function renderDeviceTip(device) {
     <div class="sit-map-pop-status"><span class="sit-state ${statusClass(device.status)}">${esc(device.status)}</span><span>最新上报 ${esc(reportAge(device.lastReportAt))}</span></div>
     ${device.posValid === false ? '<p class="sit-map-pop-note">未提供安装坐标，暂不显示地图点位。</p>' : ''}
     ${device.simulated ? '<p class="sit-map-pop-note">模拟设备数据（非现场验收）</p>' : ''}
-    <dl><dt>覆盖参数</dt><dd class="${unavailable ? 'is-unavailable' : ''}">${esc(coverageState)}</dd>
+    <dl><dt>${esc(coverage.label || '覆盖参数')}</dt><dd class="${unavailable ? 'is-unavailable' : ''}">${esc(coverageState)}</dd>
       ${coverage.availabilityReason ? `<dt>可用性</dt><dd class="is-unavailable">${esc(coverage.availabilityReason)}</dd>` : ''}
       <dt>参数来源</dt><dd>${esc(coverage.sourceLabel || '未提供')}</dd>
-      <dt>更新时间</dt><dd class="mono">${formatClock(coverage.updatedAt)}</dd></dl>
+      ${coverage.displayOnly ? '' : `<dt>更新时间</dt><dd class="mono">${formatClock(coverage.updatedAt)}</dd>`}</dl>
     <div class="sit-map-pop-alerts"><b>近期设备事件（最多2条）</b>${related.length
       ? related.map(event => `<span>${esc(event.title)}</span>`).join('')
       : '<span>本次读取范围内暂无该设备事件</span>'}</div>
@@ -921,7 +924,7 @@ onUnmounted(() => {
             </div>
           </section>
         </div>
-        <footer v-show="devicesExpanded" id="sit-device-footer">共 {{ devices.length }} 台感知设备；在线设备显示上报脉冲，覆盖范围仍以设备台账配置为准。</footer>
+        <footer v-show="devicesExpanded" id="sit-device-footer">共 {{ devices.length }} 台感知设备；在线设备显示上报脉冲。{{ hasSimulatedCoverage ? '模拟范围仅作地图示意，详情标注参数来源。' : '覆盖范围以设备台账配置为准。' }}</footer>
       </aside>
 
       <aside class="sit-glass sit-alert-dock" :class="{ 'is-collapsed': !alertsExpanded }" aria-labelledby="sit-alert-title">
@@ -933,8 +936,8 @@ onUnmounted(() => {
         </header>
         <div v-show="alertsExpanded" id="sit-alert-content" class="sit-alert-content">
         <div class="sit-risk-tabs" role="tablist" aria-label="风险类型">
-          <button type="button" role="tab" :aria-selected="alertTab === 'target'" @click="alertTab = 'target'">目标异常 <b>{{ alarms.length }}</b></button>
-          <button type="button" role="tab" :aria-selected="alertTab === 'route'" @click="alertTab = 'route'">航线风险 <b>{{ riskGroups.length }}</b></button>
+          <button type="button" role="tab" :aria-selected="alertTab === 'target'" @click="alertTab = 'target'"><span>目标异常</span><b :class="{ 'has-risk': alarms.length > 0 }">{{ alarms.length }}</b></button>
+          <button type="button" role="tab" :aria-selected="alertTab === 'route'" @click="alertTab = 'route'"><span>航线风险</span><b :class="{ 'has-risk': riskGroups.length > 0 }">{{ riskGroups.length }}</b></button>
         </div>
         <div v-if="alertTab === 'target'" class="sit-alert-list" role="tabpanel" aria-label="目标异常">
           <button v-for="alarm in alarms" :key="eventKey(alarm)" type="button" class="sit-alert-row"
@@ -1006,6 +1009,7 @@ onUnmounted(() => {
 
       <nav class="sit-layerbar" aria-label="地图图层">
         <button type="button" :aria-pressed="layers.coverage" @click="toggleLayer('coverage')">覆盖范围</button>
+        <span v-if="layers.coverage && hasSimulatedCoverage" class="sit-scan-key">含模拟参数</span>
         <span class="sit-scan-key" aria-label="在线设备上报脉冲"><i aria-hidden="true"></i>上报脉冲</span>
         <button type="button" :aria-pressed="layers.device" @click="toggleLayer('device')">设备点位</button>
         <button type="button" :aria-pressed="layers.track" @click="toggleLayer('track')">目标轨迹</button>

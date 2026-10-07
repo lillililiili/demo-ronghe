@@ -8,6 +8,34 @@ from server import Runtime
 
 
 class ReadbackTest(unittest.TestCase):
+    def test_multiple_normalized_sources_are_counted_once_per_target(self):
+        with tempfile.TemporaryDirectory() as root:
+            runtime = Runtime(root)
+            runtime.batch = 'sim-multi-readback'
+            (Path(root) / runtime.batch).mkdir()
+            runtime.manifest = {'batch': runtime.batch, 'created_at': 1,
+                'devices': {key: {'kind': 'normalized', 'platform_id': key, 'external_id': key}
+                            for key in ('n1', 'n2')},
+                'normalized_sources': {'main': {'device_id': 'n1'}, 'aux': {'device_id': 'n2'}},
+                'plans': {}, 'zones': {}, 'targets': {},
+                'fullchain': {'coverage': {'normalized': {'submitted': 8, 'accepted': 8}}}}
+
+            def call(method, path):
+                if path.startswith('/targets?page='):
+                    return {'items': [{'target_id': 'merged'}], 'total': 1}
+                if path.endswith('/observations?page=1&size=1'):
+                    return {'total': 8, 'items': []}
+                if path == '/targets/merged':
+                    return {'target_id': 'merged', 'object_type_code': 'UAV',
+                            'source_links': [{'device_id': 'n1'}, {'device_id': 'n2'}]}
+                return {'items': [], 'total': 0}
+
+            runtime.session.platform = SimpleNamespace(call=call)
+            result = runtime.verify()
+            self.assertEqual(len(result['targets']), 1)
+            self.assertEqual(result['normalized_observations_count'], 8)
+            self.assertEqual(runtime.manifest['fullchain']['coverage']['normalized']['processed'], 8)
+
     def test_reads_second_target_page_and_keeps_processed_separate_from_accepted(self):
         with tempfile.TemporaryDirectory() as root:
             runtime=Runtime(root)

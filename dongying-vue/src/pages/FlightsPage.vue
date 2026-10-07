@@ -8,7 +8,7 @@ export default {};
 </script>
 
 <script setup>
-import { computed, h, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
+import { computed, h, nextTick, onMounted, onUnmounted, reactive, ref, shallowRef, watch } from 'vue';
 import { flightApi } from '@/services/flightApi.js';
 import { airspaceApi } from '@/services/airspaceApi.js';
 import { riskApi } from '@/services/riskApi.js';
@@ -33,7 +33,10 @@ import RiskOpticalPanel from '@/pages/flights/components/RiskOpticalPanel.vue';
 import PlanVerificationPanel from '@/pages/flights/components/PlanVerificationPanel.vue';
 import PlanFilingDetails from '@/pages/flights/components/PlanFilingDetails.vue';
 import PlanDeviceMarkers from '@/pages/flights/components/PlanDeviceMarkers.vue';
+import PlanRiskMarkers from '@/pages/flights/components/PlanRiskMarkers.vue';
 import PlanRiskRecords from '@/pages/flights/components/PlanRiskRecords.vue';
+import { useWeatherRiskFacts } from '@/hooks/useWeatherRiskFacts.js';
+import { planRiskLocation, planRiskLocationNote } from '@/pages/flights/planRiskMap.js';
 import PlanWeatherForecast from '@/pages/flights/components/PlanWeatherForecast.vue';
 import FlightRecordList from '@/pages/flights/components/FlightRecordList.vue';
 import FlightListPager from '@/pages/flights/components/FlightListPager.vue';
@@ -56,6 +59,8 @@ const size = ref(S.size);
 const total = ref(0);
 const plans = ref([]);
 const selected = ref(null);
+const planEnded = computed(() => ['COMPLETED', 'CANCELLED'].includes(selected.value?.status_code));
+const showRouteRisks = computed(() => !planEnded.value && !!selected.value?.route?.route_version_id);
 const routeVersion = ref(null);
 const airspaceVersions = ref([]);
 const conflicts = ref([]);
@@ -314,7 +319,7 @@ const kpiList = computed(() => {
 });
 const trustedCenterline = computed(() => trustedCoordinates(routeVersion.value));
 const trustedAirspaces = computed(() => trustedAirspaceOverlays());
-const hasMapContent = computed(() => Boolean(trustedCenterline.value?.length || trustedAirspaces.value.length || trajectoryPoints.value.some(Boolean) || mapDevices.value.length));
+const hasMapContent = computed(() => Boolean(trustedCenterline.value?.length || trustedAirspaces.value.length || trajectoryPoints.value.some(Boolean) || mapDevices.value.length || locatedPlanRisks.value.length));
 
 /* 6 个 KPI 与原页面同位同色；数值只取服务端 size=1 的 total，后端无法得出的指标显示“尚未接入”。 */
 const RISK_KPI_QUERIES = {
@@ -493,7 +498,7 @@ const riskRecords = computed(() => risks.value.map(risk => ({
   severity: `${severityLabel(risk.severity)}风险`, severityClass: severityTag(risk.severity),
   facts: [{ label: '风险等级', value: severityLabel(risk.severity), className: `tag ${severityTag(risk.severity)}` },
     { label: '回执状态', value: receiptStatusLabel(risk) === '—' ? '暂无回执' : receiptStatusLabel(risk) }],
-  note: `${labelOf(SOURCE_MODE_LABEL, risk.source_mode)} · 接收于 ${formatClock(risk.received_at)}`
+  note: `${labelOf(SOURCE_MODE_LABEL, risk.source_display_mode || risk.source_mode)} · 接收于 ${formatClock(risk.received_at)}`
 })));
 
 function riskMessageOf(reason, fallback) {
@@ -565,6 +570,10 @@ async function loadPlans(nextPage = page.value, requestedId = null) {
 let planDetailToken = 0;
 async function loadDetail(planId) {
   const current = ++planDetailToken;
+  routeRisksToken++;
+  Object.assign(routeRisks, { planId: null, items: [], loaded: false, loading: false, error: '' });
+  selectedPlanRiskId.value = null;
+  planRiskViewKey = '';
   S.selectedPlanId = planId;
   trajectoryToken++;
   trajectory.value = null;
@@ -674,12 +683,27 @@ async function loadMatchedTarget(plan) {
 }
 
 /* ---------- 本航线风险（按 legacy「按航线看」区块）：沿线风险直接给「通知上级」入口，状态机与写入口仍是风险页签那一套 ---------- */
-const routeRisks = reactive({ loading: false, error: '', items: [], total: 0, currentTotal: 0, uncertainTotal: 0, asOf: null, page: 1, size: 50, loaded: false });
+const routeRisks = reactive({ planId: null, loading: false, error: '', items: [], total: 0, currentTotal: 0, uncertainTotal: 0, asOf: null, page: 1, size: 50, loaded: false });
+const selectedPlanRiskId = ref(null);
+const planRiskRecordsRef = ref(null);
+const planRiskMarkers = shallowRef([]);
+let planRiskViewKey = '';
+const planRiskRows = computed(() => activeTab.value === 'route' && routeRisks.planId
+  && routeRisks.planId === selected.value?.plan_id && showRouteRisks.value ? routeRisks.items : []);
+const planWeatherRisks = useWeatherRiskFacts(planRiskRows);
+const planMapRisks = computed(() => {
+  const weather = new Map(planWeatherRisks.value.map(row => [row.risk_id, row]));
+  return planRiskRows.value.map(row => weather.get(row.risk_id) || row);
+});
+const locatedPlanRisks = computed(() => planMapRisks.value.flatMap(risk => {
+  const location = planRiskLocation(risk);
+  return location ? [{ risk, location }] : [];
+}));
 let routeRisksToken = 0;
 let routeRisksTimer;
 async function loadRouteRisks(plan, pageNumber = 1) {
   const token = ++routeRisksToken;
-  Object.assign(routeRisks, { items: [], total: 0, currentTotal: 0, uncertainTotal: 0, asOf: null, error: '', loaded: false, loading: false, page: pageNumber });
+  Object.assign(routeRisks, { planId: plan?.plan_id || null, items: [], total: 0, currentTotal: 0, uncertainTotal: 0, asOf: null, error: '', loaded: false, loading: false, page: pageNumber });
   if (!plan?.route?.route_version_id || ['COMPLETED', 'CANCELLED'].includes(plan.status_code)) return;
   routeRisks.loading = true;
   try {
@@ -692,6 +716,7 @@ async function loadRouteRisks(plan, pageNumber = 1) {
       return loadRouteRisks(plan, Math.max(1, Math.ceil(data.total / routeRisks.size)));
     }
     routeRisks.items = data.items.map(item => ({ ...item.risk, current_status: item.current_status, current_reason: item.current_reason }));
+    if (!routeRisks.items.some(item => item.risk_id === selectedPlanRiskId.value)) selectedPlanRiskId.value = null;
     routeRisks.total = data.total;
     routeRisks.currentTotal = data.current_total;
     routeRisks.uncertainTotal = data.uncertain_total;
@@ -704,17 +729,19 @@ async function loadRouteRisks(plan, pageNumber = 1) {
     if (token === routeRisksToken) routeRisks.loading = false;
   }
 }
-const routeRiskRecords = computed(() => routeRisks.items.map(item => {
+const routeRiskRecords = computed(() => planMapRisks.value.map((item, index) => {
   const fact = item.space_fact;
   const position = [];
   if (fact?.distance_to_route_m != null) position.push(`距航线中心线 ${(fact.distance_to_route_m / 1000).toFixed(2)} km`);
   if (fact?.target_altitude_raw != null) position.push(`高度 ${fact.target_altitude_raw} m`);
   return {
-    id: item.risk_id, title: riskTitle(item), severity: item.severity,
+    id: item.risk_id, number: (routeRisks.page - 1) * routeRisks.size + index + 1,
+    title: riskTitle(item), severity: item.severity,
+    locatable: !!planRiskLocation(item), locationNote: planRiskLocationNote(item),
     severityLabel: `${severityLabel(item.severity)}风险`, severityClass: severityTag(item.severity),
     stateLabel: stateLabel(item.state), stateClass: stateTag(item.state),
     currentStatus: item.current_status, currentReason: item.current_reason,
-    sourceLabel: labelOf(SOURCE_MODE_LABEL, item.source_mode, '来源未提供'),
+    sourceLabel: labelOf(SOURCE_MODE_LABEL, item.source_display_mode || item.source_mode, '来源未提供'),
     occurredAt: formatTime(item.occurred_at),
     relationText: fact ? corridorText(item) : '', positionText: position.join(' · '),
     reason: item.reason_text || '', canNotify: canNotifyItem(item)
@@ -785,11 +812,9 @@ async function loadActuals(plan) {
 }
 
 /* 与 legacy 一致：待执行的计划没有"实际"可对照，已结束的计划不再做航线风险预检。 */
-const planEnded = computed(() => ['COMPLETED', 'CANCELLED'].includes(selected.value?.status_code));
 /* 没有事实就不摆空分区：待执行/已取消的计划没有实际飞行可对照；已结束或无走廊的计划没有起飞前航线预检。 */
 /* 有引擎结论就照实显示（状态字段不随时间流转，已批准的计划也可能早已飞过）；没有结论且计划还没飞或已取消，才不摆空分区。 */
 const showComparison = computed(() => ['EXECUTING', 'COMPLETED'].includes(selected.value?.status_code));
-const showRouteRisks = computed(() => !planEnded.value && !!selected.value?.route?.route_version_id);
 function sectionReady(section) { return section?.availability === 'AVAILABLE'; }
 function sectionNote(section) { return labelOf(SECTION_AVAILABILITY_LABEL, section?.availability, '暂不可用'); }
 /* 计划时段内没有任何感知目标被引擎匹配到这条计划：对监管者来说是"没飞或没测到"，不是引擎的事，措辞与原版一致。 */
@@ -841,7 +866,7 @@ async function loadRouteGeometry(plan) {
   } catch (requestError) {
     if (activeTab.value !== 'route' || selected.value?.plan_id !== plan.plan_id) return;
     routeGeometryError.value = requestError.message || '你没有查看航线的权限，或航线位置加载失败';
-    destroyRouteMap();
+    renderRouteMap();
   } finally {
     if (selected.value?.plan_id === plan.plan_id) routeGeometryLoading.value = false;
   }
@@ -876,7 +901,55 @@ function destroyRouteMap() {
   if (routeMap) routeMap.destroy();
   routeMap = null;
   deviceMarkers.value = [];
+  planRiskMarkers.value = [];
 }
+
+function syncPlanRiskMarkers(map) {
+  const records = new Map(routeRiskRecords.value.map(record => [record.id, record]));
+  const markers = locatedPlanRisks.value.flatMap(({ risk, location }) => {
+    const [x, y] = map.px(...location.anchor);
+    return x >= 0 && x <= map.w && y >= 0 && y <= map.h
+      ? [{ ...records.get(risk.risk_id), record: records.get(risk.risk_id), risk, x: Math.round(x), y: Math.round(y) }] : [];
+  });
+  if (markers.length !== planRiskMarkers.value.length || markers.some((marker, index) => {
+    const previous = planRiskMarkers.value[index];
+    return marker.risk !== previous.risk || marker.record !== previous.record || marker.x !== previous.x || marker.y !== previous.y;
+  })) planRiskMarkers.value = markers;
+}
+
+function fitPlanRisks() {
+  const extent = [...(trustedCenterline.value || []),
+    ...trajectoryPoints.value.filter(Boolean).map(point => [point.lon, point.lat]),
+    ...locatedPlanRisks.value.flatMap(({ location }) => location.polygon || [location.anchor])];
+  if (extent.length) routeMap?.fitTo(extent, .2);
+}
+
+function locatePlanRisk(riskId, fromMap = false) {
+  const item = locatedPlanRisks.value.find(({ risk }) => risk.risk_id === riskId);
+  if (!item || activeTab.value !== 'route') return;
+  selectedPlanRiskId.value = riskId;
+  if (!routeMap) renderRouteMap();
+  if (!fromMap) {
+    if (item.location.polygon) routeMap?.fitTo(item.location.polygon, .25);
+    else routeMap?.centerAt(...item.location.anchor);
+  } else {
+    planDetailTab.value = 'plan';
+    nextTick(() => planRiskRecordsRef.value?.focusRecord(riskId));
+  }
+}
+
+watch([locatedPlanRisks, () => routeRisks.loaded], async () => {
+  await nextTick();
+  if (activeTab.value !== 'route') return;
+  if (!routeMap && hasMapContent.value) renderRouteMap();
+  else routeMap?.draw();
+  // 新计划、新一页或首次取得位置时取景；同一批风险轮询更新不打断缩放。
+  const key = `${routeRisks.planId}:${routeRisks.page}:${locatedPlanRisks.value.map(item => item.risk.risk_id).join(',')}`;
+  if (routeRisks.loaded && locatedPlanRisks.value.length && key !== planRiskViewKey) {
+    planRiskViewKey = key;
+    fitPlanRisks();
+  }
+});
 
 function updatePlanDeviceMap({ planId, check }) {
   if (selected.value?.plan_id !== planId) return;
@@ -903,7 +976,7 @@ function renderRouteMap() {
   const airspaces = trustedAirspaces.value;
   const target = matchedTarget.value;
   const points = trajectoryPoints.value;
-  if (activeTab.value !== 'route' || !mapHost.value || (!coordinates && !airspaces.length && !points.some(Boolean) && !mapDevices.value.length)) return;
+  if (activeTab.value !== 'route' || !mapHost.value || (!coordinates && !airspaces.length && !points.some(Boolean) && !mapDevices.value.length && !locatedPlanRisks.value.length)) return;
   routeMap = new window.MapView(mapHost.value, {
     zoom: 3.2, maxDev: 0, legend: false, layers: { device: false, track: !!target, alarm: false }
   });
@@ -931,13 +1004,21 @@ function renderRouteMap() {
       context.stroke();
       context.setLineDash([]);
     });
+    locatedPlanRisks.value.forEach(({ risk, location }) => {
+      if (!location.polygon) return;
+      drawWeatherArea(context, this, risk.weather_fact, location.polygon, coordinates || [],
+        RISK_SEVERITY_COLOR[risk.severity] || '#8376cb', weatherLayerKind(risk.reason_code),
+        isSimulatedWeatherRisk(risk), true, risk.current_status === 'CURRENT' ? .4 : .2);
+    });
     // corridor_width_m 是走廊全宽；未做投影缓冲时不能把全宽误当半径，因此只描中心线样式。
     strokePlanComparison(context, this, coordinates, points);
     context.restore();
     syncDeviceMarkers(this);
+    syncPlanRiskMarkers(this);
   };
   // 按计划及实测轨迹的跨度自适应缩放，避免远处设备把短航线挤小。
-  const flightExtent = [...(coordinates || []), ...points.filter(Boolean).map(p => [p.lon, p.lat])];
+  const flightExtent = [...(coordinates || []), ...points.filter(Boolean).map(p => [p.lon, p.lat]),
+    ...locatedPlanRisks.value.flatMap(({ location }) => location.polygon || [location.anchor])];
   const extent = flightExtent.length ? flightExtent : mapDevices.value.map(row => [row.position.lon, row.position.lat]);
   if (extent.length) routeMap.fitTo(extent, 0.18);
   else {
@@ -1722,7 +1803,7 @@ onUnmounted(() => {
               <template v-if="riskTab === 'event'">
               <RiskOpticalPanel v-if="selectedRisk.risk_type !== 'WEATHER'" :key="selectedRisk.risk_id" :risk="selectedRisk" />
               <div class="sect"><h4>事件信息</h4><dl class="kv kv-surface">
-                <dt>来源</dt><dd>{{ sourceDescription(selectedRisk.source_name, selectedRisk.source_code, selectedRisk.source_mode) }}</dd>
+                <dt>来源</dt><dd>{{ sourceDescription(selectedRisk.source_name, selectedRisk.source_code, selectedRisk.source_display_mode || selectedRisk.source_mode) }}</dd>
                 <dt>发生时间</dt><dd>{{ formatTime(selectedRisk.occurred_at) }}</dd>
                 <dt>接收时间</dt><dd>{{ formatTime(selectedRisk.received_at) }}</dd>
                 <dt>所属范围</dt><dd>{{ selectedRisk.owner_org_name || '未知机构' }} / {{ selectedRisk.district_name || '未知区域' }}</dd>
@@ -1803,6 +1884,8 @@ onUnmounted(() => {
             <div class="plan-map-frame" :class="{ unavailable: !hasMapContent }">
               <div ref="mapHost" class="route-map"></div>
               <PlanDeviceMarkers :markers="deviceMarkers" :plan-id="selected?.plan_id" />
+              <PlanRiskMarkers :markers="planRiskMarkers" :selected-id="selectedPlanRiskId" :obstacles="deviceMarkers"
+                @select="locatePlanRisk($event, true)" />
               <details class="plan-map-legend" aria-label="航迹图例" open>
                 <summary class="plan-map-legend-title">图例<span class="legend-collapse">收起</span><span class="legend-expand">展开</span></summary>
                 <ul>
@@ -1811,8 +1894,15 @@ onUnmounted(() => {
                   <li><span class="legend-line unknown" aria-hidden="true"></span>范围未确定</li>
                   <li><span class="legend-line unobserved" aria-hidden="true"></span>计划航线</li>
                 </ul>
-                <div class="plan-map-legend-note">缺失的轨迹不连线</div>
+                <div class="plan-map-legend-note">风险编号与右侧列表对应<br>虚线标记：状态待确认<br>事件位置不代表实时位置<br>缺失的轨迹不连线</div>
               </details>
+            </div>
+            <div v-if="showRouteRisks" class="map-note plan-risk-summary" role="status">
+              <template v-if="routeRisks.loading">正在同步本计划风险位置…</template>
+              <template v-else-if="routeRisks.error">风险位置暂不可用，请在右侧重试。</template>
+              <template v-else-if="routeRisks.loaded">本页风险 {{ routeRiskRecords.length }} 起 · 可定位 {{ locatedPlanRisks.length }} 起<span v-if="routeRiskRecords.length > locatedPlanRisks.length"> · {{ routeRiskRecords.length - locatedPlanRisks.length }} 起位置待确认</span>
+                <button v-if="locatedPlanRisks.length" class="btn" type="button" @click="fitPlanRisks">查看全部位置</button>
+              </template>
             </div>
             <div v-if="routeGeometryLoading || airspaceLoading" class="empty">正在加载航线和空域边界…</div>
             <div v-else-if="routeGeometryError || airspaceError" class="warnbox">{{ routeGeometryError || airspaceError }}</div>
@@ -1852,11 +1942,11 @@ onUnmounted(() => {
               </template>
             </section>
             <PlanVerificationPanel :key="selected.plan_id" :plan="selected" :match="actuals?.match || null" @map-devices="updatePlanDeviceMap" />
-            <PlanRiskRecords v-if="showRouteRisks" :records="routeRiskRecords" :loading="routeRisks.loading"
+            <PlanRiskRecords v-if="showRouteRisks" ref="planRiskRecordsRef" :records="routeRiskRecords" :loading="routeRisks.loading" :selected-id="selectedPlanRiskId"
               :error="routeRisks.error" :total="routeRisks.total" :current-total="routeRisks.currentTotal"
               :uncertain-total="routeRisks.uncertainTotal" :as-of="routeRisks.asOf ? formatTime(routeRisks.asOf) : ''"
               :page="routeRisks.page" :size="routeRisks.size"
-              @select="jumpToRisk" @notify="notifyRouteRisk" @retry="loadRouteRisks(selected, routeRisks.page)"
+              @select="jumpToRisk" @locate="locatePlanRisk" @notify="notifyRouteRisk" @retry="loadRouteRisks(selected, routeRisks.page)"
               @page="loadRouteRisks(selected, $event)" />
             </div>
             <PlanWeatherForecast v-if="planDetailTab === 'forecast'" :key="selected.plan_id" :plan-id="selected.plan_id" :start-at="selected.start_at" :end-at="selected.end_at" />
@@ -1930,6 +2020,7 @@ onUnmounted(() => {
 .route-geometry { overflow-wrap: anywhere; line-height: 1.7; }
 .plan-map-frame { flex: 1; min-height: 0; position: relative; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 .plan-map-frame.unavailable { display: none; }
+.map-note.plan-risk-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; white-space: normal; overflow: visible; overflow-wrap: anywhere; }
 .route-map { width: 100%; height: 100%; }
 .plan-map-legend { position: absolute; right: 8px; bottom: 24px; z-index: 5; padding: 5px 8px; max-width: calc(100% - 16px); border: 1px solid rgba(220, 235, 245, .28); border-radius: 7px; background: color-mix(in srgb, var(--surface-1) 94%, transparent); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); color: #f0f6fb; box-shadow: 0 2px 8px rgba(0, 0, 0, .12); font-size: 11px; line-height: 1.4; }
 .plan-map-legend-title { display: flex; align-items: center; gap: 18px; justify-content: space-between; list-style: none; cursor: pointer; font-size: 11px; font-weight: 600; }

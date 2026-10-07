@@ -19,11 +19,11 @@ class Process:
     def wait(self, timeout): return self.returncode
     def kill(self): self.killed+=1; self.returncode=-9
 class Platform:
-    def __init__(self): self.calls=[]; self.task=TASK; self.stream=STREAM; self.fail=False
+    def __init__(self): self.calls=[]; self.task=TASK; self.stream=STREAM; self.fail=False; self.status='OPEN'
     def call(self, method, path, body=None):
         self.calls.append((method,path,body))
         if self.fail: raise ValueError('API unavailable')
-        if method=='GET': return {'details': {'open_task': {'task_id':self.task,'status':'OPEN'}}}
+        if method=='GET': return {'details': {'open_task': {'task_id':self.task,'status':self.status}}}
         return {'task_id':self.task,'device_id':'ops-1','stream_id':self.stream,'stream_path':'qa/'+self.stream}
 class EoVideoTests(unittest.TestCase):
     def setUp(self):
@@ -43,6 +43,21 @@ class EoVideoTests(unittest.TestCase):
         payload.update(overrides)
         return json.dumps(payload).encode()
     def begin(self): self.eo.handle(BINDING['dispatcher_topic'],self.command())
+    def test_restarted_idle_device_confirms_only_platform_pending_stop(self):
+        import uuid
+        for task in (str(uuid.uuid4()), str(uuid.uuid4())):
+            self.api.task=task; self.api.status='ENDING'
+            self.eo.handle(BINDING['dispatcher_topic'], self.command('EndTracking', task))
+            self.assertEqual(self.sent[-1][1]['metadata']['taskId'], task)
+            self.assertEqual(self.sent[-1][1]['metadata']['workState'], 0)
+            self.assertIn(task, self.eo.retired)
+        self.assertFalse(self.processes)
+    def test_idle_stop_rejects_wrong_or_unconfirmed_task_and_api_failure(self):
+        for status, task, fail in [('OPEN', TASK, False), ('ENDING', 'another-task', False), ('ENDING', TASK, True)]:
+            self.api.status=status; self.api.task=task; self.api.fail=fail
+            with self.assertRaises(ValueError):
+                self.eo.handle(BINDING['dispatcher_topic'], self.command('EndTracking'))
+            self.assertFalse(self.sent)
     def test_receipt_matches_binding_and_task_and_keeps_video_separate(self):
         self.begin(); topic,payload=self.sent[0]
         self.assertEqual(topic,BINDING['reporting_topic']); self.assertEqual(payload['edgeId'],'edge-1')

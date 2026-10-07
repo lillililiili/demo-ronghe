@@ -527,6 +527,10 @@ class Runtime:
         platform_ids={d['platform_id'] for d in manifest['devices'].values()}
         platform_ids.update(d.get('device',{}).get('fusion_device_id') for d in result['devices'])
         platform_ids.discard(None)
+        normalized_ids = {row['device_id'] for row in manifest.get('normalized_sources', {}).values()}
+        # Historical batches used one shared source; preserve their readback.
+        if manifest.get('normalized_source', {}).get('device_id'):
+            normalized_ids.add(manifest['normalized_source']['device_id'])
         result['targets']=[]
         for item in candidates.get('items',[]):
             detail=api.call('GET','/targets/'+item['target_id'])
@@ -543,7 +547,7 @@ class Runtime:
                 category='balloon' if target.get('subtype')=='BALLOON' else (target.get('object_type_code') or 'identifying').lower()
                 result['category_observations'][category]=result['category_observations'].get(category,0)+observations.get('total',0)
                 result['target_observations'].append({'target_id':target_id,'category':category,'count':observations.get('total',0),'latest':observations.get('items',[])})
-                if any(link.get('device_id')==manifest.get('normalized_source',{}).get('device_id') for link in target.get('source_links',[])):
+                if any(link.get('device_id') in normalized_ids for link in target.get('source_links',[])):
                     result['normalized_observations_count']+=observations.get('total',0)
                 track_page=1;track_count=0
                 while True:

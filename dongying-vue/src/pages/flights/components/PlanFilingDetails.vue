@@ -43,6 +43,7 @@ const altitude = computed(() => {
 
 <template>
   <section class="sect plan-filing">
+    <div class="filing-col">
     <div class="workspace-section-heading"><h4>任务信息</h4></div>
     <dl class="kv kv-surface">
       <dt>任务编号</dt><dd>{{ value(plan.plan_no) }} <span v-if="plan.source_mode === 'mock'" class="tag t-amber">模拟任务</span></dd>
@@ -75,12 +76,16 @@ const altitude = computed(() => {
       <p v-else>任务反馈接收对象尚未配置。</p>
       <button class="btn ghost" type="button" @click="loadSubjects">刷新关联信息</button>
     </details>
+    </div>
+    <div class="filing-col">
     <h4 class="schedule-heading">起降点与时间</h4>
     <dl class="filing-cards">
       <div class="filing-card takeoff-card"><dt>起飞点</dt><dd>{{ value(filing.takeoff_site_name) }}<small v-if="position(filing.takeoff_longitude, filing.takeoff_latitude)">{{ position(filing.takeoff_longitude, filing.takeoff_latitude) }}</small></dd></div>
       <div class="filing-card landing-card"><dt>降落点</dt><dd>{{ value(filing.landing_site_name) }}<small v-if="position(filing.landing_longitude, filing.landing_latitude)">{{ position(filing.landing_longitude, filing.landing_latitude) }}</small></dd></div>
       <div class="filing-card schedule-card"><dt>时间窗口</dt><dd><span>{{ time(plan.start_at) }}</span><span class="time-divider">至</span><span>{{ time(plan.end_at) }}</span></dd></div>
     </dl>
+    </div>
+    <div class="filing-col">
     <h4 class="route-heading">报备航线</h4>
     <dl class="kv kv-surface">
       <dt>航线名称</dt><dd class="route-name">{{ value(plan.route?.name) }}</dd>
@@ -93,6 +98,7 @@ const altitude = computed(() => {
         <div class="filing-card width-card"><dt>航线宽度</dt><dd>{{ routeVersion?.corridor_width_m == null ? '未提供' : `${routeVersion.corridor_width_m} 米` }}</dd></div>
       </template>
     </dl>
+    </div>
   </section>
 </template>
 
@@ -103,7 +109,15 @@ const altitude = computed(() => {
 .plan-filing h4::before { display: none; }
 .plan-filing .schedule-heading { --section-color: var(--cyan); }
 .plan-filing .route-heading { --section-color: var(--purple); }
-.plan-filing > h4 { margin-top: 12px; }
+.plan-filing .filing-col > h4 { margin-top: 12px; }
+/* 详情栏够宽时（见 FlightsPage 的 flight-detail 容器）左栏任务信息、右栏起降点与航线，减少上下滚动。 */
+@container flight-detail (min-width: 560px) {
+  .plan-filing .filing-col > h4:first-child, .plan-filing .filing-col > .workspace-section-heading:first-child h4 { margin-top: 0; }
+  .plan-filing .filing-col > .kv-surface:last-child { border-bottom: 0; }
+  .plan-filing .filing-col { margin-bottom: 10px; }
+  .filing-cards { margin: 6px 0; gap: 6px; }
+  .filing-card { padding: 6px 8px; gap: 3px; }
+}
 .plan-filing .kv-surface { padding: 7px 0; border: 0; border-bottom: 1px solid var(--line-2); border-radius: 0; background: transparent; }
 .plan-filing dd { min-width: 0; overflow-wrap: anywhere; }
 .plan-filing dd small { display: block; color: var(--txt-3); font-size: 11px; line-height: 1.6; margin-top: 3px; }

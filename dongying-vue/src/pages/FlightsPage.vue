@@ -1936,15 +1936,15 @@ onUnmounted(() => {
                 <div class="detail-hero-copy"><div class="detail-hero-eyebrow">飞行风险</div><div class="detail-hero-title">{{ labelOf(RISK_TYPE_LABEL, selectedRisk.risk_type, '风险类型未提供') }}</div><div v-if="selectedRisk.risk_no" class="detail-hero-id">{{ selectedRisk.risk_no }}</div></div>
                 <div class="detail-hero-side"><div class="detail-hero-tags"><span class="tag" :class="severityTag(selectedRisk.severity)">{{ severityLabel(selectedRisk.severity) }}</span><span class="tag" :class="stateTag(selectedRisk.state)">{{ stateLabel(selectedRisk.state) }}</span></div></div>
               </div></div>
-              <template v-if="riskTab === 'event'">
+              <div v-if="riskTab === 'event'" class="rk-event-grid">
               <RiskOpticalPanel v-if="selectedRisk.risk_type !== 'WEATHER'" :key="selectedRisk.risk_id" :risk="selectedRisk" />
-              <div class="sect"><h4>事件信息</h4><dl class="kv kv-surface">
+              <div class="sect rk-event-info"><h4>事件信息</h4><dl class="kv kv-surface">
                 <dt>来源</dt><dd>{{ sourceDescription(selectedRisk.source_name, selectedRisk.source_code, selectedRisk.source_display_mode || selectedRisk.source_mode) }}</dd>
                 <dt>发生时间</dt><dd>{{ formatTime(selectedRisk.occurred_at) }}</dd>
                 <dt>接收时间</dt><dd>{{ formatTime(selectedRisk.received_at) }}</dd>
                 <dt>所属范围</dt><dd>{{ selectedRisk.owner_org_name || '未知机构' }} / {{ selectedRisk.district_name || '未知区域' }}</dd>
               </dl></div>
-              <div class="sect"><h4>风险依据</h4><dl class="kv kv-surface">
+              <div class="sect rk-basis"><h4>风险依据</h4><dl class="kv kv-surface">
                 <template v-if="selectedRisk.current_status"><dt>当前风险</dt><dd>{{ ({ CURRENT: '当前仍存在', CLEARED: '已确认解除', EXPIRED: '有效时段已结束', UNKNOWN: '状态待确认', EXCLUDED: '已排除', NOT_STARTED: '尚未生效' })[selectedRisk.current_status] || '状态待确认' }}<span class="rk-hint">{{ selectedRisk.current_reason }}</span></dd></template>
                 <dt>触发原因</dt><dd>{{ labelOf(REASON_CODE_LABEL, selectedRisk.reason_code, '未提供') }}</dd>
                 <dt>依据说明</dt><dd class="rk-wrap">{{ riskReasonText(selectedRisk) }}</dd>
@@ -1956,7 +1956,7 @@ onUnmounted(() => {
                 <dt v-if="selectedRisk.target_id">关联目标</dt><dd v-if="selectedRisk.target_id" class="mono" :title="selectedRisk.target_id">{{ selectedRisk.space_fact?.subtype_name || '关联感知目标' }}</dd>
                 <dt v-if="selectedRisk.track_id">关联轨迹</dt><dd v-if="selectedRisk.track_id" :title="selectedRisk.track_id">已关联轨迹</dd>
               </dl><div class="rk-note">{{ selectedRisk.risk_type === 'WEATHER' ? '起飞前请核对最新预警和有效时段。' : '位置为发现时快照；违规结论见合法性研判。' }}</div></div>
-              <div class="sect"><h4>核验历史 <span class="tag t-gray">{{ riskHistoryTotal }}</span></h4>
+              <div class="sect rk-review-history"><h4>核验历史 <span class="tag t-gray">{{ riskHistoryTotal }}</span></h4>
                 <div v-if="riskHistoryLoading" class="empty">正在读取核验历史…</div>
                 <div v-else-if="riskHistoryError" class="warnbox rk-error">{{ riskHistoryError }}</div>
                 <div v-else-if="!riskHistory.length" class="empty">尚无已保存的核验记录</div>
@@ -1969,7 +1969,7 @@ onUnmounted(() => {
                 </div>
                 <div v-if="riskHistoryTotal > HISTORY_PAGE_SIZE" class="pager"><UPagination :page="riskHistoryPage" :page-size="HISTORY_PAGE_SIZE" :item-count="riskHistoryTotal" size="small" @update:page="changeRiskHistoryPage" /></div>
               </div>
-              </template>
+              </div>
               <section v-else class="sect notice-section">
                 <div class="workspace-section-heading"><button class="btn ghost" type="button" :disabled="noticesLoading" @click="loadRiskNotices(activeRiskId)">刷新记录</button></div>
                 <div v-if="noticesError" class="warnbox" role="alert">{{ noticesError }}</div>
@@ -2062,7 +2062,7 @@ onUnmounted(() => {
           <div v-else-if="detailError" class="warnbox">{{ detailError }} <button v-if="S.selectedPlanId" class="btn" type="button" @click="loadDetail(S.selectedPlanId)">重试</button></div>
           <div v-else-if="!selected" class="empty">请选择任务</div>
           <template v-else>
-            <div v-show="planDetailTab === 'plan'">
+            <div v-show="planDetailTab === 'plan'" class="plan-detail-grid">
               <div class="metric-strip is-compact plan-metrics">
                 <div class="metric-item" :class="PLAN_STATUS_TAG[selected.status_code] || 't-gray'"><div class="metric-copy"><small>执行状态</small><b>{{ labelOf(PLAN_STATUS_LABEL, selected.status_code) }}</b></div></div>
                 <div class="metric-item duration-metric"><div class="metric-copy"><small>任务时长</small><b>{{ formatDuration(selected) }}</b></div></div>
@@ -2084,13 +2084,13 @@ onUnmounted(() => {
                 <div v-if="demoParams"><span class="tag t-amber">参数为演示值，尚未确认</span></div>
               </template>
             </section>
-            <PlanVerificationPanel :key="selected.plan_id" :plan="selected" :match="actuals?.match || null" @map-devices="updatePlanDeviceMap" />
             <PlanRiskRecords v-if="showRouteRisks" ref="planRiskRecordsRef" :records="routeRiskRecords" :loading="routeRisks.loading" :selected-id="selectedPlanRiskId"
               :error="routeRisks.error" :total="routeRisks.total" :current-total="routeRisks.currentTotal"
               :uncertain-total="routeRisks.uncertainTotal" :as-of="routeRisks.asOf ? formatTime(routeRisks.asOf) : ''"
               :page="routeRisks.page" :size="routeRisks.size"
               @select="jumpToRisk" @locate="locatePlanRisk" @notify="notifyRouteRisk" @retry="loadRouteRisks(selected, routeRisks.page)"
               @page="loadRouteRisks(selected, $event)" />
+            <PlanVerificationPanel :key="selected.plan_id" :plan="selected" :match="actuals?.match || null" @map-devices="updatePlanDeviceMap" />
             </div>
             <PlanWeatherForecast v-if="planDetailTab === 'forecast'" :key="selected.plan_id" :plan-id="selected.plan_id" :start-at="selected.start_at" :end-at="selected.end_at" />
           </template></div>
@@ -2113,13 +2113,27 @@ onUnmounted(() => {
 .flights-page :deep(.kpi .vl) { font-size: 31px; }
 .flights-page :deep(.kpi .dt) { font-size: 12px; }
 .flights-page .detail-hero-title,.flights-page .detail-hero-id { display: block; white-space: normal; overflow: visible; overflow-wrap: anywhere; text-overflow: clip; -webkit-line-clamp: unset; }
-.flight-main,.risk-main { display: grid; grid-template-columns: minmax(250px, .95fr) minmax(300px, 1.35fr) minmax(300px, 1.1fr); grid-template-rows: minmax(0, 1fr); margin-top: 12px; flex: 1; min-height: 0; align-items: stretch; gap: 12px; }
+.flight-main,.risk-main { display: grid; grid-template-columns: minmax(240px, .8fr) minmax(300px, 1.1fr) minmax(320px, 1.45fr); grid-template-rows: minmax(0, 1fr); margin-top: 12px; flex: 1; min-height: 0; align-items: stretch; gap: 12px; }
 /* 计划页签多了上级接口提示、搜索行和筛选提示；视口较矮（1280×720、1366×768）时主区不再被压到看不全一条计划，
    改为在页面区域内纵向滚动。风险页签不受影响。 */
 .flight-main { min-height: 500px; }
 .workspace-list { grid-column: 1; grid-row: 1; }
 .workspace-map { grid-column: 2; grid-row: 1; }
-.workspace-detail { grid-column: 3; grid-row: 1; }
+.workspace-detail { grid-column: 3; grid-row: 1; container: flight-detail / inline-size; }
+/* 2026-10-07 用户要求任务详情、风险详情尽量一屏看完：详情栏够宽时分两栏排，内容不删，只换排法。 */
+@container flight-detail (min-width: 560px) {
+  /* 按两栏自动平衡高度（先左后右）；任务信息与起降航线两块拆开参与排列，避免一栏留大块空白。 */
+  .plan-detail-grid, .rk-event-grid { columns: 2; column-gap: 16px; }
+  .plan-detail-grid > *, .rk-event-grid > * { break-inside: avoid; }
+  .plan-detail-grid > .plan-metrics { column-span: all; }
+  .plan-detail-grid > :deep(.plan-filing) { display: contents; }
+  .plan-detail-grid :deep(.filing-col) { break-inside: avoid; }
+}
+.plan-detail-grid .metric-strip { margin-bottom: 10px; }
+.flights-page .plan-metrics .metric-item { min-height: 0; padding: 5px 10px; }
+.flights-page .plan-metrics .metric-copy { flex-direction: row; align-items: baseline; flex-wrap: wrap; gap: 2px 8px; }
+.workspace-detail :deep(.kv-surface) { row-gap: 5px; }
+.workspace-detail .sect { margin-bottom: 10px; }
 .flight-main > :deep(.panel),.risk-main > :deep(.panel) { min-width: 0; min-height: 0; width: auto; }
 .flights-page .workspace-list .toolbar { display: flex; flex-direction: column; align-items: stretch; padding: 10px; gap: 9px; border-bottom: 1px solid var(--line); }
 .flights-page .workspace-list .toolbar-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); width: 100%; gap: 8px; }

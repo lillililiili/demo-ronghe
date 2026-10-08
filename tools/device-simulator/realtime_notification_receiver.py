@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Independent local notification receiver; all receipts go through the logged-in proxy."""
 import argparse
+import base64
 import copy
 import hashlib
 import json
@@ -173,6 +174,46 @@ class Receiver:
         except (OSError, ValueError, TypeError):
             raise ReceiverError('outcome-file 无效；停止回执和续租，请检查按 kind 配置的结果') from None
 
+    def _prepare_message(self, message):
+        """Persist voice bytes locally, then keep only auditable metadata in JSON state."""
+        prepared = copy.deepcopy(message)
+        if message.get('kind') != 'ADVISORY_VOICE':
+            return prepared
+        payload = prepared.get('payload')
+        if not isinstance(payload, dict) or 'recording_audio_base64' not in payload:
+            return prepared
+        recording = payload.get('recording')
+        encoded = payload.get('recording_audio_base64')
+        recording_id = recording.get('id') if isinstance(recording, dict) else None
+        expected_sha = recording.get('sha256') if isinstance(recording, dict) else None
+        if (not isinstance(recording_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,100}', recording_id)
+                or not isinstance(expected_sha, str) or not re.fullmatch(r'[0-9a-fA-F]{64}', expected_sha)
+                or not isinstance(encoded, str)):
+            raise ReceiverError('电话录音元数据无效')
+        try:
+            audio = base64.b64decode(encoded, validate=True)
+        except (ValueError, TypeError):
+            raise ReceiverError('电话录音内容不是有效 Base64') from None
+        if not audio or len(audio) > 10 * 1024 * 1024:
+            raise ReceiverError('电话录音内容为空或超过 10 MiB')
+        actual_sha = hashlib.sha256(audio).hexdigest()
+        if actual_sha.lower() != expected_sha.lower():
+            raise ReceiverError('电话录音哈希校验失败')
+        recordings_dir = self.data_dir / 'recordings'
+        recordings_dir.mkdir(parents=True, exist_ok=True)
+        destination = recordings_dir / f'{recording_id}.wav'
+        temporary = destination.with_suffix('.wav.tmp')
+        with temporary.open('wb') as stream:
+            stream.write(audio)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, destination)
+        payload.pop('recording_audio_base64', None)
+        payload['recording_file'] = destination.relative_to(self.data_dir).as_posix()
+        payload['recording_sha256'] = actual_sha
+        payload['recording_bytes'] = len(audio)
+        return prepared
+
     def receive(self, message, mode='success'):
         message_id = message.get('message_id')
         if (not isinstance(message_id, str) or not re.fullmatch(r'simn-[A-Za-z0-9_-]{1,59}', message_id)
@@ -180,6 +221,7 @@ class Receiver:
             raise ReceiverError('通知 message_id/version 无效')
         if type(message.get('created_at')) is not int or message['created_at'] <= 0:
             raise ReceiverError('通知 created_at 必须为有效 epoch 毫秒整数')
+        stored_message = self._prepare_message(message)
         record = self.state['messages'].get(message_id)
         if record is None:
             if mode == 'mixed':
@@ -187,16 +229,16 @@ class Receiver:
                 if message['kind'] == 'ADVISORY_VOICE': choices.append('answered_only')
                 ordinal = sum(r['original']['kind'] == message['kind'] for r in self.state['messages'].values())
                 mode = choices[ordinal % len(choices)]
-            record = {'original': copy.deepcopy(message), 'current': copy.deepcopy(message),
+            record = {'original': stored_message, 'current': copy.deepcopy(stored_message),
                       'received_at': self.clock(), 'answered_at': None, 'pending': None,
                       'mode': mode, 'play_seconds': self.play_seconds}
             self.state['messages'][message_id] = record
             self.save()
-            self.event('received', message=copy.deepcopy(message))
+            self.event('received', message=copy.deepcopy(stored_message))
         else:
             if message['version'] < record['current']['version']:
                 return None
-            record['current'] = copy.deepcopy(message)
+            record['current'] = copy.deepcopy(stored_message)
             # Legacy records freeze their policy on the first upgraded read.
             record.setdefault('mode', mode)
             record.setdefault('play_seconds', self.play_seconds)
@@ -252,7 +294,8 @@ class Receiver:
         if (updated.get('message_id') != message['message_id'] or updated.get('state') != outcome
                 or not isinstance(updated.get('version'), int) or updated['version'] <= message['version']):
             raise ReceiverError('回执 API 未返回预期的新消息状态；等待下一次查询确认')
-        record['current'] = copy.deepcopy(updated)
+        stored_updated = self._prepare_message(updated)
+        record['current'] = stored_updated
         record['pending'] = None
         # Start playback only after ANSWERED is acknowledged by the platform.
         if outcome == 'ANSWERED':
@@ -261,15 +304,15 @@ class Receiver:
         result = updated.get('result')
         projection = result.get('projection_status') if isinstance(result, dict) else None
         if projection == 'APPLIED':
-            self.event('receipt_confirmed', message=updated)
+            self.event('receipt_confirmed', message=copy.deepcopy(stored_updated))
             LOG.info('模拟通知外部回执已记录，业务已采纳：%s %s -> %s',
                      message['message_id'], message['kind'], outcome)
         elif projection == 'IGNORED_STALE_ATTEMPT':
-            self.event('receipt_recorded_unapplied', message=updated)
+            self.event('receipt_recorded_unapplied', message=copy.deepcopy(stored_updated))
             LOG.warning('模拟通知外部回执已记录，但业务未采纳（原尝试已失效）；不重复发送：%s %s -> %s',
                         message['message_id'], message['kind'], outcome)
         else:
-            self.event('receipt_recorded_projection_unknown', message=updated)
+            self.event('receipt_recorded_projection_unknown', message=copy.deepcopy(stored_updated))
             LOG.warning('模拟通知外部回执已记录，业务采纳状态未确认；不重复发送：%s %s -> %s',
                         message['message_id'], message['kind'], outcome)
 

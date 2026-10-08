@@ -9,6 +9,7 @@ import { deviceApi } from './deviceApi.js';
 import { flightApi } from './flightApi.js';
 import { airspaceApi } from './airspaceApi.js';
 import { targetTypeLabel } from '@/ui/labels.js';
+import { displayDeviceNo } from '@/ui/deviceNumber.js';
 
 /** GeoJSON 点 → {lon, lat}；坐标系不是 WGS84、被标为不可信或越界时返回 null。 */
 export function coordOf(loc, issues, field) {
@@ -80,7 +81,7 @@ export async function loadDevicePosition(deviceId) {
   return {
     device,
     mapDevice: {
-      id: device.device_no || device.device_id || deviceId, name: device.name || device.device_no || '设备', lon, lat,
+      id: device.device_no || device.device_id || deviceId, name: device.name || displayDeviceNo(device.device_no) || '设备', lon, lat,
       type: device.device_type_name || device.device_type_code || '设备', channel: device.channel || '—',
       typeCode: device.device_type_code || '',
       status: connectivity === 'ONLINE' ? '在线' : connectivity === 'OFFLINE' ? '离线' : '异常', alarm: false

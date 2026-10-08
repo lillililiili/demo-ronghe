@@ -1,6 +1,7 @@
 /* 飞行计划列表的筛选口径与行文字。统计卡与列表共用同一口径（状态 + 北京时间今天），
    点卡片后列表数量与卡片数字一致；手动刷新、定时重读与实时刷新都按同一份筛选重取。 */
 import { readableNo } from '../../ui/labels.js';
+import { displayPlanNo } from '../../ui/deviceNumber.js';
 
 /* 与后端 keyword 上限一致；后端不去空格，空白会被拒绝，所以前端先去首尾空格再提交。 */
 export const PLAN_KEYWORD_MAX = 128;
@@ -59,7 +60,7 @@ export function planWindowText(plan) {
 
 /* 同名航线的多份计划靠编号和时段区分；内部 ID 不上屏。 */
 export function planNumberText(plan) {
-  return readableNo(plan?.plan_no) || '编号未提供';
+  return displayPlanNo(readableNo(plan?.plan_no)) || '编号未提供';
 }
 
 /* 上级（管服平台）计划接口不可用时的提示：取不到、原因、最近一次收到，以及列表只代表本系统已有计划。

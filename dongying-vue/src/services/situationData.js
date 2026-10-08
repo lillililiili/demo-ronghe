@@ -10,6 +10,7 @@
    而别名只有 Vite 认得。文案一律走共享字典，本页不另建一套中文。 */
 import { measuredMapPoints } from './trackPoints.js';
 import { OBJECT_TYPE_LABEL, ALARM_TYPE_LABEL, labelOf, targetTypeLabel } from '../ui/labels.js';
+import { displayDeviceNo } from '../ui/deviceNumber.js';
 
 /* 空域图层字典（决策 11-6 定名与配色，12-3 定归属来源）。
    阶段 12 起 mock.js 已删除，map.js 的图层归属直接读这里给出的 `layer` 字段——
@@ -359,7 +360,8 @@ export function toDevices(devices, { includeUnlocated = false } = {}) {
       deviceId: device.device_id,
       fusionDeviceId: device.fusion_device_id || device.device_id,
       id: device.device_no || device.device_id,
-      name: device.name || device.device_no || '',
+      display_no: displayDeviceNo(device.device_no) || device.device_no || device.device_id,
+      name: device.name || displayDeviceNo(device.device_no),
       lon,
       lat,
       posValid: lon !== null && lat !== null,

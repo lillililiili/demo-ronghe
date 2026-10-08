@@ -11,7 +11,7 @@ import NoCounterDecisionModal from './NoCounterDecisionModal.vue';
 import NoCounterBasis from './NoCounterBasis.vue';
 
 const U = window.UI;
-const props = defineProps({ eventId: { type: String, required: true }, eventLabel: String, active: Boolean, confirmed: Boolean, summary: Object, showLaunch: Boolean, showRecords: { type: Boolean, default: true } });
+const props = defineProps({ eventId: { type: String, required: true }, eventLabel: String, active: Boolean, confirmed: Boolean, summary: Object, showLaunch: Boolean, handedOff: Boolean, showRecords: { type: Boolean, default: true } });
 const emit = defineEmits(['records', 'decision']);
 const busy = ref(false);
 const noCounter = computed(() => props.summary?.event_id === props.eventId ? props.summary.no_counter : null);
@@ -105,9 +105,9 @@ async function decideNoCounter() {
       <p>保留告警与决定记录，继续监测；出现新的风险依据时重新判断。</p>
       <details><summary>查看决定依据</summary><NoCounterBasis :basis="noCounter.decision?.basis" /></details>
     </div>
-    <div v-else-if="confirmed" class="counter-decision">
+    <div v-else-if="confirmed && !handedOff" class="counter-decision">
       <div class="counter-choice-actions">
-        <button class="btn no-counter-choice" type="button" :disabled="busy || !active || noCounter?.can_decide !== true" :title="noCounter?.block_reason || ''" @click="decideNoCounter">{{ busy ? '正在检查处置条件' : '无风险不反制' }}</button>
+        <button v-if="!handedOff" class="btn no-counter-choice" type="button" :disabled="busy || !active || noCounter?.can_decide !== true" :title="noCounter?.block_reason || ''" @click="decideNoCounter">{{ busy ? '正在检查处置条件' : '无风险不反制' }}</button>
         <button v-if="showLaunch" class="btn pri" type="button" :disabled="busy || !active" :aria-busy="busy" @click="launch"><span class="counter-action-icon" aria-hidden="true" v-html="U.icon('shield')"></span>发起反制</button>
       </div>
       <details v-if="noCounter?.decision"><summary>此前不反制决定</summary><p>{{ noCounter.decision.actor_name || '未提供' }} · {{ time(noCounter.decision.decided_at) }}</p><p>{{ noCounter.decision.reason }}</p><NoCounterBasis :basis="noCounter.decision.basis" /></details>

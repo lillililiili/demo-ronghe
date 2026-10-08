@@ -493,6 +493,7 @@ const planRecords = computed(() => plans.value.map(plan => {
     status: labelOf(PLAN_STATUS_LABEL, plan.status_code), statusClass: PLAN_STATUS_TAG[plan.status_code] || 't-gray',
     // 同名航线常有多份计划（不同批次或时段），行内必须带编号与时段才能区分。
     subtitle: `计划编号 ${planNumberText(plan)} · ${planWindowText(plan)}`,
+    subtitleTitle: plan.plan_no,
     facts: [{ label: '计划时长', value: formatDuration(plan) }, { label: '目标匹配', value: match.text,
       className: match.tag ? `tag ${match.text === '计划偏离' ? 't-orange' : match.tag}` : '' }],
     note: plan.route?.max_altitude_m == null ? '最大高度未提供' : `最大高度 ${plan.route.max_altitude_m} 米`,

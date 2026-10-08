@@ -210,15 +210,20 @@ onUnmounted(() => { alive = false; generation++; historyRequest++; noticeRequest
 </template>
 
 <style scoped>
-.risk-event-content { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; }
-.workspace-detail-tabs { flex: none; padding: 0 10px; }.workspace-detail-tabs .tab { font-size: 12px; padding: 9px 8px; }.workspace-detail-tabs .tag { margin-left: 5px; }
-.rk-detail { flex: 1; min-height: 0; overflow: auto; padding: 12px; }
+.risk-event-content { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; background: var(--surface-1); }
+.workspace-detail-tabs { flex: none; padding: 0 10px; background: var(--surface-2); border-bottom: 1px solid var(--line-2); }.workspace-detail-tabs .tab { font-size: 12px; padding: 9px 8px; }.workspace-detail-tabs .tag { margin-left: 5px; }
+.rk-detail { flex: 1; min-height: 0; overflow: auto; padding: 12px; background: linear-gradient(180deg, color-mix(in srgb, var(--surface-2) 68%, var(--surface-1)), var(--surface-1) 58%); }
+.rk-detail .detail-hero { border: 1px solid color-mix(in srgb, var(--blue) 28%, var(--line)); background: color-mix(in srgb, var(--surface-3) 72%, var(--surface-2)); }
+.rk-detail .sect { margin-bottom: 10px; padding: 10px; border: 1px solid var(--line-2); border-radius: var(--r); background: color-mix(in srgb, var(--surface-2) 80%, transparent); }
+.rk-detail .sect > h4 { margin-top: 0; margin-bottom: 9px; }
+.rk-detail .kv.kv-surface { background: color-mix(in srgb, var(--surface-3) 76%, var(--surface-2)); border-color: color-mix(in srgb, var(--blue) 28%, var(--line)); }
+.rk-detail .rk-note { margin: 8px 2px 0; }
 .rk-detail .detail-hero-title, .rk-detail .detail-hero-id { display: block; overflow: visible; white-space: normal; text-overflow: unset; -webkit-line-clamp: unset; overflow-wrap: anywhere; }
 .kv { grid-template-columns: minmax(70px, auto) minmax(0, 1fr); }.kv dd { min-width: 0; overflow-wrap: anywhere; }
 .metric-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }.metric-copy b { overflow-wrap: anywhere; }
 .workspace-section-heading { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .rk-hint,.rk-note,.rk-sub { color: var(--txt-3); font-size: 11px; line-height: 1.6; }.rk-hint { display: block; }.rk-note { margin: 8px 0; }
-.rk-history { display: grid; gap: 8px; margin-top: 8px; }.rk-history-item { display: grid; gap: 4px; padding: 8px; border: 1px solid var(--line); border-radius: 6px; font-size: 12px; overflow-wrap: anywhere; }
+.rk-history { display: grid; gap: 8px; margin-top: 8px; }.rk-history-item { display: grid; gap: 4px; padding: 8px; border: 1px solid color-mix(in srgb, var(--blue) 22%, var(--line)); border-radius: 6px; background: color-mix(in srgb, var(--surface-3) 72%, var(--surface-2)); font-size: 12px; overflow-wrap: anywhere; }
 .rk-history-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }.rk-history-item p { margin: 0; color: var(--txt-3); line-height: 1.6; }
 .history-pager { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 8px; font-size: 11px; }
 .risk-process-actions { position: sticky; top: 0; z-index: 7; flex: none; padding: 10px 12px; border-bottom: 1px solid var(--line); background: var(--surface-2); display: flex; gap: 8px; flex-wrap: wrap; }.risk-process-actions p { flex-basis: 100%; margin: 0; color: var(--txt-3); font-size: 12px; line-height: 1.6; }

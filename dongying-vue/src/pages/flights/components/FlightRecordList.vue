@@ -13,7 +13,7 @@ const emit = defineEmits(['select']);
     <button v-for="item in items" :key="item.id" class="flight-record" :class="{ selected: item.id === selectedId }"
       type="button" :aria-pressed="item.id === selectedId" @click="emit('select', item.id)">
       <span class="record-heading"><b>{{ item.title }}</b><span v-if="compact && item.severity" class="tag" :class="item.severityClass">{{ item.severity }}</span><span class="tag" :class="item.statusClass">{{ item.status }}</span></span>
-      <span v-if="item.subtitle" class="record-subtitle">{{ item.subtitle }}</span>
+      <span v-if="item.subtitle" class="record-subtitle" :title="item.subtitleTitle">{{ item.subtitle }}</span>
       <span v-if="item.summary" class="record-summary">{{ item.summary }}</span>
       <span v-if="!compact" class="record-facts"><span v-for="fact in item.facts" :key="fact.label"><small>{{ fact.label }}</small><span :class="fact.className">{{ fact.value }}</span></span></span>
       <span class="record-bottom"><span :class="item.noteClass">{{ item.note }}</span><span class="record-open">{{ item.id === selectedId ? '正在查看' : '查看详情' }}</span></span>

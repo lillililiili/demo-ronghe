@@ -88,7 +88,7 @@ export function sourceDescription(name, code, mode, fallback = '未提供') {
   return SOURCE_MODE_LABEL[mode] && suffixes.some(suffix => source.endsWith(suffix))
     ? source : `${source}（${modeText}）`;
 }
-// RULE_LEGALITY 是阶段 7 规则引擎判定违规后自动生成的告警类型；叫「飞行违规」而不叫「合法性研判告警」，免得与飞行监管菜单下的「合法性研判」页混淆（决策 15-53）。
+// RULE_LEGALITY 是阶段 7 规则引擎判定违规后自动生成的告警类型；叫「飞行违规」而不叫「合法性研判告警」，免得与飞行监管与处置菜单下的「合法性研判」页混淆（决策 15-53）。
 export const ALARM_TYPE_LABEL = { UAV_INTRUSION: '无人机入侵', UAV: '无人机告警', RULE_LEGALITY: '飞行违规' };
 
 /* 优先展示业务编号；已知引擎来源确定映射为 ALM/RSK 显示编号。

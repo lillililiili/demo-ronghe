@@ -2,7 +2,7 @@
 /* 模块级页面状态：跨导航保留分页、筛选、选中项与证据页签；业务事实始终重新读取标准 API。 */
 const S = {
   st: {
-    page: 1, size: 10, legal: '', district: '', review: '', reviewLocation: '', plan: '',
+    page: 1, size: 10, legal: '', district: '', review: '', reviewLocation: 'LEGALITY', plan: '',
     selectedEvaluationId: null, revisionPage: 1, revisionPageSize: 10,
     evidenceTab: 'space'
   }
@@ -26,6 +26,7 @@ import { canAccessRoute, hasPermission } from '@/services/accessControl.js';
 import { loadTargetPosition, loadRouteCenterline, loadAirspaceOverlays, installOverlays, overlayPoints } from '@/services/positionMap.js';
 import { trustedTrajectoryPoints, strokePlanComparison } from '@/services/trajectoryDrawing.js';
 import { RULE_SET_LABEL, SOURCE_MODE_LABEL, labelOf } from '@/ui/labels.js';
+import { displayPlanNo } from '@/ui/deviceNumber.js';
 import {
   openLegalityReview, openLegalityRecompute,
   legalStatusText, reviewStateText, planMatchText, ruleReasonText,
@@ -107,7 +108,7 @@ const plans = ref([]);
 const plansError = ref('');
 const planOptions = computed(() => {
   const options = [{ label: '全部计划', value: '' }];
-  plans.value.forEach(plan => options.push({ label: plan.plan_no || plan.plan_id, value: plan.plan_id }));
+  plans.value.forEach(plan => options.push({ label: displayPlanNo(plan.plan_no) || plan.plan_id, value: plan.plan_id }));
   if (st.plan && !plans.value.some(plan => plan.plan_id === st.plan)) options.push({ label: '当前所选计划', value: st.plan });
   return options;
 });
@@ -186,7 +187,7 @@ function referenceKindText(kind) { return REFERENCE_KIND_TEXT[kind] || '引用';
 function referenceText(reference) {
   const current = selectedEvaluation.value || {};
   if (reference.kind === 'target' && current.target_id === reference.id && current.target_no) return current.target_no;
-  if (reference.kind === 'flight_plan' && current.plan_id === reference.id && current.plan_no) return current.plan_no;
+  if (reference.kind === 'flight_plan' && current.plan_id === reference.id && current.plan_no) return displayPlanNo(current.plan_no);
   return `已引用${referenceKindText(reference.kind)}`;
 }
 function formatTime(value) {
@@ -213,7 +214,7 @@ function evaluationReason(item) {
 function subjectLabel(item) {
   if (!item) return '未选择研判';
   if (item.target_no || item.target_id) return item.target_no || '目标（未提供编号）';
-  if (item.plan_no || item.plan_id) return item.plan_no || '计划（未提供编号）';
+  if (item.plan_no || item.plan_id) return displayPlanNo(item.plan_no) || '计划（未提供编号）';
   return '没有可查看的目标或计划';
 }
 /* 命中事实与参数的键都是引擎内部名；上屏用中文，数值取一位小数，内部 id 不上屏。 */
@@ -262,8 +263,8 @@ function conclusionQualificationText(item) {
 function planMatchDetail(item) {
   const base = planMatchText(item?.plan_match_code);
   if (!item?.plan_no) return base;
-  if (item.plan_match_code === 'NONE') return `${base}（候选 ${item.plan_no} 不匹配）`;
-  return `${base} · ${item.plan_no}`;
+  if (item.plan_match_code === 'NONE') return `${base}（候选 ${displayPlanNo(item.plan_no)} 不匹配）`;
+  return `${base} · ${displayPlanNo(item.plan_no)}`;
 }
 function outcomeText(item) {
   const kind = item?.alarm_outcome_kind;
@@ -707,7 +708,7 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
                     </button></td>
                     <td><span class="lg-plan-cell" :class="item.plan_match_code === 'FULL' ? 'is-pass' : item.plan_match_code === 'NONE' ? 'is-fail' : 'is-warn'" :title="planMatchDetail(item)">
                       <span v-html="UI.icon(item.plan_match_code === 'FULL' ? 'check' : item.plan_match_code === 'NONE' ? 'cross' : 'clock')"></span>
-                      <span class="lg-plan-number">{{ item.plan_no || (item.plan_id ? '已关联计划' : '无匹配计划') }}</span>
+                      <span class="lg-plan-number" :title="item.plan_no">{{ displayPlanNo(item.plan_no) || (item.plan_id ? '已关联计划' : '无匹配计划') }}</span>
                     </span></td>
                     <td :title="item.district_name || item.district_id">{{ item.district_name || item.district_id || '未知' }}</td>
                     <td class="lg-verdict-cell">
@@ -825,7 +826,7 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
                       <dt>{{ selectedEvaluation.plan_match_code === 'NONE' ? '候选计划' : '所属计划' }}</dt><dd :title="selectedEvaluation.plan_id">
                         <template v-if="selectedEvaluation.plan_no && selectedEvaluation.plan_id">
                           <button type="button" class="lg-link-btn" title="打开飞行计划页并选中这条计划"
-                            @click="openPlan(selectedEvaluation.plan_id)">{{ selectedEvaluation.plan_no }}</button>
+                            @click="openPlan(selectedEvaluation.plan_id)">{{ displayPlanNo(selectedEvaluation.plan_no) }}</button>
                           <span v-if="selectedEvaluation.plan_match_code === 'NONE'" class="lg-muted">（未匹配上这条计划）</span>
                         </template>
                         <template v-else-if="selectedEvaluation.plan_id">已关联计划（未提供编号）</template>

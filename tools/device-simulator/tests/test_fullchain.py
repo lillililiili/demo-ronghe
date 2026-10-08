@@ -184,8 +184,11 @@ class FullChainTests(unittest.TestCase):
         update=[body for _,path,body,_ in p.calls if path.endswith('/airspaces') and body.get('airspace_no')==no][-1]
         self.assertEqual(update['revision'],original['revision']+1)
         self.assertEqual(update['action'],'UPSERT')
-        for key in ('name','owner_org_id','district_id','kind_code','boundary'):
+        for key in ('name','owner_org_id','district_id','kind_code','boundary','valid_to'):
             self.assertEqual(update[key],original[key],key)
+        # 新-16：新版本须晚于上一版生效，否则平台拒收（409），整批在第 2 分钟停下。
+        self.assertEqual(update['valid_from'],TEST_NOW)
+        self.assertGreater(update['valid_from'],original['valid_from'])
 
     def test_notification_stop_suppresses_every_normalized_source_without_stopping_peers(self):
         chain, platform, manifest, scene = self.setup_chain()
@@ -454,7 +457,7 @@ class FullChainTests(unittest.TestCase):
             with self.subTest(offset=offset), self.assertRaises(ValueError):
                 flight_window(plan, target, [dict(risk, offset=offset)], now)
 
-    def test_airspace_uses_beijing_window_and_lifecycle_update_preserves_it(self):
+    def test_airspace_uses_beijing_window_and_a_finished_window_skips_the_lifecycle(self):
         from fullchain import FullChain, SHANGHAI
         from engine import compile_scene
         scene = full_scene(['airspaces'])
@@ -473,10 +476,111 @@ class FullChainTests(unittest.TestCase):
             for field, time_field in [('valid_from','start'), ('valid_to','end')]:
                 self.assertEqual('2026-10-05 ' + zone[time_field],
                     dt.datetime.fromtimestamp(row[field]/1000, SHANGHAI).strftime('%Y-%m-%d %H:%M'))
-        chain.tick({}, 130, 1)
-        update = [b for _, path, b, _ in api.calls if path.endswith('/airspaces')][-1]
-        old = next(b for b in rows if b['airspace_no'] == update['airspace_no'])
-        self.assertEqual((old['valid_from'], old['valid_to']), (update['valid_from'], update['valid_to']))
+        # 临时管制区 08:00–10:00 已过（现在 12:02）：平台不收已过期的新版本和撤销，跳过并在页面提示，不让整批停下。
+        for elapsed in (130, 190, 200):
+            chain.tick({}, elapsed, elapsed)
+        self.assertEqual(rows, [b for _, path, b, _ in api.calls if path.endswith('/airspaces')])
+        self.assertEqual(manifest['fullchain']['warnings'], ['临时管制区已到失效时间，跳过本批次的空域版本更新',
+                                                             '临时管制区已到失效时间，跳过本批次的空域撤销'])
+
+    def test_full_scene_airspace_lifecycle_and_a_same_day_rerun_pass_the_platform_order(self):
+        # 新-16：空库上一键全量场景第 2 分钟的空域更新曾被拒（409，生效时间必须晚于上次下发），整批停下；
+        # 同一天再启动时，已撤销的临时管制区重新下发同样被拒。
+        from fullchain import FullChain
+        api, clock = AirspaceRulePlatform(), {'now': TEST_NOW}
+        no = 'sim-map-airspace-zone-temporary_control'
+        for run, start in enumerate((TEST_NOW, TEST_NOW + 3600000), 1):
+            scene = full_scene(['airspaces'])
+            batch = 'sim-run-' + str(run)
+            manifest = {'batch':batch, 'created_at':start, 'devices':{}, 'plans':{}, 'zones':{},
+                        'targets':allocate_identities(scene, batch)}
+            chain = FullChain(api, scene, manifest, {'owner_org_id':'o','district_id':'d'}, lambda:None,
+                              clock=lambda:clock['now'])
+            clock['now'] = start
+            before = len(api.calls)
+            chain.prepare()
+            published = [b for _, path, b, _ in api.calls[before:] if path.endswith('/airspaces')]
+            if run == 1:
+                self.assertEqual(5, len(published))
+            else:
+                # 其他空域原样复用；临时管制区上次已撤销，从现在起重新生效，结束时间不变。
+                self.assertEqual([no], [b['airspace_no'] for b in published])
+                self.assertEqual((4, start), (published[0]['revision'], published[0]['valid_from']))
+            original = api.latest[no]['payload'] if run == 2 else next(b for b in published if b['airspace_no'] == no)
+            for elapsed in (119, 120, 150, 180, 181):
+                clock['now'] = start + elapsed * 1000
+                chain.tick({}, elapsed, elapsed)
+            lifecycle = [b for _, path, b, _ in api.calls if path.endswith('/airspaces') and b['airspace_no'] == no][-2:]
+            self.assertEqual([('UPSERT', start + 120000, original['valid_to']), ('WITHDRAW', start + 180000, None)],
+                             [(b['action'], b.get('valid_from', b.get('effective_at')), b.get('valid_to')) for b in lifecycle])
+            self.assertEqual([], manifest['fullchain']['warnings'])
+
+    def test_changed_zone_in_a_finished_window_follows_the_last_delivery_or_says_why_not(self):
+        from fullchain import FullChain
+        from engine import compile_scene
+        scene = full_scene(['airspaces'])
+        for zone in scene['zones']:
+            zone.update(start='08:00', end='10:00')
+        scene, _, _, _ = compile_scene(scene)
+        zone = scene['zones'][-1]
+        no = 'sim-map-airspace-' + zone['id']
+        eight = TEST_NOW - 4 * 3600000
+
+        def prepare(last):
+            api = AirspaceRulePlatform()
+            api.latest[no] = dict(last, airspace_no=no)
+            api.version_from[no], api.valid_to[no] = eight, eight + 2 * 3600000
+            manifest = dict(batch='sim-edit', created_at=TEST_NOW, devices={}, plans={}, zones={},
+                            targets=allocate_identities(scene, 'sim-edit'))
+            FullChain(api, scene, manifest, {'owner_org_id':'o','district_id':'d'}, lambda:None,
+                      clock=lambda:TEST_NOW).prepare()
+            return next(b for _, path, b, _ in api.calls if path.endswith('/airspaces') and b['airspace_no'] == no)
+
+        # 改过区域、时段已过：紧接上次之后生效，平台照收。
+        changed = {'action':'UPSERT', 'revision':1, 'state':'ACCEPTED', 'airspace_id':'a', 'airspace_version_id':'v',
+                   'payload':{'valid_from':eight, 'valid_to':eight + 2 * 3600000, 'boundary':'旧区域'}}
+        body = prepare(changed)
+        self.assertEqual((2, eight + 1000, eight + 2 * 3600000), (body['revision'], body['valid_from'], body['valid_to']))
+        # 上次已撤销到时段末尾：说清楚为什么不能再下发，不发请求。
+        withdrawn = {'action':'WITHDRAW', 'revision':2, 'state':'ACCEPTED', 'airspace_id':'a', 'airspace_version_id':'v',
+                     'payload':{'effective_at':eight + 2 * 3600000 - 500}}
+        with self.assertRaisesRegex(ValueError, '临时管制区」今天已下发到结束时间'):
+            prepare(withdrawn)
+
+
+class AirspaceRulePlatform(FakePlatform):
+    """Accept airspace deliveries only in the order UpstreamAirspaceService does."""
+    def __init__(self):
+        super().__init__()
+        self.latest, self.version_from, self.valid_to = {}, {}, {}
+
+    def call(self, method, path, body=None, key=None):
+        from fullchain import airspace_effective_at
+        if path.endswith('/airspaces/context'):
+            self.calls.append((method, path, copy.deepcopy(body), key))
+            return {'items': copy.deepcopy(list(self.latest.values()))}
+        if method == 'POST' and path.endswith('/airspaces'):
+            no, last = body['airspace_no'], self.latest.get(body['airspace_no'])
+            if last and body['revision'] <= last['revision']:
+                raise AssertionError('409 UPSTREAM_REVISION_CONFLICT')
+            if body['action'] == 'UPSERT':
+                if body.get('valid_to') is not None and body['valid_from'] >= body['valid_to']:
+                    raise AssertionError('400 INVALID_VALIDITY')
+                if last and (body['valid_from'] <= airspace_effective_at(last) or body['valid_from'] <= self.version_from[no]):
+                    raise AssertionError('409 VERSION_OVERLAP 生效时间必须晚于上次下发的生效/撤销时间')
+                self.version_from[no], self.valid_to[no] = body['valid_from'], body.get('valid_to')
+            else:
+                if not last or last['action'] == 'WITHDRAW':
+                    raise AssertionError('409 INVALID_TRANSITION')
+                if body['effective_at'] <= self.version_from[no] or body['effective_at'] <= airspace_effective_at(last):
+                    raise AssertionError('409 VERSION_OVERLAP 撤销时间必须晚于最新版本生效时间')
+                if self.valid_to[no] is not None and body['effective_at'] >= self.valid_to[no]:
+                    raise AssertionError('409 INVALID_TRANSITION 撤销时间必须早于原失效时间')
+            self.latest[no] = {'message_id':'receipt-'+body['message_id'], 'airspace_id':'a'+no, 'airspace_no':no,
+                               'airspace_version_id':'av'+str(body['revision']), 'revision':body['revision'],
+                               'action':body['action'], 'state':'ACCEPTED', 'source_mode':'replay',
+                               'received_at':0, 'payload':copy.deepcopy(body)}
+        return super().call(method, path, body, key)
 
 
 if __name__=='__main__': unittest.main()

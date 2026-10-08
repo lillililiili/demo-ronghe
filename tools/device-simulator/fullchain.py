@@ -31,6 +31,19 @@ def stable_airspace_no(zone_id):
     return value[:64 - len(digest) - 1] + '-' + digest
 
 
+def airspace_effective_at(delivery):
+    """Return the time the platform orders a source's airspace deliveries by.
+
+    An UPSERT counts from its valid_from, a WITHDRAW from its effective_at.  The
+    next delivery for the same airspace must take effect strictly later, or the
+    platform rejects it with 409 VERSION_OVERLAP.
+    """
+    delivery = delivery or {}
+    payload = delivery.get('payload') or {}
+    value = payload.get('effective_at' if delivery.get('action') == 'WITHDRAW' else 'valid_from')
+    return int(value) if type(value) in (int, float) else None
+
+
 def stable_simulator_id(prefix, value):
     """Build a readable, bounded identity for reusable simulator facts."""
     raw = re.sub(r'[^A-Za-z0-9_-]', '-', str(value)).strip('-_') or 'item'
@@ -441,6 +454,15 @@ class FullChain:
                 self.state['requests']['zone-'+zone['id']]={'path':PREFIX+'/airspaces', 'body':copy.deepcopy(saved),
                     'state':'ACCEPTED','result':copy.deepcopy(result),'reused_by_readback':True}
             else:
+                # 同一天重跑（上次已撤销或已更新）或改了区域时，新下发须晚于上次的生效/撤销时间，否则平台拒收（409）；
+                # 这时从现在起生效，时段已过就紧接上次之后，结束时间不变。
+                last=airspace_effective_at(previous)
+                if last is not None and body['valid_from']<=last:
+                    body['valid_from']=max(now,last+1000)
+                    if body['valid_from']>=zone_finish:
+                        body['valid_from']=last+1000
+                    if body['valid_from']>=zone_finish:
+                        raise ValueError('空域「'+zone['name']+'」今天已下发到结束时间，请把它的结束时间改晚或明天再启动')
                 result=self.request('zone-'+zone['id'],PREFIX+'/airspaces',body)
             self.manifest['zones'][zone['id']]={'id':result.get('airspace_id'),'revision':int(result.get('revision') or revision),'receipt':result};self.checkpoint()
         if 'observationSourceCount' in self.scene.get('fullchain', {}) and any(t.get('transport')=='normalized' for t in self.scene['targets']):
@@ -553,21 +575,39 @@ class FullChain:
             key='zone-zone-temporary_control'
             original=self.state['requests'].get(key)
             zone_state = self.manifest.get('zones', {}).get('zone-temporary_control', {})
+            valid_to=(original or {}).get('body',{}).get('valid_to')
             if original and elapsed>=120:
                 revision=int(zone_state.get('revision') or original['body'].get('revision') or 1) + 1
-                # 平台要求版本更新保持原空域名称和归属（改名会被拒 409，整批停下），这里只出新版本、新生效时间。
-                body=copy.deepcopy(original['body']);body.update(message_id=self.message('zone-update-r'+str(revision)),revision=revision,
-                    change_reason='本批次空域版本更新')
-                result=self.request('zone-update',PREFIX+'/airspaces',body)
-                zone_state['revision']=int(result.get('revision') or revision)
-                zone_state['receipt']=result
+                # 平台要求版本更新保持原空域名称和归属（改名会被拒 409，整批停下），
+                # 并且新版本晚于上一版生效（同一生效时间同样被拒 409）：这里只出新版本、新生效时间，结束时间不变。
+                valid_from=max(now,int(original['body']['valid_from'])+1000)
+                if 'zone-update' in self.state['requests'] or valid_to is None or valid_from<valid_to:
+                    body=copy.deepcopy(original['body']);body.update(message_id=self.message('zone-update-r'+str(revision)),revision=revision,
+                        valid_from=valid_from,change_reason='本批次空域版本更新')
+                    result=self.request('zone-update',PREFIX+'/airspaces',body)
+                    zone_state['revision']=int(result.get('revision') or revision)
+                    zone_state['receipt']=result
+                else:
+                    self.warn(original['body'].get('name','临时管制区')+'已到失效时间，跳过本批次的空域版本更新')
             if original and elapsed>=180:
                 revision=int(zone_state.get('revision') or original['body'].get('revision') or 1) + 1
-                result=self.request('zone-withdraw',PREFIX+'/airspaces',{'message_id':self.message('zone-withdraw-r'+str(revision)),
-                    'revision':revision,'action':'WITHDRAW','airspace_no':original['body']['airspace_no'],
-                    'effective_at':now,'change_reason':'本批次模拟临时管制结束'})
-                zone_state['revision']=int(result.get('revision') or revision)
-                zone_state['receipt']=result
+                # 撤销时间须晚于最新版本的生效时间、早于原失效时间，否则平台拒收。
+                latest=self.state['requests'].get('zone-update',original)['body']
+                effective_at=max(now,int(latest['valid_from'])+1000)
+                if 'zone-withdraw' in self.state['requests'] or valid_to is None or effective_at<valid_to:
+                    result=self.request('zone-withdraw',PREFIX+'/airspaces',{'message_id':self.message('zone-withdraw-r'+str(revision)),
+                        'revision':revision,'action':'WITHDRAW','airspace_no':original['body']['airspace_no'],
+                        'effective_at':effective_at,'change_reason':'本批次模拟临时管制结束'})
+                    zone_state['revision']=int(result.get('revision') or revision)
+                    zone_state['receipt']=result
+                else:
+                    self.warn(original['body'].get('name','临时管制区')+'已到失效时间，跳过本批次的空域撤销')
+
+    def warn(self, text):
+        """Show one page note per problem instead of stopping the whole batch."""
+        warnings=self.state.setdefault('warnings',[])
+        if text not in warnings:
+            warnings.append(text);self.checkpoint()
 
     def publish(self, category, path, body, count):
         if self.cancelled():return

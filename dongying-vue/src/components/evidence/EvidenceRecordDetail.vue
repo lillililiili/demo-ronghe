@@ -1,7 +1,8 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import { getEvidenceTrackPoints } from '@/services/evidenceApi.js';
+import { getEvidenceTrackPoints, listEvidenceFiles } from '@/services/evidenceApi.js';
+import { hasPermission } from '@/services/accessControl.js';
 import { COMMAND_STATE_LABEL, COMMAND_TYPE_LABEL, evidenceSubjectLocation } from '@/services/evidenceLedger.js';
 import { EVIDENCE_SUBJECT_LABEL } from '@/ui/labels.js';
 import { displayDeviceNo } from '@/ui/deviceNumber.js';
@@ -14,6 +15,7 @@ const entry = computed(() => props.detail.entry);
 const command = computed(() => props.detail.command);
 const commandView = computed(() => buildCommandView(command.value || {}));
 const snapshot = ref(null), loading = ref(false), error = ref('');
+const videos = ref(null), videosLoading = ref(false), videoNote = ref('');
 let sequence = 0;
 const sourceLabel = computed(() => ({ mock: '模拟来源', replay: '回放来源', live: '现场来源' }[entry.value.source_mode] || '来源未记录'));
 const sourceNote = computed(() => ({ mock: '模拟数据，不代表现场实际执行结果。', replay: '回放数据，非现场实时执行。' }[entry.value.source_mode] || ''));
@@ -27,7 +29,28 @@ async function loadTrack() {
   } catch (e) { if (own === sequence) error.value = e.message || '轨迹读取失败'; }
   finally { if (own === sequence) loading.value = false; }
 }
-watch(() => entry.value.source_id, loadTrack, { immediate: true });
+/* 轨迹关联的目标/事项上挂着的光电录像，供回放时同步播放；只读列表，录像本身在播放到时才读取。 */
+async function loadVideos(own) {
+  videos.value = null; videoNote.value = ''; videosLoading.value = false;
+  const subjects = (props.detail.links || []).filter(link => ['TARGET', 'EVENT'].includes(link.subject_kind) && link.subject_id);
+  if (!subjects.length) { videoNote.value = '这份轨迹没有关联目标或事项，无法查找录像'; return; }
+  if (!hasPermission('evidence:read')) { videoNote.value = '当前账号没有查看录像的权限'; return; }
+  videosLoading.value = true;
+  try {
+    const pages = await Promise.all(subjects.map(link => listEvidenceFiles({ kind_code: 'EO_VIDEO',
+      subject_kind: link.subject_kind, subject_id: link.subject_id, size: 50 })));
+    if (own !== sequence) return;
+    const found = new Map();
+    pages.flatMap(page => page?.items || []).forEach(item => found.set(item.evidence_id, {
+      id: item.evidence_id, no: item.evidence_no, capturedAt: item.captured_at ?? item.stored_at, status: item.status }));
+    videos.value = [...found.values()];
+  } catch { if (own === sequence) videoNote.value = '录像列表读取失败，可到证据管理查看'; }
+  finally { if (own === sequence) videosLoading.value = false; }
+}
+watch(() => entry.value.source_id, async () => {
+  await loadTrack();
+  if (entry.value.source_kind === 'TRACK') loadVideos(sequence);
+}, { immediate: true });
 function go(link) {
   const destination = evidenceSubjectLocation(link.subject_kind, link.subject_id);
   if (destination) router.push(destination);
@@ -43,7 +66,7 @@ onBeforeUnmount(() => { sequence += 1; window.removeEventListener('auth-access-c
     <template v-if="entry.source_kind === 'TRACK'">
       <p v-if="loading" role="status">正在读取当前轨迹</p>
       <p v-else-if="error" role="alert">{{ error }} <button class="btn" @click="loadTrack">重新读取</button></p>
-      <EvidenceTrackPreview v-else-if="snapshot" :key="entry.source_id" :snapshot="snapshot" details />
+      <EvidenceTrackPreview v-else-if="snapshot" :key="entry.source_id" :snapshot="snapshot" :videos="videos" :videos-loading="videosLoading" :video-note="videoNote" details />
       <dl class="kv"><dt>轨迹分层</dt><dd>{{ { RAW: '原始观测', FUSED: '融合轨迹' }[entry.layer] || '未记录' }}</dd><dt>开始时间</dt><dd>{{ fmtEvidenceTime(entry.started_at) }}</dd><dt>结束时间</dt><dd>{{ fmtEvidenceTime(entry.ended_at) }}</dd></dl>
     </template>
     <template v-else-if="command">

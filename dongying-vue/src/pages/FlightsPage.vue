@@ -22,7 +22,7 @@ import { openModal, closeModal } from '@/ui/modal.js';
 import { toast } from '@/ui/nv.js';
 import {
   ALTITUDE_DATUM_LABEL, ALTITUDE_RELATION_LABEL, HANDOFF_TYPE_LABEL, LEGALITY_LABEL, PLAN_MATCH_TAG, PLAN_ROW_MATCH_LABEL, PLAN_STATUS_LABEL, PLAN_STATUS_TAG, REASON_CODE_LABEL, RECEIPT_RESULT_LABEL, RISK_TYPE_LABEL,
-  SECTION_AVAILABILITY_LABEL, SOURCE_MODE_LABEL, sourceDescription, notificationBlockedReason, labelOf, OBJECT_TYPE_LABEL, readableNo, RISK_TYPE_OPTIONS, RISK_STATE_LABEL } from '@/ui/labels.js';
+  SECTION_AVAILABILITY_LABEL, SOURCE_MODE_LABEL, sourceDescription, notificationBlockedReason, notificationSubmissionMessage, labelOf, OBJECT_TYPE_LABEL, readableNo, RISK_TYPE_OPTIONS, RISK_STATE_LABEL } from '@/ui/labels.js';
 import { isUncertainOutcome } from '@/services/apiClient.js';
 import { loadTargetPosition, strokePlannedRoute } from '@/services/positionMap.js';
 import { hasPermission } from '@/services/accessControl.js';
@@ -1541,20 +1541,17 @@ async function refreshAfterNotify(riskId) {
 /* 成功提示只用 Vue 节点渲染服务端 ID，不走 innerHTML；链接指向通知记录详情。
    风险到"通知上级"为止（决策 18-14），所以这里说的是投递与回执，不再提处罚办结。 */
 function showHandoffSubmitted(created) {
+  const submitted = notificationSubmissionMessage(created);
   openModal({
-    title: created.delivery_status === 'DELIVERED' ? '通知已提交并送达' : '通知已提交，尚未发送', width: '520px', footer: false,
+    title: submitted.title, width: '520px', footer: false,
     render: () => h('div', { class: 'rk-notify-done' }, [
-      h('div', { class: 'warnbox' }, created.delivery_status === 'DELIVERED'
-        ? (created.receipt_status === 'ACKNOWLEDGED'
-          ? '对方已确认收到通知，请查看对方回复的处理结果。'
-          : '通知已送达，正在等待对方确认收到。')
-        : '通知材料已保存，但发送功能尚未接通，通知还没有发出去。请查看下方发送情况。'),
+      h('div', { class: 'warnbox' }, submitted.message),
       h('dl', { class: 'kv kv-surface' }, [
         h('dt', '通知对象'), h('dd', '上级'),
         h('dt', '发送情况'), h('dd', `${NOTICE_DELIVERY_LABEL[created.delivery_status] || created.delivery_status || '未知'}${notificationBlockedReason(created) ? ' · ' + notificationBlockedReason(created) : ''}`)
       ]),
       h('div', { class: 'detail-actions' }, [
-        h('button', { class: 'btn pri', type: 'button', onClick: () => closeModal() }, '查看本页通知与回执')
+        h('button', { class: 'btn pri', type: 'button', onClick: async () => { closeModal(); riskTab.value = 'notice'; await refreshAfterNotify(created.source_id || S.selectedRiskId); } }, '查看本页通知与回执')
       ])
     ])
   });
@@ -1572,7 +1569,7 @@ async function openRiskNotify(riskOverride = null) {
   openFormModal({
     title: '通知上级',
     width: '560px',
-    warning: '提交后，请在通知记录中查看是否送达，并等待对方回执。对方回执（显示“已回执”）后，本次风险通知流程即完成；对方如果一并回复了处理结果（如“已驱离”），会显示在同一条回执里。',
+    warning: '提交后，请在通知记录中查看是否送达，并等待对方回执。显示“已回执”表示本次风险通知流程完成；签收不代表风险已经解除。对方如另附处理结果，会显示在同一条回执里。',
     fields: [],
     confirmText: '提交通知',
     onSubmit: async () => {

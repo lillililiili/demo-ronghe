@@ -123,7 +123,7 @@ const NOTIFY_PHASE = {
   AUTO_SMS: { t: '自动短信', c: 't-cyan', color: '#22d3ee' },
   WATCHING: { t: '观察中', c: 't-amber', color: '#f1a43a' },
   AUTO_CALL: { t: '自动电话', c: 't-cyan', color: '#22d3ee' },
-  AWAIT_COUNTER: { t: '待处置决策', c: 't-orange', color: '#fb923c' }
+  AWAIT_COUNTER: { t: '待反制决策', c: 't-orange', color: '#fb923c' }
 };
 const SOURCE_MODE = { mock: { t: MODE_TEXT.mock, c: 't-purple' }, replay: { t: MODE_TEXT.replay, c: 't-amber' }, live: { t: MODE_TEXT.live, c: 't-green' } };
 /* 类别来自共享字典；区域来自本页的区域字典接口，读不到就把下拉标成"不可用"并在 title 说明原因。 */

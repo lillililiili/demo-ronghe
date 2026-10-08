@@ -224,57 +224,6 @@ class CountermeasureSimulator:
         return data in _SET_MASKS
 
 
-class CountermeasureEndpoint:
-    """A platform-owned TCP endpoint that the realtime controller can reuse.
-
-    The local Spring application starts its own four-channel simulator on the
-    registered device address.  The external simulator must not bind that
-    address a second time; it only needs to verify that the platform-owned
-    endpoint is reachable and expose the same lifecycle shape to the UI.
-    """
-
-    def __init__(self, host: str = '127.0.0.1', port: int = 10006,
-                 timeout: float = 0.5) -> None:
-        if not isinstance(port, int) or not 1 <= port <= 65535:
-            raise ValueError('port must be 1..65535')
-        self.host = host
-        self.port = port
-        self.timeout = timeout
-        self._running = False
-        self._error: str | None = None
-
-    def start(self) -> None:
-        if self._running:
-            return
-        if not self._probe():
-            raise OSError(f'countermeasure endpoint is not reachable: {self.host}:{self.port}')
-        self._error = None
-        self._running = True
-
-    def stop(self) -> None:
-        self._running = False
-
-    def snapshot(self) -> dict[str, Any]:
-        listening = self._running and self._probe()
-        if self._running and not listening:
-            self._error = f'countermeasure endpoint is not reachable: {self.host}:{self.port}'
-        return {
-            'listening': listening,
-            'port': self.port,
-            'relay_mask': 0,
-            'received': 0,
-            'last_received_at': None,
-            'error': self._error,
-        }
-
-    def _probe(self) -> bool:
-        try:
-            with socket.create_connection((self.host, self.port), timeout=self.timeout):
-                return True
-        except OSError:
-            return False
-
-
 def is_address_in_use(error: OSError) -> bool:
     """Recognize the platform-specific bind conflict raised by socket.bind."""
     return (getattr(error, 'winerror', None) == 10048

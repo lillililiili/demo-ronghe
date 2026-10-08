@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "name": "08 航线计划受控资料回读",
+  "duration": 2,
+  "sites": [
+    {
+      "id": "item1-site",
+      "name": "验收模拟设备组",
+      "x": 450,
+      "y": 300,
+      "devices": [
+        {
+          "id": "item1-tdoa",
+          "name": "验收模拟 tdoa",
+          "kind": "tdoa",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2
+        }
+      ]
+    }
+  ],
+  "targets": [
+    {
+      "id": "item1-t-tdoa",
+      "name": "验收目标 tdoa",
+      "kind": "uav",
+      "deviceId": "item1-tdoa",
+      "path": [
+        [
+          470,
+          300
+        ],
+        [
+          490,
+          300
+        ]
+      ],
+      "height": 100,
+      "heightAgl": 60,
+      "speed": 2,
+      "motionMode": "pingpong",
+      "transport": "mqtt",
+      "planId": "item1-plan",
+      "uavSn": "SIM-ITEM1-TDOA",
+      "protocolA": {
+        "uavModel": "SIM-SAME-MODEL",
+        "channel": "5.73",
+        "bandWidth": "10.00",
+        "reportSn": true
+      }
+    }
+  ],
+  "plans": [
+    {
+      "id": "item1-plan",
+      "name": "验收模拟航线",
+      "points": [
+        [
+          470,
+          300
+        ],
+        [
+          490,
+          300
+        ]
+      ],
+      "min": 0,
+      "max": 150,
+      "width": 100,
+      "start": "00:01",
+      "end": "23:59",
+      "altitudeDatum": "AMSL"
+    }
+  ],
+  "zones": [],
+  "risks": [],
+  "fullchain": {
+    "enabled": true,
+    "categories": []
+  }
+}

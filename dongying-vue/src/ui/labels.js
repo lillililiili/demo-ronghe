@@ -77,8 +77,23 @@ export const DATA_SCOPE_LABEL = { ALL: '全部单位', OWN_ORG: '本单位', OWN
 // 本地模拟回执关联码用于服务端对账，不是发送失败事实。
 export function notificationBlockedReason(notice) {
   const reason = String(notice?.blocked_reason || '').trim();
-  if (!reason || reason.startsWith('LOCAL_SIMULATOR_WAITING:')) return '';
+  if (!reason || reason.startsWith('LOCAL_SIMULATOR_WAITING:') || reason.startsWith('SIMULATOR_WAITING:')) return '';
   return userFacingMessage(reason);
+}
+// 提交、发送、送达分别展示，不用等待回执推断通道未接通。
+export function notificationSubmissionMessage(notice) {
+  if (notice?.delivery_status === 'DELIVERED') return {
+    title: '通知已送达',
+    message: notice.receipt_status === 'ACKNOWLEDGED'
+      ? '对方已确认收到通知，请查看对方回复的处理结果。' : '通知已送达，正在等待对方确认收到。'
+  };
+  if (notice?.delivery_status === 'SUBMITTED') return {
+    title: '通知已提交，等待送达确认', message: '发送请求已提交，尚未取得送达确认。请在通知与回执中查看后续结果。'
+  };
+  if (notice?.delivery_status === 'FAILED') return {
+    title: '通知发送失败', message: '通知材料已保存，本次发送失败。请查看发送情况和具体原因。'
+  };
+  return { title: '通知已保存，尚未确认送达', message: '请查看发送情况及具体原因，当前不能确认通知已送达。' };
 }
 // 来源名称已有同一模式后缀时不再追加；不同模式及未知模式仍明确保留。
 export function sourceDescription(name, code, mode, fallback = '未提供') {

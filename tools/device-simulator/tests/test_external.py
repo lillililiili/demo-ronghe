@@ -86,6 +86,15 @@ class ExternalBridgeTests(unittest.TestCase):
         self.assertEqual((missing['owner_org_id'], missing['district_id']), (None, None))
         self.assertIn('请手动选择', missing['message'])
 
+    def test_device_status_input_has_only_the_exact_post_path(self):
+        path = '/local-interface-simulator/device-status'
+        self.assertTrue(self.bridge.allowed('POST', path))
+        for method in ('GET', 'PUT', 'DELETE'):
+            self.assertFalse(self.bridge.allowed(method, path))
+        for extra in ('/x', '?device_id=x', '/../devices/x'):
+            self.assertFalse(self.bridge.allowed('POST', path + extra))
+        self.assertFalse(self.bridge.allowed('POST', '/devices/x/status'))
+
     def test_receipt_path_is_strict(self):
         self.bridge.connect({'api': self.url, 'account': 'operator', 'password': 'pass'})
         self.assertTrue(self.bridge.allowed('POST', '/local-interface-simulator/messages/demo_1/receipt'))

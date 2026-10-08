@@ -107,6 +107,9 @@ class Platform:
             mismatches.append('external_device_id')
         if device.get('source_mode') != body['source_mode']:
             mismatches.append('source_mode')
+        for scope_key in ('owner_org_id', 'district_id'):
+            if device.get(scope_key) != body.get(scope_key):
+                mismatches.append(scope_key)
         if detail.get('protocol_code') != body['protocol_code']:
             mismatches.append('protocol_code')
         if device.get('enabled') is False:

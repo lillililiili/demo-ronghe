@@ -343,16 +343,15 @@ export function openDisposalExecution({ authorization, refresh, onDone } = {}) {
       ? '经四通道网络控制器下发，回执以设备为准。停止时下发全关，不是急停。'
       : '下发后以设备回执为准：回执成功才算完成，超时或失败会如实标为执行失败。',
     introHtml: summaryHtml(auth),
-    fields: [{ key: 'note', label: '执行备注', placeholder: '选填：下发参数说明' }],
-    initial: { note: '' },
+    fields: [],
+    initial: {},
     confirmText: '下发执行',
     danger: true,
-    onSubmit: ({ note }) => submit({
+    onSubmit: () => submit({
       scope: auth.authorization_id,
       action: 'execute',
       call: key => disposalApi.execute(auth.authorization_id, {
-        expected_version: Number(auth.version),
-        operation_params: String(note || '').trim() ? { note: String(note).trim() } : undefined
+        expected_version: Number(auth.version)
       }, key),
       refresh,
       onDone,

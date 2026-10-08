@@ -22,7 +22,7 @@ LOG = logging.getLogger('notification-receiver')
 PREFIX = '/local-interface-simulator'
 KINDS = {'ADVISORY_SMS', 'ADVISORY_VOICE', 'RISK_NOTICE', 'UAV_PUNISHMENT',
          'PLAN_FEEDBACK', 'DEVICE_MAINTENANCE'}
-MODES = {'success', 'no_receipt', 'failed', 'timeout', 'no_answer', 'answered_only', 'delayed', 'mixed'}
+MODES = {'success', 'no_receipt', 'failed', 'timeout', 'no_answer', 'answered_only', 'delayed', 'mixed', 'dispersed', 'not_dispersed'}
 ROOT = Path(__file__).resolve().parent
 
 
@@ -170,6 +170,8 @@ class Receiver:
             if any(mode in ('no_answer', 'answered_only') and kind != 'ADVISORY_VOICE'
                    for kind, mode in modes.items()):
                 raise ValueError('voice-only mode')
+            if any(mode in ('dispersed', 'not_dispersed') and kind != 'RISK_NOTICE' for kind, mode in modes.items()):
+                raise ValueError('risk-only processing result')
             return modes
         except (OSError, ValueError, TypeError):
             raise ReceiverError('outcome-file 无效；停止回执和续租，请检查按 kind 配置的结果') from None
@@ -274,14 +276,16 @@ class Receiver:
             elapsed = self.clock() - record['answered_at']
             return 'PLAYED' if elapsed >= record.get('play_seconds', self.play_seconds) else None
         if kind not in ('ADVISORY_SMS', 'ADVISORY_VOICE') and state == 'DELIVERED':
-            return 'ACKNOWLEDGED' if mode in ('success', 'delayed') else None
+            return 'ACKNOWLEDGED' if mode in ('success', 'delayed', 'dispersed', 'not_dispersed') else None
         return None
 
     def send_receipt(self, message, record, outcome):
         body = {'expected_version': message['version'], 'outcome': outcome}
+        if message['kind'] == 'RISK_NOTICE' and outcome == 'ACKNOWLEDGED' and record['mode'] in ('dispersed', 'not_dispersed'):
+            body['receipt_result'] = 'DISPERSED' if record['mode'] == 'dispersed' else 'NOT_DISPERSED'
         pending = record.get('pending')
         if pending is None or pending['body'] != body:
-            identity = f"{message['message_id']}:{message['version']}:{outcome}"
+            identity = f"{message['message_id']}:{message['version']}:{outcome}:{body.get('receipt_result', '')}"
             pending = {'body': body, 'key': hashlib.sha256(identity.encode()).hexdigest()}
             record['pending'] = pending
         if outcome == 'ANSWERED' and record['answered_at'] is None:

@@ -4,15 +4,15 @@ const { readFileSync } = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-function executionForm(error, latest = { status: 'APPROVED' }) {
+function executionForm(error, latest = { status: 'APPROVED' }, channel = 'COUNTERMEASURE_4CH') {
   let form, refreshes = 0, closed = 0, sequence = 0;
-  const keys = [], messages = [];
+  const keys = [], messages = [], bodies = [];
   const source = readFileSync(path.join(__dirname, '../src/ui/disposalAuthModal.js'), 'utf8')
     .replace(/^import .*;\r?\n/gm, '').replace(/\bexport /g, '');
   const context = vm.createContext({
     openFormModal: value => { form = value; }, closeModal: () => { closed++; },
     toast: message => messages.push(message),
-    disposalApi: { execute: async (_id, _body, key) => { keys.push(key); throw error; } },
+    disposalApi: { execute: async (_id, _body, key) => { keys.push(key); bodies.push(_body); if (error) throw error; return { status: 'EXECUTING' }; } },
     newDisposalIdempotencyKey: () => `test-key-${++sequence}`,
     isDisposalUnavailable: () => false, isUncertainOutcome: value => value.status === 409,
     DISPOSAL_ACTION_LABEL: {}, DISPOSAL_BLOCK_REASON_LABEL: {}, DISPOSAL_CHANNEL_LABEL: {},
@@ -21,10 +21,10 @@ function executionForm(error, latest = { status: 'APPROVED' }) {
   });
   vm.runInContext(source, context);
   context.openDisposalExecution({
-    authorization: { authorization_id: 'qa-auth', status: 'APPROVED', channel: 'COUNTERMEASURE_4CH', version: 1 },
+    authorization: { authorization_id: 'qa-auth', status: 'APPROVED', channel, version: 1 },
     refresh: async () => { refreshes++; return latest; }
   });
-  return { form, keys, messages, refreshes: () => refreshes, closed: () => closed };
+  return { form, keys, messages, bodies, refreshes: () => refreshes, closed: () => closed };
 }
 
 test('设备故障是明确未下发，回读后仍保留执行弹窗供处理，不提示结果未知', async () => {
@@ -59,3 +59,14 @@ test('未知冲突且无法回读时保留幂等键，不把不确定结果当�
   assert.equal(state.keys[0], state.keys[1]);
   assert.equal(state.closed(), 0);
 });
+
+for (const channel of ['LINGYUN_B', 'COUNTERMEASURE_4CH']) {
+  test(`${channel} 执行只提交已批准参数，不把备注作为设备控制参数`, async () => {
+    const state = executionForm(null, { status: 'EXECUTING' }, channel);
+    await state.form.onSubmit({ note: '不能下发到设备的自由备注' });
+    assert.deepEqual(JSON.parse(JSON.stringify(state.bodies[0])), { expected_version: 1 });
+    assert.equal(state.form.fields.some(field => field.key === 'note'), false);
+    assert.equal(state.closed(), 1);
+    assert.match(state.messages[0], /已下发，等待设备回执/);
+  });
+}

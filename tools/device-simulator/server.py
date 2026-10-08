@@ -23,6 +23,8 @@ from eo_video import EoSimulator, video_config, public_video_config, sanitize_vi
 from realtime_control import RealtimeController, prepare_scene
 from full_scenario import full_scene, allocate_identities
 from fullchain import FullChain
+from protocol_b import ProtocolBResponder
+from mqtt_recovery import CommandSubscriptions
 
 ROOT = Path(__file__).resolve().parent
 
@@ -40,7 +42,7 @@ class ExternalBridge:
     """Shared in-memory system login and allowlisted external interface calls."""
     PREFIX = '/local-interface-simulator'
     READ = {PREFIX + '/context', PREFIX + '/airspaces/context', PREFIX + '/plan-options'}
-    WRITE = set(map(PREFIX.__add__, ('/plans', '/weather', '/weather-risks', '/bindings', '/airspaces', '/countermeasure-device', '/routes', '/observation-devices', '/target-observations', '/weather-devices', '/weather-observations')))
+    WRITE = set(map(PREFIX.__add__, ('/plans', '/weather', '/weather-risks', '/device-status', '/bindings', '/airspaces', '/countermeasure-device', '/routes', '/observation-devices', '/target-observations', '/weather-devices', '/weather-observations')))
     RECEIPT = re.compile(r'^/local-interface-simulator/messages/[A-Za-z0-9_-]{1,64}/receipt$')
     PLAN_FILING = re.compile(r'^/local-interface-simulator/plans/[A-Za-z0-9_-]{1,36}/filing$')
 
@@ -175,6 +177,7 @@ class Runtime:
         self.next_session_check = 0
         self.snapshot = {}; self.skipped = []; self.response = None
         self.video_config = dict(DEFAULT_VIDEO); self.eo = None; self.eo_status = {}
+        self.protocol_b = None
         self.realtime = None
         self.mqtt_connected = False
         self.mqtt_reconnect_count = 0
@@ -220,6 +223,7 @@ class Runtime:
                     'notification_observation':self.response.snapshot() if self.response else self.manifest.get('notification_observation', {}),
                     'video_config':public_video_config(self.video_config), 'video_control_available':True,
                     'eo':copy.deepcopy(self.eo_status),
+                    'protocol_b':self.protocol_b.snapshot() if self.protocol_b else {},
                     'skipped':self.skipped, **self.session.status(), 'mqtt_ready':self.platform is not None and self.broker is not None,
                     'mqtt_connected':self.mqtt_connected, 'last_published_at':self.last_published_at,
                      'mqtt_reconnect_count':self.mqtt_reconnect_count,
@@ -360,6 +364,7 @@ class Runtime:
             self.next_session_check = 0
             self.mqtt_reconnect_count = 0; self.mqtt_disconnected_at = None; self.last_published_at = None
             self.eo = None; self.eo_status = {}
+            self.protocol_b = None
             self.manifest={'batch':self.batch,'source_mode':'replay','provider':'map-sim', 'created_at':int(time.time()*1000),
                            'broker_id':self.broker['broker_id'],'devices':{},'plans':{},'zones':{},
                            'targets':allocate_identities(scene,self.batch)}
@@ -402,6 +407,12 @@ class Runtime:
             if self.cancel.is_set(): return
             self.platform.prepare_devices(devices,self.broker,self.manifest,self.checkpoint)
             if self.cancel.is_set(): return
+            if self.fullchain:
+                from prerequisite_check import verify as verify_prerequisites
+                self.manifest['prerequisite_readback']=verify_prerequisites(
+                    self.platform,self.scene,self.manifest,self.fullchain.scope)
+                self.checkpoint()
+                self.log('PREREQUISITES_VERIFIED','任务、航线和设备绑定已通过接口回读核对')
             self.log('WAIT_SUBSCRIPTIONS','等待后台确认本批全部设备的 MQTT 订阅')
             if not self.platform.wait_for_subscriptions(self.manifest, self.broker, self.cancel): return
             self.manifest['subscriptions_ready_at'] = int(time.time()*1000)
@@ -414,39 +425,47 @@ class Runtime:
             client.reconnect_delay_set(min_delay=1, max_delay=8)
             def on_connect(c,u,f,code,p):
                 self.mqtt_connected = not code.is_failure
-                result.append(not code.is_failure); connected.set()
+                if self.mqtt_connected: subscriptions.on_connect(c)
+                else: subscriptions.on_disconnect()
+                result[:] = [not code.is_failure]; connected.set()
             client.on_connect=on_connect
             def on_disconnect(*args):
                 if self.mqtt_connected:
                     self.mqtt_reconnect_count += 1
                     self.mqtt_disconnected_at = int(time.time()*1000)
                 self.mqtt_connected = False
+                subscriptions.on_disconnect()
             client.on_disconnect = on_disconnect
             def publish_eo(topic, payload):
-                if self.cancel.is_set() or self.phase != 'RUNNING': return
+                if self.cancel.is_set() or self.phase != 'RUNNING' or not self.mqtt_connected or not subscriptions.ready.is_set(): return
                 info = client.publish(topic, json.dumps(payload, ensure_ascii=False), qos=1, retain=False)
                 info.wait_for_publish(timeout=5)
                 if not info.is_published(): raise ValueError('光电回执 MQTT 确认超时')
                 self.log('EO_RECEIPT', '模拟光电回执已由 Broker 确认', topic=topic, payload=payload)
             self.eo = EoSimulator(self.platform, self.manifest, self.video_config, publish_eo, self.log,
                 is_running=lambda: self.phase == 'RUNNING' and not self.cancel.is_set())
+            def publish_b(topic, payload):
+                with self.lock:
+                    if self.cancel.is_set() or self.phase != 'RUNNING' or not self.mqtt_connected or not subscriptions.ready.is_set():
+                        return False
+                    info = client.publish(topic, json.dumps(payload, ensure_ascii=False), qos=1, retain=False)
+                info.wait_for_publish(timeout=5)
+                if not info.is_published(): raise ValueError('协议 B 回执 MQTT 确认超时；结果未知')
+                self.log('B_RECEIPT', '模拟协议 B 回执已由 Broker 确认', topic=topic, payload=payload)
+                return True
+            self.protocol_b = ProtocolBResponder(self.manifest, devices, publish_b, self.log,
+                is_running=lambda: self.phase == 'RUNNING' and self.mqtt_connected and subscriptions.ready.is_set() and not self.cancel.is_set())
+            subscriptions = CommandSubscriptions(set(self.eo.bindings) | set(self.protocol_b.bindings))
             def receive_command(c,u,m):
+                if m.topic in self.protocol_b.bindings:
+                    self.protocol_b.enqueue(m.topic, m.payload, m.retain, m.qos)
+                    return
                 if self.realtime and self.realtime.config['mode']=='abnormal' and self.realtime.config['command_mode']=='no_receipt':
                     self.log('COMMAND_IGNORED','异常模式：光电指令不执行、不回执',topic=m.topic)
                     return
                 self.eo.enqueue(m.topic, m.payload, m.retain)
             client.on_message = receive_command
-            subscribed = threading.Event(); subscription_result = []
-            def on_subscribe(c,u,mid,codes,p):
-                subscription_result.append(all(not code.is_failure for code in codes)); subscribed.set()
-            client.on_subscribe = on_subscribe
-            def restore_subscriptions():
-                if not self.eo.bindings:
-                    return
-                subscribed.clear(); subscription_result.clear()
-                rc, _ = client.subscribe([(topic, 1) for topic in self.eo.bindings])
-                if rc != 0 or not subscribed.wait(6) or not all(subscription_result):
-                    raise ValueError('光电指令主题订阅失败')
+            client.on_subscribe = subscriptions.on_subscribe
             if self.mqtt_username:
                 client.username_pw_set(self.mqtt_username,self.mqtt_password)
             if self.broker.get('tls'): client.tls_set()
@@ -454,7 +473,9 @@ class Runtime:
             client.connect(self.broker['host'],int(self.broker['port']),30); client.loop_start()
             if not connected.wait(6) or not result or not result[0]:
                 raise ValueError('MQTT 连接或认证失败')
-            restore_subscriptions()
+            if not subscriptions.wait_ready(self.cancel):
+                if self.cancel.is_set(): return
+                raise ValueError('MQTT 在订阅确认前断开')
             with self.lock:
                 if self.cancel.is_set(): return
                 self.phase='RUNNING'
@@ -464,6 +485,8 @@ class Runtime:
             self.response.start()
             last_sent={}; sequence=0; previous=time.monotonic(); next_frame=0
             while not self.cancel.is_set():
+                if self.protocol_b.error:
+                    raise ValueError(self.protocol_b.error)
                 current=time.monotonic()
                 with self.lock:
                     if self.phase=='RUNNING': self.elapsed+=current-previous
@@ -475,7 +498,7 @@ class Runtime:
                 if not client.is_connected():
                     if not self.wait_for_mqtt_reconnect(client):
                         raise ValueError('MQTT 连接在 30 秒内未恢复，任务停止')
-                    restore_subscriptions()
+                if not subscriptions.wait_ready(self.cancel): continue
                 self.sync_video()
                 if phase == 'PAUSED' and self.eo.accepting: self.eo.suspend()
                 elif phase == 'RUNNING':
@@ -497,7 +520,7 @@ class Runtime:
                         if not client.is_connected():
                             if not self.wait_for_mqtt_reconnect(client):
                                 raise ValueError('MQTT 连接在 30 秒内未恢复，任务停止')
-                            restore_subscriptions()
+                        if not subscriptions.wait_ready(self.cancel): break
                         info=client.publish(topic,json.dumps(payload,ensure_ascii=False),qos=1,retain=False)
                         info.wait_for_publish(timeout=5)
                         if not info.is_published(): raise ValueError('MQTT 确认超时：当前发送结果未知，任务停止')
@@ -516,6 +539,8 @@ class Runtime:
                 self.phase='FAILED'; self.error=sanitize_video_error(error, self.video_config)[:600]
             self.log('ERROR',self.error)
         finally:
+            if self.protocol_b:
+                self.protocol_b.suspend()
             if self.response: self.response.stop.set()
             if self.eo:
                 self.eo.suspend(); self.eo_status = self.eo.snapshot()
@@ -575,7 +600,9 @@ class Runtime:
         platform_ids={d['platform_id'] for d in manifest['devices'].values()}
         platform_ids.update(d.get('device',{}).get('fusion_device_id') for d in result['devices'])
         platform_ids.discard(None)
-        normalized_ids = {row['device_id'] for row in manifest.get('normalized_sources', {}).values()}
+        sources = manifest.get('normalized_sources') or {}
+        source_rows = sources.values() if isinstance(sources, dict) else sources
+        normalized_ids = {row['device_id'] for row in source_rows}
         # Historical batches used one shared source; preserve their readback.
         if manifest.get('normalized_source', {}).get('device_id'):
             normalized_ids.add(manifest['normalized_source']['device_id'])

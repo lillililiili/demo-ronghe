@@ -139,6 +139,43 @@ class EoVideoTests(unittest.TestCase):
         self.assertEqual(self.eo.active['ops-1']['stream_id'],STREAM)
         self.assertEqual(self.eo.active['ops-1']['task'],TASK)
         self.assertEqual(self.eo.snapshot()['devices'][0]['video'],'PUBLISHING')
+    def test_alive_but_stalled_encoder_is_replaced_without_ending_tracking(self):
+        self.begin()
+        first = self.processes[0]
+        self.now += 29; self.eo.tick()
+        self.assertEqual(first.terminated, 0)
+        self.now += 1; self.eo.tick()
+        self.assertEqual(first.terminated, 1)
+        self.assertEqual(self.eo.snapshot()['devices'][0]['tracking'], 'TRACKING')
+        self.assertEqual(self.eo.snapshot()['devices'][0]['video'], 'FAILED')
+        self.assertFalse(any(method == 'DELETE' for method, _, _ in self.api.calls))
+        self.now += 14; self.eo.tick()
+        self.assertEqual(len(self.processes), 1)
+        self.now += 1; self.eo.tick()
+        self.assertEqual(len(self.processes), 2)
+        self.assertEqual(self.eo.active['ops-1']['task'], TASK)
+
+    def test_only_advancing_output_keeps_encoder_alive(self):
+        self.begin()
+        progress = Path(self.eo.active['ops-1']['directory'].name) / 'progress.txt'
+        for frame in range(1, 5):
+            self.now += 20
+            progress.write_text(f'frame={frame}\nout_time_us={frame * 1000000}\nprogress=continue\n')
+            self.eo.tick()
+        self.assertEqual(len(self.processes), 1)
+        self.assertEqual(self.processes[0].terminated, 0)
+        # A running encoder rewriting the same frame is not recovered output.
+        self.now += 30
+        progress.write_text('frame=4\nout_time_us=4000000\nprogress=continue\n')
+        self.eo.tick()
+        self.assertEqual(self.processes[0].terminated, 1)
+
+    def test_stalled_encoder_cannot_restart_after_task_closes(self):
+        self.begin(); self.now += 30; self.eo.tick()
+        self.api.task = 'replacement'; self.now += 15; self.eo.tick()
+        self.assertEqual(len(self.processes), 1)
+        self.assertFalse(self.eo.active)
+
     def test_failed_encoder_never_recovers_after_stop_or_closed_task(self):
         self.begin(); self.processes[0].returncode=2; self.eo.tick()
         self.api.task='replacement'; self.now+=16; self.eo.tick()
@@ -147,6 +184,7 @@ class EoVideoTests(unittest.TestCase):
         self.now+=20; self.eo.tick(); self.assertEqual(len(self.processes),1)
     def test_lease_refresh_does_not_spawn_and_new_registry_stream_replaces_process(self):
         self.begin(); self.now+=16; self.eo.tick(); self.assertEqual(len(self.processes),1)
+        (Path(self.eo.active['ops-1']['directory'].name)/'progress.txt').write_text('frame=30\nout_time_us=2000000\nprogress=continue\n')
         self.api.stream='33333333-3333-3333-3333-333333333333'; self.now+=16; self.eo.tick()
         self.assertEqual(len(self.processes),2); self.assertEqual(self.processes[0].terminated,1)
     def test_pause_and_resume_never_restore_old_task(self):

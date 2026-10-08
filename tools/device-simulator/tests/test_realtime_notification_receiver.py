@@ -74,6 +74,30 @@ class ReceiverTests(unittest.TestCase):
     def receiver(self, **kwargs):
         return self.module.Receiver(self.proxy, self.root, **kwargs)
 
+    def test_risk_processing_result_is_explicit_and_persisted_across_restart(self):
+        for mode, expected in [('success', None), ('dispersed', 'DISPERSED'), ('not_dispersed', 'NOT_DISPERSED')]:
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                config = root / 'outcomes.json'
+                config.write_text(json.dumps({'RISK_NOTICE': mode}), encoding='utf-8')
+                proxy = FakeProxy(message('RISK_NOTICE'))
+                receiver = self.module.Receiver(proxy, root, outcome_file=config)
+                receiver.step()
+                self.assertNotIn('receipt_result', proxy.calls[-1][2])
+                config.write_text(json.dumps({'RISK_NOTICE': 'success'}), encoding='utf-8')
+                self.module.Receiver(proxy, root, outcome_file=config).step()
+                self.assertEqual(expected, proxy.calls[-1][2].get('receipt_result'))
+                self.assertEqual(['DELIVERED', 'ACKNOWLEDGED'], proxy.outcomes())
+                self.module.Receiver(proxy, root, outcome_file=config).step()
+                self.assertEqual(2, len(proxy.outcomes()))
+
+    def test_processing_result_rejected_for_other_notification_kinds(self):
+        for kind in self.module.KINDS - {'RISK_NOTICE'}:
+            config = self.root / 'outcomes.json'
+            config.write_text(json.dumps({kind: 'dispersed'}), encoding='utf-8')
+            with self.assertRaises(self.module.ReceiverError):
+                self.receiver(outcome_file=config).outcomes()
+
     def test_original_request_is_durably_saved_before_receipt(self):
         original = copy.deepcopy(self.proxy.row)
         def check():

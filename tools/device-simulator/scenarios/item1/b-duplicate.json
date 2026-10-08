@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "name": "协议 B duplicate",
+  "duration": 5,
+  "sites": [
+    {
+      "id": "item1-site",
+      "name": "验收模拟设备组",
+      "x": 450,
+      "y": 300,
+      "devices": [
+        {
+          "id": "item1-dec",
+          "name": "验收模拟 dec",
+          "kind": "dec",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2,
+          "protocolB": {
+            "enabled": true,
+            "response": "success",
+            "duplicateCount": 1
+          }
+        },
+        {
+          "id": "item1-ifr",
+          "name": "验收模拟 ifr",
+          "kind": "ifr",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2,
+          "protocolB": {
+            "enabled": true,
+            "response": "success",
+            "duplicateCount": 1
+          }
+        },
+        {
+          "id": "item1-bsc",
+          "name": "验收模拟 bsc",
+          "kind": "bsc",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2,
+          "protocolB": {
+            "enabled": true,
+            "response": "success",
+            "duplicateCount": 1
+          }
+        },
+        {
+          "id": "item1-radar",
+          "name": "验收模拟 radar",
+          "kind": "radar",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2,
+          "protocolB": {
+            "enabled": true,
+            "response": "success",
+            "duplicateCount": 1
+          }
+        },
+        {
+          "id": "item1-tdoa",
+          "name": "验收模拟 tdoa",
+          "kind": "tdoa",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2,
+          "protocolB": {
+            "enabled": true,
+            "response": "success",
+            "duplicateCount": 1
+          }
+        },
+        {
+          "id": "item1-aoa",
+          "name": "验收模拟 aoa",
+          "kind": "aoa",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2,
+          "protocolB": {
+            "enabled": true,
+            "response": "success",
+            "duplicateCount": 1
+          }
+        }
+      ]
+    }
+  ],
+  "targets": [],
+  "plans": [],
+  "zones": [],
+  "risks": [],
+  "fullchain": {
+    "enabled": true,
+    "categories": []
+  }
+}

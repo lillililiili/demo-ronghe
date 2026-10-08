@@ -8,7 +8,7 @@ CATEGORIES = {'uav': '无人机与飞行情形', 'bird': '单鸟与鸟群', 'unk
 
 
 def allocate_identities(scene, batch):
-    return {t['id']: {'external_id': batch + '-t' + str(i),
+    return {t['id']: {'external_id': batch + '-t' + str(i), 'mqtt_object_id': str(i*1000),
                       **({'uav_sn': t.get('uavSn') or batch + '-u' + str(i)} if t['kind'] == 'uav' else {})}
             for i, t in enumerate(scene['targets'], 1)}
 

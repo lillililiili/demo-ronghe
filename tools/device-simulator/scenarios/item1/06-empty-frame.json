@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "name": "06 在线但无目标",
+  "duration": 2,
+  "sites": [
+    {
+      "id": "item1-site",
+      "name": "验收模拟设备组",
+      "x": 450,
+      "y": 300,
+      "devices": [
+        {
+          "id": "item1-radar",
+          "name": "验收模拟 radar",
+          "kind": "radar",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2,
+          "emitEmpty": true
+        }
+      ]
+    }
+  ],
+  "targets": [],
+  "plans": [],
+  "zones": [],
+  "risks": [],
+  "fullchain": {
+    "enabled": true,
+    "categories": []
+  }
+}

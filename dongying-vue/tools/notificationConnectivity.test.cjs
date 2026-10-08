@@ -59,3 +59,17 @@ test('plan feedback unknown outcome does not claim no send happened', () => {
   assert.equal(message({ delivery_status: 'DELIVERED' }), undefined);
   assert.match(source, /item\.blocked_reason === 'DELIVERY_OUTCOME_UNKNOWN' \? '发送结果未知'/);
 });
+
+test('pending risk delivery does not claim a disconnected channel or a completed result', async () => {
+  const { notificationSubmissionMessage, notificationBlockedReason } = await import(pathToFileURL(path.join(sourceRoot, 'ui/labels.js')).href);
+  for (const id of ['alpha-01', 'changed-02']) {
+    const notice = Object.freeze({ delivery_status: 'SUBMITTED', blocked_reason: `SIMULATOR_WAITING:${id}` });
+    const view = notificationSubmissionMessage(notice);
+    assert.match(view.title, /等待送达确认/);
+    assert.doesNotMatch(view.message, /未接通|没有发出去|已送达|已驱离/);
+    assert.equal(notificationBlockedReason(notice), '');
+  }
+  assert.match(notificationSubmissionMessage({ delivery_status: 'FAILED' }).title, /发送失败/);
+  assert.match(notificationSubmissionMessage({ delivery_status: 'DELIVERED', receipt_status: 'ACKNOWLEDGED' }).message, /查看.*处理结果/);
+  assert.doesNotMatch(notificationSubmissionMessage({ delivery_status: 'FUTURE_UNKNOWN' }).title, /已送达|失败/);
+});

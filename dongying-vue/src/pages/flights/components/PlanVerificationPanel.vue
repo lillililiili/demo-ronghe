@@ -33,7 +33,7 @@ const needsVerification = computed(() => {
   return !!data.value?.can_verify || ['AVAILABLE', 'NO_EVALUATION'].includes(props.match?.availability);
 });
 const showPanel = computed(() => !!data.value && (needsVerification.value || hasHistory.value));
-function date(value) { return value == null ? '未记录' : new Date(value).toLocaleString('zh-CN', { hour12: false }); }
+function date(value) { return value == null ? '未记录' : new Date(value).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }); }
 function isAutomatic(record) { return ['AUTO_DEVICE_ABNORMAL','SUSPECTED_NOT_TAKEN_OFF','CHECK_INCOMPLETE'].includes(record?.conclusion); }
 function verificationSummary(record) {
   // 历史接口仅保存文字依据：原样展示已记录的摘要，不借用当前设备状态推算历史数量。

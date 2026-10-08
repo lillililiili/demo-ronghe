@@ -71,3 +71,24 @@ test('weather reads preserve supplied facts, cache versions and discard late res
   assert.deepEqual(result.value, []);
   app.unmount();
 });
+
+
+test('risk map timestamps match Beijing event time across client time zones', async () => {
+  const original = process.env.TZ;
+  try {
+    for (const name of ['ObjectRiskMapInfo', 'WeatherMapInfo']) {
+      const source = await readFile(new URL(`../src/pages/flights/components/${name}.vue`, import.meta.url), 'utf8');
+      const line = source.match(/^const time = (.*);$/m);
+      assert.ok(line);
+      const time = new Function(`return (${line[1]})`)();
+      for (const zone of ['America/New_York', 'UTC', 'Asia/Shanghai']) {
+        process.env.TZ = zone;
+        assert.equal(time(Date.UTC(2026,9,6,8,49,18)), '2026/10/6 16:49:18');
+        assert.equal(time(Date.UTC(2026,9,6,20,2,3)), '2026/10/7 04:02:03');
+      }
+      assert.equal(time(null), name === 'ObjectRiskMapInfo' ? '时间未知' : '未提供');
+    }
+  } finally {
+    if (original === undefined) delete process.env.TZ; else process.env.TZ = original;
+  }
+});

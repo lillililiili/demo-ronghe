@@ -34,6 +34,7 @@ import { exportAlarmsCsv, getAlarm, getUavEvent, listAlarmDistricts, listAlarmEs
 import { escalationBrief, escalationRecords, reasonListText } from '@/ui/alarmEscalation.js';
 import { ruleReasonText } from '@/ui/legalityReviewModal.js';
 import { NO_PILOT_LOCATION, pilotLocationText } from '@/services/pilotLocation.js';
+import { pilotDistanceNote } from '@/ui/pilotDistanceNote.js';
 import { getEvidenceChain } from '@/services/evidenceApi.js';
 import { openUavVerification } from '@/ui/uavVerificationModal.js';
 import { targetApi } from '@/services/targetApi.js';
@@ -643,6 +644,8 @@ function detailHtml() {
   const targetType = !a.target_id ? '—' : cur.targetLoading ? '读取中' : cur.targetError ? '读取失败' : esc(t ? targetTypeLabel(t.subtype, t.object_type_code) : '—');
   const altSpeed = ls ? `${ls.altitude_amsl_m == null ? '—' : esc(ls.altitude_amsl_m)} m / ${ls.speed_mps == null ? '—' : esc(ls.speed_mps)} m/s` : '— m / — m/s';
   const reasons = reasonsOf(a), brief = briefOf(a);
+  // 新-29：飞手离无人机超过 500 米不算违规，告警详情在“遥控器位置”后面照样写这句给值班员参考（取目标最近一次研判）。
+  const pilotNote = cur.targetLoading || cur.targetError ? '' : pilotDistanceNote(t);
   return `${U.detailHero({
     icon: 'alert', subtitle: '告警事件', title: typeOf(a), id: esc(noOf(a)),
     tags: [sevTag(a), detailStateTags(a)]
@@ -660,6 +663,7 @@ function detailHtml() {
     ['高度/速度', altSpeed],
     ['遥控器位置', !a.target_id ? NO_PILOT_LOCATION : cur.targetLoading ? '读取中' : cur.targetError ? '读取失败'
       : esc(pilotLocationText(ls && ls.pilot_location))],
+    ...(pilotNote ? [['飞手距离', esc(pilotNote)]] : []),
     ['数据来源', `${esc(sourceDescription(a.source_name, a.source_code, a.source_mode, '—'))}`]
   ], { surface: true, density: 'compact' }), { icon: 'alert', className: 'alarm-info-sect' })}
     ${verificationHtml()}

@@ -25,6 +25,7 @@ import { getAlarm } from '@/services/alarmApi.js';
 import SituationAdvisoryCard from './situation/SituationAdvisoryCard.vue';
 import SituationAlarmPopup from './situation/SituationAlarmPopup.vue';
 import { PILOT_LOCATION_IN_ALARM_DETAIL, pilotLocationText } from '@/services/pilotLocation.js';
+import { pilotDistanceNote } from '@/ui/pilotDistanceNote.js';
 import WeatherRiskMarkers from '@/components/WeatherRiskMarkers.vue';
 import { weatherAnchor } from '@/services/weatherRiskGeometry.js';
 import SituationRiskGroupPopup from './situation/SituationRiskGroupPopup.vue';
@@ -703,6 +704,7 @@ function renderTargetTip(target, hasAdvisoryCard = false) {
     <p>最后上报：${esc(formatClock(target.lastSeenAt))} · ${esc(reportAge(target.lastSeenAt))}</p>
     ${target.timeUntrusted ? `<p class="sit-map-pop-note">数据过期：报文时刻比平台收到时早${esc(clockLagText(target.reportLagMs) || '较多')}，设备时间不准或数据积压，图上位置可能不是当前位置；超过新鲜时限的数据不做合法性判定。平台收到：${esc(formatClock(target.receivedAt))}</p>` : ''}
     ${target.objectTypeCode === 'UAV' ? `<p>遥控器位置：${esc(pilotLocationText(target.pilotLocation))}</p>` : ''}
+    ${target.objectTypeCode === 'UAV' && pilotDistanceNote(target.legalitySummary) ? `<p class="sit-map-pop-note">${esc(pilotDistanceNote(target.legalitySummary))}</p>` : ''}
     <div class="sit-target-source"><span>感知来源：${esc(sourceNames || '未提供')}</span><button type="button" data-tip-act="eo-video" aria-expanded="${showTargetVideo.value}" aria-controls="situation-video-window">${showTargetVideo.value ? '收起视频' : '实时视频'}</button></div>
     ${alarm?.eventId && !hasAdvisoryCard ? `<p class="sit-map-pop-note">短信通知：${esc(sms?.title || '正在读取通知状态')}${sms?.simulated ? '（模拟）' : ''}${sms?.updatedAt ? ` · ${esc(formatClock(sms.updatedAt))}` : ''}</p>
     <p class="sit-map-pop-note">飞手电话：${esc(voice?.title || '正在读取通知状态')}${voice?.simulated ? '（模拟）' : ''}</p>` : ''}

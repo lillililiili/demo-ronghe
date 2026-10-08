@@ -31,6 +31,7 @@ import { usePageChrome } from '@/hooks/usePageChrome.js';
 import UKpis from '@/components/UKpis.vue';
 import UPanel from '@/components/UPanel.vue';
 import RiskOpticalPanel from '@/pages/flights/components/RiskOpticalPanel.vue';
+import RiskEvaluationHistory from '@/pages/flights/components/RiskEvaluationHistory.vue';
 import PlanVerificationPanel from '@/pages/flights/components/PlanVerificationPanel.vue';
 import FlightExecutionChecks from '@/components/FlightExecutionChecks.vue';
 import PlanFilingDetails from '@/pages/flights/components/PlanFilingDetails.vue';
@@ -1956,6 +1957,7 @@ onUnmounted(() => {
                 <dt v-if="selectedRisk.target_id">关联目标</dt><dd v-if="selectedRisk.target_id" class="mono" :title="selectedRisk.target_id">{{ selectedRisk.space_fact?.subtype_name || '关联感知目标' }}</dd>
                 <dt v-if="selectedRisk.track_id">关联轨迹</dt><dd v-if="selectedRisk.track_id" :title="selectedRisk.track_id">已关联轨迹</dd>
               </dl><div class="rk-note">{{ selectedRisk.risk_type === 'WEATHER' ? '起飞前请核对最新预警和有效时段。' : '位置为发现时快照；违规结论见合法性研判。' }}</div></div>
+              <RiskEvaluationHistory v-if="selectedRisk.risk_type === 'SPACE_OBJECT'" :key="selectedRisk.risk_id" :risk-id="selectedRisk.risk_id" />
               <div class="sect rk-review-history"><h4>核验历史 <span class="tag t-gray">{{ riskHistoryTotal }}</span></h4>
                 <div v-if="riskHistoryLoading" class="empty">正在读取核验历史…</div>
                 <div v-else-if="riskHistoryError" class="warnbox rk-error">{{ riskHistoryError }}</div>

@@ -65,7 +65,8 @@ function time(value) { return value == null ? '未记录' : new Date(value).toLo
 function title(row) { return row.target?.target_no || row.risk?.risk_no || '未编号'; }
 function typeLabel(row) { return row.target ? targetTypeLabel(row.target.subtype, row.target.object_type_code, '未分类')
   : labelOf(RISK_TYPE_LABEL, row.type, '未分类'); }
-function isMock(row) { return !!row.target?.demo || row.risk?.source_mode === 'mock' || row.target?.source_mode === 'mock'; }
+// 模拟器送来的风险按 source_display_mode 标模拟（P03：回放任务上的模拟器天气、鸟群也算），文件回放才不标。
+function isMock(row) { return !!row.target?.demo || (row.risk?.source_display_mode || row.risk?.source_mode) === 'mock' || row.target?.source_mode === 'mock'; }
 const pageCount = computed(() => Math.max(1, Math.ceil(props.list.rows.length / props.list.size)));
 const pageSizes = [10, 20, 50].map(value => ({ value, label: `${value} 条/页` }));
 function summary(row) {

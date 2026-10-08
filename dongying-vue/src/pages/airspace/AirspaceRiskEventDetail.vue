@@ -18,6 +18,7 @@ import { toast } from '@/ui/nv.js';
 import { ALTITUDE_DATUM_LABEL, HANDOFF_TYPE_LABEL, REASON_CODE_LABEL,
   RECEIPT_RESULT_LABEL, RISK_STATE_LABEL, RISK_TYPE_LABEL, SEVERITY_LABEL, SEVERITY_TAG, sourceDescription, notificationBlockedReason, labelOf } from '@/ui/labels.js';
 import RiskOpticalPanel from '@/pages/flights/components/RiskOpticalPanel.vue';
+import RiskEvaluationHistory from '@/pages/flights/components/RiskEvaluationHistory.vue';
 
 const props = defineProps({ riskId: { type: String, required: true } });
 const emit = defineEmits(['updated']);
@@ -181,6 +182,7 @@ onUnmounted(() => { alive = false; generation++; historyRequest++; noticeRequest
             <dt v-if="risk.target_id">关联目标</dt><dd v-if="risk.target_id">{{ risk.space_fact?.subtype_name || '关联感知目标' }}</dd>
             <dt v-if="risk.track_id">关联轨迹</dt><dd v-if="risk.track_id">已关联轨迹</dd>
           </dl><p class="rk-note">{{ risk.risk_type === 'WEATHER' ? '起飞前请核对最新预警和有效时段。' : '位置为发现时快照；违规结论见合法性研判。' }}</p></section>
+          <RiskEvaluationHistory v-if="risk.risk_type === 'SPACE_OBJECT'" :key="risk.risk_id" :risk-id="risk.risk_id" />
           <section class="sect"><h4>核验历史 <span class="tag t-gray">{{ historyTotal }}</span></h4>
             <div v-if="historyLoading" class="empty">正在读取核验历史…</div>
             <div v-else-if="historyError" class="warnbox" role="alert">{{ historyError }}<button class="btn" type="button" @click="loadHistory(historyPage)">重试</button></div>

@@ -13,7 +13,7 @@ let alive = true;
 onUnmounted(() => { alive = false; });
 const view = computed(() => autoVoiceView(props.data));
 const compactTitle = computed(() => {
-  if (view.value.pilotContactMissing || view.value.channelUnavailable) return view.value.title;
+  if (view.value.pilotContactMissing || view.value.channelUnavailable || view.value.smsNotSent) return view.value.title;
   const reason = props.data?.auto_voice?.reason || '';
   if (reason.includes('正在用设备位置观察')) return '观察是否撤离';
   if (reason.includes('已离开')) return '已撤离，不拨打';

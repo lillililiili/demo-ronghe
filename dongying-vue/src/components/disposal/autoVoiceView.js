@@ -7,6 +7,18 @@ export const AUTO_VOICE_STATUS = {
   NOT_REQUIRED: '不需要拨打飞手电话'
 };
 
+// 新-30：短信因没有关联任务、没有可通知的飞手或通道原因发不出去时，电话也不拨打；后台把电话写成暂停，原因沿用短信的。
+const NO_PILOT_REASONS = ['当前事件尚无精确关联任务，不能把单位联系人当作执行飞手', '没有可通知的执行飞手，不能发送短信'];
+// 与后台 NotifyFlow.cannotNotify 一致：没有可通知的飞手、没有关联任务，或短信通道本身不可用。
+function smsCannotNotify(sms) {
+  if (['UNAVAILABLE', 'DISABLED'].includes(sms.status)) return true;
+  return sms.status === 'BLOCKED' && /飞手|任务|计划|联系|名册|通知配置/.test(String(sms.reason || ''));
+}
+export function smsNotSent(data) {
+  const voice = data?.auto_voice, sms = data?.auto_sms;
+  return !!voice && !!sms && voice.status === 'BLOCKED' && !!voice.reason && voice.reason === sms.reason && smsCannotNotify(sms);
+}
+
 export function autoVoiceView(data) {
   const voice = data?.auto_voice;
   if (!voice) return {
@@ -18,6 +30,7 @@ export function autoVoiceView(data) {
   // 缺飞手电话时不再显示“等待短信送达/等待拨打”，直接写明缺什么（BLOCK-03）。
   const missing = pilotContactMissing(data, voice.status);
   const channelUnavailable = data.voice_mode === 'UNAVAILABLE' || voice.status === 'UNAVAILABLE';
+  const skipped = !missing && !channelUnavailable && smsNotSent(data);
   const backendReason = String(voice.reason || '');
   const unavailableReason = channelUnavailable && !/通道|录音|模拟器/.test(backendReason)
     ? '设备模拟器电话通道未连接，或尚未选用有效的 WAV 通知录音。'
@@ -26,11 +39,13 @@ export function autoVoiceView(data) {
     // 短信因超过通知时效停发时，电话也不自动拨打，要先核对最新情况。
     title: missing ? PILOT_CONTACT_MISSING_TITLE
       : channelUnavailable ? '电话通道不可用'
+      : skipped ? (NO_PILOT_REASONS.includes(String(voice.reason).trim()) ? '找不到飞手，不拨打' : '短信未发，不拨打')
       : String(voice.reason || '').includes('超过自动通知时效') && voice.status === 'BLOCKED' ? '超过时效，不自动拨打'
       : AUTO_VOICE_STATUS[voice.status] || '通话结果未确认',
     reason: missing ? '上级下发的飞行任务里没有执行飞手的电话，无法给飞手打电话。' : unavailableReason,
     pilotContactMissing: missing,
     channelUnavailable,
+    smsNotSent: skipped,
     tone: missing || channelUnavailable ? 'warning' : voice.status === 'SIMULATED_PLAYED' ? 'success'
       : ['FAILED', 'UNAVAILABLE', 'BLOCKED', 'UNKNOWN'].includes(voice.status) ? 'warning' : 'muted',
     // 结果未知不能通过重拨猜测，后端允许且结果明确失败时才开放重试。

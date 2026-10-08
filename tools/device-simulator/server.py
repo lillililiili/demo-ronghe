@@ -27,6 +27,7 @@ import mock_airport
 from fullchain import FullChain
 from protocol_b import ProtocolBResponder
 from mqtt_recovery import CommandSubscriptions
+from device_health import DeviceHealthReporter
 
 ROOT = Path(__file__).resolve().parent
 
@@ -504,6 +505,7 @@ class Runtime:
             if self.skipped: self.log('SKIP','本次未发送：'+'、'.join(self.skipped))
             self.response = NotificationResponse(self.platform, self.manifest, self.targets)
             self.response.start()
+            health = DeviceHealthReporter(self.platform, self.manifest, devices, self.log)
             last_sent={}; sequence=0; previous=time.monotonic(); next_frame=0
             while not self.cancel.is_set():
                 if self.protocol_b.error:
@@ -521,7 +523,9 @@ class Runtime:
                         raise ValueError('MQTT 连接在 30 秒内未恢复，任务停止')
                 if not subscriptions.wait_ready(self.cancel): continue
                 self.sync_video()
-                if phase == 'PAUSED' and self.eo.accepting: self.eo.suspend()
+                if phase == 'PAUSED':
+                    health.forget()
+                    if self.eo.accepting: self.eo.suspend()
                 elif phase == 'RUNNING':
                     if not self.eo.accepting: self.eo.resume()
                     self.eo.availability({self.manifest['devices'][key]['platform_id'] for key,d in devices.items()
@@ -535,6 +539,7 @@ class Runtime:
                     with self.lock:
                         self.response.apply(self.targets, elapsed, int(time.time()*1000))
                     if self.fullchain: self.fullchain.tick(self.targets,elapsed,sequence)
+                    health.observe(self.scene, elapsed)
                     for topic,payload in messages(self.scene,devices,self.targets,self.manifest,elapsed,int(time.time()*1000),last_sent,sequence):
                         if payload.get('event') == 'HeartBeat': self.eo.heartbeat(payload)
                         if self.cancel.is_set(): break
@@ -542,6 +547,8 @@ class Runtime:
                             if not self.wait_for_mqtt_reconnect(client):
                                 raise ValueError('MQTT 连接在 30 秒内未恢复，任务停止')
                         if not subscriptions.wait_ready(self.cancel): break
+                        # 开始、恢复上报和故障起止时，先报一条健康状态再发这条心跳（新-11）。
+                        health.before_publish(topic, payload)
                         info=client.publish(topic,json.dumps(payload,ensure_ascii=False),qos=1,retain=False)
                         info.wait_for_publish(timeout=5)
                         if not info.is_published(): raise ValueError('MQTT 确认超时：当前发送结果未知，任务停止')

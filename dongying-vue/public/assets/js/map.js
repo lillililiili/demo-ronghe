@@ -823,7 +823,9 @@
       const gap = Math.max(MapView.animationGap(costs), ANIM_FRAME_MS);
       // 图上没有会动的东西（没有在线设备，或设备与覆盖范围图层都关着）时不画装饰帧。
       if (self._hasAnimation() && now - (self._animLastAt || 0) >= gap) {
-        self.t += 1;
+        // 动画相位按真实时间走（以 60 帧/秒为单位），少画几帧不会让扫描、波纹变慢。
+        if (self._animStartAt == null) self._animStartAt = now - self.t * 1000 / 60;
+        self.t = (now - self._animStartAt) * 60 / 1000;
         self.draw();
         self._animDrawnAt = self._animLastAt = now;
       }

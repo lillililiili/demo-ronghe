@@ -34,6 +34,27 @@ async function loadSource(deps) {
 
 async function main() {
   const data = await import('../src/services/situationData.js');
+
+  // 两次重读之间本机接上的点要和上一点序号连续，地图才画成连线（放大到街道级也不断成一个个点）。
+  const vm = require('node:vm');
+  const mapContext = { window: {}, requestAnimationFrame: () => 1, cancelAnimationFrame: () => {} };
+  vm.runInNewContext(fs.readFileSync(path.resolve(__dirname, '../public/assets/js/map.js'), 'utf8'), mapContext);
+  const continuous = mapContext.window.MapView.trackContinuous;
+  const tail = [{ lon: 118.5, lat: 37.4, track_id: 'k1', point_seq: 7, t: 1000, kind: 'meas', corridor_relation: 'WITHIN' }];
+  let local = data.extendRecentTracks([{ targetId: 'a', lon: 118.501, lat: 37.401, observedAt: 2000 }], [{ targetId: 'a', track: tail }]);
+  local = data.extendRecentTracks([{ targetId: 'a', lon: 118.502, lat: 37.402, observedAt: 3000 }], local);
+  const extended = local[0].track;
+  check('本机接上的点序号连续、沿用走廊关系', extended.map(point => [point.point_seq, point.corridor_relation]),
+    [[7, 'WITHIN'], [8, 'WITHIN'], [9, 'WITHIN']]);
+  let steady = [{ targetId: 'b', track: Array.from({ length: 24 }, (_, i) => ({ lon: 118.5, lat: 37.4 + i / 1e5,
+    track_id: 'k2', point_seq: i, t: 10_000 + i * 300, kind: 'meas', corridor_relation: 'WITHIN' })) }];
+  for (let second = 1; second <= 5; second++) {
+    steady = data.extendRecentTracks([{ targetId: 'b', lon: 118.5, lat: 37.41 + second / 1e5, observedAt: 16_900 + second * 1000 }], steady);
+  }
+  const steadyTrack = steady[0].track;
+  ok(`本机接点时尾迹时长不变（${steadyTrack.at(-1).t - steadyTrack[0].t}ms）`, steadyTrack.at(-1).t - steadyTrack[0].t <= 6900);
+  check('本机接点时最老的点按时间丢掉', steadyTrack.at(-1).point_seq, 28);
+  check('本机接上的点在地图上连成线', [continuous(extended[0], extended[1]), continuous(extended[1], extended[2])], [true, true]);
   let devicePages = [];
   let targetCalls = 0;
   let targetConcurrent = 0;

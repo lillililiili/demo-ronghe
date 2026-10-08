@@ -23,6 +23,7 @@ from eo_video import EoSimulator, video_config, public_video_config, sanitize_vi
 from qa_media import MediaService, load_or_create_credentials
 from realtime_control import RealtimeController, prepare_scene
 from full_scenario import full_scene, allocate_identities
+import mock_airport
 from fullchain import FullChain
 from protocol_b import ProtocolBResponder
 from mqtt_recovery import CommandSubscriptions
@@ -119,6 +120,18 @@ class ExternalBridge:
         if not broker or not broker.get('owner_org_id') or not broker.get('district_id'):
             return {'owner_org_id': None, 'district_id': None, 'message': '未找到启用的回放 MQTT 连接 local-lingyun-replay，请手动选择归属单位与区县'}
         return {'owner_org_id': broker['owner_org_id'], 'district_id': broker['district_id'], 'broker_name': broker.get('name')}
+
+    def mock_airport(self, create):
+        """确认书 4-3 的模拟机场：读现状，或在模拟器连接的单位和区域录入（只补缺的部分，见 mock_airport）。"""
+        with self.lock:
+            platform = self.platform
+        if platform is None: raise ExternalAuthenticationRequired('请先登录现有系统')
+        try:
+            return mock_airport.ensure(platform, self.connection_scope()) if create else mock_airport.status(platform)
+        except ValueError as error:
+            if '返回 401' in str(error):
+                self.invalidate(platform)
+            raise
 
     def request(self, command):
         if not isinstance(command, dict): raise ValueError('请求格式无效')
@@ -716,6 +729,11 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.respond(external_bridge.connection_scope())
             except ValueError as error:
                 return self.respond({'error': str(error)}, 401 if isinstance(error, ExternalAuthenticationRequired) or '返回 401' in str(error) else 400)
+        if self.path=='/api/external/mock-airport':
+            try:
+                return self.respond(external_bridge.mock_airport(False))
+            except ValueError as error:
+                return self.respond({'error': str(error)}, 401 if isinstance(error, ExternalAuthenticationRequired) or '返回 401' in str(error) else 400)
         if urlparse(self.path).path == '/api/external/inbox':
             params = parse_qs(urlparse(self.path).query)
             try:
@@ -749,6 +767,7 @@ class Handler(SimpleHTTPRequestHandler):
             body=json.loads(self.rfile.read(size))
             if self.path=='/api/external/connect': result=external_bridge.connect(body)
             elif self.path=='/api/external/request': result=external_bridge.request(body)
+            elif self.path=='/api/external/mock-airport': result=external_bridge.mock_airport(True)
             elif self.path=='/api/connect': result=runtime.connect(body)
             elif self.path=='/api/video': result=runtime.video_control(body)
             elif self.path=='/api/start': result=runtime.start(body)

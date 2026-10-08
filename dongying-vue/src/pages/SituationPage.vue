@@ -23,7 +23,7 @@ import { toast } from '@/ui/nv.js';
 import { getAlarm } from '@/services/alarmApi.js';
 import SituationAdvisoryCard from './situation/SituationAdvisoryCard.vue';
 import SituationAlarmPopup from './situation/SituationAlarmPopup.vue';
-import { NO_PILOT_LOCATION, pilotLocationText } from '@/services/pilotLocation.js';
+import { PILOT_LOCATION_IN_ALARM_DETAIL, pilotLocationText } from '@/services/pilotLocation.js';
 import WeatherRiskMarkers from '@/components/WeatherRiskMarkers.vue';
 import { weatherAnchor } from '@/services/weatherRiskGeometry.js';
 import SituationRiskGroupPopup from './situation/SituationRiskGroupPopup.vue';
@@ -863,7 +863,9 @@ onMounted(() => {
     sensorIconScale: 1,
     maxDpr: 2,
     layers: { alarm: false, coverage: true },
-    interactiveTip: true,
+    // 悬停小卡片不接点击（验收预跑 3-7）：图标挤在一起时，停在设备上弹出的卡片会盖住旁边的无人机，点不开；
+    // 卡片上的按钮在点开后的弹窗里都有。
+    interactiveTip: false,
     renderTip: renderMapTip,
     onTipAction,
     onPick: onMapPick,
@@ -1005,7 +1007,7 @@ onUnmounted(() => {
             <button type="button" aria-label="关闭告警详情" @click="clearSelection" v-html="U.icon('close')"></button></header>
           <div class="sit-map-pop-status"><span class="sit-state is-risk">{{ selectedUavAlarm.level }}风险</span><span>{{ selectedUavAlarm.type }}</span></div>
           <p>{{ selectedUavAlarm.district }} · 告警时间 {{ formatClock(selectedUavAlarm.ts) }}</p>
-          <p>遥控器位置：{{ NO_PILOT_LOCATION }}</p>
+          <p>遥控器位置：{{ PILOT_LOCATION_IN_ALARM_DETAIL }}</p>
         </section>
         <div v-if="videoContext && !selectedTarget" class="sit-video-entry">
           <button type="button" :aria-expanded="showTargetVideo" aria-controls="situation-video-window" @click="onTipAction('eo-video')">{{ showTargetVideo ? '收起视频' : '实时视频' }}</button>

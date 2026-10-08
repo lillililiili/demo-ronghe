@@ -6,7 +6,16 @@
   const outcomeChoices = kind => Object.fromEntries(Object.entries(outcomes).filter(([mode])=>kind==='ADVISORY_VOICE'||!['no_answer','answered_only'].includes(mode)));
   const notificationOnline = (value, now = Date.now()) => Number(value?.lease_expires_at || 0) > now;
   const editLocked = data => ['PREPARING','RUNNING','PAUSED','STOPPING'].includes(data?.phase) || ['STARTING','RUNNING','STOPPING'].includes(data?.realtime?.state);
-  if (typeof module !== 'undefined') { module.exports = {notificationOnline, editLocked, modeNames, outcomeChoices}; return; }
+  /* 处罚接收单位存在平台上，和平台"处罚移送选接收单位"同一口径：所有启用的接收单位都算，不只是这里勾的。 */
+  const sameChoice = (a, b) => a.length === b.length && a.every(value => b.includes(value));
+  function punishmentSummary(data) {
+    const enabled = data?.enabled_recipients || [];
+    if (!enabled.length) return '现在没有启用的处罚接收单位：反制完成后不会移送，平台会提示管理员去配。';
+    const others = enabled.filter(item => !item.simulator).map(item => item.name);
+    return `现在启用的处罚接收单位共 ${enabled.length} 个，${enabled.length > 1 ? '反制完成后要人选再移送' : '反制完成后自动移送'}`
+      + (others.length ? `；其中${others.join('、')}不是在这里配的` : '') + '。';
+  }
+  if (typeof module !== 'undefined') { module.exports = {notificationOnline, editLocked, modeNames, outcomeChoices, punishmentSummary, sameChoice}; return; }
   let busy = false;
   const box = document.createElement('section');
   box.className = 'realtime-bar';
@@ -56,6 +65,18 @@
     const options = {'':'跟随模拟器连接的单位与区县'};
     for(const scope of scopes) options[`${scope.owner_org_id}|${scope.district_id}`]=`${scope.owner_org_name || scope.owner_org_id} · ${scope.district_name || scope.district_id}`;
     if(config.countermeasure_scope && !options[config.countermeasure_scope]) options[config.countermeasure_scope]='已保存的单位与区县（不在当前读取范围）';
+    let punishment = null, punishmentError = '登录系统后才能选处罚接收单位';
+    if(liveState?.connected) {
+      try { punishment = await api('external/request',{method:'GET',path:'/local-interface-simulator/punishment-recipients'}); }
+      catch(error) { punishmentError = error.message; }
+    }
+    const chosen = punishment?.selected || [];
+    const punishmentFields = punishment
+      ? `<fieldset id="realtime-punishment"><legend>处罚接收单位</legend>
+        <p class="field-note">反制完成后的处罚移送发给这里勾的单位，由模拟接收端代收。勾一个时系统自动移送，勾两个以上时要人选。飞手短信、飞手电话和通知上级不用选，接收端一启动就自动接好。这一项保存后马上生效。</p>
+        <div class="realtime-checks">${(punishment.organizations || []).map(org=>`<label class="realtime-check"><input type="checkbox" name="punishment_org" value="${esc(org.org_id)}" ${chosen.includes(org.org_id)?'checked':''}>${esc(org.name)}</label>`).join('') || '<p class="field-note">平台上还没有单位，请先在管理端 单位管理 里建好处罚部门。</p>'}</div>
+        <p class="field-note">${esc(punishmentSummary(punishment))}</p></fieldset>`
+      : `<p class="field-note">处罚接收单位暂时读不到：${esc(punishmentError)}</p>`;
     openDialog('实时收发设置',`<form id="realtime-form">
       <p class="field-note">修改只影响下一次启动。已有通知保留首次接收时的处理方式；混合模式保留正常目标上报，同时按所选通知结果模拟异常回执。</p>
       ${choice('mode','运行模式',config.mode,{normal:'正常',abnormal:'异常',mixed:'混合'})}
@@ -69,6 +90,7 @@
       ${choice('command_mode','设备指令',config.command_mode,{success:'正常执行回执',no_receipt:'不执行、不回执',unchanged:'四通道状态不变，光电正常'})}
       ${Object.entries(kinds).map(([kind,label])=>choice(kind,label,config.outcomes[kind] || 'success',outcomeChoices(kind))).join('')}
       <p class="field-note">混合模式的设备指令按正常回执；异常模式可模拟设备指令异常。全量场景若选择通知轮换策略，会覆盖此处六类结果。设备离线和故障时窗属于设备诊断联调条件。</p></fieldset>
+      ${punishmentFields}
       <p class="inline-error" role="alert">${esc(warning)}</p><div class="form-actions"><button type="submit" class="primary">保存设置</button></div></form>`);
     const form=document.querySelector('#realtime-form');
     const refresh=()=>{ const mode=form.elements.mode.value;document.querySelector('#realtime-abnormal').disabled=mode==='normal';form.elements.command_mode.disabled=mode!=='abnormal'; };
@@ -81,7 +103,15 @@
       next.play_seconds=Number(form.elements.play_seconds.value);
       for(const kind of Object.keys(kinds)) next.outcomes[kind]=form.elements[kind].value;
       const submit=form.querySelector('[type=submit]');submit.disabled=true;
-      try { await api('realtime/config',next);closeDialog();toast('设置已保存，下次启动生效');await poll(); }
+      const picked=[...form.querySelectorAll('[name=punishment_org]:checked')].map(input=>input.value);
+      const punishmentChanged=!!punishment && !sameChoice(picked,chosen);
+      try {
+        if(punishmentChanged) {
+          const key='punish-'+Date.now()+'-'+Math.random().toString(36).slice(2,8);
+          await api('external/request',{method:'POST',path:'/local-interface-simulator/punishment-recipients',key,body:{org_ids:picked}});
+        }
+        await api('realtime/config',next);closeDialog();toast(punishmentChanged?'处罚接收单位已生效；其他设置下次启动生效':'设置已保存，下次启动生效');await poll();
+      }
       catch(error) { form.querySelector('.inline-error').textContent=error.message; }
       finally { submit.disabled=false; }
     });

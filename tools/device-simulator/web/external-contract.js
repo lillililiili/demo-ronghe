@@ -1,11 +1,14 @@
 'use strict';
 (function(root){
+  // D-2（2026-10-08 定“模拟器带上”）：模拟的上级任务默认带上申报单位、执行飞手和报送单位，
+  // 平台收任务时按飞手手机号、报送单位编码找或建档案并关联；表单里可以改或清空。
+  const SIMULATED_FILING=Object.freeze({operator_name:'模拟申报单位',pilot_name:'模拟飞手',pilot_phone:'13800000000',reporting_org_code:'SIM-REPORTING-UNIT',reporting_org_name:'模拟报送单位'});
   function planSampleForRoute(route, now, messageId){
     const validFrom=Number(route?.valid_from),validTo=Number(route?.valid_to);
     const start=Math.max(now+5*60000,Number.isFinite(validFrom)&&validFrom>0?validFrom:0);
     const end=Math.min(start+60*60000,Number.isFinite(validTo)&&validTo>0?validTo:Infinity);
     if(end<=start)throw Error('航线有效期不足，无法生成起止时间；请选择其它航线版本');
-    return {message_id:messageId,route_version_id:route?.route_version_id||'',uav_sn:'SIM-UAV-'+now.toString(36).toUpperCase(),start_at:start,end_at:end,filing:{source_id:'local-flight-plan-simulator'}};
+    return {message_id:messageId,route_version_id:route?.route_version_id||'',uav_sn:'SIM-UAV-'+now.toString(36).toUpperCase(),start_at:start,end_at:end,filing:{source_id:'local-flight-plan-simulator',...SIMULATED_FILING}};
   }
   function weatherSampleForPlan(plan, now, messageId){
     const start=Number(plan?.start_at);
@@ -76,7 +79,7 @@
   function unavailableNotice(context){
     return Array.isArray(context?.unavailable_sections)?context.unavailable_sections.filter(value=>typeof value==='string'&&value.trim()).join('；'):'';
   }
-  const api={planSampleForRoute,weatherSampleForPlan,weatherSample,receiptChoices,applyInputFields,applyScenePlanRoute,refreshUpstreamRouteDraft,submitResultText,unavailableNotice};
+  const api={SIMULATED_FILING,planSampleForRoute,weatherSampleForPlan,weatherSample,receiptChoices,applyInputFields,applyScenePlanRoute,refreshUpstreamRouteDraft,submitResultText,unavailableNotice};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   root.ExternalContract=api;
 })(typeof window!=='undefined'?window:globalThis);

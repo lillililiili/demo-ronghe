@@ -46,6 +46,11 @@ def canonical_payload(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
 
 
+# Same values as the simulator's task form sample (web/external-contract.js).
+SIMULATED_PILOT = {'pilot_name': '模拟飞手', 'pilot_phone': '13800000000'}
+SIMULATED_REPORTING_UNIT = {'reporting_org_code': 'SIM-REPORTING-UNIT', 'reporting_org_name': '模拟报送单位'}
+
+
 def payload_fingerprint(value):
     """Return a short deterministic suffix for a changed simulator payload."""
     return hashlib.sha256(canonical_payload(value).encode('utf-8')).hexdigest()[:12]
@@ -311,13 +316,20 @@ class FullChain:
 
     def prepare(self):
         now=self.manifest['created_at']; end=now+24*3600000
-        # Existing configured contacts may be selected; this never asserts a new human verification.
+        # A pilot or reporting-unit binding chosen in the scene wins. Otherwise each simulated
+        # upstream task carries its own pilot and reporting unit (D-2, 2026-10-08); the platform
+        # finds or creates those records by phone and code, and links them to the task.
         filing=copy.deepcopy(self.scene.get('fullchain',{}).get('filing',{}))
         filing.setdefault('source_id','local-flight-plan-simulator')
+        if not filing.get('pilot_contact_id'):
+            for key, value in SIMULATED_PILOT.items():
+                filing.setdefault(key, value)
+        if not filing.get('source_binding_id'):
+            for key, value in SIMULATED_REPORTING_UNIT.items():
+                filing.setdefault(key, value)
         options=self.api.call('GET',PREFIX+'/plan-options')
         inputs=self.existing_inputs()
-        if not filing.get('pilot_contact_id'):
-            self.state['warnings']=['未选择执行飞手；短信/电话仍按平台资格阻断，可在全量资料设置选择现有飞手']
+        self.state['warnings']=[]
         if filing.get('pilot_contact_id') and filing['pilot_contact_id'] not in {p['contact_id'] for p in options.get('pilots',[])}:
             raise ValueError('选择的飞手不在当前可用范围，请重新选择')
         for index, plan in enumerate(self.scene['plans'],1):

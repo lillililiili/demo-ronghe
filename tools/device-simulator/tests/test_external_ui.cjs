@@ -104,6 +104,8 @@ test('plan sample stays inside selected route validity', () => {
   assert.equal(sample.start_at,route.valid_from);
   assert.equal(sample.end_at,route.valid_to);
   assert.equal(sample.message_id,'m-route');
+  // D-2: the simulated upstream task carries its own operator, pilot and reporting unit.
+  assert.deepEqual(sample.filing,{source_id:'local-flight-plan-simulator',operator_name:'模拟申报单位',pilot_name:'模拟飞手',pilot_phone:'13800000000',reporting_org_code:'SIM-REPORTING-UNIT',reporting_org_name:'模拟报送单位'});
 });
 
 test('route without validity keeps the prior one-hour sample', () => {

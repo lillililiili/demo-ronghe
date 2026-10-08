@@ -28,6 +28,46 @@ class FakePlatform:
 
 
 class FullChainTests(unittest.TestCase):
+    def test_tasks_carry_a_simulated_pilot_and_reporting_unit_unless_archives_are_chosen(self):
+        from fullchain import FullChain
+
+        class ArchivePlatform(FakePlatform):
+            def call(self, method, path, body=None, key=None):
+                if path.endswith('/plan-options'):
+                    self.calls.append((method, path, copy.deepcopy(body), key))
+                    return {'pilots':[{'contact_id':'c1','org_id':'o2','name':'档案飞手'}],
+                            'organizations':[], 'source_bindings':[]}
+                return super().call(method, path, body, key)
+
+        scene = full_scene(['uav'])
+        scene['plans'] = scene['plans'][:1]
+        scene['targets'] = [t for t in scene['targets'] if t.get('planId') == scene['plans'][0]['id']]
+        manifest = {'batch':'b', 'created_at':TEST_NOW, 'devices':{}, 'plans':{}, 'zones':{},
+                    'targets':allocate_identities(scene, 'b'),
+                    'fullchain':{'requests':{}, 'coverage':{}, 'warnings':['旧提示']}}
+        api = FakePlatform()
+        FullChain(api, scene, manifest, {'owner_org_id':'o','district_id':'d'}, lambda:None).prepare()
+        filing = next(b for _,p,b,_ in api.calls if p.endswith('/plans'))['filing']
+        self.assertEqual({k: filing.get(k) for k in ('operator_org_id','pilot_name','pilot_phone','reporting_org_code','reporting_org_name','source_id')},
+                         {'operator_org_id':'o','pilot_name':'模拟飞手','pilot_phone':'13800000000',
+                          'reporting_org_code':'SIM-REPORTING-UNIT','reporting_org_name':'模拟报送单位',
+                          'source_id':'local-flight-plan-simulator'})
+        self.assertNotIn('pilot_contact_id', filing)
+        self.assertEqual(manifest['fullchain']['warnings'], [])
+
+        chosen = copy.deepcopy(scene)
+        chosen['fullchain']['filing'] = {'pilot_contact_id':'c1','pilot_name':'档案飞手','operator_org_id':'o2',
+                                         'source_binding_id':'b1','source_id':'src'}
+        manifest = {'batch':'c', 'created_at':TEST_NOW, 'devices':{}, 'plans':{}, 'zones':{},
+                    'targets':allocate_identities(chosen, 'c')}
+        api = ArchivePlatform()
+        FullChain(api, chosen, manifest, {'owner_org_id':'o','district_id':'d'}, lambda:None).prepare()
+        filing = next(b for _,p,b,_ in api.calls if p.endswith('/plans'))['filing']
+        self.assertEqual((filing['pilot_contact_id'], filing['pilot_name'], filing['operator_org_id'], filing['source_binding_id']),
+                         ('c1', '档案飞手', 'o2', 'b1'))
+        for key in ('pilot_phone', 'reporting_org_code', 'reporting_org_name'):
+            self.assertNotIn(key, filing)
+
     def test_restart_reuses_original_plan_across_lifecycle_and_legacy_duplicates(self):
         from fullchain import FullChain
         for hour in (12, 15):

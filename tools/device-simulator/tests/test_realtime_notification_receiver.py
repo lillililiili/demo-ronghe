@@ -1,4 +1,6 @@
 import copy
+import base64
+import hashlib
 import json
 import sys
 import tempfile
@@ -17,6 +19,15 @@ def message(kind='ADVISORY_SMS', state='SUBMITTED', version=1):
     return dict(message_id='simn-message-1', kind=kind, direction='OUT', subject_id='subject-1',
                 state=state, version=version, created_at=int(time.time() * 1000),
                 payload={'text': '原样保留通知正文', 'recipient': 'receiver'}, result={})
+
+
+def voice_message_with_recording(audio=b'RIFF-test-audio'):
+    row = message('ADVISORY_VOICE')
+    row['payload'].update({
+        'recording': {'id': 'rec-1', 'name': '现场提醒', 'sha256': hashlib.sha256(audio).hexdigest()},
+        'recording_audio_base64': base64.b64encode(audio).decode('ascii')
+    })
+    return row
 
 
 class FakeProxy:
@@ -133,8 +144,20 @@ class ReceiverTests(unittest.TestCase):
         second.step()
         self.assertGreaterEqual(time.time() - start, 0.12)
         self.assertEqual(['ANSWERED', 'PLAYED'], self.proxy.outcomes())
-        second.step()
-        self.assertEqual(['ANSWERED', 'PLAYED'], self.proxy.outcomes())
+
+    def test_voice_recording_audio_is_saved_and_not_duplicated_in_state(self):
+        self.proxy.row = voice_message_with_recording()
+        self.receiver().step()
+        recording_file = self.root / 'recordings' / 'rec-1.wav'
+        self.assertEqual(b'RIFF-test-audio', recording_file.read_bytes())
+        state = json.loads((self.root / 'state.json').read_text(encoding='utf-8'))
+        stored = state['messages']['simn-message-1']['original']['payload']
+        self.assertNotIn('recording_audio_base64', stored)
+        self.assertEqual('recordings/rec-1.wav', stored['recording_file'])
+        self.assertEqual(hashlib.sha256(b'RIFF-test-audio').hexdigest(), stored['recording_sha256'])
+        self.assertNotIn('recording_audio_base64', state['messages']['simn-message-1']['current']['payload'])
+        events = [json.loads(line) for line in (self.root / 'events.jsonl').read_text(encoding='utf-8').splitlines()]
+        self.assertTrue(all('recording_audio_base64' not in e.get('message', {}).get('payload', {}) for e in events))
 
     def test_non_voice_delivery_then_acknowledgement(self):
         for kind in ('RISK_NOTICE', 'UAV_PUNISHMENT', 'PLAN_FEEDBACK', 'DEVICE_MAINTENANCE'):

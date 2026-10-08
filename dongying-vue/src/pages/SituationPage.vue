@@ -644,7 +644,7 @@ function renderDeviceTip(device) {
     : unavailable ? `${coverageText}（当前不可用）` : coverageText;
   const related = (device.relatedAlerts || []).slice(0, 2);
   return `<section class="sit-map-pop sit-map-pop-device" style="--sensor:${esc(device.color)}">
-    <header><span class="sit-map-pop-icon">${iconHtml(device)}</span><span><b>${esc(device.name)}</b><small class="mono">${esc(device.id)}</small></span>
+    <header><span class="sit-map-pop-icon">${iconHtml(device)}</span><span><b>${esc(device.name)}</b><small class="mono" title="${esc(device.id)}">${esc(device.display_no || device.id)}</small></span>
       <button type="button" data-tip-act="close" aria-label="关闭设备详情">${U.icon('close')}</button></header>
     <div class="sit-map-pop-status"><span class="sit-state ${statusClass(device.status)}">${esc(device.status)}</span><span>最新上报 ${esc(reportAge(device.lastReportAt))}</span></div>
     ${device.posValid === false ? '<p class="sit-map-pop-note">未提供安装坐标，暂不显示地图点位。</p>' : ''}
@@ -929,7 +929,7 @@ onUnmounted(() => {
                 :class="[{ 'is-selected': selection?.kind === 'device' && selection.id === device.id, 'has-new': device.newAlert }, statusClass(device.status)]"
                 :aria-pressed="selection?.kind === 'device' && selection.id === device.id"
                 :aria-label="`查看${device.type}设备 ${device.name}，${device.status}${device.hasAlarm ? '，存在告警' : ''}`" @click="selectDevice(device)">
-                <span><span class="sit-node-icon" v-html="iconHtml(device)"></span><b>{{ device.name }}</b><small class="mono">{{ device.id }}</small></span>
+                <span><span class="sit-node-icon" v-html="iconHtml(device)"></span><b>{{ device.name }}</b><small class="mono" :title="device.id">{{ device.display_no || device.id }}</small></span>
                 <em>{{ device.status }} · {{ reportAge(device.lastReportAt) }}<template v-if="device.timeUntrusted"> · 设备时间不准</template></em>
               </button>
             </div>

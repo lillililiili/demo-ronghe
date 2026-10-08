@@ -2,6 +2,7 @@
 import { userFacingMessage } from '@/ui/labels.js';
 import { computed, onUnmounted, ref, watch } from 'vue';
 import { flightApi } from '@/services/flightApi.js';
+import { displayPlanNo, displayRouteNo } from '@/ui/deviceNumber.js';
 
 const props = defineProps({
   plan: { type: Object, required: true }, routeVersion: { type: Object, default: null },
@@ -45,8 +46,8 @@ const altitude = computed(() => {
   <section class="sect plan-filing">
     <div class="filing-col">
     <div class="workspace-section-heading"><h4>任务信息</h4></div>
-    <dl class="kv kv-surface">
-      <dt>任务编号</dt><dd>{{ value(plan.plan_no) }} <span v-if="plan.source_mode === 'mock'" class="tag t-amber">模拟任务</span></dd>
+    <dl class="kv kv-surface plan-info-card">
+      <dt>任务编号</dt><dd :title="plan.plan_no">{{ displayPlanNo(plan.plan_no) || value(plan.plan_no) }} <span v-if="plan.source_mode === 'mock'" class="tag t-amber">模拟任务</span></dd>
       <dt>报备单位</dt><dd>
         <span>{{ value(subjects?.operator_org_name || filing.operator_name) }}</span>
         <small v-if="subjects?.operator_org_id && filing.operator_name && subjects.operator_org_name !== filing.operator_name">申报时名称：{{ filing.operator_name }}</small>
@@ -89,7 +90,7 @@ const altitude = computed(() => {
     <h4 class="route-heading">报备航线</h4>
     <dl class="kv kv-surface">
       <dt>航线名称</dt><dd class="route-name">{{ value(plan.route?.name) }}</dd>
-      <dt>航线编号</dt><dd>{{ value(plan.route?.route_no) }}</dd>
+      <dt>航线编号</dt><dd :title="plan.route?.route_no">{{ displayRouteNo(plan.route?.route_no) || value(plan.route?.route_no) }}</dd>
       <dt>使用版本</dt><dd><span class="tag" :class="plan.route?.version_no == null ? 't-gray' : 't-purple'">{{ plan.route?.version_no == null ? '未提供' : `v${plan.route.version_no}` }}</span></dd>
       <template v-if="routeLoading"><dt>航线范围</dt><dd>正在读取</dd></template>
       <template v-else-if="routeError"><dt>航线范围</dt><dd class="muted">{{ routeError }}</dd></template>
@@ -119,6 +120,13 @@ const altitude = computed(() => {
   .filing-card { padding: 6px 8px; gap: 3px; }
 }
 .plan-filing .kv-surface { padding: 7px 0; border: 0; border-bottom: 1px solid var(--line-2); border-radius: 0; background: transparent; }
+.plan-filing .plan-info-card {
+  padding: 10px 11px;
+  border: 1px solid color-mix(in srgb, var(--blue) 20%, var(--line-2));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--blue) 5%, var(--panel-2));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--blue) 7%, transparent);
+}
 .plan-filing dd { min-width: 0; overflow-wrap: anywhere; }
 .plan-filing dd small { display: block; color: var(--txt-3); font-size: 11px; line-height: 1.6; margin-top: 3px; }
 .plan-filing .tag { margin: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }

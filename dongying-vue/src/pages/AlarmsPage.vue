@@ -202,6 +202,15 @@ function showCounterLaunch() {
     || pageProgress[cur.alarm.event_id];
   return !['JAMMING_DONE', 'COUNTER_STOPPED', 'HANDED_OFF'].includes(key);
 }
+function eventHandedOff() {
+  const eventId = cur.alarm?.event_id;
+  if (!eventId) return false;
+  const autoHandoff = advisoryLive.value?.auto_handoff;
+  if (autoHandoff?.handoff_id && !['FAILED', 'DISABLED', 'BLOCKED', 'WAITING'].includes(autoHandoff.status)) return true;
+  const key = deriveAlarmProgress(Object.values(disposal.byAction), disposal.handoff ? [disposal.handoff] : [])
+    || pageProgress[eventId];
+  return key === 'HANDED_OFF';
+}
 const typeOf = a => ALARM_TYPE_LABEL[a.alarm_type] || esc(a.alarm_type || '—');
 /* 只上屏业务编号；引擎标识（例如 eval 前缀）不是编号，列里显示 —，内部 ID 留在 title。 */
 const noOf = a => readableNo(a.alarm_no) || '—';
@@ -211,10 +220,12 @@ const OBSERVATION_LABEL = { CURRENT: '观测有效', EXPIRED: '观测已过期',
 const ATTENTION_LABEL = { CURRENT: '当前事项', AWAITING_CONFIRMATION: '状态待确认', HISTORY: '历史记录' };
 const stateTag = a => {
   const status = U.tag(displayState(a).t, displayState(a).c);
-  const observation = a.attention_group !== 'HISTORY' && ['EXPIRED', 'UNKNOWN'].includes(a.observation_status)
-    ? U.tag(OBSERVATION_LABEL[a.observation_status], 't-gray') : '';
+  const observation = observationTag(a);
   return observation ? `<span class="alarm-state-stack">${status}${observation}</span>` : status;
 };
+const observationTag = a => a.attention_group !== 'HISTORY' && ['EXPIRED', 'UNKNOWN'].includes(a.observation_status)
+  ? U.tag(OBSERVATION_LABEL[a.observation_status], 't-gray') : '';
+const detailStateTags = a => `${U.tag(displayState(a).t, displayState(a).c)}${observationTag(a)}`;
 /* 告警升级（2026-10-06，BUG-11/BUG-16）：同一架无人机再次违规时服务端升级原告警，不再另起一条。
    severity 已是升级后的当前等级；违规原因按出现顺序累计（偏航写“偏航”）；升级经过另读升级记录。 */
 const severityText = code => SEVERITY[code]?.t || (code === 'UNKNOWN' ? '未定级' : '');
@@ -597,7 +608,7 @@ function detailHtml() {
   const reasons = reasonsOf(a), brief = briefOf(a);
   return `${U.detailHero({
     icon: 'alert', subtitle: '告警事件', title: typeOf(a), id: esc(noOf(a)),
-    tags: [sevTag(a), stateTag(a)]
+    tags: [sevTag(a), detailStateTags(a)]
   })}
     ${U.sect('告警信息', U.kv([
     ['触发时间', fmt(a.occurred_at) || '未知'], ['接收时间', fmt(a.received_at) || '—'],
@@ -613,7 +624,7 @@ function detailHtml() {
     ['遥控器位置', !a.target_id ? NO_PILOT_LOCATION : cur.targetLoading ? '读取中' : cur.targetError ? '读取失败'
       : esc(pilotLocationText(ls && ls.pilot_location))],
     ['数据来源', `${esc(sourceDescription(a.source_name, a.source_code, a.source_mode, '—'))}`]
-  ], { surface: true, density: 'compact' }), { icon: 'alert' })}
+  ], { surface: true, density: 'compact' }), { icon: 'alert', className: 'alarm-info-sect' })}
     ${escalationHtml(brief)}
     ${renderEvidenceChainHtml(cur.chain, {
       loading: cur.chainLoading, error: cur.chainError, unavailable: cur.chainUnavailable
@@ -1188,7 +1199,7 @@ onMounted(async () => {
             <div class="alarm-action-bar">
               <CounterLaunch v-if="advisorySubject" :key="`counter-${advisorySubject.id}`"
                 :event-id="advisorySubject.id" :event-label="advisorySubject.label" :active="activeTab === 'alarms'"
-                :show-launch="showCounterLaunch()" :confirmed="advisorySubject.confirmed" :summary="advisoryLive"
+                :show-launch="showCounterLaunch()" :handed-off="eventHandedOff()" :confirmed="advisorySubject.confirmed" :summary="advisoryLive"
                 @decision="updateNoCounter"
                 @records="openAuthorizations" />
               <div id="alDetailActions" class="alarm-observation"></div>
@@ -1213,6 +1224,12 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.alarms-page :deep(.detail-hero-tags) {
+  align-items: flex-start;
+}
+.alarms-page :deep(.detail-hero-auto .detail-hero-tags .tag:nth-child(n+3)) {
+  display: inline-block;
+}
 .alarms-page :deep(.alarm-state-stack) {
   display: inline-flex;
   flex-direction: column;
@@ -1283,6 +1300,7 @@ onMounted(async () => {
   }
 }
 .alarm-action-bar { position:sticky; top:0; z-index:10; display:flex; flex-direction:column; align-items:stretch; gap:10px; margin:0; padding:10px 12px; border-bottom:1px solid var(--line); background:var(--panel); box-shadow:0 4px 12px color-mix(in srgb, var(--bg-1) 22%, transparent); }
+.alarm-action-bar:has([data-al="replay"]) { position:static; top:auto; z-index:auto; }
 .alarm-action-bar:not(:has(.btn, .tag)) { display:none; }
 .alarm-observation { order:2; flex:0 0 auto; min-width:0; }
 .alarm-observation:empty { display:none; }
@@ -1295,6 +1313,11 @@ onMounted(async () => {
 .alarm-detail-content :deep(.alarm-escalation-list li + li) { border-top:1px solid var(--line-2); }
 .alarm-detail-content :deep(.alarm-escalation-head) { display:flex; align-items:center; flex-wrap:wrap; gap:8px; color:var(--txt); }
 .alarm-detail-content :deep(.alarm-escalation-meta) { margin:0; color:var(--txt-3); }
+.alarms-page :deep(.alarm-info-sect .kv.kv-surface) {
+  background: color-mix(in srgb, var(--blue) 5%, var(--panel-2));
+  border-color: color-mix(in srgb, var(--blue) 20%, var(--line-2));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--blue) 7%, transparent);
+}
 .alarms-page :deep(.alarm-refresh-note) { flex:none; margin:0 16px 8px; padding:6px 10px; border:1px solid var(--line); border-radius:6px; font-size:12px; line-height:1.6; color:var(--amber); overflow-wrap:anywhere; }
 .alarm-workspace-tabs { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; flex:none; }
 .alarm-workspace-tabs .btn { white-space:normal; height:auto; min-height:34px; }

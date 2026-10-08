@@ -24,6 +24,7 @@ import {
   AIRSPACE_KIND_LABEL, AIRSPACE_KIND_TAG, ALTITUDE_DATUM_LABEL,
   labelOf
 } from '@/ui/labels.js';
+import { displayAirspaceNo, displayRouteNo } from '@/ui/deviceNumber.js';
 
 usePageChrome('airspace');
 
@@ -230,7 +231,7 @@ async function loadRoutes() {
         const coords = current?.centerline?.coordinates;
         if (!Array.isArray(coords) || coords.length < 2) return null;
         const points = coords.map(point => [Number(point?.[0]), Number(point?.[1])]).filter(([lon, lat]) => Number.isFinite(lon) && Number.isFinite(lat));
-        return points.length >= 2 ? { id: route.route_id, name: route.name || route.route_no, points } : null;
+        return points.length >= 2 ? { id: route.route_id, name: route.name || displayRouteNo(route.route_no), points } : null;
       } catch { return null; }
     }));
     routeLines.value = lines.filter(Boolean);
@@ -637,7 +638,7 @@ onUnmounted(() => {
         <div class="drawer-head">
           <div class="drawer-title">
             <b :title="selected.airspace_id">{{ selected.name }}</b>
-            <span class="mono">{{ selected.airspace_no }} <span v-if="sourceLabel(selected)" class="tag t-amber">{{ sourceLabel(selected) }}</span></span>
+            <span class="mono" :title="selected.airspace_no">{{ displayAirspaceNo(selected.airspace_no) }} <span v-if="sourceLabel(selected)" class="tag t-amber">{{ sourceLabel(selected) }}</span></span>
           </div>
           <button type="button" class="drawer-close" aria-label="关闭" @click="clearDetail">×</button>
         </div>
@@ -699,7 +700,7 @@ onUnmounted(() => {
       <div v-else class="scroll airspace-list" aria-label="空域记录列表">
         <button v-for="row in pageRows" :key="row.airspace_id" type="button" class="airspace-rule-card" :class="{ on: selected?.airspace_id === row.airspace_id }" :style="{ '--rule-color': kindAccent(row.current_version?.kind_code) }" :aria-pressed="selected?.airspace_id === row.airspace_id" @click="select(row)">
           <span class="rule-card-head"><b>{{ row.name }}</b><span class="tag" :class="rowStatus(row).cls">{{ rowStatus(row).text }}</span></span>
-          <span v-if="row.airspace_no" class="rule-card-code">{{ row.airspace_no }}</span>
+          <span v-if="row.airspace_no" class="rule-card-code" :title="row.airspace_no">{{ displayAirspaceNo(row.airspace_no) }}</span>
           <span v-if="row.current_version && altitudeText(row.current_version) !== '未填写'">{{ altitudeText(row.current_version) }}</span>
           <span v-if="row.current_version?.valid_from" class="rule-card-validity">{{ validityShort(row.current_version) }}</span>
           <span class="rule-card-footer">

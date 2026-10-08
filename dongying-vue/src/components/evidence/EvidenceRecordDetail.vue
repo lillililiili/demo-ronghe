@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router';
 import { getEvidenceTrackPoints } from '@/services/evidenceApi.js';
 import { COMMAND_STATE_LABEL, COMMAND_TYPE_LABEL, evidenceSubjectLocation } from '@/services/evidenceLedger.js';
 import { EVIDENCE_SUBJECT_LABEL } from '@/ui/labels.js';
+import { displayDeviceNo } from '@/ui/deviceNumber.js';
 import { fmtEvidenceTime, openEvidenceFileModal } from '@/ui/evidenceFileDetail.js';
 import EvidenceTrackPreview from './EvidenceTrackPreview.vue';
 import { buildCommandView } from './evidenceCommandView.js';
@@ -56,7 +57,7 @@ onBeforeUnmount(() => { sequence += 1; window.removeEventListener('auth-access-c
         <p>{{ commandView.explanation }}</p>
       </section>
       <section class="sect"><h4>操作信息</h4><dl class="kv">
-        <dt>执行设备</dt><dd>{{ command.device_name || command.device_no || '设备未记录' }}</dd>
+        <dt>执行设备</dt><dd :title="command.device_no">{{ command.device_name || displayDeviceNo(command.device_no) || '设备未记录' }}</dd>
         <dt>发起原因</dt><dd>{{ commandView.reason }}</dd>
         <dt>发起时间</dt><dd>{{ fmtEvidenceTime(command.created_at) }}</dd>
         <dt>下发时间</dt><dd>{{ command.issued_at == null ? (command.status === 'QUEUED' ? '尚未下发' : '未记录下发时间') : fmtEvidenceTime(command.issued_at) }}</dd>

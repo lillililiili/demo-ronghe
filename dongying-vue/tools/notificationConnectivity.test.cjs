@@ -34,6 +34,19 @@ test('unknown SMS never offers blind resend even if a stale backend flag permits
   assert.equal(view.tone, 'warning');
 });
 
+test('unavailable voice channel is shown instead of being reduced to SMS waiting', async () => {
+  const { autoVoiceView } = await import(pathToFileURL(path.join(sourceRoot, 'components/disposal/autoVoiceView.js')).href);
+  const view = autoVoiceView({
+    voice_mode: 'UNAVAILABLE',
+    auto_voice: { status: 'WAITING', reason: '飞手短信尚未送达，电话要等短信送达并观察 3 秒' }
+  });
+  assert.equal(view.title, '电话通道不可用');
+  assert.equal(view.channelUnavailable, true);
+  assert.match(view.reason, /模拟器|录音|通道/);
+  assert.equal(view.tone, 'warning');
+  assert.equal(view.simulated, false);
+});
+
 test('plan feedback unknown outcome does not claim no send happened', () => {
   const source = readFileSync(path.join(sourceRoot, 'pages/flights/components/PlanVerificationPanel.vue'), 'utf8');
   const match = source.match(/function notificationBlocker\(item\) \{([\s\S]*?)\n\}/);

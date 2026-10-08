@@ -18,6 +18,7 @@ import {
   SPACE_OBJECT_SUBTYPE_LABEL, ALTITUDE_BAND_LABEL, CORRIDOR_RELATION_LABEL, OBJECT_TREND_LABEL,
   DELIVERY_STATUS_LABEL, HANDOFF_TYPE_LABEL
 } from '@/ui/labels.js';
+import { displayPlanNo } from '@/ui/deviceNumber.js';
 
 const U = window.UI;
 usePageChrome('risk');
@@ -402,7 +403,7 @@ onUnmounted(() => {
                   <div>{{ row.district_name || '—' }}</div>
                   <div v-if="row.space_fact" class="sr-sub">{{ labelOf(ALTITUDE_BAND_LABEL, row.space_fact.altitude_band) }}</div>
                 </td>
-                <td><span v-if="row.plan_no" :title="row.route_version_id">{{ row.plan_no }}</span><span v-else>—</span></td>
+                <td><span v-if="row.plan_no" :title="row.plan_no">{{ displayPlanNo(row.plan_no) }}</span><span v-else>—</span></td>
                 <td><span class="tag" :class="severityTag(row.severity)">{{ labelOf(SEVERITY_LABEL, row.severity) }}</span></td>
                 <td>{{ labelOf(RISK_STATE_LABEL, row.state) }}</td>
               </tr>
@@ -453,7 +454,7 @@ onUnmounted(() => {
           <dl class="kv">
             <dt>发现时间</dt><dd>{{ fmt(detail.occurred_at ?? detail.received_at) }}</dd>
             <dt>所属区域</dt><dd>{{ detail.district_name || '—' }}</dd>
-            <dt>关联任务</dt><dd><span v-if="detail.plan_no" :title="detail.plan_id">{{ detail.plan_no }}</span><span v-else>—</span></dd>
+            <dt>关联任务</dt><dd><span v-if="detail.plan_no" :title="detail.plan_no">{{ displayPlanNo(detail.plan_no) }}</span><span v-else>—</span></dd>
             <dt v-if="detail.target_no">关联目标</dt><dd v-if="detail.target_no"><span :title="detail.target_id">{{ detail.target_no }}</span></dd>
           </dl>
 

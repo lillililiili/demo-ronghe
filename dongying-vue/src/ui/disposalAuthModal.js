@@ -5,6 +5,7 @@
 import { openFormModal } from './formModal.js';
 import { closeModal } from './modal.js';
 import { toast } from './nv.js';
+import { displayDeviceNo } from './deviceNumber.js';
 import { disposalApi, isDisposalUnavailable, newDisposalIdempotencyKey } from '@/services/disposalApi.js';
 import { deviceApi } from '@/services/deviceApi.js';
 import { isUncertainOutcome } from '@/services/apiClient.js';
@@ -144,7 +145,7 @@ export function deviceUnavailableReason(device) {
 }
 
 function deviceOptionLabel(device) {
-  const title = [device.device_no, device.name].filter(Boolean).join(' · ') || '未命名设备';
+  const title = [displayDeviceNo(device.device_no), device.name].filter(Boolean).join(' · ') || '未命名设备';
   const why = deviceUnavailableReason(device);
   const bits = [device.device_type_name, why ? `不能选：${why}` : ''].filter(Boolean);
   return bits.length ? `${title}（${bits.join(' · ')}）` : title;

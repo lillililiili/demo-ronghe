@@ -17,15 +17,11 @@ export const NAV = [
     ]
   },
   {
-    t: '飞行监管', icon: 'plan', kids: [
+    t: '飞行监管与处置', icon: 'plan', kids: [
       { k: 'flights', t: '飞行任务', icon: 'plan' },
       { k: 'legality', t: '合法性研判', icon: 'check' },
       /* 2026-09-13 挂回菜单（设计稿 v2）：访问权限由飞行计划承载，见 accessControl.js 的 ROUTE_ALIAS。 */
-      { k: 'airspace', t: '空域管理', icon: 'zone' }
-    ]
-  },
-  {
-    t: '事件处置', icon: 'alert', kids: [
+      { k: 'airspace', t: '空域管理', icon: 'zone' },
       { k: 'alarms', t: '告警事件', icon: 'alert' },
       { k: 'punish', t: '移送与处罚', icon: 'gavel' }
     ]
@@ -55,7 +51,7 @@ export const ROUTES = (function () {
   /* 已隐藏、不再挂菜单：仍要有中文名，否则无权访问提示会把英文路由键摆出来。 */
   r.workbench = { t: '我的工作台', p: null, ph: null };
   /* 旧书签 #/risk 会重定向到飞行计划「全部风险事件」；名称仅用于万一落到无权页时的提示。 */
-  r.risk = { t: '空间安全风险', p: '飞行监管', ph: 'flights' };
+  r.risk = { t: '空间安全风险', p: '飞行监管与处置', ph: 'flights' };
   r.bigscreen = { t: '低空安全监控大屏', p: null, ph: null };
   r.devices = { t: '设备管理', p: '运维管理', ph: null };
   r.monitor = { t: '设备实时监测', p: '运维管理', ph: null };

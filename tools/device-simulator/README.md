@@ -36,6 +36,8 @@
 
 通知接收器每 0.5 秒取请求、每 5 秒续租，租约 30 秒，默认模拟电话播放 3 秒。每条消息保存首次接收时的处理模式与播放时长，切换配置或重启不改变该消息结果；短信观察 3 秒、电话播放完成后观察 10 秒仍由平台计算。收件箱包含短信、电话、风险、处罚、计划反馈、设备运维六类权威历史；运维通知回执不代表设备恢复。设备运维通知自 2026-10-05 起由后台直接写入运维待办，不再发到接收程序，收件箱里的设备运维记录都是此前的历史。
 
+电话通知使用后台当前选用的 WAV 原始字节。接收器校验消息里的录音编号、SHA-256 和 Base64 内容后，把文件落到 `.data/realtime-notifications/recordings/<录音编号>.wav`；`state.json` 与 `events.jsonl` 只记录相对文件路径、字节数和哈希，便于核对实际收到的文件而不重复保存音频正文。模拟器只负责接收、保存并按配置产生接通／播放回执，不代表真实电话外呼。
+
 本地接口：`GET/POST /api/realtime/config`、`GET /api/realtime/status`、`POST /api/realtime/control`（`action=start|stop_all`）。配置字段为 `mode`、`continuous`、`notifications_enabled`、`countermeasure_enabled`、`countermeasure_scope`（`单位编号|区县编号`，可空）、`command_mode`、`play_seconds`、`outcomes`；旧设置文件里的 `countermeasure_plan_id` 读入时丢弃。文件只保存模拟配置；登录与 MQTT 凭据仍仅驻内存。`start-realtime-workers.ps1` 调用统一接收控制，不再另启旧设备保活进程。
 
 主进程与单独启动的接收器共用同一操作系统锁，防止重复回执；独立 `device_presence.py` 见到统一控制会停止保活，不会在场景停止后恢复旧设备。实时模式禁止数据库 seed 配套，计划、空域和天气使用已有受权接口。

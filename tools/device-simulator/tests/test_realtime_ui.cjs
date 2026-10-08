@@ -27,6 +27,17 @@ test('delayed and mixed receipts are available for all six channels', () => {
   }
 });
 
+test('punishment recipient summary counts every enabled recipient like the platform does', () => {
+  assert.match(ui.punishmentSummary({enabled_recipients:[]}), /没有启用的处罚接收单位/);
+  assert.match(ui.punishmentSummary({enabled_recipients:[{name:'市公安局',simulator:true}]}), /共 1 个，反制完成后自动移送。$/);
+  const two = ui.punishmentSummary({enabled_recipients:[{name:'市公安局',simulator:true},{name:'旧接收方',simulator:false}]});
+  assert.match(two, /共 2 个，反制完成后要人选再移送/);
+  assert.match(two, /其中旧接收方不是在这里配的/);
+  assert.equal(ui.sameChoice(['a','b'],['b','a']), true);
+  assert.equal(ui.sameChoice(['a'],['a','b']), false);
+  assert.equal(ui.sameChoice([],[]), true);
+});
+
 test('isolated QA visibly disables transports without disabling scene controls', () => {
   const nodes = new Map();
   const node = selector => {

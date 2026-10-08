@@ -42,8 +42,8 @@ class ExternalAuthenticationRequired(ValueError):
 class ExternalBridge:
     """Shared in-memory system login and allowlisted external interface calls."""
     PREFIX = '/local-interface-simulator'
-    READ = {PREFIX + '/context', PREFIX + '/airspaces/context', PREFIX + '/plan-options'}
-    WRITE = set(map(PREFIX.__add__, ('/plans', '/weather', '/weather-risks', '/device-status', '/bindings', '/airspaces', '/countermeasure-device', '/routes', '/observation-devices', '/target-observations', '/weather-devices', '/weather-observations')))
+    READ = {PREFIX + '/context', PREFIX + '/airspaces/context', PREFIX + '/plan-options', PREFIX + '/punishment-recipients'}
+    WRITE = set(map(PREFIX.__add__, ('/plans', '/weather', '/weather-risks', '/device-status', '/bindings', '/airspaces', '/countermeasure-device', '/routes', '/observation-devices', '/target-observations', '/weather-devices', '/weather-observations', '/punishment-recipients')))
     RECEIPT = re.compile(r'^/local-interface-simulator/messages/[A-Za-z0-9_-]{1,64}/receipt$')
     PLAN_FILING = re.compile(r'^/local-interface-simulator/plans/[A-Za-z0-9_-]{1,36}/filing$')
 

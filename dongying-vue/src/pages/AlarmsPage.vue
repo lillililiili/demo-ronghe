@@ -30,7 +30,7 @@ import UPanel from '@/components/UPanel.vue';
 import UKpis from '@/components/UKpis.vue';
 import { handoffApi } from '@/services/handoffApi.js';
 import { toast } from '@/ui/nv.js';
-import { exportAlarmsCsv, getAlarm, getUavEvent, listAlarmDistricts, listAlarmEscalations, listAlarms } from '@/services/alarmApi.js';
+import { exportAlarmsCsv, getAlarm, getUavEvent, listAlarmDistricts, listAlarmEscalations, listAlarms, listUavVerifications } from '@/services/alarmApi.js';
 import { escalationBrief, escalationRecords, reasonListText } from '@/ui/alarmEscalation.js';
 import { ruleReasonText } from '@/ui/legalityReviewModal.js';
 import { NO_PILOT_LOCATION, pilotLocationText } from '@/services/pilotLocation.js';
@@ -38,7 +38,7 @@ import { getEvidenceChain } from '@/services/evidenceApi.js';
 import { openUavVerification } from '@/ui/uavVerificationModal.js';
 import { targetApi } from '@/services/targetApi.js';
 import { mapPool } from '@/services/apiClient.js';
-import { ALARM_PROGRESS_LABEL, ALARM_PROGRESS_TAG, ALARM_TYPE_LABEL, classChangeText, DISPOSAL_ACTION_LABEL, labelOf, LEGALITY_LABEL, readableNo, sourceDescription, SOURCE_MODE_LABEL as MODE_TEXT, targetTypeLabel } from '@/ui/labels.js';
+import { ALARM_PROGRESS_LABEL, ALARM_PROGRESS_TAG, ALARM_TYPE_LABEL, classChangeText, CONCLUSION_LABEL, DISPOSAL_ACTION_LABEL, labelOf, LEGALITY_LABEL, readableNo, sourceDescription, SOURCE_MODE_LABEL as MODE_TEXT, targetTypeLabel } from '@/ui/labels.js';
 import { openEvidenceFileModal } from '@/ui/evidenceFileDetail.js';
 import { openEvidenceChainTypeModal, renderEvidenceChainHtml } from '@/ui/evidenceChainView.js';
 import { disposalApi, isDisposalUnavailable } from '@/services/disposalApi.js';
@@ -268,7 +268,8 @@ let listSeq = 0, detailSeq = 0;
 const emptyDetail = () => ({ alarm: null, event: null, loading: false, error: '',
   target: null, targetLoading: false, targetError: '', track: null, trackError: '',
   chain: null, chainLoading: false, chainError: '', chainUnavailable: '',
-  escalations: [], escalationsTotal: 0, escalationsLoading: false, escalationsError: ''
+  escalations: [], escalationsTotal: 0, escalationsLoading: false, escalationsError: '',
+  verifications: [], verificationsLoaded: false, verificationsLoading: false, verificationsError: ''
   });
 let cur = emptyDetail();
 /* 深链（sessionStorage alarm.sel）—— 与 legacy render() 同构：mount 后按 ID 直接向服务端取详情 */
@@ -661,10 +662,32 @@ function detailHtml() {
       : esc(pilotLocationText(ls && ls.pilot_location))],
     ['数据来源', `${esc(sourceDescription(a.source_name, a.source_code, a.source_mode, '—'))}`]
   ], { surface: true, density: 'compact' }), { icon: 'alert', className: 'alarm-info-sect' })}
+    ${verificationHtml()}
     ${escalationHtml(brief)}
     ${renderEvidenceChainHtml(cur.chain, {
       loading: cur.chainLoading, error: cur.chainError, unavailable: cur.chainUnavailable
     })}`;
+}
+
+/* 核实记录（确认书 3-1、流程 1 第②步，新-18）：按先后列出结论、时间和说明。系统按核实规则自动核实的没有核实人，
+   写“系统自动核实 · 无核实人”；人工核实的写核实人。还没有核实事件的告警不显示这一块。 */
+function verificationHtml() {
+  const a = cur.alarm;
+  if (!a?.event_id) return '';
+  let body;
+  if (cur.verificationsLoading) body = '<div class="empty">正在读取核实记录</div>';
+  else if (cur.verificationsError) {
+    body = `<div class="empty">${esc(cur.verificationsError)}<br><button class="btn" data-al="verifications-retry" style="margin-top:8px">重试</button></div>`;
+  } else if (!cur.verifications.length) {
+    body = `<div class="empty">${cur.event?.state === 'PENDING_VERIFICATION' ? '还没有核实' : '暂未读到核实记录'}</div>`;
+  } else {
+    body = `<ol class="alarm-escalation-list">${cur.verifications.map(v => `<li>
+        <div class="alarm-escalation-head"><b>${esc(labelOf(CONCLUSION_LABEL, v.conclusion, '结论未知'))}</b></div>
+        ${v.note ? `<div>说明：${esc(v.note)}</div>` : ''}
+        <div class="alarm-escalation-meta">${esc(v.actor_id ? `人工核实 · 核实人 ${v.actor_name || '未知'}` : '系统自动核实 · 无核实人')} · ${esc(fmt(v.created_at) || '时间未知')}</div>
+      </li>`).join('')}</ol>`;
+  }
+  return U.sect('核实记录', body, { icon: 'check' });
 }
 
 /* 升级记录：按升级先后列出每一次是系统研判还是人工转告警、等级怎么变、新增了什么原因、谁在什么时候做的。 */
@@ -897,9 +920,10 @@ async function selectAlarm(id) {
   }
   if (cur.alarm && (cur.alarm.event_id || cur.alarm.target_id)) cur.chainLoading = true;
   if (briefOf(cur.alarm)) cur.escalationsLoading = true;
+  if (cur.alarm?.event_id) cur.verificationsLoading = true;
   cur.loading = false;
   paintDetail(); focusMap();
-  await Promise.all([loadTarget(my), loadChain(my), loadEscalations(my)]);
+  await Promise.all([loadTarget(my), loadChain(my), loadEscalations(my), loadVerifications(my)]);
 }
 
 /* 升级记录只在告警升级过时读取；读不到只影响这一块，可单独重试，不影响告警详情与处置。 */
@@ -924,6 +948,30 @@ async function loadEscalations(my, { quiet = false } = {}) {
     }
   }
   cur.escalationsLoading = false;
+  paintDetailContent();
+}
+
+/* 核实记录随事件状态读取；quiet：打开的告警刚被核实（自动或人工），已显示的记录保留到新记录读到为止，读取失败也不清掉。 */
+const VERIFICATION_PAGE_SIZE = 20;
+async function loadVerifications(my, { quiet = false } = {}) {
+  const a = cur.alarm;
+  if (!a?.event_id || my !== detailSeq) return;
+  const keep = quiet && cur.verificationsLoaded;
+  if (!keep) { cur.verificationsLoading = true; cur.verificationsError = ''; paintDetailContent(); }
+  try {
+    const page = await listUavVerifications(a.event_id, { page: 1, size: VERIFICATION_PAGE_SIZE });
+    if (my !== detailSeq) return;
+    cur.verifications = Array.isArray(page?.items) ? page.items : [];
+    cur.verificationsLoaded = true;
+    cur.verificationsError = '';
+  } catch (e) {
+    if (my !== detailSeq) return;
+    if (!keep) {
+      cur.verifications = [];
+      cur.verificationsError = e?.status === 403 ? '当前账号没有查看核实记录的权限' : messageOf(e);
+    }
+  }
+  cur.verificationsLoading = false;
   paintDetailContent();
 }
 
@@ -1042,6 +1090,9 @@ async function refreshSelected(id = st.selId) {
   // 打开着的告警被升级（同一架无人机的新违规并入，BUG-16/BUG-11）时，升级记录跟着重读。
   const escalationChanged = (alarm.escalation_count ?? 0) !== (before.escalation_count ?? 0) || alarm.escalated_at !== before.escalated_at;
   const chainChanged = targetChanged || alarm.event_id !== before.event_id || JSON.stringify(event) !== JSON.stringify(beforeEvent);
+  // 事件被核实（自动或人工）后状态会变，核实记录跟着重读；处置面板可能已先把版本号改成新的，所以也比状态。
+  const verificationChanged = alarm.event_id !== before.event_id || event?.state !== beforeEvent?.state
+    || event?.version !== beforeEvent?.version || (!!alarm.event_id && !cur.verificationsLoaded && !cur.verificationsLoading);
   cur.alarm = alarm; cur.event = event;
   if (alarm.event_id) await refreshEventDisposals(alarm.event_id);
   else { ++disposalSeq; disposal.byAction = {}; disposal.handoff = null; disposal.error = ''; disposal.unavailable = false; }
@@ -1056,6 +1107,7 @@ async function refreshSelected(id = st.selId) {
   }
   if (chainChanged && isCurrent()) await refreshChain(my);
   if (escalationChanged && isCurrent()) await loadEscalations(my, { quiet: true });
+  if (verificationChanged && isCurrent()) await loadVerifications(my, { quiet: alarm.event_id === before.event_id });
 }
 
 /* 证据链静默重读：读到新内容再替换，读取失败保留已显示的证据链；原来就没读出来的按正常流程重读。 */
@@ -1169,6 +1221,7 @@ onMounted(async () => {
     else if (k === 'retry-detail' && st.selId) selectAlarm(st.selId);
     else if (k === 'chain-retry' && st.selId) loadChain(detailSeq);
     else if (k === 'escalations-retry' && st.selId) loadEscalations(detailSeq);
+    else if (k === 'verifications-retry' && st.selId) loadVerifications(detailSeq);
     else if (k === 'replay') replayLoadedTrack();
   });
   U.on(view, '[data-ev-file]', 'click', (e, btn) => {

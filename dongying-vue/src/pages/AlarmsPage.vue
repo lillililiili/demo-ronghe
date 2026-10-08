@@ -419,15 +419,22 @@ async function loadKpis() {
   }).formatToParts(Date.now()).filter(part => part.type !== 'literal').map(part => [part.type, Number(part.value)]));
   const from = Date.UTC(parts.year, parts.month - 1, parts.day) - 8 * 60 * 60_000;
   const to = from + 86400000;
+  const day = { occurred_from: from, occurred_to: to };
   const r = await Promise.allSettled([
-    count({ occurred_from: from, occurred_to: to }),
-    count({ occurred_from: from, occurred_to: to, state: 'PENDING_VERIFICATION' }),
-    count({ occurred_from: from, occurred_to: to, state: 'CONFIRMED' }),
-    count({ occurred_from: from, occurred_to: to, state: 'FALSE_POSITIVE' }),
+    count(day),
+    count({ ...day, state: 'PENDING_VERIFICATION' }),
+    count({ ...day, state: 'CONFIRMED' }),
+    count({ ...day, state: 'FALSE_POSITIVE' }),
     disposalCount('COUNTERMEASURE'), disposalCount('JAMMING'),
     disposalApi.list({ action_type: 'COUNTERMEASURE', status: 'COMPLETED', page: 1, size: 1 })
       .then(p => ({ completed: Number(p && p.total) || 0 })),
-    count(PENDING_DISPOSAL_QUERY)
+    count(PENDING_DISPOSAL_QUERY),
+    /* 新-2（D-4）：今日四张卡和大屏同一口径，系统自带的演示告警（来源标“模拟”）不算；
+       演示告警另数一遍，卡片上写明有几条没算进来。r[8]~r[11] 依次对应 r[0]~r[3]。 */
+    count({ ...day, source_mode: 'mock' }),
+    count({ ...day, state: 'PENDING_VERIFICATION', source_mode: 'mock' }),
+    count({ ...day, state: 'CONFIRMED', source_mode: 'mock' }),
+    count({ ...day, state: 'FALSE_POSITIVE', source_mode: 'mock' })
   ]);
   const v = r.map(x => x.status === 'fulfilled' ? x.value : null);
   const num = x => x == null ? '—' : U.num(x);
@@ -443,15 +450,25 @@ async function loadKpis() {
     return { ...def, value: U.num(value.executing), desc: `另有 ${U.num(value.approved)} 起已批准待执行` };
   };
   const fail = i => v[i] == null ? '读取失败：' + esc(messageOf(r[i].reason)) : null;
+  /* 今日卡 = 全部来源 − 演示告警。演示告警数读不到时先按全部来源显示，卡片上写明可能含演示告警，不冒充已扣除。 */
+  const todayKpi = (def, i, text) => {
+    if (v[i] == null) return { ...def, value: '—', desc: fail(i) };
+    const demo = v[i + 8];
+    if (demo == null) {
+      return { ...def, value: num(v[i]), caption: '可能含演示告警', desc: `${text}；演示告警数读取失败（${esc(messageOf(r[i + 8].reason))}），这里暂按全部来源计数` };
+    }
+    return { ...def, value: num(Math.max(0, v[i] - demo)), caption: demo > 0 ? `另有演示告警 ${U.num(demo)} 条未计入` : def.caption,
+      desc: `${text}；和大屏同一口径：设备模拟器产生的告警（来源标“回放”）照算，系统自带的演示告警（来源标“模拟”）不算` };
+  };
   kpiList.value = [
-    { ...KPI_DEFS[0], value: num(v[0]), desc: fail(0) || '北京时间今天发生的告警数量；发生时间未知者不计' },
-    { ...KPI_DEFS[1], value: num(v[1]), desc: fail(1) || '北京时间今天发生且待人工核实的告警数量' },
+    todayKpi(KPI_DEFS[0], 0, '北京时间今天发生的告警数量；发生时间未知者不计'),
+    todayKpi(KPI_DEFS[1], 1, '北京时间今天发生且待人工核实的告警数量'),
     { ...KPI_DEFS[2], value: num(v[7]), desc: fail(7) || '已核实属实、处置还没结束的告警数量，不限日期；正在反制、干扰或急停核查中的也算在内，设备反制或干扰完成后不再计入' },
     disposalKpi(KPI_DEFS[3], r[4], v[4]),
     disposalKpi(KPI_DEFS[4], r[6], v[6]),
     disposalKpi(KPI_DEFS[5], r[5], v[5]),
-    { ...KPI_DEFS[6], value: num(v[2]), desc: fail(2) || '北京时间今天发生且已确认属实的告警数量，包含处置已结束的记录' },
-    { ...KPI_DEFS[7], value: num(v[3]), desc: fail(3) || '北京时间今天发生且人工核实后已排除的告警数量' }
+    todayKpi(KPI_DEFS[6], 2, '北京时间今天发生且已确认属实的告警数量，包含处置已结束的记录'),
+    todayKpi(KPI_DEFS[7], 3, '北京时间今天发生且人工核实后已排除的告警数量')
   ];
 }
 

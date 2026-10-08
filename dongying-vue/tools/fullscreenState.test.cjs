@@ -38,3 +38,18 @@ test('successful enter, external escape and explicit exit follow browser state',
   await f.toggleBig(); await f.toggleBig();
   assert.equal(f.document.fullscreenElement, null); assert.equal(f.store.bigscreen, false);
 });
+test('fullscreenchange synchronizes a restored page-wide fullscreen state', () => {
+  const f = fixture('success');
+  f.document.fullscreenElement = f.document.documentElement;
+  f.onFsChange();
+  assert.equal(f.store.bigscreen, true);
+  assert.equal(f.classes.has('bigscreen'), true);
+});
+test('a video fullscreen element does not apply the page-wide layout', async () => {
+  const f = fixture('success'); await f.toggleBig();
+  f.document.fullscreenElement = { tagName: 'VIDEO' }; f.onFsChange();
+  assert.equal(f.store.bigscreen, false);
+  assert.equal(f.classes.has('bigscreen'), false);
+  f.document.fullscreenElement = f.document.documentElement; f.onFsChange();
+  assert.equal(f.store.bigscreen, true);
+});

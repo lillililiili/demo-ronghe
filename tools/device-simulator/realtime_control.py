@@ -43,6 +43,8 @@ def validate_config(value):
     for kind, mode in modes.items():
         if not isinstance(mode, str) or mode not in MODES or (mode in ('no_answer', 'answered_only') and kind != 'ADVISORY_VOICE'):
             raise ValueError('通知结果配置无效')
+        if mode in ('dispersed', 'not_dispersed') and kind != 'RISK_NOTICE':
+            raise ValueError('风险处理结果不能用于其他通知')
     return config
 
 
@@ -177,7 +179,7 @@ class RealtimeController:
                 connection = (detail.get('connection') or {}) if isinstance(detail, dict) else {}
                 host = connection.get('host') or '127.0.0.1'
                 port = connection.get('port') or 10006
-                from countermeasure_tcp import CountermeasureEndpoint, CountermeasureSimulator, is_address_in_use
+                from countermeasure_tcp import CountermeasureSimulator, is_address_in_use
                 transport = CountermeasureSimulator(
                     host=host,
                     port=int(port),
@@ -185,13 +187,12 @@ class RealtimeController:
                 try:
                     transport.start()
                 except OSError as error:
-                    # The local Spring QA profile already owns this registered
-                    # device address. Reuse that endpoint instead of trying to
-                    # bind a second listener and surfacing WinError 10048.
                     if not is_address_in_use(error):
                         raise
-                    transport = CountermeasureEndpoint(host=host, port=int(port))
-                    transport.start()
+                    # A reachable socket cannot attest its owner, fault mode,
+                    # relay state or receipts. Never silently reuse it.
+                    raise ValueError('四通道模拟端口已被占用，请停止占用进程后重试；'
+                                     '升级后须重启后台与模拟器，四通道由模拟器统一接收') from None
                 self.tcp = transport
                 self.countermeasure_device_id = device['device']['device_id']
             if config['notifications_enabled']:

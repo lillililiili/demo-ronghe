@@ -1,11 +1,14 @@
 <script setup>
 import { computed } from 'vue';
 import { LEGALITY_LABEL, VIOLATION_CODE_LABEL, REASON_CODE_LABEL, labelOf } from '@/ui/labels.js';
+import { ruleReasonText } from '@/ui/legalityReviewModal.js';
 
 const props = defineProps({ basis: Object });
 const time = value => value == null ? '未提供' : new Date(value).toLocaleString('zh-CN', { hour12: false });
 const reasons = computed(() => (props.basis?.violation_reasons || []).map(reason => {
   const code = typeof reason === 'string' ? reason : reason?.code;
+  const currentReason = ruleReasonText(code);
+  if (currentReason && currentReason !== code) return currentReason;
   return VIOLATION_CODE_LABEL[code] || REASON_CODE_LABEL[code] || reason?.message || code || '未提供具体原因';
 }));
 </script>

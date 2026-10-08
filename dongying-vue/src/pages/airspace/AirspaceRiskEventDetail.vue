@@ -113,7 +113,7 @@ function notify() {
   if (!pendingNoticeKeys.has(id)) pendingNoticeKeys.set(id, newHandoffIdempotencyKey());
   openFormModal({
     title: '通知上级', width: '560px', fields: [], confirmText: '提交通知',
-    warning: '提交后，请在通知记录中查看是否送达，并等待对方回执。对方回执（显示“已回执”）后，本次风险通知流程即完成；对方如果一并回复了处理结果（如“已驱离”），会显示在同一条回执里。',
+    warning: '提交后，请在通知记录中查看是否送达，并等待对方回执。显示“已回执”表示本次风险通知流程完成；签收不代表风险已经解除。对方如另附处理结果，会显示在同一条回执里。',
     onSubmit: async () => {
       let created;
       try {

@@ -170,6 +170,51 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual('', self.controller.error)
         self.assertEqual('STOPPED', self.controller.state)
 
+    def test_occupied_tcp_endpoint_is_rejected_without_sending_any_command(self):
+        from countermeasure_tcp import CountermeasureSimulator
+        from test_countermeasure_tcp import free_port
+        owner = CountermeasureSimulator(port=free_port())
+        owner.start()
+        self.addCleanup(owner.stop)
+        self.session.request = lambda command: ({'device': {'device_id': 'cm-test'}}
+            if command['path'].endswith('/countermeasure-device') else {})
+        for mode in ('success', 'no_receipt', 'unchanged'):
+            self.controller.configure({'mode':'abnormal', 'command_mode':mode,
+                'notifications_enabled':False, 'countermeasure_scope':'test-org|test-district'})
+            contender = CountermeasureSimulator(port=owner.port, command_mode=mode)
+            with patch('countermeasure_tcp.CountermeasureSimulator', return_value=contender):
+                with self.subTest(mode=mode), self.assertRaisesRegex(ValueError, '端口已被占用'):
+                    self.controller.start()
+            self.assertFalse(self.controller.active())
+            self.assertIsNone(self.controller.presence_lock)
+            self.assertFalse(self.controller.snapshot()['countermeasure']['listening'])
+            self.assertEqual(0, owner.snapshot()['received'])
+
+    def test_controller_modes_and_status_match_real_tcp_receipts(self):
+        import socket
+        from countermeasure_tcp import CountermeasureSimulator
+        from test_countermeasure_tcp import free_port, frame, reply
+        self.session.request = lambda command: ({'device': {'device_id': 'cm-test'}}
+            if command['path'].endswith('/countermeasure-device') else {})
+        for mode, response, mask in [('success', reply(0x12, 1), 1),
+                                     ('no_receipt', b'', 0), ('unchanged', reply(0x12, 0), 0)]:
+            self.controller.configure({'mode':'abnormal', 'command_mode':mode,
+                'notifications_enabled':False, 'countermeasure_scope':'test-org|test-district'})
+            transport = CountermeasureSimulator(port=free_port(), command_mode=mode)
+            with patch('countermeasure_tcp.CountermeasureSimulator', return_value=transport) as factory:
+                try:
+                    self.controller.start()
+                    self.assertEqual(mode, factory.call_args.kwargs['command_mode'])
+                    with socket.create_connection(('127.0.0.1', transport.port), timeout=1) as conn:
+                        conn.sendall(frame(0x12, 1))
+                        self.assertEqual(response, conn.recv(8))
+                    status = self.controller.snapshot()['countermeasure']
+                    self.assertEqual(mask, status['relay_mask'])
+                    self.assertEqual(1, status['received'])
+                    self.assertIsNotNone(status['last_received_at'])
+                finally:
+                    self.controller.stop()
+
 
 if __name__ == '__main__':
     unittest.main()

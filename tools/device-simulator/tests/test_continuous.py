@@ -23,7 +23,7 @@ class ContinuousTests(unittest.TestCase):
                 runtime.batch = 'sim-continuous-test'
                 (Path(root) / runtime.batch).mkdir()
                 runtime.broker = dict(name='test', host='localhost', port=1883)
-                runtime.manifest = dict(created_at=1000, provider='test',
+                runtime.manifest = dict(created_at=1000, provider='test', source_mode='replay',
                     devices={'d1': {'external_id': 'radar', 'platform_id': 'test-device', 'kind': 'radar'}},
                     targets={'t1': {'uav_sn': 'TEST'}})
                 runtime.session.platform = Mock()

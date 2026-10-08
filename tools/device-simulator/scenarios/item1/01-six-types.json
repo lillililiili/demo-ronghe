@@ -1,0 +1,246 @@
+{
+  "version": 1,
+  "name": "01 六类协议 A 正常输入",
+  "duration": 2,
+  "sites": [
+    {
+      "id": "item1-site",
+      "name": "验收模拟设备组",
+      "x": 450,
+      "y": 300,
+      "devices": [
+        {
+          "id": "item1-radar",
+          "name": "验收模拟 radar",
+          "kind": "radar",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2
+        },
+        {
+          "id": "item1-5ga",
+          "name": "验收模拟 5ga",
+          "kind": "5ga",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2
+        },
+        {
+          "id": "item1-tdoa",
+          "name": "验收模拟 tdoa",
+          "kind": "tdoa",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2
+        },
+        {
+          "id": "item1-aoa",
+          "name": "验收模拟 aoa",
+          "kind": "aoa",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2
+        },
+        {
+          "id": "item1-dcd",
+          "name": "验收模拟 dcd",
+          "kind": "dcd",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2
+        },
+        {
+          "id": "item1-rid",
+          "name": "验收模拟 rid",
+          "kind": "rid",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2
+        }
+      ]
+    }
+  ],
+  "targets": [
+    {
+      "id": "item1-t-radar",
+      "name": "验收目标 radar",
+      "kind": "uav",
+      "deviceId": "item1-radar",
+      "path": [
+        [
+          470,
+          300
+        ],
+        [
+          490,
+          300
+        ]
+      ],
+      "height": 100,
+      "heightAgl": 60,
+      "speed": 2,
+      "motionMode": "pingpong",
+      "transport": "mqtt",
+      "planId": "",
+      "uavSn": "SIM-ITEM1-RADAR",
+      "protocolA": {
+        "uavModel": "SIM-SAME-MODEL",
+        "channel": "5.73",
+        "bandWidth": "10.00",
+        "reportSn": true
+      }
+    },
+    {
+      "id": "item1-t-5ga",
+      "name": "验收目标 5ga",
+      "kind": "uav",
+      "deviceId": "item1-5ga",
+      "path": [
+        [
+          770,
+          300
+        ],
+        [
+          790,
+          300
+        ]
+      ],
+      "height": 100,
+      "heightAgl": 60,
+      "speed": 2,
+      "motionMode": "pingpong",
+      "transport": "mqtt",
+      "planId": "",
+      "uavSn": "SIM-ITEM1-5GA",
+      "protocolA": {
+        "uavModel": "SIM-SAME-MODEL",
+        "channel": "5.73",
+        "bandWidth": "10.00",
+        "reportSn": true
+      }
+    },
+    {
+      "id": "item1-t-tdoa",
+      "name": "验收目标 tdoa",
+      "kind": "uav",
+      "deviceId": "item1-tdoa",
+      "path": [
+        [
+          1070,
+          300
+        ],
+        [
+          1090,
+          300
+        ]
+      ],
+      "height": 100,
+      "heightAgl": 60,
+      "speed": 2,
+      "motionMode": "pingpong",
+      "transport": "mqtt",
+      "planId": "",
+      "uavSn": "SIM-ITEM1-TDOA",
+      "protocolA": {
+        "uavModel": "SIM-SAME-MODEL",
+        "channel": "5.73",
+        "bandWidth": "10.00",
+        "reportSn": true
+      }
+    },
+    {
+      "id": "item1-t-aoa",
+      "name": "验收目标 aoa",
+      "kind": "uav",
+      "deviceId": "item1-aoa",
+      "path": [
+        [
+          1370,
+          300
+        ],
+        [
+          1390,
+          300
+        ]
+      ],
+      "height": 100,
+      "heightAgl": 60,
+      "speed": 2,
+      "motionMode": "pingpong",
+      "transport": "mqtt",
+      "planId": "",
+      "uavSn": "SIM-ITEM1-AOA",
+      "protocolA": {
+        "uavModel": "SIM-SAME-MODEL",
+        "channel": "5.73",
+        "bandWidth": "10.00",
+        "reportSn": true
+      }
+    },
+    {
+      "id": "item1-t-dcd",
+      "name": "验收目标 dcd",
+      "kind": "uav",
+      "deviceId": "item1-dcd",
+      "path": [
+        [
+          1670,
+          300
+        ],
+        [
+          1690,
+          300
+        ]
+      ],
+      "height": 100,
+      "heightAgl": 60,
+      "speed": 2,
+      "motionMode": "pingpong",
+      "transport": "mqtt",
+      "planId": "",
+      "uavSn": "SIM-ITEM1-DCD",
+      "protocolA": {
+        "uavModel": "SIM-SAME-MODEL",
+        "channel": "5.73",
+        "bandWidth": "10.00",
+        "reportSn": true
+      }
+    },
+    {
+      "id": "item1-t-rid",
+      "name": "验收目标 rid",
+      "kind": "uav",
+      "deviceId": "item1-rid",
+      "path": [
+        [
+          1970,
+          300
+        ],
+        [
+          1990,
+          300
+        ]
+      ],
+      "height": 100,
+      "heightAgl": 60,
+      "speed": 2,
+      "motionMode": "pingpong",
+      "transport": "mqtt",
+      "planId": "",
+      "uavSn": "SIM-ITEM1-RID",
+      "protocolA": {
+        "uavModel": "SIM-SAME-MODEL",
+        "channel": "5.73",
+        "bandWidth": "10.00",
+        "reportSn": true
+      }
+    }
+  ],
+  "plans": [],
+  "zones": [],
+  "risks": [],
+  "fullchain": {
+    "enabled": true,
+    "categories": []
+  }
+}

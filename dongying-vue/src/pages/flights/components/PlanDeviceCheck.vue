@@ -13,7 +13,7 @@ const rows = computed(() => result.value?.rows || []);
 const emit = defineEmits(['checked', 'map-devices']);
 const abnormalRows = computed(() => rows.value.filter(row => row.abnormal || row.incidents?.length));
 const normalCount = computed(() => rows.value.filter(row => deviceCheckStatus(row) === '正常').length);
-function date(value) { return value == null || !Number.isFinite(Number(value)) ? '未记录' : new Date(value).toLocaleString('zh-CN', { hour12: false }); }
+function date(value) { return value == null || !Number.isFinite(Number(value)) ? '未记录' : new Date(value).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }); }
 async function reload({ reset = false } = {}) {
   controller?.abort(); controller = new AbortController();
   const current = ++generation;

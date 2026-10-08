@@ -4,7 +4,7 @@ import { weatherLayerGradient } from '@/pages/flights/weatherMap.js';
 const props = defineProps({ fact: Object, title: String, severity: String, source: String, color: String, visible: Boolean, opened: Boolean, kind: String, simulated: Boolean, boundaryVisible: Boolean, opacity: { type: Number, default: .4 } });
 defineEmits(['toggle-layer', 'update:opened', 'update:boundary-visible', 'update:opacity']);
 const gradient = computed(() => weatherLayerGradient(props.kind));
-const time = value => Number.isFinite(value) ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '未提供';
+const time = value => Number.isFinite(value) ? new Date(value).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }) : '未提供';
 const now = ref(Date.now());
 const period = computed(() => now.value < props.fact.valid_from ? '尚未到预警时段' : now.value >= props.fact.valid_to ? '已过有效期 · 历史范围' : '处于预警时段');
 let ticker;

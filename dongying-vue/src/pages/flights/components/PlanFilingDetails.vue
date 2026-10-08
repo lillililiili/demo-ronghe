@@ -29,7 +29,7 @@ async function loadSubjects() {
 watch(() => [props.plan.plan_id, props.plan.version], loadSubjects, { immediate: true });
 onUnmounted(() => { requestVersion++; });
 function value(text) { return typeof text === 'string' && text.trim() ? text : '未提供'; }
-function time(at) { return at == null || !Number.isFinite(Number(at)) ? '未提供' : new Date(Number(at)).toLocaleString('zh-CN', { hour12: false }); }
+function time(at) { return at == null || !Number.isFinite(Number(at)) ? '未提供' : new Date(Number(at)).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }); }
 function position(lon, lat) {
   if (lon == null || lat == null || !Number.isFinite(Number(lon)) || !Number.isFinite(Number(lat))) return '';
   return `${Number(lon).toFixed(6)}, ${Number(lat).toFixed(6)}（WGS-84）`;

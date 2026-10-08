@@ -121,7 +121,8 @@ def ffmpeg_arguments(config, path, watermark):
     if not re.fullmatch(r'qa/[0-9a-fA-F-]{36}', path):
         raise ValueError('系统返回的测试流路径无效')
     # textfile avoids filter/shell injection; the isolated process owns this temporary directory.
-    args = [config['ffmpeg'], '-hide_banner', '-loglevel', 'error', '-nostdin', '-re']
+    args = [config['ffmpeg'], '-hide_banner', '-loglevel', 'error', '-nostdin',
+            '-stats_period', '1', '-progress', 'progress.txt', '-re']
     if config['source']:
         args += ['-stream_loop', '-1', '-i', config['source']]
     else:
@@ -281,6 +282,8 @@ class EoSimulator:
                 creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
             active['job'] = OwnedProcessJob(active['process'])
             active['stream_id'] = registration['stream_id']
+            active['progress_key'] = None
+            active['progress_at'] = self.clock()
             state.update(video='PUBLISHING', error='', exit_code=None)
         except Exception as error:
             self._kill(active)
@@ -288,6 +291,27 @@ class EoSimulator:
             state.update(video='FAILED', error=sanitize_video_error(error, self.config)[:240])
             # Preserve the active task's lease so the platform can report an interruption.
             # Retry only at the next 15-second check, after revalidating the same open task.
+
+    def _output_stalled(self, active):
+        # Process liveness is not output liveness: RTSP can hang across a broker restart.
+        # FFmpeg owns this temporary file; read a bounded tail and never expose its URL.
+        try:
+            path = Path(active['directory'].name) / 'progress.txt'
+            with path.open('rb') as stream:
+                stream.seek(0, 2)
+                stream.seek(max(0, stream.tell() - 4096))
+                text = stream.read(4096).decode('ascii', errors='ignore')
+            blocks = text.split('progress=')
+            completed = blocks[-2] if len(blocks) > 1 else ''
+            values = dict(line.split('=', 1) for line in completed.splitlines() if '=' in line)
+            frame, position = values.get('frame', '').strip(), values.get('out_time_us', '').strip()
+            if frame.isdigit() and position.isdigit() and int(frame) > 0:
+                key = (int(frame), int(position))
+                if active['progress_key'] is None or key > active['progress_key']:
+                    active['progress_key'], active['progress_at'] = key, self.clock()
+        except (OSError, AttributeError):
+            pass  # No file / no complete progress is not proof of working output.
+        return self.clock() - active['progress_at'] >= 30
 
     def tick(self):
         self.drain()
@@ -298,6 +322,11 @@ class EoSimulator:
                 self._kill(active)
                 active['next_check'] = self.clock()+15
                 self._state(active['binding']).update(video='FAILED', exit_code=code, error='FFmpeg 已退出；跟踪仍有效时15秒后重试视频')
+            elif process is not None and self._output_stalled(active):
+                self._kill(active)
+                active['next_check'] = self.clock()+15
+                self._state(active['binding']).update(video='FAILED', exit_code=None,
+                    error='FFmpeg 输出已停滞；跟踪仍有效时15秒后重试视频')
             now = self.clock()
             refresh_due = now >= active['next_check']
             if refresh_due or now >= active['next_report']:

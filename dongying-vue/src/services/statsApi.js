@@ -25,6 +25,7 @@ export function mapOperations(data) {
     simulated: !!data.simulated,
     generatedAt: data.generated_at ?? null,
     availability: data.availability || {},
+    observationMetrics: data.observation_metrics ?? null,
     total: number(summary.total),
     illegal: number(summary.illegal),
     punish: number(summary.punish),

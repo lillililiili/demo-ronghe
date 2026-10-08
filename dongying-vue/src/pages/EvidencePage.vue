@@ -283,13 +283,12 @@ onBeforeUnmount(() => { mounted = false; listSequence += 1; detailSequence += 1;
           <div v-if="loading" class="empty" role="status">正在读取证据</div>
           <div v-else-if="error" class="empty"><button class="btn" @click="load">重新读取</button></div>
           <div v-else-if="!items.length" class="empty">当前筛选条件下暂无证据</div>
-          <table v-else class="tb"><thead><tr><th>证据编号 / 类型</th><th>内容</th><th>取证 / 发生时刻</th><th>大小</th><th>状态</th><th>留存</th></tr></thead>
+          <table v-else class="tb"><thead><tr><th>证据编号 / 类型</th><th>内容</th><th>取证 / 发生时刻</th><th>大小</th><th>状态</th></tr></thead>
             <tbody><tr v-for="row in items" :key="entryKey(row)" :class="{ on: entryKey(row) === selectedKey }" @click="select(row)">
               <td class="num"><button class="evidence-record-name" @click.stop="select(row)">{{ row.evidence_no }}</button><div class="cell-sub">{{ EVIDENCE_CATEGORY_LABEL[row.category] }}</div></td>
               <td>{{ name(row) }}<div v-if="shape(row)" class="cell-sub">{{ shape(row) }}</div></td>
               <td class="num">{{ format(row.occurred_at) }}</td><td class="num">{{ row.source_kind === 'FILE' && row.status !== 'DESTROYED' ? sizeText(row.size_bytes) : '—' }}</td>
               <td><span class="tag" :class="SC[row.status] || 't-gray'">{{ stateLabel(row) }}</span></td>
-              <td v-if="row.source_kind === 'FILE'"><div class="num">{{ row.retain_until ? format(row.retain_until).split(' ')[0] : '未记录' }}</div><span class="tag" :class="row.custody === 'HELD' ? 't-purple' : 't-gray'">{{ EVIDENCE_CUSTODY_LABEL[row.custody] || '未记录' }}</span></td><td v-else>不适用</td>
             </tr></tbody>
           </table>
         </div>
@@ -313,5 +312,5 @@ onBeforeUnmount(() => { mounted = false; listSequence += 1; detailSequence += 1;
 .evidence-list .tb th:nth-child(2) { min-width: 140px; }
 .evidence-root .evidence-row { min-height: 440px; flex-shrink: 0; }
 .evidence-root { overflow: auto; }
-.evidence-root{height:100%;min-height:600px;display:flex;flex-direction:column}.evidence-row{flex:1;min-height:0;padding-bottom:6px}.evidence-list{flex:1;min-height:0;overflow:auto}.evidence-detail{flex:1;min-height:0;overflow:auto;padding:12px}.evidence-located-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;color:var(--txt-2);font-size:12px;line-height:1.6}.evidence-located-toolbar>button{margin-left:auto}.evidence-record-name{padding:0;background:none;border:0;color:inherit;font:inherit;text-align:left;cursor:pointer;overflow-wrap:anywhere}.cell-sub{font-size:11px;color:var(--txt-3)}.evidence-list td{overflow-wrap:anywhere}.evidence-list th:nth-child(1){width:148px}.evidence-list th:nth-child(3){width:124px}.evidence-list th:nth-child(4){width:72px}.evidence-list th:nth-child(5){width:86px}.evidence-list th:nth-child(6){width:118px}#evDetail :deep(.detail-hero-title),#evDetail :deep(.detail-hero-id){display:block;white-space:normal;overflow:visible;overflow-wrap:anywhere;text-overflow:unset;-webkit-line-clamp:unset;-webkit-box-orient:initial}
+.evidence-root{height:100%;min-height:600px;display:flex;flex-direction:column}.evidence-row{flex:1;min-height:0;padding-bottom:6px}.evidence-list{flex:1;min-height:0;overflow:auto}.evidence-detail{flex:1;min-height:0;overflow:auto;padding:12px}.evidence-located-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;color:var(--txt-2);font-size:12px;line-height:1.6}.evidence-located-toolbar>button{margin-left:auto}.evidence-record-name{padding:0;background:none;border:0;color:inherit;font:inherit;text-align:left;cursor:pointer;overflow-wrap:anywhere}.cell-sub{font-size:11px;color:var(--txt-3)}.evidence-list td{overflow-wrap:anywhere}.evidence-list th:nth-child(1){width:148px}.evidence-list th:nth-child(3){width:124px}.evidence-list th:nth-child(4){width:72px}.evidence-list th:nth-child(5){width:86px}#evDetail :deep(.detail-hero-title),#evDetail :deep(.detail-hero-id){display:block;white-space:normal;overflow:visible;overflow-wrap:anywhere;text-overflow:unset;-webkit-line-clamp:unset;-webkit-box-orient:initial}
 </style>

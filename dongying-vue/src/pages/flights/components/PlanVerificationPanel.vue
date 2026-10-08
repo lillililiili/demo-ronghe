@@ -22,7 +22,7 @@ const recordGroups = computed(() => {
   }
   return [...groups.values()].map(group => ({ ...group, summary: verificationSummary(group.verification) }));
 });
-const hasHistory = computed(() => !!(data.value?.verifications?.length || data.value?.feedback?.length));
+const hasHistory = computed(() => !!(data.value?.scheduled_check || data.value?.verifications?.length || data.value?.feedback?.length));
 const preflight = computed(() => ['PENDING', 'APPROVED'].includes(props.plan.status_code)
   && new Date(props.plan.start_at).getTime() > checkedAt.value);
 // 状态决定这一步是否适用；权限仅决定适用时能否办理，不能把两者混为一谈。
@@ -52,10 +52,11 @@ function notificationBlocker(item) {
   if (item.blocked_reason === 'DELIVERY_OUTCOME_UNKNOWN') return '通知发送结果未知，请先核对原发送记录，不能重复通知。';
   return item.blocked_reason === 'CHANNEL_NOT_CONNECTED' ? '通知功能尚未接通，记录已保存但还未发出。' : item.blocked_reason;
 }
-async function reload() {
+async function reload(quiet = false) {
   const current = ++token, id = props.plan.plan_id;
   checkedAt.value = Date.now();
-  data.value = null; error.value = ''; errorStatus.value = 0; loading.value = true;
+  if (quiet !== true) data.value = null;
+  error.value = ''; errorStatus.value = 0; loading.value = true;
   try { const result = await flightApi.verifications(id); if (current === token) data.value = result; }
   catch (reason) { if (current === token) { error.value = reason.message || '核实记录读取失败'; errorStatus.value = reason.status || 0; } }
   finally { if (current === token) loading.value = false; }
@@ -63,7 +64,8 @@ async function reload() {
 watch(() => [props.plan.plan_id, props.plan.status_code, props.plan.start_at], () => {
   reload();
 }, { immediate: true });
-onUnmounted(() => { token++; });
+const refreshTimer = setInterval(() => { if (!loading.value && !document.hidden && ![401,403].includes(errorStatus.value)) reload(true); }, 30000);
+onUnmounted(() => { token++; clearInterval(refreshTimer); });
 </script>
 
 <template>
@@ -75,10 +77,20 @@ onUnmounted(() => { token++; });
   <section v-else-if="showPanel" class="sect plan-verification">
     <h4>{{ needsVerification ? '周边设备检查' : '历史检查与通知' }}</h4>
     <template v-if="data">
+      <p v-if="data.scheduled_check" class="record-meta">
+        系统自动检查：{{ date(data.scheduled_check.last_checked_at) }}
+        <span v-if="data.scheduled_check.state === 'FAILED'"> · 本次检查失败，后台将重试</span>
+        <span v-else-if="data.scheduled_check.state === 'MATCHED'"> · 已发现对应目标，停止到点检查</span>
+        <span v-if="data.scheduled_check.maintenance_task_ids?.length"> · 已关联 {{ data.scheduled_check.maintenance_task_ids.length }} 条后台运维待办</span>
+      </p>
+      <p v-for="task in data.scheduled_check?.maintenance_tasks || []" :key="task.task_id" class="record-meta">
+        {{ task.device_name }}：{{ ({ PENDING: '待处理', PROCESSING: '处理中', PENDING_VERIFICATION: '待恢复核验', COMPLETED: '已完成', LEGACY_HANDLED: '历史已处理' })[task.workflow_state] || '处理状态未知' }}
+      </p>
       <PlanDeviceCheck v-if="needsVerification" :key="plan.plan_id" :plan="plan" @map-devices="emit('map-devices', { planId: plan.plan_id, check: $event })" />
       <div v-if="hasHistory" class="workflow-actions"><button class="btn ghost" type="button" @click="reload">刷新记录</button></div>
       <article v-for="group in recordGroups" :key="group.key" class="verification-record">
         <b class="record-conclusion">{{ group.verification ? (conclusions[group.verification.conclusion] || '未知结论') : '核实内容暂不可用' }}</b>
+        <p v-if="group.verification?.trigger_type" class="record-meta">{{ group.verification.trigger_type === 'SYSTEM' ? '系统自动检查' : '人工触发检查' }}</p>
         <p v-if="group.summary.basis" class="record-meta">{{ group.summary.basis }}</p>
         <p v-else-if="group.verification" class="record-meta">记录保存时间：{{ date(group.verification.handled_at) }} · 检查依据见详情</p>
         <p v-if="group.summary.source" class="record-source">{{ group.summary.source }}</p>

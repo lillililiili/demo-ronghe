@@ -160,6 +160,7 @@
       if (this._dead || controller.signal.aborted) { runtime.release(); return; }
       this._release = runtime.release;
       this._coverageBounds = runtime.bounds;
+      if (typeof this.opt.onCoverageChange === 'function') this.opt.onCoverageChange(runtime.bounds);
       this._applyRuntimePolicy(runtime.runtime || {});
       // 构造后立刻 fitTo 时覆盖范围还是内置东营框；包头真正的 bounds 更宽。
       // 航线若落在框外、包内，必须在建引擎前按真实覆盖重算，否则 load 只会跳到被夹紧的空视野。
@@ -175,9 +176,9 @@
       const map = new runtime.maplibre.Map({
         container: this.baseEl, style: runtime.style, center: this._pendingCenter,
         zoom: this._levelForScale(this.zoom), minZoom: this._minLevel(), maxZoom: this.maxZoom,
-        /* 地图包只覆盖有限区域。始终约束相机并以“覆盖视口”计算最低缩放，
-           宁可裁掉少量边缘，也不能让任何业务页面露出包外空白。 */
-        maxBounds: coverage ? [[coverage[0], coverage[1]], [coverage[2], coverage[3]]] : undefined,
+        /* 普通地图按地图包覆盖范围约束相机；证据回放可显式允许查看包外真实坐标，
+           并由调用方提示底图覆盖不足。 */
+        maxBounds: coverage && this.opt.constrainToCoverage !== false ? [[coverage[0], coverage[1]], [coverage[2], coverage[3]]] : undefined,
         bearing: 0, pitch: 0, dragRotate: false, pitchWithRotate: false,
         touchPitch: false, renderWorldCopies: false, attributionControl: false,
         // 汉字优先由浏览器本地字体栅格化，避免首屏重复下载 8 MiB 的 SC 字体文件。
@@ -438,6 +439,8 @@
 
   // 视口必须被数据覆盖：取较长边撑满，并多算 8px，避免边缘露底。
   MapView.prototype._minLevel = function () {
+    // 历史证据可能位于当前地图包之外；仅显式启用的回放允许查看这些真实位置。
+    if (this.opt.constrainToCoverage === false) return 0;
     if (this.w <= 0 || this.h <= 0) return Math.min(7, this._fitLevelForWidth());
     const [west, south, east, north] = this._viewBounds();
     const a = merc(west, north), b = merc(east, south);
@@ -447,6 +450,7 @@
   };
 
   MapView.prototype._clampCenter = function (lon, lat, level) {
+    if (this.opt.constrainToCoverage === false) return [lon, Math.max(-85.051129, Math.min(85.051129, lat))];
     if (!Number.isFinite(lon) || !Number.isFinite(lat) || this.w <= 0 || this.h <= 0) return [lon, lat];
     const [west, south, east, north] = this._viewBounds();
     const a = merc(west, north), b = merc(east, south);

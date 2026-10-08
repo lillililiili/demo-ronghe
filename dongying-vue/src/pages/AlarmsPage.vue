@@ -231,11 +231,7 @@ const modeOf = a => SOURCE_MODE[a.source_mode] || { t: esc(a.source_mode || '—
 const sevTag = a => U.tag(sevOf(a).t, sevOf(a).c);
 const OBSERVATION_LABEL = { CURRENT: '观测有效', EXPIRED: '观测已过期', UNKNOWN: '观测待确认' };
 const ATTENTION_LABEL = { CURRENT: '当前事项', AWAITING_CONFIRMATION: '状态待确认', HISTORY: '历史记录' };
-const stateTag = a => {
-  const status = U.tag(displayState(a).t, displayState(a).c);
-  const observation = observationTag(a);
-  return observation ? `<span class="alarm-state-stack">${status}${observation}</span>` : status;
-};
+const stateTag = a => U.tag(displayState(a).t, displayState(a).c);
 const observationTag = a => a.attention_group !== 'HISTORY' && ['EXPIRED', 'UNKNOWN'].includes(a.observation_status)
   ? U.tag(OBSERVATION_LABEL[a.observation_status], 't-gray') : '';
 const detailStateTags = a => `${U.tag(displayState(a).t, displayState(a).c)}${observationTag(a)}`;
@@ -1252,12 +1248,6 @@ onMounted(async () => {
 }
 .alarms-page :deep(.detail-hero-auto .detail-hero-tags .tag:nth-child(n+3)) {
   display: inline-block;
-}
-.alarms-page :deep(.alarm-state-stack) {
-  display: inline-flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
 }
 .alarms-page :deep(.alarm-kpis) {
   grid-template-columns: repeat(8, minmax(0, 1fr));

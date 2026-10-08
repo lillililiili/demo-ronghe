@@ -33,6 +33,7 @@ const props = defineProps({
   startAtEnd: Boolean,
   /** 证据详情：读数里加日期和 WGS-84 坐标。 */
   details: Boolean,
+  constrainToCoverage: { type: Boolean, default: true },
   mapHeight: { type: String, default: 'clamp(300px, 52vh, 460px)' }
 });
 
@@ -52,6 +53,12 @@ const layout = ref('pip');
 const mapHost = ref(null);
 const videoEl = ref(null);
 const mapError = ref('');
+const coverageBounds = ref(null);
+const outsideCoverage = computed(() => {
+  if (props.constrainToCoverage || !coverageBounds.value) return false;
+  const [west, south, east, north] = coverageBounds.value;
+  return props.points.some(point => point.lon < west || point.lon > east || point.lat < south || point.lat > north);
+});
 let map = null;
 let overlay = null;
 let overlayRaf = 0;
@@ -292,7 +299,9 @@ function mountMap() {
   if (typeof window.MapView !== 'function') { mapError.value = '地图暂不可用，请稍后重新打开'; return; }
   try {
     map = new window.MapView(mapHost.value, {
-      zoom: 2.2, maxZoom: 22, legend: false, layers: { device: false, alarm: false, flightPlan: false }
+      zoom: 2.2, maxZoom: 22, legend: false, constrainToCoverage: props.constrainToCoverage,
+      onCoverageChange: bounds => { coverageBounds.value = bounds; },
+      layers: { device: false, alarm: false, flightPlan: false }
     });
   } catch { mapError.value = '地图未能打开，请稍后重试'; return; }
   overlay = document.createElement('canvas');
@@ -394,6 +403,7 @@ defineExpose({ seek, togglePlay });
       <div class="replay-map-wrap" :style="{ height: mapHeight }">
         <div ref="mapHost" class="replay-map" aria-label="回放地图" />
         <p v-if="mapError" class="replay-map-error" role="alert">{{ mapError }}</p>
+        <p v-else-if="outsideCoverage" class="replay-map-error" role="status">轨迹超出当前底图覆盖范围；轨迹位置按原始坐标显示。</p>
 
         <dl class="replay-hud" aria-label="当前点读数">
           <div class="hud-time"><dt>时间</dt><dd class="mono">{{ clockText(shownTime) }}</dd></div>

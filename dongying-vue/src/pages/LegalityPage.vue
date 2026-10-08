@@ -15,6 +15,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } 
 import { useRoute } from 'vue-router';
 import UKpis from '@/components/UKpis.vue';
 import TargetTrackingPanel from '@/components/video/TargetTrackingPanel.vue';
+import FlightExecutionChecks from '@/components/FlightExecutionChecks.vue';
 import { UField } from '@/components/form/index.js';
 import UControl from '@/components/form/UControl.vue';
 import UPagination from '@/components/UPagination.vue';
@@ -826,7 +827,7 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
                       </div>
                     </template>
                     <div v-else-if="st.evidenceTab === 'plan'" class="lg-evidence-wide">
-                      <h4>任务匹配与身份 <span>判定时记录的情况</span></h4>
+                      <h4>基础任务关联与身份 <span>判定时记录的情况</span></h4>
                       <dl class="lg-resource-grid">
                         <dt>匹配等级</dt><dd>{{ planMatchText(selectedEvaluation.plan_match_code) }}{{ c01Facts?.match_reason ? `（${ruleReasonText(c01Facts.match_reason)}）` : '' }}</dd>
                       <!-- 决策 19-1：研判的主视角是计划。有计划就把编号做成入口，能直接过去看计划本身。
@@ -845,6 +846,7 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
                         <dt>身份</dt><dd>{{ c01Facts?.dimensions?.identity === 'UNDETERMINED' ? '身份线索缺失（无测向或基站数据）' : dimText(c01Facts?.dimensions?.identity) }}</dd>
                         <dt>候选任务数</dt><dd>{{ c01Facts?.candidate_count ?? '未知' }}</dd>
                       </dl>
+                      <FlightExecutionChecks :hits="selectedEvaluation.hit_details || []" />
                     </div>
                     <div v-else class="lg-evidence-wide">
                       <h4>复核历史 <span>按时间追加</span></h4>

@@ -19,10 +19,12 @@ export const PLAN_MATCH_TEXT = { FULL: '完全匹配', PARTIAL: '部分匹配', 
 export const GRADE_TEXT = { HIGH: '高', MEDIUM: '中', LOW: '低' };
 export const RULE_CODE_TEXT = {
   C01: '任务匹配', 'C02-1': '禁飞空域', 'C02-2': '空域限高', 'C02-3': '航线偏离', 'C02-4': '时间窗', 'C02-5': '夜航',
-  'C02-6': '超视距', 'C02-7': '任务高度', 'C02-8': '临时限制', C03: '四态判定', C06: '告警生成'
+  'C02-6': '超视距', 'C02-7': '任务高度', 'C02-8': '临时限制', 'C02-9': '起飞点', 'C02-10': '降落点', 'C02-11': '飞手身份', 'C02-12': '报送单位', C03: '四态判定', C06: '告警生成'
 };
 export const RULE_RESULT_TEXT = { PASS: '通过', FAIL: '不通过', UNDETERMINED: '不可判定', NOT_APPLICABLE: '不适用' };
 export const RULE_REASON_TEXT = {
+  TAKEOFF_POINT_MISMATCH: '起飞点与计划不符', LANDING_POINT_MISMATCH: '降落点与计划不符', PILOT_IDENTITY_MISMATCH: '飞手身份与计划不符', REPORTING_UNIT_MISMATCH: '报送单位与计划不符',
+  EXECUTION_FACTS_UNAVAILABLE: '缺少独立执行事实', EXECUTION_FACTS_CONFLICT: '执行事实存在冲突', EXECUTION_RULE_PARAMETERS_MISSING: '执行核对参数未配置', EXECUTION_RULE_PARAMETERS_UNCONFIRMED: '执行核对参数未正式确认', EXECUTION_POSITION_BOUNDARY_UNKNOWN: '位置误差跨越容差边界',
   OBJECT_TYPE_UNKNOWN: '目标类型尚未确定', NON_UAV_OBJECT: '非无人机目标，不适用无人机合法性判定',
   INSIDE_RESTRICTED_AIRSPACE: '进入禁飞/限制空域', AIRSPACE_ALTITUDE_EXCEEDED: '超过空域限高', ROUTE_DEVIATION: '偏航（偏离报备航线）',
   TIME_WINDOW_OVERRUN: '超出任务时间窗', NIGHT_FLIGHT: '夜间飞行', BVLOS_EXCEEDED: '超出目视视距', PLAN_ALTITUDE_EXCEEDED: '超出任务高度带', TEMPORARY_RESTRICTION_ACTIVE: '临时管制生效中',

@@ -32,6 +32,7 @@ import UKpis from '@/components/UKpis.vue';
 import UPanel from '@/components/UPanel.vue';
 import RiskOpticalPanel from '@/pages/flights/components/RiskOpticalPanel.vue';
 import PlanVerificationPanel from '@/pages/flights/components/PlanVerificationPanel.vue';
+import FlightExecutionChecks from '@/components/FlightExecutionChecks.vue';
 import PlanFilingDetails from '@/pages/flights/components/PlanFilingDetails.vue';
 import PlanDeviceMarkers from '@/pages/flights/components/PlanDeviceMarkers.vue';
 import PlanRiskMarkers from '@/pages/flights/components/PlanRiskMarkers.vue';
@@ -2082,6 +2083,7 @@ onUnmounted(() => {
                 <div v-if="demoParams"><span class="tag t-amber">参数为演示值，尚未确认</span></div>
               </template>
             </section>
+            <FlightExecutionChecks v-if="actuals?.match?.evaluation_id" :hits="actuals.match.execution_checks || []" />
             <PlanRiskRecords v-if="showRouteRisks" :key="selected.plan_id" ref="planRiskRecordsRef" :records="routeRiskRecords" :loading="routeRisks.loading" :selected-id="selectedPlanRiskId"
               :error="routeRisks.error" :total="routeRisks.total" :current-total="routeRisks.currentTotal"
               :uncertain-total="routeRisks.uncertainTotal" :as-of="routeRisks.asOf ? formatTime(routeRisks.asOf) : ''"

@@ -211,13 +211,28 @@ function shortTime(value) {
 function evaluationReason(item) {
   if (!item) return '尚未取得研判详情';
   const violations = (item.violation_reasons || []).map(ruleReasonText).join('、');
-  if (unconfirmedParams(item)) return `${violations ? `${violations}；` : ''}规则参数未确认，暂不可判定。`;
+  if (unconfirmedParams(item)) return demoParamReason(item, violations);
   if (item.original_legal_status === 'ABNORMAL') return `${violations ? `${violations}；` : ''}历史记录未明确合法或非法，保留原始依据。`;
   if (item.legal_status === 'LEGAL') return item.unknown_reasons?.length ? `系统判定合法，另有 ${item.unknown_reasons.length} 项未知信息` : '全部检查通过';
   if (item.violation_reasons?.length) return ruleReasonText(item.violation_reasons[0]);
   if (item.unknown_reasons?.length) return ruleReasonText(item.unknown_reasons[0]);
   if (item.legal_status === 'LEGAL') return '全部检查通过';
   return '未提供结论摘要';
+}
+/*
+ * 规则参数还是演示值时：判出的合法、非法照常写，后面注明“按演示参数判定，规则参数待业务确认”；
+ * 没判出来的写真实原因（如置信度不足），不再一律写“规则参数未确认，暂不可判定”——
+ * 演示参数照样参与判定，以前那句和判出的结论自相矛盾（确认书 7-9，新-14）。
+ */
+function demoParamReason(item, violations) {
+  const note = '按演示参数判定，规则参数待业务确认。';
+  if (item.original_legal_status === 'ABNORMAL') return `${violations ? `${violations}；` : ''}历史记录未明确合法或非法；${note}`;
+  if (item.legal_status === 'ILLEGAL') return `${violations || '判定非法'}；${note}`;
+  if (item.legal_status === 'LEGAL') {
+    return `${item.unknown_reasons?.length ? `判定合法，另有 ${item.unknown_reasons.length} 项未知信息` : '全部检查通过'}；${note}`;
+  }
+  const unknown = [...new Set((item.unknown_reasons || []).map(ruleReasonText))].join('、') || '依据不足';
+  return `${unknown}${violations ? `，已发现${violations}` : ''}；规则参数待业务确认。`;
 }
 function subjectLabel(item) {
   if (!item) return '未选择研判';

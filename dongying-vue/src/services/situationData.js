@@ -664,6 +664,33 @@ export function attachRecentTracks(targets, recentTracks, previousTargets = []) 
   }));
 }
 
+// 两次重读之间本机接上的点最多保留这么多（后端每目标 24 点，5 秒内每秒约一点）。
+const LOCAL_TAIL_LIMIT = 36;
+
+/* 两次重读尾迹之间：沿用上一轮尾迹，把目标最新位置接在末尾，尾迹跟着点走。
+   只接在同一条融合轨迹后面、时间更新的位置；本机接上的点没有点编号，轨迹比对着色保持未知，下一次重读时由后端点替换。 */
+export function extendRecentTracks(targets, previousTargets = []) {
+  const previous = new Map((previousTargets || []).map(target => [target.targetId, target]));
+  return (targets || []).map(target => {
+    const before = previous.get(target.targetId);
+    const track = before?.track || [];
+    const last = track[track.length - 1];
+    const t = target.observedAt;
+    const next = last && last.track_id && Number.isFinite(target.lon) && Number.isFinite(target.lat)
+      && Number.isFinite(t) && Number.isFinite(last.t) && t > last.t
+      ? [...track, {
+        lon: target.lon, lat: target.lat, point_id: null, track_id: last.track_id, point_seq: null, t,
+        alt: target.alt ?? null, kind: 'meas', corridor_relation: 'UNKNOWN', break_before: false
+      }].slice(-LOCAL_TAIL_LIMIT)
+      : track;
+    return {
+      ...target,
+      track: next,
+      sourceDeviceIds: target.sourceDeviceIds?.length ? target.sourceDeviceIds : (before?.sourceDeviceIds || [])
+    };
+  });
+}
+
 export function attachTargetSourceLinks(targets, targetId, detail) {
   const links = Array.isArray(detail?.source_links) ? detail.source_links : [];
   return (targets || []).map(target => target.targetId === targetId

@@ -11,7 +11,7 @@ import { legalityApi } from '@/services/legalityApi.js';
 import { hasPermission } from '@/services/accessControl.js';
 import { applyTrackComparison } from '@/services/trackPoints.js';
 import {
-  attachBearing, attachDeviceEvents, attachRecentTracks, attachTargetSourceLinks,
+  attachBearing, attachDeviceEvents, attachRecentTracks, attachTargetSourceLinks, extendRecentTracks,
   bearingOrigins, SITUATION_DEVICE_TYPE_ORDER, toAirspaces, toAlarms, toDevices, toFlightPlans, toRisks, toTargets
 } from '@/services/situationData.js';
 
@@ -33,6 +33,11 @@ const TOPIC_SEGMENTS = {
   target: ['targets'], legality: ['targets'], alarm: ['alarms'], risk: ['risks'], punishment: ['handoffs'], '*': FAST_SEGMENTS
 };
 const RECENT_TRACK_WINDOW_MS = 5 * 60_000;
+/* 尾迹不随每次位置推送整包重下：最多 5 秒重读一次，只要图上目标、只要坐标（slim）；
+   两次重读之间用目标最新位置把尾迹往前接上。新目标出现时立即补读。 */
+const TRACK_REFRESH_MS = 5_000;
+// 与后端 target_ids 上限一致；图上目标更多时不按目标限定，仍只要坐标。
+const MAX_TRACK_TARGET_IDS = 100;
 /* 各组数据的读取权限与后端接口一致（ZT-09）：没有权限的组不发请求、不报“刷新失败”，地图上这一类保持为空。
    飞行任务同时要读航线版本，两项权限都要有。登录后权限有变化、后端答复 403 时同样按没有权限处理，本页不再重复请求。 */
 const SEGMENT_PERMISSIONS = {
@@ -94,6 +99,8 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
   let emit = () => {};
   let report = () => {};
   let unsubscribe = null;
+  let lastTracksAt = 0;
+  let slimTracks = true;
   const routeVersions = new Map();
   const trajectoryComparisons = new Map();
   const failedSegments = new Set();
@@ -132,22 +139,42 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
     }
   }
 
+  async function loadRecentTracks(targets, generatedAt, dayFrom) {
+    const ids = [...new Set(targets.map(target => target.targetId).filter(Boolean))];
+    if (!ids.length) return { items: [] };
+    // 近期轨迹接口最多允许 1 小时；实时尾迹沿用 5 分钟窗口。
+    const base = { observed_from: Math.max(dayFrom, generatedAt - RECENT_TRACK_WINDOW_MS), observed_to: generatedAt, points_per_target: 24 };
+    if (!slimTracks) return targetApi.recentTracks(base);
+    try {
+      return await targetApi.recentTracks({ ...base, slim: true, ...(ids.length <= MAX_TRACK_TARGET_IDS ? { target_ids: ids.join(',') } : {}) });
+    } catch (error) {
+      // 不认 target_ids/slim 的旧后端答 400：本页改回原来的整包读取。
+      if (error?.status !== 400) throw error;
+      slimTracks = false;
+      return targetApi.recentTracks(base);
+    }
+  }
+
   async function refreshFast(generatedAt, segments = FAST_SEGMENTS) {
     const day = shanghaiDay(generatedAt);
     const observedFrom = day.from;
     const wanted = new Set(segments);
     const tasks = [
       wanted.has('targets') && retain('targets', async () => {
-        const [page, recent] = await Promise.all([
-          // 地图只画此刻还没到期的目标（targetIsCurrent），只取这些（ZT-20 复测 2）：当天目标多时（四百多个）
-          // 每轮分页拉完要几十秒，刚收到的目标等整轮拼完已过 15 秒有效期，被页面当作过期滤掉，图上始终看不到。
-          // 不认 map_visible_at 的旧后端照旧返回当天全部目标，页面照旧筛。
-          targetApi.listAll({ seen_from: observedFrom, seen_to: generatedAt, include_merged: false, map_visible_at: generatedAt }),
-          // 近期轨迹接口最多允许 1 小时；实时尾迹沿用 5 分钟窗口。
-          targetApi.recentTracks({ observed_from: Math.max(day.from, generatedAt - RECENT_TRACK_WINDOW_MS), observed_to: generatedAt, points_per_target: 24 })
-        ]);
+        // 地图只画此刻还没到期的目标（targetIsCurrent），只取这些（ZT-20 复测 2）：当天目标多时（四百多个）
+        // 每轮分页拉完要几十秒，刚收到的目标等整轮拼完已过 15 秒有效期，被页面当作过期滤掉，图上始终看不到。
+        // 不认 map_visible_at 的旧后端照旧返回当天全部目标，页面照旧筛。
+        const page = await targetApi.listAll({ seen_from: observedFrom, seen_to: generatedAt, include_merged: false, map_visible_at: generatedAt });
         const converted = attachBearing(toTargets(page.items), bearingOrigins(snapshot.devices));
-        return withComparison(attachRecentTracks(converted, recent, snapshot.targets));
+        const known = new Set(snapshot.targets.map(target => target.targetId));
+        const due = generatedAt - lastTracksAt >= TRACK_REFRESH_MS || generatedAt < lastTracksAt
+          || converted.some(target => !known.has(target.targetId));
+        const extended = extendRecentTracks(converted, snapshot.targets);
+        if (!due) return withComparison(extended);
+        const recent = await loadRecentTracks(converted, generatedAt, day.from);
+        lastTracksAt = generatedAt;
+        // 这次没带回某个目标的尾迹时沿用本机接上的尾迹，不让尾迹一闪而空。
+        return withComparison(attachRecentTracks(extended, recent, snapshot.targets));
       }, value => { snapshot = { ...snapshot, targets: value }; }, []),
       wanted.has('alarms') && retain('alarms', () => allPages(listAlarms, {
         occurred_from: day.from, occurred_to: day.to, sort: 'occurred_at', order: 'desc'

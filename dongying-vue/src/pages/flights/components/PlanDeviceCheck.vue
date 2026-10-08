@@ -13,6 +13,16 @@ const rows = computed(() => result.value?.rows || []);
 const emit = defineEmits(['checked', 'map-devices']);
 const abnormalRows = computed(() => rows.value.filter(row => row.abnormal || row.incidents?.length));
 const normalCount = computed(() => rows.value.filter(row => deviceCheckStatus(row) === '正常').length);
+// 设备多时正常设备只先列几台，其余收起；异常和待核查的设备始终列出
+const COLLAPSED_LIMIT = 4;
+const expanded = ref(false);
+const isNormal = row => !row.abnormal && !row.incidents?.length && deviceCheckStatus(row) === '正常';
+const visibleRows = computed(() => {
+  if (expanded.value) return rows.value;
+  let room = Math.max(0, COLLAPSED_LIMIT - rows.value.filter(row => !isNormal(row)).length);
+  return rows.value.filter(row => !isNormal(row) || room-- > 0);
+});
+const hiddenCount = computed(() => rows.value.length - visibleRows.value.length);
 function date(value) { return value == null || !Number.isFinite(Number(value)) ? '未记录' : new Date(value).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }); }
 async function reload({ reset = false } = {}) {
   controller?.abort(); controller = new AbortController();
@@ -25,6 +35,7 @@ async function reload({ reset = false } = {}) {
   catch (reason) { if (generation === current) { error.value = reason.message || '设备检查失败'; errorStatus.value = reason.status || 0; emit('map-devices', null); if ([401,403].includes(errorStatus.value)) result.value = null; } }
   finally { if (generation === current) loading.value = false; }
 }
+watch(() => props.plan.plan_id, () => { expanded.value = false; });
 watch(() => [props.plan.plan_id, props.plan.start_at, props.plan.end_at, props.plan.district_name, props.plan.source_mode, permitted.value], () => reload({ reset: true }), { immediate: true });
 const timer = setInterval(() => { if (!document.hidden && !loading.value && ![401, 403].includes(errorStatus.value)) reload(); }, 30000);
 onUnmounted(() => { generation++; controller?.abort(); clearInterval(timer); emit('map-devices', null); });
@@ -45,7 +56,7 @@ onUnmounted(() => { generation++; controller?.abort(); clearInterval(timer); emi
       <p v-if="result.unchecked_locations">{{ result.unchecked_locations }} 台设备缺少可用位置，无法确认是否在附近。</p>
       <p v-if="!result.complete && rows.length">部分信息不完整，请核查下方设备。</p>
       <div v-if="rows.length" class="device-rows">
-        <article v-for="row in rows" :key="row.device_id">
+        <article v-for="row in visibleRows" :key="row.device_id">
           <div class="device-heading">
             <span class="device-type-icon" :title="deviceMeta(row).label" :class="row.abnormal ? 'is-abnormal' : row.incidents?.length ? 'is-historical' : deviceCheckStatus(row) === '正常' ? 'is-normal' : ''" v-html="deviceIcon(row)"></span>
             <b>{{ row.name }}</b>
@@ -64,6 +75,8 @@ onUnmounted(() => { generation++; controller?.abort(); clearInterval(timer); emi
           <DeviceAbnormalNoticeButton class="device-detail-link" :plan-id="plan.plan_id" :device="row" />
         </article>
       </div>
+      <button v-if="hiddenCount" class="device-expand-button" type="button" @click="expanded = true">展开其余 {{ hiddenCount }} 台正常设备</button>
+      <button v-else-if="expanded && rows.length > COLLAPSED_LIMIT" class="device-expand-button" type="button" @click="expanded = false">收起正常设备</button>
       <footer>检查于 {{ date(result.checked_at) }} · 每 30 秒更新</footer>
     </template>
   </div>
@@ -75,7 +88,13 @@ header,.device-heading,.device-actions,footer { display: flex; align-items: cent
 header { justify-content: space-between; }
 p { color: var(--txt-3); margin: 5px 0; line-height: 1.5; overflow-wrap: anywhere; }
 .check-summary { color: var(--txt-1); }
+.device-check { container: device-check / inline-size; }
 .device-rows { min-width: 0; }
+@container device-check (min-width: 500px) {
+  .device-rows { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 16px; }
+}
+.device-expand-button { margin-top: 6px; padding: 4px 0; border: 0; background: transparent; color: var(--blue); font: inherit; font-size: 12px; line-height: 1.7; cursor: pointer; }
+.device-expand-button:hover { color: var(--cyan); text-decoration: underline; text-underline-offset: 3px; }
 article { padding: 8px 0; border-top: 1px solid var(--line); }
 .incident-records summary { width: fit-content; max-width: 100%; color: var(--cyan); cursor: pointer; line-height: 1.5; overflow-wrap: anywhere; }
 .incident-records summary:focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; }

@@ -693,7 +693,7 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
             <UField class="lg-region-filter lg-review-location-filter" variant="form" label="核实位置" v-model="st.reviewLocation" type="select" size="small"
               :options="reviewLocationOptions" :disabled="loading" @update:model-value="onRegionChange" />
             <UField v-if="canReadPlans" class="lg-region-filter" variant="form" label="任务" v-model="st.plan" type="select" size="small"
-              :options="planOptions" :disabled="loading" :title="plansError || '只看某一条飞行任务的研判；下拉默认只列今天和以后的任务'" @update:model-value="onRegionChange" />
+              :options="planOptions" :disabled="loading" :title="plansError || '只看某一条飞行任务的研判；下拉默认只列还没结束的任务'" @update:model-value="onRegionChange" />
             <span v-if="canReadPlans" class="lg-plan-expired" title="勾选后任务下拉里也列出已经结束的任务"><UControl v-model="plansIncludeExpired" type="checkbox" box-label="含已过期" :disabled="loading" @update:model-value="loadPlans" /></span>
             </div>
           </div>

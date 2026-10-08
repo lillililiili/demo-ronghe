@@ -16,15 +16,14 @@ export function beijingDayWindow(now = Date.now()) {
   return { from, to: from + DAY_MS };
 }
 
-/* 其他页面的“任务”下拉：默认只列北京时间今天起还没结束的任务（今天的、执行中的、以后的），
-   已过期的只有勾选“含已过期”才列出；按开始时间新到旧，由后端时间窗筛选，不在浏览器里滤大列表。 */
+/* 其他页面的“任务”下拉：默认只列还没结束的任务（执行中的和以后的），已结束的只有勾选“含已过期”才列出；
+   按开始时间新到旧，由后端时间窗筛选（结束时间不早于现在），不在浏览器里滤大列表。 */
 const PICKER_AHEAD_MS = 366 * DAY_MS;
 export function planPickerQuery({ includeExpired = false, size = 100, now = Date.now() } = {}) {
   const query = { page: 1, size };
   if (!includeExpired) {
-    const day = beijingDayWindow(now);
-    query.window_from = day.from;
-    query.window_to = day.from + PICKER_AHEAD_MS;
+    query.window_from = now;
+    query.window_to = now + PICKER_AHEAD_MS;
   }
   return query;
 }
@@ -33,10 +32,12 @@ export function planPickerItems(plans = [], { includeExpired = false } = {}) {
 }
 export function planPickerLabel(plan) {
   const no = displayPlanNo(plan?.plan_no) || plan?.plan_id || '任务';
+  const name = String(plan?.route?.name || '').trim();
+  const head = name ? `${name}（${no}）` : no;
   const start = Number(plan?.start_at);
-  if (plan?.start_at == null || !Number.isFinite(start)) return no;
+  if (plan?.start_at == null || !Number.isFinite(start)) return head;
   const { day, clock } = beijingParts(start);
-  return `${no} · ${day.slice(day.indexOf('/') + 1)} ${clock}`;
+  return `${head} · ${day.slice(day.indexOf('/') + 1)} ${clock}`;
 }
 
 export function normalizePlanKeyword(value) {

@@ -36,7 +36,7 @@ def samples():
     result['06-empty-frame']=s
     s=base('07 目标停报但设备继续在线');s['targets'][0]['silenceWindows']=[{'at':10,'seconds':100}]
     result['07-target-silence']=s
-    s=base('08 航线计划受控资料回读');s['targets'][0]['planId']='item1-plan'
+    s=base('08 航线任务受控资料回读');s['targets'][0]['planId']='item1-plan'
     s['plans']=[{'id':'item1-plan','name':'验收模拟航线','points':[[470,300],[490,300]],
                  'min':0,'max':150,'width':100,'start':'00:01','end':'23:59','altitudeDatum':'AMSL'}]
     result['08-controlled-inputs']=s

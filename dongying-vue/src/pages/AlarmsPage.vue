@@ -117,17 +117,30 @@ const STATE = {
   CONFIRMED: { t: '告警已确认', c: 't-cyan', color: '#22d3ee' },
   FALSE_POSITIVE: { t: '误报', c: 't-blue', color: '#8fbaff' }
 };
-const STATE_FILTER = { ...STATE, CONFIRMED: { ...STATE.CONFIRMED, t: '告警已确认（含处置中）' } };
+/* 待处置：已核实属实、处置还没结束（关注分组不是"历史"）。与列表分组同一个后端口径，不在前端另算。 */
+const PENDING_DISPOSAL_QUERY = { state: 'CONFIRMED', attention_group: 'CURRENT,AWAITING_CONFIRMATION' };
+/* 状态筛选按办理阶段分四项（2026-10-07）：待处置、已处理完与"待处置"卡片同一个后端分组口径，导出同样按它筛。 */
+const STATUS_FILTER = {
+  PENDING_VERIFICATION: { t: '待核实', q: { state: 'PENDING_VERIFICATION' } },
+  PENDING_DISPOSAL: { t: '待处置', q: PENDING_DISPOSAL_QUERY },
+  DISPOSAL_ENDED: { t: '已处理完', q: { state: 'CONFIRMED', attention_group: 'HISTORY' } },
+  FALSE_POSITIVE: { t: '误报', q: { state: 'FALSE_POSITIVE' } }
+};
 const NO_EVENT = { t: '未建事件', c: 't-gray', color: '#8ca0be' };
 const NOTIFY_PHASE = {
   AUTO_SMS: { t: '自动短信', c: 't-cyan', color: '#22d3ee' },
   WATCHING: { t: '观察中', c: 't-amber', color: '#f1a43a' },
   AUTO_CALL: { t: '自动电话', c: 't-cyan', color: '#22d3ee' },
-  AWAIT_COUNTER: { t: '待反制决策', c: 't-orange', color: '#fb923c' }
+  /* 通知已发完（或发不出去）、无人机还在：等人决定反制还是不反制。不叫"待处置决策"，免得和"待处置"统计看混。 */
+  AWAIT_COUNTER: { t: '待定是否反制', c: 't-orange', color: '#fb923c' }
 };
 const SOURCE_MODE = { mock: { t: MODE_TEXT.mock, c: 't-purple' }, replay: { t: MODE_TEXT.replay, c: 't-amber' }, live: { t: MODE_TEXT.live, c: 't-green' } };
-/* 类别来自共享字典；区域来自本页的区域字典接口，读不到就把下拉标成"不可用"并在 title 说明原因。 */
-const KIND_OPTS = [{ v: '全部', t: '全部' }, ...Object.keys(ALARM_TYPE_LABEL).map(v => ({ v, t: ALARM_TYPE_LABEL[v] }))];
+/* 类别按违规原因筛（2026-10-07）：平台自己产生的告警都是"飞行违规"，按告警类型筛只有一项筛得出东西。
+   可选项是规则引擎会写进告警的违规原因（与后端 violation_reason 白名单同一组），文字与列表里的原因一致；
+   区域来自本页的区域字典接口，读不到就把下拉标成"不可用"并在 title 说明原因。 */
+const VIOLATION_REASON_CODES = ['NO_AUTHORIZATION', 'INSIDE_RESTRICTED_AIRSPACE', 'AIRSPACE_ALTITUDE_EXCEEDED',
+  'TEMPORARY_RESTRICTION_ACTIVE', 'ROUTE_DEVIATION', 'TIME_WINDOW_OVERRUN', 'PLAN_ALTITUDE_EXCEEDED', 'NIGHT_FLIGHT', 'BVLOS_EXCEEDED'];
+const KIND_OPTS = [{ v: '全部', t: '全部' }, ...VIOLATION_REASON_CODES.map(v => ({ v, t: ruleReasonText(v) }))];
 const districts = ref([]);
 const districtError = ref('');
 const regionOpts = () => (districtError.value
@@ -135,7 +148,7 @@ const regionOpts = () => (districtError.value
   : [{ v: '全部', t: '全部' }, ...districts.value.map(d => ({ v: d.district_id, t: d.name }))]);
 
 const LEVEL_OPTS = [{ v: '全部', t: '全部' }, { v: 'CRITICAL', t: '紧急' }, { v: 'HIGH', t: '高' }, { v: 'MEDIUM', t: '中' }, { v: 'LOW', t: '低' }];
-const STATUS_OPTS = [{ v: '全部', t: '全部' }, ...Object.entries(STATE_FILTER).map(([v, s]) => ({ v, t: s.t }))];
+const STATUS_OPTS = [{ v: '全部', t: '全部' }, ...Object.entries(STATUS_FILTER).map(([v, s]) => ({ v, t: s.t }))];
 const pageProgress = {};
 const pendingProgress = new Set();
 
@@ -342,6 +355,7 @@ function setSubject(target, value) {
 const KPI_DEFS = [
   { label: '今日告警总数', caption: '按发生时间统计', color: 'blue', icon: 'alert' },
   { label: '今日待核实', caption: '按发生时间统计', color: 'amber', icon: 'alert' },
+  { label: '待处置', caption: '实时，不限日期', color: 'pink', icon: 'alert' },
   { label: '当前反制中', caption: '实时状态', color: 'orange', icon: 'radar' },
   { label: '已反制', caption: '累计完成', color: 'green', icon: 'check' },
   { label: '当前干扰中', caption: '实时状态', color: 'red', icon: 'radar' },
@@ -403,7 +417,7 @@ async function loadKpis() {
   const disposalCount = actionType => Promise.all(DISPOSAL_ACTIVE.map(status =>
     disposalApi.list({ action_type: actionType, status, page: 1, size: 1 }).then(p => Number(p && p.total) || 0)
   )).then(([approved, executing]) => ({ approved, executing }));
-  // 告警按今日发生时间统计；执行中按实时状态统计，已反制按累计完成记录统计。
+  // 告警按今日发生时间统计；待处置、执行中按实时状态统计（不限日期），已反制按累计完成记录统计。
   const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit'
   }).formatToParts(Date.now()).filter(part => part.type !== 'literal').map(part => [part.type, Number(part.value)]));
@@ -416,7 +430,8 @@ async function loadKpis() {
     count({ occurred_from: from, occurred_to: to, state: 'FALSE_POSITIVE' }),
     disposalCount('COUNTERMEASURE'), disposalCount('JAMMING'),
     disposalApi.list({ action_type: 'COUNTERMEASURE', status: 'COMPLETED', page: 1, size: 1 })
-      .then(p => ({ completed: Number(p && p.total) || 0 }))
+      .then(p => ({ completed: Number(p && p.total) || 0 })),
+    count(PENDING_DISPOSAL_QUERY)
   ]);
   const v = r.map(x => x.status === 'fulfilled' ? x.value : null);
   const num = x => x == null ? '—' : U.num(x);
@@ -435,11 +450,12 @@ async function loadKpis() {
   kpiList.value = [
     { ...KPI_DEFS[0], value: num(v[0]), desc: fail(0) || '北京时间今天发生的告警数量；发生时间未知者不计' },
     { ...KPI_DEFS[1], value: num(v[1]), desc: fail(1) || '北京时间今天发生且待人工核实的告警数量' },
-    disposalKpi(KPI_DEFS[2], r[4], v[4]),
-    disposalKpi(KPI_DEFS[3], r[6], v[6]),
-    disposalKpi(KPI_DEFS[4], r[5], v[5]),
-    { ...KPI_DEFS[5], value: num(v[2]), desc: fail(2) || '北京时间今天发生且已确认属实的告警数量，包含处置已结束的记录' },
-    { ...KPI_DEFS[6], value: num(v[3]), desc: fail(3) || '北京时间今天发生且人工核实后已排除的告警数量' }
+    { ...KPI_DEFS[2], value: num(v[7]), desc: fail(7) || '已核实属实、处置还没结束的告警数量，不限日期；正在反制、干扰或急停核查中的也算在内，设备反制或干扰完成后不再计入' },
+    disposalKpi(KPI_DEFS[3], r[4], v[4]),
+    disposalKpi(KPI_DEFS[4], r[6], v[6]),
+    disposalKpi(KPI_DEFS[5], r[5], v[5]),
+    { ...KPI_DEFS[6], value: num(v[2]), desc: fail(2) || '北京时间今天发生且已确认属实的告警数量，包含处置已结束的记录' },
+    { ...KPI_DEFS[7], value: num(v[3]), desc: fail(3) || '北京时间今天发生且人工核实后已排除的告警数量' }
   ];
 }
 
@@ -449,7 +465,7 @@ const disabledSelect = (name, reason) =>
 const listPanelBody = `<div class="toolbar alarm-filter-toolbar">
     <div class="toolbar-fields">
       ${U.field('等级', U.select('level', LEVEL_OPTS, st.level))}
-      ${U.field('类别', U.select('kind', KIND_OPTS, st.kind))}
+      ${U.field('违规原因', U.select('kind', KIND_OPTS, st.kind))}
       ${U.field('状态', U.select('status', STATUS_OPTS, st.status))}
       ${U.field('区域', U.select('region', regionOpts(), st.region))}
     </div>
@@ -486,19 +502,26 @@ function queryOf() {
   const q = { page: st.page, size: st.size, sort: st.sort };
   if (st.sort !== 'priority') q.order = st.order;
   if (st.level !== '全部') q.severity = st.level;
-  if (st.status !== '全部') q.state = st.status;
-  if (st.kind !== '全部') q.alarm_type = st.kind;
+  if (STATUS_FILTER[st.status]) Object.assign(q, STATUS_FILTER[st.status].q);
+  if (VIOLATION_REASON_CODES.includes(st.kind)) q.violation_reason = st.kind;
   if (st.region !== '全部') q.district_id = st.region;
   return q;
 }
 
+/* 违规原因单独成列，列名与"违规原因"筛选一致；没有原因码的告警（演示告警等）显示告警类型。
+   原因定宽折行、最多两行，不把列撑宽挤掉"状态"列；全文在悬停提示与详情里。 */
+function reasonCell(a) {
+  const reasons = reasonsOf(a);
+  const text = reasons ? esc(reasons) : typeOf(a);
+  return U.cell(U.tag(modeOf(a).t, modeOf(a).c),
+    `<span style="display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;white-space:normal;width:9em">${text}</span>`,
+    { title: reasons ? esc(reasons) : '' });
+}
+
+/* 来源和发生时间分两行：挤在一行时这一列最宽，整张表被撑过面板，"状态"列要横向滚动才看得到。 */
 function summaryOf(a) {
-  const text = `来源 ${esc(sourceDescription(a.source_name, a.source_code, a.source_mode, '—'))}· 发生 ${fmt(a.occurred_at) || '未知'}`;
-  const reasons = reasonsOf(a), tag = escalationTag(a);
-  /* 原因行不参与撑开列宽（表格按内容自然拓宽），跟随来源行的宽度折行，最多两行，全文在悬停提示与详情里。 */
-  const head = reasons || tag ? `<div style="width:0;min-width:100%;color:var(--txt);display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden"
-    title="${esc(reasons)}">${tag}${tag && reasons ? ' ' : ''}${reasons ? esc(reasons) : ''}</div>` : '';
-  return `<div style="white-space:normal;line-height:1.5;overflow-wrap:anywhere">${head}${text}</div>`;
+  const tag = escalationTag(a);
+  return `<div style="white-space:normal;line-height:1.5;overflow-wrap:anywhere">${tag ? `<div>${tag}</div>` : ''}<div>来源 ${esc(sourceDescription(a.source_name, a.source_code, a.source_mode, '—'))}</div><div class="cell-sub">发生 ${fmt(a.occurred_at) || '未知'}</div></div>`;
 }
 
 function listHtml() {
@@ -514,7 +537,7 @@ function listHtml() {
       render: a => U.cell(esc(noOf(a)), clock(a.received_at), { mono: true, title: esc(a.alarm_id) })
     },
     { t: sortTh('level', '等级'), w: '52px', align: 'center', render: sevTag },
-    { t: sortTh('kind', '类别 / 类型'), w: '128px', render: a => U.cell(U.tag(modeOf(a).t, modeOf(a).c), typeOf(a)) },
+    { t: sortTh('kind', '违规原因'), w: '136px', render: reasonCell },
     { t: sortTh('district', '关联目标 / 区域'), w: '146px', render: a => U.cell(a.target_id ? esc(a.target_no || a.target_id) : '—', esc(a.district_name || a.district_id || '—'), { mono: true, title: a.target_id ? esc(a.target_id) : '无关联目标或无目标读取权限' }) },
     { t: '告警内容', render: summaryOf },
     { t: sortTh('status', '状态'), w: '86px', render: stateTag }
@@ -657,7 +680,7 @@ function detailActionsHtml() {
   if (!a) return '';
   const replayN = replayPointCount();
   return `<div class="alarm-observation-actions">
-      <button class="btn" data-al="replay" ${replayN > 1 ? '' : 'disabled '}title="${replayN > 1 ? '按实测轨迹在地图上走航线回放，不是视频' : '没有足够的轨迹点'}">${U.icon('trend')} 轨迹回放</button>
+      <button class="btn" data-al="replay" ${replayN > 1 ? '' : 'disabled '}title="${replayN > 1 ? '按实测轨迹回放，有光电录像时同步播放' : '没有足够的轨迹点'}">${U.icon('trend')} 轨迹回放</button>
       ${disposalActions(a, ev)}</div>
     ${ev?.state === 'PENDING_VERIFICATION' ? '<p class="alarm-action-note">事件事实尚待核实。核实属实后自动发送飞手短信。</p>' : ''}`;
 }
@@ -1237,7 +1260,7 @@ onMounted(async () => {
   gap: 4px;
 }
 .alarms-page :deep(.alarm-kpis) {
-  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-columns: repeat(8, minmax(0, 1fr));
   flex: none;
 }
 @media (max-width: 1439px) {

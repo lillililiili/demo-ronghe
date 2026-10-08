@@ -20,6 +20,7 @@ from notification_inbox import read_inbox
 from notification_response import NotificationResponse
 from platform_client import Platform, Prerequisites, sql
 from eo_video import EoSimulator, video_config, public_video_config, sanitize_video_error, DEFAULT_VIDEO
+from qa_media import MediaService, load_or_create_credentials
 from realtime_control import RealtimeController, prepare_scene
 from full_scenario import full_scene, allocate_identities
 from fullchain import FullChain
@@ -177,6 +178,7 @@ class Runtime:
         self.next_session_check = 0
         self.snapshot = {}; self.skipped = []; self.response = None
         self.video_config = dict(DEFAULT_VIDEO); self.eo = None; self.eo_status = {}
+        self.media = MediaService()
         self.protocol_b = None
         self.realtime = None
         self.mqtt_connected = False
@@ -294,6 +296,12 @@ class Runtime:
         allowed = {'ffmpeg', 'source', 'rtsp_base', 'publisher_user', 'publisher_password'}
         if not isinstance(settings, dict) or set(settings) - allowed:
             raise ValueError('视频配置字段无效')
+        if body['enabled'] and not settings and not self.video_config.get('publisher_password'):
+            # 一键开启：没配过推流密码时，自动生成本机凭据并拉起本机视频服务，无需手填。
+            if not self.platform: raise ExternalAuthenticationRequired('请先登录系统')
+            credentials = load_or_create_credentials()
+            self.media.ensure(credentials)
+            settings = {'publisher_user': 'qa-publisher', 'publisher_password': credentials['publish']}
         with self.lock:
             if self.phase in ('PREPARING', 'STOPPING'):
                 raise ValueError('场景正在切换，请稍后操作视频')

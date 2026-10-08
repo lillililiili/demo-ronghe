@@ -80,6 +80,8 @@ class LifecycleTests(unittest.TestCase):
         self.proxy = FakeProxy(message())
         self.session = SimpleNamespace(version='first', platform=True)
         self.session.request = lambda c: self.proxy.call(c['method'], c['path'], c.get('body'), c.get('key'))
+        self.session.connection_scope = lambda: {'owner_org_id': None, 'district_id': None,
+            'message': '未找到启用的回放 MQTT 连接 local-lingyun-replay，请手动选择归属单位与区县'}
         self.runtime = SimpleNamespace(data_dir=Path(self.temp.name), platform=True, session=self.session,
                                        lock=threading.RLock(), phase='STOPPED', cancel=threading.Event())
         self.controller = RealtimeController(self.runtime, port=19871)
@@ -109,6 +111,36 @@ class LifecycleTests(unittest.TestCase):
         self.assertFalse(self.controller.active())
         self.assertIsNone(self.controller.presence_lock)
         self.assertFalse(self.controller.snapshot()['countermeasure']['listening'])
+
+    def test_missing_platform_connection_says_where_to_create_it(self):
+        with self.assertRaisesRegex(ValueError, '还没有启用的设备数据连接.*接口配置 → 设备数据连接'):
+            self.controller.start()
+        self.session.connection_scope = lambda: {'owner_org_id': None, 'district_id': None,
+            'message': '模拟器连接读取失败，请手动选择归属单位与区县'}
+        with self.assertRaisesRegex(ValueError, '读取设备数据连接失败'):
+            self.controller.start()
+        self.assertFalse(self.controller.active())
+
+    def test_first_start_after_login_follows_the_platform_connection(self):
+        # Login clears runtime.broker; the receiver must not need a scene run or a manual scope first.
+        from countermeasure_tcp import CountermeasureSimulator
+        from test_countermeasure_tcp import free_port
+        registered = []
+        def request(command):
+            if command['path'].endswith('/countermeasure-device'):
+                registered.append(command.get('body'))
+                return {'device': {'device_id': 'cm-test'}}
+            return {}
+        self.session.request = request
+        self.session.connection_scope = lambda: {'owner_org_id': 'org-conn', 'district_id': 'district-conn',
+                                                 'broker_name': 'local-lingyun-replay'}
+        self.controller.configure({'notifications_enabled': False})
+        transport = CountermeasureSimulator(port=free_port())
+        with patch('countermeasure_tcp.CountermeasureSimulator', return_value=transport):
+            self.controller.start()
+        self.addCleanup(self.controller.stop)
+        self.assertEqual('RUNNING', self.controller.snapshot()['state'])
+        self.assertEqual([{'owner_org_id': 'org-conn', 'district_id': 'district-conn'}], registered)
 
     def test_disabling_receiver_after_stop_does_not_reuse_it(self):
         self.controller.configure({'countermeasure_enabled': False})

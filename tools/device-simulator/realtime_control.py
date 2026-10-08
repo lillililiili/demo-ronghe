@@ -169,8 +169,14 @@ class RealtimeController:
                 if config['countermeasure_scope']:
                     org, district = config['countermeasure_scope'].split('|', 1)
                 else:
-                    broker = getattr(self.runtime, 'broker', None) or {}
-                    org, district = broker.get('owner_org_id'), broker.get('district_id')
+                    # 本轮还没用过连接（刚登录、还没开始模拟）时，像空域页一样去平台上查设备数据连接。
+                    scope = self.runtime.session.connection_scope()
+                    org, district = scope.get('owner_org_id'), scope.get('district_id')
+                    if not org or not district:
+                        reason = ('读取设备数据连接失败' if '读取失败' in (scope.get('message') or '')
+                                  else '还没有启用的设备数据连接 local-lingyun-replay')
+                        raise ValueError(reason + '：请先在管理端“接口配置 → 设备数据连接”里建好并启用，'
+                                         '或在实时收发设置中选择反制设备所属单位和区县')
                 if not org or not district:
                     raise ValueError('请在实时收发设置中选择反制设备所属单位和区县')
                 device = client.call('POST', '/local-interface-simulator/countermeasure-device',

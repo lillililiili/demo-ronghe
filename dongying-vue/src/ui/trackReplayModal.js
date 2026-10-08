@@ -1,5 +1,5 @@
-/* 告警页轨迹回放：用目标最新一条轨迹的可信 WGS-84 点在独立地图上走航线。
-   不是视频，也不是飞行计划航线。点位不足两条就不打开。 */
+/* 告警页轨迹回放：用目标最新一条轨迹的可信 WGS-84 点在独立地图上走航线，
+   并按采集时刻同步播放关联到该目标的光电录像。不是飞行计划航线。点位不足两条就不打开。 */
 import { h } from 'vue';
 import { openModal } from './modal.js';
 import { toast } from './nv.js';
@@ -7,11 +7,15 @@ import { targetApi } from '@/services/targetApi.js';
 import { measuredMapPoints } from '@/services/trackPoints.js';
 import { ALARM_TYPE_LABEL, LEGALITY_LABEL, labelOf, readableNo, targetTypeLabel } from '@/ui/labels.js';
 import TrackReplayModal from '@/components/modals/TrackReplayModal.vue';
+import { clockText } from '@/components/replay/trackReplayModel.js';
 
 let replaySeq = 0;
 
 export function trackPointsOf(raw) {
-  const points = measuredMapPoints(raw || []);
+  const rows = raw || [];
+  const agl = new Map(rows.filter(row => row?.point_id != null && Number.isFinite(row.height_agl_m))
+    .map(row => [row.point_id, row.height_agl_m]));
+  const points = measuredMapPoints(rows).map(point => agl.has(point.point_id) ? { ...point, agl: agl.get(point.point_id) } : point);
   return withHeadings(points);
 }
 
@@ -37,14 +41,6 @@ function withHeadings(points) {
   });
 }
 
-function clockOf(ms) {
-  if (ms == null) return '—';
-  const d = new Date(ms);
-  if (Number.isNaN(d.getTime())) return '—';
-  const p = n => String(n).padStart(2, '0');
-  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
-}
-
 function alarmMarkOf(alarm, points) {
   const start = points[0]?.t;
   const end = points[points.length - 1]?.t;
@@ -52,8 +48,9 @@ function alarmMarkOf(alarm, points) {
   if (ts == null || start == null || end == null || end <= start || ts < start || ts > end) return null;
   const type = ALARM_TYPE_LABEL[alarm.alarm_type] || alarm.alarm_type || '告警';
   return {
+    t: ts,
     pct: Math.max(0, Math.min(100, (ts - start) / (end - start) * 100)),
-    title: `${type} ${clockOf(ts)}`
+    title: `${type} ${clockText(ts)}`
   };
 }
 
@@ -94,11 +91,12 @@ export async function openTrackReplay({ target, trackId, points, alarm } = {}) {
   const mark = alarmMarkOf(alarm, pts);
   openModal({
     title: `轨迹回放 · ${titleId}`,
-    width: '860px',
+    width: '1080px',
     footer: false,
     render: () => h(TrackReplayModal, {
       mapTarget,
       points: pts,
+      targetId: target?.target_id || alarm?.target_id || '',
       alarmMark: mark,
       alarmText: mark ? mark.title : ''
     })

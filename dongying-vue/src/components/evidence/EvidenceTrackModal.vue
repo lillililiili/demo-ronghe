@@ -6,7 +6,8 @@ import EvidenceTrackPreview from './EvidenceTrackPreview.vue';
 import EvidencePreviewModal from './EvidencePreviewModal.vue';
 
 const props = defineProps({ records: { type: Array, required: true }, truncated: Boolean,
-  restricted: Boolean, subjectKind: String, subjectId: String, onReturn: { type: Function, required: true } });
+  restricted: Boolean, subjectKind: String, subjectId: String,
+  videos: { type: Array, default: null }, onReturn: { type: Function, required: true } });
 const selected = ref(0);
 const record = computed(() => props.records[selected.value]);
 const isFile = computed(() => !!record.value?.summary?.kind_code);
@@ -51,7 +52,7 @@ onBeforeUnmount(() => { sequence += 1; window.removeEventListener('auth-access-c
     <template v-else>
       <p v-if="loading" class="track-record-message" role="status">正在读取这份证据关联的轨迹观测点</p>
       <div v-else-if="error" class="track-record-message" role="alert">{{ error }} <button class="btn" type="button" @click="load">重新读取</button></div>
-      <EvidenceTrackPreview v-else-if="snapshot" :key="record.record_id" :snapshot="snapshot" />
+      <EvidenceTrackPreview v-else-if="snapshot" :key="record.record_id" :snapshot="snapshot" :videos="videos" />
       <a class="btn" :href="detailHref" @click="onReturn()">查看证据详情</a>
     </template>
   </section>

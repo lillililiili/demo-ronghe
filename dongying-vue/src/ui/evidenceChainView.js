@@ -4,7 +4,7 @@ import {
 } from '@/ui/labels.js';
 import { escEvidence, fmtEvidenceTime, openEvidenceFileModal, sizeText } from '@/ui/evidenceFileDetail.js';
 import { openModal } from '@/ui/modal.js';
-import { evidenceDisplayType } from '@/services/evidenceTrackData.js';
+import { chainVideos, evidenceDisplayType } from '@/services/evidenceTrackData.js';
 import EvidenceTrackModal from '@/components/evidence/EvidenceTrackModal.vue';
 import EvidenceCommandModal from '@/components/evidence/EvidenceCommandModal.vue';
 import { EVIDENCE_CATEGORY_LABEL, COMMAND_TYPE_LABEL } from '@/services/evidenceLedger.js';
@@ -85,7 +85,8 @@ export function openEvidenceChainTypeModal({ chain, type }) {
   if (type === 'TRACK' && card.records.length) {
     const handle = openModal({ title: '轨迹证据', width: '1180px', footer: false,
       render: () => h(EvidenceTrackModal, { records: card.records, truncated: card.truncated,
-        restricted: card.restricted, subjectKind: chain.subject_kind, subjectId: chain.subject_id, onReturn: () => handle.close() }) });
+        restricted: card.restricted, subjectKind: chain.subject_kind, subjectId: chain.subject_id,
+        videos: chainVideos(chain.records), onReturn: () => handle.close() }) });
     return handle;
   }
   const files = card.records.filter(isFileRecord).map(record => ({

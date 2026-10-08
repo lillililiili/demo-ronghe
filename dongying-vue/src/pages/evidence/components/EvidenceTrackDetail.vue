@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import EvidenceTrackPreview from '@/components/evidence/EvidenceTrackPreview.vue';
 import { hasPermission } from '@/services/accessControl.js';
 import { getEvidenceChain, getEvidenceTrackPoints } from '@/services/evidenceApi.js';
+import { chainVideos } from '@/services/evidenceTrackData.js';
 import { fmtEvidenceTime } from '@/ui/evidenceFileDetail.js';
 import { EVIDENCE_SUBJECT_LABEL, labelOf } from '@/ui/labels.js';
 
@@ -21,6 +22,7 @@ const error = ref('');
 let sequence = 0;
 let disposed = false;
 const layer = computed(() => ({ RAW: '原始观测', FUSED: '融合轨迹' }[record.value?.summary?.layer] || '分层未记录'));
+const videos = computed(() => chain.value ? chainVideos(chain.value.records) : null);
 const original = computed(() => snapshot.value ? JSON.stringify(snapshot.value, null, 2) : '');
 
 async function load() {
@@ -87,7 +89,7 @@ onBeforeUnmount(() => { disposed = true; sequence += 1; window.removeEventListen
         <div><dt>记录点数</dt><dd>{{ record.summary?.point_count == null ? '未记录' : `${record.summary.point_count} 点` }}</dd></div>
         <div><dt>记录时刻</dt><dd>{{ fmtEvidenceTime(record.occurred_at) }}</dd></div>
       </dl>
-      <EvidenceTrackPreview v-if="snapshot" :key="record.record_id" :snapshot="snapshot" details />
+      <EvidenceTrackPreview v-if="snapshot" :key="record.record_id" :snapshot="snapshot" :videos="videos" details />
       <details class="track-detail-record">
         <summary>记录标识与链校验信息</summary>
         <dl class="track-detail-facts">

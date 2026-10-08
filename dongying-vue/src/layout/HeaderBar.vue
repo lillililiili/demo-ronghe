@@ -47,17 +47,15 @@ async function toggleBig() {
   } catch {
     toast('未能切换全屏，请检查浏览器是否允许全屏显示', 'warn');
   }
-  const on = Boolean(document.fullscreenElement);
-  document.body.classList.toggle('bigscreen', on);
-  store.bigscreen = on;
-  window.dispatchEvent(new Event('resize'));
+  onFsChange();
 }
 function onFsChange() {
-  if (!document.fullscreenElement && document.body.classList.contains('bigscreen')) {
-    document.body.classList.remove('bigscreen');
-    store.bigscreen = false;
-    window.dispatchEvent(new Event('resize'));
-  }
+  // 视频自己的全屏不改变整页布局；退出视频后也按浏览器实际元素恢复。
+  const on = document.fullscreenElement === document.documentElement;
+  const changed = store.bigscreen !== on || document.body.classList.contains('bigscreen') !== on;
+  document.body.classList.toggle('bigscreen', on);
+  store.bigscreen = on;
+  if (changed) window.dispatchEvent(new Event('resize'));
 }
 
 /* ---------- 用户菜单：个人信息、修改密码与退出登录 ---------- */
@@ -156,6 +154,7 @@ async function onMenu(k) {
 onMounted(() => {
   clkTimer = setInterval(tick, 1000);
   document.addEventListener('fullscreenchange', onFsChange);
+  onFsChange();
   document.addEventListener('click', closeMenu);
 });
 onBeforeUnmount(() => {
@@ -163,6 +162,8 @@ onBeforeUnmount(() => {
   clearInterval(clkTimer);
   document.removeEventListener('fullscreenchange', onFsChange);
   document.removeEventListener('click', closeMenu);
+  document.body.classList.remove('bigscreen');
+  store.bigscreen = false;
 });
 </script>
 

@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "name": "05 AOA 方位观测",
+  "duration": 2,
+  "sites": [
+    {
+      "id": "item1-site",
+      "name": "验收模拟设备组",
+      "x": 450,
+      "y": 300,
+      "devices": [
+        {
+          "id": "item1-aoa",
+          "name": "验收模拟 aoa",
+          "kind": "aoa",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2
+        }
+      ]
+    }
+  ],
+  "targets": [
+    {
+      "id": "item1-t-aoa",
+      "name": "验收目标 aoa",
+      "kind": "uav",
+      "deviceId": "item1-aoa",
+      "path": [
+        [
+          470,
+          300
+        ],
+        [
+          490,
+          300
+        ]
+      ],
+      "height": 100,
+      "heightAgl": 60,
+      "speed": 2,
+      "motionMode": "pingpong",
+      "transport": "mqtt",
+      "planId": "",
+      "uavSn": "SIM-ITEM1-AOA",
+      "protocolA": {
+        "uavModel": "SIM-SAME-MODEL",
+        "channel": "5.73",
+        "bandWidth": "10.00",
+        "reportSn": true
+      }
+    }
+  ],
+  "plans": [],
+  "zones": [],
+  "risks": [],
+  "fullchain": {
+    "enabled": true,
+    "categories": []
+  }
+}

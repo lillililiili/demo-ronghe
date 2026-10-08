@@ -34,11 +34,11 @@ class RecordingPlatform:
 
 def prepared(batch, scene=None):
     scene = copy.deepcopy(scene or full_scene())
-    manifest = {'batch': batch, 'created_at': 1000000, 'devices': {}, 'plans': {}, 'zones': {},
+    manifest = {'batch': batch, 'created_at': 1791172800000, 'devices': {}, 'plans': {}, 'zones': {},
                 'targets': allocate_identities(scene, batch)}
     platform = RecordingPlatform()
     FullChain(platform, scene, manifest, {'owner_org_id': 'o', 'district_id': 'd'}, lambda: None,
-              clock=lambda: 1000000).prepare()
+              clock=lambda: 1791172800000).prepare()
     return platform
 
 

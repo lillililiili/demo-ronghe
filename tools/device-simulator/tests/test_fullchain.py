@@ -6,6 +6,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from full_scenario import full_scene, allocate_identities
 
+TEST_NOW = int(dt.datetime(2026, 10, 5, 12, tzinfo=dt.timezone(dt.timedelta(hours=8))).timestamp() * 1000)
+
 
 class FakePlatform:
     def __init__(self, airspace_items=None, input_context=None):
@@ -73,11 +75,11 @@ class FullChainTests(unittest.TestCase):
     def setup_chain(self):
         from fullchain import FullChain
         scene=full_scene()
-        manifest={'batch':'sim-unit','created_at':1000000,'devices':{},'plans':{},'zones':{},
+        manifest={'batch':'sim-unit','created_at':TEST_NOW,'devices':{},'plans':{},'zones':{},
                   'targets':allocate_identities(scene,'sim-unit')}
         platform=FakePlatform()
         chain=FullChain(platform,scene,manifest,{'owner_org_id':'o','district_id':'d'},lambda:None,
-                        clock=lambda:1000000)
+                        clock=lambda:TEST_NOW)
         return chain,platform,manifest,scene
 
     def test_preparation_links_plan_identity_without_seed_or_fake_verification(self):
@@ -145,6 +147,28 @@ class FullChainTests(unittest.TestCase):
         for key in ('name','owner_org_id','district_id','kind_code','boundary'):
             self.assertEqual(update[key],original[key],key)
 
+    def test_notification_stop_suppresses_every_normalized_source_without_stopping_peers(self):
+        chain, platform, manifest, scene = self.setup_chain()
+        chain.prepare()
+        targets = {t['id']: t for t in scene['targets']}
+        normalized = [t for t in targets.values() if t.get('transport') == 'normalized']
+        self.assertGreater(len(normalized), 1)
+        manifest['normalized_sources'] = [dict(manifest['normalized_source'], source_id='stop-source-'+str(i)) for i in range(3)]
+        stopped = normalized[0]
+        stopped['_notification_motion'] = {'suppress': True, 'origin': stopped['path'][0], 'at_elapsed': 1}
+        platform.calls.clear()
+        chain.tick(targets, 2, 2)
+        frames = [body for _, path, body, _ in platform.calls if path.endswith('/target-observations')]
+        self.assertEqual(3, len(frames))
+        expected = {manifest['targets'][t['id']]['external_id'] for t in normalized[1:]}
+        for frame in frames:
+            self.assertEqual(expected, {row['external_target_id'] for row in frame['items']})
+        for target in normalized[1:]:
+            target['_notification_motion'] = {'suppress': True, 'origin': target['path'][0], 'at_elapsed': 2}
+        platform.calls.clear()
+        chain.tick(targets, 3, 3)
+        self.assertFalse(any(path.endswith('/target-observations') for _, path, _, _ in platform.calls))
+
     def test_checkpoint_reprepare_does_not_create_other_objects(self):
         chain,p,m,s=self.setup_chain(); chain.prepare(); n=len(p.calls)
         chain.prepare()
@@ -161,13 +185,13 @@ class FullChainTests(unittest.TestCase):
         existing = [{'airspace_no': row['airspace_no'], 'revision': row['revision'],
                      'payload': row} for row in first_rows]
         second_scene = copy.deepcopy(scene)
-        second_manifest = {'batch':'sim-next', 'created_at':1001000, 'devices':{}, 'plans':{}, 'zones':{},
+        second_manifest = {'batch':'sim-next', 'created_at':TEST_NOW + 1000, 'devices':{}, 'plans':{}, 'zones':{},
                           'targets':allocate_identities(second_scene,'sim-next')}
         from fullchain import FullChain
         second_platform = FakePlatform(existing)
         second_chain = FullChain(second_platform, second_scene, second_manifest,
                                  {'owner_org_id':'o','district_id':'d'}, lambda:None,
-                                 clock=lambda:1001000)
+                                 clock=lambda:TEST_NOW + 1000)
         second_chain.prepare()
         second_rows = [body for _, path, body, _ in second_platform.calls if path.endswith('/airspaces')]
         self.assertEqual([row['airspace_no'] for row in second_rows], [row['airspace_no'] for row in first_rows])
@@ -194,13 +218,13 @@ class FullChainTests(unittest.TestCase):
         existing_airspaces = [{'airspace_no': body['airspace_no'], 'revision': body['revision'], 'payload': body}
                               for _, path, body, _ in first_platform.calls if path.endswith('/airspaces')]
         second_scene = copy.deepcopy(scene)
-        second_manifest = {'batch':'sim-next', 'created_at':1001000, 'devices':{}, 'plans':{}, 'zones':{},
+        second_manifest = {'batch':'sim-next', 'created_at':TEST_NOW, 'devices':{}, 'plans':{}, 'zones':{},
                           'targets':allocate_identities(second_scene,'sim-next')}
         from fullchain import FullChain
         second_platform = FakePlatform(existing_airspaces, context)
         second_chain = FullChain(second_platform, second_scene, second_manifest,
                                  {'owner_org_id':'o','district_id':'d'}, lambda:None,
-                                 clock=lambda:1001000)
+                                 clock=lambda:TEST_NOW)
         second_chain.prepare()
         self.assertFalse([row for _, path, row, _ in second_platform.calls if path.endswith('/routes')])
         self.assertFalse([row for _, path, row, _ in second_platform.calls if path.endswith('/plans')])
@@ -247,12 +271,14 @@ class FullChainTests(unittest.TestCase):
                 return super().call(method, path, body, key)
 
         scene = full_scene(['uav'])
-        manifest = {'batch':'sim-retry', 'created_at':1000000, 'devices':{}, 'plans':{}, 'zones':{},
+        # Use a valid modern date so timezone/plan offsets cannot cross epoch 0.
+        now = 1900000000000
+        manifest = {'batch':'sim-retry', 'created_at':now, 'devices':{}, 'plans':{}, 'zones':{},
                     'targets':allocate_identities(scene,'sim-retry')}
         platform = LegacyMessageCollisionPlatform()
 
         FullChain(platform, scene, manifest, {'owner_org_id':'o','district_id':'d'}, lambda:None,
-                  clock=lambda:1000000).prepare()
+                  clock=lambda:now).prepare()
 
         plan = next(body for _, path, body, _ in platform.calls if path.endswith('/plans'))
         legacy = 'sim-map-plan-' + scene['plans'][0]['id'] + '-1'
@@ -313,9 +339,104 @@ class FullChainTests(unittest.TestCase):
         p.call=fail
         with self.assertRaises(ValueError): chain.prepare()
         self.assertTrue(m['fullchain']['requests'])
+        with self.assertRaisesRegex(ValueError,'结果未知'): chain.prepare()
+        unknown=next(row for row in m['fullchain']['requests'].values() if row['state']=='UNKNOWN')
+        p.input_context['messages'].append({'kind':'FLIGHT_PLAN','message_id':'platform-generated-receipt-id',
+            'payload':copy.deepcopy(unknown['body']),'state':'ACCEPTED','subject_id':'recovered-plan'})
         chain.prepare()
+        self.assertTrue(unknown['recovered_by_readback'])
         route_calls=[c for c in p.calls if c[1].endswith('/routes')]
         self.assertEqual(len(route_calls), len(s['plans']))
+
+    def test_existing_plan_uses_external_id_in_payload_not_receipt_id(self):
+        from fullchain import FullChain
+        chain,p,m,s=self.setup_chain()
+        chain.prepare()
+        plans=[body for method,path,body,key in p.calls if path.endswith('/plans')]
+        p.input_context['messages']=[{'kind':'FLIGHT_PLAN','message_id':'receipt-'+str(i),
+            'subject_id':'saved-'+str(i),'state':'ACCEPTED','payload':copy.deepcopy(body)}
+            for i,body in enumerate(plans)]
+        second=copy.deepcopy(m)
+        second['fullchain']={'requests':{},'coverage':{},'warnings':[]}
+        p.calls.clear()
+        FullChain(p,s,second,{'owner_org_id':'o','district_id':'d'},lambda:None).prepare()
+        self.assertFalse(any(path.endswith('/plans') for _,path,_,_ in p.calls))
+        self.assertTrue(all(pid.startswith('saved-') for entry in second['plans'].values() for pid in entry['ids']))
+
+    def test_time_risks_shift_only_selected_targets_and_route_covers_all_windows(self):
+        from engine import compile_scene
+        from fullchain import FullChain, SHANGHAI
+        scene = full_scene(['uav'])
+        plan = scene['plans'][0]
+        plan.update(start='11:00', end='13:00')
+        target = scene['targets'][0]
+        scene.update(plans=[plan], zones=[], risks=[], targets=[
+            dict(copy.deepcopy(target), id=key) for key in ('normal', 'early', 'late', 'disabled')])
+        for key, mode, enabled in [('early', '开始前提前飞行', True),
+                                   ('late', '结束后继续飞行', True),
+                                   ('disabled', '结束后继续飞行', False)]:
+            scene['risks'].append(dict(id='r-' + key, name=key, type='time', enabled=enabled,
+                targetId=key, deviceId=target['deviceId'], planId=plan['id'], mode=mode, offset=5))
+        scene, _, _, _ = compile_scene(scene)
+        original = copy.deepcopy(scene)
+        manifest = dict(batch='sim-shift', created_at=TEST_NOW, devices={}, plans={}, zones={},
+                        targets=allocate_identities(scene, 'sim-shift'))
+        api = FakePlatform()
+        FullChain(api, scene, manifest, {'owner_org_id':'o','district_id':'d'}, lambda:None).prepare()
+        plans = {b['uav_sn']:b for _, path, b, _ in api.calls if path.endswith('/plans')}
+        for key, begin, end, status in [('normal', '11:00', '13:00', 'EXECUTING'),
+                                       ('early', '12:05', '14:05', 'PENDING'),
+                                       ('late', '09:55', '11:55', 'COMPLETED'),
+                                       ('disabled', '11:00', '13:00', 'EXECUTING')]:
+            row = plans['map-sim-uav-' + key]
+            self.assertEqual(begin, dt.datetime.fromtimestamp(row['start_at']/1000, SHANGHAI).strftime('%H:%M'))
+            self.assertEqual(end, dt.datetime.fromtimestamp(row['end_at']/1000, SHANGHAI).strftime('%H:%M'))
+            self.assertEqual(status, row['status_code'])
+            self.assertEqual(7200000, row['end_at'] - row['start_at'])
+        route = next(b for _, path, b, _ in api.calls if path.endswith('/routes'))
+        self.assertEqual(plans['map-sim-uav-late']['start_at'], route['valid_from'])
+        self.assertEqual(plans['map-sim-uav-early']['end_at'], route['valid_to'])
+        self.assertEqual(scene, original)
+
+    def test_time_shift_crosses_midnight_and_rejects_conflicting_offsets(self):
+        from fullchain import flight_window, SHANGHAI
+        now = int(dt.datetime(2026, 10, 5, 0, 2, tzinfo=SHANGHAI).timestamp() * 1000)
+        plan = {'id':'p', 'start':'11:00', 'end':'12:00'}
+        target = {'id':'u'}
+        risk = dict(enabled=True, type='time', targetId='u', planId='p',
+                    mode='结束后继续飞行', offset=5)
+        start, end = flight_window(plan, target, [risk], now)
+        self.assertEqual('2026-10-04 22:57', dt.datetime.fromtimestamp(start/1000, SHANGHAI).strftime('%Y-%m-%d %H:%M'))
+        self.assertEqual('2026-10-04 23:57', dt.datetime.fromtimestamp(end/1000, SHANGHAI).strftime('%Y-%m-%d %H:%M'))
+        with self.assertRaisesRegex(ValueError, '冲突'):
+            flight_window(plan, target, [risk, dict(risk, mode='开始前提前飞行')], now)
+        for offset in (True, 0, 1441, float('nan')):
+            with self.subTest(offset=offset), self.assertRaises(ValueError):
+                flight_window(plan, target, [dict(risk, offset=offset)], now)
+
+    def test_airspace_uses_beijing_window_and_lifecycle_update_preserves_it(self):
+        from fullchain import FullChain, SHANGHAI
+        from engine import compile_scene
+        scene = full_scene(['airspaces'])
+        for zone in scene['zones']:
+            zone.update(start='08:00', end='10:00')
+        scene['zones'][0].update(start='13:00', end='14:00')
+        scene, _, _, _ = compile_scene(scene)
+        manifest = dict(batch='sim-zones', created_at=TEST_NOW, devices={}, plans={}, zones={},
+                        targets=allocate_identities(scene, 'sim-zones'))
+        api = FakePlatform()
+        chain = FullChain(api, scene, manifest, {'owner_org_id':'o','district_id':'d'}, lambda:None,
+                          clock=lambda:TEST_NOW + 130000)
+        chain.prepare()
+        rows = [b for _, path, b, _ in api.calls if path.endswith('/airspaces')]
+        for zone, row in zip(scene['zones'], rows):
+            for field, time_field in [('valid_from','start'), ('valid_to','end')]:
+                self.assertEqual('2026-10-05 ' + zone[time_field],
+                    dt.datetime.fromtimestamp(row[field]/1000, SHANGHAI).strftime('%Y-%m-%d %H:%M'))
+        chain.tick({}, 130, 1)
+        update = [b for _, path, b, _ in api.calls if path.endswith('/airspaces')][-1]
+        old = next(b for b in rows if b['airspace_no'] == update['airspace_no'])
+        self.assertEqual((old['valid_from'], old['valid_to']), (update['valid_from'], update['valid_to']))
 
 
 if __name__=='__main__': unittest.main()

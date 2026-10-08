@@ -34,6 +34,19 @@ test('unknown SMS never offers blind resend even if a stale backend flag permits
   assert.equal(view.tone, 'warning');
 });
 
+test('unavailable voice channel is shown instead of being reduced to SMS waiting', async () => {
+  const { autoVoiceView } = await import(pathToFileURL(path.join(sourceRoot, 'components/disposal/autoVoiceView.js')).href);
+  const view = autoVoiceView({
+    voice_mode: 'UNAVAILABLE',
+    auto_voice: { status: 'WAITING', reason: '飞手短信尚未送达，电话要等短信送达并观察 3 秒' }
+  });
+  assert.equal(view.title, '电话通道不可用');
+  assert.equal(view.channelUnavailable, true);
+  assert.match(view.reason, /模拟器|录音|通道/);
+  assert.equal(view.tone, 'warning');
+  assert.equal(view.simulated, false);
+});
+
 test('plan feedback unknown outcome does not claim no send happened', () => {
   const source = readFileSync(path.join(sourceRoot, 'pages/flights/components/PlanVerificationPanel.vue'), 'utf8');
   const match = source.match(/function notificationBlocker\(item\) \{([\s\S]*?)\n\}/);
@@ -45,4 +58,18 @@ test('plan feedback unknown outcome does not claim no send happened', () => {
     '通知功能尚未接通，记录已保存但还未发出。');
   assert.equal(message({ delivery_status: 'DELIVERED' }), undefined);
   assert.match(source, /item\.blocked_reason === 'DELIVERY_OUTCOME_UNKNOWN' \? '发送结果未知'/);
+});
+
+test('pending risk delivery does not claim a disconnected channel or a completed result', async () => {
+  const { notificationSubmissionMessage, notificationBlockedReason } = await import(pathToFileURL(path.join(sourceRoot, 'ui/labels.js')).href);
+  for (const id of ['alpha-01', 'changed-02']) {
+    const notice = Object.freeze({ delivery_status: 'SUBMITTED', blocked_reason: `SIMULATOR_WAITING:${id}` });
+    const view = notificationSubmissionMessage(notice);
+    assert.match(view.title, /等待送达确认/);
+    assert.doesNotMatch(view.message, /未接通|没有发出去|已送达|已驱离/);
+    assert.equal(notificationBlockedReason(notice), '');
+  }
+  assert.match(notificationSubmissionMessage({ delivery_status: 'FAILED' }).title, /发送失败/);
+  assert.match(notificationSubmissionMessage({ delivery_status: 'DELIVERED', receipt_status: 'ACKNOWLEDGED' }).message, /查看.*处理结果/);
+  assert.doesNotMatch(notificationSubmissionMessage({ delivery_status: 'FUTURE_UNKNOWN' }).title, /已送达|失败/);
 });

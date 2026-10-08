@@ -7,7 +7,7 @@ const targetIcon = computed(() => window.UI.targetIcon(props.risk));
 const statusIcon = window.UI.icon('warning');
 const activeRisk = computed(() => window.UI.abnormalActive(props.risk));
 const fact = computed(() => props.risk.space_fact || {});
-const time = value => value == null ? '时间未知' : new Date(value).toLocaleString('zh-CN', { hour12: false });
+const time = value => value == null ? '时间未知' : new Date(value).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' });
 const currentTime = computed(() => time(props.trail?.[props.trailIndex]?.t));
 </script>
 

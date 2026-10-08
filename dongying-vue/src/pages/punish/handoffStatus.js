@@ -13,7 +13,7 @@ export const RECEIPT_OPTIONS = [
 ];
 const reasonOf = row => row?.latest_delivery?.blocked_reason ?? row?.blocked_reason;
 export function deliveryView(row) {
-  if (row?.simulated && row.delivery_status === 'DELIVERED') return { label: '测试送达（历史）', tag: 't-amber', tone: 'warn' };
+  if (row?.simulated && row.delivery_status === 'DELIVERED') return { label: '模拟已送达', tag: 't-amber', tone: 'warn' };
   if (row?.delivery_status === 'SUBMITTED') {
     if (reasonOf(row) === 'DELIVERY_OUTCOME_UNKNOWN') return { label: '发送结果未知', tag: 't-amber', tone: 'warn' };
     if (reasonOf(row) === 'DELIVERY_IN_PROGRESS') return { label: '发送处理中', tag: 't-cyan', tone: 'info' };
@@ -21,7 +21,7 @@ export function deliveryView(row) {
   return DELIVERY_OPTIONS.find(item => item.value === row?.delivery_status) || { label: '送达状态未知', tag: 't-gray', tone: 'warn' };
 }
 export function receiptView(row) {
-  if (row?.simulated && row.receipt_status === 'ACKNOWLEDGED') return { label: '测试签收（历史）', tag: 't-amber' };
+  if (row?.simulated && row.receipt_status === 'ACKNOWLEDGED') return { label: '模拟已签收', tag: 't-amber' };
   if (row?.receipt_status === 'PENDING' && row?.delivery_status === 'SUBMITTED'
     && ['DELIVERY_IN_PROGRESS', 'DELIVERY_OUTCOME_UNKNOWN'].includes(reasonOf(row))) {
     return { label: '回执待确认', tag: 't-gray' };

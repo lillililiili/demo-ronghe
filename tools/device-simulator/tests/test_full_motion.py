@@ -95,7 +95,7 @@ class FullMotionTests(unittest.TestCase):
                 compiled, devices, targets, _ = fixture(kind=kind)
                 obj = next(p['objects'][0] for _, p in packets(compiled, devices, targets, 0) if 'objects' in p)
                 self.assertEqual(obj['extension']['objectType'], expected)
-                self.assertEqual('uavSN' in obj['extension'], kind == 'uav')
+                self.assertNotIn('uavSN', obj['extension'])  # Radar has no serial field in protocol A.
         compiled, devices, targets, _ = fixture(kind='balloon', transport='normalized')
         self.assertFalse(any('objects' in p for _, p in packets(compiled, devices, targets, 0)))
 
@@ -106,8 +106,10 @@ class FullMotionTests(unittest.TestCase):
                        {'silenceWindows': [{'at': 10, 'seconds': 90000}]}):
             with self.subTest(fields=fields), self.assertRaises(ValueError):
                 fixture(**fields)
-        compiled, _, _, _ = fixture(altitudeDatum='AGL', transport='mqtt')
-        self.assertEqual(compiled['targets'][0]['transport'], 'normalized')
+        with self.assertRaisesRegex(ValueError, 'AGL'):
+            fixture(altitudeDatum='AGL', transport='mqtt')
+        compiled, _, _, _ = fixture(altitudeDatum='AGL', transport='normalized')
+        self.assertEqual(compiled['targets'][0]['altitudeDatum'], 'AGL')
 
 
 if __name__ == '__main__':

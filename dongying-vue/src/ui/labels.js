@@ -77,8 +77,23 @@ export const DATA_SCOPE_LABEL = { ALL: '全部单位', OWN_ORG: '本单位', OWN
 // 本地模拟回执关联码用于服务端对账，不是发送失败事实。
 export function notificationBlockedReason(notice) {
   const reason = String(notice?.blocked_reason || '').trim();
-  if (!reason || reason.startsWith('LOCAL_SIMULATOR_WAITING:')) return '';
+  if (!reason || reason.startsWith('LOCAL_SIMULATOR_WAITING:') || reason.startsWith('SIMULATOR_WAITING:')) return '';
   return userFacingMessage(reason);
+}
+// 提交、发送、送达分别展示，不用等待回执推断通道未接通。
+export function notificationSubmissionMessage(notice) {
+  if (notice?.delivery_status === 'DELIVERED') return {
+    title: '通知已送达',
+    message: notice.receipt_status === 'ACKNOWLEDGED'
+      ? '对方已确认收到通知，请查看对方回复的处理结果。' : '通知已送达，正在等待对方确认收到。'
+  };
+  if (notice?.delivery_status === 'SUBMITTED') return {
+    title: '通知已提交，等待送达确认', message: '发送请求已提交，尚未取得送达确认。请在通知与回执中查看后续结果。'
+  };
+  if (notice?.delivery_status === 'FAILED') return {
+    title: '通知发送失败', message: '通知材料已保存，本次发送失败。请查看发送情况和具体原因。'
+  };
+  return { title: '通知已保存，尚未确认送达', message: '请查看发送情况及具体原因，当前不能确认通知已送达。' };
 }
 // 来源名称已有同一模式后缀时不再追加；不同模式及未知模式仍明确保留。
 export function sourceDescription(name, code, mode, fallback = '未提供') {
@@ -88,7 +103,7 @@ export function sourceDescription(name, code, mode, fallback = '未提供') {
   return SOURCE_MODE_LABEL[mode] && suffixes.some(suffix => source.endsWith(suffix))
     ? source : `${source}（${modeText}）`;
 }
-// RULE_LEGALITY 是阶段 7 规则引擎判定违规后自动生成的告警类型；叫「飞行违规」而不叫「合法性研判告警」，免得与飞行监管菜单下的「合法性研判」页混淆（决策 15-53）。
+// RULE_LEGALITY 是阶段 7 规则引擎判定违规后自动生成的告警类型；叫「飞行违规」而不叫「合法性研判告警」，免得与飞行监管与处置菜单下的「合法性研判」页混淆（决策 15-53）。
 export const ALARM_TYPE_LABEL = { UAV_INTRUSION: '无人机入侵', UAV: '无人机告警', RULE_LEGALITY: '飞行违规' };
 
 /* 优先展示业务编号；已知引擎来源确定映射为 ALM/RSK 显示编号。

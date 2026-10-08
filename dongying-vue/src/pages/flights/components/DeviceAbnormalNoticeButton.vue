@@ -40,7 +40,7 @@ const showResend = computed(() => abnormal.value && state.value.task?.status ===
 const resendLabel = computed(() => state.value.task?.notification_delivery_status === 'FAILED' ? '重试通知' : '再次通知');
 const busy = computed(() => state.value.pending || state.value.reading);
 const reload = () => loadDeviceMaintenanceNotice(props.planId, props.device.device_id);
-function date(value) { return value == null ? '未记录' : new Date(value).toLocaleString('zh-CN', { hour12: false }); }
+function date(value) { return value == null ? '未记录' : new Date(value).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }); }
 function backendInbox(snapshot) { return snapshot?.channel_type === 'INTERNAL'; }
 function deliveryText(status, snapshot) {
   if (backendInbox(snapshot) && status === 'DELIVERED') return '已进入后台运维待办';

@@ -3,11 +3,13 @@ import copy
 import math
 import re
 import time
+import protocol_a
+from protocol_b import validate_config as validate_protocol_b
 
-KINDS = {'radar': 1, 'tdoa': 10, '5ga': 0, 'weather': 1001, 'countermeasure': 1002}
-LABELS = {'radar': '雷达', 'tdoa': 'TDOA', '5ga': '5G-A', 'eo': '光电', '5da': '5D-A', 'weather': '气象设备', 'countermeasure': '反制设备'}
+KINDS = {**protocol_a.SENSING_TYPES, 'dec': 5, 'ifr': 6, 'bsc': 12, 'weather': 1001, 'countermeasure': 1002}
+LABELS = {'radar': '雷达', 'tdoa': 'TDOA', '5ga': '5G-A', 'aoa': 'AOA', 'dcd': '协议破解', 'rid': 'RemoteID', 'dec': '诱骗', 'ifr': '干扰', 'bsc': '驱鸟炮', 'eo': '光电', '5da': '5D-A', 'weather': '气象设备', 'countermeasure': '反制设备'}
 HEARTBEAT_KINDS = frozenset((*KINDS, 'eo'))
-TARGET_REPORT_KINDS = frozenset(('radar', 'tdoa', '5ga'))
+TARGET_REPORT_KINDS = frozenset(protocol_a.SENSING_TYPES)
 RISK_TYPES = {'zone', 'deviation', 'no-plan', 'height', 'time', 'bird', 'balloon', 'offline', 'fault'}
 AUXILIARY_DEVICE_RADIUS_METRES = 5000
 
@@ -162,7 +164,9 @@ def target_sample(target, elapsed):
 
 
 def target_reporting(target, elapsed):
-    """A finite silence window suppresses reports without claiming departure."""
+    """Both transports honor notification stops and finite silence windows."""
+    if (target.get('_notification_motion') or {}).get('suppress'):
+        return False
     return not any(window['at'] <= elapsed < window['at'] + window['seconds']
                    for window in target.get('silenceWindows', []))
 
@@ -190,6 +194,9 @@ def compile_scene(raw):
     s = copy.deepcopy(raw)
     if not isinstance(s, dict):
         raise ValueError('场景格式错误')
+    source_count = s.get('fullchain', {}).get('observationSourceCount', 1)
+    if type(source_count) is not int or not 1 <= source_count <= 3:
+        raise ValueError('标准化模拟观测来源数量须为 1 至 3 的整数')
     if isinstance(s.get('duration'), bool):
         raise ValueError('时长格式无效')
     s['duration'] = 0 if s.get('duration') == 0 else number(s.get('duration'), .05, 20, '时长')
@@ -219,6 +226,10 @@ def compile_scene(raw):
             if d['kind']=='eo' and d['health']=='故障':
                 raise ValueError('光电故障码尚未确认，请使用正常心跳或离线模拟')
             d['interval'] = number(d.get('interval'), 1, 300, '心跳间隔')
+            if 'emitEmpty' in d and not isinstance(d['emitEmpty'], bool):
+                raise ValueError('空目标帧开关必须为布尔值')
+            if 'protocolB' in d:
+                d['protocolB'] = validate_protocol_b(d['protocolB'], d['kind'])
             if d['kind'] == '5da' or d.get('send') is False:
                 skipped.append(d.get('name', d['id']))
             else:
@@ -246,6 +257,7 @@ def compile_scene(raw):
             p['min'] = number(p['min'], 0, p['max'], '最低高度')
             p['width'] = number(p['width'], 1, 10000, '走廊宽度')
     for t in targets.values():
+        protocol_a.validate_target(t)
         t.pop('_notification_motion', None)  # Imported data cannot inject a runtime trigger.
         behavior = t.get('notificationBehavior', 'none')
         if behavior not in ('none', 'after_sms', 'after_voice', 'hold', 'drop_sms'):
@@ -263,9 +275,8 @@ def compile_scene(raw):
             raise ValueError('轨迹运动方式无效')
         t['motionMode'] = t.get('motionMode', 'once')
         declared_altitude_datum = t.get('altitudeDatum') in ('AMSL', 'AGL')
-        if t.get('altitudeDatum', 'AMSL') not in ('AMSL', 'AGL'):
+        if 'altitudeDatum' in t and not declared_altitude_datum:
             raise ValueError('目标高度基准无效')
-        t['altitudeDatum'] = t.get('altitudeDatum', 'AMSL')
         if t.get('altitudePath') is not None:
             if not isinstance(t['altitudePath'], list) or len(t['altitudePath']) != len(t['path']):
                 raise ValueError('航点高度数量须与轨迹节点一致')
@@ -298,23 +309,23 @@ def compile_scene(raw):
         if t.get('kind') not in ('uav', 'bird', 'balloon'):
             if t.get('kind') not in ('unknown', 'identifying', 'person', 'vehicle', 'ship', 'remote_controller'):
                 raise ValueError('未知目标类型')
-        # A declared altitude datum is only comparable by the platform when the
-        # target goes through the normalized observation contract. Keep legacy
-        # scenes without a datum on MQTT, but make explicit AMSL/AGL scenes safe
-        # by default and route them through the normalized path.
+        # Infer a channel only when absent. Export/import must preserve an
+        # explicit channel and must not invent an AMSL datum for protocol A.
         default_transport = 'normalized' if t['kind'] == 'balloon' or declared_altitude_datum else 'mqtt'
         if t.get('transport', default_transport) not in ('mqtt', 'normalized'):
             raise ValueError('目标上报通道无效')
         t['transport'] = t.get('transport', default_transport)
-        if declared_altitude_datum and t['transport'] == 'mqtt':
-            t['transport'] = 'normalized'
+        if t['transport'] == 'normalized':
+            t.setdefault('altitudeDatum', 'AMSL')  # Existing normalized-scene default.
         if t['kind'] == 'balloon' and t['transport'] != 'normalized':
             raise ValueError('气球须通过规范化观测入口上报')
-        if t['altitudeDatum'] == 'AGL' and t['transport'] != 'normalized':
+        if t.get('altitudeDatum') == 'AGL' and t['transport'] != 'normalized':
             raise ValueError('AGL 高度须通过规范化观测入口上报')
         source = devices.get(t.get('deviceId'))
         if not source or source['kind'] not in TARGET_REPORT_KINDS:
-            raise ValueError(t.get('name', '目标') + '：须选择已启用的雷达、TDOA 或 5G-A 上报设备')
+            raise ValueError(t.get('name', '目标') + '：须选择已启用的协议 A 感知设备')
+        if t['transport'] == 'mqtt' and not protocol_a.supports(source['kind'], t['kind']):
+            raise ValueError(t.get('name', '目标') + '：该设备协议不支持此目标类别')
         secondary = t.get('secondaryDeviceId')
         if secondary and (secondary == t['deviceId'] or secondary not in devices):
             raise ValueError(t.get('name', '目标') + '：辅助上报设备须为另一台已启用的周边设备')
@@ -404,24 +415,15 @@ def messages(scene, devices, targets, manifest, elapsed, now, last_sent, sequenc
             normalized = t['transport'] != 'mqtt'
             if device_id not in ((t.get('secondaryDeviceId'),) if normalized else (t['deviceId'], t.get('secondaryDeviceId'))):
                 continue
-            # 气球只能经规范化入口上报，设备协议里没有气球类别，辅助设备不替它发 MQTT 报文。
-            if t['kind'] == 'balloon': continue
+            if not protocol_a.supports(d['kind'], t['kind']):
+                continue
             sample = target_sample(t, elapsed)
             # 辅助设备报的离地高度与规范化观测一致（AGL 目标按逐航点高度），两路不打架。
             height = sample['height_agl'] if normalized else t.get('heightAgl')
             lon, lat = sample['longitude'], sample['latitude']
-            ext = {'objectType': {'unknown': 0, 'identifying': 255, 'person': 3,
-                                  'vehicle': 7, 'ship': 50, 'remote_controller': 100,
-                                  'bird': 40, 'uav': 30}[t['kind']]}
-            if d['kind'] in ('radar', '5ga'):
-                # Protocol A: X east, Y north, Z up.
-                ext.update(speedX=sample['speed_x'], speedY=sample['speed_y'], speedZ=sample['speed_z'])
-            if 'probability' in t:
-                ext['probability'] = t['probability']
-            if t['kind'] == 'uav':
-                ext['uavSN'] = manifest['targets'][t['id']]['uav_sn']
-                if t.get('pilotPoint') is not None:
-                    ext['pilotLon'], ext['pilotLat'] = coordinates(t['pilotPoint'])
+            ext = protocol_a.extension(d['kind'], t, sample, manifest['targets'][t['id']].get('uav_sn'),
+                manifest.get('batch', 'sim') + '-' + device_id, coordinates([d['x'], d['y']]),
+                coordinates(t['pilotPoint']) if t.get('pilotPoint') is not None else None)
             for member in range(int(t['count']) if t['kind']=='bird' else 1):
                 objects.append({'objectId': str(index*1000+member), 'time': now, 'longitude': lon+member%10*.00002, 'latitude': lat+member//10*.00002,
                                 'altitude': sample['altitude'], 'speed': sample['speed'], 'extension': ext,
@@ -429,7 +431,7 @@ def messages(scene, devices, targets, manifest, elapsed, now, last_sent, sequenc
         # Only the confirmed target-reporting device protocols emit target objects.
         # EO, weather, and countermeasure devices remain selectable as nearby
         # auxiliary devices but their own protocol payloads must not be invented.
-        if objects and d['kind'] in TARGET_REPORT_KINDS:
+        if (objects or d.get('emitEmpty', False)) and d['kind'] in TARGET_REPORT_KINDS:
             out.append((f"bridge/{manifest['provider']}/device_data/{d['kind']}/{external}",
-                        {'deviceId': external, 'ptTime': now, 'msgCnt': sequence, 'objects': objects}))
+                        {'deviceId': external, 'ptTime': now, 'msgCnt': sequence % 2147483648, 'objects': objects}))
     return out

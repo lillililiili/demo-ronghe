@@ -12,11 +12,11 @@ def scene():
             'risks':[{'id':'r1','name':'无匹配计划','type':'no-plan','enabled':True,'targetId':'t1','deviceId':'d1'}]}
 
 class EngineTests(unittest.TestCase):
-    def test_declared_altitude_datum_uses_normalized_observation(self):
+    def test_declared_altitude_datum_preserves_explicit_mqtt(self):
         raw = scene()
         raw['targets'][0].update(altitudeDatum='AMSL', transport='mqtt')
         compiled, _, targets, _ = compile_scene(raw)
-        self.assertEqual(compiled['targets'][0]['transport'], 'normalized')
+        self.assertEqual(compiled['targets'][0]['transport'], 'mqtt')
         self.assertEqual(targets['t1']['altitudeDatum'], 'AMSL')
 
     def test_legacy_target_without_altitude_datum_keeps_mqtt(self):
@@ -149,7 +149,7 @@ class EngineTests(unittest.TestCase):
         self.assertNotIn('四通道反制设备', skipped)
 
     def test_explicit_pilot_position_is_transmitted_without_inventing_one(self):
-        s=scene();s['targets'][0]['pilotPoint']=[450,300]
+        s=scene();s['sites'][0]['devices'][0]['kind']='tdoa';s['targets'][0]['pilotPoint']=[450,300]
         s,d,t,_=compile_scene(s)
         m={'provider':'test','devices':{'d1':{'external_id':'external'}},'targets':{'t1':{'uav_sn':'TEST'}}}
         ext=messages(s,d,t,m,0,1000,{},1)[1][1]['objects'][0]['extension']
@@ -167,12 +167,14 @@ class EngineTests(unittest.TestCase):
         for obj in objects:
             for key in ('speedX', 'speedY', 'speedZ'):
                 obj['extension'].pop(key, None)
-        self.assertEqual(objects[0],objects[1])
+        self.assertNotIn('uavSN',objects[0]['extension'])
+        self.assertEqual(objects[1]['extension']['uavSN'],'TEST')
+        self.assertEqual({k:v for k,v in objects[0].items() if k!='extension'}, {k:v for k,v in objects[1].items() if k!='extension'})
     def test_normalized_target_still_reports_through_secondary_sensor(self):
         # 规范化观测的目标由主设备走规范化入口；辅助设备照常发 MQTT 目标报文，平台才有两路来源，研判不会只剩“不可判定”。
         from engine import target_sample
         s=scene();s['sites'][0]['devices'].append(dict(s['sites'][0]['devices'][0],id='d2',kind='tdoa'))
-        s['targets'][0].update(altitudeDatum='AGL',secondaryDeviceId='d2',heightAgl=30,altitudePath=[40,60,60])
+        s['targets'][0].update(transport='normalized',altitudeDatum='AGL',secondaryDeviceId='d2',heightAgl=30,altitudePath=[40,60,60])
         s,d,t,_=compile_scene(s)
         self.assertEqual(s['targets'][0]['transport'],'normalized')
         m={'provider':'test','devices':{'d1':{'external_id':'radar'},'d2':{'external_id':'tdoa'}},'targets':{'t1':{'uav_sn':'TEST'}}}
@@ -185,7 +187,7 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(obj['height'],40)
 
     def test_normalized_target_without_secondary_sends_no_mqtt_object(self):
-        s=scene();s['targets'][0]['altitudeDatum']='AMSL'
+        s=scene();s['targets'][0].update(altitudeDatum='AMSL',transport='normalized')
         s,d,t,_=compile_scene(s)
         m={'provider':'test','devices':{'d1':{'external_id':'radar'}},'targets':{'t1':{'uav_sn':'TEST'}}}
         self.assertEqual([p for _,p in messages(s,d,t,m,0,1000,{},1) if 'objects' in p],[])

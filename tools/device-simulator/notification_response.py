@@ -50,12 +50,25 @@ class NotificationResponse:
             if not items: break
         raise ValueError('关联查询未完整返回，暂不触发飞行行为')
 
-    def matches_identity(self, target, serial):
+    def matches_identity(self, target, serial, external=None, normalized=False):
         if target.get('source_mode') != 'replay': return False
-        if target.get('uav_sn'):
-            return target['uav_sn'] == serial
-        # Fusion identity clues are not necessarily a registered aircraft serial.
-        # Read the public observations contract and require this run's RF devices.
+        if target.get('uav_sn') and target['uav_sn'] != serial: return False
+        # A selected SN is not proof of batch ownership. Verify the public source
+        # link and current observation without changing platform identity rules.
+        sources = self.manifest.get('normalized_sources') or [self.manifest.get('normalized_source') or {}]
+        source_rows = list(sources.values()) if isinstance(sources, dict) else sources
+        registered = {(s.get('source_id'), s.get('device_id')) for s in source_rows
+                      if s.get('source_id') and s.get('device_id')}
+        source_devices = set()
+        if normalized:
+            if not external or not registered: return False
+            if 'source_links' not in target:
+                target = self.platform.call('GET', '/targets/'+target['target_id'])
+            source_devices = {link.get('device_id') for link in target.get('source_links', [])
+                              if (link.get('source_id'), link.get('device_id')) in registered
+                              and link.get('external_target_id') == external
+                              and link.get('source_mode') == 'replay'}
+            if not source_devices: return False
         if self.batch_device_ids is None:
             device_ids = set()
             for device in self.manifest.get('devices', {}).values():
@@ -69,30 +82,33 @@ class NotificationResponse:
         cutoff = max(self.manifest['created_at'], now-5000)
         observations = self.pages('/targets/'+target['target_id']+'/observations',
                                   {'time_from': cutoff, 'time_to': now})
-        clues = {row.get('identity_clue') for row in observations
-                 if row.get('source_type') in ('TDOA', '5G_A')
-                 and row.get('source_mode') == 'replay'
-                 and cutoff <= (row.get('observed_at') or 0) <= now
-                 and row.get('identity_clue')}
+        current = [row for row in observations
+                   if row.get('source_type') in ('TDOA', '5G_A', 'SIM_NORMALIZED')
+                   and row.get('source_mode') == 'replay'
+                   and cutoff <= (row.get('observed_at') or 0) <= now]
+        clues = {row['identity_clue'] for row in current if row.get('identity_clue')}
         own = any(row.get('identity_clue') == serial
-                  and row.get('source_type') in ('TDOA', '5G_A')
-                  and row.get('source_mode') == 'replay'
-                  and cutoff <= (row.get('observed_at') or 0) <= now
-                  and row.get('device_id') in self.batch_device_ids for row in observations)
+                  and (not external or row.get('external_target_id') == external)
+                  and ((normalized and row.get('source_type') == 'SIM_NORMALIZED'
+                        and row.get('device_id') in source_devices)
+                       or (not normalized and row.get('source_type') in ('TDOA', '5G_A')
+                           and row.get('device_id') in self.batch_device_ids)) for row in current)
         return own and clues == {serial}
 
     def read(self, key):
         serial = self.manifest['targets'][key]['uav_sn']
+        normalized = self.targets[key].get('transport') == 'normalized'
+        external = self.manifest['targets'][key].get('external_id' if normalized else 'mqtt_object_id')
         started = self.manifest['created_at']
         link = self.links.setdefault(key, {})
         if not link.get('target_id'):
             rows = self.pages('/targets', {'seen_from': started, 'seen_to': int(time.time()*1000)+1})
-            matches = [row for row in rows if self.matches_identity(row, serial)]
+            matches = [row for row in rows if self.matches_identity(row, serial, external, normalized)]
             if not matches: return {'reason': '等待本批次目标进入系统'}
             if len(matches) != 1: raise ValueError('本批次序列号关联多个目标，暂不触发飞行行为')
             link['target_id'] = matches[0]['target_id']
         target = self.platform.call('GET', '/targets/'+link['target_id'])
-        if not self.matches_identity(target, serial):
+        if not self.matches_identity(target, serial, external, normalized):
             raise ValueError('目标身份或来源已变化，暂不触发飞行行为')
         latest = target.get('latest_state') or {}
         facts = {'target_id': link['target_id'], 'observed_at': latest.get('observed_at'),

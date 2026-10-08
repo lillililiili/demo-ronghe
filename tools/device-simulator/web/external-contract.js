@@ -72,8 +72,12 @@
     if(!current||!previous||!next||current!==previous||current===next)return data;
     return {...data,route_version_id:next};
   }
-  function submitResultText(path,result){
+  // known = the receipts listed before this submission. The platform answers a resent forecast (same message number,
+  // same content) with its first receipt, so a receipt already in the list means nothing new was created (CDX-P07).
+  function submitResultText(path,result,known){
     if(path==='/local-interface-simulator/bindings')return result.enabled?'系统确认：模拟接收已启用。等待平台原流程产生通知。':'系统确认：模拟接收已停用。';
+    if(path==='/local-interface-simulator/weather'&&result?.message_id&&Array.isArray(known)&&known.some(row=>row?.message_id===result.message_id))
+      return '这份预报此前已被系统受理，本次返回原回执，未重复生成天气风险。要再交一份新的预报，请先点“生成新样本”换新的消息编号。';
     return null;
   }
   function unavailableNotice(context){

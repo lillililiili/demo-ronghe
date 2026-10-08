@@ -90,6 +90,14 @@ test('binding result reports confirmed binding state', () => {
   assert.match(submitResultText('/local-interface-simulator/bindings',{enabled:false}),/已停用/);
 });
 
+test('a resent forecast says the platform kept its first receipt and made no new risk (CDX-P07)', () => {
+  const {submitResultText} = require('../web/external-contract.js');
+  const known = [{message_id: 'm-1', kind: 'WEATHER_FORECAST'}, {message_id: 'm-2', kind: 'FLIGHT_PLAN'}];
+  assert.match(submitResultText('/local-interface-simulator/weather', {message_id: 'm-1', state: 'ACCEPTED'}, known), /此前已被系统受理.*未重复生成天气风险/);
+  assert.equal(submitResultText('/local-interface-simulator/weather', {message_id: 'm-3', state: 'ACCEPTED'}, known), null, '新的预报照常显示系统结果');
+  assert.equal(submitResultText('/local-interface-simulator/weather', {message_id: 'm-1'}, undefined), null, '不知道之前有哪些回执时不下结论');
+});
+
 test('unavailable context sections are shown verbatim without disabling available categories', () => {
   const {unavailableNotice} = require('../web/external-contract.js');
   assert.equal(unavailableNotice({unavailable_sections:['飞行任务：无读取权限','风险：无读取权限']}),'飞行任务：无读取权限；风险：无读取权限');

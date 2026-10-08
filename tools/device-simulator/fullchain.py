@@ -7,6 +7,7 @@ import math
 import re
 import time
 from engine import coordinates, TARGET_REPORT_KINDS
+from prerequisite_check import route_version_mismatch
 
 PREFIX = '/local-interface-simulator'
 CLASSES = {'uav':'UAV','bird':'BIRD','unknown':'UNKNOWN','identifying':None,'balloon':'UNKNOWN',
@@ -272,6 +273,36 @@ class FullChain:
         self._route_records[route_message] = route
         return route
 
+    def route_matches(self, route, plan):
+        """Tell whether a reusable route still carries this scene task's own corridor."""
+        version = self.api.call('GET', '/route-versions/' + str(route.get('route_version_id'))) or {}
+        return route_version_mismatch(version, plan) is None
+
+    def stable_route(self, plan, start, finish):
+        """Pick this task's stable route message and the route to reuse, or None to create it.
+
+        Different scenes may use the same task ID with different corridors (新-26). A saved route is reused
+        only when its version carries this task's own corridor; otherwise readback would reject it, so the
+        corridor gets a stable route of its own, numbered by its content and reused by later runs.
+        """
+        corridor = payload_fingerprint({
+            'points': [coordinates(p) for p in plan['points']], 'width': plan['width'],
+            'min': plan['min'], 'max': plan['max'], 'datum': plan.get('altitudeDatum', 'AMSL')})
+        for route_key in (plan['id'], plan['id'] + '-' + corridor):
+            base_message = stable_simulator_id('sim-map-route-', route_key)
+            base = self.route_record(base_message)
+            if base is None:
+                return base_message, None
+            if not self.route_matches(base, plan):
+                continue
+            if route_covers_window(base, start, finish):
+                return base_message, base
+            window_message = stable_simulator_id('sim-map-route-', f"{route_key}-{start}-{finish}")
+            window = self.reusable_route(window_message, start, finish)
+            if window is None or self.route_matches(window, plan):
+                return window_message, window
+        raise ValueError('稳定模拟航线内容与场景不一致：' + plan['id'])
+
     def reusable_route(self, route_message, start=None, finish=None):
         """Find a route version whose validity covers the new plan window."""
         route = self.route_record(route_message)
@@ -356,14 +387,7 @@ class FullChain:
             # Shared routes must cover every selected UAV's own flight window.
             start = min(row[1] for row in windows)
             finish = max(row[2] for row in windows)
-            base_route_message = stable_simulator_id('sim-map-route-', plan['id'])
-            base_route = self.route_record(base_route_message)
-            route_message = base_route_message
-            existing_route = base_route if route_covers_window(base_route, start, finish) else None
-            if base_route is not None and existing_route is None:
-                route_message = stable_simulator_id('sim-map-route-',
-                                                    f"{plan['id']}-{start}-{finish}")
-                existing_route = self.reusable_route(route_message, start, finish)
+            route_message, existing_route = self.stable_route(plan, start, finish)
             if existing_route:
                 route = {'route_id': existing_route.get('route_id'),
                          'route_version_id': existing_route.get('route_version_id'),

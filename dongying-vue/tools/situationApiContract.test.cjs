@@ -50,6 +50,9 @@ async function main() {
   let extraTarget = null;
   let rejectSlimTracks = false;
   let emptyTracks = false;
+  let noRouteBatch = false;
+  const routeBatchQueries = [];
+  let routeSingleCalls = 0;
   const ALL_CODES = ['target:read', 'alarm:read', 'risk:read', 'handoff:read', 'devices.read', 'monitoring.read',
     'flight:read', 'route:read', 'airspace:read'];
   let granted = new Set(ALL_CODES);
@@ -111,9 +114,18 @@ async function main() {
     },
     listAlarms: async () => { calls.alarms++; return { items: [], total: 0 }; },
     listAllFlightPlans: async () => { calls.plans++; return [planRow]; },
-    flightApi: { routeVersion: async () => ({ route_version_id: 'rv1', centerline: {
-      coordinates: [[118.4, 37.3], [118.6, 37.5]]
-    } }) },
+    flightApi: {
+      routeVersion: async () => { routeSingleCalls++; return { route_version_id: 'rv1', centerline: {
+        coordinates: [[118.4, 37.3], [118.6, 37.5]]
+      } }; },
+      routeVersionBatch: async ids => {
+        routeBatchQueries.push(ids);
+        if (noRouteBatch) { const error = new Error('NOT_FOUND'); error.status = 404; throw error; }
+        return { items: ids.filter(id => id === 'rv1').map(id => ({ route_version_id: id, centerline: {
+          coordinates: [[118.4, 37.3], [118.6, 37.5]]
+        } })) };
+      }
+    },
     airspaceApi: { list: async () => ({ items: [], total: 0 }), detail: async value => value },
     riskApi: { listRisks: async () => { calls.risks++; return { items: [], total: 0 }; } },
     handoffApi: { listHandoffs: async () => {
@@ -153,6 +165,7 @@ async function main() {
     [point.point_id, point.track_id, point.point_seq, point.t, point.kind]),
   [['point-1', 'track-1', 1, now - 1000, 'meas'], ['point-2', 'track-1', 2, now, 'pred']]);
   check('计划航线读取版本中心线', first.flightPlans[0].coordinates, [[118.4, 37.3], [118.6, 37.5]]);
+  check('航线中心线一次取回，不逐条请求', [routeBatchQueries, routeSingleCalls], [[['rv1']], 0]);
   check('选中目标后按内部 device_id 关联来源', (await source.loadTargetDetail('t1')).source_links[0].device_id, 'd0');
 
   failTargets = true;
@@ -317,6 +330,21 @@ async function main() {
   check('快照注明飞行计划没有权限', noRouteSnapshots.at(-1).deniedSegments, ['flight-plans']);
   noRoute.stop();
   granted = new Set(ALL_CODES);
+
+  // 没有批量航线接口的旧后端：改回逐条读取，航线照常画出。
+  noRouteBatch = true;
+  const singleBefore = routeSingleCalls;
+  const oldBackend = createSituationApiSource({ fastMs: 10, slowMs: 10_000, now: () => clock });
+  const oldSnapshots = [];
+  const oldErrors = [];
+  oldBackend.start(value => oldSnapshots.push(value), (error, segment) => oldErrors.push(segment));
+  while (!oldSnapshots.some(value => value.flightPlans.length)) await delay(5);
+  check('旧后端不认批量航线时逐条补读', routeSingleCalls - singleBefore, 1);
+  check('逐条补读后航线照常', oldSnapshots.find(value => value.flightPlans.length).flightPlans[0].coordinates,
+    [[118.4, 37.3], [118.6, 37.5]]);
+  check('改回逐条读取不报刷新失败', oldErrors, []);
+  oldBackend.stop();
+  noRouteBatch = false;
   delete globalThis.document;
   delete globalThis.__situationContractDeps;
 

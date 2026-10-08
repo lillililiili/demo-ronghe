@@ -38,6 +38,7 @@ const RECENT_TRACK_WINDOW_MS = 5 * 60_000;
 const TRACK_REFRESH_MS = 5_000;
 // 与后端 target_ids 上限一致；图上目标更多时不按目标限定，仍只要坐标。
 const MAX_TRACK_TARGET_IDS = 100;
+const MAX_ROUTE_VERSION_BATCH = 100;
 /* 各组数据的读取权限与后端接口一致（ZT-09）：没有权限的组不发请求、不报“刷新失败”，地图上这一类保持为空。
    飞行任务同时要读航线版本，两项权限都要有。登录后权限有变化、后端答复 403 时同样按没有权限处理，本页不再重复请求。 */
 const SEGMENT_PERMISSIONS = {
@@ -101,6 +102,7 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
   let unsubscribe = null;
   let lastTracksAt = 0;
   let slimTracks = true;
+  let batchRouteVersions = true;
   const routeVersions = new Map();
   const trajectoryComparisons = new Map();
   const failedSegments = new Set();
@@ -152,6 +154,26 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
       if (error?.status !== 400) throw error;
       slimTracks = false;
       return targetApi.recentTracks(base);
+    }
+  }
+
+  // 当天计划引用的航线中心线一次取回（每 100 条一批），不再每条计划单独请求；已取过的不再取。
+  async function loadRouteVersions(ids) {
+    const single = list => mapPool(list, 6, async id => { routeVersions.set(id, await flightApi.routeVersion(id)); });
+    if (!ids.length) return;
+    if (!batchRouteVersions) { await single(ids); return; }
+    for (let index = 0; index < ids.length; index += MAX_ROUTE_VERSION_BATCH) {
+      const chunk = ids.slice(index, index + MAX_ROUTE_VERSION_BATCH);
+      try {
+        const page = await flightApi.routeVersionBatch(chunk);
+        (page?.items || []).forEach(version => routeVersions.set(version.route_version_id, version));
+      } catch (error) {
+        if (error?.status === 403) throw error;
+        // 没有批量接口的旧后端（400/404/405）：本页改回逐条读取；其他错误只本轮逐条补读。
+        if ([400, 404, 405].includes(error?.status)) batchRouteVersions = false;
+        await single(ids.slice(index));
+        return;
+      }
     }
   }
 
@@ -214,9 +236,7 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
       const plans = (await listAllFlightPlans({ window_from: day.from, window_to: day.to }))
         .filter(plan => ['PENDING', 'APPROVED', 'EXECUTING', 'COMPLETED'].includes(plan.status_code));
       const ids = [...new Set(plans.map(plan => plan.route?.route_version_id).filter(Boolean))];
-      await mapPool(ids.filter(id => !routeVersions.has(id)), 6, async id => {
-        routeVersions.set(id, await flightApi.routeVersion(id));
-      });
+      await loadRouteVersions(ids.filter(id => !routeVersions.has(id)));
       return toFlightPlans(plans, Object.fromEntries(routeVersions));
     }, value => { snapshot = { ...snapshot, flightPlans: value }; }, []);
 

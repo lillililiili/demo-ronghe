@@ -123,8 +123,10 @@ export function readableNo(value, riskId) {
 // SPACE_OBJECT 是阶段 9 C04 评估写入的风险类型；FOREIGN_OBJECT 是同一业务概念的早期写法，两者中文一致。
 export const RISK_TYPE_LABEL = { FLIGHT_OPERATION: '飞行作业风险', AIRSPACE: '空域风险', SPACE_OBJECT: '空中异物风险', FOREIGN_OBJECT: '空中异物风险', WEATHER: '气象风险' };
 export const RISK_TYPE_OPTIONS = ['FLIGHT_OPERATION', 'AIRSPACE', 'SPACE_OBJECT', 'WEATHER'].map(value => ({ label: RISK_TYPE_LABEL[value], value }));
+// 风险“现在还算不算数”（current_status）：天气风险按预报自己带的时段判断（CDX-P06）。
+export const RISK_PRESENCE_LABEL = { CURRENT: '当前仍存在', CLEARED: '已确认解除', EXPIRED: '有效时段已结束', UNKNOWN: '状态待确认', EXCLUDED: '已排除', NOT_STARTED: '尚未生效' };
 export const REASON_CODE_LABEL = {
-  WEATHER_STRONG_WIND: '大风预警', WEATHER_THUNDERSTORM: '雷雨预警', WEATHER_LOW_VISIBILITY: '低能见度预警',
+  WEATHER_STRONG_WIND: '大风预警', WEATHER_THUNDERSTORM: '雷雨预警', WEATHER_LOW_VISIBILITY: '低能见度预警', WEATHER_MULTI: '多项天气预警',
   ROUTE_DEVIATION: '偏离报备航线', AIRSPACE_CONFLICT: '空域冲突', ALTITUDE_UNKNOWN: '高度信息缺失', SOURCE_MISMATCH: '来源不一致',
   OBJECT_TYPE_UNKNOWN: '目标类别尚未确定', NON_UAV_OBJECT: '非无人机目标，不适用无人机合法性规则',
   SPACE_OBJECT_ALTITUDE_UNKNOWN: '异物进入航线走廊，高度未知', SPACE_OBJECT_IN_CORRIDOR: '异物进入航线走廊',

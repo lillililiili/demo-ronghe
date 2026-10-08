@@ -31,6 +31,9 @@ const validSourcePeriods = computed(() => sourcePeriods.value.map(item => {
   const from = timestamp(item?.from), to = timestamp(item?.to);
   return from !== null && to !== null && from < to ? { ...item, from, to } : null;
 }).filter(Boolean).sort((a, b) => a.from - b.from));
+// 同一区域的好几份预报会合在一起列出（CDX-P06）：发布时间不止一个时，每张卡片标出自己是哪次发布的。
+const publishedTimes = computed(() => new Set(validSourcePeriods.value.map(item => timestamp(item.published_at)).filter(value => value !== null)));
+const severalForecasts = computed(() => publishedTimes.value.size > 1);
 const periods = computed(() => {
   if (!planWindow.value) return [];
   return validSourcePeriods.value.flatMap(item => {
@@ -113,13 +116,13 @@ function sourceMode(value) { return SOURCE_MODE_LABEL[value] || (present(value) 
       <dl class="kv kv-surface weather-summary">
         <dt>预报区域</dt><dd><span class="tag" :class="forecast.area_name ? 't-cyan' : 't-gray'">{{ forecast.area_name || '未提供' }}</span></dd>
         <dt>数据来源</dt><dd>{{ forecast.provider_name || '未提供' }}<small><span class="tag" :class="({ live: 't-blue', mock: 't-amber', replay: 't-purple' })[forecast.source_mode] || 't-gray'">{{ sourceMode(forecast.source_mode) }}</span></small></dd>
-        <dt>发布时间<br>（北京时间）</dt><dd>{{ time(forecast.published_at) }}</dd>
+        <dt>{{ severalForecasts ? '最新发布时间' : '发布时间' }}<br>（北京时间）</dt><dd>{{ time(forecast.published_at) }}</dd>
       </dl>
       <div v-if="!planWindow" class="weather-state"><strong>任务飞行时段不完整</strong><p>无法确定对应的天气预报覆盖关系，以下仍展示收到的预报时段。</p></div>
       <div v-else-if="!validSourcePeriods.length" class="weather-state"><strong>预报没有有效时段</strong><p>当前天气报文未提供可展示的开始时间和结束时间。</p></div>
       <div v-if="validSourcePeriods.length" class="forecast-periods">
         <article v-for="(item, index) in validSourcePeriods" :key="`${item.from ?? 'unknown'}-${item.to ?? 'unknown'}-${index}`" class="forecast-period">
-          <header><strong>{{ periodTime(item) }}</strong><span class="tag" :class="item.summary ? 't-cyan' : 't-gray'">{{ item.summary || '天气现象未提供' }}</span><span v-if="planWindow" class="tag" :class="periodCoversPlan(item) ? 't-green' : 't-gray'">{{ periodCoversPlan(item) ? '覆盖任务时段' : '未覆盖任务时段' }}</span></header>
+          <header><strong>{{ periodTime(item) }}</strong><span class="tag" :class="item.summary ? 't-cyan' : 't-gray'">{{ item.summary || '天气现象未提供' }}</span><span v-if="planWindow" class="tag" :class="periodCoversPlan(item) ? 't-green' : 't-gray'">{{ periodCoversPlan(item) ? '覆盖任务时段' : '未覆盖任务时段' }}</span><small v-if="severalForecasts && timestamp(item.published_at) !== null" class="forecast-published">发布于 {{ time(item.published_at) }}</small></header>
           <dl class="weather-grid">
             <div v-if="hasField(item, 'temperature_c')" class="weather-temperature"><dt>温度</dt><dd>{{ amount(item.temperature_c, '°C') }}</dd></div>
             <div v-if="hasField(item, 'wind_speed_ms')" class="weather-wind"><dt>风速</dt><dd>{{ amount(item.wind_speed_ms, ' m/s') }}</dd></div>
@@ -159,6 +162,7 @@ function sourceMode(value) { return SOURCE_MODE_LABEL[value] || (present(value) 
 .forecast-period header { display: grid; gap: 4px; padding-bottom: 9px; border-bottom: 1px solid var(--line-2); }
 .forecast-period header strong { font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 .forecast-period header .tag { justify-self: start; font-size: 12px; }
+.forecast-period header .forecast-published { color: var(--txt-3); font-size: 11px; }
 .weather-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 10px 0 0; }
 .weather-grid div { --weather-accent: var(--cyan); min-width: 0; padding: 9px 10px; border: 1px solid color-mix(in srgb, var(--weather-accent) 28%, transparent); border-left: 3px solid var(--weather-accent); border-radius: 6px; background: color-mix(in srgb, var(--weather-accent) 6%, transparent); }
 .weather-grid .weather-temperature { --weather-accent: var(--amber); }

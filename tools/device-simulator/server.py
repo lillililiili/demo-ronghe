@@ -555,8 +555,8 @@ class Runtime:
             if client:
                 client.disconnect(); client.loop_stop()
             self.mqtt_connected = False
-            if self.fullchain and self.realtime:
-                self.realtime.stop()
+            # The notification receiver and command listener outlive the scene; only stop_all
+            # ("停止全部收发") or service exit stops them, as the README describes.
             with self.lock:
                 if self.phase in ('STOPPING','PREPARING'): self.phase='STOPPED'
             self.checkpoint()

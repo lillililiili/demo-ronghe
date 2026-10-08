@@ -377,7 +377,12 @@ onMounted(() => {
                     <dt>接收方</dt><dd class="pn-recipient" :title="selected.recipient_id">{{ selected.recipient_name || '未提供' }}</dd>
                     <RecipientSnapshotFields :snapshot="selected.recipient_snapshot" historical />
                     <dt>提交时间</dt><dd>{{ formatTime(selected.created_at) }}</dd>
-                    <dt>提交人</dt><dd :title="selected.submitted_by">{{ selected.submitted_by_name || '姓名未记录' }}</dd>
+                    <!-- 反制完成后后台自动移送：提交人是系统，记录里的提交人账号是那次反制的申请人（新-24）。 -->
+                    <template v-if="selected.trigger_source === 'JAMMING_COMPLETED'">
+                      <dt>提交人</dt><dd>系统自动（反制完成后生成）</dd>
+                      <dt>反制申请人</dt><dd :title="selected.submitted_by">{{ selected.submitted_by_name || '姓名未记录' }}</dd>
+                    </template>
+                    <template v-else><dt>提交人</dt><dd :title="selected.submitted_by">{{ selected.submitted_by_name || '姓名未记录' }}</dd></template>
                     <dt>所属范围</dt><dd :title="`${selected.owner_org_id || ''} / ${selected.district_id || ''}`">{{ selected.owner_org_name || '—' }} / {{ selected.district_name || '—' }}</dd>
                   </dl></div>
                   <div class="sect pn-section pn-section-evidence"><h4>当前关联证据

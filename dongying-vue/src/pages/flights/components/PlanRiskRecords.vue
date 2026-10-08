@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 
 const props = defineProps({
   records: { type: Array, default: () => [] },
@@ -15,11 +15,24 @@ const props = defineProps({
 });
 const emit = defineEmits(['select', 'locate', 'notify', 'retry', 'page']);
 const recordElements = new Map();
-defineExpose({ focusRecord: id => recordElements.get(id)?.scrollIntoView({ block: 'nearest' }) });
+// 风险多时先列前几条，其余收起，避免把任务详情撑得很长；选中的风险始终展开显示
+const COLLAPSED_LIMIT = 4;
+const expanded = ref(false);
+const ordered = computed(() => [
+  ...props.records.filter(record => record.currentStatus === 'CURRENT'),
+  ...props.records.filter(record => record.currentStatus !== 'CURRENT')
+]);
+const hiddenCount = computed(() => expanded.value ? 0 : Math.max(0, ordered.value.length - COLLAPSED_LIMIT));
+const visibleIds = computed(() => new Set((hiddenCount.value ? ordered.value.slice(0, COLLAPSED_LIMIT) : ordered.value).map(record => record.id)));
+watch(() => props.selectedId, id => { if (id && props.records.some(record => record.id === id) && !visibleIds.value.has(id)) expanded.value = true; }, { immediate: true });
+defineExpose({ focusRecord: async id => {
+  if (id && !visibleIds.value.has(id) && props.records.some(record => record.id === id)) { expanded.value = true; await nextTick(); }
+  recordElements.get(id)?.scrollIntoView({ block: 'nearest' });
+} });
 const pages = computed(() => Math.max(1, Math.ceil(props.total / props.size)));
 const groups = computed(() => [
-  { title: '当前仍存在', records: props.records.filter(record => record.currentStatus === 'CURRENT') },
-  { title: '状态待确认', records: props.records.filter(record => record.currentStatus !== 'CURRENT') }
+  { title: '当前仍存在', records: ordered.value.filter(record => record.currentStatus === 'CURRENT' && visibleIds.value.has(record.id)) },
+  { title: '状态待确认', records: ordered.value.filter(record => record.currentStatus !== 'CURRENT' && visibleIds.value.has(record.id)) }
 ].filter(group => group.records.length));
 </script>
 
@@ -70,6 +83,8 @@ const groups = computed(() => [
         </li>
       </ul>
       </section>
+      <button v-if="hiddenCount" class="risk-expand-button" type="button" @click="expanded = true">展开其余 {{ hiddenCount }} 起风险</button>
+      <button v-else-if="expanded && ordered.length > COLLAPSED_LIMIT" class="risk-expand-button" type="button" @click="expanded = false">收起，只看前 {{ COLLAPSED_LIMIT }} 起</button>
       <nav v-if="pages > 1" class="risk-pagination" aria-label="当前风险分页">
         <button class="btn" type="button" :disabled="page <= 1" @click="emit('page', page - 1)">上一页</button>
         <span>第 {{ page }} / {{ pages }} 页</span>
@@ -81,7 +96,13 @@ const groups = computed(() => [
 </template>
 
 <style scoped>
-.plan-risk-records { min-width: 0; color: var(--txt); }
+.plan-risk-records { min-width: 0; color: var(--txt); container: plan-risks / inline-size; }
+.risk-expand-button { margin-top: 8px; padding: 4px 0; border: 0; background: transparent; color: var(--blue); font: inherit; font-size: 12px; line-height: 1.7; cursor: pointer; }
+.risk-expand-button:hover { color: var(--cyan); text-decoration: underline; text-underline-offset: 3px; }
+@container plan-risks (min-width: 520px) {
+  .plan-risk-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 18px; }
+  .plan-risk-record:last-child { border-bottom: 1px solid var(--line-2); }
+}
 .risk-section-head { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 5px 12px; padding: 0 0 11px; border-bottom: 1px solid var(--line-2); }
 .risk-section-head h3 { margin: 0; color: var(--txt); font-size: 14px; font-weight: 600; line-height: 1.6; }
 .risk-section-head p { margin: 0; color: var(--txt-3); font-size: 12px; line-height: 1.6; }

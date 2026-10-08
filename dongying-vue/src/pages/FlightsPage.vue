@@ -1934,7 +1934,7 @@ onUnmounted(() => {
                 <div class="detail-hero-copy"><div class="detail-hero-eyebrow">飞行风险</div><div class="detail-hero-title">{{ labelOf(RISK_TYPE_LABEL, selectedRisk.risk_type, '风险类型未提供') }}</div><div v-if="selectedRisk.risk_no" class="detail-hero-id">{{ selectedRisk.risk_no }}</div></div>
                 <div class="detail-hero-side"><div class="detail-hero-tags"><span class="tag" :class="severityTag(selectedRisk.severity)">{{ severityLabel(selectedRisk.severity) }}</span><span class="tag" :class="stateTag(selectedRisk.state)">{{ stateLabel(selectedRisk.state) }}</span></div></div>
               </div></div>
-              <div v-if="riskTab === 'event'" class="rk-event-grid">
+              <div v-if="riskTab === 'event'" class="rk-event-grid" :class="{ 'has-optical': selectedRisk.risk_type !== 'WEATHER' }">
               <RiskOpticalPanel v-if="selectedRisk.risk_type !== 'WEATHER'" :key="selectedRisk.risk_id" :risk="selectedRisk" />
               <div class="sect rk-event-info"><h4>事件信息</h4><dl class="kv kv-surface">
                 <dt>来源</dt><dd>{{ sourceDescription(selectedRisk.source_name, selectedRisk.source_code, selectedRisk.source_display_mode || selectedRisk.source_mode) }}</dd>
@@ -2082,7 +2082,7 @@ onUnmounted(() => {
                 <div v-if="demoParams"><span class="tag t-amber">参数为演示值，尚未确认</span></div>
               </template>
             </section>
-            <PlanRiskRecords v-if="showRouteRisks" ref="planRiskRecordsRef" :records="routeRiskRecords" :loading="routeRisks.loading" :selected-id="selectedPlanRiskId"
+            <PlanRiskRecords v-if="showRouteRisks" :key="selected.plan_id" ref="planRiskRecordsRef" :records="routeRiskRecords" :loading="routeRisks.loading" :selected-id="selectedPlanRiskId"
               :error="routeRisks.error" :total="routeRisks.total" :current-total="routeRisks.currentTotal"
               :uncertain-total="routeRisks.uncertainTotal" :as-of="routeRisks.asOf ? formatTime(routeRisks.asOf) : ''"
               :page="routeRisks.page" :size="routeRisks.size"
@@ -2121,11 +2121,23 @@ onUnmounted(() => {
 /* 2026-10-07 用户要求任务详情、风险详情尽量一屏看完：详情栏够宽时分两栏排，内容不删，只换排法。 */
 @container flight-detail (min-width: 560px) {
   /* 按两栏自动平衡高度（先左后右）；任务信息与起降航线两块拆开参与排列，避免一栏留大块空白。 */
-  .plan-detail-grid, .rk-event-grid { columns: 2; column-gap: 16px; }
-  .plan-detail-grid > *, .rk-event-grid > * { break-inside: avoid; }
+  .plan-detail-grid { columns: 2; column-gap: 16px; }
+  .plan-detail-grid > * { break-inside: avoid; }
   .plan-detail-grid > .plan-metrics { column-span: all; }
   .plan-detail-grid > :deep(.plan-filing) { display: contents; }
   .plan-detail-grid :deep(.filing-col) { break-inside: avoid; }
+  /* 风险详情：没有光电面板时风险依据占右栏，事件信息、核验历史排在左栏；有光电面板时按内容高度自动分两栏 */
+  .rk-event-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(3, auto) 1fr; column-gap: 16px; align-items: start; grid-auto-flow: row dense; }
+  .rk-event-grid > * { grid-column: 1; min-width: 0; }
+  .rk-event-grid > .rk-basis { grid-column: 2; grid-row: 1 / span 4; }
+  .rk-event-grid.has-optical { display: block; columns: 2; column-gap: 16px; }
+  .rk-event-grid.has-optical > * { break-inside: avoid; }
+  /* 详情栏够宽时风险标题卡压成一行（等级、状态放右侧），把高度留给事件信息、风险依据和核验历史 */
+  .workspace-detail .detail-hero-micro { min-height: 0; padding: 8px 12px; }
+  .workspace-detail .detail-hero-micro .detail-hero-inner { grid-template-columns: 34px minmax(0, 1fr) auto; }
+  .workspace-detail .detail-hero-micro .detail-hero-side { grid-column: auto; }
+  /* 风险清单和周边设备检查可能很长，放在两栏要点下方整行展示，不挤占报备航线和任务与实际对照 */
+  .plan-detail-grid > :deep(.plan-risk-records), .plan-detail-grid > :deep(.plan-verification), .plan-detail-grid > :deep(.plan-preflight) { column-span: all; }
 }
 .plan-detail-grid .metric-strip { margin-bottom: 10px; }
 .flights-page .plan-metrics .metric-item { min-height: 0; padding: 5px 10px; }
@@ -2250,6 +2262,10 @@ onUnmounted(() => {
 .rk-notify-done { display: grid; gap: 12px; }
 .rk-notify-done .detail-actions { display: flex; gap: 8px; justify-content: flex-end; }
 .rk-history-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* 1700 以下收窄列表和地图，详情栏保持两栏排版所需宽度（1440、1366 下也分两栏） */
+@media (max-width: 1700px) and (min-width: 1151px) {
+  .flight-main,.risk-main { grid-template-columns: minmax(230px, .7fr) minmax(280px, .9fr) minmax(500px, 1.6fr); }
+}
 @media (max-width: 1150px) {
   .flights-page { overflow: auto; }
   .flight-main,.risk-main { flex: none; grid-template-columns: minmax(250px, .8fr) minmax(0, 1.2fr); grid-template-rows: 390px minmax(460px, auto); }

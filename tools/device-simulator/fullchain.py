@@ -108,7 +108,7 @@ def plan_window(plan, now):
         start_time = dt.time.fromisoformat(str(plan['start']) + ':00')
         end_time = dt.time.fromisoformat(str(plan['end']) + ':00')
     except (KeyError, TypeError, ValueError) as error:
-        raise ValueError('计划时间格式须为 HH:mm') from error
+        raise ValueError('任务时间格式须为 HH:mm') from error
     local = dt.datetime.fromtimestamp(now / 1000, tz=SHANGHAI)
     start = dt.datetime.combine(local.date(), start_time, SHANGHAI)
     end = dt.datetime.combine(local.date(), end_time, SHANGHAI)
@@ -161,10 +161,10 @@ def flight_window(plan, target, risks, now):
         else:
             raise ValueError('时间场景无效')
     if len(windows) > 1:
-        raise ValueError('同一目标与计划存在冲突的时间场景，请保留一种时间设置')
+        raise ValueError('同一目标与任务存在冲突的时间场景，请保留一种时间设置')
     result = next(iter(windows)) if windows else (start, finish)
     if result[0] <= 0:
-        raise ValueError('偏移后的计划时间无效，请检查场景时间')
+        raise ValueError('偏移后的任务时间无效，请检查场景时间')
     return result
 
 
@@ -219,7 +219,7 @@ class FullChain:
                 if message.get('kind') != 'FLIGHT_PLAN' or not identity:
                     continue
                 if identity in plans:
-                    raise ValueError('模拟计划消息编号出现重复记录：' + message['message_id'])
+                    raise ValueError('模拟任务消息编号出现重复记录：' + message['message_id'])
                 plans[identity] = message
             self._inputs = {'routes': routes, 'plans': plans}
         return self._inputs
@@ -396,13 +396,13 @@ class FullChain:
                 if existing_plan:
                     pid = existing_plan.get('subject_id')
                     if not pid:
-                        raise ValueError('稳定模拟计划缺少平台编号：' + plan_message)
+                        raise ValueError('稳定模拟任务缺少平台编号：' + plan_message)
                 else:
                     result=self.request('plan-'+plan['id']+'-'+str(number)+'-'+
                                         payload_fingerprint(plan_identity(plan_body)),
                                         PREFIX+'/plans',plan_body)
                     pid=result.get('subject_id') or result.get('result',{}).get('plan_id') or result.get('plan_id')
-                if not pid: raise ValueError('平台未返回模拟计划编号')
+                if not pid: raise ValueError('平台未返回模拟任务编号')
                 self.manifest.setdefault('plan_expectations',{})[pid]=copy.deepcopy(plan_body)
                 ids.append(pid)
                 if target:self.manifest['targets'][target['id']]['plan_id']=pid

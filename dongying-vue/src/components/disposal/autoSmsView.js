@@ -38,10 +38,10 @@ function reasonText(reason) {
   return Object.prototype.hasOwnProperty.call(labels, text) ? labels[text] : text;
 }
 /* BLOCK-03（2026-10-06 用户确认）：飞手信息只来自上级计划接口，本系统没有补录页面。后端 pilot_contact_missing
-   为 true（关联计划没有执行飞手，或飞手没有电话）且这条通知还没发出时，直接写明“缺飞手联系方式”；
+   为 true（关联任务没有执行飞手，或飞手没有电话）且这条通知还没发出时，直接写明“缺飞手联系方式”；
    正在发送、已送达、失败或结果未知的以发送记录为准，不改写。电话通知同一口径。 */
 export const PILOT_CONTACT_MISSING_TITLE = '缺飞手联系方式';
-export const PILOT_CONTACT_MISSING_GUIDANCE = '飞手信息以上级下发的计划为准，本系统不能补录；需要时请通过计划报备单位等其他途径联系飞手。';
+export const PILOT_CONTACT_MISSING_GUIDANCE = '飞手信息以上级下发的任务为准，本系统不能补录；需要时请通过任务报备单位等其他途径联系飞手。';
 export function pilotContactMissing(data, status) {
   return data?.pilot_contact_missing === true && ['WAITING', 'BLOCKED', 'UNAVAILABLE', 'DISABLED'].includes(status);
 }
@@ -56,7 +56,7 @@ export function autoSmsView(data) {
   const canRetry = !!sms.can_retry && !['SENDING', 'WAITING', 'UNKNOWN', 'SIMULATED_DELIVERED', 'NOT_REQUIRED'].includes(sms.status);
   return {
     title: missing ? PILOT_CONTACT_MISSING_TITLE : expired ? '需核对最新情况' : AUTO_SMS_STATUS[sms.status] || '通知结果待确认',
-    reason: missing ? '上级下发的飞行计划里没有执行飞手的电话，无法给飞手发短信。' : reasonText(sms.reason),
+    reason: missing ? '上级下发的飞行任务里没有执行飞手的电话，无法给飞手发短信。' : reasonText(sms.reason),
     pilotContactMissing: missing,
     tone: missing ? 'warning' : sms.status === 'SIMULATED_DELIVERED' ? 'success' : expired || ['FAILED', 'UNKNOWN', 'UNAVAILABLE', 'BLOCKED'].includes(sms.status) ? 'warning' : 'muted',
     canRetry, expired, recheck: expired && canRetry,

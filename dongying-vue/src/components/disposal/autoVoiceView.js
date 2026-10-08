@@ -28,7 +28,7 @@ export function autoVoiceView(data) {
       : channelUnavailable ? '电话通道不可用'
       : String(voice.reason || '').includes('超过自动通知时效') && voice.status === 'BLOCKED' ? '超过时效，不自动拨打'
       : AUTO_VOICE_STATUS[voice.status] || '通话结果未确认',
-    reason: missing ? '上级下发的飞行计划里没有执行飞手的电话，无法给飞手打电话。' : unavailableReason,
+    reason: missing ? '上级下发的飞行任务里没有执行飞手的电话，无法给飞手打电话。' : unavailableReason,
     pilotContactMissing: missing,
     channelUnavailable,
     tone: missing || channelUnavailable ? 'warning' : voice.status === 'SIMULATED_PLAYED' ? 'success'

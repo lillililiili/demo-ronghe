@@ -15,7 +15,7 @@ class Platform:
         self.calls.append((method, path))
         if path == '/flight-plans?page=1&size=20':
             return {'items': [
-                {'plan_id': 'mock-plan', 'plan_no': '模拟计划 01', 'source_mode': 'mock'},
+                {'plan_id': 'mock-plan', 'plan_no': '模拟任务 01', 'source_mode': 'mock'},
                 {'plan_id': 'live-plan', 'source_mode': 'live'},
             ], 'total': 2}
         if path == '/flight-plans/mock-plan/verifications':
@@ -31,7 +31,7 @@ class Platform:
             ]}
         if path == '/device-maintenance-tasks?status=ALL&page=1&size=20':
             return {'items': [
-                {'task_id': 'task-1', 'plan_no': '计划甲', 'device_name': '雷达甲', 'reason': '离线',
+                {'task_id': 'task-1', 'plan_no': '任务甲', 'device_name': '雷达甲', 'reason': '离线',
                  'simulated': True, 'workflow_state': 'PROCESSING', 'notification_attempts': [
                      {'attempt_id': 'attempt-1', 'delivery_status': 'DELIVERED',
                       'receipt_status': 'ACKNOWLEDGED', 'requested_at': 20, 'delivered_at': 22,

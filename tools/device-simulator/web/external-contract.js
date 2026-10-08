@@ -53,7 +53,7 @@
     const district=scope?.district_id||scope?.districtId||next.route?.district_id||'';
     const width=Number(plan.width),min=Number(plan.min),max=Number(plan.max);
     next.route={
-      name:typeof plan.name==='string'&&plan.name.trim()?plan.name.trim():'上级计划航线',
+      name:typeof plan.name==='string'&&plan.name.trim()?plan.name.trim():'上级任务航线',
       geometry:{type:'LineString',coordinates:plan.points.map(point=>[Number(point[0]),Number(point[1])])},
       corridor_width_m:Number.isFinite(width)&&width>0?width:100,
       min_altitude_m:Number.isFinite(min)&&Number.isFinite(max)&&min<=max?min:20,

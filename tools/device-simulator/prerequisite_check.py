@@ -8,12 +8,12 @@ def verify(platform, scene, manifest, scope):
         actual = platform.call('GET', '/flight-plans/' + pid)
         for key in ('uav_sn', 'start_at', 'end_at', 'source_mode'):
             if actual.get(key) != expected[key]:
-                raise ValueError('计划回读不一致：' + pid + ' / ' + key)
+                raise ValueError('任务回读不一致：' + pid + ' / ' + key)
         for key, value in scope.items():
             if actual.get(key) != value:
-                raise ValueError('计划回读范围不一致：' + pid)
+                raise ValueError('任务回读范围不一致：' + pid)
         if (actual.get('route') or {}).get('route_version_id') != expected['route_version_id']:
-            raise ValueError('计划回读航线版本不一致：' + pid)
+            raise ValueError('任务回读航线版本不一致：' + pid)
         result['plans'].append({'plan_id':pid,'uav_sn':actual.get('uav_sn'),
                                 'start_at':actual['start_at'],'end_at':actual['end_at'],
                                 'route_version_id':expected['route_version_id']})
@@ -37,7 +37,7 @@ def verify(platform, scene, manifest, scope):
         for pid in binding['ids']:
             expected = manifest['plan_expectations'][pid]
             if version['valid_from']>expected['start_at'] or (version.get('valid_to') is not None and version['valid_to']<expected['end_at']):
-                raise ValueError('航线有效期未覆盖模拟计划：'+pid)
+                raise ValueError('航线有效期未覆盖模拟任务：'+pid)
         result['routes'].append({'route_version_id':version_id,'altitude_datum':version['altitude_datum']})
     for entry in manifest['devices'].values():
         if entry['kind']=='normalized': continue

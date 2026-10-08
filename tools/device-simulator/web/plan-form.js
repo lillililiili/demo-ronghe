@@ -10,7 +10,7 @@
   if(!Number.isFinite(start)||!Number.isFinite(end))return null;
   return {start_at:start,end_at:end>start?end:end+86400000};
  }
- function scenePlanLabel(plan){return plan?.name||'未命名地图计划';}
+ function scenePlanLabel(plan){return plan?.name||'未命名地图任务';}
  function formatSceneTime(value){return typeof value==='string'&&/^\d{2}:\d{2}$/.test(value)?value:'未设置';}
  function applyScenePlan(data,plan,now=Date.now(),options={}){
   const next=structuredClone(data||{});next.filing={...(next.filing||{})};
@@ -25,9 +25,9 @@
  function select(key,label,value,rows,id,name){return `<label>${esc(label)}<select data-plan-field="${key}" aria-label="${esc(label)}"><option value="">请选择</option>${value&&!rows.some(r=>r[id]===value)?`<option value="${esc(value)}" selected>原关联（当前不可选）</option>`:''}${rows.map(r=>`<option value="${esc(r[id])}" ${r[id]===value?'selected':''}>${esc(r[name])}</option>`).join('')}</select></label>`;}
  function fields(data,catalog={}){
   const f=data.filing||{},orgs=catalog.organizations||[],pilots=(catalog.pilots||[]).filter(p=>p.org_id===f.operator_org_id),bindings=(catalog.source_bindings||[]).filter(b=>b.source_id===f.source_id),scenePlan=catalog.scene_plan;
-  const routeCard=scenePlan?`<section class="plan-route-card"><div><span class="plan-route-kicker">地图计划航线（本次报文航线）</span><strong>${esc(scenePlanLabel(scenePlan))}</strong><small>计划飞行时间（北京时间）：${esc(formatSceneTime(scenePlan.start))}—${esc(formatSceneTime(scenePlan.end))} · ${scenePlan.points.length} 个航点</small></div><button type="button" id="draw-plan-route">返回地图编辑航线</button></section>`:`<section class="plan-route-card empty"><div><span class="plan-route-kicker">地图计划航线</span><strong>尚未选择地图计划</strong><small>请选择地图计划，或在接口报文中提供完整航线几何。</small></div><button type="button" id="draw-plan-route">去地图绘制计划航线</button></section>`;
+  const routeCard=scenePlan?`<section class="plan-route-card"><div><span class="plan-route-kicker">地图任务航线（本次报文航线）</span><strong>${esc(scenePlanLabel(scenePlan))}</strong><small>任务飞行时间（北京时间）：${esc(formatSceneTime(scenePlan.start))}—${esc(formatSceneTime(scenePlan.end))} · ${scenePlan.points.length} 个航点</small></div><button type="button" id="draw-plan-route">返回地图编辑航线</button></section>`:`<section class="plan-route-card empty"><div><span class="plan-route-kicker">地图任务航线</span><strong>尚未选择地图任务</strong><small>请选择地图任务，或在接口报文中提供完整航线几何。</small></div><button type="button" id="draw-plan-route">去地图绘制任务航线</button></section>`;
   const coordsLocked=scenePlan?' readonly':'';
-  return `${routeCard}<div class="external-grid">${select('source_id','计划来源',f.source_id,catalog.plan_sources||[],'source_id','source_name')}${select('source_binding_id','报送单位关联',f.source_binding_id,bindings,'binding_id','org_name')}${select('operator_org_id','报备单位档案（可选）',f.operator_org_id,orgs,'id','label')}${select('pilot_contact_id','执行飞手档案（可选）',f.pilot_contact_id,pilots,'contact_id','name')}${names.map(([key,label])=>`<label>${label}<input data-plan-field="${key}" aria-label="${label}" maxlength="128" value="${esc(f[key])}" placeholder="填写本次申报资料"></label>`).join('')}${coords.map(([key,label,min,max])=>`<label>${label}（WGS-84）<input data-plan-field="${key}" aria-label="${label}" type="number" step="any" min="${min}" max="${max}" value="${esc(f[key])}"${coordsLocked}></label>`).join('')}</div><p>${scenePlan?'地图计划带入起降点和航线几何；计划时间可在上方直接修改，系统接收后保存航线版本，不与既有航线匹配。':'请选择地图计划，或在接口报文中提供完整航线几何；系统接收计划后保存航线版本。'}档案选项由后台单位机构维护；无对应档案时可先保存申报名称，关联状态保留为待关联。</p>`;
+  return `${routeCard}<div class="external-grid">${select('source_id','任务来源',f.source_id,catalog.plan_sources||[],'source_id','source_name')}${select('source_binding_id','报送单位关联',f.source_binding_id,bindings,'binding_id','org_name')}${select('operator_org_id','报备单位档案（可选）',f.operator_org_id,orgs,'id','label')}${select('pilot_contact_id','执行飞手档案（可选）',f.pilot_contact_id,pilots,'contact_id','name')}${names.map(([key,label])=>`<label>${label}<input data-plan-field="${key}" aria-label="${label}" maxlength="128" value="${esc(f[key])}" placeholder="填写本次申报资料"></label>`).join('')}${coords.map(([key,label,min,max])=>`<label>${label}（WGS-84）<input data-plan-field="${key}" aria-label="${label}" type="number" step="any" min="${min}" max="${max}" value="${esc(f[key])}"${coordsLocked}></label>`).join('')}</div><p>${scenePlan?'地图任务带入起降点和航线几何；任务时间可在上方直接修改，系统接收后保存航线版本，不与既有航线匹配。':'请选择地图任务，或在接口报文中提供完整航线几何；系统接收任务后保存航线版本。'}档案选项由后台单位机构维护；无对应档案时可先保存申报名称，关联状态保留为待关联。</p>`;
  }
  function update(data,key,value,catalog={}){
   const next=structuredClone(data);next.filing={...(next.filing||{})};
@@ -40,9 +40,9 @@
  }
  function validate(data,options={}){
   const f=data.filing;
-  if(!f||typeof f!=='object'||Array.isArray(f))throw Error('请填写计划申报资料');
-  if(options.requireWindow!==false&&(!Number.isFinite(Number(data.start_at))||Number(data.start_at)<=0||!Number.isFinite(Number(data.end_at))||Number(data.end_at)<=Number(data.start_at)))throw Error('请填写有效的计划飞行时间');
-  if(!f.source_id)throw Error('请选择计划来源；没有可选来源时请先在后台配置模拟或回放来源');
+  if(!f||typeof f!=='object'||Array.isArray(f))throw Error('请填写任务申报资料');
+  if(options.requireWindow!==false&&(!Number.isFinite(Number(data.start_at))||Number(data.start_at)<=0||!Number.isFinite(Number(data.end_at))||Number(data.end_at)<=Number(data.start_at)))throw Error('请填写有效的任务飞行时间');
+  if(!f.source_id)throw Error('请选择任务来源；没有可选来源时请先在后台配置模拟或回放来源');
   for(const [key,label] of names)if(typeof f[key]!=='string'||!f[key].trim()||f[key].length>128)throw Error(`请填写${label}（最多 128 字）`);
   for(const prefix of ['takeoff','landing'])if((f[prefix+'_longitude']==null)!=(f[prefix+'_latitude']==null))throw Error('起降点经纬度必须成对填写');
   for(const [key,label,min,max] of coords)if(f[key]!=null&&(!Number.isFinite(f[key])||f[key]<min||f[key]>max))throw Error(`${label}超出 WGS-84 范围`);

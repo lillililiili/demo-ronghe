@@ -12,20 +12,20 @@ const planFor = risk => props.plans.find(plan => riskMatchesPlan(risk, plan));
   <section class="sit-map-pop sit-risk-group-pop">
     <header>
       <span class="sit-map-pop-icon" v-html="U.icon('plan')"></span>
-      <span><b>{{ group.spaceFact?.subtypeName || '航线' }}风险</b><small>关联 {{ group.planCount }} 条计划</small></span>
+      <span><b>{{ group.spaceFact?.subtypeName || '航线' }}风险</b><small>关联 {{ group.planCount }} 条任务</small></span>
       <button type="button" aria-label="关闭风险详情" @click="$emit('close')" v-html="U.icon('close')"></button>
     </header>
     <p>{{ group.reasonText || '风险依据未提供' }}</p>
     <p v-if="group.currentReason" class="group-note">{{ group.currentReason }}</p>
-    <p v-if="group.members.length > 1" class="group-note">同一观测合并展示，各计划处理状态分别保留。</p>
+    <p v-if="group.members.length > 1" class="group-note">同一观测合并展示，各任务处理状态分别保留。</p>
     <article v-for="risk in group.members" :key="risk.riskId" class="group-plan">
-      <b>{{ planFor(risk)?.planNo || risk.planNo || '关联计划资料未取得' }}</b>
+      <b>{{ planFor(risk)?.planNo || risk.planNo || '关联任务资料未取得' }}</b>
       <span>{{ labelOf(RISK_STATE_LABEL, risk.state) }}</span>
       <small v-if="planFor(risk)?.uavId">无人机：{{ planFor(risk).uavId }}</small>
       <div class="sit-map-pop-actions">
-        <button v-if="planFor(risk)" type="button" @click="$emit('view-plan', risk)">查看计划</button>
+        <button v-if="planFor(risk)" type="button" @click="$emit('view-plan', risk)">查看任务</button>
         <template v-if="routeRiskIsActive(risk)">
-          <button type="button" class="is-danger" @click="$emit('action', risk, 'exclude')">排除此计划风险</button>
+          <button type="button" class="is-danger" @click="$emit('action', risk, 'exclude')">排除此任务风险</button>
           <button type="button" @click="$emit('action', risk, 'notify')">通知上级</button>
         </template>
       </div>

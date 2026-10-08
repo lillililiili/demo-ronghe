@@ -11,7 +11,7 @@ import RecipientSnapshotFields from '@/components/notifications/RecipientSnapsho
 const props = defineProps({ planId: { type: String, default: '' }, device: { type: Object, required: true } });
 const abnormal = computed(() => props.device.abnormal || props.device.incidents?.some(item => !item.closed_at));
 const state = computed(() => deviceNoticeState(props.planId, props.device.device_id));
-const blocker = computed(() => !props.planId ? '未选择飞行计划' : !hasPermission('handoff:create') ? '没有通知提交权限' : '');
+const blocker = computed(() => !props.planId ? '未选择飞行任务' : !hasPermission('handoff:create') ? '没有通知提交权限' : '');
 const attempts = computed(() => state.value.task?.notification_attempts || []);
 const latestUnknown = computed(() => attempts.value[0]?.outcome_state === 'UNKNOWN');
 const previousDeliveries = computed(() => attempts.value.slice(1).filter(item => item.delivery_status === 'DELIVERED').length);

@@ -9,7 +9,7 @@ function forecastFor(plan, periods) {
     published_at: plan.start - 120_000,
     periods: periods || [
       { from: plan.start - 60_000, to: plan.end + 60_000, summary: '晴', temperature_c: 24 },
-      { from: plan.start - 120_000, to: plan.start, summary: '计划前时段' }
+      { from: plan.start - 120_000, to: plan.start, summary: '任务前时段' }
     ]
   };
 }
@@ -49,14 +49,14 @@ async function expectCoveredForecast(page, plan, forecast) {
   await expect(weather.locator('.forecast-period header strong')).toHaveText(
     `${beijingTime(plan.start)} 至 ${beijingTime(plan.end)}`);
   await expect(weather.locator('.forecast-period')).toContainText('24°C');
-  await expect(weather).not.toContainText('计划前时段');
+  await expect(weather).not.toContainText('任务前时段');
   await expect(weather.locator('.weather-summary')).toContainText('天气模拟服务');
   await expect(weather.locator('.weather-summary')).toContainText('模拟数据');
   await expect(weather.locator('.weather-summary')).toContainText(beijingTime(forecast.published_at));
   await expect(weather).not.toContainText('过期');
 }
 
-test('READY 预报裁剪到计划时段，跨过结束时间及恢复可见后不按到期重读', async ({ page, request }) => {
+test('READY 预报裁剪到任务时段，跨过结束时间及恢复可见后不按到期重读', async ({ page, request }) => {
   const forecast = forecastFor(plan);
   const forecastEnd = forecast.periods[0].to;
   await page.clock.install({ time: forecastEnd - 60_000 });
@@ -89,18 +89,18 @@ test('兼容旧 STALE 响应：有覆盖的预报正常展示并忽略过期提�
   await expect(page.locator('.plan-weather')).not.toContainText('请重新读取');
 });
 
-test('兼容旧 STALE 响应：无计划时段覆盖时只提示暂无预报', async ({ page, request }) => {
+test('兼容旧 STALE 响应：无任务时段覆盖时只提示暂无预报', async ({ page, request }) => {
   const forecast = forecastFor(plan, [
-    { from: plan.start - 60_000, to: plan.start, summary: '计划前时段' },
-    { from: plan.end, to: plan.end + 60_000, summary: '计划后时段' }
+    { from: plan.start - 60_000, to: plan.start, summary: '任务前时段' },
+    { from: plan.end, to: plan.end + 60_000, summary: '任务后时段' }
   ]);
   await openForecast(page, request, { status: 'STALE', message: '天气预报已过期，请重新读取', forecast });
   const weather = page.locator('.plan-weather');
   await expect(weather.locator('.forecast-period')).toHaveCount(0);
-  await expect(weather.locator('.weather-state strong')).toHaveText('计划飞行时段暂无天气预报');
-  await expect(weather).toContainText('当前预报未覆盖计划飞行时段。');
+  await expect(weather.locator('.weather-state strong')).toHaveText('任务飞行时段暂无天气预报');
+  await expect(weather).toContainText('当前预报未覆盖任务飞行时段。');
   await expect(weather).not.toContainText('过期');
   await expect(weather).not.toContainText('请重新读取');
-  await expect(weather).not.toContainText('计划前时段');
-  await expect(weather).not.toContainText('计划后时段');
+  await expect(weather).not.toContainText('任务前时段');
+  await expect(weather).not.toContainText('任务后时段');
 });

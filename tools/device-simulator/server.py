@@ -349,7 +349,7 @@ class Runtime:
         scene, devices, targets, skipped = compile_scene(raw)
         if self.realtime:
             if self.seed.database:
-                raise ValueError('实时收发不使用数据库配套，请通过资料输入接口提交计划与空域')
+                raise ValueError('实时收发不使用数据库配套，请通过资料输入接口提交任务与空域')
             if not raw.get('fullchain', {}).get('enabled'):
                 self.realtime.start()
         with self.lock:
@@ -390,7 +390,7 @@ class Runtime:
         try:
             self.log('PREPARE','正在为本批次注册模拟设备与配套资料')
             if self.seed.database and self.platform.me.get('role_code') != 'ROLE-ADMIN':
-                raise ValueError('本机计划/区域 seed 仅允许测试系统管理员运行')
+                raise ValueError('本机任务/区域 seed 仅允许测试系统管理员运行')
             if self.scene.get('fullchain', {}).get('enabled'):
                 self.fullchain = FullChain(self.platform, self.scene, self.manifest, self.broker,
                                           self.checkpoint, cancelled=self.cancel.is_set)
@@ -420,7 +420,7 @@ class Runtime:
                 self.manifest['prerequisite_readback']=verify_prerequisites(
                     self.platform,self.scene,self.manifest,self.fullchain.scope)
                 self.checkpoint()
-                self.log('PREREQUISITES_VERIFIED','计划、航线和设备绑定已通过接口回读核对')
+                self.log('PREREQUISITES_VERIFIED','任务、航线和设备绑定已通过接口回读核对')
             self.log('WAIT_SUBSCRIPTIONS','等待后台确认本批全部设备的 MQTT 订阅')
             if not self.platform.wait_for_subscriptions(self.manifest, self.broker, self.cancel): return
             self.manifest['subscriptions_ready_at'] = int(time.time()*1000)
@@ -772,7 +772,7 @@ def parse_args(argv=None):
     parser=argparse.ArgumentParser()
     parser.add_argument('--port',type=int,default=8766)
     parser.add_argument('--isolated-qa-scene',action='store_true',help='隔离测试库原场景模式；不启动实时通知与反制接收端')
-    parser.add_argument('--database',help='显式启用本机测试库的计划/区域配套；只新增 replay 批次')
+    parser.add_argument('--database',help='显式启用本机测试库的任务/区域配套；只新增 replay 批次')
     parser.add_argument('--schema',help='测试库隔离 schema；须同时指定 --database，省略则保持默认搜索路径')
     parser.add_argument('--container',default='deploy-db-1')
     parser.add_argument('--data-dir',default=str(ROOT/'.data'))

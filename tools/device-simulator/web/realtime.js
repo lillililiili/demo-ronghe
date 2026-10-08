@@ -1,6 +1,6 @@
 (function (root) {
   'use strict';
-  const kinds = {ADVISORY_SMS:'飞手短信',ADVISORY_VOICE:'飞手电话',RISK_NOTICE:'风险通知',UAV_PUNISHMENT:'处罚移送',PLAN_FEEDBACK:'计划反馈',DEVICE_MAINTENANCE:'设备运维'};
+  const kinds = {ADVISORY_SMS:'飞手短信',ADVISORY_VOICE:'飞手电话',RISK_NOTICE:'风险通知',UAV_PUNISHMENT:'处罚移送',PLAN_FEEDBACK:'任务反馈',DEVICE_MAINTENANCE:'设备运维'};
   const outcomes = {success:'正常回执',failed:'失败',timeout:'超时',delayed:'延迟回执',mixed:'轮换结果（电话含仅接通）',no_receipt:'不回执',no_answer:'未接通',answered_only:'仅接通，不完成播放'};
   const modeNames = {normal:'正常模式',abnormal:'异常模式',mixed:'混合模式'};
   const outcomeChoices = kind => Object.fromEntries(Object.entries(outcomes).filter(([mode])=>kind==='ADVISORY_VOICE'||!['no_answer','answered_only'].includes(mode)));
@@ -63,7 +63,7 @@
       ${choice('notifications_enabled','六类通知接收',config.notifications_enabled,{true:'启用',false:'关闭'})}
       ${choice('countermeasure_enabled','本机模拟反制设备',config.countermeasure_enabled,{true:'启用',false:'关闭'})}
       ${choice('countermeasure_scope','反制设备所属单位与区县',config.countermeasure_scope,options)}
-      <p class="field-note">反制设备长期部署在某个单位与区县，不跟飞行计划绑定；这里只决定设备归属，不授予反制权限。</p>
+      <p class="field-note">反制设备长期部署在某个单位与区县，不跟飞行任务绑定；这里只决定设备归属，不授予反制权限。</p>
       <label class="realtime-field">模拟电话播放时长（秒）<input name="play_seconds" type="number" min="0.1" max="60" step="0.1" value="${esc(config.play_seconds)}" required></label>
       <fieldset id="realtime-abnormal"><legend>异常与混合模式参数</legend>
       ${choice('command_mode','设备指令',config.command_mode,{success:'正常执行回执',no_receipt:'不执行、不回执',unchanged:'四通道状态不变，光电正常'})}

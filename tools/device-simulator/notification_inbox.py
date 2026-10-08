@@ -50,7 +50,7 @@ def read_inbox(platform, kind, page=1):
                 status = row.get('delivery_status') or 'UNKNOWN'
                 result.append({'id': row['feedback_id'], 'kind': kind, 'subject': plan.get('plan_no') or plan['plan_id'],
                     'recipient': row.get('recipient_name'),
-                    'content': verification.get('evidence') or row.get('processing_result') or '计划核实回告内容未提供，请展开查看原始记录。',
+                    'content': verification.get('evidence') or row.get('processing_result') or '任务核实回告内容未提供，请展开查看原始记录。',
                     'status': status, 'receipt_status': row.get('receipt_status'), 'received': status == 'DELIVERED',
                     'at': row.get('delivered_at') or row.get('submitted_at') or row.get('created_at'),
                     'time_label': '送达时间' if row.get('delivered_at') else '发送记录时间',
@@ -58,7 +58,7 @@ def read_inbox(platform, kind, page=1):
             return result
         rows, errors = _read_many(visible, feedback)
         more = plans.get('total', 0) > page * 20
-        scope = '当前账号可见的模拟飞行计划 · 每页最多 20 个关联计划'
+        scope = '当前账号可见的模拟飞行任务 · 每页最多 20 个关联任务'
     elif kind == 'device_maintenance':
         tasks = platform.call('GET', f'/device-maintenance-tasks?status=ALL&page={page}&size=20')
         rows = []

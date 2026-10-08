@@ -2,7 +2,7 @@
 const USER_MESSAGES = {
   "通知配置已超过有效期": "通知设置已到期，暂时发不了通知。请联系管理员更新设置。",
   "通知配置尚未启用": "通知功能还没开启，暂时发不了通知。请联系管理员开启。",
-  "计划来源或单位关联不可用": "计划来源或报送单位的信息有问题，暂时发不了通知。请联系管理员检查。",
+  "任务来源或单位关联不可用": "任务来源或报送单位的信息有问题，暂时发不了通知。请联系管理员检查。",
   "接收联系人业务角色或单位关联已变更": "接收人的职责或所属单位变了，暂时发不了通知。请联系管理员确认接收人。",
   "接收联系人已停用或超过有效期": "接收人的资料已停用或到期，暂时发不了通知。请联系管理员更新资料。",
   "通知渠道尚未配置": "还没设置通知的发送方式，暂时发不了。请联系管理员设置。",
@@ -10,15 +10,15 @@ const USER_MESSAGES = {
   "通知渠道尚未接通": "通知服务还没接通，暂时发不了。请联系管理员处理。",
   "正式通知渠道尚未接通": "正式通知服务还没接通，暂时无法发送真实通知。请联系管理员处理。",
   "当前环境不允许使用模拟通知渠道": "当前系统不能发送模拟通知，请联系管理员设置正式通知服务。",
-  "报送单位尚未配置计划反馈渠道": "还没设置如何向报送单位发送反馈，请联系管理员设置。",
+  "报送单位尚未配置任务反馈渠道": "还没设置如何向报送单位发送反馈，请联系管理员设置。",
   "接收单位尚未配置通知渠道": "还没设置如何向接收单位发送通知，请联系管理员设置。",
-  "计划尚未关联报送单位": "这份计划还没关联报送单位，无法确定通知谁。请联系管理员补全资料。",
+  "任务尚未关联报送单位": "这份任务还没关联报送单位，无法确定通知谁。请联系管理员补全资料。",
   // 飞手信息只来自上级计划接口，本系统没有补录页面（BLOCK-03），不能让人去找管理员补录。
-  "未找到该计划的执行飞手联系人": "缺飞手联系方式：上级下发的计划没有提供执行飞手，暂时无法通知。",
-  "飞手身份与计划运营单位未形成有效关联": "飞手资料与计划中的运营单位对不上，暂时无法通知。请联系管理员核对。",
+  "未找到该任务的执行飞手联系人": "缺飞手联系方式：上级下发的任务没有提供执行飞手，暂时无法通知。",
+  "飞手身份与任务运营单位未形成有效关联": "飞手资料与任务中的运营单位对不上，暂时无法通知。请联系管理员核对。",
   "执行飞手联系人不可用": "飞手资料已停用或到期，暂时无法通知。请联系管理员更新资料。",
   "执行飞手联系方式尚未有效核验": "飞手联系方式还没核实清楚，暂时无法通知。请联系管理员核对。",
-  "当前事件尚无精确关联计划，不能把单位联系人当作执行飞手": "这条告警还没匹配到具体计划，无法确定通知哪位飞手。请查看关联计划信息。",
+  "当前事件尚无精确关联任务，不能把单位联系人当作执行飞手": "这条告警还没匹配到具体任务，无法确定通知哪位飞手。请查看关联任务信息。",
   "接收飞手或通知配置已变更，不能沿用同一通知编号更换对象重发": "飞手或通知设置已变更，不能直接重发原通知。请联系管理员核对原记录。",
   "所选运维通知对象不在当前可用范围内": "你没有权限通知所选运维单位，请重新选择或联系管理员。",
   "尚未确定唯一的运维通知对象，请明确配置接收单位": "还没确定通知哪家运维单位，请联系管理员设置接收单位。",
@@ -29,7 +29,7 @@ const USER_MESSAGES = {
   "DELIVERY_IN_PROGRESS": "通知正在发送，请稍后查看结果，不要重复提交。",
   "原发送结果未知，请先核对": "还不确定上次通知是否已发出，请先查看发送记录，不要重复发送。",
   "未收到有效送达结果": "还没收到送达结果，请先查看通知记录，不要重复发送。",
-  "没有可通知的执行飞手，不能发送短信": "还没找到可以通知的飞手，请联系管理员核对计划中的飞手和联系方式。",
+  "没有可通知的执行飞手，不能发送短信": "还没找到可以通知的飞手，请联系管理员核对任务中的飞手和联系方式。",
   "正式短信通道未接通": "短信服务还没接通，暂时无法发送真实短信。请联系管理员处理。",
   "缺少近期观测，目标位置待确认": "最近没有收到目标位置，暂时无法确认它在哪里。请查看最新观测时间；一直没更新时联系运维。",
   "缺少有效的违规研判依据": "目前还没有足够的违规依据，暂时不能自动通知。请查看这条告警的最新判定结果。",
@@ -200,15 +200,15 @@ export const DISPOSAL_STOP_RESULT_LABEL = {
    （如 "T02 device read" / "Read devices"），直接上屏就是给一线人员看英文；
    这里按模块与动作码给出中文，服务端将来给了中文再优先用服务端的。 */
 export const ACTION_MODULE_LABEL = {
-  device: '设备', target: '目标', alarm: '告警', flight: '飞行计划', route: '航线', airspace: '空域',
+  device: '设备', target: '目标', alarm: '告警', flight: '飞行任务', route: '航线', airspace: '空域',
   assessment: '合法性研判', risk: '飞行风险', workbench: '工作台', handoff: '业务交接', rule: '规则引擎',
   fusion: '融合感知', evidence: '证据', airport: '机场', disposal: '处置授权', punishment: '处罚案件'
 };
 export const ACTION_CODE_LABEL = {
   'device:read': '查看设备', 'target:read': '查看目标',
   'alarm:read': '查看告警', 'alarm:verify': '核实无人机事件',
-  'flight:read': '查看飞行计划',
-  'flight:verify': '核实计划执行',
+  'flight:read': '查看飞行任务',
+  'flight:verify': '核实任务执行',
   'route:read': '查看航线', 'airspace:read': '查看空域', 'airspace:manage': '维护空域',
   'assessment:read': '查看研判', 'assessment:evaluate': '发起研判', 'assessment:revise': '修订研判结论', 'assessment:escalate': '上报研判',
   'risk:read': '查看风险', 'risk:verify': '核验风险', 'risk:evaluate': '触发风险评估',
@@ -234,7 +234,7 @@ export const PENALTY_TYPE_LABEL = { WARNING: '警告', FINE: '罚款', WARNING_A
    档位表自带 title，页面优先显示 title，这里是它缺失时的兜底。 */
 export const VIOLATION_CODE_LABEL = {
   NO_AUTHORIZATION: '未经批准擅自飞行', PROHIBITED_AIRSPACE_OVERLAP: '进入禁飞空域飞行',
-  AIRSPACE_ALTITUDE_EXCEEDED: '超出空域限高飞行', PLAN_ALTITUDE_EXCEEDED: '超出计划高度飞行',
+  AIRSPACE_ALTITUDE_EXCEEDED: '超出空域限高飞行', PLAN_ALTITUDE_EXCEEDED: '超出任务高度飞行',
   TIME_WINDOW_EXCEEDED: '超出批准时段飞行', ROUTE_DEVIATION: '偏离批准航线飞行',
   BVLOS_EXCEEDED: '超视距飞行未符合要求', NIGHT_FLIGHT: '夜间飞行未符合要求',
   IDENTITY_MISMATCH: '实名登记信息不符', OTHER: '其他违反飞行管理规定的行为'
@@ -353,10 +353,10 @@ export const RULE_RESULT_LABEL = { PASS: '通过', FAIL: '不通过', UNDETERMIN
 export const LEGALITY_LABEL = { LEGAL: '合法', ABNORMAL: '异常', ILLEGAL: '非法', UNDETERMINED: '不可判定', NOT_APPLICABLE: '不适用' };
 // 阶段 9 计划与实际对照：段可用性、计划匹配、高度关系与外部授权登记。
 export const SECTION_AVAILABILITY_LABEL = { FORBIDDEN: '无权限查看', NO_EVALUATION: '尚无研判', UNAVAILABLE: '暂不可用' };
-export const PLAN_MATCH_LABEL = { FULL: '完全匹配', PARTIAL: '部分匹配', NONE: '无匹配计划', UNDETERMINED: '不可判定', NOT_APPLICABLE: '不适用' };
+export const PLAN_MATCH_LABEL = { FULL: '完全匹配', PARTIAL: '部分匹配', NONE: '无匹配任务', UNDETERMINED: '不可判定', NOT_APPLICABLE: '不适用' };
 export const PLAN_MATCH_TAG = { FULL: 't-green', PARTIAL: 't-amber', NONE: 't-amber', UNDETERMINED: 't-gray', NOT_APPLICABLE: 't-gray' };
 export const ALTITUDE_RELATION_LABEL = {
-  ABOVE: '高于计划高度带', WITHIN: '在计划高度带内', BELOW: '低于计划高度带', UNDETERMINED: '不可判定'
+  ABOVE: '高于任务高度带', WITHIN: '在任务高度带内', BELOW: '低于任务高度带', UNDETERMINED: '不可判定'
 };
 export const EVIDENCE_KIND_LABEL = {
   EO_VIDEO: '光电录像', EO_STILL: '光电抓拍图', TRACK_SNAPSHOT: '雷达轨迹记录',
@@ -373,7 +373,7 @@ export const EVIDENCE_CUSTODY_TAG = {
   KEPT: 't-green', NEARING: 't-amber', DUE: 't-orange', HELD: 't-purple'
 };
 export const EVIDENCE_SUBJECT_LABEL = {
-  EVENT: '无人机事件', DEVICE: '设备', TARGET: '感知目标', PLAN: '飞行计划',
+  EVENT: '无人机事件', DEVICE: '设备', TARGET: '感知目标', PLAN: '飞行任务',
   COMMAND: '指令', COMMISSION: '调测任务', CASE: '处罚案件', AUTHORIZATION: '处置授权'
 };
 export const EVIDENCE_RECORD_TYPE_LABEL = {

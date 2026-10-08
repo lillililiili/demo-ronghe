@@ -1476,7 +1476,7 @@
         if (!t) return;
         const lon = t.lon, lat = t.lat;
         const q = P(lon, lat);
-        const col = a.level === '高' ? '#ff4d5e' : a.level === '中' ? '#ffb020' : '#3d8bff';
+        const col = a.level === '高' || a.level === '紧急' ? '#ff4d5e' : a.level === '中' ? '#ffb020' : '#3d8bff';
         c.save();
         applyAlarmGlow(c, { ...a, stale: t.stale, freshness: t.freshness }, q[0], q[1], 18);
         c.beginPath(); c.moveTo(q[0],q[1]-9); c.lineTo(q[0]+9,q[1]+7); c.lineTo(q[0]-9,q[1]+7); c.closePath();

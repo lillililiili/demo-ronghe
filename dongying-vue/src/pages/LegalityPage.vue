@@ -23,6 +23,7 @@ import { usePageChrome } from '@/hooks/usePageChrome.js';
 import { refreshFailureText, useRealtimeRefresh } from '@/hooks/useRealtimeRefresh.js';
 import { legalityReviewFocus } from '@/ui/legalityReviewFocus.js';
 import { lowConfidenceReason } from '@/ui/legalityConfidence.js';
+import { noPlanExemptReason } from '@/ui/noPlanExemption.js';
 import { legalityApi } from '@/services/legalityApi.js';
 import { flightApi } from '@/services/flightApi.js';
 import { planPickerQuery, planPickerItems, planPickerLabel } from '@/pages/flights/planFilters.js';
@@ -178,6 +179,11 @@ function evidenceIcon(kind) {
 
 function resultText(code) { return RULE_RESULT_TEXT[code] || code || '未提供'; }
 function resultClass(code) { return resultMeta[code]?.className || 'is-warn'; }
+// 新-28：没有报备任务、按规定无需申请的，任务匹配一行照实记“对不上任务”，结果写“无需申请”，不画成不通过。
+function exemptCheck(hit) { return hit?.rule_code === 'C01' && hit.facts?.no_plan_exempt === true; }
+function checkResultText(hit) { return exemptCheck(hit) ? '无需申请' : resultText(hit.result_code); }
+function checkResultClass(hit) { return exemptCheck(hit) ? 'is-pass' : resultClass(hit.result_code); }
+function checkIcon(hit) { return exemptCheck(hit) || hit.result_code === 'PASS' ? 'check' : hit.result_code === 'FAIL' ? 'cross' : 'clock'; }
 /* 列表是 ACTIVE 最新研判；深链仍可能打开被替代的旧结果，历史结论保持静态。 */
 function evaluationAbnormal(item) {
   return UI.abnormalActive({
@@ -216,7 +222,7 @@ function evaluationReason(item) {
   const violations = (item.violation_reasons || []).map(ruleReasonText).join('、');
   if (unconfirmedParams(item)) return demoParamReason(item, violations);
   if (item.original_legal_status === 'ABNORMAL') return `${violations ? `${violations}；` : ''}历史记录未明确合法或非法，保留原始依据。`;
-  if (item.legal_status === 'LEGAL') return item.unknown_reasons?.length ? `系统判定合法，另有 ${item.unknown_reasons.length} 项未知信息` : '全部检查通过';
+  if (item.legal_status === 'LEGAL') return legalReason(item, '系统判定合法');
   const confidence = lowConfidenceReason(item);
   if (confidence) return `${confidence}${violations ? `；已发现${violations}` : ''}`;
   if (item.violation_reasons?.length) return ruleReasonText(item.violation_reasons[0]);
@@ -234,13 +240,18 @@ function demoParamReason(item, violations) {
   const note = '按演示参数判定，规则参数待业务确认。';
   if (item.original_legal_status === 'ABNORMAL') return `${violations ? `${violations}；` : ''}历史记录未明确合法或非法；${note}`;
   if (item.legal_status === 'ILLEGAL') return `${violations || '判定非法'}；${note}`;
-  if (item.legal_status === 'LEGAL') {
-    return `${item.unknown_reasons?.length ? `判定合法，另有 ${item.unknown_reasons.length} 项未知信息` : '全部检查通过'}；${note}`;
-  }
+  if (item.legal_status === 'LEGAL') return `${legalReason(item, '判定合法')}；${note}`;
   const confidence = lowConfidenceReason(item);
   const unknown = [...new Set((item.unknown_reasons || []).filter(code => !confidence || code !== 'LOW_CONFIDENCE').map(ruleReasonText))].join('、');
   if (confidence) return `${confidence}${unknown ? `；另有${unknown}` : ''}${violations ? `；已发现${violations}` : ''}；规则参数待业务确认。`;
   return `${unknown || '依据不足'}${violations ? `，已发现${violations}` : ''}；规则参数待业务确认。`;
+}
+/* 合法时的说明：没有报备任务、按规定无需申请的写清原因（新-28），其余照旧“全部检查通过”或“另有 N 项未知信息”。 */
+function legalReason(item, prefix) {
+  const exempt = noPlanExemptReason(item);
+  const unknown = item.unknown_reasons?.length ? `另有 ${item.unknown_reasons.length} 项未知信息` : '';
+  if (exempt) return unknown ? `${exempt}；${unknown}` : exempt;
+  return unknown ? `${prefix}，${unknown}` : '全部检查通过';
 }
 function subjectLabel(item) {
   if (!item) return '未选择研判';
@@ -254,12 +265,14 @@ const FACT_KEY_TEXT = {
   distance_m: '距中心线（米）', deviation_m: '偏离量（米）', half_width_m: '走廊半宽（米）', tolerance_m: '容差（米）', corridor_tolerance_m: '走廊容差（米）',
   altitude_m: '高度（米）', max_altitude_m: '最大高度（米）', min_altitude_m: '最小高度（米）', limit_m: '限高（米）', margin_m: '余量（米）',
   time_window: '时间窗', corridor: '走廊', identity: '身份', confidence: '置信度', candidate_count: '候选任务数', match_reason: '匹配原因',
-  start_at: '开始', end_at: '结束', observed_at: '监测时间', night_from: '夜航起', night_to: '夜航止', kinds: '空域类型'
+  start_at: '开始', end_at: '结束', observed_at: '监测时间', night_from: '夜航起', night_to: '夜航止', kinds: '空域类型',
+  no_plan_exempt: '按规定无需申请', height_agl_m: '离地高度（米）'
 };
 const DIM_TEXT = { MATCH: '匹配', MISMATCH: '不匹配', UNDETERMINED: '不可判定', PASS: '通过', FAIL: '不通过', UNKNOWN: '未知' };
 function factKeyText(key) { return FACT_KEY_TEXT[key] || key.replace(/_/g, ' '); }
 function factValueText(key, value) {
   if (value === null || value === undefined) return '—';
+  if (typeof value === 'boolean') return value ? '是' : '否';
   if (typeof value === 'number') return Number.isInteger(value) ? String(value) : value.toFixed(1);
   if (typeof value === 'string') {
     if (/_id$/.test(key) || /^seed-/.test(value)) return '已关联';
@@ -809,10 +822,10 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
                     <p v-if="selectedEvaluation.hit_details?.length && !checkRows.length" class="lg-check-empty">没有不通过或不可判定的单项检查，可展开查看完整依据。</p>
                     <button v-for="{ hit, index } in checkRows"
                       :key="`${hit.rule_code}-${index}`" type="button" class="lg-check-item"
-                      :class="[resultClass(hit.result_code), { 'is-selected': selectedHitIndex === index }]"
+                      :class="[checkResultClass(hit), { 'is-selected': selectedHitIndex === index }]"
                       :aria-expanded="selectedHitIndex === index" :title="hit.message || ''" @click="toggleHit(index)">
-                      <span class="lg-check-icon" v-html="UI.icon(hit.result_code === 'PASS' ? 'check' : hit.result_code === 'FAIL' ? 'cross' : 'clock')"></span>
-                      <span class="lg-check-copy"><b>{{ ruleName(hit.rule_code) }}<em>{{ resultText(hit.result_code) }}</em></b>
+                      <span class="lg-check-icon" v-html="UI.icon(checkIcon(hit))"></span>
+                      <span class="lg-check-copy"><b>{{ ruleName(hit.rule_code) }}<em>{{ checkResultText(hit) }}</em></b>
                         <small class="lg-check-description">{{ hit.message || (hit.reason_code ? ruleReasonText(hit.reason_code) : '未提供说明') }}</small>
                         <small v-if="selectedHitIndex === index && hit.facts && Object.keys(hit.facts).length">判定时事实：{{ factText(hit.facts) }}</small>
                         <small v-if="selectedHitIndex === index">{{ hit.rule_code }} · {{ hit.params?.length && hit.params.every(p => p.status === 'CONFIRMED') ? '已确认参数' : '参数待业务确认' }}</small>

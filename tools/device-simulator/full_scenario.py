@@ -68,6 +68,8 @@ def full_scene(categories=None):
                          transport='normalized' if key in ('height','overtime','normal') else 'mqtt')
             if key != 'unplanned': plan(row, timeMode='past' if key == 'overtime' else 'current')
             if key == 'height': row.update(height=200, altitudePath=[180,220,220,180], heightAgl=180)
+            # 新-28：没有报备任务、离地 120 米以下的普通区域飞行按规定无需申请、不告警；这架演示“无任务”告警，飞离地 150 米。
+            if key == 'unplanned': row.update(height=170, heightAgl=150)
             if key == 'deviation':
                 row['path'] = [[192,170],[216,170],[245,190],[245,220]]
                 row['motionMode'] = 'pingpong'

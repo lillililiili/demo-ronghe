@@ -22,6 +22,7 @@ import UPagination from '@/components/UPagination.vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import { refreshFailureText, useRealtimeRefresh } from '@/hooks/useRealtimeRefresh.js';
 import { legalityReviewFocus } from '@/ui/legalityReviewFocus.js';
+import { lowConfidenceReason } from '@/ui/legalityConfidence.js';
 import { legalityApi } from '@/services/legalityApi.js';
 import { flightApi } from '@/services/flightApi.js';
 import { planPickerQuery, planPickerItems, planPickerLabel } from '@/pages/flights/planFilters.js';
@@ -145,7 +146,9 @@ const reviewFocus = computed(() => legalityReviewFocus(selectedEvaluation.value)
 const checkRows = computed(() => (selectedEvaluation.value?.hit_details || []).map((hit, index) => ({ hit, index }))
   .filter(({ hit }) => showAllChecks.value || ['FAIL', 'UNDETERMINED'].includes(hit.result_code)));
 const secondaryCheckCount = computed(() => (selectedEvaluation.value?.hit_details || []).filter(hit => !['FAIL', 'UNDETERMINED'].includes(hit.result_code)).length);
-const unlistedUnknowns = computed(() => reviewFocus.value.unknownReasons.filter(code => !(selectedEvaluation.value?.hit_details || []).some(hit => hit.reason_code === code)));
+// 判定依据不足的原因上面已经列过的（如“置信度不足”），这里不再列第二遍（CDX-P04）。
+const unlistedUnknowns = computed(() => reviewFocus.value.unknownReasons.filter(code => !(selectedEvaluation.value?.hit_details || []).some(hit => hit.reason_code === code)
+  && !reviewFocus.value.assuranceReasons.includes(code)));
 const assuranceReasons = computed(() => reviewFocus.value.assuranceReasons || []);
 const c01Facts = computed(() => selectedEvaluation.value?.hit_details?.find(hit => hit.rule_code === 'C01')?.facts || null);
 const unconfirmedParams = item => !!item && item.legal_status !== 'NOT_APPLICABLE' && item.param_status !== 'CONFIRMED';
@@ -214,6 +217,8 @@ function evaluationReason(item) {
   if (unconfirmedParams(item)) return demoParamReason(item, violations);
   if (item.original_legal_status === 'ABNORMAL') return `${violations ? `${violations}；` : ''}历史记录未明确合法或非法，保留原始依据。`;
   if (item.legal_status === 'LEGAL') return item.unknown_reasons?.length ? `系统判定合法，另有 ${item.unknown_reasons.length} 项未知信息` : '全部检查通过';
+  const confidence = lowConfidenceReason(item);
+  if (confidence) return `${confidence}${violations ? `；已发现${violations}` : ''}`;
   if (item.violation_reasons?.length) return ruleReasonText(item.violation_reasons[0]);
   if (item.unknown_reasons?.length) return ruleReasonText(item.unknown_reasons[0]);
   if (item.legal_status === 'LEGAL') return '全部检查通过';
@@ -223,6 +228,7 @@ function evaluationReason(item) {
  * 规则参数还是演示值时：判出的合法、非法照常写，后面注明“按演示参数判定，规则参数待业务确认”；
  * 没判出来的写真实原因（如置信度不足），不再一律写“规则参数未确认，暂不可判定”——
  * 演示参数照样参与判定，以前那句和判出的结论自相矛盾（确认书 7-9，新-14）。
+ * 置信度不足时写明几路来源、可信度和要求（CDX-P04），其余没判出来的原因跟在“另有”后面。
  */
 function demoParamReason(item, violations) {
   const note = '按演示参数判定，规则参数待业务确认。';
@@ -231,8 +237,10 @@ function demoParamReason(item, violations) {
   if (item.legal_status === 'LEGAL') {
     return `${item.unknown_reasons?.length ? `判定合法，另有 ${item.unknown_reasons.length} 项未知信息` : '全部检查通过'}；${note}`;
   }
-  const unknown = [...new Set((item.unknown_reasons || []).map(ruleReasonText))].join('、') || '依据不足';
-  return `${unknown}${violations ? `，已发现${violations}` : ''}；规则参数待业务确认。`;
+  const confidence = lowConfidenceReason(item);
+  const unknown = [...new Set((item.unknown_reasons || []).filter(code => !confidence || code !== 'LOW_CONFIDENCE').map(ruleReasonText))].join('、');
+  if (confidence) return `${confidence}${unknown ? `；另有${unknown}` : ''}${violations ? `；已发现${violations}` : ''}；规则参数待业务确认。`;
+  return `${unknown || '依据不足'}${violations ? `，已发现${violations}` : ''}；规则参数待业务确认。`;
 }
 function subjectLabel(item) {
   if (!item) return '未选择研判';

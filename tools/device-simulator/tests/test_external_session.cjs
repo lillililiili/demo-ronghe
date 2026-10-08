@@ -35,7 +35,7 @@ test('risk inbox displays frozen coordinates and distinguishes missing or hidden
 test('selected map plan renders editable times and retains edits when the form is rebuilt',async()=>{
  const sandbox={document,window:{ExternalContract:require('../web/external-contract.js'),PlanForm:require('../web/plan-form.js'),WeatherForm:require('../web/weather-form.js')},setInterval(){},fetch:async()=>({ok:true,status:200,json:async()=>({connected:false})})};
  vm.createContext(sandbox);
- vm.runInContext(source+`\nglobalThis.__test={buildPlanInput,readDraft,set(data){tab='plans';context={routes:[],plans:[],messages:[]};scenePlans=[{id:'p1',name:'巡检计划',start:'09:00',end:'09:30',points:[[118.6,37.4],[118.7,37.5]]}];selectedScenePlanId='p1';drafts.plans=JSON.stringify(data);}};`,sandbox);
+ vm.runInContext(source+`\nglobalThis.__test={buildPlanInput,readDraft,set(data){tab='plans';context={routes:[],plans:[],messages:[]};scenePlans=[{id:'p1',name:'巡检任务',start:'09:00',end:'09:30',points:[[118.6,37.4],[118.7,37.5]]}];selectedScenePlanId='p1';drafts.plans=JSON.stringify(data);}};`,sandbox);
  await new Promise(resolve=>setImmediate(resolve));
  const edited={message_id:'time-edit',uav_sn:'SIM-TIME',start_at:Date.parse('2026-10-06T11:00:00+08:00'),end_at:Date.parse('2026-10-06T11:30:00+08:00'),filing:{source_id:'s'}};
  sandbox.__test.set(edited);

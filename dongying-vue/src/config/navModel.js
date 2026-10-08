@@ -18,7 +18,7 @@ export const NAV = [
   },
   {
     t: '飞行监管与处置', icon: 'plan', kids: [
-      { k: 'flights', t: '飞行计划', icon: 'plan' },
+      { k: 'flights', t: '飞行任务', icon: 'plan' },
       { k: 'legality', t: '合法性研判', icon: 'check' },
       /* 2026-09-13 挂回菜单（设计稿 v2）：访问权限由飞行计划承载，见 accessControl.js 的 ROUTE_ALIAS。 */
       { k: 'airspace', t: '空域管理', icon: 'zone' },

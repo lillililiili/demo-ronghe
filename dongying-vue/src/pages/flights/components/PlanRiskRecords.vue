@@ -24,14 +24,14 @@ const groups = computed(() => [
 </script>
 
 <template>
-  <section class="plan-risk-records" aria-label="本计划当前风险" :aria-busy="loading">
+  <section class="plan-risk-records" aria-label="本任务当前风险" :aria-busy="loading">
     <header class="risk-section-head">
-      <h3>本计划当前风险</h3>
+      <h3>本任务当前风险</h3>
       <p v-if="!loading && !error">当前 <strong>{{ currentTotal }}</strong> 起<span v-if="uncertainTotal"> · 其中状态待确认 <strong>{{ uncertainTotal }}</strong> 起</span></p>
       <button v-if="!error" class="btn" type="button" :disabled="loading" @click="emit('retry')">刷新</button>
     </header>
 
-    <div v-if="loading" class="risk-list-message" role="status">正在读取本计划当前风险</div>
+    <div v-if="loading" class="risk-list-message" role="status">正在读取本任务当前风险</div>
     <div v-else-if="error" class="risk-list-message risk-list-error" role="alert">
       <strong>当前风险读取失败</strong>
       <p>{{ error }}</p>

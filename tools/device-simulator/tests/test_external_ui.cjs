@@ -49,7 +49,7 @@ test('plan payload keeps its upstream route reference when no selector is shown'
 test('scene plan writes route geometry into the upstream plan payload', () => {
   const {applyScenePlanRoute} = require('../web/external-contract.js');
   const next=applyScenePlanRoute({message_id:'m',route_version_id:'legacy',route:{owner_org_id:'org-old',district_id:'district-old'}},
-    {name:'巡检计划',points:[[118.6,37.46],[118.61,37.47]],width:80,min:30,max:110,altitudeDatum:'AMSL'},
+    {name:'巡检任务',points:[[118.6,37.46],[118.61,37.47]],width:80,min:30,max:110,altitudeDatum:'AMSL'},
     {owner_org_id:'org-new',district_id:'district-new'});
   assert.equal(Object.hasOwn(next,'route_version_id'),false);
   assert.deepEqual(next.route.geometry,{type:'LineString',coordinates:[[118.6,37.46],[118.61,37.47]]});
@@ -92,7 +92,7 @@ test('binding result reports confirmed binding state', () => {
 
 test('unavailable context sections are shown verbatim without disabling available categories', () => {
   const {unavailableNotice} = require('../web/external-contract.js');
-  assert.equal(unavailableNotice({unavailable_sections:['飞行计划：无读取权限','风险：无读取权限']}),'飞行计划：无读取权限；风险：无读取权限');
+  assert.equal(unavailableNotice({unavailable_sections:['飞行任务：无读取权限','风险：无读取权限']}),'飞行任务：无读取权限；风险：无读取权限');
   assert.equal(unavailableNotice({unavailable_sections:[]}), '');
 });
 

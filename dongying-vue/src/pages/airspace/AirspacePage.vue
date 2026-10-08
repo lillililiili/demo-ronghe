@@ -33,7 +33,7 @@ const KIND_CODES = ['PROHIBITED', 'RESTRICTED', 'ALTITUDE_LIMIT', 'PERMITTED', '
 const KIND_OPTIONS = [{ label: '全部种类', value: '' }].concat(KIND_CODES.map(value => ({ label: AIRSPACE_KIND_LABEL[value], value })));
 const VALIDITY_OPTIONS = [{ label: '全部', value: '' }, { label: '当前生效', value: 'now' }, { label: '当前未生效', value: 'off' }];
 const ROUTE_COLOR = '#22d3ee'; // 监测位置颜色
-const PLAN_COLOR = '#8ca0a8'; // 计划几何统一灰色
+const PLAN_COLOR = '#8ca0a8'; // 任务几何统一灰色
 const PAGE_MAX = 100;
 // 用户确认仅从本页日常列表移除的测试空域；服务端版本和历史研判引用继续保留。
 const OMITTED_TEST_AIRSPACE_IDS = new Set([
@@ -602,7 +602,7 @@ onUnmounted(() => {
           <span class="sw" :style="{ borderColor: item.color, background: item.color + '33' }"></span>{{ item.label }}
         </button>
         <button v-if="routesAvailable && routeLines.length" type="button" class="legend-item" :class="{ off: !showRoutes }" @click="showRoutes = !showRoutes">
-          <span class="sw ln" :style="{ borderColor: PLAN_COLOR }"></span>计划航线
+          <span class="sw ln" :style="{ borderColor: PLAN_COLOR }"></span>任务航线
         </button>
         <div v-if="!legendKinds.length && !loading" class="legend-empty">图上暂无空域</div>
         <button v-if="bottomTab === 'monitor' && monitor.canRead" type="button" class="legend-item risk-layer-toggle" :class="{ off: !monitor.showLayer }" :aria-pressed="monitor.showLayer" @click="monitor.showLayer = !monitor.showLayer"><span class="target-dot"></span>近期目标位置</button>

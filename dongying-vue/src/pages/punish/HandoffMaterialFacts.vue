@@ -34,7 +34,7 @@ function formatTime(value) {
       <p><span class="tag" :class="party.unidentified ? 't-orange' : 't-green'">{{ party.title }}</span>
         <span v-for="line in party.lines" :key="line">{{ line }}</span></p>
       <p v-if="party.plan || party.uavSn" class="hmf-meta">
-        {{ party.unidentified ? '已有线索：' : '' }}<template v-if="party.plan">报备计划 {{ party.plan }}</template><template v-if="party.plan && party.uavSn">；</template><template v-if="party.uavSn">无人机序列号 {{ party.uavSn }}</template>
+        {{ party.unidentified ? '已有线索：' : '' }}<template v-if="party.plan">报备任务 {{ party.plan }}</template><template v-if="party.plan && party.uavSn">；</template><template v-if="party.uavSn">无人机序列号 {{ party.uavSn }}</template>
       </p>
       <p v-if="party.unidentified" class="hmf-meta">处罚部门需凭无人机序列号、遥控器位置等线索继续查找当事人。</p>
     </div>

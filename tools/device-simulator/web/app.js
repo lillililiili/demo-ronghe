@@ -10,10 +10,10 @@ const image = (kind, cls = '') => `<img class="${cls}" src="assets/${deviceAsset
 const uid = prefix => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,7)}`;
 const types = [
   {id:'zone',name:'进入限飞区域',group:'无人机',icon:'uav'},
-  {id:'deviation',name:'偏离计划路线',group:'无人机',icon:'uav'},
-  {id:'no-plan',name:'无匹配飞行计划',group:'无人机',icon:'uav'},
+  {id:'deviation',name:'偏离任务路线',group:'无人机',icon:'uav'},
+  {id:'no-plan',name:'无匹配飞行任务',group:'无人机',icon:'uav'},
   {id:'height',name:'超高飞行',group:'无人机',icon:'uav'},
-  {id:'time',name:'超出计划时段',group:'无人机',icon:'uav'},
+  {id:'time',name:'超出任务时段',group:'无人机',icon:'uav'},
   {id:'bird',name:'鸟群进入航线',group:'空中异物',icon:'bird'},
   {id:'balloon',name:'气球靠近航线',group:'空中异物',icon:'balloon'},
   {id:'offline',name:'设备离线',group:'设备',icon:'tdoa'},
@@ -32,7 +32,7 @@ function createDevice(kind,queued=[]){const used=new Set([...devices(),...queued
 const initial = {
   version:1,name:'东营低空风险联调',duration:10,
   sites:[{id:'s1',name:'点位 A',x:250,y:310,devices:[{id:'d1',kind:'5ga',name:'5G-A 01',health:'正常',heartbeat:'持续上报',interval:5},{id:'d2',kind:'tdoa',name:'TDOA 01',health:'正常',heartbeat:'持续上报',interval:5},{id:'d5',kind:'radar',name:'雷达 01',health:'正常',heartbeat:'持续上报',interval:5}]},{id:'s2',name:'点位 B',x:827,y:526,devices:[{id:'d3',kind:'eo',name:'光电 01',health:'正常',heartbeat:'持续上报',interval:5},{id:'d4',kind:'weather',name:'气象设备 01',health:'正常',heartbeat:'持续上报',interval:5}]}],
-  plans:[{id:'p1',name:'巡检计划 01',points:[[260,470],[361,429],[475,419],[611,402],[729,368],[825,318]],min:20,max:120,width:100,start:'09:00',end:'09:30'}],
+  plans:[{id:'p1',name:'巡检任务 01',points:[[260,470],[361,429],[475,419],[611,402],[729,368],[825,318]],min:20,max:120,width:100,start:'09:00',end:'09:30'}],
   zones:[{id:'z1',name:'限飞区域 A',kindCode:'PROHIBITED',points:[[660,180],[728,64],[891,117],[933,241],[882,332],[718,299]],max:120,start:'08:00',end:'18:00'}],
   targets:[{id:'t1',kind:'uav',name:'无人机 01',path:[[630,214],[711,232],[758,232],[798,288],[857,285]],height:150,speed:8,count:1,planId:'p1',deviceId:'d1'},
     {id:'t2',kind:'uav',name:'无人机 02',path:[[361,429],[475,419],[550,446],[610,475],[652,518]],height:90,speed:8,count:1,planId:'p1',deviceId:'d1'},
@@ -131,7 +131,7 @@ function syncRiskFixture(r){
 const riskObjects = r => {
   if(getType(r.type)?.group==='设备'){const d=deviceFor(r.deviceId);return d?`${d.siteName} · ${d.name}`:'请选择模拟设备';}
   const reference=riskConfig.referenceFor(r), related=reference.kind==='zone'?lookup('zone',r.zoneId):reference.kind==='plan'?lookup('plan',r.planId):null;
-  return `平台判定风险${related?` · ${reference.label}：${related.name}`:r.type==='no-plan'?' · 无匹配飞行计划':''}`;
+  return `平台判定风险${related?` · ${reference.label}：${related.name}`:r.type==='no-plan'?' · 无匹配飞行任务':''}`;
 };
 function toast(text){$('#toast').textContent=text;$('#toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('#toast').hidden=true,3800);}
 function dirty(){showRunPositions=false; $('#save-status').textContent='本地草稿有未保存修改'; }
@@ -141,7 +141,7 @@ const opts = (items,empty) => [...(empty?[{value:'',label:empty}]:[]),...items.m
 const btn = (action,text,cls='') => `<button type="button" class="${cls}" data-action="${action}">${text}</button>`;
 function row(kind,item,icon,sub=''){return `<button class="object-row ${selected.kind===kind&&selected.id===item.id?'active':''}" data-action="select" data-kind="${kind}" data-id="${item.id}">${image(icon)}<span class="object-text"><strong>${esc(item.name)}</strong>${sub?`<small>${esc(sub)}</small>`:''}</span></button>`;}
 function renderTree(){
-  const groups=[['设备组',state.sites.map(s=>row('site',s,s.devices[0]?.kind||'radar',deviceSummary(s.devices))),state.sites.length],['飞行计划',state.plans.map(p=>row('plan',p,'route','计划航线 · 模拟配套')),state.plans.length],['模拟目标',state.targets.map(t=>row('target',t,targetIcon(t.kind),labels[t.kind])),state.targets.length],['空域边界',state.zones.map(z=>row('zone',z,'area',airspaceKinds[z.kindCode]||'未选择空域类型')),state.zones.length]];
+  const groups=[['设备组',state.sites.map(s=>row('site',s,s.devices[0]?.kind||'radar',deviceSummary(s.devices))),state.sites.length],['飞行任务',state.plans.map(p=>row('plan',p,'route','任务航线 · 模拟配套')),state.plans.length],['模拟目标',state.targets.map(t=>row('target',t,targetIcon(t.kind),labels[t.kind])),state.targets.length],['空域边界',state.zones.map(z=>row('zone',z,'area',airspaceKinds[z.kindCode]||'未选择空域类型')),state.zones.length]];
   $('#object-tree').innerHTML=groups.map(([title,rows,n],i)=>`<section data-object-group="${['site','plan','target','zone'][i]}"><div class="group-title">${title}<small>${n}</small></div>${rows.join('')}</section>`).join('');
 }
 function label(x,y,text){const w=Math.max(80,text.length*13+20);return `<g class="map-label" transform="translate(${x},${y})"><rect x="${-w/2}" y="0" width="${w}" height="28" rx="4"/><text text-anchor="middle" y="19">${esc(text)}</text></g>`;}
@@ -174,20 +174,20 @@ function renderRisks(){
   $('#risk-enabled-count').textContent=`本次启用 ${state.risks.filter(r=>r.enabled).length} 项`;
   $('#risk-filters').innerHTML=['全部','无人机','空中异物','设备'].map(g=>`<button class="${filter===g?'active':''}" data-action="filter" data-filter="${g}">${g} ${state.risks.filter(r=>g==='全部'||getType(r.type).group===g).length}</button>`).join('');
   const rows=state.risks.filter(r=>filter==='全部'||getType(r.type).group===filter);
-  $('#risk-list').innerHTML=rows.length?rows.map(r=>`<article class="risk-card ${selected.kind==='risk'&&selected.id===r.id?'active':''}"><input type="checkbox" aria-label="本次预演包含联调条件${esc(r.name)}" data-risk-toggle="${r.id}" ${r.enabled?'checked':''}>${image(getType(r.type).icon)}<button class="risk-select" data-action="select" data-kind="risk" data-id="${r.id}"><strong>${esc(r.name)}</strong><small>${esc(riskObjects(r))}</small></button><button class="risk-remove" data-action="remove-risk" data-id="${r.id}" aria-label="移除联调条件${esc(r.name)}">移除</button></article>`).join(''):'<div class="empty">当前分类没有联调条件<br>请先在“添加目标”、计划或空域输入中配置观测事实</div>';
+  $('#risk-list').innerHTML=rows.length?rows.map(r=>`<article class="risk-card ${selected.kind==='risk'&&selected.id===r.id?'active':''}"><input type="checkbox" aria-label="本次预演包含联调条件${esc(r.name)}" data-risk-toggle="${r.id}" ${r.enabled?'checked':''}>${image(getType(r.type).icon)}<button class="risk-select" data-action="select" data-kind="risk" data-id="${r.id}"><strong>${esc(r.name)}</strong><small>${esc(riskObjects(r))}</small></button><button class="risk-remove" data-action="remove-risk" data-id="${r.id}" aria-label="移除联调条件${esc(r.name)}">移除</button></article>`).join(''):'<div class="empty">当前分类没有联调条件<br>请先在“添加目标”、任务或空域输入中配置观测事实</div>';
 }
 function riskFields(r){
   const type=getType(r.type),dev=type.group==='设备';let html=field('风险名称','name',r.name,'text','required maxlength="60"');
   if(dev){html+=selectField('关联设备','deviceId',r.deviceId,opts(devices(),'请选择模拟设备'));html+=field('任务开始后触发（秒）','at',r.at??2,'number','min="0" max="1200" required');html+=field('持续时间（秒）','seconds',r.seconds??60,'number','min="1" max="1200" required');html+=r.type==='offline'?'<div class="readout">停止该设备心跳。实际离线状态以系统超时判定为准；离线期间暂停该设备全部上报。</div>':selectField('模拟工作状态','fault','故障',['故障'])+'<p class="field-note">雷达、TDOA、5G-A 使用协议 workState=2；光电故障码未确认，启动时会阻止该组合。</p>';return html;}
   html+=`<div class="readout">${esc(riskConfig.associationNotice(r))}<br>设备协议只上报目标或设备观测事实，不携带风险结论；系统回读后以平台风险判定及其依据为准。</div>`;
-  html+='<p class="field-note">目标类别、位置/轨迹、观测高度和鸟群数量在“模拟目标”中设置；此处只配置平台判定所需的飞行计划或空域依据。</p>';
-  if(r.type==='height')html+=selectField('比较依据','basis',r.basis||'zone',[{value:'zone',label:'空域限高'},{value:'plan',label:'计划高度'}]);
+  html+='<p class="field-note">目标类别、位置/轨迹、观测高度和鸟群数量在“模拟目标”中设置；此处只配置平台判定所需的飞行任务或空域依据。</p>';
+  if(r.type==='height')html+=selectField('比较依据','basis',r.basis||'zone',[{value:'zone',label:'空域限高'},{value:'plan',label:'任务高度'}]);
   if(r.type==='zone'||r.type==='height'&&r.basis!=='plan')html+=selectField('关联区域','zoneId',r.zoneId,opts(state.zones,'请选择限飞区域'));
-  if(['deviation','time','bird','balloon'].includes(r.type)||r.type==='height'&&r.basis==='plan')html+=selectField('关联飞行计划','planId',r.planId,opts(state.plans,'请选择飞行计划'));
-  if(r.type==='no-plan')html+='<div class="readout">本场景不关联飞行计划。联调后的匹配结果由平台返回。</div>';
-  if(r.type==='height'){const b=r.basis==='plan'?lookup('plan',r.planId):lookup('zone',r.zoneId);html+=`<div class="readout">${r.basis==='plan'?'计划高度上限':'区域限高'}　<strong>${b?esc(b.max)+' m':'未选择'}</strong><br>超高事实取自“模拟目标”的基准高度，设备只上报观测值。</div>`;}
+  if(['deviation','time','bird','balloon'].includes(r.type)||r.type==='height'&&r.basis==='plan')html+=selectField('关联飞行任务','planId',r.planId,opts(state.plans,'请选择飞行任务'));
+  if(r.type==='no-plan')html+='<div class="readout">本场景不关联飞行任务。联调后的匹配结果由平台返回。</div>';
+  if(r.type==='height'){const b=r.basis==='plan'?lookup('plan',r.planId):lookup('zone',r.zoneId);html+=`<div class="readout">${r.basis==='plan'?'任务高度上限':'区域限高'}　<strong>${b?esc(b.max)+' m':'未选择'}</strong><br>超高事实取自“模拟目标”的基准高度，设备只上报观测值。</div>`;}
   if(['bird','balloon'].includes(r.type))html+=`<div class="readout">目标位置、轨迹和观测高度由“模拟目标”上报；${r.type==='bird'?'鸟群数量也由目标观测生成。':'气球按单目标观测上报。'}这里不再填写目标属性。</div>`;
-  if(r.type==='time'){html+=selectField('时间场景','mode',r.mode||'结束后继续飞行',['开始前提前飞行','结束后继续飞行']);html+=field('超出时长（分钟）','offset',r.offset??2,'number','min="1" max="1440" required');const p=lookup('plan',r.planId);html+=`<div class="readout">计划时段：${p?`${esc(p.start)}—${esc(p.end)}`:'未选择计划'}<br>示例业务时区：Asia/Shanghai</div>`;}
+  if(r.type==='time'){html+=selectField('时间场景','mode',r.mode||'结束后继续飞行',['开始前提前飞行','结束后继续飞行']);html+=field('超出时长（分钟）','offset',r.offset??2,'number','min="1" max="1440" required');const p=lookup('plan',r.planId);html+=`<div class="readout">任务时段：${p?`${esc(p.start)}—${esc(p.end)}`:'未选择任务'}<br>示例业务时区：Asia/Shanghai</div>`;}
   return html;
 }
 function context(icon,title,sub){return `<div class="inspector-context">${image(icon)}<div><h3>${esc(title)}</h3><p>${esc(sub)}</p></div></div>`;}
@@ -202,13 +202,13 @@ function renderInspector(){
     x.devices.forEach(d=>{html+=`<h3 style="margin:12px 0">${esc(d.name)}</h3>`+selectField('工作状态',`health_${d.id}`,d.health,['正常','故障'])+selectField('心跳模式',`heartbeat_${d.id}`,d.heartbeat,['持续上报','停止心跳'])+field('心跳间隔（秒）',`interval_${d.id}`,d.interval,'number','min="1" max="300" required');});
     html+='<div class="subheading">添加一台设备</div>'+selectField('设备类型','newKind',deviceKinds[0],deviceKinds.map(v=>({value:v,label:labels[v]})))+btn('add-device','添加到此点位','wide');
   }
-  if(selected.kind==='target')html=context(targetIcon(x.kind),x.name,'模拟目标')+field('目标名称','name',x.name,'text','required maxlength="60"')+selectField('目标类别','kind',x.kind,targetKinds.map(k=>({value:k,label:labels[k]})))+selectField('上报设备','deviceId',x.deviceId,opts(devices().filter(d=>targetDeviceKinds.includes(d.kind)),'请选择上报设备'))+selectField('上报通道','transport',x.transport|| (x.altitudeDatum||x.kind==='balloon'?'normalized':'mqtt'),[{value:'mqtt',label:'MQTT 设备协议'},{value:'normalized',label:'规范化观测'}])+'<p class="field-note">保存后保持所选上报通道。MQTT 高度按设备协议解释；AGL 须手动选择规范化观测。</p>'+selectField('关联计划','planId',x.planId,opts(state.plans,'不关联计划'))+'<div class="field-grid">'+field('基准高度（米）','height',x.height,'number','min="0" max="10000" required')+field('水平速度（米/秒）','speed',x.speed,'number','min="0" max="100" required')+'</div>'+(x.kind==='bird'?field('数量（只）','count',x.count,'number','min="1" max="100" required'):'')+selectField('运动方式','motionMode',x.motionMode||'once',[{value:'once',label:'到终点停留'},{value:'loop',label:'闭合循环'},{value:'pingpong',label:'原路往返'}])+selectField('高度基准','altitudeDatum',x.altitudeDatum||(x.transport==='normalized'||x.kind==='balloon'?'AMSL':''),[{value:'',label:'未知（设备协议未声明）'},{value:'AMSL',label:'海拔 AMSL'},{value:'AGL',label:'离地 AGL（规范化观测）'}])+field('逐航点高度（米，逗号分隔，可留空）','altitudePathInput',(x.altitudePath||[]).join(', '))+field('逐航点停留（秒，逗号分隔，可留空）','dwellSecondsInput',(x.dwellSeconds||[]).join(', '))+field('暂停上报时段（开始秒:持续秒，逗号分隔）','silenceWindowsInput',(x.silenceWindows||[]).map(w=>`${w.at}:${w.seconds}`).join(', '))+btn('edit-target-path','在地图上编辑轨迹','wide cyan-button')+`<p class="field-note">当前轨迹 ${x.path.length} 个航点；逐航点数值须与航点数一致。循环会沿末点到起点移动，往返沿原路返回。</p>`;
+  if(selected.kind==='target')html=context(targetIcon(x.kind),x.name,'模拟目标')+field('目标名称','name',x.name,'text','required maxlength="60"')+selectField('目标类别','kind',x.kind,targetKinds.map(k=>({value:k,label:labels[k]})))+selectField('上报设备','deviceId',x.deviceId,opts(devices().filter(d=>targetDeviceKinds.includes(d.kind)),'请选择上报设备'))+selectField('上报通道','transport',x.transport|| (x.altitudeDatum||x.kind==='balloon'?'normalized':'mqtt'),[{value:'mqtt',label:'MQTT 设备协议'},{value:'normalized',label:'规范化观测'}])+'<p class="field-note">保存后保持所选上报通道。MQTT 高度按设备协议解释；AGL 须手动选择规范化观测。</p>'+selectField('关联任务','planId',x.planId,opts(state.plans,'不关联任务'))+'<div class="field-grid">'+field('基准高度（米）','height',x.height,'number','min="0" max="10000" required')+field('水平速度（米/秒）','speed',x.speed,'number','min="0" max="100" required')+'</div>'+(x.kind==='bird'?field('数量（只）','count',x.count,'number','min="1" max="100" required'):'')+selectField('运动方式','motionMode',x.motionMode||'once',[{value:'once',label:'到终点停留'},{value:'loop',label:'闭合循环'},{value:'pingpong',label:'原路往返'}])+selectField('高度基准','altitudeDatum',x.altitudeDatum||(x.transport==='normalized'||x.kind==='balloon'?'AMSL':''),[{value:'',label:'未知（设备协议未声明）'},{value:'AMSL',label:'海拔 AMSL'},{value:'AGL',label:'离地 AGL（规范化观测）'}])+field('逐航点高度（米，逗号分隔，可留空）','altitudePathInput',(x.altitudePath||[]).join(', '))+field('逐航点停留（秒，逗号分隔，可留空）','dwellSecondsInput',(x.dwellSeconds||[]).join(', '))+field('暂停上报时段（开始秒:持续秒，逗号分隔）','silenceWindowsInput',(x.silenceWindows||[]).map(w=>`${w.at}:${w.seconds}`).join(', '))+btn('edit-target-path','在地图上编辑轨迹','wide cyan-button')+`<p class="field-note">当前轨迹 ${x.path.length} 个航点；逐航点数值须与航点数一致。循环会沿末点到起点移动，往返沿原路返回。</p>`;
   if(selected.kind==='target'){const nearby=auxiliaryDevicesFor(x).map(device=>({...device,name:`${device.name} · ${labels[device.kind]||device.kind} · ${device.siteName} · ${formatDistance(device.distanceMetres)}`}));html+=selectField('辅助上报设备','secondaryDeviceId',x.secondaryDeviceId||'',opts(nearby,'不使用辅助设备'))+'<p class="field-note">显示目标整条轨迹周边 5 公里内的所有设备；当前主上报设备已排除。只有支持目标观测协议的设备会产生辅助目标报文，光电、气象和反制设备仍按各自协议上报。</p><div class="field-grid">'+field('模拟离地高度（米，可留空）','heightAgl',x.heightAgl??'','number','min="0" max="10000" step="0.1"')+field('模拟识别概率（0—1，可留空）','probability',x.probability??'','number','min="0" max="1" step="0.01"')+'</div>';}
   if(selected.kind==='target')html+=window.NotificationUI.fields(x);
   if(['plan','zone'].includes(selected.kind)){
-    html=field(selected.kind==='plan'?'计划名称':'区域名称','name',x.name,'text','required maxlength="60"')+'<div class="field-grid">'+field('开始时间','start',x.start,'time','required')+field('结束时间','end',x.end,'time','required')+'</div><p class="field-note">示例时区：Asia/Shanghai。日期与真实生效范围待联调接口接入。</p>';
+    html=field(selected.kind==='plan'?'任务名称':'区域名称','name',x.name,'text','required maxlength="60"')+'<div class="field-grid">'+field('开始时间','start',x.start,'time','required')+field('结束时间','end',x.end,'time','required')+'</div><p class="field-note">示例时区：Asia/Shanghai。日期与真实生效范围待联调接口接入。</p>';
     if(selected.kind==='plan')html+='<div class="field-grid">'+field('最低高度（米）','min',x.min,'number','min="0" required')+field('最高高度（米）','max',x.max,'number','min="0" max="10000" required')+'</div>'+field('走廊宽度（米）','width',x.width,'number','min="1" required');else html+=field('区域限高（米）','max',x.max,'number','min="0" max="10000" required');
-    html+=selectField('计划或区域高度基准','altitudeDatum',x.altitudeDatum||'AMSL',[{value:'AMSL',label:'海拔高度 AMSL'},{value:'AGL',label:'离地高度 AGL'}]);
+    html+=selectField('任务或区域高度基准','altitudeDatum',x.altitudeDatum||'AMSL',[{value:'AMSL',label:'海拔高度 AMSL'},{value:'AGL',label:'离地高度 AGL'}]);
     html+='<div class="readout">与目标同基准高度比较；缺失时由系统保留未知</div>'+btn('redraw-object',selected.kind==='plan'?'重新绘制航线':'重新绘制区域','wide cyan-button');
   }
   $('#inspector').innerHTML=`<section id="notification-progress" class="notification-progress" hidden></section><form id="inspector-form">${html}<p class="inline-error" role="alert"></p><div class="form-actions"><button type="submit" class="primary">${selected.kind==='risk'?'保存判定条件':'应用设置'}</button></div></form>`;
@@ -234,16 +234,16 @@ function setDraw(mode,id=null,targetKind=null,group=null){if(!['site','target','
 function cancelDraw(){draw=null;$('#map-stage').classList.remove('drawing');$('#draw-controls').hidden=true;$('#group-placement').hidden=true;$('#map-hint').textContent='选择地图对象，编辑位置与关联';document.querySelectorAll('[data-tool]').forEach(b=>b.classList.remove('active'));renderMap();}
 function intersects(a,b,c,d){const cross=(p,q,r)=>(q[0]-p[0])*(r[1]-p[1])-(q[1]-p[1])*(r[0]-p[0]);return cross(a,b,c)*cross(a,b,d)<0&&cross(c,d,a)*cross(c,d,b)<0;}
 function validPolygon(points){let area=0;for(let i=0;i<points.length;i++){const a=points[i],b=points[(i+1)%points.length];area+=a[0]*b[1]-b[0]*a[1];for(let j=i+2;j<points.length;j++){if(i===0&&j===points.length-1)continue;if(intersects(a,b,points[j],points[(j+1)%points.length]))return false;}}return Math.abs(area)>20;}
-function finishDraw(){if(!draw)return;if(!['zone','plan','path','departure'].includes(draw.mode))return;const airspaceInput=draw.airspaceInput,kindCode=draw.airspaceKind;const n=draw.mode==='zone'?3:draw.mode==='departure'?1:2;if(draw.points.length<n)return toast(`请至少设置 ${n} 个节点`);if(draw.mode==='zone'&&!validPolygon(draw.points))return toast('区域边界不能自交或退化为直线，请调整顶点');let x;if(draw.mode==='departure'){x=lookup('target',draw.id);x.departurePath=draw.points;selected={kind:'target',id:x.id};}else if(draw.mode==='path'){x=lookup('target',draw.id);x.path=draw.points;if(x.altitudePath?.length!==x.path.length)delete x.altitudePath;if(x.dwellSeconds?.length!==x.path.length)delete x.dwellSeconds;selected={kind:'target',id:x.id};}else if(draw.mode==='plan'){x=draw.id?lookup('plan',draw.id):{id:uid('p'),name:`巡检计划 ${state.plans.length+1}`,min:20,max:120,width:100,start:'09:00',end:'09:30'};x.points=draw.points;if(!draw.id)state.plans.push(x);selected={kind:'plan',id:x.id};}else if(draw.mode==='zone'){x=draw.id?lookup('zone',draw.id):{id:uid('z'),name:`${airspaceKinds[kindCode]||'空域边界'} ${state.zones.length+1}`,max:120,start:'08:00',end:'18:00'};if(kindCode)x.kindCode=kindCode;x.points=draw.points;if(!draw.id)state.zones.push(x);selected={kind:'zone',id:x.id};}dirty();cancelDraw();render();toast('绘制已应用到本地草稿');if(airspaceInput)window.dispatchEvent(new CustomEvent('simulator:airspace-drawn',{detail:{id:x.id}}));}
+function finishDraw(){if(!draw)return;if(!['zone','plan','path','departure'].includes(draw.mode))return;const airspaceInput=draw.airspaceInput,kindCode=draw.airspaceKind;const n=draw.mode==='zone'?3:draw.mode==='departure'?1:2;if(draw.points.length<n)return toast(`请至少设置 ${n} 个节点`);if(draw.mode==='zone'&&!validPolygon(draw.points))return toast('区域边界不能自交或退化为直线，请调整顶点');let x;if(draw.mode==='departure'){x=lookup('target',draw.id);x.departurePath=draw.points;selected={kind:'target',id:x.id};}else if(draw.mode==='path'){x=lookup('target',draw.id);x.path=draw.points;if(x.altitudePath?.length!==x.path.length)delete x.altitudePath;if(x.dwellSeconds?.length!==x.path.length)delete x.dwellSeconds;selected={kind:'target',id:x.id};}else if(draw.mode==='plan'){x=draw.id?lookup('plan',draw.id):{id:uid('p'),name:`巡检任务 ${state.plans.length+1}`,min:20,max:120,width:100,start:'09:00',end:'09:30'};x.points=draw.points;if(!draw.id)state.plans.push(x);selected={kind:'plan',id:x.id};}else if(draw.mode==='zone'){x=draw.id?lookup('zone',draw.id):{id:uid('z'),name:`${airspaceKinds[kindCode]||'空域边界'} ${state.zones.length+1}`,max:120,start:'08:00',end:'18:00'};if(kindCode)x.kindCode=kindCode;x.points=draw.points;if(!draw.id)state.zones.push(x);selected={kind:'zone',id:x.id};}dirty();cancelDraw();render();toast('绘制已应用到本地草稿');if(airspaceInput)window.dispatchEvent(new CustomEvent('simulator:airspace-drawn',{detail:{id:x.id}}));}
 function formValues(form){return Object.fromEntries(new FormData(form));}
 function validateRisk(r,{requireObservation=false}={}){
   const type=getType(r.type);if(!r.name?.trim())return '请输入风险名称';
   const target=type.group==='设备'?null:syncRiskFixture(r);
   if(type.group!=='设备'&&!target&&requireObservation)return '开始模拟需要目标观测输入；风险由平台根据目标位置、航线、空域和时间规则自动判定';
   if((type.group==='设备'||target)&&!deviceFor(r.deviceId))return type.group==='设备'?'请选择关联的模拟设备':'模拟目标没有可用的上报设备';
-  if(target&&r.type==='no-plan'&&target.planId)return '无计划场景的模拟目标不能关联计划';
+  if(target&&r.type==='no-plan'&&target.planId)return '无任务场景的模拟目标不能关联任务';
   if(['zone','height'].includes(r.type)&&r.basis!=='plan'&&!lookup('zone',r.zoneId))return '请选择关联区域';
-  if(['deviation','time','bird','balloon'].includes(r.type)||r.type==='height'&&r.basis==='plan'){if(!lookup('plan',r.planId))return '请选择关联飞行计划';}
+  if(['deviation','time','bird','balloon'].includes(r.type)||r.type==='height'&&r.basis==='plan'){if(!lookup('plan',r.planId))return '请选择关联飞行任务';}
   if(r.type==='height'&&target){const base=r.basis==='plan'?lookup('plan',r.planId):lookup('zone',r.zoneId);if(Number(target.height)<=Number(base.max))return '超高场景的目标高度应大于所选依据的高度上限';}
   if(type.group==='设备'&&Number(r.at)+Number(r.seconds)>(Number(state.duration)>0?Number(state.duration)*60:86400))return '触发时间与持续时间不能超过任务运行时长';return '';
 }
@@ -338,7 +338,7 @@ document.addEventListener('click',event=>{
   if(a==='save'){state.name=$('#scene-name').value.trim()||'未命名场景';try{localStorage.setItem(storeKey,JSON.stringify(state));$('#save-status').textContent='已保存到此浏览器';toast('场景已保存到此浏览器，未写入业务系统');}catch{toast('本地存储不可用，当前草稿仍保留在页面中');}return;}
   if(a==='preview'){startPreview();return;}
   if(a==='stop'){stop();progress=0;$('#preview-bar').hidden=true;renderMap();toast('已停止本地预演');return;}
-  if(a==='connection'||a==='integration'){openDialog(a==='connection'?'连接设置':'联调尚未接入','<div class="readout">当前为页面交互原型，尚未连接模拟服务。</div><p class="field-note">地图编辑、风险配置、浏览器本地保存与轨迹预演可以体验。真实设备注册、计划与区域配套、MQTT 发送及报警结果需要服务接口接入。</p><div class="form-actions">'+btn('close-dialog','返回编辑','primary')+'</div>');return;}
+  if(a==='connection'||a==='integration'){openDialog(a==='connection'?'连接设置':'联调尚未接入','<div class="readout">当前为页面交互原型，尚未连接模拟服务。</div><p class="field-note">地图编辑、风险配置、浏览器本地保存与轨迹预演可以体验。真实设备注册、任务与区域配套、MQTT 发送及报警结果需要服务接口接入。</p><div class="form-actions">'+btn('close-dialog','返回编辑','primary')+'</div>');return;}
 });
 document.addEventListener('keydown',event=>{
   if(event.key==='Escape'){if(!$('#dialog-shell').hidden)closeDialog();else if(draw)cancelDraw();}

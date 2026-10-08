@@ -16,7 +16,7 @@ const fields = {
   started_at: '开始时间', ended_at: '结束时间', attempt_count: '尝试次数', event_version: '事件版本',
   event_id: '关联事件记录', alarm_id: '关联告警记录', record_id: '记录编号', evaluation_id: '研判记录',
   delivery_record_id: '发送记录', target_id: '关联目标记录', target_no: '目标编号', event_no: '事件编号',
-  alarm_no: '告警编号', case_no: '案件编号', command_id: '指令记录', authorization_id: '授权记录',
+  alarm_no: '编号', case_no: '案件编号', command_id: '指令记录', authorization_id: '授权记录',
   device_id: '设备记录', device_name: '设备名称', report: '报告内容', result: '记录结果',
   action: '操作', command_type: '指令类型', message: '记录说明', summary: '概要', items: '明细记录',
   target: '目标信息', points: '观测记录', longitude: '经度', latitude: '纬度', lon: '经度', lat: '纬度',

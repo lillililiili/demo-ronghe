@@ -9,9 +9,9 @@ const indexSource = fs.readFileSync(path.join(__dirname, '../web/index.html'), '
 const riskFieldsSource = appSource.slice(appSource.indexOf('function riskFields'), appSource.indexOf('function context'));
 
 test('non-device risk uses plan or airspace as its configured reference', () => {
-  assert.deepEqual(riskConfig.referenceFor({type: 'deviation'}), {kind: 'plan', label: '飞行计划'});
+  assert.deepEqual(riskConfig.referenceFor({type: 'deviation'}), {kind: 'plan', label: '飞行任务'});
   assert.deepEqual(riskConfig.referenceFor({type: 'zone'}), {kind: 'zone', label: '空域'});
-  assert.deepEqual(riskConfig.referenceFor({type: 'height', basis: 'plan'}), {kind: 'plan', label: '飞行计划'});
+  assert.deepEqual(riskConfig.referenceFor({type: 'height', basis: 'plan'}), {kind: 'plan', label: '飞行任务'});
   assert.deepEqual(riskConfig.referenceFor({type: 'height', basis: 'zone'}), {kind: 'zone', label: '空域'});
 });
 
@@ -40,7 +40,7 @@ test('risk editor describes automatic target association instead of manual targe
   assert.doesNotMatch(riskFieldsSource, /selectField\('关联目标','targetId'/);
   assert.doesNotMatch(riskFieldsSource, /selectField\('上报设备','deviceId'/);
   assert.match(riskFieldsSource, /associationNotice/);
-  assert.doesNotMatch(riskFieldsSource, /当前没有匹配的模拟观测目标，请先在“模拟目标”中配置对应计划或设备来源/);
+  assert.doesNotMatch(riskFieldsSource, /当前没有匹配的模拟观测目标，请先在“模拟目标”中配置对应任务或设备来源/);
 });
 
 test('target editor owns observation facts while risk editor keeps rule references', () => {

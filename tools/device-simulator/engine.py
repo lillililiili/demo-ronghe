@@ -361,12 +361,12 @@ def compile_scene(raw):
             if r['deviceId'] != t['deviceId']:
                 raise ValueError(r['name'] + '：关联设备须与目标上报设备一致')
             if r['type'] == 'no-plan' and t.get('planId'):
-                raise ValueError('无计划场景的目标不能关联计划')
+                raise ValueError('无任务场景的目标不能关联任务')
             if r['type'] in ('zone', 'height') and r.get('basis') != 'plan' and r.get('zoneId') not in zones:
                 raise ValueError(r['name'] + '缺少区域')
             if r['type'] in ('deviation', 'time', 'bird', 'balloon') or r['type'] == 'height' and r.get('basis') == 'plan':
                 if r.get('planId') not in plans:
-                    raise ValueError(r['name'] + '缺少计划')
+                    raise ValueError(r['name'] + '缺少任务')
             if r['type'] == 'height':
                 base = plans[r['planId']] if r.get('basis') == 'plan' else zones[r['zoneId']]
                 t['height'] = number(t.get('height'), 0, 10000, '目标高度')

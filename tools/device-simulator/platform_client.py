@@ -320,7 +320,7 @@ class Prerequisites:
 
     def query(self, statement):
         if not self.database:
-            raise ValueError('计划/区域尚未配套：请用 --database 指定当前本机测试库启动模拟器')
+            raise ValueError('任务/区域尚未配套：请用 --database 指定当前本机测试库启动模拟器')
         command = ['docker', 'exec', '-i']
         if self.schema is not None:
             # Per-process only: never fall back to public business tables or load a psqlrc override.

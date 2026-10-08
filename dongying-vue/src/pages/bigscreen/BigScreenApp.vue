@@ -155,7 +155,7 @@ function loadSideDetails(data) {
    由后台决定计入哪些来源（statistics_source_modes）：允许模拟的环境算真实设备和设备模拟器，
    正式环境只算真实设备；系统自带的演示样例都不算。其中来自设备模拟器的条数要写出来，免得被当成现场真实数据。 */
 const simulatorCounted = computed(() => (snapshot.value?.statistics_source_modes || []).includes('replay'));
-const SIMULATOR_FIELDS = [['感知', 'sensed_today'], ['告警', 'alarms_today'], ['计划', 'flights_today'], ['设备', 'devices']];
+const SIMULATOR_FIELDS = [['感知', 'sensed_today'], ['告警', 'alarms_today'], ['任务', 'flights_today'], ['设备', 'devices']];
 const kpiScope = computed(() => {
   if (!snapshot.value?.statistics_source_modes) return '';
   if (!simulatorCounted.value) return '统计口径与运行统计一致：只算真实设备的数据';
@@ -183,7 +183,7 @@ const kpis = computed(() => {
 });
 
 const flightMetrics = computed(() => [
-  { label: '今日计划', value: snapshot.value?.flights?.today, image: hologram('flight-plan') },
+  { label: '今日任务', value: snapshot.value?.flights?.today, image: hologram('flight-plan') },
   { label: '执行中', value: snapshot.value?.flights?.executing, image: hologram('uav') },
   { label: '已完成', value: snapshot.value?.flights?.completed, image: hologram('flight-complete') }
 ]);

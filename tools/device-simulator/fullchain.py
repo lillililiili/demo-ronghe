@@ -353,6 +353,15 @@ class FullChain:
         return [key for key in dict.fromkeys((target.get('deviceId'), target.get('secondaryDeviceId')))
                 if key in devices]
 
+    @staticmethod
+    def normalized_device_ids(target, devices):
+        # 每台设备对一个目标只报一遍（新-17）：辅助上报设备能用自己的协议报这个目标时，engine 已经让它发 MQTT 目标报文，
+        # 这里不再替它从规范化入口重复报——否则平台把同一台设备算成两个数据源，两台设备看到记成 3 个。
+        # 主上报设备、以及协议报不了这类目标的辅助设备（如气球）照常走规范化入口。
+        from engine import secondary_reports_over_mqtt
+        return [key for key in FullChain.target_device_ids(target, devices)
+                if key == target.get('deviceId') or not secondary_reports_over_mqtt(target, devices[key])]
+
     def observation_device_reporting(self, device, elapsed):
         return device['heartbeat'] != '停止心跳' and not any(
             risk.get('enabled') and risk['type'] == 'offline' and risk['deviceId'] == device['id']
@@ -502,10 +511,10 @@ class FullChain:
             self.manifest['normalized_source']=sources[0]
         else:
             # 观测源和气象站是长期设备：按登记内容（单位区域、名称、位置）复用同一条，不随批次新建（OBS-01）。
-            # 每台参与上报的场景设备各有一个观测源；身份按场景设备和登记内容生成，同样不带批次号。
+            # 每台走规范化入口上报的场景设备各有一个观测源（辅助设备能用自己协议报的不走这里，新-17）；身份按场景设备和登记内容生成，同样不带批次号。
             devices = self.observation_devices()
             selected = {key for target in self.scene['targets'] if target.get('transport') == 'normalized'
-                        for key in self.target_device_ids(target, devices)}
+                        for key in self.normalized_device_ids(target, devices)}
             sources = self.manifest.setdefault('normalized_sources', {})
             for key in sorted(selected):
                 device = devices[key]
@@ -565,7 +574,7 @@ class FullChain:
                        for d in self.target_device_ids(target, devices)):
                     items_by_device.setdefault('explicit', []).append(item)
             else:
-                for device_id in self.target_device_ids(target, devices):
+                for device_id in self.normalized_device_ids(target, devices):
                     if self.observation_device_reporting(devices[device_id], elapsed):
                         items_by_device.setdefault(device_id, []).append(item)
         if isinstance(sources, list):

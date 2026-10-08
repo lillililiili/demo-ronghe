@@ -378,6 +378,12 @@ def compile_scene(raw):
             active.append((r, t))
     return s, devices, targets, skipped
 
+def secondary_reports_over_mqtt(target, device):
+    """规范化观测的目标选了辅助上报设备、而这台设备的协议能报这类目标时，由 messages() 让它发 MQTT 目标报文。
+    fullchain 据此不再替它从规范化入口重复报：一台设备对一个目标只报一遍，平台才不会把它算成两个数据源（新-17）。"""
+    return (target.get('transport') != 'mqtt' and device.get('kind') in TARGET_REPORT_KINDS
+            and protocol_a.supports(device['kind'], target.get('kind')))
+
 def messages(scene, devices, targets, manifest, elapsed, now, last_sent, sequence):
     out = []
     active_risks = [r for r in scene['risks'] if r.get('enabled')]

@@ -21,7 +21,7 @@ class SourcePlatform(FakePlatform):
         return result
 
 
-def fixture(main='radar-a', secondary='tdoa-b', secondary_kind='tdoa', location=(450, 300)):
+def fixture(main='radar-a', secondary='tdoa-b', secondary_kind='tdoa', location=(450, 300), kind='uav'):
     raw = scene()
     raw['risks'] = []
     site = raw['sites'][0]
@@ -31,7 +31,7 @@ def fixture(main='radar-a', secondary='tdoa-b', secondary_kind='tdoa', location=
     site['devices'].extend([
         dict(device, id=secondary, kind=secondary_kind, name='辅助探测设备'),
         dict(device, id='unselected', kind='5ga', name='未参与设备')])
-    raw['targets'][0].update(deviceId=main, secondaryDeviceId=secondary,
+    raw['targets'][0].update(deviceId=main, secondaryDeviceId=secondary, kind=kind,
         altitudeDatum='AMSL', transport='normalized', path=[list(location)], probability=.91)
     compiled, devices, targets, _ = compile_scene(raw)
     manifest = {'batch': 'sim-multi', 'created_at': 2000000, 'devices': {}, 'plans': {},
@@ -46,12 +46,14 @@ def posts(api, ending):
     return [body for _, path, body, _ in api.calls if path.endswith(ending)]
 
 
+# 两台设备都走规范化入口、各有一个观测源的情形：辅助设备的协议报不了这类目标（TDOA 报不了气球）。
+# 辅助设备能用自己协议报的（无人机）只发 MQTT，不再从规范化入口重复报（新-17），见最后两个用例。
 class NormalizedSourceTests(unittest.TestCase):
     def test_each_selected_device_has_independent_source_and_same_target(self):
         for main, auxiliary, position in [('radar-a', 'tdoa-b', (450, 300)),
                 ('primary-' + 'a'*65, 'secondary-' + 'b'*65, (620, 410))]:
             with self.subTest(main=main):
-                chain, api, manifest, compiled, _, targets = fixture(main, auxiliary, location=position)
+                chain, api, manifest, compiled, _, targets = fixture(main, auxiliary, location=position, kind='balloon')
                 chain.prepare()
                 registrations = posts(api, '/observation-devices')
                 self.assertEqual(len(registrations), 2)
@@ -71,7 +73,7 @@ class NormalizedSourceTests(unittest.TestCase):
                 self.assertEqual(len(posts(api, '/observation-devices')), count)
 
     def test_shared_device_gets_one_frame_containing_only_its_targets(self):
-        chain, api, manifest, compiled, _, targets = fixture()
+        chain, api, manifest, compiled, _, targets = fixture(kind='balloon')
         other = copy.deepcopy(compiled['targets'][0])
         other.update(id='neighbor', secondaryDeviceId='', kind='bird')
         compiled['targets'].append(other)
@@ -97,7 +99,7 @@ class NormalizedSourceTests(unittest.TestCase):
                 self.assertEqual(len(posts(api, '/target-observations')), 1)
 
     def test_offline_source_stops_and_recovers_without_replacing_identity(self):
-        chain, api, manifest, compiled, _, targets = fixture()
+        chain, api, manifest, compiled, _, targets = fixture(kind='balloon')
         compiled['risks'] = [dict(id='off', type='offline', enabled=True,
                                  deviceId='tdoa-b', at=2, seconds=5)]
         chain.prepare()
@@ -134,6 +136,22 @@ class NormalizedSourceTests(unittest.TestCase):
         self.assertFalse(posts(api, '/observation-devices'))
         self.assertFalse(posts(api, '/target-observations'))
         self.assertEqual(len([p for _, p in packets if 'objects' in p]), 2)
+
+    def test_auxiliary_device_reports_a_uav_once_through_its_own_protocol(self):
+        # 新-17：两台设备看到同一架无人机，平台只该见两路来源。主设备走规范化入口；辅助设备（TDOA）已经用自己的协议
+        # 发 MQTT 目标报文，不再登记观测源、也不再从规范化入口重复报——以前一台设备算成两个数据源，两台看到记成 3 个。
+        chain, api, manifest, compiled, devices, targets = fixture()
+        manifest['provider'] = 'test'
+        manifest['devices'] = {key: {'external_id': key} for key in devices}
+        chain.prepare()
+        self.assertEqual(set(manifest['normalized_sources']), {'radar-a'})
+        self.assertEqual(len(posts(api, '/observation-devices')), 1)
+        chain.tick(targets, 0, 1)
+        frames = posts(api, '/target-observations')
+        self.assertEqual([row['source_id'] for row in frames], [manifest['normalized_sources']['radar-a']['source_id']])
+        packets = [p for _, p in messages(compiled, devices, targets, manifest, 0, 2000000, {}, 1) if 'objects' in p]
+        self.assertEqual([p['deviceId'] for p in packets], ['tdoa-b'])
+        self.assertEqual(frames[0]['items'][0]['uav_sn'], packets[0]['objects'][0]['extension']['uavSN'])
 
 
 if __name__ == '__main__':

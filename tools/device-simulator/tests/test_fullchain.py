@@ -184,6 +184,30 @@ class FullChainTests(unittest.TestCase):
             self.assertEqual(item['external_track_id'],item['external_target_id'])
             self.assertEqual('uav_sn' in item,targets[key]['kind']=='uav')
 
+    def test_auxiliary_device_reports_each_target_once(self):
+        # 新-17：辅助上报设备（雷达）已经用自己的协议发 MQTT 目标报文，不再从规范化入口重复报同一架无人机；
+        # 否则平台把一台设备算成两个数据源，两台设备看到记成 3 个。
+        chain,p,m,s=self.setup_chain();chain.prepare()
+        targets={t['id']:t for t in s['targets']}
+        uavs={m['targets'][t['id']]['external_id'] for t in targets.values()
+              if t['kind']=='uav' and t.get('transport')=='normalized' and t.get('secondaryDeviceId')=='radar'}
+        self.assertTrue(uavs)
+        chain.tick(targets,0,1)
+        frames={body['source_id']:{row['external_target_id'] for row in body['items']}
+                for _,path,body,_ in p.calls if path.endswith('/target-observations')}
+        sources={row['scene_device_id']:row['external_id'] for row in m['devices'].values() if row.get('kind')=='normalized'}
+        self.assertTrue(uavs <= frames[sources['tdoa']])
+        self.assertFalse(uavs & frames.get(sources.get('radar'), set()))
+
+    def test_auxiliary_device_that_cannot_report_the_kind_keeps_the_normalized_entry(self):
+        from fullchain import FullChain
+        devices={'r':{'id':'r','kind':'radar'},'t':{'id':'t','kind':'tdoa'}}
+        uav={'kind':'uav','transport':'normalized','deviceId':'t','secondaryDeviceId':'r'}
+        balloon={'kind':'balloon','transport':'normalized','deviceId':'t','secondaryDeviceId':'r'}
+        self.assertEqual(FullChain.normalized_device_ids(uav,devices),['t'])
+        # 雷达协议里没有气球类别，辅助设备不发 MQTT，气球照常经规范化入口由两台设备上报。
+        self.assertEqual(FullChain.normalized_device_ids(balloon,devices),['t','r'])
+
     def test_airspace_version_update_keeps_name_and_owner(self):
         # 平台要求空域版本更新保持原名称和归属；改名会被拒（409），整批模拟在第 2 分钟停下。
         chain,p,m,s=self.setup_chain();chain.prepare()

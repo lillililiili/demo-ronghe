@@ -66,6 +66,35 @@ class RealtimeConfigurationTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 validate_config(value)
 
+    def test_countermeasure_position_is_a_full_wgs84_pair_or_nothing(self):
+        from realtime_control import validate_config
+        self.assertIsNone(validate_config({})['countermeasure_longitude'])
+        config = validate_config({'countermeasure_longitude': 118.6, 'countermeasure_latitude': 37.46})
+        self.assertEqual((118.6, 37.46), (config['countermeasure_longitude'], config['countermeasure_latitude']))
+        for value, message in (({'countermeasure_longitude': 118.6}, '要一起填'),
+                               ({'countermeasure_longitude': 181, 'countermeasure_latitude': 37.46}, '经度须在 -180 到 180 之间'),
+                               ({'countermeasure_longitude': 118.6, 'countermeasure_latitude': float('nan')}, '纬度须在 -90 到 90 之间'),
+                               ({'countermeasure_longitude': True, 'countermeasure_latitude': 37.46}, '经度'),
+                               ({'countermeasure_longitude': '118.6', 'countermeasure_latitude': 37.46}, '经度')):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, message):
+                validate_config(value)
+
+    def test_position_defaults_to_the_first_radar_and_a_typed_position_wins(self):
+        from engine import coordinates
+        from full_scenario import full_scene
+        from realtime_control import countermeasure_position, validate_config
+        scene = {'sites': [{'x': 10, 'y': 10, 'devices': [{'kind': 'eo'}]},
+                           {'x': 100, 'y': 50, 'devices': [{'kind': 'tdoa'}, {'kind': 'radar'}]},
+                           {'x': 300, 'y': 300, 'devices': [{'kind': 'radar'}]}]}
+        expected = [round(value, 7) for value in coordinates([100, 50])]
+        self.assertEqual({'longitude': expected[0], 'latitude': expected[1]}, countermeasure_position(validate_config({}), scene))
+        typed = validate_config({'countermeasure_longitude': 118.7, 'countermeasure_latitude': 37.4})
+        self.assertEqual({'longitude': 118.7, 'latitude': 37.4}, countermeasure_position(typed, scene))
+        self.assertIsNone(countermeasure_position(validate_config({}), {'sites': [{'x': 1, 'y': 1, 'devices': [{'kind': 'eo'}]}]}))
+        self.assertIsNone(countermeasure_position(validate_config({}), None))
+        # 一键全量场景有雷达，反制设备跟它放在一起。
+        self.assertIsNotNone(countermeasure_position(validate_config({}), full_scene()))
+
     def test_anomaly_scene_retains_windows_and_duration_option(self):
         from realtime_control import prepare_scene, validate_config
         scene = {'duration': 5, 'sites': [], 'targets': [], 'risks': [{'type': 'offline', 'enabled': True}]}
@@ -141,6 +170,42 @@ class LifecycleTests(unittest.TestCase):
         self.addCleanup(self.controller.stop)
         self.assertEqual('RUNNING', self.controller.snapshot()['state'])
         self.assertEqual([{'owner_org_id': 'org-conn', 'district_id': 'district-conn'}], registered)
+
+    def test_countermeasure_device_is_registered_where_the_scene_radar_stands(self):
+        from countermeasure_tcp import CountermeasureSimulator
+        from engine import coordinates
+        from test_countermeasure_tcp import free_port
+        registered = []
+        def request(command):
+            if command['path'].endswith('/countermeasure-device'):
+                body = command.get('body')
+                registered.append(body)
+                device = {'device_id': 'cm-test'}
+                if 'longitude' in body:
+                    device.update(longitude=body['longitude'], latitude=body['latitude'])
+                return {'device': device}
+            return {}
+        self.session.request = request
+        self.runtime.scene = {'sites': [{'x': 100, 'y': 50, 'devices': [{'kind': 'radar'}]}]}
+        self.controller.configure({'notifications_enabled': False, 'countermeasure_scope': 'test-org|test-district'})
+        radar = [round(value, 7) for value in coordinates([100, 50])]
+        with patch('countermeasure_tcp.CountermeasureSimulator', return_value=CountermeasureSimulator(port=free_port())):
+            self.controller.start()
+        self.assertEqual({'owner_org_id': 'test-org', 'district_id': 'test-district',
+                          'longitude': radar[0], 'latitude': radar[1]}, registered[-1])
+        self.assertEqual({'longitude': radar[0], 'latitude': radar[1]}, self.controller.snapshot()['countermeasure_position'])
+        self.controller.stop()
+        # 开始模拟时用这次要跑的场景，不用上一次的。
+        with patch('countermeasure_tcp.CountermeasureSimulator', return_value=CountermeasureSimulator(port=free_port())):
+            self.controller.start({'sites': [{'x': 300, 'y': 0, 'devices': [{'kind': 'radar'}]}]})
+        self.assertEqual(round(coordinates([300, 0])[0], 7), registered[-1]['longitude'])
+        self.controller.stop()
+        # 场景里没有雷达、也没填经纬度：照旧登记，只是不带位置。
+        self.runtime.scene = {'sites': []}
+        with patch('countermeasure_tcp.CountermeasureSimulator', return_value=CountermeasureSimulator(port=free_port())):
+            self.controller.start()
+        self.assertEqual({'owner_org_id': 'test-org', 'district_id': 'test-district'}, registered[-1])
+        self.assertIsNone(self.controller.snapshot()['countermeasure_position'])
 
     def test_disabling_receiver_after_stop_does_not_reuse_it(self):
         self.controller.configure({'countermeasure_enabled': False})

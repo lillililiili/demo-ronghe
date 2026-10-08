@@ -351,7 +351,7 @@ class Runtime:
             if self.seed.database:
                 raise ValueError('实时收发不使用数据库配套，请通过资料输入接口提交任务与空域')
             if not raw.get('fullchain', {}).get('enabled'):
-                self.realtime.start()
+                self.realtime.start(scene)
         with self.lock:
             if self.phase in ('PREPARING','RUNNING','PAUSED','STOPPING') or self.thread and self.thread.is_alive():
                 raise ValueError('已有任务运行中')
@@ -396,7 +396,7 @@ class Runtime:
                                           self.checkpoint, cancelled=self.cancel.is_set)
                 self.fullchain.prepare()
                 if self.cancel.is_set(): return
-                if self.realtime: self.realtime.start()
+                if self.realtime: self.realtime.start(self.scene)
             else:
                 # The normal web scenario is also a platform-facing replay.  With
                 # no explicit --database the old branch silently skipped plans and

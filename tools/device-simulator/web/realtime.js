@@ -15,7 +15,15 @@
     return `现在启用的处罚接收单位共 ${enabled.length} 个，${enabled.length > 1 ? '反制完成后要人选再移送' : '反制完成后自动移送'}`
       + (others.length ? `；其中${others.join('、')}不是在这里配的` : '') + '。';
   }
-  if (typeof module !== 'undefined') { module.exports = {notificationOnline, editLocked, modeNames, outcomeChoices, punishmentSummary, sameChoice}; return; }
+  /* 反制设备在平台上的位置，只用来在融合感知页上画“作用范围”；没有位置时那里显示“参数未知”。 */
+  function countermeasurePositionText(rt) {
+    if (!rt?.countermeasure?.listening) return '';
+    const p = rt.countermeasure_position, lon = Number(p?.longitude), lat = Number(p?.latitude);
+    return p && Number.isFinite(lon) && Number.isFinite(lat)
+      ? `位置 ${lon.toFixed(5)}, ${lat.toFixed(5)}` : '位置未设置（在收发模式设置里填经纬度）';
+  }
+  function positionValue(raw) { const text = String(raw ?? '').trim(); return text === '' ? null : Number(text); }
+  if (typeof module !== 'undefined') { module.exports = {notificationOnline, editLocked, modeNames, outcomeChoices, punishmentSummary, sameChoice, countermeasurePositionText, positionValue}; return; }
   let busy = false;
   const box = document.createElement('section');
   box.className = 'realtime-bar';
@@ -43,7 +51,7 @@
     }
     const n = rt.notifications || {}, tcp = rt.countermeasure || {};
     document.querySelector('#realtime-summary').textContent = `${modeNames[rt.config.mode]||rt.config.mode} · ${names[rt.state] || rt.state} · ${rt.config.continuous?'持续运行':'按场景时长'}`;
-    document.querySelector('#realtime-detail').textContent = `登录校验 ${time(Math.max(rt.session_verified_at || 0,data.session_verified_at || 0))}　MQTT ${data.mqtt_connected?'已连接':'未连接'} / 已发 ${data.sent || 0}　最近上报 ${time(data.last_published_at)}　TCP ${tcp.listening?'监听中':'未监听'} / 收到 ${tcp.received || 0}　通知 ${notificationOnline(n)?'租约有效':'未连接'} / 收到 ${n.received_count || 0} / 已回执 ${n.receipt_count || 0}　最近接收 ${time(Math.max(n.last_received_at || 0,tcp.last_received_at || 0))}`;
+    document.querySelector('#realtime-detail').textContent = `登录校验 ${time(Math.max(rt.session_verified_at || 0,data.session_verified_at || 0))}　MQTT ${data.mqtt_connected?'已连接':'未连接'} / 已发 ${data.sent || 0}　最近上报 ${time(data.last_published_at)}　TCP ${tcp.listening?'监听中':'未监听'} / 收到 ${tcp.received || 0}${tcp.listening ? ' / ' + countermeasurePositionText(rt) : ''}　通知 ${notificationOnline(n)?'租约有效':'未连接'} / 收到 ${n.received_count || 0} / 已回执 ${n.receipt_count || 0}　最近接收 ${time(Math.max(n.last_received_at || 0,tcp.last_received_at || 0))}`;
     document.querySelector('#realtime-error').textContent = rt.error || n.last_error || tcp.error || '';
     document.querySelector('#realtime-settings').disabled = busy || editLocked(data);
     document.querySelector('#realtime-start').disabled = busy || !data.connected || ['STARTING','RUNNING','STOPPING'].includes(rt.state);
@@ -85,6 +93,9 @@
       ${choice('countermeasure_enabled','本机模拟反制设备',config.countermeasure_enabled,{true:'启用',false:'关闭'})}
       ${choice('countermeasure_scope','反制设备所属单位与区县',config.countermeasure_scope,options)}
       <p class="field-note">反制设备长期部署在某个单位与区县，不跟飞行任务绑定；这里只决定设备归属，不授予反制权限。</p>
+      <label class="realtime-field">反制设备经度（WGS-84，可不填）<input name="countermeasure_longitude" type="number" step="any" min="-180" max="180" value="${esc(config.countermeasure_longitude ?? '')}"></label>
+      <label class="realtime-field">反制设备纬度（WGS-84，可不填）<input name="countermeasure_latitude" type="number" step="any" min="-90" max="90" value="${esc(config.countermeasure_latitude ?? '')}"></label>
+      <p class="field-note">位置只用来在融合感知页上画反制设备的“作用范围”。不填时放在场景里第一台雷达的位置；场景里没有雷达时请在这里填。平台上这台设备已经有位置的不会改，要改请到管理端 设备管理。</p>
       <label class="realtime-field">模拟电话播放时长（秒）<input name="play_seconds" type="number" min="0.1" max="60" step="0.1" value="${esc(config.play_seconds)}" required></label>
       <fieldset id="realtime-abnormal"><legend>异常与混合模式参数</legend>
       ${choice('command_mode','设备指令',config.command_mode,{success:'正常执行回执',no_receipt:'不执行、不回执',unchanged:'四通道状态不变，光电正常'})}
@@ -101,6 +112,7 @@
       for(const key of ['mode','command_mode','countermeasure_scope']) next[key]=form.elements[key].value;
       for(const key of ['continuous','notifications_enabled','countermeasure_enabled']) next[key]=form.elements[key].value==='true';
       next.play_seconds=Number(form.elements.play_seconds.value);
+      for(const key of ['countermeasure_longitude','countermeasure_latitude']) next[key]=positionValue(form.elements[key].value);
       for(const kind of Object.keys(kinds)) next.outcomes[kind]=form.elements[kind].value;
       const submit=form.querySelector('[type=submit]');submit.disabled=true;
       const picked=[...form.querySelectorAll('[name=punishment_org]:checked')].map(input=>input.value);

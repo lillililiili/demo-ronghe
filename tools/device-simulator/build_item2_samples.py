@@ -89,6 +89,7 @@ def notification_configs():
     """Existing realtime-control payloads; not notification qualification data."""
     base = dict(mode='normal', continuous=True, notifications_enabled=True,
                 countermeasure_enabled=False, countermeasure_scope='',
+                countermeasure_longitude=None, countermeasure_latitude=None,
                 command_mode='success', play_seconds=3,
                 outcomes=dict(ADVISORY_SMS='success', ADVISORY_VOICE='success',
                               UAV_PUNISHMENT='success'))

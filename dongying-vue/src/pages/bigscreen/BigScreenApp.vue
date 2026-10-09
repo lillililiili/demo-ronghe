@@ -241,11 +241,11 @@ const mono = text => h('span', { class: 'mono' }, text);
 const colored = (text, color) => h('span', { style: { color } }, text);
 
 const alarmColumns = [
-  { title: '时间', key: 'time', render: row => mono(row.time) },
-  { title: '告警类型', key: 'type' },
-  { title: '等级', key: 'level', render: row => colored(`● ${row.level}`, alarmColor[row.level] || 'var(--txt-2)') },
+  { title: '时间', key: 'time', width: 86, render: row => mono(row.time) },
+  { title: '告警类型', key: 'type', render: row => h('span', { class: 'table-text', tabindex: 0 }, row.type) },
+  { title: '等级', key: 'level', width: 100, render: row => colored(`● ${row.level}`, alarmColor[row.level] || 'var(--txt-2)') },
   /* 这一列是核实结论（待核实、告警已确认、误报），处置进度在告警页看；叫“核实状态”免得看成处置进度（新-2 第 5 点）。 */
-  { title: '核实状态', key: 'status' }
+  { title: '核实状态', key: 'status', width: 112 }
 ];
 
 /* 重点目标异物风险态势（ZT-17 复测 2）：今日感知目标按各自最新的风险等级分档，与运行统计选今天时的"各异物风险等级分布"
@@ -550,7 +550,7 @@ onBeforeUnmount(() => {
           </section>
           <section class="panel bs-alarms-panel">
             <div class="ph"><h3>实时告警</h3><span v-if="alarmSummary" class="sub">{{ alarmSummary }}</span></div>
-            <div class="pb bs-table-body"><n-data-table class="bs-naive-table" :columns="alarmColumns" :data="alarmRows" :pagination="false" :bordered="false" :single-line="true" table-layout="auto" size="small"/></div>
+            <div class="pb bs-table-body"><n-data-table class="bs-naive-table" :columns="alarmColumns" :data="alarmRows" :pagination="false" :bordered="false" :single-line="true" table-layout="fixed" size="small"/></div>
           </section>
         </aside>
       </div>

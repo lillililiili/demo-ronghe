@@ -20,6 +20,14 @@ function parseObject(value) {
     return result && typeof result === 'object' && !Array.isArray(result) ? result : null;
   } catch { return null; }
 }
+export function commandSource(command = {}, sourceMode = command.source_mode) {
+  // 本地协议模拟器也使用 live 通道；模拟属性必须读指令/回执的明确标记，不能猜设备名。
+  const simulated = sourceMode === 'mock' || command.simulated === true
+    || (Array.isArray(command.receipts) && command.receipts.some(row => parseObject(row.payload)?.simulated === true));
+  if (sourceMode === 'replay') return { simulated, label: '回放来源', note: '回放数据，非现场实时执行。' };
+  if (simulated) return { simulated, label: '模拟来源', note: '模拟数据，不代表现场实际执行结果。' };
+  return { simulated: false, label: sourceMode === 'live' ? '现场来源' : '来源未记录', note: '' };
+}
 function eoFeedback(value, type) {
   const payload = parseObject(value), event = eoEvents[type];
   if (!event || payload?.event !== event) return null;
@@ -34,12 +42,16 @@ function readableReason(value) {
   return /^[\s]*[\[{]/.test(value) || /^[A-Z][A-Z0-9_:-]*$/.test(value)
     ? '操作原因尚未转为中文，可展开原始记录查看' : value;
 }
-function receiptView(receipt, type) {
+function receiptView(receipt, type, source) {
   const kind = receipt.receipt_kind;
+  const relaySetting = type === 'COUNTERMEASURE_4CH' && kind === 'PROTOCOL_4CH'
+    && receipt.device_result_code === 'COUNTERMEASURE_SET_OK';
   const late = kind === 'PROTOCOL_B_LATE';
   const lingyun = kind === 'PROTOCOL_B' || late;
   const known = lingyun && ['PROTOCOL_B_OK', 'PROTOCOL_B_FAILED'].includes(receipt.device_result_code);
-  const feedback = kind === 'PROTOCOL_C' ? eoFeedback(receipt.payload, type) : known
+  const feedback = relaySetting
+    ? { success: true, text: `${source.simulated ? '模拟设备' : '设备'}反馈：通道设置成功` }
+    : kind === 'PROTOCOL_C' ? eoFeedback(receipt.payload, type) : known
     ? { success: receipt.device_result_code === 'PROTOCOL_B_OK', text: (late ? '迟到设备反馈：' : '设备反馈：')
       + (receipt.device_result_code === 'PROTOCOL_B_OK' ? '执行完成' : '执行失败') + (late ? '（原任务）' : '') } : null;
   const outcome = feedback ? (feedback.success ? 'success' : 'failure')
@@ -47,14 +59,16 @@ function receiptView(receipt, type) {
   const labels = { ACCEPTED: '设备已受理指令，等待执行结果', ACK: '设备已接收指令，等待执行结果',
     SUCCEEDED: '设备反馈：执行完成', FAILED: '设备反馈：执行失败', COMPLETED: '已收到设备执行反馈',
     RESULT: '已收到设备结果反馈', PROTOCOL_B: '已收到设备反馈，具体结果待核对',
-    PROTOCOL_B_LATE: '迟到设备反馈：具体结果待核对（原任务）', PROTOCOL_C: '已收到光电设备反馈，具体结果待核对' };
+    PROTOCOL_B_LATE: '迟到设备反馈：具体结果待核对（原任务）', PROTOCOL_C: '已收到光电设备反馈，具体结果待核对',
+    PROTOCOL_4CH: '已收到四通道反馈，通道设置结果待核对' };
   return { id: receipt.receipt_id, time: receipt.occurred_at ?? receipt.received_at,
     text: feedback?.text || labels[kind] || '已收到设备反馈，类型尚未识别', outcome,
-    late, terminal: !late && (outcome != null || kind === 'COMPLETED') };
+    relaySetting, late, terminal: !late && (outcome != null || kind === 'COMPLETED') };
 }
 
-export function buildCommandView(command = {}) {
-  const receipts = (Array.isArray(command.receipts) ? command.receipts : []).map(row => receiptView(row, command.command_type));
+export function buildCommandView(command = {}, sourceMode = command.source_mode) {
+  const source = commandSource(command, sourceMode);
+  const receipts = (Array.isArray(command.receipts) ? command.receipts : []).map(row => receiptView(row, command.command_type, source));
   const legacy = eoFeedback(command.result_detail, command.command_type);
   const view = { action: actions[command.command_type] || '设备操作，具体内容见原始记录',
     reason: readableReason(command.reason), receipts, status: '执行结果未知', tone: 'warning',
@@ -74,6 +88,11 @@ export function buildCommandView(command = {}) {
     case 'SENT': return { ...view, status: '已下发，等待设备反馈', tone: 'neutral', explanation: '已下发指令，执行结果尚未确认。' };
     case 'ACCEPTED': return { ...view, status: '设备已接收，等待执行结果', tone: 'neutral', explanation: '设备已受理指令，尚不能据此认定执行完成。' };
     case 'SUCCEEDED':
+      if (receipts.some(row => row.relaySetting)) return { ...view,
+        status: sourceMode === 'replay' ? '回放记录：通道设置成功' : `${source.simulated ? '模拟设备' : '设备'}已确认通道设置成功`, tone: 'success',
+        explanation: '已收到本次指令的四通道设置回执，仅确认通道设置成功，不代表射频已发射或目标已被反制。' };
+      if (command.command_type === 'COUNTERMEASURE_4CH') return { ...view, status: '平台记录完成，通道设置待核对',
+        explanation: '尚缺可确认通道设置成功的四通道回执，请核对原始记录。' };
       if (receipts.some(row => row.terminal)) return { ...view, status: '设备反馈执行完成', tone: 'success',
         explanation: '平台完成记录与设备执行回执一致。' };
       return { ...view, status: '平台记录完成，结果待核对', explanation: legacy?.success

@@ -238,9 +238,9 @@
     }
     const color = glowColor();
     context.shadowColor = color;
-    // 贴边亮光与外层红晕叠加，避免细线图标的单层宽阴影被底图吞没。
+    // 保留贴边亮光；双层 drop-shadow 会让整层 Canvas 的交互绘制显著变慢。
     context.shadowBlur = 2 + 6 * pulse;
-    context.filter = `drop-shadow(0 0 ${1 + 3 * pulse}px ${color}) drop-shadow(0 0 ${3 + 11 * pulse}px ${color})`;
+    context.filter = 'none';
     context.shadowOffsetX = context.shadowOffsetY = 0;
   }
   const businessImages = new Map();
@@ -368,19 +368,19 @@
 
   /* ---- 表格 ---- */
   /* cols: [{k,t,align,render(row,i)}]  opts:{page,size,total,rowId,onRow,activeId,maxH}
-     列宽统一交给浏览器按单元格内容计算，调用方遗留的 w 仅作兼容输入、不再输出。 */
+     w 为列宽；文本默认省略并由公共 Tooltip 补全，操作/标签列用 overflow:false 保持完整。 */
   function table(cols, rows, opts) {
     opts = opts || {};
     // opts.checkbox: (row)=>id|null —— 返回 id 则该行可勾选(用于批量处置/批量归档)
     const ckHead = opts.checkbox ? `<th class="ck"><input type="checkbox" data-ckall aria-label="全选"></th>` : '';
-    const head = ckHead + cols.map(c => `<th class="${c.priority ? 'col-' + c.priority : ''}" style="${c.align ? 'text-align:' + c.align : ''}">${c.t}</th>`).join('');
+    const head = ckHead + cols.map(c => `<th class="${c.priority ? 'col-' + c.priority : ''}" style="${c.w ? 'width:' + c.w + ';' : ''}${c.align ? 'text-align:' + c.align : ''}">${c.t}</th>`).join('');
     const body = rows.length ? rows.map((r, i) => {
       const id = opts.rowId ? opts.rowId(r) : '';
       const ckId = opts.checkbox ? opts.checkbox(r) : null;
       const ckCell = opts.checkbox ? `<td class="ck">${ckId ? `<input type="checkbox" data-ck="${ckId}" aria-label="选择本行">` : ''}</td>` : '';
       return `<tr data-row="${id}" tabindex="0" class="${opts.activeId && id === opts.activeId ? 'on' : ''}">` + ckCell + cols.map(c => {
         const v = c.render ? c.render(r, i) : (r[c.k] == null ? '—' : r[c.k]);
-        return `<td class="${[c.cls || '', c.priority ? 'col-' + c.priority : ''].filter(Boolean).join(' ')}" style="${c.align ? 'text-align:' + c.align : ''}">${v}</td>`;
+        return `<td class="${[c.cls || '', c.priority ? 'col-' + c.priority : ''].filter(Boolean).join(' ')}" style="${c.align ? 'text-align:' + c.align : ''}">${c.overflow === false ? v : `<div class="table-text" tabindex="0">${v}</div>`}</td>`;
       }).join('') + '</tr>';
     }).join('') : `<tr><td colspan="${cols.length + (opts.checkbox ? 1 : 0)}"><div class="empty">暂无数据</div></td></tr>`;
     const tableCls = ['tb', opts.density ? 'density-' + opts.density : '', opts.className || ''].filter(Boolean).join(' ');

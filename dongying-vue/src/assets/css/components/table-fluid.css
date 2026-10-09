@@ -1,16 +1,32 @@
 
 /* ---------- 表格自适应列宽与可读性 ----------
-   表格至少铺满容器；内容更长时按内容自然拓宽，由外层 .scroll 提供横向滚动。 */
+   表格按列宽分配空间，长文本省略，由公共 Naive Tooltip 显示全文。 */
 table.tb,table.pmx{
-  width:max-content;
-  min-width:100%;
-  table-layout:auto!important;
+  width:100%;
+  table-layout:fixed;
   font-size:var(--table-font-size);
 }
-table.tb th,table.tb td,table.pmx th,table.pmx td{width:auto!important;max-width:none}
+/* 权限矩阵中的操作仍按自然宽度布局。 */
+table.pmx{table-layout:auto}
+table.tb.alarm-list-table{min-width:800px}
+/* The cell itself is the final boundary, including HTML from an already-open legacy page. */
+table.tb td:not([colspan]){overflow:hidden;text-overflow:ellipsis}
+table.tb td:not([colspan]) > div:not(.table-actions):not(.empty){max-width:100%;overflow:hidden;text-overflow:ellipsis}
+table.tb td :is(.cell-main,.cell-sub){min-width:0;max-width:100%;overflow:hidden;white-space:nowrap!important;text-overflow:ellipsis}
+.table-text{display:block;min-width:0;max-width:100%;overflow:hidden;white-space:nowrap!important;text-overflow:ellipsis;vertical-align:middle}
+.table-text:focus-visible{outline:2px solid var(--blue);outline-offset:-2px;border-radius:2px}
+.table-text :is(.cell-copy,.cell-main,.cell-sub){min-width:0;max-width:100%;overflow:hidden;white-space:nowrap!important;text-overflow:ellipsis}
+.table-text .cell-stack{min-width:0;max-width:100%}
+.table-text .cell-copy{flex:1}
+.table-text .cell-icon{flex:none}
+
 table.tb.density-compact th,table.tb.density-compact td{font-size:var(--table-compact-font-size)}
 table.tb :is(.cell-sub,small,.tag,.user-actions button){font-size:var(--table-detail-font-size)}
 /* 兼容受信任 legacy 表格串中的小字号；仅覆盖单元格，避免放大详情面板。 */
 table.tb td :is([style*="font-size:10"],[style*="font-size:11"],[style*="font-size:12"]){font-size:var(--table-detail-font-size)!important}
 body.bigscreen table.tb{--table-detail-font-size:14px}
 body.bigscreen table.tb.density-compact th,body.bigscreen table.tb.density-compact td{font-size:17px}
+
+/* Legacy cells may contain a primary line and a secondary line. Each line truncates independently. */
+.table-text > div:not(.cell-stack){max-width:100%;overflow:hidden;white-space:nowrap!important;text-overflow:ellipsis}
+.table-text:is(button){width:100%;text-align:inherit}

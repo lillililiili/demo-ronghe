@@ -139,7 +139,7 @@ const SOURCE_MODE = { mock: { t: MODE_TEXT.mock, c: 't-purple' }, replay: { t: M
 /* 类别按违规原因筛（2026-10-07）：平台自己产生的告警都是"飞行违规"，按告警类型筛只有一项筛得出东西。
    可选项是规则引擎会写进告警的违规原因（与后端 violation_reason 白名单同一组），文字与列表里的原因一致；
    区域来自本页的区域字典接口，读不到就把下拉标成"不可用"并在 title 说明原因。 */
-const VIOLATION_REASON_CODES = ['NO_AUTHORIZATION', 'INSIDE_RESTRICTED_AIRSPACE', 'AIRSPACE_ALTITUDE_EXCEEDED',
+const VIOLATION_REASON_CODES = ['INSIDE_RESTRICTED_AIRSPACE', 'AIRSPACE_ALTITUDE_EXCEEDED',
   'TEMPORARY_RESTRICTION_ACTIVE', 'ROUTE_DEVIATION', 'TIME_WINDOW_OVERRUN', 'PLAN_ALTITUDE_EXCEEDED', 'NIGHT_FLIGHT', 'BVLOS_EXCEEDED'];
 const KIND_OPTS = [{ v: '全部', t: '全部' }, ...VIOLATION_REASON_CODES.map(v => ({ v, t: ruleReasonText(v) }))];
 const districts = ref([]);
@@ -163,7 +163,6 @@ function fmt(ms) {
   const p = n => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
-const clock = ms => fmt(ms).slice(11) || '—';
 const sevOf = a => SEVERITY[a.severity] || { t: esc(a.severity || '—'), c: 't-gray', tone: 'info' };
 const stateOf = a => a.event_id ? (STATE[a.state] || { t: esc(a.state || '状态未知'), c: 't-gray', color: '#8ca0be' }) : NO_EVENT;
 function deriveAlarmProgress(auths, handoffs) {
@@ -241,12 +240,6 @@ const detailStateTags = a => `${U.tag(displayState(a).t, displayState(a).c)}${ob
 const severityText = code => SEVERITY[code]?.t || (code === 'UNKNOWN' ? '未定级' : '');
 const reasonsOf = a => reasonListText(a?.violation_reasons, ruleReasonText);
 const briefOf = a => escalationBrief(a, severityText);
-function escalationTag(a) {
-  const brief = briefOf(a);
-  if (!brief) return '';
-  const title = `${brief.level}，共升级 ${brief.count} 次${brief.at ? `，最近 ${fmt(brief.at)}` : ''}`;
-  return `<span class="tag ${brief.raised ? 't-red' : 't-amber'}" title="${esc(title)}">${brief.raised ? `已升级 ${esc(brief.level)}` : '新增原因'}</span>`;
-}
 function messageOf(e) {
   if (!e) return '请求失败，请稍后重试';
   if (e.status === 401) return '登录已失效，请重新登录';
@@ -523,20 +516,11 @@ function queryOf() {
   return q;
 }
 
-/* 违规原因单独成列，列名与"违规原因"筛选一致；没有原因码的告警（演示告警等）显示告警类型。
-   原因定宽折行、最多两行，不把列撑宽挤掉"状态"列；全文在悬停提示与详情里。 */
-function reasonCell(a) {
-  const reasons = reasonsOf(a);
-  const text = reasons ? esc(reasons) : typeOf(a);
-  return U.cell(U.tag(modeOf(a).t, modeOf(a).c),
-    `<span style="display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;white-space:normal;width:9em">${text}</span>`,
-    { title: reasons ? esc(reasons) : '' });
-}
-
-/* 来源和发生时间分两行：挤在一行时这一列最宽，整张表被撑过面板，"状态"列要横向滚动才看得到。 */
+/* 列表只保留来源标记和触发事项这一行，任务匹配提示及升级记录在详情查看。 */
 function summaryOf(a) {
-  const tag = escalationTag(a);
-  return `<div style="white-space:normal;line-height:1.5;overflow-wrap:anywhere">${tag ? `<div>${tag}</div>` : ''}<div>来源 ${esc(sourceDescription(a.source_name, a.source_code, a.source_mode, '—'))}</div><div class="cell-sub">发生 ${fmt(a.occurred_at) || '未知'}</div></div>`;
+  const reasons = reasonsOf(a);
+  const content = reasons ? `触发事项：${esc(reasons)}` : a.task_match_note ? '旧规则任务匹配告警' : `${typeOf(a)}：未记录具体触发原因`;
+  return `${U.tag(modeOf(a).t, modeOf(a).c)} ${content}`;
 }
 
 function listHtml() {
@@ -548,15 +532,15 @@ function listHtml() {
     : '';
   return note + U.table([
     {
-      t: sortTh('ts', '编号 / 时间'), w: '108px', cls: 'num',
-      render: a => U.cell(esc(noOf(a)), clock(a.received_at), { mono: true, title: esc(a.alarm_id) })
+      t: '编号', w: '120px', cls: 'num',
+      render: a => U.cell(esc(noOf(a)), null, { mono: true, title: esc(a.alarm_id) })
     },
-    { t: sortTh('level', '等级'), w: '52px', align: 'center', render: sevTag },
-    { t: sortTh('kind', '违规原因'), w: '136px', render: reasonCell },
-    { t: sortTh('district', '关联目标 / 区域'), w: '146px', render: a => U.cell(a.target_id ? esc(a.target_no || a.target_id) : '—', esc(a.district_name || a.district_id || '—'), { mono: true, title: a.target_id ? esc(a.target_id) : '无关联目标或无目标读取权限' }) },
+    { t: sortTh('level', '等级'), w: '52px', align: 'center', overflow: false, render: sevTag },
+    { t: '关联目标', w: '146px', render: a => U.cell(a.target_id ? esc(a.target_no || a.target_id) : '—', null, { mono: true, title: a.target_id ? esc(a.target_id) : '无关联目标或无目标读取权限' }) },
     { t: '告警内容', render: summaryOf },
-    { t: sortTh('status', '状态'), w: '86px', render: stateTag }
-  ], list.rows, { rowId: a => a.alarm_id, activeId: st.selId });
+    { t: sortTh('status', '状态'), w: '124px', overflow: false, render: stateTag },
+    { t: sortTh('ts', '时间'), w: '158px', overflow: false, render: a => esc(fmt(a.received_at) || '未知') }
+  ], list.rows, { rowId: a => a.alarm_id, activeId: st.selId, className: 'alarm-list-table' });
 }
 
 /* 事件事实核实保留原入口；处罚移送由后台调度，处置面板只读取进度。 */
@@ -655,6 +639,7 @@ function detailHtml() {
     ...(a.observation_status ? [['观测状态', esc(OBSERVATION_LABEL[a.observation_status] || '观测待确认')]] : []),
     ...(a.attention_group ? [['关注分组', esc(ATTENTION_LABEL[a.attention_group] || '状态待确认')]] : []),
     ...(reasons ? [['违规原因', esc(reasons)]] : []),
+    ...(a.task_match_note ? [['任务匹配提示', esc(a.task_match_note)]] : []),
     ...(brief ? [['告警升级', esc(`${brief.level}，共 ${brief.count} 次${brief.at ? `，最近 ${fmt(brief.at)}` : ''}`)]] : []),
     ['所在区域', esc(a.district_name || a.district_id || '—')], ['所属机构', esc(a.owner_org_name || a.owner_org_id || '—')],
     ['关联目标', a.target_id ? `<span class="mono" title="${esc(a.target_id)}">${esc(a.target_no || a.target_id)}</span>` : '无关联目标或无目标读取权限'],

@@ -65,17 +65,17 @@ function date(value) { return value == null ? '未记录' : new Date(value).toLo
           <dt>来源</dt><dd>{{ risks.active.source_name || risks.active.source_code || '未记录' }} · {{ labelOf(SOURCE_MODE_LABEL, risks.active.source_display_mode || risks.active.source_mode, '来源未记录') }}</dd>
         </dl>
       </article>
-      <table class="tb">
+      <table class="tb"><colgroup><col style="width:145px"><col><col style="width:62px"><col style="width:140px"><col style="width:170px"><col style="width:140px"><col style="width:150px"><col style="width:125px"></colgroup>
         <thead><tr><th>风险编号 / 类型</th><th>风险事由</th><th>等级</th><th>核验与通知状态</th><th>发生时间</th><th>关联任务（如有）</th><th>位置 / 来源</th><th>操作</th></tr></thead>
         <tbody>
           <tr v-for="risk in pageRows" :key="risk.risk_id" :class="{ on: risks.activeId === risk.risk_id }">
-            <td><b>{{ risk.risk_no || '未编业务编号' }}</b><small>{{ labelOf(RISK_TYPE_LABEL, risk.risk_type, '其他风险') }}</small></td>
-            <td class="risk-reason">{{ risk.reason_text || '未记录风险事由' }}</td>
+            <td><div class="table-text" tabindex="0"><b>{{ risk.risk_no || '未编业务编号' }}</b><small>{{ labelOf(RISK_TYPE_LABEL, risk.risk_type, '其他风险') }}</small></div></td>
+            <td class="risk-reason"><div class="table-text" tabindex="0">{{ risk.reason_text || '未记录风险事由' }}</div></td>
             <td><span class="tag" :class="SEVERITY_TAG[risk.severity] || 't-gray'">{{ labelOf(SEVERITY_LABEL, risk.severity, '未知') }}</span></td>
-            <td>{{ labelOf(RISK_STATE_LABEL, risk.state, '未知') }}</td>
-            <td>{{ date(risk.occurred_at) }}</td>
-            <td :title="risk.plan_no">{{ displayPlanNo(risk.plan_no) || (risk.plan_id ? '已关联任务' : '没有可查看的相关任务') }}</td>
-            <td>{{ risk.point ? (risks.onlySelected && risk.relation === 'BOUNDARY' ? '位于边界，归属待确认' : '已记录发现位置') : '位置未记录' }}<small>{{ labelOf(SOURCE_MODE_LABEL, risk.source_display_mode || risk.source_mode, '来源未记录') }}</small></td>
+            <td><div class="table-text" tabindex="0">{{ labelOf(RISK_STATE_LABEL, risk.state, '未知') }}</div></td>
+            <td><div class="table-text" tabindex="0">{{ date(risk.occurred_at) }}</div></td>
+            <td :title="risk.plan_no"><div class="table-text" tabindex="0">{{ displayPlanNo(risk.plan_no) || (risk.plan_id ? '已关联任务' : '没有可查看的相关任务') }}</div></td>
+            <td><div class="table-text" tabindex="0">{{ risk.point ? (risks.onlySelected && risk.relation === 'BOUNDARY' ? '位于边界，归属待确认' : '已记录发现位置') : '位置未记录' }}<small>{{ labelOf(SOURCE_MODE_LABEL, risk.source_display_mode || risk.source_mode, '来源未记录') }}</small></div></td>
             <td class="risk-actions"><button class="linkbtn" type="button" :disabled="!risk.point" :title="risk.point ? '定位发现时的位置' : '位置无法确认，暂时无法定位'" @click="emit('locate', risk)">定位</button><button type="button" class="linkbtn" @click="emit('inspect', risk)">查看详情</button></td>
           </tr>
         </tbody>
@@ -92,7 +92,7 @@ function date(value) { return value == null ? '未记录' : new Date(value).toLo
 .risk-scope-note { flex: none; padding: 7px 12px; font-size: 12px; line-height: 1.6; color: var(--txt-3); border-bottom: 1px solid var(--line); }
 .risk-scope-note span { display: block; }
 .risk-table-scroll { flex: 1; min-height: 0; overflow: auto; }
-.tb { min-width: 1080px; width: 100%; }
+.tb { min-width: 1160px; width: 100%; }
 .tb td { vertical-align: top; }
 .tb small { display: block; margin-top: 3px; color: var(--txt-3); }
 .risk-reason { min-width: 210px; max-width: 320px; white-space: normal; overflow-wrap: anywhere; }

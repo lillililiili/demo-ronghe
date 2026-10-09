@@ -43,16 +43,22 @@ export function judgmentViews(material, reasonText = code => String(code || ''))
 
 function itemName(row) {
   if (row.source_kind === 'COMMAND') return labelOf(COMMAND_TYPE_LABEL, row.name, '设备指令');
-  if (row.source_kind === 'TRACK') return row.name ? `目标 ${row.name} 的轨迹` : '目标轨迹';
+  if (row.source_kind === 'TRACK') return row.name ? `目标 ${row.name} 的融合轨迹` : '目标融合轨迹';
   return row.name || labelOf(EVIDENCE_KIND_LABEL, row.kind_code, '') || '证据文件';
 }
 
 /** 移送时冻结的证据链；文件带 sha256，可与证据台账逐项比对。 */
 export function evidenceChainView(material) {
   if (!Array.isArray(material?.evidence_chain)) return null;
-  const items = material.evidence_chain.map(row => ({
+  const rows = material.evidence_chain;
+  const isTrack = row => row.category === 'TRACK' || row.source_kind === 'TRACK' || row.kind_code === 'TRACK_SNAPSHOT';
+  const fused = rows.filter(row => row.source_kind === 'TRACK' && row.layer === 'FUSED')
+    .sort((a, b) => (b.started_at ?? b.captured_at ?? -Infinity) - (a.started_at ?? a.captured_at ?? -Infinity)
+      || String(a.source_id).localeCompare(String(b.source_id)))[0];
+  const displayed = rows.filter(row => !isTrack(row) || row === fused);
+  const items = displayed.map(row => ({
     key: `${row.source_kind}:${row.source_id}`,
-    category: labelOf(EVIDENCE_CATEGORY_LABEL, row.category, '其他'),
+    category: row.source_kind === 'TRACK' ? '融合轨迹' : labelOf(EVIDENCE_CATEGORY_LABEL, row.category, '其他'),
     name: itemName(row),
     // 轨迹的编号就是内部轨迹号，对处罚部门没有意义，不显示。
     no: row.source_kind === 'TRACK' ? '' : row.evidence_no || '',
@@ -61,5 +67,5 @@ export function evidenceChainView(material) {
     at: row.captured_at ?? row.started_at ?? null,
     points: row.source_kind === 'TRACK' && row.point_count != null ? `${row.point_count} 个点` : ''
   }));
-  return { total: items.length, items };
+  return { total: items.length, items, trackUnavailable: !fused && rows.some(isTrack) };
 }

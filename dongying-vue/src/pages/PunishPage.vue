@@ -10,7 +10,7 @@ export default {};
 <script setup>
 /* 处置处罚管理：业务交接清单只列无人机事件的处罚交接。
    通知与案件结果读取服务端，页面不再用本地标记代替送达。 */
-import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import { refreshFailureText, useRealtimeRefresh } from '@/hooks/useRealtimeRefresh.js';
 import UKpis from '@/components/UKpis.vue';
@@ -27,6 +27,7 @@ import AdvisoryRecords from '@/components/disposal/AdvisoryRecords.vue';
 import PunishmentOutcome from '@/pages/punish/PunishmentOutcome.vue';
 import PunishmentNotification from '@/pages/punish/PunishmentNotification.vue';
 import HandoffMaterialFacts from '@/pages/punish/HandoffMaterialFacts.vue';
+import { handoffEvidenceChain } from '@/pages/punish/handoffEvidence.js';
 import { DELIVERY_OPTIONS, RECEIPT_OPTIONS, deliveryView, receiptView, statusQuery } from '@/pages/punish/handoffStatus.js';
 import RecipientSnapshotFields from '@/components/notifications/RecipientSnapshotFields.vue';
 import { getEvidenceChain } from '@/services/evidenceApi.js';
@@ -268,7 +269,9 @@ async function loadChain(detail) {
   try {
     const data = await getEvidenceChain('EVENT', detail.source_id);
     if (token !== chainToken) return;
-    chain.value = data;
+    const display = await handoffEvidenceChain(data, () => token === chainToken);
+    if (token !== chainToken) return;
+    chain.value = display;
   } catch (requestError) {
     if (token !== chainToken) return;
     chainError.value = requestError.status === 403
@@ -279,7 +282,11 @@ async function loadChain(detail) {
   }
 }
 
-const chainCards = computed(() => chainTypeCards(chain.value));
+onBeforeUnmount(() => { chainToken += 1; });
+const chainCards = computed(() => chainTypeCards(chain.value).map(item => item.type === 'TRACK'
+  ? { ...item, label: '融合轨迹', ariaLabel: `融合轨迹，${item.statusText}，点击查看记录`,
+    preview: item.status === 'ABSENT' ? '暂无关联的融合轨迹' : item.preview }
+  : item));
 const chainTotal = computed(() => chainCards.value.reduce((sum, item) => sum + item.count, 0));
 const chainBroken = computed(() => chainCards.value.reduce((sum, item) => sum + item.broken, 0));
 
@@ -336,7 +343,7 @@ onMounted(() => {
                 <div v-if="listLoading && !handoffs.length" class="empty">正在读取交接清单</div>
                 <div v-else-if="!listError && !handoffs.length" class="empty">暂无符合筛选条件的交接记录</div>
                 <div v-else-if="handoffs.length" class="scroll table-scroll table-shell" style="flex:1">
-                  <table class="tb">
+                  <table class="tb" style="min-width:800px"><colgroup><col style="width:150px"><col style="width:110px"><col><col style="width:150px"><col style="width:100px"><col style="width:100px"></colgroup>
                     <thead><tr>
                       <th>来源编号</th>
                       <th>来源事项</th>
@@ -348,10 +355,10 @@ onMounted(() => {
                     <tbody>
                       <tr v-for="row in handoffs" :key="row.handoff_id" :data-row="row.handoff_id" tabindex="0" :class="{ on: selected?.handoff_id === row.handoff_id || (!selected && S.selectedHandoffId === row.handoff_id) }"
                         @click="selectHandoff(row.handoff_id)" @keydown.enter.prevent="selectHandoff(row.handoff_id)">
-                        <td class="num"><span class="mono pn-id" :title="row.handoff_id">{{ readableNo(row.source_no, row.source_id) || '—' }}</span></td>
+                        <td class="num"><div class="table-text" tabindex="0"><span class="mono pn-id" :title="row.handoff_id">{{ readableNo(row.source_no, row.source_id) || '—' }}</span></div></td>
                         <td><span class="tag t-cyan" :title="row.source_id">{{ label(KIND_LABEL, row.source_kind) }}</span></td>
-                        <td><div class="pn-wrap" :title="row.recipient_id">{{ row.recipient_name || '—' }}</div><div class="pn-sub">{{ labelOf(SOURCE_MODE_LABEL, row.source_mode, '') }}</div></td>
-                        <td class="num" :title="formatTime(row.created_at)">{{ formatClock(row.created_at) }}</td>
+                        <td><div class="table-text" tabindex="0"><div class="pn-wrap" :title="row.recipient_id">{{ row.recipient_name || '—' }}</div><div class="pn-sub">{{ labelOf(SOURCE_MODE_LABEL, row.source_mode, '') }}</div></div></td>
+                        <td class="num" :title="formatTime(row.created_at)"><div class="table-text" tabindex="0">{{ formatClock(row.created_at) }}</div></td>
                         <td class="pn-status"><span class="tag" :class="deliveryView(row).tag">{{ deliveryView(row).label }}</span></td>
                         <td class="pn-status"><span class="tag" :class="receiptView(row).tag">{{ receiptView(row).label }}</span></td>
                       </tr>
@@ -375,7 +382,7 @@ onMounted(() => {
                   <div class="sect pn-section pn-section-info"><h4>交接信息</h4><dl class="kv kv-surface">
                     <dt>来源事项</dt><dd :title="selected.source_id"><span class="tag t-cyan">{{ label(KIND_LABEL, selected.source_kind) }}</span></dd>
                     <dt>接收方</dt><dd class="pn-recipient" :title="selected.recipient_id">{{ selected.recipient_name || '未提供' }}</dd>
-                    <RecipientSnapshotFields :snapshot="selected.recipient_snapshot" historical />
+                    <RecipientSnapshotFields :snapshot="selected.recipient_snapshot" />
                     <dt>提交时间</dt><dd>{{ formatTime(selected.created_at) }}</dd>
                     <!-- 反制完成后后台自动移送：提交人是系统，记录里的提交人账号是那次反制的申请人（新-24）。 -->
                     <template v-if="selected.trigger_source === 'JAMMING_COMPLETED'">

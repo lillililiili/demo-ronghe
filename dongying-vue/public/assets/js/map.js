@@ -216,7 +216,7 @@
         this._syncView(); this._status('ready'); this.draw();
       };
       on('movestart', event => { if (event.originalEvent) this._isDefaultView = false; });
-      on('move', () => { this._syncView(); this.draw(); this._hit(); });
+      on('move', () => { this._syncView(); this._viewHitPending = true; this.draw(); });
       // 已绘制的矢量底图先显示，影像和装饰山影不阻塞首屏。
       on('render', () => { if (!this.online && vectorReady()) finishLoading(); this.draw(); });
       on('dragstart', () => { this._dragged = true; this._boxLeave(); });
@@ -652,9 +652,12 @@
   };
   MapView.prototype.setPaused = function (paused) {
     this._paused = !!paused;
-    if (this._paused && this._raf) {
-      cancelAnimationFrame(this._raf);
-      this._raf = null;
+    if (this._paused) {
+      if (this._raf) cancelAnimationFrame(this._raf);
+      if (this._drawRaf) cancelAnimationFrame(this._drawRaf);
+      this._raf = this._drawRaf = null;
+      this._animDrawPending = false;
+      this._animDrawnAt = null;
     } else if (!this._paused) {
       this._loop();
       this.draw();
@@ -674,7 +677,8 @@
     if (g.UI && g.UI.releaseAlarmGlows) g.UI.releaseAlarmGlows(this.ctx);
     this._disposeBase();
     if (this._raf) cancelAnimationFrame(this._raf);
-    this._raf = null;
+    if (this._drawRaf) cancelAnimationFrame(this._drawRaf);
+    this._raf = this._drawRaf = null;
     if (this._ro) this._ro.disconnect();
     if (this._boxClick) this.box.removeEventListener('click', this._boxClick, true);
     if (this._boxMove) this.box.removeEventListener('mousemove', this._boxMove, true);
@@ -809,11 +813,11 @@
   /* 逐帧动画（脉冲、扫描、虚线流动）只是装饰。没有显卡的电脑或云端浏览器上画一帧可能要一两秒，
      逐帧重画会占满页面：数据刷新、目标到期清理都排不上队，地图上就长时间“没有目标”。
      最近 3 帧都慢于 250ms 时，装饰动画改为隔一段时间才画一帧（该帧耗时的 8 倍，至少 2 秒），
-     让出的时间留给数据；数据变化、拖动缩放、底图重绘仍立即重画。只要有一帧恢复正常就回到逐帧动画。
+     让出的时间留给数据；数据变化、拖动缩放、底图重绘仍在下一显示帧绘制。只要有一帧恢复正常就回到逐帧动画。
      costs：最近几次“画了一帧到下一次回调”的间隔（毫秒，含浏览器合成）；返回 0 表示逐帧画。 */
   const SLOW_FRAME_MS = 250, SLOW_FRAME_COUNT = 3, SLOW_GAP_MIN_MS = 2000, SLOW_GAP_FACTOR = 8;
   /* 装饰动画平时也只画每秒约 12 帧：扫描、波纹、虚线流动看起来照样连贯，整层画布不再每秒重画 60 次跟底图抢资源。
-     数据变化、拖动缩放、底图重绘不经过这里，仍立即重画。 */
+     数据变化、拖动缩放、底图重绘不受装饰帧率限制，同一显示帧的请求合并绘制。 */
   const ANIM_FRAME_MS = 80;
   MapView.animationGap = function (costs) {
     if (!costs || costs.length < SLOW_FRAME_COUNT) return 0;
@@ -832,20 +836,25 @@
       if (self._dead || self._paused) return;
       if (!self.box.isConnected) { self.destroy(); return; }
       const costs = self._frameCosts || (self._frameCosts = []);
-      if (self._animDrawnAt != null) {
+      if (self._animDrawnAt != null && now > self._animDrawnAt) {
         costs.push(now - self._animDrawnAt);
         if (costs.length > SLOW_FRAME_COUNT) costs.shift();
         self._animDrawnAt = null;
       }
       const gap = Math.max(MapView.animationGap(costs), ANIM_FRAME_MS, minFrameGap);
-      // 图上没有会动的东西（没有在线设备，或设备与覆盖范围图层都关着）时不画装饰帧。
+      // 没有可见图层的设备动画或异常图标时，不画装饰帧。
       if (self._hasAnimation() && now - (self._animLastAt || 0) >= gap) {
         // 动画相位按真实时间走（以 60 帧/秒为单位），少画几帧不会让扫描、波纹变慢。
         if (self._animStartAt == null) self._animStartAt = now - self.t * 1000 / 60;
         self.t = (now - self._animStartAt) * 60 / 1000;
-        // 详细底图上只重画装饰层；简化示意图整张不透明，装饰画在同一张画布里，仍整张重画。
-        if (self._splitLayers) self._drawAnimated(); else self.draw();
-        self._animDrawnAt = self._animLastAt = now;
+        if (self._splitLayers) {
+          self._drawAnimated();
+          self._animDrawnAt = now;
+        } else {
+          self._animDrawPending = true;
+          self.draw();
+        }
+        self._animLastAt = now;
       }
       self._raf = requestAnimationFrame(f);
     };
@@ -882,14 +891,23 @@
     return !!(reducedMotion && reducedMotion.matches);
   };
 
-  /* 装饰动画只画在在线设备上（图标波纹、覆盖范围虚线、雷达扫描、光电摆扫、5G-A 波纹）。 */
+  /* 在线设备动画与当前异常图标红光共用低频动画帧，离线设备的红光也要持续闪烁。 */
   MapView.prototype._hasAnimation = function () {
     if (this._still()) return false;
     // 分层后：有告警红晕，或融合感知页有在线设备的覆盖/波纹时才画装饰帧；其他地图页没有会动的东西就不画。
     if (this._splitLayers && this._glows && this._glows.length) return true;
     if (this._splitLayers && !this.opt.fusionProfile) return false;
-    if (!(this.layers.device || this.layers.coverage)) return false;
-    return (this.data.devices || []).some(device => device && (device.statusCode === 'ONLINE' || device.status === '在线'));
+    const devices = (this.data.devices || []).slice(0, this.opt.maxDev || 90);
+    if ((this.layers.device || this.layers.coverage) && devices.some(device => device && (device.statusCode === 'ONLINE' || device.status === '在线'))) return true;
+    if (this.layers.device && devices.some(device => g.UI.abnormalActive(device))) return true;
+    const targets = this.data.targets || [];
+    if (this.layers.track && targets.some(target => target.posValid !== false
+      && (!target.layerKey || this.layers[target.layerKey] !== false) && this._targetAnchor(target)
+      && g.UI.abnormalActive(target))) return true;
+    return !!this.layers.alarm && (this.data.alarms || []).slice(0, this.opt.maxAlarm || 8).some(alarm => {
+      const target = targets.find(item => item.id === alarm.targetId);
+      return target && g.UI.abnormalActive({ ...alarm, stale: target.stale, freshness: target.freshness });
+    });
   };
 
   MapView.prototype._phase = function (period) {
@@ -1227,6 +1245,22 @@
 
   /* 整张重画：数据变化、拖动缩放、底图重绘时调用。详细底图上分两层：业务层（本函数）和装饰动画层（_drawAnimated）。 */
   MapView.prototype.draw = function () {
+    if (this._dead || this._paused || this._drawRaf) return;
+    // move、render、数据更新和装饰动画可能同时请求绘制，只取下一帧的最新状态。
+    this._drawRaf = requestAnimationFrame(now => {
+      this._drawRaf = null;
+      if (this._dead || this._paused) return;
+      if (!this.box.isConnected) { this.destroy(); return; }
+      this._drawFrame();
+      if (this._animDrawPending) {
+        this._animDrawnAt = now;
+        this._animDrawPending = false;
+      }
+      if (this._viewHitPending) { this._viewHitPending = false; this._hit(); }
+    });
+  };
+
+  MapView.prototype._drawFrame = function () {
     if (!this.w) return;
     this._splitLayers = !!(this.online && this.map) && !!(g.UI && g.UI.captureAlarmGlows);
     if (!this._splitLayers) {

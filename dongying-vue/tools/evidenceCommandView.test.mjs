@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildCommandView } from '../src/components/evidence/evidenceCommandView.js';
+import { buildCommandView, commandSource } from '../src/components/evidence/evidenceCommandView.js';
 
 const feedback = (code = 200, event = 'EndTracking') => ({ event, metadata: { codeStatus: code } });
 const command = (extra = {}) => ({ command_type: 'EO_END_TRACK', reason: 'OPERATOR_END_TRACK', status: 'SUCCEEDED', receipts: [], ...extra });
@@ -105,4 +105,62 @@ test('授权设备反馈链接精确绑定原命令和授权，不猜测缺失�
   assert.equal(params.get('subjectKind'),'AUTHORIZATION');
   assert.equal(params.get('subjectId'),'auth /1');
   for(const missing of [{...row,execution_command_id:null},{...row,authorization_id:null},{...row,channel:'MANUAL'}]) assert.equal(executionEvidenceHref(missing),'');
+});
+
+test('四通道明确回码仅确认设置成功，模拟、真实及回放来源保持区分', () => {
+  for (const [mode, simulated, label, result] of [
+    ['live', true, '模拟来源', '模拟设备已确认通道设置成功'],
+    ['live', false, '现场来源', '设备已确认通道设置成功'],
+    ['mock', false, '模拟来源', '模拟设备已确认通道设置成功'],
+    ['replay', true, '回放来源', '回放记录：通道设置成功'],
+  ]) {
+    const input = { command_id: crypto.randomUUID(), command_type: 'COUNTERMEASURE_4CH', status: 'SUCCEEDED', simulated,
+      receipts: [{ receipt_id: crypto.randomUUID(), receipt_kind: 'PROTOCOL_4CH', device_result_code: 'COUNTERMEASURE_SET_OK',
+        occurred_at: Date.now(), payload: { simulated } }] };
+    const before = JSON.stringify(input), view = buildCommandView(input, mode);
+    assert.equal(commandSource(input, mode).label, label);
+    assert.equal(view.status, result);
+    assert.equal(view.tone, 'success');
+    assert.match(view.receipts[0].text, /通道设置成功/);
+    assert.match(view.explanation, /不代表射频已发射或目标已被反制/);
+    assert.equal(JSON.stringify(input), before);
+  }
+});
+
+test('四通道未知、缺失、仅受理及其他协议反馈均不推断通道设置成功', () => {
+  for (const receipts of [[], [{ receipt_kind: 'ACK' }], [{ receipt_kind: 'COMPLETED' }],
+    [{ receipt_kind: 'PROTOCOL_4CH', device_result_code: 'UNKNOWN' }],
+    [{ receipt_kind: 'PROTOCOL_B', device_result_code: 'COUNTERMEASURE_SET_OK' }]]) {
+    const view = buildCommandView({ command_type: 'COUNTERMEASURE_4CH', status: 'SUCCEEDED', receipts,
+      result_detail: '继电器设置成功，不能用这段文字补造回执' });
+    assert.equal(view.status, '平台记录完成，通道设置待核对');
+    assert.equal(view.tone, 'warning');
+  }
+  assert.equal(buildCommandView(command({ receipts: [{ receipt_kind: 'PROTOCOL_4CH', device_result_code: 'COUNTERMEASURE_SET_OK' }] })).tone, 'warning');
+});
+
+test('四通道反馈不能覆盖失败、超时或取消记录，冲突不按顺序选成功', () => {
+  const receipt = { receipt_kind: 'PROTOCOL_4CH', device_result_code: 'COUNTERMEASURE_SET_OK' };
+  for (const status of ['FAILED', 'TIMED_OUT', 'CANCELLED', 'SENT']) {
+    const input = { command_type: 'COUNTERMEASURE_4CH', status, receipts: [receipt] };
+    const before = JSON.stringify(input), view = buildCommandView(input);
+    assert.notEqual(view.tone, 'success');
+    assert.equal(JSON.stringify(input), before);
+  }
+  const rows = [receipt, { receipt_kind: 'FAILED' }];
+  for (const receipts of [rows, [...rows].reverse()]) {
+    assert.equal(buildCommandView({ command_type: 'COUNTERMEASURE_4CH', status: 'SUCCEEDED', receipts }).status, '记录不一致，结果待核对');
+  }
+});
+
+test('指令或原始回执的明确模拟标记不能被 live 通道覆盖，不从名称或文字猜来源', () => {
+  for (const payload of [{ simulated: true }, JSON.stringify({ simulated: true })]) {
+    assert.equal(commandSource({ simulated: false, receipts: [{ payload }] }, 'live').label, '模拟来源');
+  }
+  assert.equal(commandSource({ simulated: true }, 'live').label, '模拟来源');
+  assert.equal(commandSource({ simulated: true }, 'replay').label, '回放来源');
+  for (const payload of ['{broken', { simulated: 'true' }, { detail: '模拟器' }]) {
+    assert.equal(commandSource({ device_name: '模拟器', receipts: [{ payload }] }, 'live').label, '现场来源');
+  }
+  assert.equal(commandSource({}).label, '来源未记录');
 });

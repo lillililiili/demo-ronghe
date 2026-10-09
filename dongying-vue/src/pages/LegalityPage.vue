@@ -34,7 +34,7 @@ import { trustedTrajectoryPoints, strokePlanComparison } from '@/services/trajec
 import { RULE_SET_LABEL, SOURCE_MODE_LABEL, labelOf } from '@/ui/labels.js';
 import { displayPlanNo } from '@/ui/deviceNumber.js';
 import {
-  openLegalityReview, openLegalityRecompute,
+  openLegalityReview, openLegalityRecompute, openLegalityEscalation,
   legalStatusText, reviewStateText, planMatchText, ruleReasonText,
   RULE_CODE_TEXT, RULE_RESULT_TEXT, MERGE_KIND_TEXT, CONCLUSION_TEXT, GRADE_TEXT
 } from '@/ui/legalityReviewModal.js';
@@ -172,7 +172,9 @@ const parameterNote = item => unconfirmedParams(item)
   : '规则参数已确认';
 // 告警关联可能因权限被隐藏；已有触发结果却没有可读 ID 时不能退回本页复核。
 const reviewInAlarm = computed(() => !!selectedEvaluation.value?.alarm_id
-  || (!!selectedEvaluation.value?.alarm_outcome_kind && selectedEvaluation.value.alarm_outcome_kind !== 'SUPPRESSED_SHADOW'));
+  || ['CREATED', 'MERGED', 'UPGRADED', 'DOWNGRADED', 'ESCALATED', 'MANUAL_ESCALATION'].includes(selectedEvaluation.value?.alarm_outcome_kind));
+const manualIllegalNeedsAlarm = computed(() => hasManualConclusion(selectedEvaluation.value)
+  && effectiveStatus(selectedEvaluation.value) === 'ILLEGAL' && !reviewInAlarm.value && !reviewFocus.value.superseded);
 const canOpenAlarm = computed(() => !!selectedEvaluation.value?.alarm_id && canAccessRoute('alarms') && hasPermission('alarms.read'));
 function openRelatedAlarm() {
   if (!canOpenAlarm.value) return;
@@ -353,6 +355,9 @@ function planMatchDetail(item) {
 }
 function outcomeText(item) {
   const kind = item?.alarm_outcome_kind;
+  if (item?.alarm_verification?.conclusion === 'CONFIRMED' && hasManualConclusion(item) && effectiveStatus(item) === 'ILLEGAL')
+    return '告警已承接人工非法结论，进入通知与处置流程';
+  if (!kind && hasManualConclusion(item) && effectiveStatus(item) === 'ILLEGAL') return '人工已判定非法，尚未关联告警';
   if (!kind) return item?.mode === 'SHADOW' ? MERGE_KIND_TEXT.SUPPRESSED_SHADOW : '未生成告警';
   return MERGE_KIND_TEXT[kind] || kind;
 }
@@ -555,6 +560,9 @@ async function refreshAfterAction(result) {
 function onReview() {
   if (reviewInAlarm.value) { openRelatedAlarm(); return; }
   openLegalityReview({ evaluation: selectedEvaluation.value, refresh: refreshAfterAction });
+}
+function onEscalate() {
+  openLegalityEscalation({ evaluation: selectedEvaluation.value, refresh: refreshAfterAction });
 }
 function onRecompute() {
   openLegalityRecompute({ evaluation: selectedEvaluation.value, refresh: refreshAfterAction });
@@ -841,13 +849,13 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
                     :class="{ 'is-selected': selectedEvaluation && subjectKey(selectedEvaluation) === subjectKey(item) }" @click="selectEvaluation(item)">
                     <td><button class="lg-target-link" type="button" @click.stop="selectEvaluation(item)">
                       <span class="lg-target-icon" v-html="item.target_id ? UI.targetIcon(item) : UI.icon('clipboard')"></span>
-                      <span class="lg-row-target"><b class="mono" :title="item.evaluation_id">{{ subjectLabel(item) }}</b><small v-if="!conclusionQualificationText(item)">{{ reviewText(item) }}</small></span>
+                      <span class="lg-row-target"><b class="mono table-text" :title="item.evaluation_id">{{ subjectLabel(item) }}</b><small v-if="!conclusionQualificationText(item)">{{ reviewText(item) }}</small></span>
                     </button></td>
                     <td><span class="lg-plan-cell" :class="item.plan_match_code === 'FULL' ? 'is-pass' : item.plan_match_code === 'NONE' ? 'is-fail' : 'is-warn'" :title="planMatchDetail(item)">
                       <span v-html="UI.icon(item.plan_match_code === 'FULL' ? 'check' : item.plan_match_code === 'NONE' ? 'cross' : 'clock')"></span>
-                      <span class="lg-plan-number" :title="item.plan_no">{{ displayPlanNo(item.plan_no) || (item.plan_id ? '已关联任务' : '无匹配任务') }}</span>
+                      <span class="lg-plan-number table-text" tabindex="0">{{ displayPlanNo(item.plan_no) || (item.plan_id ? '已关联任务' : '无匹配任务') }}</span>
                     </span></td>
-                    <td :title="item.district_name || item.district_id">{{ item.district_name || item.district_id || '未知' }}</td>
+                    <td><span class="table-text" tabindex="0">{{ item.district_name || item.district_id || '未知' }}</span></td>
                     <td class="lg-verdict-cell">
                       <div class="lg-verdict-tags">
                         <span class="lg-status-tag" :class="`is-${conclusionMeta[effectiveStatus(item)]?.tone || 'amber'}`">{{ legalStatusText(effectiveStatus(item)) }}</span>
@@ -855,8 +863,8 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
                       </div>
                       <small class="lg-row-risk" :title="`风险等级：${gradeText(item)}`">{{ gradeText(item) }}</small>
                     </td>
-                    <td><span class="lg-reason-cell" :title="evaluationReason(item)">{{ evaluationReason(item) }}</span></td>
-                    <td class="lg-time-cell" :title="formatTime(item.evaluated_at)">{{ formatTime(item.evaluated_at) }}</td>
+                    <td><span class="lg-reason-cell table-text" tabindex="0">{{ evaluationReason(item) }}</span></td>
+                    <td class="lg-time-cell"><span class="table-text" tabindex="0">{{ formatTime(item.evaluated_at) }}</span></td>
                   </tr>
                 </tbody>
               </table>
@@ -897,8 +905,9 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
                     <p v-if="reviewFocus.needsReview && !reviewInAlarm && !allowed.includes('REVIEW')" class="lg-state-warn">当前账号或记录状态不允许复核，可查看依据与历史。</p>
                   </div>
                   <div class="lg-response-result" aria-label="规则触发与处置去向">
-                    <b>规则触发结果</b>
+                    <b>告警与后续处置</b>
                     <p>{{ outcomeText(selectedEvaluation) }}</p>
+                    <p v-if="manualIllegalNeedsAlarm" class="lg-state-warn">{{ allowed.includes('ESCALATE') ? '可点击“转告警”承接已保存的人工结论，无需再次复核。' : '当前账号权限或研判状态不允许转告警，请由有权限的人员处理。' }}</p>
                     <button v-if="canOpenAlarm && reviewFocus.superseded" class="btn sm" type="button" @click="openRelatedAlarm">查看此告警的处置进度</button>
                     <p v-if="selectedEvaluation.alarm_id && !canOpenAlarm" class="lg-muted">当前账号没有告警页面查看权限。</p>
                     <p v-else-if="reviewInAlarm && !selectedEvaluation.alarm_id" class="lg-muted">未提供可查看的关联告警，请核对关联记录或访问权限。</p>
@@ -1017,10 +1026,11 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
                 </section>
               </div>
 
-              <footer v-if="selectedEvaluation.legal_status !== 'LEGAL'" class="lg-action-dock">
+              <footer v-if="effectiveStatus(selectedEvaluation) !== 'LEGAL' || reviewInAlarm" class="lg-action-dock">
                 <div class="detail-actions">
                   <button v-if="reviewFocus.superseded && selectedEvaluation.superseded_by_evaluation_id" class="btn pri" type="button" @click="selectEvaluationById(selectedEvaluation.superseded_by_evaluation_id)">查看最新研判</button>
                   <button v-else-if="reviewInAlarm" class="btn pri" type="button" :disabled="!canOpenAlarm" @click="openRelatedAlarm">前往告警页面</button>
+                  <button v-else-if="manualIllegalNeedsAlarm && allowed.includes('ESCALATE')" class="btn pri" type="button" @click="onEscalate">转告警</button>
                   <button v-else-if="reviewFocus.needsReview" class="btn pri" type="button" :disabled="!allowed.includes('REVIEW')" @click="onReview">核对信息缺口</button>
                   <details v-if="allowed.includes('RECOMPUTE') || (allowed.includes('REVIEW') && !reviewInAlarm && !reviewFocus.needsReview && !reviewFocus.superseded)" :key="selectedEvaluation.evaluation_id" class="lg-secondary-actions">
                     <summary>更多操作</summary>
@@ -1064,10 +1074,10 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
 .lg-region-filter :deep(label){font-size:12px;line-height:18px;color:var(--txt-3)}
 .lg-list-host{min-height:0;flex:1;display:flex;flex-direction:column}
 .lg-table-scroll{flex:1;min-height:0;overflow:auto;scrollbar-width:thin}
-.lg-target-table{border-collapse:separate;border-spacing:0;width:100%;min-width:720px;table-layout:fixed;font-size:13px;color:var(--txt-2)}
+.lg-target-table{border-collapse:separate;border-spacing:0;width:100%;min-width:840px;table-layout:fixed;font-size:13px;color:var(--txt-2)}
 .lg-target-table th{white-space:nowrap;position:sticky;top:0;z-index:1;height:46px;padding:10px;background:var(--table-head-gradient);color:var(--txt-2);text-align:left;font-size:12px;font-weight:600;border-bottom:1px solid var(--line-2)}
 .lg-target-table td{height:62px;padding:9px;border-bottom:1px solid var(--line-2);white-space:normal;overflow-wrap:anywhere}
-.lg-target-table th:nth-child(1){width:20%}.lg-target-table th:nth-child(2){width:19%}.lg-target-table th:nth-child(3){width:13%}.lg-target-table th:nth-child(4){width:110px}.lg-target-table th:nth-child(5){width:17%}.lg-target-table th:nth-child(6){width:auto}
+.lg-target-table th:nth-child(1){width:168px}.lg-target-table th:nth-child(2){width:125px}.lg-target-table th:nth-child(3){width:115px}.lg-target-table th:nth-child(4){width:110px}.lg-target-table th:nth-child(5){width:auto}.lg-target-table th:nth-child(6){width:160px}
 .lg-target-table tbody tr{cursor:pointer}.lg-target-table tbody tr:hover{background:var(--surface-hover)}.lg-target-table tbody tr.is-selected{background:var(--surface-selected);box-shadow:inset 2px 0 0 var(--lg-accent)}
 .lg-target-link{display:flex;align-items:center;gap:8px;width:100%;padding:0;border:0;background:none;text-align:left;color:inherit}
 .lg-target-icon{display:flex;align-items:center;justify-content:center;flex:none;width:28px;height:28px;border-radius:4px;background:var(--surface-2);color:var(--blue)}

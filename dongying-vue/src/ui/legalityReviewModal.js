@@ -149,13 +149,16 @@ function reviewReasonCodes(focus) {
 function intro(evaluation) {
   const focus = legalityReviewFocus(evaluation);
   const reasonText = reviewReasonCodes(focus).map(ruleReasonText).filter(Boolean).join('、');
-  const conclusion = esc(legalStatusText(evaluation.legal_status));
-  const grade = evaluation.grade ? `　等级 ${esc(GRADE_TEXT[evaluation.grade] || evaluation.grade)}` : '';
+  const effective = evaluation.effective_legal_status || evaluation.legal_status;
+  const reviewed = ['CONFIRMED', 'OVERRIDDEN', 'REJECTED', 'SUPERSEDED'].includes(evaluation.review?.state);
+  const conclusion = esc(legalStatusText(reviewed ? effective : evaluation.legal_status));
+  const grade = evaluation.grade && (!reviewed || effective === evaluation.legal_status) ? `　等级 ${esc(GRADE_TEXT[evaluation.grade] || evaluation.grade)}` : '';
   const headline = focus.needsReview ? '需要人工核对' : focus.reviewed ? '已完成人工复核' : '当前系统结论';
   const operatorNote = focus.needsReview
     ? '当前证据不足，结论暂不能可靠确认，请根据下列原因核对信息缺口。'
     : focus.note;
   const rows = [
+    reviewed ? ['原始系统结论', esc(legalStatusText(evaluation.original_legal_status || evaluation.legal_status))] : null,
     ['任务匹配', esc(planMatchText(evaluation.plan_match_code)) + (evaluation.plan_no ? `　${esc(evaluation.plan_no)}` : '')],
     evaluation.violation_reasons?.length ? ['违规原因', esc(evaluation.violation_reasons.map(ruleReasonText).join('、'))] : null
   ].filter(Boolean).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join('');
@@ -163,8 +166,8 @@ function intro(evaluation) {
     <section class="legality-review-focus ${focus.needsReview ? 'is-attention' : ''}">
       <div class="legality-review-focus__eyebrow">操作员重点</div>
       <div class="legality-review-focus__title">${headline}</div>
-      <div class="legality-review-focus__conclusion"><span>系统结论</span><strong>${conclusion}${grade}</strong></div>
-      ${reasonText ? `<p class="legality-review-focus__reason"><b>待核对：</b>${esc(reasonText)}</p>` : ''}
+      <div class="legality-review-focus__conclusion"><span>${reviewed ? '生效结论' : '系统结论'}</span><strong>${conclusion}${grade}</strong></div>
+      ${reasonText ? `<p class="legality-review-focus__reason"><b>${reviewed ? '原系统待核对：' : '待核对：'}</b>${esc(reasonText)}</p>` : ''}
       <p class="legality-review-focus__note">${esc(operatorNote)}</p>
     </section>
     <dl class="kv legality-review-facts">${rows}</dl>
@@ -193,7 +196,7 @@ export function openLegalityReview({ evaluation, refresh, onDone } = {}) {
   openFormModal({
     title: (focus.needsReview ? '核对信息缺口 · ' : '补充人工纠正 · ') + esc(evaluation.target_no || evaluation.plan_no || '研判'),
     width: '620px',
-    warning: '本弹窗只记录人工结论，不会执行反制，也不会修改告警核实状态。确认保留系统结论；改判需要选择人工结论。',
+    warning: '人工结论为非法时，有转告警权限的账号将同步生成或关联告警并确认属实，提交时一并校验告警核实权限，无需重复核实。短信、电话和反制按各自条件推进。驳回记录系统误判；改判需选择人工结论。',
     introHtml: intro(evaluation),
     fields: [
       { key: 'conclusion', label: '复核结论', type: 'radio', required: true, options: [
@@ -218,7 +221,8 @@ export function openLegalityReview({ evaluation, refresh, onDone } = {}) {
         const result = await legalityApi.reviseEvaluation(evaluationId, body, key);
         releaseKey(evaluationId, action);
         closeModal();
-        toast(`复核完成：${reviewStateText(result?.review?.state)}`, 'ok');
+        const followed = result?.effective_legal_status === 'ILLEGAL' && result?.alarm_verification?.conclusion === 'CONFIRMED';
+        toast(followed ? '复核完成，告警已确认，可前往告警页面查看通知与处置进度' : `复核完成：${reviewStateText(result?.review?.state)}`, 'ok');
         if (refresh) await refresh(result);
         if (onDone) onDone(result);
       } catch (error) {
@@ -279,16 +283,18 @@ export function openLegalityRecompute({ evaluation, refresh, onDone } = {}) {
 
 export function openLegalityEscalation({ evaluation, refresh, onDone } = {}) {
   if (!evaluation) { toast('尚未选择研判，无法转告警', 'err'); return false; }
-  if (!(evaluation.allowed_actions || []).includes('ESCALATE')) { toast('当前研判不可转告警（已关联告警、结论为合法或缺少权限）', 'err'); return false; }
+  if (!(evaluation.allowed_actions || []).includes('ESCALATE')) { toast('当前研判不可转告警（已有关联、结论不支持或缺少权限）', 'err'); return false; }
   const evaluationId = evaluation.evaluation_id;
   const expectedVersion = Number(evaluation.review?.version ?? 0);
   const action = 'escalate';
   holdKey(evaluationId, action);
   openFormModal({
-    title: '转告警 · ' + esc(evaluationId),
+    title: '转告警 · ' + esc(evaluation.target_no || evaluation.plan_no || '研判'),
     width: '600px',
     // 2026-10-06（BUG-16）：同一架无人机已有正在处理的告警时，服务端把这次转告警并入并升级那条告警，不再另起一条。
-    warning: '这架无人机已有正在处理的告警时，转告警会并入并升级那条告警，记下操作人和说明，不再另起一条；没有时新建告警和待核实事件。后续核实、反制与处罚交接仍在告警页按原流程办理。',
+    warning: evaluation.effective_legal_status === 'ILLEGAL' && evaluation.review?.manual_status === 'ILLEGAL'
+      ? '已有告警时按合并规则关联，没有时新建告警；承接已保存的人工非法结论并确认属实，需要告警核实权限。后续短信、电话和反制按各自条件推进。'
+      : '已有告警时按合并规则关联，没有时新建待核实告警；请前往告警页面继续处理。',
     introHtml: intro(evaluation),
     fields: [
       { key: 'note', label: '转告警说明（选填）', type: 'textarea', minRows: 4, placeholder: '可补充人工转告警的原因，最多 1000 字' }
@@ -362,8 +368,8 @@ export async function openRuleVersionView({ ruleSetVersionId, ruleSetCode, versi
     toast(error?.status === 403 ? '当前账号没有规则读取权限，无法查看参数。' : messageOf(error, '读取规则版本失败'), 'err');
     return false;
   }
-  const members = (detail?.members || []).map(m => `<tr><td class="mono">${esc(m.rule_code)}</td><td>${esc(RULE_CODE_TEXT[m.rule_code] || '')}</td><td>${esc(m.priority)}</td><td>${m.enabled === false ? '停用' : '启用'}</td></tr>`).join('');
-  const params = (detail?.params || []).map(p => `<tr><td class="mono">${esc(p.rule_code)}</td><td>${esc(paramKeyText(p.key))}</td><td>${esc(paramValueText(p.key, p.value))}${p.unit ? ` ${esc(p.unit)}` : ''}</td><td>${p.status === 'DEMO' ? '<span class="tag t-amber">演示值</span>' : '<span class="tag t-green">已确认</span>'}</td><td>${esc(demoNoteText(p.note))}</td></tr>`).join('');
+  const members = (detail?.members || []).map(m => `<tr><td class="mono">${esc(m.rule_code)}</td><td><span class="table-text" tabindex="0">${esc(RULE_CODE_TEXT[m.rule_code] || '')}</span></td><td><span class="table-text" tabindex="0">${esc(m.priority)}</span></td><td><span class="table-text" tabindex="0">${m.enabled === false ? '停用' : '启用'}</span></td></tr>`).join('');
+  const params = (detail?.params || []).map(p => `<tr><td class="mono">${esc(p.rule_code)}</td><td><span class="table-text" tabindex="0">${esc(paramKeyText(p.key))}</span></td><td><span class="table-text" tabindex="0">${esc(paramValueText(p.key, p.value))}${p.unit ? ` ${esc(p.unit)}` : ''}</span></td><td>${p.status === 'DEMO' ? '<span class="tag t-amber">演示值</span>' : '<span class="tag t-green">已确认</span>'}</td><td><span class="table-text" tabindex="0">${esc(demoNoteText(p.note))}</span></td></tr>`).join('');
   const head = `<dl class="kv"><dt>规则集</dt><dd>${esc(RULE_SET_LABEL[detail?.rule_set_code || ruleSetCode] || detail?.rule_set_code || ruleSetCode || '—')} 第 ${esc(detail?.version_no ?? versionNo ?? '—')} 版</dd>`
     + `<dt>状态</dt><dd>${esc(VERSION_STATUS_TEXT[detail?.status_code] || '—')}　参数 ${detail?.param_status === 'DEMO' ? '<span class="tag t-amber">演示值</span>' : (detail?.param_status ? '已确认' : '—')}</dd>`
     + `<dt>生效状态</dt><dd>${detail?.is_active ? '生效中' : '未生效'}${detail?.is_shadow ? '，试运行中' : ''}</dd>`

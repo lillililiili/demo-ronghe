@@ -49,7 +49,7 @@ const routeError = computed(() => exactKeys.value.length > 1 || exactKeys.value.
 const selectedKey = computed(() => `${st.sourceKind}:${st.selId}`);
 const fileDetailHtml = computed(() => detailRow.value ? renderEvidenceFileDetail(detailRow.value, { mode: 'page', embeddedPreview: true }) : '');
 const format = ms => fmtEvidenceTime(ms);
-function stateLabel(row) { return row.source_kind === 'COMMAND' ? COMMAND_STATE_LABEL[row.status] || '执行结果未知' : row.source_kind === 'TRACK' ? row.status === 'NO_POINTS' ? '暂无观测点' : '可查看' : EVIDENCE_STATUS_LABEL[row.status] || row.status; }
+function stateLabel(row) { return row.source_kind === 'COMMAND' ? row.status === 'SUCCEEDED' ? '已完成' : COMMAND_STATE_LABEL[row.status] || '执行结果未知' : row.source_kind === 'TRACK' ? row.status === 'NO_POINTS' ? '暂无观测点' : '可查看' : EVIDENCE_STATUS_LABEL[row.status] || row.status; }
 function name(row) { return row.source_kind === 'COMMAND' ? COMMAND_TYPE_LABEL[row.original_name] || row.original_name : row.source_kind === 'TRACK' ? `目标 ${row.original_name} 的轨迹` : row.original_name; }
 function shape(row) { return row.source_kind === 'TRACK' ? ({ RAW: '原始观测', FUSED: '融合轨迹' }[row.layer] || '分层未记录') : row.kind_code === 'TRACK_SNAPSHOT' ? '已保存快照' : row.kind_code === 'COMMAND_LOG' ? '历史日志文件' : ''; }
 function context() { return hasContext.value ? { subject_kind: text(route.query.subjectKind), subject_id: text(route.query.subjectId) } : {}; }
@@ -283,11 +283,12 @@ onBeforeUnmount(() => { mounted = false; listSequence += 1; detailSequence += 1;
           <div v-if="loading" class="empty" role="status">正在读取证据</div>
           <div v-else-if="error" class="empty"><button class="btn" @click="load">重新读取</button></div>
           <div v-else-if="!items.length" class="empty">当前筛选条件下暂无证据</div>
-          <table v-else class="tb"><thead><tr><th>证据编号 / 类型</th><th>内容</th><th>取证 / 发生时刻</th><th>大小</th><th>状态</th></tr></thead>
+          <table v-else class="tb"><colgroup><col style="width:160px"><col style="width:68px"><col><col style="width:170px"><col style="width:70px"><col style="width:90px"></colgroup><thead><tr><th>证据编号</th><th>类型</th><th>内容</th><th>发生时刻</th><th>大小</th><th>状态</th></tr></thead>
             <tbody><tr v-for="row in items" :key="entryKey(row)" :class="{ on: entryKey(row) === selectedKey }" @click="select(row)">
-              <td class="num"><button class="evidence-record-name" @click.stop="select(row)">{{ row.evidence_no }}</button><div class="cell-sub">{{ EVIDENCE_CATEGORY_LABEL[row.category] }}</div></td>
-              <td>{{ name(row) }}<div v-if="shape(row)" class="cell-sub">{{ shape(row) }}</div></td>
-              <td class="num">{{ format(row.occurred_at) }}</td><td class="num">{{ row.source_kind === 'FILE' && row.status !== 'DESTROYED' ? sizeText(row.size_bytes) : '—' }}</td>
+              <td class="num"><button class="evidence-record-name table-text" @click.stop="select(row)">{{ row.evidence_no }}</button></td>
+              <td>{{ EVIDENCE_CATEGORY_LABEL[row.category] }}</td>
+              <td><span class="table-text" tabindex="0">{{ name(row) }}</span><div v-if="shape(row)" class="cell-sub table-text" tabindex="0">{{ shape(row) }}</div></td>
+              <td class="evidence-occurred-at">{{ format(row.occurred_at) }}</td><td class="num">{{ row.source_kind === 'FILE' && row.status !== 'DESTROYED' ? sizeText(row.size_bytes) : '—' }}</td>
               <td><span class="tag" :class="SC[row.status] || 't-gray'">{{ stateLabel(row) }}</span></td>
             </tr></tbody>
           </table>
@@ -307,10 +308,10 @@ onBeforeUnmount(() => { mounted = false; listSequence += 1; detailSequence += 1;
 <style scoped>
 .evidence-filters { --filter-field-width: 128px; }
 .evidence-search { --filter-field-width: 192px; }
-.evidence-list .tb { table-layout: fixed; width: 100%; }
+.evidence-list .tb { table-layout: fixed; width: 100%; min-width:740px; }
 .evidence-list .tb td { white-space: normal; overflow-wrap: anywhere; }
-.evidence-list .tb th:nth-child(2) { min-width: 140px; }
+.evidence-list .tb .evidence-occurred-at { white-space: nowrap; font-weight: 400; }
 .evidence-root .evidence-row { min-height: 440px; flex-shrink: 0; }
 .evidence-root { overflow: auto; }
-.evidence-root{height:100%;min-height:600px;display:flex;flex-direction:column}.evidence-row{flex:1;min-height:0;padding-bottom:6px}.evidence-list{flex:1;min-height:0;overflow:auto}.evidence-detail{flex:1;min-height:0;overflow:auto;padding:12px}.evidence-located-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;color:var(--txt-2);font-size:12px;line-height:1.6}.evidence-located-toolbar>button{margin-left:auto}.evidence-record-name{padding:0;background:none;border:0;color:inherit;font:inherit;text-align:left;cursor:pointer;overflow-wrap:anywhere}.cell-sub{font-size:11px;color:var(--txt-3)}.evidence-list td{overflow-wrap:anywhere}.evidence-list th:nth-child(1){width:148px}.evidence-list th:nth-child(3){width:124px}.evidence-list th:nth-child(4){width:72px}.evidence-list th:nth-child(5){width:86px}#evDetail :deep(.detail-hero-title),#evDetail :deep(.detail-hero-id){display:block;white-space:normal;overflow:visible;overflow-wrap:anywhere;text-overflow:unset;-webkit-line-clamp:unset;-webkit-box-orient:initial}
+.evidence-root{height:100%;min-height:600px;display:flex;flex-direction:column}.evidence-row{flex:1;min-height:0;padding-bottom:6px}.evidence-list{flex:1;min-height:0;overflow:auto}.evidence-detail{flex:1;min-height:0;overflow:auto;padding:12px}.evidence-located-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;color:var(--txt-2);font-size:12px;line-height:1.6}.evidence-located-toolbar>button{margin-left:auto}.evidence-record-name{padding:0;background:none;border:0;color:inherit;font:inherit;text-align:left;cursor:pointer;overflow-wrap:anywhere}.cell-sub{font-size:11px;color:var(--txt-3)}.evidence-list td{overflow-wrap:anywhere}#evDetail :deep(.detail-hero-title),#evDetail :deep(.detail-hero-id){display:block;white-space:normal;overflow:visible;overflow-wrap:anywhere;text-overflow:unset;-webkit-line-clamp:unset;-webkit-box-orient:initial}
 </style>

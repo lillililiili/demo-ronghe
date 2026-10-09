@@ -13,6 +13,7 @@ import NavSidebar from './NavSidebar.vue';
 import Breadcrumb from './Breadcrumb.vue';
 import PageHost from './PageHost.vue';
 import SessionExpiredModal from './SessionExpiredModal.vue';
+import TableOverflowTooltip from '@/components/TableOverflowTooltip.vue';
 import { useAppStore } from '@/stores/app.js';
 import { canAccessRoute } from '@/services/accessControl.js';
 import { installLegacyControlObserver } from '@/ui/legacyControls.js';
@@ -64,6 +65,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
+  <TableOverflowTooltip />
   <n-config-provider v-if="showRestoreFailure" :theme="theme" :theme-overrides="themeOverrides" :locale="zhCN" :date-locale="dateZhCN" style="display:contents">
     <main class="session-outage" role="alert">
       <section>

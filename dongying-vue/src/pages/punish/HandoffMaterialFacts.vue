@@ -63,8 +63,9 @@ function formatTime(value) {
       <h4>移送时证据</h4>
       <p v-if="evidenceHidden" class="hmf-meta">当前账号没有查看证据的权限，移送时证据不显示</p>
       <template v-else-if="chain">
-        <p v-if="chain.total">{{ chain.total }} 项 · 按移送时保存，文件可凭 SHA-256 与证据台账逐项核对</p>
-        <p v-else class="hmf-meta">移送时未关联证据</p>
+        <p v-if="chain.total">显示 {{ chain.total }} 项 · 按移送时保存，文件可凭 SHA-256 与证据台账逐项核对</p>
+        <p v-else-if="!chain.trackUnavailable" class="hmf-meta">移送时未关联证据</p>
+        <p v-if="chain.trackUnavailable" class="hmf-meta">移送时材料中暂无可识别的融合轨迹</p>
         <ul v-if="chain.total" class="hmf-chain">
           <li v-for="item in chain.items" :key="item.key">
             <p><span class="tag t-gray">{{ item.category }}</span>

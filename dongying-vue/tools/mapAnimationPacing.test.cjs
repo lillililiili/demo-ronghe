@@ -13,7 +13,7 @@ const vm = require('node:vm');
 
 let pending = null;
 const context = {
-  window: {},
+  window: { UI: { abnormalActive: item => !!item.abnormal } },
   requestAnimationFrame: callback => { pending = callback; return 1; },
   cancelAnimationFrame: () => { pending = null; }
 };
@@ -33,8 +33,8 @@ assert.equal(gap([3000, 2600, 16]), 0, '有一帧恢复正常就回到逐帧动�
 const map = Object.create(MapView.prototype);
 let clock = 0, drawCost = 16, drew = false;
 const drawTimes = [];
-Object.assign(map, { t: 0, box: { isConnected: true }, layers: { device: true, coverage: true },
-  data: { devices: [{ statusCode: 'ONLINE' }] }, draw() { drew = true; drawTimes.push(clock); } });
+Object.assign(map, { opt: {}, t: 0, box: { isConnected: true }, layers: { device: true, coverage: true },
+  data: { devices: [{ statusCode: 'ONLINE' }] }, draw() { drew = true; drawTimes.push(clock); this._animDrawnAt = clock; this._animDrawPending = false; } });
 function runFor(ms) {
   const end = clock + ms;
   while (clock < end) {
@@ -110,7 +110,7 @@ const paced = Object.create(MapView.prototype);
 Object.assign(paced, {
   opt: { animationFps: 12 }, t: 0, box: { isConnected: true },
   layers: { device: true, coverage: true }, data: { devices: [{ statusCode: 'ONLINE' }] },
-  draw() { drew = true; pacedDraws.push(clock); }
+  draw() { drew = true; pacedDraws.push(clock); this._animDrawnAt = clock; this._animDrawPending = false; }
 });
 paced._loop();
 runFor(1000);
@@ -120,3 +120,31 @@ paced._dead = true;
 runFor(16);
 assert.equal(pending, null, '限制帧率的地图销毁后循环停止');
 console.log('全部通过：地图装饰动画让路');
+
+// Exercise the actual queued draw method: repeated requests share a frame and
+// animation timing is measured on the next browser frame, not the same tick.
+const queue = new Map();
+let frameId = 0;
+context.requestAnimationFrame = callback => { const id = ++frameId; queue.set(id, callback); return id; };
+context.cancelAnimationFrame = id => queue.delete(id);
+const queued = Object.create(MapView.prototype);
+let frames = 0, hits = 0;
+Object.assign(queued, {
+  opt: {}, t: 0, box: { isConnected: true }, data: { devices: [] }, layers: {},
+  _drawFrame() { frames++; }, _hit() { hits++; }, _animDrawPending: true, _viewHitPending: true
+});
+queued.draw(); queued.draw(); queued.draw();
+assert.equal(queue.size, 1);
+const flush = timestamp => { const jobs = [...queue.values()]; queue.clear(); jobs.forEach(job => job(timestamp)); };
+flush(100);
+assert.equal(frames, 1); assert.equal(hits, 1);
+queued._loop();
+flush(100);
+assert.equal(queued._animDrawnAt, 100, 'same-frame callback must not record a zero-cost frame');
+flush(3100);
+assert.equal(queued._frameCosts[0], 3000, 'deferred draw cost still drives slow-frame pacing');
+queued.draw(); queued.setPaused(true);
+assert.equal(queue.size, 0, 'pause cancels queued drawing and decoration callbacks');
+queued._dead = true;
+queued.draw();
+assert.equal(queue.size, 0);

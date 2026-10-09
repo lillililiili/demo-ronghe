@@ -389,23 +389,23 @@ onUnmounted(() => {
         <div v-if="activeTab === 'event'" class="sr-table-wrap">
           <div v-if="listError" class="empty">{{ listError }}<br><button class="btn" type="button" @click="loadList(1)">重试</button></div>
           <div v-else-if="listLoading && !rows.length" class="empty">正在读取风险事件…</div>
-          <table v-else class="tb">
+          <table v-else class="tb" style="min-width:900px">
             <thead><tr>
               <th>编号</th><th>目标</th><th>异物细类</th><th>来源</th><th>区域 / 高度</th><th>最近航线</th><th>等级</th><th>状态</th>
             </tr></thead>
             <tbody>
               <tr v-for="row in rows" :key="row.risk_id" :class="{ on: selectedId === row.risk_id }" @click="selectRisk(row.risk_id)">
-                <td class="num"><span :title="`${row.source_risk_id || ''} / ${row.risk_id}`">{{ riskNoText(row) }}</span></td>
-                <td><span v-if="row.target_no" :title="row.target_id">{{ row.target_no }}</span><span v-else>—</span></td>
-                <td>{{ row.space_fact ? labelOf(SPACE_OBJECT_SUBTYPE_LABEL, row.space_fact.subtype_code) : '—' }}</td>
-                <td>{{ labelOf(SOURCE_MODE_LABEL, row.source_mode) }}</td>
-                <td>
+                <td class="num"><div class="table-text" tabindex="0"><span :title="`${row.source_risk_id || ''} / ${row.risk_id}`">{{ riskNoText(row) }}</span></div></td>
+                <td><div class="table-text" tabindex="0"><span v-if="row.target_no" :title="row.target_id">{{ row.target_no }}</span><span v-else>—</span></div></td>
+                <td><div class="table-text" tabindex="0">{{ row.space_fact ? labelOf(SPACE_OBJECT_SUBTYPE_LABEL, row.space_fact.subtype_code) : '—' }}</div></td>
+                <td><div class="table-text" tabindex="0">{{ labelOf(SOURCE_MODE_LABEL, row.source_mode) }}</div></td>
+                <td><div class="table-text" tabindex="0">
                   <div>{{ row.district_name || '—' }}</div>
                   <div v-if="row.space_fact" class="sr-sub">{{ labelOf(ALTITUDE_BAND_LABEL, row.space_fact.altitude_band) }}</div>
-                </td>
-                <td><span v-if="row.plan_no" :title="row.plan_no">{{ displayPlanNo(row.plan_no) }}</span><span v-else>—</span></td>
+                </div></td>
+                <td><div class="table-text" tabindex="0"><span v-if="row.plan_no" :title="row.plan_no">{{ displayPlanNo(row.plan_no) }}</span><span v-else>—</span></div></td>
                 <td><span class="tag" :class="severityTag(row.severity)">{{ labelOf(SEVERITY_LABEL, row.severity) }}</span></td>
-                <td>{{ labelOf(RISK_STATE_LABEL, row.state) }}</td>
+                <td><div class="table-text" tabindex="0">{{ labelOf(RISK_STATE_LABEL, row.state) }}</div></td>
               </tr>
               <tr v-if="!rows.length"><td colspan="8" class="empty">当前筛选条件下没有异物风险事件</td></tr>
             </tbody>
@@ -420,10 +420,10 @@ onUnmounted(() => {
             <thead><tr><th>接收方</th><th>通报类型</th><th>提交时间</th><th>发送情况</th></tr></thead>
             <tbody>
               <tr v-for="notice in notices" :key="notice.handoff_id">
-                <td><span :title="notice.handoff_id">{{ notice.recipient_name || '—' }}</span></td>
-                <td>{{ labelOf(HANDOFF_TYPE_LABEL, notice.handoff_type) }}</td>
-                <td>{{ fmt(notice.created_at) }}</td>
-                <td>{{ labelOf(DELIVERY_STATUS_LABEL, notice.delivery_status) }}</td>
+                <td><div class="table-text" tabindex="0"><span :title="notice.handoff_id">{{ notice.recipient_name || '—' }}</span></div></td>
+                <td><div class="table-text" tabindex="0">{{ labelOf(HANDOFF_TYPE_LABEL, notice.handoff_type) }}</div></td>
+                <td><div class="table-text" tabindex="0">{{ fmt(notice.created_at) }}</div></td>
+                <td><div class="table-text" tabindex="0">{{ labelOf(DELIVERY_STATUS_LABEL, notice.delivery_status) }}</div></td>
               </tr>
               <tr v-if="!notices.length"><td colspan="4" class="empty">所选事件还没有通报记录</td></tr>
             </tbody>

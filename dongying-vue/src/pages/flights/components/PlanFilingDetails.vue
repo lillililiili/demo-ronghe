@@ -53,13 +53,14 @@ const missingFields = computed(() => [
   subjects.value && !reportingName.value.trim() && '报送单位',
   !uavSn.value && '无人机编号'
 ].filter(Boolean));
-const sites = computed(() => {
-  const from = filing.value.takeoff_site_name?.trim(), to = filing.value.landing_site_name?.trim();
-  if (!from && !to) return '';
-  return `${from || '未提供'} → ${to || '未提供'}`;
-});
-const sitesTitle = computed(() => [position(filing.value.takeoff_longitude, filing.value.takeoff_latitude), position(filing.value.landing_longitude, filing.value.landing_latitude)]
-  .map((text, index) => text && `${index ? '降落点' : '起飞点'} ${text}`).filter(Boolean).join('\n'));
+/* 起飞点、降落点：名称和坐标有哪个显示哪个，坐标不再只放在悬停说明里；名称和坐标都没有时整行不显示。 */
+function site(name, lon, lat) {
+  const label = typeof name === 'string' ? name.trim() : '';
+  const coordinate = position(lon, lat);
+  return label || coordinate ? { label, coordinate } : null;
+}
+const takeoffSite = computed(() => site(filing.value.takeoff_site_name, filing.value.takeoff_longitude, filing.value.takeoff_latitude));
+const landingSite = computed(() => site(filing.value.landing_site_name, filing.value.landing_longitude, filing.value.landing_latitude));
 const routeMeta = computed(() => {
   const no = displayRouteNo(props.plan.route?.route_no) || props.plan.route?.route_no || '';
   const version = props.plan.route?.version_no == null ? '' : `v${props.plan.route.version_no}`;
@@ -109,7 +110,8 @@ const routeMeta = computed(() => {
     <h4 class="route-heading">时间与航线</h4>
     <dl class="kv kv-surface">
       <dt>时间</dt><dd :title="`${time(plan.start_at)} 至 ${time(plan.end_at)}`">{{ planWindowText(plan) }}</dd>
-      <template v-if="sites"><dt>起降点</dt><dd :title="sitesTitle">{{ sites }}</dd></template>
+      <template v-if="takeoffSite"><dt>起飞点</dt><dd>{{ takeoffSite.label || '名称未提供' }}<small v-if="takeoffSite.coordinate">{{ takeoffSite.coordinate }}</small></dd></template>
+      <template v-if="landingSite"><dt>降落点</dt><dd>{{ landingSite.label || '名称未提供' }}<small v-if="landingSite.coordinate">{{ landingSite.coordinate }}</small></dd></template>
       <dt>航线</dt><dd><span class="route-name">{{ value(plan.route?.name) }}</span><span v-if="routeMeta" class="muted">（{{ routeMeta }}）</span></dd>
       <template v-if="routeLoading"><dt>高度宽度</dt><dd>正在读取</dd></template>
       <template v-else-if="routeError"><dt>高度宽度</dt><dd class="muted">{{ routeError }}</dd></template>

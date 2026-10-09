@@ -324,7 +324,7 @@ onUnmounted(() => { active = false; request++; detailRequest++; });
 .handling-panel :deep(.emergency-stop-panel) { border:0; border-top:1px solid var(--line); border-bottom:1px solid var(--line); border-radius:0; }
 .handling-panel :deep(.es-header) { position:static; border-radius:0; padding:14px 16px; }
 .handling-panel :deep(.es-header h3) { font-size:13px; color:var(--txt-2); }.handling-panel :deep(.es-stop-area) { width:100%; align-items:stretch; }
-.authorization-dossier { padding:0 16px; }.authorization-dossier summary { cursor:pointer; padding:16px 0; font-weight:600; font-size:14px; }
+.authorization-dossier { margin:12px; padding:0 14px; border:1px solid rgba(117,188,255,.28); border-radius:8px; background:rgba(117,188,255,.10); box-shadow:inset 0 1px 0 rgba(190,225,255,.08); }.authorization-dossier summary { cursor:pointer; padding:14px 0; font-weight:600; font-size:14px; }
 .detail-facts { display:grid; grid-template-columns:80px minmax(0,1fr); gap:10px 12px; line-height:1.7; font-size:13px; margin:0 0 16px; }
 .detail-facts dt { color:var(--txt-2); }.detail-facts dd { margin:0; overflow-wrap:anywhere; white-space:pre-wrap; }
 .workspace-empty { display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:24px; border:1px solid var(--line); border-radius:var(--r); background:var(--surface-gradient); }.workspace-empty p { color:var(--txt-2); font-size:13px; }

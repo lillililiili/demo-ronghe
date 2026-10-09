@@ -63,7 +63,6 @@
   toggle.addEventListener('click', async () => {
     if (busy) return;
     const enabled = current.video_config?.enabled !== true;
-    if (enabled && !current.video_config?.publisher_password_set) { settings(true); return; }
     busy = true; requestError = ''; update(current);
     try { applyRuntime(await api('video', {enabled})); }
     catch (error) { requestError = error.message; }

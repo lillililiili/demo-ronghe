@@ -1996,7 +1996,6 @@ onUnmounted(() => {
 
     <template v-else>
       <UKpis :list="kpiList" @click="onPlanKpiClick" @keydown="onPlanKpiKeydown" />
-      <div v-if="upstreamNotice" class="warnbox plan-upstream-notice" role="status"><b>{{ upstreamNotice.title }}</b>{{ upstreamNotice.detail }}</div>
       <div v-if="error" class="warnbox">{{ error }}</div>
       <div class="row flight-main">
         <UPanel title="飞行计划" class="workspace-list" nopad>
@@ -2166,8 +2165,6 @@ onUnmounted(() => {
 .plan-filter-note { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--line); color: var(--txt-2); }
 .plan-filter-note span { min-width: 0; overflow-wrap: anywhere; }
 .plan-filter-note .btn { flex: none; padding: 2px 8px; font-size: 11px; }
-.plan-upstream-notice { flex: none; margin-top: 8px; padding: 6px 12px; font-size: 12px; line-height: 1.55; }
-.plan-upstream-notice b { margin-right: 8px; }
 /* 选中的统计卡：加粗描边、底色微染并标“筛选中”，不只靠颜色区分。 */
 .flights-page :deep(.kpi.is-active) { border-color: var(--kpi-c); box-shadow: inset 0 0 0 2px var(--kpi-c); background: color-mix(in srgb, var(--kpi-c) 12%, var(--panel)); }
 .flights-page :deep(.kpi.is-active::after) { content: '筛选中'; display: block; position: absolute; inset: 6px 8px auto auto; z-index: 1; padding: 0 6px; border: 1px solid color-mix(in srgb, var(--kpi-c) 50%, transparent); border-radius: 4px; background: color-mix(in srgb, var(--kpi-c) 18%, transparent); color: var(--kpi-c); font-size: 10px; font-weight: 600; line-height: 16px; }

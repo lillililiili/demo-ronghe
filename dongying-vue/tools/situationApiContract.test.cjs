@@ -27,7 +27,7 @@ async function loadSource(deps) {
   source = `const { deviceApi, targetApi, listAlarms, listAllFlightPlans, flightApi, airspaceApi,
     riskApi, handoffApi, mapPool, attachBearing, attachDeviceEvents, attachRecentTracks,
     attachTargetSourceLinks, bearingOrigins, toAirspaces, toAlarms, toDevices, toFlightPlans,
-    toRisks, toTargets, SITUATION_DEVICE_TYPE_ORDER, onDataChange, hasPermission } = globalThis.__situationContractDeps;\n${source}`;
+    toRisks, toTargets, SITUATION_DEVICE_TYPE_ORDER, isRealtimeConnected, onDataChange, hasPermission } = globalThis.__situationContractDeps;\n${source}`;
   globalThis.__situationContractDeps = deps;
   return import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}#${Date.now()}`);
 }
@@ -47,6 +47,7 @@ async function main() {
   const calls = { alarms: 0, risks: 0, handoffs: 0, plans: 0 };
   let eventCalls = 0;
   let handoffsForbidden = false;
+  let realtimeConnected = false;
   const ALL_CODES = ['target:read', 'alarm:read', 'risk:read', 'handoff:read', 'devices.read', 'monitoring.read',
     'flight:read', 'route:read', 'airspace:read'];
   let granted = new Set(ALL_CODES);
@@ -115,6 +116,7 @@ async function main() {
       return { items: [], total: 0 };
     } },
     onDataChange: (_topics, handler) => { pushHandler = handler; return () => { if (pushHandler === handler) pushHandler = null; }; },
+    isRealtimeConnected: () => realtimeConnected,
     hasPermission: code => granted.has(code)
   };
   const { createSituationApiSource } = await loadSource(deps);
@@ -206,6 +208,18 @@ async function main() {
     { targets: 0, devices: 2, alarms: 0, risks: 0, handoffs: 0, plans: 0 });
   pushed.stop();
   ok('停止后取消订阅', pushHandler === null);
+
+  // SSE 已连接时，保留推送触发的即时刷新，但不再每 10ms 走一次完整兜底轮询。
+  realtimeConnected = true;
+  const connected = createSituationApiSource({ fastMs: 10, slowMs: 60_000, now: () => clock });
+  const connectedSnapshots = [];
+  connected.start(value => connectedSnapshots.push(value), () => {});
+  while (!connectedSnapshots.length) await delay(5);
+  const connectedBefore = targetCalls;
+  await delay(100);
+  check('SSE 在线时完整轮询至少降到 30 秒', targetCalls - connectedBefore, 0);
+  connected.stop();
+  realtimeConnected = false;
 
   // ZT-09：值班员没有设备监测（monitoring.read）和风险读取权限：不请求设备事件和风险，也不报刷新失败。
   granted = new Set(ALL_CODES.filter(code => code !== 'monitoring.read' && code !== 'risk:read'));

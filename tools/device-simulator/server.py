@@ -10,6 +10,7 @@ import threading
 import time
 import uuid
 import subprocess
+import sys
 from contextlib import nullcontext
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import urlparse, unquote, parse_qs
@@ -20,6 +21,7 @@ from notification_inbox import read_inbox
 from notification_response import NotificationResponse
 from platform_client import Platform, Prerequisites, sql
 from eo_video import EoSimulator, video_config, public_video_config, sanitize_video_error, DEFAULT_VIDEO
+from video_media import LocalMediaService, load_or_create_credentials
 from realtime_control import RealtimeController, prepare_scene
 from full_scenario import full_scene, allocate_identities
 from fullchain import FullChain
@@ -27,6 +29,94 @@ from protocol_b import ProtocolBResponder
 from mqtt_recovery import CommandSubscriptions
 
 ROOT = Path(__file__).resolve().parent
+ACCEPTANCE_FLOW_OUTPUT_NAME = 'acceptance-flows-1-7-20261008'
+ACCEPTANCE_FLOW_FILES = {
+    'flow-1-auto-disposal.json',
+    'flow-2-after-sms-departure.json',
+    'flow-3-no-filing-direct-disposal.json',
+    'flow-4-operator-false-alarm.json',
+    'flow-5-manual-disposal.json',
+    'flow-6-weather-risk.json',
+    'flow-7-bird-flock.json',
+}
+acceptance_flow_lock = threading.Lock()
+
+
+def acceptance_flow_script():
+    """Find the repository-owned flow generator without accepting a browser path."""
+    configured = os.environ.get('ACCEPTANCE_FLOW_SCRIPT')
+    candidates = [Path(configured)] if configured else []
+    if len(ROOT.parents) > 3:
+        candidates.append(ROOT.parents[3] / 'houtaiguanlii' / 'scripts' / 'prepare_acceptance_flows_1_7.py')
+    candidates.append(Path(r'E:\houtaiguanlii\scripts\prepare_acceptance_flows_1_7.py'))
+    seen = set()
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        candidate = candidate.resolve()
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def prepare_acceptance_flows():
+    """Run the fixed seven-flow generator and return the importable scenes."""
+    script = acceptance_flow_script()
+    if script is None:
+        raise ValueError('找不到流程 1-7 数据脚本，请配置 ACCEPTANCE_FLOW_SCRIPT')
+    with acceptance_flow_lock:
+        try:
+            result = subprocess.run(
+                [sys.executable, str(script), '--install', '--force', '--simulator-root', str(ROOT)],
+                cwd=str(script.parents[1]), capture_output=True, text=True,
+                encoding='utf-8', errors='replace', timeout=60,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise ValueError('流程 1-7 数据脚本超过 60 秒未完成') from error
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or '未知错误').strip().splitlines()
+            raise ValueError('流程 1-7 数据生成失败：' + detail[-1][:500])
+        try:
+            summary = json.loads(next(line for line in reversed(result.stdout.splitlines()) if line.strip()))
+        except (StopIteration, json.JSONDecodeError) as error:
+            raise ValueError('流程 1-7 数据脚本返回格式无效') from error
+        output = Path(summary.get('output', '')).resolve()
+        scenarios_root = (ROOT / 'scenarios').resolve()
+        try:
+            output.relative_to(scenarios_root)
+        except ValueError as error:
+            raise ValueError('流程脚本输出目录不在模拟器 scenarios 目录内') from error
+        manifest_path = output / 'manifest.json'
+        if not manifest_path.is_file():
+            raise ValueError('流程脚本未生成 manifest.json')
+        manifest = json.loads(read_saved_text(manifest_path))
+        flows = []
+        for item in manifest.get('flows', []):
+            filename = item.get('file') if isinstance(item, dict) else None
+            if filename not in ACCEPTANCE_FLOW_FILES:
+                raise ValueError('流程清单包含未知文件')
+            scene_path = output / filename
+            scene = json.loads(read_saved_text(scene_path))
+            if scene.get('version') != 1 or scene.get('fullchain', {}).get('acceptanceFlow') not in range(1, 8):
+                raise ValueError('流程场景协议校验失败：' + filename)
+            flows.append({
+                'flow': scene['fullchain']['acceptanceFlow'],
+                'file': filename,
+                'name': scene.get('name', filename),
+                'scene': scene,
+                'expectedChecks': scene.get('fullchain', {}).get('expectedChecks', []),
+            })
+        if len(flows) != len(ACCEPTANCE_FLOW_FILES) or {item['flow'] for item in flows} != set(range(1, 8)):
+            raise ValueError('流程清单必须包含流程 1-7 各一条')
+        return {
+            'status': 'READY_FOR_IMPORT',
+            'output': str(output),
+            'filing_fields': summary.get('filing_fields', []),
+            'flows': sorted(flows, key=lambda item: item['flow']),
+        }
 
 def read_saved_text(path):
     """Read UTF-8 batches and the legacy Windows CP936 files without rewriting history."""
@@ -176,7 +266,7 @@ class Runtime:
         self.cancel = threading.Event(); self.thread = None
         self.next_session_check = 0
         self.snapshot = {}; self.skipped = []; self.response = None
-        self.video_config = dict(DEFAULT_VIDEO); self.eo = None; self.eo_status = {}
+        self.video_config = dict(DEFAULT_VIDEO); self.video_media = LocalMediaService(); self.eo = None; self.eo_status = {}
         self.protocol_b = None
         self.realtime = None
         self.mqtt_connected = False
@@ -303,7 +393,16 @@ class Runtime:
             if body['enabled'] or settings:
                 if not self.platform: raise ExternalAuthenticationRequired('请先登录系统')
                 self.platform.call('GET', '/auth/me')
-            updated = video_config({**self.video_config, **settings, 'enabled': body['enabled']})
+            candidate = {**self.video_config, **settings, 'enabled': body['enabled']}
+            if body['enabled'] and not candidate.get('publisher_password'):
+                # The first click provisions private local credentials; the password never
+                # enters status, manifests, logs, or the browser response.
+                candidate['publisher_password'] = load_or_create_credentials()['publish']
+            updated = video_config(candidate)
+            if body['enabled']:
+                # A configured launch password may be supplied by the caller; in either case
+                # ensure that a local MediaMTX endpoint exists before the encoder is started.
+                self.video_media.ensure(candidate['rtsp_base'], candidate['publisher_user'])
             self.video_config = updated
         # Do not touch EO's active tasks or processes from this HTTP thread.
         return self.status()
@@ -743,6 +842,10 @@ class Handler(SimpleHTTPRequestHandler):
             elif self.path=='/api/external/request': result=external_bridge.request(body)
             elif self.path=='/api/connect': result=runtime.connect(body)
             elif self.path=='/api/video': result=runtime.video_control(body)
+            elif self.path=='/api/acceptance-flows-1-7':
+                if runtime.phase in ('PREPARING', 'RUNNING', 'PAUSED', 'STOPPING'):
+                    raise ValueError('请先停止当前任务，再生成流程 1-7 数据')
+                result=prepare_acceptance_flows()
             elif self.path=='/api/start': result=runtime.start(body)
             elif self.path=='/api/full-scene': result=full_scene(body.get('categories'))
             elif self.path=='/api/control': result=runtime.control(body['action'])
@@ -805,4 +908,5 @@ if __name__=='__main__':
         runtime.cancel.set()
         if runtime.realtime: runtime.realtime.stop()
         if runtime.thread: runtime.thread.join(timeout=15)
+        runtime.video_media.close()
         server.server_close()

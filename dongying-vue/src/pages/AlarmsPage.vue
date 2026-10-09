@@ -1300,7 +1300,6 @@ onMounted(async () => {
   }
 }
 .alarm-action-bar { position:sticky; top:0; z-index:10; display:flex; flex-direction:column; align-items:stretch; gap:10px; margin:0; padding:10px 12px; border-bottom:1px solid var(--line); background:var(--panel); box-shadow:0 4px 12px color-mix(in srgb, var(--bg-1) 22%, transparent); }
-.alarm-action-bar:has([data-al="replay"]) { position:static; top:auto; z-index:auto; }
 .alarm-action-bar:not(:has(.btn, .tag)) { display:none; }
 .alarm-observation { order:2; flex:0 0 auto; min-width:0; }
 .alarm-observation:empty { display:none; }

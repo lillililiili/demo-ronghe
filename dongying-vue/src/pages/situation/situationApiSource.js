@@ -6,7 +6,7 @@ import { airspaceApi } from '@/services/airspaceApi.js';
 import { riskApi } from '@/services/riskApi.js';
 import { handoffApi } from '@/services/handoffApi.js';
 import { mapPool } from '@/services/apiClient.js';
-import { onDataChange } from '@/services/realtime.js';
+import { isRealtimeConnected, onDataChange } from '@/services/realtime.js';
 import { legalityApi } from '@/services/legalityApi.js';
 import { hasPermission } from '@/services/accessControl.js';
 import { applyTrackComparison } from '@/services/trackPoints.js';
@@ -19,6 +19,7 @@ import {
 const DEVICE_TYPES = new Set(SITUATION_DEVICE_TYPE_ORDER);
 const FAST_MS = 5_000;
 const SLOW_MS = 60_000;
+const CONNECTED_POLL_MS = 30_000;
 const NUDGE_GAP_MS = 500;
 const MIN_NUDGE_INTERVAL_MS = 1_000;
 // 推送只重读变化的那一组：目标变化只读目标与尾迹，不再连带告警、风险、移送一起重读；
@@ -254,7 +255,14 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
       }
     } finally {
       running = false;
-      if (!stopped && !paused) timer = globalThis.setTimeout(() => cycle(false, pendingNudge), pendingNudge ? NUDGE_GAP_MS : fastMs);
+      if (!stopped && !paused) {
+        const delay = pendingNudge
+          ? NUDGE_GAP_MS
+          : (typeof isRealtimeConnected === 'function' && isRealtimeConnected()
+            ? Math.max(fastMs, CONNECTED_POLL_MS)
+            : fastMs);
+        timer = globalThis.setTimeout(() => cycle(false, pendingNudge), delay);
+      }
     }
   }
 

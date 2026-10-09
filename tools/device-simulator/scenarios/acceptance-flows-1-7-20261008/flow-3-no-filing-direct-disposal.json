@@ -1,0 +1,117 @@
+{
+  "version": 1,
+  "name": "流程 3 没有报备计划的无人机",
+  "duration": 5,
+  "sites": [
+    {
+      "id": "acceptance-site",
+      "name": "流程 1-7 模拟设备组",
+      "x": 450,
+      "y": 300,
+      "devices": [
+        {
+          "id": "acceptance-radar",
+          "name": "流程验收雷达",
+          "kind": "radar",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 1
+        },
+        {
+          "id": "acceptance-5ga",
+          "name": "流程验收 5G-A",
+          "kind": "5ga",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 1
+        },
+        {
+          "id": "acceptance-ifr",
+          "name": "流程验收干扰设备",
+          "kind": "ifr",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 1,
+          "protocolB": {
+            "enabled": true,
+            "response": "success"
+          }
+        }
+      ]
+    }
+  ],
+  "targets": [
+    {
+      "id": "flow3-uav",
+      "name": "流程 3 无报备无人机",
+      "kind": "uav",
+      "deviceId": "acceptance-radar",
+      "secondaryDeviceId": "acceptance-5ga",
+      "path": [
+        [
+          510,
+          300
+        ],
+        [
+          520,
+          300
+        ]
+      ],
+      "height": 100,
+      "heightAgl": 60,
+      "altitudeDatum": "AMSL",
+      "speed": 3,
+      "probability": 0.99,
+      "count": 1,
+      "motionMode": "once",
+      "transport": "mqtt",
+      "uavSn": "SIM-ACC-20261008-FLOW3-UAV",
+      "planId": "",
+      "notificationBehavior": "none"
+    }
+  ],
+  "plans": [],
+  "zones": [
+    {
+      "id": "acceptance-prohibited",
+      "name": "流程验收禁飞区",
+      "kindCode": "PROHIBITED",
+      "points": [
+        [
+          500,
+          290
+        ],
+        [
+          535,
+          290
+        ],
+        [
+          535,
+          310
+        ],
+        [
+          500,
+          310
+        ]
+      ],
+      "min": 0,
+      "max": 150,
+      "altitudeDatum": "AMSL",
+      "start": "00:00",
+      "end": "23:59"
+    }
+  ],
+  "risks": [],
+  "fullchain": {
+    "enabled": true,
+    "categories": [],
+    "filing": {},
+    "airspaceLifecycle": false,
+    "acceptanceFlow": 3,
+    "operatorSetup": {},
+    "expectedChecks": [
+      "目标没有 planId，仍由雷达与 5G-A 双源上报",
+      "目标位于禁飞区内，飞手通知资格由平台按无计划事实阻断"
+    ]
+  }
+}

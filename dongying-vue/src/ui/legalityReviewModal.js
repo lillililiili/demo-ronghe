@@ -136,20 +136,38 @@ async function settleUncertain({ error, evaluationId, action, expectedVersion, r
   throw new Error(`提交结果未确认，请刷新核对：${messageOf(error, '未返回明确结果')}`);
 }
 
+function reviewReasonCodes(focus) {
+  return [...new Set([
+    ...(focus?.assuranceReasons || []),
+    ...(focus?.unknownReasons || []),
+    ...(focus?.uncertainHits || []).map(hit => hit.reason_code)
+  ])].filter(Boolean);
+}
+
 function intro(evaluation) {
-  const assurance = evaluation.decision_assurance;
+  const focus = legalityReviewFocus(evaluation);
+  const reasonText = reviewReasonCodes(focus).map(ruleReasonText).filter(Boolean).join('、');
+  const conclusion = esc(legalStatusText(evaluation.legal_status));
+  const grade = evaluation.grade ? `　等级 ${esc(GRADE_TEXT[evaluation.grade] || evaluation.grade)}` : '';
+  const headline = focus.needsReview ? '需要人工核对' : focus.reviewed ? '已完成人工复核' : '当前系统结论';
+  const operatorNote = focus.needsReview
+    ? '当前证据不足，结论暂不能可靠确认，请根据下列原因核对信息缺口。'
+    : focus.note;
   const rows = [
-    ['复核次数', Number(evaluation.review?.version ?? 0) > 0 ? `已第${Number(evaluation.review.version)}次复核` : '尚未复核'],
-    ['系统结论', esc(legalStatusText(evaluation.legal_status)) + (evaluation.grade ? `　等级 ${esc(GRADE_TEXT[evaluation.grade] || evaluation.grade)}` : '')],
     ['复核状态', esc(reviewStateText(evaluation.review?.state))],
-    ['判定可靠性', esc(assurance ? decisionAssuranceStatusText(assurance.status) : '旧记录未提供判定可靠性')],
-    assurance?.algorithm_version ? ['算法版本', esc(assurance.algorithm_version)] : null,
-    assurance?.reasons?.length ? ['可靠性原因', esc(assurance.reasons.map(ruleReasonText).join('、'))] : null,
     ['计划匹配', esc(planMatchText(evaluation.plan_match_code)) + (evaluation.plan_no ? `　${esc(evaluation.plan_no)}` : '')],
-    evaluation.violation_reasons?.length ? ['违规原因', esc(evaluation.violation_reasons.map(ruleReasonText).join('、'))] : null,
-    evaluation.unknown_reasons?.length ? ['未知原因', esc(evaluation.unknown_reasons.map(ruleReasonText).join('、'))] : null
+    evaluation.violation_reasons?.length ? ['违规原因', esc(evaluation.violation_reasons.map(ruleReasonText).join('、'))] : null
   ].filter(Boolean).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join('');
-  return `<dl class="kv">${rows}</dl>`;
+  return `<div class="legality-review-intro">
+    <section class="legality-review-focus ${focus.needsReview ? 'is-attention' : ''}">
+      <div class="legality-review-focus__eyebrow">操作员重点</div>
+      <div class="legality-review-focus__title">${headline}</div>
+      <div class="legality-review-focus__conclusion"><span>系统结论</span><strong>${conclusion}${grade}</strong></div>
+      ${reasonText ? `<p class="legality-review-focus__reason"><b>待核对：</b>${esc(reasonText)}</p>` : ''}
+      <p class="legality-review-focus__note">${esc(operatorNote)}</p>
+    </section>
+    <dl class="kv legality-review-facts">${rows}</dl>
+  </div>`;
 }
 
 /**
@@ -174,8 +192,8 @@ export function openLegalityReview({ evaluation, refresh, onDone } = {}) {
   openFormModal({
     title: (focus.needsReview ? '核对信息缺口 · ' : '补充人工纠正 · ') + esc(evaluation.target_no || evaluation.plan_no || '研判'),
     width: '620px',
-    warning: '复核只记录人工结论：「确认」采纳系统结论；「驳回」表示系统误判（告警与合并组不会删除，统计计误报）；「改判」需选择人工结论。复核不执行反制、不改告警核实状态。',
-    introHtml: `<p>${esc(focus.note)}</p>${intro(evaluation)}`,
+    warning: '本弹窗只记录人工结论，不会执行反制，也不会修改告警核实状态。确认采纳系统结论；驳回记录系统误判；改判需要选择人工结论。',
+    introHtml: intro(evaluation),
     fields: [
       { key: 'conclusion', label: '复核结论', type: 'radio', required: true, options: [
         { value: 'CONFIRM', label: `确认（采纳系统结论「${legalStatusText(evaluation.legal_status)}」）` },

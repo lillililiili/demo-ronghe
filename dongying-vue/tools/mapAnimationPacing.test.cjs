@@ -63,4 +63,20 @@ assert.ok(drawsBetween(recoverFrom, clock).length > 1000);
 map._dead = true;
 runFor(16);
 assert.equal(pending, null, '销毁后循环停止');
+
+// 融合感知页可单独限制装饰动画帧率；未配置时保持旧页面的逐帧行为。
+clock = 0; drawCost = 1; drew = false; pending = null;
+const pacedDraws = [];
+const paced = Object.create(MapView.prototype);
+Object.assign(paced, {
+  opt: { animationFps: 12 }, t: 0, box: { isConnected: true },
+  draw() { drew = true; pacedDraws.push(clock); }
+});
+paced._loop();
+runFor(1000);
+assert.ok(pacedDraws.length >= 9 && pacedDraws.length <= 13,
+  `12fps 配置在 1 秒内只绘制约 12 帧（实到 ${pacedDraws.length} 帧）`);
+paced._dead = true;
+runFor(16);
+assert.equal(pending, null, '限制帧率的地图销毁后循环停止');
 console.log('全部通过：地图装饰动画让路');

@@ -1,0 +1,159 @@
+{
+  "version": 1,
+  "name": "流程 2 收到短信后飞离",
+  "duration": 5,
+  "sites": [
+    {
+      "id": "acceptance-site",
+      "name": "流程 1-7 模拟设备组",
+      "x": 450,
+      "y": 300,
+      "devices": [
+        {
+          "id": "acceptance-radar",
+          "name": "流程验收雷达",
+          "kind": "radar",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 1
+        },
+        {
+          "id": "acceptance-5ga",
+          "name": "流程验收 5G-A",
+          "kind": "5ga",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 1
+        },
+        {
+          "id": "acceptance-ifr",
+          "name": "流程验收干扰设备",
+          "kind": "ifr",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 1,
+          "protocolB": {
+            "enabled": true,
+            "response": "success"
+          }
+        }
+      ]
+    }
+  ],
+  "targets": [
+    {
+      "id": "flow2-uav",
+      "name": "流程 2 短信后飞离无人机",
+      "kind": "uav",
+      "deviceId": "acceptance-radar",
+      "secondaryDeviceId": "acceptance-5ga",
+      "path": [
+        [
+          470,
+          300
+        ],
+        [
+          490,
+          300
+        ],
+        [
+          510,
+          300
+        ]
+      ],
+      "height": 100,
+      "heightAgl": 60,
+      "altitudeDatum": "AMSL",
+      "speed": 3,
+      "probability": 0.99,
+      "count": 1,
+      "motionMode": "once",
+      "transport": "mqtt",
+      "uavSn": "SIM-ACC-20261008-FLOW2-UAV",
+      "planId": "flow1-plan",
+      "notificationBehavior": "after_sms",
+      "pilotPoint": [
+        468,
+        300
+      ],
+      "departurePath": [
+        [
+          560,
+          300
+        ],
+        [
+          590,
+          300
+        ]
+      ],
+      "departureSpeed": 15
+    }
+  ],
+  "plans": [
+    {
+      "id": "flow1-plan",
+      "name": "流程 1-2 报备航线",
+      "points": [
+        [
+          470,
+          300
+        ],
+        [
+          490,
+          300
+        ]
+      ],
+      "min": 0,
+      "max": 150,
+      "width": 100,
+      "start": "00:00",
+      "end": "23:59",
+      "timeMode": "current",
+      "altitudeDatum": "AMSL"
+    }
+  ],
+  "zones": [
+    {
+      "id": "acceptance-prohibited",
+      "name": "流程验收禁飞区",
+      "kindCode": "PROHIBITED",
+      "points": [
+        [
+          500,
+          290
+        ],
+        [
+          535,
+          290
+        ],
+        [
+          535,
+          310
+        ],
+        [
+          500,
+          310
+        ]
+      ],
+      "min": 0,
+      "max": 150,
+      "altitudeDatum": "AMSL",
+      "start": "00:00",
+      "end": "23:59"
+    }
+  ],
+  "risks": [],
+  "fullchain": {
+    "enabled": true,
+    "categories": [],
+    "filing": {},
+    "airspaceLifecycle": false,
+    "acceptanceFlow": 2,
+    "operatorSetup": {},
+    "expectedChecks": [
+      "与流程 1 相同的双源违规输入",
+      "短信送达后沿 departurePath 离开原禁飞区",
+      "离开事实由平台当前观测判定，不由脚本写入飞离结果"
+    ]
+  }
+}

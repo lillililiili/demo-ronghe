@@ -861,7 +861,9 @@ onMounted(() => {
     getExternalMarkers: view => weatherLayer.value?.getMarkers(view) || [],
     drawUnderMarkers: view => weatherLayer.value?.draw(view),
     sensorIconScale: 1,
-    maxDpr: 2,
+    // 地图装饰动画不需要 60fps；降低 Canvas 像素量和重绘频率，保留数据变化时的即时重画。
+    animationFps: 12,
+    maxDpr: 1.5,
     layers: { alarm: false, coverage: true },
     interactiveTip: true,
     renderTip: renderMapTip,

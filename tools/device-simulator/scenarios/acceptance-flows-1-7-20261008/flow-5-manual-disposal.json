@@ -1,0 +1,129 @@
+{
+  "version": 1,
+  "name": "流程 5 中低风险人工申请反制",
+  "duration": 5,
+  "sites": [
+    {
+      "id": "acceptance-site",
+      "name": "流程 1-7 模拟设备组",
+      "x": 450,
+      "y": 300,
+      "devices": [
+        {
+          "id": "acceptance-radar",
+          "name": "流程验收雷达",
+          "kind": "radar",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 1
+        },
+        {
+          "id": "acceptance-5ga",
+          "name": "流程验收 5G-A",
+          "kind": "5ga",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 1
+        },
+        {
+          "id": "acceptance-ifr",
+          "name": "流程验收干扰设备",
+          "kind": "ifr",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 1,
+          "protocolB": {
+            "enabled": true,
+            "response": "success"
+          }
+        }
+      ]
+    }
+  ],
+  "targets": [
+    {
+      "id": "flow5-uav",
+      "name": "流程 5 偏航无人机",
+      "kind": "uav",
+      "deviceId": "acceptance-radar",
+      "secondaryDeviceId": "acceptance-5ga",
+      "path": [
+        [
+          470,
+          340
+        ],
+        [
+          480,
+          341
+        ],
+        [
+          500,
+          343
+        ]
+      ],
+      "height": 100,
+      "heightAgl": 60,
+      "altitudeDatum": "AMSL",
+      "speed": 3,
+      "probability": 0.99,
+      "count": 1,
+      "motionMode": "once",
+      "transport": "mqtt",
+      "uavSn": "SIM-ACC-20261008-FLOW5-UAV",
+      "planId": "flow5-plan",
+      "notificationBehavior": "hold",
+      "pilotPoint": [
+        468,
+        340
+      ]
+    }
+  ],
+  "plans": [
+    {
+      "id": "flow5-plan",
+      "name": "流程 5 低中风险报备航线",
+      "points": [
+        [
+          470,
+          340
+        ],
+        [
+          500,
+          340
+        ]
+      ],
+      "min": 0,
+      "max": 150,
+      "width": 120,
+      "start": "00:00",
+      "end": "23:59",
+      "timeMode": "current",
+      "altitudeDatum": "AMSL"
+    }
+  ],
+  "zones": [],
+  "risks": [
+    {
+      "id": "flow5-deviation",
+      "name": "流程 5 偏航输入",
+      "type": "deviation",
+      "enabled": true,
+      "targetId": "flow5-uav",
+      "planId": "flow5-plan",
+      "deviceId": "acceptance-radar"
+    }
+  ],
+  "fullchain": {
+    "enabled": true,
+    "categories": [],
+    "filing": {},
+    "airspaceLifecycle": false,
+    "acceptanceFlow": 5,
+    "operatorSetup": {},
+    "expectedChecks": [
+      "有计划目标偏离航线，提供中低风险人工处置输入",
+      "目标通知后继续停留，供值班员申请和另一账号审批",
+      "实际风险等级、授权、审批和设备回执由平台页面流程决定"
+    ]
+  }
+}

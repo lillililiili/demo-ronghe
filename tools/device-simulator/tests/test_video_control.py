@@ -22,6 +22,7 @@ class VideoControlTests(unittest.TestCase):
         self.runtime = Runtime(self.directory.name)
         self.runtime.session.platform = SimpleNamespace(base='http://localhost:8081/api/v1', call=Mock(return_value={}))
         self.runtime.video_config['publisher_password'] = 'test-secret-only'
+        self.runtime.video_media.ensure = Mock(return_value='test-secret-only')
         self.runtime.phase = 'RUNNING'
         self.runtime.elapsed, self.runtime.sent = 42, 19
 
@@ -54,6 +55,15 @@ class VideoControlTests(unittest.TestCase):
             before = copy.deepcopy(self.runtime.video_config)
             with self.assertRaises(ValueError): self.control({'enabled': True})
             self.assertEqual(self.runtime.video_config, before)
+
+    def test_first_enable_provisions_missing_password_without_opening_settings(self):
+        self.runtime.video_config['publisher_password'] = ''
+        with patch('server.load_or_create_credentials', return_value={'publish': 'generated-secret-only'}):
+            result = self.control({'enabled': True})
+        self.assertTrue(result['video_config']['enabled'])
+        self.assertTrue(result['video_config']['publisher_password_set'])
+        self.runtime.video_media.ensure.assert_called_once()
+        self.assertNotIn('generated-secret-only', json.dumps(result))
 
     def test_invalid_input_or_transition_never_changes_configuration(self):
         for body in ({'enabled': 'true'}, {'enabled': 1}, {'enabled': True, 'shell': 'bad'},

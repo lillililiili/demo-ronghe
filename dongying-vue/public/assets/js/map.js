@@ -807,6 +807,9 @@
   MapView.prototype._loop = function () {
     if (this._raf || this._dead || this._paused) return;
     const self = this;
+    const configuredFps = Number(self.opt && self.opt.animationFps);
+    const minFrameGap = Number.isFinite(configuredFps) && configuredFps > 0
+      ? 1000 / Math.min(60, Math.max(1, configuredFps)) : 0;
     const f = function (now) {
       self._raf = null;
       if (self._dead || self._paused) return;
@@ -817,7 +820,7 @@
         if (costs.length > SLOW_FRAME_COUNT) costs.shift();
         self._animDrawnAt = null;
       }
-      const gap = MapView.animationGap(costs);
+      const gap = Math.max(MapView.animationGap(costs), minFrameGap);
       if (!gap || now - (self._animLastAt || 0) >= gap) {
         self.t += 1;
         self.draw();

@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "name": "规则与做法确认书·流程 1-7",
+  "source": "规则与做法确认书（含验收方法）-2026-10-08",
+  "status": "SCENES_READY_FOR_IMPORT",
+  "flows": [
+    {
+      "flow": 1,
+      "file": "flow-1-auto-disposal.json",
+      "name": "流程 1 违规无人机自动处理"
+    },
+    {
+      "flow": 2,
+      "file": "flow-2-after-sms-departure.json",
+      "name": "流程 2 收到短信后飞离"
+    },
+    {
+      "flow": 3,
+      "file": "flow-3-no-filing-direct-disposal.json",
+      "name": "流程 3 没有报备计划的无人机"
+    },
+    {
+      "flow": 4,
+      "file": "flow-4-operator-false-alarm.json",
+      "name": "流程 4 值班员核实为误报"
+    },
+    {
+      "flow": 5,
+      "file": "flow-5-manual-disposal.json",
+      "name": "流程 5 中低风险人工申请反制"
+    },
+    {
+      "flow": 6,
+      "file": "flow-6-weather-risk.json",
+      "name": "流程 6 雷雨天气风险"
+    },
+    {
+      "flow": 7,
+      "file": "flow-7-bird-flock.json",
+      "name": "流程 7 航线附近 25 只鸟群"
+    }
+  ],
+  "usage": "在数据模拟器中每次只导入并运行一个 JSON，完成后停止再导入下一个。"
+}

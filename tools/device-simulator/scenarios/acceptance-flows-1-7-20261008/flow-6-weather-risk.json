@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "name": "流程 6 雷雨天气风险",
+  "duration": 2,
+  "sites": [
+    {
+      "id": "acceptance-site",
+      "name": "流程 1-7 模拟设备组",
+      "x": 450,
+      "y": 300,
+      "devices": [
+        {
+          "id": "acceptance-radar",
+          "name": "流程验收雷达",
+          "kind": "radar",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 1
+        },
+        {
+          "id": "acceptance-5ga",
+          "name": "流程验收 5G-A",
+          "kind": "5ga",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 1
+        },
+        {
+          "id": "acceptance-weather",
+          "name": "流程验收气象设备",
+          "kind": "weather",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 5
+        }
+      ]
+    }
+  ],
+  "targets": [],
+  "plans": [
+    {
+      "id": "flow6-weather-plan",
+      "name": "流程 6 天气风险关联计划",
+      "points": [
+        [
+          470,
+          360
+        ],
+        [
+          500,
+          360
+        ]
+      ],
+      "min": 0,
+      "max": 150,
+      "width": 100,
+      "start": "00:00",
+      "end": "23:59",
+      "timeMode": "current",
+      "altitudeDatum": "AMSL"
+    }
+  ],
+  "zones": [],
+  "risks": [],
+  "fullchain": {
+    "enabled": true,
+    "categories": [
+      "weather"
+    ],
+    "filing": {},
+    "airspaceLifecycle": false,
+    "acceptanceFlow": 6,
+    "operatorSetup": {},
+    "expectedChecks": [
+      "天气预报区域和计划时段由 FullChain 同批提交",
+      "预报只提供雷雨事实，风险仍由平台规则生成待核验记录",
+      "核验与通知上级在业务页面完成，脚本不写核验或通知结果"
+    ],
+    "weather": {
+      "area_name": "流程 6 雷雨试验区域",
+      "summary": "雷雨",
+      "wind_speed_ms": 12,
+      "gust_ms": 20,
+      "wind_from_degrees": 90,
+      "humidity_percent": 88,
+      "visibility_m": 5000
+    }
+  }
+}

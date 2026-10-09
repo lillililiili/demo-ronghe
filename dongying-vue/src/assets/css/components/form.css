@@ -35,6 +35,19 @@
 .controlled-form__html{width:100%}
 .controlled-form__help{display:block;margin-top:5px;color:var(--txt-3);font-size:11px;line-height:1.5}
 .controlled-form__footer{display:flex;justify-content:flex-end;gap:8px;margin-top:16px;padding-top:14px;border-top:1px solid var(--line-2)}
+
+/* 合法性复核只在首屏突出结论与缺口，复核次数和算法版本等追溯字段不再抢占操作空间。 */
+.legality-review-intro{display:flex;flex-direction:column;gap:12px}
+.legality-review-focus{padding:12px 14px;border:1px solid var(--line-2);border-radius:8px;background:var(--surface-1)}
+.legality-review-focus.is-attention{border-color:color-mix(in srgb,var(--amber) 55%,var(--line-2));background:color-mix(in srgb,var(--amber) 8%,var(--surface-1))}
+.legality-review-focus__eyebrow{color:var(--txt-3);font-size:11px;letter-spacing:.04em}
+.legality-review-focus__title{margin-top:3px;color:var(--txt);font-size:16px;font-weight:650}
+.legality-review-focus__conclusion{display:flex;align-items:baseline;gap:9px;margin-top:8px;color:var(--txt-2);font-size:12px}
+.legality-review-focus__conclusion strong{color:var(--amber);font-size:15px;font-weight:650}
+.legality-review-focus__reason{margin:8px 0 0;color:var(--txt-2);font-size:12.5px;line-height:1.6}
+.legality-review-focus__reason b{color:var(--amber);font-weight:600}
+.legality-review-focus__note{margin:6px 0 0;color:var(--txt-3);font-size:11.5px;line-height:1.55}
+.legality-review-facts{margin:0;padding:0 2px}
 @media(max-width:680px){
   .u-field-grid.is-two,.controlled-form__grid.is-two{grid-template-columns:1fr}
 }

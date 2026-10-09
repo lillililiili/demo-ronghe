@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "name": "流程 7 航线附近 25 只鸟群",
+  "duration": 2,
+  "sites": [
+    {
+      "id": "acceptance-risk-site",
+      "name": "流程 7 鸟情模拟设备组",
+      "x": 450,
+      "y": 300,
+      "devices": [
+        {
+          "id": "acceptance-risk-radar",
+          "name": "流程验收鸟情雷达",
+          "kind": "radar",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 1
+        }
+      ]
+    }
+  ],
+  "targets": [
+    {
+      "id": "flow7-birds",
+      "name": "流程 7 航线附近鸟群",
+      "kind": "bird",
+      "deviceId": "acceptance-risk-radar",
+      "path": [
+        [
+          470,
+          365
+        ],
+        [
+          500,
+          365
+        ]
+      ],
+      "height": 100,
+      "heightAgl": 60,
+      "altitudeDatum": "AMSL",
+      "speed": 2,
+      "probability": 0.99,
+      "count": 25,
+      "motionMode": "pingpong",
+      "transport": "normalized",
+      "planId": "flow7-bird-plan",
+      "notificationBehavior": "none"
+    }
+  ],
+  "plans": [
+    {
+      "id": "flow7-bird-plan",
+      "name": "流程 7 鸟群关联计划",
+      "points": [
+        [
+          470,
+          360
+        ],
+        [
+          500,
+          360
+        ]
+      ],
+      "min": 0,
+      "max": 150,
+      "width": 100,
+      "start": "00:00",
+      "end": "23:59",
+      "timeMode": "current",
+      "altitudeDatum": "AMSL"
+    }
+  ],
+  "zones": [],
+  "risks": [
+    {
+      "id": "flow7-bird-risk",
+      "name": "流程 7 航线附近鸟群",
+      "type": "bird",
+      "enabled": true,
+      "targetId": "flow7-birds",
+      "planId": "flow7-bird-plan",
+      "deviceId": "acceptance-risk-radar"
+    }
+  ],
+  "fullchain": {
+    "enabled": true,
+    "categories": [
+      "bird"
+    ],
+    "filing": {},
+    "airspaceLifecycle": false,
+    "acceptanceFlow": 7,
+    "operatorSetup": {},
+    "expectedChecks": [
+      "25 只鸟群在航线约 5 个模拟坐标单位内持续飞过",
+      "目标不携带无人机 SN，使用三路标准化模拟观测源",
+      "核验与通知上级在全部风险事件页面完成"
+    ],
+    "observationSourceCount": 3
+  }
+}

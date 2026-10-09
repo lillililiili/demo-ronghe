@@ -25,7 +25,7 @@ async function loadSource(deps) {
   let source = fs.readFileSync(filename, 'utf8');
   source = source.replace(/import[\s\S]*?from ['"][^'"]+['"];\r?\n/g, '');
   source = `const { deviceApi, targetApi, listAlarms, listAllFlightPlans, flightApi, airspaceApi,
-    riskApi, handoffApi, mapPool, attachBearing, attachDeviceEvents, attachRecentTracks,
+    riskApi, handoffApi, mapPool, attachBearing, attachDeviceEvents, attachRecentTracks, extendRecentTracks,
     attachTargetSourceLinks, bearingOrigins, toAirspaces, toAlarms, toDevices, toFlightPlans,
     toRisks, toTargets, SITUATION_DEVICE_TYPE_ORDER, onDataChange, hasPermission } = globalThis.__situationContractDeps;\n${source}`;
   globalThis.__situationContractDeps = deps;
@@ -34,6 +34,27 @@ async function loadSource(deps) {
 
 async function main() {
   const data = await import('../src/services/situationData.js');
+
+  // 两次重读之间本机接上的点要和上一点序号连续，地图才画成连线（放大到街道级也不断成一个个点）。
+  const vm = require('node:vm');
+  const mapContext = { window: {}, requestAnimationFrame: () => 1, cancelAnimationFrame: () => {} };
+  vm.runInNewContext(fs.readFileSync(path.resolve(__dirname, '../public/assets/js/map.js'), 'utf8'), mapContext);
+  const continuous = mapContext.window.MapView.trackContinuous;
+  const tail = [{ lon: 118.5, lat: 37.4, track_id: 'k1', point_seq: 7, t: 1000, kind: 'meas', corridor_relation: 'WITHIN' }];
+  let local = data.extendRecentTracks([{ targetId: 'a', lon: 118.501, lat: 37.401, observedAt: 2000 }], [{ targetId: 'a', track: tail }]);
+  local = data.extendRecentTracks([{ targetId: 'a', lon: 118.502, lat: 37.402, observedAt: 3000 }], local);
+  const extended = local[0].track;
+  check('本机接上的点序号连续、沿用走廊关系', extended.map(point => [point.point_seq, point.corridor_relation]),
+    [[7, 'WITHIN'], [8, 'WITHIN'], [9, 'WITHIN']]);
+  let steady = [{ targetId: 'b', track: Array.from({ length: 24 }, (_, i) => ({ lon: 118.5, lat: 37.4 + i / 1e5,
+    track_id: 'k2', point_seq: i, t: 10_000 + i * 300, kind: 'meas', corridor_relation: 'WITHIN' })) }];
+  for (let second = 1; second <= 5; second++) {
+    steady = data.extendRecentTracks([{ targetId: 'b', lon: 118.5, lat: 37.41 + second / 1e5, observedAt: 16_900 + second * 1000 }], steady);
+  }
+  const steadyTrack = steady[0].track;
+  ok(`本机接点时尾迹时长不变（${steadyTrack.at(-1).t - steadyTrack[0].t}ms）`, steadyTrack.at(-1).t - steadyTrack[0].t <= 6900);
+  check('本机接点时最老的点按时间丢掉', steadyTrack.at(-1).point_seq, 28);
+  check('本机接上的点在地图上连成线', [continuous(extended[0], extended[1]), continuous(extended[1], extended[2])], [true, true]);
   let devicePages = [];
   let targetCalls = 0;
   let targetConcurrent = 0;
@@ -47,6 +68,12 @@ async function main() {
   const calls = { alarms: 0, risks: 0, handoffs: 0, plans: 0 };
   let eventCalls = 0;
   let handoffsForbidden = false;
+  let extraTarget = null;
+  let rejectSlimTracks = false;
+  let emptyTracks = false;
+  let noRouteBatch = false;
+  const routeBatchQueries = [];
+  let routeSingleCalls = 0;
   const ALL_CODES = ['target:read', 'alarm:read', 'risk:read', 'handoff:read', 'devices.read', 'monitoring.read',
     'flight:read', 'route:read', 'airspace:read'];
   let granted = new Set(ALL_CODES);
@@ -89,10 +116,14 @@ async function main() {
         await delay(20);
         targetConcurrent--;
         if (failTargets) throw new Error('intentional target outage');
-        const items = targetRow.last_seen_at >= params.seen_from && targetRow.last_seen_at <= params.seen_to ? [targetRow] : [];
+        const items = [targetRow, extraTarget].filter(row => row && row.last_seen_at >= params.seen_from && row.last_seen_at <= params.seen_to);
         return { items, total: items.length };
       },
-      recentTracks: async params => { trackQueries.push(params); return { items: [{ target_id: 't1', track_id: 'track-1', points: [
+      recentTracks: async params => {
+        trackQueries.push(params);
+        if (rejectSlimTracks && (params.slim || params.target_ids)) { const error = new Error('VALIDATION_ERROR'); error.status = 400; throw error; }
+        if (emptyTracks) return { items: [] };
+        return { items: [{ target_id: 't1', track_id: 'track-1', points: [
         { point_id: 'point-1', track_id: 'track-1', point_seq: 1, observed_at: now - 1000,
           sort_time: now - 1000, time_basis: 'OBSERVED', received_at: now - 900,
           location: { longitude: 118.5, latitude: 37.4, coordinate_system: 'WGS84' }, point_kind: 'MEAS' },
@@ -105,9 +136,18 @@ async function main() {
     },
     listAlarms: async () => { calls.alarms++; if (alarmsGate) await alarmsGate; return { items: [], total: 0 }; },
     listAllFlightPlans: async () => { calls.plans++; return [planRow]; },
-    flightApi: { routeVersion: async () => ({ route_version_id: 'rv1', centerline: {
-      coordinates: [[118.4, 37.3], [118.6, 37.5]]
-    } }) },
+    flightApi: {
+      routeVersion: async () => { routeSingleCalls++; return { route_version_id: 'rv1', centerline: {
+        coordinates: [[118.4, 37.3], [118.6, 37.5]]
+      } }; },
+      routeVersionBatch: async ids => {
+        routeBatchQueries.push(ids);
+        if (noRouteBatch) { const error = new Error('NOT_FOUND'); error.status = 404; throw error; }
+        return { items: ids.filter(id => id === 'rv1').map(id => ({ route_version_id: id, centerline: {
+          coordinates: [[118.4, 37.3], [118.6, 37.5]]
+        } })) };
+      }
+    },
     airspaceApi: { list: async () => ({ items: [], total: 0 }), detail: async value => value },
     riskApi: { listRisks: async () => { calls.risks++; return { items: [], total: 0 }; } },
     handoffApi: { listHandoffs: async () => {
@@ -132,7 +172,7 @@ async function main() {
   check('只取此刻地图显示还没到期的目标，不再每轮分页拉完当天全部目标（ZT-20 复测 2）',
     [targetQueries[0].map_visible_at, targetQueries[0].include_merged], [now, false]);
   check('目标范围扩展不突破近期轨迹接口窗口限制',
-    trackQueries[0], { observed_from: now - 5 * 60_000, observed_to: now, points_per_target: 24 });
+    trackQueries[0], { observed_from: now - 5 * 60_000, observed_to: now, points_per_target: 24, slim: true, target_ids: 't1' });
   check('两小时前停止上报的目标仍然可见', first.targets.map(row => row.id), ['MB-1']);
   check('当天旧目标保留最后上报时间和过期事实',
     [first.targets[0].lastSeenAt, first.targets[0].freshness, first.targets[0].stale],
@@ -147,6 +187,7 @@ async function main() {
     [point.point_id, point.track_id, point.point_seq, point.t, point.kind]),
   [['point-1', 'track-1', 1, now - 1000, 'meas'], ['point-2', 'track-1', 2, now, 'pred']]);
   check('计划航线读取版本中心线', first.flightPlans[0].coordinates, [[118.4, 37.3], [118.6, 37.5]]);
+  check('航线中心线一次取回，不逐条请求', [routeBatchQueries, routeSingleCalls], [[['rv1']], 0]);
   check('选中目标后按内部 device_id 关联来源', (await source.loadTargetDetail('t1')).source_links[0].device_id, 'd0');
 
   failTargets = true;
@@ -166,11 +207,13 @@ async function main() {
   source.stop();
   await delay(50);
   failTargets = false;
+  const tracksBeforeDay = trackQueries.length;
   clock = Date.parse('2026-09-22T16:00:01Z');
   source.start(value => snapshots.push(value), (error, segment) => errors.push({ error, segment }));
   while (snapshots.at(-1).generatedAt !== clock) await delay(5);
   check('北京时间跨天后切换新一天零点', targetQueries.at(-1).seen_from, Date.parse('2026-09-22T16:00:00Z'));
-  check('跨天后实时尾迹不混入昨天', trackQueries.at(-1).observed_from, Date.parse('2026-09-22T16:00:00Z'));
+  ok('跨天后实时尾迹不混入昨天', trackQueries.slice(tracksBeforeDay).every(query => query.observed_from >= Date.parse('2026-09-22T16:00:00Z')));
+  check('图上没有目标时不读尾迹', trackQueries.length, tracksBeforeDay);
   check('跨天后旧目标退出当天地图而不改历史', snapshots.at(-1).targets, []);
   source.stop();
 
@@ -207,6 +250,67 @@ async function main() {
     { targets: 0, devices: 2, alarms: 0, risks: 0, handoffs: 0, plans: 0 });
   pushed.stop();
   ok('停止后取消订阅', pushHandler === null);
+
+  // 尾迹不随每次位置推送整包重下：5 秒内只读目标，用最新位置把尾迹接上；到 5 秒或出现新目标才重读尾迹。
+  clock = now;
+  const savedRow = { ...targetRow, latest_state: { ...targetRow.latest_state } };
+  targetRow.last_seen_at = now;
+  const paced = createSituationApiSource({ fastMs: 60_000, slowMs: 60_000, now: () => clock });
+  const pacedSnapshots = [];
+  paced.start(value => pacedSnapshots.push(value), () => {});
+  while (pacedSnapshots.length < 2) await delay(5);
+  async function pushTarget() {
+    const before = pacedSnapshots.length;
+    pushHandler(['target']);
+    const started = Date.now();
+    while (pacedSnapshots.length === before && Date.now() - started < 3_000) await delay(5);
+    await delay(20);
+    return pacedSnapshots.at(-1).targets.find(row => row.targetId === 't1');
+  }
+  let tracksBefore = trackQueries.length;
+  clock = now + 1000;
+  targetRow.latest_state = { location: { longitude: 118.52, latitude: 37.42 }, observed_at: now + 1000 };
+  let moved = await pushTarget();
+  check('5 秒内的位置推送不重读尾迹', trackQueries.length - tracksBefore, 0);
+  check('尾迹在本机接上最新位置', moved.track.map(point => [point.lon, point.lat, point.track_id, point.point_id]).at(-1),
+    [118.52, 37.42, 'track-1', null]);
+  check('接上的点在原尾迹之后', moved.track.length, 3);
+  clock = now + 2000;
+  moved = await pushTarget();
+  check('同一位置不重复接点', moved.track.length, 3);
+  clock = now + 3000;
+  extraTarget = { target_id: 't2', target_no: 'MB-2', object_type_code: 'UAV', source_mode: 'replay', last_seen_at: now,
+    latest_state: { location: { longitude: 118.6, latitude: 37.5 }, observed_at: now + 3000 } };
+  await pushTarget();
+  check('新目标出现立即补读尾迹，只要图上目标', trackQueries.slice(tracksBefore).map(query => query.target_ids), ['t1,t2']);
+  extraTarget = null;
+  tracksBefore = trackQueries.length;
+  clock = now + 4000;
+  await pushTarget();
+  check('补读后 5 秒内不再重读', trackQueries.length - tracksBefore, 0);
+  clock = now + 8100;
+  moved = await pushTarget();
+  check('满 5 秒重读尾迹，后端点替换本机接上的点', [trackQueries.length - tracksBefore, moved.track.map(point => point.point_id)],
+    [1, ['point-1', 'point-2']]);
+  emptyTracks = true;
+  clock = now + 13_200;
+  targetRow.latest_state = { location: { longitude: 118.53, latitude: 37.43 }, observed_at: now + 13_200 };
+  moved = await pushTarget();
+  check('重读没带回尾迹时沿用本机尾迹，不一闪而空', moved.track.map(point => point.point_id), ['point-1', 'point-2', null]);
+  emptyTracks = false;
+  rejectSlimTracks = true;
+  tracksBefore = trackQueries.length;
+  clock = now + 18_300;
+  moved = await pushTarget();
+  check('旧后端不认精简参数时改回整包读取', trackQueries.slice(tracksBefore).map(query => [!!query.slim, query.target_ids || '']),
+    [[true, 't1'], [false, '']]);
+  check('改回整包后尾迹照常', moved.track.length, 2);
+  clock = now + 23_400;
+  await pushTarget();
+  check('之后不再先试精简参数', [!!trackQueries.at(-1).slim, trackQueries.length - tracksBefore], [false, 3]);
+  paced.stop();
+  rejectSlimTracks = false;
+  Object.assign(targetRow, savedRow);
 
   // ZT-09：值班员没有设备监测（monitoring.read）和风险读取权限：不请求设备事件和风险，也不报刷新失败。
   granted = new Set(ALL_CODES.filter(code => code !== 'monitoring.read' && code !== 'risk:read'));
@@ -265,6 +369,21 @@ async function main() {
   while (earlySnapshots.length < 2 && Date.now() - earlyStarted < 3_000) await delay(5);
   ok('整轮读完后照旧再发布一次', earlySnapshots.length >= 2);
   early.stop();
+
+  // 没有批量航线接口的旧后端：改回逐条读取，航线照常画出。
+  noRouteBatch = true;
+  const singleBefore = routeSingleCalls;
+  const oldBackend = createSituationApiSource({ fastMs: 10, slowMs: 10_000, now: () => clock });
+  const oldSnapshots = [];
+  const oldErrors = [];
+  oldBackend.start(value => oldSnapshots.push(value), (error, segment) => oldErrors.push(segment));
+  while (!oldSnapshots.some(value => value.flightPlans.length)) await delay(5);
+  check('旧后端不认批量航线时逐条补读', routeSingleCalls - singleBefore, 1);
+  check('逐条补读后航线照常', oldSnapshots.find(value => value.flightPlans.length).flightPlans[0].coordinates,
+    [[118.4, 37.3], [118.6, 37.5]]);
+  check('改回逐条读取不报刷新失败', oldErrors, []);
+  oldBackend.stop();
+  noRouteBatch = false;
   delete globalThis.document;
   delete globalThis.__situationContractDeps;
 

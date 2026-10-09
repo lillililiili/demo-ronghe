@@ -802,6 +802,9 @@
      让出的时间留给数据；数据变化、拖动缩放、底图重绘仍立即重画。只要有一帧恢复正常就回到逐帧动画。
      costs：最近几次“画了一帧到下一次回调”的间隔（毫秒，含浏览器合成）；返回 0 表示逐帧画。 */
   const SLOW_FRAME_MS = 250, SLOW_FRAME_COUNT = 3, SLOW_GAP_MIN_MS = 2000, SLOW_GAP_FACTOR = 8;
+  /* 装饰动画平时也只画每秒约 12 帧：扫描、波纹、虚线流动看起来照样连贯，整层画布不再每秒重画 60 次跟底图抢资源。
+     数据变化、拖动缩放、底图重绘不经过这里，仍立即重画。 */
+  const ANIM_FRAME_MS = 80;
   MapView.animationGap = function (costs) {
     if (!costs || costs.length < SLOW_FRAME_COUNT) return 0;
     const fastest = Math.min.apply(null, costs.slice(-SLOW_FRAME_COUNT));
@@ -821,9 +824,12 @@
         if (costs.length > SLOW_FRAME_COUNT) costs.shift();
         self._animDrawnAt = null;
       }
-      const gap = MapView.animationGap(costs);
-      if (!gap || now - (self._animLastAt || 0) >= gap) {
-        self.t += 1;
+      const gap = Math.max(MapView.animationGap(costs), ANIM_FRAME_MS);
+      // 图上没有会动的东西（没有在线设备，或设备与覆盖范围图层都关着）时不画装饰帧。
+      if (self._hasAnimation() && now - (self._animLastAt || 0) >= gap) {
+        // 动画相位按真实时间走（以 60 帧/秒为单位），少画几帧不会让扫描、波纹变慢。
+        if (self._animStartAt == null) self._animStartAt = now - self.t * 1000 / 60;
+        self.t = (now - self._animStartAt) * 60 / 1000;
         self.draw();
         self._animDrawnAt = self._animLastAt = now;
       }
@@ -856,8 +862,16 @@
     c.restore();
   };
 
+  // 每台设备每帧都要问一次“是否减少动态效果”，查询对象只建一次。
+  const reducedMotion = g.matchMedia ? g.matchMedia('(prefers-reduced-motion: reduce)') : null;
   MapView.prototype._still = function () {
-    return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    return !!(reducedMotion && reducedMotion.matches);
+  };
+
+  /* 装饰动画只画在在线设备上（图标波纹、覆盖范围虚线、雷达扫描、光电摆扫、5G-A 波纹）。 */
+  MapView.prototype._hasAnimation = function () {
+    if (this._still() || !(this.layers.device || this.layers.coverage)) return false;
+    return (this.data.devices || []).some(device => device && (device.statusCode === 'ONLINE' || device.status === '在线'));
   };
 
   MapView.prototype._phase = function (period) {

@@ -661,8 +661,47 @@ export function attachRecentTracks(targets, recentTracks, previousTargets = []) 
   return (targets || []).map(target => ({
     ...target,
     track: tracks.get(target.targetId) || target.track || [],
+    // 换上后台尾迹后按新尾迹重新量时长。
+    tailSpanMs: tracks.has(target.targetId) ? null : target.tailSpanMs,
     sourceDeviceIds: target.sourceDeviceIds?.length ? target.sourceDeviceIds : (previous.get(target.targetId)?.sourceDeviceIds || [])
   }));
+}
+
+// 两次重读之间本机接上的点最多保留这么多（后端每目标 24 点，5 秒内每秒约一点）。
+const LOCAL_TAIL_LIMIT = 36;
+
+// 与实时尾迹读取的 points_per_target 一致：后台给满这么多点，说明尾迹已经是完整长度。
+const FULL_TAIL_POINTS = 24;
+
+/* 两次重读尾迹之间：沿用上一轮尾迹，把目标最新位置接在末尾，尾迹跟着点走。
+   只接在同一条融合轨迹后面、时间更新的位置；本机接上的点没有点编号（序号接着上一点），下一次重读时由后端点替换。 */
+export function extendRecentTracks(targets, previousTargets = []) {
+  const previous = new Map((previousTargets || []).map(target => [target.targetId, target]));
+  return (targets || []).map(target => {
+    const before = previous.get(target.targetId);
+    const track = before?.track || [];
+    const last = track[track.length - 1];
+    const t = target.observedAt;
+    const extendable = last && last.track_id && Number.isFinite(target.lon) && Number.isFinite(target.lat)
+      && Number.isFinite(t) && Number.isFinite(last.t) && t > last.t;
+    // 后台给满点数的尾迹保持原来的时长：接上新点的同时按时间丢掉最老的点，不让尾巴越接越长、重读时又突然缩回。
+    // 新目标的尾迹还没满，照常变长。
+    const span = before?.tailSpanMs ?? (track.length >= FULL_TAIL_POINTS && Number.isFinite(track[0]?.t) ? last.t - track[0].t : null);
+    const next = extendable
+      ? [...track, {
+        // 接在上一点后面（序号连续）才会画成连线；走廊关系沿用上一点，等下次重读由后台的点替换。
+        lon: target.lon, lat: target.lat, point_id: null, track_id: last.track_id,
+        point_seq: Number.isFinite(last.point_seq) ? last.point_seq + 1 : null, t,
+        alt: target.alt ?? null, kind: 'meas', corridor_relation: last.corridor_relation || 'UNKNOWN', break_before: false
+      }].filter((point, index, all) => span == null || index >= all.length - 2 || !(point.t < t - span)).slice(-LOCAL_TAIL_LIMIT)
+      : track;
+    return {
+      ...target,
+      track: next,
+      tailSpanMs: span,
+      sourceDeviceIds: target.sourceDeviceIds?.length ? target.sourceDeviceIds : (before?.sourceDeviceIds || [])
+    };
+  });
 }
 
 export function attachTargetSourceLinks(targets, targetId, detail) {

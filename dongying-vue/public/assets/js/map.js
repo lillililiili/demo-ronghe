@@ -67,7 +67,7 @@
         <div class="li"><span style="width:14px;text-align:center;color:#22d3ee">●</span>设备点位</div>
         <div data-legend-airspaces></div>
       </div>`;
-    box.innerHTML = `<div class="mapbase"></div><canvas class="mapoverlay"></canvas>
+    box.innerHTML = `<div class="mapbase"></div><canvas class="mapanim" style="position:absolute;inset:0;z-index:2;width:100%;height:100%;pointer-events:none"></canvas><canvas class="mapoverlay"></canvas>
       <div class="mapctl">
         <button type="button" class="mb" data-z="in" aria-label="放大">${g.UI.icon('zoomIn')}</button><button type="button" class="mb" data-z="out" aria-label="缩小">${g.UI.icon('zoomOut')}</button><button type="button" class="mb" data-z="fit" aria-label="复位">${g.UI.icon('expand')}</button>
       </div>
@@ -81,6 +81,9 @@
     this.baseEl = box.querySelector('.mapbase');
     this.cv = box.querySelector('.mapoverlay');
     this.ctx = this.cv.getContext('2d');
+    // 会动的装饰（覆盖范围虚线、雷达扫描、上报波纹、告警红晕）单独一层，压在业务层下面，每秒约 12 帧只重画这一层。
+    this.acv = box.querySelector('.mapanim');
+    this.actx = this.acv.getContext('2d');
     this.tip = box.querySelector('.maptip');
     if (opt.interactiveTip) {
       this.tip.classList.add('is-interactive');
@@ -408,6 +411,12 @@
     this.cv.width = Math.max(1, Math.round(r.width * dpr));
     this.cv.height = Math.max(1, Math.round(r.height * dpr));
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // 装饰动画层按 1 倍像素画：高清屏上像素少四分之三，扫描和波纹看起来几乎一样。
+    const animDpr = Math.min(dpr, 1);
+    this._dpr = dpr; this._animDpr = animDpr;
+    this.acv.width = Math.max(1, Math.round(r.width * animDpr));
+    this.acv.height = Math.max(1, Math.round(r.height * animDpr));
+    this.actx.setTransform(animDpr, 0, 0, animDpr, 0, 0);
     this._applyDefaultView();
     if (this.map) {
       this.map.resize();
@@ -662,6 +671,7 @@
   MapView.prototype.destroy = function () {
     if (this._dead) return;
     this._dead = true;
+    if (g.UI && g.UI.releaseAlarmGlows) g.UI.releaseAlarmGlows(this.ctx);
     this._disposeBase();
     if (this._raf) cancelAnimationFrame(this._raf);
     this._raf = null;
@@ -830,7 +840,8 @@
         // 动画相位按真实时间走（以 60 帧/秒为单位），少画几帧不会让扫描、波纹变慢。
         if (self._animStartAt == null) self._animStartAt = now - self.t * 1000 / 60;
         self.t = (now - self._animStartAt) * 60 / 1000;
-        self.draw();
+        // 详细底图上只重画装饰层；简化示意图整张不透明，装饰画在同一张画布里，仍整张重画。
+        if (self._splitLayers) self._drawAnimated(); else self.draw();
         self._animDrawnAt = self._animLastAt = now;
       }
       self._raf = requestAnimationFrame(f);
@@ -870,7 +881,11 @@
 
   /* 装饰动画只画在在线设备上（图标波纹、覆盖范围虚线、雷达扫描、光电摆扫、5G-A 波纹）。 */
   MapView.prototype._hasAnimation = function () {
-    if (this._still() || !(this.layers.device || this.layers.coverage)) return false;
+    if (this._still()) return false;
+    // 分层后：有告警红晕，或融合感知页有在线设备的覆盖/波纹时才画装饰帧；其他地图页没有会动的东西就不画。
+    if (this._splitLayers && this._glows && this._glows.length) return true;
+    if (this._splitLayers && !this.opt.fusionProfile) return false;
+    if (!(this.layers.device || this.layers.coverage)) return false;
     return (this.data.devices || []).some(device => device && (device.statusCode === 'ONLINE' || device.status === '在线'));
   };
 
@@ -1207,7 +1222,60 @@
     this._paintLayers(c, W, H);
   };
 
+  /* 整张重画：数据变化、拖动缩放、底图重绘时调用。详细底图上分两层：业务层（本函数）和装饰动画层（_drawAnimated）。 */
   MapView.prototype.draw = function () {
+    if (!this.w) return;
+    this._splitLayers = !!(this.online && this.map) && !!(g.UI && g.UI.captureAlarmGlows);
+    if (!this._splitLayers) {
+      if (g.UI && g.UI.releaseAlarmGlows) g.UI.releaseAlarmGlows(this.ctx);
+      this._glows = [];
+      this.actx.clearRect(0, 0, this.w, this.h);
+      this._drawStatic();
+      return;
+    }
+    // 本轮业务层上画的告警红晕（含页面在 draw 之后补画的）都记进这个列表，由装饰层按时间闪烁。
+    this._glows = g.UI.captureAlarmGlows(this.ctx);
+    this._drawStatic();
+    this._drawAnimated();
+  };
+
+  /* 装饰动画层：覆盖范围、上报波纹、告警红晕。每秒约 12 帧只重画这一层，业务层不动。 */
+  MapView.prototype._drawAnimated = function () {
+    const c = this.actx, W = this.w, H = this.h;
+    if (!c || !W) return;
+    c.clearRect(0, 0, W, H);
+    if (!this._splitLayers) return;
+    this._paintAnimated(c);
+    const glows = this._glows || [];
+    if (!glows.length || !(g.UI && g.UI.paintAlarmGlow)) return;
+    const k = (this._animDpr || 1) / (this._dpr || 1);
+    glows.forEach(glow => {
+      c.save();
+      const m = glow.matrix;
+      c.setTransform(m.a * k, m.b * k, m.c * k, m.d * k, m.e * k, m.f * k);
+      c.globalAlpha = glow.alpha;
+      g.UI.paintAlarmGlow(c, glow.x, glow.y, glow.size);
+      c.restore();
+    });
+  };
+
+  MapView.prototype._paintAnimated = function (c) {
+    const P = (a, b) => this.px(a, b);
+    /* 四源覆盖只在融合感知开关下启用，避免改变告警页、飞行页等共享地图。 */
+    if (this.opt.fusionProfile && this.layers.coverage) {
+      (this.data.devices || []).slice(0, this.opt.maxDev || 90).forEach(device => {
+        this._drawDeviceCoverage(c, device, P);
+      });
+    }
+    /* 所有有坐标的设备都显示同一套上报脉冲；它和覆盖范围是两种不同事实。 */
+    if (this.opt.fusionProfile && this.layers.device) {
+      (this.data.devices || []).slice(0, this.opt.maxDev || 90).forEach(device => {
+        this._drawDeviceScanPulse(c, device, P);
+      });
+    }
+  };
+
+  MapView.prototype._drawStatic = function () {
     const c = this.ctx, W = this.w, H = this.h;
     if (!W) return;
     const P = (a, b) => this.px(a, b);
@@ -1285,19 +1353,8 @@
       c.save(); this.opt.drawUnderMarkers(this); c.restore();
     }
 
-    /* 四源覆盖只在融合感知开关下启用，避免改变告警页、飞行页等共享地图。 */
-    if (this.opt.fusionProfile && this.layers.coverage) {
-      (this.data.devices || []).slice(0, this.opt.maxDev || 90).forEach(device => {
-        this._drawDeviceCoverage(c, device, P);
-      });
-    }
-
-    /* 所有有坐标的设备都显示同一套上报脉冲；它和覆盖范围是两种不同事实。 */
-    if (this.opt.fusionProfile && this.layers.device) {
-      (this.data.devices || []).slice(0, this.opt.maxDev || 90).forEach(device => {
-        this._drawDeviceScanPulse(c, device, P);
-      });
-    }
+    /* 简化示意图（不透明）上装饰画在同一张画布；详细底图上由装饰动画层单独画。 */
+    if (!this._splitLayers) this._paintAnimated(c);
 
     /* 空域 */
     (this.data.airspaces || []).forEach(a => {

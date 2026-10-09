@@ -104,6 +104,7 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
   let lastTracksAt = 0;
   let slimTracks = true;
   let batchRouteVersions = true;
+  let batchAirspaces = true;
   const routeVersions = new Map();
   const trajectoryComparisons = new Map();
   const failedSegments = new Set();
@@ -178,6 +179,21 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
     }
   }
 
+  // 空域连同当前版本一次取回（列表带 include=current_version），不再每片空域单独请求详情。
+  async function loadAirspaceDetails(generatedAt) {
+    if (batchAirspaces) {
+      try {
+        return await allPages(airspaceApi.list, { valid_at: generatedAt, include: 'current_version' });
+      } catch (error) {
+        if (error?.status === 403) throw error;
+        // 不认 include 的旧后端答 400：本页改回逐片读取；其他错误（如某片空域版本重叠）只本轮逐片读取。
+        if (error?.status === 400) batchAirspaces = false;
+      }
+    }
+    const rows = await allPages(airspaceApi.list, { valid_at: generatedAt });
+    return mapPool(rows, 6, row => airspaceApi.detail(row.airspace_id));
+  }
+
   async function refreshFast(generatedAt, segments = FAST_SEGMENTS) {
     const day = shanghaiDay(generatedAt);
     const observedFrom = day.from;
@@ -245,9 +261,7 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
     }, value => { snapshot = { ...snapshot, flightPlans: value }; }, []);
 
     const airspaceTask = wanted.has('airspaces') && retain('airspaces', async () => {
-      const rows = await allPages(airspaceApi.list, { valid_at: generatedAt });
-      const details = await mapPool(rows, 6, row => airspaceApi.detail(row.airspace_id));
-      return toAirspaces(details);
+      return toAirspaces(await loadAirspaceDetails(generatedAt));
     }, value => { snapshot = { ...snapshot, airspaces: value }; }, []);
 
     const fusionTask = wanted.has('fusion-status') && retain('fusion-status', () => targetApi.fusionStatus(), value => {

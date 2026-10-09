@@ -191,17 +191,32 @@
   }
   const mapAlarmActive = abnormalActive;
   let alarmMotionQuery, alarmGlowColor;
-  function applyAlarmGlow(context, item, x = 0, y = 0, size = 24) {
-    if (!context || !abnormalActive(item)) return;
+  /* 地图把不动的内容和会动的红晕分两层画：在登记过的画布上，红晕只记下位置交给动画层按时间闪烁，
+     图标贴边亮光按固定强度画一次。没登记的画布（各页面自己的画布）照旧整体闪烁。 */
+  const alarmGlowSinks = new WeakMap();
+  function captureAlarmGlows(context) {
+    const items = [];
+    if (context) alarmGlowSinks.set(context, items);
+    return items;
+  }
+  function releaseAlarmGlows(context) {
+    if (context) alarmGlowSinks.delete(context);
+  }
+  function alarmPulse() {
     alarmMotionQuery ||= g.matchMedia?.('(prefers-reduced-motion: reduce)');
     const wave = (1 - Math.cos(performance.now() / 1400 * Math.PI * 2)) / 2;
-    const pulse = alarmMotionQuery?.matches ? .85 : Math.min(1, wave * 1.8);
-    alarmGlowColor ||= getComputedStyle(document.documentElement).getPropertyValue('--icon-alarm').trim() || '#ff243b';
+    return alarmMotionQuery?.matches ? .85 : Math.min(1, wave * 1.8);
+  }
+  function glowColor() {
+    return alarmGlowColor ||= getComputedStyle(document.documentElement).getPropertyValue('--icon-alarm').trim() || '#ff243b';
+  }
+  function paintAlarmGlow(context, x = 0, y = 0, size = 24, pulse = alarmPulse()) {
+    const color = glowColor();
     // 柔和的固定像素红晕提供醒目底光，不绘制范围边界，也不降低主体透明度。
     const radius = size / 2 + 20;
     const halo = context.createRadialGradient(x, y, 0, x, y, radius);
-    halo.addColorStop(0, alarmGlowColor);
-    halo.addColorStop(.3, alarmGlowColor);
+    halo.addColorStop(0, color);
+    halo.addColorStop(.3, color);
     halo.addColorStop(1, 'transparent');
     context.save();
     context.shadowBlur = 0; context.filter = 'none';
@@ -209,10 +224,23 @@
     context.fillStyle = halo;
     context.fillRect(x - radius, y - radius, radius * 2, radius * 2);
     context.restore();
-    context.shadowColor = alarmGlowColor;
+  }
+  function applyAlarmGlow(context, item, x = 0, y = 0, size = 24) {
+    if (!context || !abnormalActive(item)) return;
+    let pulse;
+    const sink = alarmGlowSinks.get(context);
+    if (sink && typeof context.getTransform === 'function') {
+      sink.push({ matrix: context.getTransform(), alpha: context.globalAlpha, x, y, size });
+      pulse = .6;
+    } else {
+      pulse = alarmPulse();
+      paintAlarmGlow(context, x, y, size, pulse);
+    }
+    const color = glowColor();
+    context.shadowColor = color;
     // 贴边亮光与外层红晕叠加，避免细线图标的单层宽阴影被底图吞没。
     context.shadowBlur = 2 + 6 * pulse;
-    context.filter = `drop-shadow(0 0 ${1 + 3 * pulse}px ${alarmGlowColor}) drop-shadow(0 0 ${3 + 11 * pulse}px ${alarmGlowColor})`;
+    context.filter = `drop-shadow(0 0 ${1 + 3 * pulse}px ${color}) drop-shadow(0 0 ${3 + 11 * pulse}px ${color})`;
     context.shadowOffsetX = context.shadowOffsetY = 0;
   }
   const businessImages = new Map();
@@ -642,7 +670,7 @@
   });
 
   g.UI = {
-    icon, deviceMeta, deviceIcon, businessIcon, businessIconUrl, targetIconKey, targetIcon, drawBusinessIcon, abnormalActive, mapAlarmActive, applyAlarmGlow, num, pct, money, delta, tag, risk, legal, dotState, stateIcon, panel, detailHero, kpis, table, cell, pager,
+    icon, deviceMeta, deviceIcon, businessIcon, businessIconUrl, targetIconKey, targetIcon, drawBusinessIcon, abnormalActive, mapAlarmActive, applyAlarmGlow, captureAlarmGlows, releaseAlarmGlows, paintAlarmGlow, num, pct, money, delta, tag, risk, legal, dotState, stateIcon, panel, detailHero, kpis, table, cell, pager,
     checked, bindCheckAll, goto, consume, selectRow, srcTag, confPct, modelTag, regParams, paramGroups,
     kv, sect, metricStrip, detailActions, codeBlock, steps, timeline, modal, closeModal, toast, field, select, input, bars, on, KC,
     legalBasis, basisHtml, verdictHtml

@@ -73,6 +73,12 @@ async function main() {
   let rejectSlimTracks = false;
   let emptyTracks = false;
   let noRouteBatch = false;
+  const airspaceQueries = [];
+  let airspaceDetailCalls = 0;
+  let rejectAirspaceInclude = false;
+  const airspaceRows = [];
+  const airspaceVersion = { kind_code: 'PROHIBITED', max_altitude_m: 120,
+    boundary: { type: 'MultiPolygon', coordinates: [[[[118.4, 37.3], [118.5, 37.3], [118.5, 37.4], [118.4, 37.3]]]] } };
   const routeBatchQueries = [];
   let routeSingleCalls = 0;
   const ALL_CODES = ['target:read', 'alarm:read', 'risk:read', 'handoff:read', 'devices.read', 'monitoring.read',
@@ -149,7 +155,15 @@ async function main() {
         } })) };
       }
     },
-    airspaceApi: { list: async () => ({ items: [], total: 0 }), detail: async value => value },
+    airspaceApi: {
+      list: async params => {
+        airspaceQueries.push(params);
+        if (rejectAirspaceInclude && params.include) { const error = new Error('VALIDATION_ERROR'); error.status = 400; throw error; }
+        const rows = airspaceRows.map(row => params.include ? { ...row, current_version: airspaceVersion } : row);
+        return { items: rows, total: rows.length };
+      },
+      detail: async id => { airspaceDetailCalls++; return { ...airspaceRows.find(row => row.airspace_id === id), current_version: airspaceVersion }; }
+    },
     riskApi: { listRisks: async () => { calls.risks++; return { items: [], total: 0 }; } },
     handoffApi: { listHandoffs: async () => {
       calls.handoffs++;
@@ -383,6 +397,22 @@ async function main() {
   while (earlySnapshots.length < 2 && Date.now() - earlyStarted < 3_000) await delay(5);
   ok('整轮读完后照旧再发布一次', earlySnapshots.length >= 2);
   early.stop();
+
+  // 空域连同当前版本一次取回，不逐片请求详情；旧后端不认 include 时改回逐片读取。
+  airspaceRows.push({ airspace_id: 'as1', airspace_no: 'ASP-1', name: '禁飞区一' }, { airspace_id: 'as2', airspace_no: 'ASP-2', name: '禁飞区二' });
+  for (const oldBackend of [false, true]) {
+    rejectAirspaceInclude = oldBackend;
+    const detailsBefore = airspaceDetailCalls;
+    const spaceSource = createSituationApiSource({ fastMs: 10, slowMs: 10_000, now: () => clock });
+    const spaceSnapshots = [];
+    spaceSource.start(value => spaceSnapshots.push(value), () => {});
+    while (!spaceSnapshots.some(value => value.airspaces.length === 2)) await delay(5);
+    spaceSource.stop();
+    check(oldBackend ? '旧后端：改回逐片读取空域详情' : '空域一次取回，不逐片请求详情', airspaceDetailCalls - detailsBefore, oldBackend ? 2 : 0);
+  }
+  ok('空域列表请求带 include=current_version', airspaceQueries.some(query => query.include === 'current_version'));
+  rejectAirspaceInclude = false;
+  airspaceRows.length = 0;
 
   // 没有批量航线接口的旧后端：改回逐条读取，航线照常画出。
   noRouteBatch = true;

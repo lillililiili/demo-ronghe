@@ -137,6 +137,17 @@ function areaText(version) {
 }
 
 /* ---------- 读取 ---------- */
+let batchAirspaces = true;
+async function listAirspaces(withVersion) {
+  const extra = withVersion && batchAirspaces ? { include: 'current_version' } : {};
+  if (withVersion && !batchAirspaces) return null;
+  const first = await airspaceApi.list({ page: 1, size: PAGE_MAX, ...extra });
+  let items = first.items || [];
+  const pages = Math.ceil((first.total || 0) / PAGE_MAX);
+  for (let p = 2; p <= pages; p++) items = items.concat((await airspaceApi.list({ page: p, size: PAGE_MAX, ...extra })).items || []);
+  return items.filter(item => !OMITTED_TEST_AIRSPACE_IDS.has(item.airspace_id));
+}
+
 /* quiet：实时刷新或到点重读。已有列表时读取失败保留原列表并注明，错误抛给实时刷新按退避重试；
    列表原本就读取失败时按正常流程重读。 */
 async function loadAll({ quiet = false } = {}) {
@@ -145,14 +156,18 @@ async function loadAll({ quiet = false } = {}) {
   loading.value = true;
   if (!keep) error.value = '';
   try {
-    const first = await airspaceApi.list({ page: 1, size: PAGE_MAX });
-    let items = first.items || [];
-    const pages = Math.ceil((first.total || 0) / PAGE_MAX);
-    for (let p = 2; p <= pages; p++) items = items.concat((await airspaceApi.list({ page: p, size: PAGE_MAX })).items || []);
-    items = items.filter(item => !OMITTED_TEST_AIRSPACE_IDS.has(item.airspace_id));
-    // 单片详情读不到（例如服务端判版本重叠）不能让它从台账上消失：保留清单行，标出原因。
-    const details = await Promise.all(items.map(item => airspaceApi.detail(item.airspace_id)
-      .catch(reason => ({ ...item, current_version: null, load_error: reason?.code === 'VERSION_AMBIGUOUS' ? '版本区间重叠，服务端拒绝读取' : messageOf(reason) }))));
+    // 先一次取回空域连同当前版本；旧后端不认（400）或某片空域版本重叠（409）时改回逐片读取详情。
+    let details = await listAirspaces(true).catch(reason => {
+      if (reason?.status !== 400 && reason?.status !== 409) throw reason;
+      if (reason?.status === 400) batchAirspaces = false;
+      return null;
+    });
+    if (!details) {
+      const items = await listAirspaces(false);
+      // 单片详情读不到（例如服务端判版本重叠）不能让它从台账上消失：保留清单行，标出原因。
+      details = await Promise.all(items.map(item => airspaceApi.detail(item.airspace_id)
+        .catch(reason => ({ ...item, current_version: null, load_error: reason?.code === 'VERSION_AMBIGUOUS' ? '版本区间重叠，服务端拒绝读取' : messageOf(reason) }))));
+    }
     all.value = details;
     refreshError.value = '';
     if (selected.value) {

@@ -3,6 +3,7 @@
    - 降速后隔“该帧耗时 × 8，至少 2 秒”才画一帧装饰动画；数据变化引起的重画不受影响。
    - 只要有一帧恢复正常，立即回到正常节奏。
    - 动画相位按真实时间走，少画帧只降低帧数，不让扫描、波纹变慢。
+   - 详细底图上业务层和装饰层分开：装饰帧只重画装饰层；非融合感知地图只有告警红晕时才画装饰帧。
    - 正常节奏是每秒约 12 帧（隔 80ms），不再每个浏览器帧都画；图上没有在线设备或设备、覆盖图层都关着时不画装饰帧。
    用的是实际 map.js 的 _loop，不在测试里复制节流规则。 */
 const assert = require('node:assert/strict');
@@ -78,6 +79,25 @@ map.layers = { device: true, coverage: false };
 const backFrom = clock;
 runFor(1000);
 assert.ok(drawsBetween(backFrom, clock).length >= 12, '再打开设备图层，装饰动画恢复');
+
+// 详细底图上分层：装饰帧只重画装饰层，业务层（draw）不动。
+const animTimes = [];
+map._drawAnimated = () => { drew = true; animTimes.push(clock); };
+map._splitLayers = true;
+map.opt = { fusionProfile: true };
+const splitFrom = clock, drawsBefore = drawTimes.length;
+runFor(1000);
+assert.equal(drawTimes.length, drawsBefore, '分层后装饰帧不再整张重画业务层');
+assert.ok(animTimes.filter(time => time >= splitFrom).length >= 11, '分层后装饰层照常每秒约 12 帧');
+map.opt = {};
+map._glows = [];
+const plainFrom = clock;
+runFor(2000);
+assert.equal(animTimes.filter(time => time >= plainFrom).length, 0, '非融合感知地图、没有告警红晕：没有会动的东西，不画装饰帧');
+map._glows = [{ x: 1, y: 1, size: 24 }];
+const glowFrom = clock;
+runFor(1000);
+assert.ok(animTimes.filter(time => time >= glowFrom).length >= 11, '有告警红晕时装饰层照常闪烁');
 
 map._dead = true;
 runFor(16);

@@ -18,6 +18,7 @@ const recordElements = new Map();
 // 风险多时先列前几条，其余收起，避免把任务详情撑得很长；选中的风险始终展开显示
 const COLLAPSED_LIMIT = 4;
 const expanded = ref(false);
+const hasNoRecords = computed(() => !props.records.length);
 const ordered = computed(() => [
   ...props.records.filter(record => record.currentStatus === 'CURRENT'),
   ...props.records.filter(record => record.currentStatus !== 'CURRENT')
@@ -44,16 +45,18 @@ const groups = computed(() => [
       <!-- 2026-10-08 用户要求精简：没有风险时只占一行，提示与更新时间放到悬停说明里。 -->
       <p v-if="isEmpty" role="status" :title="`没有记录不代表当前飞行条件已确认安全。${asOf ? `更新于 ${asOf}` : ''}`">当前无关联风险</p>
       <p v-else-if="!loading && !error">当前 <strong>{{ currentTotal }}</strong> 起<span v-if="uncertainTotal"> · 其中状态待确认 <strong>{{ uncertainTotal }}</strong> 起</span></p>
-      <button v-if="!error" class="btn" type="button" :disabled="loading" @click="emit('retry')">刷新</button>
+      <button class="btn" type="button" :disabled="loading" @click="emit('retry')">刷新</button>
     </header>
 
-    <div v-if="loading" class="risk-list-message" role="status">正在读取本任务当前风险</div>
-    <div v-else-if="error" class="risk-list-message risk-list-error" role="alert">
+    <div v-if="loading && hasNoRecords" class="risk-list-message" role="status">正在读取本任务当前风险</div>
+    <div v-else-if="error && hasNoRecords" class="risk-list-message risk-list-error" role="alert">
       <strong>当前风险读取失败</strong>
       <p>{{ error }}</p>
       <button class="btn" type="button" @click="emit('retry')">重新读取</button>
     </div>
-    <template v-else-if="!isEmpty">
+    <p v-if="loading && !hasNoRecords" class="risk-list-refreshing" role="status">正在更新，下方保留上次风险结果</p>
+    <p v-else-if="error && !hasNoRecords" class="risk-list-refreshing risk-list-error" role="status">本次更新失败，下方是上次风险结果：{{ error }}</p>
+    <template v-if="!isEmpty && !hasNoRecords">
       <section v-for="group in groups" :key="group.title" class="risk-presence-group" :aria-label="group.title">
       <h4 class="risk-group-title">{{ group.title }}</h4>
       <ul class="plan-risk-list">
@@ -135,5 +138,7 @@ const groups = computed(() => [
 .risk-list-message p { margin: 0; }
 .risk-list-error strong { color: var(--amber); }
 .risk-list-more { margin: 0; padding: 10px 0 0; border-top: 1px solid var(--line-2); color: var(--txt-3); font-size: 12px; line-height: 1.8; }
+.risk-list-refreshing { margin: 8px 0 0; color: var(--txt-3); font-size: 12px; line-height: 1.7; }
+.risk-list-refreshing.risk-list-error { color: var(--amber); }
 .plan-risk-records h3, .plan-risk-records h4, .plan-risk-records p, .plan-risk-records span, .plan-risk-records button { white-space: normal; overflow-wrap: anywhere; }
 </style>

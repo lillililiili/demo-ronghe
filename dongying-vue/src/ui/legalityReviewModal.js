@@ -1,4 +1,4 @@
-/* 合法性研判动作弹窗：人工复核（确认/驳回/改判）、重新研判（确认框）、转告警（说明框）。
+/* 合法性研判动作弹窗：人工复核（确认/改判；历史驳回只读）、重新研判（确认框）、转告警（说明框）。
    与 uavVerificationModal 同一范式：幂等键在“结果未知”期间保留，只有服务端给出明确结果后才丢弃；
    只调用 legalityApi，不写 window.MOCK/window.EVT，结论以服务端回读为准。 */
 import { openFormModal } from './formModal.js';
@@ -155,15 +155,9 @@ function intro(evaluation) {
   const operatorNote = focus.needsReview
     ? '当前证据不足，结论暂不能可靠确认，请根据下列原因核对信息缺口。'
     : focus.note;
-  const assurance = evaluation.decision_assurance;
   const rows = [
-    ['复核状态', esc(reviewStateText(evaluation.review?.state))],
-    ['判定可靠性', esc(assurance ? decisionAssuranceStatusText(assurance.status) : '旧记录未提供判定可靠性')],
-    assurance?.algorithm_version ? ['算法版本', esc(assurance.algorithm_version)] : null,
-    assurance?.reasons?.length ? ['可靠性原因', esc(assurance.reasons.map(ruleReasonText).join('、'))] : null,
     ['任务匹配', esc(planMatchText(evaluation.plan_match_code)) + (evaluation.plan_no ? `　${esc(evaluation.plan_no)}` : '')],
-    evaluation.violation_reasons?.length ? ['违规原因', esc(evaluation.violation_reasons.map(ruleReasonText).join('、'))] : null,
-    evaluation.unknown_reasons?.length ? ['未知原因', esc(evaluation.unknown_reasons.map(ruleReasonText).join('、'))] : null
+    evaluation.violation_reasons?.length ? ['违规原因', esc(evaluation.violation_reasons.map(ruleReasonText).join('、'))] : null
   ].filter(Boolean).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join('');
   return `<div class="legality-review-intro">
     <section class="legality-review-focus ${focus.needsReview ? 'is-attention' : ''}">
@@ -199,12 +193,11 @@ export function openLegalityReview({ evaluation, refresh, onDone } = {}) {
   openFormModal({
     title: (focus.needsReview ? '核对信息缺口 · ' : '补充人工纠正 · ') + esc(evaluation.target_no || evaluation.plan_no || '研判'),
     width: '620px',
-    warning: '本弹窗只记录人工结论，不会执行反制，也不会修改告警核实状态。确认采纳系统结论；驳回记录系统误判；改判需要选择人工结论。',
+    warning: '本弹窗只记录人工结论，不会执行反制，也不会修改告警核实状态。确认保留系统结论；改判需要选择人工结论。',
     introHtml: intro(evaluation),
     fields: [
       { key: 'conclusion', label: '复核结论', type: 'radio', required: true, options: [
-        { value: 'CONFIRM', label: `确认（采纳系统结论「${legalStatusText(evaluation.legal_status)}」）` },
-        { value: 'REJECT', label: '驳回（系统误判）' },
+        { value: 'CONFIRM', label: `确认（保留系统结论「${legalStatusText(evaluation.legal_status)}」）` },
         { value: 'OVERRIDE', label: '改判（选择人工结论）' }
       ] },
       { key: 'override_status', label: '人工结论', type: 'select', options: overrideOptions, placeholder: '请选择改判结论',

@@ -539,13 +539,14 @@ let planListToken = 0;
 let planRefreshTimer = 0;
 // 最近一次列表读取失败的原因，实时刷新据此判断是否值得退避重试（没有权限、登录失效不重试）。
 let planFailure = null, riskFailure = null;
-async function loadPlans(nextPage = page.value, requestedId = null) {
+async function loadPlans(nextPage = page.value, requestedId = null, { quiet = false } = {}) {
   const token = ++planListToken;
   // 筛选/翻页后，先前详情即使较晚返回也不能重新选中已离开列表的记录。
   planDetailToken++;
   trajectoryToken++;
   detailLoading.value = false;
-  loading.value = true;
+  const keepVisible = quiet && routeLoaded.value;
+  if (!keepVisible) loading.value = true;
   error.value = '';
   try {
     const focusedId = focusedPlanId.value;
@@ -594,7 +595,9 @@ async function loadPlans(nextPage = page.value, requestedId = null) {
     }
   } catch (requestError) {
     if (token !== planListToken || activeTab.value !== 'route') return;
-    // 请求失败必须保留真实错误，绝不以演示数据伪造一个“正常”列表。
+    // 静默刷新失败时保留上一次真实列表，不能因短暂网络错误让页面空白。
+    if (quiet && routeLoaded.value) { planFailure = requestError; return; }
+    // 首次读取失败必须保留真实错误，绝不以演示数据伪造一个“正常”列表。
     plans.value = [];
     total.value = 0;
     selected.value = null;
@@ -750,7 +753,9 @@ let routeRisksToken = 0;
 let routeRisksTimer;
 async function loadRouteRisks(plan, pageNumber = 1) {
   const token = ++routeRisksToken;
-  Object.assign(routeRisks, { planId: plan?.plan_id || null, items: [], total: 0, currentTotal: 0, uncertainTotal: 0, asOf: null, error: '', loaded: false, loading: false, page: pageNumber });
+  const samePlan = routeRisks.planId === plan?.plan_id;
+  if (!samePlan) Object.assign(routeRisks, { planId: plan?.plan_id || null, items: [], total: 0, currentTotal: 0, uncertainTotal: 0, asOf: null, error: '', loaded: false, loading: false, page: pageNumber });
+  else routeRisks.error = '';
   if (!plan?.route?.route_version_id || ['COMPLETED', 'CANCELLED'].includes(plan.status_code)) return;
   routeRisks.loading = true;
   try {
@@ -768,6 +773,7 @@ async function loadRouteRisks(plan, pageNumber = 1) {
     routeRisks.currentTotal = data.current_total;
     routeRisks.uncertainTotal = data.uncertain_total;
     routeRisks.asOf = data.as_of;
+    routeRisks.page = data.page || pageNumber;
     routeRisks.loaded = true;
   } catch (requestError) {
     if (token !== routeRisksToken || activeTab.value !== 'route' || selected.value?.plan_id !== plan.plan_id) return;
@@ -1003,8 +1009,9 @@ function updatePlanDeviceMap({ planId, check }) {
   const oldPositions = JSON.stringify(mapDevices.value.map(row => [row.device_id, row.position]));
   planDeviceCheck.value = check;
   const newPositions = JSON.stringify(mapDevices.value.map(row => [row.device_id, row.position]));
-  // 状态刷新沿用原地图；只有点位变化才重新取景，避免每 30 秒打断用户缩放。
-  if (activeTab.value === 'route' && (!routeMap || oldPositions !== newPositions)) renderRouteMap();
+  // 状态刷新沿用原地图；点位变化只重绘当前视图，不销毁地图实例或打断用户缩放。
+  if (activeTab.value === 'route' && !routeMap) renderRouteMap();
+  else if (activeTab.value === 'route' && oldPositions !== newPositions) routeMap?.draw();
 }
 
 function syncDeviceMarkers(map) {
@@ -1110,7 +1117,7 @@ function applyFilters() {
 
 function refreshPlans() {
   if (activeTab.value !== 'route' || loading.value) return;
-  loadPlans(page.value);
+  loadPlans(page.value, null, { quiet: true });
 }
 
 /* 下拉一改就查（与 legacy 一致）；关键词走回车/查询。不用 watch：深链清筛选时不能再抢先重读一次列表。 */

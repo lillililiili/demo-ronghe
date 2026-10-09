@@ -321,6 +321,12 @@ function factText(value, ruleCode) {
   return String(value);
 }
 function dimText(value) { return value ? (DIM_TEXT[value] || value) : '未评估'; }
+function planMatchTone(value) {
+  return ({ FULL: 'green', PARTIAL: 'cyan', NONE: 'amber', UNDETERMINED: 'amber', NOT_APPLICABLE: 'gray' })[value] || 'gray';
+}
+function dimensionTone(value) {
+  return ({ MATCH: 'green', PASS: 'green', MISMATCH: 'red', FAIL: 'red', UNDETERMINED: 'amber', UNKNOWN: 'gray' })[value] || 'gray';
+}
 function reviewText(item) {
   const focus = legalityReviewFocus(item);
   if (focus.alarmVerified) return '告警已核实';
@@ -949,24 +955,43 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
                       </div>
                     </template>
                     <div v-else-if="st.evidenceTab === 'plan'" class="lg-evidence-wide">
-                      <h4>基础任务关联与身份 <span>判定时记录的情况</span></h4>
+                      <div class="lg-plan-heading">
+                        <div>
+                          <span class="lg-section-kicker">任务证据快照</span>
+                          <h4>基础任务关联与身份 <span>判定时记录的情况</span></h4>
+                        </div>
+                        <span class="tag t-blue">任务与身份</span>
+                      </div>
                       <dl class="lg-resource-grid">
-                        <dt>匹配等级</dt><dd>{{ planMatchText(selectedEvaluation.plan_match_code) }}{{ c01Facts?.match_reason ? `（${ruleReasonText(c01Facts.match_reason)}）` : '' }}</dd>
+                        <div class="lg-resource-item lg-resource-item--wide">
+                          <dt>匹配等级</dt><dd><span class="tag" :class="`t-${planMatchTone(selectedEvaluation.plan_match_code)}`">{{ planMatchText(selectedEvaluation.plan_match_code) }}</span><span v-if="c01Facts?.match_reason" class="lg-resource-note">{{ ruleReasonText(c01Facts.match_reason) }}</span></dd>
+                        </div>
                       <!-- 决策 19-1：研判的主视角是计划。有计划就把编号做成入口，能直接过去看计划本身。
                            匹配等级为"无匹配"时它只是**候选**任务，标题要说清楚，不能写成"所属"。 -->
-                      <dt>{{ selectedEvaluation.plan_match_code === 'NONE' ? '候选任务' : '所属任务' }}</dt><dd :title="selectedEvaluation.plan_id">
-                        <template v-if="selectedEvaluation.plan_no && selectedEvaluation.plan_id">
-                          <button type="button" class="lg-link-btn" title="打开飞行任务页并选中这条任务"
-                            @click="openPlan(selectedEvaluation.plan_id)">{{ displayPlanNo(selectedEvaluation.plan_no) }}</button>
-                          <span v-if="selectedEvaluation.plan_match_code === 'NONE'" class="lg-muted">（未匹配上这条任务）</span>
-                        </template>
-                        <template v-else-if="selectedEvaluation.plan_id">已关联任务（未提供编号）</template>
-                        <template v-else>无匹配任务</template>
-                      </dd>
-                        <dt>时间窗</dt><dd>{{ dimText(c01Facts?.dimensions?.time_window) }}</dd>
-                        <dt>走廊</dt><dd>{{ dimText(c01Facts?.dimensions?.corridor) }}</dd>
-                        <dt>身份</dt><dd>{{ c01Facts?.dimensions?.identity === 'UNDETERMINED' ? '身份线索缺失（无测向或基站数据）' : dimText(c01Facts?.dimensions?.identity) }}</dd>
-                        <dt>候选任务数</dt><dd>{{ c01Facts?.candidate_count ?? '未知' }}</dd>
+                        <div class="lg-resource-item lg-resource-item--wide">
+                          <dt>{{ selectedEvaluation.plan_match_code === 'NONE' ? '候选任务' : '所属任务' }}</dt>
+                          <dd :title="selectedEvaluation.plan_id">
+                            <template v-if="selectedEvaluation.plan_no && selectedEvaluation.plan_id">
+                              <button type="button" class="lg-link-btn" title="打开飞行任务页并选中这条任务"
+                                @click="openPlan(selectedEvaluation.plan_id)">{{ displayPlanNo(selectedEvaluation.plan_no) }}</button>
+                              <span v-if="selectedEvaluation.plan_match_code === 'NONE'" class="lg-resource-note">未匹配上这条任务</span>
+                            </template>
+                            <template v-else-if="selectedEvaluation.plan_id"><span class="tag t-gray">已关联任务</span><span class="lg-resource-note">未提供编号</span></template>
+                            <template v-else><span class="tag t-gray">无匹配任务</span></template>
+                          </dd>
+                        </div>
+                        <div class="lg-resource-item">
+                          <dt>时间窗</dt><dd><span class="tag" :class="`t-${dimensionTone(c01Facts?.dimensions?.time_window)}`">{{ dimText(c01Facts?.dimensions?.time_window) }}</span></dd>
+                        </div>
+                        <div class="lg-resource-item">
+                          <dt>走廊</dt><dd><span class="tag" :class="`t-${dimensionTone(c01Facts?.dimensions?.corridor)}`">{{ dimText(c01Facts?.dimensions?.corridor) }}</span></dd>
+                        </div>
+                        <div class="lg-resource-item">
+                          <dt>身份</dt><dd><span class="tag" :class="`t-${dimensionTone(c01Facts?.dimensions?.identity)}`">{{ c01Facts?.dimensions?.identity === 'UNDETERMINED' ? '不可判定' : dimText(c01Facts?.dimensions?.identity) }}</span><span v-if="c01Facts?.dimensions?.identity === 'UNDETERMINED'" class="lg-resource-note">身份线索缺失（无测向或基站数据）</span></dd>
+                        </div>
+                        <div class="lg-resource-item">
+                          <dt>候选任务数</dt><dd><strong class="lg-count-value">{{ c01Facts?.candidate_count ?? '未知' }}</strong><span class="lg-resource-note">参与本次匹配</span></dd>
+                        </div>
                       </dl>
                       <FlightExecutionChecks :hits="selectedEvaluation.hit_details || []" />
                     </div>
@@ -1071,7 +1096,7 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
 .lg-evidence-body{padding:12px 16px;font-size:12px;line-height:1.6;color:var(--txt-2)}.lg-evidence-body h4{margin:0 0 10px;color:var(--txt);font-size:13px}.lg-evidence-body h4 span{display:block;color:var(--txt-3);font-size:11px;font-weight:400}.lg-evidence-body p{margin:4px 0}
 .lg-evidence-timeline{list-style:none;margin:0 0 12px;padding:0}.lg-evidence-timeline li{position:relative;display:flex;gap:12px;min-height:70px;padding:10px 0}.lg-evidence-timeline li:not(:last-child):before{content:"";position:absolute;left:11px;top:35px;bottom:-8px;width:1px;background:var(--line)}.lg-evidence-timeline li+li{border-top:1px solid var(--line-2)}.lg-evidence-icon{display:flex;justify-content:center;align-items:center;width:24px;height:24px;flex:none;border-radius:50%;background:var(--surface-2);color:var(--cyan)}.lg-evidence-timeline b{color:var(--blue);font-size:13px}.lg-evidence-timeline p{overflow-wrap:anywhere;color:var(--txt-3);font-size:12px}
 .lg-map-wrap{position:relative;min-height:185px;margin-top:10px;overflow:hidden;border:1px solid var(--lg-line);border-radius:4px;background:var(--surface-1)}.lg-map-host{position:absolute;inset:0}.lg-map-legend{position:absolute;z-index:3;flex-wrap:wrap;left:5px;right:5px;bottom:5px;display:flex;justify-content:center;gap:10px;padding:3px;background:var(--panel);font-size:9px}.lg-map-legend .is-zone{color:#a97bff}.lg-map-legend .is-plan{color:#8ca0a8}.lg-map-legend .is-plan::before{content:"";display:inline-block;width:14px;margin-right:4px;vertical-align:middle;border-top:2px dashed currentColor}.lg-map-legend .is-track{color:var(--txt-2)}
-.lg-resource-grid{display:grid;grid-template-columns:90px minmax(0,1fr);gap:7px;margin:8px 0;font-size:12px}.lg-resource-grid dt{color:var(--txt-3)}.lg-resource-grid dd{margin:0;overflow-wrap:anywhere;color:var(--txt-2)}
+.lg-plan-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin:1px 0 12px;padding:0 0 10px;border-bottom:1px solid var(--line-2)}.lg-section-kicker{display:block;margin-bottom:2px;color:var(--cyan);font-size:10px;letter-spacing:.08em}.lg-plan-heading h4{margin:0!important}.lg-plan-heading>.tag{flex:none;margin-top:2px}.lg-resource-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:0;font-size:12px}.lg-resource-item{min-width:0;padding:9px 10px;border:1px solid var(--line-2);border-radius:7px;background:linear-gradient(135deg,color-mix(in srgb,var(--surface-3) 78%,transparent),color-mix(in srgb,var(--surface-1) 70%,transparent))}.lg-resource-item--wide{grid-column:1/-1}.lg-resource-item dt{margin-bottom:5px;color:var(--txt-3);font-size:11px}.lg-resource-item dd{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin:0;overflow-wrap:anywhere;color:var(--txt)}.lg-resource-item .tag{max-width:100%;white-space:normal;overflow-wrap:anywhere}.lg-resource-note{color:var(--txt-3);font-size:11px;line-height:1.55}.lg-count-value{color:var(--cyan);font-size:18px;font-variant-numeric:tabular-nums;line-height:1}.lg-evidence-wide :deep(.lg-resource-item) .lg-link-btn{font-size:13px}
 .lg-evidence-wide :deep(.pager){overflow:auto;max-width:100%}
 
 .lg-action-dock{flex:none;padding:12px 0 0}.detail-actions{display:flex;gap:8px;margin:0}.lg-action-dock .btn{flex:1;min-width:0;height:40px!important;font-size:13px}.detail-actions .btn:disabled{cursor:not-allowed;opacity:.45}
@@ -1081,5 +1106,6 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
 @media(min-width:1800px){.lg-queue-tabs{min-height:54px}.lg-queue-tabs button{padding:0 15px}.lg-target-table{font-size:14px}.lg-target-table td{height:76px}.lg-target-table th{height:48px}.lg-main-column{gap:18px}}
 @media(max-width:1399px){.lg-workspace{gap:12px;grid-template-columns:minmax(0,3fr) minmax(0,2fr)}.lg-main-column{gap:12px}.lg-queue-tabs button{flex:1;padding:0 7px;font-size:12px}.lg-queue-tabs button span{font-size:11px}.lg-queue-filters{padding:10px}}
 @media(max-width:1040px){.legality-workbench{overflow:auto!important}.lg-shell,.lg-workspace{height:auto;min-height:100%}.lg-workspace{grid-template-columns:minmax(0,1fr)}.lg-queue-panel{height:560px;flex:auto}.lg-detail-scroll{overflow:visible}.lg-basis-card{max-height:none}.lg-evidence-card{min-height:300px}.lg-review-panel{min-height:0}.lg-map-wrap{min-height:250px}}
+@media(max-width:700px){.lg-resource-grid{grid-template-columns:1fr}.lg-resource-item--wide{grid-column:auto}.lg-plan-heading{flex-wrap:wrap}}
 @media(prefers-reduced-motion:reduce){.legality-workbench *{transition:none!important;scroll-behavior:auto!important}}
 </style>

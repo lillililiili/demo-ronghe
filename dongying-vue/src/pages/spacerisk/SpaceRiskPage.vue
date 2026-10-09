@@ -2,7 +2,7 @@
 /* 空间安全风险（#/risk）：按 legacy public/assets/js/pages/risk.js 的结构恢复——
    6 个 KPI、三栏（地图 0.82 / 列表 1.7 / 详情 30%）、事件与通报两个页签。
    数据全部来自服务端：风险列表走 /risks?risk_type=SPACE_OBJECT，计数走 /space-risks/summary，
-   通报记录走交接接口。核验复用与工作台、飞行计划页同一个弹窗，本页不另造状态机。 */
+   通报记录走交接接口。核验复用与工作台、飞行任务页同一个弹窗，本页不另造状态机。 */
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import { UControl } from '@/components/form/index.js';
@@ -454,7 +454,7 @@ onUnmounted(() => {
           <dl class="kv">
             <dt>发现时间</dt><dd>{{ fmt(detail.occurred_at ?? detail.received_at) }}</dd>
             <dt>所属区域</dt><dd>{{ detail.district_name || '—' }}</dd>
-            <dt>关联计划</dt><dd><span v-if="detail.plan_no" :title="detail.plan_no">{{ displayPlanNo(detail.plan_no) }}</span><span v-else>—</span></dd>
+            <dt>关联任务</dt><dd><span v-if="detail.plan_no" :title="detail.plan_no">{{ displayPlanNo(detail.plan_no) }}</span><span v-else>—</span></dd>
             <dt v-if="detail.target_no">关联目标</dt><dd v-if="detail.target_no"><span :title="detail.target_id">{{ detail.target_no }}</span></dd>
           </dl>
 

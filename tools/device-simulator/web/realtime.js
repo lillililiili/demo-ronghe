@@ -1,12 +1,29 @@
 (function (root) {
   'use strict';
-  const kinds = {ADVISORY_SMS:'飞手短信',ADVISORY_VOICE:'飞手电话',RISK_NOTICE:'风险通知',UAV_PUNISHMENT:'处罚移送',PLAN_FEEDBACK:'计划反馈',DEVICE_MAINTENANCE:'设备运维'};
+  const kinds = {ADVISORY_SMS:'飞手短信',ADVISORY_VOICE:'飞手电话',RISK_NOTICE:'风险通知',UAV_PUNISHMENT:'处罚移送',PLAN_FEEDBACK:'任务反馈',DEVICE_MAINTENANCE:'设备运维'};
   const outcomes = {success:'正常回执',failed:'失败',timeout:'超时',delayed:'延迟回执',mixed:'轮换结果（电话含仅接通）',no_receipt:'不回执',no_answer:'未接通',answered_only:'仅接通，不完成播放'};
   const modeNames = {normal:'正常模式',abnormal:'异常模式',mixed:'混合模式'};
   const outcomeChoices = kind => Object.fromEntries(Object.entries(outcomes).filter(([mode])=>kind==='ADVISORY_VOICE'||!['no_answer','answered_only'].includes(mode)));
   const notificationOnline = (value, now = Date.now()) => Number(value?.lease_expires_at || 0) > now;
   const editLocked = data => ['PREPARING','RUNNING','PAUSED','STOPPING'].includes(data?.phase) || ['STARTING','RUNNING','STOPPING'].includes(data?.realtime?.state);
-  if (typeof module !== 'undefined') { module.exports = {notificationOnline, editLocked, modeNames, outcomeChoices}; return; }
+  /* 处罚接收单位存在平台上，和平台"处罚移送选接收单位"同一口径：所有启用的接收单位都算，不只是这里勾的。 */
+  const sameChoice = (a, b) => a.length === b.length && a.every(value => b.includes(value));
+  function punishmentSummary(data) {
+    const enabled = data?.enabled_recipients || [];
+    if (!enabled.length) return '现在没有启用的处罚接收单位：反制完成后不会移送，平台会提示管理员去配。';
+    const others = enabled.filter(item => !item.simulator).map(item => item.name);
+    return `现在启用的处罚接收单位共 ${enabled.length} 个，${enabled.length > 1 ? '反制完成后要人选再移送' : '反制完成后自动移送'}`
+      + (others.length ? `；其中${others.join('、')}不是在这里配的` : '') + '。';
+  }
+  /* 反制设备在平台上的位置，只用来在融合感知页上画“作用范围”；没有位置时那里显示“参数未知”。 */
+  function countermeasurePositionText(rt) {
+    if (!rt?.countermeasure?.listening) return '';
+    const p = rt.countermeasure_position, lon = Number(p?.longitude), lat = Number(p?.latitude);
+    return p && Number.isFinite(lon) && Number.isFinite(lat)
+      ? `位置 ${lon.toFixed(5)}, ${lat.toFixed(5)}` : '位置未设置（在收发模式设置里填经纬度）';
+  }
+  function positionValue(raw) { const text = String(raw ?? '').trim(); return text === '' ? null : Number(text); }
+  if (typeof module !== 'undefined') { module.exports = {notificationOnline, editLocked, modeNames, outcomeChoices, punishmentSummary, sameChoice, countermeasurePositionText, positionValue}; return; }
   let busy = false;
   const box = document.createElement('section');
   box.className = 'realtime-bar';
@@ -34,7 +51,7 @@
     }
     const n = rt.notifications || {}, tcp = rt.countermeasure || {};
     document.querySelector('#realtime-summary').textContent = `${modeNames[rt.config.mode]||rt.config.mode} · ${names[rt.state] || rt.state} · ${rt.config.continuous?'持续运行':'按场景时长'}`;
-    document.querySelector('#realtime-detail').textContent = `登录校验 ${time(Math.max(rt.session_verified_at || 0,data.session_verified_at || 0))}　MQTT ${data.mqtt_connected?'已连接':'未连接'} / 已发 ${data.sent || 0}　最近上报 ${time(data.last_published_at)}　TCP ${tcp.listening?'监听中':'未监听'} / 收到 ${tcp.received || 0}　通知 ${notificationOnline(n)?'租约有效':'未连接'} / 收到 ${n.received_count || 0} / 已回执 ${n.receipt_count || 0}　最近接收 ${time(Math.max(n.last_received_at || 0,tcp.last_received_at || 0))}`;
+    document.querySelector('#realtime-detail').textContent = `登录校验 ${time(Math.max(rt.session_verified_at || 0,data.session_verified_at || 0))}　MQTT ${data.mqtt_connected?'已连接':'未连接'} / 已发 ${data.sent || 0}　最近上报 ${time(data.last_published_at)}　TCP ${tcp.listening?'监听中':'未监听'} / 收到 ${tcp.received || 0}${tcp.listening ? ' / ' + countermeasurePositionText(rt) : ''}　通知 ${notificationOnline(n)?'租约有效':'未连接'} / 收到 ${n.received_count || 0} / 已回执 ${n.receipt_count || 0}　最近接收 ${time(Math.max(n.last_received_at || 0,tcp.last_received_at || 0))}`;
     document.querySelector('#realtime-error').textContent = rt.error || n.last_error || tcp.error || '';
     document.querySelector('#realtime-settings').disabled = busy || editLocked(data);
     document.querySelector('#realtime-start').disabled = busy || !data.connected || ['STARTING','RUNNING','STOPPING'].includes(rt.state);
@@ -56,6 +73,18 @@
     const options = {'':'跟随模拟器连接的单位与区县'};
     for(const scope of scopes) options[`${scope.owner_org_id}|${scope.district_id}`]=`${scope.owner_org_name || scope.owner_org_id} · ${scope.district_name || scope.district_id}`;
     if(config.countermeasure_scope && !options[config.countermeasure_scope]) options[config.countermeasure_scope]='已保存的单位与区县（不在当前读取范围）';
+    let punishment = null, punishmentError = '登录系统后才能选处罚接收单位';
+    if(liveState?.connected) {
+      try { punishment = await api('external/request',{method:'GET',path:'/local-interface-simulator/punishment-recipients'}); }
+      catch(error) { punishmentError = error.message; }
+    }
+    const chosen = punishment?.selected || [];
+    const punishmentFields = punishment
+      ? `<fieldset id="realtime-punishment"><legend>处罚接收单位</legend>
+        <p class="field-note">反制完成后的处罚移送发给这里勾的单位，由模拟接收端代收。勾一个时系统自动移送，勾两个以上时要人选。飞手短信、飞手电话和通知上级不用选，接收端一启动就自动接好。这一项保存后马上生效。</p>
+        <div class="realtime-checks">${(punishment.organizations || []).map(org=>`<label class="realtime-check"><input type="checkbox" name="punishment_org" value="${esc(org.org_id)}" ${chosen.includes(org.org_id)?'checked':''}>${esc(org.name)}</label>`).join('') || '<p class="field-note">平台上还没有单位，请先在管理端 单位管理 里建好处罚部门。</p>'}</div>
+        <p class="field-note">${esc(punishmentSummary(punishment))}</p></fieldset>`
+      : `<p class="field-note">处罚接收单位暂时读不到：${esc(punishmentError)}</p>`;
     openDialog('实时收发设置',`<form id="realtime-form">
       <p class="field-note">修改只影响下一次启动。已有通知保留首次接收时的处理方式；混合模式保留正常目标上报，同时按所选通知结果模拟异常回执。</p>
       ${choice('mode','运行模式',config.mode,{normal:'正常',abnormal:'异常',mixed:'混合'})}
@@ -63,12 +92,16 @@
       ${choice('notifications_enabled','六类通知接收',config.notifications_enabled,{true:'启用',false:'关闭'})}
       ${choice('countermeasure_enabled','本机模拟反制设备',config.countermeasure_enabled,{true:'启用',false:'关闭'})}
       ${choice('countermeasure_scope','反制设备所属单位与区县',config.countermeasure_scope,options)}
-      <p class="field-note">反制设备长期部署在某个单位与区县，不跟飞行计划绑定；这里只决定设备归属，不授予反制权限。</p>
+      <p class="field-note">反制设备长期部署在某个单位与区县，不跟飞行任务绑定；这里只决定设备归属，不授予反制权限。</p>
+      <label class="realtime-field">反制设备经度（WGS-84，可不填）<input name="countermeasure_longitude" type="number" step="any" min="-180" max="180" value="${esc(config.countermeasure_longitude ?? '')}"></label>
+      <label class="realtime-field">反制设备纬度（WGS-84，可不填）<input name="countermeasure_latitude" type="number" step="any" min="-90" max="90" value="${esc(config.countermeasure_latitude ?? '')}"></label>
+      <p class="field-note">位置只用来在融合感知页上画反制设备的“作用范围”。不填时放在场景里第一台雷达的位置；场景里没有雷达时请在这里填。平台上这台设备已经有位置的不会改，要改请到管理端 设备管理。</p>
       <label class="realtime-field">模拟电话播放时长（秒）<input name="play_seconds" type="number" min="0.1" max="60" step="0.1" value="${esc(config.play_seconds)}" required></label>
       <fieldset id="realtime-abnormal"><legend>异常与混合模式参数</legend>
       ${choice('command_mode','设备指令',config.command_mode,{success:'正常执行回执',no_receipt:'不执行、不回执',unchanged:'四通道状态不变，光电正常'})}
       ${Object.entries(kinds).map(([kind,label])=>choice(kind,label,config.outcomes[kind] || 'success',outcomeChoices(kind))).join('')}
       <p class="field-note">混合模式的设备指令按正常回执；异常模式可模拟设备指令异常。全量场景若选择通知轮换策略，会覆盖此处六类结果。设备离线和故障时窗属于设备诊断联调条件。</p></fieldset>
+      ${punishmentFields}
       <p class="inline-error" role="alert">${esc(warning)}</p><div class="form-actions"><button type="submit" class="primary">保存设置</button></div></form>`);
     const form=document.querySelector('#realtime-form');
     const refresh=()=>{ const mode=form.elements.mode.value;document.querySelector('#realtime-abnormal').disabled=mode==='normal';form.elements.command_mode.disabled=mode!=='abnormal'; };
@@ -79,9 +112,18 @@
       for(const key of ['mode','command_mode','countermeasure_scope']) next[key]=form.elements[key].value;
       for(const key of ['continuous','notifications_enabled','countermeasure_enabled']) next[key]=form.elements[key].value==='true';
       next.play_seconds=Number(form.elements.play_seconds.value);
+      for(const key of ['countermeasure_longitude','countermeasure_latitude']) next[key]=positionValue(form.elements[key].value);
       for(const kind of Object.keys(kinds)) next.outcomes[kind]=form.elements[kind].value;
       const submit=form.querySelector('[type=submit]');submit.disabled=true;
-      try { await api('realtime/config',next);closeDialog();toast('设置已保存，下次启动生效');await poll(); }
+      const picked=[...form.querySelectorAll('[name=punishment_org]:checked')].map(input=>input.value);
+      const punishmentChanged=!!punishment && !sameChoice(picked,chosen);
+      try {
+        if(punishmentChanged) {
+          const key='punish-'+Date.now()+'-'+Math.random().toString(36).slice(2,8);
+          await api('external/request',{method:'POST',path:'/local-interface-simulator/punishment-recipients',key,body:{org_ids:picked}});
+        }
+        await api('realtime/config',next);closeDialog();toast(punishmentChanged?'处罚接收单位已生效；其他设置下次启动生效':'设置已保存，下次启动生效');await poll();
+      }
       catch(error) { form.querySelector('.inline-error').textContent=error.message; }
       finally { submit.disabled=false; }
     });

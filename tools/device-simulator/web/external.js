@@ -2,19 +2,20 @@
 const $ = selector => document.querySelector(selector);
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 const tabs = {
- plans:['飞行计划输入','填写计划与申报资料，或读取已有模拟计划补录。'],
- weather:['气象预报输入','提交指定区域的模拟预报，系统按预报区域判断哪些计划受到影响。'],
+ plans:['飞行任务输入','填写任务与申报资料，或读取已有模拟任务补录。'],
+ weather:['气象预报输入','提交指定区域的模拟预报，系统按预报区域判断哪些任务受到影响。'],
  sms:['飞手短信','查看平台模拟短信的接收内容，未送达与结果未知的记录单独展示。'],
  voice:['飞手电话','查看模拟电话录音通知内容，接通与播放结果以记录为准。'],
  risk:['风险通知','查看通知上级的模拟消息与已保存内容。'],
  punishment:['处罚通知','查看处罚接收对象收到的模拟消息与已保存材料。'],
- plan_feedback:['计划回告','查看报送单位的计划核实回告及平台保存的送达回执。'],
+ plan_feedback:['任务回告','查看报送单位的任务核实回告及平台保存的送达回执。'],
  device_maintenance:['设备运维','查看模拟设备运维通知的各次发送与回执；通知送达不代表设备已恢复。']
 };
 let tab=window.SimulatorExternalView?.tab||'risk', context=null, connected=false, busy=false, requestSerial=0, refreshTimer=null, sessionVersion=null, checkingStatus=false;
 let inbox=null, inboxPage=1, refreshing=false, showOther=false;
 const drafts={plans:'',weather:''};
 let planOptions=null, editingPlan=null, createPlanDraft=null, scenePlans=[], selectedScenePlanId='';
+let planScopes=null, planScopeError='', planScope=null, planConnectionScope;
 
 function message(text,error=false){const el=$('#external-message');el.textContent=text;el.classList.toggle('error',error);}
 function id(){return 'sim-'+Date.now()+'-'+Math.random().toString(36).slice(2,8);}
@@ -24,7 +25,7 @@ async function call(path, body, signal){const requestedSession=sessionVersion;co
 function backend(method,path,body,key){return call('request',{method,path,...(body===undefined?{}:{body,key})});}
 function setConnection(value){
  const changed=value.session_version!==undefined&&value.session_version!==sessionVersion;
- if(changed||(!value.connected&&connected)){requestSerial++;context=null;inbox=null;planOptions=null;editingPlan=null;if(createPlanDraft!==null){drafts.plans=createPlanDraft;createPlanDraft=null;}}
+ if(changed||(!value.connected&&connected)){requestSerial++;context=null;inbox=null;planOptions=null;planScopes=null;planScope=null;planConnectionScope=undefined;editingPlan=null;if(createPlanDraft!==null){drafts.plans=createPlanDraft;createPlanDraft=null;}}
  if(value.session_version!==undefined)sessionVersion=value.session_version;
  connected=!!value.connected;
  $('#external-status').textContent=connected?`已登录 ${value.user?.name||value.user?.account||'系统'}`:'尚未登录系统';
@@ -44,14 +45,16 @@ async function refresh(){
   const isInput=tab==='plans'||tab==='weather';
   const next=isInput?await backend('GET','/local-interface-simulator/context'):await call('inbox?kind='+tab+'&page='+inboxPage);
   const nextOptions=requestedTab==='plans'?await backend('GET','/local-interface-simulator/plan-options'):planOptions;
+  const nextScopes=requestedTab==='plans'&&(planScopes===null||planScopeError)?await readPlanScopes():planScopes;
+  const nextConnection=requestedTab==='plans'&&planConnectionScope===undefined?await call('connection-scope').catch(()=>null):planConnectionScope;
   if(serial!==requestSerial)return;
-  const changed=JSON.stringify(isInput?context:inbox)!==JSON.stringify(next)||JSON.stringify(planOptions)!==JSON.stringify(nextOptions);
+  const changed=JSON.stringify(isInput?context:inbox)!==JSON.stringify(next)||JSON.stringify(planOptions)!==JSON.stringify(nextOptions)||JSON.stringify(planScopes)!==JSON.stringify(nextScopes)||JSON.stringify(planConnectionScope)!==JSON.stringify(nextConnection);
   if(isInput&&requestedTab==='plans'&&!editingPlan&&drafts.plans){
    const draft=readDraft();
    const updated=window.ExternalContract.refreshUpstreamRouteDraft(draft,context?.routes,next?.routes);
    if(updated!==draft)drafts.plans=JSON.stringify(updated,null,2);
   }
-  planOptions=nextOptions;
+  planOptions=nextOptions;planScopes=nextScopes;planConnectionScope=nextConnection;
   if(isInput)context=next;else inbox=next;
   if(changed&&!$('#external-body').contains(document.activeElement))render();
  }catch(error){if(serial===requestSerial){message(error.message,true);render();}}
@@ -66,12 +69,29 @@ function samplePlan(route=context?.routes?.[0]){return window.ExternalContract.p
 function sampleWeather(){return window.ExternalContract.weatherSample(Date.now(),id());}
 function sectionProblem(words){return (context?.unavailable_sections||[]).find(value=>typeof value==='string'&&words.some(word=>value.includes(word)))||'';}
 function selectedScenePlan(){return scenePlans.find(plan=>plan.id===selectedScenePlanId)||null;}
+// Route owner choices are the account's authorised unit/district pairs (same source as the airspace page).
+// Without a choice the simulator's device data connection decides, like the airspace page; then the first
+// existing route's owner; a single choice is used as is; otherwise one must be chosen.
+async function readPlanScopes(){try{const value=await backend('GET','/local-interface-simulator/airspaces/context');planScopeError='';return Array.isArray(value?.scopes)?value.scopes:[];}catch(error){if(!connected)throw error;planScopeError=error.message;return [];}}
+const sameScope=(a,b)=>!!a?.owner_org_id&&!!a?.district_id&&a.owner_org_id===b?.owner_org_id&&a.district_id===b?.district_id;
+function currentPlanScope(){
+ const scopes=planScopes||[],route=context?.routes?.[0];
+ if(planScope&&(!scopes.length||scopes.some(s=>sameScope(s,planScope))))return planScope;
+ const fromRoute=route?.owner_org_id&&route?.district_id?{owner_org_id:route.owner_org_id,district_id:route.district_id}:null;
+ if(!scopes.length)return fromRoute;
+ return scopes.find(s=>sameScope(s,planConnectionScope))||scopes.find(s=>sameScope(s,fromRoute))||(scopes.length===1?scopes[0]:null);
+}
+function planScopeField(route){
+ const scopes=planScopes||[],index=scopes.findIndex(s=>sameScope(s,route)),kept=index<0&&route?.owner_org_id&&route?.district_id;
+ const hint=scopes.length?'':`<small class="external-note warn">${escapeHtml(planScopeError?'读不到可选的归属单位与区县：'+planScopeError:'当前账号没有可选的归属单位与区县，请先在后台给账号分配单位与区县的数据范围')}</small>`;
+ return `<label>航线归属单位与区县<select id="plan-scope" aria-label="航线归属单位与区县"><option value="" ${index<0&&!kept?'selected':''}>请选择</option>${kept?'<option value="kept" selected>沿用报文中的归属单位与区县</option>':''}${scopes.map((s,i)=>`<option value="${i}" ${i===index?'selected':''}>${escapeHtml((s.owner_org_name||s.owner_org_id)+' · '+(s.district_name||s.district_id))}</option>`).join('')}</select>${hint}</label>`;
+}
 function syncScenePlanDraft(options={}){
  const plan=selectedScenePlan();if(!plan||editingPlan||!drafts.plans)return readDraft();
  const next=window.ExternalContract.applyScenePlanRoute(
   window.PlanForm.applyScenePlan(readDraft(),plan,Date.now(),options),
   plan,
-  context?.routes?.[0]
+  currentPlanScope()
  );
  drafts.plans=JSON.stringify(next,null,2);return next;
 }
@@ -80,12 +100,12 @@ function buildPlanInput(){
  let warning='';if(!drafts.plans){try{drafts.plans=JSON.stringify(samplePlan(),null,2);}catch(error){warning=error.message;drafts.plans=JSON.stringify({message_id:id(),uav_sn:'',filing:{}},null,2);}}
  const rows=context?.routes||[],scenePlan=selectedScenePlan();if(scenePlan&&!editingPlan)syncScenePlanDraft();const data=readDraft();
  const route=rows.find(row=>row.route_version_id===data.route_version_id);
- const routeField=data.route?.geometry?`<p class="external-note">本次计划报文将直接携带地图计划的航线几何；系统接收计划后保存航线版本，不与既有航线做几何匹配。</p>`:data.route_version_id?`<input id="input-target" type="hidden" value="${escapeHtml(data.route_version_id)}"><p class="external-note">当前报文仍使用已有航线版本${route?`：${escapeHtml(route.name||route.route_version_id)}`:'。'}，仅用于兼容旧报文。</p>`:'<input id="input-target" type="hidden" value=""><p class="external-note warn">计划报文缺少航线几何；请选择地图计划生成完整 route，或在接口报文中补充 route。</p>';
- const sceneSelector=scenePlans.length?`<label>地图计划航线<select id="scene-plan-target"><option value="">请选择地图航线</option>${scenePlans.map(plan=>`<option value="${escapeHtml(plan.id)}">${escapeHtml(plan.name)} · ${escapeHtml(plan.start||'未设置')}—${escapeHtml(plan.end||'未设置')}</option>`).join('')}</select></label>`:'';
- const basic=editingPlan?`<p>补录计划：${escapeHtml(editingPlan.plan_no)} · ${escapeHtml(editingPlan.uav_sn)}。原航线、时间和状态保持不变。计划飞行时间（北京时间）：${escapeHtml(window.WeatherForm.localTime(editingPlan.start_at).replace('T',' '))}—${escapeHtml(window.WeatherForm.localTime(editingPlan.end_at).replace('T',' '))}</p><button id="cancel-plan-edit" type="button">返回新建计划</button>`:`<div class="external-grid">${routeField}${sceneSelector}<label>无人机 SN<input data-plan-field="uav_sn" value="${escapeHtml(data.uav_sn)}" maxlength="128"></label><label>计划开始时间（北京时间）<input data-plan-field="start_at" type="datetime-local" step="1" value="${window.WeatherForm.localTime(data.start_at)}"></label><label>计划结束时间（北京时间）<input data-plan-field="end_at" type="datetime-local" step="1" value="${window.WeatherForm.localTime(data.end_at)}"></label></div><button id="new-sample" type="button">生成新样本</button>`;
- const alignment=scenePlan?'<p class="external-note">地图计划用于生成本次上级计划报文的时间、起降点和航线几何；系统接收后保存航线版本，不与既有航线匹配。</p>':'';
+ const routeField=data.route?.geometry?`<p class="external-note">本次任务报文将直接携带地图任务的航线几何；系统接收任务后保存航线版本，不与既有航线做几何匹配。</p>`:data.route_version_id?`<input id="input-target" type="hidden" value="${escapeHtml(data.route_version_id)}"><p class="external-note">当前报文仍使用已有航线版本${route?`：${escapeHtml(route.name||route.route_version_id)}`:'。'}，仅用于兼容旧报文。</p>`:'<input id="input-target" type="hidden" value=""><p class="external-note warn">任务报文缺少航线几何；请选择地图任务生成完整 route，或在接口报文中补充 route。</p>';
+ const sceneSelector=scenePlans.length?`<label>地图任务航线<select id="scene-plan-target"><option value="">请选择地图航线</option>${scenePlans.map(plan=>`<option value="${escapeHtml(plan.id)}">${escapeHtml(plan.name)} · ${escapeHtml(plan.start||'未设置')}—${escapeHtml(plan.end||'未设置')}</option>`).join('')}</select></label>`:'';
+ const basic=editingPlan?`<p>补录任务：${escapeHtml(editingPlan.plan_no)} · ${escapeHtml(editingPlan.uav_sn)}。原航线、时间和状态保持不变。任务飞行时间（北京时间）：${escapeHtml(window.WeatherForm.localTime(editingPlan.start_at).replace('T',' '))}—${escapeHtml(window.WeatherForm.localTime(editingPlan.end_at).replace('T',' '))}</p><button id="cancel-plan-edit" type="button">返回新建任务</button>`:`<div class="external-grid">${routeField}${sceneSelector}${data.route?planScopeField(data.route):''}<label>无人机 SN<input data-plan-field="uav_sn" value="${escapeHtml(data.uav_sn)}" maxlength="128"></label><label>任务开始时间（北京时间）<input data-plan-field="start_at" type="datetime-local" step="1" value="${window.WeatherForm.localTime(data.start_at)}"></label><label>任务结束时间（北京时间）<input data-plan-field="end_at" type="datetime-local" step="1" value="${window.WeatherForm.localTime(data.end_at)}"></label></div><button id="new-sample" type="button">生成新样本</button>`;
+ const alignment=scenePlan?'<p class="external-note">地图任务用于生成本次上级任务报文的时间、起降点和航线几何；系统接收后保存航线版本，不与既有航线匹配。</p>':'';
  const blocked=!editingPlan&&!data.route&&!data.route_version_id;
- return `<section class="panel external-card"><h3>${editingPlan?'补录计划资料':'新建飞行计划'}</h3>${basic}${alignment}${warning?`<p class="external-note warn">${escapeHtml(warning)}</p>`:''}${!editingPlan&&blocked?`<p class="external-note warn">${escapeHtml(sectionProblem(['航线'])||'当前计划没有航线几何；请选择地图计划，或直接编辑接口报文补充 route。')}</p>`:''}</section><section class="panel external-card"><h3>申报资料</h3>${(planOptions?.unavailable_sections||[]).map(x=>`<p class="external-note warn">${escapeHtml(x)}</p>`).join('')}<div id="plan-fields">${window.PlanForm.fields(data,{...(planOptions||{}),scene_plan:scenePlan})}</div><details><summary>接口报文</summary><label>模拟消息编号<input id="input-message-id" value="${escapeHtml(data.message_id)}" maxlength="64"></label><label>请求内容<textarea id="payload-editor" spellcheck="false">${escapeHtml(drafts.plans)}</textarea></label></details><div class="external-actions"><button id="submit-input" class="primary" type="button" ${blocked?'disabled':''}>${editingPlan?'保存补录资料':'提交计划'}</button></div></section><section class="panel external-card"><h3>已有模拟计划</h3><label>选择计划<select id="existing-plan"><option value="">请选择</option>${options(context?.plans||[],'plan_id','plan_no')}</select></label><button id="load-plan-filing" type="button">读取并补录资料</button></section>${renderMessages('FLIGHT_PLAN')}`;
+ return `<section class="panel external-card"><h3>${editingPlan?'补录任务资料':'新建飞行任务'}</h3>${basic}${alignment}${warning?`<p class="external-note warn">${escapeHtml(warning)}</p>`:''}${!editingPlan&&blocked?`<p class="external-note warn">${escapeHtml(sectionProblem(['航线'])||'当前任务没有航线几何；请选择地图任务，或直接编辑接口报文补充 route。')}</p>`:''}</section><section class="panel external-card"><h3>申报资料</h3>${(planOptions?.unavailable_sections||[]).map(x=>`<p class="external-note warn">${escapeHtml(x)}</p>`).join('')}<div id="plan-fields">${window.PlanForm.fields(data,{...(planOptions||{}),scene_plan:scenePlan})}</div><details><summary>接口报文</summary><label>模拟消息编号<input id="input-message-id" value="${escapeHtml(data.message_id)}" maxlength="64"></label><label>请求内容<textarea id="payload-editor" spellcheck="false">${escapeHtml(drafts.plans)}</textarea></label></details><div class="external-actions"><button id="submit-input" class="primary" type="button" ${blocked?'disabled':''}>${editingPlan?'保存补录资料':'提交任务'}</button></div></section><section class="panel external-card"><h3>已有模拟任务</h3><label>选择任务<select id="existing-plan"><option value="">请选择</option>${options(context?.plans||[],'plan_id','plan_no')}</select></label><button id="load-plan-filing" type="button">读取并补录资料</button></section>${renderMessages('FLIGHT_PLAN')}`;
 }
 function planFieldsChanged(){if(tab==='plans'&&$('#plan-fields'))$('#plan-fields').innerHTML=window.PlanForm.fields(readDraft(),{...(planOptions||{}),scene_plan:selectedScenePlan()});}
 async function loadPlanFiling(planId){
@@ -114,10 +134,10 @@ function syncInputFields(){
  const next=window.ExternalContract.applyInputFields(data,{kind:tab,target,messageId,plan,route,now:Date.now()});
  drafts[tab]=JSON.stringify(next,null,2);editor.value=drafts[tab];return next;
 }
-function renderMessages(kind){const rows=(context?.messages||[]).filter(row=>row.kind===kind||(kind==='FLIGHT_PLAN'&&row.kind==='PLAN_FILING'));return `<section class="panel external-card"><h3>系统接收记录</h3>${rows.length?`<div class="external-results">${rows.map(row=>renderRecord(row)+(kind==='FLIGHT_PLAN'?`<button type="button" data-edit-plan="${escapeHtml(row.subject_id)}">补录计划资料</button>`:'')).join('')}</div>`:'<div class="external-empty">尚无此类接收记录。提交后刷新系统数据查看实际结果。</div>'}</section>`;}
+function renderMessages(kind){const rows=(context?.messages||[]).filter(row=>row.kind===kind||(kind==='FLIGHT_PLAN'&&row.kind==='PLAN_FILING'));return `<section class="panel external-card"><h3>系统接收记录</h3>${rows.length?`<div class="external-results">${rows.map(row=>renderRecord(row)+(kind==='FLIGHT_PLAN'?`<button type="button" data-edit-plan="${escapeHtml(row.subject_id)}">补录任务资料</button>`:'')).join('')}</div>`:'<div class="external-empty">尚无此类接收记录。提交后刷新系统数据查看实际结果。</div>'}</section>`;}
 function stateText(item){const map={SUBMITTED:'已提交，等待业务处理',DELIVERED:'已送达，等待签收回执',ACKNOWLEDGED:'已签收',FAILED:'发送失败',TIMEOUT:'回执超时，结果未知',ACCEPTED:'系统已受理',REJECTED:'系统已拒绝'};return map[item.state]||item.state||'状态未知';}
 function detail(item){return `<details><summary>查看原始报文与处理结果</summary><pre>${escapeHtml(JSON.stringify({message_id:item.message_id,version:item.version,payload:item.payload,result:item.result},null,2))}</pre></details>`;}
-function renderRecord(item){const outgoing=item.direction==='OUT',subject=item.subject_id,kind=item.kind;let link='';if(['FLIGHT_PLAN','PLAN_FILING'].includes(kind)&&item.result?.plan_id)link=`<a target="_blank" rel="noopener" href="http://localhost:5173/#/flights?plan=${encodeURIComponent(item.result.plan_id)}">查看飞行计划</a>`;if(kind==='UAV_PUNISHMENT'&&subject)link=`<a target="_blank" rel="noopener" href="http://127.0.0.1:5173/#/punish?handoff=${encodeURIComponent(subject)}">查看移送与处罚</a>`;return `<article class="external-record"><header><div><strong>${escapeHtml(kind)} · ${escapeHtml(stateText(item))}</strong><small>${escapeHtml(formatTime(item.created_at))} · 模拟消息</small></div><span class="badge">${outgoing?'平台发出':'平台接收'}</span></header><p>${escapeHtml(item.result?.message||item.result?.status||'业务结果请查看系统记录')}</p>${link}${detail(item)}</article>`;}
+function renderRecord(item){const outgoing=item.direction==='OUT',subject=item.subject_id,kind=item.kind;let link='';if(['FLIGHT_PLAN','PLAN_FILING'].includes(kind)&&item.result?.plan_id)link=`<a target="_blank" rel="noopener" href="http://localhost:5173/#/flights?plan=${encodeURIComponent(item.result.plan_id)}">查看飞行任务</a>`;if(kind==='UAV_PUNISHMENT'&&subject)link=`<a target="_blank" rel="noopener" href="http://127.0.0.1:5173/#/punish?handoff=${encodeURIComponent(subject)}">查看移送与处罚</a>`;return `<article class="external-record"><header><div><strong>${escapeHtml(kind)} · ${escapeHtml(stateText(item))}</strong><small>${escapeHtml(formatTime(item.created_at))} · 模拟消息</small></div><span class="badge">${outgoing?'平台发出':'平台接收'}</span></header><p>${escapeHtml(item.result?.message||item.result?.status||'业务结果请查看系统记录')}</p>${link}${detail(item)}</article>`;}
 function riskLocationContent(item){
  if(item.kind!=='risk')return '';
  const risk=item.details?.material?.risk,location=risk?.location;
@@ -140,7 +160,7 @@ function inboxRecord(item){
 function buildOutput(){
  if(!inbox)return '<div class="external-empty">正在读取通知记录。</div>';
  const received=inbox.items.filter(item=>item.received), other=inbox.items.filter(item=>!item.received),rows=showOther?other:received;
- return `${inbox.errors?.length?`<div class="external-note warn">部分记录读取失败，以下结果可能不完整。${inbox.errors.map(escapeHtml).join('；')}</div>`:''}<div class="inbox-toolbar"><div class="inbox-filters"><button data-inbox-filter="received" aria-pressed="${!showOther}">已收到 <b>${received.length}</b></button><button data-inbox-filter="other" aria-pressed="${showOther}">其他发送记录 <b>${other.length}</b></button></div><span class="muted">${escapeHtml(inbox.scope)}</span></div>${rows.length?`<div class="inbox-list">${rows.map(inboxRecord).join('')}</div>`:`<div class="inbox-empty"><img src="assets/document.svg" alt=""><h3>${inbox.errors?.length?'暂无法确认完整接收情况':showOther?'当前范围没有其他发送记录':'当前范围暂未收到通知'}</h3><p>${inbox.errors?.length?'恢复读取后刷新查看。':'平台产生模拟通知后，可在这里查看相应内容。'}</p></div>`}${['risk','punishment','plan_feedback','device_maintenance'].includes(tab)?`<div class="inbox-pagination"><button id="inbox-previous" ${inboxPage===1?'disabled':''}>上一页</button><span>第 ${inboxPage} 页</span><button id="inbox-next" ${!inbox.has_more?'disabled':''}>下一页</button></div>`:''}`;
+ return `${inbox.errors?.length?`<div class="external-note warn">部分记录读取失败，以下结果可能不完整。${inbox.errors.map(escapeHtml).join('；')}</div>`:''}${inbox.notice?`<div class="external-note">${escapeHtml(inbox.notice)}</div>`:''}<div class="inbox-toolbar"><div class="inbox-filters"><button data-inbox-filter="received" aria-pressed="${!showOther}">已收到 <b>${received.length}</b></button><button data-inbox-filter="other" aria-pressed="${showOther}">其他发送记录 <b>${other.length}</b></button></div><span class="muted">${escapeHtml(inbox.scope)}</span></div>${rows.length?`<div class="inbox-list">${rows.map(inboxRecord).join('')}</div>`:`<div class="inbox-empty"><img src="assets/document.svg" alt=""><h3>${inbox.errors?.length?'暂无法确认完整接收情况':showOther?'当前范围没有其他发送记录':'当前范围暂未收到通知'}</h3><p>${inbox.errors?.length?'恢复读取后刷新查看。':'平台产生模拟通知后，可在这里查看相应内容。'}</p></div>`}${['risk','punishment','plan_feedback','device_maintenance'].includes(tab)?`<div class="inbox-pagination"><button id="inbox-previous" ${inboxPage===1?'disabled':''}>上一页</button><span>第 ${inboxPage} 页</span><button id="inbox-next" ${!inbox.has_more?'disabled':''}>下一页</button></div>`:''}`;
 }
 function render(){
  const title=tabs[tab],draft=readDraft(),isInput=tab==='plans'||tab==='weather';
@@ -155,7 +175,7 @@ function render(){
  if(tab==='plans'&&selectedScenePlanId&&[...($('#scene-plan-target')?.options||[])].some(option=>option.value===selectedScenePlanId))$('#scene-plan-target').value=selectedScenePlanId;
  document.querySelectorAll('details[data-record]').forEach(node=>{node.open=openRecords.includes(node.dataset.record);});
 }
-async function submit(body,path,key){if(busy)return;busy=true;document.querySelectorAll('button').forEach(button=>{if(button.id==='submit-input')button.disabled=true;});try{const result=await backend('POST',path,body,key);message(window.ExternalContract.submitResultText(path,result)||'系统已返回结果：'+stateText(result)+'。请查看下方记录和业务页面。');if(tab==='plans'&&editingPlan&&path.endsWith('/filing')){drafts.plans=JSON.stringify({...body,message_id:id(),expected_version:result.result.version},null,2);}await refreshAfterWrite();}catch(error){message(error.message+(connected?'；如为版本冲突，请重新读取计划资料后重试。':''),true);if(connected)await refreshAfterWrite();}finally{busy=false;render();}}
+async function submit(body,path,key){if(busy)return;busy=true;const known=context?.messages||[];document.querySelectorAll('button').forEach(button=>{if(button.id==='submit-input')button.disabled=true;});try{const result=await backend('POST',path,body,key);message(window.ExternalContract.submitResultText(path,result,known)||'系统已返回结果：'+stateText(result)+'。请查看下方记录和业务页面。');if(tab==='plans'&&editingPlan&&path.endsWith('/filing')){drafts.plans=JSON.stringify({...body,message_id:id(),expected_version:result.result.version},null,2);}await refreshAfterWrite();}catch(error){message(error.message+(connected?'；如为版本冲突，请重新读取任务资料后重试。':''),true);if(connected)await refreshAfterWrite();}finally{busy=false;render();}}
 async function refreshAfterWrite(){if(!connected)return;const serial=++requestSerial;try{const next=await backend('GET','/local-interface-simulator/context');if(serial===requestSerial)context=next;}catch(error){message(error.message,true);}}
 $('#login-toggle').addEventListener('click',()=>$('#login-dialog').showModal());$('#login-cancel').addEventListener('click',()=>$('#login-dialog').close());
 $('#login-form').addEventListener('submit',async event=>{event.preventDefault();if(busy)return;busy=true;const form=event.currentTarget,button=form.querySelector('[type=submit]');button.disabled=true;$('#login-error').textContent='';try{requestSerial++;const result=await call('connect',Object.fromEntries(new FormData(form)));setConnection(result);form.querySelector('[name=password]').value='';$('#login-dialog').close();message('已登录系统。');await refreshAfterWrite();render();}catch(error){$('#login-error').textContent=error.message;}finally{busy=false;button.disabled=false;if(connected)refresh();}});
@@ -208,9 +228,16 @@ $('#external-body').addEventListener('input',event=>{
 });
 $('#external-body').addEventListener('change',event=>{
  if(event.target.id==='payload-editor'){weatherFieldsChanged();planFieldsChanged();if(tab==='plans')render();}
+ if(event.target.id==='plan-scope'){
+  const scope=(planScopes||[])[Number(event.target.value)];
+  if(event.target.value===''||!scope){render();return;}
+  planScope=scope;
+  try{if(selectedScenePlan())syncScenePlanDraft();else{const data=readDraft();if(data.route){data.route={...data.route,owner_org_id:scope.owner_org_id,district_id:scope.district_id};drafts.plans=JSON.stringify(data,null,2);}}render();message('已将航线归属单位与区县写入报文。');}catch(error){message(error.message,true);}
+  return;
+ }
  if(event.target.id==='scene-plan-target'){
   selectedScenePlanId=event.target.value;
-  try{syncScenePlanDraft({replaceSiteNames:true,replaceWindow:true});render();message(selectedScenePlanId?'已将地图计划的起降点和航线几何写入上级计划报文；计划时间可继续修改。':'已取消地图计划关联。');}catch(error){message(error.message,true);}
+  try{syncScenePlanDraft({replaceSiteNames:true,replaceWindow:true});render();message(selectedScenePlanId?'已将地图任务的起降点和航线几何写入上级任务报文；任务时间可继续修改。':'已取消地图任务关联。');}catch(error){message(error.message,true);}
   return;
  }
  if(event.target.id==='input-target'){

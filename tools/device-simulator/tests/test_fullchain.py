@@ -10,12 +10,22 @@ TEST_NOW = int(dt.datetime(2026, 10, 5, 12, tzinfo=dt.timezone(dt.timedelta(hour
 
 
 class FakePlatform:
-    def __init__(self, airspace_items=None, input_context=None):
+    def __init__(self, airspace_items=None, input_context=None, route_versions=None):
         self.calls=[]
         self.airspace_items = airspace_items or []
         self.input_context = input_context or {'routes': [], 'messages': []}
+        # Route versions the platform holds, as GET /route-versions/{id} returns them.
+        self.route_versions = {} if route_versions is None else route_versions
     def call(self, method, path, body=None, key=None):
         self.calls.append((method,path,copy.deepcopy(body),key))
+        if method == 'GET' and path.startswith('/route-versions/'):
+            return copy.deepcopy(self.route_versions.get(path.split('/')[2], {}))
+        if path.endswith('/routes'):
+            self.route_versions['v'+body['message_id']] = {
+                'corridor_width_m': body['corridor_width_m'], 'min_altitude_m': body['min_altitude_m'],
+                'max_altitude_m': body['max_altitude_m'], 'altitude_datum': body['altitude_datum'],
+                'centerline': {'coordinates': copy.deepcopy(body['geometry']['coordinates'])},
+                'valid_from': body['valid_from'], 'valid_to': body['valid_to']}
         if path.endswith('/plan-options'): return {'pilots':[], 'organizations':[], 'source_bindings':[]}
         if path.endswith('/airspaces/context'): return {'items':copy.deepcopy(self.airspace_items)}
         if path.endswith('/context'): return copy.deepcopy(self.input_context)
@@ -28,6 +38,46 @@ class FakePlatform:
 
 
 class FullChainTests(unittest.TestCase):
+    def test_tasks_carry_a_simulated_pilot_and_reporting_unit_unless_archives_are_chosen(self):
+        from fullchain import FullChain
+
+        class ArchivePlatform(FakePlatform):
+            def call(self, method, path, body=None, key=None):
+                if path.endswith('/plan-options'):
+                    self.calls.append((method, path, copy.deepcopy(body), key))
+                    return {'pilots':[{'contact_id':'c1','org_id':'o2','name':'档案飞手'}],
+                            'organizations':[], 'source_bindings':[]}
+                return super().call(method, path, body, key)
+
+        scene = full_scene(['uav'])
+        scene['plans'] = scene['plans'][:1]
+        scene['targets'] = [t for t in scene['targets'] if t.get('planId') == scene['plans'][0]['id']]
+        manifest = {'batch':'b', 'created_at':TEST_NOW, 'devices':{}, 'plans':{}, 'zones':{},
+                    'targets':allocate_identities(scene, 'b'),
+                    'fullchain':{'requests':{}, 'coverage':{}, 'warnings':['旧提示']}}
+        api = FakePlatform()
+        FullChain(api, scene, manifest, {'owner_org_id':'o','district_id':'d'}, lambda:None).prepare()
+        filing = next(b for _,p,b,_ in api.calls if p.endswith('/plans'))['filing']
+        self.assertEqual({k: filing.get(k) for k in ('operator_org_id','pilot_name','pilot_phone','reporting_org_code','reporting_org_name','source_id')},
+                         {'operator_org_id':'o','pilot_name':'模拟飞手','pilot_phone':'13800000000',
+                          'reporting_org_code':'SIM-REPORTING-UNIT','reporting_org_name':'模拟报送单位',
+                          'source_id':'local-flight-plan-simulator'})
+        self.assertNotIn('pilot_contact_id', filing)
+        self.assertEqual(manifest['fullchain']['warnings'], [])
+
+        chosen = copy.deepcopy(scene)
+        chosen['fullchain']['filing'] = {'pilot_contact_id':'c1','pilot_name':'档案飞手','operator_org_id':'o2',
+                                         'source_binding_id':'b1','source_id':'src'}
+        manifest = {'batch':'c', 'created_at':TEST_NOW, 'devices':{}, 'plans':{}, 'zones':{},
+                    'targets':allocate_identities(chosen, 'c')}
+        api = ArchivePlatform()
+        FullChain(api, chosen, manifest, {'owner_org_id':'o','district_id':'d'}, lambda:None).prepare()
+        filing = next(b for _,p,b,_ in api.calls if p.endswith('/plans'))['filing']
+        self.assertEqual((filing['pilot_contact_id'], filing['pilot_name'], filing['operator_org_id'], filing['source_binding_id']),
+                         ('c1', '档案飞手', 'o2', 'b1'))
+        for key in ('pilot_phone', 'reporting_org_code', 'reporting_org_name'):
+            self.assertNotIn(key, filing)
+
     def test_restart_reuses_original_plan_across_lifecycle_and_legacy_duplicates(self):
         from fullchain import FullChain
         for hour in (12, 15):
@@ -52,7 +102,7 @@ class FullChainTests(unittest.TestCase):
                                {'kind':'FLIGHT_PLAN','message_id':body['message_id'],'subject_id':'original','payload':body,'created_at':before}]}
                 restarted = {'batch':'after','created_at':after,'devices':{},'plans':{},'zones':{},
                              'targets':allocate_identities(scene,'after')}
-                api = FakePlatform(input_context=context)
+                api = FakePlatform(input_context=context, route_versions=api.route_versions)
                 FullChain(api, scene, restarted, {'owner_org_id':'o','district_id':'d'}, lambda:None).prepare()
                 self.assertEqual([p for method,p,_,_ in api.calls if method=='POST' and p.endswith('/plans')], [])
                 self.assertEqual(restarted['plans'][scene['plans'][0]['id']]['ids'], ['original'])
@@ -134,6 +184,30 @@ class FullChainTests(unittest.TestCase):
             self.assertEqual(item['external_track_id'],item['external_target_id'])
             self.assertEqual('uav_sn' in item,targets[key]['kind']=='uav')
 
+    def test_auxiliary_device_reports_each_target_once(self):
+        # 新-17：辅助上报设备（雷达）已经用自己的协议发 MQTT 目标报文，不再从规范化入口重复报同一架无人机；
+        # 否则平台把一台设备算成两个数据源，两台设备看到记成 3 个。
+        chain,p,m,s=self.setup_chain();chain.prepare()
+        targets={t['id']:t for t in s['targets']}
+        uavs={m['targets'][t['id']]['external_id'] for t in targets.values()
+              if t['kind']=='uav' and t.get('transport')=='normalized' and t.get('secondaryDeviceId')=='radar'}
+        self.assertTrue(uavs)
+        chain.tick(targets,0,1)
+        frames={body['source_id']:{row['external_target_id'] for row in body['items']}
+                for _,path,body,_ in p.calls if path.endswith('/target-observations')}
+        sources={row['scene_device_id']:row['external_id'] for row in m['devices'].values() if row.get('kind')=='normalized'}
+        self.assertTrue(uavs <= frames[sources['tdoa']])
+        self.assertFalse(uavs & frames.get(sources.get('radar'), set()))
+
+    def test_auxiliary_device_that_cannot_report_the_kind_keeps_the_normalized_entry(self):
+        from fullchain import FullChain
+        devices={'r':{'id':'r','kind':'radar'},'t':{'id':'t','kind':'tdoa'}}
+        uav={'kind':'uav','transport':'normalized','deviceId':'t','secondaryDeviceId':'r'}
+        balloon={'kind':'balloon','transport':'normalized','deviceId':'t','secondaryDeviceId':'r'}
+        self.assertEqual(FullChain.normalized_device_ids(uav,devices),['t'])
+        # 雷达协议里没有气球类别，辅助设备不发 MQTT，气球照常经规范化入口由两台设备上报。
+        self.assertEqual(FullChain.normalized_device_ids(balloon,devices),['t','r'])
+
     def test_airspace_version_update_keeps_name_and_owner(self):
         # 平台要求空域版本更新保持原名称和归属；改名会被拒（409），整批模拟在第 2 分钟停下。
         chain,p,m,s=self.setup_chain();chain.prepare()
@@ -144,8 +218,11 @@ class FullChainTests(unittest.TestCase):
         update=[body for _,path,body,_ in p.calls if path.endswith('/airspaces') and body.get('airspace_no')==no][-1]
         self.assertEqual(update['revision'],original['revision']+1)
         self.assertEqual(update['action'],'UPSERT')
-        for key in ('name','owner_org_id','district_id','kind_code','boundary'):
+        for key in ('name','owner_org_id','district_id','kind_code','boundary','valid_to'):
             self.assertEqual(update[key],original[key],key)
+        # 新-16：新版本须晚于上一版生效，否则平台拒收（409），整批在第 2 分钟停下。
+        self.assertEqual(update['valid_from'],TEST_NOW)
+        self.assertGreater(update['valid_from'],original['valid_from'])
 
     def test_notification_stop_suppresses_every_normalized_source_without_stopping_peers(self):
         chain, platform, manifest, scene = self.setup_chain()
@@ -221,7 +298,7 @@ class FullChainTests(unittest.TestCase):
         second_manifest = {'batch':'sim-next', 'created_at':TEST_NOW, 'devices':{}, 'plans':{}, 'zones':{},
                           'targets':allocate_identities(second_scene,'sim-next')}
         from fullchain import FullChain
-        second_platform = FakePlatform(existing_airspaces, context)
+        second_platform = FakePlatform(existing_airspaces, context, first_platform.route_versions)
         second_chain = FullChain(second_platform, second_scene, second_manifest,
                                  {'owner_org_id':'o','district_id':'d'}, lambda:None,
                                  clock=lambda:TEST_NOW)
@@ -229,8 +306,45 @@ class FullChainTests(unittest.TestCase):
         self.assertFalse([row for _, path, row, _ in second_platform.calls if path.endswith('/routes')])
         self.assertFalse([row for _, path, row, _ in second_platform.calls if path.endswith('/plans')])
 
-    def test_changed_current_window_gets_new_route_and_plan_message(self):
+    def test_same_task_id_with_another_corridor_gets_its_own_route(self):
+        # 新-26：用过的库里已有同一任务编号、走廊不同的模拟航线（例如先跑过别的场景），不能借来用，
+        # 否则准备阶段回读航线宽度或高度不一致直接失败；换一条按内容编号的航线，下次同样内容再复用它。
         from fullchain import FullChain
+        from prerequisite_check import route_version_mismatch
+        first_chain, first_platform, _, scene = self.setup_chain()
+        first_chain.prepare()
+        context = {'routes': [{'route_id':'r'+body['message_id'], 'route_version_id':'v'+body['message_id'],
+                               'route_no':body['message_id'], 'name':body['name'], 'valid_from':body['valid_from'],
+                               'valid_to':body['valid_to']}
+                              for _, path, body, _ in first_platform.calls if path.endswith('/routes')], 'messages': []}
+        changed = copy.deepcopy(scene)
+        changed['plans'][0].update(width=changed['plans'][0]['width'] + 30, max=changed['plans'][0]['max'] + 50)
+        manifest = {'batch':'sim-changed', 'created_at':TEST_NOW, 'devices':{}, 'plans':{}, 'zones':{},
+                    'targets':allocate_identities(changed,'sim-changed')}
+        platform = FakePlatform(input_context=context, route_versions=first_platform.route_versions)
+        FullChain(platform, changed, manifest, {'owner_org_id':'o','district_id':'d'}, lambda:None,
+                  clock=lambda:TEST_NOW).prepare()
+        posted = [body for _, path, body, _ in platform.calls if path.endswith('/routes')]
+        base = 'sim-map-route-' + changed['plans'][0]['id']
+        self.assertEqual(len(posted), 1, '只有走廊变了的那条任务换新航线，其余照旧复用')
+        self.assertTrue(posted[0]['message_id'].startswith(base + '-'))
+        self.assertEqual(posted[0]['corridor_width_m'], changed['plans'][0]['width'])
+        version = manifest['plans'][changed['plans'][0]['id']]['route_version_id']
+        self.assertEqual(version, 'v' + posted[0]['message_id'])
+        self.assertIsNone(route_version_mismatch(platform.route_versions[version], changed['plans'][0]))
+
+        # 再跑一次同样内容：复用按内容编号的那条，不再新建。
+        context['routes'].append({'route_id':'r'+posted[0]['message_id'], 'route_version_id':version,
+                                  'route_no':posted[0]['message_id'], 'name':posted[0]['name'],
+                                  'valid_from':posted[0]['valid_from'], 'valid_to':posted[0]['valid_to']})
+        again = FakePlatform(input_context=context, route_versions=platform.route_versions)
+        FullChain(again, changed, {'batch':'sim-again', 'created_at':TEST_NOW, 'devices':{}, 'plans':{}, 'zones':{},
+                                   'targets':allocate_identities(changed,'sim-again')},
+                  {'owner_org_id':'o','district_id':'d'}, lambda:None, clock=lambda:TEST_NOW).prepare()
+        self.assertFalse([body for _, path, body, _ in again.calls if path.endswith('/routes')])
+
+    def test_changed_current_window_gets_new_route_and_plan_message(self):
+        from fullchain import FullChain, stable_simulator_id
         scene = full_scene(['uav'])
         scene['plans'][0].update(start='13:00', end='14:32')
         shanghai = dt.timezone(dt.timedelta(hours=8))
@@ -251,15 +365,56 @@ class FullChainTests(unittest.TestCase):
         second_now = int(dt.datetime(2026, 10, 5, 9, 0, tzinfo=shanghai).timestamp() * 1000)
         second_manifest = {'batch':'sim-new', 'created_at':second_now, 'devices':{}, 'plans':{}, 'zones':{},
                            'targets':allocate_identities(scene,'sim-new')}
-        second_platform = FakePlatform(input_context=context)
+        second_platform = FakePlatform(input_context=context, route_versions={
+            'old-version': first_platform.route_versions['v' + old_route['message_id']]})
         FullChain(second_platform, scene, second_manifest, {'owner_org_id':'o','district_id':'d'}, lambda:None,
                   clock=lambda:second_now).prepare()
         new_route = next(body for _, path, body, _ in second_platform.calls if path.endswith('/routes'))
         new_plan = next(body for _, path, body, _ in second_platform.calls
                         if path.endswith('/plans') and body['uav_sn'] == 'map-sim-uav-normal')
         self.assertNotEqual(new_route['message_id'], old_route['message_id'])
+        # Same corridor, new day: the route is numbered by the task and its new window.
+        self.assertEqual(new_route['message_id'], stable_simulator_id(
+            'sim-map-route-', f"{scene['plans'][0]['id']}-{new_route['valid_from']}-{new_route['valid_to']}"))
         self.assertNotEqual(new_plan['message_id'], old_plan['message_id'])
         self.assertEqual(new_plan['route_version_id'], 'v' + new_route['message_id'])
+
+    def test_window_route_left_by_another_corridor_is_not_borrowed(self):
+        # 新-26：换了一天按时段另建的航线，也可能是别的场景（同一任务编号、走廊不同）先建的，同样不借用。
+        from fullchain import FullChain, stable_simulator_id
+        scene = full_scene(['uav'])
+        scene['plans'][0].update(start='13:00', end='14:32')
+        plan_id = scene['plans'][0]['id']
+        shanghai = dt.timezone(dt.timedelta(hours=8))
+        first_now = int(dt.datetime(2026, 10, 4, 17, 7, tzinfo=shanghai).timestamp() * 1000)
+        second_now = int(dt.datetime(2026, 10, 5, 9, 0, tzinfo=shanghai).timestamp() * 1000)
+
+        def run(now, batch, context=None, versions=None):
+            platform = FakePlatform(input_context=context, route_versions=versions)
+            manifest = {'batch':batch, 'created_at':now, 'devices':{}, 'plans':{}, 'zones':{},
+                        'targets':allocate_identities(scene, batch)}
+            FullChain(platform, scene, manifest, {'owner_org_id':'o','district_id':'d'}, lambda:None,
+                      clock=lambda:now).prepare()
+            return platform, manifest, next(body for _, path, body, _ in platform.calls if path.endswith('/routes'))
+
+        def saved(body, version):
+            return {'route_id':'r' + version, 'route_version_id':version, 'route_no':body['message_id'],
+                    'name':body['name'], 'valid_from':body['valid_from'], 'valid_to':body['valid_to']}
+
+        first, _, base = run(first_now, 'sim-old')
+        versions = {'base-version': first.route_versions['v' + base['message_id']]}
+        context = {'routes': [saved(base, 'base-version')], 'messages': []}
+        _, _, window = run(second_now, 'sim-probe', context, copy.deepcopy(versions))
+        self.assertEqual(window['message_id'], stable_simulator_id(
+            'sim-map-route-', f"{plan_id}-{window['valid_from']}-{window['valid_to']}"))
+        versions['window-version'] = dict(versions['base-version'], corridor_width_m=scene['plans'][0]['width'] + 30,
+                                          valid_from=window['valid_from'], valid_to=window['valid_to'])
+        context['routes'].append(saved(window, 'window-version'))
+        _, manifest, created = run(second_now, 'sim-new', context, versions)
+        self.assertNotIn(created['message_id'], (base['message_id'], window['message_id']))
+        self.assertTrue(created['message_id'].startswith('sim-map-route-' + plan_id + '-'))
+        self.assertEqual(created['corridor_width_m'], scene['plans'][0]['width'])
+        self.assertEqual(manifest['plans'][plan_id]['route_version_id'], 'v' + created['message_id'])
 
     def test_plan_retry_uses_payload_key_when_legacy_message_is_not_in_context(self):
         from fullchain import FullChain
@@ -414,7 +569,7 @@ class FullChainTests(unittest.TestCase):
             with self.subTest(offset=offset), self.assertRaises(ValueError):
                 flight_window(plan, target, [dict(risk, offset=offset)], now)
 
-    def test_airspace_uses_beijing_window_and_lifecycle_update_preserves_it(self):
+    def test_airspace_uses_beijing_window_and_a_finished_window_skips_the_lifecycle(self):
         from fullchain import FullChain, SHANGHAI
         from engine import compile_scene
         scene = full_scene(['airspaces'])
@@ -433,10 +588,111 @@ class FullChainTests(unittest.TestCase):
             for field, time_field in [('valid_from','start'), ('valid_to','end')]:
                 self.assertEqual('2026-10-05 ' + zone[time_field],
                     dt.datetime.fromtimestamp(row[field]/1000, SHANGHAI).strftime('%Y-%m-%d %H:%M'))
-        chain.tick({}, 130, 1)
-        update = [b for _, path, b, _ in api.calls if path.endswith('/airspaces')][-1]
-        old = next(b for b in rows if b['airspace_no'] == update['airspace_no'])
-        self.assertEqual((old['valid_from'], old['valid_to']), (update['valid_from'], update['valid_to']))
+        # 临时管制区 08:00–10:00 已过（现在 12:02）：平台不收已过期的新版本和撤销，跳过并在页面提示，不让整批停下。
+        for elapsed in (130, 190, 200):
+            chain.tick({}, elapsed, elapsed)
+        self.assertEqual(rows, [b for _, path, b, _ in api.calls if path.endswith('/airspaces')])
+        self.assertEqual(manifest['fullchain']['warnings'], ['临时管制区已到失效时间，跳过本批次的空域版本更新',
+                                                             '临时管制区已到失效时间，跳过本批次的空域撤销'])
+
+    def test_full_scene_airspace_lifecycle_and_a_same_day_rerun_pass_the_platform_order(self):
+        # 新-16：空库上一键全量场景第 2 分钟的空域更新曾被拒（409，生效时间必须晚于上次下发），整批停下；
+        # 同一天再启动时，已撤销的临时管制区重新下发同样被拒。
+        from fullchain import FullChain
+        api, clock = AirspaceRulePlatform(), {'now': TEST_NOW}
+        no = 'sim-map-airspace-zone-temporary_control'
+        for run, start in enumerate((TEST_NOW, TEST_NOW + 3600000), 1):
+            scene = full_scene(['airspaces'])
+            batch = 'sim-run-' + str(run)
+            manifest = {'batch':batch, 'created_at':start, 'devices':{}, 'plans':{}, 'zones':{},
+                        'targets':allocate_identities(scene, batch)}
+            chain = FullChain(api, scene, manifest, {'owner_org_id':'o','district_id':'d'}, lambda:None,
+                              clock=lambda:clock['now'])
+            clock['now'] = start
+            before = len(api.calls)
+            chain.prepare()
+            published = [b for _, path, b, _ in api.calls[before:] if path.endswith('/airspaces')]
+            if run == 1:
+                self.assertEqual(5, len(published))
+            else:
+                # 其他空域原样复用；临时管制区上次已撤销，从现在起重新生效，结束时间不变。
+                self.assertEqual([no], [b['airspace_no'] for b in published])
+                self.assertEqual((4, start), (published[0]['revision'], published[0]['valid_from']))
+            original = api.latest[no]['payload'] if run == 2 else next(b for b in published if b['airspace_no'] == no)
+            for elapsed in (119, 120, 150, 180, 181):
+                clock['now'] = start + elapsed * 1000
+                chain.tick({}, elapsed, elapsed)
+            lifecycle = [b for _, path, b, _ in api.calls if path.endswith('/airspaces') and b['airspace_no'] == no][-2:]
+            self.assertEqual([('UPSERT', start + 120000, original['valid_to']), ('WITHDRAW', start + 180000, None)],
+                             [(b['action'], b.get('valid_from', b.get('effective_at')), b.get('valid_to')) for b in lifecycle])
+            self.assertEqual([], manifest['fullchain']['warnings'])
+
+    def test_changed_zone_in_a_finished_window_follows_the_last_delivery_or_says_why_not(self):
+        from fullchain import FullChain
+        from engine import compile_scene
+        scene = full_scene(['airspaces'])
+        for zone in scene['zones']:
+            zone.update(start='08:00', end='10:00')
+        scene, _, _, _ = compile_scene(scene)
+        zone = scene['zones'][-1]
+        no = 'sim-map-airspace-' + zone['id']
+        eight = TEST_NOW - 4 * 3600000
+
+        def prepare(last):
+            api = AirspaceRulePlatform()
+            api.latest[no] = dict(last, airspace_no=no)
+            api.version_from[no], api.valid_to[no] = eight, eight + 2 * 3600000
+            manifest = dict(batch='sim-edit', created_at=TEST_NOW, devices={}, plans={}, zones={},
+                            targets=allocate_identities(scene, 'sim-edit'))
+            FullChain(api, scene, manifest, {'owner_org_id':'o','district_id':'d'}, lambda:None,
+                      clock=lambda:TEST_NOW).prepare()
+            return next(b for _, path, b, _ in api.calls if path.endswith('/airspaces') and b['airspace_no'] == no)
+
+        # 改过区域、时段已过：紧接上次之后生效，平台照收。
+        changed = {'action':'UPSERT', 'revision':1, 'state':'ACCEPTED', 'airspace_id':'a', 'airspace_version_id':'v',
+                   'payload':{'valid_from':eight, 'valid_to':eight + 2 * 3600000, 'boundary':'旧区域'}}
+        body = prepare(changed)
+        self.assertEqual((2, eight + 1000, eight + 2 * 3600000), (body['revision'], body['valid_from'], body['valid_to']))
+        # 上次已撤销到时段末尾：说清楚为什么不能再下发，不发请求。
+        withdrawn = {'action':'WITHDRAW', 'revision':2, 'state':'ACCEPTED', 'airspace_id':'a', 'airspace_version_id':'v',
+                     'payload':{'effective_at':eight + 2 * 3600000 - 500}}
+        with self.assertRaisesRegex(ValueError, '临时管制区」今天已下发到结束时间'):
+            prepare(withdrawn)
+
+
+class AirspaceRulePlatform(FakePlatform):
+    """Accept airspace deliveries only in the order UpstreamAirspaceService does."""
+    def __init__(self):
+        super().__init__()
+        self.latest, self.version_from, self.valid_to = {}, {}, {}
+
+    def call(self, method, path, body=None, key=None):
+        from fullchain import airspace_effective_at
+        if path.endswith('/airspaces/context'):
+            self.calls.append((method, path, copy.deepcopy(body), key))
+            return {'items': copy.deepcopy(list(self.latest.values()))}
+        if method == 'POST' and path.endswith('/airspaces'):
+            no, last = body['airspace_no'], self.latest.get(body['airspace_no'])
+            if last and body['revision'] <= last['revision']:
+                raise AssertionError('409 UPSTREAM_REVISION_CONFLICT')
+            if body['action'] == 'UPSERT':
+                if body.get('valid_to') is not None and body['valid_from'] >= body['valid_to']:
+                    raise AssertionError('400 INVALID_VALIDITY')
+                if last and (body['valid_from'] <= airspace_effective_at(last) or body['valid_from'] <= self.version_from[no]):
+                    raise AssertionError('409 VERSION_OVERLAP 生效时间必须晚于上次下发的生效/撤销时间')
+                self.version_from[no], self.valid_to[no] = body['valid_from'], body.get('valid_to')
+            else:
+                if not last or last['action'] == 'WITHDRAW':
+                    raise AssertionError('409 INVALID_TRANSITION')
+                if body['effective_at'] <= self.version_from[no] or body['effective_at'] <= airspace_effective_at(last):
+                    raise AssertionError('409 VERSION_OVERLAP 撤销时间必须晚于最新版本生效时间')
+                if self.valid_to[no] is not None and body['effective_at'] >= self.valid_to[no]:
+                    raise AssertionError('409 INVALID_TRANSITION 撤销时间必须早于原失效时间')
+            self.latest[no] = {'message_id':'receipt-'+body['message_id'], 'airspace_id':'a'+no, 'airspace_no':no,
+                               'airspace_version_id':'av'+str(body['revision']), 'revision':body['revision'],
+                               'action':body['action'], 'state':'ACCEPTED', 'source_mode':'replay',
+                               'received_at':0, 'payload':copy.deepcopy(body)}
+        return super().call(method, path, body, key)
 
 
 if __name__=='__main__': unittest.main()

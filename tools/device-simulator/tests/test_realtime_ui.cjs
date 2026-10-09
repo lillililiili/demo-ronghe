@@ -27,6 +27,26 @@ test('delayed and mixed receipts are available for all six channels', () => {
   }
 });
 
+test('punishment recipient summary counts every enabled recipient like the platform does', () => {
+  assert.match(ui.punishmentSummary({enabled_recipients:[]}), /没有启用的处罚接收单位/);
+  assert.match(ui.punishmentSummary({enabled_recipients:[{name:'市公安局',simulator:true}]}), /共 1 个，反制完成后自动移送。$/);
+  const two = ui.punishmentSummary({enabled_recipients:[{name:'市公安局',simulator:true},{name:'旧接收方',simulator:false}]});
+  assert.match(two, /共 2 个，反制完成后要人选再移送/);
+  assert.match(two, /其中旧接收方不是在这里配的/);
+  assert.equal(ui.sameChoice(['a','b'],['b','a']), true);
+  assert.equal(ui.sameChoice(['a'],['a','b']), false);
+  assert.equal(ui.sameChoice([],[]), true);
+});
+
+test('countermeasure position is shown only while the device listens and says how to set a missing one', () => {
+  assert.equal(ui.countermeasurePositionText({countermeasure:{listening:false},countermeasure_position:{longitude:118.6,latitude:37.46}}), '');
+  assert.equal(ui.countermeasurePositionText({countermeasure:{listening:true},countermeasure_position:{longitude:118.6104,latitude:37.464}}), '位置 118.61040, 37.46400');
+  assert.match(ui.countermeasurePositionText({countermeasure:{listening:true},countermeasure_position:null}), /位置未设置.*收发模式设置.*经纬度/);
+  assert.equal(ui.positionValue(''), null);
+  assert.equal(ui.positionValue('  '), null);
+  assert.equal(ui.positionValue('118.61'), 118.61);
+});
+
 test('isolated QA visibly disables transports without disabling scene controls', () => {
   const nodes = new Map();
   const node = selector => {

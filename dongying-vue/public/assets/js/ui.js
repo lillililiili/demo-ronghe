@@ -550,11 +550,11 @@
 
   /* 机型必须连同「凭什么知道」一起显示：射频只到系列级、雷达根本给不出。
      单看一个型号名字是分不出「解出来的」还是「报备写的」的。 */
-  const MODEL_SRC_CLR = { '协议破解解析': '#79e5a5', 'RemoteID 广播': '#79e5a5', '飞行计划报备': '#8fbaff', '射频特征匹配': '#c9a2ff' };
-  const MODEL_SRC_ABBR = { '协议破解解析': '解析', 'RemoteID 广播': '广播', '飞行计划报备': '报备', '射频特征匹配': '射频' };
+  const MODEL_SRC_CLR = { '协议破解解析': '#79e5a5', 'RemoteID 广播': '#79e5a5', '飞行任务报备': '#8fbaff', '射频特征匹配': '#c9a2ff' };
+  const MODEL_SRC_ABBR = { '协议破解解析': '解析', 'RemoteID 广播': '广播', '飞行任务报备': '报备', '射频特征匹配': '射频' };
   const MODEL_SRC_WHY = {
     '协议破解解析': '协议破解设备解出的具体型号', 'RemoteID 广播': 'RemoteID 广播中的具体型号',
-    '飞行计划报备': '型号取自报备信息，非探测识别所得', '射频特征匹配': '射频特征只能匹配到系列级，是线索不是识别结果'
+    '飞行任务报备': '型号取自报备信息，非探测识别所得', '射频特征匹配': '射频特征只能匹配到系列级，是线索不是识别结果'
   };
   /* short=true 用于表格：列宽有限，只给一个两字来源标记 + tooltip；
      详情面板用完整标签。表头装饰宁可零宽度也不要顶宽表格。 */
@@ -589,8 +589,8 @@
         un: '未取得可比对的实名 SN（需协议破解 / RemoteID 设备），本项无判据'
       },
       {
-        k: '计划', na: false, bad: f.planMatch === '未命中',
-        ok: '已匹配审批飞行计划（' + (f.planMatch || '—') + '）', no: '未匹配到审批飞行计划'
+        k: '任务', na: false, bad: f.planMatch === '未命中',
+        ok: '已匹配审批飞行任务（' + (f.planMatch || '—') + '）', no: '未匹配到审批飞行任务'
       },
       {
         k: '空域', na: false, bad: !!(f.inNoFlyZone || f.overZoneHeight || f.overZoneTime),
@@ -601,7 +601,7 @@
       },
       {
         k: '时间', na: false, bad: !!(f.night || f.overPlanTime),
-        ok: '在允许飞行时段内', no: f.night ? '夜间时段飞行' : '超出计划批准时段'
+        ok: '在允许飞行时段内', no: f.night ? '夜间时段飞行' : '超出任务批准时段'
       }
     ];
   }
@@ -616,7 +616,7 @@
   function verdictHtml(t, extra) {
     if (t.type !== '无人机') {
       return `<div class="verdict warn"><div class="vi">${icon('alert')}</div><div class="vt"><h2>不适用</h2>
-        <p>${t.type}属空中异物，不具备飞行计划与实名身份，不进入 C01/C02/C03 合法性判定，
+        <p>${t.type}属空中异物，不具备飞行任务与实名身份，不进入 C01/C02/C03 合法性判定，
         按《设计方案 §4.2》走空间安全风险线：评估风险 → 通知责任方 → 驱离 → 记录结果。</p></div>
         ${extra ? `<div class="va">${extra}</div>` : ''}</div>`;
     }

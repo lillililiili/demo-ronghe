@@ -131,7 +131,8 @@ def ffmpeg_arguments(config, path, watermark):
     font_option = ''
     if watermark:
         fonts = [Path(os.environ.get('WINDIR', 'C:/Windows'))/'Fonts/arial.ttf',
-                 Path('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf')]
+                 Path('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'),
+                 Path('/System/Library/Fonts/Supplemental/Arial.ttf'), Path('/Library/Fonts/Arial.ttf')]
         font = next((file for file in fonts if file.is_file()), None)
         if font is None: raise ValueError('找不到测试视频水印字体 Arial 或 DejaVu Sans')
         shutil.copyfile(font, Path(watermark).parent/'font.ttf')

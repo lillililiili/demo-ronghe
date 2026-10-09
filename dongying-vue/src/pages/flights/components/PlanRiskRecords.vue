@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 
 const props = defineProps({
   records: { type: Array, default: () => [] },
@@ -15,33 +15,45 @@ const props = defineProps({
 });
 const emit = defineEmits(['select', 'locate', 'notify', 'retry', 'page']);
 const recordElements = new Map();
-defineExpose({ focusRecord: id => recordElements.get(id)?.scrollIntoView({ block: 'nearest' }) });
+// 风险多时先列前几条，其余收起，避免把任务详情撑得很长；选中的风险始终展开显示
+const COLLAPSED_LIMIT = 4;
+const expanded = ref(false);
+const ordered = computed(() => [
+  ...props.records.filter(record => record.currentStatus === 'CURRENT'),
+  ...props.records.filter(record => record.currentStatus !== 'CURRENT')
+]);
+const hiddenCount = computed(() => expanded.value ? 0 : Math.max(0, ordered.value.length - COLLAPSED_LIMIT));
+const isEmpty = computed(() => !props.loading && !props.error && !props.records.length);
+const visibleIds = computed(() => new Set((hiddenCount.value ? ordered.value.slice(0, COLLAPSED_LIMIT) : ordered.value).map(record => record.id)));
+watch(() => props.selectedId, id => { if (id && props.records.some(record => record.id === id) && !visibleIds.value.has(id)) expanded.value = true; }, { immediate: true });
+defineExpose({ focusRecord: async id => {
+  if (id && !visibleIds.value.has(id) && props.records.some(record => record.id === id)) { expanded.value = true; await nextTick(); }
+  recordElements.get(id)?.scrollIntoView({ block: 'nearest' });
+} });
 const pages = computed(() => Math.max(1, Math.ceil(props.total / props.size)));
 const groups = computed(() => [
-  { title: '当前仍存在', records: props.records.filter(record => record.currentStatus === 'CURRENT') },
-  { title: '状态待确认', records: props.records.filter(record => record.currentStatus !== 'CURRENT') }
+  { title: '当前仍存在', records: ordered.value.filter(record => record.currentStatus === 'CURRENT' && visibleIds.value.has(record.id)) },
+  { title: '状态待确认', records: ordered.value.filter(record => record.currentStatus !== 'CURRENT' && visibleIds.value.has(record.id)) }
 ].filter(group => group.records.length));
 </script>
 
 <template>
-  <section class="plan-risk-records" aria-label="本计划当前风险" :aria-busy="loading">
-    <header class="risk-section-head">
-      <h3>本计划当前风险</h3>
-      <p v-if="!loading && !error">当前 <strong>{{ currentTotal }}</strong> 起<span v-if="uncertainTotal"> · 其中状态待确认 <strong>{{ uncertainTotal }}</strong> 起</span></p>
+  <section class="plan-risk-records" aria-label="本任务当前风险" :aria-busy="loading">
+    <header class="risk-section-head" :class="{ 'is-empty': isEmpty }">
+      <h3>本任务当前风险</h3>
+      <!-- 2026-10-08 用户要求精简：没有风险时只占一行，提示与更新时间放到悬停说明里。 -->
+      <p v-if="isEmpty" role="status" :title="`没有记录不代表当前飞行条件已确认安全。${asOf ? `更新于 ${asOf}` : ''}`">当前无关联风险</p>
+      <p v-else-if="!loading && !error">当前 <strong>{{ currentTotal }}</strong> 起<span v-if="uncertainTotal"> · 其中状态待确认 <strong>{{ uncertainTotal }}</strong> 起</span></p>
       <button v-if="!error" class="btn" type="button" :disabled="loading" @click="emit('retry')">刷新</button>
     </header>
 
-    <div v-if="loading" class="risk-list-message" role="status">正在读取本计划当前风险</div>
+    <div v-if="loading" class="risk-list-message" role="status">正在读取本任务当前风险</div>
     <div v-else-if="error" class="risk-list-message risk-list-error" role="alert">
       <strong>当前风险读取失败</strong>
       <p>{{ error }}</p>
       <button class="btn" type="button" @click="emit('retry')">重新读取</button>
     </div>
-    <div v-else-if="!records.length" class="risk-list-message" role="status">
-      <strong>暂无当前关联风险</strong>
-      <p>没有记录不代表当前飞行条件已确认安全。</p>
-    </div>
-    <template v-else>
+    <template v-else-if="!isEmpty">
       <section v-for="group in groups" :key="group.title" class="risk-presence-group" :aria-label="group.title">
       <h4 class="risk-group-title">{{ group.title }}</h4>
       <ul class="plan-risk-list">
@@ -70,19 +82,28 @@ const groups = computed(() => [
         </li>
       </ul>
       </section>
+      <button v-if="hiddenCount" class="risk-expand-button" type="button" @click="expanded = true">展开其余 {{ hiddenCount }} 起风险</button>
+      <button v-else-if="expanded && ordered.length > COLLAPSED_LIMIT" class="risk-expand-button" type="button" @click="expanded = false">收起，只看前 {{ COLLAPSED_LIMIT }} 起</button>
       <nav v-if="pages > 1" class="risk-pagination" aria-label="当前风险分页">
         <button class="btn" type="button" :disabled="page <= 1" @click="emit('page', page - 1)">上一页</button>
         <span>第 {{ page }} / {{ pages }} 页</span>
         <button class="btn" type="button" :disabled="page >= pages" @click="emit('page', page + 1)">下一页</button>
       </nav>
     </template>
-    <p v-if="!loading && !error && asOf" class="risk-list-more">更新于 {{ asOf }}</p>
+    <p v-if="!loading && !error && !isEmpty && asOf" class="risk-list-more">更新于 {{ asOf }}</p>
   </section>
 </template>
 
 <style scoped>
-.plan-risk-records { min-width: 0; color: var(--txt); }
+.plan-risk-records { min-width: 0; color: var(--txt); container: plan-risks / inline-size; }
+.risk-expand-button { margin-top: 8px; padding: 4px 0; border: 0; background: transparent; color: var(--blue); font: inherit; font-size: 12px; line-height: 1.7; cursor: pointer; }
+.risk-expand-button:hover { color: var(--cyan); text-decoration: underline; text-underline-offset: 3px; }
+@container plan-risks (min-width: 520px) {
+  .plan-risk-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 18px; }
+  .plan-risk-record:last-child { border-bottom: 1px solid var(--line-2); }
+}
 .risk-section-head { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 5px 12px; padding: 0 0 11px; border-bottom: 1px solid var(--line-2); }
+.risk-section-head.is-empty { padding-bottom: 0; border-bottom: 0; }
 .risk-section-head h3 { margin: 0; color: var(--txt); font-size: 14px; font-weight: 600; line-height: 1.6; }
 .risk-section-head p { margin: 0; color: var(--txt-3); font-size: 12px; line-height: 1.6; }
 .risk-section-head strong { color: var(--txt-2); font-weight: 600; font-variant-numeric: tabular-nums; }

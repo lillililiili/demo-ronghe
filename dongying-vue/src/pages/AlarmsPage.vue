@@ -30,15 +30,16 @@ import UPanel from '@/components/UPanel.vue';
 import UKpis from '@/components/UKpis.vue';
 import { handoffApi } from '@/services/handoffApi.js';
 import { toast } from '@/ui/nv.js';
-import { exportAlarmsCsv, getAlarm, getUavEvent, listAlarmDistricts, listAlarmEscalations, listAlarms } from '@/services/alarmApi.js';
+import { exportAlarmsCsv, getAlarm, getUavEvent, listAlarmDistricts, listAlarmEscalations, listAlarms, listUavVerifications } from '@/services/alarmApi.js';
 import { escalationBrief, escalationRecords, reasonListText } from '@/ui/alarmEscalation.js';
 import { ruleReasonText } from '@/ui/legalityReviewModal.js';
 import { NO_PILOT_LOCATION, pilotLocationText } from '@/services/pilotLocation.js';
+import { pilotDistanceNote } from '@/ui/pilotDistanceNote.js';
 import { getEvidenceChain } from '@/services/evidenceApi.js';
 import { openUavVerification } from '@/ui/uavVerificationModal.js';
 import { targetApi } from '@/services/targetApi.js';
 import { mapPool } from '@/services/apiClient.js';
-import { ALARM_PROGRESS_LABEL, ALARM_PROGRESS_TAG, ALARM_TYPE_LABEL, classChangeText, DISPOSAL_ACTION_LABEL, labelOf, LEGALITY_LABEL, readableNo, sourceDescription, SOURCE_MODE_LABEL as MODE_TEXT, targetTypeLabel } from '@/ui/labels.js';
+import { ALARM_PROGRESS_LABEL, ALARM_PROGRESS_TAG, ALARM_TYPE_LABEL, classChangeText, CONCLUSION_LABEL, DISPOSAL_ACTION_LABEL, labelOf, LEGALITY_LABEL, readableNo, sourceDescription, SOURCE_MODE_LABEL as MODE_TEXT, targetTypeLabel } from '@/ui/labels.js';
 import { openEvidenceFileModal } from '@/ui/evidenceFileDetail.js';
 import { openEvidenceChainTypeModal, renderEvidenceChainHtml } from '@/ui/evidenceChainView.js';
 import { disposalApi, isDisposalUnavailable } from '@/services/disposalApi.js';
@@ -117,17 +118,30 @@ const STATE = {
   CONFIRMED: { t: '告警已确认', c: 't-cyan', color: '#22d3ee' },
   FALSE_POSITIVE: { t: '误报', c: 't-blue', color: '#8fbaff' }
 };
-const STATE_FILTER = { ...STATE, CONFIRMED: { ...STATE.CONFIRMED, t: '告警已确认（含处置中）' } };
+/* 待处置：已核实属实、处置还没结束（关注分组不是"历史"）。与列表分组同一个后端口径，不在前端另算。 */
+const PENDING_DISPOSAL_QUERY = { state: 'CONFIRMED', attention_group: 'CURRENT,AWAITING_CONFIRMATION' };
+/* 状态筛选按办理阶段分四项（2026-10-07）：待处置、已处理完与"待处置"卡片同一个后端分组口径，导出同样按它筛。 */
+const STATUS_FILTER = {
+  PENDING_VERIFICATION: { t: '待核实', q: { state: 'PENDING_VERIFICATION' } },
+  PENDING_DISPOSAL: { t: '待处置', q: PENDING_DISPOSAL_QUERY },
+  DISPOSAL_ENDED: { t: '已处理完', q: { state: 'CONFIRMED', attention_group: 'HISTORY' } },
+  FALSE_POSITIVE: { t: '误报', q: { state: 'FALSE_POSITIVE' } }
+};
 const NO_EVENT = { t: '未建事件', c: 't-gray', color: '#8ca0be' };
 const NOTIFY_PHASE = {
   AUTO_SMS: { t: '自动短信', c: 't-cyan', color: '#22d3ee' },
   WATCHING: { t: '观察中', c: 't-amber', color: '#f1a43a' },
   AUTO_CALL: { t: '自动电话', c: 't-cyan', color: '#22d3ee' },
-  AWAIT_COUNTER: { t: '待反制决策', c: 't-orange', color: '#fb923c' }
+  /* 通知已发完（或发不出去）、无人机还在：等人决定反制还是不反制。不叫"待处置决策"，免得和"待处置"统计看混。 */
+  AWAIT_COUNTER: { t: '待定是否反制', c: 't-orange', color: '#fb923c' }
 };
 const SOURCE_MODE = { mock: { t: MODE_TEXT.mock, c: 't-purple' }, replay: { t: MODE_TEXT.replay, c: 't-amber' }, live: { t: MODE_TEXT.live, c: 't-green' } };
-/* 类别来自共享字典；区域来自本页的区域字典接口，读不到就把下拉标成"不可用"并在 title 说明原因。 */
-const KIND_OPTS = [{ v: '全部', t: '全部' }, ...Object.keys(ALARM_TYPE_LABEL).map(v => ({ v, t: ALARM_TYPE_LABEL[v] }))];
+/* 类别按违规原因筛（2026-10-07）：平台自己产生的告警都是"飞行违规"，按告警类型筛只有一项筛得出东西。
+   可选项是规则引擎会写进告警的违规原因（与后端 violation_reason 白名单同一组），文字与列表里的原因一致；
+   区域来自本页的区域字典接口，读不到就把下拉标成"不可用"并在 title 说明原因。 */
+const VIOLATION_REASON_CODES = ['NO_AUTHORIZATION', 'INSIDE_RESTRICTED_AIRSPACE', 'AIRSPACE_ALTITUDE_EXCEEDED',
+  'TEMPORARY_RESTRICTION_ACTIVE', 'ROUTE_DEVIATION', 'TIME_WINDOW_OVERRUN', 'PLAN_ALTITUDE_EXCEEDED', 'NIGHT_FLIGHT', 'BVLOS_EXCEEDED'];
+const KIND_OPTS = [{ v: '全部', t: '全部' }, ...VIOLATION_REASON_CODES.map(v => ({ v, t: ruleReasonText(v) }))];
 const districts = ref([]);
 const districtError = ref('');
 const regionOpts = () => (districtError.value
@@ -135,7 +149,7 @@ const regionOpts = () => (districtError.value
   : [{ v: '全部', t: '全部' }, ...districts.value.map(d => ({ v: d.district_id, t: d.name }))]);
 
 const LEVEL_OPTS = [{ v: '全部', t: '全部' }, { v: 'CRITICAL', t: '紧急' }, { v: 'HIGH', t: '高' }, { v: 'MEDIUM', t: '中' }, { v: 'LOW', t: '低' }];
-const STATUS_OPTS = [{ v: '全部', t: '全部' }, ...Object.entries(STATE_FILTER).map(([v, s]) => ({ v, t: s.t }))];
+const STATUS_OPTS = [{ v: '全部', t: '全部' }, ...Object.entries(STATUS_FILTER).map(([v, s]) => ({ v, t: s.t }))];
 const pageProgress = {};
 const pendingProgress = new Set();
 
@@ -218,11 +232,7 @@ const modeOf = a => SOURCE_MODE[a.source_mode] || { t: esc(a.source_mode || '—
 const sevTag = a => U.tag(sevOf(a).t, sevOf(a).c);
 const OBSERVATION_LABEL = { CURRENT: '观测有效', EXPIRED: '观测已过期', UNKNOWN: '观测待确认' };
 const ATTENTION_LABEL = { CURRENT: '当前事项', AWAITING_CONFIRMATION: '状态待确认', HISTORY: '历史记录' };
-const stateTag = a => {
-  const status = U.tag(displayState(a).t, displayState(a).c);
-  const observation = observationTag(a);
-  return observation ? `<span class="alarm-state-stack">${status}${observation}</span>` : status;
-};
+const stateTag = a => U.tag(displayState(a).t, displayState(a).c);
 const observationTag = a => a.attention_group !== 'HISTORY' && ['EXPIRED', 'UNKNOWN'].includes(a.observation_status)
   ? U.tag(OBSERVATION_LABEL[a.observation_status], 't-gray') : '';
 const detailStateTags = a => `${U.tag(displayState(a).t, displayState(a).c)}${observationTag(a)}`;
@@ -259,7 +269,8 @@ let listSeq = 0, detailSeq = 0;
 const emptyDetail = () => ({ alarm: null, event: null, loading: false, error: '',
   target: null, targetLoading: false, targetError: '', track: null, trackError: '',
   chain: null, chainLoading: false, chainError: '', chainUnavailable: '',
-  escalations: [], escalationsTotal: 0, escalationsLoading: false, escalationsError: ''
+  escalations: [], escalationsTotal: 0, escalationsLoading: false, escalationsError: '',
+  verifications: [], verificationsLoaded: false, verificationsLoading: false, verificationsError: ''
   });
 let cur = emptyDetail();
 /* 深链（sessionStorage alarm.sel）—— 与 legacy render() 同构：mount 后按 ID 直接向服务端取详情 */
@@ -342,6 +353,7 @@ function setSubject(target, value) {
 const KPI_DEFS = [
   { label: '今日告警总数', caption: '按发生时间统计', color: 'blue', icon: 'alert' },
   { label: '今日待核实', caption: '按发生时间统计', color: 'amber', icon: 'alert' },
+  { label: '待处置', caption: '实时，不限日期', color: 'pink', icon: 'alert' },
   { label: '当前反制中', caption: '实时状态', color: 'orange', icon: 'radar' },
   { label: '已反制', caption: '累计完成', color: 'green', icon: 'check' },
   { label: '当前干扰中', caption: '实时状态', color: 'red', icon: 'radar' },
@@ -403,20 +415,28 @@ async function loadKpis() {
   const disposalCount = actionType => Promise.all(DISPOSAL_ACTIVE.map(status =>
     disposalApi.list({ action_type: actionType, status, page: 1, size: 1 }).then(p => Number(p && p.total) || 0)
   )).then(([approved, executing]) => ({ approved, executing }));
-  // 告警按今日发生时间统计；执行中按实时状态统计，已反制按累计完成记录统计。
+  // 告警按今日发生时间统计；待处置、执行中按实时状态统计（不限日期），已反制按累计完成记录统计。
   const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit'
   }).formatToParts(Date.now()).filter(part => part.type !== 'literal').map(part => [part.type, Number(part.value)]));
   const from = Date.UTC(parts.year, parts.month - 1, parts.day) - 8 * 60 * 60_000;
   const to = from + 86400000;
+  const day = { occurred_from: from, occurred_to: to };
   const r = await Promise.allSettled([
-    count({ occurred_from: from, occurred_to: to }),
-    count({ occurred_from: from, occurred_to: to, state: 'PENDING_VERIFICATION' }),
-    count({ occurred_from: from, occurred_to: to, state: 'CONFIRMED' }),
-    count({ occurred_from: from, occurred_to: to, state: 'FALSE_POSITIVE' }),
+    count(day),
+    count({ ...day, state: 'PENDING_VERIFICATION' }),
+    count({ ...day, state: 'CONFIRMED' }),
+    count({ ...day, state: 'FALSE_POSITIVE' }),
     disposalCount('COUNTERMEASURE'), disposalCount('JAMMING'),
     disposalApi.list({ action_type: 'COUNTERMEASURE', status: 'COMPLETED', page: 1, size: 1 })
-      .then(p => ({ completed: Number(p && p.total) || 0 }))
+      .then(p => ({ completed: Number(p && p.total) || 0 })),
+    count(PENDING_DISPOSAL_QUERY),
+    /* 新-2（D-4）：今日四张卡和大屏同一口径，系统自带的演示告警（来源标“模拟”）不算；
+       演示告警另数一遍，卡片上写明有几条没算进来。r[8]~r[11] 依次对应 r[0]~r[3]。 */
+    count({ ...day, source_mode: 'mock' }),
+    count({ ...day, state: 'PENDING_VERIFICATION', source_mode: 'mock' }),
+    count({ ...day, state: 'CONFIRMED', source_mode: 'mock' }),
+    count({ ...day, state: 'FALSE_POSITIVE', source_mode: 'mock' })
   ]);
   const v = r.map(x => x.status === 'fulfilled' ? x.value : null);
   const num = x => x == null ? '—' : U.num(x);
@@ -432,14 +452,25 @@ async function loadKpis() {
     return { ...def, value: U.num(value.executing), desc: `另有 ${U.num(value.approved)} 起已批准待执行` };
   };
   const fail = i => v[i] == null ? '读取失败：' + esc(messageOf(r[i].reason)) : null;
+  /* 今日卡 = 全部来源 − 演示告警。演示告警数读不到时先按全部来源显示，卡片上写明可能含演示告警，不冒充已扣除。 */
+  const todayKpi = (def, i, text) => {
+    if (v[i] == null) return { ...def, value: '—', desc: fail(i) };
+    const demo = v[i + 8];
+    if (demo == null) {
+      return { ...def, value: num(v[i]), caption: '可能含演示告警', desc: `${text}；演示告警数读取失败（${esc(messageOf(r[i + 8].reason))}），这里暂按全部来源计数` };
+    }
+    return { ...def, value: num(Math.max(0, v[i] - demo)), caption: demo > 0 ? `另有演示告警 ${U.num(demo)} 条未计入` : def.caption,
+      desc: `${text}；和大屏同一口径：设备模拟器产生的告警（来源标“回放”）照算，系统自带的演示告警（来源标“模拟”）不算` };
+  };
   kpiList.value = [
-    { ...KPI_DEFS[0], value: num(v[0]), desc: fail(0) || '北京时间今天发生的告警数量；发生时间未知者不计' },
-    { ...KPI_DEFS[1], value: num(v[1]), desc: fail(1) || '北京时间今天发生且待人工核实的告警数量' },
-    disposalKpi(KPI_DEFS[2], r[4], v[4]),
-    disposalKpi(KPI_DEFS[3], r[6], v[6]),
-    disposalKpi(KPI_DEFS[4], r[5], v[5]),
-    { ...KPI_DEFS[5], value: num(v[2]), desc: fail(2) || '北京时间今天发生且已确认属实的告警数量，包含处置已结束的记录' },
-    { ...KPI_DEFS[6], value: num(v[3]), desc: fail(3) || '北京时间今天发生且人工核实后已排除的告警数量' }
+    todayKpi(KPI_DEFS[0], 0, '北京时间今天发生的告警数量；发生时间未知者不计'),
+    todayKpi(KPI_DEFS[1], 1, '北京时间今天发生且待人工核实的告警数量'),
+    { ...KPI_DEFS[2], value: num(v[7]), desc: fail(7) || '已核实属实、处置还没结束的告警数量，不限日期；正在反制、干扰或急停核查中的也算在内，设备反制或干扰完成后不再计入' },
+    disposalKpi(KPI_DEFS[3], r[4], v[4]),
+    disposalKpi(KPI_DEFS[4], r[6], v[6]),
+    disposalKpi(KPI_DEFS[5], r[5], v[5]),
+    todayKpi(KPI_DEFS[6], 2, '北京时间今天发生且已确认属实的告警数量，包含处置已结束的记录'),
+    todayKpi(KPI_DEFS[7], 3, '北京时间今天发生且人工核实后已排除的告警数量')
   ];
 }
 
@@ -449,7 +480,7 @@ const disabledSelect = (name, reason) =>
 const listPanelBody = `<div class="toolbar alarm-filter-toolbar">
     <div class="toolbar-fields">
       ${U.field('等级', U.select('level', LEVEL_OPTS, st.level))}
-      ${U.field('类别', U.select('kind', KIND_OPTS, st.kind))}
+      ${U.field('违规原因', U.select('kind', KIND_OPTS, st.kind))}
       ${U.field('状态', U.select('status', STATUS_OPTS, st.status))}
       ${U.field('区域', U.select('region', regionOpts(), st.region))}
     </div>
@@ -486,19 +517,26 @@ function queryOf() {
   const q = { page: st.page, size: st.size, sort: st.sort };
   if (st.sort !== 'priority') q.order = st.order;
   if (st.level !== '全部') q.severity = st.level;
-  if (st.status !== '全部') q.state = st.status;
-  if (st.kind !== '全部') q.alarm_type = st.kind;
+  if (STATUS_FILTER[st.status]) Object.assign(q, STATUS_FILTER[st.status].q);
+  if (VIOLATION_REASON_CODES.includes(st.kind)) q.violation_reason = st.kind;
   if (st.region !== '全部') q.district_id = st.region;
   return q;
 }
 
+/* 违规原因单独成列，列名与"违规原因"筛选一致；没有原因码的告警（演示告警等）显示告警类型。
+   原因定宽折行、最多两行，不把列撑宽挤掉"状态"列；全文在悬停提示与详情里。 */
+function reasonCell(a) {
+  const reasons = reasonsOf(a);
+  const text = reasons ? esc(reasons) : typeOf(a);
+  return U.cell(U.tag(modeOf(a).t, modeOf(a).c),
+    `<span style="display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;white-space:normal;width:9em">${text}</span>`,
+    { title: reasons ? esc(reasons) : '' });
+}
+
+/* 来源和发生时间分两行：挤在一行时这一列最宽，整张表被撑过面板，"状态"列要横向滚动才看得到。 */
 function summaryOf(a) {
-  const text = `来源 ${esc(sourceDescription(a.source_name, a.source_code, a.source_mode, '—'))}· 发生 ${fmt(a.occurred_at) || '未知'}`;
-  const reasons = reasonsOf(a), tag = escalationTag(a);
-  /* 原因行不参与撑开列宽（表格按内容自然拓宽），跟随来源行的宽度折行，最多两行，全文在悬停提示与详情里。 */
-  const head = reasons || tag ? `<div style="width:0;min-width:100%;color:var(--txt);display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden"
-    title="${esc(reasons)}">${tag}${tag && reasons ? ' ' : ''}${reasons ? esc(reasons) : ''}</div>` : '';
-  return `<div style="white-space:normal;line-height:1.5;overflow-wrap:anywhere">${head}${text}</div>`;
+  const tag = escalationTag(a);
+  return `<div style="white-space:normal;line-height:1.5;overflow-wrap:anywhere">${tag ? `<div>${tag}</div>` : ''}<div>来源 ${esc(sourceDescription(a.source_name, a.source_code, a.source_mode, '—'))}</div><div class="cell-sub">发生 ${fmt(a.occurred_at) || '未知'}</div></div>`;
 }
 
 function listHtml() {
@@ -510,11 +548,11 @@ function listHtml() {
     : '';
   return note + U.table([
     {
-      t: sortTh('ts', '告警编号 / 时间'), w: '108px', cls: 'num',
+      t: sortTh('ts', '编号 / 时间'), w: '108px', cls: 'num',
       render: a => U.cell(esc(noOf(a)), clock(a.received_at), { mono: true, title: esc(a.alarm_id) })
     },
     { t: sortTh('level', '等级'), w: '52px', align: 'center', render: sevTag },
-    { t: sortTh('kind', '类别 / 类型'), w: '128px', render: a => U.cell(U.tag(modeOf(a).t, modeOf(a).c), typeOf(a)) },
+    { t: sortTh('kind', '违规原因'), w: '136px', render: reasonCell },
     { t: sortTh('district', '关联目标 / 区域'), w: '146px', render: a => U.cell(a.target_id ? esc(a.target_no || a.target_id) : '—', esc(a.district_name || a.district_id || '—'), { mono: true, title: a.target_id ? esc(a.target_id) : '无关联目标或无目标读取权限' }) },
     { t: '告警内容', render: summaryOf },
     { t: sortTh('status', '状态'), w: '86px', render: stateTag }
@@ -606,6 +644,8 @@ function detailHtml() {
   const targetType = !a.target_id ? '—' : cur.targetLoading ? '读取中' : cur.targetError ? '读取失败' : esc(t ? targetTypeLabel(t.subtype, t.object_type_code) : '—');
   const altSpeed = ls ? `${ls.altitude_amsl_m == null ? '—' : esc(ls.altitude_amsl_m)} m / ${ls.speed_mps == null ? '—' : esc(ls.speed_mps)} m/s` : '— m / — m/s';
   const reasons = reasonsOf(a), brief = briefOf(a);
+  // 新-29：飞手离无人机超过 500 米不算违规，告警详情在“遥控器位置”后面照样写这句给值班员参考（取目标最近一次研判）。
+  const pilotNote = cur.targetLoading || cur.targetError ? '' : pilotDistanceNote(t);
   return `${U.detailHero({
     icon: 'alert', subtitle: '告警事件', title: typeOf(a), id: esc(noOf(a)),
     tags: [sevTag(a), detailStateTags(a)]
@@ -623,12 +663,35 @@ function detailHtml() {
     ['高度/速度', altSpeed],
     ['遥控器位置', !a.target_id ? NO_PILOT_LOCATION : cur.targetLoading ? '读取中' : cur.targetError ? '读取失败'
       : esc(pilotLocationText(ls && ls.pilot_location))],
+    ...(pilotNote ? [['飞手距离', esc(pilotNote)]] : []),
     ['数据来源', `${esc(sourceDescription(a.source_name, a.source_code, a.source_mode, '—'))}`]
   ], { surface: true, density: 'compact' }), { icon: 'alert', className: 'alarm-info-sect' })}
+    ${verificationHtml()}
     ${escalationHtml(brief)}
     ${renderEvidenceChainHtml(cur.chain, {
       loading: cur.chainLoading, error: cur.chainError, unavailable: cur.chainUnavailable
     })}`;
+}
+
+/* 核实记录（确认书 3-1、流程 1 第②步，新-18）：按先后列出结论、时间和说明。系统按核实规则自动核实的没有核实人，
+   写“系统自动核实 · 无核实人”；人工核实的写核实人。还没有核实事件的告警不显示这一块。 */
+function verificationHtml() {
+  const a = cur.alarm;
+  if (!a?.event_id) return '';
+  let body;
+  if (cur.verificationsLoading) body = '<div class="empty">正在读取核实记录</div>';
+  else if (cur.verificationsError) {
+    body = `<div class="empty">${esc(cur.verificationsError)}<br><button class="btn" data-al="verifications-retry" style="margin-top:8px">重试</button></div>`;
+  } else if (!cur.verifications.length) {
+    body = `<div class="empty">${cur.event?.state === 'PENDING_VERIFICATION' ? '还没有核实' : '暂未读到核实记录'}</div>`;
+  } else {
+    body = `<ol class="alarm-escalation-list">${cur.verifications.map(v => `<li>
+        <div class="alarm-escalation-head"><b>${esc(labelOf(CONCLUSION_LABEL, v.conclusion, '结论未知'))}</b></div>
+        ${v.note ? `<div>说明：${esc(v.note)}</div>` : ''}
+        <div class="alarm-escalation-meta">${esc(v.actor_id ? `人工核实 · 核实人 ${v.actor_name || '未知'}` : '系统自动核实 · 无核实人')} · ${esc(fmt(v.created_at) || '时间未知')}</div>
+      </li>`).join('')}</ol>`;
+  }
+  return U.sect('核实记录', body, { icon: 'check' });
 }
 
 /* 升级记录：按升级先后列出每一次是系统研判还是人工转告警、等级怎么变、新增了什么原因、谁在什么时候做的。 */
@@ -657,7 +720,7 @@ function detailActionsHtml() {
   if (!a) return '';
   const replayN = replayPointCount();
   return `<div class="alarm-observation-actions">
-      <button class="btn" data-al="replay" ${replayN > 1 ? '' : 'disabled '}title="${replayN > 1 ? '按实测轨迹在地图上走航线回放，不是视频' : '没有足够的轨迹点'}">${U.icon('trend')} 轨迹回放</button>
+      <button class="btn" data-al="replay" ${replayN > 1 ? '' : 'disabled '}title="${replayN > 1 ? '按实测轨迹回放，有光电录像时同步播放' : '没有足够的轨迹点'}">${U.icon('trend')} 轨迹回放</button>
       ${disposalActions(a, ev)}</div>
     ${ev?.state === 'PENDING_VERIFICATION' ? '<p class="alarm-action-note">事件事实尚待核实。核实属实后自动发送飞手短信。</p>' : ''}`;
 }
@@ -861,9 +924,10 @@ async function selectAlarm(id) {
   }
   if (cur.alarm && (cur.alarm.event_id || cur.alarm.target_id)) cur.chainLoading = true;
   if (briefOf(cur.alarm)) cur.escalationsLoading = true;
+  if (cur.alarm?.event_id) cur.verificationsLoading = true;
   cur.loading = false;
   paintDetail(); focusMap();
-  await Promise.all([loadTarget(my), loadChain(my), loadEscalations(my)]);
+  await Promise.all([loadTarget(my), loadChain(my), loadEscalations(my), loadVerifications(my)]);
 }
 
 /* 升级记录只在告警升级过时读取；读不到只影响这一块，可单独重试，不影响告警详情与处置。 */
@@ -888,6 +952,30 @@ async function loadEscalations(my, { quiet = false } = {}) {
     }
   }
   cur.escalationsLoading = false;
+  paintDetailContent();
+}
+
+/* 核实记录随事件状态读取；quiet：打开的告警刚被核实（自动或人工），已显示的记录保留到新记录读到为止，读取失败也不清掉。 */
+const VERIFICATION_PAGE_SIZE = 20;
+async function loadVerifications(my, { quiet = false } = {}) {
+  const a = cur.alarm;
+  if (!a?.event_id || my !== detailSeq) return;
+  const keep = quiet && cur.verificationsLoaded;
+  if (!keep) { cur.verificationsLoading = true; cur.verificationsError = ''; paintDetailContent(); }
+  try {
+    const page = await listUavVerifications(a.event_id, { page: 1, size: VERIFICATION_PAGE_SIZE });
+    if (my !== detailSeq) return;
+    cur.verifications = Array.isArray(page?.items) ? page.items : [];
+    cur.verificationsLoaded = true;
+    cur.verificationsError = '';
+  } catch (e) {
+    if (my !== detailSeq) return;
+    if (!keep) {
+      cur.verifications = [];
+      cur.verificationsError = e?.status === 403 ? '当前账号没有查看核实记录的权限' : messageOf(e);
+    }
+  }
+  cur.verificationsLoading = false;
   paintDetailContent();
 }
 
@@ -1006,6 +1094,9 @@ async function refreshSelected(id = st.selId) {
   // 打开着的告警被升级（同一架无人机的新违规并入，BUG-16/BUG-11）时，升级记录跟着重读。
   const escalationChanged = (alarm.escalation_count ?? 0) !== (before.escalation_count ?? 0) || alarm.escalated_at !== before.escalated_at;
   const chainChanged = targetChanged || alarm.event_id !== before.event_id || JSON.stringify(event) !== JSON.stringify(beforeEvent);
+  // 事件被核实（自动或人工）后状态会变，核实记录跟着重读；处置面板可能已先把版本号改成新的，所以也比状态。
+  const verificationChanged = alarm.event_id !== before.event_id || event?.state !== beforeEvent?.state
+    || event?.version !== beforeEvent?.version || (!!alarm.event_id && !cur.verificationsLoaded && !cur.verificationsLoading);
   cur.alarm = alarm; cur.event = event;
   if (alarm.event_id) await refreshEventDisposals(alarm.event_id);
   else { ++disposalSeq; disposal.byAction = {}; disposal.handoff = null; disposal.error = ''; disposal.unavailable = false; }
@@ -1020,6 +1111,7 @@ async function refreshSelected(id = st.selId) {
   }
   if (chainChanged && isCurrent()) await refreshChain(my);
   if (escalationChanged && isCurrent()) await loadEscalations(my, { quiet: true });
+  if (verificationChanged && isCurrent()) await loadVerifications(my, { quiet: alarm.event_id === before.event_id });
 }
 
 /* 证据链静默重读：读到新内容再替换，读取失败保留已显示的证据链；原来就没读出来的按正常流程重读。 */
@@ -1133,6 +1225,7 @@ onMounted(async () => {
     else if (k === 'retry-detail' && st.selId) selectAlarm(st.selId);
     else if (k === 'chain-retry' && st.selId) loadChain(detailSeq);
     else if (k === 'escalations-retry' && st.selId) loadEscalations(detailSeq);
+    else if (k === 'verifications-retry' && st.selId) loadVerifications(detailSeq);
     else if (k === 'replay') replayLoadedTrack();
   });
   U.on(view, '[data-ev-file]', 'click', (e, btn) => {
@@ -1230,14 +1323,8 @@ onMounted(async () => {
 .alarms-page :deep(.detail-hero-auto .detail-hero-tags .tag:nth-child(n+3)) {
   display: inline-block;
 }
-.alarms-page :deep(.alarm-state-stack) {
-  display: inline-flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
-}
 .alarms-page :deep(.alarm-kpis) {
-  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-columns: repeat(8, minmax(0, 1fr));
   flex: none;
 }
 @media (max-width: 1439px) {

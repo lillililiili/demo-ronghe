@@ -65,7 +65,7 @@ def decode(topic, payload, binding):
     if not isinstance(params, dict) or set(params) - PARAMS or (operation == 0 and params):
         raise ValueError('指令参数无效')
     if operation != 0 and cmd in (30002, 50005) and not str(params.get('targetId') or '').strip():
-        raise ValueError('指令缺少目标编号')
+        raise ValueError('指令缺少编号')
     if 'duration' in params and (type(params['duration']) is not int or not 10 <= params['duration'] <= 300):
         raise ValueError('duration 须为10至300秒')
     return root

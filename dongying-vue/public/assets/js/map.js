@@ -60,7 +60,7 @@
         <div class="lg-hd" role="button" tabindex="0" aria-label="展开或收起图例">图例 <span class="lg-arrow">${opt.legendOpen ? '▾' : '▸'}</span></div>
         <div class="li"><span class="sw" style="border-color:#2fd06e"></span>符合航线的已飞轨迹</div>
         <div class="li"><span class="sw" style="border-color:#ff4d5e"></span>偏离航线的已飞轨迹</div>
-        <div class="li"><span class="sw" style="border-color:#8ca0a8;border-top-style:dashed"></span>计划航线（未飞部分灰色）</div>
+        <div class="li"><span class="sw" style="border-color:#8ca0a8;border-top-style:dashed"></span>任务航线（未飞部分灰色）</div>
         <div class="li"><span class="sw" style="border-color:#ffb020"></span>航线关系未知</div>
         <div class="li" title="弥合段（A03）"><span class="sw" style="border-color:#ff8b3d;border-top-style:dotted"></span>推算补全段</div>
         <div class="li" title="预测段（A04）"><span class="sw" style="border-color:#22d3ee;border-top-style:dotted"></span>预测延伸段</div>
@@ -160,6 +160,7 @@
       if (this._dead || controller.signal.aborted) { runtime.release(); return; }
       this._release = runtime.release;
       this._coverageBounds = runtime.bounds;
+      if (typeof this.opt.onCoverageChange === 'function') this.opt.onCoverageChange(runtime.bounds);
       this._applyRuntimePolicy(runtime.runtime || {});
       // 构造后立刻 fitTo 时覆盖范围还是内置东营框；包头真正的 bounds 更宽。
       // 航线若落在框外、包内，必须在建引擎前按真实覆盖重算，否则 load 只会跳到被夹紧的空视野。
@@ -175,9 +176,9 @@
       const map = new runtime.maplibre.Map({
         container: this.baseEl, style: runtime.style, center: this._pendingCenter,
         zoom: this._levelForScale(this.zoom), minZoom: this._minLevel(), maxZoom: this.maxZoom,
-        /* 地图包只覆盖有限区域。始终约束相机并以“覆盖视口”计算最低缩放，
-           宁可裁掉少量边缘，也不能让任何业务页面露出包外空白。 */
-        maxBounds: coverage ? [[coverage[0], coverage[1]], [coverage[2], coverage[3]]] : undefined,
+        /* 普通地图按地图包覆盖范围约束相机；证据回放可显式允许查看包外真实坐标，
+           并由调用方提示底图覆盖不足。 */
+        maxBounds: coverage && this.opt.constrainToCoverage !== false ? [[coverage[0], coverage[1]], [coverage[2], coverage[3]]] : undefined,
         bearing: 0, pitch: 0, dragRotate: false, pitchWithRotate: false,
         touchPitch: false, renderWorldCopies: false, attributionControl: false,
         // 汉字优先由浏览器本地字体栅格化，避免首屏重复下载 8 MiB 的 SC 字体文件。
@@ -438,6 +439,8 @@
 
   // 视口必须被数据覆盖：取较长边撑满，并多算 8px，避免边缘露底。
   MapView.prototype._minLevel = function () {
+    // 历史证据可能位于当前地图包之外；仅显式启用的回放允许查看这些真实位置。
+    if (this.opt.constrainToCoverage === false) return 0;
     if (this.w <= 0 || this.h <= 0) return Math.min(7, this._fitLevelForWidth());
     const [west, south, east, north] = this._viewBounds();
     const a = merc(west, north), b = merc(east, south);
@@ -447,6 +450,7 @@
   };
 
   MapView.prototype._clampCenter = function (lon, lat, level) {
+    if (this.opt.constrainToCoverage === false) return [lon, Math.max(-85.051129, Math.min(85.051129, lat))];
     if (!Number.isFinite(lon) || !Number.isFinite(lat) || this.w <= 0 || this.h <= 0) return [lon, lat];
     const [west, south, east, north] = this._viewBounds();
     const a = merc(west, north), b = merc(east, south);
@@ -724,7 +728,7 @@
 
   MapView.prototype._showTip = function (hit) {
     const key = this._tipKey(hit);
-    if (this.opt.interactiveTip) this.tip.setAttribute('aria-label', hit.kind === 'device' ? '设备详情' : hit.kind === 'target' ? '目标详情' : hit.kind === 'plan' ? '计划详情' : '地图详情');
+    if (this.opt.interactiveTip) this.tip.setAttribute('aria-label', hit.kind === 'device' ? '设备详情' : hit.kind === 'target' ? '目标详情' : hit.kind === 'plan' ? '任务详情' : '地图详情');
     if (this._tipKeyShown !== key || this._tipDataShown !== hit.data) {
       this._tipKeyShown = key;
       this._tipDataShown = hit.data;
@@ -798,6 +802,9 @@
      让出的时间留给数据；数据变化、拖动缩放、底图重绘仍立即重画。只要有一帧恢复正常就回到逐帧动画。
      costs：最近几次“画了一帧到下一次回调”的间隔（毫秒，含浏览器合成）；返回 0 表示逐帧画。 */
   const SLOW_FRAME_MS = 250, SLOW_FRAME_COUNT = 3, SLOW_GAP_MIN_MS = 2000, SLOW_GAP_FACTOR = 8;
+  /* 装饰动画平时也只画每秒约 12 帧：扫描、波纹、虚线流动看起来照样连贯，整层画布不再每秒重画 60 次跟底图抢资源。
+     数据变化、拖动缩放、底图重绘不经过这里，仍立即重画。 */
+  const ANIM_FRAME_MS = 80;
   MapView.animationGap = function (costs) {
     if (!costs || costs.length < SLOW_FRAME_COUNT) return 0;
     const fastest = Math.min.apply(null, costs.slice(-SLOW_FRAME_COUNT));
@@ -820,9 +827,12 @@
         if (costs.length > SLOW_FRAME_COUNT) costs.shift();
         self._animDrawnAt = null;
       }
-      const gap = Math.max(MapView.animationGap(costs), minFrameGap);
-      if (!gap || now - (self._animLastAt || 0) >= gap) {
-        self.t += 1;
+      const gap = Math.max(MapView.animationGap(costs), ANIM_FRAME_MS, minFrameGap);
+      // 图上没有会动的东西（没有在线设备，或设备与覆盖范围图层都关着）时不画装饰帧。
+      if (self._hasAnimation() && now - (self._animLastAt || 0) >= gap) {
+        // 动画相位按真实时间走（以 60 帧/秒为单位），少画几帧不会让扫描、波纹变慢。
+        if (self._animStartAt == null) self._animStartAt = now - self.t * 1000 / 60;
+        self.t = (now - self._animStartAt) * 60 / 1000;
         self.draw();
         self._animDrawnAt = self._animLastAt = now;
       }
@@ -855,8 +865,16 @@
     c.restore();
   };
 
+  // 每台设备每帧都要问一次“是否减少动态效果”，查询对象只建一次。
+  const reducedMotion = g.matchMedia ? g.matchMedia('(prefers-reduced-motion: reduce)') : null;
   MapView.prototype._still = function () {
-    return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    return !!(reducedMotion && reducedMotion.matches);
+  };
+
+  /* 装饰动画只画在在线设备上（图标波纹、覆盖范围虚线、雷达扫描、光电摆扫、5G-A 波纹）。 */
+  MapView.prototype._hasAnimation = function () {
+    if (this._still() || !(this.layers.device || this.layers.coverage)) return false;
+    return (this.data.devices || []).some(device => device && (device.statusCode === 'ONLINE' || device.status === '在线'));
   };
 
   MapView.prototype._phase = function (period) {
@@ -1007,7 +1025,7 @@
   MapView.strokePlannedRoute = function (c, pts, options = {}) {
     if (!c || !Array.isArray(pts) || pts.length < 2
       || pts.some(p => !Array.isArray(p) || !Number.isFinite(p[0]) || !Number.isFinite(p[1]))) return;
-    const color = '#8ca0a8'; // 计划几何不代表已飞，状态和风险不得把计划线染成红绿。
+    const color = '#8ca0a8'; // 任务几何不代表已飞，状态和风险不得把任务线染成红绿。
     const { dash = [7, 5], selected = false, risk = false,
       terminals = true, vertices = false, arrows = true, label = '', width = 0, height = 0 } = options;
     const path = () => {
@@ -1040,19 +1058,41 @@
       }
     }
     if (terminals) {
+      // 起终点沿用高德/百度路线规划的通行画法：绿色“起”、红色“终”水滴标，尖端落在航线端点上。
       const first = pts[0], last = pts[pts.length - 1];
       const samePlace = first[0] === last[0] && first[1] === last[1];
-      const close = Math.hypot(first[0] - last[0], first[1] - last[1]) < 40;
-      const ends = samePlace ? [[first, '起 / 终', 1]] : [[first, '起', -1], [last, '终', close ? 1 : -1]];
-      for (const [p, text, side] of ends) {
-        c.beginPath(); c.arc(p[0], p[1], 4, 0, Math.PI * 2);
-        c.fillStyle = '#fff'; c.fill(); c.strokeStyle = color; c.lineWidth = 1.6; c.stroke();
-        c.font = '600 10px "PingFang SC",sans-serif'; c.textAlign = 'left'; c.textBaseline = 'middle';
-        c.lineWidth = 3; c.strokeStyle = 'rgba(255,255,255,.94)';
-        c.strokeText(text, p[0] + 7, p[1] + side * 11); c.fillStyle = '#294b60'; c.fillText(text, p[0] + 7, p[1] + side * 11);
+      if (samePlace) {
+        MapView.drawRouteTerminal(c, first, 'start', -9);
+        MapView.drawRouteTerminal(c, last, 'end', 9);
+      } else {
+        MapView.drawRouteTerminal(c, first, 'start');
+        MapView.drawRouteTerminal(c, last, 'end');
       }
     }
     if (label) drawRouteLabel(c, pts[Math.floor(pts.length / 2)], label, width, height, risk);
+    c.restore();
+  };
+
+  MapView.ROUTE_TERMINAL_COLORS = { start: '#1fa64a', end: '#e5383b' };
+  /** 航线起终点水滴标：尖端对准端点，头部写“起”/“终”；offset 仅在起终点重合时把两个标左右错开。 */
+  MapView.drawRouteTerminal = function (c, p, kind, offset = 0) {
+    const fill = MapView.ROUTE_TERMINAL_COLORS[kind] || MapView.ROUTE_TERMINAL_COLORS.start;
+    const text = kind === 'end' ? '终' : '起';
+    const r = 8, hx = p[0] + offset, hy = p[1] - 15;
+    c.save(); c.setLineDash([]);
+    c.beginPath();
+    c.moveTo(p[0], p[1]);
+    c.quadraticCurveTo(hx - r * .95, hy + r * .9, hx - r, hy);
+    c.arc(hx, hy, r, Math.PI, 0);
+    c.quadraticCurveTo(hx + r * .95, hy + r * .9, p[0], p[1]);
+    c.closePath();
+    c.shadowColor = 'rgba(0,0,0,.28)'; c.shadowBlur = 3; c.shadowOffsetY = 1;
+    c.fillStyle = fill; c.fill();
+    c.shadowColor = 'transparent'; c.shadowBlur = 0; c.shadowOffsetY = 0;
+    c.strokeStyle = '#fff'; c.lineWidth = 1.4; c.stroke();
+    c.font = '700 10px "PingFang SC","Microsoft YaHei",sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.fillStyle = '#fff'; c.fillText(text, hx, hy + .5);
+    c.beginPath(); c.arc(p[0], p[1], 2, 0, Math.PI * 2); c.fillStyle = fill; c.fill();
     c.restore();
   };
 
@@ -1453,7 +1493,7 @@
         if (!t) return;
         const lon = t.lon, lat = t.lat;
         const q = P(lon, lat);
-        const col = a.level === '高' ? '#ff4d5e' : a.level === '中' ? '#ffb020' : '#3d8bff';
+        const col = a.level === '高' || a.level === '紧急' ? '#ff4d5e' : a.level === '中' ? '#ffb020' : '#3d8bff';
         c.save();
         applyAlarmGlow(c, { ...a, stale: t.stale, freshness: t.freshness }, q[0], q[1], 18);
         c.beginPath(); c.moveTo(q[0],q[1]-9); c.lineTo(q[0]+9,q[1]+7); c.lineTo(q[0]-9,q[1]+7); c.closePath();

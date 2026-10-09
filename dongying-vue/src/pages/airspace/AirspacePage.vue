@@ -33,7 +33,7 @@ const KIND_CODES = ['PROHIBITED', 'RESTRICTED', 'ALTITUDE_LIMIT', 'PERMITTED', '
 const KIND_OPTIONS = [{ label: '全部种类', value: '' }].concat(KIND_CODES.map(value => ({ label: AIRSPACE_KIND_LABEL[value], value })));
 const VALIDITY_OPTIONS = [{ label: '全部', value: '' }, { label: '当前生效', value: 'now' }, { label: '当前未生效', value: 'off' }];
 const ROUTE_COLOR = '#22d3ee'; // 监测位置颜色
-const PLAN_COLOR = '#8ca0a8'; // 计划几何统一灰色
+const PLAN_COLOR = '#8ca0a8'; // 任务几何统一灰色
 const PAGE_MAX = 100;
 // 用户确认仅从本页日常列表移除的测试空域；服务端版本和历史研判引用继续保留。
 const OMITTED_TEST_AIRSPACE_IDS = new Set([
@@ -216,6 +216,23 @@ function scheduleBoundaryReload() {
 }
 onUnmounted(() => { pageAlive = false; clearTimeout(boundaryTimer); });
 
+/**
+ * 各航线的版本一次取回（最多 50 条航线，一次请求），不再每条航线单独请求。
+ * 没有批量接口的旧后端或读取失败时返回 null，由调用方改回逐条读取。
+ */
+async function loadRouteVersionsOfRoutes(routeIds) {
+  if (!routeIds.length) return new Map();
+  try {
+    const page = await flightApi.routeVersionsOfRoutes(routeIds);
+    const byRoute = new Map(routeIds.map(id => [id, []]));
+    (page.items || []).forEach(version => byRoute.get(version.route_id)?.push(version));
+    return byRoute;
+  } catch (reason) {
+    if (reason?.status === 403) throw reason;
+    return null;
+  }
+}
+
 /** 合法航线：只画启用的航线当前版本的中心线；没权限就整层不列。 */
 async function loadRoutes() {
   try {
@@ -223,9 +240,12 @@ async function loadRoutes() {
     const enabled = (data.items || []).filter(route => route.enabled !== false);
     const now = Date.now();
     const boundaries = [];
+    const versionsByRoute = await loadRouteVersionsOfRoutes(enabled.map(route => route.route_id));
     const lines = await Promise.all(enabled.map(async route => {
       try {
-        const versionPage = await flightApi.routeVersions(route.route_id, { page: 1, size: 20 });
+        const versionPage = versionsByRoute?.has(route.route_id)
+          ? { items: versionsByRoute.get(route.route_id) }
+          : await flightApi.routeVersions(route.route_id, { page: 1, size: 20 });
         (versionPage.items || []).forEach(v => [v.valid_from, v.valid_to].forEach(at => { if (Number(at) > now) boundaries.push(Number(at)); }));
         const current = (versionPage.items || []).find(v => v.valid_from <= now && (!v.valid_to || v.valid_to > now));
         const coords = current?.centerline?.coordinates;
@@ -602,7 +622,7 @@ onUnmounted(() => {
           <span class="sw" :style="{ borderColor: item.color, background: item.color + '33' }"></span>{{ item.label }}
         </button>
         <button v-if="routesAvailable && routeLines.length" type="button" class="legend-item" :class="{ off: !showRoutes }" @click="showRoutes = !showRoutes">
-          <span class="sw ln" :style="{ borderColor: PLAN_COLOR }"></span>计划航线
+          <span class="sw ln" :style="{ borderColor: PLAN_COLOR }"></span>任务航线
         </button>
         <div v-if="!legendKinds.length && !loading" class="legend-empty">图上暂无空域</div>
         <button v-if="bottomTab === 'monitor' && monitor.canRead" type="button" class="legend-item risk-layer-toggle" :class="{ off: !monitor.showLayer }" :aria-pressed="monitor.showLayer" @click="monitor.showLayer = !monitor.showLayer"><span class="target-dot"></span>近期目标位置</button>

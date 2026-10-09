@@ -21,7 +21,7 @@ const sample = '目标 UAV20260826047 超出空域限高，实测高度 208m，�
 const oldToast = t => U.toast(sample, t);
 const oldModal = () => U.modal({
   title: '旧版弹窗对照', width: '520px',
-  body: `${U.kv([['目标编号', '<span class="mono">UAV20260826047</span>'], ['判定', U.legal('非法')]])}
+  body: `${U.kv([['编号', '<span class="mono">UAV20260826047</span>'], ['判定', U.legal('非法')]])}
     <div class="info-line" style="margin-top:10px">对照台不再渲染原生表单；产品表单一律走 Naive UI。</div>`,
   footer: '<button class="btn" data-close>取消</button><button class="btn pri" data-act="ok">确定</button>',
   on: { ok: () => { U.closeModal(); U.toast('旧版确定', 'ok'); } }
@@ -98,7 +98,7 @@ const oldPagerHtml = U.pager({ total: 137, page: 3, size: 10 });
     </div>
 
     <n-modal v-model:show="showModal" preset="card" title="新版弹窗对照" style="width:520px" :z-index="100">
-      <div v-html="U.kv([['目标编号', '<span class=&quot;mono&quot;>UAV20260826047</span>'], ['判定', U.legal('非法')]])"></div>
+      <div v-html="U.kv([['编号', '<span class=&quot;mono&quot;>UAV20260826047</span>'], ['判定', U.legal('非法')]])"></div>
       <UField v-model="iptVal" placeholder="新版输入框" style="margin-top:10px" />
       <template #footer>
         <div style="display:flex;justify-content:flex-end;gap:8px">

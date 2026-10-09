@@ -7,6 +7,7 @@ import math
 import re
 import time
 from engine import coordinates, TARGET_REPORT_KINDS
+from prerequisite_check import route_version_mismatch
 
 PREFIX = '/local-interface-simulator'
 CLASSES = {'uav':'UAV','bird':'BIRD','unknown':'UNKNOWN','identifying':None,'balloon':'UNKNOWN',
@@ -31,6 +32,19 @@ def stable_airspace_no(zone_id):
     return value[:64 - len(digest) - 1] + '-' + digest
 
 
+def airspace_effective_at(delivery):
+    """Return the time the platform orders a source's airspace deliveries by.
+
+    An UPSERT counts from its valid_from, a WITHDRAW from its effective_at.  The
+    next delivery for the same airspace must take effect strictly later, or the
+    platform rejects it with 409 VERSION_OVERLAP.
+    """
+    delivery = delivery or {}
+    payload = delivery.get('payload') or {}
+    value = payload.get('effective_at' if delivery.get('action') == 'WITHDRAW' else 'valid_from')
+    return int(value) if type(value) in (int, float) else None
+
+
 def stable_simulator_id(prefix, value):
     """Build a readable, bounded identity for reusable simulator facts."""
     raw = re.sub(r'[^A-Za-z0-9_-]', '-', str(value)).strip('-_') or 'item'
@@ -44,6 +58,11 @@ def stable_simulator_id(prefix, value):
 def canonical_payload(value):
     """Return the stable JSON form used to compare replay request bodies."""
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+
+
+# Same values as the simulator's task form sample (web/external-contract.js).
+SIMULATED_PILOT = {'pilot_name': '模拟飞手', 'pilot_phone': '13800000000'}
+SIMULATED_REPORTING_UNIT = {'reporting_org_code': 'SIM-REPORTING-UNIT', 'reporting_org_name': '模拟报送单位'}
 
 
 def payload_fingerprint(value):
@@ -108,7 +127,7 @@ def plan_window(plan, now):
         start_time = dt.time.fromisoformat(str(plan['start']) + ':00')
         end_time = dt.time.fromisoformat(str(plan['end']) + ':00')
     except (KeyError, TypeError, ValueError) as error:
-        raise ValueError('计划时间格式须为 HH:mm') from error
+        raise ValueError('任务时间格式须为 HH:mm') from error
     local = dt.datetime.fromtimestamp(now / 1000, tz=SHANGHAI)
     start = dt.datetime.combine(local.date(), start_time, SHANGHAI)
     end = dt.datetime.combine(local.date(), end_time, SHANGHAI)
@@ -161,10 +180,10 @@ def flight_window(plan, target, risks, now):
         else:
             raise ValueError('时间场景无效')
     if len(windows) > 1:
-        raise ValueError('同一目标与计划存在冲突的时间场景，请保留一种时间设置')
+        raise ValueError('同一目标与任务存在冲突的时间场景，请保留一种时间设置')
     result = next(iter(windows)) if windows else (start, finish)
     if result[0] <= 0:
-        raise ValueError('偏移后的计划时间无效，请检查场景时间')
+        raise ValueError('偏移后的任务时间无效，请检查场景时间')
     return result
 
 
@@ -219,7 +238,7 @@ class FullChain:
                 if message.get('kind') != 'FLIGHT_PLAN' or not identity:
                     continue
                 if identity in plans:
-                    raise ValueError('模拟计划消息编号出现重复记录：' + message['message_id'])
+                    raise ValueError('模拟任务消息编号出现重复记录：' + message['message_id'])
                 plans[identity] = message
             self._inputs = {'routes': routes, 'plans': plans}
         return self._inputs
@@ -253,6 +272,36 @@ class FullChain:
         self.existing_inputs()['routes'][route_message] = route
         self._route_records[route_message] = route
         return route
+
+    def route_matches(self, route, plan):
+        """Tell whether a reusable route still carries this scene task's own corridor."""
+        version = self.api.call('GET', '/route-versions/' + str(route.get('route_version_id'))) or {}
+        return route_version_mismatch(version, plan) is None
+
+    def stable_route(self, plan, start, finish):
+        """Pick this task's stable route message and the route to reuse, or None to create it.
+
+        Different scenes may use the same task ID with different corridors (新-26). A saved route is reused
+        only when its version carries this task's own corridor; otherwise readback would reject it, so the
+        corridor gets a stable route of its own, numbered by its content and reused by later runs.
+        """
+        corridor = payload_fingerprint({
+            'points': [coordinates(p) for p in plan['points']], 'width': plan['width'],
+            'min': plan['min'], 'max': plan['max'], 'datum': plan.get('altitudeDatum', 'AMSL')})
+        for route_key in (plan['id'], plan['id'] + '-' + corridor):
+            base_message = stable_simulator_id('sim-map-route-', route_key)
+            base = self.route_record(base_message)
+            if base is None:
+                return base_message, None
+            if not self.route_matches(base, plan):
+                continue
+            if route_covers_window(base, start, finish):
+                return base_message, base
+            window_message = stable_simulator_id('sim-map-route-', f"{route_key}-{start}-{finish}")
+            window = self.reusable_route(window_message, start, finish)
+            if window is None or self.route_matches(window, plan):
+                return window_message, window
+        raise ValueError('稳定模拟航线内容与场景不一致：' + plan['id'])
 
     def reusable_route(self, route_message, start=None, finish=None):
         """Find a route version whose validity covers the new plan window."""
@@ -304,6 +353,15 @@ class FullChain:
         return [key for key in dict.fromkeys((target.get('deviceId'), target.get('secondaryDeviceId')))
                 if key in devices]
 
+    @staticmethod
+    def normalized_device_ids(target, devices):
+        # 每台设备对一个目标只报一遍（新-17）：辅助上报设备能用自己的协议报这个目标时，engine 已经让它发 MQTT 目标报文，
+        # 这里不再替它从规范化入口重复报——否则平台把同一台设备算成两个数据源，两台设备看到记成 3 个。
+        # 主上报设备、以及协议报不了这类目标的辅助设备（如气球）照常走规范化入口。
+        from engine import secondary_reports_over_mqtt
+        return [key for key in FullChain.target_device_ids(target, devices)
+                if key == target.get('deviceId') or not secondary_reports_over_mqtt(target, devices[key])]
+
     def observation_device_reporting(self, device, elapsed):
         return device['heartbeat'] != '停止心跳' and not any(
             risk.get('enabled') and risk['type'] == 'offline' and risk['deviceId'] == device['id']
@@ -311,13 +369,20 @@ class FullChain:
 
     def prepare(self):
         now=self.manifest['created_at']; end=now+24*3600000
-        # Existing configured contacts may be selected; this never asserts a new human verification.
+        # A pilot or reporting-unit binding chosen in the scene wins. Otherwise each simulated
+        # upstream task carries its own pilot and reporting unit (D-2, 2026-10-08); the platform
+        # finds or creates those records by phone and code, and links them to the task.
         filing=copy.deepcopy(self.scene.get('fullchain',{}).get('filing',{}))
         filing.setdefault('source_id','local-flight-plan-simulator')
+        if not filing.get('pilot_contact_id'):
+            for key, value in SIMULATED_PILOT.items():
+                filing.setdefault(key, value)
+        if not filing.get('source_binding_id'):
+            for key, value in SIMULATED_REPORTING_UNIT.items():
+                filing.setdefault(key, value)
         options=self.api.call('GET',PREFIX+'/plan-options')
         inputs=self.existing_inputs()
-        if not filing.get('pilot_contact_id'):
-            self.state['warnings']=['未选择执行飞手；短信/电话仍按平台资格阻断，可在全量资料设置选择现有飞手']
+        self.state['warnings']=[]
         if filing.get('pilot_contact_id') and filing['pilot_contact_id'] not in {p['contact_id'] for p in options.get('pilots',[])}:
             raise ValueError('选择的飞手不在当前可用范围，请重新选择')
         for index, plan in enumerate(self.scene['plans'],1):
@@ -331,14 +396,7 @@ class FullChain:
             # Shared routes must cover every selected UAV's own flight window.
             start = min(row[1] for row in windows)
             finish = max(row[2] for row in windows)
-            base_route_message = stable_simulator_id('sim-map-route-', plan['id'])
-            base_route = self.route_record(base_route_message)
-            route_message = base_route_message
-            existing_route = base_route if route_covers_window(base_route, start, finish) else None
-            if base_route is not None and existing_route is None:
-                route_message = stable_simulator_id('sim-map-route-',
-                                                    f"{plan['id']}-{start}-{finish}")
-                existing_route = self.reusable_route(route_message, start, finish)
+            route_message, existing_route = self.stable_route(plan, start, finish)
             if existing_route:
                 route = {'route_id': existing_route.get('route_id'),
                          'route_version_id': existing_route.get('route_version_id'),
@@ -396,13 +454,13 @@ class FullChain:
                 if existing_plan:
                     pid = existing_plan.get('subject_id')
                     if not pid:
-                        raise ValueError('稳定模拟计划缺少平台编号：' + plan_message)
+                        raise ValueError('稳定模拟任务缺少平台编号：' + plan_message)
                 else:
                     result=self.request('plan-'+plan['id']+'-'+str(number)+'-'+
                                         payload_fingerprint(plan_identity(plan_body)),
                                         PREFIX+'/plans',plan_body)
                     pid=result.get('subject_id') or result.get('result',{}).get('plan_id') or result.get('plan_id')
-                if not pid: raise ValueError('平台未返回模拟计划编号')
+                if not pid: raise ValueError('平台未返回模拟任务编号')
                 self.manifest.setdefault('plan_expectations',{})[pid]=copy.deepcopy(plan_body)
                 ids.append(pid)
                 if target:self.manifest['targets'][target['id']]['plan_id']=pid
@@ -429,6 +487,15 @@ class FullChain:
                 self.state['requests']['zone-'+zone['id']]={'path':PREFIX+'/airspaces', 'body':copy.deepcopy(saved),
                     'state':'ACCEPTED','result':copy.deepcopy(result),'reused_by_readback':True}
             else:
+                # 同一天重跑（上次已撤销或已更新）或改了区域时，新下发须晚于上次的生效/撤销时间，否则平台拒收（409）；
+                # 这时从现在起生效，时段已过就紧接上次之后，结束时间不变。
+                last=airspace_effective_at(previous)
+                if last is not None and body['valid_from']<=last:
+                    body['valid_from']=max(now,last+1000)
+                    if body['valid_from']>=zone_finish:
+                        body['valid_from']=last+1000
+                    if body['valid_from']>=zone_finish:
+                        raise ValueError('空域「'+zone['name']+'」今天已下发到结束时间，请把它的结束时间改晚或明天再启动')
                 result=self.request('zone-'+zone['id'],PREFIX+'/airspaces',body)
             self.manifest['zones'][zone['id']]={'id':result.get('airspace_id'),'revision':int(result.get('revision') or revision),'receipt':result};self.checkpoint()
         if 'observationSourceCount' in self.scene.get('fullchain', {}) and any(t.get('transport')=='normalized' for t in self.scene['targets']):
@@ -444,10 +511,10 @@ class FullChain:
             self.manifest['normalized_source']=sources[0]
         else:
             # 观测源和气象站是长期设备：按登记内容（单位区域、名称、位置）复用同一条，不随批次新建（OBS-01）。
-            # 每台参与上报的场景设备各有一个观测源；身份按场景设备和登记内容生成，同样不带批次号。
+            # 每台走规范化入口上报的场景设备各有一个观测源（辅助设备能用自己协议报的不走这里，新-17）；身份按场景设备和登记内容生成，同样不带批次号。
             devices = self.observation_devices()
             selected = {key for target in self.scene['targets'] if target.get('transport') == 'normalized'
-                        for key in self.target_device_ids(target, devices)}
+                        for key in self.normalized_device_ids(target, devices)}
             sources = self.manifest.setdefault('normalized_sources', {})
             for key in sorted(selected):
                 device = devices[key]
@@ -507,7 +574,7 @@ class FullChain:
                        for d in self.target_device_ids(target, devices)):
                     items_by_device.setdefault('explicit', []).append(item)
             else:
-                for device_id in self.target_device_ids(target, devices):
+                for device_id in self.normalized_device_ids(target, devices):
                     if self.observation_device_reporting(devices[device_id], elapsed):
                         items_by_device.setdefault(device_id, []).append(item)
         if isinstance(sources, list):
@@ -541,21 +608,39 @@ class FullChain:
             key='zone-zone-temporary_control'
             original=self.state['requests'].get(key)
             zone_state = self.manifest.get('zones', {}).get('zone-temporary_control', {})
+            valid_to=(original or {}).get('body',{}).get('valid_to')
             if original and elapsed>=120:
                 revision=int(zone_state.get('revision') or original['body'].get('revision') or 1) + 1
-                # 平台要求版本更新保持原空域名称和归属（改名会被拒 409，整批停下），这里只出新版本、新生效时间。
-                body=copy.deepcopy(original['body']);body.update(message_id=self.message('zone-update-r'+str(revision)),revision=revision,
-                    change_reason='本批次空域版本更新')
-                result=self.request('zone-update',PREFIX+'/airspaces',body)
-                zone_state['revision']=int(result.get('revision') or revision)
-                zone_state['receipt']=result
+                # 平台要求版本更新保持原空域名称和归属（改名会被拒 409，整批停下），
+                # 并且新版本晚于上一版生效（同一生效时间同样被拒 409）：这里只出新版本、新生效时间，结束时间不变。
+                valid_from=max(now,int(original['body']['valid_from'])+1000)
+                if 'zone-update' in self.state['requests'] or valid_to is None or valid_from<valid_to:
+                    body=copy.deepcopy(original['body']);body.update(message_id=self.message('zone-update-r'+str(revision)),revision=revision,
+                        valid_from=valid_from,change_reason='本批次空域版本更新')
+                    result=self.request('zone-update',PREFIX+'/airspaces',body)
+                    zone_state['revision']=int(result.get('revision') or revision)
+                    zone_state['receipt']=result
+                else:
+                    self.warn(original['body'].get('name','临时管制区')+'已到失效时间，跳过本批次的空域版本更新')
             if original and elapsed>=180:
                 revision=int(zone_state.get('revision') or original['body'].get('revision') or 1) + 1
-                result=self.request('zone-withdraw',PREFIX+'/airspaces',{'message_id':self.message('zone-withdraw-r'+str(revision)),
-                    'revision':revision,'action':'WITHDRAW','airspace_no':original['body']['airspace_no'],
-                    'effective_at':now,'change_reason':'本批次模拟临时管制结束'})
-                zone_state['revision']=int(result.get('revision') or revision)
-                zone_state['receipt']=result
+                # 撤销时间须晚于最新版本的生效时间、早于原失效时间，否则平台拒收。
+                latest=self.state['requests'].get('zone-update',original)['body']
+                effective_at=max(now,int(latest['valid_from'])+1000)
+                if 'zone-withdraw' in self.state['requests'] or valid_to is None or effective_at<valid_to:
+                    result=self.request('zone-withdraw',PREFIX+'/airspaces',{'message_id':self.message('zone-withdraw-r'+str(revision)),
+                        'revision':revision,'action':'WITHDRAW','airspace_no':original['body']['airspace_no'],
+                        'effective_at':effective_at,'change_reason':'本批次模拟临时管制结束'})
+                    zone_state['revision']=int(result.get('revision') or revision)
+                    zone_state['receipt']=result
+                else:
+                    self.warn(original['body'].get('name','临时管制区')+'已到失效时间，跳过本批次的空域撤销')
+
+    def warn(self, text):
+        """Show one page note per problem instead of stopping the whole batch."""
+        warnings=self.state.setdefault('warnings',[])
+        if text not in warnings:
+            warnings.append(text);self.checkpoint()
 
     def publish(self, category, path, body, count):
         if self.cancelled():return

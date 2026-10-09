@@ -16,6 +16,30 @@ export function beijingDayWindow(now = Date.now()) {
   return { from, to: from + DAY_MS };
 }
 
+/* 其他页面的“任务”下拉：默认只列还没结束的任务（执行中的和以后的），已结束的只有勾选“含已过期”才列出；
+   按开始时间新到旧，由后端时间窗筛选（结束时间不早于现在），不在浏览器里滤大列表。 */
+const PICKER_AHEAD_MS = 366 * DAY_MS;
+export function planPickerQuery({ includeExpired = false, size = 100, now = Date.now() } = {}) {
+  const query = { page: 1, size };
+  if (!includeExpired) {
+    query.window_from = now;
+    query.window_to = now + PICKER_AHEAD_MS;
+  }
+  return query;
+}
+export function planPickerItems(plans = [], { includeExpired = false } = {}) {
+  return includeExpired ? plans : plans.filter(plan => plan?.status_code !== 'CANCELLED');
+}
+export function planPickerLabel(plan) {
+  const no = displayPlanNo(plan?.plan_no) || plan?.plan_id || '任务';
+  const name = String(plan?.route?.name || '').trim();
+  const head = name ? `${name}（${no}）` : no;
+  const start = Number(plan?.start_at);
+  if (plan?.start_at == null || !Number.isFinite(start)) return head;
+  const { day, clock } = beijingParts(start);
+  return `${head} · ${day.slice(day.indexOf('/') + 1)} ${clock}`;
+}
+
 export function normalizePlanKeyword(value) {
   return String(value ?? '').trim().slice(0, PLAN_KEYWORD_MAX);
 }
@@ -53,7 +77,7 @@ function beijingParts(ms) {
 /* 计划时段（北京时间）：同一天写“2026/10/6 09:21–10:21”，跨天写两端日期；缺任一端如实说明。 */
 export function planWindowText(plan) {
   const start = Number(plan?.start_at), end = Number(plan?.end_at);
-  if (plan?.start_at == null || plan?.end_at == null || !Number.isFinite(start) || !Number.isFinite(end)) return '计划时段未提供';
+  if (plan?.start_at == null || plan?.end_at == null || !Number.isFinite(start) || !Number.isFinite(end)) return '任务时段未提供';
   const a = beijingParts(start), b = beijingParts(end);
   return a.day === b.day ? `${a.day} ${a.clock}–${b.clock}` : `${a.day} ${a.clock} – ${b.day} ${b.clock}`;
 }
@@ -68,14 +92,14 @@ export function planNumberText(plan) {
 export function upstreamPlanNotice(status, formatTime) {
   if (!status || status.available !== false) return null;
   const configured = status.configured_at != null ? formatTime(status.configured_at) : '';
-  const reason = status.status === 'NOT_CONFIGURED' ? '管服平台计划接口尚未配置'
-    : status.status === 'AWAITING_ADAPTER' ? `管服平台计划接口${configured ? `已于 ${configured} 保存配置，但` : ''}尚未接通`
-      : String(status.message || '管服平台计划接口当前不可用').replace(/[，,]?\s*上级计划数据暂时取不到。?$/, '');
+  const reason = status.status === 'NOT_CONFIGURED' ? '管服平台任务接口尚未配置'
+    : status.status === 'AWAITING_ADAPTER' ? `管服平台任务接口${configured ? `已于 ${configured} 保存配置，但` : ''}尚未接通`
+      : String(status.message || '管服平台任务接口当前不可用').replace(/[，,]?\s*上级任务数据暂时取不到。?$/, '');
   const everReceived = status.last_received_at != null;
-  const received = everReceived ? `最近一次收到上级计划：${formatTime(status.last_received_at)}` : '尚未收到过上级计划';
-  const scope = everReceived ? '下方列表为本系统已有的计划（含此前收到的上级计划）' : '下方列表只含本系统已有的计划（模拟或本地录入）';
+  const received = everReceived ? `最近一次收到上级任务：${formatTime(status.last_received_at)}` : '尚未收到过上级任务';
+  const scope = everReceived ? '下方列表为本系统已有的任务（含此前收到的上级任务）' : '下方列表只含本系统已有的任务（模拟或本地录入）';
   return {
-    title: '上级计划数据暂时取不到',
-    detail: `${reason}；${received}。${scope}，可能不全或已过时，不代表上级没有计划。`
+    title: '上级任务数据暂时取不到',
+    detail: `${reason}；${received}。${scope}，可能不全或已过时，不代表上级没有任务。`
   };
 }

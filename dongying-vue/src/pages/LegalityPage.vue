@@ -15,13 +15,19 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } 
 import { useRoute } from 'vue-router';
 import UKpis from '@/components/UKpis.vue';
 import TargetTrackingPanel from '@/components/video/TargetTrackingPanel.vue';
+import FlightExecutionChecks from '@/components/FlightExecutionChecks.vue';
 import { UField } from '@/components/form/index.js';
+import UControl from '@/components/form/UControl.vue';
 import UPagination from '@/components/UPagination.vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import { refreshFailureText, useRealtimeRefresh } from '@/hooks/useRealtimeRefresh.js';
 import { legalityReviewFocus } from '@/ui/legalityReviewFocus.js';
+import { lowConfidenceReason } from '@/ui/legalityConfidence.js';
+import { noPlanExemptReason } from '@/ui/noPlanExemption.js';
+import { isPilotDistanceNoteHit, pilotDistanceNote } from '@/ui/pilotDistanceNote.js';
 import { legalityApi } from '@/services/legalityApi.js';
 import { flightApi } from '@/services/flightApi.js';
+import { planPickerQuery, planPickerItems, planPickerLabel } from '@/pages/flights/planFilters.js';
 import { canAccessRoute, hasPermission } from '@/services/accessControl.js';
 import { loadTargetPosition, loadRouteCenterline, loadAirspaceOverlays, installOverlays, overlayPoints } from '@/services/positionMap.js';
 import { trustedTrajectoryPoints, strokePlanComparison } from '@/services/trajectoryDrawing.js';
@@ -88,7 +94,7 @@ const tabs = [
 ];
 const evidenceTabs = [
   { value: 'space', label: '空间证据' },
-  { value: 'plan', label: '计划与身份' },
+  { value: 'plan', label: '任务与身份' },
   { value: 'review', label: '复核历史与告警' }
 ];
 
@@ -106,21 +112,26 @@ const districtOptions = computed(() => {
 const canReadPlans = computed(() => hasPermission('flights.read'));
 const plans = ref([]);
 const plansError = ref('');
+const plansIncludeExpired = ref(false);
+// 取消“含已过期”后已选的过期任务不在列表里，仍按原名显示
+const planLabelCache = new Map();
 const planOptions = computed(() => {
-  const options = [{ label: '全部计划', value: '' }];
-  plans.value.forEach(plan => options.push({ label: displayPlanNo(plan.plan_no) || plan.plan_id, value: plan.plan_id }));
-  if (st.plan && !plans.value.some(plan => plan.plan_id === st.plan)) options.push({ label: '当前所选计划', value: st.plan });
+  const options = [{ label: '全部任务', value: '' }];
+  plans.value.forEach(plan => options.push({ label: planPickerLabel(plan), value: plan.plan_id }));
+  if (st.plan && !plans.value.some(plan => plan.plan_id === st.plan)) options.push({ label: planLabelCache.get(st.plan) || '当前所选任务', value: st.plan });
   return options;
 });
 async function loadPlans() {
   if (!canReadPlans.value) { plans.value = []; return; }
   try {
-    const page = await flightApi.list({ page: 1, size: 100 });
-    plans.value = page.items || [];
+    const includeExpired = plansIncludeExpired.value;
+    const page = await flightApi.list(planPickerQuery({ includeExpired }));
+    plans.value = planPickerItems(page.items || [], { includeExpired });
+    plans.value.forEach(plan => planLabelCache.set(plan.plan_id, planPickerLabel(plan)));
     plansError.value = '';
   } catch (error) {
     plans.value = [];
-    plansError.value = formatApiError(error, '读取飞行计划失败');
+    plansError.value = formatApiError(error, '读取飞行任务失败');
   }
 }
 function openPlan(planId) {
@@ -132,12 +143,18 @@ function openPlan(planId) {
 const selectedConclusion = computed(() => conclusionMeta[selectedEvaluation.value?.legal_status]
   || { label: '尚未选择研判', tone: 'amber' });
 const primaryReason = computed(() => evaluationReason(selectedEvaluation.value));
+// 新-29：飞手离得远不算违规，结论下面照样写“飞手离无人机约 N 米（超过 500 米），是否经批准请核实”。
+const focusPilotNote = computed(() => pilotDistanceNote(selectedEvaluation.value));
 const allowed = computed(() => selectedEvaluation.value?.allowed_actions || []);
 const reviewFocus = computed(() => legalityReviewFocus(selectedEvaluation.value));
+// 不通过、不可判定和要人核实飞手距离的单项直接列出，其余收在“查看通过及不适用项”里。
+const primaryCheck = hit => ['FAIL', 'UNDETERMINED'].includes(hit.result_code) || isPilotDistanceNoteHit(hit);
 const checkRows = computed(() => (selectedEvaluation.value?.hit_details || []).map((hit, index) => ({ hit, index }))
-  .filter(({ hit }) => showAllChecks.value || ['FAIL', 'UNDETERMINED'].includes(hit.result_code)));
-const secondaryCheckCount = computed(() => (selectedEvaluation.value?.hit_details || []).filter(hit => !['FAIL', 'UNDETERMINED'].includes(hit.result_code)).length);
-const unlistedUnknowns = computed(() => reviewFocus.value.unknownReasons.filter(code => !(selectedEvaluation.value?.hit_details || []).some(hit => hit.reason_code === code)));
+  .filter(({ hit }) => showAllChecks.value || primaryCheck(hit)));
+const secondaryCheckCount = computed(() => (selectedEvaluation.value?.hit_details || []).filter(hit => !primaryCheck(hit)).length);
+// 判定依据不足的原因上面已经列过的（如“置信度不足”），这里不再列第二遍（CDX-P04）。
+const unlistedUnknowns = computed(() => reviewFocus.value.unknownReasons.filter(code => !(selectedEvaluation.value?.hit_details || []).some(hit => hit.reason_code === code)
+  && !reviewFocus.value.assuranceReasons.includes(code)));
 const assuranceReasons = computed(() => reviewFocus.value.assuranceReasons || []);
 const c01Facts = computed(() => selectedEvaluation.value?.hit_details?.find(hit => hit.rule_code === 'C01')?.facts || null);
 const unconfirmedParams = item => !!item && item.legal_status !== 'NOT_APPLICABLE' && item.param_status !== 'CONFIRMED';
@@ -167,6 +184,15 @@ function evidenceIcon(kind) {
 
 function resultText(code) { return RULE_RESULT_TEXT[code] || code || '未提供'; }
 function resultClass(code) { return resultMeta[code]?.className || 'is-warn'; }
+// 新-28：没有报备任务、按规定无需申请的，任务匹配一行照实记“对不上任务”，结果写“无需申请”，不画成不通过。
+function exemptCheck(hit) { return hit?.rule_code === 'C01' && hit.facts?.no_plan_exempt === true; }
+// 新-29：飞手离无人机超过 500 米只提示，结果写“请核实”、标成提醒色，不画成不通过。
+function checkResultText(hit) { return exemptCheck(hit) ? '无需申请' : isPilotDistanceNoteHit(hit) ? '请核实' : resultText(hit.result_code); }
+function checkResultClass(hit) { return exemptCheck(hit) ? 'is-pass' : isPilotDistanceNoteHit(hit) ? 'is-warn' : resultClass(hit.result_code); }
+function checkIcon(hit) {
+  if (isPilotDistanceNoteHit(hit)) return 'warning';
+  return exemptCheck(hit) || hit.result_code === 'PASS' ? 'check' : hit.result_code === 'FAIL' ? 'cross' : 'clock';
+}
 /* 列表是 ACTIVE 最新研判；深链仍可能打开被替代的旧结果，历史结论保持静态。 */
 function evaluationAbnormal(item) {
   return UI.abnormalActive({
@@ -182,7 +208,7 @@ function gradeText(item) {
 }
 function sourceText(mode) { return labelOf(SOURCE_MODE_LABEL, mode, '未提供'); }
 /* 证据引用只给种类与内部 id；屏幕上显示中文种类和可读编号，id 放 title。 */
-const REFERENCE_KIND_TEXT = { target: '感知目标', track: '目标轨迹', flight_plan: '飞行计划', route_version: '航线版本', airspace_version: '空域版本', rule_set_version: '规则集版本', rule_version: '规则版本', alarm: '告警', risk: '风险事件' };
+const REFERENCE_KIND_TEXT = { target: '感知目标', track: '目标轨迹', flight_plan: '飞行任务', route_version: '航线版本', airspace_version: '空域版本', rule_set_version: '规则集版本', rule_version: '规则版本', alarm: '告警', risk: '风险事件' };
 function referenceKindText(kind) { return REFERENCE_KIND_TEXT[kind] || '引用'; }
 function referenceText(reference) {
   const current = selectedEvaluation.value || {};
@@ -203,33 +229,67 @@ function shortTime(value) {
 function evaluationReason(item) {
   if (!item) return '尚未取得研判详情';
   const violations = (item.violation_reasons || []).map(ruleReasonText).join('、');
-  if (unconfirmedParams(item)) return `${violations ? `${violations}；` : ''}规则参数未确认，暂不可判定。`;
+  if (unconfirmedParams(item)) return demoParamReason(item, violations);
   if (item.original_legal_status === 'ABNORMAL') return `${violations ? `${violations}；` : ''}历史记录未明确合法或非法，保留原始依据。`;
-  if (item.legal_status === 'LEGAL') return item.unknown_reasons?.length ? `系统判定合法，另有 ${item.unknown_reasons.length} 项未知信息` : '全部检查通过';
+  if (item.legal_status === 'LEGAL') return legalReason(item, '系统判定合法');
+  const confidence = lowConfidenceReason(item);
+  if (confidence) return `${confidence}${violations ? `；已发现${violations}` : ''}`;
   if (item.violation_reasons?.length) return ruleReasonText(item.violation_reasons[0]);
   if (item.unknown_reasons?.length) return ruleReasonText(item.unknown_reasons[0]);
   if (item.legal_status === 'LEGAL') return '全部检查通过';
   return '未提供结论摘要';
 }
+/*
+ * 规则参数还是演示值时：判出的合法、非法照常写，后面注明“按演示参数判定，规则参数待业务确认”；
+ * 没判出来的写真实原因（如置信度不足），不再一律写“规则参数未确认，暂不可判定”——
+ * 演示参数照样参与判定，以前那句和判出的结论自相矛盾（确认书 7-9，新-14）。
+ * 置信度不足时写明几路来源、可信度和要求（CDX-P04），其余没判出来的原因跟在“另有”后面。
+ */
+function demoParamReason(item, violations) {
+  const note = '按演示参数判定，规则参数待业务确认。';
+  if (item.original_legal_status === 'ABNORMAL') return `${violations ? `${violations}；` : ''}历史记录未明确合法或非法；${note}`;
+  if (item.legal_status === 'ILLEGAL') return `${violations || '判定非法'}；${note}`;
+  if (item.legal_status === 'LEGAL') return `${legalReason(item, '判定合法')}；${note}`;
+  const confidence = lowConfidenceReason(item);
+  const unknown = [...new Set((item.unknown_reasons || []).filter(code => !confidence || code !== 'LOW_CONFIDENCE').map(ruleReasonText))].join('、');
+  if (confidence) return `${confidence}${unknown ? `；另有${unknown}` : ''}${violations ? `；已发现${violations}` : ''}；规则参数待业务确认。`;
+  return `${unknown || '依据不足'}${violations ? `，已发现${violations}` : ''}；规则参数待业务确认。`;
+}
+/* 合法时的说明：没有报备任务、按规定无需申请的写清原因（新-28），其余照旧“全部检查通过”或“另有 N 项未知信息”。 */
+function legalReason(item, prefix) {
+  const exempt = noPlanExemptReason(item);
+  const unknown = item.unknown_reasons?.length ? `另有 ${item.unknown_reasons.length} 项未知信息` : '';
+  if (exempt) return unknown ? `${exempt}；${unknown}` : exempt;
+  return unknown ? `${prefix}，${unknown}` : '全部检查通过';
+}
 function subjectLabel(item) {
   if (!item) return '未选择研判';
   if (item.target_no || item.target_id) return item.target_no || '目标（未提供编号）';
-  if (item.plan_no || item.plan_id) return displayPlanNo(item.plan_no) || '计划（未提供编号）';
-  return '没有可查看的目标或计划';
+  if (item.plan_no || item.plan_id) return displayPlanNo(item.plan_no) || '任务（未提供编号）';
+  return '没有可查看的目标或任务';
 }
 /* 命中事实与参数的键都是引擎内部名；上屏用中文，数值取一位小数，内部 id 不上屏。 */
 const FACT_KEY_TEXT = {
-  plan_id: '计划', route_version_id: '航线版本', target_id: '目标', track_id: '轨迹', airspace_version_id: '空域版本',
+  plan_id: '任务', route_version_id: '航线版本', target_id: '目标', track_id: '轨迹', airspace_version_id: '空域版本',
   distance_m: '距中心线（米）', deviation_m: '偏离量（米）', half_width_m: '走廊半宽（米）', tolerance_m: '容差（米）', corridor_tolerance_m: '走廊容差（米）',
   altitude_m: '高度（米）', max_altitude_m: '最大高度（米）', min_altitude_m: '最小高度（米）', limit_m: '限高（米）', margin_m: '余量（米）',
-  time_window: '时间窗', corridor: '走廊', identity: '身份', confidence: '置信度', candidate_count: '候选计划数', match_reason: '匹配原因',
-  start_at: '开始', end_at: '结束', observed_at: '监测时间', night_from: '夜航起', night_to: '夜航止', kinds: '空域类型'
+  time_window: '时间窗', corridor: '走廊', identity: '身份', confidence: '置信度', candidate_count: '候选任务数', match_reason: '匹配原因',
+  start_at: '开始', end_at: '结束', observed_at: '监测时间', night_from: '夜航起', night_to: '夜航止', kinds: '空域类型',
+  no_plan_exempt: '按规定无需申请', height_agl_m: '离地高度（米）', longitude: '经度', latitude: '纬度'
 };
+/* 飞手距离（C02-6）的事实：distance_m 在这里是飞手离无人机多远，不是距航线中心线；那句提示已经写在说明里，不再重复。 */
+const PILOT_FACT_KEY_TEXT = {
+  distance_m: '飞手离无人机（米）', vlos_m: '视距阈值（米）', beyond_vlos: '超过视距阈值', pilot_location: '遥控器位置', pilot_observed_at: '遥控器位置时间'
+};
+const HIDDEN_FACT_KEYS = { 'C02-6': ['pilot_distance_note'] };
 const DIM_TEXT = { MATCH: '匹配', MISMATCH: '不匹配', UNDETERMINED: '不可判定', PASS: '通过', FAIL: '不通过', UNKNOWN: '未知' };
-function factKeyText(key) { return FACT_KEY_TEXT[key] || key.replace(/_/g, ' '); }
+function factKeyText(key, ruleCode) {
+  return (ruleCode === 'C02-6' && PILOT_FACT_KEY_TEXT[key]) || FACT_KEY_TEXT[key] || key.replace(/_/g, ' ');
+}
 function factValueText(key, value) {
   if (value === null || value === undefined) return '—';
-  if (typeof value === 'number') return Number.isInteger(value) ? String(value) : value.toFixed(1);
+  if (typeof value === 'boolean') return value ? '是' : '否';
+  if (typeof value === 'number') return Number.isInteger(value) ? String(value) : value.toFixed(key === 'longitude' || key === 'latitude' ? 6 : 1);
   if (typeof value === 'string') {
     if (/_id$/.test(key) || /^seed-/.test(value)) return '已关联';
     if (DIM_TEXT[value]) return DIM_TEXT[value];
@@ -237,9 +297,12 @@ function factValueText(key, value) {
   }
   return factText(value);
 }
-function factText(value) {
+function factText(value, ruleCode) {
   if (value === null || value === undefined) return '—';
-  if (typeof value === 'object') return Object.entries(value).map(([k, v]) => `${factKeyText(k)} ${factValueText(k, v)}`).join('；');
+  if (typeof value === 'object') {
+    const hidden = HIDDEN_FACT_KEYS[ruleCode] || [];
+    return Object.entries(value).filter(([k]) => !hidden.includes(k)).map(([k, v]) => `${factKeyText(k, ruleCode)} ${factValueText(k, v)}`).join('；');
+  }
   return String(value);
 }
 function dimText(value) { return value ? (DIM_TEXT[value] || value) : '未评估'; }
@@ -468,7 +531,7 @@ async function loadKpi() {
     st.district ? `区域：${districtOptions.value.find(option => option.value === st.district)?.label || st.district}` : '',
     st.review ? `复核：${reviewOptions.find(option => option.value === st.review)?.label || st.review}` : '',
     st.reviewLocation ? `核实位置：${reviewLocationOptions.find(option => option.value === st.reviewLocation)?.label || st.reviewLocation}` : '',
-    st.plan ? `计划：${planOptions.value.find(option => option.value === st.plan)?.label || st.plan}` : ''
+    st.plan ? `任务：${planOptions.value.find(option => option.value === st.plan)?.label || st.plan}` : ''
   ].filter(Boolean).join(' · ');
   const scopeText = filterNote ? `当前筛选：${filterNote}` : '当前筛选：全部';
   try {
@@ -477,7 +540,7 @@ async function loadKpi() {
     if (token !== kpiToken) return;
     kpiList.value = [
       { label: '研判总数', value: String(counts.total ?? '—'), color: 'blue', icon: 'database', desc: `正式模式，每架无人机只取最新一次；${scopeText}` },
-      { label: '合法', value: String(counts.legal ?? '—'), color: 'green', icon: 'shield', desc: '计划、时间、空域、航线都对得上' },
+      { label: '合法', value: String(counts.legal ?? '—'), color: 'green', icon: 'shield', desc: '任务、时间、空域、航线都对得上' },
       { label: '非法', value: String(counts.illegal ?? '—'), color: 'red', icon: 'ban', desc: '按规则判定违反空域、航线、高度或飞行时间要求' },
       { label: '不可判定', value: String(counts.undetermined ?? '—'), color: 'gray', icon: 'clock', desc: '依据不足、参数未确认或历史记录尚未明确定性' }
     ];
@@ -563,7 +626,7 @@ async function renderEvidenceMap(evaluation) {
   let centerline = null, airspaces = [], loaded = null, trajectoryPoints = [];
   const missing = [];
   if (evaluation.route_version_id) { try { centerline = await loadRouteCenterline(evaluation.route_version_id); } catch { centerline = null; } }
-  if (!centerline) missing.push(evaluation.plan_id ? '航线位置无法确认' : '无匹配计划，无航线');
+  if (!centerline) missing.push(evaluation.plan_id ? '航线位置无法确认' : '无匹配任务，无航线');
   if (evaluation.plan_id) { try { airspaces = await loadAirspaceOverlays(evaluation.plan_id); } catch { airspaces = []; } }
   if (evaluation.target_id) {
     try {
@@ -596,7 +659,7 @@ async function renderEvidenceMap(evaluation) {
     drawn.push(loaded.positionSource === 'latest' ? '目标最新位置' : '目标历史位置');
   }
   if (measured.length) drawn.push(`实测轨迹 ${measured.length} 点（截至本次研判，缺失处断开）`);
-  if (centerline) drawn.push('灰色计划航线');
+  if (centerline) drawn.push('灰色任务航线');
   if (airspaces.length) drawn.push(`空域 ${airspaces.length} 块`);
   evidenceMapNote.value = `已绘制：${drawn.join('、')}${missing.length ? `；未绘制：${missing.join('、')}` : ''}`;
   await nextTick();
@@ -618,7 +681,7 @@ function loadNavigation(context = null) {
   if (st.review === 'PENDING_REVIEW') st.review = 'NEEDS_REVIEW';
   const targetId = context?.target || (typeof route.query.target === 'string' ? route.query.target : null);
   /* 从飞行计划页过来时带着计划（决策 19-1）：预置"计划"筛选，其余筛选放开，
-     否则一进来就被默认的"系统判定非法"挡住，看着像这条计划没有研判。 */
+     否则一进来就被默认的"系统判定非法"挡住，看着像这条任务没有研判。 */
   const planId = context?.plan || (typeof route.query.plan === 'string' ? route.query.plan : '');
   if (planId) {
     st.plan = planId;
@@ -685,8 +748,9 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
               :options="reviewOptions" :disabled="loading" @update:model-value="onRegionChange" />
             <UField class="lg-region-filter lg-review-location-filter" variant="form" label="核实位置" v-model="st.reviewLocation" type="select" size="small"
               :options="reviewLocationOptions" :disabled="loading" @update:model-value="onRegionChange" />
-            <UField v-if="canReadPlans" class="lg-region-filter" variant="form" label="计划" v-model="st.plan" type="select" size="small"
-              :options="planOptions" :disabled="loading" :title="plansError || '只看某一条飞行计划的研判'" @update:model-value="onRegionChange" />
+            <UField v-if="canReadPlans" class="lg-region-filter" variant="form" label="任务" v-model="st.plan" type="select" size="small"
+              :options="planOptions" :disabled="loading" :title="plansError || '只看某一条飞行任务的研判；下拉默认只列还没结束的任务'" @update:model-value="onRegionChange" />
+            <span v-if="canReadPlans" class="lg-plan-expired" title="勾选后任务下拉里也列出已经结束的任务"><UControl v-model="plansIncludeExpired" type="checkbox" box-label="含已过期" :disabled="loading" @update:model-value="loadPlans" /></span>
             </div>
           </div>
 
@@ -698,7 +762,7 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
             <div v-else-if="deepLinkNotice" class="empty lg-state-warn" role="status">{{ deepLinkNotice }}</div>
             <div v-else class="lg-table-scroll">
               <table class="lg-target-table" aria-label="目标判定结果">
-                <thead><tr><th>目标编号</th><th>匹配计划</th><th>所在区域</th><th>判定结果</th><th>违规 / 未知原因</th><th>研判时间</th></tr></thead>
+                <thead><tr><th>编号</th><th>匹配任务</th><th>所在区域</th><th>判定结果</th><th>违规 / 未知原因</th><th>研判时间</th></tr></thead>
                 <tbody>
                   <tr v-for="item in items" :key="item.evaluation_id"
                     :class="{ 'is-selected': selectedEvaluation?.evaluation_id === item.evaluation_id }" @click="selectEvaluation(item)">
@@ -708,7 +772,7 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
                     </button></td>
                     <td><span class="lg-plan-cell" :class="item.plan_match_code === 'FULL' ? 'is-pass' : item.plan_match_code === 'NONE' ? 'is-fail' : 'is-warn'" :title="planMatchDetail(item)">
                       <span v-html="UI.icon(item.plan_match_code === 'FULL' ? 'check' : item.plan_match_code === 'NONE' ? 'cross' : 'clock')"></span>
-                      <span class="lg-plan-number" :title="item.plan_no">{{ displayPlanNo(item.plan_no) || (item.plan_id ? '已关联计划' : '无匹配计划') }}</span>
+                      <span class="lg-plan-number" :title="item.plan_no">{{ displayPlanNo(item.plan_no) || (item.plan_id ? '已关联任务' : '无匹配任务') }}</span>
                     </span></td>
                     <td :title="item.district_name || item.district_id">{{ item.district_name || item.district_id || '未知' }}</td>
                     <td class="lg-verdict-cell">
@@ -749,6 +813,7 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
                 <section class="lg-focus-card" aria-label="系统结论与人工核对重点">
                   <div class="lg-focus-verdict"><span>系统结论</span><strong class="lg-status-tag" :class="`is-${selectedConclusion.tone}`">{{ selectedConclusion.label }}</strong><span>{{ conclusionQualificationText(selectedEvaluation) || reviewText(selectedEvaluation) }}</span></div>
                   <p class="lg-focus-basis">{{ primaryReason }}</p>
+                  <p v-if="focusPilotNote" class="lg-state-warn">{{ focusPilotNote }}</p>
                   <p class="lg-muted">{{ formatTime(selectedEvaluation.evaluated_at) }} · {{ sourceText(selectedEvaluation.source_mode) }} · {{ parameterNote(selectedEvaluation) }}</p>
                   <p v-if="selectedEvaluation.original_legal_status || unconfirmedParams(selectedEvaluation)" class="lg-muted">原始系统记录：{{ legalStatusText(selectedEvaluation.original_legal_status || selectedEvaluation.legal_status) }}；原始依据与历史保留，不能作为当前正式判定。</p>
                   <p class="lg-muted">观测时间：{{ formatTime(selectedEvaluation.observed_at) }}</p>
@@ -777,12 +842,12 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
                     <p v-if="selectedEvaluation.hit_details?.length && !checkRows.length" class="lg-check-empty">没有不通过或不可判定的单项检查，可展开查看完整依据。</p>
                     <button v-for="{ hit, index } in checkRows"
                       :key="`${hit.rule_code}-${index}`" type="button" class="lg-check-item"
-                      :class="[resultClass(hit.result_code), { 'is-selected': selectedHitIndex === index }]"
+                      :class="[checkResultClass(hit), { 'is-selected': selectedHitIndex === index }]"
                       :aria-expanded="selectedHitIndex === index" :title="hit.message || ''" @click="toggleHit(index)">
-                      <span class="lg-check-icon" v-html="UI.icon(hit.result_code === 'PASS' ? 'check' : hit.result_code === 'FAIL' ? 'cross' : 'clock')"></span>
-                      <span class="lg-check-copy"><b>{{ ruleName(hit.rule_code) }}<em>{{ resultText(hit.result_code) }}</em></b>
+                      <span class="lg-check-icon" v-html="UI.icon(checkIcon(hit))"></span>
+                      <span class="lg-check-copy"><b>{{ ruleName(hit.rule_code) }}<em>{{ checkResultText(hit) }}</em></b>
                         <small class="lg-check-description">{{ hit.message || (hit.reason_code ? ruleReasonText(hit.reason_code) : '未提供说明') }}</small>
-                        <small v-if="selectedHitIndex === index && hit.facts && Object.keys(hit.facts).length">判定时事实：{{ factText(hit.facts) }}</small>
+                        <small v-if="selectedHitIndex === index && hit.facts && Object.keys(hit.facts).length">判定时事实：{{ factText(hit.facts, hit.rule_code) }}</small>
                         <small v-if="selectedHitIndex === index">{{ hit.rule_code }} · {{ hit.params?.length && hit.params.every(p => p.status === 'CONFIRMED') ? '已确认参数' : '参数待业务确认' }}</small>
                       </span>
                     </button>
@@ -814,29 +879,30 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
                       </div>
                       <div class="lg-map-wrap" aria-label="空间证据地图">
                         <div ref="evidenceMapHost" class="lg-map-host"></div>
-                        <div class="lg-map-legend"><span class="is-pass">符合航线</span><span class="is-fail">偏离航线</span><span class="is-plan">未飞计划线</span><span class="is-warn">关系未知</span></div>
+                        <div class="lg-map-legend"><span class="is-pass">符合航线</span><span class="is-fail">偏离航线</span><span class="is-plan">未飞任务线</span><span class="is-warn">关系未知</span></div>
                       </div>
                     </template>
                     <div v-else-if="st.evidenceTab === 'plan'" class="lg-evidence-wide">
-                      <h4>计划匹配与身份 <span>判定时记录的情况</span></h4>
+                      <h4>基础任务关联与身份 <span>判定时记录的情况</span></h4>
                       <dl class="lg-resource-grid">
                         <dt>匹配等级</dt><dd>{{ planMatchText(selectedEvaluation.plan_match_code) }}{{ c01Facts?.match_reason ? `（${ruleReasonText(c01Facts.match_reason)}）` : '' }}</dd>
                       <!-- 决策 19-1：研判的主视角是计划。有计划就把编号做成入口，能直接过去看计划本身。
-                           匹配等级为"无匹配"时它只是**候选**计划，标题要说清楚，不能写成"所属"。 -->
-                      <dt>{{ selectedEvaluation.plan_match_code === 'NONE' ? '候选计划' : '所属计划' }}</dt><dd :title="selectedEvaluation.plan_id">
+                           匹配等级为"无匹配"时它只是**候选**任务，标题要说清楚，不能写成"所属"。 -->
+                      <dt>{{ selectedEvaluation.plan_match_code === 'NONE' ? '候选任务' : '所属任务' }}</dt><dd :title="selectedEvaluation.plan_id">
                         <template v-if="selectedEvaluation.plan_no && selectedEvaluation.plan_id">
-                          <button type="button" class="lg-link-btn" title="打开飞行计划页并选中这条计划"
+                          <button type="button" class="lg-link-btn" title="打开飞行任务页并选中这条任务"
                             @click="openPlan(selectedEvaluation.plan_id)">{{ displayPlanNo(selectedEvaluation.plan_no) }}</button>
-                          <span v-if="selectedEvaluation.plan_match_code === 'NONE'" class="lg-muted">（未匹配上这条计划）</span>
+                          <span v-if="selectedEvaluation.plan_match_code === 'NONE'" class="lg-muted">（未匹配上这条任务）</span>
                         </template>
-                        <template v-else-if="selectedEvaluation.plan_id">已关联计划（未提供编号）</template>
-                        <template v-else>无匹配计划</template>
+                        <template v-else-if="selectedEvaluation.plan_id">已关联任务（未提供编号）</template>
+                        <template v-else>无匹配任务</template>
                       </dd>
                         <dt>时间窗</dt><dd>{{ dimText(c01Facts?.dimensions?.time_window) }}</dd>
                         <dt>走廊</dt><dd>{{ dimText(c01Facts?.dimensions?.corridor) }}</dd>
                         <dt>身份</dt><dd>{{ c01Facts?.dimensions?.identity === 'UNDETERMINED' ? '身份线索缺失（无测向或基站数据）' : dimText(c01Facts?.dimensions?.identity) }}</dd>
-                        <dt>候选计划数</dt><dd>{{ c01Facts?.candidate_count ?? '未知' }}</dd>
+                        <dt>候选任务数</dt><dd>{{ c01Facts?.candidate_count ?? '未知' }}</dd>
                       </dl>
+                      <FlightExecutionChecks :hits="selectedEvaluation.hit_details || []" />
                     </div>
                     <div v-else class="lg-evidence-wide">
                       <h4>复核历史 <span>按时间追加</span></h4>
@@ -903,6 +969,7 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
 .lg-queue-filters{display:flex;flex-wrap:wrap;flex:none;align-items:flex-end;gap:12px;padding:12px 14px;border-bottom:1px solid var(--lg-line)}
 .lg-filter-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,140px),1fr));flex:1 1 444px;min-width:0;gap:12px}
 .lg-region-filter{min-width:0;margin:0}
+.lg-plan-expired{display:inline-flex;align-items:center;gap:4px;align-self:end;font-size:12px;color:var(--txt-3);white-space:nowrap;cursor:pointer}
 .lg-region-filter :deep(label){font-size:12px;line-height:18px;color:var(--txt-3)}
 .lg-list-host{min-height:0;flex:1;display:flex;flex-direction:column}
 .lg-table-scroll{flex:1;min-height:0;overflow:auto;scrollbar-width:thin}

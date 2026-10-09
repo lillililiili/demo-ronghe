@@ -95,6 +95,14 @@ class ExternalBridgeTests(unittest.TestCase):
             self.assertFalse(self.bridge.allowed('POST', path + extra))
         self.assertFalse(self.bridge.allowed('POST', '/devices/x/status'))
 
+    def test_punishment_recipients_path_is_exact(self):
+        path = '/local-interface-simulator/punishment-recipients'
+        for method in ('GET', 'POST'):
+            self.assertTrue(self.bridge.allowed(method, path))
+        self.assertFalse(self.bridge.allowed('DELETE', path))
+        for extra in ('/x', '?org_ids=x', '/../bindings'):
+            self.assertFalse(self.bridge.allowed('POST', path + extra))
+
     def test_receipt_path_is_strict(self):
         self.bridge.connect({'api': self.url, 'account': 'operator', 'password': 'pass'})
         self.assertTrue(self.bridge.allowed('POST', '/local-interface-simulator/messages/demo_1/receipt'))

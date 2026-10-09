@@ -1,4 +1,5 @@
 import { userFacingMessage } from '@/ui/labels.js';
+import { noteServerDate } from './serverClock.js';
 
 const publicBase = String(import.meta.env.APP_PUBLIC_API_BASE_URL || '/api').replace(/\/$/, '');
 const API_BASE = publicBase.endsWith('/v1') ? publicBase : `${publicBase}/v1`;
@@ -100,13 +101,17 @@ async function sendRequest(path, options) {
   if (options.mutation) headers.set('Idempotency-Key', options.idempotencyKey || idempotencyKey());
 
   let response;
+  const sentAt = Date.now();
+  let receivedAt = sentAt;
   try {
     const body = options.body == null || options.body instanceof FormData ? options.body : JSON.stringify(options.body);
     response = await fetch(`${API_BASE}${path}`, { ...options, headers, body });
+    receivedAt = Date.now();
   } catch {
     requireCurrentSession(token);
     throw new ApiError('暂时连不上系统，请检查网络后刷新；刚提交过操作的，请先查看是否已保存。', 'NETWORK_ERROR', 0);
   }
+  noteServerDate(response.headers.get('date'), sentAt, receivedAt);
   const method = String(options.method || 'GET').toUpperCase();
   return decodeCurrent(response, token, path, method !== 'GET' && method !== 'HEAD');
 }

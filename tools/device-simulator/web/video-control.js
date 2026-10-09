@@ -26,7 +26,7 @@
     };
   }
   if (typeof module !== 'undefined') { module.exports = {viewModel}; return; }
-  let busy = false, current = {}, requestError = '';
+  let busy = false, starting = false, current = {}, requestError = '';
   const toggle = document.createElement('button');
   toggle.id = 'video-toggle'; toggle.type = 'button'; toggle.textContent = '开启视频推流';
   document.querySelector('#stop-button').before(toggle);
@@ -39,13 +39,13 @@
     const view = viewModel(data);
     toggle.textContent = view.label;
     toggle.disabled = busy || view.disabled;
-    document.querySelector('#video-summary').textContent = view.summary;
+    document.querySelector('#video-summary').textContent = starting ? '正在开启视频服务，首次可能要等十几秒…' : view.summary;
     document.querySelector('#video-error').textContent = requestError || view.error;
     document.querySelector('#video-settings').disabled = busy || view.settingsDisabled;
   }
   function settings(enableAfterSave = false) {
     const c = current.video_config || {};
-    openDialog('光电视频设置', `<form id="video-settings-form"><p class="field-note">本机测试视频；留空视频文件时使用动态测试图。</p>${field('FFmpeg 程序路径','ffmpeg',c.ffmpeg || 'ffmpeg')}${field('本机视频文件','source',c.source || '')}${field('推流入口（RTSP）','rtsp_base',c.rtsp_base || 'rtsp://127.0.0.1:8554')}${field('媒体推流账号','publisher_user',c.publisher_user || 'qa-publisher')}${field(c.publisher_password_set ? '媒体推流密码（留空保留）' : '媒体推流密码','publisher_password','','password','autocomplete="new-password"')}<p class="inline-error" role="alert"></p><button type="submit" class="primary">${enableAfterSave ? '保存并开启' : '保存设置'}</button></form>`);
+    openDialog('光电视频设置', `<form id="video-settings-form"><p class="field-note">本机测试视频；留空视频文件时使用动态测试图。一般不用改：直接点“开启视频推流”会自动开视频服务、自动填账号密码。</p>${field('FFmpeg 程序路径','ffmpeg',c.ffmpeg || 'ffmpeg')}${field('本机视频文件','source',c.source || '')}${field('推流入口（RTSP）','rtsp_base',c.rtsp_base || 'rtsp://127.0.0.1:8554')}${field('媒体推流账号','publisher_user',c.publisher_user || 'qa-publisher')}${field(c.publisher_password_set ? '媒体推流密码（留空保留）' : '媒体推流密码','publisher_password','','password','autocomplete="new-password"')}<p class="inline-error" role="alert"></p><button type="submit" class="primary">${enableAfterSave ? '保存并开启' : '保存设置'}</button></form>`);
     document.querySelector('#video-settings-form').addEventListener('submit', async event => {
       event.preventDefault();
       if (busy) return;
@@ -63,10 +63,11 @@
   toggle.addEventListener('click', async () => {
     if (busy) return;
     const enabled = current.video_config?.enabled !== true;
-    busy = true; requestError = ''; update(current);
+    // 没配过推流密码时由模拟器自动开本机视频服务、自动填账号，首次可能要等十几秒。
+    busy = true; starting = enabled; requestError = ''; update(current);
     try { applyRuntime(await api('video', {enabled})); }
     catch (error) { requestError = error.message; }
-    finally { busy = false; update(current); }
+    finally { busy = false; starting = false; update(current); }
   });
   root.VideoUI = {update};
 })(globalThis);

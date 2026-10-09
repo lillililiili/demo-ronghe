@@ -61,7 +61,8 @@ function messageOf(error, fallback) {
   if (error.code === 'DEVICE_OFFLINE') return '本次没有下发。设备未启用，或当前不在线。没有心跳的设备不能执行，请改选正在上报的设备后重新申请。';
   if (error.code === 'DEVICE_BUSY') return '本次没有下发。设备仍有未完成的指令或调测任务，请等待任务结束后重试。';
   if (error.code === 'DEVICE_NOT_OPERABLE') return `本次没有下发。${error.message || '设备当前不可执行，请检查启用、在线和故障状态。'}`;
-  if (error.code === 'EMERGENCY_STOP_UNCONFIRMED') return '这台执行设备还有未了结的急停，本次没有下发。请换一台没有未完成急停的设备，或等这台设备的急停了结后再执行。';
+  // 急停没核查完时拦的是这起事件（或这台设备上那次急停），换设备没用（新-20 / 确认书 3-9）。
+  if (error.code === 'EMERGENCY_STOP_UNCONFIRMED') return '本次没有下发。上次急停还没确认设备已停，请先确认：在急停记录里“登记现场停机核查”后，再申请或执行反制。';
   if (error.code === 'ADVISORY_COUNTER_BLOCKED') return `本次没有下发。${error.message || '当前观测或违规研判已失效。'}`;
   if (error.code === 'TARGET_NOT_ACTIVE') return '最近没有监测到这个目标，无法确认它还在现场，暂时不能下发处置指令。';
   // 服务端会说清真实原因（证据不足、类别不是无人机、告警还没核实……），不再一律说成“先核实”。

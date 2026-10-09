@@ -15,7 +15,7 @@ import { getDashboardSnapshot } from '@/services/dashboardApi.js';
 import { apiRequest } from '@/services/apiClient.js';
 import { attachTracks } from '@/services/mapTracks.js';
 import { airspaceKindMeta, targetIsCurrent } from '@/services/situationData.js';
-import { ALARM_TYPE_LABEL, LEGALITY_LABEL, OBJECT_TYPE_LABEL, labelOf, targetTypeLabel } from '@/ui/labels.js';
+import { ALARM_TYPE_LABEL, LEGALITY_LABEL, OBJECT_TYPE_LABEL, SEVERITY_LABEL, labelOf, targetTypeLabel } from '@/ui/labels.js';
 import BigScreenBottomStats from './BigScreenBottomStats.vue';
 
 const themeOverrides = createThemeOverrides();
@@ -51,8 +51,9 @@ let disposed = false;
 let version = 0;
 let detailController = null;
 
-const alarmColor = { 高: 'var(--red)', 中: 'var(--amber)', 低: 'var(--cyan)' };
-const SEVERITY_ZH = { CRITICAL: '高', HIGH: '高', MEDIUM: '中', LOW: '低' };
+/* 告警等级和告警页同一套写法：紧急就写“紧急”，颜色和“高”一样是红色（2026-10-08 新-2 第 4 点）。 */
+const alarmColor = { 紧急: 'var(--red)', 高: 'var(--red)', 中: 'var(--amber)', 低: 'var(--cyan)' };
+const SEVERITY_ZH = SEVERITY_LABEL;
 const STATE_ZH = {
   PENDING_VERIFICATION: '待核实', CONFIRMED: '告警已确认',
   FALSE_POSITIVE: '误报'
@@ -155,7 +156,7 @@ function loadSideDetails(data) {
    由后台决定计入哪些来源（statistics_source_modes）：允许模拟的环境算真实设备和设备模拟器，
    正式环境只算真实设备；系统自带的演示样例都不算。其中来自设备模拟器的条数要写出来，免得被当成现场真实数据。 */
 const simulatorCounted = computed(() => (snapshot.value?.statistics_source_modes || []).includes('replay'));
-const SIMULATOR_FIELDS = [['感知', 'sensed_today'], ['告警', 'alarms_today'], ['计划', 'flights_today'], ['设备', 'devices']];
+const SIMULATOR_FIELDS = [['感知', 'sensed_today'], ['告警', 'alarms_today'], ['任务', 'flights_today'], ['设备', 'devices']];
 const kpiScope = computed(() => {
   if (!snapshot.value?.statistics_source_modes) return '';
   if (!simulatorCounted.value) return '统计口径与运行统计一致：只算真实设备的数据';
@@ -183,7 +184,7 @@ const kpis = computed(() => {
 });
 
 const flightMetrics = computed(() => [
-  { label: '今日计划', value: snapshot.value?.flights?.today, image: hologram('flight-plan') },
+  { label: '今日任务', value: snapshot.value?.flights?.today, image: hologram('flight-plan') },
   { label: '执行中', value: snapshot.value?.flights?.executing, image: hologram('uav') },
   { label: '已完成', value: snapshot.value?.flights?.completed, image: hologram('flight-complete') }
 ]);
@@ -243,12 +244,14 @@ const alarmColumns = [
   { title: '时间', key: 'time', render: row => mono(row.time) },
   { title: '告警类型', key: 'type' },
   { title: '等级', key: 'level', render: row => colored(`● ${row.level}`, alarmColor[row.level] || 'var(--txt-2)') },
-  { title: '状态', key: 'status' }
+  /* 这一列是核实结论（待核实、告警已确认、误报），处置进度在告警页看；叫“核实状态”免得看成处置进度（新-2 第 5 点）。 */
+  { title: '核实状态', key: 'status' }
 ];
 
-/* 重点目标风险态势（ZT-17 复测 2）：今日感知目标按各自最新的风险等级分档，与运行统计选今天时的"各风险等级分布"
+/* 重点目标异物风险态势（ZT-17 复测 2）：今日感知目标按各自最新的风险等级分档，与运行统计选今天时的"各异物风险等级分布"
    同一份取数、同一套分档，五档相加就是今日感知目标；超高风险与高风险同为红色，与运行统计一致。
-   原先按研判等级抽样 100 条，与运行统计对不上。 */
+   原先按研判等级抽样 100 条，与运行统计对不上。这里的风险是目标附近空中异物这类风险的等级，不是告警等级，
+   标题写明“异物风险”，免得和告警的紧急、高、中、低混在一起（2026-10-08 新-2 第 4 点）。 */
 const riskItems = computed(() => {
   const r = snapshot.value?.target_risk || {};
   return [
@@ -473,7 +476,7 @@ onBeforeUnmount(() => {
             </div>
           </section>
           <section class="panel" data-module="target-dynamics">
-            <div class="ph"><h3>重点目标风险态势</h3><span v-if="targetSummary" class="sub">{{ targetSummary }}</span></div>
+            <div class="ph"><h3>重点目标异物风险态势</h3><span v-if="targetSummary" class="sub">{{ targetSummary }}</span></div>
             <div class="pb bs-risk-body">
               <div class="bs-risk-pie"><div ref="targetChartEl" class="bs-panel-chart" role="img" aria-label="重点目标风险圆环分布"></div><div class="bs-risk-center"><b>{{ dash(riskTotal) }}</b><span>{{ riskTotal === 0 ? '今日暂无目标' : '今日目标' }}</span></div></div>
               <div class="bs-risk-values"><div v-for="item in riskItems" :key="item.name"><i :style="{ background: 'var(--' + item.tone + ')' }"></i><span>{{ item.name }}</span><b>{{ dash(item.value) }}</b><small>个</small></div></div>

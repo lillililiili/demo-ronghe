@@ -19,6 +19,10 @@ export const flightApi = {
   route: id => apiRequest(`/routes/${encodeURIComponent(id)}`),
   routeVersions: (id, params) => apiRequest(`/routes/${encodeURIComponent(id)}/versions${query(params)}`),
   routeVersion: id => apiRequest(`/route-versions/${encodeURIComponent(id)}`),
+  // 一次取回多条航线版本（≤100 个）；越权或不存在的编号由后台略去。
+  routeVersionBatch: ids => apiRequest(`/route-versions${query({ route_version_ids: ids.join(',') })}`),
+  // 一次取回多条航线（≤100 条）各自最新的 20 个版本，等同逐条 routeVersions 的第一页。
+  routeVersionsOfRoutes: routeIds => apiRequest(`/route-versions${query({ route_ids: routeIds.join(',') })}`),
   conflicts: id => apiRequest(`/flight-plans/${encodeURIComponent(id)}/airspace-conflicts`),
   // 阶段 9：对照聚合各段自带 availability（缺权限的段不带任何数量）。
   actuals: id => apiRequest(`/flight-plans/${encodeURIComponent(id)}/actuals`),

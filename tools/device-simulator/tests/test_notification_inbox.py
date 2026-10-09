@@ -15,7 +15,7 @@ class Platform:
         self.calls.append((method, path))
         if path == '/flight-plans?page=1&size=20':
             return {'items': [
-                {'plan_id': 'mock-plan', 'plan_no': '模拟计划 01', 'source_mode': 'mock'},
+                {'plan_id': 'mock-plan', 'plan_no': '模拟任务 01', 'source_mode': 'mock'},
                 {'plan_id': 'live-plan', 'source_mode': 'live'},
             ], 'total': 2}
         if path == '/flight-plans/mock-plan/verifications':
@@ -31,7 +31,7 @@ class Platform:
             ]}
         if path == '/device-maintenance-tasks?status=ALL&page=1&size=20':
             return {'items': [
-                {'task_id': 'task-1', 'plan_no': '计划甲', 'device_name': '雷达甲', 'reason': '离线',
+                {'task_id': 'task-1', 'plan_no': '任务甲', 'device_name': '雷达甲', 'reason': '离线',
                  'simulated': True, 'workflow_state': 'PROCESSING', 'notification_attempts': [
                      {'attempt_id': 'attempt-1', 'delivery_status': 'DELIVERED',
                       'receipt_status': 'ACKNOWLEDGED', 'requested_at': 20, 'delivered_at': 22,
@@ -42,7 +42,17 @@ class Platform:
                  ]},
                 {'task_id': 'task-live', 'simulated': False, 'notification_attempts': [
                     {'attempt_id': 'live-attempt', 'delivery_status': 'DELIVERED'}]},
-            ], 'total': 2}
+                {'task_id': 'task-backend', 'device_name': '雷达乙', 'reason': '设备自报故障（工作状态：故障）',
+                 'simulated': True, 'notification_attempts': [
+                     {'attempt_id': 'backend-2', 'delivery_status': 'DELIVERED', 'requested_at': 50,
+                      'recipient_snapshot': {'recipient_name': '后台运维待办', 'channel_type': 'INTERNAL'}},
+                     {'attempt_id': 'backend-1', 'delivery_status': 'DELIVERED', 'requested_at': 40,
+                      'recipient_snapshot': {'recipient_name': '后台运维待办', 'channel_type': 'INTERNAL'}},
+                 ]},
+                {'task_id': 'task-live-backend', 'simulated': False, 'notification_attempts': [
+                    {'attempt_id': 'live-backend', 'delivery_status': 'DELIVERED',
+                     'recipient_snapshot': {'channel_type': 'INTERNAL'}}]},
+            ], 'total': 4}
         raise AssertionError(f'Unexpected platform read: {method} {path}')
 
 
@@ -73,6 +83,13 @@ class InboxTests(unittest.TestCase):
         self.assertNotIn('已修复', delivered['content'])
         self.assertNotIn('live-attempt', [row['id'] for row in result['items']])
         self.assertTrue(all(method == 'GET' for method, _ in platform.calls))
+
+    def test_backend_todos_are_not_counted_as_received_and_get_one_pointer(self):
+        # CDX-P09: device exceptions now go to the admin 运维待办, not to this simulator.
+        result = read_inbox(Platform(), 'device_maintenance')
+        self.assertEqual(['attempt-2', 'attempt-1'], [row['id'] for row in result['items']])
+        self.assertEqual('另有 1 条已进后台运维待办，不发模拟器，请在管理端 设备接入调测 → 运维待办 查看', result['notice'])
+        self.assertIsNone(read_inbox(Platform(), 'plan_feedback')['notice'])
 
 
 if __name__ == '__main__':

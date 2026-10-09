@@ -35,7 +35,7 @@ test('risk inbox displays frozen coordinates and distinguishes missing or hidden
 test('selected map plan renders editable times and retains edits when the form is rebuilt',async()=>{
  const sandbox={document,window:{ExternalContract:require('../web/external-contract.js'),PlanForm:require('../web/plan-form.js'),WeatherForm:require('../web/weather-form.js')},setInterval(){},fetch:async()=>({ok:true,status:200,json:async()=>({connected:false})})};
  vm.createContext(sandbox);
- vm.runInContext(source+`\nglobalThis.__test={buildPlanInput,readDraft,set(data){tab='plans';context={routes:[],plans:[],messages:[]};scenePlans=[{id:'p1',name:'巡检计划',start:'09:00',end:'09:30',points:[[118.6,37.4],[118.7,37.5]]}];selectedScenePlanId='p1';drafts.plans=JSON.stringify(data);}};`,sandbox);
+ vm.runInContext(source+`\nglobalThis.__test={buildPlanInput,readDraft,set(data){tab='plans';context={routes:[],plans:[],messages:[]};scenePlans=[{id:'p1',name:'巡检任务',start:'09:00',end:'09:30',points:[[118.6,37.4],[118.7,37.5]]}];selectedScenePlanId='p1';drafts.plans=JSON.stringify(data);}};`,sandbox);
  await new Promise(resolve=>setImmediate(resolve));
  const edited={message_id:'time-edit',uav_sn:'SIM-TIME',start_at:Date.parse('2026-10-06T11:00:00+08:00'),end_at:Date.parse('2026-10-06T11:30:00+08:00'),filing:{source_id:'s'}};
  sandbox.__test.set(edited);
@@ -61,4 +61,55 @@ test('401 on a write clears connection and context immediately while keeping dra
  assert.equal(sandbox.__test.get().context,null);
  assert.equal(sandbox.__test.get().draft,'saved draft');
  assert.match(node('#external-status').textContent,/尚未登录/);
+});
+
+test('route owner follows the chosen unit and district; with no routes and several choices nothing is guessed',async()=>{
+ const sandbox={document,window:{ExternalContract:require('../web/external-contract.js'),PlanForm:require('../web/plan-form.js'),WeatherForm:require('../web/weather-form.js')},setInterval(){},fetch:async()=>({ok:true,status:200,json:async()=>({connected:false})})};
+ vm.createContext(sandbox);
+ vm.runInContext(source+`\nglobalThis.__test={buildPlanInput,readDraft,set(routes,scopes,chosen,connection){tab='plans';editingPlan=null;context={routes,plans:[],messages:[]};planScopes=scopes;planScope=chosen||null;planConnectionScope=connection||null;scenePlans=[{id:'p1',name:'巡检计划',start:'09:00',end:'09:30',points:[[118.6,37.4],[118.7,37.5]]}];selectedScenePlanId='p1';drafts.plans=JSON.stringify({message_id:'m',uav_sn:'SIM-1',filing:{source_id:'s'}});}};`,sandbox);
+ await new Promise(resolve=>setImmediate(resolve));
+ const a={owner_org_id:'org-a',owner_org_name:'甲单位',district_id:'d-a',district_name:'甲区'};
+ const b={owner_org_id:'org-b',owner_org_name:'乙单位',district_id:'d-b',district_name:'乙区'};
+ sandbox.__test.set([],[a,b]);
+ let html=sandbox.__test.buildPlanInput();
+ assert.match(html,/航线归属单位与区县/);
+ assert.match(html,/<option value="" selected>请选择<\/option>/);
+ assert.equal(sandbox.__test.readDraft().route.owner_org_id,'');
+ assert.throws(()=>sandbox.window.PlanForm.validate(sandbox.__test.readDraft()),/归属单位与区县/);
+ sandbox.__test.set([],[a,b],b);
+ html=sandbox.__test.buildPlanInput();
+ assert.equal(sandbox.__test.readDraft().route.owner_org_id,'org-b');
+ assert.equal(sandbox.__test.readDraft().route.district_id,'d-b');
+ assert.match(html,/<option value="1" selected>乙单位 · 乙区<\/option>/);
+ sandbox.__test.set([],[a]);
+ sandbox.__test.buildPlanInput();
+ assert.equal(sandbox.__test.readDraft().route.owner_org_id,'org-a');
+ sandbox.__test.set([{route_version_id:'r1',owner_org_id:'org-r',district_id:'d-r'}],[]);
+ html=sandbox.__test.buildPlanInput();
+ assert.equal(sandbox.__test.readDraft().route.owner_org_id,'org-r');
+ assert.match(html,/沿用报文中的归属单位与区县/);
+ sandbox.__test.set([{route_version_id:'r1',owner_org_id:'org-b',district_id:'d-b'}],[a,b]);
+ html=sandbox.__test.buildPlanInput();
+ assert.equal(sandbox.__test.readDraft().route.owner_org_id,'org-b');
+ assert.match(html,/<option value="1" selected>乙单位 · 乙区<\/option>/);
+ // The simulator's device data connection decides first, ahead of an existing route's owner, as on the airspace page.
+ const connection={owner_org_id:'org-a',district_id:'d-a',broker_name:'local-lingyun-replay'};
+ sandbox.__test.set([{route_version_id:'r1',owner_org_id:'org-b',district_id:'d-b'}],[a,b],null,connection);
+ html=sandbox.__test.buildPlanInput();
+ assert.equal(sandbox.__test.readDraft().route.owner_org_id,'org-a');
+ assert.equal(sandbox.__test.readDraft().route.district_id,'d-a');
+ assert.match(html,/<option value="0" selected>甲单位 · 甲区<\/option>/);
+ sandbox.__test.set([],[a,b],null,connection);
+ sandbox.__test.buildPlanInput();
+ assert.equal(sandbox.__test.readDraft().route.owner_org_id,'org-a');
+ // A connection the account may not use, or one not found, is ignored; a choice made on the form always wins.
+ sandbox.__test.set([],[a,b],null,{owner_org_id:'org-x',district_id:'d-x'});
+ sandbox.__test.buildPlanInput();
+ assert.equal(sandbox.__test.readDraft().route.owner_org_id,'');
+ sandbox.__test.set([],[a,b],null,{owner_org_id:null,district_id:null,message:'未找到启用的回放 MQTT 连接 local-lingyun-replay，请手动选择归属单位与区县'});
+ sandbox.__test.buildPlanInput();
+ assert.equal(sandbox.__test.readDraft().route.owner_org_id,'');
+ sandbox.__test.set([],[a,b],b,connection);
+ sandbox.__test.buildPlanInput();
+ assert.equal(sandbox.__test.readDraft().route.owner_org_id,'org-b');
 });

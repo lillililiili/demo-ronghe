@@ -26,6 +26,8 @@ export const riskApi = {
   /* 阶段 9 空间安全风险：细类字典、空间事实、汇总与评估运行记录。 */
   listSpaceObjectSubtypes: () => apiRequestTimed('/space-object-subtypes'),
   getSpaceFact: riskId => apiRequestTimed(`/risks/${encodeURIComponent(riskId)}/space-fact`),
+  /* P03：鸟群风险的评估历史（共评估几次、每段离航线多远、当时是否构成风险）；不是鸟群风险时 applicable=false。 */
+  getEvaluationHistory: (riskId, params) => apiRequestTimed(`/risks/${encodeURIComponent(riskId)}/evaluation-history${buildQuery(params)}`),
   spaceRiskSummary: params => apiRequestTimed(`/space-risks/summary${displayQuery(params)}`),
   listRuleEvaluations: params => apiRequestTimed(`/rule-evaluations${buildQuery(params)}`),
   triggerRuleEvaluation: (body, idempotencyKey) => apiRequestTimed('/rule-evaluations', {

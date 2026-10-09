@@ -18,6 +18,7 @@ def _read_many(rows, reader):
 def read_inbox(platform, kind, page=1):
     if kind not in ('sms', 'voice', 'risk', 'punishment', 'plan_feedback', 'device_maintenance') or not 1 <= page <= 10000:
         raise ValueError('通知类别或页码无效')
+    notice = None
     if kind in ('sms', 'voice'):
         context = platform.call('GET', '/local-interface-simulator/context')
         events = [row for row in context.get('sources', []) if row.get('source_kind') == 'UAV_EVENT' and SAFE_ID.fullmatch(row.get('source_id', ''))]
@@ -50,7 +51,7 @@ def read_inbox(platform, kind, page=1):
                 status = row.get('delivery_status') or 'UNKNOWN'
                 result.append({'id': row['feedback_id'], 'kind': kind, 'subject': plan.get('plan_no') or plan['plan_id'],
                     'recipient': row.get('recipient_name'),
-                    'content': verification.get('evidence') or row.get('processing_result') or '计划核实回告内容未提供，请展开查看原始记录。',
+                    'content': verification.get('evidence') or row.get('processing_result') or '任务核实回告内容未提供，请展开查看原始记录。',
                     'status': status, 'receipt_status': row.get('receipt_status'), 'received': status == 'DELIVERED',
                     'at': row.get('delivered_at') or row.get('submitted_at') or row.get('created_at'),
                     'time_label': '送达时间' if row.get('delivered_at') else '发送记录时间',
@@ -58,16 +59,21 @@ def read_inbox(platform, kind, page=1):
             return result
         rows, errors = _read_many(visible, feedback)
         more = plans.get('total', 0) > page * 20
-        scope = '当前账号可见的模拟飞行计划 · 每页最多 20 个关联计划'
+        scope = '当前账号可见的模拟飞行任务 · 每页最多 20 个关联任务'
     elif kind == 'device_maintenance':
         tasks = platform.call('GET', f'/device-maintenance-tasks?status=ALL&page={page}&size=20')
-        rows = []
+        rows, backend_todos = [], 0
         for task in tasks.get('items', []):
             if task.get('simulated') is not True: continue
+            in_backend = False
             for attempt in task.get('notification_attempts') or []:
                 if not SAFE_ID.fullmatch(attempt.get('attempt_id', '')): continue
                 status = attempt.get('delivery_status') or 'UNKNOWN'
                 recipient = attempt.get('recipient_snapshot') or {}
+                # CDX-P09: device exceptions now go to the admin 运维待办 only; they were never sent to this simulator.
+                if recipient.get('channel_type') == 'INTERNAL':
+                    in_backend = True
+                    continue
                 rows.append({'id': attempt['attempt_id'], 'kind': kind,
                     'subject': task.get('device_name') or task.get('device_no') or task.get('task_id'),
                     'recipient': recipient.get('recipient_name'),
@@ -76,9 +82,12 @@ def read_inbox(platform, kind, page=1):
                     'at': attempt.get('delivered_at') or attempt.get('submitted_at') or attempt.get('requested_at'),
                     'time_label': '送达时间' if attempt.get('delivered_at') else '发送记录时间',
                     'reason': attempt.get('blocked_reason'), 'details': {'task': task, 'notification': attempt}})
+            if in_backend: backend_todos += 1
         errors = []
         more = tasks.get('total', 0) > page * 20
         scope = '当前账号可见的模拟设备运维通知 · 每页最多 20 个关联任务'
+        if backend_todos:
+            notice = f'另有 {backend_todos} 条已进后台运维待办，不发模拟器，请在管理端 设备接入调测 → 运维待办 查看'
     else:
         handoff_type = 'RISK_NOTICE' if kind == 'risk' else 'UAV_PUNISHMENT'
         source_kind = 'RISK' if kind == 'risk' else 'UAV_EVENT'
@@ -116,4 +125,4 @@ def read_inbox(platform, kind, page=1):
         errors += failures
         scope = '当前账号可见的模拟通知 · 每页最多 40 个关联事项'
     rows.sort(key=lambda row: row.get('at') or 0, reverse=True)
-    return {'items': rows, 'errors': list(dict.fromkeys(errors)), 'scope': scope, 'page': page, 'has_more': more}
+    return {'items': rows, 'errors': list(dict.fromkeys(errors)), 'scope': scope, 'page': page, 'has_more': more, 'notice': notice}

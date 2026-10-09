@@ -18,6 +18,7 @@ import { toast } from '@/ui/nv.js';
 import { ALTITUDE_DATUM_LABEL, HANDOFF_TYPE_LABEL, REASON_CODE_LABEL,
   RECEIPT_RESULT_LABEL, RISK_STATE_LABEL, RISK_TYPE_LABEL, SEVERITY_LABEL, SEVERITY_TAG, sourceDescription, notificationBlockedReason, labelOf } from '@/ui/labels.js';
 import RiskOpticalPanel from '@/pages/flights/components/RiskOpticalPanel.vue';
+import RiskEvaluationHistory from '@/pages/flights/components/RiskEvaluationHistory.vue';
 
 const props = defineProps({ riskId: { type: String, required: true } });
 const emit = defineEmits(['updated']);
@@ -175,12 +176,13 @@ onUnmounted(() => { alive = false; generation++; historyRequest++; noticeRequest
             <template v-if="risk.current_status"><dt>当前风险</dt><dd>{{ ({ CURRENT: '当前仍存在', CLEARED: '已确认解除', EXPIRED: '有效时段已结束', UNKNOWN: '状态待确认', EXCLUDED: '已排除', NOT_STARTED: '尚未生效' })[risk.current_status] || '状态待确认' }}<span class="rk-hint">{{ risk.current_reason }}</span></dd></template>
             <dt>触发原因</dt><dd>{{ labelOf(REASON_CODE_LABEL, risk.reason_code, '未提供') }}</dd><dt>依据说明</dt><dd>{{ reasonText }}</dd>
             <template v-if="risk.risk_type !== 'WEATHER'"><dt>测得高度</dt><dd>{{ altitude(risk) }}<span v-if="risk.observed_altitude_m == null" class="rk-hint">尚未测得高度，无法判断是否超高</span></dd><dt>高度关系</dt><dd>{{ labelOf(heightLabels, risk.height_relation, '高度关系未知') }}<span v-if="!risk.height_relation || risk.height_relation === 'UNKNOWN'" class="rk-hint">缺高度或 AGL/AMSL 换算依据</span></dd></template>
-            <dt>关联计划</dt><dd><a v-if="risk.plan_id && hasPermission('flight:read') && canAccessRoute('flights')" class="btn ghost" :href="`#/flights?plan=${encodeURIComponent(risk.plan_id)}`">查看关联飞行计划 →</a><span v-else>{{ risk.plan_id ? '已关联' : '没有可查看的相关记录' }}</span></dd>
+            <dt>关联任务</dt><dd><a v-if="risk.plan_id && hasPermission('flight:read') && canAccessRoute('flights')" class="btn ghost" :href="`#/flights?plan=${encodeURIComponent(risk.plan_id)}`">查看关联飞行任务 →</a><span v-else>{{ risk.plan_id ? '已关联' : '没有可查看的相关记录' }}</span></dd>
             <dt>航线版本</dt><dd :title="risk.route_version_id">{{ risk.route_version_id ? '已关联' : '没有可查看的相关记录' }}</dd>
             <dt v-if="risk.assessment_id">关联研判</dt><dd v-if="risk.assessment_id">已关联研判记录</dd>
             <dt v-if="risk.target_id">关联目标</dt><dd v-if="risk.target_id">{{ risk.space_fact?.subtype_name || '关联感知目标' }}</dd>
             <dt v-if="risk.track_id">关联轨迹</dt><dd v-if="risk.track_id">已关联轨迹</dd>
           </dl><p class="rk-note">{{ risk.risk_type === 'WEATHER' ? '起飞前请核对最新预警和有效时段。' : '位置为发现时快照；违规结论见合法性研判。' }}</p></section>
+          <RiskEvaluationHistory v-if="risk.risk_type === 'SPACE_OBJECT'" :key="risk.risk_id" :risk-id="risk.risk_id" />
           <section class="sect"><h4>核验历史 <span class="tag t-gray">{{ historyTotal }}</span></h4>
             <div v-if="historyLoading" class="empty">正在读取核验历史…</div>
             <div v-else-if="historyError" class="warnbox" role="alert">{{ historyError }}<button class="btn" type="button" @click="loadHistory(historyPage)">重试</button></div>

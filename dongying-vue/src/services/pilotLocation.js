@@ -2,6 +2,8 @@
    这只是设备推算的位置，不是现场核实的位置，页面一律注明；没有位置时写“没有遥控器位置”。 */
 export const NO_PILOT_LOCATION = '没有遥控器位置';
 export const PILOT_LOCATION_NOTE = '设备测算的大概位置';
+/** 告警的目标已不在地图上时，页面手里没有它的遥控器位置，不能写成“没有”。 */
+export const PILOT_LOCATION_IN_ALARM_DETAIL = '目标已不在地图上，请在告警详情里查看';
 
 function coordinate(value) {
   if (value == null || value === '') return null;

@@ -5,6 +5,7 @@ import { useRoute } from 'vue-router';
 import { ChevronUpOutline, GitCompareOutline, LocateOutline } from '@vicons/ionicons5';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import { createSituationApiSource } from '@/pages/situation/situationApiSource.js';
+import { serverNow } from '@/services/serverClock.js';
 import { clockLagText, currentMapSnapshot, deviceGroupState, riskMatchesPlan, routeRiskIsActive, SITUATION_DEVICE_TYPE_ORDER, targetClassCounts } from '@/services/situationData.js';
 import {
   disposalStage, situationAlarmNeedsAttention, situationRouteRiskVisible,
@@ -23,7 +24,8 @@ import { toast } from '@/ui/nv.js';
 import { getAlarm } from '@/services/alarmApi.js';
 import SituationAdvisoryCard from './situation/SituationAdvisoryCard.vue';
 import SituationAlarmPopup from './situation/SituationAlarmPopup.vue';
-import { NO_PILOT_LOCATION, pilotLocationText } from '@/services/pilotLocation.js';
+import { PILOT_LOCATION_IN_ALARM_DETAIL, pilotLocationText } from '@/services/pilotLocation.js';
+import { pilotDistanceNote } from '@/ui/pilotDistanceNote.js';
 import WeatherRiskMarkers from '@/components/WeatherRiskMarkers.vue';
 import { weatherAnchor } from '@/services/weatherRiskGeometry.js';
 import SituationRiskGroupPopup from './situation/SituationRiskGroupPopup.vue';
@@ -167,6 +169,12 @@ const fusionDevices = computed(() => {
 });
 const fusionConfidence = computed(() => selectedTarget.value?.fusedConf ?? null);
 const clockText = computed(() => formatClock(snapshot.value.generatedAt));
+/* 数据刷新慢（CDX-P01）：地图上的目标只在有效期（十几秒）内显示，最近一轮数据超过 10 秒还没更新，
+   目标会陆续按期退出地图，看起来像"没有目标"。这时明确提示是刷新慢，不让值班员误以为空中没有东西。 */
+const SLOW_REFRESH_SECONDS = 10;
+const nowTick = ref(serverNow());
+const refreshLagSeconds = computed(() => snapshot.value.generatedAt ? Math.max(0, Math.floor((nowTick.value - snapshot.value.generatedAt) / 1000)) : 0);
+const refreshSlow = computed(() => refreshLagSeconds.value >= SLOW_REFRESH_SECONDS);
 const sourceModeText = computed(() => snapshot.value.simulated ? '含模拟数据'
   : snapshot.value.sourceMode === 'replay' ? '回放数据'
   : snapshot.value.sourceMode === 'live' ? '实时数据'
@@ -357,7 +365,7 @@ function applySnapshot(next) {
   const count = decorated.alarms.filter(alarm => alarm.isNew).length + groupRouteRisks(decorated.risks).filter(risk => risk.isNew).length;
   const failed = (next.failedSegments || []).map(segment => ({
     targets: '目标', alarms: '告警', risks: '风险', handoffs: '移送', devices: '设备',
-    'device-events': '设备事件', 'flight-plans': '飞行计划', airspaces: '空域', 'fusion-status': '融合状态'
+    'device-events': '设备事件', 'flight-plans': '飞行任务', airspaces: '空域', 'fusion-status': '融合状态'
   }[segment] || segment));
   statusAnnouncement.value = failed.length
     ? `${failed.join('、')}数据刷新失败，已保留上次结果；恢复后自动重试`
@@ -696,6 +704,7 @@ function renderTargetTip(target, hasAdvisoryCard = false) {
     <p>最后上报：${esc(formatClock(target.lastSeenAt))} · ${esc(reportAge(target.lastSeenAt))}</p>
     ${target.timeUntrusted ? `<p class="sit-map-pop-note">数据过期：报文时刻比平台收到时早${esc(clockLagText(target.reportLagMs) || '较多')}，设备时间不准或数据积压，图上位置可能不是当前位置；超过新鲜时限的数据不做合法性判定。平台收到：${esc(formatClock(target.receivedAt))}</p>` : ''}
     ${target.objectTypeCode === 'UAV' ? `<p>遥控器位置：${esc(pilotLocationText(target.pilotLocation))}</p>` : ''}
+    ${target.objectTypeCode === 'UAV' && pilotDistanceNote(target.legalitySummary) ? `<p class="sit-map-pop-note">${esc(pilotDistanceNote(target.legalitySummary))}</p>` : ''}
     <div class="sit-target-source"><span>感知来源：${esc(sourceNames || '未提供')}</span><button type="button" data-tip-act="eo-video" aria-expanded="${showTargetVideo.value}" aria-controls="situation-video-window">${showTargetVideo.value ? '收起视频' : '实时视频'}</button></div>
     ${alarm?.eventId && !hasAdvisoryCard ? `<p class="sit-map-pop-note">短信通知：${esc(sms?.title || '正在读取通知状态')}${sms?.simulated ? '（模拟）' : ''}${sms?.updatedAt ? ` · ${esc(formatClock(sms.updatedAt))}` : ''}</p>
     <p class="sit-map-pop-note">飞手电话：${esc(voice?.title || '正在读取通知状态')}${voice?.simulated ? '（模拟）' : ''}</p>` : ''}
@@ -712,15 +721,15 @@ function renderPlanTip(plan) {
   const selectedRisk = riskId ? risks.find(risk => risk.riskId === riskId) : null;
   const stateText = riskId
     ? `风险：${selectedRisk ? labelOf(RISK_STATE_LABEL, selectedRisk.state) : '状态待确认'}`
-    : `计划：${plan.statusLabel}`;
+    : `任务：${plan.statusLabel}`;
   const stateClass = (riskId ? selectedRisk?.active : active.length) ? 'is-risk' : 'is-online';
   const routePointCount = Array.isArray(plan.coordinates) ? plan.coordinates.length : 0;
   return `<section class="sit-map-pop sit-map-pop-plan" style="--sensor:${active.length ? '#ff5b61' : '#22d3ee'}">
-    <header><span class="sit-map-pop-icon">${U.icon('plan')}</span><span><b>计划详情</b><small class="mono">${esc(plan.planNo)}</small></span>
-      <button type="button" data-tip-act="close" aria-label="关闭计划详情">${U.icon('close')}</button></header>
+    <header><span class="sit-map-pop-icon">${U.icon('plan')}</span><span><b>任务详情</b><small class="mono">${esc(plan.planNo)}</small></span>
+      <button type="button" data-tip-act="close" aria-label="关闭任务详情">${U.icon('close')}</button></header>
     <div class="sit-map-pop-status"><span class="sit-state ${stateClass}">${esc(stateText)}</span><span>${active.length ? `${active.length} 条当前风险` : '无当前风险'}</span></div>
-    <dl><dt>计划编号</dt><dd class="mono">${esc(plan.planNo)}</dd>
-      <dt>计划状态</dt><dd>${esc(plan.statusLabel)}</dd>
+    <dl><dt>任务编号</dt><dd class="mono">${esc(plan.planNo)}</dd>
+      <dt>任务状态</dt><dd>${esc(plan.statusLabel)}</dd>
       <dt>执行时段</dt><dd>${esc(formatClock(plan.startAt))} ～ ${esc(formatClock(plan.endAt))}</dd>
       <dt>关联无人机</dt><dd class="mono">${esc(plan.uavId || '未提供')}</dd>
       <dt>航线版本</dt><dd class="mono">${esc(plan.routeVersionId)}</dd>
@@ -865,7 +874,9 @@ onMounted(() => {
     animationFps: 12,
     maxDpr: 1.5,
     layers: { alarm: false, coverage: true },
-    interactiveTip: true,
+    // 悬停小卡片不接点击（验收预跑 3-7）：图标挤在一起时，停在设备上弹出的卡片会盖住旁边的无人机，点不开；
+    // 卡片上的按钮在点开后的弹窗里都有。
+    interactiveTip: false,
     renderTip: renderMapTip,
     onTipAction,
     onPick: onMapPick,
@@ -874,7 +885,8 @@ onMounted(() => {
   stopSource = source.start(applySnapshot, onSourceError);
   // 独立于网络轮询：请求失败或迟迟未返回时，旧点仍按期退出地图。
   expiryTimer = window.setInterval(() => {
-    if (!document.hidden && rawSnapshot && snapshot.value.targets.some(target => target.mapExpiresAt <= Date.now())) applySnapshot(rawSnapshot);
+    nowTick.value = serverNow();
+    if (!document.hidden && rawSnapshot && snapshot.value.targets.some(target => target.mapExpiresAt <= nowTick.value)) applySnapshot(rawSnapshot);
   }, 1000);
   selectionResizeObserver = new ResizeObserver(() => focusSelection(false));
   selectionResizeObserver.observe(mapHost.value);
@@ -905,6 +917,7 @@ onUnmounted(() => {
         <span>{{ sourceModeDetail }}</span>
         <span>当前目标 {{ targets.length }} · 无人机 {{ targetCounts.uav }} · 异物 {{ targetCounts.foreign }} · 未分类 {{ targetCounts.unknown }}<template v-if="targetCounts.other"> · 其他 {{ targetCounts.other }}</template>（北京时间）</span>
         <time class="mono">{{ clockText }}</time>
+        <em v-if="refreshSlow" class="sit-refresh-slow" role="status" :title="`最近一次数据停在 ${clockText}，已有 ${refreshLagSeconds} 秒没有更新；地图上的目标按期退出，可能不全。恢复后自动更新。`">数据刷新慢 · {{ refreshLagSeconds }} 秒未更新</em>
       </div>
       <p class="sr-only" role="status" aria-live="polite" aria-atomic="true">{{ statusAnnouncement }}</p>
 
@@ -975,9 +988,9 @@ onUnmounted(() => {
           <button v-for="risk in riskGroups" :key="risk.groupId" type="button" class="sit-alert-row sit-route-risk-row"
             :class="[{ 'is-new': risk.isNew, 'is-history': !risk.active, 'is-selected': selectedRiskGroup?.groupId === risk.groupId }, `level-${risk.level}`]"
             :aria-pressed="selectedRiskGroup?.groupId === risk.groupId"
-            :aria-label="`查看${risk.spaceFact?.subtypeName || '航线'}风险，关联${risk.planCount}条计划，${riskGroupStateText(risk)}`" @click="selectRiskGroup(risk)">
+            :aria-label="`查看${risk.spaceFact?.subtypeName || '航线'}风险，关联${risk.planCount}条任务，${riskGroupStateText(risk)}`" @click="selectRiskGroup(risk)">
             <span class="sit-alert-level">{{ risk.level }}</span>
-            <span class="sit-alert-copy"><b>{{ risk.spaceFact?.subtypeName || '航线' }}风险 · 关联 {{ risk.planCount }} 条计划</b><em>{{ riskFactText(risk) }}</em></span>
+            <span class="sit-alert-copy"><b>{{ risk.spaceFact?.subtypeName || '航线' }}风险 · 关联 {{ risk.planCount }} 条任务</b><em>{{ riskFactText(risk) }}</em></span>
             <span class="sit-alert-meta"><time class="mono">{{ formatClock(risk.occurredAt) }}{{ risk.isNew ? ' · 未查看' : '' }}</time><b>{{ riskGroupStateText(risk) }}</b></span>
           </button>
         </div>
@@ -987,7 +1000,7 @@ onUnmounted(() => {
       <SituationAlarmPopup v-if="showSelectionPopup" :key="`${selection.kind}:${selection.id}:${selection.riskId || selection.alarmId || ''}`" :get-anchor="alarmAnchor"
         :get-avoid-rect="selectionAvoidRect"
         :video-open="showTargetVideo && !!videoContext"
-        :label="selectedDevice ? '设备详情' : selectedPlan ? '计划详情' : selectedRisk ? '航线风险详情' : showAlarmPopup ? '无人机告警详情' : '目标详情'">
+        :label="selectedDevice ? '设备详情' : selectedPlan ? '任务详情' : selectedRisk ? '航线风险详情' : showAlarmPopup ? '无人机告警详情' : '目标详情'">
         <div v-if="selectedDevice" @click="onTipAction($event.target.closest('[data-tip-act]')?.dataset.tipAct, { kind: 'device', data: selectedDevice })"
           v-html="renderDeviceTip(selectedDevice)"></div>
         <div v-else-if="selectedTarget" @click="onTipAction($event.target.closest('[data-tip-act]')?.dataset.tipAct, { kind: 'target', data: selectedTarget })"
@@ -1000,14 +1013,14 @@ onUnmounted(() => {
           <header><span class="sit-map-pop-icon" v-html="U.icon('plan')"></span><span><b>{{ selectedRisk.id }}</b><small>航线风险</small></span>
             <button type="button" aria-label="关闭风险详情" @click="clearSelection" v-html="U.icon('close')"></button></header>
           <div class="sit-map-pop-status"><span class="sit-state is-risk">{{ labelOf(RISK_STATE_LABEL, selectedRisk.state) }}</span></div>
-          <p>{{ selectedRisk.reasonText || '风险依据未提供' }}</p><p>当前未取得关联计划，保留此风险的信息。</p>
+          <p>{{ selectedRisk.reasonText || '风险依据未提供' }}</p><p>当前未取得关联任务，保留此风险的信息。</p>
         </section>
         <section v-else-if="selectedUavAlarm" class="sit-map-pop">
           <header><span class="sit-map-pop-icon" v-html="U.businessIcon('uav')"></span><span><b>{{ selectedUavAlarm.targetId || selectedUavAlarm.id || '未关联目标告警' }}</b><small>无人机告警</small></span>
             <button type="button" aria-label="关闭告警详情" @click="clearSelection" v-html="U.icon('close')"></button></header>
           <div class="sit-map-pop-status"><span class="sit-state is-risk">{{ selectedUavAlarm.level }}风险</span><span>{{ selectedUavAlarm.type }}</span></div>
           <p>{{ selectedUavAlarm.district }} · 告警时间 {{ formatClock(selectedUavAlarm.ts) }}</p>
-          <p>遥控器位置：{{ NO_PILOT_LOCATION }}</p>
+          <p>遥控器位置：{{ PILOT_LOCATION_IN_ALARM_DETAIL }}</p>
         </section>
         <div v-if="videoContext && !selectedTarget" class="sit-video-entry">
           <button type="button" :aria-expanded="showTargetVideo" aria-controls="situation-video-window" @click="onTipAction('eo-video')">{{ showTargetVideo ? '收起视频' : '实时视频' }}</button>
@@ -1036,10 +1049,10 @@ onUnmounted(() => {
         <span class="sit-scan-key" aria-label="在线设备上报脉冲"><i aria-hidden="true"></i>上报脉冲</span>
         <button type="button" :aria-pressed="layers.device" @click="toggleLayer('device')">设备点位</button>
         <button type="button" :aria-pressed="layers.track" @click="toggleLayer('track')">目标轨迹</button>
-        <button type="button" :aria-pressed="layers.flightPlan" @click="toggleLayer('flightPlan')">计划航线</button>
+        <button type="button" :aria-pressed="layers.flightPlan" @click="toggleLayer('flightPlan')">任务航线</button>
         <button type="button" :aria-pressed="layers.airspace" :aria-label="`防控空域，共${airspaces.length}个区域`" @click="toggleLayer('airspace')">防控空域 {{ airspaces.length }}</button>
         <span id="situation-weather-control"></span>
-        <span class="sit-plan-key" aria-label="航线与轨迹图例"><span><i class="is-within"></i>符合航线</span><span><i class="is-outside"></i>偏离航线</span><span><i class="is-plan"></i>未飞计划线</span><span><i class="is-unknown"></i>关系未知</span></span>
+        <span class="sit-plan-key" aria-label="航线与轨迹图例"><span><i class="is-within"></i>符合航线</span><span><i class="is-outside"></i>偏离航线</span><span><i class="is-plan"></i>未飞任务线</span><span><i class="is-unknown"></i>关系未知</span><span><b class="is-start">起</b>起点<b class="is-end">终</b>终点</span></span>
       </nav>
 
       <aside v-if="selectedTarget" class="sit-fuse-dock" :class="{ 'is-open': fuseOpen }" aria-label="多源融合结果">

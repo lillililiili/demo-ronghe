@@ -15,26 +15,28 @@ export const LEGAL_STATUS_TEXT = {
 export const REVIEW_STATE_TEXT = {
   PENDING_REVIEW: '待人工复核', CONFIRMED: '已确认', REJECTED: '已驳回', OVERRIDDEN: '已改判', SUPERSEDED: '已被重算取代'
 };
-export const PLAN_MATCH_TEXT = { FULL: '完全匹配', PARTIAL: '部分匹配', NONE: '无匹配计划', UNDETERMINED: '不可判定', NOT_APPLICABLE: '不适用' };
+export const PLAN_MATCH_TEXT = { FULL: '完全匹配', PARTIAL: '部分匹配', NONE: '无匹配任务', UNDETERMINED: '不可判定', NOT_APPLICABLE: '不适用' };
 export const GRADE_TEXT = { HIGH: '高', MEDIUM: '中', LOW: '低' };
 export const RULE_CODE_TEXT = {
-  C01: '计划匹配', 'C02-1': '禁飞空域', 'C02-2': '空域限高', 'C02-3': '航线偏离', 'C02-4': '时间窗', 'C02-5': '夜航',
-  'C02-6': '超视距', 'C02-7': '计划高度', 'C02-8': '临时限制', C03: '四态判定', C06: '告警生成'
+  C01: '任务匹配', 'C02-1': '禁飞空域', 'C02-2': '空域限高', 'C02-3': '航线偏离', 'C02-4': '时间窗', 'C02-5': '夜航',
+  'C02-6': '超视距', 'C02-7': '任务高度', 'C02-8': '临时限制', 'C02-9': '起飞点', 'C02-10': '降落点', 'C02-11': '飞手身份', 'C02-12': '报送单位', C03: '四态判定', C06: '告警生成'
 };
 export const RULE_RESULT_TEXT = { PASS: '通过', FAIL: '不通过', UNDETERMINED: '不可判定', NOT_APPLICABLE: '不适用' };
 export const RULE_REASON_TEXT = {
+  TAKEOFF_POINT_MISMATCH: '起飞点与计划不符', LANDING_POINT_MISMATCH: '降落点与计划不符', PILOT_IDENTITY_MISMATCH: '飞手身份与计划不符', REPORTING_UNIT_MISMATCH: '报送单位与计划不符',
+  EXECUTION_FACTS_UNAVAILABLE: '缺少独立执行事实', EXECUTION_FACTS_CONFLICT: '执行事实存在冲突', EXECUTION_RULE_PARAMETERS_MISSING: '执行核对参数未配置', EXECUTION_RULE_PARAMETERS_UNCONFIRMED: '执行核对参数未正式确认', EXECUTION_POSITION_BOUNDARY_UNKNOWN: '位置误差跨越容差边界',
   OBJECT_TYPE_UNKNOWN: '目标类型尚未确定', NON_UAV_OBJECT: '非无人机目标，不适用无人机合法性判定',
   INSIDE_RESTRICTED_AIRSPACE: '进入禁飞/限制空域', AIRSPACE_ALTITUDE_EXCEEDED: '超过空域限高', ROUTE_DEVIATION: '偏航（偏离报备航线）',
-  TIME_WINDOW_OVERRUN: '超出计划时间窗', NIGHT_FLIGHT: '夜间飞行', BVLOS_EXCEEDED: '超出目视视距', PLAN_ALTITUDE_EXCEEDED: '超出计划高度带', TEMPORARY_RESTRICTION_ACTIVE: '临时管制生效中',
+  TIME_WINDOW_OVERRUN: '超出任务时间窗', NIGHT_FLIGHT: '夜间飞行', BVLOS_EXCEEDED: '超出目视视距', PLAN_ALTITUDE_EXCEEDED: '超出任务高度带', TEMPORARY_RESTRICTION_ACTIVE: '临时管制生效中',
   NO_AUTHORIZATION: '无飞行授权', BOUNDARY_POLICY_UNKNOWN: '碰到空域边界时如何判定，规则尚未明确', POSITION_UNKNOWN: '位置未知',
   ALTITUDE_DATUM_OR_RANGE_UNKNOWN: '高度基准或范围未知', VERSION_AMBIGUOUS: '无法确定应使用哪一版空域规则', CORRIDOR_WIDTH_UNKNOWN: '航线走廊宽度未知',
-  ROUTE_GEOMETRY_UNKNOWN: '航线位置无法确认', PLAN_TIME_UNKNOWN: '计划时间未知', PILOT_POSITION_UNAVAILABLE: '飞手位置未知', NO_PLAN: '无计划',
+  ROUTE_GEOMETRY_UNKNOWN: '航线位置无法确认', PLAN_TIME_UNKNOWN: '任务时间未知', PILOT_POSITION_UNAVAILABLE: '飞手位置未知', NO_PLAN: '无任务',
   STATE_STALE: '状态已过期', NO_STATE: '无目标状态', LOW_CONFIDENCE: '置信度不足', CONFIDENCE_UNKNOWN: '置信度未知', TRACK_DEGRADED: '轨迹点不足',
-  TRACK_BRIDGED: '轨迹存在断点', PLAN_MATCH_UNDETERMINED: '计划匹配不可判定', PLAN_MATCHER_UNAVAILABLE: '计划匹配不可用',
-  NO_PLAN_CANDIDATE: '没有候选计划', PLAN_AMBIGUOUS: '多个计划同优', IDENTITY_CLUE_MISSING: '身份线索缺失', PLAN_IDENTITY_UNKNOWN: '计划未登记机身序列号',
-  IDENTITY_MISMATCH: '编号不匹配', TIME_WINDOW_MISMATCH: '不在计划时段', CORRIDOR_MISMATCH: '不在航线走廊内',
+  TRACK_BRIDGED: '轨迹存在断点', PLAN_MATCH_UNDETERMINED: '任务匹配不可判定', PLAN_MATCHER_UNAVAILABLE: '任务匹配不可用',
+  NO_PLAN_CANDIDATE: '没有候选任务', PLAN_AMBIGUOUS: '多个任务同优', IDENTITY_CLUE_MISSING: '身份线索缺失', PLAN_IDENTITY_UNKNOWN: '任务未登记机身序列号',
+  IDENTITY_MISMATCH: '编号不匹配', TIME_WINDOW_MISMATCH: '不在任务时段', CORRIDOR_MISMATCH: '不在航线走廊内',
   TAKEOFF_POINT_UNAVAILABLE: '起降点未知', PILOT_UNIT_UNAVAILABLE: '飞手/单位未知',
-  RULE_CHECKS_INCOMPLETE: '必要检查尚未完整执行', PLAN_AUTHORIZATION_UNVERIFIED: '缺少可核验的计划授权依据',
+  RULE_CHECKS_INCOMPLETE: '必要检查尚未完整执行', PLAN_AUTHORIZATION_UNVERIFIED: '缺少可核验的任务授权依据',
   BINARY_CONCLUSION_UNRESOLVED: '尚不能明确判为合法或非法', DEMO_RULE_PARAMETERS: '真实观测采用了未经确认的演示参数',
   PARAMETER_STATUS_UNKNOWN: '规则参数确认状态未知', ALGORITHM_RESULT_UNAVAILABLE: '该记录未保存判定可靠性结果',
   DECISIVE_EVIDENCE_MISSING: '缺少支撑结论的明确事实'
@@ -50,12 +52,12 @@ export const legalStatusText = code => LEGAL_STATUS_TEXT[code] || (code ? String
 const VERSION_STATUS_TEXT = { DRAFT: '草稿', PUBLISHED: '已发布', RETIRED: '已退役' };
 const RULE_SET_LABEL = { 'LEGALITY-DEMO': '合法性研判演示规则集', 'SPACE-RISK-DEMO': '空中异物风险演示规则集' };
 const PARAM_KEY_TEXT = {
-  time_window_min: '计划时间窗（分钟）', corridor_tolerance_m: '走廊容差（米）', tolerance_m: '偏离容差（米）', grace_min: '时间窗宽限（分钟）',
+  time_window_min: '任务时间窗（分钟）', corridor_tolerance_m: '走廊容差（米）', tolerance_m: '偏离容差（米）', grace_min: '时间窗宽限（分钟）',
   timezone: '时区', night_from: '夜航开始（时）', night_to: '夜航结束（时）', vlos_m: '目视视距（米）', kinds: '适用空域类型',
   fresh_seconds: '轨迹数据最长有效时间（秒）', track_points: '取用轨迹点数', conf_min: '置信度下限', min_points: '最少轨迹点数', gap_seconds: '允许断点（秒）',
-  no_plan_status: '无计划时的结论', ignore_undetermined_rules: '不可判定时不影响结论的规则', dedup_window_min: '告警合并窗口（分钟）',
+  no_plan_status: '无任务时的结论', ignore_undetermined_rules: '不可判定时不影响结论的规则', dedup_window_min: '告警合并窗口（分钟）',
   upgrade_window_min: '告警升级窗口（分钟）', auto_close_min: '告警自动关闭（分钟）', severity_by_grade: '等级对应告警级别',
-  plan_window_pad_min: '计划前后延伸（分钟）', corridor_near_m: '邻近范围（米）'
+  plan_window_pad_min: '任务前后延伸（分钟）', corridor_near_m: '邻近范围（米）'
 };
 const PARAM_VALUE_TEXT = {
   PROHIBITED: '禁飞区', RESTRICTED: '限制区', ALTITUDE_LIMIT: '限高区', PERMITTED: '适飞区', TEMPORARY_CONTROL: '临时管制区',
@@ -65,7 +67,7 @@ const PARAM_VALUE_TEXT = {
 function demoNoteText(text) { return String(text || '').replace(/v\d+：?/g, '').replace(/契约 DEMO 参数目录/g, '演示参数').replace(/尚未业务确认/g, '尚未经业务方确认').trim(); }
 function paramKeyText(key) {
   if (PARAM_KEY_TEXT[key]) return PARAM_KEY_TEXT[key];
-  if (key.startsWith('w.')) return `权重 · ${({ violation: '违规事实', plan_match: '计划匹配', airspace: '空域', track: '轨迹', confidence: '置信度' })[key.slice(2)] || key.slice(2)}`;
+  if (key.startsWith('w.')) return `权重 · ${({ violation: '违规事实', plan_match: '任务匹配', airspace: '空域', track: '轨迹', confidence: '置信度' })[key.slice(2)] || key.slice(2)}`;
   if (key.startsWith('severity.')) return `严重度 · ${RULE_REASON_TEXT[key.slice(9)] || key.slice(9)}`;
   if (key.startsWith('grade.')) return `等级分界 · ${({ high: '高', medium: '中' })[key.slice(6)] || key.slice(6)}`;
   return key;
@@ -153,10 +155,15 @@ function intro(evaluation) {
   const operatorNote = focus.needsReview
     ? '当前证据不足，结论暂不能可靠确认，请根据下列原因核对信息缺口。'
     : focus.note;
+  const assurance = evaluation.decision_assurance;
   const rows = [
     ['复核状态', esc(reviewStateText(evaluation.review?.state))],
-    ['计划匹配', esc(planMatchText(evaluation.plan_match_code)) + (evaluation.plan_no ? `　${esc(evaluation.plan_no)}` : '')],
-    evaluation.violation_reasons?.length ? ['违规原因', esc(evaluation.violation_reasons.map(ruleReasonText).join('、'))] : null
+    ['判定可靠性', esc(assurance ? decisionAssuranceStatusText(assurance.status) : '旧记录未提供判定可靠性')],
+    assurance?.algorithm_version ? ['算法版本', esc(assurance.algorithm_version)] : null,
+    assurance?.reasons?.length ? ['可靠性原因', esc(assurance.reasons.map(ruleReasonText).join('、'))] : null,
+    ['任务匹配', esc(planMatchText(evaluation.plan_match_code)) + (evaluation.plan_no ? `　${esc(evaluation.plan_no)}` : '')],
+    evaluation.violation_reasons?.length ? ['违规原因', esc(evaluation.violation_reasons.map(ruleReasonText).join('、'))] : null,
+    evaluation.unknown_reasons?.length ? ['未知原因', esc(evaluation.unknown_reasons.map(ruleReasonText).join('、'))] : null
   ].filter(Boolean).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join('');
   return `<div class="legality-review-intro">
     <section class="legality-review-focus ${focus.needsReview ? 'is-attention' : ''}">

@@ -249,7 +249,9 @@ class Platform:
                 body['edge_id'] = external + '-edge'
             record = self._onboard_or_reuse(body, 'sim-onboard-'+external)
             record = self._sync_sensing_profile(record, d.get('coverage'), external)
-            manifest['devices'][device_id] = {'external_id': external, 'edge_id': body.get('edge_id'), 'platform_id': record['device']['device_id'], 'kind': d['kind']}
+            # source_id 供设备开始、恢复上报时报健康状态用（device_health.py）。
+            manifest['devices'][device_id] = {'external_id': external, 'edge_id': body.get('edge_id'), 'platform_id': record['device']['device_id'],
+                                              'kind': d['kind'], 'source_id': record.get('source_id')}
             if d['kind'] == 'eo':
                 binding = self.call('GET', '/devices/' + record['device']['device_id'] + '/protocol-status')['details']
                 if binding.get('edge_id') != body['edge_id'] or binding.get('external_device_id') != external:
@@ -320,7 +322,7 @@ class Prerequisites:
 
     def query(self, statement):
         if not self.database:
-            raise ValueError('计划/区域尚未配套：请用 --database 指定当前本机测试库启动模拟器')
+            raise ValueError('任务/区域尚未配套：请用 --database 指定当前本机测试库启动模拟器')
         command = ['docker', 'exec', '-i']
         if self.schema is not None:
             # Per-process only: never fall back to public business tables or load a psqlrc override.

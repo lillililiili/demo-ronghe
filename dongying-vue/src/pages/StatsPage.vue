@@ -21,6 +21,13 @@ const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&':
 usePageChrome('stats');
 
 const S = ref(null);
+const observed = computed(() => S.value?.observationMetrics);
+const observedNumber = value => value == null ? '暂不可统计' : Number(value).toLocaleString('zh-CN', { maximumFractionDigits: 3 });
+const observedKpis = computed(() => [
+  { label: '有效监测时长（秒）', value: observedNumber(observed.value?.duration_seconds), color: 'blue', icon: 'radar', caption: '按目标累计连续有效片段' },
+  { label: '已观测里程（米）', value: observedNumber(observed.value?.distance_meters), color: 'cyan', icon: 'radar', caption: '已观测水平折线距离' },
+  { label: '参与累计目标数', value: observed.value?.measured_targets ?? '—', color: 'blue', icon: 'radar', caption: '不是飞行架次' }
+]);
 // 统计口径（2026-10-07 起）：真实设备和设备模拟器的数据都算，系统自带的演示样例不算；正式环境只有真实设备。
 const sourceLabel = computed(() => ({ live: '数据来源：真实设备', replay: '数据来源：设备模拟器', mixed: '数据来源：真实设备和设备模拟器', mock: '数据来源：系统自带的演示样例', unknown: '所选时间内暂无数据' }[S.value?.sourceMode] || '数据来源未明确'));
 const generatedLabel = computed(() => S.value?.generatedAt ? new Date(S.value.generatedAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }) + '（北京时间）' : '未知');
@@ -63,7 +70,7 @@ const kpiList = computed(() => {
     { label: '非法目标数', value: metricNumber(stats.illegal), color: 'red', icon: 'alert', desc: metricReason('illegal') },
     { label: '处罚案件数', value: metricNumber(stats.punish), color: 'orange', icon: 'gavel', desc: metricReason('punish') },
     { label: '接入设备总数', value: metricNumber(devices ? devices.total : null), color: 'cyan', icon: 'device', desc: deviceDesc },
-    { label: '高风险目标数', value: metricNumber(stats.highRisk), color: 'red', icon: 'zone', desc: metricReason('high_risk') }
+    { label: '异物高风险目标数', value: metricNumber(stats.highRisk), color: 'red', icon: 'zone', desc: metricReason('high_risk') }
   ].map(item => ({ ...item, caption: escapeHtml(item.desc), desc: undefined }));
 });
 
@@ -87,7 +94,7 @@ function regionTable() {
     { t: '目标', align: 'center', cls: 'num', render: r => metricNumber(r.total) },
     { t: '非法', align: 'center', cls: 'num', render: r => `<span style="color:#ff8b95">${metricNumber(r.illegal)}</span>` },
     { t: '案件', align: 'center', cls: 'num', render: r => metricNumber(r.punish) },
-    { t: '高危', align: 'center', cls: 'num', render: r => `<span style="color:#ffb083">${metricNumber(r.highRisk)}</span>` }
+    { t: '异物高危', align: 'center', cls: 'num', render: r => `<span style="color:#ffb083">${metricNumber(r.highRisk)}</span>` }
   ], stats.regions).replace('</table>', `<tfoot><tr>
     <td colspan="2">合计</td>
     <td class="num">${metricNumber(stats.total)}</td>
@@ -245,12 +252,27 @@ function onRegionTab(e) {
 
     <div v-if="S" class="stats-basis">{{ sourceLabel }} · 生成于 {{ generatedLabel }}；目标按首次发现时间归属，合法性与风险为生成时状态。</div>
     <UKpis v-if="S" :list="kpiList" />
+    <UPanel v-if="observed" title="监测时长与里程" body-style="display:block">
+      <p class="stats-note">{{ observed.reason }}。{{ observed.basis }}</p>
+      <UKpis :list="observedKpis" />
+      <p class="stats-note">有效片段 {{ observed.valid_segments }} 个；数据来源：{{ observed.source_modes.map(mode => ({ live: '真实设备', replay: '设备模拟器', mock: '模拟数据' }[mode] || mode)).join('、') || '暂无记录' }}。</p>
+      <details v-if="observed.days.length || observed.exclusions.length" class="stats-observation-details">
+        <summary>查看每日累计与未计入原因</summary>
+        <div class="stats-observation-table">
+          <table v-if="observed.days.length" class="tb">
+            <thead><tr><th>日期（北京时间）</th><th>有效监测时长（秒）</th><th>已观测里程（米）</th></tr></thead>
+            <tbody><tr v-for="day in observed.days" :key="day.date"><td>{{ day.date }}</td><td>{{ observedNumber(day.duration_seconds) }}</td><td>{{ observedNumber(day.distance_meters) }}</td></tr></tbody>
+          </table>
+        </div>
+        <p v-for="item in observed.exclusions" :key="item.code" class="stats-note">未计入：{{ item.reason }}，{{ item.count }} 个点或相邻片段。</p>
+      </details>
+    </UPanel>
 
     <div v-if="S" class="stats-chart-grid stats-overview-grid">
       <UPanel title="目标趋势" panel-style="flex:1.5">
         <div id="sTrend" style="height:100%"></div>
       </UPanel>
-      <UPanel title="各风险等级分布" sub="目标数" panel-style="flex:.75"><div v-if="!metricVisible('by_risk')" class="stats-unavailable">暂不可统计<br>{{ metricReason('by_risk') }}</div><div v-else id="sRisk" style="height:100%"></div></UPanel>
+      <UPanel title="各异物风险等级分布" sub="目标数" panel-style="flex:.75"><div v-if="!metricVisible('by_risk')" class="stats-unavailable">暂不可统计<br>{{ metricReason('by_risk') }}</div><div v-else id="sRisk" style="height:100%"></div></UPanel>
       <UPanel title="各类型目标占比" panel-style="flex:1.25"><div v-if="!metricVisible('by_type')" class="stats-unavailable">暂不可统计<br>{{ metricReason('by_type') }}</div><div v-else id="sType" style="height:100%"></div></UPanel>
     </div>
 
@@ -293,6 +315,8 @@ function onRegionTab(e) {
 </template>
 
 <style scoped>
+.stats-observation-details summary { cursor:pointer; padding:10px 0; }
+.stats-observation-table { max-height:320px; overflow:auto; }
 .stats-filters { border: 0; }
 .stats-date-filter { --filter-field-width: 340px; }
 .stats-page { container-type:inline-size; }

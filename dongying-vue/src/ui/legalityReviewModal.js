@@ -10,7 +10,7 @@ import { legalityApi } from '@/services/legalityApi.js';
 import { isUncertainOutcome } from '@/services/apiClient.js';
 
 export const LEGAL_STATUS_TEXT = {
-  LEGAL: '合法', ABNORMAL: '异常', ILLEGAL: '非法', UNDETERMINED: '不可判定', NOT_APPLICABLE: '不适用'
+  LEGAL: '合法', ABNORMAL: '异常', ILLEGAL: '非法', UNDETERMINED: '不可判定', NOT_APPLICABLE: '不适用', REJECTED: '系统误判'
 };
 export const REVIEW_STATE_TEXT = {
   PENDING_REVIEW: '待人工复核', CONFIRMED: '已确认', REJECTED: '已驳回', OVERRIDDEN: '已改判', SUPERSEDED: '已被重算取代'
@@ -50,7 +50,7 @@ export const legalStatusText = code => LEGAL_STATUS_TEXT[code] || (code ? String
 
 /* 规则参数的键与值都是引擎内部名；只读弹窗上用中文。 */
 const VERSION_STATUS_TEXT = { DRAFT: '草稿', PUBLISHED: '已发布', RETIRED: '已退役' };
-const RULE_SET_LABEL = { 'LEGALITY-DEMO': '合法性研判演示规则集', 'SPACE-RISK-DEMO': '空中异物风险演示规则集' };
+const RULE_SET_LABEL = { 'LEGALITY-DEMO': '合法性研判规则集', 'SPACE-RISK-DEMO': '空间安全风险规则集' };
 const PARAM_KEY_TEXT = {
   time_window_min: '任务时间窗（分钟）', corridor_tolerance_m: '走廊容差（米）', tolerance_m: '偏离容差（米）', grace_min: '时间窗宽限（分钟）',
   timezone: '时区', night_from: '夜航开始（时）', night_to: '夜航结束（时）', vlos_m: '目视视距（米）', kinds: '适用空域类型',
@@ -131,7 +131,7 @@ async function settleUncertain({ error, evaluationId, action, expectedVersion, r
     releaseKey(evaluationId, action);
     closeModal();
     toast(stillAllowed
-      ? `提交结果未确认，已刷新当前状态：复核已更新为第${version}次（${reviewStateText(latest.review?.state)}），请核对历史后重新操作。`
+      ? `提交结果未确认，已刷新当前状态：${reviewStateText(latest.review?.state)}，请核对历史。`
       : `提交结果未确认，已刷新当前状态：当前为「${reviewStateText(latest.review?.state)}」，该动作已不可执行。`, 'err');
     return true;
   }
@@ -225,7 +225,7 @@ export function openLegalityReview({ evaluation, refresh, onDone } = {}) {
         const result = await legalityApi.reviseEvaluation(evaluationId, body, key);
         releaseKey(evaluationId, action);
         closeModal();
-        toast(`复核完成：${reviewStateText(result?.review?.state)}（第${Number(result?.review?.version)}次复核）`, 'ok');
+        toast(`复核完成：${reviewStateText(result?.review?.state)}`, 'ok');
         if (refresh) await refresh(result);
         if (onDone) onDone(result);
       } catch (error) {

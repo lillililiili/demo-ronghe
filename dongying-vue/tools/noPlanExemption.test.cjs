@@ -16,9 +16,9 @@ test('a legal no-task flight explains the height and the ordinary-airspace rule 
     '没有报备任务；不超过 120 米，不在禁飞区、管制区、限高区、临时管控区内，按规定无需申请');
 });
 
-test('list rows without check details get the short sentence only for a legal result with no task at all', async () => {
-  const { noPlanExemptReason, NO_PLAN_EXEMPT_SHORT } = await load('ui/noPlanExemption.js');
-  assert.equal(noPlanExemptReason({ legal_status: 'LEGAL', plan_match_code: 'NONE' }), NO_PLAN_EXEMPT_SHORT);
+test('list rows without explicit exemption facts do not infer a height or airspace exemption', async () => {
+  const { noPlanExemptReason } = await load('ui/noPlanExemption.js');
+  assert.equal(noPlanExemptReason({ legal_status: 'LEGAL', plan_match_code: 'NONE' }), '');
   // 有本机候选任务、对上了任务、非法或不可判定的，都不是这一类。
   assert.equal(noPlanExemptReason({ legal_status: 'LEGAL', plan_match_code: 'NONE', plan_id: 'p-1' }), '');
   assert.equal(noPlanExemptReason({ legal_status: 'LEGAL', plan_match_code: 'FULL', plan_id: 'p-1' }), '');

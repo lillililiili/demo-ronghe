@@ -80,3 +80,130 @@ test('取证上传带幂等键，只报取证距今毫秒数，不带客户端�
   assert.equal(calls[1][1].body.get('capture_age_ms'), '0');
   assert.match(calls[1][1].idempotencyKey, /^eo-capture-/);
 });
+
+function recordingContext(overrides = {}) {
+  const context = vm.createContext({ Blob, DOMException, setTimeout, clearTimeout, queueMicrotask, ...overrides });
+  vm.runInContext(readFileSync(path.join(__dirname, '../src/components/video/eoRecording.js'), 'utf8')
+    .replace(/\bexport /g, ''), context);
+  return vm.runInContext('({ captureVideoStream, recordVideo })', context);
+}
+
+test('直播捕获轨道延迟到达时等待轨道，不复制空流；取消准备释放轨道', async () => {
+  const video = { kind: 'video', readyState: 'live', stop() { this.readyState = 'ended'; } };
+  const audio = { kind: 'audio', readyState: 'live', stop() { this.readyState = 'ended'; } };
+  class Stream extends EventTarget {
+    constructor(tracks = []) { super(); this.tracks = tracks; }
+    getTracks() { return this.tracks; }
+    getVideoTracks() { return this.tracks.filter(t => t.kind === 'video'); }
+    getAudioTracks() { return this.tracks.filter(t => t.kind === 'audio'); }
+  }
+  const source = new Stream([audio]);
+  const media = { readyState: 4, videoWidth: 640, videoHeight: 360, paused: false, ended: false, captureStream: () => source };
+  const { captureVideoStream } = recordingContext({ MediaStream: Stream });
+  const pending = captureVideoStream(media, new AbortController().signal);
+  source.tracks.push(video); source.dispatchEvent(new Event('addtrack'));
+  const stream = await pending;
+  assert.equal(stream.getVideoTracks()[0], video);
+  assert.equal(stream.getAudioTracks().length, 0);
+  assert.equal(audio.readyState, 'ended');
+  const anotherAudio = { ...audio, readyState: 'live' };
+  const controller = new AbortController();
+  const cancel = captureVideoStream({ ...media, captureStream: () => new Stream([anotherAudio]) }, controller.signal);
+  controller.abort();
+  await assert.rejects(cancel, { name: 'AbortError' });
+  assert.equal(anotherAudio.readyState, 'ended');
+});
+
+test('编码器声称支持但异步启动失败时尝试下一格式，停止后不自动重启', async () => {
+  const capture = await import('../src/components/video/eoCapture.js');
+  const formats = capture.recordingFormats(() => true), instances = [];
+  class Recorder {
+    constructor(stream, options) { this.options = options; this.state = 'inactive'; instances.push(this); }
+    start() { this.state = 'recording'; }
+    stop() { this.state = 'inactive'; this.onstop(); }
+    fail() { this.onerror(); this.stop(); }
+  }
+  const { recordVideo } = recordingContext({ MediaRecorder: Recorder });
+  let result, failure;
+  const session = recordVideo({}, { formats, onStop: (blob, format) => { result = { blob, format }; }, onError: message => { failure = message; } });
+  await new Promise(resolve => queueMicrotask(resolve));
+  instances[0].fail();
+  assert.equal(instances.length, 2);
+  instances[1].ondataavailable({ data: new Blob(['encoded-frames']) });
+  session.stop();
+  assert.equal(failure, undefined);
+  assert.equal(result.format.mimeType, formats[1].mimeType);
+  assert.equal(await result.blob.text(), 'encoded-frames');
+  const stopped = recordVideo({}, { formats, onStop() { assert.fail('编码失败不得保存成功'); }, onError: message => { failure = message; } });
+  await new Promise(resolve => queueMicrotask(resolve));
+  instances[2].onerror();
+  stopped.stop();
+  assert.equal(instances.length, 3);
+  assert.match(failure, /编码中断/);
+});
+
+test('全部编码器失败明确报错；已经产生数据后失败不得拼接其他编码或保存损坏文件', async () => {
+  const { recordingFormats } = await import('../src/components/video/eoCapture.js');
+  const formats = recordingFormats(() => true), instances = [], errors = [];
+  class Recorder {
+    constructor() { instances.push(this); }
+    start() { this.state = 'recording'; }
+    fail() { this.onerror(); this.state = 'inactive'; this.onstop(); }
+  }
+  const { recordVideo } = recordingContext({ MediaRecorder: Recorder });
+  const options = { formats, onStop() { assert.fail('不得保存损坏文件'); }, onError: message => errors.push(message) };
+  recordVideo({}, options);
+  await new Promise(resolve => queueMicrotask(resolve));
+  for (let i = 0; i < formats.length; i++) instances[i].fail();
+  assert.equal(instances.length, formats.length);
+  assert.match(errors[0], /无法启动视频编码/);
+  recordVideo({}, options);
+  await new Promise(resolve => queueMicrotask(resolve));
+  instances.at(-1).ondataavailable({ data: new Blob(['partial']) });
+  instances.at(-1).fail();
+  assert.equal(instances.length, formats.length + 1);
+  assert.match(errors[1], /编码中断/);
+});
+
+test('短暂缓冲恢复不停止录像，持续缓冲与实际暂停停止并释放轨道', async () => {
+  const helpers = await import('../src/components/video/eoCapture.js');
+  const watchers = [], timers = new Map();
+  let timerId = 0, stops = 0, released = 0;
+  const props = { media: { paused: false, ended: false }, playing: true, targetId: 'target', eventId: '', video: { stream_id: 'stream' } };
+  const context = vm.createContext({
+    ...helpers, Blob, File, AbortController, URLSearchParams, performance,
+    defineProps: () => props, ref: value => ({ value }), computed: fn => ({ get value() { return fn(); } }),
+    watch: (source, callback) => watchers.push({ source, callback }), onBeforeUnmount() {},
+    MediaRecorder: { isTypeSupported: () => true }, hasPermission: () => true, canAccessRoute: () => false,
+    captureVideoStream: async () => ({ getTracks: () => [{ stop: () => released++ }] }),
+    recordVideo: (_stream, options) => ({ stop() { stops++; options.onStop(new Blob(['frames']), helpers.recordingFormat(() => true)); } }),
+    deviceApi: { captureTargetVideo: async () => ({}) }, newIdempotencyKey: () => 'qa', toast() {},
+    setInterval: () => ++timerId, clearInterval() {},
+    setTimeout: (fn, delay) => { const id = ++timerId; timers.set(id, { fn, delay }); return id; },
+    clearTimeout: id => timers.delete(id)
+  });
+  const source = readFileSync(path.join(__dirname, '../src/components/video/EoEvidenceCapture.vue'), 'utf8')
+    .split('<script setup>')[1].split('</script>')[0].replace(/import[\s\S]*?from ['"][^'"]+['"];\r?\n/g, '');
+  vm.runInContext(source, context);
+  const start = vm.runInContext('startRecording', context);
+  const playbackChanged = value => { props.playing = value; watchers[0].callback(value); };
+  await start();
+  playbackChanged(false);
+  assert.equal(stops, 0);
+  assert.ok([...timers.values()].some(timer => timer.delay === 3000));
+  playbackChanged(true);
+  assert.ok(![...timers.values()].some(timer => timer.delay === 3000));
+  assert.equal(stops, 0);
+  playbackChanged(false);
+  [...timers.values()].find(timer => timer.delay === 3000).fn();
+  assert.equal(stops, 1);
+  assert.equal(released, 1);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(vm.runInContext('busy.value', context), false);
+  playbackChanged(true);
+  await start();
+  props.media.paused = true;
+  playbackChanged(false);
+  assert.equal(stops, 2);
+  assert.equal(released, 2);
+});

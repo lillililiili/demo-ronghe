@@ -349,7 +349,7 @@ export const CORRIDOR_RELATION_LABEL = { INSIDE: '航线走廊内', NEAR: '邻�
 export const OBJECT_TREND_LABEL = { RISING: '数量上升', FLAT: '数量平稳', FALLING: '数量下降', UNKNOWN: '趋势未知' };
 
 // 规则集代码 → 名称（与种子/迁移里的 rule_set.name 一致）；页面只说名称与第几版，代码留在 title。
-export const RULE_SET_LABEL = { 'LEGALITY-DEMO': '合法性研判演示规则集', 'SPACE-RISK-DEMO': '空中异物风险演示规则集' };
+export const RULE_SET_LABEL = { 'LEGALITY-DEMO': '合法性研判规则集', 'SPACE-RISK-DEMO': '空间安全风险规则集' };
 export const RULE_RESULT_LABEL = { PASS: '通过', FAIL: '不通过', UNDETERMINED: '不可判定' };
 // UNDETERMINED 是引擎判不了，不是等人来确认：与 LegalityPage、复核弹窗保持同一个说法。
 export const LEGALITY_LABEL = { LEGAL: '合法', ABNORMAL: '异常', ILLEGAL: '非法', UNDETERMINED: '不可判定', NOT_APPLICABLE: '不适用' };

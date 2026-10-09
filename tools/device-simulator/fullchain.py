@@ -569,6 +569,8 @@ class FullChain:
                 item['uav_sn']=self.manifest['targets'][key]['uav_sn']
                 if target.get('pilotPoint'):item['pilot_longitude'],item['pilot_latitude']=coordinates(target['pilotPoint'])
             if target['kind']=='balloon':item['subtype']='BALLOON'
+            if target['kind']=='bird':
+                item['object_count']=int(target['count'])
             if isinstance(sources, list):
                 if any(self.observation_device_reporting(devices[d], elapsed)
                        for d in self.target_device_ids(target, devices)):

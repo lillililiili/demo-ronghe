@@ -2,8 +2,8 @@
 /* 模块级页面状态：跨导航保留分页、筛选、选中项与证据页签；业务事实始终重新读取标准 API。 */
 const S = {
   st: {
-    page: 1, size: 10, legal: '', district: '', review: '', reviewLocation: 'LEGALITY', plan: '',
-    selectedEvaluationId: null, revisionPage: 1, revisionPageSize: 10,
+    page: 1, size: 10, legal: '', district: '', review: '', reviewLocation: '', plan: '',
+    selectedEvaluationId: null, selectedTargetId: null, revisionPage: 1, revisionPageSize: 10,
     evidenceTab: 'space'
   }
 };
@@ -46,7 +46,9 @@ const root = ref(null);
 const st = reactive(S.st);
 /* 列表、统计与目标定位共用服务端无人机范围；未匹配计划的无人机仍参与研判。
    页面只展示服务端字段，不在前端推导结论，接口失败不回退任何演示数据。 */
-const uavScope = { mode: 'ACTIVE', latest_only: true, object_type_code: 'UAV' };
+const uavScope = { mode: 'ACTIVE', latest_only: true, object_type_code: 'UAV', sort: 'target_created_at_desc' };
+// 目标身份是列表与视频的稳定标识；研判记录 ID 只用于读取当次结论及操作。
+const subjectKey = item => item?.target_id ? `target:${item.target_id}` : `evaluation:${item?.evaluation_id || ''}`;
 const items = ref([]);
 const totalCount = ref(0);
 const selectedEvaluation = ref(null);
@@ -72,12 +74,14 @@ let detailToken = 0;
 let revisionsToken = 0;
 let kpiToken = 0;
 let pageActive = true;
+let followLatestSelection = false;
 
 const conclusionMeta = {
   LEGAL: { label: '合法', tone: 'green' },
   ABNORMAL: { label: '异常', tone: 'amber' },
   ILLEGAL: { label: '非法', tone: 'red' },
   UNDETERMINED: { label: '不可判定', tone: 'amber' },
+  REJECTED: { label: '系统误判', tone: 'gray' },
   NOT_APPLICABLE: { label: '不适用', tone: 'amber' }
 };
 const resultMeta = {
@@ -140,7 +144,12 @@ function openPlan(planId) {
   else location.hash = `#/flights?plan=${encodeURIComponent(planId)}`;
 }
 
-const selectedConclusion = computed(() => conclusionMeta[selectedEvaluation.value?.legal_status]
+// 生效结论由服务端统一计算；原始系统结论继续用于呈现规则依据。
+const effectiveStatus = item => item?.effective_legal_status ?? item?.legal_status;
+const rejectedConclusion = item => effectiveStatus(item) === 'REJECTED';
+const hasManualConclusion = item => !!item?.effective_legal_status && !!item?.review?.manual_status
+  && item.mode === 'ACTIVE' && ['CONFIRMED', 'OVERRIDDEN', 'SUPERSEDED'].includes(item.review.state);
+const selectedConclusion = computed(() => conclusionMeta[effectiveStatus(selectedEvaluation.value)]
   || { label: '尚未选择研判', tone: 'amber' });
 const primaryReason = computed(() => evaluationReason(selectedEvaluation.value));
 // 新-29：飞手离得远不算违规，结论下面照样写“飞手离无人机约 N 米（超过 500 米），是否经批准请核实”。
@@ -158,7 +167,9 @@ const unlistedUnknowns = computed(() => reviewFocus.value.unknownReasons.filter(
 const assuranceReasons = computed(() => reviewFocus.value.assuranceReasons || []);
 const c01Facts = computed(() => selectedEvaluation.value?.hit_details?.find(hit => hit.rule_code === 'C01')?.facts || null);
 const unconfirmedParams = item => !!item && item.legal_status !== 'NOT_APPLICABLE' && item.param_status !== 'CONFIRMED';
-const parameterNote = item => unconfirmedParams(item) ? '规则参数待业务确认，不能形成正式判定' : '规则参数已确认';
+const parameterNote = item => unconfirmedParams(item)
+  ? hasManualConclusion(item) || rejectedConclusion(item) ? '原始系统规则参数待业务确认' : '规则参数待业务确认，不能形成正式判定'
+  : '规则参数已确认';
 // 告警关联可能因权限被隐藏；已有触发结果却没有可读 ID 时不能退回本页复核。
 const reviewInAlarm = computed(() => !!selectedEvaluation.value?.alarm_id
   || (!!selectedEvaluation.value?.alarm_outcome_kind && selectedEvaluation.value.alarm_outcome_kind !== 'SUPPRESSED_SHADOW'));
@@ -175,7 +186,8 @@ function kpiPlaceholder(desc) {
     { label: '研判总数', value: '—', color: 'blue', icon: 'database', desc },
     { label: '合法', value: '—', color: 'green', icon: 'shield', desc },
     { label: '非法', value: '—', color: 'red', icon: 'ban', desc },
-    { label: '不可判定', value: '—', color: 'gray', icon: 'clock', desc }
+    { label: '不可判定', value: '—', color: 'gray', icon: 'clock', desc },
+    { label: '系统误判', value: '—', color: 'gray', icon: 'clipboard', desc }
   ];
 }
 function evidenceIcon(kind) {
@@ -196,12 +208,13 @@ function checkIcon(hit) {
 /* 列表是 ACTIVE 最新研判；深链仍可能打开被替代的旧结果，历史结论保持静态。 */
 function evaluationAbnormal(item) {
   return UI.abnormalActive({
-    abnormal: item?.mode === 'ACTIVE' && ['ABNORMAL', 'ILLEGAL'].includes(item?.legal_status),
+    abnormal: item?.mode === 'ACTIVE' && ['ABNORMAL', 'ILLEGAL'].includes(effectiveStatus(item)),
     historical: !item || item.mode !== 'ACTIVE' || !!item.superseded_by_evaluation_id
   });
 }
 function ruleName(code) { return RULE_CODE_TEXT[code] || '规则'; }
 function gradeText(item) {
+  if (effectiveStatus(item) !== item?.legal_status) return '—';
   if (!item?.grade) return '—';
   const score = item.score != null ? ` ${Number(item.score).toFixed(0)}分` : '';
   return `${GRADE_TEXT[item.grade] || item.grade}${score}`;
@@ -228,6 +241,8 @@ function shortTime(value) {
 }
 function evaluationReason(item) {
   if (!item) return '尚未取得研判详情';
+  if (rejectedConclusion(item)) return '人工复核认定系统误判，原判定已驳回';
+  if (hasManualConclusion(item)) return `人工复核${item.review.state === 'CONFIRMED' ? '确认为' : '结论：'}${legalStatusText(effectiveStatus(item))}`;
   const violations = (item.violation_reasons || []).map(ruleReasonText).join('、');
   if (unconfirmedParams(item)) return demoParamReason(item, violations);
   if (item.original_legal_status === 'ABNORMAL') return `${violations ? `${violations}；` : ''}历史记录未明确合法或非法，保留原始依据。`;
@@ -317,6 +332,7 @@ function reviewText(item) {
   return reviewStateText(item?.review?.state);
 }
 function conclusionQualificationText(item) {
+  if (hasManualConclusion(item) || rejectedConclusion(item)) return '';
   if (unconfirmedParams(item)) return '参数未确认';
   if (!['LEGAL', 'ILLEGAL'].includes(item?.legal_status)) return '';
   const focus = legalityReviewFocus(item);
@@ -394,7 +410,8 @@ async function loadQueue(options = {}) {
         if (token !== listToken) return;
         deepLink = located.items?.[0] || null;
         if (!deepLink) deepLinkNotice.value = `目标 ${options.targetNo || options.targetId} 没有可见的无人机研判记录。`;
-        else if (!st.plan) st.legal = conclusionMeta[deepLink.legal_status] && deepLink.legal_status !== 'NOT_APPLICABLE' ? deepLink.legal_status : 'UNDETERMINED';
+        else if (!st.plan) st.legal = rejectedConclusion(deepLink) ? ''
+          : conclusionMeta[effectiveStatus(deepLink)] && effectiveStatus(deepLink) !== 'NOT_APPLICABLE' ? effectiveStatus(deepLink) : 'UNDETERMINED';
       } catch (error) {
         if (token !== listToken) return;
         deepLinkNotice.value = `目标 ${options.targetId} 的研判定位失败：${formatApiError(error, '读取研判失败')}`;
@@ -416,7 +433,8 @@ async function loadQueue(options = {}) {
     if (deepLink) { await selectEvaluation(deepLink); return; }
     if (deepLinkNotice.value) return;
     const retainedId = options.selectId || S.st.selectedEvaluationId;
-    const retained = items.value.find(item => item.evaluation_id === retainedId);
+    const retained = items.value.find(item => item.evaluation_id === retainedId)
+      || (!options.selectId && items.value.find(item => item.target_id && item.target_id === S.st.selectedTargetId));
     if (retained) await selectEvaluation(retained);
     else if (options.selectId) await selectEvaluationById(options.selectId);
     else if (items.value[0]) await selectEvaluation(items.value[0]);
@@ -438,24 +456,38 @@ async function loadQueue(options = {}) {
   }
 }
 
-async function selectEvaluation(summary) {
-  await selectEvaluationById(summary.evaluation_id);
+async function selectEvaluation(summary, options = {}) {
+  await selectEvaluationById(summary.evaluation_id, { ...options, followLatest: true, targetId: summary.target_id });
 }
 
-async function selectEvaluationById(evaluationId) {
-  invalidateDetail();
+async function selectEvaluationById(evaluationId, options = {}) {
+  const previousId = selectedEvaluation.value?.evaluation_id;
+  const quiet = !!options.quiet && !!options.targetId && selectedEvaluation.value?.target_id === options.targetId && !detailError.value;
+  if (quiet) {
+    detailToken += 1;
+    revisionsToken += 1;
+  } else invalidateDetail();
   const token = detailToken;
+  followLatestSelection = !!options.followLatest;
   S.st.selectedEvaluationId = evaluationId;
-  selectedHitIndex.value = -1;
-  showAllChecks.value = false;
+  S.st.selectedTargetId = options.targetId || null;
+  if (!quiet) {
+    selectedHitIndex.value = -1;
+    showAllChecks.value = false;
+  }
   detailError.value = '';
-  detailLoading.value = true;
+  detailLoading.value = !quiet;
   try {
     const data = await legalityApi.getEvaluation(evaluationId);
     if (token !== detailToken) return;
+    if (options.targetId && data.target_id !== options.targetId) throw new Error('研判与所选目标不一致，请重新读取。');
     // 分类可能在列表读取后变化；旧选中项和动作回读也必须遵循本页范围。
     if (data.object_type_code !== 'UAV') {
+      invalidateDetail();
       S.st.selectedEvaluationId = null;
+      S.st.selectedTargetId = null;
+      followLatestSelection = false;
+      detailLoading.value = false;
       detailError.value = data.object_type_code && data.object_type_code !== 'UNKNOWN'
         ? '该目标不属于无人机，相关风险请在空域监测或全部风险事件中查看。'
         : '该目标尚未明确识别为无人机，不展示无人机合法性研判。';
@@ -463,26 +495,33 @@ async function selectEvaluationById(evaluationId) {
       void loadQueue({ keepSelection: true, skipSelection: true, refreshKpi: true });
       return;
     }
+    S.st.selectedTargetId = data.target_id || null;
     selectedEvaluation.value = data;
     detailLoading.value = false;
-    st.revisionPage = 1;
-    await loadRevisions();
+    if (previousId !== evaluationId) {
+      st.revisionPage = 1;
+      revisions.value = [];
+      revisionsTotal.value = 0;
+      selectedHitIndex.value = -1;
+    }
+    await loadRevisions({ quiet });
   } catch (error) {
     if (token !== detailToken) return;
     selectedEvaluation.value = null;
     revisions.value = [];
     revisionsTotal.value = 0;
     detailError.value = formatApiError(error, '读取研判详情失败');
+    if (options.quiet) throw error;
   } finally {
     if (token === detailToken) detailLoading.value = false;
   }
 }
 
-async function loadRevisions() {
+async function loadRevisions({ quiet = false } = {}) {
   const evaluation = selectedEvaluation.value;
   if (!evaluation) return;
   const token = ++revisionsToken;
-  revisionsLoading.value = true;
+  if (!quiet) revisionsLoading.value = true;
   revisionsError.value = '';
   try {
     const data = await legalityApi.listRevisions(evaluation.evaluation_id, { page: st.revisionPage, size: st.revisionPageSize });
@@ -540,9 +579,10 @@ async function loadKpi() {
     if (token !== kpiToken) return;
     kpiList.value = [
       { label: '研判总数', value: String(counts.total ?? '—'), color: 'blue', icon: 'database', desc: `正式模式，每架无人机只取最新一次；${scopeText}` },
-      { label: '合法', value: String(counts.legal ?? '—'), color: 'green', icon: 'shield', desc: '任务、时间、空域、航线都对得上' },
-      { label: '非法', value: String(counts.illegal ?? '—'), color: 'red', icon: 'ban', desc: '按规则判定违反空域、航线、高度或飞行时间要求' },
-      { label: '不可判定', value: String(counts.undetermined ?? '—'), color: 'gray', icon: 'clock', desc: '依据不足、参数未确认或历史记录尚未明确定性' }
+      { label: '合法', value: String(counts.legal ?? '—'), color: 'green', icon: 'shield', desc: '系统判定或人工复核为合法' },
+      { label: '非法', value: String(counts.illegal ?? '—'), color: 'red', icon: 'ban', desc: '系统判定或人工复核为非法' },
+      { label: '不可判定', value: String(counts.undetermined ?? '—'), color: 'gray', icon: 'clock', desc: '现有依据或人工复核尚不能确定合法性' },
+      { label: '系统误判', value: String(counts.rejected ?? '—'), color: 'gray', icon: 'clipboard', desc: '人工复核已驳回的系统判定' }
     ];
   } catch (error) {
     if (token !== kpiToken) return;
@@ -613,16 +653,20 @@ const evidenceMapHost = ref(null);
 const evidenceMapNote = ref('');
 let evidenceMap = null;
 let evidenceMapSeq = 0;
+let evidenceMapSubject = '';
+let evidenceMapBaseDraw = null;
 function destroyEvidenceMap() {
   evidenceMapSeq++;
   if (evidenceMap) { try { evidenceMap.destroy(); } catch { /* 已卸载 */ } }
   evidenceMap = null;
+  evidenceMapSubject = '';
+  evidenceMapBaseDraw = null;
 }
 async function renderEvidenceMap(evaluation) {
-  destroyEvidenceMap();
-  const my = evidenceMapSeq;
+  if (!evaluation || evidenceMapSubject !== subjectKey(evaluation)) destroyEvidenceMap();
+  const my = ++evidenceMapSeq;
   if (!evaluation) { evidenceMapNote.value = ''; return; }
-  evidenceMapNote.value = '正在读取位置…';
+  if (!evidenceMap) evidenceMapNote.value = '正在读取位置';
   let centerline = null, airspaces = [], loaded = null, trajectoryPoints = [];
   const missing = [];
   if (evaluation.route_version_id) { try { centerline = await loadRouteCenterline(evaluation.route_version_id); } catch { centerline = null; } }
@@ -631,7 +675,7 @@ async function renderEvidenceMap(evaluation) {
   if (evaluation.target_id) {
     try {
       loaded = await loadTargetPosition(evaluation.target_id, {
-        legal: legalStatusText(evaluation.legal_status),
+        legal: legalStatusText(effectiveStatus(evaluation)),
         positionOnly: true
       });
     } catch { loaded = null; }
@@ -653,7 +697,7 @@ async function renderEvidenceMap(evaluation) {
   const measured = trajectoryPoints.filter(Boolean);
   const points = overlayPoints({ centerline, airspaces, points: measured, anchor: loaded?.anchor || null });
   const flightExtent = overlayPoints({ centerline, points: measured, anchor: loaded?.anchor || null });
-  if (!points.length) { evidenceMapNote.value = `暂时无法在地图上显示：${missing.join('；')}`; return; }
+  if (!points.length) { destroyEvidenceMap(); evidenceMapNote.value = `暂时无法在地图上显示：${missing.join('；')}`; return; }
   const drawn = [];
   if (targets.length) {
     drawn.push(loaded.positionSource === 'latest' ? '目标最新位置' : '目标历史位置');
@@ -664,7 +708,14 @@ async function renderEvidenceMap(evaluation) {
   evidenceMapNote.value = `已绘制：${drawn.join('、')}${missing.length ? `；未绘制：${missing.join('、')}` : ''}`;
   await nextTick();
   if (my !== evidenceMapSeq || !evidenceMapHost.value) return;
-  evidenceMap = new window.MapView(evidenceMapHost.value, { zoom: 3, maxDev: 0, legend: false, layers: { device: false, track: targets.length > 0, alarm: false } });
+  const created = !evidenceMap;
+  if (created) {
+    evidenceMap = new window.MapView(evidenceMapHost.value, { zoom: 3, maxDev: 0, legend: false, layers: { device: false, track: true, alarm: false } });
+    evidenceMapSubject = subjectKey(evaluation);
+    evidenceMapBaseDraw = evidenceMap.draw.bind(evidenceMap);
+  }
+  // 每次替换叠加层绘制闭包，避免重复包裹；自动更新保留用户的地图视角。
+  evidenceMap.draw = evidenceMapBaseDraw;
   installOverlays(evidenceMap, { airspaces });
   const drawBase = evidenceMap.draw.bind(evidenceMap);
   evidenceMap.draw = function drawEvidenceTrajectory() {
@@ -673,7 +724,7 @@ async function renderEvidenceMap(evaluation) {
   };
   evidenceMap.setData({ airspaces: [], devices: [], targets, alarms: [] });
   if (targets.length) evidenceMap.sel = targets[0].id;
-  evidenceMap.fitTo(flightExtent.length ? flightExtent : points);
+  if (created) evidenceMap.fitTo(flightExtent.length ? flightExtent : points);
 }
 
 function loadNavigation(context = null) {
@@ -709,18 +760,34 @@ onMounted(() => {
   loadShadowHint();
 });
 
-/* 实时刷新：研判、告警、计划或空域变化后静默重读当前筛选下的队列和统计，保留选中项；
-   选中行本身有变化时才重读详情，避免详情区随每次信号闪烁。队列读取失败时抛出，由实时刷新按退避重试。 */
+/* 实时刷新以目标跟随最新研判，历史链接仍按指定记录查看。
+   列表顺序由服务端在分页前稳定排序；更新同一目标不清空详情或重建视频。 */
 async function realtimeRefresh() {
   if (!pageActive || loading.value) return;
-  const selectedId = S.st.selectedEvaluationId;
-  const rowKey = id => JSON.stringify(items.value.find(item => item.evaluation_id === id) || null);
-  const before = rowKey(selectedId);
+  const selection = detailToken;
+  const targetId = S.st.selectedTargetId;
+  const before = items.value.find(item => item.target_id === targetId);
   await loadQueue({ keepSelection: true, skipSelection: true, quiet: true });
+  if (!pageActive || selection !== detailToken) return;
   void loadKpi();
-  const after = rowKey(selectedId);
-  if (selectedId && S.st.selectedEvaluationId === selectedId && after !== before && after !== 'null') {
-    await selectEvaluationById(selectedId);
+  if (!followLatestSelection || !targetId) return;
+  let latest = items.value.find(item => item.target_id === targetId);
+  // 新目标、筛选结果变化可能使选中目标离开本页；按同一授权目标查询，不能误选第一行。
+  if (!latest) {
+    const located = await legalityApi.listEvaluations({ ...uavScope, target_id: targetId, page: 1, size: 1 });
+    if (!pageActive || selection !== detailToken) return;
+    latest = located.items?.[0];
+    if (!latest) {
+      invalidateDetail();
+      detailLoading.value = false;
+      S.st.selectedEvaluationId = null;
+      detailError.value = '该目标当前没有可见的无人机研判记录。';
+      return;
+    }
+  }
+  if (!selectedEvaluation.value || latest.evaluation_id !== selectedEvaluation.value.evaluation_id
+      || JSON.stringify(latest) !== JSON.stringify(before)) {
+    await selectEvaluation(latest, { quiet: true });
   }
 }
 useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, { minIntervalMs: 2_000 });
@@ -764,8 +831,8 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
               <table class="lg-target-table" aria-label="目标判定结果">
                 <thead><tr><th>编号</th><th>匹配任务</th><th>所在区域</th><th>判定结果</th><th>违规 / 未知原因</th><th>研判时间</th></tr></thead>
                 <tbody>
-                  <tr v-for="item in items" :key="item.evaluation_id"
-                    :class="{ 'is-selected': selectedEvaluation?.evaluation_id === item.evaluation_id }" @click="selectEvaluation(item)">
+                  <tr v-for="item in items" :key="subjectKey(item)"
+                    :class="{ 'is-selected': selectedEvaluation && subjectKey(selectedEvaluation) === subjectKey(item) }" @click="selectEvaluation(item)">
                     <td><button class="lg-target-link" type="button" @click.stop="selectEvaluation(item)">
                       <span class="lg-target-icon" v-html="item.target_id ? UI.targetIcon(item) : UI.icon('clipboard')"></span>
                       <span class="lg-row-target"><b class="mono" :title="item.evaluation_id">{{ subjectLabel(item) }}</b><small v-if="!conclusionQualificationText(item)">{{ reviewText(item) }}</small></span>
@@ -777,7 +844,7 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
                     <td :title="item.district_name || item.district_id">{{ item.district_name || item.district_id || '未知' }}</td>
                     <td class="lg-verdict-cell">
                       <div class="lg-verdict-tags">
-                        <span class="lg-status-tag" :class="`is-${conclusionMeta[item.legal_status]?.tone || 'amber'}`">{{ legalStatusText(item.legal_status) }}</span>
+                        <span class="lg-status-tag" :class="`is-${conclusionMeta[effectiveStatus(item)]?.tone || 'amber'}`">{{ legalStatusText(effectiveStatus(item)) }}</span>
                         <span v-if="conclusionQualificationText(item)" class="lg-status-tag is-amber lg-qualification-tag">{{ conclusionQualificationText(item) }}</span>
                       </div>
                       <small class="lg-row-risk" :title="`风险等级：${gradeText(item)}`">{{ gradeText(item) }}</small>
@@ -804,20 +871,19 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
           <span id="lgSt" class="lg-hidden-status">{{ selectedConclusion.label }}</span>
           <div id="lgDetail" class="lg-detail-host">
             <div v-if="detailError" class="empty lg-state-error" role="alert">{{ detailError }}</div>
-            <div v-else-if="detailLoading" class="empty">正在读取研判详情…</div>
+            <div v-else-if="detailLoading" class="empty">正在读取研判详情</div>
             <div v-else-if="!selectedEvaluation" class="empty">请选择一条研判</div>
             <template v-else>
               <div class="lg-detail-scroll">
-                <TargetTrackingPanel :key="selectedEvaluation.evaluation_id" :target-id="selectedEvaluation.target_id || ''"
+                <TargetTrackingPanel :key="subjectKey(selectedEvaluation)" :target-id="selectedEvaluation.target_id || ''"
                   :context-label="subjectLabel(selectedEvaluation)" begin-reason="合法性研判详情人工补充光电追踪" />
-                <section class="lg-focus-card" aria-label="系统结论与人工核对重点">
-                  <div class="lg-focus-verdict"><span>系统结论</span><strong class="lg-status-tag" :class="`is-${selectedConclusion.tone}`">{{ selectedConclusion.label }}</strong><span>{{ conclusionQualificationText(selectedEvaluation) || reviewText(selectedEvaluation) }}</span></div>
+                <section class="lg-focus-card" aria-label="判定结果与人工核对重点">
+                  <div class="lg-focus-verdict"><span>判定结果</span><strong class="lg-status-tag" :class="`is-${selectedConclusion.tone}`">{{ selectedConclusion.label }}</strong><span>{{ conclusionQualificationText(selectedEvaluation) || reviewText(selectedEvaluation) }}</span></div>
                   <p class="lg-focus-basis">{{ primaryReason }}</p>
                   <p v-if="focusPilotNote" class="lg-state-warn">{{ focusPilotNote }}</p>
                   <p class="lg-muted">{{ formatTime(selectedEvaluation.evaluated_at) }} · {{ sourceText(selectedEvaluation.source_mode) }} · {{ parameterNote(selectedEvaluation) }}</p>
-                  <p v-if="selectedEvaluation.original_legal_status || unconfirmedParams(selectedEvaluation)" class="lg-muted">原始系统记录：{{ legalStatusText(selectedEvaluation.original_legal_status || selectedEvaluation.legal_status) }}；原始依据与历史保留，不能作为当前正式判定。</p>
+                  <p v-if="hasManualConclusion(selectedEvaluation) || rejectedConclusion(selectedEvaluation) || selectedEvaluation.original_legal_status || unconfirmedParams(selectedEvaluation)" class="lg-muted">原始系统结论：{{ legalStatusText(selectedEvaluation.original_legal_status || selectedEvaluation.legal_status) }}；原始依据与历史保留。</p>
                   <p class="lg-muted">观测时间：{{ formatTime(selectedEvaluation.observed_at) }}</p>
-                  <p v-if="selectedEvaluation.review?.manual_status" class="lg-focus-manual">人工结论：<b>{{ legalStatusText(selectedEvaluation.review.manual_status) }}</b>（原始系统结论保留）</p>
                   <div v-if="reviewFocus.showTask" class="lg-focus-task" :class="{ 'needs-review': reviewFocus.needsReview }">
                     <b>{{ reviewFocus.title }}</b><p>{{ reviewFocus.note }}</p>
                     <ul v-if="assuranceReasons.length"><li v-for="code in assuranceReasons" :key="code">{{ ruleReasonText(code) }}</li></ul>
@@ -834,7 +900,7 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
                   </div>
                 </section>
                 <section class="lg-basis-card">
-                  <header>{{ reviewFocus.needsReview ? '触发依据与待核对信息' : '判定依据' }}</header>
+                  <header>{{ reviewFocus.needsReview ? '触发依据与待核对信息' : '系统判定依据' }}</header>
                   <div class="lg-selected-subject"><b :title="subjectLabel(selectedEvaluation)">{{ subjectLabel(selectedEvaluation) }}</b>
                   </div>
                   <div class="lg-check-list">
@@ -848,7 +914,7 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
                       <span class="lg-check-copy"><b>{{ ruleName(hit.rule_code) }}<em>{{ checkResultText(hit) }}</em></b>
                         <small class="lg-check-description">{{ hit.message || (hit.reason_code ? ruleReasonText(hit.reason_code) : '未提供说明') }}</small>
                         <small v-if="selectedHitIndex === index && hit.facts && Object.keys(hit.facts).length">判定时事实：{{ factText(hit.facts, hit.rule_code) }}</small>
-                        <small v-if="selectedHitIndex === index">{{ hit.rule_code }} · {{ hit.params?.length && hit.params.every(p => p.status === 'CONFIRMED') ? '已确认参数' : '参数待业务确认' }}</small>
+                        <small v-if="selectedHitIndex === index">{{ hit.rule_code }} · {{ !hit.params?.length ? (selectedEvaluation.param_status === 'CONFIRMED' ? '已确认规则（本项无数值参数）' : '本项未附数值参数') : hit.params.every(p => p.status === 'CONFIRMED') ? '已确认参数' : '参数待业务确认' }}</small>
                       </span>
                     </button>
                   </div>
@@ -905,12 +971,12 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
                       <FlightExecutionChecks :hits="selectedEvaluation.hit_details || []" />
                     </div>
                     <div v-else class="lg-evidence-wide">
-                      <h4>复核历史 <span>按时间追加</span></h4>
+                      <h4>复核历史 <span>本条研判仅复核一次，后续操作保留记录</span></h4>
                       <p v-if="revisionsError" class="lg-evidence-alert">{{ revisionsError }}</p>
                       <p v-else-if="revisionsLoading">正在读取复核历史…</p>
                       <ul v-else-if="revisions.length" class="lg-reference-list lg-revision-list">
                         <li v-for="item in revisions" :key="item.history_id">
-                          第 {{ item.version }} 次 · {{ CONCLUSION_TEXT[item.conclusion] || item.conclusion }} · {{ reviewStateText(item.previous_state) }} → {{ reviewStateText(item.resulting_state) }}
+                          {{ CONCLUSION_TEXT[item.conclusion] || item.conclusion }} · {{ reviewStateText(item.previous_state) }} → {{ reviewStateText(item.resulting_state) }}
                           {{ item.status_after && item.status_after !== item.status_before ? `（${legalStatusText(item.status_before)} → ${legalStatusText(item.status_after)}）` : '' }}
                           · {{ item.actor_name || item.actor_id }} · {{ formatTime(item.created_at) }}
                           <br><span class="lg-muted">{{ item.note }}</span>
@@ -918,7 +984,7 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
                         </li>
                       </ul>
                       <p v-else>尚无复核历史</p>
-                <UPagination v-if="revisionsTotal > 0" v-model:page="st.revisionPage" v-model:page-size="st.revisionPageSize"
+                <UPagination v-if="revisionsTotal > st.revisionPageSize" v-model:page="st.revisionPage" v-model:page-size="st.revisionPageSize"
                   :item-count="revisionsTotal" :prefix="`复核历史共 ${revisionsTotal.toLocaleString()} 条`"
                   @update:page="onRevisionPage" @update:page-size="onRevisionPageSize" />
                     </div>
@@ -926,7 +992,7 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
                 </section>
               </div>
 
-              <footer class="lg-action-dock">
+              <footer v-if="selectedEvaluation.legal_status !== 'LEGAL'" class="lg-action-dock">
                 <div class="detail-actions">
                   <button v-if="reviewFocus.superseded && selectedEvaluation.superseded_by_evaluation_id" class="btn pri" type="button" @click="selectEvaluationById(selectedEvaluation.superseded_by_evaluation_id)">查看最新研判</button>
                   <button v-else-if="reviewInAlarm" class="btn pri" type="button" :disabled="!canOpenAlarm" @click="openRelatedAlarm">前往告警页面</button>
@@ -986,6 +1052,7 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
 .lg-verdict-tags{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
 .lg-qualification-tag{min-width:0;max-width:100%;padding:3px 6px;font-size:11px;white-space:normal;overflow-wrap:anywhere}
 .lg-status-tag.is-green{color:var(--green);background:rgba(23,181,140,.12);border-color:rgba(23,181,140,.28)}.lg-status-tag.is-red{color:var(--red);background:rgba(244,70,88,.12);border-color:rgba(244,70,88,.28)}.lg-status-tag.is-amber{color:var(--amber);background:rgba(230,162,58,.12);border-color:rgba(230,162,58,.28)}
+.lg-status-tag.is-gray{color:var(--gray);background:rgba(148,163,184,.12);border-color:rgba(148,163,184,.28)}
 .lg-verdict-cell .lg-row-risk{display:block;margin-top:5px;color:var(--txt-3);font-size:11px;white-space:nowrap}.lg-reason-cell{display:block;overflow-wrap:anywhere;font-size:12px;line-height:1.6}.lg-time-cell{font-size:12px;line-height:1.6;font-variant-numeric:tabular-nums}
 .legality-workbench :deep(.svg-icon){width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7}
 .lg-pager{min-height:48px;padding:6px 10px;margin:0;border-top:1px solid var(--line-2);overflow:auto}

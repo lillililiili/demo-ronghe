@@ -49,6 +49,21 @@ def posts(api, ending):
 # 两台设备都走规范化入口、各有一个观测源的情形：辅助设备的协议报不了这类目标（TDOA 报不了气球）。
 # 辅助设备能用自己协议报的（无人机）只发 MQTT，不再从规范化入口重复报（新-17），见最后两个用例。
 class NormalizedSourceTests(unittest.TestCase):
+    def test_bird_count_is_carried_as_observed_fact_for_each_source(self):
+        for count, location in [(1, (410, 280)), (10, (430, 290)), (25, (620, 410))]:
+            with self.subTest(count=count):
+                chain, api, manifest, compiled, _, targets = fixture(location=location)
+                target = compiled['targets'][0]
+                target.update(kind='bird', count=count)
+                targets[target['id']] = target
+                manifest['targets'] = allocate_identities(compiled, manifest['batch'])
+                chain.prepare()
+                chain.tick(targets, 0, 1)
+                frames = posts(api, '/target-observations')
+                self.assertEqual(len(frames), 2)
+                self.assertTrue(all(f['items'][0]['object_count'] == count for f in frames))
+                self.assertTrue(all(f['items'][0]['class_code'] == 'BIRD' for f in frames))
+
     def test_each_selected_device_has_independent_source_and_same_target(self):
         for main, auxiliary, position in [('radar-a', 'tdoa-b', (450, 300)),
                 ('primary-' + 'a'*65, 'secondary-' + 'b'*65, (620, 410))]:

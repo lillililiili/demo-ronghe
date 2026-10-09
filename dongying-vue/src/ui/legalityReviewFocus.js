@@ -35,8 +35,11 @@ export function legalityReviewFocus(evaluation) {
     : needsReview ? '需要核对的信息缺口'
       : !assuranceProvided && applicable ? '判定可靠性未知' : '当前无需人工复核';
   const note = superseded ? '请查看最新结果；本次结论与复核历史继续保留。'
+    : evaluation?.effective_legal_status === 'REJECTED' ? '人工复核认定系统误判，原判定已驳回；原始系统结论与依据保留供追溯。'
     : alarmVerified ? `关联告警核实结果：${verification.conclusion === 'FALSE_POSITIVE' ? '误报' : '确认事件'}。${verification.note ? `说明：${verification.note}。` : ''}原始系统判定与依据继续保留，可前往同一告警查看核实历史。`
-      : reviewed ? '下方保留原始系统结论；人工结论与说明可在复核历史查看。'
+      : reviewed ? (evaluation?.effective_legal_status && evaluation?.review?.manual_status
+        ? '判定结果已采用本条研判的人工结论；原始系统依据保留，操作人和说明可在复核历史查看。'
+        : '本条研判已完成复核；原始系统依据保留，复核结论和说明可在复核历史查看。')
       : needsReview && assuranceStatus === 'UNAVAILABLE' ? '本条记录的算法可靠性结果不可用，请根据下列原因核对信息缺口。'
         : needsReview ? '本次算法依据不足，当前结论暂不能可靠确认，请根据下列原因核对信息缺口。'
           : !assuranceProvided && applicable ? '本条记录未保存算法可靠性结果，不能当作明确待复核，也不能把系统结论视为可靠自动结论。'

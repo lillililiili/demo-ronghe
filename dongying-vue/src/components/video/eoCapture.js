@@ -14,10 +14,15 @@ const RECORDING_FORMATS = [
 
 /** 浏览器能录、平台也收的第一种格式；都不支持时返回 null。 */
 export function recordingFormat(isTypeSupported) {
-  if (typeof isTypeSupported !== 'function') return null;
-  return RECORDING_FORMATS.find(item => {
+  return recordingFormats(isTypeSupported)[0] || null;
+}
+
+/** 能声明支持不代表编码器一定能启动；保留其余格式供启动失败时回退。 */
+export function recordingFormats(isTypeSupported) {
+  if (typeof isTypeSupported !== 'function') return [];
+  return RECORDING_FORMATS.filter(item => {
     try { return isTypeSupported(item.mimeType) === true; } catch { return false; }
-  }) || null;
+  });
 }
 
 const pad = value => String(value).padStart(2, '0');

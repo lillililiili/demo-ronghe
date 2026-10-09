@@ -67,6 +67,8 @@ const size = ref(S.size);
 const total = ref(0);
 const plans = ref([]);
 const selected = ref(null);
+// 外部关联入口按精确任务 ID 定位，不受普通列表的筛选与分页影响。
+const focusedPlanId = ref(null);
 const planEnded = computed(() => ['COMPLETED', 'CANCELLED'].includes(selected.value?.status_code));
 const showRouteRisks = computed(() => !planEnded.value && !!selected.value?.route?.route_version_id);
 const routeVersion = ref(null);
@@ -546,6 +548,25 @@ async function loadPlans(nextPage = page.value, requestedId = null) {
   loading.value = true;
   error.value = '';
   try {
+    const focusedId = focusedPlanId.value;
+    if (focusedId) {
+      const plan = await flightApi.detail(focusedId);
+      if (token !== planListToken || activeTab.value !== 'route') return;
+      if (plan?.plan_id !== focusedId) throw new Error('关联任务返回不一致，请重新读取。');
+      page.value = 1;
+      total.value = 1;
+      plans.value = [plan];
+      routeLoaded.value = true;
+      loading.value = false;
+      loadRowActuals(plans.value);
+      loadPlanKpis();
+      loadUpstreamStatus();
+      // 定时刷新仍定位此任务；数据未变化时不重置详情和地图。
+      if (selected.value?.plan_id !== focusedId || detailError.value || JSON.stringify(selected.value) !== JSON.stringify(plan)) {
+        await loadDetail(focusedId, plan);
+      }
+      return;
+    }
     const data = await flightApi.list(planListQuery(filters, { page: nextPage, size: size.value }));
     if (token !== planListToken || activeTab.value !== 'route') return;
     page.value = data.page;
@@ -585,14 +606,16 @@ async function loadPlans(nextPage = page.value, requestedId = null) {
     destroyRouteMap();
     routeLoaded.value = false;
     planFailure = requestError;
-    error.value = requestError.message || '读取飞行任务失败';
+    error.value = focusedPlanId.value && requestError.status === 403 ? '当前账号无权查看这条关联任务。'
+      : focusedPlanId.value && requestError.status === 404 ? '关联任务不存在或已不可访问。'
+        : requestError.message || '读取飞行任务失败';
   } finally {
     if (token === planListToken) loading.value = false;
   }
 }
 
 let planDetailToken = 0;
-async function loadDetail(planId) {
+async function loadDetail(planId, prefetchedPlan = null) {
   const current = ++planDetailToken;
   routeRisksToken++;
   Object.assign(routeRisks, { planId: null, items: [], loaded: false, loading: false, error: '' });
@@ -618,7 +641,7 @@ async function loadDetail(planId) {
   destroyRouteMap();
   let plan = null;
   try {
-    plan = await flightApi.detail(planId);
+    plan = prefetchedPlan || await flightApi.detail(planId);
     if (current !== planDetailToken) return;
     selected.value = plan;
     S.selectedPlanId = plan.plan_id;
@@ -1077,6 +1100,10 @@ async function loadAirspaceContext(plan) {
 }
 
 function applyFilters() {
+  if (focusedPlanId.value) {
+    focusedPlanId.value = null;
+    syncSelectedPlanHash(null);
+  }
   routeLoaded.value = false;
   loadPlans(1);
 }
@@ -1703,8 +1730,11 @@ function showRouteTab(requestedId = null) {
   activeTab.value = 'route';
   destroyRouteMap();
   if (requestedId) {
+    focusedPlanId.value = requestedId;
+    planDetailTab.value = 'plan';
     Object.assign(filters, { status_code: '', keyword: '', today: false });
     keywordDraft.value = '';
+    plans.value = [];
     selected.value = null;
     routeVersion.value = null;
     airspaceVersions.value = [];
@@ -1772,7 +1802,10 @@ async function realtimeRefreshPlans(topics) {
     if (error.value) throw planFailure || new Error(error.value);
     return;
   }
-  if (topics.some(topic => ['plan', 'airspace', '*'].includes(topic))) {
+  if (focusedPlanId.value && topics.some(topic => ['plan', 'airspace', '*'].includes(topic))) {
+    await loadPlans(1);
+    if (error.value) throw planFailure || new Error(error.value);
+  } else if (topics.some(topic => ['plan', 'airspace', '*'].includes(topic))) {
     const token = ++planListToken;
     const selectedId = selected.value?.plan_id;
     const before = JSON.stringify(plans.value.find(item => item.plan_id === selectedId) || null);
@@ -2000,6 +2033,7 @@ onUnmounted(() => {
 
     <template v-else>
       <UKpis :list="kpiList" @click="onPlanKpiClick" @keydown="onPlanKpiKeydown" />
+      <!-- 2026-10-08：按用户要求暂不展示上级任务接口状态横幅。 -->
       <div v-if="error" class="warnbox">{{ error }}</div>
       <div class="row flight-main">
         <UPanel title="飞行任务" class="workspace-list" nopad>
@@ -2014,8 +2048,8 @@ onUnmounted(() => {
             </div>
           </div>
           <p v-if="planFilterSummary" class="workspace-selection-note plan-filter-note"><span>{{ planFilterSummary }}</span><button class="btn ghost" type="button" :disabled="loading" @click="clearPlanFilters">清除筛选</button></p>
-          <p v-if="!loading && selected && !plans.some(plan => plan.plan_id === selected.plan_id)" class="workspace-selection-note">正在查看关联任务；本页列表未包含该任务。</p>
-          <div v-if="loading" class="empty">正在读取飞行任务…</div>
+          <p v-if="focusedPlanId" class="workspace-selection-note plan-filter-note"><span>{{ loading ? '正在定位关联任务' : error ? '关联任务未能读取' : '已定位关联任务' }}</span><button class="btn ghost" type="button" @click="clearPlanFilters">查看全部任务</button></p>
+          <div v-if="loading" class="empty">正在读取飞行任务</div>
           <div v-else-if="error" class="empty"><button class="btn" type="button" @click="loadPlans(page, S.selectedPlanId)">重新读取任务</button></div>
           <div v-else-if="!plans.length" class="empty">{{ planFilterSummary ? '没有符合筛选条件的任务' : upstreamNotice ? '本系统暂无任务；上级任务数据暂时取不到，不代表上级没有任务' : '暂无可访问的飞行任务' }}</div>
           <FlightRecordList v-else :items="planRecords" :selected-id="selected?.plan_id || null" label="飞行任务列表" @select="selectPlan" />

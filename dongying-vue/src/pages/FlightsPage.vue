@@ -2065,10 +2065,7 @@ onUnmounted(() => {
           <div v-else-if="!selected" class="empty">请选择任务</div>
           <template v-else>
             <div v-show="planDetailTab === 'plan'" class="plan-detail-grid">
-              <div class="metric-strip is-compact plan-metrics">
-                <div class="metric-item" :class="PLAN_STATUS_TAG[selected.status_code] || 't-gray'"><div class="metric-copy"><small>执行状态</small><b>{{ labelOf(PLAN_STATUS_LABEL, selected.status_code) }}</b></div></div>
-                <div class="metric-item duration-metric"><div class="metric-copy"><small>任务时长</small><b>{{ formatDuration(selected) }}</b></div></div>
-              </div>
+              <p class="plan-metrics"><span class="tag" :class="PLAN_STATUS_TAG[selected.status_code] || 't-gray'">{{ labelOf(PLAN_STATUS_LABEL, selected.status_code) }}</span><span class="plan-metrics-sep">·</span><span>任务时长 {{ formatDuration(selected) }}</span></p>
             <PlanFilingDetails :plan="selected" :route-version="routeVersion" :route-loading="routeGeometryLoading" :route-error="routeGeometryError" />
             <section v-if="showComparison" class="sect plan-comparison"><h4>任务与实际对照</h4>
               <div v-if="actualsLoading" class="empty">正在读取…</div>
@@ -2116,7 +2113,8 @@ onUnmounted(() => {
 .flights-page :deep(.kpi .vl) { font-size: 31px; }
 .flights-page :deep(.kpi .dt) { font-size: 12px; }
 .flights-page .detail-hero-title,.flights-page .detail-hero-id { display: block; white-space: normal; overflow: visible; overflow-wrap: anywhere; text-overflow: clip; -webkit-line-clamp: unset; }
-.flight-main,.risk-main { display: grid; grid-template-columns: minmax(240px, .8fr) minmax(300px, 1.1fr) minmax(320px, 1.45fr); grid-template-rows: minmax(0, 1fr); margin-top: 12px; flex: 1; min-height: 0; align-items: stretch; gap: 12px; }
+/* 2026-10-08 用户要求详情栏不加宽：三栏比例恢复 10-07 之前的样子，靠精简内容而不是加宽来少滚动。 */
+.flight-main,.risk-main { display: grid; grid-template-columns: minmax(250px, .95fr) minmax(300px, 1.35fr) minmax(300px, 1.1fr); grid-template-rows: minmax(0, 1fr); margin-top: 12px; flex: 1; min-height: 0; align-items: stretch; gap: 12px; }
 /* 计划页签多了上级接口提示、搜索行和筛选提示；视口较矮（1280×720、1366×768）时主区不再被压到看不全一条计划，
    改为在页面区域内纵向滚动。风险页签不受影响。 */
 .flight-main { min-height: 500px; }
@@ -2141,12 +2139,7 @@ onUnmounted(() => {
   .workspace-detail .detail-hero-micro { min-height: 0; padding: 8px 12px; }
   .workspace-detail .detail-hero-micro .detail-hero-inner { grid-template-columns: 34px minmax(0, 1fr) auto; }
   .workspace-detail .detail-hero-micro .detail-hero-side { grid-column: auto; }
-  /* 风险清单和周边设备检查可能很长，放在两栏要点下方整行展示，不挤占报备航线和任务与实际对照 */
-  .plan-detail-grid > :deep(.plan-risk-records), .plan-detail-grid > :deep(.plan-verification), .plan-detail-grid > :deep(.plan-preflight) { column-span: all; }
 }
-.plan-detail-grid .metric-strip { margin-bottom: 10px; }
-.flights-page .plan-metrics .metric-item { min-height: 0; padding: 5px 10px; }
-.flights-page .plan-metrics .metric-copy { flex-direction: row; align-items: baseline; flex-wrap: wrap; gap: 2px 8px; }
 .workspace-detail :deep(.kv-surface) { row-gap: 5px; }
 .workspace-detail .sect { margin-bottom: 10px; }
 .flight-main > :deep(.panel),.risk-main > :deep(.panel) { min-width: 0; min-height: 0; width: auto; }
@@ -2163,13 +2156,10 @@ onUnmounted(() => {
 .workspace-map-context span { color: var(--txt-3); font-size: 11px; }
 .workspace-detail .metric-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .flights-page :deep(.kpi) { border-top: 2px solid var(--kpi-c, var(--blue)); background: var(--kpi-gradient); }
-.flights-page .plan-metrics .metric-item { border: 1px solid color-mix(in srgb, var(--metric-color) 25%, transparent); border-top: 2px solid var(--metric-color); background: color-mix(in srgb, var(--metric-color) 7%, transparent); border-radius: 6px; padding: 9px 12px; }
-.plan-metrics .metric-item { --metric-color: var(--txt-3); }
-.plan-metrics .t-blue { --metric-color: var(--blue); }
-.plan-metrics .t-cyan { --metric-color: var(--cyan); }
-.plan-metrics .t-green { --metric-color: var(--green); }
-.plan-metrics .duration-metric { --metric-color: var(--purple); }
-.plan-metrics .metric-copy b { color: var(--metric-color); font-size: 16px; }
+/* 执行状态与任务时长只占一行小字（2026-10-08 精简），不再用两个大框。 */
+.plan-metrics { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; margin: 0 0 8px; color: var(--txt-2); font-size: 12px; }
+.plan-metrics .tag { margin: 0; }
+.plan-metrics-sep { color: var(--txt-3); }
 .workspace-detail .detail-actions { flex-wrap: wrap; }
 .workspace-detail .plan-legality-actions { flex: none; justify-content: stretch; margin: 0; padding: 10px 12px 12px; border: 0; border-top: 1px solid var(--line); border-radius: 0 0 var(--r) var(--r); background: var(--surface-3); }
 .workspace-detail .plan-legality-actions .btn { flex: 1; justify-content: center; }
@@ -2267,10 +2257,6 @@ onUnmounted(() => {
 .rk-notify-done { display: grid; gap: 12px; }
 .rk-notify-done .detail-actions { display: flex; gap: 8px; justify-content: flex-end; }
 .rk-history-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-/* 1700 以下收窄列表和地图，详情栏保持两栏排版所需宽度（1440、1366 下也分两栏） */
-@media (max-width: 1700px) and (min-width: 1151px) {
-  .flight-main,.risk-main { grid-template-columns: minmax(230px, .7fr) minmax(280px, .9fr) minmax(500px, 1.6fr); }
-}
 @media (max-width: 1150px) {
   .flights-page { overflow: auto; }
   .flight-main,.risk-main { flex: none; grid-template-columns: minmax(250px, .8fr) minmax(0, 1.2fr); grid-template-rows: 390px minmax(460px, auto); }

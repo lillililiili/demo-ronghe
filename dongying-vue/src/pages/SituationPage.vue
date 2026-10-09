@@ -5,6 +5,7 @@ import { useRoute } from 'vue-router';
 import { ChevronUpOutline, GitCompareOutline, LocateOutline } from '@vicons/ionicons5';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import { createSituationApiSource } from '@/pages/situation/situationApiSource.js';
+import { serverNow } from '@/services/serverClock.js';
 import { clockLagText, currentMapSnapshot, deviceGroupState, riskMatchesPlan, routeRiskIsActive, SITUATION_DEVICE_TYPE_ORDER, targetClassCounts } from '@/services/situationData.js';
 import {
   disposalStage, situationAlarmNeedsAttention, situationRouteRiskVisible,
@@ -23,7 +24,8 @@ import { toast } from '@/ui/nv.js';
 import { getAlarm } from '@/services/alarmApi.js';
 import SituationAdvisoryCard from './situation/SituationAdvisoryCard.vue';
 import SituationAlarmPopup from './situation/SituationAlarmPopup.vue';
-import { NO_PILOT_LOCATION, pilotLocationText } from '@/services/pilotLocation.js';
+import { PILOT_LOCATION_IN_ALARM_DETAIL, pilotLocationText } from '@/services/pilotLocation.js';
+import { pilotDistanceNote } from '@/ui/pilotDistanceNote.js';
 import WeatherRiskMarkers from '@/components/WeatherRiskMarkers.vue';
 import { weatherAnchor } from '@/services/weatherRiskGeometry.js';
 import SituationRiskGroupPopup from './situation/SituationRiskGroupPopup.vue';
@@ -167,6 +169,12 @@ const fusionDevices = computed(() => {
 });
 const fusionConfidence = computed(() => selectedTarget.value?.fusedConf ?? null);
 const clockText = computed(() => formatClock(snapshot.value.generatedAt));
+/* 数据刷新慢（CDX-P01）：地图上的目标只在有效期（十几秒）内显示，最近一轮数据超过 10 秒还没更新，
+   目标会陆续按期退出地图，看起来像"没有目标"。这时明确提示是刷新慢，不让值班员误以为空中没有东西。 */
+const SLOW_REFRESH_SECONDS = 10;
+const nowTick = ref(serverNow());
+const refreshLagSeconds = computed(() => snapshot.value.generatedAt ? Math.max(0, Math.floor((nowTick.value - snapshot.value.generatedAt) / 1000)) : 0);
+const refreshSlow = computed(() => refreshLagSeconds.value >= SLOW_REFRESH_SECONDS);
 const sourceModeText = computed(() => snapshot.value.simulated ? '含模拟数据'
   : snapshot.value.sourceMode === 'replay' ? '回放数据'
   : snapshot.value.sourceMode === 'live' ? '实时数据'
@@ -696,6 +704,7 @@ function renderTargetTip(target, hasAdvisoryCard = false) {
     <p>最后上报：${esc(formatClock(target.lastSeenAt))} · ${esc(reportAge(target.lastSeenAt))}</p>
     ${target.timeUntrusted ? `<p class="sit-map-pop-note">数据过期：报文时刻比平台收到时早${esc(clockLagText(target.reportLagMs) || '较多')}，设备时间不准或数据积压，图上位置可能不是当前位置；超过新鲜时限的数据不做合法性判定。平台收到：${esc(formatClock(target.receivedAt))}</p>` : ''}
     ${target.objectTypeCode === 'UAV' ? `<p>遥控器位置：${esc(pilotLocationText(target.pilotLocation))}</p>` : ''}
+    ${target.objectTypeCode === 'UAV' && pilotDistanceNote(target.legalitySummary) ? `<p class="sit-map-pop-note">${esc(pilotDistanceNote(target.legalitySummary))}</p>` : ''}
     <div class="sit-target-source"><span>感知来源：${esc(sourceNames || '未提供')}</span><button type="button" data-tip-act="eo-video" aria-expanded="${showTargetVideo.value}" aria-controls="situation-video-window">${showTargetVideo.value ? '收起视频' : '实时视频'}</button></div>
     ${alarm?.eventId && !hasAdvisoryCard ? `<p class="sit-map-pop-note">短信通知：${esc(sms?.title || '正在读取通知状态')}${sms?.simulated ? '（模拟）' : ''}${sms?.updatedAt ? ` · ${esc(formatClock(sms.updatedAt))}` : ''}</p>
     <p class="sit-map-pop-note">飞手电话：${esc(voice?.title || '正在读取通知状态')}${voice?.simulated ? '（模拟）' : ''}</p>` : ''}
@@ -863,7 +872,9 @@ onMounted(() => {
     sensorIconScale: 1,
     maxDpr: 2,
     layers: { alarm: false, coverage: true },
-    interactiveTip: true,
+    // 悬停小卡片不接点击（验收预跑 3-7）：图标挤在一起时，停在设备上弹出的卡片会盖住旁边的无人机，点不开；
+    // 卡片上的按钮在点开后的弹窗里都有。
+    interactiveTip: false,
     renderTip: renderMapTip,
     onTipAction,
     onPick: onMapPick,
@@ -872,7 +883,8 @@ onMounted(() => {
   stopSource = source.start(applySnapshot, onSourceError);
   // 独立于网络轮询：请求失败或迟迟未返回时，旧点仍按期退出地图。
   expiryTimer = window.setInterval(() => {
-    if (!document.hidden && rawSnapshot && snapshot.value.targets.some(target => target.mapExpiresAt <= Date.now())) applySnapshot(rawSnapshot);
+    nowTick.value = serverNow();
+    if (!document.hidden && rawSnapshot && snapshot.value.targets.some(target => target.mapExpiresAt <= nowTick.value)) applySnapshot(rawSnapshot);
   }, 1000);
   selectionResizeObserver = new ResizeObserver(() => focusSelection(false));
   selectionResizeObserver.observe(mapHost.value);
@@ -903,6 +915,7 @@ onUnmounted(() => {
         <span>{{ sourceModeDetail }}</span>
         <span>当前目标 {{ targets.length }} · 无人机 {{ targetCounts.uav }} · 异物 {{ targetCounts.foreign }} · 未分类 {{ targetCounts.unknown }}<template v-if="targetCounts.other"> · 其他 {{ targetCounts.other }}</template>（北京时间）</span>
         <time class="mono">{{ clockText }}</time>
+        <em v-if="refreshSlow" class="sit-refresh-slow" role="status" :title="`最近一次数据停在 ${clockText}，已有 ${refreshLagSeconds} 秒没有更新；地图上的目标按期退出，可能不全。恢复后自动更新。`">数据刷新慢 · {{ refreshLagSeconds }} 秒未更新</em>
       </div>
       <p class="sr-only" role="status" aria-live="polite" aria-atomic="true">{{ statusAnnouncement }}</p>
 
@@ -1005,7 +1018,7 @@ onUnmounted(() => {
             <button type="button" aria-label="关闭告警详情" @click="clearSelection" v-html="U.icon('close')"></button></header>
           <div class="sit-map-pop-status"><span class="sit-state is-risk">{{ selectedUavAlarm.level }}风险</span><span>{{ selectedUavAlarm.type }}</span></div>
           <p>{{ selectedUavAlarm.district }} · 告警时间 {{ formatClock(selectedUavAlarm.ts) }}</p>
-          <p>遥控器位置：{{ NO_PILOT_LOCATION }}</p>
+          <p>遥控器位置：{{ PILOT_LOCATION_IN_ALARM_DETAIL }}</p>
         </section>
         <div v-if="videoContext && !selectedTarget" class="sit-video-entry">
           <button type="button" :aria-expanded="showTargetVideo" aria-controls="situation-video-window" @click="onTipAction('eo-video')">{{ showTargetVideo ? '收起视频' : '实时视频' }}</button>

@@ -3,12 +3,14 @@
   "continuous": true,
   "notifications_enabled": true,
   "countermeasure_enabled": false,
+  "countermeasure_scope": "",
+  "countermeasure_longitude": null,
+  "countermeasure_latitude": null,
   "command_mode": "success",
   "play_seconds": 3,
   "outcomes": {
     "ADVISORY_SMS": "no_receipt",
     "ADVISORY_VOICE": "success",
     "UAV_PUNISHMENT": "success"
-  },
-  "countermeasure_scope": ""
+  }
 }

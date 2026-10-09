@@ -9,11 +9,13 @@ import threading
 import time
 import uuid
 
+from engine import coordinates
 from realtime_notification_receiver import Receiver, ReceiverError, InstanceLock, KINDS, MODES
 
 ACTIVE = {'PREPARING', 'RUNNING', 'PAUSED', 'STOPPING'}
 DEFAULT_CONFIG = {'mode': 'normal', 'continuous': True, 'notifications_enabled': True,
                   'countermeasure_enabled': True, 'countermeasure_scope': '',
+                  'countermeasure_longitude': None, 'countermeasure_latitude': None,
                   'command_mode': 'success', 'play_seconds': 3, 'outcomes': {}}
 
 
@@ -37,6 +39,12 @@ def validate_config(value):
     scope = config['countermeasure_scope']
     if not isinstance(scope, str) or (scope and not re.fullmatch(r'[A-Za-z0-9_-]{1,64}\|[A-Za-z0-9_-]{1,64}', scope)):
         raise ValueError('反制设备所属单位与区县无效')
+    longitude, latitude = config['countermeasure_longitude'], config['countermeasure_latitude']
+    if (longitude is None) != (latitude is None):
+        raise ValueError('反制设备位置的经度和纬度要一起填')
+    for value, low, high, label in ((longitude, -180, 180, '经度'), (latitude, -90, 90, '纬度')):
+        if value is not None and (type(value) not in (float, int) or not math.isfinite(value) or not low <= value <= high):
+            raise ValueError(f'反制设备{label}须在 {low} 到 {high} 之间')
     modes = config['outcomes']
     if not isinstance(modes, dict) or set(modes) - KINDS:
         raise ValueError('通知渠道无效')
@@ -63,6 +71,23 @@ def prepare_scene(raw, config):
             if target.get('notificationBehavior') == 'drop_sms':
                 target['notificationBehavior'] = 'none'
     return scene
+
+
+def countermeasure_position(config, scene):
+    """Where the simulator's countermeasure device is registered, only so the map can draw its 作用范围:
+    the position typed in 实时收发设置, else the first radar of the scene (a 融合感知箱 carries radar,
+    EO and countermeasure together), else none."""
+    if config.get('countermeasure_longitude') is not None and config.get('countermeasure_latitude') is not None:
+        return {'longitude': config['countermeasure_longitude'], 'latitude': config['countermeasure_latitude']}
+    for site in (scene or {}).get('sites') or []:
+        if not isinstance(site, dict) or not any(isinstance(d, dict) and d.get('kind') == 'radar' for d in site.get('devices') or []):
+            continue
+        try:
+            longitude, latitude = coordinates([float(site['x']), float(site['y'])])
+        except (KeyError, TypeError, ValueError):
+            continue
+        return {'longitude': round(longitude, 7), 'latitude': round(latitude, 7)}
+    return None
 
 
 def atomic_json(path, value):
@@ -113,6 +138,7 @@ class RealtimeController:
         self.session_verified_at = None
         self.notification_status = {}
         self.countermeasure_device_id = None
+        self.countermeasure_position = None
 
     def active(self):
         return self.state in ('STARTING', 'RUNNING', 'STOPPING') or bool(self.thread and self.thread.is_alive())
@@ -134,14 +160,16 @@ class RealtimeController:
                       'notifications': copy.deepcopy(self.notification_status),
                       'countermeasure': self.tcp.snapshot() if self.tcp else {'listening': False},
                       'countermeasure_device_id': self.countermeasure_device_id,
+                      'countermeasure_position': copy.deepcopy(self.countermeasure_position),
                       'independent_presence_allowed': False}
         return result
 
-    def start(self):
+    def start(self, scene=None):
+        """scene: the scene about to run; without one the last scene decides the countermeasure position."""
         with self.operation_lock:
-            return self._start()
+            return self._start(scene)
 
-    def _start(self):
+    def _start(self, scene=None):
         with self.lock:
             if self.active():
                 if self.state == 'RUNNING':
@@ -153,6 +181,7 @@ class RealtimeController:
             self.tcp = None
             self.notification_status = {}
             self.countermeasure_device_id = None
+            self.countermeasure_position = None
             self.thread = None
             config = copy.deepcopy(self.config)
             self.cancel.clear()
@@ -169,12 +198,22 @@ class RealtimeController:
                 if config['countermeasure_scope']:
                     org, district = config['countermeasure_scope'].split('|', 1)
                 else:
-                    broker = getattr(self.runtime, 'broker', None) or {}
-                    org, district = broker.get('owner_org_id'), broker.get('district_id')
+                    # 本轮还没用过连接（刚登录、还没开始模拟）时，像空域页一样去平台上查设备数据连接。
+                    scope = self.runtime.session.connection_scope()
+                    org, district = scope.get('owner_org_id'), scope.get('district_id')
+                    if not org or not district:
+                        reason = ('读取设备数据连接失败' if '读取失败' in (scope.get('message') or '')
+                                  else '还没有启用的设备数据连接 local-lingyun-replay')
+                        raise ValueError(reason + '：请先在管理端“接口配置 → 设备数据连接”里建好并启用，'
+                                         '或在实时收发设置中选择反制设备所属单位和区县')
                 if not org or not district:
                     raise ValueError('请在实时收发设置中选择反制设备所属单位和区县')
-                device = client.call('POST', '/local-interface-simulator/countermeasure-device',
-                                     {'owner_org_id': org, 'district_id': district})
+                body = {'owner_org_id': org, 'district_id': district}
+                # 平台上这台设备还没有位置时才用上；已有位置（比如在设备管理里填过）的不改。
+                position = countermeasure_position(config, scene if scene is not None else getattr(self.runtime, 'scene', None))
+                if position:
+                    body.update(position)
+                device = client.call('POST', '/local-interface-simulator/countermeasure-device', body)
                 detail = device.get('device', {}) if isinstance(device, dict) else {}
                 connection = (detail.get('connection') or {}) if isinstance(detail, dict) else {}
                 host = connection.get('host') or '127.0.0.1'
@@ -195,6 +234,8 @@ class RealtimeController:
                                      '升级后须重启后台与模拟器，四通道由模拟器统一接收') from None
                 self.tcp = transport
                 self.countermeasure_device_id = device['device']['device_id']
+                if isinstance(detail, dict) and detail.get('longitude') is not None and detail.get('latitude') is not None:
+                    self.countermeasure_position = {'longitude': detail['longitude'], 'latitude': detail['latitude']}
             if config['notifications_enabled']:
                 # Share the exact lock with the optional standalone receiver.
                 self.receiver_lock = InstanceLock(Path(__file__).parent / '.data' / f'notification-receiver-{self.port}.lock')

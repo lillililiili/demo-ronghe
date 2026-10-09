@@ -38,6 +38,15 @@ test('punishment recipient summary counts every enabled recipient like the platf
   assert.equal(ui.sameChoice([],[]), true);
 });
 
+test('countermeasure position is shown only while the device listens and says how to set a missing one', () => {
+  assert.equal(ui.countermeasurePositionText({countermeasure:{listening:false},countermeasure_position:{longitude:118.6,latitude:37.46}}), '');
+  assert.equal(ui.countermeasurePositionText({countermeasure:{listening:true},countermeasure_position:{longitude:118.6104,latitude:37.464}}), '位置 118.61040, 37.46400');
+  assert.match(ui.countermeasurePositionText({countermeasure:{listening:true},countermeasure_position:null}), /位置未设置.*收发模式设置.*经纬度/);
+  assert.equal(ui.positionValue(''), null);
+  assert.equal(ui.positionValue('  '), null);
+  assert.equal(ui.positionValue('118.61'), 118.61);
+});
+
 test('isolated QA visibly disables transports without disabling scene controls', () => {
   const nodes = new Map();
   const node = selector => {

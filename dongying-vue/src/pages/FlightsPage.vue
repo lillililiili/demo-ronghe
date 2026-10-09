@@ -22,7 +22,7 @@ import { openModal, closeModal } from '@/ui/modal.js';
 import { toast } from '@/ui/nv.js';
 import {
   ALTITUDE_DATUM_LABEL, ALTITUDE_RELATION_LABEL, HANDOFF_TYPE_LABEL, LEGALITY_LABEL, PLAN_MATCH_TAG, PLAN_ROW_MATCH_LABEL, PLAN_STATUS_LABEL, PLAN_STATUS_TAG, REASON_CODE_LABEL, RECEIPT_RESULT_LABEL, RISK_TYPE_LABEL,
-  SECTION_AVAILABILITY_LABEL, SOURCE_MODE_LABEL, sourceDescription, notificationBlockedReason, notificationSubmissionMessage, labelOf, OBJECT_TYPE_LABEL, readableNo, RISK_TYPE_OPTIONS, RISK_STATE_LABEL } from '@/ui/labels.js';
+  SECTION_AVAILABILITY_LABEL, SOURCE_MODE_LABEL, sourceDescription, notificationBlockedReason, notificationSubmissionMessage, labelOf, OBJECT_TYPE_LABEL, readableNo, RISK_TYPE_OPTIONS, RISK_STATE_LABEL, RISK_PRESENCE_LABEL } from '@/ui/labels.js';
 import { isUncertainOutcome } from '@/services/apiClient.js';
 import { loadTargetPosition, strokePlannedRoute } from '@/services/positionMap.js';
 import { hasPermission } from '@/services/accessControl.js';
@@ -31,6 +31,7 @@ import { usePageChrome } from '@/hooks/usePageChrome.js';
 import UKpis from '@/components/UKpis.vue';
 import UPanel from '@/components/UPanel.vue';
 import RiskOpticalPanel from '@/pages/flights/components/RiskOpticalPanel.vue';
+import RiskEvaluationHistory from '@/pages/flights/components/RiskEvaluationHistory.vue';
 import PlanVerificationPanel from '@/pages/flights/components/PlanVerificationPanel.vue';
 import FlightExecutionChecks from '@/components/FlightExecutionChecks.vue';
 import PlanFilingDetails from '@/pages/flights/components/PlanFilingDetails.vue';
@@ -516,7 +517,8 @@ function selectPlan(planId) {
 const riskRecords = computed(() => risks.value.map(risk => ({
   id: risk.risk_id, title: risk.risk_type === 'WEATHER' ? labelOf(REASON_CODE_LABEL, risk.reason_code, '气象风险') : riskTitle(risk), status: stateLabel(risk.state), statusClass: stateTag(risk.state),
   subtitle: `${risk.district_name || '区域未提供'} · ${formatTime(risk.occurred_at)}`,
-  summary: ['SPACE_OBJECT', 'FOREIGN_OBJECT'].includes(risk.risk_type) ? `${corridorText(risk)} · ${altitudeText(risk)}` : risk.risk_type === 'WEATHER' ? '' : labelOf(REASON_CODE_LABEL, risk.reason_code),
+  // 天气风险在列表里直接写现在算不算数：尚未生效 / 当前仍存在 / 有效时段已结束（CDX-P06）。
+  summary: ['SPACE_OBJECT', 'FOREIGN_OBJECT'].includes(risk.risk_type) ? `${corridorText(risk)} · ${altitudeText(risk)}` : risk.risk_type === 'WEATHER' ? labelOf(RISK_PRESENCE_LABEL, risk.current_status, '') : labelOf(REASON_CODE_LABEL, risk.reason_code),
   severity: `${severityLabel(risk.severity)}风险`, severityClass: severityTag(risk.severity),
   facts: [{ label: '风险等级', value: severityLabel(risk.severity), className: `tag ${severityTag(risk.severity)}` },
     { label: '回执状态', value: receiptStatusLabel(risk) === '—' ? '暂无回执' : receiptStatusLabel(risk) }],
@@ -1955,6 +1957,7 @@ onUnmounted(() => {
                 <dt v-if="selectedRisk.target_id">关联目标</dt><dd v-if="selectedRisk.target_id" class="mono" :title="selectedRisk.target_id">{{ selectedRisk.space_fact?.subtype_name || '关联感知目标' }}</dd>
                 <dt v-if="selectedRisk.track_id">关联轨迹</dt><dd v-if="selectedRisk.track_id" :title="selectedRisk.track_id">已关联轨迹</dd>
               </dl><div class="rk-note">{{ selectedRisk.risk_type === 'WEATHER' ? '起飞前请核对最新预警和有效时段。' : '位置为发现时快照；违规结论见合法性研判。' }}</div></div>
+              <RiskEvaluationHistory v-if="selectedRisk.risk_type === 'SPACE_OBJECT'" :key="selectedRisk.risk_id" :risk-id="selectedRisk.risk_id" />
               <div class="sect rk-review-history"><h4>核验历史 <span class="tag t-gray">{{ riskHistoryTotal }}</span></h4>
                 <div v-if="riskHistoryLoading" class="empty">正在读取核验历史…</div>
                 <div v-else-if="riskHistoryError" class="warnbox rk-error">{{ riskHistoryError }}</div>

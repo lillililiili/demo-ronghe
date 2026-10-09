@@ -10,6 +10,7 @@ import { onDataChange } from '@/services/realtime.js';
 import { legalityApi } from '@/services/legalityApi.js';
 import { hasPermission } from '@/services/accessControl.js';
 import { applyTrackComparison } from '@/services/trackPoints.js';
+import { serverNow } from '@/services/serverClock.js';
 import {
   attachBearing, attachDeviceEvents, attachRecentTracks, attachTargetSourceLinks, extendRecentTracks,
   bearingOrigins, SITUATION_DEVICE_TYPE_ORDER, toAirspaces, toAlarms, toDevices, toFlightPlans, toRisks, toTargets
@@ -87,7 +88,7 @@ function sourceMode(snapshot) {
  * 融合感知页真实数据源。一个串行调度器承载快慢轮询，页面隐藏时完全停表；
  * 任一分段失败只保留该分段最后一次真实结果，不会切回演示数据。
  */
-export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, now = () => Date.now() } = {}) {
+export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, now = serverNow } = {}) {
   let snapshot = {
     generatedAt: 0, sourceMode: 'unknown', simulated: false, devices: [], targets: [], alarms: [],
     flightPlans: [], risks: [], airspaces: [], handoffs: [], fusionStatus: null
@@ -197,7 +198,10 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
         lastTracksAt = generatedAt;
         // 这次没带回某个目标的尾迹时沿用本机接上的尾迹，不让尾迹一闪而空。
         return withComparison(attachRecentTracks(extended, recent, snapshot.targets));
-      }, value => { snapshot = { ...snapshot, targets: value }; }, []),
+      }, value => { snapshot = { ...snapshot, targets: value }; }, [])
+        // 目标一读回就先发布（CDX-P01）：不等同一轮的告警、风险、移送分页读完。当天记录多时那几组要读很久，
+        // 等它们读完，刚收到的目标已过了地图有效期，被页面当成过期滤掉。整轮读完后照旧再发布一次。
+        .then(() => publish(generatedAt)),
       wanted.has('alarms') && retain('alarms', () => allPages(listAlarms, {
         occurred_from: day.from, occurred_to: day.to, sort: 'occurred_at', order: 'desc'
       }), value => { snapshot = { ...snapshot, alarms: toAlarms(value) }; }, []),

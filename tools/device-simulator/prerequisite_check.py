@@ -2,6 +2,19 @@
 from engine import coordinates
 
 
+def route_version_mismatch(version, plan):
+    """Return the first field where a saved route version differs from the scene task's corridor, or None."""
+    for field, expected in [('corridor_width_m',plan['width']), ('min_altitude_m',plan['min']),
+                            ('max_altitude_m',plan['max']), ('altitude_datum',plan.get('altitudeDatum','AMSL'))]:
+        if version.get(field) != expected:
+            return field
+    points = (version.get('centerline') or {}).get('coordinates', [])
+    expected_points = [coordinates(point) for point in plan['points']]
+    if len(points)!=len(expected_points) or any(len(a)<2 or abs(a[0]-b[0])>1e-7 or abs(a[1]-b[1])>1e-7 for a,b in zip(points,expected_points)):
+        return 'centerline'
+    return None
+
+
 def verify(platform, scene, manifest, scope):
     result = {'plans': [], 'routes': [], 'devices': []}
     for pid, expected in manifest.get('plan_expectations', {}).items():
@@ -26,14 +39,11 @@ def verify(platform, scene, manifest, scope):
         if not version_id:
             raise ValueError('航线回读缺少版本编号：'+plan['id'])
         version = platform.call('GET', '/route-versions/' + version_id)
-        for field, expected in [('corridor_width_m',plan['width']), ('min_altitude_m',plan['min']),
-                                ('max_altitude_m',plan['max']), ('altitude_datum',plan.get('altitudeDatum','AMSL'))]:
-            if version.get(field) != expected:
-                raise ValueError('航线回读不一致：'+plan['id']+' / '+field)
-        points = (version.get('centerline') or {}).get('coordinates', [])
-        expected_points = [coordinates(point) for point in plan['points']]
-        if len(points)!=len(expected_points) or any(len(a)<2 or abs(a[0]-b[0])>1e-7 or abs(a[1]-b[1])>1e-7 for a,b in zip(points,expected_points)):
+        mismatch = route_version_mismatch(version, plan)
+        if mismatch == 'centerline':
             raise ValueError('航线回读坐标不一致：'+plan['id'])
+        if mismatch:
+            raise ValueError('航线回读不一致：'+plan['id']+' / '+mismatch)
         for pid in binding['ids']:
             expected = manifest['plan_expectations'][pid]
             if version['valid_from']>expected['start_at'] or (version.get('valid_to') is not None and version['valid_to']<expected['end_at']):

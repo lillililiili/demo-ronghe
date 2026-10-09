@@ -17,7 +17,11 @@ class FullScenarioTests(unittest.TestCase):
         self.assertTrue({'normal', 'deviation', 'prohibited', 'height', 'overtime', 'unplanned', 'departure', 'lost'} <= {t['id'] for t in scene['targets']})
         self.assertEqual({z['kindCode'] for z in scene['zones']},
                          {'PERMITTED', 'RESTRICTED', 'PROHIBITED', 'ALTITUDE_LIMIT', 'TEMPORARY_CONTROL'})
-        self.assertFalse(next(t for t in scene['targets'] if t['id'] == 'unplanned')['planId'])
+        unplanned = next(t for t in scene['targets'] if t['id'] == 'unplanned')
+        self.assertFalse(unplanned['planId'])
+        # 新-28：离地 120 米以下的普通区域飞行无需申请、不告警；演示“无任务”告警要飞在 120 米以上。
+        self.assertGreater(unplanned['heightAgl'], 120)
+        self.assertEqual(unplanned['height'] - unplanned['heightAgl'], 20)
         devices = {row['id']: row for row in scene['sites'][0]['devices']}
         self.assertEqual(devices['radar']['coverage']['radiusM'], 8000)
         self.assertEqual(devices['eo']['coverage']['kind'], 'sector')

@@ -42,6 +42,8 @@ const initial = {
   risks:types.map((t,i)=>({id:`r${i+1}`,type:t.id,name:t.name,enabled:i===5,targetId:['t1','t2','t3','t1','t2','t4','t5','',''][i],planId:['','p1','','','p1','p1','p1','',''][i],zoneId:['z1','','','z1','','','','',''][i],deviceId:i===7?'d2':'d1',basis:'zone',mode:'结束后继续飞行',offset:2,at:2,seconds:60}))
 };
 let state=structuredClone(initial), selected={kind:'risk',id:'r6'}, filter='全部', draw=null, zoom=1, progress=0, timer=null, dialogType=null, returnFocus=null, toastTimer;
+// 确认书 4-3 的模拟机场（新-27）：系统里的资料，不属于场景，不随场景保存或导出。
+let mockAirport=null;
 const storeKey='dongying-mqtt-simulator-v1';
 let liveState=null, showRunPositions=false, restoredDraft=false;
 const legacyDeviceIds = new Set(['box02-radar','box02-tdoa','box02-eo']);
@@ -150,11 +152,24 @@ function siteMarker(site){const kinds=[...new Set(site.devices.map(d=>d.kind))],
 function position(t){if(showRunPositions&&liveState?.positions?.[t.id]&&['RUNNING','PAUSED','STOPPING','COMPLETED','STOPPED','FAILED'].includes(liveState.phase))return liveState.positions[t.id];const path=t.path;if(!path.length)return [500,325];if(path.length===1)return path[0];const segs=path.slice(1).map((p,i)=>Math.hypot(p[0]-path[i][0],p[1]-path[i][1]));const total=segs.reduce((a,b)=>a+b,0);let dist=total*progress/100;for(let i=0;i<segs.length;i++){if(dist<=segs[i]||i===segs.length-1){const u=segs[i]?dist/segs[i]:0;return [path[i][0]+u*(path[i+1][0]-path[i][0]),path[i][1]+u*(path[i+1][1]-path[i][1])];}dist-=segs[i];}return path[0];}
 function activeTarget(){return selected.kind==='target'?selected.id:selected.kind==='risk'?lookup('risk',selected.id)?.targetId:null;}
 function scenePoints(){return [...state.sites.map(s=>[s.x,s.y]),...state.plans.flatMap(p=>p.points),...state.zones.flatMap(z=>z.points),...state.targets.flatMap(t=>[...t.path,...(t.departurePath||[])])];}
+function airportLayer(project,attr){
+  const a=mockAirport;if(!a?.exists)return '';
+  const [eastMetres,southMetres]=a.grid_metres_per_unit,[[x0,y0],[x1,y1]]=a.approach_grid,dy=a.buffer_m/southMetres;
+  const band=[[x0,y0-dy],[x1,y1-dy],[x1,y1+dy],[x0,y0+dy]].map(project),line=a.approach_grid.map(project);
+  const centre=project(a.protected_grid),edge=project([a.protected_grid[0]+a.protected_pad_m/eastMetres,a.protected_grid[1]]);
+  let svg=`<polygon points="${attr(band)}" fill="#d9483b12" stroke="#d9483b" stroke-width="1.2" stroke-dasharray="5 5" pointer-events="none"/>`;
+  svg+=`<polyline points="${attr(line)}" fill="none" stroke="#d9483b" stroke-width="3" pointer-events="none"/>`;
+  svg+=`<circle cx="${centre[0]}" cy="${centre[1]}" r="${Math.max(4,Math.hypot(edge[0]-centre[0],edge[1]-centre[1]))}" fill="#d9483b12" stroke="#d9483b" stroke-width="1.2" stroke-dasharray="5 5" pointer-events="none"/>`;
+  const mid=project([(x0+x1)/2,(y0+y1)/2]);svg+=label(mid[0],mid[1]+8,`${a.approach_name}（两侧 ${a.buffer_m} 米内算机场附近）`);
+  svg+=label(centre[0],centre[1]+10,a.protected_name);
+  a.test_points.forEach(p=>{const [x,y]=project(p.grid);svg+=`<circle cx="${x}" cy="${y}" r="6" fill="#9261c2" stroke="#ffffff" stroke-width="2" pointer-events="none"/>`+label(x,y-38,p.distance_m>=1000?`${p.distance_m/1000} 公里试放点（不该出风险）`:`${p.distance_m} 米试放点（该出风险）`);});
+  return `<g class="mock-airport" aria-label="模拟机场">${svg}</g>`;
+}
 function renderMap(){
   const map=window.SimulatorMap;
   if(!map?.ready){$('#map-layers').innerHTML='';$('#draw-layer').innerHTML='';return;}
   const project=p=>map.project(p), points=items=>items.map(project), attr=items=>items.map(p=>p.join(',')).join(' ');
-  let svg='';
+  let svg=airportLayer(project,attr);
   state.zones.forEach(z=>{const ps=points(z.points);svg+=`<polygon class="map-geometry" data-action="select" data-kind="zone" data-id="${z.id}" points="${attr(ps)}" fill="#e5ad432b" stroke="#efb849" stroke-width="2.5"/>`;const p=ps[1]||ps[0];if(p)svg+=label(p[0]+20,p[1]+35,z.name);});
   state.plans.forEach(p=>{const ps=points(p.points);svg+=`<polyline class="map-geometry" data-action="select" data-kind="plan" data-id="${p.id}" points="${attr(ps)}" fill="none" stroke="#8190a1" stroke-width="3" stroke-dasharray="10 7"/>`;svg+=ps.map(([x,y])=>`<circle cx="${x}" cy="${y}" r="4" fill="#285076" stroke="#e5f3ff" stroke-width="1.5"/>`).join('');const q=ps[Math.floor(ps.length/2)];if(q)svg+=label(q[0],q[1]-40,p.name);});
   state.targets.forEach(t=>{const ps=points(t.path),color=t.kind==='bird'?'#16866d':t.kind==='balloon'?'#9261c2':'#2867e8';svg+=`<polyline class="map-geometry" data-action="select" data-kind="target" data-id="${t.id}" points="${attr(ps)}" fill="none" stroke="${color}" stroke-width="2.5"/>`;svg+=ps.map(([x,y])=>`<circle cx="${x}" cy="${y}" r="3.5" fill="${color}" stroke="#ffffff" stroke-width="1.4"/>`).join('');});

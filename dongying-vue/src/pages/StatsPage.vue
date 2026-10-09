@@ -70,7 +70,7 @@ const kpiList = computed(() => {
     { label: '非法目标数', value: metricNumber(stats.illegal), color: 'red', icon: 'alert', desc: metricReason('illegal') },
     { label: '处罚案件数', value: metricNumber(stats.punish), color: 'orange', icon: 'gavel', desc: metricReason('punish') },
     { label: '接入设备总数', value: metricNumber(devices ? devices.total : null), color: 'cyan', icon: 'device', desc: deviceDesc },
-    { label: '高风险目标数', value: metricNumber(stats.highRisk), color: 'red', icon: 'zone', desc: metricReason('high_risk') }
+    { label: '异物高风险目标数', value: metricNumber(stats.highRisk), color: 'red', icon: 'zone', desc: metricReason('high_risk') }
   ].map(item => ({ ...item, caption: escapeHtml(item.desc), desc: undefined }));
 });
 
@@ -94,7 +94,7 @@ function regionTable() {
     { t: '目标', align: 'center', cls: 'num', render: r => metricNumber(r.total) },
     { t: '非法', align: 'center', cls: 'num', render: r => `<span style="color:#ff8b95">${metricNumber(r.illegal)}</span>` },
     { t: '案件', align: 'center', cls: 'num', render: r => metricNumber(r.punish) },
-    { t: '高危', align: 'center', cls: 'num', render: r => `<span style="color:#ffb083">${metricNumber(r.highRisk)}</span>` }
+    { t: '异物高危', align: 'center', cls: 'num', render: r => `<span style="color:#ffb083">${metricNumber(r.highRisk)}</span>` }
   ], stats.regions).replace('</table>', `<tfoot><tr>
     <td colspan="2">合计</td>
     <td class="num">${metricNumber(stats.total)}</td>
@@ -272,7 +272,7 @@ function onRegionTab(e) {
       <UPanel title="目标趋势" panel-style="flex:1.5">
         <div id="sTrend" style="height:100%"></div>
       </UPanel>
-      <UPanel title="各风险等级分布" sub="目标数" panel-style="flex:.75"><div v-if="!metricVisible('by_risk')" class="stats-unavailable">暂不可统计<br>{{ metricReason('by_risk') }}</div><div v-else id="sRisk" style="height:100%"></div></UPanel>
+      <UPanel title="各异物风险等级分布" sub="目标数" panel-style="flex:.75"><div v-if="!metricVisible('by_risk')" class="stats-unavailable">暂不可统计<br>{{ metricReason('by_risk') }}</div><div v-else id="sRisk" style="height:100%"></div></UPanel>
       <UPanel title="各类型目标占比" panel-style="flex:1.25"><div v-if="!metricVisible('by_type')" class="stats-unavailable">暂不可统计<br>{{ metricReason('by_type') }}</div><div v-else id="sType" style="height:100%"></div></UPanel>
     </div>
 

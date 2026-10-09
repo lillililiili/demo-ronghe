@@ -6,6 +6,7 @@ Each TCP connection carries one request and, when applicable, one reply.
 
 from __future__ import annotations
 
+import os
 import select
 import socket
 import threading
@@ -49,6 +50,13 @@ class CountermeasureSimulator:
                 return
             listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             try:
+                if os.name != 'nt':
+                    # Each reply is followed by our own close, so the port keeps
+                    # TIME_WAIT entries for up to a minute; without this a quick
+                    # stop/start fails as "address in use". A port that is still
+                    # listening is refused as before. Not set on Windows, where
+                    # the same option would let two listeners share the port.
+                    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 listener.bind((self.host, self.port))
                 listener.listen(16)
                 listener.settimeout(0.2)

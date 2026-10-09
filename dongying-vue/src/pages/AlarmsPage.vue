@@ -30,15 +30,16 @@ import UPanel from '@/components/UPanel.vue';
 import UKpis from '@/components/UKpis.vue';
 import { handoffApi } from '@/services/handoffApi.js';
 import { toast } from '@/ui/nv.js';
-import { exportAlarmsCsv, getAlarm, getUavEvent, listAlarmDistricts, listAlarmEscalations, listAlarms } from '@/services/alarmApi.js';
+import { exportAlarmsCsv, getAlarm, getUavEvent, listAlarmDistricts, listAlarmEscalations, listAlarms, listUavVerifications } from '@/services/alarmApi.js';
 import { escalationBrief, escalationRecords, reasonListText } from '@/ui/alarmEscalation.js';
 import { ruleReasonText } from '@/ui/legalityReviewModal.js';
 import { NO_PILOT_LOCATION, pilotLocationText } from '@/services/pilotLocation.js';
+import { pilotDistanceNote } from '@/ui/pilotDistanceNote.js';
 import { getEvidenceChain } from '@/services/evidenceApi.js';
 import { openUavVerification } from '@/ui/uavVerificationModal.js';
 import { targetApi } from '@/services/targetApi.js';
 import { mapPool } from '@/services/apiClient.js';
-import { ALARM_PROGRESS_LABEL, ALARM_PROGRESS_TAG, ALARM_TYPE_LABEL, classChangeText, DISPOSAL_ACTION_LABEL, labelOf, LEGALITY_LABEL, readableNo, sourceDescription, SOURCE_MODE_LABEL as MODE_TEXT, targetTypeLabel } from '@/ui/labels.js';
+import { ALARM_PROGRESS_LABEL, ALARM_PROGRESS_TAG, ALARM_TYPE_LABEL, classChangeText, CONCLUSION_LABEL, DISPOSAL_ACTION_LABEL, labelOf, LEGALITY_LABEL, readableNo, sourceDescription, SOURCE_MODE_LABEL as MODE_TEXT, targetTypeLabel } from '@/ui/labels.js';
 import { openEvidenceFileModal } from '@/ui/evidenceFileDetail.js';
 import { openEvidenceChainTypeModal, renderEvidenceChainHtml } from '@/ui/evidenceChainView.js';
 import { disposalApi, isDisposalUnavailable } from '@/services/disposalApi.js';
@@ -268,7 +269,8 @@ let listSeq = 0, detailSeq = 0;
 const emptyDetail = () => ({ alarm: null, event: null, loading: false, error: '',
   target: null, targetLoading: false, targetError: '', track: null, trackError: '',
   chain: null, chainLoading: false, chainError: '', chainUnavailable: '',
-  escalations: [], escalationsTotal: 0, escalationsLoading: false, escalationsError: ''
+  escalations: [], escalationsTotal: 0, escalationsLoading: false, escalationsError: '',
+  verifications: [], verificationsLoaded: false, verificationsLoading: false, verificationsError: ''
   });
 let cur = emptyDetail();
 /* 深链（sessionStorage alarm.sel）—— 与 legacy render() 同构：mount 后按 ID 直接向服务端取详情 */
@@ -419,15 +421,22 @@ async function loadKpis() {
   }).formatToParts(Date.now()).filter(part => part.type !== 'literal').map(part => [part.type, Number(part.value)]));
   const from = Date.UTC(parts.year, parts.month - 1, parts.day) - 8 * 60 * 60_000;
   const to = from + 86400000;
+  const day = { occurred_from: from, occurred_to: to };
   const r = await Promise.allSettled([
-    count({ occurred_from: from, occurred_to: to }),
-    count({ occurred_from: from, occurred_to: to, state: 'PENDING_VERIFICATION' }),
-    count({ occurred_from: from, occurred_to: to, state: 'CONFIRMED' }),
-    count({ occurred_from: from, occurred_to: to, state: 'FALSE_POSITIVE' }),
+    count(day),
+    count({ ...day, state: 'PENDING_VERIFICATION' }),
+    count({ ...day, state: 'CONFIRMED' }),
+    count({ ...day, state: 'FALSE_POSITIVE' }),
     disposalCount('COUNTERMEASURE'), disposalCount('JAMMING'),
     disposalApi.list({ action_type: 'COUNTERMEASURE', status: 'COMPLETED', page: 1, size: 1 })
       .then(p => ({ completed: Number(p && p.total) || 0 })),
-    count(PENDING_DISPOSAL_QUERY)
+    count(PENDING_DISPOSAL_QUERY),
+    /* 新-2（D-4）：今日四张卡和大屏同一口径，系统自带的演示告警（来源标“模拟”）不算；
+       演示告警另数一遍，卡片上写明有几条没算进来。r[8]~r[11] 依次对应 r[0]~r[3]。 */
+    count({ ...day, source_mode: 'mock' }),
+    count({ ...day, state: 'PENDING_VERIFICATION', source_mode: 'mock' }),
+    count({ ...day, state: 'CONFIRMED', source_mode: 'mock' }),
+    count({ ...day, state: 'FALSE_POSITIVE', source_mode: 'mock' })
   ]);
   const v = r.map(x => x.status === 'fulfilled' ? x.value : null);
   const num = x => x == null ? '—' : U.num(x);
@@ -443,15 +452,25 @@ async function loadKpis() {
     return { ...def, value: U.num(value.executing), desc: `另有 ${U.num(value.approved)} 起已批准待执行` };
   };
   const fail = i => v[i] == null ? '读取失败：' + esc(messageOf(r[i].reason)) : null;
+  /* 今日卡 = 全部来源 − 演示告警。演示告警数读不到时先按全部来源显示，卡片上写明可能含演示告警，不冒充已扣除。 */
+  const todayKpi = (def, i, text) => {
+    if (v[i] == null) return { ...def, value: '—', desc: fail(i) };
+    const demo = v[i + 8];
+    if (demo == null) {
+      return { ...def, value: num(v[i]), caption: '可能含演示告警', desc: `${text}；演示告警数读取失败（${esc(messageOf(r[i + 8].reason))}），这里暂按全部来源计数` };
+    }
+    return { ...def, value: num(Math.max(0, v[i] - demo)), caption: demo > 0 ? `另有演示告警 ${U.num(demo)} 条未计入` : def.caption,
+      desc: `${text}；和大屏同一口径：设备模拟器产生的告警（来源标“回放”）照算，系统自带的演示告警（来源标“模拟”）不算` };
+  };
   kpiList.value = [
-    { ...KPI_DEFS[0], value: num(v[0]), desc: fail(0) || '北京时间今天发生的告警数量；发生时间未知者不计' },
-    { ...KPI_DEFS[1], value: num(v[1]), desc: fail(1) || '北京时间今天发生且待人工核实的告警数量' },
+    todayKpi(KPI_DEFS[0], 0, '北京时间今天发生的告警数量；发生时间未知者不计'),
+    todayKpi(KPI_DEFS[1], 1, '北京时间今天发生且待人工核实的告警数量'),
     { ...KPI_DEFS[2], value: num(v[7]), desc: fail(7) || '已核实属实、处置还没结束的告警数量，不限日期；正在反制、干扰或急停核查中的也算在内，设备反制或干扰完成后不再计入' },
     disposalKpi(KPI_DEFS[3], r[4], v[4]),
     disposalKpi(KPI_DEFS[4], r[6], v[6]),
     disposalKpi(KPI_DEFS[5], r[5], v[5]),
-    { ...KPI_DEFS[6], value: num(v[2]), desc: fail(2) || '北京时间今天发生且已确认属实的告警数量，包含处置已结束的记录' },
-    { ...KPI_DEFS[7], value: num(v[3]), desc: fail(3) || '北京时间今天发生且人工核实后已排除的告警数量' }
+    todayKpi(KPI_DEFS[6], 2, '北京时间今天发生且已确认属实的告警数量，包含处置已结束的记录'),
+    todayKpi(KPI_DEFS[7], 3, '北京时间今天发生且人工核实后已排除的告警数量')
   ];
 }
 
@@ -625,6 +644,8 @@ function detailHtml() {
   const targetType = !a.target_id ? '—' : cur.targetLoading ? '读取中' : cur.targetError ? '读取失败' : esc(t ? targetTypeLabel(t.subtype, t.object_type_code) : '—');
   const altSpeed = ls ? `${ls.altitude_amsl_m == null ? '—' : esc(ls.altitude_amsl_m)} m / ${ls.speed_mps == null ? '—' : esc(ls.speed_mps)} m/s` : '— m / — m/s';
   const reasons = reasonsOf(a), brief = briefOf(a);
+  // 新-29：飞手离无人机超过 500 米不算违规，告警详情在“遥控器位置”后面照样写这句给值班员参考（取目标最近一次研判）。
+  const pilotNote = cur.targetLoading || cur.targetError ? '' : pilotDistanceNote(t);
   return `${U.detailHero({
     icon: 'alert', subtitle: '告警事件', title: typeOf(a), id: esc(noOf(a)),
     tags: [sevTag(a), detailStateTags(a)]
@@ -642,12 +663,35 @@ function detailHtml() {
     ['高度/速度', altSpeed],
     ['遥控器位置', !a.target_id ? NO_PILOT_LOCATION : cur.targetLoading ? '读取中' : cur.targetError ? '读取失败'
       : esc(pilotLocationText(ls && ls.pilot_location))],
+    ...(pilotNote ? [['飞手距离', esc(pilotNote)]] : []),
     ['数据来源', `${esc(sourceDescription(a.source_name, a.source_code, a.source_mode, '—'))}`]
   ], { surface: true, density: 'compact' }), { icon: 'alert', className: 'alarm-info-sect' })}
+    ${verificationHtml()}
     ${escalationHtml(brief)}
     ${renderEvidenceChainHtml(cur.chain, {
       loading: cur.chainLoading, error: cur.chainError, unavailable: cur.chainUnavailable
     })}`;
+}
+
+/* 核实记录（确认书 3-1、流程 1 第②步，新-18）：按先后列出结论、时间和说明。系统按核实规则自动核实的没有核实人，
+   写“系统自动核实 · 无核实人”；人工核实的写核实人。还没有核实事件的告警不显示这一块。 */
+function verificationHtml() {
+  const a = cur.alarm;
+  if (!a?.event_id) return '';
+  let body;
+  if (cur.verificationsLoading) body = '<div class="empty">正在读取核实记录</div>';
+  else if (cur.verificationsError) {
+    body = `<div class="empty">${esc(cur.verificationsError)}<br><button class="btn" data-al="verifications-retry" style="margin-top:8px">重试</button></div>`;
+  } else if (!cur.verifications.length) {
+    body = `<div class="empty">${cur.event?.state === 'PENDING_VERIFICATION' ? '还没有核实' : '暂未读到核实记录'}</div>`;
+  } else {
+    body = `<ol class="alarm-escalation-list">${cur.verifications.map(v => `<li>
+        <div class="alarm-escalation-head"><b>${esc(labelOf(CONCLUSION_LABEL, v.conclusion, '结论未知'))}</b></div>
+        ${v.note ? `<div>说明：${esc(v.note)}</div>` : ''}
+        <div class="alarm-escalation-meta">${esc(v.actor_id ? `人工核实 · 核实人 ${v.actor_name || '未知'}` : '系统自动核实 · 无核实人')} · ${esc(fmt(v.created_at) || '时间未知')}</div>
+      </li>`).join('')}</ol>`;
+  }
+  return U.sect('核实记录', body, { icon: 'check' });
 }
 
 /* 升级记录：按升级先后列出每一次是系统研判还是人工转告警、等级怎么变、新增了什么原因、谁在什么时候做的。 */
@@ -880,9 +924,10 @@ async function selectAlarm(id) {
   }
   if (cur.alarm && (cur.alarm.event_id || cur.alarm.target_id)) cur.chainLoading = true;
   if (briefOf(cur.alarm)) cur.escalationsLoading = true;
+  if (cur.alarm?.event_id) cur.verificationsLoading = true;
   cur.loading = false;
   paintDetail(); focusMap();
-  await Promise.all([loadTarget(my), loadChain(my), loadEscalations(my)]);
+  await Promise.all([loadTarget(my), loadChain(my), loadEscalations(my), loadVerifications(my)]);
 }
 
 /* 升级记录只在告警升级过时读取；读不到只影响这一块，可单独重试，不影响告警详情与处置。 */
@@ -907,6 +952,30 @@ async function loadEscalations(my, { quiet = false } = {}) {
     }
   }
   cur.escalationsLoading = false;
+  paintDetailContent();
+}
+
+/* 核实记录随事件状态读取；quiet：打开的告警刚被核实（自动或人工），已显示的记录保留到新记录读到为止，读取失败也不清掉。 */
+const VERIFICATION_PAGE_SIZE = 20;
+async function loadVerifications(my, { quiet = false } = {}) {
+  const a = cur.alarm;
+  if (!a?.event_id || my !== detailSeq) return;
+  const keep = quiet && cur.verificationsLoaded;
+  if (!keep) { cur.verificationsLoading = true; cur.verificationsError = ''; paintDetailContent(); }
+  try {
+    const page = await listUavVerifications(a.event_id, { page: 1, size: VERIFICATION_PAGE_SIZE });
+    if (my !== detailSeq) return;
+    cur.verifications = Array.isArray(page?.items) ? page.items : [];
+    cur.verificationsLoaded = true;
+    cur.verificationsError = '';
+  } catch (e) {
+    if (my !== detailSeq) return;
+    if (!keep) {
+      cur.verifications = [];
+      cur.verificationsError = e?.status === 403 ? '当前账号没有查看核实记录的权限' : messageOf(e);
+    }
+  }
+  cur.verificationsLoading = false;
   paintDetailContent();
 }
 
@@ -1025,6 +1094,9 @@ async function refreshSelected(id = st.selId) {
   // 打开着的告警被升级（同一架无人机的新违规并入，BUG-16/BUG-11）时，升级记录跟着重读。
   const escalationChanged = (alarm.escalation_count ?? 0) !== (before.escalation_count ?? 0) || alarm.escalated_at !== before.escalated_at;
   const chainChanged = targetChanged || alarm.event_id !== before.event_id || JSON.stringify(event) !== JSON.stringify(beforeEvent);
+  // 事件被核实（自动或人工）后状态会变，核实记录跟着重读；处置面板可能已先把版本号改成新的，所以也比状态。
+  const verificationChanged = alarm.event_id !== before.event_id || event?.state !== beforeEvent?.state
+    || event?.version !== beforeEvent?.version || (!!alarm.event_id && !cur.verificationsLoaded && !cur.verificationsLoading);
   cur.alarm = alarm; cur.event = event;
   if (alarm.event_id) await refreshEventDisposals(alarm.event_id);
   else { ++disposalSeq; disposal.byAction = {}; disposal.handoff = null; disposal.error = ''; disposal.unavailable = false; }
@@ -1039,6 +1111,7 @@ async function refreshSelected(id = st.selId) {
   }
   if (chainChanged && isCurrent()) await refreshChain(my);
   if (escalationChanged && isCurrent()) await loadEscalations(my, { quiet: true });
+  if (verificationChanged && isCurrent()) await loadVerifications(my, { quiet: alarm.event_id === before.event_id });
 }
 
 /* 证据链静默重读：读到新内容再替换，读取失败保留已显示的证据链；原来就没读出来的按正常流程重读。 */
@@ -1152,6 +1225,7 @@ onMounted(async () => {
     else if (k === 'retry-detail' && st.selId) selectAlarm(st.selId);
     else if (k === 'chain-retry' && st.selId) loadChain(detailSeq);
     else if (k === 'escalations-retry' && st.selId) loadEscalations(detailSeq);
+    else if (k === 'verifications-retry' && st.selId) loadVerifications(detailSeq);
     else if (k === 'replay') replayLoadedTrack();
   });
   U.on(view, '[data-ev-file]', 'click', (e, btn) => {

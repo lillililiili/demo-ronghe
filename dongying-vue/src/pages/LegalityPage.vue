@@ -22,6 +22,9 @@ import UPagination from '@/components/UPagination.vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import { refreshFailureText, useRealtimeRefresh } from '@/hooks/useRealtimeRefresh.js';
 import { legalityReviewFocus } from '@/ui/legalityReviewFocus.js';
+import { lowConfidenceReason } from '@/ui/legalityConfidence.js';
+import { noPlanExemptReason } from '@/ui/noPlanExemption.js';
+import { isPilotDistanceNoteHit, pilotDistanceNote } from '@/ui/pilotDistanceNote.js';
 import { legalityApi } from '@/services/legalityApi.js';
 import { flightApi } from '@/services/flightApi.js';
 import { planPickerQuery, planPickerItems, planPickerLabel } from '@/pages/flights/planFilters.js';
@@ -140,12 +143,18 @@ function openPlan(planId) {
 const selectedConclusion = computed(() => conclusionMeta[selectedEvaluation.value?.legal_status]
   || { label: '尚未选择研判', tone: 'amber' });
 const primaryReason = computed(() => evaluationReason(selectedEvaluation.value));
+// 新-29：飞手离得远不算违规，结论下面照样写“飞手离无人机约 N 米（超过 500 米），是否经批准请核实”。
+const focusPilotNote = computed(() => pilotDistanceNote(selectedEvaluation.value));
 const allowed = computed(() => selectedEvaluation.value?.allowed_actions || []);
 const reviewFocus = computed(() => legalityReviewFocus(selectedEvaluation.value));
+// 不通过、不可判定和要人核实飞手距离的单项直接列出，其余收在“查看通过及不适用项”里。
+const primaryCheck = hit => ['FAIL', 'UNDETERMINED'].includes(hit.result_code) || isPilotDistanceNoteHit(hit);
 const checkRows = computed(() => (selectedEvaluation.value?.hit_details || []).map((hit, index) => ({ hit, index }))
-  .filter(({ hit }) => showAllChecks.value || ['FAIL', 'UNDETERMINED'].includes(hit.result_code)));
-const secondaryCheckCount = computed(() => (selectedEvaluation.value?.hit_details || []).filter(hit => !['FAIL', 'UNDETERMINED'].includes(hit.result_code)).length);
-const unlistedUnknowns = computed(() => reviewFocus.value.unknownReasons.filter(code => !(selectedEvaluation.value?.hit_details || []).some(hit => hit.reason_code === code)));
+  .filter(({ hit }) => showAllChecks.value || primaryCheck(hit)));
+const secondaryCheckCount = computed(() => (selectedEvaluation.value?.hit_details || []).filter(hit => !primaryCheck(hit)).length);
+// 判定依据不足的原因上面已经列过的（如“置信度不足”），这里不再列第二遍（CDX-P04）。
+const unlistedUnknowns = computed(() => reviewFocus.value.unknownReasons.filter(code => !(selectedEvaluation.value?.hit_details || []).some(hit => hit.reason_code === code)
+  && !reviewFocus.value.assuranceReasons.includes(code)));
 const assuranceReasons = computed(() => reviewFocus.value.assuranceReasons || []);
 const c01Facts = computed(() => selectedEvaluation.value?.hit_details?.find(hit => hit.rule_code === 'C01')?.facts || null);
 const unconfirmedParams = item => !!item && item.legal_status !== 'NOT_APPLICABLE' && item.param_status !== 'CONFIRMED';
@@ -175,6 +184,15 @@ function evidenceIcon(kind) {
 
 function resultText(code) { return RULE_RESULT_TEXT[code] || code || '未提供'; }
 function resultClass(code) { return resultMeta[code]?.className || 'is-warn'; }
+// 新-28：没有报备任务、按规定无需申请的，任务匹配一行照实记“对不上任务”，结果写“无需申请”，不画成不通过。
+function exemptCheck(hit) { return hit?.rule_code === 'C01' && hit.facts?.no_plan_exempt === true; }
+// 新-29：飞手离无人机超过 500 米只提示，结果写“请核实”、标成提醒色，不画成不通过。
+function checkResultText(hit) { return exemptCheck(hit) ? '无需申请' : isPilotDistanceNoteHit(hit) ? '请核实' : resultText(hit.result_code); }
+function checkResultClass(hit) { return exemptCheck(hit) ? 'is-pass' : isPilotDistanceNoteHit(hit) ? 'is-warn' : resultClass(hit.result_code); }
+function checkIcon(hit) {
+  if (isPilotDistanceNoteHit(hit)) return 'warning';
+  return exemptCheck(hit) || hit.result_code === 'PASS' ? 'check' : hit.result_code === 'FAIL' ? 'cross' : 'clock';
+}
 /* 列表是 ACTIVE 最新研判；深链仍可能打开被替代的旧结果，历史结论保持静态。 */
 function evaluationAbnormal(item) {
   return UI.abnormalActive({
@@ -211,13 +229,38 @@ function shortTime(value) {
 function evaluationReason(item) {
   if (!item) return '尚未取得研判详情';
   const violations = (item.violation_reasons || []).map(ruleReasonText).join('、');
-  if (unconfirmedParams(item)) return `${violations ? `${violations}；` : ''}规则参数未确认，暂不可判定。`;
+  if (unconfirmedParams(item)) return demoParamReason(item, violations);
   if (item.original_legal_status === 'ABNORMAL') return `${violations ? `${violations}；` : ''}历史记录未明确合法或非法，保留原始依据。`;
-  if (item.legal_status === 'LEGAL') return item.unknown_reasons?.length ? `系统判定合法，另有 ${item.unknown_reasons.length} 项未知信息` : '全部检查通过';
+  if (item.legal_status === 'LEGAL') return legalReason(item, '系统判定合法');
+  const confidence = lowConfidenceReason(item);
+  if (confidence) return `${confidence}${violations ? `；已发现${violations}` : ''}`;
   if (item.violation_reasons?.length) return ruleReasonText(item.violation_reasons[0]);
   if (item.unknown_reasons?.length) return ruleReasonText(item.unknown_reasons[0]);
   if (item.legal_status === 'LEGAL') return '全部检查通过';
   return '未提供结论摘要';
+}
+/*
+ * 规则参数还是演示值时：判出的合法、非法照常写，后面注明“按演示参数判定，规则参数待业务确认”；
+ * 没判出来的写真实原因（如置信度不足），不再一律写“规则参数未确认，暂不可判定”——
+ * 演示参数照样参与判定，以前那句和判出的结论自相矛盾（确认书 7-9，新-14）。
+ * 置信度不足时写明几路来源、可信度和要求（CDX-P04），其余没判出来的原因跟在“另有”后面。
+ */
+function demoParamReason(item, violations) {
+  const note = '按演示参数判定，规则参数待业务确认。';
+  if (item.original_legal_status === 'ABNORMAL') return `${violations ? `${violations}；` : ''}历史记录未明确合法或非法；${note}`;
+  if (item.legal_status === 'ILLEGAL') return `${violations || '判定非法'}；${note}`;
+  if (item.legal_status === 'LEGAL') return `${legalReason(item, '判定合法')}；${note}`;
+  const confidence = lowConfidenceReason(item);
+  const unknown = [...new Set((item.unknown_reasons || []).filter(code => !confidence || code !== 'LOW_CONFIDENCE').map(ruleReasonText))].join('、');
+  if (confidence) return `${confidence}${unknown ? `；另有${unknown}` : ''}${violations ? `；已发现${violations}` : ''}；规则参数待业务确认。`;
+  return `${unknown || '依据不足'}${violations ? `，已发现${violations}` : ''}；规则参数待业务确认。`;
+}
+/* 合法时的说明：没有报备任务、按规定无需申请的写清原因（新-28），其余照旧“全部检查通过”或“另有 N 项未知信息”。 */
+function legalReason(item, prefix) {
+  const exempt = noPlanExemptReason(item);
+  const unknown = item.unknown_reasons?.length ? `另有 ${item.unknown_reasons.length} 项未知信息` : '';
+  if (exempt) return unknown ? `${exempt}；${unknown}` : exempt;
+  return unknown ? `${prefix}，${unknown}` : '全部检查通过';
 }
 function subjectLabel(item) {
   if (!item) return '未选择研判';
@@ -231,13 +274,22 @@ const FACT_KEY_TEXT = {
   distance_m: '距中心线（米）', deviation_m: '偏离量（米）', half_width_m: '走廊半宽（米）', tolerance_m: '容差（米）', corridor_tolerance_m: '走廊容差（米）',
   altitude_m: '高度（米）', max_altitude_m: '最大高度（米）', min_altitude_m: '最小高度（米）', limit_m: '限高（米）', margin_m: '余量（米）',
   time_window: '时间窗', corridor: '走廊', identity: '身份', confidence: '置信度', candidate_count: '候选任务数', match_reason: '匹配原因',
-  start_at: '开始', end_at: '结束', observed_at: '监测时间', night_from: '夜航起', night_to: '夜航止', kinds: '空域类型'
+  start_at: '开始', end_at: '结束', observed_at: '监测时间', night_from: '夜航起', night_to: '夜航止', kinds: '空域类型',
+  no_plan_exempt: '按规定无需申请', height_agl_m: '离地高度（米）', longitude: '经度', latitude: '纬度'
 };
+/* 飞手距离（C02-6）的事实：distance_m 在这里是飞手离无人机多远，不是距航线中心线；那句提示已经写在说明里，不再重复。 */
+const PILOT_FACT_KEY_TEXT = {
+  distance_m: '飞手离无人机（米）', vlos_m: '视距阈值（米）', beyond_vlos: '超过视距阈值', pilot_location: '遥控器位置', pilot_observed_at: '遥控器位置时间'
+};
+const HIDDEN_FACT_KEYS = { 'C02-6': ['pilot_distance_note'] };
 const DIM_TEXT = { MATCH: '匹配', MISMATCH: '不匹配', UNDETERMINED: '不可判定', PASS: '通过', FAIL: '不通过', UNKNOWN: '未知' };
-function factKeyText(key) { return FACT_KEY_TEXT[key] || key.replace(/_/g, ' '); }
+function factKeyText(key, ruleCode) {
+  return (ruleCode === 'C02-6' && PILOT_FACT_KEY_TEXT[key]) || FACT_KEY_TEXT[key] || key.replace(/_/g, ' ');
+}
 function factValueText(key, value) {
   if (value === null || value === undefined) return '—';
-  if (typeof value === 'number') return Number.isInteger(value) ? String(value) : value.toFixed(1);
+  if (typeof value === 'boolean') return value ? '是' : '否';
+  if (typeof value === 'number') return Number.isInteger(value) ? String(value) : value.toFixed(key === 'longitude' || key === 'latitude' ? 6 : 1);
   if (typeof value === 'string') {
     if (/_id$/.test(key) || /^seed-/.test(value)) return '已关联';
     if (DIM_TEXT[value]) return DIM_TEXT[value];
@@ -245,9 +297,12 @@ function factValueText(key, value) {
   }
   return factText(value);
 }
-function factText(value) {
+function factText(value, ruleCode) {
   if (value === null || value === undefined) return '—';
-  if (typeof value === 'object') return Object.entries(value).map(([k, v]) => `${factKeyText(k)} ${factValueText(k, v)}`).join('；');
+  if (typeof value === 'object') {
+    const hidden = HIDDEN_FACT_KEYS[ruleCode] || [];
+    return Object.entries(value).filter(([k]) => !hidden.includes(k)).map(([k, v]) => `${factKeyText(k, ruleCode)} ${factValueText(k, v)}`).join('；');
+  }
   return String(value);
 }
 function dimText(value) { return value ? (DIM_TEXT[value] || value) : '未评估'; }
@@ -758,6 +813,7 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
                 <section class="lg-focus-card" aria-label="系统结论与人工核对重点">
                   <div class="lg-focus-verdict"><span>系统结论</span><strong class="lg-status-tag" :class="`is-${selectedConclusion.tone}`">{{ selectedConclusion.label }}</strong><span>{{ conclusionQualificationText(selectedEvaluation) || reviewText(selectedEvaluation) }}</span></div>
                   <p class="lg-focus-basis">{{ primaryReason }}</p>
+                  <p v-if="focusPilotNote" class="lg-state-warn">{{ focusPilotNote }}</p>
                   <p class="lg-muted">{{ formatTime(selectedEvaluation.evaluated_at) }} · {{ sourceText(selectedEvaluation.source_mode) }} · {{ parameterNote(selectedEvaluation) }}</p>
                   <p v-if="selectedEvaluation.original_legal_status || unconfirmedParams(selectedEvaluation)" class="lg-muted">原始系统记录：{{ legalStatusText(selectedEvaluation.original_legal_status || selectedEvaluation.legal_status) }}；原始依据与历史保留，不能作为当前正式判定。</p>
                   <p class="lg-muted">观测时间：{{ formatTime(selectedEvaluation.observed_at) }}</p>
@@ -786,12 +842,12 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
                     <p v-if="selectedEvaluation.hit_details?.length && !checkRows.length" class="lg-check-empty">没有不通过或不可判定的单项检查，可展开查看完整依据。</p>
                     <button v-for="{ hit, index } in checkRows"
                       :key="`${hit.rule_code}-${index}`" type="button" class="lg-check-item"
-                      :class="[resultClass(hit.result_code), { 'is-selected': selectedHitIndex === index }]"
+                      :class="[checkResultClass(hit), { 'is-selected': selectedHitIndex === index }]"
                       :aria-expanded="selectedHitIndex === index" :title="hit.message || ''" @click="toggleHit(index)">
-                      <span class="lg-check-icon" v-html="UI.icon(hit.result_code === 'PASS' ? 'check' : hit.result_code === 'FAIL' ? 'cross' : 'clock')"></span>
-                      <span class="lg-check-copy"><b>{{ ruleName(hit.rule_code) }}<em>{{ resultText(hit.result_code) }}</em></b>
+                      <span class="lg-check-icon" v-html="UI.icon(checkIcon(hit))"></span>
+                      <span class="lg-check-copy"><b>{{ ruleName(hit.rule_code) }}<em>{{ checkResultText(hit) }}</em></b>
                         <small class="lg-check-description">{{ hit.message || (hit.reason_code ? ruleReasonText(hit.reason_code) : '未提供说明') }}</small>
-                        <small v-if="selectedHitIndex === index && hit.facts && Object.keys(hit.facts).length">判定时事实：{{ factText(hit.facts) }}</small>
+                        <small v-if="selectedHitIndex === index && hit.facts && Object.keys(hit.facts).length">判定时事实：{{ factText(hit.facts, hit.rule_code) }}</small>
                         <small v-if="selectedHitIndex === index">{{ hit.rule_code }} · {{ hit.params?.length && hit.params.every(p => p.status === 'CONFIRMED') ? '已确认参数' : '参数待业务确认' }}</small>
                       </span>
                     </button>

@@ -378,13 +378,27 @@ def compile_scene(raw):
             active.append((r, t))
     return s, devices, targets, skipped
 
+def secondary_reports_over_mqtt(target, device):
+    """规范化观测的目标选了辅助上报设备、而这台设备的协议能报这类目标时，由 messages() 让它发 MQTT 目标报文。
+    fullchain 据此不再替它从规范化入口重复报：一台设备对一个目标只报一遍，平台才不会把它算成两个数据源（新-17）。"""
+    return (target.get('transport') != 'mqtt' and device.get('kind') in TARGET_REPORT_KINDS
+            and protocol_a.supports(device['kind'], target.get('kind')))
+
+def device_condition(scene, device_id, device, elapsed):
+    """设备此刻的模拟状况：'offline' 什么也不发，'fault' 心跳报故障（工作状态 2），'ok' 正常上报。"""
+    windows = [r for r in scene['risks'] if r.get('enabled') and r['type'] in ('offline', 'fault')
+               and r['deviceId'] == device_id and r['at'] <= elapsed < r['at']+r['seconds']]
+    if device['heartbeat'] == '停止心跳' or any(r['type'] == 'offline' for r in windows):
+        return 'offline'
+    if device['health'] == '故障' or any(r['type'] == 'fault' for r in windows):
+        return 'fault'
+    return 'ok'
+
 def messages(scene, devices, targets, manifest, elapsed, now, last_sent, sequence):
     out = []
-    active_risks = [r for r in scene['risks'] if r.get('enabled')]
     for device_id, d in devices.items():
-        faults = [r for r in active_risks if r['type'] in ('offline', 'fault') and r['deviceId'] == device_id and r['at'] <= elapsed < r['at']+r['seconds']]
-        offline = d['heartbeat'] == '停止心跳' or any(r['type'] == 'offline' for r in faults)
-        if offline:
+        condition = device_condition(scene, device_id, d, elapsed)
+        if condition == 'offline':
             continue  # stop all reports, since either report may refresh platform last_seen
         entry = manifest['devices'][device_id]
         external = entry['external_id']
@@ -401,7 +415,7 @@ def messages(scene, devices, targets, manifest, elapsed, now, last_sent, sequenc
             else:
                 lon, lat = coordinates([d['x'], d['y']])
                 payload = {'providerCode': manifest['provider'], 'deviceId': external, 'deviceName': d['name'],
-                           'deviceType': KINDS[kind], 'workState': 2 if d['health']=='故障' or any(r['type']=='fault' for r in faults) else 1,
+                           'deviceType': KINDS[kind], 'workState': 2 if condition == 'fault' else 1,
                            'ptTime': now, 'deviceLongitude': lon, 'deviceLatitude': lat, 'deviceAltitude': 0}
                 topic = f"bridge/{manifest['provider']}/device/{kind}/{external}"
             out.append((topic, payload))

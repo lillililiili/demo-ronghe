@@ -16,3 +16,7 @@ test('the inbox presents all six distinct notification channels', () => {
 test('the two platform history channels can page through source records', () => {
   assert.match(script, /\['risk','punishment','plan_feedback','device_maintenance'\]\.includes\(tab\)/);
 });
+
+test('the maintenance tab points to the admin todo list instead of counting it as received (CDX-P09)', () => {
+  assert.match(script, /\$\{inbox\.notice\?`<div class="external-note">\$\{escapeHtml\(inbox\.notice\)\}<\/div>`:''\}<div class="inbox-toolbar">/);
+});

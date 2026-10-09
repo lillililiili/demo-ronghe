@@ -46,7 +46,7 @@ test('the risk panel counts today\'s targets in the same five tiers as the stati
   const risk = source.match(/const riskItems = computed\(\(\) => \{.*?\n\}\);/s);
   assert.ok(risk, '找不到风险分档');
   assert.deepEqual([...risk[0].matchAll(/name: '([^']+)'/g)].map(match => match[1]),
-    ['超高风险', '高风险', '中风险', '低风险', '未识别'], '与运行统计"各风险等级分布"同一套分档');
+    ['超高风险', '高风险', '中风险', '低风险', '未识别'], '与运行统计"各异物风险等级分布"同一套分档');
   assert.match(risk[0], /r\.critical/);
   assert.doesNotMatch(source, /未定级|'重点目标'/, '中间的数是今日目标，不再是抽样的"重点目标"');
   assert.match(source, /'今日目标'/);

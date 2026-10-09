@@ -23,9 +23,11 @@ from eo_video import EoSimulator, video_config, public_video_config, sanitize_vi
 from qa_media import MediaService, load_or_create_credentials
 from realtime_control import RealtimeController, prepare_scene
 from full_scenario import full_scene, allocate_identities
+import mock_airport
 from fullchain import FullChain
 from protocol_b import ProtocolBResponder
 from mqtt_recovery import CommandSubscriptions
+from device_health import DeviceHealthReporter
 
 ROOT = Path(__file__).resolve().parent
 
@@ -119,6 +121,18 @@ class ExternalBridge:
         if not broker or not broker.get('owner_org_id') or not broker.get('district_id'):
             return {'owner_org_id': None, 'district_id': None, 'message': '未找到启用的回放 MQTT 连接 local-lingyun-replay，请手动选择归属单位与区县'}
         return {'owner_org_id': broker['owner_org_id'], 'district_id': broker['district_id'], 'broker_name': broker.get('name')}
+
+    def mock_airport(self, create):
+        """确认书 4-3 的模拟机场：读现状，或在模拟器连接的单位和区域录入（只补缺的部分，见 mock_airport）。"""
+        with self.lock:
+            platform = self.platform
+        if platform is None: raise ExternalAuthenticationRequired('请先登录现有系统')
+        try:
+            return mock_airport.ensure(platform, self.connection_scope()) if create else mock_airport.status(platform)
+        except ValueError as error:
+            if '返回 401' in str(error):
+                self.invalidate(platform)
+            raise
 
     def request(self, command):
         if not isinstance(command, dict): raise ValueError('请求格式无效')
@@ -351,7 +365,7 @@ class Runtime:
             if self.seed.database:
                 raise ValueError('实时收发不使用数据库配套，请通过资料输入接口提交任务与空域')
             if not raw.get('fullchain', {}).get('enabled'):
-                self.realtime.start()
+                self.realtime.start(scene)
         with self.lock:
             if self.phase in ('PREPARING','RUNNING','PAUSED','STOPPING') or self.thread and self.thread.is_alive():
                 raise ValueError('已有任务运行中')
@@ -396,7 +410,7 @@ class Runtime:
                                           self.checkpoint, cancelled=self.cancel.is_set)
                 self.fullchain.prepare()
                 if self.cancel.is_set(): return
-                if self.realtime: self.realtime.start()
+                if self.realtime: self.realtime.start(self.scene)
             else:
                 # The normal web scenario is also a platform-facing replay.  With
                 # no explicit --database the old branch silently skipped plans and
@@ -491,6 +505,7 @@ class Runtime:
             if self.skipped: self.log('SKIP','本次未发送：'+'、'.join(self.skipped))
             self.response = NotificationResponse(self.platform, self.manifest, self.targets)
             self.response.start()
+            health = DeviceHealthReporter(self.platform, self.manifest, devices, self.log)
             last_sent={}; sequence=0; previous=time.monotonic(); next_frame=0
             while not self.cancel.is_set():
                 if self.protocol_b.error:
@@ -508,7 +523,9 @@ class Runtime:
                         raise ValueError('MQTT 连接在 30 秒内未恢复，任务停止')
                 if not subscriptions.wait_ready(self.cancel): continue
                 self.sync_video()
-                if phase == 'PAUSED' and self.eo.accepting: self.eo.suspend()
+                if phase == 'PAUSED':
+                    health.forget()
+                    if self.eo.accepting: self.eo.suspend()
                 elif phase == 'RUNNING':
                     if not self.eo.accepting: self.eo.resume()
                     self.eo.availability({self.manifest['devices'][key]['platform_id'] for key,d in devices.items()
@@ -522,6 +539,7 @@ class Runtime:
                     with self.lock:
                         self.response.apply(self.targets, elapsed, int(time.time()*1000))
                     if self.fullchain: self.fullchain.tick(self.targets,elapsed,sequence)
+                    health.observe(self.scene, elapsed)
                     for topic,payload in messages(self.scene,devices,self.targets,self.manifest,elapsed,int(time.time()*1000),last_sent,sequence):
                         if payload.get('event') == 'HeartBeat': self.eo.heartbeat(payload)
                         if self.cancel.is_set(): break
@@ -529,6 +547,8 @@ class Runtime:
                             if not self.wait_for_mqtt_reconnect(client):
                                 raise ValueError('MQTT 连接在 30 秒内未恢复，任务停止')
                         if not subscriptions.wait_ready(self.cancel): break
+                        # 开始、恢复上报和故障起止时，先报一条健康状态再发这条心跳（新-11）。
+                        health.before_publish(topic, payload)
                         info=client.publish(topic,json.dumps(payload,ensure_ascii=False),qos=1,retain=False)
                         info.wait_for_publish(timeout=5)
                         if not info.is_published(): raise ValueError('MQTT 确认超时：当前发送结果未知，任务停止')
@@ -555,8 +575,8 @@ class Runtime:
             if client:
                 client.disconnect(); client.loop_stop()
             self.mqtt_connected = False
-            if self.fullchain and self.realtime:
-                self.realtime.stop()
+            # The notification receiver and command listener outlive the scene; only stop_all
+            # ("停止全部收发") or service exit stops them, as the README describes.
             with self.lock:
                 if self.phase in ('STOPPING','PREPARING'): self.phase='STOPPED'
             self.checkpoint()
@@ -716,6 +736,11 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.respond(external_bridge.connection_scope())
             except ValueError as error:
                 return self.respond({'error': str(error)}, 401 if isinstance(error, ExternalAuthenticationRequired) or '返回 401' in str(error) else 400)
+        if self.path=='/api/external/mock-airport':
+            try:
+                return self.respond(external_bridge.mock_airport(False))
+            except ValueError as error:
+                return self.respond({'error': str(error)}, 401 if isinstance(error, ExternalAuthenticationRequired) or '返回 401' in str(error) else 400)
         if urlparse(self.path).path == '/api/external/inbox':
             params = parse_qs(urlparse(self.path).query)
             try:
@@ -749,6 +774,7 @@ class Handler(SimpleHTTPRequestHandler):
             body=json.loads(self.rfile.read(size))
             if self.path=='/api/external/connect': result=external_bridge.connect(body)
             elif self.path=='/api/external/request': result=external_bridge.request(body)
+            elif self.path=='/api/external/mock-airport': result=external_bridge.mock_airport(True)
             elif self.path=='/api/connect': result=runtime.connect(body)
             elif self.path=='/api/video': result=runtime.video_control(body)
             elif self.path=='/api/start': result=runtime.start(body)

@@ -32,15 +32,21 @@ def credentials_file():
 
 
 def load_or_create_credentials(path=None):
-    """Reuse valid credentials so the backend keeps reading the same file; otherwise create them."""
+    """Reuse existing credentials unchanged; create them only when the file is absent."""
     path = Path(path or credentials_file())
     try:
-        value = json.loads(path.read_text(encoding='utf-8'))
+        value = json.loads(path.read_text(encoding='utf-8-sig'))
+    except FileNotFoundError:
+        pass
+    except OSError:
+        raise ValueError('本机视频凭据文件无法读取，请检查文件和访问权限；现有文件不会被覆盖') from None
+    except ValueError:
+        raise ValueError('本机视频凭据文件格式无效，请修复原文件；现有文件不会被覆盖') from None
+    else:
         if (isinstance(value, dict) and all(isinstance(value.get(k), str) and SECRET.fullmatch(value[k]) for k in ('publish', 'read'))
                 and value['publish'] != value['read']):
             return value
-    except (OSError, ValueError):
-        pass
+        raise ValueError('本机视频凭据文件格式无效，请修复原文件；现有文件不会被覆盖')
     value = {'publish': secrets.token_urlsafe(32), 'read': secrets.token_urlsafe(32)}
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     temporary = path.with_name(path.name + '.tmp')
@@ -92,8 +98,12 @@ class MediaService:
     def ensure(self, credentials):
         state = self.status(credentials)
         if state == 200: return
-        if state is not None or any(self.is_port_open(port) for port in (RTSP_PORT, HLS_PORT, API_PORT)):
-            raise ValueError('本机 8554/8888/9997 端口已被其他视频服务占用，且账号与本机测试视频不一致；请先关掉它再点开启')
+        if state in (401, 403):
+            raise ValueError(f'本机视频服务拒绝读取账号（HTTP {state}），请检查媒体服务与本机凭据文件的账号、密码和 API 权限是否一致')
+        if state is not None:
+            raise ValueError(f'本机视频服务 API 响应异常（HTTP {state}），请检查现有媒体服务')
+        if any(self.is_port_open(port) for port in (RTSP_PORT, HLS_PORT, API_PORT)):
+            raise ValueError('本机 8554/8888/9997 端口已被占用，但视频服务 API 无法访问；请检查现有服务和端口配置')
         environment = {**os.environ, **media_environment(credentials)}
         binary = os.environ.get('QA_MEDIAMTX_PATH', '').strip() or self.which('mediamtx')
         if binary:

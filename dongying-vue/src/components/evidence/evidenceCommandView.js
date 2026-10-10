@@ -48,12 +48,13 @@ function receiptView(receipt, type, source) {
     && receipt.device_result_code === 'COUNTERMEASURE_SET_OK';
   const late = kind === 'PROTOCOL_B_LATE';
   const lingyun = kind === 'PROTOCOL_B' || late;
-  const known = lingyun && ['PROTOCOL_B_OK', 'PROTOCOL_B_FAILED'].includes(receipt.device_result_code);
+  const known = type === 'LINGYUN_CONTROL' && lingyun
+    && ['PROTOCOL_B_OK', 'PROTOCOL_B_FAILED'].includes(receipt.device_result_code);
   const feedback = relaySetting
     ? { success: true, text: `${source.simulated ? '模拟设备' : '设备'}反馈：通道设置成功` }
     : kind === 'PROTOCOL_C' ? eoFeedback(receipt.payload, type) : known
     ? { success: receipt.device_result_code === 'PROTOCOL_B_OK', text: (late ? '迟到设备反馈：' : '设备反馈：')
-      + (receipt.device_result_code === 'PROTOCOL_B_OK' ? '执行完成' : '执行失败') + (late ? '（原任务）' : '') } : null;
+      + (receipt.device_result_code === 'PROTOCOL_B_OK' ? '本次指令返回成功' : '本次指令返回失败') + (late ? '（原任务）' : '') } : null;
   const outcome = feedback ? (feedback.success ? 'success' : 'failure')
     : kind === 'SUCCEEDED' ? 'success' : kind === 'FAILED' ? 'failure' : null;
   const labels = { ACCEPTED: '设备已受理指令，等待执行结果', ACK: '设备已接收指令，等待执行结果',
@@ -63,7 +64,7 @@ function receiptView(receipt, type, source) {
     PROTOCOL_4CH: '已收到四通道反馈，通道设置结果待核对' };
   return { id: receipt.receipt_id, time: receipt.occurred_at ?? receipt.received_at,
     text: feedback?.text || labels[kind] || '已收到设备反馈，类型尚未识别', outcome,
-    relaySetting, late, terminal: !late && (outcome != null || kind === 'COMPLETED') };
+    relaySetting, lingyunResult: known && !late, late, terminal: !late && (outcome != null || kind === 'COMPLETED') };
 }
 
 export function buildCommandView(command = {}, sourceMode = command.source_mode) {
@@ -93,6 +94,13 @@ export function buildCommandView(command = {}, sourceMode = command.source_mode)
         explanation: '已收到本次指令的四通道设置回执，仅确认通道设置成功，不代表射频已发射或目标已被反制。' };
       if (command.command_type === 'COUNTERMEASURE_4CH') return { ...view, status: '平台记录完成，通道设置待核对',
         explanation: '尚缺可确认通道设置成功的四通道回执，请核对原始记录。' };
+      if (command.command_type === 'LINGYUN_CONTROL') {
+        if (receipts.some(row => row.lingyunResult && row.outcome === 'success')) return { ...view,
+          status: sourceMode === 'replay' ? '回放记录：指令返回成功' : `${source.simulated ? '模拟设备' : '设备'}已返回成功回执`, tone: 'success',
+          explanation: '仅表示设备对本次指令返回成功；不据此认定整次处置结束、设备已经停止或现场效果已确认。' };
+        return { ...view, status: '平台记录完成，结果待核对',
+          explanation: '尚缺与本次指令匹配的明确设备成功回执，请核对原始记录。' };
+      }
       if (receipts.some(row => row.terminal)) return { ...view, status: '设备反馈执行完成', tone: 'success',
         explanation: '平台完成记录与设备执行回执一致。' };
       return { ...view, status: '平台记录完成，结果待核对', explanation: legacy?.success

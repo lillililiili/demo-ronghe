@@ -100,11 +100,11 @@ export function strokePlannedRoute(ctx, map, coordinates, options = {}) {
   window.MapView.strokePlannedRoute(ctx, points, { width: map.w, height: map.h, ...options });
 }
 
-/** 在 MapView 的 draw 之后补画计划航线中心线。 */
+/** 在 MapView 同一绘制帧内补画计划航线中心线。 */
 export function installCenterline(map, coordinates) {
   if (!map || !coordinates) return;
-  const drawBase = map.draw.bind(map);
-  map.draw = function drawWithCenterline() {
+  const drawBase = map.drawOverlay.bind(map);
+  map.drawOverlay = function drawWithCenterline() {
     drawBase();
     if (!this.ctx || !this.w) return;
     strokePlannedRoute(this.ctx, this, coordinates);
@@ -133,11 +133,11 @@ export async function loadAirspaceOverlays(planId) {
   });
 }
 
-/** 在 MapView 的 draw 之后补画空域边界（紫色虚线）与计划航线中心线。 */
+/** 在 MapView 同一绘制帧内补画空域边界（紫色虚线）与计划航线中心线。 */
 export function installOverlays(map, { centerline = null, airspaces = [] } = {}) {
   if (!map || (!centerline && !airspaces.length)) return;
-  const drawBase = map.draw.bind(map);
-  map.draw = function drawWithOverlays() {
+  const drawBase = map.drawOverlay.bind(map);
+  map.drawOverlay = function drawWithOverlays() {
     drawBase();
     const context = this.ctx;
     if (!context || !this.w) return;

@@ -69,7 +69,8 @@ test('凌云正常回执明确成功与失败，未知结果不推断成功', ()
   for (const [status, code, tone] of [['SUCCEEDED', 'PROTOCOL_B_OK', 'success'], ['FAILED', 'PROTOCOL_B_FAILED', 'danger']]) {
     const view = buildCommandView({command_type:'LINGYUN_CONTROL', status, receipts:[{receipt_kind:'PROTOCOL_B', device_result_code:code}]});
     assert.equal(view.tone, tone);
-    assert.match(view.status, /设备反馈执行/);
+    assert.equal(view.status, status === 'SUCCEEDED' ? '设备已返回成功回执' : '设备反馈执行失败');
+    if (status === 'SUCCEEDED') assert.match(view.explanation, /不据此认定整次处置结束/);
   }
   assert.notEqual(buildCommandView({status:'SUCCEEDED', receipts:[{receipt_kind:'PROTOCOL_B', device_result_code:'UNKNOWN'}]}).tone, 'success');
 });
@@ -105,6 +106,36 @@ test('授权设备反馈链接精确绑定原命令和授权，不猜测缺失�
   assert.equal(params.get('subjectKind'),'AUTHORIZATION');
   assert.equal(params.get('subjectId'),'auth /1');
   for(const missing of [{...row,execution_command_id:null},{...row,authorization_id:null},{...row,channel:'MANUAL'}]) assert.equal(executionEvidenceHref(missing),'');
+});
+
+test('凌云指令证据按明确来源展示成功回执，不修改历史或推定处置完成', () => {
+  for (const [source_mode, simulated, status] of [
+    ['live', false, '设备已返回成功回执'], ['live', true, '模拟设备已返回成功回执'],
+    ['mock', false, '模拟设备已返回成功回执'], ['replay', true, '回放记录：指令返回成功'],
+  ]) {
+    const input = { command_id: crypto.randomUUID(), command_type: 'LINGYUN_CONTROL', status: 'SUCCEEDED', source_mode, simulated,
+      receipts: [{ receipt_id: crypto.randomUUID(), occurred_at: Date.now(), receipt_kind: 'PROTOCOL_B', device_result_code: 'PROTOCOL_B_OK' }] };
+    const before = JSON.stringify(input), view = buildCommandView(input);
+    assert.equal(view.status, status);
+    assert.match(view.explanation, /设备已经停止或现场效果已确认/);
+    assert.equal(JSON.stringify(input), before);
+  }
+});
+
+test('凌云缺失、未知、仅受理或迟到回执不显示已确认成功；其他指令不套用凌云回执', () => {
+  for (const receipts of [[], [{ receipt_kind: 'ACK' }], [{ receipt_kind: 'COMPLETED' }],
+    [{ receipt_kind: 'SUCCEEDED' }], [{ receipt_kind: 'PROTOCOL_B', device_result_code: 'UNKNOWN' }],
+    [{ receipt_kind: 'PROTOCOL_B_LATE', device_result_code: 'PROTOCOL_B_OK' }]]) {
+    const view = buildCommandView({ command_type: 'LINGYUN_CONTROL', status: 'SUCCEEDED', receipts });
+    assert.equal(view.status, '平台记录完成，结果待核对');
+    assert.equal(view.tone, 'warning');
+  }
+  const receipt = { receipt_kind: 'PROTOCOL_B', device_result_code: 'PROTOCOL_B_OK' };
+  assert.equal(buildCommandView(command({ receipts: [receipt] })).tone, 'warning');
+  const rows = [receipt, { receipt_kind: 'PROTOCOL_B', device_result_code: 'PROTOCOL_B_FAILED' }];
+  for (const receipts of [rows, [...rows].reverse()]) {
+    assert.equal(buildCommandView({ command_type: 'LINGYUN_CONTROL', status: 'SUCCEEDED', receipts }).status, '记录不一致，结果待核对');
+  }
 });
 
 test('四通道明确回码仅确认设置成功，模拟、真实及回放来源保持区分', () => {

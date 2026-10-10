@@ -235,8 +235,6 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
     warning: (direct
       ? '本次使用免逐次审批权限。服务端仍会核对目标、范围、时效、设备操作权限和急停状态；提交后以设备回执为准。'
       : '提交后进入待审批：审批人必须是另一个人，批准后才可执行。')
-      + ((pickable && choices.includes('COUNTERMEASURE')) || actionType === 'COUNTERMEASURE'
-        ? '选择联动反制时，执行完成后会自动接着发起信号干扰：沿用这次授权，不再二次审批，有效期不超过这次授权。' : '')
       + (demo ? '当前为演示策略，时限与条件待业务确认。' : ''),
     introHtml: `<dl class="kv">${intro}</dl>`,
     notice: initialReason ? '已带入申请事由草稿，请依据当前观测与研判核对。' : '',

@@ -17,7 +17,6 @@ import { statsApi } from '@/services/statsApi.js';
 import { toast } from '@/ui/nv.js';
 
 const U = window.UI;
-const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 usePageChrome('stats');
 
 const initialReport = statsApi.cachedOperations();
@@ -26,9 +25,8 @@ const S = shallowRef(initialReport);
 // 统计口径（2026-10-07 起）：真实设备和设备模拟器的数据都算，系统自带的演示样例不算；正式环境只有真实设备。
 const sourceLabel = computed(() => ({ live: '数据来源：真实设备', replay: '数据来源：设备模拟器', mixed: '数据来源：真实设备和设备模拟器', mock: '数据来源：系统自带的演示样例', unknown: '所选时间内暂无数据' }[S.value?.sourceMode] || '数据来源未明确'));
 const generatedLabel = computed(() => S.value?.generatedAt ? new Date(S.value.generatedAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }) + '（北京时间）' : '未知');
-function metricNumber(value) { return value == null ? '暂不可统计' : U.num(value); }
+function metricNumber(value) { return isCount(value) ? U.num(value) : '暂不可统计'; }
 function metricReason(key) { return S.value?.availability?.[key]?.reason || '暂无可靠统计说明'; }
-function metricVisible(key) { return S.value?.availability?.[key]?.status !== 'UNAVAILABLE'; }
 const loading = ref(true);
 const exporting = ref(false);
 const reportRange = data => data ? [Date.parse(`${data.from}T00:00:00`), Date.parse(`${data.to}T00:00:00`)] : null;
@@ -37,6 +35,25 @@ const error = ref('');
 let cancelled = false;
 const isCount = value => Number.isInteger(value) && value >= 0;
 const metricAvailable = key => ['AVAILABLE', 'PARTIAL'].includes(S.value?.availability?.[key]?.status);
+const availableCount = (key, value) => metricAvailable(key) ? metricNumber(value) : '暂不可统计';
+const targetTrendAvailable = computed(() => metricAvailable('total') && isCount(S.value?.total)
+  && S.value.days.length > 0 && S.value.days.every(day => isCount(day.total))
+  && S.value.days.reduce((total, day) => total + day.total, 0) === S.value.total);
+function distributionAvailable(key, rows) {
+  return metricAvailable(key) && metricAvailable('total') && isCount(S.value?.total)
+    && rows.every(row => typeof row.name === 'string' && row.name.trim() && isCount(row.value))
+    && rows.reduce((total, row) => total + row.value, 0) === S.value.total;
+}
+const riskDistributionAvailable = computed(() => distributionAvailable('by_risk', S.value?.byRisk || []));
+const typeDistributionAvailable = computed(() => distributionAvailable('by_type', S.value?.byType || []));
+const discoveryHoursAvailable = computed(() => metricAvailable('discovery_hours') && metricAvailable('total')
+  && isCount(S.value?.total) && S.value.discoveryHours.length === 24
+  && S.value.discoveryHours.every((row, hour) => row.hour === hour && isCount(row.total))
+  && S.value.discoveryHours.reduce((sum, row) => sum + row.total, 0) === S.value.total);
+const discoveryHoursReason = computed(() => !metricAvailable('total') ? metricReason('total')
+  : unavailableReason('discovery_hours', '目标发现时段统计不完整，暂不可统计'));
+const hourLabel = hour => `${String(hour).padStart(2, '0')}:00`;
+function unavailableReason(key, detail) { return metricAvailable(key) ? detail : metricReason(key); }
 const illegalShareAvailable = computed(() => metricAvailable('total') && metricAvailable('illegal')
   && isCount(S.value?.total) && isCount(S.value?.illegal) && S.value.illegal <= S.value.total
   && S.value.days.length > 0
@@ -66,32 +83,13 @@ const kpiList = computed(() => {
   const stats = S.value;
   const devices = stats.devices;
   return [
-    { label: '新增目标数', value: metricNumber(stats.total), color: 'blue', icon: 'radar' },
-    { label: '非法目标数', value: metricNumber(stats.illegal), color: 'red', icon: 'alert' },
-    { label: '处罚案件数', value: metricNumber(stats.punish), color: 'orange', icon: 'gavel' },
-    { label: '接入设备总数', value: metricNumber(devices ? devices.total : null), color: 'cyan', icon: 'device' },
-    { label: '异物高风险目标数', value: metricNumber(stats.highRisk), color: 'red', icon: 'zone' }
+    { label: '新增目标数', value: availableCount('total', stats.total), color: 'blue', icon: 'radar' },
+    { label: '非法目标数', value: availableCount('illegal', stats.illegal), color: 'red', icon: 'alert' },
+    { label: '处罚案件数', value: availableCount('punish', stats.punish), color: 'orange', icon: 'gavel' },
+    { label: '接入设备总数', value: availableCount('devices', devices ? devices.total : null), color: 'cyan', icon: 'device' },
+    { label: '异物高风险目标数', value: availableCount('high_risk', stats.highRisk), color: 'red', icon: 'zone' }
   ];
 });
-
-function regionTable() {
-  const stats = S.value;
-  if (!stats) return '';
-  return U.table([
-    { t: '#', w: '34px', align: 'center', render: (r, i) => i < 3 ? `<span class="tag ${['t-amber', 't-gray', 't-orange'][i]}">${i + 1}</span>` : i + 1 },
-    { t: '区域', w: '74px', render: r => escapeHtml(r.name) },
-    { t: '目标', align: 'center', cls: 'num', render: r => metricNumber(r.total) },
-    { t: '非法', align: 'center', cls: 'num', render: r => `<span style="color:#ff8b95">${metricNumber(r.illegal)}</span>` },
-    { t: '案件', align: 'center', cls: 'num', render: r => metricNumber(r.punish) },
-    { t: '异物高危', align: 'center', cls: 'num', render: r => `<span style="color:#ffb083">${metricNumber(r.highRisk)}</span>` }
-  ], stats.regions).replace('</table>', `<tfoot><tr>
-    <td colspan="2">合计</td>
-    <td class="num"><div class="table-text" tabindex="0">${metricNumber(stats.total)}</div></td>
-    <td class="num"><div class="table-text" tabindex="0">${metricNumber(stats.illegal)}</div></td>
-    <td class="num"><div class="table-text" tabindex="0">${metricNumber(stats.punish)}</div></td>
-    <td class="num"><div class="table-text" tabindex="0">${metricNumber(stats.highRisk)}</div></td>
-  </tr></tfoot></table>`);
-}
 
 function pctOf(value, total) {
   if (!total) return '0.0';
@@ -99,7 +97,6 @@ function pctOf(value, total) {
 }
 
 let renderedDataKey = '';
-let regionView = 'list';
 function renderCharts() {
   if (!S.value) return;
   const key = JSON.stringify({ ...S.value, generatedAt: null });
@@ -112,20 +109,20 @@ function renderCharts() {
 function drawCharts(CH) {
   const stats = S.value;
   if (!stats) return;
-  CH.line(document.getElementById('sTrend'), {
+  if (targetTrendAvailable.value && stats.total > 0) CH.line(document.getElementById('sTrend'), {
     x: stats.days.map(d => d.md), yName: '目标数',
     series: [
       { name: '新增目标数', data: stats.days.map(d => d.total), color: CH.C.blue, area: true },
-      { name: '非法目标数', data: stats.days.map(d => d.illegal), color: CH.C.red }
+      ...(illegalShareAvailable.value ? [{ name: '非法目标数', data: stats.days.map(d => d.illegal), color: CH.C.red }] : [])
     ]
   });
   const rc = { '超高风险': CH.C.red, '高风险': CH.C.red, '中风险': CH.C.amber, '低风险': CH.C.blue, '未识别': CH.C.gray };
-  if (metricVisible('by_risk')) CH.bar(document.getElementById('sRisk'), {
+  if (riskDistributionAvailable.value && stats.total > 0) CH.bar(document.getElementById('sRisk'), {
     x: stats.byRisk.map(r => r.name === '未识别' ? '风险等级\n未知' : r.name), legend: false, yName: '数量',
     grid: { top: 36, bottom: 40 },
     series: [{ name: '数量', data: stats.byRisk.map(r => r.value), colorBy: p => rc[stats.byRisk[p.dataIndex].name] }]
   })?.setOption({ xAxis: { axisLabel: { interval: 0, fontSize: 10 } }, yAxis: { minInterval: 1 } });
-  if (metricVisible('by_type')) {
+  if (typeDistributionAvailable.value && stats.total > 0) {
     const total = stats.byType.reduce((sum, item) => sum + item.value, 0);
     CH.donut(document.getElementById('sType'), { data: stats.byType, center: ['30%', '50%'] })?.setOption({
       series: [{ stillShowZeroSum: false }],
@@ -138,7 +135,18 @@ function drawCharts(CH) {
       }
     });
   }
-  drawRegion(CH);
+  if (discoveryHoursAvailable.value && stats.total > 0) CH.bar(document.getElementById('sDiscoveryHours'), {
+    x: stats.discoveryHours.map(row => hourLabel(row.hour)), legend: false, yName: '新增目标数',
+    grid: { left: 44, right: 20, top: 32, bottom: 30 },
+    series: [{ name: '新增目标数', data: stats.discoveryHours.map(row => row.total), color: CH.C.blue,
+      fmt: point => point.value > 0 ? String(point.value) : '' }]
+  })?.setOption({
+    xAxis: { axisLabel: { hideOverlap: true, fontSize: 11 } }, yAxis: { min: 0, minInterval: 1 },
+    tooltip: { renderMode: 'richText', formatter: points => {
+      const row = stats.discoveryHours[points[0]?.dataIndex];
+      return row ? `${hourLabel(row.hour)}—${hourLabel(row.hour + 1)}（北京时间）\n新增目标数：${row.total} 个` : '';
+    } }
+  });
   if (illegalShareAvailable.value && stats.total > 0) CH.line(document.getElementById('sIllegalShare'), {
     x: stats.days.map(day => day.md), legend: false, yName: '占比',
     grid: { left: 48, top: 28, bottom: 28 },
@@ -257,30 +265,6 @@ async function exportCsv() {
   }
 }
 
-function onRegionTab(e) {
-  const el = e.target.closest('[data-rt]');
-  if (!el || !S.value) return;
-  regionView = el.dataset.rt;
-  drawRegion(window.CH);
-}
-
-function drawRegion(CH) {
-  const box = document.getElementById('sRegion');
-  if (!box) return;
-  document.getElementById('view')?.querySelectorAll('[data-rt]').forEach(el => el.classList.toggle('on', el.dataset.rt === regionView));
-  if (CH.disposeEl) CH.disposeEl(box);
-  if (regionView === 'list') { box.style.minHeight = ''; box.innerHTML = regionTable(); }
-  else {
-    box.innerHTML = '';
-    box.style.minHeight = `${Math.max(240, S.value.regions.length * 44)}px`;
-    const chart = CH.hbar(box, {
-      y: S.value.regions.map(r => r.name), data: S.value.regions.map(r => r.total),
-      grid: { left: 150 },
-      colors: S.value.regions.map(r => r.total && r.illegal / r.total > .05 ? '#ff4d5e' : '#3d8bff')
-    });
-    chart?.setOption({ yAxis: { axisLabel: { width: 140, overflow: 'breakAll', interval: 0 } } });
-  }
-}
 </script>
 
 <template>
@@ -300,10 +284,15 @@ function drawRegion(CH) {
 
     <div v-if="S" class="stats-chart-grid stats-overview-grid">
       <UPanel title="目标趋势" panel-style="flex:1.5">
-        <div id="sTrend" style="height:100%"></div>
+        <div v-if="!targetTrendAvailable" class="stats-unavailable">暂不可统计<br>{{ unavailableReason('total', '每日目标统计不完整') }}</div>
+        <div v-else-if="S.total === 0" class="stats-unavailable">统计区间内无新增目标</div>
+        <template v-else>
+          <div v-if="!illegalShareAvailable" class="stats-note">非法目标趋势暂不可统计：{{ illegalShareReason }}</div>
+          <div id="sTrend" class="stats-detail-chart"></div>
+        </template>
       </UPanel>
-      <UPanel title="各异物风险等级分布" sub="目标数" panel-style="flex:.75"><div v-if="!metricVisible('by_risk')" class="stats-unavailable">暂不可统计<br>{{ metricReason('by_risk') }}</div><div v-else id="sRisk" style="height:100%"></div></UPanel>
-      <UPanel title="各类型目标占比" panel-style="flex:1.25"><div v-if="!metricVisible('by_type')" class="stats-unavailable">暂不可统计<br>{{ metricReason('by_type') }}</div><div v-else id="sType" style="height:100%"></div></UPanel>
+      <UPanel title="各异物风险等级分布" sub="目标数" panel-style="flex:.75"><div v-if="!riskDistributionAvailable" class="stats-unavailable">暂不可统计<br>{{ unavailableReason('by_risk', '风险分布统计不完整') }}</div><div v-else-if="S.total === 0" class="stats-unavailable">统计区间内无新增目标</div><div v-else id="sRisk" style="height:100%"></div></UPanel>
+      <UPanel title="各类型目标占比" panel-style="flex:1.25"><div v-if="!typeDistributionAvailable" class="stats-unavailable">暂不可统计<br>{{ unavailableReason('by_type', '类型分布统计不完整') }}</div><div v-else-if="S.total === 0" class="stats-unavailable">统计区间内无新增目标</div><div v-else id="sType" style="height:100%"></div></UPanel>
     </div>
 
     <div v-if="S" class="stats-chart-grid stats-details-grid">
@@ -333,9 +322,13 @@ function drawRegion(CH) {
     </div>
 
     <div v-if="S" class="stats-summary-grid">
-      <UPanel title="区域分布" sub="业务归属区域" class="stats-region" nopad @click="onRegionTab"
-        :extra="`<div class=&quot;tabs&quot; style=&quot;border:0&quot;><button type=&quot;button&quot; class=&quot;tab&quot; data-rt=&quot;chart&quot;>区域数量对比</button><button type=&quot;button&quot; class=&quot;tab on&quot; data-rt=&quot;list&quot;>排行表</button></div>`">
-        <div id="sRegion" class="stats-region-content"></div>
+      <UPanel title="目标发现时段分布" sub="北京时间 · 0—23 时" class="stats-discovery-hours">
+        <div v-if="!discoveryHoursAvailable" class="stats-unavailable">暂不可统计<br>{{ discoveryHoursReason }}</div>
+        <div v-else-if="S.total === 0" class="stats-unavailable">统计区间内无新增目标</div>
+        <template v-else>
+          <div class="stats-note">所选日期内按首次发现时段累计，每个目标仅计一次。</div>
+          <div id="sDiscoveryHours" class="stats-detail-chart" role="img" :aria-label="`目标发现时段分布，北京时间，合计 ${S.total} 个目标；${S.discoveryHours.map(row => `${hourLabel(row.hour)} ${row.total} 个`).join('，')}`"></div>
+        </template>
       </UPanel>
     </div>
   </div>
@@ -365,21 +358,14 @@ function drawRegion(CH) {
 .stats-summary-grid > .panel { height:320px; }
 .stats-summary-grid :deep(.ph) { min-height:52px;flex-wrap:wrap; }
 .stats-summary-grid :deep(.ph h3) { white-space:normal; }
-.stats-region-content { display:flex;flex-direction:column;flex:1;min-height:0; }
-/* 此处按指标分配列宽，覆盖 table-fluid 的全局自动列宽；长文字仍完整换行。 */
-.stats-summary-grid :deep(table.tb) { width:100%;table-layout:fixed !important; }
-.stats-summary-grid :deep(table.tb th), .stats-summary-grid :deep(table.tb td) { white-space:normal;overflow-wrap:anywhere; }
-.stats-summary-grid :deep(table.tb th:first-child) { width:46px !important; }
-.stats-region :deep(table.tb th:nth-child(n+3)) { width:14% !important; }
-.stats-region :deep(table.tb tfoot td) { position:sticky;bottom:0;z-index:2;background:var(--surface-1);border-top:1px solid var(--line);font-weight:600; }
-.stats-region :deep(table.tb tfoot td.num) { text-align:center; }
+.stats-discovery-hours :deep(.pb) { display:flex;flex-direction:column; }
 .stats-chart-grid { display:grid;gap:14px;margin-top:12px; }
 .stats-overview-grid { grid-template-columns:minmax(0, 1.5fr) minmax(0, .85fr) minmax(0, 1.25fr); }
 .stats-details-grid { grid-template-columns:minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.2fr); }
 .stats-chart-grid > .panel { height:310px; }
 .stats-chart-grid :deep(.ph) { flex-wrap:wrap; }
 .stats-chart-grid :deep(.ph h3) { white-space:normal; }
-.stats-details-grid :deep(.pb) { display:flex;flex-direction:column; }
+.stats-chart-grid :deep(.pb) { display:flex;flex-direction:column; }
 .stats-detail-chart { flex:1;min-height:170px; }
 @container (max-width:1200px) {
   .stats-overview-grid,.stats-details-grid { grid-template-columns:repeat(2, minmax(0, 1fr)); }

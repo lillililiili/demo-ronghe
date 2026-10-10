@@ -34,6 +34,7 @@ function load({ devices = DEVICES, create, cancel } = {}) {
     DISPOSAL_STATUS_LABEL: {}, disposalStatusText: value => value?.status,
     labelOf: (_labels, value) => value
   });
+  vm.runInContext(readFileSync(path.join(__dirname, '../src/ui/deviceNumber.js'), 'utf8').replace(/\bexport /g, ''), context);
   vm.runInContext(source, context);
   return { context, state };
 }
@@ -68,7 +69,39 @@ test('申请表单：设备下拉随通道给出置灰选项，选到不能用�
   assert.equal(form.validate({ ...base, device_id: 'ok' }), null);
   assert.equal(form.validate({ ...base, device_id: 'off' }), '所选设备不能用：设备离线。请换一台设备。');
   assert.match(form.validate({ ...base, channel: 'LINGYUN_B', device_id: 'ifr-off' }), /这个执行通道的设备现在都不能用/);
-  assert.match(form.warning, /不再二次审批，有效期不超过这次授权/);
+  assert.match(form.warning, /批准后才可执行/);
+  assert.doesNotMatch(form.warning, /自动.*信号干扰|不再二次审批/);
+});
+
+test('普通申请和直接反制都不再声明自动创建后续干扰', async () => {
+  for (const subjectId of [crypto.randomUUID(), crypto.randomUUID()]) {
+    const { context, state } = load();
+    await context.openDisposalDirect({ actionType: 'COUNTERMEASURE', subjectKind: 'UAV_EVENT', subjectId });
+    assert.equal(state.forms.length, 1);
+    assert.match(state.forms[0].warning, /免逐次审批权限/);
+    assert.doesNotMatch(state.forms[0].warning, /自动.*信号干扰|不再二次审批/);
+  }
+});
+
+test('反制已完成但没有后续干扰时，告警不重新显示发起入口；状态仍来自原授权', () => {
+  const source = readFileSync(path.join(__dirname, '../src/pages/AlarmsPage.vue'), 'utf8').replace(/\r\n/g, '\n');
+  const functions = ['deriveAlarmProgress', 'showCounterLaunch'].map(name => source.match(new RegExp(`function ${name}\\([^]*?^}`, 'm'))[0]).join('\n');
+  for (const source_mode of ['live', 'mock', 'replay']) {
+    const eventId = crypto.randomUUID();
+    const cur = { alarm: { event_id: eventId } };
+    const disposal = { byAction: {}, handoff: null };
+    const advisoryLive = { value: { counter_launch_visible: true } };
+    const view = new Function('cur', 'disposal', 'advisoryLive', 'pageProgress', functions + '; return { showCounterLaunch, deriveAlarmProgress };')(cur, disposal, advisoryLive, {});
+    assert.equal(view.showCounterLaunch(), true);
+    const row = { authorization_id: crypto.randomUUID(), subject_id: eventId, action_type: 'COUNTERMEASURE', source_mode, status: 'COMPLETED', requested_at: Date.now() - 60000 };
+    disposal.byAction.COUNTERMEASURE = row;
+    assert.equal(view.showCounterLaunch(), false);
+    assert.equal(view.deriveAlarmProgress([row], []), 'COUNTERMEASURE_DONE');
+    row.status = 'FAILED';
+    assert.equal(view.showCounterLaunch(), true);
+    advisoryLive.value.counter_launch_visible = false;
+    assert.equal(view.showCounterLaunch(), false);
+  }
 });
 
 test('服务端在申请时拒绝坏设备、或说明不能反制的真实原因时，原话上屏，不再一律说“先核实”', async () => {
@@ -146,6 +179,71 @@ test('感知设备分组：状态未知单独计数，一台都不在线时直�
   assert.deepEqual(deviceGroupState({ total: 3, online: 1, abnormal: 1, offline: 1, unknown: 0 }),
     { down: false, headline: '1在线', detail: '1异常 · 1离线' });
   assert.equal(deviceGroupState({ total: 0 }).down, false);
+});
+
+test('历史接续已停用时保留撤销与证据入口，不提示换设备重新执行', async () => {
+  const view = await import('../src/pages/alarms/authorizationQueueView.js');
+  const labels = await import('../src/ui/labels.js');
+  for (const channel of ['LINGYUN_B', 'COUNTERMEASURE_4CH']) {
+    const row = { authorization_id: crypto.randomUUID(), execution_command_id: crypto.randomUUID(), action_type: 'JAMMING', channel,
+      status: 'APPROVED', allowed_actions: ['CANCEL'], execution_block_reason: 'LEGACY_JAMMING_RETIRED' };
+    assert.equal(view.primaryCode(row, 'operator'), '');
+    assert.equal(view.canCancel(row), true);
+    assert.match(view.executionEvidenceHref(row), /#\/evidence\?command=/);
+    assert.match(view.nextStep(row, 'operator'), /自动接续已停用/);
+    assert.doesNotMatch(view.nextStep(row, 'operator'), /换设备|重新申请/);
+    assert.match(labels.DISPOSAL_BLOCK_REASON_LABEL[row.execution_block_reason], /不能再次执行/);
+  }
+});
+
+test('处置只读分组：按明确组 ID 展示且保留每条原状态、权限和子记录选择', async () => {
+  const { checkedAuthorizationGroups, groupRoot, groupContains, singleAuthorizationGroup } = await import('../src/pages/alarms/authorizationQueueView.js');
+  for (const source_mode of ['live', 'mock', 'replay']) {
+    const root = { authorization_id: crypto.randomUUID(), status: 'COMPLETED', allowed_actions: [], source_mode };
+    const child = { authorization_id: crypto.randomUUID(), status: 'EXECUTING', allowed_actions: ['STOP'], source_mode };
+    const separate = { ...root, authorization_id: crypto.randomUUID() };
+    const group = { disposal_id: root.authorization_id, authorizations: [child, root] };
+    const page = { items: [group, singleAuthorizationGroup(separate)], total: 21 };
+    const before = JSON.stringify(page);
+    assert.equal(checkedAuthorizationGroups(page), page.items);
+    assert.equal(groupRoot(group), root);
+    assert.equal(groupContains(group, child.authorization_id), true);
+    assert.equal(groupContains(group, separate.authorization_id), false);
+    assert.equal(groupContains(group, ''), false);
+    assert.equal(JSON.stringify(page), before);
+    assert.equal(page.items.length, 2);
+  }
+});
+
+test('处置只读分组：缺根、跨组重复成员或不完整分页均报错，不隐藏或补造记录', async () => {
+  const { checkedAuthorizationGroups, singleAuthorizationGroup } = await import('../src/pages/alarms/authorizationQueueView.js');
+  const root = { authorization_id: crypto.randomUUID() }, other = { authorization_id: crypto.randomUUID() };
+  const group = singleAuthorizationGroup(root);
+  const cases = [null, { items: [], total: -1 }, { items: [group], total: 0 },
+    { items: [group], total: 1.5 }, { items: [group, group], total: 2 },
+    { items: [{ disposal_id: root.authorization_id, authorizations: [] }], total: 1 },
+    { items: [{ disposal_id: root.authorization_id, authorizations: [null] }], total: 1 },
+    { items: [{ disposal_id: root.authorization_id, authorizations: [other] }], total: 1 },
+    { items: [group, { disposal_id: other.authorization_id, authorizations: [other, root] }], total: 2 }];
+  for (const value of cases) assert.throws(() => checkedAuthorizationGroups(value), /处置记录数据不完整/);
+  assert.deepEqual(checkedAuthorizationGroups({ items: [], total: 0 }), []);
+});
+
+test('处置只读分组：旧服务明确按原记录显示，权限或网络失败不回退', async () => {
+  const { readAuthorizationGroupPage, singleAuthorizationGroup } = await import('../src/pages/alarms/authorizationQueueView.js');
+  const row = { authorization_id: crypto.randomUUID() }, params = { page: 2, size: 20, status: 'COMPLETED' };
+  let reads = 0;
+  const list = async received => { assert.deepEqual(received, params); reads++; return { items: [row], total: 21 }; };
+  const ok = await readAuthorizationGroupPage({ groups: async () => ({ items: [singleAuthorizationGroup(row)], total: 21 }), list }, params);
+  assert.equal(ok.grouped, true); assert.equal(reads, 0);
+  for (const status of [404, 501]) {
+    const old = await readAuthorizationGroupPage({ groups: async () => { throw { status }; }, list }, params);
+    assert.equal(old.grouped, false); assert.equal(old.items[0].authorizations[0], row); assert.equal(old.total, 21);
+  }
+  for (const status of [401, 403, 408, 500]) {
+    await assert.rejects(readAuthorizationGroupPage({ groups: async () => { throw { status }; }, list }, params), error => error.status === status);
+  }
+  assert.equal(reads, 2);
 });
 
 test('目标视频：没有跟踪任务时把光电不在线等原因原样显示，只有默认那句缩成“暂无跟踪画面”', async () => {

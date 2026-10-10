@@ -28,6 +28,10 @@ test('the handoff line tells apart automatic, manual, not sent yet and not neede
   const { autoHandoffView } = await load('components/disposal/autoHandoffView.js');
   const auto = autoHandoffView({ auto_handoff: { status: 'SUBMITTED', handoff_id: 'h-1', trigger_source: 'JAMMING_COMPLETED', reason: '已提交' } });
   assert.deepEqual([auto.title, auto.tone, auto.reason, auto.handoffId], ['已自动移送到处罚', 'success', '', 'h-1']);
+  const single = autoHandoffView({ auto_handoff: { status: 'SUBMITTED', handoff_id: crypto.randomUUID(), trigger_source: 'COUNTERMEASURE_COMPLETED' } });
+  assert.deepEqual([single.title, single.tone, single.canSubmit], ['已自动移送到处罚', 'success', false]);
+  const waitingStop = autoHandoffView({ auto_handoff: { status: 'WAITING', reason: '尚未取得停止确认，暂不自动移送' } });
+  assert.deepEqual([waitingStop.title, waitingStop.reason, waitingStop.canSubmit], ['等待移送到处罚', '尚未取得停止确认，暂不自动移送', false]);
   assert.equal(autoHandoffView({ auto_handoff: { status: 'SUBMITTED', handoff_id: 'h-2', trigger_source: 'MANUAL' } }).title, '已选定接收单位移送到处罚');
   assert.equal(autoHandoffView({ auto_handoff: { status: 'SUBMITTED', handoff_id: 'h-3' } }).title, '已移送到处罚');
   const pending = autoHandoffView({ auto_handoff: { status: 'PENDING', handoff_id: 'h-4', reason: '处罚交接已建立，还没有发给处罚部门' } });
@@ -102,7 +106,7 @@ test('handoff material shows the frozen party, judgments and evidence chain with
     ],
     evidence_chain: [
       { category: 'VIDEO', source_kind: 'FILE', source_id: 'ev/1', evidence_no: 'EV-1', name: 'eo.mp4', kind_code: 'EO_VIDEO', sha256: 'a'.repeat(64), captured_at: 5 },
-      { category: 'TRACK', source_kind: 'TRACK', source_id: 'tr-1', evidence_no: 'tr-1', name: 'T-9', point_count: 12, started_at: 3 },
+      { category: 'TRACK', source_kind: 'TRACK', source_id: 'tr-1', layer: 'FUSED', evidence_no: 'tr-1', name: 'T-9', point_count: 12, started_at: 3 },
       { category: 'COMMAND', source_kind: 'COMMAND', source_id: 'c-1', evidence_no: 'CMD-1', name: 'EO_BEGIN_TRACK', captured_at: 4 }
     ]
   };
@@ -114,16 +118,16 @@ test('handoff material shows the frozen party, judgments and evidence chain with
   const judgments = judgmentViews(material, code => reasons[code] || code);
   assert.deepEqual(judgments.map(row => [row.basis, row.legal, row.tone]), [['告警依据的研判', '非法', 't-red'], ['移送时最新研判', '合法', 't-green']]);
   assert.deepEqual(judgments[0].reasons, ['进入禁飞/限制空域']);
-  assert.equal(judgments[0].planMatch, '计划匹配：无匹配计划');
+  assert.equal(judgments[0].planMatch, '任务匹配：无匹配任务');
   assert.equal(judgments[0].plan, '');
   assert.equal(judgments[1].review, '人工改判为非法');
   // 无匹配时研判里留的计划只是候选，不能写成“报备计划”。
   const plans = judgmentViews({ judgments: [{ plan_match_code: 'NONE', plan_no: 'P-9' }, { plan_match_code: 'FULL', plan_no: 'P-1' }] });
-  assert.deepEqual(plans.map(row => row.plan), ['候选计划 P-9（未匹配上这条计划）', '报备计划 P-1']);
+  assert.deepEqual(plans.map(row => row.plan), ['候选任务 P-9（未匹配上这条任务）', '报备任务 P-1']);
   assert.deepEqual(judgments[1].unknowns, ['位置未知']);
   const chain = evidenceChainView(material);
   assert.equal(chain.total, 3);
-  assert.deepEqual(chain.items.map(row => [row.category, row.name, row.no]), [['录像', 'eo.mp4', 'EV-1'], ['轨迹', '目标 T-9 的轨迹', ''], ['指令', '开始光电跟踪', 'CMD-1']]);
+  assert.deepEqual(chain.items.map(row => [row.category, row.name, row.no]), [['录像', 'eo.mp4', 'EV-1'], ['融合轨迹', '目标 T-9 的融合轨迹', ''], ['指令', '开始光电跟踪', 'CMD-1']]);
   assert.equal(chain.items[0].sha256, 'a'.repeat(64));
   assert.equal(chain.items[0].href, '#/evidence?file=ev%2F1');
   assert.equal(chain.items[1].href, '');
@@ -132,6 +136,6 @@ test('handoff material shows the frozen party, judgments and evidence chain with
   assert.equal(partyView({}), null);
   assert.equal(judgmentViews({}), null);
   assert.equal(evidenceChainView({ evidence: [] }), null);
-  assert.deepEqual(evidenceChainView({ evidence_chain: [] }), { total: 0, items: [] });
+  assert.deepEqual(evidenceChainView({ evidence_chain: [] }), { total: 0, items: [], trackUnavailable: false });
   assert.deepEqual(judgmentViews({ judgments: [] }), []);
 });

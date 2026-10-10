@@ -1,5 +1,37 @@
 // 这里只整理展示优先级，不授予动作权限，也不推进授权状态。
 import { stopActionLabel } from '../../components/disposal/emergencyStopView.js';
+// 分组由服务端按明确关联和访问范围计算，页面不按名称、时间或同一告警自行合并。
+export const singleAuthorizationGroup = row => ({ disposal_id: row.authorization_id, authorizations: [row] });
+export const groupRoot = group => group?.authorizations?.find(row => row?.authorization_id === group.disposal_id);
+export const groupContains = (group, id) => !!id && !!group?.authorizations?.some(row => row?.authorization_id === id);
+export function checkedAuthorizationGroups(data) {
+  const invalid = () => { throw new Error('处置记录数据不完整，请刷新重试'); };
+  if (!Array.isArray(data?.items) || !Number.isSafeInteger(data.total) || data.total < data.items.length) invalid();
+  const groups = new Set(), members = new Set();
+  for (const group of data.items) {
+    if (typeof group?.disposal_id !== 'string' || !group.disposal_id || groups.has(group.disposal_id)
+      || !Array.isArray(group.authorizations) || !group.authorizations.length || !groupRoot(group)) invalid();
+    groups.add(group.disposal_id);
+    for (const row of group.authorizations) {
+      if (typeof row?.authorization_id !== 'string' || !row.authorization_id || members.has(row.authorization_id)) invalid();
+      members.add(row.authorization_id);
+    }
+  }
+  return data.items;
+}
+// 新只读接口尚未加载时明确保留原列表，不把单条授权伪称为已合并处置。
+export async function readAuthorizationGroupPage(api, params) {
+  try {
+    const page = await api.groups(params);
+    return { ...page, items: checkedAuthorizationGroups(page), grouped: true };
+  } catch (error) {
+    if (![404, 501].includes(error?.status)) throw error;
+    const page = await api.list(params);
+    if (!Array.isArray(page?.items)) throw new Error('授权列表数据不完整，请刷新重试');
+    const compatible = { ...page, items: page.items.map(singleAuthorizationGroup) };
+    return { ...compatible, items: checkedAuthorizationGroups(compatible), grouped: false };
+  }
+}
 export const deviceChannel = row => ['LINGYUN_B', 'COUNTERMEASURE_4CH'].includes(row?.channel);
 export const usesEmergency = row => deviceChannel(row) && row?.subject_kind === 'UAV_EVENT' && ['COUNTERMEASURE', 'JAMMING'].includes(row.action_type);
 export const canStop = row => deviceChannel(row) && row?.allowed_actions?.includes('STOP');
@@ -39,6 +71,7 @@ export function executeBlockedReason(row, userId, can = () => false) {
 export function nextStep(row, userId) {
   if (row.channel === 'MANUAL') return '历史人工执行记录，仅供查阅';
   if (!deviceChannel(row)) return '执行通道未知，请查看详情';
+  if (row.execution_block_reason === 'LEGACY_JAMMING_RETIRED') return '自动接续已停用；历史干扰授权不能再次执行，已发送指令与停止记录仍可查看';
   if (row.execution_block_reason) return canCancel(row) ? '执行受阻，请查看原因；用不上了可以撤销这条授权，换设备重新申请' : '执行受阻，请查看原因';
   const code = primaryCode(row, userId);
   if (code === 'APPROVE') return '这条申请需要你审批';

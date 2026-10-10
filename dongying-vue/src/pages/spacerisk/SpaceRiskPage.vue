@@ -246,8 +246,8 @@ function renderMap() {
   map = new window.MapView(mapHost.value, { zoom: 3, maxDev: 0, legend: false, layers: { device: false, track: false, alarm: false } });
   map.setData({ airspaces: [], devices: [], targets: [], alarms: [] });
   if (!line && !spot) return;
-  const drawBase = map.draw.bind(map);
-  map.draw = function drawRouteAndRisk() {
+  const drawBase = map.drawOverlay.bind(map);
+  map.drawOverlay = function drawRouteAndRisk() {
     drawBase();
     const context = this.ctx;
     if (!context || !this.w) return;

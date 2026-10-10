@@ -313,7 +313,9 @@ RTSP 默认 `rtsp://127.0.0.1:8554`，只接受回环地址；媒体服务与后
 
 新增模块 `eo_video.py`，测试 `tests/test_eo_video.py`。含编码中断恢复的新视频测试23项，当前共享工作区Python全量55项及现有Node39项通过；真实FFmpeg水印、Windows Job清理、MQTT与鉴权媒体链路证据由本轮总验收报告记录。
 
-媒体安全补充：推流账号默认为 `qa-publisher`。首次开启无需手填密码；若环境没有有效密码，模拟器会在 `~/.dongying-qa/qa-video-credentials.json` 生成本机私有发布/读取凭据，后续启动复用该文件。密码不在场景、manifest、运行日志或导出保存，状态只显示是否已配置。重新打开设置时密码框为空，留空保留现有凭据。媒体服务应使用独立发布/读取账号，业务播放器仍经平台鉴权读取。编码输出不记录包含凭据 URL 的原始 stderr。
+媒体安全补充：推流账号默认为 `qa-publisher`。首次开启无需手填密码；未手动配置密码且本机凭据文件不存在时，模拟器会在 `~/.dongying-qa/qa-video-credentials.json` 生成本机私有发布/读取凭据，后续启动复用该文件。密码不在场景、manifest、运行日志或导出保存，状态只显示是否已配置。重新打开设置时密码框为空，留空保留现有凭据。媒体服务应使用独立发布/读取账号，业务播放器仍经平台鉴权读取。编码输出不记录包含凭据 URL 的原始 stderr。
+
+本机凭据文件兼容 UTF-8 和带 BOM 的 UTF-8。只有文件不存在时才生成凭据；已有文件无法读取、内容损坏或格式无效时会保留原文件并报错，修复原文件后重试。已运行的媒体服务、模拟器与后端必须使用同一套发布／读取凭据；认证或 API 权限失败、API 异常、端口占用分别提示，不会自动替换已有媒体服务。
 
 可选验收脚本：`tests/run_eo_media_smoke.py --run-local-media-smoke --credentials-file <本机私有媒体凭据文件> --output <证据目录>` 验证真实MQTT、FFmpeg和媒体传输，平台API使用契约替身。`tests/run_eo_platform_smoke.py --run-isolated-platform-smoke --fixture-file <本机私有隔离夹具文件> --credentials-file <本机私有媒体凭据文件> --output <证据目录>` 验证真实平台任务、回执和播放；只接受18091固定隔离API、acceptance目标及replay设备绑定，不能指向正式服务。可加 `--source-file <短视频绝对路径>` 验证循环和静音；默认动态图。脚本不会写数据库，结果按输入类型分别保存；测试凭据与媒体session原值不写证据。
 

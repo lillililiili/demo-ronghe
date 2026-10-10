@@ -46,9 +46,9 @@ defineExpose({ refresh });
     <span><strong>暂时无法核对急停状态</strong>：{{ error }}</span>
     <button v-if="!forbidden" type="button" class="btn" :disabled="loading || busy" @click="refresh">重新查询</button>
   </div>
-  <section v-if="visible" ref="host" class="emergency-stop-panel" aria-label="反制与干扰急停" :data-event-id="eventId">
+  <section v-if="visible" ref="host" class="emergency-stop-panel" aria-label="反制处置急停" :data-event-id="eventId">
     <header class="es-header" :class="{ 'is-standalone': !hasDetails }">
-      <div><h3>反制与干扰</h3><p v-if="eventLabel" class="es-muted">{{ eventLabel }}</p></div>
+      <div><h3>反制处置</h3><p v-if="eventLabel" class="es-muted">{{ eventLabel }}</p></div>
       <div v-if="offered" class="es-stop-area">
         <button type="button" class="btn es-stop-button" :disabled="!canStop" @click="halt">
           <span aria-hidden="true" v-html="icon('stop')"></span>{{ busy ? '正在提交' : actionLabel }}

@@ -4,6 +4,7 @@
    - 航线：/route-versions/{id} 的 centerline（LineString，WGS84）。
    - 设备：/devices/{id} 的 longitude/latitude。 */
 import { measuredMapPoints } from './trackPoints.js';
+import { toAirspaces } from './situationData.js';
 import { targetApi } from './targetApi.js';
 import { deviceApi } from './deviceApi.js';
 import { flightApi } from './flightApi.js';
@@ -115,12 +116,37 @@ export function centerOf(coordinates) {
   return coordinates?.[Math.floor(coordinates.length / 2)] || null;
 }
 
+/** 按版本读取边界，按空域 ID 读取与空域管理同源的名称；不以当前版本替换任务引用版本。 */
+export async function loadAirspaceOverlayVersions(facts, { skipUnavailable = false } = {}) {
+  const versionIds = [...new Set((facts || []).map(fact => fact.airspace_version_id).filter(Boolean))];
+  const versions = (await Promise.all(versionIds.map(id => airspaceApi.version(id).catch(error => { if (skipUnavailable) return null; throw error; })))).filter(Boolean);
+  const airspaceIds = [...new Set(versions.map(version => version.airspace_id).filter(Boolean))];
+  const details = await Promise.all(airspaceIds.map(id => airspaceApi.detail(id).catch(() => null)));
+  const byId = new Map(details.filter(Boolean).map(detail => [detail.airspace_id, detail]));
+  return versions.map(version => ({ ...version, airspace_detail: byId.get(version.airspace_id) || null }));
+}
+
+/** 任务和研判沿用空域管理的地图装配，名称读取失败明确提示，不猜名称或空域种类。 */
+export function mapAirspaceOverlays(airspaces) {
+  const seen = new Set();
+  return (airspaces || []).flatMap(({ version, polygons }) => {
+    if (!version || !polygons?.length || seen.has(version.airspace_version_id)) return [];
+    seen.add(version.airspace_version_id);
+    const detail = version.airspace_detail;
+    return toAirspaces([{
+      ...detail,
+      airspace_id: version.airspace_id,
+      name: detail?.name || '空域名称未读取',
+      current_version: { ...version, boundary: { ...version.boundary, coordinates: polygons } }
+    }]);
+  });
+}
+
 /** 计划涉及的空域边界（MultiPolygon，WGS84）→ 可画的多边形组；读不到或几何不可信的空域直接跳过。 */
 export async function loadAirspaceOverlays(planId) {
   if (!planId) return [];
   const facts = await flightApi.conflicts(planId);
-  const versionIds = [...new Set((facts || []).map(fact => fact.airspace_version_id).filter(Boolean))];
-  const versions = await Promise.all(versionIds.map(id => airspaceApi.version(id).catch(() => null)));
+  const versions = await loadAirspaceOverlayVersions(facts, { skipUnavailable: true });
   const byVersion = new Map(versions.filter(Boolean).map(version => [version.airspace_version_id, version]));
   return (facts || []).flatMap(conflict => {
     const version = byVersion.get(conflict.airspace_version_id);
@@ -133,30 +159,17 @@ export async function loadAirspaceOverlays(planId) {
   });
 }
 
-/** 在 MapView 同一绘制帧内补画空域边界（紫色虚线）与计划航线中心线。 */
+/** 在 MapView 同一绘制帧内补画空域名称、分类边界与计划航线中心线。 */
 export function installOverlays(map, { centerline = null, airspaces = [] } = {}) {
-  if (!map || (!centerline && !airspaces.length)) return;
+  if (!map) return;
+  map.setData({ airspaces: mapAirspaceOverlays(airspaces) });
+  if (!centerline) return;
   const drawBase = map.drawOverlay.bind(map);
   map.drawOverlay = function drawWithOverlays() {
     drawBase();
     const context = this.ctx;
     if (!context || !this.w) return;
     context.save();
-    airspaces.forEach(({ polygons }) => {
-      context.beginPath();
-      polygons.forEach(polygon => polygon.forEach(ring => ring.forEach(([lon, lat], index) => {
-        const point = this.px(lon, lat);
-        if (index) context.lineTo(point[0], point[1]);
-        else context.moveTo(point[0], point[1]);
-      })));
-      context.fillStyle = '#a97bff18';
-      context.fill('evenodd');
-      context.setLineDash([6, 4]);
-      context.strokeStyle = '#7545c7';
-      context.lineWidth = 1.35;
-      context.stroke();
-      context.setLineDash([]);
-    });
     if (centerline) strokePlannedRoute(context, this, centerline);
     context.restore();
   };

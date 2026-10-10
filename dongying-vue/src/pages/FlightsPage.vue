@@ -11,20 +11,19 @@ export default {};
 import { computed, h, nextTick, onMounted, onUnmounted, reactive, ref, shallowRef, watch } from 'vue';
 import { flightApi } from '@/services/flightApi.js';
 import { useRealtimeRefresh } from '@/hooks/useRealtimeRefresh.js';
-import { airspaceApi } from '@/services/airspaceApi.js';
 import { riskApi } from '@/services/riskApi.js';
 import { weatherRiskIcon } from '@/ui/weatherRiskIcon.js';
 import { openRiskVerification } from '@/ui/riskVerificationModal.js';
 import { RULE_REASON_TEXT } from '@/ui/legalityReviewModal.js';
-import { handoffApi, newHandoffIdempotencyKey } from '@/services/handoffApi.js';
+import { handoffApi } from '@/services/handoffApi.js';
+import { openRiskNotification } from '@/ui/riskNotificationModal.js';
 import { openFormModal } from '@/ui/formModal.js';
 import { openModal, closeModal } from '@/ui/modal.js';
 import { toast } from '@/ui/nv.js';
 import {
   ALTITUDE_DATUM_LABEL, ALTITUDE_RELATION_LABEL, HANDOFF_TYPE_LABEL, LEGALITY_LABEL, PLAN_MATCH_TAG, PLAN_ROW_MATCH_LABEL, PLAN_STATUS_LABEL, PLAN_STATUS_TAG, REASON_CODE_LABEL, RECEIPT_RESULT_LABEL, RISK_TYPE_LABEL,
   SECTION_AVAILABILITY_LABEL, SOURCE_MODE_LABEL, sourceDescription, notificationBlockedReason, notificationSubmissionMessage, labelOf, OBJECT_TYPE_LABEL, readableNo, RISK_TYPE_OPTIONS, RISK_STATE_LABEL, RISK_PRESENCE_LABEL } from '@/ui/labels.js';
-import { isUncertainOutcome } from '@/services/apiClient.js';
-import { loadTargetPosition, strokePlannedRoute } from '@/services/positionMap.js';
+import { loadTargetPosition, strokePlannedRoute, loadAirspaceOverlayVersions, mapAirspaceOverlays } from '@/services/positionMap.js';
 import { hasPermission } from '@/services/accessControl.js';
 import { authUser } from '@/services/auth.js';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
@@ -135,8 +134,6 @@ const noticesTotal = ref(0);
 const noticesLoading = ref(false);
 const noticesError = ref('');
 let noticesToken = 0;
-/* 同一风险的交接幂等键在“结果未知”期间保留；只有服务端给出明确结果后才丢弃或换新。 */
-const pendingHandoffKeys = new Map();
 const NOTICE_DELIVERY_LABEL = { PENDING_DELIVERY: '等待发送', SUBMITTED: '送达待确认', DELIVERED: '已送达', FAILED: '发送失败' };
 const NOTICE_DELIVERY_TAG = { PENDING_DELIVERY: 't-amber', SUBMITTED: 't-blue', DELIVERED: 't-green', FAILED: 't-red' };
 const NOTICE_RECEIPT_LABEL = { NOT_EXPECTED: '尚未进入回执阶段', PENDING: '等待回执', ACKNOWLEDGED: '已回执', TIMEOUT: '回执超时' };
@@ -984,7 +981,7 @@ function trustedAirspaceOverlays() {
     const polygons = boundary.coordinates.map(polygon => polygon.map(ring => ring.map(point => [Number(point?.[0]), Number(point?.[1])])))
       .filter(polygon => polygon.length && polygon.every(ring => ring.length >= 4 && ring.every(([longitude, latitude]) => Number.isFinite(longitude)
         && Number.isFinite(latitude) && longitude >= -180 && longitude <= 180 && latitude >= -90 && latitude <= 90)));
-    return polygons.length ? [{ conflict, polygons }] : [];
+    return polygons.length ? [{ conflict, version, polygons }] : [];
   });
 }
 
@@ -1073,7 +1070,7 @@ function renderRouteMap() {
   if (created) routeMap = new window.MapView(mapHost.value, {
     zoom: 3.2, maxDev: 0, legend: false, layers: { device: false, track: !!target, alarm: false }
   });
-  routeMap.setData({ airspaces: [], devices: [], targets: target ? [target] : [], alarms: [] });
+  routeMap.setData({ airspaces: mapAirspaceOverlays(airspaces), devices: [], targets: target ? [target] : [], alarms: [] });
   routeMap.setLayer('track', !!target && (activeTab.value !== 'events' || !objectRiskSelected.value));
   routeMap.sel = target?.id || null;
   // draw() 只预约下一帧；航线必须在该帧清屏、绘制基础业务层后补画。
@@ -1084,21 +1081,6 @@ function renderRouteMap() {
     if (!context || !this.w) return;
     // API 的 WGS-84 坐标顺序固定为 [longitude, latitude]；只画可信几何，不以缺失数据推断空域或合法性。
     context.save();
-    airspaces.forEach(({ polygons }) => {
-      context.beginPath();
-      polygons.forEach(polygon => polygon.forEach(ring => ring.forEach(([longitude, latitude], index) => {
-        const point = this.px(longitude, latitude);
-        if (index) context.lineTo(point[0], point[1]);
-        else context.moveTo(point[0], point[1]);
-      })));
-      context.fillStyle = '#a97bff18';
-      context.fill('evenodd');
-      context.setLineDash([6, 4]);
-      context.strokeStyle = '#7545c7';
-      context.lineWidth = 1.35;
-      context.stroke();
-      context.setLineDash([]);
-    });
     locatedPlanRisks.value.forEach(({ risk, location }) => {
       if (!location.polygon) return;
       drawWeatherArea(context, this, risk.weather_fact, location.polygon, coordinates || [],
@@ -1129,8 +1111,7 @@ async function loadAirspaceContext(plan, { quiet = false } = {}) {
   try {
     const facts = await flightApi.conflicts(plan.plan_id);
     if (activeTab.value !== 'route' || selected.value?.plan_id !== plan.plan_id) return;
-    const versionIds = [...new Set(facts.map(fact => fact.airspace_version_id).filter(Boolean))];
-    const versions = await Promise.all(versionIds.map(id => airspaceApi.version(id)));
+    const versions = await loadAirspaceOverlayVersions(facts);
     if (activeTab.value !== 'route' || selected.value?.plan_id !== plan.plan_id) return;
     conflicts.value = facts;
     airspaceVersions.value = versions;
@@ -1651,57 +1632,11 @@ function showHandoffSubmitted(created) {
   });
 }
 
-async function openRiskNotify(riskOverride = null) {
+function openRiskNotify(riskOverride = null) {
   const risk = riskOverride || selectedRisk.value;
   if (!risk || (riskOverride ? !canNotifyItem(risk) : !canNotifyRisk.value)) return;
-  const riskId = risk.risk_id;
-  const expectedVersion = Number(risk.version);
-  if (!pendingHandoffKeys.has(riskId)) pendingHandoffKeys.set(riskId, newHandoffIdempotencyKey());
-  /* 决策 18-14：风险到"通知上级"为止，不再往处置走。闭环以对方回执为准（OBS-14）：
-     当前上级接口只回"已回执"，处理结果（已驱离/未驱离）是对方愿意补充时才有的附加信息，弹窗不能把它说成完成条件。
-     接收方不再让人选——服务端按默认接收方处理；页面少一个选择，就少一处能选错的地方。 */
-  openFormModal({
-    title: '通知上级',
-    width: '560px',
-    warning: '提交后，请在通知记录中查看是否送达，并等待对方回执。显示“已回执”表示本次风险通知流程完成；签收不代表风险已经解除。对方如另附处理结果，会显示在同一条回执里。',
-    fields: [],
-    confirmText: '提交通知',
-    onSubmit: async () => {
-      const key = pendingHandoffKeys.get(riskId);
-      const body = { source_kind: 'RISK', source_id: riskId, handoff_type: 'RISK_NOTICE', expected_version: expectedVersion };
-      try {
-        const created = await handoffApi.createHandoff(body, key);
-        pendingHandoffKeys.delete(riskId);
-        closeModal();
-        await refreshAfterNotify(riskId);
-        showHandoffSubmitted(created);
-      } catch (requestError) {
-        const code = requestError.code;
-        if (code === 'HANDOFF_ALREADY_EXISTS' || code === 'IDEMPOTENCY_REPLAY') {
-          // 服务端已有这份交接：不重复提交，切到通报记录让用户核对真实记录。
-          pendingHandoffKeys.delete(riskId);
-          closeModal();
-          riskTab.value = 'notice';
-          await refreshAfterNotify(riskId);
-          toast(code === 'HANDOFF_ALREADY_EXISTS' ? '该风险已经提交过通知，已切换到通报记录。' : '该请求此前已提交，请在通报记录核对。', 'err');
-          return;
-        }
-        if (code === 'VERSION_CONFLICT' || code === 'INVALID_TRANSITION' || code === 'RECIPIENT_NOT_CONFIGURED' || code === 'RECIPIENT_NOT_FOUND') {
-          // 明确失败：服务端未落库，换新键并回读风险，避免旧版本再次提交。
-          pendingHandoffKeys.set(riskId, newHandoffIdempotencyKey());
-          await refreshAfterNotify(riskId);
-          throw new Error(`提交被拒绝，已刷新当前状态：${handoffMessageOf(requestError, '请核对后重试')}`);
-        }
-        if (isUncertainOutcome(requestError)) {
-          // 超时 / 断网 / 其他 409：服务端可能已落库。保留原键，先回读风险与交接记录，不自动换键重试、不提示成功。
-          await refreshAfterNotify(riskId);
-          throw new Error(`提交结果未确认，请刷新核对：${handoffMessageOf(requestError, '未返回明确结果')}`);
-        }
-        pendingHandoffKeys.set(riskId, newHandoffIdempotencyKey());
-        throw new Error(handoffMessageOf(requestError, '提交通知失败'));
-      }
-    }
-  });
+  openRiskNotification({ risk, refresh: () => refreshAfterNotify(risk.risk_id),
+    onDone: showHandoffSubmitted, onExisting: () => { riskTab.value = 'notice'; } });
 }
 
 /* 筛选条一行放不下七个（阶段 18 对照原版：原版只有等级/目标类型/状态三个）：

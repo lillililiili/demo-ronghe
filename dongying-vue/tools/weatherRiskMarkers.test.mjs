@@ -92,3 +92,113 @@ test('risk map timestamps match Beijing event time across client time zones', as
     if (original === undefined) delete process.env.TZ; else process.env.TZ = original;
   }
 });
+
+
+// 航线异物采用事件事实点；不得把过期风险恢复成实时目标。
+import { randomUUID } from 'node:crypto';
+import { riskSnapshotMarkers, riskSnapshotTime } from '../src/pages/situation/riskSnapshotMarkers.js';
+import { groupRouteRisks } from '../src/pages/situation/routeRiskGroups.js';
+import { currentMapSnapshot, toRisks } from '../src/services/situationData.js';
+import { planRiskLocation } from '../src/pages/flights/planRiskMap.js';
+import { layoutSituationMarkers } from '../src/pages/situation/markerLayout.js';
+
+const snapshotRisk = (overrides = {}) => ({ riskId: randomUUID(), riskType: 'SPACE_OBJECT',
+  planId: randomUUID(), routeVersionId: randomUUID(), targetInternalId: randomUUID(),
+  sourceMode: 'mock', sourceCode: 'test-observation', ownerOrgId: randomUUID(), districtId: randomUUID(),
+  reasonCode: 'SPACE_BALLOON', observedAt: Date.now() - 60000, occurredAt: Date.now() - 60000,
+  state: 'PENDING_VERIFICATION', currentStatus: 'CURRENT',
+  spaceFact: { longitude: 112.3, latitude: 31.6, subtypeCode: 'BALLOON', subtypeName: '气球', ruleVersionId: randomUUID() },
+  ...overrides });
+
+test('expired balloon snapshots match flight coordinates while live counts stay empty', () => {
+  for (const sourceMode of ['live', 'mock', 'replay']) {
+    const base = snapshotRisk({ sourceMode });
+    const risks = Array.from({ length: 4 }, (_, index) => ({ ...base, riskId: randomUUID(),
+      observedAt: base.observedAt - index * 1000, occurredAt: base.occurredAt - index * 1000,
+      state: index < 2 ? 'ACKNOWLEDGED' : 'PENDING_VERIFICATION',
+      spaceFact: { ...base.spaceFact, longitude: 108 + index * .001, latitude: 33 + index * .002 } }));
+    const snapshot = currentMapSnapshot({ targets: [], risks }, Date.now());
+    assert.equal(snapshot.targets.length, 0);
+    assert.ok(snapshot.risks.every(risk => risk.currentStatus === 'UNKNOWN' && risk.mapVisible === false));
+    const groups = groupRouteRisks(snapshot.risks);
+    const pendingRiskIds = risks.slice(2).map(risk => risk.riskId);
+    assert.equal(riskSnapshotMarkers(groups, { pendingRiskIds }).length, 2);
+    const markers = riskSnapshotMarkers(groups, { pendingRiskIds, selectedPlan: base });
+    assert.equal(markers.length, 4);
+    for (const marker of markers) {
+      assert.deepEqual(marker.anchor, planRiskLocation({ risk_type: marker.group.riskType, space_fact: marker.group.spaceFact }).anchor);
+      assert.equal(marker.sourceMode, sourceMode);
+    }
+    assert.equal(snapshot.targets.length, 0);
+    assert.ok(risks.every(risk => risk.currentStatus === 'CURRENT')); // 输入不被改写。
+  }
+});
+
+test('snapshot scope keeps plan/version boundaries and distinct observations', () => {
+  const base = snapshotRisk();
+  const otherVersion = { ...base, riskId: randomUUID(), routeVersionId: randomUUID(), state: 'ACKNOWLEDGED' };
+  const otherPlan = { ...base, riskId: randomUUID(), planId: randomUUID(), observedAt: base.observedAt - 1, state: 'ACKNOWLEDGED' };
+  const groups = groupRouteRisks([base, otherVersion, otherPlan]);
+  assert.equal(riskSnapshotMarkers(groups).length, 0);
+  assert.deepEqual(riskSnapshotMarkers(groups, { selectedPlan: base }).map(row => row.group.riskId), [base.riskId]);
+  const other = groups.find(group => group.riskId === otherVersion.riskId);
+  assert.deepEqual(riskSnapshotMarkers(groups, { selectedGroupId: other.groupId }).map(row => row.group.riskId), [otherVersion.riskId]);
+  // 同一次观测影响多个计划只画一个位置，点击仍携带各自的风险 ID。
+  const secondPlan = { ...base, riskId: randomUUID(), planId: randomUUID() };
+  const rows = riskSnapshotMarkers(groupRouteRisks([base, secondPlan]), { pendingRiskIds: [base.riskId, secondPlan.riskId] });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].group.members.length, 2);
+});
+
+test('missing snapshot coordinates never borrow route or live positions', () => {
+  for (const longitude of [null, undefined, '', ' ', false, NaN, Infinity, 181]) {
+    const risk = snapshotRisk();
+    risk.spaceFact.longitude = longitude;
+    assert.deepEqual(riskSnapshotMarkers(groupRouteRisks([risk]), { selectedPlan: risk }), []);
+    const mapped = toRisks([{ risk_id: risk.riskId, risk_type: risk.riskType,
+      plan_id: risk.planId, route_version_id: risk.routeVersionId,
+      state: risk.state, space_fact: { longitude, latitude: risk.spaceFact.latitude } }])[0];
+    assert.equal(mapped.spaceFact.longitude, null);
+    assert.equal(mapped.spaceFact.latitude, null);
+    assert.deepEqual(riskSnapshotMarkers(groupRouteRisks([mapped]), { selectedPlan: mapped }), []);
+  }
+  const risk = snapshotRisk();
+  risk.spaceFact.latitude = 86;
+  assert.deepEqual(riskSnapshotMarkers(groupRouteRisks([risk]), { selectedPlan: risk }), []);
+  const original = process.env.TZ;
+  try {
+    process.env.TZ = 'America/New_York';
+    assert.equal(riskSnapshotTime(Date.UTC(2026, 2, 5, 2, 3, 4)), '2026/3/5 10:03:04');
+    assert.equal(riskSnapshotTime(null), '时间未知');
+  } finally {
+    if (original === undefined) delete process.env.TZ; else process.env.TZ = original;
+  }
+});
+
+test('snapshot layer follows shared layout across zoom, pan and hiding without alarm glow', async () => {
+  const source = (await readFile(new URL('../src/pages/situation/SituationRiskMarkers.vue', import.meta.url), 'utf8'))
+    .match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*;\r?\n/gm, '');
+  const base = snapshotRisk();
+  const groups = groupRouteRisks([base, { ...base, riskId: randomUUID(), observedAt: base.observedAt - 1 }]);
+  const props = { rows: riskSnapshotMarkers(groups, { selectedPlan: base }), visible: true };
+  let exposed;
+  const markerRef = { value: [] };
+  new Function('ref', 'riskSnapshotTime', 'defineProps', 'defineEmits', 'defineExpose', 'window', source)(
+    () => markerRef, riskSnapshotTime, () => props, () => {}, value => { exposed = value; },
+    { UI: { targetIcon: target => target.subtypeCode } });
+  for (const [zoom, pan] of [[1, 0], [2, 30], [.5, -20]]) {
+    const map = { w: 900, h: 600, px: (lon, lat) => [(lon - 112) * 500 * zoom + pan, (lat - 31) * 300 * zoom + pan] };
+    const inputs = exposed.getMarkers(map);
+    assert.ok(inputs.every(item => item.abnormal === false && item.data.historical === true));
+    map._markerLayout = layoutSituationMarkers(inputs.map(item => ({ ...item, x: item.point[0], y: item.point[1] })), { width: map.w, height: map.h });
+    exposed.draw(map);
+    assert.equal(markerRef.value.length, 2);
+    assert.notDeepEqual([markerRef.value[0].x, markerRef.value[0].y], [markerRef.value[1].x, markerRef.value[1].y]);
+    assert.deepEqual([markerRef.value[0].anchorX, markerRef.value[0].anchorY], map.px(...props.rows[0].anchor));
+    assert.ok(markerRef.value.every(marker => marker.description.includes('发现时位置（非实时）')));
+  }
+  props.visible = false;
+  assert.deepEqual(exposed.getMarkers({ w: 900 }), []);
+  exposed.draw({ w: 900 });
+  assert.deepEqual(markerRef.value, []);
+});

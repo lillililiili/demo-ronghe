@@ -10,6 +10,7 @@ import time
 import uuid
 
 from engine import coordinates
+from state_file import atomic_json
 from realtime_notification_receiver import Receiver, ReceiverError, InstanceLock, KINDS, MODES
 
 ACTIVE = {'PREPARING', 'RUNNING', 'PAUSED', 'STOPPING'}
@@ -88,17 +89,6 @@ def countermeasure_position(config, scene):
             continue
         return {'longitude': round(longitude, 7), 'latitude': round(latitude, 7)}
     return None
-
-
-def atomic_json(path, value):
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix('.tmp')
-    with temporary.open('w', encoding='utf-8') as stream:
-        json.dump(value, stream, ensure_ascii=False, indent=2)
-        stream.flush()
-        os.fsync(stream.fileno())
-    os.replace(temporary, path)
 
 
 class BridgeClient:

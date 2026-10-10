@@ -1,10 +1,13 @@
 <script setup>
 import { RISK_STATE_LABEL, labelOf } from '@/ui/labels.js';
-import { riskMatchesPlan, routeRiskIsActive } from '@/services/situationData.js';
+import { riskMatchesPlan } from '@/services/situationData.js';
+import SituationRiskProcess from './SituationRiskProcess.vue';
+import { planRiskLocation } from '@/services/riskMapGeometry.js';
+import { riskSnapshotTime } from './riskSnapshotMarkers.js';
 
 const props = defineProps({ group: { type: Object, required: true }, plans: { type: Array, default: () => [] } });
 const U = window.UI;
-defineEmits(['close', 'view-plan', 'action']);
+defineEmits(['close', 'view-plan', 'updated']);
 const planFor = risk => props.plans.find(plan => riskMatchesPlan(risk, plan));
 </script>
 
@@ -16,6 +19,8 @@ const planFor = risk => props.plans.find(plan => riskMatchesPlan(risk, plan));
       <button type="button" aria-label="关闭风险详情" @click="$emit('close')" v-html="U.icon('close')"></button>
     </header>
     <p>{{ group.reasonText || '风险依据未提供' }}</p>
+    <p v-if="planRiskLocation({ risk_type: group.riskType, space_fact: group.spaceFact })" class="group-note">地图标记为发现时位置，非实时位置 · {{ riskSnapshotTime(group.occurredAt) }}（北京时间）</p>
+    <p v-else class="group-note">发现时位置未提供，无法在地图标记。</p>
     <p v-if="group.currentReason" class="group-note">{{ group.currentReason }}</p>
     <p v-if="group.members.length > 1" class="group-note">同一观测合并展示，各任务处理状态分别保留。</p>
     <article v-for="risk in group.members" :key="risk.riskId" class="group-plan">
@@ -24,11 +29,8 @@ const planFor = risk => props.plans.find(plan => riskMatchesPlan(risk, plan));
       <small v-if="planFor(risk)?.uavId">无人机：{{ planFor(risk).uavId }}</small>
       <div class="sit-map-pop-actions">
         <button v-if="planFor(risk)" type="button" @click="$emit('view-plan', risk)">查看任务</button>
-        <template v-if="routeRiskIsActive(risk)">
-          <button type="button" class="is-danger" @click="$emit('action', risk, 'exclude')">排除此任务风险</button>
-          <button type="button" @click="$emit('action', risk, 'notify')">通知上级</button>
-        </template>
       </div>
+      <SituationRiskProcess :risk-id="risk.riskId" :revision="risk.version" @updated="$emit('updated')" />
     </article>
   </section>
 </template>

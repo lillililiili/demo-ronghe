@@ -10,7 +10,8 @@
    而别名只有 Vite 认得。文案一律走共享字典，本页不另建一套中文。 */
 import { measuredMapPoints } from './trackPoints.js';
 import { serverNow } from './serverClock.js';
-import { OBJECT_TYPE_LABEL, ALARM_TYPE_LABEL, labelOf, targetTypeLabel } from '../ui/labels.js';
+import { planRiskLocation } from './riskMapGeometry.js';
+import { OBJECT_TYPE_LABEL, ALARM_TYPE_LABEL, AIRSPACE_KIND_LABEL, labelOf, targetTypeLabel } from '../ui/labels.js';
 import { displayDeviceNo } from '../ui/deviceNumber.js';
 
 /* 空域图层字典（决策 11-6 定名与配色，12-3 定归属来源）。
@@ -305,7 +306,7 @@ export function toAirspaces(details) {
     polygons.forEach((rings, index) => {
       const center = ringCenter(rings[0]);
       if (!center) return;
-      // id 会被 map.js 直接画到图上（标注第二行），所以这里放**业务编号**而不是内部 ID。
+      // id 用于地图提示，优先放业务编号；地图常驻标注使用 name 和 type。
       // 内部 ID 另存 airspaceId，只用于程序内引用，不上屏。
       const airspaceNo = detail.airspace_no || detail.airspace_id;
       out.push({
@@ -313,7 +314,7 @@ export function toAirspaces(details) {
         airspaceId: detail.airspace_id,
         name: detail.name || airspaceNo || '',
         kindCode: meta.kindCode,
-        type: meta.type,
+        type: AIRSPACE_KIND_LABEL[version.kind_code] || meta.type,
         color: meta.color,
         layer: meta.layer,
         // rings 是全部环（第 0 环外环，其余是孔洞），map.js 按 even-odd 填充。
@@ -614,6 +615,7 @@ export function attachDeviceEvents(devices, events) {
 export function toRisks(risks) {
   return (risks || []).map(risk => {
     const fact = risk.space_fact || null;
+    const eventPoint = planRiskLocation(risk)?.anchor;
     return {
       id: risk.risk_no || risk.risk_id,
       riskId: risk.risk_id, risk_id: risk.risk_id,
@@ -647,8 +649,8 @@ export function toRisks(risks) {
         altitudeBand: fact.altitude_band,
         objectCount: num(fact.object_count),
         trend: fact.trend,
-        longitude: num(fact.longitude),
-        latitude: num(fact.latitude)
+        longitude: eventPoint?.[0] ?? null,
+        latitude: eventPoint?.[1] ?? null
       } : null
     };
   });

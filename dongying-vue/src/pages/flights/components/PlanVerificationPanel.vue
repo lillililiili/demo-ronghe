@@ -33,7 +33,12 @@ const needsVerification = computed(() => {
   if (props.match?.target_id || data.value?.verification_blocker === '已经关联感知目标，请查看实际轨迹与研判') return false;
   return !!data.value?.can_verify || ['AVAILABLE', 'NO_EVALUATION'].includes(props.match?.availability);
 });
-const showPanel = computed(() => !!data.value && (needsVerification.value || hasHistory.value));
+const showMatchedNotice = computed(() => {
+  const start = props.plan.start_at == null ? NaN : new Date(props.plan.start_at).getTime();
+  return !completed.value && props.plan.status_code !== 'CANCELLED'
+    && Number.isFinite(start) && start <= checkedAt.value && !!props.match?.target_id;
+});
+const showPanel = computed(() => !!data.value && (needsVerification.value || showMatchedNotice.value || hasHistory.value));
 function date(value) { return value == null ? '未记录' : new Date(value).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }); }
 function isAutomatic(record) { return ['AUTO_DEVICE_ABNORMAL','SUSPECTED_NOT_TAKEN_OFF','CHECK_INCOMPLETE'].includes(record?.conclusion); }
 function verificationSummary(record) {
@@ -77,12 +82,13 @@ onUnmounted(() => { token++; clearInterval(refreshTimer); });
   <div v-if="error" class="warnbox">核实与通知记录暂时无法读取：{{ error }} <button v-if="![401,403].includes(errorStatus)" class="btn" type="button" @click="reload">重试</button></div>
   <component :is="completed ? 'details' : 'section'" v-else-if="showPanel" :key="`${plan.plan_id}:${completed}`" class="sect plan-verification">
     <summary v-if="completed" class="history-summary">历史记录</summary>
-    <h4 v-else>{{ needsVerification ? '周边设备检查' : '历史检查与通知' }}</h4>
+    <h4 v-else>{{ needsVerification || showMatchedNotice ? '周边设备检查' : '历史检查与通知' }}</h4>
+    <p v-if="showMatchedNotice" class="record-meta" role="status">已关联感知目标，自动设备检查已结束。</p>
     <template v-if="data">
       <p v-if="data.scheduled_check" class="record-meta">
         系统自动检查：{{ date(data.scheduled_check.last_checked_at) }}
         <span v-if="data.scheduled_check.state === 'FAILED'"> · 本次检查失败，后台将重试</span>
-        <span v-else-if="data.scheduled_check.state === 'MATCHED'"> · 已发现对应目标，停止到点检查</span>
+        <span v-else-if="data.scheduled_check.state === 'MATCHED' && !showMatchedNotice"> · 已发现对应目标，停止到点检查</span>
         <span v-if="data.scheduled_check.maintenance_task_ids?.length"> · 已关联 {{ data.scheduled_check.maintenance_task_ids.length }} 条后台运维待办</span>
       </p>
       <p v-for="task in data.scheduled_check?.maintenance_tasks || []" :key="task.task_id" class="record-meta">

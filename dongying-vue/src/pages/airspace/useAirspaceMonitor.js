@@ -13,6 +13,8 @@ export function useAirspaceMonitor(district, selected, onlySelected = computed((
   let token = 0, timer;
 
   async function reload({ quiet = false } = {}) {
+    // 推送与定时刷新共用进行中的读取，不互相取消或提前移除旧列表中的记录。
+    if (quiet && refreshing.value) return;
     const current = ++token;
     const keep = updatedAt.value != null;
     loading.value = false;
@@ -58,7 +60,7 @@ export function useAirspaceMonitor(district, selected, onlySelected = computed((
     window.addEventListener('auth-access-change', resetAndReload);
     timer = setInterval(() => {
       if (refreshing.value || document.hidden) return;
-      now.value = Date.now(); reload({ quiet: true });
+      reload({ quiet: true });
     }, 10_000);
   });
   onUnmounted(() => { token++; clearInterval(timer); window.removeEventListener('auth-access-change', resetAndReload); });

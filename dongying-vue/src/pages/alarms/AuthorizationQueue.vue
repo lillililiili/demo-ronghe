@@ -265,7 +265,7 @@ onUnmounted(() => { active = false; request++; detailRequest++; });
         <div class="detail-columns">
           <div class="target-observation" aria-label="目标观察">
             <TargetLiveVideo v-if="['UAV_EVENT', 'TARGET'].includes(selected.subject_kind)" :key="selected.authorization_id"
-              :default-expanded="true" :compact="true" :target-id="selectedSubject?.targetId || ''" :context-label="subjectText(selected)"
+              :compact="true" :target-id="selectedSubject?.targetId || ''" :context-label="subjectText(selected)"
               :event-id="selected.subject_kind === 'UAV_EVENT' ? selected.subject_id : ''"
               :unavailable-reason="selectedSubject?.fallback && !selectedSubject?.targetId ? subjectText(selected) : ''" />
             <AuthorizationTargetMap v-if="['UAV_EVENT', 'TARGET'].includes(selected.subject_kind)" :key="`map-${selected.authorization_id}`"

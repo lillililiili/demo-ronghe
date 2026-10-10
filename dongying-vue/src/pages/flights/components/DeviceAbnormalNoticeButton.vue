@@ -32,6 +32,7 @@ const noticeText = computed(() => {
 const tone = computed(() => state.value.pending || state.value.uncertain || latestUnknown.value ? 't-amber'
   : deliveryTone(state.value.task?.notification_delivery_status));
 const noticeReceiptText = computed(() => latestUnknown.value ? '回执状态未知' : attempts.value[0]?.outcome_state === 'NOT_SENT' ? '尚未产生回执'
+  : state.value.task?.notification_receipt_status === 'NOT_EXPECTED' ? ''
   : `${state.value.pending || state.value.uncertain ? '上次' : ''}${receiptText(state.value.task?.notification_receipt_status)}`);
 const simulated = computed(() => isSimulated(state.value.task?.recipient_snapshot));
 const showCreate = computed(() => abnormal.value && state.value.loaded && !state.value.uncertain
@@ -92,7 +93,7 @@ async function submit(kind) {
   <div v-if="abnormal || state.task || state.readError || state.uncertain" class="device-notice">
     <div v-if="state.task || state.pending || state.uncertain" class="notice-summary" role="status">
       <span class="tag" :class="tone">{{ noticeText }}</span>
-      <span v-if="state.task" class="notice-receipt">{{ noticeReceiptText }}</span>
+      <span v-if="state.task && noticeReceiptText" class="notice-receipt">{{ noticeReceiptText }}</span>
       <span v-if="simulated" class="tag t-gray">模拟通知</span>
     </div>
     <small v-if="state.task">{{ taskText }}<template v-if="attempts.length > 1"> · 共 {{ attempts.length }} 次通知记录</template></small>

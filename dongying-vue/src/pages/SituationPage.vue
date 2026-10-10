@@ -14,9 +14,6 @@ import {
 import { closeModal, openFormModal } from '@/ui/formModal.js';
 import { getUavEvent } from '@/services/alarmApi.js';
 import { openUavVerification } from '@/ui/uavVerificationModal.js';
-import { riskApi, newRiskIdempotencyKey } from '@/services/riskApi.js';
-import { handoffApi, newHandoffIdempotencyKey } from '@/services/handoffApi.js';
-import { isUncertainOutcome } from '@/services/apiClient.js';
 import {
   CORRIDOR_RELATION_LABEL, PLAN_STATUS_LABEL, RISK_STATE_LABEL, SEVERITY_LABEL, labelOf
 } from '@/ui/labels.js';
@@ -29,6 +26,9 @@ import { pilotDistanceNote } from '@/ui/pilotDistanceNote.js';
 import WeatherRiskMarkers from '@/components/WeatherRiskMarkers.vue';
 import { weatherAnchor } from '@/services/weatherRiskGeometry.js';
 import SituationRiskGroupPopup from './situation/SituationRiskGroupPopup.vue';
+import SituationRiskProcess from './situation/SituationRiskProcess.vue';
+import SituationRiskMarkers from './situation/SituationRiskMarkers.vue';
+import { riskSnapshotMarkers } from './situation/riskSnapshotMarkers.js';
 import { groupRouteRisks } from './situation/routeRiskGroups.js';
 import { selectionLayout } from './situation/selectionLayout.js';
 import { createSituationMarkerLayout } from './situation/markerLayout.js';
@@ -42,6 +42,7 @@ usePageChrome('situation');
 const VIEWED_STORAGE_KEY = 'situation.viewed.v1';
 const mapHost = ref(null);
 const weatherLayer = ref(null);
+const riskSnapshotLayer = ref(null);
 const snapshot = ref({ generatedAt: 0, sourceMode: 'unknown', simulated: false, devices: [], targets: [], alarms: [], flightPlans: [], risks: [], airspaces: [], handoffs: [] });
 const selection = ref(null);
 const advisorySummaries = ref({});
@@ -82,9 +83,10 @@ watch(() => [evidenceRoute.query.target, snapshot.value.generatedAt], ([id, gene
 }, { flush: 'post' });
 const flightPlans = computed(() => snapshot.value.flightPlans || []);
 const risks = computed(() => snapshot.value.risks || []);
+const allRiskGroups = computed(() => groupRouteRisks(risks.value));
 const riskGroups = computed(() => groupRouteRisks(risks.value.filter(situationRouteRiskVisible)));
 const selectedRiskGroup = computed(() => selection.value?.kind === 'risk-group'
-  ? riskGroups.value.find(group => group.groupId === selection.value.id) : null);
+  ? allRiskGroups.value.find(group => group.groupId === selection.value.id) : null);
 const airspaces = computed(() => snapshot.value.airspaces || []);
 const deviceStatusCounts = computed(() => devices.value.reduce((counts, device) => {
   counts[device.statusCode] = (counts[device.statusCode] || 0) + 1;
@@ -133,6 +135,14 @@ const selectedRisk = computed(() => {
   const id = selection.value?.riskId || (selection.value?.kind === 'risk' ? selection.value.id : null);
   return id ? risks.value.find(risk => risk.riskId === id) : null;
 });
+const riskSnapshots = computed(() => riskSnapshotMarkers(allRiskGroups.value, {
+  pendingRiskIds: riskGroups.value.flatMap(group => group.members.map(risk => risk.riskId)),
+  selectedPlan: selectedPlan.value || selectedRisk.value,
+  selectedGroupId: selectedRiskGroup.value?.groupId
+}));
+const selectedSnapshotId = computed(() => riskSnapshots.value.find(row =>
+  row.group.members.some(risk => risk.riskId === selectedRisk.value?.riskId))?.id);
+watch([riskSnapshots, selectedSnapshotId, () => layers.value.flightPlan], () => map?.draw(), { flush: 'post' });
 const showSelectionPopup = computed(() => !!selectedDevice.value || !!selectedTarget.value || showAlarmPopup.value
   || !!selectedPlan.value || !!selectedRisk.value);
 const selectedUavAlarm = computed(() => {
@@ -162,7 +172,7 @@ const videoContext = computed(() => {
     unavailableReason: !targetId ? (risk ? '此风险未关联可读取的目标，暂无可关联的视频。' : '此告警未提供可读取的关联目标，暂无可关联的视频。') : ''
   };
 });
-watch(() => videoContext.value?.key, key => { showTargetVideo.value = !!key; }, { flush: 'sync' });
+watch(() => videoContext.value?.key, () => { showTargetVideo.value = false; }, { flush: 'sync' });
 const fusionDevices = computed(() => {
   const ids = new Set(selectedTarget.value?.sourceDeviceIds || []);
   return devices.value.filter(device => ids.has(device.fusionDeviceId || device.deviceId));
@@ -267,16 +277,14 @@ function selectRiskGroup(group) {
   fuseOpen.value = false;
   if (map) {
     map.sel = null;
-    map.planSel = planForRisk(group)?.id || null;
+    const plan = planForRisk(group);
+    map.planSel = plan?.id || null;
     map.clearPinnedHit();
+    if (plan?.coordinates?.length >= 2) map.fitTo(plan.coordinates, 0.38);
     focusSelection(false);
   }
 }
 
-function openGroupedRiskAction(risk, action) {
-  // 详情按钮仅作用于这一计划，不把组内其他计划或航线上的其他风险一起提交。
-  openRiskActionModal({ activeRisks: [risk] }, action);
-}
 
 function toggleDeviceType(typeCode) {
   expandedType.value = expandedType.value === typeCode ? '' : typeCode;
@@ -453,7 +461,8 @@ function selectAlarm(alarm) {
 
 function alarmAnchor() {
   const current = selection.value;
-  const icon = map && current && map.getHitPoint(current.kind, current.id);
+  const icon = map && (selectedSnapshotId.value && map.getHitPoint('risk-snapshot', selectedSnapshotId.value)
+    || current && map.getHitPoint(current.kind, current.id));
   if (icon) return icon;
   const target = selectionLocation();
   return map && target?.posValid !== false && Number.isFinite(target?.lon) && Number.isFinite(target?.lat)
@@ -465,6 +474,12 @@ function selectionAvoidRect() {
   const plan = selectedPlan.value || (selectedRiskGroup.value ? planForRisk(selectedRiskGroup.value) : null);
   const points = (plan?.coordinates || []).map(point => map.px(point[0], point[1]))
     .filter(point => point?.every(Number.isFinite));
+  // 弹窗同时避让同任务的发现时标记，避免避让后的气球被详情遮住。
+  for (const row of riskSnapshots.value) {
+    if (row.id !== selectedSnapshotId.value && !riskMatchesPlan(row.group, plan)) continue;
+    const point = layers.value.flightPlan && map.getHitPoint('risk-snapshot', row.id);
+    if (point) points.push([point[0] - 56, point[1] - 29], [point[0] + 56, point[1] + 29]);
+  }
   if (points.length >= 2) {
     const xs = points.map(point => point[0]), ys = points.map(point => point[1]);
     return { left: Math.min(...xs) - 12, right: Math.max(...xs) + 12,
@@ -549,89 +564,6 @@ function selectRisk(risk) {
   }
 }
 
-async function readRiskAfterUncertain(riskId, acceptedStates) {
-  try {
-    const latest = await riskApi.getRisk(riskId);
-    return acceptedStates.includes(latest?.state) ? latest : null;
-  } catch {
-    return null;
-  }
-}
-
-async function verifyRiskState(risk, conclusion, note, acceptedStates) {
-  const latest = await riskApi.getRisk(risk.riskId);
-  if (acceptedStates.includes(latest.state)) return latest;
-  try {
-    return await riskApi.verifyRisk(risk.riskId, {
-      conclusion, note, expected_version: Number(latest.version)
-    }, newRiskIdempotencyKey());
-  } catch (error) {
-    if (isUncertainOutcome(error)) {
-      const readback = await readRiskAfterUncertain(risk.riskId, acceptedStates);
-      if (readback) return readback;
-    }
-    throw error;
-  }
-}
-
-async function notifyRisk(risk) {
-  let latest = await riskApi.getRisk(risk.riskId);
-  if (['NOTIFIED', 'ACKNOWLEDGED'].includes(latest.state)) return latest;
-  if (latest.state === 'PENDING_VERIFICATION') {
-    if (risk.state !== 'PENDING_VERIFICATION') throw new Error('风险状态已变化，请重新打开弹窗核验后通知');
-    if (!latest.allowed_actions?.includes('VERIFY')) throw new Error('当前账号无权核验这条风险');
-    latest = await verifyRiskState(risk, 'CONFIRMED', '融合感知页：人工确认风险属实并通知上级。',
-      ['PENDING_NOTIFICATION', 'NOTIFIED', 'ACKNOWLEDGED']);
-  }
-  if (['NOTIFIED', 'ACKNOWLEDGED'].includes(latest.state)) return latest;
-  if (latest.state !== 'PENDING_NOTIFICATION') throw new Error('当前风险状态不允许通知');
-  try {
-    return await handoffApi.createHandoff({
-      source_kind: 'RISK', source_id: risk.riskId, handoff_type: 'RISK_NOTICE',
-      expected_version: Number(latest.version)
-    }, newHandoffIdempotencyKey());
-  } catch (error) {
-    if (isUncertainOutcome(error)) {
-      const readback = await readRiskAfterUncertain(risk.riskId, ['NOTIFIED', 'ACKNOWLEDGED']);
-      if (readback) return readback;
-    }
-    throw error;
-  }
-}
-
-async function submitRiskAction(activeRisks, action) {
-  if (!activeRisks.length) return toast('当前航线已无可提交的风险', 'err');
-  const settled = await Promise.allSettled(activeRisks.map(risk => action === 'exclude'
-    ? verifyRiskState(risk, 'EXCLUDED', '融合感知页批量排除：当前风险尚未通知，经人工操作确认排除。', ['EXCLUDED'])
-    : notifyRisk(risk)));
-  const succeeded = settled.filter(result => result.status === 'fulfilled').length;
-  const failed = settled.length - succeeded;
-  await source.refresh();
-  const firstError = settled.find(result => result.status === 'rejected')?.reason;
-  if (failed) throw new Error(`已完成 ${succeeded} 条，失败 ${failed} 条：${firstError?.message || '请查看最新状态'}`);
-  closeModal();
-  toast(action === 'exclude' ? `已排除 ${succeeded} 条风险` : `已提交 ${succeeded} 条风险通知，请在通知与回执中查看发送结果`, 'ok');
-}
-
-function openRiskActionModal(plan, action) {
-  const activeRisks = (plan?.activeRisks || []).filter(risk => routeRiskIsActive(risk));
-  if (!activeRisks.length) return toast('当前航线已无可提交的风险', 'err');
-  const countText = activeRisks.length > 1 ? `本次将处理 ${activeRisks.length} 条当前风险。` : '';
-  const isExclude = action === 'exclude';
-  const needsVerification = !isExclude && activeRisks.some(risk => risk.state === 'PENDING_VERIFICATION');
-  openFormModal({
-    title: isExclude ? '排除风险' : '通知上级',
-    width: '560px',
-    warning: isExclude
-      ? `提交后将把下列尚未通知的风险正式标记为“已排除”，并写入核验历史。${countText}`
-      : `${needsVerification ? '请核对下列风险。确认后将记录核验通过，并继续通知上级。' : '将下列风险通知上级。'}提交后请在通知与回执中查看发送结果。${countText}`,
-    introHtml: `<dl class="kv">${activeRisks.map(risk => `<dt>${esc(risk.planNo || risk.id || risk.riskId)}</dt><dd>${esc(risk.reasonText || '风险依据未提供')}<br>${esc(labelOf(RISK_STATE_LABEL, risk.state))}</dd>`).join('')}</dl>`,
-    fields: [],
-    danger: isExclude,
-    confirmText: isExclude ? '确认排除' : needsVerification ? '确认属实并通知' : '提交通知',
-    onSubmit: async () => submitRiskAction(activeRisks, action)
-  });
-}
 
 function clearSelection() {
   selection.value = null;
@@ -735,7 +667,6 @@ function renderPlanTip(plan) {
       <dt>航线点数</dt><dd>${routePointCount || '未提供'}</dd>
       <dt>风险记录</dt><dd>${risks.length} 条</dd>
       <dt>最高等级</dt><dd>${highest ? esc(labelOf(SEVERITY_LABEL, highest.severity)) : '无'}</dd></dl>
-    ${active.length ? `<div class="sit-map-pop-actions"><button type="button" class="is-danger" data-tip-act="exclude-risk">排除风险</button><button type="button" data-tip-act="notify-superior">通知上级</button></div>` : ''}
   </section>`;
 }
 
@@ -825,11 +756,6 @@ function onTipAction(action, hit) {
     focusSelection(false);
     return;
   }
-  const plan = hit?.kind === 'plan'
-    ? flightPlans.value.find(item => item.id === hit.data.id)
-    : (selection.value?.kind === 'plan' ? flightPlans.value.find(item => item.id === selection.value.id) : null);
-  if (action === 'exclude-risk') openRiskActionModal(plan, 'exclude');
-  if (action === 'notify-superior') openRiskActionModal(plan, 'notify');
   const target = hit?.kind === 'target'
     ? targets.value.find(item => item.id === hit.data.id)
     : (selection.value?.kind === 'target' ? selectedTarget.value : null);
@@ -866,8 +792,8 @@ onMounted(() => {
     legend: false,
     fusionProfile: true,
     layoutMarkers: createSituationMarkerLayout(),
-    getExternalMarkers: view => weatherLayer.value?.getMarkers(view) || [],
-    drawUnderMarkers: view => weatherLayer.value?.draw(view),
+    getExternalMarkers: view => [...(weatherLayer.value?.getMarkers(view) || []), ...(riskSnapshotLayer.value?.getMarkers(view) || [])],
+    drawUnderMarkers: view => { weatherLayer.value?.draw(view); riskSnapshotLayer.value?.draw(view); },
     sensorIconScale: 1,
     // 地图装饰动画不需要 60fps；降低 Canvas 像素量和重绘频率，保留数据变化时的即时重画。
     animationFps: 12,
@@ -908,6 +834,8 @@ onUnmounted(() => {
   <div id="view" class="view situation-page" :class="{ 'has-selection-popup': showSelectionPopup }" @keydown.esc="clearSelection">
     <main class="sit-stage" aria-label="融合感知实时地图">
       <div id="stMap" ref="mapHost" class="sit-map"></div>
+      <SituationRiskMarkers ref="riskSnapshotLayer" :rows="riskSnapshots" :selected-id="selectedSnapshotId"
+        :visible="layers.flightPlan" @select="selectRiskGroup" />
       <WeatherRiskMarkers ref="weatherLayer" :risks="risks" :selected-id="selectedRisk?.riskId" shared-layout control-target="#situation-weather-control" @select="selectWeatherRisk" />
 
       <div class="sit-live-pill" :aria-label="`当前数据来源：${sourceModeText}`">
@@ -985,7 +913,7 @@ onUnmounted(() => {
         </div>
         <div v-else class="sit-alert-list" role="tabpanel" aria-label="航线风险">
           <button v-for="risk in riskGroups" :key="risk.groupId" type="button" class="sit-alert-row sit-route-risk-row"
-            :class="[{ 'is-new': risk.isNew, 'is-history': !risk.active, 'is-selected': selectedRiskGroup?.groupId === risk.groupId }, `level-${risk.level}`]"
+            :class="[{ 'is-new': risk.isNew, 'is-selected': selectedRiskGroup?.groupId === risk.groupId }, `level-${risk.level}`]"
             :aria-pressed="selectedRiskGroup?.groupId === risk.groupId"
             :aria-label="`查看${risk.spaceFact?.subtypeName || '航线'}风险，关联${risk.planCount}条任务，${riskGroupStateText(risk)}`" @click="selectRiskGroup(risk)">
             <span class="sit-alert-level">{{ risk.level }}</span>
@@ -1005,14 +933,19 @@ onUnmounted(() => {
         <div v-else-if="selectedTarget" @click="onTipAction($event.target.closest('[data-tip-act]')?.dataset.tipAct, { kind: 'target', data: selectedTarget })"
           v-html="renderTargetTip(selectedTarget, showAlarmAdvisoryCard)"></div>
         <SituationRiskGroupPopup v-else-if="selectedRiskGroup" :group="selectedRiskGroup" :plans="flightPlans"
-          @close="clearSelection" @view-plan="selectRisk" @action="openGroupedRiskAction" />
-        <div v-else-if="selectedPlan" @click="onTipAction($event.target.closest('[data-tip-act]')?.dataset.tipAct, { kind: 'plan', data: selectedPlan })"
-          v-html="renderPlanTip(selectedPlan)"></div>
+          @close="clearSelection" @view-plan="selectRisk" @updated="source.refresh()" />
+        <template v-else-if="selectedPlan">
+          <div @click="onTipAction($event.target.closest('[data-tip-act]')?.dataset.tipAct, { kind: 'plan', data: selectedPlan })"
+            v-html="renderPlanTip(selectedPlan)"></div>
+          <SituationRiskProcess v-for="risk in (selectedRisk ? [selectedRisk] : selectedPlan.relatedRisks.filter(situationRouteRiskVisible))"
+            :key="risk.riskId" :risk-id="risk.riskId" :revision="risk.version" @updated="source.refresh()" />
+        </template>
         <section v-else-if="selectedRisk" class="sit-map-pop">
           <header><span class="sit-map-pop-icon" v-html="U.icon('plan')"></span><span><b>{{ selectedRisk.id }}</b><small>航线风险</small></span>
             <button type="button" aria-label="关闭风险详情" @click="clearSelection" v-html="U.icon('close')"></button></header>
           <div class="sit-map-pop-status"><span class="sit-state is-risk">{{ labelOf(RISK_STATE_LABEL, selectedRisk.state) }}</span></div>
           <p>{{ selectedRisk.reasonText || '风险依据未提供' }}</p><p>当前未取得关联任务，保留此风险的信息。</p>
+          <SituationRiskProcess :key="selectedRisk.riskId" :risk-id="selectedRisk.riskId" :revision="selectedRisk.version" @updated="source.refresh()" />
         </section>
         <section v-else-if="selectedUavAlarm" class="sit-map-pop">
           <header><span class="sit-map-pop-icon" v-html="U.businessIcon('uav')"></span><span><b>{{ selectedUavAlarm.targetId || selectedUavAlarm.id || '未关联目标告警' }}</b><small>无人机告警</small></span>

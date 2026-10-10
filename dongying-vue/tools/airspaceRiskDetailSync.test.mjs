@@ -120,3 +120,39 @@ test('action refresh publishes once and also discards obsolete responses', async
     assert.equal(f.requests.length, count, 'old action callback must not request the newly selected detail');
   } finally { f.app.unmount(); }
 });
+
+
+test('monitor cards keep first-discovery order and selection while live observations update', async () => {
+  const { useAirspaceRiskList } = await import('../src/pages/airspace/useAirspaceRiskList.js');
+  const previousWindow = globalThis.window;
+  globalThis.window = { UI: { abnormalActive: () => false } };
+  const scope = Vue.effectScope();
+  try {
+    for (const base of [100000, 900000]) {
+      const id = `object-${base}`;
+      const monitor = Vue.reactive({ canRead: true, recent: [
+        { target_id: id, first_seen_at: base, last_seen_at: base + 900 },
+        { target_id: `${id}-new`, first_seen_at: base + 100, last_seen_at: base + 500 }
+      ], activeId: id, minutes: 5 });
+      const risks = Vue.reactive({ canRead: true, locatedRows: [], activeId: '' });
+      const list = scope.run(() => useAirspaceRiskList(monitor, risks, Vue.ref(null)));
+      const keys = list.rows.value.map(row => row.key);
+      assert.deepEqual(keys, [`target:${id}-new`, `target:${id}`]);
+      for (let tick = 1; tick <= 5; tick++) {
+        monitor.recent = [...monitor.recent].reverse().map((row, index) => ({ ...row,
+          last_seen_at: base + 1000 * tick + index, point: [118 + tick / 1000, 37] }));
+        await Vue.nextTick();
+        assert.deepEqual(list.rows.value.map(row => row.key), keys);
+        assert.equal(list.active.value.at, base);
+        assert.equal(list.active.value.target.last_seen_at >= base + 1000 * tick, true);
+      }
+      risks.locatedRows = [{ risk_id: `${id}-risk`, occurred_at: base + 2000, risk_type: 'FOREIGN_OBJECT' }];
+      monitor.recent[0].risk_summary = { risk_id: `${id}-risk` };
+      await Vue.nextTick();
+      assert.equal(list.rows.value[0].at, base + 2000, 'new risk facts still move into event order');
+      monitor.recent.push({ target_id: `${id}-unknown`, last_seen_at: base + 9000 });
+      await Vue.nextTick();
+      assert.equal(list.rows.value.at(-1).at, undefined, 'missing discovery time never falls back to moving observation time');
+    }
+  } finally { scope.stop(); globalThis.window = previousWindow; }
+});

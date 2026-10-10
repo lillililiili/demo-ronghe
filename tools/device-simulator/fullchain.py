@@ -8,6 +8,7 @@ import re
 import time
 from engine import coordinates, TARGET_REPORT_KINDS
 from prerequisite_check import route_version_mismatch
+from plan_weather import plan_forecast
 
 PREFIX = '/local-interface-simulator'
 CLASSES = {'uav':'UAV','bird':'BIRD','unknown':'UNKNOWN','identifying':None,'balloon':'UNKNOWN',
@@ -368,7 +369,7 @@ class FullChain:
             and risk['at'] <= elapsed < risk['at'] + risk['seconds'] for risk in self.scene['risks'])
 
     def prepare(self):
-        now=self.manifest['created_at']; end=now+24*3600000
+        now=self.manifest['created_at']
         # A pilot or reporting-unit binding chosen in the scene wins. Otherwise each simulated
         # upstream task carries its own pilot and reporting unit (D-2, 2026-10-08); the platform
         # finds or creates those records by phone and code, and links them to the task.
@@ -537,13 +538,10 @@ class FullChain:
                 message_id=stable_simulator_id('map-sim-weather-device-',station_key),
                 device_no=stable_simulator_id('map-sim-weather-',station_key)))
             self.manifest['weather_device']=sensor
-            pid=self.manifest['realtime_plan_id']
-            self.request('weather-forecast',PREFIX+'/weather',{'message_id':self.message('forecast'),
-                'plan_id':pid,'area_name':self.weather.get('area_name','东营全量模拟区域'),'published_at':now,
-                'periods':self.weather.get('periods') or [{'from':now,'to':end,'summary':self.weather.get('summary','多云'),
-                    'temperature_c':self.weather.get('temperature_c',22),'wind_speed_ms':self.weather.get('wind_speed_ms',6),
-                    'gust_ms':self.weather.get('gust_ms',11),'wind_direction_deg':int(self.weather.get('wind_from_degrees',90)),
-                    'precipitation_probability_pct':40,'humidity_pct':int(self.weather.get('humidity_percent',65))}]})
+            forecasts = [plan_forecast(self.manifest['batch'], pid, expected, self.weather, now)
+                         for pid, expected in self.manifest['plan_expectations'].items()]
+            for forecast in forecasts:
+                self.request('weather-forecast-' + forecast['plan_id'], PREFIX+'/weather', forecast)
             # Only submit configured inputs. Risk conclusions belong to the platform's
             # forecast rules; selecting weather must not inject three preset warnings.
         self.checkpoint()

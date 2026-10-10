@@ -12,7 +12,7 @@ const props = defineProps({
   contextLabel: { type: String, default: '' },
   unavailableReason: { type: String, default: '' },
   active: { type: Boolean, default: true },
-  defaultExpanded: { type: Boolean, default: true },
+  defaultExpanded: { type: Boolean, default: false },
   compact: { type: Boolean, default: false },
   subtype: { type: String, default: 'UAV' },
   // 截图、录像取证时一并关联的告警事件；没有时只关联目标和光电设备。

@@ -794,7 +794,7 @@ async function renderEvidenceMap(evaluation) {
     drawBase();
     if (this.ctx && this.w) strokePlanComparison(this.ctx, this, centerline, trajectoryPoints);
   };
-  evidenceMap.setData({ airspaces: [], devices: [], targets, alarms: [] });
+  evidenceMap.setData({ devices: [], targets, alarms: [] });
   if (targets.length) evidenceMap.sel = targets[0].id;
   if (created) evidenceMap.fitTo(flightExtent.length ? flightExtent : points);
 }

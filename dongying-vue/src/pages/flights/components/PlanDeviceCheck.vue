@@ -54,7 +54,6 @@ onUnmounted(() => { generation++; controller?.abort(); clearInterval(timer); emi
       <p class="scope-note">{{ result.selection_basis === 'DEVICE_SCAN_COVERAGE' ? '扫描范围覆盖航线' : '设备检查' }} · 已检查 {{ rows.length }} 台设备</p>
       <p v-if="rows.length">正常 {{ normalCount }} 台 · 异常 {{ abnormalRows.length }} 台 · 待核查 {{ rows.length - normalCount - abnormalRows.length }} 台</p>
       <p v-if="result.unchecked_locations">{{ result.unchecked_locations }} 台设备缺少位置，无法确认覆盖。</p>
-      <p v-if="result.unchecked_coverage">{{ result.unchecked_coverage }} 台设备的扫描覆盖关系待确认。</p>
       <div v-if="rows.length" class="device-rows">
         <article v-for="row in visibleRows" :key="row.device_id">
           <div class="device-heading">

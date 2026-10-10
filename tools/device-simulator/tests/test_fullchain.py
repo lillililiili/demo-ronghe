@@ -156,6 +156,19 @@ class FullChainTests(unittest.TestCase):
         self.assertTrue(support)
         self.assertTrue(all(serial not in {v.get('uav_sn') for v in m['targets'].values()} for serial in support))
 
+    def test_weather_covers_every_accepted_plan_including_past_and_support_tasks(self):
+        chain, platform, manifest, scene = self.setup_chain()
+        chain.prepare()
+        forecasts = [body for _, path, body, _ in platform.calls if path.endswith('/weather')]
+        self.assertEqual({row['plan_id'] for row in forecasts}, set(manifest['plan_expectations']))
+        for body in forecasts:
+            expected = manifest['plan_expectations'][body['plan_id']]
+            self.assertEqual(body['periods'][0]['from'], expected['start_at'])
+            self.assertEqual(body['periods'][-1]['to'], expected['end_at'])
+        platform.calls.clear()
+        chain.prepare()
+        self.assertFalse(any(path.endswith('/weather') for _, path, _, _ in platform.calls))
+
     def test_weather_inputs_never_submit_preset_risk_conclusions(self):
         for wind, visibility in [(3, 12000), (21, 250)]:
             with self.subTest(wind=wind, visibility=visibility):

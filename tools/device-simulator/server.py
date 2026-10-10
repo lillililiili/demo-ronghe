@@ -29,6 +29,7 @@ from fullchain import FullChain
 from protocol_b import ProtocolBResponder
 from mqtt_recovery import CommandSubscriptions
 from device_health import DeviceHealthReporter
+from state_file import atomic_json
 
 ROOT = Path(__file__).resolve().parent
 ACCEPTANCE_FLOW_OUTPUT_NAME = 'acceptance-flows-1-7-20261008'
@@ -358,7 +359,7 @@ class Runtime:
                 self.manifest['notification_observation'] = self.response.snapshot()
                 self.manifest['notification_motion'] = {key: copy.deepcopy(t['_notification_motion']) for key,t in self.targets.items() if t.get('_notification_motion')}
             path = self.data_dir/self.batch/'manifest.json'
-            temp = path.with_suffix('.tmp'); temp.write_text(json.dumps(self.manifest,ensure_ascii=False,indent=2), encoding='utf-8'); temp.replace(path)
+            atomic_json(path, self.manifest)
 
     def connect(self, config):
         with self.lock:

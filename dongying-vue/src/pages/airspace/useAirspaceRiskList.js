@@ -17,7 +17,8 @@ export function useAirspaceRiskList(monitor, risks, selected) {
         type: target.demo ? 'SPACE_OBJECT' : '',
         severity: target.demo?.severity || target.risk_summary?.severity || '',
         state: target.demo ? 'DEMO' : target.risk_summary?.state || 'UNRECORDED',
-        at: target.risk_summary?.occurred_at ?? target.last_seen_at,
+        // 卡片与排序使用事件/首次发现时间；持续上报不能把旧目标反复顶到前面。
+        at: target.risk_summary?.occurred_at ?? target.first_seen_at,
         // 历史摘要和演示等级不能代替当前风险记录。
         activeRisk: window.UI.abnormalActive({ ...target, risk_summary: null }) });
     }

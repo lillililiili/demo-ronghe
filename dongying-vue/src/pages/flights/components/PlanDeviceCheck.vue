@@ -7,7 +7,7 @@ const { deviceIcon, deviceMeta } = window.UI;
 
 const props = defineProps({ plan: { type: Object, required: true } });
 const result = ref(null), loading = ref(false), error = ref(''), errorStatus = ref(0);
-const permitted = computed(() => hasPermission('devices.read') && hasPermission('monitoring.read'));
+const permitted = computed(() => ['flight:read', 'route:read', 'devices.read'].every(hasPermission));
 let controller = null, generation = 0;
 const rows = computed(() => result.value?.rows || []);
 const emit = defineEmits(['checked', 'map-devices']);
@@ -44,7 +44,7 @@ onUnmounted(() => { generation++; controller?.abort(); clearInterval(timer); emi
 <template>
   <div class="device-check">
     <header><b>设备自动检查</b><div class="device-actions"><button v-if="permitted" class="btn ghost" type="button" :disabled="loading || [401,403].includes(errorStatus)" @click="reload">{{ loading ? '更新中' : '重新检查' }}</button></div></header>
-    <p v-if="!permitted">没有设备监测查看权限，请联系管理员。</p>
+    <p v-if="!permitted">需要飞行任务、航线和设备的查看权限，请联系管理员。</p>
     <p v-else-if="error" role="alert">{{ error }}</p>
     <p v-else-if="loading && !result">正在读取附近设备状态和告警</p>
     <p v-if="result && (loading || error)">{{ loading ? '正在更新，下方保留上次检查结果。' : '本次更新失败，下方是上次检查结果。' }}</p>

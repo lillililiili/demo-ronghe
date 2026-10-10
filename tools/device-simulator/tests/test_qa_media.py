@@ -22,14 +22,52 @@ class CredentialsTests(unittest.TestCase):
             if os.name != 'nt': self.assertEqual(path.stat().st_mode & 0o777, 0o600)
             self.assertEqual(qa_media.load_or_create_credentials(path), first)
 
-    def test_invalid_file_is_replaced(self):
+    def test_existing_utf8_and_bom_credentials_are_reused_without_writes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for encoding in ('utf-8', 'utf-8-sig'):
+                with self.subTest(encoding=encoding):
+                    path = Path(directory) / (encoding + '.json')
+                    credentials = {key: qa_media.secrets.token_urlsafe(32) for key in ('publish', 'read')}
+                    original = json.dumps(credentials).encode(encoding)
+                    path.write_bytes(original)
+                    with patch('qa_media.secrets.token_urlsafe') as generate, patch('qa_media.os.open') as create:
+                        self.assertEqual(qa_media.load_or_create_credentials(path), credentials)
+                    generate.assert_not_called(); create.assert_not_called()
+                    self.assertEqual(path.read_bytes(), original)
+
+    def test_invalid_file_is_rejected_without_replacing_credentials(self):
+        secret = qa_media.secrets.token_urlsafe(32)
+        contents = (
+            b'not json', b'\xff', b'[]', b'null', b'42', b'{}',
+            json.dumps({'publish': 'short', 'read': 'short'}).encode(),
+            json.dumps({'publish': secret, 'read': secret}).encode(),
+            json.dumps({'publish': secret, 'read': False}).encode(),
+            json.dumps({'publish': secret}).encode(),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            for index, original in enumerate(contents):
+                with self.subTest(case=index):
+                    path = Path(directory) / f'c-{index}.json'
+                    path.write_bytes(original)
+                    with patch('qa_media.secrets.token_urlsafe') as generate, patch('qa_media.os.open') as create:
+                        with self.assertRaisesRegex(ValueError, '格式无效'):
+                            qa_media.load_or_create_credentials(path)
+                    generate.assert_not_called(); create.assert_not_called()
+                    self.assertEqual(path.read_bytes(), original)
+
+    def test_unreadable_existing_file_is_rejected_without_replacing_credentials(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'c.json'
-            for content in ('not json', json.dumps({'publish': 'short', 'read': 'short'}),
-                            json.dumps({'publish': 'a' * 32, 'read': 'a' * 32})):
-                path.write_text(content, encoding='utf-8')
-                created = qa_media.load_or_create_credentials(path)
-                self.assertNotEqual(created['publish'], created['read'])
+            original = json.dumps({key: qa_media.secrets.token_urlsafe(32) for key in ('publish', 'read')}).encode()
+            path.write_bytes(original)
+            for error in (PermissionError('denied'), OSError('read failed')):
+                with self.subTest(error=type(error).__name__):
+                    with patch.object(Path, 'read_text', side_effect=error), \
+                            patch('qa_media.secrets.token_urlsafe') as generate, patch('qa_media.os.open') as create:
+                        with self.assertRaisesRegex(ValueError, '无法读取'):
+                            qa_media.load_or_create_credentials(path)
+                    generate.assert_not_called(); create.assert_not_called()
+                    self.assertEqual(path.read_bytes(), original)
 
 
 class MediaServiceTests(unittest.TestCase):
@@ -49,11 +87,15 @@ class MediaServiceTests(unittest.TestCase):
         service.ensure(self.credentials)
         popen.assert_not_called(); run.assert_not_called()
 
-    def test_foreign_service_on_the_ports_is_not_replaced(self):
-        for statuses, ports in (([401], False), ([None], True)):
-            service, popen, run = self.service(statuses, ports)
-            with self.assertRaisesRegex(ValueError, '端口已被其他视频服务占用'): service.ensure(self.credentials)
-            popen.assert_not_called(); run.assert_not_called()
+    def test_existing_service_errors_are_distinguished_without_replacing_it(self):
+        cases = ((401, False, '拒绝读取账号'), (403, False, '拒绝读取账号'),
+                 (404, False, 'API 响应异常'), (503, False, 'API 响应异常'),
+                 (None, True, '端口已被占用，但视频服务 API 无法访问'))
+        for status, ports, message in cases:
+            with self.subTest(status=status, ports=ports):
+                service, popen, run = self.service([status], ports)
+                with self.assertRaisesRegex(ValueError, message): service.ensure(self.credentials)
+                popen.assert_not_called(); run.assert_not_called()
 
     def test_local_binary_gets_credentials_only_through_environment(self):
         service, popen, run = self.service([None, None, 200], which=lambda name: '/opt/mediamtx' if name == 'mediamtx' else None)
@@ -104,6 +146,14 @@ class OneClickVideoControlTests(unittest.TestCase):
         self.assertEqual(self.runtime.video_config['publisher_user'], 'qa-publisher')
         self.assertEqual(self.runtime.video_config['publisher_password'], credentials['publish'])
         self.assertNotIn(credentials['publish'], json.dumps(result)); self.assertNotIn(credentials['read'], json.dumps(result))
+
+    def test_invalid_credentials_keep_video_off_without_starting_media(self):
+        original = b'[]'
+        self.file.write_bytes(original)
+        with self.assertRaisesRegex(ValueError, '格式无效'): self.control({'enabled': True})
+        self.assertFalse(self.runtime.video_config['enabled'])
+        self.runtime.media.ensure.assert_not_called()
+        self.assertEqual(self.file.read_bytes(), original)
 
     def test_media_failure_keeps_video_off(self):
         self.runtime.media.ensure.side_effect = ValueError('本机还没有视频服务程序（MediaMTX 或 Docker），需要先装一次')

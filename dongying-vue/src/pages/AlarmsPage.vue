@@ -213,7 +213,7 @@ function showCounterLaunch() {
   if (advisoryLive.value?.counter_launch_visible !== true || !cur.alarm?.event_id) return false;
   const key = deriveAlarmProgress(Object.values(disposal.byAction), disposal.handoff ? [disposal.handoff] : [])
     || pageProgress[cur.alarm.event_id];
-  return !['JAMMING_DONE', 'COUNTER_STOPPED', 'HANDED_OFF'].includes(key);
+  return !['COUNTERMEASURE_DONE', 'JAMMING_DONE', 'COUNTER_STOPPED', 'HANDED_OFF'].includes(key);
 }
 function eventHandedOff() {
   const eventId = cur.alarm?.event_id;

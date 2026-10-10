@@ -27,7 +27,7 @@ async function loadSource(deps) {
   source = `const { deviceApi, targetApi, listAlarms, listAllFlightPlans, flightApi, airspaceApi,
     riskApi, handoffApi, mapPool, attachBearing, attachDeviceEvents, attachRecentTracks, extendRecentTracks,
     attachTargetSourceLinks, bearingOrigins, toAirspaces, toAlarms, toDevices, toFlightPlans,
-    toRisks, toTargets, SITUATION_DEVICE_TYPE_ORDER, isRealtimeConnected, onDataChange, hasPermission } = globalThis.__situationContractDeps;\n${source}`;
+    toRisks, toTargets, SITUATION_DEVICE_TYPE_ORDER, isRealtimeConnected, onDataChange, hasPermission, authUser } = globalThis.__situationContractDeps;\n${source}`;
   globalThis.__situationContractDeps = deps;
   return import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}#${Date.now()}`);
 }
@@ -172,7 +172,8 @@ async function main() {
     } },
     onDataChange: (_topics, handler) => { pushHandler = handler; return () => { if (pushHandler === handler) pushHandler = null; }; },
     isRealtimeConnected: () => realtimeConnected,
-    hasPermission: code => granted.has(code)
+    hasPermission: code => granted.has(code),
+    authUser: { value: { user_type: 'BACKEND' } }
   };
   const { createSituationApiSource } = await loadSource(deps);
   globalThis.document = { hidden: false };
@@ -339,6 +340,20 @@ async function main() {
   paced.stop();
   rejectSlimTracks = false;
   Object.assign(targetRow, savedRow);
+
+  // 前台账号即使保留旧后台权限码，也不能请求后台专属设备事件；身份缺失同样不猜测为后台。
+  for (const userType of ['FRONTEND', undefined]) {
+    deps.authUser.value = { user_type: userType };
+    const before = eventCalls, frames = [], failures = [];
+    const frontend = createSituationApiSource({ fastMs: 10, slowMs: 10_000, now: () => clock });
+    frontend.start(value => frames.push(value), (_error, segment) => failures.push(segment));
+    while (frames.length < 2) await delay(5);
+    check('非后台身份不请求设备事件：' + String(userType), eventCalls - before, 0);
+    ok('非后台身份仍读取有权设备台账：' + String(userType), frames.at(-1).devices.length === 100);
+    check('非后台身份不将事件读取标记为服务异常：' + String(userType), failures, []);
+    frontend.stop();
+  }
+  deps.authUser.value = { user_type: 'BACKEND' };
 
   // ZT-09：值班员没有设备监测（monitoring.read）和风险读取权限：不请求设备事件和风险，也不报刷新失败。
   granted = new Set(ALL_CODES.filter(code => code !== 'monitoring.read' && code !== 'risk:read'));

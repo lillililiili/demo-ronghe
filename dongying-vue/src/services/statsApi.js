@@ -58,7 +58,11 @@ function query(params = {}) {
   return text ? `?${text}` : '';
 }
 
-const number = value => value == null ? null : Number(value);
+const number = value => {
+  if (typeof value !== 'number' && (typeof value !== 'string' || !value.trim())) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
 
 function named(list) {
   return (list || []).map(item => ({ name: item.name, value: number(item.value) }));
@@ -84,6 +88,7 @@ export function mapOperations(data) {
       date: day.date, md: day.md, total: number(day.total), illegal: number(day.illegal),
       punish: number(day.punish), highRisk: number(day.high_risk)
     })),
+    discoveryHours: (data.discovery_hours || []).map(row => ({ hour: number(row.hour), total: number(row.total) })),
     regions: (data.regions || []).map(row => ({
       name: row.name, total: number(row.total), illegal: number(row.illegal),
       punish: number(row.punish), highRisk: number(row.high_risk)

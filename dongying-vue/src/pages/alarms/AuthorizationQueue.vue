@@ -14,11 +14,12 @@ import { openDisposalApproval, openDisposalCancel, openDisposalExecution, openDi
 import EmergencyStopPanel from '@/components/disposal/EmergencyStopPanel.vue';
 import TargetLiveVideo from '@/components/video/TargetLiveVideo.vue';
 import AuthorizationTargetMap from './AuthorizationTargetMap.vue';
-import { canCancel, canStop, cancelLabel, cardStopLabel, executeBlockedReason, executionEvidenceHref, nextStep, primaryCode, readPending, resultText, usesEmergency } from './authorizationQueueView.js';
+import { canCancel, canStop, cancelLabel, cardStopLabel, executeBlockedReason, executionEvidenceHref, groupContains, groupRoot, nextStep, primaryCode, readAuthorizationGroupPage, readPending, resultText, singleAuthorizationGroup, usesEmergency } from './authorizationQueueView.js';
 
 const props = defineProps({ initialAuthorizationId: { type: String, default: '' }, eventId: { type: String, default: '' }, initialStatus: { type: String, default: '' } });
 const emit = defineEmits(['event']);
 const rows = ref([]), selected = ref(null), page = ref(1), total = ref(0), status = ref(props.initialStatus);
+const groupedResults = ref(true);
 const view = ref(props.initialAuthorizationId || props.initialStatus || props.eventId ? 'all' : 'pending');
 const loading = ref(false), error = ref(''), detailError = ref(''), detailLoading = ref(false), loadedAt = ref('');
 const pageSize = ref(20), detailHost = ref(null), emergencyInfo = ref(null);
@@ -26,9 +27,15 @@ const options = [{ label: '全部状态', value: '' }, ...['REQUESTED', 'APPROVE
 const selectedSubject = computed(() => selected.value ? subjects.value[subjectKey(selected.value)] : null);
 const actions = { APPROVE: openDisposalApproval, EXECUTE: openDisposalExecution };
 const userId = computed(() => authUser.value?.user_id);
-const feedbackHref = computed(() => canAccessRoute('evidence') && hasPermission('evidence:read') && hasPermission('monitoring.read')
+const feedbackHref = computed(() => canAccessRoute('evidence') && hasPermission('evidence:read') && hasPermission('disposal:read')
   ? executionEvidenceHref(selected.value) : '');
-const visibleRows = computed(() => view.value === 'pending' ? rows.value.slice((page.value - 1) * pageSize.value, page.value * pageSize.value) : rows.value);
+const visibleGroups = computed(() => view.value === 'pending' ? rows.value.slice((page.value - 1) * pageSize.value, page.value * pageSize.value) : rows.value);
+const visibleRows = computed(() => visibleGroups.value.flatMap(group => group.authorizations));
+const selectedGroup = computed(() => rows.value.find(group => groupContains(group, selected.value?.authorization_id)));
+const selectedGroupMembers = computed(() => (selectedGroup.value?.authorizations || []).map(row => row.authorization_id === selected.value?.authorization_id ? selected.value : row));
+const groupSelected = group => groupContains(group, selected.value?.authorization_id);
+const groupEntry = group => groupSelected(group) ? selected.value :
+  (status.value ? group.authorizations.find(row => row.status === status.value) : null) || groupRoot(group);
 const mainCode = row => primaryCode(row, userId.value);
 const executeHint = row => executeBlockedReason(row, userId.value, hasPermission);
 const mainLabel = row => row.execution_block_reason ? '查看原因' : ({ APPROVE: '审批', EXECUTE: '执行' }[mainCode(row)] || (row.status === 'FAILED' ? '查看原因' : row.status === 'EXECUTING' && row.channel !== 'MANUAL' ? '查看执行情况' : '查看详情'));
@@ -83,13 +90,12 @@ async function load(next = page.value, { quiet = false } = {}) {
     if (mode === 'pending') {
       const items = await readPending(disposalApi.list, scope, userId.value, current);
       if (!current()) return;
-      rows.value = items; total.value = items.length;
+      rows.value = items.map(singleAuthorizationGroup); total.value = items.length;
       page.value = Math.max(1, Math.min(next, Math.ceil(items.length / pageSize.value)));
     } else {
-      const result = await disposalApi.list({ ...scope, page: next, size: pageSize.value, ...(filter ? { status: filter } : {}) });
+      const result = await readAuthorizationGroupPage(disposalApi, { ...scope, page: next, size: pageSize.value, ...(filter ? { status: filter } : {}) });
       if (!current()) return;
-      if (!Array.isArray(result?.items) || !Number.isSafeInteger(result.total)) throw new Error('授权列表数据不完整，请刷新重试');
-      rows.value = result.items; total.value = result.total; page.value = next;
+      rows.value = result.items; total.value = result.total; page.value = next; groupedResults.value = result.grouped;
       if (!rows.value.length && next > 1 && total.value > 0) return load(Math.max(1, Math.ceil(total.value / pageSize.value)));
     }
     loadedAt.value = formatTime(Date.now());
@@ -202,25 +208,32 @@ onUnmounted(() => { active = false; request++; detailRequest++; });
     <p class="scope-note">{{ view === 'pending' ? '显示需要你审批或下发设备执行的事项；执行监测与历史请看“全部记录”。' : '查看设备执行进展、停止处置及历史记录。' }}<span v-if="eventId"> 仅限当前告警事件。</span></p>
     <div v-if="error" class="warnbox" role="alert">{{ error }}</div>
     <div v-if="detailError" class="warnbox" role="alert">{{ detailError }}</div>
+    <p v-if="view === 'all' && !groupedResults && !error" class="scope-note">处置归组服务尚未加载，当前按原始授权记录显示。</p>
     <div v-if="detailLoading" role="status" class="scope-note">正在读取办理详情</div>
     <div class="authorization-workspace">
       <aside class="record-queue" aria-label="反制办理记录">
-        <div class="queue-heading"><strong>{{ view === 'pending' ? '待办记录' : '办理记录' }}</strong><span>{{ total }} 条</span></div>
+        <div class="queue-heading"><strong>{{ view === 'pending' ? '待办记录' : groupedResults ? '处置记录' : '原始授权记录' }}</strong><span>{{ total }} {{ view === 'pending' || !groupedResults ? '条' : '份' }}</span></div>
         <div class="queue-scroll" :aria-busy="loading">
-          <article v-for="row in visibleRows" :key="row.authorization_id" class="queue-record" :class="{ 'is-selected': selected?.authorization_id === row.authorization_id }">
-            <button class="record-select" type="button" :aria-pressed="selected?.authorization_id === row.authorization_id" @click="show(row.authorization_id)">
-              <strong>{{ subjectText(row) }}</strong>
-              <span v-if="subjectExtra(row)" class="source-mode">{{ subjectExtra(row) }}</span>
-              <span class="record-status">{{ statusText(row) }}</span>
-              <span class="source-mode">{{ labelOf(DISPOSAL_ACTION_LABEL, row.action_type) }} · {{ labelOf(SOURCE_MODE_LABEL, row.source_mode) }}</span>
-              <span class="source-mode">申请于 {{ formatTime(row.requested_at) }}</span>
-              <span v-if="nextStep(row, userId)" class="record-next">{{ nextStep(row, userId) }}</span>
+          <article v-for="group in visibleGroups" :key="group.disposal_id" class="queue-record" :class="{ 'is-selected': groupSelected(group) }">
+            <button class="record-select" type="button" :aria-pressed="groupSelected(group)" @click="show(groupEntry(group).authorization_id)">
+              <strong>{{ subjectText(groupRoot(group)) }}</strong>
+              <span v-if="subjectExtra(groupRoot(group))" class="source-mode">{{ subjectExtra(groupRoot(group)) }}</span>
+              <span v-for="row in group.authorizations" :key="row.authorization_id" class="record-status">
+                <template v-if="group.authorizations.length > 1">{{ labelOf(DISPOSAL_ACTION_LABEL, row.action_type) }}：</template>{{ statusText(row) }}
+              </span>
+              <span class="source-mode">{{ group.authorizations.length > 1 ? '同一次处置' : labelOf(DISPOSAL_ACTION_LABEL, groupRoot(group).action_type) }} · {{ labelOf(SOURCE_MODE_LABEL, groupRoot(group).source_mode) }}</span>
+              <span class="source-mode">申请于 {{ formatTime(groupRoot(group).requested_at) }}</span>
+              <span v-if="group.authorizations.length > 1" class="record-next">包含 {{ group.authorizations.length }} 条原始记录，可在详情查看</span>
+              <span v-else-if="nextStep(groupRoot(group), userId)" class="record-next">{{ nextStep(groupRoot(group), userId) }}</span>
             </button>
-            <div v-if="selected?.authorization_id !== row.authorization_id && (mainCode(row) || cardStop(row) || canCancel(row))" class="record-actions">
-              <button v-if="mainCode(row)" type="button" class="btn" :disabled="loading || detailLoading" @click="mainAction(row)">{{ mainLabel(row) }}</button>
-              <button v-if="cardStop(row)" type="button" class="btn stop-btn" :disabled="loading || detailLoading" @click="stopAction(row)">{{ cardStopLabel(row) }}</button>
-              <button v-if="canCancel(row)" type="button" class="btn stop-btn" :disabled="loading || detailLoading" @click="cancelAction(row)">{{ cancelLabel(row) }}</button>
-            </div>
+            <template v-for="row in group.authorizations" :key="`actions-${row.authorization_id}`">
+              <div v-if="selected?.authorization_id !== row.authorization_id && (mainCode(row) || cardStop(row) || canCancel(row))" class="record-actions">
+                <span v-if="group.authorizations.length > 1" class="source-mode">{{ labelOf(DISPOSAL_ACTION_LABEL, row.action_type) }}</span>
+                <button v-if="mainCode(row)" type="button" class="btn" :disabled="loading || detailLoading" @click="mainAction(row)">{{ mainLabel(row) }}</button>
+                <button v-if="cardStop(row)" type="button" class="btn stop-btn" :disabled="loading || detailLoading" @click="stopAction(row)">{{ cardStopLabel(row) }}</button>
+                <button v-if="canCancel(row)" type="button" class="btn stop-btn" :disabled="loading || detailLoading" @click="cancelAction(row)">{{ cancelLabel(row) }}</button>
+              </div>
+            </template>
           </article>
           <p v-if="loading" class="queue-empty" role="status">正在读取办理记录</p>
           <p v-else-if="!error && !visibleRows.length" class="queue-empty">{{ view === 'pending' ? '当前没有需要你操作的事项' : '当前筛选下没有可见记录' }}</p>
@@ -231,6 +244,14 @@ onUnmounted(() => { active = false; request++; detailRequest++; });
           <div><h4>{{ subjectText(selected) }}</h4><span class="source-mode">{{ labelOf(DISPOSAL_ACTION_LABEL, selected.action_type) }} · {{ labelOf(SOURCE_MODE_LABEL, selected.source_mode) }}</span></div>
           <button v-if="selected.subject_kind === 'UAV_EVENT'" type="button" class="btn" @click="emit('event', selected.subject_id)">查看关联告警</button>
         </header>
+        <nav v-if="selectedGroupMembers.length > 1" class="group-records" aria-label="本次处置的原始记录">
+          <span class="source-mode">本次处置的原始记录</span>
+          <button v-for="row in selectedGroupMembers" :key="row.authorization_id" type="button" class="btn"
+            :class="{ pri: selected.authorization_id === row.authorization_id }" :aria-pressed="selected.authorization_id === row.authorization_id"
+            :disabled="detailLoading" @click="show(row.authorization_id)">
+            {{ labelOf(DISPOSAL_ACTION_LABEL, row.action_type) }} · {{ statusText(row) }}
+          </button>
+        </nav>
         <div class="detail-columns">
           <div class="target-observation" aria-label="目标观察">
             <TargetLiveVideo v-if="['UAV_EVENT', 'TARGET'].includes(selected.subject_kind)" :key="selected.authorization_id"
@@ -243,7 +264,7 @@ onUnmounted(() => { active = false; request++; detailRequest++; });
           </div>
           <aside class="handling-panel" aria-label="当前办理与授权资料">
             <div class="current-handling">
-              <span class="section-label">当前进展</span>
+              <span class="section-label">{{ selectedGroupMembers.length > 1 ? '所选原始记录进展' : '当前进展' }}</span>
               <h3>{{ statusText(selected) }}</h3>
               <p v-if="nextStep(selected, userId)">{{ nextStep(selected, userId) }}</p>
               <p v-if="executeHint(selected)" class="permission-note">{{ executeHint(selected) }}</p>
@@ -314,6 +335,7 @@ onUnmounted(() => { active = false; request++; detailRequest++; });
 .authorization-detail:focus { outline:0; }.authorization-detail:focus-visible { outline:2px solid var(--blue); outline-offset:-2px; }
 .detail-header { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:0 0 8px; flex:none; border-bottom:1px solid var(--line); }
 .detail-header h4 { margin:0; font-size:16px; overflow-wrap:anywhere; }.detail-header > div { min-width:0; display:flex; gap:6px 12px; align-items:baseline; flex-wrap:wrap; }.detail-header > button { flex:none; }
+.group-records { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:10px 0 0; flex:none; }
 .detail-columns { display:grid; grid-template-columns:minmax(0, 1.45fr) minmax(255px, 1fr); gap:12px; flex:1; min-height:0; padding-top:12px; }
 .target-observation, .handling-panel { min-width:0; min-height:0; overflow:auto; }
 .target-observation { display:flex; flex-direction:column; gap:12px; }

@@ -424,8 +424,8 @@ function selectedPolygons() {
 }
 
 function installOverlay() {
-  const drawBase = map.draw.bind(map);
-  map.draw = function drawWithOverlay() {
+  const drawBase = map.drawOverlay.bind(map);
+  map.drawOverlay = function drawWithOverlay() {
     drawBase();
     const c = this.ctx;
     if (!c || !this.w) return;

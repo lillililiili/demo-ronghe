@@ -668,13 +668,13 @@ const evidenceMapNote = ref('');
 let evidenceMap = null;
 let evidenceMapSeq = 0;
 let evidenceMapSubject = '';
-let evidenceMapBaseDraw = null;
+let evidenceMapBaseOverlay = null;
 function destroyEvidenceMap() {
   evidenceMapSeq++;
   if (evidenceMap) { try { evidenceMap.destroy(); } catch { /* 已卸载 */ } }
   evidenceMap = null;
   evidenceMapSubject = '';
-  evidenceMapBaseDraw = null;
+  evidenceMapBaseOverlay = null;
 }
 async function renderEvidenceMap(evaluation) {
   if (!evaluation || evidenceMapSubject !== subjectKey(evaluation)) destroyEvidenceMap();
@@ -726,13 +726,13 @@ async function renderEvidenceMap(evaluation) {
   if (created) {
     evidenceMap = new window.MapView(evidenceMapHost.value, { zoom: 3, maxDev: 0, legend: false, layers: { device: false, track: true, alarm: false } });
     evidenceMapSubject = subjectKey(evaluation);
-    evidenceMapBaseDraw = evidenceMap.draw.bind(evidenceMap);
+    evidenceMapBaseOverlay = evidenceMap.drawOverlay.bind(evidenceMap);
   }
   // 每次替换叠加层绘制闭包，避免重复包裹；自动更新保留用户的地图视角。
-  evidenceMap.draw = evidenceMapBaseDraw;
+  evidenceMap.drawOverlay = evidenceMapBaseOverlay;
   installOverlays(evidenceMap, { airspaces });
-  const drawBase = evidenceMap.draw.bind(evidenceMap);
-  evidenceMap.draw = function drawEvidenceTrajectory() {
+  const drawBase = evidenceMap.drawOverlay.bind(evidenceMap);
+  evidenceMap.drawOverlay = function drawEvidenceTrajectory() {
     drawBase();
     if (this.ctx && this.w) strokePlanComparison(this.ctx, this, centerline, trajectoryPoints);
   };

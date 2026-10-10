@@ -1036,8 +1036,8 @@ function renderRouteMap() {
   });
   routeMap.setData({ airspaces: [], devices: [], targets: target ? [target] : [], alarms: [] });
   if (target) routeMap.sel = target.id;
-  const drawBase = routeMap.draw.bind(routeMap);
-  routeMap.draw = function drawRouteCenterline() {
+  const drawBase = routeMap.drawOverlay.bind(routeMap);
+  routeMap.drawOverlay = function drawRouteCenterline() {
     drawBase();
     const context = this.ctx;
     if (!context || !this.w) return;
@@ -1464,8 +1464,8 @@ function renderRiskMap() {
   if (!coordinates && !point && !ring && !objectTrail.value.length) { if (focus.length) routeMap.fitTo(focus); return; }
   const version = riskRouteVersion.value;
   const label = '关联航线';
-  const drawBase = routeMap.draw.bind(routeMap);
-  routeMap.draw = function drawRiskRouteCenterline() {
+  const drawBase = routeMap.drawOverlay.bind(routeMap);
+  routeMap.drawOverlay = function drawRiskRouteCenterline() {
     drawBase();
     const context = this.ctx;
     if (!context || !this.w) return;

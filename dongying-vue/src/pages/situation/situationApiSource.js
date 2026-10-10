@@ -9,6 +9,7 @@ import { mapPool } from '@/services/apiClient.js';
 import { isRealtimeConnected, onDataChange } from '@/services/realtime.js';
 import { legalityApi } from '@/services/legalityApi.js';
 import { hasPermission } from '@/services/accessControl.js';
+import { authUser } from '@/services/auth.js';
 import { applyTrackComparison } from '@/services/trackPoints.js';
 import { serverNow } from '@/services/serverClock.js';
 import {
@@ -110,7 +111,10 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
   const trajectoryComparisons = new Map();
   const failedSegments = new Set();
   const deniedSegments = new Set();
-  const permitted = name => !deniedSegments.has(name) && (SEGMENT_PERMISSIONS[name] || []).every(code => hasPermission(code));
+  // 设备事件是后台专属接口；前台角色遗留 monitoring.read 也不具备后台身份。
+  const permitted = name => !deniedSegments.has(name)
+    && (name !== 'device-events' || authUser.value?.user_type === 'BACKEND')
+    && (SEGMENT_PERMISSIONS[name] || []).every(code => hasPermission(code));
   function deny(name) {
     deniedSegments.add(name);
     failedSegments.delete(name);

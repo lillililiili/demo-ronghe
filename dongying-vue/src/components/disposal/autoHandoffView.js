@@ -5,7 +5,7 @@ export const AUTO_HANDOFF_STATUS = {
   PENDING: '处罚交接已建立，还没有发出', FAILED: '移送处罚发送失败', DISABLED: '自动移送尚未启用',
   INDEPENDENT: '移送按事件事实另行判断', NOT_REQUIRED: '不需要自动移送'
 };
-const TRIGGER_TITLE = { JAMMING_COMPLETED: '已自动移送到处罚', MANUAL: '已选定接收单位移送到处罚' };
+const TRIGGER_TITLE = { COUNTERMEASURE_COMPLETED: '已自动移送到处罚', JAMMING_COMPLETED: '已自动移送到处罚', MANUAL: '已选定接收单位移送到处罚' };
 
 export function autoHandoffView(data, handoffId = '') {
   const handoff = data?.auto_handoff;

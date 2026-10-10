@@ -1260,20 +1260,25 @@
     });
   };
 
+  // 页面叠加层的同步绘制扩展点；必须在本帧清空、基础业务层完成之后调用。
+  // draw() 只请求下一帧，页面不可在请求后直接补画，否则下一帧会擦除航线。
+  MapView.prototype.drawOverlay = function () {};
+
   MapView.prototype._drawFrame = function () {
     if (!this.w) return;
     this._splitLayers = !!(this.online && this.map) && !!(g.UI && g.UI.captureAlarmGlows);
-    if (!this._splitLayers) {
+    if (this._splitLayers) {
+      // 页面叠加层的告警红晕也在同一帧收集，再交给装饰层按时间闪烁。
+      this._glows = g.UI.captureAlarmGlows(this.ctx);
+    } else {
       if (g.UI && g.UI.releaseAlarmGlows) g.UI.releaseAlarmGlows(this.ctx);
       this._glows = [];
       this.actx.clearRect(0, 0, this.w, this.h);
-      this._drawStatic();
-      return;
     }
-    // 本轮业务层上画的告警红晕（含页面在 draw 之后补画的）都记进这个列表，由装饰层按时间闪烁。
-    this._glows = g.UI.captureAlarmGlows(this.ctx);
     this._drawStatic();
-    this._drawAnimated();
+    this.ctx.save();
+    try { this.drawOverlay(); } finally { this.ctx.restore(); }
+    if (this._splitLayers) this._drawAnimated();
   };
 
   /* 装饰动画层：覆盖范围、上报波纹、告警红晕。每秒约 12 帧只重画这一层，业务层不动。 */

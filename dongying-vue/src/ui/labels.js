@@ -157,7 +157,7 @@ export const SOURCE_TYPE_LABEL = {
 /* 来源接入状态：DEMO 表示字段有协议出处但尚未与真实设备联调，页面必须说清楚，不能让人当成已核实的能力。 */
 export const SCHEMA_STATUS_LABEL = { CONFIRMED: '已联调确认', DEMO: '按凌云协议 v8.6 建模，待联调' };
 /* 处置授权（阶段 13）：动作、状态、执行通道。同一个码全站只有一个说法，页面一律经 labelOf 取词。 */
-export const DISPOSAL_ACTION_LABEL = { COUNTERMEASURE: '联动反制', JAMMING: '信号干扰', DISPERSAL: '驱离', DECOY: '诱骗' };
+export const DISPOSAL_ACTION_LABEL = { COUNTERMEASURE: '反制', JAMMING: '信号干扰', DISPERSAL: '驱离', DECOY: '诱骗' };
 /* 告警列表「状态」列的处置进度展示：uav_event.state 仍是核实结论，不把反制中写进库。 */
 export const ALARM_PROGRESS_LABEL = {
   HANDED_OFF: '已移送处罚',
@@ -278,6 +278,7 @@ export const DISPOSAL_EVENT_KIND_LABEL = {
 };
 /* 决策 13-12/13-14：执行被阻的四种原因，三种可补救、一种要等厂家；页面不得把它显示成失败或成功。 */
 export const DISPOSAL_BLOCK_REASON_LABEL = {
+  LEGACY_JAMMING_RETIRED: '自动接续已停用；历史干扰授权不能再次执行，已发送指令与停止记录仍可查看',
   DEVICE_CAPABILITY: '所选设备不能走该通道自动执行，请换设备或改通道',
   PROTOCOL_NOT_OPENED: '该类指令码尚未开放（等厂家确认设备类型），可登记人工结果',
   NOT_BOUND: '设备未登记凌云连接，请运维补登记后重试',

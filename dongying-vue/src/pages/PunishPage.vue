@@ -385,8 +385,8 @@ onMounted(() => {
                     <RecipientSnapshotFields :snapshot="selected.recipient_snapshot" />
                     <dt>提交时间</dt><dd>{{ formatTime(selected.created_at) }}</dd>
                     <!-- 反制完成后后台自动移送：提交人是系统，记录里的提交人账号是那次反制的申请人（新-24）。 -->
-                    <template v-if="selected.trigger_source === 'JAMMING_COMPLETED'">
-                      <dt>提交人</dt><dd>系统自动（反制完成后生成）</dd>
+                    <template v-if="['COUNTERMEASURE_COMPLETED', 'JAMMING_COMPLETED'].includes(selected.trigger_source)">
+                      <dt>提交人</dt><dd>{{ selected.trigger_source === 'COUNTERMEASURE_COMPLETED' ? '系统自动（反制结束且停止确认后生成）' : '系统自动（历史干扰完成后生成）' }}</dd>
                       <dt>反制申请人</dt><dd :title="selected.submitted_by">{{ selected.submitted_by_name || '姓名未记录' }}</dd>
                     </template>
                     <template v-else><dt>提交人</dt><dd :title="selected.submitted_by">{{ selected.submitted_by_name || '姓名未记录' }}</dd></template>

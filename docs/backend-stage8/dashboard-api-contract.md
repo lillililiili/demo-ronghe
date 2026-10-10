@@ -40,7 +40,7 @@
 | --- | --- | --- |
 | `kpis.sensed_today` | 今日 `last_seen`/`seen` 窗口内目标总数 | `null` |
 | `kpis.alarms_today` | 今日 `occurred` 窗口内告警总数 | `null` |
-| `kpis.pending_assessment` | `latest_only=true` 且 `review_state=PENDING_REVIEW` 的研判总数 | `null` |
+| `kpis.pending_assessment` | 北京时间当天 `evaluated_at`（含 00:00、不含次日 00:00），`latest_only=true` 且 `review_state=PENDING_REVIEW`，按既有权限与来源口径计数；页面显示“今日待研判目标”（2026-10-09） | `null` |
 | `kpis.pending_handoffs` | `delivery_status=PENDING_DELIVERY` 的交接总数 | `null` |
 | `trend` | 近 7 日（含今日）`days[{date,md,total,illegal}]`，以及 `simulated`/`source_mode` | 整块 `null` |
 | `target_risk` | 最新研判 `grade`：`high/medium/low/ungraded`（抽样上限 100 条 latest_only） | 整块 `null` |

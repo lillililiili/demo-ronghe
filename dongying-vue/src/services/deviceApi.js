@@ -23,7 +23,7 @@ export const deviceApi = {
   deleteSensingProfile: (id, expectedVersion, key = newIdempotencyKey('sensing-profile-delete')) => apiRequest(`/devices/${encodeURIComponent(id)}/sensing-profile`, {
     method: 'DELETE', body: { expected_version: expectedVersion }, mutation: true, idempotencyKey: key
   }),
-  overview: () => apiRequest('/device-monitor/overview'),
+  overview: params => apiRequest(`/device-monitor/overview${query(params)}`),
   tree: params => apiRequest(`/device-monitor/tree${query(params)}`),
   state: id => apiRequest(`/devices/${id}/state`),
   history: (id, params) => apiRequest(`/devices/${id}/state-history${query(params)}`),

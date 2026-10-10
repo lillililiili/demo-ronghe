@@ -20,6 +20,7 @@ class VideoControlTests(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.runtime = Runtime(self.directory.name)
+        self.runtime.video_config['enabled'] = False
         self.runtime.session.platform = SimpleNamespace(base='http://localhost:8081/api/v1', call=Mock(return_value={}))
         self.runtime.video_config['publisher_password'] = 'test-secret-only'
         self.runtime.video_media.ensure = Mock(return_value='test-secret-only')
@@ -64,6 +65,25 @@ class VideoControlTests(unittest.TestCase):
         self.assertTrue(result['video_config']['publisher_password_set'])
         self.runtime.video_media.ensure.assert_called_once()
         self.assertNotIn('generated-secret-only', json.dumps(result))
+
+    def test_default_enabled_connect_prepares_media_without_manual_toggle(self):
+        self.runtime.phase = 'STOPPED'
+        self.runtime.video_config.update(enabled=True, publisher_password='')
+        self.runtime.session.platform.brokers = Mock(return_value=[{
+            'broker_id': 'local-test', 'name': 'local-lingyun-replay',
+            'host': '127.0.0.1', 'port': 1883}])
+        with patch('server.load_or_create_credentials', return_value={'publish': 'generated-secret-only'}), \
+                patch('eo_video.shutil.which', return_value='/test/ffmpeg'):
+            self.runtime.connect({})
+        self.runtime.video_media.ensure.assert_called_once()
+        self.assertTrue(self.runtime.video_config['enabled'])
+        self.assertEqual(self.runtime.video_config['ffmpeg'], '/test/ffmpeg')
+        self.assertNotIn('generated-secret-only', json.dumps(self.runtime.status()))
+
+    def test_default_enabled_first_toggle_can_provision_credentials(self):
+        self.runtime.video_config.update(enabled=True, publisher_password='')
+        with patch('server.load_or_create_credentials', return_value={'publish': 'generated-secret-only'}):
+            self.assertTrue(self.control({'enabled': True})['video_config']['publisher_password_set'])
 
     def test_invalid_input_or_transition_never_changes_configuration(self):
         for body in ({'enabled': 'true'}, {'enabled': 1}, {'enabled': True, 'shell': 'bad'},

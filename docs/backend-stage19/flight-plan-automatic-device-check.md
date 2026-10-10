@@ -1,10 +1,41 @@
 # 飞行计划自动设备检查（2026-09-14 最新口径）
 
+## 2026-10-09 扫描范围筛选（替代下文固定 5 公里）
+
+- 使用任务钉住的航线版本与设备当前已配置扫描范围相交：圆形按半径，扇形按射程、北向顺时针朝向与张角。任一航线段相交即列入，不要求全航线被单台设备覆盖；包含范围边界。按平面地理覆盖判断，不虚构未配置的高度能力或遮挡模型。
+- 离线／故障不影响已配置几何范围，只影响设备检查状态。来源模式、账号数据权限、设备类型和既有启用过滤保持。
+- 缺位置记 `unchecked_locations`；缺少或无效范围、航线覆盖无法计算记 `unchecked_coverage`。均不进入已确认覆盖列表，检查不完整，不能视为正常。
+- `GET /device-check` 返回 `selection_basis=DEVICE_SCAN_COVERAGE`，移除 `nearby_meters`；新增 `unchecked_coverage`。其他字段和读权限保持。旧 `app.flight-device-check.nearby-meters`／`FLIGHT_DEVICE_CHECK_NEARBY_METERS` 不再参与筛选。
+- 圆形复用 PostGIS geography 到整条航线的米制距离。扇形将航线以 25 米间距加密后转到以设备为中心的等距投影，按完整折线与角度区域相交，再检查实际径向距离；不能只检查航线端点或最近点的方位。
+- 手动读取、手动通知前重查、后台定时检查使用同一服务。新检查材料写明扫描范围口径；历史已保存检查和冻结材料不回填。
+- 业务前台列表和地图消费同一 `rows`，文案“扫描范围覆盖航线 · 已检查 N 台设备”。管理端没有本接口消费者；其设备扫描范围配置继续使用现有 sensing profile 字段。
+
+
 > 2026-09-15 仓库归属：本文后端 `server/` 路径指同级 `../houtaiguanli/server/`；历史验证记录保留原日期。迁入后台后的迁移版本与验证结果以后台 `docs/新后端迁移记录.md` 为准。
+
+### 本次验证与代码清单
+
+- 2026-10-09：30 项设备筛选测试、12 项隔离 PostGIS 空间测试、12 项飞行核实接口测试、12 项设备通知接口测试、11 项目录接口测试，共 77 项通过（0 失败／0 跳过）。先验证了旧固定距离规则造成的 4 个失败场景，再完成修正。
+- 后端 `package -DskipTests` 通过；业务前台 `npm run build`、`node tools/scan.cjs`、`e2e/admin-migration.spec.js`（1 项）和两仓库 `git diff --check` 通过。构建保留现有大包提示。
+- 本地服务保留原数据库与配置、开发种子关闭后重启。浏览器登录、点击“重新检查”及刷新页面，接口和页面均返回 `DEVICE_SCAN_COVERAGE`、已检查 0 台、覆盖待确认 7 台；通过设备接口确认当前 7 台模拟感知设备均未配置扫描范围，未补造参数。
+- 几何正向／反向、跨北向、航线中段、边界、长距离、缺参数、离线与来源隔离已用隔离夹具验证；当前运行数据仅能验收“范围缺失”分支，尚非真实设备覆盖能力验收。未实际发送设备通知。
+
+| 文件／类 | 方法／块 | 本次作用 |
+| --- | --- | --- |
+| 后端 FlightDeviceCheckService | inspectPlan、coversRoute、positive、Check、unknown | 校验扫描参数，按圆形／扇形覆盖选择设备，返回范围未知计数 |
+| 后端 FlightReadRepository | routeIntersectsScanSector | 用整条航线计算扇形相交，处理边界与缺几何 |
+| 后端 FlightScheduledCheckService | check | 定时检查材料及变化识别采用扫描覆盖口径 |
+| 后端 FlightVerificationService | automatic | 新保存核实材料采用扫描覆盖说明并保留未知数量 |
+| 后端 application.yml | 无具体方法，flight-device-check 配置块 | 移除固定 5 公里配置 |
+| 业务前台 PlanDeviceCheck.vue | 无具体方法，模板 | 显示扫描覆盖口径、已检查数量和无法确认原因 |
+| FlightDevicePreflightTest、FlightScanCoveragePostgresTest | 覆盖筛选与空间边界测试 | 验证半径、方向、张角、全航线、缺数据和来源隔离 |
+| DeviceMaintenanceNoticeApiTest、DeviceMaintenanceNoticePostgresTest、DirectoryApiTest、FlightVerificationApiTest | 检查结果夹具构造 | 同步新的 Check 契约，保持既有通知及核实回归 |
+| 两仓库 AGENTS、前后端 README、后端开发基线、业务流映射、本接口文档 | 无具体方法，约定与说明 | 明确新规则替代 5 公里，记录实施与验收边界 |
+
 
 ## 起飞前检查补充（2026-09-14）
 
-最新补充取代下文“未到时间隐藏”和“只展开异常设备”的描述：待执行计划在详情中显示起飞前设备检查，按同一航线 5 公里范围读取设备当前状态和仍未关闭的告警。检查结果新增只读结论 `PREFLIGHT_DEVICE_NORMAL`、`PREFLIGHT_DEVICE_ABNORMAL`；信息不足仍为 `CHECK_INCOMPLETE`。这些结论不写入起飞核实记录，POST automatic 仍拒绝未来计划。设备列表展示正常、故障、离线及未知状态，异常优先，地图仍只突出异常设备。
+最新补充取代下文“未到时间隐藏”和“只展开异常设备”的描述：待执行计划在详情中显示起飞前设备检查，按设备扫描范围与该航线相交读取设备当前状态和仍未关闭的告警（2026-10-09 更新）。检查结果新增只读结论 `PREFLIGHT_DEVICE_NORMAL`、`PREFLIGHT_DEVICE_ABNORMAL`；信息不足仍为 `CHECK_INCOMPLETE`。这些结论不写入起飞核实记录，POST automatic 仍拒绝未来计划。设备列表展示正常、故障、离线及未知状态，异常优先，地图仍只突出异常设备。
 
 指定补充批次的数据由 `LocalFlightPlanEnrichmentSeeder` 追加：local 且开发种子开启，并显式设置 `app.dev-seed.flight-enrichment-prefix=seed-refill-YYMMDD-HHMMSS` 才执行。给该批次 1–5 号待执行计划各加一条模拟气象风险与范围，给 6 号执行中计划加 21 个模拟轨迹点并由既有规则引擎计算匹配。重复运行保留已有风险、轨迹与办理记录；不移动计划时间。只支持本地 PostgreSQL/PostGIS 演示环境。
 

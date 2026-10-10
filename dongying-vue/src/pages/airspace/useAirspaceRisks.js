@@ -7,7 +7,7 @@ import { weatherAnchor, weatherPolygon } from '@/services/weatherRiskGeometry.js
 import { loadRiskPages, pointRelation, riskSnapshotPoint, weatherAreaRelation } from './airspaceRiskModel.js';
 
 export function useAirspaceRisks(district, selected) {
-  const rows = ref([]), loading = ref(false), error = ref(''), errorStatus = ref(0);
+  const rows = ref([]), loading = ref(false), refreshing = ref(false), loaded = ref(false), error = ref(''), errorStatus = ref(0);
   const weatherRows = useWeatherRiskFacts(rows);
   const severity = ref(''), state = ref(''), riskType = ref(''), onlySelected = ref(false), showLayer = ref(true);
   const activeId = ref('');
@@ -18,23 +18,27 @@ export function useAirspaceRisks(district, selected) {
   const canRead = computed(() => hasPermission('risk:read'));
   let token = 0;
 
-  async function reload() {
+  async function reload({ quiet = false } = {}) {
     const current = ++token;
-    rows.value = []; activeId.value = ''; error.value = ''; errorStatus.value = 0;
+    const keep = loaded.value;
     loading.value = false;
-    if (!canRead.value) return;
-    loading.value = true;
+    if (!canRead.value) { rows.value = []; activeId.value = ''; loaded.value = false; refreshing.value = false; return; }
+    loading.value = !quiet || !keep;
+    refreshing.value = true;
     try {
       const data = await loadRiskPages(riskApi.listRisks, district.value ? { district_id: district.value } : {}, () => current === token);
       if (current !== token || !data) return;
       rows.value = data;
+      loaded.value = true; error.value = ''; errorStatus.value = 0;
     } catch (reason) {
       if (current !== token) return;
       errorStatus.value = reason.status || 0;
+      const retain = keep && ![401, 403].includes(reason.status) && reason.code !== 'SESSION_CHANGED';
+      if (!retain) { rows.value = []; activeId.value = ''; loaded.value = false; }
       error.value = reason.status === 403 ? '当前账号没有查看空域风险的权限。'
         : reason.status === 401 ? '登录已失效，请重新登录。'
-          : reason.message || '风险读取失败，请重试。';
-    } finally { if (current === token) loading.value = false; }
+          : `${reason.message || '风险读取失败，请重试。'}${retain ? ' 当前显示上次读取的风险记录。' : ''}`;
+    } finally { if (current === token) { loading.value = false; refreshing.value = false; } }
   }
 
   const polygons = computed(() => polygonRings(selected.value?.current_version?.boundary));
@@ -63,7 +67,11 @@ export function useAirspaceRisks(district, selected) {
   const pending = computed(() => filtered.value.filter(risk => risk.state === 'PENDING_VERIFICATION').length);
   // 合并列表负责筛选与取消选择；详情从原记录读取，避免两套筛选争抢选中项。
   const active = computed(() => locatedRows.value.find(risk => risk.risk_id === activeId.value) || null);
-  watch([district, canRead], reload, { immediate: true });
+  function resetAndReload() {
+    rows.value = []; activeId.value = ''; loaded.value = false; error.value = ''; errorStatus.value = 0;
+    return reload();
+  }
+  watch([district, canRead], resetAndReload, { immediate: true });
   let districtToken = 0;
   async function loadDistricts() {
     const current = ++districtToken;
@@ -74,11 +82,11 @@ export function useAirspaceRisks(district, selected) {
       if (current === districtToken) districts.value = data || [];
     } catch { /* 字典失败不影响风险读取；父页可用已读记录中的区县。 */ }
   }
-  function accessChanged() { reload(); loadDistricts(); }
+  function accessChanged() { resetAndReload(); loadDistricts(); }
   onMounted(() => { loadDistricts(); window.addEventListener('auth-access-change', accessChanged); });
   // 点选与刷新详情不启用范围筛选；只有清除选中时退出已失去对象的范围。
   watch(selected, value => { if (!value) onlySelected.value = false; });
   onUnmounted(() => { token++; districtToken++; window.removeEventListener('auth-access-change', accessChanged); });
-  return { rows, locatedRows, filtered, loading, error, errorStatus, canRead, severity, state, riskType, onlySelected,
+  return { rows, locatedRows, filtered, loading, refreshing, error, errorStatus, canRead, severity, state, riskType, onlySelected,
     showLayer, activeId, active, polygons, inSelected, unlocated, mapRows, pending, districts, reload, occurred, timeError };
 }

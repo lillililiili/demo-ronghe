@@ -14,7 +14,13 @@ const U = window.UI;
 const props = defineProps({ eventId: { type: String, required: true }, eventLabel: String, active: Boolean, confirmed: Boolean, summary: Object, showLaunch: Boolean, handedOff: Boolean, showRecords: { type: Boolean, default: true } });
 const emit = defineEmits(['records', 'decision']);
 const busy = ref(false);
-const noCounter = computed(() => props.summary?.event_id === props.eventId ? props.summary.no_counter : null);
+const currentSummary = computed(() => props.summary?.event_id === props.eventId ? props.summary : null);
+const noCounter = computed(() => currentSummary.value?.no_counter);
+const unavailableReason = computed(() => !props.active ? '请返回当前告警后操作' : busy.value ? '正在检查处置条件，请稍候' : '');
+const noCounterBlock = computed(() => unavailableReason.value || (noCounter.value?.can_decide === true ? ''
+  : noCounter.value?.block_reason || '尚未确认不反制条件，请刷新后重试'));
+const launchBlock = computed(() => unavailableReason.value || (currentSummary.value?.can_direct_counter === true || currentSummary.value?.can_request_counter === true ? ''
+  : currentSummary.value?.counter_block_reason || '尚未确认反制资格，请刷新后重试'));
 const completed = computed(() => noCounter.value?.decision_active === true);
 const time = value => value == null ? '未提供' : new Date(value).toLocaleString('zh-CN', { hour12: false });
 let generation = 0, mounted = true, feedback = null;
@@ -33,7 +39,7 @@ function showFeedback(title, message) {
 }
 
 async function launch() {
-  if (busy.value || !props.active) return;
+  if (launchBlock.value) return;
   const id = props.eventId, token = readSessionToken(), request = ++generation;
   const isCurrent = () => mounted && props.active && props.eventId === id && request === generation && token === readSessionToken();
   busy.value = true;
@@ -64,7 +70,7 @@ async function launch() {
 }
 
 async function decideNoCounter() {
-  if (busy.value || !props.active) return;
+  if (noCounterBlock.value) return;
   const id = props.eventId, token = readSessionToken(), request = ++generation;
   const isCurrent = () => mounted && props.active && props.eventId === id && request === generation && token === readSessionToken();
   busy.value = true;
@@ -105,15 +111,22 @@ async function decideNoCounter() {
       <p>保留告警与决定记录，继续监测；出现新的风险依据时重新判断。</p>
       <details><summary>查看决定依据</summary><NoCounterBasis :basis="noCounter.decision?.basis" /></details>
     </div>
-    <div v-else-if="confirmed && !handedOff" class="counter-decision">
+    <div v-else-if="confirmed && !handedOff" class="counter-decision is-choice">
       <div class="counter-choice-actions">
-        <button v-if="!handedOff" class="btn no-counter-choice" type="button" :disabled="busy || !active || noCounter?.can_decide !== true" :title="noCounter?.block_reason || ''" @click="decideNoCounter">{{ busy ? '正在检查处置条件' : '无风险不反制' }}</button>
-        <button v-if="showLaunch" class="btn pri" type="button" :disabled="busy || !active" :aria-busy="busy" @click="launch"><span class="counter-action-icon" aria-hidden="true" v-html="U.icon('shield')"></span>发起反制</button>
+        <div class="counter-choice-action">
+          <p v-if="noCounterBlock" :id="`no-counter-block-${eventId}`" class="counter-action-note">{{ noCounterBlock }}</p>
+          <button class="btn no-counter-choice" type="button" :disabled="!!noCounterBlock" :aria-describedby="noCounterBlock ? `no-counter-block-${eventId}` : undefined" :aria-busy="busy" @click="decideNoCounter">无风险不反制</button>
+        </div>
+        <div v-if="showLaunch" class="counter-choice-action">
+          <p v-if="launchBlock" :id="`counter-block-${eventId}`" class="counter-action-note">{{ launchBlock }}</p>
+          <button class="btn pri" type="button" :disabled="!!launchBlock" :aria-describedby="launchBlock ? `counter-block-${eventId}` : undefined" :aria-busy="busy" @click="launch"><span class="counter-action-icon" aria-hidden="true" v-html="U.icon('shield')"></span>发起反制</button>
+        </div>
       </div>
       <details v-if="noCounter?.decision"><summary>此前不反制决定</summary><p>{{ noCounter.decision.actor_name || '未提供' }} · {{ time(noCounter.decision.decided_at) }}</p><p>{{ noCounter.decision.reason }}</p><NoCounterBasis :basis="noCounter.decision.basis" /></details>
     </div>
-    <div class="counter-launch-actions">
-      <button v-if="showLaunch && !confirmed && !completed" class="btn pri" type="button" :disabled="busy || !active" :aria-busy="busy" @click="launch">
+    <div v-if="showLaunch && !confirmed && !completed" class="counter-launch-actions">
+      <p v-if="launchBlock" :id="`counter-block-${eventId}`" class="counter-action-note">{{ launchBlock }}</p>
+      <button class="btn pri" type="button" :disabled="!!launchBlock" :aria-describedby="launchBlock ? `counter-block-${eventId}` : undefined" :aria-busy="busy" @click="launch">
         <span class="counter-action-icon" aria-hidden="true" v-html="U.icon('shield')"></span>{{ busy ? '正在检查反制条件' : '发起反制' }}
       </button>
     </div>
@@ -122,9 +135,14 @@ async function decideNoCounter() {
 
 <style scoped>
 .counter-launch { margin-left: auto; min-width: 0; max-width: 100%; width:100%; }
-.counter-decision{padding:13px;border:1px solid var(--control-line);border-radius:var(--r);background:var(--surface-3);margin-bottom:10px}.counter-decision header{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}.counter-decision h3{margin:0;font-size:13px;font-weight:600}.counter-decision p{font-size:12px;line-height:1.8;color:var(--txt-2);margin:9px 0}.counter-choice-actions{display:flex;flex-wrap:wrap;gap:9px;margin-top:0}.counter-choice-actions>.btn{flex:1;min-width:130px}.counter-decision .no-counter-choice{border-color:var(--cyan);color:var(--cyan);background:var(--input-bg)}.counter-decision .counter-block{color:var(--txt-3)}.counter-decision .counter-review{color:var(--amber)}.counter-decision.is-completed{border-color:var(--cyan)}.counter-decision dl{display:grid;grid-template-columns:70px minmax(0,1fr);gap:7px 12px;font-size:12px;line-height:1.65;margin:13px 0}.counter-decision dt{color:var(--txt-3)}.counter-decision dd{margin:0;color:var(--txt-2);overflow-wrap:anywhere}.counter-decision summary{cursor:pointer;color:var(--txt-3);font-size:12px}.counter-decision summary:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
+.counter-decision{padding:13px;border:1px solid var(--control-line);border-radius:var(--r);background:var(--surface-3);margin-bottom:10px}.counter-decision header{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}.counter-decision h3{margin:0;font-size:13px;font-weight:600}.counter-decision p{font-size:12px;line-height:1.8;color:var(--txt-2);margin:9px 0}.counter-choice-actions{display:flex;flex-wrap:wrap;gap:9px;margin-top:0}.counter-decision .no-counter-choice{border-color:var(--cyan);color:var(--cyan);background:var(--input-bg)}.counter-decision .counter-block{color:var(--txt-3)}.counter-decision .counter-review{color:var(--amber)}.counter-decision.is-completed{border-color:var(--cyan)}.counter-decision dl{display:grid;grid-template-columns:70px minmax(0,1fr);gap:7px 12px;font-size:12px;line-height:1.65;margin:13px 0}.counter-decision dt{color:var(--txt-3)}.counter-decision dd{margin:0;color:var(--txt-2);overflow-wrap:anywhere}.counter-decision summary{cursor:pointer;color:var(--txt-3);font-size:12px}.counter-decision summary:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
 .counter-launch-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 10px; }
-.counter-launch .btn { white-space: normal; height: auto; min-height: 40px; padding: 8px 14px; }
+.counter-decision.is-choice { padding: 6px 8px; margin-bottom: 0; }
+.counter-choice-action { flex: 1; min-width: 130px; display: flex; flex-direction: column; justify-content: flex-end; gap: 4px; }
+.counter-launch .counter-action-note { margin: 0; font-size: 12px; line-height: 1.6; color: var(--txt-3); overflow-wrap: anywhere; white-space: pre-wrap; }
+.counter-launch-actions .counter-action-note { flex-basis: 100%; }
+.counter-launch .btn:disabled { background: var(--surface-2); border-color: var(--line); color: var(--txt-3); }
+.counter-launch .btn { white-space: normal; height: auto; min-height: 30px; padding: 4px 10px; }
 .counter-action-icon { display: inline-flex; flex: none; }
 .counter-action-icon :deep(.svg-icon) { width: 16px; height: 16px; }
 </style>

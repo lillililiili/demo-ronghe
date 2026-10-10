@@ -171,7 +171,7 @@ function devicesForChannel(devices, channel) {
 
 async function loadEnabledDevices() {
   const page = await deviceApi.list({ page: 1, size: 200, enabled: true, sort: 'device_no_asc' });
-  return (page?.items || []).filter(device => device.device_id);
+  return (page?.items || []).filter(device => device.device_id && device.enabled === true);
 }
 
 /**

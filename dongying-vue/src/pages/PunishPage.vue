@@ -72,6 +72,7 @@ const kpiFailed = ref({});
 const detailLoading = ref(false);
 const detailError = ref('');
 const selected = ref(null);
+const notificationPanel = ref(null), outcomePanel = ref(null);
 const chain = ref(null);
 const chainLoading = ref(false);
 const chainError = ref('');
@@ -188,16 +189,18 @@ async function loadList(nextPage = page.value, requestedId = null) {
   }
 }
 
-async function loadDetail(handoffId) {
+async function loadDetail(handoffId, { quiet = false } = {}) {
   const token = ++detailToken;
+  const keep = quiet && selected.value?.handoff_id === handoffId && !detailError.value;
   S.selectedHandoffId = handoffId;
-  detailLoading.value = true;
+  detailLoading.value = !keep;
   detailError.value = '';
   try {
     const detail = await handoffApi.getHandoff(handoffId);
     if (token !== detailToken) return;
     selected.value = detail;
-    loadChain(detail);
+    loadChain(detail, { quiet: keep });
+    if (keep) { notificationPanel.value?.refresh(); outcomePanel.value?.refresh(); }
   } catch (requestError) {
     if (token !== detailToken) return;
     selected.value = null;
@@ -247,7 +250,7 @@ async function realtimeRefresh() {
     total.value = data.total;
     void statistics.load(appliedQuery);
     const after = JSON.stringify(handoffs.value.find(item => item.handoff_id === S.selectedHandoffId) || null);
-    if (S.selectedHandoffId && after !== before && after !== 'null') loadDetail(S.selectedHandoffId);
+    if (S.selectedHandoffId && after !== before && after !== 'null') loadDetail(S.selectedHandoffId, { quiet: true });
   } catch (requestError) {
     if (token !== listToken) return;
     refreshError.value = refreshFailureText(requestError, '读取交接清单失败');
@@ -257,15 +260,17 @@ async function realtimeRefresh() {
 useRealtimeRefresh(['punishment', 'evidence'], realtimeRefresh, { minIntervalMs: 2_000 });
 function retryDetail() { if (S.selectedHandoffId) loadDetail(S.selectedHandoffId); }
 
-async function loadChain(detail) {
+async function loadChain(detail, { quiet = false } = {}) {
   const token = ++chainToken;
-  chain.value = null;
+  const keep = quiet && !!chain.value;
+  if (!keep) chain.value = null;
   chainError.value = '';
   if (!detail || detail.source_kind !== UAV_KIND || !detail.source_id) {
+    chain.value = null;
     chainLoading.value = false;
     return;
   }
-  chainLoading.value = true;
+  chainLoading.value = !keep;
   try {
     const data = await getEvidenceChain('EVENT', detail.source_id);
     if (token !== chainToken) return;
@@ -274,6 +279,7 @@ async function loadChain(detail) {
     chain.value = display;
   } catch (requestError) {
     if (token !== chainToken) return;
+    chain.value = null;
     chainError.value = requestError.status === 403
       ? '当前账号无权查看关联证据，请联系管理员。'
       : (requestError.message || '证据链读取失败');
@@ -379,6 +385,46 @@ onMounted(() => {
                     <div class="detail-hero-icon" v-html="U?.icon ? U.icon('clipboard') : ''"></div>
                     <div class="detail-hero-copy"><div class="detail-hero-eyebrow">业务交接</div><div class="detail-hero-title">{{ label(TYPE_LABEL, selected.handoff_type) }}</div><div class="detail-hero-id mono" :title="selected.handoff_id">{{ readableNo(selected.source_no, selected.source_id) || '来源编号未提供' }}</div></div>
                   </div></div>
+                  <div class="sect pn-section pn-section-material"><h4>事件与移送依据</h4>
+                    <div v-if="!selected.material" class="empty">暂无材料</div>
+                    <template v-else>
+                      <div v-if="selected.material.event" class="pn-material-summary">
+                        <p>{{ labelOf(ALARM_TYPE_LABEL, selected.material.event.alarm_type, '未提供') }} · 移送时{{ labelOf(UAV_STATE_LABEL, selected.material.event.state, '状态未提供') }}</p>
+                        <p class="pn-material-meta">发生于 {{ formatTime(selected.material.event.occurred_at) }}</p>
+                        <p class="pn-material-meta">遥控器位置：{{ pilotLocationText(selected.material.pilot_location) }}</p>
+                      </div>
+                      <p v-else class="pn-material-meta">无事件材料</p>
+                      <HandoffMaterialFacts part="summary" :material="selected.material" />
+                      <p v-if="selected.material.evidence_omitted" class="pn-material-meta">当前无权查看移送时证据</p>
+                      <details :key="selected.handoff_id" class="pn-material-details">
+                        <summary><span class="pn-material-expand">查看详细材料</span><span class="pn-material-collapse">收起详细材料</span></summary>
+                        <div class="pn-material-content">
+                      <div v-if="selected.material.verifications?.length" class="pn-sub pn-wrap">
+                        <div v-for="(vr, i) in selected.material.verifications" :key="i">
+                          核实结论：{{ labelOf(EVENT_CONCLUSION_LABEL, vr.conclusion, vr.conclusion) }}
+                          <p class="pn-material-meta">{{ formatTime(vr.created_at) }} · {{ vr.actor_name || '核实人未记录' }}</p>
+                          <p>核实说明：{{ vr.note || '未记录' }}</p>
+                        </div>
+                      </div>
+                      <div v-if="selected.material.advisory_records?.length" class="pn-sub pn-wrap">
+                        <h4>移送时的联系与观察记录</h4>
+                        <AdvisoryRecords :records="selected.material.advisory_records" />
+                      </div>
+                      <div v-if="selected.material.disposals?.length" class="pn-sub pn-wrap">
+                        <div v-for="d in selected.material.disposals" :key="d.authorization_id">
+                          {{ labelOf(DISPOSAL_ACTION_LABEL, d.action_type) }} · {{ disposalStatusText(d) }}
+                          <span v-if="materialAuthorizationMode(d)" class="tag t-gray">{{ materialAuthorizationMode(d) }}</span>
+                          <p class="pn-material-meta">
+                            {{ d.authorization_mode === 'DIRECT' ? '发起人' : '申请人' }}：{{ d.requested_by_name || '未记录' }}
+                            <span v-if="d.authorization_mode !== 'DIRECT' && d.approved_by_name"> · 审批人：{{ d.approved_by_name }}</span>
+                          </p>
+                        </div>
+                      </div>
+                      <HandoffMaterialFacts :material="selected.material" :evidence-availability="selected.availability?.evidence || ''" />
+                        </div>
+                      </details>
+                    </template>
+                  </div>
                   <div class="sect pn-section pn-section-info"><h4>交接信息</h4><dl class="kv kv-surface">
                     <dt>来源事项</dt><dd :title="selected.source_id"><span class="tag t-cyan">{{ label(KIND_LABEL, selected.source_kind) }}</span></dd>
                     <dt>接收方</dt><dd class="pn-recipient" :title="selected.recipient_id">{{ selected.recipient_name || '未提供' }}</dd>
@@ -413,46 +459,8 @@ onMounted(() => {
                       </div>
                     </template>
                   </div>
-                  <div class="sect pn-section pn-section-material"><h4>移送材料</h4>
-                    <div v-if="!selected.material" class="empty">暂无材料</div>
-                    <template v-else>
-                      <div v-if="selected.material.event" class="pn-material-summary">
-                        <p>{{ labelOf(ALARM_TYPE_LABEL, selected.material.event.alarm_type, '未提供') }} · 移送时{{ labelOf(UAV_STATE_LABEL, selected.material.event.state, '状态未提供') }}</p>
-                        <p class="pn-material-meta">发生于 {{ formatTime(selected.material.event.occurred_at) }}</p>
-                        <p class="pn-material-meta">遥控器位置：{{ pilotLocationText(selected.material.pilot_location) }}</p>
-                        <HandoffMaterialFacts part="summary" :material="selected.material" />
-                      </div>
-                      <p v-else class="pn-material-meta">无事件材料</p>
-                      <p v-if="selected.material.evidence_omitted" class="pn-material-meta">当前无权查看移送时证据</p>
-                      <details :key="selected.handoff_id" class="pn-material-details">
-                        <summary><span class="pn-material-expand">查看详细材料</span><span class="pn-material-collapse">收起详细材料</span></summary>
-                        <div class="pn-material-content">
-                      <div v-if="selected.material.verifications?.length" class="pn-sub pn-wrap">
-                        <div v-for="(vr, i) in selected.material.verifications" :key="i">
-                          核实结论：{{ labelOf(EVENT_CONCLUSION_LABEL, vr.conclusion, vr.conclusion) }}
-                        </div>
-                      </div>
-                      <div v-if="selected.material.advisory_records?.length" class="pn-sub pn-wrap">
-                        <h4>移送时的联系与观察记录</h4>
-                        <AdvisoryRecords :records="selected.material.advisory_records" />
-                      </div>
-                      <div v-if="selected.material.disposals?.length" class="pn-sub pn-wrap">
-                        <div v-for="d in selected.material.disposals" :key="d.authorization_id">
-                          {{ labelOf(DISPOSAL_ACTION_LABEL, d.action_type) }} · {{ disposalStatusText(d) }}
-                          <span v-if="materialAuthorizationMode(d)" class="tag t-gray">{{ materialAuthorizationMode(d) }}</span>
-                          <p class="pn-material-meta">
-                            {{ d.authorization_mode === 'DIRECT' ? '发起人' : '申请人' }}：{{ d.requested_by_name || '未记录' }}
-                            <span v-if="d.authorization_mode !== 'DIRECT' && d.approved_by_name"> · 审批人：{{ d.approved_by_name }}</span>
-                          </p>
-                        </div>
-                      </div>
-                      <HandoffMaterialFacts :material="selected.material" :evidence-availability="selected.availability?.evidence || ''" />
-                        </div>
-                      </details>
-                    </template>
-                  </div>
-                  <PunishmentNotification :key="selected.handoff_id" :handoff-id="selected.handoff_id" :recipient-name="selected.recipient_name" @status="updateNotificationStatus" />
-                  <PunishmentOutcome class="pn-section pn-section-outcome" :key="selected.handoff_id" :handoff-id="selected.handoff_id" />
+                  <PunishmentNotification ref="notificationPanel" :key="selected.handoff_id" :handoff-id="selected.handoff_id" :recipient-name="selected.recipient_name" @status="updateNotificationStatus" />
+                  <PunishmentOutcome ref="outcomePanel" class="pn-section pn-section-outcome" :key="selected.handoff_id" :handoff-id="selected.handoff_id" />
                 </template>
               </div>
               <div id="pnNotifyDock" class="pn-notify-dock"></div>

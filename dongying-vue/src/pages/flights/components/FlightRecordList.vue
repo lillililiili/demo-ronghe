@@ -1,4 +1,10 @@
 <script setup>
+import { ref } from 'vue';
+const listHost = ref(null);
+function scrollToSelected() {
+  listHost.value?.querySelector('.flight-record.selected')?.scrollIntoView({ block: 'nearest' });
+}
+defineExpose({ scrollToSelected });
 defineProps({
   items: { type: Array, default: () => [] },
   selectedId: { type: String, default: null },
@@ -9,7 +15,7 @@ const emit = defineEmits(['select']);
 </script>
 
 <template>
-  <div class="flight-record-list" :class="{ compact }" :aria-label="label">
+  <div ref="listHost" class="flight-record-list" :class="{ compact }" :aria-label="label">
     <button v-for="item in items" :key="item.id" class="flight-record" :class="{ selected: item.id === selectedId }"
       type="button" :aria-pressed="item.id === selectedId" @click="emit('select', item.id)">
       <span class="record-heading"><b>{{ item.title }}</b><span v-if="compact && item.severity" class="tag" :class="item.severityClass">{{ item.severity }}</span><span class="tag" :class="item.statusClass">{{ item.status }}</span></span>

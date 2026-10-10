@@ -47,9 +47,18 @@ async function main() {
   check('待通知航线风险进入融合感知列表', flow.situationRouteRiskVisible({
     state: 'PENDING_NOTIFICATION', riskType: 'SPACE_OBJECT', planId: 'p1', routeVersionId: 'rv1'
   }), true);
-  check('待核验航线风险不进入融合感知列表', flow.situationRouteRiskVisible({
+  check('待核验航线风险进入融合感知列表', flow.situationRouteRiskVisible({
     state: 'PENDING_VERIFICATION', riskType: 'SPACE_OBJECT', planId: 'p1', routeVersionId: 'rv1'
-  }), false);
+  }), true);
+  check('过期但未核验的风险保留列表入口，不冒充当前地图风险', flow.situationRouteRiskVisible({
+    state: 'PENDING_VERIFICATION', riskType: 'FOREIGN_OBJECT', planId: 'p2', routeVersionId: 'rv2',
+    active: false, mapVisible: false, currentStatus: 'UNKNOWN'
+  }), true);
+  for (const state of ['NOTIFIED', 'ACKNOWLEDGED', 'EXCLUDED', 'UNKNOWN']) {
+    check(`${state} 不混入待处理航线风险`, flow.situationRouteRiskVisible({
+      state, riskType: 'SPACE_OBJECT', planId: 'p2', routeVersionId: 'rv2'
+    }), false);
+  }
   check('没有航线关联的风险不进入航线风险列表', flow.situationRouteRiskVisible({
     state: 'PENDING_VERIFICATION', riskType: 'SPACE_OBJECT', planId: 'p1'
   }), false);

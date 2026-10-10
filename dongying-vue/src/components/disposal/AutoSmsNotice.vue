@@ -64,21 +64,20 @@ function retry() {
       <header v-if="!compact"><b>飞手短信</b><span v-if="view.simulated" class="tag t-amber">模拟短信</span></header>
       <p v-if="!compact" class="asn-title" :class="`asn-${view.tone}`">{{ view.title }}</p>
       <p v-if="view.reason">{{ userFacingMessage(view.reason) }}</p>
-      <p v-if="view.guidance">{{ view.guidance }}</p>
+      <p v-if="view.guidance && (!view.expired || view.canRetry || view.pilotContactMissing)">{{ view.guidance }}</p>
       <dl v-if="view.recipient || view.triggeredAt || view.updatedAt">
         <template v-if="view.recipient"><dt>接收飞手</dt><dd>{{ view.recipient }}<small v-if="view.recipientHint" style="display:block">{{ view.recipientHint }}</small></dd></template>
         <template v-if="view.triggeredAt"><dt>触发时间</dt><dd>{{ time(view.triggeredAt) }}</dd></template>
         <template v-if="view.updatedAt && view.updatedAt !== view.triggeredAt"><dt>状态更新</dt><dd>{{ time(view.updatedAt) }}</dd></template>
       </dl>
-      <p v-if="!view.recipient" class="asn-recipient">未提供接收飞手信息</p>
-      <p v-if="compact && ['ALARM_EVENT', 'RULE_ILLEGAL', 'MANUAL_RECHECK'].includes(view.source)">{{ sourceText }}</p>
+      <p v-if="!view.recipient && !view.reason" class="asn-recipient">未提供接收飞手信息</p>
+      <p v-if="compact && view.source === 'MANUAL_RECHECK'">{{ sourceText }}</p>
       <details v-if="!compact && (view.source || view.evaluatedAt || view.dataUpdatedAt)" :key="data?.event_id">
         <summary>查看发送依据与时间</summary>
         <p v-if="view.source">{{ sourceText }}</p>
         <p v-if="view.evaluatedAt">研判时间：{{ time(view.evaluatedAt) }}</p>
         <p v-if="view.dataUpdatedAt">观测时间：{{ time(view.dataUpdatedAt) }}</p>
       </details>
-      <p class="asn-recipient">送达不代表飞手已读，也不代表目标已飞离。</p>
       <button v-if="view.canRetry" type="button" class="btn sm" :disabled="disabled" @click="retry">{{ view.recheck ? '核对后发送飞手短信' : '重新发送飞手短信' }}</button>
     </component>
   </section>

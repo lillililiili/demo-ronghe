@@ -48,7 +48,7 @@ export function useAirspaceRiskList(monitor, risks, selected) {
     else page.value = Math.min(page.value, Math.max(1, Math.ceil(rows.value.length / size.value)));
   }
   watch([() => risks.riskType, () => risks.severity, () => risks.state, () => risks.occurred,
-    () => risks.onlySelected, selected, () => monitor.minutes], () => { page.value = 1; });
+    () => risks.onlySelected, () => selected.value?.airspace_id, () => monitor.minutes], () => { page.value = 1; });
   watch(rows, value => {
     if (!value.some(row => row.risk?.risk_id === risks.activeId)) risks.activeId = '';
     if (!value.some(row => row.target?.target_id === monitor.activeId)) monitor.activeId = '';

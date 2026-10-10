@@ -75,8 +75,10 @@ def api_status(credentials, timeout=2):
     """HTTP status of the media API with the platform read account; None when nothing listens."""
     token = base64.b64encode(('qa-platform:' + credentials['read']).encode()).decode()
     request = urllib.request.Request(f'http://127.0.0.1:{API_PORT}/v3/paths/list', headers={'Authorization': 'Basic ' + token})
+    # This is a local service probe; proxy errors are not media port/auth failures.
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response: return response.status
+        with opener.open(request, timeout=timeout) as response: return response.status
     except urllib.error.HTTPError as error: return error.code
     except (OSError, ValueError): return None
 

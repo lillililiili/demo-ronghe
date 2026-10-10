@@ -89,7 +89,8 @@ const configFields = [
 
 async function loadDevices() {
   const data = await deviceApi.list({ page: 1, size: 100, enabled: true, sort: 'device_no_asc' });
-  devices.value = data.items;
+  // 旧版后端可能忽略 enabled 查询参数；调测设备选项只保留明确启用的设备。
+  devices.value = (data.items || []).filter(device => device.enabled === true);
   if (!devices.value.some(d => d.device_id === selectedDeviceId.value)) selectedDeviceId.value = devices.value[0]?.device_id || null;
   else void loadExistingTask(selectedDeviceId.value);
 }

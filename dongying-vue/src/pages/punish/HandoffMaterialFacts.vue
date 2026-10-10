@@ -1,9 +1,10 @@
 <script setup>
 /* 处罚交接材料里冻结的当事人、研判结论和证据链（2026-10-06）。
    part=summary 放在材料摘要里，一眼看到当事人是否明确和研判结论；part=details 放在详细材料里，列出全部研判和证据。
-   旧材料没有这几段时，摘要不显示，证据仍按原来的证据清单显示，不拿现在的数据补。 */
+   旧材料没有研判时明确提示缺失，证据仍按原来的证据清单显示，不拿现在的数据补。 */
 import { computed } from 'vue';
 import { ruleReasonText } from '@/ui/legalityReviewModal.js';
+import { CONCLUSION_LABEL, labelOf } from '@/ui/labels.js';
 import { evidenceChainView, judgmentViews, partyView } from './handoffMaterialView.js';
 
 const props = defineProps({
@@ -15,7 +16,9 @@ const props = defineProps({
 
 const party = computed(() => partyView(props.material));
 const judgments = computed(() => judgmentViews(props.material, ruleReasonText));
-const headline = computed(() => judgments.value?.[0] || null);
+const headline = computed(() => judgments.value?.find(item => item.basisCode === 'EVENT_ALARM') || null);
+const verification = computed(() => [...(props.material?.verifications || [])]
+  .sort((a, b) => Number(b.created_at || 0) - Number(a.created_at || 0))[0] || null);
 const chain = computed(() => evidenceChainView(props.material));
 const legacyEvidence = computed(() => Array.isArray(props.material?.evidence) ? props.material.evidence : []);
 const evidenceHidden = computed(() => props.evidenceAvailability === 'FORBIDDEN');
@@ -30,6 +33,10 @@ function formatTime(value) {
 
 <template>
   <div v-if="part === 'summary'" class="hmf-summary">
+    <section class="hmf-alarm-reason" aria-label="告警原因">
+      <span>告警原因</span>
+      <strong>{{ headline?.reasons.length ? headline.reasons.join('、') : '移送材料未记录具体告警原因' }}</strong>
+    </section>
     <div v-if="party" class="hmf-party" :class="{ 'is-unknown': party.unidentified }">
       <p><span class="tag" :class="party.unidentified ? 't-orange' : 't-green'">{{ party.title }}</span>
         <span v-for="line in party.lines" :key="line">{{ line }}</span></p>
@@ -38,10 +45,18 @@ function formatTime(value) {
       </p>
       <p v-if="party.unidentified" class="hmf-meta">处罚部门需凭无人机序列号、遥控器位置等线索继续查找当事人。</p>
     </div>
-    <p v-if="headline" class="hmf-meta">{{ headline.basis }}：<span class="tag" :class="headline.tone">{{ headline.legal }}</span>
-      <template v-if="headline.reasons.length"> {{ headline.reasons.join('、') }}</template>
-      <template v-if="headline.review"> · {{ headline.review }}</template></p>
-    <p v-else-if="judgments" class="hmf-meta">移送时没有找到本事件的合法性研判</p>
+    <dl class="kv kv-surface">
+      <template v-if="headline">
+        <dt>移送时研判</dt><dd><span class="tag" :class="headline.tone">{{ headline.legal }}</span><span v-if="headline.review"> · {{ headline.review }}</span></dd>
+        <dt>研判时间</dt><dd>{{ formatTime(headline.evaluatedAt) }}</dd>
+        <template v-if="headline.unknowns.length"><dt>依据缺口</dt><dd>{{ headline.unknowns.join('、') }}</dd></template>
+      </template>
+      <template v-else><dt>移送时研判</dt><dd>{{ judgments ? '移送时未关联告警依据的研判' : '旧移送材料未保存研判依据' }}</dd></template>
+      <template v-if="verification">
+        <dt>移送前核实</dt><dd>{{ labelOf(CONCLUSION_LABEL, verification.conclusion, '结论未记录') }} · {{ formatTime(verification.created_at) }}</dd>
+        <dt>核实说明</dt><dd>{{ verification.note || '未记录具体核实说明' }}</dd>
+      </template>
+    </dl>
   </div>
 
   <template v-else>
@@ -89,6 +104,9 @@ function formatTime(value) {
 
 <style scoped>
 .hmf-summary { display: grid; gap: 4px; margin-top: 6px; }
+.hmf-alarm-reason { min-width:0; margin-bottom:8px; padding:12px 14px; border:1px solid color-mix(in srgb, var(--amber) 40%, var(--line)); border-left:4px solid var(--amber); border-radius:var(--r); background:color-mix(in srgb, var(--amber) 8%, var(--panel)); }
+.hmf-alarm-reason > span { display:block; margin-bottom:5px; color:var(--amber); font-size:12px; font-weight:700; line-height:1.5; }
+.hmf-alarm-reason > strong { display:block; color:var(--txt); font-size:16px; font-weight:700; line-height:1.65; white-space:normal; overflow-wrap:anywhere; }
 .hmf-party { display: grid; gap: 2px; padding: 6px 8px; border: 1px solid color-mix(in srgb, var(--green) 30%, var(--line)); border-radius: 6px; }
 .hmf-party.is-unknown { border-color: color-mix(in srgb, var(--orange) 45%, var(--line)); background: color-mix(in srgb, var(--orange) 6%, var(--surface-1)); }
 .hmf-summary p, .hmf-block p { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 0; line-height: 1.6; overflow-wrap: anywhere; }

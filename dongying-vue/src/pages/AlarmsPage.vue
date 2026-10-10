@@ -30,7 +30,7 @@ import UPanel from '@/components/UPanel.vue';
 import UKpis from '@/components/UKpis.vue';
 import { handoffApi } from '@/services/handoffApi.js';
 import { toast } from '@/ui/nv.js';
-import { exportAlarmsCsv, getAlarm, getUavEvent, listAlarmDistricts, listAlarmEscalations, listAlarms, listUavVerifications } from '@/services/alarmApi.js';
+import { exportAlarmsCsv, getAlarm, getAlarmAirspaceHits, getUavEvent, listAlarmDistricts, listAlarmEscalations, listAlarms, listUavVerifications } from '@/services/alarmApi.js';
 import { escalationBrief, escalationRecords, reasonListText } from '@/ui/alarmEscalation.js';
 import { ruleReasonText } from '@/ui/legalityReviewModal.js';
 import { NO_PILOT_LOCATION, pilotLocationText } from '@/services/pilotLocation.js';
@@ -38,6 +38,7 @@ import { pilotDistanceNote } from '@/ui/pilotDistanceNote.js';
 import { getEvidenceChain } from '@/services/evidenceApi.js';
 import { openUavVerification } from '@/ui/uavVerificationModal.js';
 import { targetApi } from '@/services/targetApi.js';
+import { toAirspaces } from '@/services/situationData.js';
 import { mapPool } from '@/services/apiClient.js';
 import { ALARM_PROGRESS_LABEL, ALARM_PROGRESS_TAG, ALARM_TYPE_LABEL, classChangeText, CONCLUSION_LABEL, DISPOSAL_ACTION_LABEL, labelOf, LEGALITY_LABEL, readableNo, sourceDescription, SOURCE_MODE_LABEL as MODE_TEXT, targetTypeLabel } from '@/ui/labels.js';
 import { openEvidenceFileModal } from '@/ui/evidenceFileDetail.js';
@@ -45,7 +46,6 @@ import { openEvidenceChainTypeModal, renderEvidenceChainHtml } from '@/ui/eviden
 import { disposalApi, isDisposalUnavailable } from '@/services/disposalApi.js';
 import { DISPOSAL_UNAVAILABLE_TEXT } from '@/ui/disposalAuthModal.js';
 import { hasPermission } from '@/services/accessControl.js';
-import { openTrackReplay, trackPointsOf } from '@/ui/trackReplayModal.js';
 import EmergencyStopPanel from '@/components/disposal/EmergencyStopPanel.vue';
 import UavAdvisoryPanel from '@/components/disposal/UavAdvisoryPanel.vue';
 import CounterLaunch from '@/pages/alarms/CounterLaunch.vue';
@@ -261,6 +261,7 @@ const list = { rows: [], loading: false, error: '', refreshError: '' };
 let listSeq = 0, detailSeq = 0;
 const emptyDetail = () => ({ alarm: null, event: null, loading: false, error: '',
   target: null, targetLoading: false, targetError: '', track: null, trackError: '',
+  airspaces: [], airspacesLoading: false, airspacesError: '', airspacesStatus: '', airspacesCheckedAt: 0,
   chain: null, chainLoading: false, chainError: '', chainUnavailable: '',
   escalations: [], escalationsTotal: 0, escalationsLoading: false, escalationsError: '',
   verifications: [], verificationsLoaded: false, verificationsLoading: false, verificationsError: ''
@@ -516,7 +517,14 @@ function queryOf() {
   return q;
 }
 
-/* 列表只保留来源标记和触发事项这一行，任务匹配提示及升级记录在详情查看。 */
+/* 原因作为主信息完整换行展示；没有原因码时保留告警类型，不推测具体原因。 */
+function reasonCell(a) {
+  const reasons = reasonsOf(a);
+  const text = reasons ? esc(reasons) : typeOf(a);
+  return `<div class="alarm-reason-cell"><strong class="alarm-reason-text">${text}</strong>${U.tag(modeOf(a).t, modeOf(a).c)}</div>`;
+}
+
+/* 来源和发生时间分两行：挤在一行时这一列最宽，整张表被撑过面板，"状态"列要横向滚动才看得到。 */
 function summaryOf(a) {
   const reasons = reasonsOf(a);
   const content = reasons ? `触发事项：${esc(reasons)}` : a.task_match_note ? '旧规则任务匹配告警' : `${typeOf(a)}：未记录具体触发原因`;
@@ -537,7 +545,7 @@ function listHtml() {
     },
     { t: sortTh('level', '等级'), w: '52px', align: 'center', overflow: false, render: sevTag },
     { t: '关联目标', w: '146px', render: a => U.cell(a.target_id ? esc(a.target_no || a.target_id) : '—', null, { mono: true, title: a.target_id ? esc(a.target_id) : '无关联目标或无目标读取权限' }) },
-    { t: '告警内容', render: summaryOf },
+    { t: '告警内容', render: reasonCell },
     { t: sortTh('status', '状态'), w: '124px', overflow: false, render: stateTag },
     { t: sortTh('ts', '时间'), w: '158px', overflow: false, render: a => esc(fmt(a.received_at) || '未知') }
   ], list.rows, { rowId: a => a.alarm_id, activeId: st.selId, className: 'alarm-list-table' });
@@ -627,7 +635,7 @@ function detailHtml() {
   const t = cur.target, ls = t && t.latest_state;
   const targetType = !a.target_id ? '—' : cur.targetLoading ? '读取中' : cur.targetError ? '读取失败' : esc(t ? targetTypeLabel(t.subtype, t.object_type_code) : '—');
   const altSpeed = ls ? `${ls.altitude_amsl_m == null ? '—' : esc(ls.altitude_amsl_m)} m / ${ls.speed_mps == null ? '—' : esc(ls.speed_mps)} m/s` : '— m / — m/s';
-  const reasons = reasonsOf(a), brief = briefOf(a);
+  const brief = briefOf(a);
   // 新-29：飞手离无人机超过 500 米不算违规，告警详情在“遥控器位置”后面照样写这句给值班员参考（取目标最近一次研判）。
   const pilotNote = cur.targetLoading || cur.targetError ? '' : pilotDistanceNote(t);
   return `${U.detailHero({
@@ -638,7 +646,6 @@ function detailHtml() {
     ['触发时间', fmt(a.occurred_at) || '未知'], ['接收时间', fmt(a.received_at) || '—'],
     ...(a.observation_status ? [['观测状态', esc(OBSERVATION_LABEL[a.observation_status] || '观测待确认')]] : []),
     ...(a.attention_group ? [['关注分组', esc(ATTENTION_LABEL[a.attention_group] || '状态待确认')]] : []),
-    ...(reasons ? [['违规原因', esc(reasons)]] : []),
     ...(a.task_match_note ? [['任务匹配提示', esc(a.task_match_note)]] : []),
     ...(brief ? [['告警升级', esc(`${brief.level}，共 ${brief.count} 次${brief.at ? `，最近 ${fmt(brief.at)}` : ''}`)]] : []),
     ['所在区域', esc(a.district_name || a.district_id || '—')], ['所属机构', esc(a.owner_org_name || a.owner_org_id || '—')],
@@ -703,9 +710,7 @@ function escalationHtml(brief) {
 function detailActionsHtml() {
   const a = cur.alarm, ev = cur.event;
   if (!a) return '';
-  const replayN = replayPointCount();
   return `<div class="alarm-observation-actions">
-      <button class="btn" data-al="replay" ${replayN > 1 ? '' : 'disabled '}title="${replayN > 1 ? '按实测轨迹回放，有光电录像时同步播放' : '没有足够的轨迹点'}">${U.icon('trend')} 轨迹回放</button>
       ${disposalActions(a, ev)}</div>
     ${ev?.state === 'PENDING_VERIFICATION' ? '<p class="alarm-action-note">事件事实尚待核实。核实属实后自动发送飞手短信。</p>' : ''}`;
 }
@@ -713,6 +718,10 @@ function detailActionsHtml() {
 /* 详情和动作区就地更新：内容没变不动节点，“核实”等按钮在刷新时保持原节点，点得中。 */
 function paintDetailContent() {
   setSubject(videoSubject, cur.alarm ? { targetId: cur.alarm.target_id || '', eventId: cur.alarm.event_id || '', label: noOf(cur.alarm) } : null);
+  patchHtml(el('alReason'), cur.alarm ? `<section class="alarm-reason-callout" aria-label="告警原因">
+    <span class="alarm-reason-label">告警原因</span>
+    <strong class="alarm-reason-text">${esc(reasonsOf(cur.alarm) || '未记录具体触发原因')}</strong>
+  </section>` : '');
   patchHtml(el('alDetail'), detailHtml());
   patchHtml(el('alDetailActions'), detailActionsHtml());
 }
@@ -754,18 +763,24 @@ async function refreshEmergency(eventId) {
 function syncAlarmMap() {
   if (activeTab.value !== 'alarms') { map?.destroy(); map = null; return; }
   if (!map && el('alMap')) map = new window.MapView(el('alMap'), {
-    zoom: 2.2, maxDev: 0, maxAlarm: 1, legend: false, layers: { device: false }
+    zoom: 2.2, maxDev: 0, maxAlarm: 1, legend: false, scrollableTip: true, layers: { device: false }
   });
   focusMap();
 }
 watch(activeTab, async () => { await nextTick(); if (authorizationPageActive) syncAlarmMap(); });
-function focusMap() {
+function focusMap({ fit = true } = {}) {
   if (!map) return;
   const info = el('alMapInfo'), srcEl = el('alMapSrc'), a = cur.alarm;
-  const setInfo = (html, title) => { if (info) { info.innerHTML = html; info.title = title || ''; } };
+  const airspaceNote = cur.airspacesLoading ? '空域读取中'
+    : cur.airspacesError ? esc(cur.airspacesError)
+      : ({ AVAILABLE: '告警命中空域 · 历史版本', NO_HIT: '该告警无已确认的空域命中',
+          UNKNOWN: '未保存告警时空域依据', PARTIAL: '部分历史依据缺失或不可见' })[cur.airspacesStatus] || '';
+  const setInfo = (html, title) => { if (info) { info.innerHTML = html + (a && airspaceNote ? ` · ${airspaceNote}` : ''); info.title = title || ''; } };
   const warn = text => `<span class="inline-icon" style="color:#ffd07a">${U.icon('warning')} ${text}</span>`;
   map.sel = null;
-  map.setData({ airspaces: [], devices: [], targets: [], alarms: [] });
+  map.setData({ airspaces: cur.airspaces, devices: [], targets: [], alarms: [] });
+  const airspaceBounds = cur.airspaces.flatMap(area => area.rings?.[0] || []);
+  if (fit && airspaceBounds.length) map.fitTo(airspaceBounds, 0.18);
   if (srcEl) srcEl.textContent = '';
   if (!a) return setInfo(cur.loading ? '正在读取告警' : '请选择告警');
   if (!a.target_id) return setInfo(warn('无关联目标或无目标读取权限，无法定位'));
@@ -796,11 +811,13 @@ function focusMap() {
   };
   map.sel = target.id;
   map.setData({
-    airspaces: [], devices: [], targets: [target],
+    airspaces: cur.airspaces, devices: [], targets: [target],
     alarms: [{ id: a.alarm_id, targetId: target.id, state: a.state, eventState: a.state, type: typeOf(a), level: sevOf(a).t, time: fmt(a.received_at), status: displayState(a).t }]
   });
-  if (pts.length > 1) map.fitTo([...pts.map(p => [p.lon, p.lat]), [last.lon, last.lat]], 0.18);
-  else map.centerAt(last.lon, last.lat);
+  if (fit) {
+    if (pts.length > 1 || airspaceBounds.length) map.fitTo([...airspaceBounds, ...pts.map(p => [p.lon, p.lat]), [last.lon, last.lat]], 0.18);
+    else map.centerAt(last.lon, last.lat);
+  }
   const source = labelOf(MODE_TEXT, cur.track?.source_mode || t.source_mode, '来源未知');
   const trackNote = pts.length > 1 ? '黄色表示航线关系未知'
     : cur.trackError ? `轨迹读取失败：${esc(cur.trackError)}`
@@ -813,6 +830,48 @@ function focusMap() {
 }
 
 /* ---------- 数据加载 ---------- */
+async function loadMapAirspaces(my) {
+  if (!cur.alarm || my !== detailSeq || cur.airspacesLoading) return;
+  const isCurrent = () => authorizationPageActive && my === detailSeq;
+  cur.airspacesLoading = true;
+  cur.airspacesError = '';
+  focusMap({ fit: false });
+  try {
+    const result = await getAlarmAirspaceHits(cur.alarm.alarm_id);
+    if (!isCurrent()) return;
+    const versions = new Map();
+    for (const hit of result.items || []) {
+      const context = hit.airspace, version = context?.version;
+      if (!version?.airspace_version_id) continue;
+      if (!versions.has(version.airspace_version_id)) versions.set(version.airspace_version_id, { context, hits: [] });
+      const label = `${hit.occurrence ? `第 ${hit.occurrence} 次升级` : '首次告警'} · ${fmt(hit.observed_at ?? hit.evaluated_at)}`;
+      const rows = versions.get(version.airspace_version_id).hits;
+      if (!rows.includes(label)) rows.push(label);
+    }
+    cur.airspaces = [...versions.values()].flatMap(({ context, hits }) => {
+      const version = context.version;
+      // 仅复用几何适配器，明确传入命中版本；不读取 current_version 接口。
+      return toAirspaces([{ ...context, current_version: version }]).map(area => ({
+        ...area, id: `${area.id} · V${version.version_no}`, historical: true,
+        historyRows: [
+          ['历史版本', `V${version.version_no}`],
+          ['生效时段', `${fmt(version.valid_from)} 至 ${version.valid_to == null ? '未设结束时间' : fmt(version.valid_to)}`],
+          ['命中记录', hits.join('；')]
+        ]
+      }));
+    });
+    cur.airspacesStatus = (result.items?.length && !cur.airspaces.length) ? 'PARTIAL' : result.status;
+  } catch (error) {
+    if (!isCurrent()) return;
+    cur.airspaces = [];
+    cur.airspacesError = error?.status === 403 ? '无历史空域依据查看权限' : '告警时空域依据读取失败';
+  }
+  cur.airspacesLoading = false;
+  const firstLoad = !cur.airspacesCheckedAt;
+  cur.airspacesCheckedAt = Date.now();
+  focusMap({ fit: firstLoad });
+}
+
 async function loadList({ quiet = false, progress = true } = {}) {
   const my = ++listSeq;
   const previousEvents = list.rows.map(row => row.event_id).join();
@@ -912,7 +971,7 @@ async function selectAlarm(id) {
   if (cur.alarm?.event_id) cur.verificationsLoading = true;
   cur.loading = false;
   paintDetail(); focusMap();
-  await Promise.all([loadTarget(my), loadChain(my), loadEscalations(my), loadVerifications(my)]);
+  await Promise.all([loadTarget(my), loadMapAirspaces(my), loadChain(my), loadEscalations(my), loadVerifications(my)]);
 }
 
 /* 升级记录只在告警升级过时读取；读不到只影响这一块，可单独重试，不影响告警详情与处置。 */
@@ -1025,19 +1084,6 @@ async function loadTarget(my, { quiet = false } = {}) {
   paintDetail(); focusMap();
 }
 
-function replayPointCount() {
-  return trackPointsOf((cur.track && cur.track.points) || []).length;
-}
-
-async function replayLoadedTrack() {
-  await openTrackReplay({
-    target: cur.target,
-    trackId: cur.track && cur.track.id,
-    points: (cur.track && cur.track.points) || [],
-    alarm: cur.alarm
-  });
-}
-
 async function refreshAfterWrite() {
   const alarm = cur.alarm;
   const id = alarm && alarm.alarm_id;
@@ -1097,6 +1143,7 @@ async function refreshSelected(id = st.selId) {
   if (chainChanged && isCurrent()) await refreshChain(my);
   if (escalationChanged && isCurrent()) await loadEscalations(my, { quiet: true });
   if (verificationChanged && isCurrent()) await loadVerifications(my, { quiet: alarm.event_id === before.event_id });
+  if (isCurrent() && (escalationChanged || (cur.airspacesError && Date.now() - cur.airspacesCheckedAt >= 60000))) await loadMapAirspaces(my);
 }
 
 /* 证据链静默重读：读到新内容再替换，读取失败保留已显示的证据链；原来就没读出来的按正常流程重读。 */
@@ -1211,7 +1258,6 @@ onMounted(async () => {
     else if (k === 'chain-retry' && st.selId) loadChain(detailSeq);
     else if (k === 'escalations-retry' && st.selId) loadEscalations(detailSeq);
     else if (k === 'verifications-retry' && st.selId) loadVerifications(detailSeq);
-    else if (k === 'replay') replayLoadedTrack();
   });
   U.on(view, '[data-ev-file]', 'click', (e, btn) => {
     if (btn.dataset.evFile) openEvidenceFileModal(btn.dataset.evFile);
@@ -1283,6 +1329,7 @@ onMounted(async () => {
               <div id="alDetailActions" class="alarm-observation"></div>
             </div>
             <div class="alarm-detail-content">
+              <div id="alReason" class="alarm-reason-host"></div>
               <EmergencyStopPanel v-if="emergencyEvent" :key="`emergency-${emergencyEvent.id}`" :event-id="emergencyEvent.id"
                 @updated="updateEmergency" @changed="refreshEmergency" />
               <TargetTrackingPanel v-if="videoSubject" :key="videoSubject.label" :target-id="videoSubject.targetId"
@@ -1371,14 +1418,21 @@ onMounted(async () => {
     grid-template-columns: minmax(0, 1fr);
   }
 }
-.alarm-action-bar { position:sticky; top:0; z-index:10; display:flex; flex-direction:column; align-items:stretch; gap:10px; margin:0; padding:10px 12px; border-bottom:1px solid var(--line); background:var(--panel); box-shadow:0 4px 12px color-mix(in srgb, var(--bg-1) 22%, transparent); }
+.alarm-action-bar { position:sticky; top:0; z-index:10; display:flex; flex-direction:column; align-items:stretch; gap:6px; margin:0; padding:6px 12px; border-bottom:1px solid var(--line); background:var(--panel); box-shadow:0 4px 12px color-mix(in srgb, var(--bg-1) 22%, transparent); }
 .alarm-action-bar:not(:has(.btn, .tag)) { display:none; }
 .alarm-observation { order:2; flex:0 0 auto; min-width:0; }
 .alarm-observation:empty { display:none; }
+.alarm-observation:has(.alarm-observation-actions:empty):not(:has(.alarm-action-note)) { display:none; }
 .alarm-observation :deep(.alarm-observation-actions) { display:flex; align-items:center; justify-content:flex-start; flex-wrap:wrap; gap:10px; }
 .alarm-observation :deep(.btn) { min-height:40px; height:auto; padding:8px 14px; white-space:normal; }
 .alarm-observation :deep(.alarm-action-note) { margin:8px 0 0; font-size:12px; line-height:1.65; color:var(--txt-2); }
 .alarm-detail-content { min-width:0; }
+.alarm-reason-host { margin:0 12px; }
+.alarms-page :deep(.alarm-reason-cell) { display:flex; flex-direction:column; align-items:flex-start; gap:7px; min-width:0; }
+.alarms-page :deep(.alarm-reason-text) { display:block; color:var(--txt); font-size:14px; font-weight:700; line-height:1.65; white-space:normal; overflow-wrap:anywhere; }
+.alarms-page :deep(.alarm-reason-callout) { flex:none; min-width:0; margin:12px 0; padding:12px 14px; border:1px solid color-mix(in srgb, var(--amber) 40%, var(--line)); border-left:4px solid var(--amber); border-radius:var(--r); background:color-mix(in srgb, var(--amber) 8%, var(--panel)); }
+.alarms-page :deep(.alarm-reason-label) { display:block; margin-bottom:5px; color:var(--amber); font-size:12px; font-weight:700; line-height:1.5; }
+.alarms-page :deep(.alarm-reason-callout .alarm-reason-text) { font-size:16px; }
 .alarm-detail-content :deep(.alarm-escalation-list) { list-style:none; margin:0; padding:0; }
 .alarm-detail-content :deep(.alarm-escalation-list li) { padding:8px 0; font-size:12px; line-height:1.65; color:var(--txt-2); overflow-wrap:anywhere; }
 .alarm-detail-content :deep(.alarm-escalation-list li + li) { border-top:1px solid var(--line-2); }

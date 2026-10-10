@@ -28,6 +28,7 @@ export function judgmentViews(material, reasonText = code => String(code || ''))
   if (!Array.isArray(material?.judgments)) return null;
   return material.judgments.map(row => ({
     key: row.evaluation_id,
+    basisCode: row.basis,
     basis: BASIS_LABEL[row.basis] || '研判',
     legal: labelOf(LEGALITY_LABEL, row.legal_status, '结论未提供'),
     review: reviewText(row),

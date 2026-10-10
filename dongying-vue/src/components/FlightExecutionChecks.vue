@@ -20,11 +20,13 @@ const pendingLabels = {
 };
 const tones = { MATCH: 'green', MISMATCH: 'red', UNDETERMINED: 'amber', NOT_APPLICABLE: 'gray' };
 const sourceLabels = { live: '在线事实', mock: '模拟事实 · 非真实核验', replay: '回放事实' };
-const rows = computed(() => dimensions.map(([code, name]) => {
+const rows = computed(() => dimensions.flatMap(([code, name]) => {
   const hit = props.hits.find(item => item.rule_code === code);
+  // 不为未执行或明确不适用的项目占位；已执行但依据不足的原因仍需保留。
+  if (!hit || hit.facts?.comparison === 'NOT_APPLICABLE') return [];
   const state = hit?.facts?.comparison;
-  const label = !hit ? '未执行核对' : labels[state] || pendingLabels[hit.reason_code] || '暂无核对结论';
-  return { code, name, hit, state, label };
+  const label = labels[state] || pendingLabels[hit.reason_code] || '暂无核对结论';
+  return [{ code, name, hit, state, label }];
 }));
 function time(value) { return value == null ? '未提供' : new Date(value).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }); }
 function tone(state) { return tones[state] || 'gray'; }
@@ -34,13 +36,13 @@ function evidenceLabel(kind) { return kind === 'flight_execution_fact' ? '执行
 </script>
 
 <template>
-  <section class="execution-checks" aria-label="独立执行事实核对">
+  <section v-if="rows.length" class="execution-checks" aria-label="独立执行事实核对">
     <div class="execution-heading">
       <div>
         <h4>独立执行事实核对</h4>
         <p>基础计划关联仅核对时间、走廊和无人机身份；以下项目依据独立执行事实。</p>
       </div>
-      <span class="tag t-cyan">4 项核对</span>
+      <span class="tag t-cyan">{{ rows.length }} 项核对</span>
     </div>
     <div class="execution-cards">
       <article v-for="row in rows" :key="row.code" class="execution-card" :class="`is-${tone(row.state)}`">
@@ -51,7 +53,7 @@ function evidenceLabel(kind) { return kind === 'flight_execution_fact' ? '执行
             <span v-if="row.hit?.facts?.source_mode" class="tag" :class="`t-${sourceTone(row.hit.facts.source_mode)}`">{{ sourceLabel(row.hit.facts.source_mode) }}</span>
           </div>
         </header>
-        <p class="execution-message">{{ row.hit?.message || (row.hit ? '本次核对未提供详细说明。' : '本次研判未执行该项核对，暂无核对结果。') }}</p>
+        <p class="execution-message">{{ row.hit.message || '本次核对未提供详细说明。' }}</p>
         <div v-if="row.hit?.facts?.received_at || row.hit?.facts?.occurred_at" class="execution-meta">
           <span v-if="row.hit?.facts?.received_at"><i>事实接收</i>{{ time(row.hit.facts.received_at) }}</span>
           <span v-if="row.hit?.facts?.occurred_at"><i>事件发生</i>{{ time(row.hit.facts.occurred_at) }}</span>

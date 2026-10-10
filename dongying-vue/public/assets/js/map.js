@@ -337,6 +337,7 @@
       drag = { x: e.clientX, y: e.clientY, center: merc(...self._pendingCenter) };
     };
     this._boxWheel = e => {
+      if (self.opt.scrollableTip && e.target.closest('.maptip')) return;
       if (self.map || e.target.closest('.mapctl,.maplegend,.maplayers,.mapstatus')) return;
       e.preventDefault();
       const r = self.cv.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
@@ -705,6 +706,13 @@
   };
 
   MapView.prototype._placeTip = function (x, y) {
+    if (this.opt.scrollableTip) {
+      Object.assign(this.tip.style, {
+        maxHeight: Math.max(1, this.h - 16) + 'px',
+        maxWidth: Math.max(1, this.w - 16) + 'px',
+        boxSizing: 'border-box', overflowY: 'auto', pointerEvents: 'auto',
+      });
+    }
     const tw = this.tip.offsetWidth, th = this.tip.offsetHeight, gap = 14;
     let left = x + gap, side = 'right';
     let top = y - th / 2;
@@ -1460,11 +1468,13 @@
         c.strokeText(airTx, ctr[0], ctr[1] + 8);
         c.fillStyle = ink; c.fillText(airTx, ctr[0], ctr[1] + 8);
       }
+      const safeAirspaceText = value => String(value ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
+      const historyRows = (a.historyRows || []).map(([label, value]) => `<dt>${safeAirspaceText(label)}</dt><dd>${safeAirspaceText(value)}</dd>`).join('');
       picks.push({
         x: ctr[0], y: ctr[1], kind: 'airspace', data: a,
-        tip: `<b style="color:${ink}">${a.name}</b><dl class="kv" style="margin-top:6px">
-          <dt>编号</dt><dd>${a.id}</dd><dt>类型</dt><dd>${a.type}</dd>
-          <dt>限高</dt><dd>${a.limitTx}</dd><dt>管理单位</dt><dd>${a.unit}</dd></dl>`
+        tip: `<b style="color:${ink}">${safeAirspaceText(a.name)}</b><dl class="kv" style="margin-top:6px">
+          <dt>编号</dt><dd>${safeAirspaceText(a.id)}</dd><dt>类型</dt><dd>${safeAirspaceText(a.type)}</dd>
+          <dt>限高</dt><dd>${safeAirspaceText(a.limitTx)}</dd><dt>管理单位</dt><dd>${safeAirspaceText(a.unit)}</dd>${historyRows}</dl>`
       });
     });
 

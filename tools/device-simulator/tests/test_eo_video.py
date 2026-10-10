@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -6,7 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from eo_video import EoSimulator, DEFAULT_VIDEO, video_config, public_video_config, sanitize_video_error, ffmpeg_arguments
+from eo_video import EoSimulator, DEFAULT_VIDEO, default_video_config, video_config, public_video_config, sanitize_video_error, ffmpeg_arguments
 
 TASK='11111111-1111-1111-1111-111111111111'
 STREAM='22222222-2222-2222-2222-222222222222'
@@ -276,8 +277,12 @@ class ConfigTests(unittest.TestCase):
             self.assertNotIn('secret-qa-only',text)
             self.assertNotIn('"publisher_password"',text)
             self.assertTrue(runtime.status()['video_config']['publisher_password_set'])
-    def test_defaults_off_and_non_loopback_rejected(self):
-        self.assertFalse(video_config({})['enabled'])
+    def test_defaults_on_with_explicit_opt_out_and_non_loopback_rejected(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertTrue(default_video_config()['enabled'])
+        with patch.dict(os.environ, {'QA_VIDEO_ENABLED': 'false'}):
+            self.assertFalse(default_video_config()['enabled'])
+        self.assertFalse(video_config({'enabled': False})['enabled'])
         for base in ('rtsp://example.com:8554','rtsp://user:pass@127.0.0.1:8554','rtsp://127.0.0.1:8554/other','http://127.0.0.1:8554','rtsp://127.0.0.1'):
             with self.assertRaises(ValueError): video_config({'rtsp_base':base})
     def test_missing_program_or_remote_source_rejected(self):

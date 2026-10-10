@@ -71,7 +71,8 @@ const path = require('node:path');
   const pageReads = page.match(/flightApi\.list\([^)]*\)/g) || [];
   // 统计卡只读 total；列表首读、翻页/定时重读与实时刷新都必须带同一份筛选。
   assert.deepEqual(pageReads.filter(call => !call.includes('size: 1')), [
-    'flightApi.list(planListQuery(filters, { page: nextPage, size: size.value })',
+    'flightApi.list(query)',
+    'flightApi.list({ ...query, page: candidate })',
     'flightApi.list(planListQuery(filters, { page: page.value, size: size.value })'
   ]);
   // 页面整份源码很长，断言失败时只报缺了哪条接线，不把整页打印出来。
@@ -90,47 +91,7 @@ const path = require('node:path');
   has(/planWindowText\(plan\)/, '行内计划时段');
   has(/upstreamPlanNotice\(/, '上级计划接口不可用提示');
   has(/flightApi\.upstreamStatus\(\)/, '读取上级计划接口状态');
-  // 关联跳转必须按精确 ID 取到列表外的任务；刷新保留定位，失败不回退到第一页任务。
-  const vm = require('node:vm');
-  const value = initial => ({ value: initial });
-  let detailCalls = 0, listCalls = 0, renderedDetails = 0;
-  let detailResult = { plan_id: 'outside-first-page', plan_no: 'PLAN-EXACT' };
-  const state = {
-    focusedPlanId: value('outside-first-page'), selected: value(null), plans: value([]), page: value(9), size: value(20),
-    total: value(0), activeTab: value('route'), detailLoading: value(false), loading: value(false), error: value(''),
-    detailError: value(''), routeLoaded: value(false), routeVersion: value(null), airspaceVersions: value([]), conflicts: value([]),
-    routeGeometryError: value(''), airspaceError: value(''), filters: {}, S: {},
-    planListQuery: F.planListQuery, loadRowActuals() {}, loadPlanKpis() {}, loadUpstreamStatus() {}, destroyRouteMap() {}, syncSelectedPlanHash() {},
-    flightApi: {
-      async detail(id) { detailCalls++; assert.equal(id, 'outside-first-page'); if (detailResult instanceof Error) throw detailResult; return detailResult; },
-      async list() { listCalls++; return { page: 1, total: 100, items: [{ plan_id: 'first-page-plan' }] }; }
-    },
-    async loadDetail(id, prefetched) { renderedDetails++; state.selected.value = prefetched || { plan_id: id }; }
-  };
-  const context = vm.createContext(state);
-  vm.runInContext('let planListToken = 0, planDetailToken = 0, trajectoryToken = 0, planFailure = null;\n'
-    + page.slice(page.indexOf('async function loadPlans('), page.indexOf('let planDetailToken = 0;')), context);
-  const loadPlans = vm.runInContext('loadPlans', context);
-  await loadPlans(1, 'outside-first-page');
-  assert.equal(state.plans.value.length, 1);
-  assert.equal(state.plans.value[0].plan_id, 'outside-first-page');
-  assert.equal(state.selected.value.plan_id, 'outside-first-page');
-  assert.equal(state.total.value, 1);
-  assert.equal(state.page.value, 1);
-  assert.equal(listCalls, 0);
-  await loadPlans();
-  assert.equal(renderedDetails, 1, '相同任务刷新不重建详情和地图');
-  assert.equal(detailCalls, 2);
-  detailResult = Object.assign(new Error('Not found'), { status: 404 });
-  await loadPlans();
-  assert.equal(state.selected.value, null);
-  assert.equal(state.plans.value.length, 0);
-  assert.equal(state.error.value, '关联任务不存在或已不可访问。');
-  assert.equal(listCalls, 0, '定位失败不能静默改选普通列表第一条');
-  state.focusedPlanId.value = null;
-  await loadPlans(1);
-  assert.equal(listCalls, 1);
-  assert.equal(state.total.value, 100);
-  assert.equal(state.selected.value.plan_id, 'first-page-plan');
+  // 关联跳转、分页及失败行为由 flightPlanNavigation.test.cjs 验证。
+  has(/const query = planListQuery\(filters, \{ page: nextPage, size: size\.value \}\)/, '关联定位与普通列表共用筛选参数');
   console.log('全部通过：飞行任务搜索、统计卡筛选、同名任务区分、任务下拉与上级接口提示');
 })().catch(error => { console.error(error); process.exitCode = 1; });

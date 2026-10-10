@@ -91,10 +91,13 @@ async function loadAggregate(showBusy = false) {
   if (showBusy) loading.value = true;
   try {
     const [overviewData, treeData, incidentData] = await Promise.all([
-      deviceApi.overview(), deviceApi.tree(filters), deviceApi.incidents({ page: 1, size: 20, stage: 'PENDING' })
+      deviceApi.overview({ enabled: true }), deviceApi.tree(filters), deviceApi.incidents({ page: 1, size: 20, stage: 'PENDING' })
     ]);
     if (disposed) return;
-    overview.value = overviewData; tree.value = treeData.items; incidents.value = incidentData.items;
+    overview.value = overviewData;
+    // 监控树接口暂不支持启用状态筛选；只展示状态明确为启用的设备。
+    tree.value = (treeData.items || []).filter(item => item.enabled === true);
+    incidents.value = incidentData.items;
     if (requestedDeviceId.value) {
       const requestedId = requestedDeviceId.value;
       let requested = tree.value.find(item => item.device_id === requestedId);
@@ -102,8 +105,10 @@ async function loadAggregate(showBusy = false) {
       if (!requested && treeData.truncated) {
         const detail = await deviceApi.detail(requestedId);
         if (disposed || requestedDeviceId.value !== requestedId) return;
-        linkedDevice.value = detail;
-        requested = detail;
+        if ((detail.device || detail).enabled === true) {
+          linkedDevice.value = detail;
+          requested = detail;
+        }
       }
       if (requested) {
         selectDevice(requested);

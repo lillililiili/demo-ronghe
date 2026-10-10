@@ -242,8 +242,8 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
     if (wanted.has('devices')) lastDevicesAt = generatedAt;
     const deviceTask = wanted.has('devices') && retain('devices', async () => {
       const rows = await allPages(deviceApi.list, { enabled: true });
-      // 部分旧后端不会消费 enabled 查询参数；前端仍须严格隐藏已停用的历史回放设备。
-      const enabledRows = rows.filter(row => row.enabled !== false);
+      // 部分旧后端不会消费 enabled 查询参数；只有明确启用的设备才进入感知列表。
+      const enabledRows = rows.filter(row => row.enabled === true);
       let events = [];
       if (permitted('device-events')) {
         try {

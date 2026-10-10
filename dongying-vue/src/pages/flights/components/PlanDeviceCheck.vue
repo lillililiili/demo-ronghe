@@ -51,27 +51,29 @@ onUnmounted(() => { generation++; controller?.abort(); clearInterval(timer); emi
     <template v-if="permitted && result">
       <p v-if="result.mqtt_simulation"><span class="tag t-gray">MQTT 模拟数据</span></p>
       <p class="check-summary">{{ result.message }}</p>
-      <p class="scope-note">航线周边 {{ Number(result.nearby_meters) / 1000 }} 公里 · 已检查 {{ rows.length }} 台设备</p>
+      <p class="scope-note">{{ result.selection_basis === 'DEVICE_SCAN_COVERAGE' ? '扫描范围覆盖航线' : '设备检查' }} · 已检查 {{ rows.length }} 台设备</p>
       <p v-if="rows.length">正常 {{ normalCount }} 台 · 异常 {{ abnormalRows.length }} 台 · 待核查 {{ rows.length - normalCount - abnormalRows.length }} 台</p>
-      <p v-if="result.unchecked_locations">{{ result.unchecked_locations }} 台设备缺少可用位置，无法确认是否在附近。</p>
-      <p v-if="!result.complete && rows.length">部分信息不完整，请核查下方设备。</p>
+      <p v-if="result.unchecked_locations">{{ result.unchecked_locations }} 台设备缺少位置，无法确认覆盖。</p>
+      <p v-if="result.unchecked_coverage">{{ result.unchecked_coverage }} 台设备的扫描覆盖关系待确认。</p>
       <div v-if="rows.length" class="device-rows">
         <article v-for="row in visibleRows" :key="row.device_id">
           <div class="device-heading">
             <span class="device-type-icon" :title="deviceMeta(row).label" :class="row.abnormal ? 'is-abnormal' : row.incidents?.length ? 'is-historical' : deviceCheckStatus(row) === '正常' ? 'is-normal' : ''" v-html="deviceIcon(row)"></span>
-            <b>{{ row.name }}</b>
-            <div class="device-status"><span v-if="row.simulated" class="tag t-gray">模拟设备</span><span class="tag" :class="row.abnormal ? 't-red' : row.incidents?.length ? 't-amber' : deviceCheckStatus(row) === '正常' ? 't-green' : 't-gray'">{{ deviceCheckStatus(row) }}</span></div>
+            <div class="device-heading-content">
+              <b>{{ row.name }}</b>
+              <div class="device-status"><span v-if="row.simulated" class="tag t-gray">模拟设备</span><span class="tag" :class="row.abnormal ? 't-red' : row.incidents?.length ? 't-amber' : deviceCheckStatus(row) === '正常' ? 't-green' : 't-gray'">{{ deviceCheckStatus(row) }}</span></div>
+            </div>
           </div>
-          <p>{{ deviceMeta(row).label }}</p>
+          <p class="device-meta"><span>{{ deviceMeta(row).label }}</span><span>距航线 {{ (Number(row.distance_m) / 1000).toFixed(2) }} 公里</span><span v-if="!row.complete && row.position && deviceCheckStatus(row) !== '状态未知'">信息待核查</span></p>
           <p v-if="!row.position">暂时无法取得设备位置。</p>
-          <p>距航线 {{ (Number(row.distance_m) / 1000).toFixed(2) }} 公里 · 最近在线上报：{{ date(row.last_heartbeat_at) }}</p>
-          <p v-if="row.abnormal">{{ ['BAD','DEGRADED'].includes(row.health_code) ? '设备运行异常' : '设备当前有异常' }} · 状态上报时间：{{ date(row.observed_at) }}</p>
+          <p>最近在线：{{ date(row.last_heartbeat_at) }}</p>
+          <p v-if="row.abnormal && ['BAD','DEGRADED'].includes(row.health_code) && !['设备故障','设备异常'].includes(deviceCheckStatus(row))">运行异常</p>
+          <p v-if="row.abnormal && row.observed_at != null && date(row.observed_at) !== date(row.last_heartbeat_at)">状态上报：{{ date(row.observed_at) }}</p>
           <p v-if="row.abnormal && !row.incidents?.length">尚无对应时段的告警记录，异常开始时间不明。</p>
           <details v-if="row.incidents?.length" class="incident-records">
             <summary>告警记录（{{ row.incidents.length }} 条）</summary>
             <p v-for="item in row.incidents" :key="item.incident_id">{{ item.reason }} · {{ date(item.detected_at) }}<span v-if="item.closed_at">（{{ date(item.closed_at) }} 已关闭）</span><span v-else>（尚未关闭）</span></p>
           </details>
-          <p v-if="!row.complete">该设备信息不完整。</p>
           <DeviceAbnormalNoticeButton class="device-detail-link" :plan-id="plan.plan_id" :device="row" />
         </article>
       </div>
@@ -96,17 +98,20 @@ p { color: var(--txt-3); margin: 5px 0; line-height: 1.5; overflow-wrap: anywher
 .device-expand-button { margin-top: 6px; padding: 4px 0; border: 0; background: transparent; color: var(--blue); font: inherit; font-size: 12px; line-height: 1.7; cursor: pointer; }
 .device-expand-button:hover { color: var(--cyan); text-decoration: underline; text-underline-offset: 3px; }
 article { padding: 8px 0; border-top: 1px solid var(--line); }
+article p { margin: 2px 0; }
+.device-meta { display: flex; flex-wrap: wrap; gap: 2px 10px; }
 .incident-records summary { width: fit-content; max-width: 100%; color: var(--cyan); cursor: pointer; line-height: 1.5; overflow-wrap: anywhere; }
 .incident-records summary:focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; }
 footer { margin-top: 8px; color: var(--txt-3); font-size: 11px; }
-.device-heading { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 8px; }
+.device-heading { display: grid; grid-template-columns: 24px minmax(0, 1fr); align-items: start; gap: 6px; margin-bottom: 3px; }
+.device-heading-content { display: flex; align-items: center; flex-wrap: wrap; gap: 3px 6px; min-width: 0; min-height: 24px; }
 .device-heading b { min-width: 0; overflow-wrap: anywhere; }
-.device-status { grid-column: 2; display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.device-status { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
 .device-status .tag { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
-.device-type-icon { display:inline-flex;flex-shrink:0;padding:4px;font-size:24px;border:0;color:var(--gray);background:transparent; }
+.device-type-icon { display:inline-flex;flex-shrink:0;font-size:24px;border:0;color:var(--gray);background:transparent; }
 .device-type-icon :deep(svg) { width:24px;height:24px; }
 .device-type-icon.is-abnormal { color: var(--red); }
 .device-type-icon.is-historical { color: var(--amber); }
 .device-type-icon.is-normal { color: var(--green); }
-.device-detail-link { display: flex; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.device-detail-link { display: flex; margin-top: 4px; }
 </style>

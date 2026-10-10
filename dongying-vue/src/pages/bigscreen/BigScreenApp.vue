@@ -177,7 +177,7 @@ const kpis = computed(() => {
   return [
     { label: '今日感知目标', value: dash(k.sensed_today), color: 'var(--blue)', image: hologram('uav') },
     { label: '今日告警', value: dash(k.alarms_today), color: 'var(--cyan)', icon: NotificationsOutline },
-    { label: '待研判目标', value: dash(k.pending_assessment), color: 'var(--amber)', icon: ScanOutline },
+    { label: '今日待研判目标', value: dash(k.pending_assessment), color: 'var(--amber)', icon: ScanOutline },
     { label: '设备总数', value: dash(d?.total), color: 'var(--blue)', image: hologram('radar') },
     { label: '在线设备', value: dash(d?.online), color: 'var(--cyan)', image: hologram('antenna') }
   ];

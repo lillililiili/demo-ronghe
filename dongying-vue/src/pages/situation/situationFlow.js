@@ -47,9 +47,9 @@ export function situationRouteRiskNeedsAttention(risk) {
   return !!risk && risk.active === true && risk.state === 'PENDING_NOTIFICATION';
 }
 
-/** 融合感知页的航线风险只展示已经核验、等待通知上级的当前风险。 */
+/** 待核验、待通知风险保留列表入口；当前位置与地图标记由独立时效条件控制。 */
 export function situationRouteRiskVisible(risk) {
-  if (!risk || risk.state !== 'PENDING_NOTIFICATION') return false;
+  if (!risk || !['PENDING_VERIFICATION', 'PENDING_NOTIFICATION'].includes(risk.state)) return false;
   if (!['SPACE_OBJECT', 'FOREIGN_OBJECT'].includes(risk.riskType || risk.risk_type)) return false;
   return !!(risk.planId || risk.plan_id) && !!(risk.routeVersionId || risk.route_version_id);
 }

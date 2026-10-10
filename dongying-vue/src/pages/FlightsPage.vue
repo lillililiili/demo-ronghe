@@ -67,8 +67,8 @@ const size = ref(S.size);
 const total = ref(0);
 const plans = ref([]);
 const selected = ref(null);
-// 外部关联入口按精确任务 ID 定位，不受普通列表的筛选与分页影响。
-const focusedPlanId = ref(null);
+// 关联入口只定位列表页和选中项，不缩小列表范围。
+const planList = ref(null);
 const planEnded = computed(() => ['COMPLETED', 'CANCELLED'].includes(selected.value?.status_code));
 const showRouteRisks = computed(() => !planEnded.value && !!selected.value?.route?.route_version_id);
 const routeVersion = ref(null);
@@ -224,6 +224,7 @@ let riskListToken = 0;
 let riskDetailToken = 0;
 let riskHistoryToken = 0;
 let riskKpiToken = 0;
+let riskKpiDayFrom = null;
 
 const RISK_STATE_TAG = { PENDING_VERIFICATION: 't-amber', PENDING_NOTIFICATION: 't-blue', NOTIFIED: 't-blue', ACKNOWLEDGED: 't-green', EXCLUDED: 't-gray' };
 const RISK_SEVERITY_LABEL = { CRITICAL: '紧急', HIGH: '高', MEDIUM: '中', LOW: '低' };
@@ -355,19 +356,19 @@ const routesInvolved = computed(() => {
   if (r.state === 'loading') return { text: '…', desc: '正在读取空间安全风险汇总' };
   if (r.state === 'error') return { text: '—', desc: '读取失败：' + r.error };
   if (r.value == null) return { text: '—', desc: r.availability === 'NO_DATA' ? '所选范围内还没有空间安全风险' : '暂无此项统计' };
-  return { text: Number(r.value).toLocaleString('en-US'), desc: '空间安全风险涉及的航线数' };
+  return { text: Number(r.value).toLocaleString('en-US'), desc: '北京时间今日发生的异物风险涉及的航线数' };
 });
 
 const riskKpis = computed(() => {
   const value = key => (riskKpiFailed.value[key] ? '—' : riskKpiTotals.value[key] == null ? '…' : Number(riskKpiTotals.value[key]).toLocaleString('en-US'));
   const desc = (key, text) => (riskKpiFailed.value[key] ? '总数读取失败' : text);
   return [
-    { label: '风险事件', value: value('all'), color: 'blue', icon: 'alert', desc: desc('all', '当前权限范围内总数') },
-    { label: '高风险事件', value: value('high'), color: 'red', icon: 'alert', desc: desc('high', 'severity=HIGH 的总数') },
-    { label: '气象风险', value: value('weather'), color: 'amber', icon: 'alert', desc: desc('weather', '当前权限范围内的气象风险总数') },
-    { label: '异物风险', value: value('bird'), color: 'green', icon: 'business:bird', desc: desc('bird', '当前权限范围内的空中异物风险总数') },
-    { label: '待核验', value: value('pending'), color: 'amber', icon: 'check', desc: desc('pending', 'state=PENDING_VERIFICATION 的总数') },
-    { label: '异物涉及航线', value: routesInvolved.value.text, color: 'purple', icon: 'zone', desc: routesInvolved.value.desc }
+    { label: '今日风险事件', value: value('all'), color: 'blue', icon: 'alert', desc: desc('all', '北京时间今日发生的风险总数') },
+    { label: '今日高风险事件', value: value('high'), color: 'red', icon: 'alert', desc: desc('high', '北京时间今日发生的高风险总数') },
+    { label: '今日气象风险', value: value('weather'), color: 'amber', icon: 'alert', desc: desc('weather', '北京时间今日发生的气象风险总数') },
+    { label: '今日异物风险', value: value('bird'), color: 'green', icon: 'business:bird', desc: desc('bird', '北京时间今日发生的异物风险总数') },
+    { label: '今日待核验', value: value('pending'), color: 'amber', icon: 'check', desc: desc('pending', '北京时间今日发生且仍待核验的风险总数') },
+    { label: '今日异物涉及航线', value: routesInvolved.value.text, color: 'purple', icon: 'zone', desc: routesInvolved.value.desc }
   ];
 });
 
@@ -549,27 +550,37 @@ async function loadPlans(nextPage = page.value, requestedId = null, { quiet = fa
   if (!keepVisible) loading.value = true;
   error.value = '';
   try {
-    const focusedId = focusedPlanId.value;
-    if (focusedId) {
-      const plan = await flightApi.detail(focusedId);
-      if (token !== planListToken || activeTab.value !== 'route') return;
-      if (plan?.plan_id !== focusedId) throw new Error('关联任务返回不一致，请重新读取。');
-      page.value = 1;
-      total.value = 1;
-      plans.value = [plan];
-      routeLoaded.value = true;
-      loading.value = false;
-      loadRowActuals(plans.value);
-      loadPlanKpis();
-      loadUpstreamStatus();
-      // 定时刷新仍定位此任务；数据未变化时不重置详情和地图。
-      if (selected.value?.plan_id !== focusedId || detailError.value || JSON.stringify(selected.value) !== JSON.stringify(plan)) {
-        await loadDetail(focusedId, plan);
+    let requestedPlan = null;
+    let selectionError = '';
+    if (requestedId) {
+      try {
+        requestedPlan = await flightApi.detail(requestedId);
+        if (requestedPlan?.plan_id !== requestedId) throw new Error('关联任务返回不一致，请重新读取。');
+      } catch (requestError) {
+        selectionError = requestError.status === 403 ? '当前账号无权查看这条关联任务。'
+          : requestError.status === 404 ? '关联任务不存在或已不可访问。'
+            : requestError.message || '读取关联任务失败';
       }
-      return;
+      if (token !== planListToken || activeTab.value !== 'route') return;
     }
-    const data = await flightApi.list(planListQuery(filters, { page: nextPage, size: size.value }));
+    const query = planListQuery(filters, { page: nextPage, size: size.value });
+    let data = await flightApi.list(query);
     if (token !== planListToken || activeTab.value !== 'route') return;
+    // 只在关联跳转时查找所在分页；刷新和普通翻页仍只读当前页。
+    if (requestedPlan && !data.items.some(item => item.plan_id === requestedId)) {
+      const firstPage = data;
+      const lastPage = Math.ceil(data.total / query.size);
+      for (let candidate = 1; candidate <= lastPage; candidate++) {
+        if (candidate === nextPage) continue;
+        data = await flightApi.list({ ...query, page: candidate });
+        if (token !== planListToken || activeTab.value !== 'route') return;
+        if (data.items.some(item => item.plan_id === requestedId)) break;
+      }
+      if (!data.items.some(item => item.plan_id === requestedId)) {
+        data = firstPage;
+        selectionError = '关联任务已不在当前可访问列表，请刷新后重试。';
+      }
+    }
     page.value = data.page;
     total.value = data.total;
     plans.value = data.items;
@@ -579,7 +590,24 @@ async function loadPlans(nextPage = page.value, requestedId = null, { quiet = fa
     loadRowActuals(plans.value);
     loadPlanKpis();
     loadUpstreamStatus();
-    if (requestedId) { await loadDetail(requestedId); return; }
+    if (requestedId) {
+      S.selectedPlanId = requestedId;
+      if (selectionError) {
+        selected.value = null;
+        routeVersion.value = null;
+        airspaceVersions.value = [];
+        conflicts.value = [];
+        destroyRouteMap();
+        detailError.value = selectionError;
+        return;
+      }
+      syncSelectedPlanHash(requestedId);
+      await loadDetail(requestedId, requestedPlan);
+      if (token !== planListToken || activeTab.value !== 'route') return;
+      await nextTick();
+      planList.value?.scrollToSelected();
+      return;
+    }
     if (!selected.value || !plans.value.some(item => item.plan_id === selected.value.plan_id)) {
       selected.value = plans.value[0] || null;
       S.selectedPlanId = selected.value?.plan_id || null;
@@ -609,39 +637,40 @@ async function loadPlans(nextPage = page.value, requestedId = null, { quiet = fa
     destroyRouteMap();
     routeLoaded.value = false;
     planFailure = requestError;
-    error.value = focusedPlanId.value && requestError.status === 403 ? '当前账号无权查看这条关联任务。'
-      : focusedPlanId.value && requestError.status === 404 ? '关联任务不存在或已不可访问。'
-        : requestError.message || '读取飞行任务失败';
+    error.value = requestError.message || '读取飞行任务失败';
   } finally {
     if (token === planListToken) loading.value = false;
   }
 }
 
 let planDetailToken = 0;
-async function loadDetail(planId, prefetchedPlan = null) {
+async function loadDetail(planId, prefetchedPlan = null, { quiet = false } = {}) {
+  const keep = quiet && selected.value?.plan_id === planId && !detailError.value;
   const current = ++planDetailToken;
-  routeRisksToken++;
-  Object.assign(routeRisks, { planId: null, items: [], loaded: false, loading: false, error: '' });
-  selectedPlanRiskId.value = null;
-  planRiskViewKey = '';
   S.selectedPlanId = planId;
-  trajectoryToken++;
-  trajectory.value = null;
-  matchedTrackNote.value = '';
-  selected.value = null;
-  planDeviceCheck.value = null;
-  detailLoading.value = true;
   detailError.value = '';
-  routeVersion.value = null;
-  airspaceVersions.value = [];
-  conflicts.value = [];
-  routeGeometryError.value = '';
-  airspaceError.value = '';
-  routeGeometryLoading.value = false;
-  actuals.value = null;
-  actualsError.value = '';
-  matchedTarget.value = null;
-  destroyRouteMap();
+  if (!keep) {
+    routeRisksToken++;
+    Object.assign(routeRisks, { planId: null, items: [], loaded: false, loading: false, refreshing: false, error: '' });
+    selectedPlanRiskId.value = null;
+    planRiskViewKey = '';
+    trajectoryToken++;
+    trajectory.value = null;
+    matchedTrackNote.value = '';
+    selected.value = null;
+    planDeviceCheck.value = null;
+    detailLoading.value = true;
+    routeVersion.value = null;
+    airspaceVersions.value = [];
+    conflicts.value = [];
+    routeGeometryError.value = '';
+    airspaceError.value = '';
+    routeGeometryLoading.value = false;
+    actuals.value = null;
+    actualsError.value = '';
+    matchedTarget.value = null;
+    destroyRouteMap();
+  }
   let plan = null;
   try {
     plan = prefetchedPlan || await flightApi.detail(planId);
@@ -650,13 +679,15 @@ async function loadDetail(planId, prefetchedPlan = null) {
     S.selectedPlanId = plan.plan_id;
   } catch (requestError) {
     if (current !== planDetailToken) return;
+    selected.value = null;
+    destroyRouteMap();
     detailError.value = requestError.message || '读取任务详情失败';
   } finally {
     if (current === planDetailToken) detailLoading.value = false;
   }
   // 计划详情只要求 flight:read；航线几何另行读取，不能让 route:read 失败掩盖已取得的计划事实。
   if (plan && selected.value?.plan_id === plan.plan_id) {
-    await Promise.all([loadRouteGeometry(plan), loadAirspaceContext(plan), loadActuals(plan), loadRouteRisks(plan)]);
+    await Promise.all([loadRouteGeometry(plan, { quiet: keep }), loadAirspaceContext(plan, { quiet: keep }), loadActuals(plan, { quiet: keep }), loadRouteRisks(plan, keep ? routeRisks.page : 1, { quiet: keep })]);
   }
 }
 
@@ -674,7 +705,8 @@ const rowActuals = reactive({});
 let rowActualsSeq = 0;
 async function loadRowActuals(rows) {
   const seq = ++rowActualsSeq;
-  Object.keys(rowActuals).forEach(key => { delete rowActuals[key]; });
+  const ids = new Set(rows.map(plan => plan.plan_id));
+  Object.keys(rowActuals).forEach(key => { if (!ids.has(key)) delete rowActuals[key]; });
   await Promise.all(rows.map(async plan => {
     let section = null;
     if (['EXECUTING', 'COMPLETED'].includes(plan.status_code)) {
@@ -713,12 +745,12 @@ const matchedTrackNote = ref('');
 const trajectory = ref(null);
 const trajectoryPoints = computed(() => trustedTrajectoryPoints(trajectory.value));
 let trajectoryToken = 0;
-async function loadMatchedTarget(plan) {
+async function loadMatchedTarget(plan, { quiet = false } = {}) {
   const current = ++trajectoryToken;
   matchedTarget.value = null;
-  trajectory.value = null;
+  if (!quiet) trajectory.value = null;
   matchedTrackNote.value = '';
-  if (!['EXECUTING', 'COMPLETED'].includes(plan?.status_code)) return;
+  if (!['EXECUTING', 'COMPLETED'].includes(plan?.status_code)) { trajectory.value = null; return; }
   try {
     const result = await flightApi.trajectory(plan.plan_id);
     if (current !== trajectoryToken || selected.value?.plan_id !== plan.plan_id) return;
@@ -728,12 +760,14 @@ async function loadMatchedTarget(plan) {
     renderRouteMap();
   } catch (requestError) {
     if (current !== trajectoryToken || selected.value?.plan_id !== plan.plan_id) return;
+    trajectory.value = null;
+    renderRouteMap();
     matchedTrackNote.value = `匹配目标轨迹读取失败：${requestError?.message || '无目标读取权限'}`;
   }
 }
 
 /* ---------- 本航线风险（按 legacy「按航线看」区块）：沿线风险直接给「通知上级」入口，状态机与写入口仍是风险页签那一套 ---------- */
-const routeRisks = reactive({ planId: null, loading: false, error: '', items: [], total: 0, currentTotal: 0, uncertainTotal: 0, asOf: null, page: 1, size: 50, loaded: false });
+const routeRisks = reactive({ planId: null, loading: false, refreshing: false, error: '', items: [], total: 0, currentTotal: 0, uncertainTotal: 0, asOf: null, page: 1, size: 50, loaded: false });
 const selectedPlanRiskId = ref(null);
 const planRiskRecordsRef = ref(null);
 const planRiskMarkers = shallowRef([]);
@@ -751,13 +785,16 @@ const locatedPlanRisks = computed(() => planMapRisks.value.flatMap(risk => {
 }));
 let routeRisksToken = 0;
 let routeRisksTimer;
-async function loadRouteRisks(plan, pageNumber = 1) {
+async function loadRouteRisks(plan, pageNumber = 1, { quiet = false } = {}) {
   const token = ++routeRisksToken;
   const samePlan = routeRisks.planId === plan?.plan_id;
-  if (!samePlan) Object.assign(routeRisks, { planId: plan?.plan_id || null, items: [], total: 0, currentTotal: 0, uncertainTotal: 0, asOf: null, error: '', loaded: false, loading: false, page: pageNumber });
+  if (!samePlan) Object.assign(routeRisks, { planId: plan?.plan_id || null, items: [], total: 0, currentTotal: 0, uncertainTotal: 0, asOf: null, error: '', loaded: false, loading: false, refreshing: false, page: pageNumber });
   else routeRisks.error = '';
-  if (!plan?.route?.route_version_id || ['COMPLETED', 'CANCELLED'].includes(plan.status_code)) return;
-  routeRisks.loading = true;
+  if (!plan?.route?.route_version_id || ['COMPLETED', 'CANCELLED'].includes(plan.status_code)) {
+    routeRisks.loading = false; routeRisks.refreshing = false; return;
+  }
+  routeRisks.loading = !(quiet && samePlan && routeRisks.loaded && routeRisks.page === pageNumber);
+  routeRisks.refreshing = true;
   try {
     const data = await riskApi.listCurrentRisks({ ...DISPLAY_RISK_SCOPE, plan_id: plan.plan_id, page: pageNumber, size: routeRisks.size });
     if (token !== routeRisksToken || activeTab.value !== 'route' || selected.value?.plan_id !== plan.plan_id) return;
@@ -779,7 +816,7 @@ async function loadRouteRisks(plan, pageNumber = 1) {
     if (token !== routeRisksToken || activeTab.value !== 'route' || selected.value?.plan_id !== plan.plan_id) return;
     routeRisks.error = requestError.message || '读取本航线风险失败';
   } finally {
-    if (token === routeRisksToken) routeRisks.loading = false;
+    if (token === routeRisksToken) { routeRisks.loading = false; routeRisks.refreshing = false; }
   }
 }
 const routeRiskRecords = computed(() => planMapRisks.value.map((item, index) => {
@@ -848,16 +885,17 @@ function clearRiskPlanScope() {
   applyRiskFilters();
 }
 
-async function loadActuals(plan) {
-  actualsLoading.value = true;
+async function loadActuals(plan, { quiet = false } = {}) {
+  actualsLoading.value = !quiet || !actuals.value;
   actualsError.value = '';
   try {
     const data = await flightApi.actuals(plan.plan_id);
     if (activeTab.value !== 'route' || selected.value?.plan_id !== plan.plan_id) return;
     actuals.value = data;
-    loadMatchedTarget(plan);
+    loadMatchedTarget(plan, { quiet });
   } catch (requestError) {
     if (activeTab.value !== 'route' || selected.value?.plan_id !== plan.plan_id) return;
+    actuals.value = null;
     actualsError.value = requestError.message || '读取任务与实际对照失败';
   } finally {
     if (selected.value?.plan_id === plan.plan_id) actualsLoading.value = false;
@@ -906,9 +944,9 @@ const targetAltitudeText = computed(() => {
 });
 
 
-async function loadRouteGeometry(plan) {
-  if (!plan.route?.route_version_id) return;
-  routeGeometryLoading.value = true;
+async function loadRouteGeometry(plan, { quiet = false } = {}) {
+  if (!plan.route?.route_version_id) { routeVersion.value = null; renderRouteMap(); return; }
+  routeGeometryLoading.value = !quiet || !routeVersion.value;
   routeGeometryError.value = '';
   try {
     const version = await flightApi.routeVersion(plan.route.route_version_id);
@@ -918,6 +956,7 @@ async function loadRouteGeometry(plan) {
     renderRouteMap();
   } catch (requestError) {
     if (activeTab.value !== 'route' || selected.value?.plan_id !== plan.plan_id) return;
+    routeVersion.value = null;
     routeGeometryError.value = requestError.message || '你没有查看航线的权限，或航线位置加载失败';
     renderRouteMap();
   } finally {
@@ -1025,18 +1064,20 @@ function syncDeviceMarkers(map) {
 
 function renderRouteMap() {
   if (activeTab.value !== 'route') return;
-  destroyRouteMap();
   const coordinates = trustedCenterline.value;
   const airspaces = trustedAirspaces.value;
   const target = matchedTarget.value;
   const points = trajectoryPoints.value;
-  if (activeTab.value !== 'route' || !mapHost.value || (!coordinates && !airspaces.length && !points.some(Boolean) && !mapDevices.value.length && !locatedPlanRisks.value.length)) return;
-  routeMap = new window.MapView(mapHost.value, {
+  if (!mapHost.value || (!coordinates && !airspaces.length && !points.some(Boolean) && !mapDevices.value.length && !locatedPlanRisks.value.length)) { destroyRouteMap(); return; }
+  const created = !routeMap;
+  if (created) routeMap = new window.MapView(mapHost.value, {
     zoom: 3.2, maxDev: 0, legend: false, layers: { device: false, track: !!target, alarm: false }
   });
   routeMap.setData({ airspaces: [], devices: [], targets: target ? [target] : [], alarms: [] });
-  if (target) routeMap.sel = target.id;
-  const drawBase = routeMap.drawOverlay.bind(routeMap);
+  routeMap.setLayer('track', !!target && (activeTab.value !== 'events' || !objectRiskSelected.value));
+  routeMap.sel = target?.id || null;
+  // draw() 只预约下一帧；航线必须在该帧清屏、绘制基础业务层后补画。
+  const drawBase = routeMap._flightDrawBase || (routeMap._flightDrawBase = routeMap.drawOverlay.bind(routeMap));
   routeMap.drawOverlay = function drawRouteCenterline() {
     drawBase();
     const context = this.ctx;
@@ -1074,6 +1115,7 @@ function renderRouteMap() {
   const flightExtent = [...(coordinates || []), ...points.filter(Boolean).map(p => [p.lon, p.lat]),
     ...locatedPlanRisks.value.flatMap(({ location }) => location.polygon || [location.anchor])];
   const extent = flightExtent.length ? flightExtent : mapDevices.value.map(row => [row.position.lon, row.position.lat]);
+  if (!created) { routeMap.draw(); return; }
   if (extent.length) routeMap.fitTo(extent, 0.18);
   else {
     const [longitude, latitude] = target ? [target.lon, target.lat] : airspaces[0].polygons[0][0][0];
@@ -1081,8 +1123,8 @@ function renderRouteMap() {
   }
 }
 
-async function loadAirspaceContext(plan) {
-  airspaceLoading.value = true;
+async function loadAirspaceContext(plan, { quiet = false } = {}) {
+  airspaceLoading.value = !quiet;
   airspaceError.value = '';
   try {
     const facts = await flightApi.conflicts(plan.plan_id);
@@ -1107,17 +1149,14 @@ async function loadAirspaceContext(plan) {
 }
 
 function applyFilters() {
-  if (focusedPlanId.value) {
-    focusedPlanId.value = null;
-    syncSelectedPlanHash(null);
-  }
+  syncSelectedPlanHash(null);
   routeLoaded.value = false;
   loadPlans(1);
 }
 
 function refreshPlans() {
   if (activeTab.value !== 'route' || loading.value) return;
-  loadPlans(page.value, null, { quiet: true });
+  loadPlans(page.value, detailError.value ? S.selectedPlanId : null, { quiet: true });
 }
 
 /* 下拉一改就查（与 legacy 一致）；关键词走回车/查询。不用 watch：深链清筛选时不能再抢先重读一次列表。 */
@@ -1254,8 +1293,16 @@ async function loadRisks(nextPage = riskPage.value, requestedId = null) {
 
 async function loadRiskKpis() {
   const token = ++riskKpiToken;
+  const day = beijingDayWindow();
+  const occurred = { occurred_from: day.from, occurred_to: day.to };
+  if (riskKpiDayFrom !== day.from) {
+    riskKpiTotals.value = {};
+    riskKpiFailed.value = {};
+    routesSummary.value = { state: 'loading', value: null, availability: '', error: '' };
+  }
+  riskKpiDayFrom = day.from;
   const keys = Object.keys(RISK_KPI_QUERIES);
-  const results = await Promise.allSettled(keys.map(key => riskApi.listRisks({ ...EVENT_RISK_SCOPE, ...RISK_KPI_QUERIES[key], page: 1, size: 1 })));
+  const results = await Promise.allSettled(keys.map(key => riskApi.listRisks({ ...EVENT_RISK_SCOPE, ...occurred, ...RISK_KPI_QUERIES[key], page: 1, size: 1 })));
   if (token !== riskKpiToken) return;
   const totals = {};
   const failed = {};
@@ -1265,12 +1312,12 @@ async function loadRiskKpis() {
   });
   riskKpiTotals.value = totals;
   riskKpiFailed.value = failed;
-  await loadRoutesInvolved(token);
+  await loadRoutesInvolved(token, occurred);
 }
 
-async function loadRoutesInvolved(token) {
+async function loadRoutesInvolved(token, occurred) {
   try {
-    const summary = await riskApi.spaceRiskSummary(DISPLAY_RISK_SCOPE);
+    const summary = await riskApi.spaceRiskSummary({ ...DISPLAY_RISK_SCOPE, ...occurred });
     if (token !== riskKpiToken) return;
     const metric = summary?.routes_involved ?? summary?.metrics?.routes_involved ?? null;
     routesSummary.value = metric && typeof metric === 'object'
@@ -1303,27 +1350,30 @@ function clearRiskDetail() {
 }
 
 /* ---------- 风险页签：详情 / 历史 / 地图依据 ---------- */
-async function loadRiskDetail(riskId) {
-  resetObjectMap();
+async function loadRiskDetail(riskId, { quiet = false } = {}) {
+  const keep = quiet && selectedRisk.value?.risk_id === riskId && !riskDetailError.value;
+  if (!keep) resetObjectMap();
   const token = ++riskDetailToken;
   riskHistoryToken += 1;
   activeRiskId.value = riskId;
-  riskDetailLoading.value = true;
+  riskDetailLoading.value = !keep;
   riskDetailError.value = '';
-  selectedRisk.value = null;
-  resetRiskWeather();
-  riskHistoryError.value = '';
-  riskRouteVersion.value = null;
-  riskTarget.value = null;
-  riskTargetNote.value = '';
-  riskMapError.value = '';
-  riskMapLoading.value = false;
-  destroyRouteMap();
+  if (!keep) {
+    selectedRisk.value = null;
+    resetRiskWeather();
+    riskHistoryError.value = '';
+    riskRouteVersion.value = null;
+    riskTarget.value = null;
+    riskTargetNote.value = '';
+    riskMapError.value = '';
+    riskMapLoading.value = false;
+    destroyRouteMap();
+  }
   let detail = null;
   try {
     const [risk, history] = await Promise.all([
       riskApi.getRisk(riskId),
-      riskApi.listRiskVerifications(riskId, { page: 1, size: HISTORY_PAGE_SIZE })
+      riskApi.listRiskVerifications(riskId, { page: keep ? riskHistoryPage.value : 1, size: HISTORY_PAGE_SIZE })
     ]);
     if (token !== riskDetailToken) return;
     if (!EVENT_RISK_TYPES.includes(risk.risk_type)) {
@@ -1340,6 +1390,7 @@ async function loadRiskDetail(riskId) {
     S.selectedRiskId = risk.risk_id;
   } catch (requestError) {
     if (token !== riskDetailToken) return;
+    destroyRouteMap();
     selectedRisk.value = null;
     riskHistory.value = [];
     riskHistoryTotal.value = 0;
@@ -1372,8 +1423,9 @@ function resetRiskWeather() {
 }
 
 async function loadRiskWeather(risk, token) {
-  if (risk.risk_type !== 'WEATHER') return;
-  riskWeatherLoading.value = true;
+  if (risk.risk_type !== 'WEATHER') { resetRiskWeather(); return; }
+  riskWeatherLoading.value = !riskWeather.value;
+  riskWeatherError.value = '';
   try {
     const fact = await riskApi.getWeatherFact(risk.risk_id);
     if (token !== riskDetailToken) return;
@@ -1383,6 +1435,7 @@ async function loadRiskWeather(risk, token) {
     if (fact && !weatherPolygon(fact)) riskWeatherError.value = '气象范围坐标不完整，暂时无法绘制';
   } catch (error) {
     if (token !== riskDetailToken) return;
+    riskWeather.value = null;
     riskWeatherError.value = `气象区域读取失败：${error?.message || '请重试'}`;
   } finally {
     if (token === riskDetailToken) riskWeatherLoading.value = false;
@@ -1406,23 +1459,25 @@ function toggleWeatherLayer() {
 
 /** 风险关联的感知目标：风险行里带 target_id，位置要再读一次目标详情才有。 */
 async function loadRiskTargetPosition(risk, token) {
-  if (!risk.target_id) return;
+  if (!risk.target_id) { riskTarget.value = null; return; }
+  riskTargetNote.value = '';
   try {
     const loaded = await loadTargetPosition(risk.target_id, { risk: severityLabel(risk.severity) });
     if (token !== riskDetailToken) return;
     objectTrackError.value = loaded.trackError ? '轨迹暂时无法读取' : '';
-    if (!loaded.mapTarget) { riskTargetNote.value = `相关目标的位置无法确认`; return; }
+    if (!loaded.mapTarget) { riskTarget.value = null; riskTargetNote.value = `相关目标的位置无法确认`; return; }
     riskTarget.value = { ...loaded.mapTarget, id: '关联目标' };
   } catch (requestError) {
     if (token !== riskDetailToken) return;
+    riskTarget.value = null;
     riskTargetNote.value = `关联目标位置读取失败：${requestError?.message || '无目标读取权限'}`;
   }
 }
 
 async function loadRiskRouteGeometry(risk, token) {
   // 风险本身没有坐标字段；只有服务端返回 route_version_id 且本人具备 route:read 时才读取已保存航线版本几何。
-  if (!risk.route_version_id || !canReadRoute.value) return;
-  riskMapLoading.value = true;
+  if (!risk.route_version_id || !canReadRoute.value) { riskRouteVersion.value = null; return; }
+  riskMapLoading.value = !riskRouteVersion.value;
   riskMapError.value = '';
   try {
     const version = await flightApi.routeVersion(risk.route_version_id);
@@ -1430,6 +1485,7 @@ async function loadRiskRouteGeometry(risk, token) {
     riskRouteVersion.value = version;
   } catch (requestError) {
     if (token !== riskDetailToken) return;
+    riskRouteVersion.value = null;
     riskMapError.value = `航线位置加载失败：${riskMessageOf(requestError, '你没有查看该航线的权限，或航线记录已不存在')}`;
   } finally {
     if (token === riskDetailToken) riskMapLoading.value = false;
@@ -1438,12 +1494,10 @@ async function loadRiskRouteGeometry(risk, token) {
 
 function renderRiskMap() {
   if (activeTab.value !== 'events') return;
-  destroyRouteMap();
   if (activeTab.value !== 'events' || !riskMapHost.value) return;
   const coordinates = riskMapCoords.value;
   const point = riskPoint.value;
   const target = riskTarget.value ? { ...riskTarget.value, activeRisk: abnormalActive(selectedRisk.value) } : null;
-  const weather = riskWeather.value;
   const ring = weatherRing.value;
   /* 视野按"这条风险相关的全部几何"收：风险点、关联目标、航线中心线三样有几样算几样。
      只 centerAt 或只按中心线收，都会把另外两样推到视野外，看上去还是一张空图。 */
@@ -1451,20 +1505,22 @@ function renderRiskMap() {
   if (ring) focus.push(...ring);
   if (point) focus.push([point.longitude, point.latitude]);
   if (target && Number.isFinite(target.lon) && Number.isFinite(target.lat)) focus.push([target.lon, target.lat]);
-  routeMap = new window.MapView(riskMapHost.value, {
+  const created = !routeMap;
+  if (created) routeMap = new window.MapView(riskMapHost.value, {
     zoom: focus.length ? 3.2 : 1, maxDev: 0, legend: false,
     drawUnderMarkers: view => {
-      if (ring && weatherVisible.value) drawWeatherArea(view.ctx, view, weather, ring, coordinates, weatherColor.value,
+      if (weatherRing.value && weatherVisible.value) drawWeatherArea(view.ctx, view, riskWeather.value, weatherRing.value, riskMapCoords.value, weatherColor.value,
         weatherKind.value, simulatedWeather.value, weatherBoundaryVisible.value, weatherOpacity.value);
     },
     layers: { device: false, track: !!target && !objectRiskSelected.value, alarm: false }
   });
   routeMap.setData({ airspaces: [], devices: [], targets: target && !objectRiskSelected.value ? [target] : [], alarms: [] });
-  if (target) routeMap.sel = target.id;
-  if (!coordinates && !point && !ring && !objectTrail.value.length) { if (focus.length) routeMap.fitTo(focus); return; }
+  routeMap.setLayer('track', !!target && (activeTab.value !== 'events' || !objectRiskSelected.value));
+  routeMap.sel = target?.id || null;
+
   const version = riskRouteVersion.value;
   const label = '关联航线';
-  const drawBase = routeMap.drawOverlay.bind(routeMap);
+  const drawBase = routeMap._flightDrawBase || (routeMap._flightDrawBase = routeMap.drawOverlay.bind(routeMap));
   routeMap.drawOverlay = function drawRiskRouteCenterline() {
     drawBase();
     const context = this.ctx;
@@ -1499,7 +1555,8 @@ function renderRiskMap() {
     }
     context.restore();
   };
-  if (focus.length) routeMap.fitTo(focus);
+  if (!routeMap._flightFitted && focus.length) { routeMap.fitTo(focus); routeMap._flightFitted = true; }
+  else routeMap.draw();
 }
 
 async function changeRiskHistoryPage(nextPage) {
@@ -1737,7 +1794,6 @@ function showRouteTab(requestedId = null) {
   activeTab.value = 'route';
   destroyRouteMap();
   if (requestedId) {
-    focusedPlanId.value = requestedId;
     planDetailTab.value = 'plan';
     Object.assign(filters, { status_code: '', keyword: '', today: false });
     keywordDraft.value = '';
@@ -1789,13 +1845,14 @@ onMounted(() => {
   syncTabByRoute();
   // 只刷新读取结果；不以轮询代替风险研判或触发通知。
   routeRisksTimer = window.setInterval(() => {
-    if (!document.hidden && activeTab.value === 'route' && showRouteRisks.value && !routeRisks.loading) {
-      loadRouteRisks(selected.value, routeRisks.page);
+    if (!document.hidden && activeTab.value === 'route' && showRouteRisks.value && !routeRisks.refreshing) {
+      loadRouteRisks(selected.value, routeRisks.page, { quiet: true });
     }
   }, 30000);
   // 上级计划可能在页面打开后才到达；定时只重读列表，不触发任何业务动作。
   planRefreshTimer = window.setInterval(() => {
     if (!document.hidden && activeTab.value === 'route') refreshPlans();
+    if (!document.hidden && activeTab.value === 'events' && riskKpiDayFrom !== beijingDayWindow().from) loadRiskKpis();
   }, 30000);
 });
 
@@ -1809,10 +1866,7 @@ async function realtimeRefreshPlans(topics) {
     if (error.value) throw planFailure || new Error(error.value);
     return;
   }
-  if (focusedPlanId.value && topics.some(topic => ['plan', 'airspace', '*'].includes(topic))) {
-    await loadPlans(1);
-    if (error.value) throw planFailure || new Error(error.value);
-  } else if (topics.some(topic => ['plan', 'airspace', '*'].includes(topic))) {
+  if (topics.some(topic => ['plan', 'airspace', '*'].includes(topic))) {
     const token = ++planListToken;
     const selectedId = selected.value?.plan_id;
     const before = JSON.stringify(plans.value.find(item => item.plan_id === selectedId) || null);
@@ -1826,15 +1880,15 @@ async function realtimeRefreshPlans(topics) {
       loadPlanKpis();
       loadUpstreamStatus();
       const after = JSON.stringify(plans.value.find(item => item.plan_id === selectedId) || null);
-      if (selectedId && after !== before && after !== 'null' && !detailLoading.value) await loadDetail(selectedId);
+      if (selectedId && after !== before && after !== 'null' && !detailLoading.value) await loadDetail(selectedId, null, { quiet: true });
     } catch (requestError) {
       // 静默刷新失败保留当前列表，抛给实时刷新退避重试。
       if (token === planListToken) throw requestError;
     }
   }
-  if (showRouteRisks.value && selected.value && !routeRisks.loading
+  if (showRouteRisks.value && selected.value && !routeRisks.refreshing
     && topics.some(topic => ['risk', 'target', '*'].includes(topic))) {
-    loadRouteRisks(selected.value, routeRisks.page);
+    loadRouteRisks(selected.value, routeRisks.page, { quiet: true });
   }
 }
 
@@ -1856,7 +1910,7 @@ async function realtimeRefreshRisks() {
     risks.value = data.items || [];
     riskTotal.value = data.total;
     const after = JSON.stringify(risks.value.find(item => item.risk_id === selectedId) || null);
-    if (selectedId && after !== before && after !== 'null') await loadRiskDetail(selectedId);
+    if (selectedId && after !== before && after !== 'null') await loadRiskDetail(selectedId, { quiet: true });
   } catch (requestError) {
     // 静默刷新失败保留当前列表，抛给实时刷新退避重试。
     if (token === riskListToken) throw requestError;
@@ -1977,7 +2031,7 @@ onUnmounted(() => {
                 <div class="detail-hero-copy"><div class="detail-hero-eyebrow">飞行风险</div><div class="detail-hero-title">{{ labelOf(RISK_TYPE_LABEL, selectedRisk.risk_type, '风险类型未提供') }}</div><div v-if="selectedRisk.risk_no" class="detail-hero-id">{{ selectedRisk.risk_no }}</div></div>
                 <div class="detail-hero-side"><div class="detail-hero-tags"><span class="tag" :class="severityTag(selectedRisk.severity)">{{ severityLabel(selectedRisk.severity) }}</span><span class="tag" :class="stateTag(selectedRisk.state)">{{ stateLabel(selectedRisk.state) }}</span></div></div>
               </div></div>
-              <div v-if="riskTab === 'event'" class="rk-event-grid" :class="{ 'has-optical': selectedRisk.risk_type !== 'WEATHER' }">
+              <div v-if="riskTab === 'event'" class="rk-event-grid">
               <RiskOpticalPanel v-if="selectedRisk.risk_type !== 'WEATHER'" :key="selectedRisk.risk_id" :risk="selectedRisk" />
               <div class="sect rk-event-info"><h4>事件信息</h4><dl class="kv kv-surface">
                 <dt>来源</dt><dd>{{ sourceDescription(selectedRisk.source_name, selectedRisk.source_code, selectedRisk.source_display_mode || selectedRisk.source_mode) }}</dd>
@@ -2055,11 +2109,10 @@ onUnmounted(() => {
             </div>
           </div>
           <p v-if="planFilterSummary" class="workspace-selection-note plan-filter-note"><span>{{ planFilterSummary }}</span><button class="btn ghost" type="button" :disabled="loading" @click="clearPlanFilters">清除筛选</button></p>
-          <p v-if="focusedPlanId" class="workspace-selection-note plan-filter-note"><span>{{ loading ? '正在定位关联任务' : error ? '关联任务未能读取' : '已定位关联任务' }}</span><button class="btn ghost" type="button" @click="clearPlanFilters">查看全部任务</button></p>
           <div v-if="loading" class="empty">正在读取飞行任务</div>
           <div v-else-if="error" class="empty"><button class="btn" type="button" @click="loadPlans(page, S.selectedPlanId)">重新读取任务</button></div>
           <div v-else-if="!plans.length" class="empty">{{ planFilterSummary ? '没有符合筛选条件的任务' : upstreamNotice ? '本系统暂无任务；上级任务数据暂时取不到，不代表上级没有任务' : '暂无可访问的飞行任务' }}</div>
-          <FlightRecordList v-else :items="planRecords" :selected-id="selected?.plan_id || null" label="飞行任务列表" @select="selectPlan" />
+          <FlightRecordList v-else ref="planList" :items="planRecords" :selected-id="selected?.plan_id || null" label="飞行任务列表" @select="selectPlan" />
           <FlightListPager :page="page" :page-size="size" :total="total" :loading="loading" @update:page="changePage" @update:page-size="changePageSize" />
         </UPanel>
 
@@ -2157,24 +2210,14 @@ onUnmounted(() => {
 .flight-main,.risk-main { display: grid; grid-template-columns: minmax(250px, .95fr) minmax(300px, 1.35fr) minmax(300px, 1.1fr); grid-template-rows: minmax(0, 1fr); margin-top: 12px; flex: 1; min-height: 0; align-items: stretch; gap: 12px; }
 /* 计划页签多了上级接口提示、搜索行和筛选提示；视口较矮（1280×720、1366×768）时主区不再被压到看不全一条计划，
    改为在页面区域内纵向滚动。风险页签不受影响。 */
-.flight-main { min-height: 500px; }
+.flight-main { min-height: 500px; grid-template-columns: minmax(240px, .8fr) minmax(300px, 1.4fr) minmax(320px, 420px); }
 .workspace-list { grid-column: 1; grid-row: 1; }
 .workspace-map { grid-column: 2; grid-row: 1; }
 .workspace-detail { grid-column: 3; grid-row: 1; container: flight-detail / inline-size; }
-/* 2026-10-07 用户要求任务详情、风险详情尽量一屏看完：详情栏够宽时分两栏排，内容不删，只换排法。 */
+/* 风险详情始终单列，各信息块使用详情栏完整宽度。 */
+.rk-event-grid { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; }
+.rk-event-grid > * { min-width: 0; }
 @container flight-detail (min-width: 560px) {
-  /* 按两栏自动平衡高度（先左后右）；任务信息与起降航线两块拆开参与排列，避免一栏留大块空白。 */
-  .plan-detail-grid { columns: 2; column-gap: 16px; }
-  .plan-detail-grid > * { break-inside: avoid; }
-  .plan-detail-grid > .plan-metrics { column-span: all; }
-  .plan-detail-grid > :deep(.plan-filing) { display: contents; }
-  .plan-detail-grid :deep(.filing-col) { break-inside: avoid; }
-  /* 风险详情：没有光电面板时风险依据占右栏，事件信息、核验历史排在左栏；有光电面板时按内容高度自动分两栏 */
-  .rk-event-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(3, auto) 1fr; column-gap: 16px; align-items: start; grid-auto-flow: row dense; }
-  .rk-event-grid > * { grid-column: 1; min-width: 0; }
-  .rk-event-grid > .rk-basis { grid-column: 2; grid-row: 1 / span 4; }
-  .rk-event-grid.has-optical { display: block; columns: 2; column-gap: 16px; }
-  .rk-event-grid.has-optical > * { break-inside: avoid; }
   /* 详情栏够宽时风险标题卡压成一行（等级、状态放右侧），把高度留给事件信息、风险依据和核验历史 */
   .workspace-detail .detail-hero-micro { min-height: 0; padding: 8px 12px; }
   .workspace-detail .detail-hero-micro .detail-hero-inner { grid-template-columns: 34px minmax(0, 1fr) auto; }
@@ -2295,6 +2338,11 @@ onUnmounted(() => {
 .rk-notify-done { display: grid; gap: 12px; }
 .rk-notify-done .detail-actions { display: flex; gap: 8px; justify-content: flex-end; }
 .rk-history-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* 中等视口的任务详情收窄，给地图留出空间；风险详情保留现有宽度。 */
+@media (max-width: 1700px) and (min-width: 1151px) {
+  .flight-main { grid-template-columns: minmax(230px, .7fr) minmax(280px, 1fr) minmax(320px, 380px); }
+  .risk-main { grid-template-columns: minmax(230px, .7fr) minmax(280px, .9fr) minmax(500px, 1.6fr); }
+}
 @media (max-width: 1150px) {
   .flights-page { overflow: auto; }
   .flight-main,.risk-main { flex: none; grid-template-columns: minmax(250px, .8fr) minmax(0, 1.2fr); grid-template-rows: 390px minmax(460px, auto); }

@@ -23,12 +23,13 @@ const recordGroups = computed(() => {
   return [...groups.values()].map(group => ({ ...group, summary: verificationSummary(group.verification) }));
 });
 const hasHistory = computed(() => !!(data.value?.scheduled_check || data.value?.verifications?.length || data.value?.feedback?.length));
+const completed = computed(() => props.plan.status_code === 'COMPLETED');
 const preflight = computed(() => ['PENDING', 'APPROVED'].includes(props.plan.status_code)
   && new Date(props.plan.start_at).getTime() > checkedAt.value);
 // 状态决定这一步是否适用；权限仅决定适用时能否办理，不能把两者混为一谈。
 const needsVerification = computed(() => {
   const start = props.plan.start_at == null ? NaN : new Date(props.plan.start_at).getTime();
-  if (props.plan.status_code === 'CANCELLED' || !Number.isFinite(start) || start > checkedAt.value) return false;
+  if (completed.value || props.plan.status_code === 'CANCELLED' || !Number.isFinite(start) || start > checkedAt.value) return false;
   if (props.match?.target_id || data.value?.verification_blocker === '已经关联感知目标，请查看实际轨迹与研判') return false;
   return !!data.value?.can_verify || ['AVAILABLE', 'NO_EVALUATION'].includes(props.match?.availability);
 });
@@ -74,8 +75,9 @@ onUnmounted(() => { token++; clearInterval(refreshTimer); });
     <PlanDeviceCheck :key="plan.plan_id" :plan="plan" @map-devices="emit('map-devices', { planId: plan.plan_id, check: $event })" />
   </section>
   <div v-if="error" class="warnbox">核实与通知记录暂时无法读取：{{ error }} <button v-if="![401,403].includes(errorStatus)" class="btn" type="button" @click="reload">重试</button></div>
-  <section v-else-if="showPanel" class="sect plan-verification">
-    <h4>{{ needsVerification ? '周边设备检查' : '历史检查与通知' }}</h4>
+  <component :is="completed ? 'details' : 'section'" v-else-if="showPanel" :key="`${plan.plan_id}:${completed}`" class="sect plan-verification">
+    <summary v-if="completed" class="history-summary">历史记录</summary>
+    <h4 v-else>{{ needsVerification ? '周边设备检查' : '历史检查与通知' }}</h4>
     <template v-if="data">
       <p v-if="data.scheduled_check" class="record-meta">
         系统自动检查：{{ date(data.scheduled_check.last_checked_at) }}
@@ -87,7 +89,7 @@ onUnmounted(() => { token++; clearInterval(refreshTimer); });
         {{ task.device_name }}：{{ ({ PENDING: '待处理', PROCESSING: '处理中', PENDING_VERIFICATION: '待恢复核验', COMPLETED: '已完成', LEGACY_HANDLED: '历史已处理' })[task.workflow_state] || '处理状态未知' }}
       </p>
       <PlanDeviceCheck v-if="needsVerification" :key="plan.plan_id" :plan="plan" @map-devices="emit('map-devices', { planId: plan.plan_id, check: $event })" />
-      <div v-if="hasHistory" class="workflow-actions"><button class="btn ghost" type="button" @click="reload">刷新记录</button></div>
+      <div v-if="hasHistory" class="workflow-actions"><button class="btn ghost" type="button" @click="reload(true)">刷新记录</button></div>
       <article v-for="group in recordGroups" :key="group.key" class="verification-record">
         <b class="record-conclusion">{{ group.verification ? (conclusions[group.verification.conclusion] || '未知结论') : '核实内容暂不可用' }}</b>
         <p v-if="group.verification?.trigger_type" class="record-meta">{{ group.verification.trigger_type === 'SYSTEM' ? '系统自动检查' : '人工触发检查' }}</p>
@@ -128,10 +130,13 @@ onUnmounted(() => { token++; clearInterval(refreshTimer); });
         </details>
       </article>
     </template>
-  </section>
+  </component>
 </template>
 <style scoped>
 .workflow-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.history-summary { cursor: pointer; color: var(--cyan); font-weight: 600; line-height: 1.6; overflow-wrap: anywhere; }
+.history-summary:focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; border-radius: 3px; }
+.plan-verification[open] > .history-summary { margin-bottom: 10px; }
 .verification-record { margin-top: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 6px; }
 .record-conclusion { display: block; line-height: 1.6; overflow-wrap: anywhere; }
 .record-meta,.record-source,.record-blocker { margin: 6px 0 0; font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }

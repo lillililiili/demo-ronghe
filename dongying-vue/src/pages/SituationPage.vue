@@ -650,21 +650,20 @@ function renderDeviceTip(device) {
   const unavailable = coverage.status === 'unavailable';
   const coverageState = coverage.status === 'unknown' ? '覆盖参数未知'
     : unavailable ? `${coverageText}（当前不可用）` : coverageText;
-  const related = (device.relatedAlerts || []).slice(0, 2);
+  // 弹窗仅展示明确的连接状态变化，报文、协议状态码和指令日志留在后台。
+  const related = (device.relatedAlerts || [])
+    .filter(event => ['CONNECTED', 'DISCONNECTED', 'RECOVERED'].includes(event.state))
+    .slice(0, 2);
   return `<section class="sit-map-pop sit-map-pop-device" style="--sensor:${esc(device.color)}">
-    <header><span class="sit-map-pop-icon">${iconHtml(device)}</span><span><b>${esc(device.name)}</b><small class="mono" title="${esc(device.id)}">${esc(device.display_no || device.id)}</small></span>
+    <header><span class="sit-map-pop-icon">${iconHtml(device)}</span><span><b>${esc(device.name)}</b>${device.simulated ? '<small>模拟设备</small>' : ''}</span>
       <button type="button" data-tip-act="close" aria-label="关闭设备详情">${U.icon('close')}</button></header>
     <div class="sit-map-pop-status"><span class="sit-state ${statusClass(device.status)}">${esc(device.status)}</span><span>最新上报 ${esc(reportAge(device.lastReportAt))}</span></div>
     ${device.posValid === false ? '<p class="sit-map-pop-note">未提供安装坐标，暂不显示地图点位。</p>' : ''}
-    ${device.timeUntrusted ? `<p class="sit-map-pop-note">设备时间不准：最近感知数据的报文时刻比平台收到时早${esc(clockLagText(device.reportLagMs) || '较多')}（设备时钟慢或数据积压），相关目标会标为“数据过期”。请核对设备时间。</p>` : ''}
-    ${device.simulated ? '<p class="sit-map-pop-note">模拟设备数据（非现场验收）</p>' : ''}
-    <dl><dt>${esc(coverage.label || '覆盖参数')}</dt><dd class="${unavailable ? 'is-unavailable' : ''}">${esc(coverageState)}</dd>
+    ${device.timeUntrusted ? `<p class="sit-map-pop-note">设备数据延迟${esc(clockLagText(device.reportLagMs) || '较多')}，请联系运维检查。</p>` : ''}
+    <dl><dt>${esc(coverage.label || '覆盖参数')}</dt><dd class="${unavailable ? 'is-unavailable' : ''}">${esc(coverageState)}${coverage.displayOnly ? ' · 示意范围' : ''}</dd>
       ${coverage.availabilityReason ? `<dt>可用性</dt><dd class="is-unavailable">${esc(coverage.availabilityReason)}</dd>` : ''}
-      <dt>参数来源</dt><dd>${esc(coverage.sourceLabel || '未提供')}</dd>
-      ${coverage.displayOnly ? '' : `<dt>更新时间</dt><dd class="mono">${formatClock(coverage.updatedAt)}</dd>`}</dl>
-    <div class="sit-map-pop-alerts"><b>近期设备事件（最多2条）</b>${related.length
-      ? related.map(event => `<span>${esc(event.title)}</span>`).join('')
-      : '<span>本次读取范围内暂无该设备事件</span>'}</div>
+    </dl>
+    ${related.length ? `<div class="sit-map-pop-alerts"><b>近期连接情况</b>${related.map(event => `<span>${esc(event.title)}</span>`).join('')}</div>` : ''}
   </section>`;
 }
 
@@ -950,7 +949,7 @@ onUnmounted(() => {
             </div>
           </section>
         </div>
-        <footer v-show="devicesExpanded" id="sit-device-footer">共 {{ devices.length }} 台感知设备；在线设备显示上报脉冲。{{ hasSimulatedCoverage ? '模拟范围仅作地图示意，详情标注参数来源。' : '覆盖范围以设备台账配置为准。' }}</footer>
+        <footer v-show="devicesExpanded" id="sit-device-footer">共 {{ devices.length }} 台感知设备；在线设备显示上报脉冲。{{ hasSimulatedCoverage ? '模拟范围仅作地图示意。' : '覆盖范围以设备台账配置为准。' }}</footer>
       </aside>
 
       <aside class="sit-glass sit-alert-dock" :class="{ 'is-collapsed': !alertsExpanded }" aria-labelledby="sit-alert-title">

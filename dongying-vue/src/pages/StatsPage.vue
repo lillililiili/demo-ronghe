@@ -27,7 +27,8 @@ const sourceLabel = computed(() => ({ live: '数据来源：真实设备', repla
 const generatedLabel = computed(() => S.value?.generatedAt ? new Date(S.value.generatedAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }) + '（北京时间）' : '未知');
 function metricNumber(value) { return isCount(value) ? U.num(value) : '暂不可统计'; }
 function metricReason(key) { return S.value?.availability?.[key]?.reason || '暂无可靠统计说明'; }
-const loading = ref(true);
+function metricVisible(key) { return S.value?.availability?.[key]?.status !== 'UNAVAILABLE'; }
+const loading = ref(true), refreshing = ref(false);
 const exporting = ref(false);
 const reportRange = data => data ? [Date.parse(`${data.from}T00:00:00`), Date.parse(`${data.to}T00:00:00`)] : null;
 const dateRange = ref(reportRange(initialReport));
@@ -101,7 +102,6 @@ function renderCharts() {
   if (!S.value) return;
   const key = JSON.stringify({ ...S.value, generatedAt: null });
   if (key === renderedDataKey) return;
-  window.CH.disposeAll?.();
   drawCharts(window.CH);
   renderedDataKey = key;
 }
@@ -182,7 +182,8 @@ let loadSequence = 0;
 /* quiet：实时刷新重算；失败时保留上次的统计并说明，错误抛给实时刷新按退避重试。 */
 async function load({ quiet = false } = {}) {
   const sequence = ++loadSequence;
-  loading.value = true;
+  loading.value = !quiet || !S.value;
+  refreshing.value = true;
   error.value = '';
   try {
     const range = dateRange.value;
@@ -217,7 +218,7 @@ async function load({ quiet = false } = {}) {
     error.value = e.message || '运行统计加载失败。';
     if (quiet) throw e;
   } finally {
-    if (!cancelled && sequence === loadSequence) loading.value = false;
+    if (!cancelled && sequence === loadSequence) { loading.value = false; refreshing.value = false; }
   }
 }
 
@@ -235,7 +236,7 @@ onMounted(() => {
   load();
 });
 // 统计为按日聚合，业务数据变化后最多每 10 秒重算一次，避免图表频繁重绘。
-useRealtimeRefresh(['alarm', 'target', 'punishment', 'device', 'plan', 'risk'], () => (loading.value ? undefined : load({ quiet: true })), { minIntervalMs: 10_000 });
+useRealtimeRefresh(['alarm', 'target', 'punishment', 'device', 'plan', 'risk'], () => (refreshing.value ? undefined : load({ quiet: true })), { minIntervalMs: 10_000 });
 onUnmounted(() => {
   cancelled = true;
   window.removeEventListener('auth-access-change', onAccessChanged);

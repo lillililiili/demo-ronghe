@@ -83,6 +83,7 @@ function notifyDepartment() {
 }
 watch(() => props.handoffId, () => { result.value = null; readPending(); load(); }, { immediate: true });
 onUnmounted(() => { active = false; ++sequence; });
+defineExpose({ refresh: load });
 </script>
 
 <template>

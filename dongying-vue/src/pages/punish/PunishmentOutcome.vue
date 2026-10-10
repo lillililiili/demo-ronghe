@@ -2,22 +2,53 @@
 import { ref, watch, onUnmounted } from 'vue';
 import { punishmentApi } from '@/services/punishmentApi.js';
 import { CASE_STATUS_LABEL, PENALTY_TYPE_LABEL, SOURCE_MODE_LABEL, labelOf } from '@/ui/labels.js';
+import { ruleReasonText } from '@/ui/legalityReviewModal.js';
 const props = defineProps({ handoffId: { type: String, required: true } });
 const rows = ref([]), loading = ref(false), error = ref('');
+const decisionBasis = ref({});
 let token = 0, active = true;
 onUnmounted(() => { active = false; ++token; });
-async function load() {
+async function load({ quiet = false } = {}) {
   const seq = ++token, id = props.handoffId;
-  loading.value = true; error.value = ''; rows.value = [];
+  loading.value = !quiet; error.value = '';
+  if (!quiet) { rows.value = []; decisionBasis.value = {}; }
   try {
     const result = await punishmentApi.listCases({ handoff_id: id, page: 1, size: 100 });
-    if (active && seq === token) rows.value = result.items || [];
+    if (active && seq === token) {
+      rows.value = result.items || [];
+      const ids = new Set(rows.value.map(row => row.case_id));
+      Object.keys(decisionBasis.value).forEach(key => { if (!ids.has(key)) delete decisionBasis.value[key]; });
+      // 只读有效决定对应的冻结文书，不能用当前罚则或后来修改的裁量覆盖历史依据。
+      for (const row of rows.value.filter(effective)) {
+        if (decisionBasis.value[row.case_id]?.documentId !== row.effective_decision.document_id) {
+          decisionBasis.value[row.case_id] = { loading: true };
+        }
+        void loadDecisionBasis(row, seq);
+      }
+    }
   } catch (e) {
-    if (active && seq === token) error.value = e.status === 403 ? '当前账号无权查看处罚结果，请联系管理员。' : e.message || '处罚结果读取失败，请刷新重试。';
+    if (active && seq === token) {
+      rows.value = []; decisionBasis.value = {};
+      error.value = e.status === 403 ? '当前账号无权查看处罚结果，请联系管理员。' : e.message || '处罚结果读取失败，请刷新重试。';
+    }
   } finally { if (active && seq === token) loading.value = false; }
 }
-watch(() => props.handoffId, load, { immediate: true });
+async function loadDecisionBasis(row, seq) {
+  try {
+    const documents = await punishmentApi.listDocuments(row.case_id);
+    if (!active || seq !== token) return;
+    const document = documents.find(item => item.document_id === row.effective_decision.document_id && item.status === 'ISSUED');
+    decisionBasis.value[row.case_id] = document
+      ? { documentId: document.document_id, fields: document.fields || {}, simulated: document.template_version?.startsWith('demo') || !!document.fields?.watermark }
+      : { error: '未读到本次有效决定的文书依据' };
+  } catch (e) {
+    if (!active || seq !== token) return;
+    decisionBasis.value[row.case_id] = { error: e.status === 403 ? '当前账号无权查看处罚文书依据' : '处罚文书依据读取失败，请刷新结果重试' };
+  }
+}
 const effective = row => row.effective_decision?.status === 'EFFECTIVE';
+watch(() => props.handoffId, () => load(), { immediate: true });
+defineExpose({ refresh: () => load({ quiet: true }) });
 const history = row => (row.effective_decision?.history || []).filter(document => document.document_id !== row.effective_decision?.document_id);
 const time = value => value == null ? '未提供' : new Date(value).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
 const money = value => value == null ? '未提供' : `${(Number(value) / 100).toLocaleString('zh-CN')} 元`;
@@ -39,15 +70,26 @@ const money = value => value == null ? '未提供' : `${(Number(value) / 100).to
         <dt>当事人</dt><dd>{{ row.party_name || '待查明' }}</dd>
         <dt>承办人</dt><dd>{{ row.officer_name || '待指派' }}</dd>
         <template v-if="effective(row)">
+          <dt>处罚依据</dt><dd v-if="decisionBasis[row.case_id]?.loading">正在读取文书依据</dd>
+          <dd v-else-if="decisionBasis[row.case_id]?.error">{{ decisionBasis[row.case_id].error }}</dd>
+          <dd v-else>{{ decisionBasis[row.case_id]?.simulated ? '演示文书，非正式处罚依据' : '本次有效决定书保存的依据' }}</dd>
+          <template v-if="decisionBasis[row.case_id]?.fields">
+            <dt>违法事由</dt><dd>{{ decisionBasis[row.case_id].fields.violation_title || '文书未记录' }}</dd>
+            <dt>法律依据</dt><dd>{{ decisionBasis[row.case_id].fields.legal_basis || '文书未记录' }}</dd>
+            <dt>裁量说明</dt><dd>{{ decisionBasis[row.case_id].fields.basis_text || '文书未记录' }}</dd>
+          </template>
           <dt>决定书编号</dt><dd>{{ row.effective_decision.document_no }}</dd>
           <dt>决定内容</dt><dd>{{ labelOf(PENALTY_TYPE_LABEL, row.effective_decision.penalty_type) }}</dd>
           <dt>决定罚款金额</dt><dd>{{ money(row.effective_decision.fine_amount) }}</dd>
           <dt>出具时间</dt><dd>{{ time(row.effective_decision.issued_at) }}</dd>
         </template>
         <template v-else-if="row.current_discretion">
+          <dt>拟认定事由</dt><dd>{{ ruleReasonText(row.current_discretion.violation_code || row.primary_violation_code) || '未记录' }}</dd>
+          <dt>裁量说明</dt><dd>{{ row.current_discretion.basis_text || '未记录' }}</dd>
           <dt>{{ row.current_discretion.status === 'CONFIRMED' ? '已确认裁量' : '拟定内容' }}</dt><dd>{{ labelOf(PENALTY_TYPE_LABEL, row.current_discretion.penalty_type) }}</dd>
           <dt>{{ row.current_discretion.status === 'CONFIRMED' ? '裁量金额' : '拟罚金额' }}</dt><dd>{{ money(row.current_discretion.fine_amount) }}</dd>
         </template>
+        <template v-else><dt>案件事由</dt><dd>{{ ruleReasonText(row.primary_violation_code) || '未记录' }}</dd></template>
         <dt v-if="row.withdraw_reason">撤案说明</dt><dd v-if="row.withdraw_reason">{{ row.withdraw_reason }}</dd>
         <dt v-if="row.close_note">结案说明</dt><dd v-if="row.close_note">{{ row.close_note }}</dd>
       </dl>

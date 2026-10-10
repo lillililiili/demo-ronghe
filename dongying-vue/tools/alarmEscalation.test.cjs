@@ -63,7 +63,7 @@ function legalityDictionaries() {
   // 告警页：列表与详情都显示累计原因与升级情况，升级记录单独读取并可重试。
   const page = readFileSync(path.join(__dirname, '../src/pages/AlarmsPage.vue'), 'utf8');
   assert.match(page, /listAlarmEscalations\(a\.alarm_id/);
-  assert.match(page, /\['违规原因', esc\(reasons\)\]/);
+  assert.match(page, /\['告警原因', esc\(reasons \|\| '未记录具体触发原因'\)\]/);
   assert.match(page, /U\.sect\('升级记录'/);
   assert.match(page, /data-al="escalations-retry"/);
   console.log('全部通过：告警升级显示');

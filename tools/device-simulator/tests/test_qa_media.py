@@ -3,6 +3,8 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -68,6 +70,40 @@ class CredentialsTests(unittest.TestCase):
                             qa_media.load_or_create_credentials(path)
                     generate.assert_not_called(); create.assert_not_called()
                     self.assertEqual(path.read_bytes(), original)
+
+
+class MediaApiProxyTests(unittest.TestCase):
+    def test_loopback_probe_ignores_proxy_and_preserves_media_status(self):
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.server.requests.append(self.path)
+                self.send_response(self.server.status)
+                self.end_headers()
+
+            def log_message(self, *args): pass
+
+        media = HTTPServer(('127.0.0.1', 0), Handler)
+        proxy = HTTPServer(('127.0.0.1', 0), Handler)
+        for server in (media, proxy):
+            server.requests = []
+            server.status = 503
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            self.addCleanup(server.server_close)
+            self.addCleanup(server.shutdown)
+        credentials = {'read': 'test-only-read-password'}
+        with patch.object(qa_media, 'API_PORT', media.server_port), \
+                patch('urllib.request.getproxies', return_value={'http': f'http://127.0.0.1:{proxy.server_port}'}), \
+                patch('urllib.request.proxy_bypass', return_value=False), \
+                patch('urllib.request._opener', None):
+            for status in (200, 401, 503):
+                with self.subTest(status=status):
+                    media.status = status
+                    self.assertEqual(qa_media.api_status(credentials), status)
+            media.shutdown()
+            media.server_close()
+            self.assertIsNone(qa_media.api_status(credentials))
+        self.assertEqual(proxy.requests, [])
+        self.assertEqual(media.requests, ['/v3/paths/list'] * 3)
 
 
 class MediaServiceTests(unittest.TestCase):
@@ -156,6 +192,7 @@ class OneClickVideoControlTests(unittest.TestCase):
         self.assertEqual(self.file.read_bytes(), original)
 
     def test_media_failure_keeps_video_off(self):
+        self.runtime.video_config['enabled'] = False
         self.runtime.media.ensure.side_effect = ValueError('本机还没有视频服务程序（MediaMTX 或 Docker），需要先装一次')
         with self.assertRaisesRegex(ValueError, '视频服务程序'): self.control({'enabled': True})
         self.assertFalse(self.runtime.video_config['enabled'])

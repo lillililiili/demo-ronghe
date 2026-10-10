@@ -50,7 +50,7 @@ const OMITTED_TEST_AIRSPACE_IDS = new Set([
 const all = ref([]);                // 空域详情（含 current_version），一次读全
 const routeLines = ref([]);         // 合法航线中心线 [{ id, name, points }]
 const routesAvailable = ref(true);  // 无 route:read 时整层不画、图例不列
-const loading = ref(false), error = ref(''), refreshError = ref('');
+const loading = ref(false), refreshing = ref(false), error = ref(''), refreshError = ref('');
 const filters = reactive({ district: '', kind: '', validity: '', keyword: '' });
 const hiddenKinds = ref({});        // { kindCode: true } → 图上不画
 const showRoutes = ref(true);
@@ -153,7 +153,8 @@ async function listAirspaces(withVersion) {
 async function loadAll({ quiet = false } = {}) {
   const keep = quiet && all.value.length > 0 && !error.value;
   let failure = null;
-  loading.value = true;
+  loading.value = !keep;
+  refreshing.value = true;
   if (!keep) error.value = '';
   try {
     // 先一次取回空域连同当前版本；旧后端不认（400）或某片空域版本重叠（409）时改回逐片读取详情。
@@ -179,7 +180,7 @@ async function loadAll({ quiet = false } = {}) {
     failure = reason;
     if (keep) refreshError.value = refreshFailureText(reason, '读取空域失败');
     else { all.value = []; clearDetail(); error.value = messageOf(reason); }
-  } finally { loading.value = false; }
+  } finally { loading.value = false; refreshing.value = false; }
   await nextTick();
   paintMap(!fittedOnce);
   scheduleBoundaryReload();
@@ -389,10 +390,10 @@ function refreshPage() { return Promise.all([loadAll(), loadRoutes(), risks.relo
 const realtime = useRealtimeRefresh(['airspace', 'plan', 'risk', 'target'], topics => {
   const everything = topics.includes('*');
   const tasks = [];
-  if ((everything || topics.includes('airspace')) && !loading.value) tasks.push(loadAll({ quiet: true }), reloadVersions());
+  if ((everything || topics.includes('airspace')) && !refreshing.value) tasks.push(loadAll({ quiet: true }), reloadVersions());
   if (everything || topics.includes('plan')) tasks.push(loadRoutes());
-  if (everything || topics.includes('risk')) tasks.push(risks.reload());
-  if (everything || topics.includes('target')) tasks.push(monitor.reload());
+  if (everything || topics.includes('risk')) tasks.push(risks.reload({ quiet: true }));
+  if (everything || topics.includes('target')) tasks.push(monitor.reload({ quiet: true }));
   return Promise.all(tasks);
 }, { minIntervalMs: 1_500 });
 watch(() => filters.district, district => {

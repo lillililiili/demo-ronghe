@@ -1,4 +1,4 @@
-"""Protocol C command receiver and explicitly enabled, loopback-only QA video publisher."""
+"""Protocol C command receiver and loopback-only QA video publisher."""
 import copy
 import json
 import os
@@ -12,8 +12,8 @@ import time
 from urllib.parse import urlparse, quote, urlunparse
 
 def default_video_config():
-    """Build opt-in defaults from the launch environment without persisting credentials."""
-    enabled = os.environ.get('QA_VIDEO_ENABLED', '').strip().lower() in ('1', 'true', 'yes', 'on')
+    """Enable local test video by default, with an explicit environment opt-out."""
+    enabled = os.environ.get('QA_VIDEO_ENABLED', 'true').strip().lower() in ('1', 'true', 'yes', 'on')
     return {
         'enabled': enabled,
         'ffmpeg': 'ffmpeg',

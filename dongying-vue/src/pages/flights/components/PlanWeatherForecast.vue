@@ -43,10 +43,7 @@ const periods = computed(() => {
   }).sort((a, b) => a.from - b.from);
 });
 const planWindowText = computed(() => planWindow.value ? `${time(planWindow.value.from)} 至 ${time(planWindow.value.to)}` : '未提供');
-const sourceWindowText = computed(() => validSourcePeriods.value.length
-  ? validSourcePeriods.value.map(period => `${time(period.from)} 至 ${time(period.to)}`).join('；')
-  : '未提供有效预报时段');
-const uncoveredMessage = computed(() => `任务飞行时段：${planWindowText.value}；预报时段：${sourceWindowText.value}。两者没有时间交集。`);
+const uncoveredMessage = computed(() => `任务飞行时段：${planWindowText.value}。当前预报未覆盖任务飞行时段。`);
 const statusCopy = computed(() => response.value?.message || STATUS_COPY[status.value] || '天气预报不可用');
 const canRetry = computed(() => error.value && ![401, 403].includes(error.value.status));
 const errorTitle = computed(() => error.value?.status === 403
@@ -94,9 +91,6 @@ function periodTime(item) {
   if (!item || (!present(item.from) && !present(item.to))) return '时段未提供';
   return `${time(item.from)} 至 ${time(item.to)}`;
 }
-function periodCoversPlan(item) {
-  return Boolean(planWindow.value && item && item.from < planWindow.value.to && item.to > planWindow.value.from);
-}
 function direction(value) { return present(value) ? `${value}°` : '未提供'; }
 function sourceMode(value) { return SOURCE_MODE_LABEL[value] || (present(value) ? value : '未提供'); }
 </script>
@@ -118,11 +112,11 @@ function sourceMode(value) { return SOURCE_MODE_LABEL[value] || (present(value) 
         <dt>数据来源</dt><dd>{{ forecast.provider_name || '未提供' }}<small><span class="tag" :class="({ live: 't-blue', mock: 't-amber', replay: 't-purple' })[forecast.source_mode] || 't-gray'">{{ sourceMode(forecast.source_mode) }}</span></small></dd>
         <dt>{{ severalForecasts ? '最新发布时间' : '发布时间' }}<br>（北京时间）</dt><dd>{{ time(forecast.published_at) }}</dd>
       </dl>
-      <div v-if="!planWindow" class="weather-state"><strong>任务飞行时段不完整</strong><p>无法确定对应的天气预报覆盖关系，以下仍展示收到的预报时段。</p></div>
+      <div v-if="!planWindow" class="weather-state"><strong>任务飞行时段不完整</strong><p>无法确定对应的天气预报覆盖关系。</p></div>
       <div v-else-if="!validSourcePeriods.length" class="weather-state"><strong>预报没有有效时段</strong><p>当前天气报文未提供可展示的开始时间和结束时间。</p></div>
-      <div v-if="validSourcePeriods.length" class="forecast-periods">
-        <article v-for="(item, index) in validSourcePeriods" :key="`${item.from ?? 'unknown'}-${item.to ?? 'unknown'}-${index}`" class="forecast-period">
-          <header><strong>{{ periodTime(item) }}</strong><span class="tag" :class="item.summary ? 't-cyan' : 't-gray'">{{ item.summary || '天气现象未提供' }}</span><span v-if="planWindow" class="tag" :class="periodCoversPlan(item) ? 't-green' : 't-gray'">{{ periodCoversPlan(item) ? '覆盖任务时段' : '未覆盖任务时段' }}</span><small v-if="severalForecasts && timestamp(item.published_at) !== null" class="forecast-published">发布于 {{ time(item.published_at) }}</small></header>
+      <div v-if="periods.length" class="forecast-periods">
+        <article v-for="(item, index) in periods" :key="`${item.from ?? 'unknown'}-${item.to ?? 'unknown'}-${index}`" class="forecast-period">
+          <header><strong>{{ periodTime(item) }}</strong><span class="tag" :class="item.summary ? 't-cyan' : 't-gray'">{{ item.summary || '天气现象未提供' }}</span><small v-if="severalForecasts && timestamp(item.published_at) !== null" class="forecast-published">发布于 {{ time(item.published_at) }}</small></header>
           <dl class="weather-grid">
             <div v-if="hasField(item, 'temperature_c')" class="weather-temperature"><dt>温度</dt><dd>{{ amount(item.temperature_c, '°C') }}</dd></div>
             <div v-if="hasField(item, 'wind_speed_ms')" class="weather-wind"><dt>风速</dt><dd>{{ amount(item.wind_speed_ms, ' m/s') }}</dd></div>
@@ -136,7 +130,7 @@ function sourceMode(value) { return SOURCE_MODE_LABEL[value] || (present(value) 
           </dl>
         </article>
       </div>
-      <div v-if="planWindow && validSourcePeriods.length && !periods.length" class="weather-state"><strong>预报区域已匹配，但未覆盖任务飞行时段</strong><p>{{ uncoveredMessage }}</p></div>
+      <div v-if="planWindow && validSourcePeriods.length && !periods.length" class="weather-state"><strong>任务飞行时段暂无天气预报</strong><p>{{ uncoveredMessage }}</p></div>
     </template>
     <div v-else-if="status === 'STALE'" class="weather-state">
       <strong>当前任务暂无天气预报</strong>

@@ -367,7 +367,7 @@ class Runtime:
             video_input = config.get('video')
             if isinstance(video_input, dict) and 'publisher_password' not in video_input:
                 video_input = {**video_input, 'publisher_password': self.video_config.get('publisher_password', '')}
-            updated_video = video_config(video_input) if 'video' in config else self.video_config
+            updated_video = {**self.video_config, **(video_input or {})}
             if config.get('account') or config.get('password'):
                 self.session.connect(config)
             api = self.platform
@@ -379,6 +379,12 @@ class Runtime:
                 raise ValueError('未找到启用的回放 MQTT 连接，请在后台配置 local-lingyun-replay')
             if broker['host'] not in ('127.0.0.1','localhost'):
                 raise ValueError('当前版本仅连接本机 replay MQTT，避免误发现场环境')
+            if updated_video['enabled'] and not updated_video.get('publisher_password'):
+                api.call('GET', '/auth/me')
+                credentials = load_or_create_credentials()
+                self.media.ensure(credentials)
+                updated_video.update(publisher_user='qa-publisher', publisher_password=credentials['publish'])
+            updated_video = video_config(updated_video)
             self.brokers, self.broker = brokers, broker
             self.mqtt_username, self.mqtt_password = config.get('mqtt_user',''),config.get('mqtt_password','')
             self.video_config = updated_video
@@ -401,6 +407,7 @@ class Runtime:
         allowed = {'ffmpeg', 'source', 'rtsp_base', 'publisher_user', 'publisher_password'}
         if not isinstance(settings, dict) or set(settings) - allowed:
             raise ValueError('视频配置字段无效')
+        changing_settings = bool(settings)
         if body['enabled'] and not settings and not self.video_config.get('publisher_password'):
             # 一键开启：没配过推流密码时，自动生成本机凭据并拉起本机视频服务，无需手填。
             if not self.platform: raise ExternalAuthenticationRequired('请先登录系统')
@@ -410,7 +417,7 @@ class Runtime:
         with self.lock:
             if self.phase in ('PREPARING', 'STOPPING'):
                 raise ValueError('场景正在切换，请稍后操作视频')
-            if settings and (self.video_config['enabled'] or any(
+            if changing_settings and (self.video_config['enabled'] or any(
                     d.get('video') == 'PUBLISHING' for d in self.eo_status.get('devices', []))):
                 raise ValueError('请先停止视频推流，再修改视频设置')
             if body['enabled'] or settings:

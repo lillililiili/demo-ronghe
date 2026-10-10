@@ -2,7 +2,7 @@
 /* 模块级页面状态：跨导航保留分页、筛选、选中项与证据页签；业务事实始终重新读取标准 API。 */
 const S = {
   st: {
-    page: 1, size: 10, legal: '', district: '', review: '', reviewLocation: '', plan: '',
+    page: 1, size: 10, legal: '', district: '', review: '', reviewLocation: '', plan: '', period: 'TODAY', date: null,
     selectedEvaluationId: null, selectedTargetId: null, revisionPage: 1, revisionPageSize: 10,
     evidenceTab: 'space'
   }
@@ -11,11 +11,13 @@ export default {};
 </script>
 
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { computed, h, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import UKpis from '@/components/UKpis.vue';
 import TargetTrackingPanel from '@/components/video/TargetTrackingPanel.vue';
 import FlightExecutionChecks from '@/components/FlightExecutionChecks.vue';
+import EvidenceTrackModal from '@/components/evidence/EvidenceTrackModal.vue';
+import { openModal } from '@/ui/modal.js';
 import { UField } from '@/components/form/index.js';
 import UControl from '@/components/form/UControl.vue';
 import UPagination from '@/components/UPagination.vue';
@@ -27,7 +29,7 @@ import { noPlanExemptReason } from '@/ui/noPlanExemption.js';
 import { isPilotDistanceNoteHit, pilotDistanceNote } from '@/ui/pilotDistanceNote.js';
 import { legalityApi } from '@/services/legalityApi.js';
 import { flightApi } from '@/services/flightApi.js';
-import { planPickerQuery, planPickerItems, planPickerLabel } from '@/pages/flights/planFilters.js';
+import { beijingDayWindow, planPickerQuery, planPickerItems, planPickerLabel } from '@/pages/flights/planFilters.js';
 import { canAccessRoute, hasPermission } from '@/services/accessControl.js';
 import { loadTargetPosition, loadRouteCenterline, loadAirspaceOverlays, installOverlays, overlayPoints } from '@/services/positionMap.js';
 import { trustedTrajectoryPoints, strokePlanComparison } from '@/services/trajectoryDrawing.js';
@@ -44,6 +46,45 @@ const UI = window.UI;
 const route = useRoute();
 const root = ref(null);
 const st = reactive(S.st);
+const periodOptions = [{ label: '今日', value: 'TODAY' }, { label: '全部日期', value: 'ALL' }, { label: '指定日期', value: 'DATE' }];
+// 日期控件的日历值按用户选中的年月日解释为北京时间，不使用浏览器时区的零点。
+function dateWindow() {
+  if (st.period === 'ALL') return {};
+  if (st.period === 'DATE' && st.date != null) {
+    const date = new Date(st.date);
+    return beijingDayWindow(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  }
+  return beijingDayWindow();
+}
+const queueWindow = ref(dateWindow());
+const periodCaption = computed(() => st.period === 'ALL' ? '全部日期' : st.period === 'TODAY' ? '北京时间今日'
+  : `${new Date(queueWindow.value.from).toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai' })}（北京时间）`);
+const totalLabel = () => st.period === 'TODAY' ? '今日研判目标' : '研判目标数';
+let dayRefreshTimer;
+function syncDateWindow() {
+  const next = dateWindow();
+  const changed = next.from !== queueWindow.value.from || next.to !== queueWindow.value.to;
+  if (changed) {
+    st.page = 1;
+    invalidateDetail();
+  }
+  queueWindow.value = next;
+  clearTimeout(dayRefreshTimer);
+  if (st.period === 'TODAY') dayRefreshTimer = setTimeout(() => {
+    if (pageActive) void loadQueue({ refreshKpi: true });
+  }, Math.max(1, next.to - Date.now() + 50));
+  return changed;
+}
+function onPeriodChange() {
+  if (st.period === 'DATE' && st.date == null) {
+    const day = new Date(beijingDayWindow().from + 8 * 3_600_000);
+    st.date = new Date(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate()).getTime();
+  }
+  onRegionChange();
+}
+function onDateVisible() {
+  if (!document.hidden && st.period === 'TODAY' && dateWindow().from !== queueWindow.value.from) void loadQueue({ refreshKpi: true });
+}
 /* 列表、统计与目标定位共用服务端无人机范围；未匹配计划的无人机仍参与研判。
    页面只展示服务端字段，不在前端推导结论，接口失败不回退任何演示数据。 */
 const uavScope = { mode: 'ACTIVE', latest_only: true, object_type_code: 'UAV', sort: 'target_created_at_desc' };
@@ -52,8 +93,17 @@ const subjectKey = item => item?.target_id ? `target:${item.target_id}` : `evalu
 const items = ref([]);
 const totalCount = ref(0);
 const selectedEvaluation = ref(null);
-function trackEvidenceHref(trackId) {
-  return `#/evidence?${new URLSearchParams({ track: trackId, subjectKind: 'TARGET', subjectId: selectedEvaluation.value.target_id })}`;
+function openTrackEvidence(trackId) {
+  const evaluation = selectedEvaluation.value;
+  if (!trackId || !evaluation?.target_id || !hasPermission('evidence:read')) return;
+  const handle = openModal({
+    title: '轨迹证据', width: '1180px', footer: false,
+    render: () => h(EvidenceTrackModal, {
+      records: [{ record_id: trackId, summary: { source_mode: evaluation.source_mode } }],
+      subjectKind: 'TARGET', subjectId: evaluation.target_id,
+      onReturn: () => handle.close()
+    })
+  });
 }
 const revisions = ref([]);
 const revisionsTotal = ref(0);
@@ -185,7 +235,7 @@ function openRelatedAlarm() {
 
 function kpiPlaceholder(desc) {
   return [
-    { label: '研判总数', value: '—', color: 'blue', icon: 'database', desc },
+    { label: totalLabel(), value: '—', color: 'blue', icon: 'database', desc },
     { label: '合法', value: '—', color: 'green', icon: 'shield', desc },
     { label: '非法', value: '—', color: 'red', icon: 'ban', desc },
     { label: '不可判定', value: '—', color: 'gray', icon: 'clock', desc },
@@ -234,7 +284,7 @@ function referenceText(reference) {
 function formatTime(value) {
   if (value === null || value === undefined) return '未知';
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? '未知' : date.toLocaleString('zh-CN', { hour12: false });
+  return Number.isNaN(date.getTime()) ? '未知' : date.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
 }
 function shortTime(value) {
   if (value === null || value === undefined) return '时间未知';
@@ -387,7 +437,7 @@ function invalidateDetail() {
 
 function queryParams() {
   return {
-    ...uavScope, legal_status: st.legal, district_id: st.district,
+    ...uavScope, ...queueWindow.value, legal_status: st.legal, district_id: st.district,
     review_state: st.review && !['NEEDS_REVIEW', 'PENDING_REVIEW'].includes(st.review) ? st.review : undefined,
     needs_review: ['NEEDS_REVIEW', 'PENDING_REVIEW'].includes(st.review) ? true : undefined,
     has_alarm: hasAlarmFilter.value,
@@ -398,6 +448,7 @@ function queryParams() {
 }
 
 async function loadQueue(options = {}) {
+  if (syncDateWindow()) options = { ...options, refreshKpi: true, keepSelection: false, skipSelection: false, quiet: false };
   const token = ++listToken;
   // quiet：实时刷新静默重读，保留当前队列直到新数据到达，不切到“正在读取”，行和按钮不重建；
   // 失败时保留已显示的队列并注明，错误抛给实时刷新按退避重试。队列原本就读取失败时按正常流程重读。
@@ -420,6 +471,11 @@ async function loadQueue(options = {}) {
         const located = await legalityApi.listEvaluations({ ...uavScope, target_id: options.targetId, plan_id: st.plan || undefined, page: 1, size: 1 });
         if (token !== listToken) return;
         deepLink = located.items?.[0] || null;
+        if (deepLink && queueWindow.value.from != null && (deepLink.evaluated_at < queueWindow.value.from || deepLink.evaluated_at >= queueWindow.value.to)) {
+          st.period = 'ALL';
+          syncDateWindow();
+          deepLinkNotice.value = '关联目标的最新研判不在所选日期内，已切换为全部日期。';
+        }
         if (!deepLink) deepLinkNotice.value = `目标 ${options.targetNo || options.targetId} 没有可见的无人机研判记录。`;
         else if (!st.plan) st.legal = rejectedConclusion(deepLink) ? ''
           : conclusionMeta[effectiveStatus(deepLink)] && effectiveStatus(deepLink) !== 'NOT_APPLICABLE' ? effectiveStatus(deepLink) : 'UNDETERMINED';
@@ -573,7 +629,7 @@ async function loadKpi() {
   const token = ++kpiToken;
   /* 三类结论统计与队列共用服务端筛选，历史未定性的异常计入不可判定。 */
   const scope = {
-    ...uavScope,
+    ...uavScope, ...queueWindow.value,
     district_id: st.district || undefined,
     review_state: st.review && !['NEEDS_REVIEW', 'PENDING_REVIEW'].includes(st.review) ? st.review : undefined,
     needs_review: ['NEEDS_REVIEW', 'PENDING_REVIEW'].includes(st.review) ? true : undefined,
@@ -592,7 +648,7 @@ async function loadKpi() {
     const counts = await legalityApi.summarizeEvaluations(scope);
     if (token !== kpiToken) return;
     kpiList.value = [
-      { label: '研判总数', value: String(counts.total ?? '—'), color: 'blue', icon: 'database', desc: `正式模式，每架无人机只取最新一次；${scopeText}` },
+      { label: totalLabel(), value: String(counts.total ?? '—'), color: 'blue', icon: 'database', desc: `正式模式，每架无人机只取最新一次；${periodCaption.value}；${scopeText}` },
       { label: '合法', value: String(counts.legal ?? '—'), color: 'green', icon: 'shield', desc: '系统判定或人工复核为合法' },
       { label: '非法', value: String(counts.illegal ?? '—'), color: 'red', icon: 'ban', desc: '系统判定或人工复核为非法' },
       { label: '不可判定', value: String(counts.undetermined ?? '—'), color: 'gray', icon: 'clock', desc: '现有依据或人工复核尚不能确定合法性' },
@@ -658,6 +714,8 @@ onBeforeUnmount(() => {
   detailToken += 1;
   revisionsToken += 1;
   kpiToken += 1;
+  clearTimeout(dayRefreshTimer);
+  document.removeEventListener('visibilitychange', onDateVisible);
   destroyEvidenceMap();
 });
 
@@ -769,6 +827,7 @@ watch(() => [route.query.target, route.query.plan], () => {
   if (route.path === '/legality') loadNavigation();
 });
 onMounted(() => {
+  document.addEventListener('visibilitychange', onDateVisible);
   loadPlans();
   loadNavigation(UI.consume('legality'));
   loadShadowHint();
@@ -788,7 +847,7 @@ async function realtimeRefresh() {
   let latest = items.value.find(item => item.target_id === targetId);
   // 新目标、筛选结果变化可能使选中目标离开本页；按同一授权目标查询，不能误选第一行。
   if (!latest) {
-    const located = await legalityApi.listEvaluations({ ...uavScope, target_id: targetId, page: 1, size: 1 });
+    const located = await legalityApi.listEvaluations({ ...queryParams(), target_id: targetId, page: 1, size: 1 });
     if (!pageActive || selection !== detailToken) return;
     latest = located.items?.[0];
     if (!latest) {
@@ -813,6 +872,7 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
       <div class="lg-workspace">
         <div class="lg-main-column">
           <div id="lgKpi" class="lg-kpi-host" aria-label="合法性研判统计（跟随当前筛选）">
+            <p class="lg-period-caption">{{ periodCaption }} · 按研判时间统计，每架无人机仅取最新一次</p>
             <UKpis :list="kpiList" />
           </div>
         <section class="lg-queue-panel" aria-label="合法性判定目标列表">
@@ -823,6 +883,10 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
           </div>
           <div class="lg-queue-filters" role="group" aria-label="队列筛选">
             <div class="lg-filter-fields">
+            <UField class="lg-region-filter" variant="form" label="研判日期" v-model="st.period" type="select" size="small"
+              :options="periodOptions" :disabled="loading" @update:model-value="onPeriodChange" />
+            <UField v-if="st.period === 'DATE'" class="lg-date-filter" variant="form" label="日期（北京时间）" v-model="st.date" type="date" size="small"
+              :disabled="loading" @update:model-value="onRegionChange" />
             <UField class="lg-region-filter" variant="form" label="区域" v-model="st.district" type="select" size="small"
               :options="districtOptions" :disabled="loading" @update:model-value="onRegionChange" />
             <UField class="lg-region-filter" variant="form" label="复核" v-model="st.review" type="select" size="small"
@@ -950,8 +1014,8 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
                           <li v-for="(reference, index) in selectedEvaluation.evidence_references" :key="`${reference.kind}-${reference.id}-${index}`">
                             <span class="lg-evidence-icon" v-html="UI.icon(evidenceIcon(reference.kind))"></span>
                             <div><b>{{ referenceKindText(reference.kind) }}</b><p :title="reference.id">{{ referenceText(reference) }}</p>
-                              <a v-if="reference.kind === 'track' && reference.id && selectedEvaluation.target_id && hasPermission('evidence:read')"
-                                class="btn" :href="trackEvidenceHref(reference.id)">查看轨迹证据</a>
+                              <button v-if="reference.kind === 'track' && reference.id && selectedEvaluation.target_id && hasPermission('evidence:read')"
+                                type="button" class="btn" @click="openTrackEvidence(reference.id)">查看轨迹证据</button>
                             </div>
                           </li>
                         </ol>
@@ -1060,6 +1124,8 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
 .lg-workspace{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:12px}
 .lg-main-column{min-width:0;min-height:0;display:flex;flex-direction:column;gap:12px}
 .lg-kpi-host{flex:none}
+.lg-period-caption{margin:0 0 8px;color:var(--txt-3);font-size:12px;line-height:1.6;overflow-wrap:anywhere}
+.lg-date-filter{min-width:0;margin:0}
 .lg-queue-panel{flex:1;min-height:0;display:flex;flex-direction:column;border:1px solid var(--line);border-radius:var(--r);background:var(--lg-surface);box-shadow:var(--shadow-soft);overflow:hidden}
 .lg-queue-tabs{display:flex;align-items:stretch;min-height:46px;border-bottom:1px solid var(--line-2)}
 .lg-queue-tabs button{position:relative;padding:0 16px;border:0;background:transparent;color:var(--txt-2);font-size:13.5px;white-space:nowrap}

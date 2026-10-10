@@ -41,6 +41,13 @@
   }
   function make(el, opt) {
     if (!el) return null;
+    // 同一宿主自动刷新时复用画布，避免清空图表并重复播放入场动画。
+    insts.filter(item => item.el.isConnected === false).forEach(item => disposeEl(item.el));
+    const existing = insts.find(item => item.el === el && !item.ch.isDisposed());
+    if (existing) {
+      existing.ch.setOption({ ...opt, animation: false }, { notMerge: true });
+      return existing.ch;
+    }
     disposeEl(el);
     const ch = echarts.init(el, null, { renderer: 'canvas' });
     ch.setOption(opt);

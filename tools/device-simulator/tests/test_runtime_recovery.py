@@ -34,7 +34,8 @@ class RuntimeRecoveryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root, patch.object(Runtime, 'run'):
             runtime = Runtime(root)
             runtime.session.platform = SimpleNamespace(base='http://localhost/test')
-            runtime.broker = {'broker_id': 'test', 'name': 'test', 'host': 'localhost', 'port': 1883}
+            runtime.broker = {'broker_id': 'test', 'name': 'test', 'host': 'localhost', 'port': 1883,
+                              'owner_org_id': 'org-test', 'district_id': 'district-test'}
             runtime.start(scene())
             runtime.thread.join(1)
             runtime.log('TEST', '中文记录')

@@ -25,7 +25,8 @@ class IsolatedQaSceneTests(unittest.TestCase):
     def runtime(self):
         runtime = server.create_runtime(server.parse_args(self.argv))
         runtime.session.platform = SimpleNamespace(base='http://127.0.0.1:8081/api/v1', me={'role_code': 'ROLE-ADMIN'})
-        runtime.broker = dict(broker_id='qa-broker', name='qa', host='127.0.0.1', port=1883, enabled=True, source_mode='replay')
+        runtime.broker = dict(broker_id='qa-broker', name='qa', host='127.0.0.1', port=1883, enabled=True, source_mode='replay',
+                              owner_org_id='org-qa', district_id='district-qa')
         runtime.seed.query = Mock(return_value='1')
         return runtime
 

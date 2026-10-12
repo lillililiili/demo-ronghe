@@ -227,7 +227,7 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
       }, value => { snapshot = { ...snapshot, targets: value }; }, [])
         // 目标一读回就先发布（CDX-P01）：不等同一轮的告警、风险、移送分页读完。当天记录多时那几组要读很久，
         // 等它们读完，刚收到的目标已过了地图有效期，被页面当成过期滤掉。整轮读完后照旧再发布一次。
-        .then(async () => { publish(generatedAt); await refreshSelectedSources(); publish(generatedAt); }),
+        .then(async () => { publish(generatedAt); if (await refreshSelectedSources()) publish(generatedAt); }),
       wanted.has('alarms') && retain('alarms', () => allPages(listAlarms, {
         occurred_from: day.from, occurred_to: day.to, sort: 'occurred_at', order: 'desc'
       }), value => { snapshot = { ...snapshot, alarms: toAlarms(value) }; }, []),
@@ -246,21 +246,24 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
     await Promise.all(tasks.filter(Boolean));
   }
 
+  // 返回值：这次是否改动了快照；没有选中目标、已停止或选择已变化时返回 false，调用方不必多发布一次。
   async function refreshSelectedSources() {
     const targetId = selectedSourceTarget;
     const generation = sourceSelectionGeneration;
-    if (!targetId || stopped) return;
+    if (!targetId || stopped) return false;
     try {
       const detail = await targetApi.detail(targetId);
-      if (stopped || generation !== sourceSelectionGeneration || targetId !== selectedSourceTarget) return;
+      if (stopped || generation !== sourceSelectionGeneration || targetId !== selectedSourceTarget) return false;
       snapshot = { ...snapshot, targets: attachTargetSourceLinks(snapshot.targets, targetId, detail) };
+      return true;
     } catch (error) {
-      if (stopped || generation !== sourceSelectionGeneration) return;
+      if (stopped || generation !== sourceSelectionGeneration) return false;
       snapshot = { ...snapshot, targets: snapshot.targets.map(target => target.targetId !== targetId ? target : {
         ...target, sourceLinks: (target.sourceLinks || []).map(link => ({ ...link, fusion_status: 'UNKNOWN',
           contribution_attributes: [], fusion_reason: '融合来源读取失败或无权查看', observation_at: null }))
       }) };
       report(error, '目标融合来源');
+      return true;
     }
   }
 

@@ -82,8 +82,15 @@ class Platform:
             except Exception:
                 message = ''
             raise ValueError(f'系统接口 {path} 返回 {error.code}：{message}') from None
-        except (OSError, ValueError):
-            raise ValueError('无法连接系统 API，请检查地址与服务状态') from None
+        except urllib.error.URLError as error:
+            category = '请求超时' if isinstance(error.reason, TimeoutError) else '连接失败'
+            raise ValueError(f'系统接口 {path} {category}，请检查服务状态') from None
+        except TimeoutError:
+            raise ValueError(f'系统接口 {path} 请求超时（{timeout}秒），请检查服务状态') from None
+        except OSError:
+            raise ValueError(f'系统接口 {path} 连接中断，请检查服务状态') from None
+        except ValueError:
+            raise ValueError(f'系统接口 {path} 返回无效 JSON，请检查服务状态') from None
         if not value.get('ok'):
             raise ValueError('系统接口未成功：' + path)
         return value.get('data')

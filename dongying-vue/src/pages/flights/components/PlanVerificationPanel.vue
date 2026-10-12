@@ -1,15 +1,24 @@
 <script setup>
 import { userFacingMessage } from '@/ui/labels.js';
 import { computed, onUnmounted, ref, watch } from 'vue';
+import { maintenanceStateLabel, deviceNoticeState } from '@/pages/flights/deviceMaintenance.js';
 import { flightApi } from '@/services/flightApi.js';
 import PlanDeviceCheck from '@/pages/flights/components/PlanDeviceCheck.vue';
 import RecipientSnapshotFields from '@/components/notifications/RecipientSnapshotFields.vue';
 const props = defineProps({ plan: { type: Object, required: true }, match: { type: Object, default: null } });
 const emit = defineEmits(['map-devices']);
 const data = ref(null), loading = ref(false), error = ref(''), errorStatus = ref(0);
+function taskLabel(task) {
+  const notice = deviceNoticeState(props.plan.plan_id, task.device_id);
+  if (notice.readError) return '办理进度待确认';
+  return maintenanceStateLabel(notice.task?.task_id === task.task_id ? notice.task : task);
+}
 const checkedAt = ref(Date.now());
+const deviceCheck = ref(null);
+async function refreshDevices() { await Promise.all([deviceCheck.value?.reload(), reload(true)]); }
+defineExpose({ refreshDevices });
 let token = 0;
-const conclusions = { AUTO_DEVICE_ABNORMAL: '系统检测到附近设备异常，是否起飞待确认', SUSPECTED_NOT_TAKEN_OFF: '附近无异常设备，疑似未按任务起飞', CHECK_INCOMPLETE: '设备信息不足，是否起飞待确认', NOT_TAKEN_OFF: '已确认未按任务起飞', DEVICE_ABNORMAL: '已确认监测设备异常，是否起飞还不清楚' };
+const conclusions = { AUTO_DEVICE_ABNORMAL: '系统检测到附近设备异常，是否起飞待确认', SUSPECTED_NOT_TAKEN_OFF: '附近无异常设备，疑似未按任务起飞', CHECK_INCOMPLETE: '是否起飞仍待确认，检查依据见详情', NOT_TAKEN_OFF: '已确认未按任务起飞', DEVICE_ABNORMAL: '已确认监测设备异常，是否起飞还不清楚' };
 const delivery = { PENDING_DELIVERY: '等待发送', SUBMITTED: '已提交发送，等待送达', DELIVERED: '已送达', FAILED: '发送失败' };
 const receipt = { NOT_EXPECTED: '暂不等待对方确认', PENDING: '等待对方确认收到', ACKNOWLEDGED: '对方已确认收到', TIMEOUT: '对方未按时确认收到' };
 const recordGroups = computed(() => {
@@ -77,7 +86,7 @@ onUnmounted(() => { token++; clearInterval(refreshTimer); });
 <template>
   <section v-if="preflight" class="sect plan-preflight">
     <h4>起飞前 · 周边设备检查</h4>
-    <PlanDeviceCheck :key="plan.plan_id" :plan="plan" @map-devices="emit('map-devices', { planId: plan.plan_id, check: $event })" />
+    <PlanDeviceCheck ref="deviceCheck" :key="plan.plan_id" :plan="plan" @map-devices="emit('map-devices', { planId: plan.plan_id, check: $event })" />
   </section>
   <div v-if="error" class="warnbox">核实与通知记录暂时无法读取：{{ error }} <button v-if="![401,403].includes(errorStatus)" class="btn" type="button" @click="reload">重试</button></div>
   <component :is="completed ? 'details' : 'section'" v-else-if="showPanel" :key="`${plan.plan_id}:${completed}`" class="sect plan-verification">
@@ -89,12 +98,12 @@ onUnmounted(() => { token++; clearInterval(refreshTimer); });
         系统自动检查：{{ date(data.scheduled_check.last_checked_at) }}
         <span v-if="data.scheduled_check.state === 'FAILED'"> · 本次检查失败，后台将重试</span>
         <span v-else-if="data.scheduled_check.state === 'MATCHED' && !showMatchedNotice"> · 已发现对应目标，停止到点检查</span>
-        <span v-if="data.scheduled_check.maintenance_task_ids?.length"> · 已关联 {{ data.scheduled_check.maintenance_task_ids.length }} 条后台运维待办</span>
+        <span v-if="data.scheduled_check.maintenance_task_ids?.length"> · 已关联 {{ data.scheduled_check.maintenance_task_ids.length }} 份后台处置单</span>
       </p>
       <p v-for="task in data.scheduled_check?.maintenance_tasks || []" :key="task.task_id" class="record-meta">
-        {{ task.device_name }}：{{ ({ PENDING: '待处理', PROCESSING: '处理中', PENDING_VERIFICATION: '待恢复核验', COMPLETED: '已完成', LEGACY_HANDLED: '历史已处理' })[task.workflow_state] || '处理状态未知' }}
+        {{ task.device_name }}：{{ taskLabel(task) }}
       </p>
-      <PlanDeviceCheck v-if="needsVerification" :key="plan.plan_id" :plan="plan" @map-devices="emit('map-devices', { planId: plan.plan_id, check: $event })" />
+      <PlanDeviceCheck ref="deviceCheck" v-if="needsVerification" :key="plan.plan_id" :plan="plan" @map-devices="emit('map-devices', { planId: plan.plan_id, check: $event })" />
       <div v-if="hasHistory" class="workflow-actions"><button class="btn ghost" type="button" @click="reload(true)">刷新记录</button></div>
       <article v-for="group in recordGroups" :key="group.key" class="verification-record">
         <b class="record-conclusion">{{ group.verification ? (conclusions[group.verification.conclusion] || '未知结论') : '核实内容暂不可用' }}</b>

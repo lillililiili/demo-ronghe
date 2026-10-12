@@ -134,7 +134,7 @@ class ExternalAuthenticationRequired(ValueError):
 class ExternalBridge:
     """Shared in-memory system login and allowlisted external interface calls."""
     PREFIX = '/local-interface-simulator'
-    READ = {PREFIX + '/context', PREFIX + '/airspaces/context', PREFIX + '/plan-options', PREFIX + '/punishment-recipients'}
+    READ = {PREFIX + '/session', PREFIX + '/receiver-context', PREFIX + '/context', PREFIX + '/airspaces/context', PREFIX + '/plan-options', PREFIX + '/punishment-recipients'}
     WRITE = set(map(PREFIX.__add__, ('/plans', '/weather', '/weather-risks', '/device-status', '/bindings', '/airspaces', '/countermeasure-device', '/routes', '/observation-devices', '/target-observations', '/weather-devices', '/weather-observations', '/punishment-recipients')))
     RECEIPT = re.compile(r'^/local-interface-simulator/messages/[A-Za-z0-9_-]{1,64}/receipt$')
     PLAN_FILING = re.compile(r'^/local-interface-simulator/plans/[A-Za-z0-9_-]{1,36}/filing$')
@@ -397,7 +397,7 @@ class Runtime:
         if platform is None: raise ExternalAuthenticationRequired('系统登录已失效，请重新登录')
         # This must also run for plain movement scenes with no notification polling.
         # Any failed check stops the publishing loop; only success renews the window.
-        platform.call('GET', '/auth/me')
+        platform.call('GET', '/local-interface-simulator/session')
         self.session_verified_at = int(time.time()*1000)
         self.next_session_check = now + 5
 
@@ -621,6 +621,9 @@ class Runtime:
                     if not self.wait_for_mqtt_reconnect(client):
                         raise ValueError('MQTT 连接在 30 秒内未恢复，任务停止')
                 if not subscriptions.wait_ready(self.cancel): continue
+                # Reconnection can outlive a pause request; never reuse the pre-wait phase.
+                with self.lock:
+                    phase = self.phase
                 self.sync_video()
                 if phase == 'PAUSED':
                     health.forget()
@@ -640,15 +643,22 @@ class Runtime:
                     if self.fullchain: self.fullchain.tick(self.targets,elapsed,sequence)
                     health.observe(self.scene, elapsed)
                     for topic,payload in messages(self.scene,devices,self.targets,self.manifest,elapsed,int(time.time()*1000),last_sent,sequence):
-                        if payload.get('event') == 'HeartBeat': self.eo.heartbeat(payload)
-                        if self.cancel.is_set(): break
+                        with self.lock:
+                            if self.cancel.is_set() or self.phase != 'RUNNING': break
                         if not client.is_connected():
                             if not self.wait_for_mqtt_reconnect(client):
                                 raise ValueError('MQTT 连接在 30 秒内未恢复，任务停止')
                         if not subscriptions.wait_ready(self.cancel): break
-                        # 开始、恢复上报和故障起止时，先报一条健康状态再发这条心跳（新-11）。
+                        with self.lock:
+                            if self.cancel.is_set() or self.phase != 'RUNNING': break
+                        # 状况变化或距明确健康上报满 30 秒时，先报健康再发心跳；停发和暂停期间不报。
                         health.before_publish(topic, payload)
-                        info=client.publish(topic,json.dumps(payload,ensure_ascii=False),qos=1,retain=False)
+                        # A health request may already be in flight when paused. Keep its actual result,
+                        # but do not send another heartbeat or another device's health after it returns.
+                        with self.lock:
+                            if self.cancel.is_set() or self.phase != 'RUNNING': break
+                            if payload.get('event') == 'HeartBeat': self.eo.heartbeat(payload)
+                            info=client.publish(topic,json.dumps(payload,ensure_ascii=False),qos=1,retain=False)
                         info.wait_for_publish(timeout=5)
                         if not info.is_published(): raise ValueError('MQTT 确认超时：当前发送结果未知，任务停止')
                         with self.lock:
@@ -659,8 +669,8 @@ class Runtime:
                     with self.lock: self.checkpoint()
                 self.cancel.wait(.1)
             with self.lock:
-                self.phase='STOPPED' if self.cancel.is_set() else 'COMPLETED'
-            self.log('STOP','发送已停止；已有业务记录保留，设备时效由系统判定')
+                self.phase=('FAILED' if self.error else 'STOPPED') if self.cancel.is_set() else 'COMPLETED'
+            self.log('ERROR' if self.error else 'STOP', self.error or '发送已停止；已有业务记录保留，设备时效由系统判定')
         except Exception as error:
             with self.lock:
                 self.phase='FAILED'; self.error=sanitize_video_error(error, self.video_config)[:600]

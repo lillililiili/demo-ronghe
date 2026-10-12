@@ -152,6 +152,19 @@ const LEVEL_OPTS = [{ v: '全部', t: '全部' }, { v: 'CRITICAL', t: '紧急' }
 const STATUS_OPTS = [{ v: '全部', t: '全部' }, ...Object.entries(STATUS_FILTER).map(([v, s]) => ({ v, t: s.t }))];
 const pageProgress = {};
 const pendingProgress = new Set();
+const progressSources = new Map();
+let progressReadSeq = 0, progressBatchSeq = 0;
+let progressBatch = null;
+
+// 列表和详情共用读取结果；两个来源各自防止旧响应覆盖新结果，读取失败保留上次事实。
+function recordProgressRead(eventId, source, seq, items) {
+  const sources = progressSources.get(eventId) || {};
+  const previous = sources[source];
+  if (previous && previous.seq > seq) return;
+  sources[source] = { seq, items: items ?? previous?.items, failed: items === undefined };
+  progressSources.set(eventId, sources);
+  pageProgress[eventId] = deriveAlarmProgress(sources.auths?.items || [], sources.handoffs?.items || []);
+}
 
 /* ---------- 通用小工具：服务端字符串一律转义后才进 innerHTML ---------- */
 const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
@@ -195,18 +208,19 @@ function displayState(a) {
   const autoTransferred = !!autoHandoff?.handoff_id && !['FAILED', 'DISABLED', 'BLOCKED', 'WAITING'].includes(autoHandoff.status);
   const handedOff = autoTransferred || pageProgress[a.event_id] === 'HANDED_OFF';
   if (a.state !== 'CONFIRMED' && !handedOff) return stateOf(a);
-  let key = handedOff ? 'HANDED_OFF' : pageProgress[a.event_id];
-  if (cur.alarm && cur.alarm.alarm_id === a.alarm_id) {
-    const fromDetail = deriveAlarmProgress(Object.values(disposal.byAction), disposal.handoff ? [disposal.handoff] : []);
-    if (fromDetail) key = fromDetail;
-  }
+  const key = handedOff ? 'HANDED_OFF' : pageProgress[a.event_id];
+  const sources = progressSources.get(a.event_id);
+  const failed = sources?.auths?.failed || sources?.handoffs?.failed;
   if (!key || !ALARM_PROGRESS_LABEL[key]) {
+    if (failed) return { t: '处置进度读取失败', c: 't-gray', color: '#8ca0be' };
+    if (!sources?.auths?.items || !sources?.handoffs?.items) {
+      return { t: pendingProgress.has(a.event_id) ? '处置进度读取中' : '处置进度待确认', c: 't-gray', color: '#8ca0be' };
+    }
     const summary = advisorySummaries.get(a.event_id);
     if (NOTIFY_PHASE[summary?.notify_phase]) return NOTIFY_PHASE[summary.notify_phase];
-    if (!summary && pendingProgress.has(a.event_id)) return { t: '已核实，处置进度读取中', c: 't-gray', color: '#8ca0be' };
     return stateOf(a);
   }
-  return { t: ALARM_PROGRESS_LABEL[key], c: ALARM_PROGRESS_TAG[key] || 't-cyan', color: '#22d3ee' };
+  return { t: `${ALARM_PROGRESS_LABEL[key]}${failed ? '（更新失败）' : ''}`, c: ALARM_PROGRESS_TAG[key] || 't-cyan', color: '#22d3ee' };
 }
 function showCounterLaunch() {
   if (advisoryLive.value?.no_counter?.decision_active === true) return false;
@@ -281,12 +295,14 @@ let progressReloadFor = '';
 
 async function loadEventDisposals(eventId) {
   const seq = ++disposalSeq;
+  const readSeq = ++progressReadSeq;
   const isCurrent = () => seq === disposalSeq && eventId === cur.alarm?.event_id;
   disposal.byAction = {}; disposal.unavailable = false; disposal.error = ''; disposal.handoff = null;
   if (!eventId) return;
   try {
     const page = await disposalApi.list({ subject_kind: 'UAV_EVENT', subject_id: eventId, page: 1, size: 50 });
     if (!isCurrent()) return;
+    recordProgressRead(eventId, 'auths', readSeq, page?.items || []);
     // 同一动作可能申请过多次：按申请时间取最新一条代表当前状态。
     for (const row of page?.items || []) {
       const prev = disposal.byAction[row.action_type];
@@ -294,25 +310,31 @@ async function loadEventDisposals(eventId) {
     }
   } catch (error) {
     if (!isCurrent()) return;
+    recordProgressRead(eventId, 'auths', readSeq);
     disposal.unavailable = isDisposalUnavailable(error);
     disposal.error = disposal.unavailable ? DISPOSAL_UNAVAILABLE_TEXT : messageOf(error);
   }
   try {
     const page = await handoffApi.listHandoffs({ source_kind: 'UAV_EVENT', source_id: eventId, page: 1, size: 5 });
     if (!isCurrent()) return;
+    recordProgressRead(eventId, 'handoffs', readSeq, page?.items || []);
     disposal.handoff = (page?.items || []).find(row => row.handoff_type === 'UAV_PUNISHMENT') || null;
-  } catch { if (isCurrent()) disposal.handoff = null; }
+  } catch { if (isCurrent()) recordProgressRead(eventId, 'handoffs', readSeq); }
+  if (!isCurrent()) return;
+  paintList();
   return Object.values(disposal.byAction).sort((a, b) => Number(b.requested_at || 0) - Number(a.requested_at || 0))[0] || null;
 }
 
 /** 打开的告警跟着后台自动核实、反制和通知更新，不清空当前进度。 */
 async function refreshEventDisposals(eventId) {
   const seq = ++disposalSeq;
+  const readSeq = ++progressReadSeq;
   const isCurrent = () => seq === disposalSeq && eventId === cur.alarm?.event_id;
   if (!eventId || eventId !== cur.alarm?.event_id) return;
   try {
     const page = await disposalApi.list({ subject_kind: 'UAV_EVENT', subject_id: eventId, page: 1, size: 50 });
     if (!isCurrent()) return;
+    recordProgressRead(eventId, 'auths', readSeq, page?.items || []);
     const next = {};
     for (const row of page?.items || []) {
       const prev = next[row.action_type];
@@ -323,16 +345,17 @@ async function refreshEventDisposals(eventId) {
     disposal.error = '';
   } catch (error) {
     if (!isCurrent()) return;
+    recordProgressRead(eventId, 'auths', readSeq);
     disposal.unavailable = isDisposalUnavailable(error);
     disposal.error = disposal.unavailable ? DISPOSAL_UNAVAILABLE_TEXT : messageOf(error);
   }
   try {
     const page = await handoffApi.listHandoffs({ source_kind: 'UAV_EVENT', source_id: eventId, page: 1, size: 5 });
     if (!isCurrent()) return;
+    recordProgressRead(eventId, 'handoffs', readSeq, page?.items || []);
     disposal.handoff = (page?.items || []).find(row => row.handoff_type === 'UAV_PUNISHMENT') || null;
-  } catch { if (isCurrent()) disposal.handoff = null; }
+  } catch { if (isCurrent()) recordProgressRead(eventId, 'handoffs', readSeq); }
   if (!isCurrent()) return;
-  pageProgress[eventId] = deriveAlarmProgress(Object.values(disposal.byAction), disposal.handoff ? [disposal.handoff] : []);
   setSubject(advisorySubject, advisoryProps(cur.alarm, cur.event));
   paintList();
   paintDetailContent();
@@ -890,7 +913,7 @@ async function loadList({ quiet = false, progress = true } = {}) {
     // 先呈现列表并允许选中详情，逐行补充信息不占用列表加载状态。
     // 实时刷新只在处置、移送变化或本页事件换了时重读逐行进度，告警本身变化不连带每行再读两三次。
     if (progress || list.rows.map(row => row.event_id).join() !== previousEvents) {
-      void loadPageProgress(list.rows, my).then(() => { if (my === listSeq) paintList(); });
+      void loadPageProgress(list.rows);
     }
   } catch (e) {
     if (my !== listSeq) return;
@@ -909,36 +932,53 @@ async function loadList({ quiet = false, progress = true } = {}) {
   paintList();
 }
 
-async function loadPageProgress(rows, seq) {
+function loadPageProgress(rows) {
   const ids = [...new Set((rows || []).map(row => row.event_id).filter(Boolean))];
-  const next = {};
-  const summaries = new Map();
+  const confirmed = new Set(rows.filter(row => row.state === 'CONFIRMED').map(row => row.event_id));
+  const key = ids.map(id => `${id}:${confirmed.has(id)}`).sort().join();
+  // 五秒一次的告警观测刷新不能取消尚未完成的处置读取；同页复用在途任务。
+  if (progressBatch?.key === key) return progressBatch.promise;
+  const seq = ++progressBatchSeq;
+  const isCurrent = () => authorizationPageActive && seq === progressBatchSeq;
   pendingProgress.clear();
-  ids.forEach(id => { if (!advisorySummaries.has(id)) pendingProgress.add(id); });
-  await mapPool(ids, 4, async id => {
-    if (seq !== listSeq) return;
-    try {
-      const [disp, hands, advisory] = await Promise.all([
-        disposalApi.list({ subject_kind: 'UAV_EVENT', subject_id: id, page: 1, size: 50 }),
-        handoffApi.listHandoffs({ source_kind: 'UAV_EVENT', source_id: id, page: 1, size: 5 }).catch(() => ({ items: [] })),
-        rows.some(row => row.event_id === id && row.state === 'CONFIRMED') ? uavAdvisoryApi.get(id).catch(() => null) : Promise.resolve(null)
-      ]);
-      summaries.set(id, advisory ? { ...advisory, _fetchedAt: Date.now() } : null);
-      next[id] = deriveAlarmProgress(disp?.items || [], hands?.items || []);
-    } catch { next[id] = null; }
-  });
-  if (seq !== listSeq) return;
-  pendingProgress.clear();
-  Object.keys(pageProgress).forEach(key => { delete pageProgress[key]; });
-  Object.assign(pageProgress, next);
-  for (const id of [...advisorySummaries.keys()]) {
-    if (!ids.includes(id)) advisorySummaries.delete(id);
+  ids.forEach(id => pendingProgress.add(id));
+  for (const id of new Set([...progressSources.keys(), ...advisorySummaries.keys()])) {
+    if (ids.includes(id) || id === cur.alarm?.event_id) continue;
+    delete pageProgress[id];
+    progressSources.delete(id);
+    advisorySummaries.delete(id);
   }
-  for (const [id, summary] of summaries) {
-    const current = advisorySummaries.get(id);
-    if (!summary) advisorySummaries.delete(id);
-    else if (!current || (summary.event_version >= current.event_version && (!current._fetchedAt || summary._fetchedAt >= current._fetchedAt))) advisorySummaries.set(id, summary);
-  }
+  const promise = mapPool(ids, 4, async id => {
+    if (!isCurrent()) return;
+    const readSeq = ++progressReadSeq;
+    const startedAt = Date.now();
+    const read = async (source, request) => {
+      try {
+        const page = await request();
+        if (isCurrent()) recordProgressRead(id, source, readSeq, page?.items || []);
+      } catch {
+        if (isCurrent()) recordProgressRead(id, source, readSeq);
+      }
+      if (isCurrent()) paintList();
+    };
+    await Promise.all([
+      read('auths', () => disposalApi.list({ subject_kind: 'UAV_EVENT', subject_id: id, page: 1, size: 50 })),
+      read('handoffs', () => handoffApi.listHandoffs({ source_kind: 'UAV_EVENT', source_id: id, page: 1, size: 5 })),
+      confirmed.has(id) ? uavAdvisoryApi.get(id).then(advisory => {
+        if (!isCurrent() || !advisory) return;
+        const current = advisorySummaries.get(id);
+        if (!current || (advisory.event_version >= current.event_version && (!current._fetchedAt || startedAt >= current._fetchedAt))) {
+          advisorySummaries.set(id, { ...advisory, _fetchedAt: startedAt });
+        }
+      }).catch(() => {}) : Promise.resolve()
+    ]);
+    if (!isCurrent()) return;
+    pendingProgress.delete(id);
+    paintList();
+    if (cur.alarm?.event_id === id) paintDetailContent();
+  }).finally(() => { if (isCurrent()) progressBatch = null; });
+  progressBatch = { key, promise };
+  return promise;
 }
 
 async function selectAlarm(id) {

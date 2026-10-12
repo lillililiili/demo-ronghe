@@ -19,6 +19,9 @@ test('only complete authorized HLS association permits playback; tracking alone 
   }
   assert.equal(targetVideoState('t1', { ...ready, simulated: true, source_mode: 'replay' }).simulated, true);
   assert.equal(targetVideoState('t1', null).playable, false);
+  for (const status of ['NONE', 'REJECTED', 'EXPIRED', 'UNKNOWN']) {
+    assert.equal(targetVideoState('t1', { ...ready, eo_fusion_observation: { status, message: '尚无可用识别观测' } }).playable, true, 'AI availability cannot close an otherwise valid video');
+  }
 });
 
 test('video component discards stale responses and clears playback on task changes, errors and permission loss', async () => {

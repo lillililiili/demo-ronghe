@@ -251,7 +251,8 @@ class Platform:
             record = self._sync_sensing_profile(record, d.get('coverage'), external)
             # source_id 供设备开始、恢复上报时报健康状态用（device_health.py）。
             manifest['devices'][device_id] = {'external_id': external, 'edge_id': body.get('edge_id'), 'platform_id': record['device']['device_id'],
-                                              'kind': d['kind'], 'source_id': record.get('source_id')}
+                                              'kind': d['kind'], 'source_id': record.get('source_id'),
+                                              'fusion_device_id': record['device'].get('fusion_device_id')}
             if d['kind'] == 'eo':
                 binding = self.call('GET', '/devices/' + record['device']['device_id'] + '/protocol-status')['details']
                 if binding.get('edge_id') != body['edge_id'] or binding.get('external_device_id') != external:

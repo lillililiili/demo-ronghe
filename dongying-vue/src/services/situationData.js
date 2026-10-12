@@ -466,6 +466,7 @@ export function toTargets(targets, legalMap) {
       activeRisk: target.active_risk === true || target.activeRisk === true,
       abnormal: target.abnormal === true,
       sourceMode: target.source_mode || '',
+      sourceLinks: Array.isArray(target.source_links) ? target.source_links : null,
       sourceDeviceIds: Array.isArray(target.source_links)
         ? target.source_links.map(link => link.device_id).filter(Boolean) : [],
       /* 阶段 15 追加的三段摘要：缺哪段就是 null，页面缺哪行不渲染哪行，不写"—"占位。 */
@@ -663,6 +664,7 @@ export function attachRecentTracks(targets, recentTracks, previousTargets = []) 
     track: tracks.get(target.targetId) || target.track || [],
     // 换上后台尾迹后按新尾迹重新量时长。
     tailSpanMs: tracks.has(target.targetId) ? null : target.tailSpanMs,
+    sourceLinks: target.sourceLinks ?? previous.get(target.targetId)?.sourceLinks ?? null,
     sourceDeviceIds: target.sourceDeviceIds?.length ? target.sourceDeviceIds : (previous.get(target.targetId)?.sourceDeviceIds || [])
   }));
 }
@@ -699,6 +701,7 @@ export function extendRecentTracks(targets, previousTargets = []) {
       ...target,
       track: next,
       tailSpanMs: span,
+      sourceLinks: target.sourceLinks ?? before?.sourceLinks ?? null,
       sourceDeviceIds: target.sourceDeviceIds?.length ? target.sourceDeviceIds : (before?.sourceDeviceIds || [])
     };
   });
@@ -707,6 +710,6 @@ export function extendRecentTracks(targets, previousTargets = []) {
 export function attachTargetSourceLinks(targets, targetId, detail) {
   const links = Array.isArray(detail?.source_links) ? detail.source_links : [];
   return (targets || []).map(target => target.targetId === targetId
-    ? { ...target, sourceDeviceIds: links.map(link => link.device_id).filter(Boolean) }
+    ? { ...target, sourceLinks: Array.isArray(detail?.source_links) ? links : null, sourceDeviceIds: links.map(link => link.device_id).filter(Boolean) }
     : target);
 }

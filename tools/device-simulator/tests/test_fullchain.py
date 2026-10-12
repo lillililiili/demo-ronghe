@@ -38,6 +38,33 @@ class FakePlatform:
 
 
 class FullChainTests(unittest.TestCase):
+    def test_batch_activation_uses_manifest_ids_and_preserves_history(self):
+        import tempfile
+        import json
+        from fullchain import FullChain
+        from pathlib import Path
+        scene = full_scene(['uav'])
+        manifest = {'batch':'current','created_at':TEST_NOW,'broker_id':'broker',
+                    'provider':'map-sim','source_mode':'replay','devices':{},'zones':{},
+                    'plans':{'logical':{'ids':['new','shared']}},'targets':{}}
+        with tempfile.TemporaryDirectory() as directory:
+            for batch, broker, ids in [('old','broker',['old','shared']), ('foreign','other',['foreign'])]:
+                path=Path(directory)/('sim-'+batch);path.mkdir()
+                (path/'manifest.json').write_text(json.dumps({'batch':batch,'created_at':TEST_NOW-1000,
+                    'broker_id':broker,'provider':'map-sim','source_mode':'replay',
+                    'plans':{'logical':{'ids':ids}}}))
+            api=FakePlatform()
+            chain=FullChain(api,scene,manifest,{'owner_org_id':'o','district_id':'d'},lambda:None)
+            chain.activate_plan_batch(Path(directory))
+            body=api.calls[-1][2]
+            self.assertEqual(body['plan_ids'], ['new','shared'])
+            self.assertEqual(body['historical_plan_ids'], ['old'])
+            self.assertEqual(body['started_at'], TEST_NOW)
+            self.assertEqual(manifest['plans']['logical']['ids'], ['new','shared'])
+            # Retrying a fixed batch uses the identical registration even if another run appears.
+            chain.activate_plan_batch(Path(directory))
+            self.assertEqual(api.calls[-1][2], body)
+
     def test_tasks_carry_a_simulated_pilot_and_reporting_unit_unless_archives_are_chosen(self):
         from fullchain import FullChain
 

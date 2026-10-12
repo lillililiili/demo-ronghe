@@ -342,6 +342,32 @@ class FullChain:
     def message(self, key):
         return self.manifest['batch']+'-'+key
 
+    def activate_plan_batch(self, data_dir):
+        """Register the prepared batch before publishing; old plans remain immutable history."""
+        from pathlib import Path
+        registration = self.manifest.get('plan_batch_registration')
+        if registration is None:
+            current = {pid for plan in self.manifest.get('plans', {}).values() for pid in plan.get('ids', [])}
+            history = set()
+            for path in Path(data_dir).glob('sim-*/manifest.json'):
+                saved = json.loads(path.read_text(encoding='utf-8-sig'))
+                if (saved.get('batch') == self.manifest['batch'] or saved.get('provider') != 'map-sim'
+                        or saved.get('source_mode') != 'replay' or saved.get('broker_id') != self.manifest.get('broker_id')
+                        or saved.get('created_at', 0) > self.manifest['created_at']):
+                    continue
+                if saved.get('scope') and saved['scope'] != self.scope:
+                    continue
+                history.update(pid for plan in saved.get('plans', {}).values() for pid in plan.get('ids', []))
+            registration = dict(self.scope, batch_id=self.manifest['batch'], started_at=self.manifest['created_at'],
+                                plan_ids=sorted(current), historical_plan_ids=sorted(history-current))
+            self.manifest['plan_batch_registration'] = registration
+            self.checkpoint()
+        result = self.api.call('POST', PREFIX + '/plan-batches/activate', registration,
+                               'plan-batch-' + self.manifest['batch'])
+        self.manifest['plan_batch_activation'] = copy.deepcopy(result)
+        self.checkpoint()
+        return result
+
     def observation_devices(self):
         return {device['id']: dict(device, x=site['x'], y=site['y'])
                 for site in self.scene['sites'] for device in site['devices']

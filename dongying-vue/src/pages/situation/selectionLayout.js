@@ -3,7 +3,10 @@ export function selectionLayout(stage, options = {}) {
   const leftDock = stage.querySelector('.sit-device-dock');
   const rightDock = stage.querySelector('.sit-alert-dock');
   const left = (leftDock ? leftDock.offsetLeft + leftDock.offsetWidth : 0) + 12;
-  const right = (rightDock ? rightDock.offsetLeft : stage.clientWidth) - 12;
+  const fusionPanel = stage.querySelector('.sit-fuse-dock.is-open .sit-fuse-panel');
+  // The open source panel reserves the right edge while target details/video remain visible.
+  const fusionLeft = fusionPanel ? fusionPanel.getBoundingClientRect().left - stage.getBoundingClientRect().left : stage.clientWidth;
+  const right = Math.min(rightDock ? rightDock.offsetLeft : stage.clientWidth, fusionLeft) - 12;
   const top = 64;
   const bottom = stage.clientHeight - 84;
   const width = Math.max(1, right - left);

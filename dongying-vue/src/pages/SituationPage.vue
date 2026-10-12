@@ -18,7 +18,7 @@ import { riskApi, newRiskIdempotencyKey } from '@/services/riskApi.js';
 import { handoffApi, newHandoffIdempotencyKey } from '@/services/handoffApi.js';
 import { isUncertainOutcome } from '@/services/apiClient.js';
 import {
-  CORRIDOR_RELATION_LABEL, PLAN_STATUS_LABEL, RISK_STATE_LABEL, SEVERITY_LABEL, labelOf
+  CORRIDOR_RELATION_LABEL, PLAN_STATUS_LABEL, RISK_STATE_LABEL, SEVERITY_LABEL, SOURCE_MODE_LABEL, labelOf
 } from '@/ui/labels.js';
 import { toast } from '@/ui/nv.js';
 import { getAlarm } from '@/services/alarmApi.js';
@@ -32,6 +32,7 @@ import SituationRiskGroupPopup from './situation/SituationRiskGroupPopup.vue';
 import { groupRouteRisks } from './situation/routeRiskGroups.js';
 import { selectionLayout } from './situation/selectionLayout.js';
 import { createSituationMarkerLayout } from './situation/markerLayout.js';
+import { sourceContributionCards } from './situation/sourceContributions.js';
 import TargetLiveVideo from '@/components/video/TargetLiveVideo.vue';
 import { autoSmsView } from '@/components/disposal/autoSmsView.js';
 import { autoVoiceView } from '@/components/disposal/autoVoiceView.js';
@@ -163,10 +164,8 @@ const videoContext = computed(() => {
   };
 });
 watch(() => videoContext.value?.key, key => { showTargetVideo.value = !!key; }, { flush: 'sync' });
-const fusionDevices = computed(() => {
-  const ids = new Set(selectedTarget.value?.sourceDeviceIds || []);
-  return devices.value.filter(device => ids.has(device.fusionDeviceId || device.deviceId));
-});
+watch(() => selectedTarget.value?.targetId, targetId => source.setSourceTarget(targetId || null), { flush: 'sync' });
+const fusionSources = computed(() => sourceContributionCards(selectedTarget.value, devices.value));
 const fusionConfidence = computed(() => selectedTarget.value?.fusedConf ?? null);
 const clockText = computed(() => formatClock(snapshot.value.generatedAt));
 /* 数据刷新慢（CDX-P01）：地图上的目标只在有效期（十几秒）内显示，最近一轮数据超过 10 秒还没更新，
@@ -970,7 +969,7 @@ onUnmounted(() => {
           </button>
           <button type="button" role="tab" :aria-selected="alertTab === 'route'" @click="alertTab = 'route'">
             <GitCompareOutline class="sit-risk-icon" aria-hidden="true" />
-            <span>航线风险</span><b :class="{ 'has-risk': riskGroups.length > 0 }">{{ riskGroups.length }}</b>
+            <span>航线风险记录</span><b :class="{ 'has-risk': riskGroups.length > 0 }">{{ riskGroups.length }} 项</b>
           </button>
         </div>
         <div v-if="alertTab === 'target'" class="sit-alert-list" role="tabpanel" aria-label="目标异常">
@@ -987,9 +986,13 @@ onUnmounted(() => {
           <button v-for="risk in riskGroups" :key="risk.groupId" type="button" class="sit-alert-row sit-route-risk-row"
             :class="[{ 'is-new': risk.isNew, 'is-history': !risk.active, 'is-selected': selectedRiskGroup?.groupId === risk.groupId }, `level-${risk.level}`]"
             :aria-pressed="selectedRiskGroup?.groupId === risk.groupId"
-            :aria-label="`查看${risk.spaceFact?.subtypeName || '航线'}风险，关联${risk.planCount}条任务，${riskGroupStateText(risk)}`" @click="selectRiskGroup(risk)">
+            :aria-label="`查看${risk.targetId && risk.targetId !== risk.targetInternalId ? risk.targetId : '目标编号未提供'}的${risk.spaceFact?.subtypeName || '航线'}风险，关联${risk.planCount}条任务，${riskGroupStateText(risk)}`" @click="selectRiskGroup(risk)">
             <span class="sit-alert-level">{{ risk.level }}</span>
-            <span class="sit-alert-copy"><b>{{ risk.spaceFact?.subtypeName || '航线' }}风险 · 关联 {{ risk.planCount }} 条任务</b><em>{{ riskFactText(risk) }}</em></span>
+            <span class="sit-alert-copy">
+              <b>{{ risk.spaceFact?.subtypeName || '航线' }}风险 · {{ labelOf(SOURCE_MODE_LABEL, risk.sourceMode, '来源未提供') }}</b>
+              <em class="mono">{{ risk.targetId && risk.targetId !== risk.targetInternalId ? risk.targetId : '目标编号未提供' }} · 关联 {{ risk.planCount }} 条任务</em>
+              <em>触发时：{{ riskFactText(risk) }}</em>
+            </span>
             <span class="sit-alert-meta"><time class="mono">{{ formatClock(risk.occurredAt) }}{{ risk.isNew ? ' · 未查看' : '' }}</time><b>{{ riskGroupStateText(risk) }}</b></span>
           </button>
         </div>
@@ -1063,11 +1066,12 @@ onUnmounted(() => {
         <section class="sit-glass sit-fuse-panel">
           <header class="sit-dock-head"><span><small>FUSION LINKS</small><b>{{ selectedTarget.id }}</b></span></header>
           <div class="sit-fuse-links">
-            <span v-for="device in fusionDevices" :key="device.id" :style="{ '--sensor': device.color }">
-              <span class="sit-node-icon" v-html="iconHtml(device)"></span><b>{{ device.type }}</b><em>{{ device.status }}</em>
+            <span v-for="source in fusionSources" :key="source.key" :style="{ '--sensor': source.color }">
+              <span v-if="source.device" class="sit-node-icon" v-html="iconHtml(source.device)"></span><b>{{ source.name }}</b><em>{{ source.status }}</em>
+              <em v-if="source.observedAt">观测 {{ formatClock(source.observedAt) }}</em><em v-if="source.reason">{{ source.reason }}</em>
             </span>
           </div>
-          <p>来源链路及在线状态均由后端融合服务返回。</p>
+          <p v-if="!fusionSources.length">暂无可读取的融合来源。</p>
         </section>
       </aside>
     </main>
@@ -1114,4 +1118,12 @@ onUnmounted(() => {
 .situation-page .sit-alert-copy>b,.situation-page .sit-alert-copy>em,.situation-page :deep(.sit-map-pop header b){white-space:normal;overflow:visible;overflow-wrap:anywhere;text-overflow:initial}
 .situation-page .sit-alert-row{flex-shrink:0;grid-template-columns:34px minmax(0,1fr)}
 .situation-page .sit-alert-meta{grid-column:2;flex-direction:row;justify-content:space-between;flex-wrap:wrap;white-space:normal}
+</style>
+
+<style scoped>
+.situation-page .sit-fuse-panel { right: 0; bottom: calc(100% + 12px); width: min(360px, calc(100cqw - 32px)); max-height: min(360px, calc(100cqh - 250px)); overflow-y: auto; }
+.sit-fuse-links { flex-wrap: wrap; }
+.sit-fuse-links > span { min-width: 130px; max-width: 100%; }
+.sit-fuse-links b { grid-column: 2; }
+.sit-fuse-links b, .sit-fuse-links em { white-space: normal; overflow-wrap: anywhere; }
 </style>

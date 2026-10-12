@@ -97,6 +97,8 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
   };
   let timer = null;
   let stopped = true;
+  let selectedSourceTarget = null;
+  let sourceSelectionGeneration = 0;
   let paused = false;
   let running = false;
   let lastSlowAt = 0;
@@ -222,7 +224,7 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
       }, value => { snapshot = { ...snapshot, targets: value }; }, [])
         // 目标一读回就先发布（CDX-P01）：不等同一轮的告警、风险、移送分页读完。当天记录多时那几组要读很久，
         // 等它们读完，刚收到的目标已过了地图有效期，被页面当成过期滤掉。整轮读完后照旧再发布一次。
-        .then(() => publish(generatedAt)),
+        .then(async () => { publish(generatedAt); await refreshSelectedSources(); publish(generatedAt); }),
       wanted.has('alarms') && retain('alarms', () => allPages(listAlarms, {
         occurred_from: day.from, occurred_to: day.to, sort: 'occurred_at', order: 'desc'
       }), value => { snapshot = { ...snapshot, alarms: toAlarms(value) }; }, []),
@@ -234,6 +236,24 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
       }), value => { snapshot = { ...snapshot, handoffs: value }; }, [])
     ];
     await Promise.all(tasks.filter(Boolean));
+  }
+
+  async function refreshSelectedSources() {
+    const targetId = selectedSourceTarget;
+    const generation = sourceSelectionGeneration;
+    if (!targetId || stopped) return;
+    try {
+      const detail = await targetApi.detail(targetId);
+      if (stopped || generation !== sourceSelectionGeneration || targetId !== selectedSourceTarget) return;
+      snapshot = { ...snapshot, targets: attachTargetSourceLinks(snapshot.targets, targetId, detail) };
+    } catch (error) {
+      if (stopped || generation !== sourceSelectionGeneration) return;
+      snapshot = { ...snapshot, targets: snapshot.targets.map(target => target.targetId !== targetId ? target : {
+        ...target, sourceLinks: (target.sourceLinks || []).map(link => ({ ...link, fusion_status: 'UNKNOWN',
+          contribution_attributes: [], fusion_reason: '融合来源读取失败或无权查看', observation_at: null }))
+      }) };
+      report(error, '目标融合来源');
+    }
   }
 
   async function refreshSlow(generatedAt, segments = SLOW_SEGMENTS) {
@@ -317,6 +337,7 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
         ? refreshSlow(generatedAt, slowSegments).then(() => { if (fullSlow) lastSlowAt = generatedAt; })
         : Promise.resolve();
       await Promise.all([fast, slow]);
+      publish(generatedAt);
       if (needsSlow) {
         // 两组完成顺序不固定，只报方位的目标须按最终设备位置再关联一次。
         snapshot = { ...snapshot, targets: attachBearing(snapshot.targets, bearingOrigins(snapshot.devices)) };
@@ -360,14 +381,32 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
       clearTimer();
       if (!running) void cycle(true);
     },
+    setSourceTarget(targetId) {
+      if (selectedSourceTarget !== (targetId || null)) sourceSelectionGeneration += 1;
+      selectedSourceTarget = targetId || null;
+    },
     stop() {
+      selectedSourceTarget = null; sourceSelectionGeneration += 1;
       stopped = true; paused = false; clearTimer(); unsubscribe?.(); unsubscribe = null;
       globalThis.removeEventListener?.('auth-access-change', accessChanged);
     },
     async refresh() { await cycle(true); },
     async loadTargetDetail(targetId) {
       if (!targetId) return null;
-      const detail = await targetApi.detail(targetId);
+      const generation = sourceSelectionGeneration;
+      let detail;
+      try { detail = await targetApi.detail(targetId); }
+      catch (error) {
+        if (!stopped && targetId === selectedSourceTarget && generation === sourceSelectionGeneration) {
+          snapshot = { ...snapshot, targets: snapshot.targets.map(target => target.targetId !== targetId ? target : {
+            ...target, sourceLinks: (target.sourceLinks || []).map(link => ({ ...link, fusion_status: 'UNKNOWN',
+              contribution_attributes: [], fusion_reason: '融合来源读取失败或无权查看', observation_at: null }))
+          }) };
+          publish(now());
+        }
+        throw error;
+      }
+      if (stopped || targetId !== selectedSourceTarget || generation !== sourceSelectionGeneration) return detail;
       snapshot = { ...snapshot, targets: attachTargetSourceLinks(snapshot.targets, targetId, detail) };
       publish(now());
       const evaluationId = detail.legality_summary?.evaluation_id;

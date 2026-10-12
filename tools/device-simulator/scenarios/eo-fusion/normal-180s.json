@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "name": "光电融合专项 · 三路同目标 · 180秒",
+  "duration": 3,
+  "fullchain": {
+    "enabled": false
+  },
+  "sites": [
+    {
+      "id": "full-site",
+      "name": "全量模拟设备组",
+      "x": 420,
+      "y": 300,
+      "devices": [
+        {
+          "id": "radar",
+          "kind": "radar",
+          "name": "正常雷达",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2,
+          "coverage": {
+            "kind": "circle",
+            "radiusM": 8000,
+            "sourceLabel": "全量模拟场景配置"
+          }
+        },
+        {
+          "id": "tdoa",
+          "kind": "tdoa",
+          "name": "身份探测",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2
+        },
+        {
+          "id": "eo",
+          "kind": "eo",
+          "name": "光电跟踪",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2,
+          "coverage": {
+            "kind": "sector",
+            "rangeM": 6000,
+            "azimuthDeg": 0,
+            "fovDeg": 120,
+            "sourceLabel": "全量模拟场景配置"
+          }
+        }
+      ]
+    }
+  ],
+  "plans": [],
+  "zones": [],
+  "targets": [
+    {
+      "id": "eo-subject",
+      "name": "专项模拟无人机",
+      "kind": "uav",
+      "path": [
+        [
+          420,
+          350
+        ],
+        [
+          480,
+          350
+        ],
+        [
+          480,
+          420
+        ],
+        [
+          420,
+          420
+        ]
+      ],
+      "motionMode": "pingpong",
+      "height": 80,
+      "heightAgl": 60,
+      "altitudeDatum": "AMSL",
+      "speed": 4,
+      "count": 1,
+      "probability": 0.98,
+      "planId": "",
+      "deviceId": "radar",
+      "notificationBehavior": "none",
+      "secondaryDeviceId": "tdoa",
+      "transport": "mqtt",
+      "pilotPoint": [
+        115,
+        165
+      ]
+    }
+  ],
+  "risks": [],
+  "eoObservations": {
+    "enabled": true,
+    "detectConfidence": 0.94,
+    "trackConfidence": 0.91,
+    "intervalSeconds": 2
+  }
+}

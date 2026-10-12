@@ -4,7 +4,7 @@
 
 在隔离local+qa库中关闭真实通知、反制及自动动作后，由项目负责人协调运行现有模拟器，导入上述JSON并开始。设置测试视频关闭仍可生成AI。每次登记产生独立批次与设备/来源；duration: 3 的单位为分钟，即180秒自动停止，历史保留。后端必须已部署任务约束的协议C融合实现。场景没有计划、空域或通知结果种子，不写入最终融合来源。
 
-关联链：本次manifest批次→已登记传感器source_id/fusion_device_id→MQTT objectId（同一场景实体分配的mqtt_object_id）→GET目标source_links→服务端open_task.target_id→对应场景实体的engine.target_sample。仅接受replay且唯一匹配；名称、距离、平台融合经纬度和下发objectData不能成为观测。标准化来源目标本轮没有明确映射时不发AI。
+关联链：本次manifest批次→已登记传感器platform_id/fusion_device_id（登记返回的source_id是运维层来源，与目标source_links里的融合层来源是两套编号，不互相比较）→MQTT objectId（同一场景实体分配的mqtt_object_id）→GET目标source_links→服务端open_task.target_id→对应场景实体的engine.target_sample。仅接受replay且唯一匹配；名称、距离、平台融合经纬度和下发objectData不能成为观测。标准化来源目标本轮没有明确映射时不发AI。
 
 `eoObservations.enabled: true` 显式启用AI；缺省保持状态回执。`detectConfidence`、`trackConfidence` 必须显式提供0—1有限数值；intervalSeconds 为0.1—300秒的有限数值，默认2秒，仅是测试输入周期；silenceWindows/anomalyWindows时间单位秒。正常只支持uav→drone、bird→bird；AMSL/AGL高度不填入协议C椭球高，只有场景明确ELLIPSOID才发送altitude。objectData/extention若下发则原样回传，不参与测量。
 

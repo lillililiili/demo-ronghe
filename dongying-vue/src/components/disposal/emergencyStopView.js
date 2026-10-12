@@ -40,5 +40,5 @@ export function stopSummary(overview) {
 export function stopTime(value) {
   if (value == null) return '—';
   const date = new Date(Number(value));
-  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString('zh-CN', { hour12: false });
+  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' });
 }

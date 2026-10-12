@@ -39,6 +39,7 @@ import { getEvidenceChain } from '@/services/evidenceApi.js';
 import { openUavVerification } from '@/ui/uavVerificationModal.js';
 import { targetApi } from '@/services/targetApi.js';
 import { toAirspaces } from '@/services/situationData.js';
+import { displayAlarmNo, displayTargetNo } from '@/ui/deviceNumber.js';
 import { mapPool } from '@/services/apiClient.js';
 import { ALARM_PROGRESS_LABEL, ALARM_PROGRESS_TAG, ALARM_TYPE_LABEL, classChangeText, CONCLUSION_LABEL, DISPOSAL_ACTION_LABEL, labelOf, LEGALITY_LABEL, readableNo, sourceDescription, SOURCE_MODE_LABEL as MODE_TEXT, targetTypeLabel } from '@/ui/labels.js';
 import { openEvidenceFileModal } from '@/ui/evidenceFileDetail.js';
@@ -52,6 +53,7 @@ import CounterLaunch from '@/pages/alarms/CounterLaunch.vue';
 import TargetTrackingPanel from '@/components/video/TargetTrackingPanel.vue';
 import { uavAdvisoryApi } from '@/services/uavAdvisoryApi.js';
 
+import { businessDateTime } from '@/services/businessTime.js';
 const U = window.UI;
 usePageChrome('alarms');
 const root = ref(null);
@@ -110,7 +112,8 @@ onUnmounted(() => { ++listSeq; ++detailSeq; ++disposalSeq; if (map) map.destroy(
 /* ---------- 契约词典（阶段 4 固定） ---------- */
 const SEVERITY = {
   CRITICAL: { t: '紧急', c: 't-red', tone: 'bad' }, HIGH: { t: '高', c: 't-red', tone: 'bad' },
-  MEDIUM: { t: '中', c: 't-amber', tone: 'warn' }, LOW: { t: '低', c: 't-blue', tone: 'info' }
+  MEDIUM: { t: '中', c: 't-amber', tone: 'warn' }, LOW: { t: '低', c: 't-blue', tone: 'info' },
+  UNKNOWN: { t: '未定级', c: 't-muted', tone: 'neutral' }
 };
 /* 通知阻断不覆盖核实结论；有现场、授权或移送事实时再展示对应处置进度。 */
 const STATE = {
@@ -170,11 +173,7 @@ function recordProgressRead(eventId, source, seq, items) {
 const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 const el = id => document.getElementById(id);
 function fmt(ms) {
-  if (ms == null) return '';
-  const d = new Date(ms);
-  if (Number.isNaN(d.getTime())) return '';
-  const p = n => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  return businessDateTime(ms);
 }
 const sevOf = a => SEVERITY[a.severity] || { t: esc(a.severity || '—'), c: 't-gray', tone: 'info' };
 const stateOf = a => a.event_id ? (STATE[a.state] || { t: esc(a.state || '状态未知'), c: 't-gray', color: '#8ca0be' }) : NO_EVENT;
@@ -240,7 +239,7 @@ function eventHandedOff() {
 }
 const typeOf = a => ALARM_TYPE_LABEL[a.alarm_type] || esc(a.alarm_type || '—');
 /* 只上屏业务编号；引擎标识（例如 eval 前缀）不是编号，列里显示 —，内部 ID 留在 title。 */
-const noOf = a => readableNo(a.alarm_no) || '—';
+const noOf = a => displayAlarmNo(readableNo(a.alarm_no)) || '—';
 const modeOf = a => SOURCE_MODE[a.source_mode] || { t: esc(a.source_mode || '—'), c: 't-gray' };
 const sevTag = a => U.tag(sevOf(a).t, sevOf(a).c);
 const OBSERVATION_LABEL = { CURRENT: '观测有效', EXPIRED: '观测已过期', UNKNOWN: '观测待确认' };
@@ -567,7 +566,7 @@ function listHtml() {
       render: a => U.cell(esc(noOf(a)), null, { mono: true, title: esc(a.alarm_id) })
     },
     { t: sortTh('level', '等级'), w: '52px', align: 'center', overflow: false, render: sevTag },
-    { t: '关联目标', w: '146px', render: a => U.cell(a.target_id ? esc(a.target_no || a.target_id) : '—', null, { mono: true, title: a.target_id ? esc(a.target_id) : '无关联目标或无目标读取权限' }) },
+    { t: '关联目标', w: '146px', render: a => U.cell(a.target_id ? esc(displayTargetNo(a.target_no) || a.target_id) : '—', null, { mono: true, title: a.target_id ? esc(a.target_id) : '无关联目标或无目标读取权限' }) },
     { t: '告警内容', render: reasonCell },
     { t: sortTh('status', '状态'), w: '124px', overflow: false, render: stateTag },
     { t: sortTh('ts', '时间'), w: '158px', overflow: false, render: a => esc(fmt(a.received_at) || '未知') }
@@ -672,7 +671,7 @@ function detailHtml() {
     ...(a.task_match_note ? [['任务匹配提示', esc(a.task_match_note)]] : []),
     ...(brief ? [['告警升级', esc(`${brief.level}，共 ${brief.count} 次${brief.at ? `，最近 ${fmt(brief.at)}` : ''}`)]] : []),
     ['所在区域', esc(a.district_name || a.district_id || '—')], ['所属机构', esc(a.owner_org_name || a.owner_org_id || '—')],
-    ['关联目标', a.target_id ? `<span class="mono" title="${esc(a.target_id)}">${esc(a.target_no || a.target_id)}</span>` : '无关联目标或无目标读取权限'],
+    ['关联目标', a.target_id ? `<span class="mono" title="${esc(a.target_id)}">${esc(displayTargetNo(a.target_no) || a.target_id)}</span>` : '无关联目标或无目标读取权限'],
     ['目标类型', targetType],
     ...(cur.targetLoading || cur.targetError ? [] : [classChangeRow(t, a)].filter(Boolean)),
     ['高度/速度', altSpeed],
@@ -808,12 +807,12 @@ function focusMap({ fit = true } = {}) {
   if (!a) return setInfo(cur.loading ? '正在读取告警' : '请选择告警');
   if (!a.target_id) return setInfo(warn('无关联目标或无目标读取权限，无法定位'));
   if (cur.targetLoading) return setInfo('正在读取关联目标');
-  if (cur.targetError) return setInfo(warn(`关联目标 ${esc(a.target_no || a.target_id)} 读取失败：${esc(cur.targetError)}`));
+  if (cur.targetError) return setInfo(warn(`关联目标 ${esc(displayTargetNo(a.target_no) || a.target_id)} 读取失败：${esc(cur.targetError)}`));
   const t = cur.target, ls = t && t.latest_state;
   const pos = ls ? coord(ls.location, ls.field_issues, 'location') : null;
   const pts = measuredMapPoints(cur.track?.points || []);
   const last = pos || (pts.length ? pts[pts.length - 1] : null);
-  if (!t || !last) return setInfo(warn(`关联目标 ${esc(t?.target_no || a.target_no || a.target_id)} 位置无法确认，暂时无法定位`));
+  if (!t || !last) return setInfo(warn(`关联目标 ${esc(displayTargetNo(t?.target_no || a.target_no) || a.target_id)} 位置无法确认，暂时无法定位`));
   const subtype = targetTypeLabel(t.subtype, t.object_type_code, '目标');
   const target = {
     id: t.target_no || t.target_id, targetId: t.target_id, lon: last.lon, lat: last.lat,
@@ -849,7 +848,7 @@ function focusMap({ fit = true } = {}) {
     ? `<span class="tag t-amber">${esc(source)}轨迹</span> <span style="color:#8fbaff">${pts.length} 点</span>`
     : `<span class="tag t-gray" title="${cur.trackError ? esc(cur.trackError) : '暂时没有可显示的飞行轨迹'}">无轨迹</span>`;
   setInfo(`合法性 ${esc(target.legal)} · ${trackNote}`,
-    `${t.target_no || t.target_id}｜${subtype}｜高度 ${target.alt == null ? '—' : target.alt + ' m'}\n${trackNote}`);
+    `${displayTargetNo(t.target_no) || t.target_id}｜${subtype}｜高度 ${target.alt == null ? '—' : target.alt + ' m'}\n${trackNote}`);
 }
 
 /* ---------- 数据加载 ---------- */
@@ -1139,7 +1138,7 @@ async function refreshAfterWrite() {
 /* 静默重读当前打开的告警：新数据到达前保留已显示的详情，内容没变就不重画；关联目标换了才重读目标和轨迹，
    急停、处置进度和视频面板不卸载重建。读取暂时失败（断网、超时、5xx）时保留原详情并抛出，由实时刷新退避重试；
    告警已不可见（403/404 等）时如实显示原因。详情还没读出来（上次失败）时按正常选中重读。 */
-async function refreshSelected(id = st.selId) {
+async function refreshSelected(id = st.selId, { evidenceChanged = false } = {}) {
   if (!id || id !== st.selId || cur.loading) return;
   if (!cur.alarm) { await selectAlarm(id); return; }
   const my = detailSeq;
@@ -1180,7 +1179,7 @@ async function refreshSelected(id = st.selId) {
   } else if (alarm.target_id && JSON.stringify(alarm) !== JSON.stringify(before)) {
     await loadTarget(my, { quiet: true });
   }
-  if (chainChanged && isCurrent()) await refreshChain(my);
+  if ((chainChanged || evidenceChanged) && isCurrent()) await refreshChain(my);
   if (escalationChanged && isCurrent()) await loadEscalations(my, { quiet: true });
   if (verificationChanged && isCurrent()) await loadVerifications(my, { quiet: alarm.event_id === before.event_id });
   if (isCurrent() && (escalationChanged || (cur.airspacesError && Date.now() - cur.airspacesCheckedAt >= 60000))) await loadMapAirspaces(my);
@@ -1243,6 +1242,8 @@ onUnmounted(() => { clearTimeout(kpiTimer); clearTimeout(progressTimer); });
 async function realtimeRefresh(topics) {
   if (list.loading) return;
   const all = topics.includes('*');
+  // 截图、录像入库不改变告警/事件版本；证据变化和断线补读仍须更新已打开的证据链。
+  const evidenceChanged = all || topics.includes('evidence');
   const disposalChanged = all || topics.some(topic => topic === 'disposal' || topic === 'punishment');
   const selId = st.selId;
   const rowKey = () => JSON.stringify(list.rows.find(row => row.alarm_id === selId) || null);
@@ -1253,10 +1254,10 @@ async function realtimeRefresh(topics) {
   const after = rowKey();
   const rowChanged = after !== before && after !== 'null';
   const observationChanged = topics.includes('target') || topics.includes('observation-expiry');
-  if (all || rowChanged || (after === 'null' && observationChanged)) await refreshSelected(selId);
+  if (all || evidenceChanged || rowChanged || (after === 'null' && observationChanged)) await refreshSelected(selId, { evidenceChanged });
   else if (disposalChanged && cur.alarm?.event_id) await refreshEventDisposals(cur.alarm.event_id);
 }
-const realtime = useRealtimeRefresh(['alarm', 'target', 'disposal', 'punishment'], realtimeRefresh, { minIntervalMs: 2_000 });
+const realtime = useRealtimeRefresh(['alarm', 'target', 'disposal', 'punishment', 'evidence'], realtimeRefresh, { minIntervalMs: 2_000 });
 // 时间经过不会产生数据库变化事件；只定时重读服务端，不在页面计算过期或修改业务状态。
 let observationRefreshTimer = null;
 onMounted(() => { observationRefreshTimer = setInterval(() => realtime.trigger(['observation-expiry']), 5_000); });
@@ -1359,7 +1360,7 @@ onMounted(async () => {
           <UPanel title="关联目标定位与轨迹" panel-style="height:244px;max-height:50%;flex:none" nopad
             body-style="padding:6px" :extra="mapExtra" :body-html="mapBody" />
           <UPanel title="告警详情与处置" panel-style="flex:1;min-height:0" nopad
-            body-style="overflow:auto;display:flex;flex-direction:column;padding:0">
+            body-style="overflow:hidden;display:flex;flex-direction:column;padding:0">
             <div class="alarm-action-bar">
               <CounterLaunch v-if="advisorySubject" :key="`counter-${advisorySubject.id}`"
                 :event-id="advisorySubject.id" :event-label="advisorySubject.label" :active="activeTab === 'alarms'"
@@ -1399,10 +1400,13 @@ onMounted(async () => {
   grid-template-columns: repeat(8, minmax(0, 1fr));
   flex: none;
 }
-@media (max-width: 1439px) {
+@media (max-width: 1099px) {
   .alarms-page :deep(.alarm-kpis) {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
+}
+@media (min-width: 1100px) and (max-width: 1439px) {
+  .alarms-page :deep(.alarm-kpis .ic) { display: none; }
 }
 @media (max-width: 900px) {
   .alarms-page :deep(.alarm-kpis) {
@@ -1448,7 +1452,7 @@ onMounted(async () => {
   flex-wrap: wrap;
   margin-left: 0;
 }
-@container alarm-filters (max-width: 760px) {
+@container alarm-filters (max-width: 580px) {
   .alarms-page :deep(.alarm-filter-toolbar .toolbar-fields) {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1458,7 +1462,7 @@ onMounted(async () => {
     grid-template-columns: minmax(0, 1fr);
   }
 }
-.alarm-action-bar { position:sticky; top:0; z-index:10; display:flex; flex-direction:column; align-items:stretch; gap:6px; margin:0; padding:6px 12px; border-bottom:1px solid var(--line); background:var(--panel); box-shadow:0 4px 12px color-mix(in srgb, var(--bg-1) 22%, transparent); }
+.alarm-action-bar { flex:none; display:flex; flex-direction:column; align-items:stretch; gap:10px; margin:0; padding:10px 12px; border-bottom:1px solid var(--line); background:var(--panel); box-shadow:0 4px 12px color-mix(in srgb, var(--bg-1) 22%, transparent); }
 .alarm-action-bar:not(:has(.btn, .tag)) { display:none; }
 .alarm-observation { order:2; flex:0 0 auto; min-width:0; }
 .alarm-observation:empty { display:none; }
@@ -1466,7 +1470,7 @@ onMounted(async () => {
 .alarm-observation :deep(.alarm-observation-actions) { display:flex; align-items:center; justify-content:flex-start; flex-wrap:wrap; gap:10px; }
 .alarm-observation :deep(.btn) { min-height:40px; height:auto; padding:8px 14px; white-space:normal; }
 .alarm-observation :deep(.alarm-action-note) { margin:8px 0 0; font-size:12px; line-height:1.65; color:var(--txt-2); }
-.alarm-detail-content { min-width:0; }
+.alarm-detail-content { flex:1; min-width:0; min-height:0; overflow:auto; }
 .alarm-reason-host { margin:0 12px; }
 .alarms-page :deep(.alarm-reason-cell) { display:flex; flex-direction:column; align-items:flex-start; gap:7px; min-width:0; }
 .alarms-page :deep(.alarm-reason-text) { display:block; color:var(--txt); font-size:14px; font-weight:700; line-height:1.65; white-space:normal; overflow-wrap:anywhere; }

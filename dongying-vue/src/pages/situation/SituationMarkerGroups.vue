@@ -1,4 +1,5 @@
 <script setup>
+import { displayBusinessNo } from '@/ui/deviceNumber.js';
 import { computed, onMounted, onUnmounted, shallowRef } from 'vue';
 import { selectionLayout } from './selectionLayout.js';
 import { weatherRiskIcon } from '@/ui/weatherRiskIcon.js';
@@ -52,7 +53,7 @@ function zoomIn() {
   close();
   map.centerAt(point[0], point[1], { scale: map.zoom * 2 });
 }
-function name(member) { return member.data.name || member.data.targetNo || member.data.id; }
+function name(member) { return member.data.name || displayBusinessNo(member.data.targetNo || member.data.id); }
 function composition(group) {
   return [['device', '设备'], ['target', '目标'], ['weather', '气象风险']]
     .map(([kind, label]) => [label, group.members.filter(member => member.kind === kind).length])
@@ -83,7 +84,7 @@ onUnmounted(() => cancelAnimationFrame(frame));
       <div class="sit-marker-rows">
         <button v-for="member in opened.members" :key="member.key" type="button" @click="select(member)">
           <span class="sit-member-icon" aria-hidden="true" v-html="icon(member)"></span>
-          <span><b>{{ name(member) }}</b><small>{{ kind(member) }}<template v-if="member.data.type"> · {{ member.data.type }}</template></small><small v-if="name(member) !== member.data.id">{{ member.data.id }}</small></span>
+          <span><b>{{ name(member) }}</b><small>{{ kind(member) }}<template v-if="member.data.type"> · {{ member.data.type }}</template></small><small v-if="name(member) !== displayBusinessNo(member.data.id)">{{ displayBusinessNo(member.data.id) }}</small></span>
           <em v-if="member.abnormal">异常</em>
         </button>
       </div>

@@ -4,6 +4,7 @@
  * ========================================================================== */
 (function (g) {
   'use strict';
+  const numberLabel = value => g.UI?.displayBusinessNo ? g.UI.displayBusinessNo(value) : value;
   const html = value => String(value == null ? '—' : value).replace(/[&<>"']/g, ch => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   })[ch]);
@@ -1619,7 +1620,7 @@
         const speedTx = t.speed == null ? '—' : html(t.speed) + ' m/s';
         picks.push({
           x: displayPoint[0], y: displayPoint[1], kind: 'target', data: t,
-          tip: `<div class="maptip-uav"><b style="color:${col}">${html(t.id)}</b>
+          tip: `<div class="maptip-uav"><b style="color:${col}">${html(numberLabel(t.id))}</b>
             <div class="maptip-uav-meta">${html(t.subtype || t.type)}</div>
             <div class="maptip-uav-tags">${html(t.legal)}${t.violation ? ' · ' + html(t.violation) : ''} · ${html(t.risk)}</div></div>`
         });
@@ -1649,7 +1650,7 @@
         picks.push({
           x: q[0], y: q[1], kind: 'alarm', data: a,
           tip: `<b style="color:${col}">${a.type}</b><dl class="kv" style="margin-top:6px">
-            <dt>目标</dt><dd>${a.targetId}</dd><dt>等级</dt><dd>${a.level}</dd>
+            <dt>目标</dt><dd>${html(numberLabel(a.targetId))}</dd><dt>等级</dt><dd>${a.level}</dd>
             <dt>时间</dt><dd>${a.time.slice(11)}</dd><dt>状态</dt><dd>${a.status}</dd></dl>`
         });
       });

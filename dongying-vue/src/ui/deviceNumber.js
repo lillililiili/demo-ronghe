@@ -43,3 +43,21 @@ export function displayDeviceNo(value) {
 export const displayPlanNo = value => compactGeneratedNumber(value, 'PLN');
 export const displayRouteNo = value => compactGeneratedNumber(value, 'RTE');
 export const displayAirspaceNo = value => compactGeneratedNumber(value, 'ASP');
+
+// 仅去掉页面编号中的类型前缀；保留完整日期、序号和来源方自带的其他编号。
+export const displayBusinessNo = value => String(value ?? '').trim().replace(/^(?:告警|目标|风险)-/, '');
+export const displayAlarmNo = value => String(value ?? '').trim().replace(/^告警-/, '');
+export const displayTargetNo = value => String(value ?? '').trim().replace(/^目标-/, '');
+export const displayRiskNo = value => String(value ?? '').trim().replace(/^风险-/, '');
+
+// 说明文字只替换该记录明确关联的完整编号，不改普通名称或其他对象的编号。
+export function displayNumberReferences(value, numbers) {
+  let text = String(value ?? '');
+  for (const number of new Set(numbers.filter(Boolean))) {
+    const display = displayBusinessNo(number);
+    if (display === number) continue;
+    const escaped = number.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    text = text.replace(new RegExp(`${escaped}(?![\\w-])`, 'g'), () => display);
+  }
+  return text;
+}

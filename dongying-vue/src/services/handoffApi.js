@@ -61,4 +61,5 @@ export function notifyHandoff(handoffId, expectedAttemptNo, idempotencyKey) {
   });
 }
 
-export const handoffApi = { listHandoffRecipients, createHandoff, listHandoffs, getHandoff, listHandoffDeliveries, getHandoffNotification, notifyHandoff };
+export const handoffApi = { listHandoffRecipients, createHandoff, listHandoffs, getHandoff, listHandoffDeliveries, getHandoffNotification, notifyHandoff,
+  previewRisk: (id, version) => apiRequestTimed(`/risks/${encodeURIComponent(id)}/handoff-preview${buildQuery({ expected_version: version })}`) };

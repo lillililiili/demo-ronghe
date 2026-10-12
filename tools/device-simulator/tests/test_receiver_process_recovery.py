@@ -43,7 +43,7 @@ class ReceiverProcessRecoveryTests(unittest.TestCase):
                 def do_POST(self):
                     command = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
                     path = command['path']
-                    if path.endswith('/context'):
+                    if path == '/local-interface-simulator/receiver-context':
                         with lock: result = {'receiver_messages': [copy.deepcopy(row)]}
                     elif path.endswith('/bindings'):
                         result = {'enabled': command['body']['enabled']}

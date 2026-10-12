@@ -4,7 +4,7 @@ import { ADVISORY_KIND, OBSERVATION_OUTCOME, OBSERVATION_DANGER, orderedRecords 
 import { AUTO_VOICE_STATUS } from './autoVoiceView.js';
 const props = defineProps({ records: { type: Array, default: () => [] } });
 const rows = computed(() => orderedRecords(props.records).reverse());
-const time = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '时间未提供';
+const time = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }) : '时间未提供';
 </script>
 
 <template>

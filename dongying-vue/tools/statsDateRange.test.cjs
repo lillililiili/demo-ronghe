@@ -10,7 +10,7 @@ const path = require('node:path');
 const source = readFileSync(path.join(__dirname, '../src/pages/StatsPage.vue'), 'utf8');
 
 function roundTrip(timezone, day) {
-  const seed = source.match(/dateRange\.value = \[(Date\.parse\(`\$\{data\.from\}[^`]*`\)), /);
+  const seed = source.match(/const reportRange = data => data \? \[(Date\.parse\(`\$\{data\.from\}[^`]*`\)), /);
   const format = source.match(/const date = (value => new Intl\.DateTimeFormat\([^;]+?\)\.format\(value\));/);
   assert.ok(seed, '找不到日期框初值');
   assert.ok(format, '找不到查询日期的格式化');

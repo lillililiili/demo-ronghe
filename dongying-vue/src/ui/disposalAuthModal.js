@@ -37,7 +37,7 @@ function esc(value) {
 function time(value) {
   if (!value) return '';
   const at = typeof value === 'number' ? new Date(value) : new Date(String(value));
-  return Number.isNaN(at.getTime()) ? String(value) : at.toLocaleString('zh-CN', { hour12: false });
+  return Number.isNaN(at.getTime()) ? String(value) : at.toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' });
 }
 /* 错误码不上屏：每一条都译成处置人员能据以行动的话。 */
 function messageOf(error, fallback) {

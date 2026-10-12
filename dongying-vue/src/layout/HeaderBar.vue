@@ -4,6 +4,7 @@
    （旧版就是 append 到 body 的 .usermenu，CSS 上下文保持一致）。 */
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { useAppStore } from '@/stores/app.js';
+import { businessDateTime } from '@/services/businessTime.js';
 import { useRouter } from 'vue-router';
 import { authUser, changePassword, loadCurrentUser, logout, updateProfile } from '@/services/auth.js';
 import { canAccessRoute } from '@/services/accessControl.js';
@@ -22,8 +23,7 @@ const canBigscreen = computed(() => canAccessRoute('bigscreen'));
 
 /* ---------- 时钟：本地墙钟，不再使用 Mock 演示基准时刻 ---------- */
 function formatClock(date) {
-  const p = n => String(n).padStart(2, '0');
-  return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())} ${p(date.getHours())}:${p(date.getMinutes())}:${p(date.getSeconds())}`;
+  return businessDateTime(date);
 }
 let clkTimer = null;
 const tick = () => {

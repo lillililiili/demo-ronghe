@@ -78,6 +78,7 @@ function notify() {
   const id = props.riskId;
   const showRecords = () => { if (alive && props.riskId === id) recordsOpen.value = true; };
   openRiskNotification({ risk: risk.value, refresh: () => refreshAfterAction(id), onExisting: showRecords,
+    isCurrent: () => alive && props.riskId === id && risk.value?.risk_id === id,
     onDone: created => { showRecords(); toast(notificationSubmissionMessage(created).message, 'ok'); } });
 }
 watch(() => props.riskId, () => {

@@ -13,6 +13,7 @@ function verificationForm(event, verify) {
     verifyUavEvent: verify, isUncertainOutcome: error => !!error && (error.status === 409 || error.code === 'TIMEOUT'),
     ALARM_TYPE_LABEL: {}, labelOf: () => '', readableNo: value => value || ''
   });
+  vm.runInContext(readFileSync(path.join(__dirname, '../src/ui/deviceNumber.js'), 'utf8').replace(/\bexport /g, ''), context);
   vm.runInContext(source, context);
   const opened = context.openUavVerification({ event, alarm: { alarm_id: 'a1', alarm_no: 'AL-1', target_id: 't1' } });
   return { form, opened };
@@ -34,11 +35,13 @@ test('缺少核实依据时“属实”不可选并说明原因，误报照常�
   assert.match(confirmed.label, /缺少依据/);
   assert.equal(form.initial.conclusion, undefined, '不预选结论');
   assert.match(form.validate({ conclusion: 'CONFIRMED' }), /缺少依据/);
-  assert.equal(form.validate({ conclusion: 'FALSE_POSITIVE' }), '');
-  await form.onSubmit({ conclusion: 'FALSE_POSITIVE' });
+  assert.match(form.validate({ conclusion: 'FALSE_POSITIVE' }), /核实理由/);
+  assert.equal(form.validate({ conclusion: 'FALSE_POSITIVE', note: '已核对关联观测与证据' }), '');
+  await form.onSubmit({ conclusion: 'FALSE_POSITIVE', note: '已核对关联观测与证据' });
   assert.equal(submitted[0].id, 'e1');
   assert.equal(submitted[0].body.conclusion, 'FALSE_POSITIVE');
   assert.equal(submitted[0].body.expected_version, 3);
+  assert.equal(submitted[0].body.note, '已核对关联观测与证据');
 });
 
 test('依据齐全或接口未返回依据时保持原来的属实预选', () => {
@@ -47,7 +50,8 @@ test('依据齐全或接口未返回依据时保持原来的属实预选', () =>
     assert.equal(form.warning, '');
     assert.equal(form.fields[0].options[0].disabled, false);
     assert.equal(form.initial.conclusion, 'CONFIRMED');
-    assert.equal(form.validate({ conclusion: 'CONFIRMED' }), '');
+    assert.match(form.validate({ conclusion: 'CONFIRMED' }), /核实理由/);
+    assert.equal(form.validate({ conclusion: 'CONFIRMED', note: '核对当前观测和明确违规研判' }), '');
   }
 });
 

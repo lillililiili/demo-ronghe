@@ -26,6 +26,14 @@
           "interval": 1
         },
         {
+          "id": "acceptance-eo",
+          "name": "流程验收光电",
+          "kind": "eo",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 1
+        },
+        {
           "id": "acceptance-weather",
           "name": "流程验收气象设备",
           "kind": "weather",
@@ -77,7 +85,7 @@
       "核验与通知上级在业务页面完成，脚本不写核验或通知结果"
     ],
     "weather": {
-      "area_name": "流程 6 雷雨试验区域",
+      "area_name": "东营区",
       "summary": "雷雨",
       "wind_speed_ms": 12,
       "gust_ms": 20,

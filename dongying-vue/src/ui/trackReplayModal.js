@@ -1,9 +1,11 @@
-/* 告警页轨迹回放：用目标最新一条轨迹的可信 WGS-84 点在独立地图上走航线，
+/* 告警页轨迹回放：用目标全部融合轨迹分段的可信 WGS-84 点在独立地图上回放，
    并按采集时刻同步播放关联到该目标的光电录像。不是飞行任务航线。点位不足两条就不打开。 */
+import { displayTargetNo } from '@/ui/deviceNumber.js';
 import { h } from 'vue';
 import { openModal } from './modal.js';
 import { toast } from './nv.js';
 import { targetApi } from '@/services/targetApi.js';
+import { targetReplayHistory } from '@/services/targetReplayHistory.js';
 import { measuredMapPoints } from '@/services/trackPoints.js';
 import { ALARM_TYPE_LABEL, LEGALITY_LABEL, labelOf, readableNo, targetTypeLabel } from '@/ui/labels.js';
 import TrackReplayModal from '@/components/modals/TrackReplayModal.vue';
@@ -74,6 +76,12 @@ function mapTargetOf(target, alarm) {
 export async function openTrackReplay({ target, trackId, points, alarm } = {}) {
   const my = ++replaySeq;
   let pts = trackPointsOf(points);
+  const targetId = target?.target_id || alarm?.target_id;
+  if (targetId) {
+    try { pts = trackPointsOf(await targetReplayHistory(targetApi, targetId)); }
+    catch (error) { if (my === replaySeq) toast(error.message || '完整历史轨迹读取失败', 'err'); return; }
+    if (my !== replaySeq) return;
+  }
   if (pts.length < 2 && trackId) {
     try {
       const page = await targetApi.pointsAll(trackId);
@@ -87,7 +95,7 @@ export async function openTrackReplay({ target, trackId, points, alarm } = {}) {
   if (my !== replaySeq) return;
   if (pts.length < 2) return toast('没有足够的轨迹点，无法走航线回放', 'err');
   const mapTarget = mapTargetOf(target, alarm);
-  const titleId = readableNo(mapTarget.id) || mapTarget.id;
+  const titleId = displayTargetNo(readableNo(mapTarget.id) || mapTarget.id);
   const mark = alarmMarkOf(alarm, pts);
   openModal({
     title: `轨迹回放 · ${titleId}`,

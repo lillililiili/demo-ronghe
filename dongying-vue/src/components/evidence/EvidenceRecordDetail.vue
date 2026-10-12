@@ -5,7 +5,7 @@ import { getEvidenceTrackPoints, listEvidenceFiles } from '@/services/evidenceAp
 import { hasPermission } from '@/services/accessControl.js';
 import { COMMAND_STATE_LABEL, COMMAND_TYPE_LABEL, evidenceSubjectLocation } from '@/services/evidenceLedger.js';
 import { EVIDENCE_SUBJECT_LABEL } from '@/ui/labels.js';
-import { displayDeviceNo } from '@/ui/deviceNumber.js';
+import { displayDeviceNo, displayBusinessNo } from '@/ui/deviceNumber.js';
 import { fmtEvidenceTime, openEvidenceFileModal } from '@/ui/evidenceFileDetail.js';
 import EvidenceTrackPreview from './EvidenceTrackPreview.vue';
 import { buildCommandView, commandSource } from './evidenceCommandView.js';
@@ -67,7 +67,7 @@ onBeforeUnmount(() => { sequence += 1; window.removeEventListener('auth-access-c
     <template v-if="entry.source_kind === 'TRACK'">
       <p v-if="loading" role="status">正在读取当前轨迹</p>
       <p v-else-if="error" role="alert">{{ error }} <button class="btn" @click="loadTrack">重新读取</button></p>
-      <EvidenceTrackPreview v-else-if="snapshot" :key="entry.source_id" :snapshot="snapshot" :videos="videos" :videos-loading="videosLoading" :video-note="videoNote" details />
+      <EvidenceTrackPreview v-else-if="snapshot" :key="entry.source_id" :snapshot="snapshot" :track-layer="entry.layer" :videos="videos" :videos-loading="videosLoading" :video-note="videoNote" details />
       <dl class="kv"><dt>轨迹分层</dt><dd>{{ { RAW: '原始观测', FUSED: '融合轨迹' }[entry.layer] || '未记录' }}</dd><dt>开始时间</dt><dd>{{ fmtEvidenceTime(entry.started_at) }}</dd><dt>结束时间</dt><dd>{{ fmtEvidenceTime(entry.ended_at) }}</dd></dl>
     </template>
     <template v-else-if="command">
@@ -108,8 +108,8 @@ onBeforeUnmount(() => { sequence += 1; window.removeEventListener('auth-access-c
     <section class="sect"><h4>被引用（{{ detail.links?.length || 0 }} 处）</h4>
       <div v-for="link in detail.links" :key="`${link.subject_kind}:${link.subject_id}`" class="reference">
         <span class="tag t-gray">{{ EVIDENCE_SUBJECT_LABEL[link.subject_kind] || link.subject_kind }}</span>
-        <button v-if="evidenceSubjectLocation(link.subject_kind, link.subject_id)" class="btn ghost" @click="go(link)">{{ link.subject_no || link.subject_id }}</button>
-        <span v-else>{{ link.subject_no || link.subject_id }}</span>
+        <button v-if="evidenceSubjectLocation(link.subject_kind, link.subject_id)" class="btn ghost" @click="go(link)">{{ displayBusinessNo(link.subject_no) || link.subject_id }}</button>
+        <span v-else>{{ displayBusinessNo(link.subject_no) || link.subject_id }}</span>
       </div><p v-if="!detail.links?.length">暂无可见关联事项</p>
     </section>
     <details v-if="entry.source_kind === 'TRACK'"><summary>轨迹编号与原始数据</summary><p>{{ entry.source_id }}</p><pre>{{ JSON.stringify(snapshot, null, 2) }}</pre></details>

@@ -186,6 +186,18 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(obj['height'],target_sample(t['t1'],0)['height_agl'])
         self.assertEqual(obj['height'],40)
 
+    def test_explicit_normalized_secondary_does_not_duplicate_mqtt(self):
+        from fullchain import FullChain
+        for kind in ('radar', 'tdoa', '5ga'):
+            with self.subTest(kind=kind):
+                raw=scene()
+                raw['sites'][0]['devices'].append(dict(raw['sites'][0]['devices'][0],id='aux',kind=kind))
+                raw['targets'][0].update(transport='normalized',secondaryTransport='normalized',secondaryDeviceId='aux')
+                compiled,devices,targets,_=compile_scene(raw)
+                manifest={'provider':'test','devices':{'d1':{'external_id':'radar'},'aux':{'external_id':kind}},'targets':{'t1':{'uav_sn':'TEST'}}}
+                self.assertEqual([p for _,p in messages(compiled,devices,targets,manifest,0,1000,{},1) if 'objects' in p],[])
+                self.assertEqual(FullChain.normalized_device_ids(targets['t1'],devices),['d1','aux'])
+
     def test_normalized_target_without_secondary_sends_no_mqtt_object(self):
         s=scene();s['targets'][0].update(altitudeDatum='AMSL',transport='normalized')
         s,d,t,_=compile_scene(s)

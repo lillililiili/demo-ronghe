@@ -10,7 +10,7 @@ const channel = computed(() => channels[props.snapshot?.channel_type] || props.s
     <template v-if="showName"><dt>接收对象</dt><dd>{{ snapshot.org_name || snapshot.recipient_name || '未记录' }}</dd></template>
     <template v-if="snapshot.contact_name"><dt>联系人员</dt><dd>{{ snapshot.contact_name }}<small v-if="snapshot.contact_hint">{{ snapshot.contact_hint }}</small></dd></template>
     <dt>通知渠道</dt><dd>{{ channel }}</dd>
-    <template v-if="historical"><dt>对象记录</dt><dd>保留本次通知时的接收资料<small v-if="snapshot.captured_at">记录于 {{ new Date(snapshot.captured_at).toLocaleString('zh-CN', { hour12: false }) }}</small></dd></template>
+    <template v-if="historical"><dt>对象记录</dt><dd>保留本次通知时的接收资料<small v-if="snapshot.captured_at">记录于 {{ new Date(snapshot.captured_at).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }) }}</small></dd></template>
   </template>
   <template v-else-if="historical"><dt>对象记录</dt><dd>该历史记录未保存完整接收资料；不使用当前联系人补写。</dd></template>
 </template>

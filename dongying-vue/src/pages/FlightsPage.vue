@@ -8,6 +8,9 @@ export default {};
 </script>
 
 <script setup>
+import HandoffMaterialPanel from '@/pages/punish/HandoffMaterialPanel.vue';
+import PunishmentNotification from '@/pages/punish/PunishmentNotification.vue';
+import { displayRiskNo, displayNumberReferences } from '@/ui/deviceNumber.js';
 import { computed, h, nextTick, onMounted, onUnmounted, reactive, ref, shallowRef, watch } from 'vue';
 import { flightApi } from '@/services/flightApi.js';
 import { useRealtimeRefresh } from '@/hooks/useRealtimeRefresh.js';
@@ -17,7 +20,6 @@ import { openRiskVerification } from '@/ui/riskVerificationModal.js';
 import { RULE_REASON_TEXT } from '@/ui/legalityReviewModal.js';
 import { handoffApi } from '@/services/handoffApi.js';
 import { openRiskNotification } from '@/ui/riskNotificationModal.js';
-import { openFormModal } from '@/ui/formModal.js';
 import { openModal, closeModal } from '@/ui/modal.js';
 import { toast } from '@/ui/nv.js';
 import {
@@ -30,7 +32,6 @@ import { usePageChrome } from '@/hooks/usePageChrome.js';
 import UKpis from '@/components/UKpis.vue';
 import UPanel from '@/components/UPanel.vue';
 import RiskOpticalPanel from '@/pages/flights/components/RiskOpticalPanel.vue';
-import RiskEvaluationHistory from '@/pages/flights/components/RiskEvaluationHistory.vue';
 import PlanVerificationPanel from '@/pages/flights/components/PlanVerificationPanel.vue';
 import FlightExecutionChecks from '@/components/FlightExecutionChecks.vue';
 import PlanFilingDetails from '@/pages/flights/components/PlanFilingDetails.vue';
@@ -372,6 +373,7 @@ const riskMapMissingNote = computed(() => {
   if (selectedRisk.value.risk_type === 'WEATHER') {
     if (riskWeatherLoading.value) missing.push('正在读取气象区域…');
     else if (riskWeatherError.value) missing.push(riskWeatherError.value);
+    else if (riskWeather.value?.coverage_basis === 'REGION') missing.push(`区域级预报：${riskWeather.value.area_name || '区域未提供'}；计划风险归属 ${riskWeather.value.district_name || '未提供'}。仅按来源区域与有效时段关联，未提供精确气象边界，不能据此判断航线某点是否受影响。`);
     else if (!weatherRing.value) missing.push('未提供可用的气象影响范围');
   } else if (!riskPoint.value && !objectRiskSelected.value) missing.push('这条风险没有记录位置');
   if (!objectRiskSelected.value && selectedRisk.value.target_id && !riskTarget.value) missing.push(riskTargetNote.value || '尚未获取相关目标的位置');
@@ -792,7 +794,8 @@ const routeRiskRecords = computed(() => planMapRisks.value.map((item, index) => 
   const fact = item.space_fact;
   const position = [];
   if (fact?.distance_to_route_m != null) position.push(`距航线中心线 ${(fact.distance_to_route_m / 1000).toFixed(2)} km`);
-  if (fact?.target_altitude_raw != null) position.push(`高度 ${fact.target_altitude_raw} m`);
+  if (item.observed_altitude_m != null) position.push(`高度 ${altitudeText(item)}`);
+  else if (fact?.target_altitude_raw != null) position.push(`高度 ${fact.target_altitude_raw} m ${fact.altitude_datum || '基准未知'}`);
   return {
     id: item.risk_id, number: (routeRisks.page - 1) * routeRisks.size + index + 1,
     title: riskTitle(item), severity: item.severity,
@@ -803,7 +806,7 @@ const routeRiskRecords = computed(() => planMapRisks.value.map((item, index) => 
     sourceLabel: labelOf(SOURCE_MODE_LABEL, item.source_display_mode || item.source_mode, '来源未提供'),
     occurredAt: formatTime(item.occurred_at),
     relationText: fact ? corridorText(item) : '', positionText: position.join(' · '),
-    reason: item.reason_text || '', canNotify: canNotifyItem(item)
+    reason: displayNumberReferences(item.reason_text, [item.target_no, item.risk_no]), canNotify: canNotifyItem(item)
   };
 }));
 function notifyRouteRisk(riskId) {
@@ -1384,7 +1387,7 @@ async function loadRiskWeather(risk, token) {
     // 拒绝模式不一致的数据；真实来源不回退成模拟区域。
     if (fact && fact.source_mode !== risk.source_mode) throw new Error('气象数据来源不一致');
     riskWeather.value = fact;
-    if (fact && !weatherPolygon(fact)) riskWeatherError.value = '气象范围坐标不完整，暂时无法绘制';
+    if (fact && fact.coverage_basis !== 'REGION' && !weatherPolygon(fact)) riskWeatherError.value = '气象范围坐标不完整，暂时无法绘制';
   } catch (error) {
     if (token !== riskDetailToken) return;
     riskWeather.value = null;
@@ -1607,7 +1610,12 @@ function showHandoffSubmitted(created) {
 function openRiskNotify(riskOverride = null) {
   const risk = riskOverride || selectedRisk.value;
   if (!risk || (riskOverride ? !canNotifyItem(risk) : !canNotifyRisk.value)) return;
-  openRiskNotification({ risk, refresh: () => refreshAfterNotify(risk.risk_id),
+  const token = riskDetailToken;
+  const tab = activeTab.value, planId = selected.value?.plan_id, planToken = planDetailToken;
+  return openRiskNotification({ risk, refresh: () => refreshAfterNotify(risk.risk_id),
+    isCurrent: () => token === riskDetailToken && activeTab.value === tab && (riskOverride
+      ? planToken === planDetailToken && selected.value?.plan_id === planId
+      : selectedRisk.value?.risk_id === risk.risk_id),
     onDone: showHandoffSubmitted, onExisting: () => { riskTab.value = 'notice'; } });
 }
 
@@ -1934,7 +1942,7 @@ onUnmounted(() => {
             <template v-else>
               <div class="detail-hero detail-hero-micro"><div class="detail-hero-inner">
                 <div class="detail-hero-icon" v-html="riskHeroIcon"></div>
-                <div class="detail-hero-copy"><div class="detail-hero-eyebrow">飞行风险</div><div class="detail-hero-title">{{ labelOf(RISK_TYPE_LABEL, selectedRisk.risk_type, '风险类型未提供') }}</div><div v-if="selectedRisk.risk_no" class="detail-hero-id">{{ selectedRisk.risk_no }}</div></div>
+                <div class="detail-hero-copy"><div class="detail-hero-eyebrow">飞行风险</div><div class="detail-hero-title">{{ labelOf(RISK_TYPE_LABEL, selectedRisk.risk_type, '风险类型未提供') }}</div><div v-if="selectedRisk.risk_no" class="detail-hero-id">{{ displayRiskNo(selectedRisk.risk_no) }}</div></div>
                 <div class="detail-hero-side"><div class="detail-hero-tags"><span class="tag" :class="severityTag(selectedRisk.severity)">{{ severityLabel(selectedRisk.severity) }}</span><span class="tag" :class="stateTag(selectedRisk.state)">{{ stateLabel(selectedRisk.state) }}</span></div></div>
               </div></div>
               <div v-if="riskTab === 'event'" class="rk-event-grid">
@@ -1957,7 +1965,6 @@ onUnmounted(() => {
                 <dt v-if="selectedRisk.target_id">关联目标</dt><dd v-if="selectedRisk.target_id" class="mono" :title="selectedRisk.target_id">{{ selectedRisk.space_fact?.subtype_name || '关联感知目标' }}</dd>
                 <dt v-if="selectedRisk.track_id">关联轨迹</dt><dd v-if="selectedRisk.track_id" :title="selectedRisk.track_id">已关联轨迹</dd>
               </dl><div class="rk-note">{{ selectedRisk.risk_type === 'WEATHER' ? '起飞前请核对最新预警和有效时段。' : '位置为发现时快照；违规结论见合法性研判。' }}</div></div>
-              <RiskEvaluationHistory v-if="selectedRisk.risk_type === 'SPACE_OBJECT'" :key="selectedRisk.risk_id" :risk-id="selectedRisk.risk_id" />
               <div class="sect rk-review-history"><h4>核验历史 <span class="tag t-gray">{{ riskHistoryTotal }}</span></h4>
                 <div v-if="riskHistoryLoading" class="empty">正在读取核验历史…</div>
                 <div v-else-if="riskHistoryError" class="warnbox rk-error">{{ riskHistoryError }}</div>
@@ -1984,6 +1991,8 @@ onUnmounted(() => {
                     <p>{{ labelOf(HANDOFF_TYPE_LABEL, notice.handoff_type) }} · {{ formatTime(notice.created_at) }}</p>
                     <p>对方回复：{{ receiptText(notice) }}</p>
                     <p v-if="notificationBlockedReason(notice)">未完成原因：{{ notificationBlockedReason(notice) }}</p>
+                    <HandoffMaterialPanel :key="notice.handoff_id" :handoff-id="notice.handoff_id" />
+                    <PunishmentNotification :handoff-id="notice.handoff_id" risk-notice @status="Object.assign(notice, { delivery_status: $event.delivery_status, receipt_status: $event.receipt_status, blocked_reason: $event.latest_delivery?.blocked_reason })" @changed="loadRiskNotices(activeRiskId)" />
                     <p class="rk-note">风险通知记录留在本页，不进入处罚办理。</p>
                   </article>
                 </div>

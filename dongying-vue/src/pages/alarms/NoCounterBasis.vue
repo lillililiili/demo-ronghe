@@ -4,7 +4,7 @@ import { LEGALITY_LABEL, VIOLATION_CODE_LABEL, REASON_CODE_LABEL, labelOf } from
 import { ruleReasonText } from '@/ui/legalityReviewModal.js';
 
 const props = defineProps({ basis: Object });
-const time = value => value == null ? '未提供' : new Date(value).toLocaleString('zh-CN', { hour12: false });
+const time = value => value == null ? '未提供' : new Date(value).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' });
 const reasons = computed(() => (props.basis?.violation_reasons || []).map(reason => {
   const code = typeof reason === 'string' ? reason : reason?.code;
   const currentReason = ruleReasonText(code);

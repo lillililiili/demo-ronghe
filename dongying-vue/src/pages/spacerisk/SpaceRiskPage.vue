@@ -1,4 +1,6 @@
 <script setup>
+import HandoffMaterialPanel from '@/pages/punish/HandoffMaterialPanel.vue';
+import PunishmentNotification from '@/pages/punish/PunishmentNotification.vue';
 /* 空间安全风险（#/risk）：按 legacy public/assets/js/pages/risk.js 的结构恢复——
    6 个 KPI、三栏（地图 0.82 / 列表 1.7 / 详情 30%）、事件与通报两个页签。
    数据全部来自服务端：风险列表走 /risks?risk_type=SPACE_OBJECT，计数走 /space-risks/summary，
@@ -18,7 +20,7 @@ import {
   SPACE_OBJECT_SUBTYPE_LABEL, ALTITUDE_BAND_LABEL, CORRIDOR_RELATION_LABEL, OBJECT_TREND_LABEL,
   DELIVERY_STATUS_LABEL, HANDOFF_TYPE_LABEL
 } from '@/ui/labels.js';
-import { displayPlanNo } from '@/ui/deviceNumber.js';
+import { displayPlanNo, displayRiskNo, displayTargetNo, displayNumberReferences } from '@/ui/deviceNumber.js';
 
 const U = window.UI;
 usePageChrome('risk');
@@ -30,10 +32,10 @@ const subtypes = ref([]);
 const rows = ref([]);
 /* 决策 9-31：C04 生成的 source_risk_id 是技术键（规则版本:计划:目标:窗口），不能当业务编号上屏；键放进 title 供排查。 */
 function riskNoText(row) {
-  if (row?.risk_no) return row.risk_no;
+  if (row?.risk_no) return displayRiskNo(row.risk_no);
   const no = row?.source_risk_id || '';
   if (!no) return '—';
-  return no.startsWith('C04:') ? '自动评估' : no;
+  return no.startsWith('C04:') ? '自动评估' : displayRiskNo(no);
 }
 const total = ref(0);
 const page = ref(1);
@@ -89,12 +91,12 @@ const subtypeOptions = computed(() => [{ label: '全部细类', value: '' },
 
 function icon(name) { return U.icon(name); }
 function severityTag(code) { return SEVERITY_TAG[code] || 't-gray'; }
+import { businessDateTime } from '@/services/businessTime.js';
 function fmt(ms) {
   if (ms == null) return '—';
   const d = new Date(Number(ms));
   if (Number.isNaN(d.getTime())) return '—';
-  const p = n => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  return businessDateTime(d).slice(0, 16);
 }
 function shortTime(ms) { return fmt(ms).slice(5); }
 function metres(value) { return value == null ? '' : `${Math.round(Number(value))} 米`; }
@@ -396,7 +398,7 @@ onUnmounted(() => {
             <tbody>
               <tr v-for="row in rows" :key="row.risk_id" :class="{ on: selectedId === row.risk_id }" @click="selectRisk(row.risk_id)">
                 <td class="num"><div class="table-text" tabindex="0"><span :title="`${row.source_risk_id || ''} / ${row.risk_id}`">{{ riskNoText(row) }}</span></div></td>
-                <td><div class="table-text" tabindex="0"><span v-if="row.target_no" :title="row.target_id">{{ row.target_no }}</span><span v-else>—</span></div></td>
+                <td><div class="table-text" tabindex="0"><span v-if="row.target_no" :title="row.target_id">{{ displayTargetNo(row.target_no) }}</span><span v-else>—</span></div></td>
                 <td><div class="table-text" tabindex="0">{{ row.space_fact ? labelOf(SPACE_OBJECT_SUBTYPE_LABEL, row.space_fact.subtype_code) : '—' }}</div></td>
                 <td><div class="table-text" tabindex="0">{{ labelOf(SOURCE_MODE_LABEL, row.source_mode) }}</div></td>
                 <td><div class="table-text" tabindex="0">
@@ -419,12 +421,12 @@ onUnmounted(() => {
           <table v-else class="tb">
             <thead><tr><th>接收方</th><th>通报类型</th><th>提交时间</th><th>发送情况</th></tr></thead>
             <tbody>
-              <tr v-for="notice in notices" :key="notice.handoff_id">
+              <template v-for="notice in notices" :key="notice.handoff_id"><tr>
                 <td><div class="table-text" tabindex="0"><span :title="notice.handoff_id">{{ notice.recipient_name || '—' }}</span></div></td>
                 <td><div class="table-text" tabindex="0">{{ labelOf(HANDOFF_TYPE_LABEL, notice.handoff_type) }}</div></td>
                 <td><div class="table-text" tabindex="0">{{ fmt(notice.created_at) }}</div></td>
                 <td><div class="table-text" tabindex="0">{{ labelOf(DELIVERY_STATUS_LABEL, notice.delivery_status) }}</div></td>
-              </tr>
+              </tr><tr><td colspan="4"><HandoffMaterialPanel :handoff-id="notice.handoff_id" /><PunishmentNotification :handoff-id="notice.handoff_id" risk-notice @status="Object.assign(notice, { delivery_status: $event.delivery_status, receipt_status: $event.receipt_status, blocked_reason: $event.latest_delivery?.blocked_reason })" @changed="loadNotices(selectedId)" /></td></tr></template>
               <tr v-if="!notices.length"><td colspan="4" class="empty">所选事件还没有通报记录</td></tr>
             </tbody>
           </table>
@@ -455,7 +457,7 @@ onUnmounted(() => {
             <dt>发现时间</dt><dd>{{ fmt(detail.occurred_at ?? detail.received_at) }}</dd>
             <dt>所属区域</dt><dd>{{ detail.district_name || '—' }}</dd>
             <dt>关联任务</dt><dd><span v-if="detail.plan_no" :title="detail.plan_no">{{ displayPlanNo(detail.plan_no) }}</span><span v-else>—</span></dd>
-            <dt v-if="detail.target_no">关联目标</dt><dd v-if="detail.target_no"><span :title="detail.target_id">{{ detail.target_no }}</span></dd>
+            <dt v-if="detail.target_no">关联目标</dt><dd v-if="detail.target_no"><span :title="detail.target_id">{{ displayTargetNo(detail.target_no) }}</span></dd>
           </dl>
 
           <div class="sect"><h5>判定依据</h5>
@@ -470,7 +472,7 @@ onUnmounted(() => {
               <dt>监测时段</dt><dd>{{ shortTime(spaceFact.window_from) }} — {{ shortTime(spaceFact.window_to) }}</dd>
             </dl>
             <div v-else class="empty">该事件没有异物判定记录</div>
-            <p v-if="detail.reason_text" class="sr-reason">{{ detail.reason_text }}</p>
+            <p v-if="detail.reason_text" class="sr-reason">{{ displayNumberReferences(detail.reason_text, [detail.target_no, detail.risk_no]) }}</p>
           </div>
 
           <div v-if="detail.state === 'PENDING_VERIFICATION' || (detail.state === 'PENDING_NOTIFICATION' && canVerify)" class="sr-actions">

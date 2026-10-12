@@ -315,6 +315,10 @@ def compile_scene(raw):
         if t.get('transport', default_transport) not in ('mqtt', 'normalized'):
             raise ValueError('目标上报通道无效')
         t['transport'] = t.get('transport', default_transport)
+        if t.get('secondaryTransport', 'auto') not in ('auto', 'normalized'):
+            raise ValueError('辅助目标上报通道无效')
+        if t.get('secondaryTransport') == 'normalized' and t['transport'] != 'normalized':
+            raise ValueError('规范化辅助观测须与主观测使用同一模拟通道')
         if t['transport'] == 'normalized':
             t.setdefault('altitudeDatum', 'AMSL')  # Existing normalized-scene default.
         if t['kind'] == 'balloon' and t['transport'] != 'normalized':
@@ -381,7 +385,8 @@ def compile_scene(raw):
 def secondary_reports_over_mqtt(target, device):
     """规范化观测的目标选了辅助上报设备、而这台设备的协议能报这类目标时，由 messages() 让它发 MQTT 目标报文。
     fullchain 据此不再替它从规范化入口重复报：一台设备对一个目标只报一遍，平台才不会把它算成两个数据源（新-17）。"""
-    return (target.get('transport') != 'mqtt' and device.get('kind') in TARGET_REPORT_KINDS
+    return (target.get('transport') != 'mqtt' and target.get('secondaryTransport') != 'normalized'
+            and device.get('kind') in TARGET_REPORT_KINDS
             and protocol_a.supports(device['kind'], target.get('kind')))
 
 def device_condition(scene, device_id, device, elapsed):
@@ -428,6 +433,8 @@ def messages(scene, devices, targets, manifest, elapsed, now, last_sent, sequenc
             # 平台要看到两路来源，融合置信度才够研判；只有一路时只能判“不可判定”，不出告警。
             normalized = t['transport'] != 'mqtt'
             if device_id not in ((t.get('secondaryDeviceId'),) if normalized else (t['deviceId'], t.get('secondaryDeviceId'))):
+                continue
+            if normalized and not secondary_reports_over_mqtt(t, d):
                 continue
             if not protocol_a.supports(d['kind'], t['kind']):
                 continue

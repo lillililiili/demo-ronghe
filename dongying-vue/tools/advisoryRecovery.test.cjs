@@ -95,6 +95,7 @@ function advisoryComponent(file, dependencies) {
 }
 
 async function renderSituationAdvisory(summary, overrides = {}, error = '') {
+  const { displayBusinessNo } = await import('../src/ui/deviceNumber.js');
   const vue = require('vue');
   const { renderToString } = require('@vue/server-renderer');
   const stub = { render: () => null };
@@ -102,6 +103,7 @@ async function renderSituationAdvisory(summary, overrides = {}, error = '') {
     NoCounterDecisionModal: stub, NoCounterBasis: stub
   });
   const card = advisoryComponent('pages/situation/SituationAdvisoryCard.vue', {
+    displayBusinessNo,
     AutoSmsNotice: stub, AutoVoiceNotice: stub, AdvisoryRecords: stub, CounterLaunch: counter,
     useUavAdvisory: () => ({ data: vue.ref(summary), error: vue.ref(error), loading: vue.ref(false), load() {} })
   });

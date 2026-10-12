@@ -23,6 +23,8 @@ const current = computed(() => data.value?.event_id === props.eventId && !loadin
 const historicalObservations = computed(() => data.value?.event_id === props.eventId
   ? (data.value.records || []).filter(row => row.kind === 'OBSERVATION') : []);
 const handoff = computed(() => autoHandoffView(data.value, props.handoffId));
+const observation = computed(() => data.value?.departure_observation);
+const observationTime = value => value == null ? '未提供' : new Date(value).toLocaleString('zh-CN', { timeZone:'Asia/Shanghai', hour12:false });
 function openHandoff() {
   if (handoff.value.handoffId) window.location.hash = `/punish?handoff=${encodeURIComponent(handoff.value.handoffId)}`;
 }
@@ -83,6 +85,14 @@ async function submitHandoff() {
     <template v-if="data">
       <AutoSmsNotice compact :data="data" :disabled="!current" @changed="load()" />
       <AutoVoiceNotice compact :data="data" :disabled="!current" @changed="load()" />
+      <div v-if="observation?.started_at" class="ua-handoff" aria-label="通知后的位置核对依据">
+        <p v-if="observation.status === 'RECORDED'" class="ua-note">已留存的通知终止依据；当前观测时效以告警信息为准。</p>
+        <p>通知后位置判断：{{ ({ LEFT:'有效位置已确认离开', STILL_PRESENT:'仍在告警区域或仍有违规', UNKNOWN:'无法确认是否离开' })[observation.presence] }}</p>
+        <p class="ua-note">观察开始 {{ observationTime(observation.started_at) }}；最早判断 {{ observationTime(observation.deadline_at) }}（北京时间）</p>
+        <p v-if="observation.position" class="ua-note">采用观测 {{ observationTime(observation.position.observed_at) }} · WGS84 {{ observation.position.longitude }}, {{ observation.position.latitude }}</p>
+        <p v-else class="ua-note">没有当前可用或可见的位置依据，不能把停报当成飞离。</p>
+        <p class="ua-note">依据：{{ ({SMS_AIRSPACE:'通知送达时所处空域与后续实测位置',LATEST_LEGALITY:'通知后的实测位置及最新合法性研判',AIRSPACE_BOUNDARY:'位置压在空域边界，无法确认',NO_CURRENT_POSITION:'没有时效内的新实测位置'})[observation.basis] || '尚未形成判断' }}；本次核对 {{ observationTime(observation.evaluated_at) }}。</p>
+      </div>
       <details v-if="historicalObservations.length" class="ua-history">
         <summary>历史现场观察记录（{{ historicalObservations.length }}）</summary>
         <AdvisoryRecords :records="historicalObservations" />

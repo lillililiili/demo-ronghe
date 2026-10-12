@@ -13,6 +13,7 @@ let alive = true;
 onUnmounted(() => { alive = false; });
 const view = computed(() => autoVoiceView(props.data));
 const compactTitle = computed(() => {
+  if (view.value.recordedDeparture) return view.value.title;
   if (view.value.pilotContactMissing || view.value.channelUnavailable || view.value.smsNotSent) return view.value.title;
   const reason = props.data?.auto_voice?.reason || '';
   if (reason.includes('正在用设备位置观察')) return '观察是否撤离';
@@ -22,7 +23,7 @@ const compactTitle = computed(() => {
   if (reason.includes('超过自动通知时效')) return '超过时效，不拨打';
   return ({ DISABLED: '未启用', WAITING: '等待拨打', CALLING: '正在拨打', SIMULATED_PLAYED: '已接通并播完', FAILED: '通知失败', UNAVAILABLE: '暂不可用', BLOCKED: '拨打已暂停', UNKNOWN: '通话结果未确认', NOT_REQUIRED: '不需要拨打' })[props.data?.auto_voice?.status] || view.value.title;
 });
-const time = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '';
+const time = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }) : '';
 function retry() {
   if (!view.value.canRetry || props.disabled) return;
   const id = props.data.event_id, version = props.data.event_version;

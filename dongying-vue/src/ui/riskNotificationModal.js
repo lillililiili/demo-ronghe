@@ -5,17 +5,25 @@ import { isUncertainOutcome } from '@/services/apiClient.js';
 import { openFormModal } from './formModal.js';
 import { closeModal } from './modal.js';
 import { toast } from './nv.js';
+import { riskNoticePreview } from './riskNoticePreview.js';
 
 const pendingKeys = new Map();
 const messageOf = error => error.status === 401 ? '登录已失效，请重新登录。'
   : error.status === 403 ? '当前账号没有提交或查看交接的权限。' : error.message || '提交通知失败';
 
-export function openRiskNotification({ risk, refresh, onDone, onExisting } = {}) {
-  if (!risk?.risk_id || risk.state !== 'PENDING_NOTIFICATION' || !hasPermission('handoff:create')) return false;
+export async function openRiskNotification({ risk, refresh, onDone, onExisting, isCurrent = () => true } = {}) {
+  if (!risk?.risk_id || risk.state !== 'PENDING_NOTIFICATION' || !hasPermission('handoff:create') || !isCurrent()) return false;
   const id = risk.risk_id, expectedVersion = Number(risk.version);
+  let preview;
+  try { preview = await riskNoticePreview(id, expectedVersion); }
+  catch (error) {
+    if (isCurrent()) toast(error.message || '通知材料预览读取失败', 'err');
+    return false;
+  }
+  if (!isCurrent()) return false;
   if (!pendingKeys.has(id)) pendingKeys.set(id, newHandoffIdempotencyKey());
   openFormModal({
-    title: '通知上级', width: '560px', fields: [], confirmText: '提交通知',
+    title: '通知上级', width: '720px', introHtml: preview.introHtml, fields: [], confirmText: '提交通知',
     warning: '提交后，请在通知记录中查看是否送达，并等待对方回执。显示“已回执”表示本次风险通知流程完成；签收不代表风险已经解除。对方如另附处理结果，会显示在同一条回执里。',
     onSubmit: async () => {
       let created;

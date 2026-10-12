@@ -17,7 +17,7 @@ const compactTitle = computed(() => view.value.pilotContactMissing ? view.value.
 const SOURCE_TEXT = { ALARM_EVENT: '核实属实后才由后台自动发送。', RULE_ILLEGAL: '核实属实后才由后台自动发送。',
   MANUAL_RECHECK: '告警超过通知时效后，有人核对了最新情况并登记发送。', MANUAL_CONFIRMATION: '人工确认与当前观测' };
 const sourceText = computed(() => SOURCE_TEXT[view.value.source] || (view.value.source ? '后台通知记录' : ''));
-const time = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '';
+const time = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }) : '';
 function retry() {
   if (!view.value.canRetry || props.disabled) return;
   const id = props.data.event_id, version = props.data.event_version;

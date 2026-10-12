@@ -1,4 +1,5 @@
 <script setup>
+import { displayBusinessNo } from '@/ui/deviceNumber.js';
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import EvidenceTrackPreview from '@/components/evidence/EvidenceTrackPreview.vue';
 import { hasPermission } from '@/services/accessControl.js';
@@ -83,13 +84,13 @@ onBeforeUnmount(() => { disposed = true; sequence += 1; window.removeEventListen
     <template v-if="record">
       <dl class="track-detail-facts">
         <div><dt>轨迹分层</dt><dd>{{ layer }}</dd></div>
-        <div><dt>关联事项</dt><dd>{{ labelOf(EVIDENCE_SUBJECT_LABEL, chain.subject_kind, '事项') }} · {{ chain.subject_no || chain.subject_id }}</dd></div>
+        <div><dt>关联事项</dt><dd>{{ labelOf(EVIDENCE_SUBJECT_LABEL, chain.subject_kind, '事项') }} · {{ displayBusinessNo(chain.subject_no) || chain.subject_id }}</dd></div>
         <div><dt>开始时间</dt><dd>{{ fmtEvidenceTime(record.summary?.started_at) }}</dd></div>
         <div><dt>结束时间</dt><dd>{{ fmtEvidenceTime(record.summary?.ended_at) }}</dd></div>
         <div><dt>记录点数</dt><dd>{{ record.summary?.point_count == null ? '未记录' : `${record.summary.point_count} 点` }}</dd></div>
         <div><dt>记录时刻</dt><dd>{{ fmtEvidenceTime(record.occurred_at) }}</dd></div>
       </dl>
-      <EvidenceTrackPreview v-if="snapshot" :key="record.record_id" :snapshot="snapshot" :videos="videos" details />
+      <EvidenceTrackPreview v-if="snapshot" :key="record.record_id" :snapshot="snapshot" :track-layer="record.summary?.layer" :videos="videos" details />
       <details class="track-detail-record">
         <summary>记录标识与链校验信息</summary>
         <dl class="track-detail-facts">

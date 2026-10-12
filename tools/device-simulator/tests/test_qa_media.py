@@ -184,6 +184,7 @@ class OneClickVideoControlTests(unittest.TestCase):
         self.assertNotIn(credentials['publish'], json.dumps(result)); self.assertNotIn(credentials['read'], json.dumps(result))
 
     def test_invalid_credentials_keep_video_off_without_starting_media(self):
+        self.runtime.video_config['enabled'] = False
         original = b'[]'
         self.file.write_bytes(original)
         with self.assertRaisesRegex(ValueError, '格式无效'): self.control({'enabled': True})

@@ -1,3 +1,4 @@
+import { displayTargetNo } from '@/ui/deviceNumber.js';
 import { h } from 'vue';
 import {
   EVIDENCE_COVERAGE_LABEL, EVIDENCE_KIND_LABEL, EVIDENCE_RECORD_TYPE_LABEL, EVIDENCE_STATUS_LABEL, labelOf
@@ -38,7 +39,7 @@ export function recordCaption(record) {
 export function recordHint(record) {
   const summary = record.summary || {};
   if (summary.source_kind === 'COMMAND') return `${COMMAND_TYPE_LABEL[summary.original_name] || summary.original_name} · ${summary.evidence_no}`;
-  if (summary.original_name) return summary.original_name;
+  if (summary.original_name) return summary.source_kind === 'TRACK' ? displayTargetNo(summary.original_name) : summary.original_name;
   if (summary.evidence_no) return summary.evidence_no;
   if (summary.layer) return summary.point_count != null ? `${summary.layer} · ${summary.point_count} 点` : summary.layer;
   return record.record_id;

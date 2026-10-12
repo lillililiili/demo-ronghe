@@ -7,13 +7,15 @@ import { SOURCE_MODE_LABEL, labelOf, targetTypeLabel } from '@/ui/labels.js';
 const props = defineProps({
   snapshot: { type: Object, required: true },
   file: { type: Object, default: null },
+  trackLayer: { type: String, default: '' },
   details: { type: Boolean, default: false },
   /** 同一事项关联的光电录像，按采集时刻与轨迹同步播放；不传则不显示录像窗。 */
   videos: { type: Array, default: null },
   videosLoading: Boolean,
   videoNote: { type: String, default: '' },
 });
-const model = computed(() => prepareEvidenceTrack(trackSnapshotRows(props.snapshot)));
+const model = computed(() => prepareEvidenceTrack(trackSnapshotRows(props.snapshot),
+  { layer: props.trackLayer || props.snapshot.layer || props.snapshot.track?.layer }));
 const points = computed(() => model.value.points);
 const sourceMode = computed(() => props.file?.source_mode || props.snapshot.source_mode);
 const partial = computed(() => Number(props.snapshot.points?.total) > trackSnapshotRows(props.snapshot).length);

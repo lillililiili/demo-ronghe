@@ -64,6 +64,22 @@ class Platform:
         self.on_unauthorized = None
         self.http = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
+    def binary(self, path):
+        # Only fixed evidence preview paths from validated frozen membership reach this method.
+        if not re.fullmatch(r'/evidence-files/[A-Za-z0-9_-]{1,100}/preview', path):
+            raise ValueError('证据路径无效')
+        req = urllib.request.Request(self.base + path, headers={'Authorization': 'Bearer ' + (self.token or '')})
+        try:
+            with self.http.open(req, timeout=20) as response:
+                content = response.read(32 * 1024 * 1024 + 1)
+                if len(content) > 32 * 1024 * 1024: raise ValueError('证据超过预览容量')
+                return content, response.headers.get('Content-Type', 'application/octet-stream')
+        except urllib.error.HTTPError as error:
+            if error.code == 401 and self.on_unauthorized: self.on_unauthorized()
+            raise ValueError(f'证据原件返回 {error.code}，请在平台核对权限、留存和文件状态') from None
+        except OSError:
+            raise ValueError('证据原件暂时无法读取') from None
+
     def call(self, method, path, body=None, key=None, *, timeout=12):
         headers = {'Content-Type': 'application/json'}
         if self.token:

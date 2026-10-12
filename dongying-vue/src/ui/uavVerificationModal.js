@@ -1,5 +1,6 @@
 /* 无人机事件人工核实弹窗：告警页与工作台共用同一实现，避免出现第二套表单和第二套幂等键逻辑。
    只调用 alarmApi.verifyUavEvent；结果以服务端为准，不写 window.MOCK/window.EVT。 */
+import { displayAlarmNo, displayTargetNo } from '@/ui/deviceNumber.js';
 import { openFormModal } from './formModal.js';
 import { closeModal } from './modal.js';
 import { toast } from './nv.js';
@@ -55,12 +56,12 @@ export function openUavVerification({ event, alarm, refresh, onDone } = {}) {
   if (!pendingKeys.has(eventId)) pendingKeys.set(eventId, newKey());
   const intro = [
     ['当前状态', esc(uavStateText(event.state))],
-    alarm ? ['告警', `${readableNo(alarm.alarm_no) ? `<span class="mono" title="${esc(alarm.alarm_id)}">${esc(readableNo(alarm.alarm_no))}</span> ` : ''}${esc(labelOf(ALARM_TYPE_LABEL, alarm.alarm_type, ''))}`] : null,
-    alarm ? ['关联目标', alarm.target_id ? `<span class="mono" title="${esc(alarm.target_id)}">${esc(alarm.target_no || alarm.target_id)}</span>` : '无关联目标或无目标读取权限'] : null
+    alarm ? ['告警', `${displayAlarmNo(readableNo(alarm.alarm_no)) ? `<span class="mono" title="${esc(alarm.alarm_id)}">${esc(displayAlarmNo(readableNo(alarm.alarm_no)))}</span> ` : ''}${esc(labelOf(ALARM_TYPE_LABEL, alarm.alarm_type, ''))}`] : null,
+    alarm ? ['关联目标', alarm.target_id ? `<span class="mono" title="${esc(alarm.target_id)}">${esc(displayTargetNo(alarm.target_no) || alarm.target_id)}</span>` : '无关联目标或无目标读取权限'] : null
   ].filter(Boolean).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join('');
 
   openFormModal({
-    title: '人工核实 · ' + esc(readableNo(alarm?.alarm_no) || '核实事件'),
+    title: '人工核实 · ' + esc(displayAlarmNo(readableNo(alarm?.alarm_no)) || '核实事件'),
     width: '600px',
     introHtml: `<dl class="kv">${intro}</dl>`,
     warning: basis.blocked ? esc(basis.message) : '',
@@ -68,16 +69,18 @@ export function openUavVerification({ event, alarm, refresh, onDone } = {}) {
       { key: 'conclusion', label: '核实结论', type: 'radio', required: true, options: [
         { value: 'CONFIRMED', label: basis.blocked ? '属实（缺少依据，暂不能选）' : '属实（置为“告警已确认”）', disabled: basis.blocked },
         { value: 'FALSE_POSITIVE', label: '误报（终态）' }
-      ] }
+      ] },
+      { key: 'note', label: '核实依据与说明', type: 'textarea', required: true, placeholder: '填写已查看的证据及判断理由；误报时说明原识别或关联为何不成立', maxlength: 1000 }
     ],
     // 缺依据时不预选结论，由核实人明确选择误报。
     initial: basis.blocked ? {} : { conclusion: 'CONFIRMED' },
-    validate: ({ conclusion }) => (basis.blocked && conclusion === 'CONFIRMED' ? '缺少依据，不能核实为属实。' : ''),
+    validate: ({ conclusion, note }) => basis.blocked && conclusion === 'CONFIRMED' ? '缺少依据，不能核实为属实。'
+      : !String(note || '').trim() ? '请填写已查看的证据与核实理由。' : String(note).trim().length > 1000 ? '核实说明不能超过1000字。' : '',
     confirmText: '提交核实结论',
-    onSubmit: async ({ conclusion }) => {
+    onSubmit: async ({ conclusion, note }) => {
       const key = pendingKeys.get(eventId);
       try {
-        const result = await verifyUavEvent(eventId, { conclusion, expected_version: expectedVersion }, key);
+        const result = await verifyUavEvent(eventId, { conclusion, note: String(note || '').trim(), expected_version: expectedVersion }, key);
         pendingKeys.delete(eventId);
         closeModal();
         toast(`核实完成：${uavStateText(result?.state)}`, 'ok');

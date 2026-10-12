@@ -65,17 +65,14 @@ const AIRSPACE_KIND = {
   ALTITUDE_LIMIT: { type: '限高空域', color: '#ffb020' },
   SUITABLE: { type: '适飞空域', color: '#2fd06e' }
 };
+import { businessDateTime, businessClock } from '@/services/businessTime.js';
 const GRADE_ZH = { HIGH: '高风险', MEDIUM: '中风险', LOW: '低风险' };
 
 function formatClock(date) {
-  const p = n => String(n).padStart(2, '0');
-  return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())} ${p(date.getHours())}:${p(date.getMinutes())}:${p(date.getSeconds())}`;
+  return businessDateTime(date);
 }
 function formatTime(ms) {
-  if (ms == null) return '';
-  const d = new Date(ms);
-  const p = n => String(n).padStart(2, '0');
-  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  return businessClock(ms);
 }
 function dash(value) { return value == null ? '—' : value; }
 function avail(key) { return snapshot.value?.availability?.[key] === 'AVAILABLE'; }
@@ -242,11 +239,11 @@ const mono = text => h('span', { class: 'mono' }, text);
 const colored = (text, color) => h('span', { style: { color } }, text);
 
 const alarmColumns = [
-  { title: '时间', key: 'time', width: 86, render: row => mono(row.time) },
-  { title: '告警类型', key: 'type', render: row => h('span', { class: 'table-text', tabindex: 0 }, row.type) },
-  { title: '等级', key: 'level', width: 100, render: row => colored(`● ${row.level}`, alarmColor[row.level] || 'var(--txt-2)') },
+  { title: '时间', key: 'time', width: '25%', render: row => mono(row.time) },
+  { title: '告警类型', key: 'type', width: '27%' },
+  { title: '等级', key: 'level', width: '18%', render: row => colored(`● ${row.level}`, alarmColor[row.level] || 'var(--txt-2)') },
   /* 这一列是核实结论（待核实、告警已确认、误报），处置进度在告警页看；叫“核实状态”免得看成处置进度（新-2 第 5 点）。 */
-  { title: '核实状态', key: 'status', width: 112 }
+  { title: '核实状态', key: 'status', width: '30%' }
 ];
 
 /* 重点目标异物风险态势（ZT-17 复测 2）：今日感知目标按各自最新的风险等级分档，与运行统计选今天时的"各异物风险等级分布"
@@ -275,7 +272,7 @@ function renderCharts() {
       { name: '非法目标', data: days.map(x => x.illegal), color: window.CH.C.red, smooth: false }
     ]
   });
-  trend?.setOption({ tooltip: { show: false }, legend: { selectedMode: false }, grid: { left: 32, right: 20, top: 30, bottom: 30 }, series: [{ silent: true, symbol: 'none', lineStyle: { width: 1.5 } }, { silent: true, symbol: 'none', lineStyle: { width: 1.5 } }] });
+  trend?.setOption({ tooltip: { show: false }, legend: { selectedMode: false }, grid: { left: 32, right: 20, top: 24, bottom: 20 }, yAxis: { splitNumber: 3, axisLabel: { hideOverlap: true } }, series: [{ silent: true, symbol: 'none', lineStyle: { width: 1.5 } }, { silent: true, symbol: 'none', lineStyle: { width: 1.5 } }] });
   window.CH.make(targetChartEl.value, {
     animation: false, tooltip: { show: false },
     series: [{ type: 'pie', silent: true, selectedMode: false,
@@ -551,7 +548,7 @@ onBeforeUnmount(() => {
           </section>
           <section class="panel bs-alarms-panel">
             <div class="ph"><h3>实时告警</h3><span v-if="alarmSummary" class="sub">{{ alarmSummary }}</span></div>
-            <div class="pb bs-table-body"><n-data-table class="bs-naive-table" :columns="alarmColumns" :data="alarmRows" :pagination="false" :bordered="false" :single-line="true" table-layout="fixed" size="small"/></div>
+            <div class="pb bs-table-body"><n-data-table class="bs-naive-table" :columns="alarmColumns" :data="alarmRows" :pagination="false" :bordered="false" :single-line="true" :flex-height="true" table-layout="fixed" size="small"/></div>
           </section>
         </aside>
       </div>

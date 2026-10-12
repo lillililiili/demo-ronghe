@@ -139,7 +139,8 @@ function loadSideDetails(data) {
     }
   };
   const { from, to } = data.trend || {};
-  const query = from && to ? new URLSearchParams({ from, to }).toString() : null;
+  // 大屏不显示有效监测时长和已观测里程，不让后台为它逐点计算（同一份 7 天报表里最慢的一块），与运行统计页同一做法。
+  const query = from && to ? new URLSearchParams({ from, to, include_observations: 'false' }).toString() : null;
   // 设备类型与快照的设备数同一统计口径（statistics_scope）；今日已完成计划随快照一起给出（flights.completed）。
   void Promise.all([
     read(operationsStats, 'stats', query ? `/stats/operations?${query}` : null, result =>

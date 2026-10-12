@@ -4,6 +4,7 @@ import { riskMatchesPlan, routeRiskIsActive } from '@/services/situationData.js'
 import SituationRiskProcess from './SituationRiskProcess.vue';
 import { planRiskLocation } from '@/services/riskMapGeometry.js';
 import { riskSnapshotTime } from './riskSnapshotMarkers.js';
+import { displayBusinessNo, displayNumberReferences } from '@/ui/deviceNumber.js';
 
 const props = defineProps({ group: { type: Object, required: true }, plans: { type: Array, default: () => [] } });
 const U = window.UI;
@@ -15,10 +16,10 @@ const planFor = risk => props.plans.find(plan => riskMatchesPlan(risk, plan));
   <section class="sit-map-pop sit-risk-group-pop">
     <header>
       <span class="sit-map-pop-icon" v-html="U.icon('plan')"></span>
-      <span><b>{{ group.spaceFact?.subtypeName || '航线' }}风险 · {{ labelOf(SOURCE_MODE_LABEL, group.sourceMode, '来源未提供') }}</b><small>{{ group.targetId && group.targetId !== group.targetInternalId ? group.targetId : '目标编号未提供' }} · 关联 {{ group.planCount }} 条任务</small></span>
+      <span><b>{{ group.spaceFact?.subtypeName || '航线' }}风险 · {{ labelOf(SOURCE_MODE_LABEL, group.sourceMode, '来源未提供') }}</b><small>{{ group.targetId && group.targetId !== group.targetInternalId ? displayBusinessNo(group.targetId) : '目标编号未提供' }} · 关联 {{ group.planCount }} 条任务</small></span>
       <button type="button" aria-label="关闭风险详情" @click="$emit('close')" v-html="U.icon('close')"></button>
     </header>
-    <p>{{ group.reasonText || '风险依据未提供' }}</p>
+    <p>{{ displayNumberReferences(group.reasonText, [group.targetId, ...group.members.map(risk => risk.id)]) || '风险依据未提供' }}</p>
     <p v-if="planRiskLocation({ risk_type: group.riskType, space_fact: group.spaceFact })" class="group-note">地图标记为发现时位置，非实时位置 · {{ riskSnapshotTime(group.occurredAt) }}（北京时间）</p>
     <p v-else class="group-note">发现时位置未提供，无法在地图标记。</p>
     <p v-if="group.currentReason" class="group-note">{{ group.currentReason }}</p>

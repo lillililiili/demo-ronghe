@@ -1,14 +1,58 @@
 import { flightApi } from '@/services/flightApi.js';
 import { deviceApi } from '@/services/deviceApi.js';
 
-export function deviceCheckStatus(row) {
-  if (!row.abnormal && row.incidents?.length) return '时段内有告警';
+// 当前状态只读服务端设备事实；告警记录与处置单完成快照不替代当前健康依据。
+export function deviceCheckCategory(row = {}) {
+  if (row.abnormal === true) return 'ABNORMAL';
+  if (row.abnormal === false && row.complete === true && row.connectivity === 'ONLINE' && row.health_code === 'GOOD') return 'NORMAL';
+  return 'UNKNOWN';
+}
+export function deviceCheckCounts(rows = []) {
+  return rows.reduce((counts, row) => {
+    counts[deviceCheckCategory(row)]++;
+    if (row.incidents?.length) counts.withHistory++;
+    return counts;
+  }, { NORMAL: 0, ABNORMAL: 0, UNKNOWN: 0, withHistory: 0 });
+}
+export function deviceCheckHistory(row = {}) {
+  const incidents = row.incidents || [];
+  if (!incidents.length) return '';
+  const open = incidents.filter(item => item.closed_at == null).length;
+  return open ? `告警记录 ${incidents.length} 条 · 未关闭 ${open} 条`
+    : `历史告警 ${incidents.length} 条 · 均已关闭`;
+}
+export function deviceCheckStatus(row = {}) {
+  const category = deviceCheckCategory(row);
+  if (category === 'NORMAL') return '正常';
+  if (category === 'UNKNOWN') return row.connectivity === 'ONLINE'
+    ? row.health_code === 'GOOD' ? '在线 · 状态待核查' : '在线 · 健康待确认'
+    : '状态待确认';
   if (row.connectivity === 'DISABLED') return '已停用';
   if (row.connectivity === 'OFFLINE') return '离线';
   if (row.health_code === 'BAD') return '设备故障';
-  if (row.abnormal) return '设备异常';
-  if (row.complete && row.connectivity === 'ONLINE' && row.health_code === 'GOOD') return '正常';
-  return '状态未知';
+  return '设备异常';
+}
+
+export function deviceCheckExplanation(row = {}) {
+  if (deviceCheckCategory(row) !== 'UNKNOWN') return '';
+  if (row.connectivity !== 'ONLINE') return '连接或健康信息不足，需核查设备上报。';
+  return row.health_code === 'GOOD'
+    ? '已收到在线心跳，状态依据尚不完整或已过期，暂不能确认正常。'
+    : '已收到在线心跳，尚缺有效的健康正常依据，暂不能确认正常。';
+}
+
+// 保留本次查看中已显示设备的相对位置；只接收本次返回的设备，新设备追加。
+// 不缓存设备事实，不让接口的异常优先排序打断正在阅读的卡片或地图弹窗。
+export function retainDeviceOrder(rows = [], previous = []) {
+  const current = new Map(rows.map(row => [row.device_id, row]));
+  const ordered = [];
+  for (const row of previous) {
+    if (current.has(row.device_id)) {
+      ordered.push(current.get(row.device_id));
+      current.delete(row.device_id);
+    }
+  }
+  return ordered.concat([...current.values()]);
 }
 
 // 附近范围、设备类型与检查结论统一由服务端计算，通知时重新检查并保存快照。

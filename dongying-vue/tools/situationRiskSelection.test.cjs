@@ -15,11 +15,11 @@ for (const [state,label] of Object.entries(scope.RISK_STATE_LABEL)) {
   assert.equal(selection.value.riskId,risk.riskId,'risk selection must retain exact internal ID');
   const html=scope.renderPlanTip(plan);
   assert.ok(html.includes(`风险：${label}`));
-  assert.ok(html.includes('<dt>计划状态</dt><dd>待执行</dd>'));
+  assert.ok(html.includes('<dt>任务状态</dt><dd>待执行</dd>'));
 }
 plan.relatedRisks=[];
 assert.ok(scope.renderPlanTip(plan).includes('风险：状态待确认'));
 scope.selectPlan(plan);
-assert.ok(scope.renderPlanTip(plan).includes('计划：待执行'));
+assert.ok(scope.renderPlanTip(plan).includes('任务：待执行'));
 assert.ok(!scope.renderPlanTip(plan).includes('风险：已排除'));
 console.log('PASS: five risk states, same-plan switching, missing risk, direct plan selection');

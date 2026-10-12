@@ -1,4 +1,5 @@
-import { coverageContainsPoint } from '@/services/situationData.js';
+import { coverageContainsPoint, planIsCurrent, riskMatchesPlan, targetIsCurrent } from '@/services/situationData.js';
+import { serverNow } from '@/services/serverClock.js';
 
 export function eoCanMonitor(target, devices = []) {
   return !!target && devices.some(device => device.typeCode === 'EO' && coverageContainsPoint(device, target));
@@ -52,6 +53,16 @@ export function situationRouteRiskVisible(risk) {
   if (!risk || !['PENDING_VERIFICATION', 'PENDING_NOTIFICATION'].includes(risk.state)) return false;
   if (!['SPACE_OBJECT', 'FOREIGN_OBJECT'].includes(risk.riskType || risk.risk_type)) return false;
   return !!(risk.planId || risk.plan_id) && !!(risk.routeVersionId || risk.route_version_id);
+}
+
+/** 本页实时航线风险：有效任务时段 + 同源有效位置 + 后端确认当前仍在风险范围内。 */
+export function situationRouteRiskIsCurrent(risk, plan, target, now = serverNow()) {
+  if (!risk || !['SPACE_OBJECT', 'FOREIGN_OBJECT'].includes(risk.riskType)) return false;
+  if (risk.currentStatus !== 'CURRENT' || !['PENDING_VERIFICATION', 'PENDING_NOTIFICATION', 'NOTIFIED', 'ACKNOWLEDGED'].includes(risk.state)) return false;
+  if (!riskMatchesPlan(risk, plan) || !planIsCurrent(plan, now)) return false;
+  if (!risk.targetInternalId || risk.targetInternalId !== target?.targetId || !targetIsCurrent(target, now) || target.posValid !== true) return false;
+  // 范围由后端按规则、实际位置和航线几何判断，不能用旧发现点或通知状态推断仍有风险。
+  return !!risk.sourceMode && risk.sourceMode === target.sourceMode && risk.mapVisible !== false;
 }
 
 export function uavProcessStatus(alarm) {

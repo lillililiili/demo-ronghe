@@ -14,23 +14,23 @@ import { applyTrackComparison } from '@/services/trackPoints.js';
 import { serverNow } from '@/services/serverClock.js';
 import {
   attachBearing, attachDeviceEvents, attachRecentTracks, attachTargetSourceLinks, extendRecentTracks,
-  bearingOrigins, SITUATION_DEVICE_TYPE_ORDER, toAirspaces, toAlarms, toDevices, toFlightPlans, toRisks, toTargets
+  bearingOrigins, planIsCurrent, toAirspaces, toAlarms, toDevices, toFlightPlans, toRisks, toTargets
 } from '@/services/situationData.js';
 
-// 态势地图保留设备台账中已支持的感知与联动态设备，类型集合由数据装配层统一维护。
-const DEVICE_TYPES = new Set(SITUATION_DEVICE_TYPE_ORDER);
+// 设备范围由后端统一筛选，未知类型仍留在清单中。
+
 const FAST_MS = 5_000;
 const SLOW_MS = 60_000;
 const CONNECTED_POLL_MS = 30_000;
 const NUDGE_GAP_MS = 500;
 const MIN_NUDGE_INTERVAL_MS = 1_000;
 // 推送只重读变化的那一组：目标变化只读目标与尾迹，不再连带告警、风险、移送一起重读；
-// 设备资料、计划、空域各自只重读本组。设备在线状态随每次上报变化，最多每 10 秒重读一次设备组。
+// 设备资料、计划、空域各自只重读本组。设备在线状态随每次上报变化，最多每 2 秒重读一次设备组。
 const SLOW_SEGMENTS = ['devices', 'flight-plans', 'airspaces', 'fusion-status'];
 const SLOW_TOPIC_SEGMENTS = {
   device: ['devices'], device_state: ['devices'], plan: ['flight-plans'], airspace: ['airspaces'], '*': SLOW_SEGMENTS
 };
-const DEVICE_STATE_MIN_MS = 10_000;
+const DEVICE_STATE_MIN_MS = 2_000;
 const FAST_SEGMENTS = ['targets', 'alarms', 'risks', 'handoffs'];
 const TOPIC_SEGMENTS = {
   target: ['targets'], legality: ['targets'], alarm: ['alarms'], risk: ['risks'], punishment: ['handoffs'], '*': FAST_SEGMENTS
@@ -39,13 +39,14 @@ const RECENT_TRACK_WINDOW_MS = 5 * 60_000;
 /* 尾迹不随每次位置推送整包重下：最多 5 秒重读一次，只要图上目标、只要坐标（slim）；
    两次重读之间用目标最新位置把尾迹往前接上。新目标出现时立即补读。 */
 const TRACK_REFRESH_MS = 5_000;
+const RISK_PRESENCE_REFRESH_MS = 5_000;
 // 与后端 target_ids 上限一致；图上目标更多时不按目标限定，仍只要坐标。
 const MAX_TRACK_TARGET_IDS = 100;
 const MAX_ROUTE_VERSION_BATCH = 100;
 /* 各组数据的读取权限与后端接口一致（ZT-09）：没有权限的组不发请求、不报“刷新失败”，地图上这一类保持为空。
    飞行任务同时要读航线版本，两项权限都要有。登录后权限有变化、后端答复 403 时同样按没有权限处理，本页不再重复请求。 */
 const SEGMENT_PERMISSIONS = {
-  targets: ['target:read'], alarms: ['alarm:read'], risks: ['risk:read'], handoffs: ['handoff:read'],
+  targets: ['target:read'], alarms: ['alarm:read'], risks: ['risk:read', 'flight:read', 'route:read'], handoffs: ['handoff:read'],
   devices: ['devices.read'], 'device-events': ['monitoring.read'], 'flight-plans': ['flight:read', 'route:read'],
   airspaces: ['airspace:read'], 'fusion-status': ['target:read']
 };
@@ -104,6 +105,7 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
   let report = () => {};
   let unsubscribe = null;
   let lastTracksAt = 0;
+  let lastRisksAt = 0;
   let slimTracks = true;
   let batchRouteVersions = true;
   let batchAirspaces = true;
@@ -203,6 +205,7 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
     const day = shanghaiDay(generatedAt);
     const observedFrom = day.from;
     const wanted = new Set(segments);
+    if (wanted.has('risks')) lastRisksAt = generatedAt;
     const tasks = [
       wanted.has('targets') && retain('targets', async () => {
         // 地图只画此刻还没到期的目标（targetIsCurrent），只取这些（ZT-20 复测 2）：当天目标多时（四百多个）
@@ -226,9 +229,14 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
       wanted.has('alarms') && retain('alarms', () => allPages(listAlarms, {
         occurred_from: day.from, occurred_to: day.to, sort: 'occurred_at', order: 'desc'
       }), value => { snapshot = { ...snapshot, alarms: toAlarms(value) }; }, []),
-      wanted.has('risks') && retain('risks', () => allPages(riskApi.listRisks, {
-        occurred_from: day.from, occurred_to: day.to, sort: 'occurred_at', order: 'desc'
-      }), value => { snapshot = { ...snapshot, risks: toRisks(value) }; }, []),
+      // 当前投影由后端按实际关联聚合，不能把当天全部历史或跨日仍持续的风险按发生日期截断。
+      wanted.has('risks') && retain('risks', async () => {
+        const planIds = [...new Set(snapshot.flightPlans.filter(plan => planIsCurrent(plan, generatedAt)).map(plan => plan.planId))];
+        const pages = await mapPool(planIds, 4, plan_id => allPages(riskApi.listCurrentRisks, { plan_id }));
+        return pages.flat();
+      }, value => {
+        snapshot = { ...snapshot, risks: toRisks(value.map(item => item.risk)) };
+      }, []),
       wanted.has('handoffs') && retain('handoffs', () => allPages(handoffApi.listHandoffs, {
         created_from: day.from, created_to: day.to
       }), value => { snapshot = { ...snapshot, handoffs: value }; }, [])
@@ -241,7 +249,7 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
     const wanted = new Set(segments);
     if (wanted.has('devices')) lastDevicesAt = generatedAt;
     const deviceTask = wanted.has('devices') && retain('devices', async () => {
-      const rows = await allPages(deviceApi.list, { enabled: true });
+      const rows = await allPages(deviceApi.list, { enabled: true, statistics_scope: true, sort: 'device_no_asc' });
       // 部分旧后端不会消费 enabled 查询参数；只有明确启用的设备才进入感知列表。
       const enabledRows = rows.filter(row => row.enabled === true);
       let events = [];
@@ -254,7 +262,7 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
           else { failedSegments.add('device-events'); report(error, 'device-events'); }
         }
       } else failedSegments.delete('device-events');
-      return attachDeviceEvents(toDevices(enabledRows, { includeUnlocated: true }).filter(row => DEVICE_TYPES.has(row.typeCode)), events);
+      return attachDeviceEvents(toDevices(enabledRows, { includeUnlocated: true }), events);
     }, value => { snapshot = { ...snapshot, devices: value }; }, []);
 
     const planTask = wanted.has('flight-plans') && retain('flight-plans', async () => {
@@ -306,17 +314,23 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
     pendingSegments = new Set();
     lastCycleAt = Date.now();
     const generatedAt = now();
+    // 位置推送会不断推迟整轮兜底；已有航线风险的当前影响每 5 秒重读，不能一直缓存初次 UNKNOWN/CURRENT。
+    if (segments.includes('targets') && !segments.includes('risks') && snapshot.risks.length
+      && (generatedAt - lastRisksAt >= RISK_PRESENCE_REFRESH_MS || generatedAt < lastRisksAt)) segments.push('risks');
     try {
-      // 实时目标与风险优先发起；资料请求并行，不再串在实时数据之前。
-      const fast = refreshFast(generatedAt, segments).then(() => publish(generatedAt));
       const fullSlow = forceSlow || generatedAt - lastSlowAt >= slowMs;
       const slowSegments = fullSlow ? SLOW_SEGMENTS : [...pendingSlowSegments];
       pendingSlowSegments = new Set();
       const needsSlow = slowSegments.length > 0;
+      const needsPlans = slowSegments.includes('flight-plans');
+      // 目标等数据仍并行读取；当前风险接口必须等本轮任务更新完成，不能无任务 ID 查询。
+      const fast = refreshFast(generatedAt, needsPlans ? segments.filter(name => name !== 'risks') : segments)
+        .then(() => publish(generatedAt));
       const slow = needsSlow
         ? refreshSlow(generatedAt, slowSegments).then(() => { if (fullSlow) lastSlowAt = generatedAt; })
         : Promise.resolve();
       await Promise.all([fast, slow]);
+      if (needsPlans) await refreshFast(generatedAt, ['risks']);
       if (needsSlow) {
         // 两组完成顺序不固定，只报方位的目标须按最终设备位置再关联一次。
         snapshot = { ...snapshot, targets: attachBearing(snapshot.targets, bearingOrigins(snapshot.devices)) };

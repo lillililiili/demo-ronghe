@@ -13,7 +13,7 @@ const bottom = read('BigScreenBottomStats.vue');
 test('every count on the big screen comes from the backend statistics scope', () => {
   // 页面自己不按来源过滤；计数都来自快照或按统计口径的接口。
   assert.doesNotMatch(source, /source_mode: '/, '页面不能自己按来源拼查询');
-  assert.match(source, /'\/device-monitor\/overview\?statistics_scope=true'/, '设备类型与设备总数同一统计口径');
+  assert.match(source, /'\/devices\/overview\?statistics_scope=true&enabled=true'/, '设备类型与设备总数同一统计口径');
   assert.doesNotMatch(source, /formal_only/);
   // 已完成计划随快照给出，与今日计划、执行中同一口径。
   assert.match(source, /snapshot\.value\?\.flights\?\.completed/);

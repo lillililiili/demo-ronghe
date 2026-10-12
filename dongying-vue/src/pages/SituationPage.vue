@@ -6,9 +6,9 @@ import { ChevronUpOutline, GitCompareOutline, LocateOutline } from '@vicons/ioni
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import { createSituationApiSource } from '@/pages/situation/situationApiSource.js';
 import { serverNow } from '@/services/serverClock.js';
-import { clockLagText, currentMapSnapshot, deviceGroupState, riskMatchesPlan, routeRiskIsActive, SITUATION_DEVICE_TYPE_ORDER, targetClassCounts } from '@/services/situationData.js';
+import { clockLagText, currentMapSnapshot, deviceGroupState, riskMatchesPlan, SITUATION_DEVICE_TYPE_ORDER, targetClassCounts } from '@/services/situationData.js';
 import {
-  disposalStage, situationAlarmNeedsAttention, situationRouteRiskVisible,
+  disposalStage, situationAlarmNeedsAttention, situationRouteRiskIsCurrent,
   uavProcessActions, uavProcessStatus
 } from '@/pages/situation/situationFlow.js';
 import { closeModal, openFormModal } from '@/ui/formModal.js';
@@ -20,6 +20,7 @@ import {
 import { toast } from '@/ui/nv.js';
 import { getAlarm } from '@/services/alarmApi.js';
 import SituationAdvisoryCard from './situation/SituationAdvisoryCard.vue';
+import SituationDeviceReport from './situation/SituationDeviceReport.vue';
 import SituationAlarmPopup from './situation/SituationAlarmPopup.vue';
 import { PILOT_LOCATION_IN_ALARM_DETAIL, pilotLocationText } from '@/services/pilotLocation.js';
 import { pilotDistanceNote } from '@/ui/pilotDistanceNote.js';
@@ -83,10 +84,9 @@ watch(() => [evidenceRoute.query.target, snapshot.value.generatedAt], ([id, gene
 }, { flush: 'post' });
 const flightPlans = computed(() => snapshot.value.flightPlans || []);
 const risks = computed(() => snapshot.value.risks || []);
-const allRiskGroups = computed(() => groupRouteRisks(risks.value));
-const riskGroups = computed(() => groupRouteRisks(risks.value.filter(situationRouteRiskVisible)));
+const riskGroups = computed(() => groupRouteRisks(risks.value.filter(risk => risk.active)));
 const selectedRiskGroup = computed(() => selection.value?.kind === 'risk-group'
-  ? allRiskGroups.value.find(group => group.groupId === selection.value.id) : null);
+  ? riskGroups.value.find(group => group.groupId === selection.value.id) : null);
 const airspaces = computed(() => snapshot.value.airspaces || []);
 const deviceStatusCounts = computed(() => devices.value.reduce((counts, device) => {
   counts[device.statusCode] = (counts[device.statusCode] || 0) + 1;
@@ -120,8 +120,8 @@ const deviceGroups = computed(() => {
   });
 });
 const newAlarmCount = computed(() => alarms.value.filter(alarm => alarm.isNew).length);
-const newRiskCount = computed(() => riskGroups.value.filter(risk => risk.active && risk.isNew).length);
-const activeRiskCount = computed(() => riskGroups.value.filter(risk => risk.active).length);
+const newRiskCount = computed(() => riskGroups.value.filter(risk => risk.isNew).length);
+const activeRiskCount = computed(() => alarms.value.length + riskGroups.value.length);
 const selectedTarget = computed(() => {
   if (selection.value?.kind !== 'target') return null;
   return targets.value.find(target => target.id === selection.value.id) || null;
@@ -135,7 +135,7 @@ const selectedRisk = computed(() => {
   const id = selection.value?.riskId || (selection.value?.kind === 'risk' ? selection.value.id : null);
   return id ? risks.value.find(risk => risk.riskId === id) : null;
 });
-const riskSnapshots = computed(() => riskSnapshotMarkers(allRiskGroups.value, {
+const riskSnapshots = computed(() => riskSnapshotMarkers(riskGroups.value, {
   pendingRiskIds: riskGroups.value.flatMap(group => group.members.map(risk => risk.riskId)),
   selectedPlan: selectedPlan.value || selectedRisk.value,
   selectedGroupId: selectedRiskGroup.value?.groupId
@@ -304,11 +304,12 @@ function decorate(next) {
       handoff: punishmentEvents.has(alarm.eventId)
     };
   });
-  const nextRisks = (next.risks || []).map(risk => ({
-    ...risk,
-    active: routeRiskIsActive(risk),
-    isNew: routeRiskIsActive(risk) && isNewEvent(risk)
-  }));
+  const now = serverNow();
+  const nextRisks = (next.risks || []).map(risk => {
+    const plan = (next.flightPlans || []).find(plan => riskMatchesPlan(risk, plan));
+    const active = situationRouteRiskIsCurrent(risk, plan, targetsByInternalId.get(risk.targetInternalId), now);
+    return { ...risk, active, mapVisible: active, isNew: active && isNewEvent(risk) };
+  });
   const targetAlarms = new Map();
   const targetRisks = new Map();
   const planRisks = new Map();
@@ -370,7 +371,9 @@ function applySnapshot(next) {
   const decorated = decorate(currentMapSnapshot(next));
   snapshot.value = decorated;
   if (selection.value?.kind === 'target' && !decorated.targets.some(target => target.id === selection.value.id)) clearSelection();
-  const count = decorated.alarms.filter(alarm => alarm.isNew).length + groupRouteRisks(decorated.risks).filter(risk => risk.isNew).length;
+  if (selection.value?.kind === 'risk-group' && !selectedRiskGroup.value) clearSelection();
+  if (selection.value?.riskId && !decorated.risks.some(risk => risk.riskId === selection.value.riskId && risk.active)) clearSelection();
+  const count = newAlarmCount.value + newRiskCount.value;
   const failed = (next.failedSegments || []).map(segment => ({
     targets: '目标', alarms: '告警', risks: '风险', handoffs: '移送', devices: '设备',
     'device-events': '设备事件', 'flight-plans': '飞行任务', airspaces: '空域', 'fusion-status': '融合状态'
@@ -811,7 +814,14 @@ onMounted(() => {
   // 独立于网络轮询：请求失败或迟迟未返回时，旧点仍按期退出地图。
   expiryTimer = window.setInterval(() => {
     nowTick.value = serverNow();
-    if (!document.hidden && rawSnapshot && snapshot.value.targets.some(target => target.mapExpiresAt <= nowTick.value)) applySnapshot(rawSnapshot);
+    if (document.hidden || !rawSnapshot) return;
+    const at = nowTick.value;
+    const visibleRiskIds = new Set(snapshot.value.risks.filter(risk => risk.active).map(risk => risk.riskId));
+    const rawTargets = new Map(rawSnapshot.targets.map(target => [target.targetId, target]));
+    const rawPlans = new Map(rawSnapshot.flightPlans.map(plan => [plan.planId, plan]));
+    const riskWindowChanged = rawSnapshot.risks.some(risk => visibleRiskIds.has(risk.riskId)
+      !== situationRouteRiskIsCurrent(risk, rawPlans.get(risk.planId), rawTargets.get(risk.targetInternalId), at));
+    if (riskWindowChanged || snapshot.value.targets.some(target => target.mapExpiresAt <= at)) applySnapshot(rawSnapshot);
   }, 1000);
   selectionResizeObserver = new ResizeObserver(() => focusSelection(false));
   selectionResizeObserver.observe(mapHost.value);
@@ -883,7 +893,7 @@ onUnmounted(() => {
       <aside class="sit-glass sit-alert-dock" :class="{ 'is-collapsed': !alertsExpanded }" aria-labelledby="sit-alert-title">
         <header class="sit-dock-head">
           <span><b id="sit-alert-title">实时风险</b></span>
-          <em :class="{ 'has-new': newAlarmCount + newRiskCount }">{{ newAlarmCount + newRiskCount ? `${newAlarmCount + newRiskCount} 条未查看` : `${activeRiskCount} 条当前风险` }}</em>
+          <em>{{ activeRiskCount }} 条当前风险</em>
           <button type="button" class="sit-alert-toggle" :aria-expanded="alertsExpanded" aria-controls="sit-alert-content"
             :aria-label="alertsExpanded ? '收起实时风险' : '展开实时风险'" @click="alertsExpanded = !alertsExpanded">
             {{ alertsExpanded ? '收起' : '展开' }}
@@ -928,8 +938,11 @@ onUnmounted(() => {
         :get-avoid-rect="selectionAvoidRect"
         :video-open="showTargetVideo && !!videoContext"
         :label="selectedDevice ? '设备详情' : selectedPlan ? '任务详情' : selectedRisk ? '航线风险详情' : showAlarmPopup ? '无人机告警详情' : '目标详情'">
-        <div v-if="selectedDevice" @click="onTipAction($event.target.closest('[data-tip-act]')?.dataset.tipAct, { kind: 'device', data: selectedDevice })"
-          v-html="renderDeviceTip(selectedDevice)"></div>
+        <template v-if="selectedDevice">
+          <div @click="onTipAction($event.target.closest('[data-tip-act]')?.dataset.tipAct, { kind: 'device', data: selectedDevice })"
+            v-html="renderDeviceTip(selectedDevice)"></div>
+          <SituationDeviceReport :key="selectedDevice.deviceId" :device-id="selectedDevice.deviceId" />
+        </template>
         <div v-else-if="selectedTarget" @click="onTipAction($event.target.closest('[data-tip-act]')?.dataset.tipAct, { kind: 'target', data: selectedTarget })"
           v-html="renderTargetTip(selectedTarget, showAlarmAdvisoryCard)"></div>
         <SituationRiskGroupPopup v-else-if="selectedRiskGroup" :group="selectedRiskGroup" :plans="flightPlans"
@@ -937,7 +950,7 @@ onUnmounted(() => {
         <template v-else-if="selectedPlan">
           <div @click="onTipAction($event.target.closest('[data-tip-act]')?.dataset.tipAct, { kind: 'plan', data: selectedPlan })"
             v-html="renderPlanTip(selectedPlan)"></div>
-          <SituationRiskProcess v-for="risk in (selectedRisk ? [selectedRisk] : selectedPlan.relatedRisks.filter(situationRouteRiskVisible))"
+          <SituationRiskProcess v-for="risk in (selectedRisk ? [selectedRisk] : selectedPlan.activeRisks)"
             :key="risk.riskId" :risk-id="risk.riskId" :revision="risk.version" @updated="source.refresh()" />
         </template>
         <section v-else-if="selectedRisk" class="sit-map-pop">

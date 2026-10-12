@@ -37,7 +37,7 @@ export const LEGAL_FALLBACK = '待确认';
 const SEVERITY_LEVEL = { CRITICAL: '高', HIGH: '高', MEDIUM: '中', LOW: '低' };
 const DEVICE_STATUS = { ONLINE: '在线', OFFLINE: '离线', ABNORMAL: '异常', UNKNOWN: '未知' };
 // 现场只有融合感知箱（雷达、光电、反制）、TDOA、5G-A 和气象设备（2026-10-05 业务确认），
-// 态势页只展示这几类，顺序由此表统一维护；台账里其他类型不上态势页。
+// 常见类型的显示顺序由此表维护，其他已接入类型仍显示在清单末尾。
 export const SITUATION_DEVICE_TYPE_ORDER = [
   'RADAR', 'EO', 'COUNTERMEASURE', 'FUSION_BOX', 'TDOA', 'FIVE_G_A', 'WEATHER'
 ];
@@ -99,6 +99,13 @@ export function targetClassCounts(targets) {
     else counts.unknown++;
   }
   return counts;
+}
+
+/** 实时航线风险只在任务实际有效时段内显示，含起不含止。 */
+export function planIsCurrent(plan, now = serverNow()) {
+  return !!plan && ['PENDING', 'APPROVED', 'EXECUTING'].includes(plan.statusCode)
+    && Number.isFinite(plan.startAt) && Number.isFinite(plan.endAt)
+    && plan.startAt <= now && now < plan.endAt;
 }
 
 export function routeRiskIsActive(risk) {
@@ -639,6 +646,7 @@ export function toRisks(risks) {
       occurredAt: num(risk.occurred_at ?? risk.received_at) || 0,
       ts: num(risk.occurred_at ?? risk.received_at) || 0,
       reasonText: risk.reason_text || '',
+      simulated: (risk.source_display_mode || risk.source_mode) === 'mock',
       sourceMode: risk.source_mode || '',
       spaceFact: fact ? {
         ruleVersionId: fact.rule_version_id,

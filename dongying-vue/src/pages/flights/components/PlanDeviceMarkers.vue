@@ -1,8 +1,8 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import DeviceAbnormalNoticeButton from './DeviceAbnormalNoticeButton.vue';
-import { deviceCheckStatus } from '@/pages/flights/planDeviceCheck.js';
-const props = defineProps({ markers: { type: Array, default: () => [] }, planId: { type: String, default: '' } });
+import { deviceCheckStatus, deviceCheckHistory, deviceCheckExplanation } from '@/pages/flights/planDeviceCheck.js';
+const props = defineProps({ markers: { type: Array, default: () => [] }, planId: { type: String, default: '' }, refreshDeviceState: { type: Function, default: null } });
 // 图标来自系统内置资源，不插入设备接口返回的 HTML。
 const { deviceIcon, deviceMeta, icon: windowIcon } = window.UI;
 const abnormalActive = window.UI.abnormalActive;
@@ -51,7 +51,7 @@ const placedMarkers = computed(() => {
 </script>
 
 <template>
-  <div ref="layer" class="device-map-layer" aria-label="附近异常设备">
+  <div ref="layer" class="device-map-layer" aria-label="附近设备与关联告警记录">
     <svg class="device-leaders" aria-hidden="true">
       <g v-for="marker in placedMarkers.filter(item => item.displaced)" :key="marker.device_id" :class="{ historical: !abnormalActive(marker) }">
         <line :x1="marker.x" :y1="marker.y" :x2="marker.displayX" :y2="marker.displayY" />
@@ -69,8 +69,10 @@ const placedMarkers = computed(() => {
       <div class="device-map-card">
         <b>{{ marker.name }}</b>
         <span class="device-type">{{ deviceMeta(marker).label }}</span>
-        <span>{{ deviceCheckStatus(marker) }}<template v-if="marker.simulated"> · 模拟设备</template></span>
-        <DeviceAbnormalNoticeButton :plan-id="planId" :device="marker" />
+        <span>当前状态：{{ deviceCheckStatus(marker) }}<template v-if="marker.simulated"> · 模拟设备</template></span>
+        <span v-if="deviceCheckExplanation(marker)">{{ deviceCheckExplanation(marker) }}</span>
+        <span v-if="marker.incidents?.length">{{ deviceCheckHistory(marker) }}（记录状态）</span>
+        <DeviceAbnormalNoticeButton :plan-id="planId" :device="marker" :refresh-device-state="refreshDeviceState" />
       </div>
     </div>
   </div>

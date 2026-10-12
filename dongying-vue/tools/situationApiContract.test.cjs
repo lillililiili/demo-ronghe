@@ -26,7 +26,7 @@ async function loadSource(deps) {
   source = source.replace(/import[\s\S]*?from ['"][^'"]+['"];\r?\n/g, '');
   source = `const { deviceApi, targetApi, listAlarms, listAllFlightPlans, flightApi, airspaceApi,
     riskApi, handoffApi, mapPool, attachBearing, attachDeviceEvents, attachRecentTracks, extendRecentTracks,
-    attachTargetSourceLinks, bearingOrigins, toAirspaces, toAlarms, toDevices, toFlightPlans,
+    attachTargetSourceLinks, bearingOrigins, planIsCurrent, toAirspaces, toAlarms, toDevices, toFlightPlans,
     toRisks, toTargets, SITUATION_DEVICE_TYPE_ORDER, isRealtimeConnected, onDataChange, hasPermission, authUser } = globalThis.__situationContractDeps;\n${source}`;
   globalThis.__situationContractDeps = deps;
   return import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}#${Date.now()}`);
@@ -66,6 +66,9 @@ async function main() {
   const targetQueries = [];
   const trackQueries = [];
   const calls = { alarms: 0, risks: 0, handoffs: 0, plans: 0 };
+  const riskQueries = [];
+  const riskRows = Array.from({ length:101 }, () => ({ risk: { risk_id:require('node:crypto').randomUUID(),
+    risk_type:'SPACE_OBJECT',state:'NOTIFIED',current_status:'CURRENT',source_mode:'replay',occurred_at:now-86400000 } }));
   let eventCalls = 0;
   let handoffsForbidden = false;
   let realtimeConnected = false;
@@ -93,6 +96,8 @@ async function main() {
     longitude: 118.5 + index / 100000, latitude: 37.4, connectivity: 'ONLINE', source_mode: 'replay',
     coverage: { kind: 'CIRCLE', status: 'AVAILABLE', radius_m: 5000, source_label: '接口配置' }
   }));
+  devices[2].device_type_code = 'weather_sensor';
+  devices[3].device_type_code = 'NEW_SENSOR';
   devices[1].longitude = null;
   devices[1].latitude = null;
   devices[1].simulated = true;
@@ -101,6 +106,7 @@ async function main() {
     freshness: 'STALE', stale: true,
     latest_state: { location: { longitude: 118.51, latitude: 37.41 }, fusion_confidence: 0.91 }
   };
+  let extraPlans = [];
   const planRow = { plan_id: 'p1', plan_no: 'FP-1', status_code: 'EXECUTING', start_at: now - 1000,
     end_at: now + 10000, source_mode: 'replay', route: { route_version_id: 'rv1' } };
 
@@ -108,7 +114,8 @@ async function main() {
     ...data,
     mapPool: async (items, _limit, mapper) => Promise.all(items.map(mapper)),
     deviceApi: {
-      list: async ({ page }) => {
+      list: async ({ page, enabled, statistics_scope }) => {
+        check('设备范围与大屏后台同源', [enabled, statistics_scope], [true, true]);
         devicePages.push(page);
         return { items: page === 1 ? devices.slice(0, 100) : devices.slice(100), total: 101 };
       },
@@ -142,7 +149,7 @@ async function main() {
       detail: async () => ({ source_links: [{ device_id: 'd0' }] })
     },
     listAlarms: async () => { calls.alarms++; if (alarmsGate) await alarmsGate; return { items: [], total: 0 }; },
-    listAllFlightPlans: async () => { calls.plans++; return [planRow]; },
+    listAllFlightPlans: async () => { calls.plans++; return [planRow, ...extraPlans]; },
     flightApi: {
       routeVersion: async () => { routeSingleCalls++; return { route_version_id: 'rv1', centerline: {
         coordinates: [[118.4, 37.3], [118.6, 37.5]]
@@ -164,7 +171,12 @@ async function main() {
       },
       detail: async id => { airspaceDetailCalls++; return { ...airspaceRows.find(row => row.airspace_id === id), current_version: airspaceVersion }; }
     },
-    riskApi: { listRisks: async () => { calls.risks++; return { items: [], total: 0 }; } },
+    riskApi: { listCurrentRisks: async query => {
+      calls.risks++;riskQueries.push(query);
+      if (!query.plan_id) throw new Error('当前风险接口必须明确 plan_id');
+      const rows = query.plan_id === planRow.plan_id ? riskRows : [];
+      return { items:rows.slice((query.page-1)*query.size,query.page*query.size),total:rows.length };
+    }, listRisks:async()=>{throw new Error('不得将当天历史列表用作实时风险');} },
     handoffApi: { listHandoffs: async () => {
       calls.handoffs++;
       if (handoffsForbidden) { const error = new Error('无权访问'); error.status = 403; throw error; }
@@ -181,9 +193,9 @@ async function main() {
   const errors = [];
   const source = createSituationApiSource({ fastMs: 10, slowMs: 10_000, now: () => clock });
   source.start(value => snapshots.push(value), (error, segment) => errors.push({ error, segment }));
-  while (!snapshots.length) await delay(5);
+  while (!snapshots.some(frame => frame.risks.length === 101)) await delay(5);
 
-  const first = snapshots[0];
+  const first = snapshots.find(frame => frame.risks.length === 101);
   check('目标范围为北京时间当天零点至当前，不依赖机器时区',
     [targetQueries[0].seen_from, targetQueries[0].seen_to], [dayStart, now]);
   check('只取此刻地图显示还没到期的目标，不再每轮分页拉完当天全部目标（ZT-20 复测 2）',
@@ -194,8 +206,13 @@ async function main() {
   check('当天旧目标保留最后上报时间和过期事实',
     [first.targets[0].lastSeenAt, first.targets[0].freshness, first.targets[0].stale],
     [targetRow.last_seen_at, 'STALE', true]);
+  check('当前航线风险完整读取当前投影分页',first.risks.length,101);
+  check('当前风险不按今天发生时间截断跨日风险',riskQueries.slice(0,2),[{plan_id:planRow.plan_id,page:1,size:100},{plan_id:planRow.plan_id,page:2,size:100}]);
+  check('当前投影保留真实风险ID、持续状态及已通知事实',[first.risks[0].riskId,first.risks[0].currentStatus,first.risks[0].state],
+    [riskRows[0].risk.risk_id,'CURRENT','NOTIFIED']);
   check('设备列表按 total 继续读取第二页', devicePages, [1, 2]);
-  check('只保留启用的态势设备类型并完整分页', first.devices.length, 100);
+  check('所有启用设备完整分页，新增类型不被前台隐藏', first.devices.length, 100);
+  ok('新增类型与天气设备均保留', first.devices.some(row => row.deviceId === 'd2') && first.devices.some(row => row.deviceId === 'd3'));
   check('API 无坐标设备仍保留在感知列表', first.devices.find(row => row.deviceId === 'd1')?.posValid, false);
   check('模拟来源标记不能被发布快照重置', first.simulated, true);
   check('回放来源由真实响应推导', first.sourceMode, 'replay');
@@ -224,6 +241,22 @@ async function main() {
   source.stop();
   await delay(50);
   failTargets = false;
+  // 更换任务编号、时间与状态：只读取此刻有效的任务，不拿今天的全部任务凑实时风险。
+  const secondId = require('node:crypto').randomUUID();
+  extraPlans = [
+    { ...planRow, plan_id:secondId, start_at:clock-86400000 },
+    { ...planRow, plan_id:require('node:crypto').randomUUID(), start_at:clock+1 },
+    { ...planRow, plan_id:require('node:crypto').randomUUID(), end_at:clock },
+    { ...planRow, plan_id:require('node:crypto').randomUUID(), status_code:'COMPLETED' }
+  ];
+  const planFrames=[],queriesBefore=riskQueries.length;
+  const planScoped=createSituationApiSource({fastMs:60_000,slowMs:60_000,now:()=>clock});
+  planScoped.start(value=>planFrames.push(value),()=>{});
+  while(planFrames.length<3)await delay(5);
+  check('多任务读取只含当前有效任务、跨日有效任务仍纳入',
+    [...new Set(riskQueries.slice(queriesBefore).map(query=>query.plan_id))],[planRow.plan_id,secondId]);
+  check('风险读取等任务就绪且完整分页',planFrames.at(-1).risks.length,101);
+  planScoped.stop();extraPlans=[];
   const tracksBeforeDay = trackQueries.length;
   clock = Date.parse('2026-09-22T16:00:01Z');
   source.start(value => snapshots.push(value), (error, segment) => errors.push({ error, segment }));
@@ -297,10 +330,12 @@ async function main() {
     return pacedSnapshots.at(-1).targets.find(row => row.targetId === 't1');
   }
   let tracksBefore = trackQueries.length;
+  const risksBeforePacing = calls.risks;
   clock = now + 1000;
   targetRow.latest_state = { location: { longitude: 118.52, latitude: 37.42 }, observed_at: now + 1000 };
   let moved = await pushTarget();
   check('5 秒内的位置推送不重读尾迹', trackQueries.length - tracksBefore, 0);
+  check('5 秒内的位置推送不连带重读风险', calls.risks-risksBeforePacing, 0);
   check('尾迹在本机接上最新位置', moved.track.map(point => [point.lon, point.lat, point.track_id, point.point_id]).at(-1),
     [118.52, 37.42, 'track-1', null]);
   check('接上的点在原尾迹之后', moved.track.length, 3);
@@ -319,6 +354,7 @@ async function main() {
   check('补读后 5 秒内不再重读', trackQueries.length - tracksBefore, 0);
   clock = now + 8100;
   moved = await pushTarget();
+  check('连续目标推送不能饿死当前风险更新，满 5 秒完整重读分页', calls.risks-risksBeforePacing, 2);
   check('满 5 秒重读尾迹，后端点替换本机接上的点', [trackQueries.length - tracksBefore, moved.track.map(point => point.point_id)],
     [1, ['point-1', 'point-2']]);
   emptyTracks = true;
@@ -354,6 +390,15 @@ async function main() {
     frontend.stop();
   }
   deps.authUser.value = { user_type: 'BACKEND' };
+
+  granted=new Set(ALL_CODES.filter(code=>code!=='flight:read'));
+  const noFlight=createSituationApiSource({fastMs:60_000,slowMs:60_000,now:()=>clock});
+  const noFlightFrames=[],noFlightErrors=[],currentCalls=calls.risks;
+  noFlight.start(value=>noFlightFrames.push(value),(_error,segment)=>noFlightErrors.push(segment));
+  while(noFlightFrames.length<2)await delay(5);
+  check('缺少任务读取权限时不请求当前风险接口',calls.risks-currentCalls,0);
+  check('缺任务权限不伪造风险或报服务故障',[noFlightFrames.at(-1).risks,noFlightErrors],[[],[]]);
+  noFlight.stop();
 
   // ZT-09：值班员没有设备监测（monitoring.read）和风险读取权限：不请求设备事件和风险，也不报刷新失败。
   granted = new Set(ALL_CODES.filter(code => code !== 'monitoring.read' && code !== 'risk:read'));
@@ -392,7 +437,7 @@ async function main() {
   while (noRouteSnapshots.length < 2) await delay(5);
   check('没有航线权限时不请求飞行计划', calls.plans - plansBefore, 0);
   check('没有航线权限不报刷新失败', noRouteErrors, []);
-  check('快照注明飞行计划没有权限', noRouteSnapshots.at(-1).deniedSegments, ['flight-plans']);
+  check('缺航线权限也不读无法关联的当前风险', noRouteSnapshots.at(-1).deniedSegments, ['risks','flight-plans']);
   noRoute.stop();
   granted = new Set(ALL_CODES);
 

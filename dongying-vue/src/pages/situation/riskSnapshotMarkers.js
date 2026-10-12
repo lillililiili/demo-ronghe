@@ -12,7 +12,7 @@ export function riskSnapshotMarkers(groups, { pendingRiskIds = [], selectedPlan 
     if (!location) return [];
     return [{ id: group.groupId, anchor: location.anchor, group,
       subtypeCode: group.spaceFact?.subtypeCode, title: group.spaceFact?.subtypeName || '异物',
-      occurredAt: group.occurredAt, sourceMode: group.sourceMode }];
+      occurredAt: group.occurredAt, sourceMode: group.sourceMode, simulated: group.simulated === true }];
   });
 }
 

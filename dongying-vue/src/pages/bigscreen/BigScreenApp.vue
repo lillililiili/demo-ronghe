@@ -144,7 +144,7 @@ function loadSideDetails(data) {
   void Promise.all([
     read(operationsStats, 'stats', query ? `/stats/operations?${query}` : null, result =>
       result?.availability ? 'AVAILABLE' : 'UNAVAILABLE'),
-    read(deviceTypes, 'devices', '/device-monitor/overview?statistics_scope=true', result =>
+    read(deviceTypes, 'devices', '/devices/overview?statistics_scope=true&enabled=true', result =>
       Array.isArray(result?.by_type) && result.by_type.every(row => countValid(row.total) && countValid(row.online) && row.online <= row.total) ? 'AVAILABLE' : 'UNAVAILABLE')
   ]).finally(() => {
     clearTimeout(timeout);

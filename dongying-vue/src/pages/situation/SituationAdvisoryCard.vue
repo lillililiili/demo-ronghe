@@ -12,7 +12,7 @@ const { data, loading, error, load } = useUavAdvisory(() => props.eventId, value
 <template>
   <section class="sit-advisory-card" aria-label="当前目标通知">
     <CounterLaunch v-if="canLaunch && !error && data?.event_id === eventId && data?.counter_launch_visible === true"
-      :key="eventId" :event-id="eventId" :event-label="alarmLabel" active show-launch :show-records="false" @records="emit('records', $event)" />
+      :key="eventId" :event-id="eventId" :event-label="alarmLabel" :summary="data" active show-launch :show-records="false" @records="emit('records', $event)" />
     <header><div><b>{{ targetLabel || '通知记录' }}</b><small>{{ alarmLabel }}</small></div><button class="btn sm" type="button" :disabled="loading" @click="load()">{{ error ? '重试' : '刷新' }}</button></header>
     <p v-if="error" role="alert">{{ error }} 当前发送结果未确认。</p>
     <p v-else-if="loading && !data">正在读取通知状态</p>

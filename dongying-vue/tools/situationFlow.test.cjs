@@ -17,7 +17,8 @@ async function main() {
   const filename = path.resolve(__dirname, '../src/pages/situation/situationFlow.js');
   const dataUrl = pathToFileURL(path.resolve(__dirname, '../src/services/situationData.js')).href;
   const source = fs.readFileSync(filename, 'utf8')
-    .replace("@/services/situationData.js", dataUrl);
+    .replace("@/services/situationData.js", dataUrl)
+    .replace('@/services/serverClock.js', pathToFileURL(path.resolve(__dirname, '../src/services/serverClock.js')).href);
   const flow = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 
   const eo = { typeCode: 'EO', lon: 118.5, lat: 37.4,
@@ -62,6 +63,88 @@ async function main() {
   check('没有航线关联的风险不进入航线风险列表', flow.situationRouteRiskVisible({
     state: 'PENDING_VERIFICATION', riskType: 'SPACE_OBJECT', planId: 'p1'
   }), false);
+
+  const S = await import(dataUrl);
+  for (const [sourceMode, displayMode, expected] of [['replay','mock',true],['replay','replay',false],['live','live',false]]) {
+    const mapped=S.toRisks([{risk_id:`mode-${sourceMode}-${displayMode}`,source_mode:sourceMode,source_display_mode:displayMode}])[0];
+    check(`风险来源标识遵循后端展示契约 ${sourceMode}/${displayMode}`,[mapped.simulated,mapped.sourceMode],[expected,sourceMode]);
+  }
+  const { groupRouteRisks } = await import(pathToFileURL(path.resolve(__dirname, '../src/pages/situation/routeRiskGroups.js')).href);
+  const { riskSnapshotMarkers } = await import(pathToFileURL(path.resolve(__dirname, '../src/pages/situation/riskSnapshotMarkers.js')).href);
+  const { randomUUID } = require('node:crypto');
+  for (const [index, sourceMode] of ['live', 'mock', 'replay'].entries()) {
+    const now = Date.now() + index * 86400000;
+    const plan = { planId: randomUUID(), routeVersionId: randomUUID(), statusCode: 'EXECUTING', startAt: now - 60000, endAt: now + 60000 };
+    const target = { targetId: randomUUID(), sourceMode, posValid: true, observedAt: now - 1000, mapExpiresAt: now + 10000, lon: 110 + index, lat: 32 + index };
+    const risk = { riskId: randomUUID(), riskType: 'SPACE_OBJECT', state: 'PENDING_VERIFICATION', currentStatus: 'CURRENT',
+      planId: plan.planId, routeVersionId: plan.routeVersionId, targetInternalId: target.targetId, sourceMode };
+    const visible = (r = risk, p = plan, t = target, at = now) => flow.situationRouteRiskIsCurrent(r, p, t, at);
+    check(`${sourceMode} 当前任务有效观测且后端确认持续才显示`, visible(), true);
+    for (const state of ['PENDING_NOTIFICATION','NOTIFIED','ACKNOWLEDGED']) check(`${sourceMode} ${state} 不等于解除`, visible({ ...risk, state }), true);
+    for (const currentStatus of ['UNKNOWN','CLEARED','EXPIRED','NOT_STARTED','EXCLUDED','',undefined]) {
+      check(`${sourceMode} ${String(currentStatus)} 不冒充当前航线风险`, visible({ ...risk, currentStatus }), false);
+    }
+    check(`${sourceMode} 已排除不因旧CURRENT再次显示`, visible({ ...risk, state: 'EXCLUDED' }), false);
+    for (const statusCode of ['COMPLETED','CANCELLED','UNKNOWN']) check(`${sourceMode} ${statusCode} 任务不显示当前风险`, visible(risk,{ ...plan,statusCode }),false);
+    check(`${sourceMode} 未开始的任务不显示`, visible(risk,{ ...plan,startAt:now+1 }),false);
+    check(`${sourceMode} 开始边界纳入`, visible(risk,{ ...plan,startAt:now }),true);
+    check(`${sourceMode} 结束边界退出`, visible(risk,{ ...plan,endAt:now }),false);
+    check(`${sourceMode} 缺任务时段不补默认`, visible(risk,{ ...plan,startAt:null }),false);
+    check(`${sourceMode} 缺计划读取权限不以旧计划ID推算`, visible(risk,null),false);
+    check(`${sourceMode} 不串同名不同航线版本`, visible(risk,{ ...plan,routeVersionId:randomUUID() }),false);
+    check(`${sourceMode} 不串同航线不同任务`, visible(risk,{ ...plan,planId:randomUUID() }),false);
+    check(`${sourceMode} 停报到期边界退出`, visible(risk,plan,target,target.mapExpiresAt),false);
+    check(`${sourceMode} 缺目标读取权限不恢复发现点`, visible(risk,plan,null),false);
+    for (const patch of [{ posValid:false },{ stale:true },{ historical:true },{ statusCode:'LOST' },{ mapExpiresAt:null },{ observedAt:now+1 },{ sourceMode:'other-source' },{ targetId:randomUUID() }]) {
+      check(`${sourceMode} 无当前同源依据 ${JSON.stringify(patch)}`, visible(risk,plan,{ ...target,...patch }),false);
+    }
+    // 当天早些时候/跨日发生本身不决定现在是否有风险；只认当前投影和有效观测。
+    check(`${sourceMode} 发生时间不代替当前影响判断`, visible({ ...risk, occurredAt:now-2*86400000 }),true);
+    const raw={targets:[target],risks:[risk],alarms:[]};
+    const expired=S.currentMapSnapshot(raw,target.mapExpiresAt);
+    check(`${sourceMode} 停报不修改原风险办理状态`,[expired.risks[0].state,raw.risks[0].currentStatus],['PENDING_VERIFICATION','CURRENT']);
+  }
+  // 实际页面：气球与鸟群共用当前筛选，列表、数字与地图随任务和观测到期退出。
+  const vue=require('vue'); let clock=Date.now(); const intervals=[],mounts=[];
+  const script=fs.readFileSync(path.resolve(__dirname,'../src/pages/SituationPage.vue'),'utf8')
+    .split('<script setup>')[1].split('</script>')[0].replace(/import[\s\S]*?from ['"][^'"]+['"];?\r?\n/g,'');
+  const labels=await import(pathToFileURL(path.resolve(__dirname,'../src/ui/labels.js')).href);
+  const deps={...vue,...S,...flow,...labels,groupRouteRisks,riskSnapshotMarkers,serverNow:()=>clock,
+    currentMapSnapshot:value=>S.currentMapSnapshot(value,clock),
+    usePageChrome(){},useRoute:()=>({query:{}}),watch(){},onMounted:cb=>mounts.push(cb),onUnmounted(){},
+    createSituationApiSource:()=>({start:()=>()=>{},loadTargetDetail:async()=>{}}),
+    createSituationMarkerLayout:()=>()=>[],ResizeObserver:class{observe(){}},document:{hidden:false,addEventListener(){}},
+    sessionStorage:{getItem:()=>null,setItem(){}},window:{UI:{icon:()=>''},setInterval:cb=>intervals.push(cb),
+      MapView:class{setData(){} clearPinnedHit(){} draw(){} pinHit(){} }}};
+  const page=new Function(...Object.keys(deps),script+'\nreturn {applySnapshot,riskGroups,riskSnapshots,activeRiskCount,alarms,selection,selectedRiskGroup};')(...Object.values(deps));
+  const plan={planId:randomUUID(),routeVersionId:randomUUID(),statusCode:'EXECUTING',startAt:clock-10000,endAt:clock+10000};
+  const t={id:randomUUID(),targetId:randomUUID(),sourceMode:'live',posValid:true,observedAt:clock-1000,mapExpiresAt:clock+50000};
+  const risk={riskId:randomUUID(),planId:plan.planId,routeVersionId:plan.routeVersionId,targetInternalId:t.targetId,sourceMode:'live',
+    riskType:'SPACE_OBJECT',state:'NOTIFIED',currentStatus:'CURRENT',occurredAt:clock-1000,spaceFact:{longitude:114.2,latitude:32.5,subtypeCode:'BALLOON'}};
+  const birdPlan={...plan,planId:randomUUID(),routeVersionId:randomUUID()};
+  const birdTarget={...t,id:randomUUID(),targetId:randomUUID(),sourceMode:'replay'};
+  const birdRisk={...risk,riskId:randomUUID(),planId:birdPlan.planId,routeVersionId:birdPlan.routeVersionId,
+    targetInternalId:birdTarget.targetId,sourceMode:'replay',simulated:true,state:'PENDING_VERIFICATION',
+    spaceFact:{longitude:116.8,latitude:31.2,subtypeCode:'BIRD_FLOCK',subtypeName:'鸟群',count:25}};
+  const raw={generatedAt:clock,targets:[t,birdTarget],risks:[risk,birdRisk],alarms:[{alarmId:randomUUID(),targetInternalId:t.targetId,eventState:'PENDING_VERIFICATION'}],flightPlans:[plan,birdPlan],devices:[],handoffs:[]};
+  mounts.forEach(cb=>cb());page.applySnapshot(raw);
+  check('当前风险总数包含目标异常、气球与鸟群',[page.activeRiskCount.value,page.alarms.value.length,page.riskGroups.value.length,page.riskSnapshots.value.length],[3,1,2,2]);
+  check('气球与鸟群同时进入航线风险分组',page.riskGroups.value.map(g=>g.spaceFact.subtypeCode).sort(),['BALLOON','BIRD_FLOCK']);
+  const birdMarker=page.riskSnapshots.value.find(row=>row.subtypeCode==='BIRD_FLOCK');
+  check('鸟群地图使用自身风险坐标并标明模拟',[birdMarker?.anchor,birdMarker?.simulated],[[116.8,31.2],true]);
+  page.applySnapshot({...raw,risks:[risk]});
+  check('只有鸟类目标没有风险事实时不凭类别补造风险',page.riskGroups.value.length,1);
+  page.applySnapshot({...raw,targets:[t,{...birdTarget,mapExpiresAt:clock}]});
+  check('鸟群观测到期独立退出列表和地图',[page.riskGroups.value.length,page.riskSnapshots.value.length],[1,1]);
+  page.applySnapshot({...raw,risks:[risk,{...birdRisk,currentStatus:'UNKNOWN'}]});
+  check('鸟群后端当前依据未知时不复活旧发现点',[page.riskGroups.value.length,page.riskSnapshots.value.length],[1,1]);
+  page.applySnapshot(raw);
+  page.selection.value={kind:'risk-group',id:page.riskGroups.value[0].groupId};
+  clock=plan.endAt+5000; intervals[0]();
+  check('任务到期即使定时器延迟仍同步退出列表、地图和详情',[page.riskGroups.value.length,page.riskSnapshots.value.length,page.selection.value],[0,0,null]);
+  clock=t.mapExpiresAt+5000;intervals[0]();
+  check('停报到期后目标异常也从实时列表退出',page.activeRiskCount.value,0);
+  check('展示退出不修改通知状态',raw.risks[0].state,'NOTIFIED');
 
   console.log(failed ? `\n${passed} 条通过，${failed} 条失败` : `全部通过：${passed} 条`);
   process.exitCode = failed ? 1 : 0;

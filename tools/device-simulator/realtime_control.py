@@ -181,7 +181,7 @@ class RealtimeController:
             self.presence_lock = InstanceLock(Path(__file__).parent / '.data' / f'device-presence-{self.port}.lock')
             self.presence_lock.__enter__()
             client = BridgeClient(self.runtime.session)
-            client.call('GET', '/local-interface-simulator/context')
+            client.call('GET', '/local-interface-simulator/session')
             self.session_verified_at = int(time.time() * 1000)
             if config['countermeasure_enabled']:
                 # 反制设备属于单位与区县，不跟飞行计划绑定；没选时跟随模拟器连接的单位与区县。
@@ -279,14 +279,20 @@ class RealtimeController:
                 else:
                     ok = True
                 if time.monotonic() - last_check >= 5:
-                    client.call('GET', '/local-interface-simulator/context')
+                    client.call('GET', '/local-interface-simulator/session')
                     self.session_verified_at = int(time.time() * 1000)
                     last_check = time.monotonic()
                 if self.tcp and not ok:
                     raise ValueError('平台连接不可用，设备指令接收已停止，请恢复后重新启动')
         except Exception as error:
             self.error = str(error)
-            self.runtime.cancel.set()
+            with self.runtime.lock:
+                self.runtime.error = '实时收发服务停止：' + self.error
+                if self.runtime.phase in ACTIVE:
+                    self.runtime.phase = 'STOPPING'
+                self.runtime.cancel.set()
+                if hasattr(self.runtime, 'log'):
+                    self.runtime.log('REALTIME_FAILURE', self.runtime.error)
         finally:
             self.cleanup()
             with self.lock:

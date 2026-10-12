@@ -175,7 +175,7 @@ test('missing snapshot coordinates never borrow route or live positions', () => 
   }
 });
 
-test('snapshot layer follows shared layout across zoom, pan and hiding without alarm glow', async () => {
+test('balloon snapshots stay at discovery coordinates across zoom, pan and hiding', async () => {
   const source = (await readFile(new URL('../src/pages/situation/SituationRiskMarkers.vue', import.meta.url), 'utf8'))
     .match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*;\r?\n/gm, '');
   const base = snapshotRisk();
@@ -189,11 +189,13 @@ test('snapshot layer follows shared layout across zoom, pan and hiding without a
   for (const [zoom, pan] of [[1, 0], [2, 30], [.5, -20]]) {
     const map = { w: 900, h: 600, px: (lon, lat) => [(lon - 112) * 500 * zoom + pan, (lat - 31) * 300 * zoom + pan] };
     const inputs = exposed.getMarkers(map);
-    assert.ok(inputs.every(item => item.abnormal === false && item.data.historical === true));
+    assert.deepEqual(inputs, []);
     map._markerLayout = layoutSituationMarkers(inputs.map(item => ({ ...item, x: item.point[0], y: item.point[1] })), { width: map.w, height: map.h });
     exposed.draw(map);
     assert.equal(markerRef.value.length, 2);
-    assert.notDeepEqual([markerRef.value[0].x, markerRef.value[0].y], [markerRef.value[1].x, markerRef.value[1].y]);
+    assert.deepEqual([markerRef.value[0].x, markerRef.value[0].y], [markerRef.value[1].x, markerRef.value[1].y]);
+    assert.deepEqual([markerRef.value[0].x, markerRef.value[0].y], map.px(...props.rows[0].anchor));
+    assert.ok(markerRef.value.every(marker => marker.anchored));
     assert.deepEqual([markerRef.value[0].anchorX, markerRef.value[0].anchorY], map.px(...props.rows[0].anchor));
     assert.ok(markerRef.value.every(marker => marker.description.includes('发现时位置（非实时）')));
   }

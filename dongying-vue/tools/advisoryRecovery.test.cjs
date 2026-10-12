@@ -75,3 +75,67 @@ test('disposal progress backs off during an outage and returns to its interval o
   }
   assert.deepEqual(pending(), [], 'no read is left scheduled after the card closes');
 });
+
+
+// 编译真实父子模板，验证资格响应确实传到按钮，不能只测子组件的计算属性。
+function advisoryComponent(file, dependencies) {
+  const vue = require('vue');
+  const { parse, compileScript } = require('@vue/compiler-sfc');
+  const filename = path.resolve(__dirname, '../src/' + file);
+  const { descriptor } = parse(fs.readFileSync(filename, 'utf8'), { filename });
+  const compiled = compileScript(descriptor, { id: 'advisory-qualification', inlineTemplate: true });
+  const code = compiled.content
+    .replace(/import\s*\{([^}]+)\}\s*from\s*['"]([^'"]+)['"];?/g, (_, names, from) => {
+      const bindings = names.replace(/\s+as\s+/g, ': ');
+      return `const { ${bindings} } = ${from === 'vue' ? 'Vue' : 'dependencies'};`;
+    })
+    .replace(/import\s+(\w+)\s+from\s*['"][^'"]+['"];?/g, (_, name) => `const ${name} = dependencies.${name};`)
+    .replace('export default', 'return');
+  return new Function('Vue', 'dependencies', 'window', code)(vue, dependencies, { UI: { icon: () => '' } });
+}
+
+async function renderSituationAdvisory(summary, overrides = {}, error = '') {
+  const vue = require('vue');
+  const { renderToString } = require('@vue/server-renderer');
+  const stub = { render: () => null };
+  const counter = advisoryComponent('pages/alarms/CounterLaunch.vue', {
+    NoCounterDecisionModal: stub, NoCounterBasis: stub
+  });
+  const card = advisoryComponent('pages/situation/SituationAdvisoryCard.vue', {
+    AutoSmsNotice: stub, AutoVoiceNotice: stub, AdvisoryRecords: stub, CounterLaunch: counter,
+    useUavAdvisory: () => ({ data: vue.ref(summary), error: vue.ref(error), loading: vue.ref(false), load() {} })
+  });
+  return renderToString(vue.createSSRApp(card, { eventId: summary?.event_id, canLaunch: true, ...overrides }));
+}
+const counterButton = html => html.match(/<button[^>]*>[^]*?发起反制<\/button>/)?.[0];
+
+test('fusion card enables counter launch only from this event request/direct eligibility', async () => {
+  const { randomUUID } = require('node:crypto');
+  for (const permission of ['can_request_counter', 'can_direct_counter']) {
+    const event_id = randomUUID();
+    const html = await renderSituationAdvisory({ event_id, counter_launch_visible: true, [permission]: true });
+    assert.ok(counterButton(html), permission);
+    assert.doesNotMatch(counterButton(html), /\bdisabled(?:[\s=>])/);
+    assert.doesNotMatch(html, /尚未确认反制资格/);
+  }
+});
+
+test('fusion card shows actual counter block reasons and never borrows another event eligibility', async () => {
+  const { randomUUID } = require('node:crypto');
+  const event_id = randomUUID();
+  for (const reason of ['当前账号没有反制申请或直接反制权限', '目标观测已过期，无法确认当前位置', '电话观察期尚未结束']) {
+    const html = await renderSituationAdvisory({ event_id, counter_launch_visible: true,
+      can_request_counter: false, can_direct_counter: false, counter_block_reason: reason });
+    assert.match(counterButton(html), /\bdisabled(?:[\s=>])/);
+    assert.ok(html.includes(reason));
+    assert.doesNotMatch(html, /尚未确认反制资格/);
+  }
+  const allowed = { event_id, counter_launch_visible: true, can_request_counter: true };
+  assert.equal(counterButton(await renderSituationAdvisory(allowed, { eventId: randomUUID() })), undefined);
+  assert.equal(counterButton(await renderSituationAdvisory(allowed, {}, '接口读取失败')), undefined);
+  assert.equal(counterButton(await renderSituationAdvisory(allowed, { canLaunch: false })), undefined);
+  assert.equal(counterButton(await renderSituationAdvisory({ ...allowed, counter_launch_visible: false })), undefined);
+  const unknown = await renderSituationAdvisory({ event_id, counter_launch_visible: true });
+  assert.match(counterButton(unknown), /\bdisabled(?:[\s=>])/);
+  assert.match(unknown, /尚未确认反制资格/);
+});

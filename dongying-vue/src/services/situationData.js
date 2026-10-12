@@ -10,7 +10,8 @@
    而别名只有 Vite 认得。文案一律走共享字典，本页不另建一套中文。 */
 import { measuredMapPoints } from './trackPoints.js';
 import { serverNow } from './serverClock.js';
-import { OBJECT_TYPE_LABEL, ALARM_TYPE_LABEL, labelOf, targetTypeLabel } from '../ui/labels.js';
+import { planRiskLocation } from './riskMapGeometry.js';
+import { OBJECT_TYPE_LABEL, ALARM_TYPE_LABEL, AIRSPACE_KIND_LABEL, labelOf, targetTypeLabel } from '../ui/labels.js';
 import { displayDeviceNo } from '../ui/deviceNumber.js';
 
 /* 空域图层字典（决策 11-6 定名与配色，12-3 定归属来源）。
@@ -36,7 +37,7 @@ export const LEGAL_FALLBACK = '待确认';
 const SEVERITY_LEVEL = { CRITICAL: '高', HIGH: '高', MEDIUM: '中', LOW: '低' };
 const DEVICE_STATUS = { ONLINE: '在线', OFFLINE: '离线', ABNORMAL: '异常', UNKNOWN: '未知' };
 // 现场只有融合感知箱（雷达、光电、反制）、TDOA、5G-A 和气象设备（2026-10-05 业务确认），
-// 态势页只展示这几类，顺序由此表统一维护；台账里其他类型不上态势页。
+// 常见类型的显示顺序由此表维护，其他已接入类型仍显示在清单末尾。
 export const SITUATION_DEVICE_TYPE_ORDER = [
   'RADAR', 'EO', 'COUNTERMEASURE', 'FUSION_BOX', 'TDOA', 'FIVE_G_A', 'WEATHER'
 ];
@@ -98,6 +99,13 @@ export function targetClassCounts(targets) {
     else counts.unknown++;
   }
   return counts;
+}
+
+/** 实时航线风险只在任务实际有效时段内显示，含起不含止。 */
+export function planIsCurrent(plan, now = serverNow()) {
+  return !!plan && ['PENDING', 'APPROVED', 'EXECUTING'].includes(plan.statusCode)
+    && Number.isFinite(plan.startAt) && Number.isFinite(plan.endAt)
+    && plan.startAt <= now && now < plan.endAt;
 }
 
 export function routeRiskIsActive(risk) {
@@ -305,7 +313,7 @@ export function toAirspaces(details) {
     polygons.forEach((rings, index) => {
       const center = ringCenter(rings[0]);
       if (!center) return;
-      // id 会被 map.js 直接画到图上（标注第二行），所以这里放**业务编号**而不是内部 ID。
+      // id 用于地图提示，优先放业务编号；地图常驻标注使用 name 和 type。
       // 内部 ID 另存 airspaceId，只用于程序内引用，不上屏。
       const airspaceNo = detail.airspace_no || detail.airspace_id;
       out.push({
@@ -313,7 +321,7 @@ export function toAirspaces(details) {
         airspaceId: detail.airspace_id,
         name: detail.name || airspaceNo || '',
         kindCode: meta.kindCode,
-        type: meta.type,
+        type: AIRSPACE_KIND_LABEL[version.kind_code] || meta.type,
         color: meta.color,
         layer: meta.layer,
         // rings 是全部环（第 0 环外环，其余是孔洞），map.js 按 even-odd 填充。
@@ -615,6 +623,7 @@ export function attachDeviceEvents(devices, events) {
 export function toRisks(risks) {
   return (risks || []).map(risk => {
     const fact = risk.space_fact || null;
+    const eventPoint = planRiskLocation(risk)?.anchor;
     return {
       id: risk.risk_no || risk.risk_id,
       riskId: risk.risk_id, risk_id: risk.risk_id,
@@ -638,6 +647,7 @@ export function toRisks(risks) {
       occurredAt: num(risk.occurred_at ?? risk.received_at) || 0,
       ts: num(risk.occurred_at ?? risk.received_at) || 0,
       reasonText: risk.reason_text || '',
+      simulated: (risk.source_display_mode || risk.source_mode) === 'mock',
       sourceMode: risk.source_mode || '',
       spaceFact: fact ? {
         ruleVersionId: fact.rule_version_id,
@@ -648,8 +658,8 @@ export function toRisks(risks) {
         altitudeBand: fact.altitude_band,
         objectCount: num(fact.object_count),
         trend: fact.trend,
-        longitude: num(fact.longitude),
-        latitude: num(fact.latitude)
+        longitude: eventPoint?.[0] ?? null,
+        latitude: eventPoint?.[1] ?? null
       } : null
     };
   });

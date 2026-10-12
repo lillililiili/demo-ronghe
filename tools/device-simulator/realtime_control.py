@@ -10,6 +10,7 @@ import time
 import uuid
 
 from engine import coordinates
+from state_file import atomic_json
 from realtime_notification_receiver import Receiver, ReceiverError, InstanceLock, KINDS, MODES
 
 ACTIVE = {'PREPARING', 'RUNNING', 'PAUSED', 'STOPPING'}
@@ -88,17 +89,6 @@ def countermeasure_position(config, scene):
             continue
         return {'longitude': round(longitude, 7), 'latitude': round(latitude, 7)}
     return None
-
-
-def atomic_json(path, value):
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix('.tmp')
-    with temporary.open('w', encoding='utf-8') as stream:
-        json.dump(value, stream, ensure_ascii=False, indent=2)
-        stream.flush()
-        os.fsync(stream.fileno())
-    os.replace(temporary, path)
 
 
 class BridgeClient:
@@ -191,7 +181,7 @@ class RealtimeController:
             self.presence_lock = InstanceLock(Path(__file__).parent / '.data' / f'device-presence-{self.port}.lock')
             self.presence_lock.__enter__()
             client = BridgeClient(self.runtime.session)
-            client.call('GET', '/local-interface-simulator/context')
+            client.call('GET', '/local-interface-simulator/session')
             self.session_verified_at = int(time.time() * 1000)
             if config['countermeasure_enabled']:
                 # 反制设备属于单位与区县，不跟飞行计划绑定；没选时跟随模拟器连接的单位与区县。
@@ -289,14 +279,20 @@ class RealtimeController:
                 else:
                     ok = True
                 if time.monotonic() - last_check >= 5:
-                    client.call('GET', '/local-interface-simulator/context')
+                    client.call('GET', '/local-interface-simulator/session')
                     self.session_verified_at = int(time.time() * 1000)
                     last_check = time.monotonic()
                 if self.tcp and not ok:
                     raise ValueError('平台连接不可用，设备指令接收已停止，请恢复后重新启动')
         except Exception as error:
             self.error = str(error)
-            self.runtime.cancel.set()
+            with self.runtime.lock:
+                self.runtime.error = '实时收发服务停止：' + self.error
+                if self.runtime.phase in ACTIVE:
+                    self.runtime.phase = 'STOPPING'
+                self.runtime.cancel.set()
+                if hasattr(self.runtime, 'log'):
+                    self.runtime.log('REALTIME_FAILURE', self.runtime.error)
         finally:
             self.cleanup()
             with self.lock:

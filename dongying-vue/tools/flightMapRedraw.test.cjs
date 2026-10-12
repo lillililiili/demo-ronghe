@@ -5,16 +5,19 @@ const vm = require('node:vm');
 
 // Exercise the page's real map installation with MapView's deferred frame and
 // canvas clearing. A synchronous draw wrapper loses its route on that frame.
+async function main() {
+const { toAirspaces } = await import('../src/services/situationData.js');
 const queue = new Map();
 let nextId = 0;
 const sandbox = {
-  window: { UI: { applyAlarmGlow() {} } },
+  toAirspaces, window: { UI: { applyAlarmGlow() {} } },
   requestAnimationFrame(callback) { const id = ++nextId; queue.set(id, callback); return id; },
   cancelAnimationFrame(id) { queue.delete(id); }
 };
 vm.createContext(sandbox);
-const read = file => fs.readFileSync(path.resolve(__dirname, '..', file), 'utf8');
+const read = file => fs.readFileSync(path.resolve(__dirname, '..', file), 'utf8').replace(/\r\n/g, '\n');
 vm.runInContext(read('public/assets/js/map.js'), sandbox);
+vm.runInContext(read('src/services/positionMap.js').replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, ''), sandbox);
 const MapView = sandbox.window.MapView;
 const canvas = [];
 const context = new Proxy({
@@ -38,7 +41,7 @@ sandbox.window.MapView = TestMap;
 sandbox.strokePlannedRoute = (ctx, map, coordinates, options) => MapView.strokePlannedRoute(
   ctx, coordinates.map(point => map.px(...point)), options);
 vm.runInContext(read('src/services/trajectoryDrawing.js')
-  .replace(/^import .*;\n/gm, '').replace(/export /g, ''), sandbox);
+  .replace(/^import .*;\r?\n/gm, '').replace(/export /g, ''), sandbox);
 const ref = value => ({ value });
 Object.assign(sandbox, {
   routeMap: null,
@@ -83,3 +86,6 @@ for (const [tab, render] of [['route', 'renderRouteMap'], ['events', 'renderRisk
   }
 }
 console.log('PASS: flight task and risk routes survive deferred redraw, terminals, coalescing and disposal');
+
+}
+main().catch(error => { console.error(error); process.exitCode = 1; });

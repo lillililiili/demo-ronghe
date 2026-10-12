@@ -42,7 +42,9 @@ class FakeProxy:
         self.calls.append((method, path, copy.deepcopy(body), key))
         if self.fail:
             raise self.fail
-        if path.endswith('/context'):
+        if path.endswith('/session'):
+            return {'available': True}
+        if path.endswith('/receiver-context'):
             return {'receiver_messages': [copy.deepcopy(self.row)]}
         if path.endswith('/bindings'):
             return {'enabled': body['enabled']}

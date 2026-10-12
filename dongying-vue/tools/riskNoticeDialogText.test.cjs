@@ -5,7 +5,7 @@ const path = require('node:path');
 
 /* OBS-14：通知上级弹窗曾写"对方回复'已驱离'后流程完成"，但上级接口只回"已回执"，
    处理结果（已驱离/未驱离）是对方愿意补充时才有的附加信息。两处入口的文案必须说同一件事。 */
-const PAGES = ['../src/pages/FlightsPage.vue', '../src/pages/airspace/AirspaceRiskEventDetail.vue'];
+const PAGES = ['../src/ui/riskNotificationModal.js', '../src/pages/airspace/AirspaceRiskEventDetail.vue'];
 
 function warningOf(file) {
   const source = readFileSync(path.join(__dirname, file), 'utf8');

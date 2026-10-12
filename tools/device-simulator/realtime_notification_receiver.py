@@ -325,7 +325,7 @@ class Receiver:
             return False
         try:
             modes = self.outcomes()
-            context = self.client.call('GET', PREFIX + '/context')
+            context = self.client.call('GET', PREFIX + '/receiver-context')
             messages = context.get('receiver_messages')
             if not isinstance(messages, list):
                 raise ReceiverError('平台尚未提供 receiver_messages；停止续租')

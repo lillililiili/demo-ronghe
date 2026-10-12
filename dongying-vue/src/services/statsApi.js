@@ -95,6 +95,10 @@ export function mapOperations(data) {
     })),
     byRisk: named(data.by_risk),
     byType: named(data.by_type),
+    airborneTypes: data.airborne_types ? {
+      items: named(data.airborne_types.items), total: number(data.airborne_types.total),
+      unidentified: number(data.airborne_types.unidentified)
+    } : null,
     byDuration: named(data.by_duration),
     byTrack: named(data.by_track),
     altBands: named(data.alt_bands),

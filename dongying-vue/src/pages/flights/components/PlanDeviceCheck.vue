@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onUnmounted, ref, watch } from 'vue';
-import { checkPlanDevices, deviceCheckStatus } from '@/pages/flights/planDeviceCheck.js';
+import { checkPlanDevices, deviceCheckStatus, deviceCheckCategory, deviceCheckCounts, deviceCheckHistory, deviceCheckExplanation, retainDeviceOrder } from '@/pages/flights/planDeviceCheck.js';
+import { loadDeviceMaintenanceNotice } from '@/pages/flights/deviceMaintenance.js';
 import { hasPermission } from '@/services/accessControl.js';
 import DeviceAbnormalNoticeButton from './DeviceAbnormalNoticeButton.vue';
 const { deviceIcon, deviceMeta } = window.UI;
@@ -11,75 +12,75 @@ const permitted = computed(() => ['flight:read', 'route:read', 'devices.read'].e
 let controller = null, generation = 0;
 const rows = computed(() => result.value?.rows || []);
 const emit = defineEmits(['checked', 'map-devices']);
-const abnormalRows = computed(() => rows.value.filter(row => row.abnormal || row.incidents?.length));
-const normalCount = computed(() => rows.value.filter(row => deviceCheckStatus(row) === '正常').length);
-// 设备多时正常设备只先列几台，其余收起；异常和待核查的设备始终列出
-const COLLAPSED_LIMIT = 4;
-const expanded = ref(false);
-const isNormal = row => !row.abnormal && !row.incidents?.length && deviceCheckStatus(row) === '正常';
-const visibleRows = computed(() => {
-  if (expanded.value) return rows.value;
-  let room = Math.max(0, COLLAPSED_LIMIT - rows.value.filter(row => !isNormal(row)).length);
-  return rows.value.filter(row => !isNormal(row) || room-- > 0);
-});
-const hiddenCount = computed(() => rows.value.length - visibleRows.value.length);
+const counts = computed(() => deviceCheckCounts(rows.value));
+// 不按实时状态自动隐藏设备，避免恢复或新增异常时正在阅读的卡片消失。
 function date(value) { return value == null || !Number.isFinite(Number(value)) ? '未记录' : new Date(value).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }); }
 async function reload({ reset = false } = {}) {
   controller?.abort(); controller = new AbortController();
   const current = ++generation;
   if (reset) { result.value = null; emit('map-devices', null); }
-  error.value = ''; errorStatus.value = 0; emit('checked', null);
+  if (reset) { error.value = ''; errorStatus.value = 0; }
+  if (reset) emit('checked', null);
   if (!permitted.value) { result.value = null; emit('map-devices', null); loading.value = false; return; }
   loading.value = true;
-  try { const data = await checkPlanDevices(props.plan, controller.signal); if (generation === current) { result.value = data; emit('checked', data); emit('map-devices', data); } }
+  try {
+    const planId = props.plan.plan_id;
+    const data = await checkPlanDevices(props.plan, controller.signal);
+    if (generation !== current) return;
+    await Promise.all(data.rows.map(row => loadDeviceMaintenanceNotice(planId, row.device_id)));
+    if (generation === current) {
+      const next = { ...data, rows: retainDeviceOrder(data.rows, rows.value) };
+      error.value = ''; errorStatus.value = 0; result.value = next;
+      emit('checked', next); emit('map-devices', next);
+    }
+  }
   catch (reason) { if (generation === current) { error.value = reason.message || '设备检查失败'; errorStatus.value = reason.status || 0; emit('map-devices', null); if ([401,403].includes(errorStatus.value)) result.value = null; } }
   finally { if (generation === current) loading.value = false; }
 }
-watch(() => props.plan.plan_id, () => { expanded.value = false; });
 watch(() => [props.plan.plan_id, props.plan.start_at, props.plan.end_at, props.plan.district_name, props.plan.source_mode, permitted.value], () => reload({ reset: true }), { immediate: true });
-const timer = setInterval(() => { if (!document.hidden && !loading.value && ![401, 403].includes(errorStatus.value)) reload(); }, 30000);
+defineExpose({ reload });
+const timer = setInterval(() => { if (!document.hidden && !loading.value && ![401, 403].includes(errorStatus.value)) reload(); }, 5000);
 onUnmounted(() => { generation++; controller?.abort(); clearInterval(timer); emit('map-devices', null); });
 </script>
 
 <template>
   <div class="device-check">
-    <header><b>设备自动检查</b><div class="device-actions"><button v-if="permitted" class="btn ghost" type="button" :disabled="loading || [401,403].includes(errorStatus)" @click="reload">{{ loading ? '更新中' : '重新检查' }}</button></div></header>
+    <header><b>设备自动检查</b><div class="device-actions"><button v-if="permitted" class="btn ghost" type="button" :disabled="loading || [401,403].includes(errorStatus)" @click="reload">刷新</button></div></header>
     <p v-if="!permitted">需要飞行任务、航线和设备的查看权限，请联系管理员。</p>
     <p v-else-if="error" role="alert">{{ error }}</p>
     <p v-else-if="loading && !result">正在读取附近设备状态和告警</p>
-    <p v-if="result && (loading || error)">{{ loading ? '正在更新，下方保留上次检查结果。' : '本次更新失败，下方是上次检查结果。' }}</p>
+    <p v-if="result && error">本次更新失败，下方保留上次检查结果。</p>
     <template v-if="permitted && result">
       <p v-if="result.mqtt_simulation"><span class="tag t-gray">MQTT 模拟数据</span></p>
-      <p class="check-summary">{{ result.message }}</p>
+      <p class="check-summary"><template v-if="error">上次检查： </template>{{ result.message }}</p>
       <p class="scope-note">{{ result.selection_basis === 'DEVICE_SCAN_COVERAGE' ? '扫描范围覆盖航线' : '设备检查' }} · 已检查 {{ rows.length }} 台设备</p>
-      <p v-if="rows.length">正常 {{ normalCount }} 台 · 异常 {{ abnormalRows.length }} 台 · 待核查 {{ rows.length - normalCount - abnormalRows.length }} 台</p>
+      <p v-if="rows.length">当前正常 {{ counts.NORMAL }} 台 · 当前异常 {{ counts.ABNORMAL }} 台 · 待核查 {{ counts.UNKNOWN }} 台</p>
+      <p v-if="counts.UNKNOWN">待核查表示状态依据不足，未计为异常。</p>
       <p v-if="result.unchecked_locations">{{ result.unchecked_locations }} 台设备缺少位置，无法确认覆盖。</p>
-      <p v-if="result.unchecked_coverage">{{ result.unchecked_coverage }} 台设备的扫描覆盖关系待确认。</p>
       <div v-if="rows.length" class="device-rows">
-        <article v-for="row in visibleRows" :key="row.device_id">
+        <article v-for="row in rows" :key="row.device_id">
           <div class="device-heading">
-            <span class="device-type-icon" :title="deviceMeta(row).label" :class="row.abnormal ? 'is-abnormal' : row.incidents?.length ? 'is-historical' : deviceCheckStatus(row) === '正常' ? 'is-normal' : ''" v-html="deviceIcon(row)"></span>
+            <span class="device-type-icon" :title="deviceMeta(row).label" :class="deviceCheckCategory(row) === 'ABNORMAL' ? 'is-abnormal' : deviceCheckCategory(row) === 'NORMAL' ? 'is-normal' : ''" v-html="deviceIcon(row)"></span>
             <div class="device-heading-content">
               <b>{{ row.name }}</b>
-              <div class="device-status"><span v-if="row.simulated" class="tag t-gray">模拟设备</span><span class="tag" :class="row.abnormal ? 't-red' : row.incidents?.length ? 't-amber' : deviceCheckStatus(row) === '正常' ? 't-green' : 't-gray'">{{ deviceCheckStatus(row) }}</span></div>
+              <div class="device-status"><span v-if="row.simulated" class="tag t-gray">模拟设备</span><span class="tag" :class="deviceCheckCategory(row) === 'ABNORMAL' ? 't-red' : deviceCheckCategory(row) === 'NORMAL' ? 't-green' : 't-gray'">{{ deviceCheckStatus(row) }}</span></div>
             </div>
           </div>
-          <p class="device-meta"><span>{{ deviceMeta(row).label }}</span><span>距航线 {{ (Number(row.distance_m) / 1000).toFixed(2) }} 公里</span><span v-if="!row.complete && row.position && deviceCheckStatus(row) !== '状态未知'">信息待核查</span></p>
+          <p class="device-meta"><span>{{ deviceMeta(row).label }}</span><span>距航线 {{ (Number(row.distance_m) / 1000).toFixed(2) }} 公里</span><span v-if="!row.complete && row.position && deviceCheckCategory(row) !== 'UNKNOWN'">信息待核查</span></p>
           <p v-if="!row.position">暂时无法取得设备位置。</p>
-          <p>最近在线：{{ date(row.last_heartbeat_at) }}</p>
+          <p v-if="deviceCheckExplanation(row)" class="state-explanation">{{ deviceCheckExplanation(row) }}</p>
+          <p>最近心跳：{{ date(row.last_heartbeat_at) }}</p>
           <p v-if="row.abnormal && ['BAD','DEGRADED'].includes(row.health_code) && !['设备故障','设备异常'].includes(deviceCheckStatus(row))">运行异常</p>
           <p v-if="row.abnormal && row.observed_at != null && date(row.observed_at) !== date(row.last_heartbeat_at)">状态上报：{{ date(row.observed_at) }}</p>
-          <p v-if="row.abnormal && !row.incidents?.length">尚无对应时段的告警记录，异常开始时间不明。</p>
+          <p v-if="row.abnormal && !row.incidents?.length">设备告警记录：本任务时段暂无事件记录。</p>
           <details v-if="row.incidents?.length" class="incident-records">
-            <summary>告警记录（{{ row.incidents.length }} 条）</summary>
-            <p v-for="item in row.incidents" :key="item.incident_id">{{ item.reason }} · {{ date(item.detected_at) }}<span v-if="item.closed_at">（{{ date(item.closed_at) }} 已关闭）</span><span v-else>（尚未关闭）</span></p>
+            <summary>{{ deviceCheckHistory(row) }}</summary>
+            <p v-for="item in row.incidents" :key="item.incident_id">{{ item.reason }} · {{ date(item.detected_at) }}<span v-if="item.closed_at != null">（{{ date(item.closed_at) }} 已关闭）</span><span v-else>（尚未关闭）</span></p>
           </details>
-          <DeviceAbnormalNoticeButton class="device-detail-link" :plan-id="plan.plan_id" :device="row" />
+          <DeviceAbnormalNoticeButton class="device-detail-link" :plan-id="plan.plan_id" :device="row" :refresh-device-state="reload" :show-refresh="false" :stale="!!error" />
         </article>
       </div>
-      <button v-if="hiddenCount" class="device-expand-button" type="button" @click="expanded = true">展开其余 {{ hiddenCount }} 台正常设备</button>
-      <button v-else-if="expanded && rows.length > COLLAPSED_LIMIT" class="device-expand-button" type="button" @click="expanded = false">收起正常设备</button>
-      <footer>检查于 {{ date(result.checked_at) }} · 每 30 秒更新</footer>
+      <footer>最近检查：{{ date(result.checked_at) }} · 每 5 秒自动更新，设备顺序保持不变</footer>
     </template>
   </div>
 </template>
@@ -95,8 +96,6 @@ p { color: var(--txt-3); margin: 5px 0; line-height: 1.5; overflow-wrap: anywher
 @container device-check (min-width: 500px) {
   .device-rows { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 16px; }
 }
-.device-expand-button { margin-top: 6px; padding: 4px 0; border: 0; background: transparent; color: var(--blue); font: inherit; font-size: 12px; line-height: 1.7; cursor: pointer; }
-.device-expand-button:hover { color: var(--cyan); text-decoration: underline; text-underline-offset: 3px; }
 article { padding: 8px 0; border-top: 1px solid var(--line); }
 article p { margin: 2px 0; }
 .device-meta { display: flex; flex-wrap: wrap; gap: 2px 10px; }
@@ -111,7 +110,6 @@ footer { margin-top: 8px; color: var(--txt-3); font-size: 11px; }
 .device-type-icon { display:inline-flex;flex-shrink:0;font-size:24px;border:0;color:var(--gray);background:transparent; }
 .device-type-icon :deep(svg) { width:24px;height:24px; }
 .device-type-icon.is-abnormal { color: var(--red); }
-.device-type-icon.is-historical { color: var(--amber); }
 .device-type-icon.is-normal { color: var(--green); }
 .device-detail-link { display: flex; margin-top: 4px; }
 </style>

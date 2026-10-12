@@ -61,7 +61,7 @@ async function toggleFilters() {
   if (filtersOpen.value) { await nextTick(); filterPanel.value?.focus({ preventScroll: true }); }
 }
 function closeFilters() { filtersOpen.value = false; filterToggle.value?.focus({ preventScroll: true }); }
-function time(value) { return value == null ? '未记录' : new Date(value).toLocaleString('zh-CN', { hour12: false }); }
+function time(value) { return value == null ? '未记录' : new Date(value).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }); }
 function title(row) { return row.target?.target_no || row.risk?.risk_no || '未编号'; }
 function typeLabel(row) { return row.target ? targetTypeLabel(row.target.subtype, row.target.object_type_code, '未分类')
   : labelOf(RISK_TYPE_LABEL, row.type, '未分类'); }
@@ -125,7 +125,7 @@ function summary(row) {
         <span class="record-heading"><b>{{ title(row) }}</b><span class="tag" :class="SEVERITY_TAG[row.severity] || 't-gray'">{{ labelOf(SEVERITY_LABEL, row.severity, '未判定') }}</span></span>
         <span class="record-state">{{ typeLabel(row) }}<span v-if="isMock(row)" class="tag t-amber">模拟</span><span>{{ labelOf(stateLabels, row.state, '状态未记录') }}</span></span>
         <span class="record-summary" :title="summary(row)">{{ summary(row) }}</span>
-        <span class="record-bottom"><span>{{ time(row.at) }}</span><span>{{ list.active?.key === row.key ? '正在查看' : '查看详情' }}</span></span>
+        <span class="record-bottom"><span :title="row.target ? `最近监测：${time(row.target.last_seen_at)}（北京时间）` : '风险发生时间（北京时间）'">{{ row.risk || row.target?.risk_summary?.occurred_at != null ? '风险发生' : '首次发现' }} {{ time(row.at) }}</span><span>{{ list.active?.key === row.key ? '正在查看' : '查看详情' }}</span></span>
       </button>
     </div>
     <div v-if="list.rows.length" class="record-pager">

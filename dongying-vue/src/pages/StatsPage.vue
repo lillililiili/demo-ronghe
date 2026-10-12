@@ -46,7 +46,12 @@ function distributionAvailable(key, rows) {
     && rows.reduce((total, row) => total + row.value, 0) === S.value.total;
 }
 const riskDistributionAvailable = computed(() => distributionAvailable('by_risk', S.value?.byRisk || []));
-const typeDistributionAvailable = computed(() => distributionAvailable('by_type', S.value?.byType || []));
+const typeDistributionAvailable = computed(() => {
+  const types = S.value?.airborneTypes;
+  return metricAvailable('airborne_types') && types && isCount(types.total) && isCount(types.unidentified)
+    && types.items.every(row => typeof row.name === 'string' && row.name.trim() && isCount(row.value))
+    && types.items.reduce((sum, row) => sum + row.value, 0) === types.total;
+});
 const discoveryHoursAvailable = computed(() => metricAvailable('discovery_hours') && metricAvailable('total')
   && isCount(S.value?.total) && S.value.discoveryHours.length === 24
   && S.value.discoveryHours.every((row, hour) => row.hour === hour && isCount(row.total))
@@ -122,14 +127,14 @@ function drawCharts(CH) {
     grid: { top: 36, bottom: 40 },
     series: [{ name: '数量', data: stats.byRisk.map(r => r.value), colorBy: p => rc[stats.byRisk[p.dataIndex].name] }]
   })?.setOption({ xAxis: { axisLabel: { interval: 0, fontSize: 10 } }, yAxis: { minInterval: 1 } });
-  if (typeDistributionAvailable.value && stats.total > 0) {
-    const total = stats.byType.reduce((sum, item) => sum + item.value, 0);
-    CH.donut(document.getElementById('sType'), { data: stats.byType, center: ['30%', '50%'] })?.setOption({
+  if (typeDistributionAvailable.value && stats.airborneTypes.total > 0) {
+    const total = stats.airborneTypes.items.reduce((sum, item) => sum + item.value, 0);
+    CH.donut(document.getElementById('sType'), { data: stats.airborneTypes.items, center: ['30%', '50%'] })?.setOption({
       series: [{ stillShowZeroSum: false }],
       legend: {
         textStyle: { overflow: 'breakAll', lineHeight: 16 },
         formatter: name => {
-          const item = stats.byType.find(row => row.name === name);
+          const item = stats.airborneTypes.items.find(row => row.name === name);
           return item ? `${name}  ${item.value.toLocaleString()} (${pctOf(item.value, total)}%)` : name;
         }
       }
@@ -293,7 +298,14 @@ async function exportCsv() {
         </template>
       </UPanel>
       <UPanel title="各异物风险等级分布" sub="目标数" panel-style="flex:.75"><div v-if="!riskDistributionAvailable" class="stats-unavailable">暂不可统计<br>{{ unavailableReason('by_risk', '风险分布统计不完整') }}</div><div v-else-if="S.total === 0" class="stats-unavailable">统计区间内无新增目标</div><div v-else id="sRisk" style="height:100%"></div></UPanel>
-      <UPanel title="各类型目标占比" panel-style="flex:1.25"><div v-if="!typeDistributionAvailable" class="stats-unavailable">暂不可统计<br>{{ unavailableReason('by_type', '类型分布统计不完整') }}</div><div v-else-if="S.total === 0" class="stats-unavailable">统计区间内无新增目标</div><div v-else id="sType" style="height:100%"></div></UPanel>
+      <UPanel title="空中目标类型占比" panel-style="flex:1.25">
+        <div v-if="!typeDistributionAvailable" class="stats-unavailable">暂不可统计<br>{{ unavailableReason('airborne_types', '空中目标类型统计不完整') }}</div>
+        <template v-else>
+          <div class="stats-note">待识别：{{ U.num(S.airborneTypes.unidentified) }} 个（不计入占比）</div>
+          <div v-if="S.airborneTypes.total === 0" class="stats-unavailable">统计区间内无已识别空中目标</div>
+          <div v-else id="sType" class="stats-detail-chart" role="img" :aria-label="`空中目标类型占比，合计 ${S.airborneTypes.total} 个；${S.airborneTypes.items.map(row => `${row.name} ${row.value} 个`).join('，')}`"></div>
+        </template>
+      </UPanel>
     </div>
 
     <div v-if="S" class="stats-chart-grid stats-details-grid">

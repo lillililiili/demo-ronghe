@@ -1406,6 +1406,8 @@
     /* 简化示意图（不透明）上装饰画在同一张画布；详细底图上由装饰动画层单独画。 */
     if (!this._splitLayers) this._paintAnimated(c);
 
+    const airspaceLabels = [];
+    const labeledAirspaces = new Set();
     /* 空域 */
     (this.data.airspaces || []).forEach(a => {
       /* 图层归属只认数据层声明的 layer，不再按 type 猜（审查第 3 轮 P2-1）。
@@ -1457,16 +1459,43 @@
         c.restore();
       }
       const ctr = P(a.center.lon, a.center.lat);
-      if (this.opt.showAirspaceLabels !== false) {
-        c.textAlign = 'center';
-        c.font = '600 12px "PingFang SC"';
-        c.strokeStyle = 'rgba(255,255,255,.94)'; c.lineWidth = 4;
-        c.strokeText(a.type, ctr[0], ctr[1] - 7);
-        c.fillStyle = ink; c.fillText(a.type, ctr[0], ctr[1] - 7);
-        c.font = '10.5px Menlo';
-        const airTx = a.id + (a.limit ? ' · ' + a.limitTx : '');
-        c.strokeText(airTx, ctr[0], ctr[1] + 8);
-        c.fillStyle = ink; c.fillText(airTx, ctr[0], ctr[1] + 8);
+      const labelKey = JSON.stringify([a.airspaceId || a.id, a.kindCode, a.name, rings]);
+      if (this.opt.showAirspaceLabels !== false && !labeledAirspaces.has(labelKey)) {
+        // 名称与种类同源；按可见区域放置，街道级缩放时不会随空域中心移出屏幕。
+        const bounds = rings[0].reduce((box, p) => {
+          const [x, y] = P(p[0], p[1]);
+          return [Math.min(box[0], x), Math.max(box[1], x), Math.min(box[2], y), Math.max(box[3], y)];
+        }, [Infinity, -Infinity, Infinity, -Infinity]);
+        const left = Math.max(8, bounds[0]);
+        const right = Math.min(W - 8, bounds[1]);
+        const top = Math.max(8, bounds[2]);
+        const bottom = Math.min(H - 8, bounds[3]);
+        if (right > left && bottom > top) {
+          labeledAirspaces.add(labelKey);
+          c.save();
+          c.font = '600 12px "PingFang SC","Microsoft YaHei",sans-serif';
+          const name = a.name || '空域名称未读取';
+          const text = name === a.type ? name : `${name} · ${a.type}`;
+          const maxWidth = Math.max(30, Math.min(240, W - 32));
+          const lines = []; let line = '';
+          for (const char of text) {
+            if (line && c.measureText(line + char).width > maxWidth) { lines.push(line); line = ''; }
+            line += char;
+          }
+          if (line) lines.push(line);
+          const width = Math.max(...lines.map(row => c.measureText(row).width)) + 16;
+          const height = lines.length * 17 + 10;
+          const x = Math.max(8, Math.min(W - width - 8, (left + right - width) / 2));
+          let y = Math.max(8, Math.min(H - height - 8, top + 8));
+          for (const box of airspaceLabels) {
+            if (x < box.x + box.width + 4 && x + width + 4 > box.x
+              && y < box.y + box.height + 4 && y + height + 4 > box.y) y = box.y + box.height + 4;
+          }
+          y = Math.min(H - height - 8, y);
+          airspaceLabels.push({ x, y, width, height, lines, color: a.color });
+
+          c.restore();
+        }
       }
       const safeAirspaceText = value => String(value ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
       const historyRows = (a.historyRows || []).map(([label, value]) => `<dt>${safeAirspaceText(label)}</dt><dd>${safeAirspaceText(value)}</dd>`).join('');
@@ -1476,6 +1505,16 @@
           <dt>编号</dt><dd>${safeAirspaceText(a.id)}</dd><dt>类型</dt><dd>${safeAirspaceText(a.type)}</dd>
           <dt>限高</dt><dd>${safeAirspaceText(a.limitTx)}</dd><dt>管理单位</dt><dd>${safeAirspaceText(a.unit)}</dd>${historyRows}</dl>`
       });
+    });
+
+    // 全部空域填充之后绘制名称，避免重叠边界遮住其他空域的文字。
+    airspaceLabels.forEach(({ x, y, width, height, lines, color }) => {
+      c.save(); c.font = '600 12px "PingFang SC","Microsoft YaHei",sans-serif';
+      c.fillStyle = 'rgba(8,18,44,.9)'; c.fillRect(x, y, width, height);
+      c.strokeStyle = color; c.lineWidth = 1; c.setLineDash([]); c.strokeRect(x, y, width, height);
+      c.fillStyle = color; c.textAlign = 'left'; c.textBaseline = 'top';
+      lines.forEach((row, index) => c.fillText(row, x + 8, y + 5 + index * 17));
+      c.restore();
     });
 
     /* 融合感知计划航线：仅专用模式启用，避免改变其他地图。 */

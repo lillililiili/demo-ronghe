@@ -34,7 +34,7 @@ import { canAccessRoute, hasPermission } from '@/services/accessControl.js';
 import { loadTargetPosition, loadRouteCenterline, loadAirspaceOverlays, installOverlays, overlayPoints } from '@/services/positionMap.js';
 import { trustedTrajectoryPoints, strokePlanComparison } from '@/services/trajectoryDrawing.js';
 import { RULE_SET_LABEL, SOURCE_MODE_LABEL, labelOf } from '@/ui/labels.js';
-import { displayPlanNo } from '@/ui/deviceNumber.js';
+import { displayPlanNo, displayTargetNo } from '@/ui/deviceNumber.js';
 import {
   openLegalityReview, openLegalityRecompute, openLegalityEscalation,
   legalStatusText, reviewStateText, planMatchText, ruleReasonText,
@@ -277,7 +277,7 @@ const REFERENCE_KIND_TEXT = { target: '感知目标', track: '目标轨迹', fli
 function referenceKindText(kind) { return REFERENCE_KIND_TEXT[kind] || '引用'; }
 function referenceText(reference) {
   const current = selectedEvaluation.value || {};
-  if (reference.kind === 'target' && current.target_id === reference.id && current.target_no) return current.target_no;
+  if (reference.kind === 'target' && current.target_id === reference.id && current.target_no) return displayTargetNo(current.target_no);
   if (reference.kind === 'flight_plan' && current.plan_id === reference.id && current.plan_no) return displayPlanNo(current.plan_no);
   return `已引用${referenceKindText(reference.kind)}`;
 }
@@ -289,7 +289,7 @@ function formatTime(value) {
 function shortTime(value) {
   if (value === null || value === undefined) return '时间未知';
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? '时间未知' : date.toLocaleTimeString('zh-CN', { hour12: false });
+  return Number.isNaN(date.getTime()) ? '时间未知' : date.toLocaleTimeString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' });
 }
 function evaluationReason(item) {
   if (!item) return '尚未取得研判详情';
@@ -331,7 +331,7 @@ function legalReason(item, prefix) {
 }
 function subjectLabel(item) {
   if (!item) return '未选择研判';
-  if (item.target_no || item.target_id) return item.target_no || '目标（未提供编号）';
+  if (item.target_no || item.target_id) return displayTargetNo(item.target_no) || '目标（未提供编号）';
   if (item.plan_no || item.plan_id) return displayPlanNo(item.plan_no) || '任务（未提供编号）';
   return '没有可查看的目标或任务';
 }
@@ -476,7 +476,7 @@ async function loadQueue(options = {}) {
           syncDateWindow();
           deepLinkNotice.value = '关联目标的最新研判不在所选日期内，已切换为全部日期。';
         }
-        if (!deepLink) deepLinkNotice.value = `目标 ${options.targetNo || options.targetId} 没有可见的无人机研判记录。`;
+        if (!deepLink) deepLinkNotice.value = `目标 ${displayTargetNo(options.targetNo) || options.targetId} 没有可见的无人机研判记录。`;
         else if (!st.plan) st.legal = rejectedConclusion(deepLink) ? ''
           : conclusionMeta[effectiveStatus(deepLink)] && effectiveStatus(deepLink) !== 'NOT_APPLICABLE' ? effectiveStatus(deepLink) : 'UNDETERMINED';
       } catch (error) {

@@ -5,9 +5,13 @@ export default {};
 </script>
 
 <script setup>
+import { displayRiskNo } from '@/ui/deviceNumber.js';
 import { computed, onUnmounted, ref, watch } from 'vue';
 import { riskApi } from '@/services/riskApi.js';
 import { weatherRiskIcon } from '@/ui/weatherRiskIcon.js';
+import HandoffMaterialPanel from '@/pages/punish/HandoffMaterialPanel.vue';
+import PunishmentNotification from '@/pages/punish/PunishmentNotification.vue';
+import { riskNoticePreview } from '@/ui/riskNoticePreview.js';
 import { handoffApi, newHandoffIdempotencyKey } from '@/services/handoffApi.js';
 import { isUncertainOutcome } from '@/services/apiClient.js';
 import { hasPermission, canAccessRoute } from '@/services/accessControl.js';
@@ -18,7 +22,6 @@ import { toast } from '@/ui/nv.js';
 import { ALTITUDE_DATUM_LABEL, HANDOFF_TYPE_LABEL, REASON_CODE_LABEL,
   RECEIPT_RESULT_LABEL, RISK_STATE_LABEL, RISK_TYPE_LABEL, SEVERITY_LABEL, SEVERITY_TAG, sourceDescription, notificationBlockedReason, labelOf } from '@/ui/labels.js';
 import RiskOpticalPanel from '@/pages/flights/components/RiskOpticalPanel.vue';
-import RiskEvaluationHistory from '@/pages/flights/components/RiskEvaluationHistory.vue';
 
 const props = defineProps({ riskId: { type: String, required: true } });
 const emit = defineEmits(['updated']);
@@ -53,7 +56,7 @@ const reasonText = computed(() => {
   }
   return text;
 });
-function time(value) { return value == null ? '未知' : new Date(value).toLocaleString('zh-CN', { hour12: false }); }
+function time(value) { return value == null ? '未知' : new Date(value).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }); }
 function altitude(value) { return value?.observed_altitude_m == null ? '未知' : `${value.observed_altitude_m} 米（${labelOf(ALTITUDE_DATUM_LABEL, value.observed_altitude_datum, '基准未知')}）`; }
 function receiptText(item) { return [receiptLabels[item.receipt_status] || '回执状态未知', labelOf(RECEIPT_RESULT_LABEL, item.receipt_result, '')].filter(Boolean).join(' · '); }
 function message(e, fallback) { return e.status === 401 ? '登录已失效，请重新登录。' : e.status === 403 ? '当前账号没有查看或办理这项记录的权限。' : e.message || fallback; }
@@ -108,12 +111,16 @@ function verify() {
   const id = props.riskId;
   openRiskVerification({ risk: risk.value, refresh: () => refreshAfterAction(id) });
 }
-function notify() {
+async function notify() {
   if (!canNotify.value) return;
   const id = props.riskId, expectedVersion = Number(risk.value.version);
+  let preview;
+  try { preview = await riskNoticePreview(id, expectedVersion); }
+  catch (error) { toast(error.message || '通知材料预览读取失败', 'err'); return; }
+  if (!alive || id !== props.riskId) return;
   if (!pendingNoticeKeys.has(id)) pendingNoticeKeys.set(id, newHandoffIdempotencyKey());
   openFormModal({
-    title: '通知上级', width: '560px', fields: [], confirmText: '提交通知',
+    title: '通知上级', width: '720px', introHtml: preview.introHtml, fields: [], confirmText: '提交通知',
     warning: '提交后，请在通知记录中查看是否送达，并等待对方回执。显示“已回执”表示本次风险通知流程完成；签收不代表风险已经解除。对方如另附处理结果，会显示在同一条回执里。',
     onSubmit: async () => {
       let created;
@@ -162,7 +169,7 @@ onUnmounted(() => { alive = false; generation++; historyRequest++; noticeRequest
       <template v-else-if="risk">
         <div class="detail-hero detail-hero-micro"><div class="detail-hero-inner">
           <div class="detail-hero-icon" v-html="icon"></div>
-          <div class="detail-hero-copy"><div class="detail-hero-eyebrow">空域风险</div><div class="detail-hero-title">{{ labelOf(RISK_TYPE_LABEL, risk.risk_type, '风险类型未提供') }}</div><div v-if="risk.risk_no" class="detail-hero-id">{{ risk.risk_no }}</div></div>
+          <div class="detail-hero-copy"><div class="detail-hero-eyebrow">空域风险</div><div class="detail-hero-title">{{ labelOf(RISK_TYPE_LABEL, risk.risk_type, '风险类型未提供') }}</div><div v-if="risk.risk_no" class="detail-hero-id">{{ displayRiskNo(risk.risk_no) }}</div></div>
           <div class="detail-hero-side"><div class="detail-hero-tags"><span class="tag" :class="SEVERITY_TAG[risk.severity] || 't-gray'">{{ labelOf(SEVERITY_LABEL, risk.severity, '未知') }}</span><span class="tag" :class="stateTags[risk.state] || 't-gray'">{{ labelOf(RISK_STATE_LABEL, risk.state, '未知') }}</span></div></div>
         </div></div>
         <template v-if="tab === 'event'">
@@ -182,7 +189,6 @@ onUnmounted(() => { alive = false; generation++; historyRequest++; noticeRequest
             <dt v-if="risk.target_id">关联目标</dt><dd v-if="risk.target_id">{{ risk.space_fact?.subtype_name || '关联感知目标' }}</dd>
             <dt v-if="risk.track_id">关联轨迹</dt><dd v-if="risk.track_id">已关联轨迹</dd>
           </dl><p class="rk-note">{{ risk.risk_type === 'WEATHER' ? '起飞前请核对最新预警和有效时段。' : '位置为发现时快照；违规结论见合法性研判。' }}</p></section>
-          <RiskEvaluationHistory v-if="risk.risk_type === 'SPACE_OBJECT'" :key="risk.risk_id" :risk-id="risk.risk_id" />
           <section class="sect"><h4>核验历史 <span class="tag t-gray">{{ historyTotal }}</span></h4>
             <div v-if="historyLoading" class="empty">正在读取核验历史…</div>
             <div v-else-if="historyError" class="warnbox" role="alert">{{ historyError }}<button class="btn" type="button" @click="loadHistory(historyPage)">重试</button></div>
@@ -202,6 +208,8 @@ onUnmounted(() => { alive = false; generation++; historyRequest++; noticeRequest
             <details v-if="notice.recipient_name && notice.recipient_name !== '上级'"><summary>原通知对象记录</summary><p>{{ notice.recipient_name }}</p></details>
             <p>{{ labelOf(HANDOFF_TYPE_LABEL, notice.handoff_type) }} · {{ time(notice.created_at) }}</p><p>对方回复：{{ receiptText(notice) }}</p>
             <p v-if="notificationBlockedReason(notice)">未完成原因：{{ notificationBlockedReason(notice) }}</p>
+            <HandoffMaterialPanel :key="notice.handoff_id" :handoff-id="notice.handoff_id" />
+            <PunishmentNotification :handoff-id="notice.handoff_id" risk-notice @status="Object.assign(notice, { delivery_status: $event.delivery_status, receipt_status: $event.receipt_status, blocked_reason: $event.latest_delivery?.blocked_reason })" @changed="loadNotices" />
             <p class="rk-note">风险通知记录留在本页，不进入处罚办理。</p>
           </article></div>
           <p v-if="noticesTotal > notices.length && !noticesLoading" class="rk-note">共 {{ noticesTotal }} 条通知记录，当前展示最近 {{ notices.length }} 条。</p>

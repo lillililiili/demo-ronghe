@@ -37,7 +37,7 @@ class NotificationResponse:
                 except Exception as error:
                     with self.lock:
                         self.views[key].update(error=str(error), updated_at=int(time.time()*1000))
-            self.stop.wait(1)
+            self.stop.wait(.2)
 
     def pages(self, path, params):
         rows = []
@@ -154,8 +154,17 @@ class NotificationResponse:
                 if now-(view.get('updated_at') or 0) > 5000: continue
                 target = targets[key]
                 behavior = target['notificationBehavior']
-                origin = position(target, elapsed)
-                motion = {'at_elapsed': elapsed, 'origin': origin}
+                # The simulated pilot reacts to the confirmed receipt, not to the
+                # observer's next poll. Sample only the next current observation;
+                # never rewrite already published positions or their timestamps.
+                reaction_elapsed = elapsed
+                receipt_at = view['trigger'].get('created_at')
+                if (behavior in ('after_sms', 'after_voice') and isinstance(receipt_at, (int, float))
+                        and self.manifest['created_at'] <= receipt_at <= now
+                        and now-receipt_at <= 5000):
+                    reaction_elapsed = max(0.0, elapsed-(now-receipt_at)/1000)
+                origin = position(target, reaction_elapsed)
+                motion = {'at_elapsed': reaction_elapsed, 'origin': origin}
                 if behavior in ('after_sms', 'after_voice'):
                     motion.update(path=[origin]+copy.deepcopy(target['departurePath']), speed=target['departureSpeed'])
                     view['action'] = 'DEPARTING'

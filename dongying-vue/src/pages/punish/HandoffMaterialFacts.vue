@@ -3,6 +3,7 @@
    part=summary 放在材料摘要里，一眼看到当事人是否明确和研判结论；part=details 放在详细材料里，列出全部研判和证据。
    旧材料没有研判时明确提示缺失，证据仍按原来的证据清单显示，不拿现在的数据补。 */
 import { computed } from 'vue';
+import FrozenEvidenceContent from './FrozenEvidenceContent.vue';
 import { ruleReasonText } from '@/ui/legalityReviewModal.js';
 import { CONCLUSION_LABEL, labelOf } from '@/ui/labels.js';
 import { evidenceChainView, judgmentViews, partyView } from './handoffMaterialView.js';
@@ -27,7 +28,7 @@ const evidenceOmitted = computed(() => props.material?.evidence_omitted === true
 function formatTime(value) {
   if (value === null || value === undefined) return '时间未记录';
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? '时间未记录' : date.toLocaleString('zh-CN', { hour12: false });
+  return Number.isNaN(date.getTime()) ? '时间未记录' : date.toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' });
 }
 </script>
 
@@ -60,6 +61,19 @@ function formatTime(value) {
   </div>
 
   <template v-else>
+    <div v-if="material?.weather_forecast" class="pn-sub pn-wrap hmf-block">
+      <h4>通知时的天气预报依据</h4>
+      <p>{{ material.weather_forecast.area_name }} · {{ material.weather_forecast.summary }}</p>
+      <p v-if="!material.weather_area?.polygon?.length">区域级预报，按来源区域与计划时段关联；未提供精确气象边界，不能还原某个航线点的覆盖关系。</p>
+      <p>发布 {{ formatTime(material.weather_forecast.published_at) }}；有效 {{ formatTime(material.weather_forecast.valid_from) }} 至 {{ formatTime(material.weather_forecast.valid_to) }}</p>
+      <p>风速 {{ material.weather_forecast.wind_speed_mps ?? '未提供' }} 米/秒；阵风 {{ material.weather_forecast.gust_mps ?? '未提供' }} 米/秒；降水概率 {{ material.weather_forecast.precipitation_probability_pct ?? '未提供' }}%</p>
+      <p>规则 {{ material.weather_forecast.rule_code }} · {{ material.weather_forecast.rule_version }} · {{ material.weather_forecast.source_mode === 'live' ? '实时来源' : '模拟／回放来源' }}</p>
+    </div>
+    <div v-if="material?.space_fact" class="pn-sub pn-wrap hmf-block">
+      <h4>通知时的空中异物依据</h4>
+      <p>{{ material.space_fact.subtype_name }} · 数量 {{ material.space_fact.object_count ?? '未提供' }} · 距航线 {{ material.space_fact.distance_to_route_m ?? '未提供' }} 米</p>
+      <p>观测窗口 {{ formatTime(material.space_fact.window_from) }} 至 {{ formatTime(material.space_fact.window_to) }}</p>
+    </div>
     <div v-if="judgments" class="pn-sub pn-wrap hmf-block">
       <h4>移送时的研判结论</h4>
       <p v-if="!judgments.length" class="hmf-meta">移送时没有找到本事件的合法性研判</p>
@@ -74,8 +88,9 @@ function formatTime(value) {
       </div>
     </div>
 
-    <div v-if="!evidenceOmitted" class="pn-sub pn-wrap hmf-block">
-      <h4>移送时证据</h4>
+    <p v-if="evidenceOmitted" class="hmf-meta">提交时未纳入证据：提交账号当时没有证据读取权限。补权限不会补进这份历史材料。</p>
+    <div v-else class="pn-sub pn-wrap hmf-block">
+      <h4>提交时保存的证据</h4>
       <p v-if="evidenceHidden" class="hmf-meta">当前账号没有查看证据的权限，移送时证据不显示</p>
       <template v-else-if="chain">
         <p v-if="chain.total">显示 {{ chain.total }} 项 · 按移送时保存，文件可凭 SHA-256 与证据台账逐项核对</p>
@@ -87,6 +102,7 @@ function formatTime(value) {
               <a v-if="item.href" class="hmf-link" :href="item.href">{{ item.name }}</a><span v-else>{{ item.name }}</span>
               <span v-if="item.no" class="mono">{{ item.no }}</span><span v-if="item.points">{{ item.points }}</span></p>
             <p class="hmf-meta">{{ formatTime(item.at) }}</p>
+            <FrozenEvidenceContent :item="item.record" />
             <p v-if="item.sha256" class="hmf-meta mono hmf-hash">SHA-256：{{ item.sha256 }}</p>
           </li>
         </ul>
@@ -97,7 +113,7 @@ function formatTime(value) {
           <a class="hmf-link" :href="`#/evidence?file=${encodeURIComponent(evidence.evidence_id)}`">{{ evidence.evidence_no || '查看证据记录' }}</a>
         </div>
       </template>
-      <p v-else class="hmf-meta">移送时未关联证据</p>
+      <p v-else class="hmf-meta">{{ Array.isArray(material?.evidence) ? '移送时未关联证据' : '这份历史材料未保存证据清单，无法确认当时纳入了哪些证据' }}</p>
     </div>
   </template>
 </template>

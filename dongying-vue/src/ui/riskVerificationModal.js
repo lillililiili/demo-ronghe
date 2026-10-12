@@ -1,5 +1,6 @@
 /* 飞行计划风险人工核验弹窗：飞行计划页“全部风险事件”与工作台共用同一实现。
    只调用 riskApi.verifyRisk；不再读取 window.MOCK，也不产生第二套状态机。 */
+import { displayRiskNo } from '@/ui/deviceNumber.js';
 import { openFormModal } from './formModal.js';
 import { closeModal } from './modal.js';
 import { toast } from './nv.js';
@@ -42,7 +43,7 @@ export function openRiskVerification({ risk, refresh, onDone } = {}) {
   openFormModal({
     title: exclusionOnly ? '改判为排除' : '人工核验',
     width: '560px',
-    notice: [risk.risk_no || readableNo(risk.source_risk_id) ? `风险 ${risk.risk_no || readableNo(risk.source_risk_id)}` : '风险事件', labelOf(RISK_TYPE_LABEL, risk.risk_type, '')].filter(Boolean).join(' · '),
+    notice: [risk.risk_no || readableNo(risk.source_risk_id) ? `风险 ${displayRiskNo(risk.risk_no || readableNo(risk.source_risk_id))}` : '风险事件', labelOf(RISK_TYPE_LABEL, risk.risk_type, '')].filter(Boolean).join(' · '),
     fields: [
       ...(exclusionOnly ? [] : [{ key: 'conclusion', label: '核验结论', type: 'radio', required: true, options: [
         { value: 'CONFIRMED', label: '核验通过（转待通知）' },

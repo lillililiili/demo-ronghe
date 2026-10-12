@@ -1,4 +1,5 @@
 <script setup>
+import { displayTargetNo } from '@/ui/deviceNumber.js';
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
 import { targetApi } from '@/services/targetApi.js';
 import { coordOf } from '@/services/positionMap.js';
@@ -10,7 +11,7 @@ const props = defineProps({ targetId: { type: String, default: '' }, unavailable
 const host = ref(null), loading = ref(false), error = ref(''), target = ref(null), points = ref([]), trackError = ref(''), trackMode = ref('');
 const reason = computed(() => props.unavailableReason || (!props.targetId ? '未提供可读取的关联目标' : '') || (!hasPermission('target:read') ? '当前账号没有目标读取权限' : ''));
 const observedAt = computed(() => target.value?.latest_state?.observed_at || points.value.at(-1)?.t);
-const formatTime = value => value ? new Date(value).toLocaleString('zh-CN', { hour12:false }) : '未提供';
+const formatTime = value => value ? new Date(value).toLocaleString('zh-CN', { hour12:false, timeZone:'Asia/Shanghai' }) : '未提供';
 let map, generation = 0, alive = true;
 function destroyMap() { map?.destroy(); map = null; }
 function locate() {
@@ -74,7 +75,7 @@ onUnmounted(() => { alive = false; ++generation; destroyMap(); });
     <p v-if="loading" class="map-note" role="status">正在读取目标位置与轨迹</p>
     <div v-show="!reason && !error" ref="host" class="map-canvas"></div>
     <div v-if="target" class="map-facts">
-      <span>{{ target.target_no || '编号未提供' }} · {{ labelOf(SOURCE_MODE_LABEL, trackMode || target.source_mode, '来源未知') }}</span>
+      <span>{{ displayTargetNo(target.target_no) || '编号未提供' }} · {{ labelOf(SOURCE_MODE_LABEL, trackMode || target.source_mode, '来源未知') }}</span>
       <span>末次观测 {{ formatTime(observedAt) }}</span>
       <span v-if="target.stale === true" class="warning">观测已失效，图示位置不代表当前实时位置</span>
       <span v-if="trackError" class="warning">轨迹读取失败：{{ trackError }}</span>

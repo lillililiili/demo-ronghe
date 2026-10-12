@@ -30,7 +30,7 @@
   box.setAttribute('aria-label', '实时收发');
   box.innerHTML = '<div><strong>实时收发</strong><span id="realtime-summary" role="status">尚未启动</span></div><div id="realtime-detail"></div><div class="realtime-actions"><button id="realtime-settings">收发模式设置</button><button id="realtime-start">启动接收端</button><button id="realtime-stop">停止全部收发</button></div><div id="realtime-error" role="alert"></div>';
   document.querySelector('footer').before(box);
-  const time = value => value ? new Date(value).toLocaleTimeString() : '尚无';
+  const time = value => value ? new Date(value).toLocaleTimeString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}) : '尚无';
   const names = {STOPPED:'已停止',STARTING:'启动中',RUNNING:'运行中',STOPPING:'停止中',FAILED:'失败'};
   function update(data) {
     if (data.scene_mode === 'isolated_qa') {

@@ -541,6 +541,7 @@ class FullChain:
             forecasts = [plan_forecast(self.manifest['batch'], pid, expected, self.weather, now)
                          for pid, expected in self.manifest['plan_expectations'].items()]
             for forecast in forecasts:
+                forecast['district_id'] = self.scope['district_id']
                 self.request('weather-forecast-' + forecast['plan_id'], PREFIX+'/weather', forecast)
             # Only submit configured inputs. Risk conclusions belong to the platform's
             # forecast rules; selecting weather must not inject three preset warnings.

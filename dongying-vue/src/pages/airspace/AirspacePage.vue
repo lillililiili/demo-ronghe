@@ -24,7 +24,7 @@ import {
   AIRSPACE_KIND_LABEL, AIRSPACE_KIND_TAG, ALTITUDE_DATUM_LABEL,
   labelOf
 } from '@/ui/labels.js';
-import { displayAirspaceNo, displayRouteNo } from '@/ui/deviceNumber.js';
+import { displayAirspaceNo, displayRouteNo, displayRiskNo, displayTargetNo } from '@/ui/deviceNumber.js';
 
 usePageChrome('airspace');
 
@@ -77,7 +77,7 @@ const riskSection = ref(null);
 
 
 /* ---------- 文案 ---------- */
-function time(value) { return value == null ? '' : new Date(value).toLocaleString('zh-CN', { hour12: false }); }
+function time(value) { return value == null ? '' : new Date(value).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }); }
 function day(value) { return value == null ? '' : new Date(value).toLocaleDateString('zh-CN'); }
 function sourceLabel(row) { return ({ mock: '模拟', replay: '回放' })[row?.source_display_mode || row?.source_mode] || ''; }
 function kindLabel(code) { return labelOf(AIRSPACE_KIND_LABEL, code, '未知种类'); }
@@ -458,7 +458,7 @@ function installOverlay() {
         active: demo ? monitor.activeId === row.target_id : risks.activeId === row.risk_id,
         activeRisk: !demo && window.UI.abnormalActive(row),
         subtype: demo ? row.subtype : row.space_fact?.subtype_code,
-        color: demo ? RISK_COLORS[demo.severity] : riskColor(row), title: demo ? row.target_no : row.space_fact?.subtype_name || row.risk_no,
+        color: demo ? RISK_COLORS[demo.severity] : riskColor(row), title: demo ? displayTargetNo(row.target_no) : row.space_fact?.subtype_name || displayRiskNo(row.risk_no),
         note: demo ? `${Math.round(demo.distance)} 米 · ${demo.count}${demo.unit} · 模拟` : `事件位置${row.source_mode === 'mock' ? ' · 模拟' : ''}` };
     }).filter(marker => marker.x >= 0 && marker.y >= 0 && marker.x <= this.w && marker.y <= this.h);
     // 独立风险只用发生时的可信位置快照；圆点颜色沿用服务端等级，排除项灰显。
@@ -652,7 +652,7 @@ onUnmounted(() => {
       </details>
 
       <div v-if="bottomTab === 'monitor' && monitor.active && !riskDetailOpen" class="airspace-risk-tip">
-        <b>{{ monitor.active.target_no || '监测目标' }}</b>
+        <b>{{ displayTargetNo(monitor.active.target_no) || '监测目标' }}</b>
         <template v-if="monitor.active.demo">
           <span>{{ monitor.active.demo.scene.distanceLabel }} {{ Math.round(monitor.active.demo.distance) }} 米 · 海拔 {{ monitor.active.demo.altitude }} 米 · {{ monitor.active.demo.count }} {{ monitor.active.demo.unit }}</span>
           <span>{{ monitor.active.demo.horizontal }} · {{ monitor.active.demo.vertical }} · 模拟观测</span>

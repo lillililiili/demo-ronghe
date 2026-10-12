@@ -44,7 +44,7 @@ export function judgmentViews(material, reasonText = code => String(code || ''))
 
 function itemName(row) {
   if (row.source_kind === 'COMMAND') return labelOf(COMMAND_TYPE_LABEL, row.name, '设备指令');
-  if (row.source_kind === 'TRACK') return row.name ? `目标 ${row.name} 的融合轨迹` : '目标融合轨迹';
+  if (row.source_kind === 'TRACK') return `${row.name ? `目标 ${row.name} 的` : '目标'}${row.layer === 'FUSED' ? '融合' : '来源'}轨迹`;
   return row.name || labelOf(EVIDENCE_KIND_LABEL, row.kind_code, '') || '证据文件';
 }
 
@@ -53,13 +53,13 @@ export function evidenceChainView(material) {
   if (!Array.isArray(material?.evidence_chain)) return null;
   const rows = material.evidence_chain;
   const isTrack = row => row.category === 'TRACK' || row.source_kind === 'TRACK' || row.kind_code === 'TRACK_SNAPSHOT';
-  const fused = rows.filter(row => row.source_kind === 'TRACK' && row.layer === 'FUSED')
-    .sort((a, b) => (b.started_at ?? b.captured_at ?? -Infinity) - (a.started_at ?? a.captured_at ?? -Infinity)
-      || String(a.source_id).localeCompare(String(b.source_id)))[0];
-  const displayed = rows.filter(row => !isTrack(row) || row === fused);
+  // 材料目录必须与冻结快照逐项一致，不能仅显示最后一段融合轨迹而隐藏历史段或原始来源。
+  const fused = rows.some(row => row.source_kind === 'TRACK' && row.layer === 'FUSED');
+  const displayed = rows;
   const items = displayed.map(row => ({
     key: `${row.source_kind}:${row.source_id}`,
-    category: row.source_kind === 'TRACK' ? '融合轨迹' : labelOf(EVIDENCE_CATEGORY_LABEL, row.category, '其他'),
+    record: row,
+    category: row.source_kind === 'TRACK' ? (row.layer === 'FUSED' ? '融合轨迹' : '来源轨迹') : labelOf(EVIDENCE_CATEGORY_LABEL, row.category, '其他'),
     name: itemName(row),
     // 轨迹的编号就是内部轨迹号，对处罚部门没有意义，不显示。
     no: row.source_kind === 'TRACK' ? '' : row.evidence_no || '',

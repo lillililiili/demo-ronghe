@@ -1,3 +1,4 @@
+import { displayBusinessNo } from '@/ui/deviceNumber.js';
 import { h } from 'vue';
 import { openModal } from '@/ui/modal.js';
 import EvidencePreviewModal from '@/components/evidence/EvidencePreviewModal.vue';
@@ -104,7 +105,7 @@ export function renderEvidenceFileDetail(f, options = {}) {
   ${U.sect(`被引用（${links.length} 处）`, links.length
     ? links.map(r => `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid rgba(64,158,255,.08);font-size:12px">
         <span class="tag t-gray">${esc(labelOf(EVIDENCE_SUBJECT_LABEL, r.subject_kind, r.subject_kind))}</span>
-        <span class="${mode === 'page' ? 'lnk' : ''}" title="${esc(r.subject_id)}" ${mode === 'page' ? `data-ev-go="${esc(r.subject_kind)}|${esc(r.subject_id)}"` : ''}>${esc((r.subject_no !== r.subject_id && readableNo(r.subject_no)) || `已关联${labelOf(EVIDENCE_SUBJECT_LABEL, r.subject_kind, '对象')}`)}</span>
+        <span class="${mode === 'page' ? 'lnk' : ''}" title="${esc(r.subject_id)}" ${mode === 'page' ? `data-ev-go="${esc(r.subject_kind)}|${esc(r.subject_id)}"` : ''}>${esc((r.subject_no !== r.subject_id && displayBusinessNo(readableNo(r.subject_no))) || `已关联${labelOf(EVIDENCE_SUBJECT_LABEL, r.subject_kind, '对象')}`)}</span>
       </div>`).join('')
     : emptyLinks)}
   ${actions ? U.sect('操作', actions) : ''}`;

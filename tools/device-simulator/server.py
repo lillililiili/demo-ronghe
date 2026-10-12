@@ -17,7 +17,7 @@ from urllib.parse import urlparse, unquote, parse_qs
 from urllib.request import Request, build_opener, ProxyHandler, HTTPRedirectHandler
 from urllib.error import HTTPError, URLError
 from engine import compile_scene, duration_reached, messages, position
-from notification_inbox import read_inbox
+from notification_inbox import read_inbox, open_handoff_evidence
 from notification_response import NotificationResponse
 from platform_client import Platform, Prerequisites, sql
 from eo_video import EoSimulator, video_config, public_video_config, sanitize_video_error, DEFAULT_VIDEO
@@ -193,6 +193,12 @@ class ExternalBridge:
             if '返回 401' in str(error):
                 self.invalidate(platform)
             raise
+
+    def evidence(self, handoff_id, evidence_id):
+        with self.lock:
+            platform = self.platform
+        if platform is None: raise ExternalAuthenticationRequired('请先登录现有系统')
+        return open_handoff_evidence(platform, handoff_id, evidence_id)
 
     def connection_scope(self):
         """Unit and district of the simulator's MQTT connection: the default owner of airspaces issued from the map."""
@@ -780,8 +786,9 @@ class Runtime:
         if manifest.get('weather_device'):
             wid=manifest['weather_device']['device_id']
             try:
-                result['weather_latest']=api.call('GET',f'/weather-sensors/{wid}/latest-observation')
-                result['weather_count']=api.call('GET',f'/weather-sensors/{wid}/observations?page=1&size=1')['total']
+                weather=api.call('GET',f'/local-interface-simulator/weather-devices/{wid}/observations')
+                result['weather_latest']=weather.get('latest')
+                result['weather_count']=weather['total']
             except ValueError as error:result['read_errors'].append(str(error))
         with self.lock:
             if self.batch!=manifest['batch']: raise ValueError('运行批次已变化，请重新回读')
@@ -848,6 +855,21 @@ class Handler(SimpleHTTPRequestHandler):
         if self.path=='/api/external/mock-airport':
             try:
                 return self.respond(external_bridge.mock_airport(False))
+            except ValueError as error:
+                return self.respond({'error': str(error)}, 401 if isinstance(error, ExternalAuthenticationRequired) or '返回 401' in str(error) else 400)
+        if urlparse(self.path).path == '/api/external/evidence':
+            params = parse_qs(urlparse(self.path).query)
+            try:
+                if set(params) != {'handoff_id', 'evidence_id'} or any(len(v) != 1 for v in params.values()):
+                    raise ValueError('证据查询参数无效')
+                content, content_type = external_bridge.evidence(params['handoff_id'][0], params['evidence_id'][0])
+                self.send_response(200)
+                self.send_header('Content-Type', content_type)
+                self.send_header('Content-Length', str(len(content)))
+                self.send_header('Cache-Control', 'no-store')
+                self.send_header('X-Content-Type-Options', 'nosniff')
+                self.end_headers()
+                return self.wfile.write(content)
             except ValueError as error:
                 return self.respond({'error': str(error)}, 401 if isinstance(error, ExternalAuthenticationRequired) or '返回 401' in str(error) else 400)
         if urlparse(self.path).path == '/api/external/inbox':

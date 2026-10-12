@@ -1,5 +1,6 @@
 <script setup>
 /* 融合感知指挥台：页面结构保持不变，全部业务状态来自后端领域接口。 */
+import { displayBusinessNo, displayTargetNo, displayNumberReferences } from '@/ui/deviceNumber.js';
 import { computed, h, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { ChevronUpOutline, GitCompareOutline, LocateOutline } from '@vicons/ionicons5';
@@ -167,7 +168,7 @@ const videoContext = computed(() => {
     targetId,
     // 取证关联的告警事件：只取与视频同一目标的无人机告警。
     eventId: !risk && alarm?.eventId && alarm.targetInternalId === targetId ? alarm.eventId : '',
-    label: linked?.id || risk?.targetId || alarm?.targetId || risk?.id || '当前事项',
+    label: displayBusinessNo(linked?.id || risk?.targetId || alarm?.targetId || risk?.id) || '当前事项',
     subtype: linked?.objectTypeCode === 'UAV' || (!risk && alarm) ? 'UAV' : linked?.subtypeCode || risk?.spaceFact?.subtypeCode || 'UNKNOWN',
     unavailableReason: !targetId ? (risk ? '此风险未关联可读取的目标，暂无可关联的视频。' : '此告警未提供可读取的关联目标，暂无可关联的视频。') : ''
   };
@@ -224,7 +225,7 @@ function esc(value) {
 
 function formatClock(value) {
   if (!Number(value)) return '—';
-  return new Date(Number(value)).toLocaleTimeString('zh-CN', { hour12: false });
+  return new Date(Number(value)).toLocaleTimeString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' });
 }
 
 function reportAge(value) {
@@ -621,7 +622,7 @@ function renderTargetTip(target, hasAdvisoryCard = false) {
   const routeRisk = (target.relatedRisks || []).find(risk => risk.active);
   const sourceNames = devices.value.filter(device => (target.sourceDeviceIds || []).includes(device.fusionDeviceId || device.deviceId))
     .map(device => device.type).join(' / ');
-  const summary = alarm?.type || routeRisk?.reasonText || '暂无关联异常';
+  const summary = alarm?.type || displayNumberReferences(routeRisk?.reasonText, [routeRisk?.targetId, routeRisk?.id]) || '暂无关联异常';
   const processStatus = alarm ? uavProcessStatus(alarm) : '';
   // 报文时刻不可信（ZT-20）不能显示成"已观测"：写明数据过期、设备时间不准。
   const stateText = processStatus || (target.activeRisk ? '风险持续'
@@ -631,7 +632,7 @@ function renderTargetTip(target, hasAdvisoryCard = false) {
     ? 'is-online' : (target.activeRisk || processStatus === '信号干扰中' || processStatus === '待审批' ? 'is-risk'
       : !processStatus && target.timeUntrusted ? 'is-warning' : 'is-online');
   return `<section class="sit-map-pop sit-map-pop-target${target.newAlert ? ' is-new' : ''}" style="--sensor:${target.objectTypeCode === 'UAV' ? '#2fd06e' : '#72d6ff'}">
-    <header><span class="sit-map-pop-icon">${targetIconHtml(target)}</span><span><b>${esc(target.id)}</b><small>${esc(target.typeLabel)}</small></span>
+    <header><span class="sit-map-pop-icon">${targetIconHtml(target)}</span><span><b>${esc(displayTargetNo(target.id))}</b><small>${esc(target.typeLabel)}</small></span>
       <button type="button" data-tip-act="close" aria-label="关闭目标详情">${U.icon('close')}</button></header>
     <div class="sit-map-pop-status"><span class="sit-state ${stateClass}">${esc(stateText)}</span><span>${esc(summary)}</span></div>
     <div class="sit-target-metrics"><span><small>高度</small><b>${esc(formatMetric(target.alt, ' m'))}</b></span><span><small>速度</small><b>${esc(formatMetric(target.speed, ' m/s'))}</b></span></div>
@@ -915,9 +916,9 @@ onUnmounted(() => {
           <button v-for="alarm in alarms" :key="eventKey(alarm)" type="button" class="sit-alert-row"
             :class="[{ 'is-new': alarm.isNew, 'is-selected': isSelectedAlarm(alarm) }, `level-${alarm.level}`]"
             :aria-pressed="isSelectedAlarm(alarm)"
-            :aria-label="`查看${alarm.targetId || alarm.id || '未关联目标告警'}的${alarm.type}，${alarm.eventState === 'PENDING_VERIFICATION' ? '待核实' : '待反制'}`" @click="selectAlarm(alarm)">
+            :aria-label="`查看${displayBusinessNo(alarm.targetId || alarm.id) || '未关联目标告警'}的${alarm.type}，${alarm.eventState === 'PENDING_VERIFICATION' ? '待核实' : '待反制'}`" @click="selectAlarm(alarm)">
             <span class="sit-alert-level">{{ alarm.level }}</span>
-            <span class="sit-alert-copy"><b class="mono">{{ alarm.targetId || alarm.id || '未关联目标告警' }}</b><em>{{ alarm.type }} · {{ alarm.district }}</em></span>
+            <span class="sit-alert-copy"><b class="mono">{{ displayBusinessNo(alarm.targetId || alarm.id) || '未关联目标告警' }}</b><em>{{ alarm.type }} · {{ alarm.district }}</em></span>
             <span class="sit-alert-meta"><time class="mono">{{ formatClock(alarm.ts) }}</time><b>{{ alarm.eventState === 'PENDING_VERIFICATION' ? '待核实' : '待反制' }}{{ alarm.isNew ? ' · 新异常' : '' }}</b></span>
           </button>
         </div>
@@ -954,14 +955,14 @@ onUnmounted(() => {
             :key="risk.riskId" :risk-id="risk.riskId" :revision="risk.version" @updated="source.refresh()" />
         </template>
         <section v-else-if="selectedRisk" class="sit-map-pop">
-          <header><span class="sit-map-pop-icon" v-html="U.icon('plan')"></span><span><b>{{ selectedRisk.id }}</b><small>航线风险</small></span>
+          <header><span class="sit-map-pop-icon" v-html="U.icon('plan')"></span><span><b>{{ displayBusinessNo(selectedRisk.id) }}</b><small>航线风险</small></span>
             <button type="button" aria-label="关闭风险详情" @click="clearSelection" v-html="U.icon('close')"></button></header>
           <div class="sit-map-pop-status"><span class="sit-state is-risk">{{ labelOf(RISK_STATE_LABEL, selectedRisk.state) }}</span></div>
-          <p>{{ selectedRisk.reasonText || '风险依据未提供' }}</p><p>当前未取得关联任务，保留此风险的信息。</p>
+          <p>{{ displayNumberReferences(selectedRisk.reasonText, [selectedRisk.targetId, selectedRisk.id]) || '风险依据未提供' }}</p><p>当前未取得关联任务，保留此风险的信息。</p>
           <SituationRiskProcess :key="selectedRisk.riskId" :risk-id="selectedRisk.riskId" :revision="selectedRisk.version" @updated="source.refresh()" />
         </section>
         <section v-else-if="selectedUavAlarm" class="sit-map-pop">
-          <header><span class="sit-map-pop-icon" v-html="U.businessIcon('uav')"></span><span><b>{{ selectedUavAlarm.targetId || selectedUavAlarm.id || '未关联目标告警' }}</b><small>无人机告警</small></span>
+          <header><span class="sit-map-pop-icon" v-html="U.businessIcon('uav')"></span><span><b>{{ displayBusinessNo(selectedUavAlarm.targetId || selectedUavAlarm.id) || '未关联目标告警' }}</b><small>无人机告警</small></span>
             <button type="button" aria-label="关闭告警详情" @click="clearSelection" v-html="U.icon('close')"></button></header>
           <div class="sit-map-pop-status"><span class="sit-state is-risk">{{ selectedUavAlarm.level }}风险</span><span>{{ selectedUavAlarm.type }}</span></div>
           <p>{{ selectedUavAlarm.district }} · 告警时间 {{ formatClock(selectedUavAlarm.ts) }}</p>
@@ -1007,7 +1008,7 @@ onUnmounted(() => {
           <span class="sit-fuse-orb-ball" aria-hidden="true"><span v-html="fuseIcon"></span></span>
         </button>
         <section class="sit-glass sit-fuse-panel">
-          <header class="sit-dock-head"><span><small>FUSION LINKS</small><b>{{ selectedTarget.id }}</b></span></header>
+          <header class="sit-dock-head"><span><small>FUSION LINKS</small><b>{{ displayTargetNo(selectedTarget.id) }}</b></span></header>
           <div class="sit-fuse-links">
             <span v-for="device in fusionDevices" :key="device.id" :style="{ '--sensor': device.color }">
               <span class="sit-node-icon" v-html="iconHtml(device)"></span><b>{{ device.type }}</b><em>{{ device.status }}</em>

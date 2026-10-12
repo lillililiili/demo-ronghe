@@ -11,6 +11,7 @@ import { getAlarm, getUavEvent } from '@/services/alarmApi.js';
 import { reasonListText } from '@/ui/alarmEscalation.js';
 import { ruleReasonText } from '@/ui/legalityReviewModal.js';
 import { targetApi } from '@/services/targetApi.js';
+import { displayAlarmNo, displayTargetNo } from '@/ui/deviceNumber.js';
 import { canAccessRoute, hasPermission } from '@/services/accessControl.js';
 import { DISPOSAL_ACTION_LABEL, DISPOSAL_BLOCK_REASON_LABEL, DISPOSAL_CHANNEL_LABEL, SOURCE_MODE_LABEL, disposalStatusText, labelOf } from '@/ui/labels.js';
 import { openDisposalApproval, openDisposalCancel, openDisposalExecution, openDisposalStop } from '@/ui/disposalAuthModal.js';
@@ -65,13 +66,13 @@ async function readSubject(row) {
       if (!active) return;
       if (!event?.alarm_id) throw new Error('未提供关联告警');
       const alarm = await getAlarm(event.alarm_id);
-      text = alarm.alarm_no || '编号未提供';
-      extra = alarm.target_no ? `目标 ${alarm.target_no}` : '';
+      text = displayAlarmNo(alarm.alarm_no) || '编号未提供';
+      extra = alarm.target_no ? `目标 ${displayTargetNo(alarm.target_no)}` : '';
       targetId = alarm.target_id || '';
       alarmReason = reasonListText(alarm.violation_reasons, ruleReasonText) || '未记录具体触发原因';
     } else if (row.subject_kind === 'TARGET' && hasPermission('target:read')) {
       const target = await targetApi.detail(row.subject_id);
-      text = target.target_no || '编号未提供';
+      text = displayTargetNo(target.target_no) || '编号未提供';
       targetId = target.target_id || '';
     } else { text = '关联对象信息不可用'; alarmReason = '当前账号无权查看关联告警原因'; }
     if (active) subjects.value[key] = { text, extra, targetId, alarmReason, fallback: !targetId };
@@ -82,7 +83,7 @@ async function readSubject(row) {
 function formatTime(value) {
   if (value == null || value === '') return '未提供';
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? '时间未知' : date.toLocaleString('zh-CN', { hour12: false });
+  return Number.isNaN(date.getTime()) ? '时间未知' : date.toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' });
 }
 async function load(next = page.value, { quiet = false } = {}) {
   const seq = ++request, mode = view.value, filter = status.value;

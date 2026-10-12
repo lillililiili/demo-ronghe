@@ -22,7 +22,7 @@ const noCounterBlock = computed(() => unavailableReason.value || (noCounter.valu
 const launchBlock = computed(() => unavailableReason.value || (currentSummary.value?.can_direct_counter === true || currentSummary.value?.can_request_counter === true ? ''
   : currentSummary.value?.counter_block_reason || '尚未确认反制资格，请刷新后重试'));
 const completed = computed(() => noCounter.value?.decision_active === true);
-const time = value => value == null ? '未提供' : new Date(value).toLocaleString('zh-CN', { hour12: false });
+const time = value => value == null ? '未提供' : new Date(value).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' });
 let generation = 0, mounted = true, feedback = null;
 watch(() => [props.eventId, props.active], () => { ++generation; busy.value = false; feedback?.close(); }, { flush: 'sync' });
 onUnmounted(() => { mounted = false; ++generation; feedback?.close(); });

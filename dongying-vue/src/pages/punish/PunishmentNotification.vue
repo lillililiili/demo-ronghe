@@ -1,5 +1,5 @@
 <script setup>
-import { userFacingMessage } from '@/ui/labels.js';
+import { userFacingMessage, notificationBlockedReason } from '@/ui/labels.js';
 import { computed, onUnmounted, ref, watch } from 'vue';
 import { handoffApi, newHandoffIdempotencyKey } from '@/services/handoffApi.js';
 import { authSession, authUser } from '@/services/auth.js';
@@ -7,9 +7,12 @@ import { openConfirm } from '@/ui/confirm.js';
 import { toast } from '@/ui/nv.js';
 import { deliveryView, receiptView } from './handoffStatus.js';
 
-const props = defineProps({ handoffId: { type: String, required: true }, recipientName: String });
-const emit = defineEmits(['status']);
+const props = defineProps({ handoffId: { type: String, required: true }, recipientName: String, riskNotice: Boolean });
+const emit = defineEmits(['status', 'changed']);
 const result = ref(null), loading = ref(false), sending = ref(false), error = ref(''), pending = ref(null);
+const history = ref([]), historyPage = ref(1), historyTotal = ref(0), historyError = ref('');
+const historySize = 10;
+const heading = computed(() => props.riskNotice ? '通知上级' : '处罚部门通知');
 let active = true, sequence = 0;
 const session = authSession.value;
 const current = () => active && session === authSession.value;
@@ -32,8 +35,8 @@ const failureReason = computed(() => {
 });
 const needsNotification = computed(() => ['PENDING_DELIVERY', 'FAILED'].includes(result.value?.delivery_status)
   && result.value?.receipt_status !== 'ACKNOWLEDGED');
-const buttonLabel = computed(() => pending.value ? '重试原通知' : result.value?.delivery_status === 'FAILED' ? '重试通知' : '通知处罚部门');
-const date = value => value == null ? '未记录' : new Date(value).toLocaleString('zh-CN', { hour12: false });
+const buttonLabel = computed(() => pending.value ? '重试原通知' : result.value?.delivery_status === 'FAILED' ? '重试通知' : props.riskNotice ? '通知上级' : '通知处罚部门');
+const date = value => value == null ? '未记录' : new Date(value).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' });
 async function load() {
   const seq = ++sequence, id = props.handoffId;
   loading.value = true; error.value = '';
@@ -43,6 +46,14 @@ async function load() {
     result.value = data;
     if (pending.value && data.expected_attempt_no > pending.value.attempt) savePending(null);
     emit('status', data);
+    if (props.riskNotice) {
+      historyError.value = '';
+      try {
+        const attempts = await handoffApi.listHandoffDeliveries(id, { page: historyPage.value, size: historySize });
+        if (!current() || seq !== sequence) return;
+        history.value = attempts.items || []; historyTotal.value = attempts.total;
+      } catch (e) { if (current() && seq === sequence) historyError.value = e.message || '发送记录读取失败，请刷新重试。'; }
+    }
   } catch (e) {
     if (current() && seq === sequence) error.value = e.status === 403 ? '当前账号没有查看通知记录的权限。'
       : e.status === 404 ? '未找到通知记录，请返回交接列表重新选择；仍无法查看时联系管理员。' : e.message || '通知状态读取失败，请重新查询。';
@@ -51,10 +62,10 @@ async function load() {
 function notifyDepartment() {
   if (!current() || loading.value || sending.value || error.value || !result.value?.can_notify) return;
   const id = props.handoffId, attempt = result.value.expected_attempt_no;
-  const recipient = result.value.recipient_snapshot?.recipient_name || props.recipientName || '原处罚接收方';
+  const recipient = result.value.recipient_snapshot?.recipient_name || props.recipientName || (props.riskNotice ? '上级' : '原处罚接收方');
   openConfirm({
     title: buttonLabel.value,
-    message: `向「${recipient}」发送这份已提交的处罚交接材料。${result.value.simulated ? '本次使用模拟通道，不会发送真实通知。' : ''}送达和签收不代表处罚已办结。`,
+    message: `向「${recipient}」发送这份已提交的${props.riskNotice ? '风险通知' : '处罚交接'}材料。${result.value.simulated ? '本次使用模拟通道，不会发送真实通知。' : ''}${props.riskNotice ? '送达和签收不代表风险已解除。' : '送达和签收不代表处罚已办结。'}`,
     confirmText: '确认通知',
     onConfirm: async () => {
       if (!current() || props.handoffId !== id || loading.value || sending.value || error.value || !result.value?.can_notify) return true;
@@ -67,7 +78,7 @@ function notifyDepartment() {
         if (!current()) return true;
         savePending(null);
         await load();
-        if (current() && !error.value) toast('通知状态已更新', 'ok');
+        if (current() && !error.value) { toast('通知状态已更新', 'ok'); emit('changed'); }
       } catch (e) {
         if (!current()) return true;
         const uncertain = !e.status || e.status >= 500;
@@ -81,22 +92,22 @@ function notifyDepartment() {
     }
   });
 }
-watch(() => props.handoffId, () => { result.value = null; readPending(); load(); }, { immediate: true });
+watch(() => props.handoffId, () => { result.value = null; history.value = []; historyPage.value = 1; historyTotal.value = 0; readPending(); load(); }, { immediate: true });
 onUnmounted(() => { active = false; ++sequence; });
 defineExpose({ refresh: load });
 </script>
 
 <template>
-  <Teleport to="#pnNotifyDock" defer>
+  <Teleport :to="riskNotice ? 'body' : '#pnNotifyDock'" :disabled="riskNotice" defer>
     <template v-if="needsNotification">
       <p v-if="error" class="notify-block" role="alert">{{ error }}</p>
       <p v-else-if="!result.can_notify" class="notify-block">{{ userFacingMessage(result.blocked_reason) || '当前暂不能通知，请核对通知记录。' }}</p>
       <button class="btn pri notify-send" type="button" :disabled="!result.can_notify || loading || sending || !!error" @click="notifyDepartment">{{ sending ? '正在通知' : buttonLabel }}</button>
     </template>
   </Teleport>
-  <section class="sect punishment-notification" aria-label="处罚部门通知" :aria-busy="loading">
+  <section class="sect punishment-notification" :aria-label="heading" :aria-busy="loading">
     <header>
-      <h4>处罚部门通知 <span v-if="result?.simulated" class="tag t-amber" title="模拟通道，不代表真实通知或回执">模拟通道</span></h4>
+      <h4>{{ heading }} <span v-if="result?.simulated" class="tag t-amber" title="模拟通道，不代表真实通知或回执">模拟通道</span></h4>
       <button class="btn sm" type="button" :disabled="loading || sending" @click="load">{{ loading ? '正在刷新' : '刷新通知状态' }}</button>
     </header>
     <p v-if="loading && !result" role="status">正在读取通知记录</p>
@@ -110,6 +121,16 @@ defineExpose({ refresh: load });
         <template v-if="result.latest_delivery?.delivered_at"><dt>送达时间</dt><dd>{{ date(result.latest_delivery.delivered_at) }}</dd></template>
         <template v-if="result.latest_delivery?.acknowledged_at"><dt>签收时间</dt><dd>{{ date(result.latest_delivery.acknowledged_at) }}</dd></template>
       </dl>
+      <details v-if="riskNotice">
+        <summary>发送尝试记录（{{ historyTotal }}）</summary>
+        <p v-if="historyError" role="alert">{{ historyError }}</p>
+        <p v-for="attempt in history" :key="attempt.delivery_id">第 {{ attempt.attempt_no }} 次 · {{ date(attempt.submitted_at || attempt.created_at) }} · {{ deliveryView(attempt).label }} · {{ receiptView(attempt).label }}<template v-if="notificationBlockedReason(attempt)"> · {{ notificationBlockedReason(attempt) }}</template></p>
+        <div v-if="historyTotal > historySize" class="pager">
+          <button class="btn sm" :disabled="loading || sending || historyPage <= 1" @click="historyPage--; load()">上一页</button>
+          <span>第 {{ historyPage }} / {{ Math.ceil(historyTotal / historySize) }} 页</span>
+          <button class="btn sm" :disabled="loading || sending || historyPage * historySize >= historyTotal" @click="historyPage++; load()">下一页</button>
+        </div>
+      </details>
     </template>
   </section>
 </template>

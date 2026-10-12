@@ -16,6 +16,14 @@
           "health": "正常",
           "heartbeat": "持续上报",
           "interval": 1
+        },
+        {
+          "id": "acceptance-eo",
+          "name": "流程验收光电",
+          "kind": "eo",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 1
         }
       ]
     }

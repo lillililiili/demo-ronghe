@@ -11,7 +11,7 @@ export function trackSnapshotRows(snapshot) {
 }
 
 /** 只消费标准观测字段；旧版坐标数组缺少坐标系和时序时不猜测。 */
-export function prepareEvidenceTrack(rows = []) {
+export function prepareEvidenceTrack(rows = [], { layer } = {}) {
   const input = Array.isArray(rows) ? rows : [];
   const sources = new Map();
   const normalized = input.map((row, index) => {
@@ -26,8 +26,12 @@ export function prepareEvidenceTrack(rows = []) {
   const points = measuredMapPoints(normalized).map((point, index, all) => {
     const source = sources.get(point.point_id) || {};
     const previous = all[index - 1];
+    // RAW 序号由来源适配器定义，可用毫秒时间或稀疏设备序号；不能据差值推断丢点。
+    // FUSED 保持平台连续序号约束；层级缺失的旧文件不猜测为 RAW。
+    const sequenceContinues = previous && Number.isFinite(previous.point_seq) && Number.isFinite(point.point_seq)
+      && (layer === 'RAW' ? point.point_seq > previous.point_seq : point.point_seq === previous.point_seq + 1);
     const connected = previous && !point.break_before && !!point.track_id && previous.track_id === point.track_id
-      && Number.isFinite(previous.point_seq) && point.point_seq === previous.point_seq + 1
+      && sequenceContinues
       && Number.isFinite(previous.t) && Number.isFinite(point.t) && point.t >= previous.t
       && previous.kind === point.kind;
     // 文件自带的关系字段不等于带计划/走廊依据的后台比对结果。

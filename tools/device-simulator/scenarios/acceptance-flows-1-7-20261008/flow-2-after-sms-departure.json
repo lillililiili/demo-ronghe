@@ -26,16 +26,12 @@
           "interval": 1
         },
         {
-          "id": "acceptance-ifr",
-          "name": "流程验收干扰设备",
-          "kind": "ifr",
+          "id": "acceptance-eo",
+          "name": "流程验收光电",
+          "kind": "eo",
           "health": "正常",
           "heartbeat": "持续上报",
-          "interval": 1,
-          "protocolB": {
-            "enabled": true,
-            "response": "success"
-          }
+          "interval": 1
         }
       ]
     }
@@ -49,15 +45,11 @@
       "secondaryDeviceId": "acceptance-5ga",
       "path": [
         [
-          470,
-          300
-        ],
-        [
           490,
           300
         ],
         [
-          510,
+          500.5,
           300
         ]
       ],
@@ -68,25 +60,30 @@
       "probability": 0.99,
       "count": 1,
       "motionMode": "once",
-      "transport": "mqtt",
-      "uavSn": "SIM-ACC-20261008-FLOW2-UAV",
+      "transport": "normalized",
+      "secondaryTransport": "normalized",
+      "uavSn": "SIM-ACC-20261008-FLOW2-UAV-80F5D25D17B8",
       "planId": "flow1-plan",
       "notificationBehavior": "after_sms",
       "pilotPoint": [
-        468,
+        488,
         300
       ],
       "departurePath": [
         [
-          560,
+          495,
           300
         ],
         [
-          590,
+          490,
           300
         ]
       ],
-      "departureSpeed": 15
+      "departureSpeed": 15,
+      "dwellSeconds": [
+        60,
+        0
+      ]
     }
   ],
   "plans": [
@@ -95,11 +92,11 @@
       "name": "流程 1-2 报备航线",
       "points": [
         [
-          470,
+          490,
           300
         ],
         [
-          490,
+          520,
           300
         ]
       ],

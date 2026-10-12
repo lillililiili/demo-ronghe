@@ -1,4 +1,5 @@
 <script setup>
+import { displayBusinessNo, displayNumberReferences } from '@/ui/deviceNumber.js';
 import { computed, nextTick, ref, watch } from 'vue';
 import UField from '@/components/form/UField.vue';
 import { FunnelOutline } from '@vicons/ionicons5';
@@ -62,7 +63,7 @@ async function toggleFilters() {
 }
 function closeFilters() { filtersOpen.value = false; filterToggle.value?.focus({ preventScroll: true }); }
 function time(value) { return value == null ? '未记录' : new Date(value).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }); }
-function title(row) { return row.target?.target_no || row.risk?.risk_no || '未编号'; }
+function title(row) { return displayBusinessNo(row.target?.target_no || row.risk?.risk_no) || '未编号'; }
 function typeLabel(row) { return row.target ? targetTypeLabel(row.target.subtype, row.target.object_type_code, '未分类')
   : labelOf(RISK_TYPE_LABEL, row.type, '未分类'); }
 // 模拟器送来的风险按 source_display_mode 标模拟（P03：回放任务上的模拟器天气、鸟群也算），文件回放才不标。
@@ -71,7 +72,7 @@ const pageCount = computed(() => Math.max(1, Math.ceil(props.list.rows.length / 
 const pageSizes = [10, 20, 50].map(value => ({ value, label: `${value} 条/页` }));
 function summary(row) {
   return row.target?.demo ? `${row.target.demo.scene.label} · ${Math.round(row.target.demo.distance)} 米`
-    : row.risk?.reason_text || (row.risk ? '未记录风险事由' : row.target?.risk_summary ? '已有风险摘要' : '近期监测发现，尚无风险记录');
+    : displayNumberReferences(row.risk?.reason_text, [row.risk?.target_no, row.risk?.risk_no]) || (row.risk ? '未记录风险事由' : row.target?.risk_summary ? '已有风险摘要' : '近期监测发现，尚无风险记录');
 }
 </script>
 

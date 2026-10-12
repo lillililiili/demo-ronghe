@@ -149,13 +149,46 @@ function riskLocationContent(item){
  const observed=typeof location.observed_at==='number'&&Number.isFinite(location.observed_at)?formatTime(location.observed_at):'未记录';
  return `<p class="inbox-content">风险位置（发现时）：经度 ${location.longitude.toFixed(6)}°，纬度 ${location.latitude.toFixed(6)}°<br>坐标系：WGS-84<br>观测时间：${escapeHtml(observed)}${altitude}</p>`;
 }
+function frozenEvidenceContent(item){
+ const material=item.details?.material;if(!material)return '';
+ const rows=material.evidence_chain;
+ const weather=material.weather_forecast;
+ let result=weather?`<details data-record="weather:${escapeHtml(item.id)}"><summary>打开通知时的天气预报依据</summary><p>${escapeHtml(weather.area_name)} · ${escapeHtml(weather.summary)}</p><p>发布 ${escapeHtml(formatTime(weather.published_at))}；有效 ${escapeHtml(formatTime(weather.valid_from))} 至 ${escapeHtml(formatTime(weather.valid_to))}</p><p>风速 ${escapeHtml(weather.wind_speed_mps??'未提供')} 米/秒；阵风 ${escapeHtml(weather.gust_mps??'未提供')} 米/秒；降水概率 ${escapeHtml(weather.precipitation_probability_pct??'未提供')}%</p></details>`:'';
+ if(!Array.isArray(rows))return result+'<p class="inbox-receipt">这份材料未提供可查看的证据清单；请核对提交时留存情况与当前权限。</p>';
+ result+=`<p class="inbox-receipt">本份材料冻结证据 ${rows.length} 项</p>`;
+ const hid=item.details.handoff_id;
+ for(const row of rows){
+  const name=escapeHtml(row.name||row.evidence_no||row.source_kind);
+  if(row.source_kind==='FILE'){
+   const url='/api/external/evidence?'+new URLSearchParams({handoff_id:hid||'',evidence_id:row.source_id});
+   result+=`<p><a target="_blank" rel="noopener" href="${escapeHtml(url)}">打开原件：${name}</a><br><small>提交时校验值 ${escapeHtml(row.sha256||'未记录')}</small></p>`;continue;
+  }
+  if(row.source_kind==='TRACK'){
+   const points=Array.isArray(row.content?.points)?row.content.points:null;
+   const valid=(points||[]).filter(p=>p.location?.coordinate_system==='WGS84'&&Number.isFinite(p.location.longitude)&&Math.abs(p.location.longitude)<=180&&Number.isFinite(p.location.latitude)&&Math.abs(p.location.latitude)<=90);
+   let view='历史材料没有冻结轨迹点，不能用当前轨迹代替。';
+   if(points){
+    const xs=valid.map(p=>p.location.longitude),ys=valid.map(p=>p.location.latitude);
+    const minX=Math.min(...xs),minY=Math.min(...ys),dx=Math.max(...xs)-minX,dy=Math.max(...ys)-minY,scale=260/Math.max(dx,dy,.00001);
+    let previous=null;const segments=[];
+    for(const p of valid){const x=20+(p.location.longitude-minX)*scale,y=280-(p.location.latitude-minY)*scale;
+     if(previous&&p.track_id===previous.p.track_id&&p.point_seq===previous.p.point_seq+1&&p.point_kind===previous.p.point_kind&&Number.isFinite(p.observed_at)&&Number.isFinite(previous.p.observed_at)&&p.observed_at>=previous.p.observed_at)segments.push(`<line x1="${previous.x}" y1="${previous.y}" x2="${x}" y2="${y}" stroke="#55c4ec" stroke-width="2"/>`);
+     segments.push(`<circle cx="${x}" cy="${y}" r="2" fill="#e9c568"/>`);previous={p,x,y};}
+    view=`<p>提交时冻结 ${points.length} 点 · ${escapeHtml(row.content.source_mode||'来源未记录')} · ${escapeHtml(formatTime(row.content.frozen_at))}</p>${valid.length?`<svg viewBox="0 0 320 300" role="img" aria-label="通知时冻结的轨迹示意" style="width:100%;max-width:440px;background:#071f38">${segments.join('')}</svg>`:'<p>无有效观测坐标</p>'}<p>以下列出前 ${Math.min(points.length,100)} 个冻结观测点；全部点保存在完整记录中。</p><pre>${escapeHtml(points.slice(0,100).map(p=>`${formatTime(p.observed_at)}  经度 ${p.location?.longitude??'未知'}，纬度 ${p.location?.latitude??'未知'}`).join('\n'))}</pre>`;
+   }
+   result+=`<details data-record="track:${escapeHtml(item.id+':'+row.source_id)}"><summary>打开冻结轨迹：${name}（${escapeHtml(row.layer||'层级未记录')}，${escapeHtml(row.point_count??'未记录')} 点）</summary>${view}</details>`;continue;
+  }
+  if(row.source_kind==='COMMAND')result+=`<details data-record="command:${escapeHtml(item.id+':'+row.source_id)}"><summary>打开指令回执：${name}</summary><pre>${escapeHtml(row.content?JSON.stringify(row.content,null,2):'历史材料没有冻结指令回执')}</pre></details>`;
+ }
+ return result;
+}
 function inboxRecord(item){
  const subject=item.kind==='risk'&&String(item.subject||'').includes(':')?'风险通知':item.subject;
  const alarmLabels={UAV_INTRUSION:'无人机入侵',UAV:'无人机告警',RULE_LEGALITY:'飞行违规'};
  const content=item.kind==='punishment'&&alarmLabels[item.content]?'移送事由：'+alarmLabels[item.content]:item.content;
  const status={SIMULATED_DELIVERED:'模拟短信已送达',SIMULATED_PLAYED:'模拟接通并完成播放',DELIVERED:'模拟通知已送达',SUBMITTED:'已发出，送达待确认',PENDING_DELIVERY:'待发送',FAILED:'发送失败',UNKNOWN:'结果未知',TIMEOUT:'回执超时，结果未知',ANSWERED:'已接通，播放待确认'};
  const receipt={NOT_EXPECTED:'未进入签收',PENDING:'等待签收回执',ACKNOWLEDGED:'已签收',TIMEOUT:'签收回执超时'};
- return `<article class="inbox-message"><header><div><strong>${escapeHtml(subject||'关联事项未提供')}</strong><small>${escapeHtml(item.time_label||'记录时间')} · ${escapeHtml(formatTime(item.at))}</small></div><span class="inbox-state ${item.received?'received':''}">${escapeHtml(status[item.status]||item.status||'状态未知')}</span></header><div class="inbox-recipient">接收对象 <b>${escapeHtml(item.recipient||'未提供')}</b></div><p class="inbox-content">${escapeHtml(content||'通知内容未提供')}</p>${riskLocationContent(item)}${item.receipt_status?`<p class="inbox-receipt">签收回执：${escapeHtml(receipt[item.receipt_status]||item.receipt_status)}</p>`:''}${item.reason?`<p class="external-note warn">${escapeHtml(item.reason)}</p>`:''}<details data-record="${escapeHtml(item.id)}"><summary>查看完整记录</summary><pre>${escapeHtml(JSON.stringify({subject:item.subject,...item.details},null,2))}</pre></details></article>`;
+ return `<article class="inbox-message"><header><div><strong>${escapeHtml(subject||'关联事项未提供')}</strong><small>${escapeHtml(item.time_label||'记录时间')} · ${escapeHtml(formatTime(item.at))}</small></div><span class="inbox-state ${item.received?'received':''}">${escapeHtml(status[item.status]||item.status||'状态未知')}</span></header><div class="inbox-recipient">接收对象 <b>${escapeHtml(item.recipient||'未提供')}</b></div><p class="inbox-content">${escapeHtml(content||'通知内容未提供')}</p>${riskLocationContent(item)}${frozenEvidenceContent(item)}${item.receipt_status?`<p class="inbox-receipt">签收回执：${escapeHtml(receipt[item.receipt_status]||item.receipt_status)}</p>`:''}${item.reason?`<p class="external-note warn">${escapeHtml(item.reason)}</p>`:''}<details data-record="${escapeHtml(item.id)}"><summary>查看完整记录</summary><pre>${escapeHtml(JSON.stringify({subject:item.subject,...item.details},null,2))}</pre></details></article>`;
 }
 function buildOutput(){
  if(!inbox)return '<div class="external-empty">正在读取通知记录。</div>';

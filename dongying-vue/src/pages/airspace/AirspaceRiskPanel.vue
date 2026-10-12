@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue';
 import UControl from '@/components/form/UControl.vue';
 import UPagination from '@/components/UPagination.vue';
 import { ALTITUDE_DATUM_LABEL, RISK_TYPE_LABEL, RISK_TYPE_OPTIONS, RISK_STATE_LABEL, SEVERITY_LABEL, SEVERITY_TAG, SOURCE_MODE_LABEL, labelOf } from '@/ui/labels.js';
-import { displayPlanNo } from '@/ui/deviceNumber.js';
+import { displayPlanNo, displayRiskNo, displayNumberReferences } from '@/ui/deviceNumber.js';
 
 const props = defineProps({ risks: { type: Object, required: true }, selected: { type: Object, default: null } });
 const emit = defineEmits(['locate', 'inspect']);
@@ -23,7 +23,7 @@ watch(() => props.risks.activeId, id => {
   if (index >= 0) page.value = Math.floor(index / size.value) + 1;
   if (tableScroll.value) tableScroll.value.scrollTop = 0;
 });
-function date(value) { return value == null ? '未记录' : new Date(value).toLocaleString('zh-CN', { hour12: false }); }
+function date(value) { return value == null ? '未记录' : new Date(value).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }); }
 </script>
 
 <template>
@@ -52,11 +52,11 @@ function date(value) { return value == null ? '未记录' : new Date(value).toLo
     <div v-else-if="!risks.filtered.length" class="empty">当前筛选范围内暂无已记录的风险事件，不代表这片空域当前安全。</div>
     <div v-else ref="tableScroll" class="risk-table-scroll">
       <article v-if="risks.active" class="risk-inline-detail" aria-label="风险详情">
-        <header><b>{{ risks.active.risk_no || '风险详情' }}</b><button class="linkbtn" type="button" @click="risks.activeId = ''">收起详情</button></header>
+        <header><b>{{ displayRiskNo(risks.active.risk_no) || '风险详情' }}</b><button class="linkbtn" type="button" @click="risks.activeId = ''">收起详情</button></header>
         <dl>
           <dt>风险类型</dt><dd>{{ labelOf(RISK_TYPE_LABEL, risks.active.risk_type, '其他风险') }}</dd>
           <dt>风险等级 / 状态</dt><dd>{{ labelOf(SEVERITY_LABEL, risks.active.severity, '未知') }} · {{ labelOf(RISK_STATE_LABEL, risks.active.state, '未知') }}</dd>
-          <dt>风险事由</dt><dd>{{ risks.active.reason_text || '未记录风险事由' }}</dd>
+          <dt>风险事由</dt><dd>{{ displayNumberReferences(risks.active.reason_text, [risks.active.target_no, risks.active.risk_no]) || '未记录风险事由' }}</dd>
           <dt>发生时间</dt><dd>{{ date(risks.active.occurred_at) }}</dd>
           <dt>接收时间</dt><dd>{{ date(risks.active.received_at) }}</dd>
           <dt>发现时的位置</dt><dd>{{ risks.active.point ? `${risks.active.point[0]}, ${risks.active.point[1]}（经度、纬度）` : '位置未记录，无法定位' }}</dd>
@@ -69,8 +69,8 @@ function date(value) { return value == null ? '未记录' : new Date(value).toLo
         <thead><tr><th>风险编号 / 类型</th><th>风险事由</th><th>等级</th><th>核验与通知状态</th><th>发生时间</th><th>关联任务（如有）</th><th>位置 / 来源</th><th>操作</th></tr></thead>
         <tbody>
           <tr v-for="risk in pageRows" :key="risk.risk_id" :class="{ on: risks.activeId === risk.risk_id }">
-            <td><div class="table-text" tabindex="0"><b>{{ risk.risk_no || '未编业务编号' }}</b><small>{{ labelOf(RISK_TYPE_LABEL, risk.risk_type, '其他风险') }}</small></div></td>
-            <td class="risk-reason"><div class="table-text" tabindex="0">{{ risk.reason_text || '未记录风险事由' }}</div></td>
+            <td><div class="table-text" tabindex="0"><b>{{ displayRiskNo(risk.risk_no) || '未编业务编号' }}</b><small>{{ labelOf(RISK_TYPE_LABEL, risk.risk_type, '其他风险') }}</small></div></td>
+            <td class="risk-reason"><div class="table-text" tabindex="0">{{ displayNumberReferences(risk.reason_text, [risk.target_no, risk.risk_no]) || '未记录风险事由' }}</div></td>
             <td><span class="tag" :class="SEVERITY_TAG[risk.severity] || 't-gray'">{{ labelOf(SEVERITY_LABEL, risk.severity, '未知') }}</span></td>
             <td><div class="table-text" tabindex="0">{{ labelOf(RISK_STATE_LABEL, risk.state, '未知') }}</div></td>
             <td><div class="table-text" tabindex="0">{{ date(risk.occurred_at) }}</div></td>

@@ -4,6 +4,27 @@ const { readFileSync } = require('node:fs');
 const path = require('node:path');
 const { computed, ref } = require('vue');
 
+test('flight notification previews are cancelled by task, tab, or risk selection changes', () => {
+  const flight = readFileSync(path.join(__dirname, '../src/pages/FlightsPage.vue'), 'utf8');
+  const body = flight.match(/function openRiskNotify\(riskOverride = null\) \{[\s\S]*?\n\}/)[0];
+  for (const route of [true, false]) {
+    for (const change of ['task', 'tab', 'risk']) {
+      const risk = { risk_id: 'risk-a', state: 'PENDING_NOTIFICATION' };
+      const deps = { selectedRisk: ref(risk), selected: ref({ plan_id: 'plan-a' }),
+        activeTab: ref(route ? 'route' : 'events'), riskDetailToken: 1, planDetailToken: 1,
+        canNotifyItem: () => true, canNotifyRisk: ref(true), openRiskNotification: options => options,
+        refreshAfterNotify() {}, showHandoffSubmitted() {}, riskTab: ref('detail') };
+      const open = new Function('deps', `with (deps) { ${body}; return openRiskNotify; }`)(deps);
+      const options = open(route ? risk : null);
+      assert.equal(options.isCurrent(), true);
+      if (change === 'tab') deps.activeTab.value = route ? 'events' : 'route';
+      if (change === 'task') { deps.selected.value = { plan_id: 'plan-b' }; deps.planDetailToken++; }
+      if (change === 'risk') { deps.selectedRisk.value = { risk_id: 'risk-b' }; deps.riskDetailToken++; }
+      assert.equal(options.isCurrent(), !route && change === 'task', `${route ? 'route' : 'events'} / ${change}`);
+    }
+  }
+});
+
 function fixtures(allowed) {
   const hasPermission = code => allowed && code === 'handoff:create';
   const flight = readFileSync(path.join(__dirname, '../src/pages/FlightsPage.vue'), 'utf8');
@@ -41,11 +62,17 @@ test('authorized users can notify a pending risk and cannot resubmit an existing
 
 function notificationFixture(allowed = true) {
   const file = readFileSync(path.join(__dirname, '../src/ui/riskNotificationModal.js'), 'utf8');
-  const source = file.replace(/import[\s\S]*?from ['"][^'"]+['"];?/g, '').replace('export function', 'function');
-  const f = { dialogs: [], submissions: [], refreshed: 0, done: [], existing: 0, sequence: 0, failure: null };
+  const source = file.replace(/import[\s\S]*?from ['"][^'"]+['"];?/g, '').replace(/export (?=(?:async )?function)/, '');
+  const f = { dialogs: [], submissions: [], previews: [], refreshed: 0, done: [], existing: 0, sequence: 0, failure: null, previewFailure: null, previewWait: null };
   const deps = { hasPermission: () => allowed, openFormModal: opts => f.dialogs.push(opts), closeModal() {}, toast() {},
     newHandoffIdempotencyKey: () => `submission-${++f.sequence}`,
     isUncertainOutcome: error => error.code === 'TIMEOUT',
+    riskNoticePreview: async (id, version) => {
+      f.previews.push({ id, version });
+      if (f.previewWait) await f.previewWait;
+      if (f.previewFailure) throw f.previewFailure;
+      return { introHtml: `<p>材料 ${id} / ${version}</p>` };
+    },
     handoffApi: { createHandoff: async (body, key) => { f.submissions.push({ body, key }); if (f.failure) throw f.failure; return { source_id: body.source_id, delivery_status: 'SUBMITTED' }; } } };
   f.open = new Function(...Object.keys(deps), `${source}; return openRiskNotification;`)(...Object.values(deps));
   f.options = risk => ({ risk, refresh: async () => { f.refreshed++; }, onDone: created => f.done.push(created), onExisting: () => f.existing++ });
@@ -56,13 +83,15 @@ test('shared notification requires verification and permission; opening never wr
   for (const allowed of [true, false]) {
     const f = notificationFixture(allowed);
     for (const state of ['PENDING_VERIFICATION', 'EXCLUDED', 'NOTIFIED', 'ACKNOWLEDGED']) {
-      assert.equal(f.open(f.options({ risk_id: `event-${state}`, state, allowed_actions: ['NOTIFY'], version: 3 })), false);
+      assert.equal(await f.open(f.options({ risk_id: `event-${state}`, state, allowed_actions: ['NOTIFY'], version: 3 })), false);
     }
     for (const [id, version] of [['event-one', 4], ['another-event', 19]]) {
       const before = f.submissions.length;
-      assert.equal(f.open(f.options({ risk_id: id, state: 'PENDING_NOTIFICATION', version })), allowed);
+      assert.equal(await f.open(f.options({ risk_id: id, state: 'PENDING_NOTIFICATION', version })), allowed);
       assert.equal(f.submissions.length, before, 'opening must not send');
       if (allowed) {
+        assert.deepEqual(f.previews.at(-1), { id, version });
+        assert.match(f.dialogs.at(-1).introHtml, new RegExp(`${id} / ${version}`));
         await f.dialogs.at(-1).onSubmit();
         assert.deepEqual(f.submissions.at(-1).body, { source_kind: 'RISK', source_id: id, handoff_type: 'RISK_NOTICE', expected_version: version });
       }
@@ -73,11 +102,11 @@ test('shared notification requires verification and permission; opening never wr
 test('uncertain notifications reuse the submission key and do not claim success', async () => {
   const f = notificationFixture();
   const risk = { risk_id: 'uncertain-risk', state: 'PENDING_NOTIFICATION', version: 10 };
-  f.open(f.options(risk));
+  await f.open(f.options(risk));
   f.failure = { code: 'TIMEOUT', message: 'timeout' };
   await assert.rejects(f.dialogs.at(-1).onSubmit(), /结果未确认/);
   assert.equal(f.refreshed, 1); assert.equal(f.done.length, 0);
-  f.open(f.options(risk)); f.failure = null;
+  await f.open(f.options(risk)); f.failure = null;
   await f.dialogs.at(-1).onSubmit();
   assert.equal(f.submissions[0].key, f.submissions[1].key);
   assert.equal(f.done.length, 1);
@@ -86,9 +115,9 @@ test('uncertain notifications reuse the submission key and do not claim success'
 test('version conflicts refresh before a new submission; duplicate notices open records', async () => {
   const f = notificationFixture();
   const risk = { risk_id: 'conflict-risk', state: 'PENDING_NOTIFICATION', version: 2 };
-  f.open(f.options(risk)); f.failure = { code: 'VERSION_CONFLICT' };
+  await f.open(f.options(risk)); f.failure = { code: 'VERSION_CONFLICT' };
   await assert.rejects(f.dialogs.at(-1).onSubmit(), /提交被拒绝/);
-  f.open(f.options({ ...risk, version: 3 })); f.failure = { code: 'HANDOFF_ALREADY_EXISTS' };
+  await f.open(f.options({ ...risk, version: 3 })); f.failure = { code: 'HANDOFF_ALREADY_EXISTS' };
   await f.dialogs.at(-1).onSubmit();
   assert.notEqual(f.submissions[0].key, f.submissions[1].key);
   assert.equal(f.submissions[1].body.expected_version, 3);
@@ -97,9 +126,27 @@ test('version conflicts refresh before a new submission; duplicate notices open 
 
 test('a successful notification stays successful if subsequent refresh fails', async () => {
   const f = notificationFixture();
-  f.open({ ...f.options({ risk_id: 'saved-risk', state: 'PENDING_NOTIFICATION', version: 7 }), refresh: async () => { throw new Error('offline'); } });
+  await f.open({ ...f.options({ risk_id: 'saved-risk', state: 'PENDING_NOTIFICATION', version: 7 }), refresh: async () => { throw new Error('offline'); } });
   await f.dialogs.at(-1).onSubmit();
   assert.equal(f.submissions.length, 1); assert.equal(f.done.length, 1);
+});
+
+test('missing preview or a changed selection never opens a stale notification dialog', async () => {
+  const f = notificationFixture();
+  const options = f.options({ risk_id: 'preview-risk', state: 'PENDING_NOTIFICATION', version: 23 });
+  f.previewFailure = new Error('preview unavailable');
+  assert.equal(await f.open(options), false);
+  assert.equal(f.dialogs.length, 0); assert.equal(f.submissions.length, 0);
+  f.previewFailure = null;
+  let release, current = true;
+  f.previewWait = new Promise(resolve => { release = resolve; });
+  const pending = f.open({ ...options, isCurrent: () => current });
+  current = false; release();
+  assert.equal(await pending, false);
+  assert.equal(f.dialogs.length, 0); assert.equal(f.submissions.length, 0);
+  const reads = f.previews.length;
+  assert.equal(await f.open({ ...options, isCurrent: () => false }), false);
+  assert.equal(f.previews.length, reads);
 });
 
 const Vue = require('vue');
@@ -168,27 +215,34 @@ test('switching risk or unmounting rejects late detail responses', async () => {
 });
 
 
-test('notifying one grouped risk keeps its open card and does not process its neighboring task', async () => {
+test('current risks stay grouped after notification and disappear only when no longer active', async () => {
   const { pathToFileURL } = require('node:url');
   const { groupRouteRisks } = await import(pathToFileURL(path.join(__dirname, '../src/pages/situation/routeRiskGroups.js')).href);
   const page = readFileSync(path.join(__dirname, '../src/pages/SituationPage.vue'), 'utf8');
-  const declarations = page.slice(page.indexOf('const allRiskGroups = computed('), page.indexOf('const airspaces = computed('));
+  const start = page.indexOf('const riskGroups = computed(');
+  assert.ok(start >= 0, 'risk group declarations must be found');
+  const declarations = page.slice(start, page.indexOf('const airspaces = computed('));
   const rows = Vue.ref(['one', 'two'].map((id, index) => ({ riskId: `risk-${id}`, planId: `plan-${id}`,
     routeVersionId: 'route-shared', targetInternalId: 'target-shared', sourceMode: 'mock', sourceCode: 'sensor',
     ownerOrgId: 'org', districtId: 'district', riskType: 'SPACE_OBJECT', reasonCode: 'NEAR_ROUTE',
     observedAt: 888000, occurredAt: 888000, spaceFact: { ruleVersionId: 'rules-v3', subtypeCode: 'BIRD' },
-    state: 'PENDING_NOTIFICATION', version: index + 4 })));
+    state: 'PENDING_NOTIFICATION', active: true, version: index + 4 })));
   const selection = Vue.ref({ kind: 'risk-group', id: groupRouteRisks(rows.value)[0].groupId });
-  const state = new Function('computed', 'groupRouteRisks', 'risks', 'selection', 'situationRouteRiskVisible',
-    declarations + '; return { riskGroups, selectedRiskGroup };')(Vue.computed, groupRouteRisks, rows, selection,
-    risk => ['PENDING_VERIFICATION', 'PENDING_NOTIFICATION'].includes(risk.state));
+  const state = new Function('computed', 'groupRouteRisks', 'risks', 'selection',
+    declarations + '; return { riskGroups, selectedRiskGroup };')(Vue.computed, groupRouteRisks, rows, selection);
   rows.value[0] = { ...rows.value[0], state: 'NOTIFIED', version: 9 };
-  assert.equal(state.riskGroups.value[0].members.length, 1);
+  assert.equal(state.riskGroups.value[0].members.length, 2);
   assert.equal(state.selectedRiskGroup.value.members.length, 2);
   assert.equal(rows.value[1].state, 'PENDING_NOTIFICATION');
   rows.value[1] = { ...rows.value[1], state: 'NOTIFIED', version: 10 };
+  assert.equal(state.riskGroups.value[0].members.length, 2);
+  assert.equal(state.selectedRiskGroup.value.members.length, 2, 'notification is not evidence that a current risk has cleared');
+  rows.value[0] = { ...rows.value[0], active: false };
+  assert.equal(state.riskGroups.value[0].members.length, 1);
+  assert.equal(state.selectedRiskGroup.value.members[0].riskId, 'risk-two');
+  rows.value[1] = { ...rows.value[1], active: false };
   assert.equal(state.riskGroups.value.length, 0);
-  assert.equal(state.selectedRiskGroup.value.members.length, 2, 'the open card remains available for notification receipts');
+  assert.equal(state.selectedRiskGroup.value, undefined, 'expired facts do not remain as current risks');
   rows.value = [];
   assert.equal(state.selectedRiskGroup.value, undefined, 'removed or unauthorized data is not retained as a cached card');
 });

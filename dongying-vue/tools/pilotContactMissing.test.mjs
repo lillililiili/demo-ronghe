@@ -17,7 +17,7 @@ test('计划缺飞手电话且尚未发出时，短信和电话都写明缺飞�
     assert.equal(smsView.title, '缺飞手联系方式', sms);
     assert.equal(smsView.pilotContactMissing, true);
     assert.equal(smsView.tone, 'warning');
-    assert.match(smsView.reason, /计划里没有执行飞手的电话/);
+    assert.match(smsView.reason, /上级下发的飞行任务里没有执行飞手的电话/);
     assert.match(smsView.guidance, /不能补录/);
     assert.doesNotMatch(smsView.reason + smsView.guidance, /管理员补全/);
     assert.equal(voiceView.title, '缺飞手联系方式', voice);
@@ -49,5 +49,8 @@ test('紧凑卡片的标题先看缺飞手联系方式，不再显示“等待�
   const sms = readFileSync(new URL('../src/components/disposal/AutoSmsNotice.vue', import.meta.url), 'utf8');
   const voice = readFileSync(new URL('../src/components/disposal/AutoVoiceNotice.vue', import.meta.url), 'utf8');
   assert.match(sms, /const compactTitle = computed\(\(\) => view\.value\.pilotContactMissing \? view\.value\.title :/);
-  assert.match(voice, /const compactTitle = computed\(\(\) => \{\s*if \(view\.value\.pilotContactMissing\) return view\.value\.title;/);
+  const body = voice.match(/const compactTitle = computed\(\(\) => \{([\s\S]*?)\n\}\);/)[1];
+  const compactTitle = new Function('view', 'props', body);
+  assert.equal(compactTitle({ value: { pilotContactMissing: true, title: '缺飞手联系方式' } },
+    { data: overview('BLOCKED', 'WAITING', true) }), '缺飞手联系方式');
 });

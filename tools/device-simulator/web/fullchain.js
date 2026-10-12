@@ -1,7 +1,7 @@
 (function(root){
  'use strict';
  const categories={uav:'无人机与完整轨迹',bird:'单鸟与鸟群',unknown:'未知类别',identifying:'识别中',balloon:'气球',person:'人员',vehicle:'车辆',ship:'船舶',remote_controller:'遥控器',weather:'气象实测、预报和预警',airspaces:'五类空域',device_faults:'设备异常'};
- const coverageText=row=>`已提交 ${row.submitted||0} · 接入确认 ${row.accepted||0} · ${row.processed==null?'平台处理待回读':`平台回读 ${row.processed}`} ${row.processed_label||''} ${row.last_at?'最近 '+new Date(row.last_at).toLocaleTimeString():''} ${Object.entries(row.related||{}).map(([k,v])=>`${k}: ${v}`).join(' / ')} ${row.error||''}`;
+ const coverageText=row=>`已提交 ${row.submitted||0} · 接入确认 ${row.accepted||0} · ${row.processed==null?'平台处理待回读':`平台回读 ${row.processed}`} ${row.processed_label||''} ${row.last_at?'最近 '+new Date(row.last_at).toLocaleTimeString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}):''} ${Object.entries(row.related||{}).map(([k,v])=>`${k}: ${v}`).join(' / ')} ${row.error||''}`;
  if(typeof module!=='undefined'){module.exports={categories,coverageText};return;}
  const box=document.createElement('section');box.className='realtime-bar fullchain-bar';
  box.innerHTML='<div><strong>全量关联场景</strong><span>正常与异常同时展示</span></div><div class="realtime-actions"><button id="fullchain-load">配置全量场景</button><button id="fullchain-edit">完整资料与接口字段</button><button id="fullchain-start">一键启动全量场景</button><button id="fullchain-verify">回读平台数据</button></div><details><summary>数据覆盖与关联记录</summary><div id="fullchain-coverage">尚未运行全量场景</div></details>';

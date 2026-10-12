@@ -3,6 +3,7 @@ const S = { st: { page: 1, size: 10, kind: '', status: '', custody: '', refKind:
 export default {};
 </script>
 <script setup>
+import { displayTargetNo } from '@/ui/deviceNumber.js';
 import { computed, nextTick, ref, reactive, watch, onMounted, onBeforeUnmount } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
@@ -50,7 +51,7 @@ const selectedKey = computed(() => `${st.sourceKind}:${st.selId}`);
 const fileDetailHtml = computed(() => detailRow.value ? renderEvidenceFileDetail(detailRow.value, { mode: 'page', embeddedPreview: true }) : '');
 const format = ms => fmtEvidenceTime(ms);
 function stateLabel(row) { return row.source_kind === 'COMMAND' ? row.status === 'SUCCEEDED' ? '已完成' : COMMAND_STATE_LABEL[row.status] || '执行结果未知' : row.source_kind === 'TRACK' ? row.status === 'NO_POINTS' ? '暂无观测点' : '可查看' : EVIDENCE_STATUS_LABEL[row.status] || row.status; }
-function name(row) { return row.source_kind === 'COMMAND' ? COMMAND_TYPE_LABEL[row.original_name] || row.original_name : row.source_kind === 'TRACK' ? `目标 ${row.original_name} 的轨迹` : row.original_name; }
+function name(row) { return row.source_kind === 'COMMAND' ? COMMAND_TYPE_LABEL[row.original_name] || row.original_name : row.source_kind === 'TRACK' ? `目标 ${displayTargetNo(row.original_name)} 的轨迹` : row.original_name; }
 function shape(row) { return row.source_kind === 'TRACK' ? ({ RAW: '原始观测', FUSED: '融合轨迹' }[row.layer] || '分层未记录') : row.kind_code === 'TRACK_SNAPSHOT' ? '已保存快照' : row.kind_code === 'COMMAND_LOG' ? '历史日志文件' : ''; }
 function context() { return hasContext.value ? { subject_kind: text(route.query.subjectKind), subject_id: text(route.query.subjectId) } : {}; }
 function query() {

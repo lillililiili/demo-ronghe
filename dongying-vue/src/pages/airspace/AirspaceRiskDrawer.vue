@@ -1,4 +1,5 @@
 <script setup>
+import { displayBusinessNo } from '@/ui/deviceNumber.js';
 import { nextTick, ref, watch } from 'vue';
 import { canAccessRoute } from '@/services/accessControl.js';
 import AirspaceRiskEventDetail from './AirspaceRiskEventDetail.vue';
@@ -24,8 +25,8 @@ watch(show, async visible => {
   }
 });
 const stateLabels = { ...RISK_STATE_LABEL, DEMO: '模拟监测', UNRECORDED: '未记录风险' };
-function time(value) { return value == null ? '未记录' : new Date(value).toLocaleString('zh-CN', { hour12: false }); }
-function title(row) { return row.risk?.risk_no || row.target?.target_no || '未编号'; }
+function time(value) { return value == null ? '未记录' : new Date(value).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }); }
+function title(row) { return displayBusinessNo(row.risk?.risk_no || row.target?.target_no) || '未编号'; }
 function typeLabel(row) { return row.target ? targetTypeLabel(row.target.subtype, row.target.object_type_code, '未分类')
   : labelOf(RISK_TYPE_LABEL, row.type, '未分类'); }
 function pointText(point) { return point ? `${point[0]}, ${point[1]}（经度、纬度）` : '位置未记录，无法定位'; }

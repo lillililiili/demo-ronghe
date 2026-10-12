@@ -52,7 +52,7 @@ onBeforeUnmount(() => { sequence += 1; window.removeEventListener('auth-access-c
     <template v-else>
       <p v-if="loading" class="track-record-message" role="status">正在读取这份证据关联的轨迹观测点</p>
       <div v-else-if="error" class="track-record-message" role="alert">{{ error }} <button class="btn" type="button" @click="load">重新读取</button></div>
-      <EvidenceTrackPreview v-else-if="snapshot" :key="record.record_id" :snapshot="snapshot" :videos="videos" />
+      <EvidenceTrackPreview v-else-if="snapshot" :key="record.record_id" :snapshot="snapshot" :track-layer="record.summary?.layer" :videos="videos" />
       <a class="btn" :href="detailHref" @click="onReturn()">查看证据详情</a>
     </template>
   </section>

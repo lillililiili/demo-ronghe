@@ -1,6 +1,7 @@
 /* 合法性研判动作弹窗：人工复核（确认/改判；历史驳回只读）、重新研判（确认框）、转告警（说明框）。
    与 uavVerificationModal 同一范式：幂等键在“结果未知”期间保留，只有服务端给出明确结果后才丢弃；
    只调用 legalityApi，不写 window.MOCK/window.EVT，结论以服务端回读为准。 */
+import { displayTargetNo } from '@/ui/deviceNumber.js';
 import { openFormModal } from './formModal.js';
 import { openConfirm } from './confirm.js';
 import { closeModal, openModal } from './modal.js';
@@ -194,9 +195,9 @@ export function openLegalityReview({ evaluation, refresh, onDone } = {}) {
     .map(code => ({ value: code, label: legalStatusText(code) }));
 
   openFormModal({
-    title: (focus.needsReview ? '核对信息缺口 · ' : '补充人工纠正 · ') + esc(evaluation.target_no || evaluation.plan_no || '研判'),
+    title: (focus.needsReview ? '核对信息缺口 · ' : '补充人工纠正 · ') + esc(displayTargetNo(evaluation.target_no) || evaluation.plan_no || '研判'),
     width: '620px',
-    warning: '人工结论为非法时，有转告警权限的账号将同步生成或关联告警并确认属实，提交时一并校验告警核实权限，无需重复核实。短信、电话和反制按各自条件推进。驳回记录系统误判；改判需选择人工结论。',
+    warning: '人工结论为非法时，提交人须同时具备转告警、查看告警和核实权限；系统同步生成或关联告警并确认属实，缺任一权限则整次提交失败，无需重复核实。短信、电话和反制按各自条件推进。驳回记录系统误判；改判需选择人工结论。',
     introHtml: intro(evaluation),
     fields: [
       { key: 'conclusion', label: '复核结论', type: 'radio', required: true, options: [
@@ -249,7 +250,7 @@ export function openLegalityRecompute({ evaluation, refresh, onDone } = {}) {
   holdKey(evaluationId, action);
   // 重算说明由操作人填写并进复核历史（RECOMPUTE），不能用页面写死的文案冒充人工依据。
   openFormModal({
-    title: '重新研判 · ' + esc(evaluation.target_no || evaluation.plan_no || '研判'),
+    title: '重新研判 · ' + esc(displayTargetNo(evaluation.target_no) || evaluation.plan_no || '研判'),
     width: '600px',
     warning: '将按当前激活规则集重新评估；旧研判保留并标记为"已被重算取代"，其复核记录不会被覆盖。',
     introHtml: intro(evaluation),
@@ -289,7 +290,7 @@ export function openLegalityEscalation({ evaluation, refresh, onDone } = {}) {
   const action = 'escalate';
   holdKey(evaluationId, action);
   openFormModal({
-    title: '转告警 · ' + esc(evaluation.target_no || evaluation.plan_no || '研判'),
+    title: '转告警 · ' + esc(displayTargetNo(evaluation.target_no) || evaluation.plan_no || '研判'),
     width: '600px',
     // 2026-10-06（BUG-16）：同一架无人机已有正在处理的告警时，服务端把这次转告警并入并升级那条告警，不再另起一条。
     warning: evaluation.effective_legal_status === 'ILLEGAL' && evaluation.review?.manual_status === 'ILLEGAL'
@@ -332,7 +333,7 @@ export function openLegalityManualEvaluate({ targetId, targetNo, refresh, onDone
   holdKey(targetId, action);
   openConfirm({
     title: '手动评估',
-    content: `将按当前生效规则集对目标 ${targetNo || targetId} 立即评估一次并生成新的研判（不影响既有研判与复核）。是否继续？`,
+    content: `将按当前生效规则集对目标 ${displayTargetNo(targetNo) || targetId} 立即评估一次并生成新的研判（不影响既有研判与复核）。是否继续？`,
     confirmText: '立即评估',
     onConfirm: async () => {
       const key = holdKey(targetId, action);

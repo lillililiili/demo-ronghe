@@ -10,6 +10,7 @@ export default {};
 <script setup>
 /* 处置处罚管理：业务交接清单只列无人机事件的处罚交接。
    通知与案件结果读取服务端，页面不再用本地标记代替送达。 */
+import { displayBusinessNo } from '@/ui/deviceNumber.js';
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import { refreshFailureText, useRealtimeRefresh } from '@/hooks/useRealtimeRefresh.js';
@@ -108,13 +109,14 @@ function materialAuthorizationMode(row) {
 function formatTime(value) {
   if (value === null || value === undefined) return '—';
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString('zh-CN', { hour12: false });
+  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' });
 }
+import { businessDateTime } from '@/services/businessTime.js';
 function formatClock(value) {
   if (value === null || value === undefined) return '—';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '—';
-  return `${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+  return businessDateTime(date).slice(5, 16);
 }
 function messageOf(reason, fallback) {
   if (!reason) return fallback;
@@ -361,7 +363,7 @@ onMounted(() => {
                     <tbody>
                       <tr v-for="row in handoffs" :key="row.handoff_id" :data-row="row.handoff_id" tabindex="0" :class="{ on: selected?.handoff_id === row.handoff_id || (!selected && S.selectedHandoffId === row.handoff_id) }"
                         @click="selectHandoff(row.handoff_id)" @keydown.enter.prevent="selectHandoff(row.handoff_id)">
-                        <td class="num"><div class="table-text" tabindex="0"><span class="mono pn-id" :title="row.handoff_id">{{ readableNo(row.source_no, row.source_id) || '—' }}</span></div></td>
+                        <td class="num"><div class="table-text" tabindex="0"><span class="mono pn-id" :title="row.handoff_id">{{ displayBusinessNo(readableNo(row.source_no, row.source_id)) || '—' }}</span></div></td>
                         <td><span class="tag t-cyan" :title="row.source_id">{{ label(KIND_LABEL, row.source_kind) }}</span></td>
                         <td><div class="table-text" tabindex="0"><div class="pn-wrap" :title="row.recipient_id">{{ row.recipient_name || '—' }}</div><div class="pn-sub">{{ labelOf(SOURCE_MODE_LABEL, row.source_mode, '') }}</div></div></td>
                         <td class="num" :title="formatTime(row.created_at)"><div class="table-text" tabindex="0">{{ formatClock(row.created_at) }}</div></td>
@@ -383,7 +385,7 @@ onMounted(() => {
                 <template v-else>
                   <div class="detail-hero detail-hero-micro"><div class="detail-hero-inner">
                     <div class="detail-hero-icon" v-html="U?.icon ? U.icon('clipboard') : ''"></div>
-                    <div class="detail-hero-copy"><div class="detail-hero-eyebrow">业务交接</div><div class="detail-hero-title">{{ label(TYPE_LABEL, selected.handoff_type) }}</div><div class="detail-hero-id mono" :title="selected.handoff_id">{{ readableNo(selected.source_no, selected.source_id) || '来源编号未提供' }}</div></div>
+                    <div class="detail-hero-copy"><div class="detail-hero-eyebrow">业务交接</div><div class="detail-hero-title">{{ label(TYPE_LABEL, selected.handoff_type) }}</div><div class="detail-hero-id mono" :title="selected.handoff_id">{{ displayBusinessNo(readableNo(selected.source_no, selected.source_id)) || '来源编号未提供' }}</div></div>
                   </div></div>
                   <div class="sect pn-section pn-section-material"><h4>事件与移送依据</h4>
                     <div v-if="!selected.material" class="empty">暂无材料</div>

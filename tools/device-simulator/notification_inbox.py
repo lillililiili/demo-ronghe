@@ -1,8 +1,27 @@
 """Read existing simulated notification facts. Never bind, dispatch or acknowledge."""
 import re
+import hashlib
 from concurrent.futures import ThreadPoolExecutor
 
 SAFE_ID = re.compile(r'^[A-Za-z0-9_-]{1,100}$')
+
+def open_handoff_evidence(platform, handoff_id, evidence_id):
+    """Recheck current handoff visibility, frozen membership and original bytes on every open."""
+    if not SAFE_ID.fullmatch(handoff_id or '') or not SAFE_ID.fullmatch(evidence_id or ''):
+        raise ValueError('材料或证据编号无效')
+    detail = platform.call('GET', '/handoffs/' + handoff_id)
+    availability = detail.get('availability') or {}
+    if detail.get('source_mode') not in ('mock', 'replay') or availability.get('material') != 'AVAILABLE' or availability.get('evidence') != 'AVAILABLE':
+        raise ValueError('当前账号不能打开这份模拟通知的证据')
+    material = detail.get('material') or {}
+    entry = next((row for row in material.get('evidence_chain') or []
+        if row.get('source_kind') == 'FILE' and row.get('source_id') == evidence_id), None)
+    if entry is None or not entry.get('sha256'):
+        raise ValueError('这份材料没有冻结该文件及校验值，不能用其他文件代替')
+    content, content_type = platform.binary('/evidence-files/' + evidence_id + '/preview')
+    if hashlib.sha256(content).hexdigest() != entry['sha256']:
+        raise ValueError('原件与提交时的校验值不一致，不能打开')
+    return content, content_type
 
 def _read_many(rows, reader):
     def read(row):
@@ -120,7 +139,7 @@ def read_inbox(platform, kind, page=1):
                 'received': d.get('delivery_status') == 'DELIVERED',
                 'at': d.get('delivered_at') or d.get('submitted_at') or d.get('created_at'),
                 'time_label': '送达时间' if d.get('delivered_at') else '发送记录时间',
-                'reason': d.get('blocked_reason'), 'details': {'notification': d, 'material': material, 'availability': detail.get('availability')}} for d in deliveries]
+                'reason': d.get('blocked_reason'), 'details': {'handoff_id': hid, 'notification': d, 'material': material, 'availability': detail.get('availability')}} for d in deliveries]
         rows, failures = _read_many(handoffs, handoff)
         errors += failures
         scope = '当前账号可见的模拟通知 · 每页最多 40 个关联事项'

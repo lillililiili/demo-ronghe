@@ -60,7 +60,7 @@ class RuntimeRecoveryTests(unittest.TestCase):
             runtime.session.platform = platform
             runtime.check_session(100)
             runtime.check_session(104.9)
-            platform.call.assert_called_once_with('GET', '/auth/me')
+            platform.call.assert_called_once_with('GET', '/local-interface-simulator/session')
             runtime.check_session(105)
             self.assertEqual(platform.call.call_count, 2)
 

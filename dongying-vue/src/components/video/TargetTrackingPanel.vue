@@ -5,6 +5,7 @@ import { hasModuleAction } from '@/services/accessControl.js';
 import { authSession } from '@/services/auth.js';
 import { refreshFailureText, shouldRetryRefresh } from '@/hooks/useRealtimeRefresh.js';
 import TargetLiveVideo from './TargetLiveVideo.vue';
+import EoDispatchControls from './EoDispatchControls.vue';
 
 const props = defineProps({
   targetId: { type: String, default: '' },
@@ -151,8 +152,6 @@ onUnmounted(() => { alive = false; invalidate(); });
         <p v-if="statusDetail" class="tracking-detail" role="status">{{ statusDetail }}</p>
         <p v-if="!canOperate" class="tracking-detail" role="note">当前账号只能查看光电追踪；补跟踪、暂停等操作需要设备操作权限。</p>
         <div v-if="actions.length" class="tracking-actions">
-          <button v-if="actions.includes('BEGIN')" class="btn" type="button" @click="perform('BEGIN')">人工补跟踪</button>
-          <button v-if="actions.includes('RETRY')" class="btn" type="button" @click="perform('RETRY')">重试跟踪</button>
           <button v-if="actions.includes('PAUSE')" class="btn" type="button" title="暂停该目标的自动追踪，三个页面同步生效" @click="perform('PAUSE')">{{ pauseLabel }}</button>
           <button v-if="actions.includes('RESUME')" class="btn" type="button" @click="perform('RESUME')">恢复自动追踪</button>
         </div>
@@ -160,6 +159,7 @@ onUnmounted(() => { alive = false; invalidate(); });
     </template>
     <p v-if="busy" role="status">正在提交操作，随后读取最新状态。</p>
     <p v-if="actionMessage" class="tracking-error" role="alert">{{ actionMessage }}</p>
+    <EoDispatchControls v-if="active && state?.auto_paused && !reason && !readError" :target-id="targetId" @updated="refresh()" />
     <TargetLiveVideo v-if="state && !state.auto_paused && state.status !== 'PAUSED'"
       :target-id="targetId" :event-id="eventId" :context-label="contextLabel" :active="active"
       :compact="compact" :unavailable-reason="unavailableReason" />

@@ -48,6 +48,11 @@ export const deviceApi = {
       method: 'POST', body, headers: { 'Idempotency-Key': key }
     }),
   eoTrackingStatus: (targetId, options = {}) => apiRequest(`/targets/${encodeURIComponent(targetId)}/eo-tracking-status`, options),
+  eoDispatch: (targetId, options = {}) => apiRequest(`/targets/${encodeURIComponent(targetId)}/eo-dispatch`, options),
+  requestEoDispatch: (targetId, body = {}, key = newIdempotencyKey('eo-dispatch')) =>
+    apiRequest(`/targets/${encodeURIComponent(targetId)}/eo-dispatch`, { method: 'POST', body, mutation: true, idempotencyKey: key }),
+  cancelEoDispatch: (targetId, key = newIdempotencyKey('eo-dispatch-cancel')) =>
+    apiRequest(`/targets/${encodeURIComponent(targetId)}/eo-dispatch/cancel`, { method: 'POST', body: {}, mutation: true, idempotencyKey: key }),
   pauseEoTracking: (targetId, key = newIdempotencyKey('eo-track-pause')) =>
     apiRequest(`/targets/${encodeURIComponent(targetId)}/eo-tracking-pause`, {
       method: 'POST', body: {}, headers: { 'Idempotency-Key': key }

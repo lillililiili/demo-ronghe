@@ -16,6 +16,7 @@ from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import urlparse, unquote, parse_qs
 from urllib.request import Request, build_opener, ProxyHandler, HTTPRedirectHandler
 from urllib.error import HTTPError, URLError
+from eo_observations import EoObservations
 from engine import compile_scene, duration_reached, messages, position
 from notification_inbox import read_inbox, open_handoff_evidence
 from notification_response import NotificationResponse
@@ -493,7 +494,7 @@ class Runtime:
             self.eo = None; self.eo_status = {}
             self.protocol_b = None
             self.manifest={'batch':self.batch,'source_mode':'replay','provider':'map-sim', 'created_at':int(time.time()*1000),
-                           'broker_id':self.broker['broker_id'],'devices':{},'plans':{},'zones':{},
+                           'broker_id':self.broker['broker_id'],'scope':{k:self.broker[k] for k in ('owner_org_id','district_id')},'devices':{},'plans':{},'zones':{},
                            'targets':allocate_identities(scene,self.batch)}
             self.fullchain = None
             self.phase='PREPARING'
@@ -542,6 +543,9 @@ class Runtime:
                 self.log('PREREQUISITES_VERIFIED','任务、航线和设备绑定已通过接口回读核对')
             self.log('WAIT_SUBSCRIPTIONS','等待后台确认本批全部设备的 MQTT 订阅')
             if not self.platform.wait_for_subscriptions(self.manifest, self.broker, self.cancel): return
+            if self.fullchain:
+                self.fullchain.activate_plan_batch(self.data_dir)
+                self.log('PLAN_BATCH_ACTIVATED','当前批次任务已启用匹配，旧批次保留历史')
             self.manifest['subscriptions_ready_at'] = int(time.time()*1000)
             self.log('SUBSCRIPTIONS_READY','后台已确认本批全部设备订阅，准备开始发送')
             self.checkpoint()
@@ -570,7 +574,9 @@ class Runtime:
                 if not info.is_published(): raise ValueError('光电回执 MQTT 确认超时')
                 self.log('EO_RECEIPT', '模拟光电回执已由 Broker 确认', topic=topic, payload=payload)
             self.eo = EoSimulator(self.platform, self.manifest, self.video_config, publish_eo, self.log,
-                is_running=lambda: self.phase == 'RUNNING' and not self.cancel.is_set())
+                is_running=lambda: self.phase == 'RUNNING' and not self.cancel.is_set(),
+                observations=EoObservations(self.scene.get('eoObservations'), self.manifest, self.targets,
+                    lambda: self.elapsed))
             def publish_b(topic, payload):
                 with self.lock:
                     if self.cancel.is_set() or self.phase != 'RUNNING' or not self.mqtt_connected or not subscriptions.ready.is_set():

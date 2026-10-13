@@ -148,10 +148,11 @@ def ffmpeg_arguments(config, path, watermark):
 
 
 class EoSimulator:
-    def __init__(self, platform, manifest, config, publish, log, popen=subprocess.Popen, clock=time.time, is_running=lambda: True):
+    def __init__(self, platform, manifest, config, publish, log, popen=subprocess.Popen, clock=time.time, is_running=lambda: True, observations=None):
         self.platform, self.config, self.publish, self.log = platform, copy.deepcopy(config), publish, log
         self.popen, self.clock = popen, clock
         self.is_running = is_running
+        self.observations = observations
         self.bindings = {d['dispatcher_topic']: d for d in manifest['devices'].values() if d['kind'] == 'eo'}
         self.incoming = queue.Queue(maxsize=100)
         self.active, self.retired, self.states = {}, set(), {}
@@ -163,6 +164,10 @@ class EoSimulator:
         if retained or topic not in self.bindings or len(payload) > 1_048_576: return
         try: self.incoming.put_nowait((topic, payload))
         except queue.Full: pass  # no invented protocol error; platform command times out
+
+    def _ai_interval(self):
+        config = getattr(self.observations, 'config', {})
+        return config.get('intervalSeconds', 2) if config.get('enabled') is True else None
 
     def snapshot(self):
         return {'enabled': self.config['enabled'], 'devices': copy.deepcopy(list(self.states.values()))}
@@ -180,7 +185,7 @@ class EoSimulator:
 
     def _state(self, binding):
         return self.states.setdefault(binding['platform_id'], {'device_id': binding['platform_id'],
-            'device': binding['external_id'], 'task_id': None, 'tracking': 'IDLE', 'video': 'DISABLED' if not self.config['enabled'] else 'IDLE', 'error': ''})
+            'device': binding['external_id'], 'ai_observation': 'UNAVAILABLE' if self._ai_interval() else 'DISABLED', 'task_id': None, 'tracking': 'IDLE', 'video': 'DISABLED' if not self.config['enabled'] else 'IDLE', 'error': ''})
 
     def _details(self, binding):
         return self.platform.call('GET', '/devices/' + binding['platform_id'] + '/protocol-status')['details']
@@ -252,7 +257,9 @@ class EoSimulator:
         if not current:
             self.active[device] = {'task': task, 'binding': binding, 'process': None, 'directory': None,
                 'stderr': None, 'job': None, 'stream_id': None, 'registered': False,
-                'next_check': 0, 'next_report': self.clock()+5}
+                'next_check': 0, 'next_report': self.clock()+5,
+                'next_ai': self.clock() + (self._ai_interval() or 5),
+                'echo': {key: copy.deepcopy(metadata[key]) for key in ('objectData', 'extention') if key in metadata}}
             self._state(binding).update(task_id=task, tracking='TRACKING', error='')
         self.receipt(binding, event, task)
         if not current: self._refresh(self.active[device])
@@ -330,19 +337,51 @@ class EoSimulator:
                     error='FFmpeg 输出已停滞；跟踪仍有效时15秒后重试视频')
             now = self.clock()
             refresh_due = now >= active['next_check']
-            if refresh_due or now >= active['next_report']:
+            ai_interval = self._ai_interval()
+            ai_due = ai_interval is not None and now >= active['next_ai']
+            status_due = now >= active['next_report']
+            if refresh_due or status_due or ai_due:
                 try:
                     facts = self._details(active['binding']).get('open_task') or {}
                     if facts.get('task_id') != active['task'] or facts.get('status') != 'OPEN':
                         self._stop(device, 'STOPPED'); continue
-                    self.receipt(active['binding'], 'BeginTracking', active['task'])
+                    self._tracking_report(active, facts, include_ai=ai_due or ai_interval is None)
+                    if device not in self.active: continue
                     # Tracking liveness must not sit on the backend's 15-second
                     # freshness boundary or depend on video lease/retry timing.
-                    active['next_report'] = self.clock()+5
+                    if status_due or refresh_due: active['next_report'] = self.clock()+5
+                    if ai_due: active['next_ai'] = self.clock()+ai_interval
                     if refresh_due: self._refresh(active)
                 except Exception as error:
                     self._stop(device, 'FAILED')
                     self._state(active['binding'])['error'] = sanitize_video_error(error, self.config)[:240]
+
+    def _tracking_report(self, active, facts, include_ai=True):
+        if self.observations is None:
+            self.receipt(active['binding'], 'BeginTracking', active['task'])
+            return
+        binding = active['binding']
+        metadata = {'deviceId': binding['external_id'], 'taskId': active['task'],
+                    'codeStatus': 200, 'workState': 1, 'cameraStatus': {}, **active.get('echo', {})}
+        target_id = facts.get('target_id')
+        ai_disabled = getattr(self.observations, 'config', {}).get('enabled') is not True if hasattr(self.observations, 'config') else False
+        if ai_disabled: self._state(binding)['ai_observation'] = 'DISABLED'
+        if target_id and include_ai and not ai_disabled:
+            try:
+                detail = self.platform.call('GET', '/targets/' + str(target_id))
+                # Recheck after the target read: a switched/stopping task cannot emit an AI frame.
+                latest = self._details(binding).get('open_task') or {}
+                if latest.get('task_id') != active['task'] or latest.get('status') != 'OPEN' or latest.get('target_id') != target_id:
+                    self._stop(binding['platform_id'], 'STOPPED')
+                    return
+                ai = self.observations.observation(detail, binding)
+                self._state(binding)['ai_observation'] = 'ACTIVE' if ai is not None else 'UNAVAILABLE'
+                if ai is not None: metadata['aiStatus'] = ai
+            except Exception as error:
+                self._state(binding)['ai_observation'] = 'UNAVAILABLE'
+                self.log('EO_AI_UNAVAILABLE', '模拟光电观测未发送：' + sanitize_video_error(error, self.config)[:180])
+        self.publish(binding['reporting_topic'], {'event':'BeginTracking', 'edgeId':binding['edge_id'],
+                     'timestamp':int(self.clock()*1000), 'metadata':metadata})
 
     def _kill(self, active):
         process = active.get('process')
@@ -373,7 +412,7 @@ class EoSimulator:
         self.retired.add(active['task'])
         self._kill(active)
         self._deregister(active)
-        self._state(active['binding']).update(tracking='STOPPED', video=video)
+        self._state(active['binding']).update(tracking='STOPPED', video=video, ai_observation='STOPPED')
 
     def suspend(self):
         self.accepting = False

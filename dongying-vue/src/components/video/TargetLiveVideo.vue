@@ -3,6 +3,7 @@ import { computed, onUnmounted, ref, watch } from 'vue';
 import { deviceApi } from '@/services/deviceApi.js';
 import { hasModuleAction } from '@/services/accessControl.js';
 import AuthenticatedHlsVideo from './AuthenticatedHlsVideo.vue';
+import EoDispatchControls from './EoDispatchControls.vue';
 import { authSession } from '@/services/auth.js';
 import { refreshFailureText, shouldRetryRefresh } from '@/hooks/useRealtimeRefresh.js';
 import { targetVideoState } from './targetVideoState.js';
@@ -23,6 +24,7 @@ const loading = ref(false), checked = ref(false), error = ref('');
 // 看画面只是读取：与后端 /targets/{id}/video 一致只要设备查看权限（OBS-03，值班员要能看光电画面）。
 const permitted = computed(() => hasModuleAction('devices', 'read'));
 const state = computed(() => targetVideoState(props.targetId, video.value));
+const dispatchVisible = computed(() => ['NO_TASK', 'ENDED', 'FAILED'].includes(video.value?.status));
 const reason = computed(() => props.unavailableReason || (!props.targetId ? '未提供可读取的关联目标，无法定位视频。' : '')
   || (!permitted.value ? '当前账号没有设备查看权限，无法查看光电画面。' : ''));
 let generation = 0, timer, controller, alive = true, retryDelay = 0;
@@ -88,7 +90,9 @@ onUnmounted(() => { alive = false; clear(); });
       <p v-else-if="error" role="alert" class="video-error">{{ error }}</p>
       <template v-else>
         <p v-if="loading && !checked" role="status">视频读取中</p>
-        <p v-else-if="!state.playable" role="status">{{ state.message }}</p>
+        <p v-else-if="!state.playable && (!dispatchVisible || video?.status !== 'NO_TASK')" role="status">{{ state.message }}</p>
+        <p v-if="video?.eo_fusion_observation?.message && video.eo_fusion_observation.status !== 'CURRENT'" role="status">{{ video.eo_fusion_observation.message }}</p>
+        <EoDispatchControls v-if="dispatchVisible" :target-id="targetId" @updated="refresh" />
         <AuthenticatedHlsVideo v-if="state.playable" :target-id="targetId" :video="video" :event-id="eventId" />
       </template>
     </div>

@@ -1,6 +1,6 @@
 <script setup>
-import { RISK_STATE_LABEL, labelOf } from '@/ui/labels.js';
-import { riskMatchesPlan } from '@/services/situationData.js';
+import { RISK_STATE_LABEL, SOURCE_MODE_LABEL, labelOf } from '@/ui/labels.js';
+import { riskMatchesPlan, routeRiskIsActive } from '@/services/situationData.js';
 import SituationRiskProcess from './SituationRiskProcess.vue';
 import { planRiskLocation } from '@/services/riskMapGeometry.js';
 import { riskSnapshotTime } from './riskSnapshotMarkers.js';
@@ -15,7 +15,7 @@ const planFor = risk => props.plans.find(plan => riskMatchesPlan(risk, plan));
   <section class="sit-map-pop sit-risk-group-pop">
     <header>
       <span class="sit-map-pop-icon" v-html="U.icon('plan')"></span>
-      <span><b>{{ group.spaceFact?.subtypeName || '航线' }}风险</b><small>关联 {{ group.planCount }} 条任务</small></span>
+      <span><b>{{ group.spaceFact?.subtypeName || '航线' }}风险 · {{ labelOf(SOURCE_MODE_LABEL, group.sourceMode, '来源未提供') }}</b><small>{{ group.targetId && group.targetId !== group.targetInternalId ? group.targetId : '目标编号未提供' }} · 关联 {{ group.planCount }} 条任务</small></span>
       <button type="button" aria-label="关闭风险详情" @click="$emit('close')" v-html="U.icon('close')"></button>
     </header>
     <p>{{ group.reasonText || '风险依据未提供' }}</p>

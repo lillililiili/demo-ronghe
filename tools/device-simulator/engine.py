@@ -256,7 +256,11 @@ def compile_scene(raw):
         for key in ['start', 'end']:
             if not re.fullmatch(r'(?:[01]\d|2[0-3]):[0-5]\d', str(p.get(key, ''))):
                 raise ValueError('时间格式须为 HH:mm')
-        if p['start'] >= p['end']:
+        if p['id'] in plans:
+            # 飞行任务允许跨夜（如 22:00–次日 02:00），只要求开始和结束不是同一时刻；区域的时分在上面已固定为全天。
+            if p['start'] == p['end']:
+                raise ValueError('任务的开始时间和结束时间不能相同（跨夜任务请把结束时间填成次日的时刻）')
+        elif p['start'] >= p['end']:
             raise ValueError('结束时间必须晚于开始时间')
         if p['id'] in plans:
             p['min'] = number(p['min'], 0, p['max'], '最低高度')

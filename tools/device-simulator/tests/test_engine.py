@@ -389,12 +389,20 @@ class EngineTests(unittest.TestCase):
 
     def test_flight_plan_times_are_still_checked(self):
         for start, end, message in [('9点', '09:30', '时间格式须为 HH:mm'), ('09:00', '', '时间格式须为 HH:mm'),
-                                    ('09:30', '09:30', '结束时间必须晚于开始时间'), ('10:00', '09:30', '结束时间必须晚于开始时间')]:
+                                    ('09:30', '09:30', '开始时间和结束时间不能相同')]:
             with self.subTest(start=start, end=end):
                 raw = self.zone_and_plan_scene()
                 raw['plans'][0].update(start=start, end=end)
                 with self.assertRaisesRegex(ValueError, message):
                     compile_scene(raw)
+
+    def test_overnight_flight_plans_are_accepted(self):
+        for start, end in [('22:00', '02:00'), ('23:30', '00:30'), ('10:00', '09:30')]:
+            with self.subTest(start=start, end=end):
+                raw = self.zone_and_plan_scene()
+                raw['plans'][0].update(start=start, end=end)
+                compiled, *_ = compile_scene(raw)
+                self.assertEqual((compiled['plans'][0]['start'], compiled['plans'][0]['end']), (start, end))
 
     def test_real_map_outside_old_canvas_preserves_mqtt_coordinates(self):
         s=scene();lon,lat=118.82,37.78

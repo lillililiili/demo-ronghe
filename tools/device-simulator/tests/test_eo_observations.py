@@ -93,7 +93,12 @@ class StatusOnlyTest(unittest.TestCase):
         eo.heartbeat(heartbeat)
         self.assertEqual(heartbeat['metadata']['workState'],1)
         eo.suspend(); now[0]+=5;eo.tick()
-        self.assertEqual(len(sent),6)
+        # 暂停时只多发一条“结束跟踪”回执，告诉平台这个任务结束了；之后不再上报。
+        self.assertEqual(len(sent),7)
+        self.assertEqual(sent[-1]['event'],'EndTracking')
+        self.assertEqual(sent[-1]['metadata']['taskId'],TASK)
+        eo.tick()
+        self.assertEqual(len(sent),7)
 
 class CadenceTest(unittest.TestCase):
     def test_video_off_ai_every_two_seconds_independent_of_status(self):

@@ -6,7 +6,7 @@ const source=fs.readFileSync(require('node:path').join(__dirname,'../web/app.js'
 function drawing(mode,kind){
  const events=[];
  const env={draw:{mode,airspaceInput:mode==='zone',airspaceKind:kind,points:[[100,100],[200,100],[200,200]]},state:{zones:[],plans:[]},selected:null,
- airspaceKinds:{PROHIBITED:'禁飞区',RESTRICTED:'限制区',ALTITUDE_LIMIT:'限高区',PERMITTED:'允许区',TEMPORARY_CONTROL:'临时管制区'},uid:prefix=>prefix+'test',validPolygon:()=>true,dirty(){},render(){},toast(){},cancelDraw(){env.draw=null;},window:{dispatchEvent:e=>events.push(e)},CustomEvent:function(type,options){this.type=type;this.detail=options.detail;}};
+ airspaceKinds:{PROHIBITED:'禁飞区',RESTRICTED:'限制区',ALTITUDE_LIMIT:'限高区',PERMITTED:'允许区',TEMPORARY_CONTROL:'临时管制区'},uid:prefix=>prefix+'test',validPolygon:()=>true,dirty(){},render(){},toast(){},cancelDraw(){env.draw=null;},window:{dispatchEvent:e=>events.push(e),PlanTime:{nowWindow:()=>({start:'21:05',end:'22:05'})}},CustomEvent:function(type,options){this.type=type;this.detail=options.detail;}};
  vm.createContext(env);vm.runInContext(source.slice(source.indexOf('function finishDraw('),source.indexOf('function formValues(')),env);
  return {env,events};
 }
@@ -23,9 +23,9 @@ test('untyped boundary is neutral and unknown draw modes cannot create a zone',(
 test('route drawing remains a route and never creates an airspace',()=>{
  const {env,events}=drawing('plan');env.finishDraw();assert.equal(env.state.plans.length,1);assert.equal(env.state.zones.length,0);assert.equal(events.length,0);
 });
-test('a drawn airspace is valid for the whole day and carries no hour pair of its own, while a drawn route keeps its time pair',()=>{
+test('a drawn airspace is valid for the whole day and carries no hour pair of its own, while a drawn route starts now and lasts one hour',()=>{
  const zone=drawing('zone','PERMITTED');zone.env.finishDraw();
  assert.equal(zone.env.state.zones[0].start,'00:00');assert.equal(zone.env.state.zones[0].end,'23:59');
  const route=drawing('plan');route.env.finishDraw();
- assert.equal(route.env.state.plans[0].start,'09:00');assert.equal(route.env.state.plans[0].end,'09:30');
+ assert.equal(route.env.state.plans[0].start,'21:05');assert.equal(route.env.state.plans[0].end,'22:05');
 });

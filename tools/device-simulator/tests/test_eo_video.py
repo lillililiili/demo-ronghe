@@ -250,6 +250,55 @@ class EoVideoTests(unittest.TestCase):
         self.api.call=interrupted
         self.begin(); self.assertFalse(self.processes)
         self.assertEqual(self.api.calls[-1][0],'DELETE')
+    def test_suspend_tells_the_platform_the_tracking_ended(self):
+        # 清单第 5 条：暂停和停止时给平台回“光电跟踪已结束”，平台上的任务才不会一直挂着。
+        self.begin(); self.assertEqual([p['event'] for _,p in self.sent],['BeginTracking'])
+        self.eo.suspend()
+        topic,payload=self.sent[-1]
+        self.assertEqual(topic,BINDING['reporting_topic'])
+        self.assertEqual(payload['event'],'EndTracking')
+        self.assertEqual(payload['metadata']['taskId'],TASK)
+        self.assertEqual(payload['metadata']['codeStatus'],200)
+        self.assertEqual(payload['metadata']['workState'],0)
+        self.assertNotIn('ops-1',self.eo.active)
+        self.eo.suspend()  # 再停一次不会重复回执
+        self.assertEqual(len(self.sent),2)
+    def test_end_receipt_goes_through_the_publisher_that_still_works_after_the_run_stops(self):
+        running,final=[],[]
+        eo=EoSimulator(self.api,{'devices':{'one':BINDING}},{**DEFAULT_VIDEO,'enabled':False},
+                       lambda t,p:running.append(p),lambda *a:None,self.spawn,lambda:self.now,publish_final=lambda t,p:final.append(p))
+        eo.handle(BINDING['dispatcher_topic'],self.command())
+        eo.suspend()
+        self.assertEqual([p['event'] for p in running],['BeginTracking'])
+        self.assertEqual([p['event'] for p in final],['EndTracking'])
+    def test_a_failed_end_receipt_never_blocks_suspend_and_is_written_to_the_log(self):
+        logs=[]
+        def refuse(topic,payload): raise ValueError('MQTT 确认超时')
+        eo=EoSimulator(self.api,{'devices':{'one':BINDING}},{**DEFAULT_VIDEO,'enabled':False},
+                       lambda t,p:None,lambda kind,message,**extra:logs.append((kind,message)),self.spawn,lambda:self.now,publish_final=refuse)
+        eo.handle(BINDING['dispatcher_topic'],self.command())
+        eo.suspend()
+        self.assertFalse(eo.accepting)
+        self.assertEqual(eo.active,{})
+        self.assertTrue(any(kind=='EO_END_RECEIPT' and '可能仍显示进行中' in message for kind,message in logs))
+    def test_settle_leftovers_closes_only_open_or_ending_tasks_left_by_an_earlier_run(self):
+        import uuid
+        for status in ('OPEN','ENDING'):
+            with self.subTest(status=status):
+                self.sent.clear(); self.api.task=str(uuid.uuid4()); self.api.status=status
+                self.eo.settle_leftovers()
+                topic,payload=self.sent[-1]
+                self.assertEqual((topic,payload['event'],payload['metadata']['taskId']),(BINDING['reporting_topic'],'EndTracking',self.api.task))
+                self.assertIn(self.api.task,self.eo.retired)
+        for status,task in (('ENDED',TASK),('OPEN',None),('OPEN','not a task id!')):
+            with self.subTest(status=status,task=task):
+                self.sent.clear(); self.api.status=status; self.api.task=task
+                self.eo.settle_leftovers()
+                self.assertEqual(self.sent,[])
+    def test_settle_leftovers_survives_an_unreadable_device(self):
+        self.api.fail=True
+        self.eo.settle_leftovers()
+        self.assertEqual(self.sent,[])
     def test_malformed_duplicate_json_rejected(self):
         with self.assertRaises(ValueError): self.eo.handle(BINDING['dispatcher_topic'],b'{"event":"BeginTracking","event":"EndTracking"}')
         for raw in (b'null',b'[]',b'42'):

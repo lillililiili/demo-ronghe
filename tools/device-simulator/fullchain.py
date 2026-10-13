@@ -133,7 +133,11 @@ def plan_window(plan, now):
     start = dt.datetime.combine(local.date(), start_time, SHANGHAI)
     end = dt.datetime.combine(local.date(), end_time, SHANGHAI)
     if end <= start:
+        # 跨夜的任务（如 22:00–02:00）：结束落在次日。现在还在“昨天开始、今天结束”的那一段里时，用那一段。
         end += dt.timedelta(days=1)
+        if local < end - dt.timedelta(days=1):
+            start -= dt.timedelta(days=1)
+            end -= dt.timedelta(days=1)
     start_ms = int(start.timestamp() * 1000)
     end_ms = int(end.timestamp() * 1000)
     duration = end_ms - start_ms
@@ -311,8 +315,9 @@ class FullChain:
             return None
         return route
 
-    def request(self, key, path, body):
-        if self.cancelled(): raise ValueError('全量准备已停止，已提交资料保留')
+    def request(self, key, path, body, final=False):
+        # final：停止后的收尾（撤回本批次空域）必须能在“已请求停止”之后继续提交。
+        if self.cancelled() and not final: raise ValueError('全量准备已停止，已提交资料保留')
         rows=self.state['requests']
         if key not in rows:
             rows[key]={'path':path,'body':copy.deepcopy(body),'state':'PENDING'}
@@ -664,6 +669,41 @@ class FullChain:
                     zone_state['receipt']=result
                 else:
                     self.warn(original['body'].get('name','临时管制区')+'已到失效时间，跳过本批次的空域撤销')
+
+    def withdraw_zones(self):
+        """停止、完成或失败时，撤回本场景里各区域在平台上的空域（编号 sim-map-airspace-…），下一次不再受它们影响（清单第 4 条）。
+
+        只动本场景的区域；「空域下发」里另起编号的空域不碰。以平台上最新的回执为准：已经是撤销的、已经过了失效时间的不再撤；
+        撤销时间必须晚于上一条下发的生效时间，否则平台按 409 拒收，所以取“现在”和“上一条生效时间 + 1 秒”中较晚的。
+        返回每个区域的结果，写进运行记录；某个区域撤不掉不影响其余区域。"""
+        results = []
+        zones = self.scene.get('zones') or []
+        if not zones:
+            return results
+        self._airspaces = None
+        existing = self.existing_airspaces()
+        for index, zone in enumerate(zones, 1):
+            number = stable_airspace_no(zone['id'])
+            previous = existing.get(number)
+            name = zone.get('name') or zone['id']
+            if not previous or previous.get('state') != 'ACCEPTED' or previous.get('action') != 'UPSERT':
+                continue
+            payload = previous.get('payload') or {}
+            revision = int(previous.get('revision') or 0) + 1
+            last = airspace_effective_at(previous)
+            effective_at = max(self.clock(), (last or 0) + 1000)
+            valid_to = payload.get('valid_to')
+            if type(valid_to) in (int, float) and effective_at >= valid_to:
+                continue  # 已经过了失效时间，平台上本来就不再有效
+            body = {'message_id': self.message('zone-end-' + str(index) + '-r' + str(revision)), 'revision': revision,
+                    'action': 'WITHDRAW', 'airspace_no': number, 'effective_at': int(effective_at),
+                    'change_reason': '本批次结束，撤回模拟空域'}
+            try:
+                result = self.request('zone-end-' + zone['id'], PREFIX + '/airspaces', body, final=True)
+                results.append({'zone': name, 'ok': True, 'revision': int(result.get('revision') or revision)})
+            except Exception as error:
+                results.append({'zone': name, 'ok': False, 'error': str(error)})
+        return results
 
     def warn(self, text):
         """Show one page note per problem instead of stopping the whole batch."""

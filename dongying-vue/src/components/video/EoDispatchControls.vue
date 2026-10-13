@@ -3,6 +3,7 @@ import { computed, onUnmounted, ref, watch } from 'vue';
 import { NButton, NModal } from 'naive-ui';
 import { deviceApi } from '@/services/deviceApi.js';
 import { authSession } from '@/services/auth.js';
+import { displayTargetNo } from '@/ui/deviceNumber.js';
 
 const props = defineProps({ targetId: { type: String, required: true } });
 const emit = defineEmits(['updated']);
@@ -71,7 +72,7 @@ onUnmounted(() => { alive = false; clear(); });
     </div>
     <p v-if="busy" role="status">正在提交，等待后台确认。</p>
     <NModal :show="!!choice" preset="dialog" title="确认切换光电跟踪" :mask-closable="false" @update:show="open => { if (!open) choice = null; }">
-      <p v-if="choice">{{ choice.device_name }}目前正在跟踪{{ choice.target_no }}。切换会中断该目标的当前光电画面；原任务停止确认后，设备才开始跟踪当前选中目标。</p>
+      <p v-if="choice">{{ choice.device_name }}目前正在跟踪{{ displayTargetNo(choice.target_no) }}。切换会中断该目标的当前光电画面；原任务停止确认后，设备才开始跟踪当前选中目标。</p>
       <template #action>
         <NButton @click="choice = null">保持原跟踪</NButton>
         <NButton type="warning" :disabled="busy || !!error || !choice" @click="perform('switch', choice)">确认切换到此目标</NButton>

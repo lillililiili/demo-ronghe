@@ -62,11 +62,15 @@ class AnomalyTest(ObservationsTest):
         self.assertNotIn('detectConfidence',self.generator.observation({'source_links':self.links},{}))
         self.generator.config['anomalyWindows'][0]['kind']='class_conflict'
         self.assertEqual(self.generator.observation({'source_links':self.links},{})['className'],'bird')
-    def test_source_identity_also_constrains_batch(self):
-        self.manifest['devices']['radar']['source_id']='batch-source'
+    def test_operations_and_fusion_source_ids_are_different_layers(self):
+        # Registration returns the operations-layer source id; target source_links carry the fusion-layer one.
+        # The link is found by the fusion device bound to the registered device, not by comparing the two source ids.
+        self.manifest['devices']['radar'].update(platform_id='ops-radar',fusion_device_id='radar-1',source_id='ops-source')
+        self.links[0]['source_id']='fusion-source'
+        self.assertEqual(self.generator.observation({'source_links':self.links},{})['className'],'drone')
+        # Another batch's device (or any other device) with the same MQTT object id is still not accepted.
+        self.links[0]['device_id']='other-batch-radar'
         self.assertIsNone(self.generator.observation({'source_links':self.links},{}))
-        self.links[0]['source_id']='batch-source'
-        self.assertIsNotNone(self.generator.observation({'source_links':self.links},{}))
 
 class StatusOnlyTest(unittest.TestCase):
     def test_ai_silence_keeps_reports_and_heartbeat(self):

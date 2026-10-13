@@ -930,11 +930,11 @@ onUnmounted(() => {
           <button v-for="risk in riskGroups" :key="risk.groupId" type="button" class="sit-alert-row sit-route-risk-row"
             :class="[{ 'is-new': risk.isNew, 'is-selected': selectedRiskGroup?.groupId === risk.groupId }, `level-${risk.level}`]"
             :aria-pressed="selectedRiskGroup?.groupId === risk.groupId"
-            :aria-label="`查看${risk.targetId && risk.targetId !== risk.targetInternalId ? risk.targetId : '目标编号未提供'}的${risk.spaceFact?.subtypeName || '航线'}风险，关联${risk.planCount}条任务，${riskGroupStateText(risk)}`" @click="selectRiskGroup(risk)">
+            :aria-label="`查看${risk.targetId && risk.targetId !== risk.targetInternalId ? displayBusinessNo(risk.targetId) : '目标编号未提供'}的${risk.spaceFact?.subtypeName || '航线'}风险，关联${risk.planCount}条任务，${riskGroupStateText(risk)}`" @click="selectRiskGroup(risk)">
             <span class="sit-alert-level">{{ risk.level }}</span>
             <span class="sit-alert-copy">
               <b>{{ risk.spaceFact?.subtypeName || '航线' }}风险 · {{ labelOf(SOURCE_MODE_LABEL, risk.sourceMode, '来源未提供') }}</b>
-              <em class="mono">{{ risk.targetId && risk.targetId !== risk.targetInternalId ? risk.targetId : '目标编号未提供' }} · 关联 {{ risk.planCount }} 条任务</em>
+              <em class="mono">{{ risk.targetId && risk.targetId !== risk.targetInternalId ? displayBusinessNo(risk.targetId) : '目标编号未提供' }} · 关联 {{ risk.planCount }} 条任务</em>
               <em>触发时：{{ riskFactText(risk) }}</em>
             </span>
             <span class="sit-alert-meta"><time class="mono">{{ formatClock(risk.occurredAt) }}{{ risk.isNew ? ' · 未查看' : '' }}</time><b>{{ riskGroupStateText(risk) }}</b></span>

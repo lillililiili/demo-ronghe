@@ -5,7 +5,7 @@ import { hasModuleAction } from '@/services/accessControl.js';
 import AuthenticatedHlsVideo from './AuthenticatedHlsVideo.vue';
 import EoDispatchControls from './EoDispatchControls.vue';
 import { authSession } from '@/services/auth.js';
-import { refreshFailureText, shouldRetryRefresh } from '@/hooks/useRealtimeRefresh.js';
+import { refreshFailureText, shouldRetryRefresh, useRealtimeRefresh } from '@/hooks/useRealtimeRefresh.js';
 import { targetVideoState } from './targetVideoState.js';
 
 const props = defineProps({
@@ -32,7 +32,7 @@ function clear() {
   ++generation; clearTimeout(timer); controller?.abort(); retryDelay = 0;
   video.value = null; error.value = ''; loading.value = false; checked.value = false;
 }
-async function refresh() {
+async function refresh(quiet = false) {
   clearTimeout(timer);
   if (!alive || !props.active || !expanded.value || reason.value) return;
   const token = ++generation, id = props.targetId;
@@ -42,7 +42,7 @@ async function refresh() {
   const options = { signal: pending.signal, dedupe: false };
   const current = () => alive && token === generation && props.active && expanded.value && props.targetId === id;
   // 失败提示留到读到结果再换，自动重读时不在“读取中”和失败之间来回闪。
-  loading.value = true;
+  if (quiet !== true) loading.value = true;
   let retry = false;
   try {
     const nextVideo = await deviceApi.targetVideo(id, options);
@@ -62,11 +62,13 @@ async function refresh() {
     clearTimeout(deadline);
     if (current()) {
       loading.value = false; checked.value = true;
-      if (!error.value) { retryDelay = 0; timer = setTimeout(refresh, 5000); }
-      else if (retry) { retryDelay = Math.min(retryDelay ? retryDelay * 2 : 5000, 15000); timer = setTimeout(refresh, retryDelay); }
+      if (!error.value) { retryDelay = 0; timer = setTimeout(() => refresh(true), 5000); }
+      else if (retry) { retryDelay = Math.min(retryDelay ? retryDelay * 2 : 5000, 15000); timer = setTimeout(() => refresh(true), retryDelay); }
     }
   }
 }
+// 媒体就绪和有效期不全由数据库事件产生，展开视频时保留静默探测。
+useRealtimeRefresh(['tracking', 'device_state', 'disposal'], () => refresh(true), { minIntervalMs: 2_000 });
 function reloadVideo() { clear(); refresh(); }
 function toggle() { expanded.value = !expanded.value; }
 watch([() => props.targetId, () => props.contextLabel, () => props.active, authSession, reason], () => { clear(); if (expanded.value) refresh(); }, { flush: 'sync' });

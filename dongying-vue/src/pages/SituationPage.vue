@@ -67,6 +67,9 @@ let selectionResizeObserver = null;
 let expiryTimer = null;
 
 const devices = computed(() => snapshot.value.devices || []);
+const locatedDevices = computed(() => devices.value.filter(device => device.posValid !== false
+  && Number.isFinite(device.lon) && Math.abs(device.lon) <= 180
+  && Number.isFinite(device.lat) && Math.abs(device.lat) <= 85.051129));
 const hasSimulatedCoverage = computed(() => devices.value.some(device => device.displayCoverage?.displayOnly));
 const targets = computed(() => snapshot.value.targets || []);
 const currentTargetIds = computed(() => new Set(targets.value.map(target => target.targetId).filter(Boolean)));
@@ -386,7 +389,7 @@ function applySnapshot(next) {
   if (!map) return;
   map.setData({
     airspaces: decorated.airspaces,
-    devices: decorated.devices.filter(device => Number.isFinite(device.lon) && Number.isFinite(device.lat)),
+    devices: locatedDevices.value,
     targets: decorated.targets,
     flightPlans: decorated.flightPlans,
     risks: decorated.risks.filter(risk => risk.mapVisible !== false),
@@ -789,11 +792,13 @@ function onVisibilityChange() {
 
 onMounted(() => {
   map = new window.MapView(mapHost.value, {
-    maxDev: 120,
+    maxDev: Infinity,
     maxAlarm: 0,
     zoom: 1,
     legend: false,
     fusionProfile: true,
+    // 固定使用原东营地图范围，不因设备位置扩大底图视野。
+    constrainToCoverage: true,
     layoutMarkers: createSituationMarkerLayout(),
     getExternalMarkers: view => [...(weatherLayer.value?.getMarkers(view) || []), ...(riskSnapshotLayer.value?.getMarkers(view) || [])],
     drawUnderMarkers: view => { weatherLayer.value?.draw(view); riskSnapshotLayer.value?.draw(view); },
@@ -882,7 +887,7 @@ onUnmounted(() => {
                 :aria-pressed="selection?.kind === 'device' && selection.id === device.id"
                 :aria-label="`查看${device.type}设备 ${device.name}，${device.status}${device.hasAlarm ? '，存在告警' : ''}`" @click="selectDevice(device)">
                 <span><span class="sit-node-icon" v-html="iconHtml(device)"></span><b>{{ device.name }}</b><small class="mono" :title="device.id">{{ device.display_no || device.id }}</small></span>
-                <em>{{ device.status }} · {{ reportAge(device.lastReportAt) }}<template v-if="device.timeUntrusted"> · 设备时间不准</template></em>
+                <em>{{ device.status }} · {{ reportAge(device.lastReportAt) }}<template v-if="device.timeUntrusted"> · 设备时间不准</template><template v-if="!locatedDevices.includes(device)"> · 位置未知</template></em>
               </button>
             </div>
           </section>
@@ -908,7 +913,7 @@ onUnmounted(() => {
           </button>
           <button type="button" role="tab" :aria-selected="alertTab === 'route'" @click="alertTab = 'route'">
             <GitCompareOutline class="sit-risk-icon" aria-hidden="true" />
-            <span>航线风险记录</span><b :class="{ 'has-risk': riskGroups.length > 0 }">{{ riskGroups.length }} 项</b>
+            <span>航线风险</span><b :class="{ 'has-risk': riskGroups.length > 0 }">{{ riskGroups.length }} 项</b>
           </button>
         </div>
         <div v-if="alertTab === 'target'" class="sit-alert-list" role="tabpanel" aria-label="目标异常">

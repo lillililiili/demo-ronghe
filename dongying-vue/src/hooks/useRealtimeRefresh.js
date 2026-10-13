@@ -27,6 +27,7 @@ export function refreshFailureText(error, fallback = '读取失败') {
    - 断网、超时或 5xx 失败后按 2、4、8……最长 30 秒退避再读同一批变化；
      重连或网络恢复（recovery）时立即再读，不等退避结束。 */
 export function useRealtimeRefresh(topics, reload, { minIntervalMs = 1_000 } = {}) {
+  let active = true;
   let running = false;
   let lastAt = 0;
   let timer = null;
@@ -37,7 +38,7 @@ export function useRealtimeRefresh(topics, reload, { minIntervalMs = 1_000 } = {
 
   async function run() {
     timer = null;
-    if (document.hidden || running || !changed.size) return;
+    if (!active || document.hidden || running || !changed.size) return;
     const wait = Math.max(lastAt + minIntervalMs, retryAt) - Date.now();
     if (wait > 0) { timer = setTimeout(run, wait); return; }
     running = true;
@@ -57,11 +58,12 @@ export function useRealtimeRefresh(topics, reload, { minIntervalMs = 1_000 } = {
       }
     } finally {
       running = false;
-      if (changed.size && !timer) timer = setTimeout(run, 0);
+      if (active && changed.size && !timer) timer = setTimeout(run, 0);
     }
   }
 
   function trigger(received = ['*'], { recovery = false } = {}) {
+    if (!active) return;
     received.forEach(topic => changed.add(topic));
     if (recovery) {
       retryDelay = 0;
@@ -77,6 +79,8 @@ export function useRealtimeRefresh(topics, reload, { minIntervalMs = 1_000 } = {
     document.addEventListener('visibilitychange', onVisible);
   });
   onUnmounted(() => {
+    active = false;
+    changed.clear();
     stop?.();
     clearTimeout(timer);
     document.removeEventListener('visibilitychange', onVisible);

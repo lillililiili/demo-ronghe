@@ -105,6 +105,8 @@ function handleEvent(block) {
     if (hadConnection || missed) emit(['*'], { recovery: true });
     hadConnection = true;
     missed = false;
+  } else if (name === 'status') {
+    try { setState(true, JSON.parse(data.join('\n')).listening === true); } catch { /* 忽略无效状态 */ }
   } else if (name === 'change') {
     if (!listening) setState(true, true);
     try {
@@ -145,11 +147,11 @@ async function connect() {
     for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
       if (controller !== current) return;
       armWatchdog(current);
-      buffer += chunk.value.replace(/\r\n/g, '\n');
-      let index;
-      while ((index = buffer.indexOf('\n\n')) >= 0) {
-        handleEvent(buffer.slice(0, index));
-        buffer = buffer.slice(index + 2);
+      buffer += chunk.value;
+      let boundary;
+      while ((boundary = /\r?\n\r?\n/.exec(buffer))) {
+        handleEvent(buffer.slice(0, boundary.index).replace(/\r\n/g, '\n'));
+        buffer = buffer.slice(boundary.index + boundary[0].length);
       }
     }
   } catch {

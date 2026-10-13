@@ -17,7 +17,7 @@ export function deviceReportState(deviceId) {
   if (!states.has(identity)) {
     let requestKey = null;
     try { requestKey = sessionStorage.getItem(prefix + identity); } catch { /* 浏览器存储不可用。 */ }
-    states.set(identity, { identity, requestKey, context: null, reading: false, pending: false,
+    states.set(identity, { identity, requestKey, context: null, reading: false, refreshing: false, pending: false,
       loadedAt: null, readError: '', error: '', result: null, generation: 0 });
   }
   return states.get(identity);
@@ -30,12 +30,12 @@ function validate(data, deviceId) {
   }
   return data;
 }
-export async function loadDeviceReport(deviceId) {
+export async function loadDeviceReport(deviceId, { quiet = false } = {}) {
   if (!deviceId) return;
   const state = deviceReportState(deviceId);
-  if (state.pending || state.reading) return;
+  if (state.pending || state.refreshing) return;
   const generation = ++state.generation;
-  state.reading = true;
+  state.refreshing = true; if (!quiet) state.reading = true;
   try {
     const context = validate(await apiRequestTimed(path(deviceId), { dedupe: false }), deviceId);
     if (generation !== state.generation) return;
@@ -46,14 +46,15 @@ export async function loadDeviceReport(deviceId) {
     if (generation !== state.generation) return;
     state.readError = error.message || '处置进度读取失败，请刷新重试。';
     if ([401, 403, 404].includes(error.status)) { state.context = null; state.result = null; }
-  } finally { if (generation === state.generation) state.reading = false; }
+    if (quiet) throw error;
+  } finally { if (generation === state.generation) { state.reading = false; state.refreshing = false; } }
 }
 export async function submitDeviceReport(deviceId) {
   const state = deviceReportState(deviceId);
   if (state.pending || state.reading || (!state.requestKey && (!state.context?.can_report || state.readError))) return;
   const replay = !!state.requestKey;
   remember(state, state.requestKey || newHandoffIdempotencyKey());
-  state.generation++; state.pending = true; state.error = '';
+  state.generation++; state.reading = false; state.refreshing = false; state.pending = true; state.error = '';
   try {
     const context = validate(await apiRequestTimed(path(deviceId), { method: 'POST', mutation: true,
       idempotencyKey: state.requestKey }), deviceId);

@@ -90,6 +90,16 @@ async function serviceTests() {
   // 心跳维持连接：间隔小于看门狗时限的心跳不触发重连。
   await delay(800);
   check('有心跳时不重连', streams.length, 1);
+  calls.length = 0;
+  send(first, 'event: status\r'); await delay(5);
+  send(first, '\ndata: {"listening":false}\r\n\r'); await delay(5);
+  send(first, '\n');
+  ok('分块 CRLF 状态事件在监听中断时启用兜底', await until(() => calls.some(call => call.topics.includes('*')), 500));
+  send(first, 'event: status\ndata: {"listening":true}\n\n');
+  send(first, 'event: change\ndata: {"topics":["*"]}\n\n');
+  await until(() => calls.some(call => call.recovery));
+  calls.length = 0; await delay(400);
+  check('数据库监听恢复后停掉兜底，只有心跳不触发读取', calls, []);
 
   // 后端重启后旧连接既不断开也不再有数据：看门狗断开重连，连上后通知全部重读。
   calls.length = 0;
@@ -152,10 +162,10 @@ async function serviceTests() {
 
 async function hookTests() {
   let trigger = null;
-  const mounted = [];
+  const mounted = [], unmounted = [];
   globalThis.__hookDeps = {
     onMounted: fn => mounted.push(fn),
-    onUnmounted: () => {},
+    onUnmounted: fn => unmounted.push(fn),
     onDataChange: (topics, handler) => { trigger = handler; return () => {}; }
   };
   const hook = await loadModule('../src/hooks/useRealtimeRefresh.js',
@@ -223,6 +233,17 @@ async function hookTests() {
   await until(() => merged.length === 2);
   check('期间的信号合并成一次', merged[1].sort(), ['disposal', 'punishment']);
   release();
+  let reject, lateReads = 0;
+  mounted.length = 0;
+  const late = hook.useRealtimeRefresh(['alarm'], () => {
+    lateReads++; return new Promise((resolve, fail) => { reject = fail; });
+  }, { minIntervalMs: 10 });
+  mounted.forEach(fn => fn()); late.trigger(['alarm']);
+  await until(() => lateReads === 1);
+  unmounted.forEach(fn => fn());
+  reject(new Error('late failure')); late.trigger(['*']);
+  await delay(500);
+  check('卸载后迟到失败和变化不会重新安排请求', lateReads, 1);
 }
 
 async function main() {

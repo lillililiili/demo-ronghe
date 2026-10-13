@@ -3,7 +3,7 @@ import { computed, onUnmounted, ref, watch } from 'vue';
 import { deviceApi } from '@/services/deviceApi.js';
 import { hasModuleAction } from '@/services/accessControl.js';
 import { authSession } from '@/services/auth.js';
-import { refreshFailureText, shouldRetryRefresh } from '@/hooks/useRealtimeRefresh.js';
+import { refreshFailureText, shouldRetryRefresh, useRealtimeRefresh } from '@/hooks/useRealtimeRefresh.js';
 import TargetLiveVideo from './TargetLiveVideo.vue';
 import EoDispatchControls from './EoDispatchControls.vue';
 
@@ -94,7 +94,8 @@ async function refresh(silent = false) {
       loading.value = false;
       if (!readError.value) {
         retryDelay = 0;
-        timer = setTimeout(() => refresh(true), 5000);
+        // 活跃跟踪仍需核对观测时效；空闲状态只随 SSE 更新。
+        if (['STARTING', 'TRACKING', 'LOST', 'ENDING', 'END_UNCONFIRMED'].includes(state.value?.status)) timer = setTimeout(() => refresh(true), 5000);
       } else if (retry) {
         retryDelay = Math.min(retryDelay ? retryDelay * 2 : 5000, 15000);
         timer = setTimeout(() => refresh(true), retryDelay);
@@ -128,6 +129,7 @@ async function perform(action) {
   }
 }
 
+useRealtimeRefresh(['tracking', 'device', 'device_state', 'target', 'disposal'], () => refresh(true), { minIntervalMs: 2_000 });
 watch([() => props.targetId, () => props.contextLabel, () => props.active, authSession, reason], () => {
   invalidate();
   if (props.active) refresh();

@@ -1,3 +1,4 @@
+import { useRealtimeRefresh } from '@/hooks/useRealtimeRefresh.js';
 import { computed, onUnmounted, ref, watch } from 'vue';
 import { disposalApi, newDisposalIdempotencyKey } from '@/services/disposalApi.js';
 import { isUncertainOutcome } from '@/services/apiClient.js';
@@ -32,18 +33,18 @@ export function useEmergencyStop(eventId, onUpdate, onChanged) {
 
   function schedule() {
     clearTimeout(timer);
-    if (disposed || forbidden.value || !eventId.value) return;
+    if (disposed || forbidden.value || !eventId.value || (!uncertain.value && !error.value)) return;
     timer = setTimeout(async () => {
-      if (!busy.value && document.visibilityState !== 'hidden') await refresh();
+      if (!busy.value && document.visibilityState !== 'hidden') await refresh({ quiet: true });
       else schedule();
     }, followup.value || uncertain.value ? 5000 : 15000);
   }
 
-  async function refresh() {
+  async function refresh({ quiet = false } = {}) {
     if (!eventId.value || busy.value || disposed) return;
     clearTimeout(timer);
     const id = eventId.value, epoch = generation, seq = ++readSeq;
-    loading.value = true;
+    if (!quiet) loading.value = true;
     try {
       const data = await disposalApi.emergencyOverview(id);
       if (disposed || epoch !== generation || seq !== readSeq) return;
@@ -128,6 +129,7 @@ export function useEmergencyStop(eventId, onUpdate, onChanged) {
       data => data?.latest_stop?.stop_id === stopId && data.latest_stop.devices?.some(d => d.device_id === device.device_id && d.stop_status === 'MANUALLY_CONFIRMED'));
   }
 
+  useRealtimeRefresh(['disposal', 'device_state'], () => refresh({ quiet: true }), { minIntervalMs: 2_000 });
   watch([eventId, authUser], () => {
     ++generation; ++readSeq; clearTimeout(timer);
     overview.value = null; error.value = ''; uncertain.value = ''; loading.value = false;

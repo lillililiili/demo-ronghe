@@ -31,6 +31,7 @@ from protocol_b import ProtocolBResponder
 from mqtt_recovery import CommandSubscriptions
 from device_health import DeviceHealthReporter
 from state_file import atomic_json
+from tcp_radar import TcpRadar, MANUAL_PORT
 
 ROOT = Path(__file__).resolve().parent
 ACCEPTANCE_FLOW_OUTPUT_NAME = 'acceptance-flows-1-7-20261008'
@@ -278,6 +279,8 @@ class Runtime:
         self.data_dir = Path(data_dir); self.data_dir.mkdir(parents=True, exist_ok=True)
         self.session = session or ExternalBridge()
         self.session.runtime = self
+        self.tcp_radar = TcpRadar(self.session)
+        self.manual_tcp_radar = TcpRadar(self.session, port=MANUAL_PORT, manual=True)
         self.lock = self.session.lock
         self.brokers = []; self.broker = None
         self.mqtt_password = ''; self.mqtt_username = ''
@@ -714,6 +717,8 @@ class Runtime:
         return self.status()
 
     def stop_all(self):
+        self.tcp_radar.stop()
+        self.manual_tcp_radar.stop()
         if self.realtime is None:
             return self.control('stop')
         with self.realtime.operation_lock:
@@ -886,6 +891,11 @@ class Handler(SimpleHTTPRequestHandler):
             except ValueError as error:
                 return self.respond({'error': str(error)}, 401 if isinstance(error, ExternalAuthenticationRequired) or '返回 401' in str(error) else 400)
 
+        if self.path=='/api/tcp-radar/manual/status': return self.respond(runtime.manual_tcp_radar.snapshot())
+        if self.path=='/api/tcp-radar/status': return self.respond(runtime.tcp_radar.snapshot())
+        if self.path=='/api/tcp-radar/context':
+            try: return self.respond(runtime.tcp_radar.context())
+            except ValueError as error: return self.respond({'error': str(error)}, 400)
         if self.path=='/api/status': return self.respond(runtime.status())
         if self.path=='/api/full-scene': return self.respond(full_scene())
         if self.path in ('/api/realtime/status', '/api/realtime/config'):
@@ -914,6 +924,10 @@ class Handler(SimpleHTTPRequestHandler):
             elif self.path=='/api/external/mock-airport': result=external_bridge.mock_airport(True)
             elif self.path=='/api/connect': result=runtime.connect(body)
             elif self.path=='/api/video': result=runtime.video_control(body)
+            elif self.path=='/api/tcp-radar/manual/start': result=runtime.manual_tcp_radar.start(body)
+            elif self.path=='/api/tcp-radar/manual/stop': result=runtime.manual_tcp_radar.stop()
+            elif self.path=='/api/tcp-radar/start': result=runtime.tcp_radar.start(body)
+            elif self.path=='/api/tcp-radar/stop': result=runtime.tcp_radar.stop()
             elif self.path=='/api/acceptance-flows-1-7':
                 if runtime.phase in ('PREPARING', 'RUNNING', 'PAUSED', 'STOPPING'):
                     raise ValueError('请先停止当前任务，再生成流程 1-7 数据')
@@ -980,5 +994,7 @@ if __name__=='__main__':
         runtime.cancel.set()
         if runtime.realtime: runtime.realtime.stop()
         if runtime.thread: runtime.thread.join(timeout=15)
+        runtime.tcp_radar.stop()
+        runtime.manual_tcp_radar.stop()
         runtime.media.stop()
         server.server_close()

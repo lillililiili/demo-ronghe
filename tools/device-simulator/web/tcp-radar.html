@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>独立 TCP 雷达 · 信号模拟器</title>
+<link rel="stylesheet" href="tcp-radar.css"></head>
+<body>
+<header><a href="/">← 信号地图</a><span>信号模拟器 / 原生 TCP 雷达</span><b>模拟环境</b></header>
+<main>
+<div class="intro"><div><p class="eyebrow">RADAR TCP · V3.0.0</p><h1>独立 TCP 模拟雷达</h1><p>从原生协议验证设备接入。单独启动、单独停止，可与凌云 MQTT 场景同时运行。</p></div><span class="chip">T02 数据协议</span></div>
+<nav class="mode-switch" aria-label="测试方式"><button id="mode-manual" type="button" aria-pressed="true">后台手动接入测试</button><button id="mode-auto" type="button" class="secondary" aria-pressed="false">原有自动登记模式</button></nav>
+<div id="manual-panel">
+<div id="manual-message" class="message" role="status" aria-live="polite">先启动独立 TCP 服务，再到后台手动新增雷达设备。</div>
+<div class="grid">
+<section><h2>① 只启动 TCP 服务</h2><p>独立监听 15002 端口。启动后等待后台连接，不自动登记设备。</p>
+<form id="manual-config"><div class="fields">
+<label>测试经度（WGS-84）<input name="longitude" type="number" step="any" min="-180" max="180" value="118.608" required></label>
+<label>测试纬度（WGS-84）<input name="latitude" type="number" step="any" min="-90" max="90" value="37.464" required></label></div>
+<div class="actions"><button id="manual-start" type="submit" disabled>启动独立 TCP 服务</button><button id="manual-stop" type="button" class="secondary" disabled>停止独立 TCP 服务</button></div></form>
+<dl><div><dt>服务状态</dt><dd id="manual-state">正在读取</dd></div><div><dt>TCP 会话</dt><dd id="manual-connection">未连接</dd></div><div><dt>已发送航迹帧</dt><dd id="manual-frames">0</dd></div><div><dt>最近发送时间</dt><dd id="manual-sent">—</dd></div></dl>
+<p class="note">现有自动登记雷达使用 15001 端口，两种模式可同时运行。此处停止仅关闭 15002。</p></section>
+<section><h2>② 后台手动填写参数</h2><p>设备管理 → 接入设备 → 雷达。编号和名称自行填写，选择所属单位及区域。</p>
+<dl><div><dt>数据来源</dt><dd>本机模拟测试</dd></div><div><dt>设备地址</dt><dd>127.0.0.1</dd></div><div><dt>端口</dt><dd>15002</dd></div><div><dt>允许网段</dt><dd>127.0.0.1/32</dd></div><div><dt>雷达识别码引用</dt><dd>留空</dd></div><div><dt>雷达扩展</dt><dd>勾选“采集 RTK”“派生经纬度”</dd></div></dl>
+<p class="note">安装坐标可填写左侧测试位置。保存后，在设备实时监测和设备接入调测选择你新增的这台设备。后端与模拟器需运行在同一台电脑。</p>
+<p class="note">等待数据登录成功、发送帧数增长，再核对后台的接收时间、RTK 和航迹。未看到“本机模拟测试”时，先确认后台已加载更新及本机测试权限。</p>
+</section></div></div>
+<div id="auto-panel" hidden>
+<div id="message" role="status" aria-live="polite"></div>
+<div class="grid">
+<section><h2>① 登记并启动</h2><p>首次启动选择设备归属与位置；再次启动复用同一台设备，保留其登记位置。</p>
+<form id="config">
+<label>所属单位与区域<select id="scope" required aria-label="所属单位与区域"><option value="">正在读取…</option></select></label>
+<div class="fields"><label>经度（WGS-84）<input name="longitude" type="number" step="any" min="-180" max="180" value="118.608" required></label>
+<label>纬度（WGS-84）<input name="latitude" type="number" step="any" min="-90" max="90" value="37.464" required></label></div>
+<p class="note">上方是可修改的演示位置。设备编号：QA-LOCAL-RADAR-TCP<br>独立监听：127.0.0.1:15001</p>
+<div class="actions"><button id="start" type="submit" disabled>登记并启动 TCP 雷达</button><button id="stop" type="button" class="secondary" disabled>停止 TCP 雷达</button></div>
+</form>
+</section>
+<section><h2>② 查看接入结果</h2><dl>
+<div><dt>模拟发送</dt><dd id="state">正在读取</dd></div>
+<div><dt>平台 TCP 会话</dt><dd id="connection">尚未连接</dd></div>
+<div><dt>已发送航迹帧</dt><dd id="frames">0</dd></div>
+<div><dt>最近发送时间</dt><dd id="sent">—</dd></div>
+<div><dt>设备</dt><dd id="device">尚未登记</dd></div></dl>
+<p class="note">在后台“设备管理”找到“模拟 独立 TCP 雷达”，查看原生协议状态与航迹。已发送帧数表示模拟器发出，不代表平台全部接收。</p>
+<button id="refresh" type="button" class="secondary">刷新状态</button>
+</section>
+</div>
+</div>
+<section class="explanation"><h2>本次演示提供什么</h2><p>数据登录、心跳应答、寄存器读取、RTK 上报，以及每秒一帧的模拟无人机航迹。后台通过现有 TCP 适配器接收并保存原始数据。</p>
+<p>雷达相对站址的高度不作为离地高度。该协议未提供明确的健康与告警清除证据，因此在线不代表设备处置单已恢复。此入口暂用于协议接入与原始航迹验证，模拟航迹不会混入真实目标通道。</p></section>
+</main><script src="tcp-radar.js"></script></body></html>

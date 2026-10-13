@@ -3,6 +3,7 @@ import { computed, onUnmounted, ref, watch } from 'vue';
 import { checkPlanDevices, deviceCheckStatus, deviceCheckCategory, deviceCheckCounts, deviceCheckHistory, deviceCheckExplanation, retainDeviceOrder } from '@/pages/flights/planDeviceCheck.js';
 import { loadDeviceMaintenanceNotice } from '@/pages/flights/deviceMaintenance.js';
 import { hasPermission } from '@/services/accessControl.js';
+import { useRealtimeRefresh } from '@/hooks/useRealtimeRefresh.js';
 import DeviceAbnormalNoticeButton from './DeviceAbnormalNoticeButton.vue';
 const { deviceIcon, deviceMeta } = window.UI;
 
@@ -15,14 +16,14 @@ const emit = defineEmits(['checked', 'map-devices']);
 const counts = computed(() => deviceCheckCounts(rows.value));
 // 不按实时状态自动隐藏设备，避免恢复或新增异常时正在阅读的卡片消失。
 function date(value) { return value == null || !Number.isFinite(Number(value)) ? '未记录' : new Date(value).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' }); }
-async function reload({ reset = false } = {}) {
+async function reload({ reset = false, quiet = false } = {}) {
   controller?.abort(); controller = new AbortController();
   const current = ++generation;
   if (reset) { result.value = null; emit('map-devices', null); }
   if (reset) { error.value = ''; errorStatus.value = 0; }
   if (reset) emit('checked', null);
   if (!permitted.value) { result.value = null; emit('map-devices', null); loading.value = false; return; }
-  loading.value = true;
+  if (!quiet) loading.value = true;
   try {
     const planId = props.plan.plan_id;
     const data = await checkPlanDevices(props.plan, controller.signal);
@@ -34,13 +35,17 @@ async function reload({ reset = false } = {}) {
       emit('checked', next); emit('map-devices', next);
     }
   }
-  catch (reason) { if (generation === current) { error.value = reason.message || '设备检查失败'; errorStatus.value = reason.status || 0; emit('map-devices', null); if ([401,403].includes(errorStatus.value)) result.value = null; } }
+  catch (reason) { if (generation === current) {
+    error.value = reason.message || '设备检查失败'; errorStatus.value = reason.status || 0;
+    if ([401,403].includes(errorStatus.value)) { result.value = null; emit('map-devices', null); }
+    if (quiet) throw reason;
+  } }
   finally { if (generation === current) loading.value = false; }
 }
 watch(() => [props.plan.plan_id, props.plan.start_at, props.plan.end_at, props.plan.district_name, props.plan.source_mode, permitted.value], () => reload({ reset: true }), { immediate: true });
 defineExpose({ reload });
-const timer = setInterval(() => { if (!document.hidden && !loading.value && ![401, 403].includes(errorStatus.value)) reload(); }, 5000);
-onUnmounted(() => { generation++; controller?.abort(); clearInterval(timer); emit('map-devices', null); });
+useRealtimeRefresh(['device', 'device_state', 'plan'], () => reload({ quiet: true }), { minIntervalMs: 2_000 });
+onUnmounted(() => { generation++; controller?.abort(); emit('map-devices', null); });
 </script>
 
 <template>

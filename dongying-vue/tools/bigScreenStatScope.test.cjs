@@ -54,3 +54,38 @@ test('the risk panel counts today\'s targets in the same five tiers as the stati
   assert.ok(summary);
   assert.match(summary[0], /dataState\(avail\('targets'\) \? 'risks' : 'targets'\)/, '没有风险读取权限时写明原因');
 });
+
+
+test('dashboard retry keeps its error and content stable until a new snapshot arrives', async () => {
+  const start = source.indexOf('async function load({');
+  const end = source.indexOf('const sideRealtime =', start);
+  assert.ok(start >= 0 && end > start);
+  const ref = value => ({ value });
+  let resolve, retries = 0, details = 0;
+  const deps = {
+    snapshotInFlight: false, version: 0, disposed: false, detailController: null,
+    snapshot: ref(null), loading: ref(false), error: ref(''),
+    operationsStats: ref({ state: 'LOADING' }), deviceTypes: ref({ state: 'LOADING' }),
+    nextTick: async () => {}, renderCharts() {}, renderMap() {},
+    realtime: { trigger: () => { retries++; } }, sideRealtime: { trigger: () => { details++; } },
+    getDashboardSnapshot: async () => { throw new Error('temporary timeout'); }
+  };
+  const load = new Function('deps', 'with (deps) { ' + source.slice(start, end) + '; return load; }')(deps);
+  await load();
+  assert.equal(retries, 1);
+  assert.equal(deps.error.value, 'temporary timeout');
+  assert.equal(deps.operationsStats.value.state, 'UNAVAILABLE');
+  deps.getDashboardSnapshot = () => new Promise(done => { resolve = done; });
+  const retry = load({ rethrow: true });
+  assert.equal(deps.loading.value, false, 'automatic retry does not replace the error with a loading screen');
+  assert.equal(deps.error.value, 'temporary timeout');
+  resolve({ devices: { total: 17 } }); await retry;
+  assert.equal(deps.snapshot.value.devices.total, 17);
+  assert.equal(deps.error.value, '');
+  assert.equal(details, 1, 'successful changes schedule a trailing sidebar refresh');
+  const again = load({ rethrow: true });
+  assert.equal(deps.snapshot.value.devices.total, 17);
+  assert.equal(deps.loading.value, false);
+  resolve({ devices: { total: 18 } }); await again;
+  assert.equal(deps.snapshot.value.devices.total, 18);
+});

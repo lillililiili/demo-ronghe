@@ -13,7 +13,7 @@ export function useAirspaceMonitor(district, selected, onlySelected = computed((
   let token = 0, timer;
 
   async function reload({ quiet = false } = {}) {
-    // 推送与定时刷新共用进行中的读取，不互相取消或提前移除旧列表中的记录。
+    // 推送共用进行中的读取，不提前移除旧列表中的记录。
     if (quiet && refreshing.value) return;
     const current = ++token;
     const keep = updatedAt.value != null;
@@ -45,6 +45,7 @@ export function useAirspaceMonitor(district, selected, onlySelected = computed((
       error.value = reason.status === 403 ? '当前账号没有查看监测目标的权限。'
         : reason.status === 401 ? '登录已失效，请重新登录。'
           : `${reason.message || '监测数据读取失败，请重试。'}${retain ? ' 当前显示上次读取的监测记录。' : ''}`;
+      if (quiet) throw reason;
     } finally { if (current === token) { loading.value = false; refreshing.value = false; } }
   }
 
@@ -59,8 +60,7 @@ export function useAirspaceMonitor(district, selected, onlySelected = computed((
   onMounted(() => {
     window.addEventListener('auth-access-change', resetAndReload);
     timer = setInterval(() => {
-      if (refreshing.value || document.hidden) return;
-      reload({ quiet: true });
+      if (!document.hidden) now.value = Date.now(); // 仅推进五分钟展示窗口，不发请求。
     }, 10_000);
   });
   onUnmounted(() => { token++; clearInterval(timer); window.removeEventListener('auth-access-change', resetAndReload); });

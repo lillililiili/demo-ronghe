@@ -31,7 +31,6 @@ const snapshot = ref(null);
 const TRACK_MAX_AGE_MS = 30_000;
 const trackCache = new Map();
 const SIDE_MIN_INTERVAL_MS = 30_000;
-let sideLoadedAt = 0;
 const operationsStats = ref({ state: 'LOADING', data: null });
 const targetTypes = computed(() => {
   const detail = operationsStats.value;
@@ -46,7 +45,8 @@ const deviceTypes = ref({ state: 'LOADING', data: null });
 let clockTimer = null;
 let resizeTimer = null;
 let map = null;
-let refreshTimer = null;
+let snapshotInFlight = false;
+let snapshotDay = Math.floor((Date.now() + 8 * 3600000) / 86400000);
 let disposed = false;
 let version = 0;
 let detailController = null;
@@ -132,14 +132,17 @@ function loadSideDetails(data) {
       const state = validate(result);
       destination.value = { state, data: state === 'AVAILABLE' ? result : null };
     } catch (e) {
-      if (!disposed && controller === detailController) destination.value = { state: e.status === 403 ? 'FORBIDDEN' : 'UNAVAILABLE', data: null };
+      if (!disposed && controller === detailController) {
+        destination.value = { state: e.status === 403 ? 'FORBIDDEN' : 'UNAVAILABLE', data: null };
+        throw e;
+      }
     }
   };
   const { from, to } = data.trend || {};
   // 大屏不显示有效监测时长和已观测里程，不让后台为它逐点计算（同一份 7 天报表里最慢的一块），与运行统计页同一做法。
   const query = from && to ? new URLSearchParams({ from, to, include_observations: 'false' }).toString() : null;
   // 设备类型与快照的设备数同一统计口径（statistics_scope）；今日已完成计划随快照一起给出（flights.completed）。
-  void Promise.all([
+  return Promise.all([
     read(operationsStats, 'stats', query ? `/stats/operations?${query}` : null, result =>
       result?.availability ? 'AVAILABLE' : 'UNAVAILABLE'),
     read(deviceTypes, 'devices', '/devices/overview?statistics_scope=true&enabled=true', result =>
@@ -394,42 +397,48 @@ function handleResize() {
 
 /* rethrow：实时刷新触发的重读失败时抛出，由实时刷新按 2、4、8 秒……退避重试，不必等 30 秒兜底。 */
 async function load({ rethrow = false } = {}) {
-  clearTimeout(refreshTimer);
+  if (snapshotInFlight) return;
+  snapshotInFlight = true;
   const currentVersion = ++version;
-  loading.value = !snapshot.value;
-  error.value = '';
+  if (!rethrow) loading.value = !snapshot.value;
   try {
     const data = await getDashboardSnapshot();
     if (disposed || currentVersion !== version) return;
-    snapshot.value = data;
+    snapshot.value = data; error.value = '';
     await nextTick();
     if (disposed || currentVersion !== version) return;
     renderCharts();
     renderMap();
-    // 侧栏统计不必跟着每次推送重读：至少间隔 30 秒，与改造前的轮询节奏一致。
-    if (Date.now() - sideLoadedAt >= SIDE_MIN_INTERVAL_MS) { sideLoadedAt = Date.now(); loadSideDetails(data); }
+    // 合并侧栏变化并保留最后一次更新；节流窗口内不能直接丢掉信号。
+    sideRealtime.trigger(['stats']);
   } catch (e) {
     if (disposed || currentVersion !== version) return;
-    snapshot.value = null;
-    detailController?.abort();
-    sideLoadedAt = 0;
-    operationsStats.value = deviceTypes.value = { state: 'UNAVAILABLE', data: null };
+    if (!snapshot.value || [401, 403].includes(e.status)) {
+      snapshot.value = null; detailController?.abort();
+      operationsStats.value = deviceTypes.value = { state: 'UNAVAILABLE', data: null };
+    }
     error.value = e.message || '大屏数据加载失败';
     await nextTick();
     if (!disposed) { renderCharts(); renderMap(); }
     if (rethrow) throw e;
+    if (![401, 403, 404].includes(e.status)) realtime.trigger(['*']);
   } finally {
-    if (!disposed) { loading.value = false; refreshTimer = window.setTimeout(load, 30000); }
+    snapshotInFlight = false;
+    if (!disposed) loading.value = false;
   }
 }
 
-// 业务数据变化后最多每 5 秒重读一次快照；30 秒定时器保留为推送不可用时的兜底。
-useRealtimeRefresh(['alarm', 'target', 'device', 'risk', 'plan', 'airspace', 'punishment', 'disposal'], () => load({ rethrow: true }), { minIntervalMs: 5_000 });
+const sideRealtime = useRealtimeRefresh([], () => snapshot.value ? loadSideDetails(snapshot.value) : undefined, { minIntervalMs: SIDE_MIN_INTERVAL_MS });
+
+// 业务变化后静默重读快照；断线补读由公共 SSE 服务统一负责。
+const realtime = useRealtimeRefresh(['alarm', 'target', 'device', 'device_state', 'legality', 'risk', 'plan', 'airspace', 'punishment', 'disposal', 'fusion'], () => load({ rethrow: true }), { minIntervalMs: 5_000 });
 
 onMounted(() => {
   clock.value = formatClock(new Date());
   clockTimer = window.setInterval(() => {
     clock.value = formatClock(new Date());
+    const day = Math.floor((Date.now() + 8 * 3600000) / 86400000);
+    if (day !== snapshotDay) { snapshotDay = day; realtime.trigger(['*']); }
     if (!map) return;
     const targets = (map.data.targets || []).filter(target => targetIsCurrent(target));
     if (targets.length === map.data.targets.length) return;
@@ -444,7 +453,6 @@ onBeforeUnmount(() => {
   disposed = true;
   version++;
   detailController?.abort();
-  clearTimeout(refreshTimer);
   clearInterval(clockTimer);
   clearTimeout(resizeTimer);
   window.removeEventListener('resize', handleResize);

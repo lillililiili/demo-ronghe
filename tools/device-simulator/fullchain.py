@@ -522,7 +522,9 @@ class FullChain:
                     if body['valid_from']>=zone_finish:
                         body['valid_from']=last+1000
                     if body['valid_from']>=zone_finish:
-                        raise ValueError('空域「'+zone['name']+'」今天已下发到结束时间，请把它的结束时间改晚或明天再启动')
+                        when=dt.datetime.fromtimestamp(last/1000,SHANGHAI).strftime('%m月%d日 %H:%M')
+                        raise ValueError('空域「'+zone['name']+'」已经有一条生效时间排在 '+when+' 的下发（或撤销），到了当天结束（23:59）或更晚。'
+                                         '平台要求新的下发必须晚于它，所以现在发不出去。请到「资料输入」里的「空域下发」撤销或改掉那一条，或等到北京时间次日零点之后再开始')
                 result=self.request('zone-'+zone['id'],PREFIX+'/airspaces',body)
             self.manifest['zones'][zone['id']]={'id':result.get('airspace_id'),'revision':int(result.get('revision') or revision),'receipt':result};self.checkpoint()
         if 'observationSourceCount' in self.scene.get('fullchain', {}) and any(t.get('transport')=='normalized' for t in self.scene['targets']):

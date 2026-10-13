@@ -1,5 +1,6 @@
 <script setup>
-import { computed, onUnmounted, watch } from 'vue';
+import { computed, watch } from 'vue';
+import { useRealtimeRefresh } from '@/hooks/useRealtimeRefresh.js';
 import { authUser } from '@/services/auth.js';
 import { maintenanceStateLabel } from '@/pages/flights/deviceMaintenance.js';
 import { deviceReportState, loadDeviceReport, submitDeviceReport } from './deviceReport.js';
@@ -16,11 +17,8 @@ const label = computed(() => state.value.pending ? '正在上报…' : state.val
 const date = value => new Date(value).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
 const reload = () => loadDeviceReport(props.deviceId);
 const submit = () => submitDeviceReport(props.deviceId);
-let timer;
-watch(() => [props.deviceId, authUser.value?.user_id], () => {
-  clearInterval(timer); reload(); timer = setInterval(reload, 5000);
-}, { immediate: true });
-onUnmounted(() => clearInterval(timer));
+watch(() => [props.deviceId, authUser.value?.user_id], reload, { immediate: true });
+useRealtimeRefresh(['device', 'device_state'], () => loadDeviceReport(props.deviceId, { quiet: true }), { minIntervalMs: 2_000 });
 </script>
 
 <template>

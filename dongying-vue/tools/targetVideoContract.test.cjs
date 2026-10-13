@@ -34,7 +34,7 @@ test('video component discards stale responses and clears playback on task chang
   const authSession = vue.ref('session'), permission = vue.ref(true), requests = [], unmounts = [];
   const deviceApi = { targetVideo: id => new Promise((resolve, reject) => requests.push({ id, resolve, reject })) };
   const { shouldRetryRefresh, refreshFailureText } = await retryHelpers();
-  const run = new Function('props', 'deviceApi', 'hasModuleAction', 'targetVideoState', 'computed', 'ref', 'watch', 'onUnmounted', 'authSession', 'shouldRetryRefresh', 'refreshFailureText', source + '\nreturn { video, expanded, refresh, clear };');
+  const run = new Function('props', 'deviceApi', 'hasModuleAction', 'targetVideoState', 'computed', 'ref', 'watch', 'onUnmounted', 'authSession', 'shouldRetryRefresh', 'refreshFailureText', 'const useRealtimeRefresh = () => {};\n' + source + '\nreturn { video, expanded, refresh, clear };');
   const scope = vue.effectScope();
   const instance = scope.run(() => run(props, deviceApi, () => permission.value, targetVideoState, vue.computed, vue.ref, vue.watch, cb => unmounts.push(cb), authSession, shouldRetryRefresh, refreshFailureText));
   const response = (id, task = 'task') => ({ target_id: id, task_id: task, device_id: 'device', command_id: task, status: 'TRACKING', video_status: 'AVAILABLE', stream_id: 'stream', playback_url: '/api/v1/targets/one/video/streams/stream/index.m3u8', simulated: false, playback_type: 'HLS' });
@@ -150,7 +150,7 @@ function componentScript(file) {
   const fs = require('node:fs');
   const source = fs.readFileSync(require('node:path').resolve(__dirname, '../src/components/video/' + file), 'utf8')
     .split('<script setup>')[1].split('</script>')[0];
-  return source.replace(/^import .*;\r?\n/gm, '').replace(/const props = defineProps\([\s\S]*?\r?\n\}\);/, '');
+  return 'const useRealtimeRefresh = () => {};\n' + source.replace(/^import .*;\r?\n/gm, '').replace(/const props = defineProps\([\s\S]*?\r?\n\}\);/, '');
 }
 const viewOnly = asked => (module, action) => { asked.push(`${module}.${action}`); return module === 'devices' && action === 'read'; };
 

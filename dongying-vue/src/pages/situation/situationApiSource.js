@@ -6,7 +6,7 @@ import { airspaceApi } from '@/services/airspaceApi.js';
 import { riskApi } from '@/services/riskApi.js';
 import { handoffApi } from '@/services/handoffApi.js';
 import { mapPool } from '@/services/apiClient.js';
-import { isRealtimeConnected, onDataChange } from '@/services/realtime.js';
+import { onDataChange } from '@/services/realtime.js';
 import { legalityApi } from '@/services/legalityApi.js';
 import { hasPermission } from '@/services/accessControl.js';
 import { authUser } from '@/services/auth.js';
@@ -21,19 +21,20 @@ import {
 
 const FAST_MS = 5_000;
 const SLOW_MS = 60_000;
-const CONNECTED_POLL_MS = 30_000;
 const NUDGE_GAP_MS = 500;
 const MIN_NUDGE_INTERVAL_MS = 1_000;
 // 推送只重读变化的那一组：目标变化只读目标与尾迹，不再连带告警、风险、移送一起重读；
 // 设备资料、计划、空域各自只重读本组。设备在线状态随每次上报变化，最多每 2 秒重读一次设备组。
 const SLOW_SEGMENTS = ['devices', 'flight-plans', 'airspaces', 'fusion-status'];
 const SLOW_TOPIC_SEGMENTS = {
-  device: ['devices'], device_state: ['devices'], plan: ['flight-plans'], airspace: ['airspaces'], '*': SLOW_SEGMENTS
+  device: ['devices'], device_state: ['devices'], plan: ['flight-plans'], airspace: ['airspaces'],
+  fusion: ['fusion-status'], 'time-boundary': ['flight-plans', 'airspaces'], '*': SLOW_SEGMENTS
 };
 const DEVICE_STATE_MIN_MS = 2_000;
 const FAST_SEGMENTS = ['targets', 'alarms', 'risks', 'handoffs'];
 const TOPIC_SEGMENTS = {
-  target: ['targets'], legality: ['targets'], alarm: ['alarms'], risk: ['risks'], punishment: ['handoffs'], '*': FAST_SEGMENTS
+  target: ['targets'], legality: ['targets'], alarm: ['alarms'], risk: ['risks'], punishment: ['handoffs'],
+  'time-boundary': ['risks'], '*': FAST_SEGMENTS
 };
 const RECENT_TRACK_WINDOW_MS = 5 * 60_000;
 /* 尾迹不随每次位置推送整包重下：最多 5 秒重读一次，只要图上目标、只要坐标（slim）；
@@ -88,7 +89,7 @@ function sourceMode(snapshot) {
 }
 
 /**
- * 融合感知页真实数据源。一个串行调度器承载快慢轮询，页面隐藏时完全停表；
+ * 融合感知页真实数据源。SSE 按变化分组串行重读，页面隐藏时完全停表；
  * 任一分段失败只保留该分段最后一次真实结果，不会切回演示数据。
  */
 export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, now = serverNow } = {}) {
@@ -102,7 +103,9 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
   let sourceSelectionGeneration = 0;
   let paused = false;
   let running = false;
-  let lastSlowAt = 0;
+  let boundaryTimer = null;
+  let retryDelay = 0;
+  let boundaryDay = shanghaiDay(now()).from;
   let emit = () => {};
   let report = () => {};
   let unsubscribe = null;
@@ -227,7 +230,10 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
       }, value => { snapshot = { ...snapshot, targets: value }; }, [])
         // 目标一读回就先发布（CDX-P01）：不等同一轮的告警、风险、移送分页读完。当天记录多时那几组要读很久，
         // 等它们读完，刚收到的目标已过了地图有效期，被页面当成过期滤掉。整轮读完后照旧再发布一次。
-        .then(async () => { publish(generatedAt); if (await refreshSelectedSources()) publish(generatedAt); }),
+        .then(async () => {
+          publish(generatedAt);
+          if (selectedSourceTarget) { await refreshSelectedSources(); publish(generatedAt); }
+        }),
       wanted.has('alarms') && retain('alarms', () => allPages(listAlarms, {
         occurred_from: day.from, occurred_to: day.to, sort: 'occurred_at', order: 'desc'
       }), value => { snapshot = { ...snapshot, alarms: toAlarms(value) }; }, []),
@@ -246,24 +252,21 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
     await Promise.all(tasks.filter(Boolean));
   }
 
-  // 返回值：这次是否改动了快照；没有选中目标、已停止或选择已变化时返回 false，调用方不必多发布一次。
   async function refreshSelectedSources() {
     const targetId = selectedSourceTarget;
     const generation = sourceSelectionGeneration;
-    if (!targetId || stopped) return false;
+    if (!targetId || stopped) return;
     try {
       const detail = await targetApi.detail(targetId);
-      if (stopped || generation !== sourceSelectionGeneration || targetId !== selectedSourceTarget) return false;
+      if (stopped || generation !== sourceSelectionGeneration || targetId !== selectedSourceTarget) return;
       snapshot = { ...snapshot, targets: attachTargetSourceLinks(snapshot.targets, targetId, detail) };
-      return true;
     } catch (error) {
-      if (stopped || generation !== sourceSelectionGeneration) return false;
+      if (stopped || generation !== sourceSelectionGeneration) return;
       snapshot = { ...snapshot, targets: snapshot.targets.map(target => target.targetId !== targetId ? target : {
         ...target, sourceLinks: (target.sourceLinks || []).map(link => ({ ...link, fusion_status: 'UNKNOWN',
           contribution_attributes: [], fusion_reason: '融合来源读取失败或无权查看', observation_at: null }))
       }) };
       report(error, '目标融合来源');
-      return true;
     }
   }
 
@@ -315,7 +318,6 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
   let lastDevicesAt = 0;
   function nudge(topics) {
     topics.forEach(topic => {
-      if (topic === 'device_state' && now() - lastDevicesAt < DEVICE_STATE_MIN_MS) return;
       (SLOW_TOPIC_SEGMENTS[topic] || []).forEach(segment => pendingSlowSegments.add(segment));
     });
     topics.forEach(topic => (TOPIC_SEGMENTS[topic] || []).forEach(segment => pendingSegments.add(segment)));
@@ -323,7 +325,8 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
     if (stopped || paused) return;
     if (running) { pendingNudge = true; return; }
     clearTimer();
-    const wait = lastCycleAt + MIN_NUDGE_INTERVAL_MS - Date.now();
+    const deviceOnly = !pendingSegments.size && pendingSlowSegments.size === 1 && pendingSlowSegments.has('devices');
+    const wait = Math.max(lastCycleAt + MIN_NUDGE_INTERVAL_MS - Date.now(), deviceOnly ? lastDevicesAt + DEVICE_STATE_MIN_MS - now() : 0);
     if (wait > 0) timer = globalThis.setTimeout(() => cycle(false, true), wait);
     else void cycle(false, true);
   }
@@ -332,7 +335,7 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
     if (stopped || paused || running) return;
     running = true;
     pendingNudge = false;
-    // 定时兜底的一轮读全部；推送触发的一轮只读变化的分组。
+    // 首屏或手动刷新读全部；推送及断线补读只由公共 SSE 服务触发。
     const segments = nudged ? [...pendingSegments] : FAST_SEGMENTS;
     pendingSegments = new Set();
     lastCycleAt = Date.now();
@@ -341,7 +344,7 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
     if (segments.includes('targets') && !segments.includes('risks') && snapshot.risks.length
       && (generatedAt - lastRisksAt >= RISK_PRESENCE_REFRESH_MS || generatedAt < lastRisksAt)) segments.push('risks');
     try {
-      const fullSlow = forceSlow || generatedAt - lastSlowAt >= slowMs;
+      const fullSlow = forceSlow;
       const slowSegments = fullSlow ? SLOW_SEGMENTS : [...pendingSlowSegments];
       pendingSlowSegments = new Set();
       const needsSlow = slowSegments.length > 0;
@@ -350,7 +353,7 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
       const fast = refreshFast(generatedAt, needsPlans ? segments.filter(name => name !== 'risks') : segments)
         .then(() => publish(generatedAt));
       const slow = needsSlow
-        ? refreshSlow(generatedAt, slowSegments).then(() => { if (fullSlow) lastSlowAt = generatedAt; })
+        ? refreshSlow(generatedAt, slowSegments)
         : Promise.resolve();
       await Promise.all([fast, slow]);
       if (needsPlans) await refreshFast(generatedAt, ['risks']);
@@ -363,14 +366,34 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
     } finally {
       running = false;
       if (!stopped && !paused) {
-        const delay = pendingNudge
-          ? NUDGE_GAP_MS
-          : (typeof isRealtimeConnected === 'function' && isRealtimeConnected()
-            ? Math.max(fastMs, CONNECTED_POLL_MS)
-            : fastMs);
-        timer = globalThis.setTimeout(() => cycle(false, pendingNudge), delay);
+        if (pendingNudge) timer = globalThis.setTimeout(() => cycle(false, true), NUDGE_GAP_MS);
+        else if (failedSegments.size) {
+          // 暂时失败只重试失败的分组，成功后停表。
+          for (const name of failedSegments) {
+            if (FAST_SEGMENTS.includes(name)) pendingSegments.add(name);
+            if (SLOW_SEGMENTS.includes(name)) pendingSlowSegments.add(name);
+            if (name === 'device-events') pendingSlowSegments.add('devices');
+          }
+          retryDelay = Math.min(retryDelay ? retryDelay * 2 : fastMs, 30_000);
+          timer = globalThis.setTimeout(() => cycle(false, true), retryDelay);
+        } else retryDelay = 0;
       }
     }
+  }
+
+  // 有效空域查询只返回当前版本；未来生效、任务起止和跨日可能没有写库。
+  // 只补读这些随时间变化的投影，不再定时扫描目标、设备、告警和移送。
+  function armBoundary() {
+    globalThis.clearTimeout(boundaryTimer);
+    if (stopped || paused) return;
+    const at = now();
+    const deadlines = snapshot.flightPlans.flatMap(plan => [plan.startAt, plan.endAt]).filter(value => value > at);
+    const wait = Math.max(50, Math.min(slowMs, shanghaiDay(at).to - at + 50, ...deadlines.map(value => value - at + 50)));
+    boundaryTimer = globalThis.setTimeout(() => {
+      const day = shanghaiDay(now()).from;
+      nudge(day !== boundaryDay ? ['*'] : ['time-boundary']);
+      boundaryDay = day; armBoundary();
+    }, wait);
   }
 
   function clearTimer() {
@@ -388,15 +411,17 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
       globalThis.addEventListener?.('auth-access-change', accessChanged);
       unsubscribe = onDataChange([...new Set([...Object.keys(TOPIC_SEGMENTS), ...Object.keys(SLOW_TOPIC_SEGMENTS)])], topics => nudge(topics));
       paused = typeof document !== 'undefined' && document.hidden;
-      if (!paused) void cycle(true);
+      if (!paused) { void cycle(true); armBoundary(); }
       return () => api.stop();
     },
-    pause() { paused = true; clearTimer(); },
+    pause() { paused = true; clearTimer(); globalThis.clearTimeout(boundaryTimer); },
     resume() {
       if (stopped) return;
       paused = false;
       clearTimer();
       if (!running) void cycle(true);
+      else nudge(['*']);
+      armBoundary();
     },
     setSourceTarget(targetId) {
       if (selectedSourceTarget !== (targetId || null)) sourceSelectionGeneration += 1;
@@ -404,7 +429,7 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
     },
     stop() {
       selectedSourceTarget = null; sourceSelectionGeneration += 1;
-      stopped = true; paused = false; clearTimer(); unsubscribe?.(); unsubscribe = null;
+      stopped = true; paused = false; clearTimer(); globalThis.clearTimeout(boundaryTimer); unsubscribe?.(); unsubscribe = null;
       globalThis.removeEventListener?.('auth-access-change', accessChanged);
     },
     async refresh() { await cycle(true); },

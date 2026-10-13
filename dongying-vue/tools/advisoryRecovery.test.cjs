@@ -15,8 +15,8 @@ function hookScript() {
     .replace(/^import .*;\r?\n/gm, '').replace('export function useUavAdvisory', 'function useUavAdvisory');
 }
 
-// BUG-07：后台重启、断网时处置进度退避后自己再读，读到后回到原来的间隔；提示说清是暂时读不到，不再叫人“核对是否重复提交”。
-test('disposal progress backs off during an outage and returns to its interval once the backend answers', async () => {
+// BUG-07：后台重启、断网时处置进度退避后自己再读，读到后等待 SSE 更新；提示说清是暂时读不到，不再叫人“核对是否重复提交”。
+test('disposal progress backs off during an outage and waits for SSE once the backend answers', async () => {
   const vue = await import('vue');
   const { shouldRetryRefresh, refreshFailureText } = await retryHelpers();
   const timers = [], mounts = [], unmounts = [];
@@ -35,17 +35,20 @@ test('disposal progress backs off during an outage and returns to its interval o
   const outage = () => Object.assign(new Error('系统暂时无法处理，请稍后查看最新记录；若刚提交过操作，请先核对结果，避免重复提交。'), { code: 'HTTP_ERROR', status: 502 });
   let reply = () => Promise.resolve({ event_id: 'e1', sms: { status: 'SENT' } });
   const updates = [];
+  let onChange;
+  const useRealtimeRefresh = (topics, callback) => { assert.ok(topics.includes('alarm')); onChange = callback; };
   const uavAdvisoryApi = { get: () => reply() };
-  const useUavAdvisory = new Function('onMounted', 'onUnmounted', 'ref', 'watch', 'uavAdvisoryApi', 'shouldRetryRefresh', 'refreshFailureText', 'setTimeout', 'clearTimeout', 'document',
-    hookScript() + '\nreturn useUavAdvisory;')(cb => mounts.push(cb), cb => unmounts.push(cb), vue.ref, vue.watch, uavAdvisoryApi, shouldRetryRefresh, refreshFailureText, fakeSetTimeout, fakeClearTimeout, document);
+  const useUavAdvisory = new Function('onMounted', 'onUnmounted', 'ref', 'watch', 'uavAdvisoryApi', 'shouldRetryRefresh', 'refreshFailureText', 'setTimeout', 'clearTimeout', 'document', 'useRealtimeRefresh',
+    hookScript() + '\nreturn useUavAdvisory;')(cb => mounts.push(cb), cb => unmounts.push(cb), vue.ref, vue.watch, uavAdvisoryApi, shouldRetryRefresh, refreshFailureText, fakeSetTimeout, fakeClearTimeout, document, useRealtimeRefresh);
   const scope = vue.effectScope();
   try {
-    // 态势页卡片每 1 秒读一次。
+    // 处置卡片订阅 SSE，两次变化读取至少间隔 1 秒。
     const { data, error } = scope.run(() => useUavAdvisory(() => 'e1', value => updates.push(value), 1000));
     await flush();
     assert.equal(data.value.sms.status, 'SENT');
     reply = () => Promise.reject(outage());
-    await fire(1000);
+    assert.deepEqual(pending(), [], 'healthy reads do not poll');
+    await onChange(); await flush();
     assert.equal(error.value, '处置记录暂时读不到（服务暂时不可用），正在自动重试。');
     assert.equal(data.value.sms.status, 'SENT', 'last progress stays on screen while the backend is away');
     await fire(2000);
@@ -60,15 +63,25 @@ test('disposal progress backs off during an outage and returns to its interval o
     assert.equal(error.value, '', 'recovered without a click');
     assert.equal(data.value.sms.status, 'DELIVERED');
     assert.equal(updates.length, 2);
-    await fire(1000);
-    // 没有权限、接口不存在不是暂时的：照旧按原间隔读，不退避。
+    assert.deepEqual(pending(), [], 'healthy reads do not poll');
+    await onChange(); await flush();
+    // 没有权限、接口不存在不自行重试；后续变化才重新读取。
     reply = () => Promise.reject(Object.assign(new Error('当前账号没有处置查看权限'), { status: 403 }));
-    await fire(1000);
+    assert.deepEqual(pending(), [], 'healthy reads do not poll');
+    await onChange(); await flush();
     assert.equal(error.value, '当前账号没有处置查看权限');
     reply = () => Promise.reject(Object.assign(new Error('Not Found'), { status: 404 }));
-    await fire(1000);
+    assert.deepEqual(pending(), [], 'healthy reads do not poll');
+    await onChange(); await flush();
     assert.equal(error.value, '处置记录接口暂不可用，请稍后重试。');
-    assert.deepEqual(pending().map(timer => timer.ms), [1000]);
+    assert.deepEqual(pending(), []);
+    assert.equal(data.value, null, 'revoked or missing data is removed');
+    reply = () => Promise.resolve({ event_id: 'e1', notify_phase: 'WATCHING' });
+    await onChange(); await flush();
+    assert.deepEqual(pending().map(timer => timer.ms), [1000], 'observation window retains its business timer');
+    reply = () => Promise.resolve({ event_id: 'e1', notify_phase: 'AWAIT_COUNTER' });
+    await fire(1000);
+    assert.deepEqual(pending(), [], 'observation ends only from the server response, then stops its timer');
   } finally {
     unmounts.splice(0).forEach(cb => cb());
     scope.stop();

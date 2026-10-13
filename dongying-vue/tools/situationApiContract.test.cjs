@@ -225,16 +225,17 @@ async function main() {
   check('选中目标后按内部 device_id 关联来源', (await source.loadTargetDetail('t1')).source_links[0].device_id, 'd0');
 
   failTargets = true;
-  const snapshotsBeforeFailure = snapshots.length;
-  while (snapshots.length === snapshotsBeforeFailure) await delay(5);
+  pushHandler(['target']);
+  const failureStarted = Date.now();
+  while (!errors.some(row => row.segment === 'targets') && Date.now() - failureStarted < 3000) await delay(5);
   ok('目标刷新失败会上报分段错误', errors.some(row => row.segment === 'targets'));
   check('接口失败保留上次真实目标，不回退 mock', snapshots.at(-1).targets.map(row => row.id), ['MB-1']);
-  ok('快轮询禁止目标请求重叠', maxTargetConcurrent === 1);
+  ok('SSE 与失败重试禁止目标请求重叠', maxTargetConcurrent === 1);
 
   source.pause();
   const callsAtPause = targetCalls;
   await delay(50);
-  check('页面隐藏期间停止轮询', targetCalls, callsAtPause);
+  check('页面隐藏期间停止读取', targetCalls, callsAtPause);
   source.resume();
   while (targetCalls === callsAtPause) await delay(5);
   ok('恢复可见后立即刷新', targetCalls > callsAtPause);
@@ -291,11 +292,11 @@ async function main() {
   check('计划变化只读计划资料组',
     await afterPush(['plan'], (a, b) => b.plans > a.plans),
     { targets: 0, devices: 0, alarms: 0, risks: 0, handoffs: 0, plans: 1 });
-  check('设备在线状态刚读过时不重读设备列表',
-    await afterPush(['device_state'], () => false),
-    { targets: 0, devices: 0, alarms: 0, risks: 0, handoffs: 0, plans: 0 });
+  check('设备状态信号保留到节流结束再读取，不能丢掉最后一次变化',
+    await afterPush(['device_state'], (a, b) => b.devices > a.devices),
+    { targets: 0, devices: 2, alarms: 0, risks: 0, handoffs: 0, plans: 0 });
   clock += 11_000;
-  check('设备在线状态 10 秒后再变化才重读设备列表',
+  check('后续设备状态信号仍只读取设备',
     await afterPush(['device_state'], (a, b) => b.devices > a.devices),
     { targets: 0, devices: 2, alarms: 0, risks: 0, handoffs: 0, plans: 0 });
   pushed.stop();
@@ -408,7 +409,7 @@ async function main() {
   const eventsBefore = eventCalls;
   const risksBefore = calls.risks;
   duty.start(value => dutySnapshots.push(value), (error, segment) => dutyErrors.push(segment));
-  while (dutySnapshots.length < 4) await delay(5);
+  while (dutySnapshots.length < 2) await delay(5);
   check('没有设备监测权限时不请求设备事件', eventCalls - eventsBefore, 0);
   check('没有风险权限时不请求风险', calls.risks - risksBefore, 0);
   check('没有权限的分组不报刷新失败', dutyErrors, []);
@@ -419,8 +420,11 @@ async function main() {
   // 后端答复 403（登录后权限被收回）：按没有权限处理，不反复请求、不报刷新失败。
   handoffsForbidden = true;
   const handoffsBefore = calls.handoffs;
-  const shown = dutySnapshots.length;
-  while (dutySnapshots.length < shown + 4) await delay(5);
+  pushHandler(['punishment']);
+  const deniedStarted = Date.now();
+  while (!dutySnapshots.at(-1).deniedSegments.includes('handoffs') && Date.now() - deniedStarted < 3000) await delay(5);
+  pushHandler(['punishment']);
+  await delay(1100);
   check('403 的分组只请求一次', calls.handoffs - handoffsBefore, 1);
   check('403 不报刷新失败', dutyErrors, []);
   check('403 的分组记为没有权限', dutySnapshots.at(-1).deniedSegments, ['risks', 'handoffs', 'device-events']);

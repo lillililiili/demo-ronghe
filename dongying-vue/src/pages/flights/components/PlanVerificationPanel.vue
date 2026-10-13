@@ -2,6 +2,7 @@
 import { userFacingMessage } from '@/ui/labels.js';
 import { computed, onUnmounted, ref, watch } from 'vue';
 import { maintenanceStateLabel, deviceNoticeState } from '@/pages/flights/deviceMaintenance.js';
+import { useRealtimeRefresh } from '@/hooks/useRealtimeRefresh.js';
 import { flightApi } from '@/services/flightApi.js';
 import PlanDeviceCheck from '@/pages/flights/components/PlanDeviceCheck.vue';
 import RecipientSnapshotFields from '@/components/notifications/RecipientSnapshotFields.vue';
@@ -17,7 +18,7 @@ const checkedAt = ref(Date.now());
 const deviceCheck = ref(null);
 async function refreshDevices() { await Promise.all([deviceCheck.value?.reload(), reload(true)]); }
 defineExpose({ refreshDevices });
-let token = 0;
+let token = 0, boundaryTimer;
 const conclusions = { AUTO_DEVICE_ABNORMAL: '系统检测到附近设备异常，是否起飞待确认', SUSPECTED_NOT_TAKEN_OFF: '附近无异常设备，疑似未按任务起飞', CHECK_INCOMPLETE: '是否起飞仍待确认，检查依据见详情', NOT_TAKEN_OFF: '已确认未按任务起飞', DEVICE_ABNORMAL: '已确认监测设备异常，是否起飞还不清楚' };
 const delivery = { PENDING_DELIVERY: '等待发送', SUBMITTED: '已提交发送，等待送达', DELIVERED: '已送达', FAILED: '发送失败' };
 const receipt = { NOT_EXPECTED: '暂不等待对方确认', PENDING: '等待对方确认收到', ACKNOWLEDGED: '对方已确认收到', TIMEOUT: '对方未按时确认收到' };
@@ -71,16 +72,27 @@ async function reload(quiet = false) {
   const current = ++token, id = props.plan.plan_id;
   checkedAt.value = Date.now();
   if (quiet !== true) data.value = null;
-  error.value = ''; errorStatus.value = 0; loading.value = true;
-  try { const result = await flightApi.verifications(id); if (current === token) data.value = result; }
-  catch (reason) { if (current === token) { error.value = reason.message || '核实记录读取失败'; errorStatus.value = reason.status || 0; } }
+  if (quiet !== true) { error.value = ''; errorStatus.value = 0; loading.value = true; }
+  try { const result = await flightApi.verifications(id); if (current === token) { data.value = result; error.value = ''; errorStatus.value = 0; } }
+  catch (reason) { if (current === token) { error.value = reason.message || '核实记录读取失败'; errorStatus.value = reason.status || 0; if ([401,403,404].includes(reason.status)) data.value = null; if (quiet === true) throw reason; } }
   finally { if (current === token) loading.value = false; }
 }
-watch(() => [props.plan.plan_id, props.plan.status_code, props.plan.start_at], () => {
-  reload();
+const realtime = useRealtimeRefresh(['plan', 'plan_check', 'device', 'target'], () => reload(true), { minIntervalMs: 2_000 });
+function armBoundary() {
+  clearTimeout(boundaryTimer);
+  const start = props.plan.start_at == null ? NaN : new Date(props.plan.start_at).getTime();
+  if (Number.isFinite(start) && start > Date.now()) boundaryTimer = setTimeout(() => {
+    checkedAt.value = Date.now();
+    if (start <= checkedAt.value) realtime.trigger(['plan']);
+    else armBoundary();
+  }, Math.min(start - Date.now() + 50, 2_147_483_647));
+}
+watch(() => [props.plan.plan_id, props.plan.status_code, props.plan.start_at], (current, previous) => {
+  if (previous && current[0] === previous[0]) realtime.trigger(['plan']);
+  else void reload().then(() => { if (error.value && ![401,403,404].includes(errorStatus.value)) realtime.trigger(['plan']); });
+  armBoundary();
 }, { immediate: true });
-const refreshTimer = setInterval(() => { if (!loading.value && !document.hidden && ![401,403].includes(errorStatus.value)) reload(true); }, 30000);
-onUnmounted(() => { token++; clearInterval(refreshTimer); });
+onUnmounted(() => { token++; clearTimeout(boundaryTimer); });
 </script>
 
 <template>

@@ -509,6 +509,7 @@ function riskMessageOf(reason, fallback) {
 
 let planListToken = 0;
 let planRefreshTimer = 0;
+let planTimeSignature = null;
 // 最近一次列表读取失败的原因，实时刷新据此判断是否值得退避重试（没有权限、登录失效不重试）。
 let planFailure = null, riskFailure = null;
 async function loadPlans(nextPage = page.value, requestedId = null, { quiet = false } = {}) {
@@ -1758,15 +1759,18 @@ onMounted(() => {
   window.addEventListener('hashchange', syncTabByRoute);
   S.tabHash = '';
   syncTabByRoute();
-  // 只刷新读取结果；不以轮询代替风险研判或触发通知。
+  // 当前风险投影含随时间到期的依据（不一定写库）；保留静默时效核对，不触发研判或通知。
   routeRisksTimer = window.setInterval(() => {
     if (!document.hidden && activeTab.value === 'route' && showRouteRisks.value && !routeRisks.refreshing) {
       loadRouteRisks(selected.value, routeRisks.page, { quiet: true });
     }
   }, 30000);
-  // 上级计划可能在页面打开后才到达；定时只重读列表，不触发任何业务动作。
+  // 新计划由 SSE 到达；这里仅在已读任务跨越起止时刻或北京时间跨日时重读。
   planRefreshTimer = window.setInterval(() => {
-    if (!document.hidden && activeTab.value === 'route') refreshPlans();
+    const now = Date.now();
+    const signature = plans.value.map(plan => `${plan.plan_id}:${Number(plan.start_at) <= now}:${Number(plan.end_at) <= now}`).join('|');
+    if (!document.hidden && activeTab.value === 'route' && planTimeSignature !== null && signature !== planTimeSignature) realtime.trigger(['plan']);
+    planTimeSignature = signature;
     if (!document.hidden && activeTab.value === 'events' && riskKpiDayFrom !== beijingDayWindow().from) loadRiskKpis();
   }, 30000);
 });
@@ -1832,7 +1836,7 @@ async function realtimeRefreshRisks() {
   }
 }
 
-useRealtimeRefresh(['plan', 'airspace', 'risk', 'target'], async topics => {
+const realtime = useRealtimeRefresh(['plan', 'airspace', 'risk', 'target'], async topics => {
   if (activeTab.value === 'events') {
     if (topics.some(topic => ['risk', 'plan', '*'].includes(topic))) await realtimeRefreshRisks();
   } else await realtimeRefreshPlans(topics);

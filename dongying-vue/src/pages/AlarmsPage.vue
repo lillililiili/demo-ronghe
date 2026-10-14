@@ -2,7 +2,7 @@
 /* 模块级状态：跨导航保持（legacy 约定）。
    level/status 映射为服务端契约的 severity/state；kind/region 为类别、区域筛选（阶段 15 契约）；
    sort/order 随列表与导出请求一起发给服务端（阶段 15 契约白名单四个键），页面不做假排序。
-   默认 priority：接收不满 5 分钟的未处理告警置顶（2026-10-05 用户确认），其余未处理在前（等级高、等得久的在前），已处理在后（2026-10-04 用户确认）。 */
+   默认 priority：当前事项、观测过期或未知待确认、历史分组；前两组等级高、同等级新到优先，历史新到优先（2026-10-07 用户确认）。 */
 const S = {
   st: { page: 1, size: 10, level: '全部', status: '全部', kind: '全部', region: '全部', sel: null, selId: null,
     sort: 'priority', order: 'desc' }
@@ -153,7 +153,7 @@ const regionOpts = () => (districtError.value
 
 const LEVEL_OPTS = [{ v: '全部', t: '全部' }, { v: 'CRITICAL', t: '紧急' }, { v: 'HIGH', t: '高' }, { v: 'MEDIUM', t: '中' }, { v: 'LOW', t: '低' }];
 const STATUS_OPTS = [{ v: '全部', t: '全部' }, ...Object.entries(STATUS_FILTER).map(([v, s]) => ({ v, t: s.t }))];
-const pageProgress = {};
+const pageProgress = reactive({});
 const pendingProgress = new Set();
 const progressSources = new Map();
 let progressReadSeq = 0, progressBatchSeq = 0;
@@ -221,11 +221,14 @@ function displayState(a) {
   }
   return { t: `${ALARM_PROGRESS_LABEL[key]}${failed ? '（更新失败）' : ''}`, c: ALARM_PROGRESS_TAG[key] || 't-cyan', color: '#22d3ee' };
 }
+function selectedDisposalProgress() {
+  return pageProgress[cur.alarm?.event_id]
+    || deriveAlarmProgress(Object.values(disposal.byAction), disposal.handoff ? [disposal.handoff] : []);
+}
 function showCounterLaunch() {
   if (advisoryLive.value?.no_counter?.decision_active === true) return false;
   if (advisoryLive.value?.counter_launch_visible !== true || !cur.alarm?.event_id) return false;
-  const key = deriveAlarmProgress(Object.values(disposal.byAction), disposal.handoff ? [disposal.handoff] : [])
-    || pageProgress[cur.alarm.event_id];
+  const key = selectedDisposalProgress();
   return !['COUNTERMEASURE_DONE', 'JAMMING_DONE', 'COUNTER_STOPPED', 'HANDED_OFF'].includes(key);
 }
 function eventHandedOff() {
@@ -233,8 +236,7 @@ function eventHandedOff() {
   if (!eventId) return false;
   const autoHandoff = advisoryLive.value?.auto_handoff;
   if (autoHandoff?.handoff_id && !['FAILED', 'DISABLED', 'BLOCKED', 'WAITING'].includes(autoHandoff.status)) return true;
-  const key = deriveAlarmProgress(Object.values(disposal.byAction), disposal.handoff ? [disposal.handoff] : [])
-    || pageProgress[eventId];
+  const key = selectedDisposalProgress();
   return key === 'HANDED_OFF';
 }
 const typeOf = a => ALARM_TYPE_LABEL[a.alarm_type] || esc(a.alarm_type || '—');
@@ -1365,6 +1367,7 @@ onMounted(async () => {
               <CounterLaunch v-if="advisorySubject" :key="`counter-${advisorySubject.id}`"
                 :event-id="advisorySubject.id" :event-label="advisorySubject.label" :active="activeTab === 'alarms'"
                 :show-launch="showCounterLaunch()" :handed-off="eventHandedOff()" :confirmed="advisorySubject.confirmed" :summary="advisoryLive"
+                :counter-stopped="selectedDisposalProgress() === 'COUNTER_STOPPED'"
                 @decision="updateNoCounter"
                 @records="openAuthorizations" />
               <div id="alDetailActions" class="alarm-observation"></div>
@@ -1463,7 +1466,7 @@ onMounted(async () => {
   }
 }
 .alarm-action-bar { flex:none; display:flex; flex-direction:column; align-items:stretch; gap:10px; margin:0; padding:10px 12px; border-bottom:1px solid var(--line); background:var(--panel); box-shadow:0 4px 12px color-mix(in srgb, var(--bg-1) 22%, transparent); }
-.alarm-action-bar:not(:has(.btn, .tag)) { display:none; }
+.alarm-action-bar:not(:has(.btn, .tag, details)) { display:none; }
 .alarm-observation { order:2; flex:0 0 auto; min-width:0; }
 .alarm-observation:empty { display:none; }
 .alarm-observation:has(.alarm-observation-actions:empty):not(:has(.alarm-action-note)) { display:none; }

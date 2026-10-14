@@ -11,7 +11,7 @@ import NoCounterDecisionModal from './NoCounterDecisionModal.vue';
 import NoCounterBasis from './NoCounterBasis.vue';
 
 const U = window.UI;
-const props = defineProps({ eventId: { type: String, required: true }, eventLabel: String, active: Boolean, confirmed: Boolean, summary: Object, showLaunch: Boolean, handedOff: Boolean, showRecords: { type: Boolean, default: true } });
+const props = defineProps({ eventId: { type: String, required: true }, eventLabel: String, active: Boolean, confirmed: Boolean, summary: Object, showLaunch: Boolean, handedOff: Boolean, counterStopped: Boolean, showRecords: { type: Boolean, default: true } });
 const emit = defineEmits(['records', 'decision']);
 const busy = ref(false);
 const currentSummary = computed(() => props.summary?.event_id === props.eventId ? props.summary : null);
@@ -24,7 +24,7 @@ const launchBlock = computed(() => unavailableReason.value || (currentSummary.va
 const completed = computed(() => noCounter.value?.decision_active === true);
 const time = value => value == null ? '未提供' : new Date(value).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' });
 let generation = 0, mounted = true, feedback = null;
-watch(() => [props.eventId, props.active], () => { ++generation; busy.value = false; feedback?.close(); }, { flush: 'sync' });
+watch(() => [props.eventId, props.active, props.counterStopped], () => { ++generation; busy.value = false; feedback?.close(); }, { flush: 'sync' });
 onUnmounted(() => { mounted = false; ++generation; feedback?.close(); });
 
 function showFeedback(title, message) {
@@ -70,7 +70,7 @@ async function launch() {
 }
 
 async function decideNoCounter() {
-  if (noCounterBlock.value) return;
+  if (props.counterStopped || noCounterBlock.value) return;
   const id = props.eventId, token = readSessionToken(), request = ++generation;
   const isCurrent = () => mounted && props.active && props.eventId === id && request === generation && token === readSessionToken();
   busy.value = true;
@@ -111,8 +111,8 @@ async function decideNoCounter() {
       <p>保留告警与决定记录，继续监测；出现新的风险依据时重新判断。</p>
       <details><summary>查看决定依据</summary><NoCounterBasis :basis="noCounter.decision?.basis" /></details>
     </div>
-    <div v-else-if="confirmed && !handedOff" class="counter-decision is-choice">
-      <div class="counter-choice-actions">
+    <div v-else-if="confirmed && !handedOff && (!counterStopped || noCounter?.decision)" class="counter-decision is-choice">
+      <div v-if="!counterStopped" class="counter-choice-actions">
         <div class="counter-choice-action">
           <p v-if="noCounterBlock" :id="`no-counter-block-${eventId}`" class="counter-action-note">{{ noCounterBlock }}</p>
           <button class="btn no-counter-choice" type="button" :disabled="!!noCounterBlock" :aria-describedby="noCounterBlock ? `no-counter-block-${eventId}` : undefined" :aria-busy="busy" @click="decideNoCounter">无风险不反制</button>

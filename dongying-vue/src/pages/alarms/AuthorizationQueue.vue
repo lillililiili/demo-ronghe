@@ -26,8 +26,8 @@ const rows = ref([]), selected = ref(null), page = ref(1), total = ref(0), statu
 const groupedResults = ref(true);
 const view = ref(props.initialAuthorizationId || props.initialStatus || props.eventId ? 'all' : 'pending');
 const loading = ref(false), error = ref(''), detailError = ref(''), detailLoading = ref(false), loadedAt = ref('');
-const pageSize = ref(20), detailHost = ref(null), emergencyInfo = ref(null);
-const options = [{ label: '全部状态', value: '' }, ...['REQUESTED', 'APPROVED', 'EXECUTING', 'COMPLETED', 'FAILED', 'REJECTED', 'EXPIRED', 'STOPPED', 'CANCELLED'].map(value => ({ value, label: disposalStatusText({ status: value }) }))];
+const pageSize = ref(20), detailHost = ref(null);
+const options = [{ label: '全部状态', value: '' }, ...['REQUESTED', 'APPROVED', 'EXECUTING', 'COMPLETED', 'FAILED', 'REJECTED', 'EXPIRED', 'STOPPED', 'CANCELLED'].map(value => ({ value, label: value === 'STOPPED' ? '反制已中止' : disposalStatusText({ status: value }) }))];
 const selectedSubject = computed(() => selected.value ? subjects.value[subjectKey(selected.value)] : null);
 const actions = { APPROVE: openDisposalApproval, EXECUTE: openDisposalExecution };
 const userId = computed(() => authUser.value?.user_id);
@@ -45,7 +45,8 @@ const executeHint = row => executeBlockedReason(row, userId.value, hasPermission
 const mainLabel = row => row.execution_block_reason ? '查看原因' : ({ APPROVE: '审批', EXECUTE: '执行' }[mainCode(row)] || (row.status === 'FAILED' ? '查看原因' : row.status === 'EXECUTING' && row.channel !== 'MANUAL' ? '查看执行情况' : '查看详情'));
 const modeText = row => row?.authorization_mode === 'DIRECT' ? '免逐次审批' : row?.authorization_mode === 'REVIEW' ? '申请审批' : '方式未知';
 const approverText = row => row?.authorization_mode === 'DIRECT' ? '不适用（免逐次审批）' : (row?.approved_by_name || (row.status === 'REQUESTED' ? '待审批' : '未提供'));
-const statusText = row => row?.status === 'STOPPED' && emergencyInfo.value?.latest_stop && row.subject_id === emergencyInfo.value.event_id
+// 办理状态只按本条授权显示，不随选中项的急停详情读取结果变化；设备反馈在急停面板中保留。
+const statusText = row => row?.status === 'STOPPED' && row.action_type === 'COUNTERMEASURE'
   ? '反制已中止' : disposalStatusText(row);
 const blockReasonText = row => row?.execution_block_reason ? labelOf(DISPOSAL_BLOCK_REASON_LABEL, row.execution_block_reason) : '';
 const subjects = ref({});
@@ -112,12 +113,12 @@ async function load(next = page.value, { quiet = false } = {}) {
     else throw e;
   } finally { if (current()) loading.value = false; }
 }
-function closeDetail() { ++detailRequest; selected.value = null; emergencyInfo.value = null; detailError.value = ''; detailLoading.value = false; }
+function closeDetail() { ++detailRequest; selected.value = null; detailError.value = ''; detailLoading.value = false; }
 function changeView(mode) { closeDetail(); view.value = mode; status.value = ''; load(1); }
 function filterChanged() { closeDetail(); load(1); }
 async function refresh(id, reloadList = true) {
   const seq = ++detailRequest;
-  selected.value = null; emergencyInfo.value = null; detailError.value = ''; detailLoading.value = true;
+  selected.value = null; detailError.value = ''; detailLoading.value = true;
   try {
     const detail = await disposalApi.detail(id);
     if (active && seq === detailRequest) {
@@ -297,7 +298,7 @@ onUnmounted(() => { active = false; request++; detailRequest++; });
               </div>
             </div>
             <EmergencyStopPanel v-if="usesEmergency(selected)" :key="selected.subject_id" :event-id="selected.subject_id"
-              @updated="emergencyInfo = $event" @changed="refreshCurrent" />
+              @changed="refreshCurrent" />
             <details :key="selected.authorization_id" class="authorization-dossier" open>
               <summary>授权资料与办理记录</summary>
               <dl class="detail-facts">

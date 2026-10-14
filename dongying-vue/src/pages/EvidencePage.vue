@@ -94,10 +94,13 @@ async function load() {
   }
   const detail = exact.value ? loadDetail() : null;
   try {
-    const filters = query(), result = await listEvidenceLedger(filters);
+    const filters = query();
+    void statistics.load(filters);
+    const result = await listEvidenceLedger(filters);
     if (!mounted || own !== listSequence) return;
     items.value = result.items || []; totalCount.value = result.total;
-    void statistics.load(filters);
+    // 台账已可用，详情和统计各自显示读取状态，不阻塞整张列表。
+    loading.value = false;
     if (!exact.value) {
       const selected = items.value.find(row => entryKey(row) === selectedKey.value) || items.value[0];
       st.selId = selected?.source_id || null; st.sourceKind = selected?.source_kind || 'FILE';

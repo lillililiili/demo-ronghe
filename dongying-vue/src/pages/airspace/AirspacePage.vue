@@ -67,7 +67,25 @@ const versions = ref([]);
 const detailLoading = ref(false), detailError = ref('');
 const mapHost = ref(null);
 const weatherLayer = ref(null);
-const objectMarkers = ref([]);
+const objectLayer = ref(null);
+// 业务字段仅随数据/选择变化生成，地图移动只更新投影，不能逐帧写入 Vue 状态。
+const objectMarkers = computed(() => (bottomTab.value === 'monitor' ? [
+  ...riskList.targetMapRows.filter(row => row.demo),
+  ...riskList.riskMapRows.filter(row => ['SPACE_OBJECT', 'FOREIGN_OBJECT'].includes(row.risk_type))
+] : []).map(row => {
+  const demo = row.demo;
+  return { id: demo ? row.target_id : row.risk_id, kind: demo ? 'target' : 'risk', point: row.point,
+    active: demo ? monitor.activeId === row.target_id : risks.activeId === row.risk_id,
+    activeRisk: !demo && window.UI.abnormalActive(row),
+    subtype: demo ? row.subtype : row.space_fact?.subtype_code,
+    color: demo ? RISK_COLORS[demo.severity] : riskColor(row),
+    title: demo ? displayTargetNo(row.target_no) : row.space_fact?.subtype_name || displayRiskNo(row.risk_no),
+    note: demo ? `${Math.round(demo.distance)} 米 · ${demo.count}${demo.unit} · 模拟`
+      : `事件位置${row.source_mode === 'mock' ? ' · 模拟' : ''}` };
+}));
+const weatherRisks = computed(() => riskList.rows.map(row => row.risk).filter(Boolean));
+const targetRiskStates = computed(() => new Map(riskList.rows.filter(row => row.target)
+  .map(row => [row.target.target_id, row.activeRisk === true])));
 const referenceTip = ref(null);
 let referenceShapes = [];
 let referenceCamera = '';
@@ -450,17 +468,7 @@ function installOverlay() {
       polygons.forEach(rings => rings.forEach(ring => { ring.forEach(([lon, lat], i) => { const p = this.px(lon, lat); i ? c.lineTo(p[0], p[1]) : c.moveTo(p[0], p[1]); }); c.closePath(); }));
       c.lineWidth = 3; c.strokeStyle = color; c.shadowColor = color; c.shadowBlur = 10; c.stroke(); c.shadowBlur = 0;
     }
-    const markerRows = bottomTab.value === 'monitor' ? [...riskList.targetMapRows.filter(row => row.demo),
-      ...riskList.riskMapRows.filter(row => ['SPACE_OBJECT', 'FOREIGN_OBJECT'].includes(row.risk_type))] : [];
-    objectMarkers.value = markerRows.map(row => {
-      const [x, y] = this.px(...row.point), demo = row.demo;
-      return { id: demo ? row.target_id : row.risk_id, kind: demo ? 'target' : 'risk', x, y, leftward: x > this.w - 200,
-        active: demo ? monitor.activeId === row.target_id : risks.activeId === row.risk_id,
-        activeRisk: !demo && window.UI.abnormalActive(row),
-        subtype: demo ? row.subtype : row.space_fact?.subtype_code,
-        color: demo ? RISK_COLORS[demo.severity] : riskColor(row), title: demo ? displayTargetNo(row.target_no) : row.space_fact?.subtype_name || displayRiskNo(row.risk_no),
-        note: demo ? `${Math.round(demo.distance)} 米 · ${demo.count}${demo.unit} · 模拟` : `事件位置${row.source_mode === 'mock' ? ' · 模拟' : ''}` };
-    }).filter(marker => marker.x >= 0 && marker.y >= 0 && marker.x <= this.w && marker.y <= this.h);
+    objectLayer.value?.draw?.(this);
     // 独立风险只用发生时的可信位置快照；圆点颜色沿用服务端等级，排除项灰显。
     if (bottomTab.value === 'monitor') riskList.riskMapRows.forEach(risk => {
       if (['SPACE_OBJECT', 'FOREIGN_OBJECT', 'WEATHER'].includes(risk.risk_type)) return;
@@ -480,7 +488,7 @@ function installOverlay() {
       const [x, y] = this.px(...target.point);
       const radius = monitor.activeId === target.target_id ? 8 : 5;
       c.save();
-      window.UI.applyAlarmGlow(c, { activeRisk: riskList.rows.find(row => row.target?.target_id === target.target_id)?.activeRisk === true });
+      window.UI.applyAlarmGlow(c, { activeRisk: targetRiskStates.value.get(target.target_id) === true });
       c.fillStyle = ROUTE_COLOR; c.fillRect(x - radius, y - radius, radius * 2, radius * 2);
       c.strokeStyle = '#fff'; c.lineWidth = 2; c.strokeRect(x - radius, y - radius, radius * 2, radius * 2);
       c.restore();
@@ -605,28 +613,12 @@ onUnmounted(() => {
 
 <template>
   <section class="view airspace-page" :class="{ 'has-detail': (riskDetailOpen && riskList.active) || selected }">
-    <!-- 顶部：筛选 + 图层 + 操作 -->
-    <div class="panel airspace-bar">
-      <div class="toolbar">
-        <div class="toolbar-fields">
-          <div class="field"><label>区县</label><UControl v-model="filters.district" type="select" :options="districtOptions" :disabled="loading" size="small" /></div>
-          <div class="field"><label>空域种类</label><UControl v-model="filters.kind" type="select" :options="KIND_OPTIONS" :disabled="loading" size="small" /></div>
-          <div class="field"><label>空域状态</label><UControl v-model="filters.validity" type="select" :options="VALIDITY_OPTIONS" :disabled="loading" size="small" /></div>
-          <div class="field"><UControl v-model="filters.keyword" placeholder="搜索名称或编号" clearable :disabled="loading" size="small" /></div>
-        </div>
-        <div class="toolbar-actions">
-          <span class="toolbar-note">空域规则由上级下发</span>
-          <button class="btn ghost" type="button" :disabled="loading || risks.loading || monitor.loading" @click="refreshPage">刷新</button>
-        </div>
-      </div>
-    </div>
-
     <!-- 中部：地图 + 抽屉 -->
     <div class="airspace-stage"><h3 class="map-heading">空域位置与监测</h3>
       <div class="airspace-map-area" @mousemove="onReferenceMove" @mouseleave="clearReferenceTip" @pointerdown.capture="clearReferenceTip" @wheel.capture="clearReferenceTip">
       <div ref="mapHost" class="airspace-map"></div>
-      <AirspaceObjectMarkers :markers="objectMarkers" @select="selectObjectMarker" />
-      <WeatherRiskMarkers ref="weatherLayer" :risks="riskList.rows.map(row => row.risk).filter(Boolean)" :visible="bottomTab === 'monitor' && risks.showLayer" :selected-id="risks.activeId" control-target="#airspace-weather-control" control-inline @select="viewRisk" />
+      <AirspaceObjectMarkers ref="objectLayer" :markers="objectMarkers" @select="selectObjectMarker" />
+      <WeatherRiskMarkers ref="weatherLayer" :risks="weatherRisks" :visible="bottomTab === 'monitor' && risks.showLayer" :selected-id="risks.activeId" control-target="#airspace-weather-control" control-inline @select="viewRisk" />
       <div v-if="referenceTip" class="airspace-reference-tip" role="tooltip"
         :style="{ left: `${referenceTip.x}px`, top: `${referenceTip.y}px`, width: `${referenceTip.width}px` }">
         <b>{{ referenceTip.name }}</b><span>{{ referenceTip.type }}</span><p>{{ referenceTip.note }}</p>
@@ -728,6 +720,20 @@ onUnmounted(() => {
       <div ref="riskSection" class="unified-risk-section"><AirspaceRiskList :list="riskList" :monitor="monitor" :risks="risks" :selected="selected" @inspect="inspectRiskRow" /></div>
     </section>
     <section v-show="bottomTab === 'rules'" id="airspace-rules-panel" role="tabpanel" aria-labelledby="airspace-rules-tab" class="airspace-tab-content">
+    <div class="panel airspace-bar">
+      <div class="toolbar">
+        <div class="toolbar-fields">
+          <div class="field"><label>区县</label><UControl v-model="filters.district" type="select" :options="districtOptions" :disabled="loading" size="small" /></div>
+          <div class="field"><label>空域种类</label><UControl v-model="filters.kind" type="select" :options="KIND_OPTIONS" :disabled="loading" size="small" /></div>
+          <div class="field"><label>空域状态</label><UControl v-model="filters.validity" type="select" :options="VALIDITY_OPTIONS" :disabled="loading" size="small" /></div>
+          <div class="field"><UControl v-model="filters.keyword" placeholder="搜索名称或编号" clearable :disabled="loading" size="small" /></div>
+        </div>
+        <div class="toolbar-actions">
+          <span class="toolbar-note">空域规则由上级下发</span>
+          <button class="btn ghost" type="button" :disabled="loading || risks.loading || monitor.loading" @click="refreshPage">刷新</button>
+        </div>
+      </div>
+    </div>
     <UPanel :title="`<span class='rule-count count-all'>全部 <b>${counts.total}</b></span><span class='rule-count count-active'>生效中 <b>${counts.active}</b></span><span class='rule-count count-temporary'>临时管制 <b>${counts.temporary}</b></span>`" panel-style="flex:1;min-height:0" nopad class-name="airspace-list-panel">
       <div v-if="refreshError && !error" class="airspace-refresh-note" role="status">自动刷新失败（{{ refreshError }}），正在重试；下面是上次读到的空域。</div>
       <div v-if="error" class="empty">空域列表暂不可用</div>
@@ -758,11 +764,11 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.airspace-page { display: grid; grid-template-columns: minmax(260px, .95fr) minmax(300px, 1.35fr) minmax(280px, 1.1fr); grid-template-rows: auto auto auto minmax(280px, 1fr) auto; grid-template-areas: "bar bar bar" "tabs tabs tabs" "filters filters filters" "records map detail" "import import import"; height: 100%; min-height: 0; min-width: 0; overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable; scrollbar-width: auto; scrollbar-color: auto; gap: 10px; }
+.airspace-page { display: grid; grid-template-columns: minmax(260px, .95fr) minmax(300px, 1.35fr) minmax(280px, 1.1fr); grid-template-rows: auto auto minmax(280px, 1fr) auto; grid-template-areas: "tabs tabs tabs" "filters filters filters" "records map detail" "import import import"; height: 100%; min-height: 0; min-width: 0; overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable; scrollbar-width: auto; scrollbar-color: auto; gap: 10px; }
 .airspace-page::-webkit-scrollbar { width: 10px; }
 .airspace-page::-webkit-scrollbar-track { background: var(--panel-2); }
 .airspace-page::-webkit-scrollbar-thumb { background: var(--txt-3); border: 2px solid var(--panel-2); border-radius: 6px; }
-.airspace-bar { grid-area: bar; min-width: 0; }
+.airspace-bar { grid-area: filters; min-width: 0; }
 .airspace-bar .toolbar { border-bottom: 0; }
 
 /* 参照飞行计划：左侧记录、中间地图、右侧详情，各栏独立滚动。 */
@@ -806,7 +812,8 @@ onUnmounted(() => {
 .airspace-bottom-tabs button.on { color: var(--page-accent); border-bottom-color: var(--page-accent); background: color-mix(in srgb, var(--page-accent) 10%, transparent); }
 .airspace-bottom-tabs span { margin-left: 5px; font-size: 12px; }
 .airspace-tab-content { grid-area: records; display: flex; min-height: 0; min-width: 0; flex-direction: column; overflow: hidden; }
-#airspace-monitor-panel, .unified-risk-section { display: contents; }
+#airspace-monitor-panel, #airspace-rules-panel, .unified-risk-section { display: contents; }
+.airspace-list-panel { grid-area: records; }
 #airspace-rules-panel :deep(.panel) { min-width: 0; }
 .rule-pager { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px; border-top: 1px solid var(--line); font-size: 11px; color: var(--txt-3); }
 .rule-pager .btn { padding: 4px 7px; font-size: 11px; }
@@ -861,11 +868,11 @@ onUnmounted(() => {
 .airspace-import-issue { margin-left: 6px; color: var(--txt-2); font-size: 12.5px; }
 
 @media (max-width: 1200px) {
-  .airspace-page { grid-template-columns: minmax(220px, .9fr) minmax(0, 1.4fr); grid-template-rows: auto auto auto minmax(280px, 1fr) auto auto; grid-template-areas: "bar bar" "tabs tabs" "filters filters" "records map" "detail detail" "import import"; }
+  .airspace-page { grid-template-columns: minmax(220px, .9fr) minmax(0, 1.4fr); grid-template-rows: auto auto minmax(280px, 1fr) auto auto; grid-template-areas: "tabs tabs" "filters filters" "records map" "detail detail" "import import"; }
   .airspace-detail-slot:not(:empty) { min-height: 280px; max-height: 420px; }
 }
 @media (max-width: 720px) {
-  .airspace-page { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto minmax(240px, auto) 320px auto auto; grid-template-areas: "bar" "tabs" "filters" "records" "map" "detail" "import"; }
+  .airspace-page { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(240px, auto) 320px auto auto; grid-template-areas: "tabs" "filters" "records" "map" "detail" "import"; }
   .airspace-page:not(.has-detail) .airspace-stage { grid-column: 1; }
   .airspace-bottom-tabs { flex-wrap: wrap; }
   .drawer-actions { flex-wrap: wrap; }

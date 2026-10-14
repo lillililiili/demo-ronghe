@@ -85,7 +85,7 @@ test('普通申请和直接反制都不再声明自动创建后续干扰', async
 
 test('反制已完成但没有后续干扰时，告警不重新显示发起入口；状态仍来自原授权', () => {
   const source = readFileSync(path.join(__dirname, '../src/pages/AlarmsPage.vue'), 'utf8').replace(/\r\n/g, '\n');
-  const functions = ['deriveAlarmProgress', 'showCounterLaunch'].map(name => source.match(new RegExp(`function ${name}\\([^]*?^}`, 'm'))[0]).join('\n');
+  const functions = ['deriveAlarmProgress', 'selectedDisposalProgress', 'showCounterLaunch'].map(name => source.match(new RegExp(`function ${name}\\([^]*?^}`, 'm'))[0]).join('\n');
   for (const source_mode of ['live', 'mock', 'replay']) {
     const eventId = crypto.randomUUID();
     const cur = { alarm: { event_id: eventId } };

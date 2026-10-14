@@ -27,8 +27,10 @@ class EoObservations:
             for device_key in (target.get('deviceId'), target.get('secondaryDeviceId')):
                 device = self.manifest.get('devices', {}).get(device_key, {})
                 device_ids = {device.get('platform_id'), device.get('fusion_device_id')}-{None}
+                # The registered device's source_id is the operations-layer source; source_links carry the fusion-layer
+                # source. They are two ids by design, so the link is matched by the fusion device the backend already
+                # bound to that source (a link whose device belongs to another source is never returned).
                 if external is not None and any(link.get('device_id') in device_ids
-                        and (not device.get('source_id') or link.get('source_id') == device['source_id'])
                         and str(link.get('external_target_id')) == str(external)
                         and str(link.get('source_mode', '')).lower() == 'replay'
                         for link in detail.get('source_links', [])):

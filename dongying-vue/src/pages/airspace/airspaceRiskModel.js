@@ -54,7 +54,7 @@ export function pointRelation(point, polygons) {
   return boundary ? 'BOUNDARY' : 'OUTSIDE';
 }
 
-export async function loadRiskPages(list, params = {}, isCurrent = () => true) {
+export async function loadRiskPages(list, params = {}, isCurrent = () => true, onPage = () => {}) {
   const rows = [];
   let total = 0;
   for (let page = 1; ; page++) {
@@ -65,6 +65,7 @@ export async function loadRiskPages(list, params = {}, isCurrent = () => true) {
       || (!data.items.length && rows.length < data.total)) throw new Error('风险列表读取不完整，请刷新重试。');
     total = data.total;
     rows.push(...data.items);
+    onPage([...new Map(rows.map(row => [row.risk_id, row])).values()]);
     if (rows.length >= total) break;
   }
   return [...new Map(rows.map(row => [row.risk_id, row])).values()];

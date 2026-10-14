@@ -20,7 +20,6 @@ watch(() => props.list.active?.key, async () => {
     list.scrollBy({ top: itemRect.top - listRect.top });
   }
 });
-const notesOpen = ref(false);
 const filtersOpen = ref(false);
 const filterToggle = ref(null);
 const filterPanel = ref(null);
@@ -58,7 +57,6 @@ function clearFilter(key) {
 function resetFilters() { appliedFilters.value.forEach(item => clearFilter(item.key)); }
 async function toggleFilters() {
   filtersOpen.value = !filtersOpen.value;
-  notesOpen.value = false;
   if (filtersOpen.value) { await nextTick(); filterPanel.value?.focus({ preventScroll: true }); }
 }
 function closeFilters() { filtersOpen.value = false; filterToggle.value?.focus({ preventScroll: true }); }
@@ -103,13 +101,8 @@ function summary(row) {
         <button v-for="item in appliedFilters" :key="item.key" class="filter-chip" type="button" :title="item.text" :aria-label="`移除${item.text}`" @click="clearFilter(item.key)">{{ item.text }}<span aria-hidden="true"> ×</span></button>
         <button class="linkbtn clear-filters" type="button" @click="resetFilters">清空筛选</button>
       </div>
-      <div class="monitor-note-bar">
-        <p v-if="list.unlocated" class="location-warning" role="status"><strong>{{ list.unlocated }} 条</strong>记录缺少有效位置，可查看详情，无法定位。</p>
-        <button class="linkbtn notes-toggle" type="button" :aria-expanded="notesOpen" aria-controls="airspace-monitor-notes" @click="notesOpen = !notesOpen; filtersOpen = false">监测说明 <span>{{ notesOpen ? '收起' : '展开' }}</span></button>
-      </div>
-      <div v-show="notesOpen" id="airspace-monitor-notes" class="monitor-notes">
-        <p>风险位置为发现时快照，监测位置为最近观测；通知与风险解除分别记录。</p>
-        <p v-if="risks.onlySelected && selected">按 {{ selected.name }} 的平面范围筛选（含边界），不直接判定进入管制高度或违规。</p>
+      <div v-if="list.unlocated" class="monitor-note-bar">
+        <p class="location-warning" role="status"><strong>{{ list.unlocated }} 条</strong>记录缺少有效位置，可查看详情，无法定位。</p>
       </div>
     </div>
     <section class="risk-records-panel panel" aria-label="风险与监测记录">
@@ -142,7 +135,7 @@ function summary(row) {
 <style scoped>
 .airspace-risk-list { display: contents; }
 .monitor-controls { grid-area: filters; border: 1px solid var(--line); border-radius: 8px; min-width: 0; position: relative; z-index: 3; flex: none; border-bottom: 1px solid var(--line); background: var(--surface-gradient); }
-.monitor-control-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; padding: 8px 12px; border-bottom: 1px solid var(--line-2); }
+.monitor-control-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; padding: 8px 12px; }
 .monitor-control-head h3 { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--txt); font-size: 14px; white-space: nowrap; }
 .monitor-title-icon { display: flex; color: var(--cyan); }
 .monitor-title-icon :deep(svg) { width: 18px; height: 18px; }
@@ -170,11 +163,6 @@ function summary(row) {
 .monitor-note-bar { display: flex; align-items: center; gap: 12px; min-height: 35px; padding: 5px 14px; border-top: 1px solid var(--line-2); }
 .location-warning { margin: 0; color: var(--amber); font-size: 12px; line-height: 1.6; }
 .location-warning strong { font-weight: 600; }
-.notes-toggle { margin-left: auto; flex: none; }
-.notes-toggle span { margin-left: 6px; font-size: 11px; color: var(--txt-2); }
-.monitor-notes { position: absolute; top: 100%; left: 10px; right: 10px; max-height: 160px; overflow: auto; box-shadow: var(--shadow); padding: 8px 14px; border-top: 1px solid var(--line-2); background: var(--surface-1); color: var(--txt-2); font-size: 12px; line-height: 1.7; }
-.monitor-notes p { margin: 0; }
-.monitor-notes p + p { margin-top: 4px; }
 .list-note { flex: none; padding: 7px 12px; border-bottom: 1px solid var(--line); font-size: 12px; line-height: 1.6; color: var(--txt-3); }
 .risk-records-panel { grid-area: records; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
 .records-head { display: flex; flex: none; justify-content: space-between; padding: 11px 12px; border-bottom: 1px solid var(--line); font-size: 13px; }.records-head span { color: var(--txt-3); }

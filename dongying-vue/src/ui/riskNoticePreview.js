@@ -1,4 +1,5 @@
 import { handoffApi } from '@/services/handoffApi.js';
+import { displayNumberReferences, displayTargetNo } from '@/ui/deviceNumber.js';
 
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const time = value => value == null ? '未提供' : new Date(value).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
@@ -12,8 +13,9 @@ export async function riskNoticePreview(id, version) {
     ['接收单位', r.org_name || r.recipient_name || '未提供'],
     ['接收配置', `${r.setting_id || '未提供'} · 版本 ${r.config_version ?? '未知'} · ${r.channel_type || '未配置'}`],
     ['关联计划', preview.plan_no || m.references?.plan_id || '未关联'],
-    ['关联目标', preview.target_no || m.references?.target_id || '本风险未关联目标'],
-    ['风险', `${m.risk?.reason_text || '未提供'} · 版本 ${preview.source_version}`],
+    // 编号前缀只在显示时去掉（2026-10-09 用户确认），服务端材料和提交内容不变。
+    ['关联目标', displayTargetNo(preview.target_no) || m.references?.target_id || '本风险未关联目标'],
+    ['风险', `${displayNumberReferences(m.risk?.reason_text, [preview.target_no]) || '未提供'} · 版本 ${preview.source_version}`],
     ['核验说明', (m.verifications || []).map(v => v.note).filter(Boolean).join('；') || '尚无核验说明'],
     ['预览时间', `${time(preview.generated_at)}（北京时间）`]
   ];

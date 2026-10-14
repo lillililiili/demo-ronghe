@@ -19,6 +19,7 @@ export function useAirspaceRisks(district, selected) {
   let token = 0;
 
   async function reload({ quiet = false } = {}) {
+    if (quiet && refreshing.value) return;
     const current = ++token;
     const keep = loaded.value;
     loading.value = false;
@@ -26,7 +27,8 @@ export function useAirspaceRisks(district, selected) {
     loading.value = !quiet || !keep;
     refreshing.value = true;
     try {
-      const data = await loadRiskPages(riskApi.listRisks, district.value ? { district_id: district.value } : {}, () => current === token);
+      const data = await loadRiskPages(riskApi.listRisks, district.value ? { district_id: district.value } : {}, () => current === token,
+        pageRows => { if (!keep) rows.value = pageRows; });
       if (current !== token || !data) return;
       rows.value = data;
       loaded.value = true; error.value = ''; errorStatus.value = 0;

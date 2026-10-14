@@ -7,7 +7,8 @@ import { ChevronUpOutline, GitCompareOutline, LocateOutline } from '@vicons/ioni
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import { createSituationApiSource } from '@/pages/situation/situationApiSource.js';
 import { serverNow } from '@/services/serverClock.js';
-import { clockLagText, currentMapSnapshot, deviceGroupState, riskMatchesPlan, SITUATION_DEVICE_TYPE_ORDER, targetClassCounts } from '@/services/situationData.js';
+import { uavNowHtml, uavNowPillHtml, uavNowStatus } from '@/components/disposal/uavNowStatus.js';
+import { clockLagText, currentMapSnapshot, deviceGroupState, riskMatchesPlan, SITUATION_DEVICE_TYPE_ORDER, targetClassCounts, targetIsCurrent } from '@/services/situationData.js';
 import {
   disposalStage, situationAlarmNeedsAttention, situationRouteRiskIsCurrent,
   uavProcessActions, uavProcessStatus
@@ -624,6 +625,7 @@ function renderTargetTip(target, hasAdvisoryCard = false) {
   const sms = notification ? autoSmsView(notification) : null;
   const voice = notification ? autoVoiceView(notification) : null;
   const routeRisk = (target.relatedRisks || []).find(risk => risk.active);
+  const nowStatus = target.objectTypeCode === 'UAV' && alarm ? targetNowStatus(target, notification) : null;
   const sourceNames = devices.value.filter(device => (target.sourceDeviceIds || []).includes(device.fusionDeviceId || device.deviceId))
     .map(device => device.type).join(' / ');
   const summary = alarm?.type || displayNumberReferences(routeRisk?.reasonText, [routeRisk?.targetId, routeRisk?.id]) || '暂无关联异常';
@@ -638,8 +640,9 @@ function renderTargetTip(target, hasAdvisoryCard = false) {
   return `<section class="sit-map-pop sit-map-pop-target${target.newAlert ? ' is-new' : ''}" style="--sensor:${target.objectTypeCode === 'UAV' ? '#2fd06e' : '#72d6ff'}">
     <header><span class="sit-map-pop-icon">${targetIconHtml(target)}</span><span><b>${esc(displayTargetNo(target.id))}</b><small>${esc(target.typeLabel)}</small></span>
       <button type="button" data-tip-act="close" aria-label="关闭目标详情">${U.icon('close')}</button></header>
-    <div class="sit-map-pop-status"><span class="sit-state ${stateClass}">${esc(stateText)}</span><span>${esc(summary)}</span></div>
-    ${alarm ? `<div class="sit-target-alarm-reason" aria-label="告警原因"><span>告警原因</span><strong>${esc(reasonListText(alarm.violationReasons, ruleReasonText) || '未记录具体触发原因')}</strong></div>` : ''}
+    ${nowStatus ? uavNowHtml(nowStatus, { process: [processStatus, summary].filter(Boolean).join(' · ') })
+      : `<div class="sit-map-pop-status"><span class="sit-state ${stateClass}">${esc(stateText)}</span><span>${esc(summary)}</span></div>`}
+    ${alarm ? `<div class="sit-target-alarm-reason" aria-label="告警原因"><span>告警原因（出告警时）</span><strong>${esc(reasonListText(alarm.violationReasons, ruleReasonText) || '未记录具体触发原因')}</strong></div>` : ''}
     <div class="sit-target-metrics"><span><small>高度</small><b>${esc(formatMetric(target.alt, ' m'))}</b></span><span><small>速度</small><b>${esc(formatMetric(target.speed, ' m/s'))}</b></span></div>
     <p>最后上报：${esc(formatClock(target.lastSeenAt))} · ${esc(reportAge(target.lastSeenAt))}</p>
     ${target.timeUntrusted ? `<p class="sit-map-pop-note">数据过期：报文时刻比平台收到时早${esc(clockLagText(target.reportLagMs) || '较多')}，设备时间不准或数据积压，图上位置可能不是当前位置；超过新鲜时限的数据不做合法性判定。平台收到：${esc(formatClock(target.receivedAt))}</p>` : ''}
@@ -691,6 +694,25 @@ function onMapPick(hit) {
   if (hit?.kind === 'target') selectTarget(targets.value.find(target => target.id === hit.data.id));
   if (hit?.kind === 'plan') selectPlan(flightPlans.value.find(plan => plan.id === hit.data.id));
   if (hit?.kind === 'weather') selectWeatherRisk(hit.data);
+}
+
+/** 无人机现在状态：地图上的目标都在有效时限内；通知后的位置判断只有当前选中的事件才读到。 */
+function targetNowStatus(target, notification = null) {
+  return uavNowStatus({
+    current: targetIsCurrent(target, snapshot.value.generatedAt || serverNow()),
+    observedAt: target.observedAt,
+    legalStatus: target.legalitySummary?.legal_status,
+    legalReasons: target.legalitySummary?.violation_reasons,
+    departure: notification?.departure_observation,
+    now: snapshot.value.generatedAt || serverNow(),
+    reasonText: ruleReasonText
+  });
+}
+
+function alarmNowPill(alarm) {
+  const target = targets.value.find(row => row.targetId === alarm.targetInternalId);
+  if (!target || target.objectTypeCode !== 'UAV') return '';
+  return uavNowPillHtml(targetNowStatus(target, alarm.eventId ? advisorySummaries.value[alarm.eventId] : null));
 }
 
 function targetAlarm(target) {
@@ -926,7 +948,7 @@ onUnmounted(() => {
             :aria-label="`查看${displayBusinessNo(alarm.targetId || alarm.id) || '未关联目标告警'}的${alarm.type}，${alarm.eventState === 'PENDING_VERIFICATION' ? '待核实' : '待反制'}`" @click="selectAlarm(alarm)">
             <span class="sit-alert-level">{{ alarm.level }}</span>
             <span class="sit-alert-copy"><b class="mono">{{ displayBusinessNo(alarm.targetId || alarm.id) || '未关联目标告警' }}</b><em>{{ alarm.type }} · {{ alarm.district }}</em></span>
-            <span class="sit-alert-meta"><time class="mono">{{ formatClock(alarm.ts) }}</time><b>{{ alarm.eventState === 'PENDING_VERIFICATION' ? '待核实' : '待反制' }}{{ alarm.isNew ? ' · 新异常' : '' }}</b></span>
+            <span class="sit-alert-meta"><time class="mono">{{ formatClock(alarm.ts) }}</time><b>{{ alarm.eventState === 'PENDING_VERIFICATION' ? '待核实' : '待反制' }}{{ alarm.isNew ? ' · 新异常' : '' }}</b><span v-if="alarmNowPill(alarm)" v-html="alarmNowPill(alarm)"></span></span>
           </button>
         </div>
         <div v-else class="sit-alert-list" role="tabpanel" aria-label="航线风险">

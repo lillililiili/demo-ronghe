@@ -50,6 +50,8 @@ import { hasPermission } from '@/services/accessControl.js';
 import EmergencyStopPanel from '@/components/disposal/EmergencyStopPanel.vue';
 import UavAdvisoryPanel from '@/components/disposal/UavAdvisoryPanel.vue';
 import CounterLaunch from '@/pages/alarms/CounterLaunch.vue';
+import { uavNowHtml, uavNowStatus } from '@/components/disposal/uavNowStatus.js';
+import { serverNow } from '@/services/serverClock.js';
 import TargetTrackingPanel from '@/components/video/TargetTrackingPanel.vue';
 import { uavAdvisoryApi } from '@/services/uavAdvisoryApi.js';
 
@@ -610,6 +612,7 @@ function updateAdvisory(summary) {
   }
   if (!advisoryLive.value || advisoryContent(advisoryLive.value) !== advisoryContent(summary)) advisoryLive.value = summary;
   if (cur.event) cur.event.version = summary.event_version;
+  patchHtml(el('alNow'), alarmNowHtml());
   if (!pageChanged) return;
   paintList();
   paintDetailContent();
@@ -739,6 +742,24 @@ function detailActionsHtml() {
     ${ev?.state === 'PENDING_VERIFICATION' ? '<p class="alarm-action-note">事件事实尚待核实。核实属实后自动发送飞手短信。</p>' : ''}`;
 }
 
+/* 无人机现在状态（2026-10-14）：放在反制按钮上方。是否在时效内以后端 observation_status 为准，
+   通知后的位置判断只是当时的结论，最新研判仍违规时以违规为准。 */
+function alarmNowHtml() {
+  const a = cur.alarm, t = cur.target;
+  if (!a?.event_id || !a.target_id || !a.observation_status || a.attention_group === 'HISTORY') return '';
+  if (t?.object_type_code && t.object_type_code !== 'UAV') return '';
+  const advisory = advisoryLive.value?.event_id === a.event_id ? advisoryLive.value : advisorySummaries.get(a.event_id);
+  return uavNowHtml(uavNowStatus({
+    current: a.observation_status === 'CURRENT',
+    observedAt: t?.latest_state?.observed_at,
+    legalStatus: t?.legality_summary?.legal_status,
+    legalReasons: t?.legality_summary?.violation_reasons,
+    departure: advisory?.departure_observation,
+    now: serverNow(),
+    reasonText: ruleReasonText
+  }));
+}
+
 /* 详情和动作区就地更新：内容没变不动节点，“核实”等按钮在刷新时保持原节点，点得中。 */
 function paintDetailContent() {
   setSubject(videoSubject, cur.alarm ? { targetId: cur.alarm.target_id || '', eventId: cur.alarm.event_id || '', label: noOf(cur.alarm) } : null);
@@ -748,6 +769,7 @@ function paintDetailContent() {
   </section>` : '');
   patchHtml(el('alDetail'), detailHtml());
   patchHtml(el('alDetailActions'), detailActionsHtml());
+  patchHtml(el('alNow'), alarmNowHtml());
 }
 
 let listQueryKey = '';
@@ -1364,6 +1386,7 @@ onMounted(async () => {
           <UPanel title="告警详情与处置" panel-style="flex:1;min-height:0" nopad
             body-style="overflow:hidden;display:flex;flex-direction:column;padding:0">
             <div class="alarm-action-bar">
+              <div id="alNow" class="alarm-now"></div>
               <CounterLaunch v-if="advisorySubject" :key="`counter-${advisorySubject.id}`"
                 :event-id="advisorySubject.id" :event-label="advisorySubject.label" :active="activeTab === 'alarms'"
                 :show-launch="showCounterLaunch()" :handed-off="eventHandedOff()" :confirmed="advisorySubject.confirmed" :summary="advisoryLive"
@@ -1466,7 +1489,9 @@ onMounted(async () => {
   }
 }
 .alarm-action-bar { flex:none; display:flex; flex-direction:column; align-items:stretch; gap:10px; margin:0; padding:10px 12px; border-bottom:1px solid var(--line); background:var(--panel); box-shadow:0 4px 12px color-mix(in srgb, var(--bg-1) 22%, transparent); }
-.alarm-action-bar:not(:has(.btn, .tag, details)) { display:none; }
+.alarm-action-bar:not(:has(.btn, .tag, details, .uav-now)) { display:none; }
+.alarm-now:empty { display:none; }
+.alarm-now :deep(.uav-now) { margin:0; }
 .alarm-observation { order:2; flex:0 0 auto; min-width:0; }
 .alarm-observation:empty { display:none; }
 .alarm-observation:has(.alarm-observation-actions:empty):not(:has(.alarm-action-note)) { display:none; }

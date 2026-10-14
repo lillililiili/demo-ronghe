@@ -4,13 +4,11 @@ import argparse
 import copy
 import json
 import re
-import os
 from pathlib import Path
 import threading
 import time
 import uuid
 import subprocess
-import sys
 from contextlib import nullcontext
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import urlparse, unquote, parse_qs
@@ -24,6 +22,8 @@ from platform_client import Platform, Prerequisites, sql
 from eo_video import EoSimulator, video_config, public_video_config, sanitize_video_error, DEFAULT_VIDEO
 from qa_media import MediaService, load_or_create_credentials
 from realtime_control import RealtimeController, prepare_scene
+from friendly_errors import explain, explain_exception
+from start_check import check as check_before_start, retired_devices, retired_message
 from full_scenario import full_scene, allocate_identities
 import mock_airport
 from fullchain import FullChain
@@ -31,97 +31,11 @@ from protocol_b import ProtocolBResponder
 from mqtt_recovery import CommandSubscriptions
 from device_health import DeviceHealthReporter
 from state_file import atomic_json
+from acceptance_flows import read_acceptance_flows
 from tcp_radar import TcpRadar, MANUAL_PORT
 
 ROOT = Path(__file__).resolve().parent
-ACCEPTANCE_FLOW_OUTPUT_NAME = 'acceptance-flows-1-7-20261008'
-ACCEPTANCE_FLOW_FILES = {
-    'flow-1-auto-disposal.json',
-    'flow-2-after-sms-departure.json',
-    'flow-3-no-filing-direct-disposal.json',
-    'flow-4-operator-false-alarm.json',
-    'flow-5-manual-disposal.json',
-    'flow-6-weather-risk.json',
-    'flow-7-bird-flock.json',
-}
-acceptance_flow_lock = threading.Lock()
 
-
-def acceptance_flow_script():
-    """Find the repository-owned flow generator without accepting a browser path."""
-    configured = os.environ.get('ACCEPTANCE_FLOW_SCRIPT')
-    candidates = [Path(configured)] if configured else []
-    if len(ROOT.parents) > 3:
-        candidates.append(ROOT.parents[3] / 'houtaiguanlii' / 'scripts' / 'prepare_acceptance_flows_1_7.py')
-    candidates.append(Path(r'E:\houtaiguanlii\scripts\prepare_acceptance_flows_1_7.py'))
-    seen = set()
-    for candidate in candidates:
-        if candidate is None:
-            continue
-        candidate = candidate.resolve()
-        if candidate in seen:
-            continue
-        seen.add(candidate)
-        if candidate.is_file():
-            return candidate
-    return None
-
-
-def prepare_acceptance_flows():
-    """Run the fixed seven-flow generator and return the importable scenes."""
-    script = acceptance_flow_script()
-    if script is None:
-        raise ValueError('找不到流程 1-7 数据脚本，请配置 ACCEPTANCE_FLOW_SCRIPT')
-    with acceptance_flow_lock:
-        try:
-            result = subprocess.run(
-                [sys.executable, str(script), '--install', '--force', '--simulator-root', str(ROOT)],
-                cwd=str(script.parents[1]), capture_output=True, text=True,
-                encoding='utf-8', errors='replace', timeout=60,
-            )
-        except subprocess.TimeoutExpired as error:
-            raise ValueError('流程 1-7 数据脚本超过 60 秒未完成') from error
-        if result.returncode != 0:
-            detail = (result.stderr or result.stdout or '未知错误').strip().splitlines()
-            raise ValueError('流程 1-7 数据生成失败：' + detail[-1][:500])
-        try:
-            summary = json.loads(next(line for line in reversed(result.stdout.splitlines()) if line.strip()))
-        except (StopIteration, json.JSONDecodeError) as error:
-            raise ValueError('流程 1-7 数据脚本返回格式无效') from error
-        output = Path(summary.get('output', '')).resolve()
-        scenarios_root = (ROOT / 'scenarios').resolve()
-        try:
-            output.relative_to(scenarios_root)
-        except ValueError as error:
-            raise ValueError('流程脚本输出目录不在模拟器 scenarios 目录内') from error
-        manifest_path = output / 'manifest.json'
-        if not manifest_path.is_file():
-            raise ValueError('流程脚本未生成 manifest.json')
-        manifest = json.loads(read_saved_text(manifest_path))
-        flows = []
-        for item in manifest.get('flows', []):
-            filename = item.get('file') if isinstance(item, dict) else None
-            if filename not in ACCEPTANCE_FLOW_FILES:
-                raise ValueError('流程清单包含未知文件')
-            scene_path = output / filename
-            scene = json.loads(read_saved_text(scene_path))
-            if scene.get('version') != 1 or scene.get('fullchain', {}).get('acceptanceFlow') not in range(1, 8):
-                raise ValueError('流程场景协议校验失败：' + filename)
-            flows.append({
-                'flow': scene['fullchain']['acceptanceFlow'],
-                'file': filename,
-                'name': scene.get('name', filename),
-                'scene': scene,
-                'expectedChecks': scene.get('fullchain', {}).get('expectedChecks', []),
-            })
-        if len(flows) != len(ACCEPTANCE_FLOW_FILES) or {item['flow'] for item in flows} != set(range(1, 8)):
-            raise ValueError('流程清单必须包含流程 1-7 各一条')
-        return {
-            'status': 'READY_FOR_IMPORT',
-            'output': str(output),
-            'filing_fields': summary.get('filing_fields', []),
-            'flows': sorted(flows, key=lambda item: item['flow']),
-        }
 
 def read_saved_text(path):
     """Read UTF-8 batches and the legacy Windows CP936 files without rewriting history."""
@@ -217,7 +131,7 @@ class ExternalBridge:
                     raise
                 return {'owner_org_id': None, 'district_id': None, 'message': '模拟器连接读取失败，请手动选择归属单位与区县'}
         if not broker or not broker.get('owner_org_id') or not broker.get('district_id'):
-            return {'owner_org_id': None, 'district_id': None, 'message': '未找到启用的回放 MQTT 连接 local-lingyun-replay，请手动选择归属单位与区县'}
+            return {'owner_org_id': None, 'district_id': None, 'message': '平台里没有找到启用的本机回放设备数据连接，请手动选择归属单位与区县'}
         return {'owner_org_id': broker['owner_org_id'], 'district_id': broker['district_id'], 'broker_name': broker.get('name')}
 
     def mock_airport(self, create):
@@ -231,6 +145,29 @@ class ExternalBridge:
             if '返回 401' in str(error):
                 self.invalidate(platform)
             raise
+
+    def automation_rules(self):
+        """规则管理里「核实」「反制」两组规则现在开没开，只读，给「选流程」弹框显示。
+
+        自动核实是否发生只看有没有启用的核实规则（一条都没启用就不会自动核实）。规则管理只有后台账号、全部数据范围
+        才读得到，读不到就如实说读不到，不猜。"""
+        with self.lock:
+            platform = self.platform
+        if platform is None: raise ExternalAuthenticationRequired('请先登录现有系统')
+        result = {}
+        for category in ('verify', 'counter'):
+            try:
+                group = platform.call('GET', '/automation-rule-groups/' + category) or {}
+            except ValueError as error:
+                if '返回 401' in str(error):
+                    self.invalidate(platform)
+                    raise
+                result[category] = {'ok': False, 'reason': 'FORBIDDEN' if '返回 403' in str(error) else 'UNAVAILABLE'}
+                continue
+            rules = [rule for rule in group.get('rules') or [] if isinstance(rule, dict)]
+            result[category] = {'ok': True, 'total': len(rules), 'enabled': sum(1 for rule in rules if rule.get('enabled') is True),
+                                'engine': group.get('execution_status'), 'engine_message': group.get('execution_message')}
+        return result
 
     def request(self, command):
         if not isinstance(command, dict): raise ValueError('请求格式无效')
@@ -284,7 +221,7 @@ class Runtime:
         self.lock = self.session.lock
         self.brokers = []; self.broker = None
         self.mqtt_password = ''; self.mqtt_username = ''
-        self.phase = 'IDLE'; self.error = ''; self.batch = None; self.elapsed = 0
+        self.phase = 'IDLE'; self.error = ''; self.error_detail = ''; self.batch = None; self.elapsed = 0
         self.sent = 0; self.logs = []; self.manifest = {}; self.targets = {}; self.scene = {}
         self.source_scene = None
         self.fullchain = None
@@ -335,7 +272,7 @@ class Runtime:
 
     def status(self):
         with self.lock:
-            return {'phase':self.phase, 'error':self.error, 'batch':self.batch, 'elapsed':round(self.elapsed,1),
+            return {'phase':self.phase, 'error':self.error, 'error_detail':self.error_detail, 'batch':self.batch, 'elapsed':round(self.elapsed,1),
                     'duration':self.scene.get('duration',0)*60, 'sent':self.sent, 'logs':copy.deepcopy(self.logs[-80:]),
                     'positions':{k:position(t,self.elapsed) for k,t in self.targets.items()},
                     'notification_observation':self.response.snapshot() if self.response else self.manifest.get('notification_observation', {}),
@@ -387,7 +324,8 @@ class Runtime:
             selected = config.get('broker_id')
             broker = next((b for b in brokers if b['broker_id']==selected),None) if selected else next((b for b in brokers if b['name']=='local-lingyun-replay'), None)
             if not broker:
-                raise ValueError('未找到启用的回放 MQTT 连接，请在后台配置 local-lingyun-replay')
+                raise ValueError('平台里没有找到启用的本机回放设备数据连接（名称 local-lingyun-replay）。'
+                                 '这个连接不能在模拟器里建，后台页面里也建不了，需要开发人员在平台里建好并启用，之后重新登录')
             if broker['host'] not in ('127.0.0.1','localhost'):
                 raise ValueError('当前版本仅连接本机 replay MQTT，避免误发现场环境')
             if updated_video['enabled'] and not updated_video.get('publisher_password'):
@@ -465,19 +403,53 @@ class Runtime:
         with self.realtime.operation_lock if self.realtime else nullcontext():
             return self._start(raw)
 
+    def describe_failure(self, error):
+        """运行失败写给页面的两份文字：给人看的说法，和原来的技术报错（出错时发给开发人员用）。"""
+        friendly, detail = explain_exception(error)
+        friendly = sanitize_video_error(friendly, self.video_config)[:600]
+        detail = sanitize_video_error(detail, self.video_config)[:900] if detail else ''
+        return friendly, detail
+
+    def start_check(self, scene):
+        """页面点“开始模拟”时先问一遍：哪些问题会让这次一定失败（挡住），哪些只是提醒。只读，不向平台发任何东西。"""
+        if not isinstance(scene, dict):
+            raise ValueError('场景格式错误')
+        # 隔离测试场景模式没有实时收发，设置都照原样生效，不存在“正常模式改回去”。
+        config = self.realtime.config if self.realtime else {}
+        can_switch = self.realtime.can_change_mode() if self.realtime else False
+        result = check_before_start(scene, config, int(time.time() * 1000), can_switch_mode=can_switch)
+        result['mode'] = config.get('mode')
+        return result
+
+    def busy_reason(self):
+        """现在不能开始新一轮的原因；能开始返回空。"""
+        with self.lock:
+            if self.phase == 'STOPPING':
+                return '上一轮还在停止，请等几秒再点“开始模拟”'
+            if self.phase in ('PREPARING','RUNNING','PAUSED') or self.thread and self.thread.is_alive():
+                return '已有任务运行中，请先停止它，再开始新的'
+        return ''
+
     def _start(self, raw):
         source_scene = copy.deepcopy(raw)
+        # 平台已停用的设备类型登记不了：开始前就点名挡住，不能等任务、空域、天气都提交了才在登记设备时失败。
+        retired = retired_devices(raw)
+        if retired:
+            raise ValueError(retired_message(retired))
         if self.realtime:
             raw = prepare_scene(raw, self.realtime.config)
         scene, devices, targets, skipped = compile_scene(raw)
         if self.realtime:
             if self.seed.database:
                 raise ValueError('实时收发不使用数据库配套，请通过资料输入接口提交任务与空域')
+            reason = self.busy_reason()
+            if reason:
+                raise ValueError(reason)
             if not raw.get('fullchain', {}).get('enabled'):
                 self.realtime.start(scene)
         with self.lock:
             if self.phase in ('PREPARING','RUNNING','PAUSED','STOPPING') or self.thread and self.thread.is_alive():
-                raise ValueError('已有任务运行中')
+                raise ValueError('上一轮还在停止，请等几秒再点“开始模拟”' if self.phase == 'STOPPING' else '已有任务运行中，请先停止它，再开始新的')
             if not self.platform:
                 raise ExternalAuthenticationRequired('请先登录系统')
             if not self.broker:
@@ -491,7 +463,7 @@ class Runtime:
             (self.data_dir/self.batch).mkdir()
             self.scene, self.targets, self.skipped = scene, targets, skipped
             self.source_scene = source_scene
-            self.elapsed=0; self.sent=0; self.logs=[]; self.snapshot={}; self.error=''; self.response=None
+            self.elapsed=0; self.sent=0; self.logs=[]; self.snapshot={}; self.error=''; self.error_detail=''; self.response=None
             self.next_session_check = 0
             self.mqtt_reconnect_count = 0; self.mqtt_disconnected_at = None; self.last_published_at = None
             self.eo = None; self.eo_status = {}
@@ -576,10 +548,17 @@ class Runtime:
                 info.wait_for_publish(timeout=5)
                 if not info.is_published(): raise ValueError('光电回执 MQTT 确认超时')
                 self.log('EO_RECEIPT', '模拟光电回执已由 Broker 确认', topic=topic, payload=payload)
+            def publish_eo_final(topic, payload):
+                # 暂停和停止时告诉平台“光电跟踪已结束”：此时任务已不在运行中，不能走上面只在运行中才发的 publish_eo。
+                if not self.mqtt_connected: return
+                info = client.publish(topic, json.dumps(payload, ensure_ascii=False), qos=1, retain=False)
+                info.wait_for_publish(timeout=5)
+                if not info.is_published(): raise ValueError('光电回执 MQTT 确认超时')
+                self.log('EO_RECEIPT', '模拟光电回执已由 Broker 确认', topic=topic, payload=payload)
             self.eo = EoSimulator(self.platform, self.manifest, self.video_config, publish_eo, self.log,
                 is_running=lambda: self.phase == 'RUNNING' and not self.cancel.is_set(),
                 observations=EoObservations(self.scene.get('eoObservations'), self.manifest, self.targets,
-                    lambda: self.elapsed))
+                    lambda: self.elapsed), publish_final=publish_eo_final)
             def publish_b(topic, payload):
                 with self.lock:
                     if self.cancel.is_set() or self.phase != 'RUNNING' or not self.mqtt_connected or not subscriptions.ready.is_set():
@@ -612,6 +591,7 @@ class Runtime:
             if not subscriptions.wait_ready(self.cancel):
                 if self.cancel.is_set(): return
                 raise ValueError('MQTT 在订阅确认前断开')
+            self.eo.settle_leftovers()
             with self.lock:
                 if self.cancel.is_set(): return
                 self.phase='RUNNING'
@@ -687,9 +667,10 @@ class Runtime:
                 self.phase=('FAILED' if self.error else 'STOPPED') if self.cancel.is_set() else 'COMPLETED'
             self.log('ERROR' if self.error else 'STOP', self.error or '发送已停止；已有业务记录保留，设备时效由系统判定')
         except Exception as error:
+            friendly, detail = self.describe_failure(error)
             with self.lock:
-                self.phase='FAILED'; self.error=sanitize_video_error(error, self.video_config)[:600]
-            self.log('ERROR',self.error)
+                self.phase='FAILED'; self.error=friendly; self.error_detail=detail
+            self.log('ERROR',self.error,**({'detail':detail} if detail else {}))
         finally:
             if self.protocol_b:
                 self.protocol_b.suspend()
@@ -699,11 +680,27 @@ class Runtime:
             if client:
                 client.disconnect(); client.loop_stop()
             self.mqtt_connected = False
+            self.withdraw_run_airspaces()
             # The notification receiver and command listener outlive the scene; only stop_all
             # ("停止全部收发") or service exit stops them, as the README describes.
             with self.lock:
                 if self.phase in ('STOPPING','PREPARING'): self.phase='STOPPED'
             self.checkpoint()
+
+    def withdraw_run_airspaces(self):
+        """停止、完成、失败都会走到这里：把本批次下发的模拟空域撤回，下一个场景不再受它们影响（清单第 4 条）。"""
+        if not self.fullchain: return
+        try:
+            results = self.fullchain.withdraw_zones()
+        except Exception as error:
+            results = [{'zone': '本批次的空域', 'ok': False, 'error': str(error)}]
+        done = [row['zone'] for row in results if row['ok']]
+        if done: self.log('AIRSPACE_WITHDRAWN', '已撤回本批次下发的模拟空域：' + '、'.join(done))
+        for row in results:
+            if not row['ok']:
+                note = '空域「' + row['zone'] + '」没能撤回，平台上它可能仍然有效：' + row['error']
+                self.log('AIRSPACE_WITHDRAW_FAILED', note)
+                self.fullchain.warn(note)
 
     def control(self, action):
         with self.lock:
@@ -827,6 +824,10 @@ class Handler(SimpleHTTPRequestHandler):
         host=self.headers.get('Host','')
         origin=self.headers.get('Origin')
         return host in expected and (not origin or origin in {'http://'+h for h in expected})
+    def fail(self,error,status=400):
+        """错误统一出口：给页面的是“哪个对象出了什么问题、怎么办”，技术原文放在 detail 里。"""
+        friendly, detail = explain_exception(error)
+        self.respond({'error':friendly,**({'detail':detail} if detail else {})},status)
     def respond(self,value,status=200):
         raw=json.dumps(value,ensure_ascii=False).encode()
         self.send_response(status); self.send_header('Content-Type','application/json; charset=utf-8'); self.send_header('Cache-Control','no-store'); self.send_header('Content-Length',str(len(raw))); self.end_headers(); self.wfile.write(raw)
@@ -862,12 +863,22 @@ class Handler(SimpleHTTPRequestHandler):
             try:
                 return self.respond(external_bridge.connection_scope())
             except ValueError as error:
-                return self.respond({'error': str(error)}, 401 if isinstance(error, ExternalAuthenticationRequired) or '返回 401' in str(error) else 400)
+                return self.fail(error, 401 if isinstance(error, ExternalAuthenticationRequired) or '返回 401' in str(error) else 400)
         if self.path=='/api/external/mock-airport':
             try:
                 return self.respond(external_bridge.mock_airport(False))
             except ValueError as error:
-                return self.respond({'error': str(error)}, 401 if isinstance(error, ExternalAuthenticationRequired) or '返回 401' in str(error) else 400)
+                return self.fail(error, 401 if isinstance(error, ExternalAuthenticationRequired) or '返回 401' in str(error) else 400)
+        if self.path=='/api/external/automation-rules':
+            try:
+                return self.respond(external_bridge.automation_rules())
+            except ValueError as error:
+                return self.fail(error, 401 if isinstance(error, ExternalAuthenticationRequired) or '返回 401' in str(error) else 400)
+        if self.path=='/api/acceptance-flows-1-7':
+            try:
+                return self.respond(read_acceptance_flows(ROOT))
+            except ValueError as error:
+                return self.fail(error, 400)
         if urlparse(self.path).path == '/api/external/evidence':
             params = parse_qs(urlparse(self.path).query)
             try:
@@ -882,14 +893,14 @@ class Handler(SimpleHTTPRequestHandler):
                 self.end_headers()
                 return self.wfile.write(content)
             except ValueError as error:
-                return self.respond({'error': str(error)}, 401 if isinstance(error, ExternalAuthenticationRequired) or '返回 401' in str(error) else 400)
+                return self.fail(error, 401 if isinstance(error, ExternalAuthenticationRequired) or '返回 401' in str(error) else 400)
         if urlparse(self.path).path == '/api/external/inbox':
             params = parse_qs(urlparse(self.path).query)
             try:
                 if set(params) - {'kind', 'page'}: raise ValueError('通知查询参数无效')
                 return self.respond(external_bridge.inbox(params.get('kind', ['risk'])[0], int(params.get('page', ['1'])[0])))
             except ValueError as error:
-                return self.respond({'error': str(error)}, 401 if isinstance(error, ExternalAuthenticationRequired) or '返回 401' in str(error) else 400)
+                return self.fail(error, 401 if isinstance(error, ExternalAuthenticationRequired) or '返回 401' in str(error) else 400)
 
         if self.path=='/api/tcp-radar/manual/status': return self.respond(runtime.manual_tcp_radar.snapshot())
         if self.path=='/api/tcp-radar/status': return self.respond(runtime.tcp_radar.snapshot())
@@ -903,7 +914,7 @@ class Handler(SimpleHTTPRequestHandler):
                 realtime = runtime.require_realtime()
                 return self.respond(realtime.snapshot() if self.path.endswith('/status') else realtime.config)
             except ValueError as error:
-                return self.respond({'error': str(error)}, 409)
+                return self.fail(error, 409)
         if self.path=='/api/export':
             data={**runtime.status(),'scene':runtime.scene}
             return self.respond(data)
@@ -928,11 +939,8 @@ class Handler(SimpleHTTPRequestHandler):
             elif self.path=='/api/tcp-radar/manual/stop': result=runtime.manual_tcp_radar.stop()
             elif self.path=='/api/tcp-radar/start': result=runtime.tcp_radar.start(body)
             elif self.path=='/api/tcp-radar/stop': result=runtime.tcp_radar.stop()
-            elif self.path=='/api/acceptance-flows-1-7':
-                if runtime.phase in ('PREPARING', 'RUNNING', 'PAUSED', 'STOPPING'):
-                    raise ValueError('请先停止当前任务，再生成流程 1-7 数据')
-                result=prepare_acceptance_flows()
             elif self.path=='/api/start': result=runtime.start(body)
+            elif self.path=='/api/start-check': result=runtime.start_check(body)
             elif self.path=='/api/full-scene': result=full_scene(body.get('categories'))
             elif self.path=='/api/control': result=runtime.control(body['action'])
             elif self.path=='/api/verify': result=runtime.verify()
@@ -945,7 +953,7 @@ class Handler(SimpleHTTPRequestHandler):
             else: return self.respond({'error':'接口不存在'},404)
             self.respond(result)
         except (ValueError,KeyError,TypeError) as error:
-            self.respond({'error':str(error)},401 if self.path.startswith('/api/external/') and (isinstance(error, ExternalAuthenticationRequired) or '返回 401' in str(error)) else 400)
+            self.fail(error,401 if self.path.startswith('/api/external/') and (isinstance(error, ExternalAuthenticationRequired) or '返回 401' in str(error)) else 400)
         except Exception:
             self.respond({'error':'操作失败，请检查模拟器服务配置'},500)
 

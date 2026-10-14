@@ -1,5 +1,5 @@
 <script>
-const S = { st: { page: 1, size: 10, kind: '', status: '', custody: '', refKind: '', kw: '', selId: null, sourceKind: 'FILE' } };
+const S = { st: { page: 1, size: 10, kind: '', status: '', custody: '', refKind: '', kw: '', time: '', timeRange: null, selId: null, sourceKind: 'FILE' } };
 export default {};
 </script>
 <script setup>
@@ -24,6 +24,7 @@ import { destroyEvidenceFile, downloadEvidenceContent, getEvidenceFile, holdEvid
   verifyEvidenceFile, listEvidenceLedger, getEvidenceRecord, getEvidenceLedgerStatistics, exportEvidenceLedger } from '@/services/evidenceApi.js';
 import { EVIDENCE_CUSTODY_LABEL, EVIDENCE_STATUS_LABEL, EVIDENCE_SUBJECT_LABEL, labelOf } from '@/ui/labels.js';
 import { EVIDENCE_CATEGORY_LABEL, COMMAND_STATE_LABEL, COMMAND_TYPE_LABEL, entryKey, evidenceRecordQuery, evidenceSubjectLocation } from '@/services/evidenceLedger.js';
+import { TIME_FILTER_OPTIONS, customRangeValid, timeFilterWindow } from '@/services/timeFilter.js';
 import { renderEvidenceFileDetail, saveEvidenceBlob, sizeText, fmtEvidenceTime } from '@/ui/evidenceFileDetail.js';
 const U = window.UI;
 usePageChrome('evidence');
@@ -54,8 +55,13 @@ function stateLabel(row) { return row.source_kind === 'COMMAND' ? row.status ===
 function name(row) { return row.source_kind === 'COMMAND' ? COMMAND_TYPE_LABEL[row.original_name] || row.original_name : row.source_kind === 'TRACK' ? `目标 ${displayTargetNo(row.original_name)} 的轨迹` : row.original_name; }
 function shape(row) { return row.source_kind === 'TRACK' ? ({ RAW: '原始观测', FUSED: '融合轨迹' }[row.layer] || '分层未记录') : row.kind_code === 'TRACK_SNAPSHOT' ? '已保存快照' : row.kind_code === 'COMMAND_LOG' ? '历史日志文件' : ''; }
 function context() { return hasContext.value ? { subject_kind: text(route.query.subjectKind), subject_id: text(route.query.subjectId) } : {}; }
+/* 时间筛选（2026-10-14）：按证据产生时间（列表“发生时刻”）、北京时间筛；列表、统计、导出同参。 */
+function timeQuery() {
+  const span = timeFilterWindow(st.time, st.timeRange);
+  return span ? { occurred_from: span.from, occurred_to: span.to } : {};
+}
 function query() {
-  return { page: st.page, size: st.size, ...(st.kind ? { category: st.kind } : {}), ...(st.status ? { status: st.status } : {}),
+  return { page: st.page, size: st.size, ...timeQuery(), ...(st.kind ? { category: st.kind } : {}), ...(st.status ? { status: st.status } : {}),
     ...(st.custody ? { custody: st.custody } : {}), ...(st.refKind ? { subject_kind: st.refKind } : {}), ...(st.kw ? { q: st.kw } : {}), ...context() };
 }
 function clearDetail() { detailSequence += 1; detailRow.value = null; recordDetail.value = null; detailLoading.value = false; detailError.value = ''; }
@@ -144,13 +150,14 @@ async function syncLocation() {
 }
 function filterChanged() { st.page = 1; load(); }
 function typeChanged() { st.status = ''; st.custody = ''; filterChanged(); }
+function timeChanged() { if (st.time === 'CUSTOM' && !customRangeValid(st.timeRange)) return; filterChanged(); }
 function keywordChanged() { clearTimeout(keywordTimer); keywordTimer = setTimeout(filterChanged, 250); }
 function select(row) {
   closeModal();
   if (exact.value) { const { file, track, command, ...rest } = route.query; router.replace({ path: '/evidence', query: evidenceRecordQuery(row, rest) }); return; }
   st.selId = row.source_id; st.sourceKind = row.source_kind; loadDetail();
 }
-function returnToLedger() { st.kind = ''; st.refKind = ''; st.status = ''; st.custody = ''; st.page = 1; router.replace({ path: '/evidence' }); }
+function returnToLedger() { st.kind = ''; st.refKind = ''; st.status = ''; st.custody = ''; st.time = ''; st.timeRange = null; st.page = 1; router.replace({ path: '/evidence' }); }
 function accessChanged() { listSequence += 1; clearDetail(); items.value = []; totalCount.value = 0; loading.value = false; error.value = '访问权限已变化，请重新读取'; statistics.fail(error.value); closeModal(); }
 function onPage(p) { st.page = p; load(); }
 function onPageSize(size) { st.size = size; st.page = 1; load(); }
@@ -280,6 +287,8 @@ onBeforeUnmount(() => { mounted = false; listSequence += 1; detailSequence += 1;
           <UField v-if="st.kind !== 'COMMAND'" id="evidence-status" v-model="st.status" label="文件状态" type="select" variant="filter" :options="STATUS_OPTS" @update:model-value="filterChanged" />
           <UField v-if="st.kind !== 'COMMAND'" id="evidence-custody" v-model="st.custody" label="保管状态" type="select" variant="filter" :options="CUSTODY_OPTS" @update:model-value="filterChanged" />
           <UField v-if="!hasContext" id="evidence-subject" v-model="st.refKind" label="关联对象" type="select" variant="filter" :options="REF_OPTS" @update:model-value="filterChanged" />
+          <UField id="evidence-time" v-model="st.time" label="时间" type="select" variant="filter" :options="TIME_FILTER_OPTIONS" @update:model-value="timeChanged" />
+          <UField v-if="st.time === 'CUSTOM'" id="evidence-time-range" v-model="st.timeRange" class="evidence-time-range" label="自定义起止（北京时间）" type="datetimerange" variant="filter" clearable start-placeholder="开始时间" end-placeholder="结束时间" @update:model-value="filterChanged" />
           <UField id="evidence-keyword" v-model="st.kw" class="evidence-search" label="查找记录" variant="filter" placeholder="编号 / 名称" @update:model-value="keywordChanged" />
           <template #actions><button class="btn" :disabled="loading || !!error" @click="doExport">导出 CSV</button></template>
         </UFilterBar>
@@ -312,6 +321,7 @@ onBeforeUnmount(() => { mounted = false; listSequence += 1; detailSequence += 1;
 <style scoped>
 .evidence-filters { --filter-field-width: 128px; }
 .evidence-search { --filter-field-width: 192px; }
+.evidence-time-range { --filter-field-width: 360px; }
 .evidence-list .tb { table-layout: fixed; width: 100%; min-width:740px; }
 .evidence-list .tb td { white-space: normal; overflow-wrap: anywhere; }
 .evidence-list .tb .evidence-occurred-at { white-space: nowrap; font-weight: 400; }

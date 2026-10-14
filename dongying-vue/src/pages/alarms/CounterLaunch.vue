@@ -111,9 +111,9 @@ async function decideNoCounter() {
       <p>保留告警与决定记录，继续监测；出现新的风险依据时重新判断。</p>
       <details><summary>查看决定依据</summary><NoCounterBasis :basis="noCounter.decision?.basis" /></details>
     </div>
-    <div v-else-if="confirmed && !handedOff && (!counterStopped || noCounter?.decision)" class="counter-decision is-choice">
-      <div v-if="!counterStopped" class="counter-choice-actions">
-        <div class="counter-choice-action">
+    <div v-else-if="confirmed && !handedOff && (!counterStopped || showLaunch || noCounter?.decision)" class="counter-decision is-choice">
+      <div v-if="!counterStopped || showLaunch" class="counter-choice-actions">
+        <div v-if="!counterStopped" class="counter-choice-action">
           <p v-if="noCounterBlock" :id="`no-counter-block-${eventId}`" class="counter-action-note">{{ noCounterBlock }}</p>
           <button class="btn no-counter-choice" type="button" :disabled="!!noCounterBlock" :aria-describedby="noCounterBlock ? `no-counter-block-${eventId}` : undefined" :aria-busy="busy" @click="decideNoCounter">无风险不反制</button>
         </div>

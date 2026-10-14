@@ -229,7 +229,8 @@ function showCounterLaunch() {
   if (advisoryLive.value?.no_counter?.decision_active === true) return false;
   if (advisoryLive.value?.counter_launch_visible !== true || !cur.alarm?.event_id) return false;
   const key = selectedDisposalProgress();
-  return !['COUNTERMEASURE_DONE', 'JAMMING_DONE', 'COUNTER_STOPPED', 'HANDED_OFF'].includes(key);
+  // 2026-10-14 起急停后马上能再申请、再执行反制：“反制已中止”不再收起发起反制，是否可点仍按后端资格。
+  return !['COUNTERMEASURE_DONE', 'JAMMING_DONE', 'HANDED_OFF'].includes(key);
 }
 function eventHandedOff() {
   const eventId = cur.alarm?.event_id;

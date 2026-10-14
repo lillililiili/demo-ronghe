@@ -483,7 +483,7 @@ async function loadKpis() {
   kpiList.value = [
     todayKpi(KPI_DEFS[0], 0, '北京时间今天发生的告警数量；发生时间未知者不计'),
     todayKpi(KPI_DEFS[1], 1, '北京时间今天发生且待人工核实的告警数量'),
-    { ...KPI_DEFS[2], value: num(v[7]), desc: fail(7) || '已核实属实、处置还没结束的告警数量，不限日期；正在反制、干扰或急停核查中的也算在内，设备反制或干扰完成后不再计入' },
+    { ...KPI_DEFS[2], value: num(v[7]), desc: fail(7) || '已核实属实、处置还没结束的告警数量，不限日期；正在反制或干扰中的也算在内，设备反制或干扰完成后不再计入' },
     disposalKpi(KPI_DEFS[3], r[4], v[4]),
     disposalKpi(KPI_DEFS[4], r[6], v[6]),
     disposalKpi(KPI_DEFS[5], r[5], v[5]),

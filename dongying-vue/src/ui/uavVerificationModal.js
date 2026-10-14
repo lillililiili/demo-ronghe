@@ -70,12 +70,12 @@ export function openUavVerification({ event, alarm, refresh, onDone } = {}) {
         { value: 'CONFIRMED', label: basis.blocked ? '属实（缺少依据，暂不能选）' : '属实（置为“告警已确认”）', disabled: basis.blocked },
         { value: 'FALSE_POSITIVE', label: '误报（终态）' }
       ] },
-      { key: 'note', label: '核实依据与说明', type: 'textarea', required: true, placeholder: '填写已查看的证据及判断理由；误报时说明原识别或关联为何不成立', maxlength: 1000 }
+      { key: 'note', label: '核实依据与说明（选填）', type: 'textarea', placeholder: '可填写已查看的证据及判断理由；误报时可说明原识别或关联为何不成立', maxlength: 1000 }
     ],
     // 缺依据时不预选结论，由核实人明确选择误报。
     initial: basis.blocked ? {} : { conclusion: 'CONFIRMED' },
     validate: ({ conclusion, note }) => basis.blocked && conclusion === 'CONFIRMED' ? '缺少依据，不能核实为属实。'
-      : !String(note || '').trim() ? '请填写已查看的证据与核实理由。' : String(note).trim().length > 1000 ? '核实说明不能超过1000字。' : '',
+      : String(note || '').trim().length > 1000 ? '核实说明不能超过1000字。' : '',
     confirmText: '提交核实结论',
     onSubmit: async ({ conclusion, note }) => {
       const key = pendingKeys.get(eventId);

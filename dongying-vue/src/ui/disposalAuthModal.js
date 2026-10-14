@@ -249,7 +249,8 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
         placeholder: '请选择执行设备',
         options: model => deviceOptions(devices, model.channel),
         help: deviceHelp, required: true },
-      { key: 'reason', label: direct ? '直接反制事由' : '申请事由', type: 'textarea', required: true, minRows: 3, placeholder: '2–500 字：依据当前观测与研判，说明本次处置事由' }
+      { key: 'reason', label: direct ? '直接反制事由' : '申请事由', type: 'textarea', required: !direct, minRows: 3,
+        placeholder: direct ? '选填；如需补充事由，请填写 2–500 字' : '2–500 字：依据当前观测与研判，说明本次处置事由' }
     ],
     initial: { action_type: actionType, channel: 'LINGYUN_B', device_id: null, reason: initialReason },
     confirmText: direct ? '确认直接反制' : '提交申请',
@@ -257,7 +258,9 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
     validate: m => {
       if (!isCurrent()) return '事件已切换，请关闭后从当前事件重新申请';
       const reason = String(m.reason || '').trim();
-      if (reason.length < 2 || reason.length > 500) return `申请事由需为 2–500 字，当前 ${reason.length} 字；请核对并调整。`;
+      if ((!direct || reason.length > 0) && (reason.length < 2 || reason.length > 500)) {
+        return `${direct ? '直接反制事由填写时' : '申请事由'}需为 2–500 字，当前 ${reason.length} 字；请核对并调整。`;
+      }
       // 服务端要求：经设备执行的处置必须指定设备。这里先拦，免得填完事由才被打回。
       if (!['LINGYUN_B', 'COUNTERMEASURE_4CH'].includes(m.channel)) return '仅支持设备执行';
       const matched = devicesForChannel(devices, m.channel);
@@ -277,7 +280,7 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
         const body = {
           action_type: chosen || actionType, subject_kind: subjectKind, subject_id: subjectId,
           channel, device_id: String(deviceId || '').trim(),
-          reason: String(reason).trim()
+          reason: String(reason || '').trim()
         };
         return customSubmit ? customSubmit(body, key) : direct ? disposalApi.directExecute(body, key) : disposalApi.create(body, key);
       },

@@ -1,0 +1,549 @@
+{
+  "version": 1,
+  "name": "全量类型核查",
+  "duration": 2,
+  "sites": [
+    {
+      "id": "s-main",
+      "name": "无人机探测组",
+      "x": 420,
+      "y": 292,
+      "devices": [
+        {
+          "id": "main-radar",
+          "name": "全量·无人机演示雷达",
+          "kind": "radar",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2
+        },
+        {
+          "id": "main-tdoa",
+          "name": "全量·无人机身份演示TDOA",
+          "kind": "tdoa",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2
+        },
+        {
+          "id": "all-5ga",
+          "name": "全量·5G-A",
+          "kind": "5ga",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2
+        },
+        {
+          "id": "all-eo",
+          "name": "全量·光电",
+          "kind": "eo",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2
+        },
+        {
+          "id": "all-weather",
+          "name": "全量·气象站",
+          "kind": "weather",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2
+        },
+        {
+          "id": "all-5da",
+          "name": "全量·5D-A",
+          "kind": "5da",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2
+        }
+      ]
+    },
+    {
+      "id": "s-bird",
+      "name": "航线风险探测组",
+      "x": 480,
+      "y": 360,
+      "devices": [
+        {
+          "id": "bird-radar",
+          "name": "全量·鸟群演示雷达",
+          "kind": "radar",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2
+        },
+        {
+          "id": "d-mv3jgu43-ig757",
+          "kind": "eo",
+          "name": "光电 01",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 5
+        },
+        {
+          "id": "d-mv3jh14t-a47uw",
+          "kind": "tdoa",
+          "name": "TDOA 01",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 5
+        }
+      ]
+    },
+    {
+      "id": "s-fault",
+      "name": "独立设备故障组",
+      "x": 520,
+      "y": 360,
+      "devices": [
+        {
+          "id": "fault-radar",
+          "name": "全量·故障恢复演示雷达",
+          "kind": "radar",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2
+        },
+        {
+          "id": "offline-tdoa",
+          "name": "全量·离线演示TDOA",
+          "kind": "tdoa",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2
+        }
+      ]
+    }
+  ],
+  "plans": [
+    {
+      "id": "ql6-deviation-plan",
+      "name": "全量·01 巡检计划·先沿线后偏离",
+      "points": [
+        [
+          390,
+          276
+        ],
+        [
+          402,
+          276
+        ],
+        [
+          420,
+          276
+        ]
+      ],
+      "min": 20,
+      "max": 120,
+      "width": 100,
+      "start": "00:00",
+      "end": "23:59",
+      "altitudeDatum": "AGL"
+    },
+    {
+      "id": "ql6-zone-plan",
+      "name": "全量·02 禁飞区闯入关联计划",
+      "points": [
+        [
+          470,
+          276
+        ],
+        [
+          500,
+          276
+        ],
+        [
+          506,
+          288
+        ]
+      ],
+      "min": 20,
+      "max": 120,
+      "width": 100,
+      "start": "00:00",
+      "end": "23:59",
+      "altitudeDatum": "AGL"
+    },
+    {
+      "id": "ql6-bird-plan",
+      "name": "全量·04 鸟群影响计划",
+      "points": [
+        [
+          450,
+          350
+        ],
+        [
+          490,
+          350
+        ],
+        [
+          500,
+          350
+        ]
+      ],
+      "min": 20,
+      "max": 120,
+      "width": 100,
+      "start": "00:00",
+      "end": "23:59",
+      "altitudeDatum": "AGL"
+    },
+    {
+      "id": "ql6-time-plan",
+      "name": "全量·06 超出计划时段计划",
+      "points": [
+        [
+          390,
+          336
+        ],
+        [
+          402,
+          336
+        ],
+        [
+          420,
+          336
+        ]
+      ],
+      "min": 20,
+      "max": 120,
+      "width": 100,
+      "start": "00:00",
+      "end": "23:59",
+      "altitudeDatum": "AGL"
+    },
+    {
+      "id": "ql6-height-plan",
+      "name": "全量·07 超高计划",
+      "points": [
+        [
+          440,
+          300
+        ],
+        [
+          452,
+          300
+        ],
+        [
+          462,
+          300
+        ]
+      ],
+      "min": 20,
+      "max": 120,
+      "width": 100,
+      "start": "00:00",
+      "end": "23:59",
+      "altitudeDatum": "AGL"
+    }
+  ],
+  "zones": [
+    {
+      "id": "ql6-restricted-zone",
+      "name": "全量·02 演示禁飞区",
+      "points": [
+        [
+          476,
+          268
+        ],
+        [
+          516,
+          268
+        ],
+        [
+          516,
+          296
+        ],
+        [
+          476,
+          296
+        ]
+      ],
+      "max": 120,
+      "altitudeDatum": "AGL",
+      "start": "00:00",
+      "end": "23:59",
+      "kindCode": "PROHIBITED"
+    }
+  ],
+  "targets": [
+    {
+      "id": "deviation-uav",
+      "name": "全量·01 巡检无人机·先沿线后偏航",
+      "kind": "uav",
+      "path": [
+        [
+          390,
+          276
+        ],
+        [
+          399,
+          276
+        ],
+        [
+          404,
+          276
+        ],
+        [
+          408,
+          284
+        ],
+        [
+          420,
+          290
+        ]
+      ],
+      "planId": "ql6-deviation-plan",
+      "deviceId": "main-tdoa",
+      "height": 80,
+      "heightAgl": 60,
+      "probability": 0.98,
+      "speed": 4,
+      "count": 1,
+      "secondaryDeviceId": "main-radar",
+      "pilotPoint": [
+        390,
+        276
+      ]
+    },
+    {
+      "id": "zone-uav",
+      "name": "全量·02 闯入禁飞区域无人机",
+      "kind": "uav",
+      "path": [
+        [
+          470,
+          276
+        ],
+        [
+          480,
+          276
+        ],
+        [
+          500,
+          276
+        ],
+        [
+          506,
+          288
+        ]
+      ],
+      "planId": "ql6-zone-plan",
+      "deviceId": "main-tdoa",
+      "height": 80,
+      "heightAgl": 60,
+      "probability": 0.98,
+      "speed": 4,
+      "count": 1,
+      "secondaryDeviceId": "main-radar",
+      "pilotPoint": [
+        470,
+        276
+      ]
+    },
+    {
+      "id": "unmatched-uav",
+      "name": "全量·03 无匹配计划无人机",
+      "kind": "uav",
+      "path": [
+        [
+          390,
+          316
+        ],
+        [
+          410,
+          316
+        ],
+        [
+          420,
+          320
+        ]
+      ],
+      "planId": "",
+      "deviceId": "main-tdoa",
+      "height": 170,
+      "heightAgl": 150,
+      "probability": 0.98,
+      "speed": 4,
+      "count": 1,
+      "secondaryDeviceId": "main-radar",
+      "pilotPoint": [
+        390,
+        316
+      ]
+    },
+    {
+      "id": "birds",
+      "name": "全量·04 航线鸟群",
+      "kind": "bird",
+      "path": [
+        [
+          460,
+          358
+        ],
+        [
+          460,
+          353
+        ],
+        [
+          460,
+          350
+        ],
+        [
+          490,
+          350
+        ]
+      ],
+      "planId": "ql6-bird-plan",
+      "deviceId": "bird-radar",
+      "height": 80,
+      "heightAgl": 60,
+      "probability": 0.98,
+      "speed": 4,
+      "count": 3
+    },
+    {
+      "id": "time-uav",
+      "name": "全量·06 提前起飞无人机",
+      "kind": "uav",
+      "path": [
+        [
+          390,
+          336
+        ],
+        [
+          402,
+          336
+        ],
+        [
+          420,
+          336
+        ]
+      ],
+      "planId": "ql6-time-plan",
+      "deviceId": "all-5ga",
+      "height": 80,
+      "heightAgl": 60,
+      "probability": 0.98,
+      "speed": 4,
+      "count": 1,
+      "pilotPoint": [
+        390,
+        336
+      ],
+      "secondaryDeviceId": "main-tdoa"
+    },
+    {
+      "id": "height-uav",
+      "name": "全量·07 超高无人机",
+      "kind": "uav",
+      "path": [
+        [
+          440,
+          300
+        ],
+        [
+          452,
+          300
+        ],
+        [
+          462,
+          300
+        ]
+      ],
+      "planId": "ql6-height-plan",
+      "deviceId": "main-radar",
+      "height": 220,
+      "heightAgl": 200,
+      "probability": 0.98,
+      "speed": 4,
+      "count": 1,
+      "pilotPoint": [
+        440,
+        300
+      ],
+      "transport": "normalized",
+      "altitudeDatum": "AMSL",
+      "secondaryDeviceId": "main-tdoa"
+    }
+  ],
+  "risks": [
+    {
+      "id": "r-deviation",
+      "name": "全量·01 沿计划飞行后偏航",
+      "type": "deviation",
+      "enabled": true,
+      "targetId": "deviation-uav",
+      "planId": "ql6-deviation-plan",
+      "deviceId": "main-tdoa"
+    },
+    {
+      "id": "r-zone",
+      "name": "全量·02 闯入禁飞区",
+      "type": "zone",
+      "enabled": true,
+      "targetId": "zone-uav",
+      "planId": "ql6-zone-plan",
+      "zoneId": "ql6-restricted-zone",
+      "deviceId": "main-tdoa"
+    },
+    {
+      "id": "r-unmatched",
+      "name": "全量·03 无计划待核实",
+      "type": "no-plan",
+      "enabled": true,
+      "targetId": "unmatched-uav",
+      "deviceId": "main-tdoa"
+    },
+    {
+      "id": "r-bird",
+      "name": "全量·04 鸟群进入计划航线",
+      "type": "bird",
+      "enabled": true,
+      "targetId": "birds",
+      "planId": "ql6-bird-plan",
+      "deviceId": "bird-radar"
+    },
+    {
+      "id": "r-fault",
+      "name": "全量·05 雷达故障后恢复",
+      "type": "fault",
+      "enabled": true,
+      "deviceId": "fault-radar",
+      "at": 20,
+      "seconds": 60
+    },
+    {
+      "id": "r-time",
+      "name": "全量·06 超出计划时段(提前30分钟)",
+      "type": "time",
+      "enabled": true,
+      "targetId": "time-uav",
+      "planId": "ql6-time-plan",
+      "deviceId": "all-5ga",
+      "mode": "开始前提前飞行",
+      "offset": 30
+    },
+    {
+      "id": "r-height",
+      "name": "全量·07 超高(计划上限120)",
+      "type": "height",
+      "enabled": true,
+      "targetId": "height-uav",
+      "planId": "ql6-height-plan",
+      "basis": "plan",
+      "height": 200,
+      "deviceId": "main-radar"
+    },
+    {
+      "id": "r-offline",
+      "name": "全量·08 TDOA离线后恢复",
+      "type": "offline",
+      "enabled": true,
+      "deviceId": "offline-tdoa",
+      "at": 30,
+      "seconds": 60
+    }
+  ]
+}

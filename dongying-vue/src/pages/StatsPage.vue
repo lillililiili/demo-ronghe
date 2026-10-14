@@ -126,7 +126,7 @@ function drawCharts(CH) {
     x: stats.byRisk.map(r => r.name === '未识别' ? '风险等级\n未知' : r.name), legend: false, yName: '数量',
     grid: { top: 36, bottom: 40 },
     series: [{ name: '数量', data: stats.byRisk.map(r => r.value), colorBy: p => rc[stats.byRisk[p.dataIndex].name] }]
-  })?.setOption({ xAxis: { axisLabel: { interval: 0, fontSize: 10 } }, yAxis: { minInterval: 1 } });
+  })?.setOption({ xAxis: { axisLabel: { interval: 0, fontSize: 10 } }, yAxis: { minInterval: 1, splitNumber: 3 } });
   if (typeDistributionAvailable.value && stats.airborneTypes.total > 0) {
     const total = stats.airborneTypes.items.reduce((sum, item) => sum + item.value, 0);
     CH.donut(document.getElementById('sType'), { data: stats.airborneTypes.items, center: ['30%', '50%'] })?.setOption({
@@ -146,7 +146,7 @@ function drawCharts(CH) {
     series: [{ name: '新增目标数', data: stats.discoveryHours.map(row => row.total), color: CH.C.blue,
       fmt: point => point.value > 0 ? String(point.value) : '' }]
   })?.setOption({
-    xAxis: { axisLabel: { hideOverlap: true, fontSize: 11 } }, yAxis: { min: 0, minInterval: 1 },
+    xAxis: { axisLabel: { hideOverlap: true, fontSize: 11 } }, yAxis: { min: 0, minInterval: 1, splitNumber: 3 },
     tooltip: { renderMode: 'richText', formatter: points => {
       const row = stats.discoveryHours[points[0]?.dataIndex];
       return row ? `${hourLabel(row.hour)}—${hourLabel(row.hour + 1)}（北京时间）\n新增目标数：${row.total} 个` : '';
@@ -158,7 +158,7 @@ function drawCharts(CH) {
     series: [{ name: '非法目标占比', data: stats.days.map(day => day.total ? day.illegal * 100 / day.total : null),
       color: CH.C.red, smooth: false }]
   })?.setOption({
-    yAxis: { min: 0, max: 100, axisLabel: { formatter: '{value}%' } },
+    yAxis: { min: 0, max: 100, splitNumber: 4, axisLabel: { formatter: '{value}%' } },
     xAxis: { axisLabel: { hideOverlap: true } },
     tooltip: { renderMode: 'richText', formatter: points => {
       const day = stats.days[points[0]?.dataIndex];
@@ -279,7 +279,7 @@ async function exportCsv() {
       <span>{{ error }}</span>
       <button class="btn" type="button" @click="load">重试</button>
     </div>
-    <div class="panel mb12" style="flex:none"><UFilterBar class="stats-filters">
+    <div class="panel stats-filter-panel"><UFilterBar class="stats-filters">
         <UField id="stats-range" v-model="dateRange" class="stats-date-filter" type="daterange" label="统计日期（北京时间）" variant="filter" @update:model-value="load" />
       <template #actions><button class="btn pri" id="stExp" :disabled="loading || !S || exporting" @click="exportCsv">{{ exporting ? '正在导出' : '导出数据' }}</button></template>
     </UFilterBar></div>
@@ -348,17 +348,21 @@ async function exportCsv() {
 </template>
 
 <style scoped>
-.stats-filters { border: 0; }
+.stats-filters { border:0;padding:6px 12px;align-items:center; }
+.stats-filter-panel { flex:none; }
+.stats-filters :deep(.stats-date-filter) { flex-direction:row;align-items:center;gap:12px; }
+.stats-filters :deep(.stats-date-filter > label) { flex:none; }
+.stats-filters :deep(.u-field__control) { flex:1;min-width:0; }
 .stats-loading { min-height:116px;display:flex;align-items:center;justify-content:center;color:var(--txt-2); }
-.stats-date-filter { --filter-field-width: 340px; }
-.stats-page { container-type:inline-size; }
-.stats-page :deep(.stats-primary-kpis) { grid-template-columns:repeat(5, minmax(0, 1fr)); }
-.stats-page :deep(.stats-primary-kpis .kpi) { min-height:116px;padding:18px;gap:16px; }
-.stats-page :deep(.stats-primary-kpis .ic) { width:56px;height:56px; }
-.stats-page :deep(.stats-primary-kpis .ic svg) { width:30px;height:30px;stroke-width:1.8; }
-.stats-page :deep(.stats-primary-kpis .lb) { color:var(--txt);font-size:18px;font-weight:600;line-height:1.4; }
-.stats-page :deep(.stats-primary-kpis .vl) { margin-top:5px;font-size:42px;font-weight:700;line-height:1.15; }
-@container (max-width:1180px) {
+.stats-date-filter { --filter-field-width: 480px; }
+.stats-page { container-type:inline-size;display:flex;flex-direction:column;gap:6px;padding:6px 12px; }
+.stats-page :deep(.stats-primary-kpis) { flex:none;grid-template-columns:repeat(5, minmax(0, 1fr));gap:8px;margin:0; }
+.stats-page :deep(.stats-primary-kpis .kpi) { min-height:76px;padding:10px 14px;gap:12px; }
+.stats-page :deep(.stats-primary-kpis .ic) { width:40px;height:40px; }
+.stats-page :deep(.stats-primary-kpis .ic svg) { width:24px;height:24px;stroke-width:1.8; }
+.stats-page :deep(.stats-primary-kpis .lb) { color:var(--txt);font-size:14px;font-weight:600;line-height:1.4; }
+.stats-page :deep(.stats-primary-kpis .vl) { margin-top:2px;font-size:30px;font-weight:700;line-height:1.1; }
+@container (max-width:1000px) {
   .stats-page :deep(.stats-primary-kpis) { grid-template-columns:repeat(3, minmax(0, 1fr)); }
 }
 @container (max-width:760px) {
@@ -367,27 +371,27 @@ async function exportCsv() {
 @container (max-width:480px) {
   .stats-page :deep(.stats-primary-kpis) { grid-template-columns:minmax(0, 1fr); }
 }
-.stats-summary-grid { display:grid;grid-template-columns:minmax(0, 1fr);gap:14px;margin-top:12px;padding-bottom:12px; }
-.stats-summary-grid > .panel { height:320px; }
-.stats-summary-grid :deep(.ph) { min-height:52px;flex-wrap:wrap; }
-.stats-summary-grid :deep(.ph h3) { white-space:normal; }
-.stats-discovery-hours :deep(.pb) { display:flex;flex-direction:column; }
-.stats-chart-grid { display:grid;gap:14px;margin-top:12px; }
+.stats-summary-grid { display:grid;grid-template-columns:minmax(0, 1fr);grid-template-rows:minmax(0, 1fr);flex:.8 0 190px;min-height:190px; }
+.stats-chart-grid { display:grid;grid-template-rows:minmax(0, 1fr);gap:8px;flex:1 0 200px;min-height:200px; }
 .stats-overview-grid { grid-template-columns:minmax(0, 1.5fr) minmax(0, .85fr) minmax(0, 1.25fr); }
-.stats-details-grid { grid-template-columns:minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.2fr); }
-.stats-chart-grid > .panel { height:310px; }
-.stats-chart-grid :deep(.ph) { flex-wrap:wrap; }
-.stats-chart-grid :deep(.ph h3) { white-space:normal; }
-.stats-chart-grid :deep(.pb) { display:flex;flex-direction:column; }
-.stats-detail-chart { flex:1;min-height:170px; }
-@container (max-width:1200px) {
+.stats-details-grid { grid-template-columns:minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.2fr);flex-basis:210px;min-height:210px; }
+.stats-chart-grid > .panel,.stats-summary-grid > .panel { min-height:0; }
+.stats-chart-grid :deep(.ph),.stats-summary-grid :deep(.ph) { min-height:34px;padding:6px 12px;flex-wrap:wrap;gap:4px 8px; }
+.stats-chart-grid :deep(.ph h3),.stats-summary-grid :deep(.ph h3) { white-space:normal; }
+.stats-chart-grid :deep(.pb),.stats-summary-grid :deep(.pb) { display:flex;flex-direction:column;min-height:0;padding:8px 12px; }
+.stats-detail-chart { flex:1;min-height:110px; }
+@container (max-width:1000px) {
+  .stats-chart-grid,.stats-summary-grid { flex:none;grid-template-rows:none; }
+  .stats-chart-grid > .panel,.stats-summary-grid > .panel { min-height:240px; }
   .stats-overview-grid,.stats-details-grid { grid-template-columns:repeat(2, minmax(0, 1fr)); }
   .stats-overview-grid > :first-child,.stats-details-grid > :last-child { grid-column:1 / -1; }
 }
 @container (max-width:680px) {
   .stats-summary-grid,.stats-overview-grid,.stats-details-grid { grid-template-columns:minmax(0, 1fr); }
+  .stats-filters :deep(.stats-date-filter) { flex-direction:column;align-items:stretch;gap:6px; }
 }
-.stats-basis,.stats-note { color:var(--txt-3);font-size:12px;line-height:1.5;overflow-wrap:anywhere;margin-bottom:8px; }
+.stats-basis,.stats-note { flex:none;color:var(--txt-3);font-size:12px;line-height:1.5;overflow-wrap:anywhere;margin:0; }
+.stats-note { margin-bottom:4px; }
 :deep(.kpi .dt), :deep(.kpi .vl) { white-space:normal;overflow-wrap:anywhere; }
 .stats-unavailable { height:100%;display:flex;flex-direction:column;justify-content:center;text-align:center;padding:16px;box-sizing:border-box;color:var(--txt-3);line-height:1.8;overflow-wrap:anywhere; }
 </style>

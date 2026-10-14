@@ -26,7 +26,7 @@ function retry() {
   const recheck = view.value.recheck;
   const modal = openFormModal({
     title: recheck ? '核对最新情况后发送飞手短信' : '重新发送飞手短信', confirmText: recheck ? '登记发送' : '提交重试', width: '520px',
-    notice: recheck ? '提交后由后台发送这一条短信；之后仍按短信送达、观察位置、拨打电话的顺序继续。模拟短信不会发到真实手机。'
+    notice: recheck ? '提交后由后台发送这一条短信；送达后即检查电话拨打条件，不设观察等待。模拟短信不会发到真实手机。'
       : '提交后由后台重新发送。模拟短信不会发到真实手机。',
     warning: view.value.simulated ? '当前使用模拟短信，不会发送真实短信。' : '',
     fields: [

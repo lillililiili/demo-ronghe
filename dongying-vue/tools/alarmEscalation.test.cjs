@@ -25,6 +25,7 @@ function legalityDictionaries() {
   // 偏航要写成“偏航”；升级引擎原告警在合法性页也要有中文说法，不能把 ESCALATED 原样上屏。
   assert.match(RULE_REASON_TEXT.ROUTE_DEVIATION, /^偏航/);
   assert.equal(MERGE_KIND_TEXT.ESCALATED, '升级既有告警');
+  assert.equal(reasonListText(['NO_AUTHORIZATION', 'TIME_WINDOW_OVERRUN'], ruleReasonText), '无飞行授权、超出任务时间窗');
   assert.equal(reasonListText(['NIGHT_FLIGHT', 'ROUTE_DEVIATION'], ruleReasonText), '夜间飞行、偏航（偏离报备航线）');
   assert.equal(reasonListText(['NIGHT_FLIGHT', ' NIGHT_FLIGHT ', '', null, 'INSIDE_RESTRICTED_AIRSPACE'], ruleReasonText), '夜间飞行、进入禁飞/限制空域');
   // 词典里没有的新原因照原样显示，不吞掉；没有原因时为空串，页面就不显示这一行。

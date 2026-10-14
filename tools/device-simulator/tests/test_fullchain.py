@@ -48,12 +48,23 @@ class FullChainTests(unittest.TestCase):
                     'provider':'map-sim','source_mode':'replay','devices':{},'zones':{},
                     'plans':{'logical':{'ids':['new','shared']}},'targets':{}}
         with tempfile.TemporaryDirectory() as directory:
-            for batch, broker, ids in [('old','broker',['old','shared']), ('foreign','other',['foreign'])]:
+            for batch, broker, ids in [('old','broker',['old','shared']), ('foreign','other',['foreign']),
+                                       ('legacy','broker',['seeded-without-receipt']),
+                                       ('other-database','broker',['missing-in-this-platform'])]:
                 path=Path(directory)/('sim-'+batch);path.mkdir()
                 (path/'manifest.json').write_text(json.dumps({'batch':batch,'created_at':TEST_NOW-1000,
                     'broker_id':broker,'provider':'map-sim','source_mode':'replay',
-                    'plans':{'logical':{'ids':ids}}}))
-            api=FakePlatform()
+                    'plans':{'logical':{'ids':ids}},
+                    'plan_expectations':{} if batch == 'legacy' else {pid:{'source_mode':'replay',
+                        'message_id':'message-'+pid} for pid in ids}}))
+            class BatchPlatform(FakePlatform):
+                def call(self, method, path, body=None, key=None):
+                    if path.startswith('/flight-plans?'):
+                        self.calls.append((method,path,body,key))
+                        # The required old task is beyond the first page.
+                        return {'items':[{'plan_id':'shared' if 'page=1&' in path else 'old'}], 'total':2}
+                    return super().call(method,path,body,key)
+            api=BatchPlatform()
             chain=FullChain(api,scene,manifest,{'owner_org_id':'o','district_id':'d'},lambda:None)
             chain.activate_plan_batch(Path(directory))
             body=api.calls[-1][2]
@@ -64,6 +75,20 @@ class FullChainTests(unittest.TestCase):
             # Retrying a fixed batch uses the identical registration even if another run appears.
             chain.activate_plan_batch(Path(directory))
             self.assertEqual(api.calls[-1][2], body)
+            # An incomplete history read must never activate a partial batch.
+            for response in ({'items':[], 'total':1}, {'state':'unavailable'}):
+                class IncompletePlatform(FakePlatform):
+                    def call(self, method, path, body=None, key=None):
+                        if path.startswith('/flight-plans?'):
+                            return response
+                        return super().call(method,path,body,key)
+                failed_api=IncompletePlatform()
+                failed_manifest=copy.deepcopy(manifest)
+                failed_manifest.pop('plan_batch_registration')
+                failed_manifest.pop('plan_batch_activation')
+                with self.assertRaises(ValueError):
+                    FullChain(failed_api,scene,failed_manifest,{'owner_org_id':'o','district_id':'d'},lambda:None).activate_plan_batch(Path(directory))
+                self.assertFalse(any(p.endswith('/plan-batches/activate') for _,p,_,_ in failed_api.calls))
 
     def test_tasks_carry_a_simulated_pilot_and_reporting_unit_unless_archives_are_chosen(self):
         from fullchain import FullChain

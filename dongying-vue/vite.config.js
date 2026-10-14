@@ -3,6 +3,7 @@ import vue from '@vitejs/plugin-vue';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
 import { externalMapData } from './tools/map-data-server.mjs';
 import { mapWorkerAssets } from './tools/map-worker-server.mjs';
 
@@ -20,6 +21,25 @@ function resolveMapDataDirectory() {
   return candidates.find(directory => existsSync(mapManifest(directory))) || candidates[0];
 }
 
+
+// Written into built HTML, so preview checks the build-time API instead of guessing from its environment.
+function startupMetadata() {
+  let tags;
+  return {
+    name: 'startup-metadata',
+    configResolved(config) {
+      let apiBase = String(config.env.APP_PUBLIC_API_BASE_URL || '/api').replace(/\/$/, '');
+      if (!apiBase.endsWith('/v1')) apiBase += '/v1';
+      tags = Object.entries({
+        'uav-api-base': apiBase,
+        'uav-source-id': createHash('sha256').update(path.resolve(rootDir)).digest('hex'),
+        'uav-runtime-mode': config.command === 'build' ? 'built' : 'dev'
+      }).map(([name, content]) => ({ tag: 'meta', attrs: { name, content }, injectTo: 'head' }));
+    },
+    transformIndexHtml() { return tags; }
+  };
+}
+
 export default defineConfig(() => {
   return {
     resolve: {
@@ -29,6 +49,7 @@ export default defineConfig(() => {
     },
     plugins: [
       vue(),
+      startupMetadata(),
       mapWorkerAssets(),
       externalMapData(resolveMapDataDirectory())
     ],

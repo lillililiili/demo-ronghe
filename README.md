@@ -54,3 +54,7 @@ npx playwright test e2e/admin-migration.spec.js
 # 2026-10-09 现用规则参数确认
 
 本机已启用合法性第6版、空间风险第3版，均为“已确认参数”；入口为后台“系统管理 → 规则管理 → 研判规则集”。新结果按确认版本保存，旧结果仍显示原版本的参数状态。37项合法性及8项空间风险参数沿用确认前的现用值，未切换到旧r2或恢复文档中已被后续决定替代的流程。实施与验证见[现用参数确认记录](houtaiguanli/docs/acceptance/current-parameters-2026-10-09.md)。
+
+## 拉取与重启后的必过检查
+
+每次重启必须执行后台仓库的 `scripts/check-local-startup.mjs --business-dir <本仓库 dongying-vue 绝对目录>`。固定顺序见后台仓库 `docs/本地启动与拉取后检查.md`，实际仓库可为同级或本目录内的 `houtaiguanli`。检查失败不能宣布启动完成；真实账号登录单独验证。

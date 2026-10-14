@@ -1,8 +1,8 @@
 <script>
 /* 跨导航只保留筛选、分页与选中 ID；业务事实仍每次从只读 API 重取，不能缓存成 Mock 副本。 */
-const S = { filters: { status_code: '', keyword: '', today: false }, page: 1, size: 20, selectedPlanId: null, tab: 'route', tabHash: '',
+const S = { filters: { status_code: '', keyword: '', time: '', timeRange: null }, page: 1, size: 20, selectedPlanId: null, tab: 'route', tabHash: '',
   /* 风险页签：筛选只收契约允许的字段；目标类型筛选与任意排序契约不支持，只保留禁用控件。 */
-  riskFilters: { severity: '', state: '', risk_type: '', plan_id: '', owner_org_id: '', district_id: '', source_mode: '', occurred: null },
+  riskFilters: { severity: '', state: '', risk_type: '', plan_id: '', owner_org_id: '', district_id: '', source_mode: '', time: '', occurred: null },
   riskPage: 1, riskSize: 10, selectedRiskId: null, riskTab: 'event' };
 export default {};
 </script>
@@ -50,6 +50,7 @@ import { objectSnapshot, drawObjectRisk } from '@/pages/flights/objectRiskMap.js
 import { weatherPolygon, insideWeather, drawWeatherArea, weatherLayerKind } from '@/pages/flights/weatherMap.js';
 import { strokePlanComparison, trustedTrajectoryPoints, trajectoryNoteText } from '@/pages/flights/planTrajectory.js';
 import { hasRouteDeviation } from '@/pages/flights/planMatch.js';
+import { TIME_FILTER_OPTIONS, customRangeValid, timeFilterLabel, timeFilterWindow } from '@/services/timeFilter.js';
 import { PLAN_KEYWORD_MAX, activePlanKpi, beijingDayWindow, planKpiFilters, planListQuery, planNumberText, planWindowText, normalizePlanKeyword, upstreamPlanNotice } from '@/pages/flights/planFilters.js';
 import UPagination from '@/components/UPagination.vue';
 import UControl from '@/components/form/UControl.vue';
@@ -303,7 +304,7 @@ const kpiList = computed(() => {
 /* 生效条件提示：“今日计划”与统计卡口径相同（北京时间今天），点卡片后不在工具栏里另占位置。 */
 const planFilterSummary = computed(() => {
   const parts = [];
-  if (filters.today) parts.push('今日任务');
+  if (planTimeWindow()) parts.push(filters.time === 'TODAY' ? '今日任务' : `时间：${timeFilterLabel(filters.time)}`);
   if (filters.status_code) parts.push(labelOf(PLAN_STATUS_LABEL, filters.status_code));
   if (filters.keyword) parts.push(`关键词“${filters.keyword}”`);
   return parts.length ? `筛选：${parts.join(' · ')}，共 ${total.value} 条` : '';
@@ -1121,6 +1122,20 @@ function chooseStatus(value) {
   filters.status_code = value || '';
   applyFilters();
 }
+/* 时间筛选（2026-10-14）：按任务时段与所选时间有重叠即算，和“今日报备任务”卡片同一口径；选“今天”与点该卡片等价。 */
+function chooseTime(value) {
+  const next = value || '';
+  if (next === filters.time) return;
+  filters.time = next;
+  // 刚选“自定义起止”还没填时间时，查询条件没变，等填好起止再读。
+  if (next === 'CUSTOM' && !customRangeValid(filters.timeRange)) return;
+  applyFilters();
+}
+function chooseTimeRange(value) {
+  filters.timeRange = value;
+  applyFilters();
+}
+function planTimeWindow() { return timeFilterWindow(filters.time, filters.timeRange); }
 function applyKeyword() {
   const keyword = normalizePlanKeyword(keywordDraft.value);
   keywordDraft.value = keyword;
@@ -1157,7 +1172,7 @@ watch(kpiList, () => {
   }
 }, { flush: 'post' });
 function clearPlanFilters() {
-  Object.assign(filters, { status_code: '', keyword: '', today: false });
+  Object.assign(filters, { status_code: '', keyword: '', time: '', timeRange: null });
   keywordDraft.value = '';
   applyFilters();
 }
@@ -1197,12 +1212,16 @@ function riskQuery() {
     target_type: riskFilters.risk_type === 'WEATHER' ? '' : riskFilters.target_type || '', risk_type: riskFilters.risk_type || '', sort: riskSort.field, order: riskSort.order };
   // plan_id 筛选另需 flight:read；已知无权限时控件禁用，也不把值带进请求以免换来 403。
   if (canFilterByPlan.value && text(riskFilters.plan_id)) query.plan_id = text(riskFilters.plan_id);
+  // 时间筛选（2026-10-14）：与告警等页同一组选项，按风险发生时间、北京时间；occurred 是“自定义起止”的起止。
   const range = Array.isArray(riskFilters.occurred) ? riskFilters.occurred : null;
-  if (range && range[0] != null && range[1] != null) {
+  if (riskFilters.time === 'CUSTOM' && range && range[0] != null && range[1] != null && !customRangeValid(range)) {
     // 契约要求 [from,to) 且 from < to；不满足时直接报错，不偷偷丢弃筛选。
-    if (!(Number(range[0]) < Number(range[1]))) throw new Error('发生时间范围必须满足开始时间早于结束时间。');
-    query.occurred_from = Number(range[0]);
-    query.occurred_to = Number(range[1]);
+    throw new Error('发生时间范围必须满足开始时间早于结束时间。');
+  }
+  const span = timeFilterWindow(riskFilters.time, range);
+  if (span) {
+    query.occurred_from = span.from;
+    query.occurred_to = span.to;
   }
   return query;
 }
@@ -1625,21 +1644,26 @@ function openRiskNotify(riskOverride = null) {
    否则列表被筛过却看不出是被什么筛的。 */
 const riskMoreOpen = ref(false);
 const riskMoreActiveCount = computed(() => {
-  const values = [riskFilters.risk_type === 'WEATHER' ? '' : riskFilters.target_type, riskFilters.source_mode, riskFilters.occurred, riskFilters.district_id, ['', 'SPACE_OBJECT', 'WEATHER'].includes(riskFilters.risk_type) ? '' : riskFilters.risk_type];
+  const values = [riskFilters.risk_type === 'WEATHER' ? '' : riskFilters.target_type, riskFilters.source_mode, riskFilters.district_id, ['', 'SPACE_OBJECT', 'WEATHER'].includes(riskFilters.risk_type) ? '' : riskFilters.risk_type];
   return values.filter(value => (Array.isArray(value) ? value.length > 0 : !!value)).length;
 });
 const riskMoreTitle = computed(() => (riskMoreActiveCount.value
-  ? `另有 ${riskMoreActiveCount.value} 个筛选正在生效：区域 / 目标类型 / 发生时间 / 来源模式 / 风险类型`
-  : '展开区域、目标类型、发生时间、来源模式和其他风险类型'));
+  ? `另有 ${riskMoreActiveCount.value} 个筛选正在生效：区域 / 目标类型 / 来源模式 / 风险类型`
+  : '展开区域、目标类型、来源模式和其他风险类型'));
 
 const riskFilterChips = computed(() => [
   { key: 'district_id', label: riskFilters.district_id ? `区域：${riskDistricts.value.find(d => d.district_id === riskFilters.district_id)?.name || '已选区域'}` : '' },
   { key: 'target_type', label: riskFilters.target_type ? labelOf(OBJECT_TYPE_LABEL, riskFilters.target_type) : '' },
   { key: 'source_mode', label: riskFilters.source_mode ? labelOf(SOURCE_MODE_LABEL, riskFilters.source_mode) : '' },
-  { key: 'occurred', label: riskFilters.occurred?.length ? '发生时间已限定' : '' },
   { key: 'risk_type', label: !['', 'SPACE_OBJECT', 'WEATHER'].includes(riskFilters.risk_type) ? labelOf(RISK_TYPE_LABEL, riskFilters.risk_type) : '' }
 ].filter(chip => chip.label));
-function clearRiskFilter(key) { riskFilters[key] = key === 'occurred' ? null : ''; applyRiskFilters(); }
+function clearRiskFilter(key) { riskFilters[key] = ''; applyRiskFilters(); }
+function chooseRiskTime(value) {
+  riskFilters.time = value || '';
+  // 刚选“自定义起止”还没填时间时，查询条件没变，等填好起止再读。
+  if (riskFilters.time === 'CUSTOM' && !customRangeValid(riskFilters.occurred)) return;
+  applyRiskFilters();
+}
 
 /* ---------- 风险页签：交互 ---------- */
 function applyRiskFilters() {
@@ -1673,7 +1697,7 @@ function enterRiskTab(requestedId = null, planId = null) {
   nextTick(() => renderRiskMap());
   if (requestedId || planId) {
     // 深链只清筛选与页码，避免选中的那条被当前筛选挡在列表外；详情仍按精确 ID 读取。
-    Object.assign(riskFilters, { severity: '', state: '', risk_type: '', plan_id: '', owner_org_id: '', district_id: '', source_mode: '', occurred: null });
+    Object.assign(riskFilters, { severity: '', state: '', risk_type: '', plan_id: '', owner_org_id: '', district_id: '', source_mode: '', time: '', occurred: null });
     if (planId && canFilterByPlan.value) riskFilters.plan_id = planId;
     riskTab.value = 'event';
     S.selectedRiskId = requestedId;
@@ -1711,7 +1735,7 @@ function showRouteTab(requestedId = null) {
   destroyRouteMap();
   if (requestedId) {
     planDetailTab.value = 'plan';
-    Object.assign(filters, { status_code: '', keyword: '', today: false });
+    Object.assign(filters, { status_code: '', keyword: '', time: '', timeRange: null });
     keywordDraft.value = '';
     plans.value = [];
     selected.value = null;
@@ -1887,13 +1911,14 @@ onUnmounted(() => {
                 <div class="risk-quick-fields">
                   <div class="field"><label>等级</label><UControl v-model="riskFilters.severity" type="select" :options="riskSeverityOptions" :disabled="riskLoading" size="small" @update:model-value="applyRiskFilters" /></div>
                   <div class="field"><label>状态</label><UControl v-model="riskFilters.state" type="select" :options="riskStateOptions" :disabled="riskLoading" size="small" @update:model-value="applyRiskFilters" /></div>
+                  <div class="field"><label>时间</label><UControl :model-value="riskFilters.time" type="select" :options="TIME_FILTER_OPTIONS" :disabled="riskLoading" size="small" @update:model-value="chooseRiskTime" /></div>
                   <button class="btn ghost" type="button" :aria-expanded="riskMoreOpen" :title="riskMoreTitle" @click="riskMoreOpen = !riskMoreOpen">筛选{{ riskMoreActiveCount ? ` (${riskMoreActiveCount})` : '' }}</button>
                 </div>
+                <div v-if="riskFilters.time === 'CUSTOM'" class="field risk-time-range"><label for="risk-time-range">自定义起止（北京时间）</label><UControl id="risk-time-range" v-model="riskFilters.occurred" type="datetimerange" clearable :disabled="riskLoading" size="small" start-placeholder="开始时间" end-placeholder="结束时间" @update:model-value="applyRiskFilters" /></div>
                 <div v-if="riskMoreOpen" class="toolbar-fields rk-more">
                   <div class="field"><label>风险类型</label><UControl v-model="riskFilters.risk_type" type="select" :options="riskKindOptions" :disabled="riskLoading" size="small" @update:model-value="applyRiskFilters" /></div>
                   <div class="field" :title="riskDistrictTitle"><label>区域</label><UControl v-model="riskFilters.district_id" type="select" :options="riskDistrictOptions" :disabled="riskLoading" size="small" @update:model-value="applyRiskFilters" /></div>
                   <div v-if="riskFilters.risk_type !== 'WEATHER'" class="field"><label>目标类型</label><UControl v-model="riskFilters.target_type" type="select" :options="riskTypeOptions" :disabled="riskLoading" size="small" @update:model-value="applyRiskFilters" /></div>
-                  <div class="field rk-range"><label>发生时间</label><UControl v-model="riskFilters.occurred" type="datetimerange" clearable :disabled="riskLoading" size="small" start-placeholder="开始" end-placeholder="结束" @update:model-value="applyRiskFilters" /></div>
                   <div class="field"><label>来源模式</label><UControl v-model="riskFilters.source_mode" type="select" :options="sourceModeOptions" :disabled="riskLoading" size="small" @update:model-value="applyRiskFilters" /></div>
                 </div>
                 <div v-if="riskFilterChips.length" class="risk-filter-chips"><button v-for="chip in riskFilterChips" :key="chip.key" type="button" :disabled="riskLoading" :aria-label="`清除${chip.label}`" @click="clearRiskFilter(chip.key)">{{ chip.label }} · 清除</button></div>
@@ -2022,9 +2047,13 @@ onUnmounted(() => {
               <div class="field"><label for="plan-keyword">搜索</label><UControl id="plan-keyword" v-model="keywordDraft" clearable size="small" placeholder="任务编号/航线/无人机" :maxlength="PLAN_KEYWORD_MAX" :disabled="loading" @keyup.enter="applyKeyword" @update:model-value="keywordInput" /></div>
               <button class="btn" type="button" :disabled="loading" @click="applyKeyword">查询</button>
             </div>
-            <div class="plan-filter-row">
+            <div class="plan-filter-row has-time">
               <div class="field"><label>状态</label><UControl :model-value="filters.status_code" type="select" size="small" :options="statusOptions" :disabled="loading" @update:model-value="chooseStatus" /></div>
+              <div class="field"><label>时间</label><UControl :model-value="filters.time" type="select" size="small" :options="TIME_FILTER_OPTIONS" :disabled="loading" @update:model-value="chooseTime" /></div>
               <button class="btn ghost" type="button" :disabled="loading" @click="refreshPlans">刷新任务</button>
+            </div>
+            <div v-if="filters.time === 'CUSTOM'" class="plan-filter-row plan-time-range">
+              <div class="field"><label for="plan-time-range">自定义起止（北京时间）</label><UControl id="plan-time-range" :model-value="filters.timeRange" type="datetimerange" clearable size="small" start-placeholder="开始时间" end-placeholder="结束时间" :disabled="loading" @update:model-value="chooseTimeRange" /></div>
             </div>
           </div>
           <p v-if="planFilterSummary" class="workspace-selection-note plan-filter-note"><span>{{ planFilterSummary }}</span><button class="btn ghost" type="button" :disabled="loading" @click="clearPlanFilters">清除筛选</button></p>
@@ -2184,6 +2213,8 @@ onUnmounted(() => {
 /* 搜索与状态两行与风险页签的快捷筛选同尺寸（小号控件、10px 字段名），给列表多留高度。 */
 .flights-page .workspace-list .plan-toolbar { display: grid; grid-template-columns: minmax(0, 1fr); align-items: end; gap: 7px; padding: 9px; }
 .flights-page .workspace-list .plan-filter-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 6px; }
+.flights-page .workspace-list .plan-filter-row.has-time { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; }
+.flights-page .workspace-list .plan-filter-row.plan-time-range { grid-template-columns: minmax(0, 1fr); }
 .flights-page .workspace-list .plan-filter-row .field { gap: 3px; }
 .flights-page .workspace-list .plan-filter-row label { font-size: 10px; }
 .flights-page .workspace-list .plan-filter-row > .btn { min-height: 28px; height: 28px; padding: 0 10px; white-space: nowrap; }
@@ -2231,10 +2262,12 @@ onUnmounted(() => {
 .risk-kind-tabs { display: flex; width: 100%; gap: 4px; border-bottom: 1px solid var(--line); }
 .risk-kind-tabs button { flex: 1; padding: 6px; border: 0; border-bottom: 2px solid transparent; color: var(--txt-3); background: transparent; cursor: pointer; }
 .risk-kind-tabs button.on { color: var(--cyan); border-bottom-color: var(--cyan); }
-.risk-quick-fields { display: grid; width: 100%; grid-template-columns: minmax(0,1fr) minmax(0,1fr) auto; align-items: end; gap: 6px; }
+.risk-quick-fields { display: grid; width: 100%; grid-template-columns: minmax(0,1fr) minmax(0,1fr) minmax(0,1fr) auto; align-items: end; gap: 6px; }
 .risk-quick-fields .field { min-width: 0; display: block; }
 .risk-quick-fields .field :deep(.n-select) { width: 100%; min-width: 0; }
 .risk-quick-fields label { display: block; font-size: 10px; margin-bottom: 3px; }
+.risk-time-range { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.risk-time-range label { font-size: 10px; }
 .risk-list-tools { display: flex; width: 100%; justify-content: space-between; align-items: center; gap: 8px; }
 .risk-list-tools > :deep(.n-select) { width: 150px; }
 .risk-export-menu { position: relative; font-size: 11px; color: var(--txt-2); }

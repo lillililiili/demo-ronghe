@@ -1,10 +1,11 @@
 <script>
 /* 模块级状态：跨导航保持（legacy 约定）。
    level/status 映射为服务端契约的 severity/state；kind/region 为类别、区域筛选（阶段 15 契约）；
+   time/timeRange 为时间筛选（2026-10-14），按告警发生时间、北京时间筛，列表、导出同参；
    sort/order 随列表与导出请求一起发给服务端（阶段 15 契约白名单四个键），页面不做假排序。
    默认 priority：当前事项、观测过期或未知待确认、历史分组；前两组等级高、同等级新到优先，历史新到优先（2026-10-07 用户确认）。 */
 const S = {
-  st: { page: 1, size: 10, level: '全部', status: '全部', kind: '全部', region: '全部', sel: null, selId: null,
+  st: { page: 1, size: 10, level: '全部', status: '全部', kind: '全部', region: '全部', time: '', timeRange: null, sel: null, selId: null,
     sort: 'priority', order: 'desc' }
 };
 export default {};
@@ -27,6 +28,8 @@ import { refreshFailureText, shouldRetryRefresh, useRealtimeRefresh } from '@/ho
 import { patchHtml } from '@/ui/domPatch.js';
 import UPagination from '@/components/UPagination.vue';
 import UPanel from '@/components/UPanel.vue';
+import UControl from '@/components/form/UControl.vue';
+import { TIME_FILTER_OPTIONS, customRangeValid, timeFilterWindow } from '@/services/timeFilter.js';
 import UKpis from '@/components/UKpis.vue';
 import { handoffApi } from '@/services/handoffApi.js';
 import { toast } from '@/ui/nv.js';
@@ -153,6 +156,8 @@ const regionOpts = () => (districtError.value
 
 const LEVEL_OPTS = [{ v: '全部', t: '全部' }, { v: 'CRITICAL', t: '紧急' }, { v: 'HIGH', t: '高' }, { v: 'MEDIUM', t: '中' }, { v: 'LOW', t: '低' }];
 const STATUS_OPTS = [{ v: '全部', t: '全部' }, ...Object.entries(STATUS_FILTER).map(([v, s]) => ({ v, t: s.t }))];
+/* 时间筛选只缩小范围，不改排序：默认仍是当前事项 → 过期或未知待确认 → 历史。 */
+const TIME_OPTS = TIME_FILTER_OPTIONS.map(o => ({ v: o.value, t: o.label }));
 const pageProgress = reactive({});
 const pendingProgress = new Set();
 const progressSources = new Map();
@@ -496,19 +501,20 @@ async function loadKpis() {
 /* ---------- 工具条：只暴露契约支持的过滤；不支持的保留控件但禁用并说明 ---------- */
 const disabledSelect = (name, reason) =>
   `<select class="sel" data-f="${name}" disabled aria-disabled="true" title="${reason}"><option value="全部" selected>全部</option></select>`;
-const listPanelBody = `<div class="toolbar alarm-filter-toolbar">
+const listToolbar = `<div class="toolbar alarm-filter-toolbar">
     <div class="toolbar-fields">
       ${U.field('等级', U.select('level', LEVEL_OPTS, st.level))}
       ${U.field('违规原因', U.select('kind', KIND_OPTS, st.kind))}
       ${U.field('状态', U.select('status', STATUS_OPTS, st.status))}
       ${U.field('区域', U.select('region', regionOpts(), st.region))}
+      ${U.field('时间', U.select('time', TIME_OPTS, st.time))}
     </div>
     <div class="toolbar-actions">
       <button class="btn" type="button" id="alRefresh" title="重新读取当前列表、统计和已打开的告警">刷新</button>
       <button class="btn" type="button" id="alExp" title="按当前筛选与排序导出 CSV（上限 5000 行）">导出 CSV</button>
     </div>
-  </div>
-  <div id="alList" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>`;
+  </div>`;
+const listBody = `<div id="alList" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>`;
 const mapExtra = `<span id="alMapSrc" style="font-size:11px;color:var(--txt-3)"></span>
   <button class="btn" id="alLoc" style="height:24px;font-size:11.5px;flex:none" title="重新显示当前告警的完整轨迹与目标位置">${U.icon('location')} 定位</button>`;
 const mapBody = `<div id="alMap" style="flex:1;min-height:80px"></div>
@@ -539,6 +545,8 @@ function queryOf() {
   if (STATUS_FILTER[st.status]) Object.assign(q, STATUS_FILTER[st.status].q);
   if (VIOLATION_REASON_CODES.includes(st.kind)) q.violation_reason = st.kind;
   if (st.region !== '全部') q.district_id = st.region;
+  const span = timeFilterWindow(st.time, st.timeRange);
+  if (span) { q.occurred_from = span.from; q.occurred_to = span.to; }
   return q;
 }
 
@@ -1267,6 +1275,8 @@ onMounted(() => { observationRefreshTimer = setInterval(() => realtime.trigger([
 onUnmounted(() => clearInterval(observationRefreshTimer));
 
 function onPage(p2) { st.page = p2; loadList(); }
+/* 自定义起止：两端都填好才按它筛；清空后回到不限时间。 */
+function onTimeRange() { st.page = 1; loadList(); }
 function onPageSize(s2) { st.size = s2; st.page = 1; loadList(); }
 
 onMounted(async () => {
@@ -1278,7 +1288,10 @@ onMounted(async () => {
   /* 分页交互已由模板层 <n-pagination> 受控接管（P2），[data-pg]/[data-size] 委托删除 */
   U.on(view, '[data-f]', 'change', (e, ctl) => {
     if (ctl.disabled) return;
-    st[ctl.dataset.f] = ctl.value; st.page = 1; loadList();
+    st[ctl.dataset.f] = ctl.value; st.page = 1;
+    // 刚选“自定义起止”还没填时间时，列表条件没变，等填好起止再读。
+    if (ctl.dataset.f === 'time' && ctl.value === 'CUSTOM' && !customRangeValid(st.timeRange)) return;
+    loadList();
   });
   /* 点列头切 asc/desc；不支持的列（aria-disabled）只说明为什么不能排。 */
   const toggleSort = (btn) => {
@@ -1353,7 +1366,13 @@ onMounted(async () => {
         @event="showAuthorizationEvent" :event-id="authorizationScope.eventId" :initial-authorization-id="authorizationScope.authorizationId" :initial-status="authorizationScope.status" />
       <div v-show="activeTab === 'alarms'" class="row" style="margin-top:12px;flex:1;min-height:0">
         <UPanel title="告警列表" panel-style="flex:6;min-width:0" nopad>
-          <div style="display:contents" v-html="listPanelBody"></div>
+          <div style="display:contents" v-html="listToolbar"></div>
+          <div v-if="st.time === 'CUSTOM'" class="alarm-time-custom">
+            <label for="alarm-time-range">自定义起止（北京时间）</label>
+            <UControl id="alarm-time-range" v-model="st.timeRange" type="datetimerange" clearable size="small"
+              start-placeholder="开始时间" end-placeholder="结束时间" @update:model-value="onTimeRange" />
+          </div>
+          <div style="display:contents" v-html="listBody"></div>
           <div class="pager">
             <UPagination v-model:page="st.page" v-model:page-size="st.size" :item-count="totalCount"
               :prefix="`共 ${totalCount.toLocaleString()} 条`" @update:page="onPage" @update:page-size="onPageSize" />
@@ -1429,7 +1448,7 @@ onMounted(async () => {
 }
 .alarms-page :deep(.alarm-filter-toolbar .toolbar-fields) {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.65fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.65fr) minmax(0, 1fr) minmax(0, 1fr);
   gap: 12px 16px;
   align-items: start;
 }
@@ -1456,6 +1475,11 @@ onMounted(async () => {
   flex-wrap: wrap;
   margin-left: 0;
 }
+@container alarm-filters (max-width: 760px) {
+  .alarms-page :deep(.alarm-filter-toolbar .toolbar-fields) {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
 @container alarm-filters (max-width: 580px) {
   .alarms-page :deep(.alarm-filter-toolbar .toolbar-fields) {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1466,6 +1490,9 @@ onMounted(async () => {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+.alarm-time-custom { flex:none; display:flex; flex-direction:column; gap:6px; padding:0 16px 12px; }
+.alarm-time-custom > label { line-height:20px; color:var(--txt-2); }
+.alarm-time-custom :deep(.n-date-picker) { max-width:420px; }
 .alarm-action-bar { flex:none; display:flex; flex-direction:column; align-items:stretch; gap:10px; margin:0; padding:10px 12px; border-bottom:1px solid var(--line); background:var(--panel); box-shadow:0 4px 12px color-mix(in srgb, var(--bg-1) 22%, transparent); }
 .alarm-action-bar:not(:has(.btn, .tag, details)) { display:none; }
 .alarm-observation { order:2; flex:0 0 auto; min-width:0; }

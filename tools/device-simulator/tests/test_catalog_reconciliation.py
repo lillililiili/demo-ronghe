@@ -6,7 +6,7 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import catalog_reconciliation as catalog
-from platform_client import Platform as Client
+from platform_client import Platform as Client, PlatformError
 
 
 class Platform:
@@ -14,6 +14,7 @@ class Platform:
         self.rows = {}
         self.calls = []
         self.fail_page = False
+        self.old_backend = False
 
     def add(self, identity, **changes):
         row = dict(device_id=identity, device_no='external-' + identity, enabled=True,
@@ -30,6 +31,10 @@ class Platform:
             return dict(items=copy.deepcopy(rows[:1] if self.fail_page else rows), total=len(rows))
         identity = path.split('/')[2]
         row = self.rows[identity]
+        if path.endswith('/catalog-blockers'):
+            if self.old_backend:
+                raise PlatformError('系统接口 ' + path + ' 返回 404：资源不存在', 404, 'NOT_FOUND', '资源不存在')
+            return dict(device_id=identity, device_no=row['device_no'], reasons=list(row.get('reasons') or []))
         if path.endswith('/protocol-status'):
             return dict(details=dict(broker_id=row.get('broker', 'broker'),
                                      provider_code=None if row.get('eo') else 'map-sim',
@@ -38,12 +43,14 @@ class Platform:
             return dict(device=copy.deepcopy(row), external_device_id=row['device_no'],
                         protocol_code='EO_EDGE_MQTT_20250826' if row.get('eo') else 'LINGYUN_MQTT_V8_6')
         if row['version'] != body['version']:
-            raise ValueError('409 version')
+            raise PlatformError('409 version', 409, 'VERSION_CONFLICT', '设备已被更新，请刷新后重试')
         if method == 'PATCH':
-            row.update(enabled=False, version=row['version'] + 1)
+            row.update(enabled=body['enabled'], version=row['version'] + 1)
             return dict(device=copy.deepcopy(row))
         if row.get('busy'):
-            raise ValueError('409 DEVICE_BUSY')
+            # A busy delete rolls back: the record stays exactly as it was before the call.
+            raise PlatformError('409 busy', 409, 'DEVICE_BUSY', '设备 ' + row['device_no'] + ' 还有没结束的工作：'
+                                + '、'.join(row['busy']) + '。请处理完再删除')
         del self.rows[identity]
         return dict(device_id=identity)
 
@@ -65,6 +72,8 @@ class CatalogReconciliationTests(unittest.TestCase):
         self.assertFalse(any(c[0] != 'GET' for c in self.api.calls))
         result = catalog.apply(self.api, plan)
         self.assertEqual(result['retired'], ['old'])
+        self.assertEqual(result['retired_devices'], [dict(device_id='old', device_no='external-old', name=None)])
+        self.assertEqual(result['skipped'], [])
         writes = [c for c in self.api.calls if c[0] != 'GET']
         self.assertEqual([c[0] for c in writes], ['PATCH', 'DELETE'])
         self.assertEqual([c[2]['version'] for c in writes], [2, 3])
@@ -103,13 +112,59 @@ class CatalogReconciliationTests(unittest.TestCase):
     def test_version_changed_since_preview_is_not_disabled(self):
         plan = self.plan()
         self.api.rows['old']['version'] += 1
-        with self.assertRaises(ValueError): catalog.apply(self.api, plan)
+        with self.assertRaisesRegex(ValueError, 'external-old'): catalog.apply(self.api, plan)
         self.assertTrue(self.api.rows['old']['enabled'])
 
-    def test_busy_delete_keeps_record_and_reports_failure_no_success(self):
-        self.api.rows['old']['busy'] = True
-        with self.assertRaises(ValueError): catalog.apply(self.api, self.plan())
-        self.assertIn('old', self.api.rows)
+    def test_busy_device_is_left_switched_on_reported_and_the_start_goes_on(self):
+        # 2026-10-14 用户确认方案 A：正忙的设备不停用、不退役、不让启动失败，说清是哪台、为什么。
+        self.api.add('busy', name='模拟 光电 01', reasons=['光电跟踪任务还没结束'])
+        result = catalog.apply(self.api, self.plan())
+        self.assertEqual(result['retired'], ['old'])
+        self.assertEqual(result['skipped'], [dict(device_id='busy', device_no='external-busy', name='模拟 光电 01',
+                                                  reasons=['光电跟踪任务还没结束'])])
+        self.assertTrue(self.api.rows['busy']['enabled'])
+        self.assertEqual(self.api.rows['busy']['version'], 2)
+        self.assertFalse(any(c[0] != 'GET' and '/busy' in c[1] for c in self.api.calls))
+
+    def test_device_turning_busy_after_the_check_is_switched_back_on_and_reported(self):
+        self.api.rows['old'].update(busy=['反制正在执行'], name='模拟 反制 01')
+        result = catalog.apply(self.api, self.plan())
+        writes = [(c[0], c[2]['enabled'] if c[0] == 'PATCH' else None) for c in self.api.calls if c[0] != 'GET']
+        self.assertEqual(writes, [('PATCH', False), ('DELETE', None), ('PATCH', True)])
+        self.assertEqual(result['retired'], [])
+        self.assertEqual(result['skipped'][0]['device_no'], 'external-old')
+        self.assertTrue(result['skipped'][0]['reasons'])
+        self.assertTrue(self.api.rows['old']['enabled'])
+
+    def test_already_switched_off_busy_device_is_not_switched_on(self):
+        self.api.rows['old'].update(enabled=False, busy=['有未完成的设备指令'])
+        result = catalog.apply(self.api, self.plan())
+        self.assertEqual([c[0] for c in self.api.calls if c[0] != 'GET'], ['DELETE'])
+        self.assertFalse(self.api.rows['old']['enabled'])
+        self.assertEqual(result['skipped'][0]['device_id'], 'old')
+
+    def test_older_platform_without_busy_check_still_retires(self):
+        self.api.old_backend = True
+        self.assertEqual(catalog.apply(self.api, self.plan())['retired'], ['old'])
+
+    def test_older_platform_busy_delete_is_reported_with_its_message(self):
+        self.api.old_backend = True
+        self.api.rows['old']['busy'] = ['有进行中的调测任务']
+        result = catalog.apply(self.api, self.plan())
+        self.assertIn('有进行中的调测任务', result['skipped'][0]['reasons'][0])
+        self.assertTrue(self.api.rows['old']['enabled'])
+
+    def test_other_delete_failure_names_the_device(self):
+        self.api.rows['old']['name'] = '模拟 雷达 02'
+        original = self.api.call
+
+        def refuse_delete(method, path, body=None, key=None):
+            if method == 'DELETE':
+                raise PlatformError('409', 409, 'VERSION_CONFLICT', '设备已被更新，请刷新后重试')
+            return original(method, path, body, key)
+        self.api.call = refuse_delete
+        with self.assertRaisesRegex(ValueError, 'external-old（模拟 雷达 02）.*设备已被更新.*已被停用'):
+            catalog.apply(self.api, self.plan())
 
     def test_renamed_devices_are_managed_by_identity_not_display_name(self):
         self.api.rows['old']['name'] = '现场验收设备 X'

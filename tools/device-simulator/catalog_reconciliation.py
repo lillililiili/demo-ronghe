@@ -2,9 +2,10 @@
 import hashlib
 from urllib.parse import quote, urlencode
 
-from platform_client import SIMULATOR_VENDOR, SIMULATOR_MODEL
+from platform_client import SIMULATOR_VENDOR, SIMULATOR_MODEL, PlatformError
 
 REASON = '当前模拟场景设备台账同步：退役已退出场景的设备，保留历史记录'
+BUSY_REASON = '当前模拟场景设备台账同步：设备正忙，这次不退役，重新启用'
 
 
 def rows(platform):
@@ -81,27 +82,82 @@ def plan(platform, broker, current):
     return {'keep': keep, 'retire': retire}
 
 
+def label(row):
+    """Device number plus name, the way people find it in 设备管理."""
+    name = row.get('name')
+    return str(row.get('device_no') or row.get('device_id')) + ('（' + name + '）' if name else '')
+
+
+def blockers(platform, path):
+    """What still keeps a device busy, or None when the platform cannot say (older version)."""
+    try:
+        data = platform.call('GET', path + '/catalog-blockers')
+    except PlatformError as error:
+        if error.status in (404, 405) and error.code != 'DEVICE_NOT_FOUND':
+            return None
+        raise
+    reasons = data.get('reasons') if isinstance(data, dict) else None
+    if not isinstance(reasons, list) or not all(isinstance(r, str) and r for r in reasons):
+        raise ValueError('设备占用情况读取不完整，未执行清理')
+    return reasons
+
+
+def skipped(row, reasons):
+    return dict(device_id=row['device_id'], device_no=row.get('device_no'), name=row.get('name'),
+                reasons=list(reasons))
+
+
 def apply(platform, preview):
     """Keep platform authorization, version, active-work guards and audit intact.
 
     Every successful removal is a catalog tombstone, not a history deletion.
-    A partial failure is raised; startup must not pretend reconciliation passed.
+    A device that is still busy (an unfinished command, EO task, countermeasure or
+    emergency-stop check) is left alone, still switched on, and reported in
+    ``skipped`` with the platform's reasons; the start goes on. Any other failure
+    is raised with the device number: startup must not pretend reconciliation passed.
     """
-    result = {'retired': []}
+    result = {'retired': [], 'retired_devices': [], 'skipped': []}
     for row in preview['retire']:
         identity, version = row['device_id'], row['version']
         path = '/devices/' + quote(identity, safe='')
+        who = label(row)
         latest = platform.call('GET', path).get('device') or {}
         if any(latest.get(k) != row.get(k) for k in (
                 'version', 'enabled', 'source_mode', 'simulated', 'device_no', 'owner_org_id', 'district_id')):
-            raise ValueError('设备资料已变化，请重新核对后清理：' + identity)
+            raise ValueError('设备资料已变化，请重新核对后清理：' + who)
+        busy = blockers(platform, path)
+        if busy:
+            result['skipped'].append(skipped(row, busy))
+            continue
         key = hashlib.sha256((identity + ':' + str(version)).encode()).hexdigest()[:24]
+        switched_off = False
         if latest.get('enabled') is True:
             response = platform.call('PATCH', path + '/enabled',
                                      dict(enabled=False, version=version, reason=REASON), 'catalog-off-' + key)
             version = (response.get('device') or {}).get('version')
             if type(version) is not int:
-                raise ValueError('停用后未取得设备版本：' + identity)
-        platform.call('DELETE', path, dict(version=version, reason=REASON), 'catalog-delete-' + key)
+                raise ValueError('停用后未取得设备版本：' + who)
+            switched_off = True
+        try:
+            platform.call('DELETE', path, dict(version=version, reason=REASON), 'catalog-delete-' + key)
+        except PlatformError as error:
+            if error.code != 'DEVICE_BUSY':
+                raise ValueError('设备 ' + who + ' 没能从台账退役：' + (error.detail or str(error))
+                                 + ('（它已被停用，请在设备管理里核对）' if switched_off else '')) from None
+            # It became busy after the check: put it back the way it was and leave it alone.
+            if switched_off:
+                try:
+                    platform.call('PATCH', path + '/enabled',
+                                  dict(enabled=True, version=version, reason=BUSY_REASON), 'catalog-on-' + key)
+                except ValueError as again:
+                    raise ValueError('设备 ' + who + ' 正忙，这次不退役，但已停用后没能重新启用：' + str(again)
+                                     + '。请在设备管理里把它启用') from None
+            try:
+                reasons = blockers(platform, path)
+            except ValueError:
+                reasons = None
+            result['skipped'].append(skipped(row, reasons or [error.detail or '设备还有没结束的工作']))
+            continue
         result['retired'].append(identity)
+        result['retired_devices'].append(dict(device_id=identity, device_no=row.get('device_no'), name=row.get('name')))
     return result

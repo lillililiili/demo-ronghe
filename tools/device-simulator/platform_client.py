@@ -54,6 +54,22 @@ def legacy_batch_device(item):
             and item.get('source_mode') == 'replay' and item.get('simulated') is True
             and bool(item.get('device_id')))
 
+# 2026-10-14 用户确认方案 A：启动时把本场景要用、但以前被退役或停用的模拟设备恢复成同一条记录。
+RESTORE_REASON = '设备模拟器启动：恢复本场景要用的模拟设备（同一条设备记录，历史保留）'
+
+
+class PlatformError(ValueError):
+    """A refused API call that keeps the platform's HTTP status and error code.
+
+    It stays a ValueError with the same text as before, so existing callers and
+    the operator-facing message are unchanged; only callers that must branch on
+    the platform's answer (restore, busy devices) read ``status`` and ``code``.
+    """
+    def __init__(self, text, status=None, code=None, detail=''):
+        super().__init__(text)
+        self.status, self.code, self.detail = status, code, detail
+
+
 class Platform:
     def __init__(self, base, token=None):
         parsed = urllib.parse.urlparse(base)
@@ -94,10 +110,12 @@ class Platform:
             if error.code == 401 and self.on_unauthorized:
                 self.on_unauthorized()
             try:
-                message = json.load(error).get('error', {}).get('message', '')
+                problem = json.load(error).get('error') or {}
             except Exception:
-                message = ''
-            raise ValueError(f'系统接口 {path} 返回 {error.code}：{message}') from None
+                problem = {}
+            message = str(problem.get('message') or '') if isinstance(problem, dict) else ''
+            code = problem.get('code') if isinstance(problem, dict) else None
+            raise PlatformError(f'系统接口 {path} 返回 {error.code}：{message}', error.code, code, message) from None
         except urllib.error.URLError as error:
             category = '请求超时' if isinstance(error.reason, TimeoutError) else '连接失败'
             raise ValueError(f'系统接口 {path} {category}，请检查服务状态') from None
@@ -111,12 +129,41 @@ class Platform:
             raise ValueError('系统接口未成功：' + path)
         return value.get('data')
 
-    def _existing_device(self, body):
-        """Find and validate a previously registered stable simulator device."""
+    def _restore(self, body):
+        """Ask the platform to bring back this simulator's own retired or switched-off device.
+
+        The platform restores only replay devices it recorded as simulated, and only
+        when every identity field below matches the existing binding; real devices
+        are refused. Returns None when the platform has no device with this number
+        (a new registration follows) or is an older version without restore.
+        """
+        request = {key: body.get(key) for key in ('device_no', 'broker_id', 'protocol_code',
+                                                  'external_device_id', 'source_mode')}
+        if body.get('protocol_code') == 'EO_EDGE_MQTT_20250826':
+            request['edge_id'] = body.get('edge_id')
+        else:
+            request.update(provider_code=body.get('provider_code'), device_type_abbr=body.get('device_type_abbr'))
+        request['reason'] = RESTORE_REASON
+        try:
+            return self.call('POST', '/devices/restore-simulated', request)
+        except PlatformError as error:
+            if error.status in (404, 405):
+                return None
+            raise ValueError('模拟设备 ' + body['device_no'] + ' 没能恢复：' + (error.detail or str(error))) from None
+
+    def _existing_device(self, body, restored=None):
+        """Find and validate a previously registered stable simulator device.
+
+        A device this simulator registered earlier and the platform later retired
+        or switched off is restored first (same record, history kept), then
+        validated like any other existing registration.
+        """
         query = urllib.parse.urlencode({'page': 1, 'size': 100, 'keyword': body['device_no'], 'sort': 'device_no_asc'})
         page = self.call('GET', '/devices?' + query)
         matches = [item for item in page.get('items', []) if item.get('device_no') == body['device_no']]
         if not matches:
+            if restored is None and self._restore(body) is not None:
+                return self._existing_device(body, 'retired')
             return None
         if len(matches) > 1:
             raise ValueError('稳定设备编号出现重复记录：' + body['device_no'])
@@ -135,8 +182,6 @@ class Platform:
                 mismatches.append(scope_key)
         if detail.get('protocol_code') != body['protocol_code']:
             mismatches.append('protocol_code')
-        if device.get('enabled') is False:
-            mismatches.append('设备已停用')
         status = self.call('GET', '/devices/' + urllib.parse.quote(str(device_id), safe='') + '/protocol-status')
         details = status.get('details') or {}
         for key in ('broker_id', 'provider_code', 'external_device_id', 'edge_id', 'device_type_abbr'):
@@ -144,6 +189,11 @@ class Platform:
             actual = details.get(key)
             if expected is not None and actual is not None and expected != actual:
                 mismatches.append(key)
+        if device.get('enabled') is False:
+            # Only an identity that already matches is switched back on.
+            if not mismatches and restored is None and self._restore(body) is not None:
+                return self._existing_device(body, 'disabled')
+            mismatches.append('设备已停用')
         if mismatches:
             raise ValueError('稳定设备身份冲突（' + body['device_no'] + '）：' + '、'.join(dict.fromkeys(mismatches)))
         mutable = ('name', 'vendor', 'model', 'longitude', 'latitude', 'altitude_m')
@@ -156,6 +206,8 @@ class Platform:
             sync_key = 'sim-sync-' + hashlib.sha256((body['external_device_id'] + ':' + str(version)).encode('utf-8')).hexdigest()[:24]
             detail = self.call('PUT', '/devices/' + urllib.parse.quote(str(device_id), safe=''), update, sync_key)
         detail['_reused'] = True
+        if restored:
+            detail['_restored'] = restored
         return detail
 
     def _onboard_or_reuse(self, body, key):
@@ -271,6 +323,9 @@ class Platform:
             if d['kind'] == 'eo':
                 body['edge_id'] = external + '-edge'
             record = self._onboard_or_reuse(body, 'sim-onboard-'+external)
+            if record.get('_restored'):
+                manifest.setdefault('devices_restored', []).append(
+                    {'device_no': external, 'name': body['name'], 'before': record['_restored']})
             record = self._sync_sensing_profile(record, d.get('coverage'), external)
             # source_id 供设备开始、恢复上报时报健康状态用（device_health.py）。
             manifest['devices'][device_id] = {'external_id': external, 'edge_id': body.get('edge_id'), 'platform_id': record['device']['device_id'],

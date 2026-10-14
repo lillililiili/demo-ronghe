@@ -362,6 +362,24 @@ class Runtime:
                 with (self.data_dir/self.batch/'events.ndjson').open('a', encoding='utf-8') as f:
                     f.write(json.dumps(record,ensure_ascii=False)+'\n')
 
+    def log_catalog_changes(self):
+        """Say in plain words which devices this start restored, retired or left alone."""
+        def name(item):
+            return str(item.get('device_no')) + ('（' + item['name'] + '）' if item.get('name') else '')
+        restored = self.manifest.get('devices_restored') or []
+        if restored:
+            self.log('DEVICES_RESTORED', f'已恢复 {len(restored)} 台以前退役或停用的模拟设备（还是原来那条设备记录，历史都在）：'
+                     + '、'.join(name(item) for item in restored), devices=copy.deepcopy(restored))
+        result = self.manifest.get('device_catalog_reconciliation') or {}
+        retired = result.get('retired_devices') or []
+        if retired:
+            self.log('CATALOG_RETIRED', f'已退役 {len(retired)} 台不在本场景里的模拟设备（历史保留，以后场景再用到会自动恢复）：'
+                     + '、'.join(name(item) for item in retired), devices=copy.deepcopy(retired))
+        for item in result.get('skipped') or []:
+            self.log('CATALOG_SKIPPED', '设备 ' + name(item) + '不在本场景里，但还有没结束的工作（'
+                     + '、'.join(item.get('reasons') or []) + '），这次没有停用或退役它，启动照常进行；'
+                     + '处理完后下次启动会再整理。', device=copy.deepcopy(item))
+
     def checkpoint(self):
         with self.lock:
             self.manifest.update(phase=self.phase,elapsed=self.elapsed,sent=self.sent)
@@ -537,6 +555,7 @@ class Runtime:
             self.checkpoint()
             if self.cancel.is_set(): return
             self.platform.prepare_devices(devices,self.broker,self.manifest,self.checkpoint)
+            self.log_catalog_changes()
             if self.cancel.is_set(): return
             if self.fullchain:
                 from prerequisite_check import verify as verify_prerequisites

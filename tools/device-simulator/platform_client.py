@@ -461,6 +461,7 @@ class Prerequisites:
             related = [t for t in targets.values() if t.get('planId')==p['id'] or any(r.get('targetId')==t['id'] and r.get('planId')==p['id'] for r in risks)]
             for t in related or [None]:
                 pid = str(uuid.uuid4()); start, end = moment(p['start']), moment(p['end'])
+                if end <= start: end += 86400  # 跨夜的任务：结束落在次日
                 # Preserve user-specified plan times. Time risks require an actual out-of-window observation.
                 for risk in scene['risks']:
                     if risk.get('enabled') and risk['type']=='time' and t and risk.get('targetId')==t['id'] and risk.get('planId')==p['id']:

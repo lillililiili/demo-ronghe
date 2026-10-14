@@ -13,7 +13,7 @@
   const c=data.coverage||{},rows=Object.entries(c.coverage||{});
   document.getElementById('fullchain-coverage').innerHTML=(c.warnings||[]).map(x=>`<p>${esc(x)}</p>`).join('')+`<p>MQTT Broker 确认 ${data.sent||0} 条；通知收到 ${data.realtime?.notifications?.received_count||0} 条；TCP 请求 ${data.realtime?.countermeasure?.received||0} 次</p>`+(rows.length?rows.map(([k,v])=>`<p><b>${esc(v.label||k)}</b>：${esc(coverageText(v))}</p>`).join(''):'<p>尚无本批次输入确认</p>');
  }
- function adopt(next){localStorage.setItem(storeKey+'-before-fullchain',JSON.stringify(state));state=next;selected={kind:'site',id:state.sites[0]?.id};syncSceneFields();dirty();render();window.SimulatorMap?.fit(scenePoints());}
+ function adopt(next){localStorage.setItem(storeKey+'-before-fullchain',JSON.stringify(state));window.FlowPicker?.clear();state=next;selected={kind:'site',id:state.sites[0]?.id};syncSceneFields();dirty();render();window.SimulatorMap?.fit(scenePoints());}
  async function load(){
   const options=liveState?.connected?await api('external/request',{method:'GET',path:'/local-interface-simulator/plan-options'}):{};
   const pilots=options.pilots||[],bindings=options.source_bindings||[];

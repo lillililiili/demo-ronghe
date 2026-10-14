@@ -53,11 +53,43 @@ class RealtimeConfigurationTests(unittest.TestCase):
         original = copy.deepcopy(scene)
         result = prepare_scene(scene, validate_config({}))
         self.assertEqual(original, scene)
-        self.assertEqual(0, result['duration'])
+        self.assertEqual(20, result['duration'])  # 运行时长只看场景自带的，收发设置里不再另设“持续运行”
         self.assertFalse(result['risks'][0]['enabled'])
         self.assertTrue(result['risks'][1]['enabled'])
         self.assertEqual('持续上报', result['sites'][0]['devices'][0]['heartbeat'])
         self.assertEqual('none', result['targets'][0]['notificationBehavior'])
+
+    def test_retired_fields_in_old_settings_are_dropped_not_rejected(self):
+        from realtime_control import DEFAULT_CONFIG, prepare_scene, validate_config
+        self.assertNotIn('continuous', DEFAULT_CONFIG)
+        for value in ({'continuous': True}, {'continuous': False, 'mode': 'abnormal'},
+                      {'countermeasure_plan_id': 'p1', 'continuous': True}):
+            with self.subTest(value=value):
+                config = validate_config(value)
+                self.assertNotIn('continuous', config)
+                self.assertNotIn('countermeasure_plan_id', config)
+        scene = {'duration': 5, 'sites': [], 'targets': [], 'risks': []}
+        for mode in ('normal', 'abnormal', 'mixed'):
+            self.assertEqual(5, prepare_scene(scene, validate_config({'mode': mode, 'continuous': True}))['duration'])
+        # 保存在磁盘上的旧设置文件也能读，并且下次保存时不再带这个字段。
+        with tempfile.TemporaryDirectory() as folder:
+            from realtime_control import RealtimeController
+            path = Path(folder) / 'realtime-config.json'
+            path.write_text(json.dumps({'mode': 'abnormal', 'continuous': True}), encoding='utf-8')
+            controller = RealtimeController(SimpleNamespace(data_dir=Path(folder)), port=19870)
+            self.assertEqual('abnormal', controller.config['mode'])
+            self.assertNotIn('continuous', controller.config)
+
+    def test_notification_outcomes_follow_the_mode_and_this_scenes_policy(self):
+        from realtime_control import notification_outcomes, validate_config
+        from realtime_notification_receiver import KINDS
+        picked = {'ADVISORY_SMS': 'failed'}
+        self.assertEqual({}, notification_outcomes(validate_config({'outcomes': picked}), {}))
+        self.assertEqual(picked, notification_outcomes(validate_config({'mode': 'abnormal', 'outcomes': picked}), {}))
+        self.assertEqual(picked, notification_outcomes(validate_config({'mode': 'mixed', 'outcomes': picked}), None))
+        rotating = {'fullchain': {'enabled': True, 'notificationPolicy': 'mixed'}}
+        for mode in ('normal', 'abnormal'):
+            self.assertEqual({kind: 'mixed' for kind in KINDS}, notification_outcomes(validate_config({'mode': mode}), rotating))
 
     def test_reject_unknown_config_or_voice_mode_on_sms(self):
         from realtime_control import validate_config
@@ -135,20 +167,23 @@ class LifecycleTests(unittest.TestCase):
         self.assertTrue(any(c[2] and c[2].get('enabled') is False for c in self.proxy.calls))
 
     def test_missing_scope_leaves_no_live_transports(self):
-        with self.assertRaisesRegex(ValueError, '所属单位和区县'):
+        with self.assertRaisesRegex(ValueError, '反制设备所属单位与区县'):
             self.controller.start()
         self.assertFalse(self.controller.active())
         self.assertIsNone(self.controller.presence_lock)
         self.assertFalse(self.controller.snapshot()['countermeasure']['listening'])
 
-    def test_missing_platform_connection_says_where_to_create_it(self):
-        with self.assertRaisesRegex(ValueError, '还没有启用的设备数据连接.*接口配置 → 设备数据连接'):
+    def test_missing_platform_connection_says_who_has_to_create_it(self):
+        with self.assertRaisesRegex(ValueError, '平台上还没有可用的本机回放设备数据连接.*选好“反制设备所属单位与区县”.*找开发人员') as caught:
             self.controller.start()
+        # 她在后台页面里建不了这个连接，不能再指向已经不存在的“接口配置”页面。
+        self.assertNotIn('接口配置', str(caught.exception))
         self.session.connection_scope = lambda: {'owner_org_id': None, 'district_id': None,
             'message': '模拟器连接读取失败，请手动选择归属单位与区县'}
-        with self.assertRaisesRegex(ValueError, '读取设备数据连接失败'):
+        with self.assertRaisesRegex(ValueError, '读取平台上的设备数据连接失败'):
             self.controller.start()
         self.assertFalse(self.controller.active())
+        self.assertIn('读取平台上的设备数据连接失败', self.controller.snapshot()['error'])
 
     def test_first_start_after_login_follows_the_platform_connection(self):
         # Login clears runtime.broker; the receiver must not need a scene run or a manual scope first.
@@ -206,6 +241,48 @@ class LifecycleTests(unittest.TestCase):
             self.controller.start()
         self.assertEqual({'owner_org_id': 'test-org', 'district_id': 'test-district'}, registered[-1])
         self.assertIsNone(self.controller.snapshot()['countermeasure_position'])
+
+    def test_second_scene_start_refreshes_outcomes_and_the_counter_position(self):
+        # 收发端跨场景常驻，第二个场景开始时不会重新启动：通知结果和反制设备位置也要按这一次的场景重新定。
+        from countermeasure_tcp import CountermeasureSimulator
+        from engine import coordinates
+        from test_countermeasure_tcp import free_port
+        registered = []
+        def request(command):
+            if command['path'].endswith('/countermeasure-device'):
+                body = command.get('body')
+                registered.append(body)
+                # 平台上这台设备已经有位置的话不会改：第一次没带位置，第二次带了就记下来。
+                device = {'device_id': 'cm-test'}
+                if 'longitude' in body:
+                    device.update(longitude=body['longitude'], latitude=body['latitude'])
+                return {'device': device}
+            return self.proxy.call(command['method'], command['path'], command.get('body'), command.get('key'))
+        self.session.request = request
+        self.controller.configure({'mode': 'abnormal', 'countermeasure_scope': 'test-org|test-district',
+                                   'outcomes': {'ADVISORY_SMS': 'failed'}})
+        outcome_file = Path(self.temp.name) / 'realtime-outcomes.json'
+        rotating = {'fullchain': {'enabled': True, 'notificationPolicy': 'mixed'}}
+        # 第一个场景：通知轮换，场景里没有雷达，登记时不带位置。
+        with patch('countermeasure_tcp.CountermeasureSimulator', return_value=CountermeasureSimulator(port=free_port())):
+            self.controller.start({**rotating, 'sites': []})
+        self.addCleanup(self.controller.stop)
+        self.assertEqual('mixed', json.loads(outcome_file.read_text(encoding='utf-8'))['ADVISORY_SMS'])
+        self.assertIsNone(self.controller.snapshot()['countermeasure_position'])
+        self.assertEqual(1, len(registered))
+        # 第二个场景：没有轮换策略，带一台雷达。收发端已经在运行，不重新启动，但这两项按新场景重新定。
+        state_before = self.controller.thread
+        self.controller.start({'sites': [{'x': 100, 'y': 50, 'devices': [{'kind': 'radar'}]}]})
+        self.assertIs(state_before, self.controller.thread)
+        self.assertEqual({'ADVISORY_SMS': 'failed'}, json.loads(outcome_file.read_text(encoding='utf-8')))
+        radar = [round(value, 7) for value in coordinates([100, 50])]
+        self.assertEqual({'longitude': radar[0], 'latitude': radar[1]}, registered[-1] and
+                         {k: registered[-1][k] for k in ('longitude', 'latitude')})
+        self.assertEqual({'longitude': radar[0], 'latitude': radar[1]}, self.controller.snapshot()['countermeasure_position'])
+        # 已经有位置之后，再开始第三个场景不再去平台登记。
+        count = len(registered)
+        self.controller.start({'sites': [{'x': 5, 'y': 5, 'devices': [{'kind': 'radar'}]}]})
+        self.assertEqual(count, len(registered))
 
     def test_disabling_receiver_after_stop_does_not_reuse_it(self):
         self.controller.configure({'countermeasure_enabled': False})

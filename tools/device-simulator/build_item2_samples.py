@@ -87,7 +87,7 @@ def samples():
 
 def notification_configs():
     """Existing realtime-control payloads; not notification qualification data."""
-    base = dict(mode='normal', continuous=True, notifications_enabled=True,
+    base = dict(mode='normal', notifications_enabled=True,
                 countermeasure_enabled=False, countermeasure_scope='',
                 countermeasure_longitude=None, countermeasure_latitude=None,
                 command_mode='success', play_seconds=3,

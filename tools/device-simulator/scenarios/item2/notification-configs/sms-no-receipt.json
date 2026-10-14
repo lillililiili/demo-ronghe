@@ -1,6 +1,5 @@
 {
   "mode": "abnormal",
-  "continuous": true,
   "notifications_enabled": true,
   "countermeasure_enabled": false,
   "countermeasure_scope": "",

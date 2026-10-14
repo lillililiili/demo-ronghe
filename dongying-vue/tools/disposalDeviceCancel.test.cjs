@@ -1,5 +1,5 @@
 /* 反制设备可用性、撤销授权与“为什么不能反制”的提示（BUG-03 / ZT-18）：node tools/disposalDeviceCancel.test.cjs */
-const { test } = require('node:test');
+const { test, before } = require('node:test');
 const assert = require('node:assert/strict');
 const { readFileSync } = require('node:fs');
 const path = require('node:path');
@@ -13,6 +13,9 @@ const DEVICES = [
   { device_id: 'bad', device_no: 'CM-5', device_type_code: 'countermeasure', enabled: true, connectivity: 'ONLINE', health_code: 'BAD' },
   { device_id: 'ifr-off', device_no: 'IFR-1', device_type_code: 'ifr', enabled: true, connectivity: 'OFFLINE' }
 ];
+
+let reach;
+before(async () => { reach = await import('../src/ui/deviceReach.js'); });
 
 /** 去掉 import/export 后在隔离上下文里跑弹窗模块，表单、提示和接口调用都记下来。 */
 function load({ devices = DEVICES, create, cancel } = {}) {
@@ -32,7 +35,8 @@ function load({ devices = DEVICES, create, cancel } = {}) {
     isDisposalUnavailable: () => false, isUncertainOutcome: () => false,
     DISPOSAL_ACTION_LABEL: {}, DISPOSAL_BLOCK_REASON_LABEL: {}, DISPOSAL_CHANNEL_LABEL: {},
     DISPOSAL_STATUS_LABEL: {}, disposalStatusText: value => value?.status,
-    labelOf: (_labels, value) => value
+    labelOf: (_labels, value) => value,
+    deviceReach: reach.deviceReach, distanceText: reach.distanceText, validPoint: reach.validPoint
   });
   vm.runInContext(readFileSync(path.join(__dirname, '../src/ui/deviceNumber.js'), 'utf8').replace(/\bexport /g, ''), context);
   vm.runInContext(source, context);
@@ -63,7 +67,7 @@ test('不能用的设备置灰并写明原因，能用的排在前面，别的�
 test('申请表单：设备下拉随通道给出置灰选项，选到不能用的设备时提交前就说清原因', async () => {
   const { form } = await requestForm();
   const device = form.fields.find(field => field.key === 'device_id');
-  assert.match(device.help, /置灰不能选/);
+  assert.match(device.help({ channel: 'COUNTERMEASURE_4CH' }), /置灰不能选/);
   assert.deepEqual(device.options({ channel: 'LINGYUN_B' }).map(option => option.disabled), [true]);
   const base = { action_type: 'COUNTERMEASURE', channel: 'COUNTERMEASURE_4CH', reason: '现场核实后申请反制' };
   assert.equal(form.validate({ ...base, device_id: 'ok' }), null);
@@ -71,6 +75,52 @@ test('申请表单：设备下拉随通道给出置灰选项，选到不能用�
   assert.match(form.validate({ ...base, channel: 'LINGYUN_B', device_id: 'ifr-off' }), /这个执行通道的设备现在都不能用/);
   assert.match(form.warning, /批准后才可执行/);
   assert.doesNotMatch(form.warning, /自动.*信号干扰|不再二次审批/);
+});
+
+// 2026-10-14 rose：申请反制选设备时只显示覆盖范围照得到目标的设备，近的在前。
+const REACH_DEVICES = [
+  { device_id: 'far', device_no: 'CM-9', device_type_code: 'countermeasure', enabled: true, connectivity: 'ONLINE', longitude: 118.60, latitude: 37.52,
+    coverage: { kind: 'CIRCLE', status: 'AVAILABLE', radius_m: 3000 } },
+  { device_id: 'near', device_no: 'CM-1', device_type_code: 'countermeasure', enabled: true, connectivity: 'ONLINE', longitude: 118.60, latitude: 37.47,
+    coverage: { kind: 'CIRCLE', status: 'AVAILABLE', radius_m: 3000 } },
+  { device_id: 'mid-off', device_no: 'CM-2', device_type_code: 'countermeasure', enabled: true, connectivity: 'OFFLINE', longitude: 118.60, latitude: 37.48,
+    coverage: { kind: 'CIRCLE', status: 'UNAVAILABLE', radius_m: 3000 } },
+  { device_id: 'no-cover', device_no: 'CM-3', device_type_code: 'countermeasure', enabled: true, connectivity: 'ONLINE', longitude: 118.60, latitude: 37.46,
+    coverage: { kind: null, status: 'UNKNOWN' } },
+  { device_id: 'sector-away', device_no: 'CM-4', device_type_code: 'countermeasure', enabled: true, connectivity: 'ONLINE', longitude: 118.60, latitude: 37.45,
+    coverage: { kind: 'SECTOR', status: 'AVAILABLE', range_m: 5000, azimuth_deg: 180, fov_deg: 60 } }
+];
+const TARGET = { lon: 118.60, lat: 37.461 };
+
+test('给了目标位置：只列覆盖范围照得到目标的设备，近的在前，并说明隐藏了几台', async () => {
+  const { context } = load({ devices: REACH_DEVICES });
+  const options = context.deviceOptions(REACH_DEVICES, 'COUNTERMEASURE_4CH', TARGET);
+  assert.deepEqual(options.map(option => option.value), ['near', 'mid-off']);
+  assert.match(options[0].label, /距目标 1\.0 km · 在覆盖范围内/);
+  assert.match(options[1].label, /不能选：设备离线/);
+  const hidden = context.hiddenDeviceText(REACH_DEVICES, 'COUNTERMEASURE_4CH', TARGET);
+  assert.match(hidden, /另有 3 台没有列出/);
+  assert.match(hidden, /2 台超出覆盖/);
+  assert.match(hidden, /1 台没有配置覆盖范围/);
+  // 不给位置时保持原来的全部列出。
+  assert.equal(context.deviceOptions(REACH_DEVICES, 'COUNTERMEASURE_4CH').length, 5);
+});
+
+test('申请表单按目标位置筛设备；读不到位置时全部列出并如实说明', async () => {
+  const loaded = load({ devices: REACH_DEVICES });
+  await loaded.context.openDisposalRequest({ actionType: 'COUNTERMEASURE', subjectKind: 'UAV_EVENT', subjectId: 'event-1', targetPoint: TARGET });
+  const form = loaded.state.forms[0];
+  const device = form.fields.find(field => field.key === 'device_id');
+  assert.match(device.help({ channel: 'COUNTERMEASURE_4CH' }), /只显示覆盖范围照得到目标的设备.*另有 3 台没有列出/);
+  const base = { action_type: 'COUNTERMEASURE', channel: 'COUNTERMEASURE_4CH', reason: '现场核实后申请反制' };
+  assert.equal(form.validate({ ...base, device_id: 'near' }), null);
+  assert.equal(form.validate({ ...base, device_id: 'far' }), '执行设备与所选通道不一致，请重新选择');
+  assert.equal(form.validate({ ...base, channel: 'LINGYUN_B', device_id: null }), '这个执行通道没有覆盖范围照得到目标的设备，请换一个执行通道。');
+  const unknown = load({ devices: REACH_DEVICES });
+  await unknown.context.openDisposalRequest({ actionType: 'COUNTERMEASURE', subjectKind: 'UAV_EVENT', subjectId: 'event-1', targetPoint: null });
+  const unknownDevice = unknown.state.forms[0].fields.find(field => field.key === 'device_id');
+  assert.match(unknownDevice.help({ channel: 'COUNTERMEASURE_4CH' }), /读不到目标现在的位置/);
+  assert.equal(unknownDevice.options({ channel: 'COUNTERMEASURE_4CH' }).length, 5);
 });
 
 test('普通申请和直接反制都不再声明自动创建后续干扰', async () => {

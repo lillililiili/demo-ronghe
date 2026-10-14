@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { departureBasisText, uavNowHtml, uavNowPillHtml, uavNowStatus } from '../src/components/disposal/uavNowStatus.js';
+import { alarmReasonView, departureBasisText, uavNowHtml, uavNowPillHtml, uavNowStatus } from '../src/components/disposal/uavNowStatus.js';
 
 const now = Date.UTC(2026, 9, 14, 5, 37, 20);
 const base = { current: true, observedAt: now - 3000, now, reasonText: code => ({ PLAN_ALTITUDE_EXCEEDED: '超出任务高度飞行', INSIDE_RESTRICTED_AIRSPACE: '进入禁飞/限制空域' })[code] || code };
@@ -44,4 +44,23 @@ test('basis text and html escape', () => {
   assert.match(html, /&lt;x&gt;/);
   assert.match(html, /告警已确认/);
   assert.match(uavNowPillHtml(uavNowStatus({ ...base, legalStatus: 'LEGAL' })), /已不再违规/);
+});
+
+// 2026-10-14 rose 选「直接消失」：只有有效位置证明已离开、且最新研判不再违规，才从融合感知去掉。
+test('departed flag', () => {
+  assert.equal(uavNowStatus({ ...base, departure: left(now - 9000) }).departed, true);
+  assert.equal(uavNowStatus({ ...base, departure: left(now - 9000, 'LATEST_LEGALITY') }).departed, true);
+  assert.equal(uavNowStatus({ ...base, legalStatus: 'ILLEGAL', departure: left(now - 9000) }).departed, false);
+  assert.equal(uavNowStatus({ ...base, current: false, departure: left(now - 9000) }).departed, false);
+  assert.equal(uavNowStatus({ ...base, legalStatus: 'LEGAL' }).departed, false);
+});
+
+test('alarm reason shows latest judgment first', () => {
+  const text = code => ({ A: '超出任务高度飞行', B: '进入禁飞/限制空域' })[code] || code;
+  const same = alarmReasonView({ legalStatus: 'ILLEGAL', legalReasons: ['A'], alarmReasons: ['A'], reasonText: text });
+  assert.deepEqual([same.label, same.text, same.atAlarm, same.tone], ['现在的违规原因 · 最新研判', '超出任务高度飞行', '', 'risk']);
+  const cleared = alarmReasonView({ legalStatus: 'LEGAL', legalReasons: [], alarmReasons: ['B'], reasonText: text });
+  assert.deepEqual([cleared.text, cleared.atAlarm, cleared.tone], ['已无违规', '进入禁飞/限制空域', 'ok']);
+  const unknown = alarmReasonView({ legalStatus: 'UNDETERMINED', alarmReasons: [], reasonText: text });
+  assert.deepEqual([unknown.label, unknown.text], ['告警原因（出告警时）', '未记录具体触发原因']);
 });

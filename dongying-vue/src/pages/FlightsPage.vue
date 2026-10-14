@@ -1,6 +1,6 @@
 <script>
 /* 跨导航只保留筛选、分页与选中 ID；业务事实仍每次从只读 API 重取，不能缓存成 Mock 副本。 */
-const S = { filters: { status_code: '', keyword: '', today: false }, page: 1, size: 20, selectedPlanId: null, tab: 'route', tabHash: '',
+const S = { filters: { status_code: '', keyword: '', time: '', timeRange: null }, page: 1, size: 20, selectedPlanId: null, tab: 'route', tabHash: '',
   /* 风险页签：筛选只收契约允许的字段；目标类型筛选与任意排序契约不支持，只保留禁用控件。 */
   riskFilters: { severity: '', state: '', risk_type: '', plan_id: '', owner_org_id: '', district_id: '', source_mode: '', occurred: null },
   riskPage: 1, riskSize: 10, selectedRiskId: null, riskTab: 'event' };
@@ -50,6 +50,7 @@ import { objectSnapshot, drawObjectRisk } from '@/pages/flights/objectRiskMap.js
 import { weatherPolygon, insideWeather, drawWeatherArea, weatherLayerKind } from '@/pages/flights/weatherMap.js';
 import { strokePlanComparison, trustedTrajectoryPoints, trajectoryNoteText } from '@/pages/flights/planTrajectory.js';
 import { hasRouteDeviation } from '@/pages/flights/planMatch.js';
+import { TIME_FILTER_OPTIONS, customRangeValid, timeFilterLabel, timeFilterWindow } from '@/services/timeFilter.js';
 import { PLAN_KEYWORD_MAX, activePlanKpi, beijingDayWindow, planKpiFilters, planListQuery, planNumberText, planWindowText, normalizePlanKeyword, upstreamPlanNotice } from '@/pages/flights/planFilters.js';
 import UPagination from '@/components/UPagination.vue';
 import UControl from '@/components/form/UControl.vue';
@@ -303,7 +304,7 @@ const kpiList = computed(() => {
 /* 生效条件提示：“今日计划”与统计卡口径相同（北京时间今天），点卡片后不在工具栏里另占位置。 */
 const planFilterSummary = computed(() => {
   const parts = [];
-  if (filters.today) parts.push('今日任务');
+  if (planTimeWindow()) parts.push(filters.time === 'TODAY' ? '今日任务' : `时间：${timeFilterLabel(filters.time)}`);
   if (filters.status_code) parts.push(labelOf(PLAN_STATUS_LABEL, filters.status_code));
   if (filters.keyword) parts.push(`关键词“${filters.keyword}”`);
   return parts.length ? `筛选：${parts.join(' · ')}，共 ${total.value} 条` : '';
@@ -1121,6 +1122,20 @@ function chooseStatus(value) {
   filters.status_code = value || '';
   applyFilters();
 }
+/* 时间筛选（2026-10-14）：按任务时段与所选时间有重叠即算，和“今日报备任务”卡片同一口径；选“今天”与点该卡片等价。 */
+function chooseTime(value) {
+  const next = value || '';
+  if (next === filters.time) return;
+  filters.time = next;
+  // 刚选“自定义起止”还没填时间时，查询条件没变，等填好起止再读。
+  if (next === 'CUSTOM' && !customRangeValid(filters.timeRange)) return;
+  applyFilters();
+}
+function chooseTimeRange(value) {
+  filters.timeRange = value;
+  applyFilters();
+}
+function planTimeWindow() { return timeFilterWindow(filters.time, filters.timeRange); }
 function applyKeyword() {
   const keyword = normalizePlanKeyword(keywordDraft.value);
   keywordDraft.value = keyword;
@@ -1157,7 +1172,7 @@ watch(kpiList, () => {
   }
 }, { flush: 'post' });
 function clearPlanFilters() {
-  Object.assign(filters, { status_code: '', keyword: '', today: false });
+  Object.assign(filters, { status_code: '', keyword: '', time: '', timeRange: null });
   keywordDraft.value = '';
   applyFilters();
 }
@@ -1711,7 +1726,7 @@ function showRouteTab(requestedId = null) {
   destroyRouteMap();
   if (requestedId) {
     planDetailTab.value = 'plan';
-    Object.assign(filters, { status_code: '', keyword: '', today: false });
+    Object.assign(filters, { status_code: '', keyword: '', time: '', timeRange: null });
     keywordDraft.value = '';
     plans.value = [];
     selected.value = null;
@@ -2022,9 +2037,13 @@ onUnmounted(() => {
               <div class="field"><label for="plan-keyword">搜索</label><UControl id="plan-keyword" v-model="keywordDraft" clearable size="small" placeholder="任务编号/航线/无人机" :maxlength="PLAN_KEYWORD_MAX" :disabled="loading" @keyup.enter="applyKeyword" @update:model-value="keywordInput" /></div>
               <button class="btn" type="button" :disabled="loading" @click="applyKeyword">查询</button>
             </div>
-            <div class="plan-filter-row">
+            <div class="plan-filter-row has-time">
               <div class="field"><label>状态</label><UControl :model-value="filters.status_code" type="select" size="small" :options="statusOptions" :disabled="loading" @update:model-value="chooseStatus" /></div>
+              <div class="field"><label>时间</label><UControl :model-value="filters.time" type="select" size="small" :options="TIME_FILTER_OPTIONS" :disabled="loading" @update:model-value="chooseTime" /></div>
               <button class="btn ghost" type="button" :disabled="loading" @click="refreshPlans">刷新任务</button>
+            </div>
+            <div v-if="filters.time === 'CUSTOM'" class="plan-filter-row plan-time-range">
+              <div class="field"><label for="plan-time-range">自定义起止（北京时间）</label><UControl id="plan-time-range" :model-value="filters.timeRange" type="datetimerange" clearable size="small" start-placeholder="开始时间" end-placeholder="结束时间" :disabled="loading" @update:model-value="chooseTimeRange" /></div>
             </div>
           </div>
           <p v-if="planFilterSummary" class="workspace-selection-note plan-filter-note"><span>{{ planFilterSummary }}</span><button class="btn ghost" type="button" :disabled="loading" @click="clearPlanFilters">清除筛选</button></p>
@@ -2184,6 +2203,8 @@ onUnmounted(() => {
 /* 搜索与状态两行与风险页签的快捷筛选同尺寸（小号控件、10px 字段名），给列表多留高度。 */
 .flights-page .workspace-list .plan-toolbar { display: grid; grid-template-columns: minmax(0, 1fr); align-items: end; gap: 7px; padding: 9px; }
 .flights-page .workspace-list .plan-filter-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 6px; }
+.flights-page .workspace-list .plan-filter-row.has-time { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; }
+.flights-page .workspace-list .plan-filter-row.plan-time-range { grid-template-columns: minmax(0, 1fr); }
 .flights-page .workspace-list .plan-filter-row .field { gap: 3px; }
 .flights-page .workspace-list .plan-filter-row label { font-size: 10px; }
 .flights-page .workspace-list .plan-filter-row > .btn { min-height: 28px; height: 28px; padding: 0 10px; white-space: nowrap; }

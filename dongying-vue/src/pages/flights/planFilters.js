@@ -2,6 +2,7 @@
    点卡片后列表数量与卡片数字一致；手动刷新、定时重读与实时刷新都按同一份筛选重取。 */
 import { readableNo } from '../../ui/labels.js';
 import { displayPlanNo } from '../../ui/deviceNumber.js';
+import { timeFilterWindow } from '../../services/timeFilter.js';
 
 /* 与后端 keyword 上限一致；后端不去空格，空白会被拒绝，所以前端先去首尾空格再提交。 */
 export const PLAN_KEYWORD_MAX = 128;
@@ -44,28 +45,28 @@ export function normalizePlanKeyword(value) {
   return String(value ?? '').trim().slice(0, PLAN_KEYWORD_MAX);
 }
 
-/* 列表请求参数：空值由 flightApi 丢弃；只在“今天”范围打开时带时间窗。 */
+/* 列表请求参数：空值由 flightApi 丢弃；选了时间才带时间窗（任务时段与之重叠即算，“今天”与统计卡同一窗口）。 */
 export function planListQuery(filters = {}, { page = 1, size = 20, now = Date.now() } = {}) {
   const query = { page, size, status_code: filters.status_code || '', keyword: normalizePlanKeyword(filters.keyword) };
-  if (filters.today) {
-    const day = beijingDayWindow(now);
-    query.window_from = day.from;
-    query.window_to = day.to;
+  const span = timeFilterWindow(filters.time, filters.timeRange, now);
+  if (span) {
+    query.window_from = span.from;
+    query.window_to = span.to;
   }
   return query;
 }
 
 /* 当前筛选恰好等于哪张统计卡（用于高亮）；不是“今天”范围时没有选中的卡。 */
 export function activePlanKpi(filters = {}) {
-  if (!filters.today) return null;
+  if (filters.time !== 'TODAY') return null;
   return Object.keys(PLAN_KPI_STATUS).find(key => PLAN_KPI_STATUS[key] === (filters.status_code || '')) || null;
 }
 
 /* 点卡片：只看今天该状态的计划，并清空关键词，使列表与卡片数字一致；再点已选中的卡片恢复全部日期与状态。 */
 export function planKpiFilters(filters = {}, key) {
   if (!Object.hasOwn(PLAN_KPI_STATUS, key)) return { ...filters };
-  if (activePlanKpi(filters) === key) return { ...filters, today: false, status_code: '' };
-  return { ...filters, today: true, status_code: PLAN_KPI_STATUS[key], keyword: '' };
+  if (activePlanKpi(filters) === key) return { ...filters, time: '', status_code: '' };
+  return { ...filters, time: 'TODAY', status_code: PLAN_KPI_STATUS[key], keyword: '' };
 }
 
 function beijingParts(ms) {

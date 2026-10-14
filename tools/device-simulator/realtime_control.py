@@ -10,26 +10,30 @@ import time
 import uuid
 
 from engine import coordinates
+from friendly_errors import explain, explain_exception
 from state_file import atomic_json
 from realtime_notification_receiver import Receiver, ReceiverError, InstanceLock, KINDS, MODES
 
 ACTIVE = {'PREPARING', 'RUNNING', 'PAUSED', 'STOPPING'}
-DEFAULT_CONFIG = {'mode': 'normal', 'continuous': True, 'notifications_enabled': True,
+DEFAULT_CONFIG = {'mode': 'normal', 'notifications_enabled': True,
                   'countermeasure_enabled': True, 'countermeasure_scope': '',
                   'countermeasure_longitude': None, 'countermeasure_latitude': None,
                   'command_mode': 'success', 'play_seconds': 3, 'outcomes': {}}
+# 旧设置文件里已经不用的字段，读入时直接丢弃：
+# countermeasure_plan_id——反制设备曾借计划取单位与区县，现在直接选单位与区县；
+# continuous——运行时长曾在这里另设一份“持续运行”，现在只看页面顶部的“运行时长”。
+RETIRED_FIELDS = ('countermeasure_plan_id', 'continuous')
 
 
 def validate_config(value):
-    if isinstance(value, dict) and 'countermeasure_plan_id' in value:
-        # 旧设置文件：反制设备曾借计划取单位与区县，现在直接选单位与区县，旧值丢弃。
-        value = {k: v for k, v in value.items() if k != 'countermeasure_plan_id'}
+    if isinstance(value, dict) and set(value) & set(RETIRED_FIELDS):
+        value = {k: v for k, v in value.items() if k not in RETIRED_FIELDS}
     if not isinstance(value, dict) or set(value) - set(DEFAULT_CONFIG):
         raise ValueError('实时收发配置包含未知字段')
     config = {**copy.deepcopy(DEFAULT_CONFIG), **copy.deepcopy(value)}
     if config['mode'] not in ('normal', 'abnormal', 'mixed'):
         raise ValueError('请选择正常或异常模式')
-    for key in ('continuous', 'notifications_enabled', 'countermeasure_enabled'):
+    for key in ('notifications_enabled', 'countermeasure_enabled'):
         if type(config[key]) is not bool:
             raise ValueError('收发开关必须为布尔值')
     if config['command_mode'] not in ('success', 'no_receipt', 'unchanged'):
@@ -57,10 +61,16 @@ def validate_config(value):
     return config
 
 
+def notification_outcomes(config, scene):
+    """每一类通知这一轮的回执结果：全量场景选了“通知轮换”就一律轮换；
+    否则异常、混合模式用设置里选的结果，正常模式一律正常回执（空表示都按正常）。"""
+    if (scene or {}).get('fullchain', {}).get('notificationPolicy') == 'mixed':
+        return {kind: 'mixed' for kind in KINDS}
+    return copy.deepcopy(config['outcomes']) if config['mode'] in ('abnormal', 'mixed') else {}
+
+
 def prepare_scene(raw, config):
     scene = copy.deepcopy(raw)
-    if config['continuous']:
-        scene['duration'] = 0
     if config['mode'] == 'normal' and not scene.get('fullchain', {}).get('enabled'):
         for site in scene.get('sites', []):
             for device in site.get('devices', []):
@@ -123,8 +133,10 @@ class RealtimeController:
         self.receiver_lock = None
         self.presence_lock = None
         self.cancel = threading.Event()
+        self.client = None
         self.state = 'STOPPED'
         self.error = ''
+        self.error_detail = ''
         self.session_verified_at = None
         self.notification_status = {}
         self.countermeasure_device_id = None
@@ -133,9 +145,13 @@ class RealtimeController:
     def active(self):
         return self.state in ('STARTING', 'RUNNING', 'STOPPING') or bool(self.thread and self.thread.is_alive())
 
+    def can_change_mode(self):
+        """收发端和场景都没在跑，才能改正常／异常配置。"""
+        return not (self.active() or self.runtime.phase in ACTIVE)
+
     def configure(self, value):
         with self.operation_lock, self.runtime.lock, self.lock:
-            if self.active() or self.runtime.phase in ACTIVE:
+            if not self.can_change_mode():
                 raise ValueError('请先停止全部收发，再修改正常／异常配置')
             config = validate_config(value)
             atomic_json(self.config_path, config)
@@ -145,7 +161,8 @@ class RealtimeController:
     def snapshot(self):
         # Do not acquire the runtime lock while holding this controller lock.
         with self.lock:
-            result = {'state': self.state, 'error': self.error, 'config': copy.deepcopy(self.config),
+            result = {'state': self.state, 'error': self.error, 'error_detail': self.error_detail,
+                      'config': copy.deepcopy(self.config),
                       'session_verified_at': self.session_verified_at,
                       'notifications': copy.deepcopy(self.notification_status),
                       'countermeasure': self.tcp.snapshot() if self.tcp else {'listening': False},
@@ -159,51 +176,93 @@ class RealtimeController:
         with self.operation_lock:
             return self._start(scene)
 
+    def _scene_for(self, scene):
+        return scene if scene is not None else getattr(self.runtime, 'scene', None)
+
+    def _countermeasure_body(self, config, scene):
+        """登记模拟反制设备时交给平台的内容：设备属于哪个单位与区县，以及（知道的话）它立在哪里。"""
+        # 反制设备属于单位与区县，不跟飞行计划绑定；没选时跟随模拟器连接的单位与区县。
+        if config['countermeasure_scope']:
+            org, district = config['countermeasure_scope'].split('|', 1)
+        else:
+            # 本轮还没用过连接（刚登录、还没开始模拟）时，像空域页一样去平台上查设备数据连接。
+            found = self.runtime.session.connection_scope()
+            org, district = found.get('owner_org_id'), found.get('district_id')
+            if not org or not district:
+                lead = ('读取平台上的设备数据连接失败' if '读取失败' in (found.get('message') or '')
+                        else '平台上还没有可用的本机回放设备数据连接')
+                raise ValueError(lead + '，模拟器不知道模拟反制设备该放在哪个单位和区县。'
+                                 '请在“收发模式设置”里选好“反制设备所属单位与区县”；'
+                                 '下拉里没有可选项，说明平台还没建好演示连接，请找开发人员建好后再试（模拟器自己建不了）')
+        if not org or not district:
+            raise ValueError('请在“收发模式设置”里选好“反制设备所属单位与区县”')
+        body = {'owner_org_id': org, 'district_id': district}
+        # 平台上这台设备还没有位置时才用上；已有位置（比如在设备管理里填过）的不改。
+        position = countermeasure_position(config, self._scene_for(scene))
+        if position:
+            body.update(position)
+        return body
+
+    def _refresh_for_scene(self, scene):
+        """收发端在两次模拟之间一直开着，第二个场景开始时不会重新启动；
+        这一次场景要用的两项设置（通知结果、反制设备位置）在这里重新定一遍，不再沿用上一个场景的。"""
+        with self.lock:
+            config = copy.deepcopy(self.config)
+            receiver, tcp, client = self.receiver, self.tcp, self.client
+            located = self.countermeasure_position is not None
+        scene = self._scene_for(scene)
+        if receiver is not None:
+            # 接收端每一步都会重新读这个文件：此后收到的通知用这一次场景的结果，已收到的保持首次接收时的结果。
+            atomic_json(self.root / 'realtime-outcomes.json', notification_outcomes(config, scene))
+        if tcp is not None and client is not None and not located and countermeasure_position(config, scene):
+            # 上一个场景里没有雷达可参照、平台上这台设备还没有位置：用这个场景的雷达位置补上。
+            try:
+                device = client.call('POST', '/local-interface-simulator/countermeasure-device',
+                                     self._countermeasure_body(config, scene))
+                detail = device.get('device', {}) if isinstance(device, dict) else {}
+                if isinstance(detail, dict) and detail.get('longitude') is not None and detail.get('latitude') is not None:
+                    with self.lock:
+                        self.countermeasure_position = {'longitude': detail['longitude'], 'latitude': detail['latitude']}
+            except (ReceiverError, ValueError) as error:
+                # 补位置失败不影响本次模拟；地图上暂时画不出作用范围。
+                if hasattr(self.runtime, 'log'):
+                    self.runtime.log('REALTIME_REFRESH_FAILED', '补充反制设备位置失败：' + str(error))
+        return self.snapshot()
+
     def _start(self, scene=None):
         with self.lock:
             if self.active():
-                if self.state == 'RUNNING':
-                    return self.snapshot()
-                raise ValueError('收发服务正在启动或停止')
-            self.state = 'STARTING'
-            self.error = ''
-            self.receiver = None
-            self.tcp = None
-            self.notification_status = {}
-            self.countermeasure_device_id = None
-            self.countermeasure_position = None
-            self.thread = None
-            config = copy.deepcopy(self.config)
-            self.cancel.clear()
+                if self.state != 'RUNNING':
+                    raise ValueError('收发服务正在启动或停止')
+                refresh = True
+            else:
+                refresh = False
+                self.state = 'STARTING'
+                self.error = ''
+                self.error_detail = ''
+                self.receiver = None
+                self.tcp = None
+                self.client = None
+                self.notification_status = {}
+                self.countermeasure_device_id = None
+                self.countermeasure_position = None
+                self.thread = None
+                config = copy.deepcopy(self.config)
+                self.cancel.clear()
+        if refresh:
+            return self._refresh_for_scene(scene)
         try:
             if not self.runtime.platform:
                 raise ValueError('请先登录系统')
             self.presence_lock = InstanceLock(Path(__file__).parent / '.data' / f'device-presence-{self.port}.lock')
             self.presence_lock.__enter__()
             client = BridgeClient(self.runtime.session)
+            self.client = client
             client.call('GET', '/local-interface-simulator/session')
             self.session_verified_at = int(time.time() * 1000)
             if config['countermeasure_enabled']:
-                # 反制设备属于单位与区县，不跟飞行计划绑定；没选时跟随模拟器连接的单位与区县。
-                if config['countermeasure_scope']:
-                    org, district = config['countermeasure_scope'].split('|', 1)
-                else:
-                    # 本轮还没用过连接（刚登录、还没开始模拟）时，像空域页一样去平台上查设备数据连接。
-                    scope = self.runtime.session.connection_scope()
-                    org, district = scope.get('owner_org_id'), scope.get('district_id')
-                    if not org or not district:
-                        reason = ('读取设备数据连接失败' if '读取失败' in (scope.get('message') or '')
-                                  else '还没有启用的设备数据连接 local-lingyun-replay')
-                        raise ValueError(reason + '：请先在管理端“接口配置 → 设备数据连接”里建好并启用，'
-                                         '或在实时收发设置中选择反制设备所属单位和区县')
-                if not org or not district:
-                    raise ValueError('请在实时收发设置中选择反制设备所属单位和区县')
-                body = {'owner_org_id': org, 'district_id': district}
-                # 平台上这台设备还没有位置时才用上；已有位置（比如在设备管理里填过）的不改。
-                position = countermeasure_position(config, scene if scene is not None else getattr(self.runtime, 'scene', None))
-                if position:
-                    body.update(position)
-                device = client.call('POST', '/local-interface-simulator/countermeasure-device', body)
+                device = client.call('POST', '/local-interface-simulator/countermeasure-device',
+                                     self._countermeasure_body(config, scene))
                 detail = device.get('device', {}) if isinstance(device, dict) else {}
                 connection = (detail.get('connection') or {}) if isinstance(detail, dict) else {}
                 host = connection.get('host') or '127.0.0.1'
@@ -231,10 +290,7 @@ class RealtimeController:
                 self.receiver_lock = InstanceLock(Path(__file__).parent / '.data' / f'notification-receiver-{self.port}.lock')
                 self.receiver_lock.__enter__()
                 outcome_file = self.root / 'realtime-outcomes.json'
-                outcomes = config['outcomes'] if config['mode'] in ('abnormal','mixed') else {}
-                if getattr(self.runtime,'scene',{}).get('fullchain',{}).get('notificationPolicy') == 'mixed':
-                    outcomes = {kind:'mixed' for kind in KINDS}
-                atomic_json(outcome_file, outcomes)
+                atomic_json(outcome_file, notification_outcomes(config, self._scene_for(scene)))
                 self.receiver = Receiver(client, self.root / 'realtime-notifications', config['play_seconds'], outcome_file)
                 if not self.receiver.step():
                     raise ValueError(self.receiver.last_error)
@@ -246,8 +302,10 @@ class RealtimeController:
             return self.snapshot()
         except Exception as error:
             self.cleanup()
+            friendly, detail = explain_exception(error)
             with self.lock:
-                self.state, self.error = 'FAILED', str(error)
+                self.state, self.error, self.error_detail = 'FAILED', friendly, detail
+            # 往外抛原文：页面这一层统一翻成人话，并把原文放进“技术详情”。
             raise ValueError(str(error)) from None
 
     def update_receiver_status(self):
@@ -260,7 +318,7 @@ class RealtimeController:
             self.notification_status = {'received_count': len(records),
                 'last_received_at': int(max(times) * 1000) if times else None,
                 'lease_expires_at': int((receiver.last_heartbeat + 30) * 1000) if receiver.leased and receiver.last_heartbeat else None,
-                'last_error': receiver.last_error,
+                'last_error': explain(receiver.last_error)[0] if receiver.last_error else receiver.last_error,
                 'receipt_count': sum(r['current']['state'] != 'SUBMITTED' for r in records)}
 
     def run(self, client):
@@ -285,9 +343,10 @@ class RealtimeController:
                 if self.tcp and not ok:
                     raise ValueError('平台连接不可用，设备指令接收已停止，请恢复后重新启动')
         except Exception as error:
-            self.error = str(error)
+            self.error, self.error_detail = explain_exception(error)
             with self.runtime.lock:
                 self.runtime.error = '实时收发服务停止：' + self.error
+                self.runtime.error_detail = self.error_detail
                 if self.runtime.phase in ACTIVE:
                     self.runtime.phase = 'STOPPING'
                 self.runtime.cancel.set()

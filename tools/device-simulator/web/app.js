@@ -24,16 +24,19 @@ const riskIcons={zone:'area',deviation:'route','no-plan':'document',height:'heig
 const labels={uav:'无人机',bird:'鸟群',balloon:'气球',unknown:'未知目标',identifying:'识别中目标',person:'人员',vehicle:'车辆',ship:'船舶',remote_controller:'遥控器',radar:'雷达',tdoa:'TDOA',rid:'Remote ID',aoa:'AOA',dcd:'协议破解',dec:'诱骗',ifr:'干扰',bsc:'驱鸟炮',weather:'气象设备','5ga':'5G-A',eo:'光电',countermeasure:'反制设备'};
 const targetKinds=['uav','bird','balloon','unknown','identifying','person','vehicle','ship','remote_controller'];
 const targetIcon=kind=>kind==='uav'?'uav':kind==='bird'?'bird':kind==='balloon'?'balloon':'fusion';
-const deviceKinds=['weather','5ga','eo','tdoa','radar','aoa','dcd','rid','dec','ifr','bsc','countermeasure'];
-const targetDeviceKinds=['radar','tdoa','5ga','aoa','dcd','rid'];
+// 平台后台已停用 AOA、协议破解、Remote ID、诱骗、干扰、驱鸟炮，登记不了；这里不再提供，旧草稿里残留的在开始前会被点名挡住。
+const deviceKinds=['weather','5ga','eo','tdoa','radar','countermeasure'];
+const targetDeviceKinds=['radar','tdoa','5ga'];
+const defaultGroupKinds=['radar','tdoa','eo'];
 const auxiliaryDeviceRadiusMetres=5000;
 function deviceSummary(items){return [...new Set([...deviceKinds,...items.map(d=>d.kind)])].map(kind=>({kind,count:items.filter(d=>d.kind===kind).length})).filter(x=>x.count).map(x=>`${labels[x.kind]} × ${x.count}`).join(' · ');}
 function createDevice(kind,queued=[]){const used=new Set([...devices(),...queued].filter(d=>d.kind===kind).map(d=>d.name));let number=1;while(used.has(`${labels[kind]} ${String(number).padStart(2,'0')}`))number++;return {id:uid('d'),kind,name:`${labels[kind]} ${String(number).padStart(2,'0')}`,health:'正常',heartbeat:'持续上报',interval:5};}
+const firstWindow = window.PlanTime.nowWindow();
 const initial = {
   version:1,name:'东营低空风险联调',duration:10,
   sites:[{id:'s1',name:'点位 A',x:250,y:310,devices:[{id:'d1',kind:'5ga',name:'5G-A 01',health:'正常',heartbeat:'持续上报',interval:5},{id:'d2',kind:'tdoa',name:'TDOA 01',health:'正常',heartbeat:'持续上报',interval:5},{id:'d5',kind:'radar',name:'雷达 01',health:'正常',heartbeat:'持续上报',interval:5}]},{id:'s2',name:'点位 B',x:827,y:526,devices:[{id:'d3',kind:'eo',name:'光电 01',health:'正常',heartbeat:'持续上报',interval:5},{id:'d4',kind:'weather',name:'气象设备 01',health:'正常',heartbeat:'持续上报',interval:5}]}],
-  plans:[{id:'p1',name:'巡检任务 01',points:[[260,470],[361,429],[475,419],[611,402],[729,368],[825,318]],min:20,max:120,width:100,start:'09:00',end:'09:30'}],
-  zones:[{id:'z1',name:'限飞区域 A',kindCode:'PROHIBITED',points:[[660,180],[728,64],[891,117],[933,241],[882,332],[718,299]],max:120,start:'08:00',end:'18:00'}],
+  plans:[{id:'p1',name:'巡检任务 01',points:[[260,470],[361,429],[475,419],[611,402],[729,368],[825,318]],min:20,max:120,width:100,start:firstWindow.start,end:firstWindow.end}],
+  zones:[{id:'z1',name:'限飞区域 A',kindCode:'PROHIBITED',points:[[660,180],[728,64],[891,117],[933,241],[882,332],[718,299]],max:120,start:'00:00',end:'23:59'}],
   targets:[{id:'t1',kind:'uav',name:'无人机 01',path:[[630,214],[711,232],[758,232],[798,288],[857,285]],height:150,speed:8,count:1,planId:'p1',deviceId:'d1'},
     {id:'t2',kind:'uav',name:'无人机 02',path:[[361,429],[475,419],[550,446],[610,475],[652,518]],height:90,speed:8,count:1,planId:'p1',deviceId:'d1'},
     {id:'t3',kind:'uav',name:'无人机 03',path:[[112,209],[192,185],[251,211],[311,225]],height:80,speed:6,count:1,planId:'',deviceId:'d1'},
@@ -45,7 +48,7 @@ let state=structuredClone(initial), selected={kind:'risk',id:'r6'}, filter='全�
 // 确认书 4-3 的模拟机场（新-27）：系统里的资料，不属于场景，不随场景保存或导出。
 let mockAirport=null;
 const storeKey='dongying-mqtt-simulator-v1';
-let liveState=null, showRunPositions=false, restoredDraft=false;
+let liveState=null, showRunPositions=false, restoredDraft=false, draftUnsaved=false;
 const legacyDeviceIds = new Set(['box02-radar','box02-tdoa','box02-eo']);
 function cleanLegacySceneDraft(draft){
   const staleIds = new Set();
@@ -136,7 +139,7 @@ const riskObjects = r => {
   return `平台判定风险${related?` · ${reference.label}：${related.name}`:r.type==='no-plan'?' · 无匹配飞行任务':''}`;
 };
 function toast(text){$('#toast').textContent=text;$('#toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('#toast').hidden=true,3800);}
-function dirty(){showRunPositions=false; $('#save-status').textContent='本地草稿有未保存修改'; }
+function dirty(){showRunPositions=false; draftUnsaved=true; $('#save-status').textContent='本地草稿有未保存修改'; }
 function field(label,name,value,type='text',extra=''){return `<label class="field"><span>${esc(label)}</span><input name="${name}" type="${type}" value="${esc(value)}" ${extra}></label>`;}
 function selectField(label,name,value,options){return `<label class="field"><span>${esc(label)}</span><select name="${name}">${options.map(o=>{const v=typeof o==='string'?o:o.value;return `<option value="${esc(v)}" ${String(value)===String(v)?'selected':''}>${esc(typeof o==='string'?o:o.label)}</option>`;}).join('')}</select></label>`;}
 const opts = (items,empty) => [...(empty?[{value:'',label:empty}]:[]),...items.map(x=>({value:x.id,label:x.name}))];
@@ -221,23 +224,34 @@ function renderInspector(){
   if(selected.kind==='target'){const nearby=auxiliaryDevicesFor(x).map(device=>({...device,name:`${device.name} · ${labels[device.kind]||device.kind} · ${device.siteName} · ${formatDistance(device.distanceMetres)}`}));html+=selectField('辅助上报设备','secondaryDeviceId',x.secondaryDeviceId||'',opts(nearby,'不使用辅助设备'))+'<p class="field-note">显示目标整条轨迹周边 5 公里内的所有设备；当前主上报设备已排除。只有支持目标观测协议的设备会产生辅助目标报文，光电、气象和反制设备仍按各自协议上报。</p><div class="field-grid">'+field('模拟离地高度（米，可留空）','heightAgl',x.heightAgl??'','number','min="0" max="10000" step="0.1"')+field('模拟识别概率（0—1，可留空）','probability',x.probability??'','number','min="0" max="1" step="0.01"')+'</div>';}
   if(selected.kind==='target')html+=window.NotificationUI.fields(x);
   if(['plan','zone'].includes(selected.kind)){
-    html=field(selected.kind==='plan'?'任务名称':'区域名称','name',x.name,'text','required maxlength="60"')+'<div class="field-grid">'+field('开始时间','start',x.start,'time','required')+field('结束时间','end',x.end,'time','required')+'</div><p class="field-note">示例时区：Asia/Shanghai。日期与真实生效范围待联调接口接入。</p>';
+    html=field(selected.kind==='plan'?'任务名称':'区域名称','name',x.name,'text','required maxlength="60"')+(selected.kind==='zone'?'<p class="field-note">区域在开始模拟时按北京时间当天全天（00:00 到 23:59）有效。要让区域只在某个时段生效，请到「资料输入」里的「空域下发」手动下发。</p>':'<div class="field-grid">'+field('开始时间','start',x.start,'time','required')+field('结束时间','end',x.end,'time','required')+'</div><p class="field-note" id="plan-window-note"></p>');
     if(selected.kind==='plan')html+='<div class="field-grid">'+field('最低高度（米）','min',x.min,'number','min="0" required')+field('最高高度（米）','max',x.max,'number','min="0" max="10000" required')+'</div>'+field('走廊宽度（米）','width',x.width,'number','min="1" required');else html+=field('区域限高（米）','max',x.max,'number','min="0" max="10000" required');
     html+=selectField('任务或区域高度基准','altitudeDatum',x.altitudeDatum||'AMSL',[{value:'AMSL',label:'海拔高度 AMSL'},{value:'AGL',label:'离地高度 AGL'}]);
     html+='<div class="readout">与目标同基准高度比较；缺失时由系统保留未知</div>'+btn('redraw-object',selected.kind==='plan'?'重新绘制航线':'重新绘制区域','wide cyan-button');
   }
   $('#inspector').innerHTML=`<section id="notification-progress" class="notification-progress" hidden></section><form id="inspector-form">${html}<p class="inline-error" role="alert"></p><div class="form-actions"><button type="submit" class="primary">${selected.kind==='risk'?'保存判定条件':'应用设置'}</button></div></form>`;
-  window.NotificationUI.estimate();window.NotificationUI.progress();window.NotificationUI.lock();
+  window.NotificationUI.estimate();window.NotificationUI.progress();window.NotificationUI.lock();updatePlanWindowNote();
+}
+// 任务时段的说明：今天哪个时间段（北京时间），现在在不在里面；开始晚于结束就是跨夜，结束落在次日。
+function planWindowNote(plan){
+  const time=window.PlanTime,text=time.windowText(plan.start,plan.end);
+  if(!text)return '请填写不同的开始和结束时间（北京时间）；开始晚于结束算跨夜，结束落在次日。';
+  const late=time.outsidePlans({plans:[plan],targets:state.targets,risks:state.risks}).length>0;
+  return `任务时段：${text}。`+(late?'现在不在这个时段里：挂在这个任务下的无人机会被平台判成“超出任务时段”。要让它们按正常飞行，请把时段改成包含现在。':'');
+}
+function updatePlanWindowNote(){
+  const note=$('#plan-window-note'),form=$('#inspector-form'),plan=selected.kind==='plan'?lookup('plan',selected.id):null;
+  if(note&&form&&plan)note.textContent=planWindowNote({...plan,start:form.elements.start.value,end:form.elements.end.value});
 }
 function render(){renderTree();renderMap();renderRisks();renderInspector();$('#totals').textContent=`${state.sites.length} 个点位 · ${devices().length} 台设备 · ${state.targets.length} 个目标`;}
 function stop(){clearInterval(timer);timer=null;$('#run-status').textContent='编辑中';$('#stop-button').disabled=true;$('#preview-button').textContent='本地预演';}
 function select(kind,id){window.dispatchEvent(new CustomEvent('simulator:selection',{detail:{kind,id}}));if(!(typeof running==='function'&&running()))stop();selected={kind,id};const object=lookup(kind,id);const target=kind==='risk'?targetFor(object):null;const ps=kind==='site'?[[object.x,object.y]]:object?.points||object?.path||target?.path;render();if(ps?.length)window.SimulatorMap?.fit(ps);}
-function openDialog(title,html){returnFocus=document.activeElement;$('#dialog-title').textContent=title;$('#dialog-body').innerHTML=html;$('#dialog-shell').hidden=false;document.body.style.overflow='hidden';$('#dialog button').focus();}
+function openDialog(title,html,variant=''){returnFocus=document.activeElement;$('#dialog').className=variant?`drawer ${variant}`:'drawer';$('#dialog-title').textContent=title;$('#dialog-body').innerHTML=html;$('#dialog-shell').hidden=false;document.body.style.overflow='hidden';$('#dialog button').focus();}
 function closeDialog(){ $('#dialog-shell').hidden=true;document.body.style.overflow='';dialogType=null;returnFocus?.focus(); }
 function defaultRisk(type){const t=state.targets.find(t=>t.kind===(getType(type).group==='无人机'?'uav':type)&&(type!=='no-plan'||!t.planId));return {id:uid('r'),type,name:getType(type).name,enabled:true,targetId:t?.id||'',planId:['deviation','time','bird','balloon'].includes(type)?state.plans[0]?.id||'':'',zoneId:['zone','height'].includes(type)?state.zones[0]?.id||'':'',deviceId:devices()[0]?.id||'',basis:'zone',at:2,seconds:60,offset:2};}
 let newRisk;
 function openDeviceGroup(group){
-  stop();const config=group||{name:`设备组 ${state.sites.length+1}`,counts:Object.fromEntries(deviceKinds.map(kind=>[kind,1]))};
+  stop();const config=group||{name:`设备组 ${state.sites.length+1}`,counts:Object.fromEntries(deviceKinds.map(kind=>[kind,defaultGroupKinds.includes(kind)?1:0]))};
   if(draw)cancelDraw();
   openDialog('放置设备组',`<p class="group-intro">选择设备与数量，再点击地图放下整组。同一个位置可以放置多种设备。</p><form id="device-group-form">${field('设备组名称','groupName',config.name,'text','required maxlength="40"')}<div class="group-table-heading"><span>设备类型</span><span>数量</span></div><div class="device-options">${deviceKinds.map(kind=>`<div class="device-option ${config.counts[kind]?'chosen':''}" data-device-option="${kind}"><label class="device-choice"><input type="checkbox" name="include_${kind}" ${config.counts[kind]?'checked':''}>${image(kind)}<span>${labels[kind]}</span></label><label class="device-quantity"><span class="sr-only">${labels[kind]}数量</span><input type="number" name="qty_${kind}" min="1" max="20" step="1" value="${config.counts[kind]||1}" ${config.counts[kind]?'':'disabled'} required><span>台</span></label></div>`).join('')}</div><div class="group-summary"><span class="muted">待放置设备</span><strong id="group-summary-count"></strong><p id="group-summary-types"></p></div><p class="field-note">只选择一种设备、数量设为 1，即可放置单台。</p><p class="inline-error" role="alert"></p><div class="form-actions">${btn('close-dialog','取消')}<button type="submit" class="primary" id="place-device-group">在地图上放置</button></div></form>`);
   dialogType='devices';updateDeviceGroupSummary();
@@ -249,7 +263,7 @@ function setDraw(mode,id=null,targetKind=null,group=null){if(!['site','target','
 function cancelDraw(){draw=null;$('#map-stage').classList.remove('drawing');$('#draw-controls').hidden=true;$('#group-placement').hidden=true;$('#map-hint').textContent='选择地图对象，编辑位置与关联';document.querySelectorAll('[data-tool]').forEach(b=>b.classList.remove('active'));renderMap();}
 function intersects(a,b,c,d){const cross=(p,q,r)=>(q[0]-p[0])*(r[1]-p[1])-(q[1]-p[1])*(r[0]-p[0]);return cross(a,b,c)*cross(a,b,d)<0&&cross(c,d,a)*cross(c,d,b)<0;}
 function validPolygon(points){let area=0;for(let i=0;i<points.length;i++){const a=points[i],b=points[(i+1)%points.length];area+=a[0]*b[1]-b[0]*a[1];for(let j=i+2;j<points.length;j++){if(i===0&&j===points.length-1)continue;if(intersects(a,b,points[j],points[(j+1)%points.length]))return false;}}return Math.abs(area)>20;}
-function finishDraw(){if(!draw)return;if(!['zone','plan','path','departure'].includes(draw.mode))return;const airspaceInput=draw.airspaceInput,kindCode=draw.airspaceKind;const n=draw.mode==='zone'?3:draw.mode==='departure'?1:2;if(draw.points.length<n)return toast(`请至少设置 ${n} 个节点`);if(draw.mode==='zone'&&!validPolygon(draw.points))return toast('区域边界不能自交或退化为直线，请调整顶点');let x;if(draw.mode==='departure'){x=lookup('target',draw.id);x.departurePath=draw.points;selected={kind:'target',id:x.id};}else if(draw.mode==='path'){x=lookup('target',draw.id);x.path=draw.points;if(x.altitudePath?.length!==x.path.length)delete x.altitudePath;if(x.dwellSeconds?.length!==x.path.length)delete x.dwellSeconds;selected={kind:'target',id:x.id};}else if(draw.mode==='plan'){x=draw.id?lookup('plan',draw.id):{id:uid('p'),name:`巡检任务 ${state.plans.length+1}`,min:20,max:120,width:100,start:'09:00',end:'09:30'};x.points=draw.points;if(!draw.id)state.plans.push(x);selected={kind:'plan',id:x.id};}else if(draw.mode==='zone'){x=draw.id?lookup('zone',draw.id):{id:uid('z'),name:`${airspaceKinds[kindCode]||'空域边界'} ${state.zones.length+1}`,max:120,start:'08:00',end:'18:00'};if(kindCode)x.kindCode=kindCode;x.points=draw.points;if(!draw.id)state.zones.push(x);selected={kind:'zone',id:x.id};}dirty();cancelDraw();render();toast('绘制已应用到本地草稿');if(airspaceInput)window.dispatchEvent(new CustomEvent('simulator:airspace-drawn',{detail:{id:x.id}}));}
+function finishDraw(){if(!draw)return;if(!['zone','plan','path','departure'].includes(draw.mode))return;const airspaceInput=draw.airspaceInput,kindCode=draw.airspaceKind;const n=draw.mode==='zone'?3:draw.mode==='departure'?1:2;if(draw.points.length<n)return toast(`请至少设置 ${n} 个节点`);if(draw.mode==='zone'&&!validPolygon(draw.points))return toast('区域边界不能自交或退化为直线，请调整顶点');let x;if(draw.mode==='departure'){x=lookup('target',draw.id);x.departurePath=draw.points;selected={kind:'target',id:x.id};}else if(draw.mode==='path'){x=lookup('target',draw.id);x.path=draw.points;if(x.altitudePath?.length!==x.path.length)delete x.altitudePath;if(x.dwellSeconds?.length!==x.path.length)delete x.dwellSeconds;selected={kind:'target',id:x.id};}else if(draw.mode==='plan'){x=draw.id?lookup('plan',draw.id):{id:uid('p'),name:`巡检任务 ${state.plans.length+1}`,min:20,max:120,width:100,...window.PlanTime.nowWindow()};x.points=draw.points;if(!draw.id)state.plans.push(x);selected={kind:'plan',id:x.id};}else if(draw.mode==='zone'){x=draw.id?lookup('zone',draw.id):{id:uid('z'),name:`${airspaceKinds[kindCode]||'空域边界'} ${state.zones.length+1}`,max:120,start:'00:00',end:'23:59'};if(kindCode)x.kindCode=kindCode;x.points=draw.points;if(!draw.id)state.zones.push(x);selected={kind:'zone',id:x.id};}dirty();cancelDraw();render();toast('绘制已应用到本地草稿');if(airspaceInput)window.dispatchEvent(new CustomEvent('simulator:airspace-drawn',{detail:{id:x.id}}));}
 function formValues(form){return Object.fromEntries(new FormData(form));}
 function validateRisk(r,{requireObservation=false}={}){
   const type=getType(r.type);if(!r.name?.trim())return '请输入风险名称';
@@ -297,7 +311,7 @@ document.addEventListener('submit',event=>{
   if(typeof running==='function'&&running()){event.preventDefault();return;}event.preventDefault();const form=event.target,v=formValues(form),error=$('.inline-error',form);error.textContent='';
   if(form.id==='new-risk-form'||selected.kind==='risk'){const r=form.id==='new-risk-form'?newRisk:lookup('risk',selected.id),candidate={...r,...v};const message=validateRisk(candidate);if(message){error.textContent=message;return;}saveRiskFields(r,v);if(form.id==='new-risk-form'){state.risks.push(r);selected={kind:'risk',id:r.id};filter='全部';closeDialog();}dirty();render();toast('风险配置已保存到本地草稿');return;}
   const x=lookup(selected.kind,selected.id);if(!x)return;
-  if(['plan','zone'].includes(selected.kind)&&v.start>=v.end){error.textContent='结束时间须晚于开始时间';return;}
+  if(selected.kind==='plan'&&(!v.start||!v.end||v.start===v.end)){error.textContent='开始时间和结束时间不能相同；开始晚于结束算跨夜，结束落在次日';return;}
   if(selected.kind==='plan'&&Number(v.min)>Number(v.max)){error.textContent='最低高度不能超过最高高度';return;}
   if(selected.kind==='target'&&['after_sms','after_voice'].includes(v.notificationBehavior)&&(!x.departurePath?.length||!(Number(v.departureSpeed)>0))){error.textContent='请先绘制撤离航线，并填写大于 0 的撤离速度';return;}
   if(selected.kind==='site'){x.name=v.name;x.x=(Number(v.lon)-118.56)/.00012;x.y=(37.50-Number(v.lat))/.00012;x.devices.forEach(d=>{d.health=v[`health_${d.id}`];d.heartbeat=v[`heartbeat_${d.id}`];d.interval=Number(v[`interval_${d.id}`]);});}
@@ -314,7 +328,7 @@ document.addEventListener('change',event=>{
   if(['basis','zoneId','planId'].includes(el.name)&&el.closest('#new-risk-form')){Object.assign(newRisk,formValues(el.form));$('#new-risk-fields').innerHTML=riskFields(newRisk);}
   if(['basis','zoneId','planId'].includes(el.name)&&el.closest('#inspector-form')&&selected.kind==='risk'){const r=lookup('risk',selected.id);Object.assign(r,formValues(el.form));syncRiskFixture(r);dirty();renderInspector();renderRisks();renderMap();}
 });
-document.addEventListener('input',event=>{if(event.target.closest('#device-group-form'))updateDeviceGroupSummary();});
+document.addEventListener('input',event=>{if(event.target.closest('#device-group-form'))updateDeviceGroupSummary();if(['start','end'].includes(event.target.name)&&event.target.closest('#inspector-form'))updatePlanWindowNote();});
 $('#preview-range').addEventListener('input',e=>{progress=Number(e.target.value);$('#preview-percent').textContent=`${Math.round(progress)}%`;renderMap();});
 window.addEventListener('simulator-map:point',event=>{
   if(!draw||!window.SimulatorMap?.ready)return;const [x,y]=event.detail;
@@ -350,7 +364,7 @@ document.addEventListener('click',event=>{
   if(a==='redraw-object'){if(selected.kind==='zone')window.dispatchEvent(new CustomEvent('simulator:selection',{detail:{kind:'zone',id:selected.id}}));else setDraw(selected.kind,selected.id);return;}
   if(a==='add-device'){const s=lookup('site',selected.id),k=$('[name=newKind]').value;s.devices.push(createDevice(k));dirty();render();toast('已在当前设备组添加一台模拟设备');return;}
   if(a.startsWith('zoom-')){if(a==='zoom-reset')window.SimulatorMap?.fit(scenePoints());else window.SimulatorMap?.zoom(a==='zoom-in'?1:-1);return;}
-  if(a==='save'){state.name=$('#scene-name').value.trim()||'未命名场景';try{localStorage.setItem(storeKey,JSON.stringify(state));$('#save-status').textContent='已保存到此浏览器';toast('场景已保存到此浏览器，未写入业务系统');}catch{toast('本地存储不可用，当前草稿仍保留在页面中');}return;}
+  if(a==='save'){state.name=$('#scene-name').value.trim()||'未命名场景';try{localStorage.setItem(storeKey,JSON.stringify(state));draftUnsaved=false;$('#save-status').textContent='已保存到此浏览器';toast('场景已保存到此浏览器，未写入业务系统');}catch{toast('本地存储不可用，当前草稿仍保留在页面中');}return;}
   if(a==='preview'){startPreview();return;}
   if(a==='stop'){stop();progress=0;$('#preview-bar').hidden=true;renderMap();toast('已停止本地预演');return;}
   if(a==='connection'||a==='integration'){openDialog(a==='connection'?'连接设置':'联调尚未接入','<div class="readout">当前为页面交互原型，尚未连接模拟服务。</div><p class="field-note">地图编辑、风险配置、浏览器本地保存与轨迹预演可以体验。真实设备注册、任务与区域配套、MQTT 发送及报警结果需要服务接口接入。</p><div class="form-actions">'+btn('close-dialog','返回编辑','primary')+'</div>');return;}

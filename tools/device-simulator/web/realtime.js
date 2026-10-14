@@ -50,15 +50,12 @@
       return;
     }
     const n = rt.notifications || {}, tcp = rt.countermeasure || {};
-    document.querySelector('#realtime-summary').textContent = `${modeNames[rt.config.mode]||rt.config.mode} · ${names[rt.state] || rt.state} · ${rt.config.continuous?'持续运行':'按场景时长'}`;
+    document.querySelector('#realtime-summary').textContent = `${modeNames[rt.config.mode]||rt.config.mode} · ${names[rt.state] || rt.state}`;
     document.querySelector('#realtime-detail').textContent = `登录校验 ${time(Math.max(rt.session_verified_at || 0,data.session_verified_at || 0))}　MQTT ${data.mqtt_connected?'已连接':'未连接'} / 已发 ${data.sent || 0}　最近上报 ${time(data.last_published_at)}　TCP ${tcp.listening?'监听中':'未监听'} / 收到 ${tcp.received || 0}${tcp.listening ? ' / ' + countermeasurePositionText(rt) : ''}　通知 ${notificationOnline(n)?'租约有效':'未连接'} / 收到 ${n.received_count || 0} / 已回执 ${n.receipt_count || 0}　最近接收 ${time(Math.max(n.last_received_at || 0,tcp.last_received_at || 0))}`;
     document.querySelector('#realtime-error').textContent = rt.error || n.last_error || tcp.error || '';
     document.querySelector('#realtime-settings').disabled = busy || editLocked(data);
     document.querySelector('#realtime-start').disabled = busy || !data.connected || ['STARTING','RUNNING','STOPPING'].includes(rt.state);
     document.querySelector('#realtime-stop').disabled = busy || (!editLocked(data) && !tcp.listening);
-    const duration = document.querySelector('#duration');
-    duration.value=rt.config.continuous?'0':String(state.duration);
-    duration.disabled = running() || rt.config.continuous;
   }
   function choice(name,label,value,choices) {
     return `<label class="realtime-field">${esc(label)}<select name="${esc(name)}">${Object.entries(choices).map(([v,text])=>`<option value="${esc(v)}" ${String(value)===v?'selected':''}>${esc(text)}</option>`).join('')}</select></label>`;
@@ -88,7 +85,6 @@
     openDialog('实时收发设置',`<form id="realtime-form">
       <p class="field-note">修改只影响下一次启动。已有通知保留首次接收时的处理方式；混合模式保留正常目标上报，同时按所选通知结果模拟异常回执。</p>
       ${choice('mode','运行模式',config.mode,{normal:'正常',abnormal:'异常',mixed:'混合'})}
-      ${choice('continuous','运行时长',config.continuous,{true:'持续运行，手动停止',false:'使用场景时长'})}
       ${choice('notifications_enabled','六类通知接收',config.notifications_enabled,{true:'启用',false:'关闭'})}
       ${choice('countermeasure_enabled','本机模拟反制设备',config.countermeasure_enabled,{true:'启用',false:'关闭'})}
       ${choice('countermeasure_scope','反制设备所属单位与区县',config.countermeasure_scope,options)}
@@ -110,7 +106,7 @@
       event.preventDefault();
       const next={...config,outcomes:{...config.outcomes}};
       for(const key of ['mode','command_mode','countermeasure_scope']) next[key]=form.elements[key].value;
-      for(const key of ['continuous','notifications_enabled','countermeasure_enabled']) next[key]=form.elements[key].value==='true';
+      for(const key of ['notifications_enabled','countermeasure_enabled']) next[key]=form.elements[key].value==='true';
       next.play_seconds=Number(form.elements.play_seconds.value);
       for(const key of ['countermeasure_longitude','countermeasure_latitude']) next[key]=positionValue(form.elements[key].value);
       for(const kind of Object.keys(kinds)) next.outcomes[kind]=form.elements[kind].value;

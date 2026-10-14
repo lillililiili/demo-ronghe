@@ -91,3 +91,23 @@ export function uavNowPillHtml(status) {
   if (!status) return '';
   return `<span class="uav-now-pill is-${status.tone}"><i aria-hidden="true"></i>${escapeHtml(UAV_NOW_TITLE[status.key])}</span>`;
 }
+
+/** 告警原因的标题：告警记录的原因会随升级累计；升级过就不能说成“出告警时”。 */
+export function alarmReasonLabel(escalationCount) {
+  return Number(escalationCount) > 0 ? '告警原因（累计，含升级时新增）' : '告警原因（出告警时）';
+}
+
+/**
+ * 有升级记录时，把累计原因拆成出告警时的和升级时新增的；升级记录没读全时不拆。
+ * @returns {{ label: string, atAlarm: string[], added: string[] }}
+ */
+export function alarmReasonSplit(reasons, { escalationCount = 0, escalations = null, escalationsTotal = 0 } = {}) {
+  const all = [...new Set((Array.isArray(reasons) ? reasons : []).filter(Boolean))];
+  if (!(Number(escalationCount) > 0)) return { label: '告警原因（出告警时）', atAlarm: all, added: [] };
+  const rows = Array.isArray(escalations) ? escalations : null;
+  if (!rows || !rows.length || rows.length < Number(escalationsTotal || escalationCount)) {
+    return { label: alarmReasonLabel(escalationCount), atAlarm: all, added: [] };
+  }
+  const added = [...new Set(rows.flatMap(row => Array.isArray(row?.reasons_added) ? row.reasons_added : []))];
+  return { label: '告警原因', atAlarm: all.filter(code => !added.includes(code)), added: all.filter(code => added.includes(code)) };
+}

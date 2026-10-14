@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { departureBasisText, uavNowHtml, uavNowPillHtml, uavNowStatus } from '../src/components/disposal/uavNowStatus.js';
+import { alarmReasonLabel, alarmReasonSplit, departureBasisText, uavNowHtml, uavNowPillHtml, uavNowStatus } from '../src/components/disposal/uavNowStatus.js';
 
 const now = Date.UTC(2026, 9, 14, 5, 37, 20);
 const base = { current: true, observedAt: now - 3000, now, reasonText: code => ({ PLAN_ALTITUDE_EXCEEDED: '超出任务高度飞行', INSIDE_RESTRICTED_AIRSPACE: '进入禁飞/限制空域' })[code] || code };
@@ -44,4 +44,17 @@ test('basis text and html escape', () => {
   assert.match(html, /&lt;x&gt;/);
   assert.match(html, /告警已确认/);
   assert.match(uavNowPillHtml(uavNowStatus({ ...base, legalStatus: 'LEGAL' })), /已不再违规/);
+});
+
+// 测试 H（2026-10-14）：告警记录的原因随升级累计，不能把累计的说成“出告警时”。
+test('alarm reason split by escalation records', () => {
+  assert.equal(alarmReasonLabel(0), '告警原因（出告警时）');
+  assert.equal(alarmReasonLabel(2), '告警原因（累计，含升级时新增）');
+  const reasons = ['NOFLY', 'NO_AUTH', 'DEVIATION'];
+  assert.deepEqual(alarmReasonSplit(reasons, {}), { label: '告警原因（出告警时）', atAlarm: reasons, added: [] });
+  assert.equal(alarmReasonSplit(reasons, { escalationCount: 2 }).label, '告警原因（累计，含升级时新增）');
+  assert.equal(alarmReasonSplit(reasons, { escalationCount: 2, escalations: [{ reasons_added: ['NO_AUTH'] }], escalationsTotal: 2 }).label, '告警原因（累计，含升级时新增）');
+  const split = alarmReasonSplit(reasons, { escalationCount: 2, escalationsTotal: 2,
+    escalations: [{ reasons_added: ['NO_AUTH'] }, { reasons_added: ['DEVIATION'] }] });
+  assert.deepEqual(split, { label: '告警原因', atAlarm: ['NOFLY'], added: ['NO_AUTH', 'DEVIATION'] });
 });

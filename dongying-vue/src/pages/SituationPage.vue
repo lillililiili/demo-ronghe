@@ -7,7 +7,8 @@ import { ChevronUpOutline, GitCompareOutline, LocateOutline } from '@vicons/ioni
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import { createSituationApiSource } from '@/pages/situation/situationApiSource.js';
 import { serverNow } from '@/services/serverClock.js';
-import { uavNowHtml, uavNowPillHtml, uavNowStatus } from '@/components/disposal/uavNowStatus.js';
+import { alarmReasonLabel, uavNowHtml, uavNowPillHtml, uavNowStatus } from '@/components/disposal/uavNowStatus.js';
+import { uavAdvisoryApi } from '@/services/uavAdvisoryApi.js';
 import { clockLagText, currentMapSnapshot, deviceGroupState, riskMatchesPlan, SITUATION_DEVICE_TYPE_ORDER, targetClassCounts, targetIsCurrent } from '@/services/situationData.js';
 import {
   disposalStage, situationAlarmNeedsAttention, situationRouteRiskIsCurrent,
@@ -52,6 +53,8 @@ const riskSnapshotLayer = ref(null);
 const snapshot = ref({ generatedAt: 0, sourceMode: 'unknown', simulated: false, devices: [], targets: [], alarms: [], flightPlans: [], risks: [], airspaces: [], handoffs: [] });
 const selection = ref(null);
 const advisorySummaries = ref({});
+// 列表里各条已核实告警的「通知后位置判断」：没选中的行也用和卡片同样的依据，列表标签与卡片一致。
+const departureByEvent = ref({});
 const expandedType = ref('');
 const devicesExpanded = ref(true);
 const alertTab = ref('target');
@@ -625,7 +628,7 @@ function renderTargetTip(target, hasAdvisoryCard = false) {
   const sms = notification ? autoSmsView(notification) : null;
   const voice = notification ? autoVoiceView(notification) : null;
   const routeRisk = (target.relatedRisks || []).find(risk => risk.active);
-  const nowStatus = target.objectTypeCode === 'UAV' && alarm ? targetNowStatus(target, notification) : null;
+  const nowStatus = target.objectTypeCode === 'UAV' && alarm ? targetNowStatus(target, notification, alarm.eventId) : null;
   const sourceNames = devices.value.filter(device => (target.sourceDeviceIds || []).includes(device.fusionDeviceId || device.deviceId))
     .map(device => device.type).join(' / ');
   const summary = alarm?.type || displayNumberReferences(routeRisk?.reasonText, [routeRisk?.targetId, routeRisk?.id]) || '暂无关联异常';
@@ -642,7 +645,7 @@ function renderTargetTip(target, hasAdvisoryCard = false) {
       <button type="button" data-tip-act="close" aria-label="关闭目标详情">${U.icon('close')}</button></header>
     ${nowStatus ? uavNowHtml(nowStatus, { process: [processStatus, summary].filter(Boolean).join(' · ') })
       : `<div class="sit-map-pop-status"><span class="sit-state ${stateClass}">${esc(stateText)}</span><span>${esc(summary)}</span></div>`}
-    ${alarm ? `<div class="sit-target-alarm-reason" aria-label="告警原因"><span>告警原因（出告警时）</span><strong>${esc(reasonListText(alarm.violationReasons, ruleReasonText) || '未记录具体触发原因')}</strong></div>` : ''}
+    ${alarm ? `<div class="sit-target-alarm-reason" aria-label="告警原因"><span>${esc(alarmReasonLabel(alarm.escalationCount))}</span><strong>${esc(reasonListText(alarm.violationReasons, ruleReasonText) || '未记录具体触发原因')}</strong></div>` : ''}
     <div class="sit-target-metrics"><span><small>高度</small><b>${esc(formatMetric(target.alt, ' m'))}</b></span><span><small>速度</small><b>${esc(formatMetric(target.speed, ' m/s'))}</b></span></div>
     <p>最后上报：${esc(formatClock(target.lastSeenAt))} · ${esc(reportAge(target.lastSeenAt))}</p>
     ${target.timeUntrusted ? `<p class="sit-map-pop-note">数据过期：报文时刻比平台收到时早${esc(clockLagText(target.reportLagMs) || '较多')}，设备时间不准或数据积压，图上位置可能不是当前位置；超过新鲜时限的数据不做合法性判定。平台收到：${esc(formatClock(target.receivedAt))}</p>` : ''}
@@ -650,7 +653,7 @@ function renderTargetTip(target, hasAdvisoryCard = false) {
     ${target.objectTypeCode === 'UAV' && pilotDistanceNote(target.legalitySummary) ? `<p class="sit-map-pop-note">${esc(pilotDistanceNote(target.legalitySummary))}</p>` : ''}
     <div class="sit-target-source"><span>感知来源：${esc(sourceNames || '未提供')}</span><button type="button" data-tip-act="eo-video" aria-expanded="${showTargetVideo.value}" aria-controls="situation-video-window">${showTargetVideo.value ? '收起视频' : '实时视频'}</button></div>
     ${alarm?.eventId && !hasAdvisoryCard ? `<p class="sit-map-pop-note">短信通知：${esc(sms?.title || '正在读取通知状态')}${sms?.simulated ? '（模拟）' : ''}${sms?.updatedAt ? ` · ${esc(formatClock(sms.updatedAt))}` : ''}</p>
-    <p class="sit-map-pop-note">飞手电话：${esc(voice?.title || '正在读取通知状态')}${voice?.simulated ? '（模拟）' : ''}</p>` : ''}
+    <p class="sit-map-pop-note">飞手电话：${esc(voice?.title || '正在读取通知状态')}${voice?.simulated ? '（模拟）' : ''}${voice?.departureBasis ? `<br><small>${esc(voice.departureBasis)}；现在的情况以「无人机现在」为准</small>` : ''}</p>` : ''}
     ${renderTargetActions(target, hasAdvisoryCard)}
   </section>`;
 }
@@ -697,13 +700,13 @@ function onMapPick(hit) {
 }
 
 /** 无人机现在状态：地图上的目标都在有效时限内；通知后的位置判断只有当前选中的事件才读到。 */
-function targetNowStatus(target, notification = null) {
+function targetNowStatus(target, notification = null, eventId = '') {
   return uavNowStatus({
     current: targetIsCurrent(target, snapshot.value.generatedAt || serverNow()),
     observedAt: target.observedAt,
     legalStatus: target.legalitySummary?.legal_status,
     legalReasons: target.legalitySummary?.violation_reasons,
-    departure: notification?.departure_observation,
+    departure: notification ? notification.departure_observation : eventId ? departureByEvent.value[eventId] : null,
     now: snapshot.value.generatedAt || serverNow(),
     reasonText: ruleReasonText
   });
@@ -712,8 +715,32 @@ function targetNowStatus(target, notification = null) {
 function alarmNowPill(alarm) {
   const target = targets.value.find(row => row.targetId === alarm.targetInternalId);
   if (!target || target.objectTypeCode !== 'UAV') return '';
-  return uavNowPillHtml(targetNowStatus(target, alarm.eventId ? advisorySummaries.value[alarm.eventId] : null));
+  const notification = alarm.eventId ? advisorySummaries.value[alarm.eventId] : null;
+  // 通知后的位置判断还没读到时不出标签，免得和点开后的卡片说法不一致。
+  if (alarm.eventState === 'CONFIRMED' && alarm.eventId && !notification && !(alarm.eventId in departureByEvent.value)) return '';
+  return uavNowPillHtml(targetNowStatus(target, notification, alarm.eventId));
 }
+
+// 通知后判定已离开是一次性的结论，读到“已离开”后不再重读；其余每 15 秒最多读一次，一次最多 6 条。
+const departureReadAt = new Map();
+let departureReading = false;
+async function refreshDepartures() {
+  if (departureReading) return;
+  departureReading = true;
+  try {
+    const now = Date.now();
+    const due = alarms.value.filter(alarm => alarm.eventId && alarm.eventState === 'CONFIRMED'
+      && departureByEvent.value[alarm.eventId]?.presence !== 'LEFT' && now - (departureReadAt.get(alarm.eventId) || 0) >= 15000).slice(0, 6);
+    for (const alarm of due) {
+      departureReadAt.set(alarm.eventId, now);
+      try {
+        const value = await uavAdvisoryApi.get(alarm.eventId);
+        if (value?.event_id === alarm.eventId) departureByEvent.value = { ...departureByEvent.value, [alarm.eventId]: value.departure_observation || null };
+      } catch { /* 读不到时保持原样：不当作已飞离 */ }
+    }
+  } finally { departureReading = false; }
+}
+watch(() => snapshot.value.generatedAt, () => { void refreshDepartures(); });
 
 function targetAlarm(target) {
   const related = target?.relatedAlarms || [];
@@ -726,6 +753,7 @@ function targetAlarm(target) {
 function updateNotification(value) {
   if (value.event_id !== selectedUavAlarm.value?.eventId) return;
   advisorySummaries.value = { [value.event_id]: value };
+  departureByEvent.value = { ...departureByEvent.value, [value.event_id]: value.departure_observation || null };
   if (map && selection.value?.kind === 'target') map.pinHit('target', selection.value.id);
 }
 

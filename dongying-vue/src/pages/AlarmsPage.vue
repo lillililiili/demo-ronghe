@@ -50,7 +50,7 @@ import { hasPermission } from '@/services/accessControl.js';
 import EmergencyStopPanel from '@/components/disposal/EmergencyStopPanel.vue';
 import UavAdvisoryPanel from '@/components/disposal/UavAdvisoryPanel.vue';
 import CounterLaunch from '@/pages/alarms/CounterLaunch.vue';
-import { uavNowHtml, uavNowStatus } from '@/components/disposal/uavNowStatus.js';
+import { alarmReasonSplit, uavNowHtml, uavNowStatus } from '@/components/disposal/uavNowStatus.js';
 import { serverNow } from '@/services/serverClock.js';
 import TargetTrackingPanel from '@/components/video/TargetTrackingPanel.vue';
 import { uavAdvisoryApi } from '@/services/uavAdvisoryApi.js';
@@ -760,13 +760,24 @@ function alarmNowHtml() {
   }));
 }
 
+/* 告警原因：告警记录的原因随升级累计。没升级过写“出告警时”；升级记录读全了就拆成出告警时和升级时新增，
+   没读全就写“累计”，不把累计的说成出告警时的。 */
+function alarmReasonHtml(a) {
+  const split = alarmReasonSplit(a.violation_reasons, { escalationCount: a.escalation_count,
+    escalations: cur.escalationsLoading || cur.escalationsError ? null : cur.escalations, escalationsTotal: cur.escalationsTotal });
+  const text = codes => reasonListText(codes, ruleReasonText);
+  const main = split.added.length ? `出告警时：${text(split.atAlarm) || '未记录'}` : text(split.atAlarm) || '未记录具体触发原因';
+  return `<section class="alarm-reason-callout" aria-label="${esc(split.label)}">
+    <span class="alarm-reason-label">${esc(split.label)}</span>
+    <strong class="alarm-reason-text">${esc(main)}</strong>
+    ${split.added.length ? `<strong class="alarm-reason-text">升级时新增：${esc(text(split.added))}</strong>` : ''}
+  </section>`;
+}
+
 /* 详情和动作区就地更新：内容没变不动节点，“核实”等按钮在刷新时保持原节点，点得中。 */
 function paintDetailContent() {
   setSubject(videoSubject, cur.alarm ? { targetId: cur.alarm.target_id || '', eventId: cur.alarm.event_id || '', label: noOf(cur.alarm) } : null);
-  patchHtml(el('alReason'), cur.alarm ? `<section class="alarm-reason-callout" aria-label="告警原因">
-    <span class="alarm-reason-label">告警原因</span>
-    <strong class="alarm-reason-text">${esc(reasonsOf(cur.alarm) || '未记录具体触发原因')}</strong>
-  </section>` : '');
+  patchHtml(el('alReason'), cur.alarm ? alarmReasonHtml(cur.alarm) : '');
   patchHtml(el('alDetail'), detailHtml());
   patchHtml(el('alDetailActions'), detailActionsHtml());
   patchHtml(el('alNow'), alarmNowHtml());

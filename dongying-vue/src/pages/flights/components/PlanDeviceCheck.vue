@@ -62,6 +62,7 @@ onUnmounted(() => { generation++; controller?.abort(); emit('map-devices', null)
       <p v-if="rows.length">当前正常 {{ counts.NORMAL }} 台 · 当前异常 {{ counts.ABNORMAL }} 台 · 待核查 {{ counts.UNKNOWN }} 台</p>
       <p v-if="counts.UNKNOWN">待核查表示状态依据不足，未计为异常。</p>
       <p v-if="result.unchecked_locations">{{ result.unchecked_locations }} 台设备缺少位置，无法确认覆盖。</p>
+      <p v-if="result.unchecked_coverage">{{ result.unchecked_coverage }} 台设备的扫描范围或航线依据不足，无法确认覆盖。</p>
       <div v-if="rows.length" class="device-rows">
         <article v-for="row in rows" :key="row.device_id">
           <div class="device-heading">

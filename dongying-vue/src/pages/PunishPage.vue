@@ -419,6 +419,8 @@ onMounted(() => {
                           <p class="pn-material-meta">
                             {{ d.authorization_mode === 'DIRECT' ? '发起人' : '申请人' }}：{{ d.requested_by_name || '未记录' }}
                             <span v-if="d.authorization_mode !== 'DIRECT' && d.approved_by_name"> · 审批人：{{ d.approved_by_name }}</span>
+                            <span> · 执行人：{{ d.executed_by_name || '未记录' }}</span>
+                            <span v-if="d.executed_at"> · 下发执行 {{ formatTime(d.executed_at) }}</span>
                           </p>
                         </div>
                       </div>

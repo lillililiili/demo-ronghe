@@ -556,6 +556,7 @@ export function toAlarms(alarms) {
       targetInternalId: alarm.target_id || null,
       level: SEVERITY_LEVEL[alarm.severity] || '低',
       type: labelOf(ALARM_TYPE_LABEL, alarm.alarm_type, '告警类型未提供'),
+      violationReasons: Array.isArray(alarm.violation_reasons) ? [...alarm.violation_reasons] : [],
       state: alarm.state,
       eventState: alarm.state,
       severity: alarm.severity,

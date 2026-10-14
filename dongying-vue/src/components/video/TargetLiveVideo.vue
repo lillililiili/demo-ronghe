@@ -93,7 +93,8 @@ onUnmounted(() => { alive = false; clear(); });
       <template v-else>
         <p v-if="loading && !checked" role="status">视频读取中</p>
         <p v-else-if="!state.playable && (!dispatchVisible || video?.status !== 'NO_TASK')" role="status">{{ state.message }}</p>
-        <p v-if="video?.eo_fusion_observation?.message && video.eo_fusion_observation.status !== 'CURRENT'" role="status">{{ video.eo_fusion_observation.message }}</p>
+        <p v-if="video?.eo_fusion_observation?.message && video.eo_fusion_observation.status !== 'CURRENT'
+          && !(state.playable && video.eo_fusion_observation.status === 'NONE')" role="status">{{ video.eo_fusion_observation.message }}</p>
         <EoDispatchControls v-if="dispatchVisible" :target-id="targetId" @updated="refresh" />
         <AuthenticatedHlsVideo v-if="state.playable" :target-id="targetId" :video="video" :event-id="eventId" />
       </template>

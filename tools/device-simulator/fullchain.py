@@ -363,7 +363,31 @@ class FullChain:
                     continue
                 if saved.get('scope') and saved['scope'] != self.scope:
                     continue
-                history.update(pid for plan in saved.get('plans', {}).values() for pid in plan.get('ids', []))
+                # Older seed-only manifests are not local-interface submissions. A saved
+                # expectation is written only after an accepted plan input/readback; the
+                # server still verifies its receipt, source and scope during activation.
+                submitted = saved.get('plan_expectations', {})
+                history.update(pid for plan in saved.get('plans', {}).values() for pid in plan.get('ids', [])
+                               if submitted.get(pid, {}).get('source_mode') == 'replay'
+                               and submitted[pid].get('message_id'))
+            # A data directory can outlive a database or be used against another local
+            # platform. Only register historical IDs actually readable on this platform.
+            # Read all pages; the first page/context's recent receipts are not exhaustive.
+            visible, page, read = set(), 1, 0
+            while history:
+                result = self.api.call('GET', '/flight-plans?page=' + str(page) + '&size=100&source_mode=replay')
+                items = result.get('items') if isinstance(result, dict) else None
+                total = result.get('total') if isinstance(result, dict) else None
+                if not isinstance(items, list) or not isinstance(total, int) or total < 0:
+                    raise ValueError('读取历史任务失败，未切换当前模拟批次')
+                visible.update(item['plan_id'] for item in items)
+                read += len(items)
+                if read >= total:
+                    break
+                if not items:
+                    raise ValueError('历史任务分页不完整，未切换当前模拟批次')
+                page += 1
+            history.intersection_update(visible)
             registration = dict(self.scope, batch_id=self.manifest['batch'], started_at=self.manifest['created_at'],
                                 plan_ids=sorted(current), historical_plan_ids=sorted(history-current))
             self.manifest['plan_batch_registration'] = registration

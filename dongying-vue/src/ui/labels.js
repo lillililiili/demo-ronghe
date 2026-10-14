@@ -195,7 +195,7 @@ export const DISPOSAL_RESULT_LABEL = { SUCCEEDED: '执行成功', FAILED: '执�
 export const DISPOSAL_STOP_RESULT_LABEL = {
   EXECUTED: '授权已撤销；设备急停已受理',
   ALL_OFF_ISSUED: '授权已撤销；已向四通道网络控制器下发全关，回执以设备为准',
-  UNAVAILABLE: '反制已撤销',
+  UNAVAILABLE: '反制已中止',
   NOT_ATTEMPTED: '授权已撤销；未尝试设备急停',
   NOT_BOUND: '授权已撤销；设备未登记凌云连接，请运维补配置后重试'
 };

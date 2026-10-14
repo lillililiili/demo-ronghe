@@ -25,6 +25,8 @@ import SituationDeviceReport from './situation/SituationDeviceReport.vue';
 import SituationAlarmPopup from './situation/SituationAlarmPopup.vue';
 import { PILOT_LOCATION_IN_ALARM_DETAIL, pilotLocationText } from '@/services/pilotLocation.js';
 import { pilotDistanceNote } from '@/ui/pilotDistanceNote.js';
+import { reasonListText } from '@/ui/alarmEscalation.js';
+import { ruleReasonText } from '@/ui/legalityReviewModal.js';
 import WeatherRiskMarkers from '@/components/WeatherRiskMarkers.vue';
 import { weatherAnchor } from '@/services/weatherRiskGeometry.js';
 import SituationRiskGroupPopup from './situation/SituationRiskGroupPopup.vue';
@@ -637,6 +639,7 @@ function renderTargetTip(target, hasAdvisoryCard = false) {
     <header><span class="sit-map-pop-icon">${targetIconHtml(target)}</span><span><b>${esc(displayTargetNo(target.id))}</b><small>${esc(target.typeLabel)}</small></span>
       <button type="button" data-tip-act="close" aria-label="关闭目标详情">${U.icon('close')}</button></header>
     <div class="sit-map-pop-status"><span class="sit-state ${stateClass}">${esc(stateText)}</span><span>${esc(summary)}</span></div>
+    ${alarm ? `<div class="sit-target-alarm-reason" aria-label="告警原因"><span>告警原因</span><strong>${esc(reasonListText(alarm.violationReasons, ruleReasonText) || '未记录具体触发原因')}</strong></div>` : ''}
     <div class="sit-target-metrics"><span><small>高度</small><b>${esc(formatMetric(target.alt, ' m'))}</b></span><span><small>速度</small><b>${esc(formatMetric(target.speed, ' m/s'))}</b></span></div>
     <p>最后上报：${esc(formatClock(target.lastSeenAt))} · ${esc(reportAge(target.lastSeenAt))}</p>
     ${target.timeUntrusted ? `<p class="sit-map-pop-note">数据过期：报文时刻比平台收到时早${esc(clockLagText(target.reportLagMs) || '较多')}，设备时间不准或数据积压，图上位置可能不是当前位置；超过新鲜时限的数据不做合法性判定。平台收到：${esc(formatClock(target.receivedAt))}</p>` : ''}
@@ -1065,6 +1068,9 @@ onUnmounted(() => {
 .sit-companion-video :deep(.video-toolbar){margin-left:auto}
 .sit-video-entry{padding:0 12px 12px;display:flex;justify-content:flex-end}
 .situation-page :deep(.sit-target-source){display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;color:var(--txt-2);font-size:12px}
+.situation-page :deep(.sit-target-alarm-reason){display:flex;flex-direction:column;gap:4px;padding:8px 10px;border-left:3px solid var(--sit-risk);background:var(--surface-2);white-space:normal;overflow-wrap:anywhere}
+.situation-page :deep(.sit-target-alarm-reason>span){color:var(--txt-2);font-size:11px}
+.situation-page :deep(.sit-target-alarm-reason>strong){color:var(--txt);font-size:13px;line-height:1.5}
 .sit-video-entry button,.situation-page :deep(.sit-target-source button){min-height:32px;padding:4px 8px;border:1px solid var(--sit-line);border-radius:6px;background:var(--surface-2);color:var(--cyan);font:inherit;cursor:pointer}
 .sit-video-entry button:focus-visible,.situation-page :deep(.sit-target-source button:focus-visible){outline:2px solid var(--cyan);outline-offset:2px}
 .situation-page .sit-alert-copy>b,.situation-page .sit-alert-copy>em,.situation-page :deep(.sit-map-pop header b){white-space:normal;overflow:visible;overflow-wrap:anywhere;text-overflow:initial}

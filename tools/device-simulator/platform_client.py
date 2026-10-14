@@ -287,6 +287,18 @@ class Platform:
                     manifest['devices'][device_id][key] = value
             checkpoint()
 
+        if devices and broker.get('source_mode') == 'replay':
+            # Registration must finish before retiring anything. The new IDs are
+            # from this API, never recovered from a previous database's manifest.
+            from catalog_reconciliation import plan, apply
+            # Normalized sources belong to fusion ingestion, not the ops/MQTT
+            # catalog. Keep them in the manifest for observation and readback.
+            current_catalog = {key: member for key, member in manifest['devices'].items()
+                               if member.get('kind') != 'normalized'}
+            preview = plan(self, broker, current_catalog)
+            manifest['device_catalog_reconciliation'] = apply(self, preview)
+            checkpoint()
+
     def wait_for_subscriptions(self, manifest, broker, cancel, timeout=30):
         """Wait for the backend's SUBACK facts, before publishing even a heartbeat."""
         deadline = time.monotonic() + timeout

@@ -94,13 +94,44 @@ export function uavNowPillHtml(status) {
   return `<span class="uav-now-pill is-${status.tone}"><i aria-hidden="true"></i>${escapeHtml(UAV_NOW_TITLE[status.key])}</span>`;
 }
 
-/** 告警原因：先写最新研判的结论，和出告警时不同才另写“出告警时”。研判时间要后台补给后再显示。 */
-export function alarmReasonView({ legalStatus, legalReasons, alarmReasons, reasonText = code => code }) {
+/**
+ * 告警原因：先写最新研判的结论，和告警记录的原因不同才另写一行。研判时间要后台补给后再显示。
+ * 告警记录的原因随升级累计：没升级过叫“出告警时”；升级记录读全了拆成出告警时和升级时新增；否则叫“告警累计原因”。
+ */
+export function alarmReasonView({ legalStatus, legalReasons, alarmReasons, escalationCount = 0, escalations = null, escalationsTotal = 0, reasonText = code => code }) {
   const join = codes => (Array.isArray(codes) ? codes : []).map(reasonText).filter(Boolean).join('、');
-  const atAlarm = join(alarmReasons) || '未记录具体触发原因';
+  const split = alarmReasonSplit(alarmReasons, { escalationCount, escalations, escalationsTotal });
+  const escalated = Number(escalationCount) > 0;
+  const resolved = escalated && split.label === '告警原因';
+  const atAlarmLabel = escalated && !resolved ? '告警累计原因' : '出告警时';
+  const recorded = resolved && split.added.length
+    ? `${join(split.atAlarm) || '未记录'}；升级时新增：${join(split.added)}`
+    : join(alarmReasons) || '未记录具体触发原因';
   const latest = legalStatus === 'ILLEGAL' ? (join(legalReasons) || '违规（原因未提供）')
     : legalStatus === 'LEGAL' ? '已无违规' : '';
-  if (!latest) return { label: '告警原因（出告警时）', text: atAlarm, tone: 'risk', atAlarm: '' };
+  if (!latest) {
+    return { label: resolved && split.added.length ? '告警原因（出告警时；升级时新增）' : split.label, text: recorded, tone: 'risk', atAlarm: '', atAlarmLabel };
+  }
   return { label: '现在的违规原因 · 最新研判', text: latest, tone: legalStatus === 'LEGAL' ? 'ok' : 'risk',
-    atAlarm: latest === atAlarm ? '' : atAlarm };
+    atAlarm: latest === recorded ? '' : recorded, atAlarmLabel };
+}
+
+/** 告警原因的标题：告警记录的原因会随升级累计；升级过就不能说成“出告警时”。 */
+export function alarmReasonLabel(escalationCount) {
+  return Number(escalationCount) > 0 ? '告警原因（累计，含升级时新增）' : '告警原因（出告警时）';
+}
+
+/**
+ * 有升级记录时，把累计原因拆成出告警时的和升级时新增的；升级记录没读全时不拆。
+ * @returns {{ label: string, atAlarm: string[], added: string[] }}
+ */
+export function alarmReasonSplit(reasons, { escalationCount = 0, escalations = null, escalationsTotal = 0 } = {}) {
+  const all = [...new Set((Array.isArray(reasons) ? reasons : []).filter(Boolean))];
+  if (!(Number(escalationCount) > 0)) return { label: '告警原因（出告警时）', atAlarm: all, added: [] };
+  const rows = Array.isArray(escalations) ? escalations : null;
+  if (!rows || !rows.length || rows.length < Number(escalationsTotal || escalationCount)) {
+    return { label: alarmReasonLabel(escalationCount), atAlarm: all, added: [] };
+  }
+  const added = [...new Set(rows.flatMap(row => Array.isArray(row?.reasons_added) ? row.reasons_added : []))];
+  return { label: '告警原因', atAlarm: all.filter(code => !added.includes(code)), added: all.filter(code => added.includes(code)) };
 }

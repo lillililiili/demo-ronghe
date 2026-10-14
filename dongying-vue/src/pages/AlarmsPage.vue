@@ -816,16 +816,17 @@ function alarmFactsHtml(a, t, advisory, status) {
   </dl>${hidden ? `<p class="alarm-now-block">暂不能反制：${esc(hidden)}</p>` : ''}`;
 }
 
-/* 告警原因（页面设计第 3 条）：先写最新研判，和出告警时不同才另写“出告警时”；历史告警只写出告警时。 */
+/* 告警原因（页面设计第 3 条）：先写最新研判，和告警记录的原因不同才另写一行；升级过的按升级记录拆开或写“累计”。 */
 function alarmReasonHtml(a, t) {
   const live = a.attention_group !== 'HISTORY' && a.observation_status === 'CURRENT' && t && !cur.targetLoading && !cur.targetError;
   const view = alarmReasonView({ legalStatus: live ? t.legality_summary?.legal_status : null,
-    legalReasons: t?.legality_summary?.violation_reasons, alarmReasons: a.violation_reasons, reasonText: ruleReasonText });
+    legalReasons: t?.legality_summary?.violation_reasons, alarmReasons: a.violation_reasons, escalationCount: a.escalation_count,
+    escalations: cur.escalationsLoading || cur.escalationsError ? null : cur.escalations, escalationsTotal: cur.escalationsTotal, reasonText: ruleReasonText });
   const when = a.received_at || a.occurred_at;
   return `<section class="alarm-reason-callout is-${view.tone}" aria-label="${esc(view.label)}">
     <span class="alarm-reason-label">${esc(view.label)}</span>
     <strong class="alarm-reason-text">${esc(view.text)}</strong>
-    ${view.atAlarm ? `<small class="alarm-reason-then">出告警时${when ? `（${esc(fmt(when))}）` : ''}：${esc(view.atAlarm)}</small>` : ''}
+    ${view.atAlarm ? `<small class="alarm-reason-then">${esc(view.atAlarmLabel)}${when && view.atAlarmLabel === '出告警时' ? `（${esc(fmt(when))}）` : ''}：${esc(view.atAlarm)}</small>` : ''}
   </section>`;
 }
 

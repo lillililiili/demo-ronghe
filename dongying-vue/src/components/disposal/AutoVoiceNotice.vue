@@ -60,7 +60,7 @@ function retry() {
       <summary v-if="compact" class="notice-summary">
         <b>飞手电话</b><span class="notice-result" :class="`avn-${view.tone}`">{{ compactTitle }}</span>
         <span v-if="view.simulated" class="tag t-amber">模拟</span><span class="notice-toggle">详情</span>
-        <small v-if="compactTitle === DEPARTED_NOT_CALLED && view.departureBasis" class="notice-basis">{{ view.departureBasis }}；现在的情况以「无人机现在」为准</small>
+        <small v-if="view.departureBasis && (compactTitle === DEPARTED_NOT_CALLED || view.recordedDeparture)" class="notice-basis">{{ view.departureBasis }}；现在的情况以「无人机现在」为准</small>
       </summary>
       <header v-if="!compact"><b>飞手电话录音通知</b><span v-if="view.simulated" class="tag t-amber">模拟电话</span></header>
       <p v-if="!compact" class="avn-title" :class="`avn-${view.tone}`">{{ view.title }}</p>

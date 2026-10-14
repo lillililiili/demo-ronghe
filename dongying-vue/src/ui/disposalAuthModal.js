@@ -149,26 +149,40 @@ export function deviceUnavailableReason(device) {
 function deviceOptionLabel(device, reach) {
   const title = [displayDeviceNo(device.device_no), device.name].filter(Boolean).join(' · ') || '未命名设备';
   const why = deviceUnavailableReason(device);
-  const bits = [device.device_type_name, reach ? `距目标 ${distanceText(reach.distanceM)} · 在覆盖范围内` : '', why ? `不能选：${why}` : ''].filter(Boolean);
+  const where = !reach ? '' : reach.inRange ? `距目标 ${distanceText(reach.distanceM)} · 在覆盖范围内`
+    : [reach.distanceM == null ? '' : `距目标 ${distanceText(reach.distanceM)}`, reach.reason].filter(Boolean).join(' · ');
+  const bits = [device.device_type_name, where, why ? `不能选：${why}` : ''].filter(Boolean);
   return bits.length ? `${title}（${bits.join(' · ')}）` : title;
 }
 
 /** 执行设备下拉：能用的在前；不能用的置灰、写明原因，不能选。
-    给了目标位置时只列覆盖范围内的设备，近的在前（2026-10-14 rose：只显示在范围内的反制设备）。 */
+    给了目标位置时（2026-10-14 rose：只显示在范围内的反制设备）：配了覆盖范围但照不到目标的不列；
+    覆盖范围内的在前、近的在前；没配覆盖范围的无法判断，排在后面并写明，免得台账没配范围时谁都选不了。 */
 export function deviceOptions(devices, channel, point) {
   const reachOf = device => validPoint(point) ? deviceReach(device, point) : null;
   return devicesForChannel(devices, channel)
     .map(device => ({ device, reach: reachOf(device) }))
-    .filter(row => !row.reach || row.reach.inRange)
-    .map(({ device, reach }) => ({ value: device.device_id, label: deviceOptionLabel(device, reach), disabled: !!deviceUnavailableReason(device), distanceM: reach?.distanceM ?? null }))
-    .sort((a, b) => Number(a.disabled) - Number(b.disabled) || (a.distanceM ?? Infinity) - (b.distanceM ?? Infinity))
-    .map(({ distanceM, ...option }) => option);
+    .filter(row => !row.reach || row.reach.inRange || row.reach.unknown)
+    .map(({ device, reach }) => ({ value: device.device_id, label: deviceOptionLabel(device, reach), disabled: !!deviceUnavailableReason(device),
+      unknown: !!reach?.unknown, distanceM: reach?.distanceM ?? null }))
+    .sort((a, b) => Number(a.disabled) - Number(b.disabled) || Number(a.unknown) - Number(b.unknown) || (a.distanceM ?? Infinity) - (b.distanceM ?? Infinity))
+    .map(({ distanceM, unknown, ...option }) => option);
+}
+
+/** 下拉没有可列的设备时，放一条置灰的说明代替“No Data”。 */
+function deviceOptionsOrNote(devices, channel, point) {
+  const options = deviceOptions(devices, channel, point);
+  if (options.length) return options;
+  const note = !devices.length ? '没有读到启用中的设备'
+    : !devicesForChannel(devices, channel).length ? '这个执行通道没有登记设备，请换一个执行通道'
+      : '这个执行通道的设备都照不到目标，请换一个执行通道';
+  return [{ value: '__none__', label: note, disabled: true }];
 }
 
 /** 给了目标位置时，这个通道有几台设备因为照不到目标被隐藏，以及原因。 */
 export function hiddenDeviceText(devices, channel, point) {
   if (!validPoint(point)) return '';
-  const hidden = devicesForChannel(devices, channel).map(device => deviceReach(device, point)).filter(reach => !reach.inRange);
+  const hidden = devicesForChannel(devices, channel).map(device => deviceReach(device, point)).filter(reach => !reach.inRange && !reach.unknown);
   if (!hidden.length) return '';
   const counts = hidden.reduce((map, reach) => map.set(reach.reason.replace(/（.*$/, ''), (map.get(reach.reason.replace(/（.*$/, '')) || 0) + 1), new Map());
   return `另有 ${hidden.length} 台没有列出：${[...counts].map(([why, count]) => `${count} 台${why}`).join('，')}。`;
@@ -221,7 +235,7 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
   let devices = [];
   const point = validPoint(targetPoint) ? targetPoint : null;
   let deviceHelp = point
-    ? '只显示覆盖范围照得到目标的设备，近的在前；停用、离线、故障或状态不明的设备置灰不能选，括号里写明原因。'
+    ? '只显示覆盖范围照得到目标的设备，近的在前；没配置覆盖范围的设备无法判断，排在后面并写明；停用、离线、故障或状态不明的设备置灰不能选。'
     : targetPoint !== undefined
       ? '读不到目标现在的位置，没法按覆盖范围筛选，下面列出这个执行通道的全部设备，请自己核对设备能否照到目标。'
       : '只显示当前执行通道可以下发的设备；停用、离线、故障或状态不明的设备置灰不能选，括号里写明原因。';
@@ -268,7 +282,7 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
       ] },
       { key: 'device_id', label: '执行设备', type: 'select', clearable: true, filterable: true,
         placeholder: '请选择执行设备',
-        options: model => deviceOptions(devices, model.channel, point),
+        options: model => deviceOptionsOrNote(devices, model.channel, point),
         help: model => [deviceHelp, hiddenDeviceText(devices, model.channel, point)].filter(Boolean).join(''), required: true },
       { key: 'reason', label: direct ? '直接反制事由' : '申请事由', type: 'textarea', required: !direct, minRows: 3,
         placeholder: direct ? '选填；如需补充事由，请填写 2–500 字' : '2–500 字：依据当前观测与研判，说明本次处置事由' }
@@ -286,7 +300,7 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
       if (!['LINGYUN_B', 'COUNTERMEASURE_4CH'].includes(m.channel)) return '仅支持设备执行';
       const listed = new Set(deviceOptions(devices, m.channel, point).map(option => option.value));
       const matched = devicesForChannel(devices, m.channel).filter(device => listed.has(device.device_id));
-      if (!matched.length) return point ? '这个执行通道没有覆盖范围照得到目标的设备，请换一个执行通道。' : '当前执行通道没有可下发的设备';
+      if (!matched.length) return point && devicesForChannel(devices, m.channel).length ? '这个执行通道的设备都照不到目标，请换一个执行通道。' : '当前执行通道没有可下发的设备';
       if (matched.every(device => deviceUnavailableReason(device))) return '这个执行通道的设备现在都不能用（停用、离线、故障或状态不明），请换一个执行通道，或等设备恢复后再申请。';
       const chosen = matched.find(device => device.device_id === m.device_id);
       if (!chosen) return '执行设备与所选通道不一致，请重新选择';

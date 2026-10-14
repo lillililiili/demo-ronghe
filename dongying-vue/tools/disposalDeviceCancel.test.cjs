@@ -92,16 +92,16 @@ const REACH_DEVICES = [
 ];
 const TARGET = { lon: 118.60, lat: 37.461 };
 
-test('给了目标位置：只列覆盖范围照得到目标的设备，近的在前，并说明隐藏了几台', async () => {
+test('给了目标位置：照得到的在前、没配范围的排后写明，配了范围照不到的不列', async () => {
   const { context } = load({ devices: REACH_DEVICES });
   const options = context.deviceOptions(REACH_DEVICES, 'COUNTERMEASURE_4CH', TARGET);
-  assert.deepEqual(options.map(option => option.value), ['near', 'mid-off']);
+  assert.deepEqual(options.map(option => option.value), ['near', 'no-cover', 'mid-off']);
   assert.match(options[0].label, /距目标 1\.0 km · 在覆盖范围内/);
-  assert.match(options[1].label, /不能选：设备离线/);
+  assert.match(options[1].label, /未配置覆盖范围，无法判断是否覆盖/);
+  assert.equal(options[1].disabled, false);
+  assert.match(options[2].label, /不能选：设备离线/);
   const hidden = context.hiddenDeviceText(REACH_DEVICES, 'COUNTERMEASURE_4CH', TARGET);
-  assert.match(hidden, /另有 3 台没有列出/);
-  assert.match(hidden, /2 台超出覆盖/);
-  assert.match(hidden, /1 台没有配置覆盖范围/);
+  assert.equal(hidden, '另有 2 台没有列出：2 台超出覆盖。');
   // 不给位置时保持原来的全部列出。
   assert.equal(context.deviceOptions(REACH_DEVICES, 'COUNTERMEASURE_4CH').length, 5);
 });
@@ -111,11 +111,17 @@ test('申请表单按目标位置筛设备；读不到位置时全部列出并�
   await loaded.context.openDisposalRequest({ actionType: 'COUNTERMEASURE', subjectKind: 'UAV_EVENT', subjectId: 'event-1', targetPoint: TARGET });
   const form = loaded.state.forms[0];
   const device = form.fields.find(field => field.key === 'device_id');
-  assert.match(device.help({ channel: 'COUNTERMEASURE_4CH' }), /只显示覆盖范围照得到目标的设备.*另有 3 台没有列出/);
+  assert.match(device.help({ channel: 'COUNTERMEASURE_4CH' }), /只显示覆盖范围照得到目标的设备.*另有 2 台没有列出/);
   const base = { action_type: 'COUNTERMEASURE', channel: 'COUNTERMEASURE_4CH', reason: '现场核实后申请反制' };
   assert.equal(form.validate({ ...base, device_id: 'near' }), null);
+  assert.equal(form.validate({ ...base, device_id: 'no-cover' }), null);
+  // 台账里一台都没配覆盖范围（测试库 v10 的情况）：仍能选，不能出现空下拉。
+  const bare = REACH_DEVICES.map(device => ({ ...device, coverage: { kind: null, status: 'UNKNOWN' } }));
+  assert.equal(loaded.context.deviceOptions(bare, 'COUNTERMEASURE_4CH', TARGET).filter(option => !option.disabled).length, 4);
+  // 空下拉给中文说明，不显示“No Data”。
+  assert.deepEqual(JSON.parse(JSON.stringify(device.options({ channel: 'LINGYUN_B' }).map(option => [option.label, option.disabled]))), [['这个执行通道没有登记设备，请换一个执行通道', true]]);
   assert.equal(form.validate({ ...base, device_id: 'far' }), '执行设备与所选通道不一致，请重新选择');
-  assert.equal(form.validate({ ...base, channel: 'LINGYUN_B', device_id: null }), '这个执行通道没有覆盖范围照得到目标的设备，请换一个执行通道。');
+  assert.equal(form.validate({ ...base, channel: 'LINGYUN_B', device_id: null }), '当前执行通道没有可下发的设备');
   const unknown = load({ devices: REACH_DEVICES });
   await unknown.context.openDisposalRequest({ actionType: 'COUNTERMEASURE', subjectKind: 'UAV_EVENT', subjectId: 'event-1', targetPoint: null });
   const unknownDevice = unknown.state.forms[0].fields.find(field => field.key === 'device_id');

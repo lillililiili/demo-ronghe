@@ -790,12 +790,16 @@ function counterDeviceText(point) {
   if (!counterDevices.rows) { void loadCounterDevices(); return counterDevices.error || '读取中'; }
   if (Date.now() - counterDevices.at >= 30000) void loadCounterDevices();
   if (!point) return '没有时效内的位置，无法判断';
-  const usable = counterDevices.rows.filter(device => !deviceUnavailableReason(device))
-    .map(device => ({ device, reach: deviceReach(device, point) })).filter(row => row.reach.inRange)
-    .sort((x, y) => x.reach.distanceM - y.reach.distanceM);
-  if (!usable.length) return '没有在线且覆盖到目标的反制设备';
-  const names = usable.slice(0, 2).map(({ device }) => displayDeviceNo(device.device_no) || device.name || '未命名设备');
-  return `${names.join('、')}${usable.length > 2 ? ` 等 ${usable.length} 台` : ''}在线，覆盖到目标`;
+  // 与申请弹窗的设备下拉同一口径：照得到的、没配覆盖范围无法判断的都能选，配了范围照不到的不列。
+  const online = counterDevices.rows.filter(device => !deviceUnavailableReason(device))
+    .map(device => ({ device, reach: deviceReach(device, point) }));
+  const usable = online.filter(row => row.reach.inRange).sort((x, y) => x.reach.distanceM - y.reach.distanceM);
+  const unknown = online.filter(row => row.reach.unknown);
+  const names = rows => rows.slice(0, 2).map(({ device }) => displayDeviceNo(device.device_no) || device.name || '未命名设备').join('、')
+    + (rows.length > 2 ? ` 等 ${rows.length} 台` : '');
+  const parts = [usable.length ? `${names(usable)}在线，覆盖到目标` : '',
+    unknown.length ? `${names(unknown)}在线，未配置覆盖范围，无法判断是否覆盖` : ''].filter(Boolean);
+  return parts.length ? parts.join('；') : '没有在线且覆盖到目标的反制设备，发起反制时选不到执行设备';
 }
 function alarmFactsHtml(a, t, advisory, status) {
   const ls = t?.latest_state;

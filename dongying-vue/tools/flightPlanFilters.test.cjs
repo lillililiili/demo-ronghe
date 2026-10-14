@@ -17,19 +17,24 @@ const path = require('node:path');
   assert.equal(F.normalizePlanKeyword('x'.repeat(200)).length, 128);
   assert.deepEqual(F.planListQuery({ status_code: 'EXECUTING', keyword: ' EXT-SIM ' }, { page: 2, size: 20, now }),
     { page: 2, size: 20, status_code: 'EXECUTING', keyword: 'EXT-SIM' });
-  assert.deepEqual(F.planListQuery({ status_code: '', keyword: '', today: true }, { page: 1, size: 20, now }),
+  assert.deepEqual(F.planListQuery({ status_code: '', keyword: '', time: 'TODAY' }, { page: 1, size: 20, now }),
     { page: 1, size: 20, status_code: '', keyword: '', window_from: Date.parse('2026-10-05T16:00:00Z'), window_to: Date.parse('2026-10-06T16:00:00Z') });
+  // 2026-10-14 起“今天”改为“时间”下拉的一项：近 24 小时/近 7 天按任务时段与窗口有重叠筛选，自定义起止没填完整不带时间条件。
+  assert.deepEqual(F.planListQuery({ time: 'LAST_24H' }, { now }),
+    { page: 1, size: 20, status_code: '', keyword: '', window_from: now - 86_400_000, window_to: now + 300_000 });
+  assert.deepEqual(F.planListQuery({ time: 'CUSTOM', timeRange: null }, { now }), { page: 1, size: 20, status_code: '', keyword: '' });
 
   // 统计卡：点“执行中”只看今天执行中的计划并清空关键词；当前筛选决定哪张卡高亮；再点一次恢复全部。
-  const executing = F.planKpiFilters({ status_code: '', keyword: '0911', today: false }, 'executing');
-  assert.deepEqual(executing, { status_code: 'EXECUTING', keyword: '', today: true });
+  const executing = F.planKpiFilters({ status_code: '', keyword: '0911', time: '' }, 'executing');
+  assert.deepEqual(executing, { status_code: 'EXECUTING', keyword: '', time: 'TODAY' });
   assert.equal(F.activePlanKpi(executing), 'executing');
   assert.equal(F.activePlanKpi({ ...executing, keyword: '0911' }), 'executing');
-  assert.equal(F.activePlanKpi({ status_code: 'EXECUTING', today: false }), null);
-  assert.equal(F.activePlanKpi({ status_code: 'CANCELLED', today: true }), null);
-  assert.equal(F.activePlanKpi({ status_code: '', today: true }), 'today');
-  assert.deepEqual(F.planKpiFilters(executing, 'executing'), { status_code: '', keyword: '', today: false });
-  assert.deepEqual(F.planKpiFilters(executing, 'pending'), { status_code: 'PENDING', keyword: '', today: true });
+  assert.equal(F.activePlanKpi({ status_code: 'EXECUTING', time: '' }), null);
+  assert.equal(F.activePlanKpi({ status_code: 'EXECUTING', time: 'LAST_7D' }), null);
+  assert.equal(F.activePlanKpi({ status_code: 'CANCELLED', time: 'TODAY' }), null);
+  assert.equal(F.activePlanKpi({ status_code: '', time: 'TODAY' }), 'today');
+  assert.deepEqual(F.planKpiFilters(executing, 'executing'), { status_code: '', keyword: '', time: '' });
+  assert.deepEqual(F.planKpiFilters(executing, 'pending'), { status_code: 'PENDING', keyword: '', time: 'TODAY' });
   assert.deepEqual(F.planKpiFilters(executing, 'unmatched'), executing);
   assert.deepEqual(Object.keys(F.PLAN_KPI_STATUS), ['today', 'executing', 'pending', 'completed']);
 

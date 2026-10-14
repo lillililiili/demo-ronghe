@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from friendly_errors import explain
 from platform_client import Platform
 from realtime_control import RealtimeController
 from server import ExternalBridge, Runtime
@@ -48,7 +49,10 @@ class PollingTransportTests(unittest.TestCase):
                 self.assertEqual(bool(error), runtime.cancel.is_set())
                 if error:
                     self.assertEqual('FAILED', controller.state)
-                    self.assertIn(str(error), runtime.error)
+                    # 页面上写“哪个对象出了什么问题、怎么办”，原来的技术报错留在“技术详情”里。
+                    self.assertEqual('实时收发服务停止：' + explain(str(error))[0], runtime.error)
+                    self.assertNotIn('系统接口', runtime.error)
+                    self.assertEqual(str(error), runtime.error_detail)
                     self.assertEqual('STOPPING', runtime.phase)
                     logs.assert_called_once_with('REALTIME_FAILURE', runtime.error)
                 else:

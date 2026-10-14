@@ -359,6 +359,51 @@ class EngineTests(unittest.TestCase):
     def test_freezes_input(self):
         raw=scene(); compiled,*_=compile_scene(raw);raw['targets'][0]['path'][0][0]=0
         self.assertEqual(compiled['targets'][0]['path'][0][0],450)
+    def zone_and_plan_scene(self, zone_times=('08:00', '18:00')):
+        raw = scene()
+        raw['zones'] = [{'id': 'z1', 'name': '限飞区域', 'points': [[420, 280], [480, 280], [480, 330]], 'max': 120,
+                         'start': zone_times[0], 'end': zone_times[1]}]
+        raw['plans'] = [{'id': 'p1', 'name': '巡检航线', 'points': [[440, 290], [460, 300]], 'min': 0, 'max': 120,
+                         'width': 50, 'start': '09:00', 'end': '09:30'}]
+        return raw
+
+    def test_zones_always_cover_the_whole_beijing_day_whatever_the_scene_carries(self):
+        for times in [('08:00', '18:00'), ('00:00', '23:59'), ('23:00', '01:00'), ('', ''), ('坏的', None)]:
+            with self.subTest(zone_times=times):
+                raw = self.zone_and_plan_scene(times)
+                compiled, *_ = compile_scene(raw)
+                self.assertEqual((compiled['zones'][0]['start'], compiled['zones'][0]['end']), ('00:00', '23:59'))
+                # 飞行任务自己的起止时间不受影响；传进来的原始场景也不被改写。
+                self.assertEqual((compiled['plans'][0]['start'], compiled['plans'][0]['end']), ('09:00', '09:30'))
+                self.assertEqual((raw['zones'][0]['start'], raw['zones'][0]['end']), times)
+
+    def test_zone_with_a_missing_time_pair_still_loads_but_a_bad_polygon_is_still_refused(self):
+        raw = self.zone_and_plan_scene()
+        raw['zones'][0].pop('start')
+        raw['zones'][0].pop('end')
+        compiled, *_ = compile_scene(raw)
+        self.assertEqual((compiled['zones'][0]['start'], compiled['zones'][0]['end']), ('00:00', '23:59'))
+        raw['zones'][0]['points'] = [[420, 280], [480, 280]]
+        with self.assertRaises(ValueError):
+            compile_scene(raw)
+
+    def test_flight_plan_times_are_still_checked(self):
+        for start, end, message in [('9点', '09:30', '时间格式须为 HH:mm'), ('09:00', '', '时间格式须为 HH:mm'),
+                                    ('09:30', '09:30', '开始时间和结束时间不能相同')]:
+            with self.subTest(start=start, end=end):
+                raw = self.zone_and_plan_scene()
+                raw['plans'][0].update(start=start, end=end)
+                with self.assertRaisesRegex(ValueError, message):
+                    compile_scene(raw)
+
+    def test_overnight_flight_plans_are_accepted(self):
+        for start, end in [('22:00', '02:00'), ('23:30', '00:30'), ('10:00', '09:30')]:
+            with self.subTest(start=start, end=end):
+                raw = self.zone_and_plan_scene()
+                raw['plans'][0].update(start=start, end=end)
+                compiled, *_ = compile_scene(raw)
+                self.assertEqual((compiled['plans'][0]['start'], compiled['plans'][0]['end']), (start, end))
+
     def test_real_map_outside_old_canvas_preserves_mqtt_coordinates(self):
         s=scene();lon,lat=118.82,37.78
         point=[(lon-118.56)/.00012,(37.50-lat)/.00012]

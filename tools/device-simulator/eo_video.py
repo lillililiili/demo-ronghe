@@ -148,8 +148,10 @@ def ffmpeg_arguments(config, path, watermark):
 
 
 class EoSimulator:
-    def __init__(self, platform, manifest, config, publish, log, popen=subprocess.Popen, clock=time.time, is_running=lambda: True, observations=None):
+    def __init__(self, platform, manifest, config, publish, log, popen=subprocess.Popen, clock=time.time, is_running=lambda: True, observations=None, publish_final=None):
         self.platform, self.config, self.publish, self.log = platform, copy.deepcopy(config), publish, log
+        # “光电跟踪已结束”的回执发在暂停和停止的时候，那时任务已不在运行中，不能走只在运行中才发的 publish。
+        self.publish_final = publish_final or publish
         self.popen, self.clock = popen, clock
         self.is_running = is_running
         self.observations = observations
@@ -190,12 +192,12 @@ class EoSimulator:
     def _details(self, binding):
         return self.platform.call('GET', '/devices/' + binding['platform_id'] + '/protocol-status')['details']
 
-    def receipt(self, binding, event, task=None):
+    def receipt(self, binding, event, task=None, final=False):
         metadata = {'deviceId': binding['external_id'], 'codeStatus': 200,
                     'workState': 1 if binding['platform_id'] in self.active else 0, 'cameraStatus': {}}
         if task: metadata['taskId'] = task
-        self.publish(binding['reporting_topic'], {'event': event, 'edgeId': binding['edge_id'],
-                                                'timestamp': int(self.clock()*1000), 'metadata': metadata})
+        (self.publish_final if final else self.publish)(binding['reporting_topic'], {
+            'event': event, 'edgeId': binding['edge_id'], 'timestamp': int(self.clock()*1000), 'metadata': metadata})
 
     def drain(self):
         while True:
@@ -415,9 +417,40 @@ class EoSimulator:
         self._state(active['binding']).update(tracking='STOPPED', video=video, ai_observation='STOPPED')
 
     def suspend(self):
+        """暂停或停止：本地结束跟踪，并告诉平台“光电跟踪已结束”，平台上的任务才不会一直挂着。"""
         self.accepting = False
-        for device in list(self.active): self._stop(device, 'STOPPED')
+        for device in list(self.active):
+            binding, task = self.active[device]['binding'], self.active[device]['task']
+            self._stop(device, 'STOPPED')
+            self._tell_platform_ended(binding, task)
         self.drain()
+
+    def settle_leftovers(self):
+        """开始发送前，把平台上这台模拟光电设备以前留下的“进行中/正在结束”任务回执为已结束。
+
+        旧版本在暂停、停止时没有告诉平台，任务会一直挂着并占着这台设备（清单第 5 条）。这一步发生在本次开始发送之前，
+        本次还没有产生任何任务，所以平台上此刻存在的都是以前留下的。"""
+        for binding in self.bindings.values():
+            try:
+                facts = self._details(binding).get('open_task') or {}
+            except Exception as error:
+                self.log('EO_LEFTOVER', '读取光电设备上一次留下的任务失败：' + sanitize_video_error(error, self.config)[:160])
+                continue
+            task = facts.get('task_id')
+            if not task or facts.get('status') not in ('OPEN', 'ENDING') or not SAFE_ID.fullmatch(str(task)):
+                continue
+            self.retired.add(task)
+            self._state(binding).update(task_id=task, tracking='STOPPED')
+            self.log('EO_LEFTOVER', '平台上有一条以前留下的光电跟踪任务，已回执为结束：' + str(task)[:8])
+            self._tell_platform_ended(binding, task)
+
+    def _tell_platform_ended(self, binding, task):
+        try:
+            self.receipt(binding, 'EndTracking', task, final=True)
+        except Exception as error:
+            # 发不出去也不能挡住暂停或停止；平台上的任务会继续挂着，如实写进运行记录。
+            self.log('EO_END_RECEIPT', '光电跟踪结束回执没有发出去，平台上的任务可能仍显示进行中：'
+                     + sanitize_video_error(error, self.config)[:180])
 
     def resume(self):
         self.accept_after = int(self.clock()*1000)

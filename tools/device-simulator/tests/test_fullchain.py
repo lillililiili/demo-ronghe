@@ -634,10 +634,11 @@ class FullChainTests(unittest.TestCase):
             with self.subTest(offset=offset), self.assertRaises(ValueError):
                 flight_window(plan, target, [dict(risk, offset=offset)], now)
 
-    def test_airspace_uses_beijing_window_and_a_finished_window_skips_the_lifecycle(self):
+    def test_every_zone_is_delivered_for_the_whole_beijing_day_whatever_the_scene_carries(self):
         from fullchain import FullChain, SHANGHAI
         from engine import compile_scene
         scene = full_scene(['airspaces'])
+        # 旧草稿、旧场景文件里区域自带的时分（含手画区域原来的 08:00–18:00 默认）不再生效。
         for zone in scene['zones']:
             zone.update(start='08:00', end='10:00')
         scene['zones'][0].update(start='13:00', end='14:00')
@@ -649,11 +650,25 @@ class FullChainTests(unittest.TestCase):
                           clock=lambda:TEST_NOW + 130000)
         chain.prepare()
         rows = [b for _, path, b, _ in api.calls if path.endswith('/airspaces')]
-        for zone, row in zip(scene['zones'], rows):
-            for field, time_field in [('valid_from','start'), ('valid_to','end')]:
-                self.assertEqual('2026-10-05 ' + zone[time_field],
-                    dt.datetime.fromtimestamp(row[field]/1000, SHANGHAI).strftime('%Y-%m-%d %H:%M'))
-        # 临时管制区 08:00–10:00 已过（现在 12:02）：平台不收已过期的新版本和撤销，跳过并在页面提示，不让整批停下。
+        self.assertEqual(len(scene['zones']), len(rows))
+        for row in rows:
+            self.assertEqual(('2026-10-05 00:00', '2026-10-05 23:59'),
+                             tuple(dt.datetime.fromtimestamp(row[field]/1000, SHANGHAI).strftime('%Y-%m-%d %H:%M')
+                                   for field in ('valid_from', 'valid_to')))
+
+    def test_a_zone_that_has_run_out_at_the_day_end_skips_the_lifecycle_with_a_note(self):
+        from fullchain import FullChain, SHANGHAI
+        from engine import compile_scene
+        late = int(dt.datetime(2026, 10, 5, 23, 57, tzinfo=SHANGHAI).timestamp() * 1000)
+        scene, _, _, _ = compile_scene(full_scene(['airspaces']))
+        manifest = dict(batch='sim-late', created_at=late, devices={}, plans={}, zones={},
+                        targets=allocate_identities(scene, 'sim-late'))
+        api = FakePlatform()
+        chain = FullChain(api, scene, manifest, {'owner_org_id':'o','district_id':'d'}, lambda:None,
+                          clock=lambda:late + 130000)
+        chain.prepare()
+        rows = [b for _, path, b, _ in api.calls if path.endswith('/airspaces')]
+        # 临时管制区 23:59 失效，现在 23:59:10：平台不收已过期的新版本和撤销，跳过并在页面提示，不让整批停下。
         for elapsed in (130, 190, 200):
             chain.tick({}, elapsed, elapsed)
         self.assertEqual(rows, [b for _, path, b, _ in api.calls if path.endswith('/airspaces')])
@@ -692,37 +707,68 @@ class FullChainTests(unittest.TestCase):
                              [(b['action'], b.get('valid_from', b.get('effective_at')), b.get('valid_to')) for b in lifecycle])
             self.assertEqual([], manifest['fullchain']['warnings'])
 
-    def test_changed_zone_in_a_finished_window_follows_the_last_delivery_or_says_why_not(self):
-        from fullchain import FullChain
+    def test_changed_zone_follows_the_last_delivery_and_a_delivery_at_the_day_end_says_why_not(self):
+        from fullchain import FullChain, SHANGHAI
         from engine import compile_scene
-        scene = full_scene(['airspaces'])
-        for zone in scene['zones']:
-            zone.update(start='08:00', end='10:00')
-        scene, _, _, _ = compile_scene(scene)
+        scene, _, _, _ = compile_scene(full_scene(['airspaces']))
         zone = scene['zones'][-1]
         no = 'sim-map-airspace-' + zone['id']
         eight = TEST_NOW - 4 * 3600000
+        day_end = int(dt.datetime(2026, 10, 5, 23, 59, tzinfo=SHANGHAI).timestamp() * 1000)
 
         def prepare(last):
             api = AirspaceRulePlatform()
             api.latest[no] = dict(last, airspace_no=no)
-            api.version_from[no], api.valid_to[no] = eight, eight + 2 * 3600000
+            api.version_from[no], api.valid_to[no] = eight, day_end
             manifest = dict(batch='sim-edit', created_at=TEST_NOW, devices={}, plans={}, zones={},
                             targets=allocate_identities(scene, 'sim-edit'))
             FullChain(api, scene, manifest, {'owner_org_id':'o','district_id':'d'}, lambda:None,
                       clock=lambda:TEST_NOW).prepare()
             return next(b for _, path, b, _ in api.calls if path.endswith('/airspaces') and b['airspace_no'] == no)
 
-        # 改过区域、时段已过：紧接上次之后生效，平台照收。
+        # 改过区域、上次下发在早上 8 点：从现在起生效，当天 23:59 止，平台照收。
         changed = {'action':'UPSERT', 'revision':1, 'state':'ACCEPTED', 'airspace_id':'a', 'airspace_version_id':'v',
-                   'payload':{'valid_from':eight, 'valid_to':eight + 2 * 3600000, 'boundary':'旧区域'}}
+                   'payload':{'valid_from':eight, 'valid_to':day_end, 'boundary':'旧区域'}}
         body = prepare(changed)
-        self.assertEqual((2, eight + 1000, eight + 2 * 3600000), (body['revision'], body['valid_from'], body['valid_to']))
-        # 上次已撤销到时段末尾：说清楚为什么不能再下发，不发请求。
-        withdrawn = {'action':'WITHDRAW', 'revision':2, 'state':'ACCEPTED', 'airspace_id':'a', 'airspace_version_id':'v',
-                     'payload':{'effective_at':eight + 2 * 3600000 - 500}}
-        with self.assertRaisesRegex(ValueError, '临时管制区」今天已下发到结束时间'):
-            prepare(withdrawn)
+        self.assertEqual((2, TEST_NOW, day_end), (body['revision'], body['valid_from'], body['valid_to']))
+        # 上次的下发或撤销已到当天末尾或更晚（含手动排到了明天）：说清楚是哪一条、怎么办，不发请求。
+        for action, key, effective, shown in (('WITHDRAW', 'effective_at', day_end - 500, '10月05日 23:58'),
+                                              ('UPSERT', 'valid_from', day_end + 8 * 3600000 + 60000, '10月06日 08:00')):
+            last = {'action':action, 'revision':2, 'state':'ACCEPTED', 'airspace_id':'a', 'airspace_version_id':'v',
+                    'payload':{key:effective}}
+            with self.subTest(shown=shown), self.assertRaisesRegex(
+                    ValueError, '临时管制区」已经有一条生效时间排在 ' + shown + ' 的下发（或撤销）.*空域下发.*次日零点'):
+                prepare(last)
+
+    def test_starting_in_the_evening_after_a_manual_delivery_is_not_blocked(self):
+        # 现场：北京时间傍晚开始模拟，之前在「空域下发」手动发过一条（生效 18:16），场景里区域还带着老默认 08:00–18:00。
+        # 以前会被「今天已下发到结束时间」挡住，或者发出去一个已过期的区域；现在全天有效，从现在起生效。
+        from fullchain import FullChain, SHANGHAI
+        from engine import compile_scene
+        raw = full_scene(['airspaces'])
+        for zone in raw['zones']:
+            zone.update(start='08:00', end='18:00')
+        scene, _, _, _ = compile_scene(raw)
+        no = 'sim-map-airspace-' + scene['zones'][0]['id']
+        at = lambda hour, minute, second=0: int(dt.datetime(2026, 10, 5, hour, minute, second, tzinfo=SHANGHAI).timestamp() * 1000)
+        api = AirspaceRulePlatform()
+        manual = {'action':'UPSERT', 'revision':1, 'state':'ACCEPTED', 'airspace_id':'a', 'airspace_version_id':'v',
+                  'payload':{'valid_from':at(18, 16, 9), 'valid_to':None, 'boundary':'手动下发的边界'}}
+        api.latest[no] = dict(manual, airspace_no=no)
+        api.version_from[no], api.valid_to[no] = at(18, 16, 9), None
+        manifest = dict(batch='sim-evening', created_at=at(18, 30), devices={}, plans={}, zones={},
+                        targets=allocate_identities(scene, 'sim-evening'))
+        FullChain(api, scene, manifest, {'owner_org_id':'o','district_id':'d'}, lambda:None,
+                  clock=lambda:at(18, 30)).prepare()
+        rows = [b for _, path, b, _ in api.calls if path.endswith('/airspaces')]
+        self.assertEqual(len(scene['zones']), len(rows))
+        for row in rows:
+            if row['airspace_no'] == no:
+                self.assertEqual((2, at(18, 30), at(23, 59)), (row['revision'], row['valid_from'], row['valid_to']))
+            else:
+                # 第一次下发的区域不是已过期的：当天 00:00 起、23:59 止，晚上开始也在生效期内。
+                self.assertEqual((at(0, 0), at(23, 59)), (row['valid_from'], row['valid_to']))
+                self.assertGreater(row['valid_to'], at(18, 30))
 
 
 class AirspaceRulePlatform(FakePlatform):

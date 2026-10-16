@@ -638,10 +638,12 @@ class FullChain:
         if isinstance(sources, list):
             items = items_by_device.get('explicit', [])
             if items:
+                # 多路观测源各错开 1 毫秒：真实设备不会同一毫秒上报，同一时刻多个融合点会被后台当作位置矛盾，
+                # 航线风险就判成“待确认”，融合感知页上的风险忽有忽无。
                 for index, current in enumerate(sources):
                     self.publish('normalized', PREFIX+'/target-observations', {
                         'message_id': self.message('o'+str(sequence)+'-s'+str(index+1)),
-                        'source_id': current['source_id'], 'observed_at': now, 'items': items}, len(items))
+                        'source_id': current['source_id'], 'observed_at': now+index, 'items': items}, len(items))
         else:
             for device_id, items in items_by_device.items():
                 source = sources.get(device_id)

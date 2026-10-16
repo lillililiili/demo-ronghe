@@ -47,6 +47,7 @@ class Item2SourcesTest(unittest.TestCase):
         self.assertEqual(3, len({f['source_id'] for f in frames}))
         self.assertEqual(3, len({f['message_id'] for f in frames}))
         self.assertTrue(all(f['items'] == frames[0]['items'] for f in frames))
+        self.assertEqual([frames[0]['observed_at']+i for i in range(3)], [f['observed_at'] for f in frames])
         count = len(api.calls)
         chain.prepare()
         self.assertFalse(any(method == 'POST' for method,_,_,_ in api.calls[count:]))

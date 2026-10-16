@@ -2,6 +2,7 @@
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 import { applyMapTheme, mapPalette, installThemeImages } from './mapTheme';
 import { proceduralDemTile } from './proceduralTerrain';
+import { warmMapResource, warmMapStyleAssets } from './mapResourceWarmup.js';
 let enginePromise;
 const archives = new Map();
 const MANAGED_CONFIG_URL = '/map-data/control/map-config.json';
@@ -16,6 +17,17 @@ function localUrl(value, base = window.location.href) {
     throw new Error('地图资源必须通过同源内网静态地址提供');
   }
   return url.href;
+}
+
+function vectorTileTemplate(value, manifestUrl) {
+  const url = new URL(localUrl(value, manifestUrl));
+  const template = url.pathname.replaceAll('%7B', '{').replaceAll('%7D', '}');
+  if (url.username || url.password || url.search || url.hash ||
+      !/\/\{z\}\/\{x\}\/\{y\}\.(?:pbf|mvt)$/.test(template) ||
+      (template.match(/\{/g) || []).length !== 3) {
+    throw new Error('地图矢量瓦片地址必须为同源的 /{z}/{x}/{y}.pbf 或 .mvt 路径');
+  }
+  return `${url.origin}${template}`;
 }
 
 async function json(url, signal, cache = 'no-cache', optional = false) {
@@ -188,6 +200,7 @@ function acquireArchive(engine, url) {
 
 export async function prepareOfflineMap(signal) {
   startRuntimeMonitor();
+  warmMapResource(import.meta.env.DEV ? '/map-engine/maplibre-gl-worker.mjs' : workerUrl, signal);
   // 清单和样式不依赖地图引擎；引擎下载期间直接推进资源链。
   const manifestTask = readMapManifest(signal);
   const styleTask = manifestTask.then(({ styleUrl }) => json(styleUrl, signal, 'default'));
@@ -215,7 +228,11 @@ export async function prepareOfflineMap(signal) {
     const maxZoom = Number.isFinite(Number(manifest.maxZoom)) ? Number(manifest.maxZoom) : 15;
     style.sources.protomaps = {
       type: 'vector',
-      url: `pmtiles://${url}`,
+      // 云端可将同一个 PMTiles 包导出成静态 XYZ，省去每次读索引的网络往返。
+      // 未配置的旧包仍走原协议，包头及范围校验在两种模式下均保留。
+      ...(manifest.vectorTiles == null ? { url: `pmtiles://${url}` } : {
+        tiles: [vectorTileTemplate(manifest.vectorTiles, manifestUrl)]
+      }),
       attribution: '© OpenStreetMap contributors · Protomaps（开发数据）',
       minzoom: 0,
       // 包内只有到 Z15 的瓦片；声明 maxzoom 让引擎对 Z16–Z18 做过缩放，而不是去要没有的瓦片。
@@ -232,6 +249,7 @@ export async function prepareOfflineMap(signal) {
       if (typeof style.sprite !== 'string') throw new Error('不支持的图标清单格式');
       style.sprite = assetUrl(style.sprite);
     }
+    warmMapStyleAssets(style, signal);
     if (header.tileType !== 1 || header.maxZoom < 15) throw new Error('地图包不是预期的 Z0–Z15 矢量数据');
     const bounds = [header.minLon, header.minLat, header.maxLon, header.maxLat];
     if (!bounds.every(Number.isFinite) || bounds[0] >= bounds[2] || bounds[1] >= bounds[3]) throw new Error('地图包覆盖范围无效');

@@ -75,18 +75,41 @@ watch(() => [route.query.tab, route.query.authorization, route.query.event], ([t
    底层对象仍是 S.st，跨导航记忆不变 */
 const st = reactive(S.st);
 let evidenceEventSequence = 0;
+function resetLinkedAlarmFilters() {
+  Object.assign(st, { page: 1, level: '全部', status: '全部', kind: '全部', region: '全部', time: '', timeRange: null });
+  root.value?.querySelectorAll('[data-f]').forEach(control => { control.value = st[control.dataset.f]; });
+}
 async function openEvidenceEvent() {
   const id = typeof route.query.event === 'string' ? route.query.event : '';
   if (!id || route.query.tab === 'authorizations' || route.query.authorization) return false;
   const own = ++evidenceEventSequence;
+  const detailRequest = ++detailSeq;
+  ++listSeq; ++disposalSeq;
+  let requestedListSeq = listSeq;
   activeTab.value = 'alarms';
+  st.selId = null; cur = emptyDetail(); cur.loading = true;
+  resetLinkedAlarmFilters();
+  list.loading = true; paintList(); paintDetail(); focusMap();
+  const isCurrent = () => authorizationPageActive && own === evidenceEventSequence
+    && activeTab.value === 'alarms' && route.query.event === id
+    && detailRequest === detailSeq && requestedListSeq === listSeq;
   try {
     const event = await getUavEvent(id);
-    if (!authorizationPageActive || own !== evidenceEventSequence || route.query.event !== id) return true;
+    if (!isCurrent()) return true;
+    if (!event?.alarm_id) throw new Error('此事件未关联可查看的告警');
+    requestedListSeq = listSeq + 1;
+    const loaded = await loadList({ alarmId: event.alarm_id });
+    if (!isCurrent()) return true;
+    if (!loaded) {
+      if (list.error) throw new Error(list.error);
+      return true;
+    }
     await selectAlarm(event.alarm_id);
+    if (st.selId === event.alarm_id) root.value?.querySelector('#alList tr.on')?.scrollIntoView({ block: 'center' });
   } catch (error) {
-    if (!authorizationPageActive || own !== evidenceEventSequence || route.query.event !== id) return true;
-    ++detailSeq; st.selId = null; cur = emptyDetail(); cur.error = error.message || '关联告警不可见'; paintDetail();
+    if (!isCurrent()) return true;
+    list.loading = false; paintList();
+    ++detailSeq; st.selId = null; cur = emptyDetail(); cur.error = error.message || '关联告警不可见'; paintDetail(); focusMap();
   }
   return true;
 }
@@ -904,14 +927,34 @@ async function loadMapAirspaces(my) {
   focusMap({ fit: firstLoad });
 }
 
-async function loadList({ quiet = false, progress = true } = {}) {
+async function loadList({ quiet = false, progress = true, alarmId = null } = {}) {
   const my = ++listSeq;
   const previousEvents = list.rows.map(row => row.event_id).join();
   // 实时刷新静默重读：保留当前列表直到新数据到达，不闪加载状态。
   if (!quiet) { list.loading = true; list.error = ''; paintList(); }
   try {
-    const page = await listAlarms(queryOf());
+    const query = queryOf();
+    let page = await listAlarms(query);
     if (my !== listSeq) return;
+    if (alarmId && !page.items?.some(row => row.alarm_id === alarmId)) {
+      // 关联跳转按服务端相同排序查找所在页；普通刷新和翻页不扫描历史。
+      const scanSize = 100;
+      const lastPage = Math.ceil(page.total / scanSize);
+      for (let candidate = 1; candidate <= lastPage; candidate++) {
+        const batch = await listAlarms({ ...query, page: candidate, size: scanSize });
+        if (my !== listSeq) return;
+        const index = (batch.items || []).findIndex(row => row.alarm_id === alarmId);
+        if (index < 0) continue;
+        const targetPage = Math.floor(((candidate - 1) * scanSize + index) / query.size) + 1;
+        page = await listAlarms({ ...query, page: targetPage });
+        if (my !== listSeq) return;
+        break;
+      }
+      if (!page.items?.some(row => row.alarm_id === alarmId)) {
+        throw new Error('关联告警已不在当前可访问列表，请刷新后重试。');
+      }
+    }
+    if (alarmId) st.page = page.page;
     list.rows = Array.isArray(page && page.items) ? page.items : [];
     totalCount.value = Number(page && page.total) || 0;
     list.loading = false; list.error = ''; list.refreshError = '';
@@ -939,6 +982,7 @@ async function loadList({ quiet = false, progress = true } = {}) {
     return;
   }
   paintList();
+  return true;
 }
 
 function loadPageProgress(rows) {
@@ -1339,8 +1383,10 @@ onMounted(async () => {
   loadDistricts();
 
   loadKpis();
-  await loadList();
   if (await openEvidenceEvent()) return;
+  if (deepId) resetLinkedAlarmFilters();
+  const loaded = await loadList({ alarmId: deepId });
+  if (deepId && !loaded) return;
   // safe-default：深链 > 上次选中 > 当前页首条；用户可见可改
   const id = deepId || st.selId || (list.rows[0] && list.rows[0].alarm_id) || null;
   if (id) {

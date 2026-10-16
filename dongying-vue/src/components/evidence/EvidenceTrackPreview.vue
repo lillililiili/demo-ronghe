@@ -34,7 +34,7 @@ const rawText = computed(() => JSON.stringify(props.snapshot, null, 2));
 <template>
   <section class="evidence-track-preview" aria-label="轨迹证据回放">
     <div class="track-summary">
-      <b>轨迹回放 <span v-if="details">{{ points.length }} 点</span></b>
+      <b>轨迹回放 <span>{{ points.length }} 点</span></b>
       <span class="tag t-gray">{{ sourceNote }}</span>
     </div>
     <p v-if="!points.length" class="track-notice" role="status">没有可用的观测位置，无法显示轨迹。</p>
@@ -44,6 +44,7 @@ const rawText = computed(() => JSON.stringify(props.snapshot, null, 2));
       <p v-if="details" class="track-description">按原始观测点展示，不补点、不平滑；证据快照不带航线比对依据，轨迹统一按“关系未知”（黄色）显示。</p>
       <p v-if="model.timingIncomplete" class="track-notice">观测时间缺失或顺序异常，仅支持逐点查看。</p>
       <p v-else-if="points.length === 1" class="track-notice">仅有一个观测位置，无法回放。</p>
+      <p v-if="model.stationary" class="track-notice">本段有效观测的经纬度未变化，地图显示为同一点。</p>
       <p v-if="model.rejected || model.breaks || partial" class="track-notice">{{ model.rejected ? `${model.rejected} 个位置无效，未绘制。` : '' }}{{ model.breaks ? `轨迹有 ${model.breaks} 处中断。` : '' }}{{ partial ? '仅包含部分轨迹。' : '' }}</p>
     </template>
     <p v-if="details && snapshot.note" class="track-description">{{ snapshot.note }}</p>

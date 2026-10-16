@@ -101,6 +101,10 @@ function openTrackEvidence(trackId) {
     render: () => h(EvidenceTrackModal, {
       records: [{ record_id: trackId, summary: { source_mode: evaluation.source_mode } }],
       subjectKind: 'TARGET', subjectId: evaluation.target_id,
+      historyContext: { targetId: evaluation.target_id,
+        through: Number.isFinite(evaluation.as_of) && Number.isFinite(evaluation.evaluated_at)
+          ? Math.min(evaluation.as_of, evaluation.evaluated_at) : null,
+        recordedThrough: evaluation.evaluated_at },
       onReturn: () => handle.close()
     })
   });

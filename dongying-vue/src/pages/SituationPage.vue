@@ -745,8 +745,7 @@ async function openAlarmDisposal(alarm) {
     try {
       const linked = await getAlarm(alarm.alarmId);
       if (!linked?.event_id) return toast('这条告警尚未建立可办理的无人机事件', 'err');
-      sessionStorage.setItem('alarm.sel', linked.alarm_id);
-      window.location.hash = '/alarms';
+      window.location.hash = `/alarms?event=${encodeURIComponent(linked.event_id)}`;
     } catch (error) { toast(error.message || '无法读取关联告警，请稍后重试', 'err'); }
     return;
   }

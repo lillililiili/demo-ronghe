@@ -53,6 +53,9 @@ export function planListQuery(filters = {}, { page = 1, size = 20, now = Date.no
     query.window_from = span.from;
     query.window_to = span.to;
   }
+  // 2026-10-16（设计二）：列表按“需要处理”排序；点顶部汇总的某种问题时只看这一种。
+  query.order = 'attention';
+  if (filters.attention) query.attention = filters.attention;
   return query;
 }
 
@@ -65,8 +68,8 @@ export function activePlanKpi(filters = {}) {
 /* 点卡片：只看今天该状态的计划，并清空关键词，使列表与卡片数字一致；再点已选中的卡片恢复全部日期与状态。 */
 export function planKpiFilters(filters = {}, key) {
   if (!Object.hasOwn(PLAN_KPI_STATUS, key)) return { ...filters };
-  if (activePlanKpi(filters) === key) return { ...filters, time: '', status_code: '' };
-  return { ...filters, time: 'TODAY', status_code: PLAN_KPI_STATUS[key], keyword: '' };
+  if (activePlanKpi(filters) === key) return { ...filters, time: '', status_code: '', attention: '' };
+  return { ...filters, time: 'TODAY', status_code: PLAN_KPI_STATUS[key], keyword: '', attention: '' };
 }
 
 function beijingParts(ms) {
@@ -80,6 +83,15 @@ export function planWindowText(plan) {
   const start = Number(plan?.start_at), end = Number(plan?.end_at);
   if (plan?.start_at == null || plan?.end_at == null || !Number.isFinite(start) || !Number.isFinite(end)) return '任务时段未提供';
   const a = beijingParts(start), b = beijingParts(end);
+  return a.day === b.day ? `${a.day} ${a.clock}–${b.clock}` : `${a.day} ${a.clock} – ${b.day} ${b.clock}`;
+}
+
+/* 列表行用的短写法（2026-10-16 设计二）：不写年份，“10/16 09:00–12:00”，跨天“10/16 10:31 – 10/17 10:30”。 */
+export function planWindowShortText(plan) {
+  const start = Number(plan?.start_at), end = Number(plan?.end_at);
+  if (plan?.start_at == null || plan?.end_at == null || !Number.isFinite(start) || !Number.isFinite(end)) return '任务时段未提供';
+  const short = ms => beijingParts(ms).day.replace(/^\d+\//, '');
+  const a = { day: short(start), clock: beijingParts(start).clock }, b = { day: short(end), clock: beijingParts(end).clock };
   return a.day === b.day ? `${a.day} ${a.clock}–${b.clock}` : `${a.day} ${a.clock} – ${b.day} ${b.clock}`;
 }
 

@@ -102,8 +102,10 @@ test('heartbeat without health stays unknown and separate from a real fault', as
 
 // The POST association receipt survives read-only refreshes, whose reused flag is false.
 function maintenanceHarness() {
-  const source = readFileSync(path.join(__dirname, '../src/pages/flights/deviceMaintenance.js'), 'utf8')
-    .replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '');
+  // 处置单状态说法 2026-10-16 拆到 maintenanceState.js（列表“需要处理”提示也用），这里一并装入。
+  const source = ['maintenanceState.js', 'deviceMaintenance.js']
+    .map(file => readFileSync(path.join(__dirname, '../src/pages/flights', file), 'utf8'))
+    .join('\n').replace(/^import .*;\r?\n/gm, '').replace(/^export \{[^}]*\};\r?\n/gm, '').replace(/^export /gm, '');
   const actor = { value: { user_id: 'operator-a' } };
   let nextReply;
   const service = new Function('reactive', 'apiRequestTimed', 'authUser', 'newHandoffIdempotencyKey', 'isUncertainOutcome', 'sessionStorage',

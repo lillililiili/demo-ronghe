@@ -16,25 +16,29 @@ const path = require('node:path');
   assert.equal(F.normalizePlanKeyword(null), '');
   assert.equal(F.normalizePlanKeyword('x'.repeat(200)).length, 128);
   assert.deepEqual(F.planListQuery({ status_code: 'EXECUTING', keyword: ' EXT-SIM ' }, { page: 2, size: 20, now }),
-    { page: 2, size: 20, status_code: 'EXECUTING', keyword: 'EXT-SIM' });
+    { page: 2, size: 20, status_code: 'EXECUTING', keyword: 'EXT-SIM', order: 'attention' });
   assert.deepEqual(F.planListQuery({ status_code: '', keyword: '', time: 'TODAY' }, { page: 1, size: 20, now }),
-    { page: 1, size: 20, status_code: '', keyword: '', window_from: Date.parse('2026-10-05T16:00:00Z'), window_to: Date.parse('2026-10-06T16:00:00Z') });
+    { page: 1, size: 20, status_code: '', keyword: '', window_from: Date.parse('2026-10-05T16:00:00Z'), window_to: Date.parse('2026-10-06T16:00:00Z'), order: 'attention' });
   // 2026-10-14 起“今天”改为“时间”下拉的一项：近 24 小时/近 7 天按任务时段与窗口有重叠筛选，自定义起止没填完整不带时间条件。
   assert.deepEqual(F.planListQuery({ time: 'LAST_24H' }, { now }),
-    { page: 1, size: 20, status_code: '', keyword: '', window_from: now - 86_400_000, window_to: now + 300_000 });
-  assert.deepEqual(F.planListQuery({ time: 'CUSTOM', timeRange: null }, { now }), { page: 1, size: 20, status_code: '', keyword: '' });
+    { page: 1, size: 20, status_code: '', keyword: '', window_from: now - 86_400_000, window_to: now + 300_000, order: 'attention' });
+  assert.deepEqual(F.planListQuery({ time: 'CUSTOM', timeRange: null }, { now }), { page: 1, size: 20, status_code: '', keyword: '', order: 'attention' });
+  // 2026-10-16（设计二）：列表总按“需要处理”排序；点顶部汇总的某种问题时只看这一种。
+  assert.deepEqual(F.planListQuery({ attention: 'RISK' }, { now }), { page: 1, size: 20, status_code: '', keyword: '', order: 'attention', attention: 'RISK' });
 
   // 统计卡：点“执行中”只看今天执行中的计划并清空关键词；当前筛选决定哪张卡高亮；再点一次恢复全部。
   const executing = F.planKpiFilters({ status_code: '', keyword: '0911', time: '' }, 'executing');
-  assert.deepEqual(executing, { status_code: 'EXECUTING', keyword: '', time: 'TODAY' });
+  assert.deepEqual(executing, { status_code: 'EXECUTING', keyword: '', time: 'TODAY', attention: '' });
   assert.equal(F.activePlanKpi(executing), 'executing');
   assert.equal(F.activePlanKpi({ ...executing, keyword: '0911' }), 'executing');
   assert.equal(F.activePlanKpi({ status_code: 'EXECUTING', time: '' }), null);
   assert.equal(F.activePlanKpi({ status_code: 'EXECUTING', time: 'LAST_7D' }), null);
   assert.equal(F.activePlanKpi({ status_code: 'CANCELLED', time: 'TODAY' }), null);
   assert.equal(F.activePlanKpi({ status_code: '', time: 'TODAY' }), 'today');
-  assert.deepEqual(F.planKpiFilters(executing, 'executing'), { status_code: '', keyword: '', time: '' });
-  assert.deepEqual(F.planKpiFilters(executing, 'pending'), { status_code: 'PENDING', keyword: '', time: 'TODAY' });
+  assert.deepEqual(F.planKpiFilters(executing, 'executing'), { status_code: '', keyword: '', time: '', attention: '' });
+  assert.deepEqual(F.planKpiFilters(executing, 'pending'), { status_code: 'PENDING', keyword: '', time: 'TODAY', attention: '' });
+  // 点统计卡同时取消“只看某种问题”，列表与卡片数字一致。
+  assert.equal(F.planKpiFilters({ attention: 'DEVICE' }, 'today').attention, '');
   assert.deepEqual(F.planKpiFilters(executing, 'unmatched'), executing);
   assert.deepEqual(Object.keys(F.PLAN_KPI_STATUS), ['today', 'executing', 'pending', 'completed']);
 
@@ -43,6 +47,10 @@ const path = require('node:path');
   assert.equal(F.planWindowText({ start_at: start, end_at: start + 3_600_000 }), '2026/10/5 09:21–10:21');
   assert.equal(F.planWindowText({ start_at: Date.parse('2026-10-05T15:30:00Z'), end_at: Date.parse('2026-10-05T16:30:00Z') }), '2026/10/5 23:30 – 2026/10/6 00:30');
   assert.equal(F.planWindowText({ start_at: null, end_at: start }), '任务时段未提供');
+  // 列表行短写法（设计二）不写年份。
+  assert.equal(F.planWindowShortText({ start_at: start, end_at: start + 3_600_000 }), '10/5 09:21–10:21');
+  assert.equal(F.planWindowShortText({ start_at: Date.parse('2026-10-05T15:30:00Z'), end_at: Date.parse('2026-10-05T16:30:00Z') }), '10/5 23:30 – 10/6 00:30');
+  assert.equal(F.planWindowShortText({ start_at: start }), '任务时段未提供');
   assert.equal(F.planNumberText({ plan_no: '计划-0911-105' }), '计划-0911-105');
   assert.equal(F.planNumberText({ plan_no: '6a39f0c2-1111-4222-8333-944455556666' }), '编号未提供');
   assert.equal(F.planNumberText({}), '编号未提供');

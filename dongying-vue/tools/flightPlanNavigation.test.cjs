@@ -18,7 +18,7 @@ function setup({ denied = false, missing = false, target = 'p25' } = {}) {
   };
   for (const [key, value] of Object.entries({ page: 1, size: 20, total: 0, plans: [], selected: null,
     activeTab: 'route', routeLoaded: false, loading: false, detailLoading: false, error: '', detailError: '', routeVersion: null,
-    airspaceVersions: [], conflicts: [], routeGeometryError: '', airspaceError: '', planList: null })) ctx[key] = { value };
+    airspaceVersions: [], conflicts: [], routeGeometryError: '', airspaceError: '', planList: null, attentionSummary: null })) ctx[key] = { value };
   vm.createContext(ctx); vm.runInContext(load, ctx);
   return { ctx, calls };
 }

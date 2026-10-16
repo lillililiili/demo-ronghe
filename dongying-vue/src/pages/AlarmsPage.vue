@@ -842,7 +842,7 @@ function alarmFactsHtml(a, t, advisory, status) {
   const sms = advisory ? autoSmsView(advisory) : null;
   const voice = advisory ? autoVoiceView(advisory) : null;
   const notify = advisory ? [`短信：${sms?.title || '未提供'}`, `电话：${voice?.title || '未提供'}`].join('；') : '读取中';
-  const done = ['COUNTERMEASURE_DONE', 'JAMMING_DONE', 'COUNTER_STOPPED', 'HANDED_OFF'].includes(selectedDisposalProgress());
+  const done = ['COUNTERMEASURE_DONE', 'JAMMING_DONE', 'HANDED_OFF'].includes(selectedDisposalProgress());
   const hidden = a.state === 'CONFIRMED' && !showCounterLaunch() && !done && !eventHandedOff()
     ? counterHiddenReason({ alarm: { eventState: 'CONFIRMED' }, actions: ['counter'], summary: advisory, nowStatus: status }) : '';
   return `<dl class="alarm-now-facts">

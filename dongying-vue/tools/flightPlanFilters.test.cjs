@@ -47,6 +47,10 @@ const path = require('node:path');
   assert.equal(F.planWindowText({ start_at: start, end_at: start + 3_600_000 }), '2026/10/5 09:21–10:21');
   assert.equal(F.planWindowText({ start_at: Date.parse('2026-10-05T15:30:00Z'), end_at: Date.parse('2026-10-05T16:30:00Z') }), '2026/10/5 23:30 – 2026/10/6 00:30');
   assert.equal(F.planWindowText({ start_at: null, end_at: start }), '任务时段未提供');
+  // 列表行短写法（设计二）不写年份。
+  assert.equal(F.planWindowShortText({ start_at: start, end_at: start + 3_600_000 }), '10/5 09:21–10:21');
+  assert.equal(F.planWindowShortText({ start_at: Date.parse('2026-10-05T15:30:00Z'), end_at: Date.parse('2026-10-05T16:30:00Z') }), '10/5 23:30 – 10/6 00:30');
+  assert.equal(F.planWindowShortText({ start_at: start }), '任务时段未提供');
   assert.equal(F.planNumberText({ plan_no: '计划-0911-105' }), '计划-0911-105');
   assert.equal(F.planNumberText({ plan_no: '6a39f0c2-1111-4222-8333-944455556666' }), '编号未提供');
   assert.equal(F.planNumberText({}), '编号未提供');

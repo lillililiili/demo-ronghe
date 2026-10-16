@@ -53,7 +53,7 @@ import { weatherPolygon, insideWeather, drawWeatherArea, weatherLayerKind } from
 import { strokePlanComparison, trustedTrajectoryPoints, trajectoryNoteText } from '@/pages/flights/planTrajectory.js';
 import { hasRouteDeviation } from '@/pages/flights/planMatch.js';
 import { TIME_FILTER_OPTIONS, customRangeValid, timeFilterLabel, timeFilterWindow } from '@/services/timeFilter.js';
-import { PLAN_KEYWORD_MAX, activePlanKpi, beijingDayWindow, planKpiFilters, planListQuery, planNumberText, planWindowText, normalizePlanKeyword, upstreamPlanNotice } from '@/pages/flights/planFilters.js';
+import { PLAN_KEYWORD_MAX, activePlanKpi, beijingDayWindow, planKpiFilters, planListQuery, planNumberText, planWindowShortText, planWindowText, normalizePlanKeyword, upstreamPlanNotice } from '@/pages/flights/planFilters.js';
 import UPagination from '@/components/UPagination.vue';
 import UControl from '@/components/form/UControl.vue';
 
@@ -474,18 +474,21 @@ const planRecords = computed(() => {
   return plans.value.map(plan => {
     const group = planGroupOf(plan), issues = attentionIssues(plan), match = rowMatch(plan);
     const header = group === previous ? null : group === 'needs'
-      ? { title: PLAN_GROUP.needs.title, note: filters.attention ? `只看${attentionKindLabel(filters.attention)}` : `${attentionSummary.value?.needs_action ?? ''} 个 · ${PLAN_GROUP.needs.note}` }
-      : PLAN_GROUP[group];
+      ? { title: PLAN_GROUP.needs.title, note: filters.attention ? `只看${attentionKindLabel(filters.attention)}` : `${attentionBar.value?.total ?? ''} 个 · ${PLAN_GROUP.needs.note}` }
+      : group === 'executing' ? { title: PLAN_GROUP.executing.title, note: attentionBar.value?.otherExecuting == null ? '' : `${attentionBar.value.otherExecuting} 个` }
+        : PLAN_GROUP[group];
     previous = group;
     return {
       id: plan.plan_id, title: plan.route?.name || '未命名航线', group, groupHeader: header,
-      status: labelOf(PLAN_STATUS_LABEL, plan.status_code), statusClass: PLAN_STATUS_TAG[plan.status_code] || 't-gray',
+      // 设计二：已结束的任务状态用灰色，不和需要处理的颜色抢眼。
+      status: labelOf(PLAN_STATUS_LABEL, plan.status_code), statusClass: group === 'ended' ? 't-gray' : PLAN_STATUS_TAG[plan.status_code] || 't-gray',
       // 同名航线常有多份计划（不同批次或时段），行内必须带编号与时段才能区分。
-      subtitle: `${planNumberText(plan)} · ${planWindowText(plan)}`, subtitleTitle: plan.plan_no,
+      subtitle: `${planNumberText(plan)} · ${planWindowShortText(plan)}`, subtitleTitle: `${plan.plan_no || ''} · ${planWindowText(plan)}`,
       needs: needsAction(plan), deviation: plan.attention?.match_issue === 'DEVIATION',
       tags: issues.length ? issues.map(issue => ({ text: issue.tag, cls: issue.tagClass, title: issue.detail }))
-        : match.text && match.text !== '—' ? [{ text: match.text, cls: match.tag ? (match.text === '任务偏离' ? 't-red' : match.tag) : 't-gray', title: match.title }] : [],
-      next: issues.map(issue => issue.next).join('；'),
+        // 不需要处理的任务：匹配结论一律灰色（设计二），不和问题标签混淆。
+        : match.text && !['—', '…'].includes(match.text) ? [{ text: match.text, cls: 't-gray', title: match.title }] : [],
+      next: issues.length ? issues.map(issue => issue.next).join('；') : group === 'executing' ? '无需处理' : '',
       details: issues.map(issue => issue.detail),
       action: attentionAction(plan)
     };
@@ -728,7 +731,8 @@ function rowMatch(plan) {
   if (section && sectionReady(section)) return { text: labelOf(PLAN_ROW_MATCH_LABEL, section.plan_match_code), tag: PLAN_MATCH_TAG[section.plan_match_code] || 't-gray', title: '' };
   if (section === undefined) return { text: '…', tag: 't-gray', title: '正在读取对照结论' };
   if (!section) return { text: '—', tag: '', title: '对照结论读取失败或无权限' };
-  if (!sectionReady(section)) return { text: section.availability === 'NO_EVALUATION' ? '还没对上飞机' : '—', tag: section.availability === 'NO_EVALUATION' ? 't-amber' : '', title: matchMetricNote(section) };
+  // 已结束的任务没有对上飞机是历史事实，不再写“还没”，也不用提醒色。
+  if (!sectionReady(section)) return { text: section.availability !== 'NO_EVALUATION' ? '—' : plan.status_code === 'EXECUTING' ? '还没对上飞机' : '没有对上飞机', tag: section.availability === 'NO_EVALUATION' && plan.status_code === 'EXECUTING' ? 't-amber' : '', title: matchMetricNote(section) };
   return { text: labelOf(PLAN_ROW_MATCH_LABEL, section.plan_match_code), tag: PLAN_MATCH_TAG[section.plan_match_code] || 't-gray', title: '' };
 }
 
@@ -2092,9 +2096,9 @@ onUnmounted(() => {
           <div v-if="attentionBar && !loading && !error" class="plan-attention-bar" :class="{ calm: !attentionBar.total }">
             <p class="plan-attention-total"><span>需要处理</span><b>{{ attentionBar.total }}</b><span>个任务</span></p>
             <div class="plan-attention-chips">
-              <button v-for="chip in attentionBar.chips" :key="chip.key" class="plan-attention-chip" :class="[chip.tag, { on: chip.active }]" type="button"
+              <button v-for="chip in attentionBar.chips" :key="chip.key" class="plan-attention-chip" :class="{ on: chip.active }" type="button"
                 :aria-pressed="chip.active" :disabled="loading || (!chip.count && !chip.active)" :title="chip.active ? '再点一次查看全部任务' : '只看有这种问题的任务'"
-                @click="choosePlanAttention(chip.key)">{{ chip.label }}<b>{{ chip.count }}</b></button>
+                @click="choosePlanAttention(chip.key)">{{ chip.label }}<b :class="chip.key === 'DEVIATION' ? 'c-red' : 'c-amber'">{{ chip.count }}</b></button>
             </div>
             <p class="plan-attention-note">一个任务有几种问题时，每种都算一次</p>
           </div>
@@ -2263,9 +2267,10 @@ onUnmounted(() => {
 .plan-attention-total b { font-size: 22px; line-height: 1; color: var(--amber); }
 .plan-attention-bar.calm .plan-attention-total b { color: var(--green); }
 .plan-attention-chips { display: flex; flex-wrap: wrap; gap: 5px; }
-.plan-attention-chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border: 1px solid color-mix(in srgb, var(--tag-c, var(--amber)) 45%, transparent); border-radius: 12px; background: transparent; color: var(--txt); font-size: 12px; cursor: pointer; }
-.plan-attention-chip b { color: var(--tag-c, var(--amber)); }
-.plan-attention-chip.on { background: color-mix(in srgb, var(--tag-c, var(--amber)) 20%, transparent); border-color: var(--tag-c, var(--amber)); }
+.plan-attention-chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel-2); color: var(--txt); font-size: 12px; cursor: pointer; }
+.plan-attention-chip b.c-red { color: var(--red); }
+.plan-attention-chip b.c-amber { color: var(--amber); }
+.plan-attention-chip.on { border-color: var(--blue); box-shadow: inset 0 0 0 1px var(--blue); }
 .plan-attention-chip:disabled { opacity: .45; cursor: default; }
 .plan-attention-note { margin: 0; font-size: 10px; color: var(--txt-3); }
 .flights-page .workspace-list .plan-filter-row .field { gap: 3px; }

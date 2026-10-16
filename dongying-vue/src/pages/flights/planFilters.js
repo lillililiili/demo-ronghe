@@ -86,6 +86,15 @@ export function planWindowText(plan) {
   return a.day === b.day ? `${a.day} ${a.clock}–${b.clock}` : `${a.day} ${a.clock} – ${b.day} ${b.clock}`;
 }
 
+/* 列表行用的短写法（2026-10-16 设计二）：不写年份，“10/16 09:00–12:00”，跨天“10/16 10:31 – 10/17 10:30”。 */
+export function planWindowShortText(plan) {
+  const start = Number(plan?.start_at), end = Number(plan?.end_at);
+  if (plan?.start_at == null || plan?.end_at == null || !Number.isFinite(start) || !Number.isFinite(end)) return '任务时段未提供';
+  const short = ms => beijingParts(ms).day.replace(/^\d+\//, '');
+  const a = { day: short(start), clock: beijingParts(start).clock }, b = { day: short(end), clock: beijingParts(end).clock };
+  return a.day === b.day ? `${a.day} ${a.clock}–${b.clock}` : `${a.day} ${a.clock} – ${b.day} ${b.clock}`;
+}
+
 /* 同名航线的多份计划靠编号和时段区分；内部 ID 不上屏。 */
 export function planNumberText(plan) {
   return displayPlanNo(readableNo(plan?.plan_no)) || '编号未提供';

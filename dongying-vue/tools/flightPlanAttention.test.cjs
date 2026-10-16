@@ -20,6 +20,7 @@ const path = require('node:path');
   assert.deepEqual(A.attentionIssues(deviated).map(issue => [issue.tag, issue.tagClass]), [['任务偏离', 't-red']]);
   assert.match(A.attentionIssues(deviated)[0].detail, /^飞机实际飞的位置离开了报备航线。请打开合法性判定/);
   assert.equal(A.attentionAction(deviated).key, 'legality');
+  assert.equal(A.attentionAction(deviated).primary, true);
 
   // “未找到对应飞机”和“还没对上飞机”是两种情况，说法和按钮都不同。
   const none = plan('EXECUTING', attention(['AIRCRAFT'], { match_issue: 'NONE' }));
@@ -39,22 +40,34 @@ const path = require('node:path');
   }));
   const issues = A.attentionIssues(several);
   assert.deepEqual(issues.map(issue => issue.tag), ['还没对上飞机', '设备异常 1', '风险 2 条']);
-  assert.equal(issues[1].detail, '航线附近有 1 台监测设备异常（雷达-02，后台处置单“处理中”），飞机可能测不到。请跟进处置单进度；设备修好前，靠联系报备单位确认飞行情况。');
+  assert.equal(issues[1].detail, '航线附近的雷达-02 异常，后台处置单“处理中”，飞机可能测不到。请跟进处置单；修好前靠联系报备单位确认飞行情况。');
+  assert.equal(issues[1].tagClass, 't-amber');
   assert.equal(issues[2].detail, '这条任务有 2 个风险事件还没处理（待核验 1、待通知 1）。请去核验，确认后通知上级。');
+  // 设备已恢复、等后台确认办结时，不再说飞机测不到。
+  const recovered = A.attentionIssues(plan('EXECUTING', attention(['DEVICE'], { device_tasks: [{ device_name: '雷达-02', workflow_state: 'READY_TO_COMPLETE' }] })))[0];
+  assert.equal(recovered.detail, '雷达-02已恢复，后台处置单“待确认办结”。请跟进后台确认办结。');
+  assert.doesNotMatch(recovered.detail, /测不到/);
+  // 风险写明种类：气象写具体预警。
+  const storm = A.attentionIssues(plan('PENDING', attention(['RISK'], { pending_verification_risks: 1,
+    pending_risk_kinds: [{ risk_type: 'WEATHER', reason_code: 'WEATHER_THUNDERSTORM' }] })))[0];
+  assert.equal(storm.detail, '这条任务有 1 个风险事件还没处理（待核验 1，雷雨预警）。请去核验，确认后通知上级。');
+  assert.equal(storm.next, '核验雷雨预警，确认后通知上级');
   assert.equal(A.attentionAction(several).key, 'detail');
+  assert.ok(!A.attentionAction(several).primary, '查看详情不用实心按钮');
 
   // 只有风险：去风险事件；只剩待通知时不再叫人去核验。
   const risky = plan('PENDING', attention(['RISK'], { pending_notification_risks: 2 }));
   assert.equal(A.attentionAction(risky).key, 'risks');
   assert.equal(A.attentionIssues(risky)[0].detail, '这条任务有 2 个风险事件还没处理（待通知 2）。请通知上级。');
 
-  // 没有问题的任务没有标签、没有按钮。
+  // 没有问题的任务没有问题标签，按钮是“查看详情”。
   assert.deepEqual(A.attentionIssues(plan('EXECUTING', attention([]))), []);
-  assert.equal(A.attentionAction(plan('COMPLETED')), null);
+  assert.deepEqual(A.attentionAction(plan('COMPLETED')), { key: 'detail', label: '查看详情' });
 
   // 顶部汇总：后台数量原样显示，选中的种类高亮；后台没给汇总（旧版本）就不显示。
-  const bar = A.attentionSummaryChips({ needs_action: 5, deviation: 1, aircraft: 2, device: 1, risk: 2 }, 'AIRCRAFT');
+  const bar = A.attentionSummaryChips({ needs_action: 5, deviation: 1, aircraft: 2, device: 1, risk: 2, other_executing: 1 }, 'AIRCRAFT');
   assert.equal(bar.total, 5);
+  assert.equal(bar.otherExecuting, 1);
   assert.deepEqual(bar.chips.map(chip => [chip.label, chip.count, chip.active]),
     [['任务偏离', 1, false], ['没对上飞机', 2, true], ['设备异常', 1, false], ['风险待处理', 2, false]]);
   assert.equal(A.attentionSummaryChips(null), null);

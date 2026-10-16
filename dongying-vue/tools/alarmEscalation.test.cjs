@@ -65,8 +65,9 @@ function legalityDictionaries() {
   const page = readFileSync(path.join(__dirname, '../src/pages/AlarmsPage.vue'), 'utf8');
   assert.match(page, /listAlarmEscalations\(a\.alarm_id/);
   assert.match(page, /t: '告警内容', render: reasonCell/);
-  assert.match(page, /aria-label="告警原因"/);
-  assert.match(page, /esc\(reasonsOf\(cur\.alarm\) \|\| '未记录具体触发原因'\)/);
+  // 页面设计第 3 条：先写最新研判；告警记录的原因按升级记录拆成出告警时与升级时新增，没读全时写“累计”。
+  assert.match(page, /patchHtml\(el\('alReason'\), cur\.alarm \? alarmReasonHtml\(cur\.alarm, cur\.target\)/);
+  assert.match(page, /alarmReasons: a\.violation_reasons, escalationCount: a\.escalation_count/);
   assert.match(page, /U\.sect\('升级记录'/);
   assert.match(page, /data-al="escalations-retry"/);
   console.log('全部通过：告警升级显示');

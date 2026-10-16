@@ -42,7 +42,7 @@ import { getEvidenceChain } from '@/services/evidenceApi.js';
 import { openUavVerification } from '@/ui/uavVerificationModal.js';
 import { targetApi } from '@/services/targetApi.js';
 import { toAirspaces } from '@/services/situationData.js';
-import { displayAlarmNo, displayTargetNo } from '@/ui/deviceNumber.js';
+import { displayAlarmNo, displayDeviceNo, displayTargetNo } from '@/ui/deviceNumber.js';
 import { mapPool } from '@/services/apiClient.js';
 import { ALARM_PROGRESS_LABEL, ALARM_PROGRESS_TAG, ALARM_TYPE_LABEL, classChangeText, CONCLUSION_LABEL, DISPOSAL_ACTION_LABEL, labelOf, LEGALITY_LABEL, readableNo, sourceDescription, SOURCE_MODE_LABEL as MODE_TEXT, targetTypeLabel } from '@/ui/labels.js';
 import { openEvidenceFileModal } from '@/ui/evidenceFileDetail.js';
@@ -53,6 +53,14 @@ import { hasPermission } from '@/services/accessControl.js';
 import EmergencyStopPanel from '@/components/disposal/EmergencyStopPanel.vue';
 import UavAdvisoryPanel from '@/components/disposal/UavAdvisoryPanel.vue';
 import CounterLaunch from '@/pages/alarms/CounterLaunch.vue';
+import { alarmReasonView, uavNowHtml, uavNowStatus } from '@/components/disposal/uavNowStatus.js';
+import { counterHiddenReason } from '@/components/disposal/counterNextStep.js';
+import { autoSmsView } from '@/components/disposal/autoSmsView.js';
+import { autoVoiceView } from '@/components/disposal/autoVoiceView.js';
+import { deviceApi } from '@/services/deviceApi.js';
+import { deviceUnavailableReason } from '@/ui/disposalAuthModal.js';
+import { deviceReach } from '@/ui/deviceReach.js';
+import { serverNow } from '@/services/serverClock.js';
 import TargetTrackingPanel from '@/components/video/TargetTrackingPanel.vue';
 import { uavAdvisoryApi } from '@/services/uavAdvisoryApi.js';
 
@@ -75,18 +83,41 @@ watch(() => [route.query.tab, route.query.authorization, route.query.event], ([t
    底层对象仍是 S.st，跨导航记忆不变 */
 const st = reactive(S.st);
 let evidenceEventSequence = 0;
+function resetLinkedAlarmFilters() {
+  Object.assign(st, { page: 1, level: '全部', status: '全部', kind: '全部', region: '全部', time: '', timeRange: null });
+  root.value?.querySelectorAll('[data-f]').forEach(control => { control.value = st[control.dataset.f]; });
+}
 async function openEvidenceEvent() {
   const id = typeof route.query.event === 'string' ? route.query.event : '';
   if (!id || route.query.tab === 'authorizations' || route.query.authorization) return false;
   const own = ++evidenceEventSequence;
+  const detailRequest = ++detailSeq;
+  ++listSeq; ++disposalSeq;
+  let requestedListSeq = listSeq;
   activeTab.value = 'alarms';
+  st.selId = null; cur = emptyDetail(); cur.loading = true;
+  resetLinkedAlarmFilters();
+  list.loading = true; paintList(); paintDetail(); focusMap();
+  const isCurrent = () => authorizationPageActive && own === evidenceEventSequence
+    && activeTab.value === 'alarms' && route.query.event === id
+    && detailRequest === detailSeq && requestedListSeq === listSeq;
   try {
     const event = await getUavEvent(id);
-    if (!authorizationPageActive || own !== evidenceEventSequence || route.query.event !== id) return true;
+    if (!isCurrent()) return true;
+    if (!event?.alarm_id) throw new Error('此事件未关联可查看的告警');
+    requestedListSeq = listSeq + 1;
+    const loaded = await loadList({ alarmId: event.alarm_id });
+    if (!isCurrent()) return true;
+    if (!loaded) {
+      if (list.error) throw new Error(list.error);
+      return true;
+    }
     await selectAlarm(event.alarm_id);
+    if (st.selId === event.alarm_id) root.value?.querySelector('#alList tr.on')?.scrollIntoView({ block: 'center' });
   } catch (error) {
-    if (!authorizationPageActive || own !== evidenceEventSequence || route.query.event !== id) return true;
-    ++detailSeq; st.selId = null; cur = emptyDetail(); cur.error = error.message || '关联告警不可见'; paintDetail();
+    if (!isCurrent()) return true;
+    list.loading = false; paintList();
+    ++detailSeq; st.selId = null; cur = emptyDetail(); cur.error = error.message || '关联告警不可见'; paintDetail(); focusMap();
   }
   return true;
 }
@@ -619,6 +650,7 @@ function updateAdvisory(summary) {
   }
   if (!advisoryLive.value || advisoryContent(advisoryLive.value) !== advisoryContent(summary)) advisoryLive.value = summary;
   if (cur.event) cur.event.version = summary.event_version;
+  patchHtml(el('alNow'), alarmNowHtml());
   if (!pageChanged) return;
   paintList();
   paintDetailContent();
@@ -748,15 +780,99 @@ function detailActionsHtml() {
     ${ev?.state === 'PENDING_VERIFICATION' ? '<p class="alarm-action-note">事件事实尚待核实。核实属实后自动发送飞手短信。</p>' : ''}`;
 }
 
+/* 无人机现在状态（2026-10-14）：放在反制按钮上方。是否在时效内以后端 observation_status 为准，
+   通知后的位置判断只是当时的结论，最新研判仍违规时以违规为准。 */
+function alarmNowHtml() {
+  const a = cur.alarm, t = cur.target;
+  if (!a?.event_id || !a.target_id || !a.observation_status || a.attention_group === 'HISTORY') return '';
+  if (t?.object_type_code && t.object_type_code !== 'UAV') return '';
+  const advisory = advisoryLive.value?.event_id === a.event_id ? advisoryLive.value : advisorySummaries.get(a.event_id);
+  const status = uavNowStatus({
+    current: a.observation_status === 'CURRENT',
+    observedAt: t?.latest_state?.observed_at,
+    legalStatus: t?.legality_summary?.legal_status,
+    legalReasons: t?.legality_summary?.violation_reasons,
+    departure: advisory?.departure_observation,
+    now: serverNow(),
+    reasonText: ruleReasonText
+  });
+  return `${uavNowHtml(status)}${alarmFactsHtml(a, t, advisory, status)}`;
+}
+
+/* 顶部四项（页面设计第 6 条）：无人机现在（上面那块）、现在位置、通知飞手、能用的反制设备，
+   都放在「反制 / 不反制」按钮正上方；反制按钮不出现时写一句原因。 */
+const COUNTER_DEVICE_TYPES = ['ifr', 'countermeasure'];
+const counterDevices = { rows: null, error: '', at: 0, loading: false };
+async function loadCounterDevices() {
+  if (counterDevices.loading || Date.now() - counterDevices.at < 30000) return;
+  counterDevices.loading = true;
+  try {
+    const page = await deviceApi.list({ page: 1, size: 200, enabled: true, sort: 'device_no_asc' });
+    counterDevices.rows = (page?.items || []).filter(device => device.enabled === true && COUNTER_DEVICE_TYPES.includes(device.device_type_code));
+    counterDevices.error = '';
+  } catch (e) {
+    counterDevices.error = e?.status === 403 ? '没有设备台账读取权限' : '读取设备失败';
+  } finally {
+    counterDevices.at = Date.now();
+    counterDevices.loading = false;
+    patchHtml(el('alNow'), alarmNowHtml());
+  }
+}
+function counterDeviceText(point) {
+  if (!counterDevices.rows) { void loadCounterDevices(); return counterDevices.error || '读取中'; }
+  if (Date.now() - counterDevices.at >= 30000) void loadCounterDevices();
+  if (!point) return '没有时效内的位置，无法判断';
+  // 与申请弹窗的设备下拉同一口径：照得到的、没配覆盖范围无法判断的都能选，配了范围照不到的不列。
+  const online = counterDevices.rows.filter(device => !deviceUnavailableReason(device))
+    .map(device => ({ device, reach: deviceReach(device, point) }));
+  const usable = online.filter(row => row.reach.inRange).sort((x, y) => x.reach.distanceM - y.reach.distanceM);
+  const unknown = online.filter(row => row.reach.unknown);
+  const names = rows => rows.slice(0, 2).map(({ device }) => displayDeviceNo(device.device_no) || device.name || '未命名设备').join('、')
+    + (rows.length > 2 ? ` 等 ${rows.length} 台` : '');
+  const parts = [usable.length ? `${names(usable)}在线，覆盖到目标` : '',
+    unknown.length ? `${names(unknown)}在线，未配置覆盖范围，无法判断是否覆盖` : ''].filter(Boolean);
+  return parts.length ? parts.join('；') : '没有在线且覆盖到目标的反制设备，发起反制时选不到执行设备';
+}
+function alarmFactsHtml(a, t, advisory, status) {
+  const ls = t?.latest_state;
+  const point = a.observation_status === 'CURRENT' && ls ? coord(ls.location, ls.field_issues, 'location') : null;
+  const position = point
+    ? `${point.lon.toFixed(4)}, ${point.lat.toFixed(4)}${ls.altitude_amsl_m == null ? '' : ` · ${Math.round(Number(ls.altitude_amsl_m))} m`}`
+    : cur.targetLoading ? '读取中' : '没有时效内的位置';
+  const sms = advisory ? autoSmsView(advisory) : null;
+  const voice = advisory ? autoVoiceView(advisory) : null;
+  const notify = advisory ? [`短信：${sms?.title || '未提供'}`, `电话：${voice?.title || '未提供'}`].join('；') : '读取中';
+  const done = ['COUNTERMEASURE_DONE', 'JAMMING_DONE', 'COUNTER_STOPPED', 'HANDED_OFF'].includes(selectedDisposalProgress());
+  const hidden = a.state === 'CONFIRMED' && !showCounterLaunch() && !done && !eventHandedOff()
+    ? counterHiddenReason({ alarm: { eventState: 'CONFIRMED' }, actions: ['counter'], summary: advisory, nowStatus: status }) : '';
+  return `<dl class="alarm-now-facts">
+    <div><dt>现在位置</dt><dd class="mono">${esc(position)}</dd></div>
+    <div><dt>通知飞手</dt><dd>${esc(notify)}</dd></div>
+    <div><dt>能用的反制设备</dt><dd>${esc(counterDeviceText(point))}</dd></div>
+  </dl>${hidden ? `<p class="alarm-now-block">暂不能反制：${esc(hidden)}</p>` : ''}`;
+}
+
+/* 告警原因（页面设计第 3 条）：先写最新研判，和告警记录的原因不同才另写一行；升级过的按升级记录拆开或写“累计”。 */
+function alarmReasonHtml(a, t) {
+  const live = a.attention_group !== 'HISTORY' && a.observation_status === 'CURRENT' && t && !cur.targetLoading && !cur.targetError;
+  const view = alarmReasonView({ legalStatus: live ? t.legality_summary?.legal_status : null,
+    legalReasons: t?.legality_summary?.violation_reasons, alarmReasons: a.violation_reasons, escalationCount: a.escalation_count,
+    escalations: cur.escalationsLoading || cur.escalationsError ? null : cur.escalations, escalationsTotal: cur.escalationsTotal, reasonText: ruleReasonText });
+  const when = a.received_at || a.occurred_at;
+  return `<section class="alarm-reason-callout is-${view.tone}" aria-label="${esc(view.label)}">
+    <span class="alarm-reason-label">${esc(view.label)}</span>
+    <strong class="alarm-reason-text">${esc(view.text)}</strong>
+    ${view.atAlarm ? `<small class="alarm-reason-then">${esc(view.atAlarmLabel)}${when && view.atAlarmLabel === '出告警时' ? `（${esc(fmt(when))}）` : ''}：${esc(view.atAlarm)}</small>` : ''}
+  </section>`;
+}
+
 /* 详情和动作区就地更新：内容没变不动节点，“核实”等按钮在刷新时保持原节点，点得中。 */
 function paintDetailContent() {
   setSubject(videoSubject, cur.alarm ? { targetId: cur.alarm.target_id || '', eventId: cur.alarm.event_id || '', label: noOf(cur.alarm) } : null);
-  patchHtml(el('alReason'), cur.alarm ? `<section class="alarm-reason-callout" aria-label="告警原因">
-    <span class="alarm-reason-label">告警原因</span>
-    <strong class="alarm-reason-text">${esc(reasonsOf(cur.alarm) || '未记录具体触发原因')}</strong>
-  </section>` : '');
+  patchHtml(el('alReason'), cur.alarm ? alarmReasonHtml(cur.alarm, cur.target) : '');
   patchHtml(el('alDetail'), detailHtml());
   patchHtml(el('alDetailActions'), detailActionsHtml());
+  patchHtml(el('alNow'), alarmNowHtml());
 }
 
 let listQueryKey = '';
@@ -905,14 +1021,34 @@ async function loadMapAirspaces(my) {
   focusMap({ fit: firstLoad });
 }
 
-async function loadList({ quiet = false, progress = true } = {}) {
+async function loadList({ quiet = false, progress = true, alarmId = null } = {}) {
   const my = ++listSeq;
   const previousEvents = list.rows.map(row => row.event_id).join();
   // 实时刷新静默重读：保留当前列表直到新数据到达，不闪加载状态。
   if (!quiet) { list.loading = true; list.error = ''; paintList(); }
   try {
-    const page = await listAlarms(queryOf());
+    const query = queryOf();
+    let page = await listAlarms(query);
     if (my !== listSeq) return;
+    if (alarmId && !page.items?.some(row => row.alarm_id === alarmId)) {
+      // 关联跳转按服务端相同排序查找所在页；普通刷新和翻页不扫描历史。
+      const scanSize = 100;
+      const lastPage = Math.ceil(page.total / scanSize);
+      for (let candidate = 1; candidate <= lastPage; candidate++) {
+        const batch = await listAlarms({ ...query, page: candidate, size: scanSize });
+        if (my !== listSeq) return;
+        const index = (batch.items || []).findIndex(row => row.alarm_id === alarmId);
+        if (index < 0) continue;
+        const targetPage = Math.floor(((candidate - 1) * scanSize + index) / query.size) + 1;
+        page = await listAlarms({ ...query, page: targetPage });
+        if (my !== listSeq) return;
+        break;
+      }
+      if (!page.items?.some(row => row.alarm_id === alarmId)) {
+        throw new Error('关联告警已不在当前可访问列表，请刷新后重试。');
+      }
+    }
+    if (alarmId) st.page = page.page;
     list.rows = Array.isArray(page && page.items) ? page.items : [];
     totalCount.value = Number(page && page.total) || 0;
     list.loading = false; list.error = ''; list.refreshError = '';
@@ -940,6 +1076,7 @@ async function loadList({ quiet = false, progress = true } = {}) {
     return;
   }
   paintList();
+  return true;
 }
 
 function loadPageProgress(rows) {
@@ -1340,8 +1477,10 @@ onMounted(async () => {
   loadDistricts();
 
   loadKpis();
-  await loadList();
   if (await openEvidenceEvent()) return;
+  if (deepId) resetLinkedAlarmFilters();
+  const loaded = await loadList({ alarmId: deepId });
+  if (deepId && !loaded) return;
   // safe-default：深链 > 上次选中 > 当前页首条；用户可见可改
   const id = deepId || st.selId || (list.rows[0] && list.rows[0].alarm_id) || null;
   if (id) {
@@ -1384,6 +1523,7 @@ onMounted(async () => {
           <UPanel title="告警详情与处置" panel-style="flex:1;min-height:0" nopad
             body-style="overflow:hidden;display:flex;flex-direction:column;padding:0">
             <div class="alarm-action-bar">
+              <div id="alNow" class="alarm-now"></div>
               <CounterLaunch v-if="advisorySubject" :key="`counter-${advisorySubject.id}`"
                 :event-id="advisorySubject.id" :event-label="advisorySubject.label" :active="activeTab === 'alarms'"
                 :show-launch="showCounterLaunch()" :handed-off="eventHandedOff()" :confirmed="advisorySubject.confirmed" :summary="advisoryLive"
@@ -1494,7 +1634,15 @@ onMounted(async () => {
 .alarm-time-custom > label { line-height:20px; color:var(--txt-2); }
 .alarm-time-custom :deep(.n-date-picker) { max-width:420px; }
 .alarm-action-bar { flex:none; display:flex; flex-direction:column; align-items:stretch; gap:10px; margin:0; padding:10px 12px; border-bottom:1px solid var(--line); background:var(--panel); box-shadow:0 4px 12px color-mix(in srgb, var(--bg-1) 22%, transparent); }
-.alarm-action-bar:not(:has(.btn, .tag, details)) { display:none; }
+.alarm-action-bar:not(:has(.btn, .tag, details, .uav-now)) { display:none; }
+.alarm-now:empty { display:none; }
+.alarm-now :deep(.uav-now) { margin:0; }
+.alarm-now { display:flex; flex-direction:column; gap:8px; }
+.alarm-now :deep(.alarm-now-facts) { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:6px; margin:0; }
+.alarm-now :deep(.alarm-now-facts > div) { min-width:0; padding:6px 8px; border:1px solid var(--line); border-radius:6px; background:var(--surface-2); }
+.alarm-now :deep(.alarm-now-facts dt) { font-size:11px; color:var(--txt-3); }
+.alarm-now :deep(.alarm-now-facts dd) { margin:2px 0 0; font-size:12px; line-height:1.5; color:var(--txt); overflow-wrap:anywhere; }
+.alarm-now :deep(.alarm-now-block) { margin:0; font-size:12px; line-height:1.6; color:var(--txt-3); }
 .alarm-observation { order:2; flex:0 0 auto; min-width:0; }
 .alarm-observation:empty { display:none; }
 .alarm-observation:has(.alarm-observation-actions:empty):not(:has(.alarm-action-note)) { display:none; }
@@ -1508,6 +1656,9 @@ onMounted(async () => {
 .alarms-page :deep(.alarm-reason-callout) { flex:none; min-width:0; margin:12px 0; padding:12px 14px; border:1px solid color-mix(in srgb, var(--amber) 40%, var(--line)); border-left:4px solid var(--amber); border-radius:var(--r); background:color-mix(in srgb, var(--amber) 8%, var(--panel)); }
 .alarms-page :deep(.alarm-reason-label) { display:block; margin-bottom:5px; color:var(--amber); font-size:12px; font-weight:700; line-height:1.5; }
 .alarms-page :deep(.alarm-reason-callout .alarm-reason-text) { font-size:16px; }
+.alarms-page :deep(.alarm-reason-callout.is-ok) { border-color:color-mix(in srgb, var(--green, #58ddb0) 40%, var(--line)); border-left-color:var(--green, #58ddb0); background:color-mix(in srgb, var(--green, #58ddb0) 8%, var(--panel)); }
+.alarms-page :deep(.alarm-reason-callout.is-ok .alarm-reason-label) { color:var(--green, #58ddb0); }
+.alarms-page :deep(.alarm-reason-then) { display:block; margin-top:4px; color:var(--txt-3); font-size:12px; line-height:1.5; }
 .alarm-detail-content :deep(.alarm-escalation-list) { list-style:none; margin:0; padding:0; }
 .alarm-detail-content :deep(.alarm-escalation-list li) { padding:8px 0; font-size:12px; line-height:1.65; color:var(--txt-2); overflow-wrap:anywhere; }
 .alarm-detail-content :deep(.alarm-escalation-list li + li) { border-top:1px solid var(--line-2); }

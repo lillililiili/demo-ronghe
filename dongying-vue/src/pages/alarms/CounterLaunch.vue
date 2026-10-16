@@ -3,12 +3,16 @@ import { h, ref, computed, watch, onUnmounted } from 'vue';
 import { uavAdvisoryApi } from '@/services/uavAdvisoryApi.js';
 import { disposalApi } from '@/services/disposalApi.js';
 import { readSessionToken } from '@/services/apiClient.js';
+import { getUavEvent } from '@/services/alarmApi.js';
+import { targetApi } from '@/services/targetApi.js';
+import { coordOf } from '@/services/positionMap.js';
 import { openDisposalRequest, openDisposalDirect } from '@/ui/disposalAuthModal.js';
 import { openModal } from '@/ui/modal.js';
 import { toast } from '@/ui/nv.js';
 import { noCounterApi } from '@/services/noCounterApi.js';
 import NoCounterDecisionModal from './NoCounterDecisionModal.vue';
 import NoCounterBasis from './NoCounterBasis.vue';
+import { counterLaunchLabel, counterPermissionHint } from '@/components/disposal/counterNextStep.js';
 
 const U = window.UI;
 const props = defineProps({ eventId: { type: String, required: true }, eventLabel: String, active: Boolean, confirmed: Boolean, summary: Object, showLaunch: Boolean, handedOff: Boolean, counterStopped: Boolean, showRecords: { type: Boolean, default: true } });
@@ -21,6 +25,8 @@ const noCounterBlock = computed(() => unavailableReason.value || (noCounter.valu
   : noCounter.value?.block_reason || '尚未确认不反制条件，请刷新后重试'));
 const launchBlock = computed(() => unavailableReason.value || (currentSummary.value?.can_direct_counter === true || currentSummary.value?.can_request_counter === true ? ''
   : currentSummary.value?.counter_block_reason || '尚未确认反制资格，请刷新后重试'));
+const launchLabel = computed(() => counterLaunchLabel(currentSummary.value));
+const launchHint = computed(() => launchBlock.value ? '' : counterPermissionHint(currentSummary.value));
 const completed = computed(() => noCounter.value?.decision_active === true);
 const time = value => value == null ? '未提供' : new Date(value).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' });
 let generation = 0, mounted = true, feedback = null;
@@ -38,6 +44,17 @@ function showFeedback(title, message) {
   });
 }
 
+/** 目标现在的位置，用来只列出覆盖范围照得到目标的反制设备；读不到时返回 null，弹窗里如实说明。 */
+async function currentTargetPoint(eventId) {
+  try {
+    const event = await getUavEvent(eventId);
+    const targetId = event?.target_id ?? event?.targetId;
+    if (!targetId) return null;
+    const latest = (await targetApi.detail(targetId))?.latest_state;
+    return latest ? coordOf(latest.location, latest.field_issues, 'location') : null;
+  } catch { return null; }
+}
+
 async function launch() {
   if (launchBlock.value) return;
   const id = props.eventId, token = readSessionToken(), request = ++generation;
@@ -52,12 +69,12 @@ async function launch() {
       showFeedback('暂不能发起反制', eligibility.counter_block_reason || '当前反制资格未确认，暂不能发起。');
       return;
     }
-    const policy = await disposalApi.policies();
+    const [policy, targetPoint] = await Promise.all([disposalApi.policies(), currentTargetPoint(id)]);
     if (!isCurrent()) return;
     const open = eligibility.can_direct_counter === true ? openDisposalDirect : openDisposalRequest;
     await open({
       actionType: 'COUNTERMEASURE', subjectKind: 'UAV_EVENT', subjectId: id,
-      subjectText: props.eventLabel || id, policy, isCurrent,
+      subjectText: props.eventLabel || id, policy, isCurrent, targetPoint,
       onDone: result => {
         if (isCurrent()) emit('records', { eventId: id, authorizationId: result?.authorization_id || '' });
       }
@@ -119,7 +136,8 @@ async function decideNoCounter() {
         </div>
         <div v-if="showLaunch" class="counter-choice-action">
           <p v-if="launchBlock" :id="`counter-block-${eventId}`" class="counter-action-note">{{ launchBlock }}</p>
-          <button class="btn pri" type="button" :disabled="!!launchBlock" :aria-describedby="launchBlock ? `counter-block-${eventId}` : undefined" :aria-busy="busy" @click="launch"><span class="counter-action-icon" aria-hidden="true" v-html="U.icon('shield')"></span>发起反制</button>
+          <button class="btn pri" type="button" :disabled="!!launchBlock" :aria-describedby="launchBlock ? `counter-block-${eventId}` : undefined" :aria-busy="busy" @click="launch"><span class="counter-action-icon" aria-hidden="true" v-html="U.icon('shield')"></span>{{ launchLabel }}</button>
+          <p v-if="launchHint" class="counter-action-note">{{ launchHint }}</p>
         </div>
       </div>
       <details v-if="noCounter?.decision"><summary>此前不反制决定</summary><p>{{ noCounter.decision.actor_name || '未提供' }} · {{ time(noCounter.decision.decided_at) }}</p><p>{{ noCounter.decision.reason }}</p><NoCounterBasis :basis="noCounter.decision.basis" /></details>
@@ -127,8 +145,9 @@ async function decideNoCounter() {
     <div v-if="showLaunch && !confirmed && !completed" class="counter-launch-actions">
       <p v-if="launchBlock" :id="`counter-block-${eventId}`" class="counter-action-note">{{ launchBlock }}</p>
       <button class="btn pri" type="button" :disabled="!!launchBlock" :aria-describedby="launchBlock ? `counter-block-${eventId}` : undefined" :aria-busy="busy" @click="launch">
-        <span class="counter-action-icon" aria-hidden="true" v-html="U.icon('shield')"></span>{{ busy ? '正在检查反制条件' : '发起反制' }}
+        <span class="counter-action-icon" aria-hidden="true" v-html="U.icon('shield')"></span>{{ busy ? '正在检查反制条件' : launchLabel }}
       </button>
+      <p v-if="launchHint" class="counter-action-note">{{ launchHint }}</p>
     </div>
   </section>
 </template>

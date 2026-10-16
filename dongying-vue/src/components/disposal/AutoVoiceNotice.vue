@@ -1,7 +1,7 @@
 <script setup>
 import { userFacingMessage } from '@/ui/labels.js';
 import { computed, onUnmounted } from 'vue';
-import { autoVoiceView } from './autoVoiceView.js';
+import { DEPARTED_NOT_CALLED, autoVoiceView } from './autoVoiceView.js';
 import { openFormModal } from '@/ui/formModal.js';
 import { toast } from '@/ui/nv.js';
 import { newHandoffIdempotencyKey } from '@/services/handoffApi.js';
@@ -17,7 +17,7 @@ const compactTitle = computed(() => {
   if (view.value.pilotContactMissing || view.value.channelUnavailable || view.value.smsNotSent) return view.value.title;
   const reason = props.data?.auto_voice?.reason || '';
   if (reason.includes('正在用设备位置观察')) return '观察是否撤离';
-  if (reason.includes('已离开')) return '已撤离，不拨打';
+  if (reason.includes('已离开')) return DEPARTED_NOT_CALLED;
   if (reason.includes('没有新的位置') || reason.includes('无法判断')) return '无法确认，不拨打';
   if (reason.includes('尚未送达')) return '等待短信送达';
   if (reason.includes('超过自动通知时效')) return '超过时效，不拨打';
@@ -60,6 +60,7 @@ function retry() {
       <summary v-if="compact" class="notice-summary">
         <b>飞手电话</b><span class="notice-result" :class="`avn-${view.tone}`">{{ compactTitle }}</span>
         <span v-if="view.simulated" class="tag t-amber">模拟</span><span class="notice-toggle">详情</span>
+        <small v-if="view.departureBasis && (compactTitle === DEPARTED_NOT_CALLED || view.recordedDeparture)" class="notice-basis">{{ view.departureBasis }}；现在的情况以「无人机现在」为准</small>
       </summary>
       <header v-if="!compact"><b>飞手电话录音通知</b><span v-if="view.simulated" class="tag t-amber">模拟电话</span></header>
       <p v-if="!compact" class="avn-title" :class="`avn-${view.tone}`">{{ view.title }}</p>
@@ -86,7 +87,7 @@ function retry() {
 </template>
 
 <style scoped>
-.auto-voice-notice.is-compact{padding:9px 10px;margin-top:8px}.notice-summary{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;min-height:24px;list-style:none}.notice-summary::-webkit-details-marker{display:none}.notice-summary b{font-size:12px;color:var(--txt)}.notice-result{font-size:12px;font-weight:600}.notice-toggle{margin-left:auto;color:var(--muted);font-size:11px;text-decoration:underline;text-underline-offset:3px}summary:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
+.auto-voice-notice.is-compact{padding:9px 10px;margin-top:8px}.notice-summary{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;min-height:24px;list-style:none}.notice-summary::-webkit-details-marker{display:none}.notice-summary b{font-size:12px;color:var(--txt)}.notice-result{font-size:12px;font-weight:600}.notice-basis{flex-basis:100%;color:var(--muted);font-size:11px;line-height:1.5;font-weight:400}.notice-toggle{margin-left:auto;color:var(--muted);font-size:11px;text-decoration:underline;text-underline-offset:3px}summary:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
 
 .auto-voice-notice{margin-top:10px;padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--bg-soft);min-width:0}.auto-voice-notice header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;font-size:13px}.auto-voice-notice p{font-size:12px;line-height:1.6;margin:7px 0;overflow-wrap:anywhere}.auto-voice-notice .avn-title{font-size:14px;font-weight:600}.avn-success{color:var(--green)}.avn-warning{color:var(--amber)}.avn-muted{color:var(--muted)}.auto-voice-notice dl{display:grid;grid-template-columns:60px minmax(0,1fr);gap:5px 8px;font-size:11px;margin:10px 0}.auto-voice-notice dt{color:var(--muted)}.auto-voice-notice dd{margin:0;overflow-wrap:anywhere}.auto-voice-notice .btn{margin-top:6px;white-space:normal;height:auto;min-height:30px}.auto-voice-notice summary{font-size:11px;color:var(--muted);cursor:pointer}.auto-voice-notice button:focus-visible,.auto-voice-notice summary:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
 </style>

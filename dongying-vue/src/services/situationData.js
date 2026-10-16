@@ -232,7 +232,7 @@ function deviceDisplayCoverage(device, coverage, typeCode, rawTypeCode, online) 
     displayOnly: true, label: preset.label || '扫描范围' };
 }
 
-function distanceMeters(aLon, aLat, bLon, bLat) {
+export function distanceMeters(aLon, aLat, bLon, bLat) {
   const rad = Math.PI / 180;
   const y = (bLat - aLat) * rad;
   const x = (bLon - aLon) * rad * Math.cos((aLat + bLat) * .5 * rad);
@@ -557,6 +557,7 @@ export function toAlarms(alarms) {
       level: SEVERITY_LEVEL[alarm.severity] || '低',
       type: labelOf(ALARM_TYPE_LABEL, alarm.alarm_type, '告警类型未提供'),
       violationReasons: Array.isArray(alarm.violation_reasons) ? [...alarm.violation_reasons] : [],
+      escalationCount: Number(alarm.escalation_count) || 0,
       state: alarm.state,
       eventState: alarm.state,
       severity: alarm.severity,

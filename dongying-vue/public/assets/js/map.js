@@ -1162,7 +1162,9 @@
   MapView.trackContinuous = function (a, b) {
     return trackPointValid(a) && trackPointValid(b) && !b.break_before
       && !!a.track_id && a.track_id === b.track_id
-      && Number.isFinite(a.point_seq) && b.point_seq === a.point_seq + 1
+      // 原始来源可用时间戳或稀疏序号；仅在两点均明确标为 RAW 时采用递增检查。
+      && Number.isFinite(a.point_seq) && Number.isFinite(b.point_seq)
+      && (a.track_layer === 'RAW' && b.track_layer === 'RAW' ? b.point_seq > a.point_seq : b.point_seq === a.point_seq + 1)
       && Number.isFinite(trackTime(a)) && Number.isFinite(trackTime(b)) && trackTime(b) > trackTime(a);
   };
   MapView.strokeObservedTrack = function (c, project, points, { hot = true, neutralColor = null } = {}) {

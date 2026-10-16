@@ -18,7 +18,6 @@ export const disposalApi = {
   emergencyStop: (eventId, idempotencyKey) => write(emergency(eventId), {}, idempotencyKey),
   emergencyNote: (eventId, stopId, note, idempotencyKey) => write(`${stopped(eventId, stopId)}/notes`, { note }, idempotencyKey),
   emergencyRetry: (eventId, stopId, deviceId, idempotencyKey) => write(`${stopped(eventId, stopId)}/devices/${encodeURIComponent(deviceId)}/retry`, {}, idempotencyKey),
-  emergencyConfirm: (eventId, stopId, deviceId, note, idempotencyKey) => write(`${stopped(eventId, stopId)}/devices/${encodeURIComponent(deviceId)}/manual-confirm`, { note }, idempotencyKey),
   list: params => apiRequestTimed(`${base}${buildQuery(params)}`),
   groups: params => apiRequestTimed(`${base}/grouped${buildQuery(params)}`),
   detail: id => apiRequestTimed(one(id)),

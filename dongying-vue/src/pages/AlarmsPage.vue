@@ -265,7 +265,8 @@ function showCounterLaunch() {
   if (advisoryLive.value?.no_counter?.decision_active === true) return false;
   if (advisoryLive.value?.counter_launch_visible !== true || !cur.alarm?.event_id) return false;
   const key = selectedDisposalProgress();
-  return !['COUNTERMEASURE_DONE', 'JAMMING_DONE', 'COUNTER_STOPPED', 'HANDED_OFF'].includes(key);
+  // 2026-10-14 起急停后马上能再申请、再执行反制：“反制已中止”不再收起发起反制，是否可点仍按后端资格。
+  return !['COUNTERMEASURE_DONE', 'JAMMING_DONE', 'HANDED_OFF'].includes(key);
 }
 function eventHandedOff() {
   const eventId = cur.alarm?.event_id;
@@ -519,7 +520,7 @@ async function loadKpis() {
   kpiList.value = [
     todayKpi(KPI_DEFS[0], 0, '北京时间今天发生的告警数量；发生时间未知者不计'),
     todayKpi(KPI_DEFS[1], 1, '北京时间今天发生且待人工核实的告警数量'),
-    { ...KPI_DEFS[2], value: num(v[7]), desc: fail(7) || '已核实属实、处置还没结束的告警数量，不限日期；正在反制、干扰或急停核查中的也算在内，设备反制或干扰完成后不再计入' },
+    { ...KPI_DEFS[2], value: num(v[7]), desc: fail(7) || '已核实属实、处置还没结束的告警数量，不限日期；正在反制或干扰中的也算在内，设备反制或干扰完成后不再计入' },
     disposalKpi(KPI_DEFS[3], r[4], v[4]),
     disposalKpi(KPI_DEFS[4], r[6], v[6]),
     disposalKpi(KPI_DEFS[5], r[5], v[5]),
@@ -841,7 +842,7 @@ function alarmFactsHtml(a, t, advisory, status) {
   const sms = advisory ? autoSmsView(advisory) : null;
   const voice = advisory ? autoVoiceView(advisory) : null;
   const notify = advisory ? [`短信：${sms?.title || '未提供'}`, `电话：${voice?.title || '未提供'}`].join('；') : '读取中';
-  const done = ['COUNTERMEASURE_DONE', 'JAMMING_DONE', 'COUNTER_STOPPED', 'HANDED_OFF'].includes(selectedDisposalProgress());
+  const done = ['COUNTERMEASURE_DONE', 'JAMMING_DONE', 'HANDED_OFF'].includes(selectedDisposalProgress());
   const hidden = a.state === 'CONFIRMED' && !showCounterLaunch() && !done && !eventHandedOff()
     ? counterHiddenReason({ alarm: { eventState: 'CONFIRMED' }, actions: ['counter'], summary: advisory, nowStatus: status }) : '';
   return `<dl class="alarm-now-facts">

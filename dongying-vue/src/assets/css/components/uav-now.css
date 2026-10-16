@@ -1,0 +1,16 @@
+/* 无人机现在状态：卡片整块与列表小标签共用（2026-10-14）。颜色只表示无人机现状，不表示处理进度。 */
+.uav-now{--uav-now:var(--txt-3);display:flex;flex-direction:column;gap:3px;margin:8px 0;padding:9px 11px;border:1px solid color-mix(in srgb,var(--uav-now) 50%,transparent);border-radius:8px;background:color-mix(in srgb,var(--uav-now) 12%,transparent);white-space:normal;overflow-wrap:anywhere;min-width:0}
+.uav-now.is-red,.uav-now-pill.is-red{--uav-now:var(--red)}
+.uav-now.is-green,.uav-now-pill.is-green{--uav-now:var(--green)}
+.uav-now.is-amber,.uav-now-pill.is-amber{--uav-now:var(--amber)}
+.uav-now.is-grey,.uav-now-pill.is-grey{--uav-now:var(--txt-3)}
+.uav-now-top{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.uav-now-label{color:var(--txt-3);font-size:11px;letter-spacing:.12em}
+.uav-now-process{font-size:11px;padding:0 8px;border:1px solid var(--line);border-radius:999px;color:var(--txt)}
+.uav-now-title{display:flex;align-items:center;gap:7px;color:var(--uav-now);font-size:15px;line-height:1.45}
+.uav-now-title i,.uav-now-pill i{flex:none;width:8px;height:8px;border-radius:50%;background:currentColor}
+.uav-now.is-red .uav-now-title i{animation:uav-now-pulse 1.4s infinite}
+.uav-now-sub{color:var(--txt-3);font-size:12px;line-height:1.5}
+.uav-now-pill{--uav-now:var(--txt-3);display:inline-flex;align-items:center;gap:5px;padding:0 7px;border-radius:999px;font-size:11px;font-weight:600;line-height:18px;color:var(--uav-now);background:color-mix(in srgb,var(--uav-now) 14%,transparent);white-space:nowrap}
+@keyframes uav-now-pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--red) 60%,transparent)}70%{box-shadow:0 0 0 6px transparent}100%{box-shadow:0 0 0 0 transparent}}
+@media (prefers-reduced-motion:reduce){.uav-now.is-red .uav-now-title i{animation:none}}

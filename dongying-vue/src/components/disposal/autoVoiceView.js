@@ -1,4 +1,8 @@
 import { PILOT_CONTACT_MISSING_TITLE, pilotContactMissing } from './autoSmsView.js';
+import { departureBasisText } from './uavNowStatus.js';
+
+/* 通知后的“已撤离”只是当时的判断（2026-10-14）：写明“当时判定”和依据，现在的情况以“无人机现在”为准。 */
+export const DEPARTED_NOT_CALLED = '当时判定已撤离，未拨打';
 
 export const AUTO_VOICE_STATUS = {
   DISABLED: '电话录音通知未启用', WAITING: '等待自动拨打', CALLING: '系统正在拨打',
@@ -38,7 +42,7 @@ export function autoVoiceView(data) {
     : voice.reason || '';
   return {
     // 短信因超过通知时效停发时，电话也不自动拨打，要先核对最新情况。
-    title: ended && data.departure_observation.channel === 'SMS' ? '已撤离，不拨打'
+    title: ended && data.departure_observation.channel === 'SMS' ? DEPARTED_NOT_CALLED
       : missing ? PILOT_CONTACT_MISSING_TITLE
       : channelUnavailable ? '电话通道不可用'
       : skipped ? (NO_PILOT_REASONS.includes(String(voice.reason).trim()) ? '找不到飞手，不拨打' : '短信未发，不拨打')
@@ -47,6 +51,7 @@ export function autoVoiceView(data) {
     reason: missing ? '上级下发的飞行任务里没有执行飞手的电话，无法给飞手打电话。' : unavailableReason,
     pilotContactMissing: missing,
     recordedDeparture: ended,
+    departureBasis: data.departure_observation?.presence === 'LEFT' ? departureBasisText(data.departure_observation) : '',
     channelUnavailable,
     smsNotSent: skipped,
     tone: missing || channelUnavailable ? 'warning' : voice.status === 'SIMULATED_PLAYED' ? 'success'

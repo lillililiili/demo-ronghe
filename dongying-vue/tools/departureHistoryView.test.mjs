@@ -16,7 +16,7 @@ for (const channel of ['SMS', 'VOICE']) {
     assert.equal(view.pilotContactMissing, false);
     assert.equal(view.canRetry, false);
     assert.equal(view.reason, data.auto_voice.reason);
-    assert.equal(view.title, channel === 'SMS' ? '已撤离，不拨打' : '模拟接通并播放完成');
+    assert.equal(view.title, channel === 'SMS' ? '当时判定已撤离，未拨打' : '模拟接通并播放完成');
   });
 }
 test('a live or unknown position cannot hide unavailable channel', () => {

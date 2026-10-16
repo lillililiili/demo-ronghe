@@ -27,7 +27,7 @@ function fieldOptions(field) {
 <template>
   <div class="u-field-grid" :class="{ 'is-two': columns === 2 }">
     <UField v-for="field in fields" v-show="isVisible(field)" :key="field.key" v-model="model[field.key]" :class="{ 'is-wide': isWide(field) }"
-      :type="field.type || 'text'" :label="field.label" :required="field.required" :help="field.help"
+      :type="field.type || 'text'" :label="field.label" :required="field.required" :help="typeof field.help === 'function' ? field.help(props.model) : field.help"
       :wide="isWide(field)" :variant="variant" :options="fieldOptions(field)" :placeholder="field.placeholder || ''"
       :start-placeholder="field.startPlaceholder || ''" :end-placeholder="field.endPlaceholder || ''"
       :default-time="field.defaultTime"

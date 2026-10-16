@@ -45,7 +45,7 @@ export function uavNowStatus({ current, observedAt, legalStatus, legalReasons, d
   const observed = Number(observedAt);
   const age = Number.isFinite(observed) && observed > 0 ? ageText(observed, now) : '';
   const basis = age ? `${clock(observed)} 实测 · ${age}` : '';
-  const result = key => ({ key, title: UAV_NOW_TITLE[key], tone: TONE[key], detail: '', basis });
+  const result = key => ({ key, title: UAV_NOW_TITLE[key], tone: TONE[key], detail: '', basis, departed: false });
   if (!current) {
     return { ...result('UNKNOWN_POSITION'),
       detail: age ? `已超过有效时限没有新位置，不能当作已飞离` : '没有时效内的实测位置，不能当作已飞离',
@@ -65,7 +65,9 @@ export function uavNowStatus({ current, observedAt, legalStatus, legalReasons, d
     return { ...result('BOUNDARY'), detail: '位置正好在区域边线上，等下一个位置再判断' };
   }
   if (presence === 'LEFT') {
-    return { ...result(departure.basis === 'LATEST_LEGALITY' ? 'COMPLIANT' : 'LEFT'), detail: departureBasisText(departure).replace(/^依据/, '') };
+    // departed：有有效位置证明通知后已离开，且最新研判不再违规（2026-10-14 rose 选定：这类告警从融合感知消失）。
+    return { ...result(departure.basis === 'LATEST_LEGALITY' ? 'COMPLIANT' : 'LEFT'), departed: true,
+      detail: departureBasisText(departure).replace(/^依据/, '') };
   }
   if (legalStatus === 'LEGAL') return { ...result('COMPLIANT'), detail: '最新研判为合法' };
   return { ...result('PENDING'), detail: '还没有足够的数据判断现在是否违规' };
@@ -90,6 +92,28 @@ export function uavNowHtml(status, { process = '' } = {}) {
 export function uavNowPillHtml(status) {
   if (!status) return '';
   return `<span class="uav-now-pill is-${status.tone}"><i aria-hidden="true"></i>${escapeHtml(UAV_NOW_TITLE[status.key])}</span>`;
+}
+
+/**
+ * 告警原因：先写最新研判的结论，和告警记录的原因不同才另写一行。研判时间要后台补给后再显示。
+ * 告警记录的原因随升级累计：没升级过叫“出告警时”；升级记录读全了拆成出告警时和升级时新增；否则叫“告警累计原因”。
+ */
+export function alarmReasonView({ legalStatus, legalReasons, alarmReasons, escalationCount = 0, escalations = null, escalationsTotal = 0, reasonText = code => code }) {
+  const join = codes => (Array.isArray(codes) ? codes : []).map(reasonText).filter(Boolean).join('、');
+  const split = alarmReasonSplit(alarmReasons, { escalationCount, escalations, escalationsTotal });
+  const escalated = Number(escalationCount) > 0;
+  const resolved = escalated && split.label === '告警原因';
+  const atAlarmLabel = escalated && !resolved ? '告警累计原因' : '出告警时';
+  const recorded = resolved && split.added.length
+    ? `${join(split.atAlarm) || '未记录'}；升级时新增：${join(split.added)}`
+    : join(alarmReasons) || '未记录具体触发原因';
+  const latest = legalStatus === 'ILLEGAL' ? (join(legalReasons) || '违规（原因未提供）')
+    : legalStatus === 'LEGAL' ? '已无违规' : '';
+  if (!latest) {
+    return { label: resolved && split.added.length ? '告警原因（出告警时；升级时新增）' : split.label, text: recorded, tone: 'risk', atAlarm: '', atAlarmLabel };
+  }
+  return { label: '现在的违规原因 · 最新研判', text: latest, tone: legalStatus === 'LEGAL' ? 'ok' : 'risk',
+    atAlarm: latest === recorded ? '' : recorded, atAlarmLabel };
 }
 
 /** 告警原因的标题：告警记录的原因会随升级累计；升级过就不能说成“出告警时”。 */

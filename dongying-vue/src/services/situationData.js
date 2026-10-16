@@ -232,7 +232,7 @@ function deviceDisplayCoverage(device, coverage, typeCode, rawTypeCode, online) 
     displayOnly: true, label: preset.label || '扫描范围' };
 }
 
-function distanceMeters(aLon, aLat, bLon, bLat) {
+export function distanceMeters(aLon, aLat, bLon, bLat) {
   const rad = Math.PI / 180;
   const y = (bLat - aLat) * rad;
   const x = (bLon - aLon) * rad * Math.cos((aLat + bLat) * .5 * rad);

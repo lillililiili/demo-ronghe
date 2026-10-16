@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { alarmReasonLabel, alarmReasonSplit, departureBasisText, uavNowHtml, uavNowPillHtml, uavNowStatus } from '../src/components/disposal/uavNowStatus.js';
+import { alarmReasonLabel, alarmReasonSplit, alarmReasonView, departureBasisText, uavNowHtml, uavNowPillHtml, uavNowStatus } from '../src/components/disposal/uavNowStatus.js';
 
 const now = Date.UTC(2026, 9, 14, 5, 37, 20);
 const base = { current: true, observedAt: now - 3000, now, reasonText: code => ({ PLAN_ALTITUDE_EXCEEDED: '超出任务高度飞行', INSIDE_RESTRICTED_AIRSPACE: '进入禁飞/限制空域' })[code] || code };
@@ -46,6 +46,25 @@ test('basis text and html escape', () => {
   assert.match(uavNowPillHtml(uavNowStatus({ ...base, legalStatus: 'LEGAL' })), /已不再违规/);
 });
 
+// 2026-10-14 rose 选「直接消失」：只有有效位置证明已离开、且最新研判不再违规，才从融合感知去掉。
+test('departed flag', () => {
+  assert.equal(uavNowStatus({ ...base, departure: left(now - 9000) }).departed, true);
+  assert.equal(uavNowStatus({ ...base, departure: left(now - 9000, 'LATEST_LEGALITY') }).departed, true);
+  assert.equal(uavNowStatus({ ...base, legalStatus: 'ILLEGAL', departure: left(now - 9000) }).departed, false);
+  assert.equal(uavNowStatus({ ...base, current: false, departure: left(now - 9000) }).departed, false);
+  assert.equal(uavNowStatus({ ...base, legalStatus: 'LEGAL' }).departed, false);
+});
+
+test('alarm reason shows latest judgment first', () => {
+  const text = code => ({ A: '超出任务高度飞行', B: '进入禁飞/限制空域' })[code] || code;
+  const same = alarmReasonView({ legalStatus: 'ILLEGAL', legalReasons: ['A'], alarmReasons: ['A'], reasonText: text });
+  assert.deepEqual([same.label, same.text, same.atAlarm, same.tone], ['现在的违规原因 · 最新研判', '超出任务高度飞行', '', 'risk']);
+  const cleared = alarmReasonView({ legalStatus: 'LEGAL', legalReasons: [], alarmReasons: ['B'], reasonText: text });
+  assert.deepEqual([cleared.text, cleared.atAlarm, cleared.tone], ['已无违规', '进入禁飞/限制空域', 'ok']);
+  const unknown = alarmReasonView({ legalStatus: 'UNDETERMINED', alarmReasons: [], reasonText: text });
+  assert.deepEqual([unknown.label, unknown.text], ['告警原因（出告警时）', '未记录具体触发原因']);
+});
+
 // 测试 H（2026-10-14）：告警记录的原因随升级累计，不能把累计的说成“出告警时”。
 test('alarm reason split by escalation records', () => {
   assert.equal(alarmReasonLabel(0), '告警原因（出告警时）');
@@ -57,4 +76,15 @@ test('alarm reason split by escalation records', () => {
   const split = alarmReasonSplit(reasons, { escalationCount: 2, escalationsTotal: 2,
     escalations: [{ reasons_added: ['NO_AUTH'] }, { reasons_added: ['DEVIATION'] }] });
   assert.deepEqual(split, { label: '告警原因', atAlarm: ['NOFLY'], added: ['NO_AUTH', 'DEVIATION'] });
+});
+
+test('reason view with escalations', () => {
+  const text = code => ({ A: '进入禁飞/限制空域', B: '无飞行授权', C: '偏航' })[code] || code;
+  const unread = alarmReasonView({ legalStatus: 'ILLEGAL', legalReasons: ['A'], alarmReasons: ['A', 'B', 'C'], escalationCount: 2, reasonText: text });
+  assert.deepEqual([unread.atAlarmLabel, unread.atAlarm], ['告警累计原因', '进入禁飞/限制空域、无飞行授权、偏航']);
+  const read = alarmReasonView({ legalStatus: 'ILLEGAL', legalReasons: ['A'], alarmReasons: ['A', 'B', 'C'], escalationCount: 2, escalationsTotal: 2,
+    escalations: [{ reasons_added: ['B'] }, { reasons_added: ['C'] }], reasonText: text });
+  assert.deepEqual([read.atAlarmLabel, read.atAlarm], ['出告警时', '进入禁飞/限制空域；升级时新增：无飞行授权、偏航']);
+  const noJudgment = alarmReasonView({ alarmReasons: ['A', 'B'], escalationCount: 1, reasonText: text });
+  assert.deepEqual([noJudgment.label, noJudgment.text], ['告警原因（累计，含升级时新增）', '进入禁飞/限制空域、无飞行授权']);
 });

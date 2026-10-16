@@ -107,30 +107,36 @@ function advisoryComponent(file, dependencies) {
   return new Function('Vue', 'dependencies', 'window', code)(vue, dependencies, { UI: { icon: () => '' } });
 }
 
-async function renderSituationAdvisory(summary, overrides = {}, error = '') {
+// 2026-10-14 页面设计第 2 条：反制入口移到卡片上方的「下一步」，不能反制时按钮保留变灰并写原因。
+async function renderSituationNextStep(summary, alarmOverrides = {}) {
   const { displayBusinessNo } = await import('../src/ui/deviceNumber.js');
+  const nextStep = await import('../src/components/disposal/counterNextStep.js');
   const vue = require('vue');
   const { renderToString } = require('@vue/server-renderer');
   const stub = { render: () => null };
   const counter = advisoryComponent('pages/alarms/CounterLaunch.vue', {
-    NoCounterDecisionModal: stub, NoCounterBasis: stub
+    NoCounterDecisionModal: stub, NoCounterBasis: stub, ...nextStep
   });
-  const card = advisoryComponent('pages/situation/SituationAdvisoryCard.vue', {
-    displayBusinessNo,
-    AutoSmsNotice: stub, AutoVoiceNotice: stub, AdvisoryRecords: stub, CounterLaunch: counter,
-    useUavAdvisory: () => ({ data: vue.ref(summary), error: vue.ref(error), loading: vue.ref(false), load() {} })
+  const card = advisoryComponent('pages/situation/SituationNextStep.vue', {
+    displayBusinessNo, CounterLaunch: counter, ...nextStep,
+    uavProcessActions: alarm => alarm.eventState === 'CONFIRMED' ? ['counter'] : alarm.eventState === 'PENDING_VERIFICATION' ? ['verify'] : [],
+    uavProcessStatus: alarm => alarm.eventState === 'CONFIRMED' ? '告警已确认' : '已移送处罚'
   });
-  return renderToString(vue.createSSRApp(card, { eventId: summary?.event_id, canLaunch: true, ...overrides }));
+  const alarm = { alarmId: 'a1', id: 'AL-1', eventId: summary?.event_id, eventState: 'CONFIRMED', ...alarmOverrides };
+  return renderToString(vue.createSSRApp(card, { alarm, summary }));
 }
-const counterButton = html => html.match(/<button[^>]*>[^]*?发起反制<\/button>/)?.[0];
+const counterButton = html => html.match(/<button[^>]*>(?:(?!<button)[^])*?(?:发起反制|直接反制|申请反制（需审批）)<\/button>/)?.[0];
+const disabled = /\bdisabled(?:[\s=>])/;
 
 test('fusion card enables counter launch only from this event request/direct eligibility', async () => {
   const { randomUUID } = require('node:crypto');
-  for (const permission of ['can_request_counter', 'can_direct_counter']) {
+  for (const [permission, label, hint] of [['can_request_counter', '申请反制（需审批）', '提交后要审批人同意才执行'], ['can_direct_counter', '直接反制', '你的账号可直接反制，不用审批']]) {
     const event_id = randomUUID();
-    const html = await renderSituationAdvisory({ event_id, counter_launch_visible: true, [permission]: true });
+    const html = await renderSituationNextStep({ event_id, counter_launch_visible: true, [permission]: true });
     assert.ok(counterButton(html), permission);
-    assert.doesNotMatch(counterButton(html), /\bdisabled(?:[\s=>])/);
+    assert.ok(counterButton(html).includes(label), label);
+    assert.ok(html.includes(hint), hint);
+    assert.doesNotMatch(counterButton(html), disabled);
     assert.doesNotMatch(html, /尚未确认反制资格/);
   }
 });
@@ -139,18 +145,30 @@ test('fusion card shows actual counter block reasons and never borrows another e
   const { randomUUID } = require('node:crypto');
   const event_id = randomUUID();
   for (const reason of ['当前账号没有反制申请或直接反制权限', '目标观测已过期，无法确认当前位置', '电话观察期尚未结束']) {
-    const html = await renderSituationAdvisory({ event_id, counter_launch_visible: true,
+    const html = await renderSituationNextStep({ event_id, counter_launch_visible: true,
       can_request_counter: false, can_direct_counter: false, counter_block_reason: reason });
-    assert.match(counterButton(html), /\bdisabled(?:[\s=>])/);
+    assert.match(counterButton(html), disabled);
     assert.ok(html.includes(reason));
     assert.doesNotMatch(html, /尚未确认反制资格/);
   }
   const allowed = { event_id, counter_launch_visible: true, can_request_counter: true };
-  assert.equal(counterButton(await renderSituationAdvisory(allowed, { eventId: randomUUID() })), undefined);
-  assert.equal(counterButton(await renderSituationAdvisory(allowed, {}, '接口读取失败')), undefined);
-  assert.equal(counterButton(await renderSituationAdvisory(allowed, { canLaunch: false })), undefined);
-  assert.equal(counterButton(await renderSituationAdvisory({ ...allowed, counter_launch_visible: false })), undefined);
-  const unknown = await renderSituationAdvisory({ event_id, counter_launch_visible: true });
-  assert.match(counterButton(unknown), /\bdisabled(?:[\s=>])/);
+  // 别的事件的资格不能借用：按钮变灰，写正在读取。
+  const other = await renderSituationNextStep(allowed, { eventId: randomUUID() });
+  assert.match(counterButton(other), disabled);
+  assert.match(other, /暂不能反制：正在读取能否反制/);
+  const handedOff = await renderSituationNextStep(allowed, { eventState: 'HANDED_OFF' });
+  assert.match(counterButton(handedOff), disabled);
+  assert.match(handedOff, /现在的处理进度是「已移送处罚」/);
+  const watching = await renderSituationNextStep({ ...allowed, counter_launch_visible: false, notify_phase: 'WATCHING' });
+  assert.match(counterButton(watching), disabled);
+  assert.match(watching, /已通知飞手，正在观察无人机是否离开/);
+  const decided = await renderSituationNextStep({ ...allowed, counter_launch_visible: false, no_counter: { decision_active: true } });
+  assert.match(decided, /已决定不反制，本次处置已结束/);
+  const pending = await renderSituationNextStep(allowed, { eventState: 'PENDING_VERIFICATION' });
+  assert.equal(counterButton(pending), undefined);
+  assert.match(pending, />核实<\/button>/);
+  assert.match(pending, /告警还没核实属实，核实后才能反制/);
+  const unknown = await renderSituationNextStep({ event_id, counter_launch_visible: true });
+  assert.match(counterButton(unknown), disabled);
   assert.match(unknown, /尚未确认反制资格/);
 });

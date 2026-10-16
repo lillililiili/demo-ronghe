@@ -53,6 +53,9 @@ export function planListQuery(filters = {}, { page = 1, size = 20, now = Date.no
     query.window_from = span.from;
     query.window_to = span.to;
   }
+  // 2026-10-16（设计二）：列表按“需要处理”排序；点顶部汇总的某种问题时只看这一种。
+  query.order = 'attention';
+  if (filters.attention) query.attention = filters.attention;
   return query;
 }
 
@@ -65,8 +68,8 @@ export function activePlanKpi(filters = {}) {
 /* 点卡片：只看今天该状态的计划，并清空关键词，使列表与卡片数字一致；再点已选中的卡片恢复全部日期与状态。 */
 export function planKpiFilters(filters = {}, key) {
   if (!Object.hasOwn(PLAN_KPI_STATUS, key)) return { ...filters };
-  if (activePlanKpi(filters) === key) return { ...filters, time: '', status_code: '' };
-  return { ...filters, time: 'TODAY', status_code: PLAN_KPI_STATUS[key], keyword: '' };
+  if (activePlanKpi(filters) === key) return { ...filters, time: '', status_code: '', attention: '' };
+  return { ...filters, time: 'TODAY', status_code: PLAN_KPI_STATUS[key], keyword: '', attention: '' };
 }
 
 function beijingParts(ms) {

@@ -1,6 +1,6 @@
 <script>
 /* 跨导航只保留筛选、分页与选中 ID；业务事实仍每次从只读 API 重取，不能缓存成 Mock 副本。 */
-const S = { filters: { status_code: '', keyword: '', time: '', timeRange: null }, page: 1, size: 20, selectedPlanId: null, tab: 'route', tabHash: '',
+const S = { filters: { status_code: '', keyword: '', time: '', timeRange: null, attention: '' }, page: 1, size: 20, selectedPlanId: null, tab: 'route', tabHash: '',
   /* 风险页签：筛选只收契约允许的字段；目标类型筛选与任意排序契约不支持，只保留禁用控件。 */
   riskFilters: { severity: '', state: '', risk_type: '', plan_id: '', owner_org_id: '', district_id: '', source_mode: '', time: '', occurred: null },
   riskPage: 1, riskSize: 10, selectedRiskId: null, riskTab: 'event' };
@@ -42,6 +42,8 @@ import { useWeatherRiskFacts } from '@/hooks/useWeatherRiskFacts.js';
 import { planRiskLocation, planRiskLocationNote } from '@/pages/flights/planRiskMap.js';
 import PlanWeatherForecast from '@/pages/flights/components/PlanWeatherForecast.vue';
 import FlightRecordList from '@/pages/flights/components/FlightRecordList.vue';
+import PlanRecordList from '@/pages/flights/components/PlanRecordList.vue';
+import { PLAN_GROUP, attentionAction, attentionIssues, attentionKindLabel, attentionSummaryChips, needsAction, planGroupOf } from '@/pages/flights/planAttention.js';
 import FlightListPager from '@/pages/flights/components/FlightListPager.vue';
 import { isSimulatedWeatherRisk } from '@/services/weatherRiskGeometry.js';
 import WeatherMapInfo from '@/pages/flights/components/WeatherMapInfo.vue';
@@ -307,6 +309,7 @@ const planFilterSummary = computed(() => {
   if (planTimeWindow()) parts.push(filters.time === 'TODAY' ? '今日任务' : `时间：${timeFilterLabel(filters.time)}`);
   if (filters.status_code) parts.push(labelOf(PLAN_STATUS_LABEL, filters.status_code));
   if (filters.keyword) parts.push(`关键词“${filters.keyword}”`);
+  if (filters.attention) parts.push(`需要处理：${attentionKindLabel(filters.attention)}`);
   return parts.length ? `筛选：${parts.join(' · ')}，共 ${total.value} 条` : '';
 });
 const upstreamNotice = computed(() => upstreamPlanNotice(upstreamStatus.value, formatTime));
@@ -463,20 +466,48 @@ function relatedIdText(id, permissionCode) {
   return '没有可查看的相关记录';
 }
 
-const planRecords = computed(() => plans.value.map(plan => {
-  const match = rowMatch(plan);
-  return {
-    id: plan.plan_id, title: plan.route?.name || '未命名航线',
-    status: labelOf(PLAN_STATUS_LABEL, plan.status_code), statusClass: PLAN_STATUS_TAG[plan.status_code] || 't-gray',
-    // 同名航线常有多份计划（不同批次或时段），行内必须带编号与时段才能区分。
-    subtitle: `任务编号 ${planNumberText(plan)} · ${planWindowText(plan)}`,
-    subtitleTitle: plan.plan_no,
-    facts: [{ label: '任务时长', value: formatDuration(plan) }, { label: '目标匹配', value: match.text,
-      className: match.tag ? `tag ${match.text === '任务偏离' ? 't-orange' : match.tag}` : '' }],
-    note: plan.route?.max_altitude_m == null ? '最大高度未提供' : `最大高度 ${plan.route.max_altitude_m} 米`,
-    noteClass: plan.route?.max_altitude_m == null ? '' : 'record-altitude'
-  };
-}));
+/* 设计二（2026-10-16）：后台已按“需要处理 → 执行中 → 待执行 → 已结束”排好；本页只在每组第一条前加组标题。 */
+const attentionSummary = ref(null);
+const attentionBar = computed(() => attentionSummaryChips(attentionSummary.value, filters.attention));
+const planRecords = computed(() => {
+  let previous = '';
+  return plans.value.map(plan => {
+    const group = planGroupOf(plan), issues = attentionIssues(plan), match = rowMatch(plan);
+    const header = group === previous ? null : group === 'needs'
+      ? { title: PLAN_GROUP.needs.title, note: filters.attention ? `只看${attentionKindLabel(filters.attention)}` : `${attentionSummary.value?.needs_action ?? ''} 个 · ${PLAN_GROUP.needs.note}` }
+      : PLAN_GROUP[group];
+    previous = group;
+    return {
+      id: plan.plan_id, title: plan.route?.name || '未命名航线', group, groupHeader: header,
+      status: labelOf(PLAN_STATUS_LABEL, plan.status_code), statusClass: PLAN_STATUS_TAG[plan.status_code] || 't-gray',
+      // 同名航线常有多份计划（不同批次或时段），行内必须带编号与时段才能区分。
+      subtitle: `${planNumberText(plan)} · ${planWindowText(plan)}`, subtitleTitle: plan.plan_no,
+      needs: needsAction(plan), deviation: plan.attention?.match_issue === 'DEVIATION',
+      tags: issues.length ? issues.map(issue => ({ text: issue.tag, cls: issue.tagClass, title: issue.detail }))
+        : match.text && match.text !== '—' ? [{ text: match.text, cls: match.tag ? (match.text === '任务偏离' ? 't-red' : match.tag) : 't-gray', title: match.title }] : [],
+      next: issues.map(issue => issue.next).join('；'),
+      details: issues.map(issue => issue.detail),
+      action: attentionAction(plan)
+    };
+  });
+});
+function choosePlanAttention(kind) {
+  filters.attention = filters.attention === kind ? '' : kind;
+  applyFilters();
+}
+function onPlanAction({ id, key }) {
+  if (key === 'legality') {
+    const target = selected.value?.plan_id === id ? matchedTargetId.value : null;
+    if (window.UI?.goto) window.UI.goto('legality', { plan: id, ...(target ? { target } : {}) });
+    else location.hash = `#/legality?plan=${encodeURIComponent(id)}`;
+  } else if (key === 'risks') {
+    const hash = `#/flights?tab=events&plan=${encodeURIComponent(id)}`;
+    S.tabHash = hash;
+    location.hash = hash;
+    showEventsTab(null, id);
+  } else selectPlan(id);
+}
+
 
 function syncSelectedPlanHash(planId) {
   const hash = planId ? `#/flights?plan=${encodeURIComponent(planId)}` : '#/flights';
@@ -557,6 +588,7 @@ async function loadPlans(nextPage = page.value, requestedId = null, { quiet = fa
     page.value = data.page;
     total.value = data.total;
     plans.value = data.items;
+    attentionSummary.value = data.attention_summary || null;
     routeLoaded.value = true;
     // 列表已可浏览，详情、轨迹和实际对照各自显示加载状态。
     loading.value = false;
@@ -696,7 +728,7 @@ function rowMatch(plan) {
   if (section && sectionReady(section)) return { text: labelOf(PLAN_ROW_MATCH_LABEL, section.plan_match_code), tag: PLAN_MATCH_TAG[section.plan_match_code] || 't-gray', title: '' };
   if (section === undefined) return { text: '…', tag: 't-gray', title: '正在读取对照结论' };
   if (!section) return { text: '—', tag: '', title: '对照结论读取失败或无权限' };
-  if (!sectionReady(section)) return { text: section.availability === 'NO_EVALUATION' ? '未匹配' : '—', tag: section.availability === 'NO_EVALUATION' ? 't-amber' : '', title: matchMetricNote(section) };
+  if (!sectionReady(section)) return { text: section.availability === 'NO_EVALUATION' ? '还没对上飞机' : '—', tag: section.availability === 'NO_EVALUATION' ? 't-amber' : '', title: matchMetricNote(section) };
   return { text: labelOf(PLAN_ROW_MATCH_LABEL, section.plan_match_code), tag: PLAN_MATCH_TAG[section.plan_match_code] || 't-gray', title: '' };
 }
 
@@ -1172,7 +1204,7 @@ watch(kpiList, () => {
   }
 }, { flush: 'post' });
 function clearPlanFilters() {
-  Object.assign(filters, { status_code: '', keyword: '', time: '', timeRange: null });
+  Object.assign(filters, { status_code: '', keyword: '', time: '', timeRange: null, attention: '' });
   keywordDraft.value = '';
   applyFilters();
 }
@@ -1735,7 +1767,7 @@ function showRouteTab(requestedId = null) {
   destroyRouteMap();
   if (requestedId) {
     planDetailTab.value = 'plan';
-    Object.assign(filters, { status_code: '', keyword: '', time: '', timeRange: null });
+    Object.assign(filters, { status_code: '', keyword: '', time: '', timeRange: null, attention: '' });
     keywordDraft.value = '';
     plans.value = [];
     selected.value = null;
@@ -1819,6 +1851,7 @@ async function realtimeRefreshPlans(topics) {
       if (token !== planListToken || activeTab.value !== 'route') return;
       total.value = data.total;
       plans.value = data.items;
+      attentionSummary.value = data.attention_summary || null;
       loadRowActuals(plans.value);
       loadPlanKpis();
       loadUpstreamStatus();
@@ -2056,11 +2089,20 @@ onUnmounted(() => {
               <div class="field"><label for="plan-time-range">自定义起止（北京时间）</label><UControl id="plan-time-range" :model-value="filters.timeRange" type="datetimerange" clearable size="small" start-placeholder="开始时间" end-placeholder="结束时间" :disabled="loading" @update:model-value="chooseTimeRange" /></div>
             </div>
           </div>
+          <div v-if="attentionBar && !loading && !error" class="plan-attention-bar" :class="{ calm: !attentionBar.total }">
+            <p class="plan-attention-total"><span>需要处理</span><b>{{ attentionBar.total }}</b><span>个任务</span></p>
+            <div class="plan-attention-chips">
+              <button v-for="chip in attentionBar.chips" :key="chip.key" class="plan-attention-chip" :class="[chip.tag, { on: chip.active }]" type="button"
+                :aria-pressed="chip.active" :disabled="loading || (!chip.count && !chip.active)" :title="chip.active ? '再点一次查看全部任务' : '只看有这种问题的任务'"
+                @click="choosePlanAttention(chip.key)">{{ chip.label }}<b>{{ chip.count }}</b></button>
+            </div>
+            <p class="plan-attention-note">一个任务有几种问题时，每种都算一次</p>
+          </div>
           <p v-if="planFilterSummary" class="workspace-selection-note plan-filter-note"><span>{{ planFilterSummary }}</span><button class="btn ghost" type="button" :disabled="loading" @click="clearPlanFilters">清除筛选</button></p>
           <div v-if="loading" class="empty">正在读取飞行任务</div>
           <div v-else-if="error" class="empty"><button class="btn" type="button" @click="loadPlans(page, S.selectedPlanId)">重新读取任务</button></div>
           <div v-else-if="!plans.length" class="empty">{{ planFilterSummary ? '没有符合筛选条件的任务' : upstreamNotice ? '本系统暂无任务；上级任务数据暂时取不到，不代表上级没有任务' : '暂无可访问的飞行任务' }}</div>
-          <FlightRecordList v-else ref="planList" :items="planRecords" :selected-id="selected?.plan_id || null" label="飞行任务列表" @select="selectPlan" />
+          <PlanRecordList v-else ref="planList" :items="planRecords" :selected-id="selected?.plan_id || null" label="飞行任务列表" @select="selectPlan" @action="onPlanAction" />
           <FlightListPager :page="page" :page-size="size" :total="total" :loading="loading" @update:page="changePage" @update:page-size="changePageSize" />
         </UPanel>
 
@@ -2215,6 +2257,17 @@ onUnmounted(() => {
 .flights-page .workspace-list .plan-filter-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 6px; }
 .flights-page .workspace-list .plan-filter-row.has-time { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; }
 .flights-page .workspace-list .plan-filter-row.plan-time-range { grid-template-columns: minmax(0, 1fr); }
+.plan-attention-bar { display: grid; gap: 6px; margin: 0 10px; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--amber) 40%, var(--line)); border-left: 3px solid var(--amber); border-radius: 7px; background: color-mix(in srgb, var(--amber) 7%, var(--panel)); }
+.plan-attention-bar.calm { border-color: var(--line); border-left-color: var(--green); background: var(--panel); }
+.plan-attention-total { display: flex; align-items: baseline; gap: 5px; margin: 0; font-size: 12px; color: var(--txt-2); }
+.plan-attention-total b { font-size: 22px; line-height: 1; color: var(--amber); }
+.plan-attention-bar.calm .plan-attention-total b { color: var(--green); }
+.plan-attention-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.plan-attention-chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border: 1px solid color-mix(in srgb, var(--tag-c, var(--amber)) 45%, transparent); border-radius: 12px; background: transparent; color: var(--txt); font-size: 12px; cursor: pointer; }
+.plan-attention-chip b { color: var(--tag-c, var(--amber)); }
+.plan-attention-chip.on { background: color-mix(in srgb, var(--tag-c, var(--amber)) 20%, transparent); border-color: var(--tag-c, var(--amber)); }
+.plan-attention-chip:disabled { opacity: .45; cursor: default; }
+.plan-attention-note { margin: 0; font-size: 10px; color: var(--txt-3); }
 .flights-page .workspace-list .plan-filter-row .field { gap: 3px; }
 .flights-page .workspace-list .plan-filter-row label { font-size: 10px; }
 .flights-page .workspace-list .plan-filter-row > .btn { min-height: 28px; height: 28px; padding: 0 10px; white-space: nowrap; }

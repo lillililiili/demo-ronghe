@@ -3,13 +3,8 @@ import { apiRequestTimed, isUncertainOutcome } from '@/services/apiClient.js';
 import { authUser } from '@/services/auth.js';
 import { newHandoffIdempotencyKey } from '@/services/handoffApi.js';
 
-export function maintenanceState(task) {
-  return task?.workflow_state || (task?.status === 'HANDLED' ? 'LEGACY_HANDLED' : task?.status);
-}
-export function maintenanceStateLabel(task) {
-  return ({ PENDING: '待处理', PROCESSING: '处理中', READY_TO_COMPLETE: '待确认办结',
-    PENDING_VERIFICATION: '系统核验中', COMPLETED: '已办结', LEGACY_HANDLED: '历史已反馈' })[maintenanceState(task)] || '状态待确认';
-}
+import { maintenanceState, maintenanceStateLabel } from '@/pages/flights/maintenanceState.js';
+export { maintenanceState, maintenanceStateLabel };
 export function maintenanceRecoveryText(task) {
   // 已办结单的 PASS 是当时的核验快照，不能冒充设备当前恢复事实。
   return maintenanceState(task) === 'READY_TO_COMPLETE' && task?.recovery?.result === 'PASS'

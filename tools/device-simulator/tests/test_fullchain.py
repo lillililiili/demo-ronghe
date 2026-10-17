@@ -12,6 +12,16 @@ from full_scenario import full_scene, allocate_identities
 TEST_NOW = int(dt.datetime(2026, 10, 5, 12, tzinfo=dt.timezone(dt.timedelta(hours=8))).timestamp() * 1000)
 
 
+def prepared_manifest(scene, manifest):
+    """Supply the current device-registration receipts for an isolated FullChain fixture."""
+    for site in scene.get('sites', []):
+        for device in site['devices']:
+            if device.get('send') is not False:
+                manifest.setdefault('devices', {}).setdefault(device['id'], {
+                    'platform_id': 'registered-' + device['id'], 'kind': device['kind']})
+    return manifest
+
+
 class FakePlatform:
     def __init__(self, airspace_items=None, input_context=None, route_versions=None):
         self.calls=[]
@@ -127,7 +137,7 @@ class FullChainTests(unittest.TestCase):
                         return {'items':[{'plan_id':'shared' if 'page=1&' in path else 'old'}], 'total':2}
                     return super().call(method,path,body,key)
             api=BatchPlatform()
-            chain=FullChain(api,scene,manifest,{'owner_org_id':'o','district_id':'d'},lambda:None)
+            chain=FullChain(api,scene,prepared_manifest(scene, manifest),{'owner_org_id':'o','district_id':'d'},lambda:None)
             chain.activate_plan_batch(Path(directory))
             body=api.calls[-1][2]
             self.assertEqual(body['plan_ids'], ['new','shared'])
@@ -149,7 +159,7 @@ class FullChainTests(unittest.TestCase):
                 failed_manifest.pop('plan_batch_registration')
                 failed_manifest.pop('plan_batch_activation')
                 with self.assertRaises(ValueError):
-                    FullChain(failed_api,scene,failed_manifest,{'owner_org_id':'o','district_id':'d'},lambda:None).activate_plan_batch(Path(directory))
+                    FullChain(failed_api,scene,prepared_manifest(scene, failed_manifest),{'owner_org_id':'o','district_id':'d'},lambda:None).activate_plan_batch(Path(directory))
                 self.assertFalse(any(p.endswith('/plan-batches/activate') for _,p,_,_ in failed_api.calls))
 
     def test_tasks_carry_a_simulated_pilot_and_reporting_unit_unless_archives_are_chosen(self):
@@ -170,7 +180,7 @@ class FullChainTests(unittest.TestCase):
                     'targets':allocate_identities(scene, 'b'),
                     'fullchain':{'requests':{}, 'coverage':{}, 'warnings':['旧提示']}}
         api = FakePlatform()
-        FullChain(api, scene, manifest, {'owner_org_id':'o','district_id':'d'}, lambda:None).prepare()
+        FullChain(api, scene, prepared_manifest(scene, manifest), {'owner_org_id':'o','district_id':'d'}, lambda:None).prepare()
         filing = next(b for _,p,b,_ in api.calls if p.endswith('/plans'))['filing']
         self.assertEqual({k: filing.get(k) for k in ('operator_org_id','pilot_name','pilot_phone','reporting_org_code','reporting_org_name','source_id')},
                          {'operator_org_id':'o','pilot_name':'模拟飞手','pilot_phone':'13800000000',
@@ -185,14 +195,14 @@ class FullChainTests(unittest.TestCase):
         manifest = {'batch':'c', 'created_at':TEST_NOW, 'devices':{}, 'plans':{}, 'zones':{},
                     'targets':allocate_identities(chosen, 'c')}
         api = ArchivePlatform()
-        FullChain(api, chosen, manifest, {'owner_org_id':'o','district_id':'d'}, lambda:None).prepare()
+        FullChain(api, chosen, prepared_manifest(chosen, manifest), {'owner_org_id':'o','district_id':'d'}, lambda:None).prepare()
         filing = next(b for _,p,b,_ in api.calls if p.endswith('/plans'))['filing']
         self.assertEqual((filing['pilot_contact_id'], filing['pilot_name'], filing['operator_org_id'], filing['source_binding_id']),
                          ('c1', '档案飞手', 'o2', 'b1'))
         for key in ('pilot_phone', 'reporting_org_code', 'reporting_org_name'):
             self.assertNotIn(key, filing)
 
-    def test_restart_reuses_original_plan_across_lifecycle_and_legacy_duplicates(self):
+    def test_same_batch_retry_reuses_original_plan_across_lifecycle_and_duplicates(self):
         from fullchain import FullChain
         for hour in (12, 15):
             with self.subTest(hour=hour):
@@ -205,7 +215,7 @@ class FullChainTests(unittest.TestCase):
                 first = {'batch':'before', 'created_at':before, 'devices':{}, 'plans':{}, 'zones':{},
                          'targets':allocate_identities(scene,'before')}
                 api = FakePlatform()
-                FullChain(api, scene, first, {'owner_org_id':'o','district_id':'d'}, lambda:None).prepare()
+                FullChain(api, scene, prepared_manifest(scene, first), {'owner_org_id':'o','district_id':'d'}, lambda:None).prepare()
                 route = next(b for _,p,b,_ in api.calls if p.endswith('/routes'))
                 body = next(b for _,p,b,_ in api.calls if p.endswith('/plans'))
                 old = dict(body, message_id=body['message_id']+'-old', status_code='COMPLETED')
@@ -214,10 +224,10 @@ class FullChainTests(unittest.TestCase):
                            'messages':[
                                {'kind':'FLIGHT_PLAN','message_id':old['message_id'],'subject_id':'duplicate','payload':old,'created_at':before+1},
                                {'kind':'FLIGHT_PLAN','message_id':body['message_id'],'subject_id':'original','payload':body,'created_at':before}]}
-                restarted = {'batch':'after','created_at':after,'devices':{},'plans':{},'zones':{},
-                             'targets':allocate_identities(scene,'after')}
+                restarted = {'batch':'before','created_at':after,'devices':{},'plans':{},'zones':{},
+                             'targets':allocate_identities(scene,'before')}
                 api = FakePlatform(input_context=context, route_versions=api.route_versions)
-                FullChain(api, scene, restarted, {'owner_org_id':'o','district_id':'d'}, lambda:None).prepare()
+                FullChain(api, scene, prepared_manifest(scene, restarted), {'owner_org_id':'o','district_id':'d'}, lambda:None).prepare()
                 self.assertEqual([p for method,p,_,_ in api.calls if method=='POST' and p.endswith('/plans')], [])
                 self.assertEqual(restarted['plans'][scene['plans'][0]['id']]['ids'], ['original'])
 
@@ -229,10 +239,10 @@ class FullChainTests(unittest.TestCase):
             scene['plans'] = scene['plans'][:1]
             scene['plans'][0].update(start='11:00', end='14:00')
             now = int(dt.datetime(2027, 3, 9, hour, tzinfo=dt.timezone(dt.timedelta(hours=8))).timestamp()*1000)
-            manifest = {'batch':str(hour),'created_at':now,'devices':{},'plans':{},'zones':{},
-                        'targets':allocate_identities(scene,str(hour))}
+            manifest = {'batch':'same-run','created_at':now,'devices':{},'plans':{},'zones':{},
+                        'targets':allocate_identities(scene,'same-run')}
             api = FakePlatform()
-            FullChain(api,scene,manifest,{'owner_org_id':'o','district_id':'d'},lambda:None).prepare()
+            FullChain(api,scene,prepared_manifest(scene, manifest),{'owner_org_id':'o','district_id':'d'},lambda:None).prepare()
             messages.append(next(b['message_id'] for _,p,b,_ in api.calls if p.endswith('/plans')))
         self.assertEqual(len(set(messages)), 1)
 
@@ -242,7 +252,7 @@ class FullChainTests(unittest.TestCase):
         manifest={'batch':'sim-unit','created_at':TEST_NOW,'devices':{},'plans':{},'zones':{},
                   'targets':allocate_identities(scene,'sim-unit')}
         platform=FakePlatform()
-        chain=FullChain(platform,scene,manifest,{'owner_org_id':'o','district_id':'d'},lambda:None,
+        chain=FullChain(platform,scene,prepared_manifest(scene, manifest),{'owner_org_id':'o','district_id':'d'},lambda:None,
                         clock=lambda:TEST_NOW)
         return chain,platform,manifest,scene
 
@@ -393,7 +403,7 @@ class FullChainTests(unittest.TestCase):
                           'targets':allocate_identities(second_scene,'sim-next')}
         from fullchain import FullChain
         second_platform = FakePlatform(existing)
-        second_chain = FullChain(second_platform, second_scene, second_manifest,
+        second_chain = FullChain(second_platform, second_scene, prepared_manifest(second_scene, second_manifest),
                                  {'owner_org_id':'o','district_id':'d'}, lambda:None,
                                  clock=lambda:TEST_NOW + 1000)
         second_chain.prepare()
@@ -401,7 +411,7 @@ class FullChainTests(unittest.TestCase):
         self.assertEqual([row['airspace_no'] for row in second_rows], [row['airspace_no'] for row in first_rows])
         self.assertEqual({row['revision'] for row in second_rows}, {2})
 
-    def test_repeated_batch_reuses_routes_and_plans(self):
+    def test_new_batch_reuses_routes_but_creates_independent_plans(self):
         first_chain, first_platform, first_manifest, scene = self.setup_chain()
         first_chain.prepare()
         route_posts = [(body, {'route_id':'r'+body['message_id'], 'route_version_id':'v'+body['message_id']})
@@ -417,7 +427,7 @@ class FullChainTests(unittest.TestCase):
                         'route_no': body['message_id'], 'name': body['name'], 'valid_from': body['valid_from'],
                         'valid_to': body['valid_to']} for body, result in route_posts],
             'messages': [{'message_id': body['message_id'], 'kind': 'FLIGHT_PLAN',
-                          'subject_id': 'p'+body['message_id']} for body in plan_posts]
+                          'subject_id': 'p'+body['message_id'], 'payload':copy.deepcopy(body)} for body in plan_posts]
         }
         existing_airspaces = [{'airspace_no': body['airspace_no'], 'revision': body['revision'], 'payload': body}
                               for _, path, body, _ in first_platform.calls if path.endswith('/airspaces')]
@@ -426,12 +436,15 @@ class FullChainTests(unittest.TestCase):
                           'targets':allocate_identities(second_scene,'sim-next')}
         from fullchain import FullChain
         second_platform = FakePlatform(existing_airspaces, context, first_platform.route_versions)
-        second_chain = FullChain(second_platform, second_scene, second_manifest,
+        second_chain = FullChain(second_platform, second_scene, prepared_manifest(second_scene, second_manifest),
                                  {'owner_org_id':'o','district_id':'d'}, lambda:None,
                                  clock=lambda:TEST_NOW)
         second_chain.prepare()
         self.assertFalse([row for _, path, row, _ in second_platform.calls if path.endswith('/routes')])
-        self.assertFalse([row for _, path, row, _ in second_platform.calls if path.endswith('/plans')])
+        posted = [row for _, path, row, _ in second_platform.calls if path.endswith('/plans')]
+        self.assertEqual(len(posted), len(plan_posts))
+        self.assertEqual({row['simulation_batch_id'] for row in posted}, {'sim-next'})
+        self.assertTrue({row['message_id'] for row in posted}.isdisjoint(row['message_id'] for row in plan_posts))
 
     def test_same_task_id_with_another_corridor_gets_its_own_route(self):
         # 新-26：用过的库里已有同一任务编号、走廊不同的模拟航线（例如先跑过别的场景），不能借来用，
@@ -449,7 +462,7 @@ class FullChainTests(unittest.TestCase):
         manifest = {'batch':'sim-changed', 'created_at':TEST_NOW, 'devices':{}, 'plans':{}, 'zones':{},
                     'targets':allocate_identities(changed,'sim-changed')}
         platform = FakePlatform(input_context=context, route_versions=first_platform.route_versions)
-        FullChain(platform, changed, manifest, {'owner_org_id':'o','district_id':'d'}, lambda:None,
+        FullChain(platform, changed, prepared_manifest(changed, manifest), {'owner_org_id':'o','district_id':'d'}, lambda:None,
                   clock=lambda:TEST_NOW).prepare()
         posted = [body for _, path, body, _ in platform.calls if path.endswith('/routes')]
         base = 'sim-map-route-' + changed['plans'][0]['id']
@@ -465,8 +478,8 @@ class FullChainTests(unittest.TestCase):
                                   'route_no':posted[0]['message_id'], 'name':posted[0]['name'],
                                   'valid_from':posted[0]['valid_from'], 'valid_to':posted[0]['valid_to']})
         again = FakePlatform(input_context=context, route_versions=platform.route_versions)
-        FullChain(again, changed, {'batch':'sim-again', 'created_at':TEST_NOW, 'devices':{}, 'plans':{}, 'zones':{},
-                                   'targets':allocate_identities(changed,'sim-again')},
+        FullChain(again, changed, prepared_manifest(changed, {'batch':'sim-again', 'created_at':TEST_NOW, 'devices':{}, 'plans':{}, 'zones':{},
+                                   'targets':allocate_identities(changed,'sim-again')}),
                   {'owner_org_id':'o','district_id':'d'}, lambda:None, clock=lambda:TEST_NOW).prepare()
         self.assertFalse([body for _, path, body, _ in again.calls if path.endswith('/routes')])
 
@@ -479,7 +492,7 @@ class FullChainTests(unittest.TestCase):
         first_manifest = {'batch':'sim-old', 'created_at':first_now, 'devices':{}, 'plans':{}, 'zones':{},
                           'targets':allocate_identities(scene,'sim-old')}
         first_platform = FakePlatform()
-        FullChain(first_platform, scene, first_manifest, {'owner_org_id':'o','district_id':'d'}, lambda:None,
+        FullChain(first_platform, scene, prepared_manifest(scene, first_manifest), {'owner_org_id':'o','district_id':'d'}, lambda:None,
                   clock=lambda:first_now).prepare()
         old_route = next(body for _, path, body, _ in first_platform.calls if path.endswith('/routes'))
         old_plan = next(body for _, path, body, _ in first_platform.calls if path.endswith('/plans') and body['uav_sn'] == 'map-sim-uav-normal')
@@ -494,7 +507,7 @@ class FullChainTests(unittest.TestCase):
                            'targets':allocate_identities(scene,'sim-new')}
         second_platform = FakePlatform(input_context=context, route_versions={
             'old-version': first_platform.route_versions['v' + old_route['message_id']]})
-        FullChain(second_platform, scene, second_manifest, {'owner_org_id':'o','district_id':'d'}, lambda:None,
+        FullChain(second_platform, scene, prepared_manifest(scene, second_manifest), {'owner_org_id':'o','district_id':'d'}, lambda:None,
                   clock=lambda:second_now).prepare()
         new_route = next(body for _, path, body, _ in second_platform.calls if path.endswith('/routes'))
         new_plan = next(body for _, path, body, _ in second_platform.calls
@@ -520,7 +533,7 @@ class FullChainTests(unittest.TestCase):
             platform = FakePlatform(input_context=context, route_versions=versions)
             manifest = {'batch':batch, 'created_at':now, 'devices':{}, 'plans':{}, 'zones':{},
                         'targets':allocate_identities(scene, batch)}
-            FullChain(platform, scene, manifest, {'owner_org_id':'o','district_id':'d'}, lambda:None,
+            FullChain(platform, scene, prepared_manifest(scene, manifest), {'owner_org_id':'o','district_id':'d'}, lambda:None,
                       clock=lambda:now).prepare()
             return platform, manifest, next(body for _, path, body, _ in platform.calls if path.endswith('/routes'))
 
@@ -559,7 +572,7 @@ class FullChainTests(unittest.TestCase):
                     'targets':allocate_identities(scene,'sim-retry')}
         platform = LegacyMessageCollisionPlatform()
 
-        FullChain(platform, scene, manifest, {'owner_org_id':'o','district_id':'d'}, lambda:None,
+        FullChain(platform, scene, prepared_manifest(scene, manifest), {'owner_org_id':'o','district_id':'d'}, lambda:None,
                   clock=lambda:now).prepare()
 
         plan = next(body for _, path, body, _ in platform.calls if path.endswith('/plans'))
@@ -582,7 +595,7 @@ class FullChainTests(unittest.TestCase):
         scene = full_scene(['uav'])
         manifest = {'batch':'sim-route', 'created_at':1000, 'devices':{}, 'plans':{}, 'zones':{},
                     'targets':allocate_identities(scene,'sim-route')}
-        chain = FullChain(RouteLookupPlatform(), scene, manifest,
+        chain = FullChain(RouteLookupPlatform(), scene, prepared_manifest(scene, manifest),
                           {'owner_org_id':'o','district_id':'d'}, lambda:None)
         route = chain.route_record('route-old')
         self.assertEqual(route['valid_to'], 100)
@@ -597,7 +610,7 @@ class FullChainTests(unittest.TestCase):
         manifest = {'batch':'sim-time', 'created_at':now, 'devices':{}, 'plans':{}, 'zones':{},
                     'targets':allocate_identities(scene,'sim-time')}
         platform = FakePlatform()
-        chain = FullChain(platform, scene, manifest, {'owner_org_id':'o','district_id':'d'}, lambda:None,
+        chain = FullChain(platform, scene, prepared_manifest(scene, manifest), {'owner_org_id':'o','district_id':'d'}, lambda:None,
                           clock=lambda:now)
         chain.prepare()
         body = next(body for _, path, body, _ in platform.calls
@@ -641,7 +654,7 @@ class FullChainTests(unittest.TestCase):
         second=copy.deepcopy(m)
         second['fullchain']={'requests':{},'coverage':{},'warnings':[]}
         p.calls.clear()
-        FullChain(p,s,second,{'owner_org_id':'o','district_id':'d'},lambda:None).prepare()
+        FullChain(p,s,prepared_manifest(s, second),{'owner_org_id':'o','district_id':'d'},lambda:None).prepare()
         self.assertFalse(any(path.endswith('/plans') for _,path,_,_ in p.calls))
         self.assertTrue(all(pid.startswith('saved-') for entry in second['plans'].values() for pid in entry['ids']))
 
@@ -664,7 +677,7 @@ class FullChainTests(unittest.TestCase):
         manifest = dict(batch='sim-shift', created_at=TEST_NOW, devices={}, plans={}, zones={},
                         targets=allocate_identities(scene, 'sim-shift'))
         api = FakePlatform()
-        FullChain(api, scene, manifest, {'owner_org_id':'o','district_id':'d'}, lambda:None).prepare()
+        FullChain(api, scene, prepared_manifest(scene, manifest), {'owner_org_id':'o','district_id':'d'}, lambda:None).prepare()
         plans = {b['uav_sn']:b for _, path, b, _ in api.calls if path.endswith('/plans')}
         for key, begin, end, status in [('normal', '11:00', '13:00', 'EXECUTING'),
                                        ('early', '12:05', '14:05', 'PENDING'),
@@ -708,7 +721,7 @@ class FullChainTests(unittest.TestCase):
         manifest = dict(batch='sim-zones', created_at=TEST_NOW, devices={}, plans={}, zones={},
                         targets=allocate_identities(scene, 'sim-zones'))
         api = FakePlatform()
-        chain = FullChain(api, scene, manifest, {'owner_org_id':'o','district_id':'d'}, lambda:None,
+        chain = FullChain(api, scene, prepared_manifest(scene, manifest), {'owner_org_id':'o','district_id':'d'}, lambda:None,
                           clock=lambda:TEST_NOW + 130000)
         chain.prepare()
         rows = [b for _, path, b, _ in api.calls if path.endswith('/airspaces')]
@@ -726,7 +739,7 @@ class FullChainTests(unittest.TestCase):
         manifest = dict(batch='sim-late', created_at=late, devices={}, plans={}, zones={},
                         targets=allocate_identities(scene, 'sim-late'))
         api = FakePlatform()
-        chain = FullChain(api, scene, manifest, {'owner_org_id':'o','district_id':'d'}, lambda:None,
+        chain = FullChain(api, scene, prepared_manifest(scene, manifest), {'owner_org_id':'o','district_id':'d'}, lambda:None,
                           clock=lambda:late + 130000)
         chain.prepare()
         rows = [b for _, path, b, _ in api.calls if path.endswith('/airspaces')]
@@ -748,7 +761,7 @@ class FullChainTests(unittest.TestCase):
             batch = 'sim-run-' + str(run)
             manifest = {'batch':batch, 'created_at':start, 'devices':{}, 'plans':{}, 'zones':{},
                         'targets':allocate_identities(scene, batch)}
-            chain = FullChain(api, scene, manifest, {'owner_org_id':'o','district_id':'d'}, lambda:None,
+            chain = FullChain(api, scene, prepared_manifest(scene, manifest), {'owner_org_id':'o','district_id':'d'}, lambda:None,
                               clock=lambda:clock['now'])
             clock['now'] = start
             before = len(api.calls)
@@ -784,7 +797,7 @@ class FullChainTests(unittest.TestCase):
             api.version_from[no], api.valid_to[no] = eight, day_end
             manifest = dict(batch='sim-edit', created_at=TEST_NOW, devices={}, plans={}, zones={},
                             targets=allocate_identities(scene, 'sim-edit'))
-            FullChain(api, scene, manifest, {'owner_org_id':'o','district_id':'d'}, lambda:None,
+            FullChain(api, scene, prepared_manifest(scene, manifest), {'owner_org_id':'o','district_id':'d'}, lambda:None,
                       clock=lambda:TEST_NOW).prepare()
             return next(b for _, path, b, _ in api.calls if path.endswith('/airspaces') and b['airspace_no'] == no)
 
@@ -820,7 +833,7 @@ class FullChainTests(unittest.TestCase):
         api.version_from[no], api.valid_to[no] = at(18, 16, 9), None
         manifest = dict(batch='sim-evening', created_at=at(18, 30), devices={}, plans={}, zones={},
                         targets=allocate_identities(scene, 'sim-evening'))
-        FullChain(api, scene, manifest, {'owner_org_id':'o','district_id':'d'}, lambda:None,
+        FullChain(api, scene, prepared_manifest(scene, manifest), {'owner_org_id':'o','district_id':'d'}, lambda:None,
                   clock=lambda:at(18, 30)).prepare()
         rows = [b for _, path, b, _ in api.calls if path.endswith('/airspaces')]
         self.assertEqual(len(scene['zones']), len(rows))

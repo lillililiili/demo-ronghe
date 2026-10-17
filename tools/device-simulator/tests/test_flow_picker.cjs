@@ -6,11 +6,17 @@ const FlowPicker = require('../web/flow-picker.js');
 
 const group = (enabled, total, ok = true) => ok ? {ok: true, enabled, total, engine: 'ON', engine_message: ''} : {ok: false, reason: 'FORBIDDEN'};
 
-test('the rule line tells how many verify and counter rules are on and that counter is never automatic', () => {
+test('the rule line distinguishes enabled rules from their checked automatic action', () => {
   const line = FlowPicker.rulesLine({verify: group(2, 3), counter: group(1, 2)});
   assert.match(line, /^规则管理里现在：/);
-  assert.match(line, /核实规则启用 2\/3 条，告警出来后会自动核实/);
-  assert.match(line, /反制规则启用 1\/2 条，只判断够不够条件，反制要人工点“发起反制”/);
+  assert.match(line, /核实规则启用 2\/3 条，全部满足后自动核实/);
+  assert.match(line, /反制规则启用 1\/2 条，全部满足且证据、设备等校验通过后自动发起；不满足时由有权限的人发起/);
+});
+
+test('no enabled counter rules requires a permitted human action', () => {
+  const line = FlowPicker.rulesLine({counter: group(0, 2)});
+  assert.match(line, /反制规则一条都没启用，由有权限的人发起反制/);
+  assert.doesNotMatch(line, /自动发起/);
 });
 
 test('with every verify rule off the line says alarms will stay waiting to be verified', () => {

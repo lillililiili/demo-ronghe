@@ -89,6 +89,32 @@ class SubscriptionReadinessTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, '会话已失效'):
             self.wait()
 
+    def test_runtime_registers_devices_before_normalized_sources(self):
+        with tempfile.TemporaryDirectory() as root:
+            runtime = Runtime(root)
+            runtime.batch = 'sim-order'
+            (Path(root) / runtime.batch).mkdir()
+            runtime.manifest = {'batch': runtime.batch, 'created_at': 1, 'devices': {}}
+            runtime.scene = {'fullchain': {'enabled': True}}
+            runtime.phase = 'PREPARING'
+            order = []
+            def register(devices, broker, manifest, checkpoint):
+                order.append('devices')
+                manifest['devices']['observed-device'] = {'platform_id': 'ops-registration', 'kind': 'radar'}
+            def prepare():
+                self.assertEqual(runtime.manifest['devices']['observed-device']['platform_id'], 'ops-registration')
+                order.append('sources')
+                runtime.cancel.set()
+            chain = Mock()
+            chain.prepare.side_effect = prepare
+            chain.withdraw_zones.return_value = []
+            runtime.session.platform = SimpleNamespace(prepare_devices=register)
+            with patch('server.FullChain', return_value=chain), patch('paho.mqtt.client.Client') as publisher:
+                runtime.run({'observed-device': {'kind': 'radar'}})
+                publisher.assert_not_called()
+            self.assertEqual(order, ['devices', 'sources'])
+            self.assertEqual(runtime.phase, 'STOPPED')
+
     def test_runtime_does_not_create_publisher_on_timeout_or_cancel(self):
         for failure in (ValueError('订阅等待超时'), None):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as root:

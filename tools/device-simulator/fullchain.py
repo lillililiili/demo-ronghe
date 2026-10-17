@@ -103,10 +103,9 @@ def route_covers_window(route, start, finish):
 def message_matches_payload(message, body):
     """Compare an existing input when the API returned its original payload."""
     payload = message.get('payload') if isinstance(message, dict) else None
-    # Older test doubles and older platform responses did not expose payload;
-    # keep their established reuse behavior while using strict comparison for
-    # the current API response.
-    return not isinstance(payload, dict) or canonical_payload(plan_identity(payload)) == canonical_payload(plan_identity(body))
+    # Only a returned business payload can prove the same simulation batch.
+    # Missing payloads and legacy unscoped receipts cannot stand in for a new run.
+    return isinstance(payload, dict) and canonical_payload(plan_identity(payload)) == canonical_payload(plan_identity(body))
 
 
 def input_message_id(message):
@@ -492,7 +491,7 @@ class FullChain:
                     landing_longitude=coordinates(plan['points'][-1])[0],landing_latitude=coordinates(plan['points'][-1])[1])
                 legacy_plan_message = stable_simulator_id('sim-map-plan-', plan['id']+'-'+str(number))
                 plan_message = legacy_plan_message
-                plan_body={'message_id':plan_message,
+                plan_body={'message_id':plan_message,'simulation_batch_id':self.manifest['batch'],
                            'route_version_id':route_data['route_version_id'],'uav_sn':serial,
                            'start_at':plan_start,'end_at':plan_finish,'source_mode':'replay',
                            'status_code':plan_status(plan_start, plan_finish, now),'filing':item_filing}
@@ -501,8 +500,8 @@ class FullChain:
                               and message_matches_payload(row, plan_body)]
                 if len(candidates) > 1:
                     candidates = [(mid, row) for mid, row in candidates if isinstance(row.get('payload'), dict)]
-                # Prefer the earliest receipt; list order and the current state
-                # must not select a later duplicate from an older simulator run.
+                # Prefer the earliest receipt within this batch. Different runs
+                # keep independent plans even when their time, UAV and route match.
                 candidates.sort(key=lambda item: (item[1].get('created_at', 0), item[0]))
                 existing_plan = None
                 if candidates:
@@ -514,6 +513,8 @@ class FullChain:
                         f"{plan['id']}-{number}-{payload_fingerprint(plan_identity(plan_body))}")
                     plan_body['message_id'] = plan_message
                     existing_plan = inputs['plans'].get(plan_message)
+                    if existing_plan and not message_matches_payload(existing_plan, plan_body):
+                        existing_plan = None
                 if existing_plan:
                     pid = existing_plan.get('subject_id')
                     if not pid:
@@ -585,13 +586,19 @@ class FullChain:
                 device = devices[key]
                 source_key = stable_simulator_id('normalized-', key)
                 longitude, latitude = coordinates([device['x'], device['y']])
+                registered = self.manifest['devices'].get(key, {})
+                origin = registered.get('platform_id')
+                if not isinstance(origin, str) or not origin or registered.get('kind') != device['kind']:
+                    raise ValueError('场景观测设备尚未完成本批台账登记：' + key)
                 source_body = dict(self.scope, name=(device['name']+' · 模拟观测')[:128],
-                    longitude=longitude, latitude=latitude)
-                source = self.request(source_key, PREFIX+'/observation-devices', dict(source_body,
-                    message_id=stable_simulator_id('map-sim-source-', payload_fingerprint(dict(source_body, scene_device_id=key)))))
+                    longitude=longitude, latitude=latitude, origin_ops_device_id=origin)
+                source_message = stable_simulator_id('map-sim-source-', payload_fingerprint(dict(source_body, scene_device_id=key)))
+                # A previous checkpoint without this verified parent must not satisfy the new registration.
+                source = self.request(source_message, PREFIX+'/observation-devices', dict(source_body, message_id=source_message))
                 sources[key] = source
                 self.manifest['devices'][source_key] = {'platform_id': source['device_id'], 'kind': 'normalized',
-                    'external_id': source['source_id'], 'scene_device_id': key, 'scene_device_kind': device['kind']}
+                    'external_id': source['source_id'], 'scene_device_id': key, 'scene_device_kind': device['kind'],
+                    'origin_ops_device_id': origin}
             if sources:
                 self.manifest['normalized_source'] = next(iter(sources.values()))
         if 'weather' in self.scene.get('fullchain',{}).get('categories',[]):

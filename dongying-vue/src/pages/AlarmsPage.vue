@@ -42,7 +42,7 @@ import { getEvidenceChain } from '@/services/evidenceApi.js';
 import { openUavVerification } from '@/ui/uavVerificationModal.js';
 import { targetApi } from '@/services/targetApi.js';
 import { toAirspaces } from '@/services/situationData.js';
-import { displayAlarmNo, displayDeviceNo, displayTargetNo } from '@/ui/deviceNumber.js';
+import { displayAlarmNo, displayTargetNo } from '@/ui/deviceNumber.js';
 import { mapPool } from '@/services/apiClient.js';
 import { ALARM_PROGRESS_LABEL, ALARM_PROGRESS_TAG, ALARM_TYPE_LABEL, classChangeText, CONCLUSION_LABEL, DISPOSAL_ACTION_LABEL, labelOf, LEGALITY_LABEL, readableNo, sourceDescription, SOURCE_MODE_LABEL as MODE_TEXT, targetTypeLabel } from '@/ui/labels.js';
 import { openEvidenceFileModal } from '@/ui/evidenceFileDetail.js';
@@ -807,7 +807,7 @@ function alarmNowHtml() {
     now: serverNow(),
     reasonText: ruleReasonText
   });
-  return `${uavNowHtml(status)}${alarmCounterBlockHtml(a, advisory, status)}`;
+  return `${uavNowHtml(status, { compact: true })}${alarmCounterBlockHtml(a, advisory, status)}`;
 }
 
 /* 反制入口不出现时，保留当前不能发起的原因。 */
@@ -1601,7 +1601,10 @@ onMounted(async () => {
 .alarm-action-bar { flex:none; max-height:100%; overflow:auto; display:flex; flex-direction:column; align-items:stretch; gap:10px; margin:0; padding:10px 12px; border-bottom:1px solid var(--line); background:var(--panel); box-shadow:0 4px 12px color-mix(in srgb, var(--bg-1) 22%, transparent); }
 .alarm-action-bar:not(:has(.btn, .tag, details, .uav-now)) { display:none; }
 .alarm-now:empty { display:none; }
-.alarm-now :deep(.uav-now) { margin:0; }
+.alarm-now :deep(.uav-now) { margin:0; padding:6px 10px; gap:2px; }
+.alarm-now :deep(.uav-now-summary) { display:flex; align-items:baseline; flex-wrap:wrap; gap:2px 12px; min-width:0; }
+.alarm-now :deep(.uav-now-title) { font-size:14px; }
+.alarm-now :deep(.uav-now-basis) { margin-left:auto; }
 .alarm-now { display:flex; flex-direction:column; gap:8px; }
 .alarm-now :deep(.alarm-now-block) { margin:0; font-size:12px; line-height:1.6; color:var(--txt-3); }
 .alarm-observation { order:2; flex:0 0 auto; min-width:0; }

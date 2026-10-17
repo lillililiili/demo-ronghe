@@ -1104,7 +1104,13 @@ onUnmounted(() => {
         <button type="button" :aria-pressed="layers.flightPlan" @click="toggleLayer('flightPlan')">任务航线</button>
         <button type="button" :aria-pressed="layers.airspace" :aria-label="`防控空域，共${airspaces.length}个区域`" @click="toggleLayer('airspace')">防控空域 {{ airspaces.length }}</button>
         <span id="situation-weather-control"></span>
-        <span class="sit-plan-key" aria-label="航线与轨迹图例"><span><i class="is-within"></i>符合航线</span><span><i class="is-outside"></i>偏离航线</span><span><i class="is-plan"></i>未飞任务线</span><span><i class="is-unknown"></i>关系未知</span><span><b class="is-start">起</b>起点<b class="is-end">终</b>终点</span></span>
+        <span v-if="layers.track || layers.flightPlan" class="sit-plan-key" aria-label="航线与轨迹图例">
+          <span v-if="layers.track"><i class="is-within"></i>符合航线</span>
+          <span v-if="layers.track"><i class="is-outside"></i>偏离航线</span>
+          <span v-if="layers.flightPlan"><i class="is-plan"></i>计划航线</span>
+          <span v-if="layers.track"><i class="is-unknown"></i>关系未知</span>
+          <span v-if="layers.flightPlan"><b class="is-start">起</b>起点<b class="is-end">终</b>终点（选中显示）</span>
+        </span>
       </nav>
 
       <aside v-if="selectedTarget" class="sit-fuse-dock" :class="{ 'is-open': fuseOpen }" aria-label="多源融合结果">

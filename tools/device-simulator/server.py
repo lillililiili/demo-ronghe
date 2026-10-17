@@ -497,6 +497,10 @@ class Runtime:
             self.log('PREPARE','正在为本批次注册模拟设备与配套资料')
             if self.seed.database and self.platform.me.get('role_code') != 'ROLE-ADMIN':
                 raise ValueError('本机任务/区域 seed 仅允许测试系统管理员运行')
+            # Bind normalized observations only to identities returned by this preparation.
+            self.platform.prepare_devices(devices,self.broker,self.manifest,self.checkpoint)
+            self.log_catalog_changes()
+            if self.cancel.is_set(): return
             if self.scene.get('fullchain', {}).get('enabled'):
                 self.fullchain = FullChain(self.platform, self.scene, self.manifest, self.broker,
                                           self.checkpoint, cancelled=self.cancel.is_set)
@@ -518,9 +522,6 @@ class Runtime:
                                               self.checkpoint, cancelled=self.cancel.is_set)
                     self.fullchain.prepare()
             self.checkpoint()
-            if self.cancel.is_set(): return
-            self.platform.prepare_devices(devices,self.broker,self.manifest,self.checkpoint)
-            self.log_catalog_changes()
             if self.cancel.is_set(): return
             if self.fullchain:
                 from prerequisite_check import verify as verify_prerequisites

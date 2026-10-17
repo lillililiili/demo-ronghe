@@ -267,7 +267,9 @@ function showCounterLaunch() {
     || summary.counter_launch_visible !== true) return false;
   const sources = progressSources.get(eventId);
   if (!Array.isArray(sources?.auths?.items) || !Array.isArray(sources?.handoffs?.items) || sources.auths.failed || sources.handoffs.failed) return false;
-  return !selectedDisposalProgress();
+  const key = selectedDisposalProgress();
+  // 急停后的重新申请仍须取得当前事件的最新资格；在途审批和执行继续阻断重复申请。
+  return !key || key === 'COUNTER_STOPPED';
 }
 function eventHandedOff() {
   const eventId = cur.alarm?.event_id;
@@ -521,7 +523,7 @@ async function loadKpis() {
   kpiList.value = [
     todayKpi(KPI_DEFS[0], 0, '北京时间今天发生的告警数量；发生时间未知者不计'),
     todayKpi(KPI_DEFS[1], 1, '北京时间今天发生且待人工核实的告警数量'),
-    { ...KPI_DEFS[2], value: num(v[7]), desc: fail(7) || '已核实属实、处置还没结束的告警数量，不限日期；正在反制、干扰或急停核查中的也算在内，设备反制或干扰完成后不再计入' },
+    { ...KPI_DEFS[2], value: num(v[7]), desc: fail(7) || '已核实属实、处置还没结束的告警数量，不限日期；正在反制或干扰中的也算在内，设备反制或干扰完成后不再计入' },
     disposalKpi(KPI_DEFS[3], r[4], v[4]),
     disposalKpi(KPI_DEFS[4], r[6], v[6]),
     disposalKpi(KPI_DEFS[5], r[5], v[5]),
@@ -810,7 +812,8 @@ function alarmNowHtml() {
 
 /* 反制入口不出现时，保留当前不能发起的原因。 */
 function alarmCounterBlockHtml(a, advisory, status) {
-  const progressed = !!selectedDisposalProgress();
+  const key = selectedDisposalProgress();
+  const progressed = !!key && key !== 'COUNTER_STOPPED';
   const hidden = a.state === 'CONFIRMED' && !showCounterLaunch() && !progressed && !eventHandedOff()
     ? counterHiddenReason({ alarm: { eventState: 'CONFIRMED' }, actions: ['counter'], summary: advisory, nowStatus: status }) : '';
   return hidden ? `<p class="alarm-now-block">暂不能反制：${esc(hidden)}</p>` : '';

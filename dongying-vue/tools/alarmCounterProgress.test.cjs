@@ -28,12 +28,25 @@ function fixture() {
 
 test('the same event stops offering a new request when its current progress enters approval or execution', () => {
   for (const action_type of ['COUNTERMEASURE', 'JAMMING']) {
-    for (const status of ['REQUESTED', 'APPROVED', 'EXECUTING', 'COMPLETED', 'STOPPED']) {
+    for (const status of ['REQUESTED', 'APPROVED', 'EXECUTING', 'COMPLETED']) {
       const f = fixture();
       assert.equal(f.showCounterLaunch(), true);
       f.recordProgressRead(f.eventId, 'auths', 2, [{ authorization_id: randomUUID(), action_type, status, requested_at: Date.now() }]);
       assert.equal(f.showCounterLaunch(), false, `${action_type}/${status}`);
     }
+  }
+});
+
+test('stopped authorization can be followed by a new request only with fresh eligibility and complete progress reads', () => {
+  for (const action_type of ['COUNTERMEASURE', 'JAMMING']) {
+    const f = fixture();
+    f.recordProgressRead(f.eventId, 'auths', 2, [{ authorization_id: randomUUID(), action_type, status: 'STOPPED', requested_at: Date.now() }]);
+    assert.equal(f.showCounterLaunch(), true);
+    f.advisoryLive.value.counter_launch_visible = false;
+    assert.equal(f.showCounterLaunch(), false);
+    f.advisoryLive.value.counter_launch_visible = true;
+    f.recordProgressRead(f.eventId, 'auths', 3);
+    assert.equal(f.showCounterLaunch(), false);
   }
 });
 

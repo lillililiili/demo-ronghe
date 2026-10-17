@@ -146,8 +146,9 @@ test('反制已完成但没有后续干扰时，告警不重新显示发起入�
     const eventId = crypto.randomUUID();
     const cur = { alarm: { event_id: eventId } };
     const disposal = { byAction: {}, handoff: null };
-    const advisoryLive = { value: { counter_launch_visible: true } };
-    const view = new Function('cur', 'disposal', 'advisoryLive', 'pageProgress', functions + '; return { showCounterLaunch, deriveAlarmProgress };')(cur, disposal, advisoryLive, {});
+    const advisoryLive = { value: { event_id: eventId, counter_launch_visible: true } };
+    const progressSources = new Map([[eventId, { auths: { items: [], failed: false }, handoffs: { items: [], failed: false } }]]);
+    const view = new Function('cur', 'disposal', 'advisoryLive', 'pageProgress', 'progressSources', functions + '; return { showCounterLaunch, deriveAlarmProgress };')(cur, disposal, advisoryLive, {}, progressSources);
     assert.equal(view.showCounterLaunch(), true);
     const row = { authorization_id: crypto.randomUUID(), subject_id: eventId, action_type: 'COUNTERMEASURE', source_mode, status: 'COMPLETED', requested_at: Date.now() - 60000 };
     disposal.byAction.COUNTERMEASURE = row;

@@ -7,7 +7,7 @@ import { deviceStopText, stopActionLabel, stopSummary, stopTime } from './emerge
 const props = defineProps({ eventId: { type: String, required: true }, eventLabel: { type: String, default: '' } });
 const emit = defineEmits(['updated', 'changed']);
 const host = ref(null);
-const { overview, stop, loading, busy, error, uncertain, forbidden, retryReady, refresh, retryPending, requestStop, addNote, retryDevice, confirmDevice }
+const { overview, stop, loading, busy, error, uncertain, forbidden, retryReady, refresh, retryPending, requestStop, addNote, retryDevice }
   = useEmergencyStop(toRef(props, 'eventId'), data => emit('updated', data), eventId => emit('changed', eventId));
 const offered = computed(() => (overview.value?.allowed_actions || []).includes('EMERGENCY_STOP'));
 const visible = computed(() => uncertain.value || !!error.value || !!stop.value || (!!overview.value?.applicable && offered.value));
@@ -17,22 +17,19 @@ const canStop = computed(() => actions.value.includes('EMERGENCY_STOP') && !busy
 const actionLabel = computed(() => stopActionLabel(overview.value));
 const summary = computed(() => stopSummary(overview.value));
 const locked = computed(() => busy.value || loading.value || !!error.value || !!uncertain.value || forbidden.value);
-const note = ref(''), confirming = ref(''), confirmation = ref('');
+const note = ref('');
+// 2026-10-14 起急停后不再登记现场停机核查；旧记录里的现场确认（核查人、依据、处理记录）只读显示。
 const historyLabel = kind => ({ STOP: '发起急停', NOTE: '补充原因', RETRY: '重试停止', MANUAL_CONFIRM: '现场停机核查' })[kind] || '处置记录';
 const allows = (device, action) => (device.allowed_actions || []).includes(action);
 const icon = name => window.UI.icon(name);
 
-watch([() => props.eventId, () => stop.value?.stop_id], () => { note.value = ''; confirming.value = ''; confirmation.value = ''; });
+watch([() => props.eventId, () => stop.value?.stop_id], () => { note.value = ''; });
 async function saveNote() {
   if (locked.value || !actions.value.includes('ADD_NOTE') || !note.value.trim()) return;
   if (await addNote(note.value.trim())) note.value = '';
 }
 async function retry(device) {
   if (!locked.value && allows(device, 'RETRY_STOP')) await retryDevice(device);
-}
-async function confirm(device) {
-  if (locked.value || !allows(device, 'MANUAL_CONFIRM') || !confirmation.value.trim()) return;
-  if (await confirmDevice(device, confirmation.value.trim())) { confirming.value = ''; confirmation.value = ''; }
 }
 async function halt() {
   if (!canStop.value) return;
@@ -77,11 +74,6 @@ defineExpose({ refresh });
           <div class="es-actions">
             <button v-if="allows(device, 'QUERY')" type="button" class="btn" :disabled="loading || busy || forbidden" @click="refresh">查询设备反馈</button>
             <button v-if="allows(device, 'RETRY_STOP')" type="button" class="btn" :disabled="locked" @click="retry(device)">重试停止</button>
-            <button v-if="allows(device, 'MANUAL_CONFIRM') && confirming !== device.device_id" type="button" class="btn" :disabled="locked" @click="confirming = device.device_id; confirmation = ''">登记现场停机核查</button>
-          </div>
-          <div v-if="confirming === device.device_id && allows(device, 'MANUAL_CONFIRM')" class="es-form">
-            <UField v-model="confirmation" type="textarea" label="现场停机核查依据" required :disabled="locked" :input-props="{ maxlength: 500 }" help="仅在已现场核实设备实际停止后登记，控制器全关回码不能替代现场核查。" />
-            <div class="es-actions"><button type="button" class="btn" :disabled="locked || !confirmation.trim()" @click="confirm(device)">确认已现场核实停止</button><button type="button" class="btn" :disabled="busy" @click="confirming = ''; confirmation = ''">取消</button></div>
           </div>
         </div>
         <div v-if="actions.includes('ADD_NOTE')" class="es-note">
@@ -119,7 +111,7 @@ defineExpose({ refresh });
 .es-blocker { margin-bottom:12px; color:var(--amber); overflow-wrap:anywhere; }
 .es-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
 .es-link { background:transparent; border-color:transparent; color:var(--blue); }
-.es-feedback, .es-form, .es-history { margin-top:14px; padding-top:12px; border-top:1px solid var(--line); }
+.es-feedback, .es-history { margin-top:14px; padding-top:12px; border-top:1px solid var(--line); }
 .es-device { padding:12px 0; border-bottom:1px solid var(--line); }.es-device:last-child { border-bottom:0; }
 .es-device-title { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }.es-device-title strong { overflow-wrap:anywhere; }
 .es-needs-check { color:var(--amber); }.es-note, .es-footer { padding-top:12px; }

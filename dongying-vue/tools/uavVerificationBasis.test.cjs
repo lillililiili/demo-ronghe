@@ -35,7 +35,8 @@ test('缺少核实依据时“属实”不可选并说明原因，误报照常�
   assert.match(confirmed.label, /缺少依据/);
   assert.equal(form.initial.conclusion, undefined, '不预选结论');
   assert.match(form.validate({ conclusion: 'CONFIRMED' }), /缺少依据/);
-  assert.match(form.validate({ conclusion: 'FALSE_POSITIVE' }), /核实理由/);
+  assert.equal(form.validate({ conclusion: 'FALSE_POSITIVE' }), '', '核实说明为选填');
+  assert.match(form.validate({ conclusion: 'FALSE_POSITIVE', note: '字'.repeat(1001) }), /不能超过1000字/);
   assert.equal(form.validate({ conclusion: 'FALSE_POSITIVE', note: '已核对关联观测与证据' }), '');
   await form.onSubmit({ conclusion: 'FALSE_POSITIVE', note: '已核对关联观测与证据' });
   assert.equal(submitted[0].id, 'e1');
@@ -50,7 +51,8 @@ test('依据齐全或接口未返回依据时保持原来的属实预选', () =>
     assert.equal(form.warning, '');
     assert.equal(form.fields[0].options[0].disabled, false);
     assert.equal(form.initial.conclusion, 'CONFIRMED');
-    assert.match(form.validate({ conclusion: 'CONFIRMED' }), /核实理由/);
+    assert.equal(form.validate({ conclusion: 'CONFIRMED' }), '', '核实说明为选填');
+    assert.match(form.validate({ conclusion: 'CONFIRMED', note: '字'.repeat(1001) }), /不能超过1000字/);
     assert.equal(form.validate({ conclusion: 'CONFIRMED', note: '核对当前观测和明确违规研判' }), '');
   }
 });

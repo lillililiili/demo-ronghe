@@ -122,12 +122,6 @@ export function useEmergencyStop(eventId, onUpdate, onChanged) {
       (id, key) => disposalApi.emergencyRetry(id, stopId, device.device_id, key),
       data => data?.latest_stop?.stop_id === stopId && data.latest_stop.devices?.some(d => d.device_id === device.device_id && d.command_id && d.command_id !== previous));
   }
-  function confirmDevice(device, note) {
-    const stopId = stop.value?.stop_id;
-    return mutate('confirm', { stopId, deviceId: device.device_id, note },
-      (id, key) => disposalApi.emergencyConfirm(id, stopId, device.device_id, note, key),
-      data => data?.latest_stop?.stop_id === stopId && data.latest_stop.devices?.some(d => d.device_id === device.device_id && d.stop_status === 'MANUALLY_CONFIRMED'));
-  }
 
   useRealtimeRefresh(['disposal', 'device_state'], () => refresh({ quiet: true }), { minIntervalMs: 2_000 });
   watch([eventId, authUser], () => {
@@ -137,5 +131,5 @@ export function useEmergencyStop(eventId, onUpdate, onChanged) {
     onUpdate?.(null); refresh();
   }, { immediate: true });
   onUnmounted(() => { disposed = true; ++generation; ++readSeq; clearTimeout(timer); });
-  return { overview, stop, followup, loading, busy, error, uncertain, forbidden, retryReady, refresh, retryPending, requestStop, addNote, retryDevice, confirmDevice };
+  return { overview, stop, followup, loading, busy, error, uncertain, forbidden, retryReady, refresh, retryPending, requestStop, addNote, retryDevice };
 }

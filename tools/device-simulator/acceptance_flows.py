@@ -5,6 +5,7 @@
 """
 import json
 from pathlib import Path
+from state_file import read_saved_text as read_text
 
 OUTPUT_NAME = 'acceptance-flows-1-7-20261008'
 FLOW_FILES = {
@@ -137,14 +138,6 @@ GUIDE = {
         ],
     },
 }
-
-
-def read_text(path):
-    """UTF-8 first, then the legacy Windows CP936 files, without rewriting history."""
-    try:
-        return path.read_text(encoding='utf-8-sig')
-    except UnicodeDecodeError:
-        return path.read_text(encoding='cp936')
 
 
 def read_acceptance_flows(root):

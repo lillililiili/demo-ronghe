@@ -2,7 +2,7 @@
 /* 模块级状态：跨导航保持筛选、分页与选中项（legacy 约定）。 */
 const S = {
   page: 1, size: 20, selectedHandoffId: null,
-  filters: { delivery_status: '', receipt_status: '', created: null }
+  filters: { notification_status: '', receipt_status: '', created: null }
 };
 export default {};
 </script>
@@ -29,7 +29,7 @@ import PunishmentOutcome from '@/pages/punish/PunishmentOutcome.vue';
 import PunishmentNotification from '@/pages/punish/PunishmentNotification.vue';
 import HandoffMaterialFacts from '@/pages/punish/HandoffMaterialFacts.vue';
 import { handoffEvidenceChain } from '@/pages/punish/handoffEvidence.js';
-import { DELIVERY_OPTIONS, RECEIPT_OPTIONS, deliveryView, receiptView, statusQuery } from '@/pages/punish/handoffStatus.js';
+import { NOTIFICATION_OPTIONS, RECEIPT_OPTIONS, deliveryView, receiptView, statusQuery } from '@/pages/punish/handoffStatus.js';
 import RecipientSnapshotFields from '@/components/notifications/RecipientSnapshotFields.vue';
 import { getEvidenceChain } from '@/services/evidenceApi.js';
 import {
@@ -49,7 +49,8 @@ const U = window.UI;
 const UAV_KIND = 'UAV_EVENT';
 const KIND_LABEL = HANDOFF_KIND_LABEL;
 const TYPE_LABEL = HANDOFF_TYPE_LABEL;
-const deliveryOptions = [{ label: '全部送达状态', value: '' }, ...DELIVERY_OPTIONS];
+const deliveryOptions = [{ label: '全部通知状态', value: '' }, ...NOTIFICATION_OPTIONS];
+const kpiOptions = NOTIFICATION_OPTIONS.filter(item => ['PENDING_DECISION', 'SUBMITTED', 'DELIVERED', 'FAILED'].includes(item.value));
 const receiptOptions = [{ label: '全部签收状态', value: '' }, ...RECEIPT_OPTIONS];
 
 const forbidden = ref(false);
@@ -61,9 +62,9 @@ let listFailure = null;
 const handoffs = ref([]);
 let appliedQuery = { source_kind: UAV_KIND };
 const statistics = useModuleStatistics(getHandoffStatistics, [
-  { key: 'by_delivery', title: '处罚送达状态分布', type: 'bar', labels: Object.fromEntries(DELIVERY_OPTIONS.map(item => [item.value, item.label])), colors: Object.fromEntries(DELIVERY_OPTIONS.map(item => [item.value, item.color])) },
+  { key: 'by_delivery', title: '通知状态分布', type: 'bar', labels: Object.fromEntries(NOTIFICATION_OPTIONS.map(item => [item.value, item.label])), colors: Object.fromEntries(NOTIFICATION_OPTIONS.map(item => [item.value, item.color])) },
   { key: 'by_receipt', title: '签收回执占比', type: 'donut', labels: Object.fromEntries(RECEIPT_OPTIONS.map(item => [item.value, item.label])), colors: { NOT_EXPECTED: 'gray', PENDING: 'amber', ACKNOWLEDGED: 'green', TIMEOUT: 'red' } },
-  { key: 'by_day', title: '近7日移送趋势', type: 'line', windowed: true, label: code => code.slice(5), note: '按提交时间 · 北京时间' }
+  { key: 'by_day', title: '近7日进入趋势', type: 'line', windowed: true, label: code => code.slice(5), note: '按进入时间 · 北京时间' }
 ]);
 const total = ref(0);
 const page = ref(S.page);
@@ -82,8 +83,11 @@ let listToken = 0, kpiToken = 0, detailToken = 0, chainToken = 0;
 
 function updateNotificationStatus(data) {
   if (selected.value?.handoff_id !== data.handoff_id) return;
-  const changed = selected.value.delivery_status !== data.delivery_status || selected.value.receipt_status !== data.receipt_status;
-  const fields = { delivery_status: data.delivery_status, receipt_status: data.receipt_status, latest_delivery: data.latest_delivery, blocked_reason: data.latest_delivery?.blocked_reason || null };
+  const changed = selected.value.delivery_status !== data.delivery_status || selected.value.receipt_status !== data.receipt_status
+    || JSON.stringify(selected.value.notification_decision) !== JSON.stringify(data.notification_decision);
+  const fields = { delivery_status: data.delivery_status, receipt_status: data.receipt_status, latest_delivery: data.latest_delivery,
+    notification_decision: data.notification_decision, recipient_snapshot: data.recipient_snapshot,
+    blocked_reason: data.latest_delivery?.blocked_reason || null };
   Object.assign(selected.value, fields);
   const row = handoffs.value.find(item => item.handoff_id === data.handoff_id);
   if (row) Object.assign(row, fields);
@@ -95,8 +99,8 @@ const kpiList = computed(() => {
   const desc = (key, text) => forbidden.value ? '没有查看业务交接的权限' : kpiFailed.value[key] ? '总数读取失败' : text;
   return [
     { label: '交接总数', value: value('all'), color: 'blue', icon: 'gavel', desc: desc('all', '无人机事件处罚交接总数') },
-    ...DELIVERY_OPTIONS.map(item => ({ label: item.label, value: value(item.value), color: item.color, icon: item.icon,
-      desc: desc(item.value, item.value === 'SUBMITTED' ? '已提交但送达尚未确认，包含处理中和结果未知' : `最近一次投递：${item.label}`) }))
+    ...kpiOptions.map(item => ({ label: item.label, value: value(item.value), color: item.color, icon: item.icon,
+      desc: desc(item.value, item.value === 'PENDING_DECISION' ? '等待操作员决定是否通知上级' : item.value === 'SUBMITTED' ? '已提交但送达尚未确认，包含处理中和结果未知' : `最近一次投递：${item.label}`) }))
   ];
 });
 
@@ -128,10 +132,10 @@ function messageOf(reason, fallback) {
 }
 
 function listQuery() {
-  const query = { source_kind: UAV_KIND, ...statusQuery(filters.delivery_status, filters.receipt_status) };
+  const query = { source_kind: UAV_KIND, ...statusQuery(filters.notification_status, filters.receipt_status) };
   const range = Array.isArray(filters.created) ? filters.created : null;
   if (range && range[0] != null && range[1] != null) {
-    if (!(Number(range[0]) < Number(range[1]))) throw new Error('提交时间范围必须满足开始时间早于结束时间。');
+    if (!(Number(range[0]) < Number(range[1]))) throw new Error('进入时间范围必须满足开始时间早于结束时间。');
     query.created_from = Number(range[0]);
     query.created_to = Number(range[1]);
   }
@@ -141,7 +145,7 @@ function listQuery() {
 async function loadKpis() {
   const token = ++kpiToken;
   const base = { source_kind: UAV_KIND };
-  const queries = { all: { ...base }, ...Object.fromEntries(DELIVERY_OPTIONS.map(item => [item.value, { ...base, delivery_status: item.value }])) };
+  const queries = { all: { ...base }, ...Object.fromEntries(kpiOptions.map(item => [item.value, { ...base, ...statusQuery(item.value) }])) };
   await Promise.all(Object.keys(queries).map(async key => {
     try {
       const data = await handoffApi.listHandoffs({ ...queries[key], page: 1, size: 1 });
@@ -214,7 +218,7 @@ async function loadDetail(handoffId, { quiet = false } = {}) {
   }
 }
 
-watch(() => [filters.delivery_status, filters.receipt_status], () => applyFilters());
+watch(() => [filters.notification_status, filters.receipt_status], () => applyFilters());
 function applyFilters() {
   try { listQuery(); } catch (validation) { listError.value = validation.message; return; }
   S.selectedHandoffId = null;
@@ -318,7 +322,7 @@ function consumeDeepLink() {
 onMounted(() => {
   if (authorizationId) { window.location.replace(`#/alarms?tab=authorizations&authorization=${encodeURIComponent(authorizationId)}`); return; }
   const requested = consumeDeepLink();
-  if (requested) { Object.assign(filters, { delivery_status: '', receipt_status: '', created: null }); S.selectedHandoffId = requested; }
+  if (requested) { Object.assign(filters, { notification_status: '', receipt_status: '', created: null }); S.selectedHandoffId = requested; }
   loadKpis();
   loadList(requested ? 1 : page.value, requested);
 });
@@ -339,9 +343,9 @@ onMounted(() => {
             <UPanel title="业务交接清单" panel-style="flex:6;min-width:0" nopad>
               <div id="pnList" class="pn-list">
                 <UFilterBar class="pn-toolbar">
-                  <UField id="pn-delivery" v-model="filters.delivery_status" label="送达状态" variant="filter" type="select" :options="deliveryOptions" :disabled="listLoading" />
+                  <UField id="pn-delivery" v-model="filters.notification_status" label="通知状态" variant="filter" type="select" :options="deliveryOptions" :disabled="listLoading" />
                   <UField id="pn-receipt" v-model="filters.receipt_status" label="签收回执" variant="filter" type="select" :options="receiptOptions" :disabled="listLoading" />
-                  <UField id="pn-created" v-model="filters.created" class="pn-range" label="提交时间" variant="filter" type="datetimerange" clearable :disabled="listLoading" start-placeholder="开始时间" end-placeholder="结束时间" />
+                  <UField id="pn-created" v-model="filters.created" class="pn-range" label="进入时间" variant="filter" type="datetimerange" clearable :disabled="listLoading" start-placeholder="开始时间" end-placeholder="结束时间" />
                   <template #actions>
                     <button class="btn pri" type="button" :disabled="listLoading" @click="applyFilters">查询</button>
                   </template>
@@ -356,8 +360,8 @@ onMounted(() => {
                       <th>来源编号</th>
                       <th>来源事项</th>
                       <th>接收方</th>
-                      <th>提交时间</th>
-                      <th class="pn-status">送达状态</th>
+                      <th>进入时间</th>
+                      <th class="pn-status">通知状态</th>
                       <th class="pn-status">签收回执</th>
                     </tr></thead>
                     <tbody>
@@ -365,7 +369,7 @@ onMounted(() => {
                         @click="selectHandoff(row.handoff_id)" @keydown.enter.prevent="selectHandoff(row.handoff_id)">
                         <td class="num"><div class="table-text" tabindex="0"><span class="mono pn-id" :title="row.handoff_id">{{ displayBusinessNo(readableNo(row.source_no, row.source_id)) || '—' }}</span></div></td>
                         <td><span class="tag t-cyan" :title="row.source_id">{{ label(KIND_LABEL, row.source_kind) }}</span></td>
-                        <td><div class="table-text" tabindex="0"><div class="pn-wrap" :title="row.recipient_id">{{ row.recipient_name || '—' }}</div><div class="pn-sub">{{ labelOf(SOURCE_MODE_LABEL, row.source_mode, '') }}</div></div></td>
+                        <td><div class="table-text" tabindex="0"><div class="pn-wrap" :title="row.recipient_id">{{ row.recipient_name || row.recipient_snapshot?.recipient_name || (row.notification_decision ? '尚未确定' : '—') }}</div><div class="pn-sub">{{ labelOf(SOURCE_MODE_LABEL, row.source_mode, '') }}</div></div></td>
                         <td class="num" :title="formatTime(row.created_at)"><div class="table-text" tabindex="0">{{ formatClock(row.created_at) }}</div></td>
                         <td class="pn-status"><span class="tag" :class="deliveryView(row).tag">{{ deliveryView(row).label }}</span></td>
                         <td class="pn-status"><span class="tag" :class="receiptView(row).tag">{{ receiptView(row).label }}</span></td>
@@ -431,11 +435,12 @@ onMounted(() => {
                   </div>
                   <div class="sect pn-section pn-section-info"><h4>交接信息</h4><dl class="kv kv-surface">
                     <dt>来源事项</dt><dd :title="selected.source_id"><span class="tag t-cyan">{{ label(KIND_LABEL, selected.source_kind) }}</span></dd>
-                    <dt>接收方</dt><dd class="pn-recipient" :title="selected.recipient_id">{{ selected.recipient_name || '未提供' }}</dd>
-                    <RecipientSnapshotFields :snapshot="selected.recipient_snapshot" />
-                    <dt>提交时间</dt><dd>{{ formatTime(selected.created_at) }}</dd>
+                    <dt>接收方</dt><dd class="pn-recipient" :title="selected.recipient_id">{{ selected.recipient_name || selected.recipient_snapshot?.recipient_name || '尚未确定' }}</dd>
+                    <RecipientSnapshotFields v-if="!selected.notification_decision" :snapshot="selected.recipient_snapshot" />
+                    <dt>进入时间</dt><dd>{{ formatTime(selected.created_at) }}</dd>
                     <!-- 反制完成后后台自动移送：提交人是系统，记录里的提交人账号是那次反制的申请人（新-24）。 -->
-                    <template v-if="['COUNTERMEASURE_COMPLETED', 'JAMMING_COMPLETED'].includes(selected.trigger_source)">
+                    <template v-if="selected.notification_decision"><dt>进入方式</dt><dd>现场处置结束后自动进入待办</dd></template>
+                    <template v-else-if="['COUNTERMEASURE_COMPLETED', 'JAMMING_COMPLETED'].includes(selected.trigger_source)">
                       <dt>提交人</dt><dd>{{ selected.trigger_source === 'COUNTERMEASURE_COMPLETED' ? '系统自动（反制结束且停止确认后生成）' : '系统自动（历史干扰完成后生成）' }}</dd>
                       <dt>反制申请人</dt><dd :title="selected.submitted_by">{{ selected.submitted_by_name || '姓名未记录' }}</dd>
                     </template>
@@ -463,8 +468,10 @@ onMounted(() => {
                       </div>
                     </template>
                   </div>
-                  <PunishmentNotification ref="notificationPanel" :key="selected.handoff_id" :handoff-id="selected.handoff_id" :recipient-name="selected.recipient_name" @status="updateNotificationStatus" />
-                  <PunishmentOutcome ref="outcomePanel" class="pn-section pn-section-outcome" :key="selected.handoff_id" :handoff-id="selected.handoff_id" />
+                  <PunishmentNotification ref="notificationPanel" :key="selected.handoff_id" :handoff-id="selected.handoff_id" :recipient-name="selected.recipient_name" @status="updateNotificationStatus" @changed="realtimeRefresh" />
+                  <details v-if="!selected.notification_decision" :key="`outcome-${selected.handoff_id}`" class="pn-material-details"><summary>历史处罚办理结果</summary>
+                    <PunishmentOutcome ref="outcomePanel" class="pn-section pn-section-outcome" :handoff-id="selected.handoff_id" />
+                  </details>
                 </template>
               </div>
               <div id="pnNotifyDock" class="pn-notify-dock"></div>

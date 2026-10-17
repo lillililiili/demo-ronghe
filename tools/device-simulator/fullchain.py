@@ -9,6 +9,7 @@ import time
 from engine import coordinates, TARGET_REPORT_KINDS
 from prerequisite_check import route_version_mismatch
 from plan_weather import plan_forecast
+from state_file import read_saved_text
 
 PREFIX = '/local-interface-simulator'
 CLASSES = {'uav':'UAV','bird':'BIRD','unknown':'UNKNOWN','identifying':None,'balloon':'UNKNOWN',
@@ -356,7 +357,13 @@ class FullChain:
             current = {pid for plan in self.manifest.get('plans', {}).values() for pid in plan.get('ids', [])}
             history = set()
             for path in Path(data_dir).glob('sim-*/manifest.json'):
-                saved = json.loads(path.read_text(encoding='utf-8-sig'))
+                try:
+                    saved = json.loads(read_saved_text(path))
+                    if not isinstance(saved, dict):
+                        raise ValueError('运行清单必须是对象')
+                except (OSError, ValueError) as error:
+                    raise ValueError('历史运行清单无法读取：' + path.parent.name + '/' + path.name
+                                     + '。请先恢复该文件；未切换当前模拟批次，原记录未修改。') from error
                 if (saved.get('batch') == self.manifest['batch'] or saved.get('provider') != 'map-sim'
                         or saved.get('source_mode') != 'replay' or saved.get('broker_id') != self.manifest.get('broker_id')
                         or saved.get('created_at', 0) > self.manifest['created_at']):

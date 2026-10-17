@@ -30,19 +30,12 @@ from fullchain import FullChain
 from protocol_b import ProtocolBResponder
 from mqtt_recovery import CommandSubscriptions
 from device_health import DeviceHealthReporter
-from state_file import atomic_json
+from state_file import atomic_json, read_saved_text
 from acceptance_flows import read_acceptance_flows
 from tcp_radar import TcpRadar, MANUAL_PORT
 
 ROOT = Path(__file__).resolve().parent
 
-
-def read_saved_text(path):
-    """Read UTF-8 batches and the legacy Windows CP936 files without rewriting history."""
-    try:
-        return path.read_text(encoding='utf-8-sig')
-    except UnicodeDecodeError:
-        return path.read_text(encoding='cp936')
 
 class ExternalAuthenticationRequired(ValueError):
     """The external interface session is absent and the browser must log in again."""

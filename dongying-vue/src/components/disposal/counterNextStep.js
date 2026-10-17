@@ -33,8 +33,10 @@ export function counterHiddenReason({ alarm, actions = [], processStatus = '', s
   if (alarm.eventState === 'PENDING_VERIFICATION') return '告警还没核实属实，核实后才能反制';
   if (!actions.includes('counter')) return processStatus ? `现在的处理进度是「${processStatus}」，这里不再发起反制` : '现在这一步不能反制';
   if (!summary) return '正在读取能否反制';
-  if (summary.no_counter?.decision_active === true) return '已决定不反制，本次处置已结束';
+  if (summary._unavailable === true) return '处置进度读取失败，恢复后重新判断';
+  if (summary.no_counter?.decision_active === true) return '已决定不反制，现场处置结束';
   if (summary.counter_launch_visible === true) return '';
+  if (summary.counter_block_reason) return summary.counter_block_reason;
   if (nowStatus?.departed) return '无人机已飞离，不需要反制；在告警事件页继续办理';
   if (PHASE_REASON[summary.notify_phase]) return PHASE_REASON[summary.notify_phase];
   if (summary.departure_observation?.presence === 'LEFT') {

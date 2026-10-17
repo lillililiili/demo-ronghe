@@ -1,7 +1,10 @@
 import copy
 import datetime as dt
+import json
 import sys
+import tempfile
 import unittest
+import uuid
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from full_scenario import full_scene, allocate_identities
@@ -38,6 +41,65 @@ class FakePlatform:
 
 
 class FullChainTests(unittest.TestCase):
+    def test_batch_activation_reads_mixed_history_encodings_without_rewriting(self):
+        from fullchain import FullChain
+        for encoding in ('utf-8', 'utf-8-sig', 'cp936'):
+            with self.subTest(encoding=encoding), tempfile.TemporaryDirectory() as directory:
+                broker, org, district = (uuid.uuid4().hex for _ in range(3))
+                scope = {'owner_org_id': org, 'district_id': district}
+                now = int(dt.datetime.now(dt.timezone.utc).timestamp() * 1000)
+                current, old, foreign, future, outside = (uuid.uuid4().hex for _ in range(5))
+                manifest = {'batch': uuid.uuid4().hex, 'created_at': now, 'broker_id': broker,
+                            'plans': {'current': {'ids': [current]}}}
+                snapshots = {}
+                for plan_id, row_broker, created_at, row_scope in (
+                        (old, broker, now - 1000, scope),
+                        (foreign, uuid.uuid4().hex, now - 1000, scope),
+                        (future, broker, now + 1000, scope),
+                        (outside, broker, now - 1000, dict(scope, district_id=uuid.uuid4().hex))):
+                    folder = Path(directory) / ('sim-' + uuid.uuid4().hex)
+                    folder.mkdir()
+                    path = folder / 'manifest.json'
+                    saved = {'batch': folder.name, 'name': '东营中文历史记录',
+                             'created_at': created_at, 'broker_id': row_broker, 'scope': row_scope,
+                             'provider': 'map-sim', 'source_mode': 'replay',
+                             'plans': {'logical': {'ids': [plan_id]}},
+                             'plan_expectations': {plan_id: {'source_mode': 'replay', 'message_id': uuid.uuid4().hex}}}
+                    path.write_text(json.dumps(saved, ensure_ascii=False), encoding=encoding)
+                    snapshots[path] = path.read_bytes()
+
+                class VisibleHistory(FakePlatform):
+                    def call(self, method, path, body=None, key=None):
+                        if path.startswith('/flight-plans?'):
+                            return {'items': [{'plan_id': pid} for pid in (old, foreign, future, outside)], 'total': 4}
+                        return super().call(method, path, body, key)
+
+                api = VisibleHistory()
+                chain = FullChain(api, full_scene(['uav']), manifest, scope, lambda: None)
+                chain.activate_plan_batch(directory)
+                self.assertEqual(api.calls[-1][2]['plan_ids'], [current])
+                self.assertEqual(api.calls[-1][2]['historical_plan_ids'], [old])
+                for path, original in snapshots.items():
+                    self.assertEqual(path.read_bytes(), original)
+
+    def test_unreadable_history_names_the_file_and_does_not_activate_partial_batch(self):
+        from fullchain import FullChain
+        for content in (b'\x00' * 32, b'{"plans":', b'\xff', b'[]'):
+            with self.subTest(content=content), tempfile.TemporaryDirectory() as directory:
+                folder = Path(directory) / ('sim-' + uuid.uuid4().hex)
+                folder.mkdir()
+                path = folder / 'manifest.json'
+                path.write_bytes(content)
+                api = FakePlatform()
+                manifest = {'batch': uuid.uuid4().hex, 'created_at': TEST_NOW, 'plans': {}}
+                chain = FullChain(api, full_scene(['uav']), manifest,
+                                  {'owner_org_id': 'org', 'district_id': 'district'}, lambda: None)
+                with self.assertRaisesRegex(ValueError, folder.name + '/manifest.json'):
+                    chain.activate_plan_batch(directory)
+                self.assertEqual(api.calls, [])
+                self.assertNotIn('plan_batch_registration', manifest)
+                self.assertEqual(path.read_bytes(), content)
+
     def test_batch_activation_uses_manifest_ids_and_preserves_history(self):
         import tempfile
         import json

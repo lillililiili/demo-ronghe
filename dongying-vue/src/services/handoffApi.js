@@ -1,5 +1,6 @@
 import { apiRequestTimed, buildQuery, mapPool } from './apiClient.js';
 import { readDistributionCounts } from '@/services/distributionStatistics.js';
+import { NOTIFICATION_OPTIONS, notificationStatisticsFilters, statusQuery } from '@/pages/punish/handoffStatus.js';
 
 /* 阶段 5 交接适配层：只包装后端 /handoff-recipients 与 /handoffs 接口，不复制任何状态机。
    提交成功保证材料入库；后端尝试投递，发送与送达以返回事实为准，不表示处罚办结。
@@ -24,8 +25,9 @@ export function listHandoffs(params) {
 }
 
 export async function getHandoffStatistics(filters, options = {}) {
-  const result = await readDistributionCounts(listHandoffs, filters, [
-    { key: 'by_delivery', field: 'delivery_status', codes: ['PENDING_DELIVERY', 'SUBMITTED', 'DELIVERED', 'FAILED'] },
+  const countNotifications = ({ notification_status, ...query }) => listHandoffs({ ...query, ...statusQuery(notification_status, query.receipt_status) });
+  const result = await readDistributionCounts(countNotifications, notificationStatisticsFilters(filters), [
+    { key: 'by_delivery', field: 'notification_status', codes: NOTIFICATION_OPTIONS.map(item => item.value) },
     { key: 'by_receipt', field: 'receipt_status', codes: ['NOT_EXPECTED', 'PENDING', 'ACKNOWLEDGED', 'TIMEOUT'] }
   ], options);
   // Day boundaries use business time (UTC+8), independent of the browser timezone.
@@ -61,5 +63,12 @@ export function notifyHandoff(handoffId, expectedAttemptNo, idempotencyKey) {
   });
 }
 
-export const handoffApi = { listHandoffRecipients, createHandoff, listHandoffs, getHandoff, listHandoffDeliveries, getHandoffNotification, notifyHandoff,
+export function declineHandoffNotification(handoffId, expectedVersion, reason, idempotencyKey) {
+  return apiRequestTimed(`/handoffs/${encodeURIComponent(handoffId)}/notification-decision`, {
+    method: 'POST', mutation: true, idempotencyKey,
+    body: { decision: 'DO_NOT_NOTIFY', expected_version: expectedVersion, reason }
+  });
+}
+
+export const handoffApi = { listHandoffRecipients, createHandoff, listHandoffs, getHandoff, listHandoffDeliveries, getHandoffNotification, notifyHandoff, declineHandoffNotification,
   previewRisk: (id, version) => apiRequestTimed(`/risks/${encodeURIComponent(id)}/handoff-preview${buildQuery({ expected_version: version })}`) };

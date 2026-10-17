@@ -5,8 +5,9 @@ import AutoVoiceNotice from '@/components/disposal/AutoVoiceNotice.vue';
 import AdvisoryRecords from '@/components/disposal/AdvisoryRecords.vue';
 import { useUavAdvisory } from '@/hooks/useUavAdvisory.js';
 const props = defineProps({ eventId: { type: String, required: true }, alarmLabel: String, targetLabel: String });
-const emit = defineEmits(['updated', 'open']);
-const { data, loading, error, load } = useUavAdvisory(() => props.eventId, value => emit('updated', value), 1000);
+const emit = defineEmits(['updated', 'open', 'unavailable']);
+const { data, loading, error, load } = useUavAdvisory(() => props.eventId, value => emit('updated', value), 1000,
+  (id, startedAt) => emit('unavailable', id, startedAt));
 </script>
 
 <template>

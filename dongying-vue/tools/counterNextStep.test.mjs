@@ -18,7 +18,7 @@ test('reason when counter is not offered', () => {
   assert.match(counterHiddenReason({ alarm, actions: [], processStatus: '反制执行中' }), /「反制执行中」/);
   assert.equal(counterHiddenReason({ alarm, actions }), '正在读取能否反制');
   assert.equal(counterHiddenReason({ alarm, actions, summary: { counter_launch_visible: true } }), '');
-  assert.equal(counterHiddenReason({ alarm, actions, summary: { counter_launch_visible: true, no_counter: { decision_active: true } } }), '已决定不反制，本次处置已结束');
+  assert.equal(counterHiddenReason({ alarm, actions, summary: { counter_launch_visible: true, no_counter: { decision_active: true } } }), '已决定不反制，现场处置结束');
   assert.match(counterHiddenReason({ alarm, actions, summary: { notify_phase: 'AUTO_CALL' } }), /正在给飞手打电话/);
   assert.match(counterHiddenReason({ alarm, actions, summary: {}, nowStatus: { departed: true } }), /已飞离，不需要反制/);
   const left = { departure_observation: { presence: 'LEFT' } };

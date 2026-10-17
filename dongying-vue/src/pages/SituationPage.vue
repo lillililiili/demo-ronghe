@@ -780,9 +780,16 @@ function targetAlarm(target) {
 
 function updateNotification(value) {
   if (value.event_id !== selectedUavAlarm.value?.eventId) return;
+  const previous = advisorySummaries.value[value.event_id];
+  if (previous && (previous._fetchedAt > (value._fetchedAt || 0) || previous.event_version > value.event_version)) return;
   advisorySummaries.value = { [value.event_id]: value };
   departureByEvent.value = { ...departureByEvent.value, [value.event_id]: value.departure_observation || null };
   if (map && selection.value?.kind === 'target') map.pinHit('target', selection.value.id);
+}
+function invalidateNotification(eventId, startedAt = Date.now()) {
+  if (eventId !== selectedUavAlarm.value?.eventId
+    || (advisorySummaries.value[eventId]?._fetchedAt || 0) > startedAt) return;
+  advisorySummaries.value = { [eventId]: { event_id: eventId, _unavailable: true, _fetchedAt: startedAt } };
 }
 
 async function openTargetVerification(target) {
@@ -1036,6 +1043,7 @@ onUnmounted(() => {
           <div @click="onTipAction($event.target.closest('[data-tip-act]')?.dataset.tipAct, { kind: 'target', data: selectedTarget })"
             v-html="renderTargetTip(selectedTarget, showAlarmAdvisoryCard, 'head')"></div>
           <SituationNextStep :alarm="selectedUavAlarm" :summary="advisorySummaries[selectedUavAlarm.eventId]" :now-status="selectedNowStatus"
+            @updated="updateNotification" @unavailable="invalidateNotification"
             @verify="verifySelectedAlarm" @records="openCounterRecords" />
           <div @click="onTipAction($event.target.closest('[data-tip-act]')?.dataset.tipAct, { kind: 'target', data: selectedTarget })"
             v-html="renderTargetTip(selectedTarget, showAlarmAdvisoryCard, 'body')"></div>
@@ -1065,14 +1073,15 @@ onUnmounted(() => {
           <p>遥控器位置：{{ PILOT_LOCATION_IN_ALARM_DETAIL }}</p>
         </section>
         <SituationNextStep v-if="selectedUavAlarm && !selectedTarget && !selectedRisk && !selectedPlan && !selectedDevice" :alarm="selectedUavAlarm"
-          :summary="advisorySummaries[selectedUavAlarm.eventId]" :now-status="selectedNowStatus" @verify="verifySelectedAlarm" @records="openCounterRecords" />
+          :summary="advisorySummaries[selectedUavAlarm.eventId]" :now-status="selectedNowStatus" @verify="verifySelectedAlarm" @records="openCounterRecords"
+          @updated="updateNotification" @unavailable="invalidateNotification" />
         <div v-if="videoContext && !selectedTarget" class="sit-video-entry">
           <button type="button" :aria-expanded="showTargetVideo" aria-controls="situation-video-window" @click="onTipAction('eo-video')">{{ showTargetVideo ? '收起视频' : '实时视频' }}</button>
         </div>
         <p v-if="showAlarmPopup && !alarmAnchor()" class="sit-alarm-position-note">当前未取得该目标的有效位置，无法定位无人机；以下保留此事件的信息。</p>
         <SituationAdvisoryCard v-if="showAlarmAdvisoryCard" :key="`${selectedUavAlarm.eventId}:${selectedUavAlarm.eventState}`"
           :event-id="selectedUavAlarm.eventId" :alarm-label="selectedUavAlarm.id"
-          @updated="updateNotification" @open="openAlarmDisposal(selectedUavAlarm)" />
+          @updated="updateNotification" @unavailable="invalidateNotification" @open="openAlarmDisposal(selectedUavAlarm)" />
         <p v-else-if="showAlarmPopup" class="sit-alarm-position-note">此告警未关联无人机事件，暂无可读取的通知记录。</p>
         <template #video="{ expanded, toggleExpanded }">
           <TargetLiveVideo v-if="videoContext" :key="videoContext.key" class="sit-companion-video" compact default-expanded

@@ -7,7 +7,7 @@ import { uavProcessActions, uavProcessStatus } from './situationFlow.js';
 
 /* 卡片「下一步」：紧挨「无人机现在」。能反制时放反制按钮；不能时按钮变灰并写原因（页面设计第 2 条）。 */
 const props = defineProps({ alarm: { type: Object, required: true }, summary: Object, nowStatus: Object });
-const emit = defineEmits(['records', 'verify']);
+const emit = defineEmits(['records', 'verify', 'updated', 'unavailable']);
 const actions = computed(() => uavProcessActions(props.alarm));
 const summary = computed(() => props.summary?.event_id && props.summary.event_id === props.alarm.eventId ? props.summary : null);
 const reason = computed(() => counterHiddenReason({
@@ -23,7 +23,8 @@ const reason = computed(() => counterHiddenReason({
       <p>{{ reason }}</p>
     </div>
     <CounterLaunch v-else-if="!reason && alarm.eventId" :key="alarm.eventId" :event-id="alarm.eventId" :event-label="displayBusinessNo(alarm.id)"
-      :summary="summary" active show-launch :show-records="false" @records="emit('records', $event)" />
+      :summary="summary" active show-launch :show-records="false" @records="emit('records', $event)"
+      @updated="emit('updated', $event)" @unavailable="(id, startedAt) => emit('unavailable', id, startedAt)" />
     <div v-else class="sit-next-step-row">
       <button class="btn pri" type="button" disabled :aria-describedby="`sit-next-${alarm.alarmId}`">发起反制</button>
       <p :id="`sit-next-${alarm.alarmId}`">暂不能反制：{{ reason }}</p>

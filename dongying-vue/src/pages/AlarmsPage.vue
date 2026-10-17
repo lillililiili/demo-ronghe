@@ -55,11 +55,7 @@ import UavAdvisoryPanel from '@/components/disposal/UavAdvisoryPanel.vue';
 import CounterLaunch from '@/pages/alarms/CounterLaunch.vue';
 import { alarmReasonView, uavNowHtml, uavNowStatus } from '@/components/disposal/uavNowStatus.js';
 import { counterHiddenReason } from '@/components/disposal/counterNextStep.js';
-import { autoSmsView } from '@/components/disposal/autoSmsView.js';
-import { autoVoiceView } from '@/components/disposal/autoVoiceView.js';
-import { deviceApi } from '@/services/deviceApi.js';
-import { deviceUnavailableReason } from '@/ui/disposalAuthModal.js';
-import { deviceReach } from '@/ui/deviceReach.js';
+import { notificationProgressView } from '@/components/disposal/autoHandoffView.js';
 import { serverNow } from '@/services/serverClock.js';
 import TargetTrackingPanel from '@/components/video/TargetTrackingPanel.vue';
 import { uavAdvisoryApi } from '@/services/uavAdvisoryApi.js';
@@ -191,7 +187,7 @@ const STATUS_OPTS = [{ v: '全部', t: '全部' }, ...Object.entries(STATUS_FILT
 const TIME_OPTS = TIME_FILTER_OPTIONS.map(o => ({ v: o.value, t: o.label }));
 const pageProgress = reactive({});
 const pendingProgress = new Set();
-const progressSources = new Map();
+const progressSources = reactive(new Map());
 let progressReadSeq = 0, progressBatchSeq = 0;
 let progressBatch = null;
 
@@ -200,7 +196,8 @@ function recordProgressRead(eventId, source, seq, items) {
   const sources = progressSources.get(eventId) || {};
   const previous = sources[source];
   if (previous && previous.seq > seq) return;
-  sources[source] = { seq, items: items ?? previous?.items, failed: items === undefined };
+  const complete = Array.isArray(items);
+  sources[source] = { seq, items: complete ? items : previous?.items, failed: !complete };
   progressSources.set(eventId, sources);
   pageProgress[eventId] = deriveAlarmProgress(sources.auths?.items || [], sources.handoffs?.items || []);
 }
@@ -236,9 +233,12 @@ function deriveAlarmProgress(auths, handoffs) {
 }
 function displayState(a) {
   if (!a?.event_id || !['CONFIRMED', 'PENDING_VERIFICATION'].includes(a.state)) return stateOf(a);
-  const noCounter = advisorySummaries.get(a.event_id)?.no_counter;
-  if (noCounter?.decision_active === true) return { t: '不反制 · 处置已结束', c: 't-cyan', color: '#22d3ee' };
+  const summary = advisorySummaries.get(a.event_id);
+  const noCounter = summary?.no_counter;
   if (noCounter?.review_required === true) return { t: '风险变化待决策', c: 't-amber', color: '#f1a43a' };
+  const notification = notificationProgressView(summary?.auto_handoff);
+  if (notification) return { t: notification.title, c: notification.tone === 'warning' ? 't-amber' : notification.tone === 'success' ? 't-green' : 't-gray', color: notification.tone === 'warning' ? '#f1a43a' : '#22d3ee' };
+  if (noCounter?.decision_active === true) return { t: '不反制 · 现场处置结束', c: 't-cyan', color: '#22d3ee' };
   const autoHandoff = advisorySummaries.get(a.event_id)?.auto_handoff;
   const autoTransferred = !!autoHandoff?.handoff_id && !['FAILED', 'DISABLED', 'BLOCKED', 'WAITING'].includes(autoHandoff.status);
   const handedOff = autoTransferred || pageProgress[a.event_id] === 'HANDED_OFF';
@@ -262,10 +262,12 @@ function selectedDisposalProgress() {
     || deriveAlarmProgress(Object.values(disposal.byAction), disposal.handoff ? [disposal.handoff] : []);
 }
 function showCounterLaunch() {
-  if (advisoryLive.value?.no_counter?.decision_active === true) return false;
-  if (advisoryLive.value?.counter_launch_visible !== true || !cur.alarm?.event_id) return false;
-  const key = selectedDisposalProgress();
-  return !['COUNTERMEASURE_DONE', 'JAMMING_DONE', 'COUNTER_STOPPED', 'HANDED_OFF'].includes(key);
+  const eventId = cur.alarm?.event_id, summary = advisoryLive.value;
+  if (!eventId || summary?.event_id !== eventId || summary._unavailable === true || summary.no_counter?.decision_active === true
+    || summary.counter_launch_visible !== true) return false;
+  const sources = progressSources.get(eventId);
+  if (!Array.isArray(sources?.auths?.items) || !Array.isArray(sources?.handoffs?.items) || sources.auths.failed || sources.handoffs.failed) return false;
+  return !selectedDisposalProgress();
 }
 function eventHandedOff() {
   const eventId = cur.alarm?.event_id;
@@ -339,7 +341,7 @@ async function loadEventDisposals(eventId) {
   try {
     const page = await disposalApi.list({ subject_kind: 'UAV_EVENT', subject_id: eventId, page: 1, size: 50 });
     if (!isCurrent()) return;
-    recordProgressRead(eventId, 'auths', readSeq, page?.items || []);
+    recordProgressRead(eventId, 'auths', readSeq, page?.items);
     // 同一动作可能申请过多次：按申请时间取最新一条代表当前状态。
     for (const row of page?.items || []) {
       const prev = disposal.byAction[row.action_type];
@@ -354,7 +356,7 @@ async function loadEventDisposals(eventId) {
   try {
     const page = await handoffApi.listHandoffs({ source_kind: 'UAV_EVENT', source_id: eventId, page: 1, size: 5 });
     if (!isCurrent()) return;
-    recordProgressRead(eventId, 'handoffs', readSeq, page?.items || []);
+    recordProgressRead(eventId, 'handoffs', readSeq, page?.items);
     disposal.handoff = (page?.items || []).find(row => row.handoff_type === 'UAV_PUNISHMENT') || null;
   } catch { if (isCurrent()) recordProgressRead(eventId, 'handoffs', readSeq); }
   if (!isCurrent()) return;
@@ -371,7 +373,7 @@ async function refreshEventDisposals(eventId) {
   try {
     const page = await disposalApi.list({ subject_kind: 'UAV_EVENT', subject_id: eventId, page: 1, size: 50 });
     if (!isCurrent()) return;
-    recordProgressRead(eventId, 'auths', readSeq, page?.items || []);
+    recordProgressRead(eventId, 'auths', readSeq, page?.items);
     const next = {};
     for (const row of page?.items || []) {
       const prev = next[row.action_type];
@@ -389,7 +391,7 @@ async function refreshEventDisposals(eventId) {
   try {
     const page = await handoffApi.listHandoffs({ source_kind: 'UAV_EVENT', source_id: eventId, page: 1, size: 5 });
     if (!isCurrent()) return;
-    recordProgressRead(eventId, 'handoffs', readSeq, page?.items || []);
+    recordProgressRead(eventId, 'handoffs', readSeq, page?.items);
     disposal.handoff = (page?.items || []).find(row => row.handoff_type === 'UAV_PUNISHMENT') || null;
   } catch { if (isCurrent()) recordProgressRead(eventId, 'handoffs', readSeq); }
   if (!isCurrent()) return;
@@ -631,7 +633,7 @@ function advisoryProps(a, ev) {
 }
 /* 处置进度面板每秒读一次通知摘要。只有本页用到的字段（通知阶段、反制入口、不反制决定、自动移送）
    变了才重画列表和详情、重读处置记录；没变就不动页面，免得每秒重画、按钮点不中（BUG-06）。 */
-const advisoryPageKey = s => JSON.stringify([s.event_version, s.notify_phase || '', s.counter_launch_visible === true,
+const advisoryPageKey = s => JSON.stringify([s.event_version, s.notify_phase || '', s.counter_launch_visible === true, s._unavailable === true,
   s.no_counter?.decision_active === true, s.no_counter?.review_required === true,
   s.auto_handoff?.handoff_id || '', s.auto_handoff?.status || '']);
 const advisoryContent = s => JSON.stringify({ ...s, _fetchedAt: undefined });
@@ -667,7 +669,15 @@ function updateAdvisory(summary) {
 }
 async function refreshOpenAdvisory(eventId) {
   if (!eventId) return;
-  try { updateAdvisory(await uavAdvisoryApi.get(eventId)); } catch { /* 列表回读仍会补上通知阶段 */ }
+  const startedAt = Date.now();
+  try { updateAdvisory({ ...await uavAdvisoryApi.get(eventId), _fetchedAt: startedAt }); }
+  catch { invalidateAdvisory(eventId, startedAt); }
+}
+function invalidateAdvisory(eventId, startedAt = Date.now()) {
+  const previous = advisorySummaries.get(eventId);
+  if ((previous?._fetchedAt || 0) > startedAt) return;
+  advisorySummaries.set(eventId, { event_id: eventId, event_version: 0, ...previous, _unavailable: true, _fetchedAt: startedAt });
+  if (advisoryLive.value?.event_id === eventId) advisoryLive.value = null;
 }
 function updateNoCounter(status) {
   if (!status?.event_id || status.event_id !== cur.alarm?.event_id) return;
@@ -795,60 +805,15 @@ function alarmNowHtml() {
     now: serverNow(),
     reasonText: ruleReasonText
   });
-  return `${uavNowHtml(status)}${alarmFactsHtml(a, t, advisory, status)}`;
+  return `${uavNowHtml(status)}${alarmCounterBlockHtml(a, advisory, status)}`;
 }
 
-/* 顶部四项（页面设计第 6 条）：无人机现在（上面那块）、现在位置、通知飞手、能用的反制设备，
-   都放在「反制 / 不反制」按钮正上方；反制按钮不出现时写一句原因。 */
-const COUNTER_DEVICE_TYPES = ['ifr', 'countermeasure'];
-const counterDevices = { rows: null, error: '', at: 0, loading: false };
-async function loadCounterDevices() {
-  if (counterDevices.loading || Date.now() - counterDevices.at < 30000) return;
-  counterDevices.loading = true;
-  try {
-    const page = await deviceApi.list({ page: 1, size: 200, enabled: true, sort: 'device_no_asc' });
-    counterDevices.rows = (page?.items || []).filter(device => device.enabled === true && COUNTER_DEVICE_TYPES.includes(device.device_type_code));
-    counterDevices.error = '';
-  } catch (e) {
-    counterDevices.error = e?.status === 403 ? '没有设备台账读取权限' : '读取设备失败';
-  } finally {
-    counterDevices.at = Date.now();
-    counterDevices.loading = false;
-    patchHtml(el('alNow'), alarmNowHtml());
-  }
-}
-function counterDeviceText(point) {
-  if (!counterDevices.rows) { void loadCounterDevices(); return counterDevices.error || '读取中'; }
-  if (Date.now() - counterDevices.at >= 30000) void loadCounterDevices();
-  if (!point) return '没有时效内的位置，无法判断';
-  // 与申请弹窗的设备下拉同一口径：照得到的、没配覆盖范围无法判断的都能选，配了范围照不到的不列。
-  const online = counterDevices.rows.filter(device => !deviceUnavailableReason(device))
-    .map(device => ({ device, reach: deviceReach(device, point) }));
-  const usable = online.filter(row => row.reach.inRange).sort((x, y) => x.reach.distanceM - y.reach.distanceM);
-  const unknown = online.filter(row => row.reach.unknown);
-  const names = rows => rows.slice(0, 2).map(({ device }) => displayDeviceNo(device.device_no) || device.name || '未命名设备').join('、')
-    + (rows.length > 2 ? ` 等 ${rows.length} 台` : '');
-  const parts = [usable.length ? `${names(usable)}在线，覆盖到目标` : '',
-    unknown.length ? `${names(unknown)}在线，未配置覆盖范围，无法判断是否覆盖` : ''].filter(Boolean);
-  return parts.length ? parts.join('；') : '没有在线且覆盖到目标的反制设备，发起反制时选不到执行设备';
-}
-function alarmFactsHtml(a, t, advisory, status) {
-  const ls = t?.latest_state;
-  const point = a.observation_status === 'CURRENT' && ls ? coord(ls.location, ls.field_issues, 'location') : null;
-  const position = point
-    ? `${point.lon.toFixed(4)}, ${point.lat.toFixed(4)}${ls.altitude_amsl_m == null ? '' : ` · ${Math.round(Number(ls.altitude_amsl_m))} m`}`
-    : cur.targetLoading ? '读取中' : '没有时效内的位置';
-  const sms = advisory ? autoSmsView(advisory) : null;
-  const voice = advisory ? autoVoiceView(advisory) : null;
-  const notify = advisory ? [`短信：${sms?.title || '未提供'}`, `电话：${voice?.title || '未提供'}`].join('；') : '读取中';
-  const done = ['COUNTERMEASURE_DONE', 'JAMMING_DONE', 'COUNTER_STOPPED', 'HANDED_OFF'].includes(selectedDisposalProgress());
-  const hidden = a.state === 'CONFIRMED' && !showCounterLaunch() && !done && !eventHandedOff()
+/* 反制入口不出现时，保留当前不能发起的原因。 */
+function alarmCounterBlockHtml(a, advisory, status) {
+  const progressed = !!selectedDisposalProgress();
+  const hidden = a.state === 'CONFIRMED' && !showCounterLaunch() && !progressed && !eventHandedOff()
     ? counterHiddenReason({ alarm: { eventState: 'CONFIRMED' }, actions: ['counter'], summary: advisory, nowStatus: status }) : '';
-  return `<dl class="alarm-now-facts">
-    <div><dt>现在位置</dt><dd class="mono">${esc(position)}</dd></div>
-    <div><dt>通知飞手</dt><dd>${esc(notify)}</dd></div>
-    <div><dt>能用的反制设备</dt><dd>${esc(counterDeviceText(point))}</dd></div>
-  </dl>${hidden ? `<p class="alarm-now-block">暂不能反制：${esc(hidden)}</p>` : ''}`;
+  return hidden ? `<p class="alarm-now-block">暂不能反制：${esc(hidden)}</p>` : '';
 }
 
 /* 告警原因（页面设计第 3 条）：先写最新研判，和告警记录的原因不同才另写一行；升级过的按升级记录拆开或写“累计”。 */
@@ -1101,7 +1066,7 @@ function loadPageProgress(rows) {
     const read = async (source, request) => {
       try {
         const page = await request();
-        if (isCurrent()) recordProgressRead(id, source, readSeq, page?.items || []);
+        if (isCurrent()) recordProgressRead(id, source, readSeq, page?.items);
       } catch {
         if (isCurrent()) recordProgressRead(id, source, readSeq);
       }
@@ -1112,11 +1077,8 @@ function loadPageProgress(rows) {
       read('handoffs', () => handoffApi.listHandoffs({ source_kind: 'UAV_EVENT', source_id: id, page: 1, size: 5 })),
       confirmed.has(id) ? uavAdvisoryApi.get(id).then(advisory => {
         if (!isCurrent() || !advisory) return;
-        const current = advisorySummaries.get(id);
-        if (!current || (advisory.event_version >= current.event_version && (!current._fetchedAt || startedAt >= current._fetchedAt))) {
-          advisorySummaries.set(id, { ...advisory, _fetchedAt: startedAt });
-        }
-      }).catch(() => {}) : Promise.resolve()
+        updateAdvisory({ ...advisory, _fetchedAt: startedAt });
+      }).catch(() => { if (isCurrent()) invalidateAdvisory(id, startedAt); }) : Promise.resolve()
     ]);
     if (!isCurrent()) return;
     pendingProgress.delete(id);
@@ -1528,6 +1490,7 @@ onMounted(async () => {
                 :show-launch="showCounterLaunch()" :handed-off="eventHandedOff()" :confirmed="advisorySubject.confirmed" :summary="advisoryLive"
                 :counter-stopped="selectedDisposalProgress() === 'COUNTER_STOPPED'"
                 @decision="updateNoCounter"
+                @updated="updateAdvisory" @unavailable="invalidateAdvisory"
                 @records="openAuthorizations" />
               <div id="alDetailActions" class="alarm-observation"></div>
             </div>
@@ -1542,7 +1505,7 @@ onMounted(async () => {
               <UavAdvisoryPanel v-if="advisorySubject" :key="`advisory-${advisorySubject.id}`"
                 :event-id="advisorySubject.id" :confirmed="advisorySubject.confirmed"
                 :handoff-id="advisorySubject.handoffId" :interval="1000"
-                @updated="updateAdvisory" />
+                @updated="updateAdvisory" @unavailable="invalidateAdvisory" />
             </div>
           </UPanel>
         </div>
@@ -1632,15 +1595,11 @@ onMounted(async () => {
 .alarm-time-custom { flex:none; display:flex; flex-direction:column; gap:6px; padding:0 16px 12px; }
 .alarm-time-custom > label { line-height:20px; color:var(--txt-2); }
 .alarm-time-custom :deep(.n-date-picker) { max-width:420px; }
-.alarm-action-bar { flex:none; display:flex; flex-direction:column; align-items:stretch; gap:10px; margin:0; padding:10px 12px; border-bottom:1px solid var(--line); background:var(--panel); box-shadow:0 4px 12px color-mix(in srgb, var(--bg-1) 22%, transparent); }
+.alarm-action-bar { flex:none; max-height:100%; overflow:auto; display:flex; flex-direction:column; align-items:stretch; gap:10px; margin:0; padding:10px 12px; border-bottom:1px solid var(--line); background:var(--panel); box-shadow:0 4px 12px color-mix(in srgb, var(--bg-1) 22%, transparent); }
 .alarm-action-bar:not(:has(.btn, .tag, details, .uav-now)) { display:none; }
 .alarm-now:empty { display:none; }
 .alarm-now :deep(.uav-now) { margin:0; }
 .alarm-now { display:flex; flex-direction:column; gap:8px; }
-.alarm-now :deep(.alarm-now-facts) { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:6px; margin:0; }
-.alarm-now :deep(.alarm-now-facts > div) { min-width:0; padding:6px 8px; border:1px solid var(--line); border-radius:6px; background:var(--surface-2); }
-.alarm-now :deep(.alarm-now-facts dt) { font-size:11px; color:var(--txt-3); }
-.alarm-now :deep(.alarm-now-facts dd) { margin:2px 0 0; font-size:12px; line-height:1.5; color:var(--txt); overflow-wrap:anywhere; }
 .alarm-now :deep(.alarm-now-block) { margin:0; font-size:12px; line-height:1.6; color:var(--txt-3); }
 .alarm-observation { order:2; flex:0 0 auto; min-width:0; }
 .alarm-observation:empty { display:none; }

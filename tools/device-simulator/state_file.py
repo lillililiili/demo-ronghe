@@ -9,6 +9,15 @@ import time
 REPLACE_DELAYS = (0.05, 0.1, 0.2, 0.4, 0.8)
 
 
+def read_saved_text(path):
+    """Read current UTF-8 and legacy Windows CP936 without rewriting history."""
+    raw = Path(path).read_bytes()
+    try:
+        return raw.decode('utf-8-sig')
+    except UnicodeDecodeError:
+        return raw.decode('cp936')
+
+
 def atomic_json(path, value):
     path = Path(path)
     encoded = json.dumps(value, ensure_ascii=False, indent=2)

@@ -5,14 +5,14 @@ const { pathToFileURL } = require('node:url');
 const sourceRoot = path.resolve(__dirname, '../src');
 const load = file => import(pathToFileURL(path.join(sourceRoot, file)).href);
 
-test('several punishment recipients ask a person to choose, and only accounts that may hand off get the button', async () => {
+test('接口配置不唯一不能要求操作员选择接收方，保留后台原因', async () => {
   const { autoHandoffView, partyWarning } = await load('components/disposal/autoHandoffView.js');
   const manual = { status: 'MANUAL_REQUIRED', reason: '启用了 2 个处罚接收单位，系统不会替你选择。请选择接收单位后移送到处罚',
     party_status: 'UNIDENTIFIED', party_reasons: ['没有匹配到本次飞行的报备计划，找不到飞手和运营单位'] };
   const allowed = autoHandoffView({ can_handoff: true, auto_handoff: manual });
-  assert.equal(allowed.title, '需要选择处罚接收单位');
+  assert.equal(allowed.title, '通知接口配置待处理');
   assert.equal(allowed.tone, 'warning');
-  assert.equal(allowed.canSubmit, true);
+  assert.equal(allowed.canSubmit, false);
   assert.equal(allowed.partyUnidentified, true);
   assert.match(partyWarning(allowed), /^当事人不明，按待补线索移送：没有匹配到本次飞行的报备计划/);
   assert.equal(autoHandoffView({ can_handoff: false, auto_handoff: manual }).canSubmit, false);
@@ -22,6 +22,30 @@ test('several punishment recipients ask a person to choose, and only accounts th
   assert.equal(linked.canSubmit, false);
   assert.equal(linked.handoffId, 'handoff-1');
   assert.equal(partyWarning(autoHandoffView({ can_handoff: true, auto_handoff: { status: 'MANUAL_REQUIRED' } })), '');
+});
+
+test('内部待办只有实际关联编号才显示已建立，不通知决定与违法事实分开', async () => {
+  const { autoHandoffView } = await load('components/disposal/autoHandoffView.js');
+  const created = autoHandoffView({ auto_handoff: { status: 'PENDING_DECISION', handoff_id: 'new-1', reason: '已自动建立内部待办' } });
+  assert.deepEqual([created.title, created.tone, created.handoffId, created.canSubmit], ['现场处置结束 · 待决定通知', 'warning', 'new-1', false]);
+  const missing = autoHandoffView({ auto_handoff: { status: 'PENDING_DECISION', reason: '等待后台恢复待办' } });
+  assert.deepEqual([missing.title, missing.handoffId, missing.tone], ['通知待办尚未建立', '', 'warning']);
+  const declined = autoHandoffView({ auto_handoff: { status: 'DO_NOT_NOTIFY', handoff_id: 'new-2', reason: '已记录操作员决定' } });
+  assert.equal(declined.title, '本次不通知（已记录）');
+  assert.equal(declined.reason, '已记录操作员决定');
+});
+
+test('告警摘要以已保存待办及通知决定为准，旧历史不补待办', async () => {
+  const { notificationProgressView } = await load('components/disposal/autoHandoffView.js');
+  assert.equal(notificationProgressView(null), null);
+  assert.equal(notificationProgressView({ status: 'PENDING_DECISION' }).title, '通知待办尚未建立');
+  assert.equal(notificationProgressView({ status: 'SUBMITTED', handoff_id: 'old-1' }), null);
+  const pending = notificationProgressView({ status: 'PENDING_DECISION', handoff_id: 'new-3' });
+  assert.equal(pending.title, '现场处置结束 · 待决定通知');
+  const sent = notificationProgressView({ status: 'SUBMITTED', handoff_id: 'new-4', notification_decision: { state: 'NOTIFY' } });
+  assert.equal(sent.title, '已通知上级');
+  const failed = notificationProgressView({ status: 'FAILED', handoff_id: 'new-5', notification_decision: { state: 'NOTIFY' } });
+  assert.equal(failed.title, '通知上级发送失败');
 });
 
 test('the handoff line tells apart automatic, manual, not sent yet and not needed', async () => {

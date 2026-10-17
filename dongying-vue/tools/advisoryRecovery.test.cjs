@@ -35,6 +35,7 @@ test('disposal progress backs off during an outage and waits for SSE once the ba
   const outage = () => Object.assign(new Error('系统暂时无法处理，请稍后查看最新记录；若刚提交过操作，请先核对结果，避免重复提交。'), { code: 'HTTP_ERROR', status: 502 });
   let reply = () => Promise.resolve({ event_id: 'e1', sms: { status: 'SENT' } });
   const updates = [];
+  const unavailable = [];
   let onChange;
   const useRealtimeRefresh = (topics, callback) => { assert.ok(topics.includes('alarm')); onChange = callback; };
   const uavAdvisoryApi = { get: () => reply() };
@@ -43,7 +44,7 @@ test('disposal progress backs off during an outage and waits for SSE once the ba
   const scope = vue.effectScope();
   try {
     // 处置卡片订阅 SSE，两次变化读取至少间隔 1 秒。
-    const { data, error } = scope.run(() => useUavAdvisory(() => 'e1', value => updates.push(value), 1000));
+    const { data, error } = scope.run(() => useUavAdvisory(() => 'e1', value => updates.push(value), 1000, id => unavailable.push(id)));
     await flush();
     assert.equal(data.value.sms.status, 'SENT');
     reply = () => Promise.reject(outage());
@@ -51,6 +52,7 @@ test('disposal progress backs off during an outage and waits for SSE once the ba
     await onChange(); await flush();
     assert.equal(error.value, '处置记录暂时读不到（服务暂时不可用），正在自动重试。');
     assert.equal(data.value.sms.status, 'SENT', 'last progress stays on screen while the backend is away');
+    assert.deepEqual(unavailable, ['e1'], 'failed qualification refresh invalidates the parent action entry while retaining historical display');
     await fire(2000);
     await fire(4000);
     await fire(8000);
@@ -163,7 +165,7 @@ test('fusion card shows actual counter block reasons and never borrows another e
   assert.match(counterButton(watching), disabled);
   assert.match(watching, /已通知飞手，正在观察无人机是否离开/);
   const decided = await renderSituationNextStep({ ...allowed, counter_launch_visible: false, no_counter: { decision_active: true } });
-  assert.match(decided, /已决定不反制，本次处置已结束/);
+  assert.match(decided, /已决定不反制，现场处置结束/);
   const pending = await renderSituationNextStep(allowed, { eventState: 'PENDING_VERIFICATION' });
   assert.equal(counterButton(pending), undefined);
   assert.match(pending, />核实<\/button>/);

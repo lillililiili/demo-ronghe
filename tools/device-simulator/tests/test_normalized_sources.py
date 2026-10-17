@@ -34,7 +34,8 @@ def fixture(main='radar-a', secondary='tdoa-b', secondary_kind='tdoa', location=
     raw['targets'][0].update(deviceId=main, secondaryDeviceId=secondary, kind=kind,
         altitudeDatum='AMSL', transport='normalized', path=[list(location)], probability=.91)
     compiled, devices, targets, _ = compile_scene(raw)
-    manifest = {'batch': 'sim-multi', 'created_at': 2000000, 'devices': {}, 'plans': {},
+    manifest = {'batch': 'sim-multi', 'created_at': 2000000, 'devices': {key: {'platform_id': 'ops-'+str(i), 'kind': device['kind']}
+                    for i, (key, device) in enumerate(devices.items())}, 'plans': {},
                 'zones': {}, 'targets': allocate_identities(compiled, 'sim-multi')}
     api = SourcePlatform()
     chain = FullChain(api, compiled, manifest, {'owner_org_id': 'o', 'district_id': 'd'},
@@ -49,6 +50,46 @@ def posts(api, ending):
 # 两台设备都走规范化入口、各有一个观测源的情形：辅助设备的协议报不了这类目标（TDOA 报不了气球）。
 # 辅助设备能用自己协议报的（无人机）只发 MQTT，不再从规范化入口重复报（新-17），见最后两个用例。
 class NormalizedSourceTests(unittest.TestCase):
+    def test_missing_or_mismatched_registration_never_guesses_the_origin(self):
+        for registered in ({}, {'platform_id': 'ops-other', 'kind': '5ga'}):
+            with self.subTest(registered=registered):
+                chain, api, manifest, *_ = fixture()
+                manifest['devices']['radar-a'] = registered
+                with self.assertRaisesRegex(ValueError, '尚未完成本批台账登记'):
+                    chain.prepare()
+                self.assertFalse(posts(api, '/observation-devices'))
+
+    def test_changed_platform_identity_changes_source_idempotency_identity(self):
+        first, first_api, *_ = fixture()
+        first.prepare()
+        second, second_api, manifest, *_ = fixture()
+        manifest['devices']['radar-a']['platform_id'] = 'ops-from-another-registration'
+        second.prepare()
+        before = posts(first_api, '/observation-devices')[0]
+        after = posts(second_api, '/observation-devices')[0]
+        self.assertNotEqual(before['origin_ops_device_id'], after['origin_ops_device_id'])
+        self.assertNotEqual(before['message_id'], after['message_id'])
+
+    def test_legacy_checkpoint_without_parent_cannot_satisfy_bound_registration(self):
+        chain, api, manifest, *_ = fixture()
+        manifest['fullchain']['requests']['normalized-radar-a'] = {
+            'path': '/local-interface-simulator/observation-devices', 'body': {'message_id': 'old-without-parent'},
+            'state': 'ACCEPTED', 'result': {'device_id': 'legacy-device', 'source_id': 'legacy-source'}}
+        chain.prepare()
+        self.assertEqual(len(posts(api, '/observation-devices')), 1)
+        self.assertNotEqual(manifest['normalized_sources']['radar-a']['source_id'], 'legacy-source')
+        self.assertEqual(posts(api, '/observation-devices')[0]['origin_ops_device_id'], 'ops-0')
+
+    def test_legacy_source_count_does_not_invent_device_relationships(self):
+        chain, api, manifest, compiled, *_ = fixture()
+        compiled.setdefault('fullchain', {})['observationSourceCount'] = 2
+        chain.observation_source_count = 2
+        manifest['devices'] = {}
+        chain.prepare()
+        registrations = posts(api, '/observation-devices')
+        self.assertEqual(len(registrations), 2)
+        self.assertTrue(all('origin_ops_device_id' not in row for row in registrations))
+
     def test_bird_count_is_carried_as_observed_fact_for_each_source(self):
         for count, location in [(1, (410, 280)), (10, (430, 290)), (25, (620, 410))]:
             with self.subTest(count=count):
@@ -73,6 +114,10 @@ class NormalizedSourceTests(unittest.TestCase):
                 registrations = posts(api, '/observation-devices')
                 self.assertEqual(len(registrations), 2)
                 self.assertEqual(set(manifest['normalized_sources']), {main, auxiliary})
+                self.assertEqual({row['origin_ops_device_id'] for row in registrations},
+                    {manifest['devices'][key]['platform_id'] for key in (main, auxiliary)})
+                self.assertTrue(all(row['origin_ops_device_id'] for row in manifest['devices'].values()
+                    if row['kind'] == 'normalized'))
                 self.assertTrue(all(len(row['message_id']) <= 64 for row in registrations))
                 self.assertTrue(all([row['longitude'], row['latitude']] == coordinates(position) for row in registrations))
                 chain.tick(targets, 0, 1)
@@ -144,7 +189,7 @@ class NormalizedSourceTests(unittest.TestCase):
         chain, api, manifest, compiled, devices, targets = fixture()
         targets['t1']['transport'] = 'mqtt'
         manifest['provider'] = 'test'
-        manifest['devices'] = {key: {'external_id': key} for key in devices}
+        manifest['devices'] = {key: dict(manifest['devices'][key], external_id=key) for key in devices}
         chain.prepare()
         chain.tick(targets, 0, 1)
         packets = messages(compiled, devices, targets, manifest, 0, 2000000, {}, 1)
@@ -157,7 +202,7 @@ class NormalizedSourceTests(unittest.TestCase):
         # 发 MQTT 目标报文，不再登记观测源、也不再从规范化入口重复报——以前一台设备算成两个数据源，两台看到记成 3 个。
         chain, api, manifest, compiled, devices, targets = fixture()
         manifest['provider'] = 'test'
-        manifest['devices'] = {key: {'external_id': key} for key in devices}
+        manifest['devices'] = {key: dict(manifest['devices'][key], external_id=key) for key in devices}
         chain.prepare()
         self.assertEqual(set(manifest['normalized_sources']), {'radar-a'})
         self.assertEqual(len(posts(api, '/observation-devices')), 1)

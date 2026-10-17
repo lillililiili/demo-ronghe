@@ -12,9 +12,11 @@
   function rulesLine(rules) {
     const verify = rules?.verify, counter = rules?.counter, parts = [];
     if (verify?.ok) parts.push(verify.enabled > 0
-      ? `核实规则启用 ${verify.enabled}/${verify.total} 条，告警出来后会自动核实`
+      ? `核实规则启用 ${verify.enabled}/${verify.total} 条，全部满足后自动核实`
       : '核实规则一条都没启用，不会自动核实，告警会一直停在“待核实”');
-    if (counter?.ok) parts.push(`反制规则启用 ${counter.enabled}/${counter.total} 条，只判断够不够条件，反制要人工点“发起反制”`);
+    if (counter?.ok) parts.push(counter.enabled > 0
+      ? `反制规则启用 ${counter.enabled}/${counter.total} 条，全部满足且证据、设备等校验通过后自动发起；不满足时由有权限的人发起`
+      : '反制规则一条都没启用，由有权限的人发起反制');
     return parts.length ? `规则管理里现在：${parts.join('；')}。` : '';
   }
   /* 这个流程对自动核实的要求和现在的开关对不上时，说清楚；没有要求或读不到就不说。 */

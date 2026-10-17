@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from full_scenario import allocate_identities, full_scene
 from fullchain import FullChain
+from test_fullchain import prepared_manifest
 from platform_client import Platform, legacy_batch_device
 import retire_legacy_devices
 
@@ -37,7 +38,7 @@ def prepared(batch, scene=None):
     manifest = {'batch': batch, 'created_at': 1791172800000, 'devices': {}, 'plans': {}, 'zones': {},
                 'targets': allocate_identities(scene, batch)}
     platform = RecordingPlatform()
-    FullChain(platform, scene, manifest, {'owner_org_id': 'o', 'district_id': 'd'}, lambda: None,
+    FullChain(platform, scene, prepared_manifest(scene, manifest), {'owner_org_id': 'o', 'district_id': 'd'}, lambda: None,
               clock=lambda: 1791172800000).prepare()
     return platform
 

@@ -77,14 +77,15 @@ const escapeHtml = value => String(value == null ? '' : value).replace(/[&<>"']/
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
 })[char]);
 
-/** 卡片里的“无人机现在”整块；process 是处理进度，缩成右上角小标签。 */
-export function uavNowHtml(status, { process = '' } = {}) {
+/** 卡片里的“无人机现在”；告警详情 compact 将状态和时间放在同一行。 */
+export function uavNowHtml(status, { process = '', compact = false } = {}) {
   if (!status) return '';
+  const title = `<strong class="uav-now-title"><i aria-hidden="true"></i>${escapeHtml(status.title)}</strong>`;
+  const basis = status.basis ? `<span class="uav-now-sub uav-now-basis">${escapeHtml(status.basis)}</span>` : '';
   return `<div class="uav-now is-${status.tone}" role="status" aria-label="无人机现在：${escapeHtml(status.title)}">
-    <div class="uav-now-top"><span class="uav-now-label">无人机现在</span>${process ? `<span class="uav-now-process">${escapeHtml(process)}</span>` : ''}</div>
-    <strong class="uav-now-title"><i aria-hidden="true"></i>${escapeHtml(status.title)}</strong>
+    ${compact ? `<div class="uav-now-summary">${title}${basis}</div>` : `<div class="uav-now-top"><span class="uav-now-label">无人机现在</span>${process ? `<span class="uav-now-process">${escapeHtml(process)}</span>` : ''}</div>${title}`}
     ${status.detail ? `<span class="uav-now-sub">${escapeHtml(status.detail)}</span>` : ''}
-    ${status.basis ? `<span class="uav-now-sub">${escapeHtml(status.basis)}</span>` : ''}
+    ${compact ? '' : basis}
   </div>`;
 }
 

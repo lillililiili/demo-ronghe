@@ -5,14 +5,14 @@ const { pathToFileURL } = require('node:url');
 const sourceRoot = path.resolve(__dirname, '../src');
 const load = file => import(pathToFileURL(path.join(sourceRoot, file)).href);
 
-test('接口配置不唯一不能要求操作员选择接收方，保留后台原因', async () => {
+test('several punishment recipients ask a person to choose, and only accounts that may hand off get the button', async () => {
   const { autoHandoffView, partyWarning } = await load('components/disposal/autoHandoffView.js');
   const manual = { status: 'MANUAL_REQUIRED', reason: '启用了 2 个处罚接收单位，系统不会替你选择。请选择接收单位后移送到处罚',
     party_status: 'UNIDENTIFIED', party_reasons: ['没有匹配到本次飞行的报备计划，找不到飞手和运营单位'] };
   const allowed = autoHandoffView({ can_handoff: true, auto_handoff: manual });
-  assert.equal(allowed.title, '通知接口配置待处理');
+  assert.equal(allowed.title, '需要选择处罚接收单位');
   assert.equal(allowed.tone, 'warning');
-  assert.equal(allowed.canSubmit, false);
+  assert.equal(allowed.canSubmit, true);
   assert.equal(allowed.partyUnidentified, true);
   assert.match(partyWarning(allowed), /^当事人不明，按待补线索移送：没有匹配到本次飞行的报备计划/);
   assert.equal(autoHandoffView({ can_handoff: false, auto_handoff: manual }).canSubmit, false);
@@ -162,4 +162,11 @@ test('handoff material shows the frozen party, judgments and evidence chain with
   assert.equal(evidenceChainView({ evidence: [] }), null);
   assert.deepEqual(evidenceChainView({ evidence_chain: [] }), { total: 0, items: [], trackUnavailable: false });
   assert.deepEqual(judgmentViews({ judgments: [] }), []);
+});
+
+test('已有人工通知决定不能变成新的选单位自动移送入口', async () => {
+  const { autoHandoffView } = await load('components/disposal/autoHandoffView.js');
+  for (const linked of ['', 'legacy-handoff']) {
+    assert.equal(autoHandoffView({ can_handoff: true, auto_handoff: { status: 'MANUAL_REQUIRED', handoff_id: linked, notification_decision: { state: 'PENDING_DECISION' } } }).canSubmit, false);
+  }
 });

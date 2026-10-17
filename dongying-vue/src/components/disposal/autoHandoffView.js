@@ -1,6 +1,6 @@
-/* 处置进度只读后端事实；新待办在“移送与处罚”决定是否通知上级。 */
+/* 新事件按规则自动移送；已有人工通知决定只按后端冻结事实兼容展示。 */
 export const AUTO_HANDOFF_STATUS = {
-  WAITING: '等待移送到处罚', MANUAL_REQUIRED: '通知接口配置待处理', BLOCKED: '暂时不能移送到处罚',
+  WAITING: '等待移送到处罚', MANUAL_REQUIRED: '需要选择处罚接收单位', BLOCKED: '暂时不能移送到处罚',
   PENDING: '处罚交接已建立，还没有发出', FAILED: '移送处罚发送失败', DISABLED: '自动移送尚未启用',
   INDEPENDENT: '移送按事件事实另行判断', NOT_REQUIRED: '不需要自动移送',
   PENDING_DECISION: '现场处置结束 · 待决定通知', DO_NOT_NOTIFY: '本次不通知（已记录）'
@@ -36,7 +36,7 @@ export function autoHandoffView(data, handoffId = '') {
     reason: submitted ? '' : handoff.reason || '',
     tone: notification?.tone || (submitted ? 'success' : ['MANUAL_REQUIRED', 'BLOCKED', 'PENDING', 'FAILED', 'PENDING_DECISION'].includes(handoff.status) ? 'warning' : 'muted'),
     handoffId: linked,
-    canSubmit: false,
+    canSubmit: !notification && handoff.status === 'MANUAL_REQUIRED' && data?.can_handoff === true && !linked,
     partyUnidentified: handoff.party_status === 'UNIDENTIFIED',
     partyReasons: Array.isArray(handoff.party_reasons) ? handoff.party_reasons : []
   };

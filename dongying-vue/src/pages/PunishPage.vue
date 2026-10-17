@@ -50,7 +50,7 @@ const UAV_KIND = 'UAV_EVENT';
 const KIND_LABEL = HANDOFF_KIND_LABEL;
 const TYPE_LABEL = HANDOFF_TYPE_LABEL;
 const deliveryOptions = [{ label: '全部通知状态', value: '' }, ...NOTIFICATION_OPTIONS];
-const kpiOptions = NOTIFICATION_OPTIONS.filter(item => ['PENDING_DECISION', 'SUBMITTED', 'DELIVERED', 'FAILED'].includes(item.value));
+const kpiOptions = NOTIFICATION_OPTIONS.filter(item => ['PENDING_DELIVERY', 'SUBMITTED', 'DELIVERED', 'FAILED'].includes(item.value));
 const receiptOptions = [{ label: '全部签收状态', value: '' }, ...RECEIPT_OPTIONS];
 
 const forbidden = ref(false);
@@ -469,9 +469,7 @@ onMounted(() => {
                     </template>
                   </div>
                   <PunishmentNotification ref="notificationPanel" :key="selected.handoff_id" :handoff-id="selected.handoff_id" :recipient-name="selected.recipient_name" @status="updateNotificationStatus" @changed="realtimeRefresh" />
-                  <details v-if="!selected.notification_decision" :key="`outcome-${selected.handoff_id}`" class="pn-material-details"><summary>历史处罚办理结果</summary>
-                    <PunishmentOutcome ref="outcomePanel" class="pn-section pn-section-outcome" :handoff-id="selected.handoff_id" />
-                  </details>
+                  <PunishmentOutcome v-if="!selected.notification_decision" ref="outcomePanel" class="pn-section pn-section-outcome" :key="selected.handoff_id" :handoff-id="selected.handoff_id" />
                 </template>
               </div>
               <div id="pnNotifyDock" class="pn-notify-dock"></div>

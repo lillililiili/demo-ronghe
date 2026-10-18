@@ -32,6 +32,10 @@ import UControl from '@/components/form/UControl.vue';
 import { TIME_FILTER_OPTIONS, customRangeValid, timeFilterWindow } from '@/services/timeFilter.js';
 import UKpis from '@/components/UKpis.vue';
 import { handoffApi } from '@/services/handoffApi.js';
+import { NO_REPORTED_PILOT_TEXT, noReportedPilot } from '@/components/disposal/autoSmsView.js';
+import { altitudeSpeedText } from '@/pages/alarms/alarmMotion.js';
+import { pickCounterAuthorization } from '@/components/disposal/counterProgressView.js';
+import { autoHandoffProgress, HANDED_OFF, HANDOFF_PENDING, mergeHandoffProgress, punishmentHandoffProgress } from '@/ui/punishmentHandoffProgress.js';
 import { toast } from '@/ui/nv.js';
 import { exportAlarmsCsv, getAlarm, getAlarmAirspaceHits, getUavEvent, listAlarmDistricts, listAlarmEscalations, listAlarms, listUavVerifications } from '@/services/alarmApi.js';
 import { escalationBrief, escalationRecords, reasonListText } from '@/ui/alarmEscalation.js';
@@ -53,7 +57,7 @@ import { hasPermission } from '@/services/accessControl.js';
 import EmergencyStopPanel from '@/components/disposal/EmergencyStopPanel.vue';
 import UavAdvisoryPanel from '@/components/disposal/UavAdvisoryPanel.vue';
 import CounterLaunch from '@/pages/alarms/CounterLaunch.vue';
-import { alarmReasonView, uavNowHtml, uavNowStatus } from '@/components/disposal/uavNowStatus.js';
+import { alarmReasonView, currentLegalityText, uavNowHtml, uavNowStatus } from '@/components/disposal/uavNowStatus.js';
 import { counterHiddenReason } from '@/components/disposal/counterNextStep.js';
 import { notificationProgressView } from '@/components/disposal/autoHandoffView.js';
 import { serverNow } from '@/services/serverClock.js';
@@ -72,7 +76,8 @@ function openAuthorizations(value = {}) {
   authorizationScope.value = { eventId: value.eventId || '', authorizationId: value.authorizationId || '', status: value.status || '', key: ++authorizationKey };
   activeTab.value = 'authorizations';
 }
-watch(() => [route.query.tab, route.query.authorization, route.query.event], ([tab, id, event]) => {
+// at：顶栏“待我审批”每次点击都带新的时间，已在本页时也重新打开“反制办理 → 待我处理”。
+watch(() => [route.query.tab, route.query.authorization, route.query.event, route.query.at], ([tab, id, event]) => {
   if (tab === 'authorizations' || id) openAuthorizations({ authorizationId: typeof id === 'string' ? id : '', eventId: typeof event === 'string' ? event : '' });
 }, { immediate: true });
 /* reactive 代理同一份模块级状态：n-pagination 的 :page/:page-size 需要响应式，
@@ -211,9 +216,9 @@ function fmt(ms) {
 const sevOf = a => SEVERITY[a.severity] || { t: esc(a.severity || '—'), c: 't-gray', tone: 'info' };
 const stateOf = a => a.event_id ? (STATE[a.state] || { t: esc(a.state || '状态未知'), c: 't-gray', color: '#8ca0be' }) : NO_EVENT;
 function deriveAlarmProgress(auths, handoffs) {
-  if ((handoffs || []).some(h => h.handoff_type === 'UAV_PUNISHMENT' && h.delivery_status && h.delivery_status !== 'FAILED')) {
-    return 'HANDED_OFF';
-  }
+  // 真正发出才写“已移送处罚”；交接已建立还没发出写“待发送移送”。
+  const handoffProgress = punishmentHandoffProgress(handoffs);
+  if (handoffProgress) return handoffProgress;
   const rows = (auths || []).filter(row => ['JAMMING', 'COUNTERMEASURE'].includes(row.action_type)
     && !['FAILED', 'REJECTED', 'CANCELLED', 'EXPIRED'].includes(row.status));
   if (!rows.length) return null;
@@ -240,10 +245,10 @@ function displayState(a) {
   if (notification) return { t: notification.title, c: notification.tone === 'warning' ? 't-amber' : notification.tone === 'success' ? 't-green' : 't-gray', color: notification.tone === 'warning' ? '#f1a43a' : '#22d3ee' };
   if (noCounter?.decision_active === true) return { t: '不反制 · 现场处置结束', c: 't-cyan', color: '#22d3ee' };
   const autoHandoff = advisorySummaries.get(a.event_id)?.auto_handoff;
-  const autoTransferred = !!autoHandoff?.handoff_id && !['FAILED', 'DISABLED', 'BLOCKED', 'WAITING'].includes(autoHandoff.status);
-  const handedOff = autoTransferred || pageProgress[a.event_id] === 'HANDED_OFF';
-  if (a.state !== 'CONFIRMED' && !handedOff) return stateOf(a);
-  const key = handedOff ? 'HANDED_OFF' : pageProgress[a.event_id];
+  const listed = [HANDED_OFF, HANDOFF_PENDING].includes(pageProgress[a.event_id]) ? pageProgress[a.event_id] : null;
+  const handoffKey = mergeHandoffProgress(autoHandoffProgress(autoHandoff), listed);
+  if (a.state !== 'CONFIRMED' && !handoffKey) return stateOf(a);
+  const key = handoffKey || pageProgress[a.event_id];
   const sources = progressSources.get(a.event_id);
   const failed = sources?.auths?.failed || sources?.handoffs?.failed;
   if (!key || !ALARM_PROGRESS_LABEL[key]) {
@@ -277,7 +282,8 @@ function eventHandedOff() {
   const autoHandoff = advisoryLive.value?.auto_handoff;
   if (autoHandoff?.handoff_id && !['FAILED', 'DISABLED', 'BLOCKED', 'WAITING'].includes(autoHandoff.status)) return true;
   const key = selectedDisposalProgress();
-  return key === 'HANDED_OFF';
+  // 交接已建立（无论是否已发出）都不再出现反制和不反制入口。
+  return key === HANDED_OFF || key === HANDOFF_PENDING;
 }
 const typeOf = a => ALARM_TYPE_LABEL[a.alarm_type] || esc(a.alarm_type || '—');
 /* 只上屏业务编号；引擎标识（例如 eval 前缀）不是编号，列里显示 —，内部 ID 留在 title。 */
@@ -630,8 +636,16 @@ function advisoryProps(a, ev) {
   return {
     id: a.event_id, label: noOf(a), confirmed: ev.state === 'CONFIRMED',
     handoffId: disposal.handoff?.handoff_type === 'UAV_PUNISHMENT' && disposal.handoff.delivery_status !== 'FAILED'
-      ? (disposal.handoff.handoff_id || '') : ''
+      ? (disposal.handoff.handoff_id || '') : '',
+    counter: counterSubject(pickCounterAuthorization(Object.values(disposal.byAction)))
   };
+}
+/* 处置进度“反制”一行只要这些字段；内容不变就不重画处置进度面板。 */
+function counterSubject(row) {
+  if (!row?.authorization_id) return null;
+  const keys = ['authorization_id', 'action_type', 'status', 'version', 'requested_by', 'requested_by_name', 'requested_at',
+    'approved_by_name', 'authorization_mode', 'result_code', 'device_stop_result'];
+  return Object.fromEntries(keys.map(key => [key, row[key] ?? null]));
 }
 /* 处置进度面板每秒读一次通知摘要。只有本页用到的字段（通知阶段、反制入口、不反制决定、自动移送）
    变了才重画列表和详情、重读处置记录；没变就不动页面，免得每秒重画、按钮点不中（BUG-06）。 */
@@ -710,7 +724,7 @@ function detailHtml() {
   }
   const t = cur.target, ls = t && t.latest_state;
   const targetType = !a.target_id ? '—' : cur.targetLoading ? '读取中' : cur.targetError ? '读取失败' : esc(t ? targetTypeLabel(t.subtype, t.object_type_code) : '—');
-  const altSpeed = ls ? `${ls.altitude_amsl_m == null ? '—' : esc(ls.altitude_amsl_m)} m / ${ls.speed_mps == null ? '—' : esc(ls.speed_mps)} m/s` : '— m / — m/s';
+  const altSpeed = ls ? esc(altitudeSpeedText(ls, t?.last_reported_speed)) : '— m / — m/s';
   const brief = briefOf(a);
   // 新-29：飞手离无人机超过 500 米不算违规，告警详情在“遥控器位置”后面照样写这句给值班员参考（取目标最近一次研判）。
   const pilotNote = cur.targetLoading || cur.targetError ? '' : pilotDistanceNote(t);
@@ -788,7 +802,14 @@ function detailActionsHtml() {
   if (!a) return '';
   return `<div class="alarm-observation-actions">
       ${disposalActions(a, ev)}</div>
-    ${ev?.state === 'PENDING_VERIFICATION' ? '<p class="alarm-action-note">事件事实尚待核实。核实属实后自动发送飞手短信。</p>' : ''}`;
+    ${ev?.state === 'PENDING_VERIFICATION' ? `<p class="alarm-action-note">事件事实尚待核实。${pendingNotifyNote(a)}</p>` : ''}`;
+}
+/* 没有报备飞手时从一开始就说清楚不发短信、不打电话，不写“核实后自动发送”（2026-10-18）。 */
+function pendingNotifyNote(a) {
+  const advisory = advisoryLive.value?.event_id === a.event_id ? advisoryLive.value : advisorySummaries.get(a.event_id);
+  if (noReportedPilot(advisory)) return NO_REPORTED_PILOT_TEXT;
+  if (advisory?.pilot_contact_missing === true) return '任务里没有执行飞手的电话，不发短信、不打电话。';
+  return '核实属实后自动发送飞手短信。';
 }
 
 /* 无人机现在状态（2026-10-14）：放在反制按钮上方。是否在时效内以后端 observation_status 为准，
@@ -920,8 +941,12 @@ function focusMap({ fit = true } = {}) {
     heading: ls && ls.heading_deg != null ? Number(ls.heading_deg) : 0,
     // 合法性判定阶段 4 未接入：不向 MapView 传任何结论词（'待确认' 等），maptip 与信息栏同文案。
     type: targetTypeLabel(null, t.object_type_code, '目标'), subtype,
-    legal: t.legality_summary && t.legality_summary.legal_status
-      ? labelOf(LEGALITY_LABEL, t.legality_summary.legal_status, t.legality_summary.legal_status) : '—',
+    // 已无有效观测时不沿用停报前的研判结论（2026-10-18）：按告警的观测时效写“已无有效观测”。
+    legal: currentLegalityText({
+      observationStatus: a.observation_status, stale: t.stale === true,
+      legalLabel: t.legality_summary && t.legality_summary.legal_status
+        ? labelOf(LEGALITY_LABEL, t.legality_summary.legal_status, t.legality_summary.legal_status) : '—'
+    }),
     risk: t.risk_summary && t.risk_summary.severity ? esc(t.risk_summary.severity) : '—', tracked: true,
     track: pts
   };
@@ -941,7 +966,7 @@ function focusMap({ fit = true } = {}) {
   if (srcEl) srcEl.innerHTML = pts.length > 1
     ? `<span class="tag t-amber">${esc(source)}轨迹</span> <span style="color:#8fbaff">${pts.length} 点</span>`
     : `<span class="tag t-gray" title="${cur.trackError ? esc(cur.trackError) : '暂时没有可显示的飞行轨迹'}">无轨迹</span>`;
-  setInfo(`合法性 ${esc(target.legal)} · ${trackNote}`,
+  setInfo(`当前研判：${esc(target.legal)} · ${trackNote}`,
     `${displayTargetNo(t.target_no) || t.target_id}｜${subtype}｜高度 ${target.alt == null ? '—' : target.alt + ' m'}\n${trackNote}`);
 }
 
@@ -1507,7 +1532,7 @@ onMounted(async () => {
               <div id="alDetail" style="padding:12px"></div>
               <UavAdvisoryPanel v-if="advisorySubject" :key="`advisory-${advisorySubject.id}`"
                 :event-id="advisorySubject.id" :confirmed="advisorySubject.confirmed"
-                :handoff-id="advisorySubject.handoffId" :interval="1000"
+                :handoff-id="advisorySubject.handoffId" :counter="advisorySubject.counter" :interval="1000"
                 @updated="updateAdvisory" @unavailable="invalidateAdvisory" />
             </div>
           </UPanel>

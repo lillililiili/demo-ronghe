@@ -136,3 +136,19 @@ export function alarmReasonSplit(reasons, { escalationCount = 0, escalations = n
   const added = [...new Set(rows.flatMap(row => Array.isArray(row?.reasons_added) ? row.reasons_added : []))];
   return { label: '告警原因', atAlarm: all.filter(code => !added.includes(code)), added: all.filter(code => added.includes(code)) };
 }
+
+/**
+ * 告警详情地图下方的“当前研判”（2026-10-18 rose 确认）：观测已过有效时限（后台按 identity.terminate_after_ms 判定的
+ * observation_status）时写“已无有效观测”，不再把停报前最后一次研判（例如“合法”）当成现在的结论。
+ * 不按告警产生了多久判断；没有 observation_status 的旧数据才看目标自己的 stale 标记。
+ * @param {object} input
+ * @param {string} [input.observationStatus] 告警的 observation_status：CURRENT / EXPIRED / UNKNOWN
+ * @param {boolean} [input.stale] 目标详情的 stale 标记（仅作旧数据兜底）
+ * @param {string} [input.legalLabel] 最新研判结论的中文（例如“合法”“非法”）
+ */
+export function currentLegalityText({ observationStatus, stale, legalLabel }) {
+  if (observationStatus === 'EXPIRED') return '已无有效观测';
+  if (observationStatus === 'UNKNOWN') return '观测待确认';
+  if (!observationStatus && stale === true) return '已无有效观测';
+  return legalLabel || '—';
+}

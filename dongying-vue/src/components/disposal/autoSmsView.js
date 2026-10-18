@@ -45,27 +45,53 @@ export const PILOT_CONTACT_MISSING_GUIDANCE = '飞手信息以上级下发的任
 export function pilotContactMissing(data, status) {
   return data?.pilot_contact_missing === true && ['WAITING', 'BLOCKED', 'UNAVAILABLE', 'DISABLED'].includes(status);
 }
+/* 没有报备飞手（2026-10-18 rose 确认，流程 3、4）：对不上报备任务、任务里没有执行飞手，或飞手与任务单位对不上。
+   这是事实本身，不随核实、告警时长变化；从告警一出来就写“没有报备飞手，不发短信、不打电话”，之后也不变。
+   原因文字与后台 NotificationDirectoryService / AutoSmsService 的说法一致；旧记录里“超过时效；同时……”的后半句同样认。 */
+export const NO_REPORTED_PILOT_REASONS = [
+  '当前事件尚无精确关联任务，不能把单位联系人当作执行飞手',
+  '没有可通知的执行飞手，不能发送短信',
+  '没有可通知的执行飞手，不能拨打电话',
+  '未找到该任务的执行飞手联系人',
+  '飞手身份与任务运营单位未形成有效关联'
+];
+export const NO_REPORTED_PILOT_TEXT = '没有报备飞手，不发短信、不打电话。';
+function baseReason(reason) {
+  const text = String(reason || '').trim();
+  const tail = text.match(/；同时(.+)$/);
+  return (tail ? tail[1] : text).trim().replace(/[。.]$/, '');
+}
+/** 通知还没发出、原因是没有报备飞手。已发送、送达、失败或结果未知的以发送记录为准，不改写。 */
+export function noReportedPilot(data) {
+  const sms = data?.auto_sms;
+  if (!sms || !['WAITING', 'BLOCKED', 'UNAVAILABLE', 'DISABLED'].includes(sms.status) || Number(sms.attempt_count) > 0) return false;
+  if (pilotContactMissing(data, sms.status)) return false;
+  return NO_REPORTED_PILOT_REASONS.includes(baseReason(sms.reason));
+}
 export function autoSmsView(data) {
   const sms = data?.auto_sms;
   if (!sms) return { title: '自动通知状态暂不可用', reason: '', tone: 'muted', canRetry: false };
   const latest = [...(data.records || [])].reverse().find(row => row.kind === 'SMS_SIMULATED');
   const recipientSnapshot = latest ? latest.recipient_snapshot : sms.recipient_snapshot;
   // 告警超过通知时效才走到发送：不再自动发短信和打电话，先请人核对最新情况（2026-10-06）。
-  const expired = smsExpired(sms);
   const missing = pilotContactMissing(data, sms.status);
+  const noPilot = !missing && noReportedPilot(data);
+  // 没有飞手是根本原因：不再显示“需核对最新情况”“等待发送”这类会随时间变化的说法。
+  const expired = !noPilot && smsExpired(sms);
   const canRetry = !!sms.can_retry && !['SENDING', 'WAITING', 'UNKNOWN', 'SIMULATED_DELIVERED', 'NOT_REQUIRED'].includes(sms.status);
   return {
-    title: missing ? PILOT_CONTACT_MISSING_TITLE : expired ? '需核对最新情况' : AUTO_SMS_STATUS[sms.status] || '通知结果待确认',
-    reason: missing ? '上级下发的飞行任务里没有执行飞手的电话，无法给飞手发短信。' : reasonText(sms.reason),
+    title: missing ? PILOT_CONTACT_MISSING_TITLE : noPilot ? '没有报备飞手，不发短信' : expired ? '需核对最新情况' : AUTO_SMS_STATUS[sms.status] || '通知结果待确认',
+    reason: missing ? '上级下发的飞行任务里没有执行飞手的电话，无法给飞手发短信。' : noPilot ? NO_REPORTED_PILOT_TEXT : reasonText(sms.reason),
     pilotContactMissing: missing,
-    tone: missing ? 'warning' : sms.status === 'SIMULATED_DELIVERED' ? 'success' : expired || ['FAILED', 'UNKNOWN', 'UNAVAILABLE', 'BLOCKED'].includes(sms.status) ? 'warning' : 'muted',
-    canRetry, expired, recheck: expired && canRetry,
+    noReportedPilot: noPilot,
+    tone: missing || noPilot ? 'warning' : sms.status === 'SIMULATED_DELIVERED' ? 'success' : expired || ['FAILED', 'UNKNOWN', 'UNAVAILABLE', 'BLOCKED'].includes(sms.status) ? 'warning' : 'muted',
+    canRetry: canRetry && !noPilot, expired, recheck: expired && canRetry,
     updatedAt: sms.updated_at, triggeredAt: sms.triggered_at, evaluatedAt: sms.evaluated_at, dataUpdatedAt: sms.data_updated_at,
     recipient: latest ? latest.recipient_name || recipientSnapshot?.recipient_name : recipientSnapshot ? recipientSnapshot.recipient_name : Number(sms.attempt_count) > 0 ? undefined : data.recipient?.name,
     recipientHint: recipientSnapshot?.contact_hint,
     simulated: data.sms_mode === 'SIMULATED' || sms.status === 'SIMULATED_DELIVERED',
     source: sms.trigger_source, policy: sms.policy_code,
-    guidance: missing ? PILOT_CONTACT_MISSING_GUIDANCE : !expired ? ''
+    guidance: missing ? PILOT_CONTACT_MISSING_GUIDANCE : noPilot ? '这架无人机对不上报备飞手，系统找不到可以通知的人；需要时请按现场情况处置。' : !expired ? ''
       : canRetry ? '请先核对目标现在的位置和违规情况。确认仍需提醒飞手时，点“核对后发送飞手短信”；目标已离开或情况已变化，可以不再发送。'
         : sms.status === 'BLOCKED' && !String(sms.reason || '').includes('；同时')
           ? '请先核对目标现在的位置和违规情况。需要有权限的人员核对后才能登记发送。'

@@ -1,5 +1,5 @@
-import { coverageContainsPoint, planIsCurrent, riskMatchesPlan, targetIsCurrent } from '@/services/situationData.js';
-import { serverNow } from '@/services/serverClock.js';
+import { coverageContainsPoint, planIsCurrent, riskMatchesPlan, targetIsCurrent } from '../../services/situationData.js';
+import { serverNow } from '../../services/serverClock.js';
 
 export function eoCanMonitor(target, devices = []) {
   return !!target && devices.some(device => device.typeCode === 'EO' && coverageContainsPoint(device, target));
@@ -68,7 +68,8 @@ export function situationRouteRiskIsCurrent(risk, plan, target, now = serverNow(
 export function uavProcessStatus(alarm) {
   if (!alarm) return '';
   if (alarm.eventState === 'FALSE_POSITIVE') return '误报';
-  if (alarm.handoff) return '已移送处罚';
+  // handoff 为移送进度：HANDOFF_PENDING 是交接已建立还没发出，不能写成已移送。
+  if (alarm.handoff) return alarm.handoff === 'HANDOFF_PENDING' ? '待发送移送' : '已移送处罚';
   if (alarm.disposalStage === 'jamming') return '信号干扰中';
   if (alarm.disposalStage === 'counter' || alarm.disposalStage === 'active') return '反制执行中';
   if (alarm.disposalStage === 'jammed') return '已干扰';

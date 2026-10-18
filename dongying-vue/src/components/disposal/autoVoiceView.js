@@ -1,7 +1,7 @@
-import { PILOT_CONTACT_MISSING_TITLE, pilotContactMissing } from './autoSmsView.js';
+import { NO_REPORTED_PILOT_TEXT, PILOT_CONTACT_MISSING_TITLE, noReportedPilot, pilotContactMissing } from './autoSmsView.js';
 import { departureBasisText } from './uavNowStatus.js';
 
-/* 通知后的“已撤离”只是当时的判断（2026-10-14）：写明“当时判定”和依据，现在的情况以“无人机现在”为准。 */
+/* 通知后的“已撤离”只是当时的判断（2026-10-14）：写明“当时判定”和依据。 */
 export const DEPARTED_NOT_CALLED = '当时判定已撤离，未拨打';
 
 export const AUTO_VOICE_STATUS = {
@@ -34,8 +34,11 @@ export function autoVoiceView(data) {
   // 缺飞手电话时不再显示“等待短信送达/等待拨打”，直接写明缺什么（BLOCK-03）。
   const ended = data.departure_observation?.status === 'RECORDED' && data.departure_observation?.presence === 'LEFT';
   const missing = !ended && pilotContactMissing(data, voice.status);
-  const channelUnavailable = !ended && (data.voice_mode === 'UNAVAILABLE' || voice.status === 'UNAVAILABLE');
-  const skipped = !missing && !channelUnavailable && smsNotSent(data);
+  // 没有报备飞手：短信发不出，电话也不打。没拨打过才这样写；拨打过的以通话记录为准。
+  const noPilot = !ended && !missing && Number(voice.attempt_count) === 0
+    && ['WAITING', 'BLOCKED', 'UNAVAILABLE', 'DISABLED'].includes(voice.status) && noReportedPilot(data);
+  const channelUnavailable = !ended && !noPilot && (data.voice_mode === 'UNAVAILABLE' || voice.status === 'UNAVAILABLE');
+  const skipped = !missing && !noPilot && !channelUnavailable && smsNotSent(data);
   const backendReason = String(voice.reason || '');
   const unavailableReason = channelUnavailable && !/通道|录音|模拟器/.test(backendReason)
     ? '设备模拟器电话通道未连接，或尚未选用有效的 WAV 通知录音。'
@@ -44,20 +47,22 @@ export function autoVoiceView(data) {
     // 短信因超过通知时效停发时，电话也不自动拨打，要先核对最新情况。
     title: ended && data.departure_observation.channel === 'SMS' ? DEPARTED_NOT_CALLED
       : missing ? PILOT_CONTACT_MISSING_TITLE
+      : noPilot ? '没有报备飞手，不打电话'
       : channelUnavailable ? '电话通道不可用'
       : skipped ? (NO_PILOT_REASONS.includes(String(voice.reason).trim()) ? '找不到飞手，不拨打' : '短信未发，不拨打')
       : String(voice.reason || '').includes('超过自动通知时效') && voice.status === 'BLOCKED' ? '超过时效，不自动拨打'
       : AUTO_VOICE_STATUS[voice.status] || '通话结果未确认',
-    reason: missing ? '上级下发的飞行任务里没有执行飞手的电话，无法给飞手打电话。' : unavailableReason,
+    reason: missing ? '上级下发的飞行任务里没有执行飞手的电话，无法给飞手打电话。' : noPilot ? NO_REPORTED_PILOT_TEXT : unavailableReason,
     pilotContactMissing: missing,
+    noReportedPilot: noPilot,
     recordedDeparture: ended,
     departureBasis: data.departure_observation?.presence === 'LEFT' ? departureBasisText(data.departure_observation) : '',
     channelUnavailable,
     smsNotSent: skipped,
-    tone: missing || channelUnavailable ? 'warning' : voice.status === 'SIMULATED_PLAYED' ? 'success'
+    tone: missing || noPilot || channelUnavailable ? 'warning' : voice.status === 'SIMULATED_PLAYED' ? 'success'
       : ['FAILED', 'UNAVAILABLE', 'BLOCKED', 'UNKNOWN'].includes(voice.status) ? 'warning' : 'muted',
     // 结果未知不能通过重拨猜测，后端允许且结果明确失败时才开放重试。
-    canRetry: !ended && voice.can_retry === true && ['FAILED', 'UNAVAILABLE', 'BLOCKED'].includes(voice.status),
+    canRetry: !ended && !noPilot && voice.can_retry === true && ['FAILED', 'UNAVAILABLE', 'BLOCKED'].includes(voice.status),
     simulated: data.voice_mode === 'SIMULATED' || voice.status === 'SIMULATED_PLAYED',
     recipient: latest ? latest.recipient_name || recipientSnapshot?.recipient_name : recipientSnapshot ? recipientSnapshot.recipient_name : Number(voice.attempt_count) > 0 ? undefined : data.recipient?.name,
     recipientHint: recipientSnapshot?.contact_hint,

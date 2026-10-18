@@ -113,7 +113,7 @@ async function submit(kind) {
       <b>{{ reportResult.title }}</b>
       <p>{{ reportResult.description }}</p>
       <small>后台“设备异常处理” → {{ state.task.device_name || device.name }}</small>
-      <small>处置单编号：{{ state.task.task_no || state.task.task_id }}</small>
+      <small v-if="state.task.task_no">处置单编号：{{ state.task.task_no }}</small>
       <small>原单首次建单：{{ date(state.task.reported_at) }}</small>
     </div>
     <div class="notice-actions">
@@ -146,7 +146,7 @@ async function submit(kind) {
     <details v-if="state.task" :key="state.task.task_id" class="notice-result">
       <summary><span class="expand-label">查看上报记录</span><span class="collapse-label">收起上报记录</span></summary>
       <dl>
-        <dt>处置单编号</dt><dd>{{ state.task.task_no || state.task.task_id }}</dd>
+        <template v-if="state.task.task_no"><dt>处置单编号</dt><dd>{{ state.task.task_no }}</dd></template>
         <dt>处置单首次记录</dt><dd>{{ date(state.task.reported_at) }}</dd>
         <template v-if="state.task.handled_by_name"><dt>处理人</dt><dd>{{ state.task.handled_by_name }}</dd></template>
         <template v-if="state.task.handled_at"><dt>处理时间</dt><dd>{{ date(state.task.handled_at) }}</dd></template>

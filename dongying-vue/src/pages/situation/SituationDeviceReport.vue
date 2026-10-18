@@ -39,7 +39,7 @@ useRealtimeRefresh(['device', 'device_state'], () => loadDeviceReport(props.devi
     <details v-if="task">
       <summary>查看处置单</summary>
       <p>后台“设备异常处理” → {{ task.device_name }}</p>
-      <p>处置单编号：{{ task.task_id }}</p>
+      <p v-if="task.task_no">处置单编号：{{ task.task_no }}</p>
       <p>首次记录：{{ date(task.reported_at) }}</p>
       <p v-if="task.my_reported_at">我的上报：{{ date(task.my_reported_at) }}</p>
     </details>

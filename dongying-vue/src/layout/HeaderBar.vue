@@ -2,12 +2,16 @@
 /* 顶栏：logo / 时钟 / 大屏按钮 / 用户菜单。
    逻辑逐字移植旧 app.js 的 clock() 与 bindBigScreen()；用户菜单 Teleport 到 body
    （旧版就是 append 到 body 的 .usermenu，CSS 上下文保持一致）。 */
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue';
 import { useAppStore } from '@/stores/app.js';
 import { businessDateTime } from '@/services/businessTime.js';
 import { useRouter } from 'vue-router';
 import { authUser, changePassword, loadCurrentUser, logout, updateProfile } from '@/services/auth.js';
-import { canAccessRoute } from '@/services/accessControl.js';
+import { canAccessRoute, hasPermission } from '@/services/accessControl.js';
+import { disposalApi } from '@/services/disposalApi.js';
+import { readSessionToken } from '@/services/apiClient.js';
+import { canSeePendingApprovals, countPendingApprovals, pendingApprovalText } from '@/services/pendingApprovals.js';
+import { onDataChange } from '@/services/realtime.js';
 import { validatePassword } from '@/services/passwordPolicy.js';
 import { toast } from '@/ui/nv.js';
 import { closeModal } from '@/ui/modal.js';
@@ -57,6 +61,29 @@ function onFsChange() {
   store.bigscreen = on;
   if (changed) window.dispatchEvent(new Event('resize'));
 }
+
+/* ---------- 待我审批：有审批权限的账号在顶栏看到待审批数量，点开直达“反制办理 → 待我处理” ---------- */
+const approvalVisible = computed(() => !!authUser.value && canSeePendingApprovals(hasPermission, canAccessRoute));
+const approvals = ref(null);
+const approvalLabel = computed(() => pendingApprovalText(approvals.value));
+const APPROVAL_POLL_MS = 15_000;
+let approvalTimer = null, approvalSeq = 0, approvalRunning = false, stopApprovalSignal = null;
+async function refreshApprovals() {
+  if (!approvalVisible.value) { approvals.value = null; return; }
+  if (approvalRunning || document.hidden) return;
+  const seq = ++approvalSeq, token = readSessionToken(), userId = authUser.value?.user_id;
+  approvalRunning = true;
+  try {
+    const result = await countPendingApprovals(disposalApi.list, userId,
+      () => seq === approvalSeq && token === readSessionToken() && userId === authUser.value?.user_id);
+    if (result) approvals.value = result;
+  } catch { /* 读取失败保留上次数字，下次定时再读；不弹错误打扰值班。 */ }
+  finally { approvalRunning = false; }
+}
+function openApprovals() {
+  router.push({ path: '/alarms', query: { tab: 'authorizations', view: 'pending', at: String(Date.now()) } });
+}
+function onVisible() { if (!document.hidden) void refreshApprovals(); }
 
 /* ---------- 用户菜单：个人信息、修改密码与退出登录 ---------- */
 const menuOpen = ref(false);
@@ -156,10 +183,23 @@ onMounted(() => {
   document.addEventListener('fullscreenchange', onFsChange);
   onFsChange();
   document.addEventListener('click', closeMenu);
+  approvalTimer = setInterval(() => { void refreshApprovals(); }, APPROVAL_POLL_MS);
+  document.addEventListener('visibilitychange', onVisible);
 });
+// 有人申请或审批后服务端会推送 disposal 变化，顶栏立即重数；只有能审批的账号才订阅。
+watch(approvalVisible, visible => {
+  ++approvalSeq; approvals.value = null;
+  if (typeof stopApprovalSignal === 'function') stopApprovalSignal();
+  stopApprovalSignal = visible ? onDataChange(['disposal'], () => { void refreshApprovals(); }) : null;
+  void refreshApprovals();
+}, { immediate: true });
 onBeforeUnmount(() => {
   // 阶段 12：search.js 已删除，window.SEARCH 不再存在，这行随之移除。
   clearInterval(clkTimer);
+  clearInterval(approvalTimer);
+  ++approvalSeq;
+  document.removeEventListener('visibilitychange', onVisible);
+  if (typeof stopApprovalSignal === 'function') stopApprovalSignal();
   document.removeEventListener('fullscreenchange', onFsChange);
   document.removeEventListener('click', closeMenu);
   document.body.classList.remove('bigscreen');
@@ -175,6 +215,7 @@ onBeforeUnmount(() => {
     </div>
     <div class="spacer"></div>
     <div class="meta">
+      <span v-if="approvalVisible && approvalLabel" class="it"><button class="btn pending-approval" type="button" title="有反制申请等你审批，点击打开“告警事件 → 反制办理 → 待我处理”" @click="openApprovals"><span class="pending-dot" aria-hidden="true"></span>{{ approvalLabel }}</button></span>
       <span class="it" id="clk" v-html="clkHtml"></span>
       <span v-if="canBigscreen" class="it"><router-link class="btn ghost" id="btnScreen" to="/bigscreen" title="进入低空安全数据大屏" v-html="screenLabel"></router-link></span>
       <span class="it"><button class="btn ghost" id="btnBig" title="全屏模式：放大字号与行距，适配指挥大厅显示" v-html="bigLabel" @click="toggleBig"></button></span>
@@ -190,3 +231,12 @@ onBeforeUnmount(() => {
     </div>
   </Teleport>
 </template>
+
+<style scoped>
+.pending-approval{display:inline-flex;align-items:center;gap:7px;border-color:var(--amber,#ffb020);color:var(--amber,#ffb020);background:rgba(255,176,32,.12);font-weight:600}
+.pending-approval:hover{background:rgba(255,176,32,.22)}
+.pending-approval:focus-visible{outline:2px solid var(--amber,#ffb020);outline-offset:2px}
+.pending-dot{width:8px;height:8px;border-radius:50%;background:var(--amber,#ffb020);box-shadow:0 0 0 0 rgba(255,176,32,.6);animation:pending-pulse 1.6s ease-out infinite}
+@keyframes pending-pulse{0%{box-shadow:0 0 0 0 rgba(255,176,32,.6)}100%{box-shadow:0 0 0 8px rgba(255,176,32,0)}}
+@media (prefers-reduced-motion:reduce){.pending-dot{animation:none}}
+</style>

@@ -1,5 +1,6 @@
 <script setup>
 /* 融合感知指挥台：页面结构保持不变，全部业务状态来自后端领域接口。 */
+import { punishmentHandoffProgress } from '@/ui/punishmentHandoffProgress.js';
 import { displayBusinessNo, displayTargetNo, displayNumberReferences } from '@/ui/deviceNumber.js';
 import { computed, h, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
@@ -301,16 +302,19 @@ function toggleDeviceType(typeCode) {
 
 function decorate(next) {
   const targetsByInternalId = new Map((next.targets || []).map(target => [target.targetId, target]));
-  const punishmentEvents = new Set((next.handoffs || [])
-    .filter(row => row.source_kind === 'UAV_EVENT' && row.handoff_type === 'UAV_PUNISHMENT' && row.delivery_status !== 'FAILED')
-    .map(row => row.source_id));
+  // 每个事件的处罚移送进度：发出才算已移送，建立未发出是待发送（与告警列表同一口径）。
+  const punishmentRows = new Map();
+  for (const row of next.handoffs || []) {
+    if (row.source_kind !== 'UAV_EVENT') continue;
+    punishmentRows.set(row.source_id, [...(punishmentRows.get(row.source_id) || []), row]);
+  }
   const nextAlarms = (next.alarms || []).map(alarm => {
     const target = targetsByInternalId.get(alarm.targetInternalId);
     return {
       ...alarm,
       isNew: isNewEvent(alarm),
       disposalStage: disposalStage(target?.disposalSummary),
-      handoff: punishmentEvents.has(alarm.eventId)
+      handoff: punishmentHandoffProgress(punishmentRows.get(alarm.eventId)) || ''
     };
   });
   const now = serverNow();

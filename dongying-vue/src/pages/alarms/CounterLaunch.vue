@@ -12,7 +12,8 @@ import { toast } from '@/ui/nv.js';
 import { noCounterApi } from '@/services/noCounterApi.js';
 import NoCounterDecisionModal from './NoCounterDecisionModal.vue';
 import NoCounterBasis from './NoCounterBasis.vue';
-import { counterLaunchLabel, counterPermissionHint } from '@/components/disposal/counterNextStep.js';
+import { counterLaunchLabel, counterPermissionHint, noCounterEntryVisible } from '@/components/disposal/counterNextStep.js';
+import { hasPermission } from '@/services/accessControl.js';
 
 const U = window.UI;
 const props = defineProps({ eventId: { type: String, required: true }, eventLabel: String, active: Boolean, confirmed: Boolean, summary: Object, showLaunch: Boolean, handedOff: Boolean, counterStopped: Boolean, showRecords: { type: Boolean, default: true } });
@@ -28,6 +29,8 @@ const launchBlock = computed(() => unavailableReason.value || (currentSummary.va
 const launchLabel = computed(() => counterLaunchLabel(currentSummary.value));
 const launchHint = computed(() => launchBlock.value ? '' : counterPermissionHint(currentSummary.value));
 const completed = computed(() => noCounter.value?.decision_active === true);
+/* 没有告警核实权限的账号（只读领导、执行员等）不显示“无风险不反制”入口；只是隐藏，后端照常校验。 */
+const noCounterVisible = computed(() => !props.counterStopped && noCounterEntryVisible(hasPermission));
 const time = value => value == null ? '未提供' : new Date(value).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' });
 let generation = 0, mounted = true, feedback = null;
 watch(() => [props.eventId, props.active, props.counterStopped, props.showLaunch], () => { ++generation; busy.value = false; feedback?.close(); }, { flush: 'sync' });
@@ -92,7 +95,7 @@ async function launch() {
 }
 
 async function decideNoCounter() {
-  if (props.counterStopped || noCounterBlock.value) return;
+  if (!noCounterVisible.value || noCounterBlock.value) return;
   const id = props.eventId, token = readSessionToken(), request = ++generation;
   const isCurrent = () => mounted && props.active && props.eventId === id && request === generation && token === readSessionToken();
   busy.value = true;
@@ -133,9 +136,9 @@ async function decideNoCounter() {
       <p>保留告警与决定记录，继续监测；出现新的风险依据时重新判断。</p>
       <details><summary>查看决定依据</summary><NoCounterBasis :basis="noCounter.decision?.basis" /></details>
     </div>
-    <div v-else-if="confirmed && !handedOff && (!counterStopped || showLaunch || noCounter?.decision)" class="counter-decision is-choice">
-      <div v-if="!counterStopped || showLaunch" class="counter-choice-actions">
-        <div v-if="!counterStopped" class="counter-choice-action">
+    <div v-else-if="confirmed && !handedOff && (noCounterVisible || showLaunch || noCounter?.decision)" class="counter-decision is-choice">
+      <div v-if="noCounterVisible || showLaunch" class="counter-choice-actions">
+        <div v-if="noCounterVisible" class="counter-choice-action">
           <button class="btn no-counter-choice" type="button" :disabled="!!noCounterBlock" :aria-describedby="noCounterBlock ? `no-counter-block-${eventId}` : undefined" :aria-busy="busy" @click="decideNoCounter">无风险不反制</button>
           <p v-if="noCounterBlock" :id="`no-counter-block-${eventId}`" class="counter-action-note">{{ noCounterBlock }}</p>
         </div>

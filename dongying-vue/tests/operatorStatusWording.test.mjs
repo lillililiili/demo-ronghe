@@ -197,3 +197,89 @@ test('#25 coverage: registered range decides, missing range says so plainly', ()
   assert.equal(none.unknown, true);
   assert.equal(none.reason, '这台设备没有登记覆盖范围，无法判断能否覆盖目标');
 });
+
+test('#32 manual counter row follows the review decision and shows the rejection reason', () => {
+  const base = { authorization_id: 'a-32', action_type: 'COUNTERMEASURE', authorization_mode: 'REVIEW', requested_by: 'u-1', requested_by_name: '张值班', requested_at: 10 };
+  const events = [{ event_kind: 'REQUEST', occurred_at: 10 }, { event_kind: 'REJECT', occurred_at: 20, actor_name: '李审批' }];
+  const rejected = counterProgressView({ ...base, status: 'REJECTED', approved_by_name: '李审批', decision_note: '证据不足：请先确认是否为报备任务的备用机' }, events);
+  assert.equal(rejected.initiator, '张值班申请，李审批驳回');
+  assert.equal(rejected.decisionNote, '驳回理由：证据不足：请先确认是否为报备任务的备用机。');
+  assert.equal(rejected.status, '已驳回');
+  assert.equal(rejected.startText, '没有启动');
+  assert.equal(rejected.receipt, '没有启动，没有设备回执');
+  assert.doesNotMatch(rejected.initiator, /批准/);
+  // 换人、没写理由、还没读到办理记录：仍按状态写驳回。
+  const other = counterProgressView({ ...base, requested_by_name: '王值班', status: 'REJECTED', approved_by_name: '赵审批', decision_note: '' }, null);
+  assert.equal(other.initiator, '王值班申请，赵审批驳回');
+  assert.equal(other.decisionNote, '驳回时没有填写理由。');
+  // 其他审批结论。
+  assert.equal(counterProgressView({ ...base, status: 'REQUESTED' }, []).initiator, '张值班申请，等待审批');
+  assert.equal(counterProgressView({ ...base, status: 'APPROVED', approved_by_name: '李审批', approved_at: 30 }, []).initiator, '张值班申请，李审批批准');
+  assert.equal(counterProgressView({ ...base, status: 'CANCELLED', result_code: 'CANCELLED_BY_REQUESTER' }, []).initiator, '张值班申请，张值班撤销');
+  assert.equal(counterProgressView({ ...base, status: 'CANCELLED', approved_by_name: '李审批', approved_at: 30 },
+    [{ event_kind: 'CANCEL', occurred_at: 40, actor_name: '李审批' }]).initiator, '张值班申请，李审批批准，李审批撤销');
+  assert.equal(counterProgressView({ ...base, status: 'EXPIRED', approved_by_name: '李审批', approved_at: 30 }, []).initiator, '张值班申请，李审批批准，授权到期前没有执行');
+  assert.equal(counterProgressView({ ...base, status: 'COMPLETED', approved_by_name: '李审批', approved_at: 30, decision_note: '同意' }, []).decisionNote, '');
+});
+
+test('#33 device receipt follows the last receipt or stop fact', () => {
+  const base = { authorization_id: 'a-33', action_type: 'COUNTERMEASURE', authorization_mode: 'REVIEW', requested_by_name: '张值班', approved_by_name: '李审批', device_id: 'dev-1', requested_at: 10 };
+  const opened = { event_kind: 'RECEIPT', occurred_at: 120, note: '设备回执：已打开，反制中；满 60 秒系统自动全部关闭，也可以随时急停', snapshot: { device_on: true } };
+  const events = [{ event_kind: 'EXECUTE', occurred_at: 110 }, opened, { event_kind: 'STOP', occurred_at: 140, actor_name: '张值班' }];
+  const stop = status => ({ stop_id: 's-1', requested_at: 140, devices: [{ device_id: 'dev-1', stop_status: status }, { device_id: 'dev-9', stop_status: 'FAILED' }] });
+  // 还在执行：沿用打开的回执。
+  assert.match(counterProgressView({ ...base, status: 'EXECUTING' }, events.slice(0, 2)).receipt, /已打开/);
+  // 急停后已收到全关确认。
+  const acked = counterProgressView({ ...base, status: 'STOPPED' }, events, stop('CONTROLLER_ALL_OFF_ACK'));
+  assert.equal(acked.receipt, '已全部关闭（控制器已确认全关）');
+  assert.equal(acked.stopText, '张值班停止');
+  // 停止命令还在等反馈；别的设备失败不算到这台。
+  assert.equal(counterProgressView({ ...base, status: 'STOPPED' }, events, stop('WAITING_FEEDBACK')).receipt, '已下发停止，等待设备确认关闭');
+  // 换一台设备：按它自己的停止结果写。
+  assert.match(counterProgressView({ ...base, device_id: 'dev-9', status: 'STOPPED' }, events, stop('CONTROLLER_ALL_OFF_ACK')).receipt, /设备可能还开着/);
+  // 读不到急停记录：已下发全关或只知道已停止，都不再说“已打开，反制中”。
+  const issued = counterProgressView({ ...base, status: 'STOPPED', device_stop_result: 'ALL_OFF_ISSUED' }, events, null);
+  assert.equal(issued.receipt, '已下发全部关闭，等待设备确认');
+  const unknown = counterProgressView({ ...base, status: 'STOPPED' }, events, null);
+  assert.equal(unknown.receipt, '已停止，还没有收到设备关闭的回执');
+  // 早于这次打开的旧急停记录不算。
+  assert.equal(counterProgressView({ ...base, status: 'STOPPED' }, events, { ...stop('CONTROLLER_ALL_OFF_ACK'), requested_at: 100 }).receipt,
+    '已停止，还没有收到设备关闭的回执');
+  // 到时自动全部关闭：最后一条回执就是关闭回执。
+  const completed = counterProgressView({ ...base, status: 'COMPLETED' },
+    [...events.slice(0, 2), { event_kind: 'DEVICE_ALL_OFF_ISSUED', occurred_at: 180 }, { event_kind: 'RECEIPT', occurred_at: 181, note: '设备回执：已全部关闭', snapshot: {} }, { event_kind: 'COMPLETE', occurred_at: 181 }]);
+  assert.equal(completed.receipt, '设备回执：已全部关闭');
+});
+
+test('#34 progress sources are read only with the matching view permission', async () => {
+  const { canReadProgressSource, readProgressSource, mergeProgressRead, PROGRESS_SOURCE_PERMISSION } = await import('../src/pages/alarms/progressAccess.js');
+  const { noCounterEntryVisible } = await import('../src/components/disposal/counterNextStep.js');
+  const lead = code => ['alarm:read'].includes(code);
+  const exec = code => ['alarm:read', 'disposal:read', 'disposal:execute'].includes(code);
+  const duty = code => ['alarm:read', 'alarm:verify', 'disposal:read', 'handoff:read'].includes(code);
+  assert.deepEqual(PROGRESS_SOURCE_PERMISSION, { auths: 'disposal:read', handoffs: 'handoff:read' });
+  let calls = 0;
+  const request = async () => { calls += 1; return { items: [{ id: 'x' }] }; };
+  assert.deepEqual(await readProgressSource('handoffs', request, lead), { forbidden: true });
+  assert.deepEqual(await readProgressSource('auths', request, lead), { forbidden: true });
+  assert.deepEqual(await readProgressSource('handoffs', request, exec), { forbidden: true });
+  assert.equal(calls, 0, '没有权限不发请求');
+  assert.deepEqual(await readProgressSource('auths', request, exec), { items: [{ id: 'x' }] });
+  assert.equal(calls, 1);
+  assert.equal(canReadProgressSource('handoffs', duty), true);
+  assert.equal(canReadProgressSource('unknown', duty), false);
+  // 服务端仍按 403 拒绝（权限刚被收回）：按无权查看，不算失败；别的错误才算读取失败。
+  assert.deepEqual(await readProgressSource('auths', async () => { throw Object.assign(new Error('x'), { status: 403 }); }, duty), { forbidden: true });
+  const failed = await readProgressSource('auths', async () => { throw Object.assign(new Error('x'), { status: 500 }); }, duty);
+  assert.equal(failed.failed, true);
+  // 并入来源状态：无权查看是“没有可见记录”，不是失败；失败保留上次事实；旧结果不覆盖新结果。
+  assert.deepEqual(mergeProgressRead(undefined, 1, { forbidden: true }), { seq: 1, items: [], failed: false, forbidden: true });
+  const ok = mergeProgressRead(undefined, 2, { items: [1] });
+  assert.deepEqual(mergeProgressRead(ok, 3, { failed: true }), { seq: 3, items: [1], failed: true });
+  assert.equal(mergeProgressRead(ok, 1, { items: [9] }), ok);
+  // “无风险不反制”入口只给有告警核实权限的账号。
+  assert.equal(noCounterEntryVisible(lead), false);
+  assert.equal(noCounterEntryVisible(exec), false);
+  assert.equal(noCounterEntryVisible(duty), true);
+  assert.equal(noCounterEntryVisible(null), false);
+});

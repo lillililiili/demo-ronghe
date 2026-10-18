@@ -21,6 +21,8 @@ const props = defineProps({
   handoffId: { type: String, default: '' },
   /* 本事件最近一条反制（或历史干扰）授权记录，由告警页按处置记录读取后传入；没有就不显示反制一行。 */
   counter: { type: Object, default: null },
+  /* 本事件最近一次急停记录（急停面板读到的 latest_stop）：设备回执按它写停止后的结果。 */
+  counterStop: { type: Object, default: null },
   interval: { type: Number, default: 5000 }
 });
 const emit = defineEmits(['updated', 'unavailable']);
@@ -49,7 +51,7 @@ async function loadCounterEvents({ quiet = false } = {}) {
     counterEvents.value = Array.isArray(data) ? data : Array.isArray(data?.items) ? data.items : [];
     counterEventsError.value = '';
   } catch (readError) {
-    if (alive && seq === counterSeq) counterEventsError.value = readError?.status === 403 ? '当前账号不能查看反制办理记录' : '反制办理记录读取失败，点“更新记录”重试';
+    if (alive && seq === counterSeq) counterEventsError.value = readError?.status === 403 ? '当前账号不能查看反制办理记录。' : '反制办理记录读取失败，点“更新记录”重试。';
   }
 }
 watch(() => props.counter ? `${props.counter.authorization_id}:${props.counter.status}:${props.counter.version}` : '', (key, previous) => {
@@ -60,7 +62,7 @@ watch(() => props.counter ? `${props.counter.authorization_id}:${props.counter.s
   if (key && ['APPROVED', 'EXECUTING'].includes(props.counter.status)) counterTimer = setInterval(() => { if (!document.hidden) void loadCounterEvents({ quiet: true }); }, 5000);
 }, { immediate: true });
 onUnmounted(() => clearInterval(counterTimer));
-const counter = computed(() => counterProgressView(props.counter, counterEvents.value));
+const counter = computed(() => counterProgressView(props.counter, counterEvents.value, props.counterStop));
 
 /* ---------- 待发送移送：交接已建立但规则没让系统自动发出，由有移送权限的人员人工发送 ---------- */
 const sendPermitted = computed(() => hasPermission('handoff:create') && hasPermission('handoff:read'));
@@ -87,7 +89,7 @@ async function loadSendStatus() {
     send.status = status; send.error = '';
     if (pendingOperationSettled(send.pending, status)) saveSendPending(id, null);
   } catch (readError) {
-    if (alive && seq === sendSeq) send.error = readError?.status === 403 ? '当前账号不能查看这份移送的发送状态' : readError?.message || '发送状态读取失败，请点“更新记录”重试';
+    if (alive && seq === sendSeq) send.error = readError?.status === 403 ? '当前账号不能查看这份移送的发送状态。' : readError?.message || '发送状态读取失败，请点“更新记录”重试。';
   } finally { if (alive && seq === sendSeq) send.loading = false; }
 }
 watch(() => `${handoff.value.awaitingSend}:${handoff.value.handoffId}:${sendPermitted.value}`, () => { void loadSendStatus(); }, { immediate: true });
@@ -117,12 +119,12 @@ async function submitSend(id, attempt) {
     await handoffApi.notifyHandoff(id, request.attempt, request.key);
     if (!alive || send.id !== id) return;
     saveSendPending(id, null);
-    toast('已提交发送，请在“移送与处罚”查看送达和签收', 'ok');
+    toast('已提交发送，请在“移送与处罚”查看送达和签收。', 'ok');
   } catch (sendError) {
     if (!alive || send.id !== id) return;
     const uncertain = !sendError?.status || sendError.status >= 500;
     if (!uncertain) saveSendPending(id, null);
-    toast(uncertain ? '发送结果还没确认，请先点“更新记录”查看，不要重复发送' : sendError?.message || '发送未能提交，请核对当前状态', 'err');
+    toast(uncertain ? '发送结果还没确认，请先点“更新记录”查看，不要重复发送。' : sendError?.message || '发送未能提交，请核对当前状态。', 'err');
   } finally {
     if (alive && send.id === id) send.sending = false;
     if (alive) refresh();
@@ -191,6 +193,7 @@ async function submitHandoff() {
       <div v-if="counter" class="ua-handoff ua-counter" aria-label="反制进度" :data-state="props.counter?.status">
         <p><b>{{ counter.title }}</b><span>{{ counter.status }}</span></p>
         <p class="ua-note">{{ counter.initiator }}</p>
+        <p v-if="counter.decisionNote" class="ua-note">{{ counter.decisionNote }}</p>
         <dl class="ua-counter-facts">
           <dt>开始</dt><dd>{{ counter.startedAt ? `${observationTime(counter.startedAt)} · ${counter.startText}` : counter.startText || '正在读取' }}</dd>
           <dt>停止</dt><dd>{{ counter.stoppedAt ? `${observationTime(counter.stoppedAt)} · ${counter.stopText}` : counter.stopText || (counter.eventsKnown ? '还没有停止记录' : '正在读取') }}</dd>

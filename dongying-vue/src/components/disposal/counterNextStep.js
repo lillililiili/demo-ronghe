@@ -46,3 +46,9 @@ export function counterHiddenReason({ alarm, actions = [], processStatus = '', s
   }
   return '现在这一步不能反制';
 }
+
+/** “无风险不反制”是告警核实动作（后端要求告警核实权限）：没有这项权限的账号不显示入口（#34），后端校验不变。 */
+export const NO_COUNTER_PERMISSION = 'alarm:verify';
+export function noCounterEntryVisible(has) {
+  return typeof has === 'function' && has(NO_COUNTER_PERMISSION) === true;
+}

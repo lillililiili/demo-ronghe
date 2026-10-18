@@ -54,6 +54,7 @@ import { openEvidenceChainTypeModal, renderEvidenceChainHtml } from '@/ui/eviden
 import { disposalApi, isDisposalUnavailable } from '@/services/disposalApi.js';
 import { DISPOSAL_UNAVAILABLE_TEXT } from '@/ui/disposalAuthModal.js';
 import { hasPermission } from '@/services/accessControl.js';
+import { canReadProgressSource, mergeProgressRead, readProgressSource } from './alarms/progressAccess.js';
 import EmergencyStopPanel from '@/components/disposal/EmergencyStopPanel.vue';
 import UavAdvisoryPanel from '@/components/disposal/UavAdvisoryPanel.vue';
 import CounterLaunch from '@/pages/alarms/CounterLaunch.vue';
@@ -197,12 +198,12 @@ let progressReadSeq = 0, progressBatchSeq = 0;
 let progressBatch = null;
 
 // 列表和详情共用读取结果；两个来源各自防止旧响应覆盖新结果，读取失败保留上次事实。
-function recordProgressRead(eventId, source, seq, items) {
+// 没有查看权限的来源不请求，记为“无权查看”（按没有可见记录处理），不算读取失败（#34）。
+function recordProgressRead(eventId, source, seq, result) {
   const sources = progressSources.get(eventId) || {};
   const previous = sources[source];
   if (previous && previous.seq > seq) return;
-  const complete = Array.isArray(items);
-  sources[source] = { seq, items: complete ? items : previous?.items, failed: !complete };
+  sources[source] = mergeProgressRead(previous, seq, result);
   progressSources.set(eventId, sources);
   pageProgress[eventId] = deriveAlarmProgress(sources.auths?.items || [], sources.handoffs?.items || []);
 }
@@ -340,34 +341,32 @@ const DISPOSAL_ACTIVE = ['APPROVED', 'EXECUTING'];
 let disposalSeq = 0;
 let progressReloadFor = '';
 
+const readEventAuthorizations = eventId => disposalApi.list({ subject_kind: 'UAV_EVENT', subject_id: eventId, page: 1, size: 50 });
+const readEventHandoffs = eventId => handoffApi.listHandoffs({ source_kind: 'UAV_EVENT', source_id: eventId, page: 1, size: 5 });
+function setDisposalError(error) {
+  disposal.unavailable = !!error && isDisposalUnavailable(error);
+  disposal.error = disposal.unavailable ? DISPOSAL_UNAVAILABLE_TEXT : messageOf(error);
+}
+
 async function loadEventDisposals(eventId) {
   const seq = ++disposalSeq;
   const readSeq = ++progressReadSeq;
   const isCurrent = () => seq === disposalSeq && eventId === cur.alarm?.event_id;
   disposal.byAction = {}; disposal.unavailable = false; disposal.error = ''; disposal.handoff = null;
   if (!eventId) return;
-  try {
-    const page = await disposalApi.list({ subject_kind: 'UAV_EVENT', subject_id: eventId, page: 1, size: 50 });
-    if (!isCurrent()) return;
-    recordProgressRead(eventId, 'auths', readSeq, page?.items);
-    // 同一动作可能申请过多次：按申请时间取最新一条代表当前状态。
-    for (const row of page?.items || []) {
-      const prev = disposal.byAction[row.action_type];
-      if (!prev || Number(row.requested_at || 0) >= Number(prev.requested_at || 0)) disposal.byAction[row.action_type] = row;
-    }
-  } catch (error) {
-    if (!isCurrent()) return;
-    recordProgressRead(eventId, 'auths', readSeq);
-    disposal.unavailable = isDisposalUnavailable(error);
-    disposal.error = disposal.unavailable ? DISPOSAL_UNAVAILABLE_TEXT : messageOf(error);
-  }
-  try {
-    const page = await handoffApi.listHandoffs({ source_kind: 'UAV_EVENT', source_id: eventId, page: 1, size: 5 });
-    if (!isCurrent()) return;
-    recordProgressRead(eventId, 'handoffs', readSeq, page?.items);
-    disposal.handoff = (page?.items || []).find(row => row.handoff_type === 'UAV_PUNISHMENT') || null;
-  } catch { if (isCurrent()) recordProgressRead(eventId, 'handoffs', readSeq); }
+  const auths = await readProgressSource('auths', () => readEventAuthorizations(eventId), hasPermission);
   if (!isCurrent()) return;
+  recordProgressRead(eventId, 'auths', readSeq, auths);
+  // 同一动作可能申请过多次：按申请时间取最新一条代表当前状态。
+  for (const row of auths.items || []) {
+    const prev = disposal.byAction[row.action_type];
+    if (!prev || Number(row.requested_at || 0) >= Number(prev.requested_at || 0)) disposal.byAction[row.action_type] = row;
+  }
+  if (auths.failed) setDisposalError(auths.error);
+  const handoffs = await readProgressSource('handoffs', () => readEventHandoffs(eventId), hasPermission);
+  if (!isCurrent()) return;
+  recordProgressRead(eventId, 'handoffs', readSeq, handoffs);
+  if (!handoffs.failed) disposal.handoff = (handoffs.items || []).find(row => row.handoff_type === 'UAV_PUNISHMENT') || null;
   paintList();
   return Object.values(disposal.byAction).sort((a, b) => Number(b.requested_at || 0) - Number(a.requested_at || 0))[0] || null;
 }
@@ -378,31 +377,24 @@ async function refreshEventDisposals(eventId) {
   const readSeq = ++progressReadSeq;
   const isCurrent = () => seq === disposalSeq && eventId === cur.alarm?.event_id;
   if (!eventId || eventId !== cur.alarm?.event_id) return;
-  try {
-    const page = await disposalApi.list({ subject_kind: 'UAV_EVENT', subject_id: eventId, page: 1, size: 50 });
-    if (!isCurrent()) return;
-    recordProgressRead(eventId, 'auths', readSeq, page?.items);
+  const auths = await readProgressSource('auths', () => readEventAuthorizations(eventId), hasPermission);
+  if (!isCurrent()) return;
+  recordProgressRead(eventId, 'auths', readSeq, auths);
+  if (auths.failed) setDisposalError(auths.error);
+  else {
     const next = {};
-    for (const row of page?.items || []) {
+    for (const row of auths.items || []) {
       const prev = next[row.action_type];
       if (!prev || Number(row.requested_at || 0) >= Number(prev.requested_at || 0)) next[row.action_type] = row;
     }
     disposal.byAction = next;
     disposal.unavailable = false;
     disposal.error = '';
-  } catch (error) {
-    if (!isCurrent()) return;
-    recordProgressRead(eventId, 'auths', readSeq);
-    disposal.unavailable = isDisposalUnavailable(error);
-    disposal.error = disposal.unavailable ? DISPOSAL_UNAVAILABLE_TEXT : messageOf(error);
   }
-  try {
-    const page = await handoffApi.listHandoffs({ source_kind: 'UAV_EVENT', source_id: eventId, page: 1, size: 5 });
-    if (!isCurrent()) return;
-    recordProgressRead(eventId, 'handoffs', readSeq, page?.items);
-    disposal.handoff = (page?.items || []).find(row => row.handoff_type === 'UAV_PUNISHMENT') || null;
-  } catch { if (isCurrent()) recordProgressRead(eventId, 'handoffs', readSeq); }
+  const handoffs = await readProgressSource('handoffs', () => readEventHandoffs(eventId), hasPermission);
   if (!isCurrent()) return;
+  recordProgressRead(eventId, 'handoffs', readSeq, handoffs);
+  if (!handoffs.failed) disposal.handoff = (handoffs.items || []).find(row => row.handoff_type === 'UAV_PUNISHMENT') || null;
   setSubject(advisorySubject, advisoryProps(cur.alarm, cur.event));
   paintList();
   paintDetailContent();
@@ -476,7 +468,10 @@ async function loadKpis() {
   const count = q => listAlarms({ ...q, page: 1, size: 1 }).then(p => Number(p && p.total) || 0);
   /* “反制中 / 干扰中”问的是当前有多少处置在进行，因此按状态计数（契约的列表接口没有日期过滤，
      跨页在前端数日期会数错）。EXECUTING 是正在执行，APPROVED 是已批准待执行，两者分开报。 */
-  const disposalCount = actionType => Promise.all(DISPOSAL_ACTIVE.map(status =>
+  // 没有处置记录查看权限就不去数（#34）：卡片写“无权查看”，不发注定被拒的请求。
+  const disposalReadable = canReadProgressSource('auths', hasPermission);
+  const NO_DISPOSAL_READ = { forbidden: true };
+  const disposalCount = actionType => !disposalReadable ? Promise.reject(NO_DISPOSAL_READ) : Promise.all(DISPOSAL_ACTIVE.map(status =>
     disposalApi.list({ action_type: actionType, status, page: 1, size: 1 }).then(p => Number(p && p.total) || 0)
   )).then(([approved, executing]) => ({ approved, executing }));
   // 告警按今日发生时间统计；待处置、执行中按实时状态统计（不限日期），已反制按累计完成记录统计。
@@ -492,7 +487,7 @@ async function loadKpis() {
     count({ ...day, state: 'CONFIRMED' }),
     count({ ...day, state: 'FALSE_POSITIVE' }),
     disposalCount('COUNTERMEASURE'), disposalCount('JAMMING'),
-    disposalApi.list({ action_type: 'COUNTERMEASURE', status: 'COMPLETED', page: 1, size: 1 })
+    !disposalReadable ? Promise.reject(NO_DISPOSAL_READ) : disposalApi.list({ action_type: 'COUNTERMEASURE', status: 'COMPLETED', page: 1, size: 1 })
       .then(p => ({ completed: Number(p && p.total) || 0 })),
     count(PENDING_DISPOSAL_QUERY),
     /* 新-2（D-4）：今日四张卡和大屏同一口径，系统自带的演示告警（来源标“模拟”）不算；
@@ -507,6 +502,7 @@ async function loadKpis() {
   /* 处置授权读不到时如实说明原因，不写 0——“没有在执行”与“读不到”是两件事。 */
   const disposalKpi = (def, settled, value) => {
     if (!value) {
+      if (settled?.reason === NO_DISPOSAL_READ || settled?.reason?.status === 403) return { ...def, value: '—', desc: '当前账号无权查看处置记录。' };
       const unavailable = settled?.reason && isDisposalUnavailable(settled.reason);
       return { ...def, value: unavailable ? '尚未接入' : '—', desc: unavailable ? DISPOSAL_UNAVAILABLE_TEXT : '读取失败：' + esc(messageOf(settled?.reason)) };
     }
@@ -637,14 +633,21 @@ function advisoryProps(a, ev) {
     id: a.event_id, label: noOf(a), confirmed: ev.state === 'CONFIRMED',
     handoffId: disposal.handoff?.handoff_type === 'UAV_PUNISHMENT' && disposal.handoff.delivery_status !== 'FAILED'
       ? (disposal.handoff.handoff_id || '') : '',
-    counter: counterSubject(pickCounterAuthorization(Object.values(disposal.byAction)))
+    counter: counterSubject(pickCounterAuthorization(Object.values(disposal.byAction))),
+    counterStop: counterStopSubject(emergencyInfo.value?.event_id === a.event_id ? emergencyInfo.value?.latest_stop : null)
   };
+}
+/* 急停记录里设备回执要用的部分：发起时间和每台设备的停止结果。 */
+function counterStopSubject(stop) {
+  if (!stop?.stop_id) return null;
+  return { stop_id: stop.stop_id, requested_at: stop.requested_at ?? null,
+    devices: (stop.devices || []).map(device => ({ device_id: device.device_id ?? null, stop_status: device.stop_status ?? null })) };
 }
 /* 处置进度“反制”一行只要这些字段；内容不变就不重画处置进度面板。 */
 function counterSubject(row) {
   if (!row?.authorization_id) return null;
   const keys = ['authorization_id', 'action_type', 'status', 'version', 'requested_by', 'requested_by_name', 'requested_at',
-    'approved_by_name', 'authorization_mode', 'result_code', 'device_stop_result'];
+    'approved_by_name', 'approved_at', 'decision_note', 'authorization_mode', 'result_code', 'device_stop_result', 'device_id'];
   return Object.fromEntries(keys.map(key => [key, row[key] ?? null]));
 }
 /* 处置进度面板每秒读一次通知摘要。只有本页用到的字段（通知阶段、反制入口、不反制决定、自动移送）
@@ -878,7 +881,9 @@ function paintList() {
 function paintDetail() {
   const eventId = cur.alarm?.event_id || null;
   if (emergencyEvent.value?.id !== eventId) emergencyInfo.value = null;
-  setSubject(emergencyEvent, eventId ? { id: eventId, label: noOf(cur.alarm) } : null);
+  // 急停状态要处置查看或停止权限才能读；都没有（例如只读领导）就不显示急停区，也不去读（#34）。
+  const canSeeStop = hasPermission('disposal:read') || hasPermission('disposal:stop');
+  setSubject(emergencyEvent, eventId && canSeeStop ? { id: eventId, label: noOf(cur.alarm) } : null);
   setSubject(advisorySubject, advisoryProps(cur.alarm, cur.event));
   if (advisoryLive.value?.event_id !== eventId) advisoryLive.value = null;
   paintDetailContent();
@@ -1092,17 +1097,12 @@ function loadPageProgress(rows) {
     const readSeq = ++progressReadSeq;
     const startedAt = Date.now();
     const read = async (source, request) => {
-      try {
-        const page = await request();
-        if (isCurrent()) recordProgressRead(id, source, readSeq, page?.items);
-      } catch {
-        if (isCurrent()) recordProgressRead(id, source, readSeq);
-      }
-      if (isCurrent()) paintList();
+      const result = await readProgressSource(source, request, hasPermission);
+      if (isCurrent()) { recordProgressRead(id, source, readSeq, result); paintList(); }
     };
     await Promise.all([
-      read('auths', () => disposalApi.list({ subject_kind: 'UAV_EVENT', subject_id: id, page: 1, size: 50 })),
-      read('handoffs', () => handoffApi.listHandoffs({ source_kind: 'UAV_EVENT', source_id: id, page: 1, size: 5 })),
+      read('auths', () => readEventAuthorizations(id)),
+      read('handoffs', () => readEventHandoffs(id)),
       confirmed.has(id) ? uavAdvisoryApi.get(id).then(advisory => {
         if (!isCurrent() || !advisory) return;
         updateAdvisory({ ...advisory, _fetchedAt: startedAt });
@@ -1532,7 +1532,7 @@ onMounted(async () => {
               <div id="alDetail" style="padding:12px"></div>
               <UavAdvisoryPanel v-if="advisorySubject" :key="`advisory-${advisorySubject.id}`"
                 :event-id="advisorySubject.id" :confirmed="advisorySubject.confirmed"
-                :handoff-id="advisorySubject.handoffId" :counter="advisorySubject.counter" :interval="1000"
+                :handoff-id="advisorySubject.handoffId" :counter="advisorySubject.counter" :counter-stop="advisorySubject.counterStop" :interval="1000"
                 @updated="updateAdvisory" @unavailable="invalidateAdvisory" />
             </div>
           </UPanel>

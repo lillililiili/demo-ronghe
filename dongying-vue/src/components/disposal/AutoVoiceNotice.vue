@@ -14,7 +14,7 @@ onUnmounted(() => { alive = false; });
 const view = computed(() => autoVoiceView(props.data));
 const compactTitle = computed(() => {
   if (view.value.recordedDeparture) return view.value.title;
-  if (view.value.pilotContactMissing || view.value.channelUnavailable || view.value.smsNotSent) return view.value.title;
+  if (view.value.pilotContactMissing || view.value.noReportedPilot || view.value.channelUnavailable || view.value.smsNotSent) return view.value.title;
   const reason = props.data?.auto_voice?.reason || '';
   if (reason.includes('正在用设备位置观察')) return '观察是否撤离';
   if (reason.includes('已离开')) return DEPARTED_NOT_CALLED;
@@ -60,7 +60,7 @@ function retry() {
       <summary v-if="compact" class="notice-summary">
         <b>飞手电话</b><span class="notice-result" :class="`avn-${view.tone}`">{{ compactTitle }}</span>
         <span v-if="view.simulated" class="tag t-amber">模拟</span><span class="notice-toggle">详情</span>
-        <small v-if="view.departureBasis && (compactTitle === DEPARTED_NOT_CALLED || view.recordedDeparture)" class="notice-basis">{{ view.departureBasis }}；现在的情况以「无人机现在」为准</small>
+        <small v-if="view.departureBasis && (compactTitle === DEPARTED_NOT_CALLED || view.recordedDeparture)" class="notice-basis">{{ view.departureBasis }}</small>
       </summary>
       <header v-if="!compact"><b>飞手电话录音通知</b><span v-if="view.simulated" class="tag t-amber">模拟电话</span></header>
       <p v-if="!compact" class="avn-title" :class="`avn-${view.tone}`">{{ view.title }}</p>

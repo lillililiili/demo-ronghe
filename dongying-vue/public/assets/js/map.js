@@ -1590,7 +1590,9 @@
         const targetClassColor = TARGET_COLORS[t.iconKind] || TARGET_COLORS.unknown;
         const col = t.objectTypeCode && t.objectTypeCode !== 'UAV' ? targetClassColor
           : t.legal === '非法' ? '#ff4d5e' : t.legal === '异常' ? '#ff8b3d'
-            : t.legal === '待确认' ? '#ffb020' : t.legal === '不适用' ? '#8ca0be' : '#2fd06e';
+            : t.legal === '待确认' ? '#ffb020'
+              // 已无有效观测、观测待确认不是“合法”，与不适用同用中性色（2026-10-18）。
+              : ['不适用', '已无有效观测', '观测待确认'].includes(t.legal) ? '#8ca0be' : '#2fd06e';
         /* AOA 目标只有方位角，没有经纬度（协议 v8.6）—— 画成从设备射出的方位线。
            当点画等于凭空给了一个平台并不知道的位置。 */
         if (t.posValid === false) { this._drawBearing(c, t, P, col); if (dim) c.restore(); return; }

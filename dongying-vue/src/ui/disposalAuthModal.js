@@ -211,7 +211,7 @@ async function loadEnabledDevices() {
  * @param {string} [o.subjectText] 主体的可读说明（编号/名称），只读展示
  * @param {string} [o.initialReason] 申请事由草稿，提交前由用户核对
  * @param {() => boolean} [o.isCurrent] 所属事件及页面是否仍有效，阻止迟到表单串到其他事件
- * @param {object} [o.policy] GET /disposal-policies 的结果，用于显示时限与 DEMO 标注
+ * @param {object} [o.policy] GET /disposal-policies 的结果，用于显示授权有效时长
  * @param {(body: object, key: string) => Promise<object>} [o.submit] 自定义提交；融合感知模拟源用来复用同一弹窗但不打真实授权接口
  * @param {(result: object) => string} [o.okText] 成功提示；缺省为“申请已提交，待审批”
  */
@@ -233,7 +233,7 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
   let devices = [];
   const point = validPoint(targetPoint) ? targetPoint : null;
   let deviceHelp = point
-    ? '只显示覆盖范围照得到目标的设备，近的在前；没配置覆盖范围的设备无法判断，排在后面并写明；停用、离线、故障或状态不明的设备置灰不能选。'
+    ? '只显示覆盖范围照得到目标的设备，近的在前；没有登记覆盖范围的设备无法判断，排在后面并写明；停用、离线、故障或状态不明的设备置灰不能选。'
     : targetPoint !== undefined
       ? '读不到目标现在的位置，没法按覆盖范围筛选，下面列出这个执行通道的全部设备，请自己核对设备能否照到目标。'
       : '只显示当前执行通道可以下发的设备；停用、离线、故障或状态不明的设备置灰不能选，括号里写明原因。';
@@ -246,11 +246,10 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
       : (error?.message || '读取执行设备失败，请稍后重试。');
   }
   if (!isCurrent()) return false;
-  /* GET /disposal-policies 实际返回的是策略数组，参数在 params 下、DEMO 标记是 schema_status；
+  /* GET /disposal-policies 实际返回的是策略数组，参数在 params 下；
      这里一并兼容扁平形状，避免接口小改动就把时限提示悄悄变没。 */
   const current = Array.isArray(policy) ? policy[0] : policy;
   const params = current?.params || current || {};
-  const demo = (current?.schema_status || current?.param_status) === 'DEMO' || current?.policy_code === 'demo-v1' || current?.policy_version === 'demo-v1';
   const limits = params.time_limit_min || {};
   // 可选动作时把各自时限并列写出：表单是静态的，选哪个就临时改一行提示会让人误以为它随选择实时变化。
   const limitText = pickable
@@ -267,8 +266,7 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
     width: '600px',
     warning: (direct
       ? '本次使用免逐次审批权限。服务端仍会核对目标、范围、时效、设备操作权限和急停状态；提交后以设备回执为准。'
-      : '提交后进入待审批：审批人必须是另一个人，批准后才可执行。')
-      + (demo ? '当前为演示策略，时限与条件待业务确认。' : ''),
+      : '提交后进入待审批：审批人必须是另一个人，批准后才可执行。'),
     introHtml: `<dl class="kv">${intro}</dl>`,
     notice: initialReason ? '已带入申请事由草稿，请依据当前观测与研判核对。' : '',
     fields: [

@@ -52,7 +52,7 @@ const blockReasonText = row => row?.execution_block_reason ? labelOf(DISPOSAL_BL
 const subjects = ref({});
 const subjectKey = row => `${row.subject_kind}:${row.subject_id}`;
 const subjectText = row => subjects.value[subjectKey(row)]?.text || `${({ UAV_EVENT: '告警事件', TARGET: '目标', RISK: '风险事件' }[row.subject_kind] || '关联对象')}编号读取中`;
-const subjectExtra = row => subjects.value[subjectKey(row)]?.fallback ? `记录 ${row.authorization_no || row.authorization_id}` : subjects.value[subjectKey(row)]?.extra || '';
+const subjectExtra = row => subjects.value[subjectKey(row)]?.fallback ? (row.authorization_no ? `记录 ${row.authorization_no}` : '') : subjects.value[subjectKey(row)]?.extra || '';
 let request = 0, detailRequest = 0, active = true, loadFailure = null;
 watch(visibleRows, items => { for (const row of items) void readSubject(row); });
 watch(selected, row => { if (row) void readSubject(row); });
@@ -302,8 +302,8 @@ onUnmounted(() => { active = false; request++; detailRequest++; });
             <details :key="selected.authorization_id" class="authorization-dossier" open>
               <summary>授权资料与办理记录</summary>
               <dl class="detail-facts">
-                <dt>授权编号</dt><dd>{{ selected.authorization_no || selected.authorization_id }}</dd>
-                <dt>关联对象 ID</dt><dd>{{ selected.subject_id || '未提供' }}</dd>
+                <dt>授权编号</dt><dd>{{ selected.authorization_no || '未编号' }}</dd>
+                <dt>关联对象</dt><dd>{{ subjectText(selected) }}</dd>
                 <template v-if="!mainCode(selected)"><dt>授权方式</dt><dd>{{ modeText(selected) }}</dd></template>
                 <dt>{{ selected.authorization_mode === 'DIRECT' ? '直接操作人' : '申请人' }}</dt><dd>{{ selected.requested_by_name || '未提供' }}</dd>
                 <template v-if="!mainCode(selected) && selected.authorization_mode !== 'DIRECT'">

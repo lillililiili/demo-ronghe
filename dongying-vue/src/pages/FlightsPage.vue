@@ -9,6 +9,7 @@ export default {};
 
 <script setup>
 import HandoffMaterialPanel from '@/pages/punish/HandoffMaterialPanel.vue';
+import { noticesLagBehindRisk, riskHeaderState } from '@/pages/flights/riskNoticeState.js';
 import PunishmentNotification from '@/pages/punish/PunishmentNotification.vue';
 import { displayRiskNo, displayNumberReferences } from '@/ui/deviceNumber.js';
 import { computed, h, nextTick, onMounted, onUnmounted, reactive, ref, shallowRef, watch } from 'vue';
@@ -139,6 +140,8 @@ const notices = ref([]);
 const noticesTotal = ref(0);
 const noticesLoading = ref(false);
 const noticesError = ref('');
+/* 静默重读通知记录后加一，让每条记录里的通知状态组件重新读取最新发送和签收结果。 */
+const noticesRevision = ref(0);
 let noticesToken = 0;
 const NOTICE_DELIVERY_LABEL = { PENDING_DELIVERY: '等待发送', SUBMITTED: '送达待确认', DELIVERED: '已送达', FAILED: '发送失败' };
 const NOTICE_DELIVERY_TAG = { PENDING_DELIVERY: 't-amber', SUBMITTED: 't-blue', DELIVERED: 't-green', FAILED: 't-red' };
@@ -442,6 +445,10 @@ function formatDuration(plan) {
 
 function stateLabel(state) { return RISK_STATE_LABEL[state] || state || '未知'; }
 function stateTag(state) { return RISK_STATE_TAG[state] || 't-gray'; }
+/* 详情标题：已通知的风险按本条通知记录的发送和签收说，与下面“通知与回执”同一套判断。 */
+const riskHeader = computed(() => riskHeaderState(selectedRisk.value, notices.value, {
+  label: stateLabel, tag: stateTag, loaded: !noticesLoading.value && !noticesError.value
+}));
 function receiptStatusLabel(risk) {
   if (risk?.state === 'ACKNOWLEDGED') return '已回执';
   if (risk?.state === 'NOTIFIED') return '未回执';
@@ -1617,17 +1624,19 @@ function handoffMessageOf(error, fallback) {
   return error.message || fallback;
 }
 
-async function loadRiskNotices(riskId) {
+async function loadRiskNotices(riskId, { quiet = false } = {}) {
   const token = ++noticesToken;
-  notices.value = []; noticesTotal.value = 0; noticesError.value = '';
+  if (!quiet) { notices.value = []; noticesTotal.value = 0; }
+  noticesError.value = '';
   if (!riskId) { noticesLoading.value = false; return; }
-  noticesLoading.value = true;
+  noticesLoading.value = !quiet;
   noticesError.value = '';
   try {
     const data = await handoffApi.listHandoffs({ source_kind: 'RISK', source_id: riskId, page: 1, size: 20 });
     if (token !== noticesToken) return;
     notices.value = data.items || [];
     noticesTotal.value = data.total;
+    if (quiet) noticesRevision.value += 1;
   } catch (requestError) {
     if (token !== noticesToken) return;
     notices.value = [];
@@ -1910,6 +1919,11 @@ watch(riskPage, value => { S.riskPage = value; });
 watch(riskSize, value => { S.riskSize = value; });
 watch(riskTab, value => { S.riskTab = value; });
 watch(activeRiskId, id => loadRiskNotices(id), { immediate: true });
+/* 风险状态由实时刷新更新（例如对方签收后变成已回执），通知记录不会跟着变：落后时静默重读，标题和记录保持一致。 */
+watch(() => [selectedRisk.value?.risk_id, selectedRisk.value?.state, selectedRisk.value?.version], ([id], previous) => {
+  if (!id || id !== previous?.[0] || noticesLoading.value) return;
+  if (noticesLagBehindRisk(selectedRisk.value, notices.value)) void loadRiskNotices(id, { quiet: true });
+});
 
 onUnmounted(() => {
   clearInterval(routeRisksTimer);
@@ -2009,7 +2023,7 @@ onUnmounted(() => {
               <div class="detail-hero detail-hero-micro"><div class="detail-hero-inner">
                 <div class="detail-hero-icon" v-html="riskHeroIcon"></div>
                 <div class="detail-hero-copy"><div class="detail-hero-eyebrow">飞行风险</div><div class="detail-hero-title">{{ labelOf(RISK_TYPE_LABEL, selectedRisk.risk_type, '风险类型未提供') }}</div><div v-if="selectedRisk.risk_no" class="detail-hero-id">{{ displayRiskNo(selectedRisk.risk_no) }}</div></div>
-                <div class="detail-hero-side"><div class="detail-hero-tags"><span class="tag" :class="severityTag(selectedRisk.severity)">{{ severityLabel(selectedRisk.severity) }}</span><span class="tag" :class="stateTag(selectedRisk.state)">{{ stateLabel(selectedRisk.state) }}</span></div></div>
+                <div class="detail-hero-side"><div class="detail-hero-tags"><span class="tag" :class="severityTag(selectedRisk.severity)">{{ severityLabel(selectedRisk.severity) }}</span><span class="tag" :class="riskHeader.tag">{{ riskHeader.label }}</span></div></div>
               </div></div>
               <div v-if="riskTab === 'event'" class="rk-event-grid">
               <RiskOpticalPanel v-if="selectedRisk.risk_type !== 'WEATHER'" :key="selectedRisk.risk_id" :risk="selectedRisk" />
@@ -2058,7 +2072,7 @@ onUnmounted(() => {
                     <p>对方回复：{{ receiptText(notice) }}</p>
                     <p v-if="notificationBlockedReason(notice)">未完成原因：{{ notificationBlockedReason(notice) }}</p>
                     <HandoffMaterialPanel :key="notice.handoff_id" :handoff-id="notice.handoff_id" />
-                    <PunishmentNotification :handoff-id="notice.handoff_id" risk-notice @status="Object.assign(notice, { delivery_status: $event.delivery_status, receipt_status: $event.receipt_status, blocked_reason: $event.latest_delivery?.blocked_reason })" @changed="loadRiskNotices(activeRiskId)" />
+                    <PunishmentNotification :key="`${notice.handoff_id}:${noticesRevision}`" :handoff-id="notice.handoff_id" risk-notice @status="Object.assign(notice, { delivery_status: $event.delivery_status, receipt_status: $event.receipt_status, blocked_reason: $event.latest_delivery?.blocked_reason })" @changed="loadRiskNotices(activeRiskId)" />
                     <p class="rk-note">风险通知记录留在本页，不进入处罚办理。</p>
                   </article>
                 </div>

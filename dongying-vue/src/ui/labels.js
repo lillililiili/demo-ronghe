@@ -162,6 +162,8 @@ export const DISPOSAL_ACTION_LABEL = { COUNTERMEASURE: '反制', JAMMING: '信�
 /* 告警列表「状态」列的处置进度展示：uav_event.state 仍是核实结论，不把反制中写进库。 */
 export const ALARM_PROGRESS_LABEL = {
   HANDED_OFF: '已移送处罚',
+  /* 处罚交接已建立但还没有发出（例如通知处罚规则未全部满足）：不能写成已移送。与后台报表同一说法。 */
+  HANDOFF_PENDING: '待发送移送',
   JAMMING_ACTIVE: '干扰中',
   JAMMING_DONE: '已干扰',
   COUNTERMEASURE_ACTIVE: '反制中',
@@ -171,6 +173,7 @@ export const ALARM_PROGRESS_LABEL = {
 };
 export const ALARM_PROGRESS_TAG = {
   HANDED_OFF: 't-green',
+  HANDOFF_PENDING: 't-amber',
   JAMMING_ACTIVE: 't-red',
   JAMMING_DONE: 't-cyan',
   COUNTERMEASURE_ACTIVE: 't-orange',

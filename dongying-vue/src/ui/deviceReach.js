@@ -13,12 +13,12 @@ export function validPoint(point) {
     @returns {{ inRange: boolean, unknown: boolean, distanceM: number|null, reason: string }} */
 export function deviceReach(device, point) {
   if (!validPoint(point)) return { inRange: false, unknown: true, distanceM: null, reason: '没有目标位置' };
-  if (!finite(device?.longitude) || !finite(device?.latitude)) return { inRange: false, unknown: true, distanceM: null, reason: '设备没有安装坐标，无法判断是否覆盖' };
+  if (!finite(device?.longitude) || !finite(device?.latitude)) return { inRange: false, unknown: true, distanceM: null, reason: '这台设备没有登记安装位置，无法判断能否覆盖目标' };
   const lon = Number(device.longitude), lat = Number(device.latitude);
   const distanceM = distanceMeters(lon, lat, Number(point.lon), Number(point.lat));
   // 在线与否另由 deviceUnavailableReason 判断；这里只看几何，所以按“可用”归一化。
   const coverage = normalizeCoverage(device.coverage ? { ...device.coverage, status: 'available' } : null, true);
-  if (coverage.status !== 'available') return { inRange: false, unknown: true, distanceM, reason: '未配置覆盖范围，无法判断是否覆盖' };
+  if (coverage.status !== 'available') return { inRange: false, unknown: true, distanceM, reason: '这台设备没有登记覆盖范围，无法判断能否覆盖目标' };
   const inRange = coverageContainsPoint({ lon, lat, coverage }, { lon: Number(point.lon), lat: Number(point.lat) });
   const reach = coverage.radiusM ?? coverage.rangeM;
   return { inRange, unknown: false, distanceM, reason: inRange ? '' : `超出覆盖（${distanceText(reach)}）` };

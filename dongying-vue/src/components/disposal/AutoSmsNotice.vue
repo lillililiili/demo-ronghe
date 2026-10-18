@@ -12,7 +12,7 @@ const emit = defineEmits(['changed']);
 let alive = true;
 onUnmounted(() => { alive = false; });
 const view = computed(() => autoSmsView(props.data));
-const compactTitle = computed(() => view.value.pilotContactMissing ? view.value.title : view.value.expired ? '需核对最新情况'
+const compactTitle = computed(() => view.value.pilotContactMissing || view.value.noReportedPilot ? view.value.title : view.value.expired ? '需核对最新情况'
   : ({ WAITING: '等待发送', SENDING: '正在发送', SIMULATED_DELIVERED: '模拟已送达', UNKNOWN: '发送结果未知', FAILED: '发送失败', UNAVAILABLE: '通道未接通', BLOCKED: '暂不满足发送条件', DISABLED: '未启用', NOT_REQUIRED: '不需要发送' })[props.data?.auto_sms?.status] || view.value.title);
 const SOURCE_TEXT = { ALARM_EVENT: '核实属实后才由后台自动发送。', RULE_ILLEGAL: '核实属实后才由后台自动发送。',
   MANUAL_RECHECK: '告警超过通知时效后，有人核对了最新情况并登记发送。', MANUAL_CONFIRMATION: '人工确认与当前观测' };
@@ -64,7 +64,7 @@ function retry() {
       <header v-if="!compact"><b>飞手短信</b><span v-if="view.simulated" class="tag t-amber">模拟短信</span></header>
       <p v-if="!compact" class="asn-title" :class="`asn-${view.tone}`">{{ view.title }}</p>
       <p v-if="view.reason">{{ userFacingMessage(view.reason) }}</p>
-      <p v-if="view.guidance && (!view.expired || view.canRetry || view.pilotContactMissing)">{{ view.guidance }}</p>
+      <p v-if="view.guidance && (!view.expired || view.canRetry || view.pilotContactMissing || view.noReportedPilot)">{{ view.guidance }}</p>
       <dl v-if="view.recipient || view.triggeredAt || view.updatedAt">
         <template v-if="view.recipient"><dt>接收飞手</dt><dd>{{ view.recipient }}<small v-if="view.recipientHint" style="display:block">{{ view.recipientHint }}</small></dd></template>
         <template v-if="view.triggeredAt"><dt>触发时间</dt><dd>{{ time(view.triggeredAt) }}</dd></template>

@@ -64,6 +64,19 @@ def normalize_coverage_config(raw):
                 'fovDeg': fov, 'sourceLabel': source}
     raise ValueError('设备覆盖类型只能为 circle 或 sector')
 
+def countermeasure_config(raw):
+    """场景里模拟反制设备的配置：目前只有作用范围（圆形半径，米），登记反制设备时交给平台，
+    供“执行设备能否覆盖目标”判断。不配置时不登记覆盖范围（平台显示“未配置覆盖范围”），不编默认值。"""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict) or set(raw) - {'coverage'}:
+        raise ValueError('反制设备配置只能包含覆盖范围 coverage')
+    coverage = normalize_coverage_config(raw.get('coverage'))
+    if coverage is not None and coverage['kind'] != 'circle':
+        raise ValueError('反制设备覆盖范围只支持圆形作用半径 radiusM')
+    return {'coverage': coverage}
+
+
 def coordinates(point):
     return [118.56 + point[0] * .00012, 37.50 - point[1] * .00012]
 
@@ -389,6 +402,7 @@ def compile_scene(raw):
                 r['offset'] = number(r.get('offset'), 1, 1440, '超出时长')
                 if r.get('mode') not in ('开始前提前飞行','结束后继续飞行'): raise ValueError('时间场景无效')
             active.append((r, t))
+    s['countermeasure'] = countermeasure_config(s.get('countermeasure'))
     return s, devices, targets, skipped
 
 def secondary_reports_over_mqtt(target, device):

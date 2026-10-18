@@ -36,6 +36,13 @@
       ]
     }
   ],
+  "countermeasure": {
+    "coverage": {
+      "kind": "circle",
+      "radiusM": 2000,
+      "sourceLabel": "流程验收场景配置：模拟反制设备作用半径"
+    }
+  },
   "targets": [
     {
       "id": "flow3-uav",

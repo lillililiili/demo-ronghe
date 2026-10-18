@@ -16,6 +16,8 @@ import uuid
 from engine import device_condition
 
 STATUS_PATH = '/local-interface-simulator/device-status'
+# 模拟器正常停止后声明本批模拟设备“计划下线”：之后的心跳超时不算故障，平台不开异常处置单（#12）。
+PLANNED_OFFLINE_PATH = STATUS_PATH + '/planned-offline'
 # 状况 → 连接、健康码、有无告警。故障时心跳的工作状态是 2，平台记“异常”，这里一致。
 REPORTS = {'ok': ('ONLINE', 'GOOD', False), 'fault': ('ABNORMAL', 'BAD', True)}
 LABELS = {'ok': '良好', 'fault': '故障'}
@@ -112,3 +114,34 @@ class DeviceHealthReporter:
         if changed: self.log('DEVICE_HEALTH', '已向系统报设备健康：' + LABELS[condition],
                  device=external, health=LABELS[condition])
         return True
+
+
+def declare_planned_offline(platform, manifest, log):
+    """模拟器正常停止（点了停止，或场景跑完）后，告诉平台本批模拟设备是计划下线，不是故障。
+
+    只在正常停止时调用；模拟器崩溃、连接失败等非计划停发不声明，平台仍按心跳超时开单（单子标“模拟设备”）。
+    平台只接受经回放连接登记、标明模拟、来源一致的设备；设备重新上报心跳后计划下线自然结束。
+    规范化观测来源不是平台台账设备，不声明。某台没声明上只记日志，不影响其他设备和本次停止。
+    """
+    declared, failed = [], []
+    for key, entry in (manifest.get('devices') or {}).items():
+        if not isinstance(entry, dict) or entry.get('kind') == 'normalized':
+            continue
+        if not entry.get('platform_id') or not entry.get('source_id'):
+            continue
+        body = {'device_id': entry['platform_id'], 'source_id': entry['source_id']}
+        try:
+            platform.call('POST', PLANNED_OFFLINE_PATH, body, 'sim-planned-offline-' + uuid.uuid4().hex, timeout=3)
+            declared.append(entry.get('external_id') or key)
+        except Exception as error:  # 声明不上不影响停止；平台照常按心跳超时开单
+            message = str(error)
+            if '返回 404' in message:
+                log('PLANNED_OFFLINE_OFF', '系统未开放模拟设备计划下线接口（只在 local,qa 运行时开放）；'
+                    '停发后平台可能按心跳超时生成设备异常处置单')
+                return {'declared': declared, 'failed': [key]}
+            failed.append(entry.get('external_id') or key)
+            log('PLANNED_OFFLINE_FAILED', '模拟设备计划下线没有告诉平台：' + message, device=entry.get('external_id') or key)
+    if declared:
+        log('PLANNED_OFFLINE', '已告诉平台本批 ' + str(len(declared)) + ' 台模拟设备计划下线；'
+            '停发后的心跳超时不算故障，重新开始模拟后自动恢复上报')
+    return {'declared': declared, 'failed': failed}

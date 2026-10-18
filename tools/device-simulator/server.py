@@ -29,7 +29,7 @@ import mock_airport
 from fullchain import FullChain
 from protocol_b import ProtocolBResponder
 from mqtt_recovery import CommandSubscriptions
-from device_health import DeviceHealthReporter
+from device_health import DeviceHealthReporter, declare_planned_offline
 from state_file import atomic_json, read_saved_text
 from acceptance_flows import read_acceptance_flows
 from tcp_radar import TcpRadar, MANUAL_PORT
@@ -694,11 +694,25 @@ class Runtime:
                 client.disconnect(); client.loop_stop()
             self.mqtt_connected = False
             self.withdraw_run_airspaces()
+            self.declare_planned_offline()
             # The notification receiver and command listener outlive the scene; only stop_all
             # ("停止全部收发") or service exit stops them, as the README describes.
             with self.lock:
                 if self.phase in ('STOPPING','PREPARING'): self.phase='STOPPED'
             self.checkpoint()
+
+    def declare_planned_offline(self):
+        """正常停止（点停止或场景跑完）后，告诉平台本批模拟设备计划下线，停发不再被当成故障开处置单。
+        出错停止（连接失败、登录失效等）不声明：那是非计划停发，平台仍按心跳超时开单。"""
+        with self.lock:
+            planned = self.phase in ('STOPPING', 'STOPPED', 'COMPLETED') and not self.error
+            manifest, platform = self.manifest, self.platform
+        if not planned or not platform or not isinstance(manifest, dict):
+            return
+        result = declare_planned_offline(platform, manifest, self.log)
+        with self.lock:
+            manifest['planned_offline'] = {'declared': result['declared'], 'failed': result['failed'],
+                                           'at': int(time.time() * 1000)}
 
     def withdraw_run_airspaces(self):
         """停止、完成、失败都会走到这里：把本批次下发的模拟空域撤回，下一个场景不再受它们影响（清单第 4 条）。"""

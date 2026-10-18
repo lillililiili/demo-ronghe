@@ -101,6 +101,22 @@ def countermeasure_position(config, scene):
     return None
 
 
+def countermeasure_radius(scene):
+    """场景配置的反制作用半径（米）：场景 countermeasure.coverage（圆形 radiusM，已由 compile_scene 校验）。
+    没配置时返回 None，平台上这台设备的覆盖范围保持原样。"""
+    coverage = ((scene or {}).get('countermeasure') or {}).get('coverage') if isinstance(scene, dict) else None
+    if not isinstance(coverage, dict) or coverage.get('kind') != 'circle':
+        return None
+    radius = coverage.get('radiusM')
+    return radius if type(radius) in (int, float) and math.isfinite(radius) and radius > 0 else None
+
+
+def has_coverage(detail):
+    """平台返回的设备详情里，这台设备是否已有覆盖范围（不论是设备管理里配的还是之前登记时带上的）。"""
+    coverage = detail.get('coverage') if isinstance(detail, dict) else None
+    return isinstance(coverage, dict) and bool(coverage.get('kind'))
+
+
 class BridgeClient:
     """Same in-memory session and allowlist as the HTTP proxy, pinned to its login."""
     def __init__(self, session):
@@ -141,6 +157,7 @@ class RealtimeController:
         self.notification_status = {}
         self.countermeasure_device_id = None
         self.countermeasure_position = None
+        self.countermeasure_covered = False
 
     def active(self):
         return self.state in ('STARTING', 'RUNNING', 'STOPPING') or bool(self.thread and self.thread.is_alive())
@@ -201,6 +218,10 @@ class RealtimeController:
         position = countermeasure_position(config, self._scene_for(scene))
         if position:
             body.update(position)
+        # 平台上这台设备还没有覆盖范围时才用上；已有的（设备管理里配过，或之前的场景登记过）不改。
+        radius = countermeasure_radius(self._scene_for(scene))
+        if radius is not None:
+            body['coverage_radius_m'] = radius
         return body
 
     def _refresh_for_scene(self, scene):
@@ -210,12 +231,16 @@ class RealtimeController:
             config = copy.deepcopy(self.config)
             receiver, tcp, client = self.receiver, self.tcp, self.client
             located = self.countermeasure_position is not None
+            covered = self.countermeasure_covered
         scene = self._scene_for(scene)
         if receiver is not None:
             # 接收端每一步都会重新读这个文件：此后收到的通知用这一次场景的结果，已收到的保持首次接收时的结果。
             atomic_json(self.root / 'realtime-outcomes.json', notification_outcomes(config, scene))
-        if tcp is not None and client is not None and not located and countermeasure_position(config, scene):
-            # 上一个场景里没有雷达可参照、平台上这台设备还没有位置：用这个场景的雷达位置补上。
+        if tcp is not None and client is not None and (
+                (not located and countermeasure_position(config, scene))
+                or (not covered and countermeasure_radius(scene) is not None)):
+            # 上一个场景里没有雷达可参照、平台上这台设备还没有位置：用这个场景的雷达位置补上；
+            # 这台设备还没有覆盖范围、这个场景配置了作用半径：一并补上。
             try:
                 device = client.call('POST', '/local-interface-simulator/countermeasure-device',
                                      self._countermeasure_body(config, scene))
@@ -223,8 +248,11 @@ class RealtimeController:
                 if isinstance(detail, dict) and detail.get('longitude') is not None and detail.get('latitude') is not None:
                     with self.lock:
                         self.countermeasure_position = {'longitude': detail['longitude'], 'latitude': detail['latitude']}
+                if has_coverage(detail):
+                    with self.lock:
+                        self.countermeasure_covered = True
             except (ReceiverError, ValueError) as error:
-                # 补位置失败不影响本次模拟；地图上暂时画不出作用范围。
+                # 补位置或覆盖范围失败不影响本次模拟；地图上暂时画不出作用范围。
                 if hasattr(self.runtime, 'log'):
                     self.runtime.log('REALTIME_REFRESH_FAILED', '补充反制设备位置失败：' + str(error))
         return self.snapshot()
@@ -246,6 +274,7 @@ class RealtimeController:
                 self.notification_status = {}
                 self.countermeasure_device_id = None
                 self.countermeasure_position = None
+                self.countermeasure_covered = False
                 self.thread = None
                 config = copy.deepcopy(self.config)
                 self.cancel.clear()
@@ -285,6 +314,7 @@ class RealtimeController:
                 self.countermeasure_device_id = device['device']['device_id']
                 if isinstance(detail, dict) and detail.get('longitude') is not None and detail.get('latitude') is not None:
                     self.countermeasure_position = {'longitude': detail['longitude'], 'latitude': detail['latitude']}
+                self.countermeasure_covered = has_coverage(detail)
             if config['notifications_enabled']:
                 # Share the exact lock with the optional standalone receiver.
                 self.receiver_lock = InstanceLock(Path(__file__).parent / '.data' / f'notification-receiver-{self.port}.lock')

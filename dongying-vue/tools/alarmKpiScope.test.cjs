@@ -6,23 +6,24 @@ const path = require('node:path');
 /* OBS-15：统计卡"今日告警 10"与"待核实 14"对不上——待核实那张卡当初不带日期条件，数的是全部历史。
    告警类的卡必须同一口径（同一个北京时间自然日的发生时间），并各自写明自己数的是什么。 */
 /* totals(query) 给出这次计数的结果；默认今天没有演示告警。 */
-function loadKpis(recorded, totals = query => query.source_mode === 'mock' ? 0 : query.state ? 4 : 10) {
+async function loadKpis(recorded, totals = query => query.source_mode === 'mock' ? 0 : query.state ? 4 : 10) {
+  const { canReadProgressSource } = await import('../src/pages/alarms/progressAccess.js');
   const source = readFileSync(path.join(__dirname, '../src/pages/AlarmsPage.vue'), 'utf8').replace(/\r\n/g, '\n');
   const start = source.indexOf('const KPI_DEFS = [');
   const body = source.slice(start, source.indexOf('\n}\n', source.indexOf('async function loadKpis()')) + 3);
   const listAlarms = query => { recorded.push(query); return Promise.resolve(totals(query)).then(total => ({ total })); };
   const disposalApi = { list: () => Promise.resolve({ total: 1 }) };
   const names = ['ref', 'listAlarms', 'disposalApi', 'DISPOSAL_ACTIVE', 'isDisposalUnavailable', 'DISPOSAL_UNAVAILABLE_TEXT', 'esc', 'messageOf', 'U',
-    'PENDING_DISPOSAL_QUERY'];
+    'PENDING_DISPOSAL_QUERY', 'canReadProgressSource', 'hasPermission'];
   const values = [value => ({ value }), listAlarms, disposalApi, ['APPROVED', 'EXECUTING'], () => false, '处置授权功能暂不可用',
     String, error => String(error), { num: value => String(value) },
-    new Function(`${source.match(/^const PENDING_DISPOSAL_QUERY = .*;$/m)[0]} return PENDING_DISPOSAL_QUERY;`)()];
+    new Function(`${source.match(/^const PENDING_DISPOSAL_QUERY = .*;$/m)[0]} return PENDING_DISPOSAL_QUERY;`)(), canReadProgressSource, () => true];
   return new Function(...names, body + '; return { run: loadKpis, kpiList };')(...values);
 }
 
 test('every alarm statistic card counts the same Beijing day and says so', async () => {
   const recorded = [];
-  const { run, kpiList } = loadKpis(recorded);
+  const { run, kpiList } = await loadKpis(recorded);
   await run();
 
   const alarmQueries = recorded.filter(q => q.occurred_from != null && q.source_mode == null);
@@ -59,7 +60,7 @@ test('every alarm statistic card counts the same Beijing day and says so', async
    卡片下面写明另有几条演示告警没算进来，列表里仍能看到它们。 */
 test('today cards leave out the built-in demo alarms and say how many were left out', async () => {
   const recorded = [];
-  const { run, kpiList } = loadKpis(recorded, query => query.source_mode === 'mock' ? (query.state ? 1 : 3) : query.state ? 4 : 10);
+  const { run, kpiList } = await loadKpis(recorded, query => query.source_mode === 'mock' ? (query.state ? 1 : 3) : query.state ? 4 : 10);
   await run();
   const byLabel = Object.fromEntries(kpiList.value.map(card => [card.label, card]));
   assert.equal(byLabel['今日告警总数'].value, '7');
@@ -77,7 +78,7 @@ test('today cards leave out the built-in demo alarms and say how many were left 
 });
 
 test('if the demo count cannot be read the card shows all sources and says it may include demo alarms', async () => {
-  const { run, kpiList } = loadKpis([], query => query.source_mode === 'mock' ? Promise.reject(new Error('网络中断')) : query.state ? 4 : 10);
+  const { run, kpiList } = await loadKpis([], query => query.source_mode === 'mock' ? Promise.reject(new Error('网络中断')) : query.state ? 4 : 10);
   await run();
   const byLabel = Object.fromEntries(kpiList.value.map(card => [card.label, card]));
   assert.equal(byLabel['今日告警总数'].value, '10');
@@ -89,7 +90,7 @@ test('if the demo count cannot be read the card shows all sources and says it ma
 });
 
 test('if the card count itself cannot be read the card shows a dash, never a demo-only number', async () => {
-  const { run, kpiList } = loadKpis([], query => query.source_mode == null && query.state === 'CONFIRMED' && query.occurred_from != null
+  const { run, kpiList } = await loadKpis([], query => query.source_mode == null && query.state === 'CONFIRMED' && query.occurred_from != null
     ? Promise.reject(new Error('超时')) : query.source_mode === 'mock' ? 1 : query.state ? 4 : 10);
   await run();
   const card = kpiList.value.find(k => k.label === '今日已确认');

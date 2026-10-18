@@ -5,7 +5,7 @@
    sort/order 随列表与导出请求一起发给服务端（阶段 15 契约白名单四个键），页面不做假排序。
    默认 priority：当前事项、观测过期或未知待确认、历史分组；前两组等级高、同等级新到优先，历史新到优先（2026-10-07 用户确认）。 */
 const S = {
-  st: { page: 1, size: 10, level: '全部', status: '全部', kind: '全部', region: '全部', time: '', timeRange: null, sel: null, selId: null,
+  st: { page: 1, size: 10, targetNo: '', level: '全部', status: '全部', kind: '全部', region: '全部', time: '', timeRange: null, sel: null, selId: null,
     sort: 'priority', order: 'desc' }
 };
 export default {};
@@ -29,6 +29,7 @@ import { patchHtml } from '@/ui/domPatch.js';
 import UPagination from '@/components/UPagination.vue';
 import UPanel from '@/components/UPanel.vue';
 import UControl from '@/components/form/UControl.vue';
+import UField from '@/components/form/UField.vue';
 import { TIME_FILTER_OPTIONS, customRangeValid, timeFilterWindow } from '@/services/timeFilter.js';
 import UKpis from '@/components/UKpis.vue';
 import { handoffApi } from '@/services/handoffApi.js';
@@ -84,9 +85,22 @@ watch(() => [route.query.tab, route.query.authorization, route.query.event, rout
 /* reactive 代理同一份模块级状态：n-pagination 的 :page/:page-size 需要响应式，
    底层对象仍是 S.st，跨导航记忆不变 */
 const st = reactive(S.st);
+const targetNoInput = ref(st.targetNo);
+async function applyTargetNo() {
+  st.targetNo = String(targetNoInput.value || '').trim();
+  targetNoInput.value = st.targetNo;
+  st.page = 1;
+  // 新目标筛选先撤下原详情，避免清单已换目标而右侧仍可操作旧事件。
+  ++detailSeq; ++disposalSeq;
+  st.selId = null; cur = emptyDetail();
+  paintDetail(); focusMap();
+  const loaded = await loadList();
+  if (loaded && !st.selId && list.rows.length) selectAlarm(list.rows[0].alarm_id);
+}
 let evidenceEventSequence = 0;
 function resetLinkedAlarmFilters() {
-  Object.assign(st, { page: 1, level: '全部', status: '全部', kind: '全部', region: '全部', time: '', timeRange: null });
+  Object.assign(st, { page: 1, targetNo: '', level: '全部', status: '全部', kind: '全部', region: '全部', time: '', timeRange: null });
+  targetNoInput.value = '';
   root.value?.querySelectorAll('[data-f]').forEach(control => { control.value = st[control.dataset.f]; });
 }
 async function openEvidenceEvent() {
@@ -537,19 +551,12 @@ async function loadKpis() {
 /* ---------- 工具条：只暴露契约支持的过滤；不支持的保留控件但禁用并说明 ---------- */
 const disabledSelect = (name, reason) =>
   `<select class="sel" data-f="${name}" disabled aria-disabled="true" title="${reason}"><option value="全部" selected>全部</option></select>`;
-const listToolbar = `<div class="toolbar alarm-filter-toolbar">
-    <div class="toolbar-fields">
+const listToolbar = `
       ${U.field('等级', U.select('level', LEVEL_OPTS, st.level))}
       ${U.field('违规原因', U.select('kind', KIND_OPTS, st.kind))}
       ${U.field('状态', U.select('status', STATUS_OPTS, st.status))}
       ${U.field('区域', U.select('region', regionOpts(), st.region))}
-      ${U.field('时间', U.select('time', TIME_OPTS, st.time))}
-    </div>
-    <div class="toolbar-actions">
-      <button class="btn" type="button" id="alRefresh" title="重新读取当前列表、统计和已打开的告警">刷新</button>
-      <button class="btn" type="button" id="alExp" title="按当前筛选与排序导出 CSV（上限 5000 行）">导出 CSV</button>
-    </div>
-  </div>`;
+      ${U.field('时间', U.select('time', TIME_OPTS, st.time))}`;
 const listBody = `<div id="alList" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>`;
 const mapExtra = `<span id="alMapSrc" style="font-size:11px;color:var(--txt-3)"></span>
   <button class="btn" id="alLoc" style="height:24px;font-size:11.5px;flex:none" title="重新显示当前告警的完整轨迹与目标位置">${U.icon('location')} 定位</button>`;
@@ -576,6 +583,7 @@ function sortTh(key, label) {
 
 function queryOf() {
   const q = { page: st.page, size: st.size, sort: st.sort };
+  if (st.targetNo) q.target_no = st.targetNo;
   if (st.sort !== 'priority') q.order = st.order;
   if (st.level !== '全部') q.severity = st.level;
   if (STATUS_FILTER[st.status]) Object.assign(q, STATUS_FILTER[st.status].q);
@@ -613,7 +621,7 @@ function listHtml() {
       render: a => U.cell(esc(noOf(a)), null, { mono: true, title: esc(a.alarm_id) })
     },
     { t: sortTh('level', '等级'), w: '52px', align: 'center', overflow: false, render: sevTag },
-    { t: '关联目标', w: '146px', render: a => U.cell(a.target_id ? esc(displayTargetNo(a.target_no) || a.target_id) : '—', null, { mono: true, title: a.target_id ? esc(a.target_id) : '无关联目标或无目标读取权限' }) },
+    { t: '关联目标', w: '146px', overflow: false, render: a => `<span class="alarm-target-number mono" title="${a.target_id ? esc(displayTargetNo(a.target_no) || a.target_id) : '无关联目标或无目标读取权限'}">${a.target_id ? esc(displayTargetNo(a.target_no) || a.target_id) : '—'}</span>` },
     { t: '告警内容', render: reasonCell },
     { t: sortTh('status', '状态'), w: '124px', overflow: false, render: stateTag },
     { t: sortTh('ts', '时间'), w: '158px', overflow: false, render: a => esc(fmt(a.received_at) || '未知') }
@@ -1494,7 +1502,19 @@ onMounted(async () => {
         @event="showAuthorizationEvent" :event-id="authorizationScope.eventId" :initial-authorization-id="authorizationScope.authorizationId" :initial-status="authorizationScope.status" />
       <div v-show="activeTab === 'alarms'" class="row" style="margin-top:12px;flex:1;min-height:0">
         <UPanel title="告警列表" panel-style="flex:6;min-width:0" nopad>
-          <div style="display:contents" v-html="listToolbar"></div>
+          <div class="toolbar alarm-filter-toolbar">
+            <div class="toolbar-fields">
+              <UField id="al-target-no" v-model="targetNoInput" label="目标编号" placeholder="输入完整或部分编号" clearable size="small"
+                :disabled="!hasPermission('target:read')" :title="hasPermission('target:read') ? '' : '无目标读取权限'"
+                :input-props="{ maxlength: 64 }" @keydown.enter.prevent="applyTargetNo" @update:model-value="value => { if (!value) applyTargetNo(); }" />
+              <div style="display:contents" v-html="listToolbar"></div>
+            </div>
+            <div class="toolbar-actions">
+              <button class="btn pri" type="button" @click="applyTargetNo">查询</button>
+              <button class="btn" type="button" id="alRefresh" title="重新读取当前列表、统计和已打开的告警">刷新</button>
+              <button class="btn" type="button" id="alExp" title="按当前筛选与排序导出 CSV（上限 5000 行）">导出 CSV</button>
+            </div>
+          </div>
           <div v-if="st.time === 'CUSTOM'" class="alarm-time-custom">
             <label for="alarm-time-range">自定义起止（北京时间）</label>
             <UControl id="alarm-time-range" v-model="st.timeRange" type="datetimerange" clearable size="small"
@@ -1578,18 +1598,20 @@ onMounted(async () => {
 }
 .alarms-page :deep(.alarm-filter-toolbar .toolbar-fields) {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.65fr) minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px 16px;
   align-items: start;
 }
-.alarms-page :deep(.alarm-filter-toolbar .field) {
+.alarms-page :deep(.alarm-filter-toolbar .field),
+.alarms-page :deep(.alarm-filter-toolbar .u-field) {
   display: flex;
   flex-direction: column;
   align-items: stretch;
   min-width: 0;
   gap: 6px;
 }
-.alarms-page :deep(.alarm-filter-toolbar .field > label) {
+.alarms-page :deep(.alarm-filter-toolbar .field > label),
+.alarms-page :deep(.alarm-filter-toolbar .u-field > label) {
   line-height: 20px;
   color: var(--txt-2);
 }
@@ -1621,6 +1643,7 @@ onMounted(async () => {
   }
 }
 .alarm-time-custom { flex:none; display:flex; flex-direction:column; gap:6px; padding:0 16px 12px; }
+.alarms-page :deep(.alarm-target-number) { display:block; white-space:normal; overflow-wrap:anywhere; line-height:1.5; }
 .alarm-time-custom > label { line-height:20px; color:var(--txt-2); }
 .alarm-time-custom :deep(.n-date-picker) { max-width:420px; }
 .alarm-action-bar { flex:none; max-height:100%; overflow:auto; display:flex; flex-direction:column; align-items:stretch; gap:10px; margin:0; padding:10px 12px; border-bottom:1px solid var(--line); background:var(--panel); box-shadow:0 4px 12px color-mix(in srgb, var(--bg-1) 22%, transparent); }

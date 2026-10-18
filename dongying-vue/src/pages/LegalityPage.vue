@@ -2,7 +2,7 @@
 /* 模块级页面状态：跨导航保留分页、筛选、选中项与证据页签；业务事实始终重新读取标准 API。 */
 const S = {
   st: {
-    page: 1, size: 10, legal: '', district: '', review: '', reviewLocation: '', plan: '', period: 'TODAY', date: null,
+    page: 1, size: 10, targetNo: '', legal: '', district: '', review: '', reviewLocation: '', plan: '', period: 'TODAY', date: null,
     selectedEvaluationId: null, selectedTargetId: null, revisionPage: 1, revisionPageSize: 10,
     evidenceTab: 'space'
   }
@@ -46,6 +46,12 @@ const UI = window.UI;
 const route = useRoute();
 const root = ref(null);
 const st = reactive(S.st);
+const targetNoInput = ref(st.targetNo);
+function applyTargetNo() {
+  st.targetNo = String(targetNoInput.value || '').trim();
+  targetNoInput.value = st.targetNo;
+  onRegionChange();
+}
 const periodOptions = [{ label: '今日', value: 'TODAY' }, { label: '全部日期', value: 'ALL' }, { label: '指定日期', value: 'DATE' }];
 // 日期控件的日历值按用户选中的年月日解释为北京时间，不使用浏览器时区的零点。
 function dateWindow() {
@@ -442,6 +448,7 @@ function invalidateDetail() {
 function queryParams() {
   return {
     ...uavScope, ...queueWindow.value, legal_status: st.legal, district_id: st.district,
+    target_no: st.targetNo || undefined,
     review_state: st.review && !['NEEDS_REVIEW', 'PENDING_REVIEW'].includes(st.review) ? st.review : undefined,
     needs_review: ['NEEDS_REVIEW', 'PENDING_REVIEW'].includes(st.review) ? true : undefined,
     has_alarm: hasAlarmFilter.value,
@@ -634,6 +641,7 @@ async function loadKpi() {
   /* 三类结论统计与队列共用服务端筛选，历史未定性的异常计入不可判定。 */
   const scope = {
     ...uavScope, ...queueWindow.value,
+    target_no: st.targetNo || undefined,
     district_id: st.district || undefined,
     review_state: st.review && !['NEEDS_REVIEW', 'PENDING_REVIEW'].includes(st.review) ? st.review : undefined,
     needs_review: ['NEEDS_REVIEW', 'PENDING_REVIEW'].includes(st.review) ? true : undefined,
@@ -641,6 +649,7 @@ async function loadKpi() {
     plan_id: st.plan || undefined
   };
   const filterNote = [
+    st.targetNo ? `目标编号：${st.targetNo}` : '',
     st.district ? `区域：${districtOptions.value.find(option => option.value === st.district)?.label || st.district}` : '',
     st.review ? `复核：${reviewOptions.find(option => option.value === st.review)?.label || st.review}` : '',
     st.reviewLocation ? `核实位置：${reviewLocationOptions.find(option => option.value === st.reviewLocation)?.label || st.reviewLocation}` : '',
@@ -810,6 +819,7 @@ function loadNavigation(context = null) {
   /* 从飞行计划页过来时带着计划（决策 19-1）：预置"计划"筛选，其余筛选放开，
      否则一进来就被默认的"系统判定非法"挡住，看着像这条任务没有研判。 */
   const planId = context?.plan || (typeof route.query.plan === 'string' ? route.query.plan : '');
+  if (planId || targetId || context?.evaluation || route.query.evaluation) { st.targetNo = ''; targetNoInput.value = ''; }
   if (planId) {
     st.plan = planId;
     st.legal = '';
@@ -887,6 +897,9 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
           </div>
           <div class="lg-queue-filters" role="group" aria-label="队列筛选">
             <div class="lg-filter-fields">
+            <UField id="lg-target-no" class="lg-region-filter" variant="form" label="目标编号" v-model="targetNoInput" size="small"
+              placeholder="输入完整或部分编号" clearable :disabled="loading || !hasPermission('target:read')" :title="!hasPermission('target:read') ? '需目标读取权限' : ''" :input-props="{ maxlength: 64 }"
+              @keydown.enter.prevent="applyTargetNo" @update:model-value="value => { if (!value) applyTargetNo(); }" />
             <UField class="lg-region-filter" variant="form" label="研判日期" v-model="st.period" type="select" size="small"
               :options="periodOptions" :disabled="loading" @update:model-value="onPeriodChange" />
             <UField v-if="st.period === 'DATE'" class="lg-date-filter" variant="form" label="日期（北京时间）" v-model="st.date" type="date" size="small"
@@ -901,6 +914,7 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
               :options="planOptions" :disabled="loading" :title="plansError || '只看某一条飞行任务的研判；下拉默认只列还没结束的任务'" @update:model-value="onRegionChange" />
             <span v-if="canReadPlans" class="lg-plan-expired" title="勾选后任务下拉里也列出已经结束的任务"><UControl v-model="plansIncludeExpired" type="checkbox" box-label="含已过期" :disabled="loading" @update:model-value="loadPlans" /></span>
             </div>
+            <button class="btn pri" type="button" :disabled="loading" @click="applyTargetNo">查询</button>
           </div>
 
           <div id="lgList" class="lg-list-host">
@@ -1128,6 +1142,9 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
 .lg-workspace{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:12px}
 .lg-main-column{min-width:0;min-height:0;display:flex;flex-direction:column;gap:12px}
 .lg-kpi-host{flex:none}
+/* 沿用处罚页的五列统计卡，避免窄桌面多出一排卡片挤掉筛选后的结果。 */
+@media(min-width:1041px){.lg-kpi-host :deep(.kpis){grid-template-columns:repeat(5,minmax(0,1fr))}}
+@media(min-width:1041px) and (max-width:1399px){.lg-kpi-host :deep(.kpi .ic){display:none}.lg-kpi-host :deep(.kpi .lb){white-space:normal}}
 .lg-period-caption{margin:0 0 8px;color:var(--txt-3);font-size:12px;line-height:1.6;overflow-wrap:anywhere}
 .lg-date-filter{min-width:0;margin:0}
 .lg-queue-panel{flex:1;min-height:0;display:flex;flex-direction:column;border:1px solid var(--line);border-radius:var(--r);background:var(--lg-surface);box-shadow:var(--shadow-soft);overflow:hidden}

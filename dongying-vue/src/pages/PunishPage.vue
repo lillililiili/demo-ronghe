@@ -2,7 +2,7 @@
 /* 模块级状态：跨导航保持筛选、分页与选中项（legacy 约定）。 */
 const S = {
   page: 1, size: 20, selectedHandoffId: null,
-  filters: { notification_status: '', receipt_status: '', created: null }
+  filters: { target_no: '', notification_status: '', receipt_status: '', created: null }
 };
 export default {};
 </script>
@@ -13,6 +13,7 @@ export default {};
 import { displayBusinessNo } from '@/ui/deviceNumber.js';
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
+import { hasPermission } from '@/services/accessControl.js';
 import { refreshFailureText, useRealtimeRefresh } from '@/hooks/useRealtimeRefresh.js';
 import UKpis from '@/components/UKpis.vue';
 import UPanel from '@/components/UPanel.vue';
@@ -55,6 +56,7 @@ const receiptOptions = [{ label: '全部签收状态', value: '' }, ...RECEIPT_O
 
 const forbidden = ref(false);
 const filters = reactive(S.filters);
+const targetNoInput = ref(filters.target_no);
 const listLoading = ref(false);
 const listError = ref('');
 const refreshError = ref('');
@@ -133,6 +135,7 @@ function messageOf(reason, fallback) {
 
 function listQuery() {
   const query = { source_kind: UAV_KIND, ...statusQuery(filters.notification_status, filters.receipt_status) };
+  if (filters.target_no) query.target_no = filters.target_no;
   const range = Array.isArray(filters.created) ? filters.created : null;
   if (range && range[0] != null && range[1] != null) {
     if (!(Number(range[0]) < Number(range[1]))) throw new Error('进入时间范围必须满足开始时间早于结束时间。');
@@ -220,6 +223,8 @@ async function loadDetail(handoffId, { quiet = false } = {}) {
 
 watch(() => [filters.notification_status, filters.receipt_status], () => applyFilters());
 function applyFilters() {
+  filters.target_no = String(targetNoInput.value || '').trim();
+  targetNoInput.value = filters.target_no;
   try { listQuery(); } catch (validation) { listError.value = validation.message; return; }
   S.selectedHandoffId = null;
   loadList(1);
@@ -322,7 +327,7 @@ function consumeDeepLink() {
 onMounted(() => {
   if (authorizationId) { window.location.replace(`#/alarms?tab=authorizations&authorization=${encodeURIComponent(authorizationId)}`); return; }
   const requested = consumeDeepLink();
-  if (requested) { Object.assign(filters, { notification_status: '', receipt_status: '', created: null }); S.selectedHandoffId = requested; }
+  if (requested) { Object.assign(filters, { target_no: '', notification_status: '', receipt_status: '', created: null }); targetNoInput.value = ''; S.selectedHandoffId = requested; }
   loadKpis();
   loadList(requested ? 1 : page.value, requested);
 });
@@ -343,6 +348,10 @@ onMounted(() => {
             <UPanel title="业务交接清单" panel-style="flex:6;min-width:0" nopad>
               <div id="pnList" class="pn-list">
                 <UFilterBar class="pn-toolbar">
+                  <UField id="pn-target-no" v-model="targetNoInput" class="pn-target-filter" label="目标编号" variant="filter"
+                    placeholder="输入完整或部分编号" clearable :disabled="listLoading || !hasPermission('target:read') || !hasPermission('alarm:read')"
+                    :title="!hasPermission('target:read') || !hasPermission('alarm:read') ? '需目标及告警读取权限' : ''" :input-props="{ maxlength: 64 }"
+                    @keydown.enter.prevent="applyFilters" @update:model-value="value => { if (!value) applyFilters(); }" />
                   <UField id="pn-delivery" v-model="filters.notification_status" label="通知状态" variant="filter" type="select" :options="deliveryOptions" :disabled="listLoading" />
                   <UField id="pn-receipt" v-model="filters.receipt_status" label="签收回执" variant="filter" type="select" :options="receiptOptions" :disabled="listLoading" />
                   <UField id="pn-created" v-model="filters.created" class="pn-range" label="进入时间" variant="filter" type="datetimerange" clearable :disabled="listLoading" start-placeholder="开始时间" end-placeholder="结束时间" />
@@ -476,8 +485,8 @@ onMounted(() => {
             </UPanel>
           </div>
         </template>
+        <ModuleStatistics :state="statistics.state" @retry="retryList" />
       </div>
-      <ModuleStatistics :state="statistics.state" @retry="retryList" />
     </div>
   </div>
 </template>
@@ -493,6 +502,7 @@ onMounted(() => {
 .pn-main :deep(.panel > .pb) { display: flex; flex-direction: column; overflow: hidden; }
 .pn-list { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .pn-toolbar { --filter-field-width: 160px; }
+.pn-target-filter { --filter-field-width: 220px; }
 .pn-range { --filter-field-width: 380px; }
 .pn-status { min-width: 110px; white-space: nowrap; }
 .pn-status .tag { white-space: nowrap; height: auto; }

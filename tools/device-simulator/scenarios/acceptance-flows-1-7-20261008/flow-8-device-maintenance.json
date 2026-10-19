@@ -1,0 +1,131 @@
+{
+  "version": 1,
+  "name": "流程 8 设备故障、离线与恢复办结",
+  "duration": 10,
+  "sites": [
+    {
+      "id": "maintenance-site",
+      "name": "流程 8 设备检查组",
+      "x": 450,
+      "y": 300,
+      "devices": [
+        {
+          "id": "maintenance-radar",
+          "name": "正常对照雷达",
+          "kind": "radar",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2
+        },
+        {
+          "id": "maintenance-tdoa",
+          "name": "范围检查 TDOA",
+          "kind": "tdoa",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2
+        },
+        {
+          "id": "maintenance-5ga",
+          "name": "范围检查 5G-A",
+          "kind": "5ga",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2
+        },
+        {
+          "id": "maintenance-eo",
+          "name": "范围检查光电",
+          "kind": "eo",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2
+        },
+        {
+          "id": "maintenance-weather",
+          "name": "气象参考设备",
+          "kind": "weather",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2
+        },
+        {
+          "id": "maintenance-fault",
+          "name": "故障恢复雷达",
+          "kind": "radar",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2
+        },
+        {
+          "id": "maintenance-offline",
+          "name": "离线恢复雷达",
+          "kind": "radar",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2
+        }
+      ]
+    }
+  ],
+  "targets": [],
+  "plans": [
+    {
+      "id": "maintenance-plan",
+      "name": "流程 8 设备异常检查任务",
+      "points": [
+        [
+          450,
+          260
+        ],
+        [
+          480,
+          250
+        ]
+      ],
+      "min": 0,
+      "max": 150,
+      "width": 100,
+      "start": "00:00",
+      "end": "23:59",
+      "timeMode": "current",
+      "altitudeDatum": "AMSL"
+    }
+  ],
+  "zones": [],
+  "risks": [
+    {
+      "id": "maintenance-fault",
+      "name": "雷达故障后恢复",
+      "type": "fault",
+      "enabled": true,
+      "deviceId": "maintenance-fault",
+      "at": 30,
+      "seconds": 150
+    },
+    {
+      "id": "maintenance-offline",
+      "name": "雷达离线后恢复",
+      "type": "offline",
+      "enabled": true,
+      "deviceId": "maintenance-offline",
+      "at": 30,
+      "seconds": 150
+    }
+  ],
+  "fullchain": {
+    "enabled": true,
+    "categories": [
+      "device_faults"
+    ],
+    "filing": {},
+    "airspaceLifecycle": false,
+    "acceptanceFlow": 8,
+    "operatorSetup": {},
+    "expectedChecks": [
+      "范围由模拟器同步，融合感知地图与任务检查同源；气象及反制不计入探测设备检查",
+      "30秒出现故障与停止心跳，180秒恢复；处置单由平台创建或关联",
+      "恢复依据由实际健康上报提供，办结由后台人员确认，不由模拟器生成办理结果"
+    ]
+  }
+}

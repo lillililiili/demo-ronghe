@@ -21,6 +21,7 @@ class ManualTcpRadarTest(unittest.TestCase):
             with self.subTest(longitude=lon):
                 status=self.manual.start({'longitude':lon,'latitude':lat})
                 self.assertEqual(self.platform.writes,[])
+                self.assertEqual(self.platform.ranges,[])
                 self.assertIsNone(status['device_id']); self.assertIsNone(status['device_no'])
                 self.assertFalse(status['connected']); self.assertEqual(status['frames_sent'],0)
                 self.assertEqual(status['mode'],'manual')

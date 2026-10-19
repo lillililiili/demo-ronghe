@@ -1,6 +1,6 @@
 (function (root) {
   'use strict';
-  /* “生成流程 1-7 数据”：一次选一个流程。左边选，右边看这个流程演示什么、开始前要做什么、会看到什么、要在平台上做什么，
+  /* “选择流程 1-8”：一次选一个流程。左边选，右边看这个流程演示什么、开始前要做什么、会看到什么、要在平台上做什么，
      点“载入并准备”只载入这一个；载入后地图页顶部一直显示“你要做什么”，直到停止或换流程。
      流程文件和说明都在服务端（acceptance_flows.py），模拟器不替人开关规则，只读地看一眼规则开了没有。 */
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -54,7 +54,7 @@
 
   const flowOf = number => flows.find(item => item.flow === number);
   const persist = () => { try { if (current?.startedBatch) localStorage.setItem(KEY, JSON.stringify(current)); else localStorage.removeItem(KEY); } catch {} };
-  async function readFlows() { flows = (await api('acceptance-flows-1-7')).flows; return flows; }
+  async function readFlows() { flows = (await api('acceptance-flows')).flows; return flows; }
   /* 规则状态只在登录且账号读得到时才有；读不到整行不显示。 */
   async function readRules() {
     if (!liveState?.connected) return null;

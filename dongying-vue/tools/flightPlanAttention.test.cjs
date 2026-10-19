@@ -7,6 +7,7 @@ const path = require('node:path');
   const A = await import('../src/pages/flights/planAttention.js');
   const H = await import('../src/pages/flights/planHandling.js');
   const plan = (status_code, attention) => ({ plan_id: 'p', status_code, ...(attention ? { attention } : {}) });
+  const action = (row, key) => A.attentionIssues(row).flatMap(issue => issue.actions).find(item => !key || item.key === key);
   const attention = (kinds, extra = {}) => ({ kinds, match_issue: null, pending_verification_risks: 0, pending_notification_risks: 0, device_tasks: [], ...extra });
 
   // 分组：有问题的不论状态都进“需要处理”；没问题的按状态分；已结束任务后台不带 attention。
@@ -16,38 +17,16 @@ const path = require('node:path');
   assert.equal(A.planGroupOf(plan('COMPLETED')), 'ended');
   assert.equal(A.planGroupOf(plan('CANCELLED')), 'ended');
 
-  const evaluationEntry = { kind: 'legality', label: '查看研判', context: { evaluation: 'e' } };
-  const alarmEntry = { kind: 'alarm', label: '查看告警', context: { alarm: 'a' } };
-  // 偏离不自行决定办理页面，入口依同一研判的告警关联。
-  const deviated = plan('EXECUTING', attention(['DEVIATION'], { match_issue: 'DEVIATION' }));
-  assert.deepEqual(A.attentionIssues(deviated).map(issue => [issue.tag, issue.tagClass]), [['任务偏离', 't-red']]);
-  assert.match(A.attentionIssues(deviated, alarmEntry)[0].detail, /告警/);
-  assert.equal(A.attentionAction(deviated, alarmEntry).key, 'alarm');
-  assert.equal(A.attentionAction(deviated, evaluationEntry).key, 'legality');
-  assert.equal(A.attentionAction(deviated).key, 'detail');
-  assert.equal(A.attentionAction(deviated, alarmEntry).primary, true);
-
-  // “未找到对应飞机”和“还没对上飞机”是两种情况，说法和按钮都不同。
-  const none = plan('EXECUTING', attention(['AIRCRAFT'], { match_issue: 'NONE' }));
-  const notYet = plan('EXECUTING', attention(['AIRCRAFT'], { match_issue: 'NO_EVALUATION' }));
-  assert.equal(A.attentionIssues(none)[0].tag, '未找到对应飞机');
-  assert.equal(A.attentionIssues(notYet)[0].tag, '还没对上飞机');
-  assert.match(A.attentionIssues(notYet)[0].detail, /可能还没起飞，也可能没被探测到/);
-  assert.equal(A.attentionAction(none, evaluationEntry).key, 'legality');
-  assert.equal(A.attentionAction(notYet).key, 'detail');
-  assert.equal(A.attentionAction(plan('EXECUTING', attention(['AIRCRAFT'], { match_issue: 'PARTIAL' })), evaluationEntry).key, 'legality');
-  assert.equal(A.attentionAction(plan('EXECUTING', attention(['AIRCRAFT'], { match_issue: 'UNDETERMINED' }))).key, 'detail');
-
-  // 几种问题同时有：逐条列出，下一步用分号连起来；设备写明设备名和处置单状态。
+  // 几种问题同时有：每项保留独立入口；设备写明设备名和处置单状态。
   const several = plan('EXECUTING', attention(['AIRCRAFT', 'DEVICE', 'RISK'], {
     match_issue: 'NO_EVALUATION', pending_verification_risks: 1, pending_notification_risks: 1,
     device_tasks: [{ task_id: 't1', device_name: '雷达-02', workflow_state: 'PROCESSING' }]
   }));
   const issues = A.attentionIssues(several);
-  assert.deepEqual(issues.map(issue => issue.tag), ['还没对上飞机', '设备异常 1', '风险 2 条']);
-  assert.equal(issues[1].detail, '航线附近的雷达-02 异常，后台处置单“处理中”，飞机可能测不到。请跟进处置单；修好前靠联系报备单位确认飞行情况。');
-  assert.equal(issues[1].tagClass, 't-amber');
-  assert.equal(issues[2].detail, '这条任务有 2 个风险事件还没处理（待核验 1、待通知 1）。请去核验，确认后通知上级。');
+  assert.deepEqual(issues.map(issue => issue.tag), ['设备异常 1', '风险 2 条']);
+  assert.equal(issues[0].detail, '航线附近的雷达-02 异常，后台处置单“处理中”，飞机可能测不到。请跟进处置单；修好前靠联系报备单位确认飞行情况。');
+  assert.equal(issues[0].tagClass, 't-amber');
+  assert.equal(issues[1].detail, '这条任务有 2 个风险事件还没处理（待核验 1、待通知 1）。请去核验，确认后通知上级。');
   // 设备已恢复、等后台确认办结时，不再说飞机测不到。
   const recovered = A.attentionIssues(plan('EXECUTING', attention(['DEVICE'], { device_tasks: [{ device_name: '雷达-02', workflow_state: 'READY_TO_COMPLETE' }] })))[0];
   assert.equal(recovered.detail, '雷达-02已恢复，后台处置单“待确认办结”。请跟进后台确认办结。');
@@ -57,24 +36,23 @@ const path = require('node:path');
     pending_risk_kinds: [{ risk_type: 'WEATHER', reason_code: 'WEATHER_THUNDERSTORM' }] })))[0];
   assert.equal(storm.detail, '这条任务有 1 个风险事件还没处理（待核验 1，雷雨预警）。请去核验，确认后通知上级。');
   assert.equal(storm.next, '核验雷雨预警，确认后通知上级');
-  assert.equal(A.attentionAction(several).key, 'detail');
-  assert.ok(!A.attentionAction(several).primary, '查看详情不用实心按钮');
+  assert.deepEqual(issues.map(issue => issue.actions[0].key), ['devices', 'risks'], '多类问题的入口全部保留');
 
   // 只有风险：去风险事件；只剩待通知时不再叫人去核验。
   const risky = plan('PENDING', attention(['RISK'], { pending_notification_risks: 2 }));
-  assert.equal(A.attentionAction(risky).key, 'risks');
+  assert.equal(action(risky).key, 'risks');
   assert.equal(A.attentionIssues(risky)[0].detail, '这条任务有 2 个风险事件还没处理（待通知 2）。请通知上级。');
 
   // 没有问题的任务没有问题标签，按钮是“查看详情”。
   assert.deepEqual(A.attentionIssues(plan('EXECUTING', attention([]))), []);
-  assert.deepEqual(A.attentionAction(plan('COMPLETED')), { key: 'detail', label: '查看详情' });
+  assert.equal(action(plan('COMPLETED')), undefined);
 
   // 顶部汇总：后台数量原样显示，选中的种类高亮；后台没给汇总（旧版本）就不显示。
-  const bar = A.attentionSummaryChips({ needs_action: 5, deviation: 1, aircraft: 2, device: 1, risk: 2, other_executing: 1 }, 'AIRCRAFT');
+  const bar = A.attentionSummaryChips({ needs_action: 5, deviation: 1, aircraft: 2, device: 1, risk: 2, other_executing: 1 }, 'DEVICE');
   assert.equal(bar.total, 5);
   assert.equal(bar.otherExecuting, 1);
   assert.deepEqual(bar.chips.map(chip => [chip.label, chip.count, chip.active]),
-    [['任务偏离', 1, false], ['没对上飞机', 2, true], ['设备异常', 1, false], ['风险待处理', 2, false]]);
+    [['设备异常', 1, true], ['风险待处理', 2, false]]);
   assert.equal(A.attentionSummaryChips(null), null);
 
   // 页面接线：列表用新组件，按钮分别去合法性判定、只看本任务的风险、右侧详情；“未匹配”改叫“还没对上飞机”。
@@ -122,5 +100,88 @@ const path = require('node:path');
   await reader('same-plan');
   assert.equal(reads, 2, '完成后重读，不能永久缓存旧关联');
   assert.ok(!page.includes("'未匹配'"), '“未匹配”应改叫“还没对上飞机”');
-  console.log('全部通过：需要处理分组、问题说明、按钮与顶部汇总');
+
+  // 相邻组合与权限：匹配分类不抢走设备或风险入口；没有权限的入口解释原因。
+  for (const match_issue of ['DEVIATION', 'NO_EVALUATION', 'NONE', 'PARTIAL', 'UNDETERMINED']) {
+    const row = { ...several, plan_id: `alternate-${match_issue}`, source_mode: 'live', attention: { ...several.attention, match_issue } };
+    const normal = A.attentionIssues(row);
+    assert.equal(normal.length, 2);
+    assert.ok(normal.every(issue => issue.actions.length));
+    const denied = A.attentionIssues(row, { legality: false, risks: false });
+    assert.ok(denied.flatMap(issue => issue.actions).filter(a => ['legality', 'risks'].includes(a.key)).every(a => a.blockedReason));
+    assert.ok(denied.flatMap(issue => issue.actions).filter(a => ['contacts', 'devices'].includes(a.key)).every(a => !a.blockedReason));
+  }
+  assert.equal(A.attentionIssues(risky)[0].actions[0].label, '去通知上级');
+  assert.equal(issues[1].actions[0].label, '去核验与通知');
+
+  // 后端分页没有单页上限假象；保留被点击的原单，不用同设备的新单替换。
+  const pages = [], rows = Array.from({ length: 102 }, (_, n) => ({ task_id: `case-${n}`, workflow_state: n === 101 ? 'COMPLETED' : 'PROCESSING' }));
+  const read = async (id, query) => { pages.push([id, query.page]); return { total: rows.length, items: rows.slice((query.page - 1) * 100, query.page * 100) }; };
+  const loaded = await A.loadAttentionDeviceTasks('other-plan', ['case-101', 'case-0'], read);
+  assert.deepEqual(pages, [['other-plan', 1], ['other-plan', 2]]);
+  assert.deepEqual(loaded.items.map(t => t.task_id), ['case-101', 'case-0']);
+  assert.equal(loaded.items[0].workflow_state, 'COMPLETED');
+  assert.equal((await A.loadAttentionDeviceTasks('other-plan', ['missing'], read)).missing, 1);
+  await assert.rejects(A.loadAttentionDeviceTasks('p', ['x'], async () => ({ total: 1, items: [] })), /不完整/);
+  await assert.rejects(A.loadAttentionDeviceTasks('p', ['x'], async () => ({ items: [] })), /不完整/);
+  await assert.rejects(A.loadAttentionDeviceTasks('p', [], read), /缺少关联/);
+  assert.equal(await A.loadAttentionDeviceTasks('p', ['case-101'], read, () => false), null);
+
+  // 实际 Vue 组件渲染：多类入口均可见，无嵌套按钮，权限原因可见，正常任务无多余动作。
+  const Vue = require('vue'), { renderToString } = require('@vue/server-renderer');
+  const { parse, compileScript } = require('@vue/compiler-sfc');
+  const source = fs.readFileSync(path.join(__dirname, '../src/pages/flights/components/PlanRecordList.vue'), 'utf8');
+  const { descriptor } = parse(source);
+  const compiled = compileScript(descriptor, { id: 'attention-regression', inlineTemplate: true }).content
+    .replace(/import \{([^}]+)\} from ['"]vue['"];?/g, (_, names) => `const {${names.replace(/\bas\b/g, ':')}} = Vue;`)
+    .replace('export default', 'return');
+  const Component = new Function('Vue', compiled)(Vue);
+  const record = (id, entry, access) => ({ id, title: `航线 ${id}`, subtitle: '某日任务', status: '执行中', statusClass: 't-blue', tags: [], issues: A.attentionIssues(entry, access) });
+  const html = await renderToString(Vue.createSSRApp(Component, { items: [record('A', several)], label: '飞行任务' }));
+  // 关联导航独立于两类待办：不增加问题数，也不替换设备和风险按钮。
+  for (const kind of ['alarm', 'legality']) {
+    const item = record(`linked-${kind}`, several);
+    item.handlingAction = { key: kind, label: kind === 'alarm' ? '查看告警' : '查看研判', disabled: true };
+    const linkedHtml = await renderToString(Vue.createSSRApp(Component, { items: [item], label: '飞行任务' }));
+    assert.equal(item.issues.length, 2);
+    assert.match(linkedHtml, /查看设备处置进度/);
+    assert.match(linkedHtml, /去核验与通知/);
+    assert.match(linkedHtml, /关联研判与告警/);
+    assert.match(linkedHtml, new RegExp(`disabled[^>]*>${item.handlingAction.label}`));
+    assert.doesNotMatch(linkedHtml, /3 类问题/);
+  }
+
+  for (const label of ['查看设备处置进度', '去核验与通知', '有 2 类问题，请分别处理']) assert.ok(html.includes(label), label);
+  assert.equal((html.match(/<section /g) || []).length, 2);
+  assert.doesNotMatch(html, /<button\b[^>]*>(?:(?!<\/button>)[\s\S])*<button\b/);
+  const deniedHtml = await renderToString(Vue.createSSRApp(Component, { items: [record('B', risky, { risks: false })], label: '飞行任务' }));
+  assert.match(deniedHtml, /disabled/); assert.match(deniedHtml, /当前账号无权查看风险事件/);
+  const normalHtml = await renderToString(Vue.createSSRApp(Component, { items: [record('C', plan('COMPLETED'))], label: '飞行任务' }));
+  assert.doesNotMatch(normalHtml, /逐项处理/);
+
+  // 执行真实路由处理器：风险仍按本任务过滤，设备只读打开原单；过期入口不可执行。
+  const vm = require('node:vm');
+  let focusCalls = 0, watcher;
+  const ctx = { plans: { value: [several] }, planActionAccess: { value: {} }, attentionIssues: A.attentionIssues,
+    pendingPlanContact: { value: null }, selected: { value: null }, matchedTargetId: { value: null },
+    window: { UI: { goto: (page, query) => { ctx.goto = [page, query]; } } }, location: {}, S: {},
+    planDetailTab: { value: 'forecast' }, detailLoading: { value: false }, planFilingDetails: { value: { focusContacts: () => focusCalls++ } },
+    showEventsTab: (risk, id) => { ctx.risks = [risk, id]; }, toast: message => { ctx.message = message; },
+    openModal: options => { ctx.modal = options.render(); }, h: (component, props) => props, PlanMaintenanceProgressModal: {},
+    selectPlan: id => { ctx.selected.value = { plan_id: id }; }, nextTick: async () => {}, watch: (deps, fn) => { watcher = fn; } };
+  vm.createContext(ctx);
+  vm.runInContext(page.slice(page.indexOf('function onPlanAction('), page.indexOf('function syncSelectedPlanHash')), ctx);
+  ctx.onPlanAction({ id: 'p', key: 'risks' }); assert.deepEqual(ctx.risks, [null, 'p']); assert.match(ctx.location.hash, /plan=p/);
+  ctx.onPlanAction({ id: 'p', key: 'devices' }); assert.equal(ctx.modal.planId, 'p'); assert.equal(ctx.modal.taskIds[0], 't1');
+  ctx.onPlanAction({ id: 'missing', key: 'devices' }); assert.match(ctx.message, /情况已变化/);
+  for (const match_issue of ['DEVIATION', 'NONE', 'NO_EVALUATION', 'PARTIAL', 'UNDETERMINED']) {
+    const removed = plan('EXECUTING', attention(['DEVIATION', 'AIRCRAFT'], { match_issue }));
+    assert.equal(A.needsAction(removed), false);
+    assert.equal(A.planGroupOf(removed), 'executing');
+    assert.deepEqual(A.attentionIssues(removed), []);
+  }
+  ctx.onPlanAction({ id: 'p', key: 'contacts' }); assert.match(ctx.message, /情况已变化/);
+  ctx.planActionAccess.value = { risks: false }; ctx.risks = null;
+  ctx.onPlanAction({ id: 'p', key: 'risks' }); assert.equal(ctx.risks, null); assert.match(ctx.message, /无权/);
+  console.log('全部通过：分组、多问题独立入口、权限、分页原单、Vue 渲染与任务导航');
 })().catch(error => { console.error(error); process.exitCode = 1; });

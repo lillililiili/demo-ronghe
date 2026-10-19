@@ -4,6 +4,7 @@ import math
 import re
 import time
 import protocol_a
+from coverage_defaults import default_coverage
 from protocol_b import validate_config as validate_protocol_b
 
 KINDS = {**protocol_a.SENSING_TYPES, 'dec': 5, 'ifr': 6, 'bsc': 12, 'weather': 1001, 'countermeasure': 1002}
@@ -234,7 +235,7 @@ def compile_scene(raw):
             seen_devices.add(d['id'])
             if d.get('kind') not in LABELS:
                 raise ValueError('未知设备类型')
-            d['coverage'] = normalize_coverage_config(d.get('coverage'))
+            d['coverage'] = normalize_coverage_config(d.get('coverage') if d.get('coverage') is not None else default_coverage(d['kind']))
             if d.get('health') not in ('正常', '故障') or d.get('heartbeat') not in ('持续上报', '停止心跳'):
                 raise ValueError('设备状态无效')
             if d['kind']=='eo' and d['health']=='故障':

@@ -12,6 +12,7 @@ import urllib.request
 import urllib.parse
 import uuid
 from engine import coordinates
+from coverage_defaults import default_coverage
 from engine import normalize_coverage_config
 
 
@@ -257,6 +258,24 @@ class Platform:
         digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()[:24]
         return self.call('PUT', '/devices/' + urllib.parse.quote(str(device['device_id']), safe='') + '/sensing-profile',
                          payload, 'sim-sensing-' + external + '-' + digest)
+
+    def sync_simulated_range(self, device_id, kind):
+        """Independent native simulators use the same persisted range as scene devices."""
+        desired = default_coverage(kind)
+        if desired is None:
+            raise ValueError('模拟设备类型没有默认范围')
+        record = self.call('GET', '/devices/' + urllib.parse.quote(str(device_id), safe=''))
+        device = record.get('device') or {}
+        expected = {'countermeasure': 'COUNTERMEASURE', 'radar': 'RADAR'}
+        if (device.get('device_id') != device_id or device.get('simulated') is not True
+                or device.get('source_mode') not in ('live', 'replay')
+                or str(device.get('device_type_code') or '').upper() != expected.get(kind)):
+            raise ValueError('设备身份或模拟来源不一致，不能同步模拟范围')
+        # Preserve an explicitly configured range; supply the default only when absent.
+        current = device.get('coverage') or {}
+        if current.get('kind'):
+            return record
+        return self._sync_sensing_profile(record, desired, str(device_id))
 
     def login(self, account, password):
         self.token = self.call('POST', '/auth/login', {'account': account, 'password': password})['session_id']

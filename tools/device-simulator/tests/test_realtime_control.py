@@ -6,7 +6,7 @@ import unittest
 import threading
 import time
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -139,7 +139,7 @@ class LifecycleTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.proxy = FakeProxy(message())
-        self.session = SimpleNamespace(version='first', platform=True)
+        self.session = SimpleNamespace(version='first', platform=SimpleNamespace(sync_simulated_range=Mock()))
         self.session.request = lambda c: self.proxy.call(c['method'], c['path'], c.get('body'), c.get('key'))
         self.session.connection_scope = lambda: {'owner_org_id': None, 'district_id': None,
             'message': '未找到启用的回放 MQTT 连接 local-lingyun-replay，请手动选择归属单位与区县'}
@@ -205,6 +205,7 @@ class LifecycleTests(unittest.TestCase):
         self.addCleanup(self.controller.stop)
         self.assertEqual('RUNNING', self.controller.snapshot()['state'])
         self.assertEqual([{'owner_org_id': 'org-conn', 'district_id': 'district-conn'}], registered)
+        self.session.platform.sync_simulated_range.assert_called_once_with('cm-test', 'countermeasure')
 
     def test_countermeasure_device_is_registered_where_the_scene_radar_stands(self):
         from countermeasure_tcp import CountermeasureSimulator

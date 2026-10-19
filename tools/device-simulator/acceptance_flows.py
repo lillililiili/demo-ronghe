@@ -1,4 +1,4 @@
-"""七个验收流程：直接读仓库里现成的 7 份流程文件，配上选择框里的说明文字。
+"""八个验收流程：直接读仓库里现成的 8 份流程文件，配上选择框里的说明文字。
 
 不再依赖外部脚本，也不改写任何文件。流程文件放在 scenarios/acceptance-flows-1-7-20261008/，
 这里只读取、校验，再把每个流程的说明（演示什么、开始前、会看到什么、要做什么）一起交给页面。
@@ -16,6 +16,7 @@ FLOW_FILES = {
     5: 'flow-5-manual-disposal.json',
     6: 'flow-6-weather-risk.json',
     7: 'flow-7-bird-flock.json',
+    8: 'flow-8-device-maintenance.json',
 }
 
 # 选择框说明采用 2026-10-16 最新验收口径：规则全满足且业务校验通过时自动反制，
@@ -137,14 +138,32 @@ GUIDE = {
             '在「全部风险事件」打开本次鸟群风险，核验后通知上级；在通知记录及模拟器收件箱核对接收对象、送达与回执。',
         ],
     },
+    8: {
+        'title': '设备故障、离线与恢复办结',
+        'shows': '两台独立雷达分别故障和停止心跳，恢复后由后台核验，再人工确认办结。',
+        'auto_verify': None,
+        'before': ['准备业务前台和后台账号；无需修改核实或反制规则。'],
+        'sees': [
+            '开始时设备自动同步范围；在飞行任务选中本流程任务，右下角显示覆盖航线的设备。',
+            '约30秒后，一台雷达报故障，另一台停止心跳；离线显示需等待平台心跳超时。后台检查后关联处置单。',
+            '约3分钟后恢复心跳及明确健康上报；后台自动核验通过后显示「待确认办结」。',
+            '自动核实和反制不适用，本流程不生成无人机目标。',
+        ],
+        'todo': [
+            '前台查看设备状态和「查看设备处置进度」；有异常但尚未关联处置单时，可点「上报设备异常」。',
+            '后台进入「运维管理 → 设备异常处理」，按设备找到两份处置单，分别点「接手处理」。',
+            '等待两台设备恢复并显示「待确认办结」，分别点「确认办结」，核对前台待办消失和历史记录保留。',
+            '完成办结后再停止模拟；停止上报可能再次产生离线异常。',
+        ],
+    },
 }
 
 
 def read_acceptance_flows(root):
-    """Read the seven flow files under <root>/scenarios and attach the picker guide to each."""
+    """Read the eight flow files under <root>/scenarios and attach the picker guide to each."""
     folder = Path(root) / 'scenarios' / OUTPUT_NAME
     if not folder.is_dir():
-        raise ValueError('找不到流程 1-7 的场景文件夹（scenarios/' + OUTPUT_NAME + '），请确认模拟器代码是完整的')
+        raise ValueError('找不到流程 1-8 的场景文件夹（scenarios/' + OUTPUT_NAME + '），请确认模拟器代码是完整的')
     manifest_path = folder / 'manifest.json'
     if not manifest_path.is_file():
         raise ValueError('流程文件夹里缺少 manifest.json')
@@ -178,5 +197,5 @@ def read_acceptance_flows(root):
             'expectedChecks': scene.get('fullchain', {}).get('expectedChecks', []),
         })
     if sorted(item['flow'] for item in flows) != sorted(FLOW_FILES):
-        raise ValueError('流程清单必须包含流程 1-7 各一条')
+        raise ValueError('流程清单必须包含流程 1-8 各一条')
     return {'status': 'READY_FOR_IMPORT', 'flows': sorted(flows, key=lambda item: item['flow'])}

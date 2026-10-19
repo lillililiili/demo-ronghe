@@ -8,9 +8,23 @@ export function selectMenuMinWidth(options) {
 }
 
 export function selectMenuProps(options) {
+  if (hasSelectedLabel(options)) return { class: 'u-select-menu u-select-menu--details' };
   return { class: 'u-select-menu', style: { minWidth: selectMenuMinWidth(options) + 'px' } };
 }
 
 export const SELECT_DROPDOWN = {
   consistentMenuWidth: false
 };
+
+export function hasSelectedLabel(options) {
+  return (options || []).some(option => typeof option?.selectedLabel === 'string');
+}
+
+/** 仅对显式提供 selectedLabel 的选项缩短选中值；菜单和搜索继续使用完整 label。 */
+export function selectTagRenderer(options) {
+  if (!hasSelectedLabel(options)) return undefined;
+  return ({ option }) => {
+    if (typeof option?.selectedLabel === 'string') return option.selectedLabel;
+    return typeof option?.label === 'function' ? option.label(option, true) : option?.label;
+  };
+}

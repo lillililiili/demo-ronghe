@@ -6,7 +6,7 @@ import threading
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from platform_client import PlatformError
@@ -100,14 +100,19 @@ class SceneCoverageTests(unittest.TestCase):
             with self.assertRaises(ValueError, msg=str(bad)):
                 countermeasure_config(bad)
 
-    def test_every_acceptance_flow_configures_a_countermeasure_radius(self):
+    def test_acceptance_flows_keep_explicit_radius_or_use_simulator_default(self):
         from engine import compile_scene
         from realtime_control import countermeasure_radius
-        files = sorted(SCENES.glob('flow-*.json'))
-        self.assertEqual(7, len(files))
+        from coverage_defaults import default_coverage
+        manifest = json.loads((SCENES / 'manifest.json').read_text(encoding='utf-8'))
+        files = [SCENES / item['file'] for item in manifest['flows']]
+        self.assertEqual(set(files), set(SCENES.glob('flow-*.json')))
         for path in files:
             scene = compile_scene(json.loads(path.read_text(encoding='utf-8')))[0]
             radius = countermeasure_radius(scene)
+            if scene.get('countermeasure') is None:
+                self.assertIsNone(radius, path.name)
+                radius = default_coverage('countermeasure')['radiusM']
             self.assertIsNotNone(radius, path.name)
             self.assertGreater(radius, 821, path.name)  # 流程 5 反制设备离目标约 821 米，须在作用范围内
 
@@ -138,7 +143,8 @@ class CountermeasureRegistrationTests(unittest.TestCase):
                     device['coverage'] = {'kind': 'CIRCLE', 'radius_m': body.get('coverage_radius_m')}
                 return {'device': device}
             return {}
-        session = SimpleNamespace(version='first', platform=True, request=request,
+        self.range_sync = Mock()
+        session = SimpleNamespace(version='first', platform=SimpleNamespace(sync_simulated_range=self.range_sync), request=request,
                                   connection_scope=lambda: {'owner_org_id': None, 'district_id': None})
         self.runtime = SimpleNamespace(data_dir=Path(self.temp.name), platform=True, session=session,
                                        lock=threading.RLock(), phase='STOPPED', cancel=threading.Event())
@@ -151,6 +157,7 @@ class CountermeasureRegistrationTests(unittest.TestCase):
         from test_countermeasure_tcp import free_port
         with patch('countermeasure_tcp.CountermeasureSimulator', return_value=CountermeasureSimulator(port=free_port())):
             self.controller.start(scene)
+        self.range_sync.assert_called_with('cm-test', 'countermeasure')
 
     def test_scene_radius_goes_with_the_registration(self):
         radar = {'x': 100, 'y': 50, 'devices': [{'kind': 'radar'}]}

@@ -62,6 +62,7 @@ import CounterLaunch from '@/pages/alarms/CounterLaunch.vue';
 import { alarmReasonView, currentLegalityText, uavNowHtml, uavNowStatus } from '@/components/disposal/uavNowStatus.js';
 import { counterHiddenReason } from '@/components/disposal/counterNextStep.js';
 import { notificationProgressView } from '@/components/disposal/autoHandoffView.js';
+import { alarmDepartureView, recordedDepartureKey } from '@/components/disposal/alarmDepartureView.js';
 import { serverNow } from '@/services/serverClock.js';
 import TargetTrackingPanel from '@/components/video/TargetTrackingPanel.vue';
 import { uavAdvisoryApi } from '@/services/uavAdvisoryApi.js';
@@ -154,6 +155,7 @@ const emergencyEvent = ref(null);
 const emergencyInfo = ref(null);
 const advisorySubject = ref(null);
 const advisoryLive = ref(null);
+const departureEnded = ref(false);
 const videoSubject = ref(null);
 const advisorySummaries = new Map();
 let map = null;
@@ -273,11 +275,15 @@ function displayState(a) {
     }
     const summary = advisorySummaries.get(a.event_id);
     if (NOTIFY_PHASE[summary?.notify_phase]) return NOTIFY_PHASE[summary.notify_phase];
+    if (departureView(a, summary)) return { t: '已撤离', c: 't-green', color: '#31d19b' };
     return stateOf(a);
   }
   const handoffId = key === 'HANDED_OFF' ? autoHandoff?.handoff_id || sources?.handoffs?.items?.find(row =>
     row.handoff_type === 'UAV_PUNISHMENT' && row.delivery_status && row.delivery_status !== 'FAILED')?.handoff_id : '';
   return { t: `${ALARM_PROGRESS_LABEL[key]}${failed ? '（更新失败）' : ''}`, c: ALARM_PROGRESS_TAG[key] || 't-cyan', color: '#22d3ee', handoffId };
+}
+function departureView(alarm, summary) {
+  return alarmDepartureView({ alarm, summary, progress: pageProgress[alarm?.event_id], sources: progressSources.get(alarm?.event_id) });
 }
 function selectedDisposalProgress() {
   return pageProgress[cur.alarm?.event_id]
@@ -665,11 +671,11 @@ function counterSubject(row) {
     'approved_by_name', 'approved_at', 'decision_note', 'authorization_mode', 'result_code', 'device_stop_result', 'device_id'];
   return Object.fromEntries(keys.map(key => [key, row[key] ?? null]));
 }
-/* 处置进度面板每秒读一次通知摘要。只有本页用到的字段（通知阶段、反制入口、不反制决定、自动移送）
+/* 处置进度面板每秒读一次通知摘要。只有本页用到的字段（通知阶段、撤离结果、反制入口、不反制决定、自动移送）
    变了才重画列表和详情、重读处置记录；没变就不动页面，免得每秒重画、按钮点不中（BUG-06）。 */
 const advisoryPageKey = s => JSON.stringify([s.event_version, s.notify_phase || '', s.counter_launch_visible === true, s._unavailable === true,
   s.no_counter?.decision_active === true, s.no_counter?.review_required === true,
-  s.auto_handoff?.handoff_id || '', s.auto_handoff?.status || '']);
+  s.auto_handoff?.handoff_id || '', s.auto_handoff?.status || '', recordedDepartureKey(s)]);
 const advisoryContent = s => JSON.stringify({ ...s, _fetchedAt: undefined });
 function updateAdvisory(summary) {
   if (!summary?.event_id) return;
@@ -685,16 +691,18 @@ function updateAdvisory(summary) {
   }
   if (!advisoryLive.value || advisoryContent(advisoryLive.value) !== advisoryContent(summary)) advisoryLive.value = summary;
   if (cur.event) cur.event.version = summary.event_version;
+  departureEnded.value = !!departureView(cur.alarm, advisoryLive.value);
   patchHtml(el('alNow'), alarmNowHtml());
   if (!pageChanged) return;
   paintList();
   paintDetailContent();
   const stillPending = cur.alarm.state !== 'CONFIRMED' && cur.alarm.state !== 'FALSE_POSITIVE';
-  if (summary.notify_phase && stillPending) {
-    const mark = `${summary.event_id}:${summary.event_version}`;
+  const departureKey = recordedDepartureKey(summary);
+  if ((summary.notify_phase && stillPending) || (departureKey && departureKey !== recordedDepartureKey(current))) {
+    const mark = departureKey ? `departure:${departureKey}` : `${summary.event_id}:${summary.event_version}`;
     if (progressReloadFor !== mark) {
       progressReloadFor = mark;
-      // 后台已经核实并开始通知：静默重读列表和当前告警，不清空正在看的详情。
+      // 后台已核实或已留存撤离：重读服务端分组和统计，不写不反制决定，不清空详情。
       void Promise.all([loadList({ quiet: true }), refreshSelected(), loadKpis()]).catch(() => {});
     }
     return;
@@ -834,9 +842,17 @@ function pendingNotifyNote(a) {
    通知后的位置判断只是当时的结论，最新研判仍违规时以违规为准。 */
 function alarmNowHtml() {
   const a = cur.alarm, t = cur.target;
-  if (!a?.event_id || !a.target_id || !a.observation_status || a.attention_group === 'HISTORY') return '';
-  if (t?.object_type_code && t.object_type_code !== 'UAV') return '';
+  if (!a?.event_id || !a.target_id) return '';
   const advisory = advisoryLive.value?.event_id === a.event_id ? advisoryLive.value : advisorySummaries.get(a.event_id);
+  const departure = departureView(a, advisory);
+  if (departure) return `<section class="uav-now is-green alarm-departure" role="status" aria-label="通知与撤离结果">
+    <div class="uav-now-summary"><strong class="uav-now-title"><i aria-hidden="true"></i>${esc(departure.title)}</strong></div>
+    <span class="uav-now-sub">${esc(departure.notification)}</span>
+    <span class="uav-now-sub">撤离确认：${esc(fmt(departure.evaluatedAt))}（北京时间）</span>
+    <span class="uav-now-sub">${esc(departure.basis)}；${esc(departure.conclusion)}</span>
+  </section>`;
+  if (!a.observation_status || a.attention_group === 'HISTORY') return '';
+  if (t?.object_type_code && t.object_type_code !== 'UAV') return '';
   const status = uavNowStatus({
     current: a.observation_status === 'CURRENT',
     observedAt: t?.latest_state?.observed_at,
@@ -878,6 +894,7 @@ function paintDetailContent() {
   patchHtml(el('alReason'), cur.alarm ? alarmReasonHtml(cur.alarm, cur.target) : '');
   patchHtml(el('alDetail'), detailHtml());
   patchHtml(el('alDetailActions'), detailActionsHtml());
+  departureEnded.value = !!departureView(cur.alarm, advisoryLive.value);
   patchHtml(el('alNow'), alarmNowHtml());
 }
 
@@ -1553,7 +1570,7 @@ onMounted(async () => {
             body-style="overflow:hidden;display:flex;flex-direction:column;padding:0">
             <div class="alarm-action-bar">
               <div id="alNow" class="alarm-now"></div>
-              <CounterLaunch v-if="advisorySubject" :key="`counter-${advisorySubject.id}`"
+              <CounterLaunch v-if="advisorySubject && !departureEnded" :key="`counter-${advisorySubject.id}`"
                 :event-id="advisorySubject.id" :event-label="advisorySubject.label" :active="activeTab === 'alarms'"
                 :show-launch="showCounterLaunch()" :handed-off="eventHandedOff()" :confirmed="advisorySubject.confirmed" :summary="advisoryLive"
                 :counter-stopped="selectedDisposalProgress() === 'COUNTER_STOPPED'"

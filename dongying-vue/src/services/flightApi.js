@@ -28,6 +28,7 @@ export const flightApi = {
   actuals: id => apiRequest(`/flight-plans/${encodeURIComponent(id)}/actuals`),
   trajectory: id => apiRequestTimed(`/flight-plans/${encodeURIComponent(id)}/trajectory`),
   verifications: id => apiRequestTimed(`/flight-plans/${encodeURIComponent(id)}/verifications`),
+  maintenanceTasks: (id, params) => apiRequestTimed(`/flight-plans/${encodeURIComponent(id)}/device-maintenance-tasks${query(params)}`),
   deviceCheck: id => apiRequestTimed(`/flight-plans/${encodeURIComponent(id)}/verifications/device-check`),
   automaticCheck: (id, body, idempotencyKey) => apiRequestTimed(`/flight-plans/${encodeURIComponent(id)}/verifications/automatic`, { method: 'POST', body, mutation: true, idempotencyKey }),
   feedbackPlan: (id, body, idempotencyKey) => apiRequestTimed(`/flight-plans/${encodeURIComponent(id)}/verifications/feedback`, { method: 'POST', body, mutation: true, idempotencyKey })

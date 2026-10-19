@@ -105,6 +105,8 @@ class TcpRadar:
                 listener.settimeout(.25)
                 detail = None if self.manual else api.call('POST', '/local-interface-simulator/radar-device', body,
                                   key='tcp-radar-' + uuid.uuid4().hex)
+                if not self.manual:
+                    api.sync_simulated_range(detail['device']['device_id'], 'radar')
             except Exception:
                 listener.close()
                 raise

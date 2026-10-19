@@ -901,7 +901,7 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.respond(external_bridge.automation_rules())
             except ValueError as error:
                 return self.fail(error, 401 if isinstance(error, ExternalAuthenticationRequired) or '返回 401' in str(error) else 400)
-        if self.path=='/api/acceptance-flows-1-7':
+        if self.path in ('/api/acceptance-flows', '/api/acceptance-flows-1-7'):
             try:
                 return self.respond(read_acceptance_flows(ROOT))
             except ValueError as error:

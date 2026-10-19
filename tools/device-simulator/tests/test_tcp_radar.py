@@ -11,7 +11,12 @@ from tcp_radar import TcpRadar, Decoder, frame, track_payload, LOGIN, HEARTBEAT,
 class PlatformStub:
     def __init__(self):
         self.writes = []
+        self.ranges = []
+        self.fail_range = False
         self.fail_auth = False
+    def sync_simulated_range(self, device_id, kind):
+        if self.fail_range: raise ValueError('range sync failed')
+        self.ranges.append((device_id,kind))
     def call(self, method, path, body=None, key=None, **kwargs):
         if self.fail_auth: raise ValueError('session expired')
         if method == 'POST':
@@ -55,6 +60,19 @@ class TcpRadarTest(unittest.TestCase):
             self.radar.stop()
             self.assertFalse(self.radar.snapshot()['connected'])
         self.assertEqual(self.platform.writes[0][0],'/local-interface-simulator/radar-device')
+        self.assertEqual(self.platform.ranges,[('test-device','radar')])
+    def test_failed_range_sync_releases_listener_and_does_not_start(self):
+        with socket.socket() as available:
+            available.bind(('127.0.0.1',0))
+            self.radar.port=available.getsockname()[1]
+        self.platform.fail_range=True
+        with self.assertRaisesRegex(ValueError,'range sync failed'): self.start()
+        self.assertEqual(self.radar.snapshot()['state'],'STOPPED')
+        with socket.socket() as reopened:
+            reopened.bind(('127.0.0.1',self.radar.port))
+        self.platform.fail_range=False
+        self.start()
+        self.assertEqual(self.radar.snapshot()['state'],'RUNNING')
     def test_invalid_crc_and_bounds(self):
         raw = bytearray(frame(HEARTBEAT,1,bytes(8))); raw[-1] ^= 1
         with self.assertRaises(ValueError): Decoder().feed(raw)

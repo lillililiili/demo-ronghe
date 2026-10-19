@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "name": "规则与做法确认书·流程 1-7",
+  "name": "模拟验收流程 1-8",
   "source": "规则与做法确认书（含验收方法）-2026-10-08",
   "status": "SCENES_READY_FOR_IMPORT",
   "flows": [
@@ -38,6 +38,11 @@
       "flow": 7,
       "file": "flow-7-bird-flock.json",
       "name": "流程 7 航线附近 25 只鸟群"
+    },
+    {
+      "flow": 8,
+      "file": "flow-8-device-maintenance.json",
+      "name": "流程 8 设备故障、离线与恢复办结"
     }
   ],
   "usage": "在数据模拟器中每次只导入并运行一个 JSON，完成后停止再导入下一个。"

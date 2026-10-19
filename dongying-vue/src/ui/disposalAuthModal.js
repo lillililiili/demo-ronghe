@@ -8,7 +8,7 @@ import { toast } from './nv.js';
 import { displayDeviceNo } from './deviceNumber.js';
 import { disposalApi, isDisposalUnavailable, newDisposalIdempotencyKey } from '@/services/disposalApi.js';
 import { deviceApi } from '@/services/deviceApi.js';
-import { deviceReach, distanceText, validPoint } from './deviceReach.js';
+import { deviceReach, validPoint } from './deviceReach.js';
 import { isUncertainOutcome } from '@/services/apiClient.js';
 import { DISPOSAL_ACTION_LABEL, DISPOSAL_BLOCK_REASON_LABEL, DISPOSAL_CHANNEL_LABEL, DISPOSAL_STATUS_LABEL, disposalStatusText, labelOf } from '@/ui/labels.js';
 
@@ -144,24 +144,18 @@ export function deviceUnavailableReason(device) {
   return '';
 }
 
-function deviceOptionLabel(device, reach) {
-  const title = [displayDeviceNo(device.device_no), device.name].filter(Boolean).join(' · ') || '未命名设备';
-  const why = deviceUnavailableReason(device);
-  const where = !reach ? '' : reach.inRange ? `距目标 ${distanceText(reach.distanceM)} · 在覆盖范围内`
-    : [reach.distanceM == null ? '' : `距目标 ${distanceText(reach.distanceM)}`, reach.reason].filter(Boolean).join(' · ');
-  const bits = [device.device_type_name, where, why ? `不能选：${why}` : ''].filter(Boolean);
-  return bits.length ? `${title}（${bits.join(' · ')}）` : title;
+function deviceOptionLabel(device) {
+  return [displayDeviceNo(device.device_no), device.name].filter(Boolean).join(' · ') || '未命名设备';
 }
 
-/** 执行设备下拉：能用的在前；不能用的置灰、写明原因，不能选。
-    给了目标位置时（2026-10-14 rose：只显示在范围内的反制设备）：配了覆盖范围但照不到目标的不列；
-    覆盖范围内的在前、近的在前；没配覆盖范围的无法判断，排在后面并写明，免得台账没配范围时谁都选不了。 */
+/** 只简化展示：通道、覆盖、距离排序及禁选判断保持；缺覆盖参数仍按未知处理。 */
 export function deviceOptions(devices, channel, point) {
   const reachOf = device => validPoint(point) ? deviceReach(device, point) : null;
   return devicesForChannel(devices, channel)
     .map(device => ({ device, reach: reachOf(device) }))
     .filter(row => !row.reach || row.reach.inRange || row.reach.unknown)
-    .map(({ device, reach }) => ({ value: device.device_id, label: deviceOptionLabel(device, reach), disabled: !!deviceUnavailableReason(device),
+    .map(({ device, reach }) => ({ value: device.device_id, label: deviceOptionLabel(device), disabled: !!deviceUnavailableReason(device),
+      selectedLabel: String(device.name || '').trim() || displayDeviceNo(device.device_no) || '未命名设备',
       unknown: !!reach?.unknown, distanceM: reach?.distanceM ?? null }))
     .sort((a, b) => Number(a.disabled) - Number(b.disabled) || Number(a.unknown) - Number(b.unknown) || (a.distanceM ?? Infinity) - (b.distanceM ?? Infinity))
     .map(({ distanceM, unknown, ...option }) => option);
@@ -175,15 +169,6 @@ function deviceOptionsOrNote(devices, channel, point) {
     : !devicesForChannel(devices, channel).length ? '这个执行通道没有登记设备，请换一个执行通道'
       : '这个执行通道的设备都照不到目标，请换一个执行通道';
   return [{ value: '__none__', label: note, disabled: true }];
-}
-
-/** 给了目标位置时，这个通道有几台设备因为照不到目标被隐藏，以及原因。 */
-export function hiddenDeviceText(devices, channel, point) {
-  if (!validPoint(point)) return '';
-  const hidden = devicesForChannel(devices, channel).map(device => deviceReach(device, point)).filter(reach => !reach.inRange && !reach.unknown);
-  if (!hidden.length) return '';
-  const counts = hidden.reduce((map, reach) => map.set(reach.reason.replace(/（.*$/, ''), (map.get(reach.reason.replace(/（.*$/, '')) || 0) + 1), new Map());
-  return `另有 ${hidden.length} 台没有列出：${[...counts].map(([why, count]) => `${count} 台${why}`).join('，')}。`;
 }
 
 const CHANNEL_DEVICE_TYPE = {
@@ -226,22 +211,17 @@ export function openDisposalDirect({ actionType, subjectKind, subjectId, subject
   return showDisposalRequestForm({ actionType, subjectKind, subjectId, subjectText, initialReason, isCurrent, policy, refresh, onDone, direct: true, targetPoint });
 }
 
-/** targetPoint：目标现在的位置 { lon, lat }。不传表示不按覆盖筛选；传了但读不到位置（null）时如实提示。 */
+/** targetPoint：目标现在的位置 { lon, lat }。不传或读不到位置（null）时保持原设备清单，不推断覆盖事实。 */
 async function showDisposalRequestForm({ actionType, actionOptions, subjectKind, subjectId, subjectText, initialReason, isCurrent, policy, refresh, onDone, customSubmit, okText, direct = false, targetPoint }) {
   const choices = (actionOptions || []).filter(Boolean);
   const pickable = choices.length > 1;
   let devices = [];
   const point = validPoint(targetPoint) ? targetPoint : null;
-  let deviceHelp = point
-    ? '只显示覆盖范围照得到目标的设备，近的在前；没有登记覆盖范围的设备无法判断，排在后面并写明；停用、离线、故障或状态不明的设备置灰不能选。'
-    : targetPoint !== undefined
-      ? '读不到目标现在的位置，没法按覆盖范围筛选，下面列出这个执行通道的全部设备，请自己核对设备能否照到目标。'
-      : '只显示当前执行通道可以下发的设备；停用、离线、故障或状态不明的设备置灰不能选，括号里写明原因。';
+  let deviceLoadError = '';
   try {
     devices = await loadEnabledDevices();
-    if (!devices.length) deviceHelp = '没有启用中的设备，请联系运维接入设备后再申请。';
   } catch (error) {
-    deviceHelp = error?.status === 403
+    deviceLoadError = error?.status === 403
       ? '当前账号没有设备台账读取权限，无法选择执行设备。'
       : (error?.message || '读取执行设备失败，请稍后重试。');
   }
@@ -268,7 +248,7 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
       ? '本次使用免逐次审批权限。服务端仍会核对目标、范围、时效、设备操作权限和急停状态；提交后以设备回执为准。'
       : '提交后进入待审批：审批人必须是另一个人，批准后才可执行。'),
     introHtml: `<dl class="kv">${intro}</dl>`,
-    notice: initialReason ? '已带入申请事由草稿，请依据当前观测与研判核对。' : '',
+    notice: [initialReason ? '已带入申请事由草稿，请依据当前观测与研判核对。' : '', deviceLoadError].filter(Boolean).join(' '),
     fields: [
       ...(pickable ? [{ key: 'action_type', label: '动作类型', type: 'radio', required: true,
         options: choices.map(a => ({ value: a, label: labelOf(DISPOSAL_ACTION_LABEL, a) })) }] : []),
@@ -279,7 +259,7 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
       { key: 'device_id', label: '执行设备', type: 'select', clearable: true, filterable: true,
         placeholder: '请选择执行设备',
         options: model => deviceOptionsOrNote(devices, model.channel, point),
-        help: model => [deviceHelp, hiddenDeviceText(devices, model.channel, point)].filter(Boolean).join(''), required: true },
+        required: true },
       { key: 'reason', label: direct ? '直接反制事由' : '申请事由', type: 'textarea', minRows: 3,
         placeholder: '选填；如需补充事由，请填写 2–500 字' }
     ],

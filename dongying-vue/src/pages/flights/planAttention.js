@@ -5,28 +5,13 @@ import { maintenanceState, maintenanceStateLabel } from './maintenanceState.js';
 import { REASON_CODE_LABEL, RISK_TYPE_LABEL } from '../../ui/labels.js';
 
 export const ATTENTION_CHIPS = [
-  { key: 'DEVIATION', label: '任务偏离', tag: 't-red' },
-  { key: 'AIRCRAFT', label: '没对上飞机', tag: 't-amber' },
   { key: 'DEVICE', label: '设备异常', tag: 't-amber' },
   { key: 'RISK', label: '风险待处理', tag: 't-amber' }
 ];
-const SUMMARY_FIELD = { DEVIATION: 'deviation', AIRCRAFT: 'aircraft', DEVICE: 'device', RISK: 'risk' };
-
-const MATCH_ISSUE = {
-  DEVIATION: { tag: '任务偏离', tagClass: 't-red', next: '确认是不是违规，是就按告警处置',
-    detail: '飞机实际飞的位置离开了报备航线。' },
-  NONE: { tag: '未找到对应飞机', tagClass: 't-amber', next: '看比对的飞机是不是违规，并联系报备单位',
-    detail: '有飞机和这条任务比对过，但位置、时间或高度对不上。请同时联系报备单位，确认报备的飞机是否起飞。' },
-  NO_EVALUATION: { tag: '还没对上飞机', tagClass: 't-amber', next: '联系报备单位问是否起飞',
-    detail: '系统还没把任何飞机和这条任务对上：可能还没起飞，也可能没被探测到。请联系报备单位，问清是否已经起飞。' },
-  PARTIAL: { tag: '部分匹配', tagClass: 't-amber', next: '查看比对详情，确认哪一项不符',
-    detail: '找到的飞机和报备内容对不全（比如高度或时间不一致）。' },
-  UNDETERMINED: { tag: '不可判定', tagClass: 't-amber', next: '人工核实：看现场画面或联系报备单位',
-    detail: '收到的数据不够，系统判断不了。请人工核实：看现场画面，或联系报备单位。' }
-};
+const SUMMARY_FIELD = { DEVICE: 'device', RISK: 'risk' };
 
 export function needsAction(plan) {
-  return Array.isArray(plan?.attention?.kinds) && plan.attention.kinds.length > 0;
+  return Array.isArray(plan?.attention?.kinds) && plan.attention.kinds.some(kind => ['DEVICE', 'RISK'].includes(kind));
 }
 
 /* 列表分组：需要处理 → 其他执行中 → 待执行 → 已结束/已取消，与后台排序一致。 */
@@ -37,27 +22,17 @@ export function planGroupOf(plan) {
   return 'ended';
 }
 export const PLAN_GROUP = {
-  needs: { title: '需要处理', note: '任务偏离的在最前' },
+  needs: { title: '需要处理', note: '设备异常或风险待处理' },
   executing: { title: '执行中', note: '' },
   pending: { title: '待执行', note: '开始时间近的在前' },
   ended: { title: '已结束 / 已取消', note: '最近的在前' }
 };
 
-/* 一个任务的每一种问题：列表标签、一句下一步、展开后的完整说明。 */
-export function attentionIssues(plan, handling) {
+/* 一个任务的每一种问题：问题说明、下一步及各自的入口；入口只导航，业务动作仍在原页面办理。 */
+export function attentionIssues(plan, access = {}) {
   const attention = plan?.attention;
+  if (!needsAction(plan)) return [];
   const issues = [];
-  const match = MATCH_ISSUE[attention?.match_issue];
-  if (match) {
-    const next = handling?.kind === 'alarm' ? '查看告警及处置进度'
-      : handling?.kind === 'legality' ? '查看研判，核对判断依据'
-        : handling?.kind === 'blocked' ? handling.note : match.next;
-    issues.push({ kind: attention.match_issue === 'DEVIATION' ? 'DEVIATION' : 'AIRCRAFT', ...match,
-      next, detail: `${match.detail}${handling?.kind === 'alarm' ? '已有关联告警，请到告警页面继续处理。' : handling?.kind === 'legality' ? '请查看研判与判断依据。' : ''}` });
-  } else if (handling?.kind === 'alarm') {
-    issues.push({ kind: 'ALARM', tag: '已关联告警', tagClass: 't-amber', next: '查看告警及处置进度', detail: '已有关联告警，请到告警页面查看核实与处置进度。' });
-  }
-  if (!attention) return issues;
   const tasks = Array.isArray(attention.device_tasks) ? attention.device_tasks : [];
   if (tasks.length) issues.push(deviceIssue(tasks));
   const verify = Number(attention.pending_verification_risks) || 0, notify = Number(attention.pending_notification_risks) || 0;
@@ -66,9 +41,12 @@ export function attentionIssues(plan, handling) {
     const parts = [verify ? `待核验 ${verify}` : '', notify ? `待通知 ${notify}` : ''].filter(Boolean).join('、') + (kinds ? `，${kinds}` : '');
     issues.push({ kind: 'RISK', tag: `风险 ${verify + notify} 条`, tagClass: 't-amber',
       next: verify ? `核验${kinds || '风险'}，确认后通知上级` : `把${kinds || '风险'}通知上级`,
-      detail: `这条任务有 ${verify + notify} 个风险事件还没处理（${parts}）。${verify ? '请去核验，确认后通知上级。' : '请通知上级。'}` });
+      detail: `这条任务有 ${verify + notify} 个风险事件还没处理（${parts}）。${verify ? '请去核验，确认后通知上级。' : '请通知上级。'}`,
+      actions: [{ key: 'risks', label: verify ? '去核验与通知' : '去通知上级', primary: true }] });
   }
-  return issues;
+  return issues.map(issue => ({ ...issue, actions: issue.actions.map(action => ({ ...action,
+    blockedReason: action.key === 'risks' && access.risks === false ? '当前账号无权查看风险事件' : ''
+  })) }));
 }
 
 /* 处置单还在办（待处理、处理中）的设备算“异常”；系统核验中、待确认办结的说明设备可能已恢复，不再说飞机测不到。 */
@@ -83,7 +61,8 @@ function deviceIssue(tasks) {
   else if (broken.length > 1) lines.push(`航线附近有 ${broken.length} 台设备异常（${broken.map(task => `${name(task)}，${state(task)}`).join('；')}），飞机可能测不到。请跟进处置单；修好前靠联系报备单位确认飞行情况。`);
   if (recovering.length) lines.push(`${recovering.map(task => `${name(task)}${maintenanceState(task) === 'READY_TO_COMPLETE' ? '已恢复' : '正在核验是否恢复'}，${state(task)}`).join('；')}。请跟进后台确认办结。`);
   return { kind: 'DEVICE', tag: `设备异常 ${tasks.length}`, tagClass: 't-amber',
-    next: broken.length ? `跟进${broken.map(name).join('、')}处置单` : '跟进后台确认办结', detail: lines.join('') };
+    next: broken.length ? '由后台人员接手处理，恢复核验通过后确认办结' : '跟进后台核验恢复、确认办结', detail: lines.join(''),
+    actions: [{ key: 'devices', label: '查看设备处置进度', primary: true }] };
 }
 
 /* 待处理风险的种类：气象写具体预警（如“雷雨预警”），其他写风险类型；同名去重。 */
@@ -91,14 +70,6 @@ function riskKindText(kinds) {
   const names = (Array.isArray(kinds) ? kinds : []).map(kind => kind?.risk_type === 'WEATHER'
     ? REASON_CODE_LABEL[kind.reason_code] || '气象预警' : RISK_TYPE_LABEL[kind?.risk_type] || '').filter(Boolean);
   return [...new Set(names)].join('、');
-}
-
-/* 行内与详情共用已核对的办理入口；未知关联不先显示研判再跳成告警。 */
-export function attentionAction(plan, handling) {
-  if (['alarm', 'legality'].includes(handling?.kind)) return { key: handling.kind, label: `${handling.label} →`, primary: true };
-  if (!needsAction(plan)) return { key: 'detail', label: '查看详情' };
-  if (plan.attention.kinds.every(kind => kind === 'RISK')) return { key: 'risks', label: '查看风险事件 →', primary: true };
-  return { key: 'detail', label: '查看详情' };
 }
 
 /* 顶部汇总：需要处理几个任务，按种类各几个（一个任务有几种问题就各算一次）。 */
@@ -113,4 +84,25 @@ export function attentionSummaryChips(summary, chosen = '') {
 
 export function attentionKindLabel(kind) {
   return ATTENTION_CHIPS.find(chip => chip.key === kind)?.label || '';
+}
+
+// 按本任务分页读取，并只返回点击时对应的处置单；不能拿同设备的新单替代旧单。
+export async function loadAttentionDeviceTasks(planId, taskIds, readPage, isCurrent = () => true) {
+  const wanted = new Set(taskIds.filter(Boolean)), found = new Map(), seen = new Set();
+  if (!planId || !wanted.size) throw new Error('缺少关联处置单，请关闭后刷新任务。');
+  for (let page = 1; ; page++) {
+    const result = await readPage(planId, { page, size: 100 });
+    if (!isCurrent()) return null;
+    if (!Array.isArray(result?.items) || !Number.isSafeInteger(result.total) || result.total < 0)
+      throw new Error('处置进度返回不完整，请重新读取。');
+    let added = 0;
+    for (const task of result.items) {
+      if (!task?.task_id) throw new Error('处置单编号缺失，请重新读取。');
+      if (!seen.has(task.task_id)) { seen.add(task.task_id); added++; }
+      if (wanted.has(task.task_id)) found.set(task.task_id, task);
+    }
+    if (found.size === wanted.size || seen.size >= result.total) break;
+    if (!added) throw new Error('处置单分页读取不完整，请重新读取。');
+  }
+  return { items: [...wanted].flatMap(id => found.has(id) ? [found.get(id)] : []), missing: wanted.size - found.size };
 }

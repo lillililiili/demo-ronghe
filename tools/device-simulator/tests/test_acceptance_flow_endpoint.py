@@ -1,4 +1,4 @@
-"""「选流程」弹框的服务端：直接读仓库里现成的 7 份流程文件，并只读地查规则开关。"""
+"""「选流程」弹框的服务端：直接读仓库里现成的 8 份流程文件，并只读地查规则开关。"""
 import http.server
 import json
 import shutil
@@ -20,10 +20,10 @@ FOLDER = ROOT / 'scenarios' / acceptance_flows.OUTPUT_NAME
 
 
 class ReadAcceptanceFlowsTest(unittest.TestCase):
-    def test_reads_the_seven_repository_files_in_order_without_any_external_script(self):
+    def test_reads_the_eight_repository_files_in_order_without_any_external_script(self):
         result = acceptance_flows.read_acceptance_flows(ROOT)
         self.assertEqual('READY_FOR_IMPORT', result['status'])
-        self.assertEqual([1, 2, 3, 4, 5, 6, 7], [item['flow'] for item in result['flows']])
+        self.assertEqual([1, 2, 3, 4, 5, 6, 7, 8], [item['flow'] for item in result['flows']])
         for item in result['flows']:
             self.assertEqual(acceptance_flows.FLOW_FILES[item['flow']], item['file'])
             guide = item['guide']
@@ -33,14 +33,14 @@ class ReadAcceptanceFlowsTest(unittest.TestCase):
 
     def test_durations_are_the_flow_files_own_minutes(self):
         minutes = {item['flow']: item['minutes'] for item in acceptance_flows.read_acceptance_flows(ROOT)['flows']}
-        self.assertEqual({1: 5, 2: 5, 3: 5, 4: 5, 5: 5, 6: 2, 7: 2}, minutes)
+        self.assertEqual({1: 5, 2: 5, 3: 5, 4: 5, 5: 5, 6: 2, 7: 2, 8: 10}, minutes)
 
     def test_only_flow_four_asks_for_auto_verification_to_be_turned_off(self):
         flows = {item['flow']: item['guide'] for item in acceptance_flows.read_acceptance_flows(ROOT)['flows']}
         self.assertEqual({4}, {flow for flow, guide in flows.items() if guide['auto_verify'] is False})
         self.assertEqual('开始前请先在规则管理关掉自动核实', flows[4]['warning'])
         self.assertEqual({1, 2, 3, 5}, {flow for flow, guide in flows.items() if guide['auto_verify'] is True})
-        self.assertEqual({6, 7}, {flow for flow, guide in flows.items() if guide['auto_verify'] is None})
+        self.assertEqual({6, 7, 8}, {flow for flow, guide in flows.items() if guide['auto_verify'] is None})
         self.assertEqual({4}, {flow for flow, guide in flows.items() if guide['warning']})
 
     def test_every_flow_says_what_auto_verify_and_the_counter_button_do(self):
@@ -61,7 +61,7 @@ class ReadAcceptanceFlowsTest(unittest.TestCase):
     def test_reports_plain_errors_for_a_broken_folder(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            with self.assertRaisesRegex(ValueError, '找不到流程 1-7'):
+            with self.assertRaisesRegex(ValueError, '找不到流程 1-8'):
                 acceptance_flows.read_acceptance_flows(root)
             folder = root / 'scenarios' / acceptance_flows.OUTPUT_NAME
             shutil.copytree(FOLDER, folder)
@@ -203,10 +203,10 @@ class AcceptanceFlowHttpTest(unittest.TestCase):
         self.local.server_close()
         self.thread.join()
 
-    def test_get_returns_the_seven_flows_and_post_is_gone(self):
-        with self.opener.open(self.base + '/api/acceptance-flows-1-7') as response:
+    def test_get_returns_the_eight_flows_and_post_is_gone(self):
+        with self.opener.open(self.base + '/api/acceptance-flows') as response:
             data = json.load(response)
-        self.assertEqual([1, 2, 3, 4, 5, 6, 7], [item['flow'] for item in data['flows']])
+        self.assertEqual([1, 2, 3, 4, 5, 6, 7, 8], [item['flow'] for item in data['flows']])
         request = urllib.request.Request(self.base + '/api/acceptance-flows-1-7', data=b'{}',
                                          headers={'Content-Type': 'application/json'}, method='POST')
         with self.assertRaises(urllib.error.HTTPError) as caught:

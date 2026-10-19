@@ -46,7 +46,8 @@ import { planRiskLocation, planRiskLocationNote } from '@/pages/flights/planRisk
 import PlanWeatherForecast from '@/pages/flights/components/PlanWeatherForecast.vue';
 import FlightRecordList from '@/pages/flights/components/FlightRecordList.vue';
 import PlanRecordList from '@/pages/flights/components/PlanRecordList.vue';
-import { PLAN_GROUP, attentionAction, attentionIssues, attentionKindLabel, attentionSummaryChips, needsAction, planGroupOf } from '@/pages/flights/planAttention.js';
+import PlanMaintenanceProgressModal from '@/pages/flights/components/PlanMaintenanceProgressModal.vue';
+import { PLAN_GROUP, attentionIssues, attentionKindLabel, attentionSummaryChips, needsAction, planGroupOf } from '@/pages/flights/planAttention.js';
 import FlightListPager from '@/pages/flights/components/FlightListPager.vue';
 import { isSimulatedWeatherRisk } from '@/services/weatherRiskGeometry.js';
 import WeatherMapInfo from '@/pages/flights/components/WeatherMapInfo.vue';
@@ -64,6 +65,7 @@ usePageChrome('flights');
 const abnormalActive = window.UI.abnormalActive;
 
 const filters = reactive(S.filters);
+if (!['DEVICE', 'RISK'].includes(filters.attention)) filters.attention = '';
 /* 输入框里的关键词；回车或“查询”后才写入 filters.keyword，避免每敲一字就重读列表。 */
 const keywordDraft = ref(filters.keyword);
 /* 上级计划接口状态（ZT-21）：读不到时为 null，不提示。 */
@@ -280,18 +282,17 @@ async function loadPlanKpis() {
 }
 const pageMatchCounts = computed(() => {
   const window = todayWindow();
-  let unmatched = 0, deviated = 0;
+  let unmatched = 0;
   plans.value.forEach(plan => {
     if (!planOverlapsToday(plan, window)) return;
     const section = rowActuals[plan.plan_id];
     if (!section) return;
     if (['EXECUTING', 'COMPLETED'].includes(plan.status_code) && section.availability === 'NO_EVALUATION') unmatched += 1;
-    if (['EXECUTING', 'COMPLETED'].includes(plan.status_code) && hasRouteDeviation(section)) deviated += 1;
   });
-  return { unmatched, deviated };
+  return { unmatched };
 });
 /* 前四张卡可点击：列表改为只看北京时间今天该状态的计划，选中卡高亮，再点一次恢复全部。
-   后两张只统计本页、服务端没有对应筛选，不做成可点击，免得只筛本页造成误解。 */
+   最后一张只统计本页、服务端没有对应筛选，不做成可点击，免得只筛本页造成误解。 */
 const PLAN_KPI_CARDS = [
   { key: 'today', label: '今日报备任务', color: 'blue', icon: 'plan', caption: '北京时间今天', desc: '任务时段与北京时间今天相交的任务数' },
   { key: 'executing', label: '执行中', color: 'cyan', icon: 'radar', caption: '今日任务', desc: '北京时间今天任务中当前状态为执行中的数量' },
@@ -307,7 +308,6 @@ const kpiList = computed(() => {
       desc: `${desc}；${chosen === key ? '再次点击查看全部任务' : '点击只看这些任务'}`
     })),
     { label: '任务未匹配到目标', value: String(m.unmatched), color: 'amber', icon: 'alert', caption: '本页今日任务', desc: '本页北京时间今天执行中或已完成的任务中，还没找到对应飞机的数量' },
-    { label: '偏离报备任务', value: String(m.deviated), color: 'red', icon: 'alert', caption: '本页今日任务', desc: '本页北京时间今天任务中，研判已记录走廊不匹配的数量' }
   ];
 });
 /* 生效条件提示：“今日计划”与统计卡口径相同（北京时间今天），点卡片后不在工具栏里另占位置。 */
@@ -480,11 +480,12 @@ function relatedIdText(id, permissionCode) {
 /* 设计二（2026-10-16）：后台已按“需要处理 → 执行中 → 待执行 → 已结束”排好；本页只在每组第一条前加组标题。 */
 const attentionSummary = ref(null);
 const attentionBar = computed(() => attentionSummaryChips(attentionSummary.value, filters.attention));
+const planActionAccess = computed(() => ({ risks: hasPermission('risk:read') }));
 const planRecords = computed(() => {
   let previous = '';
   return plans.value.map(plan => {
     const handling = handlingFor(plan);
-    const group = planGroupOf(plan), issues = attentionIssues(plan, handling), match = rowMatch(plan);
+    const group = planGroupOf(plan), issues = attentionIssues(plan, planActionAccess.value), match = rowMatch(plan);
     const header = group === previous ? null : group === 'needs'
       ? { title: PLAN_GROUP.needs.title, note: filters.attention ? `只看${attentionKindLabel(filters.attention)}` : `${attentionBar.value?.total ?? ''} 个 · ${PLAN_GROUP.needs.note}` }
       : group === 'executing' ? { title: PLAN_GROUP.executing.title, note: attentionBar.value?.otherExecuting == null ? '' : `${attentionBar.value.otherExecuting} 个` }
@@ -496,14 +497,14 @@ const planRecords = computed(() => {
       status: labelOf(PLAN_STATUS_LABEL, plan.status_code), statusClass: group === 'ended' ? 't-gray' : PLAN_STATUS_TAG[plan.status_code] || 't-gray',
       // 同名航线常有多份计划（不同批次或时段），行内必须带编号与时段才能区分。
       subtitle: `${planNumberText(plan)} · ${planWindowShortText(plan)}`, subtitleTitle: `${plan.plan_no || ''} · ${planWindowText(plan)}`,
-      needs: needsAction(plan), deviation: plan.attention?.match_issue === 'DEVIATION',
+      needs: needsAction(plan),
       tags: issues.length ? issues.map(issue => ({ text: issue.tag, cls: issue.tagClass, title: issue.detail }))
         // 不需要处理的任务：匹配结论一律灰色（设计二），不和问题标签混淆。
         : match.text && !['—', '…'].includes(match.text) ? [{ text: match.text, cls: 't-gray', title: match.title }] : [],
-      next: issues.length ? issues.map(issue => issue.next).join('；') : handling.kind === 'blocked' ? handling.note
-        : handling.kind === 'legality' ? '查看研判结果' : handling.kind === 'loading' ? handling.note : group === 'executing' ? '无需处理' : '',
-      details: issues.map(issue => issue.detail),
-      action: { ...attentionAction(plan, handling), disabled: handlingNavigationId.value === plan.plan_id }
+      next: !issues.length && group === 'executing' ? '暂无设备或风险待办' : '',
+      issues,
+      handlingAction: ['alarm', 'legality'].includes(handling.kind)
+        ? { key: handling.kind, label: handling.label, disabled: !!handlingNavigationId.value } : null
     };
   });
 });
@@ -512,16 +513,22 @@ function choosePlanAttention(kind) {
   applyFilters();
 }
 function onPlanAction({ id, key }) {
-  if (key === 'legality' || key === 'alarm') {
-    void openPlanHandling(id);
-  } else if (key === 'risks') {
+  if (key === 'legality' || key === 'alarm') { void openPlanHandling(id); return; }
+  const plan = plans.value.find(item => item.plan_id === id);
+  const action = plan && attentionIssues(plan, planActionAccess.value).flatMap(issue => issue.actions).find(item => item.key === key);
+  if (!action) { toast('任务情况已变化，请刷新后查看当前处理入口。'); return; }
+  if (action.blockedReason) { toast(action.blockedReason); return; }
+  if (key === 'risks') {
     const hash = `#/flights?tab=events&plan=${encodeURIComponent(id)}`;
     S.tabHash = hash;
     location.hash = hash;
     showEventsTab(null, id);
-  } else selectPlan(id);
+  } else if (key === 'devices') {
+    openModal({ title: '设备异常处置进度', width: '720px',
+      render: () => h(PlanMaintenanceProgressModal, { planId: id, planNo: plan.plan_no,
+        taskIds: (plan.attention?.device_tasks || []).map(task => task.task_id) }) });
+  }
 }
-
 
 function syncSelectedPlanHash(planId) {
   const hash = planId ? `#/flights?plan=${encodeURIComponent(planId)}` : '#/flights';
@@ -2231,7 +2238,7 @@ onUnmounted(() => {
           <template v-else>
             <div v-show="planDetailTab === 'plan'" class="plan-detail-grid">
               <p class="plan-metrics"><span class="tag" :class="PLAN_STATUS_TAG[selected.status_code] || 't-gray'">{{ labelOf(PLAN_STATUS_LABEL, selected.status_code) }}</span><span class="plan-metrics-sep">·</span><span>任务时长 {{ formatDuration(selected) }}</span></p>
-            <PlanFilingDetails :plan="selected" :route-version="routeVersion" :route-loading="routeGeometryLoading" :route-error="routeGeometryError" />
+            <PlanFilingDetails :key="selected.plan_id" :plan="selected" :route-version="routeVersion" :route-loading="routeGeometryLoading" :route-error="routeGeometryError" />
             <section v-if="showComparison" class="sect plan-comparison"><h4>任务与实际对照</h4>
               <div v-if="actualsLoading" class="empty">正在读取…</div>
               <div v-else-if="actualsError" class="warnbox">{{ actualsError }}</div>

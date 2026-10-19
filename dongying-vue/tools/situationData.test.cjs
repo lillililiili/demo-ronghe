@@ -156,8 +156,7 @@ async function main() {
       const row = { device_id: `scan-${index}-${type}`, name: `设备 ${index}`, longitude: position[0], latitude: position[1],
         device_type_code: type, simulated: true, connectivity: 'ONLINE', coverage: { status: 'UNKNOWN' } };
       const simulated = S.toDevices([row])[0];
-      check(`${type} 模拟范围只供展示 ${index}`, [simulated.coverage.status, simulated.displayCoverage.displayOnly], ['unknown', true]);
-      ok(`${type} 模拟参数标注 ${index}`, simulated.displayCoverage.sourceLabel.includes('模拟参数'));
+      check(`${type} 未上报范围保持未知 ${index}`, [simulated.coverage.status, simulated.displayCoverage.status], ['unknown', 'unknown']);
       ok(`${type} 示意不参与监测判断 ${index}`, !S.coverageContainsPoint(simulated, { lon: position[0], lat: position[1] }));
       const real = S.toDevices([{ ...row, simulated: false, source_mode: 'live' }])[0];
       check(`${type} 真实设备不补范围 ${index}`, real.displayCoverage.status, 'unknown');
@@ -165,16 +164,19 @@ async function main() {
       check(`${type} 回放不等于模拟 ${index}`, replay.displayCoverage.status, 'unknown');
       for (const connectivity of ['OFFLINE', 'ABNORMAL', 'UNKNOWN']) {
         check(`${type} 非在线范围不可用 ${index} ${connectivity}`,
-          S.toDevices([{ ...row, connectivity }])[0].displayCoverage.status, 'unavailable');
+          S.toDevices([{ ...row, connectivity, coverage: { kind: 'CIRCLE', radius_m: 730 + index } }])[0].displayCoverage.status, 'unavailable');
       }
       const configured = S.toDevices([{ ...row, coverage: { kind: 'CIRCLE', radius_m: 730 + index } }])[0];
       check(`${type} 已配置范围优先 ${index}`, configured.displayCoverage.radiusM, 730 + index);
+      check(`${type} 地图与检查几何同源 ${index}`, configured.displayCoverage.radiusM, configured.coverage.radiusM);
+      ok(`${type} 覆盖中心点 ${index}`, S.coverageContainsPoint(configured, { lon: position[0], lat: position[1] }));
       const incomplete = S.toDevices([{ ...row, coverage: { kind: 'SECTOR', range_m: 730 + index } }])[0];
       check(`${type} 不掩盖配置缺项 ${index}`, incomplete.displayCoverage.status, 'unknown');
     }
   }
   const simulatedOptical = S.toDevices([{ device_id: 'optical-scan', simulated: true, device_type_code: 'oe',
-    longitude: 118.6, latitude: 37.2, connectivity: 'ONLINE' }])[0];
+    longitude: 118.6, latitude: 37.2, connectivity: 'ONLINE',
+    coverage: { kind: 'SECTOR', range_m: 1500, azimuth_deg: 0, fov_deg: 120, source_label: '模拟器设备范围（模拟参数）' } }])[0];
   check('模拟光电保留扇形参数和小数距离', [simulatedOptical.displayCoverage.kind, simulatedOptical.displayCoverage.azimuthDeg,
     simulatedOptical.displayCoverage.fovDeg, simulatedOptical.displayCoverageText], ['sector', 0, 120, '0°方位 · 120°视场 · 1.5 km']);
   check('没有坐标不补地图范围', S.toDevices([{ device_id: 'no-location', simulated: true, device_type_code: 'radar' }],

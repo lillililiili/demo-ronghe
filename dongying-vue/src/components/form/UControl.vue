@@ -4,7 +4,7 @@ import {
   NCheckbox, NCheckboxGroup, NConfigProvider, NDatePicker, NInput, NInputNumber,
   NRadio, NRadioGroup, NSelect, dateZhCN, zhCN
 } from 'naive-ui';
-import { SELECT_DROPDOWN, selectMenuProps } from './selectProps.js';
+import { SELECT_DROPDOWN, selectMenuProps, selectTagRenderer } from './selectProps.js';
 
 const DATE_TYPES = new Set([
   'date', 'datetime', 'daterange', 'datetimerange',
@@ -38,6 +38,7 @@ const props = defineProps({
 });
 const model = defineModel({ default: null });
 const menuProps = computed(() => selectMenuProps(props.options));
+const tagRenderer = computed(() => selectTagRenderer(props.options));
 const isDatePicker = computed(() => DATE_TYPES.has(props.type));
 const input = ref(null);
 defineExpose({ focus: () => input.value?.focus() });
@@ -47,7 +48,7 @@ defineExpose({ focus: () => input.value?.focus() });
   <div v-if="type === 'html'" class="u-control u-control--html" v-html="html"></div>
   <n-select v-else-if="type === 'select'" :id="id || undefined" v-model:value="model" :options="options"
     :placeholder="placeholder || '请选择'" :disabled="disabled" :clearable="clearable" :filterable="filterable" :size="size"
-    :consistent-menu-width="SELECT_DROPDOWN.consistentMenuWidth" :menu-props="menuProps" />
+    :consistent-menu-width="tagRenderer ? true : SELECT_DROPDOWN.consistentMenuWidth" :virtual-scroll="!tagRenderer" :menu-props="menuProps" :render-tag="tagRenderer" />
   <n-input-number v-else-if="type === 'number'" :id="id || undefined" v-model:value="model" :min="min" :max="max"
     :placeholder="placeholder" :disabled="disabled" :show-button="showButton" :size="size" style="width:100%" />
   <n-radio-group v-else-if="type === 'radio'" :id="id || undefined" v-model:value="model" class="u-control-stack">

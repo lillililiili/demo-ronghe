@@ -15,10 +15,12 @@ const DEVICES = [
 ];
 
 let reach;
-before(async () => { reach = await import('../src/ui/deviceReach.js'); });
+before(async () => {
+  reach = await import('../src/ui/deviceReach.js');
+});
 
 /** 去掉 import/export 后在隔离上下文里跑弹窗模块，表单、提示和接口调用都记下来。 */
-function load({ devices = DEVICES, create, cancel } = {}) {
+function load({ devices = DEVICES, create, cancel, listError } = {}) {
   const state = { forms: [], toasts: [], closed: 0, cancels: [], refreshed: [] };
   const source = readFileSync(path.join(__dirname, '../src/ui/disposalAuthModal.js'), 'utf8')
     .replace(/^import .*;\r?\n/gm, '').replace(/\bexport /g, '');
@@ -26,7 +28,7 @@ function load({ devices = DEVICES, create, cancel } = {}) {
   const context = vm.createContext({
     openFormModal: form => state.forms.push(form), closeModal: () => { state.closed++; },
     toast: (message, kind) => state.toasts.push([message, kind]),
-    deviceApi: { list: async () => ({ items: devices }) },
+    deviceApi: { list: async () => { if (listError) throw listError; return { items: devices }; } },
     disposalApi: {
       create: create || (async () => ({ authorization_no: 'DSP-NEW' })),
       cancel: cancel || (async (id, body, key) => { state.cancels.push([id, body, key]); return { authorization_id: id, status: 'CANCELLED' }; })
@@ -50,16 +52,13 @@ async function requestForm(options) {
   return { ...loaded, form: loaded.state.forms[0] };
 }
 
-test('不能用的设备置灰并写明原因，能用的排在前面，别的通道的设备不出现', () => {
+test('禁选和原因校验保留，选项只显示编号与名称，其他通道不出现', () => {
   const { context } = load();
   const options = context.deviceOptions(DEVICES, 'COUNTERMEASURE_4CH');
   assert.deepEqual(options.map(option => [option.value, option.disabled]),
     [['ok', false], ['off', true], ['abn', true], ['unk', true], ['bad', true]]);
-  assert.doesNotMatch(options[0].label, /不能选/);
-  assert.match(options[1].label, /不能选：设备离线/);
-  assert.match(options[2].label, /不能选：设备上报工作异常（故障）/);
-  assert.match(options[3].label, /不能选：设备状态不明（没有上报状态）/);
-  assert.match(options[4].label, /不能选：设备上报故障/);
+  assert.deepEqual(options.map(option => option.label), ['CM-1 · 一号', 'CM-2 · 二号', 'CM-3', 'CM-4', 'CM-5']);
+  assert.equal(context.deviceUnavailableReason(DEVICES[1]), '设备离线');
   assert.equal(context.deviceUnavailableReason({ enabled: false, connectivity: 'ONLINE' }), '设备已停用');
   assert.equal(context.deviceUnavailableReason({ enabled: true, connectivity: 'ONLINE', health_code: 'GOOD' }), '');
 });
@@ -67,7 +66,7 @@ test('不能用的设备置灰并写明原因，能用的排在前面，别的�
 test('申请表单：设备下拉随通道给出置灰选项，选到不能用的设备时提交前就说清原因', async () => {
   const { form } = await requestForm();
   const device = form.fields.find(field => field.key === 'device_id');
-  assert.match(device.help({ channel: 'COUNTERMEASURE_4CH' }), /置灰不能选/);
+  assert.equal(device.help, undefined);
   assert.deepEqual(device.options({ channel: 'LINGYUN_B' }).map(option => option.disabled), [true]);
   const base = { action_type: 'COUNTERMEASURE', channel: 'COUNTERMEASURE_4CH', reason: '现场核实后申请反制' };
   assert.equal(form.validate({ ...base, device_id: 'ok' }), null);
@@ -111,22 +110,19 @@ test('给了目标位置：照得到的在前、没配范围的排后写明，�
   const { context } = load({ devices: REACH_DEVICES });
   const options = context.deviceOptions(REACH_DEVICES, 'COUNTERMEASURE_4CH', TARGET);
   assert.deepEqual(options.map(option => option.value), ['near', 'no-cover', 'mid-off']);
-  assert.match(options[0].label, /距目标 1\.0 km · 在覆盖范围内/);
-  assert.match(options[1].label, /这台设备没有登记覆盖范围，无法判断能否覆盖目标/);
+  assert.deepEqual(options.map(option => option.label), ['CM-1', 'CM-3', 'CM-2']);
   assert.equal(options[1].disabled, false);
-  assert.match(options[2].label, /不能选：设备离线/);
-  const hidden = context.hiddenDeviceText(REACH_DEVICES, 'COUNTERMEASURE_4CH', TARGET);
-  assert.equal(hidden, '另有 2 台没有列出：2 台超出覆盖。');
+  assert.equal(options[2].disabled, true);
   // 不给位置时保持原来的全部列出。
   assert.equal(context.deviceOptions(REACH_DEVICES, 'COUNTERMEASURE_4CH').length, 5);
 });
 
-test('申请表单按目标位置筛设备；读不到位置时全部列出并如实说明', async () => {
+test('申请表单按目标位置筛设备；读不到位置时保持清单，无下方说明', async () => {
   const loaded = load({ devices: REACH_DEVICES });
   await loaded.context.openDisposalRequest({ actionType: 'COUNTERMEASURE', subjectKind: 'UAV_EVENT', subjectId: 'event-1', targetPoint: TARGET });
   const form = loaded.state.forms[0];
   const device = form.fields.find(field => field.key === 'device_id');
-  assert.match(device.help({ channel: 'COUNTERMEASURE_4CH' }), /只显示覆盖范围照得到目标的设备.*另有 2 台没有列出/);
+  assert.equal(device.help, undefined);
   const base = { action_type: 'COUNTERMEASURE', channel: 'COUNTERMEASURE_4CH', reason: '现场核实后申请反制' };
   assert.equal(form.validate({ ...base, device_id: 'near' }), null);
   assert.equal(form.validate({ ...base, device_id: 'no-cover' }), null);
@@ -140,7 +136,7 @@ test('申请表单按目标位置筛设备；读不到位置时全部列出并�
   const unknown = load({ devices: REACH_DEVICES });
   await unknown.context.openDisposalRequest({ actionType: 'COUNTERMEASURE', subjectKind: 'UAV_EVENT', subjectId: 'event-1', targetPoint: null });
   const unknownDevice = unknown.state.forms[0].fields.find(field => field.key === 'device_id');
-  assert.match(unknownDevice.help({ channel: 'COUNTERMEASURE_4CH' }), /读不到目标现在的位置/);
+  assert.equal(unknownDevice.help, undefined);
   assert.equal(unknownDevice.options({ channel: 'COUNTERMEASURE_4CH' }).length, 5);
 });
 
@@ -325,4 +321,103 @@ test('目标视频：没有跟踪任务时把光电不在线等原因原样显�
   const offline = '当前目标没有光电跟踪任务：目标所在区域的光电设备都不在线（共 2 台，停用、离线、异常或状态未知），暂无画面。';
   assert.equal(noTask(offline), offline);
   assert.equal(noTask('当前目标没有光电跟踪任务，暂无可查看画面。'), '暂无跟踪画面');
+});
+
+test('选中值只用名称、编号区分同名设备，不追加括号说明及下方小字', async () => {
+  const devices = REACH_DEVICES.map((device, index) => ({ ...device,
+    device_id: crypto.randomUUID(), device_no: `R-${index}-${Date.now()}`, name: '反制设备',
+    longitude: device.longitude + 0.1 }));
+  const point = { lon: TARGET.lon + 0.1, lat: TARGET.lat };
+  const { context, state } = load({ devices });
+  await context.openDisposalRequest({ actionType: 'COUNTERMEASURE', subjectKind: 'UAV_EVENT', subjectId: crypto.randomUUID(), targetPoint: point });
+  const field = state.forms[0].fields.find(item => item.key === 'device_id');
+  const model = { channel: 'COUNTERMEASURE_4CH', device_id: null };
+  const options = field.options(model);
+  assert.equal(options.length, 3, '超范围设备仍被过滤');
+  for (const option of options) {
+    assert.equal(option.selectedLabel, '反制设备');
+    assert.match(option.label, /R-.*反制设备/);
+    assert.equal(option.label, devices.find(d => d.device_id === option.value).device_no + ' · 反制设备');
+    assert.equal(option.help, undefined);
+  }
+  assert.equal(field.help, undefined);
+  assert.equal(options[2].disabled, true);
+});
+
+test('选中名称缺失有编号兜底，未知位置不假称覆盖', async () => {
+  const { form } = await requestForm();
+  const field = form.fields.find(item => item.key === 'device_id');
+  const model = { channel: 'COUNTERMEASURE_4CH', device_id: 'ok' };
+  assert.equal(field.help, undefined);
+  assert.equal(field.options(model).find(item => item.value === 'abn').selectedLabel, 'CM-3');
+});
+
+test('选中值渲染不改变普通选择器、完整菜单标签和设备标识', async () => {
+  const { selectTagRenderer, selectMenuProps } = await import('../src/components/form/selectProps.js');
+  assert.deepEqual(selectMenuProps([{ label: '普通选项' }]), { class: 'u-select-menu', style: { minWidth: '136px' } });
+  assert.equal(selectTagRenderer([{ value: 'one', label: '普通选项' }]), undefined);
+  const option = { value: crypto.randomUUID(), label: '编号 · 设备（反制 · 距目标 500 m · 在覆盖范围内）', selectedLabel: '设备' };
+  const before = JSON.stringify(option);
+  const render = selectTagRenderer([option]);
+  assert.match(selectMenuProps([option]).class, /u-select-menu--details/);
+  assert.equal(render({ option }), '设备');
+  assert.equal(JSON.stringify(option), before);
+  assert.equal(render({ option: { label: '未设置短名称' } }), '未设置短名称');
+  assert.equal(render({ option: { label: (_option, selected) => selected ? '动态名称' : '动态菜单' } }), '动态名称');
+});
+
+test('简化设备显示后申请仍提交原 device_id 和通道，不提交展示字段', async () => {
+  let payload;
+  const { form } = await requestForm({ create: async body => { payload = body; return { authorization_no: 'DSP-TEST' }; } });
+  const values = { action_type: 'COUNTERMEASURE', channel: 'COUNTERMEASURE_4CH', device_id: 'ok', reason: '核实依据后申请处置' };
+  assert.equal(form.validate(values), null);
+  await form.onSubmit(values);
+  assert.equal(payload.device_id, 'ok');
+  assert.equal(payload.channel, 'COUNTERMEASURE_4CH');
+  assert.equal(payload.reason, values.reason);
+  assert.equal(payload.selectedLabel, undefined);
+  assert.equal(payload.help, undefined);
+});
+
+test('申请及直接反制均移除设备括号与小字，保留名称自身括号和读取错误', async () => {
+  for (const method of ['openDisposalRequest', 'openDisposalDirect']) {
+    const { context, state } = load({ devices: [{ ...DEVICES[0], name: '设备（东区）' }] });
+    await context[method]({ actionType: 'COUNTERMEASURE', subjectKind: 'UAV_EVENT', subjectId: crypto.randomUUID(), targetPoint: TARGET });
+    const field = state.forms[0].fields.find(item => item.key === 'device_id');
+    const option = field.options({ channel: 'COUNTERMEASURE_4CH' })[0];
+    assert.equal(option.label, 'CM-1 · 设备（东区）');
+    assert.equal(option.selectedLabel, '设备（东区）');
+    assert.equal(field.help, undefined);
+    for (const listError of [{ status: 403 }, { message: '连接设备服务失败' }]) {
+      const failed = load({ listError });
+      await failed.context[method]({ actionType: 'COUNTERMEASURE', subjectKind: 'UAV_EVENT', subjectId: crypto.randomUUID() });
+      assert.match(failed.state.forms[0].notice, /没有设备台账读取权限|连接设备服务失败/);
+      assert.ok(failed.state.forms[0].validate({ reason: '依据有效', channel: 'COUNTERMEASURE_4CH', device_id: 'ok' }));
+    }
+  }
+});
+
+test('待审批只给申请人撤回入口，审批人和未知身份不能撤回，也不重复显示事件级撤销面板', async () => {
+  const view = await import('../src/pages/alarms/authorizationQueueView.js');
+  for (const channel of ['LINGYUN_B', 'COUNTERMEASURE_4CH']) {
+    for (const source_mode of ['live', 'replay']) {
+      const requester = crypto.randomUUID(), approver = crypto.randomUUID();
+      const row = { authorization_id: crypto.randomUUID(), requested_by: requester, channel, source_mode,
+        subject_kind: 'UAV_EVENT', action_type: 'COUNTERMEASURE', status: 'REQUESTED', allowed_actions: ['CANCEL', 'APPROVE', 'REJECT'] };
+      assert.equal(view.canCancel(row, requester), true);
+      assert.equal(view.primaryCode(row, requester), '');
+      assert.equal(view.primaryCode(row, approver), 'APPROVE');
+      assert.equal(view.canCancel(row, approver), false);
+      assert.equal(view.canCancel(row), false);
+      assert.equal(view.canCancel({ ...row, requested_by: null }, null), false);
+      assert.equal(view.canCancel({ ...row, allowed_actions: [] }, requester), false);
+      assert.equal(view.showEmergencyPanel(row), false);
+      assert.equal(view.canCancel({ ...row, status: 'APPROVED' }, approver), true);
+      for (const status of ['APPROVED', 'EXECUTING', 'STOPPED', 'COMPLETED', 'FAILED']) {
+        assert.equal(view.showEmergencyPanel({ ...row, status }), true);
+      }
+      assert.equal(view.canCancel({ ...row, status: 'EXECUTING' }, requester), false);
+      assert.equal(view.canStop({ ...row, status: 'EXECUTING', allowed_actions: ['STOP'] }), true);
+    }
+  }
 });

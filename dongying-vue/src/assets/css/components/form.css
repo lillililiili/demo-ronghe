@@ -19,6 +19,8 @@
 .n-base-select-menu .n-base-select-option{white-space:nowrap}
 .u-select-menu .n-base-select-option__content,
 .n-base-select-menu .n-base-select-option__content{overflow:visible;text-overflow:unset}
+/* 带独立选中名称的设备菜单按控件宽度换行，完整保留距离和覆盖说明。 */
+.u-select-menu--details .n-base-select-option .n-base-select-option__content{white-space:normal;overflow-wrap:anywhere;overflow:visible;text-overflow:unset}
 .u-field__help{color:var(--txt-3);font-size:11px;line-height:1.5}
 .u-field-grid{display:grid;gap:12px 14px}
 .u-field-grid.is-two{grid-template-columns:repeat(2,minmax(0,1fr))}

@@ -224,6 +224,11 @@ class RealtimeController:
             body['coverage_radius_m'] = radius
         return body
 
+    def _sync_countermeasure_range(self, client, device_id):
+        if client.version != self.runtime.session.version:
+            raise ReceiverError('登录身份已变化，请停止收发后重新启动', 401)
+        self.runtime.session.platform.sync_simulated_range(device_id, 'countermeasure')
+
     def _refresh_for_scene(self, scene):
         """收发端在两次模拟之间一直开着，第二个场景开始时不会重新启动；
         这一次场景要用的两项设置（通知结果、反制设备位置）在这里重新定一遍，不再沿用上一个场景的。"""
@@ -255,6 +260,8 @@ class RealtimeController:
                 # 补位置或覆盖范围失败不影响本次模拟；地图上暂时画不出作用范围。
                 if hasattr(self.runtime, 'log'):
                     self.runtime.log('REALTIME_REFRESH_FAILED', '补充反制设备位置失败：' + str(error))
+        if tcp is not None and client is not None and self.countermeasure_device_id:
+            self._sync_countermeasure_range(client, self.countermeasure_device_id)
         return self.snapshot()
 
     def _start(self, scene=None):
@@ -292,6 +299,7 @@ class RealtimeController:
             if config['countermeasure_enabled']:
                 device = client.call('POST', '/local-interface-simulator/countermeasure-device',
                                      self._countermeasure_body(config, scene))
+                self._sync_countermeasure_range(client, device['device']['device_id'])
                 detail = device.get('device', {}) if isinstance(device, dict) else {}
                 connection = (detail.get('connection') or {}) if isinstance(detail, dict) else {}
                 host = connection.get('host') or '127.0.0.1'

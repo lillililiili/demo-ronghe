@@ -16,6 +16,18 @@ class PlanWeatherTests(unittest.TestCase):
         self.weather = {'area_name': '场景气象范围', 'summary': '模拟多云', 'wind_speed_ms': 3, 'gust_ms': 5}
         self.scene = {'fullchain': {'categories': ['weather'], 'weather': self.weather}}
 
+    def test_explicit_weather_footprint_and_rainfall_survive_batch_and_change_message(self):
+        plan = {'start_at': self.now, 'end_at': self.now + 60000, 'source_mode': 'replay'}
+        for x, y in ((118.6, 37.4), (119.1, 36.8)):
+            weather = dict(self.weather, polygon=[[x,y],[x+.01,y],[x+.01,y+.01],[x,y+.01],[x,y]], precipitation_rate_mm_h=2.1)
+            body = plan_forecast('weather-map', 'plan-1', plan, weather, self.now)
+            self.assertEqual(body['polygon'], weather['polygon'])
+            self.assertEqual(body['periods'][0]['precipitation_rate_mm_h'], 2.1)
+            regional = plan_forecast('weather-map', 'plan-1', plan, self.weather, self.now)
+            self.assertNotIn('polygon', regional)
+            self.assertNotEqual(body['message_id'], regional['message_id'])
+            body['polygon'][0][0] += 1
+            self.assertEqual(weather['polygon'][0][0], x)
     def test_all_plans_and_extra_task_have_full_coverage_across_dates_sources_and_order(self):
         for shift in (0, 45 * 86400000):
             with self.subTest(shift=shift):

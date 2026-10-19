@@ -23,6 +23,19 @@ test('untyped boundary is neutral and unknown draw modes cannot create a zone',(
 test('route drawing remains a route and never creates an airspace',()=>{
  const {env,events}=drawing('plan');env.finishDraw();assert.equal(env.state.plans.length,1);assert.equal(env.state.zones.length,0);assert.equal(events.length,0);
 });
+
+test('weather drawing sends a closed geographic forecast footprint without changing routes or airspaces',()=>{
+ for(const offset of [0,12]){
+  const {env,events}=drawing('weather');
+  env.window.SimulatorMap={coordinates:p=>[110+offset+p[0]/10000,30+p[1]/10000]};
+  env.finishDraw();
+  assert.equal(env.state.zones.length,0);assert.equal(env.state.plans.length,0);
+  assert.equal(events[0].type,'simulator:weather-drawn');
+  const ring=events[0].detail.polygon;
+  assert.equal(ring.length,4);assert.equal(ring[0][0],110+offset+.01);
+  assert.deepEqual([...ring[0]],[...ring.at(-1)]);assert.equal(env.draw,null);
+ }
+});
 test('a drawn airspace is valid for the whole day and carries no hour pair of its own, while a drawn route starts now and lasts one hour',()=>{
  const zone=drawing('zone','PERMITTED');zone.env.finishDraw();
  assert.equal(zone.env.state.zones[0].start,'00:00');assert.equal(zone.env.state.zones[0].end,'23:59');

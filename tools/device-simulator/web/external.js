@@ -112,10 +112,12 @@ async function loadPlanFiling(planId){
  if(!planId||busy)return;busy=true;const requested=sessionVersion;
  try{const result=await backend('GET','/local-interface-simulator/plans/'+encodeURIComponent(planId)+'/filing');if(requested!==sessionVersion)return;if(createPlanDraft===null)createPlanDraft=drafts.plans;editingPlan=result.plan;drafts.plans=JSON.stringify(window.PlanForm.fromDetail(result,id()),null,2);message('已读取当前资料，可填写缺失项后保存。');render();$('#external-body').scrollIntoView({block:'start'});}catch(error){message(error.message,true);}finally{busy=false;}
 }
+function weatherPreview(data){let polygon=null;try{polygon=window.WeatherForm.validatePolygon(data?.polygon);}catch{}window.parent?.postMessage({type:'simulator-weather-preview',polygon},location.origin);}
 function buildWeatherInput(){
  if(!drafts.weather)drafts.weather=JSON.stringify(sampleWeather(),null,2);
  let data;try{data=JSON.parse(drafts.weather);if(!data||typeof data!=='object'||Array.isArray(data))data={};}catch{data={};}
- return `<section class="panel external-card"><h3>预报范围</h3><div class="external-grid"><label>模拟消息编号<input id="input-message-id" value="${escapeHtml(data.message_id||'')}" maxlength="64"></label><div id="weather-area-field">${window.WeatherForm.areaField(data)}</div></div><p id="weather-coverage">${escapeHtml(window.WeatherForm.coverage(data))}</p><div class="external-actions"><button id="new-sample" type="button">生成新样本</button></div></section><section class="panel external-card"><h3>天气预报</h3><div id="weather-fields">${window.WeatherForm.fields(data)}</div><details id="weather-json"><summary>接口报文</summary><p>POST /api/v1/local-interface-simulator/weather</p><label>请求内容<textarea id="payload-editor" spellcheck="false">${escapeHtml(drafts.weather)}</textarea></label></details><div class="external-actions"><button id="submit-input" class="primary" type="button">提交预报</button></div></section>${renderMessages('WEATHER_FORECAST')}`;
+ weatherPreview(data);
+ return `<section class="panel external-card"><h3>预报范围</h3><div class="external-grid"><label>模拟消息编号<input id="input-message-id" value="${escapeHtml(data.message_id||'')}" maxlength="64"></label><div id="weather-area-field">${window.WeatherForm.areaField(data)}</div></div><div class="external-actions"><button id="draw-weather" type="button">在地图绘制预报范围</button><button id="clear-weather" type="button">清除范围</button></div><p id="weather-coverage">${escapeHtml(window.WeatherForm.coverage(data))}</p><div class="external-actions"><button id="new-sample" type="button">生成新样本</button></div></section><section class="panel external-card"><h3>天气预报</h3><div id="weather-fields">${window.WeatherForm.fields(data)}</div><details id="weather-json"><summary>接口报文</summary><p>POST /api/v1/local-interface-simulator/weather</p><label>请求内容<textarea id="payload-editor" spellcheck="false">${escapeHtml(drafts.weather)}</textarea></label></details><div class="external-actions"><button id="submit-input" class="primary" type="button">提交预报</button></div></section>${renderMessages('WEATHER_FORECAST')}`;
 }
 function weatherFieldsChanged(){
  if(tab!=='weather')return;
@@ -220,6 +222,8 @@ $('#external-body').addEventListener('click',event=>{
  }
  if(button.dataset.editPlan||button.id==='load-plan-filing'){loadPlanFiling(button.dataset.editPlan||$('#existing-plan')?.value);return;}
  if(button.id==='cancel-plan-edit'){editingPlan=null;drafts.plans=createPlanDraft||'';createPlanDraft=null;render();return;}
+ if(button.id==='draw-weather'){if(window.parent===window)return message('请在模拟器主地图的天气页绘制范围。',true);window.parent.postMessage({type:'simulator-weather-draw'},location.origin);return;}
+ if(button.id==='clear-weather'){const data=readDraft();delete data.polygon;drafts.weather=JSON.stringify(data,null,2);render();return;}
  if(button.id==='new-sample'){
   const target=$('#input-target')?.value;
   const row=tab==='plans'?(context?.routes||[]).find(item=>item.route_version_id===target):null;
@@ -260,7 +264,7 @@ $('#external-body').addEventListener('input',event=>{
  }
 });
 $('#external-body').addEventListener('change',event=>{
- if(event.target.id==='payload-editor'){weatherFieldsChanged();planFieldsChanged();if(tab==='plans')render();}
+ if(event.target.id==='payload-editor'){weatherFieldsChanged();planFieldsChanged();if(tab==='plans')render();else{try{const data=readDraft();window.WeatherForm.validatePolygon(data.polygon);weatherPreview(data);}catch(error){weatherPreview(null);message(error.message,true);}}}
  if(event.target.id==='plan-scope'){
   const scope=(planScopes||[])[Number(event.target.value)];
   if(event.target.value===''||!scope){render();return;}
@@ -278,7 +282,9 @@ $('#external-body').addEventListener('change',event=>{
  }
 });
 if(typeof window.addEventListener==='function')window.addEventListener('message',event=>{
- if(event.origin!==location.origin||event.source!==window.parent||event.data?.type!=='simulator-plan-drafts')return;
+ if(event.origin!==location.origin||event.source!==window.parent)return;
+ if(event.data?.type==='simulator-weather-drawn'){try{const polygon=window.WeatherForm.validatePolygon(event.data.polygon);const data=JSON.parse(drafts.weather);data.polygon=polygon;drafts.weather=JSON.stringify(data,null,2);render();message('已绘制模拟预报范围；提交后由平台按范围和时段关联任务。');}catch(error){message(error.message,true);}return;}
+ if(event.data?.type!=='simulator-plan-drafts')return;
  const hasSelectedId=Object.prototype.hasOwnProperty.call(event.data,'selected_id');
  const selectedId=typeof event.data.selected_id==='string'?event.data.selected_id:'';
  const previousSelectedScenePlanId=selectedScenePlanId;

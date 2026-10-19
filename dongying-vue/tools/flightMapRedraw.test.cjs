@@ -31,7 +31,7 @@ function TestMap(host, opt) {
     w: 800, h: 600, online: true, map: {}, layers: {},
     _paintLayers() {}, _drawAnimated() {},
     setData(data) { this.data = data; this.draw(); },
-    fitTo() { this.draw(); }, px(lon, lat) { return [lon * 10, lat * 10]; },
+    fits: [], fitTo(points) { this.fits.push(JSON.parse(JSON.stringify(points))); this.draw(); }, px(lon, lat) { return [lon * 10, lat * 10]; },
     destroy() { this._dead = true; sandbox.cancelAnimationFrame(this._drawRaf); }
   });
 }
@@ -51,6 +51,7 @@ Object.assign(sandbox, {
   syncDeviceMarkers() {}, syncPlanRiskMarkers() {},
   riskMapCoords: ref([[10, 20], [30, 40]]), riskPoint: ref(null), riskTarget: ref(null),
   riskWeather: ref(null), weatherRing: ref(null), objectTrail: ref([]),
+  selectedRisk: ref(null),
   riskRouteVersion: ref({}), objectRiskSelected: ref(false),
   destroyRouteMap() { if (sandbox.routeMap) sandbox.routeMap.destroy(); sandbox.routeMap = null; }
 });
@@ -86,6 +87,26 @@ for (const [tab, render] of [['route', 'renderRouteMap'], ['events', 'renderRisk
   }
 }
 console.log('PASS: flight task and risk routes survive deferred redraw, terminals, coalescing and disposal');
+
+for (const weatherFirst of [false, true]) {
+  const route = [[110, 31], [110.2, 31.1]];
+  const polygon = [[109.7, 30.8], [110.3, 30.8], [110.3, 31.2], [109.7, 30.8]];
+  sandbox.activeTab.value = 'events';
+  sandbox.selectedRisk.value = { risk_type: 'WEATHER' };
+  sandbox.riskMapCoords.value = weatherFirst ? null : route;
+  sandbox.weatherRing.value = weatherFirst ? polygon : null;
+  sandbox.renderRiskMap();
+  sandbox.riskMapCoords.value = route;
+  sandbox.weatherRing.value = polygon;
+  sandbox.renderRiskMap();
+  assert.deepEqual(sandbox.routeMap.fits.at(-1), [...route, ...polygon],
+    `complete forecast and route must fit regardless of response order (weatherFirst=${weatherFirst})`);
+  const fitted = sandbox.routeMap.fits.length;
+  sandbox.renderRiskMap();
+  assert.equal(sandbox.routeMap.fits.length, fitted, 'unchanged facts must preserve the user-panned view');
+  sandbox.destroyRouteMap();
+}
+console.log('PASS: forecast range and route fit in either arrival order without resetting unchanged views');
 
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

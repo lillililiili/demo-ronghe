@@ -77,6 +77,21 @@ test('申请表单：设备下拉随通道给出置灰选项，选到不能用�
   assert.doesNotMatch(form.warning, /自动.*信号干扰|不再二次审批/);
 });
 
+test('申请事由选填，填写时保留长度限制，设备仍必选', async () => {
+  const { form } = await requestForm();
+  const field = form.fields.find(field => field.key === 'reason');
+  assert.equal(!!field.required, false);
+  assert.match(field.placeholder, /选填/);
+  const base = { channel: 'COUNTERMEASURE_4CH', device_id: 'ok' };
+  for (const reason of [undefined, null, '', '   ', '说明', '字'.repeat(500)]) {
+    assert.equal(form.validate({ ...base, reason }), null);
+  }
+  for (const reason of ['字', '字'.repeat(501)]) {
+    assert.match(form.validate({ ...base, reason }), /2–500/);
+  }
+  assert.match(form.validate({ ...base, reason: '', device_id: null }), /执行设备/);
+});
+
 // 2026-10-14 rose：申请反制选设备时只显示覆盖范围照得到目标的设备，近的在前。
 const REACH_DEVICES = [
   { device_id: 'far', device_no: 'CM-9', device_type_code: 'countermeasure', enabled: true, connectivity: 'ONLINE', longitude: 118.60, latitude: 37.52,
@@ -97,7 +112,7 @@ test('给了目标位置：照得到的在前、没配范围的排后写明，�
   const options = context.deviceOptions(REACH_DEVICES, 'COUNTERMEASURE_4CH', TARGET);
   assert.deepEqual(options.map(option => option.value), ['near', 'no-cover', 'mid-off']);
   assert.match(options[0].label, /距目标 1\.0 km · 在覆盖范围内/);
-  assert.match(options[1].label, /未配置覆盖范围，无法判断是否覆盖/);
+  assert.match(options[1].label, /这台设备没有登记覆盖范围，无法判断能否覆盖目标/);
   assert.equal(options[1].disabled, false);
   assert.match(options[2].label, /不能选：设备离线/);
   const hidden = context.hiddenDeviceText(REACH_DEVICES, 'COUNTERMEASURE_4CH', TARGET);
@@ -139,7 +154,8 @@ test('普通申请和直接反制都不再声明自动创建后续干扰', async
   }
 });
 
-test('反制已完成但没有后续干扰时，告警不重新显示发起入口；状态仍来自原授权', () => {
+test('反制已完成但没有后续干扰时，告警不重新显示发起入口；状态仍来自原授权', async () => {
+  const { punishmentHandoffProgress } = await import('../src/ui/punishmentHandoffProgress.js');
   const source = readFileSync(path.join(__dirname, '../src/pages/AlarmsPage.vue'), 'utf8').replace(/\r\n/g, '\n');
   const functions = ['deriveAlarmProgress', 'selectedDisposalProgress', 'showCounterLaunch'].map(name => source.match(new RegExp(`function ${name}\\([^]*?^}`, 'm'))[0]).join('\n');
   for (const source_mode of ['live', 'mock', 'replay']) {
@@ -148,7 +164,7 @@ test('反制已完成但没有后续干扰时，告警不重新显示发起入�
     const disposal = { byAction: {}, handoff: null };
     const advisoryLive = { value: { event_id: eventId, counter_launch_visible: true } };
     const progressSources = new Map([[eventId, { auths: { items: [], failed: false }, handoffs: { items: [], failed: false } }]]);
-    const view = new Function('cur', 'disposal', 'advisoryLive', 'pageProgress', 'progressSources', functions + '; return { showCounterLaunch, deriveAlarmProgress };')(cur, disposal, advisoryLive, {}, progressSources);
+    const view = new Function('cur', 'disposal', 'advisoryLive', 'pageProgress', 'progressSources', 'punishmentHandoffProgress', functions + '; return { showCounterLaunch, deriveAlarmProgress };')(cur, disposal, advisoryLive, {}, progressSources, punishmentHandoffProgress);
     assert.equal(view.showCounterLaunch(), true);
     const row = { authorization_id: crypto.randomUUID(), subject_id: eventId, action_type: 'COUNTERMEASURE', source_mode, status: 'COMPLETED', requested_at: Date.now() - 60000 };
     disposal.byAction.COUNTERMEASURE = row;

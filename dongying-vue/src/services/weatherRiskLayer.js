@@ -1,133 +1,99 @@
-// 气象色带、雷雨色斑与风流线沿用 Git e5dab95 的地图绘制实现。
 import { weatherPolygon, insideWeather } from '@/services/weatherRiskGeometry.js';
 export { weatherPolygon, insideWeather };
 
+const COLORS = { wind: '#80bfd6', storm: '#56b8cd', visibility: '#a5bad0', multi: '#65bdcc', unknown: '#89b8ce' };
+export const weatherLayerKind = reason => ({ WEATHER_STRONG_WIND: 'wind', WEATHER_THUNDERSTORM: 'storm', WEATHER_LOW_VISIBILITY: 'visibility', WEATHER_MULTI: 'multi' }[reason] || 'unknown');
+export const weatherLayerGradient = kind => COLORS[kind] || COLORS.unknown;
+
 function polygonPath(ctx, pixels) {
   ctx.beginPath();
-  pixels.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y));
+  pixels.forEach(([x,y],i) => i ? ctx.lineTo(x,y) : ctx.moveTo(x,y));
   ctx.closePath();
 }
 
-const WEATHER_PALETTES = {
-  wind: [[44, 89, 181], [39, 152, 197], [41, 184, 160], [115, 197, 103], [225, 211, 77], [238, 151, 57], [213, 78, 66]],
-  storm: [[36, 157, 128], [63, 193, 87], [175, 218, 67], [250, 216, 58], [249, 140, 42], [225, 54, 66], [171, 43, 104]],
-  visibility: [[165, 184, 208], [139, 164, 203], [115, 135, 188], [127, 111, 178], [150, 89, 160]]
-};
-export const weatherLayerKind = reason => reason === 'WEATHER_STRONG_WIND' ? 'wind' : reason === 'WEATHER_THUNDERSTORM' ? 'storm' : 'visibility';
-export const weatherLayerGradient = kind => `linear-gradient(90deg, ${WEATHER_PALETTES[kind].map(c => `rgb(${c.join(',')})`).join(',')})`;
-const clamp = n => Math.max(0, Math.min(1, n));
-const fract = n => n - Math.floor(n);
-const textures = new WeakMap();
-
-function edgeDistance(x, y, ring) {
-  let min = Infinity;
-  for (let i = 1; i < ring.length; i++) {
-    const [ax, ay] = ring[i - 1], [bx, by] = ring[i];
-    const dx = bx - ax, dy = by - ay;
-    const t = clamp(((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy || 1));
-    min = Math.min(min, Math.hypot(x - ax - dx * t, y - ay - dy * t));
-  }
-  return min;
+const mix = (a,b,t) => a+(b-a)*t;
+const smooth = t => t*t*(3-2*t);
+function noise(x,y) {
+  const ix=Math.floor(x),iy=Math.floor(y),fx=smooth(x-ix),fy=smooth(y-iy);
+  const hash=(a,b)=>{ const n=Math.sin(a*127.1+b*311.7+41.3)*43758.5453; return n-Math.floor(n); };
+  return mix(mix(hash(ix,iy),hash(ix+1,iy),fx),mix(hash(ix,iy+1),hash(ix+1,iy+1),fx),fy);
+}
+function cloudNoise(x,y) {
+  return .52*noise(x,y)+.27*noise(x*2.1+17,y*2.1+9)+.14*noise(x*4.3,y*4.3)+.07*noise(x*8.7,y*8.7);
 }
 
-// 明确模拟来源的视觉纹理。仅表达示意强弱，不生成测量值、阈值或新的风险事实。
-function simulatedTexture(fact, ring, kind) {
-  const cached = textures.get(fact);
-  if (cached?.kind === kind) return cached;
-  const xs = ring.map(p => p[0]), ys = ring.map(p => p[1]);
-  const bounds = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
-  const [west, south, east, north] = bounds;
-  const normalized = ring.map(([x, y]) => [(x - west) / (east - west), (north - y) / (north - south)]);
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = 192;
-  const context = canvas.getContext('2d');
-  const pixels = context.createImageData(192, 192);
-  const palette = WEATHER_PALETTES[kind];
-  const blob = (x, y, cx, cy, sx, sy) => Math.exp(-((x - cx) ** 2 / sx + (y - cy) ** 2 / sy));
-  for (let row = 0; row < 192; row++) for (let col = 0; col < 192; col++) {
-    const x = col / 191, y = row / 191;
-    if (!insideWeather([x, y], normalized)) continue;
-    const edge = clamp(edgeDistance(x, y, normalized) / .12);
-    const wave = Math.sin(x * 9 + Math.sin(y * 6) * 1.8);
-    let strength = .30 + .38 * blob(x, y, .62, .40, .09, .32) + .14 * wave;
-    if (kind === 'storm') strength = .90 * blob(x, y, .63, .38, .025, .065)
-      + .63 * blob(x, y, .36, .64, .03, .028) + .42 * blob(x, y, .43, .33, .04, .035)
-      + .06 * Math.sin(x * 48 + y * 32) * Math.sin(y * 43);
-    if (kind === 'visibility') strength = .24 + .49 * blob(x, y, .56, .48, .16, .08) + .09 * wave;
-    const value = clamp(strength) * (palette.length - 1), index = Math.min(palette.length - 2, Math.floor(value));
-    const ratio = value - index, offset = (row * 192 + col) * 4;
-    for (let channel = 0; channel < 3; channel++) pixels.data[offset + channel] = palette[index][channel] * (1 - ratio) + palette[index + 1][channel] * ratio;
-    pixels.data[offset + 3] = 210 * edge * (kind === 'storm' ? clamp(strength * 5) : .87);
+// A fixed illustrative cloud material, not a meteorological grid or an intensity estimate.
+// The source polygon and numeric observations remain the only geographic/weather facts.
+export function weatherTexturePixels(size=256) {
+  const pixels=new Uint8ClampedArray(size*size*4);
+  for(let y=0;y<size;y++) for(let x=0;x<size;x++) {
+    const u=x/size*6,v=y/size*6;
+    const n=cloudNoise(u+1.8*noise(u*.7,v*.7),v+1.2*noise(u*.7+8,v*.7));
+    const density=Math.max(0,Math.min(1,(n-.28)/.48));
+    const highlight=smooth(Math.max(0,Math.min(1,(n-.45)/.22)));
+    const at=(y*size+x)*4;
+    pixels[at]=mix(76,218,highlight); pixels[at+1]=mix(157,232,highlight); pixels[at+2]=mix(187,240,highlight);
+    pixels[at+3]=Math.min(230,Math.round(density*density*230));
   }
-  context.putImageData(pixels, 0, 0);
-  const result = { canvas, bounds, kind };
-  textures.set(fact, result);
-  return result;
+  return pixels;
+}
+let texture;
+function cloudTexture() {
+  if (texture) return texture;
+  const size=256;
+  const canvas=typeof OffscreenCanvas==='function' ? new OffscreenCanvas(size,size) : document.createElement('canvas');
+  canvas.width=size;canvas.height=size;
+  const c=canvas.getContext('2d');
+  const data=c.createImageData(size,size);data.data.set(weatherTexturePixels(size));c.putImageData(data,0,0);
+  texture=canvas; return texture;
 }
 
-function drawWindParticles(ctx, map, fact, bounds) {
-  if (!Number.isFinite(fact.wind_from_degrees)) return;
-  const [west, south, east, north] = bounds;
-  const angle = (fact.wind_from_degrees + 180) * Math.PI / 180;
-  const dx = Math.sin(angle), dy = -Math.cos(angle);
-  const time = map._still?.() ? 0 : performance.now() / 18000;
-  // 地理坐标锚定：拖动、缩放时与气象纹理一起移动，不在屏幕上铺固定箭头。
-  const position = (i, phase) => {
-    const seed = fract(Math.sin(i * 127.1 + 3.7) * 43758.5453);
-    const cross = fract(Math.sin(i * 311.7 + 9.2) * 96321.912);
-    const x = fract(seed + dx * phase), y = fract(cross + dy * phase);
-    const bend = .018 * Math.sin(x * 7 + y * 5);
-    return map.px(west + (x - dy * bend) * (east - west), north - (y + dx * bend) * (north - south));
-  };
-  ctx.lineWidth = 1;
-  ctx.lineCap = 'round';
-  for (let i = 0; i < 240; i++) {
-    const phase = time * (.6 + fract(i * .618) * .5);
-    let previous = position(i, phase - .024);
-    for (let step = 1; step <= 5; step++) {
-      const next = position(i, phase - .024 + step * .0048);
-      if (Math.hypot(next[0] - previous[0], next[1] - previous[1]) < 30) {
-        ctx.strokeStyle = `rgba(255,255,255,${.08 + step * .11})`;
-        ctx.beginPath(); ctx.moveTo(...previous); ctx.lineTo(...next); ctx.stroke();
-      }
-      previous = next;
-    }
-  }
-}
-
-export function drawWeatherArea(ctx, map, fact, ring, route, color, kind, simulated, boundaryVisible, opacity = .4) {
+export function drawWeatherArea(ctx, map, fact, ring, route, color, kind, simulated, boundaryVisible, opacity = .18, layers = {}) {
+  const clouds=layers.clouds!==false,windEnabled=layers.wind!==false;
+  if ((!clouds && !windEnabled) || !weatherPolygon({ polygon: ring })) return;
   const pixels = ring.map(p => map.px(...p));
+  const strength = Number.isFinite(opacity) ? Math.max(.08, Math.min(.32, opacity)) : .18;
+  const tint = COLORS[kind] || COLORS.unknown;
+  const left=Math.min(...pixels.map(p=>p[0])),top=Math.min(...pixels.map(p=>p[1]));
+  const width=Math.max(...pixels.map(p=>p[0]))-left,height=Math.max(...pixels.map(p=>p[1]))-top;
+  if(left>map.w || top>map.h || left+width<0 || top+height<0)return;
+  const rain = Number.isFinite(fact?.precipitation_rate_mm_h) ? fact.precipitation_rate_mm_h>0 : /雨|雷暴/.test(fact?.summary || '') || kind==='storm';
+  const cloudy = rain || /云|阴|雾/.test(fact?.summary || '') || kind==='visibility';
+  const wind = windEnabled && Number.isFinite(fact?.wind_from_degrees) && Number.isFinite(fact?.wind_speed_mps) && fact.wind_speed_mps>0;
   ctx.save();
   polygonPath(ctx, pixels);
-  if (boundaryVisible || !simulated) {
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 1;
-    ctx.setLineDash([3, 5]); ctx.stroke(); ctx.setLineDash([]);
-  }
-  ctx.save();
   ctx.clip();
-  const strength = Number.isFinite(opacity) ? clamp(opacity) : .4;
-  if (simulated) {
-    const texture = simulatedTexture(fact, ring, kind);
-    const [west, south, east, north] = texture.bounds;
-    const topLeft = map.px(west, north), bottomRight = map.px(east, south);
-    ctx.imageSmoothingEnabled = true;
-    ctx.globalAlpha = strength;
-    ctx.drawImage(texture.canvas, topLeft[0], topLeft[1], bottomRight[0] - topLeft[0], bottomRight[1] - topLeft[1]);
-    if (kind === 'wind') drawWindParticles(ctx, map, fact, texture.bounds);
-  } else {
-    ctx.fillStyle = color; ctx.globalAlpha = .32 * strength; ctx.fill();
+  // Keep roads visible: only a very light footprint beneath the cloud material.
+  ctx.fillStyle = tint; ctx.globalAlpha = strength*.22; ctx.fill();
+  if(clouds && cloudy) {
+    ctx.globalAlpha=Math.min(.48,strength*1.65);
+    ctx.drawImage(cloudTexture(),left,top,width,height);
   }
-  ctx.globalAlpha = 1;
-  // 紫色外圈只表示平面交集，不代替飞行时段、高度或合法性判定。
-  if (route?.length) {
-    ctx.beginPath();
-    route.forEach((p, i) => { const [x, y] = map.px(...p); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
-    ctx.strokeStyle = '#a855f7';
-    ctx.lineWidth = 11;
-    ctx.globalAlpha = 0.5;
-    ctx.stroke();
+  ctx.globalAlpha = boundaryVisible ? .55 : .28;
+  ctx.strokeStyle = tint; ctx.lineWidth = 1; ctx.setLineDash([5,4]); ctx.stroke(); ctx.setLineDash([]);
+  const xs=ring.map(p=>p[0]), ys=ring.map(p=>p[1]);
+  const west=Math.min(...xs),east=Math.max(...xs),south=Math.min(...ys),north=Math.max(...ys);
+  const angle=((fact?.wind_from_degrees || 0)+180)*Math.PI/180;
+  const dx=Math.sin(angle),dy=-Math.cos(angle);
+  const cols=Math.max(2,Math.min(18,Math.floor(width/48))), rows=Math.max(2,Math.min(16,Math.floor(height/48)));
+  ctx.lineWidth=.85; ctx.lineCap='round';
+  for(let i=0;i<cols;i++) for(let j=0;j<rows;j++) {
+    const point=[west+(i+.5)*(east-west)/cols,south+(j+.5)*(north-south)/rows];
+    if(!insideWeather(point,ring))continue;
+    const [x,y]=map.px(...point);
+    if(x < -100 || y < -100 || x > map.w+100 || y > map.h+100)continue;
+    if(clouds && rain && (i+j)%3===0) {
+      ctx.strokeStyle='#8ed4e4';ctx.globalAlpha=Math.min(.42,strength*1.8);
+      ctx.beginPath();ctx.moveTo(x-8,y-4);ctx.lineTo(x-11,y+3);ctx.moveTo(x-1,y-4);ctx.lineTo(x-4,y+3);ctx.stroke();
+    }
+    if(wind) {
+      const length=34+((i+2*j)%3)*9,ex=x+dx*length*.5,ey=y+dy*length*.5;
+      ctx.strokeStyle='#b2d4df';ctx.globalAlpha=Math.min(.43,strength*1.65);
+      ctx.beginPath();ctx.moveTo(x-dx*length*.5,y-dy*length*.5);
+      // Collinear control point: no invented local change in wind direction.
+      ctx.quadraticCurveTo(x,y,ex,ey);
+      ctx.moveTo(ex-dx*5-dy*3,ey-dy*5+dx*3);ctx.lineTo(ex,ey);ctx.lineTo(ex-dx*5+dy*3,ey-dy*5-dx*3);ctx.stroke();
+    }
   }
-  ctx.restore();
   ctx.restore();
 }

@@ -280,8 +280,8 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
         placeholder: '请选择执行设备',
         options: model => deviceOptionsOrNote(devices, model.channel, point),
         help: model => [deviceHelp, hiddenDeviceText(devices, model.channel, point)].filter(Boolean).join(''), required: true },
-      { key: 'reason', label: direct ? '直接反制事由' : '申请事由', type: 'textarea', required: !direct, minRows: 3,
-        placeholder: direct ? '选填；如需补充事由，请填写 2–500 字' : '2–500 字：依据当前观测与研判，说明本次处置事由' }
+      { key: 'reason', label: direct ? '直接反制事由' : '申请事由', type: 'textarea', minRows: 3,
+        placeholder: '选填；如需补充事由，请填写 2–500 字' }
     ],
     initial: { action_type: actionType, channel: 'LINGYUN_B', device_id: null, reason: initialReason },
     confirmText: direct ? '确认直接反制' : '提交申请',
@@ -289,8 +289,8 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
     validate: m => {
       if (!isCurrent()) return '事件已切换，请关闭后从当前事件重新申请';
       const reason = String(m.reason || '').trim();
-      if ((!direct || reason.length > 0) && (reason.length < 2 || reason.length > 500)) {
-        return `${direct ? '直接反制事由填写时' : '申请事由'}需为 2–500 字，当前 ${reason.length} 字；请核对并调整。`;
+      if (reason.length > 0 && (reason.length < 2 || reason.length > 500)) {
+        return `${direct ? '直接反制事由' : '申请事由'}填写时需为 2–500 字，当前 ${reason.length} 字；请核对并调整。`;
       }
       // 服务端要求：经设备执行的处置必须指定设备。这里先拦，免得填完事由才被打回。
       if (!['LINGYUN_B', 'COUNTERMEASURE_4CH'].includes(m.channel)) return '仅支持设备执行';

@@ -476,7 +476,25 @@ async function loadQueue(options = {}) {
   if (!options.keepSelection) invalidateDetail();
   try {
     let deepLink = null;
-    if (options.targetId) {
+    if (options.evaluationId) {
+      try {
+        const located = await legalityApi.getEvaluation(options.evaluationId);
+        if (token !== listToken) return;
+        if ((st.plan && located.plan_id !== st.plan) || (options.targetId && located.target_id !== options.targetId)) {
+          throw new Error('关联研判与所选任务或目标不一致');
+        }
+        if (located.object_type_code !== 'UAV') throw new Error('该目标当前不是可查看的无人机研判');
+        deepLink = located;
+        if (queueWindow.value.from != null && (located.evaluated_at < queueWindow.value.from || located.evaluated_at >= queueWindow.value.to)) {
+          st.period = 'ALL';
+          syncDateWindow();
+          deepLinkNotice.value = '关联研判不在所选日期内，已切换为全部日期。';
+        }
+      } catch (error) {
+        if (token !== listToken) return;
+        deepLinkNotice.value = `关联研判定位失败：${formatApiError(error, '读取研判失败')}`;
+      }
+    } else if (options.targetId) {
       // 计划入口同时限定目标与计划；仅目标入口才跟随最新研判的判定分组。
       try {
         const located = await legalityApi.listEvaluations({ ...uavScope, target_id: options.targetId, plan_id: st.plan || undefined, page: 1, size: 1 });
@@ -508,7 +526,11 @@ async function loadQueue(options = {}) {
     // 队列不等待默认选中项的详情与复核历史。
     loading.value = false;
     if (options.skipSelection) return;
-    if (deepLink) { await selectEvaluation(deepLink); return; }
+    if (deepLink) {
+      if (options.evaluationId) await selectEvaluationById(deepLink.evaluation_id, { targetId: deepLink.target_id });
+      else await selectEvaluation(deepLink);
+      return;
+    }
     if (deepLinkNotice.value) return;
     const retainedId = options.selectId || S.st.selectedEvaluationId;
     const retained = items.value.find(item => item.evaluation_id === retainedId)
@@ -816,10 +838,11 @@ function loadNavigation(context = null) {
   // 兼容旧页面保留的选项值；初始复核状态不等于实际仍需人工处理。
   if (st.review === 'PENDING_REVIEW') st.review = 'NEEDS_REVIEW';
   const targetId = context?.target || (typeof route.query.target === 'string' ? route.query.target : null);
+  const evaluationId = context?.evaluation || (typeof route.query.evaluation === 'string' ? route.query.evaluation : null);
   /* 从飞行计划页过来时带着计划（决策 19-1）：预置"计划"筛选，其余筛选放开，
      否则一进来就被默认的"系统判定非法"挡住，看着像这条任务没有研判。 */
   const planId = context?.plan || (typeof route.query.plan === 'string' ? route.query.plan : '');
-  if (planId || targetId || context?.evaluation || route.query.evaluation) { st.targetNo = ''; targetNoInput.value = ''; }
+  if (planId || targetId || evaluationId) { st.targetNo = ''; targetNoInput.value = ''; }
   if (planId) {
     st.plan = planId;
     st.legal = '';
@@ -828,16 +851,17 @@ function loadNavigation(context = null) {
     st.reviewLocation = '';
     st.page = 1;
   }
-  if (targetId && !planId) {
+  if ((targetId || evaluationId) && !planId) {
     st.plan = '';
+    st.legal = '';
     st.district = '';
     st.review = '';
     st.reviewLocation = '';
     st.page = 1;
   }
-  void loadQueue({ targetId, refreshKpi: true });
+  void loadQueue({ targetId, evaluationId, refreshKpi: true });
 }
-watch(() => [route.query.target, route.query.plan], () => {
+watch(() => [route.query.target, route.query.plan, route.query.evaluation], () => {
   if (route.path === '/legality') loadNavigation();
 });
 onMounted(() => {

@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useWeatherRiskFacts } from '@/hooks/useWeatherRiskFacts.js';
 import { weatherAnchor, weatherPolygon, isSimulatedWeatherRisk } from '@/services/weatherRiskGeometry.js';
 import { drawWeatherArea, weatherLayerKind, weatherLayerGradient } from '@/services/weatherRiskLayer.js';
@@ -13,8 +13,10 @@ defineEmits(['select']);
 const rows = useWeatherRiskFacts(computed(() => props.risks));
 const located = computed(() => rows.value.map(row => ({ row, point: weatherAnchor(row.weather_fact), ring: weatherPolygon(row.weather_fact) })));
 const markers = ref([]);
-const enabled = ref(true), opacity = ref(.4);
-const legendKinds = computed(() => [...new Set(located.value.filter(item => item.ring && isSimulatedWeatherRisk(item.row))
+const enabled = ref(true), opacity = ref(.18);
+let lastMap;
+watch([enabled, opacity], () => lastMap?.draw());
+const legendKinds = computed(() => [...new Set(located.value.filter(item => item.ring)
   .map(({ row }) => weatherLayerKind(row.reason_code || row.reasonCode)))]);
 const missing = computed(() => located.value.filter(({ row, point }) => !row.weather_loading && !point).length);
 const layoutRows = computed(() => located.value.map(item => ({ ...item, data: { ...item.row, id: item.row.risk_id,
@@ -35,6 +37,7 @@ function getMarkers(map) {
 }
 // 复用宿主 MapView 的绘制周期，拖动、缩放和减少动态效果均沿用原地图。
 function draw(map) {
+  lastMap = map;
   const next = props.visible && enabled.value && map?.w ? located.value.flatMap(({ row, point, ring }) => {
     if (!point) return [];
     const reason = row.reason_code || row.reasonCode;
@@ -57,7 +60,7 @@ function draw(map) {
     }
     return [{ id: row.risk_id, x: Math.round(x), y: Math.round(y), icon: weatherRiskIcon(row),
       title: labelOf(REASON_CODE_LABEL, row.reason_code || row.reasonCode, '气象风险'),
-      mode: row.weather_fact.source_mode, color: row.state === 'EXCLUDED' ? 'var(--txt-3)' : 'var(--amber)' }];
+      mode: row.weather_fact.simulated === true ? 'mock' : row.weather_fact.source_mode, color: row.state === 'EXCLUDED' ? 'var(--txt-3)' : 'var(--amber)' }];
   }) : [];
   if (JSON.stringify(next) !== JSON.stringify(markers.value)) markers.value = next;
 }
@@ -81,9 +84,9 @@ function risk(id) { return rows.value.find(row => row.risk_id === id); }
       <summary :class="{ off: !enabled }">气象<span>{{ rows.length }}</span></summary>
       <div class="weather-layer-panel">
         <header><b>气象图层</b><button type="button" :aria-pressed="enabled" @click="enabled = !enabled">{{ enabled ? '隐藏图层' : '显示图层' }}</button></header>
-        <div class="weather-opacity" aria-label="气象不透明度"><span>不透明度</span><button v-for="value in [.25, .4, .6]" :key="value" type="button" :aria-pressed="opacity === value" @click="opacity = value">{{ Math.round(value * 100) }}%</button></div>
-        <div v-for="kind in legendKinds" :key="kind" class="weather-risk-scale"><span>{{ { wind: '大风', storm: '雷雨', visibility: '低能见度' }[kind] }}</span><i :style="{ background: weatherLayerGradient(kind) }"></i></div>
-        <p v-if="legendKinds.length">模拟分布 · 非实测</p>
+        <div class="weather-opacity" aria-label="气象不透明度"><span>不透明度</span><button v-for="value in [.12, .18, .26]" :key="value" type="button" :aria-pressed="opacity === value" @click="opacity = value">{{ Math.round(value * 100) }}%</button></div>
+        <div v-for="kind in legendKinds" :key="kind" class="weather-risk-scale"><span>{{ { wind: '大风', storm: '雷雨', visibility: '低能见度', multi: '多项天气', unknown: '气象范围' }[kind] }}</span><i :style="{ background: weatherLayerGradient(kind) }"></i></div>
+        <p v-if="legendKinds.length">预报范围 · 云雨纹理示意，非逐点雨量</p>
       </div>
     </details>
   </Teleport>

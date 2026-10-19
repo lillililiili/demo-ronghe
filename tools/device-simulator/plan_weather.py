@@ -36,6 +36,8 @@ def plan_forecast(batch, plan_id, plan, weather, created_at):
                     'wind_direction_deg': int(weather.get('wind_from_degrees', 90)),
                     'precipitation_probability_pct': weather.get('precipitation_probability_pct', 40),
                     'humidity_pct': int(weather.get('humidity_percent', 65))}]
+    if weather.get('precipitation_rate_mm_h') is not None and not weather.get('periods'):
+        periods[0]['precipitation_rate_mm_h'] = weather['precipitation_rate_mm_h']
     # These are simulated scenario times, not a claim that a real forecast was issued then.
     # The platform independently records the actual receipt time and retains old inputs.
     last = 0
@@ -55,6 +57,8 @@ def plan_forecast(batch, plan_id, plan, weather, created_at):
         raise ValueError('模拟预报时段超出发布时间后七天')
     body = {'plan_id': plan_id, 'area_name': plan.get('district_name') or weather.get('area_name') or '模拟预报区域',
             'published_at': published, 'periods': periods}
+    if weather.get('polygon') is not None:
+        body['polygon'] = copy.deepcopy(weather['polygon'])
     # Stable for retries; changed batch, plan or weather gets its own message, never rewrites history.
     digest = hashlib.sha256(json.dumps([batch, body], ensure_ascii=False, sort_keys=True,
                                       separators=(',', ':')).encode('utf-8')).hexdigest()[:40]

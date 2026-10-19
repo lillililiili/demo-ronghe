@@ -5,6 +5,7 @@ const path = require('node:path');
 
 (async () => {
   const A = await import('../src/pages/flights/planAttention.js');
+  const H = await import('../src/pages/flights/planHandling.js');
   const plan = (status_code, attention) => ({ plan_id: 'p', status_code, ...(attention ? { attention } : {}) });
   const attention = (kinds, extra = {}) => ({ kinds, match_issue: null, pending_verification_risks: 0, pending_notification_risks: 0, device_tasks: [], ...extra });
 
@@ -15,12 +16,16 @@ const path = require('node:path');
   assert.equal(A.planGroupOf(plan('COMPLETED')), 'ended');
   assert.equal(A.planGroupOf(plan('CANCELLED')), 'ended');
 
-  // 偏离：红色标签、去合法性判定。
+  const evaluationEntry = { kind: 'legality', label: '查看研判', context: { evaluation: 'e' } };
+  const alarmEntry = { kind: 'alarm', label: '查看告警', context: { alarm: 'a' } };
+  // 偏离不自行决定办理页面，入口依同一研判的告警关联。
   const deviated = plan('EXECUTING', attention(['DEVIATION'], { match_issue: 'DEVIATION' }));
   assert.deepEqual(A.attentionIssues(deviated).map(issue => [issue.tag, issue.tagClass]), [['任务偏离', 't-red']]);
-  assert.match(A.attentionIssues(deviated)[0].detail, /^飞机实际飞的位置离开了报备航线。请打开合法性判定/);
-  assert.equal(A.attentionAction(deviated).key, 'legality');
-  assert.equal(A.attentionAction(deviated).primary, true);
+  assert.match(A.attentionIssues(deviated, alarmEntry)[0].detail, /告警/);
+  assert.equal(A.attentionAction(deviated, alarmEntry).key, 'alarm');
+  assert.equal(A.attentionAction(deviated, evaluationEntry).key, 'legality');
+  assert.equal(A.attentionAction(deviated).key, 'detail');
+  assert.equal(A.attentionAction(deviated, alarmEntry).primary, true);
 
   // “未找到对应飞机”和“还没对上飞机”是两种情况，说法和按钮都不同。
   const none = plan('EXECUTING', attention(['AIRCRAFT'], { match_issue: 'NONE' }));
@@ -28,9 +33,9 @@ const path = require('node:path');
   assert.equal(A.attentionIssues(none)[0].tag, '未找到对应飞机');
   assert.equal(A.attentionIssues(notYet)[0].tag, '还没对上飞机');
   assert.match(A.attentionIssues(notYet)[0].detail, /可能还没起飞，也可能没被探测到/);
-  assert.equal(A.attentionAction(none).key, 'legality');
+  assert.equal(A.attentionAction(none, evaluationEntry).key, 'legality');
   assert.equal(A.attentionAction(notYet).key, 'detail');
-  assert.equal(A.attentionAction(plan('EXECUTING', attention(['AIRCRAFT'], { match_issue: 'PARTIAL' }))).key, 'legality');
+  assert.equal(A.attentionAction(plan('EXECUTING', attention(['AIRCRAFT'], { match_issue: 'PARTIAL' })), evaluationEntry).key, 'legality');
   assert.equal(A.attentionAction(plan('EXECUTING', attention(['AIRCRAFT'], { match_issue: 'UNDETERMINED' }))).key, 'detail');
 
   // 几种问题同时有：逐条列出，下一步用分号连起来；设备写明设备名和处置单状态。
@@ -79,7 +84,43 @@ const path = require('node:path');
   has(/attentionSummary\.value = data\.attention_summary \|\| null;[\s\S]*attentionSummary\.value = data\.attention_summary \|\| null;/, '首读与实时刷新都更新顶部汇总');
   has(/@click="choosePlanAttention\(chip\.key\)"/, '汇总按种类筛选');
   has(/showEventsTab\(null, id\)/, '查看风险事件只看本任务');
-  has(/window\.UI\.goto\('legality', \{ plan: id/, '合法性判定带上本任务');
+  has(/openPlanHandling\(id\)/, '列表与详情共用关联入口');
+  // 不依赖任务编号或展示文案；变化编号、来源后仍按同一研判的显式关联分流。
+  for (const source of ['live', 'replay']) {
+    const id = `plan-${source}-${Date.now()}`, eid = `eval-${id}`, tid = `target-${id}`;
+    const p = { plan_id: id, status_code: 'EXECUTING' };
+    const snapshot = { data: { match: { availability: 'AVAILABLE', evaluation_id: eid, target_id: tid } },
+      evaluation: { evaluation_id: eid, plan_id: id, target_id: tid, object_type_code: 'UAV', has_alarm: false, source_mode: source } };
+    const rights = { alarms: true, legality: true };
+    assert.equal(H.planHandling(p, snapshot, rights).kind, 'legality');
+    assert.equal(H.planHandling(p, snapshot, rights).context.evaluation, eid);
+    snapshot.evaluation.has_alarm = true;
+    assert.equal(H.planHandling(p, snapshot, rights).kind, 'blocked', '隐藏编号不等于无告警');
+    snapshot.evaluation.alarm_id = `alarm-${id}`;
+    assert.equal(H.planHandling(p, snapshot, rights).kind, 'alarm');
+    assert.equal(H.planHandling(p, snapshot, { ...rights, alarms: false }).kind, 'blocked');
+    delete snapshot.evaluation.alarm_id;
+    delete snapshot.evaluation.has_alarm;
+    assert.equal(H.planHandling(p, snapshot, rights).kind, 'blocked', '旧接口未知关联不能猜无告警');
+    snapshot.evaluation.has_alarm = false;
+    snapshot.evaluation.object_type_code = 'BIRD';
+    assert.equal(H.planHandling(p, snapshot, rights).kind, 'none');
+    snapshot.evaluation.object_type_code = 'UAV';
+    snapshot.evaluation.plan_id = 'other-plan';
+    assert.equal(H.planHandling(p, snapshot, rights).kind, 'blocked');
+    assert.equal(H.planHandling(p, { error: new Error('网络错误') }, rights).kind, 'blocked');
+    assert.equal(H.planHandling(p, { data: { match: { availability: 'NO_EVALUATION' } } }, rights).kind, 'none');
+    assert.equal(H.planHandling(p, { data: { match: { availability: 'FORBIDDEN' } } }, rights).kind, 'blocked');
+    assert.equal(H.planHandling({ ...p, status_code: 'PENDING' }, snapshot, rights).kind, 'none');
+  }
+  let reads = 0, evaluationReads = 0;
+  const reader = H.createPlanSnapshotReader({ actuals: async () => { reads++; return { match: { availability: 'NO_EVALUATION' } }; },
+    getEvaluation: async () => { evaluationReads++; } });
+  await Promise.all([reader('same-plan'), reader('same-plan')]);
+  assert.equal(reads, 1, '列表与详情同时读取共享请求');
+  assert.equal(evaluationReads, 0, '没有研判不查不存在的关联');
+  await reader('same-plan');
+  assert.equal(reads, 2, '完成后重读，不能永久缓存旧关联');
   assert.ok(!page.includes("'未匹配'"), '“未匹配”应改叫“还没对上飞机”');
   console.log('全部通过：需要处理分组、问题说明、按钮与顶部汇总');
 })().catch(error => { console.error(error); process.exitCode = 1; });

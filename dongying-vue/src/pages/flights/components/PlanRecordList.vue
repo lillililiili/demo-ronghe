@@ -42,7 +42,7 @@ function onKey(event, id) {
           <p v-for="(line, index) in item.details" :key="line">{{ item.details.length > 1 ? `${MARKS[index] || `${index + 1}.`} ` : '' }}{{ line }}</p>
         </div>
         <span class="pr-bottom">
-          <button v-if="item.action" class="btn" :class="{ pri: item.action.primary }" type="button" @click.stop="emit('action', { id: item.id, key: item.action.key })">{{ item.action.label }}</button>
+          <button v-if="item.action" class="btn" :class="{ pri: item.action.primary }" type="button" :disabled="item.action.disabled" @click.stop="emit('action', { id: item.id, key: item.action.key })">{{ item.action.label }}</button>
           <span v-else class="pr-open">{{ item.id === selectedId ? '正在查看' : '查看详情' }}</span>
         </span>
       </div>

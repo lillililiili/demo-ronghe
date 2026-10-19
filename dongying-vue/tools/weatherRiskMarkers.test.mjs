@@ -6,6 +6,43 @@ import { weatherAnchor, weatherPolygon, insideWeather, isSimulatedWeatherRisk } 
 import { weatherAreaRelation } from '../src/pages/airspace/airspaceRiskModel.js';
 
 const box = (x, y, width = 2, height = 2) => [[x,y],[x+width,y],[x+width,y+height],[x,y+height],[x,y]];
+const layerSource = (await readFile(new URL('../src/services/weatherRiskLayer.js', import.meta.url), 'utf8'))
+  .replace("@/services/weatherRiskGeometry.js", new URL('../src/services/weatherRiskGeometry.js', import.meta.url).href);
+const weatherLayer = await import('data:text/javascript;base64,' + Buffer.from(layerSource).toString('base64'));
+
+test('cloud texture is repeatable, translucent and visibly textured rather than a flat region fill', () => {
+  const pixels = weatherLayer.weatherTexturePixels(96);
+  assert.deepEqual(pixels, weatherLayer.weatherTexturePixels(96));
+  const alphas = pixels.filter((value, index) => index % 4 === 3);
+  assert.ok(new Set(alphas).size > 80, 'cloud texture needs a soft range of density');
+  assert.ok(Math.min(...alphas) < 20 && Math.max(...alphas) <= 230, 'leave transparent gaps and cap opacity');
+});
+
+test('weather rendering clips cloud imagery and wind strokes to the supplied region and respects each switch', () => {
+  const previous = globalThis.OffscreenCanvas;
+  globalThis.OffscreenCanvas = class { constructor(width,height) { this.width=width;this.height=height; }
+    getContext() { return { createImageData:(w,h)=>({data:new Uint8ClampedArray(w*h*4)}), putImageData(){} }; } };
+  try {
+    for (const origin of [[118,37],[109,30]]) {
+      const ring = box(...origin, .02, .01);
+      const fact = { polygon:ring, summary:'小雨',precipitation_rate_mm_h:2.1,wind_speed_mps:7,wind_from_degrees:315 };
+      const map = { w:800,h:500,px:(x,y)=>[(x-origin[0])*24000+40,(origin[1]+.012-y)*24000+40] };
+      for (const [clouds,wind] of [[true,true],[false,true],[true,false],[false,false]]) {
+        const calls=[]; const ctx=new Proxy({}, { get:(o,k)=> k in o ? o[k] : (...args)=>calls.push([k,...args]) });
+        weatherLayer.drawWeatherArea(ctx,map,fact,ring,null,'red','storm',true,false,.18,{clouds,wind});
+        const images=calls.filter(c=>c[0]==='drawImage');
+        const strokes=calls.filter(c=>c[0]==='stroke');
+        assert.equal(images.length>0,clouds);
+        assert.equal(calls.some(c=>c[0]==='quadraticCurveTo'),wind,'wind field uses long directional streamlines');
+        if (clouds || wind) {
+          const clip=calls.findIndex(c=>c[0]==='clip');
+          assert.ok(clip>=0 && clip<calls.findIndex(c=>c[0]==='stroke'),'clip before all effects');
+          assert.ok(strokes.length>0);
+        } else assert.equal(calls.length,0);
+      }
+    }
+  } finally { if (previous===undefined) delete globalThis.OffscreenCanvas; else globalThis.OffscreenCanvas=previous; }
+});
 test('historic weather texture is limited to identified simulated sources', () => {
   const risk = { source_mode:'mock', source_code:'QA_WEATHER_RISK_INPUT', reason_code:'WEATHER_STRONG_WIND' };
   assert.equal(isSimulatedWeatherRisk(risk), true);

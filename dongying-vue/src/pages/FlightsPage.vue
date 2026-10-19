@@ -27,7 +27,9 @@ import {
   ALTITUDE_DATUM_LABEL, ALTITUDE_RELATION_LABEL, HANDOFF_TYPE_LABEL, LEGALITY_LABEL, PLAN_MATCH_TAG, PLAN_ROW_MATCH_LABEL, PLAN_STATUS_LABEL, PLAN_STATUS_TAG, REASON_CODE_LABEL, RECEIPT_RESULT_LABEL, RISK_TYPE_LABEL,
   SECTION_AVAILABILITY_LABEL, SOURCE_MODE_LABEL, sourceDescription, notificationBlockedReason, notificationSubmissionMessage, labelOf, OBJECT_TYPE_LABEL, readableNo, RISK_TYPE_OPTIONS, RISK_STATE_LABEL, RISK_PRESENCE_LABEL } from '@/ui/labels.js';
 import { loadTargetPosition, strokePlannedRoute, loadAirspaceOverlayVersions, mapAirspaceOverlays } from '@/services/positionMap.js';
-import { hasPermission } from '@/services/accessControl.js';
+import { canAccessRoute, hasPermission } from '@/services/accessControl.js';
+import { legalityApi } from '@/services/legalityApi.js';
+import { createPlanSnapshotReader, planHandling } from '@/pages/flights/planHandling.js';
 import { authUser } from '@/services/auth.js';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import UKpis from '@/components/UKpis.vue';
@@ -179,12 +181,14 @@ const riskMapHost = ref(null);
 const riskWeather = ref(null);
 const riskWeatherError = ref('');
 const riskWeatherLoading = ref(false);
-const weatherVisible = ref(true);
+const weatherCloudVisible = ref(true);
+const weatherWindVisible = ref(true);
+const weatherVisible = computed(() => weatherCloudVisible.value || weatherWindVisible.value);
 const weatherOpened = ref(false);
 const weatherBoundaryVisible = ref(false);
-const weatherOpacity = ref(.4);
+const weatherOpacity = ref(.18);
 const weatherKind = computed(() => weatherLayerKind(selectedRisk.value?.reason_code));
-const simulatedWeather = computed(() => isSimulatedWeatherRisk(selectedRisk.value));
+const simulatedWeather = computed(() => riskWeather.value?.simulated === true || isSimulatedWeatherRisk(selectedRisk.value));
 const weatherRing = computed(() => weatherPolygon(riskWeather.value));
 const weatherTitle = computed(() => labelOf(REASON_CODE_LABEL, selectedRisk.value?.reason_code));
 const weatherColor = computed(() => ({ WEATHER_THUNDERSTORM: '#e15c75', WEATHER_STRONG_WIND: '#cf8418', WEATHER_LOW_VISIBILITY: '#8376cb' }[selectedRisk.value?.reason_code] || '#8376cb'));
@@ -479,7 +483,8 @@ const attentionBar = computed(() => attentionSummaryChips(attentionSummary.value
 const planRecords = computed(() => {
   let previous = '';
   return plans.value.map(plan => {
-    const group = planGroupOf(plan), issues = attentionIssues(plan), match = rowMatch(plan);
+    const handling = handlingFor(plan);
+    const group = planGroupOf(plan), issues = attentionIssues(plan, handling), match = rowMatch(plan);
     const header = group === previous ? null : group === 'needs'
       ? { title: PLAN_GROUP.needs.title, note: filters.attention ? `只看${attentionKindLabel(filters.attention)}` : `${attentionBar.value?.total ?? ''} 个 · ${PLAN_GROUP.needs.note}` }
       : group === 'executing' ? { title: PLAN_GROUP.executing.title, note: attentionBar.value?.otherExecuting == null ? '' : `${attentionBar.value.otherExecuting} 个` }
@@ -495,9 +500,10 @@ const planRecords = computed(() => {
       tags: issues.length ? issues.map(issue => ({ text: issue.tag, cls: issue.tagClass, title: issue.detail }))
         // 不需要处理的任务：匹配结论一律灰色（设计二），不和问题标签混淆。
         : match.text && !['—', '…'].includes(match.text) ? [{ text: match.text, cls: 't-gray', title: match.title }] : [],
-      next: issues.length ? issues.map(issue => issue.next).join('；') : group === 'executing' ? '无需处理' : '',
+      next: issues.length ? issues.map(issue => issue.next).join('；') : handling.kind === 'blocked' ? handling.note
+        : handling.kind === 'legality' ? '查看研判结果' : handling.kind === 'loading' ? handling.note : group === 'executing' ? '无需处理' : '',
       details: issues.map(issue => issue.detail),
-      action: attentionAction(plan)
+      action: { ...attentionAction(plan, handling), disabled: handlingNavigationId.value === plan.plan_id }
     };
   });
 });
@@ -506,10 +512,8 @@ function choosePlanAttention(kind) {
   applyFilters();
 }
 function onPlanAction({ id, key }) {
-  if (key === 'legality') {
-    const target = selected.value?.plan_id === id ? matchedTargetId.value : null;
-    if (window.UI?.goto) window.UI.goto('legality', { plan: id, ...(target ? { target } : {}) });
-    else location.hash = `#/legality?plan=${encodeURIComponent(id)}`;
+  if (key === 'legality' || key === 'alarm') {
+    void openPlanHandling(id);
   } else if (key === 'risks') {
     const hash = `#/flights?tab=events&plan=${encodeURIComponent(id)}`;
     S.tabHash = hash;
@@ -526,6 +530,10 @@ function syncSelectedPlanHash(planId) {
 }
 
 function selectPlan(planId) {
+  if (handlingNavigationId.value && handlingNavigationId.value !== planId) {
+    handlingNavigationSeq++;
+    handlingNavigationId.value = null;
+  }
   syncSelectedPlanHash(planId);
   if (selected.value?.plan_id === planId && !detailError.value) { routeMap?.refocus(); return; }
   loadDetail(planId);
@@ -682,6 +690,7 @@ async function loadDetail(planId, prefetchedPlan = null, { quiet = false } = {})
     airspaceError.value = '';
     routeGeometryLoading.value = false;
     actuals.value = null;
+    selectedPlanSnapshot.value = null;
     actualsError.value = '';
     matchedTarget.value = null;
     destroyRouteMap();
@@ -713,21 +722,39 @@ async function loadDetail(planId, prefetchedPlan = null, { quiet = false } = {})
 const actuals = ref(null);
 const actualsLoading = ref(false);
 const actualsError = ref('');
+const selectedPlanSnapshot = shallowRef(null);
+const rowPlanSnapshots = reactive({});
+const readPlanSnapshot = createPlanSnapshotReader({ actuals: flightApi.actuals, getEvaluation: legalityApi.getEvaluation });
+const handlingNavigationId = ref(null);
+let handlingNavigationSeq = 0;
+function handlingFor(plan) {
+  return planHandling(plan, selected.value?.plan_id === plan?.plan_id ? selectedPlanSnapshot.value : rowPlanSnapshots[plan?.plan_id], {
+    alarms: canAccessRoute('alarms') && hasPermission('alarms.read'),
+    legality: canAccessRoute('legality') && hasPermission('legality.read')
+  });
+}
+const selectedHandling = computed(() => handlingFor(selected.value));
 
 /* 列表"匹配"列：每行各读一次对照聚合（与详情栏同一接口、同一口径）。
    读失败或无权限的行显示 —，不阻塞列表；翻页后旧结果作废。 */
 const rowActuals = reactive({});
 let rowActualsSeq = 0;
+let lastPlanRelationsReadAt = 0;
 async function loadRowActuals(rows) {
   const seq = ++rowActualsSeq;
+  lastPlanRelationsReadAt = Date.now();
   const ids = new Set(rows.map(plan => plan.plan_id));
   Object.keys(rowActuals).forEach(key => { if (!ids.has(key)) delete rowActuals[key]; });
+  Object.keys(rowPlanSnapshots).forEach(key => { if (!ids.has(key)) delete rowPlanSnapshots[key]; });
   await Promise.all(rows.map(async plan => {
-    let section = null;
+    let snapshot = null;
     if (['EXECUTING', 'COMPLETED'].includes(plan.status_code)) {
-      try { section = (await flightApi.actuals(plan.plan_id))?.match || null; } catch { section = null; }
+      snapshot = await readPlanSnapshot(plan.plan_id);
     }
-    if (seq === rowActualsSeq) rowActuals[plan.plan_id] = section;
+    if (seq === rowActualsSeq) {
+      rowActuals[plan.plan_id] = snapshot?.data?.match || null;
+      rowPlanSnapshots[plan.plan_id] = snapshot;
+    }
   }));
 }
 function rowMatch(plan) {
@@ -743,16 +770,30 @@ function rowMatch(plan) {
   return { text: labelOf(PLAN_ROW_MATCH_LABEL, section.plan_match_code), tag: PLAN_MATCH_TAG[section.plan_match_code] || 't-gray', title: '' };
 }
 
-/* 合法性判定（决策 19-1）：研判是拿实际飞行与计划比对出来的，**待执行的计划必然还没有研判**——
-   过去这个按钮恰好只在待执行时出现，点过去永远是空的。现在反过来：待执行只留一句说明，
-   执行中 / 已完成才给按钮，并把本任务带过去预置筛选（研判页按 plan_id 过滤）。 */
+/* 办理入口按同一研判的实际关联决定；点击前重读，避免刚生成告警仍进入研判。 */
 const matchedTargetId = computed(() => actuals.value?.match?.target_id || null);
-const planLegalityReady = computed(() => ['EXECUTING', 'COMPLETED'].includes(selected.value?.status_code));
-function goLegality() {
-  const planId = selected.value?.plan_id;
-  const context = planId ? { plan: planId, ...(matchedTargetId.value ? { target: matchedTargetId.value } : {}) } : null;
-  if (window.UI?.goto) window.UI.goto('legality', context);
-  else location.hash = planId ? `#/legality?plan=${encodeURIComponent(planId)}` : '#/legality';
+async function openPlanHandling(planId) {
+  const plan = plans.value.find(item => item.plan_id === planId) || (selected.value?.plan_id === planId ? selected.value : null);
+  if (!plan || handlingNavigationId.value) return;
+  const request = ++handlingNavigationSeq;
+  handlingNavigationId.value = planId;
+  try {
+    const snapshot = await readPlanSnapshot(planId);
+    if (request !== handlingNavigationSeq || activeTab.value !== 'route') return;
+    rowPlanSnapshots[planId] = snapshot;
+    rowActuals[planId] = snapshot.data?.match || null;
+    if (selected.value?.plan_id === planId) { selectedPlanSnapshot.value = snapshot; actuals.value = snapshot.data || null; }
+    const handling = handlingFor(plan);
+    if (handling.kind === 'alarm') {
+      // 事件深链复用告警页的精确定位与筛选清理，刷新后仍定位同一事件。
+      if (snapshot.evaluation.event_id) location.hash = `#/alarms?event=${encodeURIComponent(snapshot.evaluation.event_id)}`;
+      else { sessionStorage.setItem('alarm.sel', handling.context.alarm); location.hash = '#/alarms'; }
+    } else if (handling.kind === 'legality') {
+      location.hash = `#/legality?${new URLSearchParams(handling.context)}`;
+    } else toast(handling.note || '当前没有可查看的关联研判。');
+  } finally {
+    if (request === handlingNavigationSeq) handlingNavigationId.value = null;
+  }
 }
 
 /* 使用后端按计划时段截取的匹配目标实测点；保留轨迹断点，不使用最新位置代替历史。 */
@@ -903,21 +944,27 @@ function clearRiskPlanScope() {
 }
 
 async function loadActuals(plan, { quiet = false } = {}) {
+  const token = ++actualsRequestSeq;
   actualsLoading.value = !quiet || !actuals.value;
   actualsError.value = '';
   try {
-    const data = await flightApi.actuals(plan.plan_id);
-    if (activeTab.value !== 'route' || selected.value?.plan_id !== plan.plan_id) return;
-    actuals.value = data;
+    const snapshot = await readPlanSnapshot(plan.plan_id);
+    if (token !== actualsRequestSeq || activeTab.value !== 'route' || selected.value?.plan_id !== plan.plan_id) return;
+    selectedPlanSnapshot.value = snapshot;
+    rowPlanSnapshots[plan.plan_id] = snapshot;
+    rowActuals[plan.plan_id] = snapshot.data?.match || null;
+    if (snapshot.error) throw snapshot.error;
+    actuals.value = snapshot.data;
     loadMatchedTarget(plan, { quiet });
   } catch (requestError) {
-    if (activeTab.value !== 'route' || selected.value?.plan_id !== plan.plan_id) return;
+    if (token !== actualsRequestSeq || activeTab.value !== 'route' || selected.value?.plan_id !== plan.plan_id) return;
     actuals.value = null;
     actualsError.value = requestError.message || '读取任务与实际对照失败';
   } finally {
-    if (selected.value?.plan_id === plan.plan_id) actualsLoading.value = false;
+    if (token === actualsRequestSeq && selected.value?.plan_id === plan.plan_id) actualsLoading.value = false;
   }
 }
+let actualsRequestSeq = 0;
 
 /* 与 legacy 一致：待执行的计划没有"实际"可对照，已结束的计划不再做航线风险预检。 */
 /* 没有事实就不摆空分区：待执行/已取消的计划没有实际飞行可对照；已结束或无走廊的计划没有起飞前航线预检。 */
@@ -1104,7 +1151,7 @@ function renderRouteMap() {
       if (!location.polygon) return;
       drawWeatherArea(context, this, risk.weather_fact, location.polygon, coordinates || [],
         RISK_SEVERITY_COLOR[risk.severity] || '#8376cb', weatherLayerKind(risk.reason_code),
-        isSimulatedWeatherRisk(risk), true, risk.current_status === 'CURRENT' ? .4 : .2);
+        isSimulatedWeatherRisk(risk), true, risk.current_status === 'CURRENT' ? .18 : .12);
     });
     // corridor_width_m 是走廊全宽；未做投影缓冲时不能把全宽误当半径，因此只描中心线样式。
     strokePlanComparison(context, this, coordinates, points);
@@ -1435,7 +1482,8 @@ function resetRiskWeather() {
   riskWeather.value = null;
   riskWeatherError.value = '';
   riskWeatherLoading.value = false;
-  weatherVisible.value = true;
+  weatherCloudVisible.value = true;
+  weatherWindVisible.value = true;
   weatherOpened.value = false;
   weatherBoundaryVisible.value = false;
 }
@@ -1469,11 +1517,10 @@ function pickWeatherArea(event) {
   if (insideWeather(point, weatherRing.value.map(p => routeMap.px(...p)))) weatherOpened.value = true;
 }
 
-function toggleWeatherLayer() {
-  weatherVisible.value = !weatherVisible.value;
+watch([weatherCloudVisible, weatherWindVisible, weatherOpacity, weatherBoundaryVisible], () => {
   if (!weatherVisible.value) weatherOpened.value = false;
   routeMap?.draw();
-}
+});
 
 /** 风险关联的感知目标：风险行里带 target_id，位置要再读一次目标详情才有。 */
 async function loadRiskTargetPosition(risk, token) {
@@ -1530,7 +1577,8 @@ function renderRiskMap() {
     zoom: focus.length ? 3.2 : 1, maxDev: 0, legend: false,
     drawUnderMarkers: view => {
       if (weatherRing.value && weatherVisible.value) drawWeatherArea(view.ctx, view, riskWeather.value, weatherRing.value, riskMapCoords.value, weatherColor.value,
-        weatherKind.value, simulatedWeather.value, weatherBoundaryVisible.value, weatherOpacity.value);
+        weatherKind.value, simulatedWeather.value, weatherBoundaryVisible.value, weatherOpacity.value,
+        { clouds: weatherCloudVisible.value, wind: weatherWindVisible.value });
     },
     layers: { device: false, track: !!target && !objectRiskSelected.value, alarm: false }
   });
@@ -1574,7 +1622,13 @@ function renderRiskMap() {
     }
     context.restore();
   };
-  if (!routeMap._flightFitted && focus.length) { routeMap.fitTo(focus); routeMap._flightFitted = true; }
+  // 航线和预报范围独立返回；后到的几何也应进入首次定位，重复读取相同事实不重置视角。
+  const weatherExtent = selectedRisk.value?.risk_type === 'WEATHER' ? JSON.stringify(focus) : null;
+  if (focus.length && (!routeMap._flightFitted || (weatherExtent && weatherExtent !== routeMap._flightWeatherExtent))) {
+    routeMap.fitTo(focus, weatherExtent && ring ? .12 : .25);
+    routeMap._flightFitted = true;
+    routeMap._flightWeatherExtent = weatherExtent;
+  }
   else routeMap.draw();
 }
 
@@ -1879,6 +1933,12 @@ async function realtimeRefreshPlans(topics) {
     && topics.some(topic => ['risk', 'target', '*'].includes(topic))) {
     loadRouteRisks(selected.value, routeRisks.page, { quiet: true });
   }
+  if (Date.now() - lastPlanRelationsReadAt >= 5000 && topics.some(topic => ['alarm', 'legality', 'target'].includes(topic))) {
+    void loadRowActuals(plans.value);
+  }
+  if (selected.value && !actualsLoading.value && topics.some(topic => ['alarm', 'legality', 'target', '*'].includes(topic))) {
+    await loadActuals(selected.value, { quiet: true });
+  }
 }
 
 async function realtimeRefreshRisks() {
@@ -1906,7 +1966,7 @@ async function realtimeRefreshRisks() {
   }
 }
 
-const realtime = useRealtimeRefresh(['plan', 'airspace', 'risk', 'target'], async topics => {
+const realtime = useRealtimeRefresh(['plan', 'airspace', 'risk', 'target', 'alarm', 'legality'], async topics => {
   if (activeTab.value === 'events') {
     if (topics.some(topic => ['risk', 'plan', '*'].includes(topic))) await realtimeRefreshRisks();
   } else await realtimeRefreshPlans(topics);
@@ -1926,6 +1986,9 @@ watch(() => [selectedRisk.value?.risk_id, selectedRisk.value?.state, selectedRis
 });
 
 onUnmounted(() => {
+  rowActualsSeq++;
+  actualsRequestSeq++;
+  handlingNavigationSeq++;
   clearInterval(routeRisksTimer);
   clearInterval(planRefreshTimer);
   routeRisksToken++;
@@ -1992,13 +2055,14 @@ onUnmounted(() => {
 
         <UPanel title="风险位置与影响范围" class="workspace-map" nopad body-style="padding:6px">
           <div v-if="selectedRisk" class="workspace-map-context"><b>{{ riskTitle(selectedRisk) }}</b><span>{{ selectedRisk.district_name || '区域未提供' }}</span></div>
-          <div v-if="riskMapDrawable" class="rk-map-shell" @click="pickWeatherArea">
+          <div v-if="riskMapDrawable" class="rk-map-shell" :class="{ 'has-weather': riskWeather }" @click="pickWeatherArea">
             <div id="rkMap" ref="riskMapHost" class="rk-map"></div>
             <ObjectRiskMapInfo v-if="objectRiskSelected" :risk="selectedRisk" :marker="objectMarker" :title="riskTitle(selectedRisk)" :color="riskPoint?.color || '#ffb020'"
               :severity="severityLabel(selectedRisk.severity)" :route-visible="!!riskMapCoords" :corridor-visible="objectCorridorVisible" />
-            <WeatherMapInfo v-if="weatherRing" :fact="riskWeather" :title="weatherTitle" :severity="severityLabel(selectedRisk.severity)"
-              :source="selectedRisk.source_name" :color="weatherColor" :visible="weatherVisible" :kind="weatherKind" :simulated="simulatedWeather"
-              v-model:boundary-visible="weatherBoundaryVisible" v-model:opened="weatherOpened" v-model:opacity="weatherOpacity" @toggle-layer="toggleWeatherLayer" />
+            <WeatherMapInfo v-if="riskWeather" :fact="riskWeather" :title="weatherTitle" :severity="severityLabel(selectedRisk.severity)"
+              :source="selectedRisk.source_name" :color="weatherColor" :kind="weatherKind" :simulated="simulatedWeather"
+              v-model:cloud-visible="weatherCloudVisible" v-model:wind-visible="weatherWindVisible"
+              v-model:boundary-visible="weatherBoundaryVisible" v-model:opened="weatherOpened" v-model:opacity="weatherOpacity" />
           </div>
           <div v-else class="empty rk-map-empty">{{ riskMapNote }}<button v-if="riskWeatherError && selectedRisk" class="btn" type="button" @click="loadRiskDetail(selectedRisk.risk_id)">重试</button></div>
           <div v-if="selectedRisk?.risk_type !== 'WEATHER' && !objectRiskSelected" class="rk-legend" title="圆点表示发现风险时的位置，颜色表示风险等级；青色虚线表示相关航线。没有位置记录的内容不显示。">
@@ -2183,6 +2247,7 @@ onUnmounted(() => {
                 </dl>
                 <div v-if="demoParams"><span class="tag t-amber">参数为演示值，尚未确认</span></div>
               </template>
+              <p v-if="selectedHandling.note && !actualsLoading && !actualsError" class="plan-handling-note">{{ selectedHandling.note }}</p>
             </section>
             <FlightExecutionChecks v-if="actuals?.match?.evaluation_id" :hits="actuals.match.execution_checks || []" />
             <PlanRiskRecords v-if="showRouteRisks" :key="selected.plan_id" ref="planRiskRecordsRef" :records="routeRiskRecords" :loading="routeRisks.loading" :selected-id="selectedPlanRiskId"
@@ -2195,10 +2260,9 @@ onUnmounted(() => {
             </div>
             <PlanWeatherForecast v-if="planDetailTab === 'forecast'" :key="selected.plan_id" :plan-id="selected.plan_id" :start-at="selected.start_at" :end-at="selected.end_at" />
           </template></div>
-          <!-- 与 legacy 一致的唯一动作：跳到合法性研判页并选中本计划匹配到的目标（决策 15-48）。 -->
-          <div v-if="planDetailTab === 'plan' && planLegalityReady" class="detail-actions plan-legality-actions">
-            <button class="btn pri" type="button"
-              :title="matchedTargetId ? '打开合法性研判页，按本任务筛选并选中匹配到的目标' : '打开合法性研判页，按本任务筛选'" @click="goLegality">合法性判定 →</button>
+          <div v-if="planDetailTab === 'plan' && ['alarm', 'legality'].includes(selectedHandling.kind)" class="detail-actions plan-legality-actions">
+            <button class="btn pri" type="button" :disabled="!!handlingNavigationId"
+              @click="openPlanHandling(selected.plan_id)">{{ handlingNavigationId === selected.plan_id ? '正在读取…' : `${selectedHandling.label} →` }}</button>
           </div>
           </UPanel>
       </div>
@@ -2207,6 +2271,7 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.plan-handling-note { margin: 8px 0 0; color: var(--txt-2); font-size: 12px; line-height: 1.6; }
 .flights-page { min-width: 0; min-height: 0; height: 100%; display: flex; flex-direction: column; overflow-x: hidden; overflow-y: auto; }
 .flights-page > .tabs { flex: none; }
 .flights-page :deep(.kpis) { flex: none; }
@@ -2325,6 +2390,7 @@ onUnmounted(() => {
 .sect-title { margin-top: 14px; font-weight: 600; }
 /* 两个页签共用列表—地图—详情的阅读顺序，地图始终只有一个实例。 */
 .rk-map { flex: 1; min-height: 0; }
+.rk-map-shell.has-weather { flex-direction:column; }
 .rk-map-shell { position: relative; flex: 1; min-height: 0; display: flex; overflow: hidden; }
 .rk-weather-note { flex: none; padding: 4px; font-size: 11px; color: var(--txt-3); overflow-wrap: anywhere; }
 .rk-map-empty { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 12px; font-size: 12px; }

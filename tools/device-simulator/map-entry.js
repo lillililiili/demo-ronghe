@@ -21,6 +21,7 @@ function showError(message) {
 const bridge = window.SimulatorMap = {
   ready: false,
   coordinates(point) { return coordinates(point); },
+  projectCoordinates(point) { const p=map.project(point);return [p.x,p.y]; },
   project(point) {
     const p = map.project(coordinates(point));
     return [p.x, p.y];

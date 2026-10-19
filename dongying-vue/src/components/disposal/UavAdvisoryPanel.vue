@@ -200,11 +200,9 @@ async function submitHandoff() {
           <dt>设备回执</dt><dd>{{ counterEventsError || userFacingMessage(counter.receipt) || (counter.eventsKnown ? '还没有设备回执' : '正在读取') }}</dd>
         </dl>
       </div>
-      <div v-if="observation?.started_at" class="ua-handoff" aria-label="通知后的位置核对依据">
-        <p v-if="observation.status === 'RECORDED'" class="ua-note">已留存的通知终止依据；当前观测时效以告警信息为准。</p>
+      <div v-if="observation?.started_at && observation.status !== 'RECORDED'" class="ua-handoff" aria-label="通知后的位置核对依据">
         <p>通知后位置判断：{{ ({ LEFT:'有效位置已确认离开', STILL_PRESENT:'仍在告警区域或仍有违规', UNKNOWN:'无法确认是否离开' })[observation.presence] }}</p>
-        <p v-if="observation.status === 'RECORDED'" class="ua-note">历史观察开始 {{ observationTime(observation.started_at) }}；判断起点 {{ observationTime(observation.deadline_at) }}（北京时间）</p>
-        <p v-else class="ua-note">{{ observation.channel === 'VOICE' ? '电话播放完成' : '短信送达' }} {{ observationTime(observation.started_at) }}（北京时间）</p>
+        <p class="ua-note">{{ observation.channel === 'VOICE' ? '电话播放完成' : '短信送达' }} {{ observationTime(observation.started_at) }}（北京时间）</p>
         <p v-if="observation.position" class="ua-note">采用观测 {{ observationTime(observation.position.observed_at) }} · WGS84 {{ observation.position.longitude }}, {{ observation.position.latitude }}</p>
         <p v-else class="ua-note">没有当前可用或可见的位置依据，不能把停报当成飞离。</p>
         <p class="ua-note">依据：{{ ({SMS_AIRSPACE:'通知送达时所处空域与后续实测位置',LATEST_LEGALITY:'通知后的实测位置及最新合法性研判',AIRSPACE_BOUNDARY:'位置压在空域边界，无法确认',NO_CURRENT_POSITION:'没有时效内的新实测位置'})[observation.basis] || '尚未形成判断' }}；本次核对 {{ observationTime(observation.evaluated_at) }}。</p>
@@ -213,7 +211,7 @@ async function submitHandoff() {
         <summary>历史现场观察记录（{{ historicalObservations.length }}）</summary>
         <AdvisoryRecords :records="historicalObservations" />
       </details>
-      <div v-if="confirmed || data.auto_handoff || handoff.handoffId" class="ua-handoff" aria-label="处罚移送进度" :data-state="data.auto_handoff?.status">
+      <div v-if="handoff.handoffId || handoff.canSubmit || ((confirmed || data.auto_handoff) && data.auto_handoff?.status !== 'NOT_REQUIRED')" class="ua-handoff" aria-label="处罚移送进度" :data-state="data.auto_handoff?.status">
         <p><span :class="`ua-${handoff.tone}`">{{ handoff.title }}</span><button v-if="handoff.handoffId" type="button" class="ua-link" @click="openHandoff">查看处罚交接</button></p>
         <p v-if="handoff.reason" class="ua-note">{{ userFacingMessage(handoff.reason) }}</p>
         <p v-if="handoff.partyUnidentified" class="ua-note">当事人不明：{{ handoff.partyReasons.join('；') || '没有可用的当事人信息' }}。移送时会写明按待补线索移送。</p>

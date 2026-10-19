@@ -129,11 +129,10 @@ async function decideNoCounter() {
 </script>
 
 <template>
-  <section class="counter-launch" aria-label="处置选择">
+  <section class="counter-launch" :class="{ 'is-completed': completed }" aria-label="处置选择">
     <div v-if="completed" class="counter-decision is-completed">
       <header><h3>已决定不反制</h3><span class="tag t-cyan">现场处置结束</span></header>
-      <dl><dt>处置决定</dt><dd>{{ noCounter.decision?.reason }}</dd><dt>决定人员</dt><dd>{{ noCounter.decision?.actor_name || '未提供' }}</dd><dt>决定时间</dt><dd>{{ time(noCounter.decision?.decided_at) }}</dd></dl>
-      <p>保留告警与决定记录，继续监测；出现新的风险依据时重新判断。</p>
+      <p>继续监测，出现新的风险依据时重新判断。</p>
       <details><summary>查看决定依据</summary><NoCounterBasis :basis="noCounter.decision?.basis" /></details>
     </div>
     <div v-else-if="confirmed && !handedOff && (noCounterVisible || showLaunch || noCounter?.decision)" class="counter-decision is-choice">
@@ -162,6 +161,8 @@ async function decideNoCounter() {
 
 <style scoped>
 .counter-launch { margin-left: auto; min-width: 0; max-width: 100%; width:100%; }
+.counter-launch.is-completed .counter-decision { padding: 8px 10px; margin-bottom: 0; }
+.counter-launch.is-completed p { margin: 5px 0; line-height: 1.6; }
 .counter-decision{padding:13px;border:1px solid var(--control-line);border-radius:var(--r);background:var(--surface-3);margin-bottom:10px}.counter-decision header{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}.counter-decision h3{margin:0;font-size:13px;font-weight:600}.counter-decision p{font-size:12px;line-height:1.8;color:var(--txt-2);margin:9px 0}.counter-choice-actions{display:flex;flex-wrap:wrap;gap:9px;margin-top:0}.counter-decision .no-counter-choice{border-color:var(--cyan);color:var(--cyan);background:var(--input-bg)}.counter-decision .counter-block{color:var(--txt-3)}.counter-decision .counter-review{color:var(--amber)}.counter-decision.is-completed{border-color:var(--cyan)}.counter-decision dl{display:grid;grid-template-columns:70px minmax(0,1fr);gap:7px 12px;font-size:12px;line-height:1.65;margin:13px 0}.counter-decision dt{color:var(--txt-3)}.counter-decision dd{margin:0;color:var(--txt-2);overflow-wrap:anywhere}.counter-decision summary{cursor:pointer;color:var(--txt-3);font-size:12px}.counter-decision summary:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
 .counter-launch-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 10px; }
 .counter-decision.is-choice { padding: 6px 8px; margin-bottom: 0; }

@@ -14,17 +14,16 @@ const SUMMARY_FIELD = { DEVIATION: 'deviation', AIRCRAFT: 'aircraft', DEVICE: 'd
 
 const MATCH_ISSUE = {
   DEVIATION: { tag: '任务偏离', tagClass: 't-red', next: '确认是不是违规，是就按告警处置',
-    detail: '飞机实际飞的位置离开了报备航线。请打开合法性判定，确认是不是违规；是违规就按告警处置。' },
+    detail: '飞机实际飞的位置离开了报备航线。' },
   NONE: { tag: '未找到对应飞机', tagClass: 't-amber', next: '看比对的飞机是不是违规，并联系报备单位',
-    detail: '有飞机和这条任务比对过，但位置、时间或高度对不上。请打开合法性判定，看那架飞机是不是违规；同时联系报备单位，问清报备的飞机有没有起飞。' },
+    detail: '有飞机和这条任务比对过，但位置、时间或高度对不上。请同时联系报备单位，确认报备的飞机是否起飞。' },
   NO_EVALUATION: { tag: '还没对上飞机', tagClass: 't-amber', next: '联系报备单位问是否起飞',
     detail: '系统还没把任何飞机和这条任务对上：可能还没起飞，也可能没被探测到。请联系报备单位，问清是否已经起飞。' },
-  PARTIAL: { tag: '部分匹配', tagClass: 't-amber', next: '打开合法性判定，看哪一项不符',
-    detail: '找到的飞机和报备内容对不全（比如高度或时间不一致）。请打开合法性判定，看是哪一项不符。' },
+  PARTIAL: { tag: '部分匹配', tagClass: 't-amber', next: '查看比对详情，确认哪一项不符',
+    detail: '找到的飞机和报备内容对不全（比如高度或时间不一致）。' },
   UNDETERMINED: { tag: '不可判定', tagClass: 't-amber', next: '人工核实：看现场画面或联系报备单位',
     detail: '收到的数据不够，系统判断不了。请人工核实：看现场画面，或联系报备单位。' }
 };
-const LEGALITY_ISSUES = new Set(['DEVIATION', 'NONE', 'PARTIAL']);
 
 export function needsAction(plan) {
   return Array.isArray(plan?.attention?.kinds) && plan.attention.kinds.length > 0;
@@ -45,12 +44,20 @@ export const PLAN_GROUP = {
 };
 
 /* 一个任务的每一种问题：列表标签、一句下一步、展开后的完整说明。 */
-export function attentionIssues(plan) {
+export function attentionIssues(plan, handling) {
   const attention = plan?.attention;
-  if (!needsAction(plan)) return [];
   const issues = [];
-  const match = MATCH_ISSUE[attention.match_issue];
-  if (match) issues.push({ kind: attention.match_issue === 'DEVIATION' ? 'DEVIATION' : 'AIRCRAFT', ...match });
+  const match = MATCH_ISSUE[attention?.match_issue];
+  if (match) {
+    const next = handling?.kind === 'alarm' ? '查看告警及处置进度'
+      : handling?.kind === 'legality' ? '查看研判，核对判断依据'
+        : handling?.kind === 'blocked' ? handling.note : match.next;
+    issues.push({ kind: attention.match_issue === 'DEVIATION' ? 'DEVIATION' : 'AIRCRAFT', ...match,
+      next, detail: `${match.detail}${handling?.kind === 'alarm' ? '已有关联告警，请到告警页面继续处理。' : handling?.kind === 'legality' ? '请查看研判与判断依据。' : ''}` });
+  } else if (handling?.kind === 'alarm') {
+    issues.push({ kind: 'ALARM', tag: '已关联告警', tagClass: 't-amber', next: '查看告警及处置进度', detail: '已有关联告警，请到告警页面查看核实与处置进度。' });
+  }
+  if (!attention) return issues;
   const tasks = Array.isArray(attention.device_tasks) ? attention.device_tasks : [];
   if (tasks.length) issues.push(deviceIssue(tasks));
   const verify = Number(attention.pending_verification_risks) || 0, notify = Number(attention.pending_notification_risks) || 0;
@@ -86,10 +93,10 @@ function riskKindText(kinds) {
   return [...new Set(names)].join('、');
 }
 
-/* 行内按钮：比对类问题去合法性判定；只有风险时去风险事件（只看这条任务的）；其他看右侧详情。 */
-export function attentionAction(plan) {
+/* 行内与详情共用已核对的办理入口；未知关联不先显示研判再跳成告警。 */
+export function attentionAction(plan, handling) {
+  if (['alarm', 'legality'].includes(handling?.kind)) return { key: handling.kind, label: `${handling.label} →`, primary: true };
   if (!needsAction(plan)) return { key: 'detail', label: '查看详情' };
-  if (LEGALITY_ISSUES.has(plan.attention.match_issue)) return { key: 'legality', label: '合法性判定 →', primary: true };
   if (plan.attention.kinds.every(kind => kind === 'RISK')) return { key: 'risks', label: '查看风险事件 →', primary: true };
   return { key: 'detail', label: '查看详情' };
 }

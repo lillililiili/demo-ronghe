@@ -34,7 +34,8 @@
     if (event.key === 'Escape') { sceneTools.open = false; sceneTools.querySelector('summary').focus(); }
   });
   function syncFrame() {
-    const url = inputTab==='airspaces'?'/airspace.html?embed=1':'/external.html?embed=1&tab='+inputTab+'&v=20261005-plan-time-2';
+    if(inputTab!=='weather' && weatherPreview.length){weatherPreview=[];renderMap();}
+    const url = inputTab==='airspaces'?'/airspace.html?embed=1':'/external.html?embed=1&tab='+inputTab+'&v=20261018-weather-range-1';
     if (root.dataset.workspace==='inputs' && frame.dataset.view !== (inputTab==='airspaces'?'airspaces':'external')) { frame.dataset.view=inputTab==='airspaces'?'airspaces':'external'; frame.src=url; }
     frame.contentWindow?.postMessage({type:'simulator-input-view', tab:inputTab, visible:root.dataset.workspace==='inputs'}, location.origin);
     if(inputTab==='plans')sendPlans();
@@ -55,7 +56,7 @@
     document.querySelectorAll('[data-tool-panel]').forEach(panel => { panel.hidden = panel.dataset.toolPanel !== next; });
     document.querySelector('.inspector').hidden = next === 'inputs';
     document.querySelector('#input-dock').hidden = next !== 'inputs';
-  if (next === 'inputs' && !frame.getAttribute('src')) frame.src = '/external.html?embed=1&tab='+inputTab+'&v=20261005-weather-area-1';
+  if (next === 'inputs' && !frame.getAttribute('src')) frame.src = '/external.html?embed=1&tab='+inputTab+'&v=20261018-weather-range-1';
     syncFrame();
     if (refit) requestAnimationFrame(() => window.SimulatorMap?.fit(scenePoints()));
   }
@@ -82,10 +83,18 @@
     event.currentTarget.textContent = collapsed ? '展开列表' : '收起列表';
   });
   window.addEventListener('simulator:selection', event => event.detail.kind==='zone'?openAirspace(event.detail.id):workspace(event.detail.kind==='plan'?'routes':'objects', false));
+  window.addEventListener('simulator:weather-drawn', event => {
+    frame.contentWindow.postMessage({type:'simulator-weather-drawn',polygon:event.detail.polygon},location.origin);
+  });
   window.addEventListener('simulator:airspace-drawn', event => openAirspace(event.detail.id));
   window.addEventListener('message', event => {
     if (event.origin!==location.origin || event.source!==frame.contentWindow) return;
     if (event.data?.type==='simulator-input-ready') {syncFrame();if(pendingZoneId)sendZones();}
+    if (event.data?.type==='simulator-weather-preview') { weatherPreview=Array.isArray(event.data.polygon)?event.data.polygon:[];renderMap(); }
+    if (event.data?.type==='simulator-weather-draw') {
+      if(draw)return toast('请先完成或取消当前绘制');setDraw('weather');
+      document.querySelector('#map-stage').scrollIntoView({block:'nearest'});
+    }
     if (event.data?.type==='simulator-plan-draw') {
       if(draw)return toast('请先完成或取消当前绘制');
       workspace('routes');setDraw('plan',event.data.id||null);

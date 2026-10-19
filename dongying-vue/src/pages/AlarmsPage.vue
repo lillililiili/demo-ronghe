@@ -257,7 +257,7 @@ function displayState(a) {
   const noCounter = summary?.no_counter;
   if (noCounter?.review_required === true) return { t: '风险变化待决策', c: 't-amber', color: '#f1a43a' };
   const notification = notificationProgressView(summary?.auto_handoff);
-  if (notification) return { t: notification.title, c: notification.tone === 'warning' ? 't-amber' : notification.tone === 'success' ? 't-green' : 't-gray', color: notification.tone === 'warning' ? '#f1a43a' : '#22d3ee' };
+  if (notification) return { t: notification.title, c: notification.tone === 'warning' ? 't-amber' : notification.tone === 'success' ? 't-green' : 't-gray', color: notification.tone === 'warning' ? '#f1a43a' : '#22d3ee', handoffId: summary.auto_handoff?.handoff_id };
   if (noCounter?.decision_active === true) return { t: '不反制 · 现场处置结束', c: 't-cyan', color: '#22d3ee' };
   const autoHandoff = advisorySummaries.get(a.event_id)?.auto_handoff;
   const listed = [HANDED_OFF, HANDOFF_PENDING].includes(pageProgress[a.event_id]) ? pageProgress[a.event_id] : null;
@@ -275,7 +275,9 @@ function displayState(a) {
     if (NOTIFY_PHASE[summary?.notify_phase]) return NOTIFY_PHASE[summary.notify_phase];
     return stateOf(a);
   }
-  return { t: `${ALARM_PROGRESS_LABEL[key]}${failed ? '（更新失败）' : ''}`, c: ALARM_PROGRESS_TAG[key] || 't-cyan', color: '#22d3ee' };
+  const handoffId = key === 'HANDED_OFF' ? autoHandoff?.handoff_id || sources?.handoffs?.items?.find(row =>
+    row.handoff_type === 'UAV_PUNISHMENT' && row.delivery_status && row.delivery_status !== 'FAILED')?.handoff_id : '';
+  return { t: `${ALARM_PROGRESS_LABEL[key]}${failed ? '（更新失败）' : ''}`, c: ALARM_PROGRESS_TAG[key] || 't-cyan', color: '#22d3ee', handoffId };
 }
 function selectedDisposalProgress() {
   return pageProgress[cur.alarm?.event_id]
@@ -307,10 +309,15 @@ const modeOf = a => SOURCE_MODE[a.source_mode] || { t: esc(a.source_mode || '—
 const sevTag = a => U.tag(sevOf(a).t, sevOf(a).c);
 const OBSERVATION_LABEL = { CURRENT: '观测有效', EXPIRED: '观测已过期', UNKNOWN: '观测待确认' };
 const ATTENTION_LABEL = { CURRENT: '当前事项', AWAITING_CONFIRMATION: '状态待确认', HISTORY: '历史记录' };
-const stateTag = a => U.tag(displayState(a).t, displayState(a).c);
+function stateTag(a) {
+  const state = displayState(a), tag = U.tag(state.t, state.c);
+  return state.handoffId
+    ? `<a class="al-handoff-link" href="#/punish?handoff=${encodeURIComponent(state.handoffId)}" aria-label="查看告警 ${esc(noOf(a))} 的移送处置" title="查看移送处置">${tag}</a>`
+    : tag;
+}
 const observationTag = a => a.attention_group !== 'HISTORY' && ['EXPIRED', 'UNKNOWN'].includes(a.observation_status)
   ? U.tag(OBSERVATION_LABEL[a.observation_status], 't-gray') : '';
-const detailStateTags = a => `${U.tag(displayState(a).t, displayState(a).c)}${observationTag(a)}`;
+const detailStateTags = a => `${stateTag(a)}${observationTag(a)}`;
 /* 告警升级（2026-10-06，BUG-11/BUG-16）：同一架无人机再次违规时服务端升级原告警，不再另起一条。
    severity 已是升级后的当前等级；违规原因按出现顺序累计（偏航写“偏航”）；升级经过另读升级记录。 */
 const severityText = code => SEVERITY[code]?.t || (code === 'UNKNOWN' ? '未定级' : '');
@@ -878,6 +885,10 @@ let listQueryKey = '';
 function paintList() {
   const host = el('alList');
   if (!host) return;
+  host.setAttribute('aria-busy', String(list.loading));
+  // 新页的告警与处置进度准备好前，保留当前整页及滚动位置。
+  // 逐行进度回调也走这里，不能把半成品状态或上一页顶部提前画出来。
+  if (list.loading && list.rows.length) return;
   const queryKey = JSON.stringify(queryOf());
   const resetScroll = queryKey !== listQueryKey;
   listQueryKey = queryKey;
@@ -1029,8 +1040,10 @@ async function loadMapAirspaces(my) {
 async function loadList({ quiet = false, progress = true, alarmId = null } = {}) {
   const my = ++listSeq;
   const previousEvents = list.rows.map(row => row.event_id).join();
-  // 实时刷新静默重读：保留当前列表直到新数据到达，不闪加载状态。
-  if (!quiet) { list.loading = true; list.error = ''; paintList(); }
+  // 整次读取（含逐行进度）完成后一次发布；实时刷新和翻页共用读取屏障。
+  list.loading = true;
+  if (!quiet) list.error = '';
+  paintList();
   try {
     const query = queryOf();
     let page = await listAlarms(query);
@@ -1053,21 +1066,25 @@ async function loadList({ quiet = false, progress = true, alarmId = null } = {})
         throw new Error('关联告警已不在当前可访问列表，请刷新后重试。');
       }
     }
-    if (alarmId) st.page = page.page;
-    list.rows = Array.isArray(page && page.items) ? page.items : [];
-    totalCount.value = Number(page && page.total) || 0;
-    list.loading = false; list.error = ''; list.refreshError = '';
-    if (!list.rows.length && st.page > 1 && totalCount.value) {
-      st.page = Math.max(1, Math.ceil(totalCount.value / st.size));
+    const rows = Array.isArray(page && page.items) ? page.items : [];
+    const total = Number(page && page.total) || 0;
+    if (!rows.length && query.page > 1 && total) {
+      st.page = Math.max(1, Math.ceil(total / query.size));
       return loadList();
     }
-    // 先呈现列表并允许选中详情，逐行补充信息不占用列表加载状态。
     // 实时刷新只在处置、移送变化或本页事件换了时重读逐行进度，告警本身变化不连带每行再读两三次。
-    if (progress || list.rows.map(row => row.event_id).join() !== previousEvents) {
-      void loadPageProgress(list.rows);
+    if (progress || rows.map(row => row.event_id).join() !== previousEvents) {
+      await loadPageProgress(rows);
     }
+    // 翻页期间旧页的进度可能后返回，只有最后一次请求能发布列表。
+    if (my !== listSeq) return;
+    if (alarmId) st.page = page.page;
+    list.rows = rows;
+    totalCount.value = total;
+    list.loading = false; list.error = ''; list.refreshError = '';
   } catch (e) {
     if (my !== listSeq) return;
+    list.loading = false;
     if (quiet && list.rows.length && !list.error) {
       // 自动刷新失败：保留上次读到的列表并注明，错误抛给实时刷新按退避重试。
       list.refreshError = refreshFailureText(e);
@@ -1418,7 +1435,10 @@ onMounted(async () => {
   paintList(); paintDetail();
   syncAlarmMap();
 
-  U.on(view, '[data-row]', 'click', (e, row) => { if (row.dataset.row) selectAlarm(row.dataset.row); });
+  U.on(view, '[data-row]', 'click', (e, row) => {
+    if (e.target.closest('a.al-handoff-link')) return;
+    if (row.dataset.row) selectAlarm(row.dataset.row);
+  });
   /* 分页交互已由模板层 <n-pagination> 受控接管（P2），[data-pg]/[data-size] 委托删除 */
   U.on(view, '[data-f]', 'change', (e, ctl) => {
     if (ctl.disabled) return;
@@ -1649,6 +1669,9 @@ onMounted(async () => {
 .alarm-action-bar { flex:none; max-height:100%; overflow:auto; display:flex; flex-direction:column; align-items:stretch; gap:10px; margin:0; padding:10px 12px; border-bottom:1px solid var(--line); background:var(--panel); box-shadow:0 4px 12px color-mix(in srgb, var(--bg-1) 22%, transparent); }
 .alarm-action-bar:not(:has(.btn, .tag, details, .uav-now)) { display:none; }
 .alarm-now:empty { display:none; }
+.alarms-page :deep(.al-handoff-link) { display:inline-flex; max-width:100%; border-radius:var(--r); }
+.alarms-page :deep(.al-handoff-link .tag) { cursor:pointer; text-decoration:underline; text-underline-offset:3px; }
+.alarms-page :deep(.al-handoff-link:focus-visible) { outline:2px solid var(--cyan); outline-offset:3px; }
 .alarm-now :deep(.uav-now) { margin:0; padding:6px 10px; gap:2px; }
 .alarm-now :deep(.uav-now-summary) { display:flex; align-items:baseline; flex-wrap:wrap; gap:2px 12px; min-width:0; }
 .alarm-now :deep(.uav-now-title) { font-size:14px; }

@@ -3,6 +3,30 @@ const { readFileSync } = require('node:fs');
 const vm = require('node:vm');
 const source = readFileSync('src/pages/FlightsPage.vue', 'utf8');
 const load = source.slice(source.indexOf('async function loadPlans('), source.indexOf('\nlet planDetailToken'));
+const legalitySource = readFileSync('src/pages/LegalityPage.vue', 'utf8');
+const loadQueueSource = legalitySource.slice(legalitySource.indexOf('async function loadQueue('), legalitySource.indexOf('\nasync function selectEvaluation('));
+function legalitySetup({ denied = false, wrongPlan = false } = {}) {
+  const selected = [], evaluationId = `evaluation-${Date.now()}`;
+  const c = { listToken: 0, kpiToken: 0, st: { plan: 'linked-plan', period: 'TODAY', page: 1 },
+    syncDateWindow() { if (c.st.period === 'ALL') c.queueWindow.value = {}; return false; },
+    invalidateDetail() {}, queryParams() { return {}; }, loadKpi() {},
+    formatApiError: e => e.message,
+    legalityApi: {
+      getEvaluation: async id => {
+        if (denied) throw new Error('无权查看');
+        return { evaluation_id: id, target_id: 'linked-target', plan_id: wrongPlan ? 'another-plan' : 'linked-plan', object_type_code: 'UAV', evaluated_at: 5 };
+      },
+      listEvaluations: async () => ({ items: [{ evaluation_id: 'unrelated-default' }], total: 1 })
+    },
+    selectEvaluationById: async id => selected.push(id),
+    selectEvaluation: async row => selected.push(row.evaluation_id),
+    S: { st: {} }
+  };
+  for (const [key, value] of Object.entries({ queueWindow: { from: 100, to: 200 }, listError: '', deepLinkNotice: '', loading: false,
+    items: [], totalCount: 0, refreshError: '' })) c[key] = { value };
+  vm.createContext(c); vm.runInContext(loadQueueSource, c);
+  return { c, evaluationId, selected };
+}
 function setup({ denied = false, missing = false, target = 'p25' } = {}) {
   const rows = Array.from({ length: 42 }, (_, i) => ({ plan_id: `p${i + 1}` }));
   const calls = [];
@@ -48,5 +72,15 @@ function setup({ denied = false, missing = false, target = 'p25' } = {}) {
   stale.ctx.flightApi.detail = async () => { stale.ctx.planListToken++; return { plan_id: 'p25' }; };
   await stale.ctx.loadPlans(1, 'p25');
   assert.equal(stale.calls.length, 0, '离开页面或新查询作废旧定位');
+  const historical = legalitySetup();
+  await historical.c.loadQueue({ evaluationId: historical.evaluationId, targetId: 'linked-target' });
+  assert.deepEqual(historical.selected, [historical.evaluationId], '精确打开所引研判，不能改选列表首条');
+  assert.equal(historical.c.st.period, 'ALL', '历史研判不被今日筛选挡住');
+  for (const option of [{ denied: true }, { wrongPlan: true }]) {
+    const blocked = legalitySetup(option);
+    await blocked.c.loadQueue({ evaluationId: blocked.evaluationId, targetId: 'linked-target' });
+    assert.deepEqual(blocked.selected, [], '关联读取失败或错配不能用其他记录替代');
+    assert.match(blocked.c.deepLinkNotice.value, /定位失败/);
+  }
   console.log('flight plan navigation: passed');
 })();

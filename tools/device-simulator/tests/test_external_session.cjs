@@ -11,6 +11,23 @@ function node(selector){
 const document={hidden:false,activeElement:null,querySelector:node,querySelectorAll(){return [];},addEventListener(){}};
 const source=fs.readFileSync(path.join(__dirname,'../web/external.js'),'utf8');
 
+test('weather preview clears invalid geometry and keeps valid source coordinates',async()=>{
+ const messages=[];
+ const sandbox={document,location:{origin:'http://localhost'},window:{ExternalContract:require('../web/external-contract.js'),WeatherForm:require('../web/weather-form.js'),parent:{postMessage(data){messages.push(data);}}},setInterval(){},fetch:async()=>({ok:true,status:200,json:async()=>({connected:false})})};
+ vm.createContext(sandbox);
+ vm.runInContext(source+'\nglobalThis.__test={weatherPreview};',sandbox);
+ await new Promise(resolve=>setImmediate(resolve));
+ for(const [x,y] of [[118.6,37.4],[119.1,36.8]]){
+  const polygon=[[x,y],[x+.01,y],[x+.01,y+.01],[x,y]];
+  sandbox.__test.weatherPreview({polygon});
+  assert.deepEqual(messages.at(-1).polygon,polygon);
+ }
+ for(const polygon of ['invalid',[[181,0],[181,1],[180,1],[181,0]],[[0,0],[1,1],[0,1],[1,0],[0,0]]]){
+  sandbox.__test.weatherPreview({polygon});
+  assert.equal(messages.at(-1).polygon,null);
+ }
+});
+
 test('risk inbox displays frozen coordinates and distinguishes missing or hidden material',async()=>{
  const sandbox={document,window:{ExternalContract:require('../web/external-contract.js')},setInterval(){},fetch:async()=>({ok:true,status:200,json:async()=>({connected:false})})};
  vm.createContext(sandbox);

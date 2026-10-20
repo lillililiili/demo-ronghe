@@ -36,6 +36,7 @@ import UKpis from '@/components/UKpis.vue';
 import UPanel from '@/components/UPanel.vue';
 import RiskOpticalPanel from '@/pages/flights/components/RiskOpticalPanel.vue';
 import PlanVerificationPanel from '@/pages/flights/components/PlanVerificationPanel.vue';
+import PlanDeviceCheck from '@/pages/flights/components/PlanDeviceCheck.vue';
 import FlightExecutionChecks from '@/components/FlightExecutionChecks.vue';
 import PlanFilingDetails from '@/pages/flights/components/PlanFilingDetails.vue';
 import PlanDeviceMarkers from '@/pages/flights/components/PlanDeviceMarkers.vue';
@@ -523,6 +524,9 @@ function onPlanAction({ id, key }) {
     S.tabHash = hash;
     location.hash = hash;
     showEventsTab(null, id);
+  } else if (key === 'device-check') {
+    openModal({ title: '设备检查与处置进度', width: '720px',
+      render: () => h(PlanDeviceCheck, { plan }) });
   } else if (key === 'devices') {
     openModal({ title: '设备异常处置进度', width: '720px',
       render: () => h(PlanMaintenanceProgressModal, { planId: id, planNo: plan.plan_no,
@@ -1915,7 +1919,7 @@ async function realtimeRefreshPlans(topics) {
     if (error.value) throw planFailure || new Error(error.value);
     return;
   }
-  if (topics.some(topic => ['plan', 'airspace', '*'].includes(topic))) {
+  if (topics.some(topic => ['plan', 'airspace', 'risk', 'device', 'device_state', '*'].includes(topic))) {
     const token = ++planListToken;
     const selectedId = selected.value?.plan_id;
     const before = JSON.stringify(plans.value.find(item => item.plan_id === selectedId) || null);
@@ -1973,7 +1977,7 @@ async function realtimeRefreshRisks() {
   }
 }
 
-const realtime = useRealtimeRefresh(['plan', 'airspace', 'risk', 'target', 'alarm', 'legality'], async topics => {
+const realtime = useRealtimeRefresh(['plan', 'airspace', 'risk', 'target', 'alarm', 'legality', 'device', 'device_state'], async topics => {
   if (activeTab.value === 'events') {
     if (topics.some(topic => ['risk', 'plan', '*'].includes(topic))) await realtimeRefreshRisks();
   } else await realtimeRefreshPlans(topics);

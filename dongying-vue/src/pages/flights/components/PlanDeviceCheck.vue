@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onUnmounted, ref, watch } from 'vue';
 import { checkPlanDevices, deviceCheckStatus, deviceCheckCategory, deviceCheckCounts, deviceCheckHistory, deviceCheckExplanation, retainDeviceOrder } from '@/pages/flights/planDeviceCheck.js';
+import { maintenanceStateLabel } from '@/pages/flights/maintenanceState.js';
 import { loadDeviceMaintenanceNotice } from '@/pages/flights/deviceMaintenance.js';
 import { hasPermission } from '@/services/accessControl.js';
 import { useRealtimeRefresh } from '@/hooks/useRealtimeRefresh.js';
@@ -76,6 +77,7 @@ onUnmounted(() => { generation++; controller?.abort(); emit('map-devices', null)
           <p v-if="!row.position">暂时无法取得设备位置。</p>
           <p v-if="deviceCheckExplanation(row)" class="state-explanation">{{ deviceCheckExplanation(row) }}</p>
           <p>最近心跳：{{ date(row.last_heartbeat_at) }}</p>
+          <p v-if="row.maintenance" class="maintenance-progress" role="status">后台处置：{{ maintenanceStateLabel(row.maintenance) }} · 在管理后台“设备异常处理”办理</p>
           <p v-if="row.abnormal && ['BAD','DEGRADED'].includes(row.health_code) && !['设备故障','设备异常'].includes(deviceCheckStatus(row))">运行异常</p>
           <p v-if="row.abnormal && row.observed_at != null && date(row.observed_at) !== date(row.last_heartbeat_at)">状态上报：{{ date(row.observed_at) }}</p>
           <p v-if="row.abnormal && !row.incidents?.length">设备告警记录：本任务时段暂无事件记录。</p>

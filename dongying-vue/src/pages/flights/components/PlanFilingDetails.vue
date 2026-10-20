@@ -103,7 +103,7 @@ const routeMeta = computed(() => {
         </template>
         <template v-else-if="subjects"><dt>任务反馈对象</dt><dd>尚未配置</dd></template>
       </dl>
-      <p v-if="subjects">报备单位、报送单位和飞手档案由后台维护；申报时名称保留在本任务中。 <button class="btn ghost" type="button" @click="loadSubjects">刷新关联信息</button></p>
+      <p v-if="subjects">本页展示任务已关联的单位和飞手资料；申报时名称保留在本任务中。 <button class="btn ghost" type="button" @click="loadSubjects">刷新关联信息</button></p>
     </details>
     </div>
     <div class="filing-col">

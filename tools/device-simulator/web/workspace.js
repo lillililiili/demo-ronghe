@@ -35,7 +35,7 @@
   });
   function syncFrame() {
     if(inputTab!=='weather' && weatherPreview.length){weatherPreview=[];renderMap();}
-    const url = inputTab==='airspaces'?'/airspace.html?embed=1':'/external.html?embed=1&tab='+inputTab+'&v=20261018-weather-range-1';
+    const url = inputTab==='airspaces'?'/airspace.html?embed=1':'/external.html?embed=1&tab='+inputTab+'&v=20261019-district-boundary-1';
     if (root.dataset.workspace==='inputs' && frame.dataset.view !== (inputTab==='airspaces'?'airspaces':'external')) { frame.dataset.view=inputTab==='airspaces'?'airspaces':'external'; frame.src=url; }
     frame.contentWindow?.postMessage({type:'simulator-input-view', tab:inputTab, visible:root.dataset.workspace==='inputs'}, location.origin);
     if(inputTab==='plans')sendPlans();
@@ -56,7 +56,7 @@
     document.querySelectorAll('[data-tool-panel]').forEach(panel => { panel.hidden = panel.dataset.toolPanel !== next; });
     document.querySelector('.inspector').hidden = next === 'inputs';
     document.querySelector('#input-dock').hidden = next !== 'inputs';
-  if (next === 'inputs' && !frame.getAttribute('src')) frame.src = '/external.html?embed=1&tab='+inputTab+'&v=20261018-weather-range-1';
+  if (next === 'inputs' && !frame.getAttribute('src')) frame.src = '/external.html?embed=1&tab='+inputTab+'&v=20261019-district-boundary-1';
     syncFrame();
     if (refit) requestAnimationFrame(() => window.SimulatorMap?.fit(scenePoints()));
   }

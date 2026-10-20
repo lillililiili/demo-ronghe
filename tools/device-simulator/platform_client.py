@@ -259,9 +259,10 @@ class Platform:
         return self.call('PUT', '/devices/' + urllib.parse.quote(str(device['device_id']), safe='') + '/sensing-profile',
                          payload, 'sim-sensing-' + external + '-' + digest)
 
-    def sync_simulated_range(self, device_id, kind):
+    def sync_simulated_range(self, device_id, kind, coverage=None):
         """Independent native simulators use the same persisted range as scene devices."""
-        desired = default_coverage(kind)
+        explicit = coverage is not None
+        desired = normalize_coverage_config(coverage) if explicit else default_coverage(kind)
         if desired is None:
             raise ValueError('模拟设备类型没有默认范围')
         record = self.call('GET', '/devices/' + urllib.parse.quote(str(device_id), safe=''))
@@ -271,9 +272,9 @@ class Platform:
                 or device.get('source_mode') not in ('live', 'replay')
                 or str(device.get('device_type_code') or '').upper() != expected.get(kind)):
             raise ValueError('设备身份或模拟来源不一致，不能同步模拟范围')
-        # Preserve an explicitly configured range; supply the default only when absent.
+        # A scene declaration wins for verified simulated devices; defaults only fill missing profiles.
         current = device.get('coverage') or {}
-        if current.get('kind'):
+        if not explicit and current.get('kind'):
             return record
         return self._sync_sensing_profile(record, desired, str(device_id))
 

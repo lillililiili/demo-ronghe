@@ -8,6 +8,8 @@ from uuid import uuid4
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from plan_weather import batch_forecasts, plan_forecast
+from acceptance_flows import read_acceptance_flows
+from engine import coordinates
 
 
 class PlanWeatherTests(unittest.TestCase):
@@ -15,6 +17,46 @@ class PlanWeatherTests(unittest.TestCase):
         self.now = int(dt.datetime(2027, 2, 18, 15, tzinfo=dt.timezone.utc).timestamp() * 1000)
         self.weather = {'area_name': '场景气象范围', 'summary': '模拟多云', 'wind_speed_ms': 3, 'gust_ms': 5}
         self.scene = {'fullchain': {'categories': ['weather'], 'weather': self.weather}}
+
+    def test_weather_flow_keeps_its_explicit_map_coverage_in_every_forecast(self):
+        flow = next(item for item in read_acceptance_flows(Path(__file__).resolve().parents[1])['flows']
+                    if item['flow'] == 6)
+        scene = flow['scene']
+        polygon = scene['fullchain']['weather'].get('polygon')
+        self.assertIsNotNone(polygon, '流程 6 必须明确保存模拟预报范围，不能只有区域名称')
+        self.assertGreaterEqual(len(polygon), 4)
+        self.assertEqual(polygon[0], polygon[-1])
+        source = scene['fullchain']['weather']['polygon_source']
+        self.assertEqual(source['adcode'], '370502')
+        self.assertEqual(source['coordinate_system'], 'WGS84')
+        self.assertEqual(len(polygon)-1, source['vertex_count'])
+        # A district forecast keeps its detailed outline, not a box around this route.
+        self.assertGreater(max(p[0] for p in polygon)-min(p[0] for p in polygon), .1)
+        self.assertGreater(max(p[1] for p in polygon)-min(p[1] for p in polygon), .1)
+        for plan in scene['plans']:
+            for point in plan['points']:
+                x, y = coordinates(point)
+                crossings = sum((a[1]>y)!=(b[1]>y) and x<(b[0]-a[0])*(y-a[1])/(b[1]-a[1])+a[0]
+                                for a, b in zip(polygon, polygon[1:]))
+                self.assertEqual(crossings % 2, 1)
+        for mode, offset in (('replay', 0), ('mock', 86400000)):
+            with self.subTest(mode=mode):
+                plan_id, batch = str(uuid4()), str(uuid4())
+                start = self.now + offset
+                manifest = {'batch': batch, 'created_at': start,
+                            'plans': {'route': {'ids': [plan_id]}},
+                            'plan_expectations': {plan_id: {'start_at': start, 'end_at': start + 300000,
+                                                           'source_mode': mode}}}
+                first = batch_forecasts(scene, manifest)
+                self.assertEqual(first, batch_forecasts(scene, manifest))
+                self.assertEqual(first[0]['polygon'], polygon)
+                self.assertEqual(first[0]['plan_id'], plan_id)
+                self.assertEqual(first[0]['periods'][0]['summary'], scene['fullchain']['weather']['summary'])
+                without_range = copy.deepcopy(scene)
+                del without_range['fullchain']['weather']['polygon']
+                previous = batch_forecasts(without_range, manifest)[0]
+                self.assertNotIn('polygon', previous)
+                self.assertNotEqual(first[0]['message_id'], previous['message_id'])
 
     def test_explicit_weather_footprint_and_rainfall_survive_batch_and_change_message(self):
         plan = {'start_at': self.now, 'end_at': self.now + 60000, 'source_mode': 'replay'}

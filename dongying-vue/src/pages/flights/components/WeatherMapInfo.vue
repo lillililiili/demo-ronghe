@@ -48,7 +48,7 @@ onUnmounted(() => clearInterval(ticker));
       <dt>数据来源</dt><dd>{{ source || '未提供' }}<span v-if="isSimulation"> · 模拟数据</span></dd>
       <dt>发布时间</dt><dd>{{ time(fact.published_at) }}（北京时间）</dd>
     </dl>
-    <p>云雨纹理为区域天气示意，不表示逐点雨量或实际云层分布。预报范围不等同于行政区边界；当前未提供高度分层。</p>
+    <p>云雨纹理为区域天气示意，不表示逐点雨量或实际云层分布。范围以预报提供的边界为准；当前未提供高度分层。</p>
   </section>
   <div class="weather-legend" @click.stop>
     <div class="weather-legend-row"><span><i class="area"></i>{{ hasRange ? '预报范围' : '边界未提供' }}</span><span class="weather-cloud-key"><span aria-hidden="true" v-html="icon"></span>云雨示意</span><span><i class="wind-key"></i>风向</span><span><i class="route"></i>关联航线</span></div>

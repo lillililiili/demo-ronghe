@@ -24,14 +24,14 @@
   }
   function coverage(data){
     const area=String(data?.area_name||'').trim();
-    if(data?.polygon) return `预报区域：${area||'未填写'} · 模拟预报范围 ${data.polygon.length-1} 个顶点。平台按区域、范围及有效时段匹配任务；不是行政区边界。`;
+    if(data?.polygon) return `预报区域：${area||'未填写'} · 模拟预报范围 ${data.polygon.length-1} 个顶点。平台按区域、范围及有效时段匹配任务；范围以本次提交的边界为准。`;
     return area
       ? `预报区域：${area}。提交后由平台系统按预报区域匹配受影响任务。边界未提供，不绘制范围。`
       : '请填写预报区域。提交后由平台系统按预报区域匹配受影响任务。边界未提供，不绘制范围。';
   }
   function validatePolygon(ring){
     if(ring==null)return null;
-    if(!Array.isArray(ring)||ring.length<4||ring.length>101)throw Error('预报范围须有3至100个顶点并闭合');
+    if(!Array.isArray(ring)||ring.length<4||ring.length>1001)throw Error('预报范围须有3至1000个顶点并闭合');
     if(!ring.every(p=>Array.isArray(p)&&p.length===2&&p.every(Number.isFinite)&&Math.abs(p[0])<=180&&Math.abs(p[1])<=85.051129))throw Error('预报范围坐标无效');
     const n=ring.length-1,origin=ring[0],cross=(a,b,c)=>(b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0]);
     if(origin.some((v,i)=>v!==ring[n][i]))throw Error('预报范围必须闭合');

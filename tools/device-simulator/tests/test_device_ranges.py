@@ -92,4 +92,38 @@ class DeviceRangeTests(unittest.TestCase):
             api.sync_simulated_range(device_id,'countermeasure')
             self.assertEqual(1,api.call.call_count)
 
+    def test_explicit_counter_scene_replaces_old_default_with_version_and_source_checks(self):
+        for radius, version in ((2000, 0), (1350, 4)):
+            device_id = uuid.uuid4().hex
+            record = {'device': dict(device_id=device_id, simulated=True, source_mode='live',
+                device_type_code='countermeasure', coverage={'kind': 'CIRCLE', 'radius_m': 1000, 'version': version})}
+            desired = dict(kind='circle', radiusM=radius, sourceLabel='验收场景模拟范围')
+            api = Platform('http://127.0.0.1:8081/api/v1')
+            api.call = Mock(side_effect=[record, record])
+            api.sync_simulated_range(device_id, 'countermeasure', desired)
+            self.assertEqual(radius, api.call.call_args.args[2]['radius_m'])
+            self.assertEqual(version, api.call.call_args.args[2]['expected_version'])
+            record['device']['simulated'] = False
+            api.call = Mock(return_value=record)
+            with self.assertRaisesRegex(ValueError, '模拟来源'):
+                api.sync_simulated_range(device_id, 'countermeasure', desired)
+            self.assertEqual(1, api.call.call_count)
+
+    def test_receiver_sync_uses_this_scene_not_previous_scene(self):
+        from realtime_control import RealtimeController
+        from types import SimpleNamespace
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            api = SimpleNamespace(sync_simulated_range=Mock())
+            session = SimpleNamespace(version='current', platform=api)
+            previous = {'countermeasure': {'coverage': {'kind': 'circle', 'radiusM': 1000}}}
+            runtime = SimpleNamespace(data_dir=Path(folder), session=session, scene=previous)
+            controller = RealtimeController(runtime, port=19874)
+            next_scene = {'countermeasure': {'coverage': {'kind': 'circle', 'radiusM': 2300}}}
+            controller._sync_countermeasure_range(SimpleNamespace(version='current'), 'device-next', next_scene)
+            api.sync_simulated_range.assert_called_once_with('device-next', 'countermeasure', next_scene['countermeasure']['coverage'])
+            api.sync_simulated_range.reset_mock()
+            controller._sync_countermeasure_range(SimpleNamespace(version='current'), 'device-default', {})
+            api.sync_simulated_range.assert_called_once_with('device-default', 'countermeasure')
+
 if __name__=='__main__': unittest.main()

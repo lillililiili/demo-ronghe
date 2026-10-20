@@ -816,9 +816,16 @@ let trajectoryToken = 0;
 async function loadMatchedTarget(plan, { quiet = false } = {}) {
   const current = ++trajectoryToken;
   matchedTarget.value = null;
-  if (!quiet) trajectory.value = null;
-  matchedTrackNote.value = '';
-  if (!['EXECUTING', 'COMPLETED'].includes(plan?.status_code)) { trajectory.value = null; return; }
+  // 静默刷新保留原提示，避免请求期间移除提示行使地图高度反复变化。
+  if (!quiet) {
+    trajectory.value = null;
+    matchedTrackNote.value = '';
+  }
+  if (!['EXECUTING', 'COMPLETED'].includes(plan?.status_code)) {
+    trajectory.value = null;
+    matchedTrackNote.value = '';
+    return;
+  }
   try {
     const result = await flightApi.trajectory(plan.plan_id);
     if (current !== trajectoryToken || selected.value?.plan_id !== plan.plan_id) return;

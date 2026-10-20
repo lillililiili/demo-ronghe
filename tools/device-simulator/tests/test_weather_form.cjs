@@ -36,3 +36,20 @@ test('rain intensity is optional and never inferred from probability', () => {
   data.periods[0].precipitation_rate_mm_h=-1;
   assert.throws(()=>WeatherForm.validate(data),/降雨/);
 });
+
+test('detailed regional boundaries keep coordinate, topology and size validation', () => {
+  const circle=(x,y,n)=>{
+    const ring=Array.from({length:n},(_,i)=>[x+.1*Math.cos(2*Math.PI*i/n),y+.1*Math.sin(2*Math.PI*i/n)]);
+    return [...ring,ring[0]];
+  };
+  for(const [x,y] of [[118.6,37.4],[119.1,36.8]]) {
+    for(const n of [659,1000]) {
+      const polygon=circle(x,y,n);
+      assert.deepEqual(WeatherForm.validatePolygon(polygon),polygon);
+      const crossed=structuredClone(polygon);
+      [crossed[2],crossed[Math.floor(n/2)]]=[crossed[Math.floor(n/2)],crossed[2]];
+      assert.throws(()=>WeatherForm.validatePolygon(crossed),/自交/);
+    }
+    assert.throws(()=>WeatherForm.validatePolygon(circle(x,y,1001)),/1000/);
+  }
+});

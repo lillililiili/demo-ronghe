@@ -10,7 +10,7 @@ import { disposalApi, isDisposalUnavailable, newDisposalIdempotencyKey } from '@
 import { deviceApi } from '@/services/deviceApi.js';
 import { deviceReach, validPoint } from './deviceReach.js';
 import { isUncertainOutcome } from '@/services/apiClient.js';
-import { DISPOSAL_ACTION_LABEL, DISPOSAL_BLOCK_REASON_LABEL, DISPOSAL_CHANNEL_LABEL, DISPOSAL_STATUS_LABEL, disposalStatusText, labelOf } from '@/ui/labels.js';
+import { COUNTERMEASURE_MODE_LABEL, DISPOSAL_ACTION_LABEL, DISPOSAL_BLOCK_REASON_LABEL, DISPOSAL_CHANNEL_LABEL, DISPOSAL_STATUS_LABEL, disposalStatusText, labelOf } from '@/ui/labels.js';
 
 export const DISPOSAL_UNAVAILABLE_TEXT = '处置授权功能暂不可用';
 
@@ -76,6 +76,7 @@ function summaryHtml(auth, extra = []) {
   const rows = [
     ['授权编号', auth?.authorization_no ? `<span class="mono" title="${esc(auth.authorization_id)}">${esc(auth.authorization_no)}</span>` : ''],
     ['动作类型', auth?.action_type ? esc(labelOf(DISPOSAL_ACTION_LABEL, auth.action_type)) : ''],
+    ['反制方式', auth?.countermeasure_mode ? esc(labelOf(COUNTERMEASURE_MODE_LABEL, auth.countermeasure_mode)) : ''],
     ['授权方式', direct ? '免逐次审批' : auth?.authorization_mode === 'REVIEW' ? '申请审批' : ''],
     ['当前状态', esc(status)],
     ['执行受阻', auth?.execution_block_reason ? esc(labelOf(DISPOSAL_BLOCK_REASON_LABEL, auth.execution_block_reason)) : ''],
@@ -252,6 +253,11 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
     fields: [
       ...(pickable ? [{ key: 'action_type', label: '动作类型', type: 'radio', required: true,
         options: choices.map(a => ({ value: a, label: labelOf(DISPOSAL_ACTION_LABEL, a) })) }] : []),
+      ...(actionType === 'COUNTERMEASURE' || choices.includes('COUNTERMEASURE') ? [{
+        key: 'countermeasure_mode', label: '反制方式', type: 'radio', required: true,
+        visibleWhen: model => model.action_type === 'COUNTERMEASURE',
+        options: Object.entries(COUNTERMEASURE_MODE_LABEL).map(([value, label]) => ({ value, label }))
+      }] : []),
       { key: 'channel', label: '执行通道', type: 'radio', required: true, options: [
         { value: 'LINGYUN_B', label: direct ? '协议 B 设备（提交后由服务端直接下发）' : '协议 B 设备（批准后可自动执行）' },
         { value: 'COUNTERMEASURE_4CH', label: '四通道反制设备（经网络控制器下发，回执以设备为准）' }
@@ -263,11 +269,12 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
       { key: 'reason', label: direct ? '直接反制事由' : '申请事由', type: 'textarea', minRows: 3,
         placeholder: '选填；如需补充事由，请填写 2–500 字' }
     ],
-    initial: { action_type: actionType, channel: 'LINGYUN_B', device_id: null, reason: initialReason },
+    initial: { action_type: actionType, countermeasure_mode: 'FORCE_LAND', channel: 'LINGYUN_B', device_id: null, reason: initialReason },
     confirmText: direct ? '确认直接反制' : '提交申请',
     danger: true,
     validate: m => {
       if (!isCurrent()) return '事件已切换，请关闭后从当前事件重新申请';
+      if (m.action_type === 'COUNTERMEASURE' && !Object.hasOwn(COUNTERMEASURE_MODE_LABEL, m.countermeasure_mode)) return '请选择迫降或驱离';
       const reason = String(m.reason || '').trim();
       if (reason.length > 0 && (reason.length < 2 || reason.length > 500)) {
         return `${direct ? '直接反制事由' : '申请事由'}填写时需为 2–500 字，当前 ${reason.length} 字；请核对并调整。`;
@@ -284,7 +291,7 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
       if (why) return `所选设备不能用：${why}。请换一台设备。`;
       return null;
     },
-    onSubmit: ({ action_type: chosen, channel, device_id: deviceId, reason }) => submit({
+    onSubmit: ({ action_type: chosen, countermeasure_mode: countermeasureMode, channel, device_id: deviceId, reason }) => submit({
       scope: `${subjectKind}:${subjectId}:${chosen || actionType}`,
       action: direct ? 'direct' : 'request',
       call: key => {
@@ -292,6 +299,7 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
         const body = {
           action_type: chosen || actionType, subject_kind: subjectKind, subject_id: subjectId,
           channel, device_id: String(deviceId || '').trim(),
+          ...((chosen || actionType) === 'COUNTERMEASURE' ? { countermeasure_mode: countermeasureMode } : {}),
           reason: String(reason || '').trim()
         };
         return customSubmit ? customSubmit(body, key) : direct ? disposalApi.directExecute(body, key) : disposalApi.create(body, key);

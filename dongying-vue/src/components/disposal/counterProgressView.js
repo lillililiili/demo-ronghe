@@ -1,7 +1,7 @@
 /* 处置进度里的“反制”一行（2026-10-18 rose 确认）：谁发起（自动反制 / 人工反制）、什么时候开始和停止、设备回执。
    只整理授权记录和它的办理事件里已有的事实；开始以设备回执“已打开”为准，只下发了启动指令不算开始。
    不推进授权、不替设备判断结果。 */
-import { DISPOSAL_STATUS_LABEL, labelOf } from '../../ui/labels.js';
+import { COUNTERMEASURE_MODE_LABEL, DISPOSAL_STATUS_LABEL, labelOf } from '../../ui/labels.js';
 
 /** 后台自动规则执行身份（AutomationPrincipal.USER_ID）；自动反制都以它发起且为直接授权。 */
 export const AUTOMATION_ACTOR_ID = 'automation-rule-runner';
@@ -108,7 +108,8 @@ export function counterProgressView(row, events, stop = null) {
   if (!row) return null;
   const automatic = isAutomaticCounter(row);
   const action = ACTION[row.action_type] || '处置';
-  const title = `${automatic ? '自动' : '人工'}${action}`;
+  const mode = row.countermeasure_mode ? labelOf(COUNTERMEASURE_MODE_LABEL, row.countermeasure_mode) : '';
+  const title = `${automatic ? '自动' : '人工'}${action}${mode ? ` · ${mode}` : ''}`;
   const known = Array.isArray(events);
   const list = known ? [...events].filter(Boolean).sort((a, b) => Number(a.occurred_at || 0) - Number(b.occurred_at || 0)) : [];
   const decision = automatic ? { initiator: '系统按启用的反制规则自动发起', decisionNote: '' }

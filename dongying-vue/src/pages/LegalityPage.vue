@@ -589,7 +589,7 @@ async function selectEvaluationById(evaluationId, options = {}) {
       followLatestSelection = false;
       detailLoading.value = false;
       detailError.value = data.object_type_code && data.object_type_code !== 'UNKNOWN'
-        ? '该目标不属于无人机，相关风险请在空域监测或全部风险事件中查看。'
+        ? '该目标不属于无人机，相关风险请在飞行任务的全部风险事件中查看。'
         : '该目标尚未明确识别为无人机，不展示无人机合法性研判。';
       st.page = 1;
       void loadQueue({ keepSelection: true, skipSelection: true, refreshKpi: true });

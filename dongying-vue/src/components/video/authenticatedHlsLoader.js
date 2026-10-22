@@ -1,7 +1,8 @@
 // 清单、分片、密钥均走同一授权代理；不向外部地址或其他目标泄漏会话。
-export function streamUrl(raw, { origin, targetId, streamId }) {
+export function streamUrl(raw, { origin, targetId, deviceId, streamId }) {
   const url = new URL(raw, origin);
-  const prefix = `/api/v1/targets/${encodeURIComponent(targetId)}/video/streams/${encodeURIComponent(streamId)}/`;
+  if ((!targetId && !deviceId) || !streamId) throw new Error('视频关联不完整');
+  const prefix = `/api/v1/${deviceId ? 'devices' : 'targets'}/${encodeURIComponent(deviceId || targetId)}/video/streams/${encodeURIComponent(streamId)}/`;
   // 平台签发的临时媒体标识不承载登录凭据；真实上游会话仅由后端保存。
   const mediaSession = /^\?session=[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   if (url.origin !== origin || url.username || url.password || (url.search && !mediaSession.test(url.search)) || url.hash
@@ -11,7 +12,7 @@ export function streamUrl(raw, { origin, targetId, streamId }) {
   return url.href;
 }
 
-export function authenticatedHlsLoader({ origin, targetId, streamId, session, readToken, onUnauthorized }) {
+export function authenticatedHlsLoader({ origin, targetId, deviceId, streamId, session, readToken, onUnauthorized }) {
   return class AuthenticatedLoader {
     constructor() {
       this.stats = { aborted: false, loaded: 0, total: 0, retry: 0, chunkCount: 0, bwEstimate: 0,
@@ -33,7 +34,7 @@ export function authenticatedHlsLoader({ origin, targetId, streamId, session, re
       try {
         const token = readToken();
         if (!token || token !== session) throw new Error('登录会话已变化');
-        const url = streamUrl(context.url, { origin, targetId, streamId });
+        const url = streamUrl(context.url, { origin, targetId, deviceId, streamId });
         const headers = new Headers({ Authorization: `Bearer ${token}` });
         if (context.rangeEnd) headers.set('Range', `bytes=${context.rangeStart || 0}-${context.rangeEnd - 1}`);
         const response = await fetch(url, { headers, redirect: 'error', cache: 'no-store', credentials: 'same-origin', signal: this.controller.signal });

@@ -1,4 +1,4 @@
-import { pointRelation } from './airspaceRiskModel.js';
+import { pointRelation } from './airspaceGeometry.js';
 
 // 使用当前绘制的屏幕坐标命中，容差单位为像素，不影响业务距离或空域判定。
 export function hitMapReference([x, y], references) {
@@ -17,10 +17,3 @@ export function hitMapReference([x, y], references) {
   return hits.find(item => !item.polygon && near(item))
     || hits.find(item => item.polygon && (near(item) || pointRelation([x, y], [[item.points]]) !== 'OUTSIDE')) || null;
 }
-
-export const REFERENCE_NOTES = {
-  dock: '无人机自动起降参考点；目标距离按距该点的水平距离展示。',
-  facility: '重点设施中心参考点；目标距离按距该中心的水平距离展示。',
-  route: '航线中心线；目标距离取到中心线的最短水平距离。',
-  airspace: '监测空域平面范围；目标距离取到边界的最短水平距离，界内外仅表示平面位置。'
-};

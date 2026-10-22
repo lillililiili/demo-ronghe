@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { autoSmsView } from '../src/components/disposal/autoSmsView.js';
-import { autoVoiceView } from '../src/components/disposal/autoVoiceView.js';
+import { autoVoiceView, DEPARTED_NOT_CALLED } from '../src/components/disposal/autoVoiceView.js';
+import { computed } from 'vue';
 
 // BLOCK-03（2026-10-06 用户确认）：飞手信息只来自上级计划；计划里没有飞手电话时，告警的通知进度直接写明“缺飞手联系方式”。
 const overview = (sms, voice, missing) => ({
@@ -48,9 +49,18 @@ test('已经在发、已送达、失败或结果未知时以发送记录为准�
 test('紧凑卡片的标题先看缺飞手联系方式，不再显示“等待短信送达”', () => {
   const sms = readFileSync(new URL('../src/components/disposal/AutoSmsNotice.vue', import.meta.url), 'utf8');
   const voice = readFileSync(new URL('../src/components/disposal/AutoVoiceNotice.vue', import.meta.url), 'utf8');
-  assert.match(sms, /const compactTitle = computed\(\(\) => view\.value\.pilotContactMissing \? view\.value\.title :/);
-  const body = voice.match(/const compactTitle = computed\(\(\) => \{([\s\S]*?)\n\}\);/)[1];
-  const compactTitle = new Function('view', 'props', body);
-  assert.equal(compactTitle({ value: { pilotContactMissing: true, title: '缺飞手联系方式' } },
-    { data: overview('BLOCKED', 'WAITING', true) }), '缺飞手联系方式');
+  const title = (source, view, data) => {
+    const expression = source.match(/const compactTitle = computed\([\s\S]*?\);/)[0];
+    return new Function('computed', 'view', 'props', 'DEPARTED_NOT_CALLED', `${expression} return compactTitle.value;`)(
+      computed, { value: view }, { data }, DEPARTED_NOT_CALLED);
+  };
+  const missing = overview('BLOCKED', 'WAITING', true);
+  assert.equal(title(sms, autoSmsView(missing), missing), '缺飞手联系方式');
+  assert.equal(title(voice, autoVoiceView(missing), missing), '缺飞手联系方式');
+  for (const source of [sms, voice]) {
+    assert.equal(title(source, { noReportedPilot: true, title: '没有报备飞手' }, overview('WAITING', 'WAITING', false)), '没有报备飞手');
+  }
+  const normal = { auto_sms: { status: 'SENDING' }, auto_voice: { status: 'CALLING' } };
+  assert.equal(title(sms, autoSmsView(normal), normal), '正在发送');
+  assert.equal(title(voice, autoVoiceView(normal), normal), '正在拨打');
 });

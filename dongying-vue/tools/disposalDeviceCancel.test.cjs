@@ -31,11 +31,13 @@ function load({ devices = DEVICES, create, cancel, listError } = {}) {
     deviceApi: { list: async () => { if (listError) throw listError; return { items: devices }; } },
     disposalApi: {
       create: create || (async () => ({ authorization_no: 'DSP-NEW' })),
+      directExecute: create || (async () => ({ authorization_no: 'DSP-NEW' })),
       cancel: cancel || (async (id, body, key) => { state.cancels.push([id, body, key]); return { authorization_id: id, status: 'CANCELLED' }; })
     },
     newDisposalIdempotencyKey: () => `key-${++sequence}`,
     isDisposalUnavailable: () => false, isUncertainOutcome: () => false,
     DISPOSAL_ACTION_LABEL: {}, DISPOSAL_BLOCK_REASON_LABEL: {}, DISPOSAL_CHANNEL_LABEL: {},
+    COUNTERMEASURE_MODE_LABEL: { FORCE_LAND: '迫降', DRIVE_AWAY: '驱离' },
     DISPOSAL_STATUS_LABEL: {}, disposalStatusText: value => value?.status,
     labelOf: (_labels, value) => value,
     deviceReach: reach.deviceReach, distanceText: reach.distanceText, validPoint: reach.validPoint
@@ -50,6 +52,30 @@ async function requestForm(options) {
   await loaded.context.openDisposalRequest({ actionType: 'COUNTERMEASURE', subjectKind: 'UAV_EVENT', subjectId: 'event-1' });
   assert.equal(loaded.state.forms.length, 1);
   return { ...loaded, form: loaded.state.forms[0] };
+}
+
+for (const direct of [false, true]) {
+  for (const mode of ['FORCE_LAND', 'DRIVE_AWAY']) {
+    test(`${direct ? '直接反制' : '申请审批'}保存选择的${mode}，业务动作仍是反制`, async () => {
+      let body;
+      const { context, state } = load({ create: async value => { body = value; return { authorization_no: 'MODE-NEW' }; } });
+      await context[direct ? 'openDisposalDirect' : 'openDisposalRequest']({
+        actionType: 'COUNTERMEASURE', subjectKind: 'UAV_EVENT', subjectId: `mode-${mode}-${direct}`
+      });
+      const form = state.forms[0];
+      const field = form.fields.find(item => item.key === 'countermeasure_mode');
+      assert.deepEqual(Array.from(field.options, item => item.label), ['迫降', '驱离']);
+      assert.equal(field.visibleWhen({ action_type: 'COUNTERMEASURE' }), true);
+      assert.equal(field.visibleWhen({ action_type: 'JAMMING' }), false);
+      const model = { ...form.initial, countermeasure_mode: mode, channel: 'COUNTERMEASURE_4CH', device_id: 'ok' };
+      assert.equal(form.validate(model), null);
+      assert.match(form.validate({ ...model, countermeasure_mode: 'UNKNOWN' }), /请选择迫降或驱离/);
+      await form.onSubmit(model);
+      assert.equal(body.countermeasure_mode, mode);
+      assert.equal(body.action_type, 'COUNTERMEASURE');
+      assert.equal(body.device_id, 'ok');
+    });
+  }
 }
 
 test('禁选和原因校验保留，选项只显示编号与名称，其他通道不出现', () => {
@@ -68,7 +94,7 @@ test('申请表单：设备下拉随通道给出置灰选项，选到不能用�
   const device = form.fields.find(field => field.key === 'device_id');
   assert.equal(device.help, undefined);
   assert.deepEqual(device.options({ channel: 'LINGYUN_B' }).map(option => option.disabled), [true]);
-  const base = { action_type: 'COUNTERMEASURE', channel: 'COUNTERMEASURE_4CH', reason: '现场核实后申请反制' };
+  const base = { ...form.initial, action_type: 'COUNTERMEASURE', channel: 'COUNTERMEASURE_4CH', reason: '现场核实后申请反制' };
   assert.equal(form.validate({ ...base, device_id: 'ok' }), null);
   assert.equal(form.validate({ ...base, device_id: 'off' }), '所选设备不能用：设备离线。请换一台设备。');
   assert.match(form.validate({ ...base, channel: 'LINGYUN_B', device_id: 'ifr-off' }), /这个执行通道的设备现在都不能用/);
@@ -123,7 +149,7 @@ test('申请表单按目标位置筛设备；读不到位置时保持清单，�
   const form = loaded.state.forms[0];
   const device = form.fields.find(field => field.key === 'device_id');
   assert.equal(device.help, undefined);
-  const base = { action_type: 'COUNTERMEASURE', channel: 'COUNTERMEASURE_4CH', reason: '现场核实后申请反制' };
+  const base = { ...form.initial, action_type: 'COUNTERMEASURE', channel: 'COUNTERMEASURE_4CH', reason: '现场核实后申请反制' };
   assert.equal(form.validate({ ...base, device_id: 'near' }), null);
   assert.equal(form.validate({ ...base, device_id: 'no-cover' }), null);
   // 台账里一台都没配覆盖范围（测试库 v10 的情况）：仍能选，不能出现空下拉。
@@ -369,7 +395,7 @@ test('选中值渲染不改变普通选择器、完整菜单标签和设备标�
 test('简化设备显示后申请仍提交原 device_id 和通道，不提交展示字段', async () => {
   let payload;
   const { form } = await requestForm({ create: async body => { payload = body; return { authorization_no: 'DSP-TEST' }; } });
-  const values = { action_type: 'COUNTERMEASURE', channel: 'COUNTERMEASURE_4CH', device_id: 'ok', reason: '核实依据后申请处置' };
+  const values = { ...form.initial, action_type: 'COUNTERMEASURE', channel: 'COUNTERMEASURE_4CH', device_id: 'ok', reason: '核实依据后申请处置' };
   assert.equal(form.validate(values), null);
   await form.onSubmit(values);
   assert.equal(payload.device_id, 'ok');

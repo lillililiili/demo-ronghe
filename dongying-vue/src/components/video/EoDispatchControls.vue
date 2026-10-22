@@ -5,10 +5,10 @@ import { deviceApi } from '@/services/deviceApi.js';
 import { authSession } from '@/services/auth.js';
 import { displayTargetNo } from '@/ui/deviceNumber.js';
 
-const props = defineProps({ targetId: { type: String, required: true } });
+const props = defineProps({ targetId: { type: String, required: true }, deviceId: { type: String, default: '' } });
 const emit = defineEmits(['updated']);
 const state = ref(null), error = ref(''), busy = ref(false), choice = ref(null), loading = ref(false);
-const options = computed(() => !error.value && !busy.value ? state.value?.switch_options || [] : []);
+const options = computed(() => !error.value && !busy.value ? (state.value?.switch_options || []).filter(option => !props.deviceId || option.device_id === props.deviceId) : []);
 let generation = 0, timer, controller, alive = true, pendingAction = null;
 function clear() {
   ++generation; clearTimeout(timer); controller?.abort(); state.value = null;
@@ -38,24 +38,24 @@ async function refresh() {
 }
 async function perform(kind, selected = null) {
   if (busy.value || error.value) return;
-  const target = props.targetId, token = ++generation;
+  const target = props.targetId, device = props.deviceId, token = ++generation;
   clearTimeout(timer); controller?.abort(); busy.value = true; choice.value = null;
-  const signature = `${target}:${kind}:${selected?.task_id || ''}`;
+  const signature = `${target}:${device}:${kind}:${selected?.task_id || ''}`;
   if (!pendingAction || pendingAction.signature !== signature) pendingAction = { signature, key: `eo-dispatch-${crypto.randomUUID()}` };
   let failure = '';
   try {
     const result = kind === 'cancel' ? await deviceApi.cancelEoDispatch(target, pendingAction.key)
-      : await deviceApi.requestEoDispatch(target, selected ? { expected_task_id: selected.task_id } : {}, pendingAction.key);
-    if (alive && token === generation && target === props.targetId) { state.value = result; pendingAction = null; emit('updated'); }
+      : await deviceApi.requestEoDispatch(target, { ...(device ? { device_id: device } : {}), ...(selected ? { expected_task_id: selected.task_id } : {}) }, pendingAction.key);
+    if (alive && token === generation && target === props.targetId && device === props.deviceId) { state.value = result; pendingAction = null; emit('updated'); }
   } catch (e) { failure = e.message || '操作结果未确认，请读取最新状态。'; }
   finally {
-    if (alive && token === generation && target === props.targetId) {
+    if (alive && token === generation && target === props.targetId && device === props.deviceId) {
       busy.value = false; await refresh();
       if (failure && alive && target === props.targetId) error.value = `${failure}；请刷新确认当前状态。`;
     }
   }
 }
-watch([() => props.targetId, authSession], () => { clear(); refresh(); }, { immediate: true, flush: 'sync' });
+watch([() => props.targetId, () => props.deviceId, authSession], () => { clear(); refresh(); }, { immediate: true, flush: 'sync' });
 onUnmounted(() => { alive = false; clear(); });
 </script>
 
@@ -66,7 +66,7 @@ onUnmounted(() => { alive = false; clear(); });
     <p v-else role="status">正在读取光电调度状态</p>
     <div class="dispatch-actions">
       <NButton v-if="error" size="small" :loading="loading" @click="refresh">重读调度状态</NButton>
-      <NButton v-if="!error && state?.can_request" size="small" type="primary" :loading="busy" @click="perform('request')">请求跟踪此目标</NButton>
+      <NButton v-if="!error && state?.can_request" size="small" type="primary" :loading="busy" @click="perform('request')">{{ deviceId ? '请求本机跟踪此目标' : '请求跟踪此目标' }}</NButton>
       <NButton v-if="!error && state?.can_cancel" size="small" :disabled="busy" @click="perform('cancel')">取消人工请求</NButton>
       <NButton v-for="option in options" :key="option.task_id" size="small" @click="choice = option">切换{{ option.device_name }}到此目标</NButton>
     </div>

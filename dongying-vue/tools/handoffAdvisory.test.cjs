@@ -59,7 +59,7 @@ test('the handoff line tells apart automatic, manual, not sent yet and not neede
   assert.equal(autoHandoffView({ auto_handoff: { status: 'SUBMITTED', handoff_id: 'h-2', trigger_source: 'MANUAL' } }).title, '已选定接收单位移送到处罚');
   assert.equal(autoHandoffView({ auto_handoff: { status: 'SUBMITTED', handoff_id: 'h-3' } }).title, '已移送到处罚');
   const pending = autoHandoffView({ auto_handoff: { status: 'PENDING', handoff_id: 'h-4', reason: '处罚交接已建立，还没有发给处罚部门' } });
-  assert.deepEqual([pending.title, pending.tone, pending.reason], ['处罚交接已建立，还没有发出', 'warning', '处罚交接已建立，还没有发给处罚部门']);
+  assert.deepEqual([pending.title, pending.tone, pending.reason], ['待发送移送 · 处罚交接已建立，还没有发出', 'warning', '处罚交接已建立，还没有发给处罚部门']);
   const falsePositive = autoHandoffView({ can_handoff: true, auto_handoff: { status: 'NOT_REQUIRED', reason: '已核实为误报，不需要移送处罚' } });
   assert.deepEqual([falsePositive.title, falsePositive.tone, falsePositive.canSubmit], ['不需要自动移送', 'muted', false]);
   assert.equal(autoHandoffView({ auto_handoff: { status: 'WAITING', reason: '干扰完成后自动移送到处罚' } }).title, '等待移送到处罚');

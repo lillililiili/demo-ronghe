@@ -34,6 +34,31 @@ class ObservationsTest(unittest.TestCase):
         self.generator.config['detectConfidence']=float('nan')
         self.assertIsNone(self.generator.observation({'source_links':self.links},{}))
 
+class NormalizedSecondaryTest(unittest.TestCase):
+    def test_uses_only_explicit_secondary_mqtt_identity(self):
+        import uuid
+        for _ in range(2):
+            entity, primary, secondary, mqtt_id = (uuid.uuid4().hex for i in range(4))
+            target = {'id': entity, 'deviceId': primary, 'secondaryDeviceId': secondary,
+                      'kind': 'uav', 'path': [[430, 260], [432, 260]], 'speed': .2,
+                      'height': 180, 'altitudeDatum': 'AMSL', 'transport': 'normalized'}
+            manifest = {'batch': uuid.uuid4().hex,
+                        'devices': {primary: {'platform_id': primary}, secondary: {'platform_id': secondary}},
+                        'targets': {entity: {'mqtt_object_id': mqtt_id, 'external_id': 'normalized-' + entity}}}
+            generator = EoObservations({'enabled': True, 'detectConfidence': .9, 'trackConfidence': .8},
+                                       manifest, {entity: target}, lambda: 5)
+            link = {'device_id': secondary, 'external_target_id': mqtt_id, 'source_mode': 'replay'}
+            self.assertEqual(generator.observation({'source_links': [link]}, {})['className'], 'drone')
+            self.assertNotIn('altitude', generator.observation({'source_links': [link]}, {}))
+            for altered in (dict(link, device_id=primary), dict(link, source_mode='live'),
+                            dict(link, external_target_id='normalized-' + entity)):
+                self.assertIsNone(generator.observation({'source_links': [altered]}, {}))
+            target['secondaryTransport'] = 'normalized'
+            self.assertIsNone(generator.observation({'source_links': [link]}, {}))
+            target.pop('secondaryTransport')
+            target.pop('secondaryDeviceId')
+            self.assertIsNone(generator.observation({'source_links': [link]}, {}))
+
 class LifecycleTest(unittest.TestCase):
     def test_video_off_ai_enabled_echo_and_stop(self):
         import json

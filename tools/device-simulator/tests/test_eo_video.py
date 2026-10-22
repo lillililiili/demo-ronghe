@@ -35,7 +35,7 @@ class EoVideoTests(unittest.TestCase):
             self.watermark=(Path(kwargs['cwd'])/'watermark.txt').read_text(encoding='utf-8')
             p=Process(); self.processes.append(p); return p
         self.spawn=spawn
-        self.eo=EoSimulator(self.api,{'devices':{'one':BINDING}}, {**DEFAULT_VIDEO,'enabled':True,'publisher_password':'test-only-password'},
+        self.eo=EoSimulator(self.api,{'devices':{'one':BINDING}}, {**DEFAULT_VIDEO,'source_mode':'calibration','enabled':True,'publisher_password':'test-only-password'},
                             lambda t,p:self.sent.append((t,p)), lambda *args:None, spawn,lambda:self.now)
     def tearDown(self): self.eo.suspend()
     def command(self, event='BeginTracking', task=TASK, **overrides):
@@ -73,7 +73,7 @@ class EoVideoTests(unittest.TestCase):
         self.assertEqual(self.eo.active['ops-1']['task'],TASK)
     def test_tracking_reports_do_not_wait_for_video_lease_refresh(self):
         self.begin()
-        registrations=lambda:sum(method=='PUT' for method,_,_ in self.api.calls)
+        registrations=lambda:sum(method=='PUT' and '/video-streams/' in path for method,path,_ in self.api.calls)
         self.assertEqual(registrations(),1)
         self.now+=5; self.eo.tick()
         self.assertEqual(len(self.sent),2)
@@ -304,6 +304,10 @@ class EoVideoTests(unittest.TestCase):
         for raw in (b'null',b'[]',b'42'):
             with self.assertRaises(ValueError): self.eo.handle(BINDING['dispatcher_topic'],raw)
 class ConfigTests(unittest.TestCase):
+    def test_calibration_template_is_explicit_and_legacy_pattern_available(self):
+        self.assertEqual(video_config({'enabled': False})['source_mode'], 'recorded')
+        self.assertEqual(video_config({'enabled': False, 'source_mode': 'test_pattern'})['source_mode'], 'test_pattern')
+        with self.assertRaises(ValueError): video_config({'enabled': False, 'source_mode': 'arbitrary'})
     def test_enabled_requires_publisher_secret_and_public_config_masks_it(self):
         with self.assertRaises(ValueError): video_config({'enabled':True})
         public=public_video_config({**DEFAULT_VIDEO,'publisher_password':'secret-qa-only'})

@@ -159,6 +159,7 @@ export const SOURCE_TYPE_LABEL = {
 export const SCHEMA_STATUS_LABEL = { CONFIRMED: '已联调确认', DEMO: '按协议 v8.6 建模，待联调' };
 /* 处置授权（阶段 13）：动作、状态、执行通道。同一个码全站只有一个说法，页面一律经 labelOf 取词。 */
 export const DISPOSAL_ACTION_LABEL = { COUNTERMEASURE: '反制', JAMMING: '信号干扰', DISPERSAL: '驱离', DECOY: '诱骗' };
+export const COUNTERMEASURE_MODE_LABEL = { FORCE_LAND: '迫降', DRIVE_AWAY: '驱离' };
 /* 告警列表「状态」列的处置进度展示：uav_event.state 仍是核实结论，不把反制中写进库。 */
 export const ALARM_PROGRESS_LABEL = {
   HANDED_OFF: '已移送处罚',

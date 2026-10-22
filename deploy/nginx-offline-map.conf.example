@@ -35,6 +35,7 @@ server {
             application/vnd.pmtiles pmtiles;
             application/x-protobuf pbf;
             image/png png;
+            image/webp webp;
             font/otf otf;
             text/plain txt;
         }

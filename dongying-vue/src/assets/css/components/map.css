@@ -42,6 +42,7 @@
 .mapscale .bar{height:4px;border:1px solid var(--map-label);border-top:0;width:70px}
 .mapwrap .mapstatus{max-width:calc(100% - 104px);white-space:normal;pointer-events:auto;line-height:1.5;text-align:center}
 .mapwrap .mapstatus[hidden],.mapwrap .mapcredit[hidden],.mapwrap .mapstatus button[hidden]{display:none}
+.mapwrap.has-satellite-imagery::after{display:none}
 .mapwrap .mapstatus button{margin-left:8px;padding:2px 7px;border:1px solid currentColor;border-radius:4px;background:transparent;color:inherit;cursor:pointer;font:inherit}
 .mapwrap .mapctl button:focus-visible,.mapwrap .mapstatus button:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
 .mapwrap .mapcredit{position:absolute;left:6px;bottom:2px;z-index:3;font-size:10px;line-height:18px;color:var(--map-label-muted);background:var(--map-background);padding:0 4px;pointer-events:none}

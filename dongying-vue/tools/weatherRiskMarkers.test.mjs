@@ -3,7 +3,6 @@ import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { computed, createRenderer, nextTick, onUnmounted, ref, watch } from 'vue';
 import { weatherAnchor, weatherPolygon, insideWeather, isSimulatedWeatherRisk } from '../src/services/weatherRiskGeometry.js';
-import { weatherAreaRelation } from '../src/pages/airspace/airspaceRiskModel.js';
 
 const box = (x, y, width = 2, height = 2) => [[x,y],[x+width,y],[x+width,y+height],[x,y+height],[x,y]];
 const layerSource = (await readFile(new URL('../src/services/weatherRiskLayer.js', import.meta.url), 'utf8'))
@@ -65,15 +64,6 @@ test('icon stays inside a concave weather area whose bounds center is outside', 
   const anchor = weatherAnchor({ polygon: ring });
   assert.equal(insideWeather(anchor, ring), true);
 });
-test('weather scope tests area intersection rather than only its icon anchor', () => {
-  const ring = box(0, 0, 6, 2);
-  assert.equal(weatherAreaRelation(ring, [[box(5,1)]]), 'INSIDE');
-  assert.equal(weatherAreaRelation(ring, [[box(2,-2,1,6)]]), 'INSIDE');
-  assert.equal(weatherAreaRelation(ring, [[box(8,8)]]), 'OUTSIDE');
-  assert.equal(weatherAreaRelation(null, [[box(0,0)]]), 'UNKNOWN');
-  assert.equal(weatherAreaRelation(box(2,2), [[box(0,0,10,10), box(1,1,5,5)]]), 'OUTSIDE');
-});
-
 test('weather reads preserve supplied facts, cache versions and discard late responses', async () => {
   const requested = [], pending = new Map();
   const source = (await readFile(new URL('../src/hooks/useWeatherRiskFacts.js', import.meta.url), 'utf8'))

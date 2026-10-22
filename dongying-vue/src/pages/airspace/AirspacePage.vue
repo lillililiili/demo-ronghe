@@ -1,30 +1,28 @@
 <script setup>
-/* 空域管理：选区查看近期监测目标、历史风险与上级空域规则。
-   目标位置和风险发现快照分图层展示，不由前端推导入侵、现场解除或整片空域安全。
-   新空域规则由上级下发，本页只读展示并保留旧资料。
-   监测只读取接口数据；读取失败时如实显示原因。 */
-import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
+/* 空域管理：本地立体空域维护、上级空域资料与合法航线参照。
+   本地与上级下发空域均可按授权编辑、删除，原来源和旧版本保留。
+   读取失败时如实显示原因。 */
+import { computed, h, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { refreshFailureText, useRealtimeRefresh } from '@/hooks/useRealtimeRefresh.js';
 import { airspaceApi } from '@/services/airspaceApi.js';
+import { idempotencyKey } from '@/services/apiClient.js';
+import { hasPermission } from '@/services/accessControl.js';
+import { openModal } from '@/ui/modal.js';
+import { openConfirm } from '@/ui/confirm.js';
+import { message } from '@/ui/nv.js';
+import AirspaceEditorModal from './AirspaceEditorModal.vue';
 import { flightApi } from '@/services/flightApi.js';
 import { strokePlannedRoute } from '@/services/positionMap.js';
 import { airspaceKindMeta, polygonRings, toAirspaces } from '@/services/situationData.js';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import UPanel from '@/components/UPanel.vue';
 import UControl from '@/components/form/UControl.vue';
-import AirspaceRiskList from './AirspaceRiskList.vue';
-import AirspaceRiskDrawer from './AirspaceRiskDrawer.vue';
-import { useAirspaceRiskList } from './useAirspaceRiskList.js';
-import { useAirspaceRisks } from './useAirspaceRisks.js';
-import { useAirspaceMonitor } from './useAirspaceMonitor.js';
-import WeatherRiskMarkers from '@/components/WeatherRiskMarkers.vue';
-import AirspaceObjectMarkers from './AirspaceObjectMarkers.vue';
 import { hitMapReference } from './airspaceReferenceHover.js';
 import {
   AIRSPACE_KIND_LABEL, AIRSPACE_KIND_TAG, ALTITUDE_DATUM_LABEL,
   labelOf
 } from '@/ui/labels.js';
-import { displayAirspaceNo, displayRouteNo, displayRiskNo, displayTargetNo } from '@/ui/deviceNumber.js';
+import { displayAirspaceNo, displayRouteNo } from '@/ui/deviceNumber.js';
 
 usePageChrome('airspace');
 
@@ -32,7 +30,6 @@ usePageChrome('airspace');
 const KIND_CODES = ['PROHIBITED', 'RESTRICTED', 'ALTITUDE_LIMIT', 'PERMITTED', 'TEMPORARY_CONTROL'];
 const KIND_OPTIONS = [{ label: '全部种类', value: '' }].concat(KIND_CODES.map(value => ({ label: AIRSPACE_KIND_LABEL[value], value })));
 const VALIDITY_OPTIONS = [{ label: '全部', value: '' }, { label: '当前生效', value: 'now' }, { label: '当前未生效', value: 'off' }];
-const ROUTE_COLOR = '#22d3ee'; // 监测位置颜色
 const PLAN_COLOR = '#8ca0a8'; // 任务几何统一灰色
 const PAGE_MAX = 100;
 // 用户确认仅从本页日常列表移除的测试空域；服务端版本和历史研判引用继续保留。
@@ -56,42 +53,19 @@ const hiddenKinds = ref({});        // { kindCode: true } → 图上不画
 const showRoutes = ref(true);
 const page = ref(1), size = ref(10);
 const selected = ref(null);
-const bottomTab = ref('rules');
-const risks = reactive(useAirspaceRisks(computed(() => filters.district), selected));
-const monitor = reactive(useAirspaceMonitor(computed(() => filters.district), selected, computed(() => risks.onlySelected)));
-const riskList = reactive(useAirspaceRiskList(monitor, risks, selected));
-const riskDetailOpen = ref(false);
-const RISK_COLORS = { CRITICAL: '#ff4d5e', HIGH: '#ff4d5e', MEDIUM: '#ffb020', LOW: '#3d8bff' };
-const riskColor = risk => risk.state === 'EXCLUDED' ? '#8ca0be' : RISK_COLORS[risk.severity] || '#8ca0be';
 const versions = ref([]);
 const detailLoading = ref(false), detailError = ref('');
+const mutationBusy = ref(false), mutationError = ref('');
+const canManage = computed(() => hasPermission('airspace:read') && hasPermission('airspace:manage'));
+const localSourceLabel = row => ({ LOCAL: '本地维护', UPSTREAM: '上级下发', LEGACY: '历史资料' })[row?.management_source] || '来源待确认';
+const maintenanceBlocker = computed(() => !canManage.value ? '需要空域维护权限。'
+  : !selected.value?.editable ? '该空域已删除或来源依据不完整，不能维护。' : '');
 const mapHost = ref(null);
-const weatherLayer = ref(null);
-const objectLayer = ref(null);
-// 业务字段仅随数据/选择变化生成，地图移动只更新投影，不能逐帧写入 Vue 状态。
-const objectMarkers = computed(() => (bottomTab.value === 'monitor' ? [
-  ...riskList.targetMapRows.filter(row => row.demo),
-  ...riskList.riskMapRows.filter(row => ['SPACE_OBJECT', 'FOREIGN_OBJECT'].includes(row.risk_type))
-] : []).map(row => {
-  const demo = row.demo;
-  return { id: demo ? row.target_id : row.risk_id, kind: demo ? 'target' : 'risk', point: row.point,
-    active: demo ? monitor.activeId === row.target_id : risks.activeId === row.risk_id,
-    activeRisk: !demo && window.UI.abnormalActive(row),
-    subtype: demo ? row.subtype : row.space_fact?.subtype_code,
-    color: demo ? RISK_COLORS[demo.severity] : riskColor(row),
-    title: demo ? displayTargetNo(row.target_no) : row.space_fact?.subtype_name || displayRiskNo(row.risk_no),
-    note: demo ? `${Math.round(demo.distance)} 米 · ${demo.count}${demo.unit} · 模拟`
-      : `事件位置${row.source_mode === 'mock' ? ' · 模拟' : ''}` };
-}));
-const weatherRisks = computed(() => riskList.rows.map(row => row.risk).filter(Boolean));
-const targetRiskStates = computed(() => new Map(riskList.rows.filter(row => row.target)
-  .map(row => [row.target.target_id, row.activeRisk === true])));
 const referenceTip = ref(null);
 let referenceShapes = [];
 let referenceCamera = '';
 let map = null;
 let fittedOnce = false;
-const riskSection = ref(null);
 
 
 /* ---------- 文案 ---------- */
@@ -304,10 +278,6 @@ async function loadRoutes() {
 const districtOptions = computed(() => {
   const seen = new Map();
   all.value.forEach(row => { if (row.district_id && !seen.has(row.district_id)) seen.set(row.district_id, row.district_name || row.district_id); });
-  // 有风险但尚未划空域的区县也能切换，不用空域台账限制独立风险的可见范围。
-  risks.districts.forEach(row => { if (row.district_id) seen.set(row.district_id, row.name || row.district_id); });
-  risks.rows.forEach(row => { if (row.district_id && !seen.has(row.district_id)) seen.set(row.district_id, row.district_name || row.district_id); });
-  monitor.rows.forEach(row => { if (row.district_id && !seen.has(row.district_id)) seen.set(row.district_id, row.district_name || row.district_id); });
   return [{ label: '全市', value: '' }].concat([...seen].map(([value, label]) => ({ label, value })));
 });
 const filtered = computed(() => {
@@ -341,77 +311,15 @@ function toggleKind(code) { hiddenKinds.value = { ...hiddenKinds.value, [code]: 
 
 const mapAirspaces = computed(() => toAirspaces(filtered.value.filter(row => row.current_version && !hiddenKinds.value[row.current_version.kind_code])));
 
-watch([mapAirspaces, showRoutes, () => riskList.riskMapRows, () => risks.activeId,
-  () => riskList.targetMapRows, () => monitor.activeId, bottomTab], () => paintMap(false));
-watch([() => riskList.active, bottomTab], ([active, tab]) => {
-  if (!active || tab !== 'monitor') riskDetailOpen.value = false;
-});
-function showSelectedRisks() {
-  risks.onlySelected = true;
-  risks.severity = ''; risks.state = ''; risks.riskType = ''; risks.occurred = null;
-  showRiskRecords();
-}
-function showRiskRecords() {
-  bottomTab.value = 'monitor';
-  nextTick(() => {
-    riskSection.value?.querySelector('.risk-record-scroll')?.scrollTo({ top: 0 });
-  });
-}
-function viewRisk(risk) {
-  monitor.activeId = '';
-  risks.activeId = risk.risk_id;
-  bottomTab.value = 'monitor';
-  if (risk.point) locateRisk(risk);
-  openRiskDetail();
-}
-function openRiskDetail() {
-  riskDetailOpen.value = true;
-}
-function updateRiskRecord(record) {
-  const index = risks.rows.findIndex(item => item.risk_id === record.risk_id);
-  if (index >= 0) risks.rows[index] = { ...risks.rows[index], ...record };
-}
-function inspectRiskRow(row) {
-  if (row.risk) { viewRisk(row.risk); return; }
-  risks.activeId = '';
-  monitor.activeId = row.target.target_id;
-  bottomTab.value = 'monitor';
-  if (row.target?.point) locateTarget(row.target);
-  openRiskDetail();
-}
-function locateRisk(risk) {
-  if (!risk.point) return;
-  monitor.activeId = '';
-  risks.activeId = risk.risk_id;
-  risks.showLayer = true;
-  bottomTab.value = 'monitor';
-  // 仅扩展相机视野以显示周边环境；风险几何仍是原始位置点。
-  const [lon, lat] = risk.point;
-  map?.fitTo([[lon - 0.005, lat - 0.005], [lon + 0.005, lat + 0.005]], 0.2);
-  map?.draw();
-}
-function locateTarget(target) {
-  if (!target.point) return;
-  risks.activeId = '';
-  monitor.activeId = target.target_id; monitor.showLayer = true; bottomTab.value = 'monitor';
-  const [lon, lat] = target.point;
-  map?.fitTo( [[lon - 0.005, lat - 0.005], [lon + 0.005, lat + 0.005]], 0.3);
-  map?.draw();
-}
-function selectObjectMarker(marker) {
-  if (marker.kind === 'target') { const row = riskList.rows.find(item => item.target?.target_id === marker.id); if (row) inspectRiskRow(row); }
-  else { const row = riskList.riskMapRows.find(item => item.risk_id === marker.id); if (row) viewRisk(row); }
-}
-function refreshPage() { return Promise.all([loadAll(), loadRoutes(), risks.reload(), monitor.reload()]); }
+watch([mapAirspaces, showRoutes], () => paintMap(false));
+function refreshPage() { return Promise.all([loadAll(), loadRoutes()]); }
 /* 实时刷新：按变化类别只重读受影响的部分；空域详情、选中项与地图视野保留，正在查看的空域的版本历史一并更新。
    到点生效、失效没有推送信号，由上面的边界计时按同样方式触发。空域列表读取失败时抛出，由实时刷新按退避重试。 */
-const realtime = useRealtimeRefresh(['airspace', 'plan', 'risk', 'target'], topics => {
+const realtime = useRealtimeRefresh(['airspace', 'plan'], topics => {
   const everything = topics.includes('*');
   const tasks = [];
   if ((everything || topics.includes('airspace')) && !refreshing.value) tasks.push(loadAll({ quiet: true }), reloadVersions());
   if (everything || topics.includes('plan')) tasks.push(loadRoutes());
-  if (everything || topics.includes('risk')) tasks.push(risks.reload({ quiet: true }));
-  if (everything || topics.includes('target')) tasks.push(monitor.reload({ quiet: true }));
   return Promise.all(tasks);
 }, { minIntervalMs: 1_500 });
 watch(() => filters.district, district => {
@@ -433,8 +341,6 @@ function allPoints() {
   const out = [];
   mapAirspaces.value.forEach(a => a.rings.forEach(ring => out.push(...ring)));
   if (showRoutes.value) routeLines.value.forEach(line => out.push(...line.points));
-  if (bottomTab.value === 'monitor') riskList.riskMapRows.forEach(risk => out.push(risk.point));
-  if (bottomTab.value === 'monitor') riskList.targetMapRows.forEach(target => out.push(target.point));
   return out;
 }
 
@@ -468,31 +374,6 @@ function installOverlay() {
       polygons.forEach(rings => rings.forEach(ring => { ring.forEach(([lon, lat], i) => { const p = this.px(lon, lat); i ? c.lineTo(p[0], p[1]) : c.moveTo(p[0], p[1]); }); c.closePath(); }));
       c.lineWidth = 3; c.strokeStyle = color; c.shadowColor = color; c.shadowBlur = 10; c.stroke(); c.shadowBlur = 0;
     }
-    objectLayer.value?.draw?.(this);
-    // 独立风险只用发生时的可信位置快照；圆点颜色沿用服务端等级，排除项灰显。
-    if (bottomTab.value === 'monitor') riskList.riskMapRows.forEach(risk => {
-      if (['SPACE_OBJECT', 'FOREIGN_OBJECT', 'WEATHER'].includes(risk.risk_type)) return;
-      const [x, y] = this.px(...risk.point);
-      const active = risks.activeId === risk.risk_id;
-      c.save();
-      window.UI.applyAlarmGlow(c, risk);
-      c.beginPath(); c.arc(x, y, active ? 9 : 6, 0, Math.PI * 2);
-      c.fillStyle = riskColor(risk); c.fill();
-      c.lineWidth = active ? 3 : 2; c.strokeStyle = '#fff'; c.stroke();
-      if (active) { c.beginPath(); c.arc(x, y, 14, 0, Math.PI * 2); c.lineWidth = 2; c.strokeStyle = riskColor(risk); c.stroke(); }
-      c.restore();
-    });
-    // 蓝色方点表示近期监测位置，不借风险颜色暗示目标危险或安全。
-    if (bottomTab.value === 'monitor') riskList.targetMapRows.forEach(target => {
-      if (target.demo) return;
-      const [x, y] = this.px(...target.point);
-      const radius = monitor.activeId === target.target_id ? 8 : 5;
-      c.save();
-      window.UI.applyAlarmGlow(c, { activeRisk: targetRiskStates.value.get(target.target_id) === true });
-      c.fillStyle = ROUTE_COLOR; c.fillRect(x - radius, y - radius, radius * 2, radius * 2);
-      c.strokeStyle = '#fff'; c.lineWidth = 2; c.strokeRect(x - radius, y - radius, radius * 2, radius * 2);
-      c.restore();
-    });
     c.restore();
   };
 }
@@ -514,31 +395,10 @@ function onReferenceMove(event) {
     y: Math.max(8, Math.min(y + 14, rect.height - 140)) };
 }
 
-function onMapClick(event) {
-  if (!map || map._dragged || Date.now() < (map._suppressClickUntil || 0)) return;
-  if (event.target.closest?.('.mapctl,.map-refocus,.maptip')) return;
-  const rect = map.cv.getBoundingClientRect();
-  const x = event.clientX - rect.left, y = event.clientY - rect.top;
-  if (bottomTab.value === 'monitor') {
-    const target = riskList.targetMapRows.slice().reverse().find(row => {
-      const point = map.px(...row.point);
-      return Math.hypot(point[0] - x, point[1] - y) <= 11;
-    });
-    if (target) { event.stopPropagation(); const row = riskList.rows.find(item => item.target?.target_id === target.target_id); if (row) inspectRiskRow(row); return; }
-  }
-  if (bottomTab.value !== 'monitor') return;
-  const hit = riskList.riskMapRows.slice().reverse().find(risk => {
-    const point = map.px(...risk.point);
-    return Math.hypot(point[0] - x, point[1] - y) <= 11;
-  });
-  if (hit) { event.stopPropagation(); viewRisk(hit); map.draw(); }
-}
-
 function createMap() {
   if (!mapHost.value || !window.MapView) return;
   map = new window.MapView(mapHost.value, {
     zoom: 1, maxDev: 0, legend: false, layers: { device: false, track: false, alarm: false },
-    drawUnderMarkers: view => weatherLayer.value?.draw(view),
     onPick: pick => {
       if (pick?.kind !== 'airspace') return;
       const row = all.value.find(item => item.airspace_id === pick.data.airspaceId);
@@ -546,21 +406,62 @@ function createMap() {
     }
   });
   installOverlay();
-  mapHost.value.addEventListener('click', onMapClick, true);
   paintMap(!fittedOnce);
 }
 function destroyMap() {
   clearReferenceTip(); referenceShapes = [];
-  if (mapHost.value) mapHost.value.removeEventListener('click', onMapClick, true);
   if (map?.destroy) map.destroy();
   map = null;
 }
 
 /* ---------- 选中与详情 ---------- */
-function clearDetail() { selected.value = null; versions.value = []; detailError.value = ''; map?.draw(); }
+function clearDetail() { selected.value = null; versions.value = []; detailError.value = ''; mutationError.value = ''; map?.draw(); }
+
+function editAirspace(row = null) {
+  if (!canManage.value || (row && !row.editable)) return;
+  const handle = openModal({ title: row ? '编辑立体空域' : '新增立体空域', width: '1280px', footer: false,
+    render: () => h(AirspaceEditorModal, { airspaceId: row?.airspace_id || '',
+      onCancel: () => handle.close(),
+      onSaved: async result => {
+        if (handle.isCurrent()) handle.close();
+        message.success('空域已保存。');
+        if (!pageAlive) return;
+        await loadAll();
+        if (!pageAlive) return;
+        const saved = all.value.find(item => item.airspace_id === result.airspace_id);
+        if (saved) await select(saved);
+      }
+    }) });
+}
+
+async function deleteAirspace() {
+  const row = selected.value;
+  if (!row?.editable || !canManage.value || mutationBusy.value) return;
+  mutationBusy.value = true; mutationError.value = '';
+  try {
+    const current = await airspaceApi.detail(row.airspace_id);
+    if (!pageAlive || selected.value?.airspace_id !== row.airspace_id) return;
+    if (!current.editable) throw new Error('该空域当前不允许删除，请刷新资料。');
+    const key = idempotencyKey();
+    const body = { expected_version: current.version, change_reason: '用户在空域管理删除空域' };
+    openConfirm({ title: '删除空域', content: `确认删除“${current.name}”？删除后不再参与当前及未来空域判断，原来源、版本和历史记录保留。`,
+      confirmText: '确认删除', positiveType: 'error', onConfirm: async () => {
+        try {
+          await airspaceApi.remove(current.airspace_id, body, key);
+          message.success('空域已删除，历史版本保留。');
+          if (pageAlive) { clearDetail(); await loadAll(); }
+          return true;
+        } catch (reason) {
+          if (pageAlive) mutationError.value = messageOf(reason);
+          message.error(reason?.status === 0 ? '删除结果暂不确定，请重试本次操作或取消后刷新核对。' : messageOf(reason));
+          return false;
+        }
+      } });
+  } catch (reason) { if (pageAlive) mutationError.value = messageOf(reason); }
+  finally { mutationBusy.value = false; }
+}
 
 async function select(row, { fit = true } = {}) {
-  riskDetailOpen.value = false;
   selected.value = row; versions.value = []; detailError.value = '';
   detailLoading.value = true;
   if (fit) locate();
@@ -612,13 +513,11 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <section class="view airspace-page" :class="{ 'has-detail': (riskDetailOpen && riskList.active) || selected }">
+  <section class="view airspace-page" :class="{ 'has-detail': !!selected }">
     <!-- 中部：地图 + 抽屉 -->
-    <div class="airspace-stage"><h3 class="map-heading">空域位置与监测</h3>
+    <div class="airspace-stage"><h3 class="map-heading">空域位置</h3>
       <div class="airspace-map-area" @mousemove="onReferenceMove" @mouseleave="clearReferenceTip" @pointerdown.capture="clearReferenceTip" @wheel.capture="clearReferenceTip">
       <div ref="mapHost" class="airspace-map"></div>
-      <AirspaceObjectMarkers ref="objectLayer" :markers="objectMarkers" @select="selectObjectMarker" />
-      <WeatherRiskMarkers ref="weatherLayer" :risks="weatherRisks" :visible="bottomTab === 'monitor' && risks.showLayer" :selected-id="risks.activeId" control-target="#airspace-weather-control" control-inline @select="viewRisk" />
       <div v-if="referenceTip" class="airspace-reference-tip" role="tooltip"
         :style="{ left: `${referenceTip.x}px`, top: `${referenceTip.y}px`, width: `${referenceTip.width}px` }">
         <b>{{ referenceTip.name }}</b><span>{{ referenceTip.type }}</span><p>{{ referenceTip.note }}</p>
@@ -633,26 +532,9 @@ onUnmounted(() => {
           <span class="sw ln" :style="{ borderColor: PLAN_COLOR }"></span>任务航线
         </button>
         <div v-if="!legendKinds.length && !loading" class="legend-empty">图上暂无空域</div>
-        <button v-if="bottomTab === 'monitor' && monitor.canRead" type="button" class="legend-item risk-layer-toggle" :class="{ off: !monitor.showLayer }" :aria-pressed="monitor.showLayer" @click="monitor.showLayer = !monitor.showLayer"><span class="target-dot"></span>近期目标位置</button>
-
-        <button v-if="bottomTab === 'monitor' && risks.canRead" type="button" class="legend-item risk-layer-toggle" :class="{ off: !risks.showLayer }" :aria-pressed="risks.showLayer" title="红：高/紧急；黄：中；蓝：低；灰：已排除或等级未知" @click="risks.showLayer = !risks.showLayer">
-          <span class="risk-dot"></span>风险位置（发生时）
-        </button>
-        <span v-if="risks.canRead && risks.loading" class="legend-empty">风险读取中…</span>
-        <button v-else-if="risks.error" class="linkbtn" type="button" @click="showRiskRecords">风险读取失败，查看原因</button>
-        <span id="airspace-weather-control"></span>
       </details>
 
-      <div v-if="bottomTab === 'monitor' && monitor.active && !riskDetailOpen" class="airspace-risk-tip">
-        <b>{{ displayTargetNo(monitor.active.target_no) || '监测目标' }}</b>
-        <template v-if="monitor.active.demo">
-          <span>{{ monitor.active.demo.scene.distanceLabel }} {{ Math.round(monitor.active.demo.distance) }} 米 · 海拔 {{ monitor.active.demo.altitude }} 米 · {{ monitor.active.demo.count }} {{ monitor.active.demo.unit }}</span>
-          <span>{{ monitor.active.demo.horizontal }} · {{ monitor.active.demo.vertical }} · 模拟观测</span>
-        </template>
-        <template v-else><span>最近发现 {{ time(monitor.active.last_seen_at) }}</span><span>近期位置，不代表目标仍在场；请结合风险记录核实。</span></template>
-      </div>
-
-      <div v-if="!loading && !error && !all.length" class="airspace-map-empty">暂无空域规则，请核对上级下发数据</div>
+      <div v-if="!loading && !error && !all.length" class="airspace-map-empty">暂无空域，可新增本地空域或接收上级下发</div>
       <div v-else-if="error" class="airspace-map-empty">{{ error }}</div>
 
 
@@ -660,9 +542,8 @@ onUnmounted(() => {
 
     </div>
 
-    <div v-show="(riskDetailOpen && riskList.active) || selected" class="airspace-detail-slot">
-      <AirspaceRiskDrawer v-model:show="riskDetailOpen" :row="riskList.active" @updated="updateRiskRecord" />
-      <aside v-if="selected && !riskDetailOpen" class="airspace-drawer">
+    <div v-show="selected" class="airspace-detail-slot">
+      <aside v-if="selected" class="airspace-drawer">
         <div class="drawer-head">
           <div class="drawer-title">
             <b :title="selected.airspace_id">{{ selected.name }}</b>
@@ -676,6 +557,7 @@ onUnmounted(() => {
             <div class="key-fact fact-altitude"><dt>高度</dt><dd>{{ altitudeText(selected.current_version) }}</dd></div>
             <div class="key-fact fact-validity"><dt>生效期</dt><dd>{{ validityText(selected.current_version) }}</dd></div>
             <dt>管理单位</dt><dd>{{ selected.owner_org_name || '未记录' }}</dd>
+            <dt>维护来源</dt><dd>{{ localSourceLabel(selected) }}</dd>
             <dt>所属区县</dt><dd>{{ selected.district_name || '未记录' }}</dd>
             <dt>面积</dt><dd>{{ areaText(selected.current_version) }}</dd>
             <template v-if="selected.current_version?.change_reason"><dt>划设原因</dt><dd>{{ selected.current_version.change_reason }}</dd></template>
@@ -685,41 +567,21 @@ onUnmounted(() => {
           </dl>
           <div v-if="selected.load_error" class="warnbox">{{ selected.load_error }}</div>
           <div v-if="detailError" class="warnbox">{{ detailError }}</div>
-
-          <section class="drawer-risk-summary">
-            <b>范围内风险记录</b>
-            <span v-if="!risks.canRead">无风险查看权限</span>
-            <span v-else-if="risks.loading">正在读取…</span>
-            <span v-else-if="risks.error">读取失败，请在下方风险记录中查看</span>
-            <span v-else-if="!risks.polygons.length">当前边界不可用，无法匹配</span>
-            <template v-else>
-              <span>已记录 {{ risks.inSelected.length }} 起（含边界点）</span>
-              <button class="linkbtn" type="button" @click="showSelectedRisks">查看范围内风险</button>
-            </template>
-            <small>按当前平面范围匹配发现位置，不代表已判定侵入或超高。</small>
-          </section>
+          <div v-if="mutationError" class="warnbox" role="alert">{{ mutationError }}</div>
+          <p v-if="maintenanceBlocker" class="maintenance-note">{{ maintenanceBlocker }}</p>
 
           <details v-if="versions.length"><summary>版本历史</summary><dl v-for="version in versions" :key="version.airspace_version_id || version.version_no" class="kv"><dt>版本</dt><dd>{{ version.version_no }}</dd><dt>种类</dt><dd>{{ kindLabel(version.kind_code) }}</dd><dt>生效期</dt><dd>{{ validityText(version) }}</dd><dt>高度</dt><dd>{{ altitudeText(version) }}</dd><dt>变更原因</dt><dd>{{ version.change_reason || '未记录' }}</dd></dl></details>
           <div v-if="selected.current_version && !selectedPolygons().length" class="warnbox">边界数据有问题，图上未绘制。</div>
         </div>
         <div class="drawer-actions">
           <button class="btn" type="button" :disabled="!selectedPolygons().length" @click="locate">定位</button>
+          <button class="btn" type="button" :disabled="!!maintenanceBlocker || mutationBusy" @click="editAirspace(selected)">三维编辑</button>
+          <button class="btn" type="button" :disabled="!!maintenanceBlocker || mutationBusy" @click="deleteAirspace">删除空域</button>
         </div>
       </aside>
     </div>
 
-    <!-- 监测观测与风险记录合并为一张表，共用筛选、分页、详情与地图。 -->
-    <div class="airspace-bottom-tabs">
-      <div class="airspace-tabs" role="tablist" aria-label="空域信息">
-      <button id="airspace-rules-tab" type="button" role="tab" :aria-selected="bottomTab === 'rules'" aria-controls="airspace-rules-panel" :class="{ on: bottomTab === 'rules' }" @click="bottomTab = 'rules'">空域列表</button>
-      <button id="airspace-monitor-tab" type="button" role="tab" :aria-selected="bottomTab === 'monitor'" aria-controls="airspace-monitor-panel" :class="{ on: bottomTab === 'monitor' }" @click="bottomTab = 'monitor'">空域监测</button>
-      </div>
-
-    </div>
-    <section v-show="bottomTab === 'monitor'" id="airspace-monitor-panel" role="tabpanel" aria-labelledby="airspace-monitor-tab" class="panel airspace-tab-content airspace-monitor-workspace">
-      <div ref="riskSection" class="unified-risk-section"><AirspaceRiskList :list="riskList" :monitor="monitor" :risks="risks" :selected="selected" @inspect="inspectRiskRow" /></div>
-    </section>
-    <section v-show="bottomTab === 'rules'" id="airspace-rules-panel" role="tabpanel" aria-labelledby="airspace-rules-tab" class="airspace-tab-content">
+    <section id="airspace-rules-panel" aria-label="空域列表">
     <div class="panel airspace-bar">
       <div class="toolbar">
         <div class="toolbar-fields">
@@ -729,8 +591,9 @@ onUnmounted(() => {
           <div class="field"><UControl v-model="filters.keyword" placeholder="搜索名称或编号" clearable :disabled="loading" size="small" /></div>
         </div>
         <div class="toolbar-actions">
-          <span class="toolbar-note">空域规则由上级下发</span>
-          <button class="btn ghost" type="button" :disabled="loading || risks.loading || monitor.loading" @click="refreshPage">刷新</button>
+          <span class="toolbar-note">{{ canManage ? '本地维护 · 上级下发' : '新增、编辑和删除需要空域维护权限' }}</span>
+          <button class="btn primary" type="button" :disabled="!canManage" @click="editAirspace()">新增空域</button>
+          <button class="btn ghost" type="button" :disabled="loading" @click="refreshPage">刷新</button>
         </div>
       </div>
     </div>
@@ -743,6 +606,7 @@ onUnmounted(() => {
         <button v-for="row in pageRows" :key="row.airspace_id" type="button" class="airspace-rule-card" :class="{ on: selected?.airspace_id === row.airspace_id }" :style="{ '--rule-color': kindAccent(row.current_version?.kind_code) }" :aria-pressed="selected?.airspace_id === row.airspace_id" @click="select(row)">
           <span class="rule-card-head"><b>{{ row.name }}</b><span class="tag" :class="rowStatus(row).cls">{{ rowStatus(row).text }}</span></span>
           <span v-if="row.airspace_no" class="rule-card-code" :title="row.airspace_no">{{ displayAirspaceNo(row.airspace_no) }}</span>
+          <span class="rule-card-source">{{ localSourceLabel(row) }}</span>
           <span v-if="row.current_version && altitudeText(row.current_version) !== '未填写'">{{ altitudeText(row.current_version) }}</span>
           <span v-if="row.current_version?.valid_from" class="rule-card-validity">{{ validityShort(row.current_version) }}</span>
           <span class="rule-card-footer">
@@ -764,7 +628,7 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.airspace-page { display: grid; grid-template-columns: minmax(260px, .95fr) minmax(300px, 1.35fr) minmax(280px, 1.1fr); grid-template-rows: auto auto minmax(280px, 1fr) auto; grid-template-areas: "tabs tabs tabs" "filters filters filters" "records map detail" "import import import"; height: 100%; min-height: 0; min-width: 0; overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable; scrollbar-width: auto; scrollbar-color: auto; gap: 10px; }
+.airspace-page { display: grid; grid-template-columns: minmax(260px, .95fr) minmax(300px, 1.35fr) minmax(280px, 1.1fr); grid-template-rows: auto minmax(280px, 1fr) auto; grid-template-areas: "filters filters filters" "records map detail" "import import import"; height: 100%; min-height: 0; min-width: 0; overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable; scrollbar-width: auto; scrollbar-color: auto; gap: 10px; }
 .airspace-page::-webkit-scrollbar { width: 10px; }
 .airspace-page::-webkit-scrollbar-track { background: var(--panel-2); }
 .airspace-page::-webkit-scrollbar-thumb { background: var(--txt-3); border: 2px solid var(--panel-2); border-radius: 6px; }
@@ -795,24 +659,9 @@ onUnmounted(() => {
 .legend-item .sw { width: 16px; height: 10px; border: 1.5px dashed; border-radius: 2px; flex: none; }
 .legend-item .sw.ln { height: 0; border-width: 2px 0 0; background: none; border-radius: 0; }
 .legend-empty { font-size: 12px; color: var(--txt-3); }
-.risk-layer-toggle { margin-top: 6px; padding-top: 8px; border-top: 1px solid var(--line); }
-.risk-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--red, #ff4d5e); border: 2px solid #fff; margin: 0 3px; }
-.target-dot { width: 10px; height: 10px; background: var(--cyan, #22d3ee); border: 2px solid #fff; margin: 0 3px; }
-.airspace-risk-tip { position: absolute; z-index: 6; left: 12px; bottom: 12px; max-width: min(420px, 48%); padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; background: var(--surface-3); border: 1px solid var(--line); border-radius: 6px; font-size: 12px; }
-.airspace-risk-tip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.drawer-risk-summary { display: flex; flex-direction: column; gap: 6px; padding: 12px 0; margin-top: 10px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); font-size: 13px; }
-.drawer-risk-summary small { color: var(--txt-3); line-height: 1.5; }
-.drawer-risk-summary .linkbtn { text-align: left; }
-.drawer-risk-summary > b { border-left: 3px solid var(--amber); padding-left: 8px; color: var(--txt); }
 .drawer-body > details { padding: 7px 0; }
 .drawer-body > details > summary { color: var(--txt-2); border-left: 3px solid var(--purple); padding-left: 8px; }
-.airspace-bottom-tabs { grid-area: tabs; display: flex; gap: 6px; flex: none; border-bottom: 1px solid var(--line); }
-.airspace-tabs { display: flex; gap: 6px; }
-.airspace-bottom-tabs button { border: 0; border-bottom: 2px solid transparent; background: transparent; padding: 8px 16px; color: var(--txt-3); cursor: pointer; font-size: 14px; }
-.airspace-bottom-tabs button.on { color: var(--page-accent); border-bottom-color: var(--page-accent); background: color-mix(in srgb, var(--page-accent) 10%, transparent); }
-.airspace-bottom-tabs span { margin-left: 5px; font-size: 12px; }
-.airspace-tab-content { grid-area: records; display: flex; min-height: 0; min-width: 0; flex-direction: column; overflow: hidden; }
-#airspace-monitor-panel, #airspace-rules-panel, .unified-risk-section { display: contents; }
+#airspace-rules-panel { display: contents; }
 .airspace-list-panel { grid-area: records; }
 #airspace-rules-panel :deep(.panel) { min-width: 0; }
 .rule-pager { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px; border-top: 1px solid var(--line); font-size: 11px; color: var(--txt-3); }
@@ -824,6 +673,8 @@ onUnmounted(() => {
 .airspace-refresh-note { flex: none; margin: 8px 12px 0; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; font-size: 12px; line-height: 1.6; color: var(--amber); overflow-wrap: anywhere; }
 
 .airspace-drawer { display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; background: var(--surface-gradient); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.maintenance-note { color: var(--txt-3); font-size: 12px; line-height: 1.7; margin: 10px 0; }
+.rule-card-source { color: var(--txt-3); font-size: 12px; }
 .drawer-head { display: flex; align-items: flex-start; gap: 8px; padding: 12px 12px 8px; border-top: 2px solid var(--blue); border-bottom: 1px solid var(--line-2); }
 .drawer-title { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .drawer-title b { font-size: 14.5px; color: var(--txt); white-space: normal; overflow-wrap: anywhere; }
@@ -868,13 +719,12 @@ onUnmounted(() => {
 .airspace-import-issue { margin-left: 6px; color: var(--txt-2); font-size: 12.5px; }
 
 @media (max-width: 1200px) {
-  .airspace-page { grid-template-columns: minmax(220px, .9fr) minmax(0, 1.4fr); grid-template-rows: auto auto minmax(280px, 1fr) auto auto; grid-template-areas: "tabs tabs" "filters filters" "records map" "detail detail" "import import"; }
+  .airspace-page { grid-template-columns: minmax(220px, .9fr) minmax(0, 1.4fr); grid-template-rows: auto minmax(280px, 1fr) auto auto; grid-template-areas: "filters filters" "records map" "detail detail" "import import"; }
   .airspace-detail-slot:not(:empty) { min-height: 280px; max-height: 420px; }
 }
 @media (max-width: 720px) {
-  .airspace-page { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(240px, auto) 320px auto auto; grid-template-areas: "tabs" "filters" "records" "map" "detail" "import"; }
+  .airspace-page { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(240px, auto) 320px auto auto; grid-template-areas: "filters" "records" "map" "detail" "import"; }
   .airspace-page:not(.has-detail) .airspace-stage { grid-column: 1; }
-  .airspace-bottom-tabs { flex-wrap: wrap; }
   .drawer-actions { flex-wrap: wrap; }
 }
 

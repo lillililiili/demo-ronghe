@@ -17,8 +17,8 @@ async function main() {
   const filename = path.resolve(__dirname, '../src/pages/situation/situationFlow.js');
   const dataUrl = pathToFileURL(path.resolve(__dirname, '../src/services/situationData.js')).href;
   const source = fs.readFileSync(filename, 'utf8')
-    .replace("@/services/situationData.js", dataUrl)
-    .replace('@/services/serverClock.js', pathToFileURL(path.resolve(__dirname, '../src/services/serverClock.js')).href);
+    .replace(/(?:@\/|\.\.\/\.\.\/)services\/situationData\.js/, dataUrl)
+    .replace(/(?:@\/|\.\.\/\.\.\/)services\/serverClock\.js/, pathToFileURL(path.resolve(__dirname, '../src/services/serverClock.js')).href);
   const flow = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 
   const eo = { typeCode: 'EO', lon: 118.5, lat: 37.4,
@@ -109,9 +109,13 @@ async function main() {
   const script=fs.readFileSync(path.resolve(__dirname,'../src/pages/SituationPage.vue'),'utf8')
     .split('<script setup>')[1].split('</script>')[0].replace(/import[\s\S]*?from ['"][^'"]+['"];?\r?\n/g,'');
   const labels=await import(pathToFileURL(path.resolve(__dirname,'../src/ui/labels.js')).href);
-  const deps={...vue,...S,...flow,...labels,groupRouteRisks,riskSnapshotMarkers,serverNow:()=>clock,
+  const handoff=await import(pathToFileURL(path.resolve(__dirname,'../src/ui/punishmentHandoffProgress.js')).href);
+  const prediction=await import(pathToFileURL(path.resolve(__dirname,'../src/services/predictionView.js')).href);
+  const eoCoverage=await import(pathToFileURL(path.resolve(__dirname,'../src/pages/situation/eoCoverage.js')).href);
+  const eoSelection=await import(pathToFileURL(path.resolve(__dirname,'../src/pages/situation/eoSelection.js')).href);
+  const deps={...vue,...S,...flow,...labels,...handoff,...prediction,...eoCoverage,...eoSelection,groupRouteRisks,riskSnapshotMarkers,serverNow:()=>clock,
     currentMapSnapshot:value=>S.currentMapSnapshot(value,clock),
-    usePageChrome(){},useRoute:()=>({query:{}}),watch(){},onMounted:cb=>mounts.push(cb),onUnmounted(){},
+    usePageChrome(){},useRoute:()=>({query:{}}),authSession:vue.ref('test-session'),watch(){},onMounted:cb=>mounts.push(cb),onUnmounted(){},
     createSituationApiSource:()=>({start:()=>()=>{},loadTargetDetail:async()=>{}}),
     createSituationMarkerLayout:()=>()=>[],ResizeObserver:class{observe(){}},document:{hidden:false,addEventListener(){}},
     sessionStorage:{getItem:()=>null,setItem(){}},window:{UI:{icon:()=>''},setInterval:cb=>intervals.push(cb),

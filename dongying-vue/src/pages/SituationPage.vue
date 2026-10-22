@@ -47,6 +47,11 @@ import PredictionPanel from './situation/PredictionPanel.vue';
 import { PREDICTION_ORIGIN, PREDICTION_STATES, currentPredictionViews, predictionMapData, predictionWarningRows, isPredictionAlarm, predictionVerificationState } from '@/services/predictionView.js';
 
 import { predictionAlarmStatusHtml } from '@/ui/predictionDetails.js';
+import DeviceVideoWorkspace from '@/components/video/DeviceVideoWorkspace.vue';
+import EoMapSelection from './situation/EoMapSelection.vue';
+import { MAX_EO_SELECTION, reconcileSelected, toggleSelected } from './situation/eoSelection.js';
+import { drawEoCoverageMask, eoCoverageView } from './situation/eoCoverage.js';
+import { authSession } from '@/services/auth.js';
 
 const U = window.UI;
 usePageChrome('situation');
@@ -66,6 +71,7 @@ const alertTab = ref('target');
 const alertsExpanded = ref(true);
 const fuseOpen = ref(false);
 const showTargetVideo = ref(false);
+const eoDevice = ref(null), eoExpanded = ref(false), eoMode = ref('point'), eoSelected = ref([]), eoFocusedId = ref('');
 const source = createSituationApiSource();
 const layers = ref({ prediction: true, coverage: true, device: true, track: true, flightPlan: true, airspace: true });
 const statusAnnouncement = ref('正在连接融合感知服务');
@@ -76,6 +82,7 @@ let stopSource = null;
 let lastSourceErrorAt = 0;
 let selectionResizeObserver = null;
 let expiryTimer = null;
+let mainMapView = null;
 
 const devices = computed(() => snapshot.value.devices || []);
 const locatedDevices = computed(() => devices.value.filter(device => device.posValid !== false
@@ -83,6 +90,65 @@ const locatedDevices = computed(() => devices.value.filter(device => device.posV
   && Number.isFinite(device.lat) && Math.abs(device.lat) <= 85.051129));
 const hasSimulatedCoverage = computed(() => devices.value.some(device => device.displayCoverage?.displayOnly));
 const targets = computed(() => snapshot.value.targets || []);
+const currentEoDevice = computed(() => devices.value.find(d => d.deviceId === eoDevice.value?.deviceId));
+const eoMapView = computed(() => eoCoverageView(
+  snapshot.value.failedSegments?.includes('devices') ? null : currentEoDevice.value, targets.value));
+const eoMapCandidates = computed(() => {
+  const ids = new Set(eoMapView.value.targets.map(t => t.targetId));
+  return eoCandidates.value.filter(row => ids.has(row.targetId));
+});
+const eoCoverageKey = computed(() => JSON.stringify([currentEoDevice.value?.deviceId, eoMapView.value.coordinates]));
+const eoCandidates = computed(() => targets.value.filter(target => target.objectTypeCode === 'UAV').flatMap(target => {
+  const alarm = [...(target.relatedAlarms || [])].filter(a => a.eventId && a.eventState !== 'FALSE_POSITIVE').sort((a,b) => b.ts-a.ts || String(a.alarmId).localeCompare(String(b.alarmId)))[0];
+  return alarm ? [{ targetId: target.targetId, mapId: target.id, eventId: alarm.eventId, alarmId: alarm.alarmId,
+    label: displayTargetNo(target.id), eventState: alarm.eventState, lon: target.lon, lat: target.lat,
+    reasonText: (alarm.violationReasons || []).map(ruleReasonText).filter(Boolean).join('、') || alarm.type || '告警原因未提供' }] : [];
+}));
+watch(eoCandidates, candidates => { eoSelected.value = reconcileSelected(eoSelected.value,candidates); });
+watch(authSession, () => { closeEoVideo(); eoSelected.value=[];eoFocusedId.value=''; });
+function openEoVideo(device) {
+  if (!device || device.typeCode !== 'EO') return;
+  showTargetVideo.value=false;eoDevice.value=device;eoMode.value='point';clearSelection();
+}
+function focusEoCoverage() {
+  if (eoExpanded.value && eoMapView.value.coordinates.length) map?.fitTo(eoMapView.value.coordinates, .17);
+}
+async function setEoExpanded(value) {
+  if (value && !eoExpanded.value && map) mainMapView = { center: map.unpx(map.w / 2, map.h / 2), scale: map.zoom };
+  eoExpanded.value = value;
+  await nextTick();
+  syncMapData();
+  if (value) focusEoCoverage();
+  else if (mainMapView && map) map.centerAt(...mainMapView.center, { scale: mainMapView.scale });
+}
+watch(eoCoverageKey, () => { if (eoExpanded.value) { syncMapData(); focusEoCoverage(); } }, { flush: 'post' });
+async function closeEoVideo() {await setEoExpanded(false);eoDevice.value=null;eoMode.value='point';}
+function selectEoTargets(rows) {
+  const current=rows.filter(row=>row?.eventId && eoCandidates.value.some(c=>c.eventId===row.eventId && c.targetId===row.targetId));
+  if(!current.length){toast('此处没有可关联告警的当前无人机，可在地图或告警列表选择。','warn');return;}
+  if(current.length===1 && eoMode.value==='point') {
+    if(eoSelected.value.length>=MAX_EO_SELECTION && !eoSelected.value.some(row=>row.eventId===current[0].eventId)){toast('每批最多选择20架，请先取消部分选择。','warn');return;}
+    eoSelected.value=toggleSelected(eoSelected.value,current[0]);
+  }
+  else {
+    const added=current.filter(row=>!eoSelected.value.some(old=>old.eventId===row.eventId));
+    if(eoSelected.value.length+added.length>MAX_EO_SELECTION){toast('每批最多选择20架，请缩小框选范围。','warn');return;}
+    eoSelected.value=[...eoSelected.value,...added];
+  }
+  eoFocusedId.value=current[0].eventId;
+}
+function removeEoTarget(eventId){eoSelected.value=eoSelected.value.filter(row=>row.eventId!==eventId);if(eoFocusedId.value===eventId)eoFocusedId.value=eoSelected.value[0]?.eventId||'';}
+function clearEoTargets(){eoSelected.value=[];eoFocusedId.value='';}
+function locateEoTarget(row){
+  const target=targets.value.find(t=>t.targetId===row.targetId);
+  if(!target || target.posValid===false || !Number.isFinite(target.lon) || !Number.isFinite(target.lat)){toast('当前没有可定位的有效位置','warn');return;}
+  if(eoExpanded.value){
+    if(eoMapView.value.reason){toast(eoMapView.value.reason,'warn');return;}
+    if(!eoMapView.value.targets.some(t=>t.targetId===row.targetId)){toast('目标不在本机已配置覆盖范围内，可缩小视频后在主地图查看','warn');return;}
+    focusEoCoverage();map?.pinHit('target',target.id);return;
+  }
+  map?.centerAt(target.lon,target.lat,{scale:Math.max(map.zoom,32)});
+}
 const currentTargetIds = computed(() => new Set(targets.value.map(target => target.targetId).filter(Boolean)));
 const alarms = computed(() => (snapshot.value.alarms || [])
   .filter(alarm => alarm.originKind !== PREDICTION_ORIGIN && currentTargetIds.value.has(alarm.targetInternalId) && situationAlarmNeedsAttention(alarm) && !alarmDeparted(alarm))
@@ -212,7 +278,7 @@ const clockText = computed(() => formatClock(snapshot.value.generatedAt));
    目标会陆续按期退出地图，看起来像"没有目标"。这时明确提示是刷新慢，不让值班员误以为空中没有东西。 */
 const SLOW_REFRESH_SECONDS = 10;
 const nowTick = ref(serverNow());
-watch(mapPredictions, rows => map?.setData({ predictions: rows }), { flush: 'post' });
+watch(mapPredictions, () => syncMapData(), { flush: 'post' });
 watch([selectedPrediction, predictionRows], ([prediction, rows]) => {
   if (selection.value?.kind === 'prediction' && !prediction) clearSelection();
   predictionClusterIds.value = predictionClusterIds.value.filter(id => rows.some(row => row.key === id));
@@ -436,17 +502,25 @@ function applySnapshot(next) {
     : count
     ? `融合感知数据已更新，${count} 条新风险`
     : '融合感知数据已更新，当前无未查看异常';
+  syncMapData();
   if (!map) return;
-  map.setData({
-    airspaces: decorated.airspaces,
-    devices: locatedDevices.value,
-    targets: decorated.targets,
-    predictions: mapPredictions.value,
-    flightPlans: decorated.flightPlans,
-    risks: decorated.risks.filter(risk => risk.mapVisible !== false),
-    alarms: []
-  });
   if (selection.value && ['device', 'target', 'plan'].includes(selection.value.kind)) map.pinHit(selection.value.kind, selection.value.id);
+}
+
+function syncMapData() {
+  if (!map) return;
+  const mini = eoExpanded.value, data = snapshot.value;
+  map.layers = { ...map.layers, coverage: mini || layers.value.coverage, device: mini || layers.value.device,
+    track: mini || layers.value.track, flightPlan: !mini && layers.value.flightPlan,
+    nofly: !mini && layers.value.airspace, limit: !mini && layers.value.airspace, suit: !mini && layers.value.airspace };
+  map.setData({
+    airspaces: mini ? [] : data.airspaces,
+    devices: mini ? (eoMapView.value.coordinates.length ? [currentEoDevice.value] : []) : locatedDevices.value,
+    targets: mini ? eoMapView.value.targets.map(target => ({ ...target, track: [] })) : data.targets,
+    predictions: mini ? [] : mapPredictions.value,
+    flightPlans: mini ? [] : data.flightPlans,
+    risks: mini ? [] : data.risks.filter(risk => risk.mapVisible !== false), alarms: []
+  });
 }
 
 function onSourceError(error, segment) {
@@ -516,6 +590,7 @@ function selectPrediction(row) {
 }
 
 function selectAlarm(alarm) {
+  if(eoDevice.value){const candidate=eoCandidates.value.find(row=>row.eventId===alarm.eventId);if(candidate)selectEoTargets([candidate]);else toast('该告警没有当前可选择的无人机','warn');return;}
   markViewed(alarm);
   alertTab.value = 'target';
   const target = targets.value.find(target => target.targetId === alarm.targetInternalId);
@@ -665,6 +740,7 @@ function renderDeviceTip(device) {
       ${coverage.availabilityReason ? `<dt>可用性</dt><dd class="is-unavailable">${esc(coverage.availabilityReason)}</dd>` : ''}
     </dl>
     ${related.length ? `<div class="sit-map-pop-alerts"><b>近期连接情况</b>${related.map(event => `<span>${esc(event.title)}</span>`).join('')}</div>` : ''}
+    ${device.typeCode === 'EO' ? '<div class="sit-video-entry"><button type="button" data-tip-act="device-video">实时视频</button></div>' : ''}
   </section>`;
 }
 
@@ -759,6 +835,8 @@ function renderMapTip(hit) {
 }
 
 function onMapPick(hit) {
+  if(eoDevice.value && hit?.kind==='target') {const row=eoCandidates.value.find(candidate=>candidate.mapId===hit.data.id);selectEoTargets(row?[row]:[]);return;}
+  if(eoExpanded.value) return;
   if (hit?.kind === 'prediction') {
     const rows = hit.data.rows || [];
     predictionClusterIds.value = rows.length > 1 ? rows.map(row => row.warning.event_id || row.warning.alarm_id || `${row.prediction.targetId}:${row.warning.airspace_version_id}`) : [];
@@ -920,6 +998,7 @@ async function openAlarmDisposal(alarm) {
 }
 
 function onTipAction(action, hit) {
+  if(action==='device-video'){openEoVideo(hit?.data || selectedDevice.value);return;}
   if (action === 'close') return clearSelection();
   if (action === 'eo-video') {
     showTargetVideo.value = !showTargetVideo.value;
@@ -964,8 +1043,11 @@ onMounted(() => {
     // 固定使用原东营地图范围，不因设备位置扩大底图视野。
     constrainToCoverage: true,
     layoutMarkers: createSituationMarkerLayout(),
-    getExternalMarkers: view => [...(weatherLayer.value?.getMarkers(view) || []), ...(riskSnapshotLayer.value?.getMarkers(view) || [])],
-    drawUnderMarkers: view => { weatherLayer.value?.draw(view); riskSnapshotLayer.value?.draw(view); },
+    getExternalMarkers: view => eoExpanded.value ? [] : [...(weatherLayer.value?.getMarkers(view) || []), ...(riskSnapshotLayer.value?.getMarkers(view) || [])],
+    drawUnderMarkers: view => {
+      if (eoExpanded.value) drawEoCoverageMask(view, eoMapView.value.coordinates);
+      else { weatherLayer.value?.draw(view); riskSnapshotLayer.value?.draw(view); }
+    },
     sensorIconScale: 1,
     // 地图装饰动画不需要 60fps；降低 Canvas 像素量和重绘频率，保留数据变化时的即时重画。
     animationFps: 12,
@@ -974,7 +1056,7 @@ onMounted(() => {
     // 悬停小卡片不接点击（验收预跑 3-7）：图标挤在一起时，停在设备上弹出的卡片会盖住旁边的无人机，点不开；
     // 卡片上的按钮在点开后的弹窗里都有。
     interactiveTip: false,
-    renderTip: renderMapTip,
+    renderTip: hit => eoExpanded.value ? '' : renderMapTip(hit),
     onTipAction,
     onPick: onMapPick,
     onEmptyPick: clearSelection
@@ -992,7 +1074,11 @@ onMounted(() => {
       !== situationRouteRiskIsCurrent(risk, rawPlans.get(risk.planId), rawTargets.get(risk.targetInternalId), at));
     if (riskWindowChanged || snapshot.value.targets.some(target => target.mapExpiresAt <= at)) applySnapshot(rawSnapshot);
   }, 1000);
-  selectionResizeObserver = new ResizeObserver(() => focusSelection(false));
+  selectionResizeObserver = new ResizeObserver(() => {
+    if (eoExpanded.value) focusEoCoverage();
+    else if (mainMapView) { map?.centerAt(...mainMapView.center, { scale: mainMapView.scale }); mainMapView = null; }
+    else focusSelection(false);
+  });
   selectionResizeObserver.observe(mapHost.value);
   document.addEventListener('visibilitychange', onVisibilityChange);
 });
@@ -1012,7 +1098,13 @@ onUnmounted(() => {
 <template>
   <div id="view" class="view situation-page" :class="{ 'has-selection-popup': showSelectionPopup }" @keydown.esc="clearSelection">
     <main class="sit-stage" aria-label="融合感知实时地图">
-      <div id="stMap" ref="mapHost" class="sit-map"></div>
+      <Teleport :to="eoExpanded ? '#eo-video-mini-map' : 'body'" :disabled="!eoExpanded">
+        <div class="eo-map-shell" :class="{'is-mini':eoExpanded}">
+          <div id="stMap" ref="mapHost" class="sit-map"></div>
+          <EoMapSelection v-if="eoDevice" :get-map="() => map" :candidates="eoExpanded ? eoMapCandidates : eoCandidates" :selected="eoSelected" :mode="eoMode" @select="selectEoTargets" />
+          <p v-if="eoExpanded && (eoMapView.reason || !eoMapView.targets.length)" class="eo-map-empty" role="status">{{eoMapView.reason || (snapshot.failedSegments?.includes('targets') ? '目标数据读取失败，暂无法确认范围内无人机' : '覆盖范围内暂无当前无人机')}}</p>
+        </div>
+      </Teleport>
       <SituationRiskMarkers ref="riskSnapshotLayer" :rows="riskSnapshots" :selected-id="selectedSnapshotId"
         :visible="layers.flightPlan" @select="selectRiskGroup" />
       <WeatherRiskMarkers ref="weatherLayer" :risks="risks" :selected-id="selectedRisk?.riskId" shared-layout control-target="#situation-weather-control" @select="selectWeatherRisk" />
@@ -1046,13 +1138,16 @@ onUnmounted(() => {
               <span class="sit-device-state" :class="{ 'is-down': deviceGroupState(group).down }"><b>{{ deviceGroupState(group).headline }}</b><small>{{ deviceGroupState(group).detail }}</small></span>
             </button>
             <div v-show="expandedType === group.typeCode" :id="`sit-device-${group.typeCode}`" class="sit-device-node-list">
-              <button v-for="device in group.items" :key="device.id" type="button" class="sit-device-node"
+              <div v-for="device in group.items" :key="device.id" class="sit-device-node-wrapper">
+              <button type="button" class="sit-device-node"
                 :class="[{ 'is-selected': selection?.kind === 'device' && selection.id === device.id, 'has-new': device.newAlert }, statusClass(device.status)]"
                 :aria-pressed="selection?.kind === 'device' && selection.id === device.id"
                 :aria-label="`查看${device.type}设备 ${device.name}，${device.status}${device.hasAlarm ? '，存在告警' : ''}`" @click="selectDevice(device)">
                 <span><span class="sit-node-icon" v-html="iconHtml(device)"></span><b>{{ device.name }}</b><small class="mono" :title="device.id">{{ device.display_no || device.id }}</small></span>
                 <em>{{ device.status }} · {{ reportAge(device.lastReportAt) }}<template v-if="device.timeUntrusted"> · 设备时间不准</template><template v-if="!locatedDevices.includes(device)"> · 位置未知</template></em>
               </button>
+              <button v-if="device.typeCode==='EO'" type="button" class="sit-device-video-button" :aria-label="`查看${device.name}实时视频`" @click="openEoVideo(device)">实时视频</button>
+              </div>
             </div>
           </section>
         </div>
@@ -1188,6 +1283,10 @@ onUnmounted(() => {
         </template>
       </SituationAlarmPopup>
 
+      <Teleport to="body"><DeviceVideoWorkspace v-if="eoDevice" :device="currentEoDevice||eoDevice" :candidates="eoCandidates" :selected="eoSelected" :focused-id="eoFocusedId" :mode="eoMode" :map-view="eoMapView"
+        @expanded="setEoExpanded" @close="closeEoVideo" @select="selectEoTargets" @focus="eoFocusedId=$event" @remove="removeEoTarget" @clear="clearEoTargets" @mode="eoMode=$event" @locate="locateEoTarget" @updated="source.refresh()" />
+      </Teleport>
+
       <nav class="sit-layerbar" aria-label="地图图层">
         <button type="button" :aria-pressed="layers.coverage" @click="toggleLayer('coverage')">覆盖范围</button>
         <span v-if="layers.coverage && hasSimulatedCoverage" class="sit-scan-key">含模拟参数</span>
@@ -1233,6 +1332,10 @@ onUnmounted(() => {
 .prediction-list-note{padding:8px 12px;margin:0;font-size:12px;line-height:1.5;color:var(--txt-3)}
 .prediction-popup-title{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px}
 
+.eo-map-empty{position:absolute;z-index:6;left:60px;right:15px;top:45%;margin:0;text-align:center;padding:8px;background:var(--surface-1);color:var(--txt-2);pointer-events:none}
+.eo-map-shell.is-mini :deep(.mapctl){top:44px}
+.eo-map-shell.is-mini :deep(.map-refocus){font-size:11px}
+.eo-map-shell{position:absolute;inset:0}.eo-map-shell.is-mini{position:relative;width:100%;height:100%;min-height:150px}.sit-device-node-wrapper{position:relative}.sit-device-node-wrapper .sit-device-node{width:100%}.sit-device-video-button{margin:0 10px 7px auto;display:block;padding:4px 9px;min-height:28px;border:1px solid var(--control-line);border-radius:5px;color:var(--cyan);background:var(--surface-2);cursor:pointer;font:inherit;font-size:12px}.sit-device-video-button:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
 .situation-page .sit-alert-dock>.sit-dock-head,.situation-page .sit-device-dock>.sit-dock-head{flex-wrap:wrap;gap:8px;flex-shrink:0}
 .situation-page .sit-device-dock>.sit-dock-head>span{flex-basis:85px}
 .situation-page .sit-alert-dock>.sit-dock-head>span{flex-basis:auto}

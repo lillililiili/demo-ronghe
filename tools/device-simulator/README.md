@@ -337,6 +337,44 @@ node --check tools/device-simulator/web/runtime.js
 
 ## 光电任务与本机测试视频（2026-09-28）
 
+### 原始/AI 双流与受控校准场景（2026-10-20）
+
+2026-10-21 更新：默认模板已改为 `recorded`（可见光实拍回放），优先于本节下方旧默认说明。使用随模拟器附带的CC0原片与逐帧标注，原始流无框，AI流以每个实际编码帧的标注绘框并提供同坐标可交互元数据；片段循环时媒体时间保持递增。两路保持设备/任务/来源校验，录像明确标记 `TEST VIDEO - RECORDED REPLAY`。实拍素材不能冒充当前现场或真实AI推理。素材、授权、校验及转换说明见 [assets/eo-visible/README.md](assets/eo-visible/README.md)。旧 `calibration`、`test_pattern` 和本机外部文件仍可选择，任意外部文件不生成本素材的识别框。
+
+本节优先于下方旧版“没有任务等待跟踪、仅任务视频”的说明。启用视频且批次正在运行时，每台已登记且可用的模拟光电设备独立发布 RAW 原始流，即使当前没有跟踪任务；不因此创建任务或发送成功跟踪回执。收到并验证当前 OPEN 跟踪任务后，另外发布 AI 任务流。任务结束只关闭 AI，RAW 继续；视频开关、修改视频模板只清理/重建编码器，不结束跟踪。暂停、停止、离线、会话失效沿用原有停止约束。
+
+“视频设置”新增 `source_mode`：`calibration`（默认，模拟无人机校准场景）或 `test_pattern`（旧动态测试图）。非空 `source` 本机文件优先于模板，保留循环、静音与原安全限制。校准场景由 FFmpeg 真正生成固定 960×540 图像，带 `TEST VIDEO - SIMULATED CALIBRATION` 水印、设备、任务及画面 PTS/帧号；中间青色图形是模拟无人机形状，不能作为真实光电识别能力或实拍证据。RAW 与 AI 使用同一场景几何。测试图和任意外部视频均不生成检测框，不能把示意截图用作视频故障占位。
+
+RAW 使用 `PUT /local-interface-simulator/device-video-streams/{device_id}`、空 body 登记，每15秒续租；停流使用同地址 DELETE。AI 保留 `PUT /local-interface-simulator/video-streams/{task_id}`。两者只接受服务端分配的 `qa/<UUID>` 路径，保留 Bearer、设备权限与范围、local+qa、模拟来源及非生产门禁；不启用开发种子，不额外生成业务设备、目标或计划。
+
+校准图形由 `eo_calibration.py` 的同一像素几何同时定义 FFmpeg 图形和检测框：原画 960×540，边界 `(380,230,200,80)`；上传归一化 `(x,y,width,height)`。只在编码器 progress 实际出现新帧和 `out_time_us` 后，向 `PUT /local-interface-simulator/device-video-streams/{device_id}/frames` 上报：
+
+```json
+{
+  "stream_id": "服务端本次 AI 流 UUID",
+  "task_id": "当前跟踪任务 UUID",
+  "frame_timestamp": 1792531202000,
+  "media_time_ms": 2000,
+  "detections": [{
+    "detection_id": "qa-shape-本次流UUID",
+    "x": 0.3958333333333333, "y": 0.42592592592592593,
+    "width": 0.20833333333333334, "height": 0.14814814814814814,
+    "class_code": "UAV", "confidence": 1.0,
+    "observation_id": "已读回且核验的观测 UUID，可缺省"
+  }]
+}
+```
+
+`media_time_ms` 对应实际已编码样本的零起点帧号：`(progress.frame-1)/15` 秒（FFmpeg 的 `out_time_us` 包含最后样本时长，不能直接把结束时间当该帧 PTS）。校准视频底部还由同一个渲染滤镜写入24位帧号条码。`eo_media_clock.py` 使用现有私有读取账号，只读本机 HLS 最新完整分片及 `EXT-X-PROGRAM-DATE-TIME`，真实解码首帧、读取该帧条码，得到媒体 UTC 与生成帧号的实际锚点；`frame_timestamp = HLS锚点UTC + 已编码帧号/15`，不再估计 FFmpeg 启动或缓冲偏移。没有可靠锚点、时钟漂移或帧超过5秒时不上传框。校准在最多两个后台只读工作线程进行，不阻塞跟踪回执；不经过系统代理，不跟随跳转或读取外部资源，密码不进 URL/日志，读取不创建或覆盖凭据文件。媒体重启生成新的编码起点；同一流服务端要求 PTS 严格递增，因此视频恢复/切模板须重新登记新流身份，不拼接旧时间轴。
+
+观测关联来自只读 `GET /local-interface-simulator/device-video-streams/{device_id}/observation-associations?task_id=...`。仅当原 EO 场景观测生成器验证当前目标的模拟源/台账设备关系，且读回观测的目标、类别和最近5秒时间均匹配，才上传该 `observation_id`；不上传或猜测 `target_id`。标准接口主观测同时配置了 MQTT 辅助设备时，仅接受该辅助设备已登记身份与本场景分配的 MQTT 目标编号所对应的实际来源链接；纯标准接口或辅助设备同样走标准接口时不推断关联。缺少可靠关联时图形显示为未关联，不能点击跳转目标。当前生成器只保证一个形状；不虚构第二个可关联目标。`confidence=1` 是对确定生成图形的校准值，不代表真实检测模型置信度。
+
+本次相关验证：`python -m unittest discover -s tests -p test_eo_dual_video.py` 包含真实 FFmpeg 生成帧像素读回并与检测框对照、真实 fMP4/HLS 分片的 PDT 与首帧条码对账、媒体读取不阻塞、空闲 RAW/任务 AI 生命周期、切模板保留任务、外部视频无造框及错误关联拒用；旧 `test_eo_video.py`、`test_eo_observations.py`、`test_video_control.py` 和 `node --test tests/test_video_control_ui.cjs` 定向回归。浏览器播放、媒体 UTC 对齐和有效账号验收由集成验收单独记录，单测通过不能替代。
+
+重启步骤：保存运行状态并通过模拟器原有“暂停/停止”结束当前批次，再使用原启动入口重启 Python 服务加载新代码；不要杀未知 Python/FFmpeg，不覆盖私有凭据文件。重新登录、连接并开始已有光电场景，先验证没有跟踪时 RAW 可播放，再经原授权流程产生跟踪任务，回读 AI 流、真实帧与观测关联；停止视频验证跟踪任务继续，重新开启验证新流时间轴。前后台/模拟器重启后的仓库统一本地启动检查仍须由主验收执行。
+
+### 旧版行为与历史验收记录
+
 2026-10-09 后续确认：本地光电测试视频默认开启，替代下文早期的显式启用要求。模拟器连接本机系统时自动准备私有媒体凭据和媒体服务；后端 local+qa 默认开放视频登记。仍须当前有效跟踪任务与成功回执才推流和播放。`QA_VIDEO_ENABLED=false`、`APP_VIDEO_QA_ENABLED=false` 可分别关闭；页面仍支持“停止视频推流”。不自动恢复旧批次发送。
 
 2026-10-07：在页面底部“开始模拟”旁提供独立的“开启视频推流 / 停止视频推流”。允许在 MQTT 运行中切换；停止视频仅结束本模拟器的编码进程、注销视频登记，保留当前跟踪和目标上报。再次开启时重新核对同一平台 OPEN 任务；没有当前任务时显示“等待跟踪”，不会生成跟踪成功回执或替平台分配任务。

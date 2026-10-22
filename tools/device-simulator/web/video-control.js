@@ -4,8 +4,8 @@
     const enabled = data.video_config?.enabled === true;
     const active = ['RUNNING', 'PAUSED'].includes(data.phase);
     const devices = data.eo?.devices || [];
-    const errors = devices.filter(d => d.video === 'FAILED');
-    const publishing = devices.filter(d => d.video === 'PUBLISHING').length;
+    const errors = devices.filter(d => d.video === 'FAILED' || d.raw_video === 'FAILED');
+    const publishing = devices.filter(d => d.video === 'PUBLISHING' || d.raw_video === 'PUBLISHING').length;
     let summary = '视频推流已关闭';
     if (active && typeof data.eo?.enabled === 'boolean' && data.eo.enabled !== enabled) {
       summary = enabled ? '视频推流开启中' : '视频推流停止中';
@@ -14,13 +14,13 @@
       else if (data.phase !== 'RUNNING') summary = '视频已开启，等待开始模拟';
       else if (errors.length) summary = `视频推流失败 · ${errors.length} 台`;
       else if (publishing) summary = `正在推流 · ${publishing} 台 · 播放状态以业务前台为准`;
-      else summary = devices.some(d => d.tracking === 'TRACKING') ? '正在准备视频推流' : '视频已开启，等待跟踪';
+      else summary = '视频已开启，正在准备原始视频';
     }
     const available = data.video_control_available === true;
     return {
       label: enabled ? '停止视频推流' : '开启视频推流',
       summary: available ? summary : '视频开关尚未加载，请重启模拟器服务',
-      error: errors.map(d => `${d.device}：${d.error || '请检查视频设置和媒体服务'}`).join('；'),
+      error: errors.map(d => `${d.device}：${[d.error, d.raw_error].filter(Boolean).join('；') || '请检查视频设置和媒体服务'}`).join('；'),
       disabled: !available || ['PREPARING', 'STOPPING'].includes(data.phase) || (!enabled && !data.connected),
       settingsDisabled: !available || enabled || !data.connected || ['PREPARING', 'STOPPING'].includes(data.phase)
     };
@@ -45,7 +45,7 @@
   }
   function settings(enableAfterSave = false) {
     const c = current.video_config || {};
-    openDialog('光电视频设置', `<form id="video-settings-form"><p class="field-note">本机测试视频；留空视频文件时使用动态测试图。一般不用改：直接点“开启视频推流”会自动开视频服务、自动填账号密码。</p>${field('FFmpeg 程序路径','ffmpeg',c.ffmpeg || 'ffmpeg')}${field('本机视频文件','source',c.source || '')}${field('推流入口（RTSP）','rtsp_base',c.rtsp_base || 'rtsp://127.0.0.1:8554')}${field('媒体推流账号','publisher_user',c.publisher_user || 'qa-publisher')}${field(c.publisher_password_set ? '媒体推流密码（留空保留）' : '媒体推流密码','publisher_password','','password','autocomplete="new-password"')}<p class="inline-error" role="alert"></p><button type="submit" class="primary">${enableAfterSave ? '保存并开启' : '保存设置'}</button></form>`);
+    openDialog('光电视频设置', `<form id="video-settings-form"><p class="field-note">本机模拟视频：无跟踪时持续提供原始视频，有效跟踪时增加 AI 视频。实拍回放使用同一原片，原始流无框，AI 流按逐帧标注跟随目标；任意外部视频不生成识别框。直接点“开启视频推流”会自动开启本机媒体服务。</p><label>模拟视频模板<select name="source_mode"><option value="recorded"${!c.source_mode || c.source_mode === 'recorded' ? ' selected' : ''}>可见光实拍回放（CC0，逐帧识别框）</option><option value="calibration"${c.source_mode === 'calibration' ? ' selected' : ''}>模拟无人机校准场景</option><option value="test_pattern"${c.source_mode === 'test_pattern' ? ' selected' : ''}>动态测试图（无识别框）</option></select></label>${field('FFmpeg 程序路径','ffmpeg',c.ffmpeg || 'ffmpeg')}${field('本机视频文件（优先于模板）','source',c.source || '')}${field('推流入口（RTSP）','rtsp_base',c.rtsp_base || 'rtsp://127.0.0.1:8554')}${field('媒体推流账号','publisher_user',c.publisher_user || 'qa-publisher')}${field(c.publisher_password_set ? '媒体推流密码（留空保留）' : '媒体推流密码','publisher_password','','password','autocomplete="new-password"')}<p class="inline-error" role="alert"></p><button type="submit" class="primary">${enableAfterSave ? '保存并开启' : '保存设置'}</button></form>`);
     document.querySelector('#video-settings-form').addEventListener('submit', async event => {
       event.preventDefault();
       if (busy) return;

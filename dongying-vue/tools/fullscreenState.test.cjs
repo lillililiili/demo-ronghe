@@ -6,7 +6,9 @@ const path = require('node:path');
 function fixture(mode) {
   const source = readFileSync(path.join(__dirname, '../src/layout/HeaderBar.vue'), 'utf8');
   const start = source.indexOf('async function toggleBig');
-  const code = source.slice(start < 0 ? source.indexOf('function toggleBig') : start, source.indexOf('/* ---------- 用户菜单'));
+  const end = source.indexOf('\n}', source.indexOf('function onFsChange')) + 2;
+  assert.ok(end > start, '提取完整全屏状态同步函数，不包含相邻的待审批模块');
+  const code = source.slice(start < 0 ? source.indexOf('function toggleBig') : start, end);
   const classes = new Set(), notices = [], store = { bigscreen: false };
   const document = { body: { classList: {
     contains: key => classes.has(key), remove: key => classes.delete(key),

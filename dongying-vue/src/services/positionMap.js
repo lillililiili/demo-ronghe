@@ -4,6 +4,7 @@
    - 航线：/route-versions/{id} 的 centerline（LineString，WGS84）。
    - 设备：/devices/{id} 的 longitude/latitude。 */
 import { measuredMapPoints } from './trackPoints.js';
+import { isWgs84, wgs84Position } from './wgs84.js';
 import { toAirspaces } from './situationData.js';
 import { targetApi } from './targetApi.js';
 import { deviceApi } from './deviceApi.js';
@@ -14,20 +15,18 @@ import { displayDeviceNo } from '@/ui/deviceNumber.js';
 
 /** GeoJSON 点 → {lon, lat}；坐标系不是 WGS84、被标为不可信或越界时返回 null。 */
 export function coordOf(loc, issues, field) {
-  if (!loc || loc.coordinate_system !== 'WGS84') return null;
   if (field && Array.isArray(issues) && issues.some(i => i && i.field === field)) return null;
-  const lon = Number(loc.longitude), lat = Number(loc.latitude);
-  if (!Number.isFinite(lon) || !Number.isFinite(lat) || lon < -180 || lon > 180 || lat < -90 || lat > 90) return null;
-  return { lon, lat };
+  return wgs84Position(loc);
 }
 
 /** 航线版本中心线 → [[lon, lat], …]；不可信时 null。 */
 export function trustedCenterline(version) {
   const line = version?.centerline;
-  if (line?.type !== 'LineString' || line?.coordinate_system !== 'WGS84'
+  if (line?.type !== 'LineString' || !isWgs84(line?.coordinate_system)
     || version?.field_issues?.some(issue => issue.field === 'centerline') || !Array.isArray(line.coordinates)) return null;
-  const coordinates = line.coordinates.map(point => [Number(point?.[0]), Number(point?.[1])]);
-  return coordinates.length > 1 && coordinates.every(([lon, lat]) => Number.isFinite(lon) && Number.isFinite(lat)) ? coordinates : null;
+  const points = line.coordinates.map(point => Array.isArray(point)
+    ? wgs84Position({ longitude: point[0], latitude: point[1], coordinate_system: line.coordinate_system }) : null);
+  return points.length > 1 && points.every(Boolean) ? points.map(({ lon, lat }) => [lon, lat]) : null;
 }
 
 /** fusedBefore：研判地图优先读取该时刻之前的融合轨迹；无融合轨迹时使用研判引用的 trackId。
@@ -76,8 +75,10 @@ export async function loadDevicePosition(deviceId) {
   // /devices/{id} 的坐标在顶层，台账字段（编号、名称、类型、连接状态）在 detail.device 里。
   const detail = await deviceApi.detail(deviceId);
   const device = detail?.device || detail || {};
-  const lon = Number(detail?.longitude ?? device.longitude), lat = Number(detail?.latitude ?? device.latitude);
-  if (!Number.isFinite(lon) || !Number.isFinite(lat) || (lon === 0 && lat === 0)) return { device, mapDevice: null };
+  const location = detail && Object.hasOwn(detail, 'longitude') ? detail : device;
+  const point = wgs84Position(location);
+  if (!point) return { device, mapDevice: null };
+  const { lon, lat } = point;
   const connectivity = device.connectivity || detail?.latest_state?.connectivity;
   return {
     device,

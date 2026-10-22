@@ -1,5 +1,6 @@
 """Protocol C command receiver and loopback-only QA video publisher."""
 import copy
+from functools import lru_cache
 import json
 import os
 from pathlib import Path
@@ -10,6 +11,9 @@ import subprocess
 import tempfile
 import time
 from urllib.parse import urlparse, quote, urlunparse
+from eo_calibration import detection as calibration_detection, scene_filters as calibration_filters, FPS as CALIBRATION_FPS
+from eo_media_clock import HlsCalibrationClock
+from eo_recorded import recorded_clip
 
 def default_video_config():
     """Enable local test video by default, with an explicit environment opt-out."""
@@ -18,6 +22,7 @@ def default_video_config():
         'enabled': enabled,
         'ffmpeg': 'ffmpeg',
         'source': '',
+        'source_mode': 'recorded',
         'rtsp_base': os.environ.get('QA_VIDEO_RTSP_BASE', 'rtsp://127.0.0.1:8554'),
         'publisher_user': os.environ.get('QA_VIDEO_PUBLISH_USER', 'qa-publisher'),
         'publisher_password': os.environ.get('QA_VIDEO_PUBLISH_PASSWORD', ''),
@@ -82,6 +87,8 @@ def video_config(raw):
     value = {**DEFAULT_VIDEO, **(raw or {})}
     if not isinstance(value['enabled'], bool):
         raise ValueError('测试视频启用状态必须为布尔值')
+    if value.get('source_mode') not in ('recorded', 'calibration', 'test_pattern'):
+        raise ValueError('视频模板必须为 recorded、calibration 或 test_pattern')
     parsed = urlparse(value['rtsp_base'])
     if (parsed.scheme != 'rtsp' or parsed.hostname not in ('127.0.0.1', 'localhost', '::1')
             or parsed.username or parsed.password or parsed.path not in ('', '/') or parsed.query or parsed.fragment):
@@ -114,20 +121,40 @@ def video_config(raw):
             if not source.is_absolute() or value['source'].startswith(('\\\\', '//')) or not source.is_file():
                 raise ValueError('视频源必须是本机已存在文件的绝对路径')
             value['source'] = str(source.resolve())
+        elif value['source_mode'] == 'recorded':
+            recorded_clip()  # Fail closed if footage no longer matches its labels.
     return value
 
 
-def ffmpeg_arguments(config, path, watermark):
+@lru_cache(maxsize=8)
+def filter_file_option(executable):
+    """Use the advertised legacy option or FFmpeg's current file-argument syntax."""
+    help_result = subprocess.run([executable, '-hide_banner', '-h', 'full'],
+                                 capture_output=True, text=True, encoding='utf-8',
+                                 errors='replace', check=True, timeout=10)
+    return '-filter_script:v' if '-filter_script' in help_result.stdout else '-/filter:v'
+
+
+def ffmpeg_arguments(config, path, watermark, kind='AI', frame_offset=0):
     if not re.fullmatch(r'qa/[0-9a-fA-F-]{36}', path):
         raise ValueError('系统返回的测试流路径无效')
     # textfile avoids filter/shell injection; the isolated process owns this temporary directory.
     args = [config['ffmpeg'], '-hide_banner', '-loglevel', 'error', '-nostdin',
             '-stats_period', '1', '-progress', 'progress.txt', '-re']
-    if config['source']:
+    recorded = not config['source'] and config.get('source_mode') == 'recorded'
+    clip = recorded_clip() if recorded else None
+    if recorded:
+        if frame_offset: args += ['-readrate_initial_burst', str(frame_offset / CALIBRATION_FPS)]
+        args += ['-stream_loop', '-1', '-i', str(clip.path)]
+    elif config['source']:
         args += ['-stream_loop', '-1', '-i', config['source']]
-    else:
+    elif config.get('source_mode', 'calibration') == 'test_pattern':
         args += ['-f', 'lavfi', '-i', 'testsrc2=size=960x540:rate=15']
-    filters = 'scale=960:540:force_original_aspect_ratio=decrease,pad=960:540:(ow-iw)/2:(oh-ih)/2'
+    else:
+        args += ['-f', 'lavfi', '-i', 'color=c=0x12263a:size=960x540:rate=15']
+    filters = clip.filters(kind, frame_offset) if recorded else 'scale=960:540:force_original_aspect_ratio=decrease,pad=960:540:(ow-iw)/2:(oh-ih)/2'
+    if not config['source'] and config.get('source_mode', 'calibration') == 'calibration':
+        filters += ',' + calibration_filters()
     font_option = ''
     if watermark:
         fonts = [Path(os.environ.get('WINDIR', 'C:/Windows'))/'Fonts/arial.ttf',
@@ -137,11 +164,17 @@ def ffmpeg_arguments(config, path, watermark):
         if font is None: raise ValueError('找不到测试视频水印字体 Arial 或 DejaVu Sans')
         shutil.copyfile(font, Path(watermark).parent/'font.ttf')
         font_option = 'fontfile=font.ttf:'
-    filters += ',drawtext=' + font_option + 'textfile=watermark.txt:fontcolor=white:fontsize=22:box=1:boxcolor=black@0.8:x=16:y=16'
+    filters += ',drawtext=' + font_option + ('textfile=watermark.txt:fontcolor=white:fontsize=13:x=350:y=516' if recorded
+        else 'textfile=watermark.txt:fontcolor=white:fontsize=22:box=1:boxcolor=black@0.8:x=16:y=16')
+    # A per-frame annotation filter can exceed Windows' command-line limit.
+    filter_args = ['-vf', filters]
+    if recorded and watermark:
+        (Path(watermark).parent / 'video-filter.txt').write_text(filters, encoding='utf-8')
+        filter_args = [filter_file_option(config['ffmpeg']), 'video-filter.txt']
     base = urlparse(config['rtsp_base'])
     authority = quote(config['publisher_user'], safe='') + ':' + quote(config['publisher_password'], safe='') + '@' + base.netloc
     destination = urlunparse((base.scheme, authority, '/' + path, '', '', ''))
-    args += ['-map', '0:v:0', '-an', '-vf', filters, '-c:v', 'libx264', '-preset', 'ultrafast',
+    args += ['-map', '0:v:0', '-an', *filter_args, '-c:v', 'libx264', '-preset', 'ultrafast',
              '-tune', 'zerolatency', '-pix_fmt', 'yuv420p', '-r', '15', '-g', '15', '-keyint_min', '15',
              '-sc_threshold', '0', '-b:v', '900k', '-f', 'rtsp', '-rtsp_transport', 'tcp', destination]
     return args
@@ -161,6 +194,9 @@ class EoSimulator:
         self.accept_after = int(clock() * 1000)
         self.accepting = True
         self.unavailable = set()
+        self.raw_video = {}
+        self.media_clock = HlsCalibrationClock()
+        self.recorded = recorded_clip() if not config['source'] and config.get('source_mode') == 'recorded' else None
 
     def enqueue(self, topic, payload, retained=False):
         if retained or topic not in self.bindings or len(payload) > 1_048_576: return
@@ -177,16 +213,18 @@ class EoSimulator:
     def configure_video(self, config):
         """Called only by the MQTT owner thread; tracking survives video changes."""
         if config == self.config: return
+        self._stop_raw_video()
         for active in self.active.values():
             self._kill(active)
             self._deregister(active)
             active['next_check'] = self.clock()
         self.config = copy.deepcopy(config)
+        self.recorded = recorded_clip() if not config['source'] and config.get('source_mode') == 'recorded' else None
         for state in self.states.values():
             state.update(video='IDLE' if config['enabled'] else 'DISABLED', error='', exit_code=None)
 
     def _state(self, binding):
-        return self.states.setdefault(binding['platform_id'], {'device_id': binding['platform_id'],
+        return self.states.setdefault(binding['platform_id'], {'device_id': binding['platform_id'], 'camera_id': binding['external_id'],
             'device': binding['external_id'], 'ai_observation': 'UNAVAILABLE' if self._ai_interval() else 'DISABLED', 'task_id': None, 'tracking': 'IDLE', 'video': 'DISABLED' if not self.config['enabled'] else 'IDLE', 'error': ''})
 
     def _details(self, binding):
@@ -274,6 +312,13 @@ class EoSimulator:
             if not self.config['enabled']:
                 self._deregister(active)
                 return
+            # A replacement encoder has a new PTS origin. Preserve the old lease
+            # during interruption, then retire it at restart so frame/session IDs
+            # can never splice two independent media clocks.
+            if active['process'] is None and active.get('stream_id') and active['registered']:
+                self._deregister(active)
+                if active['registered']: raise ValueError('旧视频登记尚未注销，等待下次重试')
+                active['stream_id'] = None
             registration = self.platform.call('PUT', '/local-interface-simulator/video-streams/' + task,
                                               {'device_id': binding['platform_id']})
             active['registered'] = True
@@ -285,8 +330,18 @@ class EoSimulator:
             directory = tempfile.TemporaryDirectory(prefix='eo-test-video-')
             active['directory'] = directory
             watermark = Path(directory.name)/'watermark.txt'
-            watermark.write_text('TEST VIDEO\nDEVICE ' + binding['external_id'] + '\nTASK ' + task, encoding='utf-8')
-            args = ffmpeg_arguments(self.config, registration['stream_path'], watermark)
+            scene = 'SIMULATED CALIBRATION' if not self.config['source'] and self.config.get('source_mode') == 'calibration' else 'SIMULATED SOURCE'
+            watermark.write_text('TEST VIDEO - ' + scene + '\nDEVICE ' + binding['external_id'] + '\nTASK ' + task
+                + '\nPTS %{pts} FRAME %{n}', encoding='utf-8')
+            active['frame_offset'] = 0
+            if self.recorded:
+                watermark.write_text('TEST VIDEO - RECORDED REPLAY | AI | CC0', encoding='utf-8')
+                raw = self.raw_video.get(binding['platform_id'])
+                if raw and raw.get('process'):
+                    self._output_stalled(raw)
+                    if raw.get('progress_key'):
+                        active['frame_offset'] = raw['progress_key'][0] % self.recorded.frame_count
+            args = ffmpeg_arguments(self.config, registration['stream_path'], watermark, 'AI', active['frame_offset'])
             active['process'] = self.popen(args, cwd=directory.name, stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
@@ -294,6 +349,10 @@ class EoSimulator:
             active['stream_id'] = registration['stream_id']
             active['progress_key'] = None
             active['progress_at'] = self.clock()
+            active['started_at'] = self.clock()
+            active['last_frame_pts'] = None
+            active['last_frame_number'] = None
+            active['next_frame'] = self.clock()
             state.update(video='PUBLISHING', error='', exit_code=None)
         except Exception as error:
             self._kill(active)
@@ -325,6 +384,7 @@ class EoSimulator:
 
     def tick(self):
         self.drain()
+        self._tick_raw_video()
         for device, active in list(self.active.items()):
             process = active['process']
             if process is not None and process.poll() is not None:
@@ -357,6 +417,8 @@ class EoSimulator:
                 except Exception as error:
                     self._stop(device, 'FAILED')
                     self._state(active['binding'])['error'] = sanitize_video_error(error, self.config)[:240]
+            if device in self.active:
+                self._report_video_frame(active)
 
     def _tracking_report(self, active, facts, include_ai=True):
         if self.observations is None:
@@ -419,6 +481,7 @@ class EoSimulator:
     def suspend(self):
         """暂停或停止：本地结束跟踪，并告诉平台“光电跟踪已结束”，平台上的任务才不会一直挂着。"""
         self.accepting = False
+        self._stop_raw_video()
         for device in list(self.active):
             binding, task = self.active[device]['binding'], self.active[device]['task']
             self._stop(device, 'STOPPED')
@@ -458,9 +521,143 @@ class EoSimulator:
 
     def availability(self, unavailable):
         self.unavailable = set(unavailable)
+        for device in list(self.raw_video):
+            if device in self.unavailable: self._stop_raw_video(device)
         for device in list(self.active):
             if device in self.unavailable: self._stop(device, 'STOPPED')
 
     def heartbeat(self, payload):
         external = payload['metadata']['deviceId']
         payload['metadata']['workState'] = int(any(a['binding']['external_id'] == external for a in self.active.values()))
+
+    def _raw_endpoint(self, binding):
+        return '/local-interface-simulator/device-video-streams/' + binding['platform_id']
+
+    def _stop_raw_video(self, device=None):
+        for identity in [device] if device is not None else list(self.raw_video):
+            active = self.raw_video.pop(identity, None)
+            if active is None: continue
+            self._kill(active)
+            if active.get('registered'):
+                try: self.platform.call('DELETE', self._raw_endpoint(active['binding']))
+                except Exception as error:
+                    self.log('VIDEO_CLEANUP', '原始测试流注销失败，等待租约过期：' + sanitize_video_error(error, self.config)[:160])
+            self._state(active['binding'])['raw_video'] = 'STOPPED'
+
+    def _tick_raw_video(self):
+        if not self.config['enabled'] or not self.accepting or not self.is_running():
+            self._stop_raw_video()
+            return
+        for binding in self.bindings.values():
+            device, now = binding['platform_id'], self.clock()
+            if device in self.unavailable: continue
+            active = self.raw_video.setdefault(device, {'binding': binding, 'process': None, 'next_check': 0,
+                'registered': False, 'stream_id': None, 'job': None, 'directory': None})
+            state = self._state(binding)
+            process = active['process']
+            if process is not None and (process.poll() is not None or self._output_stalled(active)):
+                self._kill(active)
+                active['next_check'] = now + 15
+                state.update(raw_video='FAILED', raw_error='原始测试流中断，15秒后重试')
+            if now < active['next_check']: continue
+            active['next_check'] = now + 15
+            try:
+                if active['process'] is None and active.get('stream_id') and active['registered']:
+                    self.platform.call('DELETE', self._raw_endpoint(binding))
+                    active.update(registered=False, stream_id=None)
+                registration = self.platform.call('PUT', self._raw_endpoint(binding), {})
+                if registration.get('device_id') != device or registration.get('stream_kind') != 'RAW':
+                    raise ValueError('原始测试流设备关联或类型不匹配')
+                active['registered'] = True
+                if not self.is_running() or not self.accepting: raise ValueError('模拟已暂停或停止')
+                if process is not None and active['stream_id'] == registration['stream_id']: continue
+                self._kill(active)
+                directory = tempfile.TemporaryDirectory(prefix='eo-raw-video-')
+                active['directory'] = directory
+                watermark = Path(directory.name) / 'watermark.txt'
+                watermark.write_text('TEST VIDEO - SIMULATED CALIBRATION' if not self.config['source'] and self.config.get('source_mode') == 'calibration'
+                    else 'TEST VIDEO - SIMULATED SOURCE', encoding='utf-8')
+                with watermark.open('a', encoding='utf-8') as output:
+                    output.write('\nDEVICE ' + binding['external_id'] + '\nRAW CAMERA\nPTS %{pts} FRAME %{n}')
+                if self.recorded:
+                    watermark.write_text('TEST VIDEO - RECORDED REPLAY | RAW | CC0', encoding='utf-8')
+                active['process'] = self.popen(ffmpeg_arguments(self.config, registration['stream_path'], watermark, 'RAW'),
+                    cwd=directory.name, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+                active['job'] = OwnedProcessJob(active['process'])
+                active.update(stream_id=registration['stream_id'], progress_key=None, progress_at=now)
+                state.update(raw_video='PUBLISHING', raw_error='')
+            except Exception as error:
+                self._kill(active)
+                if not self.is_running() or not self.accepting:
+                    self._stop_raw_video(device)
+                state.update(raw_video='FAILED', raw_error=sanitize_video_error(error, self.config)[:240])
+
+    def _report_video_frame(self, active):
+        # Only the controlled renderer/verified recorded annotation owns its pixels.
+        # Arbitrary operator files never inherit this fixture's detections.
+        if (self.config['source'] or self.config.get('source_mode', 'calibration') not in ('calibration', 'recorded')
+                or active.get('process') is None or self.clock() < active.get('next_frame', 0)):
+            return
+        active['next_frame'] = self.clock() + 1
+        key = active.get('progress_key')
+        if key is None or key[1] == active.get('last_frame_pts'): return
+        if not 0 < key[0] <= 1 << 24:
+            self._state(active['binding'])['video_metadata'] = 'UNAVAILABLE'
+            return  # The calibration barcode must never wrap into an invented clock.
+        binding = active['binding']
+        try:
+            # This read cannot schedule tracking. A stopped/switched task cannot
+            # inherit the old pixels, observation id or media clock.
+            facts = self._details(binding).get('open_task') or {}
+            if facts.get('task_id') != active['task'] or facts.get('status') != 'OPEN' or not facts.get('target_id'): return
+            origin = self.media_clock.anchor('qa/' + active['stream_id'], self.config['ffmpeg'])
+            if origin is None:
+                self._state(binding)['video_metadata'] = 'AWAITING_MEDIA_CLOCK'
+                return
+            # Progress out_time includes the last sample's duration. The barcode
+            # uses zero-based n, so the last encoded sample is frame_count - 1.
+            media_time = (key[0] - 1) * 1000 / CALIBRATION_FPS
+            timestamp = int(origin + media_time)
+            if not 0 <= self.clock() * 1000 - timestamp <= 5000: return
+            association = None
+            if self.observations is not None and facts.get('target_id'):
+                detail = self.platform.call('GET', '/targets/' + str(facts['target_id']))
+                sample = self.observations.observation(detail, binding)
+                # The regular observation producer verifies this exact scene target's
+                # replay source/device mapping. Readback then verifies persisted ID.
+                if sample is not None and sample.get('className') == 'drone':
+                    result = self.platform.call('GET', self._raw_endpoint(binding)
+                        + '/observation-associations?task_id=' + quote(active['task'], safe=''))
+                    matches = [item for item in result.get('items', [])
+                        if item.get('target_id') == facts['target_id'] and item.get('class_code', '').lower() in ('drone', 'uav')
+                        and isinstance(item.get('observation_id'), str)
+                        and type(item.get('observed_at')) in (int, float)
+                        and 0 <= self.clock() * 1000 - item['observed_at'] <= 5000]
+                    association = max(matches, key=lambda item: item['observed_at']) if matches else None
+            last = key[0] - 1
+            # Send every actually encoded frame since the last report. A single
+            # box per second cannot follow moving recorded pixels accurately.
+            previous = active.get('last_frame_number')
+            first = max(0, last - 29, previous + 1 if previous is not None else 0) if self.recorded else last
+            for number in range(first, last + 1):
+                media_time = number * 1000 / CALIBRATION_FPS
+                timestamp = int(origin + media_time)
+                if timestamp > self.clock() * 1000 or timestamp < self.clock() * 1000 - 5000: continue
+                detection = (self.recorded.detection(active['stream_id'], number, association, active.get('frame_offset', 0))
+                    if self.recorded else calibration_detection(active['stream_id'], association))
+                payload = {'stream_id': active['stream_id'], 'task_id': active['task'],
+                    'frame_timestamp': timestamp, 'media_time_ms': int(media_time),
+                    'detections': [detection] if detection else []}
+                self.platform.call('PUT', self._raw_endpoint(binding) + '/frames', payload)
+                active['last_frame_number'] = number
+            active['last_frame_pts'] = key[1]
+            self._state(binding)['video_metadata'] = 'LINKED' if association else 'UNLINKED'
+            self._state(binding)['video_metadata_error'] = ''
+        except Exception as error:
+            state = self._state(binding)
+            message = sanitize_video_error(error, self.config)[:160]
+            if message != state.get('video_metadata_error'):
+                self.log('VIDEO_METADATA', '模拟视频帧信息未上报：' + message)
+            state.update(video_metadata='UNAVAILABLE', video_metadata_error=message)
+            active['next_frame'] = self.clock() + 5

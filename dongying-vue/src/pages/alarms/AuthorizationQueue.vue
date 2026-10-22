@@ -13,7 +13,7 @@ import { ruleReasonText } from '@/ui/legalityReviewModal.js';
 import { targetApi } from '@/services/targetApi.js';
 import { displayAlarmNo, displayTargetNo } from '@/ui/deviceNumber.js';
 import { canAccessRoute, hasPermission } from '@/services/accessControl.js';
-import { DISPOSAL_ACTION_LABEL, DISPOSAL_BLOCK_REASON_LABEL, DISPOSAL_CHANNEL_LABEL, SOURCE_MODE_LABEL, disposalStatusText, labelOf } from '@/ui/labels.js';
+import { COUNTERMEASURE_MODE_LABEL, DISPOSAL_ACTION_LABEL, DISPOSAL_BLOCK_REASON_LABEL, DISPOSAL_CHANNEL_LABEL, SOURCE_MODE_LABEL, disposalStatusText, labelOf } from '@/ui/labels.js';
 import { openDisposalApproval, openDisposalCancel, openDisposalExecution, openDisposalStop } from '@/ui/disposalAuthModal.js';
 import EmergencyStopPanel from '@/components/disposal/EmergencyStopPanel.vue';
 import TargetLiveVideo from '@/components/video/TargetLiveVideo.vue';
@@ -278,6 +278,7 @@ onUnmounted(() => { active = false; request++; detailRequest++; });
             <div class="current-handling">
               <span class="section-label">{{ selectedGroupMembers.length > 1 ? '所选原始记录进展' : '当前进展' }}</span>
               <h3 class="progress-status" :data-status="selected.status">{{ statusText(selected) }}</h3>
+              <p v-if="selected.countermeasure_mode">反制方式：{{ labelOf(COUNTERMEASURE_MODE_LABEL, selected.countermeasure_mode) }}</p>
               <p v-if="nextStep(selected, userId)">{{ nextStep(selected, userId) }}</p>
               <p v-if="executeHint(selected)" class="permission-note">{{ executeHint(selected) }}</p>
               <p v-if="resultText(selected)" class="result-text">{{ resultText(selected) }}</p>

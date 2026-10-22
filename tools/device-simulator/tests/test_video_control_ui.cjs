@@ -9,10 +9,23 @@ function model(data) {
   return ui.viewModel(data);
 }
 const running = {video_control_available:true,connected:true, phase:'RUNNING', video_config:{enabled:true,publisher_password_set:true}, eo:{enabled:true,devices:[]}};
-test('enabling without a task waits, never claims playback', () => {
-  assert.match(model(running).summary, /等待跟踪/);
+test('enabling without a task prepares raw camera, never claims playback', () => {
+  assert.match(model(running).summary, /准备原始/);
   assert.match(model({...running,phase:'IDLE'}).summary, /等待开始模拟/);
   assert.equal(model(running).label, '停止视频推流');
+});
+test('idle raw camera and raw failures are visible independently of tracking', () => {
+  const raw = {device:'eo-random',tracking:'IDLE',raw_video:'PUBLISHING',video:'IDLE'};
+  assert.match(model({...running,eo:{enabled:true,devices:[raw]}}).summary, /正在推流/);
+  const failed = {...raw,raw_video:'FAILED',raw_error:'读取媒体失败'};
+  assert.match(model({...running,eo:{enabled:true,devices:[failed]}}).error, /读取媒体失败/);
+});
+test('settings expose explicit simulated calibration and legacy test pattern', () => {
+  const source = fs.readFileSync(file, 'utf8');
+  assert.match(source, /name="source_mode"/);
+  assert.match(source, /value="calibration"/);
+  assert.match(source, /value="test_pattern"/);
+  assert.match(source, /外部视频不生成识别框/);
 });
 test('independent toggle stays available while MQTT is running', () => {
   assert.equal(model(running).disabled, false);

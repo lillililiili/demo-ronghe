@@ -364,7 +364,7 @@ class Runtime:
         if not isinstance(body, dict) or set(body) - {'enabled', 'config'} or type(body.get('enabled')) is not bool:
             raise ValueError('视频开关必须为布尔值')
         settings = body.get('config', {})
-        allowed = {'ffmpeg', 'source', 'rtsp_base', 'publisher_user', 'publisher_password'}
+        allowed = {'ffmpeg', 'source', 'source_mode', 'rtsp_base', 'publisher_user', 'publisher_password'}
         if not isinstance(settings, dict) or set(settings) - allowed:
             raise ValueError('视频配置字段无效')
         changing_settings = bool(settings)

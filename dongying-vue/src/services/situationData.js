@@ -9,6 +9,7 @@
 /* 用相对路径而不是 @/ 别名：本模块要能被 node 直接 import 跑单测（tools/situationData.test.cjs），
    而别名只有 Vite 认得。文案一律走共享字典，本页不另建一套中文。 */
 import { measuredMapPoints } from './trackPoints.js';
+import { wgs84Position } from './wgs84.js';
 import { serverNow } from './serverClock.js';
 import { planRiskLocation } from './riskMapGeometry.js';
 import { OBJECT_TYPE_LABEL, ALARM_TYPE_LABEL, AIRSPACE_KIND_LABEL, labelOf, targetTypeLabel } from '../ui/labels.js';
@@ -337,8 +338,9 @@ export function deviceGroupState({ total = 0, online = 0, abnormal = 0, offline 
 export function toDevices(devices, { includeUnlocated = false } = {}) {
   const out = [];
   for (const device of devices || []) {
-    const lon = num(device.longitude), lat = num(device.latitude);
-    if (!includeUnlocated && (lon === null || lat === null)) continue;
+    const position = wgs84Position(device);
+    const lon = position?.lon ?? null, lat = position?.lat ?? null;
+    if (!includeUnlocated && !position) continue;
     const status = DEVICE_STATUS[device.connectivity] || '未知';
     const hasAlarm = !!(device.has_alarm || device.alarm);
     const rawTypeCode = device.device_type_code || device.type_code || '';

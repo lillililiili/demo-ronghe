@@ -20,11 +20,16 @@ class EoObservations:
             return None
         candidates = set()
         for identity, target in self.targets.items():
-            if target.get('transport') == 'normalized':
-                continue  # A separately onboarded normalized source needs its own explicit mapping.
             allocated = self.manifest.get('targets', {}).get(identity, {})
-            external = allocated.get('external_id' if target.get('transport') == 'normalized' else 'mqtt_object_id')
-            for device_key in (target.get('deviceId'), target.get('secondaryDeviceId')):
+            external = allocated.get('mqtt_object_id')
+            if target.get('transport') == 'normalized':
+                # The optional secondary sensor may really report protocol A for this same scene entity.
+                # Only its allocated MQTT id and registered device can prove the mapping; the normalized
+                # primary's separate source id, fused location and display name cannot establish it.
+                device_keys = () if target.get('secondaryTransport') == 'normalized' else (target.get('secondaryDeviceId'),)
+            else:
+                device_keys = (target.get('deviceId'), target.get('secondaryDeviceId'))
+            for device_key in device_keys:
                 device = self.manifest.get('devices', {}).get(device_key, {})
                 device_ids = {device.get('platform_id'), device.get('fusion_device_id')}-{None}
                 # The registered device's source_id is the operations-layer source; source_links carry the fusion-layer

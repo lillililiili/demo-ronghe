@@ -39,6 +39,7 @@ const bridge = window.SimulatorMap = {
 };
 async function start() {
   const run = ++generation;
+  let resourceWarning = false;
   bridge.ready = false;
   controller?.abort(); resize?.disconnect(); map?.remove(); resources?.release();
   map = null; resources = null;
@@ -65,10 +66,18 @@ async function start() {
     map.addControl(new next.maplibre.AttributionControl({ compact: true }), 'bottom-right');
     map.on('move', redraw);
     map.on('click', event => window.dispatchEvent(new CustomEvent('simulator-map:point', { detail: stored(event.lngLat) })));
-    map.on('error', () => showError('系统地图部分资源加载失败，请检查地图服务后重试'));
+    map.on('error', event => {
+      if (run !== generation) return;
+      const imageryState = next.handleImageryError(map, event);
+      if (imageryState === 'cancelled') return;
+      const error = event.error;
+      if (error?.name === 'AbortError' || error?.code === 20 || /abort|cancelled|canceled/i.test(String(error?.message || ''))) return;
+      resourceWarning = true;
+      showError(imageryState === 'fallback' ? '卫星影像读取失败，已恢复本地矢量底图' : '系统地图部分资源加载失败，请检查地图服务后重试');
+    });
     map.on('load', () => {
       if (run !== generation) return;
-      bridge.ready = true; notice.hidden = true;
+      bridge.ready = true; notice.hidden = !resourceWarning;
       redraw(); window.dispatchEvent(new Event('simulator-map:ready'));
     });
     resize = new ResizeObserver(() => { map?.resize(); redraw(); });

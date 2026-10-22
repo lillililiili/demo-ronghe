@@ -99,14 +99,17 @@
   }
 
   MapView.prototype._status = function (state, error) {
+    if (state === 'ready' && this._imageryError) { state = 'imagery-fallback'; error = this._imageryError; }
     this.box.dataset.mapState = state;
     this.baseEl.setAttribute('aria-busy', String(state === 'loading'));
     this.statusEl.hidden = state === 'ready';
-    this.statusEl.className = 'mapstatus is-' + state;
-    this.statusEl.querySelector('span').textContent = state === 'loading' ? '底图加载中' : '离线地图不可用，已切换简化示意图';
-    this.statusEl.querySelector('button').hidden = state !== 'fallback';
+    this.statusEl.className = 'mapstatus is-' + (state === 'imagery-fallback' ? 'fallback' : state);
+    this.statusEl.querySelector('span').textContent = state === 'loading' ? '底图加载中'
+      : state === 'imagery-fallback' ? '卫星影像读取失败，已恢复本地矢量底图'
+        : '离线地图不可用，已切换简化示意图';
+    this.statusEl.querySelector('button').hidden = !['fallback', 'imagery-fallback'].includes(state);
     this.statusEl.title = error ? error.message || String(error) : '';
-    this.box.querySelector('.mapcredit').hidden = state === 'ready';
+    this.box.querySelector('.mapcredit').hidden = state === 'ready' || state === 'imagery-fallback';
   };
 
   MapView.prototype._isTransientMapError = function (error) {
@@ -130,6 +133,7 @@
       map.remove();
     }
     this._mapEvents = [];
+    this.box.classList.remove('has-satellite-imagery');
     // 构造阶段 WebGL 失败也可能已经插入 Canvas，必须一并清理。
     if (this.baseEl) { this.baseEl.replaceChildren(); this.baseEl.classList.remove('maplibregl-map'); }
     if (this._release) { this._release(); this._release = null; }
@@ -153,6 +157,7 @@
   MapView.prototype._initOffline = function () {
     if (this._dead) return;
     this._disposeBase();
+    this._imageryError = null;
     this._status('loading');
     const controller = new AbortController();
     this._loadController = controller;
@@ -191,6 +196,7 @@
         transformRequest: runtime.transformRequest
       });
       this.map = map;
+      this.box.classList.toggle('has-satellite-imagery', Boolean(runtime.style.sources?.imagery));
       // 主题在运行时生成地块纹理图片；必须在样式加载完成前挂上 styleimagemissing。
       if (typeof runtime.decorate === 'function') runtime.decorate(map);
       this._applyCameraLimits();
@@ -236,8 +242,17 @@
         // 地图已经出来之后不能因此拆掉整张底图；只有首屏还没 load 的致命错误才降级示意图。
         const error = event.error || new Error('离线资源读取失败');
         if (this._dead || this.map !== map) return;
+        const imageryState = runtime.handleImageryError?.(map, event);
+        if (imageryState) {
+          if (imageryState === 'fallback') {
+            this._imageryError = error;
+            this.box.classList.remove('has-satellite-imagery');
+            this._status('imagery-fallback', error);
+          }
+          return;
+        }
         if (this._isTransientMapError(error) || this.online) return;
-        if (['imagery', 'procdem'].includes(event.sourceId)) return;
+        if (event.sourceId === 'procdem') return;
         initialFailure = error;
         clearTimeout(this._failureTimer);
         this._failureTimer = setTimeout(() => {

@@ -1,5 +1,7 @@
 # 处置授权 API 契约（阶段 13，v1.1）
 
+2026-10-20 用户确认：普通申请和直接反制表单新增“反制方式”：迫降 `FORCE_LAND`、驱离 `DRIVE_AWAY`，默认迫降。提交独立 `countermeasure_mode`，动作仍是 `COUNTERMEASURE`；服务端保存后供审批、执行、记录详情和进度读取，不在执行时重新选择。四通道对应 `SET_MASK=15/13`，凌云协议 B 对应 `60003/60002`。未知值拒绝，旧记录未提供方式时不补造历史选择，自动反制及现有权限、急停、幂等、回执保持。
+
 2026-09-10 修订：UAV_EVENT 授权的 `source_mode` 继承源告警，TARGET 授权继承目标，均不硬编码 live。页面新增独立“处置与处罚 → 处置授权”队列，先审批、执行、核对结果，再提交处罚交接。
 
 > 状态：v1.3（2026-09-09，四通道原生 TCP 设置：`COUNTERMEASURE`→`SET_MASK 0x0F`，`JAMMING`→`0x0D`，停止=全关 `0x00`；DECOY/DISPERSAL 走四通道 400。v1.2 为 A 开通 `dec`/`ifr`/`bsc`；v1.1 为 2026-09-08 验收修订；v1.0 冻结稿 2026-09-07）。依据：计划 `docs/superpowers/plans/2026-09-07-collaborator-b-stage-13-disposal-authorization.md`、决策 13-1…13-9、协作者 A 的 P5 与四通道 REST。通用约定同前：`{ok,data}` 包络、snake_case、字符串 ID、epoch ms、`page,size→items/page/size/total`、先鉴权再解析、精确 `(owner_org_id,district_id)` 元组、越权 404、`Idempotency-Key` + `expected_version`。

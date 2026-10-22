@@ -11,8 +11,6 @@ export function mapPalette() {
 export function applyMapTheme(style, options = {}) {
   const p = mapPalette();
   const imagery = options.imagery || null;
-  // 有影像时，影像负责地表纹理，矢量色块只做半透明"染色"，否则会把影像整片盖掉。
-  const tintOpacity = imagery ? 0.42 : 1;
   for (const layer of style.layers || []) {
     if (layer.type === 'background') {
       layer.paint = { ...layer.paint, 'background-color': p.background };
@@ -31,8 +29,8 @@ export function applyMapTheme(style, options = {}) {
           ['urban_area', 'hospital', 'school', 'university', 'college'], p.urban,
           p.land];
       }
-      if (source === 'landcover' || source === 'landuse') paint['fill-opacity'] = tintOpacity;
-      if (source === 'buildings') { paint['fill-color'] = p.building; if (imagery) paint['fill-opacity'] = 0.6; }
+      if (source === 'landcover' || source === 'landuse') paint['fill-opacity'] = 1;
+      if (source === 'buildings') paint['fill-color'] = p.building;
       if (source === 'water') {
         // 海/湖/河分档：湖泊与近岸水体偏亮偏青，河道面用河流线色，其余（海）用深水色。
         paint['fill-color'] = ['match', ['get', 'kind'],
@@ -60,39 +58,40 @@ export function applyMapTheme(style, options = {}) {
       }
     }
   }
-  injectUrbanLayers(style, p, tintOpacity);
-  if (imagery) injectImagery(style, p, imagery);
+  if (imagery) injectImagery(style, imagery);
+  else injectUrbanLayers(style, p);
   return style;
 }
 
-/* 影像底图：raster 层插在 earth 之后、所有地块色块之前。影像先去饱和提对比，再用一层半透明陆地色
-   "染"成蓝调；上面的农田/城区色块按 tintOpacity 半透明叠加。影像只做到 Z12，再放大就淡出交给矢量。 */
-function injectImagery(style, p, imagery) {
+/* 矢量地表留在影像下方，供透明缺测和读取失败时显示；道路、边界及地名继续在上方叠加。
+   maxzoom 仅限制源瓦片级别，影像层不设上限，放大时由引擎沿用最高级影像。 */
+function injectImagery(style, imagery) {
   style.sources.imagery = {
-    type: 'raster', tiles: [imagery.tiles], tileSize: 256,
+    type: 'raster', tiles: [imagery.tiles], tileSize: imagery.tileSize ?? 256,
     minzoom: imagery.minzoom, maxzoom: imagery.maxzoom, bounds: imagery.bounds, attribution: imagery.attribution
   };
-  const layers = style.layers;
-  const earthAt = layers.findIndex(layer => layer.id === 'earth');
-  layers.splice(earthAt < 0 ? 1 : earthAt + 1, 0,
+  const layers = style.layers || [];
+  const ground = layer => layer.type === 'background' || (layer.source === 'protomaps' && layer.type === 'fill');
+  style.layers = [...layers.filter(ground),
     {
-      id: 'theme_imagery', type: 'raster', source: 'imagery', minzoom: 6,
+      id: 'theme_imagery', type: 'raster', source: 'imagery',
       paint: {
-        'raster-saturation': -0.72, 'raster-contrast': 0.22,
-        'raster-brightness-min': 0.04, 'raster-brightness-max': 0.82,
+        'raster-saturation': 0, 'raster-contrast': 0,
+        'raster-brightness-min': 0, 'raster-brightness-max': 1,
         'raster-fade-duration': 0,
-        'raster-opacity': ['interpolate', ['linear'], ['zoom'], 6, 0.9, imagery.maxzoom, 0.9, imagery.maxzoom + 2, 0.3]
+        'raster-opacity': 1
       }
-    },
-    {
-      id: 'theme_imagery_tint', type: 'fill', source: 'protomaps', 'source-layer': 'earth',
-      filter: ['==', ['geometry-type'], 'Polygon'],
-      paint: { 'fill-color': p.land, 'fill-antialias': false,
-        'fill-opacity': ['interpolate', ['linear'], ['zoom'], 6, 0.5, imagery.maxzoom + 2, 0.75] }
-    });
-  // 影像自带地表起伏，山影收弱。
-  const hill = layers.find(layer => layer.id === 'theme_hillshade');
-  if (hill) hill.paint['hillshade-exaggeration'] = 0.22;
+    }, ...layers.filter(layer => !ground(layer))];
+}
+
+// 返回 null 表示交给调用方处理；取消请求不应误报。移除源会同时停止后续影像请求。
+export function handleImageryError(map, event) {
+  if (event?.sourceId !== 'imagery') return null;
+  const error = event.error;
+  if (error?.name === 'AbortError' || error?.code === 20 || /abort|cancelled|canceled/i.test(String(error?.message || ''))) return 'cancelled';
+  if (map.getLayer('theme_imagery')) map.removeLayer('theme_imagery');
+  if (map.getSource('imagery')) map.removeSource('imagery');
+  return 'fallback';
 }
 
 /* 微调色相：hex 按比例提亮/压暗，用于同一类地块的多档色，避免为每档单开 token。 */

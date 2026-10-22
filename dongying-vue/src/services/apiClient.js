@@ -26,7 +26,7 @@ export function writeSessionToken(token) {
   } catch { return false; }
 }
 
-function idempotencyKey() {
+export function idempotencyKey() {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
   return `${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
 }

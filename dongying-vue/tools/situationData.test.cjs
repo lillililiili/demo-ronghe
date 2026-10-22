@@ -43,6 +43,41 @@ function airspace(kindCode, boundary, extra) {
 async function main() {
   const S = await import('../src/services/situationData.js');
 
+  // 坐标契约：其他基准或不完整位置不能进入 WGS-84 地图，真实零值保持。
+  const positionSource = fs.readFileSync(path.resolve(__dirname, '../src/services/positionMap.js'), 'utf8')
+    .replace(/^import .*;\r?\n/gm, '').replace(/export /g, '');
+  // 使用真实校验函数，VM 只替代浏览器 API 依赖。
+  const positionContext = { ...await import('../src/services/wgs84.js') };
+  vm.createContext(positionContext);
+  vm.runInContext(positionSource, positionContext);
+  for (const [longitude, latitude] of [[null,37.2],[118.3,''],[' ',37.2],[false,37.2],[201,37],[118,95]]) {
+    check(`缺失或非法坐标不补零 ${JSON.stringify([longitude,latitude])}`,
+      positionContext.coordOf({longitude,latitude,coordinate_system:'WGS84'}),null);
+  }
+  check('真实零度坐标有效',positionContext.coordOf({longitude:0,latitude:0,coordinate_system:'WGS84'}),{lon:0,lat:0});
+  for (const coordinates of [[[null,37],[118,37]],[[118,''],[119,37]],[[181,37],[118,37]]]) {
+    check('无效航线点不补零',positionContext.trustedCenterline({centerline:{type:'LineString',coordinate_system:'WGS84',coordinates}}),null);
+  }
+  check('有效航线保留真实零值',positionContext.trustedCenterline({centerline:{type:'LineString',coordinate_system:'WGS-84',coordinates:[[0,0],[1,1]]}}),[[0,0],[1,1]]);
+  for (const coordinate_system of ['WGS84','WGS-84','GCJ02',null]) {
+    positionContext.deviceApi={detail:async()=>({device:{device_id:'position-device',device_no:'DEV-POS',name:'位置校验设备'},longitude:0,latitude:0,coordinate_system})};
+    const result=await positionContext.loadDevicePosition('position-device');
+    check(`设备详情坐标契约 ${coordinate_system}`,result.mapDevice?[result.mapDevice.lon,result.mapDevice.lat]:null,
+      ['WGS84','WGS-84'].includes(coordinate_system)?[0,0]:null);
+  }
+  for (const crs of ['GCJ02','CGCS2000','BD09',null,'']) {
+    const input={device_id:`datum-${crs}`,longitude:118.3,latitude:37.2,coordinate_system:crs};
+    check(`非WGS设备不画图 ${crs}`,S.toDevices([input]),[]);
+    const retained=S.toDevices([input],{includeUnlocated:true})[0];
+    check(`非WGS设备保留列表但位置未知 ${crs}`,[retained.lon,retained.lat,retained.posValid],[null,null,false]);
+  }
+  for (const crs of ['WGS84','WGS-84',' wgs84 ']) {
+    for (const [longitude,latitude] of [[0,0],[119.2,36.8]]) {
+      const result=S.toDevices([{device_id:`valid-${crs}`,longitude,latitude,coordinate_system:crs}])[0];
+      check(`等价基准和真实零值 ${crs}/${longitude}`,[result.lon,result.lat,result.posValid],[longitude,latitude,true]);
+    }
+  }
+
   /* ---- 空域几何 ---- */
   const polygons = S.polygonRings(SQUARE_WITH_HOLE);
   check('一个多边形产出一条', polygons.length, 1);
@@ -115,7 +150,7 @@ async function main() {
   ]), { uav: 1, foreign: 3, unknown: 3, other: 1 });
   check('空目标列表分类均为零', S.targetClassCounts([]), { uav: 0, foreign: 0, unknown: 0, other: 0 });
   const devices = S.toDevices([
-    { device_id: 'd1', device_no: 'DEV-1', name: '雷达一号', longitude: 118.5, latitude: 37.4, connectivity: 'ONLINE' },
+    { device_id: 'd1', device_no: 'DEV-1', name: '雷达一号', coordinate_system: 'WGS84', longitude: 118.5, latitude: 37.4, connectivity: 'ONLINE' },
     { device_id: 'd2', device_no: 'DEV-2', name: '无坐标设备', connectivity: 'OFFLINE' }
   ]);
   check('没有经纬度的设备不进地图', devices.length, 1);
@@ -126,34 +161,34 @@ async function main() {
   check('设备状态走字典', devices[0].status, '在线');
   check('设备保留稳定状态码', devices[0].statusCode, 'ONLINE');
   check('告警标记来自 has_alarm', S.toDevices([
-    { device_id: 'd4', longitude: 118.5, latitude: 37.4, has_alarm: true }
+    { device_id: 'd4', coordinate_system: 'WGS84', longitude: 118.5, latitude: 37.4, has_alarm: true }
   ])[0].alarm, true);
-  check('未知连接状态不猜成在线', S.toDevices([{ device_id: 'd3', longitude: 1, latitude: 1, connectivity: 'WAT' }])[0].status, '未知');
-  const abnormalDevice = S.toDevices([{ device_id: 'd5', longitude: 118.4, latitude: 37.4, connectivity: 'ABNORMAL', coverage: { kind: 'circle', radius_m: 1000 } }])[0];
+  check('未知连接状态不猜成在线', S.toDevices([{ device_id: 'd3', coordinate_system: 'WGS84', longitude: 1, latitude: 1, connectivity: 'WAT' }])[0].status, '未知');
+  const abnormalDevice = S.toDevices([{ device_id: 'd5', coordinate_system: 'WGS84', longitude: 118.4, latitude: 37.4, connectivity: 'ABNORMAL', coverage: { kind: 'circle', radius_m: 1000 } }])[0];
   check('异常连接状态单独映射', [abnormalDevice.statusCode, abnormalDevice.status], ['ABNORMAL', '异常']);
   check('异常设备覆盖不参与有效监测', abnormalDevice.coverage.status, 'unavailable');
   check('后端小写设备缩写归一为页面稳定码', S.toDevices([
-    { device_id: 'd6', fusion_device_id: 'fusion-d6', longitude: 118.4, latitude: 37.4, connectivity: 'ONLINE', device_type_code: '5ga' }
+    { device_id: 'd6', fusion_device_id: 'fusion-d6', coordinate_system: 'WGS84', longitude: 118.4, latitude: 37.4, connectivity: 'ONLINE', device_type_code: '5ga' }
   ])[0].typeCode, 'FIVE_G_A');
   const extendedTypes = S.toDevices([
-    { device_id: 'aoa', longitude: 118.4, latitude: 37.4, connectivity: 'ONLINE', device_type_code: 'aoa' },
-    { device_id: 'dcd', longitude: 118.4, latitude: 37.4, connectivity: 'ONLINE', device_type_code: 'dcd' },
-    { device_id: 'rid', longitude: 118.4, latitude: 37.4, connectivity: 'ONLINE', device_type_code: 'rid' },
-    { device_id: 'oe', longitude: 118.4, latitude: 37.4, connectivity: 'ONLINE', device_type_code: 'oe' }
+    { device_id: 'aoa', coordinate_system: 'WGS84', longitude: 118.4, latitude: 37.4, connectivity: 'ONLINE', device_type_code: 'aoa' },
+    { device_id: 'dcd', coordinate_system: 'WGS84', longitude: 118.4, latitude: 37.4, connectivity: 'ONLINE', device_type_code: 'dcd' },
+    { device_id: 'rid', coordinate_system: 'WGS84', longitude: 118.4, latitude: 37.4, connectivity: 'ONLINE', device_type_code: 'rid' },
+    { device_id: 'oe', coordinate_system: 'WGS84', longitude: 118.4, latitude: 37.4, connectivity: 'ONLINE', device_type_code: 'oe' }
   ]);
   check('态势页新增设备类型统一归一并使用正式图标', extendedTypes.map(device => [device.typeCode, device.icon]), [
     ['AOA', 'aoa'], ['DCD', 'dcd'], ['RID', 'rid'], ['EO', 'camera']
   ]);
   const simulatorDevices = S.toDevices([
-    { device_id: 'weather-1', longitude: 118.4, latitude: 37.4, connectivity: 'ONLINE', device_type_code: 'weather', simulated: true },
-    { device_id: 'countermeasure-1', longitude: 118.4, latitude: 37.4, connectivity: 'ONLINE', device_type_code: 'countermeasure', simulated: true }
+    { device_id: 'weather-1', coordinate_system: 'WGS84', longitude: 118.4, latitude: 37.4, connectivity: 'ONLINE', device_type_code: 'weather', simulated: true },
+    { device_id: 'countermeasure-1', coordinate_system: 'WGS84', longitude: 118.4, latitude: 37.4, connectivity: 'ONLINE', device_type_code: 'countermeasure', simulated: true }
   ]);
   check('模拟器气象设备单独归为气象设备类型', [simulatorDevices[0].typeCode, simulatorDevices[0].icon], ['WEATHER', 'weather']);
   check('态势页只列现场设备类型', S.SITUATION_DEVICE_TYPE_ORDER, ['RADAR', 'EO', 'COUNTERMEASURE', 'FUSION_BOX', 'TDOA', 'FIVE_G_A', 'WEATHER']);
   check('模拟器反制设备保留反制展示类型', [simulatorDevices[1].typeCode, simulatorDevices[1].icon], ['COUNTERMEASURE', 'cm']);
   for (const [index, position] of [[0, [118.4, 37.4]], [1, [119.1, 36.8]]]) {
     for (const type of ['radar', 'tdoa', '5ga', 'EO', 'weather', 'countermeasure']) {
-      const row = { device_id: `scan-${index}-${type}`, name: `设备 ${index}`, longitude: position[0], latitude: position[1],
+      const row = { device_id: `scan-${index}-${type}`, name: `设备 ${index}`, coordinate_system: 'WGS84', longitude: position[0], latitude: position[1],
         device_type_code: type, simulated: true, connectivity: 'ONLINE', coverage: { status: 'UNKNOWN' } };
       const simulated = S.toDevices([row])[0];
       check(`${type} 未上报范围保持未知 ${index}`, [simulated.coverage.status, simulated.displayCoverage.status], ['unknown', 'unknown']);
@@ -175,17 +210,17 @@ async function main() {
     }
   }
   const simulatedOptical = S.toDevices([{ device_id: 'optical-scan', simulated: true, device_type_code: 'oe',
-    longitude: 118.6, latitude: 37.2, connectivity: 'ONLINE',
+    coordinate_system: 'WGS84', longitude: 118.6, latitude: 37.2, connectivity: 'ONLINE',
     coverage: { kind: 'SECTOR', range_m: 1500, azimuth_deg: 0, fov_deg: 120, source_label: '模拟器设备范围（模拟参数）' } }])[0];
   check('模拟光电保留扇形参数和小数距离', [simulatedOptical.displayCoverage.kind, simulatedOptical.displayCoverage.azimuthDeg,
     simulatedOptical.displayCoverage.fovDeg, simulatedOptical.displayCoverageText], ['sector', 0, 120, '0°方位 · 120°视场 · 1.5 km']);
   check('没有坐标不补地图范围', S.toDevices([{ device_id: 'no-location', simulated: true, device_type_code: 'radar' }],
     { includeUnlocated: true })[0].displayCoverage.status, 'unknown');
   check('没有定义的类型不补模拟范围', S.toDevices([{ device_id: 'unknown-type', simulated: true,
-    device_type_code: 'unsupported', longitude: 118.6, latitude: 37.2 }])[0].displayCoverage.status, 'unknown');
+    device_type_code: 'unsupported', coordinate_system: 'WGS84', longitude: 118.6, latitude: 37.2 }])[0].displayCoverage.status, 'unknown');
   check('气象参考范围与反制作用范围分别标明', simulatorDevices.map(device => device.displayCoverage.label), ['气象参考范围', '作用范围']);
   check('设备保留融合域内部 ID 用于来源链路关联', S.toDevices([
-    { device_id: 'd6', fusion_device_id: 'fusion-d6', longitude: 118.4, latitude: 37.4 }
+    { device_id: 'd6', fusion_device_id: 'fusion-d6', coordinate_system: 'WGS84', longitude: 118.4, latitude: 37.4 }
   ])[0].fusionDeviceId, 'fusion-d6');
 
   /* ---- 覆盖参数 ---- */
@@ -219,7 +254,7 @@ async function main() {
   /* ---- 目标 ---- */
   const targets = S.toTargets([
     { target_id: 't1', target_no: 'MB-1', object_type_code: 'UAV', subtype: 'QUADCOPTER',
-      latest_state: { location: { longitude: 118.6, latitude: 37.4 }, altitude_amsl_m: 120, speed_mps: 12, fusion_confidence: 0.87 } },
+      latest_state: { location: { coordinate_system: 'WGS84', longitude: 118.6, latitude: 37.4 }, altitude_amsl_m: 120, speed_mps: 12, fusion_confidence: 0.87 } },
     // t3 故意没有任何研判：这条目标专门用来验"没有研判 ≠ 合法"。
     { target_id: 't3', target_no: 'MB-3', object_type_code: 'UAV', latest_state: { location: null } }
   ], legal);
@@ -235,11 +270,11 @@ async function main() {
   check('没有研判的目标是待确认，不是合法', targets[1].legal, '待确认');
   check('没有置信度不补 0', targets[1].fusedConf, null);
   const foreignTargets = S.toTargets([
-    { target_id: 'bird', object_type_code: 'BIRD', subtype: 'BIRD_FLOCK', latest_state: { location: { longitude: 118.5, latitude: 37.5 } } },
-    { target_id: 'balloon', object_type_code: 'UNKNOWN', subtype: 'BALLOON', latest_state: { location: { longitude: 118.5, latitude: 37.5 } } },
-    { target_id: 'kite', object_type_code: 'UNKNOWN', subtype: 'KITE', latest_state: { location: { longitude: 118.5, latitude: 37.5 } } },
-    { target_id: 'lantern', object_type_code: 'UNKNOWN', subtype: 'SKY_LANTERN', latest_state: { location: { longitude: 118.5, latitude: 37.5 } } },
-    { target_id: 'other', object_type_code: 'UNKNOWN', subtype: 'OTHER_OBJECT', latest_state: { location: { longitude: 118.5, latitude: 37.5 } } }
+    { target_id: 'bird', object_type_code: 'BIRD', subtype: 'BIRD_FLOCK', latest_state: { location: { coordinate_system: 'WGS84', longitude: 118.5, latitude: 37.5 } } },
+    { target_id: 'balloon', object_type_code: 'UNKNOWN', subtype: 'BALLOON', latest_state: { location: { coordinate_system: 'WGS84', longitude: 118.5, latitude: 37.5 } } },
+    { target_id: 'kite', object_type_code: 'UNKNOWN', subtype: 'KITE', latest_state: { location: { coordinate_system: 'WGS84', longitude: 118.5, latitude: 37.5 } } },
+    { target_id: 'lantern', object_type_code: 'UNKNOWN', subtype: 'SKY_LANTERN', latest_state: { location: { coordinate_system: 'WGS84', longitude: 118.5, latitude: 37.5 } } },
+    { target_id: 'other', object_type_code: 'UNKNOWN', subtype: 'OTHER_OBJECT', latest_state: { location: { coordinate_system: 'WGS84', longitude: 118.5, latitude: 37.5 } } }
   ], {});
   check('五种异物映射到不同图标', foreignTargets.map(target => target.iconKind), ['bird', 'balloon', 'kite', 'lantern', 'unknown']);
   ok('非无人机合法性统一为不适用', foreignTargets.every(target => target.legal === '不适用'));
@@ -247,16 +282,16 @@ async function main() {
   /* ---- 报文时刻不可信（ZT-20）：设备时钟慢两分钟时不能显示成"已观测" ---- */
   const laggingTargets = S.toTargets([
     { target_id: 'lag', object_type_code: 'UAV', latest_state: { observed_at: 1_000_000, received_at: 1_120_000,
-      field_issues: [{ field: 'observed_at', reason_code: 'TIME_UNTRUSTED' }], location: { longitude: 118.5, latitude: 37.5 } } },
+      field_issues: [{ field: 'observed_at', reason_code: 'TIME_UNTRUSTED' }], location: { coordinate_system: 'WGS84', longitude: 118.5, latitude: 37.5 } } },
     // 接收比报文晚 5 s 但后端没有标不可信：前端不自己按差值猜。
     { target_id: 'ok', object_type_code: 'UAV', latest_state: { observed_at: 1_000_000, received_at: 1_005_000,
-      field_issues: [{ field: 'heading_deg', reason_code: 'NOT_REPORTED' }], location: { longitude: 118.5, latitude: 37.5 } } }
+      field_issues: [{ field: 'heading_deg', reason_code: 'NOT_REPORTED' }], location: { coordinate_system: 'WGS84', longitude: 118.5, latitude: 37.5 } } }
   ], {});
   check('后端标了 observed_at 不可信的目标带 timeUntrusted', [laggingTargets[0].timeUntrusted, laggingTargets[0].reportLagMs, laggingTargets[0].receivedAt], [true, 120000, 1120000]);
   check('后端没标就不算不可信，也不报差值', [laggingTargets[1].timeUntrusted, laggingTargets[1].reportLagMs], [false, null]);
   const laggingDevices = S.toDevices([
-    { device_id: 'tdoa-lag', longitude: 118.5, latitude: 37.4, connectivity: 'ONLINE', report_lag_ms: 120000, time_untrusted: true },
-    { device_id: 'tdoa-ok', longitude: 118.5, latitude: 37.4, connectivity: 'ONLINE' }
+    { device_id: 'tdoa-lag', coordinate_system: 'WGS84', longitude: 118.5, latitude: 37.4, connectivity: 'ONLINE', report_lag_ms: 120000, time_untrusted: true },
+    { device_id: 'tdoa-ok', coordinate_system: 'WGS84', longitude: 118.5, latitude: 37.4, connectivity: 'ONLINE' }
   ]);
   check('设备时间不准随设备摘要带出', [laggingDevices[0].timeUntrusted, laggingDevices[0].reportLagMs], [true, 120000]);
   check('没有感知水位的设备不算时间不准', [laggingDevices[1].timeUntrusted, laggingDevices[1].reportLagMs], [false, null]);
@@ -300,9 +335,9 @@ async function main() {
 
   /* ---- 轨迹点 ---- */
   const track = S.toTrack([
-    { longitude: 118.1, latitude: 37.1, point_kind: 'MEAS' },
-    { longitude: null, latitude: 37.2, point_kind: 'PRED' },
-    { longitude: 118.3, latitude: 37.3, point_kind: 'PRED' }
+    { coordinate_system: 'WGS84', longitude: 118.1, latitude: 37.1, point_kind: 'MEAS' },
+    { coordinate_system: 'WGS84', longitude: null, latitude: 37.2, point_kind: 'PRED' },
+    { coordinate_system: 'WGS84', longitude: 118.3, latitude: 37.3, point_kind: 'PRED' }
   ]);
   check('没有坐标的轨迹点丢弃', track.length, 2);
   check('kind 小写透传', track.map(p => p.kind), ['meas', 'pred']);
@@ -354,13 +389,13 @@ async function main() {
   const bearingTargets = S.toTargets([
     { target_id: 'bt1', target_no: 'B-1', latest_state: { bearing_deg: 82.5, bearing_device_id: 'd1' } },
     { target_id: 'bt2', target_no: 'B-2', latest_state: { bearing_deg: 10, bearing_device_id: 'd2' } },
-    { target_id: 'bt3', target_no: 'B-3', latest_state: { location: { longitude: 118.4, latitude: 37.3 }, bearing_deg: 30, bearing_device_id: 'd1' } }
+    { target_id: 'bt3', target_no: 'B-3', latest_state: { location: { coordinate_system: 'WGS84', longitude: 118.4, latitude: 37.3 }, bearing_deg: 30, bearing_device_id: 'd1' } }
   ]);
   check('只报方位的目标不算有位置', bearingTargets[0].posValid, false);
   check('方位角读的是 bearing_deg', bearingTargets[0].bearing, 82.5);
   check('观测设备读的是 bearing_device_id', bearingTargets[0].bearingDeviceId, 'd1');
   const origins = S.bearingOrigins([
-    { device_id: 'd1', longitude: 118.5, latitude: 37.4 },
+    { device_id: 'd1', coordinate_system: 'WGS84', longitude: 118.5, latitude: 37.4 },
     { device_id: 'd2', name: '无坐标设备' }
   ]);
   check('无坐标设备不能当方位线起点', origins.d2, undefined);

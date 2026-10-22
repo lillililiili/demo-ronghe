@@ -104,6 +104,13 @@ class VideoControlTests(unittest.TestCase):
         self.assertNotIn('test-secret-only', json.dumps(result))
         self.assertEqual(result['video_config']['rtsp_base'], 'rtsp://127.0.0.1:18554')
 
+    def test_source_template_can_be_changed_only_while_video_off(self):
+        result = self.control({'enabled': False, 'config': {'source_mode': 'test_pattern'}})
+        self.assertEqual(result['video_config']['source_mode'], 'test_pattern')
+        self.runtime.video_config['enabled'] = True
+        with self.assertRaises(ValueError):
+            self.control({'enabled': True, 'config': {'source_mode': 'calibration'}})
+
     def test_same_origin_http_endpoint_validates_payload_and_masks_secrets(self):
         local = simulator_server.ThreadingHTTPServer(('127.0.0.1', 0), simulator_server.Handler)
         thread = threading.Thread(target=lambda: local.serve_forever(poll_interval=.05), daemon=True)

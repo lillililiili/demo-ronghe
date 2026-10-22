@@ -668,7 +668,7 @@ function counterStopSubject(stop) {
 function counterSubject(row) {
   if (!row?.authorization_id) return null;
   const keys = ['authorization_id', 'action_type', 'status', 'version', 'requested_by', 'requested_by_name', 'requested_at',
-    'approved_by_name', 'approved_at', 'decision_note', 'authorization_mode', 'result_code', 'device_stop_result', 'device_id'];
+    'approved_by_name', 'approved_at', 'decision_note', 'authorization_mode', 'countermeasure_mode', 'result_code', 'device_stop_result', 'device_id'];
   return Object.fromEntries(keys.map(key => [key, row[key] ?? null]));
 }
 /* 处置进度面板每秒读一次通知摘要。只有本页用到的字段（通知阶段、撤离结果、反制入口、不反制决定、自动移送）

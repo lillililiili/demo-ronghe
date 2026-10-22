@@ -1,12 +1,13 @@
 // 挂载前注册桥接；经典 MapView 和业务页面不依赖具体引擎。
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
-import { applyMapTheme, mapPalette, installThemeImages } from './mapTheme';
+import { applyMapTheme, mapPalette, installThemeImages, handleImageryError } from './mapTheme';
 import { proceduralDemTile } from './proceduralTerrain';
 import { warmMapResource, warmMapStyleAssets } from './mapResourceWarmup.js';
 let enginePromise;
 const archives = new Map();
 const MANAGED_CONFIG_URL = '/map-data/control/map-config.json';
 const BUILTIN_CONFIG_URL = '/map-config.json';
+const IMAGERY_PROTOCOL = 'offlineimagery://';
 let activeRuntimeKey = '';
 let monitorStarted = false;
 
@@ -28,6 +29,35 @@ function vectorTileTemplate(value, manifestUrl) {
     throw new Error('地图矢量瓦片地址必须为同源的 /{z}/{x}/{y}.pbf 或 .mvt 路径');
   }
   return `${url.origin}${template}`;
+}
+
+export function readImagery(manifest, manifestUrl, bounds) {
+  if (manifest.imagery == null) return null;
+  const { tiles, minZoom = 7, maxZoom = 12, tileSize = 256, attribution = '' } = manifest.imagery;
+  const url = new URL(localUrl(tiles, manifestUrl));
+  const path = url.pathname.replaceAll('%7B', '{').replaceAll('%7D', '}');
+  if (url.username || url.password || url.search || url.hash ||
+      !path.startsWith(new URL('.', manifestUrl).pathname) ||
+      !/\/\{z\}\/\{x\}\/\{y\}\.(?:png|jpg|jpeg|webp)$/.test(path) ||
+      (path.match(/\{/g) || []).length !== 3 ||
+      !Number.isInteger(minZoom) || !Number.isInteger(maxZoom) || minZoom < 0 || maxZoom > 24 || minZoom > maxZoom ||
+      ![256, 512].includes(tileSize) || typeof attribution !== 'string') {
+    throw new Error('地图影像清单无效，请检查包内瓦片路径、缩放范围和尺寸');
+  }
+  return { tiles: `${url.origin}${path}`, minzoom: minZoom, maxzoom: maxZoom, tileSize, attribution, bounds };
+}
+
+// MapLibre 会吞掉普通影像请求的 HTTP 404 并继续找父瓦片；离线完整包缺块必须明确提示。
+// 协议仍只读取同源文件，禁止重定向，并让取消信号原样传递。
+export async function readImageryTile(request, controller) {
+  const url = localUrl(request.url.slice(IMAGERY_PROTOCOL.length));
+  const response = await fetch(url, { signal: controller.signal, redirect: 'error' });
+  if (!response.ok || response.status === 204) throw new Error(`本地卫星影像读取失败（HTTP ${response.status}）`);
+  const contentType = (response.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
+  if (contentType && !contentType.startsWith('image/') && contentType !== 'application/octet-stream') throw new Error('本地卫星影像返回了非图片内容');
+  const data = await response.arrayBuffer();
+  if (!data.byteLength) throw new Error('本地卫星影像文件为空');
+  return { data, cacheControl: response.headers.get('Cache-Control'), expires: response.headers.get('Expires') };
 }
 
 async function json(url, signal, cache = 'no-cache', optional = false) {
@@ -119,6 +149,7 @@ function loadEngine() {
       maplibre.setWorkerUrl(import.meta.env.DEV ? '/map-engine/maplibre-gl-worker.mjs' : workerUrl);
       const protocol = new pmtiles.Protocol();
       maplibre.addProtocol('pmtiles', protocol.tile);
+      maplibre.addProtocol('offlineimagery', readImageryTile);
       // 装饰性山影的高程瓦片在本机按噪声生成，不是网络源。
       maplibre.addProtocol('procdem', proceduralDemTile);
       return { maplibre, pmtiles, protocol };
@@ -254,10 +285,8 @@ export async function prepareOfflineMap(signal) {
     const bounds = [header.minLon, header.minLat, header.maxLon, header.maxLat];
     if (!bounds.every(Number.isFinite) || bounds[0] >= bounds[2] || bounds[1] >= bounds[3]) throw new Error('地图包覆盖范围无效');
     // 影像瓦片是随包部署的静态目录，同源校验与其他资源一致；没有 imagery 字段就只画矢量。
-    const imagery = manifest.imagery?.tiles ? {
-      tiles: assetUrl(manifest.imagery.tiles), minzoom: manifest.imagery.minZoom ?? 7, maxzoom: manifest.imagery.maxZoom ?? 12,
-      attribution: manifest.imagery.attribution || '', bounds
-    } : null;
+    const imagery = readImagery(manifest, manifestUrl, bounds);
+    if (imagery) imagery.tiles = `${IMAGERY_PROTOCOL}${imagery.tiles}`;
     return {
       maplibre: engine.maplibre, style: applyMapTheme(style, { imagery }), manifest, bounds, release,
       runtime: {
@@ -268,8 +297,11 @@ export async function prepareOfflineMap(signal) {
         cityName: config.city_name || '东营市',
         clearBusinessOverlays: Boolean(config.clear_business_overlays)
       },
-      decorate: installThemeImages,
-      transformRequest: url => ({ url: url.startsWith('pmtiles://') || url.startsWith('procdem://') ? url : localUrl(url) })
+      decorate: imagery ? () => {} : installThemeImages,
+      handleImageryError,
+      transformRequest: url => ({ url: url.startsWith(IMAGERY_PROTOCOL)
+        ? `${IMAGERY_PROTOCOL}${localUrl(url.slice(IMAGERY_PROTOCOL.length))}`
+        : url.startsWith('pmtiles://') || url.startsWith('procdem://') ? url : localUrl(url) })
     };
   } catch (error) { release(); throw error; }
 }

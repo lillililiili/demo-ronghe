@@ -131,8 +131,8 @@ function reallyOpen(o) {
     maskClosable: true,
     blockScroll: true,
     zIndex: 100,
-    style: { width: o.width || '520px', maxWidth: '94vw', maxHeight: 'calc(100vh - 32px)' },
-    contentStyle: { maxHeight: 'calc(100vh - 120px)', overflow: 'auto' },
+    // The shared flex shell reserves the actual header/footer height before scrolling content.
+    style: { width: o.width || '520px', maxWidth: 'calc(100vw - 32px)' },
     onClose: () => { closeModal(); return false; },
     title: () => h('span', { innerHTML: String(o.title == null ? '' : o.title) }),
     /* P4b：o.render 提供 vnode 工厂时走受控组件（真 Naive 表单），否则沿用 HTML 串桥接 */

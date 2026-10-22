@@ -105,7 +105,7 @@ export function sourceDescription(name, code, mode, fallback = '未提供') {
     ? source : `${source}（${modeText}）`;
 }
 // RULE_LEGALITY 是阶段 7 规则引擎判定违规后自动生成的告警类型；叫「飞行违规」而不叫「合法性研判告警」，免得与飞行监管与处置菜单下的「合法性研判」页混淆（决策 15-53）。
-export const ALARM_TYPE_LABEL = { UAV_INTRUSION: '无人机入侵', UAV: '无人机告警', RULE_LEGALITY: '飞行违规' };
+export const ALARM_TYPE_LABEL = { UAV_INTRUSION: '无人机入侵', UAV: '无人机告警', RULE_LEGALITY: '飞行违规', PREDICTED_AIRSPACE_ENTRY: '预测入区预警', OBSERVED_AIRSPACE_ENTRY: '实测入区告警' };
 
 /* 优先展示业务编号；已知引擎来源确定映射为 ALM/RSK 显示编号。
    其他内部来源键及裸 UUID 只进 title 提示，返回空串表示没有可展示编号。 */
@@ -156,7 +156,7 @@ export const SOURCE_TYPE_LABEL = {
   AOA: '无线电测向（AOA）', DCD: '协议破解', RID: 'RemoteID'
 };
 /* 来源接入状态：DEMO 表示字段有协议出处但尚未与真实设备联调，页面必须说清楚，不能让人当成已核实的能力。 */
-export const SCHEMA_STATUS_LABEL = { CONFIRMED: '已联调确认', DEMO: '按凌云协议 v8.6 建模，待联调' };
+export const SCHEMA_STATUS_LABEL = { CONFIRMED: '已联调确认', DEMO: '按协议 v8.6 建模，待联调' };
 /* 处置授权（阶段 13）：动作、状态、执行通道。同一个码全站只有一个说法，页面一律经 labelOf 取词。 */
 export const DISPOSAL_ACTION_LABEL = { COUNTERMEASURE: '反制', JAMMING: '信号干扰', DISPERSAL: '驱离', DECOY: '诱骗' };
 /* 告警列表「状态」列的处置进度展示：uav_event.state 仍是核实结论，不把反制中写进库。 */
@@ -192,7 +192,7 @@ export const DISPOSAL_STATUS_LABEL = {
   REQUESTED: '待审批', APPROVED: '已批准', REJECTED: '已驳回', EXECUTING: '执行中',
   COMPLETED: '已完成', FAILED: '执行失败', STOPPED: '已停止', EXPIRED: '已过期', CANCELLED: '已撤销'
 };
-export const DISPOSAL_CHANNEL_LABEL = { LINGYUN_B: '凌云协议 B 设备', COUNTERMEASURE_4CH: '四通道反制设备', MANUAL: '人工执行' };
+export const DISPOSAL_CHANNEL_LABEL = { LINGYUN_B: '协议 B 设备', COUNTERMEASURE_4CH: '四通道反制设备', MANUAL: '人工执行' };
 export const DISPOSAL_RESULT_LABEL = { SUCCEEDED: '执行成功', FAILED: '执行失败' };
 /* 决策 13-10/13-11：STOPPED 不能只说“已停止”——撤销授权与设备是否真的急停是两件事，必须带限定语。 */
 export const DISPOSAL_STOP_RESULT_LABEL = {
@@ -200,7 +200,7 @@ export const DISPOSAL_STOP_RESULT_LABEL = {
   ALL_OFF_ISSUED: '授权已撤销；已向四通道网络控制器下发全关，回执以设备为准',
   UNAVAILABLE: '反制已中止',
   NOT_ATTEMPTED: '授权已撤销；未尝试设备急停',
-  NOT_BOUND: '授权已撤销；设备未登记凌云连接，请运维补配置后重试'
+  NOT_BOUND: '授权已撤销；设备未登记连接，请运维补配置后重试'
 };
 /* 动作权限的中文名（阶段 15）。服务端目录里的 module_name/name 目前是英文开发描述
    （如 "T02 device read" / "Read devices"），直接上屏就是给一线人员看英文；
@@ -277,7 +277,7 @@ export const DISPOSAL_EVENT_KIND_LABEL = {
   REQUEST: '发起申请', APPROVE: '批准', REJECT: '驳回', EXECUTE: '下发执行', RECEIPT: '设备回执',
   STOP: '停止', COMPLETE: '完成', FAIL: '失败', EXPIRE: '超时失效', CANCEL: '撤销',
   MANUAL_RESULT: '登记人工结果', DEVICE_STOP_UNAVAILABLE: '设备急停不可用', DEVICE_CONTROL_UNAVAILABLE: '设备控制不可用',
-  PROTOCOL_NOT_OPENED: '指令码未开放', DEVICE_NOT_BOUND: '设备未登记凌云连接', DEVICE_OFFLINE: '设备离线或未启用',
+  PROTOCOL_NOT_OPENED: '指令码未开放', DEVICE_NOT_BOUND: '设备未登记连接', DEVICE_OFFLINE: '设备离线或未启用',
   DEVICE_ALL_OFF_ISSUED: '已下发四通道全关', DEVICE_FAULT: '设备故障，执行受阻', DEVICE_BUSY: '设备占用，执行受阻'
 };
 /* 决策 13-12/13-14：执行被阻的四种原因，三种可补救、一种要等厂家；页面不得把它显示成失败或成功。 */
@@ -285,7 +285,7 @@ export const DISPOSAL_BLOCK_REASON_LABEL = {
   LEGACY_JAMMING_RETIRED: '自动接续已停用；历史干扰授权不能再次执行，已发送指令与停止记录仍可查看',
   DEVICE_CAPABILITY: '所选设备不能走该通道自动执行，请换设备或改通道',
   PROTOCOL_NOT_OPENED: '该类指令码尚未开放（等厂家确认设备类型），可登记人工结果',
-  NOT_BOUND: '设备未登记凌云连接，请运维补登记后重试',
+  NOT_BOUND: '设备未登记连接，请运维补登记后重试',
   DEVICE_OFFLINE: '设备当前离线或未启用，请恢复后重试',
   DEVICE_FAULT: '设备已上报故障，未下发启动指令；请排除故障后重试',
   DEVICE_BUSY: '设备仍有未完成任务，未下发启动指令；请等待任务结束后重试'
@@ -325,7 +325,7 @@ export const DEVICE_EVENT_TYPE_LABEL = {
   STATE_UNKNOWN: '状态未知', COMMAND_FAILED: '指令失败', DEVICE_ENABLED: '设备启用', DEVICE_DISABLED: '设备停用',
   CATALOG_CREATED: '台账登记', CATALOG_UPDATED: '台账修改', CATALOG_DELETED: '台账删除', CATALOG_RESTORED: '模拟设备恢复',
   REBOOT_QUEUED: '重启已排队', REBOOT_SUCCEEDED: '重启成功', REBOOT_FAILED: '重启失败', REBOOT_TIMED_OUT: '重启超时', REBOOT_CANCELLED: '重启已取消',
-  LINGYUN_CONTROL_QUEUED: '凌云控制已排队', LINGYUN_CONTROL_TIMED_OUT: '凌云控制超时', EO_TRACK_QUEUED: '光电跟踪已排队', EO_COMMAND_TIMED_OUT: '光电指令超时',
+  LINGYUN_CONTROL_QUEUED: '控制已排队', LINGYUN_CONTROL_TIMED_OUT: '控制超时', EO_TRACK_QUEUED: '光电跟踪已排队', EO_COMMAND_TIMED_OUT: '光电指令超时',
   INCIDENT_OPENED: '异常产生', INCIDENT_RECOVERED: '异常恢复', DEVICE_OFFLINE: '设备离线', LINK_DEGRADED: '通信质量下降'
 };
 /* MQTT 接入层的连接状态与接收诊断码（协议 A/C 适配器写入 mqtt_receive_diagnostic 的 outcome / reason）。

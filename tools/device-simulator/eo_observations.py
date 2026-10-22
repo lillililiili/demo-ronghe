@@ -1,6 +1,7 @@
 """Opt-in replay AI samples from the scene entity, never platform fused coordinates."""
 import math
 from engine import target_sample
+from coordinate_contract import simulator_wgs84
 
 
 class EoObservations:
@@ -48,7 +49,7 @@ class EoObservations:
         lon, lat = sample['longitude'], sample['latitude']
         if not (math.isfinite(lon) and math.isfinite(lat) and -180 <= lon <= 180 and -90 <= lat <= 90):
             return None
-        result = {'className':category,'longitude':lon,'latitude':lat,
+        result = {'className':category,'longitude':lon,'latitude':lat,'coordinate_system':simulator_wgs84(target),
                   'detectConfidence':quality[0],'trackConfidence':quality[1]}
         if target.get('altitudeDatum') == 'ELLIPSOID' and math.isfinite(sample['altitude']):
             result['altitude'] = sample['altitude']

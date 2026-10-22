@@ -60,5 +60,5 @@ const rawText = computed(() => JSON.stringify(props.snapshot, null, 2));
 .track-notice { color: var(--orange, #ffb020); padding: 10px; border: 1px solid var(--line); border-radius: 6px; }
 .track-description { color: var(--txt-3); }
 .track-original summary { cursor: pointer; font-size: 12px; color: var(--txt-2); padding: 8px 0; }
-.track-original pre { max-height: 280px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.6 monospace; }
+.track-original pre { max-height: 280px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.6 var(--app-font-mono); }
 </style>

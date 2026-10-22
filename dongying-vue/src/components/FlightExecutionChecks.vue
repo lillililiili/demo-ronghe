@@ -88,7 +88,7 @@ function evidenceLabel(kind) { return kind === 'flight_execution_fact' ? '执行
 .execution-card-head { display:flex; align-items:flex-start; justify-content:space-between; gap:8px; }
 .execution-card-title { display:flex; align-items:center; gap:7px; min-width:0; color:var(--txt); }
 .execution-card-title b { font-size:13px; line-height:1.5; }
-.execution-index { flex:none; color:var(--cyan); font:11px/1.4 Consolas,monospace; }
+.execution-index { flex:none; color:var(--cyan); font:11px/1.4 var(--app-font-mono); }
 .execution-card-tags { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:5px; }
 .execution-card .tag { margin:0; max-width:100%; white-space:normal; overflow-wrap:anywhere; }
 .execution-message { margin:8px 0 0; color:var(--txt-2); line-height:1.65; }

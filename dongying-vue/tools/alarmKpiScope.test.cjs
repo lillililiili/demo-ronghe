@@ -98,3 +98,15 @@ test('if the card count itself cannot be read the card shows a dash, never a dem
   assert.equal(card.caption, '按发生时间统计');
   assert.match(card.desc, /^读取失败/);
 });
+
+
+test('待核实和待处置计数使用当前待办口径，今日已确认与误报历史统计不排除终态预测', async () => {
+  const recorded = [];
+  const { run } = await loadKpis(recorded);
+  await run();
+  for (const query of recorded) {
+    const pending = query.state === 'PENDING_VERIFICATION' || (query.state === 'CONFIRMED' && query.occurred_from == null);
+    assert.equal(query.current_pending === true, pending, JSON.stringify(query));
+    if (query.state === 'PENDING_VERIFICATION') assert.ok(query.occurred_from != null, '今日待办仍保留同一天窗口');
+  }
+});

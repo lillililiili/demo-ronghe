@@ -6,6 +6,39 @@ const FlowPicker = require('../web/flow-picker.js');
 
 const group = (enabled, total, ok = true) => ok ? {ok: true, enabled, total, engine: 'ON', engine_message: ''} : {ok: false, reason: 'FORBIDDEN'};
 
+test('all prediction variants stay manual with either automatic-rule configuration', () => {
+  for (const variant of ['avoid', 'enter']) for (const enabled of [0,2]) {
+    const flow = {flow:9, variant, guide:{prediction_only:true, auto_verify:null}};
+    const rules = {verify:group(enabled,2), counter:group(enabled,2)};
+    assert.match(FlowPicker.rulesLine(rules,flow), /人工核实、人工发起反制/);
+    assert.doesNotMatch(FlowPicker.rulesLine(rules,flow), /全部满足后自动/);
+    assert.equal(FlowPicker.ruleConflict(flow,rules),'');
+  }
+});
+
+test('choosing a flow variant keeps its scene and guide together and leaves other flows unchanged', () => {
+  const flow = {flow:9, title:'预测入区预警', default_variant:'avoid', variants:[
+    {id:'avoid', label:'转向避开', minutes:5, scene:{name:'avoid'}, guide:{todo:['撤销']}},
+    {id:'enter', label:'继续入区', minutes:6, scene:{name:'enter'}, guide:{todo:['关联实测告警', '人工核实申请审批执行']}}
+  ]};
+  const before = JSON.stringify(flow);
+  assert.equal(FlowPicker.selectVariant(flow).scene.name,'avoid');
+  assert.equal(FlowPicker.selectVariant(flow,'unknown').variant,'avoid');
+  assert.equal(FlowPicker.selectVariant(flow,'silence').variant,'avoid', 'old selection cannot restore the removed scene');
+  for (const variant of flow.variants) {
+    const selected = FlowPicker.selectVariant(flow,variant.id);
+    assert.equal(selected.scene,variant.scene);
+    assert.equal(selected.guide,variant.guide);
+    assert.equal(selected.variant,variant.id);
+    assert.equal(selected.minutes,variant.minutes);
+    assert.equal(selected.title,flow.title);
+    assert.equal(selected.variantLabel,variant.label);
+  }
+  assert.equal(JSON.stringify(flow),before);
+  const ordinary = {flow:5, scene:{name:'manual'}};
+  assert.equal(FlowPicker.selectVariant(ordinary),ordinary);
+});
+
 test('the rule line distinguishes enabled rules from their checked automatic action', () => {
   const line = FlowPicker.rulesLine({verify: group(2, 3), counter: group(1, 2)});
   assert.match(line, /^规则管理里现在：/);

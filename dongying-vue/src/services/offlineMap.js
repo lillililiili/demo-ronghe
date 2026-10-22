@@ -47,8 +47,8 @@ function runtimeKey(config) {
 }
 
 function preferLocalIdeographs(style) {
-  // MapLibre 6 的 font-faces 优先于 localIdeographFontFamily。仅移除随包提供的
-  // 完整中文后备字体，让 MapView 已配置的系统中文字体生效；保留其他语言/定制字体。
+  // MapLibre 6 的 font-faces 优先于 localIdeographFontFamily。中文统一由应用
+  // 启动前加载的自托管 Noto Sans SC 绘制，避免重复下载整份 OTF；保留其他语言/定制字体。
   const localRanges = new Set(['U+2E80-9FFF', 'U+F900-FAFF', 'U+FF00-FFEF']);
   for (const [stack, faces] of Object.entries(style['font-faces'] || {})) {
     const remaining = faces.filter(face => !(

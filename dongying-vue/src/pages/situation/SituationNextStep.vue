@@ -1,16 +1,21 @@
 <script setup>
 import { computed } from 'vue';
+import { predictionVerificationState } from '@/services/predictionView.js';
+import { serverNow } from '@/services/serverClock.js';
 import { displayBusinessNo } from '@/ui/deviceNumber.js';
 import CounterLaunch from '@/pages/alarms/CounterLaunch.vue';
 import { counterHiddenReason } from '@/components/disposal/counterNextStep.js';
 import { uavProcessActions, uavProcessStatus } from './situationFlow.js';
 
 /* 卡片「下一步」：紧挨「无人机现在」。能反制时放反制按钮；不能时按钮变灰并写原因（页面设计第 2 条）。 */
-const props = defineProps({ alarm: { type: Object, required: true }, summary: Object, nowStatus: Object });
-const emit = defineEmits(['records', 'verify', 'updated', 'unavailable']);
+const props = defineProps({ alarm: { type: Object, required: true }, summary: Object, nowStatus: Object, now: Number });
+const emit = defineEmits(['records', 'verify', 'updated', 'unavailable', 'open']);
+const prediction = computed(() => predictionVerificationState(null, props.alarm, props.now || serverNow()));
 const actions = computed(() => uavProcessActions(props.alarm));
 const summary = computed(() => props.summary?.event_id && props.summary.event_id === props.alarm.eventId ? props.summary : null);
-const reason = computed(() => counterHiddenReason({
+const reason = computed(() => prediction.value?.blocked ? prediction.value.message
+  : prediction.value && props.alarm.eventState === 'PENDING_VERIFICATION' ? '本次核实预测入区风险，通知和反制以当前依据与授权校验为准。'
+    : counterHiddenReason({
   alarm: props.alarm, actions: actions.value, processStatus: uavProcessStatus(props.alarm), summary: summary.value, nowStatus: props.nowStatus
 }));
 </script>
@@ -18,8 +23,11 @@ const reason = computed(() => counterHiddenReason({
 <template>
   <section class="sit-next-step" aria-label="下一步">
     <span class="sit-next-step-label">下一步</span>
-    <div v-if="actions.includes('verify')" class="sit-next-step-row">
-      <button class="btn pri" type="button" @click="emit('verify')">核实</button>
+    <div v-if="prediction?.terminal || (prediction?.blocked && alarm.eventState !== 'PENDING_VERIFICATION')" class="sit-next-step-row">
+      <p>{{ prediction.message }}</p><button class="btn" type="button" @click="emit('open')">查看预测预警与办理进度</button>
+    </div>
+    <div v-else-if="actions.includes('verify')" class="sit-next-step-row">
+      <button class="btn pri" type="button" @click="emit('verify')">{{ prediction ? prediction.blocked ? '核实为误报' : '核实预测风险' : '核实' }}</button>
       <p>{{ reason }}</p>
     </div>
     <CounterLaunch v-else-if="!reason && alarm.eventId" :key="alarm.eventId" :event-id="alarm.eventId" :event-label="displayBusinessNo(alarm.id)"

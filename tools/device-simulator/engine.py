@@ -200,6 +200,113 @@ def point_list(points, minimum, label):
         number(lat, -85, 85, label+'纬度')
     return result
 
+
+_GEOMETRY_EPSILON = 1e-9  # Simulator-grid units, only for floating-point boundary comparisons.
+
+
+def _orientation(a, b, c):
+    cross = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+    tolerance = _GEOMETRY_EPSILON * max(1.0, math.dist(a, b))
+    return 1 if cross > tolerance else -1 if cross < -tolerance else 0
+
+
+def _on_segment(point, a, b):
+    return (_orientation(a, b, point) == 0
+            and min(a[0], b[0]) - _GEOMETRY_EPSILON <= point[0] <= max(a[0], b[0]) + _GEOMETRY_EPSILON
+            and min(a[1], b[1]) - _GEOMETRY_EPSILON <= point[1] <= max(a[1], b[1]) + _GEOMETRY_EPSILON)
+
+
+def _segments_intersect(a, b, c, d):
+    # Includes touching/overlap: holes must be strictly separated from every boundary.
+    if (max(a[0], b[0]) + _GEOMETRY_EPSILON < min(c[0], d[0])
+            or max(c[0], d[0]) + _GEOMETRY_EPSILON < min(a[0], b[0])
+            or max(a[1], b[1]) + _GEOMETRY_EPSILON < min(c[1], d[1])
+            or max(c[1], d[1]) + _GEOMETRY_EPSILON < min(a[1], b[1])):
+        return False
+    first, second = _orientation(a, b, c), _orientation(a, b, d)
+    third, fourth = _orientation(c, d, a), _orientation(c, d, b)
+    return (first * second < 0 and third * fourth < 0
+            or first == 0 and _on_segment(c, a, b)
+            or second == 0 and _on_segment(d, a, b)
+            or third == 0 and _on_segment(a, c, d)
+            or fourth == 0 and _on_segment(b, c, d))
+
+
+def _ring_location(point, ring):
+    """Return 1 inside, 0 on the boundary, -1 outside a closed simple ring."""
+    inside = False
+    for a, b in zip(ring, ring[1:]):
+        if _on_segment(point, a, b):
+            return 0
+        if (a[1] > point[1]) != (b[1] > point[1]):
+            crossing = a[0] + (point[1] - a[1]) * (b[0] - a[0]) / (b[1] - a[1])
+            if point[0] < crossing:
+                inside = not inside
+    return 1 if inside else -1
+
+
+def _zone_ring(raw, label):
+    if (not isinstance(raw, list) or any(not isinstance(point, list) or len(point) != 2
+            or any(type(value) not in (int, float) for value in point) for point in raw)):
+        raise ValueError(label + '须为有限数字坐标对')
+    points = point_list(raw, 3, label)
+    if points[0] == points[-1]:
+        points.pop()
+    if len(points) < 3 or len(set(map(tuple, points))) != len(points):
+        raise ValueError(label + '至少需要三个不重复顶点')
+    ring = points + [points[0][:]]
+    origin = points[0]
+    area_twice = math.fsum((a[0] - origin[0]) * (b[1] - origin[1])
+                          - (b[0] - origin[0]) * (a[1] - origin[1])
+                          for a, b in zip(ring, ring[1:]))
+    perimeter = math.fsum(math.dist(a, b) for a, b in zip(ring, ring[1:]))
+    if abs(area_twice) <= _GEOMETRY_EPSILON * max(1, perimeter):
+        raise ValueError(label + '不能退化为直线或零面积')
+    for index, current in enumerate(points):
+        previous, following = points[index - 1], points[(index + 1) % len(points)]
+        if _on_segment(previous, current, following) or _on_segment(following, previous, current):
+            raise ValueError(label + '边界不能折返重叠')
+    edges = list(zip(ring, ring[1:]))
+    for index, (a, b) in enumerate(edges):
+        for other in range(index + 2, len(edges)):
+            if index == 0 and other == len(edges) - 1:
+                continue  # Adjacent edges share exactly the validated common endpoint.
+            if _segments_intersect(a, b, *edges[other]):
+                raise ValueError(label + '边界不能自交或相触')
+    return ring
+
+
+def zone_polygon_rings(zone):
+    """Validate zone.points + zone.holes in the same grid; return closed rings.
+
+    Open rings remain accepted for existing scenes. A hole must be strictly inside
+    the outer ring; touching, intersecting and nested holes are rejected. The
+    combined 2,000-vertex limit bounds the pairwise validation cost.
+    """
+    label = str(zone.get('name') or '区域')
+    holes = zone.get('holes', [])
+    if not isinstance(holes, list) or len(holes) > 100:
+        raise ValueError(label + '内孔须为数组且不超过 100 个')
+    raw_rings = [zone.get('points')] + holes
+    if any(not isinstance(ring, list) for ring in raw_rings):
+        raise ValueError(label + '边界坐标格式错误')
+    if sum(len(ring) - int(bool(ring) and ring[0] == ring[-1]) for ring in raw_rings) > 2000:
+        raise ValueError(label + '外环与内孔合计不能超过 2000 个顶点')
+    rings = [_zone_ring(raw, label + ('外环' if index == 0 else '内孔 ' + str(index)))
+             for index, raw in enumerate(raw_rings)]
+    for index, hole in enumerate(rings[1:], 1):
+        for other in rings[:index]:
+            if any(_segments_intersect(a, b, c, d) for a, b in zip(hole, hole[1:])
+                   for c, d in zip(other, other[1:])):
+                raise ValueError(label + '内孔不能与外环或其他内孔相交、相触')
+        if _ring_location(hole[0], rings[0]) != 1:
+            raise ValueError(label + '内孔必须严格位于外环内')
+        for other in rings[1:index]:
+            if _ring_location(hole[0], other) >= 0 or _ring_location(other[0], hole) >= 0:
+                raise ValueError(label + '内孔不能重叠或相互包含')
+    return rings
+
+
 def duration_reached(scene, elapsed):
     """Zero explicitly means continuous; finite scenes keep their original deadline."""
     return scene['duration'] > 0 and elapsed >= scene['duration'] * 60
@@ -209,6 +316,8 @@ def compile_scene(raw):
     s = copy.deepcopy(raw)
     if not isinstance(s, dict):
         raise ValueError('场景格式错误')
+    from coordinate_contract import simulator_wgs84
+    simulator_wgs84(s)
     source_count = s.get('fullchain', {}).get('observationSourceCount', 1)
     if type(source_count) is not int or not 1 <= source_count <= 3:
         raise ValueError('标准化模拟观测来源数量须为 1 至 3 的整数')
@@ -219,6 +328,8 @@ def compile_scene(raw):
         rows = s.get(collection)
         if not isinstance(rows, list) or len(rows) > 200:
             raise ValueError(collection + '数量无效')
+        for row in rows:
+            simulator_wgs84(s, row)
         ids = [x.get('id') for x in rows]
         if any(not isinstance(i, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,80}', i) for i in ids) or len(ids) != len(set(ids)):
             raise ValueError(collection + '编号缺失或重复')
@@ -230,6 +341,7 @@ def compile_scene(raw):
         if not isinstance(site.get('devices'), list) or len(site['devices']) > 100:
             raise ValueError('设备组数量无效')
         for d in site['devices']:
+            simulator_wgs84(s, site, d)
             if not re.fullmatch(r'[A-Za-z0-9_-]{1,80}', str(d.get('id', ''))) or d['id'] in seen_devices:
                 raise ValueError('设备编号缺失或重复')
             seen_devices.add(d['id'])
@@ -258,6 +370,12 @@ def compile_scene(raw):
         # 区域一律按北京时间当天全天有效，场景里区域自带的时分不再生效（旧草稿、旧场景文件照常能载入）；
         # 要让某个区域只在某个时段生效，在「空域下发」页手动下发。飞行任务的起止时间不受影响。
         z['start'], z['end'] = ZONE_DAY_START, ZONE_DAY_END
+        rings = zone_polygon_rings(z)
+        # Preserve the scene's open/closed representation; API geometries are always closed.
+        z['points'] = rings[0] if z['points'][0] == z['points'][-1] else rings[0][:-1]
+        if 'holes' in z:
+            z['holes'] = [ring if raw[0] == raw[-1] else ring[:-1]
+                          for raw, ring in zip(z['holes'], rings[1:])]
     for p in s['plans'] + s['zones']:
         minimum = 2 if p['id'] in plans else 3
         valid = point_list(p['points'], minimum, p.get('name', '区域'))
@@ -424,6 +542,7 @@ def device_condition(scene, device_id, device, elapsed):
     return 'ok'
 
 def messages(scene, devices, targets, manifest, elapsed, now, last_sent, sequence):
+    from coordinate_contract import simulator_wgs84
     out = []
     for device_id, d in devices.items():
         condition = device_condition(scene, device_id, d, elapsed)
@@ -445,7 +564,8 @@ def messages(scene, devices, targets, manifest, elapsed, now, last_sent, sequenc
                 lon, lat = coordinates([d['x'], d['y']])
                 payload = {'providerCode': manifest['provider'], 'deviceId': external, 'deviceName': d['name'],
                            'deviceType': KINDS[kind], 'workState': 2 if condition == 'fault' else 1,
-                           'ptTime': now, 'deviceLongitude': lon, 'deviceLatitude': lat, 'deviceAltitude': 0}
+                           'ptTime': now, 'deviceLongitude': lon, 'deviceLatitude': lat, 'deviceAltitude': 0,
+                           'coordinate_system': simulator_wgs84(scene, d)}
                 topic = f"bridge/{manifest['provider']}/device/{kind}/{external}"
             out.append((topic, payload))
             last_sent[device_id] = elapsed
@@ -472,11 +592,13 @@ def messages(scene, devices, targets, manifest, elapsed, now, last_sent, sequenc
             for member in range(int(t['count']) if t['kind']=='bird' else 1):
                 objects.append({'objectId': str(index*1000+member), 'time': now, 'longitude': lon+member%10*.00002, 'latitude': lat+member//10*.00002,
                                 'altitude': sample['altitude'], 'speed': sample['speed'], 'extension': ext,
+                                'coordinate_system': simulator_wgs84(scene, t),
                                 **({'height': height} if height is not None else {})})
         # Only the confirmed target-reporting device protocols emit target objects.
         # EO, weather, and countermeasure devices remain selectable as nearby
         # auxiliary devices but their own protocol payloads must not be invented.
         if (objects or d.get('emitEmpty', False)) and d['kind'] in TARGET_REPORT_KINDS:
             out.append((f"bridge/{manifest['provider']}/device_data/{d['kind']}/{external}",
-                        {'deviceId': external, 'ptTime': now, 'msgCnt': sequence % 2147483648, 'objects': objects}))
+                        {'deviceId': external, 'ptTime': now, 'msgCnt': sequence % 2147483648, 'objects': objects,
+                         'coordinate_system': simulator_wgs84(scene)}))
     return out

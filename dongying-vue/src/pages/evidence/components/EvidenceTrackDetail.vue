@@ -117,6 +117,6 @@ onBeforeUnmount(() => { disposed = true; sequence += 1; window.removeEventListen
 .track-detail-facts dt { color: var(--txt-3); }.track-detail-facts dd { margin: 3px 0 0; color: var(--txt); overflow-wrap: anywhere; }
 .track-detail-record { min-width: 0; border-top: 1px solid var(--line); }
 .track-detail-record summary { padding: 12px 0; color: var(--txt-2); cursor: pointer; font-size: 12px; }
-.track-detail-record pre { max-height: 360px; margin: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.6 monospace; }
+.track-detail-record pre { max-height: 360px; margin: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.6 var(--app-font-mono); }
 @media (max-width: 720px) { .track-detail-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 </style>

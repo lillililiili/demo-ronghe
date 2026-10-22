@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { autoVoiceView } from '../src/components/disposal/autoVoiceView.js';
+import { isPredictionAlarm } from '../src/services/predictionView.js';
 import { autoHandoffProgress, HANDED_OFF, HANDOFF_PENDING, mergeHandoffProgress } from '../src/ui/punishmentHandoffProgress.js';
 
 for (const channel of ['SMS', 'VOICE']) {
@@ -140,7 +141,7 @@ function pageFixture(f) {
     pendingProgress: new Set(), stateOf: a => ({ t: a.state }), NOTIFY_PHASE: {},
     ALARM_PROGRESS_LABEL: { PENDING_APPROVAL: '待审批', COUNTERMEASURE_ACTIVE: '反制中', COUNTERMEASURE_DONE: '已反制', COUNTER_STOPPED: '反制已中止', HANDED_OFF: '已移送处罚' },
     ALARM_PROGRESS_TAG: {}, alarmDepartureView, recordedDepartureKey, notificationProgressView,
-    autoHandoffProgress, HANDED_OFF, HANDOFF_PENDING, mergeHandoffProgress,
+    autoHandoffProgress, HANDED_OFF, HANDOFF_PENDING, mergeHandoffProgress, isPredictionAlarm,
     esc: s => String(s).replaceAll('<', '&lt;').replaceAll('>', '&gt;'), fmt: ms => String(ms),
     uavNowStatus, uavNowHtml, serverNow: Date.now, ruleReasonText: s => s, alarmCounterBlockHtml: () => ''
   };

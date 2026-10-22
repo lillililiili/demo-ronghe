@@ -279,7 +279,7 @@ function drawOverlay(now) {
     c.beginPath(); c.arc(x, y, 9, 0, Math.PI * 2);
     c.fillStyle = color; c.fill();
     c.lineWidth = 2; c.strokeStyle = 'rgba(255,255,255,.9)'; c.stroke();
-    c.fillStyle = '#fff'; c.font = '600 10px "PingFang SC", sans-serif';
+    c.fillStyle = '#fff'; c.font = '600 10px "Noto Sans SC"';
     c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(label, x, y + 0.5);
   };
   terminal(pts[0], '起', '#2f9e6b');

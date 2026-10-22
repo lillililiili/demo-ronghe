@@ -1,0 +1,136 @@
+{
+  "version": 1,
+  "coordinate_system": "WGS84",
+  "duration": 3.0,
+  "sites": [
+    {
+      "id": "site-011554ff866d",
+      "name": "K03 模拟观测设备组",
+      "x": 415.1345610534207,
+      "y": 427.8955563540521,
+      "coordinate_system": "WGS84",
+      "devices": [
+        {
+          "id": "radar-011554ff866d",
+          "name": "K03 模拟雷达",
+          "kind": "radar",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 1
+        },
+        {
+          "id": "tdoa-011554ff866d",
+          "name": "K03 模拟 TDOA",
+          "kind": "tdoa",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 1
+        }
+      ]
+    }
+  ],
+  "zones": [
+    {
+      "id": "prohibited-011554ff866d",
+      "name": "K03 模拟禁飞区",
+      "kindCode": "PROHIBITED",
+      "coordinate_system": "WGS84",
+      "points": [
+        [
+          500.00000000001893,
+          454.0962989579474
+        ],
+        [
+          594.2949321629717,
+          454.0962989579474
+        ],
+        [
+          594.2949321629717,
+          379.2370343753385
+        ],
+        [
+          500.00000000001893,
+          379.2370343753385
+        ]
+      ],
+      "min": 0,
+      "max": 300,
+      "altitudeDatum": "AMSL",
+      "start": "00:00",
+      "end": "23:59"
+    }
+  ],
+  "risks": [],
+  "fullchain": {
+    "enabled": true,
+    "categories": [],
+    "filing": {},
+    "airspaceLifecycle": false
+  },
+  "name": "K03 接近后停止目标上报",
+  "targets": [
+    {
+      "id": "uav-011554ff866d-silence",
+      "name": "K03 模拟无人机·接近后停止目标上报",
+      "kind": "uav",
+      "coordinate_system": "WGS84",
+      "deviceId": "radar-011554ff866d",
+      "secondaryDeviceId": "tdoa-011554ff866d",
+      "transport": "normalized",
+      "secondaryTransport": "auto",
+      "motionMode": "once",
+      "path": [
+        [
+          330.2691221068225,
+          416.666666666643
+        ],
+        [
+          594.2949321629717,
+          416.666666666643
+        ]
+      ],
+      "height": 100,
+      "heightAgl": 80,
+      "altitudeDatum": "AMSL",
+      "speed": 20,
+      "count": 1,
+      "probability": 0.99,
+      "planId": "route-011554ff866d-silence",
+      "pilotPoint": [
+        415.1345610534207,
+        424.1525931249157
+      ],
+      "notificationBehavior": "none",
+      "silenceWindows": [
+        {
+          "at": 80,
+          "seconds": 101
+        }
+      ]
+    }
+  ],
+  "plans": [
+    {
+      "id": "route-011554ff866d-silence",
+      "name": "K03 模拟配套航线",
+      "coordinate_system": "WGS84",
+      "points": [
+        [
+          330.2691221068225,
+          416.666666666643
+        ],
+        [
+          594.2949321629717,
+          416.666666666643
+        ]
+      ],
+      "min": 20,
+      "max": 150,
+      "width": 200,
+      "start": "00:00",
+      "end": "23:59",
+      "timeMode": "current",
+      "altitudeDatum": "AMSL"
+    }
+  ]
+}

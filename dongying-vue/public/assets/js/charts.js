@@ -17,7 +17,7 @@
   };
   const TIP = {
     get backgroundColor() { return token('--chart-tooltip'); }, get borderColor() { return token('--line'); },
-    textStyle: { get color() { return token('--txt'); }, fontSize: 12 }, confine: true,
+    textStyle: { get color() { return token('--txt'); }, get fontFamily() { return token('--app-font-sans'); }, fontSize: 12 }, confine: true,
     padding: [9, 11],
     extraCssText: 'box-shadow:0 16px 40px rgba(0,0,0,.34);border-radius:9px;backdrop-filter:blur(10px);',
     axisPointer: { lineStyle: { get color() { return token('--blue'); } } }
@@ -41,6 +41,15 @@
   }
   function make(el, opt) {
     if (!el) return null;
+    // Canvas 不继承页面 CSS；每次更新都使用已加载的开源字体，包括坐标轴和图例。
+    opt = { ...opt, textStyle: { ...opt.textStyle, fontFamily: token('--app-font-sans') } };
+    // 自定义 tooltip 不一定经过 TIP；独立的浮层默认字体也需要覆盖。
+    if (opt.tooltip && !Array.isArray(opt.tooltip)) {
+      opt.tooltip = {
+        ...opt.tooltip,
+        textStyle: { ...opt.tooltip.textStyle, fontFamily: token('--app-font-sans') }
+      };
+    }
     // 同一宿主自动刷新时复用画布，避免清空图表并重复播放入场动画。
     insts.filter(item => item.el.isConnected === false).forEach(item => disposeEl(item.el));
     const existing = insts.find(item => item.el === el && !item.ch.isDisposed());
@@ -173,7 +182,7 @@
           formatter: `{a|${o.centerLabel || '总计'}}\n{b|${(o.centerValue != null ? o.centerValue : total).toLocaleString()}}`,
           rich: {
             a: { color: token('--chart-label'), fontSize: 11, lineHeight: 16 },
-            b: { color: token('--chart-detail'), fontSize: 17, fontWeight: 700, lineHeight: 22, fontFamily: 'Menlo' }
+            b: { color: token('--chart-detail'), fontSize: 17, fontWeight: 700, lineHeight: 22, fontFamily: token('--app-font-mono') }
           }
         },
         labelLine: { show: false }, itemStyle: { color: 'transparent' }, tooltip: { show: false },

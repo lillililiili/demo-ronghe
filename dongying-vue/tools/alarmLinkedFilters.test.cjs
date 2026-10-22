@@ -20,9 +20,9 @@ test('linked alarms remain searchable after a recent or custom time filter', asy
     const targetNoInput = { value: st.targetNo };
     const controls = ['level', 'time', 'region'].map(key => ({ dataset: { f: key }, value: st[key] }));
     const root = { value: { querySelectorAll: () => controls } };
-    const bindings = new Function('st', 'root', 'STATUS_FILTER', 'VIOLATION_REASON_CODES', 'timeFilterWindow', 'targetNoInput',
+    const bindings = new Function('st', 'root', 'STATUS_FILTER', 'VIOLATION_REASON_CODES', 'timeFilterWindow', 'targetNoInput', 'PREDICTION_ORIGIN',
       `${body('resetLinkedAlarmFilters')}\n${body('queryOf')}\nreturn { resetLinkedAlarmFilters, queryOf };`)
-      (st, root, {}, ['NO_AUTHORIZATION'], timeFilterWindow, targetNoInput);
+      (st, root, {}, ['NO_AUTHORIZATION'], timeFilterWindow, targetNoInput, 'PREDICTED_AIRSPACE_ENTRY');
     assert.ok(bindings.queryOf().occurred_from, `${time} is active before the linked navigation`);
     bindings.resetLinkedAlarmFilters();
     assert.deepEqual(bindings.queryOf(), { page: 1, size: 20, sort: 'priority' });
@@ -48,5 +48,42 @@ test('target search resets pagination and clears stale details before selecting 
     assert.equal(targetNoInput.value, 'new-number');
     assert.equal(run.detail(), null);
     assert.deepEqual(selected, matching.map(row => row.alarm_id));
+  }
+});
+
+
+test('预测类别与状态下发服务端且与既有条件相交；深链重置两项预测筛选', async () => {
+  const { timeFilterWindow } = await import('../src/services/timeFilter.js');
+  const st = { page: 4, size: 20, sort: 'priority', level: 'HIGH', status: '全部', kind: '全部', region: '全部',
+    time: '', targetNo: 'UAV-X', originKind: 'PREDICTED_AIRSPACE_ENTRY', predictionStatus: 'UNKNOWN' };
+  const targetNoInput = { value: st.targetNo }, root = { value: { querySelectorAll: () => [] } };
+  const bindings = new Function('st', 'root', 'STATUS_FILTER', 'VIOLATION_REASON_CODES', 'timeFilterWindow', 'targetNoInput', 'PREDICTION_ORIGIN',
+    `${body('resetLinkedAlarmFilters')}
+${body('queryOf')}
+return { resetLinkedAlarmFilters, queryOf };`)
+    (st, root, {}, [], timeFilterWindow, targetNoInput, 'PREDICTED_AIRSPACE_ENTRY');
+  assert.deepEqual(bindings.queryOf(), { page: 4, size: 20, sort: 'priority', severity: 'HIGH', target_no: 'UAV-X', origin_kind: 'PREDICTED_AIRSPACE_ENTRY', prediction_status: 'UNKNOWN' });
+  bindings.resetLinkedAlarmFilters();
+  assert.equal(st.originKind, ''); assert.equal(st.predictionStatus, '');
+  assert.deepEqual(bindings.queryOf(), { page: 1, size: 20, sort: 'priority' });
+});
+
+
+test('待核实和待处置筛选下发当前待办参数，历史筛选及深链保留原条件', async () => {
+  const { timeFilterWindow } = await import('../src/services/timeFilter.js');
+  const constants = source.match(/^const PENDING_DISPOSAL_QUERY = .*;$/m)[0] + '\n'
+    + source.match(/^const STATUS_FILTER = \{[\s\S]*?^\};/m)[0];
+  const filters = new Function(`${constants} return STATUS_FILTER;`)();
+  for (const status of ['PENDING_VERIFICATION', 'PENDING_DISPOSAL', 'DISPOSAL_ENDED', 'FALSE_POSITIVE', '全部']) {
+    const st = { page: 1, size: 20, sort: 'priority', level: '全部', status, kind: '全部', region: '全部', time: '', targetNo: '' };
+    const bindings = new Function('st', 'root', 'STATUS_FILTER', 'VIOLATION_REASON_CODES', 'timeFilterWindow', 'targetNoInput', 'PREDICTION_ORIGIN',
+      `${body('resetLinkedAlarmFilters')}\n${body('queryOf')}\nreturn { resetLinkedAlarmFilters, queryOf };`)
+      (st, { value: { querySelectorAll: () => [] } }, filters, [], timeFilterWindow, { value: '' }, 'PREDICTED_AIRSPACE_ENTRY');
+    const query = bindings.queryOf();
+    assert.equal(query.current_pending === true, ['PENDING_VERIFICATION', 'PENDING_DISPOSAL'].includes(status), status);
+    if (status === 'PENDING_DISPOSAL') assert.equal(query.attention_group, 'CURRENT,AWAITING_CONFIRMATION');
+    if (status === 'DISPOSAL_ENDED') assert.equal(query.attention_group, 'HISTORY');
+    bindings.resetLinkedAlarmFilters();
+    assert.equal(bindings.queryOf().current_pending, undefined, '历史告警深链不可因待办筛选消失');
   }
 });

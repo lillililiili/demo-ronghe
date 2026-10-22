@@ -862,7 +862,7 @@ onUnmounted(() => {
 .airspace-list-panel :deep(.rule-count) { --count-color: var(--blue); display: inline-flex; align-items: center; gap: 5px; padding: 3px 7px; border: 1px solid color-mix(in srgb, var(--count-color) 32%, transparent); border-radius: 5px; color: var(--count-color); background: color-mix(in srgb, var(--count-color) 9%, transparent); font-size: 11px; }
 .airspace-list-panel :deep(.count-active) { --count-color: var(--green); }
 .airspace-list-panel :deep(.count-temporary) { --count-color: var(--purple); }
-.airspace-list-panel :deep(.rule-count b) { font-family: Bahnschrift, sans-serif; font-size: 15px; }
+.airspace-list-panel :deep(.rule-count b) { font-family: var(--app-font-mono); font-size: 15px; }
 .airspace-import { grid-area: import; flex: none; max-height: 40%; display: flex; flex-direction: column; }
 .airspace-import-list { overflow: auto; }
 .airspace-import-issue { margin-left: 6px; color: var(--txt-2); font-size: 12.5px; }

@@ -101,13 +101,16 @@ class SceneCoverageTests(unittest.TestCase):
                 countermeasure_config(bad)
 
     def test_acceptance_flows_keep_explicit_radius_or_use_simulator_default(self):
+        from acceptance_flows import FLOW_VARIANTS
         from engine import compile_scene
         from realtime_control import countermeasure_radius
         from coverage_defaults import default_coverage
         manifest = json.loads((SCENES / 'manifest.json').read_text(encoding='utf-8'))
-        files = [SCENES / item['file'] for item in manifest['flows']]
-        self.assertEqual(set(files), set(SCENES.glob('flow-*.json')))
-        for path in files:
+        files = {SCENES / item['file'] for item in manifest['flows']}
+        files.update(SCENES / variant['file'] for variants in FLOW_VARIANTS.values()
+                     for variant in variants.values())
+        self.assertEqual(files, set(SCENES.glob('flow-*.json')))
+        for path in sorted(files):
             scene = compile_scene(json.loads(path.read_text(encoding='utf-8')))[0]
             radius = countermeasure_radius(scene)
             if scene.get('countermeasure') is None:

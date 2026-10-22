@@ -217,7 +217,8 @@ class RealtimeController:
         # 平台上这台设备还没有位置时才用上；已有位置（比如在设备管理里填过）的不改。
         position = countermeasure_position(config, self._scene_for(scene))
         if position:
-            body.update(position)
+            from coordinate_contract import simulator_wgs84
+            body.update(position, coordinate_system=simulator_wgs84(config))
         # 平台上这台设备还没有覆盖范围时才用上；已有的（设备管理里配过，或之前的场景登记过）不改。
         radius = countermeasure_radius(self._scene_for(scene))
         if radius is not None:

@@ -97,7 +97,7 @@
 .crumb .cbs b{color:var(--txt-3);font-weight:400}
 .crumb .cbs .c{color:var(--txt-2)}
 .crumb .cbs .c.on{color:#fff;font-weight:600}
-.crumb .cbs .c.ctx{font-family:Menlo,monospace;color:var(--cyan)}
+.crumb .cbs .c.ctx{font-family:var(--app-font-mono);color:var(--cyan)}
 .crumb [data-ops]{cursor:pointer}
 
 .main{flex:1;min-width:0;display:flex;flex-direction:column}

@@ -31,9 +31,9 @@ const SLOW_TOPIC_SEGMENTS = {
   fusion: ['fusion-status'], 'time-boundary': ['flight-plans', 'airspaces'], '*': SLOW_SEGMENTS
 };
 const DEVICE_STATE_MIN_MS = 2_000;
-const FAST_SEGMENTS = ['targets', 'alarms', 'risks', 'handoffs'];
+const FAST_SEGMENTS = ['targets', 'alarms', 'risks', 'handoffs', 'predictions'];
 const TOPIC_SEGMENTS = {
-  target: ['targets'], legality: ['targets'], alarm: ['alarms'], risk: ['risks'], punishment: ['handoffs'],
+  target: ['targets', 'predictions'], prediction: ['predictions'], legality: ['targets'], alarm: ['alarms', 'predictions'], risk: ['risks'], punishment: ['handoffs'],
   'time-boundary': ['risks'], '*': FAST_SEGMENTS
 };
 const RECENT_TRACK_WINDOW_MS = 5 * 60_000;
@@ -47,7 +47,7 @@ const MAX_ROUTE_VERSION_BATCH = 100;
 /* 各组数据的读取权限与后端接口一致（ZT-09）：没有权限的组不发请求、不报“刷新失败”，地图上这一类保持为空。
    飞行任务同时要读航线版本，两项权限都要有。登录后权限有变化、后端答复 403 时同样按没有权限处理，本页不再重复请求。 */
 const SEGMENT_PERMISSIONS = {
-  targets: ['target:read'], alarms: ['alarm:read'], risks: ['risk:read', 'flight:read', 'route:read'], handoffs: ['handoff:read'],
+  predictions: ['target:read'], targets: ['target:read'], alarms: ['alarm:read'], risks: ['risk:read', 'flight:read', 'route:read'], handoffs: ['handoff:read'],
   devices: ['devices.read'], 'device-events': ['monitoring.read'], 'flight-plans': ['flight:read', 'route:read'],
   airspaces: ['airspace:read'], 'fusion-status': ['target:read']
 };
@@ -83,7 +83,7 @@ function sourceMode(snapshot) {
     if (mode === 'mixed') { modes.add('live'); modes.add('replay'); }
   });
   visit(snapshot.devices); visit(snapshot.targets); visit(snapshot.alarms);
-  visit(snapshot.flightPlans); visit(snapshot.risks); visit(snapshot.handoffs);
+  visit(snapshot.flightPlans); visit(snapshot.risks); visit(snapshot.handoffs); visit(snapshot.predictions);
   if (modes.size > 1) return 'mixed';
   return modes.values().next().value || 'unknown';
 }
@@ -95,12 +95,13 @@ function sourceMode(snapshot) {
 export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, now = serverNow } = {}) {
   let snapshot = {
     generatedAt: 0, sourceMode: 'unknown', simulated: false, devices: [], targets: [], alarms: [],
-    flightPlans: [], risks: [], airspaces: [], handoffs: [], fusionStatus: null
+    flightPlans: [], risks: [], airspaces: [], handoffs: [], predictions: [], fusionStatus: null
   };
   let timer = null;
   let stopped = true;
   let selectedSourceTarget = null;
   let sourceSelectionGeneration = 0;
+  let predictionAccessGeneration = 0;
   let paused = false;
   let running = false;
   let boundaryTimer = null;
@@ -125,9 +126,19 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
   function deny(name) {
     deniedSegments.add(name);
     failedSegments.delete(name);
+    if (name === 'targets' || name === 'predictions') {
+      predictionAccessGeneration += 1;
+      deniedSegments.add('predictions'); failedSegments.delete('predictions');
+      snapshot = { ...snapshot, predictions: [] };
+    }
   }
-  // 重新登录或权限刷新后，按新权限重新判断哪些组可以读。
-  const accessChanged = () => { deniedSegments.clear(); };
+  // 权限或账号变化时先清除旧坐标/标识，在途响应不能写回旧范围的数据。
+  const accessChanged = () => {
+    predictionAccessGeneration += 1;
+    deniedSegments.clear(); failedSegments.delete('predictions');
+    snapshot = { ...snapshot, predictions: [] };
+    publish(now()); nudge(['prediction']);
+  };
 
   function withComparison(targets) {
     return targets.map(target => {
@@ -139,7 +150,8 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
 
   function publish(generatedAt) {
     if (stopped || paused) return;
-    const simulated = ['devices', 'targets', 'alarms', 'flightPlans', 'risks', 'handoffs']
+    if (!permitted('predictions')) snapshot = { ...snapshot, predictions: [] };
+    const simulated = ['devices', 'targets', 'alarms', 'flightPlans', 'risks', 'handoffs', 'predictions']
       .some(key => snapshot[key].some(row => row.simulated === true || row.sourceMode === 'mock' || row.source_mode === 'mock'));
     snapshot = { ...snapshot, generatedAt, sourceMode: sourceMode(snapshot), simulated,
       failedSegments: [...failedSegments], deniedSegments: Object.keys(SEGMENT_PERMISSIONS).filter(name => !permitted(name)) };
@@ -148,8 +160,15 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
 
   async function retain(name, task, apply, empty) {
     if (!permitted(name)) { failedSegments.delete(name); apply(empty); return; }
-    try { apply(await task()); failedSegments.delete(name); }
+    const generation = predictionAccessGeneration;
+    try {
+      const result = await task();
+      if (name === 'predictions' && (stopped || generation !== predictionAccessGeneration)) return;
+      if (!permitted(name)) { apply(empty); return; }
+      apply(result); failedSegments.delete(name);
+    }
     catch (error) {
+      if (name === 'predictions' && (stopped || generation !== predictionAccessGeneration)) return;
       if (error?.status === 403) { deny(name); apply(empty); return; }
       failedSegments.add(name); report(error, name);
     }
@@ -212,6 +231,8 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
     const wanted = new Set(segments);
     if (wanted.has('risks')) lastRisksAt = generatedAt;
     const tasks = [
+      wanted.has('predictions') && retain('predictions', () => allPages(targetApi.currentPredictions),
+        value => { snapshot = { ...snapshot, predictions: value }; }, []),
       wanted.has('targets') && retain('targets', async () => {
         // 地图只画此刻还没到期的目标（targetIsCurrent），只取这些（ZT-20 复测 2）：当天目标多时（四百多个）
         // 每轮分页拉完要几十秒，刚收到的目标等整轮拼完已过 15 秒有效期，被页面当作过期滤掉，图上始终看不到。
@@ -428,7 +449,7 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
       selectedSourceTarget = targetId || null;
     },
     stop() {
-      selectedSourceTarget = null; sourceSelectionGeneration += 1;
+      selectedSourceTarget = null; sourceSelectionGeneration += 1; predictionAccessGeneration += 1;
       stopped = true; paused = false; clearTimer(); globalThis.clearTimeout(boundaryTimer); unsubscribe?.(); unsubscribe = null;
       globalThis.removeEventListener?.('auth-access-change', accessChanged);
     },
@@ -466,6 +487,32 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
         }
       }
       return detail;
+    },
+    async loadTargetPrediction(targetId) {
+      if (!targetId || !permitted('predictions')) return null;
+      const generation = sourceSelectionGeneration;
+      const accessGeneration = predictionAccessGeneration;
+      let prediction;
+      try {
+        prediction = await targetApi.prediction(targetId);
+        if (prediction?.target_id !== targetId) throw new Error('预测结果与当前目标不一致，请重新读取');
+      } catch (error) {
+        if (!stopped && targetId === selectedSourceTarget && generation === sourceSelectionGeneration
+          && accessGeneration === predictionAccessGeneration && permitted('predictions')) {
+          predictionAccessGeneration += 1;
+          failedSegments.add('predictions');
+          // 单个目标可能已移出数据范围；清空旧范围缓存，再从当前权限的分页接口重新读取。
+          if (error?.status === 403) snapshot = { ...snapshot, predictions: [] };
+          publish(now()); nudge(['prediction']);
+        }
+        throw error;
+      }
+      if (stopped || targetId !== selectedSourceTarget || generation !== sourceSelectionGeneration
+        || accessGeneration !== predictionAccessGeneration || !permitted('predictions')) return null;
+      const rows = snapshot.predictions.filter(row => row.target_id !== targetId);
+      snapshot = { ...snapshot, predictions: [...rows, prediction] };
+      publish(now());
+      return prediction;
     },
     current() { return snapshot; }
   };

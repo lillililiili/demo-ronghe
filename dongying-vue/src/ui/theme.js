@@ -27,9 +27,9 @@ function shade(hex, amount) {
     .map(x => x.toString(16).padStart(2, '0')).join('');
 }
 
-/* 字体栈照抄 reset.css body 基线；行高 1.65（Naive 默认 1.6，必须显式覆盖） */
-const fontFamily = getComputedStyle(document.body).fontFamily
-  || `-apple-system,"PingFang SC","Microsoft YaHei",sans-serif`;
+/* 字体与页面共用自托管开源字体 token；行高继续显式覆盖 Naive 默认值。 */
+const fontFamily = v('--app-font-sans') || '"Noto Sans SC"';
+const fontFamilyMono = v('--app-font-mono') || '"Noto Sans Mono", "Noto Sans SC"';
 
 export const theme = darkTheme;
 
@@ -122,6 +122,7 @@ export function createThemeOverrides() {
       fontSizeMedium: '14px',
       lineHeight: '1.65',
       fontFamily,
+      fontFamilyMono,
       boxShadow2: v('--shadow') || '0 12px 32px rgba(0,0,0,.22)'
     },
     Input: {

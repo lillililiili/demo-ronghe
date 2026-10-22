@@ -33,7 +33,9 @@ const completed = computed(() => noCounter.value?.decision_active === true);
 const noCounterVisible = computed(() => !props.counterStopped && noCounterEntryVisible(hasPermission));
 const time = value => value == null ? '未提供' : new Date(value).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' });
 let generation = 0, mounted = true, feedback = null;
-watch(() => [props.eventId, props.active, props.counterStopped, props.showLaunch], () => { ++generation; busy.value = false; feedback?.close(); }, { flush: 'sync' });
+// 绑定只随事件、页面或停止状态变化失效；同事件的资格刷新不算切换。
+// showLaunch 仍由提交时的 isCurrent 实时校验，读取失败或风险失效时不能提交。
+watch(() => [props.eventId, props.active, props.counterStopped], () => { ++generation; busy.value = false; feedback?.close(); }, { flush: 'sync' });
 onUnmounted(() => { mounted = false; ++generation; feedback?.close(); });
 
 function showFeedback(title, message) {

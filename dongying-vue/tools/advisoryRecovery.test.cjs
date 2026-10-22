@@ -113,6 +113,8 @@ function advisoryComponent(file, dependencies) {
 async function renderSituationNextStep(summary, alarmOverrides = {}) {
   const { displayBusinessNo } = await import('../src/ui/deviceNumber.js');
   const nextStep = await import('../src/components/disposal/counterNextStep.js');
+  const { predictionVerificationState } = await import('../src/services/predictionView.js');
+  const { serverNow } = await import('../src/services/serverClock.js');
   const vue = require('vue');
   const { renderToString } = require('@vue/server-renderer');
   const stub = { render: () => null };
@@ -120,7 +122,7 @@ async function renderSituationNextStep(summary, alarmOverrides = {}) {
     NoCounterDecisionModal: stub, NoCounterBasis: stub, ...nextStep
   });
   const card = advisoryComponent('pages/situation/SituationNextStep.vue', {
-    displayBusinessNo, CounterLaunch: counter, ...nextStep,
+    displayBusinessNo, CounterLaunch: counter, ...nextStep, predictionVerificationState, serverNow,
     uavProcessActions: alarm => alarm.eventState === 'CONFIRMED' ? ['counter'] : alarm.eventState === 'PENDING_VERIFICATION' ? ['verify'] : [],
     uavProcessStatus: alarm => alarm.eventState === 'CONFIRMED' ? '告警已确认' : '已移送处罚'
   });

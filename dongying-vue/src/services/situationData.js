@@ -535,6 +535,10 @@ export function toAlarms(alarms) {
     out.push({
       id: alarm.alarm_no || alarm.alarm_id,
       alarmId: alarm.alarm_id,
+      originKind: alarm.origin_kind,
+      prediction: alarm.prediction || null,
+      prediction_snapshot: alarm.prediction_snapshot || null,
+      prediction_status: alarm.prediction_status || null,
       eventId: alarm.event_id || null,
       targetId: alarm.target_no || alarm.target_id,
       targetInternalId: alarm.target_id || null,

@@ -1,15 +1,15 @@
 
 /* 弹窗 */
 .mask{position:fixed;inset:0;background:rgba(2,6,18,.72);z-index:100;display:flex;align-items:center;
-  justify-content:center;backdrop-filter:blur(2px)}
-.modal{width:640px;max-width:92vw;max-height:88vh;display:flex;flex-direction:column;
+  justify-content:center;padding:16px;box-sizing:border-box;backdrop-filter:blur(2px)}
+.modal{width:640px;max-width:calc(100vw - 32px);max-height:var(--modal-viewport-height);min-height:0;box-sizing:border-box;overflow:hidden;display:flex;flex-direction:column;
   background:linear-gradient(180deg,#0b1e4a,#071231);border:1px solid rgba(64,158,255,.45);
   border-radius:10px;box-shadow:var(--shadow)}
-.modal>.mh{display:flex;align-items:center;padding:12px 16px;border-bottom:1px solid var(--line);font-size:15px;font-weight:600}
+.modal>.mh{flex:none;display:flex;align-items:center;padding:12px 16px;border-bottom:1px solid var(--line);font-size:15px;font-weight:600}
 .modal>.mh .x{margin-left:auto;cursor:pointer;color:var(--txt-3);font-size:18px;line-height:1}
 .modal>.mh .x:hover{color:#fff}
-.modal>.mb{padding:16px;overflow:auto}
-.modal>.mf{padding:12px 16px;border-top:1px solid var(--line);display:flex;gap:10px;justify-content:flex-end}
+.modal>.mb{flex:1 1 auto;min-height:0;padding:16px;overflow:auto;overscroll-behavior:contain}
+.modal>.mf{flex:none;flex-wrap:wrap;padding:12px 16px;border-top:1px solid var(--line);display:flex;gap:10px;justify-content:flex-end}
 
 /* 弹窗打开时隐藏壳层滚动条，但不改 overflow，避免把 .view 滚回顶部 */
 html.is-modal-open .view,
@@ -23,8 +23,27 @@ html.is-modal-open .nav::-webkit-scrollbar{
   height:0;
   display:none;
 }
-.n-modal{max-height:calc(100vh - 32px);overflow:hidden}
-.n-modal.n-card .n-card-content{min-height:0}
+/* All modal shells share one viewport budget; only the content takes the remaining space. */
+.modal,.n-modal,.n-dialog{--modal-viewport-height:calc(100vh - 32px)}
+@supports (height:100dvh){
+  .modal,.n-modal,.n-dialog{--modal-viewport-height:calc(100dvh - 32px)}
+}
+/* Shared centering covers discrete modals/dialogs and independent NModal instances. */
+.n-modal-body-wrapper .n-modal-scroll-content{display:flex;align-items:center;justify-content:center;min-height:100%;padding:16px;box-sizing:border-box}
+.n-modal,.n-dialog{margin:auto;box-sizing:border-box;max-height:var(--modal-viewport-height);min-height:0;max-width:calc(100vw - 32px);overflow:hidden}
+.n-modal.n-card>.n-card-header,
+.n-modal.n-card>.n-card__footer,
+.n-modal.n-card>.n-card__action{flex:none}
+.n-modal.n-card>.n-card-content{flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain}
+.n-dialog{display:flex;flex-direction:column}
+.n-dialog>.n-dialog__title,
+.n-dialog>.n-dialog__action{flex:none}
+.n-dialog>.n-dialog__content{flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain}
+.n-dialog>.n-dialog__action{flex-wrap:wrap;row-gap:8px}
+/* Controlled forms render actions inside their content. Keep that footer opaque and visible. */
+.n-modal .u-form-footer{position:sticky;bottom:0;z-index:1;flex-wrap:wrap;background:var(--surface-3);padding-bottom:8px}
+.n-modal .u-form-footer .n-button{height:auto;min-height:34px;white-space:normal}
+.n-modal .u-form-footer .n-button__content{white-space:normal;overflow-wrap:anywhere}
 .n-modal-body-wrapper > .n-scrollbar > .n-scrollbar-container{overflow:hidden}
 .n-modal-body-wrapper > .n-scrollbar > .n-scrollbar-rail{display:none}
 .warnbox{border:1px solid rgba(255,176,32,.4);background:rgba(255,176,32,.08);border-radius:6px;
@@ -62,15 +81,15 @@ html.is-modal-open .nav::-webkit-scrollbar{
 
 /* 代码块 */
 pre.code{background:rgba(3,9,26,.85);border:1px solid var(--line-2);border-radius:6px;padding:10px;
-  font:12px/1.65 Menlo,Consolas,monospace;color:#a9d4ff;overflow:auto;white-space:pre;max-height:100%}
+  font:12px/1.65 var(--app-font-mono);color:#a9d4ff;overflow:auto;white-space:pre;max-height:100%}
 pre.code .k{color:#7fd0ff} pre.code .s{color:#9ae6a0} pre.code .n{color:#ffc978}
 
 /* 日志流 */
-.logflow{font:12px/1.8 Menlo,monospace;color:var(--txt-2)}
+.logflow{font:12px/1.8 var(--app-font-mono);color:var(--txt-2)}
 .logflow .l{display:flex;gap:10px;padding:2px 0;border-bottom:1px solid rgba(64,158,255,.06)}
 .logflow .l .tm{color:var(--txt-3);flex:none}
 .empty{color:var(--txt-3);text-align:center;padding:30px;font-size:13.5px}
-.mono{font-family:Menlo,monospace}
+.mono{font-family:var(--app-font-mono)}
 .right{text-align:right} .center{text-align:center}
 .scroll{overflow:auto;min-height:0}
 

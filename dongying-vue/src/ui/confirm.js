@@ -37,10 +37,7 @@ export function openConfirm(options = {}) {
     maskClosable: false,
     style: {
       width: options.width || '420px',
-      maxWidth: 'calc(100vw - 32px)',
-      /* Dialog 原生已在视口居中；用独立 translate 轻微上移，不参与 flex 的 auto margin
-         计算，也不会与 Naive UI 的 transform 缩放动画互相覆盖。 */
-      translate: `0 ${options.offsetY || '-8vh'}`
+      maxWidth: 'calc(100vw - 32px)'
     },
     onNegativeClick: () => {
       if (options.onCancel) options.onCancel();

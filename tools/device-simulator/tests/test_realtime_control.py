@@ -228,7 +228,7 @@ class LifecycleTests(unittest.TestCase):
         with patch('countermeasure_tcp.CountermeasureSimulator', return_value=CountermeasureSimulator(port=free_port())):
             self.controller.start()
         self.assertEqual({'owner_org_id': 'test-org', 'district_id': 'test-district',
-                          'longitude': radar[0], 'latitude': radar[1]}, registered[-1])
+                          'longitude': radar[0], 'latitude': radar[1], 'coordinate_system': 'WGS84'}, registered[-1])
         self.assertEqual({'longitude': radar[0], 'latitude': radar[1]}, self.controller.snapshot()['countermeasure_position'])
         self.controller.stop()
         # 开始模拟时用这次要跑的场景，不用上一次的。

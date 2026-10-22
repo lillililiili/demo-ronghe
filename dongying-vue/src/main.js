@@ -10,6 +10,7 @@ import { createApp } from 'vue';
 import { createPinia } from 'pinia';
 import App from '@/layout/App.vue';
 import { router } from '@/router/index.js';
+import { startWithAppFonts } from '@/services/appFonts.js';
 import { displayBusinessNo } from '@/ui/deviceNumber.js';
 
 // 经典地图脚本通过同一显示函数渲染编号，地图选择和关联键仍使用原始值。
@@ -17,4 +18,4 @@ window.UI.displayBusinessNo = displayBusinessNo;
 
 const pinia = createPinia();
 
-createApp(App).use(pinia).use(router).mount('#app');
+startWithAppFonts(() => createApp(App).use(pinia).use(router).mount('#app'));

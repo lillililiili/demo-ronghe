@@ -122,6 +122,7 @@ async function main() {
       events: async () => { eventCalls++; return { items: [] }; }
     },
     targetApi: {
+      currentPredictions: async () => ({ items: [], total: 0 }),
       listAll: async params => {
         targetQueries.push(params);
         targetCalls++;
@@ -492,6 +493,99 @@ async function main() {
   check('改回逐条读取不报刷新失败', oldErrors, []);
   oldBackend.stop();
   noRouteBatch = false;
+  // K03：完整分页与失败保留；无目标权限不能读取预测或保留旧位置。
+  const predictionPages = [];
+  const forecastRows = Array.from({ length: 101 }, (_, index) => ({ prediction_id: `p-${index}`, target_id: `forecast-target-${index}`,
+    status: index % 2 ? 'UNKNOWN' : 'READY', source_mode: index % 2 ? 'replay' : 'live', warnings: [] }));
+  let forecastFailure = false;
+  deps.targetApi.currentPredictions = async ({ page, size }) => {
+    predictionPages.push(page);
+    if (forecastFailure) throw new Error('prediction unavailable');
+    return { items: forecastRows.slice((page - 1) * size, page * size), total: forecastRows.length };
+  };
+  const forecastSource = createSituationApiSource({ fastMs: 60_000, slowMs: 60_000, now: () => clock });
+  const forecastSnapshots = [];
+  forecastSource.start(value => forecastSnapshots.push(value), () => {});
+  const forecastStart = Date.now();
+  while (!forecastSnapshots.some(value => value.predictions.length === 101) && Date.now() - forecastStart < 3_000) await delay(5);
+  await delay(50);
+  check('预测完整读取两页，不截断全图数量', forecastSource.current().predictions.length, 101);
+  check('预测分页顺序', predictionPages.slice(0, 2), [1, 2]);
+  forecastFailure = true;
+  await forecastSource.refresh();
+  check('预测失败保留事项供未知状态展示', forecastSource.current().predictions.length, 101);
+  ok('预测失败单独标记，不假装正常', forecastSource.current().failedSegments.includes('predictions'));
+  const hadTargetRead = granted.has('target:read');
+  granted.delete('target:read');
+  await forecastSource.refresh();
+  check('无目标权限清空预测', forecastSource.current().predictions, []);
+  if (hadTargetRead) granted.add('target:read');
+  forecastSource.stop();
+  // 权限改变与单目标/分页请求交错：旧结果即使晚返回也不得恢复旧标识或位置。
+  const originalAdd = globalThis.addEventListener, originalRemove = globalThis.removeEventListener;
+  const accessListeners = new Set();
+  globalThis.addEventListener = (name, listener) => { if (name === 'auth-access-change') accessListeners.add(listener); };
+  globalThis.removeEventListener = (name, listener) => { if (name === 'auth-access-change') accessListeners.delete(listener); };
+  const previousGrants = granted; granted = new Set(['target:read']);
+  const oldForecast = { ...forecastRows[0], source_mode: 'replay', simulated: true, anchor: { location: { longitude: 118.25, latitude: 37.15 } } };
+  let listReader = async () => ({ items: [oldForecast], total: 1 });
+  deps.targetApi.currentPredictions = params => listReader(params);
+  const guarded = createSituationApiSource({ fastMs: 60_000, slowMs: 60_000, now: () => clock });
+  guarded.start(() => {}, () => {});
+  await delay(60);
+  check('仅预测记录也计入模拟来源', guarded.current().simulated, true);
+  check('仅预测记录保留回放来源', guarded.current().sourceMode, 'replay');
+  guarded.setSourceTarget(oldForecast.target_id);
+  deps.targetApi.prediction = async () => ({ ...oldForecast, target_id: 'unrelated-target' });
+  let mismatch = false;
+  try { await guarded.loadTargetPrediction(oldForecast.target_id); } catch { mismatch = true; }
+  ok('单目标错配被拒绝', mismatch);
+  ok('单目标错配令旧预测转未知', guarded.current().failedSegments.includes('predictions'));
+  await guarded.refresh();
+  ok('完整重读成功后恢复可用', !guarded.current().failedSegments.includes('predictions'));
+
+  let releaseList;
+  listReader = () => new Promise(resolve => { releaseList = resolve; });
+  const oldListRequest = guarded.refresh();
+  deps.targetApi.prediction = async () => { throw Object.assign(new Error('target scope changed'), { status: 403 }); };
+  try { await guarded.loadTargetPrediction(oldForecast.target_id); } catch { /* expected */ }
+  check('单目标403先清除旧范围缓存', guarded.current().predictions, []);
+  releaseList({ items: [oldForecast], total: 1 });
+  await oldListRequest;
+  check('先前分页响应晚到也不恢复403目标', guarded.current().predictions, []);
+  ok('403等待重新读取期间保持不可用', guarded.current().failedSegments.includes('predictions'));
+
+  listReader = async () => ({ items: [oldForecast], total: 1 });
+  await guarded.refresh();
+  let releaseSelected;
+  deps.targetApi.prediction = () => new Promise(resolve => { releaseSelected = resolve; });
+  const oldSelectedRequest = guarded.loadTargetPrediction(oldForecast.target_id);
+  listReader = async () => { throw Object.assign(new Error('prediction read forbidden'), { status: 403 }); };
+  await guarded.refresh();
+  releaseSelected(oldForecast);
+  check('分页403后在途单目标结果不回写', await oldSelectedRequest, null);
+  check('分页403清空所有预测标识坐标', guarded.current().predictions, []);
+  ok('分页403记为无权限且不重复失败重试', guarded.current().deniedSegments.includes('predictions') && !guarded.current().failedSegments.includes('predictions'));
+
+  // 相同权限码但数据范围或账号已改变，也不能沿用旧结果。
+  for (const listener of accessListeners) listener();
+  listReader = async () => ({ items: [oldForecast], total: 1 });
+  await guarded.refresh();
+  listReader = () => new Promise(resolve => { releaseList = resolve; });
+  const beforeAccessChange = guarded.refresh();
+  for (const listener of accessListeners) listener();
+  check('权限刷新立即清空缓存，不等下一次轮询', guarded.current().predictions, []);
+  releaseList({ items: [oldForecast], total: 1 });
+  await beforeAccessChange;
+  check('旧权限下的在途分页不能写回', guarded.current().predictions, []);
+  const newForecast = { ...oldForecast, target_id: 'new-visible-target', prediction_id: 'new-visible-snapshot' };
+  listReader = async () => ({ items: [newForecast], total: 1 });
+  await guarded.refresh();
+  check('重新读取只显示新范围结果', guarded.current().predictions.map(row => row.target_id), ['new-visible-target']);
+  guarded.stop(); granted = previousGrants;
+  if (originalAdd) globalThis.addEventListener = originalAdd; else delete globalThis.addEventListener;
+  if (originalRemove) globalThis.removeEventListener = originalRemove; else delete globalThis.removeEventListener;
+  deps.targetApi.currentPredictions = async () => ({ items: [], total: 0 });
   delete globalThis.document;
   delete globalThis.__situationContractDeps;
 

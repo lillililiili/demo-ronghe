@@ -83,7 +83,7 @@ function unavailable(key) {
 .bs-region-bars{display:flex;flex-direction:column;justify-content:space-evenly;gap:5px;flex:1;min-height:0;overflow:auto;scrollbar-width:thin}
 .bs-region-row{display:grid;grid-template-columns:minmax(70px,auto) minmax(30px,1fr) auto;gap:10px;align-items:center;flex:1 0 auto;min-height:19px;font-size:12px;line-height:18px}
 .bs-region-name{width:6em;overflow-wrap:anywhere;color:var(--txt)}
-.bs-region-row b{min-width:3ch;text-align:right;font:500 17px/1.2 'Bahnschrift','Consolas',sans-serif;color:var(--cyan)}
+.bs-region-row b{min-width:3ch;text-align:right;font:500 17px/1.2 var(--app-font-mono);color:var(--cyan)}
 .bs-region-track{height:7px;background:var(--bs-summary-fill);border-right:1px solid var(--line)}
 .bs-region-track i{display:block;height:100%;background:linear-gradient(90deg,var(--blue),var(--cyan));box-shadow:0 0 6px var(--glow-cyan)}
 .bs-altitude-bars{flex:1;min-height:110px;display:flex;gap:9px;padding-top:22px;background:repeating-linear-gradient(to top,transparent 0,transparent calc(25% - 1px),var(--line-2) calc(25% - 1px),var(--line-2) 25%)}
@@ -91,7 +91,7 @@ function unavailable(key) {
 .bs-altitude-track{display:flex;align-items:flex-end;justify-content:center;border-bottom:1px solid var(--line);min-height:0}
 .bs-altitude-fill{position:relative;width:60%;max-width:32px;background:linear-gradient(0deg,var(--blue),var(--cyan));border-top:2px solid var(--cyan);box-shadow:0 0 9px var(--glow-cyan)}
 .bs-altitude-fill.is-zero{border:0}
-.bs-altitude-fill b{position:absolute;bottom:100%;left:50%;transform:translateX(-50%);padding-bottom:4px;font:500 15px/1.2 'Bahnschrift','Consolas',sans-serif;color:var(--cyan);white-space:nowrap}
+.bs-altitude-fill b{position:absolute;bottom:100%;left:50%;transform:translateX(-50%);padding-bottom:4px;font:500 15px/1.2 var(--app-font-mono);color:var(--cyan);white-space:nowrap}
 .bs-altitude-column>span{font-size:11px;line-height:15px;overflow-wrap:anywhere;color:var(--txt-2)}
 .bs-bottom-empty{flex:1;display:grid;place-items:center;text-align:center;overflow-wrap:anywhere;font-size:12px;line-height:20px;color:var(--txt-3)}
 @media(max-width:1400px),(max-height:820px){

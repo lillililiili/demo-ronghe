@@ -19,8 +19,9 @@ test('weather preview clears invalid geometry and keeps valid source coordinates
  await new Promise(resolve=>setImmediate(resolve));
  for(const [x,y] of [[118.6,37.4],[119.1,36.8]]){
   const polygon=[[x,y],[x+.01,y],[x+.01,y+.01],[x,y]];
-  sandbox.__test.weatherPreview({polygon});
+  sandbox.__test.weatherPreview({polygon,coordinate_system:'WGS84'});
   assert.deepEqual(messages.at(-1).polygon,polygon);
+  for(const datum of [undefined,null,'GCJ02','BD09','CGCS2000']){sandbox.__test.weatherPreview({polygon,coordinate_system:datum});assert.equal(messages.at(-1).polygon,null);}
  }
  for(const polygon of ['invalid',[[181,0],[181,1],[180,1],[181,0]],[[0,0],[1,1],[0,1],[1,0],[0,0]]]){
   sandbox.__test.weatherPreview({polygon});
@@ -129,4 +130,19 @@ test('route owner follows the chosen unit and district; with no routes and sever
  sandbox.__test.set([],[a,b],b,connection);
  sandbox.__test.buildPlanInput();
  assert.equal(sandbox.__test.readDraft().route.owner_org_id,'org-b');
+});
+
+test('rendering a selected map plan keeps imported foreign coordinates and shows the error',async()=>{
+ const sandbox={document,window:{ExternalContract:require('../web/external-contract.js'),PlanForm:require('../web/plan-form.js'),WeatherForm:require('../web/weather-form.js')},setInterval(){},fetch:async()=>({ok:true,status:200,json:async()=>({connected:false})})};
+ vm.createContext(sandbox);
+ vm.runInContext(source+`\nglobalThis.__test={buildPlanInput,readDraft,set(data){tab='plans';context={routes:[],plans:[],messages:[]};scenePlans=[{id:'p1',name:'航线',points:[[118,37],[119,38]]}];selectedScenePlanId='p1';drafts.plans=JSON.stringify(data);}};`,sandbox);
+ await new Promise(resolve=>setImmediate(resolve));
+ for(const original of [
+  {message_id:'m',filing:{coordinate_system:'GCJ02',takeoff_longitude:100,takeoff_latitude:20}},
+  {message_id:'m',filing:{},route:{geometry:{type:'LineString',coordinates:[[100,20],[101,21]],crs:{type:'name',properties:{name:'EPSG:3857'}}}}}
+ ]){
+  sandbox.__test.set(original);
+  assert.match(sandbox.__test.buildPlanInput(),/请先转换原始坐标/);
+  assert.equal(JSON.stringify(sandbox.__test.readDraft()),JSON.stringify(original));
+ }
 });

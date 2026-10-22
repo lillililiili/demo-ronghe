@@ -129,7 +129,7 @@ onBeforeUnmount(() => {
   overflow: auto;
   color: var(--login-text);
   background: var(--canvas);
-  font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+  font-family: var(--app-font-sans);
 }
 .login-background { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center; z-index: -2; pointer-events: none; }
 .login-brand { position: absolute; top: 10.6%; left: 4.3%; }

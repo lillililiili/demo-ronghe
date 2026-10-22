@@ -217,6 +217,7 @@ class Runtime:
         self.phase = 'IDLE'; self.error = ''; self.error_detail = ''; self.batch = None; self.elapsed = 0
         self.sent = 0; self.logs = []; self.manifest = {}; self.targets = {}; self.scene = {}
         self.source_scene = None
+        self.loaded_history = False
         self.fullchain = None
         self.cancel = threading.Event(); self.thread = None
         self.next_session_check = 0
@@ -244,6 +245,9 @@ class Runtime:
                     if key in self.targets: self.targets[key]['_notification_motion'] = motion
                 self.phase=self.manifest.get('phase','STOPPED')
                 if self.phase in ('PREPARING','RUNNING','PAUSED','STOPPING'): self.phase='STOPPED'; self.error='服务重启，上次发送已中断，未自动续发'
+                elif self.phase == 'FAILED':
+                    self.phase = 'STOPPED'
+                    self.error = '上次模拟失败，当前已停止，请查看运行记录后重新开始'
                 self.elapsed=self.manifest.get('elapsed',0); self.sent=self.manifest.get('sent',0)
                 readback=saved[-1].parent/'system-readback.json'
                 if readback.exists(): self.snapshot=json.loads(read_saved_text(readback))
@@ -257,6 +261,7 @@ class Runtime:
                             break
                         except UnicodeDecodeError:
                             if encoding == 'cp936': raise
+                self.loaded_history = True
             except (ValueError,KeyError,OSError): self.phase='IDLE'; self.batch=None; self.manifest={}; self.scene={}; self.targets={}
 
     @property
@@ -288,7 +293,7 @@ class Runtime:
         record = {'at':int(time.time()*1000),'kind':kind,'message':message,**extra}
         with self.lock:
             self.logs.append(record); self.logs = self.logs[-200:]
-            if self.batch:
+            if self.batch and not self.loaded_history:
                 with (self.data_dir/self.batch/'events.ndjson').open('a', encoding='utf-8') as f:
                     f.write(json.dumps(record,ensure_ascii=False)+'\n')
 
@@ -312,6 +317,9 @@ class Runtime:
 
     def checkpoint(self):
         with self.lock:
+            # A restarted process displays the previous batch, but does not own it.
+            if self.loaded_history:
+                return
             self.manifest.update(phase=self.phase,elapsed=self.elapsed,sent=self.sent)
             if self.response:
                 self.manifest['notification_observation'] = self.response.snapshot()
@@ -472,6 +480,7 @@ class Runtime:
                     raise ValueError('隔离测试库与当前 API 的 MQTT 连接不一致，已阻止启动')
             self.batch='sim-'+time.strftime('%m%d%H%M%S')+'-'+uuid.uuid4().hex[:4]
             (self.data_dir/self.batch).mkdir()
+            self.loaded_history = False
             self.scene, self.targets, self.skipped = scene, targets, skipped
             self.source_scene = source_scene
             self.elapsed=0; self.sent=0; self.logs=[]; self.snapshot={}; self.error=''; self.error_detail=''; self.response=None

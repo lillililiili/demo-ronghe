@@ -7,6 +7,8 @@ import { toast } from './nv.js';
 import { verifyUavEvent } from '@/services/alarmApi.js';
 import { isUncertainOutcome } from '@/services/apiClient.js';
 import { ALARM_TYPE_LABEL, labelOf, readableNo } from '@/ui/labels.js';
+import { predictionVerificationState } from '@/services/predictionView.js';
+import { serverNow } from '@/services/serverClock.js';
 
 export const UAV_STATE_TEXT = {
   PENDING_VERIFICATION: '待人工核实',
@@ -52,7 +54,11 @@ export function openUavVerification({ event, alarm, refresh, onDone } = {}) {
   if (!(event.allowed_actions || []).includes('VERIFY')) { toast('当前事件不可核实或缺少核实权限', 'err'); return false; }
   const eventId = event.event_id;
   const expectedVersion = Number(event.version);
-  const basis = verificationBasisState(event);
+  const predicted = alarm?.origin_kind === 'PREDICTED_AIRSPACE_ENTRY' || event.origin_kind === 'PREDICTED_AIRSPACE_ENTRY';
+  const predictionId = predicted ? event.verification_basis?.prediction_id || event.prediction?.prediction_id || alarm?.prediction?.prediction_id : null;
+  const prediction = predictionVerificationState(event, alarm, serverNow());
+  if (prediction?.terminal) { toast(prediction.message, 'err'); return false; }
+  const basis = prediction || verificationBasisState(event);
   if (!pendingKeys.has(eventId)) pendingKeys.set(eventId, newKey());
   const intro = [
     ['当前状态', esc(uavStateText(event.state))],
@@ -63,24 +69,26 @@ export function openUavVerification({ event, alarm, refresh, onDone } = {}) {
   openFormModal({
     title: '人工核实 · ' + esc(displayAlarmNo(readableNo(alarm?.alarm_no)) || '核实事件'),
     width: '600px',
-    introHtml: `<dl class="kv">${intro}</dl>`,
+    introHtml: `<dl class="kv">${intro}</dl>${predicted ? '<p>本次核实的是预测入区风险。是否可通知或反制以当前证据与授权校验为准。</p>' : ''}`,
     warning: basis.blocked ? esc(basis.message) : '',
     fields: [
       { key: 'conclusion', label: '核实结论', type: 'radio', required: true, options: [
-        { value: 'CONFIRMED', label: basis.blocked ? '属实（缺少依据，暂不能选）' : '属实（置为“告警已确认”）', disabled: basis.blocked },
+        { value: 'CONFIRMED', label: basis.blocked ? predicted ? '预测风险成立（依据不足，暂不能选）' : '属实（缺少依据，暂不能选）' : predicted ? '预测风险成立（确认本次预警）' : '属实（置为“告警已确认”）', disabled: basis.blocked },
         { value: 'FALSE_POSITIVE', label: '误报（终态）' }
       ] },
       { key: 'note', label: '核实依据与说明（选填）', type: 'textarea', placeholder: '可填写已查看的证据及判断理由；误报时可说明原识别或关联为何不成立', maxlength: 1000 }
     ],
     // 缺依据时不预选结论，由核实人明确选择误报。
     initial: basis.blocked ? {} : { conclusion: 'CONFIRMED' },
-    validate: ({ conclusion, note }) => basis.blocked && conclusion === 'CONFIRMED' ? '缺少依据，不能核实为属实。'
+    validate: ({ conclusion, note }) => basis.blocked && conclusion === 'CONFIRMED' ? predicted ? '当前预测依据不足，不能提交预测风险属实。' : '缺少依据，不能核实为属实。'
       : String(note || '').trim().length > 1000 ? '核实说明不能超过1000字。' : '',
     confirmText: '提交核实结论',
     onSubmit: async ({ conclusion, note }) => {
+      // 保留打开时选择的同周期快照；提交时由服务端重验最新依据，避免快照持续更新迫使重复核实。
+      if (prediction?.blocked && conclusion === 'CONFIRMED') throw new Error(prediction.message);
       const key = pendingKeys.get(eventId);
       try {
-        const result = await verifyUavEvent(eventId, { conclusion, note: String(note || '').trim(), expected_version: expectedVersion }, key);
+        const result = await verifyUavEvent(eventId, { conclusion, note: String(note || '').trim(), expected_version: expectedVersion, ...(predicted && predictionId ? { prediction_id: predictionId } : {}) }, key);
         pendingKeys.delete(eventId);
         closeModal();
         toast(`核实完成：${uavStateText(result?.state)}`, 'ok');

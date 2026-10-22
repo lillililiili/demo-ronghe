@@ -11,6 +11,8 @@
 .flow-detail { min-width: 0; }
 .flow-detail h3 { margin: 0 0 4px; font-size: 16px; }
 .flow-meta { margin: 0 0 10px; color: var(--muted); font-size: 12px; }
+.flow-variant { display: grid; gap: 6px; margin: 12px 0 16px; font-size: 13px; font-weight: 650; }
+.flow-variant select { width: 100%; min-height: 40px; font-weight: 400; }
 .flow-detail section { margin: 0 0 14px; }
 .flow-detail h4 { margin: 0 0 4px; font-size: 13px; }
 .flow-detail p, .flow-detail li, .flow-banner-body li { font-size: 13px; line-height: 1.75; }

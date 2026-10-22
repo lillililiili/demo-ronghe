@@ -43,8 +43,8 @@
     opt = opt || {};
     if (box.__map) box.__map.destroy();
     this.box = box; this.opt = opt;
-    this.data = { airspaces: [], devices: [], targets: [], alarms: [], flightPlans: [], risks: [] };
-    this.layers = Object.assign({ coverage: true, device: true, track: true, flightPlan: true, nofly: true, suit: true, limit: true, alarm: true }, opt.layers);
+    this.data = { airspaces: [], devices: [], targets: [], alarms: [], flightPlans: [], risks: [], predictions: [] };
+    this.layers = Object.assign({ prediction: false, coverage: true, device: true, track: true, flightPlan: true, nofly: true, suit: true, limit: true, alarm: true }, opt.layers);
     this.online = false; this.map = null;
     this.maxZoom = Number.isFinite(opt.maxZoom) ? Math.max(12, Math.min(24, Number(opt.maxZoom))) : 18;
     this.zoom = opt.zoom || 1; this.ox = 0; this.oy = 0; this.t = 0; this.hover = null; this.sel = null; this.planSel = null;
@@ -187,7 +187,7 @@
         touchPitch: false, renderWorldCopies: false, attributionControl: false,
         // 汉字优先由浏览器本地字体栅格化，避免首屏重复下载 8 MiB 的 SC 字体文件。
         // 拉丁字符仍继续使用地图包内 PBF 字形，离线部署不会产生外网请求。
-        localIdeographFontFamily: 'Microsoft YaHei, PingFang SC, sans-serif', fadeDuration: 0,
+        localIdeographFontFamily: '"Noto Sans SC"', fadeDuration: 0,
         transformRequest: runtime.transformRequest
       });
       this.map = map;
@@ -887,7 +887,7 @@
     c.setLineDash([]);
     c.beginPath(); c.arc(o[0], o[1], 2.5, 0, 7); c.fillStyle = col; c.fill();
     if (this.sel === t.id || t.tracked) {
-      c.font = '9.5px "PingFang SC"'; c.fillStyle = col; c.textAlign = 'left';
+      c.font = '9.5px "Noto Sans SC"'; c.fillStyle = col; c.textAlign = 'left';
       c.fillText('仅方位 ' + t.azimuth.toFixed(0) + '°',
         o[0] + Math.cos(rad) * (L + 6), o[1] + Math.sin(rad) * (L + 6));
     }
@@ -1132,14 +1132,14 @@
     c.fillStyle = fill; c.fill();
     c.shadowColor = 'transparent'; c.shadowBlur = 0; c.shadowOffsetY = 0;
     c.strokeStyle = '#fff'; c.lineWidth = 1.4; c.stroke();
-    c.font = '700 10px "PingFang SC","Microsoft YaHei",sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.font = '700 10px "Noto Sans SC"'; c.textAlign = 'center'; c.textBaseline = 'middle';
     c.fillStyle = '#fff'; c.fillText(text, hx, hy + .5);
     c.beginPath(); c.arc(p[0], p[1], 2, 0, Math.PI * 2); c.fillStyle = fill; c.fill();
     c.restore();
   };
 
   function drawRouteLabel(c, at, text, width, height, risk) {
-    c.font = '500 11px "PingFang SC",sans-serif';
+    c.font = '500 11px "Noto Sans SC"';
     const limit = Math.max(40, Math.min(230, width ? width - 28 : 230)), lines = [];
     let line = '';
     for (const char of String(text)) {
@@ -1198,6 +1198,48 @@
   const PLAN_STYLE = {
     PENDING: { alpha: .9 }, APPROVED: { alpha: .9 },
     EXECUTING: { alpha: 1 }, COMPLETED: { alpha: .72 }
+  };
+
+  /* K03 未来预测独立绘制；不参与已飞轨迹、当前位置或证据点。 */
+  MapView.prototype._drawPredictions = function (c, P, picks) {
+    if (!this.opt.fusionProfile || !this.layers.prediction) return;
+    const groups = [];
+    (this.data.predictions || []).forEach(prediction => {
+      if (prediction.selected && prediction.anchor && prediction.points.length) {
+        const route = [prediction.anchor, ...prediction.points];
+        c.save(); c.strokeStyle = '#22d3ee'; c.lineWidth = 2; c.setLineDash([6, 5]);
+        c.beginPath(); route.forEach((point, index) => { const p = P(point.lon, point.lat); if (index) c.lineTo(p[0], p[1]); else c.moveTo(p[0], p[1]); }); c.stroke();
+        c.setLineDash([]); c.font = '600 11px "Noto Sans SC"'; c.textAlign = 'left'; c.textBaseline = 'middle';
+        prediction.points.forEach((point, index) => {
+          const p = P(point.lon, point.lat), before = P(route[index].lon, route[index].lat);
+          c.beginPath(); c.arc(p[0], p[1], 4, 0, Math.PI * 2); c.fillStyle = '#082139'; c.fill(); c.stroke();
+          const text = '预测 +' + point.horizon + '秒', y = p[1] + (index % 2 ? 15 : -15);
+          c.strokeStyle = '#082139'; c.lineWidth = 4; c.strokeText(text, p[0] + 7, y); c.fillStyle = '#9bf1ff'; c.fillText(text, p[0] + 7, y);
+          c.strokeStyle = '#22d3ee'; c.lineWidth = 2;
+          const angle = Math.atan2(p[1] - before[1], p[0] - before[0]);
+          if (Math.hypot(p[0] - before[0], p[1] - before[1]) > 16) {
+            c.beginPath(); c.moveTo(p[0] - 8 * Math.cos(angle - .5), p[1] - 8 * Math.sin(angle - .5)); c.lineTo(p[0], p[1]);
+            c.lineTo(p[0] - 8 * Math.cos(angle + .5), p[1] - 8 * Math.sin(angle + .5)); c.stroke();
+          }
+        }); c.restore();
+      }
+      prediction.warnings.forEach(warning => {
+        const p = P(warning.lon, warning.lat);
+        // 聚合只改变屏幕标记，保存每条真实入区坐标；展开列表选择后显示该条精确位置。
+        let group = !prediction.selected && groups.find(item => !item.selected && Math.hypot(item.x - p[0], item.y - p[1]) < 28);
+        if (!group) { group = { x: p[0], y: p[1], rows: [], selected: prediction.selected }; groups.push(group); }
+        group.rows.push({ prediction, warning });
+      });
+    });
+    groups.forEach(group => {
+      const { x, y, rows } = group, first = rows[0];
+      c.save(); c.fillStyle = '#292019'; c.strokeStyle = '#ffc160'; c.lineWidth = group.selected ? 2.5 : 1.5;
+      c.beginPath(); c.moveTo(x, y - 9); c.lineTo(x + 9, y); c.lineTo(x, y + 9); c.lineTo(x - 9, y); c.closePath(); c.fill(); c.stroke();
+      c.font = '600 11px "Noto Sans SC"'; c.textAlign = 'left'; c.textBaseline = 'middle';
+      const text = rows.length > 1 ? '预测 ' + rows.length + '项' : '预测入区';
+      c.strokeStyle = '#082139'; c.lineWidth = 4; c.strokeText(text, x + 13, y); c.fillStyle = '#ffe0a3'; c.fillText(text, x + 13, y); c.restore();
+      picks.push({ kind: 'prediction', x, y, data: { id: first.prediction.id, rows }, title: text });
+    });
   };
 
   MapView.prototype._drawFlightPlans = function (c, P, picks) {
@@ -1370,7 +1412,7 @@
     c.textAlign = 'center'; c.textBaseline = 'middle';
     LABELS.forEach(l => {
       const q = P(l.lon, l.lat);
-      c.font = `${l.s}px "PingFang SC",sans-serif`;
+      c.font = `${l.s}px "Noto Sans SC"`;
       c.strokeStyle = palette.halo; c.lineWidth = 4; c.strokeText(l.n, q[0], q[1]);
       c.fillStyle = palette.label; c.fillText(l.n, q[0], q[1]);
     });
@@ -1387,7 +1429,7 @@
         c.beginPath(); c.moveTo(a[0], a[1]); c.lineTo(b[0], b[1]); c.stroke();
       }
       c.textAlign = 'center'; c.textBaseline = 'middle';
-      c.font = '15px "PingFang SC",sans-serif'; c.fillStyle = palette.label;
+      c.font = '15px "Noto Sans SC"'; c.fillStyle = palette.label;
       c.fillText(this._activeCityName || '当前城市', W / 2, H / 2);
     }
 
@@ -1476,7 +1518,7 @@
         if (right > left && bottom > top) {
           labeledAirspaces.add(labelKey);
           c.save();
-          c.font = '600 12px "PingFang SC","Microsoft YaHei",sans-serif';
+          c.font = '600 12px "Noto Sans SC"';
           const name = a.name || '空域名称未读取';
           const text = name === a.type ? name : `${name} · ${a.type}`;
           const maxWidth = Math.max(30, Math.min(240, W - 32));
@@ -1512,7 +1554,7 @@
 
     // 全部空域填充之后绘制名称，避免重叠边界遮住其他空域的文字。
     airspaceLabels.forEach(({ x, y, width, height, lines, color }) => {
-      c.save(); c.font = '600 12px "PingFang SC","Microsoft YaHei",sans-serif';
+      c.save(); c.font = '600 12px "Noto Sans SC"';
       c.fillStyle = 'rgba(8,18,44,.9)'; c.fillRect(x, y, width, height);
       c.strokeStyle = color; c.lineWidth = 1; c.setLineDash([]); c.strokeRect(x, y, width, height);
       c.fillStyle = color; c.textAlign = 'left'; c.textBaseline = 'top';
@@ -1673,11 +1715,12 @@
       }
       c.strokeStyle = '#071b38'; c.lineWidth = 6; c.stroke();
       c.strokeStyle = '#b6f5ff'; c.lineWidth = 2.5; c.stroke();
-      c.font = '600 12px "PingFang SC",sans-serif'; c.textAlign = 'center';
+      c.font = '600 12px "Noto Sans SC"'; c.textAlign = 'center';
       c.strokeStyle = '#071b38'; c.lineWidth = 4; c.strokeText('已选中', 0, 45);
       c.fillStyle = '#b6f5ff'; c.fillText('已选中', 0, 45);
       c.restore();
     }
+    this._drawPredictions(c, P, picks);
     this._pickPts = picks;
     if (this.opt.pinSelTip || (this.opt.interactiveTip && this.tip && this.tip.style.display !== 'none')) this._hit();
 

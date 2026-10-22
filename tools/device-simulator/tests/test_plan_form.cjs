@@ -14,7 +14,7 @@ test('source changes clear the previous reporting binding',()=>{
  assert.equal(form.update({filing:{source_binding_id:'old'}},'source_id','new',{}).filing.source_binding_id,null);
 });
 test('complete coordinates are validated with WGS84 ranges',()=>{
- const filing={source_id:'s',operator_name:'单位',pilot_name:'飞手',takeoff_site_name:'起点',landing_site_name:'终点',takeoff_longitude:118,takeoff_latitude:37};
+ const filing={source_id:'s',operator_name:'单位',pilot_name:'飞手',takeoff_site_name:'起点',landing_site_name:'终点',coordinate_system:'WGS84',takeoff_longitude:118,takeoff_latitude:37};
  const times={start_at:Date.parse('2026-10-03T09:00:00+08:00'),end_at:Date.parse('2026-10-03T09:30:00+08:00')};
  assert.doesNotThrow(()=>form.validate({filing,...times}));
  assert.throws(()=>form.validate({filing:{...filing,takeoff_latitude:null},...times}),/成对/);
@@ -98,4 +98,45 @@ test('carried pilot phone and reporting unit are checked like the platform does'
  assert.throws(()=>form.validate({filing:{...filing,reporting_org_name:'报送单位'},...times}),/报送单位编码/);
  assert.doesNotThrow(()=>form.validate({filing:{...filing,source_binding_id:'b',reporting_org_name:'报送单位'},...times}));
  assert.throws(()=>form.validate({filing:{...filing,reporting_org_code:'x'.repeat(65)},...times}),/最多 64/);
+});
+
+test('new WGS84 manual points declare the datum without reclassifying imported coordinates',()=>{
+ const fresh=form.update({filing:{}},'takeoff_longitude','-73.9');
+ assert.equal(fresh.filing.coordinate_system,'WGS84');
+ const next=form.update(fresh,'takeoff_latitude','40.7');
+ assert.equal(next.filing.takeoff_latitude,40.7);
+ const imported={filing:{takeoff_longitude:118,takeoff_latitude:37}};
+ assert.equal(form.update(imported,'takeoff_longitude','119').filing.coordinate_system,undefined);
+ for(const datum of ['GCJ02','BD09','CGCS2000','',null]){
+  const source={filing:{...imported.filing,coordinate_system:datum}};
+  assert.throws(()=>form.update(source,'takeoff_longitude','119'),/WGS-84/);
+  assert.equal(source.filing.coordinate_system,datum);
+ }
+});
+
+test('flat plan coordinates require a source declaration and optional points remain optional',()=>{
+ const base={source_id:'s',operator_name:'单位',pilot_name:'飞手',takeoff_site_name:'起点',landing_site_name:'终点'};
+ const data={start_at:10,end_at:20,filing:base};
+ assert.doesNotThrow(()=>form.validate(data));
+ for(const datum of [undefined,null,'','GCJ02','BD09','CGCS2000']){
+  const filing={...base,takeoff_longitude:-74,takeoff_latitude:41};
+  if(datum!==undefined)filing.coordinate_system=datum;
+  assert.throws(()=>form.validate({...data,filing}),/WGS-84/);
+ }
+ for(const [x,y] of [[0,0],[-74,41],[151,-33]])assert.doesNotThrow(()=>form.validate({...data,filing:{...base,takeoff_longitude:x,takeoff_latitude:y,coordinate_system:'WGS-84'}}));
+ assert.throws(()=>form.validate({...data,filing:{...base,coordinate_system:'GCJ02'}}),/WGS-84/);
+});
+
+test('map plan adds WGS84 only after valid points and preserves foreign imported declarations',()=>{
+ const plan={points:[[-73,40],[-72,41]],start:'09:00',end:'09:30'};
+ assert.equal(form.applyScenePlan({filing:{}},plan).filing.coordinate_system,'WGS84');
+ for(const source of [{filing:{coordinate_system:'BD09',takeoff_longitude:118,takeoff_latitude:37}},{route:{geometry:{crs:{type:'name',properties:{name:'EPSG:3857'}}}}},{route:{geometry:{coordinateSystem:'GCJ02'}}}]){
+  const snapshot=structuredClone(source);
+  assert.throws(()=>form.applyScenePlan(source,plan),/WGS-84/);
+  assert.deepEqual(source,snapshot);
+ }
+ assert.throws(()=>form.applyScenePlan({filing:{}},{...plan,points:[[null,0],[1,1]]}),/WGS-84/);
+ assert.throws(()=>form.applyScenePlan({filing:{}},{...plan,coordinate_system:'GCJ02'}),/WGS-84/);
+ const loaded=form.fromDetail({plan:{version:1,filing:{takeoff_longitude:118,takeoff_latitude:37}},subjects:{}},'m');
+ assert.equal(loaded.filing.coordinate_system,undefined);
 });

@@ -98,7 +98,7 @@ function syncScenePlanDraft(options={}){
 function buildInput(){return tab==='weather'?buildWeatherInput():buildPlanInput();}
 function buildPlanInput(){
  let warning='';if(!drafts.plans){try{drafts.plans=JSON.stringify(samplePlan(),null,2);}catch(error){warning=error.message;drafts.plans=JSON.stringify({message_id:id(),uav_sn:'',filing:{}},null,2);}}
- const rows=context?.routes||[],scenePlan=selectedScenePlan();if(scenePlan&&!editingPlan)syncScenePlanDraft();const data=readDraft();
+ const rows=context?.routes||[],scenePlan=selectedScenePlan();if(scenePlan&&!editingPlan){try{syncScenePlanDraft();}catch(error){warning=error.message;}}const data=readDraft();
  const route=rows.find(row=>row.route_version_id===data.route_version_id);
  const routeField=data.route?.geometry?`<p class="external-note">本次任务报文将直接携带地图任务的航线几何；系统接收任务后保存航线版本，不与既有航线做几何匹配。</p>`:data.route_version_id?`<input id="input-target" type="hidden" value="${escapeHtml(data.route_version_id)}"><p class="external-note">当前报文仍使用已有航线版本${route?`：${escapeHtml(route.name||route.route_version_id)}`:'。'}，仅用于兼容旧报文。</p>`:'<input id="input-target" type="hidden" value=""><p class="external-note warn">任务报文缺少航线几何；请选择地图任务生成完整 route，或在接口报文中补充 route。</p>';
  const sceneSelector=scenePlans.length?`<label>地图任务航线<select id="scene-plan-target"><option value="">请选择地图航线</option>${scenePlans.map(plan=>`<option value="${escapeHtml(plan.id)}">${escapeHtml(plan.name)} · ${escapeHtml(plan.start||'未设置')}—${escapeHtml(plan.end||'未设置')}</option>`).join('')}</select></label>`:'';
@@ -112,7 +112,7 @@ async function loadPlanFiling(planId){
  if(!planId||busy)return;busy=true;const requested=sessionVersion;
  try{const result=await backend('GET','/local-interface-simulator/plans/'+encodeURIComponent(planId)+'/filing');if(requested!==sessionVersion)return;if(createPlanDraft===null)createPlanDraft=drafts.plans;editingPlan=result.plan;drafts.plans=JSON.stringify(window.PlanForm.fromDetail(result,id()),null,2);message('已读取当前资料，可填写缺失项后保存。');render();$('#external-body').scrollIntoView({block:'start'});}catch(error){message(error.message,true);}finally{busy=false;}
 }
-function weatherPreview(data){let polygon=null;try{polygon=window.WeatherForm.validatePolygon(data?.polygon);}catch{}window.parent?.postMessage({type:'simulator-weather-preview',polygon},location.origin);}
+function weatherPreview(data){let polygon=null;try{polygon=window.WeatherForm.validatedPolygon(data);}catch{}window.parent?.postMessage({type:'simulator-weather-preview',polygon},location.origin);}
 function buildWeatherInput(){
  if(!drafts.weather)drafts.weather=JSON.stringify(sampleWeather(),null,2);
  let data;try{data=JSON.parse(drafts.weather);if(!data||typeof data!=='object'||Array.isArray(data))data={};}catch{data={};}
@@ -223,7 +223,7 @@ $('#external-body').addEventListener('click',event=>{
  if(button.dataset.editPlan||button.id==='load-plan-filing'){loadPlanFiling(button.dataset.editPlan||$('#existing-plan')?.value);return;}
  if(button.id==='cancel-plan-edit'){editingPlan=null;drafts.plans=createPlanDraft||'';createPlanDraft=null;render();return;}
  if(button.id==='draw-weather'){if(window.parent===window)return message('请在模拟器主地图的天气页绘制范围。',true);window.parent.postMessage({type:'simulator-weather-draw'},location.origin);return;}
- if(button.id==='clear-weather'){const data=readDraft();delete data.polygon;drafts.weather=JSON.stringify(data,null,2);render();return;}
+ if(button.id==='clear-weather'){const data=readDraft();delete data.polygon;delete data.coordinate_system;delete data.coordinateSystem;drafts.weather=JSON.stringify(data,null,2);render();return;}
  if(button.id==='new-sample'){
   const target=$('#input-target')?.value;
   const row=tab==='plans'?(context?.routes||[]).find(item=>item.route_version_id===target):null;
@@ -264,7 +264,7 @@ $('#external-body').addEventListener('input',event=>{
  }
 });
 $('#external-body').addEventListener('change',event=>{
- if(event.target.id==='payload-editor'){weatherFieldsChanged();planFieldsChanged();if(tab==='plans')render();else{try{const data=readDraft();window.WeatherForm.validatePolygon(data.polygon);weatherPreview(data);}catch(error){weatherPreview(null);message(error.message,true);}}}
+ if(event.target.id==='payload-editor'){weatherFieldsChanged();planFieldsChanged();if(tab==='plans')render();else{try{const data=readDraft();window.WeatherForm.validatedPolygon(data);weatherPreview(data);}catch(error){weatherPreview(null);message(error.message,true);}}}
  if(event.target.id==='plan-scope'){
   const scope=(planScopes||[])[Number(event.target.value)];
   if(event.target.value===''||!scope){render();return;}
@@ -283,7 +283,7 @@ $('#external-body').addEventListener('change',event=>{
 });
 if(typeof window.addEventListener==='function')window.addEventListener('message',event=>{
  if(event.origin!==location.origin||event.source!==window.parent)return;
- if(event.data?.type==='simulator-weather-drawn'){try{const polygon=window.WeatherForm.validatePolygon(event.data.polygon);const data=JSON.parse(drafts.weather);data.polygon=polygon;drafts.weather=JSON.stringify(data,null,2);render();message('已绘制模拟预报范围；提交后由平台按范围和时段关联任务。');}catch(error){message(error.message,true);}return;}
+ if(event.data?.type==='simulator-weather-drawn'){try{const data=window.WeatherForm.withMapPolygon(JSON.parse(drafts.weather),event.data.polygon);drafts.weather=JSON.stringify(data,null,2);render();message('已绘制模拟预报范围；提交后由平台按范围和时段关联任务。');}catch(error){message(error.message,true);}return;}
  if(event.data?.type!=='simulator-plan-drafts')return;
  const hasSelectedId=Object.prototype.hasOwnProperty.call(event.data,'selected_id');
  const selectedId=typeof event.data.selected_id==='string'?event.data.selected_id:'';
@@ -291,7 +291,7 @@ if(typeof window.addEventListener==='function')window.addEventListener('message'
  scenePlans=Array.isArray(event.data.plans)?event.data.plans.filter(plan=>plan&&typeof plan.id==='string'&&Array.isArray(plan.points)&&plan.points.length>=2):[];
  if(hasSelectedId)selectedScenePlanId=selectedId&&scenePlans.some(plan=>plan.id===selectedId)?selectedId:'';
  else if(!scenePlans.some(plan=>plan.id===selectedScenePlanId))selectedScenePlanId=scenePlans.length===1?scenePlans[0].id:'';
- if(tab==='plans'&&!editingPlan&&selectedScenePlanId)syncScenePlanDraft({replaceSiteNames:previousSelectedScenePlanId!==selectedScenePlanId,replaceWindow:previousSelectedScenePlanId!==selectedScenePlanId});
+ if(tab==='plans'&&!editingPlan&&selectedScenePlanId){try{syncScenePlanDraft({replaceSiteNames:previousSelectedScenePlanId!==selectedScenePlanId,replaceWindow:previousSelectedScenePlanId!==selectedScenePlanId});}catch(error){message(error.message,true);}}
  if(tab==='plans')render();
 });
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)status();});refreshTimer=setInterval(()=>{if(!document.hidden)status();},3000);status();

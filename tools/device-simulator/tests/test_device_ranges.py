@@ -39,7 +39,8 @@ class DeviceRangeTests(unittest.TestCase):
 
     def test_flow_eight_fault_offline_and_recovery_with_changed_ids_location_and_time(self):
         for offset, start in [(0,30),(65,45)]:
-            raw = copy.deepcopy(read_acceptance_flows(ROOT)['flows'][-1]['scene'])
+            raw = copy.deepcopy(next(item['scene'] for item in read_acceptance_flows(ROOT)['flows']
+                                     if item['flow'] == 8))
             site=raw['sites'][0]; site['x']+=offset; site['y']+=offset
             for plan in raw['plans']:
                 plan['points']=[[x+offset,y+offset] for x,y in plan['points']]

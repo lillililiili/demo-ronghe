@@ -6,10 +6,11 @@ import json
 import math
 import re
 import time
-from engine import coordinates, TARGET_REPORT_KINDS
+from engine import coordinates, TARGET_REPORT_KINDS, zone_polygon_rings
 from prerequisite_check import route_version_mismatch
 from plan_weather import plan_forecast
 from state_file import read_saved_text
+from coordinate_contract import simulator_wgs84
 
 PREFIX = '/local-interface-simulator'
 CLASSES = {'uav':'UAV','bird':'BIRD','unknown':'UNKNOWN','identifying':None,'balloon':'UNKNOWN',
@@ -194,6 +195,7 @@ def flight_window(plan, target, risks, now):
 
 class FullChain:
     def __init__(self, platform, scene, manifest, broker, checkpoint, clock=None, cancelled=None):
+        simulator_wgs84(scene)
         self.api, self.scene, self.manifest = platform, scene, manifest
         self.scope = {k:broker[k] for k in ('owner_org_id','district_id')}
         self.checkpoint = checkpoint
@@ -431,6 +433,10 @@ class FullChain:
 
     def prepare(self):
         now=self.manifest['created_at']
+        # Validate all boundaries before any API mutation, including direct callers.
+        zone_boundaries = {zone['id']: {'type': 'Polygon', 'coordinates': [
+            [coordinates(point) for point in ring] for ring in zone_polygon_rings(zone)]}
+            for zone in self.scene['zones']}
         # A pilot or reporting-unit binding chosen in the scene wins. Otherwise each simulated
         # upstream task carries its own pilot and reporting unit (D-2, 2026-10-08); the platform
         # finds or creates those records by phone and code, and links them to the task.
@@ -485,7 +491,7 @@ class FullChain:
                 serial=stable_uav_sn(target['id'], target.get('uavSn')) if target else stable_simulator_id('map-sim-support-uav-', 'p'+str(index))
                 if target:
                     self.manifest['targets'][target['id']]['uav_sn']=serial
-                item_filing=dict(filing,operator_org_id=filing.get('operator_org_id') or self.scope['owner_org_id'],
+                item_filing=dict(filing,coordinate_system=simulator_wgs84(filing, plan),operator_org_id=filing.get('operator_org_id') or self.scope['owner_org_id'],
                     takeoff_site_name=plan['name']+'起点',landing_site_name=plan['name']+'终点',
                     takeoff_longitude=coordinates(plan['points'][0])[0],takeoff_latitude=coordinates(plan['points'][0])[1],
                     landing_longitude=coordinates(plan['points'][-1])[0],landing_latitude=coordinates(plan['points'][-1])[1])
@@ -532,14 +538,12 @@ class FullChain:
             self.manifest.setdefault('realtime_plan_id',ids[0]);self.checkpoint()
         for index,zone in enumerate(self.scene['zones'],1):
             zone_start, zone_finish = plan_window(zone, now)
-            ring=[coordinates(p) for p in zone['points']]
-            if ring[0]!=ring[-1]:ring.append(ring[0])
             airspace_no = stable_airspace_no(zone['id'])
             previous = self.existing_airspaces().get(airspace_no)
             revision = int(previous.get('revision') or 0) + 1 if previous else 1
             body=dict(self.scope,
                 message_id=self.message('z'+str(index)+'-r'+str(revision)),revision=revision,action='UPSERT',airspace_no=airspace_no,
-                name=zone['name'],kind_code=zone['kindCode'],boundary={'type':'Polygon','coordinates':[ring]},
+                name=zone['name'],kind_code=zone['kindCode'],boundary=zone_boundaries[zone['id']],
                 min_altitude_m=zone.get('min',0),max_altitude_m=zone['max'],altitude_datum=zone.get('altitudeDatum','AMSL'),
                 valid_from=zone_start,valid_to=zone_finish,change_reason='全量模拟批次 '+self.manifest['batch'])
             saved=(previous or {}).get('payload') or {}
@@ -569,7 +573,7 @@ class FullChain:
             for index in range(self.observation_source_count):
                 suffix='' if index==0 else '-'+str(index+1)
                 source=self.request('normalized-source'+suffix,PREFIX+'/observation-devices',dict(self.scope,
-                    message_id=self.message('source'+suffix),name=self.message('完整模拟观测'+suffix),longitude=118.61,latitude=37.464))
+                    message_id=self.message('source'+suffix),name=self.message('完整模拟观测'+suffix),longitude=118.61,latitude=37.464,coordinate_system='WGS84'))
                 sources.append(source)
                 self.manifest['devices']['normalized-source'+suffix]={'platform_id':source['device_id'],'kind':'normalized',
                                                                     'external_id':source['source_id']}
@@ -591,7 +595,7 @@ class FullChain:
                 if not isinstance(origin, str) or not origin or registered.get('kind') != device['kind']:
                     raise ValueError('场景观测设备尚未完成本批台账登记：' + key)
                 source_body = dict(self.scope, name=(device['name']+' · 模拟观测')[:128],
-                    longitude=longitude, latitude=latitude, origin_ops_device_id=origin)
+                    longitude=longitude, latitude=latitude, origin_ops_device_id=origin, coordinate_system=simulator_wgs84(device))
                 source_message = stable_simulator_id('map-sim-source-', payload_fingerprint(dict(source_body, scene_device_id=key)))
                 # A previous checkpoint without this verified parent must not satisfy the new registration.
                 source = self.request(source_message, PREFIX+'/observation-devices', dict(source_body, message_id=source_message))
@@ -602,7 +606,7 @@ class FullChain:
             if sources:
                 self.manifest['normalized_source'] = next(iter(sources.values()))
         if 'weather' in self.scene.get('fullchain',{}).get('categories',[]):
-            station=dict(self.scope,name='模拟气象站',
+            station=dict(self.scope,name='模拟气象站',coordinate_system=simulator_wgs84(self.weather),
                 longitude=self.weather.get('longitude',118.61),latitude=self.weather.get('latitude',37.464))
             station_key=payload_fingerprint(station)
             sensor=self.request('weather-device',PREFIX+'/weather-devices',dict(station,
@@ -631,6 +635,7 @@ class FullChain:
             sample=target_sample(target,elapsed)
             external=self.manifest['targets'][key]['external_id']
             item={'external_target_id':external,'external_track_id':external,'longitude':sample['longitude'],
+                  'coordinate_system':simulator_wgs84(target),
                   'latitude':sample['latitude'],'speed_mps':sample['speed'],'heading_deg':sample['heading'],
                   'class_code':CLASSES[target['kind']],'class_confidence':target.get('probability')}
             if target.get('altitudeDatum','AMSL')=='AMSL':item['altitude_amsl_m']=sample['altitude']
@@ -657,7 +662,7 @@ class FullChain:
                 for index, current in enumerate(sources):
                     self.publish('normalized', PREFIX+'/target-observations', {
                         'message_id': self.message('o'+str(sequence)+'-s'+str(index+1)),
-                        'source_id': current['source_id'], 'observed_at': now+index, 'items': items}, len(items))
+                        'source_id': current['source_id'], 'observed_at': now+index, 'items': items, 'coordinate_system':'WGS84'}, len(items))
         else:
             for device_id, items in items_by_device.items():
                 source = sources.get(device_id)
@@ -665,12 +670,13 @@ class FullChain:
                     raise ValueError('模拟观测设备尚未登记，请重新启动场景：'+devices[device_id]['name'])
                 self.publish('normalized',PREFIX+'/target-observations',{
                     'message_id':stable_simulator_id(self.message('o'+str(sequence)+'-'), device_id),
-                    'source_id':source['source_id'],'observed_at':now,'items':items},len(items))
+                    'source_id':source['source_id'],'observed_at':now,'items':items,'coordinate_system':'WGS84'},len(items))
         sensor=self.manifest.get('weather_device')
         if sensor and elapsed>=self.next_weather:
             self.publish('weather-observations',PREFIX+'/weather-observations',{
                 'message_id':self.message('w'+str(sequence)),'device_id':sensor['device_id'],'observed_at':now,
                 'longitude':self.weather.get('longitude',118.61),'latitude':self.weather.get('latitude',37.464),
+                'coordinate_system':simulator_wgs84(self.weather),
                 'temperature_c':round(self.weather.get('temperature_c',22)+math.sin(elapsed/60),2),
                 'wind_speed_ms':round(max(0,self.weather.get('wind_speed_ms',6)+2*math.sin(elapsed/20)),2),
                 'gust_ms':self.weather.get('gust_ms',11),'wind_from_degrees':self.weather.get('wind_from_degrees',90),

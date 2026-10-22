@@ -53,3 +53,32 @@ test('detailed regional boundaries keep coordinate, topology and size validation
     assert.throws(()=>WeatherForm.validatePolygon(circle(x,y,1001)),/1000/);
   }
 });
+
+test('drawn WGS84 weather ranges declare their source and imported positions must declare it',()=>{
+ for(const [x,y] of [[0,0],[-74,40],[151,-33]]){
+  const polygon=[[x,y],[x+.1,y],[x+.1,y+.1],[x,y]];
+  const drawn=WeatherForm.withMapPolygon({area_name:'区域'},polygon);
+  assert.equal(drawn.coordinate_system,'WGS84');
+  assert.deepEqual(WeatherForm.validatedPolygon(drawn),polygon);
+  assert.throws(()=>WeatherForm.validatedPolygon({polygon}),/WGS-84/);
+  for(const datum of ['GCJ02','BD09','CGCS2000','',null]){
+   const source={polygon,coordinate_system:datum};
+   assert.throws(()=>WeatherForm.validatedPolygon(source),/WGS-84/);
+   assert.throws(()=>WeatherForm.withMapPolygon(source,polygon),/WGS-84/);
+   assert.equal(source.coordinate_system,datum);
+  }
+ }
+ assert.equal(WeatherForm.validatedPolygon({area_name:'区域'}),null);
+ assert.throws(()=>WeatherForm.validatedPolygon({coordinate_system:'BD09'}),/WGS-84/);
+});
+
+test('weather submission validates the source declaration while unrelated edits retain it',()=>{
+ const now=Date.now(),polygon=[[10,10],[11,10],[11,11],[10,10]];
+ const base={area_name:'区域',polygon,published_at:now,periods:[{from:now,to:now+60000,summary:'晴',temperature_c:20,wind_speed_ms:6,gust_ms:9,wind_direction_deg:90,precipitation_probability_pct:0,humidity_pct:75}]};
+ assert.throws(()=>WeatherForm.validate(base,now),/WGS-84/);
+ assert.doesNotThrow(()=>WeatherForm.validate({...base,coordinate_system:'WGS84'},now));
+ const foreign={...base,coordinate_system:'GCJ02'};
+ const edited=WeatherForm.update(foreign,'area_name','','新区');
+ assert.equal(edited.coordinate_system,'GCJ02');
+ assert.throws(()=>WeatherForm.validate(edited,now),/WGS-84/);
+});

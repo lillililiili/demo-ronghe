@@ -93,7 +93,7 @@ def ensure(platform, scope):
     if created:
         lon, lat = shape['reference']
         airport = platform.call('POST', '/airports', {
-            'icao_code': ICAO, 'name': NAME, 'longitude': round(lon, 6), 'latitude': round(lat, 6),
+            'icao_code': ICAO, 'name': NAME, 'longitude': round(lon, 6), 'latitude': round(lat, 6), 'coordinate_system': 'WGS84',
             'elevation_amsl_m': ELEVATION_M, 'owner_org_id': org, 'district_id': district, 'note': NOTE}, key())
     elif (airport.get('owner_org_id'), airport.get('district_id')) != (org, district):
         raise ValueError('系统里已有模拟机场，但它的单位或区域和模拟器连接不一致；机场资料录进去以后不能改，'
@@ -109,7 +109,7 @@ def ensure(platform, scope):
     if not any(t.get('name') == PROTECTED_NAME for t in detail.get('protected_targets') or []):
         lon, lat = shape['protected']
         platform.call('POST', '/airports/' + urllib.parse.quote(airport['airport_id'], safe='') + '/protected-targets', {
-            'name': PROTECTED_NAME, 'kind': 'TOWER', 'longitude': round(lon, 6), 'latitude': round(lat, 6),
+            'name': PROTECTED_NAME, 'kind': 'TOWER', 'longitude': round(lon, 6), 'latitude': round(lat, 6), 'coordinate_system': 'WGS84',
             'radius_m': PROTECTED_RADIUS_M}, key())
         added.append('保护目标')
     result = status(platform)

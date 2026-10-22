@@ -5,7 +5,7 @@
    sort/order 随列表与导出请求一起发给服务端（阶段 15 契约白名单四个键），页面不做假排序。
    默认 priority：当前事项、观测过期或未知待确认、历史分组；前两组等级高、同等级新到优先，历史新到优先（2026-10-07 用户确认）。 */
 const S = {
-  st: { page: 1, size: 10, targetNo: '', level: '全部', status: '全部', kind: '全部', region: '全部', time: '', timeRange: null, sel: null, selId: null,
+  st: { page: 1, size: 10, originKind: '', predictionStatus: '', targetNo: '', level: '全部', status: '全部', kind: '全部', region: '全部', time: '', timeRange: null, sel: null, selId: null,
     sort: 'priority', order: 'desc' }
 };
 export default {};
@@ -68,6 +68,8 @@ import TargetTrackingPanel from '@/components/video/TargetTrackingPanel.vue';
 import { uavAdvisoryApi } from '@/services/uavAdvisoryApi.js';
 
 import { businessDateTime } from '@/services/businessTime.js';
+import { PREDICTION_ORIGIN, PREDICTION_STATES, alarmPredictionState, isPredictionAlarm, predictionVerificationState } from '@/services/predictionView.js';
+import { predictionDetailsHtml, predictionReasonText, predictionTime, predictionAlarmStatusHtml } from '@/ui/predictionDetails.js';
 const U = window.UI;
 usePageChrome('alarms');
 const root = ref(null);
@@ -87,6 +89,9 @@ watch(() => [route.query.tab, route.query.authorization, route.query.event, rout
    底层对象仍是 S.st，跨导航记忆不变 */
 const st = reactive(S.st);
 const targetNoInput = ref(st.targetNo);
+const originOptions = [{ label: '全部告警', value: '' }, { label: '预测入区预警', value: PREDICTION_ORIGIN }];
+const predictionStatusOptions = [{ label: '全部预测状态', value: '' }, ...Object.entries(PREDICTION_STATES).map(([value, label]) => ({ value, label }))];
+function predictionFilterChanged() { if (!st.originKind) st.predictionStatus = ''; st.page = 1; loadList(); }
 async function applyTargetNo() {
   st.targetNo = String(targetNoInput.value || '').trim();
   targetNoInput.value = st.targetNo;
@@ -100,7 +105,7 @@ async function applyTargetNo() {
 }
 let evidenceEventSequence = 0;
 function resetLinkedAlarmFilters() {
-  Object.assign(st, { page: 1, targetNo: '', level: '全部', status: '全部', kind: '全部', region: '全部', time: '', timeRange: null });
+  Object.assign(st, { page: 1, originKind: '', predictionStatus: '', targetNo: '', level: '全部', status: '全部', kind: '全部', region: '全部', time: '', timeRange: null });
   targetNoInput.value = '';
   root.value?.querySelectorAll('[data-f]').forEach(control => { control.value = st[control.dataset.f]; });
 }
@@ -174,10 +179,10 @@ const STATE = {
   FALSE_POSITIVE: { t: '误报', c: 't-blue', color: '#8fbaff' }
 };
 /* 待处置：已核实属实、处置还没结束（关注分组不是"历史"）。与列表分组同一个后端口径，不在前端另算。 */
-const PENDING_DISPOSAL_QUERY = { state: 'CONFIRMED', attention_group: 'CURRENT,AWAITING_CONFIRMATION' };
+const PENDING_DISPOSAL_QUERY = { state: 'CONFIRMED', current_pending: true, attention_group: 'CURRENT,AWAITING_CONFIRMATION' };
 /* 状态筛选按办理阶段分四项（2026-10-07）：待处置、已处理完与"待处置"卡片同一个后端分组口径，导出同样按它筛。 */
 const STATUS_FILTER = {
-  PENDING_VERIFICATION: { t: '待核实', q: { state: 'PENDING_VERIFICATION' } },
+  PENDING_VERIFICATION: { t: '待核实', q: { state: 'PENDING_VERIFICATION', current_pending: true } },
   PENDING_DISPOSAL: { t: '待处置', q: PENDING_DISPOSAL_QUERY },
   DISPOSAL_ENDED: { t: '已处理完', q: { state: 'CONFIRMED', attention_group: 'HISTORY' } },
   FALSE_POSITIVE: { t: '误报', q: { state: 'FALSE_POSITIVE' } }
@@ -308,7 +313,7 @@ function eventHandedOff() {
   // 交接已建立（无论是否已发出）都不再出现反制和不反制入口。
   return key === HANDED_OFF || key === HANDOFF_PENDING;
 }
-const typeOf = a => ALARM_TYPE_LABEL[a.alarm_type] || esc(a.alarm_type || '—');
+const typeOf = a => isPredictionAlarm(a) ? '预测进入禁飞区' : ALARM_TYPE_LABEL[a.alarm_type] || esc(a.alarm_type || '—');
 /* 只上屏业务编号；引擎标识（例如 eval 前缀）不是编号，列里显示 —，内部 ID 留在 title。 */
 const noOf = a => displayAlarmNo(readableNo(a.alarm_no)) || '—';
 const modeOf = a => SOURCE_MODE[a.source_mode] || { t: esc(a.source_mode || '—'), c: 't-gray' };
@@ -316,6 +321,10 @@ const sevTag = a => U.tag(sevOf(a).t, sevOf(a).c);
 const OBSERVATION_LABEL = { CURRENT: '观测有效', EXPIRED: '观测已过期', UNKNOWN: '观测待确认' };
 const ATTENTION_LABEL = { CURRENT: '当前事项', AWAITING_CONFIRMATION: '状态待确认', HISTORY: '历史记录' };
 function stateTag(a) {
+  if (isPredictionAlarm(a)) {
+    const state = alarmPredictionState(a, serverNow());
+    return `${U.tag(PREDICTION_STATES[state] || '预测状态未知', state === 'ACTIVE' ? 't-amber' : state === 'ENTERED' ? 't-red' : 't-gray')}${state === 'ACTIVE' ? U.tag(a.state === 'CONFIRMED' ? '风险已核实' : '待人工核实', 't-cyan') : ''}`;
+  }
   const state = displayState(a), tag = U.tag(state.t, state.c);
   return state.handoffId
     ? `<a class="al-handoff-link" href="#/punish?handoff=${encodeURIComponent(state.handoffId)}" aria-label="查看告警 ${esc(noOf(a))} 的移送处置" title="查看移送处置">${tag}</a>`
@@ -510,7 +519,7 @@ async function loadKpis() {
   const day = { occurred_from: from, occurred_to: to };
   const r = await Promise.allSettled([
     count(day),
-    count({ ...day, state: 'PENDING_VERIFICATION' }),
+    count({ ...day, state: 'PENDING_VERIFICATION', current_pending: true }),
     count({ ...day, state: 'CONFIRMED' }),
     count({ ...day, state: 'FALSE_POSITIVE' }),
     disposalCount('COUNTERMEASURE'), disposalCount('JAMMING'),
@@ -520,7 +529,7 @@ async function loadKpis() {
     /* 新-2（D-4）：今日四张卡和大屏同一口径，系统自带的演示告警（来源标“模拟”）不算；
        演示告警另数一遍，卡片上写明有几条没算进来。r[8]~r[11] 依次对应 r[0]~r[3]。 */
     count({ ...day, source_mode: 'mock' }),
-    count({ ...day, state: 'PENDING_VERIFICATION', source_mode: 'mock' }),
+    count({ ...day, state: 'PENDING_VERIFICATION', current_pending: true, source_mode: 'mock' }),
     count({ ...day, state: 'CONFIRMED', source_mode: 'mock' }),
     count({ ...day, state: 'FALSE_POSITIVE', source_mode: 'mock' })
   ]);
@@ -597,6 +606,8 @@ function sortTh(key, label) {
 function queryOf() {
   const q = { page: st.page, size: st.size, sort: st.sort };
   if (st.targetNo) q.target_no = st.targetNo;
+  if (st.originKind) q.origin_kind = st.originKind;
+  if (st.originKind === PREDICTION_ORIGIN && st.predictionStatus) q.prediction_status = st.predictionStatus;
   if (st.sort !== 'priority') q.order = st.order;
   if (st.level !== '全部') q.severity = st.level;
   if (STATUS_FILTER[st.status]) Object.assign(q, STATUS_FILTER[st.status].q);
@@ -609,6 +620,7 @@ function queryOf() {
 
 /* 原因作为主信息完整换行展示；没有原因码时保留告警类型，不推测具体原因。 */
 function reasonCell(a) {
+  if (isPredictionAlarm(a)) return `<div class="alarm-reason-cell"><strong class="alarm-reason-text">预测进入${esc(a.prediction?.warning?.airspace_name || '禁飞区')}</strong>${U.tag('预测预警', 't-cyan')}${U.tag(modeOf(a).t, modeOf(a).c)}</div>`;
   const reasons = reasonsOf(a);
   const text = reasons ? esc(reasons) : typeOf(a);
   return `<div class="alarm-reason-cell"><strong class="alarm-reason-text">${text}</strong>${U.tag(modeOf(a).t, modeOf(a).c)}</div>`;
@@ -644,7 +656,9 @@ function listHtml() {
 /* 事件事实核实保留原入口；处罚移送由后台调度，处置面板只读取进度。 */
 function disposalActions(a, ev) {
   if (!ev) return '<button class="btn" disabled>尚未创建核实事件</button>';
-  if ((ev.allowed_actions || []).includes('VERIFY')) return '<button class="btn" data-al="verify">核实事件事实</button>';
+  const prediction = predictionVerificationState(ev, a, serverNow());
+  if (prediction?.terminal) return '';
+  if ((ev.allowed_actions || []).includes('VERIFY')) return `<button class="btn" data-al="verify">${prediction ? prediction.blocked ? '核实为误报' : '核实预测风险' : '核实事件事实'}</button>`;
   if (ev.state === 'CONFIRMED' || ev.state === 'FALSE_POSITIVE') return '';
   return '<span>当前账号没有事件核实权限</span>';
 }
@@ -774,6 +788,7 @@ function detailHtml() {
     ...(pilotNote ? [['飞手距离', esc(pilotNote)]] : []),
     ['数据来源', `${esc(sourceDescription(a.source_name, a.source_code, a.source_mode, '—'))}`]
   ], { surface: true, density: 'compact' }), { icon: 'alert', className: 'alarm-info-sect' })}
+    ${predictionAlarmHtml(a)}
     ${verificationHtml()}
     ${escalationHtml(brief)}
     ${renderEvidenceChainHtml(cur.chain, {
@@ -783,6 +798,16 @@ function detailHtml() {
 
 /* 核实记录（确认书 3-1、流程 1 第②步，新-18）：按先后列出结论、时间和说明。系统按核实规则自动核实的没有核实人，
    写“系统自动核实 · 无核实人”；人工核实的写核实人。还没有核实事件的告警不显示这一块。 */
+function predictionAlarmHtml(alarm) {
+  if (!isPredictionAlarm(alarm)) return '';
+  const scoped = alarm.prediction?.warning ? { ...alarm.prediction, warnings: [alarm.prediction.warning] } : alarm.prediction;
+  const current = predictionDetailsHtml(scoped, { now: serverNow() });
+  const frozen = predictionDetailsHtml(alarm.prediction_snapshot, { now: serverNow(), frozen: true });
+  const history = Array.isArray(alarm.prediction_history) ? alarm.prediction_history : [];
+  const changes = history.length ? `<ol>${history.map(row => `<li>${esc(predictionTime(row.changed_at || row.occurred_at || row.created_at))} · ${esc(PREDICTION_STATES[row.to_state || row.state] || (row.state === 'CANDIDATE' ? '预测待稳定' : '预测状态更新'))}${row.reason ? ' · ' + esc(predictionReasonText(row.reason)) : ''}</li>`).join('')}</ol>` : '<p>暂无可读取的预测状态变更记录。</p>';
+  return U.sect('预测依据', `<div class="prediction-detail">${current}<details><summary>查看首次预警的冻结依据</summary>${frozen}</details><details><summary>预测生命周期记录</summary>${changes}</details></div>`, { icon: 'location' });
+}
+
 function verificationHtml() {
   const a = cur.alarm;
   if (!a?.event_id) return '';
@@ -826,9 +851,12 @@ function escalationHtml(brief) {
 function detailActionsHtml() {
   const a = cur.alarm, ev = cur.event;
   if (!a) return '';
+  const prediction = predictionVerificationState(ev, a, serverNow());
+  const note = prediction?.blocked ? prediction.message : ev?.state === 'PENDING_VERIFICATION'
+    ? prediction ? '预测入区风险尚待人工核实。确认后是否通知，以当前预测依据、飞手信息和通道校验为准。' : `事件事实尚待核实。${pendingNotifyNote(a)}` : '';
   return `<div class="alarm-observation-actions">
       ${disposalActions(a, ev)}</div>
-    ${ev?.state === 'PENDING_VERIFICATION' ? `<p class="alarm-action-note">事件事实尚待核实。${pendingNotifyNote(a)}</p>` : ''}`;
+    ${note ? `<p class="alarm-action-note">${esc(note)}</p>` : ''}`;
 }
 /* 没有报备飞手时从一开始就说清楚不发短信、不打电话，不写“核实后自动发送”（2026-10-18）。 */
 function pendingNotifyNote(a) {
@@ -843,6 +871,7 @@ function pendingNotifyNote(a) {
 function alarmNowHtml() {
   const a = cur.alarm, t = cur.target;
   if (!a?.event_id || !a.target_id) return '';
+  if (isPredictionAlarm(a)) return predictionAlarmStatusHtml(a, { now: serverNow(), currentObservation: a.observation_status === 'CURRENT', legalStatus: t?.legality_summary?.legal_status, includeReason: false });
   const advisory = advisoryLive.value?.event_id === a.event_id ? advisoryLive.value : advisorySummaries.get(a.event_id);
   const departure = departureView(a, advisory);
   if (departure) return `<section class="uav-now is-green alarm-departure" role="status" aria-label="通知与撤离结果">
@@ -876,6 +905,15 @@ function alarmCounterBlockHtml(a, advisory, status) {
 
 /* 告警原因（页面设计第 3 条）：先写最新研判，和告警记录的原因不同才另写一行；升级过的按升级记录拆开或写“累计”。 */
 function alarmReasonHtml(a, t) {
+  if (isPredictionAlarm(a)) {
+    const frozen = a.prediction_snapshot;
+    const warning = frozen?.warning || frozen?.warnings?.find(row => row.event_id === a.event_id)
+      || a.prediction?.warning || a.prediction?.warnings?.find(row => row.event_id === a.event_id);
+    return `<section class="alarm-reason-callout is-risk" aria-label="预测预警原因（出预警时）">
+      <span class="alarm-reason-label">预测预警原因（出预警时）</span>
+      <strong class="alarm-reason-text">预计进入${esc(warning?.airspace_name || '禁飞区（名称未提供）')}</strong>
+      <small class="alarm-reason-then">首次预测与空域版本见下方“预测依据”。</small></section>`;
+  }
   const live = a.attention_group !== 'HISTORY' && a.observation_status === 'CURRENT' && t && !cur.targetLoading && !cur.targetError;
   const view = alarmReasonView({ legalStatus: live ? t.legality_summary?.legal_status : null,
     legalReasons: t?.legality_summary?.violation_reasons, alarmReasons: a.violation_reasons, escalationCount: a.escalation_count,
@@ -946,13 +984,17 @@ function syncAlarmMap() {
   focusMap();
 }
 watch(activeTab, async () => { await nextTick(); if (authorizationPageActive) syncAlarmMap(); });
-function focusMap({ fit = true } = {}) {
-  if (!map) return;
-  const info = el('alMapInfo'), srcEl = el('alMapSrc'), a = cur.alarm;
-  const airspaceNote = cur.airspacesLoading ? '空域读取中'
+function alarmMapAirspaceNote(a) {
+  if (isPredictionAlarm(a)) return '显示实测轨迹；预测及空域依据见详情';
+  return cur.airspacesLoading ? '空域读取中'
     : cur.airspacesError ? esc(cur.airspacesError)
       : ({ AVAILABLE: '告警命中空域 · 历史版本', NO_HIT: '该告警无已确认的空域命中',
           UNKNOWN: '未保存告警时空域依据', PARTIAL: '部分历史依据缺失或不可见' })[cur.airspacesStatus] || '';
+}
+function focusMap({ fit = true } = {}) {
+  if (!map) return;
+  const info = el('alMapInfo'), srcEl = el('alMapSrc'), a = cur.alarm;
+  const airspaceNote = alarmMapAirspaceNote(a);
   const setInfo = (html, title) => { if (info) { info.innerHTML = html + (a && airspaceNote ? ` · ${airspaceNote}` : ''); info.title = title || ''; } };
   const warn = text => `<span class="inline-icon" style="color:#ffd07a">${U.icon('warning')} ${text}</span>`;
   map.sel = null;
@@ -1160,6 +1202,12 @@ function loadPageProgress(rows) {
 }
 
 async function selectAlarm(id) {
+  // 同一告警的再次点击、核实后补读或手动刷新保留详情与正在办理的表单。
+  // 真正换行才清空；首次读取未完成时也不另起一次初始化。
+  if (id && id === st.selId) {
+    if (cur.loading) return;
+    if (cur.alarm?.alarm_id === id) return refreshSelected(id);
+  }
   const my = ++detailSeq;
   ++disposalSeq;
   disposal.byAction = {}; disposal.handoff = null; disposal.error = ''; disposal.unavailable = false;
@@ -1433,10 +1481,10 @@ async function realtimeRefresh(topics) {
   const after = rowKey();
   const rowChanged = after !== before && after !== 'null';
   const observationChanged = topics.includes('target') || topics.includes('observation-expiry');
-  if (all || evidenceChanged || rowChanged || (after === 'null' && observationChanged)) await refreshSelected(selId, { evidenceChanged });
+  if (all || evidenceChanged || rowChanged || topics.includes('prediction') || (after === 'null' && observationChanged)) await refreshSelected(selId, { evidenceChanged });
   else if (disposalChanged && cur.alarm?.event_id) await refreshEventDisposals(cur.alarm.event_id);
 }
-const realtime = useRealtimeRefresh(['alarm', 'target', 'disposal', 'punishment', 'evidence'], realtimeRefresh, { minIntervalMs: 2_000 });
+const realtime = useRealtimeRefresh(['alarm', 'target', 'prediction', 'disposal', 'punishment', 'evidence'], realtimeRefresh, { minIntervalMs: 2_000 });
 // 时间经过不会产生数据库变化事件；只定时重读服务端，不在页面计算过期或修改业务状态。
 let observationRefreshTimer = null;
 onMounted(() => { observationRefreshTimer = setInterval(() => realtime.trigger(['observation-expiry']), 5_000); });
@@ -1544,6 +1592,8 @@ onMounted(async () => {
               <UField id="al-target-no" v-model="targetNoInput" label="目标编号" placeholder="输入完整或部分编号" clearable size="small"
                 :disabled="!hasPermission('target:read')" :title="hasPermission('target:read') ? '' : '无目标读取权限'"
                 :input-props="{ maxlength: 64 }" @keydown.enter.prevent="applyTargetNo" @update:model-value="value => { if (!value) applyTargetNo(); }" />
+              <UField v-model="st.originKind" label="告警类别" type="select" size="small" :options="originOptions" @update:model-value="predictionFilterChanged" />
+              <UField v-if="st.originKind === PREDICTION_ORIGIN" v-model="st.predictionStatus" label="预测状态" type="select" size="small" :options="predictionStatusOptions" @update:model-value="predictionFilterChanged" />
               <div style="display:contents" v-html="listToolbar"></div>
             </div>
             <div class="toolbar-actions">
@@ -1600,6 +1650,14 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.alarms-page :deep(.prediction-title){display:flex;align-items:center;justify-content:space-between;gap:8px}
+.alarms-page :deep(.prediction-message){color:var(--txt-3);font-size:12px;line-height:1.5}
+.alarms-page :deep(.prediction-table-scroll){overflow:auto}.alarms-page :deep(.prediction-detail table){width:100%;font-size:12px;border-collapse:collapse}
+.alarms-page :deep(.prediction-detail th),.alarms-page :deep(.prediction-detail td){padding:7px;text-align:left;white-space:nowrap;border-bottom:1px solid var(--line-2)}
+.alarms-page :deep(.prediction-detail summary){padding:8px 0;cursor:pointer;color:var(--txt)}
+.alarms-page :deep(.prediction-warning){display:flex;flex-direction:column;gap:4px;padding:9px 0;border-bottom:1px solid var(--line-2)}
+.alarms-page :deep(.prediction-warning b){color:var(--tag-amber-text)}
+
 .alarms-page :deep(.detail-hero-tags) {
   align-items: flex-start;
 }

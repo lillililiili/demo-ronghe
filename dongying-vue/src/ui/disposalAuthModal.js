@@ -55,7 +55,7 @@ function messageOf(error, fallback) {
   if (error.code === 'SUBJECT_KIND_NOT_SUPPORTED') return '本期只能对已核实的无人机事件或目标发起处置授权。';
   if (error.code === 'DEVICE_CONTROL_UNAVAILABLE') return '该设备不支持所需反制动作，未下发指令；请检查设备能力与接入配置。';
   // 未登记连接是可补救的配置问题，与“设备根本不支持自动执行”不是一回事，两句必须分开说。
-  if (error.code === 'DEVICE_NOT_BOUND') return '设备未登记凌云连接，未下发指令；请运维补登记后重试。';
+  if (error.code === 'DEVICE_NOT_BOUND') return '设备未登记连接，未下发指令；请运维补登记后重试。';
   // 申请时就挡下的坏设备：服务端的话已经写明是停用、离线、异常、状态不明还是故障。
   if (error.code === 'DEVICE_UNAVAILABLE') return error.message || '所选设备现在不能用（停用、离线、故障或状态不明），请换一台设备再申请。';
   // 离线是现场问题，与"未登记"（运维）和"不支持"（换通道）的补救方都不同（13-14）。
@@ -253,7 +253,7 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
       ...(pickable ? [{ key: 'action_type', label: '动作类型', type: 'radio', required: true,
         options: choices.map(a => ({ value: a, label: labelOf(DISPOSAL_ACTION_LABEL, a) })) }] : []),
       { key: 'channel', label: '执行通道', type: 'radio', required: true, options: [
-        { value: 'LINGYUN_B', label: direct ? '凌云协议 B 设备（提交后由服务端直接下发）' : '凌云协议 B 设备（批准后可自动执行）' },
+        { value: 'LINGYUN_B', label: direct ? '协议 B 设备（提交后由服务端直接下发）' : '协议 B 设备（批准后可自动执行）' },
         { value: 'COUNTERMEASURE_4CH', label: '四通道反制设备（经网络控制器下发，回执以设备为准）' }
       ] },
       { key: 'device_id', label: '执行设备', type: 'select', clearable: true, filterable: true,

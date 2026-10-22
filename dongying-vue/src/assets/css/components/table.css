@@ -25,7 +25,7 @@ table.tb tbody tr{cursor:pointer}
 .n-data-table .n-data-table-tr:hover .n-data-table-td--fixed-left,
 .n-data-table .n-data-table-tr:hover .n-data-table-td--fixed-right{background-color:var(--surface-hover)}
 .pager-row{display:flex;flex:none;align-items:center;justify-content:space-between;gap:12px;padding:10px 16px;color:var(--txt-3);border-top:1px solid var(--line)}
-table.tb td.num{font-family:Menlo,monospace;color:var(--txt);font-variant-numeric:tabular-nums}
+table.tb td.num{font-family:var(--app-font-mono);color:var(--txt);font-variant-numeric:tabular-nums}
 .lnk{color:var(--blue);cursor:pointer}
 .lnk:hover{text-decoration:underline;color:#7fb4ff}
 .lnk+.lnk{margin-left:8px}

@@ -78,9 +78,12 @@ class TcpRadar:
                 'device_no': DEVICE_NO, 'port': self.port}
 
     def start(self, body):
-        fields = {'longitude', 'latitude'} if self.manual else {'owner_org_id', 'district_id', 'longitude', 'latitude'}
+        from coordinate_contract import simulator_wgs84
+        fields = {'longitude', 'latitude', 'coordinate_system', 'coordinateSystem'} if self.manual else {'owner_org_id', 'district_id', 'longitude', 'latitude', 'coordinate_system', 'coordinateSystem'}
         if not isinstance(body, dict) or set(body) - fields:
             raise ValueError('TCP 雷达配置字段无效')
+        body = dict(body, coordinate_system=simulator_wgs84(body))
+        body.pop('coordinateSystem', None)
         if self.manual:
             for field, limit in (('longitude', 180), ('latitude', 90)):
                 value = body.get(field)

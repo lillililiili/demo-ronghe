@@ -1,4 +1,4 @@
-"""八个验收流程：直接读仓库里现成的 8 份流程文件，配上选择框里的说明文字。
+"""九个验收流程：只读现有流程文件，流程 9 提供转向和入区两种固定变式。
 
 不再依赖外部脚本，也不改写任何文件。流程文件放在 scenarios/acceptance-flows-1-7-20261008/，
 这里只读取、校验，再把每个流程的说明（演示什么、开始前、会看到什么、要做什么）一起交给页面。
@@ -17,6 +17,33 @@ FLOW_FILES = {
     6: 'flow-6-weather-risk.json',
     7: 'flow-7-bird-flock.json',
     8: 'flow-8-device-maintenance.json',
+    9: 'flow-9-prediction-warning.json',
+}
+
+# 变式只能来自这里的固定映射，不能由 manifest 或请求提供任意路径。
+FLOW_VARIANTS = {
+    9: {
+        'avoid': {
+            'file': 'flow-9-prediction-warning.json',
+            'label': '5分钟转向撤销',
+            'sees': ['第4分钟开始转向；连续新实测证明未来安全避开后，预警撤销并保留历史。转向期间依据不稳定时会先显示待确认。'],
+            'todo': [
+                '约3分20秒，在当前证据和设备条件满足时人工执行反制；普通申请请提前办理他人审批，有直接权限时使用既有直接入口，不跳过校验。',
+                '观察第4分钟的转向变化；保留收发到5分钟结束，核对历史与停止回执，再点停止并选择下一项。',
+                '核对预警撤销、未启动动作取消、原反制授权失效，以及模拟设备全关的实际回执；不能把发出停止指令当作已停止。',
+            ],
+        },
+        'enter': {
+            'file': 'flow-9-prediction-entry.json',
+            'label': '6分钟继续入区并反制',
+            'sees': ['第4分钟起继续进入禁飞区并持续上报实测位置；平台确认实际入区后查看关联实测告警，预测预警与实测结论分别保留。'],
+            'todo': [
+                '实际入区后打开关联实测告警，核对当前实测位置、入区依据和原预测预警的关联；短信电话回执在原预测预警中查看，实测告警按同次风险不重复通知。',
+                '在入区后的约2分钟内，按当前权限和有效证据办理：仍待核实时先人工核实，已核实则继续申请、由他人审批并执行反制；有既有直接反制权限时按原策略办理，已失效的预测授权不能复用。',
+                '保留收发到6分钟结束，核对实际启动、停止回执及关联历史；通知或处置受阻时按页面原因处理，不能用场景时间代替业务条件。',
+            ],
+        },
+    },
 }
 
 # 选择框说明采用 2026-10-16 最新验收口径：规则全满足且业务校验通过时自动反制，
@@ -156,14 +183,65 @@ GUIDE = {
             '完成办结后再停止模拟；停止上报可能再次产生离线异常。',
         ],
     },
+    9: {
+        'title': '预测入区预警',
+        'shows': '无人机尚未入区，但预计30秒内进入禁飞区；人工核实预测风险后按当前条件通知，再由有权限人员人工反制。默认5分钟转向撤销，也可选6分钟继续入区并反制。空域和航线已内置，无需手动导入文件。',
+        'auto_verify': None,
+        'prediction_only': True,
+        'before': [
+            '先在后台「运维管理 → 接口配置 → 电话通知录音」上传并选用预测进入禁飞区专用录音，确认模拟通知接收端及模拟反制设备可用。',
+            '准备有核实、申请和执行权限的账号；普通申请仍需另一个有审批权限的账号审批，有既有直接反制权限的人可按原策略直接发起。',
+            '本流程从预测预警开始，预测及其衍生处置不自动核实、不自动反制、不自动处罚；无需为此开启或关闭普通告警规则，权限、有效证据和设备校验保持。',
+        ],
+        'sees': [
+            '前4分钟持续提供预测输入；达到连续可靠预测门槛后形成预警，预测轨迹独立显示，不能当作实测入区或违法证据。',
+            '人工核实后先发短信、再播放预测专用电话录音；以模拟通道实际送达、接通和播放完成回执为准，不把等待发送当作成功。',
+            '反制必须人工发起，启用的普通自动规则也不会替这个预测事件发起反制或处罚。',
+        ],
+        'todo': [
+            '预警出现且当前依据有效时点「核实预测风险」，核对已核实状态及冻结依据，再查看短信和电话的实际回执。',
+        ],
+    },
 }
 
 
+def _read_scene(folder, filename, number, variant=None):
+    try:
+        scene = json.loads(read_text(folder / filename))
+    except (OSError, ValueError) as error:
+        raise ValueError('流程文件读不出来：' + filename) from error
+    fullchain = scene.get('fullchain') if isinstance(scene, dict) else None
+    if (not isinstance(fullchain, dict) or scene.get('version') != 1
+            or type(fullchain.get('acceptanceFlow')) is not int
+            or fullchain['acceptanceFlow'] != number):
+        raise ValueError('流程场景校验失败：' + filename)
+    if number == 9 and (variant not in FLOW_VARIANTS[9]
+                        or fullchain.get('predictionVariant') != variant):
+        raise ValueError('流程预测变式校验失败：' + filename)
+    return scene
+
+
+def _minutes(scene):
+    value = scene.get('duration')
+    return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def _guide(number, variant=None):
+    guide = GUIDE[number]
+    result = {key: guide.get(key) for key in ('shows', 'before', 'sees', 'todo', 'warning', 'auto_verify')}
+    if number == 9:
+        detail = FLOW_VARIANTS[9][variant or 'avoid']
+        result['prediction_only'] = True
+        result['sees'] = list(guide['sees']) + detail['sees']
+        result['todo'] = list(guide['todo']) + detail['todo']
+    return result
+
+
 def read_acceptance_flows(root):
-    """Read the eight flow files under <root>/scenarios and attach the picker guide to each."""
+    """Read nine defaults and the fixed flow-9 variants without changing files."""
     folder = Path(root) / 'scenarios' / OUTPUT_NAME
     if not folder.is_dir():
-        raise ValueError('找不到流程 1-8 的场景文件夹（scenarios/' + OUTPUT_NAME + '），请确认模拟器代码是完整的')
+        raise ValueError('找不到流程 1-9 的场景文件夹（scenarios/' + OUTPUT_NAME + '），请确认模拟器代码是完整的')
     manifest_path = folder / 'manifest.json'
     if not manifest_path.is_file():
         raise ValueError('流程文件夹里缺少 manifest.json')
@@ -171,31 +249,40 @@ def read_acceptance_flows(root):
         manifest = json.loads(read_text(manifest_path))
     except ValueError as error:
         raise ValueError('流程清单 manifest.json 读不出来：' + str(error)[:120]) from error
-    allowed = set(FLOW_FILES.values())
+    if not isinstance(manifest, dict) or not isinstance(manifest.get('flows'), list):
+        raise ValueError('流程清单必须包含流程 1-9 各一条')
+    allowed = {filename: number for number, filename in FLOW_FILES.items()}
     flows = []
-    for item in manifest.get('flows', []):
+    for item in manifest['flows']:
         filename = item.get('file') if isinstance(item, dict) else None
-        if filename not in allowed:
+        if not isinstance(filename, str) or filename not in allowed:
             raise ValueError('流程清单里有不认识的文件')
-        try:
-            scene = json.loads(read_text(folder / filename))
-        except (OSError, ValueError) as error:
-            raise ValueError('流程文件读不出来：' + filename) from error
-        number = scene.get('fullchain', {}).get('acceptanceFlow') if isinstance(scene, dict) else None
-        if scene.get('version') != 1 or number not in FLOW_FILES or FLOW_FILES[number] != filename:
-            raise ValueError('流程场景校验失败：' + filename)
+        number = allowed[filename]
+        scene = _read_scene(folder, filename, number, 'avoid' if number == 9 else None)
         guide = GUIDE[number]
-        minutes = scene.get('duration')
-        flows.append({
+        flow = {
             'flow': number,
             'file': filename,
             'name': scene.get('name', filename),
             'title': guide['title'],
-            'minutes': minutes if isinstance(minutes, (int, float)) and not isinstance(minutes, bool) else None,
+            'minutes': _minutes(scene),
             'scene': scene,
-            'guide': {key: guide.get(key) for key in ('shows', 'before', 'sees', 'todo', 'warning', 'auto_verify')},
+            'guide': _guide(number),
             'expectedChecks': scene.get('fullchain', {}).get('expectedChecks', []),
-        })
+        }
+        if number == 9:
+            flow['default_variant'] = 'avoid'
+            flow['variants'] = []
+            for variant_id, variant in FLOW_VARIANTS[9].items():
+                variant_scene = scene if variant['file'] == filename else _read_scene(folder, variant['file'], number, variant_id)
+                flow['variants'].append({
+                    'id': variant_id,
+                    'label': variant['label'],
+                    'scene': variant_scene,
+                    'minutes': _minutes(variant_scene),
+                    'guide': _guide(number, variant_id),
+                })
+        flows.append(flow)
     if sorted(item['flow'] for item in flows) != sorted(FLOW_FILES):
-        raise ValueError('流程清单必须包含流程 1-8 各一条')
+        raise ValueError('流程清单必须包含流程 1-9 各一条')
     return {'status': 'READY_FOR_IMPORT', 'flows': sorted(flows, key=lambda item: item['flow'])}

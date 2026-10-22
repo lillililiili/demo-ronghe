@@ -2,6 +2,7 @@
 import copy
 import hashlib
 import json
+from coordinate_contract import simulator_wgs84
 
 
 def batch_forecasts(scene, manifest, extra_plans=None):
@@ -59,6 +60,7 @@ def plan_forecast(batch, plan_id, plan, weather, created_at):
             'published_at': published, 'periods': periods}
     if weather.get('polygon') is not None:
         body['polygon'] = copy.deepcopy(weather['polygon'])
+        body['coordinate_system'] = simulator_wgs84(weather, weather.get('polygon_source'))
     # Stable for retries; changed batch, plan or weather gets its own message, never rewrites history.
     digest = hashlib.sha256(json.dumps([batch, body], ensure_ascii=False, sort_keys=True,
                                       separators=(',', ':')).encode('utf-8')).hexdigest()[:40]

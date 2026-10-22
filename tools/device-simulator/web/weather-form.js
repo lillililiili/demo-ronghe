@@ -5,14 +5,25 @@
   function localTime(ms){return Number.isFinite(Number(ms))&&Number(ms)>0?new Date(Number(ms)+8*3600000).toISOString().slice(0,19):'';}
   function timestamp(value){if(!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/.test(value))throw Error('请填写完整的北京时间');const n=Date.parse(value+'+08:00');if(!Number.isFinite(n))throw Error('时间无效');return n;}
   function control(key,label,value,type='text',index='',min,max){return `<label>${esc(label)}<input data-weather-field="${key}" data-period="${index}" aria-label="${esc(label)}${index!==''?' · 时段 '+(index+1):''}" type="${type}" value="${esc(type==='datetime-local'?localTime(value):value)}" ${type==='number'?`min="${min}" max="${max}" step="${['wind_direction_deg','precipitation_probability_pct','humidity_pct'].includes(key)?1:'any'}"`:type==='datetime-local'?'step="1"':'maxlength="128"'} ${key==='precipitation_rate_mm_h'?'':'required'}></label>`;}
-  function areaField(data){return control('area_name','预报区域',data?.area_name);}
+  const isWgs84=value=>typeof value==='string'&&['WGS84','WGS-84'].includes(value.trim().toUpperCase());
+  function assertCoordinateSystem(data,required=false){
+    for(const key of ['coordinate_system','coordinateSystem'])if(Object.hasOwn(data||{},key)&&!isWgs84(data[key]))throw Error('预报范围仅支持 WGS-84；请先转换原始坐标，不能只修改坐标系名称');
+    if(required&&!isWgs84(data?.coordinate_system))throw Error('预报范围缺少 WGS-84 坐标声明；请确认原始坐标后在接口报文中填写 coordinate_system，或清除范围后重新绘制');
+  }
+  function validatedPolygon(data){assertCoordinateSystem(data,data?.polygon!=null);return validatePolygon(data?.polygon);}
+  function withMapPolygon(data,ring){
+    assertCoordinateSystem(data);
+    const polygon=validatePolygon(ring);if(!polygon)throw Error('地图未提供预报范围');
+    return {...structuredClone(data),polygon:structuredClone(polygon),coordinate_system:'WGS84'};
+  }
+  function areaField(data){return control('area_name','预报区域',data?.area_name)+`<p class="external-note">地图绘制范围采用 WGS-84；导入范围须附坐标系声明，其他坐标系请先转换。当前声明：${esc(data?.coordinate_system??'未提供')}。</p>`;}
   function fields(data){if(!data||typeof data!=='object'||Array.isArray(data)||(data.periods!==undefined&&(!Array.isArray(data.periods)||data.periods.some(p=>!p||typeof p!=='object'||Array.isArray(p)))))return '<p class="external-note warn">报文结构无效，请展开接口报文修正预报时段。</p>';return `<div class="external-grid">${control('published_at','发布时间（北京时间）',data.published_at,'datetime-local')}</div><div class="weather-periods">${(Array.isArray(data.periods)?data.periods:[]).map((p,i)=>`<fieldset><legend>预报时段 ${i+1}</legend><div class="external-grid">${control('from','开始时间（北京时间）',p.from,'datetime-local',i)}${control('to','结束时间（北京时间）',p.to,'datetime-local',i)}${specs.map(([key,label,type,min,max])=>control(key,label,p[key],type,i,min,max)).join('')}</div>${data.periods.length>1?`<button type="button" data-weather-remove="${i}">移除此时段</button>`:''}</fieldset>`).join('')}</div><button type="button" id="weather-add-period" ${(data.periods?.length||0)>=48?'disabled':''}>增加预报时段</button>`;}
   function update(data,key,index,value){const next=structuredClone(data);const numeric=['published_at','from','to',...specs.filter(s=>s[2]==='number').map(s=>s[0])];let parsed=value;if(numeric.includes(key)){if(value==='')parsed=null;else parsed=['published_at','from','to'].includes(key)?timestamp(value):Number(value);}if(index==='')next[key]=parsed;else {if(!next.periods?.[Number(index)])throw Error('预报时段不存在');next.periods[Number(index)][key]=parsed;}return next;}
   function validate(data,now=Date.now()){
     if(typeof data.area_name!=='string'||!data.area_name.trim())throw Error('请填写预报区域');
     if(!Number.isFinite(data.published_at)||data.published_at<=0||data.published_at>now+30000)throw Error('预报发布时间须有效且不能在未来');
     if(!Array.isArray(data.periods)||!data.periods.length||data.periods.length>48)throw Error('请填写 1 至 48 个预报时段');
-    validatePolygon(data.polygon);
+    validatedPolygon(data);
     let last=data.published_at;
     for(const [i,p] of data.periods.entries()){
       if(!p||typeof p!=='object'||Array.isArray(p))throw Error(`时段 ${i+1} 必须为对象`);
@@ -49,5 +60,5 @@
     if(Math.abs(area)<1e-12)throw Error('预报范围面积无效');
     return ring;
   }
-  const api={validatePolygon,areaField,fields,update,validate,localTime,timestamp,coverage};root.WeatherForm=api;if(typeof module!=='undefined'&&module.exports)module.exports=api;
+  const api={validatePolygon,validatedPolygon,withMapPolygon,areaField,fields,update,validate,localTime,timestamp,coverage};root.WeatherForm=api;if(typeof module!=='undefined'&&module.exports)module.exports=api;
 })(typeof window!=='undefined'?window:globalThis);

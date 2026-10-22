@@ -11,7 +11,7 @@ import urllib.error
 import urllib.request
 import urllib.parse
 import uuid
-from engine import coordinates
+from engine import coordinates, zone_polygon_rings
 from coverage_defaults import default_coverage
 from engine import normalize_coverage_config
 
@@ -332,6 +332,7 @@ class Platform:
         return result
 
     def prepare_devices(self, devices, broker, manifest, checkpoint):
+        from coordinate_contract import simulator_wgs84
         for device_id, d in devices.items():
             external = stable_device_identity(device_id, d['kind'])
             lon, lat = coordinates([d['x'], d['y']])
@@ -339,7 +340,7 @@ class Platform:
                         broker_id=broker['broker_id'], provider_code=manifest['provider'], external_device_id=external,
                         device_type_abbr=d['kind'], source_mode='replay', owner_org_id=broker['owner_org_id'],
                         district_id=broker['district_id'], device_no=external, name='模拟 '+d['name'],
-                        vendor=SIMULATOR_VENDOR, model=SIMULATOR_MODEL, longitude=lon, latitude=lat, altitude_m=0)
+                        vendor=SIMULATOR_VENDOR, model=SIMULATOR_MODEL, longitude=lon, latitude=lat, altitude_m=0, coordinate_system=simulator_wgs84(d))
             if d['kind'] == 'eo':
                 body['edge_id'] = external + '-edge'
             record = self._onboard_or_reuse(body, 'sim-onboard-'+external)
@@ -460,6 +461,8 @@ class Prerequisites:
             if zone['id'] in zone_ids and zone.get('kindCode') not in (
                     'PROHIBITED', 'RESTRICTED', 'ALTITUDE_LIMIT', 'PERMITTED', 'TEMPORARY_CONTROL'):
                 raise ValueError(zone['name']+'尚未选择空域类型，请在空域下发中选择后再模拟')
+        zone_rings = {zone['id']: zone_polygon_rings(zone) for zone in scene['zones']
+                      if zone['id'] in zone_ids}
         # Prove the chosen API and seed database share the same broker identity before any write.
         if self.query('SELECT count(*) FROM mqtt_broker WHERE broker_id='+sql(broker['broker_id'])+" AND source_mode='replay' AND enabled=TRUE;") != '1':
             raise ValueError('测试库与当前 API 的 MQTT 连接不一致，已阻止写入')
@@ -498,12 +501,11 @@ class Prerequisites:
             if z['id'] not in zone_ids:
                 continue
             zid, vid = str(uuid.uuid4()), str(uuid.uuid4())
-            ring = [coordinates(p) for p in z['points']]
-            if ring[0] != ring[-1]: ring.append(ring[0])
-            points = ','.join(f'{x} {y}' for x,y in ring)
+            rings = ','.join('(' + ','.join(f'{x} {y}' for x, y in map(coordinates, ring)) + ')'
+                             for ring in zone_rings[z['id']])
             start, end = moment(z['start']), moment(z['end'])
             statements += [f"INSERT INTO airspace(airspace_id,airspace_no,name,source_mode,owner_org_id,district_id,created_at,updated_at,version) VALUES ({sql(zid)},{sql(manifest['batch']+'-a'+str(len(manifest['zones'])+1))},{sql('模拟 '+z['name'])},'replay',{owner},{district},now(),now(),0);",
-                f"INSERT INTO airspace_version(airspace_version_id,airspace_id,version_no,kind_code,boundary,min_altitude_m,max_altitude_m,altitude_datum,valid_from,valid_to,change_reason,created_at) VALUES ({sql(vid)},{sql(zid)},1,{sql(z['kindCode'])},{geometry_function}({sql('MULTIPOLYGON((('+points+')))')},4326),0,{z['max']},{sql(z.get('altitudeDatum', 'AMSL'))},to_timestamp({start}),to_timestamp({end}),'MQTT 地图模拟批次',now());"]
+                f"INSERT INTO airspace_version(airspace_version_id,airspace_id,version_no,kind_code,boundary,min_altitude_m,max_altitude_m,altitude_datum,valid_from,valid_to,change_reason,created_at) VALUES ({sql(vid)},{sql(zid)},1,{sql(z['kindCode'])},{geometry_function}({sql('MULTIPOLYGON(('+rings+'))')},4326),0,{z['max']},{sql(z.get('altitudeDatum', 'AMSL'))},to_timestamp({start}),to_timestamp({end}),'MQTT 地图模拟批次',now());"]
             manifest['zones'][z['id']] = {'id':zid,'version_id':vid}
         statements.append('COMMIT;')
         self.query('\n'.join(statements))

@@ -6,7 +6,7 @@ import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue';
 import { useAppStore } from '@/stores/app.js';
 import { businessDateTime } from '@/services/businessTime.js';
 import { useRouter } from 'vue-router';
-import { authUser, changePassword, loadCurrentUser, logout, updateProfile } from '@/services/auth.js';
+import { authUser, changePassword, logout } from '@/services/auth.js';
 import { canAccessRoute, hasPermission } from '@/services/accessControl.js';
 import { disposalApi } from '@/services/disposalApi.js';
 import { readSessionToken } from '@/services/apiClient.js';
@@ -14,7 +14,7 @@ import { canSeePendingApprovals, countPendingApprovals, pendingApprovalText } fr
 import { onDataChange } from '@/services/realtime.js';
 import { validatePassword } from '@/services/passwordPolicy.js';
 import { toast } from '@/ui/nv.js';
-import { closeModal } from '@/ui/modal.js';
+import { closeModal, openModal } from '@/ui/modal.js';
 import { openFormModal } from '@/ui/formModal.js';
 import { DATA_SCOPE_LABEL } from '@/ui/labels.js';
 
@@ -96,44 +96,15 @@ function closeMenu() { menuOpen.value = false; }
 function esc(value) {
   return String(value ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 }
-function profileError({ name, phone }) {
-  const value = String(name || '').trim();
-  const tel = String(phone || '').trim();
-  if (!value) return '请填写姓名。';
-  if (value.length > 64) return '姓名不能超过 64 个字。';
-  if (tel.length > 32) return '联系电话不能超过 32 位。';
-  if (!/^[0-9+()\- ]*$/.test(tel)) return '联系电话只能填写数字、空格和 + - ( )。';
-  return '';
-}
-/* 本人只改姓名和联系电话；所属单位、角色、数据范围由后台管理员调整（ZT-28）。 */
+/* 个人信息只读展示，不在业务前台填写或保存资料。 */
 function openProfile() {
   const u = currentUser.value;
-  const info = [['账号', u.account], ['角色', u.role_name], ['所属单位', u.org_name || '未设置'], ['数据范围', DATA_SCOPE_LABEL[u.data_scope]]]
+  const info = [['账号', u.account], ['姓名', u.name], ['联系电话', u.phone || '未设置'],
+    ['角色', u.role_name], ['所属单位', u.org_name || '未设置'], ['数据范围', DATA_SCOPE_LABEL[u.data_scope]]]
     .map(([label, value]) => `<dt>${esc(label)}</dt><dd>${esc(value || '—')}</dd>`).join('');
-  openFormModal({
+  openModal({
     title: '个人信息', width: '480px',
-    introHtml: `<dl class="kv">${info}</dl>`,
-    fields: [
-      { key: 'name', label: '姓名', required: true, inputProps: { maxlength: 64, autocomplete: 'name' } },
-      { key: 'phone', label: '联系电话', placeholder: '选填', inputProps: { maxlength: 32, autocomplete: 'tel' } }
-    ],
-    initial: { name: u.name || '', phone: u.phone || '' },
-    notice: '所属单位、角色和数据范围由系统管理员在后台调整。',
-    confirmText: '保存',
-    validate: profileError,
-    onSubmit: async ({ name, phone }) => {
-      try { await updateProfile({ name: name.trim(), phone: String(phone || '').trim() }); }
-      catch (error) {
-        if (error.code === 'VERSION_CONFLICT') {
-          await loadCurrentUser().catch(() => null);
-          throw new Error('资料刚被其他操作修改过，已读取最新资料；你填写的内容还在，请核对后再保存。');
-        }
-        if (error.status === 401) throw new Error('登录已过期，这次修改没有保存。重新登录后请再保存一次。');
-        throw error;
-      }
-      closeModal();
-      toast('个人资料已保存', 'ok');
-    }
+    body: `<dl class="kv">${info}</dl>`
   });
 }
 /* 主动修改密码。当前密码输错由服务端按表单错误返回，留在弹窗里提示，不会退出登录（ZT-28）。 */

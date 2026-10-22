@@ -34,7 +34,9 @@ export function attentionIssues(plan, access = {}) {
   if (!needsAction(plan)) return [];
   const issues = [];
   const tasks = Array.isArray(attention.device_tasks) ? attention.device_tasks : [];
-  if (tasks.length) issues.push(deviceIssue(tasks));
+  const checks = Array.isArray(attention.device_checks) ? attention.device_checks : [];
+  if (checks.length) issues.push(checkedDeviceIssue(checks, tasks));
+  else if (tasks.length) issues.push(deviceIssue(tasks));
   const verify = Number(attention.pending_verification_risks) || 0, notify = Number(attention.pending_notification_risks) || 0;
   if (verify + notify > 0) {
     const kinds = riskKindText(attention.pending_risk_kinds);
@@ -47,6 +49,25 @@ export function attentionIssues(plan, access = {}) {
   return issues.map(issue => ({ ...issue, actions: issue.actions.map(action => ({ ...action,
     blockedReason: action.key === 'risks' && access.risks === false ? '当前账号无权查看风险事件' : ''
   })) }));
+}
+
+// 当前覆盖设备与其未办结单共用右侧设备检查，不依赖旧定时检查的关联表。
+function checkedDeviceIssue(checks, tasks) {
+  const seenDevices = new Set(), seenTasks = new Set();
+  const rows = checks.filter(row => {
+    if (!row.device_id || seenDevices.has(row.device_id)) return false;
+    seenDevices.add(row.device_id);
+    if (row.task_id) seenTasks.add(row.task_id);
+    return true;
+  });
+  const extra = tasks.filter(task => !seenTasks.has(task.task_id));
+  const abnormal = rows.filter(row => row.abnormal);
+  const names = rows.map(row => `${row.device_name || '未命名设备'}：${row.abnormal ? '当前异常' : '设备处置未办结'}${row.workflow_state ? `，${maintenanceStateLabel(row)}` : '，请查看设备检查并上报异常'}`);
+  return { kind: 'DEVICE', tag: `设备异常 ${rows.length + extra.length}`, tagClass: 't-amber',
+    next: abnormal.length ? '查看异常设备，由后台人员处理，恢复后确认办结' : '跟进后台核验恢复、确认办结',
+    detail: names.join('；') + '。' + (extra.length ? deviceIssue(extra).detail : ''),
+    actions: [{ key: 'device-check', label: '查看设备检查与进度', primary: true },
+      ...(extra.length ? [{ key: 'devices', label: '查看关联处置单', primary: false }] : [])] };
 }
 
 /* 处置单还在办（待处理、处理中）的设备算“异常”；系统核验中、待确认办结的说明设备可能已恢复，不再说飞机测不到。 */

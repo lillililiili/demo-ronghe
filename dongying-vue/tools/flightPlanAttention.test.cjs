@@ -167,12 +167,29 @@ const path = require('node:path');
     window: { UI: { goto: (page, query) => { ctx.goto = [page, query]; } } }, location: {}, S: {},
     planDetailTab: { value: 'forecast' }, detailLoading: { value: false }, planFilingDetails: { value: { focusContacts: () => focusCalls++ } },
     showEventsTab: (risk, id) => { ctx.risks = [risk, id]; }, toast: message => { ctx.message = message; },
-    openModal: options => { ctx.modal = options.render(); }, h: (component, props) => props, PlanMaintenanceProgressModal: {},
+    openModal: options => { ctx.modal = options.render(); }, h: (component, props) => props, PlanMaintenanceProgressModal: {}, PlanDeviceCheck: {},
     selectPlan: id => { ctx.selected.value = { plan_id: id }; }, nextTick: async () => {}, watch: (deps, fn) => { watcher = fn; } };
   vm.createContext(ctx);
   vm.runInContext(page.slice(page.indexOf('function onPlanAction('), page.indexOf('function syncSelectedPlanHash')), ctx);
   ctx.onPlanAction({ id: 'p', key: 'risks' }); assert.deepEqual(ctx.risks, [null, 'p']); assert.match(ctx.location.hash, /plan=p/);
   ctx.onPlanAction({ id: 'p', key: 'devices' }); assert.equal(ctx.modal.planId, 'p'); assert.equal(ctx.modal.taskIds[0], 't1');
+  const currentDevice = plan('EXECUTING', attention(['DEVICE'], {
+    device_checks: [{ device_id: 'changed-sensor', device_name: '覆盖雷达', abnormal: true, task_id: 'current-case', workflow_state: 'PROCESSING' }],
+    device_tasks: [{ task_id: 'current-case', device_name: '覆盖雷达', workflow_state: 'PROCESSING' }]
+  }));
+  const currentIssue = A.attentionIssues(currentDevice)[0];
+  assert.equal(currentIssue.tag, '设备异常 1', '同设备当前故障与原单不能重复计数');
+  assert.equal(currentIssue.actions[0].key, 'device-check');
+  ctx.plans.value = [currentDevice];
+  ctx.onPlanAction({ id: 'p', key: 'device-check' });
+  assert.equal(ctx.modal.plan, currentDevice, '打开同一任务的实时设备检查');
+  currentDevice.attention.device_checks[0].abnormal = false;
+  currentDevice.attention.device_checks[0].workflow_state = 'READY_TO_COMPLETE';
+  assert.match(A.attentionIssues(currentDevice)[0].detail, /待确认办结/);
+  assert.doesNotMatch(A.attentionIssues(currentDevice)[0].detail, /当前异常/);
+  assert.match(page, /useRealtimeRefresh\(\[[^\]]*'device_state'/);
+  assert.match(page, /topics\.some\(topic => \[[^\]]*'device_state'/);
+  ctx.plans.value = [several];
   ctx.onPlanAction({ id: 'missing', key: 'devices' }); assert.match(ctx.message, /情况已变化/);
   for (const match_issue of ['DEVIATION', 'NONE', 'NO_EVALUATION', 'PARTIAL', 'UNDETERMINED']) {
     const removed = plan('EXECUTING', attention(['DEVIATION', 'AIRCRAFT'], { match_issue }));

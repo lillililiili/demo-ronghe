@@ -155,9 +155,14 @@ class CountermeasureRegistrationTests(unittest.TestCase):
     def start(self, scene):
         from countermeasure_tcp import CountermeasureSimulator
         from test_countermeasure_tcp import free_port
+        self.range_sync.reset_mock()
         with patch('countermeasure_tcp.CountermeasureSimulator', return_value=CountermeasureSimulator(port=free_port())):
             self.controller.start(scene)
-        self.range_sync.assert_called_with('cm-test', 'countermeasure')
+        coverage = (scene.get('countermeasure') or {}).get('coverage')
+        if coverage is None:
+            self.range_sync.assert_called_once_with('cm-test', 'countermeasure')
+        else:
+            self.range_sync.assert_called_once_with('cm-test', 'countermeasure', coverage)
 
     def test_scene_radius_goes_with_the_registration(self):
         radar = {'x': 100, 'y': 50, 'devices': [{'kind': 'radar'}]}

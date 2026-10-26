@@ -23,6 +23,7 @@ export function openFormModal(o) {
       hideFooter: !!o.hideFooter,
       submitEnabled: o.submitEnabled || null,
       validate: o.validate || null,
+      onModelChange: o.onModelChange || null,
       onCancel: closeModal,
       onSubmit: values => o.onSubmit(values)
     })

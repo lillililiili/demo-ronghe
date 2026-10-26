@@ -393,7 +393,8 @@ class AcceptanceFlowHttpTest(unittest.TestCase):
     def test_get_returns_nine_flows_with_prediction_variants_and_post_is_gone(self):
         with self.opener.open(self.base + '/api/acceptance-flows') as response:
             data = json.load(response)
-        self.assertEqual(list(range(1, 9)), [item['flow'] for item in data['flows']])
+        # 流程 9 只留作兼容；流程 10「反制前附近有航班」由流程 5 加模拟航班组成（2026-10-26）。
+        self.assertEqual([1, 2, 3, 4, 5, 6, 7, 8, 10], [item['flow'] for item in data['flows']])
         self.assertEqual('prediction', data['flows'][0]['default_variant'])
         prediction = data['compatibility_flows'][0]
         self.assertEqual('avoid', prediction['default_variant'])

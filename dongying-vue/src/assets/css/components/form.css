@@ -53,3 +53,12 @@
 @media(max-width:680px){
   .u-field-grid.is-two,.controlled-form__grid.is-two{grid-template-columns:1fr}
 }
+/* 反制弹窗：附近航班提示（禁止 红 / 提醒 橙 / 收不到 灰），确认勾选贴在提示块下沿。 */
+.flight-notice{--fn:#fa8c16;border:1px solid var(--fn);background:color-mix(in srgb,var(--fn) 12%,transparent);border-radius:8px;padding:10px 14px;line-height:1.75;color:var(--txt-2);font-size:13px}
+.flight-notice>b{color:color-mix(in srgb,var(--fn) 75%,#fff);font-size:14px}
+.flight-notice.is-block{--fn:var(--red)}.flight-notice.is-no_data{--fn:#6b7890}.flight-notice.is-no_data>b{color:var(--txt)}
+.flight-notice table{width:100%;border-collapse:collapse;margin:6px 0;font-size:12px}
+.flight-notice td{padding:4px;border-top:1px solid color-mix(in srgb,var(--txt-2) 18%,transparent)}
+.u-field-grid .flight-ack{margin-top:-12px;padding:2px 14px 10px;border:1px solid #fa8c16;border-top:0;border-radius:0 0 8px 8px;background:color-mix(in srgb,#fa8c16 12%,transparent)}
+.u-field-grid .flight-ack.is-no_data{border-color:#6b7890;background:color-mix(in srgb,#6b7890 12%,transparent)}
+.u-field-grid .u-field:has(+.flight-ack:not([style*="none"])) .flight-notice{border-bottom:0;border-radius:8px 8px 0 0;padding-bottom:4px}

@@ -18,6 +18,11 @@ function isVisible(field) {
   return typeof field.visibleWhen !== 'function' || field.visibleWhen(props.model);
 }
 
+function valueOf(field, name, fallback) {
+  const value = typeof field[name] === 'function' ? field[name](props.model) : field[name];
+  return value ?? fallback;
+}
+
 function fieldOptions(field) {
   const options = typeof field.options === 'function' ? field.options(props.model) : field.options;
   return options || [];
@@ -26,7 +31,7 @@ function fieldOptions(field) {
 
 <template>
   <div class="u-field-grid" :class="{ 'is-two': columns === 2 }">
-    <UField v-for="field in fields" v-show="isVisible(field)" :key="field.key" v-model="model[field.key]" :class="{ 'is-wide': isWide(field) }"
+    <UField v-for="field in fields" v-show="isVisible(field)" :key="field.key" v-model="model[field.key]" :class="[{ 'is-wide': isWide(field) }, valueOf(field, 'class', '')]"
       :type="field.type || 'text'" :label="field.label" :required="field.required" :help="typeof field.help === 'function' ? field.help(props.model) : field.help"
       :wide="isWide(field)" :variant="variant" :options="fieldOptions(field)" :placeholder="field.placeholder || ''"
       :start-placeholder="field.startPlaceholder || ''" :end-placeholder="field.endPlaceholder || ''"
@@ -34,7 +39,7 @@ function fieldOptions(field) {
       :disabled="field.disabled" :readonly="field.readonly" :clearable="field.clearable === true"
       :filterable="field.filterable === true"
       :min="field.min" :max="field.max" :min-rows="field.minRows || 3" :max-rows="field.maxRows || 6"
-      :show-button="field.showButton === true" :layout="field.layout || 'stack'" :html="field.html || ''"
-      :box-label="field.boxLabel || ''" :input-props="field.inputProps || {}" />
+      :show-button="field.showButton === true" :layout="field.layout || 'stack'" :html="valueOf(field, 'html', '')"
+      :box-label="valueOf(field, 'boxLabel', '')" :input-props="field.inputProps || {}" />
   </div>
 </template>

@@ -289,7 +289,8 @@ export const DISPOSAL_BLOCK_REASON_LABEL = {
   NOT_BOUND: '设备未登记连接，请运维补登记后重试',
   DEVICE_OFFLINE: '设备当前离线或未启用，请恢复后重试',
   DEVICE_FAULT: '设备已上报故障，未下发启动指令；请排除故障后重试',
-  DEVICE_BUSY: '设备仍有未完成任务，未下发启动指令；请等待任务结束后重试'
+  DEVICE_BUSY: '设备仍有未完成任务，未下发启动指令；请等待任务结束后重试',
+  AIRCRAFT_NEARBY: '附近有航班，未下发反制指令；等航班飞远后再试，迫降可以改用驱离'
 };
 
 /* 目标类别是哪一路给的：观测的 class_source（阶段 8.5）。 */

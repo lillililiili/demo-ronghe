@@ -290,6 +290,10 @@ def _read_legacy_flows(root):
 def read_acceptance_flows(root):
     """Daily flows share one risk journey; old flow 9 is import/history compatibility only."""
     from unified_risk_flows import integrate
+    from adsb_flights import flight_flow
     legacy = _read_legacy_flows(root)
-    return dict(status=legacy['status'], flows=integrate(legacy['flows']),
+    flows = integrate(legacy['flows'])
+    # 流程 10「反制前附近有航班」由流程 5 的无人机加上模拟航班组成（2026-10-26）。
+    flows.append(flight_flow(next(flow for flow in legacy['flows'] if flow['flow'] == 5)))
+    return dict(status=legacy['status'], flows=flows,
                 compatibility_flows=[flow for flow in legacy['flows'] if flow['flow'] == 9])

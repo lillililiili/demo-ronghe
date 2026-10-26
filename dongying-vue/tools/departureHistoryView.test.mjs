@@ -152,7 +152,7 @@ function pageFixture(f) {
 }
 test('list and top detail agree on withdrawal while original verification and other progress remain intact', () => {
   const f = fixture(), p = pageFixture(f);
-  assert.equal(p.displayState(f.alarm).t, '已撤离');
+  assert.equal(p.displayState(f.alarm).t, '已撤离 · 处置已结束');
   assert.match(p.alarmNowHtml(), /通知与撤离结果/);
   assert.doesNotMatch(p.alarmNowHtml(), /核实结论|无风险不反制/);
   assert.match(p.alarmNowHtml(), /撤离确认/);

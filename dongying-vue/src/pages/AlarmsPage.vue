@@ -283,7 +283,7 @@ function displayState(a) {
     const summary = advisorySummaries.get(progressKey(a));
     if (summary?.response_order?.counter_priority && summary?.counter_launch_visible) return { t: '可人工发起反制', c: 't-amber', color: '#f1a43a' };
     if (NOTIFY_PHASE[summary?.notify_phase]) return NOTIFY_PHASE[summary.notify_phase];
-    if (departureView(a, summary)) return { t: '已撤离', c: 't-green', color: '#31d19b' };
+    if (departureView(a, summary)) return { t: '已撤离 · 处置已结束', c: 't-green', color: '#31d19b' };
     return stateOf(a);
   }
   const handoffId = key === 'HANDED_OFF' ? autoHandoff?.handoff_id || sources?.handoffs?.items?.find(row =>

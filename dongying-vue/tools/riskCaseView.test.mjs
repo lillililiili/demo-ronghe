@@ -88,6 +88,10 @@ test('办理进度优先采用本风险已授权的真实反制状态，未知�
       assert.equal(riskCaseProgress(row).t, expected);
     }
     assert.equal(riskCaseProgress({ ...base, risk_case: { ...base.risk_case, stage: 'UNKNOWN' } }).t, '处置暂停');
+    // 实测告警通知后确认撤离写明办完；预测风险解除（或缺少来源标记）仍写“风险已解除”。
+    assert.equal(riskCaseProgress({ ...base, risk_case: { ...base.risk_case, stage: 'CLEARED', manual_counter_only: false } }).t, '已撤离 · 处置已结束');
+    assert.equal(riskCaseProgress({ ...base, risk_case: { ...base.risk_case, stage: 'CLEARED', manual_counter_only: true } }).t, '风险已解除');
+    assert.equal(riskCaseProgress({ ...base, risk_case: { ...base.risk_case, stage: 'CLEARED' } }).t, '风险已解除');
     assert.equal(riskCaseProgress({ ...base, risk_case: { ...base.risk_case, stage: 'UNKNOWN', counter: { status: 'EXECUTING' } } }).t, '反制执行中');
   }
 });

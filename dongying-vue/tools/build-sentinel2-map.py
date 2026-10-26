@@ -160,7 +160,10 @@ def download(work, credentials_file):
         list(pool.map(one, jobs))
 
 
-def make_rgba(work, value):
+def make_rgba(work, value, resampling="bilinear", source_work=None):
+    if resampling not in ("bilinear", "cubic", "lanczos"):
+        raise ValueError("Unsupported imagery resampling")
+    source_work = source_work or work
     # Standalone conda environments on Windows do not run activation hooks.
     # Locate data files within this interpreter, without editing system settings.
     for variable, folder in (("GDAL_DATA", "gdal"), ("PROJ_DATA", "proj")):
@@ -179,9 +182,10 @@ def make_rgba(work, value):
     resolution = 2 * math.pi * radius / (512 * 2**13)
     outputs, inputs = [], []
     for band in BANDS:
+        print(f"Preparing {band}: verified source bands, resampling={resampling}", flush=True)
         files = []
         for item in value["items"]:
-            path = work / "raw" / item["id"] / f"{band}.tif"
+            path = source_work / "raw" / item["id"] / f"{band}.tif"
             asset = item["assets"][band]
             if not path.is_file() or path.stat().st_size != asset["bytes"]:
                 raise ValueError(f"Missing or incomplete source: {item['id']} {band}")
@@ -204,8 +208,9 @@ def make_rgba(work, value):
         out = processing / f"{band}-3857.tif"
         gdal.Warp(str(out), files, dstSRS="EPSG:3857", outputBounds=bounds_m,
                   xRes=resolution, yRes=resolution, targetAlignedPixels=True,
-                  srcNodata=-32768, dstNodata=-32768, outputType=gdal.GDT_Int16,
-                  resampleAlg="bilinear", multithread=True,
+                  srcNodata=-32768, dstNodata=-32768,
+                  outputType=gdal.GDT_Int16 if resampling == "bilinear" else gdal.GDT_Float32,
+                  resampleAlg=resampling, multithread=True,
                   creationOptions=["TILED=YES", "COMPRESS=DEFLATE", "BIGTIFF=IF_SAFER"])
         outputs.append(gdal.Open(str(out)))
     reference = outputs[0]
@@ -237,7 +242,7 @@ def make_rgba(work, value):
     provenance = {**value, "input_files": inputs, "attribution": ATTRIBUTION,
                   "processing": {"gdal": gdal.VersionInfo("RELEASE_NAME"), "rgb_bands": BANDS,
                                  "reflectance_range": [0, 3000], "exponent": 0.85,
-                                 "projection": "EPSG:3857", "resampling": "bilinear", "nodata": -32768},
+                                 "projection": "EPSG:3857", "resampling": resampling, "nodata": -32768},
                   "coverage": {"valid_pixels": valid_count, "total_pixels": total,
                                "nodata_fraction": 1 - valid_count / total, "nodata_display": "transparent"}}
     save_json(work / "provenance.json", provenance)

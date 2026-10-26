@@ -663,7 +663,7 @@ function listHtml() {
     { t: sortTh('level', '等级'), w: '52px', align: 'center', overflow: false, render: sevTag },
     { t: '关联目标', w: '146px', overflow: false, render: a => `<span class="alarm-target-number mono" title="${a.target_id ? esc(displayTargetNo(a.target_no) || a.target_id) : '无关联目标或无目标读取权限'}">${a.target_id ? esc(displayTargetNo(a.target_no) || a.target_id) : '—'}</span>` },
     { t: '告警内容', render: reasonCell },
-    { t: sortTh('status', '办理进度'), w: '124px', overflow: false, render: stateTag },
+    { t: sortTh('status', '办理进度'), w: '156px', overflow: false, render: stateTag },
     { t: sortTh('ts', '时间'), w: '158px', overflow: false, render: a => esc(fmt(a.received_at) || '未知') }
   ], list.rows, { rowId: riskCaseKey, activeId: st.selId, className: 'alarm-list-table' });
 }

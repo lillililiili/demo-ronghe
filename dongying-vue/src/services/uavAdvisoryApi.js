@@ -2,7 +2,7 @@ import { apiRequestTimed } from './apiClient.js';
 
 const base = eventId => `/uav-events/${encodeURIComponent(eventId)}/advisory`;
 export const uavAdvisoryApi = {
-  get: eventId => apiRequestTimed(base(eventId)),
+  get: (eventId, riskCaseId) => apiRequestTimed(`${base(eventId)}${riskCaseId ? `?risk_case_id=${encodeURIComponent(riskCaseId)}` : ''}`),
   retrySms: (eventId, body, idempotencyKey) => apiRequestTimed(`${base(eventId)}/auto-sms/retry`, {
     method: 'POST', body, mutation: true, idempotencyKey
   }),

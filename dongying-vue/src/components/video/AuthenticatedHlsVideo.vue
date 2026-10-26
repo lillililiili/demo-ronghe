@@ -1,6 +1,5 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import Hls from 'hls.js';
 import { authExpired, authSession } from '@/services/auth.js';
 import { readSessionToken } from '@/services/apiClient.js';
 import { targetVideoState } from './targetVideoState.js';
@@ -118,8 +117,11 @@ async function start() {
   if (!canConnect()) return;
   await nextTick();
   if (current !== sequence || !media.value) return;
-  if (!Hls.isSupported()) { interrupt('当前浏览器不支持带会话授权的视频播放，请使用支持 MediaSource 的浏览器。'); return; }
   try {
+    // 只有已获准且实际展开的直播才下载解码器；普通页面和收起的视频不承担其体积。
+    const { default: Hls } = await import('hls.js');
+    if (current !== sequence || !canConnect() || !media.value) return;
+    if (!Hls.isSupported()) { interrupt('当前浏览器不支持带会话授权的视频播放，请使用支持 MediaSource 的浏览器。'); return; }
     const options = { origin: location.origin, targetId: props.targetId, deviceId: props.deviceId, streamId: props.video.stream_id };
     const url = streamUrl(props.video.playback_url, options);
     // Workspace metadata is polled every 2s and encoded frames arrive in batches.
@@ -146,7 +148,10 @@ async function start() {
     player.attachMedia(media.value);
     player.loadSource(url);
     watchForData(current);
-  } catch { interrupt('视频地址或会话无效，请刷新视频状态'); }
+  } catch {
+    if (current !== sequence || !alive) return;
+    interrupt('视频资源或会话暂时不可用，请刷新视频状态');
+  }
 }
 watch([() => props.targetId, () => props.deviceId, () => props.video.task_id, () => props.video.command_id,
   () => props.video.stream_id, () => props.video.playback_url, playable, authSession, authExpired],

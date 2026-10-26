@@ -15,6 +15,7 @@ from urllib.parse import urlparse, unquote, parse_qs
 from urllib.request import Request, build_opener, ProxyHandler, HTTPRedirectHandler
 from urllib.error import HTTPError, URLError
 from eo_observations import EoObservations
+from eo_worker import EoWorker
 from engine import compile_scene, duration_reached, messages, position
 from notification_inbox import read_inbox, open_handoff_evidence
 from notification_response import NotificationResponse
@@ -160,6 +161,16 @@ class ExternalBridge:
             rules = [rule for rule in group.get('rules') or [] if isinstance(rule, dict)]
             result[category] = {'ok': True, 'total': len(rules), 'enabled': sum(1 for rule in rules if rule.get('enabled') is True),
                                 'engine': group.get('execution_status'), 'engine_message': group.get('execution_message')}
+        try:
+            policy = platform.call('GET', '/response-order-policy') or {}
+            if not isinstance(policy, dict) or not isinstance(policy.get('enabled'), bool):
+                raise ValueError('处置顺序配置格式无效')
+            result['response_order'] = dict(policy, ok=True)
+        except ValueError as error:
+            if '返回 401' in str(error):
+                self.invalidate(platform)
+                raise
+            result['response_order'] = {'ok': False, 'reason': 'FORBIDDEN' if '返回 403' in str(error) else 'UNAVAILABLE'}
         return result
 
     def request(self, command):
@@ -577,10 +588,10 @@ class Runtime:
                 info.wait_for_publish(timeout=5)
                 if not info.is_published(): raise ValueError('光电回执 MQTT 确认超时')
                 self.log('EO_RECEIPT', '模拟光电回执已由 Broker 确认', topic=topic, payload=payload)
-            self.eo = EoSimulator(self.platform, self.manifest, self.video_config, publish_eo, self.log,
+            self.eo = EoWorker(EoSimulator(self.platform, self.manifest, self.video_config, publish_eo, self.log,
                 is_running=lambda: self.phase == 'RUNNING' and not self.cancel.is_set(),
                 observations=EoObservations(self.scene.get('eoObservations'), self.manifest, self.targets,
-                    lambda: self.elapsed), publish_final=publish_eo_final)
+                    lambda: self.elapsed), publish_final=publish_eo_final))
             def publish_b(topic, payload):
                 with self.lock:
                     if self.cancel.is_set() or self.phase != 'RUNNING' or not self.mqtt_connected or not subscriptions.ready.is_set():
@@ -654,12 +665,20 @@ class Runtime:
                     self.eo.tick()
                 self.eo_status = self.eo.snapshot()
                 if phase=='RUNNING' and elapsed >= next_frame:
+                    # Capture position time after any blocking session/reconnect work.
+                    current=time.monotonic()
+                    with self.lock:
+                        if self.phase != 'RUNNING' or self.cancel.is_set(): continue
+                        self.elapsed += current-previous
+                        elapsed=self.elapsed
+                    previous=current
+                    frame_time=int(time.time()*1000)
                     sequence+=1; next_frame=elapsed+1
                     with self.lock:
                         self.response.apply(self.targets, elapsed, int(time.time()*1000))
-                    if self.fullchain: self.fullchain.tick(self.targets,elapsed,sequence)
+                    if self.fullchain: self.fullchain.tick(self.targets,elapsed,sequence,observed_at=frame_time)
                     health.observe(self.scene, elapsed)
-                    for topic,payload in messages(self.scene,devices,self.targets,self.manifest,elapsed,int(time.time()*1000),last_sent,sequence):
+                    for topic,payload in messages(self.scene,devices,self.targets,self.manifest,elapsed,frame_time,last_sent,sequence):
                         with self.lock:
                             if self.cancel.is_set() or self.phase != 'RUNNING': break
                         if not client.is_connected():
@@ -698,7 +717,7 @@ class Runtime:
                 self.protocol_b.suspend()
             if self.response: self.response.stop.set()
             if self.eo:
-                self.eo.suspend(); self.eo_status = self.eo.snapshot()
+                self.eo.close(); self.eo_status = self.eo.snapshot()
             if client:
                 client.disconnect(); client.loop_stop()
             self.mqtt_connected = False

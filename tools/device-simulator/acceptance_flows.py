@@ -26,20 +26,19 @@ FLOW_VARIANTS = {
         'avoid': {
             'file': 'flow-9-prediction-warning.json',
             'label': '5分钟转向撤销',
-            'sees': ['第4分钟开始转向；连续新实测证明未来安全避开后，预警撤销并保留历史。转向期间依据不稳定时会先显示待确认。'],
+            'sees': ['约44秒，无人机在矩形左边界外转向左上方。连续新实测证明未来安全避开后，平台撤销预警并保留历史；转向期间预测可能暂不可判断。'],
             'todo': [
-                '约3分20秒，在当前证据和设备条件满足时人工执行反制；普通申请请提前办理他人审批，有直接权限时使用既有直接入口，不跳过校验。',
-                '观察第4分钟的转向变化；保留收发到5分钟结束，核对历史与停止回执，再点停止并选择下一项。',
-                '核对预警撤销、未启动动作取消、原反制授权失效，以及模拟设备全关的实际回执；不能把发出停止指令当作已停止。',
+                '约44秒观察转向，随后到告警事件核对预警是否撤销、历史是否保留；实际结果以平台的新观测判断为准。',
+                '保留收发到5分钟结束；如已人工启动反制，核对停止指令及模拟设备全关的实际回执，再点停止并选择下一项。',
             ],
         },
         'enter': {
             'file': 'flow-9-prediction-entry.json',
             'label': '6分钟继续入区并反制',
-            'sees': ['第4分钟起继续进入禁飞区并持续上报实测位置；平台确认实际入区后查看关联实测告警，预测预警与实测结论分别保留。'],
+            'sees': ['约50秒，无人机越过矩形左边界；约65秒到区内停留，持续上报至6分钟结束。平台确认实际入区后，查看关联实测告警。'],
             'todo': [
                 '实际入区后打开关联实测告警，核对当前实测位置、入区依据和原预测预警的关联；短信电话回执在原预测预警中查看，实测告警按同次风险不重复通知。',
-                '在入区后的约2分钟内，按当前权限和有效证据办理：仍待核实时先人工核实，已核实则继续申请、由他人审批并执行反制；有既有直接反制权限时按原策略办理，已失效的预测授权不能复用。',
+                '区内停留期间，按当前权限和有效证据办理：仍待核实时先人工核实，已核实则继续申请、由他人审批并执行反制；有既有直接反制权限时按原策略办理，已失效的预测授权不能复用。',
                 '保留收发到6分钟结束，核对实际启动、停止回执及关联历史；通知或处置受阻时按页面原因处理，不能用场景时间代替业务条件。',
             ],
         },
@@ -185,7 +184,7 @@ GUIDE = {
     },
     9: {
         'title': '预测入区预警',
-        'shows': '无人机尚未入区，但预计30秒内进入禁飞区；人工核实预测风险后按当前条件通知，再由有权限人员人工反制。默认5分钟转向撤销，也可选6分钟继续入区并反制。空域和航线已内置，无需手动导入文件。',
+        'shows': '一块矩形禁飞区，无人机从左向右直线接近。选5分钟转向避开，或6分钟继续入区并人工反制。空域和航线已内置。',
         'auto_verify': None,
         'prediction_only': True,
         'before': [
@@ -194,9 +193,9 @@ GUIDE = {
             '本流程从预测预警开始，预测及其衍生处置不自动核实、不自动反制、不自动处罚；无需为此开启或关闭普通告警规则，权限、有效证据和设备校验保持。',
         ],
         'sees': [
-            '前4分钟持续提供预测输入；达到连续可靠预测门槛后形成预警，预测轨迹独立显示，不能当作实测入区或违法证据。',
-            '人工核实后先发短信、再播放预测专用电话录音；以模拟通道实际送达、接通和播放完成回执为准，不把等待发送当作成功。',
-            '反制必须人工发起，启用的普通自动规则也不会替这个预测事件发起反制或处罚。',
+            '先在融合感知选中无人机，查看未来10、20、30秒位置。约半分钟后留意预警；后台只预测未来30秒，预警是否成立及可办理时段以平台为准。',
+            '预警出现且依据有效时，人工核实后按当前条件发送短信、播放预测专用电话录音；以实际送达和播放完成回执为准。',
+            '模拟阶段提示只说明飞机飞到哪一步；预测线不是实测轨迹，反制仍需有权限人员人工发起。',
         ],
         'todo': [
             '预警出现且当前依据有效时点「核实预测风险」，核对已核实状态及冻结依据，再查看短信和电话的实际回执。',
@@ -237,7 +236,7 @@ def _guide(number, variant=None):
     return result
 
 
-def read_acceptance_flows(root):
+def _read_legacy_flows(root):
     """Read nine defaults and the fixed flow-9 variants without changing files."""
     folder = Path(root) / 'scenarios' / OUTPUT_NAME
     if not folder.is_dir():
@@ -286,3 +285,11 @@ def read_acceptance_flows(root):
     if sorted(item['flow'] for item in flows) != sorted(FLOW_FILES):
         raise ValueError('流程清单必须包含流程 1-9 各一条')
     return {'status': 'READY_FOR_IMPORT', 'flows': sorted(flows, key=lambda item: item['flow'])}
+
+
+def read_acceptance_flows(root):
+    """Daily flows share one risk journey; old flow 9 is import/history compatibility only."""
+    from unified_risk_flows import integrate
+    legacy = _read_legacy_flows(root)
+    return dict(status=legacy['status'], flows=integrate(legacy['flows']),
+                compatibility_flows=[flow for flow in legacy['flows'] if flow['flow'] == 9])

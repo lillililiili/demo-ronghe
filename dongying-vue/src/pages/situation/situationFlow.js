@@ -1,4 +1,5 @@
 import { coverageContainsPoint, planIsCurrent, riskMatchesPlan, targetIsCurrent } from '../../services/situationData.js';
+import { riskCaseOf, riskCaseVisible, riskVerificationState } from '../../services/riskCaseView.js';
 import { serverNow } from '../../services/serverClock.js';
 
 export function eoCanMonitor(target, devices = []) {
@@ -25,11 +26,11 @@ export function disposalStage(summary) {
 }
 
 export function uavProcessActions(alarm) {
-  if (!alarm || alarm.eventState === 'FALSE_POSITIVE' || alarm.handoff) return [];
+  if (!alarm || !riskCaseVisible(alarm) || riskVerificationState(alarm) === 'FALSE_POSITIVE' || alarm.handoff) return [];
   if (['jamming', 'counter', 'active', 'requested'].includes(alarm.disposalStage)) return [];
   if (['jammed', 'countered', 'completed'].includes(alarm.disposalStage)) return [];
-  if (alarm.eventState === 'PENDING_VERIFICATION') return ['verify'];
-  if (alarm.eventState === 'CONFIRMED') return ['counter'];
+  if (['PENDING_VERIFICATION', 'PENDING'].includes(riskVerificationState(alarm))) return ['verify'];
+  if (riskVerificationState(alarm) === 'CONFIRMED') return ['counter'];
   return [];
 }
 
@@ -38,7 +39,8 @@ export function uavProcessActions(alarm) {
  * 已经进入自动/人工处置、已移送或已结束的事件留在告警详情和历史记录中，不继续占用实时待办列表。
  */
 export function situationAlarmNeedsAttention(alarm) {
-  if (!alarm || alarm.handoff || alarm.eventState === 'FALSE_POSITIVE') return false;
+  if (!alarm || alarm.handoff || riskVerificationState(alarm) === 'FALSE_POSITIVE') return false;
+  if (riskCaseOf(alarm)) return riskCaseVisible(alarm);
   if (alarm.eventState === 'PENDING_VERIFICATION') return true;
   return alarm.eventState === 'CONFIRMED' && (!alarm.disposalStage || alarm.disposalStage === 'none');
 }

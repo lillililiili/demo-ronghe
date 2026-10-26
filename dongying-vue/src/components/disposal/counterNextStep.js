@@ -13,11 +13,7 @@ export function counterPermissionHint(summary) {
   return '';
 }
 
-const PHASE_REASON = {
-  AUTO_SMS: '正在给飞手发短信，发完并观察后再决定是否反制',
-  WATCHING: '已通知飞手，正在观察无人机是否离开',
-  AUTO_CALL: '正在给飞手打电话，打完并观察后再决定是否反制'
-};
+// 处置顺序由后端统一判定。通知阶段本身不代表反制不可用。
 
 /**
  * 反制按钮为什么现在不出现；返回空字符串表示按钮正常出现（能不能点由 CounterLaunch 按后台资格判断）。
@@ -38,7 +34,7 @@ export function counterHiddenReason({ alarm, actions = [], processStatus = '', s
   if (summary.counter_launch_visible === true) return '';
   if (summary.counter_block_reason) return summary.counter_block_reason;
   if (nowStatus?.departed) return '无人机已飞离，不需要反制；在告警事件页继续办理';
-  if (PHASE_REASON[summary.notify_phase]) return PHASE_REASON[summary.notify_phase];
+  if (summary.response_order?.reason && summary.counter_launch_visible !== true) return summary.response_order.reason;
   if (summary.departure_observation?.presence === 'LEFT') {
     return nowStatus?.key === 'VIOLATING'
       ? '通知后曾判定已离开，系统收起了反制按钮；但无人机现在仍在违规'

@@ -774,21 +774,27 @@ async function renderEvidenceMap(evaluation) {
   const my = ++evidenceMapSeq;
   if (!evaluation) { evidenceMapNote.value = ''; return; }
   if (!evidenceMap) evidenceMapNote.value = '正在读取位置';
-  let centerline = null, airspaces = [], loaded = null, trajectoryPoints = [];
+  // 四份独立只读资料并行读取；单项失败不抹去其他可用事实。
+  const [routeResult, airspaceResult, positionResult, trackResult] = await Promise.allSettled([
+    evaluation.route_version_id ? loadRouteCenterline(evaluation.route_version_id) : null,
+    evaluation.plan_id ? loadAirspaceOverlays(evaluation.plan_id) : [],
+    evaluation.target_id ? loadTargetPosition(evaluation.target_id, {
+      legal: legalStatusText(effectiveStatus(evaluation)), positionOnly: true
+    }) : null,
+    evaluation.target_id ? legalityApi.trajectory(evaluation.evaluation_id) : null
+  ]);
+  if (my !== evidenceMapSeq) return;
+  const centerline = routeResult.status === 'fulfilled' ? routeResult.value : null;
+  const airspaces = airspaceResult.status === 'fulfilled' ? airspaceResult.value : [];
+  const loaded = positionResult.status === 'fulfilled' ? positionResult.value : null;
+  let trajectoryPoints = [];
   const missing = [];
-  if (evaluation.route_version_id) { try { centerline = await loadRouteCenterline(evaluation.route_version_id); } catch { centerline = null; } }
   if (!centerline) missing.push(evaluation.plan_id ? '航线位置无法确认' : '无匹配任务，无航线');
-  if (evaluation.plan_id) { try { airspaces = await loadAirspaceOverlays(evaluation.plan_id); } catch { airspaces = []; } }
   if (evaluation.target_id) {
-    try {
-      loaded = await loadTargetPosition(evaluation.target_id, {
-        legal: legalStatusText(effectiveStatus(evaluation)),
-        positionOnly: true
-      });
-    } catch { loaded = null; }
     if (!loaded?.mapTarget) missing.push('目标坐标未知');
     try {
-      const comparison = await legalityApi.trajectory(evaluation.evaluation_id);
+      if (trackResult.status === 'rejected') throw trackResult.reason;
+      const comparison = trackResult.value;
       if (comparison.target_id && comparison.target_id !== evaluation.target_id) throw new Error('轨迹与所选目标不一致，请重新选择');
       trajectoryPoints = trustedTrajectoryPoints(comparison);
       if (!trajectoryPoints.some(Boolean)) missing.push('本次研判暂无有效实测轨迹');

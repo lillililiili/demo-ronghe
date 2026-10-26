@@ -1,3 +1,4 @@
+const riskHelpers = require('./riskCaseTestHelpers.cjs');
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const fs = require('node:fs');
@@ -119,10 +120,10 @@ async function renderSituationNextStep(summary, alarmOverrides = {}) {
   const { renderToString } = require('@vue/server-renderer');
   const stub = { render: () => null };
   const counter = advisoryComponent('pages/alarms/CounterLaunch.vue', {
-    NoCounterDecisionModal: stub, NoCounterBasis: stub, ...nextStep
+    ...riskHelpers, NoCounterDecisionModal: stub, NoCounterBasis: stub, ...nextStep
   });
   const card = advisoryComponent('pages/situation/SituationNextStep.vue', {
-    displayBusinessNo, CounterLaunch: counter, ...nextStep, predictionVerificationState, serverNow,
+    ...riskHelpers, displayBusinessNo, CounterLaunch: counter, ...nextStep, predictionVerificationState, serverNow,
     uavProcessActions: alarm => alarm.eventState === 'CONFIRMED' ? ['counter'] : alarm.eventState === 'PENDING_VERIFICATION' ? ['verify'] : [],
     uavProcessStatus: alarm => alarm.eventState === 'CONFIRMED' ? '告警已确认' : '已移送处罚'
   });
@@ -163,7 +164,7 @@ test('fusion card shows actual counter block reasons and never borrows another e
   const handedOff = await renderSituationNextStep(allowed, { eventState: 'HANDED_OFF' });
   assert.match(counterButton(handedOff), disabled);
   assert.match(handedOff, /现在的处理进度是「已移送处罚」/);
-  const watching = await renderSituationNextStep({ ...allowed, counter_launch_visible: false, notify_phase: 'WATCHING' });
+  const watching = await renderSituationNextStep({ ...allowed, counter_launch_visible: false, notify_phase: 'WATCHING', counter_block_reason: '已通知飞手，正在观察无人机是否离开' });
   assert.match(counterButton(watching), disabled);
   assert.match(watching, /已通知飞手，正在观察无人机是否离开/);
   const decided = await renderSituationNextStep({ ...allowed, counter_launch_visible: false, no_counter: { decision_active: true } });

@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
+const vm = require('node:vm');
 const FlowPicker = require('../web/flow-picker.js');
 
 const group = (enabled, total, ok = true) => ok ? {ok: true, enabled, total, engine: 'ON', engine_message: ''} : {ok: false, reason: 'FORBIDDEN'};
@@ -37,6 +38,148 @@ test('choosing a flow variant keeps its scene and guide together and leaves othe
   assert.equal(JSON.stringify(flow),before);
   const ordinary = {flow:5, scene:{name:'manual'}};
   assert.equal(FlowPicker.selectVariant(ordinary),ordinary);
+});
+
+const guidedScene = (turnAt = 44, lastAt = 98.69) => ({sceneGuide: {summary: '直线接近 → 转向 → 停留', stages: [
+  {at_seconds: 0, label: '直线接近', description: '查看未来位置'},
+  {at_seconds: turnAt, label: '转向', description: '等待平台依据新观测判断'},
+  {at_seconds: lastAt, label: '停留', description: '继续上报位置'}
+]}});
+const guideRun = {flow: 9, startedBatch: 'run-a', ended: false};
+const runtimeFor = (scene, elapsed, phase = 'RUNNING', batch = 'run-a') => ({source_scene: scene, elapsed, phase, batch});
+
+test('scene guides are optional and a loaded flow never borrows the previous batch progress', () => {
+  assert.equal(FlowPicker.sceneGuideModel({}), null);
+  assert.equal(FlowPicker.sceneGuideHtml(null), '');
+  const scene = guidedScene();
+  assert.equal(FlowPicker.sceneGuideModel(scene).activeIndex, -1);
+  assert.equal(FlowPicker.sceneGuideModel(scene, {startedBatch: null}, runtimeFor(scene, 90)).activeIndex, -1);
+  assert.equal(FlowPicker.sceneGuideModel(scene, guideRun, runtimeFor(scene, 90, 'RUNNING', 'other-batch')), null);
+  assert.equal(FlowPicker.sceneGuideModel(scene, {...guideRun, ended: true}, runtimeFor(scene, 90)), null);
+});
+
+test('stage boundaries follow exact metadata seconds across different scene timings', () => {
+  for (const [turnAt, lastAt] of [[44, 98.69], [50, 65], [12.5, 45.2]]) {
+    const scene = guidedScene(turnAt, lastAt), before = JSON.stringify(scene);
+    for (const [elapsed, index] of [[0, 0], [turnAt - 0.01, 0], [turnAt, 1], [lastAt - 0.01, 1], [lastAt, 2], [300, 2]]) {
+      assert.equal(FlowPicker.sceneGuideModel(scene, guideRun, runtimeFor(scene, elapsed)).activeIndex, index);
+    }
+    assert.equal(JSON.stringify(scene), before);
+  }
+});
+
+test('a paused run uses its reported position in time and preparation or missing time highlights no stage', () => {
+  const scene = guidedScene();
+  const paused = FlowPicker.sceneGuideModel(scene, guideRun, runtimeFor(scene, 44, 'PAUSED'));
+  assert.equal(paused.activeIndex, 1);
+  assert.equal(paused.paused, true);
+  assert.match(FlowPicker.sceneGuideHtml(paused, true), /已暂停/);
+  for (const phase of ['PREPARING', 'STOPPING', 'STOPPED', 'COMPLETED', 'FAILED', 'UNKNOWN']) {
+    assert.equal(FlowPicker.sceneGuideModel(scene, guideRun, runtimeFor(scene, 100, phase)).activeIndex, -1);
+  }
+  for (const elapsed of [undefined, null, '44', -1, NaN, Infinity]) {
+    assert.equal(FlowPicker.sceneGuideModel(scene, guideRun, runtimeFor(scene, elapsed)).activeIndex, -1);
+  }
+});
+
+test('running guide belongs to the frozen runtime scene rather than a newly published variant', () => {
+  const published = guidedScene(44), frozen = guidedScene(70);
+  assert.equal(FlowPicker.sceneGuideModel(published, guideRun, runtimeFor(frozen, 50)).activeIndex, 0);
+  assert.equal(FlowPicker.sceneGuideModel(published, guideRun, {batch: 'run-a', phase: 'RUNNING', elapsed: 50}), null);
+  assert.equal(FlowPicker.sceneGuideModel(published, guideRun, runtimeFor({}, 50)), null);
+  assert.equal(FlowPicker.sceneGuideModel(published, guideRun, {batch: 'run-a', phase: 'RUNNING', elapsed: 50, scene: frozen}).activeIndex, 0);
+});
+
+test('invalid or ambiguous metadata is not silently rearranged into a flight schedule', () => {
+  const cases = [null, {}, {summary: ' ', stages: []}];
+  for (const bad of [-1, NaN, Infinity, '44', null]) {
+    const guide = guidedScene().sceneGuide;
+    guide.stages[1].at_seconds = bad;
+    cases.push(guide);
+  }
+  for (const modify of [g => g.stages.reverse(), g => g.stages[1].at_seconds = 0,
+    g => g.stages[1].label = '', g => g.stages[1].description = {}, g => g.stages.push(null)]) {
+    const guide = guidedScene().sceneGuide; modify(guide); cases.push(guide);
+  }
+  for (const sceneGuide of cases) assert.equal(FlowPicker.sceneGuideModel({sceneGuide}), null);
+});
+
+test('guide markup escapes scene text and labels current simulation without claiming a business result', () => {
+  const scene = guidedScene();
+  scene.sceneGuide.summary = '<script>unsafe()</script>';
+  scene.sceneGuide.stages[1].description = '<img onerror="unsafe()">';
+  const html = FlowPicker.sceneGuideHtml(FlowPicker.sceneGuideModel(scene, guideRun, runtimeFor(scene, 45)), true);
+  assert.match(html, /模拟飞行阶段/);
+  assert.match(html, /当前模拟阶段/);
+  assert.match(html, /&lt;script&gt;/);
+  assert.match(html, /&lt;img onerror=&quot;/);
+  assert.doesNotMatch(html, /<script>|<img|已核实|已送达|已完成/);
+  assert.equal((html.match(/aria-current="step"/g) || []).length, 1);
+  const full = FlowPicker.sceneGuideHtml(FlowPicker.sceneGuideModel(scene));
+  assert.doesNotMatch(full, /aria-current/);
+  assert.match(full, /预警、核实、通知和反制结果以平台为准/);
+});
+
+test('compact guide keeps one action sentence and the full dialog retains every stage description', () => {
+  const scene = guidedScene();
+  const loaded = FlowPicker.sceneGuideHtml(FlowPicker.sceneGuideModel(scene), true);
+  assert.match(loaded, /开始后：<\/b>在融合感知选中无人机/);
+  assert.doesNotMatch(loaded, /<h4>|scene-guide-note|等待平台依据新观测判断|继续上报位置/);
+  const running = FlowPicker.sceneGuideHtml(FlowPicker.sceneGuideModel(scene, guideRun, runtimeFor(scene, 45)), true);
+  assert.match(running, /当前模拟阶段：<\/b>等待平台依据新观测判断/);
+  assert.doesNotMatch(running, /查看未来位置|继续上报位置|scene-guide-note|<h4>/);
+  const full = FlowPicker.sceneGuideHtml(FlowPicker.sceneGuideModel(scene));
+  for (const stage of scene.sceneGuide.stages) assert.ok(full.includes(stage.description));
+});
+
+test('runtime polling redraws the banner only when its stage or lifecycle state changes', async () => {
+  const scene = guidedScene(), saved = {...guideRun, baseBatch: 'old', reminder: false};
+  let writes = 0, markup = '';
+  const banner = {hidden: true, set innerHTML(value) { writes++; markup = value; }};
+  const context = vm.createContext({window: {}, storeKey: 'guide-test',
+    localStorage: {getItem: () => JSON.stringify(saved), setItem() {}, removeItem() {}},
+    document: {addEventListener() {}, querySelector: selector => selector === '#flow-banner' ? banner : {hidden: true}},
+    api: async () => ({flows: [{flow: 9, title: '预测', scene, guide: {todo: ['查看平台结果']}}]}),
+    liveState: runtimeFor(scene, 1)
+  });
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../web/flow-picker.js'), 'utf8'), context);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(writes, 1);
+  assert.doesNotMatch(markup, /你要做什么|查看平台结果|做完点|scene-guide-note/);
+  assert.match(markup, /完整说明/);
+  for (const elapsed of [2.5, 4, 43.9]) {
+    context.liveState = runtimeFor(scene, elapsed);
+    context.window.FlowPicker.onRuntime(context.liveState);
+  }
+  assert.equal(writes, 1, 'unchanged stage does not recreate banner buttons');
+  context.liveState = runtimeFor(scene, 44);
+  context.window.FlowPicker.onRuntime(context.liveState);
+  assert.equal(writes, 2);
+  assert.match(markup, /当前模拟阶段：<\/b>等待平台依据新观测判断/);
+  context.liveState = runtimeFor(scene, 44, 'PAUSED');
+  context.window.FlowPicker.onRuntime(context.liveState);
+  assert.equal(writes, 3);
+  assert.match(markup, /模拟已暂停：<\/b>等待平台依据新观测判断/);
+  context.liveState = runtimeFor(scene, 44, 'COMPLETED');
+  context.window.FlowPicker.onRuntime(context.liveState);
+  assert.equal(banner.hidden, true);
+  assert.equal(markup, '');
+});
+
+test('ordinary flow banner retains its action list and footer', async () => {
+  let markup = '';
+  const context = vm.createContext({window: {}, storeKey: 'ordinary-test',
+    localStorage: {getItem: () => JSON.stringify({...guideRun, flow: 5}), setItem() {}, removeItem() {}},
+    document: {addEventListener() {}, querySelector: () => ({set innerHTML(value) { markup = value; }})},
+    api: async () => ({flows: [{flow: 5, title: '人工处置', scene: {}, guide: {todo: ['普通流程原步骤']}}]}),
+    liveState: runtimeFor({}, 30)
+  });
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../web/flow-picker.js'), 'utf8'), context);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(markup, /你要做什么/);
+  assert.match(markup, /普通流程原步骤/);
+  assert.match(markup, /做完点“停止”/);
+  assert.doesNotMatch(markup, /scene-guide/);
 });
 
 test('the rule line distinguishes enabled rules from their checked automatic action', () => {

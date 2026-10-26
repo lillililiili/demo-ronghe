@@ -1,3 +1,4 @@
+import { riskActionContext } from '@/services/riskCaseView.js';
 /* 处置授权弹窗（阶段 13 契约 v1.0，决策 13-7）：申请 / 审批 / 执行 / 停止·人工结果四种形态共用一个实现，
    避免出现第二套表单和第二套幂等键逻辑。所有按钮可用性以服务端 allowed_actions 为准，前端不自算。
    反制与干扰有法律后果：授权编号、审批人、时限、执行结果一律来自服务端，页面绝不伪造，也绝不把
@@ -201,19 +202,19 @@ async function loadEnabledDevices() {
  * @param {(body: object, key: string) => Promise<object>} [o.submit] 自定义提交；融合感知模拟源用来复用同一弹窗但不打真实授权接口
  * @param {(result: object) => string} [o.okText] 成功提示；缺省为“申请已提交，待审批”
  */
-export function openDisposalRequest({ actionType, actionOptions, subjectKind, subjectId, subjectText, initialReason = '', isCurrent = () => true, policy, refresh, onDone, submit: customSubmit, okText, targetPoint } = {}) {
+export function openDisposalRequest({ actionType, actionOptions, subjectKind, subjectId, subjectText, initialReason = '', isCurrent = () => true, policy, refresh, onDone, submit: customSubmit, okText, targetPoint, riskContext } = {}) {
   if (!actionType || !subjectKind || !subjectId) { toast('缺少处置对象，无法发起申请', 'err'); return false; }
-  return showDisposalRequestForm({ actionType, actionOptions, subjectKind, subjectId, subjectText, initialReason, isCurrent, policy, refresh, onDone, customSubmit, okText, direct: false, targetPoint });
+  return showDisposalRequestForm({ actionType, actionOptions, subjectKind, subjectId, subjectText, initialReason, isCurrent, policy, refresh, onDone, customSubmit, okText, direct: false, targetPoint, riskContext });
 }
 
 /** 免逐次审批直接处置。资格与业务前置条件仍由 direct-execute 在服务端重新校验。 */
-export function openDisposalDirect({ actionType, subjectKind, subjectId, subjectText, initialReason = '', isCurrent = () => true, policy, refresh, onDone, targetPoint } = {}) {
+export function openDisposalDirect({ actionType, subjectKind, subjectId, subjectText, initialReason = '', isCurrent = () => true, policy, refresh, onDone, targetPoint, riskContext } = {}) {
   if (!actionType || !subjectKind || !subjectId) { toast('缺少处置对象，无法直接反制', 'err'); return false; }
-  return showDisposalRequestForm({ actionType, subjectKind, subjectId, subjectText, initialReason, isCurrent, policy, refresh, onDone, direct: true, targetPoint });
+  return showDisposalRequestForm({ actionType, subjectKind, subjectId, subjectText, initialReason, isCurrent, policy, refresh, onDone, direct: true, targetPoint, riskContext });
 }
 
 /** targetPoint：目标现在的位置 { lon, lat }。不传或读不到位置（null）时保持原设备清单，不推断覆盖事实。 */
-async function showDisposalRequestForm({ actionType, actionOptions, subjectKind, subjectId, subjectText, initialReason, isCurrent, policy, refresh, onDone, customSubmit, okText, direct = false, targetPoint }) {
+async function showDisposalRequestForm({ actionType, actionOptions, subjectKind, subjectId, subjectText, initialReason, isCurrent, policy, refresh, onDone, customSubmit, okText, direct = false, targetPoint, riskContext }) {
   const choices = (actionOptions || []).filter(Boolean);
   const pickable = choices.length > 1;
   let devices = [];
@@ -298,6 +299,7 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
         if (!isCurrent()) throw new Error('事件已切换，请关闭后从当前事件重新申请');
         const body = {
           action_type: chosen || actionType, subject_kind: subjectKind, subject_id: subjectId,
+          ...riskContext,
           channel, device_id: String(deviceId || '').trim(),
           ...((chosen || actionType) === 'COUNTERMEASURE' ? { countermeasure_mode: countermeasureMode } : {}),
           reason: String(reason || '').trim()
@@ -341,7 +343,7 @@ export function openDisposalApproval({ authorization, refresh, onDone } = {}) {
       scope: auth.authorization_id,
       action: decision === 'APPROVE' ? 'approve' : 'reject',
       call: key => {
-        const body = { expected_version: Number(auth.version), note: String(note || '').trim() || undefined };
+        const body = { ...riskActionContext(auth), expected_version: Number(auth.version), note: String(note || '').trim() || undefined };
         return decision === 'APPROVE' ? disposalApi.approve(auth.authorization_id, body, key) : disposalApi.reject(auth.authorization_id, body, key);
       },
       refresh,
@@ -373,7 +375,7 @@ export function openDisposalExecution({ authorization, refresh, onDone } = {}) {
       scope: auth.authorization_id,
       action: 'execute',
       call: key => disposalApi.execute(auth.authorization_id, {
-        expected_version: Number(auth.version)
+        ...riskActionContext(auth), expected_version: Number(auth.version)
       }, key),
       refresh,
       onDone,
@@ -403,7 +405,7 @@ export function openDisposalStop({ authorization, refresh, onDone } = {}) {
     onSubmit: ({ note }) => submit({
       scope: auth.authorization_id,
       action: 'stop',
-      call: key => disposalApi.stop(auth.authorization_id, { expected_version: Number(auth.version), note: String(note).trim() }, key),
+      call: key => disposalApi.stop(auth.authorization_id, { ...riskActionContext(auth), expected_version: Number(auth.version), note: String(note).trim() }, key),
       refresh,
       onDone,
       okText: result => `${disposalStatusText(result)}`
@@ -437,7 +439,7 @@ export function openDisposalCancel({ authorization, refresh, onDone } = {}) {
       scope: auth.authorization_id,
       action: 'cancel',
       call: key => disposalApi.cancel(auth.authorization_id, {
-        expected_version: Number(auth.version),
+        ...riskActionContext(auth), expected_version: Number(auth.version),
         note: String(note || '').trim() || undefined
       }, key),
       refresh,

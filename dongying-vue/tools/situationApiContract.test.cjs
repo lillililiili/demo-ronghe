@@ -67,6 +67,7 @@ async function main() {
   const trackQueries = [];
   const calls = { alarms: 0, risks: 0, handoffs: 0, plans: 0 };
   const riskQueries = [];
+  const planQueries = [];
   const riskRows = Array.from({ length:101 }, () => ({ risk: { risk_id:require('node:crypto').randomUUID(),
     risk_type:'SPACE_OBJECT',state:'NOTIFIED',current_status:'CURRENT',source_mode:'replay',occurred_at:now-86400000 } }));
   let eventCalls = 0;
@@ -150,7 +151,7 @@ async function main() {
       detail: async () => ({ source_links: [{ device_id: 'd0' }] })
     },
     listAlarms: async () => { calls.alarms++; if (alarmsGate) await alarmsGate; return { items: [], total: 0 }; },
-    listAllFlightPlans: async () => { calls.plans++; return [planRow, ...extraPlans]; },
+    listAllFlightPlans: async query => { calls.plans++; planQueries.push(query); return [planRow, ...extraPlans]; },
     flightApi: {
       routeVersion: async () => { routeSingleCalls++; return { route_version_id: 'rv1', centerline: {
         coordinates: [[118.4, 37.3], [118.6, 37.5]]
@@ -194,9 +195,11 @@ async function main() {
   const errors = [];
   const source = createSituationApiSource({ fastMs: 10, slowMs: 10_000, now: () => clock });
   source.start(value => snapshots.push(value), (error, segment) => errors.push({ error, segment }));
-  while (!snapshots.some(frame => frame.risks.length === 101)) await delay(5);
+  while (!snapshots.some(frame => frame.risks.length === 101 && frame.targets.length && frame.devices.length)) await delay(5);
 
-  const first = snapshots.find(frame => frame.risks.length === 101);
+  const first = snapshots.find(frame => frame.risks.length === 101 && frame.targets.length && frame.devices.length);
+  check('实时地图由后端过滤退出的模拟批次，仍保留当天窗口', planQueries[0],
+    { window_from: dayStart, window_to: dayStart + 86400000, exclude_retired_simulation: true });
   check('目标范围为北京时间当天零点至当前，不依赖机器时区',
     [targetQueries[0].seen_from, targetQueries[0].seen_to], [dayStart, now]);
   check('只取此刻地图显示还没到期的目标，不再每轮分页拉完当天全部目标（ZT-20 复测 2）',
@@ -254,7 +257,7 @@ async function main() {
   const planFrames=[],queriesBefore=riskQueries.length;
   const planScoped=createSituationApiSource({fastMs:60_000,slowMs:60_000,now:()=>clock});
   planScoped.start(value=>planFrames.push(value),()=>{});
-  while(planFrames.length<3)await delay(5);
+  while(!planFrames.some(frame=>frame.risks.length===101))await delay(5);
   check('多任务读取只含当前有效任务、跨日有效任务仍纳入',
     [...new Set(riskQueries.slice(queriesBefore).map(query=>query.plan_id))],[planRow.plan_id,secondId]);
   check('风险读取等任务就绪且完整分页',planFrames.at(-1).risks.length,101);
@@ -262,7 +265,7 @@ async function main() {
   const tracksBeforeDay = trackQueries.length;
   clock = Date.parse('2026-09-22T16:00:01Z');
   source.start(value => snapshots.push(value), (error, segment) => errors.push({ error, segment }));
-  while (snapshots.at(-1).generatedAt !== clock) await delay(5);
+  while (snapshots.at(-1).generatedAt !== clock || snapshots.at(-1).targets.length) await delay(5);
   check('北京时间跨天后切换新一天零点', targetQueries.at(-1).seen_from, Date.parse('2026-09-22T16:00:00Z'));
   ok('跨天后实时尾迹不混入昨天', trackQueries.slice(tracksBeforeDay).every(query => query.observed_from >= Date.parse('2026-09-22T16:00:00Z')));
   check('图上没有目标时不读尾迹', trackQueries.length, tracksBeforeDay);
@@ -273,7 +276,7 @@ async function main() {
   const pushed = createSituationApiSource({ fastMs: 60_000, slowMs: 60_000, now: () => clock });
   const pushedSnapshots = [];
   pushed.start(value => pushedSnapshots.push(value), () => {});
-  while (pushedSnapshots.length < 2) await delay(5);
+  while (!pushedSnapshots.some(frame => frame.flightPlans.length && frame.devices.length)) await delay(5);
   const counts = () => ({ targets: targetCalls, devices: devicePages.length, ...calls });
   async function afterPush(topics, until) {
     const before = counts();
@@ -289,6 +292,12 @@ async function main() {
     { targets: 1, devices: 0, alarms: 0, risks: 0, handoffs: 0, plans: 0 });
   check('告警变化只读告警',
     await afterPush(['alarm'], (a, b) => b.alarms > a.alarms),
+    { targets: 0, devices: 0, alarms: 1, risks: 0, handoffs: 0, plans: 0 });
+  check('预测变化同时刷新统一风险阶段，不停在旧的UNKNOWN状态',
+    await afterPush(['prediction'], (a, b) => b.alarms > a.alarms),
+    { targets: 0, devices: 0, alarms: 1, risks: 0, handoffs: 0, plans: 0 });
+  check('设备处置变化刷新统一风险进度',
+    await afterPush(['disposal'], (a, b) => b.alarms > a.alarms),
     { targets: 0, devices: 0, alarms: 1, risks: 0, handoffs: 0, plans: 0 });
   check('计划变化只读计划资料组',
     await afterPush(['plan'], (a, b) => b.plans > a.plans),
@@ -322,13 +331,14 @@ async function main() {
   const paced = createSituationApiSource({ fastMs: 60_000, slowMs: 60_000, now: () => clock });
   const pacedSnapshots = [];
   paced.start(value => pacedSnapshots.push(value), () => {});
-  while (pacedSnapshots.length < 2) await delay(5);
+  while (!pacedSnapshots.some(frame => frame.targets.length && frame.flightPlans.length && frame.risks.length===101)) await delay(5);
   async function pushTarget() {
-    const before = pacedSnapshots.length;
+    const before = targetCalls;
     pushHandler(['target']);
     const started = Date.now();
-    while (pacedSnapshots.length === before && Date.now() - started < 3_000) await delay(5);
-    await delay(20);
+    while (targetCalls === before && Date.now() - started < 3_000) await delay(5);
+    while (targetConcurrent) await delay(5);
+    await delay(5);
     return pacedSnapshots.at(-1).targets.find(row => row.targetId === 't1');
   }
   let tracksBefore = trackQueries.length;
@@ -385,7 +395,7 @@ async function main() {
     const before = eventCalls, frames = [], failures = [];
     const frontend = createSituationApiSource({ fastMs: 10, slowMs: 10_000, now: () => clock });
     frontend.start(value => frames.push(value), (_error, segment) => failures.push(segment));
-    while (frames.length < 2) await delay(5);
+    while (!frames.some(frame => frame.devices.length)) await delay(5);
     check('非后台身份不请求设备事件：' + String(userType), eventCalls - before, 0);
     ok('非后台身份仍读取有权设备台账：' + String(userType), frames.at(-1).devices.length === 100);
     check('非后台身份不将事件读取标记为服务异常：' + String(userType), failures, []);
@@ -397,7 +407,7 @@ async function main() {
   const noFlight=createSituationApiSource({fastMs:60_000,slowMs:60_000,now:()=>clock});
   const noFlightFrames=[],noFlightErrors=[],currentCalls=calls.risks;
   noFlight.start(value=>noFlightFrames.push(value),(_error,segment)=>noFlightErrors.push(segment));
-  while(noFlightFrames.length<2)await delay(5);
+  while(!noFlightFrames.some(frame=>frame.targets.length))await delay(5);
   check('缺少任务读取权限时不请求当前风险接口',calls.risks-currentCalls,0);
   check('缺任务权限不伪造风险或报服务故障',[noFlightFrames.at(-1).risks,noFlightErrors],[[],[]]);
   noFlight.stop();
@@ -410,7 +420,7 @@ async function main() {
   const eventsBefore = eventCalls;
   const risksBefore = calls.risks;
   duty.start(value => dutySnapshots.push(value), (error, segment) => dutyErrors.push(segment));
-  while (dutySnapshots.length < 2) await delay(5);
+  while (!dutySnapshots.some(frame => frame.targets.length)) await delay(5);
   check('没有设备监测权限时不请求设备事件', eventCalls - eventsBefore, 0);
   check('没有风险权限时不请求风险', calls.risks - risksBefore, 0);
   check('没有权限的分组不报刷新失败', dutyErrors, []);
@@ -439,7 +449,7 @@ async function main() {
   const noRouteErrors = [];
   const plansBefore = calls.plans;
   noRoute.start(value => noRouteSnapshots.push(value), (error, segment) => noRouteErrors.push(segment));
-  while (noRouteSnapshots.length < 2) await delay(5);
+  while (!noRouteSnapshots.some(frame => frame.targets.length)) await delay(5);
   check('没有航线权限时不请求飞行计划', calls.plans - plansBefore, 0);
   check('没有航线权限不报刷新失败', noRouteErrors, []);
   check('缺航线权限也不读无法关联的当前风险', noRouteSnapshots.at(-1).deniedSegments, ['risks','flight-plans']);
@@ -456,12 +466,71 @@ async function main() {
   const earlyStarted = Date.now();
   while ((!earlySnapshots.length || calls.alarms === alarmsBeforeEarly) && Date.now() - earlyStarted < 3_000) await delay(5);
   await delay(30);
-  ok('告警还没读完，目标已先发布', earlySnapshots.length === 1 && earlySnapshots[0].generatedAt === clock);
+  ok('告警还没读完，目标已先发布', earlySnapshots.some(frame => frame.targets.length && frame.generatedAt === clock));
   openAlarms();
   alarmsGate = null;
   while (earlySnapshots.length < 2 && Date.now() - earlyStarted < 3_000) await delay(5);
   ok('整轮读完后照旧再发布一次', earlySnapshots.length >= 2);
   early.stop();
+
+  // 通知历史读取迟缓时，已读回的新风险与短时预测立即可见，不等其余分段。
+  const savedAlarmReader = deps.listAlarms, savedHandoffReader = deps.handoffApi.listHandoffs;
+  const savedPredictionReader = deps.targetApi.currentPredictions;
+  for (const source_mode of ['live', 'replay']) {
+    const id = require('node:crypto').randomUUID(), samples = [], queries = [];
+    let releaseHistory, historyFinished = false;
+    const historyGate = new Promise(resolve => { releaseHistory = resolve; });
+    deps.listAlarms = async query => { queries.push(query); return { items: [{ alarm_id: id, target_id: 't1', state: 'PENDING_VERIFICATION',
+      source_mode, risk_case: { risk_case_id: id, stage: 'PREDICTED' } }], total: 1 }; };
+    deps.targetApi.currentPredictions = async () => ({ items: [{ prediction_id: id, target_id: 't1', source_mode, status: 'READY',
+      valid_until: clock + 3000, based_on_observed_at: clock }], total: 1 });
+    deps.handoffApi.listHandoffs = async () => { await historyGate; historyFinished = true; return { items: [], total: 0 }; };
+    const { createSituationApiSource: createImmediate } = await loadSource(deps);
+    const immediate = createImmediate({ fastMs: 60_000, slowMs: 60_000, now: () => clock });
+    immediate.start(value => samples.push(value), () => {});
+    const started = Date.now();
+    while (!samples.some(frame => frame.alarms.length && frame.predictions.length) && Date.now() - started < 3000) await delay(5);
+    ok(`${source_mode} 新预警和预测不等待通知历史分页`, samples.some(frame => frame.alarms.length && frame.predictions.length) && !historyFinished);
+    check('融合只读取当前有效风险阶段，历史待确认留在告警处置', queries[0].risk_stage, 'PREDICTED,ENTERED,OBSERVED');
+    ok('融合风险查询不按当天截断跨日风险', !queries[0].occurred_from && !queries[0].occurred_to);
+    releaseHistory(); await delay(20); immediate.stop();
+  }
+  deps.listAlarms = savedAlarmReader; deps.handoffApi.listHandoffs = savedHandoffReader;
+  deps.targetApi.currentPredictions = savedPredictionReader;
+
+  // 同一告警请求仍在等待时，后续新观测和预测须继续刷新；离开页面不能再报旧失败。
+  for (const source_mode of ['live', 'replay']) {
+    while (targetConcurrent) await delay(5);
+    maxTargetConcurrent = 0;
+    let rejectAlarm, releaseDetail, predictionReads = 0, alarmReads = 0, detailReads = 0;
+    const detailReader = deps.targetApi.detail;
+    const pendingDetail = new Promise(resolve => { releaseDetail = resolve; });
+    deps.targetApi.detail = async () => { detailReads++; return pendingDetail; };
+    const pendingAlarm = new Promise((_resolve, reject) => { rejectAlarm = reject; });
+    deps.listAlarms = async () => { alarmReads++; return pendingAlarm; };
+    deps.targetApi.currentPredictions = async () => ({ items: [{ prediction_id: `${source_mode}-${++predictionReads}`, target_id: 't1', source_mode }], total: 1 });
+    const { createSituationApiSource: createSplit } = await loadSource(deps);
+    const split = createSplit({ fastMs: 60_000, slowMs: 60_000, now: () => clock });
+    const frames = [], errors = [];
+    split.setSourceTarget('t1');
+    split.start(frame => frames.push(frame), (_error, segment) => errors.push(segment));
+    const started = Date.now();
+    while ((!split.current().targets.length || !predictionReads || !alarmReads || !detailReads) && Date.now() - started < 3000) await delay(5);
+    const before = targetCalls, initialPrediction = predictionReads;
+    for (let index = 0; index < 20; index++) pushHandler(['target', 'prediction']);
+    const pushedAt = Date.now();
+    while ((targetCalls === before || predictionReads === initialPrediction || targetConcurrent) && Date.now() - pushedAt < 3000) await delay(5);
+    ok(`${source_mode} 告警未完成时第二轮目标和预测照常读取`, targetCalls > before && predictionReads > initialPrediction);
+    check(`${source_mode} 连续变化不叠加告警在途请求`, alarmReads, 1);
+    check(`${source_mode} 选中目标的慢详情不阻塞新位置且至多一个在途`, detailReads, 1);
+    check(`${source_mode} 同段目标最多一个在途请求`, maxTargetConcurrent, 1);
+    split.stop(); const frameCount = frames.length;
+    rejectAlarm(new Error('late alarm timeout')); releaseDetail({ source_links: [] });
+    deps.targetApi.detail = detailReader; await delay(30);
+    check(`${source_mode} 离开页面后迟到失败不再弹到其他页面`, errors, []);
+    check(`${source_mode} 离开页面后迟到响应不再发布`, frames.length, frameCount);
+  }
+  deps.listAlarms = savedAlarmReader; deps.targetApi.currentPredictions = savedPredictionReader;
 
   // 空域连同当前版本一次取回，不逐片请求详情；旧后端不认 include 时改回逐片读取。
   airspaceRows.push({ airspace_id: 'as1', airspace_no: 'ASP-1', name: '禁飞区一' }, { airspace_id: 'as2', airspace_no: 'ASP-2', name: '禁飞区二' });
@@ -547,6 +616,7 @@ async function main() {
   let releaseList;
   listReader = () => new Promise(resolve => { releaseList = resolve; });
   const oldListRequest = guarded.refresh();
+  while (!releaseList) await delay(1);
   deps.targetApi.prediction = async () => { throw Object.assign(new Error('target scope changed'), { status: 403 }); };
   try { await guarded.loadTargetPrediction(oldForecast.target_id); } catch { /* expected */ }
   check('单目标403先清除旧范围缓存', guarded.current().predictions, []);
@@ -572,7 +642,9 @@ async function main() {
   listReader = async () => ({ items: [oldForecast], total: 1 });
   await guarded.refresh();
   listReader = () => new Promise(resolve => { releaseList = resolve; });
+  releaseList = null;
   const beforeAccessChange = guarded.refresh();
+  while (!releaseList) await delay(1);
   for (const listener of accessListeners) listener();
   check('权限刷新立即清空缓存，不等下一次轮询', guarded.current().predictions, []);
   releaseList({ items: [oldForecast], total: 1 });

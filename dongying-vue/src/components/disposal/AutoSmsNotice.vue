@@ -1,4 +1,5 @@
 <script setup>
+import { riskActionContext, riskCaseOf, riskSummaryMatches } from '@/services/riskCaseView.js';
 import { userFacingMessage } from '@/ui/labels.js';
 import { computed, onUnmounted } from 'vue';
 import { autoSmsView } from './autoSmsView.js';
@@ -21,16 +22,19 @@ const time = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: 
 function retry() {
   if (!view.value.canRetry || props.disabled) return;
   const id = props.data.event_id, version = props.data.event_version;
+  const caseId = riskCaseOf(props.data)?.risk_case_id || props.data?._riskCaseId || '';
+  const riskContext = riskActionContext(props.data);
+  if (caseId && !riskContext.risk_case_id) { toast('风险版本未提供，请刷新后重新操作', 'err'); return; }
   const key = newHandoffIdempotencyKey();
   // 超过通知时效后的发送要先核对最新情况，并由提交人确认（2026-10-06）。
   const recheck = view.value.recheck;
   const modal = openFormModal({
     title: recheck ? '核对最新情况后发送飞手短信' : '重新发送飞手短信', confirmText: recheck ? '登记发送' : '提交重试', width: '520px',
-    notice: recheck ? '提交后由后台发送这一条短信；送达后即检查电话拨打条件，不设观察等待。模拟短信不会发到真实手机。'
+    notice: recheck ? '提交后由后台发送这一条短信；电话与反制按当前后台顺序和风险资格办理。模拟短信不会发到真实手机。'
       : '提交后由后台重新发送。模拟短信不会发到真实手机。',
     warning: view.value.simulated ? '当前使用模拟短信，不会发送真实短信。' : '',
     fields: [
-      ...(recheck ? [{ key: 'checked', label: '核对结果', type: 'checkbox', boxLabel: '我已核对目标现在的位置和违规情况，仍需要提醒飞手' }] : []),
+      ...(recheck ? [{ key: 'checked', label: '核对结果', type: 'checkbox', boxLabel: '我已核对目标最新位置与当前风险，仍需要提醒飞手' }] : []),
       { key: 'note', label: recheck ? '核对说明（选填）' : '重试说明（选填）', type: 'textarea', minRows: 3, placeholder: recheck ? '可写明核对了什么，最多 1000 字' : '可补充已核查或处理的问题，最多 1000 字' }
     ],
     initial: { note: '', checked: false },
@@ -38,10 +42,11 @@ function retry() {
     validate: value => recheck && value.checked !== true ? '请先确认已核对最新情况'
       : String(value.note || '').trim().length > 1000 ? (recheck ? '核对说明不能超过 1000 字' : '重试说明不能超过 1000 字') : null,
     onSubmit: async value => {
-      const current = () => alive && id === props.data?.event_id && modal.isCurrent();
-      if (!current()) throw new Error('事件已切换，请关闭后重新操作');
+      const current = () => alive && riskSummaryMatches(props.data, id, caseId) && modal.isCurrent();
+      if (!current()) throw new Error('风险或事件已切换，请关闭后重新操作');
+      if (props.disabled || !view.value.canRetry) throw new Error('当前状态不允许发送，请关闭弹窗后核对最新结果。');
       try {
-        await uavAdvisoryApi.retrySms(id, { expected_version: version, note: String(value.note).trim() }, key);
+        await uavAdvisoryApi.retrySms(id, { ...riskContext, expected_version: version, note: String(value.note).trim() }, key);
         if (!current()) return;
         modal.close(); emit('changed'); toast(recheck ? '已登记发送，请查看后台发送结果' : '已提交重试，请查看后台发送结果', 'ok');
       } catch (error) {
@@ -56,7 +61,7 @@ function retry() {
 
 <template>
   <section class="auto-sms-notice" :class="{ 'is-compact': compact }" aria-label="飞手短信通知" :data-state="data?.auto_sms?.status">
-    <component :is="compact ? 'details' : 'div'" :key="data?.event_id" :open="compact && (data?.auto_sms?.status === 'BLOCKED' || view.expired)">
+    <component :is="compact ? 'details' : 'div'" :key="riskCaseOf(data)?.risk_case_id || data?.event_id" :open="compact && (data?.auto_sms?.status === 'BLOCKED' || view.expired)">
       <summary v-if="compact" class="notice-summary">
         <b>飞手短信</b><span class="notice-result" :class="`asn-${view.tone}`">{{ compactTitle }}</span>
         <span v-if="view.simulated" class="tag t-amber">模拟</span><span class="notice-toggle">详情</span>
@@ -72,7 +77,7 @@ function retry() {
       </dl>
       <p v-if="!view.recipient && !view.reason" class="asn-recipient">未提供接收飞手信息</p>
       <p v-if="compact && view.source === 'MANUAL_RECHECK'">{{ sourceText }}</p>
-      <details v-if="!compact && (view.source || view.evaluatedAt || view.dataUpdatedAt)" :key="data?.event_id">
+      <details v-if="!compact && (view.source || view.evaluatedAt || view.dataUpdatedAt)" :key="riskCaseOf(data)?.risk_case_id || data?.event_id">
         <summary>查看发送依据与时间</summary>
         <p v-if="view.source">{{ sourceText }}</p>
         <p v-if="view.evaluatedAt">研判时间：{{ time(view.evaluatedAt) }}</p>

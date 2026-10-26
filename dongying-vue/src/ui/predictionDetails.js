@@ -46,7 +46,7 @@ export function predictionPosition(location) {
   return point ? `${point.lon.toFixed(6)}, ${point.lat.toFixed(6)}` : '位置未提供';
 }
 const valueUnit = (value, unit) => value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? '未提供' : `${Number(value).toFixed(1)} ${unit}`;
-export function predictionDetailsHtml(prediction, { now = Date.now(), unavailable = false, frozen = false, showProximity = false } = {}) {
+export function predictionDetailsHtml(prediction, { now = Date.now(), unavailable = false, frozen = false, showProximity = false, riskCase = null } = {}) {
   if (!prediction) return '<p class="prediction-message" role="status">尚无可读取的预测依据。</p>';
   const current = predictionIsCurrent(prediction, now, unavailable);
   const expiredWithoutPoints = !frozen && prediction.valid_until != null && prediction.valid_until !== ''
@@ -58,7 +58,9 @@ export function predictionDetailsHtml(prediction, { now = Date.now(), unavailabl
   const source = prediction.simulated || prediction.source_mode === 'replay' ? '模拟／回放' : prediction.source_mode === 'live' ? '真实来源' : '来源未提供';
   const inactiveNote = [
     warnings.some(warning => warning.state === 'WITHDRAWN') ? '已撤销的预测预警保留为历史记录。' : '',
-    warnings.some(warning => warning.state === 'ENTERED') ? '已确认实测入区，后续查看实际入区处置进度。' : '',
+    warnings.some(warning => warning.state === 'ENTERED') ? riskCase?.risk_case_id
+      ? '预测已转为实测入区，后续处置仍在同一风险记录中办理，当前状态以风险阶段为准。'
+      : '已确认实测入区，后续查看实际入区处置进度。' : '',
     pendingWarnings ? '尚未结束的预警保留待确认；这不代表风险已解除。' : '',
     !warnings.length ? '当前没有可用的未来位置；是否存在入区风险仍需有效依据确认。' : ''
   ].filter(Boolean).join('');
@@ -82,19 +84,18 @@ export function predictionDetailsHtml(prediction, { now = Date.now(), unavailabl
     return `<div class="prediction-warning"><b>${esc(PREDICTION_STATES[status] || '预测状态未知')} · ${esc(warning.airspace_name || '禁飞区')}</b>
       <span>${eta ? esc(eta) + ' · ' : ''}预计入区时间 ${esc(predictionTime(warning.entry_at))}</span><span>预计入区位置 ${esc(predictionPosition(warning.entry_location))}</span>
       <small>空域版本 ${esc(versions.join('、') || '未提供')} · 预警状态版本 ${esc(warning.version ?? '未提供')}</small>${warning.airspace_basis === 'FIRST_FROZEN' ? '<small>缺失空域资料来自首次冻结依据。</small>' : warning.airspace_basis === 'LAST_KNOWN' ? '<small>空域名称与版本为最后有效预测依据。</small>' : ''}${warning.reason ? `<span>${esc(predictionReasonText(warning.reason))}</span>` : ''}
-      ${!frozen && warning.event_id ? `<a class="lnk" href="#/alarms?event=${encodeURIComponent(warning.event_id)}">查看预测预警与办理进度</a>` : ''}</div>`;
+      </div>`;
   }).join('');
   return `<header class="prediction-title"><strong>${esc(state)}</strong><span class="tag t-cyan">预测</span></header>
     ${!frozen && !current ? `<p class="prediction-message" role="status">${unavailable ? '预测读取失败，以下为上次结果。' : '预测依据不足或已经过期。'}未来线已隐藏。${esc(inactiveNote)}</p>` : '<p class="prediction-message">虚线和空心点表示预计位置，实测轨迹保持原样。时间均为北京时间，+10／20／30秒以预测生成时刻计算。</p>'}
     ${!frozen && prediction.evidence_status === 'LAST_KNOWN' ? `<p class="prediction-message">保留的历史依据仅供追溯，不能作为当前有效预测。${prediction.last_evidence_observed_at != null ? `最后有效预测所用实测：${esc(predictionTime(prediction.last_evidence_observed_at))}。` : ''}${prediction.last_evidence_generated_at != null ? `最后有效预测生成：${esc(predictionTime(prediction.last_evidence_generated_at))}。` : ''}</p>` : ''}
     <dl class="kv">${rows.map(([label, value]) => `<dt>${esc(label)}</dt><dd>${esc(value)}</dd>`).join('')}</dl>
-    ${expiredWithoutPoints ? '<p class="prediction-message">当前预测位置已失效，历史预测请查看首次预警的冻结依据。</p>' : `<details${frozen ? '' : ' open'}><summary>未来 30 秒的位置与高度${!current && !frozen ? '（上次结果）' : ''}</summary>
+    ${expiredWithoutPoints ? '<p class="prediction-message">当前预测位置已失效。</p>' : `<details${frozen ? '' : ' open'}><summary>未来 30 秒的位置与高度${!current && !frozen ? '（上次结果）' : ''}</summary>
       <div class="prediction-table-scroll"><table><thead><tr><th>预测时长</th><th>预计时刻</th><th>经纬度</th><th>高度</th><th>位置不确定范围</th></tr></thead><tbody>${points}</tbody></table></div></details>`}
     <p class="prediction-message">${esc((prediction.reason_codes || []).map(predictionReasonText).join('；'))}</p>
     ${prediction.uncertainty_note ? `<p class="prediction-message">${esc(prediction.uncertainty_note)}</p>` : ''}
     ${(prediction.evidence_notes || []).length ? `<p class="prediction-message">${esc(predictionEvidenceNotesText(prediction.evidence_notes))}</p>` : ''}
-    ${warningRows || '<p class="prediction-message">尚无稳定入区预警。</p>'}${proximity}
-    <details><summary>算法与规则版本</summary><dl class="kv"><dt>算法版本</dt><dd>${esc(prediction.model_version || '未提供')}</dd><dt>规则版本</dt><dd>${esc(prediction.rule_version || '未提供')}</dd></dl></details>`;
+    ${warningRows || '<p class="prediction-message">尚无稳定入区预警。</p>'}${proximity}`;
 }
 
 
@@ -107,7 +108,9 @@ export function predictionAlarmStatusHtml(alarm, { now = Date.now(), currentObse
   const process = ['WITHDRAWN', 'ENTERED'].includes(state) && eventState === 'PENDING_VERIFICATION' ? '原核实记录保留' : verified;
   const tone = state === 'ACTIVE' ? 'amber' : state === 'ENTERED' ? 'red' : 'grey';
   const detail = state === 'WITHDRAWN' ? '本次预测预警已撤销，原核实与通知记录保留。'
-    : state === 'ENTERED' ? '实测已确认进入预警空域，请查看实际入区告警及处置进度。'
+    : state === 'ENTERED' ? (alarm.risk_case || alarm.riskCase)?.risk_case_id
+      ? '预测已转为实测入区，后续处置仍在同一风险记录中办理，当前状态以风险阶段为准。'
+      : '实测已确认进入预警空域，请查看实际入区告警及处置进度。'
       : !currentObservation ? '当前实测位置无效或不可确认，不能当作已进入或已撤离。'
         : legalStatus === 'LEGAL' ? '当前实测尚未进入预警空域；当前合法不代表预测风险已解除。'
           : '当前实测研判与预测入区风险分别处理，不能据此推断已撤离。';
@@ -122,5 +125,5 @@ export function predictionAlarmStatusHtml(alarm, { now = Date.now(), currentObse
     <span class="uav-now-sub">${esc(detail)}</span></div>
     ${includeReason ? `<div class="sit-target-alarm-reason is-risk" aria-label="${reasonLabel}"><span>${reasonLabel}</span>
       <strong>预计进入${esc(warning?.airspace_name || '禁飞区（名称未提供）')}</strong>
-      <small>${frozenWarning ? '依据首次预警冻结快照。' : '首次冻结依据见预警详情。'}</small></div>` : ''}`;
+      <small>${frozenWarning ? '依据首次预警冻结快照。' : '依据本次预测预警。'}</small></div>` : ''}`;
 }

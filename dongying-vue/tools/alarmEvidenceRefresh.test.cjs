@@ -1,3 +1,4 @@
+const riskHelpers = require('./riskCaseTestHelpers.cjs');
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { readFileSync } = require('node:fs');
@@ -18,7 +19,7 @@ function fixture() {
   const calls = [], paints = [];
   const nextChain = { files: [{ evidence_id: randomUUID(), kind_code: 'EO_STILL' }, { evidence_id: randomUUID(), kind_code: 'EO_VIDEO' }] };
   let subscription;
-  const deps = {
+  const deps = { authorizationPageActive: true, ...riskHelpers, readRiskAlarm: async () => ({ ...alarm }),
     cur, st, list: { rows: [alarm] }, detailSeq: 1, disposalSeq: 1,
     disposal: {}, getAlarm: async () => ({ ...alarm }), getUavEvent: async () => ({ ...event }),
     getEvidenceChain: async (...args) => { calls.push(args); return nextChain; },
@@ -58,4 +59,19 @@ test('unrelated changes and no selected alarm do not fetch an evidence chain', a
   f.st.selId = '';
   await f.subscription.reload(['evidence']);
   assert.equal(f.calls.length, 0);
+});
+
+
+test('列表静默刷新期间离页，列表返回后不继续读风险详情或处置', async () => {
+  for (const topics of [['evidence'], ['disposal'], ['prediction'], ['*']]) {
+    const alarm = { alarm_id: randomUUID(), event_id: randomUUID() }; let release;
+    const calls = [], deps = { ...riskHelpers, list: { loading: false, rows: [alarm] }, st: { selId: alarm.alarm_id },
+      cur: { alarm, loading: false }, realtimeKpis() {}, takeProgress: () => false,
+      loadList: () => new Promise(resolve => { release = resolve; }),
+      refreshSelected: async () => calls.push('selected'), refreshEventDisposals: async () => calls.push('disposal') };
+    const api = new Function(...Object.keys(deps), 'let authorizationPageActive = true;\n' + body('realtimeRefresh')
+      + '\nreturn { run: realtimeRefresh, leave: () => { authorizationPageActive = false; } };')(...Object.values(deps));
+    const pending = api.run(topics); api.leave(); release(); await pending;
+    assert.deepEqual(calls, [], topics.join(',')); await api.run(topics); assert.deepEqual(calls, []);
+  }
 });

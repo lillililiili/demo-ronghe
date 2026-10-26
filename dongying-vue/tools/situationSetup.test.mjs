@@ -1,3 +1,5 @@
+import * as riskHelpers from '../src/services/riskCaseView.js';
+import * as riskFlow from '../src/pages/situation/situationFlow.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -7,7 +9,7 @@ import * as prediction from '../src/services/predictionView.js';
 import * as eoCoverage from '../src/pages/situation/eoCoverage.js';
 import * as eoSelection from '../src/pages/situation/eoSelection.js';
 
-function createPage(now = Date.now()) {
+function createPage(now = Date.now(), sourceOverrides = {}) {
   const file = readFileSync(new URL('../src/pages/SituationPage.vue', import.meta.url), 'utf8');
   let script = file.match(/<script setup>([\s\S]*?)<\/script>/)[1];
   const bindings = {};
@@ -17,25 +19,26 @@ function createPage(now = Date.now()) {
     }
     return '';
   });
-  const stats = { watchCount: 0, mapCreated: 0 };
-  const context = vm.createContext({ ...bindings, ...prediction, ...eoCoverage, ...eoSelection,
-    authSession: ref('test-session'),
+  const unmounts = [];
+  const stats = { watchCount: 0, mapCreated: 0, notices: [] };
+  const context = vm.createContext({ ...bindings, ...riskHelpers, ...riskFlow, ...prediction, ...eoCoverage, ...eoSelection,
+    authSession: ref('test-session'), toast: (message, tone) => stats.notices.push({ message, tone }), displayBusinessNo: value => value,
     computed, ref, nextTick, watch: (...args) => { stats.watchCount++; return watch(...args); },
-    onMounted() {}, onUnmounted() {}, serverNow: () => now,
+    onMounted() {}, onUnmounted: callback => unmounts.push(callback), serverNow: () => now,
     useRoute: () => ({ query: {} }), createSituationApiSource: () => ({ setSourceTarget() {},
-      loadTargetDetail: async () => null, loadTargetPrediction: async () => null }),
+      loadTargetDetail: async () => null, loadTargetPrediction: async () => null, stop() {}, ...sourceOverrides }),
     groupRouteRisks: () => [], riskSnapshotMarkers: () => [],
-    window: { UI: { icon: () => '', businessIcon: () => '' }, MapView: function () { stats.mapCreated++; } },
+    document: { removeEventListener() {} }, window: { clearInterval() {}, UI: { icon: () => '', businessIcon: () => '' }, MapView: function () { stats.mapCreated++; } },
     sessionStorage: { getItem: () => null, setItem() {} }, console
   });
   const scope = effectScope();
   try {
     scope.run(() => vm.runInContext(`${script}\n globalThis.page = {
-      snapshot, selection, nowTick, predictionRows, predictionClusterIds, visiblePredictionRows,
-      selectedPrediction, selectedTarget, mapPredictions, showSelectionPopup, selectPrediction, clearSelection,
+      snapshot, selection, nowTick, refreshSlow, predictionRows, alertTab, alertsExpanded, predictionClusterIds, visiblePredictionRows,
+      selectedPrediction, selectedTarget, selectedUavAlarm, alarms, videoContext, showTargetVideo, mapPredictions, showSelectionPopup, selectPrediction, selectAlarm, selectTarget, clearSelection,
       eoDevice, eoSelected, setEoExpanded, onMapPick, attachMap: value => { map = value; syncMapData(); }
     };`, context));
-    return { ...context.page, stats, stop: () => scope.stop() };
+    return { ...context.page, stats, leave: () => unmounts.forEach(fn => fn()), stop: () => scope.stop() };
   } catch (error) { scope.stop(); throw error; }
 }
 
@@ -198,4 +201,133 @@ test('预测刷新与光电小地图共存：小地图只显示本机覆盖目�
       assert.equal(frames.at(-1).targets.length, 2, '预测过期不移除实测目标');
     } finally { page.stop(); }
   }
+});
+
+test('有效新预测预警展开右上角页签，同周期重算和恢复不反复抢页签', async () => {
+  for (const prefix of ['north-alert', 'south-alert']) {
+    const now = Date.now(), page = createPage(now);
+    try {
+      const first = forecast(prefix, now);
+      page.alertsExpanded.value = false;
+      page.snapshot.value = { ...page.snapshot.value, predictions: [first] };
+      await nextTick();
+      assert.equal(page.alertTab.value, 'target');
+      assert.equal(page.alertsExpanded.value, true);
+      assert.equal(page.selection.value, null); // 提醒不改变地图选择或办理对象。
+      page.alertTab.value = 'route'; page.alertsExpanded.value = false;
+      for (const prediction of [{ ...first, prediction_id: 'recomputed' },
+        { ...first, status: 'UNKNOWN' }, first]) {
+        page.snapshot.value = { ...page.snapshot.value, predictions: [prediction] };
+        await nextTick();
+        assert.equal(page.alertTab.value, 'route');
+        assert.equal(page.alertsExpanded.value, false);
+      }
+      page.snapshot.value = { ...page.snapshot.value, predictions: [forecast(prefix + '-new-cycle', now)] };
+      await nextTick();
+      assert.equal(page.alertTab.value, 'target');
+      assert.equal(page.alertsExpanded.value, true);
+    } finally { page.stop(); }
+  }
+});
+
+test('未知、已撤销、已入区及过期预测不弹出新预警', async () => {
+  const now = Date.now(), page = createPage(now);
+  try {
+    const first = forecast('not-current', now);
+    for (const prediction of [{ ...first, status: 'UNKNOWN' }, { ...first, valid_until: now },
+      ...['WITHDRAWN', 'ENTERED'].map(state => ({ ...first, warnings: first.warnings.map(row => ({ ...row, state })) }))]) {
+      page.snapshot.value = { ...page.snapshot.value, predictions: [prediction] };
+      await nextTick();
+      assert.equal(page.alertTab.value, 'target');
+      assert.equal(page.predictionRows.value.length, 0);
+    }
+  } finally { page.stop(); }
+});
+
+test('统一风险从预计入区转实际入区保留所选区域、卡片及视频上下文', async () => {
+  for (const sourceMode of ['live', 'replay']) {
+    const now = Date.now(), page = createPage(now), predicted = forecast(sourceMode, now);
+    const risk_case_id = `case-${sourceMode}`;
+    const first = { id: 'first', alarmId: 'first-alarm', eventId: predicted.warnings[0].event_id,
+      targetInternalId: predicted.target_id, targetId: predicted.target_no, eventState: 'CONFIRMED', sourceMode,
+      originKind: 'PREDICTED_AIRSPACE_ENTRY', risk_case: { risk_case_id, version: 3, stage: 'PREDICTED', verification_status: 'CONFIRMED', airspace_id: 'area-one' } };
+    const target = { id: predicted.target_no, targetId: predicted.target_id, objectTypeCode: 'UAV', relatedAlarms: [first] };
+    try {
+      page.snapshot.value = { ...page.snapshot.value, predictions: [predicted], targets: [target], alarms: [first] };
+      await nextTick(); page.selectAlarm(first); await nextTick();
+      page.showTargetVideo.value = true; const videoKey = page.videoContext.value.key, selection = page.selection.value;
+      const entered = { ...first, id: 'observed', alarmId: 'observed-alarm', eventId: 'observed-event',
+        risk_case: { ...first.risk_case, version: 4, stage: 'ENTERED' } };
+      const another = { ...entered, alarmId: 'other-area', risk_case: { ...entered.risk_case, risk_case_id: 'another-case', airspace_id: 'area-two', verification_status: 'PENDING_VERIFICATION' } };
+      page.snapshot.value = { ...page.snapshot.value, predictions: [], alarms: [entered, another], targets: [{ ...target, relatedAlarms: [another, entered] }] };
+      await nextTick();
+      assert.equal(page.selection.value, selection);
+      assert.equal(page.selectedUavAlarm.value.risk_case.risk_case_id, risk_case_id);
+      assert.equal(page.selectedUavAlarm.value.eventId, 'observed-event');
+      assert.equal(page.videoContext.value.key, videoKey); assert.equal(page.showTargetVideo.value, true);
+      assert.equal(page.alarms.value.length, 2, '不同区域保留独立风险，同周期没有预测重复项');
+    } finally { page.stop(); }
+  }
+});
+
+
+test('预测先读回、同风险列表迟到及转实测只提示一次，新区域或新周期单独提示', async () => {
+  for (const sourceMode of ['live', 'replay']) {
+    const now = Date.now(), page = createPage(now), prediction = forecast(`dedup-${sourceMode}`, now);
+    const episode = `episode-${sourceMode}`, caseId = `risk-${sourceMode}`;
+    prediction.warnings[0] = { ...prediction.warnings[0], episode_id: episode, airspace_id: 'area-one' };
+    const first = { id: 'original-alarm', alarmId: 'original-alarm', eventId: prediction.warnings[0].event_id,
+      targetInternalId: prediction.target_id, targetId: prediction.target_no, eventState: 'PENDING_VERIFICATION', sourceMode,
+      prediction, originKind: 'PREDICTED_AIRSPACE_ENTRY',
+      risk_case: { risk_case_id: caseId, version: 1, stage: 'PREDICTED', airspace_id: 'area-one', verification_status: 'PENDING_VERIFICATION' } };
+    const target = { id: prediction.target_no, targetId: prediction.target_id, objectTypeCode: 'UAV', relatedAlarms: [first] };
+    try {
+      page.snapshot.value = { ...page.snapshot.value, predictions: [prediction] }; await nextTick();
+      assert.equal(page.stats.notices.length, 1, '首次有效预测不是历史基线，立即提示');
+      page.alertTab.value = 'route'; page.alertsExpanded.value = false;
+      page.snapshot.value = { ...page.snapshot.value, alarms: [first], targets: [target] }; await nextTick();
+      assert.equal(page.stats.notices.length, 1, '通过明确episode关联到risk_case，不重复提示');
+      assert.equal(page.alertTab.value, 'route'); assert.equal(page.alertsExpanded.value, false);
+      const entered = { ...first, prediction: undefined, id: 'measured-alarm', alarmId: 'measured-alarm', eventId: 'measured-event',
+        risk_case: { ...first.risk_case, stage: 'ENTERED', version: 2 } };
+      page.snapshot.value = { ...page.snapshot.value, predictions: [], alarms: [entered] }; await nextTick();
+      assert.equal(page.stats.notices.length, 1, '入区阶段变化不改变风险身份');
+      const other = { ...entered, risk_case: { ...entered.risk_case, risk_case_id: `${caseId}-second-area`, airspace_id: 'area-two' } };
+      page.snapshot.value = { ...page.snapshot.value, alarms: [entered, other] }; await nextTick();
+      assert.equal(page.stats.notices.length, 2, '同一实测事件不同区域独立提醒');
+      assert.equal(page.alertsExpanded.value, true);
+    } finally { page.stop(); }
+  }
+});
+
+
+test('选中目标的详情和预测迟到失败在离页后不弹到其他页面', async () => {
+  const now = Date.now(), rejects = [];
+  const read = () => new Promise((_resolve, reject) => rejects.push(reject));
+  const page = createPage(now, { loadTargetDetail: read, loadTargetPrediction: read });
+  try {
+    const target = { id: 'current-target', targetId: 'internal-target', objectTypeCode: 'UAV' };
+    page.snapshot.value = { ...page.snapshot.value, targets: [target] }; await nextTick();
+    page.selectTarget(target); assert.equal(rejects.length, 2); page.leave();
+    rejects.forEach(reject => reject(Object.assign(new Error('late failure'), { code: 'TIMEOUT' })));
+    await Promise.resolve(); await nextTick(); assert.equal(page.stats.notices.length, 0);
+  } finally { page.stop(); }
+});
+
+
+test('SSE正常空闲和无权限不报刷新慢，仅真实目标请求超时或失败提示', async () => {
+  const now = Date.now(), page = createPage(now);
+  try {
+    page.snapshot.value = { ...page.snapshot.value, startedAt: now, generatedAt: now, targetUpdatedAt: now, targetRefreshStartedAt: 0 };
+    page.nowTick.value = now + 30000; await nextTick();
+    assert.equal(page.refreshSlow.value, false, '没有新观测的正常空闲不代表数据刷新故障');
+    page.snapshot.value = { ...page.snapshot.value, targetRefreshStartedAt: now + 10000 }; await nextTick();
+    assert.equal(page.refreshSlow.value, true, '实际目标读取已在途20秒');
+    page.snapshot.value = { ...page.snapshot.value, deniedSegments: ['targets'] }; await nextTick();
+    assert.equal(page.refreshSlow.value, false, '无权限不伪装服务异常');
+    page.snapshot.value = { ...page.snapshot.value, deniedSegments: [], targetRefreshStartedAt: 0, failedSegments: ['targets'] }; await nextTick();
+    assert.equal(page.refreshSlow.value, true);
+    page.snapshot.value = { ...page.snapshot.value, failedSegments: [], targetUpdatedAt: now + 30000 }; await nextTick();
+    assert.equal(page.refreshSlow.value, false);
+  } finally { page.stop(); }
 });

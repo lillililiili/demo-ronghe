@@ -622,10 +622,10 @@ class FullChain:
             # forecast rules; selecting weather must not inject three preset warnings.
         self.checkpoint()
 
-    def tick(self, targets, elapsed, sequence):
+    def tick(self, targets, elapsed, sequence, *, observed_at=None):
         from engine import target_sample, target_reporting
         if self.cancelled():return
-        now=self.clock()
+        now=self.clock() if observed_at is None else observed_at
         devices = self.observation_devices()
         sources = self.manifest.get('normalized_sources', {})
         items_by_device = {}

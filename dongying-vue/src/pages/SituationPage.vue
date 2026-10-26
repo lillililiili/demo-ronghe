@@ -3,6 +3,8 @@
 import { punishmentHandoffProgress } from '@/ui/punishmentHandoffProgress.js';
 import { displayBusinessNo, displayTargetNo, displayNumberReferences } from '@/ui/deviceNumber.js';
 import { computed, h, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { NSelect } from 'naive-ui';
+import { riskCaseOf, riskCaseKey, riskStageLabel, RISK_STAGE_LABEL, riskCaseVisible, riskCaseVerificationLabel } from '@/services/riskCaseView.js';
 import { useRoute } from 'vue-router';
 import { ChevronUpOutline, GitCompareOutline, LocateOutline } from '@vicons/ionicons5';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
@@ -16,7 +18,7 @@ import {
   uavProcessActions, uavProcessStatus
 } from '@/pages/situation/situationFlow.js';
 import { closeModal, openFormModal } from '@/ui/formModal.js';
-import { getUavEvent } from '@/services/alarmApi.js';
+import { getUavRiskCase, getUavEvent } from '@/services/alarmApi.js';
 import { openUavVerification } from '@/ui/uavVerificationModal.js';
 import {
   CORRIDOR_RELATION_LABEL, PLAN_STATUS_LABEL, RISK_STATE_LABEL, SEVERITY_LABEL, SOURCE_MODE_LABEL, labelOf
@@ -25,6 +27,7 @@ import { toast } from '@/ui/nv.js';
 import { getAlarm } from '@/services/alarmApi.js';
 import SituationAdvisoryCard from './situation/SituationAdvisoryCard.vue';
 import SituationNextStep from './situation/SituationNextStep.vue';
+import SituationTargetCard from './situation/SituationTargetCard.vue';
 import SituationDeviceReport from './situation/SituationDeviceReport.vue';
 import SituationAlarmPopup from './situation/SituationAlarmPopup.vue';
 import { PILOT_LOCATION_IN_ALARM_DETAIL, pilotLocationText } from '@/services/pilotLocation.js';
@@ -68,7 +71,11 @@ const departureByEvent = ref({});
 const expandedType = ref('');
 const devicesExpanded = ref(true);
 const alertTab = ref('target');
+const riskStageFilter = ref('');
+const riskStageOptions = [{ label: '全部阶段', value: '' }, ...['PREDICTED', 'ENTERED', 'OBSERVED'].map(value => ({ value, label: RISK_STAGE_LABEL[value] }))];
 const alertsExpanded = ref(true);
+// 同一风险周期只提醒一次；重算、暂时失效后恢复不抢回用户手动切换的页签。
+const announcedRiskKeys = new Set();
 const fuseOpen = ref(false);
 const showTargetVideo = ref(false);
 const eoDevice = ref(null), eoExpanded = ref(false), eoMode = ref('point'), eoSelected = ref([]), eoFocusedId = ref('');
@@ -76,10 +83,15 @@ const source = createSituationApiSource();
 const layers = ref({ prediction: true, coverage: true, device: true, track: true, flightPlan: true, airspace: true });
 const statusAnnouncement = ref('正在连接融合感知服务');
 let viewedKeys = loadViewedKeys();
+watch(authSession, () => announcedRiskKeys.clear());
 let rawSnapshot = null;
 let map = null;
 let stopSource = null;
-let lastSourceErrorAt = 0;
+let situationPageActive = true, selectedReadSequence = 0;
+const reportedSourceFailures = new Set();
+const SEGMENT_LABEL = { predictions: '未来预测', targets: '目标', 'target-sources': '目标融合来源', alarms: '告警', risks: '航线风险', handoffs: '移送', devices: '设备',
+  'device-events': '设备事件', 'flight-plans': '飞行任务', airspaces: '空域', 'fusion-status': '融合状态' };
+const sourceFailureLabels = computed(() => (snapshot.value.failedSegments || []).map(segment => SEGMENT_LABEL[segment] || segment).join('、'));
 let selectionResizeObserver = null;
 let expiryTimer = null;
 let mainMapView = null;
@@ -151,9 +163,11 @@ function locateEoTarget(row){
 }
 const currentTargetIds = computed(() => new Set(targets.value.map(target => target.targetId).filter(Boolean)));
 const alarms = computed(() => (snapshot.value.alarms || [])
-  .filter(alarm => alarm.originKind !== PREDICTION_ORIGIN && currentTargetIds.value.has(alarm.targetInternalId) && situationAlarmNeedsAttention(alarm) && !alarmDeparted(alarm))
+  .filter(alarm => currentTargetIds.value.has(alarm.targetInternalId) && riskCaseVisible(alarm) && situationAlarmNeedsAttention(alarm)
+    && (isPredictionAlarm(alarm) ? predictionRows.value.some(row => row.warning.event_id === alarm.eventId || row.warning.alarm_id === alarm.alarmId || (row.warning.risk_case_id && row.warning.risk_case_id === riskCaseOf(alarm)?.risk_case_id)) : !alarmDeparted(alarm)))
   .slice()
   .sort((a, b) => b.ts - a.ts));
+const visibleUavRisks = computed(() => alarms.value.filter(alarm => !riskStageFilter.value || riskCaseOf(alarm)?.stage === riskStageFilter.value));
 const evidenceRoute = useRoute();
 let evidenceTargetHandled = '';
 watch(() => [evidenceRoute.query.target, snapshot.value.generatedAt], ([id, generatedAt]) => {
@@ -245,7 +259,7 @@ let predictionAlarmDetailSeq = 0;
 const selectedUavAlarm = computed(() => {
   if (selection.value?.kind === 'alarm' || selection.value?.alarmId) {
     const alarmId = selection.value.alarmId || selection.value.id;
-    return alarms.value.find(item => item.alarmId === alarmId) || null;
+    return alarms.value.find(item => riskCaseKey(item) === (selection.value.riskCaseId || alarmId) || item.alarmId === alarmId) || null;
   }
   return selectedTarget.value?.objectTypeCode === 'UAV' ? targetAlarm(selectedTarget.value) : null;
 });
@@ -260,7 +274,7 @@ const videoContext = computed(() => {
   const targetId = risk ? risk.targetInternalId || '' : target?.targetId || alarm?.targetInternalId || '';
   const linked = target || targets.value.find(item => item.targetId === targetId);
   return {
-    key: `${selection.value?.kind}:${selection.value?.id}:${risk?.riskId || alarm?.alarmId || ''}:${targetId}`,
+    key: `${selection.value?.kind}:${selection.value?.id}:${risk?.riskId || riskCaseKey(alarm)}:${targetId}`,
     targetId,
     // 取证关联的告警事件：只取与视频同一目标的无人机告警。
     eventId: !risk && alarm?.eventId && alarm.targetInternalId === targetId ? alarm.eventId : '',
@@ -273,12 +287,32 @@ watch(() => videoContext.value?.key, () => { showTargetVideo.value = false; }, {
 watch(() => selectedTarget.value?.targetId, targetId => source.setSourceTarget(targetId || null), { flush: 'sync' });
 const fusionSources = computed(() => sourceContributionCards(selectedTarget.value, devices.value));
 const fusionConfidence = computed(() => selectedTarget.value?.fusedConf ?? null);
-const clockText = computed(() => formatClock(snapshot.value.generatedAt));
-/* 数据刷新慢（CDX-P01）：地图上的目标只在有效期（十几秒）内显示，最近一轮数据超过 10 秒还没更新，
-   目标会陆续按期退出地图，看起来像"没有目标"。这时明确提示是刷新慢，不让值班员误以为空中没有东西。 */
+const targetRefreshAt = computed(() => snapshot.value.targetUpdatedAt || snapshot.value.startedAt || snapshot.value.generatedAt);
+const clockText = computed(() => formatClock(targetRefreshAt.value));
+/* 数据刷新慢（CDX-P01）：地图上的目标只在有效期（十几秒）内显示，目标请求在途超过 10 秒仍未完成或目标读取失败，
+   才提示刷新慢。SSE 正常空闲没有新观测时，不用距上次读回的时间假定故障。 */
 const SLOW_REFRESH_SECONDS = 10;
 const nowTick = ref(serverNow());
 watch(mapPredictions, () => syncMapData(), { flush: 'post' });
+watch([alarms, predictionRows], ([alarmRows, forecasts]) => {
+  // 预测先读回时即可提醒；统一风险列表随后返回、转实测或重算，不重复弹出同一风险。
+  const candidates = [
+    ...alarmRows.map(row => ({ keys: [eventKey(row), ...(row.prediction?.warnings || [row.prediction?.warning]).filter(warning => warning?.episode_id && (!riskCaseOf(row)?.airspace_id || !warning.airspace_id || warning.airspace_id === riskCaseOf(row).airspace_id)).map(warning => `episode:${warning.episode_id}`)], target: row.targetId || row.id,
+      phase: riskStageLabel(row) || (isPredictionAlarm(row) ? '预计入区' : row.type), area: riskCaseOf(row)?.airspace_name })),
+    ...forecasts.map(row => ({ keys: [row.warning.risk_case_id, row.warning.episode_id ? `episode:${row.warning.episode_id}` : `prediction:${row.key}`].filter(Boolean), target: row.targetNo || row.targetId,
+      phase: '预计入区', area: row.name }))
+  ];
+  const fresh = candidates.filter(row => {
+    const announced = row.keys.some(key => announcedRiskKeys.has(key));
+    row.keys.forEach(key => announcedRiskKeys.add(key));
+    return !announced;
+  });
+  if (!fresh.length) return;
+  alertTab.value = 'target'; alertsExpanded.value = true; predictionClusterIds.value = [];
+  const first = fresh[0];
+  toast(`${fresh.length > 1 ? `发现 ${fresh.length} 项无人机风险；` : ''}${displayBusinessNo(first.target) || '无人机'}：${first.phase}${first.area ? ` · ${first.area}` : ''}`, 'warn');
+}, { flush: 'post' });
+
 watch([selectedPrediction, predictionRows], ([prediction, rows]) => {
   if (selection.value?.kind === 'prediction' && !prediction) clearSelection();
   predictionClusterIds.value = predictionClusterIds.value.filter(id => rows.some(row => row.key === id));
@@ -293,8 +327,13 @@ watch(() => isPredictionAlarm(selectedUavAlarm.value) ? selectedUavAlarm.value.a
   } catch { /* 冻结依据不可读时不以最新结果冒充首次快照。 */ }
 }, { immediate: true });
 onUnmounted(() => { predictionAlarmDetailSeq++; });
-const refreshLagSeconds = computed(() => snapshot.value.generatedAt ? Math.max(0, Math.floor((nowTick.value - snapshot.value.generatedAt) / 1000)) : 0);
-const refreshSlow = computed(() => refreshLagSeconds.value >= SLOW_REFRESH_SECONDS);
+const refreshLagSeconds = computed(() => targetRefreshAt.value ? Math.max(0, Math.floor((nowTick.value - targetRefreshAt.value) / 1000)) : 0);
+const refreshSlow = computed(() => {
+  if ((snapshot.value.deniedSegments || []).includes('targets')) return false;
+  const startedAt = Number(snapshot.value.targetRefreshStartedAt || 0);
+  return (startedAt > 0 && nowTick.value - startedAt >= SLOW_REFRESH_SECONDS * 1000)
+    || ((snapshot.value.failedSegments || []).includes('targets') && refreshLagSeconds.value >= SLOW_REFRESH_SECONDS);
+});
 const sourceModeText = computed(() => snapshot.value.simulated ? '含模拟数据'
   : snapshot.value.sourceMode === 'replay' ? '回放数据'
   : snapshot.value.sourceMode === 'live' ? '实时数据'
@@ -315,7 +354,7 @@ function loadViewedKeys() {
 }
 
 function eventKey(item) {
-  return `${item?.id || ''}:${Number(item?.occurredAt ?? item?.ts ?? 0)}`;
+  return riskCaseOf(item) ? riskCaseKey(item) : `${item?.id || ''}:${Number(item?.occurredAt ?? item?.ts ?? 0)}`;
 }
 
 function persistViewedKeys() {
@@ -413,8 +452,8 @@ function decorate(next) {
     return {
       ...alarm,
       isNew: isNewEvent(alarm),
-      disposalStage: disposalStage(target?.disposalSummary),
-      handoff: punishmentHandoffProgress(punishmentRows.get(alarm.eventId)) || ''
+      disposalStage: riskCaseOf(alarm) ? disposalStage(riskCaseOf(alarm).counter) : disposalStage(target?.disposalSummary),
+      handoff: riskCaseOf(alarm)?.manual_counter_only ? '' : punishmentHandoffProgress(punishmentRows.get(alarm.eventId)) || ''
     };
   });
   const now = serverNow();
@@ -482,6 +521,7 @@ function decorate(next) {
 function applySnapshot(next) {
   const previousSelectedTargetId = selectedTarget.value?.targetId;
   rawSnapshot = next;
+  for (const segment of reportedSourceFailures) if (!(next.failedSegments || []).includes(segment)) reportedSourceFailures.delete(segment);
   const decorated = decorate(currentMapSnapshot(next));
   snapshot.value = decorated;
   if (selection.value?.kind === 'target' && !decorated.targets.some(target => target.id === selection.value.id)) {
@@ -524,12 +564,13 @@ function syncMapData() {
 }
 
 function onSourceError(error, segment) {
-  statusAnnouncement.value = `${segment}数据刷新失败，已保留上次真实结果`;
-  const at = Date.now();
-  if (at - lastSourceErrorAt > 15_000) {
-    lastSourceErrorAt = at;
-    toast(`${segment}刷新失败：${error?.message || '服务异常'}；已保留上次结果`, 'err');
-  }
+  if (!situationPageActive) return;
+  const label = SEGMENT_LABEL[segment] || segment;
+  statusAnnouncement.value = `${label}更新失败，正在重试；已保留上次真实结果`;
+  if (reportedSourceFailures.has(segment)) return;
+  reportedSourceFailures.add(segment);
+  const reason = error?.code === 'TIMEOUT' ? '服务响应超时' : error?.code === 'NETWORK_ERROR' ? '暂时无法连接服务' : error?.message || '服务暂时不可用';
+  toast(`${label}更新失败：${reason}。正在自动重试，当前显示上次结果。`, 'err');
 }
 
 function markViewed(rows) {
@@ -563,19 +604,21 @@ function selectDevice(device) {
   }
 }
 
-function selectTarget(target, alarmId) {
-  if (!target) return;
+function selectTarget(target, alarmId, riskCaseId) {
+  if (!situationPageActive || !target) return;
+  const request = ++selectedReadSequence;
   alertTab.value = 'target';
   markViewed([...(target.relatedAlarms || []), ...(target.relatedRisks || []).filter(risk => risk.active)]);
-  selection.value = { kind: 'target', id: target.id, alarmId };
+  selection.value = { kind: 'target', id: target.id, alarmId, riskCaseId };
   if (map) {
     map.sel = target.id;
     map.planSel = null;
     map.pinHit('target', target.id);
     focusSelection();
   }
-  source.loadTargetDetail(target.targetId).catch(error => onSourceError(error, '目标来源链路'));
-  source.loadTargetPrediction(target.targetId).catch(error => onSourceError(error, '未来预测'));
+  const current = () => situationPageActive && request === selectedReadSequence && selectedTarget.value?.targetId === target.targetId;
+  source.loadTargetDetail(target.targetId).catch(error => { if (current()) onSourceError(error, 'target-sources'); });
+  source.loadTargetPrediction(target.targetId).catch(error => { if (current()) onSourceError(error, 'predictions'); });
 }
 
 function selectPrediction(row) {
@@ -584,7 +627,7 @@ function selectPrediction(row) {
   const target = targets.value.find(item => item.targetId === prediction.target_id);
   if (target) selectTarget(target);
   else { selection.value = { kind: 'prediction', id: prediction.target_id }; map?.clearPinnedHit(); }
-  alertTab.value = 'prediction';
+  alertTab.value = 'target';
   layers.value = { ...layers.value, prediction: true };
   map?.setLayer('prediction', true);
 }
@@ -594,10 +637,10 @@ function selectAlarm(alarm) {
   markViewed(alarm);
   alertTab.value = 'target';
   const target = targets.value.find(target => target.targetId === alarm.targetInternalId);
-  if (target) selectTarget(target, alarm.alarmId);
+  if (target) selectTarget(target, alarm.alarmId, riskCaseOf(alarm)?.risk_case_id);
   else {
     // 目标不在当前监测窗口，仍查看被点击的同一事件，不能沿用前一个目标。
-    selection.value = { kind: 'alarm', id: alarm.alarmId };
+    selection.value = { kind: 'alarm', id: riskCaseKey(alarm), riskCaseId: riskCaseOf(alarm)?.risk_case_id };
     fuseOpen.value = false;
     if (map) { map.sel = null; map.planSel = null; map.clearPinnedHit(); }
   }
@@ -657,7 +700,8 @@ async function focusSelection(enlarge = true) {
 }
 
 function isSelectedAlarm(alarm) {
-  return selection.value?.kind === 'alarm' ? selection.value.id === alarm.alarmId
+  if (selection.value?.riskCaseId) return selection.value.riskCaseId === riskCaseOf(alarm)?.risk_case_id;
+  return selection.value?.kind === 'alarm' ? selection.value.id === riskCaseKey(alarm)
     : selection.value?.kind === 'target' && selection.value.id === alarm.targetId
       && (!selection.value.alarmId || selection.value.alarmId === alarm.alarmId);
 }
@@ -760,7 +804,7 @@ function renderTargetActions(target, hasAdvisoryCard = false, hasNextStep = fals
 /** part：'all' 整张卡；'head' 只到「无人机现在」；'body' 其余部分（中间插「下一步」）。 */
 function renderTargetTip(target, hasAdvisoryCard = false, part = 'all') {
   const alarm = targetAlarm(target);
-  const notification = alarm?.eventId ? advisorySummaries.value[alarm.eventId] : null;
+  const notification = alarm?.eventId ? advisorySummaries.value[riskCaseOf(alarm)?.risk_case_id || alarm.eventId] : null;
   const sms = notification ? autoSmsView(notification) : null;
   const voice = notification ? autoVoiceView(notification) : null;
   const routeRisk = (target.relatedRisks || []).find(risk => risk.active);
@@ -840,7 +884,7 @@ function onMapPick(hit) {
   if (hit?.kind === 'prediction') {
     const rows = hit.data.rows || [];
     predictionClusterIds.value = rows.length > 1 ? rows.map(row => row.warning.event_id || row.warning.alarm_id || `${row.prediction.targetId}:${row.warning.airspace_version_id}`) : [];
-    alertTab.value = 'prediction'; alertsExpanded.value = true;
+    alertTab.value = 'target'; alertsExpanded.value = true;
     if (rows.length === 1) {
       const current = predictions.value.find(row => row.prediction_id === rows[0].prediction.id);
       if (current) selectPrediction(current); else toast('预测已更新，请从预测清单重新选择。', 'warn');
@@ -867,9 +911,10 @@ function targetNowStatus(target, notification = null, eventId = '') {
 }
 
 function alarmNowPill(alarm) {
+  if (riskCaseOf(alarm)) return '';
   const target = targets.value.find(row => row.targetId === alarm.targetInternalId);
   if (!target || target.objectTypeCode !== 'UAV') return '';
-  const notification = alarm.eventId ? advisorySummaries.value[alarm.eventId] : null;
+  const notification = alarm.eventId ? advisorySummaries.value[riskCaseOf(alarm)?.risk_case_id || alarm.eventId] : null;
   // 通知后的位置判断还没读到时不出标签，免得和点开后的卡片说法不一致。
   if (alarm.eventState === 'CONFIRMED' && alarm.eventId && !notification && !(alarm.eventId in departureByEvent.value)) return '';
   return uavNowPillHtml(targetNowStatus(target, notification, alarm.eventId));
@@ -877,11 +922,12 @@ function alarmNowPill(alarm) {
 
 /** 有有效位置证明已离开、且最新研判不再违规的告警，不再留在融合感知，只在告警事件页办理。 */
 function alarmDeparted(alarm) {
+  if (riskCaseOf(alarm)) return ['CLEARED', 'ENDED'].includes(riskCaseOf(alarm).stage);
   if (isPredictionAlarm(alarm)) return false;
   if (!alarm?.eventId || alarm.eventState !== 'CONFIRMED') return false;
   const target = targets.value.find(row => row.targetId === alarm.targetInternalId);
   if (!target || target.objectTypeCode !== 'UAV') return false;
-  return targetNowStatus(target, advisorySummaries.value[alarm.eventId] || null, alarm.eventId).departed === true;
+  return targetNowStatus(target, advisorySummaries.value[riskCaseOf(alarm)?.risk_case_id || alarm.eventId] || null, alarm.eventId).departed === true;
 }
 
 // 通知后判定已离开是一次性的结论，读到“已离开”后不再重读；其余每 15 秒最多读一次，一次最多 6 条。
@@ -892,13 +938,13 @@ async function refreshDepartures() {
   departureReading = true;
   try {
     const now = Date.now();
-    const due = (snapshot.value.alarms || []).filter(alarm => !isPredictionAlarm(alarm) && alarm.eventId && alarm.eventState === 'CONFIRMED'
+    const due = (snapshot.value.alarms || []).filter(alarm => !riskCaseOf(alarm) && !isPredictionAlarm(alarm) && alarm.eventId && alarm.eventState === 'CONFIRMED'
       && currentTargetIds.value.has(alarm.targetInternalId) && situationAlarmNeedsAttention(alarm)
       && departureByEvent.value[alarm.eventId]?.presence !== 'LEFT' && now - (departureReadAt.get(alarm.eventId) || 0) >= 15000).slice(0, 6);
     for (const alarm of due) {
       departureReadAt.set(alarm.eventId, now);
       try {
-        const value = await uavAdvisoryApi.get(alarm.eventId);
+        const value = await uavAdvisoryApi.get(alarm.eventId, riskCaseOf(alarm)?.risk_case_id);
         if (value?.event_id === alarm.eventId) departureByEvent.value = { ...departureByEvent.value, [alarm.eventId]: value.departure_observation || null };
       } catch { /* 读不到时保持原样：不当作已飞离 */ }
     }
@@ -907,9 +953,9 @@ async function refreshDepartures() {
 watch(() => snapshot.value.generatedAt, () => { void refreshDepartures(); });
 const selectedNowStatus = computed(() => {
   const alarm = selectedUavAlarm.value;
-  if (!alarm || isPredictionAlarm(alarm)) return null;
+  if (!alarm || riskCaseOf(alarm) || isPredictionAlarm(alarm)) return null;
   const target = selectedTarget.value || targets.value.find(row => row.targetId === alarm.targetInternalId);
-  const notification = alarm.eventId ? advisorySummaries.value[alarm.eventId] : null;
+  const notification = alarm.eventId ? advisorySummaries.value[riskCaseOf(alarm)?.risk_case_id || alarm.eventId] : null;
   if (target?.objectTypeCode === 'UAV') return targetNowStatus(target, notification, alarm.eventId);
   return uavNowStatus({ current: false, now: snapshot.value.generatedAt || serverNow() });
 });
@@ -920,9 +966,10 @@ function verifySelectedAlarm() {
 }
 
 function targetAlarm(target) {
-  const related = target?.relatedAlarms || [];
+  const related = (target?.relatedAlarms || []).filter(row => riskCaseVisible(row) && (!isPredictionAlarm(row) || predictionRows.value.some(item => item.warning.event_id === row.eventId || item.warning.alarm_id === row.alarmId)));
   const selectedId = selection.value?.kind === 'target' && selection.value.id === target?.id ? selection.value.alarmId : null;
-  const alarm = selectedId ? related.find(row => row.alarmId === selectedId) : related.find(row => row.eventState !== 'FALSE_POSITIVE');
+  const selectedCaseId = selection.value?.riskCaseId;
+  const alarm = selectedCaseId ? related.find(row => riskCaseKey(row) === selectedCaseId) : selectedId ? related.find(row => row.alarmId === selectedId) : related.find(row => riskCaseVisible(row) && row.eventState !== 'FALSE_POSITIVE');
   if (!alarm || !isPredictionAlarm(alarm)) return alarm || null;
   const latest = predictions.value.find(row => row.target_id === target.targetId);
   const warning = latest?.warnings?.find(row => row.event_id === alarm.eventId)
@@ -935,23 +982,29 @@ function targetAlarm(target) {
 
 function updateNotification(value) {
   if (value.event_id !== selectedUavAlarm.value?.eventId) return;
-  const previous = advisorySummaries.value[value.event_id];
+  const key = value._riskCaseId || value.risk_case?.risk_case_id || value.risk_case_id || value.event_id;
+  if (key !== (riskCaseOf(selectedUavAlarm.value)?.risk_case_id || selectedUavAlarm.value?.eventId)) return;
+  const previous = advisorySummaries.value[key];
   if (previous && (previous._fetchedAt > (value._fetchedAt || 0) || previous.event_version > value.event_version)) return;
-  advisorySummaries.value = { [value.event_id]: value };
+  advisorySummaries.value = { ...advisorySummaries.value, [key]: value };
   departureByEvent.value = { ...departureByEvent.value, [value.event_id]: value.departure_observation || null };
   if (map && selection.value?.kind === 'target') map.pinHit('target', selection.value.id);
 }
-function invalidateNotification(eventId, startedAt = Date.now()) {
+function invalidateNotification(eventId, startedAt = Date.now(), caseId = '') {
+  const key = caseId || riskCaseOf(selectedUavAlarm.value)?.risk_case_id || eventId;
+  if (key !== (riskCaseOf(selectedUavAlarm.value)?.risk_case_id || selectedUavAlarm.value?.eventId)) return;
   if (eventId !== selectedUavAlarm.value?.eventId
-    || (advisorySummaries.value[eventId]?._fetchedAt || 0) > startedAt) return;
-  advisorySummaries.value = { [eventId]: { event_id: eventId, _unavailable: true, _fetchedAt: startedAt } };
+    || (advisorySummaries.value[key]?._fetchedAt || 0) > startedAt) return;
+  advisorySummaries.value = { ...advisorySummaries.value, [key]: { event_id: eventId, _riskCaseId: caseId, _unavailable: true, _fetchedAt: startedAt } };
 }
 
 async function openTargetVerification(target) {
   const alarm = targetAlarm(target);
   if (!alarm?.eventId) return toast('没有关联无人机事件，无法核实', 'err');
   try {
-    const [event, linkedAlarm] = await Promise.all([
+    const risk = riskCaseOf(alarm);
+    const detail = risk ? await getUavRiskCase(risk.risk_case_id) : null;
+    const [event, linkedAlarm] = detail ? [detail.event, { ...detail.alarm, risk_case: detail.risk_case }] : await Promise.all([
       getUavEvent(alarm.eventId),
       alarm.alarmId ? getAlarm(alarm.alarmId) : Promise.resolve(null)
     ]);
@@ -960,7 +1013,7 @@ async function openTargetVerification(target) {
       alarm: linkedAlarm,
       refresh: async () => {
         await source.refresh();
-        return getUavEvent(alarm.eventId);
+        return risk ? (await getUavRiskCase(risk.risk_case_id)).event : getUavEvent(alarm.eventId);
       }
     });
   } catch (error) {
@@ -973,14 +1026,16 @@ async function openLinkedDisposal(target) {
   return openAlarmDisposal(alarm);
 }
 
-function openCounterRecords({ eventId, authorizationId }) {
+function openCounterRecords({ eventId, riskCaseId, authorizationId }) {
   const query = new URLSearchParams({ tab: 'authorizations', event: eventId });
+  if (riskCaseId) query.set('risk_case', riskCaseId);
   if (authorizationId) query.set('authorization', authorizationId);
   window.location.hash = `/alarms?${query}`;
 }
 
 async function openAlarmDisposal(alarm) {
   // 只有数据源明确提供业务告警 ID 才深链；页面私有模拟 ID 不冒充服务端事件。
+  if (riskCaseOf(alarm)?.risk_case_id) { window.location.hash = `/alarms?risk_case=${encodeURIComponent(riskCaseOf(alarm).risk_case_id)}`; return; }
   if (alarm?.alarmId) {
     try {
       const linked = await getAlarm(alarm.alarmId);
@@ -1084,6 +1139,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  situationPageActive = false; selectedReadSequence++;
   window.clearInterval(expiryTimer);
   selectionResizeObserver?.disconnect();
   document.removeEventListener('visibilitychange', onVisibilityChange);
@@ -1115,7 +1171,7 @@ onUnmounted(() => {
         <span>{{ sourceModeDetail }}</span>
         <span>当前目标 {{ targets.length }} · 无人机 {{ targetCounts.uav }} · 异物 {{ targetCounts.foreign }} · 未分类 {{ targetCounts.unknown }}<template v-if="targetCounts.other"> · 其他 {{ targetCounts.other }}</template>（北京时间）</span>
         <time class="mono">{{ clockText }}</time>
-        <em v-if="refreshSlow" class="sit-refresh-slow" role="status" :title="`最近一次数据停在 ${clockText}，已有 ${refreshLagSeconds} 秒没有更新；地图上的目标按期退出，可能不全。恢复后自动更新。`">数据刷新慢 · {{ refreshLagSeconds }} 秒未更新</em>
+        <em v-if="sourceFailureLabels || refreshSlow" class="sit-refresh-slow" role="status" :title="sourceFailureLabels ? `${sourceFailureLabels}更新失败，正在自动重试；当前显示上次结果。` : `最近一次数据停在 ${clockText}，已有 ${refreshLagSeconds} 秒没有更新；地图上的目标按期退出，可能不全。恢复后自动更新。`">{{ sourceFailureLabels ? `${sourceFailureLabels}更新失败 · 重试中` : `数据刷新慢 · ${refreshLagSeconds} 秒未更新` }}</em>
       </div>
       <p class="sr-only" role="status" aria-live="polite" aria-atomic="true">{{ statusAnnouncement }}</p>
 
@@ -1157,7 +1213,7 @@ onUnmounted(() => {
       <aside class="sit-glass sit-alert-dock" :class="{ 'is-collapsed': !alertsExpanded }" aria-labelledby="sit-alert-title">
         <header class="sit-dock-head">
           <span><b id="sit-alert-title">实时风险</b></span>
-          <em>{{ activeRiskCount }} 条当前风险 · {{ predictionRows.length }} 项预测</em>
+          <em>{{ alarms.length }} 项无人机风险 · {{ riskGroups.length }} 项航线风险</em>
           <button type="button" class="sit-alert-toggle" :aria-expanded="alertsExpanded" aria-controls="sit-alert-content"
             :aria-label="alertsExpanded ? '收起实时风险' : '展开实时风险'" @click="alertsExpanded = !alertsExpanded">
             {{ alertsExpanded ? '收起' : '展开' }}
@@ -1168,24 +1224,23 @@ onUnmounted(() => {
         <div class="sit-risk-tabs" role="tablist" aria-label="风险类型">
           <button type="button" role="tab" :aria-selected="alertTab === 'target'" @click="alertTab = 'target'">
             <LocateOutline class="sit-risk-icon" aria-hidden="true" />
-            <span>目标异常</span><b :class="{ 'has-risk': alarms.length > 0 }">{{ alarms.length }}</b>
+            <span>无人机风险</span><b :class="{ 'has-risk': alarms.length > 0 }">{{ alarms.length }}</b>
           </button>
           <button type="button" role="tab" :aria-selected="alertTab === 'route'" @click="alertTab = 'route'">
             <GitCompareOutline class="sit-risk-icon" aria-hidden="true" />
-            <span>航线风险</span><b :class="{ 'has-risk': riskGroups.length > 0 }">{{ riskGroups.length }} 项</b>
-          </button>
-          <button type="button" role="tab" class="is-prediction-tab" :aria-selected="alertTab === 'prediction'" @click="alertTab = 'prediction'; predictionClusterIds = []">
-            <span aria-hidden="true" class="sit-risk-icon">◇</span><span>预测预警</span><b :class="{ 'has-risk': predictionRows.length > 0 }">{{ predictionRows.length }} 项</b>
+            <span>航线风险</span><b :class="{ 'has-risk': riskGroups.length > 0 }">{{ riskGroups.length }}</b>
           </button>
         </div>
-        <div v-if="alertTab === 'target'" class="sit-alert-list" role="tabpanel" aria-label="目标异常">
-          <button v-for="alarm in alarms" :key="eventKey(alarm)" type="button" class="sit-alert-row"
+        <div v-if="alertTab === 'target'" class="sit-alert-list" role="tabpanel" aria-label="无人机风险">
+          <NSelect v-model:value="riskStageFilter" :options="riskStageOptions" size="small" aria-label="风险阶段" />
+          <p v-if="!visibleUavRisks.length" class="prediction-list-note">当前没有此阶段的有效风险。</p>
+          <button v-for="alarm in visibleUavRisks" :key="eventKey(alarm)" type="button" class="sit-alert-row"
             :class="[{ 'is-new': alarm.isNew, 'is-selected': isSelectedAlarm(alarm) }, `level-${alarm.level}`]"
             :aria-pressed="isSelectedAlarm(alarm)"
             :aria-label="`查看${displayBusinessNo(alarm.targetId || alarm.id) || '未关联目标告警'}的${alarm.type}，${alarm.eventState === 'PENDING_VERIFICATION' ? '待核实' : '待定是否反制'}`" @click="selectAlarm(alarm)">
             <span class="sit-alert-level">{{ alarm.level }}</span>
-            <span class="sit-alert-copy"><b class="mono">{{ displayBusinessNo(alarm.targetId || alarm.id) || '未关联目标告警' }}</b><em>{{ alarm.type }} · {{ alarm.district }}</em></span>
-            <span class="sit-alert-meta"><time class="mono">{{ formatClock(alarm.ts) }}</time><b>{{ alarm.eventState === 'PENDING_VERIFICATION' ? '待核实' : '待定是否反制' }}{{ alarm.isNew ? ' · 新异常' : '' }}</b><span v-if="alarmNowPill(alarm)" v-html="alarmNowPill(alarm)"></span></span>
+            <span class="sit-alert-copy"><b class="mono">{{ displayBusinessNo(alarm.targetId || alarm.id) || '未关联目标告警' }}</b><em>{{ riskStageLabel(alarm) || alarm.type }} · {{ riskCaseOf(alarm)?.airspace_name || alarm.district }}</em></span>
+            <span class="sit-alert-meta"><time class="mono">{{ formatClock(alarm.ts) }}</time><b>{{ riskCaseVerificationLabel(alarm) }}{{ alarm.isNew ? ' · 新风险' : '' }}</b><span v-if="alarmNowPill(alarm)" v-html="alarmNowPill(alarm)"></span></span>
           </button>
         </div>
         <div v-else-if="alertTab === 'route'" class="sit-alert-list" role="tabpanel" aria-label="航线风险">
@@ -1202,21 +1257,10 @@ onUnmounted(() => {
             <span class="sit-alert-meta"><time class="mono">{{ formatClock(risk.occurredAt) }}{{ risk.isNew ? ' · 未查看' : '' }}</time><b>{{ riskGroupStateText(risk) }}</b></span>
           </button>
         </div>
-        <div v-else class="sit-alert-list" role="tabpanel" aria-label="预测预警">
-          <p v-if="predictionDenied" class="prediction-list-note" role="status">当前无权读取未来预测。</p>
-          <p v-if="predictionUnavailable" class="prediction-list-note" role="status">预测读取失败，当前预测暂不可用。</p>
-          <button v-if="predictionClusterIds.length" type="button" class="btn" @click="predictionClusterIds = []">显示全部 {{ predictionRows.length }} 项预测</button>
-          <button v-for="row in visiblePredictionRows" :key="row.key" type="button" class="sit-alert-row"
-            :class="{ 'is-selected': selectedPrediction?.target_id === row.targetId }" @click="selectPrediction(row)">
-            <span class="sit-alert-level">预测</span><span class="sit-alert-copy"><b>{{ displayTargetNo(row.targetNo) || '目标编号未提供' }}</b><em>{{ row.name }}</em></span>
-            <span class="sit-alert-meta"><b>{{ PREDICTION_STATES[row.state] }}</b><time>{{ formatClock(row.warning.entry_at) }}</time></span>
-          </button>
-          <p v-if="!visiblePredictionRows.length && !predictionUnavailable && !predictionDenied" class="prediction-list-note">当前没有稳定的预测入区预警。</p>
-        </div>
         </div>
       </aside>
 
-      <SituationAlarmPopup v-if="showSelectionPopup" :key="`${selection.kind}:${selection.id}:${selection.riskId || selection.alarmId || ''}`" :get-anchor="alarmAnchor"
+      <SituationAlarmPopup v-if="showSelectionPopup" :key="`${selection.kind}:${selection.id}:${selection.riskId || selection.riskCaseId || selection.alarmId || ''}`" :get-anchor="alarmAnchor"
         :get-avoid-rect="selectionAvoidRect"
         :video-open="showTargetVideo && !!videoContext"
         :label="isPredictionAlarm(selectedUavAlarm) ? '预测入区风险详情' : selectedDevice ? '设备详情' : selectedPlan ? '任务详情' : selectedRisk ? '航线风险详情' : showAlarmPopup ? '无人机告警详情' : '目标详情'">
@@ -1225,17 +1269,12 @@ onUnmounted(() => {
             v-html="renderDeviceTip(selectedDevice)"></div>
           <SituationDeviceReport :key="selectedDevice.deviceId" :device-id="selectedDevice.deviceId" />
         </template>
-        <template v-else-if="selectedTarget && selectedUavAlarm">
-          <div @click="onTipAction($event.target.closest('[data-tip-act]')?.dataset.tipAct, { kind: 'target', data: selectedTarget })"
-            v-html="renderTargetTip(selectedTarget, showAlarmAdvisoryCard, 'head')"></div>
-          <SituationNextStep :alarm="selectedUavAlarm" :summary="advisorySummaries[selectedUavAlarm.eventId]" :now-status="selectedNowStatus" :now="nowTick" @open="openAlarmDisposal(selectedUavAlarm)"
-            @updated="updateNotification" @unavailable="invalidateNotification"
-            @verify="verifySelectedAlarm" @records="openCounterRecords" />
-          <div @click="onTipAction($event.target.closest('[data-tip-act]')?.dataset.tipAct, { kind: 'target', data: selectedTarget })"
-            v-html="renderTargetTip(selectedTarget, showAlarmAdvisoryCard, 'body')"></div>
-        </template>
-        <div v-else-if="selectedTarget" @click="onTipAction($event.target.closest('[data-tip-act]')?.dataset.tipAct, { kind: 'target', data: selectedTarget })"
-          v-html="renderTargetTip(selectedTarget, showAlarmAdvisoryCard)"></div>
+        <SituationTargetCard v-else-if="selectedTarget" :key="selectedTarget.targetId || selectedTarget.id"
+          :target="selectedTarget" :alarm="selectedUavAlarm" :now-status="selectedNowStatus"
+          :summary="advisorySummaries[riskCaseOf(selectedUavAlarm)?.risk_case_id || selectedUavAlarm?.eventId]" :now="nowTick" :video-open="showTargetVideo"
+          :source-names="devices.filter(device => (selectedTarget.sourceDeviceIds || []).includes(device.fusionDeviceId || device.deviceId)).map(device => device.type).join(' / ')"
+          @close="clearSelection" @video="onTipAction('eo-video')" @verify="verifySelectedAlarm" @records="openCounterRecords"
+          @updated="updateNotification" @unavailable="invalidateNotification" @open="openAlarmDisposal(selectedUavAlarm)" />
         <SituationRiskGroupPopup v-else-if="selectedRiskGroup" :group="selectedRiskGroup" :plans="flightPlans"
           @close="clearSelection" @view-plan="selectRisk" @updated="source.refresh()" />
         <template v-else-if="selectedPlan">
@@ -1259,18 +1298,22 @@ onUnmounted(() => {
           <p>遥控器位置：{{ PILOT_LOCATION_IN_ALARM_DETAIL }}</p>
         </section>
         <SituationNextStep v-if="selectedUavAlarm && !selectedTarget && !selectedRisk && !selectedPlan && !selectedDevice" :alarm="selectedUavAlarm"
-          :summary="advisorySummaries[selectedUavAlarm.eventId]" :now-status="selectedNowStatus" :now="nowTick" @open="openAlarmDisposal(selectedUavAlarm)" @verify="verifySelectedAlarm" @records="openCounterRecords"
+          :summary="advisorySummaries[riskCaseOf(selectedUavAlarm)?.risk_case_id || selectedUavAlarm.eventId]" :now-status="selectedNowStatus" :now="nowTick" @verify="verifySelectedAlarm" @records="openCounterRecords"
           @updated="updateNotification" @unavailable="invalidateNotification" />
         <div v-if="videoContext && !selectedTarget" class="sit-video-entry">
           <button type="button" :aria-expanded="showTargetVideo" aria-controls="situation-video-window" @click="onTipAction('eo-video')">{{ showTargetVideo ? '收起视频' : '实时视频' }}</button>
         </div>
         <p v-if="showAlarmPopup && !alarmAnchor()" class="sit-alarm-position-note">当前未取得该目标的有效位置，无法定位无人机；以下保留此事件的信息。</p>
-        <SituationAdvisoryCard v-if="showAlarmAdvisoryCard" :key="`${selectedUavAlarm.eventId}:${selectedUavAlarm.eventState}`"
+        <SituationAdvisoryCard v-if="showAlarmAdvisoryCard && !selectedTarget" :key="riskCaseKey(selectedUavAlarm)" :risk-case="riskCaseOf(selectedUavAlarm)"
           :event-id="selectedUavAlarm.eventId" :alarm-label="selectedUavAlarm.id"
           @updated="updateNotification" @unavailable="invalidateNotification" @open="openAlarmDisposal(selectedUavAlarm)" />
-        <p v-else-if="showAlarmPopup" class="sit-alarm-position-note">此告警未关联无人机事件，暂无可读取的通知记录。</p>
+        <p v-else-if="showAlarmPopup && !selectedTarget" class="sit-alarm-position-note">此告警未关联无人机事件，暂无可读取的通知记录。</p>
         <div v-if="selectedPrediction && !selectedTarget" class="prediction-popup-title"><b>目标未来位置</b><button type="button" class="btn" @click="clearSelection">关闭</button></div>
-        <PredictionPanel v-if="selectedPrediction" :prediction="selectedPrediction" :now="nowTick" :unavailable="predictionUnavailable" />
+        <details v-if="selectedPrediction && selectedTarget" class="sit-target-prediction-more">
+          <summary>未来 10／20／30 秒预测详情</summary>
+          <PredictionPanel :prediction="selectedPrediction" :risk-case="riskCaseOf(selectedUavAlarm)" :now="nowTick" :unavailable="predictionUnavailable" />
+        </details>
+        <PredictionPanel v-else-if="selectedPrediction" :prediction="selectedPrediction" :risk-case="riskCaseOf(selectedUavAlarm)" :now="nowTick" :unavailable="predictionUnavailable" />
         <template #video="{ expanded, toggleExpanded }">
           <TargetLiveVideo v-if="videoContext" :key="videoContext.key" class="sit-companion-video" compact default-expanded
             :target-id="videoContext.targetId" :event-id="videoContext.eventId" :context-label="videoContext.label" :unavailable-reason="videoContext.unavailableReason" :subtype="videoContext.subtype">
@@ -1330,6 +1373,8 @@ onUnmounted(() => {
 
 <style scoped>
 .prediction-list-note{padding:8px 12px;margin:0;font-size:12px;line-height:1.5;color:var(--txt-3)}
+.sit-target-prediction-more{margin:0 12px 12px;border-top:1px solid var(--line);padding-top:8px;font-size:12px;color:var(--txt-3)}
+.sit-target-prediction-more>summary{cursor:pointer}
 .prediction-popup-title{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px}
 
 .eo-map-empty{position:absolute;z-index:6;left:60px;right:15px;top:45%;margin:0;text-align:center;padding:8px;background:var(--surface-1);color:var(--txt-2);pointer-events:none}
@@ -1350,22 +1395,18 @@ onUnmounted(() => {
 .situation-page .sit-alert-toggle:hover{color:var(--txt)}
 .sit-alert-chevron{width:15px;height:15px;flex:none;transition:transform .16s ease}
 .sit-alert-chevron.is-collapsed{transform:rotate(180deg)}
-.situation-page .sit-risk-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));flex:none;gap:0;margin:10px 9px 2px;padding:0;border:1px solid var(--control-line);border-radius:10px;background:var(--button-bg)}
-.situation-page .sit-risk-tabs button{position:relative;display:grid;grid-template-columns:22px minmax(0,1fr) auto;align-items:center;gap:6px;min-width:0;min-height:58px;margin:0;padding:10px;border:0;border-radius:9px;background:transparent;color:var(--txt-2);font-family:inherit;font-size:14px;font-weight:500;line-height:1.4;text-align:left;cursor:pointer;transition:background .16s ease,color .16s ease}
-.situation-page .sit-risk-tabs button>span{white-space:normal;overflow-wrap:anywhere}
+.situation-page .sit-risk-tabs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));flex:none;gap:4px;margin:10px 10px 0;padding:4px;border:1px solid var(--control-line);border-radius:9px;background:var(--surface-1)}
+.situation-page .sit-risk-tabs button{position:relative;display:flex;align-items:center;justify-content:center;gap:6px;min-width:0;min-height:44px;margin:0;padding:8px 6px;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--txt-2);font-family:inherit;font-size:13px;font-weight:500;line-height:1.4;cursor:pointer;transition:background .16s ease,color .16s ease,border-color .16s ease}
+.situation-page .sit-risk-tabs button>span{white-space:nowrap}
 .situation-page .sit-risk-tabs button:hover{background:var(--button-hover);color:var(--txt)}
-.situation-page .sit-risk-tabs button[aria-selected="true"]{background:color-mix(in srgb,var(--blue) 22%,var(--panel));color:var(--txt)}
-.situation-page .sit-risk-tabs button[aria-selected="true"]::after{position:absolute;bottom:2px;left:38px;width:22px;height:3px;border-radius:2px;background:var(--blue);content:""}
-.situation-page .sit-risk-tabs button:focus-visible{outline:2px solid var(--blue);outline-offset:-3px}
-.sit-risk-icon{width:22px;height:22px;color:var(--txt-2)}
-.situation-page .sit-risk-tabs b{display:flex;align-items:center;justify-content:center;min-width:28px;min-height:28px;padding:2px 6px;border-radius:999px;background:color-mix(in srgb,var(--txt-2) 12%,transparent);color:var(--txt-2);font:600 18px/1.2 var(--app-font-mono);font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
-.situation-page .sit-risk-tabs b.has-risk{background:color-mix(in srgb,var(--red) 18%,transparent);color:var(--red)}
-@media (max-width:1366px){.situation-page .sit-risk-tabs button{grid-template-columns:20px minmax(0,1fr) auto;gap:5px;padding:9px 8px;font-size:13px}.sit-risk-icon{width:20px;height:20px}.situation-page .sit-risk-tabs button[aria-selected="true"]::after{left:33px}}
-.situation-page .sit-risk-tabs button{grid-template-columns:minmax(0,1fr) auto;gap:4px;padding:8px 6px;font-size:12px;min-height:52px}
+.situation-page .sit-risk-tabs button[aria-selected="true"]{border-color:color-mix(in srgb,var(--cyan) 40%,var(--control-line));background:color-mix(in srgb,var(--blue) 18%,var(--surface-1));color:var(--txt);font-weight:600;box-shadow:inset 0 -2px 0 var(--cyan)}
+.situation-page .sit-risk-tabs button:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
 .situation-page .sit-risk-tabs .sit-risk-icon{display:none}
-.situation-page .sit-risk-tabs b{min-width:20px;min-height:24px;padding:2px 3px;font-size:14px}
-.situation-page .sit-risk-tabs button[aria-selected="true"]::after{left:10px}
-.situation-page .sit-risk-tabs .is-prediction-tab b.has-risk{background:color-mix(in srgb,var(--amber) 18%,transparent);color:var(--tag-amber-text)}
+.situation-page .sit-risk-tabs b{display:inline-flex;flex:none;align-items:center;justify-content:center;box-sizing:border-box;min-width:24px;height:24px;padding:0 5px;border-radius:6px;background:color-mix(in srgb,var(--txt-2) 12%,transparent);color:var(--txt-2);font:600 12px/1 var(--app-font-mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+.situation-page .sit-risk-tabs button[aria-selected="true"] b:not(.has-risk){background:color-mix(in srgb,var(--cyan) 15%,transparent);color:var(--cyan)}
+.situation-page .sit-risk-tabs b.has-risk{background:color-mix(in srgb,var(--red) 18%,transparent);color:var(--red)}
+.situation-page .sit-alert-content>.sit-alert-list{gap:10px;padding:10px}
+.situation-page .sit-alert-list>.prediction-list-note{padding:10px 4px;text-align:center}
 .situation-page.has-selection-popup :deep(.maptip){display:none!important}
 .sit-alarm-position-note{margin:0;padding:10px 12px;color:var(--muted);font-size:12px;line-height:1.5}
 .sit-companion-video{margin:0;border:0;background:transparent}

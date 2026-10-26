@@ -1,3 +1,4 @@
+const riskHelpers = require('./riskCaseTestHelpers.cjs');
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
@@ -13,9 +14,9 @@ function fixture(direct = false) {
     can_request_counter: !direct, can_direct_counter: direct };
   const props = vue.reactive({ eventId, eventLabel: 'test-' + randomUUID(), active: true,
     confirmed: true, showLaunch: true, counterStopped: false, summary });
-  const state = { token: randomUUID(), form: null, reads: [], unmounts: [] };
-  const deps = { ...vue, defineProps: () => props, defineEmits: () => () => {},
-    onUnmounted: cb => state.unmounts.push(cb), window: { UI: {} },
+  const state = { token: randomUUID(), form: null, reads: [], unmounts: [], events: [] };
+  const deps = { ...riskHelpers, ...vue, defineProps: () => props, defineEmits: () => (...args) => state.events.push(args),
+    onUnmounted: cb => state.unmounts.push(cb), openModal: () => ({ close() {} }), window: { UI: {} },
     readSessionToken: () => state.token, hasPermission: () => true,
     counterLaunchLabel: () => '', counterPermissionHint: () => '', noCounterEntryVisible: () => true,
     uavAdvisoryApi: { get: async id => { state.reads.push(id); return { ...props.summary }; } },
@@ -68,4 +69,19 @@ test('real event, page, stop and session changes still invalidate an open reques
       }
     } finally { f.close(); }
   }
+});
+
+
+test('同事件多区反制表单绑定当前风险，并把办理记录导航保留在该风险', async () => {
+  const f = fixture();
+  try {
+    const risk = { risk_case_id: randomUUID(), version: 11 };
+    f.props.riskCase = risk; f.props.summary = { ...f.props.summary, risk_case: risk };
+    await f.launch();
+    assert.deepEqual(f.state.form.riskContext, { risk_case_id: risk.risk_case_id, expected_case_version: risk.version });
+    const authorization_id = randomUUID(); f.state.form.onDone({ authorization_id });
+    assert.deepEqual(f.state.events.find(row => row[0] === 'records')[1], { eventId: f.props.eventId, riskCaseId: risk.risk_case_id, authorizationId: authorization_id });
+    f.props.riskCase = { risk_case_id: randomUUID(), version: 11 };
+    assert.equal(f.state.form.isCurrent(), false);
+  } finally { f.close(); }
 });

@@ -13,13 +13,14 @@ import { noCounterApi } from '@/services/noCounterApi.js';
 import NoCounterDecisionModal from './NoCounterDecisionModal.vue';
 import NoCounterBasis from './NoCounterBasis.vue';
 import { counterLaunchLabel, counterPermissionHint, noCounterEntryVisible } from '@/components/disposal/counterNextStep.js';
+import { riskActionContext, riskSummaryMatches } from '@/services/riskCaseView.js';
 import { hasPermission } from '@/services/accessControl.js';
 
 const U = window.UI;
-const props = defineProps({ eventId: { type: String, required: true }, eventLabel: String, active: Boolean, confirmed: Boolean, summary: Object, showLaunch: Boolean, handedOff: Boolean, counterStopped: Boolean, showRecords: { type: Boolean, default: true } });
+const props = defineProps({ eventId: { type: String, required: true }, eventLabel: String, active: Boolean, confirmed: Boolean, summary: Object, riskCase: Object, showLaunch: Boolean, handedOff: Boolean, counterStopped: Boolean, showRecords: { type: Boolean, default: true } });
 const emit = defineEmits(['records', 'decision', 'updated', 'unavailable']);
 const busy = ref(false);
-const currentSummary = computed(() => props.summary?.event_id === props.eventId ? props.summary : null);
+const currentSummary = computed(() => riskSummaryMatches(props.summary, props.eventId, props.riskCase?.risk_case_id) ? props.summary : null);
 const noCounter = computed(() => currentSummary.value?.no_counter);
 const unavailableReason = computed(() => !props.active ? '请返回当前告警后操作' : busy.value ? '正在检查处置条件，请稍候' : '');
 const noCounterBlock = computed(() => unavailableReason.value || (noCounter.value?.can_decide === true ? ''
@@ -30,12 +31,12 @@ const launchLabel = computed(() => counterLaunchLabel(currentSummary.value));
 const launchHint = computed(() => launchBlock.value ? '' : counterPermissionHint(currentSummary.value));
 const completed = computed(() => noCounter.value?.decision_active === true);
 /* 没有告警核实权限的账号（只读领导、执行员等）不显示“无风险不反制”入口；只是隐藏，后端照常校验。 */
-const noCounterVisible = computed(() => !props.counterStopped && noCounterEntryVisible(hasPermission));
+const noCounterVisible = computed(() => !props.riskCase?.risk_case_id && !props.counterStopped && noCounterEntryVisible(hasPermission));
 const time = value => value == null ? '未提供' : new Date(value).toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' });
 let generation = 0, mounted = true, feedback = null;
 // 绑定只随事件、页面或停止状态变化失效；同事件的资格刷新不算切换。
 // showLaunch 仍由提交时的 isCurrent 实时校验，读取失败或风险失效时不能提交。
-watch(() => [props.eventId, props.active, props.counterStopped], () => { ++generation; busy.value = false; feedback?.close(); }, { flush: 'sync' });
+watch(() => [props.eventId, props.riskCase?.risk_case_id, props.active, props.counterStopped], () => { ++generation; busy.value = false; feedback?.close(); }, { flush: 'sync' });
 onUnmounted(() => { mounted = false; ++generation; feedback?.close(); });
 
 function showFeedback(title, message) {
@@ -62,33 +63,36 @@ async function currentTargetPoint(eventId) {
 
 async function launch() {
   if (launchBlock.value || !props.showLaunch) return;
-  const id = props.eventId, token = readSessionToken(), request = ++generation;
+  const id = props.eventId, caseId = props.riskCase?.risk_case_id, token = readSessionToken(), request = ++generation;
   const startedAt = Date.now();
-  const isCurrent = () => mounted && props.active && props.showLaunch && props.eventId === id && request === generation && token === readSessionToken();
+  const isCurrent = () => mounted && props.active && props.showLaunch && props.eventId === id && props.riskCase?.risk_case_id === caseId && request === generation && token === readSessionToken();
   busy.value = true;
   try {
     // 每次点击重新读取资格；页面加载和轮询不创建授权。
-    const eligibility = await uavAdvisoryApi.get(id);
+    const eligibility = await uavAdvisoryApi.get(id, props.riskCase?.risk_case_id);
     if (!isCurrent()) return;
-    if (eligibility?.event_id !== id) throw new Error('未取得当前事件的反制资格，请刷新后重试。');
-    emit('updated', { ...eligibility, _fetchedAt: startedAt });
+    if (!riskSummaryMatches(eligibility, id, caseId)) throw new Error('未取得当前风险的反制资格，请刷新后重试。');
+    emit('updated', { ...eligibility, _riskCaseId: caseId, _fetchedAt: startedAt });
     if (eligibility.counter_launch_visible !== true || (eligibility.can_direct_counter !== true && eligibility.can_request_counter !== true)) {
       showFeedback('暂不能发起反制', eligibility.counter_block_reason || '当前反制资格未确认，暂不能发起。');
       return;
     }
+    const riskContext = riskActionContext({ risk_case: eligibility.risk_case || (eligibility.risk_case_id ? { risk_case_id: eligibility.risk_case_id, version: eligibility.risk_case_version } : null) || props.riskCase });
+    if (caseId && !riskContext.risk_case_id) throw new Error('风险版本未提供，请刷新后重新操作。');
     const [policy, targetPoint] = await Promise.all([disposalApi.policies(), currentTargetPoint(id)]);
     if (!isCurrent()) return;
     const open = eligibility.can_direct_counter === true ? openDisposalDirect : openDisposalRequest;
     await open({
       actionType: 'COUNTERMEASURE', subjectKind: 'UAV_EVENT', subjectId: id,
       subjectText: props.eventLabel || id, policy, isCurrent, targetPoint,
+      riskContext,
       onDone: result => {
-        if (isCurrent()) emit('records', { eventId: id, authorizationId: result?.authorization_id || '' });
+        if (isCurrent()) emit('records', { eventId: id, riskCaseId: caseId || '', authorizationId: result?.authorization_id || '' });
       }
     });
   } catch (cause) {
     if (isCurrent()) {
-      emit('unavailable', id, startedAt);
+      emit('unavailable', id, startedAt, caseId);
       showFeedback('反制条件检查失败', cause?.message || '读取反制资格失败，请稍后重试。');
     }
   } finally {
@@ -98,8 +102,8 @@ async function launch() {
 
 async function decideNoCounter() {
   if (!noCounterVisible.value || noCounterBlock.value) return;
-  const id = props.eventId, token = readSessionToken(), request = ++generation;
-  const isCurrent = () => mounted && props.active && props.eventId === id && request === generation && token === readSessionToken();
+  const id = props.eventId, caseId = props.riskCase?.risk_case_id, token = readSessionToken(), request = ++generation;
+  const isCurrent = () => mounted && props.active && props.eventId === id && props.riskCase?.risk_case_id === caseId && request === generation && token === readSessionToken();
   busy.value = true;
   try {
     const status = await noCounterApi.get(id);

@@ -1,3 +1,4 @@
+const riskHelpers = require('./riskCaseTestHelpers.cjs');
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { readFileSync } = require('node:fs');
@@ -9,7 +10,7 @@ function executionForm(error, latest = { status: 'APPROVED' }, channel = 'COUNTE
   const keys = [], messages = [], bodies = [];
   const source = readFileSync(path.join(__dirname, '../src/ui/disposalAuthModal.js'), 'utf8')
     .replace(/^import .*;\r?\n/gm, '').replace(/\bexport /g, '');
-  const context = vm.createContext({
+  const context = vm.createContext({ ...riskHelpers,
     openFormModal: value => { form = value; }, closeModal: () => { closed++; },
     toast: message => messages.push(message),
     disposalApi: { execute: async (_id, _body, key) => { keys.push(key); bodies.push(_body); if (error) throw error; return { status: 'EXECUTING' }; } },

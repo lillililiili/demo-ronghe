@@ -34,6 +34,23 @@
 .flow-banner-body .flow-foot { margin: 2px 0 0; }
 .flow-banner-ack { margin-top: 6px; }
 
+.scene-guide { margin: 12px 0; padding: 10px 12px; border: 1px solid #d5e0ed; border-radius: 8px; background: #fff; }
+.scene-guide h4 { margin: 0 0 5px; font-size: 13px; }
+.scene-guide-summary { margin: 0 0 8px; font-size: 13px; line-height: 1.6; }
+.scene-guide-stages { display: grid; grid-template-columns: repeat(auto-fit, minmax(135px, 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; }
+.scene-guide-stages li { display: flex; flex-direction: column; gap: 3px; padding: 8px; border: 1px solid #dce4ee; border-radius: 6px; font-size: 12px; line-height: 1.5; }
+.scene-guide-stages li[aria-current="step"] { border-color: #245bbb; background: #edf3ff; box-shadow: inset 3px 0 0 #245bbb; }
+.scene-guide-time { color: #516178; font-size: 12px; }
+.scene-guide-current { margin: 8px 0 0; font-size: 13px; line-height: 1.6; }
+.scene-guide-note { margin: 7px 0 0; color: #516178; font-size: 12px !important; line-height: 1.6; }
+.scene-guide-compact { margin: 6px 0 0; padding: 0; border: 0; border-radius: 0; background: none; }
+.scene-guide-compact .scene-guide-summary { margin: 0 0 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scene-guide-compact .scene-guide-stages { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 6px; }
+.scene-guide-compact .scene-guide-stages li { flex-direction: row; align-items: center; gap: 8px; min-width: 0; padding: 4px 8px; }
+.scene-guide-compact .scene-guide-stages b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scene-guide-compact .scene-guide-time { flex-shrink: 0; white-space: nowrap; }
+.scene-guide-compact .scene-guide-current { margin: 5px 0 0; line-height: 1.5; }
+
 .start-check h3 { margin: 0 0 4px; font-size: 14px; }
 .start-check p { font-size: 13px; line-height: 1.75; margin: 4px 0; }
 .start-check-block { margin-bottom: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: #f9fbfd; }
@@ -46,4 +63,5 @@
   .flow-picker-grid { grid-template-columns: 1fr; }
   .flow-list { flex-direction: row; flex-wrap: wrap; }
   .flow-item { flex: 1 1 150px; }
+  .scene-guide-compact .scene-guide-stages { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-flow: row; }
 }

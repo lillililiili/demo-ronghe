@@ -1,8 +1,8 @@
 <script setup>
 import { computed } from 'vue';
 import { predictionDetailsHtml } from '@/ui/predictionDetails.js';
-const props = defineProps({ prediction: Object, now: Number, unavailable: Boolean });
-const html = computed(() => predictionDetailsHtml(props.prediction, { now: props.now, unavailable: props.unavailable, showProximity: true }));
+const props = defineProps({ prediction: Object, riskCase: Object, now: Number, unavailable: Boolean });
+const html = computed(() => predictionDetailsHtml(props.prediction, { now: props.now, unavailable: props.unavailable, showProximity: true, riskCase: props.riskCase }));
 </script>
 <template><section class="prediction-panel" aria-label="未来位置预测" v-html="html"></section></template>
 <style scoped>

@@ -2,6 +2,7 @@
 import copy
 import json
 import sys
+import itertools
 import tempfile
 import unittest
 from pathlib import Path
@@ -36,7 +37,7 @@ class ContinuousTests(unittest.TestCase):
                 client.publish.side_effect = publish
                 with patch('paho.mqtt.client.Client', return_value=client), \
                      patch('server.NotificationResponse') as notice, \
-                     patch('server.time.monotonic', side_effect=[0, 1201]):
+                     patch('server.time.monotonic', side_effect=itertools.chain([0], itertools.repeat(1201))):
                     notice.return_value.snapshot.return_value = {}
                     runtime.run(devices)
                 self.assertEqual(runtime.error, '')

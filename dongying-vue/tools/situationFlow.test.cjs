@@ -18,6 +18,7 @@ async function main() {
   const dataUrl = pathToFileURL(path.resolve(__dirname, '../src/services/situationData.js')).href;
   const source = fs.readFileSync(filename, 'utf8')
     .replace(/(?:@\/|\.\.\/\.\.\/)services\/situationData\.js/, dataUrl)
+    .replace('../../services/riskCaseView.js', pathToFileURL(path.resolve(__dirname, '../src/services/riskCaseView.js')).href)
     .replace(/(?:@\/|\.\.\/\.\.\/)services\/serverClock\.js/, pathToFileURL(path.resolve(__dirname, '../src/services/serverClock.js')).href);
   const flow = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 
@@ -113,7 +114,8 @@ async function main() {
   const prediction=await import(pathToFileURL(path.resolve(__dirname,'../src/services/predictionView.js')).href);
   const eoCoverage=await import(pathToFileURL(path.resolve(__dirname,'../src/pages/situation/eoCoverage.js')).href);
   const eoSelection=await import(pathToFileURL(path.resolve(__dirname,'../src/pages/situation/eoSelection.js')).href);
-  const deps={...vue,...S,...flow,...labels,...handoff,...prediction,...eoCoverage,...eoSelection,groupRouteRisks,riskSnapshotMarkers,serverNow:()=>clock,
+  const riskHelpers = await import(pathToFileURL(path.resolve(__dirname, '../src/services/riskCaseView.js')).href);
+  const deps={...riskHelpers,...vue,...S,...flow,...labels,...handoff,...prediction,...eoCoverage,...eoSelection,groupRouteRisks,riskSnapshotMarkers,serverNow:()=>clock,
     currentMapSnapshot:value=>S.currentMapSnapshot(value,clock),
     usePageChrome(){},useRoute:()=>({query:{}}),authSession:vue.ref('test-session'),watch(){},onMounted:cb=>mounts.push(cb),onUnmounted(){},
     createSituationApiSource:()=>({start:()=>()=>{},loadTargetDetail:async()=>{}}),

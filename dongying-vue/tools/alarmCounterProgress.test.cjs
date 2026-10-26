@@ -1,3 +1,4 @@
+const riskHelpers = require('./riskCaseTestHelpers.cjs');
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
@@ -12,6 +13,7 @@ const progressAccess = loadPure('../src/pages/alarms/progressAccess.js', ['merge
 const { punishmentHandoffProgress } = loadPure('../src/ui/punishmentHandoffProgress.js', ['punishmentHandoffProgress']);
 
 const source = readFileSync(path.join(__dirname, '../src/pages/AlarmsPage.vue'), 'utf8').replace(/\r\n/g, '\n');
+const progressKey = new Function('riskCaseOf', source.match(/^const progressKey = .*;$/m)[0] + '; return progressKey;')(riskHelpers.riskCaseOf);
 function body(name) {
   const start = source.indexOf(`function ${name}(`);
   assert.ok(start >= 0, name);
@@ -19,7 +21,7 @@ function body(name) {
 }
 function fixture() {
   const eventId = randomUUID();
-  const deps = {
+  const deps = { authorizationPageActive: true, ...riskHelpers, progressKey,
     ...progressAccess, punishmentHandoffProgress, hasPermission: () => true,
     cur: { alarm: { event_id: eventId } },
     advisoryLive: { value: { event_id: eventId, counter_launch_visible: true } },
@@ -86,7 +88,7 @@ test('old responses and another event cannot restore an application entry', () =
 test('failed advisory refresh preserves a read barrier against older successful replies', () => {
   const eventId = randomUUID(), summaries = new Map([[eventId, { event_id: eventId, event_version: 2, _fetchedAt: 10 }]]);
   const live = { value: { event_id: eventId } };
-  const invalidate = new Function('advisorySummaries', 'advisoryLive', body('invalidateAdvisory') + '\nreturn invalidateAdvisory;')(summaries, live);
+  const invalidate = new Function('advisorySummaries', 'advisoryLive', 'cur', 'progressKey', body('invalidateAdvisory') + '\nreturn invalidateAdvisory;')(summaries, live, { alarm: { event_id: eventId } }, progressKey);
   invalidate(eventId, 20);
   assert.equal(live.value, null);
   assert.equal(summaries.get(eventId)?._fetchedAt, 20);
@@ -99,8 +101,8 @@ test('failed advisory refresh preserves a read barrier against older successful 
 test('list refresh shares fresh qualification and read failures with the open detail', async () => {
   const eventId = randomUUID(), updates = [], failures = [];
   let unavailable = false;
-  const deps = {
-    authorizationPageActive: true, pendingProgress: new Set(), progressSources: new Map(), advisorySummaries: new Map(), pageProgress: {},
+  const deps = { authorizationPageActive: true, ...riskHelpers, progressKey,
+    pendingProgress: new Set(), progressSources: new Map(), advisorySummaries: new Map(), pageProgress: {},
     ...progressAccess, punishmentHandoffProgress, hasPermission: () => true,
     cur: { alarm: { event_id: eventId } },
     mapPool: (ids, _, read) => Promise.all(ids.map(read)), recordProgressRead: () => {}, paintList: () => {}, paintDetailContent: () => {},
@@ -116,4 +118,16 @@ test('list refresh shares fresh qualification and read failures with the open de
   unavailable = true;
   await refresh([{ event_id: eventId, state: 'CONFIRMED' }]);
   assert.deepEqual(failures, [eventId]);
+});
+
+test('同事件其他风险的读取失败不会清除当前区域的资格', () => {
+  const eventId = randomUUID(), selectedCase = randomUUID(), otherCase = randomUUID();
+  const summaries = new Map(), live = { value: { event_id: eventId, _riskCaseId: selectedCase } };
+  const cur = { alarm: { event_id: eventId, risk_case: { risk_case_id: selectedCase } } };
+  const invalidate = new Function('advisorySummaries', 'advisoryLive', 'cur', 'progressKey', body('invalidateAdvisory') + '\nreturn invalidateAdvisory;')(summaries, live, cur, progressKey);
+  invalidate(eventId, 20, otherCase);
+  assert.equal(live.value._riskCaseId, selectedCase);
+  assert.equal(summaries.get(otherCase)._unavailable, true);
+  invalidate(eventId, 21, selectedCase);
+  assert.equal(live.value, null);
 });

@@ -5,7 +5,7 @@
 import { computed, h, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { refreshFailureText, useRealtimeRefresh } from '@/hooks/useRealtimeRefresh.js';
 import { airspaceApi } from '@/services/airspaceApi.js';
-import { idempotencyKey } from '@/services/apiClient.js';
+import { idempotencyKey, mapPool } from '@/services/apiClient.js';
 import { hasPermission } from '@/services/accessControl.js';
 import { openModal } from '@/ui/modal.js';
 import { openConfirm } from '@/ui/confirm.js';
@@ -134,15 +134,19 @@ async function listAirspaces(withVersion) {
   const extra = withVersion && batchAirspaces ? { include: 'current_version' } : {};
   if (withVersion && !batchAirspaces) return null;
   const first = await airspaceApi.list({ page: 1, size: PAGE_MAX, ...extra });
-  let items = first.items || [];
   const pages = Math.ceil((first.total || 0) / PAGE_MAX);
-  for (let p = 2; p <= pages; p++) items = items.concat((await airspaceApi.list({ page: p, size: PAGE_MAX, ...extra })).items || []);
+  const remaining = await mapPool(Array.from({ length: Math.max(0, pages - 1) }, (_, i) => i + 2), 3,
+    page => airspaceApi.list({ page, size: PAGE_MAX, ...extra }));
+  const items = (first.items || []).concat(...remaining.map(result => result.items || []));
   return items.filter(item => !OMITTED_TEST_AIRSPACE_IDS.has(item.airspace_id));
 }
 
 /* quiet：实时刷新或到点重读。已有列表时读取失败保留原列表并注明，错误抛给实时刷新按退避重试；
    列表原本就读取失败时按正常流程重读。 */
+let airspaceLoadSeq = 0;
 async function loadAll({ quiet = false } = {}) {
+  const seq = ++airspaceLoadSeq;
+  const isCurrent = () => pageAlive && seq === airspaceLoadSeq;
   const keep = quiet && all.value.length > 0 && !error.value;
   let failure = null;
   loading.value = !keep;
@@ -158,22 +162,32 @@ async function loadAll({ quiet = false } = {}) {
     if (!details) {
       const items = await listAirspaces(false);
       // 单片详情读不到（例如服务端判版本重叠）不能让它从台账上消失：保留清单行，标出原因。
-      details = await Promise.all(items.map(item => airspaceApi.detail(item.airspace_id)
-        .catch(reason => ({ ...item, current_version: null, load_error: reason?.code === 'VERSION_AMBIGUOUS' ? '版本区间重叠，服务端拒绝读取' : messageOf(reason) }))));
+      details = await mapPool(items, 4, item => airspaceApi.detail(item.airspace_id)
+        .catch(reason => ({ ...item, current_version: null, load_error: reason?.code === 'VERSION_AMBIGUOUS' ? '版本区间重叠，服务端拒绝读取' : messageOf(reason) })));
     }
+    if (!isCurrent()) return;
     all.value = details;
     refreshError.value = '';
     if (selected.value) {
       const refreshed = all.value.find(row => row.airspace_id === selected.value.airspace_id);
       if (refreshed) selected.value = refreshed; else clearDetail();
     }
-    await loadUpcomingStarts(details);
+    // 先显示列表和当前空域，未来生效边界后台补读。
+    loading.value = false;
+    await nextTick();
+    if (!isCurrent()) return;
+    paintMap(!fittedOnce);
+    scheduleBoundaryReload();
+    await loadUpcomingStarts(details, isCurrent);
   } catch (reason) {
+    if (!isCurrent()) return;
     failure = reason;
     if (keep) refreshError.value = refreshFailureText(reason, '读取空域失败');
     else { all.value = []; clearDetail(); error.value = messageOf(reason); }
-  } finally { loading.value = false; refreshing.value = false; }
+  } finally { if (isCurrent()) { loading.value = false; refreshing.value = false; } }
+  if (!isCurrent()) return;
   await nextTick();
+  if (!isCurrent()) return;
   paintMap(!fittedOnce);
   scheduleBoundaryReload();
   if (failure && quiet) throw failure;
@@ -190,18 +204,20 @@ const MAX_TIMER_MS = 2_000_000_000;
 const upcomingStarts = new Map();   // airspace_id → { version, at }
 let routeBoundaries = [];
 let boundaryTimer = 0, boundaryRechecks = 0, pageAlive = true;
-async function loadUpcomingStarts(rows) {
+async function loadUpcomingStarts(rows, isCurrent = () => pageAlive) {
   const now = Date.now();
   const idle = rows.filter(row => !row.current_version && !row.load_error);
   const ids = new Set(idle.map(row => row.airspace_id));
   [...upcomingStarts.keys()].forEach(id => { if (!ids.has(id)) upcomingStarts.delete(id); });
-  await Promise.all(idle.filter(row => upcomingStarts.get(row.airspace_id)?.version !== row.version).map(async row => {
+  await mapPool(idle.filter(row => upcomingStarts.get(row.airspace_id)?.version !== row.version), 4, async row => {
+    if (!isCurrent()) return;
     try {
       const versionPage = await airspaceApi.versions(row.airspace_id, { page: 1, size: 50 });
       const starts = (versionPage.items || []).map(version => Number(version.valid_from)).filter(at => at > now);
+      if (!isCurrent()) return;
       upcomingStarts.set(row.airspace_id, { version: row.version, at: starts.length ? Math.min(...starts) : 0 });
     } catch { /* 读不到版本历史时只靠推送信号和手动刷新 */ }
-  }));
+  });
 }
 function scheduleBoundaryReload() {
   clearTimeout(boundaryTimer);

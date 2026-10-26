@@ -113,19 +113,51 @@ class NotificationResponse:
         latest = target.get('latest_state') or {}
         facts = {'target_id': link['target_id'], 'observed_at': latest.get('observed_at'),
                  'location': latest.get('location'), 'reason': '等待本批次目标产生告警'}
-        if not link.get('event_id'):
-            alarms = self.pages('/alarms', {'target_id': link['target_id'], 'source_mode': 'replay'})
-            matches = {r['event_id']: r for r in alarms if r.get('event_id') and r.get('target_id') == link['target_id']
-                       and r.get('source_mode') == 'replay' and (r.get('received_at') or 0) >= started}
+        if not link.get('risk_case_id') and not link.get('event_id'):
+            alarms = self.pages('/alarms', {'target_id': link['target_id'], 'source_mode': 'replay', 'view': 'risk_case'})
+            matches = {}
+            for row in alarms:
+                if (row.get('target_id') != link['target_id'] or row.get('source_mode') != 'replay'
+                        or (row.get('received_at') or 0) < started):
+                    continue
+                case = row.get('risk_case') or {}
+                case_id = case.get('risk_case_id')
+                identity = ('risk', case_id) if case_id else ('event', row.get('event_id'))
+                if identity[1]: matches[identity] = row
             if not matches: return facts
-            if len(matches) != 1: raise ValueError('本批次目标关联多个告警，暂不触发飞行行为')
-            link['event_id'], alarm = next(iter(matches.items()))
+            if len(matches) != 1: raise ValueError('本批次目标关联多个独立风险，暂不触发飞行行为')
+            (kind, identifier), alarm = next(iter(matches.items()))
+            link['risk_case_id' if kind == 'risk' else 'event_id'] = identifier
             link['alarm_no'] = alarm.get('alarm_no')
-        event = self.platform.call('GET', '/uav-events/'+link['event_id'])
-        if event.get('target_id') != link['target_id'] or (event.get('created_at') or 0) < started:
-            raise ValueError('告警不属于本次目标，暂不触发飞行行为')
-        overview = self.platform.call('GET', '/uav-events/'+link['event_id']+'/advisory')
-        if overview.get('event_id') != link['event_id']: raise ValueError('通知与当前告警关联不一致')
+        if link.get('risk_case_id'):
+            detail = self.platform.call('GET', '/uav-risk-cases/' + link['risk_case_id'])
+            case = detail.get('risk_case') or {}
+            alarm = detail.get('alarm') or {}
+            if not alarm.get('target_id'):
+                raise ValueError('风险详情未提供目标关联，可能缺少目标读取权限，暂不能确认本批次目标')
+            if (case.get('risk_case_id') != link['risk_case_id'] or alarm.get('target_id') != link['target_id']
+                    or case.get('source_mode') != 'replay' or (case.get('created_at') or 0) < started):
+                raise ValueError('风险不属于本批次目标或模拟来源，暂不触发飞行行为')
+            event, overview = detail.get('event') or {}, detail.get('advisory') or {}
+            if event.get('target_id') != link['target_id']:
+                raise ValueError('风险办理事件与当前目标不一致')
+            related = set(case.get('related_event_ids') or [])
+            notification_event = case.get('notification_event_id')
+            if (not notification_event or notification_event not in related or overview.get('event_id') not in related
+                    or overview.get('event_id') not in (notification_event, case.get('action_event_id'))):
+                raise ValueError('风险通知与原渠道任务关联不一致')
+            link['event_id'] = notification_event
+            confirmed = case.get('verification_status') == 'CONFIRMED'
+            facts['risk_case_id'] = link['risk_case_id']
+        else:
+            # Original platforms/raw historical alarms remain compatible, but
+            # multiple raw events are never guessed to be the same risk.
+            event = self.platform.call('GET', '/uav-events/'+link['event_id'])
+            if event.get('target_id') != link['target_id'] or (event.get('created_at') or 0) < started:
+                raise ValueError('告警不属于本次目标，暂不触发飞行行为')
+            overview = self.platform.call('GET', '/uav-events/'+link['event_id']+'/advisory')
+            if overview.get('event_id') != link['event_id']: raise ValueError('通知与当前告警关联不一致')
+            confirmed = event.get('state') == 'CONFIRMED'
         records = [r for r in overview.get('records', []) if r.get('simulated') is True
                    and started <= (r.get('created_at') or 0) <= int(time.time()*1000)]
         sms = next((r for r in records if r.get('kind') == 'SMS_SIMULATED' and r.get('delivery_status') == 'SIMULATED_DELIVERED'), None)
@@ -142,7 +174,7 @@ class NotificationResponse:
                      reason=auto_voice.get('reason') if sms else auto_sms.get('reason'),
                      sms_status=auto_sms.get('status'), voice_status=auto_voice.get('status'), observation=observation)
         trigger = voice if self.targets[key]['notificationBehavior'] == 'after_voice' else sms
-        facts['trigger'] = trigger if event.get('state') == 'CONFIRMED' else None
+        facts['trigger'] = trigger if confirmed else None
         return facts
 
     def apply(self, targets, elapsed, now):

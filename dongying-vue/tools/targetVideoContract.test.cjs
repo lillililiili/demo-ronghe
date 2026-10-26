@@ -270,3 +270,52 @@ test('EO tracking card and video recover by themselves after a backend outage', 
     assert.deepEqual(pending().map(timer => timer.ms), [5000], 'back to the normal 5 s reading');
   } finally { unmounts.splice(0).forEach(cb => cb()); scope.stop(); }
 });
+
+
+test('decoder loads only for playable video and delayed imports cannot revive stale playback', async () => {
+  const fs = require('node:fs'), path = require('node:path');
+  const source = fs.readFileSync(path.resolve(__dirname, '../src/components/video/AuthenticatedHlsVideo.vue'), 'utf8');
+  assert.doesNotMatch(source, /import Hls from/);
+  const start = source.slice(source.indexOf('async function start() {'), source.indexOf('\nwatch([', source.indexOf('async function start() {')))
+    .replace("import('hls.js')", 'loadHls()');
+  function fixture() {
+    const pending = [], created = [], errors = [];
+    let allowed = true;
+    class Hls {
+      static isSupported() { return true; }
+      static Events = { ERROR: 'error', MANIFEST_PARSED: 'parsed' };
+      constructor(options) { created.push(options); }
+      on() {} attachMedia() {} loadSource() {}
+    }
+    const deps = { nextTick: async () => {}, destroy() {}, canConnect: () => allowed,
+      media: { value: {} }, error: { value: '' }, phase: { value: '' },
+      props: { targetId: 'selected', deviceId: 'device', video: { stream_id: 'stream', playback_url: '/allowed' } },
+      location: { origin: 'http://localhost' }, authSession: { value: 'current-session' },
+      readSessionToken: () => 'current-session', streamUrl: value => value, authenticatedHlsLoader: value => value,
+      interrupt: message => errors.push(message), watchForData() {}, playLive() {}, reconnect() {},
+      loadHls: () => new Promise((resolve, reject) => pending.push({ resolve: () => resolve({ default: Hls }), reject }))
+    };
+    const api = new Function(...Object.keys(deps), `let sequence = 0, alive = true, player; ${start};
+      return { start, invalidate: () => { sequence++; }, unmount: () => { alive = false; sequence++; } };`)(...Object.values(deps));
+    return { ...api, pending, created, errors, allow: value => { allowed = value; } };
+  }
+  for (const interruption of ['permission', 'selection', 'unmount']) {
+    const f = fixture();
+    f.allow(false); await f.start(); assert.equal(f.pending.length, 0);
+    f.allow(true); const reading = f.start(); await Promise.resolve();
+    assert.equal(f.pending.length, 1); assert.equal(f.created.length, 0);
+    if (interruption === 'permission') f.allow(false);
+    else if (interruption === 'selection') f.invalidate();
+    else f.unmount();
+    f.pending[0].resolve(); await reading;
+    assert.equal(f.created.length, 0, interruption);
+    assert.equal(f.errors.length, 0, 'stale imports do not overwrite current state');
+  }
+  const f = fixture();
+  const old = f.start(); await Promise.resolve();
+  const current = f.start(); await Promise.resolve();
+  f.pending[1].resolve(); await current;
+  f.pending[0].reject(new Error('old import failed')); await old;
+  assert.equal(f.created.length, 1); assert.equal(f.errors.length, 0);
+  assert.equal(f.created[0].loader.session, 'current-session');
+});

@@ -1,11 +1,11 @@
 <script>
 /* 模块级状态：跨导航保持（legacy 约定）。
-   level/status 映射为服务端契约的 severity/state；kind/region 为类别、区域筛选（阶段 15 契约）；
+   level/status 映射为服务端契约的 severity/state；kind 为违规原因筛选；
    time/timeRange 为时间筛选（2026-10-14），按告警发生时间、北京时间筛，列表、导出同参；
    sort/order 随列表与导出请求一起发给服务端（阶段 15 契约白名单四个键），页面不做假排序。
    默认 priority：当前事项、观测过期或未知待确认、历史分组；前两组等级高、同等级新到优先，历史新到优先（2026-10-07 用户确认）。 */
 const S = {
-  st: { page: 1, size: 10, originKind: '', predictionStatus: '', targetNo: '', level: '全部', status: '全部', kind: '全部', region: '全部', time: '', timeRange: null, sel: null, selId: null,
+  st: { page: 1, size: 10, riskStage: '', originKind: '', predictionStatus: '', targetNo: '', level: '全部', status: '全部', kind: '全部', time: '', timeRange: null, sel: null, selId: null,
     sort: 'priority', order: 'desc' }
 };
 export default {};
@@ -38,7 +38,7 @@ import { altitudeSpeedText } from '@/pages/alarms/alarmMotion.js';
 import { pickCounterAuthorization } from '@/components/disposal/counterProgressView.js';
 import { autoHandoffProgress, HANDED_OFF, HANDOFF_PENDING, mergeHandoffProgress, punishmentHandoffProgress } from '@/ui/punishmentHandoffProgress.js';
 import { toast } from '@/ui/nv.js';
-import { exportAlarmsCsv, getAlarm, getAlarmAirspaceHits, getUavEvent, listAlarmDistricts, listAlarmEscalations, listAlarms, listUavVerifications } from '@/services/alarmApi.js';
+import { getAlarmOverview, getUavRiskCase, exportAlarmsCsv, getAlarm, getAlarmAirspaceHits, getUavEvent, listAlarmEscalations, listAlarms, listUavVerifications } from '@/services/alarmApi.js';
 import { escalationBrief, escalationRecords, reasonListText } from '@/ui/alarmEscalation.js';
 import { ruleReasonText } from '@/ui/legalityReviewModal.js';
 import { NO_PILOT_LOCATION, pilotLocationText } from '@/services/pilotLocation.js';
@@ -67,28 +67,30 @@ import { serverNow } from '@/services/serverClock.js';
 import TargetTrackingPanel from '@/components/video/TargetTrackingPanel.vue';
 import { uavAdvisoryApi } from '@/services/uavAdvisoryApi.js';
 
+import { riskCaseProgress, RISK_STAGE_LABEL, riskCaseOf, riskCaseKey, riskStageLabel, riskConfirmed, riskVerificationState, riskCaseVerificationLabel, riskCaseAlarm, riskCaseMatches } from '@/services/riskCaseView.js';
 import { businessDateTime } from '@/services/businessTime.js';
 import { PREDICTION_ORIGIN, PREDICTION_STATES, alarmPredictionState, isPredictionAlarm, predictionVerificationState } from '@/services/predictionView.js';
-import { predictionDetailsHtml, predictionReasonText, predictionTime, predictionAlarmStatusHtml } from '@/ui/predictionDetails.js';
+import { predictionDetailsHtml, predictionAlarmStatusHtml } from '@/ui/predictionDetails.js';
 const U = window.UI;
 usePageChrome('alarms');
 const root = ref(null);
 const route = useRoute();
 const activeTab = ref('alarms');
-const authorizationScope = ref({ eventId: '', authorizationId: '', status: '' });
+const authorizationScope = ref({ eventId: '', riskCaseId: '', authorizationId: '', status: '' });
 let authorizationKey = 0;
 function openAuthorizations(value = {}) {
-  authorizationScope.value = { eventId: value.eventId || '', authorizationId: value.authorizationId || '', status: value.status || '', key: ++authorizationKey };
+  authorizationScope.value = { eventId: value.eventId || '', riskCaseId: value.riskCaseId || '', authorizationId: value.authorizationId || '', status: value.status || '', key: ++authorizationKey };
   activeTab.value = 'authorizations';
 }
 // at：顶栏“待我审批”每次点击都带新的时间，已在本页时也重新打开“反制办理 → 待我处理”。
-watch(() => [route.query.tab, route.query.authorization, route.query.event, route.query.at], ([tab, id, event]) => {
-  if (tab === 'authorizations' || id) openAuthorizations({ authorizationId: typeof id === 'string' ? id : '', eventId: typeof event === 'string' ? event : '' });
+watch(() => [route.query.tab, route.query.authorization, route.query.event, route.query.risk_case, route.query.at], ([tab, id, event, riskId]) => {
+  if (tab === 'authorizations' || id) openAuthorizations({ riskCaseId: typeof riskId === 'string' ? riskId : '', authorizationId: typeof id === 'string' ? id : '', eventId: typeof event === 'string' ? event : '' });
 }, { immediate: true });
 /* reactive 代理同一份模块级状态：n-pagination 的 :page/:page-size 需要响应式，
    底层对象仍是 S.st，跨导航记忆不变 */
 const st = reactive(S.st);
 const targetNoInput = ref(st.targetNo);
+const riskStageOptions = [{ label: '全部风险阶段', value: '' }, ...Object.entries(RISK_STAGE_LABEL).map(([value, label]) => ({ value, label }))];
 const originOptions = [{ label: '全部告警', value: '' }, { label: '预测入区预警', value: PREDICTION_ORIGIN }];
 const predictionStatusOptions = [{ label: '全部预测状态', value: '' }, ...Object.entries(PREDICTION_STATES).map(([value, label]) => ({ value, label }))];
 function predictionFilterChanged() { if (!st.originKind) st.predictionStatus = ''; st.page = 1; loadList(); }
@@ -101,16 +103,17 @@ async function applyTargetNo() {
   st.selId = null; cur = emptyDetail();
   paintDetail(); focusMap();
   const loaded = await loadList();
-  if (loaded && !st.selId && list.rows.length) selectAlarm(list.rows[0].alarm_id);
+  if (loaded && !st.selId && list.rows.length) selectAlarm(riskCaseKey(list.rows[0]));
 }
 let evidenceEventSequence = 0;
 function resetLinkedAlarmFilters() {
-  Object.assign(st, { page: 1, originKind: '', predictionStatus: '', targetNo: '', level: '全部', status: '全部', kind: '全部', region: '全部', time: '', timeRange: null });
+  Object.assign(st, { page: 1, riskStage: '', originKind: '', predictionStatus: '', targetNo: '', level: '全部', status: '全部', kind: '全部', time: '', timeRange: null });
   targetNoInput.value = '';
   root.value?.querySelectorAll('[data-f]').forEach(control => { control.value = st[control.dataset.f]; });
 }
 async function openEvidenceEvent() {
-  const id = typeof route.query.event === 'string' ? route.query.event : '';
+  const riskId = typeof route.query.risk_case === 'string' ? route.query.risk_case : '';
+  const id = riskId || (typeof route.query.event === 'string' ? route.query.event : '');
   if (!id || route.query.tab === 'authorizations' || route.query.authorization) return false;
   const own = ++evidenceEventSequence;
   const detailRequest = ++detailSeq;
@@ -121,10 +124,11 @@ async function openEvidenceEvent() {
   resetLinkedAlarmFilters();
   list.loading = true; paintList(); paintDetail(); focusMap();
   const isCurrent = () => authorizationPageActive && own === evidenceEventSequence
-    && activeTab.value === 'alarms' && route.query.event === id
+    && activeTab.value === 'alarms' && (riskId ? route.query.risk_case : route.query.event) === id
     && detailRequest === detailSeq && requestedListSeq === listSeq;
   try {
-    const event = await getUavEvent(id);
+    const detail = riskId ? await getUavRiskCase(riskId) : null;
+    const event = detail ? { ...detail.event, alarm_id: detail.risk_case.risk_case_id } : await getUavEvent(id);
     if (!isCurrent()) return true;
     if (!event?.alarm_id) throw new Error('此事件未关联可查看的告警');
     requestedListSeq = listSeq + 1;
@@ -143,16 +147,18 @@ async function openEvidenceEvent() {
   }
   return true;
 }
-watch(() => route.query.event, () => { if (root.value) openEvidenceEvent(); });
+watch(() => [route.query.event, route.query.risk_case], () => { if (root.value) openEvidenceEvent(); });
 let authorizationEventRequest = 0, authorizationPageActive = true;
 onUnmounted(() => { authorizationPageActive = false; ++authorizationEventRequest; });
-async function showAuthorizationEvent(eventId) {
+async function showAuthorizationEvent(value) {
+  const eventId = typeof value === 'string' ? value : value?.eventId;
+  const riskId = typeof value === 'object' ? value?.riskCaseId : '';
   const request = ++authorizationEventRequest, scope = authorizationScope.value;
   try {
-    const event = await getUavEvent(eventId);
+    const event = riskId ? null : await getUavEvent(eventId);
     if (!authorizationPageActive || request !== authorizationEventRequest || activeTab.value !== 'authorizations' || scope !== authorizationScope.value) return;
     activeTab.value = 'alarms';
-    await selectAlarm(event.alarm_id);
+    await selectAlarm(riskId || event.alarm_id);
   } catch (error) { toast(error.message || '读取关联告警失败', 'err'); }
 }
 const totalCount = ref(0);
@@ -163,6 +169,8 @@ const advisoryLive = ref(null);
 const departureEnded = ref(false);
 const videoSubject = ref(null);
 const advisorySummaries = new Map();
+const progressKey = row => riskCaseOf(row)?.risk_case_id || row?.event_id || '';
+const summaryKey = value => value?._riskCaseId || value?.risk_case?.risk_case_id || value?.risk_case_id || value?.event_id || '';
 let map = null;
 onUnmounted(() => { ++listSeq; ++detailSeq; ++disposalSeq; if (map) map.destroy(); map = null; });
 
@@ -197,16 +205,10 @@ const NOTIFY_PHASE = {
 };
 const SOURCE_MODE = { mock: { t: MODE_TEXT.mock, c: 't-purple' }, replay: { t: MODE_TEXT.replay, c: 't-amber' }, live: { t: MODE_TEXT.live, c: 't-green' } };
 /* 类别按违规原因筛（2026-10-07）：平台自己产生的告警都是"飞行违规"，按告警类型筛只有一项筛得出东西。
-   可选项是规则引擎会写进告警的违规原因（与后端 violation_reason 白名单同一组），文字与列表里的原因一致；
-   区域来自本页的区域字典接口，读不到就把下拉标成"不可用"并在 title 说明原因。 */
+   可选项是规则引擎会写进告警的违规原因（与后端 violation_reason 白名单同一组），文字与列表里的原因一致。 */
 const VIOLATION_REASON_CODES = ['NO_AUTHORIZATION', 'INSIDE_RESTRICTED_AIRSPACE', 'AIRSPACE_ALTITUDE_EXCEEDED',
   'TEMPORARY_RESTRICTION_ACTIVE', 'ROUTE_DEVIATION', 'TIME_WINDOW_OVERRUN', 'PLAN_ALTITUDE_EXCEEDED', 'NIGHT_FLIGHT', 'BVLOS_EXCEEDED'];
 const KIND_OPTS = [{ v: '全部', t: '全部' }, ...VIOLATION_REASON_CODES.map(v => ({ v, t: ruleReasonText(v) }))];
-const districts = ref([]);
-const districtError = ref('');
-const regionOpts = () => (districtError.value
-  ? [{ v: '全部', t: '全部' }, { v: '', t: '不可用', disabled: true }]
-  : [{ v: '全部', t: '全部' }, ...districts.value.map(d => ({ v: d.district_id, t: d.name }))]);
 
 const LEVEL_OPTS = [{ v: '全部', t: '全部' }, { v: 'CRITICAL', t: '紧急' }, { v: 'HIGH', t: '高' }, { v: 'MEDIUM', t: '中' }, { v: 'LOW', t: '低' }];
 const STATUS_OPTS = [{ v: '全部', t: '全部' }, ...Object.entries(STATUS_FILTER).map(([v, s]) => ({ v, t: s.t }))];
@@ -236,7 +238,7 @@ function fmt(ms) {
   return businessDateTime(ms);
 }
 const sevOf = a => SEVERITY[a.severity] || { t: esc(a.severity || '—'), c: 't-gray', tone: 'info' };
-const stateOf = a => a.event_id ? (STATE[a.state] || { t: esc(a.state || '状态未知'), c: 't-gray', color: '#8ca0be' }) : NO_EVENT;
+const stateOf = a => a.event_id ? (STATE[riskVerificationState(a)] || { t: esc(a.state || '状态未知'), c: 't-gray', color: '#8ca0be' }) : NO_EVENT;
 function deriveAlarmProgress(auths, handoffs) {
   // 真正发出才写“已移送处罚”；交接已建立还没发出写“待发送移送”。
   const handoffProgress = punishmentHandoffProgress(handoffs);
@@ -260,25 +262,26 @@ function deriveAlarmProgress(auths, handoffs) {
 }
 function displayState(a) {
   if (!a?.event_id || !['CONFIRMED', 'PENDING_VERIFICATION'].includes(a.state)) return stateOf(a);
-  const summary = advisorySummaries.get(a.event_id);
+  const summary = advisorySummaries.get(progressKey(a));
   const noCounter = summary?.no_counter;
   if (noCounter?.review_required === true) return { t: '风险变化待决策', c: 't-amber', color: '#f1a43a' };
   const notification = notificationProgressView(summary?.auto_handoff);
   if (notification) return { t: notification.title, c: notification.tone === 'warning' ? 't-amber' : notification.tone === 'success' ? 't-green' : 't-gray', color: notification.tone === 'warning' ? '#f1a43a' : '#22d3ee', handoffId: summary.auto_handoff?.handoff_id };
   if (noCounter?.decision_active === true) return { t: '不反制 · 现场处置结束', c: 't-cyan', color: '#22d3ee' };
-  const autoHandoff = advisorySummaries.get(a.event_id)?.auto_handoff;
-  const listed = [HANDED_OFF, HANDOFF_PENDING].includes(pageProgress[a.event_id]) ? pageProgress[a.event_id] : null;
+  const autoHandoff = advisorySummaries.get(progressKey(a))?.auto_handoff;
+  const listed = [HANDED_OFF, HANDOFF_PENDING].includes(pageProgress[progressKey(a)]) ? pageProgress[progressKey(a)] : null;
   const handoffKey = mergeHandoffProgress(autoHandoffProgress(autoHandoff), listed);
-  if (a.state !== 'CONFIRMED' && !handoffKey) return stateOf(a);
-  const key = handoffKey || pageProgress[a.event_id];
-  const sources = progressSources.get(a.event_id);
+  if (!riskConfirmed(a) && !handoffKey) return stateOf(a);
+  const key = handoffKey || pageProgress[progressKey(a)];
+  const sources = progressSources.get(progressKey(a));
   const failed = sources?.auths?.failed || sources?.handoffs?.failed;
   if (!key || !ALARM_PROGRESS_LABEL[key]) {
     if (failed) return { t: '处置进度读取失败', c: 't-gray', color: '#8ca0be' };
     if (!sources?.auths?.items || !sources?.handoffs?.items) {
-      return { t: pendingProgress.has(a.event_id) ? '处置进度读取中' : '处置进度待确认', c: 't-gray', color: '#8ca0be' };
+      return { t: pendingProgress.has(progressKey(a)) ? '处置进度读取中' : '处置进度待确认', c: 't-gray', color: '#8ca0be' };
     }
-    const summary = advisorySummaries.get(a.event_id);
+    const summary = advisorySummaries.get(progressKey(a));
+    if (summary?.response_order?.counter_priority && summary?.counter_launch_visible) return { t: '可人工发起反制', c: 't-amber', color: '#f1a43a' };
     if (NOTIFY_PHASE[summary?.notify_phase]) return NOTIFY_PHASE[summary.notify_phase];
     if (departureView(a, summary)) return { t: '已撤离', c: 't-green', color: '#31d19b' };
     return stateOf(a);
@@ -288,17 +291,18 @@ function displayState(a) {
   return { t: `${ALARM_PROGRESS_LABEL[key]}${failed ? '（更新失败）' : ''}`, c: ALARM_PROGRESS_TAG[key] || 't-cyan', color: '#22d3ee', handoffId };
 }
 function departureView(alarm, summary) {
-  return alarmDepartureView({ alarm, summary, progress: pageProgress[alarm?.event_id], sources: progressSources.get(alarm?.event_id) });
+  if (riskCaseOf(alarm)) return null;
+  return alarmDepartureView({ alarm, summary, progress: pageProgress[progressKey(alarm)], sources: progressSources.get(progressKey(alarm)) });
 }
 function selectedDisposalProgress() {
-  return pageProgress[cur.alarm?.event_id]
+  return pageProgress[progressKey(cur.alarm)]
     || deriveAlarmProgress(Object.values(disposal.byAction), disposal.handoff ? [disposal.handoff] : []);
 }
 function showCounterLaunch() {
   const eventId = cur.alarm?.event_id, summary = advisoryLive.value;
   if (!eventId || summary?.event_id !== eventId || summary._unavailable === true || summary.no_counter?.decision_active === true
     || summary.counter_launch_visible !== true) return false;
-  const sources = progressSources.get(eventId);
+  const sources = progressSources.get(progressKey(cur.alarm));
   if (!Array.isArray(sources?.auths?.items) || !Array.isArray(sources?.handoffs?.items) || sources.auths.failed || sources.handoffs.failed) return false;
   const key = selectedDisposalProgress();
   // 急停后的重新申请仍须取得当前事件的最新资格；在途审批和执行继续阻断重复申请。
@@ -313,7 +317,7 @@ function eventHandedOff() {
   // 交接已建立（无论是否已发出）都不再出现反制和不反制入口。
   return key === HANDED_OFF || key === HANDOFF_PENDING;
 }
-const typeOf = a => isPredictionAlarm(a) ? '预测进入禁飞区' : ALARM_TYPE_LABEL[a.alarm_type] || esc(a.alarm_type || '—');
+const typeOf = a => riskCaseOf(a) ? `无人机风险 · ${riskStageLabel(a)}` : isPredictionAlarm(a) ? '预测进入禁飞区' : ALARM_TYPE_LABEL[a.alarm_type] || esc(a.alarm_type || '—');
 /* 只上屏业务编号；引擎标识（例如 eval 前缀）不是编号，列里显示 —，内部 ID 留在 title。 */
 const noOf = a => displayAlarmNo(readableNo(a.alarm_no)) || '—';
 const modeOf = a => SOURCE_MODE[a.source_mode] || { t: esc(a.source_mode || '—'), c: 't-gray' };
@@ -321,6 +325,11 @@ const sevTag = a => U.tag(sevOf(a).t, sevOf(a).c);
 const OBSERVATION_LABEL = { CURRENT: '观测有效', EXPIRED: '观测已过期', UNKNOWN: '观测待确认' };
 const ATTENTION_LABEL = { CURRENT: '当前事项', AWAITING_CONFIRMATION: '状态待确认', HISTORY: '历史记录' };
 function stateTag(a) {
+  if (riskCaseOf(a)) {
+    const verified = riskConfirmed(a);
+    const state = riskCaseProgress(a) || (verified ? displayState(a) : { t: riskCaseVerificationLabel(a), c: 't-gray' });
+    return `<span title="${esc(`风险阶段：${riskStageLabel(a)}；核实：${riskCaseVerificationLabel(a)}`)}">${U.tag(esc(state.t), state.c)}</span>`;
+  }
   if (isPredictionAlarm(a)) {
     const state = alarmPredictionState(a, serverNow());
     return `${U.tag(PREDICTION_STATES[state] || '预测状态未知', state === 'ACTIVE' ? 't-amber' : state === 'ENTERED' ? 't-red' : 't-gray')}${state === 'ACTIVE' ? U.tag(a.state === 'CONFIRMED' ? '风险已核实' : '待人工核实', 't-cyan') : ''}`;
@@ -332,7 +341,7 @@ function stateTag(a) {
 }
 const observationTag = a => a.attention_group !== 'HISTORY' && ['EXPIRED', 'UNKNOWN'].includes(a.observation_status)
   ? U.tag(OBSERVATION_LABEL[a.observation_status], 't-gray') : '';
-const detailStateTags = a => `${stateTag(a)}${observationTag(a)}`;
+const detailStateTags = a => `${stateTag(a)}${riskCaseOf(a) && (riskConfirmed(a) || riskCaseProgress(a)) ? U.tag(esc(riskCaseVerificationLabel(a)), 't-gray') : ''}${observationTag(a)}`;
 /* 告警升级（2026-10-06，BUG-11/BUG-16）：同一架无人机再次违规时服务端升级原告警，不再另起一条。
    severity 已是升级后的当前等级；违规原因按出现顺序累计（偏航写“偏航”）；升级经过另读升级记录。 */
 const severityText = code => SEVERITY[code]?.t || (code === 'UNKNOWN' ? '未定级' : '');
@@ -377,31 +386,36 @@ const DISPOSAL_ACTIVE = ['APPROVED', 'EXECUTING'];
 let disposalSeq = 0;
 let progressReloadFor = '';
 
-const readEventAuthorizations = eventId => disposalApi.list({ subject_kind: 'UAV_EVENT', subject_id: eventId, page: 1, size: 50 });
-const readEventHandoffs = eventId => handoffApi.listHandoffs({ source_kind: 'UAV_EVENT', source_id: eventId, page: 1, size: 5 });
+const readEventAuthorizations = (eventId, riskCaseId) => disposalApi.list({ subject_kind: 'UAV_EVENT', ...(riskCaseId ? { risk_case_id: riskCaseId } : { subject_id: eventId }), page: 1, size: 50 });
+const readEventHandoffs = (eventId, riskCase) => riskCase?.manual_counter_only ? Promise.resolve({ items: [] }) : handoffApi.listHandoffs({ source_kind: 'UAV_EVENT', source_id: eventId, page: 1, size: 5 });
 function setDisposalError(error) {
   disposal.unavailable = !!error && isDisposalUnavailable(error);
   disposal.error = disposal.unavailable ? DISPOSAL_UNAVAILABLE_TEXT : messageOf(error);
 }
 
 async function loadEventDisposals(eventId) {
+  if (!authorizationPageActive) return;
   const seq = ++disposalSeq;
   const readSeq = ++progressReadSeq;
-  const isCurrent = () => seq === disposalSeq && eventId === cur.alarm?.event_id;
+  const caseId = riskCaseOf(cur.alarm)?.risk_case_id, contextKey = progressKey(cur.alarm);
+  const isCurrent = () => authorizationPageActive && seq === disposalSeq && eventId === cur.alarm?.event_id && contextKey === progressKey(cur.alarm);
   disposal.byAction = {}; disposal.unavailable = false; disposal.error = ''; disposal.handoff = null;
   if (!eventId) return;
-  const auths = await readProgressSource('auths', () => readEventAuthorizations(eventId), hasPermission);
+  // 独立只读资料并行；固定本次风险绑定，迟到结果继续按原序号隔离。
+  const riskCase = riskCaseOf(cur.alarm);
+  const [auths, handoffs] = await Promise.all([
+    readProgressSource('auths', () => readEventAuthorizations(eventId, caseId), hasPermission),
+    readProgressSource('handoffs', () => readEventHandoffs(eventId, riskCase), hasPermission)
+  ]);
   if (!isCurrent()) return;
-  recordProgressRead(eventId, 'auths', readSeq, auths);
+  recordProgressRead(contextKey, 'auths', readSeq, auths);
   // 同一动作可能申请过多次：按申请时间取最新一条代表当前状态。
   for (const row of auths.items || []) {
     const prev = disposal.byAction[row.action_type];
     if (!prev || Number(row.requested_at || 0) >= Number(prev.requested_at || 0)) disposal.byAction[row.action_type] = row;
   }
   if (auths.failed) setDisposalError(auths.error);
-  const handoffs = await readProgressSource('handoffs', () => readEventHandoffs(eventId), hasPermission);
-  if (!isCurrent()) return;
-  recordProgressRead(eventId, 'handoffs', readSeq, handoffs);
+  recordProgressRead(contextKey, 'handoffs', readSeq, handoffs);
   if (!handoffs.failed) disposal.handoff = (handoffs.items || []).find(row => row.handoff_type === 'UAV_PUNISHMENT') || null;
   paintList();
   return Object.values(disposal.byAction).sort((a, b) => Number(b.requested_at || 0) - Number(a.requested_at || 0))[0] || null;
@@ -409,13 +423,20 @@ async function loadEventDisposals(eventId) {
 
 /** 打开的告警跟着后台自动核实、反制和通知更新，不清空当前进度。 */
 async function refreshEventDisposals(eventId) {
+  if (!authorizationPageActive) return;
   const seq = ++disposalSeq;
   const readSeq = ++progressReadSeq;
-  const isCurrent = () => seq === disposalSeq && eventId === cur.alarm?.event_id;
+  const caseId = riskCaseOf(cur.alarm)?.risk_case_id, contextKey = progressKey(cur.alarm);
+  const isCurrent = () => authorizationPageActive && seq === disposalSeq && eventId === cur.alarm?.event_id && contextKey === progressKey(cur.alarm);
   if (!eventId || eventId !== cur.alarm?.event_id) return;
-  const auths = await readProgressSource('auths', () => readEventAuthorizations(eventId), hasPermission);
+  // 独立只读资料并行；固定本次风险绑定，迟到结果继续按原序号隔离。
+  const riskCase = riskCaseOf(cur.alarm);
+  const [auths, handoffs] = await Promise.all([
+    readProgressSource('auths', () => readEventAuthorizations(eventId, caseId), hasPermission),
+    readProgressSource('handoffs', () => readEventHandoffs(eventId, riskCase), hasPermission)
+  ]);
   if (!isCurrent()) return;
-  recordProgressRead(eventId, 'auths', readSeq, auths);
+  recordProgressRead(contextKey, 'auths', readSeq, auths);
   if (auths.failed) setDisposalError(auths.error);
   else {
     const next = {};
@@ -427,9 +448,7 @@ async function refreshEventDisposals(eventId) {
     disposal.unavailable = false;
     disposal.error = '';
   }
-  const handoffs = await readProgressSource('handoffs', () => readEventHandoffs(eventId), hasPermission);
-  if (!isCurrent()) return;
-  recordProgressRead(eventId, 'handoffs', readSeq, handoffs);
+  recordProgressRead(contextKey, 'handoffs', readSeq, handoffs);
   if (!handoffs.failed) disposal.handoff = (handoffs.items || []).find(row => row.handoff_type === 'UAV_PUNISHMENT') || null;
   setSubject(advisorySubject, advisoryProps(cur.alarm, cur.event));
   paintList();
@@ -446,38 +465,14 @@ const KPI_DEFS = [
   { label: '今日告警总数', caption: '按发生时间统计', color: 'blue', icon: 'alert' },
   { label: '今日待核实', caption: '按发生时间统计', color: 'amber', icon: 'alert' },
   { label: '待处置', caption: '实时，不限日期', color: 'pink', icon: 'alert' },
-  { label: '当前反制中', caption: '实时状态', color: 'orange', icon: 'radar' },
-  { label: '已反制', caption: '累计完成', color: 'green', icon: 'check' },
-  { label: '当前干扰中', caption: '实时状态', color: 'red', icon: 'radar' },
+  { label: '执行中反制记录', caption: '设备处置记录数', color: 'orange', icon: 'radar' },
+  { label: '已完成反制记录', caption: '设备处置记录数', color: 'green', icon: 'check' },
+  { label: '执行中干扰记录', caption: '设备处置记录数', color: 'red', icon: 'radar' },
   { label: '今日已确认', caption: '按发生时间统计', color: 'cyan', icon: 'alert' },
   { label: '今日误报', caption: '按发生时间统计', color: 'blue', icon: 'check' }
 ];
 const kpiList = ref(KPI_DEFS.map(k => ({ ...k, value: '读取中', desc: '' })));
-/* 区域字典：读不到就只留"全部"，并在筛选项 title 说明——不能凭当前页的数据拼一份看着像全量的区域列表。 */
-async function loadDistricts() {
-  try {
-    const rows = await listAlarmDistricts();
-    districts.value = (Array.isArray(rows) ? rows : rows?.items || []).filter(d => d.enabled !== false);
-    paintRegionOptions();
-  } catch (error) {
-    districtError.value = messageOf(error);
-    paintRegionOptions();
-  }
-}
-
-/* 工具条是一次性拼好的 HTML，区域选项在字典读回来之前就定型了；读回后补进去，
-   读失败就只留"全部"并在 title 说明，不留一个看着能用其实是空的下拉。 */
-function paintRegionOptions() {
-  const select = document.querySelector('select[data-f="region"]');
-  if (!select) return;
-  const current = st.region;
-  select.innerHTML = regionOpts()
-    .map(o => `<option value="${esc(o.v)}"${o.disabled ? ' disabled' : ''}${o.v === current ? ' selected' : ''}>${esc(o.t)}</option>`).join('');
-  select.title = districtError.value
-    ? `暂时读不到区域字典：${districtError.value}`
-    : (districts.value.length ? '' : '当前没有可选区域');
-}
-
+let kpiInFlight = null, kpiRefreshQueued = false, kpiActive = true;
 /* 导出：与列表同参（含排序与筛选），走 apiDownload 取 blob 后交浏览器保存，
    与统计页、证据台账、审计日志三处既有导出同一写法。 */
 async function exportCsv() {
@@ -501,7 +496,15 @@ async function exportCsv() {
 }
 
 async function loadKpis() {
-  const count = q => listAlarms({ ...q, page: 1, size: 1 }).then(p => Number(p && p.total) || 0);
+  if (!kpiActive) return;
+  if (kpiInFlight) { kpiRefreshQueued = true; return kpiInFlight; }
+  kpiInFlight = (async () => {
+  const overview = getAlarmOverview();
+  const count = (key, group = 'today') => overview.then(data => {
+    const value = group ? data?.[group]?.[key] : data?.[key];
+    if (!Number.isSafeInteger(value) || value < 0) throw new Error('告警统计数据未完整返回');
+    return value;
+  });
   /* “反制中 / 干扰中”问的是当前有多少处置在进行，因此按状态计数（契约的列表接口没有日期过滤，
      跨页在前端数日期会数错）。EXECUTING 是正在执行，APPROVED 是已批准待执行，两者分开报。 */
   // 没有处置记录查看权限就不去数（#34）：卡片写“无权查看”，不发注定被拒的请求。
@@ -510,29 +513,33 @@ async function loadKpis() {
   const disposalCount = actionType => !disposalReadable ? Promise.reject(NO_DISPOSAL_READ) : Promise.all(DISPOSAL_ACTIVE.map(status =>
     disposalApi.list({ action_type: actionType, status, page: 1, size: 1 }).then(p => Number(p && p.total) || 0)
   )).then(([approved, executing]) => ({ approved, executing }));
-  // 告警按今日发生时间统计；待处置、执行中按实时状态统计（不限日期），已反制按累计完成记录统计。
-  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit'
-  }).formatToParts(Date.now()).filter(part => part.type !== 'literal').map(part => [part.type, Number(part.value)]));
-  const from = Date.UTC(parts.year, parts.month - 1, parts.day) - 8 * 60 * 60_000;
-  const to = from + 86400000;
-  const day = { occurred_from: from, occurred_to: to };
-  const r = await Promise.allSettled([
-    count(day),
-    count({ ...day, state: 'PENDING_VERIFICATION', current_pending: true }),
-    count({ ...day, state: 'CONFIRMED' }),
-    count({ ...day, state: 'FALSE_POSITIVE' }),
-    disposalCount('COUNTERMEASURE'), disposalCount('JAMMING'),
-    !disposalReadable ? Promise.reject(NO_DISPOSAL_READ) : disposalApi.list({ action_type: 'COUNTERMEASURE', status: 'COMPLETED', page: 1, size: 1 })
+  // 北京时间当日和未结束风险的统计由服务端统一返回，不再为各张卡分页扫描告警。
+  const tasks = [
+    () => count('total'),
+    () => count('pending_verification'),
+    () => count('confirmed'),
+    () => count('false_positive'),
+    () => disposalCount('COUNTERMEASURE'), () => disposalCount('JAMMING'),
+    () => !disposalReadable ? Promise.reject(NO_DISPOSAL_READ) : disposalApi.list({ action_type: 'COUNTERMEASURE', status: 'COMPLETED', page: 1, size: 1 })
       .then(p => ({ completed: Number(p && p.total) || 0 })),
-    count(PENDING_DISPOSAL_QUERY),
+    () => count('pending_disposal', null),
     /* 新-2（D-4）：今日四张卡和大屏同一口径，系统自带的演示告警（来源标“模拟”）不算；
-       演示告警另数一遍，卡片上写明有几条没算进来。r[8]~r[11] 依次对应 r[0]~r[3]。 */
-    count({ ...day, source_mode: 'mock' }),
-    count({ ...day, state: 'PENDING_VERIFICATION', current_pending: true, source_mode: 'mock' }),
-    count({ ...day, state: 'CONFIRMED', source_mode: 'mock' }),
-    count({ ...day, state: 'FALSE_POSITIVE', source_mode: 'mock' })
-  ]);
+       聚合同时返回同口径排除数，卡片上写明有几条没算进来。r[8]~r[11] 依次对应 r[0]~r[3]。 */
+    () => count('total', 'excluded_mock'),
+    () => count('pending_verification', 'excluded_mock'),
+    () => count('confirmed', 'excluded_mock'),
+    () => count('false_positive', 'excluded_mock')
+  ];
+  // 共用一次告警聚合；处置授权仍使用原接口，分组限流并合并在途刷新。
+  const r = new Array(tasks.length); let next = 0;
+  await Promise.all(Array.from({ length: 2 }, async () => {
+    while (next < tasks.length && kpiActive) {
+      const index = next++;
+      try { r[index] = { status: 'fulfilled', value: await tasks[index]() }; }
+      catch (reason) { r[index] = { status: 'rejected', reason }; }
+    }
+  }));
+  if (!kpiActive) return;
   const v = r.map(x => x.status === 'fulfilled' ? x.value : null);
   const num = x => x == null ? '—' : U.num(x);
   /* 处置授权读不到时如实说明原因，不写 0——“没有在执行”与“读不到”是两件事。 */
@@ -568,6 +575,13 @@ async function loadKpis() {
     todayKpi(KPI_DEFS[6], 2, '北京时间今天发生且已确认属实的告警数量，包含处置已结束的记录'),
     todayKpi(KPI_DEFS[7], 3, '北京时间今天发生且人工核实后已排除的告警数量')
   ];
+
+  })();
+  try { return await kpiInFlight; }
+  finally {
+    kpiInFlight = null;
+    if (kpiRefreshQueued && kpiActive) { kpiRefreshQueued = false; realtimeKpis(); }
+  }
 }
 
 /* ---------- 工具条：只暴露契约支持的过滤；不支持的保留控件但禁用并说明 ---------- */
@@ -577,7 +591,6 @@ const listToolbar = `
       ${U.field('等级', U.select('level', LEVEL_OPTS, st.level))}
       ${U.field('违规原因', U.select('kind', KIND_OPTS, st.kind))}
       ${U.field('状态', U.select('status', STATUS_OPTS, st.status))}
-      ${U.field('区域', U.select('region', regionOpts(), st.region))}
       ${U.field('时间', U.select('time', TIME_OPTS, st.time))}`;
 const listBody = `<div id="alList" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>`;
 const mapExtra = `<span id="alMapSrc" style="font-size:11px;color:var(--txt-3)"></span>
@@ -604,7 +617,8 @@ function sortTh(key, label) {
 }
 
 function queryOf() {
-  const q = { page: st.page, size: st.size, sort: st.sort };
+  const q = { view: 'risk_case', page: st.page, size: st.size, sort: st.sort };
+  if (st.riskStage) q.risk_stage = st.riskStage;
   if (st.targetNo) q.target_no = st.targetNo;
   if (st.originKind) q.origin_kind = st.originKind;
   if (st.originKind === PREDICTION_ORIGIN && st.predictionStatus) q.prediction_status = st.predictionStatus;
@@ -612,7 +626,6 @@ function queryOf() {
   if (st.level !== '全部') q.severity = st.level;
   if (STATUS_FILTER[st.status]) Object.assign(q, STATUS_FILTER[st.status].q);
   if (VIOLATION_REASON_CODES.includes(st.kind)) q.violation_reason = st.kind;
-  if (st.region !== '全部') q.district_id = st.region;
   const span = timeFilterWindow(st.time, st.timeRange);
   if (span) { q.occurred_from = span.from; q.occurred_to = span.to; }
   return q;
@@ -620,10 +633,12 @@ function queryOf() {
 
 /* 原因作为主信息完整换行展示；没有原因码时保留告警类型，不推测具体原因。 */
 function reasonCell(a) {
-  if (isPredictionAlarm(a)) return `<div class="alarm-reason-cell"><strong class="alarm-reason-text">预测进入${esc(a.prediction?.warning?.airspace_name || '禁飞区')}</strong>${U.tag('预测预警', 't-cyan')}${U.tag(modeOf(a).t, modeOf(a).c)}</div>`;
+  if (riskCaseOf(a)) return `<div class="alarm-reason-cell"><strong class="alarm-reason-text">${esc(riskStageLabel(a))} · ${esc(riskCaseOf(a).airspace_name || reasonsOf(a) || '无人机风险')}</strong></div>`;
+  const sourceTag = a.source_mode === 'replay' ? '' : U.tag(modeOf(a).t, modeOf(a).c);
+  if (isPredictionAlarm(a)) return `<div class="alarm-reason-cell"><strong class="alarm-reason-text">预测进入${esc(a.prediction?.warning?.airspace_name || '禁飞区')}</strong>${U.tag('预测预警', 't-cyan')}${sourceTag}</div>`;
   const reasons = reasonsOf(a);
   const text = reasons ? esc(reasons) : typeOf(a);
-  return `<div class="alarm-reason-cell"><strong class="alarm-reason-text">${text}</strong>${U.tag(modeOf(a).t, modeOf(a).c)}</div>`;
+  return `<div class="alarm-reason-cell"><strong class="alarm-reason-text">${text}</strong>${sourceTag}</div>`;
 }
 
 /* 来源和发生时间分两行：挤在一行时这一列最宽，整张表被撑过面板，"状态"列要横向滚动才看得到。 */
@@ -648,24 +663,25 @@ function listHtml() {
     { t: sortTh('level', '等级'), w: '52px', align: 'center', overflow: false, render: sevTag },
     { t: '关联目标', w: '146px', overflow: false, render: a => `<span class="alarm-target-number mono" title="${a.target_id ? esc(displayTargetNo(a.target_no) || a.target_id) : '无关联目标或无目标读取权限'}">${a.target_id ? esc(displayTargetNo(a.target_no) || a.target_id) : '—'}</span>` },
     { t: '告警内容', render: reasonCell },
-    { t: sortTh('status', '状态'), w: '124px', overflow: false, render: stateTag },
+    { t: sortTh('status', '办理进度'), w: '124px', overflow: false, render: stateTag },
     { t: sortTh('ts', '时间'), w: '158px', overflow: false, render: a => esc(fmt(a.received_at) || '未知') }
-  ], list.rows, { rowId: a => a.alarm_id, activeId: st.selId, className: 'alarm-list-table' });
+  ], list.rows, { rowId: riskCaseKey, activeId: st.selId, className: 'alarm-list-table' });
 }
 
 /* 事件事实核实保留原入口；处罚移送由后台调度，处置面板只读取进度。 */
 function disposalActions(a, ev) {
   if (!ev) return '<button class="btn" disabled>尚未创建核实事件</button>';
+  if (riskConfirmed(a) || ['CLEARED', 'ENDED'].includes(riskCaseOf(a)?.stage)) return '';
   const prediction = predictionVerificationState(ev, a, serverNow());
   if (prediction?.terminal) return '';
-  if ((ev.allowed_actions || []).includes('VERIFY')) return `<button class="btn" data-al="verify">${prediction ? prediction.blocked ? '核实为误报' : '核实预测风险' : '核实事件事实'}</button>`;
+  if ((riskCaseOf(a)?.allowed_actions || ev.allowed_actions || []).includes('VERIFY')) return `<button class="btn" data-al="verify">${prediction?.blocked ? '核实为误报' : riskCaseOf(a) ? '核实风险' : prediction ? '核实预测风险' : '核实事件事实'}</button>`;
   if (ev.state === 'CONFIRMED' || ev.state === 'FALSE_POSITIVE') return '';
   return '<span>当前账号没有事件核实权限</span>';
 }
 function advisoryProps(a, ev) {
   if (!a?.event_id || !ev) return null;
   return {
-    id: a.event_id, label: noOf(a), confirmed: ev.state === 'CONFIRMED',
+    id: a.event_id, key: riskCaseKey(a), riskCase: riskCaseOf(a), label: noOf(a), confirmed: riskConfirmed(a),
     handoffId: disposal.handoff?.handoff_type === 'UAV_PUNISHMENT' && disposal.handoff.delivery_status !== 'FAILED'
       ? (disposal.handoff.handoff_id || '') : '',
     counter: counterSubject(pickCounterAuthorization(Object.values(disposal.byAction))),
@@ -687,19 +703,20 @@ function counterSubject(row) {
 }
 /* 处置进度面板每秒读一次通知摘要。只有本页用到的字段（通知阶段、撤离结果、反制入口、不反制决定、自动移送）
    变了才重画列表和详情、重读处置记录；没变就不动页面，免得每秒重画、按钮点不中（BUG-06）。 */
-const advisoryPageKey = s => JSON.stringify([s.event_version, s.notify_phase || '', s.counter_launch_visible === true, s._unavailable === true,
+const advisoryPageKey = s => JSON.stringify([s.response_order, s.event_version, s.notify_phase || '', s.counter_launch_visible === true, s._unavailable === true,
   s.no_counter?.decision_active === true, s.no_counter?.review_required === true,
   s.auto_handoff?.handoff_id || '', s.auto_handoff?.status || '', recordedDepartureKey(s)]);
 const advisoryContent = s => JSON.stringify({ ...s, _fetchedAt: undefined });
 function updateAdvisory(summary) {
   if (!summary?.event_id) return;
   const fetchedAt = summary._fetchedAt || Date.now();
-  const current = advisorySummaries.get(summary.event_id);
+  const key = summaryKey(summary);
+  const current = advisorySummaries.get(key);
   if (current && (summary.event_version < current.event_version || (current._fetchedAt && fetchedAt < current._fetchedAt))) return;
   summary = { ...summary, _fetchedAt: fetchedAt };
-  advisorySummaries.set(summary.event_id, summary);
+  advisorySummaries.set(key, summary);
   const pageChanged = !current || advisoryPageKey(current) !== advisoryPageKey(summary);
-  if (summary.event_id !== cur.alarm?.event_id) {
+  if (summary.event_id !== cur.alarm?.event_id || key !== progressKey(cur.alarm)) {
     if (pageChanged) paintList();
     return;
   }
@@ -710,7 +727,7 @@ function updateAdvisory(summary) {
   if (!pageChanged) return;
   paintList();
   paintDetailContent();
-  const stillPending = cur.alarm.state !== 'CONFIRMED' && cur.alarm.state !== 'FALSE_POSITIVE';
+  const stillPending = !['CONFIRMED', 'FALSE_POSITIVE'].includes(riskVerificationState(cur.alarm));
   const departureKey = recordedDepartureKey(summary);
   if ((summary.notify_phase && stillPending) || (departureKey && departureKey !== recordedDepartureKey(current))) {
     const mark = departureKey ? `departure:${departureKey}` : `${summary.event_id}:${summary.event_version}`;
@@ -725,19 +742,20 @@ function updateAdvisory(summary) {
 }
 async function refreshOpenAdvisory(eventId) {
   if (!eventId) return;
-  const startedAt = Date.now();
-  try { updateAdvisory({ ...await uavAdvisoryApi.get(eventId), _fetchedAt: startedAt }); }
-  catch { invalidateAdvisory(eventId, startedAt); }
+  const startedAt = Date.now(), caseId = riskCaseOf(cur.alarm)?.risk_case_id || '';
+  try { updateAdvisory({ ...await uavAdvisoryApi.get(eventId, caseId), _riskCaseId: caseId, _fetchedAt: startedAt }); }
+  catch { invalidateAdvisory(eventId, startedAt, caseId); }
 }
-function invalidateAdvisory(eventId, startedAt = Date.now()) {
-  const previous = advisorySummaries.get(eventId);
+function invalidateAdvisory(eventId, startedAt = Date.now(), caseId = '') {
+  const key = caseId || (cur.alarm?.event_id === eventId ? progressKey(cur.alarm) : eventId);
+  const previous = advisorySummaries.get(key);
   if ((previous?._fetchedAt || 0) > startedAt) return;
-  advisorySummaries.set(eventId, { event_id: eventId, event_version: 0, ...previous, _unavailable: true, _fetchedAt: startedAt });
-  if (advisoryLive.value?.event_id === eventId) advisoryLive.value = null;
+  advisorySummaries.set(key, { event_id: eventId, event_version: 0, ...previous, _unavailable: true, _fetchedAt: startedAt });
+  if (advisoryLive.value?.event_id === eventId && key === progressKey(cur.alarm)) advisoryLive.value = null;
 }
 function updateNoCounter(status) {
   if (!status?.event_id || status.event_id !== cur.alarm?.event_id) return;
-  const previous = advisorySummaries.get(status.event_id);
+  const previous = advisorySummaries.get(progressKey(cur.alarm));
   if (previous && status.event_version < previous.event_version) return;
   updateAdvisory({ ...previous, event_id: status.event_id, event_version: status.event_version, no_counter: status, _fetchedAt: Date.now() });
   void refreshOpenAdvisory(status.event_id);
@@ -801,11 +819,8 @@ function detailHtml() {
 function predictionAlarmHtml(alarm) {
   if (!isPredictionAlarm(alarm)) return '';
   const scoped = alarm.prediction?.warning ? { ...alarm.prediction, warnings: [alarm.prediction.warning] } : alarm.prediction;
-  const current = predictionDetailsHtml(scoped, { now: serverNow() });
-  const frozen = predictionDetailsHtml(alarm.prediction_snapshot, { now: serverNow(), frozen: true });
-  const history = Array.isArray(alarm.prediction_history) ? alarm.prediction_history : [];
-  const changes = history.length ? `<ol>${history.map(row => `<li>${esc(predictionTime(row.changed_at || row.occurred_at || row.created_at))} · ${esc(PREDICTION_STATES[row.to_state || row.state] || (row.state === 'CANDIDATE' ? '预测待稳定' : '预测状态更新'))}${row.reason ? ' · ' + esc(predictionReasonText(row.reason)) : ''}</li>`).join('')}</ol>` : '<p>暂无可读取的预测状态变更记录。</p>';
-  return U.sect('预测依据', `<div class="prediction-detail">${current}<details><summary>查看首次预警的冻结依据</summary>${frozen}</details><details><summary>预测生命周期记录</summary>${changes}</details></div>`, { icon: 'location' });
+  const current = predictionDetailsHtml(scoped, { now: serverNow(), riskCase: riskCaseOf(alarm) });
+  return U.sect('预测依据', `<div class="prediction-detail">${current}</div>`, { icon: 'location' });
 }
 
 function verificationHtml() {
@@ -852,15 +867,15 @@ function detailActionsHtml() {
   const a = cur.alarm, ev = cur.event;
   if (!a) return '';
   const prediction = predictionVerificationState(ev, a, serverNow());
-  const note = prediction?.blocked ? prediction.message : ev?.state === 'PENDING_VERIFICATION'
-    ? prediction ? '预测入区风险尚待人工核实。确认后是否通知，以当前预测依据、飞手信息和通道校验为准。' : `事件事实尚待核实。${pendingNotifyNote(a)}` : '';
+  const note = prediction?.blocked ? prediction.message : !riskConfirmed(a) && ev?.state === 'PENDING_VERIFICATION'
+    ? riskCaseOf(a) ? `本次区域风险尚待人工核实。${pendingNotifyNote(a)}` : prediction ? '预测入区风险尚待人工核实。确认后是否通知，以当前预测依据、飞手信息和通道校验为准。' : `事件事实尚待核实。${pendingNotifyNote(a)}` : '';
   return `<div class="alarm-observation-actions">
       ${disposalActions(a, ev)}</div>
     ${note ? `<p class="alarm-action-note">${esc(note)}</p>` : ''}`;
 }
 /* 没有报备飞手时从一开始就说清楚不发短信、不打电话，不写“核实后自动发送”（2026-10-18）。 */
 function pendingNotifyNote(a) {
-  const advisory = advisoryLive.value?.event_id === a.event_id ? advisoryLive.value : advisorySummaries.get(a.event_id);
+  const advisory = advisoryLive.value?.event_id === a.event_id ? advisoryLive.value : advisorySummaries.get(progressKey(a));
   if (noReportedPilot(advisory)) return NO_REPORTED_PILOT_TEXT;
   if (advisory?.pilot_contact_missing === true) return '任务里没有执行飞手的电话，不发短信、不打电话。';
   return '核实属实后自动发送飞手短信。';
@@ -871,8 +886,9 @@ function pendingNotifyNote(a) {
 function alarmNowHtml() {
   const a = cur.alarm, t = cur.target;
   if (!a?.event_id || !a.target_id) return '';
+  if (riskCaseOf(a)) return `<section class="uav-now" role="status" aria-label="当前风险阶段"><div class="uav-now-summary"><strong class="uav-now-title">${esc(riskStageLabel(a))}</strong><span>${esc(riskCaseVerificationLabel(a))}</span></div><span class="uav-now-sub">${esc(riskCaseOf(a).airspace_name || '区域名称未提供')}${riskCaseOf(a).manual_counter_only ? ' · 人工发起反制' : ''}</span></section>`;
   if (isPredictionAlarm(a)) return predictionAlarmStatusHtml(a, { now: serverNow(), currentObservation: a.observation_status === 'CURRENT', legalStatus: t?.legality_summary?.legal_status, includeReason: false });
-  const advisory = advisoryLive.value?.event_id === a.event_id ? advisoryLive.value : advisorySummaries.get(a.event_id);
+  const advisory = advisoryLive.value?.event_id === a.event_id ? advisoryLive.value : advisorySummaries.get(progressKey(a));
   const departure = departureView(a, advisory);
   if (departure) return `<section class="uav-now is-green alarm-departure" role="status" aria-label="通知与撤离结果">
     <div class="uav-now-summary"><strong class="uav-now-title"><i aria-hidden="true"></i>${esc(departure.title)}</strong></div>
@@ -905,14 +921,14 @@ function alarmCounterBlockHtml(a, advisory, status) {
 
 /* 告警原因（页面设计第 3 条）：先写最新研判，和告警记录的原因不同才另写一行；升级过的按升级记录拆开或写“累计”。 */
 function alarmReasonHtml(a, t) {
+  if (riskCaseOf(a)) return `<section class="alarm-reason-callout is-risk" aria-label="风险依据"><span class="alarm-reason-label">${esc(riskStageLabel(a))}</span><strong class="alarm-reason-text">${esc(riskCaseOf(a).airspace_name || reasonsOf(a) || '无人机风险')}</strong>${riskCaseOf(a).verification_basis_kind === 'PREDICTED_AIRSPACE_ENTRY' || riskCaseOf(a).manual_counter_only ? '<small>核实仅用于本次风险处置；实际违法及处罚须另有实测依据。</small>' : ''}</section>`;
   if (isPredictionAlarm(a)) {
     const frozen = a.prediction_snapshot;
     const warning = frozen?.warning || frozen?.warnings?.find(row => row.event_id === a.event_id)
       || a.prediction?.warning || a.prediction?.warnings?.find(row => row.event_id === a.event_id);
     return `<section class="alarm-reason-callout is-risk" aria-label="预测预警原因（出预警时）">
       <span class="alarm-reason-label">预测预警原因（出预警时）</span>
-      <strong class="alarm-reason-text">预计进入${esc(warning?.airspace_name || '禁飞区（名称未提供）')}</strong>
-      <small class="alarm-reason-then">首次预测与空域版本见下方“预测依据”。</small></section>`;
+      <strong class="alarm-reason-text">预计进入${esc(warning?.airspace_name || '禁飞区（名称未提供）')}</strong><small>首次预测与空域版本以冻结依据为准。</small></section>`;
   }
   const live = a.attention_group !== 'HISTORY' && a.observation_status === 'CURRENT' && t && !cur.targetLoading && !cur.targetError;
   const view = alarmReasonView({ legalStatus: live ? t.legality_summary?.legal_status : null,
@@ -928,7 +944,7 @@ function alarmReasonHtml(a, t) {
 
 /* 详情和动作区就地更新：内容没变不动节点，“核实”等按钮在刷新时保持原节点，点得中。 */
 function paintDetailContent() {
-  setSubject(videoSubject, cur.alarm ? { targetId: cur.alarm.target_id || '', eventId: cur.alarm.event_id || '', label: noOf(cur.alarm) } : null);
+  setSubject(videoSubject, cur.alarm ? { key: riskCaseKey(cur.alarm), targetId: cur.alarm.target_id || '', eventId: cur.alarm.event_id || '', label: displayTargetNo(cur.alarm.target_no) || noOf(cur.alarm) } : null);
   patchHtml(el('alReason'), cur.alarm ? alarmReasonHtml(cur.alarm, cur.target) : '');
   patchHtml(el('alDetail'), detailHtml());
   patchHtml(el('alDetailActions'), detailActionsHtml());
@@ -941,8 +957,7 @@ function paintList() {
   const host = el('alList');
   if (!host) return;
   host.setAttribute('aria-busy', String(list.loading));
-  // 新页的告警与处置进度准备好前，保留当前整页及滚动位置。
-  // 逐行进度回调也走这里，不能把半成品状态或上一页顶部提前画出来。
+  // 新页列表读回前保留旧页及滚动位置；列表到达后显示事实，进度就地补齐。
   if (list.loading && list.rows.length) return;
   const queryKey = JSON.stringify(queryOf());
   const resetScroll = queryKey !== listQueryKey;
@@ -1097,9 +1112,11 @@ async function loadMapAirspaces(my) {
 }
 
 async function loadList({ quiet = false, progress = true, alarmId = null } = {}) {
+  if (!authorizationPageActive) return;
   const my = ++listSeq;
-  const previousEvents = list.rows.map(row => row.event_id).join();
-  // 整次读取（含逐行进度）完成后一次发布；实时刷新和翻页共用读取屏障。
+  const scopeSignature = rows => rows.map(row => `${progressKey(row)}:${row.event_id}:${riskConfirmed(row)}`).join();
+  const previousEvents = scopeSignature(list.rows);
+  // 列表事实先发布；逐行授权、通知和移送进度独立加载，不占用列表刷新屏障。
   list.loading = true;
   if (!quiet) list.error = '';
   paintList();
@@ -1107,40 +1124,42 @@ async function loadList({ quiet = false, progress = true, alarmId = null } = {})
     const query = queryOf();
     let page = await listAlarms(query);
     if (my !== listSeq) return;
-    if (alarmId && !page.items?.some(row => row.alarm_id === alarmId)) {
+    if (alarmId && !page.items?.some(row => riskCaseMatches(row, alarmId))) {
       // 关联跳转按服务端相同排序查找所在页；普通刷新和翻页不扫描历史。
       const scanSize = 100;
       const lastPage = Math.ceil(page.total / scanSize);
       for (let candidate = 1; candidate <= lastPage; candidate++) {
         const batch = await listAlarms({ ...query, page: candidate, size: scanSize });
         if (my !== listSeq) return;
-        const index = (batch.items || []).findIndex(row => row.alarm_id === alarmId);
+        const index = (batch.items || []).findIndex(row => riskCaseMatches(row, alarmId));
         if (index < 0) continue;
         const targetPage = Math.floor(((candidate - 1) * scanSize + index) / query.size) + 1;
         page = await listAlarms({ ...query, page: targetPage });
         if (my !== listSeq) return;
         break;
       }
-      if (!page.items?.some(row => row.alarm_id === alarmId)) {
+      if (!page.items?.some(row => riskCaseMatches(row, alarmId))) {
         throw new Error('关联告警已不在当前可访问列表，请刷新后重试。');
       }
     }
-    const rows = Array.isArray(page && page.items) ? page.items : [];
+    const rows = Array.isArray(page && page.items) ? page.items.map(riskCaseAlarm) : [];
     const total = Number(page && page.total) || 0;
     if (!rows.length && query.page > 1 && total) {
       st.page = Math.max(1, Math.ceil(total / query.size));
       return loadList();
     }
-    // 实时刷新只在处置、移送变化或本页事件换了时重读逐行进度，告警本身变化不连带每行再读两三次。
-    if (progress || rows.map(row => row.event_id).join() !== previousEvents) {
-      await loadPageProgress(rows);
-    }
-    // 翻页期间旧页的进度可能后返回，只有最后一次请求能发布列表。
-    if (my !== listSeq) return;
+    if (my !== listSeq || !authorizationPageActive) return;
     if (alarmId) st.page = page.page;
     list.rows = rows;
     totalCount.value = total;
     list.loading = false; list.error = ''; list.refreshError = '';
+    // 同区域/事件在途进度由 loadPageProgress 合并，换页和换范围使旧批次失效。
+    if (progress || scopeSignature(rows) !== previousEvents) {
+      void loadPageProgress(rows).catch(error => {
+        if (!authorizationPageActive || my !== listSeq) return;
+        list.refreshError = `处置进度更新失败：${messageOf(error)}`; paintList();
+      });
+    }
   } catch (e) {
     if (my !== listSeq) return;
     list.loading = false;
@@ -1161,52 +1180,57 @@ async function loadList({ quiet = false, progress = true, alarmId = null } = {})
 }
 
 function loadPageProgress(rows) {
-  const ids = [...new Set((rows || []).map(row => row.event_id).filter(Boolean))];
-  const confirmed = new Set(rows.filter(row => row.state === 'CONFIRMED').map(row => row.event_id));
-  const key = ids.map(id => `${id}:${confirmed.has(id)}`).sort().join();
-  // 五秒一次的告警观测刷新不能取消尚未完成的处置读取；同页复用在途任务。
+  const scopes = (rows || []).filter(row => row.event_id);
+  const keys = scopes.map(progressKey);
+  const key = scopes.map(row => `${progressKey(row)}:${row.event_id}:${riskConfirmed(row)}`).sort().join();
   if (progressBatch?.key === key) return progressBatch.promise;
   const seq = ++progressBatchSeq;
   const isCurrent = () => authorizationPageActive && seq === progressBatchSeq;
-  pendingProgress.clear();
-  ids.forEach(id => pendingProgress.add(id));
+  pendingProgress.clear(); keys.forEach(id => pendingProgress.add(id));
   for (const id of new Set([...progressSources.keys(), ...advisorySummaries.keys()])) {
-    if (ids.includes(id) || id === cur.alarm?.event_id) continue;
-    delete pageProgress[id];
-    progressSources.delete(id);
-    advisorySummaries.delete(id);
+    if (keys.includes(id) || id === progressKey(cur.alarm)) continue;
+    delete pageProgress[id]; progressSources.delete(id); advisorySummaries.delete(id);
   }
-  const promise = mapPool(ids, 4, async id => {
+  const promise = mapPool(scopes, 4, async row => {
     if (!isCurrent()) return;
-    const readSeq = ++progressReadSeq;
-    const startedAt = Date.now();
+    const id = row.event_id, scope = progressKey(row), caseId = riskCaseOf(row)?.risk_case_id;
+    const readSeq = ++progressReadSeq, startedAt = Date.now();
     const read = async (source, request) => {
       const result = await readProgressSource(source, request, hasPermission);
-      if (isCurrent()) { recordProgressRead(id, source, readSeq, result); paintList(); }
+      if (isCurrent()) { recordProgressRead(scope, source, readSeq, result); paintList(); }
     };
     await Promise.all([
-      read('auths', () => readEventAuthorizations(id)),
-      read('handoffs', () => readEventHandoffs(id)),
-      confirmed.has(id) ? uavAdvisoryApi.get(id).then(advisory => {
-        if (!isCurrent() || !advisory) return;
-        updateAdvisory({ ...advisory, _fetchedAt: startedAt });
-      }).catch(() => { if (isCurrent()) invalidateAdvisory(id, startedAt); }) : Promise.resolve()
+      read('auths', () => readEventAuthorizations(id, caseId)),
+      read('handoffs', () => readEventHandoffs(id, riskCaseOf(row))),
+      riskConfirmed(row) ? uavAdvisoryApi.get(id, caseId).then(advisory => {
+        if (isCurrent() && advisory) updateAdvisory({ ...advisory, _riskCaseId: caseId, _fetchedAt: startedAt });
+      }).catch(() => { if (isCurrent()) invalidateAdvisory(id, startedAt, caseId); }) : Promise.resolve()
     ]);
     if (!isCurrent()) return;
-    pendingProgress.delete(id);
-    paintList();
-    if (cur.alarm?.event_id === id) paintDetailContent();
+    pendingProgress.delete(scope); paintList();
+    if (progressKey(cur.alarm) === scope) paintDetailContent();
   }).finally(() => { if (isCurrent()) progressBatch = null; });
-  progressBatch = { key, promise };
-  return promise;
+  progressBatch = { key, promise }; return promise;
+}
+
+async function readRiskAlarm(id) {
+  const known = list.rows.find(row => riskCaseMatches(row, id)) || (riskCaseMatches(cur.alarm, id) ? cur.alarm : null);
+  const original = known || await getAlarm(id);
+  const risk = riskCaseOf(original);
+  if (!risk?.risk_case_id) return original === known ? getAlarm(original.alarm_id) : original;
+  const detail = await getUavRiskCase(risk.risk_case_id);
+  if (detail?.risk_case?.risk_case_id !== risk.risk_case_id || !detail.alarm) throw new Error('风险详情与选中记录不一致，请刷新重试');
+  return riskCaseAlarm({ ...detail.alarm, risk_case: detail.risk_case, _case_event: detail.event });
 }
 
 async function selectAlarm(id) {
+  const known = list.rows.find(row => riskCaseMatches(row, id));
+  if (known) id = riskCaseKey(known);
   // 同一告警的再次点击、核实后补读或手动刷新保留详情与正在办理的表单。
   // 真正换行才清空；首次读取未完成时也不另起一次初始化。
   if (id && id === st.selId) {
     if (cur.loading) return;
-    if (cur.alarm?.alarm_id === id) return refreshSelected(id);
+    if (riskCaseKey(cur.alarm) === id) return refreshSelected(id);
   }
   const my = ++detailSeq;
   ++disposalSeq;
@@ -1217,12 +1241,12 @@ async function selectAlarm(id) {
   if (listEl) U.selectRow(listEl, id);
   paintDetail(); focusMap();
   try {
-    const alarm = await getAlarm(id);
+    const alarm = await readRiskAlarm(id);
     if (my !== detailSeq) return;
     cur.alarm = alarm;
     if (alarm.event_id) {
       try {
-        cur.event = await getUavEvent(alarm.event_id);
+        cur.event = alarm._case_event || await getUavEvent(alarm.event_id);
         if (my !== detailSeq) return;
         await loadEventDisposals(alarm.event_id);
         if (my !== detailSeq) return;
@@ -1273,9 +1297,10 @@ async function loadVerifications(my, { quiet = false } = {}) {
   const keep = quiet && cur.verificationsLoaded;
   if (!keep) { cur.verificationsLoading = true; cur.verificationsError = ''; paintDetailContent(); }
   try {
-    const page = await listUavVerifications(a.event_id, { page: 1, size: VERIFICATION_PAGE_SIZE });
+    const eventIds = [...new Set([a.event_id, ...(riskCaseOf(a)?.related_event_ids || [])])];
+    const pages = await mapPool(eventIds, 4, eventId => listUavVerifications(eventId, { page: 1, size: VERIFICATION_PAGE_SIZE }));
     if (my !== detailSeq) return;
-    cur.verifications = Array.isArray(page?.items) ? page.items : [];
+    cur.verifications = pages.flatMap(page => Array.isArray(page?.items) ? page.items : []).sort((left, right) => Number(right.created_at) - Number(left.created_at));
     cur.verificationsLoaded = true;
     cur.verificationsError = '';
   } catch (e) {
@@ -1366,16 +1391,16 @@ async function refreshAfterWrite() {
    急停、处置进度和视频面板不卸载重建。读取暂时失败（断网、超时、5xx）时保留原详情并抛出，由实时刷新退避重试；
    告警已不可见（403/404 等）时如实显示原因。详情还没读出来（上次失败）时按正常选中重读。 */
 async function refreshSelected(id = st.selId, { evidenceChanged = false } = {}) {
-  if (!id || id !== st.selId || cur.loading) return;
+  if (!authorizationPageActive || !id || id !== st.selId || cur.loading) return;
   if (!cur.alarm) { await selectAlarm(id); return; }
   const my = detailSeq;
-  const isCurrent = () => my === detailSeq && st.selId === id;
+  const isCurrent = () => authorizationPageActive && my === detailSeq && st.selId === id;
   let alarm, event = null;
   try {
-    alarm = await getAlarm(id);
+    alarm = await readRiskAlarm(id);
     if (!isCurrent()) return;
     if (alarm.event_id) {
-      try { event = await getUavEvent(alarm.event_id); } catch (e) { if (shouldRetryRefresh(e)) throw e; }
+      try { event = alarm._case_event || await getUavEvent(alarm.event_id); } catch (e) { if (shouldRetryRefresh(e)) throw e; }
       if (!isCurrent()) return;
     }
   } catch (e) {
@@ -1433,14 +1458,17 @@ async function verifyModal() {
   if (verifyOpening) return;
   verifyOpening = true;
   let latest;
-  try { latest = await getUavEvent(ev.event_id); }
+  try {
+    if (riskCaseOf(a)) { const detail = await getUavRiskCase(riskCaseOf(a).risk_case_id); latest = detail.event; if (my === detailSeq) cur.alarm = riskCaseAlarm({ ...detail.alarm, risk_case: detail.risk_case }); }
+    else latest = await getUavEvent(ev.event_id);
+  }
   catch (error) { return toast(error.message || '读取核实事件失败，请稍后重试', 'err'); }
   finally { verifyOpening = false; }
-  if (my !== detailSeq || cur.alarm?.alarm_id !== a.alarm_id) return;
+  if (my !== detailSeq || riskCaseKey(cur.alarm) !== riskCaseKey(a)) return;
   cur.event = latest;
   if (latest.version !== ev.version || latest.state !== ev.state) paintDetail();
   openUavVerification({
-    alarm: a,
+    alarm: cur.alarm,
     event: latest,
     refresh: async () => { await refreshAfterWrite(); return cur.event; }
   });
@@ -1454,6 +1482,8 @@ const KPI_MIN_INTERVAL_MS = 10_000;
 const PROGRESS_MIN_INTERVAL_MS = 10_000;
 let kpiAt = 0, kpiTimer = null, progressAt = 0, progressTimer = null;
 function realtimeKpis() {
+  if (!kpiActive) return;
+  if (kpiInFlight) { kpiRefreshQueued = true; return; }
   if (kpiTimer) return;
   const wait = kpiAt + KPI_MIN_INTERVAL_MS - Date.now();
   kpiTimer = setTimeout(() => { kpiTimer = null; kpiAt = Date.now(); void loadKpis(); }, Math.max(0, wait));
@@ -1465,19 +1495,19 @@ function takeProgress(wanted) {
   if (!progressTimer) progressTimer = setTimeout(() => { progressTimer = null; realtime.trigger(['disposal']); }, wait);
   return false;
 }
-onUnmounted(() => { clearTimeout(kpiTimer); clearTimeout(progressTimer); });
+onUnmounted(() => { kpiActive = false; kpiRefreshQueued = false; clearTimeout(kpiTimer); clearTimeout(progressTimer); });
 async function realtimeRefresh(topics) {
-  if (list.loading) return;
+  if (!authorizationPageActive || list.loading) return;
   const all = topics.includes('*');
   // 截图、录像入库不改变告警/事件版本；证据变化和断线补读仍须更新已打开的证据链。
   const evidenceChanged = all || topics.includes('evidence');
   const disposalChanged = all || topics.some(topic => topic === 'disposal' || topic === 'punishment');
   const selId = st.selId;
-  const rowKey = () => JSON.stringify(list.rows.find(row => row.alarm_id === selId) || null);
+  const rowKey = () => JSON.stringify(list.rows.find(row => riskCaseKey(row) === selId) || null);
   const before = rowKey();
   realtimeKpis();
   await loadList({ quiet: true, progress: takeProgress(disposalChanged) });
-  if (!selId || st.selId !== selId || cur.loading) return;
+  if (!authorizationPageActive || !selId || st.selId !== selId || cur.loading) return;
   const after = rowKey();
   const rowChanged = after !== before && after !== 'null';
   const observationChanged = topics.includes('target') || topics.includes('observation-expiry');
@@ -1556,15 +1586,13 @@ onMounted(async () => {
       refreshBtn.textContent = '刷新';
     }
   };
-  loadDistricts();
-
   loadKpis();
   if (await openEvidenceEvent()) return;
   if (deepId) resetLinkedAlarmFilters();
   const loaded = await loadList({ alarmId: deepId });
   if (deepId && !loaded) return;
   // safe-default：深链 > 上次选中 > 当前页首条；用户可见可改
-  const id = deepId || st.selId || (list.rows[0] && list.rows[0].alarm_id) || null;
+  const id = deepId || st.selId || (list.rows[0] && riskCaseKey(list.rows[0])) || null;
   if (id) {
     selectAlarm(id);
     // 深链/默认选中的行可能落在列表滚动区外：把选中行滚到列表可视区中部。
@@ -1584,7 +1612,7 @@ onMounted(async () => {
         <button v-if="activeTab === 'authorizations' && authorizationScope.eventId" type="button" class="btn" @click="openAuthorizations()">查看全部授权</button>
       </nav>
       <AuthorizationQueue v-if="activeTab === 'authorizations'" :key="authorizationScope.key"
-        @event="showAuthorizationEvent" :event-id="authorizationScope.eventId" :initial-authorization-id="authorizationScope.authorizationId" :initial-status="authorizationScope.status" />
+        @event="showAuthorizationEvent" :event-id="authorizationScope.eventId" :risk-case-id="authorizationScope.riskCaseId" :initial-authorization-id="authorizationScope.authorizationId" :initial-status="authorizationScope.status" />
       <div v-show="activeTab === 'alarms'" class="row" style="margin-top:12px;flex:1;min-height:0">
         <UPanel title="告警列表" panel-style="flex:6;min-width:0" nopad>
           <div class="toolbar alarm-filter-toolbar">
@@ -1592,7 +1620,8 @@ onMounted(async () => {
               <UField id="al-target-no" v-model="targetNoInput" label="目标编号" placeholder="输入完整或部分编号" clearable size="small"
                 :disabled="!hasPermission('target:read')" :title="hasPermission('target:read') ? '' : '无目标读取权限'"
                 :input-props="{ maxlength: 64 }" @keydown.enter.prevent="applyTargetNo" @update:model-value="value => { if (!value) applyTargetNo(); }" />
-              <UField v-model="st.originKind" label="告警类别" type="select" size="small" :options="originOptions" @update:model-value="predictionFilterChanged" />
+              <UField v-model="st.riskStage" label="风险阶段" type="select" size="small" :options="riskStageOptions" @update:model-value="predictionFilterChanged" />
+              <UField v-model="st.originKind" label="原始来源" type="select" size="small" :options="originOptions" @update:model-value="predictionFilterChanged" />
               <UField v-if="st.originKind === PREDICTION_ORIGIN" v-model="st.predictionStatus" label="预测状态" type="select" size="small" :options="predictionStatusOptions" @update:model-value="predictionFilterChanged" />
               <div style="display:contents" v-html="listToolbar"></div>
             </div>
@@ -1620,7 +1649,7 @@ onMounted(async () => {
             body-style="overflow:hidden;display:flex;flex-direction:column;padding:0">
             <div class="alarm-action-bar">
               <div id="alNow" class="alarm-now"></div>
-              <CounterLaunch v-if="advisorySubject && !departureEnded" :key="`counter-${advisorySubject.id}`"
+              <CounterLaunch v-if="advisorySubject && !departureEnded" :key="`counter-${advisorySubject.key}`" :risk-case="advisorySubject.riskCase"
                 :event-id="advisorySubject.id" :event-label="advisorySubject.label" :active="activeTab === 'alarms'"
                 :show-launch="showCounterLaunch()" :handed-off="eventHandedOff()" :confirmed="advisorySubject.confirmed" :summary="advisoryLive"
                 :counter-stopped="selectedDisposalProgress() === 'COUNTER_STOPPED'"
@@ -1633,12 +1662,12 @@ onMounted(async () => {
               <div id="alReason" class="alarm-reason-host"></div>
               <EmergencyStopPanel v-if="emergencyEvent" :key="`emergency-${emergencyEvent.id}`" :event-id="emergencyEvent.id"
                 @updated="updateEmergency" @changed="refreshEmergency" />
-              <TargetTrackingPanel v-if="videoSubject" :key="videoSubject.label" :target-id="videoSubject.targetId"
+              <TargetTrackingPanel v-if="videoSubject" :key="videoSubject.key" :target-id="videoSubject.targetId"
                 :event-id="videoSubject.eventId" :context-label="videoSubject.label" :active="activeTab === 'alarms'"
                 begin-reason="告警详情人工补充光电追踪" />
               <div id="alDetail" style="padding:12px"></div>
-              <UavAdvisoryPanel v-if="advisorySubject" :key="`advisory-${advisorySubject.id}`"
-                :event-id="advisorySubject.id" :confirmed="advisorySubject.confirmed"
+              <UavAdvisoryPanel v-if="advisorySubject" :key="`advisory-${advisorySubject.key}`"
+                :event-id="advisorySubject.id" :risk-case="advisorySubject.riskCase" :confirmed="advisorySubject.confirmed"
                 :handoff-id="advisorySubject.handoffId" :counter="advisorySubject.counter" :counter-stop="advisorySubject.counterStop" :interval="1000"
                 @updated="updateAdvisory" @unavailable="invalidateAdvisory" />
             </div>

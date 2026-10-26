@@ -1,19 +1,19 @@
-/* 已转换为真 Vue 组件的页面注册表。
-   转换节奏：每转一页，在这里登记；未登记的 key 一律走 LegacyHost。
-   验收标准：转换页与 legacy 版并排 DOM 指纹一致（元素数 + 全文哈希）后才准登记。
-   monitor 已迁移为后端状态驱动页面，不再读取或消耗 legacy 随机序列。 */
 import { defineAsyncComponent } from 'vue';
-import StatsPage from './StatsPage.vue';
-import EvidencePage from './EvidencePage.vue';
-import AlarmsPage from './AlarmsPage.vue';
-import SituationPage from './SituationPage.vue';
-import PunishPage from './PunishPage.vue';
-import LegalityPage from './LegalityPage.vue';
+import PageLoadState from '@/components/PageLoadState.vue';
 
-/* FlightsPage 依赖尚未入库的 positionMap.js；同步 import 会让登录与其它页一起挂。
-   异步加载后，缺文件只影响飞行/空域/风险页。 */
-const FlightsPage = defineAsyncComponent(() => import('./FlightsPage.vue'));
-const AirspacePage = defineAsyncComponent(() => import('./airspace/AirspacePage.vue'));
+// 外壳只加载公共代码；业务页第一次进入时加载，之后复用模块缓存。
+// 切页后旧组件加载完成不会挂载已经离开的页面。
+const page = loader => defineAsyncComponent({
+  loader, delay: 150, loadingComponent: PageLoadState, errorComponent: PageLoadState
+});
+const StatsPage = page(() => import('./StatsPage.vue'));
+const EvidencePage = page(() => import('./EvidencePage.vue'));
+const AlarmsPage = page(() => import('./AlarmsPage.vue'));
+const SituationPage = page(() => import('./SituationPage.vue'));
+const PunishPage = page(() => import('./PunishPage.vue'));
+const LegalityPage = page(() => import('./LegalityPage.vue'));
+const FlightsPage = page(() => import('./FlightsPage.vue'));
+const AirspacePage = page(() => import('./airspace/AirspacePage.vue'));
 
 export const VUE_PAGES = {
   stats: StatsPage,

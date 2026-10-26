@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { autoVoiceView } from '../src/components/disposal/autoVoiceView.js';
 import { isPredictionAlarm } from '../src/services/predictionView.js';
+import * as riskHelpers from '../src/services/riskCaseView.js';
 import { autoHandoffProgress, HANDED_OFF, HANDOFF_PENDING, mergeHandoffProgress } from '../src/ui/punishmentHandoffProgress.js';
 
 for (const channel of ['SMS', 'VOICE']) {
@@ -116,6 +117,7 @@ test('redacted position and unavailable channels retain the historical evidence 
 });
 
 const source = readFileSync(new URL('../src/pages/AlarmsPage.vue', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+const identityKeys = new Function('riskCaseOf', source.match(/^const progressKey =.*$/m)[0] + '\n' + source.match(/^const summaryKey =.*$/m)[0] + '\nreturn { progressKey, summaryKey };')(riskHelpers.riskCaseOf);
 function body(name) {
   const start = source.indexOf(`function ${name}(`);
   assert.ok(start >= 0, name);
@@ -134,7 +136,7 @@ test('stable page key reacts to saved withdrawal, not to current polling timesta
 });
 
 function pageFixture(f) {
-  const deps = {
+  const deps = { ...riskHelpers, ...identityKeys,
     cur: { alarm: f.alarm, target: { object_type_code: 'UAV' }, event: { version: 3 } },
     advisorySummaries: new Map([[f.alarm.event_id, f.summary]]), advisoryLive: { value: f.summary },
     pageProgress: { [f.alarm.event_id]: f.progress }, progressSources: new Map([[f.alarm.event_id, f.sources]]),
@@ -169,7 +171,7 @@ test('new withdrawal reloads backend classification and counters once; stale rep
   const f = fixture(), calls = [];
   f.alarm.attention_group = 'CURRENT';
   const old = { ...f.summary, departure_observation: null, _fetchedAt: 10 };
-  const deps = {
+  const deps = { ...riskHelpers, ...identityKeys,
     cur: { alarm: f.alarm, event: { version: 3 } }, advisoryLive: { value: old }, advisorySummaries: new Map([[f.alarm.event_id, old]]),
     recordedDepartureKey, departureEnded: { value: false }, departureView: () => alarmDepartureView(f), el: () => null, patchHtml: () => {}, alarmNowHtml: () => '', paintList: () => {}, paintDetailContent: () => {},
     loadList: async opts => { calls.push(['list', opts]); },

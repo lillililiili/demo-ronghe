@@ -4,10 +4,11 @@ import { displayAlarmNo, displayTargetNo } from '@/ui/deviceNumber.js';
 import { openFormModal } from './formModal.js';
 import { closeModal } from './modal.js';
 import { toast } from './nv.js';
-import { verifyUavEvent } from '@/services/alarmApi.js';
+import { verifyUavRiskCase, verifyUavEvent } from '@/services/alarmApi.js';
 import { isUncertainOutcome } from '@/services/apiClient.js';
 import { ALARM_TYPE_LABEL, labelOf, readableNo } from '@/ui/labels.js';
 import { predictionVerificationState } from '@/services/predictionView.js';
+import { riskCaseOf, riskActionContext, riskConfirmed } from '@/services/riskCaseView.js';
 import { serverNow } from '@/services/serverClock.js';
 
 export const UAV_STATE_TEXT = {
@@ -51,10 +52,12 @@ function messageOf(error, fallback) {
  */
 export function openUavVerification({ event, alarm, refresh, onDone } = {}) {
   if (!event) { toast('尚未创建核实事件，无法核实', 'err'); return false; }
-  if (!(event.allowed_actions || []).includes('VERIFY')) { toast('当前事件不可核实或缺少核实权限', 'err'); return false; }
-  const eventId = event.event_id;
+  const risk = riskCaseOf(alarm);
+  if (!(risk?.allowed_actions || event.allowed_actions || []).includes('VERIFY')) { toast('当前风险不可核实或缺少核实权限', 'err'); return false; }
+  if (riskConfirmed(alarm)) { toast('本次风险已核实，无需重复核实', 'ok'); return false; }
+  const eventId = risk?.risk_case_id || event.event_id;
   const expectedVersion = Number(event.version);
-  const predicted = alarm?.origin_kind === 'PREDICTED_AIRSPACE_ENTRY' || event.origin_kind === 'PREDICTED_AIRSPACE_ENTRY';
+  const predicted = risk ? risk.stage === 'PREDICTED' : alarm?.origin_kind === 'PREDICTED_AIRSPACE_ENTRY' || event.origin_kind === 'PREDICTED_AIRSPACE_ENTRY';
   const predictionId = predicted ? event.verification_basis?.prediction_id || event.prediction?.prediction_id || alarm?.prediction?.prediction_id : null;
   const prediction = predictionVerificationState(event, alarm, serverNow());
   if (prediction?.terminal) { toast(prediction.message, 'err'); return false; }
@@ -69,11 +72,11 @@ export function openUavVerification({ event, alarm, refresh, onDone } = {}) {
   openFormModal({
     title: '人工核实 · ' + esc(displayAlarmNo(readableNo(alarm?.alarm_no)) || '核实事件'),
     width: '600px',
-    introHtml: `<dl class="kv">${intro}</dl>${predicted ? '<p>本次核实的是预测入区风险。是否可通知或反制以当前证据与授权校验为准。</p>' : ''}`,
+    introHtml: `<dl class="kv">${intro}</dl>${risk ? '<p>本次核实用于这一次区域风险处置，持续风险无需重复核实；实际违法及处罚须有独立实测依据。</p>' : predicted ? '<p>本次核实的是预测入区风险。是否可通知或反制以当前证据与授权校验为准。</p>' : ''}`,
     warning: basis.blocked ? esc(basis.message) : '',
     fields: [
       { key: 'conclusion', label: '核实结论', type: 'radio', required: true, options: [
-        { value: 'CONFIRMED', label: basis.blocked ? predicted ? '预测风险成立（依据不足，暂不能选）' : '属实（缺少依据，暂不能选）' : predicted ? '预测风险成立（确认本次预警）' : '属实（置为“告警已确认”）', disabled: basis.blocked },
+        { value: 'CONFIRMED', label: risk ? basis.blocked ? '风险属实（依据不足，暂不能选）' : '风险属实（确认本次处置风险）' : basis.blocked ? predicted ? '预测风险成立（依据不足，暂不能选）' : '属实（缺少依据，暂不能选）' : predicted ? '预测风险成立（确认本次预警）' : '属实（置为“告警已确认”）', disabled: basis.blocked },
         { value: 'FALSE_POSITIVE', label: '误报（终态）' }
       ] },
       { key: 'note', label: '核实依据与说明（选填）', type: 'textarea', placeholder: '可填写已查看的证据及判断理由；误报时可说明原识别或关联为何不成立', maxlength: 1000 }
@@ -88,7 +91,7 @@ export function openUavVerification({ event, alarm, refresh, onDone } = {}) {
       if (prediction?.blocked && conclusion === 'CONFIRMED') throw new Error(prediction.message);
       const key = pendingKeys.get(eventId);
       try {
-        const result = await verifyUavEvent(eventId, { conclusion, note: String(note || '').trim(), expected_version: expectedVersion, ...(predicted && predictionId ? { prediction_id: predictionId } : {}) }, key);
+        const result = await (risk ? verifyUavRiskCase : verifyUavEvent)(eventId, { ...riskActionContext(alarm), conclusion, note: String(note || '').trim(), expected_version: expectedVersion, ...(predicted && predictionId ? { prediction_id: predictionId } : {}) }, key);
         pendingKeys.delete(eventId);
         closeModal();
         toast(`核实完成：${uavStateText(result?.state)}`, 'ok');

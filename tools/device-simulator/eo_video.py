@@ -211,7 +211,7 @@ class EoSimulator:
         return {'enabled': self.config['enabled'], 'devices': copy.deepcopy(list(self.states.values()))}
 
     def configure_video(self, config):
-        """Called only by the MQTT owner thread; tracking survives video changes."""
+        """Called only by the EO owner thread; tracking survives video changes."""
         if config == self.config: return
         self._stop_raw_video()
         for active in self.active.values():
@@ -641,6 +641,7 @@ class EoSimulator:
             previous = active.get('last_frame_number')
             first = max(0, last - 29, previous + 1 if previous is not None else 0) if self.recorded else last
             for number in range(first, last + 1):
+                if not self.is_running() or not self.accepting: return
                 media_time = number * 1000 / CALIBRATION_FPS
                 timestamp = int(origin + media_time)
                 if timestamp > self.clock() * 1000 or timestamp < self.clock() * 1000 - 5000: continue

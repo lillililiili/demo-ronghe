@@ -56,7 +56,11 @@ export function predictionMapData(predictions, now, selectedTargetId, unavailabl
         .map(warning => ({ ...warning, ...predictionLocation(warning.entry_location) })) : [] };
   });
 }
-export function isPredictionAlarm(alarm) { return (alarm?.origin_kind || alarm?.originKind) === PREDICTION_ORIGIN; }
+export function isPredictionAlarm(alarm) {
+  const stage = (alarm?.risk_case || alarm?.riskCase)?.stage;
+  if (stage) return stage === 'PREDICTED' || stage === 'UNKNOWN';
+  return (alarm?.origin_kind || alarm?.originKind) === PREDICTION_ORIGIN;
+}
 export function alarmPredictionState(alarm, now) {
   const prediction = alarm?.prediction;
   const warning = prediction?.warning || predictionWarnings(prediction).find(row => row.event_id === (alarm?.event_id || alarm?.eventId));
@@ -70,13 +74,23 @@ export function predictionVerificationId(event, alarm) {
 
 /** 仅控制预测风险的核实入口；原核实历史和实际入区告警继续遵循各自流程。 */
 export function predictionVerificationState(event, alarm, now) {
+  const risk = alarm?.risk_case || alarm?.riskCase;
+  // 同一风险转实测后，旧预测的 ENTERED/WITHDRAWN 只是历史依据，不再决定统一办理资格。
+  if (risk) {
+    if (risk.stage === 'UNKNOWN') return { state: 'UNKNOWN', blocked: true, terminal: false,
+      message: risk.block_reason || event?.verification_basis?.message || '当前风险依据不足，暂不能确认属实；恢复有效依据后可继续在本条风险办理，如确认是误报可核实为误报。' };
+    if (['CLEARED', 'ENDED'].includes(risk.stage)) return { state: risk.stage, blocked: true, terminal: true,
+      message: risk.stage === 'CLEARED' ? '本次风险已避开，保留核实和处置历史。' : '本次风险已结束，保留核实和处置历史。' };
+    if (risk.stage !== 'PREDICTED') return null;
+  }
   if (!isPredictionAlarm(alarm) && event?.origin_kind !== PREDICTION_ORIGIN) return null;
   const state = alarmPredictionState({ ...alarm, event_id: event?.event_id || alarm?.event_id || alarm?.eventId,
     prediction: event?.prediction || alarm?.prediction, prediction_status: event?.prediction_status || alarm?.prediction_status }, now);
   if (state === 'WITHDRAWN') return { state, blocked: true, terminal: true,
     message: '预测预警已撤销，保留原核实与通知记录；不能再确认本次预测风险。' };
   if (state === 'ENTERED') return { state, blocked: true, terminal: true,
-    message: '已实测入区，本次预测预警不再核实；请查看实际入区告警及其处置进度，原核实记录保留。' };
+    message: risk ? '预测依据已转为实测入区，请刷新本条风险查看当前阶段并继续办理，原核实记录保留。'
+      : '已实测入区，本次预测预警不再核实；请查看实际入区告警及其处置进度，原核实记录保留。' };
   const predictionId = event?.verification_basis?.prediction_id || event?.prediction?.prediction_id || alarm?.prediction?.prediction_id;
   if (!predictionId) return { state, blocked: true, terminal: false,
     message: '缺少可核实的预测快照，不能提交预测风险属实；如确认是误报，可核实为误报。' };

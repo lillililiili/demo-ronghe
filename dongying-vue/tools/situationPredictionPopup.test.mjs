@@ -1,3 +1,5 @@
+import * as riskHelpers from '../src/services/riskCaseView.js';
+import { predictionWarningRows } from '../src/services/predictionView.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -18,7 +20,7 @@ function rawAlarm(id, state = 'ACTIVE') {
   prediction_snapshot: { warning: { event_id: `event-${id}`, state: 'ACTIVE', airspace_name: `首次<${id}>禁飞区` } } };
 }
 function render(alarm, current = true) {
- const deps = { targetAlarm: () => alarm, advisorySummaries: { value: {} }, autoSmsView: () => null, autoVoiceView: () => null,
+ const deps = { ...riskHelpers, targetAlarm: () => alarm, advisorySummaries: { value: {} }, autoSmsView: () => null, autoVoiceView: () => null,
   isPredictionAlarm, predictionAlarmStatusHtml, targetNowStatus: () => { throw new Error('预测不应进入普通实测状态'); },
   alarmReasonView: () => { throw new Error('预测不应套用普通违规原因'); }, devices: { value: [] }, ruleReasonText: code => code,
   displayNumberReferences: () => '', uavProcessStatus: () => '待核实', targetIconHtml: () => '', displayTargetNo: value => value,
@@ -52,24 +54,25 @@ test('只将当前目标同事件预测关联到弹窗，首次冻结快照单�
  const target = { id: alarm.targetId, targetId: alarm.targetInternalId, relatedAlarms: [alarm] };
  const latest = { ...alarm.prediction, target_id: target.targetId, prediction_id: 'latest-snapshot', warnings: [
   { event_id: 'other-event', state: 'ACTIVE', airspace_name: '其他区域' },
-  { ...alarm.prediction.warning, state: 'UNKNOWN' }
+  { ...alarm.prediction.warning, state: 'ACTIVE' }
  ] };
  const selection = { value: { kind: 'target', id: target.id } }, predictions = { value: [latest] };
  const selectedPredictionAlarmDetail = { value: { alarm_id: alarm.alarmId, prediction_snapshot: alarm.prediction_snapshot } };
  const predictionUnavailable = { value: false };
- const choose = new Function('selection', 'predictions', 'selectedPredictionAlarmDetail', 'predictionUnavailable', 'isPredictionAlarm',
-  `${body('targetAlarm')}\nreturn targetAlarm;`)(selection, predictions, selectedPredictionAlarmDetail, predictionUnavailable, isPredictionAlarm);
+ const predictionRows = { get value() { return predictionWarningRows(predictions.value, now, predictionUnavailable.value); } };
+ const choose = new Function(...Object.keys(riskHelpers), 'predictionRows', 'selection', 'predictions', 'selectedPredictionAlarmDetail', 'predictionUnavailable', 'isPredictionAlarm',
+  `${body('targetAlarm')}\nreturn targetAlarm;`)(...Object.values(riskHelpers), predictionRows, selection, predictions, selectedPredictionAlarmDetail, predictionUnavailable, isPredictionAlarm);
  const chosen = choose(target);
  assert.equal(chosen.prediction.prediction_id, 'latest-snapshot'); assert.equal(chosen.prediction.warning.event_id, alarm.eventId);
  assert.equal(chosen.prediction.warnings.length, 1); assert.equal(chosen.prediction_snapshot, alarm.prediction_snapshot);
- predictionUnavailable.value = true; assert.equal(choose(target).prediction.status, 'UNKNOWN');
+ predictionUnavailable.value = true; assert.equal(choose(target), null, '读取失败的旧预测不进入目标卡');
 });
 test('地图核实先读完整告警和事件，把当前预测ID交共用核实弹窗', async () => {
  const raw = rawAlarm('verify'), mapped = toAlarms([raw])[0], event = { event_id: raw.event_id, version: 8, allowed_actions: ['VERIFY'] };
  let opened;
- const fn = new Function('targetAlarm', 'toast', 'getUavEvent', 'getAlarm', 'openUavVerification', 'source',
+ const fn = new Function(...Object.keys(riskHelpers), 'targetAlarm', 'toast', 'getUavEvent', 'getAlarm', 'openUavVerification', 'source',
   `${body('openTargetVerification')}\nreturn openTargetVerification;`)
-  (() => mapped, () => {}, async id => { assert.equal(id, raw.event_id); return event; },
+  (...Object.values(riskHelpers), () => mapped, () => {}, async id => { assert.equal(id, raw.event_id); return event; },
     async id => { assert.equal(id, raw.alarm_id); return raw; }, input => { opened = input; }, { refresh: async () => {} });
  await fn({ targetId: raw.target_id });
  assert.equal(opened.event, event); assert.equal(opened.alarm.prediction.prediction_id, raw.prediction.prediction_id);
@@ -85,4 +88,18 @@ test('UNKNOWN最后依据与首次空域冻结清楚标识，不能恢复当前�
   assert.match(html, basis === 'FIRST_FROZEN' ? /缺失空域资料来自首次冻结依据/ : /空域名称与版本为最后有效预测依据/);
   assert.match(html, /实测已过期或时间不可信/); assert.doesNotMatch(html, /约 \d+ 秒后/);
  }
+});
+
+test('统一风险的旧入区依据不引导到另一条告警', () => {
+  for (const id of ['unified-north', 'unified-south']) {
+    const alarm = { ...rawAlarm(id, 'ENTERED'), risk_case: { risk_case_id: `case-${id}`, stage: 'UNKNOWN' } };
+    const html = predictionAlarmStatusHtml(alarm, { now });
+    assert.match(html, /同一风险记录中办理/);
+    assert.doesNotMatch(html, /请查看实际入区告警/);
+    alarm.risk_case.stage = 'PREDICTED';
+    const gate = predictionVerificationState(null, alarm, now);
+    assert.equal(gate.blocked, true);
+    assert.match(gate.message, /刷新本条风险/);
+    assert.doesNotMatch(gate.message, /请查看实际入区告警/);
+  }
 });

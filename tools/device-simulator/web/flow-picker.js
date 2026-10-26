@@ -1,6 +1,6 @@
 (function (root) {
   'use strict';
-  /* “选择流程 1-9”：一次选一个流程。左边选，右边看这个流程演示什么、开始前要做什么、会看到什么、要在平台上做什么，
+  /* “选择流程 1-8”：一次选一个流程。左边选，右边看这个流程演示什么、开始前要做什么、会看到什么、要在平台上做什么，
      点“载入并准备”只载入这一个；载入后地图页顶部一直显示“你要做什么”，直到停止或换流程。
      流程文件和说明都在服务端（acceptance_flows.py），模拟器不替人开关规则，只读地看一眼规则开了没有。 */
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -19,6 +19,22 @@
       ? `反制规则启用 ${counter.enabled}/${counter.total} 条，全部满足且证据、设备等校验通过后自动发起；不满足时由有权限的人发起`
       : '反制规则一条都没启用，由有权限的人发起反制');
     return parts.length ? `规则管理里现在：${parts.join('；')}。` : '';
+  }
+  // Configuration is an explanation, not a frontend eligibility decision.
+  function orderLine(rules, flow) {
+    if (![1, 2, 3, 4, 5, 9].includes(flow?.flow)) return '';
+    const policy = rules?.response_order;
+    if (!policy?.ok) return '处置顺序配置暂不可读取，请以平台当前允许动作及阻断原因为准。';
+    if (!policy.enabled) return '处置顺序：优先反制策略未启用，沿用通知优先流程。';
+    const prediction = flow.guide?.prediction_only;
+    if ((prediction && !policy.prediction_enabled) || (!prediction && !policy.observed_enabled))
+      return '处置顺序：当前分支阶段未纳入优先策略，沿用通知优先；阶段变化后由平台重新判断。';
+    const risk = policy.minimum_risk === 'MEDIUM' ? '中风险及以上' : '高风险';
+    const scope = policy.scope_mode === 'AIRSPACES' ? '指定空域' : '全部空域';
+    const schedule = policy.schedule_mode === 'DAILY' ? `${policy.start_time}—${policy.end_time}（北京时间）` : '全天';
+    const wait = Number.isInteger(policy.max_wait_seconds) && policy.max_wait_seconds >= 5 && policy.max_wait_seconds <= 300
+      ? `${policy.max_wait_seconds}秒` : '后台配置的最长等待时间';
+    return `后台优先策略：${risk}，${scope}，${schedule}。命中时短信并行、反制优先；收到真实启动回执且风险持续后才拨电话，明确无法启动或失败立即进入电话资格判断，等待超过${wait}也可进入电话资格判断。实际是否命中、通道及授权条件以平台为准。`;
   }
   /* 这个流程对自动核实的要求和现在的开关对不上时，说清楚；没有要求或读不到就不说。 */
   function ruleConflict(flow, rules) {
@@ -55,15 +71,48 @@
     return {...flow, ...variant, title: flow.title, variant: variant.id, variantLabel: variant.label};
   }
 
-  if (typeof module !== 'undefined' && module.exports) { module.exports = {rulesLine, ruleConflict, advance, statusText, selectVariant}; return; }
+  /* 阶段来自本次场景，时间只取本批次服务端进度；它描述模拟飞行，不代表平台业务办理结果。 */
+  function sceneGuideModel(scene, current = null, runtime = null) {
+    const started = Boolean(current?.startedBatch);
+    if (current?.ended || (started && current.startedBatch !== runtime?.batch)) return null;
+    const source = started ? (runtime?.source_scene || runtime?.scene) : scene;
+    const guide = source?.sceneGuide;
+    if (typeof guide?.summary !== 'string' || !guide.summary.trim() || !Array.isArray(guide.stages) || !guide.stages.length) return null;
+    let previous = -1;
+    const stages = [];
+    for (const stage of guide.stages) {
+      if (!stage || !Number.isFinite(stage.at_seconds) || stage.at_seconds < 0 || stage.at_seconds <= previous
+        || typeof stage.label !== 'string' || !stage.label.trim() || typeof stage.description !== 'string') return null;
+      stages.push({at_seconds: stage.at_seconds, label: stage.label, description: stage.description});
+      previous = stage.at_seconds;
+    }
+    let activeIndex = -1;
+    if (started && ['RUNNING', 'PAUSED'].includes(runtime?.phase) && Number.isFinite(runtime?.elapsed) && runtime.elapsed >= 0) {
+      stages.forEach((stage, index) => { if (runtime.elapsed >= stage.at_seconds) activeIndex = index; });
+    }
+    return {summary: guide.summary, stages, activeIndex, paused: activeIndex >= 0 && runtime?.phase === 'PAUSED'};
+  }
+
+  function sceneGuideHtml(model, compact = false) {
+    if (!model) return '';
+    const active = model.stages[model.activeIndex];
+    const stages = `<ol class="scene-guide-stages">${model.stages.map((stage, index) => `<li${index === model.activeIndex ? ' aria-current="step"' : ''}><span class="scene-guide-time">${stage.at_seconds === 0 ? '开始' : `约 ${Math.round(stage.at_seconds)} 秒`}</span><b>${esc(stage.label)}</b>${compact ? '' : `<span>${esc(stage.description)}</span>`}</li>`).join('')}</ol>`;
+    if (compact) return `<section class="scene-guide scene-guide-compact" aria-label="模拟飞行阶段"><p class="scene-guide-summary" title="${esc(model.summary)}">路线：${esc(model.summary)}</p>${stages}
+      <p class="scene-guide-current" role="status"><b>${active ? (model.paused ? '模拟已暂停：' : '当前模拟阶段：') : '开始后：'}</b>${active ? esc(active.description) : '在融合感知选中无人机，查看未来位置和平台预警。'}</p></section>`;
+    const title = active ? `模拟飞行阶段${model.paused ? ' · 已暂停' : ''}：${esc(active.label)}` : '模拟航线导读';
+    return `<section class="scene-guide"><h4>${title}</h4><p class="scene-guide-summary">${esc(model.summary)}</p>${stages}
+      <p class="scene-guide-note">阶段按模拟航线和运行进度显示；预警、核实、通知和反制结果以平台为准。</p></section>`;
+  }
+
+  if (typeof module !== 'undefined' && module.exports) { module.exports = {rulesLine, orderLine, ruleConflict, advance, statusText, selectVariant, sceneGuideModel, sceneGuideHtml}; return; }
 
   const KEY = `${storeKey}-flow`;
-  let flows = [], chosen = null, chosenVariant = null, rules = null, current = null, folded = false, loading = null;
+  let flows = [], compatibilityFlows = [], chosen = null, chosenVariant = null, rules = null, current = null, folded = false, loading = null;
   try { const saved = JSON.parse(localStorage.getItem(KEY)); if (saved?.flow && saved.startedBatch) current = saved; } catch {}
 
-  const flowOf = (number, variant) => selectVariant(flows.find(item => item.flow === number), variant);
+  const flowOf = (number, variant) => selectVariant([...flows, ...compatibilityFlows].find(item => item.flow === number), variant);
   const persist = () => { try { if (current?.startedBatch) localStorage.setItem(KEY, JSON.stringify(current)); else localStorage.removeItem(KEY); } catch {} };
-  async function readFlows() { flows = (await api('acceptance-flows')).flows; return flows; }
+  async function readFlows() { const result = await api('acceptance-flows'); flows = result.flows; compatibilityFlows = result.compatibility_flows || []; return flows; }
   /* 规则状态只在登录且账号读得到时才有；读不到整行不显示。 */
   async function readRules() {
     if (!liveState?.connected) return null;
@@ -74,7 +123,9 @@
   /* 每 1.5 秒轮询一次，内容没变就不重画，免得按钮闪、焦点丢。 */
   function renderBanner() {
     const box = document.querySelector('#flow-banner'), flow = current && flowOf(current.flow, current.variant);
-    const key = JSON.stringify([flow?.flow, current, liveState?.phase, folded]);
+    const sceneGuide = sceneGuideModel(flow?.scene, current, liveState);
+    // 模型只保存阶段索引，不保存逐秒进度，因此同一阶段内的轮询不会重建按钮或丢失焦点。
+    const key = JSON.stringify([flow?.flow, flow?.guide, current, liveState?.phase, folded, sceneGuide]);
     if (key === shown) return;
     shown = key;
     if (!flow) { box.hidden = true; box.innerHTML = ''; return; }
@@ -83,8 +134,8 @@
     box.innerHTML = `<div class="flow-banner-head"><strong>流程 ${flow.flow} · ${esc(flow.title)}${flow.variantLabel ? ' · ' + esc(flow.variantLabel) : ''}</strong><span class="flow-chip">${esc(statusText(current, phase))}</span>
       <span class="flow-banner-actions"><button type="button" data-flow-banner="detail">完整说明</button><button type="button" data-flow-banner="switch">换一个流程</button><button type="button" data-flow-banner="fold">${folded ? '展开' : '收起'}</button></span></div>`
       + (folded ? '' : (current.reminder
-        ? `<p class="flow-warning">这个流程已经结束。请回规则管理把自动核实打开，否则流程 1、2 不会自动核实。</p><div class="flow-banner-ack"><button type="button" class="primary" data-flow-banner="ack">我知道了</button></div>`
-        : `${g.warning && !current.startedBatch ? `<p class="flow-warning">${esc(g.warning)}</p>` : ''}<div class="flow-banner-body"><b>你要做什么</b>${items(g.todo)}<p class="flow-foot">做完点“停止”，再选下一个流程。</p></div>`));
+        ? `<p class="flow-warning">这个流程已经结束。请回规则管理把自动核实打开，否则独立实测分支不会自动核实。</p><div class="flow-banner-ack"><button type="button" class="primary" data-flow-banner="ack">我知道了</button></div>`
+        : `${g.warning && !current.startedBatch ? `<p class="flow-warning">${esc(g.warning)}</p>` : ''}${sceneGuide ? sceneGuideHtml(sceneGuide, true) : `<div class="flow-banner-body"><b>你要做什么</b>${items(g.todo)}<p class="flow-foot">做完点“停止”，再选下一个流程。</p></div>`}`));
   }
 
   function detailHtml(flow, mode) {
@@ -98,7 +149,8 @@
       ${flow.variants?.length ? `<label class="flow-variant">本次模拟情况<select data-flow-variant>${flow.variants.map(item => `<option value="${esc(item.id)}" ${item.id === flow.variant ? 'selected' : ''}>${esc(item.label)}</option>`).join('')}</select></label>` : ''}
       ${g.warning ? `<p class="flow-warning">${esc(g.warning)}</p>` : ''}
       <section><h4>这个流程演示什么</h4><p>${esc(g.shows)}</p></section>
-      <section><h4>开始前要做什么</h4>${items(g.before)}${line ? `<p class="flow-rules">${esc(line)}</p>` : ''}${conflict ? `<p class="flow-warning">${esc(conflict)}</p>` : ''}</section>
+      ${sceneGuideHtml(sceneGuideModel(flow.scene))}
+      <section><h4>开始前要做什么</h4>${items(g.before)}${line ? `<p class="flow-rules">${esc(line)}</p>` : ''}${orderLine(rules, flow) ? `<p class="flow-rules">${esc(orderLine(rules, flow))}</p>` : ''}${conflict ? `<p class="flow-warning">${esc(conflict)}</p>` : ''}</section>
       <section><h4>跑起来你会看到什么</h4>${items(g.sees)}</section>
       <section><h4>你要在平台上做什么</h4>${items(g.todo)}</section>
       <p class="flow-foot">做完点“停止”，再选下一个流程。</p>
@@ -116,7 +168,8 @@
 
   async function open(preselect) {
     await readFlows();
-    chosen = flowOf(preselect) ? preselect : flowOf(current?.flow) ? current.flow : flowOf(chosen) ? chosen : flows[0].flow;
+    const daily = number => flows.some(flow => flow.flow === number);
+    chosen = daily(preselect) ? preselect : daily(current?.flow) ? current.flow : daily(chosen) ? chosen : flows[0].flow;
     chosenVariant = current?.flow === chosen ? current.variant : null;
     rules = null;
     openDialog('选一个流程来跑', `<div class="flow-picker"><p class="field-note">一次只跑一个流程：左边选，右边看说明，点“载入并准备”。做完点“停止”，再选下一个。</p>
@@ -142,7 +195,7 @@
   function release() { if (current && !current.startedBatch) clear(); }
 
   function showReminder(flow) {
-    openDialog(`流程 ${flow.flow} 已结束`, `<div class="start-check"><p class="flow-warning">请回规则管理把自动核实打开，否则流程 1、2 不会自动核实。</p>
+    openDialog(`流程 ${flow.flow} 已结束`, `<div class="start-check"><p class="flow-warning">请回规则管理把自动核实打开，否则独立实测分支不会自动核实。</p>
       <p class="field-note">这个流程需要自动核实关着，所以跑之前让你关了它。模拟器不会替你开关规则，要你自己去打开。</p><p class="flow-rules" id="flow-reminder-rules"></p>
       <div class="form-actions">${btn('close-dialog', '稍后再说')}<button type="button" class="primary" data-flow-banner="ack">我已经打开了</button></div></div>`);
     readRules().then(value => { const verify = value?.verify; const note = document.querySelector('#flow-reminder-rules');

@@ -1,4 +1,5 @@
 <script setup>
+import { riskActionContext, riskCaseOf, riskSummaryMatches } from '@/services/riskCaseView.js';
 import { userFacingMessage } from '@/ui/labels.js';
 import { computed, onUnmounted } from 'vue';
 import { DEPARTED_NOT_CALLED, autoVoiceView } from './autoVoiceView.js';
@@ -27,20 +28,23 @@ const time = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: 
 function retry() {
   if (!view.value.canRetry || props.disabled) return;
   const id = props.data.event_id, version = props.data.event_version;
+  const caseId = riskCaseOf(props.data)?.risk_case_id || props.data?._riskCaseId || '';
+  const riskContext = riskActionContext(props.data);
+  if (caseId && !riskContext.risk_case_id) { toast('风险版本未提供，请刷新后重新操作', 'err'); return; }
   const key = newHandoffIdempotencyKey();
   const modal = openFormModal({
     title: '重新拨打飞手电话', confirmText: '提交重试', width: '520px',
-    notice: '提交后由后台再次确认目标是否仍在告警空域，并按当前飞手和录音通道拨打。',
+    notice: '提交后由后台再次确认当前风险是否持续，并按当前飞手和录音通道拨打。',
     warning: view.value.simulated ? '当前使用模拟电话通道，不会拨打真实电话或播放真实录音。' : '',
     fields: [{ key: 'note', label: '重试说明（选填）', type: 'textarea', minRows: 3, placeholder: '可补充已核查或处理的问题，最多 1000 字' }],
     initial: { note: '' },
     validate: value => String(value.note || '').trim().length > 1000 ? '重试说明不能超过 1000 字' : null,
     onSubmit: async value => {
-      const current = () => alive && id === props.data?.event_id && modal.isCurrent();
-      if (!current()) throw new Error('事件已切换，请关闭后重新操作');
+      const current = () => alive && riskSummaryMatches(props.data, id, caseId) && modal.isCurrent();
+      if (!current()) throw new Error('风险或事件已切换，请关闭后重新操作');
       if (props.disabled || !view.value.canRetry) throw new Error('当前状态不允许重拨，请关闭弹窗后核对最新结果。');
       try {
-        await uavAdvisoryApi.retryVoice(id, { expected_version: version, note: String(value.note).trim() }, key);
+        await uavAdvisoryApi.retryVoice(id, { ...riskContext, expected_version: version, note: String(value.note).trim() }, key);
         if (!current()) return;
         modal.close(); emit('changed'); toast('已提交重拨，请查看后台通话结果', 'ok');
       } catch (error) {
@@ -56,7 +60,7 @@ function retry() {
 
 <template>
   <section class="auto-voice-notice" :class="{ 'is-compact': compact }" aria-label="飞手电话录音通知" :data-state="data?.auto_voice?.status">
-    <component :is="compact ? 'details' : 'div'" :key="data?.event_id">
+    <component :is="compact ? 'details' : 'div'" :key="riskCaseOf(data)?.risk_case_id || data?.event_id">
       <summary v-if="compact" class="notice-summary">
         <b>飞手电话</b><span class="notice-result" :class="`avn-${view.tone}`">{{ compactTitle }}</span>
         <span v-if="view.simulated" class="tag t-amber">模拟</span><span class="notice-toggle">详情</span>
@@ -74,7 +78,7 @@ function retry() {
         <template v-if="view.updatedAt && view.updatedAt !== view.triggeredAt"><dt>状态更新</dt><dd>{{ time(view.updatedAt) }}</dd></template>
       </dl>
       <p v-if="!view.recipient" class="avn-muted">未提供接收飞手信息</p>
-      <details v-if="view.source || view.evaluatedAt || view.dataUpdatedAt" :key="data?.event_id">
+      <details v-if="view.source || view.evaluatedAt || view.dataUpdatedAt" :key="riskCaseOf(data)?.risk_case_id || data?.event_id">
         <summary>查看拨打依据与时间</summary>
         <p v-if="view.source">{{ view.source === 'RULE_ILLEGAL' ? '系统违规研判' : view.source === 'MANUAL_CONFIRMATION' ? '人工确认与当前观测' : '后台通知记录' }}</p>
         <p v-if="view.evaluatedAt">研判时间：{{ time(view.evaluatedAt) }}</p>

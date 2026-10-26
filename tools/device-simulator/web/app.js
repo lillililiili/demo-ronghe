@@ -139,7 +139,13 @@ const riskObjects = r => {
   return `平台判定风险${related?` · ${reference.label}：${related.name}`:r.type==='no-plan'?' · 无匹配飞行任务':''}`;
 };
 function toast(text){$('#toast').textContent=text;$('#toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('#toast').hidden=true,3800);}
-function dirty(){showRunPositions=false; draftUnsaved=true; $('#save-status').textContent='本地草稿有未保存修改'; }
+function dirty(){
+  showRunPositions=false; draftUnsaved=true; $('#save-status').textContent='本地草稿有未保存修改';
+  // Authored landmarks and timing describe the loaded scene, not a subsequently edited draft.
+  const hadGuide=Object.hasOwn(state,'mapGuide')||Object.hasOwn(state,'sceneGuide');
+  delete state.mapGuide; delete state.sceneGuide;
+  if(hadGuide){window.FlowPicker?.clear();renderMap();}
+}
 function field(label,name,value,type='text',extra=''){return `<label class="field"><span>${esc(label)}</span><input name="${name}" type="${type}" value="${esc(value)}" ${extra}></label>`;}
 function selectField(label,name,value,options){return `<label class="field"><span>${esc(label)}</span><select name="${name}">${options.map(o=>{const v=typeof o==='string'?o:o.value;return `<option value="${esc(v)}" ${String(value)===String(v)?'selected':''}>${esc(typeof o==='string'?o:o.label)}</option>`;}).join('')}</select></label>`;}
 const opts = (items,empty) => [...(empty?[{value:'',label:empty}]:[]),...items.map(x=>({value:x.id,label:x.name}))];
@@ -149,7 +155,21 @@ function renderTree(){
   const groups=[['设备组',state.sites.map(s=>row('site',s,s.devices[0]?.kind||'radar',deviceSummary(s.devices))),state.sites.length],['飞行任务',state.plans.map(p=>row('plan',p,'route','任务航线 · 模拟配套')),state.plans.length],['模拟目标',state.targets.map(t=>row('target',t,targetIcon(t.kind),labels[t.kind])),state.targets.length],['空域边界',state.zones.map(z=>row('zone',z,'area',airspaceKinds[z.kindCode]||'未选择空域类型')),state.zones.length]];
   $('#object-tree').innerHTML=groups.map(([title,rows,n],i)=>`<section data-object-group="${['site','plan','target','zone'][i]}"><div class="group-title">${title}<small>${n}</small></div>${rows.join('')}</section>`).join('');
 }
-function label(x,y,text){const w=Math.max(80,text.length*13+20);return `<g class="map-label" transform="translate(${x},${y})"><rect x="${-w/2}" y="0" width="${w}" height="28" rx="4"/><text text-anchor="middle" y="19">${esc(text)}</text></g>`;}
+function labelBounds(x,y,text){const width=Math.max(80,text.length*13+20);return {x:x-width/2,y,width,height:28};}
+function mapOverlayBounds(svg,element){
+  if(!element||element.hidden)return null;
+  const rect=element.getBoundingClientRect?.();
+  if(!rect||!(rect.width>0&&rect.height>0)||!['left','top','right','bottom'].every(key=>Number.isFinite(rect[key])))return null;
+  try{
+    const inverse=svg.getScreenCTM?.()?.inverse();
+    if(!inverse||!svg.createSVGPoint)return null;
+    const points=[[rect.left,rect.top],[rect.right,rect.top],[rect.right,rect.bottom],[rect.left,rect.bottom]].map(([x,y])=>{const p=svg.createSVGPoint();p.x=x;p.y=y;return p.matrixTransform(inverse);});
+    if(points.some(p=>!Number.isFinite(p.x)||!Number.isFinite(p.y)))return null;
+    const xs=points.map(p=>p.x),ys=points.map(p=>p.y);
+    return {x:Math.min(...xs)-5,y:Math.min(...ys)-5,width:Math.max(...xs)-Math.min(...xs)+10,height:Math.max(...ys)-Math.min(...ys)+10};
+  }catch{return null;}
+}
+function label(x,y,text){const box=labelBounds(x,y,text);return `<g class="map-label" transform="translate(${x},${y})"><rect x="${-box.width/2}" y="0" width="${box.width}" height="${box.height}" rx="4"/><text text-anchor="middle" y="19">${esc(text)}</text></g>`;}
 function marker(kind,id,icon,x,y,name,active,offset=0){return `<g class="map-marker" data-action="select" data-kind="${kind}" data-id="${id}" tabindex="0" role="button" aria-label="选择${esc(name)}"><circle cx="${x}" cy="${y}" r="27" fill="transparent"/>${active?`<circle cx="${x}" cy="${y}" r="24" fill="#23cce815" stroke="#66e9ff" stroke-width="2"/>`:''}<image href="assets/${icon}.svg" x="${x-19+offset}" y="${y-20}" width="38" height="38"/>${label(x,y+24,name)}</g>`;}
 function siteMarker(site){const kinds=[...new Set(site.devices.map(d=>d.kind))],width=Math.max(52,kinds.length*35+12),active=selected.kind==='site'&&selected.id===site.id;return `<g class="map-marker" data-action="select" data-kind="site" data-id="${site.id}" tabindex="0" role="button" aria-label="选择${esc(site.name)} · ${site.devices.length} 台设备"><rect x="${site.x-width/2}" y="${site.y-28}" width="${width}" height="56" rx="8" fill="transparent"/>${active?`<path d="M${site.x-width/2} ${site.y+20}h${width}" stroke="#68e6ff" stroke-width="2"/>`:''}${kinds.map((kind,i)=>`<image href="assets/${deviceAsset(kind)}.svg" x="${site.x+(i-(kinds.length-1)/2)*35-17}" y="${site.y-20}" width="34" height="34"/>`).join('')}${label(site.x,site.y+24,`${site.name} · ${site.devices.length} 台设备`)}</g>`;}
 function position(t){if(showRunPositions&&liveState?.positions?.[t.id]&&['RUNNING','PAUSED','STOPPING','COMPLETED','STOPPED','FAILED'].includes(liveState.phase))return liveState.positions[t.id];const path=t.path;if(!path.length)return [500,325];if(path.length===1)return path[0];const segs=path.slice(1).map((p,i)=>Math.hypot(p[0]-path[i][0],p[1]-path[i][1]));const total=segs.reduce((a,b)=>a+b,0);let dist=total*progress/100;for(let i=0;i<segs.length;i++){if(dist<=segs[i]||i===segs.length-1){const u=segs[i]?dist/segs[i]:0;return [path[i][0]+u*(path[i+1][0]-path[i][0]),path[i][1]+u*(path[i+1][1]-path[i][1])];}dist-=segs[i];}return path[0];}
@@ -173,13 +193,22 @@ function renderMap(){
   const map=window.SimulatorMap;
   if(!map?.ready){$('#map-layers').innerHTML='';$('#draw-layer').innerHTML='';return;}
   const project=p=>map.project(p), points=items=>items.map(project), attr=items=>items.map(p=>p.join(',')).join(' ');
+  const guide=window.SceneMapGuide?.normalize(state.mapGuide),compactPaths=guide?.compactPaths===true;
+  const obstacles=[],sceneLabel=(x,y,text)=>{const box=labelBounds(x,y,text);obstacles.push({x:box.x-5,y:box.y-5,width:box.width+10,height:box.height+10});return label(x,y,text);};
   let svg=airportLayer(project,attr);
-  if(weatherPreview.length&&map.projectCoordinates){const ps=weatherPreview.map(p=>map.projectCoordinates(p));svg+=`<polygon points="${attr(ps)}" fill="#65bed333" stroke="#80c8df" stroke-width="1.5" stroke-dasharray="5 4" pointer-events="none"/>`+label(ps[0][0],ps[0][1]-32,'模拟天气预报范围');}
-  state.zones.forEach(z=>{const ps=points(z.points);svg+=`<path class="map-geometry" data-action="select" data-kind="zone" data-id="${z.id}" d="${window.ZoneRings.svgPath(z,project)}" fill-rule="evenodd" fill="#e5ad432b" stroke="#efb849" stroke-width="2.5"/>`;const p=ps[1]||ps[0];if(p)svg+=label(p[0]+20,p[1]+35,z.name);});
-  state.plans.forEach(p=>{const ps=points(p.points);svg+=`<polyline class="map-geometry" data-action="select" data-kind="plan" data-id="${p.id}" points="${attr(ps)}" fill="none" stroke="#8190a1" stroke-width="3" stroke-dasharray="10 7"/>`;svg+=ps.map(([x,y])=>`<circle cx="${x}" cy="${y}" r="4" fill="#285076" stroke="#e5f3ff" stroke-width="1.5"/>`).join('');const q=ps[Math.floor(ps.length/2)];if(q)svg+=label(q[0],q[1]-40,p.name);});
-  state.targets.forEach(t=>{const ps=points(t.path),color=t.kind==='bird'?'#16866d':t.kind==='balloon'?'#9261c2':'#2867e8';svg+=`<polyline class="map-geometry" data-action="select" data-kind="target" data-id="${t.id}" points="${attr(ps)}" fill="none" stroke="${color}" stroke-width="2.5"/>`;svg+=ps.map(([x,y])=>`<circle cx="${x}" cy="${y}" r="3.5" fill="${color}" stroke="#ffffff" stroke-width="1.4"/>`).join('');});
+  if(weatherPreview.length&&map.projectCoordinates){const ps=weatherPreview.map(p=>map.projectCoordinates(p));svg+=`<polygon points="${attr(ps)}" fill="#65bed333" stroke="#80c8df" stroke-width="1.5" stroke-dasharray="5 4" pointer-events="none"/>`+sceneLabel(ps[0][0],ps[0][1]-32,'模拟天气预报范围');}
+  state.zones.forEach(z=>{const ps=points(z.points);svg+=`<path class="map-geometry" data-action="select" data-kind="zone" data-id="${z.id}" d="${window.ZoneRings.svgPath(z,project)}" fill-rule="evenodd" fill="#e5ad432b" stroke="#efb849" stroke-width="2.5"/>`;const p=ps[1]||ps[0];if(p){const x=compactPaths?(Math.min(...ps.map(point=>point[0]))+Math.max(...ps.map(point=>point[0])))/2:p[0]+20,y=compactPaths?Math.min(...ps.map(point=>point[1]))+8:p[1]+35;svg+=sceneLabel(x,y,z.name);}});
+  state.plans.forEach(p=>{const ps=points(p.points);svg+=`<polyline class="map-geometry" data-action="select" data-kind="plan" data-id="${p.id}" points="${attr(ps)}" fill="none" stroke="#8190a1" stroke-width="3" stroke-dasharray="10 7"/>`;if(!compactPaths)svg+=ps.map(([x,y])=>`<circle cx="${x}" cy="${y}" r="4" fill="#285076" stroke="#e5f3ff" stroke-width="1.5"/>`).join('');const q=ps[Math.floor(ps.length/2)];if(q)svg+=sceneLabel(q[0],q[1]-40,p.name);});
+  state.targets.forEach(t=>{const ps=points(t.path),color=t.kind==='bird'?'#16866d':t.kind==='balloon'?'#9261c2':'#2867e8';svg+=`<polyline class="map-geometry" data-action="select" data-kind="target" data-id="${t.id}" points="${attr(ps)}" fill="none" stroke="${color}" stroke-width="2.5"/>`;if(!compactPaths)svg+=ps.map(([x,y])=>`<circle cx="${x}" cy="${y}" r="3.5" fill="${color}" stroke="#ffffff" stroke-width="1.4"/>`).join('');});
   const departing=state.targets.find(t=>t.id===activeTarget());
-  if(departing?.departurePath?.length){const ps=points(departing.departurePath);svg+=`<polyline points="${attr(ps)}" fill="none" stroke="#9261c2" stroke-width="2.5" stroke-dasharray="5 5"/>`+ps.map(([x,y])=>`<circle cx="${x}" cy="${y}" r="4" fill="#9261c2"/>`).join('');const last=ps.at(-1);svg+=label(last[0],last[1]+25,'撤离航线（预设）');}
+  if(departing?.departurePath?.length){const ps=points(departing.departurePath);svg+=`<polyline points="${attr(ps)}" fill="none" stroke="#9261c2" stroke-width="2.5" stroke-dasharray="5 5"/>`+ps.map(([x,y])=>`<circle cx="${x}" cy="${y}" r="4" fill="#9261c2"/>`).join('');const last=ps.at(-1);svg+=sceneLabel(last[0],last[1]+25,'撤离航线（预设）');}
+  if(guide){
+    const svgElement=$('#map'),viewBox=svgElement.viewBox?.baseVal,hint=mapOverlayBounds(svgElement,$('#map-hint'));
+    if(hint)obstacles.push(hint);
+    state.sites.forEach(s=>{const [x,y]=project([s.x,s.y]),width=Math.max(80,`${s.name} · ${s.devices.length} 台设备`.length*13+20);obstacles.push({x:x-width/2-6,y:y-32,width:width+12,height:88});});
+    state.targets.forEach(t=>{const [x,y]=project(position(t)),width=Math.max(80,t.name.length*13+20);obstacles.push({x:x-width/2-6,y:y-30,width:width+12,height:88});});
+    svg+=window.SceneMapGuide.render(guide,project,{width:viewBox?.width,height:viewBox?.height,obstacles});
+  }
   state.sites.forEach(s=>{const [x,y]=project([s.x,s.y]);svg+=siteMarker({...s,x,y});});
   state.targets.forEach(t=>{const p=project(position(t));svg+=marker('target',t.id,targetIcon(t.kind),p[0],p[1],t.name,activeTarget()===t.id);});
   $('#map-layers').innerHTML=svg;

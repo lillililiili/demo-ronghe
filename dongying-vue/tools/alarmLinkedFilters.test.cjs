@@ -1,3 +1,4 @@
+const { riskCaseKey } = require('./riskCaseTestHelpers.cjs');
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { readFileSync } = require('node:fs');
@@ -25,7 +26,7 @@ test('linked alarms remain searchable after a recent or custom time filter', asy
       (st, root, {}, ['NO_AUTHORIZATION'], timeFilterWindow, targetNoInput, 'PREDICTED_AIRSPACE_ENTRY');
     assert.ok(bindings.queryOf().occurred_from, `${time} is active before the linked navigation`);
     bindings.resetLinkedAlarmFilters();
-    assert.deepEqual(bindings.queryOf(), { page: 1, size: 20, sort: 'priority' });
+    assert.deepEqual(bindings.queryOf(), { view: 'risk_case', page: 1, size: 20, sort: 'priority' });
     assert.equal(st.timeRange, null);
     assert.equal(targetNoInput.value, '');
     assert.equal(controls.find(control => control.dataset.f === 'time').value, '');
@@ -36,11 +37,11 @@ test('target search resets pagination and clears stale details before selecting 
   for (const matching of [[], [{ alarm_id: randomUUID() }]]) {
     const st = { page: 8, selId: randomUUID(), targetNo: '' }, targetNoInput = { value: '  new-number  ' };
     const list = { rows: matching }, selected = [];
-    const run = new Function('st', 'targetNoInput', 'list', 'loadList', 'selectAlarm', `
+    const run = new Function('riskCaseKey', 'st', 'targetNoInput', 'list', 'loadList', 'selectAlarm', `
       let detailSeq=0, disposalSeq=0, cur={ alarm: { alarm_id: st.selId } };
       const emptyDetail=()=>({alarm:null}), paintDetail=()=>{}, focusMap=()=>{};
       async ${body('applyTargetNo')}
-      return { applyTargetNo, detail:()=>cur.alarm };`)(st, targetNoInput, list,
+      return { applyTargetNo, detail:()=>cur.alarm };`)(riskCaseKey, st, targetNoInput, list,
       async () => { assert.equal(st.selId, null); return true; }, id => selected.push(id));
     await run.applyTargetNo();
     assert.equal(st.page, 1);
@@ -62,10 +63,10 @@ test('预测类别与状态下发服务端且与既有条件相交；深链重�
 ${body('queryOf')}
 return { resetLinkedAlarmFilters, queryOf };`)
     (st, root, {}, [], timeFilterWindow, targetNoInput, 'PREDICTED_AIRSPACE_ENTRY');
-  assert.deepEqual(bindings.queryOf(), { page: 4, size: 20, sort: 'priority', severity: 'HIGH', target_no: 'UAV-X', origin_kind: 'PREDICTED_AIRSPACE_ENTRY', prediction_status: 'UNKNOWN' });
+  assert.deepEqual(bindings.queryOf(), { view: 'risk_case', page: 4, size: 20, sort: 'priority', severity: 'HIGH', target_no: 'UAV-X', origin_kind: 'PREDICTED_AIRSPACE_ENTRY', prediction_status: 'UNKNOWN' });
   bindings.resetLinkedAlarmFilters();
   assert.equal(st.originKind, ''); assert.equal(st.predictionStatus, '');
-  assert.deepEqual(bindings.queryOf(), { page: 1, size: 20, sort: 'priority' });
+  assert.deepEqual(bindings.queryOf(), { view: 'risk_case', page: 1, size: 20, sort: 'priority' });
 });
 
 

@@ -272,3 +272,23 @@ test('依据说明显示已知语义和配置版本，未知说明去重且安�
   assert.doesNotMatch(html, /<current-v3>/);
   assert.equal(predictionReasonText('ENTRY_AWAITING_CONFIRMATION'), '预测将进入禁飞区，等待连续新实测确认');
 });
+
+test('统一风险的入区预测历史保留失效事实并在同条记录继续办理', () => {
+  for (const mode of ['live', 'replay']) for (const stage of ['ENTERED', 'UNKNOWN']) {
+    const raw = forecast({ id: `same-case-${mode}-${stage}`, mode });
+    raw.warnings[0].state = 'ENTERED';
+    const riskCase = { risk_case_id: `case-${mode}-${stage}`, stage };
+    for (const options of [{ now: origin + 8000 }, { now: origin, unavailable: true }]) {
+      const html = predictionDetailsHtml(raw, { ...options, riskCase });
+      assert.match(html, /预测已转为实测入区/);
+      assert.match(html, /同一风险记录中办理/);
+      assert.match(html, /当前状态以风险阶段为准/);
+      assert.match(html, /未来线已隐藏/);
+      assert.match(html, options.unavailable ? /预测读取失败/ : /预测依据不足或已经过期/);
+      assert.doesNotMatch(html, /后续查看实际入区处置进度|请查看实际入区告警/);
+    }
+    const frozen = predictionDetailsHtml(raw, { now: origin + 8000, frozen: true, riskCase });
+    assert.match(frozen, /预警创建时的预测快照/);
+    assert.doesNotMatch(frozen, /未来线已隐藏/);
+  }
+});

@@ -1,3 +1,4 @@
+import * as riskHelpers from '../src/services/riskCaseView.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -15,9 +16,9 @@ function alarm(state, index = 1) {
 }
 function render(a, event = {}) {
   const cur = { alarm: a, event: { state: 'PENDING_VERIFICATION', allowed_actions: ['VERIFY'], ...event } };
-  return new Function('cur', 'predictionVerificationState', 'serverNow', 'esc', 'pendingNotifyNote',
+  return new Function(...Object.keys(riskHelpers), 'cur', 'predictionVerificationState', 'serverNow', 'esc', 'pendingNotifyNote',
     `${body('disposalActions')}\n${body('detailActionsHtml')}\nreturn detailActionsHtml();`)
-    (cur, predictionVerificationState, () => now, value => String(value), () => '核实属实后自动发送飞手短信。');
+    (...Object.values(riskHelpers), cur, predictionVerificationState, () => now, value => String(value), () => '核实属实后自动发送飞手短信。');
 }
 test('告警详情终态不再提供核实预测风险或核实后短信提示，历史核实状态保持', () => {
   for (const state of ['WITHDRAWN', 'ENTERED']) for (const eventState of ['PENDING_VERIFICATION', 'CONFIRMED']) {
@@ -54,9 +55,9 @@ test('预测公共原因优先首次冻结空域，不混入目标最新实测�
   const esc = value => String(value).replaceAll('<', '&lt;').replaceAll('>', '&gt;');
   const ordinaryView = { tone: 'risk', label: '告警原因（出告警时）', text: '未记录具体触发原因' };
   let ordinaryCalls = 0;
-  const reason = new Function('isPredictionAlarm', 'esc', 'cur', 'alarmReasonView', 'ruleReasonText', 'fmt',
+  const reason = new Function(...Object.keys(riskHelpers), 'isPredictionAlarm', 'esc', 'cur', 'alarmReasonView', 'ruleReasonText', 'fmt',
     `${body('alarmReasonHtml')}\nreturn alarmReasonHtml;`)
-    (isPredictionAlarm, esc, cur, () => { ordinaryCalls++; return ordinaryView; }, code => code, String);
+    (...Object.values(riskHelpers), isPredictionAlarm, esc, cur, () => { ordinaryCalls++; return ordinaryView; }, code => code, String);
   for (const [id, name] of [['first-event', '<最初禁飞区>'], ['another-event', '北侧禁飞区']]) {
     const a = { ...alarm('WITHDRAWN'), event_id: id, prediction_snapshot: { warning: { event_id: id, airspace_name: name } },
       prediction: { warning: { event_id: id, airspace_name: '后来改名区域' } } };
@@ -76,12 +77,26 @@ test('预测公共原因优先首次冻结空域，不混入目标最新实测�
 
 test('预测轨迹图说明指向预测依据，普通历史空域的缺失、命中和权限提示不变', () => {
   const cur = { airspacesStatus: 'UNKNOWN' };
-  const note = new Function('isPredictionAlarm', 'esc', 'cur', `${body('alarmMapAirspaceNote')}\nreturn alarmMapAirspaceNote;`)
-    (isPredictionAlarm, String, cur);
+  const note = new Function(...Object.keys(riskHelpers), 'isPredictionAlarm', 'esc', 'cur', `${body('alarmMapAirspaceNote')}\nreturn alarmMapAirspaceNote;`)
+    (...Object.values(riskHelpers), isPredictionAlarm, String, cur);
   for (const state of ['ACTIVE', 'UNKNOWN', 'WITHDRAWN', 'ENTERED']) {
     assert.equal(note(alarm(state)), '显示实测轨迹；预测及空域依据见详情');
   }
   assert.equal(note({ origin_kind: 'OBSERVED_AIRSPACE_ENTRY' }), '未保存告警时空域依据');
   cur.airspacesStatus = 'AVAILABLE'; assert.equal(note({}), '告警命中空域 · 历史版本');
   cur.airspacesError = '无历史空域依据查看权限'; assert.equal(note({}), cur.airspacesError);
+});
+
+test('统一风险已入区可就地核实，短暂未知仍可按权限核实误报', () => {
+  for (const source_mode of ['live', 'replay']) {
+    const a = { ...alarm('ENTERED'), source_mode, risk_case: { risk_case_id: 'test-current-region', stage: 'ENTERED',
+      verification_status: 'PENDING_VERIFICATION', allowed_actions: ['VERIFY'] } };
+    const entered = render(a, { allowed_actions: [], origin_kind: 'PREDICTED_AIRSPACE_ENTRY' });
+    assert.match(entered, /data-al="verify">核实风险/); assert.doesNotMatch(entered, /请查看实际入区告警/);
+    a.risk_case.stage = 'UNKNOWN';
+    const unknown = render(a); assert.match(unknown, /核实为误报/); assert.match(unknown, /当前风险依据不足/);
+    assert.doesNotMatch(unknown, /请查看实际入区告警/);
+    a.risk_case.allowed_actions = [];
+    assert.doesNotMatch(render(a), /data-al="verify"/, '风险级禁止核实时不能借用原事件权限');
+  }
 });

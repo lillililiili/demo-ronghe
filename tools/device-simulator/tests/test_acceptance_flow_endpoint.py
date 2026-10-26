@@ -21,7 +21,7 @@ FOLDER = ROOT / 'scenarios' / acceptance_flows.OUTPUT_NAME
 
 class ReadAcceptanceFlowsTest(unittest.TestCase):
     def test_reads_the_nine_repository_flows_in_order_without_any_external_script(self):
-        result = acceptance_flows.read_acceptance_flows(ROOT)
+        result = acceptance_flows._read_legacy_flows(ROOT)
         self.assertEqual('READY_FOR_IMPORT', result['status'])
         self.assertEqual(list(range(1, 10)), [item['flow'] for item in result['flows']])
         for item in result['flows']:
@@ -32,11 +32,11 @@ class ReadAcceptanceFlowsTest(unittest.TestCase):
             compile_scene(item['scene'])
 
     def test_durations_are_the_flow_files_own_minutes(self):
-        minutes = {item['flow']: item['minutes'] for item in acceptance_flows.read_acceptance_flows(ROOT)['flows']}
+        minutes = {item['flow']: item['minutes'] for item in acceptance_flows._read_legacy_flows(ROOT)['flows']}
         self.assertEqual({1: 5, 2: 5, 3: 5, 4: 5, 5: 5, 6: 2, 7: 2, 8: 10, 9: 5}, minutes)
 
     def test_only_flow_four_asks_for_auto_verification_to_be_turned_off(self):
-        flows = {item['flow']: item['guide'] for item in acceptance_flows.read_acceptance_flows(ROOT)['flows']}
+        flows = {item['flow']: item['guide'] for item in acceptance_flows._read_legacy_flows(ROOT)['flows']}
         self.assertEqual({4}, {flow for flow, guide in flows.items() if guide['auto_verify'] is False})
         self.assertEqual('开始前请先在规则管理关掉自动核实', flows[4]['warning'])
         self.assertEqual({1, 2, 3, 5}, {flow for flow, guide in flows.items() if guide['auto_verify'] is True})
@@ -44,33 +44,33 @@ class ReadAcceptanceFlowsTest(unittest.TestCase):
         self.assertEqual({4}, {flow for flow, guide in flows.items() if guide['warning']})
 
     def test_every_flow_says_what_auto_verify_and_the_counter_button_do(self):
-        for item in acceptance_flows.read_acceptance_flows(ROOT)['flows']:
+        for item in acceptance_flows._read_legacy_flows(ROOT)['flows']:
             guide = item['guide']
             text = '\n'.join(guide['before'] + guide['sees'] + guide['todo'])
             self.assertIn('自动核实', text, f'流程 {item["flow"]} 没写自动核实')
             if item['flow'] in (1, 3, 5):
                 self.assertIn('反制按钮', text, f'流程 {item["flow"]} 没写反制按钮什么时候亮')
-        flow5 = next(item for item in acceptance_flows.read_acceptance_flows(ROOT)['flows'] if item['flow'] == 5)
+        flow5 = next(item for item in acceptance_flows._read_legacy_flows(ROOT)['flows'] if item['flow'] == 5)
         self.assertIn('核实', flow5['guide']['before'][0])
 
     def test_reading_does_not_touch_the_files(self):
         before = {path.name: path.stat().st_mtime_ns for path in FOLDER.iterdir()}
-        acceptance_flows.read_acceptance_flows(ROOT)
+        acceptance_flows._read_legacy_flows(ROOT)
         self.assertEqual(before, {path.name: path.stat().st_mtime_ns for path in FOLDER.iterdir()})
 
     def test_reports_plain_errors_for_a_broken_folder(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             with self.assertRaisesRegex(ValueError, '找不到流程 1-9'):
-                acceptance_flows.read_acceptance_flows(root)
+                acceptance_flows._read_legacy_flows(root)
             folder = root / 'scenarios' / acceptance_flows.OUTPUT_NAME
             shutil.copytree(FOLDER, folder)
             (folder / 'manifest.json').unlink()
             with self.assertRaisesRegex(ValueError, 'manifest.json'):
-                acceptance_flows.read_acceptance_flows(root)
+                acceptance_flows._read_legacy_flows(root)
             (folder / 'manifest.json').write_text('{bad', encoding='utf-8')
             with self.assertRaisesRegex(ValueError, '读不出来'):
-                acceptance_flows.read_acceptance_flows(root)
+                acceptance_flows._read_legacy_flows(root)
 
     def test_rejects_unknown_files_mismatched_flows_and_missing_flows(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -82,21 +82,21 @@ class ReadAcceptanceFlowsTest(unittest.TestCase):
             outsider['flows'][0]['file'] = '../outside.json'
             (folder / 'manifest.json').write_text(json.dumps(outsider), encoding='utf-8')
             with self.assertRaisesRegex(ValueError, '不认识的文件'):
-                acceptance_flows.read_acceptance_flows(root)
+                acceptance_flows._read_legacy_flows(root)
             missing = json.loads(json.dumps(manifest))
             missing['flows'] = missing['flows'][:-1]
             (folder / 'manifest.json').write_text(json.dumps(missing), encoding='utf-8')
             with self.assertRaisesRegex(ValueError, '各一条'):
-                acceptance_flows.read_acceptance_flows(root)
+                acceptance_flows._read_legacy_flows(root)
             (folder / 'manifest.json').write_text(json.dumps(manifest), encoding='utf-8')
             swapped = json.loads((folder / 'flow-2-after-sms-departure.json').read_text(encoding='utf-8'))
             swapped['fullchain']['acceptanceFlow'] = 3
             (folder / 'flow-2-after-sms-departure.json').write_text(json.dumps(swapped), encoding='utf-8')
             with self.assertRaisesRegex(ValueError, '校验失败'):
-                acceptance_flows.read_acceptance_flows(root)
+                acceptance_flows._read_legacy_flows(root)
 
     def test_prediction_variants_share_manual_gates_but_describe_distinct_outcomes(self):
-        flows = acceptance_flows.read_acceptance_flows(ROOT)['flows']
+        flows = acceptance_flows._read_legacy_flows(ROOT)['flows']
         prediction = next(item for item in flows if item['flow'] == 9)
         self.assertEqual('预测入区预警', prediction['title'])
         self.assertEqual('avoid', prediction['default_variant'])
@@ -110,14 +110,24 @@ class ReadAcceptanceFlowsTest(unittest.TestCase):
                 self.assertTrue(variant['guide']['prediction_only'])
                 self.assertIsNone(variant['guide']['auto_verify'])
                 text = '\n'.join(variant['guide']['before'] + variant['guide']['sees'] + variant['guide']['todo'])
-                for required in ('专用录音', '不自动核实', '不自动反制', '不自动处罚', '第4分钟', '实际回执', '另一个', '直接反制权限'):
+                for required in ('专用录音', '不自动核实', '不自动反制', '不自动处罚', '约半分钟', '未来30秒', '实际回执', '另一个', '直接反制权限'):
                     self.assertIn(required, text)
+                for obsolete in ('前4分钟', '第4分钟', '3分20秒', '约2分钟'):
+                    self.assertNotIn(obsolete, text)
+                guide = variant['scene']['sceneGuide']
+                self.assertTrue(guide['summary'])
+                self.assertTrue(guide['stages'])
+                times = [stage['at_seconds'] for stage in guide['stages']]
+                self.assertEqual(0, times[0])
+                self.assertEqual(times, sorted(set(times)))
+                self.assertTrue(all(isinstance(value, (int, float)) and value >= 0 for value in times))
+                self.assertTrue(all(stage['label'] and stage['description'] for stage in guide['stages']))
                 compile_scene(variant['scene'])
         variants = {item['id']: item for item in prediction['variants']}
         self.assertIn('连续新实测', variants['avoid']['guide']['sees'][-1])
         self.assertEqual('6分钟继续入区并反制', variants['enter']['label'])
         entry_todo = '\n'.join(variants['enter']['guide']['todo'])
-        for required in ('关联实测告警', '约2分钟', '权限', '有效证据', '人工核实', '申请', '审批', '执行反制', '6分钟结束'):
+        for required in ('关联实测告警', '区内停留期间', '权限', '有效证据', '人工核实', '申请', '审批', '执行反制', '6分钟结束'):
             self.assertIn(required, entry_todo)
         self.assertIn('短信电话回执在原预测预警中查看', entry_todo)
         self.assertIn('同次风险不重复通知', entry_todo)
@@ -126,8 +136,11 @@ class ReadAcceptanceFlowsTest(unittest.TestCase):
         self.assertNotIn('3分20秒', entry_todo)
         self.assertNotIn('5分钟结束', entry_todo)
         avoid_todo = '\n'.join(variants['avoid']['guide']['todo'])
-        self.assertIn('3分20秒', avoid_todo)
+        self.assertIn('约44秒', avoid_todo)
         self.assertIn('5分钟结束', avoid_todo)
+        self.assertIn('约50秒', variants['enter']['guide']['sees'][-1])
+        self.assertIn('矩形', prediction['guide']['shows'])
+        self.assertIn('从左向右直线接近', prediction['guide']['shows'])
         common_todo = '\n'.join(acceptance_flows.GUIDE[9]['todo'])
         self.assertNotIn('3分20秒', common_todo)
         self.assertNotIn('5分钟结束', common_todo)
@@ -149,7 +162,7 @@ class ReadAcceptanceFlowsTest(unittest.TestCase):
                 self.assertNotIn(filename, [item['file'] for item in manifest['flows']])
             prediction['variants'] = [{'id': 'enter', 'file': '../../outside.json'}]
             manifest_path.write_text(json.dumps(manifest), encoding='utf-8')
-            flow = acceptance_flows.read_acceptance_flows(root)['flows'][-1]
+            flow = acceptance_flows._read_legacy_flows(root)['flows'][-1]
             for variant_id, filename in (('enter', 'flow-9-prediction-entry.json'),):
                 with self.subTest(variant=variant_id):
                     expected = json.loads((folder / filename).read_text(encoding='utf-8'))
@@ -157,7 +170,7 @@ class ReadAcceptanceFlowsTest(unittest.TestCase):
                     prediction['file'] = filename
                     manifest_path.write_text(json.dumps(manifest), encoding='utf-8')
                     with self.assertRaisesRegex(ValueError, '不认识的文件'):
-                        acceptance_flows.read_acceptance_flows(root)
+                        acceptance_flows._read_legacy_flows(root)
 
     def test_rejects_missing_or_invalid_prediction_variant_instead_of_silent_fallback(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -169,14 +182,14 @@ class ReadAcceptanceFlowsTest(unittest.TestCase):
                 original = json.loads(variant_path.read_text(encoding='utf-8'))
                 variant_path.unlink()
                 with self.assertRaisesRegex(ValueError, '流程文件读不出来：' + variant['file']):
-                    acceptance_flows.read_acceptance_flows(root)
+                    acceptance_flows._read_legacy_flows(root)
                 for invalid in ([], {'version': 1, 'fullchain': []},
                                 dict(original, fullchain={'acceptanceFlow': 8}),
                                 dict(original, fullchain={'acceptanceFlow': True})):
                     with self.subTest(variant=variant['file'], invalid=invalid):
                         variant_path.write_text(json.dumps(invalid), encoding='utf-8')
                         with self.assertRaisesRegex(ValueError, '流程场景校验失败'):
-                            acceptance_flows.read_acceptance_flows(root)
+                            acceptance_flows._read_legacy_flows(root)
                 variant_path.write_text(json.dumps(original), encoding='utf-8')
 
     def test_prediction_variant_identity_must_match_each_fixed_file(self):
@@ -197,7 +210,7 @@ class ReadAcceptanceFlowsTest(unittest.TestCase):
                             scene['fullchain']['predictionVariant'] = identity
                         path.write_text(json.dumps(scene), encoding='utf-8')
                         with self.assertRaisesRegex(ValueError, '流程预测变式校验失败：' + variant['file']):
-                            acceptance_flows.read_acceptance_flows(root)
+                            acceptance_flows._read_legacy_flows(root)
                 path.write_text(original, encoding='utf-8')
 
     def test_rejects_swapped_prediction_scene_contents(self):
@@ -212,7 +225,7 @@ class ReadAcceptanceFlowsTest(unittest.TestCase):
             avoid.write_text(enter_content, encoding='utf-8')
             enter.write_text(avoid_content, encoding='utf-8')
             with self.assertRaisesRegex(ValueError, '流程预测变式校验失败'):
-                acceptance_flows.read_acceptance_flows(root)
+                acceptance_flows._read_legacy_flows(root)
 
     def test_removed_silence_variant_cannot_be_restored_by_a_leftover_file_or_manifest(self):
         self.assertNotIn('silence', acceptance_flows.FLOW_VARIANTS[9])
@@ -231,12 +244,12 @@ class ReadAcceptanceFlowsTest(unittest.TestCase):
             prediction = next(item for item in manifest['flows'] if item['flow'] == 9)
             prediction['variants'] = [{'id': 'silence', 'file': removed_name}]
             manifest_path.write_text(json.dumps(manifest), encoding='utf-8')
-            result = acceptance_flows.read_acceptance_flows(root)['flows'][-1]
+            result = acceptance_flows._read_legacy_flows(root)['flows'][-1]
             self.assertEqual(['avoid', 'enter'], [item['id'] for item in result['variants']])
             prediction['file'] = removed_name
             manifest_path.write_text(json.dumps(manifest), encoding='utf-8')
             with self.assertRaisesRegex(ValueError, '不认识的文件'):
-                acceptance_flows.read_acceptance_flows(root)
+                acceptance_flows._read_legacy_flows(root)
 
     def test_prediction_variant_identity_does_not_restrict_existing_flows(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -250,7 +263,7 @@ class ReadAcceptanceFlowsTest(unittest.TestCase):
                 scene = json.loads(path.read_text(encoding='utf-8'))
                 scene['fullchain']['predictionVariant'] = 'unrelated-extension'
                 path.write_text(json.dumps(scene), encoding='utf-8')
-            flows = acceptance_flows.read_acceptance_flows(root)['flows']
+            flows = acceptance_flows._read_legacy_flows(root)['flows']
             self.assertEqual(list(range(1, 10)), [flow['flow'] for flow in flows])
 
     def test_rejects_duplicate_flow_and_non_string_manifest_path(self):
@@ -263,11 +276,11 @@ class ReadAcceptanceFlowsTest(unittest.TestCase):
             manifest['flows'].append(dict(manifest['flows'][-1]))
             manifest_path.write_text(json.dumps(manifest), encoding='utf-8')
             with self.assertRaisesRegex(ValueError, '各一条'):
-                acceptance_flows.read_acceptance_flows(root)
+                acceptance_flows._read_legacy_flows(root)
             manifest['flows'][-1]['file'] = ['flow-9-prediction-warning.json']
             manifest_path.write_text(json.dumps(manifest), encoding='utf-8')
             with self.assertRaisesRegex(ValueError, '不认识的文件'):
-                acceptance_flows.read_acceptance_flows(root)
+                acceptance_flows._read_legacy_flows(root)
 
 
 class FakeRules(http.server.BaseHTTPRequestHandler):
@@ -346,7 +359,7 @@ class AutomationRulesTest(unittest.TestCase):
     def test_a_non_backend_account_gets_a_plain_forbidden_not_a_guess(self):
         self.login()
         FakeRules.forbid = True
-        self.assertEqual({'verify': {'ok': False, 'reason': 'FORBIDDEN'}, 'counter': {'ok': False, 'reason': 'FORBIDDEN'}},
+        self.assertEqual({'verify': {'ok': False, 'reason': 'FORBIDDEN'}, 'counter': {'ok': False, 'reason': 'FORBIDDEN'}, 'response_order': {'ok': False, 'reason': 'UNAVAILABLE'}},
                          self.bridge.automation_rules())
 
     def test_an_expired_login_clears_the_session(self):
@@ -380,8 +393,9 @@ class AcceptanceFlowHttpTest(unittest.TestCase):
     def test_get_returns_nine_flows_with_prediction_variants_and_post_is_gone(self):
         with self.opener.open(self.base + '/api/acceptance-flows') as response:
             data = json.load(response)
-        self.assertEqual(list(range(1, 10)), [item['flow'] for item in data['flows']])
-        prediction = data['flows'][-1]
+        self.assertEqual(list(range(1, 9)), [item['flow'] for item in data['flows']])
+        self.assertEqual('prediction', data['flows'][0]['default_variant'])
+        prediction = data['compatibility_flows'][0]
         self.assertEqual('avoid', prediction['default_variant'])
         self.assertEqual(['avoid', 'enter'], [item['id'] for item in prediction['variants']])
         self.assertTrue(prediction['guide']['prediction_only'])

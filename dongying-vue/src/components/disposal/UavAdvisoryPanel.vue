@@ -1,4 +1,6 @@
 <script setup>
+import RiskDisposalSummary from './RiskDisposalSummary.vue';
+import { riskSummaryMatches } from '@/services/riskCaseView.js';
 import { userFacingMessage } from '@/ui/labels.js';
 import { computed, onUnmounted, reactive, ref, watch } from 'vue';
 import AutoSmsNotice from './AutoSmsNotice.vue';
@@ -17,7 +19,7 @@ import { hasPermission } from '@/services/accessControl.js';
 import { pendingOperationSettled } from '@/pages/punish/handoffStatus.js';
 
 const props = defineProps({
-  eventId: { type: String, required: true }, confirmed: Boolean,
+  eventId: { type: String, required: true }, riskCase: Object, confirmed: Boolean,
   handoffId: { type: String, default: '' },
   /* 本事件最近一条反制（或历史干扰）授权记录，由告警页按处置记录读取后传入；没有就不显示反制一行。 */
   counter: { type: Object, default: null },
@@ -27,13 +29,13 @@ const props = defineProps({
 });
 const emit = defineEmits(['updated', 'unavailable']);
 const { data, loading, error, load } = useUavAdvisory(() => props.eventId, result => emit('updated', result), props.interval,
-  (id, startedAt) => emit('unavailable', id, startedAt));
+  (id, startedAt, caseId) => emit('unavailable', id, startedAt, caseId), () => props.riskCase?.risk_case_id || '');
 let alive = true;
 onUnmounted(() => { alive = false; });
-const current = computed(() => data.value?.event_id === props.eventId && !loading.value && !error.value);
+const current = computed(() => riskSummaryMatches(data.value, props.eventId, props.riskCase?.risk_case_id) && !loading.value && !error.value);
 const historicalObservations = computed(() => data.value?.event_id === props.eventId
   ? (data.value.records || []).filter(row => row.kind === 'OBSERVATION') : []);
-const handoff = computed(() => autoHandoffView(data.value, props.handoffId));
+const handoff = computed(() => autoHandoffView(props.riskCase?.manual_counter_only ? null : data.value, props.riskCase?.manual_counter_only ? '' : props.handoffId));
 const observation = computed(() => data.value?.departure_observation);
 const observationTime = value => value == null ? '未提供' : new Date(value).toLocaleString('zh-CN', { timeZone:'Asia/Shanghai', hour12:false });
 
@@ -188,6 +190,7 @@ async function submitHandoff() {
     <p v-if="error" class="ua-error" role="alert">{{ error }}</p>
     <p v-else-if="loading && !data" class="ua-note">正在读取通知与处置进度</p>
     <template v-if="data">
+      <RiskDisposalSummary :summary="data" :counter="props.counter" />
       <AutoSmsNotice compact :data="data" :disabled="!current" @changed="load()" />
       <AutoVoiceNotice compact :data="data" :disabled="!current" @changed="load()" />
       <div v-if="counter" class="ua-handoff ua-counter" aria-label="反制进度" :data-state="props.counter?.status">
@@ -211,7 +214,7 @@ async function submitHandoff() {
         <summary>历史现场观察记录（{{ historicalObservations.length }}）</summary>
         <AdvisoryRecords :records="historicalObservations" />
       </details>
-      <div v-if="handoff.handoffId || handoff.canSubmit || ((confirmed || data.auto_handoff) && data.auto_handoff?.status !== 'NOT_REQUIRED')" class="ua-handoff" aria-label="处罚移送进度" :data-state="data.auto_handoff?.status">
+      <div v-if="!riskCase?.manual_counter_only && (handoff.handoffId || handoff.canSubmit || ((confirmed || data.auto_handoff) && data.auto_handoff?.status !== 'NOT_REQUIRED'))" class="ua-handoff" aria-label="处罚移送进度" :data-state="data.auto_handoff?.status">
         <p><span :class="`ua-${handoff.tone}`">{{ handoff.title }}</span><button v-if="handoff.handoffId" type="button" class="ua-link" @click="openHandoff">查看处罚交接</button></p>
         <p v-if="handoff.reason" class="ua-note">{{ userFacingMessage(handoff.reason) }}</p>
         <p v-if="handoff.partyUnidentified" class="ua-note">当事人不明：{{ handoff.partyReasons.join('；') || '没有可用的当事人信息' }}。移送时会写明按待补线索移送。</p>

@@ -1,4 +1,5 @@
 <script setup>
+import { riskCaseOf } from '@/services/riskCaseView.js';
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { ChevronForwardOutline } from '@vicons/ionicons5';
 import { useRealtimeRefresh } from '@/hooks/useRealtimeRefresh.js';
@@ -7,7 +8,7 @@ import UControl from '@/components/form/UControl.vue';
 import UPagination from '@/components/UPagination.vue';
 import { disposalApi } from '@/services/disposalApi.js';
 import { authUser } from '@/services/auth.js';
-import { getAlarm, getUavEvent } from '@/services/alarmApi.js';
+import { getAlarm, getUavEvent, getUavRiskCase } from '@/services/alarmApi.js';
 import { reasonListText } from '@/ui/alarmEscalation.js';
 import { ruleReasonText } from '@/ui/legalityReviewModal.js';
 import { targetApi } from '@/services/targetApi.js';
@@ -20,11 +21,11 @@ import TargetLiveVideo from '@/components/video/TargetLiveVideo.vue';
 import AuthorizationTargetMap from './AuthorizationTargetMap.vue';
 import { canCancel, canStop, cancelLabel, cardStopLabel, executeBlockedReason, executionEvidenceHref, groupContains, groupRoot, nextStep, primaryCode, readAuthorizationGroupPage, readPending, resultText, singleAuthorizationGroup, showEmergencyPanel, usesEmergency } from './authorizationQueueView.js';
 
-const props = defineProps({ initialAuthorizationId: { type: String, default: '' }, eventId: { type: String, default: '' }, initialStatus: { type: String, default: '' } });
+const props = defineProps({ initialAuthorizationId: { type: String, default: '' }, eventId: { type: String, default: '' }, riskCaseId: { type: String, default: '' }, initialStatus: { type: String, default: '' } });
 const emit = defineEmits(['event']);
 const rows = ref([]), selected = ref(null), page = ref(1), total = ref(0), status = ref(props.initialStatus);
 const groupedResults = ref(true);
-const view = ref(props.initialAuthorizationId || props.initialStatus || props.eventId ? 'all' : 'pending');
+const view = ref(props.initialAuthorizationId || props.initialStatus || props.eventId || props.riskCaseId ? 'all' : 'pending');
 const loading = ref(false), error = ref(''), detailError = ref(''), detailLoading = ref(false), loadedAt = ref('');
 const pageSize = ref(20), detailHost = ref(null);
 const options = [{ label: '全部状态', value: '' }, ...['REQUESTED', 'APPROVED', 'EXECUTING', 'COMPLETED', 'FAILED', 'REJECTED', 'EXPIRED', 'STOPPED', 'CANCELLED'].map(value => ({ value, label: value === 'STOPPED' ? '反制已中止' : disposalStatusText({ status: value }) }))];
@@ -50,7 +51,7 @@ const statusText = row => row?.status === 'STOPPED' && row.action_type === 'COUN
   ? '反制已中止' : disposalStatusText(row);
 const blockReasonText = row => row?.execution_block_reason ? labelOf(DISPOSAL_BLOCK_REASON_LABEL, row.execution_block_reason) : '';
 const subjects = ref({});
-const subjectKey = row => `${row.subject_kind}:${row.subject_id}`;
+const subjectKey = row => riskCaseOf(row)?.risk_case_id || `${row.subject_kind}:${row.subject_id}`;
 const subjectText = row => subjects.value[subjectKey(row)]?.text || `${({ UAV_EVENT: '告警事件', TARGET: '目标', RISK: '风险事件' }[row.subject_kind] || '关联对象')}编号读取中`;
 const subjectExtra = row => subjects.value[subjectKey(row)]?.fallback ? (row.authorization_no ? `记录 ${row.authorization_no}` : '') : subjects.value[subjectKey(row)]?.extra || '';
 let request = 0, detailRequest = 0, active = true, loadFailure = null;
@@ -63,12 +64,13 @@ async function readSubject(row) {
   try {
     let text, extra = '', targetId = '', alarmReason = '';
     if (row.subject_kind === 'UAV_EVENT' && hasPermission('alarm:read')) {
-      const event = await getUavEvent(row.subject_id);
+      const detail = riskCaseOf(row)?.risk_case_id ? await getUavRiskCase(riskCaseOf(row)?.risk_case_id) : null;
+      const event = detail?.event || await getUavEvent(row.subject_id);
       if (!active) return;
-      if (!event?.alarm_id) throw new Error('未提供关联告警');
-      const alarm = await getAlarm(event.alarm_id);
+      if (!detail?.alarm && !event?.alarm_id) throw new Error('未提供关联告警');
+      const alarm = detail?.alarm || await getAlarm(event.alarm_id);
       text = displayAlarmNo(alarm.alarm_no) || '编号未提供';
-      extra = alarm.target_no ? `目标 ${displayTargetNo(alarm.target_no)}` : '';
+      extra = [alarm.target_no ? `目标 ${displayTargetNo(alarm.target_no)}` : '', detail?.risk_case?.airspace_name].filter(Boolean).join(' · ');
       targetId = alarm.target_id || '';
       alarmReason = reasonListText(alarm.violation_reasons, ruleReasonText) || '未记录具体触发原因';
     } else if (row.subject_kind === 'TARGET' && hasPermission('target:read')) {
@@ -91,7 +93,7 @@ async function load(next = page.value, { quiet = false } = {}) {
   // 实时刷新静默重读：保留当前列表直到新数据到达。
   if (!quiet) { loading.value = true; error.value = ''; loadedAt.value = ''; rows.value = []; total.value = 0; }
   const current = () => active && seq === request;
-  const scope = props.eventId ? { subject_kind: 'UAV_EVENT', subject_id: props.eventId } : {};
+  const scope = props.riskCaseId ? { risk_case_id: props.riskCaseId } : props.eventId ? { subject_kind: 'UAV_EVENT', subject_id: props.eventId } : {};
   try {
     if (mode === 'pending') {
       const items = await readPending(disposalApi.list, scope, userId.value, current);
@@ -122,7 +124,7 @@ async function refresh(id, reloadList = true) {
   try {
     const detail = await disposalApi.detail(id);
     if (active && seq === detailRequest) {
-      if (props.eventId && (detail.subject_kind !== 'UAV_EVENT' || detail.subject_id !== props.eventId)) throw new Error('授权记录不属于当前告警事件');
+      if (props.riskCaseId ? riskCaseOf(detail)?.risk_case_id !== props.riskCaseId : props.eventId && (detail.subject_kind !== 'UAV_EVENT' || detail.subject_id !== props.eventId)) throw new Error('授权记录不属于当前风险或告警事件');
       selected.value = detail;
       if (reloadList) await load();
     }
@@ -175,7 +177,7 @@ async function refreshSelectedQuietly() {
     throw e;
   }
   if (!active || seq !== detailRequest || selected.value?.authorization_id !== id) return;
-  if (props.eventId && (detail.subject_kind !== 'UAV_EVENT' || detail.subject_id !== props.eventId)) return;
+  if (props.riskCaseId ? riskCaseOf(detail)?.risk_case_id !== props.riskCaseId : props.eventId && (detail.subject_kind !== 'UAV_EVENT' || detail.subject_id !== props.eventId)) return;
   detailError.value = '';
   if (JSON.stringify(detail) !== JSON.stringify(selected.value)) selected.value = detail;
 }
@@ -211,7 +213,7 @@ onUnmounted(() => { active = false; request++; detailRequest++; });
       <button type="button" class="btn" :disabled="loading || detailLoading" @click="refreshCurrent">{{ loading || detailLoading ? '正在读取' : '刷新' }}</button>
       <span v-if="loadedAt" class="read-time">读取于 {{ loadedAt }}</span>
     </div>
-    <p class="scope-note">{{ view === 'pending' ? '显示需要你审批或下发设备执行的事项；执行监测与历史请看“全部记录”。' : '查看设备执行进展、停止处置及历史记录。' }}<span v-if="eventId"> 仅限当前告警事件。</span></p>
+    <p class="scope-note">{{ view === 'pending' ? '显示需要你审批或下发设备执行的事项；执行监测与历史请看“全部记录”。' : '查看设备执行进展、停止处置及历史记录。' }}<span v-if="riskCaseId"> 仅限当前风险，包含预测与实际入区阶段。</span><span v-else-if="eventId"> 仅限当前告警事件。</span></p>
     <div v-if="error" class="warnbox" role="alert">{{ error }}</div>
     <div v-if="detailError" class="warnbox" role="alert">{{ detailError }}</div>
     <p v-if="view === 'all' && !groupedResults && !error" class="scope-note">处置归组服务尚未加载，当前按原始授权记录显示。</p>
@@ -250,7 +252,7 @@ onUnmounted(() => { active = false; request++; detailRequest++; });
       <section v-if="selected" ref="detailHost" class="authorization-detail" aria-label="办理详情" tabindex="-1">
         <header class="detail-header">
           <div><h4>{{ subjectText(selected) }}</h4><span class="source-mode">{{ labelOf(DISPOSAL_ACTION_LABEL, selected.action_type) }} · {{ labelOf(SOURCE_MODE_LABEL, selected.source_mode) }}</span></div>
-          <button v-if="selected.subject_kind === 'UAV_EVENT'" type="button" class="btn" @click="emit('event', selected.subject_id)">查看关联告警</button>
+          <button v-if="selected.subject_kind === 'UAV_EVENT'" type="button" class="btn" @click="emit('event', { eventId: selected.subject_id, riskCaseId: riskCaseOf(selected)?.risk_case_id || '' })">查看关联告警</button>
         </header>
         <section v-if="selected.subject_kind === 'UAV_EVENT'" class="alarm-reason-callout" aria-label="告警原因">
           <span class="alarm-reason-label">告警原因</span>

@@ -10,17 +10,28 @@ const source = await readFile(new URL('../src/pages/airspace/AirspacePage.vue', 
 const { descriptor } = parse(source);
 const setup = descriptor.scriptSetup.content.replace(/import[\s\S]*?from ['"][^'"]+['"];?/g, '');
 
-function pageFixture(row) {
+const clientSource = await readFile(new URL('../src/services/apiClient.js', import.meta.url), 'utf8');
+const poolSource = clientSource.match(/export async function mapPool[\s\S]*?\n}/)[0].replace('export ', '');
+const mapPool = new Function(`${poolSource}; return mapPool;`)();
+const deferred = () => {
+  let resolve, reject;
+  const promise = new Promise((ok, fail) => { resolve = ok; reject = fail; });
+  return { promise, resolve, reject };
+};
+const turn = () => new Promise(resolve => setImmediate(resolve));
+
+function pageFixture(row, overrides = {}) {
   const calls = [], mounted = [], unmounted = [];
   const versions = [{ airspace_version_id: `${row.airspace_id}-version`, version_no: 1 }];
   let subscription;
   const dependencies = {
-    ...Vue, onMounted: callback => mounted.push(callback), onUnmounted: callback => unmounted.push(callback),
+    ...Vue, mapPool, onMounted: callback => mounted.push(callback), onUnmounted: callback => unmounted.push(callback),
     usePageChrome() {}, hasPermission: () => true, refreshFailureText: error => error.message,
     useRealtimeRefresh: (topics, callback) => (subscription = { topics, trigger: callback }),
     airspaceApi: {
       list: async query => { calls.push(['airspaces', query]); return { items: [row], total: 1 }; },
-      versions: async id => { calls.push(['versions', id]); return { items: versions }; }
+      versions: async id => { calls.push(['versions', id]); return { items: versions }; },
+      ...overrides
     },
     flightApi: { routes: async () => { calls.push(['routes']); return { items: [] }; } },
     AIRSPACE_KIND_LABEL: {}, AIRSPACE_KIND_TAG: {}, ALTITUDE_DATUM_LABEL: {},
@@ -32,7 +43,7 @@ function pageFixture(row) {
   const scope = Vue.effectScope();
   const page = scope.run(() => new Function('dependencies', `with (dependencies) {
     ${setup}
-    return { refreshPage, select, clearDetail, all, selected, versions, filters, filtered, canManage };
+    return { refreshPage, loadAll, select, clearDetail, all, selected, versions, filters, filtered, canManage, loading, refreshing, error };
   }`)(dependencies));
   return { page, calls, subscription, versions,
     mount: async () => { for (const callback of mounted) await callback(); },
@@ -100,4 +111,66 @@ test('reference geometry retains holes, boundaries and line priority at differen
     assert.equal(hitMapReference([x + 50, y + 60], [route, region]).id, 'area');
     assert.equal(hitMapReference([x + 140, y + 140], [route, region]), null);
   }
+});
+
+
+test('list becomes usable before slow future-version reads finish, and newer refresh wins', async () => {
+  for (const source_mode of ['live', 'replay']) {
+    const row = { airspace_id: `future-${source_mode}`, version: 1, source_mode, current_version: null };
+    const history = deferred();
+    let current = row;
+    const f = pageFixture(row, {
+      list: async () => ({ items: [current], total: 1 }),
+      versions: () => history.promise
+    });
+    try {
+      const first = f.page.loadAll();
+      await turn();
+      assert.equal(f.page.loading.value, false, 'list is usable without waiting for history');
+      assert.equal(f.page.refreshing.value, true, 'automatic refresh still shares the ongoing read');
+      assert.equal(f.page.all.value[0].version, 1);
+      current = { ...row, version: 2, current_version: { kind_code: 'PERMITTED' } };
+      await f.page.loadAll();
+      history.resolve({ items: [{ valid_from: Date.now() + 60000 }] });
+      await first;
+      assert.equal(f.page.all.value[0].version, 2, 'late old history cannot replace current data');
+      assert.equal(f.page.refreshing.value, false);
+    } finally { f.dispose(); }
+  }
+});
+
+test('paginated airspaces use bounded concurrency and retain server page ordering', async () => {
+  const requests = [], results = new Map();
+  const row = { airspace_id: 'page-1', current_version: {} };
+  const f = pageFixture(row, { list: query => {
+    requests.push(query.page);
+    if (query.page === 1) return Promise.resolve({ items: [row], total: 500 });
+    const pending = deferred(); results.set(query.page, pending); return pending.promise;
+  } });
+  try {
+    const reading = f.page.loadAll();
+    await turn();
+    assert.deepEqual(requests, [1, 2, 3, 4], 'at most three remaining pages are in flight');
+    results.get(3).resolve({ items: [{ ...row, airspace_id: 'page-3' }] });
+    await turn();
+    assert.deepEqual(requests, [1, 2, 3, 4, 5]);
+    for (const page of [5, 4, 2]) results.get(page).resolve({ items: [{ ...row, airspace_id: `page-${page}` }] });
+    await reading;
+    assert.deepEqual(f.page.all.value.map(item => item.airspace_id), [1, 2, 3, 4, 5].map(page => `page-${page}`));
+  } finally { f.dispose(); }
+});
+
+test('superseded failures and unmounted requests cannot clear or restore the current list', async () => {
+  const row = { airspace_id: 'latest-area', current_version: {} };
+  const requests = [];
+  const f = pageFixture(row, { list: () => { const next = deferred(); requests.push(next); return next.promise; } });
+  const oldRead = f.page.loadAll();
+  const newRead = f.page.loadAll();
+  requests[1].resolve({ items: [row], total: 1 }); await newRead;
+  requests[0].reject(new Error('old request failed')); await oldRead;
+  assert.equal(f.page.all.value[0].airspace_id, row.airspace_id);
+  assert.equal(f.page.error.value, '');
+  const late = f.page.loadAll(); f.dispose();
+  requests[2].resolve({ items: [{ ...row, airspace_id: 'stale-area' }], total: 1 }); await late;
+  assert.equal(f.page.all.value[0].airspace_id, row.airspace_id);
 });

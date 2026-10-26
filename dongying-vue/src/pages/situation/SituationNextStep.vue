@@ -1,5 +1,6 @@
 <script setup>
 import { computed } from 'vue';
+import { riskCaseOf, riskSummaryMatches } from '@/services/riskCaseView.js';
 import { predictionVerificationState } from '@/services/predictionView.js';
 import { serverNow } from '@/services/serverClock.js';
 import { displayBusinessNo } from '@/ui/deviceNumber.js';
@@ -8,11 +9,11 @@ import { counterHiddenReason } from '@/components/disposal/counterNextStep.js';
 import { uavProcessActions, uavProcessStatus } from './situationFlow.js';
 
 /* 卡片「下一步」：紧挨「无人机现在」。能反制时放反制按钮；不能时按钮变灰并写原因（页面设计第 2 条）。 */
-const props = defineProps({ alarm: { type: Object, required: true }, summary: Object, nowStatus: Object, now: Number });
-const emit = defineEmits(['records', 'verify', 'updated', 'unavailable', 'open']);
+const props = defineProps({ alarm: { type: Object, required: true }, summary: Object, nowStatus: Object, now: Number, compact: Boolean });
+const emit = defineEmits(['records', 'verify', 'updated', 'unavailable']);
 const prediction = computed(() => predictionVerificationState(null, props.alarm, props.now || serverNow()));
 const actions = computed(() => uavProcessActions(props.alarm));
-const summary = computed(() => props.summary?.event_id && props.summary.event_id === props.alarm.eventId ? props.summary : null);
+const summary = computed(() => riskSummaryMatches(props.summary, props.alarm.eventId, riskCaseOf(props.alarm)?.risk_case_id) ? props.summary : null);
 const reason = computed(() => prediction.value?.blocked ? prediction.value.message
   : prediction.value && props.alarm.eventState === 'PENDING_VERIFICATION' ? '本次核实预测入区风险，通知和反制以当前依据与授权校验为准。'
     : counterHiddenReason({
@@ -21,18 +22,18 @@ const reason = computed(() => prediction.value?.blocked ? prediction.value.messa
 </script>
 
 <template>
-  <section class="sit-next-step" aria-label="下一步">
-    <span class="sit-next-step-label">下一步</span>
+  <section v-if="!compact || !prediction?.terminal" class="sit-next-step" :class="{ 'is-compact': compact }" aria-label="下一步">
+    <span v-if="!compact" class="sit-next-step-label">下一步</span>
     <div v-if="prediction?.terminal || (prediction?.blocked && alarm.eventState !== 'PENDING_VERIFICATION')" class="sit-next-step-row">
-      <p>{{ prediction.message }}</p><button class="btn" type="button" @click="emit('open')">查看预测预警与办理进度</button>
+      <p>{{ compact ? '预测依据不足，暂不能办理。' : prediction.message }}</p>
     </div>
     <div v-else-if="actions.includes('verify')" class="sit-next-step-row">
       <button class="btn pri" type="button" @click="emit('verify')">{{ prediction ? prediction.blocked ? '核实为误报' : '核实预测风险' : '核实' }}</button>
-      <p>{{ reason }}</p>
+      <p>{{ compact && prediction ? prediction.blocked ? '预测依据不足，暂不能确认风险属实。' : '请人工核实本次预测风险。' : reason }}</p>
     </div>
-    <CounterLaunch v-else-if="!reason && alarm.eventId" :key="alarm.eventId" :event-id="alarm.eventId" :event-label="displayBusinessNo(alarm.id)"
+    <CounterLaunch v-else-if="!reason && alarm.eventId" :key="riskCaseOf(alarm)?.risk_case_id || alarm.eventId" :risk-case="riskCaseOf(alarm)" :event-id="alarm.eventId" :event-label="displayBusinessNo(alarm.id)"
       :summary="summary" active show-launch :show-records="false" @records="emit('records', $event)"
-      @updated="emit('updated', $event)" @unavailable="(id, startedAt) => emit('unavailable', id, startedAt)" />
+      @updated="emit('updated', $event)" @unavailable="(id, startedAt, caseId) => emit('unavailable', id, startedAt, caseId)" />
     <div v-else class="sit-next-step-row">
       <button class="btn pri" type="button" disabled :aria-describedby="`sit-next-${alarm.alarmId}`">发起反制</button>
       <p :id="`sit-next-${alarm.alarmId}`">暂不能反制：{{ reason }}</p>
@@ -42,6 +43,7 @@ const reason = computed(() => prediction.value?.blocked ? prediction.value.messa
 
 <style scoped>
 .sit-next-step{display:flex;flex-direction:column;gap:6px;margin:0 12px;padding:8px 9px;border:1px solid var(--line);border-radius:8px;background:var(--surface-1)}
+.sit-next-step.is-compact{margin:0;padding:0;border:0;background:transparent}
 .sit-next-step-label{font-size:10px;letter-spacing:.04em;color:var(--txt-3)}
 .sit-next-step-row{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
 .sit-next-step-row p{flex:1;min-width:140px;margin:0;font-size:11px;line-height:1.55;color:var(--txt-3);overflow-wrap:anywhere}

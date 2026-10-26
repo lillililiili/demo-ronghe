@@ -1,13 +1,14 @@
 <script setup>
 import { displayBusinessNo } from '@/ui/deviceNumber.js';
+import RiskDisposalSummary from '@/components/disposal/RiskDisposalSummary.vue';
 import AutoSmsNotice from '@/components/disposal/AutoSmsNotice.vue';
 import AutoVoiceNotice from '@/components/disposal/AutoVoiceNotice.vue';
 import AdvisoryRecords from '@/components/disposal/AdvisoryRecords.vue';
 import { useUavAdvisory } from '@/hooks/useUavAdvisory.js';
-const props = defineProps({ eventId: { type: String, required: true }, alarmLabel: String, targetLabel: String });
+const props = defineProps({ eventId: { type: String, required: true }, riskCase: Object, alarmLabel: String, targetLabel: String });
 const emit = defineEmits(['updated', 'open', 'unavailable']);
 const { data, loading, error, load } = useUavAdvisory(() => props.eventId, value => emit('updated', value), 1000,
-  (id, startedAt) => emit('unavailable', id, startedAt));
+  (id, startedAt, caseId) => emit('unavailable', id, startedAt, caseId), () => props.riskCase?.risk_case_id || '');
 </script>
 
 <template>
@@ -16,6 +17,7 @@ const { data, loading, error, load } = useUavAdvisory(() => props.eventId, value
     <header><div><b>{{ displayBusinessNo(targetLabel) || '通知记录' }}</b><small>{{ displayBusinessNo(alarmLabel) }}</small></div><button class="btn sm" type="button" :disabled="loading" @click="load()">{{ error ? '重试' : '刷新' }}</button></header>
     <p v-if="error" role="alert">{{ error }} 当前发送结果未确认。</p>
     <p v-else-if="loading && !data">正在读取通知状态</p>
+    <RiskDisposalSummary :summary="data" compact />
     <AutoSmsNotice v-if="data" compact :data="data" :disabled="!!error || loading" @changed="load()" />
     <AutoVoiceNotice v-if="data" compact :data="data" :disabled="!!error || loading" @changed="load()" />
     <details v-if="data?.records?.length"><summary>联系与观察记录（{{ data.records.length }}）</summary><AdvisoryRecords :records="data.records" /></details>

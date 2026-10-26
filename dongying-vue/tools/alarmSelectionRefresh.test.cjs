@@ -1,3 +1,4 @@
+const riskHelpers = require('./riskCaseTestHelpers.cjs');
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
@@ -19,7 +20,7 @@ function fixture(origin) {
   const event = { event_id: alarm.event_id, state: 'CONFIRMED', version: 3 };
   const initial = { alarm, event, loading: false, verificationsLoaded: true, chain: { files: [] } };
   const st = { selId: alarm.alarm_id }, requests = [], paints = [];
-  const deps = { st, disposal: {}, initial,
+  const deps = { ...riskHelpers, list: { rows: [] }, st, disposal: {}, initial,
     emptyDetail: () => ({ alarm: null, event: null, loading: false }),
     getAlarm: id => { const request = deferred(); requests.push({ ...request, id }); return request.promise; },
     getUavEvent: async id => ({ ...event, event_id: id }),
@@ -29,9 +30,10 @@ function fixture(origin) {
     loadEscalations: async () => {}, loadVerifications: async () => {}, refreshChain: async () => {},
     briefOf: () => null, messageOf: e => e.message, shouldRetryRefresh: e => e.status >= 500
   };
-  const api = new Function(...Object.keys(deps), 'let cur = initial, detailSeq = 1, disposalSeq = 1;\n'
+  deps.readRiskAlarm = deps.getAlarm;
+  const api = new Function(...Object.keys(deps), 'let authorizationPageActive = true; let cur = initial, detailSeq = 1, disposalSeq = 1;\n'
     + body('selectAlarm') + body('refreshSelected')
-    + '\nreturn { selectAlarm, refreshSelected, current: () => cur, sequence: () => detailSeq };')(...Object.values(deps));
+    + '\nreturn { selectAlarm, refreshSelected, current: () => cur, sequence: () => detailSeq, leave: () => { authorizationPageActive = false; } };')(...Object.values(deps));
   return { alarm, initial, st, requests, paints, ...api };
 }
 
@@ -78,5 +80,15 @@ test('refresh preserves temporary outage data but removes revoked or missing eve
       assert.equal(f.current().error, 'read failed');
       assert.equal(f.sequence(), 2, 'access loss invalidates previous detail requests');
     }
+  }
+});
+
+
+test('离开页面后不再启动选中风险刷新，原在途响应也不更新详情', async () => {
+  for (const origin of ['PREDICTED_AIRSPACE_ENTRY', 'OBSERVED']) {
+    const f = fixture(origin), pending = f.refreshSelected();
+    f.leave(); f.requests[0].resolve({ ...f.alarm, target_id: randomUUID() }); await pending;
+    assert.equal(f.current().alarm, f.alarm); assert.equal(f.paints.length, 0);
+    await f.refreshSelected(); assert.equal(f.requests.length, 1);
   }
 });

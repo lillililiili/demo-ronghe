@@ -1,3 +1,4 @@
+const riskHelpers = require('./riskCaseTestHelpers.cjs');
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { readFileSync } = require('node:fs');
@@ -8,9 +9,9 @@ function verificationForm(event, verify, alarm = {}) {
   let form;
   const source = readFileSync(path.join(__dirname, '../src/ui/uavVerificationModal.js'), 'utf8')
     .replace(/^import .*;\r?\n/gm, '').replace(/\bexport /g, '');
-  const context = vm.createContext({
+  const context = vm.createContext({ ...riskHelpers,
     openFormModal: value => { form = value; }, closeModal() {}, toast() {}, crypto: globalThis.crypto,
-    verifyUavEvent: verify, isUncertainOutcome: error => !!error && (error.status === 409 || error.code === 'TIMEOUT'),
+    verifyUavRiskCase: verify, verifyUavEvent: verify, isUncertainOutcome: error => !!error && (error.status === 409 || error.code === 'TIMEOUT'),
     ALARM_TYPE_LABEL: {}, labelOf: () => '', readableNo: value => value || '', serverNow: () => Date.now()
   });
   vm.runInContext(readFileSync(path.join(__dirname, '../src/ui/deviceNumber.js'), 'utf8').replace(/\bexport /g, ''), context);
@@ -123,4 +124,35 @@ test('预测终态不打开核实弹窗，UNKNOWN和打开时过期只允许误�
   assert.equal(expired.form.fields[0].options[0].disabled, true);
   assert.match(expired.form.validate({ conclusion: 'CONFIRMED' }), /不能提交预测风险属实/);
   await assert.rejects(expired.form.onSubmit({ conclusion: 'CONFIRMED' }), /不能提交预测风险属实/);
+});
+
+test('统一风险核实提交风险与事件版本，已核实持续风险不重复核实', async () => {
+  const submitted = [], risk_case = { risk_case_id: 'case-region-one', version: 7, stage: 'ENTERED', verification_status: 'PENDING_VERIFICATION' };
+  const { form } = verificationForm(pending(), async (id, body) => { submitted.push({ id, body }); return { state: 'CONFIRMED' }; }, { risk_case });
+  await form.onSubmit({ conclusion: 'CONFIRMED', note: '' });
+  assert.equal(submitted[0].id, risk_case.risk_case_id);
+  assert.equal(submitted[0].body.expected_case_version, 7);
+  assert.equal(submitted[0].body.expected_version, 3);
+  const verified = verificationForm(pending(), async () => { throw new Error('不应重复提交'); }, { risk_case: { ...risk_case, verification_status: 'CONFIRMED' } });
+  assert.equal(verified.opened, false);
+});
+
+test('统一风险核实优先当前区域资格，实测及未知不误用旧预测终态', async () => {
+  for (const source_mode of ['live', 'replay']) {
+    const submissions = [], risk_case = { risk_case_id: `region-${source_mode}`, version: 9, stage: 'ENTERED',
+      verification_status: 'PENDING_VERIFICATION', allowed_actions: ['VERIFY'] };
+    const alarm = { source_mode, risk_case, origin_kind: 'PREDICTED_AIRSPACE_ENTRY', prediction: { warning: { state: 'ENTERED' } } };
+    const event = pending({ allowed_actions: [], verification_basis: { confirmable: true }, origin_kind: 'PREDICTED_AIRSPACE_ENTRY' });
+    const entered = verificationForm(event, async (id, body) => { submissions.push({ id, body }); return { state: 'CONFIRMED' }; }, alarm);
+    assert.equal(entered.opened, true); assert.equal(entered.form.fields[0].options[0].disabled, false);
+    assert.match(entered.form.fields[0].options[0].label, /风险属实/);
+    await entered.form.onSubmit({ conclusion: 'CONFIRMED' });
+    assert.equal(submissions[0].id, risk_case.risk_case_id); assert.equal(submissions[0].body.expected_case_version, 9);
+    assert.equal(Object.hasOwn(submissions[0].body, 'prediction_id'), false);
+    const unknown = verificationForm(event, async () => ({}), { ...alarm, risk_case: { ...risk_case, stage: 'UNKNOWN' } });
+    assert.equal(unknown.opened, true); assert.equal(unknown.form.fields[0].options[0].disabled, true);
+    await assert.rejects(unknown.form.onSubmit({ conclusion: 'CONFIRMED' }), /当前风险依据不足/);
+    const denied = verificationForm(pending(), async () => ({}), { ...alarm, risk_case: { ...risk_case, allowed_actions: [] } });
+    assert.equal(denied.opened, false);
+  }
 });

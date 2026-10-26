@@ -1,5 +1,6 @@
 """Ending a scene keeps the notification receiver; only 停止全部收发 stops it."""
 import sys
+import itertools
 import tempfile
 import unittest
 from pathlib import Path
@@ -37,7 +38,7 @@ class ReceiverLifecycleTests(unittest.TestCase):
              patch('server.FullChain'), \
              patch('server.NotificationResponse') as notice, \
              patch('prerequisite_check.verify', return_value={}), \
-             patch('server.time.monotonic', side_effect=[0, 1201]):
+             patch('server.time.monotonic', side_effect=itertools.chain([0], itertools.repeat(1201))):
             notice.return_value.snapshot.return_value = {}
             runtime.run(devices)
         return runtime

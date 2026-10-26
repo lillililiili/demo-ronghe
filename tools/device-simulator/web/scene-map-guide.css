@@ -1,0 +1,10 @@
+/* Read-only scene landmarks; keep editable geometry and live target markers independent. */
+.scene-map-guide { pointer-events: none; }
+.scene-guide-marker { --guide-color: var(--cyan); }
+.scene-guide-entry { --guide-color: var(--amber); }
+.scene-guide-leader { fill: none; stroke: var(--guide-color); stroke-width: 1.5; stroke-opacity: .7; }
+.scene-guide-point { fill: var(--panel); stroke: var(--guide-color); stroke-width: 2.5; }
+.scene-guide-label { fill: var(--panel); fill-opacity: .97; stroke: var(--guide-color); stroke-width: 1.2; }
+.scene-guide-marker text { fill: var(--text); font: 600 13px -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; }
+.scene-guide-direction path { fill: none; stroke: var(--cyan); stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+.scene-guide-direction .scene-guide-arrow-halo { stroke: var(--panel); stroke-width: 5.5; }

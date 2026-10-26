@@ -1,10 +1,7 @@
-"""Build reusable flow-9 input scenes; prediction, verification and actions remain platform decisions.
+"""Simple flow-9 inputs: approach a rectangle, then turn away or enter.
 
-The vehicle circles inside a prohibited polygon's hole. Current measured positions
-remain outside the zone while a constant-velocity forecast can cross the ring.
-The entry variant continues tangentially into its smaller ring and holds there.
-Only ordinary route points, device observations and a polygon with a hole are used.
-This module neither calls services nor imports forecast/notification outcomes.
+Only ordinary measured motion and airspace inputs are produced. Map and stage
+guides describe the simulated route, never a platform prediction or action result.
 """
 import argparse
 import copy
@@ -15,160 +12,154 @@ import re
 
 from engine import compile_scene, metres
 
-FILES = {
-    'avoid': 'flow-9-prediction-warning.json',
-    'enter': 'flow-9-prediction-entry.json',
-}
-RING_VERTICES = 120
+FILES = {'avoid': 'flow-9-prediction-warning.json', 'enter': 'flow-9-prediction-entry.json'}
 
 
-def build_scenes(longitude=118.6104, latitude=37.464, radius=900.0, speed=30.0,
-                 inner_radius=1000.0, outer_radius=1600.0, action_seconds=240,
+def build_scenes(longitude=118.6104, latitude=37.464, start_distance=1500.0, speed=30.0,
+                 turn_clearance=120.0, turn_radius=60.0, zone_width=900.0,
+                 zone_half_height=600.0, return_distance=1500.0,
                  duration_seconds=300, identity='acceptance-flow9'):
-    """Return two variants, with configurable WGS84 center, geometry and timing.
+    """Build two portable variants with the same devices and rectangular zone.
 
-    Changed parameters are input geometry, not prediction settings. Their actual
-    forecasting reliability must still be checked against the platform model.
-    Variants share the two logical devices and versioned logical airspace.
-    Only entry scales the input geometry to 75%; its default hold radius is 875m,
-    inside the existing 1km countermeasure coverage. It runs for at least two
-    minutes after action_seconds; no platform threshold or outcome is supplied.
+    Dimensions are input metres; no K03 thresholds are overridden. A straight
+    approach has at most 30 seconds of predictive warning. The entry variant
+    therefore leaves the remaining run for human handling of actual intrusion.
     """
-    values = (longitude, latitude, radius, speed, inner_radius, outer_radius,
-              action_seconds, duration_seconds)
+    values = (longitude, latitude, start_distance, speed, turn_clearance, turn_radius,
+              zone_width, zone_half_height, return_distance, duration_seconds)
     if any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) for v in values):
         raise ValueError('坐标、尺寸、速度和时长须为有限数字')
     if not -179 < longitude < 179 or not -80 < latitude < 80:
-        raise ValueError('请使用非极区且不跨日期变更线的 WGS84 中心位置')
-    if not 0 < radius < inner_radius < outer_radius <= 20_000:
-        raise ValueError('尺寸须满足 0 < 巡航半径 < 内孔半径 < 外沿半径，外沿不超过20公里')
-    if radius >= inner_radius * math.cos(math.pi / RING_VERTICES):
-        raise ValueError('巡航轨迹须完整位于多边形内孔内，不能与内孔边界相交')
-    if not 0 < speed <= 100 or speed / radius > .1:
-        raise ValueError('速度须大于0且不超过100米/秒；每秒巡航转角不能超过0.1弧度')
-    if action_seconds != int(action_seconds) or duration_seconds != int(duration_seconds):
-        raise ValueError('动作时间和总时长须为整数秒')
-    if not 30 <= action_seconds < duration_seconds <= 1200:
-        raise ValueError('动作应在开始30秒以后，总时长须晚于动作且不超过20分钟')
-    if duration_seconds - action_seconds < radius / speed + 20:
-        raise ValueError('动作后须留出飞到圆心及至少20秒观察时间')
+        raise ValueError('请使用非极区且不跨日期变更线的 WGS84 位置')
+    if not 0 < speed <= 100:
+        raise ValueError('速度须大于0且不超过100米/秒')
+    if any(not 0 < v <= 20_000 for v in (start_distance, turn_clearance, turn_radius,
+                                        zone_width, zone_half_height, return_distance)):
+        raise ValueError('场景尺寸须大于0且不超过20公里')
+    if start_distance <= turn_clearance + turn_radius + speed * 15:
+        raise ValueError('接近路线须在转向前保留至少15秒直线飞行')
+    if return_distance / speed < 30:
+        raise ValueError('转向后须保留至少30秒持续远离的飞行观测')
+    if duration_seconds != int(duration_seconds) or not 120 <= duration_seconds <= 1200:
+        raise ValueError('总时长须为120至1200的整数秒')
     if not isinstance(identity, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,32}', identity):
         raise ValueError('场景包标识须为1至32位字母、数字、下划线或短横线')
-    action_seconds, duration_seconds = int(action_seconds), int(duration_seconds)
+    duration_seconds = int(duration_seconds)
 
     def point(east, north):
         lon = longitude + east / (111320 * math.cos(math.radians(latitude)))
         lat = latitude + north / 111320
-        # Version-1 coordinates use the simulator's documented reversible WGS84 grid.
         return [(lon - 118.56) / .00012, (37.50 - lat) / .00012]
 
-    def circle_ring(size, clockwise=False):
-        result = [point(size * math.cos(i * math.tau / RING_VERTICES),
-                        size * math.sin(i * math.tau / RING_VERTICES)) for i in range(RING_VERTICES)]
-        return list(reversed(result)) if clockwise else result
+    def travel(path):
+        return sum(metres(a, b) for a, b in zip(path, path[1:])) / speed
 
-    def orbit(seconds, orbit_radius=radius):
-        # Match the existing sampler's distance formula so the configured turn
-        # happens at action_seconds, without chord-length or latitude drift.
-        path, theta = [point(orbit_radius, 0)], 0.0
-        for _ in range(seconds):
-            low, high = theta, theta + .2
-            for _ in range(45):
-                middle = (low + high) / 2
-                candidate = point(orbit_radius * math.cos(middle), orbit_radius * math.sin(middle))
-                if metres(path[-1], candidate) < speed:
-                    low = middle
-                else:
-                    high = middle
-            theta = (low + high) / 2
-            path.append(point(orbit_radius * math.cos(theta), orbit_radius * math.sin(theta)))
-        return path
+    def marker(key, role, label, position):
+        return dict(id=key, role=role, label=label, point=copy.deepcopy(position))
 
-    entry_duration = max(duration_seconds, action_seconds + 120)
-    entry_radius, entry_inner, entry_outer = radius * .75, inner_radius * .75, outer_radius * .75
-    entry_hold = inner_radius * .875
-    if entry_duration > 1200 or entry_hold >= entry_outer * math.cos(math.pi / RING_VERTICES):
-        raise ValueError('入区场景须保留两分钟办理时间且驻留点完整位于环带内')
+    def stage(at, label, description):
+        return dict(at_seconds=round(at, 2), label=label, description=description)
 
-    def entry_path():
-        path = orbit(action_seconds, entry_radius)
-        # Continue the final delivered segment exactly: no heading jump and no
-        # position teleport. Solve the forward ray's intersection with the hold
-        # circle in the same center-relative metric used to construct the rings.
-        origin = point(0, 0)
-        scale_x = .00012 * 111320 * math.cos(math.radians(latitude))
-        scale_y = -.00012 * 111320
-        x, y = (path[-1][0] - origin[0]) * scale_x, (path[-1][1] - origin[1]) * scale_y
-        dx, dy = (path[-1][0] - path[-2][0]) * scale_x, (path[-1][1] - path[-2][1]) * scale_y
-        magnitude = math.hypot(dx, dy)
-        dx, dy = dx / magnitude, dy / magnitude
-        projection = x * dx + y * dy
-        distance = -projection + math.sqrt(projection ** 2 + entry_hold ** 2 - x ** 2 - y ** 2)
-        path.append(point(x + dx * distance, y + dy * distance))
-        if sum(metres(a, b) for a, b in zip(path, path[1:])) / speed > entry_duration - 60:
-            raise ValueError('入区场景到达区内驻留点后须保留至少一分钟持续观测')
-        return path
+    start = point(-start_distance, 0)
+    turn_x = -turn_clearance - turn_radius
+    turn = point(turn_x, 0)
+    # A single short bend makes the change of direction visible without an orbit.
+    arc = [point(turn_x + turn_radius * math.cos(-math.pi / 2 + i * 3 * math.pi / 32),
+                 turn_radius + turn_radius * math.sin(-math.pi / 2 + i * 3 * math.pi / 32))
+           for i in range(1, 9)]
+    arc_end_east = turn_x + turn_radius / math.sqrt(2)
+    arc_end_north = turn_radius + turn_radius / math.sqrt(2)
+    safe_end = point(arc_end_east - return_distance / math.sqrt(2),
+                     arc_end_north + return_distance / math.sqrt(2))
+    avoid_path = [start, turn, *arc, safe_end]
+    entry_end = point(zone_width / 2, 0)
+    entry_path = [start, entry_end]
+    turn_at, turned_at, safe_at = travel([start, turn]), travel(avoid_path[:-1]), travel(avoid_path)
+    entry_at, hold_at = travel([start, point(0, 0)]), travel(entry_path)
+    entry_duration = max(duration_seconds + 60, math.ceil(hold_at + 120))
+    if safe_at > duration_seconds - 30 or entry_duration > 1200:
+        raise ValueError('航迹结束后须保留30秒观测，入区停留须保留两分钟且总时长不超过20分钟')
 
-    center = point(0, 0)
-    circular_path = orbit(duration_seconds)
+    site_point = point(-150, -300)
     radar, tdoa = 'radar-' + identity, 'tdoa-' + identity
+    # Both routes stay north of this site; declare the simulated camera's full
+    # observation sector from the route geometry, without changing real devices.
+    eo_range = math.ceil(max(metres(site_point, p) for p in avoid_path + entry_path) / 100) * 100 + 100
     common = {
         'version': 1, 'coordinate_system': 'WGS84', 'duration': duration_seconds / 60,
-        'sites': [{'id': 'site-' + identity, 'name': '流程 9 模拟观测设备组',
-                   'x': center[0], 'y': center[1], 'coordinate_system': 'WGS84', 'devices': [
+        'sites': [{'id': 'site-' + identity, 'name': '观测设备组',
+                   'x': site_point[0], 'y': site_point[1], 'coordinate_system': 'WGS84', 'devices': [
                        {'id': radar, 'name': '流程 9 模拟雷达', 'kind': 'radar',
                         'health': '正常', 'heartbeat': '持续上报', 'interval': 1},
                        {'id': tdoa, 'name': '流程 9 模拟 TDOA', 'kind': 'tdoa',
-                        'health': '正常', 'heartbeat': '持续上报', 'interval': 1}]}],
-        'zones': [{'id': 'prohibited-' + identity, 'name': '流程 9 环带禁飞区', 'kindCode': 'PROHIBITED',
-                   'coordinate_system': 'WGS84', 'points': circle_ring(outer_radius),
-                   'holes': [circle_ring(inner_radius, clockwise=True)],
-                   'min': 0, 'max': 300, 'altitudeDatum': 'AMSL', 'start': '00:00', 'end': '23:59'}],
+                        'health': '正常', 'heartbeat': '持续上报', 'interval': 1},
+                       {'id': 'eo-' + identity, 'name': '流程 9 模拟光电', 'kind': 'eo',
+                        'health': '正常', 'heartbeat': '持续上报', 'interval': 1,
+                        'coverage': {'kind': 'sector', 'rangeM': eo_range, 'azimuthDeg': 0,
+                                     'fovDeg': 180, 'sourceLabel': '流程9模拟光电范围（模拟参数）'}}]}],
+        # This new named rectangle is a separate upstream business identity.
+        # Reusing the annular scene ID would violate its immutable source name,
+        # even after withdrawal. Both variants/reruns reuse this stable ID.
+        'zones': [{'id': 'prohibited-rectangle-v2-' + identity, 'name': '禁飞区 · 矩形内禁止飞行',
+                   'kindCode': 'PROHIBITED', 'coordinate_system': 'WGS84',
+                   'points': [point(0, -zone_half_height), point(zone_width, -zone_half_height),
+                              point(zone_width, zone_half_height), point(0, zone_half_height)],
+                   'holes': [], 'min': 0, 'max': 300, 'altitudeDatum': 'AMSL',
+                   'start': '00:00', 'end': '23:59'}],
         'risks': [],
-        'fullchain': {'enabled': True, 'categories': [], 'filing': {}, 'airspaceLifecycle': False,
-                      'acceptanceFlow': 9},
+        'fullchain': {'enabled': True, 'categories': [], 'filing': {},
+                      'airspaceLifecycle': False, 'acceptanceFlow': 9},
     }
     result = {}
-    for variant, label in [('avoid', '转向避开'), ('enter', '继续入区后人工反制')]:
+    for variant, label in [('avoid', '接近后转向避开'), ('enter', '继续入区并人工反制')]:
         scene = copy.deepcopy(common)
-        path = circular_path[:action_seconds + 1] + [center]
+        path = avoid_path if variant == 'avoid' else entry_path
         if variant == 'enter':
-            path = entry_path()
             scene['duration'] = entry_duration / 60
-            scene['zones'][0]['points'] = circle_ring(entry_outer)
-            scene['zones'][0]['holes'] = [circle_ring(entry_inner, clockwise=True)]
         plan = 'route-' + identity + '-' + variant
         target = {
-            'id': 'uav-' + identity + '-' + variant, 'name': '流程 9 预测入区预警·' + label,
+            'id': 'uav-' + identity + '-' + variant, 'name': '演示无人机',
             'kind': 'uav', 'coordinate_system': 'WGS84', 'deviceId': radar, 'secondaryDeviceId': tdoa,
             'transport': 'normalized', 'secondaryTransport': 'auto', 'motionMode': 'once',
             'path': copy.deepcopy(path), 'height': 100, 'heightAgl': 80, 'altitudeDatum': 'AMSL',
             'speed': speed, 'count': 1, 'probability': .99, 'planId': plan,
-            'pilotPoint': copy.deepcopy(center), 'notificationBehavior': 'none',
+            'pilotPoint': copy.deepcopy(site_point), 'notificationBehavior': 'none',
         }
-        scene.update(name=target['name'], targets=[target], plans=[{
-            'id': plan, 'name': '流程 9 配套飞行航线·' + label, 'coordinate_system': 'WGS84',
+        scene.update(name='流程 9 · ' + ('转向避开' if variant == 'avoid' else '继续入区'), targets=[target], plans=[{
+            'id': plan, 'name': '配套航线', 'coordinate_system': 'WGS84',
             'points': copy.deepcopy(path), 'min': 20, 'max': 150, 'width': 200,
             'start': '00:00', 'end': '23:59', 'timeMode': 'current', 'altitudeDatum': 'AMSL',
         }])
         scene['fullchain']['predictionVariant'] = variant
         scene['fullchain']['expectedChecks'] = [
-            '实测始终在禁飞区内孔内，未来10／20／30秒预测单独显示',
-            '预测预警由连续新实测产生，人工核实后核对短信与专用录音电话回执',
-            '预测反制由有权限人员人工发起，核对真实设备指令及回执',
-            '约第' + str(action_seconds) + '秒转向孔内；先失效停止，稳定安全新观测后撤销并留存历史',
-            '场景结束沿既有流程撤销本场景环带空域，保留历史',
+            '无人机从矩形禁飞区左侧直线接近，未来10／20／30秒预测与实测轨迹分别显示',
+            '预警由平台按有效新实测计算；仅在当前依据有效时人工核实，再查看短信和预测专用电话回执',
+            '有效预警自动排队光电观察；选中无人机点实时视频，收到跟踪回执且媒体就绪后显示带模拟标识的视频',
+            '反制须由有权限人员人工发起，通知、授权、启停均以平台实际结果为准',
+            ('无人机在边界外转向并远离；平台收到连续明确安全观测后撤销预警并保留历史'
+             if variant == 'avoid' else '无人机继续飞入区内并停留；在关联实测告警办理人工反制，通知与处置按同次风险防重'),
+            '持续上报到场景结束；沿既有流程撤销本场景空域并保留历史',
         ]
-        if variant == 'enter':
-            scene['fullchain']['expectedChecks'] = [
-                '前段实测在禁飞区内孔内，未来10／20／30秒预测独立显示，持续上报不跳点',
-                '预测预警人工核实后核对短信与预测专用录音电话的实际模拟回执',
-                '约第' + str(action_seconds) + '秒沿当前切线继续飞入禁飞区，区内驻留并持续上报至第' + str(entry_duration) + '秒',
-                '实测入区后核对关联的实际告警，预测核实不替代实际违法核实；短信电话和设备处置防重',
-                '实测入区后由有权限人员人工申请、审批和执行或使用已有直接权限，核对设备指令及真实回执',
-                '同次预测衍生事件保持人工反制，不自动核实预测、不自动反制、不以预测自动移送处罚',
-                '场景结束沿既有流程撤销本场景环带空域，保留历史',
-            ]
+        markers = [marker('start', 'start', '① 起点 · 向右飞行', start)]
+        stages = [stage(0, '① 直线接近', '打开融合感知，选中无人机，查看未来10、20、30秒预测。'),
+                  stage(max(10, entry_at - 30), '② 留意提前预警',
+                        '临近禁飞区。有效预警触发光电观察，点实时视频查看；人工核实后查看短信、电话回执。')]
+        directions = [{'from': copy.deepcopy(start), 'to': copy.deepcopy(turn)}]
+        if variant == 'avoid':
+            markers.extend([marker('turn', 'turn', '② 转向避开', turn),
+                            marker('safe', 'end', '③ 区外终点', safe_end)])
+            directions.append({'from': copy.deepcopy(arc[-1]), 'to': copy.deepcopy(safe_end)})
+            stages.extend([stage(turn_at, '③ 转向远离', '无人机在边界外转向；等待平台依据新观测判断风险是否解除。'),
+                           stage(safe_at, '④ 区外停留', '无人机保持上报。在告警事件中查看撤销原因和处置历史。')])
+            summary = '从左向右接近 → 边界外转向 → 向左上方远离，全程不进入矩形禁飞区。'
+        else:
+            markers.extend([marker('entry', 'entry', '② 穿过边界入区', point(0, 0)),
+                            marker('hold', 'end', '③ 区内停留', entry_end)])
+            stages.extend([stage(entry_at, '③ 飞入禁飞区', '查看平台关联的实测入区告警，按当前资格人工办理反制。'),
+                           stage(hold_at, '④ 区内停留', '持续上报位置，留出核实、申请审批及执行时间；查看实际启停回执。')])
+            summary = '从左向右接近 → 穿过矩形边界 → 区内停留，在平台人工办理反制。'
+        scene['mapGuide'] = dict(title='路线导读', compactPaths=True, markers=markers, directions=directions)
+        scene['sceneGuide'] = dict(summary=summary, stages=stages)
         compile_scene(scene)
         result[variant] = scene
     return result
@@ -184,19 +175,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output-dir', type=Path, default=Path(__file__).resolve().parent / 'scenarios' / 'acceptance-flows-1-7-20261008')
     parser.add_argument('--overwrite', action='store_true', help='明确替换该目录下两份流程9文件；不修改流程清单')
-    parser.add_argument('--longitude', type=float, default=118.6104)
-    parser.add_argument('--latitude', type=float, default=37.464)
-    parser.add_argument('--radius', type=float, default=900)
-    parser.add_argument('--speed', type=float, default=30)
-    parser.add_argument('--inner-radius', type=float, default=1000)
-    parser.add_argument('--outer-radius', type=float, default=1600)
-    parser.add_argument('--action-seconds', type=int, default=240)
+    defaults = dict(longitude=118.6104, latitude=37.464, start_distance=1500, speed=30,
+                    turn_clearance=120, turn_radius=60, zone_width=900, zone_half_height=600, return_distance=1500)
+    for name, default in defaults.items():
+        parser.add_argument('--' + name.replace('_', '-'), type=float, default=default)
     parser.add_argument('--duration-seconds', type=int, default=300)
     parser.add_argument('--identity', default='acceptance-flow9')
-    args = parser.parse_args()
-    params = vars(args).copy()
-    output, overwrite = params.pop('output_dir'), params.pop('overwrite')
-    scenes = build_scenes(**params)
+    args = vars(parser.parse_args())
+    output, overwrite = args.pop('output_dir'), args.pop('overwrite')
+    scenes = build_scenes(**args)
     if not overwrite and any((output / name).exists() for name in FILES.values()):
         parser.error('目标目录已有流程9文件，请换输出目录或显式使用 --overwrite')
     output.mkdir(parents=True, exist_ok=True)

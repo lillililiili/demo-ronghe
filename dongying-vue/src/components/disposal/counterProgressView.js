@@ -124,7 +124,9 @@ export function counterProgressView(row, events, stop = null) {
       : ['REQUESTED', 'APPROVED'].includes(row.status) ? '尚未启动'
         : ['REJECTED', 'CANCELLED', 'EXPIRED'].includes(row.status) ? '没有启动' : known ? '没有设备打开的回执' : '';
   let stopText = '';
-  if (stopped) stopText = stopped.event_kind === 'STOP' && stopped.actor_name ? `${stopped.actor_name}停止` : STOP_KIND[stopped.event_kind];
+  // 反制中有航班飞进禁止反制范围时系统自动停止（2026-10-26），不能写成人工停止。
+  if (stopped && stopped.snapshot?.origin === 'SYSTEM_AIRCRAFT_STOP') stopText = '附近有航班，系统自动停止';
+  else if (stopped) stopText = stopped.event_kind === 'STOP' && stopped.actor_name ? `${stopped.actor_name}停止` : STOP_KIND[stopped.event_kind];
   else if (opened && row.status === 'EXECUTING') stopText = '还在执行，到时系统自动关闭';
   else if (['REJECTED', 'CANCELLED', 'EXPIRED'].includes(row.status) && !issued) stopText = '没有启动，无需停止';
   return {

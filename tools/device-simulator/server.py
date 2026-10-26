@@ -746,6 +746,10 @@ class Runtime:
         """停止、完成、失败都会走到这里：把本批次下发的模拟空域撤回，下一个场景不再受它们影响（清单第 4 条）。"""
         if not self.fullchain: return
         try:
+            self.fullchain.release_adsb()
+        except Exception as error:
+            self.log('ADSB_RELEASE_FAILED', '模拟航班接收机没能停用，10 分钟后平台不再按它检查：' + str(error))
+        try:
             results = self.fullchain.withdraw_zones()
         except Exception as error:
             results = [{'zone': '本批次的空域', 'ok': False, 'error': str(error)}]

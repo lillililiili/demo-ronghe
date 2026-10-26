@@ -4,6 +4,7 @@ import { riskSummaryMatches } from '@/services/riskCaseView.js';
 import { userFacingMessage } from '@/ui/labels.js';
 import { computed, onUnmounted, reactive, ref, watch } from 'vue';
 import AutoSmsNotice from './AutoSmsNotice.vue';
+import FlightCheckNotice from './FlightCheckNotice.vue';
 import AutoVoiceNotice from './AutoVoiceNotice.vue';
 import AdvisoryRecords from './AdvisoryRecords.vue';
 import { useUavAdvisory } from '@/hooks/useUavAdvisory.js';
@@ -191,6 +192,7 @@ async function submitHandoff() {
     <p v-else-if="loading && !data" class="ua-note">正在读取通知与处置进度</p>
     <template v-if="data">
       <RiskDisposalSummary :summary="data" :counter="props.counter" />
+      <FlightCheckNotice :event-id="eventId" :interval="interval" />
       <AutoSmsNotice compact :data="data" :disabled="!current" @changed="load()" />
       <AutoVoiceNotice compact :data="data" :disabled="!current" @changed="load()" />
       <div v-if="counter" class="ua-handoff ua-counter" aria-label="反制进度" :data-state="props.counter?.status">

@@ -34,6 +34,7 @@ import { PILOT_LOCATION_IN_ALARM_DETAIL, pilotLocationText } from '@/services/pi
 import { pilotDistanceNote } from '@/ui/pilotDistanceNote.js';
 import { ruleReasonText } from '@/ui/legalityReviewModal.js';
 import WeatherRiskMarkers from '@/components/WeatherRiskMarkers.vue';
+import FlightTrafficLayer from './situation/FlightTrafficLayer.vue';
 import { weatherAnchor } from '@/services/weatherRiskGeometry.js';
 import SituationRiskGroupPopup from './situation/SituationRiskGroupPopup.vue';
 import SituationRiskProcess from './situation/SituationRiskProcess.vue';
@@ -63,6 +64,7 @@ const VIEWED_STORAGE_KEY = 'situation.viewed.v1';
 const mapHost = ref(null);
 const weatherLayer = ref(null);
 const riskSnapshotLayer = ref(null);
+const flightLayer = ref(null);
 const snapshot = ref({ generatedAt: 0, sourceMode: 'unknown', simulated: false, devices: [], targets: [], alarms: [], flightPlans: [], risks: [], airspaces: [], handoffs: [] });
 const selection = ref(null);
 const advisorySummaries = ref({});
@@ -80,7 +82,7 @@ const fuseOpen = ref(false);
 const showTargetVideo = ref(false);
 const eoDevice = ref(null), eoExpanded = ref(false), eoMode = ref('point'), eoSelected = ref([]), eoFocusedId = ref('');
 const source = createSituationApiSource();
-const layers = ref({ prediction: true, coverage: true, device: true, track: true, flightPlan: true, airspace: true });
+const layers = ref({ prediction: true, coverage: true, device: true, track: true, flightPlan: true, airspace: true, flights: true });
 const statusAnnouncement = ref('正在连接融合感知服务');
 let viewedKeys = loadViewedKeys();
 watch(authSession, () => announcedRiskKeys.clear());
@@ -237,6 +239,10 @@ const mapPredictions = computed(() => predictionMapData(currentPredictions.value
   selectedPrediction.value?.target_id, predictionUnavailable.value));
 const selectedDevice = computed(() => selection.value?.kind === 'device'
   ? devices.value.find(device => device.id === selection.value.id) : null);
+// 民航航班图层按反制设备的位置判断远近；点开某台反制设备时在它周围画范围圈。
+const counterDevices = computed(() => locatedDevices.value.filter(device => device.typeCode === 'COUNTERMEASURE'));
+const selectedCounterId = computed(() => selectedDevice.value?.typeCode === 'COUNTERMEASURE' ? selectedDevice.value.id : '');
+const flightSummary = computed(() => flightLayer.value?.summary || { receivers: 0 });
 const selectedPlan = computed(() => selection.value?.kind === 'plan'
   ? flightPlans.value.find(plan => plan.id === selection.value.id) : null);
 const selectedRisk = computed(() => {
@@ -1101,7 +1107,7 @@ onMounted(() => {
     getExternalMarkers: view => eoExpanded.value ? [] : [...(weatherLayer.value?.getMarkers(view) || []), ...(riskSnapshotLayer.value?.getMarkers(view) || [])],
     drawUnderMarkers: view => {
       if (eoExpanded.value) drawEoCoverageMask(view, eoMapView.value.coordinates);
-      else { weatherLayer.value?.draw(view); riskSnapshotLayer.value?.draw(view); }
+      else { weatherLayer.value?.draw(view); riskSnapshotLayer.value?.draw(view); flightLayer.value?.draw(view); }
     },
     sensorIconScale: 1,
     // 地图装饰动画不需要 60fps；降低 Canvas 像素量和重绘频率，保留数据变化时的即时重画。
@@ -1163,6 +1169,7 @@ onUnmounted(() => {
       </Teleport>
       <SituationRiskMarkers ref="riskSnapshotLayer" :rows="riskSnapshots" :selected-id="selectedSnapshotId"
         :visible="layers.flightPlan" @select="selectRiskGroup" />
+      <FlightTrafficLayer ref="flightLayer" :visible="layers.flights && !eoExpanded" :counter-devices="counterDevices" :selected-counter-id="selectedCounterId" />
       <WeatherRiskMarkers ref="weatherLayer" :risks="risks" :selected-id="selectedRisk?.riskId" shared-layout control-target="#situation-weather-control" @select="selectWeatherRisk" />
 
       <div class="sit-live-pill" :aria-label="`当前数据来源：${sourceModeText}`">
@@ -1204,6 +1211,14 @@ onUnmounted(() => {
               </button>
               <button v-if="device.typeCode==='EO'" type="button" class="sit-device-video-button" :aria-label="`查看${device.name}实时视频`" @click="openEoVideo(device)">实时视频</button>
               </div>
+            </div>
+          </section>
+          <section v-if="flightSummary.receivers" class="sit-device-group" style="--sensor:#8fb3d9">
+            <div class="sit-device-row" :class="{ 'is-offline': !flightSummary.online }" role="group"
+              :aria-label="`ADS-B 航班接收机，共${flightSummary.receivers}台，收到${flightSummary.aircraft}架航班`">
+              <span class="sit-device-icon sit-device-icon--plane" aria-hidden="true"><svg viewBox="-10 -10 20 20"><path d="M0,-9 L2,-3 L9,1 L9,3 L2,1 L1.5,6 L4,8 L4,9.5 L0,8.5 L-4,9.5 L-4,8 L-1.5,6 L-2,1 L-9,3 L-9,1 L-2,-3Z" fill="currentColor" transform="rotate(90)" /></svg></span>
+              <span class="sit-device-copy"><b>ADS-B 航班接收机<small>{{ flightSummary.receivers }} 台</small></b><em>{{ flightSummary.aircraft }} 架航班</em></span>
+              <span class="sit-device-state" :class="{ 'is-down': !flightSummary.online }"><b>{{ flightSummary.online ? `${flightSummary.online}在线` : '全部不在线' }}</b><small>0异常 · {{ flightSummary.offline }}离线</small></span>
             </div>
           </section>
         </div>
@@ -1340,6 +1355,7 @@ onUnmounted(() => {
         <button type="button" :aria-pressed="layers.track" @click="toggleLayer('track')">目标轨迹</button>
         <button type="button" :aria-pressed="layers.flightPlan" @click="toggleLayer('flightPlan')">任务航线</button>
         <button type="button" :aria-pressed="layers.airspace" :aria-label="`防控空域，共${airspaces.length}个区域`" @click="toggleLayer('airspace')">防控空域 {{ airspaces.length }}</button>
+        <button v-if="flightSummary.receivers" type="button" :aria-pressed="layers.flights" @click="toggleLayer('flights')">民航航班</button>
         <span id="situation-weather-control"></span>
         <span v-if="layers.track || layers.flightPlan" class="sit-plan-key" aria-label="航线与轨迹图例">
           <span v-if="layers.track"><i class="is-within"></i>符合航线</span>

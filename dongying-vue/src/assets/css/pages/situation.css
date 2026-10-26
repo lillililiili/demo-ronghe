@@ -92,3 +92,4 @@
 .situation-page .level-低 .sit-alert-level{background:color-mix(in srgb,var(--blue) 16%,transparent);border-color:color-mix(in srgb,var(--blue) 40%,transparent);color:var(--tag-blue-text)}
 .situation-page .sit-alert-meta b,.situation-page .sit-alert-row:not(.is-new) .sit-alert-meta b{color:var(--tag-red-text)}
 .situation-page :is(.sit-device-dock>footer,.sit-alert-dock>footer){border-color:var(--line-2)}
+.situation-page .sit-device-icon--plane svg{width:20px;height:20px}

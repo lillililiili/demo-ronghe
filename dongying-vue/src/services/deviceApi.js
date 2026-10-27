@@ -12,6 +12,7 @@ function query(params = {}) {
 export const deviceApi = {
   list: params => apiRequest(`/devices${query(params)}`),
   listTimed: params => apiRequestTimed(`/devices${query(params)}`, {}, 8_000),
+  eoSituation: params => apiRequest(`/devices/eo-situation${query(params)}`, { dedupe: false }),
   options: () => apiRequest('/devices/options'),
   detail: id => apiRequest(`/devices/${id}`),
   create: body => apiRequest('/devices', { method: 'POST', body }),

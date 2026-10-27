@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue';
 import { rectangle } from '@/pages/situation/eoSelection.js';
 const props = defineProps({ active: Boolean });
-const emit = defineEmits(['select']);
+const emit = defineEmits(['select', 'start', 'cancel']);
 const surface = ref(null), start = ref(null), end = ref(null);
 const box = computed(() => start.value && end.value ? rectangle(start.value, end.value) : null);
 const boxStyle = computed(() => box.value ? { left: `${box.value.x}px`, top: `${box.value.y}px`, width: `${box.value.width}px`, height: `${box.value.height}px` } : {});
@@ -10,9 +10,10 @@ function point(event) { const rect = surface.value.getBoundingClientRect(); retu
 function down(event) {
   if (!props.active || event.button !== 0) return;
   start.value = end.value = point(event); surface.value.setPointerCapture(event.pointerId);
+  emit('start');
 }
 function move(event) { if (start.value) end.value = point(event); }
-function cancel() { start.value = end.value = null; }
+function cancel() { start.value = end.value = null; emit('cancel'); }
 function up(event) {
   if (!start.value) return;
   end.value = point(event);

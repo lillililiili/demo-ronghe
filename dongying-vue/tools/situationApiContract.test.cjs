@@ -27,13 +27,14 @@ async function loadSource(deps) {
   source = `const { deviceApi, targetApi, listAlarms, listAllFlightPlans, flightApi, airspaceApi,
     riskApi, handoffApi, mapPool, attachBearing, attachDeviceEvents, attachRecentTracks, extendRecentTracks,
     attachTargetSourceLinks, bearingOrigins, planIsCurrent, toAirspaces, toAlarms, toDevices, toFlightPlans,
-    toRisks, toTargets, SITUATION_DEVICE_TYPE_ORDER, isRealtimeConnected, onDataChange, hasPermission, authUser } = globalThis.__situationContractDeps;\n${source}`;
+    toRisks, toTargets, attachEoCameraStates, SITUATION_DEVICE_TYPE_ORDER, isRealtimeConnected, onDataChange, hasPermission, authUser } = globalThis.__situationContractDeps;\n${source}`;
   globalThis.__situationContractDeps = deps;
   return import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}#${Date.now()}`);
 }
 
 async function main() {
   const data = await import('../src/services/situationData.js');
+  const eoCamera = await import('../src/pages/situation/eoCameraState.js');
 
   // 两次重读之间本机接上的点要和上一点序号连续，地图才画成连线（放大到街道级也不断成一个个点）。
   const vm = require('node:vm');
@@ -113,8 +114,10 @@ async function main() {
 
   const deps = {
     ...data,
+    ...eoCamera,
     mapPool: async (items, _limit, mapper) => Promise.all(items.map(mapper)),
     deviceApi: {
+      eoSituation: async () => ({ items: [], total: 0 }),
       list: async ({ page, enabled, statistics_scope }) => {
         check('设备范围与大屏后台同源', [enabled, statistics_scope], [true, true]);
         devicePages.push(page);
@@ -200,8 +203,8 @@ async function main() {
   const first = snapshots.find(frame => frame.risks.length === 101 && frame.targets.length && frame.devices.length);
   check('实时地图由后端过滤退出的模拟批次，仍保留当天窗口', planQueries[0],
     { window_from: dayStart, window_to: dayStart + 86400000, exclude_retired_simulation: true });
-  check('目标范围为北京时间当天零点至当前，不依赖机器时区',
-    [targetQueries[0].seen_from, targetQueries[0].seen_to], [dayStart, now]);
+  check('目标查询保留北京时间当天窗口，不以请求发起时间截断持续上报',
+    [targetQueries[0].seen_from, targetQueries[0].seen_to], [dayStart, dayStart + 86400000]);
   check('只取此刻地图显示还没到期的目标，不再每轮分页拉完当天全部目标（ZT-20 复测 2）',
     [targetQueries[0].map_visible_at, targetQueries[0].include_merged], [now, false]);
   check('目标范围扩展不突破近期轨迹接口窗口限制',
@@ -246,6 +249,30 @@ async function main() {
   source.stop();
   await delay(50);
   failTargets = false;
+  // A new observation arrives after request creation but before the backend evaluates last_seen_at.
+  // Match the backend date predicate: this must not turn a healthy live target into an empty list.
+  const originalTargetList = deps.targetApi.listAll;
+  const advancingId = require('node:crypto').randomUUID(), requestAt = clock;
+  deps.targetApi.listAll = async params => {
+    clock = requestAt + 50;
+    extraTarget = { target_id:advancingId, target_no:'ADVANCING', object_type_code:'UAV', source_mode:'replay',
+      last_seen_at:clock, map_expires_at:clock+15000, freshness:'FRESH', stale:false,
+      latest_state:{observed_at:clock, location:{longitude:118.52,latitude:37.42}} };
+    return originalTargetList(params);
+  };
+  const advancingFrames=[];
+  const advancing=createSituationApiSource({fastMs:60_000,slowMs:60_000,now:()=>clock});
+  advancing.start(value=>advancingFrames.push(value),()=>{});
+  const advancingStarted=Date.now();
+  while(!advancingFrames.some(frame=>frame.targetUpdatedAt) && Date.now()-advancingStarted<3000) await delay(5);
+  const advancingFrame=advancingFrames.at(-1);
+  ok('请求过程中last_seen推进的目标仍在成功响应中', advancingFrame?.targets.some(row=>row.targetId===advancingId));
+  ok('新观测在响应时已到达，不使当前地图及风险关联消失', data.currentMapSnapshot(advancingFrame,clock).targets.some(row=>row.targetId===advancingId));
+  check('日期上界调整不改变map_visible_at时效契约',targetQueries.at(-1).map_visible_at,requestAt);
+  const future=data.toTargets([{...extraTarget,latest_state:{...extraTarget.latest_state,observed_at:clock+1000}}]);
+  check('扩大当天检索范围仍不能显示真正未来观测',data.currentMapSnapshot({targets:future},clock).targets,[]);
+  advancing.stop();await delay(30);
+  deps.targetApi.listAll=originalTargetList;extraTarget=null;clock=requestAt;
   // 更换任务编号、时间与状态：只读取此刻有效的任务，不拿今天的全部任务凑实时风险。
   const secondId = require('node:crypto').randomUUID();
   extraPlans = [

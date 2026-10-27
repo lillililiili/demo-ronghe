@@ -52,9 +52,14 @@ function reportFrame(metadata) {
   // playingDate is HLS PROGRAM-DATE-TIME, not the wall clock when the browser receives metadata.
   // timeupdate/playing must not overwrite an exact compositor-frame timestamp.
   if (phase.value === 'PLAYING' && media.value?.requestVideoFrameCallback && !Number.isFinite(metadata?.mediaTime)) return;
-  const at = hlsFrameTimestamp(player?.playingDate?.getTime(), media.value?.currentTime,
-    metadata?.mediaTime ?? media.value?.currentTime);
-  emit('frame', { playingAt: Number.isFinite(at) ? at : null, playing: phase.value === 'PLAYING',
+  const currentTime = media.value?.currentTime;
+  const mediaTime = metadata?.mediaTime ?? currentTime;
+  const level = player?.levels?.[player?.currentLevel] || player?.levels?.[player?.loadLevel] || player?.levels?.[0];
+  const fragments = level?.details?.fragments;
+  const playingDate = player?.playingDate?.getTime();
+  const at = hlsFrameTimestamp(playingDate, currentTime, mediaTime, fragments);
+  emit('frame', { playingAt: Number.isFinite(at) ? at : null,
+    playing: phase.value === 'PLAYING',
     width: media.value?.videoWidth || 0, height: media.value?.videoHeight || 0 });
 }
 function startFrames() {

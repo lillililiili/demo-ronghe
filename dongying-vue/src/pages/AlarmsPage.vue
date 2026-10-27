@@ -1632,11 +1632,11 @@ onMounted(async () => {
               <UField v-model="st.originKind" label="原始来源" type="select" size="small" :options="originOptions" @update:model-value="predictionFilterChanged" />
               <UField v-if="st.originKind === PREDICTION_ORIGIN" v-model="st.predictionStatus" label="预测状态" type="select" size="small" :options="predictionStatusOptions" @update:model-value="predictionFilterChanged" />
               <div style="display:contents" v-html="listToolbar"></div>
-            </div>
-            <div class="toolbar-actions">
-              <button class="btn pri" type="button" @click="applyTargetNo">查询</button>
-              <button class="btn" type="button" id="alRefresh" title="重新读取当前列表、统计和已打开的告警">刷新</button>
-              <button class="btn" type="button" id="alExp" title="按当前筛选与排序导出 CSV（上限 5000 行）">导出 CSV</button>
+              <div class="toolbar-actions">
+                <button class="btn pri" type="button" @click="applyTargetNo">查询</button>
+                <button class="btn" type="button" id="alRefresh" title="重新读取当前列表、统计和已打开的告警">刷新</button>
+                <button class="btn" type="button" id="alExp" title="按当前筛选与排序导出 CSV（上限 5000 行）">导出 CSV</button>
+              </div>
             </div>
           </div>
           <div v-if="st.time === 'CUSTOM'" class="alarm-time-custom">
@@ -1725,48 +1725,49 @@ onMounted(async () => {
   flex-direction: column;
   align-items: stretch;
   flex: none;
-  gap: 12px;
-  padding: 14px 16px;
+  gap: 8px;
+  padding: 10px 12px;
 }
 .alarms-page :deep(.alarm-filter-toolbar .toolbar-fields) {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px 16px;
-  align-items: start;
+  gap: 8px 12px;
+  align-items: center;
 }
 .alarms-page :deep(.alarm-filter-toolbar .field),
 .alarms-page :deep(.alarm-filter-toolbar .u-field) {
   display: flex;
-  flex-direction: column;
-  align-items: stretch;
+  flex-direction: row;
+  align-items: center;
   min-width: 0;
-  gap: 6px;
+  gap: 8px;
 }
 .alarms-page :deep(.alarm-filter-toolbar .field > label),
 .alarms-page :deep(.alarm-filter-toolbar .u-field > label) {
   line-height: 20px;
+  flex: none;
+  width: 4em;
   color: var(--txt-2);
 }
 .alarms-page :deep(.alarm-filter-toolbar .field .naive-control-bridge:not(.is-check)) {
-  flex: none;
-  width: 100%;
+  flex: 1 1 0;
+  width: auto;
   /* 桥接层将菜单最小宽度写在行内；触发器应服从网格，菜单仍完整展示。 */
   min-width: 0 !important;
   max-width: none;
 }
 .alarms-page :deep(.alarm-filter-toolbar .toolbar-actions) {
+  grid-column: -3 / -1;
   gap: 8px;
   flex-wrap: wrap;
   margin-left: 0;
 }
-@container alarm-filters (max-width: 760px) {
-  .alarms-page :deep(.alarm-filter-toolbar .toolbar-fields) {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-}
-@container alarm-filters (max-width: 580px) {
+@container alarm-filters (max-width: 680px) {
   .alarms-page :deep(.alarm-filter-toolbar .toolbar-fields) {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .alarms-page :deep(.alarm-filter-toolbar .toolbar-actions) {
+    grid-column: -2 / -1;
   }
 }
 @container alarm-filters (max-width: 460px) {

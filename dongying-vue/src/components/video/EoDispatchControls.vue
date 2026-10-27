@@ -5,9 +5,11 @@ import { deviceApi } from '@/services/deviceApi.js';
 import { authSession } from '@/services/auth.js';
 import { displayTargetNo } from '@/ui/deviceNumber.js';
 
-const props = defineProps({ targetId: { type: String, required: true }, deviceId: { type: String, default: '' } });
+const props = defineProps({ targetId: { type: String, required: true }, deviceId: { type: String, default: '' }, summaryOnly: Boolean });
 const emit = defineEmits(['updated']);
 const state = ref(null), error = ref(''), busy = ref(false), choice = ref(null), loading = ref(false);
+const brief = computed(() => ({ ACTIVE: '已有光电观察任务', SWITCHING: '等待原任务停止后切换',
+  WAITING_DEVICE: '等待光电观察（按优先级排队）', BLOCKED: '暂不可观察', IDLE: '暂无光电任务', FAILED: '跟踪请求失败' })[state.value?.status] || '观察状态未知');
 const options = computed(() => !error.value && !busy.value ? (state.value?.switch_options || []).filter(option => !props.deviceId || option.device_id === props.deviceId) : []);
 let generation = 0, timer, controller, alive = true, pendingAction = null;
 function clear() {
@@ -62,9 +64,9 @@ onUnmounted(() => { alive = false; clear(); });
 <template>
   <div class="eo-dispatch" aria-label="光电调度">
     <p v-if="error" role="alert">{{ error }}</p>
-    <p v-else-if="state" role="status">{{ state.status === 'FAILED' ? '上次跟踪请求未完成：' : '' }}{{ state.message }}</p>
+    <p v-else-if="state" role="status">{{ summaryOnly ? brief : (state.status === 'FAILED' ? '上次跟踪请求未完成：' : '') + state.message }}</p>
     <p v-else role="status">正在读取光电调度状态</p>
-    <div class="dispatch-actions">
+    <div v-if="!summaryOnly" class="dispatch-actions">
       <NButton v-if="error" size="small" :loading="loading" @click="refresh">重读调度状态</NButton>
       <NButton v-if="!error && state?.can_request" size="small" type="primary" :loading="busy" @click="perform('request')">{{ deviceId ? '请求本机跟踪此目标' : '请求跟踪此目标' }}</NButton>
       <NButton v-if="!error && state?.can_cancel" size="small" :disabled="busy" @click="perform('cancel')">取消人工请求</NButton>

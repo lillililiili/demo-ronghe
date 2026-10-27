@@ -1,11 +1,13 @@
 """One EO owner thread: slow media requests must not stall measured position publishing."""
 import copy
 import threading
+import time
 
 
 class EoWorker:
     def __init__(self, simulator):
         self.simulator = simulator
+        simulator.enable_metadata_worker()
         self.bindings = simulator.bindings
         self.lock = threading.Lock()
         self.wake = threading.Event()
@@ -18,6 +20,9 @@ class EoWorker:
         self.state = simulator.snapshot()
         self.busy = set()
         self.failure = None
+        self.heartbeat_metadata = {}
+        self.heartbeat_snapshot_at = 0
+        self._snapshot()
 
     def settle_leftovers(self):
         # Preparation completes before the background owner is started.
@@ -53,7 +58,18 @@ class EoWorker:
 
     def heartbeat(self, payload):
         with self.lock:
-            payload['metadata']['workState'] = int(payload['metadata']['deviceId'] in self.busy)
+            metadata = payload['metadata']
+            metadata.pop('taskId', None)
+            metadata.pop('cameraStatus', None)
+            cached = copy.deepcopy(self.heartbeat_metadata.get(metadata['deviceId'], {}))
+            if time.monotonic() - self.heartbeat_snapshot_at > 5:
+                cached['workState'] = 0
+                if 'cameraStatus' in cached:
+                    original_stamp = cached['cameraStatus'].get('observedAt')
+                    cached['cameraStatus'] = {'trackingState': 'UNKNOWN', 'calibrated': False}
+                    if original_stamp is not None: cached['cameraStatus']['observedAt'] = original_stamp
+            metadata.update(cached)
+            metadata.setdefault('workState', 0)
 
     def snapshot(self):
         with self.lock:
@@ -71,8 +87,14 @@ class EoWorker:
     def _snapshot(self):
         state = self.simulator.snapshot()
         busy = {a['binding']['external_id'] for a in self.simulator.active.values()}
+        heartbeats = {}
+        for binding in self.bindings.values():
+            payload = {'metadata': {'deviceId': binding['external_id']}}
+            self.simulator.heartbeat(payload)
+            heartbeats[binding['external_id']] = payload['metadata']
         with self.lock:
             self.state, self.busy = state, busy
+            self.heartbeat_metadata, self.heartbeat_snapshot_at = heartbeats, time.monotonic()
 
     def _run(self):
         revision = 0
@@ -115,3 +137,4 @@ class EoWorker:
         else:
             self.simulator.suspend()
             self._snapshot()
+        self.simulator.close_metadata()

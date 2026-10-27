@@ -1,4 +1,4 @@
-import { toAlarms, currentMapSnapshot } from '../src/services/situationData.js';
+import { toAlarms, currentMapSnapshot, coverageContainsPoint } from '../src/services/situationData.js';
 import { randomUUID } from 'node:crypto';
 import * as riskHelpers from '../src/services/riskCaseView.js';
 import * as riskFlow from '../src/pages/situation/situationFlow.js';
@@ -10,6 +10,12 @@ import { computed, ref, watch, effectScope, nextTick } from 'vue';
 import * as prediction from '../src/services/predictionView.js';
 import * as eoCoverage from '../src/pages/situation/eoCoverage.js';
 import * as eoSelection from '../src/pages/situation/eoSelection.js';
+
+const riskItemsContext = vm.createContext({ ...riskHelpers, coverageContainsPoint,
+  displayTargetNo: value => value, ruleReasonText: value => value });
+const riskItemsSource = readFileSync(new URL('../src/pages/situation/situationRiskItems.js', import.meta.url), 'utf8')
+  .replace(/^import .*;\r?\n/gm, '').replace(/^export /gm, '');
+vm.runInContext(`${riskItemsSource}\n globalThis.helpers = { candidateFromRisk, riskFromAlarm, riskSelectionKey, riskCoverageText };`, riskItemsContext);
 
 function createPage(now = Date.now(), sourceOverrides = {}, apiOverrides = {}) {
   const file = readFileSync(new URL('../src/pages/SituationPage.vue', import.meta.url), 'utf8');
@@ -23,22 +29,25 @@ function createPage(now = Date.now(), sourceOverrides = {}, apiOverrides = {}) {
   });
   const unmounts = [];
   const stats = { watchCount: 0, mapCreated: 0, notices: [] };
-  const context = vm.createContext({ ...bindings, ...riskHelpers, ...riskFlow, ...prediction, ...eoCoverage, ...eoSelection,
+  const context = vm.createContext({ ...bindings, ...riskHelpers, ...riskFlow, ...prediction, ...eoCoverage, ...eoSelection, ...riskItemsContext.helpers,
     authSession: ref('test-session'), toast: (message, tone) => stats.notices.push({ message, tone }), displayBusinessNo: value => value,
     computed, ref, nextTick, watch: (...args) => { stats.watchCount++; return watch(...args); },
     onMounted() {}, onUnmounted: callback => unmounts.push(callback), serverNow: () => now,
     useRoute: () => ({ query: {} }), createSituationApiSource: () => ({ setSourceTarget() {},
       loadTargetDetail: async () => null, loadTargetPrediction: async () => null, stop() {}, ...sourceOverrides }),
     groupRouteRisks: () => [], riskSnapshotMarkers: () => [],
+    useSituationRiskItems: () => ({ kind: ref('ALL'), page: ref(1), view: ref('ACTIVE'), rows: ref([]),
+      counts: ref({}), availability: ref({}), total: ref(null), loading: ref(false), error: ref(''), revision: ref(0),
+      refresh: async () => {}, changeKind() {}, changeView() {} }),
     document: { removeEventListener() {} }, window: { clearInterval() {}, UI: { icon: () => '', businessIcon: () => '' }, MapView: function () { stats.mapCreated++; } },
-    sessionStorage: { getItem: () => null, setItem() {} }, console, toAlarms, currentMapSnapshot: value => currentMapSnapshot(value, now), ...apiOverrides
+    sessionStorage: { getItem: () => null, setItem() {} }, console, toAlarms, coverageContainsPoint, currentMapSnapshot: value => currentMapSnapshot(value, now), ...apiOverrides
   });
   const scope = effectScope();
   try {
     scope.run(() => vm.runInContext(`${script}\n globalThis.page = {
       snapshot, selection, nowTick, refreshSlow, predictionRows, alertTab, alertsExpanded, predictionClusterIds, visiblePredictionRows,
       selectedPrediction, selectedTarget, selectedCardTarget, selectedCardAlarm, selectedUavAlarm, alarms, videoContext, showTargetVideo, mapPredictions, showSelectionPopup, selectPrediction, selectAlarm, selectTarget, clearSelection,
-      selectedRiskContext, updateNotification, applySelectedRiskDetail, openTargetVerification, advisorySummaries, selectedAdvisorySummary, applySnapshot, eoDevice, eoSelected, setEoExpanded, onMapPick, attachMap: value => { map = value; syncMapData(); }
+      selectedRiskContext, updateNotification, applySelectedRiskDetail, openTargetVerification, advisorySummaries, selectedAdvisorySummary, applySnapshot, eoDevice, eoSelected, eoRiskFocus, setEoExpanded, onMapPick, attachMap: value => { map = value; syncMapData(); }
     };`, context));
     return { ...context.page, stats, leave: () => unmounts.forEach(fn => fn()), stop: () => scope.stop() };
   } catch (error) { scope.stop(); throw error; }
@@ -177,6 +186,14 @@ test('预测刷新与光电小地图共存：小地图只显示本机覆盖目�
       assert.equal(frames.at(-1).targets[0].track.length, 0);
       assert.equal(frames.at(-1).predictions.length, 0);
       assert.equal(frames.at(-1).flightPlans.length, 0);
+      page.eoRiskFocus.value = { key: `risk-${shift}`, target_id: raw.target_id };
+      await nextTick();
+      assert.deepEqual(Array.from(frames.at(-1).predictions, row => row.targetId), [raw.target_id], '只显示当前选中风险的预测');
+      page.eoRiskFocus.value = { key: `other-risk-${shift}`, target_id: outside.targetId };
+      await nextTick();
+      assert.equal(frames.at(-1).predictions.length, 0, '其他目标的预测不能混入');
+      page.eoRiskFocus.value = null;
+      await nextTick();
       const renewed = { ...raw, prediction_id: `renewed-${shift}`, valid_until: now + 12000 };
       page.snapshot.value = { ...page.snapshot.value, predictions: [renewed] };
       await nextTick();

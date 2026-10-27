@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import RectangleSelection from '@/components/video/RectangleSelection.vue';
-import { pointsWithin } from './eoSelection.js';
+import { pointsWithin, selectionKey } from './eoSelection.js';
 const props = defineProps({ getMap: Function, candidates: Array, selected: Array, mode: String });
 const emit=defineEmits(['select']);
 const points=ref([]);
@@ -14,9 +14,11 @@ function update(now) {
   }); }
   frame=requestAnimationFrame(update);
 }
-const rings=computed(()=>points.value.filter(p=>props.selected?.some(s=>s.eventId===p.eventId)));
+const rings=computed(()=>points.value.filter(p=>props.selected?.some(s=>selectionKey(s)===selectionKey(p)))
+  .filter((p,index,rows)=>rows.findIndex(row=>row.targetId===p.targetId)===index));
 function select(rect) {
-  const found=rect.point ? points.value.filter(p=>Math.hypot(p.x-rect.x,p.y-rect.y)<25).slice(0,1) : pointsWithin(points.value,rect);
+  const hit=points.value.find(p=>Math.hypot(p.x-rect.x,p.y-rect.y)<25);
+  const found=rect.point ? points.value.filter(p=>p.targetId===hit?.targetId) : pointsWithin(points.value,rect);
   emit('select',found);
 }
 onMounted(()=>{frame=requestAnimationFrame(update);});
@@ -24,7 +26,7 @@ onUnmounted(()=>cancelAnimationFrame(frame));
 </script>
 <template>
   <div class="eo-map-selection">
-    <span v-for="p in rings" :key="p.eventId" class="eo-map-ring" :style="{left:`${p.x}px`,top:`${p.y}px`}" />
+    <span v-for="p in rings" :key="p.targetId" class="eo-map-ring" :style="{left:`${p.x}px`,top:`${p.y}px`}" />
     <RectangleSelection :active="mode === 'box'" @select="select" />
   </div>
 </template>

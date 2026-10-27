@@ -19,7 +19,7 @@ from test_mqtt_recovery import FastReconnectClient
 
 class SlowCamera:
     def __init__(self, identity):
-        self.bindings = {identity: {}}
+        self.bindings = {identity: {'external_id': identity}}
         self.config = {'enabled': True}
         self.accepting = True
         self.active = {'task': {'binding': {'external_id': identity}}}
@@ -29,6 +29,11 @@ class SlowCamera:
     def snapshot(self):
         return {'enabled': self.config['enabled'], 'devices': []}
 
+    def heartbeat(self, payload):
+        payload['metadata']['workState'] = 0
+
+    def enable_metadata_worker(self): pass
+    def close_metadata(self): pass
     def settle_leftovers(self): pass
     def enqueue(self, *args): pass
     def configure_video(self, config):
@@ -170,3 +175,100 @@ class EoWorkerTests(unittest.TestCase):
 
 
 if __name__ == '__main__': unittest.main()
+
+class MetadataSchedulingTest(unittest.TestCase):
+    def test_two_blocked_frame_uploads_do_not_starve_tracking_or_queue_unbounded_jobs(self):
+        from eo_video import EoSimulator, DEFAULT_VIDEO
+        from types import SimpleNamespace
+        now=[1000.0]; records=[]
+        bindings={key:{'kind':'eo','platform_id':key,'external_id':key,'edge_id':'edge-'+key,
+                       'dispatcher_topic':'dispatch/'+key,'reporting_topic':'report/'+key} for key in ('camera-a','camera-b')}
+        eo=EoSimulator(SimpleNamespace(call=lambda *a:{}),{'devices':bindings},dict(DEFAULT_VIDEO,enabled=False),
+                       lambda *a:None,lambda *a:None,clock=lambda:now[0],
+                       observations=SimpleNamespace(config={'enabled':True,'intervalSeconds':2}))
+        for key,b in bindings.items():
+            eo.active[key]={'binding':b,'task':'task-'+key,'process':None,'next_check':2000,'next_report':1000,
+                            'next_ai':1000,'registered':False}
+            eo.gimbals[key].state='TRACKING'
+        eo._details=lambda b:{'open_task':{'task_id':eo.active[b['platform_id']]['task'],'status':'OPEN','target_id':'target-'+b['platform_id']}}
+        eo._tracking_report=lambda active,facts,include_ai=True:records.append((active['binding']['platform_id'],now[0]))
+        release=threading.Event(); entered={key:threading.Event() for key in bindings}; finished={key:threading.Event() for key in bindings}
+        calls=[]
+        def blocked(active, expected=None):
+            key=active['binding']['platform_id'];calls.append(key);entered[key].set()
+            release.wait(5)
+            eo._metadata_state(active,expected,video_metadata='LINKED')
+            finished[key].set()
+        eo._report_video_frame=blocked
+        eo.enable_metadata_worker()
+        try:
+            eo.tick()
+            self.assertTrue(all(event.wait(1) for event in entered.values()))
+            for step in (2,4,6):now[0]=1000+step;eo.tick()
+            for key in bindings:
+                self.assertEqual([t for device,t in records if device==key],[1000,1002,1004,1006])
+            self.assertEqual(sorted(calls),sorted(bindings))
+            self.assertEqual(len(eo.metadata_pending),2)
+            eo._stop('camera-a','STOPPED')
+            eo.active['camera-b']['stream_id']='new-stream-session'
+            started=time.monotonic();eo.close_metadata()
+            self.assertLess(time.monotonic()-started,.2)
+            eo._schedule_video_frame(eo.active['camera-b'])
+            self.assertEqual(sorted(calls),sorted(bindings))
+            release.set()
+            self.assertTrue(all(event.wait(1) for event in finished.values()))
+            self.assertNotEqual(eo._state(bindings['camera-a']).get('video_metadata'),'LINKED')
+            self.assertNotEqual(eo._state(bindings['camera-b']).get('video_metadata'),'LINKED')
+        finally:
+            release.set();eo.suspend();eo.close_metadata()
+
+
+    def test_owner_discards_completed_old_stream_results_including_both_frame_cursors(self):
+        from eo_video import EoSimulator, DEFAULT_VIDEO
+        from types import SimpleNamespace
+        binding={'kind':'eo','platform_id':'camera','external_id':'camera','edge_id':'edge',
+                 'dispatcher_topic':'dispatch','reporting_topic':'report'}
+        eo=EoSimulator(SimpleNamespace(),{'devices':{'camera':binding}},dict(DEFAULT_VIDEO,enabled=False),lambda *a:None,lambda *a:None)
+        process=object();active={'binding':binding,'task':'task','stream_id':'old','process':process,'last_frame_number':1,'last_frame_pts':1000}
+        eo.active['camera']=active;eo.gimbals['camera'].state='TRACKING';eo.enable_metadata_worker()
+        expected=('task','old',process,0,None)
+        try:
+            eo._metadata_state(active,expected,active_values={'last_frame_number':90,'last_frame_pts':9000},video_metadata='LINKED')
+            self.assertEqual(active['last_frame_number'],1,'background completion may only enqueue')
+            active.update(stream_id='new',process=object(),last_frame_number=2,last_frame_pts=2000)
+            eo._state(binding)['video_metadata']='NEW_STREAM'
+            eo._drain_metadata()
+            self.assertEqual(active['last_frame_number'],2)
+            self.assertEqual(active['last_frame_pts'],2000)
+            self.assertEqual(eo._state(binding)['video_metadata'],'NEW_STREAM')
+            current=('task','new',active['process'],0,None)
+            eo._metadata_state(active,current,active_values={'last_frame_number':3,'last_frame_pts':3000},video_metadata='LINKED')
+            eo._drain_metadata()
+            self.assertEqual(active['last_frame_pts'],3000)
+            eo._metadata_state(active,current,active_values={'last_frame_number':99},video_metadata='LINKED')
+            replacement=dict(active,task='new-task',last_frame_number=0)
+            eo.active['camera']=replacement
+            eo._state(binding)['video_metadata']='NEW_TASK'
+            eo._drain_metadata()
+            self.assertEqual(replacement['last_frame_number'],0)
+            self.assertEqual(eo._state(binding)['video_metadata'],'NEW_TASK')
+        finally:eo.close_metadata()
+
+    def test_lost_capture_discards_late_linked_frame_result(self):
+        from eo_video import EoSimulator, DEFAULT_VIDEO
+        from types import SimpleNamespace
+        binding={'kind':'eo','platform_id':'camera','external_id':'camera','edge_id':'edge',
+                 'dispatcher_topic':'dispatch','reporting_topic':'report'}
+        eo=EoSimulator(SimpleNamespace(),{'devices':{'camera':binding}},dict(DEFAULT_VIDEO,enabled=False),lambda *a:None,lambda *a:None)
+        process=object();active={'binding':binding,'task':'task','stream_id':'stream','process':process}
+        eo.active['camera']=active;eo.gimbals['camera'].state='TRACKING';eo.enable_metadata_worker()
+        try:
+            eo._metadata_state(active,('task','stream',process,0,None),active_values={'last_frame_number':40,'last_frame_pts':4000,'last_frame_timestamp':1000,'last_frame_media_ms':900},video_metadata='LINKED')
+            eo._acquire(active,{'target_id':'target'})
+            self.assertEqual(eo._state(binding)['video_metadata'],'UNAVAILABLE')
+            eo._drain_metadata()
+            self.assertEqual(eo._state(binding)['video_metadata'],'UNAVAILABLE')
+            self.assertEqual(active['last_frame_number'],40)
+            self.assertEqual(active['last_frame_pts'],4000)
+            self.assertEqual(eo._state(binding)['video_last_accepted_frame_timestamp'],1000)
+        finally:eo.close_metadata()

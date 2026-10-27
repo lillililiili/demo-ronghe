@@ -1,5 +1,7 @@
 """Protocol C command receiver and loopback-only QA video publisher."""
 import copy
+from concurrent.futures import ThreadPoolExecutor
+import threading
 from functools import lru_cache
 import json
 import os
@@ -14,6 +16,7 @@ from urllib.parse import urlparse, quote, urlunparse
 from eo_calibration import detection as calibration_detection, scene_filters as calibration_filters, FPS as CALIBRATION_FPS
 from eo_media_clock import HlsCalibrationClock
 from eo_recorded import recorded_clip
+from eo_pointing import SimulatedGimbal
 
 def default_video_config():
     """Enable local test video by default, with an explicit environment opt-out."""
@@ -189,12 +192,18 @@ class EoSimulator:
         self.is_running = is_running
         self.observations = observations
         self.bindings = {d['dispatcher_topic']: d for d in manifest['devices'].values() if d['kind'] == 'eo'}
+        self.gimbals = {d['platform_id']: SimulatedGimbal(d, clock()) for d in self.bindings.values()}
         self.incoming = queue.Queue(maxsize=100)
         self.active, self.retired, self.states = {}, set(), {}
         self.accept_after = int(clock() * 1000)
         self.accepting = True
         self.unavailable = set()
         self.raw_video = {}
+        self.metadata_executor = None
+        self.metadata_closed = False
+        self.metadata_pending = {}
+        self.metadata_results = queue.Queue(maxsize=128)
+        self.metadata_lock = threading.RLock()
         self.media_clock = HlsCalibrationClock()
         self.recorded = recorded_clip() if not config['source'] and config.get('source_mode') == 'recorded' else None
 
@@ -208,7 +217,66 @@ class EoSimulator:
         return config.get('intervalSeconds', 2) if config.get('enabled') is True else None
 
     def snapshot(self):
-        return {'enabled': self.config['enabled'], 'devices': copy.deepcopy(list(self.states.values()))}
+        with self.metadata_lock:
+            return {'enabled': self.config['enabled'], 'devices': copy.deepcopy(list(self.states.values()))}
+
+    def enable_metadata_worker(self):
+        if self.metadata_executor is None and not self.metadata_closed:
+            self.metadata_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix='eo-frame-metadata')
+
+    def close_metadata(self):
+        self.metadata_closed = True
+        if self.metadata_executor is not None:
+            self.metadata_executor.shutdown(wait=False, cancel_futures=True)
+
+    def _schedule_video_frame(self, active):
+        if self.metadata_closed: return
+        if self.metadata_executor is None:
+            self._report_video_frame(active)
+            return
+        device = active['binding']['platform_id']
+        pending = self.metadata_pending.get(device)
+        if pending is not None:
+            if not pending.done(): return
+            self.metadata_pending.pop(device, None)
+            # Give other cameras the released slot before scheduling this one again.
+            active['next_frame'] = max(active.get('next_frame', 0), self.clock()+.1)
+            return
+        if self.clock() < active.get('next_frame', 0): return
+        # There is no executor backlog: at most two jobs across all cameras.
+        if sum(not future.done() for future in self.metadata_pending.values()) >= 2: return
+        snapshot = (active['task'], active.get('stream_id'), active.get('process'), active.get('frame_offset', 0), self.recorded)
+        self.metadata_pending[device] = self.metadata_executor.submit(self._report_video_frame, active, snapshot)
+
+    def _metadata_current(self, active, expected=None):
+        if self.metadata_closed or self.active.get(active['binding']['platform_id']) is not active: return False
+        return expected is None or (active['task'] == expected[0] and active.get('stream_id') == expected[1]
+                                   and active.get('process') is expected[2])
+
+    def _metadata_state(self, active, expected=None, active_values=None, **values):
+        if self.metadata_executor is not None:
+            # Only the EO owner applies results/cursors. Workers never mutate
+            # a reused active dictionary after an HTTP response returns.
+            try: self.metadata_results.put_nowait((active, expected, dict(values), dict(active_values or {})))
+            except queue.Full: pass  # Bounded loss is retried, never fabricated success.
+            return
+        if self._metadata_current(active, expected):
+            self._state(active['binding']).update(values)
+            active.update(active_values or {})
+
+    def _drain_metadata(self):
+        while True:
+            try: active, expected, values, cursors = self.metadata_results.get_nowait()
+            except queue.Empty: return
+            if not self._metadata_current(active, expected): continue
+            # Accepted frame accounting survives a transient loss of capture.
+            # Visibility may not become LINKED again until capture is current.
+            active.update(cursors)
+            state = self._state(active['binding'])
+            if 'last_frame_timestamp' in cursors:
+                state.update(video_last_accepted_frame_timestamp=cursors['last_frame_timestamp'],
+                             video_last_accepted_media_time_ms=cursors['last_frame_media_ms'])
+            if self.gimbals[active['binding']['platform_id']].state == 'TRACKING': state.update(values)
 
     def configure_video(self, config):
         """Called only by the EO owner thread; tracking survives video changes."""
@@ -232,7 +300,8 @@ class EoSimulator:
 
     def receipt(self, binding, event, task=None, final=False):
         metadata = {'deviceId': binding['external_id'], 'codeStatus': 200,
-                    'workState': 1 if binding['platform_id'] in self.active else 0, 'cameraStatus': {}}
+                    'workState': int(self.gimbals[binding['platform_id']].state == 'TRACKING'),
+                    'cameraStatus': self.gimbals[binding['platform_id']].camera(self.clock())}
         if task: metadata['taskId'] = task
         (self.publish_final if final else self.publish)(binding['reporting_topic'], {
             'event': event, 'edgeId': binding['edge_id'], 'timestamp': int(self.clock()*1000), 'metadata': metadata})
@@ -283,6 +352,7 @@ class EoSimulator:
                 if facts.get('task_id') != task or facts.get('status') != 'ENDING':
                     raise ValueError('结束任务不是系统当前待停止任务')
                 self.retired.add(task)
+                self.gimbals[binding['platform_id']].state = 'STOPPED'
                 self._state(binding).update(task_id=task, tracking='STOPPED')
                 self.receipt(binding, event, task)
                 return
@@ -300,7 +370,8 @@ class EoSimulator:
                 'next_check': 0, 'next_report': self.clock()+5,
                 'next_ai': self.clock() + (self._ai_interval() or 5),
                 'echo': {key: copy.deepcopy(metadata[key]) for key in ('objectData', 'extention') if key in metadata}}
-            self._state(binding).update(task_id=task, tracking='TRACKING', error='')
+            self.gimbals[device].begin(self.clock())
+            self._state(binding).update(task_id=task, tracking='TURNING', video_metadata='UNAVAILABLE', error='')
         self.receipt(binding, event, task)
         if not current: self._refresh(self.active[device])
 
@@ -352,8 +423,13 @@ class EoSimulator:
             active['started_at'] = self.clock()
             active['last_frame_pts'] = None
             active['last_frame_number'] = None
+            active.pop('last_frame_timestamp', None)
+            active.pop('last_frame_media_ms', None)
             active['next_frame'] = self.clock()
-            state.update(video='PUBLISHING', error='', exit_code=None)
+            state.update(video='PUBLISHING', error='', exit_code=None, video_clock_session=active['stream_id'],
+                video_last_accepted_frame_timestamp=None, video_last_accepted_media_time_ms=None,
+                video_attempt_frame_timestamp=None, video_attempt_media_time_ms=None, video_attempt_age_ms=None,
+                video_frame_rejection_code=None)
         except Exception as error:
             self._kill(active)
             if not self.is_running(): self._deregister(active)
@@ -383,6 +459,7 @@ class EoSimulator:
         return self.clock() - active['progress_at'] >= 30
 
     def tick(self):
+        self._drain_metadata()
         self.drain()
         self._tick_raw_video()
         for device, active in list(self.active.items()):
@@ -418,21 +495,19 @@ class EoSimulator:
                     self._stop(device, 'FAILED')
                     self._state(active['binding'])['error'] = sanitize_video_error(error, self.config)[:240]
             if device in self.active:
-                self._report_video_frame(active)
+                self._schedule_video_frame(active)
 
     def _tracking_report(self, active, facts, include_ai=True):
-        if self.observations is None:
-            self.receipt(active['binding'], 'BeginTracking', active['task'])
-            return
         binding = active['binding']
+        captured, detail = self._acquire(active, facts)
         metadata = {'deviceId': binding['external_id'], 'taskId': active['task'],
-                    'codeStatus': 200, 'workState': 1, 'cameraStatus': {}, **active.get('echo', {})}
+                    'codeStatus': 200, 'workState': int(captured),
+                    'cameraStatus': self.gimbals[binding['platform_id']].camera(self.clock()), **active.get('echo', {})}
         target_id = facts.get('target_id')
         ai_disabled = getattr(self.observations, 'config', {}).get('enabled') is not True if hasattr(self.observations, 'config') else False
         if ai_disabled: self._state(binding)['ai_observation'] = 'DISABLED'
-        if target_id and include_ai and not ai_disabled:
+        if captured and target_id and include_ai and not ai_disabled:
             try:
-                detail = self.platform.call('GET', '/targets/' + str(target_id))
                 # Recheck after the target read: a switched/stopping task cannot emit an AI frame.
                 latest = self._details(binding).get('open_task') or {}
                 if latest.get('task_id') != active['task'] or latest.get('status') != 'OPEN' or latest.get('target_id') != target_id:
@@ -446,6 +521,23 @@ class EoSimulator:
                 self.log('EO_AI_UNAVAILABLE', '模拟光电观测未发送：' + sanitize_video_error(error, self.config)[:180])
         self.publish(binding['reporting_topic'], {'event':'BeginTracking', 'edgeId':binding['edge_id'],
                      'timestamp':int(self.clock()*1000), 'metadata':metadata})
+
+    def _acquire(self, active, facts):
+        binding, detail, sample = active['binding'], {}, None
+        try:
+            if self.observations is not None and facts.get('target_id'):
+                detail = self.platform.call('GET', '/targets/' + str(facts['target_id']))
+                sample = self.observations.observation(detail, binding, acquisition=True)
+                latest = self._details(binding).get('open_task') or {}
+                if latest.get('task_id') != active['task'] or latest.get('status') != 'OPEN' or latest.get('target_id') != facts.get('target_id'):
+                    sample = None
+        except Exception as error:
+            self.log('EO_POINTING_UNKNOWN', '模拟云台缺少有效目标依据：' + sanitize_video_error(error, self.config)[:160])
+        gimbal = self.gimbals[binding['platform_id']]
+        captured = gimbal.update(sample, detail, self.clock())
+        self._state(binding).update(tracking=gimbal.state, camera_status=gimbal.camera(self.clock()))
+        if not captured: self._state(binding).update(ai_observation='UNAVAILABLE', video_metadata='UNAVAILABLE')
+        return captured, detail
 
     def _kill(self, active):
         process = active.get('process')
@@ -476,7 +568,8 @@ class EoSimulator:
         self.retired.add(active['task'])
         self._kill(active)
         self._deregister(active)
-        self._state(active['binding']).update(tracking='STOPPED', video=video, ai_observation='STOPPED')
+        self.gimbals[device].state = 'STOPPED'
+        self._state(active['binding']).update(tracking='STOPPED', video=video, ai_observation='STOPPED', video_metadata='STOPPED')
 
     def suspend(self):
         """暂停或停止：本地结束跟踪，并告诉平台“光电跟踪已结束”，平台上的任务才不会一直挂着。"""
@@ -503,6 +596,7 @@ class EoSimulator:
             if not task or facts.get('status') not in ('OPEN', 'ENDING') or not SAFE_ID.fullmatch(str(task)):
                 continue
             self.retired.add(task)
+            self.gimbals[binding['platform_id']].state = 'STOPPED'
             self._state(binding).update(task_id=task, tracking='STOPPED')
             self.log('EO_LEFTOVER', '平台上有一条以前留下的光电跟踪任务，已回执为结束：' + str(task)[:8])
             self._tell_platform_ended(binding, task)
@@ -528,7 +622,14 @@ class EoSimulator:
 
     def heartbeat(self, payload):
         external = payload['metadata']['deviceId']
-        payload['metadata']['workState'] = int(any(a['binding']['external_id'] == external for a in self.active.values()))
+        for binding in self.bindings.values():
+            if binding['external_id'] != external: continue
+            gimbal = self.gimbals[binding['platform_id']]
+            active = self.active.get(binding['platform_id'])
+            payload['metadata'].pop('taskId', None)
+            if active: payload['metadata']['taskId'] = active['task']
+            payload['metadata']['workState'] = int(gimbal.state == 'TRACKING')
+            payload['metadata']['cameraStatus'] = gimbal.camera(self.clock())
 
     def _raw_endpoint(self, binding):
         return '/local-interface-simulator/device-video-streams/' + binding['platform_id']
@@ -593,72 +694,94 @@ class EoSimulator:
                     self._stop_raw_video(device)
                 state.update(raw_video='FAILED', raw_error=sanitize_video_error(error, self.config)[:240])
 
-    def _report_video_frame(self, active):
-        # Only the controlled renderer/verified recorded annotation owns its pixels.
-        # Arbitrary operator files never inherit this fixture's detections.
-        if (self.config['source'] or self.config.get('source_mode', 'calibration') not in ('calibration', 'recorded')
-                or active.get('process') is None or self.clock() < active.get('next_frame', 0)):
-            return
-        active['next_frame'] = self.clock() + 1
-        key = active.get('progress_key')
-        if key is None or key[1] == active.get('last_frame_pts'): return
-        if not 0 < key[0] <= 1 << 24:
-            self._state(active['binding'])['video_metadata'] = 'UNAVAILABLE'
-            return  # The calibration barcode must never wrap into an invented clock.
-        binding = active['binding']
+    def _report_video_frame(self, active, expected=None):
+        expected = expected or (active['task'],active.get('stream_id'),active.get('process'),active.get('frame_offset',0),self.recorded)
+        if not self._metadata_current(active,expected): return
+        task,stream_id,process,frame_offset,recorded=expected
+        if (self.config['source'] or self.config.get('source_mode') not in ('calibration','recorded')
+                or process is None or self.gimbals[active['binding']['platform_id']].state!='TRACKING'
+                or self.clock()<active.get('next_frame',0)): return
+        self._metadata_state(active,expected,active_values={'next_frame':self.clock()+1})
+        binding=active['binding']
         try:
-            # This read cannot schedule tracking. A stopped/switched task cannot
-            # inherit the old pixels, observation id or media clock.
-            facts = self._details(binding).get('open_task') or {}
-            if facts.get('task_id') != active['task'] or facts.get('status') != 'OPEN' or not facts.get('target_id'): return
-            origin = self.media_clock.anchor('qa/' + active['stream_id'], self.config['ffmpeg'])
-            if origin is None:
-                self._state(binding)['video_metadata'] = 'AWAITING_MEDIA_CLOCK'
+            facts=self._details(binding).get('open_task') or {}
+            if facts.get('task_id')!=task or facts.get('status')!='OPEN' or not facts.get('target_id'): return
+            # This call already runs in the bounded per-camera metadata worker.
+            # Finish its current segment proof here; a second Future would return
+            # old cache and defer the decoded window to another upload poll.
+            window=self.media_clock.measure_segment('qa/'+stream_id,self.config['ffmpeg'])
+            if not window or not window.get('frames'):
+                self._metadata_state(active,expected,video_metadata='AWAITING_MEDIA_CLOCK',
+                    video_metadata_error='当前完整分片尚无可证明的帧时钟',
+                    video_segments=[],video_segment_rejections=window.get('rejected_segments',[]) if window else [])
                 return
-            # Progress out_time includes the last sample's duration. The barcode
-            # uses zero-based n, so the last encoded sample is frame_count - 1.
-            media_time = (key[0] - 1) * 1000 / CALIBRATION_FPS
-            timestamp = int(origin + media_time)
-            if not 0 <= self.clock() * 1000 - timestamp <= 5000: return
-            association = None
-            if self.observations is not None and facts.get('target_id'):
-                detail = self.platform.call('GET', '/targets/' + str(facts['target_id']))
-                sample = self.observations.observation(detail, binding)
-                # The regular observation producer verifies this exact scene target's
-                # replay source/device mapping. Readback then verifies persisted ID.
-                if sample is not None and sample.get('className') == 'drone':
-                    result = self.platform.call('GET', self._raw_endpoint(binding)
-                        + '/observation-associations?task_id=' + quote(active['task'], safe=''))
-                    matches = [item for item in result.get('items', [])
-                        if item.get('target_id') == facts['target_id'] and item.get('class_code', '').lower() in ('drone', 'uav')
-                        and isinstance(item.get('observation_id'), str)
-                        and type(item.get('observed_at')) in (int, float)
-                        and 0 <= self.clock() * 1000 - item['observed_at'] <= 5000]
-                    association = max(matches, key=lambda item: item['observed_at']) if matches else None
-            last = key[0] - 1
-            # Send every actually encoded frame since the last report. A single
-            # box per second cannot follow moving recorded pixels accurately.
-            previous = active.get('last_frame_number')
-            first = max(0, last - 29, previous + 1 if previous is not None else 0) if self.recorded else last
-            for number in range(first, last + 1):
-                if not self.is_running() or not self.accepting: return
-                media_time = number * 1000 / CALIBRATION_FPS
-                timestamp = int(origin + media_time)
-                if timestamp > self.clock() * 1000 or timestamp < self.clock() * 1000 - 5000: continue
-                detection = (self.recorded.detection(active['stream_id'], number, association, active.get('frame_offset', 0))
-                    if self.recorded else calibration_detection(active['stream_id'], association))
-                payload = {'stream_id': active['stream_id'], 'task_id': active['task'],
-                    'frame_timestamp': timestamp, 'media_time_ms': int(media_time),
-                    'detections': [detection] if detection else []}
-                self.platform.call('PUT', self._raw_endpoint(binding) + '/frames', payload)
-                active['last_frame_number'] = number
-            active['last_frame_pts'] = key[1]
-            self._state(binding)['video_metadata'] = 'LINKED' if association else 'UNLINKED'
-            self._state(binding)['video_metadata_error'] = ''
+            evidence=[{key:segment[key] for key in ('segment_id','program_date_time_ms','first_frame','last_frame')}
+                      | {'decoded_count':len(segment['frames']),
+                         'first_packet_pts_ms':segment.get('packet_pts_ms',[None])[0],
+                         'last_packet_pts_ms':segment.get('packet_pts_ms',[None])[-1]} for segment in window.get('segments',[])]
+            self._metadata_state(active,expected,video_segments=evidence,video_segment_rejections=window.get('rejected_segments',[]))
+            detail=self.platform.call('GET','/targets/'+str(facts['target_id']))
+            sample=self.observations.observation(detail,binding) if self.observations is not None else None
+            matches=[]
+            if sample is not None and sample.get('className')=='drone':
+                result=self.platform.call('GET',self._raw_endpoint(binding)+'/observation-associations?task_id='+quote(task,safe=''))
+                matches=[item for item in result.get('items',[]) if item.get('target_id')==facts['target_id']
+                    and item.get('class_code','').lower() in ('drone','uav') and isinstance(item.get('observation_id'),str)
+                    and type(item.get('observed_at')) in (int,float)
+                    and 0<=self.clock()*1000-item['observed_at']<=5000]
+            reserve_ms=min(2000,max(250,2*active.get('metadata_upload_ms',0)))
+            payloads=[];proofs=[]
+            last_timestamp=active.get('last_frame_timestamp',-1)
+            last_media=active.get('last_frame_media_ms',-1)
+            for frame in window['frames']:
+                timestamp,media_time=frame['frame_timestamp'],frame['media_time_ms']
+                age=self.clock()*1000-timestamp
+                if not 0<=age<=5000-reserve_ms: continue
+                if timestamp<=last_timestamp or media_time<=last_media: continue
+                eligible=[item for item in matches if abs(timestamp-item['observed_at'])<=2000]
+                association=min(eligible,key=lambda item:(abs(timestamp-item['observed_at']),-item['observed_at'])) if eligible else None
+                detection=(recorded.detection(stream_id,frame['number'],association,frame_offset) if recorded
+                           else calibration_detection(stream_id,association))
+                payloads.append({'frame_timestamp':timestamp,'media_time_ms':media_time,'detections':[detection] if detection else []})
+                proofs.append((frame,association))
+                last_timestamp,last_media=timestamp,media_time
+                if len(payloads)==30: break
+            if not payloads: return
+            if (not self.is_running() or not self.accepting or not self._metadata_current(active,expected)
+                    or self.gimbals[binding['platform_id']].state!='TRACKING'): return
+            attempt=payloads[-1]
+            self._metadata_state(active,expected,video_attempt_frame_timestamp=attempt['frame_timestamp'],
+                video_attempt_media_time_ms=attempt['media_time_ms'],video_attempt_age_ms=self.clock()*1000-attempt['frame_timestamp'])
+            started=self.clock()
+            result=self.platform.call('PUT',self._raw_endpoint(binding)+'/frames/batch',
+                {'stream_id':stream_id,'task_id':task,'frames':payloads})
+            elapsed=max(0,(self.clock()-started)*1000)
+            if not self._metadata_current(active,expected): return
+            returned=result.get('frames',[])
+            if (result.get('stream_id')!=stream_id or result.get('task_id')!=task or len(returned)!=len(payloads)):
+                raise ValueError('帧批量回执不属于当前完整视频批次')
+            latest_linked=False;latest_error=None
+            for index,item in enumerate(returned):
+                sent=payloads[index];frame,association=proofs[index]
+                if (item.get('index')!=index or item.get('frame_timestamp')!=sent['frame_timestamp']
+                        or item.get('media_time_ms')!=sent['media_time_ms']):
+                    raise ValueError('帧批量回执时序与已提交帧不一致')
+                if item.get('accepted') is not True:
+                    latest_error=item.get('error_code') or 'VIDEO_FRAME_REJECTED'
+                    continue
+                latest_linked=any(d.get('association_status')=='LINKED' and d.get('target_id')==facts['target_id']
+                    and association is not None and d.get('observation_id')==association['observation_id']
+                    for d in item.get('detections',[]))
+                self._metadata_state(active,expected,active_values={'last_frame_number':frame['number'],
+                    'last_frame_pts':sent['media_time_ms'],'last_frame_timestamp':sent['frame_timestamp'],
+                    'last_frame_media_ms':sent['media_time_ms'],'metadata_upload_ms':elapsed},
+                    video_frame_timestamp=sent['frame_timestamp'],video_observation_timestamp=association['observed_at'] if association else None,
+                    video_association_offset_ms=sent['frame_timestamp']-association['observed_at'] if association else None)
+            self._metadata_state(active,expected,active_values={'metadata_upload_ms':elapsed},
+                video_frame_upload_elapsed_ms=elapsed,video_frame_rejection_code=latest_error,
+                video_metadata='LINKED' if latest_linked else 'UNLINKED',video_metadata_error='')
         except Exception as error:
-            state = self._state(binding)
-            message = sanitize_video_error(error, self.config)[:160]
-            if message != state.get('video_metadata_error'):
-                self.log('VIDEO_METADATA', '模拟视频帧信息未上报：' + message)
-            state.update(video_metadata='UNAVAILABLE', video_metadata_error=message)
-            active['next_frame'] = self.clock() + 5
+            if not self._metadata_current(active,expected): return
+            message=sanitize_video_error(error,self.config)[:160]
+            self._metadata_state(active,expected,active_values={'next_frame':self.clock()+2},
+                video_metadata='UNAVAILABLE',video_metadata_error=message,video_frame_rejection_code=getattr(error,'code',None))

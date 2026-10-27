@@ -12,6 +12,7 @@ import { hasPermission } from '@/services/accessControl.js';
 import { authUser } from '@/services/auth.js';
 import { applyTrackComparison } from '@/services/trackPoints.js';
 import { serverNow } from '@/services/serverClock.js';
+import { attachEoCameraStates } from './eoCameraState.js';
 import {
   attachBearing, attachDeviceEvents, attachRecentTracks, attachTargetSourceLinks, extendRecentTracks,
   bearingOrigins, planIsCurrent, toAirspaces, toAlarms, toDevices, toFlightPlans, toRisks, toTargets
@@ -30,8 +31,9 @@ const SLOW_TOPIC_SEGMENTS = {
   fusion: ['fusion-status'], 'time-boundary': ['flight-plans', 'airspaces'], '*': SLOW_SEGMENTS
 };
 const DEVICE_STATE_MIN_MS = 2_000;
-const FAST_SEGMENTS = ['targets', 'alarms', 'risks', 'handoffs', 'predictions'];
+const FAST_SEGMENTS = ['targets', 'alarms', 'risks', 'handoffs', 'predictions', 'eo-status'];
 const TOPIC_SEGMENTS = {
+  tracking: ['eo-status'], device_state: ['eo-status'], device: ['eo-status'],
   target: ['targets', 'predictions'], prediction: ['predictions', 'alarms'], legality: ['targets'], alarm: ['alarms', 'predictions'], disposal: ['alarms'], risk: ['risks'], punishment: ['handoffs'],
   'time-boundary': ['risks'], '*': FAST_SEGMENTS
 };
@@ -47,7 +49,7 @@ const MAX_ROUTE_VERSION_BATCH = 100;
    飞行任务同时要读航线版本，两项权限都要有。登录后权限有变化、后端答复 403 时同样按没有权限处理，本页不再重复请求。 */
 const SEGMENT_PERMISSIONS = {
   predictions: ['target:read'], targets: ['target:read'], 'target-sources': ['target:read'], alarms: ['alarm:read'], risks: ['risk:read', 'flight:read', 'route:read'], handoffs: ['handoff:read'],
-  devices: ['devices.read'], 'device-events': ['monitoring.read'], 'flight-plans': ['flight:read', 'route:read'],
+  devices: ['devices.read'], 'eo-status': ['devices.read'], 'device-events': ['monitoring.read'], 'flight-plans': ['flight:read', 'route:read'],
   airspaces: ['airspace:read'], 'fusion-status': ['target:read']
 };
 
@@ -94,7 +96,7 @@ function sourceMode(snapshot) {
 export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, now = serverNow } = {}) {
   let snapshot = {
     generatedAt: 0, sourceMode: 'unknown', simulated: false, devices: [], targets: [], alarms: [],
-    flightPlans: [], risks: [], airspaces: [], handoffs: [], predictions: [], fusionStatus: null
+    flightPlans: [], risks: [], airspaces: [], handoffs: [], predictions: [], eoReports: [], fusionStatus: null
   };
   let stopped = true;
   let selectedSourceTarget = null;
@@ -103,6 +105,7 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
   let paused = false;
   let readGeneration = 0;
   let boundaryTimer = null;
+  let eoTimer = null;
   let boundaryDay = shanghaiDay(now()).from;
   let emit = () => {};
   let report = () => {};
@@ -134,7 +137,7 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
     predictionAccessGeneration += 1;
     readGeneration += 1;
     deniedSegments.clear(); failedSegments.delete('predictions');
-    snapshot = { ...snapshot, predictions: [] };
+    snapshot = { ...snapshot, predictions: [], eoReports: [] };
     publish(now()); nudge(['prediction']);
   };
 
@@ -149,6 +152,8 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
   function publish(generatedAt) {
     if (stopped || paused) return;
     if (!permitted('predictions')) snapshot = { ...snapshot, predictions: [] };
+    if (!permitted('eo-status')) snapshot = { ...snapshot, eoReports: [] };
+    snapshot = { ...snapshot, devices: attachEoCameraStates(snapshot.devices, snapshot.eoReports, now()) };
     const simulated = ['devices', 'targets', 'alarms', 'flightPlans', 'risks', 'handoffs', 'predictions']
       .some(key => snapshot[key].some(row => row.simulated === true || row.sourceMode === 'mock' || row.source_mode === 'mock'));
     snapshot = { ...snapshot, generatedAt: Math.max(snapshot.generatedAt, generatedAt), sourceMode: sourceMode(snapshot), simulated,
@@ -173,6 +178,7 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
       if (!current()) return;
       if (error?.status === 403) { deny(name); apply(empty); return; }
       failedSegments.add(name); report(error, name);
+      if (name === 'eo-status') apply(empty);
     }
   }
 
@@ -235,13 +241,18 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
     if (wanted.has('risks')) lastRisksAt = generatedAt;
     // 短时预测和统一风险读回即发布，不能等待其他历史分页耗尽预测有效期。
     const tasks = [
+      wanted.has('eo-status') && retain('eo-status', () => allPages(deviceApi.eoSituation),
+        value => { snapshot = { ...snapshot, eoReports: value }; }, []),
       wanted.has('predictions') && retain('predictions', () => allPages(targetApi.currentPredictions),
         value => { snapshot = { ...snapshot, predictions: value }; }, []),
       wanted.has('targets') && retain('targets', async () => {
         // 地图只画此刻还没到期的目标（targetIsCurrent），只取这些（ZT-20 复测 2）：当天目标多时（四百多个）
         // 每轮分页拉完要几十秒，刚收到的目标等整轮拼完已过 15 秒有效期，被页面当作过期滤掉，图上始终看不到。
         // 不认 map_visible_at 的旧后端照旧返回当天全部目标，页面照旧筛。
-        const page = await targetApi.listAll({ seen_from: observedFrom, seen_to: generatedAt, include_merged: false, map_visible_at: generatedAt });
+        // last_seen_at can advance while this request is in flight. A request-start upper bound
+        // would drop the most actively reporting targets; keep the day window and let map expiry
+        // plus targetIsCurrent validate the actual observation against the current platform time.
+        const page = await targetApi.listAll({ seen_from: observedFrom, seen_to: day.to, include_merged: false, map_visible_at: generatedAt });
         if (stopped || paused || generation !== readGeneration) return [];
         const converted = attachBearing(toTargets(page.items), bearingOrigins(snapshot.devices));
         const known = new Set(snapshot.targets.map(target => target.targetId));
@@ -428,7 +439,17 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
     }, wait);
   }
 
+  function armEoTelemetry() {
+    globalThis.clearTimeout(eoTimer);
+    if (stopped || paused) return;
+    eoTimer = globalThis.setTimeout(() => {
+      if (permitted('eo-status')) void requestSegment('eo-status');
+      armEoTelemetry();
+    }, DEVICE_STATE_MIN_MS);
+  }
+
   function clearTimer() {
+    globalThis.clearTimeout(eoTimer);
     for (const lane of lanes.values()) {
       globalThis.clearTimeout(lane.timer); lane.timer = null; lane.pending = false;
       lane.retryDelay = 0; lane.retryAt = 0;
@@ -447,7 +468,7 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
       globalThis.addEventListener?.('auth-access-change', accessChanged);
       unsubscribe = onDataChange([...new Set([...Object.keys(TOPIC_SEGMENTS), ...Object.keys(SLOW_TOPIC_SEGMENTS)])], topics => nudge(topics));
       paused = typeof document !== 'undefined' && document.hidden;
-      if (!paused) { void cycle(true); armBoundary(); }
+      if (!paused) { void cycle(true); armBoundary(); armEoTelemetry(); }
       return () => api.stop();
     },
     pause() { paused = true; readGeneration += 1; clearTimer(); globalThis.clearTimeout(boundaryTimer); },
@@ -457,6 +478,7 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
       clearTimer();
       void cycle(true);
       armBoundary();
+      armEoTelemetry();
     },
     setSourceTarget(targetId) {
       if (selectedSourceTarget !== (targetId || null)) { sourceSelectionGeneration += 1; failedSegments.delete('target-sources'); }

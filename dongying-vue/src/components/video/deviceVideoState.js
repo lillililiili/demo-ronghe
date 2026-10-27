@@ -15,8 +15,9 @@ export function matchingVideoFrame(video, metadata, playingAt, maxDeltaMs = 500)
   if (video?.status !== 'AI' || video.stream_kind !== 'AI' || !Number.isFinite(playingAt)
     || !metadata || metadata.device_id !== video.device_id || metadata.stream_id !== video.stream_id
     || metadata.task_id !== video.task_id || metadata.status === 'NONE') return null;
+  const frames = metadata.frames || [];
   let nearest = null, distance = maxDeltaMs + 1;
-  for (const frame of metadata.frames || []) {
+  for (const frame of frames) {
     const at = typeof frame.frame_timestamp === 'number' ? frame.frame_timestamp : Date.parse(frame.frame_timestamp);
     const gap = Math.abs(at - playingAt);
     if (Number.isFinite(gap) && gap < distance) { nearest = frame; distance = gap; }
@@ -31,6 +32,12 @@ export function validDetectionBox(b) {
 export function selectableDetection(detection) {
   return !!detection?.target_id && detection.association_status === 'LINKED'
     && detection.class_code === 'UAV' && validDetectionBox(detection.bbox);
+}
+
+export function detectionPresentation(candidate) {
+  return candidate
+    ? { label: `告警 · ${candidate.label}`, alert: true }
+    : { label: '未关联告警', alert: false };
 }
 
 export function containedVideoRect(width, height, videoWidth, videoHeight) {

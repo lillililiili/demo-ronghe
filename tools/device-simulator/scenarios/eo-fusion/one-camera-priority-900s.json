@@ -1,0 +1,282 @@
+{
+  "version": 1,
+  "name": "光电多告警自动调度 · one-camera-priority · 15分钟",
+  "duration": 15,
+  "fullchain": {
+    "enabled": true,
+    "categories": [],
+    "filing": {},
+    "airspaceLifecycle": false
+  },
+  "sites": [
+    {
+      "id": "eo-queue-site",
+      "name": "全量模拟设备组",
+      "x": 420,
+      "y": 300,
+      "devices": [
+        {
+          "id": "eo-queue-radar",
+          "kind": "radar",
+          "name": "正常雷达",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2,
+          "coverage": {
+            "kind": "circle",
+            "radiusM": 8000,
+            "sourceLabel": "全量模拟场景配置"
+          },
+          "coordinate_system": "WGS84"
+        },
+        {
+          "id": "eo-queue-tdoa",
+          "kind": "tdoa",
+          "name": "身份探测",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2,
+          "coordinate_system": "WGS84"
+        },
+        {
+          "id": "eo-queue-eo",
+          "kind": "eo",
+          "name": "模拟光电一",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2,
+          "coverage": {
+            "kind": "circle",
+            "radiusM": 4000,
+            "sourceLabel": "光电东西指向专项明确全向覆盖（仅模拟）"
+          },
+          "coordinate_system": "WGS84"
+        }
+      ],
+      "coordinate_system": "WGS84"
+    }
+  ],
+  "plans": [
+    {
+      "id": "eo-queue-route-east",
+      "name": "east侧配套模拟航线",
+      "coordinate_system": "WGS84",
+      "points": [
+        [
+          480,
+          300
+        ],
+        [
+          500,
+          300
+        ],
+        [
+          560,
+          300
+        ]
+      ],
+      "min": 20,
+      "max": 200,
+      "width": 200,
+      "start": "00:00",
+      "end": "23:59",
+      "timeMode": "current",
+      "altitudeDatum": "AMSL"
+    },
+    {
+      "id": "eo-queue-route-west",
+      "name": "west侧配套模拟航线",
+      "coordinate_system": "WGS84",
+      "points": [
+        [
+          360,
+          300
+        ],
+        [
+          340,
+          300
+        ]
+      ],
+      "min": 20,
+      "max": 200,
+      "width": 200,
+      "start": "00:00",
+      "end": "23:59",
+      "timeMode": "current",
+      "altitudeDatum": "AMSL"
+    }
+  ],
+  "zones": [
+    {
+      "id": "eo-queue-prohibited-east",
+      "name": "east侧光电验收禁飞区",
+      "kindCode": "PROHIBITED",
+      "coordinate_system": "WGS84",
+      "points": [
+        [
+          460,
+          280
+        ],
+        [
+          520,
+          280
+        ],
+        [
+          520,
+          320
+        ],
+        [
+          460,
+          320
+        ]
+      ],
+      "holes": [],
+      "min": 0,
+      "max": 300,
+      "altitudeDatum": "AMSL",
+      "start": "00:00",
+      "end": "23:59"
+    },
+    {
+      "id": "eo-queue-prohibited-west",
+      "name": "west侧光电验收禁飞区",
+      "kindCode": "PROHIBITED",
+      "coordinate_system": "WGS84",
+      "points": [
+        [
+          320,
+          280
+        ],
+        [
+          380,
+          280
+        ],
+        [
+          380,
+          320
+        ],
+        [
+          320,
+          320
+        ]
+      ],
+      "holes": [],
+      "min": 0,
+      "max": 300,
+      "altitudeDatum": "AMSL",
+      "start": "00:00",
+      "end": "23:59"
+    }
+  ],
+  "targets": [
+    {
+      "id": "eo-queue-east",
+      "name": "east侧持续实测无人机",
+      "kind": "uav",
+      "path": [
+        [
+          480,
+          300
+        ],
+        [
+          500,
+          300
+        ],
+        [
+          560,
+          300
+        ]
+      ],
+      "motionMode": "once",
+      "height": 100,
+      "heightAgl": 80,
+      "altitudeDatum": "AMSL",
+      "speed": 8,
+      "count": 1,
+      "probability": 0.98,
+      "planId": "eo-queue-route-east",
+      "deviceId": "eo-queue-radar",
+      "notificationBehavior": "none",
+      "secondaryDeviceId": "eo-queue-tdoa",
+      "transport": "normalized",
+      "pilotPoint": [
+        480,
+        300
+      ],
+      "secondaryTransport": "auto",
+      "coordinate_system": "WGS84",
+      "dwellSeconds": [
+        180,
+        0,
+        0
+      ]
+    },
+    {
+      "id": "eo-queue-west",
+      "name": "west侧持续实测无人机",
+      "kind": "uav",
+      "path": [
+        [
+          360,
+          300
+        ],
+        [
+          340,
+          300
+        ]
+      ],
+      "motionMode": "pingpong",
+      "height": 100,
+      "heightAgl": 80,
+      "altitudeDatum": "AMSL",
+      "speed": 2,
+      "count": 1,
+      "probability": 0.98,
+      "planId": "eo-queue-route-west",
+      "deviceId": "eo-queue-radar",
+      "notificationBehavior": "none",
+      "secondaryDeviceId": "eo-queue-tdoa",
+      "transport": "normalized",
+      "pilotPoint": [
+        360,
+        300
+      ],
+      "secondaryTransport": "auto",
+      "coordinate_system": "WGS84",
+      "silenceWindows": [
+        {
+          "at": 0,
+          "seconds": 45
+        }
+      ]
+    }
+  ],
+  "risks": [],
+  "eoObservations": {
+    "enabled": true,
+    "detectConfidence": 0.94,
+    "trackConfidence": 0.91,
+    "intervalSeconds": 2
+  },
+  "coordinate_system": "WGS84",
+  "sceneGuide": {
+    "summary": "两个真实输入链路生成的模拟入区告警：东侧先发现，45秒后西侧开始；180秒后东侧离区。观察平台自动光电优先级、排队和实际回执，不注入告警或执行结果。",
+    "stages": [
+      {
+        "at_seconds": 0,
+        "label": "东侧先入区",
+        "description": "通过实测观测和禁飞区输入触发平台告警及自动观察。"
+      },
+      {
+        "at_seconds": 45,
+        "label": "西侧第二告警",
+        "description": "一台光电时同级不抢占，另一目标排队；两台光电时可分别承接两目标，以平台实际调度为准。"
+      },
+      {
+        "at_seconds": 180,
+        "label": "东侧开始离区",
+        "description": "东侧真实移动越过禁飞区边界，待后端新实测解除风险及精确任务停止回执，再核对排队任务是否启动。"
+      }
+    ]
+  }
+}

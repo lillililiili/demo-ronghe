@@ -30,19 +30,31 @@
     }
     return changed;
   }
+  // 服务端原来的规矩：没填位置时，反制设备放在场景第一台雷达所在的点位。设备就在那个点位时位置留空，只有放到别处才写明。
+  const defaultCounterSite = () => state.sites.find(s => s.devices.some(d => d.kind === 'radar'));
   function counterConfig() {
     const found = counterDevices()[0];
     if (!found) return {countermeasure_enabled: false};
-    const [lon, lat] = lonLat(found.site);
-    return {countermeasure_enabled: true, countermeasure_scope: found.device.scope || '', countermeasure_longitude: Number(lon), countermeasure_latitude: Number(lat)};
+    const explicit = found.site !== defaultCounterSite();
+    const [lon, lat] = explicit ? lonLat(found.site).map(Number) : [null, null];
+    return {countermeasure_enabled: true, countermeasure_scope: found.device.scope || '', countermeasure_longitude: lon, countermeasure_latitude: lat};
   }
+  const receiverBusy = () => ['STARTING', 'RUNNING', 'STOPPING'].includes(liveState?.realtime?.state);
+  const syncNote = () => document.getElementById('counter-sync-note');
   async function beforeStart() {
     if (liveState?.scene_mode === 'isolated_qa') return;
     let config;
     try { config = await api('realtime/config'); } catch { return; }
     const wanted = counterConfig();
     const differs = Object.keys(wanted).some(key => JSON.stringify(config[key] ?? null) !== JSON.stringify(wanted[key] ?? null));
-    realtimeConfig = differs ? await api('realtime/config', {...config, ...wanted}) : config;
+    if (!differs) { realtimeConfig = config; if (syncNote()) syncNote().textContent = ''; return; }
+    // 接收端在两次模拟之间一直开着，开着时服务端不让改收发设置；这时不改、也不挡“开始”，只提示一句。
+    if (receiverBusy()) {
+      if (syncNote()) syncNote().textContent = '反制设备的单位或位置有改动：要先在“运行方式”里停止接收端，再点“开始”才会生效。';
+      realtimeConfig = config; return;
+    }
+    realtimeConfig = await api('realtime/config', {...config, ...wanted});
+    if (syncNote()) syncNote().textContent = '';
   }
   function payload(current) {
     const copy = structuredClone(current);
@@ -70,6 +82,7 @@
   const errors = $$('status-errors');
   for (const id of ['mqtt-error', 'realtime-error', 'video-error']) move(id, errors);
   move('error-detail', errors);
+  const syncNoteEl = document.createElement('p'); syncNoteEl.id = 'counter-sync-note'; syncNoteEl.className = 'muted'; errors.append(syncNoteEl);
   const runMode = $$('run-mode-realtime');
   move('realtime-start', runMode); move('realtime-stop', runMode);
   move('realtime-settings', runMode).hidden = true;  // 由“修改运行方式…”代点
@@ -184,10 +197,8 @@
       html += `<div class="device-row"><h3>${esc(d.name)}<small>${esc(labels[d.kind] || d.kind)}</small></h3><div class="seg-pair">${seg(`health_${d.id}`, d.health, [{value: '正常', label: '正常'}, {value: '故障', label: '故障', bad: true}])}${seg(`heartbeat_${d.id}`, d.heartbeat, [{value: '持续上报', label: '持续心跳'}, {value: '停止心跳', label: '停止心跳', bad: true}], 'heartbeat')}</div></div>`;
     }
     html += '<div class="subheading">再加一台设备</div>' + selectField('设备类型', 'newKind', deviceKinds[0], deviceKinds.map(v => ({value: v, label: labels[v]}))) + btn('add-device', '添加到此点位', 'wide');
-    const radius = state.countermeasure?.coverage?.radiusM ?? '';
-    html += moreBox('心跳间隔、经纬度' + (counters ? '、反制作用半径' : ''),
-      `<div class="field-pair">${field('经度（WGS84）', 'lon', lon, 'number', 'step="0.000001" min="-180" max="180" required')}${field('纬度（WGS84）', 'lat', lat, 'number', 'step="0.000001" min="-85" max="85" required')}</div>` + intervals
-      + (counters ? field('反制作用半径（米，留空则平台保持原样）', 'counterRadius', radius, 'number', 'min="1" max="100000" step="1"') : ''));
+    html += moreBox('心跳间隔、经纬度',
+      `<div class="field-pair">${field('经度（WGS84）', 'lon', lon, 'number', 'step="0.000001" min="-180" max="180" required')}${field('纬度（WGS84）', 'lat', lat, 'number', 'step="0.000001" min="-85" max="85" required')}</div>` + intervals);
     return html;
   }
   function planForm(x) {
@@ -225,12 +236,6 @@
     if (!x) return;
     if (selected.kind === 'site') {
       for (const d of x.devices) if (d.kind === COUNTER) { d.scope = form.elements[`scope_${d.id}`]?.value || ''; d.send = false; }
-      const radius = form.elements.counterRadius;
-      if (radius) {
-        const value = Number(radius.value);
-        if (radius.value.trim() === '') delete state.countermeasure;
-        else if (Number.isFinite(value) && value > 0) state.countermeasure = {coverage: {kind: 'circle', radiusM: value, sourceLabel: '模拟器设备组设置：反制作用半径'}};
-      }
     }
     if (selected.kind === 'plan') {
       form.querySelectorAll('[data-executor]').forEach(box => {

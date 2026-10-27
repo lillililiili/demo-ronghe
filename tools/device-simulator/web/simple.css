@@ -1,0 +1,145 @@
+/* 新版主页面（index.html）的布局：左边“添加”、中间地图、右边设置、底部“运行情况”。
+   原版页面（classic.html）不用这个文件。功能都在共用脚本里，这里只摆位置。 */
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.simple-layout{--border:#e0e7f0;--panel:#fff;background:#f3f6fa}
+@media(min-width:1001px){
+  body.simple-layout{height:100dvh;min-height:640px;display:flex;flex-direction:column;overflow:hidden}
+  body.simple-layout main{flex:1;min-height:0;padding:0 16px 12px}
+  body.simple-layout .workspace{flex:1;height:auto;min-height:0}
+}
+.simple-layout .header{min-height:64px;padding:8px 20px}
+.simple-layout .sim-topnav a[aria-current=page]::after{bottom:-9px}
+.simple-layout .sim-topnav .muted-link{color:#8a9bb0;font-size:12px}
+/* 顶部一行：场景名、场景菜单、地图预演 …… 运行方式、时长、视频设置、开始、停止 */
+.simple-layout .scenario-bar{display:flex;align-items:center;gap:10px;padding:10px 20px;flex-wrap:wrap}
+.simple-layout .scene-name{gap:0}
+.simple-layout .scene-name input{width:230px;font-size:18px;font-weight:650;padding:6px 8px;background:transparent;border-color:transparent}
+.simple-layout .scene-name input:hover,.simple-layout .scene-name input:focus{border-color:#d6dfeb;background:#fff}
+.simple-layout .scene-tools{margin:0}
+.simple-layout .scene-tools summary{list-style:none;cursor:pointer}
+.simple-layout .scene-tools summary::-webkit-details-marker{display:none}
+.simple-layout .scene-tools-menu{left:0;right:auto;width:250px}
+.simple-layout .scene-tools-menu hr{border:0;border-top:1px solid var(--border);margin:4px 0}
+.simple-layout .scene-tools-menu .menu-title{padding:6px 12px 2px;font-size:11px;color:#8a9bb0}
+.simple-layout .scenario-bar #save-status{font-size:11px}
+.simple-layout .run-controls{margin-left:auto;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.simple-layout .run-mode{position:relative;font-size:13px}
+.simple-layout .run-mode summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:6px;border:1px solid #d6dfeb;border-radius:7px;background:#fff;padding:8px 12px}
+.simple-layout .run-mode summary::-webkit-details-marker{display:none}
+.simple-layout .run-mode-menu{position:absolute;right:0;top:calc(100% + 8px);z-index:10;width:320px;padding:12px;border:1px solid var(--border);border-radius:10px;background:#fff;box-shadow:0 12px 32px #20314918;display:grid;gap:8px}
+.simple-layout .run-mode-menu button{width:100%;text-align:left}
+.simple-layout .run-mode-menu .field-note{margin:0;white-space:pre-line}
+.simple-layout .run-controls .duration{display:flex;align-items:center;gap:6px;font-size:12px}
+.simple-layout .run-controls .duration select{width:118px;min-height:38px}
+.simple-layout .start-button{padding:9px 26px;font-size:15px;min-width:0}
+.simple-layout .run-controls button{min-height:38px}
+.simple-layout #stop-button:not(:disabled){color:#b74646;border-color:#e4bcbc}
+.simple-layout .flow-banner{margin:0 16px 10px}
+/* 三栏 */
+.simple-layout .workspace,.simple-layout[data-workspace=inputs] .workspace,.simple-layout[data-workspace=routes] .workspace{display:grid;grid-template-columns:292px minmax(0,1fr) 340px;gap:12px}
+.simple-layout[data-workspace=inputs] .workspace{grid-template-columns:292px minmax(0,1fr) 470px}
+.simple-layout .objects{display:flex;flex-direction:column;min-height:0;background:#fff}
+.simple-layout .panel-heading{min-height:50px;padding:12px 16px}
+.simple-layout .add-palette{padding:8px 14px 4px;flex:none}
+.simple-layout .add-palette .group-title{padding:8px 0 6px;color:#7a8aa0;font-size:12px;display:block}
+.simple-layout .tile-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:4px}
+.simple-layout .tile{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;min-height:58px;padding:7px 2px;border:1px solid #e6ecf3;border-radius:8px;background:#fff;font-size:11.5px;line-height:1.2;color:#203149;text-align:center;overflow-wrap:anywhere}
+.simple-layout .tile img{width:22px;height:22px}
+.simple-layout .tile:hover{background:#f1f5fc;border-color:#a6bce2}
+.simple-layout .tile.active{background:#edf3ff;border-color:#89ade9;color:#245bbb}
+.simple-layout .scene-list{flex:1;min-height:0;display:flex;flex-direction:column;border-top:1px solid var(--border);margin-top:6px}
+.simple-layout .scene-list>.group-title{flex:none;padding:10px 16px 2px;color:#7a8aa0;font-size:12px;display:flex;justify-content:space-between;gap:8px}
+.simple-layout .scene-list>.group-title small{background:none;color:#8a9bb0;font-size:11px;text-align:right;min-width:0}
+.simple-layout .scene-list .panel-scroll{flex:1;padding:2px 8px 10px}
+.simple-layout .object-tree .group-title,.simple-layout #object-tree .group-title{padding:8px 8px 4px;font-size:11px}
+.simple-layout #object-tree [data-object-group]{display:block}
+.simple-layout .objects .object-row{min-height:38px;padding:6px 8px;margin:2px 0}
+.simple-layout .object-row img{width:24px;height:24px}
+.simple-layout .object-row small{margin-top:2px}
+.simple-layout .map-panel{display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.simple-layout .map-stage{flex:1;min-height:0}
+/* 右侧设置 */
+.simple-layout .inspector{display:flex;flex-direction:column;min-height:0;background:#fff}
+.simple-layout .inspector .panel-scroll{padding:6px 18px 18px}
+.simple-layout .inspector .field{gap:5px;margin-bottom:12px}
+.simple-layout .inspector .field>span{font-size:12px;color:#52637a}
+.simple-layout .field-pair{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.simple-layout .field-pair.wide-first{grid-template-columns:1.3fr 1fr}
+.simple-layout .field-triple{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+.simple-layout .field-pair .field,.simple-layout .field-triple .field{min-width:0}
+.simple-layout .seg{display:flex;border:1px solid #d5dde8;border-radius:8px;overflow:hidden;margin-bottom:12px}
+.simple-layout .seg label{flex:1;position:relative;text-align:center;font-size:13px;border-right:1px solid #d5dde8;cursor:pointer}
+.simple-layout .seg label:last-child{border-right:0}
+.simple-layout .seg input{position:absolute;opacity:0;width:0;height:0;margin:0}
+.simple-layout .seg span{display:block;padding:7px 4px;color:#203149}
+.simple-layout .seg input:checked+span{background:#ecfeff;color:#0e7490;font-weight:600}
+.simple-layout .seg label.bad input:checked+span{background:#fff5f5;color:#d93636}
+.simple-layout .seg input:focus-visible+span{outline:2px solid var(--cyan);outline-offset:-2px}
+.simple-layout .seg input:disabled+span{opacity:.5}
+.simple-layout .seg.wrap{flex-wrap:wrap}
+.simple-layout .seg.wrap label{flex:none;width:33.33%;border-bottom:1px solid #d5dde8}
+.simple-layout .seg.wrap label:nth-child(3n){border-right:0}
+.simple-layout .seg.wrap label:nth-last-child(-n+2){border-bottom:0}
+.simple-layout .seg.wrap label:nth-child(3){border-right:1px solid #d5dde8}
+.simple-layout .seg-label{font-size:12px;color:#52637a;margin:0 0 6px}
+.simple-layout .device-row{padding:10px 0;border-bottom:1px solid #eef2f7}
+.simple-layout .device-row h3{display:flex;justify-content:space-between;align-items:baseline;margin:0 0 8px;font-size:14px}
+.simple-layout .device-row h3 small{color:#7a8aa0;font-weight:400;font-size:12px}
+.simple-layout .device-row .seg-pair{display:flex;gap:8px}
+.simple-layout .device-row .seg{flex:1;margin:0}
+.simple-layout .device-row .seg.heartbeat{flex:1.25}
+.simple-layout .device-row .field{margin:8px 0 0}
+.simple-layout .inspector details.more{margin:14px 0 4px}
+.simple-layout .inspector details.more>summary{cursor:pointer;color:#52637a;font-size:13px;line-height:1.6;padding:4px 0}
+.simple-layout .inspector details.more>div{padding-top:10px}
+.simple-layout .inspector .subheading{margin:14px 0 10px;padding-top:12px}
+.simple-layout .inspector .submit-note{font-size:12px;color:#63758a;margin:8px 0 0;line-height:1.6}
+.simple-layout .executor-list{display:grid;gap:6px;margin-bottom:12px}
+.simple-layout .executor-list label{display:flex;align-items:center;gap:8px;font-size:13px}
+.simple-layout .executor-list .muted{font-size:12px}
+.simple-layout .inspector .wide{margin-bottom:12px}
+/* 资料输入（任务申报、气象预报、空域下发）在右侧代替设置栏 */
+.simple-layout .input-dock{display:flex;flex-direction:column;min-height:0;background:#fff}
+.simple-layout .dock-head{display:flex;justify-content:space-between;align-items:center;padding:10px 16px;border-bottom:1px solid var(--border);font-weight:600;flex:none}
+.simple-layout .dock-head button{font-size:12px;padding:6px 10px}
+.simple-layout .input-dock iframe{flex:1;min-height:0}
+/* 平台风险判定：平时收起，点底部按钮弹出来 */
+.simple-layout .risks{position:fixed;left:16px;right:16px;bottom:78px;z-index:15;max-height:min(52vh,460px);display:flex;flex-direction:column;background:#fff;box-shadow:0 -8px 30px #0f172a2e}
+.simple-layout.risks-collapsed .risks{display:none}
+.simple-layout .risk-list{flex:1;min-height:0;max-height:none;overflow:auto}
+.simple-layout .preview-bar{flex:none;margin-top:10px}
+/* 底部运行情况 */
+.simple-layout footer{flex-direction:column;align-items:stretch;gap:6px;padding:10px 20px;min-height:0;background:#fff}
+.simple-layout .status-row{display:flex;align-items:center;gap:18px;flex-wrap:wrap;font-size:13px;color:#203149;min-height:38px}
+.simple-layout .status-row>b{font-size:13.5px}
+.simple-layout .status-row>span{white-space:nowrap}
+.simple-layout .status-actions{margin-left:auto;display:flex;align-items:center;gap:8px}
+.simple-layout .status-actions button{min-height:38px;font-size:13px}
+.simple-layout .status-more{position:relative}
+.simple-layout .status-more summary{list-style:none;cursor:pointer;border:1px solid #d6dfeb;border-radius:7px;background:#fff;padding:9px 12px;font-size:13px}
+.simple-layout .status-more summary::-webkit-details-marker{display:none}
+.simple-layout .status-more-menu{position:absolute;right:0;bottom:calc(100% + 8px);z-index:16;width:420px;max-width:calc(100vw - 40px);padding:12px;border:1px solid var(--border);border-radius:10px;background:#fff;box-shadow:0 12px 32px #20314918;display:grid;gap:8px;font-size:12px;color:#52637a;line-height:1.7}
+.simple-layout .status-more-menu button{width:100%;text-align:left}
+.simple-layout .status-more-menu details summary{cursor:pointer}
+.simple-layout .status-more-menu .menu-title{font-size:11px;color:#8a9bb0}
+.simple-layout .status-errors{display:flex;flex-wrap:wrap;gap:4px 16px;font-size:12px}
+.simple-layout .status-errors>*:empty{display:none}
+.simple-layout .status-errors>*{color:#9e5215;overflow-wrap:anywhere}
+.simple-layout #mqtt-error{color:#9e5215}
+.simple-layout #error-detail{padding:2px 10px;font-size:12px}
+@media(max-width:1300px){.simple-layout .workspace,.simple-layout[data-workspace=routes] .workspace{grid-template-columns:250px minmax(0,1fr) 300px}.simple-layout .tile-grid{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:1000px){
+  .simple-layout .workspace,.simple-layout[data-workspace=inputs] .workspace,.simple-layout[data-workspace=routes] .workspace{grid-template-columns:230px minmax(0,1fr);height:auto}
+  .simple-layout .map-panel{height:520px}.simple-layout .objects{height:520px}
+  .simple-layout .inspector,.simple-layout .input-dock{grid-column:1/-1;max-height:none;min-height:420px}
+  .simple-layout .inspector .panel-scroll form{display:block}
+  .simple-layout .risks{position:static;max-height:none;box-shadow:none}
+}
+@media(max-width:760px){
+  .simple-layout .workspace,.simple-layout[data-workspace=inputs] .workspace{display:flex;flex-direction:column}
+  .simple-layout .map-panel{order:0;height:420px;flex:none}.simple-layout .objects{order:1;height:auto}
+  .simple-layout .inspector,.simple-layout .input-dock{order:2}
+  .simple-layout .scene-name input{width:100%}
+  .simple-layout .run-controls{margin-left:0;width:100%}
+  .simple-layout .status-row>span{white-space:normal}
+}

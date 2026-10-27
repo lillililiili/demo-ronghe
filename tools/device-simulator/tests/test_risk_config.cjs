@@ -6,6 +6,7 @@ const riskConfig = require('../web/risk-config.js');
 
 const appSource = fs.readFileSync(path.join(__dirname, '../web/app.js'), 'utf8');
 const indexSource = fs.readFileSync(path.join(__dirname, '../web/index.html'), 'utf8');
+const classicSource = fs.readFileSync(path.join(__dirname, '../web/classic.html'), 'utf8');
 const riskFieldsSource = appSource.slice(appSource.indexOf('function riskFields'), appSource.indexOf('function context'));
 
 test('non-device risk uses plan or airspace as its configured reference', () => {
@@ -52,9 +53,13 @@ test('target editor owns observation facts while risk editor keeps rule referenc
 });
 
 test('target observations are added from the target entry while risk conclusions have no add-risk entry', () => {
-  assert.match(indexSource, /data-action="add-target"/);
+  // 新版页面左边“添加”栏直接列出目标类别（place-target）；原版页面保留“添加目标”入口（add-target）。
+  assert.match(indexSource, /data-action="place-target"/);
+  assert.match(classicSource, /data-action="add-target"/);
   assert.doesNotMatch(indexSource, /data-action="add-risk"/);
+  assert.doesNotMatch(classicSource, /data-action="add-risk"/);
   assert.match(indexSource, /平台风险判定/);
+  assert.match(classicSource, /平台风险判定/);
   assert.match(appSource, /这里添加设备上报的目标观测/);
   assert.match(appSource, /目标观测请通过图上的“添加目标”产生，风险结论由平台返回/);
 });

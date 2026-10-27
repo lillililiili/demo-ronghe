@@ -82,7 +82,15 @@
     event.currentTarget.setAttribute('aria-expanded', String(!collapsed));
     event.currentTarget.textContent = collapsed ? '展开列表' : '收起列表';
   });
-  window.addEventListener('simulator:selection', event => event.detail.kind==='zone'?openAirspace(event.detail.id):workspace(event.detail.kind==='plan'?'routes':'objects', false));
+  // 新版页面：选中空域先在右侧改名称、种类和高度，“空域下发”另有按钮进这张表。原版页面：选中空域直接进空域下发表。
+  const simple = root.classList.contains('simple-layout');
+  window.addEventListener('simulator:selection', event => event.detail.kind==='zone'&&!simple?openAirspace(event.detail.id):workspace(event.detail.kind==='plan'&&!simple?'routes':'objects', false));
+  function openInput(tab) {
+    inputTab=tab;
+    document.querySelectorAll('[data-input-tab]').forEach(item => item.setAttribute('aria-pressed', String(item.dataset.inputTab===tab)));
+    workspace('inputs', false); revealInput();
+  }
+  window.SimulatorWorkspace = {openAirspace, openInput, show: next => workspace(next, false)};
   window.addEventListener('simulator:weather-drawn', event => {
     frame.contentWindow.postMessage({type:'simulator-weather-drawn',polygon:event.detail.polygon},location.origin);
   });

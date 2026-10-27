@@ -4,10 +4,17 @@
 - enter：一架航班在反制设备附近盘旋等待，降到 3000 米以下进入提醒范围，再飞近进入禁止反制范围，最后爬升飞远。
 - no_data：航班接收机中途断开 4 分钟，平台收不到航班信息，再恢复。
 航班位置以平台上反制设备的位置为中心计算；能不能反制只由平台判断，这里只送位置。
+航班数据按客户的真实接收机 pingStation3 的格式（JSON，一架一条）通过 UDP 推给平台，走的是正式设备同一条路；
+到现场联调时只要把真实接收机的发送地址指向平台、在接入设备里填它的识别码，不用改平台。
 模拟结束时停用这台模拟接收机，后面别的流程的反制不再受它影响。
 """
 import copy
+import datetime
+import json
 import math
+import os
+import socket
+import urllib.parse
 
 from engine import compile_scene
 
@@ -15,6 +22,10 @@ RECEIVER_NO = 'SIM-ADSB-DY01'
 RECEIVER_NAME = '东营 ADS-B 航班接收机（模拟）'
 RANGE_KM = 350
 REPORT_EVERY = 2
+# 模拟接收机的机身识别码（固定，平台按它认设备）和平台收数据的 UDP 端口（平台配置 app.adsb.pingstation.udp-port）。
+STATION_GUID = 'a1b2c3d4e5f60001'
+UDP_PORT = int(os.environ.get('ADSB_UDP_PORT') or 30021)
+STATUS_EVERY = 30
 OUTAGE = (60, 300)
 DEFAULT_CENTER = (118.614, 37.464)
 PREFIX = '/local-interface-simulator/adsb-receiver'
@@ -119,22 +130,65 @@ def counter_center(api):
     return DEFAULT_CENTER
 
 
-class AdsbFeed:
-    """在全链路模拟的每一拍里送航班位置。"""
+def _iso(millis):
+    return datetime.datetime.fromtimestamp(millis / 1000, datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
-    def __init__(self, api, scope, variant):
+
+def pingstation_traffic(row, guid, sequence):
+    """一架航班的 pingStation3 航班报文（ICD Rev F 的 JSON Traffic object，一条一架）。"""
+    return json.dumps({'aircraft': [{
+        'icaoAddress': row['icao24'], 'trafficSource': 0, 'latDD': row['latitude'], 'lonDD': row['longitude'],
+        'altitudeMM': int(row['altitude_m'] * 1000), 'headingDE2': int(round(row['track_deg'] * 100)),
+        'horVelocityCMS': int(round(row['ground_speed_mps'] * 100)), 'verVelocityCMS': 0, 'altitudeType': 0,
+        'callsign': row['callsign'].ljust(8)[:8], 'emitterType': 5, 'sequenceNumber': sequence, 'pingStationGuid': guid,
+        'utcSync': 1, 'timeStamp': _iso(row['observed_at']),
+        'detail': {'airGroundState': 0, 'emergencyStatus': 0, 'navIntegrity': 8}}]}).encode()
+
+
+def pingstation_status(guid, center, now):
+    """接收机每 30 秒的状态报文：平台据此知道它在线，哪怕附近没有航班。"""
+    return json.dumps({'status': {'pingStationGuid': guid, 'pingStationVersionMajor': 1, 'pingStationVersionMinor': 0,
+                                  'pingStationVersionBuild': 29, 'timeStamp': _iso(now), 'pingStationLatDD': center[1],
+                                  'pingStationLonDD': center[0], 'pingStationAltType': 1, 'pingStationAltMM': 12000,
+                                  'gpsStatus': 3, 'receiverStatus': 0}}).encode()
+
+
+def udp_target(api):
+    """平台收航班数据的地址：和接口同一台机器，端口按平台配置。"""
+    host = urllib.parse.urlparse(getattr(api, 'base', '') or '').hostname or '127.0.0.1'
+    return (host, UDP_PORT)
+
+
+class AdsbFeed:
+    """在全链路模拟的每一拍里，按 pingStation3 的格式通过 UDP 送航班位置。"""
+
+    def __init__(self, api, scope, variant, sender=None):
         self.api, self.scope, self.variant = api, scope, variant
         self.receiver_id = None
         self.center = DEFAULT_CENTER
         self.next_at = 0
+        self.next_status_at = 0
+        self.sequence = 0
+        self.sent = 0
+        self._sender = sender
+        self._socket = None
 
     def prepare(self):
         self.center = counter_center(self.api)
         receiver = self.api.call('POST', PREFIX, dict(self.scope, device_no=RECEIVER_NO, name=RECEIVER_NAME,
                                                       longitude=self.center[0], latitude=self.center[1],
-                                                      receive_range_km=RANGE_KM))
+                                                      receive_range_km=RANGE_KM, station_guid=STATION_GUID))
         self.receiver_id = receiver['device_id']
         return receiver
+
+    def send(self, datagram):
+        if self._sender:
+            self._sender(datagram)
+        else:
+            if self._socket is None:
+                self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self._socket.sendto(datagram, udp_target(self.api))
+        self.sent += 1
 
     def tick(self, elapsed, now):
         if not self.receiver_id or elapsed < self.next_at:
@@ -142,11 +196,19 @@ class AdsbFeed:
         self.next_at = elapsed + REPORT_EVERY
         rows = aircraft_at(self.variant, elapsed, self.center, now)
         if rows is None:
-            return 0
-        self.api.call('POST', f'{PREFIX}/{self.receiver_id}/aircraft', {'aircraft': rows})
+            return 0  # 接收机断开：什么都不发，平台 30 秒后判为收不到航班信息
+        if elapsed >= self.next_status_at:
+            self.next_status_at = elapsed + STATUS_EVERY
+            self.send(pingstation_status(STATION_GUID, self.center, now))
+        for row in rows:
+            self.sequence += 1
+            self.send(pingstation_traffic(row, STATION_GUID, self.sequence))
         return len(rows)
 
     def release(self):
+        if self._socket is not None:
+            self._socket.close()
+            self._socket = None
         if self.receiver_id:
             self.api.call('POST', f'{PREFIX}/{self.receiver_id}/release', {})
 

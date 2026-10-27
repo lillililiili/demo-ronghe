@@ -50,7 +50,7 @@
     if (!differs) { realtimeConfig = config; if (syncNote()) syncNote().textContent = ''; return; }
     // 接收端在两次模拟之间一直开着，开着时服务端不让改收发设置；这时不改、也不挡“开始”，只提示一句。
     if (receiverBusy()) {
-      if (syncNote()) syncNote().textContent = '反制设备的单位或位置有改动：要先在“运行方式”里停止接收端，再点“开始”才会生效。';
+      if (syncNote()) syncNote().textContent = '反制设备的单位或位置有改动：要先在“运行方式”里点“停止全部收发”，再点“开始”才会生效。平台上这台设备已经有位置的不会改，要改请到管理后台的设备管理里改。';
       realtimeConfig = config; return;
     }
     realtimeConfig = await api('realtime/config', {...config, ...wanted});

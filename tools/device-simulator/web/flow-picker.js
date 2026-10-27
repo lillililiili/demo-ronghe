@@ -1,6 +1,6 @@
 (function (root) {
   'use strict';
-  /* “选择流程 1-8”：一次选一个流程。左边选，右边看这个流程演示什么、开始前要做什么、会看到什么、要在平台上做什么，
+  /* “选择流程”（流程 1-8 与流程 10）：一次选一个流程。左边选，右边看这个流程演示什么、开始前要做什么、会看到什么、要在平台上做什么，
      点“载入并准备”只载入这一个；载入后地图页顶部一直显示“你要做什么”，直到停止或换流程。
      流程文件和说明都在服务端（acceptance_flows.py），模拟器不替人开关规则，只读地看一眼规则开了没有。 */
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -112,7 +112,8 @@
     if (started && ['RUNNING', 'PAUSED'].includes(runtime?.phase) && Number.isFinite(runtime?.elapsed) && runtime.elapsed >= 0) {
       stages.forEach((stage, index) => { if (runtime.elapsed >= stage.at_seconds) activeIndex = index; });
     }
-    return {summary: guide.summary, stages, activeIndex, paused: activeIndex >= 0 && runtime?.phase === 'PAUSED'};
+    const startHint = typeof guide.startHint === 'string' && guide.startHint.trim() ? guide.startHint : '';
+    return {summary: guide.summary, stages, activeIndex, paused: activeIndex >= 0 && runtime?.phase === 'PAUSED', ...(startHint ? {startHint} : {})};
   }
 
   function sceneGuideHtml(model, compact = false) {
@@ -120,7 +121,7 @@
     const active = model.stages[model.activeIndex];
     const stages = `<ol class="scene-guide-stages">${model.stages.map((stage, index) => `<li${index === model.activeIndex ? ' aria-current="step"' : ''}><span class="scene-guide-time">${stage.at_seconds === 0 ? '开始' : `约 ${Math.round(stage.at_seconds)} 秒`}</span><b>${esc(stage.label)}</b>${compact ? '' : `<span>${esc(stage.description)}</span>`}</li>`).join('')}</ol>`;
     if (compact) return `<section class="scene-guide scene-guide-compact" aria-label="模拟飞行阶段"><p class="scene-guide-summary" title="${esc(model.summary)}">路线：${esc(model.summary)}</p>${stages}
-      <p class="scene-guide-current" role="status"><b>${active ? (model.paused ? '模拟已暂停：' : '当前模拟阶段：') : '开始后：'}</b>${active ? esc(active.description) : '在融合感知选中无人机，查看未来位置和平台预警。'}</p></section>`;
+      <p class="scene-guide-current" role="status"><b>${active ? (model.paused ? '模拟已暂停：' : '当前模拟阶段：') : '开始后：'}</b>${active ? esc(active.description) : esc(model.startHint || '在融合感知选中无人机，查看未来位置和平台预警。')}</p></section>`;
     const title = active ? `模拟飞行阶段${model.paused ? ' · 已暂停' : ''}：${esc(active.label)}` : '模拟航线导读';
     return `<section class="scene-guide"><h4>${title}</h4><p class="scene-guide-summary">${esc(model.summary)}</p>${stages}
       <p class="scene-guide-note">阶段按模拟航线和运行进度显示；预警、核实、通知和反制结果以平台为准。</p></section>`;

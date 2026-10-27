@@ -18,7 +18,8 @@ const props = defineProps({
   onRefresh: { type: Function, default: null },
   refreshText: { type: String, default: '重新读取当前依据' },
   submitEnabled: { type: Function, default: null },
-  validate: { type: Function, default: null }
+  validate: { type: Function, default: null },
+  onModelChange: { type: Function, default: null }
 });
 
 const model = reactive({ ...props.initial });
@@ -37,6 +38,9 @@ watch(() => [model.channel, model.action_type], () => {
   if (!field || !model.device_id) return;
   if (!optionsOf(field).some(item => item.value === model.device_id)) model.device_id = null;
 });
+
+// 表单内容变了时交给调用方（例如按所选设备重新查附近航班）。
+if (props.onModelChange) watch(model, () => props.onModelChange(model), { deep: true, immediate: true });
 
 function isEmpty(value) {
   if (value == null) return true;

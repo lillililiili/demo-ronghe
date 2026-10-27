@@ -21,7 +21,7 @@ class UnifiedRiskScenesTest(unittest.TestCase):
         legacy = _read_legacy_flows(ROOT)['flows']
         before = copy.deepcopy(legacy)
         result = read_acceptance_flows(ROOT)
-        self.assertEqual(list(range(1, 9)), [row['flow'] for row in result['flows']])
+        self.assertEqual([1, 2, 3, 4, 5, 6, 7, 8, 10], [row['flow'] for row in result['flows']])
         self.assertEqual([legacy[-1]], result['compatibility_flows'])
         for number in (1, 2, 3):
             row = result['flows'][number - 1]

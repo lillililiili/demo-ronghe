@@ -11,6 +11,7 @@ import { disposalApi, isDisposalUnavailable, newDisposalIdempotencyKey } from '@
 import { deviceApi } from '@/services/deviceApi.js';
 import { deviceReach, validPoint } from './deviceReach.js';
 import { isUncertainOutcome } from '@/services/apiClient.js';
+import { flightAckOf, flightCheckFields, flightLevel, flightValidate, refreshFlightCheck } from './flightCheck.js';
 import { COUNTERMEASURE_MODE_LABEL, DISPOSAL_ACTION_LABEL, DISPOSAL_BLOCK_REASON_LABEL, DISPOSAL_CHANNEL_LABEL, DISPOSAL_STATUS_LABEL, disposalStatusText, labelOf } from '@/ui/labels.js';
 
 export const DISPOSAL_UNAVAILABLE_TEXT = '处置授权功能暂不可用';
@@ -23,7 +24,7 @@ const DEFINITE_CONFLICT_CODES = new Set([
   'DEVICE_CONTROL_UNAVAILABLE', 'DEVICE_NOT_BOUND', 'DEVICE_OFFLINE', 'DEVICE_NOT_OPERABLE', 'DEVICE_BUSY',
   'ACTIVE_AUTHORIZATION_EXISTS', 'SUBJECT_KIND_NOT_SUPPORTED',
   'TARGET_NOT_ACTIVE', 'POLICY_REQUIRES_CONFIRMED_EVENT', 'DEVICE_UNAVAILABLE',
-  'RISK_CASE_VERSION_CONFLICT'
+  'RISK_CASE_VERSION_CONFLICT', 'AIRCRAFT_NEARBY', 'AIRCRAFT_CONFIRM_REQUIRED'
 ]);
 
 /* 同一授权的幂等键在“结果未知”期间保留；服务端给出明确结果后才丢弃，避免超时重试重复写授权。 */
@@ -72,6 +73,9 @@ function messageOf(error, fallback) {
   if (error.code === 'TARGET_NOT_ACTIVE') return '最近没有监测到这个目标，无法确认它还在现场，暂时不能下发处置指令。';
   // 服务端会说清真实原因（证据不足、类别不是无人机、告警还没核实……），不再一律说成“先核实”。
   if (error.code === 'POLICY_REQUIRES_CONFIRMED_EVENT') return error.message || '该动作要求事件先经人工核实，请先完成核实再申请。';
+  // 附近航班：服务端的话已写明是哪架航班、多远、该怎么办。
+  if (error.code === 'AIRCRAFT_NEARBY') return `本次没有下发。${error.message || '附近有航班，不能反制。'}`;
+  if (error.code === 'AIRCRAFT_CONFIRM_REQUIRED') return error.message || '附近有航班或收不到航班信息，请勾选确认后再提交。';
   return error.message || fallback;
 }
 
@@ -277,12 +281,15 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
         placeholder: '请选择执行设备',
         options: model => deviceOptionsOrNote(devices, model.channel, point),
         required: true },
+      ...flightCheckFields(),
       { key: 'reason', label: direct ? '直接反制事由' : '申请事由', type: 'textarea', minRows: 3,
         placeholder: '选填；如需补充事由，请填写 2–500 字' }
     ],
-    initial: { action_type: actionType, countermeasure_mode: 'FORCE_LAND', channel: 'LINGYUN_B', device_id: null, reason: initialReason },
+    initial: { action_type: actionType, countermeasure_mode: 'FORCE_LAND', channel: 'LINGYUN_B', device_id: null, reason: initialReason, flight_check_ack: false },
     confirmText: direct ? '确认直接反制' : '提交申请',
     danger: true,
+    onModelChange: refreshFlightCheck,
+    submitEnabled: m => flightLevel(m) !== 'BLOCK',
     validate: m => {
       if (!isCurrent()) return '事件已切换，请关闭后从当前事件重新申请';
       if (m.action_type === 'COUNTERMEASURE' && !Object.hasOwn(COUNTERMEASURE_MODE_LABEL, m.countermeasure_mode)) return '请选择迫降或驱离';
@@ -300,14 +307,15 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
       if (!chosen) return '执行设备与所选通道不一致，请重新选择';
       const why = deviceUnavailableReason(chosen);
       if (why) return `所选设备不能用：${why}。请换一台设备。`;
-      return null;
+      return flightValidate(m);
     },
-    onSubmit: ({ action_type: chosen, countermeasure_mode: countermeasureMode, channel, device_id: deviceId, reason }) => submit({
-      scope: `${subjectKind}:${riskContext?.risk_case_id || subjectId}:${chosen || actionType}`,
+    onSubmit: values => submit({
+      scope: `${subjectKind}:${riskContext?.risk_case_id || subjectId}:${values.action_type || actionType}`,
       action: direct ? 'direct' : 'request',
       call: async key => {
         if (!isCurrent()) throw new Error('事件已切换，请关闭后从当前事件重新申请');
-        // 结果未知时沿用原主体、版本、设备和幂等键，不把重试改成新的阶段动作。
+        const { action_type: chosen, countermeasure_mode: countermeasureMode, channel, device_id: deviceId, reason } = values;
+        // 结果未知时沿用原主体、版本、设备、航班确认和幂等键，不把重试改成新的阶段动作。
         let body = pendingRequestBodies.get(key);
         if (!body) {
           let binding;
@@ -321,7 +329,8 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
             ...(binding?.riskContext || riskContext),
             channel, device_id: String(deviceId || '').trim(),
             ...((chosen || actionType) === 'COUNTERMEASURE' ? { countermeasure_mode: countermeasureMode } : {}),
-            reason: String(reason || '').trim()
+            reason: String(reason || '').trim(),
+            ...(flightAckOf(values) ? { flight_check_ack: true } : {})
           };
           pendingRequestBodies.set(key, body);
         }
@@ -337,6 +346,11 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
     })
   });
   return true;
+}
+
+/** 已有授权的设备与反制方式，用来查附近航班。 */
+function flightSubjectOf(auth) {
+  return { channel: auth.channel, action_type: auth.action_type, countermeasure_mode: auth.countermeasure_mode, device_id: auth.device_id };
 }
 
 /** 审批（批准 / 驳回）。 */
@@ -355,9 +369,11 @@ export function openDisposalApproval({ authorization, refresh, onDone } = {}) {
       { key: 'decision', label: '审批结论', type: 'radio', required: true, options: [
         { value: 'APPROVE', label: '批准' }, { value: 'REJECT', label: '驳回' }
       ] },
+      ...flightCheckFields({ info: true }),
       { key: 'note', label: '审批意见', type: 'textarea', minRows: 3, placeholder: '驳回时必填；批准时可写明限制条件' }
     ],
-    initial: { decision: 'APPROVE', note: '' },
+    initial: { decision: 'APPROVE', note: '', ...flightSubjectOf(auth) },
+    onModelChange: refreshFlightCheck,
     confirmText: '提交审批',
     validate: m => (m.decision === 'REJECT' && !String(m.note || '').trim() ? '驳回时必须填写审批意见' : null),
     onSubmit: ({ decision, note }) => submit({
@@ -388,16 +404,26 @@ export function openDisposalExecution({ authorization, refresh, onDone } = {}) {
       ? '经四通道网络控制器下发，回执以设备为准。停止时下发全关，不是急停。'
       : '下发后以设备回执为准：回执成功才算完成，超时或失败会如实标为执行失败。',
     introHtml: summaryHtml(auth),
-    fields: [],
-    initial: {},
+    fields: flightCheckFields(),
+    initial: { ...flightSubjectOf(auth), flight_check_ack: false },
     confirmText: '下发执行',
     danger: true,
-    onSubmit: () => submit({
+    onModelChange: refreshFlightCheck,
+    submitEnabled: m => flightLevel(m) !== 'BLOCK',
+    validate: flightValidate,
+    onSubmit: values => submit({
       scope: auth.authorization_id,
       action: 'execute',
-      call: key => disposalApi.execute(auth.authorization_id, {
-        ...riskActionContext(auth), expected_version: Number(auth.version)
-      }, key),
+      call: key => {
+        // 未知结果重试仍是原执行请求，不能因航班确认变化复用同键提交不同报文。
+        let body = pendingRequestBodies.get(key);
+        if (!body) {
+          body = { ...riskActionContext(auth), expected_version: Number(auth.version),
+            ...(flightAckOf(values) ? { flight_check_ack: true } : {}) };
+          pendingRequestBodies.set(key, body);
+        }
+        return disposalApi.execute(auth.authorization_id, body, key);
+      },
       refresh,
       onDone,
       /* 执行被阻（本期凌云四种处置码都还没开放）既不是成功也不是失败：如实说明设备受阻原因。 */

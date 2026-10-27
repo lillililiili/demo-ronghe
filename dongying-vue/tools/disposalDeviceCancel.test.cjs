@@ -1,3 +1,4 @@
+const flightHelpers = require('./flightCheckTestHelpers.cjs')();
 /* 反制设备可用性、撤销授权与“为什么不能反制”的提示（BUG-03 / ZT-18）：node tools/disposalDeviceCancel.test.cjs */
 const { test, before } = require('node:test');
 const riskHelpers = require('./riskCaseTestHelpers.cjs');
@@ -26,7 +27,7 @@ function load({ devices = DEVICES, create, cancel, listError } = {}) {
   const source = readFileSync(path.join(__dirname, '../src/ui/disposalAuthModal.js'), 'utf8')
     .replace(/^import .*;\r?\n/gm, '').replace(/\bexport /g, '');
   let sequence = 0;
-  const context = vm.createContext({ ...riskHelpers,
+  const context = vm.createContext({ ...riskHelpers, ...flightHelpers,
     openFormModal: form => state.forms.push(form), closeModal: () => { state.closed++; },
     toast: (message, kind) => state.toasts.push([message, kind]),
     deviceApi: { listTimed: async () => { state.reads++; if (listError) throw listError; return { items: devices }; } },

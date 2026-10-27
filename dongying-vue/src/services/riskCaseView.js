@@ -79,7 +79,8 @@ export function riskCaseProgress(row) {
   const value = counterLabels[counter?.status];
   if (value) return { t: value[0], c: value[1] };
   if (risk.stage === 'UNKNOWN') return { t: '处置暂停', c: 't-amber' };
-  if (risk.stage === 'CLEARED') return { t: '风险已解除', c: 't-green' };
+  // 实测告警的风险记录只在通知后按有效位置确认撤离时变为 CLEARED（预测风险另有自己的解除），2026-10-26 用户要求写明办完。
+  if (risk.stage === 'CLEARED') return risk.manual_counter_only === false ? { t: '已撤离 · 处置已结束', c: 't-green' } : { t: '风险已解除', c: 't-green' };
   if (risk.stage === 'ENDED') return { t: '处置已结束', c: 't-gray' };
   return null;
 }

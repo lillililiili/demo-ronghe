@@ -208,6 +208,7 @@ class FullChain:
         self._inputs = None
         self._route_records = {}
         self.weather = copy.deepcopy(scene.get('fullchain',{}).get('weather',{}))
+        self.adsb = None
         self.observation_source_count = scene.get('fullchain',{}).get('observationSourceCount',1)
         if type(self.observation_source_count) is not int or not 1 <= self.observation_source_count <= 3:
             raise ValueError('标准化模拟观测来源数量须为 1 至 3 的整数')
@@ -620,6 +621,11 @@ class FullChain:
                 self.request('weather-forecast-' + forecast['plan_id'], PREFIX+'/weather', forecast)
             # Only submit configured inputs. Risk conclusions belong to the platform's
             # forecast rules; selecting weather must not inject three preset warnings.
+        if 'adsb' in self.scene.get('fullchain',{}).get('categories',[]):
+            from adsb_flights import AdsbFeed
+            variant=(self.scene['fullchain'].get('adsb') or {}).get('variant','enter')
+            self.adsb=AdsbFeed(self.api,self.scope,variant)
+            self.manifest['adsb_receiver']=self.adsb.prepare()
         self.checkpoint()
 
     def tick(self, targets, elapsed, sequence, *, observed_at=None):
@@ -671,6 +677,11 @@ class FullChain:
                 self.publish('normalized',PREFIX+'/target-observations',{
                     'message_id':stable_simulator_id(self.message('o'+str(sequence)+'-'), device_id),
                     'source_id':source['source_id'],'observed_at':now,'items':items,'coordinate_system':'WGS84'},len(items))
+        if self.adsb:
+            count=self.adsb.tick(elapsed,now)
+            if count:
+                entry=self.state['coverage'].setdefault('adsb',{'label':'模拟航班','submitted':0,'accepted':0,'processed':None,'last_at':None})
+                entry['submitted']+=count;entry['accepted']+=count;entry['last_at']=self.clock()
         sensor=self.manifest.get('weather_device')
         if sensor and elapsed>=self.next_weather:
             self.publish('weather-observations',PREFIX+'/weather-observations',{
@@ -715,6 +726,11 @@ class FullChain:
                     zone_state['receipt']=result
                 else:
                     self.warn(original['body'].get('name','临时管制区')+'已到失效时间，跳过本批次的空域撤销')
+
+    def release_adsb(self):
+        """停止、完成或失败时停用模拟航班接收机，后面别的流程的反制不再按它检查。"""
+        if self.adsb:
+            self.adsb.release()
 
     def withdraw_zones(self):
         """停止、完成或失败时，撤回本场景里各区域在平台上的空域（编号 sim-map-airspace-…），下一次不再受它们影响（清单第 4 条）。

@@ -18,6 +18,7 @@ const counterText = computed(() => {
   const counter = props.summary?.risk_case?.counter || props.counter;
   const status = counter?.status || props.summary?.counter_status;
   if (status === 'FAILED' && counter?.result_code === 'AUTHORIZATION_STOPPED') return '启动被拦截';
+  if (status === 'STOPPED' && counter?.result_code === 'STOPPED_BY_AIRCRAFT') return '已停止：附近有航班';
   const handoff = status === 'COMPLETED' ? completedHandoffProgress(props.summary) : '';
   if (handoff) return `已完成 · ${handoff}`;
   return { REQUESTED: '待审批', APPROVED: '已批准，等待启动', EXECUTING: '执行中', COMPLETED: '已完成', STOPPED: '已停止', FAILED: '启动失败', CANCELLED: '已取消', EXPIRED: '授权已失效' }[status]
@@ -59,7 +60,7 @@ const voiceTriggerText = computed(() => {
     <div class="risk-order"><strong>{{ orderTitle }}</strong><span>{{ orderDescription }}</span></div>
     <dl class="risk-channels" :aria-busy="!summaryReady">
       <div><dt>短信</dt><dd>{{ summaryReady ? sms.title : '正在更新发送结果' }}</dd></div>
-      <div><dt>反制</dt><dd>{{ counterText }}</dd></div>
+      <div><dt>反制</dt><dd :class="{ 'is-aircraft-stop': counterText === '已停止：附近有航班' }">{{ counterText }}</dd></div>
       <div><dt>电话</dt><dd>{{ summaryReady ? voiceOrderText || voice.title : '正在更新通话结果' }}<small v-if="summaryReady && voiceTriggerText" class="voice-trigger">{{ voiceTriggerText }}</small></dd></div>
     </dl>
     <p v-if="!compact && order?.reason" class="risk-order-note">{{ order.reason }}</p>
@@ -68,4 +69,5 @@ const voiceTriggerText = computed(() => {
 <style scoped>
 .risk-disposal-summary{padding:10px 0;font-size:12px;color:var(--txt-2)}.risk-order{display:flex;align-items:baseline;gap:10px;margin-bottom:8px}.risk-order strong{color:var(--cyan)}.risk-order span,.risk-order-note{color:var(--txt-3);font-size:11px}.risk-channels{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:0}.risk-channels>div{padding:8px;background:var(--surface-2);border:1px solid var(--line);border-radius:6px}.risk-channels dt{color:var(--txt-3);font-size:11px}.risk-channels dd{margin:4px 0 0;overflow-wrap:anywhere;line-height:1.5}.risk-order-note{margin:8px 0 0}.compact .risk-channels{grid-template-columns:1fr}.compact .risk-channels>div{display:flex;gap:9px;padding:5px 7px}.compact .risk-channels dt{flex:none;width:28px}.compact .risk-channels dd{margin:0;font-size:11px}
 .voice-trigger{display:block;margin-top:3px;color:var(--txt-3);font-size:11px;line-height:1.5}
+.risk-channels dd.is-aircraft-stop{color:var(--red)}
 </style>

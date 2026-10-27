@@ -127,7 +127,7 @@ function verificationEntry(readCase) {
   toast: message => notices.push(message), getUavRiskCase: async id => { caseReads.push(id); return readCase(id); },
   getUavEvent: () => { throw new Error('已有风险时不能读取原始事件代替'); },
   getAlarm: () => { throw new Error('已有风险时不能读取原始告警代替'); },
-  openUavVerification: context.openUavVerification, source: { refresh: async () => {} } };
+  openUavVerification: context.openUavVerification, applySelectedRiskDetail: () => false, source: { refresh: async () => {} } };
  const click = new Function(...Object.keys(deps), `let verificationOpening = null;\n${body('verifySelectedAlarm')}\n${body('openTargetVerification')}\nreturn verifySelectedAlarm;`)(...Object.values(deps));
  return { click, forms, notices, submissions, caseReads, selectedUavAlarm, loading };
 }

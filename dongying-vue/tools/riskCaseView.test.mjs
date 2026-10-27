@@ -89,6 +89,10 @@ test('办理进度优先采用本风险已授权的真实反制状态，未知�
       assert.equal(riskCaseProgress(row).t, expected);
     }
     assert.equal(riskCaseProgress({ ...base, risk_case: { ...base.risk_case, stage: 'UNKNOWN' } }).t, '处置暂停');
+    // 实测告警通知后确认撤离写明办完；预测风险解除（或缺少来源标记）仍写“风险已解除”。
+    assert.equal(riskCaseProgress({ ...base, risk_case: { ...base.risk_case, stage: 'CLEARED', manual_counter_only: false } }).t, '已撤离 · 处置已结束');
+    assert.equal(riskCaseProgress({ ...base, risk_case: { ...base.risk_case, stage: 'CLEARED', manual_counter_only: true } }).t, '风险已解除');
+    assert.equal(riskCaseProgress({ ...base, risk_case: { ...base.risk_case, stage: 'CLEARED' } }).t, '风险已解除');
     assert.equal(riskCaseProgress({ ...base, risk_case: { ...base.risk_case, stage: 'UNKNOWN', counter: { status: 'EXECUTING' } } }).t, '反制执行中');
   }
 });
@@ -240,5 +244,20 @@ test('已完成反制仅附带同区域服务端移送进度，不根据阶段�
     assert.equal(disposalSummaryView({ ...base, event_id: randomUUID(), auto_handoff: { status: 'WAITING' } }).counter, '已完成');
     assert.equal(disposalSummaryView({ ...base, auto_handoff: { status: 'PENDING_DECISION', handoff_id: randomUUID() } }).counter, '已完成');
     assert.equal(disposalSummaryView({ ...base, risk_case: { ...base.risk_case, counter: { status: 'EXECUTING' } }, auto_handoff: { status: 'SUBMITTED', handoff_id: randomUUID() } }).counter, '执行中');
+  }
+});
+
+
+test('民航自动停止、资格拦截和移送完成各按后端状态显示，不互相覆盖', () => {
+  for (const [status, result_code, text] of [
+    ['STOPPED', 'STOPPED_BY_AIRCRAFT', '已停止：附近有航班'],
+    ['FAILED', 'AUTHORIZATION_STOPPED', '启动被拦截'],
+    ['FAILED', 'STOPPED_BY_AIRCRAFT', '启动失败'],
+    ['STOPPED', 'AUTHORIZATION_STOPPED', '已停止'],
+    ['COMPLETED', null, '已完成']
+  ]) {
+    const summary = { risk_case: { counter: { status, result_code } } };
+    assert.equal(disposalSummaryView(summary).counter, text);
+    assert.equal(disposalSummaryView({ ...summary, _unavailable: true }).counter, '正在更新当前资格');
   }
 });

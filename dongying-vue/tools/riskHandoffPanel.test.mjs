@@ -13,7 +13,7 @@ function panel(summary) {
   const stub = { render: () => null };
   const dependencies = {
     ...Vue, ...handoffHelpers, riskSummaryMatches, userFacingMessage: value => value,
-    RiskDisposalSummary: stub, AutoSmsNotice: stub, AutoVoiceNotice: stub, AdvisoryRecords: stub,
+    RiskDisposalSummary: stub, FlightCheckNotice: stub, AutoSmsNotice: stub, AutoVoiceNotice: stub, AdvisoryRecords: stub,
     useUavAdvisory: () => ({ data: Vue.ref(summary), loading: Vue.ref(false), error: Vue.ref(''), load() {} }),
     counterProgressView: () => null, authUser: Vue.ref(null), hasPermission: () => false,
     openFormModal() {}, openConfirm() {}, toast() {}, handoffApi: {}, disposalApi: {},

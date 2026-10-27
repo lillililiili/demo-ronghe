@@ -190,7 +190,7 @@ GUIDE = {
         'before': [
             '先在后台「运维管理 → 接口配置 → 电话通知录音」上传并选用预测进入禁飞区专用录音，确认模拟通知接收端及模拟反制设备可用。',
             '准备有核实、申请和执行权限的账号；普通申请仍需另一个有审批权限的账号审批，有既有直接反制权限的人可按原策略直接发起。',
-            '本流程预警阶段不自动核实；实际入区后尚未核实且后台启用规则全部满足、本区实测依据有效时可自动核实。预测衍生处置不自动反制、不自动处罚；规则启用状态由后台维护，权限、有效证据和设备校验保持。',
+            '本流程预警阶段不自动核实；实际入区后尚未核实且后台启用规则全部满足、本区实测依据有效时可自动核实。预测衍生处置不自动反制，须人工发起；实际入区且本区独立实测违法依据早于反制完成、真实停机回执及已启用通知处罚规则满足时可自动移送，系统不自动处罚。仅有预测不能作为移送依据；权限、有效证据和设备校验保持。',
         ],
         'sees': [
             '先在融合感知选中无人机，查看未来10、20、30秒位置。约半分钟后留意预警；后台只预测未来30秒，预警是否成立及可办理时段以平台为准。',
@@ -291,6 +291,10 @@ def _read_legacy_flows(root):
 def read_acceptance_flows(root):
     """Daily flows share one risk journey; old flow 9 is import/history compatibility only."""
     from unified_risk_flows import integrate
+    from adsb_flights import flight_flow
     legacy = _read_legacy_flows(root)
-    return dict(status=legacy['status'], flows=integrate(legacy['flows']),
+    flows = integrate(legacy['flows'])
+    # 流程 10「反制前附近有航班」由流程 5 的无人机加上模拟航班组成（2026-10-26）。
+    flows.append(flight_flow(next(flow for flow in legacy['flows'] if flow['flow'] == 5)))
+    return dict(status=legacy['status'], flows=flows,
                 compatibility_flows=[flow for flow in legacy['flows'] if flow['flow'] == 9])

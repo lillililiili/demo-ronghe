@@ -6,7 +6,8 @@ import vm from 'node:vm';
 import { computed } from 'vue';
 import { autoSmsView } from '../src/components/disposal/autoSmsView.js';
 import { autoVoiceView } from '../src/components/disposal/autoVoiceView.js';
-import { riskCaseProgress, riskCaseKey, riskCaseAlarm, riskCaseMatches, riskActionContext, riskConfirmed, riskCaseVisible, riskSummaryMatches } from '../src/services/riskCaseView.js';
+import { completedHandoffProgress } from '../src/components/disposal/autoHandoffView.js';
+import { riskCaseProgress, riskCaseKey, riskCaseAlarm, riskCaseMatches, riskActionContext, riskConfirmed, riskCaseVisible, riskSummaryMatches, riskCaseVerificationLabel, riskCaseVerificationHint, verificationSourceLabel } from '../src/services/riskCaseView.js';
 import { uavProcessActions } from '../src/pages/situation/situationFlow.js';
 import { predictionVerificationState } from '../src/services/predictionView.js';
 import { counterHiddenReason } from '../src/components/disposal/counterNextStep.js';
@@ -99,8 +100,8 @@ test('办理进度优先采用本风险已授权的真实反制状态，未知�
 function disposalSummaryView(summary) {
   const source = readFileSync(new URL('../src/components/disposal/RiskDisposalSummary.vue', import.meta.url), 'utf8');
   const script = source.match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*;\r?$/gm, '');
-  return vm.runInNewContext(`${script}\n({ title: voiceOrderText.value || voice.value.title, reason: order.value?.reason });`,
-    { computed, autoSmsView, autoVoiceView, defineProps: () => ({ summary }) });
+  return vm.runInNewContext(`${script}\n({ title: voiceOrderText.value || voice.value.title, reason: order.value?.reason, trigger: voiceTriggerText.value, ready: summaryReady.value, counter: counterText.value, orderTitle: orderTitle.value, order: order.value });`,
+    { computed, autoSmsView, autoVoiceView, completedHandoffProgress, defineProps: () => ({ summary }) });
 }
 
 test('处置摘要区分待核实、确实依据不足和已结束，不改变资格或真实原因', () => {
@@ -111,7 +112,7 @@ test('处置摘要区分待核实、确实依据不足和已结束，不改变�
       risk_case: { risk_case_id: randomUUID(), stage: 'ENTERED', verification_status: 'PENDING_VERIFICATION' } };
     for (const stage of ['PREDICTED', 'ENTERED', 'OBSERVED']) {
       const row = { ...original, risk_case: { ...original.risk_case, stage } }, before = JSON.stringify(row);
-      assert.equal(disposalSummaryView(row).title, '等待人工核实，暂不拨打');
+      assert.equal(disposalSummaryView(row).title, stage === 'PREDICTED' ? '等待人工核实，暂不拨打' : '等待核实，暂不拨打');
       assert.equal(disposalSummaryView(row).reason, reason);
       assert.equal(JSON.stringify(row), before, '仅展示，不更改服务端资格、核实或依据');
     }
@@ -134,4 +135,129 @@ test('真实通话状态优先于风险顺序暂停，保留正常优先流程�
     assert.equal(disposalSummaryView({ ...summary, auto_voice: { status, attempt_count: 1 } }).title, expected);
   }
   assert.equal(disposalSummaryView({ ...summary, response_order: { voice_status: 'WAITING_START' }, auto_voice: { status: 'WAITING' } }).title, '电话等待启动确认');
+});
+
+
+test('预测人工核实与入区规则核实按当前阶段说明，人工反制标记不改变核实方式', () => {
+  for (const source_mode of ['live', 'replay']) for (const manual_counter_only of [true, false]) {
+    const row = { source_mode, risk_case: { risk_case_id: randomUUID(), manual_counter_only, stage: 'PREDICTED', verification_status: 'PENDING_VERIFICATION' } };
+    assert.equal(riskCaseVerificationLabel(row), '待人工核实');
+    assert.match(riskCaseVerificationHint(row), /人工核实本次预测风险/);
+    row.risk_case.stage = 'ENTERED';
+    assert.equal(riskCaseVerificationLabel(row), '待核实');
+    assert.match(riskCaseVerificationHint(row), /满足已启用的核实规则可自动核实，也可人工核实/);
+    for (const verification_status of ['CONFIRMED', 'FALSE_POSITIVE']) {
+      row.risk_case.verification_status = verification_status;
+      assert.equal(riskCaseVerificationHint(row), '', '已核实不再提示重复核实');
+    }
+  }
+});
+
+test('核实来源依赖真实触发方式，空操作人和预测来源都不能伪造自动核实', () => {
+  assert.equal(verificationSourceLabel({ trigger_mode: 'AUTO', actor_id: null }), '系统自动核实');
+  assert.match(verificationSourceLabel({ trigger_mode: 'MANUAL', actor_id: randomUUID() }), /人工核实/);
+  assert.equal(verificationSourceLabel({ trigger_mode: 'MANUAL' }), '人工核实 · 核实人未提供');
+  assert.equal(verificationSourceLabel({ actor_id: null }), '核实方式未提供');
+  assert.equal(verificationSourceLabel({ manual_counter_only: true }), '核实方式未提供');
+});
+
+
+test('电话等待上限可见，真实通话结果附当次冻结原因，不能从最新策略推断旧原因', () => {
+  for (const max_wait_seconds of [5, 60, 300]) {
+    const waiting = { response_order: { voice_status: 'WAITING_START', max_wait_seconds }, auto_voice: { status: 'WAITING' } };
+    assert.equal(disposalSummaryView(waiting).title, `电话等待启动确认（最长${max_wait_seconds}秒）`);
+    const sent = { response_order: { voice_status: 'START_CONFIRMED', max_wait_seconds: 45 },
+      auto_voice: { status: 'SIMULATED_PLAYED', attempt_count: 1,
+        response_order_basis: { status: 'WAIT_TIMEOUT', max_wait_seconds } } };
+    assert.equal(disposalSummaryView(sent).title, '模拟接通并播放完成');
+    assert.equal(disposalSummaryView(sent).trigger, `优先等待已达${max_wait_seconds}秒，转电话通知`);
+    for (const status of ['UNKNOWN', 'FAILED', 'CALLING']) {
+      assert.equal(disposalSummaryView({ ...sent, auto_voice: { ...sent.auto_voice, status } }).trigger,
+        `优先等待已达${max_wait_seconds}秒，转电话通知`);
+    }
+  }
+  for (const [status, expected] of [['START_CONFIRMED', '设备确认启动后拨打'],
+    ['START_FAILED', '设备启动失败，转电话通知'], ['START_UNAVAILABLE', '反制设备不可用，转电话通知']]) {
+    assert.equal(disposalSummaryView({ response_order: { voice_status: 'PAUSED' },
+      auto_voice: { status: 'SIMULATED_PLAYED', attempt_count: 1, response_order_basis: { status } } }).trigger, expected);
+  }
+  assert.equal(disposalSummaryView({ response_order: { voice_status: 'WAIT_TIMEOUT', max_wait_seconds: 60 },
+    auto_voice: { status: 'SIMULATED_PLAYED', attempt_count: 1 } }).trigger, '', '旧通话没有冻结依据时不猜测拨打原因');
+});
+
+test('处置摘要未就绪时不显示旧顺序或待核实事实', () => {
+  for (const summary of [null, { _unavailable: true, response_order: { counter_priority: false } }]) {
+    const view = disposalSummaryView(summary);
+    assert.equal(view.ready, false);
+    assert.equal(view.order, null);
+  }
+  assert.equal(disposalSummaryView({ event_id: randomUUID(), response_order: { counter_priority: true } }).ready, true);
+  const source = readFileSync(new URL('../src/components/disposal/RiskDisposalSummary.vue', import.meta.url), 'utf8');
+  assert.match(source, /v-if="!summaryReady"[^>]*[^<]*>处置进度更新中，暂不能办理。/);
+  assert.match(source, /<dl class="risk-channels" :aria-busy="!summaryReady"/);
+});
+test('入口可见不代表可以反制；摘要与按钮使用相同明确资格并保留阻断原因',()=>{
+ const base={event_id:randomUUID(),counter_launch_visible:true,can_direct_counter:false,can_request_counter:false,counter_block_reason:'缺少当前有效实测入区依据'};
+ assert.equal(disposalSummaryView(base).counter,base.counter_block_reason);
+ assert.equal(disposalSummaryView({...base,can_direct_counter:true}).counter,'可直接反制');
+ assert.equal(disposalSummaryView({...base,can_request_counter:true}).counter,'可申请反制（需审批）');
+ assert.equal(disposalSummaryView({...base,_unavailable:true,can_direct_counter:true}).counter,'正在更新当前资格');
+ assert.equal(disposalSummaryView(null).counter,'正在更新当前资格');
+});
+
+test('资格暂停不是后台切回通知优先，已受理电话继续呈现真实回执与冻结原因',()=>{
+ const paused={response_order:{counter_priority:false,voice_status:'PAUSED'},risk_case:{stage:'UNKNOWN',verification_status:'CONFIRMED'},
+  auto_voice:{status:'SIMULATED_PLAYED',attempt_count:1,response_order_basis:{status:'WAIT_TIMEOUT',max_wait_seconds:60}}};
+ assert.equal(disposalSummaryView(paused).orderTitle,'处置进度');
+ assert.equal(disposalSummaryView(paused).title,'模拟接通并播放完成');
+ assert.equal(disposalSummaryView(paused).trigger,'优先等待已达60秒，转电话通知');
+ assert.equal(disposalSummaryView(null).orderTitle,'处置进度');
+});
+
+
+test('风险摘要只凭明确失败结果码区分启动拦截，超时和设备失败不混淆',()=>{
+ for(const source_mode of ['live','replay']) for(const [result_code,expected] of [
+  ['AUTHORIZATION_STOPPED','启动被拦截'],['DEVICE_FAILED','启动失败'],['ADAPTER_TIMEOUT','启动失败'],[undefined,'启动失败']]){
+  const counter={authorization_id:randomUUID(),status:'FAILED',result_code};
+  const summary={event_id:randomUUID(),source_mode,risk_case:{risk_case_id:randomUUID(),counter}};
+  assert.equal(disposalSummaryView(summary).counter,expected);
+  const progress=riskCaseProgress(summary);
+  assert.equal(progress.t,result_code==='AUTHORIZATION_STOPPED'?'启动被拦截':'反制失败');
+ }
+ assert.equal(disposalSummaryView({risk_case:{counter:{status:'EXECUTING',result_code:'AUTHORIZATION_STOPPED'}}}).counter,'执行中');
+});
+
+
+test('已完成反制仅附带同区域服务端移送进度，不根据阶段认定已移送或已处罚', () => {
+  for (const source_mode of ['live', 'replay']) {
+    const event_id = randomUUID(), risk_case_id = randomUUID();
+    const base = { event_id, source_mode, risk_case: { risk_case_id, action_event_id: event_id, stage: 'ENTERED', manual_counter_only: true,
+      counter: { status: 'COMPLETED' } } };
+    for (const [status, label] of [['WAITING', '待移送'], ['BLOCKED', '移送受阻'], ['SUBMITTED', '已移送'], ['PENDING', '移送待发送']]) {
+      const view = disposalSummaryView({ ...base, auto_handoff: { status, handoff_id: ['SUBMITTED', 'PENDING'].includes(status) ? randomUUID() : null } });
+      assert.equal(view.counter, `已完成 · ${label}`);
+      assert.doesNotMatch(view.counter, /已处罚|处罚已办结/);
+    }
+    assert.equal(disposalSummaryView(base).counter, '已完成');
+    assert.equal(disposalSummaryView({ ...base, auto_handoff: { status: 'SUBMITTED' } }).counter, '已完成');
+    assert.equal(disposalSummaryView({ ...base, _riskCaseId: randomUUID(), auto_handoff: { status: 'SUBMITTED', handoff_id: randomUUID() } }).counter, '已完成');
+    assert.equal(disposalSummaryView({ ...base, event_id: randomUUID(), auto_handoff: { status: 'WAITING' } }).counter, '已完成');
+    assert.equal(disposalSummaryView({ ...base, auto_handoff: { status: 'PENDING_DECISION', handoff_id: randomUUID() } }).counter, '已完成');
+    assert.equal(disposalSummaryView({ ...base, risk_case: { ...base.risk_case, counter: { status: 'EXECUTING' } }, auto_handoff: { status: 'SUBMITTED', handoff_id: randomUUID() } }).counter, '执行中');
+  }
+});
+
+
+test('民航自动停止、资格拦截和移送完成各按后端状态显示，不互相覆盖', () => {
+  for (const [status, result_code, text] of [
+    ['STOPPED', 'STOPPED_BY_AIRCRAFT', '已停止：附近有航班'],
+    ['FAILED', 'AUTHORIZATION_STOPPED', '启动被拦截'],
+    ['FAILED', 'STOPPED_BY_AIRCRAFT', '启动失败'],
+    ['STOPPED', 'AUTHORIZATION_STOPPED', '已停止'],
+    ['COMPLETED', null, '已完成']
+  ]) {
+    const summary = { risk_case: { counter: { status, result_code } } };
+    assert.equal(disposalSummaryView(summary).counter, text);
+    assert.equal(disposalSummaryView({ ...summary, _unavailable: true }).counter, '正在更新当前资格');
+  }
 });

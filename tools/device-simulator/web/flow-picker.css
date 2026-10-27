@@ -13,6 +13,10 @@
 .flow-meta { margin: 0 0 10px; color: var(--muted); font-size: 12px; }
 .flow-variant { display: grid; gap: 6px; margin: 12px 0 16px; font-size: 13px; font-weight: 650; }
 .flow-variant select { width: 100%; min-height: 40px; font-weight: 400; }
+.flow-journey { margin: 10px 0 8px; font-weight: 650; color: var(--text); }
+.flow-supplemental { margin: 0 0 16px; border: 1px solid var(--border); border-radius: 8px; padding: 0 10px; }
+.flow-supplemental summary { cursor: pointer; padding: 10px 0; min-height: 44px; font-size: 13px; }
+.flow-supplemental .flow-variant { margin: 8px 0 12px; }
 .flow-detail section { margin: 0 0 14px; }
 .flow-detail h4 { margin: 0 0 4px; font-size: 13px; }
 .flow-detail p, .flow-detail li, .flow-banner-body li { font-size: 13px; line-height: 1.75; }

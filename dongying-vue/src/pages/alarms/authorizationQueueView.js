@@ -75,6 +75,7 @@ export function executeBlockedReason(row, userId, can = () => false) {
 export function nextStep(row, userId) {
   if (row.channel === 'MANUAL') return '历史人工执行记录，仅供查阅';
   if (!deviceChannel(row)) return '执行通道未知，请查看详情';
+  if (row.status === 'FAILED' && row.result_code === 'AUTHORIZATION_STOPPED') return '启动被拦截，请查看阻断原因';
   if (row.execution_block_reason === 'LEGACY_JAMMING_RETIRED') return '自动接续已停用；历史干扰授权不能再次执行，已发送指令与停止记录仍可查看';
   if (row.execution_block_reason) return canCancel(row, userId) ? '执行受阻，请查看原因；用不上了可以撤销这条授权，换设备重新申请' : '执行受阻，请查看原因';
   const code = primaryCode(row, userId);
@@ -89,7 +90,8 @@ export function nextStep(row, userId) {
   if (['COMPLETED', 'REJECTED', 'CANCELLED'].includes(row.status)) return '当前无需操作，可查看记录';
   return '状态未明确，请查看详情';
 }
-export const resultText = row => receiptTimedOut(row)
+export const resultText = row => row?.status === 'FAILED' && row?.result_code === 'AUTHORIZATION_STOPPED'
+  ? row.result_detail || '启动资格已失效或处置已停止，请查看阻断原因与设备反馈。' : receiptTimedOut(row)
   ? '超时不代表设备未执行；请查看设备反馈并核查实际状态，避免重复下发。' : ({
   MANUAL_SUCCEEDED: '人工登记执行成功', MANUAL_FAILED: '人工登记执行失败',
   DEVICE_SUCCEEDED: '设备反馈执行成功', DEVICE_FAILED: '设备反馈执行失败',

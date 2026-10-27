@@ -10,7 +10,7 @@ const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 const jobs = new Map();
 let nextId = 0;
 const sandbox = {
-  toAirspaces, window: { UI: { captureAlarmGlows: () => [], releaseAlarmGlows() {} } },
+  toAirspaces, clearTimeout, window: { UI: { captureAlarmGlows: () => [], releaseAlarmGlows() {} } },
   requestAnimationFrame(callback) { const id = ++nextId; jobs.set(id, callback); return id; },
   cancelAnimationFrame(id) { jobs.delete(id); }
 };
@@ -136,5 +136,48 @@ flush();
 assert.equal(overlapLabels.length, 2, 'identical versions share one label, while distinct airspace identities retain their labels');
 assert.equal(overlapMap.data.airspaces.length, 3, 'label deduplication does not remove boundary facts');
 console.log('PASS: all five airspace kinds share management names/colors; version boundaries, missing metadata and zoom labels verified');
+
+// Suppressing the UAV hover card must preserve hit testing and other map consumers.
+const situationSource = read('src/pages/SituationPage.vue').replace(/\r\n/g, '\n');
+const tipStart = situationSource.indexOf('function renderMapTip(');
+assert.ok(tipStart >= 0);
+const tipRenderer = new Function('renderDeviceTip', 'renderTargetTip', 'renderPlanTip',
+  situationSource.slice(tipStart, situationSource.indexOf('\n}\n', tipStart) + 3) + '; return renderMapTip;')(
+    data => `device:${data.id}`, data => `target:${data.id}`, data => `plan:${data.id}`);
+let placements = 0;
+const tipMap = Object.assign(Object.create(MapView.prototype), {
+  opt: { fusionProfile: true, renderTip: tipRenderer },
+  tip: { style: {}, innerHTML: '', classList: { toggle() {} } },
+  baseEl: { style: {} }, _placeTip() { placements++; }
+});
+function hover(hit) {
+  tipMap._pickPts = [hit]; tipMap.mx = hit.x; tipMap.my = hit.y;
+  tipMap._hit();
+  assert.equal(tipMap.hover, hit, 'same hit remains available to the click handler');
+  assert.equal(tipMap.baseEl.style.cursor, 'pointer');
+}
+for (const [index, objectTypeCode] of ['UAV', 'BIRD', 'UAV', 'FOREIGN'].entries()) {
+  const hit = { kind: 'target', data: { id: `moving-${index}`, objectTypeCode }, x: 20 + index * 30, y: 50 + index * 10, tip: 'legacy default' };
+  const hidden = objectTypeCode === 'UAV';
+  const before = placements;
+  hover(hit); hover(hit); // Repeat the same cached hit, then a fresh observation and position.
+  hover({ ...hit, data: { ...hit.data, speed: 24 }, x: hit.x + 5 });
+  assert.equal(tipMap.tip.style.display, hidden ? 'none' : 'block');
+  assert.equal(tipMap.tip.innerHTML, hidden ? '' : `target:${hit.data.id}`);
+  if (hidden) assert.equal(placements, before, 'hidden hover must not position an empty card');
+}
+for (const kind of ['device', 'plan']) {
+  hover({ kind, data: { id: `${kind}-next` }, x: 220, y: 140, tip: 'default' });
+  assert.equal(tipMap.tip.style.display, 'block');
+  assert.equal(tipMap.tip.innerHTML, `${kind}:${kind}-next`);
+}
+for (const renderTip of [() => null, undefined]) {
+  tipMap.opt.renderTip = renderTip;
+  hover({ kind: 'target', data: { id: `other-page-${placements}` }, x: 40, y: 80, tip: 'other page default card' });
+  assert.equal(tipMap.tip.style.display, 'block');
+  assert.equal(tipMap.tip.innerHTML, 'other page default card', 'other pages keep their default tooltip');
+}
+console.log('PASS: UAV hover stays hidden across cached/replaced observations; click hits, other target/device/plan tips and default map behavior remain');
+
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

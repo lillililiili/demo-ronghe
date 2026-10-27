@@ -5,23 +5,28 @@ import { isPredictionAlarm, alarmPredictionState, PREDICTION_STATES } from '@/se
 import { pilotLocationText } from '@/services/pilotLocation.js';
 import { pilotDistanceNote } from '@/ui/pilotDistanceNote.js';
 import { useUavAdvisory } from '@/hooks/useUavAdvisory.js';
-import { riskCaseOf, riskStageLabel, riskCaseVerificationLabel } from '@/services/riskCaseView.js';
+import { riskCaseOf, riskStageLabel, riskCaseVerificationLabel, riskSummaryMatches } from '@/services/riskCaseView.js';
 import RiskDisposalSummary from '@/components/disposal/RiskDisposalSummary.vue';
 import SituationNextStep from './SituationNextStep.vue';
 
 const props = defineProps({ target: { type: Object, required: true }, alarm: Object, nowStatus: Object,
   summary: Object, sourceNames: String, now: Number, videoOpen: Boolean });
 const emit = defineEmits(['close', 'video', 'verify', 'records', 'open', 'updated', 'unavailable']);
+const currentSummary = computed(() => {
+  const risk = riskCaseOf(props.alarm);
+  return !props.alarm?._riskUnavailable && riskSummaryMatches(props.summary, props.alarm?.eventId, risk?.risk_case_id, risk) ? props.summary : null;
+});
 const icon = computed(() => window.UI.targetIcon(props.target));
 // Keep qualification updates independent of the collapsed information. Moving
 // observations patch text nodes; they never replace the card or its controls.
 const { error } = useUavAdvisory(() => props.alarm?.eventId || '', value => emit('updated', value), 1000,
-  (id, at, caseId) => emit('unavailable', id, at, caseId), () => riskCaseOf(props.alarm)?.risk_case_id || '');
+  (id, at, caseId) => emit('unavailable', id, at, caseId), () => riskCaseOf(props.alarm)?.risk_case_id || '', () => riskCaseOf(props.alarm));
 const predicted = computed(() => isPredictionAlarm(props.alarm));
 const predictionState = computed(() => predicted.value ? alarmPredictionState(props.alarm, props.now) : null);
 const terminal = computed(() => riskCaseOf(props.alarm) ? ['CLEARED', 'ENDED'].includes(riskCaseOf(props.alarm).stage) : ['WITHDRAWN', 'ENTERED'].includes(predictionState.value));
 const state = computed(() => {
   const risk = riskCaseOf(props.alarm);
+  if (props.alarm?._riskUnavailable) return { title: risk ? riskStageLabel(props.alarm) : '风险状态更新中', tone: 'grey' };
   if (risk) return { title: riskStageLabel(props.alarm), tone: risk.stage === 'ENTERED' ? 'red' : risk.stage === 'PREDICTED' ? 'amber' : risk.stage === 'CLEARED' ? 'green' : 'grey' };
   if (predicted.value) return { title: PREDICTION_STATES[predictionState.value] || '预测暂不可判断',
     tone: predictionState.value === 'ACTIVE' ? 'amber' : predictionState.value === 'ENTERED' ? 'red' : 'grey' };
@@ -64,12 +69,13 @@ const metric = (value, unit) => value !== null && value !== undefined && String(
     <dl class="sit-target-card-metrics">
       <div><dt>高度</dt><dd>{{ metric(target.alt, 'm') }}</dd></div>
       <div><dt>速度</dt><dd>{{ metric(target.speed, 'm/s') }}</dd></div>
-      <div><dt>最新上报</dt><dd>{{ clock(target.lastSeenAt) }}</dd></div>
+      <div><dt>{{ target._lastObservationOnly ? '最后观测' : '最新上报' }}</dt><dd>{{ clock(target.lastSeenAt) }}</dd></div>
     </dl>
+    <p v-if="alarm?._riskUnavailable" class="sit-target-read-error" role="status">{{ alarm._riskReadReason || '正在重新读取本次风险，暂停新操作。' }}</p>
     <p v-if="error" class="sit-target-read-error" role="alert">处置状态读取失败，请在详情中重试。</p>
-    <RiskDisposalSummary v-if="alarm && summary" :summary="summary" compact />
-    <SituationNextStep v-if="alarm" compact :alarm="alarm" :summary="summary" :now-status="nowStatus" :now="now"
-      @verify="emit('verify')" @records="emit('records', $event)"
+    <RiskDisposalSummary v-if="alarm" :summary="currentSummary" compact />
+    <SituationNextStep v-if="alarm" compact :alarm="alarm" :summary="currentSummary" :now-status="nowStatus" :now="now"
+      @verify="emit('verify', $event)" @records="emit('records', $event)"
       @updated="emit('updated', $event)" @unavailable="(id, at, caseId) => emit('unavailable', id, at, caseId)" />
     <div class="sit-target-card-links">
       <button v-if="alarm && !terminal" type="button" @click="emit('open')">查看告警与处置</button>

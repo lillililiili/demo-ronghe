@@ -28,6 +28,12 @@ class UnifiedRiskScenesTest(unittest.TestCase):
             self.assertEqual('prediction', row['default_variant'])
             self.assertEqual(['prediction', 'inside'], [item['id'] for item in row['variants']])
             self.assertTrue(row['guide']['prediction_only'])
+            self.assertTrue(row['guide']['includes_observed_stage'])
+            self.assertTrue(row['variants'][1]['supplemental'])
+            self.assertNotIn('supplemental', row['variants'][0])
+            self.assertIn('预警阶段人工核实', row['guide']['before'][0])
+            self.assertIn('后台启用的核实条件全部满足', row['guide']['before'][0])
+            self.assertIn('已核实不重复办理', str(row['guide']['sees']))
             for variant in row['variants']:
                 scene, _, targets, _ = compile_scene(variant['scene'])
                 target = next(iter(targets.values()))
@@ -35,6 +41,8 @@ class UnifiedRiskScenesTest(unittest.TestCase):
         self.assertEqual(['observed_false_alarm', 'prediction'], [v['id'] for v in result['flows'][3]['variants']])
         self.assertFalse(result['flows'][3]['variants'][0]['guide']['auto_verify'])
         self.assertIsNone(result['flows'][3]['variants'][1]['guide']['auto_verify'])
+        self.assertFalse(result['flows'][3]['variants'][1]['guide']['includes_observed_stage'])
+        self.assertFalse(result['flows'][3]['variants'][0]['supplemental'])
         self.assertEqual(legacy[4]['scene'], result['flows'][4]['scene'])
         self.assertEqual(before, _read_legacy_flows(ROOT)['flows'])
 

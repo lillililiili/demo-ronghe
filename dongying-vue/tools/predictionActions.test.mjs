@@ -29,15 +29,15 @@ test('告警详情终态不再提供核实预测风险或核实后短信提示�
     assert.equal(event.state, eventState);
   }
 });
-test('UNKNOWN、过期或后端依据不足只提供误报入口，有效预测说明通知条件', () => {
+test('预测统一显示核实入口，UNKNOWN、过期或后端依据不足仍限制属实提交', () => {
   const expired = alarm('ACTIVE', 'expired'); expired.prediction.valid_until = now;
   for (const [a, event] of [[alarm('UNKNOWN'), {}], [expired, {}], [alarm('ACTIVE', 'unconfirmed'), { verification_basis: { confirmable: false } }]]) {
     const html = render(a, event);
-    assert.match(html, /核实为误报/); assert.match(html, /不能提交预测风险属实/);
+    assert.match(html, /data-al="verify">核实<\/button>/); assert.match(html, /不能提交预测风险属实/);
     assert.doesNotMatch(html, /核实预测风险|核实属实后自动发送/);
   }
   const valid = render(alarm('ACTIVE'));
-  assert.match(valid, /核实预测风险/); assert.match(valid, /当前预测依据、飞手信息和通道校验/);
+  assert.match(valid, /data-al="verify">核实<\/button>/); assert.match(valid, /当前预测依据、飞手信息和通道校验/);
   assert.doesNotMatch(valid, /核实属实后自动发送/);
 });
 test('实际入区和其他普通告警维持原事件核实流程', () => {
@@ -94,7 +94,7 @@ test('统一风险已入区可就地核实，短暂未知仍可按权限核实�
     const entered = render(a, { allowed_actions: [], origin_kind: 'PREDICTED_AIRSPACE_ENTRY' });
     assert.match(entered, /data-al="verify">核实风险/); assert.doesNotMatch(entered, /请查看实际入区告警/);
     a.risk_case.stage = 'UNKNOWN';
-    const unknown = render(a); assert.match(unknown, /核实为误报/); assert.match(unknown, /当前风险依据不足/);
+    const unknown = render(a); assert.match(unknown, /data-al="verify">核实<\/button>/); assert.match(unknown, /当前风险依据不足/);
     assert.doesNotMatch(unknown, /请查看实际入区告警/);
     a.risk_case.allowed_actions = [];
     assert.doesNotMatch(render(a), /data-al="verify"/, '风险级禁止核实时不能借用原事件权限');

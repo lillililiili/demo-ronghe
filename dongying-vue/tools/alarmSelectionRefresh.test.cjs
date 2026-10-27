@@ -92,3 +92,38 @@ test('离开页面后不再启动选中风险刷新，原在途响应也不更�
     await f.refreshSelected(); assert.equal(f.requests.length, 1);
   }
 });
+
+
+test('统一风险核实记录只读本区域账本，不合并共享事件和另一禁飞区的结论', async () => {
+  for (const source_mode of ['live', 'replay']) {
+    const risk_case_id = randomUUID(), event_id = randomUUID();
+    const records = [{ verification_id: randomUUID(), trigger_mode: 'AUTO', conclusion: 'CONFIRMED', created_at: Date.now() }];
+    const alarm = { event_id, source_mode, risk_case: { risk_case_id, related_event_ids: [event_id, randomUUID()], verifications: records } };
+    const cur = { alarm, event: { state: 'CONFIRMED' }, verifications: [], verificationsLoaded: false };
+    const deps = { ...riskHelpers, cur, detailSeq: 1, VERIFICATION_PAGE_SIZE: 20, paintDetailContent() {}, messageOf: e => e.message,
+      listUavVerifications: async () => assert.fail('不能用事件核实代替区域风险账本'),
+      getUavRiskCase: async () => assert.fail('详情已返回账本，无需重复读取') };
+    const load = new Function(...Object.keys(deps), body('loadVerifications') + '\nreturn loadVerifications;')(...Object.values(deps));
+    await load(1);
+    assert.deepEqual(cur.verifications, records); assert.equal(cur.verificationsLoaded, true);
+    assert.equal(cur.verificationsError, '');
+    alarm.risk_case = { risk_case_id: randomUUID(), related_event_ids: [event_id], verifications: [] };
+    await load(1);
+    assert.deepEqual(cur.verifications, [], '另一风险没有核实不能借前一风险的确认');
+  }
+});
+
+test('风险账本缺失时按风险重读，关联不符显示失败而不回退事件核实', async () => {
+  for (const matches of [true, false]) {
+    const risk_case_id = randomUUID();
+    const cur = { alarm: { event_id: randomUUID(), risk_case: { risk_case_id } }, verifications: [] };
+    const records = [{ verification_id: randomUUID(), trigger_mode: 'MANUAL', actor_id: randomUUID(), created_at: Date.now() }];
+    const deps = { ...riskHelpers, cur, detailSeq: 1, VERIFICATION_PAGE_SIZE: 20, paintDetailContent() {}, messageOf: e => e.message,
+      listUavVerifications: async () => assert.fail('不能回退共享事件记录'),
+      getUavRiskCase: async id => { assert.equal(id, risk_case_id); return { risk_case: { risk_case_id: matches ? id : randomUUID(), verifications: records } }; } };
+    const load = new Function(...Object.keys(deps), body('loadVerifications') + '\nreturn loadVerifications;')(...Object.values(deps));
+    await load(1);
+    if (matches) assert.deepEqual(cur.verifications, records);
+    else { assert.deepEqual(cur.verifications, []); assert.match(cur.verificationsError, /本次风险的核实记录暂不可用/); }
+  }
+});

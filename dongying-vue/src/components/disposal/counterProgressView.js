@@ -22,6 +22,7 @@ export function isAutomaticCounter(row) {
 }
 
 function statusText(row) {
+  if (row.status === 'FAILED' && row.result_code === 'AUTHORIZATION_STOPPED') return '启动被拦截';
   if (row.status === 'STOPPED') return row.action_type === 'COUNTERMEASURE' ? '反制已中止' : '已停止';
   if (row.status === 'EXECUTING') return `${ACTION[row.action_type] || '处置'}中`;
   return labelOf(DISPOSAL_STATUS_LABEL, row.status, '状态待确认');

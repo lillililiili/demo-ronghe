@@ -38,7 +38,7 @@ def prediction_scene(number, **geometry):
                                      [start[0] - abs(end[0] - start[0]) / 4, start[1]]])
         scene['sceneGuide']['summary'] = '直线接近矩形禁飞区；收到本次风险短信送达回执后向左返回，未收到则继续原航线。'
         scene['sceneGuide']['stages'] = scene['sceneGuide']['stages'][:2]
-        scene['sceneGuide']['stages'][1]['description'] = '人工核实风险，查看短信回执；转向由真实模拟送达回执触发，具体时刻不预设。'
+        scene['sceneGuide']['stages'][1]['description'] = '预警阶段人工核实；未核实并继续入区时查看后台规则结果。转向由真实模拟短信送达回执触发，具体时刻不预设。'
         scene['mapGuide']['markers'] = [scene['mapGuide']['markers'][0]]
         scene['mapGuide']['directions'] = scene['mapGuide']['directions'][:1]
         scene['mapGuide']['markers'].append({'id': 'return', 'role': 'end',
@@ -55,9 +55,9 @@ def prediction_scene(number, **geometry):
                 device['coverage']['rangeM'] = max(device['coverage']['rangeM'], math.ceil(extent / 100) * 100 + 100)
     for stage in scene['sceneGuide']['stages']:
         if '提前预警' in stage['label'] and number != 2:
-            stage['description'] = '在无人机风险中人工核实；按平台允许动作办理通知与人工反制，可查看光电模拟视频。'
+            stage['description'] = '预警阶段可人工核实；验证入区自动衔接时暂不提交，在同一条风险查看后续状态，可查看光电模拟视频。'
         if '飞入禁飞区' in stage['label']:
-            stage['description'] = '同一风险更新为已实际入区，查看原记录继续办理，不重复核实或通知。'
+            stage['description'] = '同一风险更新为已实际入区；未核实时按后台启用规则判断，全部满足且入区依据有效才自动核实；已核实不重复，继续查看原记录和通知进度。'
     if number == 4:
         scene['sceneGuide']['stages'][1]['description'] = '在统一风险详情人工核实为误报，核对后续通知和反制不会启动；模拟航线仍按观测继续。'
     scene['fullchain']['expectedChecks'] = prediction_guide(number)['sees']
@@ -67,30 +67,32 @@ def prediction_scene(number, **geometry):
 
 def prediction_guide(number):
     guide = {
-        'prediction_only': True, 'auto_verify': None, 'warning': '',
+        'prediction_only': True, 'includes_observed_stage': number != 4, 'auto_verify': None, 'warning': '',
         'shows': '无人机从左向右直线接近矩形禁飞区，提前预警与实际入区使用同一条无人机风险办理记录。',
-        'before': ['提前预警必须人工核实、人工发起反制；无需调整普通实测告警的自动核实或自动反制规则。',
+        'before': ['预警阶段人工核实；实际入区时若尚未核实，后台启用的核实条件全部满足且本区实测依据有效才自动核实，否则继续人工核实。',
+                   '查看后台核实规则的实际启用状态；模拟器不替你开关规则。预测衍生风险的反制仍由有权限人员人工发起。',
                    '确认模拟短信、电话及预测用途录音可用；未配置或没有飞手资料时按平台提示处理。',
                    '处置顺序以后台当前策略和本风险资格为准；模拟器只读配置，不替用户启用规则。'],
         'sees': ['未来10／20／30秒虚线预测与实测轨迹区分；有效风险可排队光电跟踪，媒体就绪后查看带模拟标识的视频。',
-                 '预测转实测更新同一风险；已核实的持续风险不重复核实，短信和电话各按同次风险防重。',
+                 '预警转实际入区更新同一风险、同一待办；尚未核实才判断自动核实，已核实不重复办理，短信和电话各按同次风险防重。',
                  '命中反制优先策略时短信并行、反制不等电话；真实启动回执后且风险持续才拨电话，明确无法启动或失败、最长等待到期进入电话资格判断。'],
-        'todo': ['融合感知或告警处置打开同一条无人机风险，人工核实并查看短信、反制、电话的并行进度。',
+        'todo': ['在融合感知或告警处置打开同一条无人机风险：预警时可人工核实；要验证自动衔接，可暂不提交，待实际入区后查看系统核实记录或具体阻断原因。',
                  '按允许动作人工申请、由不同人员审批后执行，或使用已有直接反制权限；查看真实启动和停止回执。',
-                 '结束后点停止；预测核实和预测处置记录不能作为实际违法或处罚移送依据。']}
+                 '反制结束且真实停机回执满足完成口径后，到「移送与处罚」查看进度：本禁飞区已有早于反制完成的独立实测违法依据、已启用通知处罚规则全部满足时，平台按同一风险自动移送。仅有预测、预测核实或反制完成不能作为违法依据；结束后点停止。']}
     if number == 2:
-        guide['shows'] = '无人机先接近矩形禁飞区；人工核实后，只有本次风险的模拟短信真实送达才向左返回。'
-        guide['sees'][1] = '短信送达后转向；连续新实测确认当前和完整预测轨迹均避开该区域，平台撤销风险并取消后续通知、停止预测处置。'
+        guide['shows'] = '无人机从区外接近；风险经人工或入区后的规则核实后，只有本次风险的模拟短信真实送达才向左返回。'
+        guide['sees'][1] = '同一次风险已核实不重复办理，短信和电话不重复发送。短信送达后转向；连续新实测确认当前和完整预测轨迹均避开该区域，平台撤销风险并取消后续通知、停止预测处置。'
         guide['todo'] = ['出现提前预警后及时人工核实，查看真实短信回执及随后向左返回的航迹。',
-                        '没有短信送达时不会按定时器转向，仍可能进入禁飞区；按实际观测和通知时序验收。',
+                        '没有短信送达时继续原航迹；若实际入区且尚未核实，按后台规则判断自动核实，再依据实际短信回执转向。',
                         '在同一风险核对已避开、撤销原因和历史；已受理电话保留真实回执，不能承诺已经拨出的电话被撤回。']
     elif number == 3:
         guide['shows'] = '无报备无人机从区外接近并继续入区；没有飞手联系方式时，短信和电话如实显示不可通知。'
-        guide['before'][1] = '本分支不创建飞行计划、飞手位置或联系方式；核对通知受阻原因，不补造通知成功。'
+        guide['before'][2] = '本分支不创建飞行计划、飞手位置或联系方式；核对通知受阻原因，不补造通知成功。'
         guide['sees'].append('缺少飞手资料阻断通知；反制是否可办由当前顺序策略、权限、设备和有效证据共同判断。')
     elif number == 4:
-        guide['shows'] = '区外接近产生提前预警，由值班员在统一风险页面核实为误报；预测分支不需要关闭普通自动核实。'
-        guide['todo'] = ['出现有效提前预警后，人工选择核实为误报并填写真实核实说明。',
+        guide['shows'] = '区外接近产生提前预警，由值班员在统一风险页面核实为误报；本场景在区外转向，不演示实测入区后的自动核实。'
+        guide['before'][0] = '出现预警时人工核实为误报；本场景全程在区外，预警不自动核实，无需关闭普通核实规则。'
+        guide['todo'] = ['出现有效提前预警后，人工选择核实为误报并提交。',
                         '核对风险进入历史且没有自动短信、电话和反制；不要将观测中的后续转向当作人工核实结论。']
     return guide
 
@@ -149,10 +151,10 @@ def integrate(legacy):
             old_guide['todo'] = ['在统一无人机风险页面办理，阶段和通知、反制进度分别查看。'] + old_guide['todo']
             old_scene['fullchain']['expectedChecks'] = copy.deepcopy(old_guide['sees'])
             old = dict(id='inside' if number != 4 else 'observed_false_alarm',
-                       label='首次发现已在区内（原自动规则）' if number != 4 else '实测风险核实为误报',
-                       minutes=old_scene['duration'], scene=old_scene, guide=old_guide)
+                       label='首次发现已在区内（补充场景）' if number != 4 else '实测风险核实为误报',
+                       minutes=old_scene['duration'], scene=old_scene, guide=old_guide, supplemental=number != 4)
             new_scene = prediction_scene(number)
-            predicted = dict(id='prediction', label='区外接近，提前预警' if number != 4 else '预测风险核实为误报',
+            predicted = dict(id='prediction', label=('完整流程：区外预警 → 短信后转向' if number == 2 else '完整流程：区外预警 → 入区按规则核实') if number != 4 else '预测风险核实为误报',
                              minutes=new_scene['duration'], scene=new_scene, guide=prediction_guide(number))
             item.update(title=TITLES[number], variants=[predicted, old] if number != 4 else [old, predicted],
                         default_variant='prediction' if number != 4 else 'observed_false_alarm')

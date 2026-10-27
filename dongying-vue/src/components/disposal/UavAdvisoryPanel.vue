@@ -30,13 +30,14 @@ const props = defineProps({
 });
 const emit = defineEmits(['updated', 'unavailable']);
 const { data, loading, error, load } = useUavAdvisory(() => props.eventId, result => emit('updated', result), props.interval,
-  (id, startedAt, caseId) => emit('unavailable', id, startedAt, caseId), () => props.riskCase?.risk_case_id || '');
+  (id, startedAt, caseId) => emit('unavailable', id, startedAt, caseId), () => props.riskCase?.risk_case_id || '', () => props.riskCase);
 let alive = true;
 onUnmounted(() => { alive = false; });
-const current = computed(() => riskSummaryMatches(data.value, props.eventId, props.riskCase?.risk_case_id) && !loading.value && !error.value);
+const current = computed(() => riskSummaryMatches(data.value, props.eventId, props.riskCase?.risk_case_id, props.riskCase) && !loading.value && !error.value);
 const historicalObservations = computed(() => data.value?.event_id === props.eventId
   ? (data.value.records || []).filter(row => row.kind === 'OBSERVATION') : []);
-const handoff = computed(() => autoHandoffView(props.riskCase?.manual_counter_only ? null : data.value, props.riskCase?.manual_counter_only ? '' : props.handoffId));
+// 人工反制标记不代表处罚资格；移送进度和操作只采用后端独立实测判断。
+const handoff = computed(() => autoHandoffView(data.value, props.handoffId));
 const observation = computed(() => data.value?.departure_observation);
 const observationTime = value => value == null ? '未提供' : new Date(value).toLocaleString('zh-CN', { timeZone:'Asia/Shanghai', hour12:false });
 
@@ -67,7 +68,7 @@ watch(() => props.counter ? `${props.counter.authorization_id}:${props.counter.s
 onUnmounted(() => clearInterval(counterTimer));
 const counter = computed(() => counterProgressView(props.counter, counterEvents.value, props.counterStop));
 
-/* ---------- 待发送移送：交接已建立但规则没让系统自动发出，由有移送权限的人员人工发送 ---------- */
+/* ---------- 待发送移送：按后台规则自动发送，保留有权限人员的人工入口 ---------- */
 const sendPermitted = computed(() => hasPermission('handoff:create') && hasPermission('handoff:read'));
 const send = reactive({ id: '', status: null, loading: false, sending: false, error: '', pending: null });
 let sendSeq = 0;
@@ -96,7 +97,7 @@ async function loadSendStatus() {
   } finally { if (alive && seq === sendSeq) send.loading = false; }
 }
 watch(() => `${handoff.value.awaitingSend}:${handoff.value.handoffId}:${sendPermitted.value}`, () => { void loadSendStatus(); }, { immediate: true });
-const sendStep = computed(() => pendingSendStep({ permitted: sendPermitted.value, status: send.status, loading: send.loading, error: send.error }));
+const sendStep = computed(() => pendingSendStep({ permitted: sendPermitted.value, status: send.status, loading: send.loading, error: send.error, waitingForRules: handoff.value.waitingForRules }));
 function refresh() { load(); void loadSendStatus(); void loadCounterEvents({ quiet: true }); }
 function sendHandoff() {
   if (!sendStep.value.canSend || send.sending || !current.value) return;
@@ -104,7 +105,7 @@ function sendHandoff() {
   const recipient = status.recipient_snapshot?.org_name || status.recipient_snapshot?.recipient_name || '处罚接收单位';
   openConfirm({
     title: '发送处罚移送',
-    message: `向「${recipient}」发送这份已建立的处罚交接材料。通知处罚的规则没有全部满足，系统没有自动发出，由你人工发送。${status.simulated ? '本次使用模拟通道，不会发送真实通知。' : ''}送达和签收不代表处罚已办结。`,
+    message: `向「${recipient}」发送这份已建立的处罚交接材料。${sendStep.value.automaticAfterRules ? '通知处罚规则全部满足后也可自动发送；本次由你人工提交。' : '本次由你核对当前发送资格后人工提交。'}${status.simulated ? '本次使用模拟通道，不会发送真实通知。' : ''}送达和签收不代表处罚已办结。`,
     confirmText: '确认发送',
     onConfirm: async () => {
       if (!alive || send.id !== id || send.sending || !send.status?.can_notify) return true;
@@ -142,7 +143,8 @@ const escText = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&
 async function submitHandoff() {
   const view = handoff.value;
   if (!view.canSubmit || !current.value) return;
-  const id = data.value.event_id, version = data.value.event_version;
+  const id = data.value.event_id, version = data.value.event_version, caseId = props.riskCase?.risk_case_id || '';
+  const sameRisk = () => current.value && id === data.value?.event_id && caseId === (props.riskCase?.risk_case_id || '');
   let recipients;
   try {
     recipients = (await handoffApi.listHandoffRecipients('UAV_PUNISHMENT'))?.items || [];
@@ -150,7 +152,7 @@ async function submitHandoff() {
     toast(listError.status === 403 ? '当前账号没有查看处罚接收单位的权限' : listError.message || '读取处罚接收单位失败，请稍后重试', 'err');
     return;
   }
-  if (!alive || id !== data.value?.event_id) return;
+  if (!alive || !sameRisk()) return;
   if (!recipients.length) { toast('还没有启用的处罚接收单位，请联系管理员配置', 'err'); load(); return; }
   const key = newHandoffIdempotencyKey();
   const unidentified = view.partyUnidentified;
@@ -168,11 +170,11 @@ async function submitHandoff() {
     validate: value => !value.recipient_id ? '请选择处罚接收单位'
       : unidentified && value.party_confirmed !== true ? '请先确认已知道当事人不明' : null,
     onSubmit: async value => {
-      const stillCurrent = () => alive && id === data.value?.event_id && modal.isCurrent();
+      const stillCurrent = () => alive && sameRisk() && modal.isCurrent();
       if (!stillCurrent()) throw new Error('事件已切换，请关闭后重新操作');
       try {
         await handoffApi.createHandoff({ source_kind: 'UAV_EVENT', source_id: id, handoff_type: 'UAV_PUNISHMENT',
-          recipient_id: value.recipient_id, expected_version: version }, key);
+          recipient_id: value.recipient_id, expected_version: version, ...(caseId ? { risk_case_id: caseId } : {}) }, key);
         if (!stillCurrent()) return;
         modal.close(); load(); toast('已移送到处罚，请在“移送与处罚”查看发出结果', 'ok');
       } catch (submitError) {
@@ -216,7 +218,7 @@ async function submitHandoff() {
         <summary>历史现场观察记录（{{ historicalObservations.length }}）</summary>
         <AdvisoryRecords :records="historicalObservations" />
       </details>
-      <div v-if="!riskCase?.manual_counter_only && (handoff.handoffId || handoff.canSubmit || ((confirmed || data.auto_handoff) && data.auto_handoff?.status !== 'NOT_REQUIRED'))" class="ua-handoff" aria-label="处罚移送进度" :data-state="data.auto_handoff?.status">
+      <div v-if="handoff.handoffId || handoff.canSubmit || data.auto_handoff" class="ua-handoff" aria-label="处罚移送进度" :data-state="data.auto_handoff?.status">
         <p><span :class="`ua-${handoff.tone}`">{{ handoff.title }}</span><button v-if="handoff.handoffId" type="button" class="ua-link" @click="openHandoff">查看处罚交接</button></p>
         <p v-if="handoff.reason" class="ua-note">{{ userFacingMessage(handoff.reason) }}</p>
         <p v-if="handoff.partyUnidentified" class="ua-note">当事人不明：{{ handoff.partyReasons.join('；') || '没有可用的当事人信息' }}。移送时会写明按待补线索移送。</p>

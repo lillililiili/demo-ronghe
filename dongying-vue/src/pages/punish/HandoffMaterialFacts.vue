@@ -6,7 +6,7 @@ import { computed } from 'vue';
 import FrozenEvidenceContent from './FrozenEvidenceContent.vue';
 import { ruleReasonText } from '@/ui/legalityReviewModal.js';
 import { CONCLUSION_LABEL, labelOf } from '@/ui/labels.js';
-import { evidenceChainView, judgmentViews, partyView } from './handoffMaterialView.js';
+import { evidenceChainView, judgmentViews, partyView, measuredRiskBasisView } from './handoffMaterialView.js';
 
 const props = defineProps({
   material: { type: Object, default: null },
@@ -16,6 +16,7 @@ const props = defineProps({
 });
 
 const party = computed(() => partyView(props.material));
+const measured = computed(() => measuredRiskBasisView(props.material));
 const judgments = computed(() => judgmentViews(props.material, ruleReasonText));
 const headline = computed(() => judgments.value?.find(item => item.basisCode === 'EVENT_ALARM') || null);
 const verification = computed(() => [...(props.material?.verifications || [])]
@@ -53,14 +54,41 @@ function formatTime(value) {
         <template v-if="headline.unknowns.length"><dt>依据缺口</dt><dd>{{ headline.unknowns.join('、') }}</dd></template>
       </template>
       <template v-else><dt>移送时研判</dt><dd>{{ judgments ? '移送时未关联告警依据的研判' : '旧移送材料未保存研判依据' }}</dd></template>
+      <template v-if="measured">
+        <dt>独立实测依据</dt><dd>{{ measured.title }} · {{ measured.source }}</dd>
+        <dt>入区观测时间</dt><dd>{{ formatTime(measured.observedAt) }}</dd>
+        <dt>风险核实（处置资格）</dt><dd>{{ measured.verification ? `${measured.verification.conclusion} · ${measured.verification.trigger}` : '风险核实记录未随材料保存' }}</dd>
+      </template>
       <template v-if="verification">
-        <dt>移送前核实</dt><dd>{{ labelOf(CONCLUSION_LABEL, verification.conclusion, '结论未记录') }} · {{ formatTime(verification.created_at) }}</dd>
+        <dt>原事件核实</dt><dd>{{ labelOf(CONCLUSION_LABEL, verification.conclusion, '结论未记录') }} · {{ formatTime(verification.created_at) }}</dd>
         <dt>核实说明</dt><dd>{{ verification.note || '未记录具体核实说明' }}</dd>
       </template>
     </dl>
   </div>
 
   <template v-else>
+    <section v-if="measured" class="pn-sub pn-wrap hmf-block" aria-label="独立实测入区依据">
+      <h4>独立实测入区依据</h4>
+      <p>{{ measured.title }} <span class="tag" :class="measured.simulated ? 't-orange' : 't-gray'">{{ measured.source }}</span></p>
+      <dl class="kv kv-surface">
+        <dt>实测观测</dt><dd>{{ formatTime(measured.observedAt) }}</dd>
+        <dt>实测研判</dt><dd>{{ formatTime(measured.evaluatedAt) }}</dd>
+        <dt>实测位置</dt><dd>{{ measured.position }}</dd>
+        <dt>高度</dt><dd>{{ measured.altitude }}</dd>
+        <dt>位置精度</dt><dd>{{ measured.accuracy }}</dd>
+        <dt>反制完成</dt><dd>{{ formatTime(measured.completedAt) }}</dd>
+        <template v-for="reference in measured.references" :key="reference.label"><dt>{{ reference.label }}</dt><dd>{{ reference.value }}</dd></template>
+      </dl>
+      <h4>风险核实（处置资格）</h4>
+      <template v-if="measured.verification">
+        <p>{{ measured.verification.conclusion }} · {{ measured.verification.trigger }} · {{ measured.verification.basis }}</p>
+        <p class="hmf-meta">{{ formatTime(measured.verification.at) }}<template v-if="measured.verification.actor"> · 操作人 {{ measured.verification.actor }}</template></p>
+        <p v-if="measured.verification.ruleRun" class="hmf-meta">规则运行 {{ measured.verification.ruleRun }}</p>
+        <p v-if="measured.verification.note" class="hmf-meta">{{ measured.verification.note }}</p>
+      </template>
+      <p v-else class="hmf-meta">风险核实记录未随材料保存</p>
+      <p class="hmf-meta">风险核实用于本次处置；实测入区依据单独保存。移送不代表处罚已办结。</p>
+    </section>
     <div v-if="material?.weather_forecast" class="pn-sub pn-wrap hmf-block">
       <h4>通知时的天气预报依据</h4>
       <p>{{ material.weather_forecast.area_name }} · {{ material.weather_forecast.summary }}</p>

@@ -7,14 +7,45 @@ const FlowPicker = require('../web/flow-picker.js');
 
 const group = (enabled, total, ok = true) => ok ? {ok: true, enabled, total, engine: 'ON', engine_message: ''} : {ok: false, reason: 'FORBIDDEN'};
 
-test('all prediction variants stay manual with either automatic-rule configuration', () => {
-  for (const variant of ['avoid', 'enter']) for (const enabled of [0,2]) {
-    const flow = {flow:9, variant, guide:{prediction_only:true, auto_verify:null}};
-    const rules = {verify:group(enabled,2), counter:group(enabled,2)};
-    assert.match(FlowPicker.rulesLine(rules,flow), /人工核实、人工发起反制/);
-    assert.doesNotMatch(FlowPicker.rulesLine(rules,flow), /全部满足后自动/);
-    assert.equal(FlowPicker.ruleConflict(flow,rules),'');
+test('prediction stays manual and measured handoff explains enabled verification rules without granting automatic countermeasures', () => {
+  for (const flowNumber of [1, 2, 3, 9]) for (const enabled of [0, 2]) {
+    const flow = {flow: flowNumber, guide: {prediction_only: true, includes_observed_stage: true, auto_verify: null}};
+    const rules = {verify: group(enabled, 3), counter: group(enabled, 2)};
+    const line = FlowPicker.rulesLine(rules, flow);
+    assert.match(line, /预警阶段由人工核实/);
+    assert.match(line, /已核实不重复核实/);
+    assert.match(line, /仍须人工发起反制/);
+    if (enabled) assert.match(line, /2\/3 条核实规则全部满足且本区实测依据有效时自动核实/);
+    else assert.match(line, /没有启用的核实规则，实际入区后仍需人工核实/);
+    assert.doesNotMatch(line, /自动发起/);
+    assert.equal(FlowPicker.ruleConflict(flow, rules), '');
+    assert.match(FlowPicker.rulesLine(null, flow), /规则状态暂不可读取/);
+    assert.doesNotMatch(FlowPicker.rulesLine(null, flow), /核实规则全部满足/);
   }
+  const avoid = {flow: 4, guide: {prediction_only: true, includes_observed_stage: false}};
+  assert.doesNotMatch(FlowPicker.rulesLine({verify: group(2, 2)}, avoid), /实际入区后|自动核实/);
+});
+
+test('daily journey hides the first-seen-inside branch under supplemental scenarios while preserving explicit selection', () => {
+  for (const flowNumber of [1, 2, 3]) {
+    const flow = {flow: flowNumber, default_variant: 'prediction', variants: [
+      {id: 'prediction', label: '区外预警 → 入区核实', scene: {name: 'continuous'}},
+      {id: 'inside', label: '首次发现已在区内', supplemental: true, scene: {name: 'inside'}}
+    ]};
+    const main = FlowPicker.variantHtml(FlowPicker.selectVariant(flow));
+    assert.match(main, /<details class="flow-supplemental"><summary>补充场景/);
+    assert.match(main, /value="prediction" selected/);
+    assert.doesNotMatch(main, /本次模拟情况|<details[^>]* open/);
+    const inside = FlowPicker.selectVariant(flow, 'inside');
+    assert.equal(inside.scene.name, 'inside');
+    assert.match(FlowPicker.variantHtml(inside), /<details class="flow-supplemental" open>/);
+    assert.match(FlowPicker.variantHtml(inside), /value="inside" selected/);
+  }
+  assert.equal(FlowPicker.variantHtml({flow: 5}), '');
+  const legacy = {flow: 9, variant: 'avoid', variants: [{id: 'avoid', label: '<转向>'}, {id: 'enter', label: '入区'}]};
+  assert.match(FlowPicker.variantHtml(legacy), /本次模拟情况/);
+  assert.match(FlowPicker.variantHtml(legacy), /&lt;转向&gt;/);
+  assert.doesNotMatch(FlowPicker.variantHtml(legacy), /flow-supplemental/);
 });
 
 test('choosing a flow variant keeps its scene and guide together and leaves other flows unchanged', () => {

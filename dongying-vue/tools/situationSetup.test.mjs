@@ -1,3 +1,5 @@
+import { toAlarms, currentMapSnapshot } from '../src/services/situationData.js';
+import { randomUUID } from 'node:crypto';
 import * as riskHelpers from '../src/services/riskCaseView.js';
 import * as riskFlow from '../src/pages/situation/situationFlow.js';
 import { test } from 'node:test';
@@ -9,7 +11,7 @@ import * as prediction from '../src/services/predictionView.js';
 import * as eoCoverage from '../src/pages/situation/eoCoverage.js';
 import * as eoSelection from '../src/pages/situation/eoSelection.js';
 
-function createPage(now = Date.now(), sourceOverrides = {}) {
+function createPage(now = Date.now(), sourceOverrides = {}, apiOverrides = {}) {
   const file = readFileSync(new URL('../src/pages/SituationPage.vue', import.meta.url), 'utf8');
   let script = file.match(/<script setup>([\s\S]*?)<\/script>/)[1];
   const bindings = {};
@@ -29,14 +31,14 @@ function createPage(now = Date.now(), sourceOverrides = {}) {
       loadTargetDetail: async () => null, loadTargetPrediction: async () => null, stop() {}, ...sourceOverrides }),
     groupRouteRisks: () => [], riskSnapshotMarkers: () => [],
     document: { removeEventListener() {} }, window: { clearInterval() {}, UI: { icon: () => '', businessIcon: () => '' }, MapView: function () { stats.mapCreated++; } },
-    sessionStorage: { getItem: () => null, setItem() {} }, console
+    sessionStorage: { getItem: () => null, setItem() {} }, console, toAlarms, currentMapSnapshot: value => currentMapSnapshot(value, now), ...apiOverrides
   });
   const scope = effectScope();
   try {
     scope.run(() => vm.runInContext(`${script}\n globalThis.page = {
       snapshot, selection, nowTick, refreshSlow, predictionRows, alertTab, alertsExpanded, predictionClusterIds, visiblePredictionRows,
-      selectedPrediction, selectedTarget, selectedUavAlarm, alarms, videoContext, showTargetVideo, mapPredictions, showSelectionPopup, selectPrediction, selectAlarm, selectTarget, clearSelection,
-      eoDevice, eoSelected, setEoExpanded, onMapPick, attachMap: value => { map = value; syncMapData(); }
+      selectedPrediction, selectedTarget, selectedCardTarget, selectedCardAlarm, selectedUavAlarm, alarms, videoContext, showTargetVideo, mapPredictions, showSelectionPopup, selectPrediction, selectAlarm, selectTarget, clearSelection,
+      selectedRiskContext, updateNotification, applySelectedRiskDetail, openTargetVerification, advisorySummaries, selectedAdvisorySummary, applySnapshot, eoDevice, eoSelected, setEoExpanded, onMapPick, attachMap: value => { map = value; syncMapData(); }
     };`, context));
     return { ...context.page, stats, leave: () => unmounts.forEach(fn => fn()), stop: () => scope.stop() };
   } catch (error) { scope.stop(); throw error; }
@@ -271,7 +273,7 @@ test('统一风险从预计入区转实际入区保留所选区域、卡片及�
 });
 
 
-test('预测先读回、同风险列表迟到及转实测只提示一次，新区域或新周期单独提示', async () => {
+test('预测和实测不弹顶部提示，同风险更新不抢页签，新区域仍展开风险列表', async () => {
   for (const sourceMode of ['live', 'replay']) {
     const now = Date.now(), page = createPage(now), prediction = forecast(`dedup-${sourceMode}`, now);
     const episode = `episode-${sourceMode}`, caseId = `risk-${sourceMode}`;
@@ -283,18 +285,18 @@ test('预测先读回、同风险列表迟到及转实测只提示一次，新�
     const target = { id: prediction.target_no, targetId: prediction.target_id, objectTypeCode: 'UAV', relatedAlarms: [first] };
     try {
       page.snapshot.value = { ...page.snapshot.value, predictions: [prediction] }; await nextTick();
-      assert.equal(page.stats.notices.length, 1, '首次有效预测不是历史基线，立即提示');
+      assert.equal(page.stats.notices.length, 0, '首次有效预测只进入风险列表，不弹顶部提示');
       page.alertTab.value = 'route'; page.alertsExpanded.value = false;
       page.snapshot.value = { ...page.snapshot.value, alarms: [first], targets: [target] }; await nextTick();
-      assert.equal(page.stats.notices.length, 1, '通过明确episode关联到risk_case，不重复提示');
+      assert.equal(page.stats.notices.length, 0, '通过明确episode关联到risk_case，仍不弹顶部提示');
       assert.equal(page.alertTab.value, 'route'); assert.equal(page.alertsExpanded.value, false);
       const entered = { ...first, prediction: undefined, id: 'measured-alarm', alarmId: 'measured-alarm', eventId: 'measured-event',
         risk_case: { ...first.risk_case, stage: 'ENTERED', version: 2 } };
       page.snapshot.value = { ...page.snapshot.value, predictions: [], alarms: [entered] }; await nextTick();
-      assert.equal(page.stats.notices.length, 1, '入区阶段变化不改变风险身份');
+      assert.equal(page.stats.notices.length, 0, '实际入区也不弹顶部提示');
       const other = { ...entered, risk_case: { ...entered.risk_case, risk_case_id: `${caseId}-second-area`, airspace_id: 'area-two' } };
       page.snapshot.value = { ...page.snapshot.value, alarms: [entered, other] }; await nextTick();
-      assert.equal(page.stats.notices.length, 2, '同一实测事件不同区域独立提醒');
+      assert.equal(page.stats.notices.length, 0, '不同区域风险保留在列表，不弹顶部提示');
       assert.equal(page.alertsExpanded.value, true);
     } finally { page.stop(); }
   }
@@ -330,4 +332,254 @@ test('SSE正常空闲和无权限不报刷新慢，仅真实目标请求超时�
     page.snapshot.value = { ...page.snapshot.value, failedSegments: [], targetUpdatedAt: now + 30000 }; await nextTick();
     assert.equal(page.refreshSlow.value, false);
   } finally { page.stop(); }
+});
+
+const settle = async () => { for (let i=0;i<6;i++) await Promise.resolve(); await nextTick(); };
+function currentCase(sourceMode='replay') {
+  const caseId=randomUUID(), targetId=randomUUID(), areaId=randomUUID(), eventId=randomUUID();
+  const raw={ alarm_id:randomUUID(), alarm_no:'AL-'+randomUUID(), target_id:targetId,target_no:'UAV-'+randomUUID(),
+    event_id:eventId,state:'CONFIRMED',source_mode:sourceMode,
+    risk_case:{risk_case_id:caseId,version:5,stage:'ENTERED',verification_status:'CONFIRMED',airspace_id:areaId,action_event_id:eventId} };
+  const alarm=toAlarms([raw])[0];
+  return {raw,alarm,target:{id:raw.target_no,targetId,sourceMode,objectTypeCode:'UAV',relatedAlarms:[alarm]}};
+}
+test('所选风险暂时离开列表仍保留身份并暂停动作，轻量读取UNKNOWN及恢复实测不借另一地区', async()=>{
+  for(const sourceMode of ['live','replay']) {
+    const f=currentCase(sourceMode), replies=[],calls=[];
+    const page=createPage(Date.now(),{}, {getUavRiskCase:(id,params)=>{calls.push({id,params});return new Promise(resolve=>replies.push(resolve));}});
+    try {
+      page.snapshot.value={...page.snapshot.value,targets:[f.target],alarms:[f.alarm]}; await nextTick();
+      page.selectAlarm(f.alarm);await nextTick();
+      const other={...f.alarm,alarmId:randomUUID(),risk_case:{...f.alarm.risk_case,risk_case_id:randomUUID(),airspace_id:randomUUID()}};
+      page.snapshot.value={...page.snapshot.value,alarms:[other],targets:[{...f.target,relatedAlarms:[other]}]};await nextTick();
+      assert.equal(page.selectedUavAlarm.value.risk_case.risk_case_id,f.raw.risk_case.risk_case_id);
+      assert.equal(page.selectedUavAlarm.value._riskUnavailable,true);
+      assert.equal(page.alarms.value.length,1,'保留选中上下文不塞回地图风险列表');
+      assert.equal(calls.length,1);assert.deepEqual({...calls[0].params},{purpose:'verification'});
+      replies.shift()({alarm:f.raw,event:{},risk_case:{...f.raw.risk_case,version:6,stage:'UNKNOWN',allowed_actions:[]}});await settle();
+      assert.equal(page.selectedUavAlarm.value.risk_case.stage,'UNKNOWN');
+      assert.equal(page.selectedUavAlarm.value._riskUnavailable,false,'依据不足来自最新服务端状态');
+      const entered={...f.alarm,eventId:randomUUID(),risk_case:{...f.alarm.risk_case,version:7,stage:'ENTERED'}};
+      page.snapshot.value={...page.snapshot.value,alarms:[entered,other],targets:[{...f.target,relatedAlarms:[other,entered]}]};await nextTick();
+      assert.equal(page.selectedUavAlarm.value.eventId,entered.eventId);
+      assert.equal(page.selectedUavAlarm.value.risk_case.risk_case_id,f.raw.risk_case.risk_case_id);
+      assert.equal(calls.length,1,'正常列表刷新不额外读取详情');
+    }finally{page.stop();}
+  }
+});
+test('所选风险回读拒绝其他来源/区域和旧版本；切换目标后迟到响应不能覆盖',async()=>{
+  for(const change of ['source','area','version','selection']) {
+    const f=currentCase(),g=currentCase('live');let resolve;
+    const page=createPage(Date.now(),{}, {getUavRiskCase:()=>new Promise(done=>resolve=done)});
+    try{
+      page.snapshot.value={...page.snapshot.value,targets:[f.target,g.target],alarms:[f.alarm,g.alarm]};await nextTick();page.selectAlarm(f.alarm);await nextTick();
+      page.snapshot.value={...page.snapshot.value,alarms:[g.alarm],targets:[{...f.target,relatedAlarms:[]},g.target]};await nextTick();
+      const result={alarm:{...f.raw},risk_case:{...f.raw.risk_case,version:6},event:{}};
+      if(change==='source')result.alarm.source_mode='live';
+      if(change==='area')result.risk_case.airspace_id=randomUUID();
+      if(change==='version')result.risk_case.version=4;
+      if(change==='selection'){page.selectAlarm(g.alarm);await nextTick();}
+      resolve(result);await settle();
+      assert.equal(page.selectedUavAlarm.value.risk_case.risk_case_id,(change==='selection'?g:f).raw.risk_case.risk_case_id);
+      if(change!=='selection')assert.equal(page.selectedUavAlarm.value._riskUnavailable,true);
+    }finally{page.stop();}
+  }
+});
+test('同case转实测的低event版本可更新处置摘要，旧事件迟到响应不能覆盖',async()=>{
+  const f=currentCase(),page=createPage();
+  try{
+    page.snapshot.value={...page.snapshot.value,targets:[f.target],alarms:[f.alarm]};await nextTick();page.selectAlarm(f.alarm);await nextTick();
+    const caseId=f.raw.risk_case.risk_case_id;
+    page.updateNotification({event_id:f.alarm.eventId,_riskCaseId:caseId,event_version:90,_fetchedAt:200});
+    const entered={...f.alarm,eventId:randomUUID(),risk_case:{...f.alarm.risk_case,version:6}};
+    page.snapshot.value={...page.snapshot.value,alarms:[entered],targets:[{...f.target,relatedAlarms:[entered]}]};await nextTick();
+    page.updateNotification({event_id:entered.eventId,_riskCaseId:caseId,event_version:2,_fetchedAt:100,can_direct_counter:true});
+    assert.equal(page.advisorySummaries.value[caseId].event_id,entered.eventId);
+    page.updateNotification({event_id:f.alarm.eventId,_riskCaseId:caseId,event_version:91,_fetchedAt:300});
+    assert.equal(page.advisorySummaries.value[caseId].event_id,entered.eventId);
+  }finally{page.stop();}
+});
+
+test('所选风险回读终态按真实原始state保留，不重新出现在地图或继续轮询',async()=>{
+  const f=currentCase();let resolve,reads=0;
+  const page=createPage(Date.now(),{}, {getUavRiskCase:()=>{reads++;return new Promise(done=>resolve=done);}});
+  try{
+    page.snapshot.value={...page.snapshot.value,targets:[f.target],alarms:[f.alarm]};await nextTick();page.selectAlarm(f.alarm);await nextTick();
+    page.snapshot.value={...page.snapshot.value,alarms:[],targets:[{...f.target,relatedAlarms:[]}]};await nextTick();
+    resolve({alarm:{...f.raw,state:'FALSE_POSITIVE'},risk_case:{...f.raw.risk_case,version:6,stage:'ENDED',verification_status:'FALSE_POSITIVE'},event:{}});await settle();
+    assert.equal(page.selectedUavAlarm.value.state,'FALSE_POSITIVE');assert.equal(page.selectedUavAlarm.value.eventState,'FALSE_POSITIVE');
+    assert.equal(page.selectedUavAlarm.value.risk_case.stage,'ENDED');assert.equal(page.alarms.value.length,0);
+    page.selectedRiskContext.value={...page.selectedRiskContext.value,checkedAt:Date.now()-5000};page.nowTick.value+=5000;await nextTick();
+    assert.equal(reads,1);
+  }finally{page.stop();}
+});
+
+test('真实applySnapshot短暂过滤目标后转实测，所选case和视频不被降为纯预测或清除',async()=>{
+  for(const sourceMode of ['live','replay']){
+    const now=Date.now(),f=currentCase(sourceMode);let resolve;
+    const page=createPage(now,{}, {getUavRiskCase:()=>new Promise(done=>resolve=done)});
+    const forecastRaw={...forecast(sourceMode,now),target_id:f.raw.target_id,target_no:f.raw.target_no,source_mode:sourceMode};
+    forecastRaw.warnings=[{...forecastRaw.warnings[0],event_id:f.alarm.eventId,risk_case_id:f.raw.risk_case.risk_case_id,airspace_id:f.raw.risk_case.airspace_id}];
+    const predicted={...f.alarm,originKind:'PREDICTED_AIRSPACE_ENTRY',prediction:forecastRaw,risk_case:{...f.alarm.risk_case,stage:'PREDICTED'}};
+    const target={...f.target,observedAt:now-100,mapExpiresAt:now+5000,posValid:true,lon:118,lat:37};
+    try{
+      page.applySnapshot({...page.snapshot.value,targets:[target],alarms:[predicted],predictions:[forecastRaw]});await nextTick();
+      page.selectAlarm(predicted);await nextTick();page.showTargetVideo.value=true;
+      const selected=page.selection.value,key=page.videoContext.value.key;
+      page.applySnapshot({...page.snapshot.value,targets:[{...target,mapExpiresAt:now-1}],alarms:[predicted]});await nextTick();
+      assert.equal(page.snapshot.value.targets.length,0,'不延长地图目标有效期');
+      assert.equal(page.selectedTarget.value,null);
+      assert.equal(page.selectedCardTarget.value.targetId,target.targetId,'保留同一紧凑卡的最后观测，不切换另一套大卡');
+      assert.equal(page.selectedCardTarget.value._lastObservationOnly,true);
+      assert.equal(page.selectedCardAlarm.value._riskUnavailable,true,'最后观测不得用于新动作');
+      assert.equal(page.selection.value,selected);assert.equal(page.selection.value.kind,'target');
+      assert.equal(page.selectedUavAlarm.value.risk_case.risk_case_id,f.raw.risk_case.risk_case_id);
+      assert.equal(page.selectedUavAlarm.value._riskUnavailable,true);assert.equal(page.showSelectionPopup.value,true);
+      assert.equal(page.videoContext.value.key,key);assert.equal(page.showTargetVideo.value,true);
+      const entered={...f.alarm,eventId:randomUUID(),risk_case:{...f.alarm.risk_case,version:6,stage:'ENTERED'}};
+      page.applySnapshot({...page.snapshot.value,targets:[target],alarms:[entered],predictions:[]});await nextTick();
+      assert.equal(page.selection.value,selected);assert.equal(page.selectedTarget.value.targetId,f.target.targetId);
+      assert.equal(page.selectedCardTarget.value._lastObservationOnly,undefined,'恢复实测后重新使用有效目标');
+      assert.equal(page.selectedUavAlarm.value.risk_case.stage,'ENTERED');assert.equal(page.mapPredictions.value.length,0);
+      assert.equal(page.videoContext.value.key,key);assert.equal(page.showTargetVideo.value,true);
+      resolve({alarm:f.raw,risk_case:f.raw.risk_case,event:{}});await settle();
+      assert.equal(page.selectedUavAlarm.value.risk_case.stage,'ENTERED','迟到的旧预测阶段不能覆盖');
+    }finally{page.stop();}
+  }
+});
+test('纯预测选择在有效实测目标到达后升级目标选择，预测退出不关闭当前目标',async()=>{
+  const now=Date.now(),page=createPage(now),raw=forecast(randomUUID(),now);
+  try{
+    page.applySnapshot({...page.snapshot.value,predictions:[raw]});await nextTick();page.selectPrediction(page.predictionRows.value[0]);await nextTick();
+    assert.equal(page.selection.value.kind,'prediction');
+    page.applySnapshot({...page.snapshot.value,predictions:[],targets:[{id:raw.target_no,targetId:raw.target_id,objectTypeCode:'UAV',observedAt:now-100,mapExpiresAt:now+5000}]});await nextTick();
+    assert.equal(page.selection.value.kind,'target');assert.equal(page.selectedTarget.value.targetId,raw.target_id);
+    assert.equal(page.showSelectionPopup.value,true);assert.equal(page.selectedPrediction.value,null);
+  }finally{page.stop();}
+});
+test('预警先到且明确case时保留选择，目标/实测告警迟到只补同case面板',async()=>{
+  const now=Date.now(),f=currentCase();let resolve;const page=createPage(now,{}, {getUavRiskCase:()=>new Promise(done=>resolve=done)});
+  const raw={...forecast(randomUUID(),now),target_id:f.raw.target_id,target_no:f.raw.target_no,source_mode:f.raw.source_mode};
+  raw.warnings=[{...raw.warnings[0],risk_case_id:f.raw.risk_case.risk_case_id,airspace_id:f.raw.risk_case.airspace_id,event_id:f.raw.event_id}];
+  try{
+    page.applySnapshot({...page.snapshot.value,predictions:[raw]});await nextTick();page.selectPrediction(page.predictionRows.value[0]);await nextTick();
+    const selection=page.selection.value;assert.equal(selection.riskCaseId,f.raw.risk_case.risk_case_id);assert.equal(page.selectedUavAlarm.value._riskUnavailable,true);
+    page.applySnapshot({...page.snapshot.value,predictions:[]});await nextTick();assert.equal(page.selection.value,selection);
+    resolve({alarm:f.raw,risk_case:f.raw.risk_case,event:{}});await settle();assert.equal(page.selectedUavAlarm.value.risk_case.stage,'ENTERED');
+    page.applySnapshot({...page.snapshot.value,targets:[{...f.target,observedAt:now-50,mapExpiresAt:now+5000}],alarms:[f.alarm]});await nextTick();
+    assert.equal(page.selection.value,selection);assert.equal(page.selectedTarget.value.targetId,f.raw.target_id);assert.equal(page.showSelectionPopup.value,true);
+  }finally{page.stop();}
+});
+test('核实更新case版本后旧摘要退出，最新摘要同区域同事件同版本才恢复',async()=>{
+  const f=currentCase(),page=createPage();
+  try{
+    page.snapshot.value={...page.snapshot.value,targets:[f.target],alarms:[f.alarm]};await nextTick();page.selectAlarm(f.alarm);await nextTick();
+    const risk=f.raw.risk_case,key=risk.risk_case_id;
+    for(const version of [undefined,4]){
+      page.advisorySummaries.value={[key]:{event_id:f.alarm.eventId,risk_case_id:key,risk_case_version:version,can_direct_counter:true}};await nextTick();
+      assert.equal(page.selectedAdvisorySummary.value,null);
+    }
+    const summary={event_id:f.alarm.eventId,risk_case:{...risk},can_direct_counter:true};
+    page.advisorySummaries.value={[key]:summary};await nextTick();assert.equal(page.selectedAdvisorySummary.value.can_direct_counter,true);
+    page.snapshot.value={...page.snapshot.value,alarms:[{...f.alarm,risk_case:{...risk,version:6}}]};await nextTick();
+    assert.equal(page.selectedAdvisorySummary.value,null);
+  }finally{page.stop();}
+});
+
+
+test('相同case版本的阶段或核实状态不同，处置摘要暂停显示资格且不改写风险状态',async()=>{
+ const f=currentCase(),page=createPage();
+ try{
+  page.snapshot.value={...page.snapshot.value,targets:[f.target],alarms:[f.alarm]};await nextTick();page.selectAlarm(f.alarm);await nextTick();
+  const risk=f.raw.risk_case,key=risk.risk_case_id;
+  for(const patch of [{stage:'UNKNOWN'},{verification_status:'PENDING_VERIFICATION'},{stage:undefined},{verification_status:undefined}]){
+   page.updateNotification({event_id:f.alarm.eventId,risk_case:{...risk,...patch},can_direct_counter:true});await nextTick();
+   assert.equal(page.selectedAdvisorySummary.value,null);
+   assert.equal(page.selectedUavAlarm.value.risk_case.stage,'ENTERED');
+   assert.equal(page.selectedUavAlarm.value.risk_case.verification_status,'CONFIRMED');
+  }
+  page.updateNotification({event_id:f.alarm.eventId,risk_case:{...risk},can_direct_counter:true});await nextTick();
+  assert.equal(page.selectedAdvisorySummary.value.can_direct_counter,true);
+ }finally{page.stop();}
+});
+
+test('同区域同来源更高版本处置摘要推进选中case，旧列表与迟到低版本不能回退',async()=>{
+ for(const sourceMode of ['live','replay']) for(const changedEvent of [false,true]){
+  const f=currentCase(sourceMode),page=createPage();
+  try{
+   const prior={...f.alarm,risk_case:{...f.raw.risk_case,stage:'PREDICTED',verification_status:'PENDING_VERIFICATION'}};
+   page.snapshot.value={...page.snapshot.value,targets:[{...f.target,relatedAlarms:[prior]}],alarms:[prior]};await nextTick();page.selectAlarm(prior);await nextTick();
+   page.showTargetVideo.value=true;const selection=page.selection.value,video=page.videoContext.value.key;
+   const eventId=changedEvent?randomUUID():f.alarm.eventId;
+   const risk={...f.raw.risk_case,version:6,source_mode:sourceMode,action_event_id:eventId,related_event_ids:[f.alarm.eventId,eventId]};
+   const current={event_id:eventId,event_version:2,risk_case:risk,can_direct_counter:true,_fetchedAt:200};
+   page.updateNotification(current);await nextTick();
+   assert.equal(page.selectedUavAlarm.value.risk_case.version,6);assert.equal(page.selectedUavAlarm.value.risk_case.stage,'ENTERED');
+   assert.equal(page.selectedUavAlarm.value.eventId,eventId);assert.equal(page.selectedAdvisorySummary.value.can_direct_counter,true);
+   assert.equal(page.selection.value,selection);assert.equal(page.videoContext.value.key,video);assert.equal(page.showTargetVideo.value,true);
+   page.snapshot.value={...page.snapshot.value,alarms:[prior]};await nextTick();
+   assert.equal(page.selectedUavAlarm.value.risk_case.version,6,'旧列表不能覆盖更高版本');
+   page.updateNotification({...current,risk_case:{...risk,version:5,stage:'PREDICTED'},_fetchedAt:300});await nextTick();
+   assert.equal(page.selectedUavAlarm.value.risk_case.version,6);assert.equal(page.selectedAdvisorySummary.value.risk_case.version,6);
+  }finally{page.stop();}
+ }
+});
+
+test('更高版本摘要不得串入其他区域或来源，切换办理事件必须有原事件关联',async()=>{
+ for(const change of ['case','area','source','event']){
+  const f=currentCase(),page=createPage();
+  try{
+   page.snapshot.value={...page.snapshot.value,targets:[f.target],alarms:[f.alarm]};await nextTick();page.selectAlarm(f.alarm);await nextTick();
+   const risk={...f.raw.risk_case,version:6,source_mode:'replay'},event_id=change==='event'?randomUUID():f.alarm.eventId;
+   if(change==='case')risk.risk_case_id=randomUUID();
+   if(change==='area')risk.airspace_id=randomUUID();
+   if(change==='source')risk.source_mode='live';
+   if(change==='event')risk.action_event_id=event_id;
+   page.updateNotification({event_id,risk_case:risk,can_direct_counter:true});await nextTick();
+   assert.equal(page.selectedUavAlarm.value.risk_case.version,5);assert.equal(page.selectedUavAlarm.value.risk_case.risk_case_id,f.raw.risk_case.risk_case_id);
+   assert.equal(page.selectedAdvisorySummary.value,null);
+  }finally{page.stop();}
+ }
+});
+
+
+test('核实成功返回的统一风险与资格在地图刷新完成前原子接续，旧列表不能回退',async()=>{
+ for(const sourceMode of ['live','replay']) for(const entered of [false,true]){
+  const f=currentCase(sourceMode);let refresh,resolveMap,reads=0;
+  const initial={...f.raw.risk_case,source_mode:sourceMode,stage:'PREDICTED',verification_status:'PENDING_VERIFICATION'};
+  const raw={...f.raw,risk_case:initial},prior=toAlarms([raw])[0];
+  const page=createPage(Date.now(),{refresh:()=>new Promise(resolve=>{resolveMap=resolve;})},{
+    getUavRiskCase:async()=>{reads++;return {risk_case:initial,alarm:raw,event:{event_id:prior.eventId}};},
+    openModal:()=>({isCurrent:()=>true,close(){}}),openUavVerification:options=>{refresh=options.refresh;return true;}
+  });
+  try{
+   page.snapshot.value={...page.snapshot.value,targets:[{...f.target,relatedAlarms:[prior]}],alarms:[prior]};await nextTick();page.selectAlarm(prior);await nextTick();
+   await page.openTargetVerification(null,prior);
+   const eventId=entered?randomUUID():prior.eventId;
+   const risk={...initial,version:6,stage:entered?'ENTERED':'PREDICTED',verification_status:'CONFIRMED',action_event_id:eventId,related_event_ids:[prior.eventId,eventId]};
+   const result={risk_case:risk,alarm:{...raw,event_id:eventId},event:{event_id:eventId},
+     advisory:{event_id:eventId,risk_case:{...risk},can_direct_counter:true,event_version:2}};
+   const readsBeforeRefresh=reads;const pending=refresh(result);
+   assert.equal(page.selectedUavAlarm.value.risk_case.verification_status,'CONFIRMED');
+   assert.equal(page.selectedUavAlarm.value.risk_case.stage,risk.stage);assert.equal(page.selectedAdvisorySummary.value.can_direct_counter,true);
+   await nextTick();resolveMap();await pending;assert.equal(reads,readsBeforeRefresh,'提交响应已携带event，不重复读取核实详情');
+   page.updateNotification({event_id:prior.eventId,risk_case:initial,can_direct_counter:false,_fetchedAt:Date.now()+1000});
+   assert.equal(page.selectedAdvisorySummary.value.can_direct_counter,true);
+  }finally{page.stop();}
+ }
+});
+
+test('核实返回身份、来源、区域或资格快照不一致时不能接续为可反制',async()=>{
+ for(const field of ['case','target','source','area','version','advisory']){
+  const f=currentCase(),page=createPage();try{
+   page.snapshot.value={...page.snapshot.value,targets:[f.target],alarms:[f.alarm]};await nextTick();page.selectAlarm(f.alarm);await nextTick();
+   const risk={...f.raw.risk_case,source_mode:'replay',version:6},alarm={...f.raw};
+   const result={risk_case:risk,alarm,advisory:{event_id:f.alarm.eventId,risk_case:{...risk},can_direct_counter:true}};
+   if(field==='case')risk.risk_case_id=randomUUID();if(field==='target')alarm.target_id=randomUUID();
+   if(field==='source')alarm.source_mode='live';if(field==='area')risk.airspace_id=randomUUID();
+   if(field==='version')risk.version=4;if(field==='advisory')result.advisory.risk_case.version=5;
+   assert.equal(page.applySelectedRiskDetail(result),false);assert.equal(page.selectedAdvisorySummary.value,null);
+   assert.equal(page.selectedUavAlarm.value.risk_case.version,5);
+  }finally{page.stop();}
+ }
 });

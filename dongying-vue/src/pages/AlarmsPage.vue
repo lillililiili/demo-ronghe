@@ -67,7 +67,7 @@ import { serverNow } from '@/services/serverClock.js';
 import TargetTrackingPanel from '@/components/video/TargetTrackingPanel.vue';
 import { uavAdvisoryApi } from '@/services/uavAdvisoryApi.js';
 
-import { riskCaseProgress, RISK_STAGE_LABEL, riskCaseOf, riskCaseKey, riskStageLabel, riskConfirmed, riskVerificationState, riskCaseVerificationLabel, riskCaseAlarm, riskCaseMatches } from '@/services/riskCaseView.js';
+import { riskCaseProgress, RISK_STAGE_LABEL, riskCaseOf, riskCaseKey, riskStageLabel, riskConfirmed, riskVerificationState, riskCaseVerificationLabel, riskCaseVerificationHint, verificationSourceLabel, riskCaseAlarm, riskCaseMatches } from '@/services/riskCaseView.js';
 import { businessDateTime } from '@/services/businessTime.js';
 import { PREDICTION_ORIGIN, PREDICTION_STATES, alarmPredictionState, isPredictionAlarm, predictionVerificationState } from '@/services/predictionView.js';
 import { predictionDetailsHtml, predictionAlarmStatusHtml } from '@/ui/predictionDetails.js';
@@ -567,7 +567,7 @@ async function loadKpis() {
   };
   kpiList.value = [
     todayKpi(KPI_DEFS[0], 0, '北京时间今天发生的告警数量；发生时间未知者不计'),
-    todayKpi(KPI_DEFS[1], 1, '北京时间今天发生且待人工核实的告警数量'),
+    todayKpi(KPI_DEFS[1], 1, '北京时间今天发生且待核实的告警数量'),
     { ...KPI_DEFS[2], value: num(v[7]), desc: fail(7) || '已核实属实、处置还没结束的告警数量，不限日期；正在反制或干扰中的也算在内，设备反制或干扰完成后不再计入' },
     disposalKpi(KPI_DEFS[3], r[4], v[4]),
     disposalKpi(KPI_DEFS[4], r[6], v[6]),
@@ -674,7 +674,7 @@ function disposalActions(a, ev) {
   if (riskConfirmed(a) || ['CLEARED', 'ENDED'].includes(riskCaseOf(a)?.stage)) return '';
   const prediction = predictionVerificationState(ev, a, serverNow());
   if (prediction?.terminal) return '';
-  if ((riskCaseOf(a)?.allowed_actions || ev.allowed_actions || []).includes('VERIFY')) return `<button class="btn" data-al="verify">${prediction?.blocked ? '核实为误报' : riskCaseOf(a) ? '核实风险' : prediction ? '核实预测风险' : '核实事件事实'}</button>`;
+  if ((riskCaseOf(a)?.allowed_actions || ev.allowed_actions || []).includes('VERIFY')) return `<button class="btn" data-al="verify">${prediction ? '核实' : riskCaseOf(a) ? '核实风险' : '核实事件事实'}</button>`;
   if (ev.state === 'CONFIRMED' || ev.state === 'FALSE_POSITIVE') return '';
   return '<span>当前账号没有事件核实权限</span>';
 }
@@ -814,8 +814,7 @@ function detailHtml() {
     })}`;
 }
 
-/* 核实记录（确认书 3-1、流程 1 第②步，新-18）：按先后列出结论、时间和说明。系统按核实规则自动核实的没有核实人，
-   写“系统自动核实 · 无核实人”；人工核实的写核实人。还没有核实事件的告警不显示这一块。 */
+/* 核实记录按当前风险账本显示结论、来源和时间；不能用操作人为空推断自动核实。 */
 function predictionAlarmHtml(alarm) {
   if (!isPredictionAlarm(alarm)) return '';
   const scoped = alarm.prediction?.warning ? { ...alarm.prediction, warnings: [alarm.prediction.warning] } : alarm.prediction;
@@ -836,7 +835,7 @@ function verificationHtml() {
     body = `<ol class="alarm-escalation-list">${cur.verifications.map(v => `<li>
         <div class="alarm-escalation-head"><b>${esc(labelOf(CONCLUSION_LABEL, v.conclusion, '结论未知'))}</b></div>
         ${v.note ? `<div>说明：${esc(v.note)}</div>` : ''}
-        <div class="alarm-escalation-meta">${esc(v.actor_id ? `人工核实 · 核实人 ${v.actor_name || '未知'}` : '系统自动核实 · 无核实人')} · ${esc(fmt(v.created_at) || '时间未知')}</div>
+        <div class="alarm-escalation-meta">${esc(verificationSourceLabel(v))} · ${esc(fmt(v.created_at) || '时间未知')}</div>
       </li>`).join('')}</ol>`;
   }
   return U.sect('核实记录', body, { icon: 'check' });
@@ -868,7 +867,7 @@ function detailActionsHtml() {
   if (!a) return '';
   const prediction = predictionVerificationState(ev, a, serverNow());
   const note = prediction?.blocked ? prediction.message : !riskConfirmed(a) && ev?.state === 'PENDING_VERIFICATION'
-    ? riskCaseOf(a) ? `本次区域风险尚待人工核实。${pendingNotifyNote(a)}` : prediction ? '预测入区风险尚待人工核实。确认后是否通知，以当前预测依据、飞手信息和通道校验为准。' : `事件事实尚待核实。${pendingNotifyNote(a)}` : '';
+    ? riskCaseOf(a) ? `${riskCaseVerificationHint(a) || '本次区域风险尚待核实。'}${pendingNotifyNote(a)}` : prediction ? '预测入区风险尚待人工核实。确认后是否通知，以当前预测依据、飞手信息和通道校验为准。' : `事件事实尚待核实。${pendingNotifyNote(a)}` : '';
   return `<div class="alarm-observation-actions">
       ${disposalActions(a, ev)}</div>
     ${note ? `<p class="alarm-action-note">${esc(note)}</p>` : ''}`;
@@ -1297,10 +1296,19 @@ async function loadVerifications(my, { quiet = false } = {}) {
   const keep = quiet && cur.verificationsLoaded;
   if (!keep) { cur.verificationsLoading = true; cur.verificationsError = ''; paintDetailContent(); }
   try {
-    const eventIds = [...new Set([a.event_id, ...(riskCaseOf(a)?.related_event_ids || [])])];
-    const pages = await mapPool(eventIds, 4, eventId => listUavVerifications(eventId, { page: 1, size: VERIFICATION_PAGE_SIZE }));
+    const risk = riskCaseOf(a);
+    let records;
+    if (risk?.risk_case_id) {
+      // 同一实测事件可以关联多个禁飞区，核实资格只能读取本风险账本。
+      const scoped = Array.isArray(risk.verifications) ? risk : (await getUavRiskCase(risk.risk_case_id))?.risk_case;
+      if (scoped?.risk_case_id !== risk.risk_case_id || !Array.isArray(scoped.verifications)) throw new Error('本次风险的核实记录暂不可用，请重试');
+      records = scoped.verifications;
+    } else {
+      const page = await listUavVerifications(a.event_id, { page: 1, size: VERIFICATION_PAGE_SIZE });
+      records = Array.isArray(page?.items) ? page.items : [];
+    }
     if (my !== detailSeq) return;
-    cur.verifications = pages.flatMap(page => Array.isArray(page?.items) ? page.items : []).sort((left, right) => Number(right.created_at) - Number(left.created_at));
+    cur.verifications = [...records].sort((left, right) => Number(right.created_at) - Number(left.created_at));
     cur.verificationsLoaded = true;
     cur.verificationsError = '';
   } catch (e) {
@@ -1418,7 +1426,7 @@ async function refreshSelected(id = st.selId, { evidenceChanged = false } = {}) 
   const chainChanged = targetChanged || alarm.event_id !== before.event_id || JSON.stringify(event) !== JSON.stringify(beforeEvent);
   // 事件被核实（自动或人工）后状态会变，核实记录跟着重读；处置面板可能已先把版本号改成新的，所以也比状态。
   const verificationChanged = alarm.event_id !== before.event_id || event?.state !== beforeEvent?.state
-    || event?.version !== beforeEvent?.version || (!!alarm.event_id && !cur.verificationsLoaded && !cur.verificationsLoading);
+    || event?.version !== beforeEvent?.version || riskCaseOf(alarm)?.version !== riskCaseOf(before)?.version || (!!alarm.event_id && !cur.verificationsLoaded && !cur.verificationsLoading);
   cur.alarm = alarm; cur.event = event;
   if (alarm.event_id) await refreshEventDisposals(alarm.event_id);
   else { ++disposalSeq; disposal.byAction = {}; disposal.handoff = null; disposal.error = ''; disposal.unavailable = false; }
@@ -1459,7 +1467,7 @@ async function verifyModal() {
   verifyOpening = true;
   let latest;
   try {
-    if (riskCaseOf(a)) { const detail = await getUavRiskCase(riskCaseOf(a).risk_case_id); latest = detail.event; if (my === detailSeq) cur.alarm = riskCaseAlarm({ ...detail.alarm, risk_case: detail.risk_case }); }
+    if (riskCaseOf(a)) { const detail = await getUavRiskCase(riskCaseOf(a).risk_case_id, { purpose: 'verification' }); latest = detail.event; if (my === detailSeq) cur.alarm = riskCaseAlarm({ ...detail.alarm, risk_case: detail.risk_case }); }
     else latest = await getUavEvent(ev.event_id);
   }
   catch (error) { return toast(error.message || '读取核实事件失败，请稍后重试', 'err'); }

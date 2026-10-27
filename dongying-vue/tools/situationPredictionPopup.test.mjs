@@ -2,6 +2,7 @@ import * as riskHelpers from '../src/services/riskCaseView.js';
 import { predictionWarningRows } from '../src/services/predictionView.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import vm from 'node:vm';
 import { readFileSync } from 'node:fs';
 import { toAlarms } from '../src/services/situationData.js';
 import { isPredictionAlarm, predictionVerificationState } from '../src/services/predictionView.js';
@@ -61,7 +62,7 @@ test('只将当前目标同事件预测关联到弹窗，首次冻结快照单�
  const predictionUnavailable = { value: false };
  const predictionRows = { get value() { return predictionWarningRows(predictions.value, now, predictionUnavailable.value); } };
  const choose = new Function(...Object.keys(riskHelpers), 'predictionRows', 'selection', 'predictions', 'selectedPredictionAlarmDetail', 'predictionUnavailable', 'isPredictionAlarm',
-  `${body('targetAlarm')}\nreturn targetAlarm;`)(...Object.values(riskHelpers), predictionRows, selection, predictions, selectedPredictionAlarmDetail, predictionUnavailable, isPredictionAlarm);
+  `const selectedRiskContext = { value: null }, selectedRiskSelectionKey = () => '';\n${body('targetAlarm')}\nreturn targetAlarm;`)(...Object.values(riskHelpers), predictionRows, selection, predictions, selectedPredictionAlarmDetail, predictionUnavailable, isPredictionAlarm);
  const chosen = choose(target);
  assert.equal(chosen.prediction.prediction_id, 'latest-snapshot'); assert.equal(chosen.prediction.warning.event_id, alarm.eventId);
  assert.equal(chosen.prediction.warnings.length, 1); assert.equal(chosen.prediction_snapshot, alarm.prediction_snapshot);
@@ -70,10 +71,11 @@ test('只将当前目标同事件预测关联到弹窗，首次冻结快照单�
 test('地图核实先读完整告警和事件，把当前预测ID交共用核实弹窗', async () => {
  const raw = rawAlarm('verify'), mapped = toAlarms([raw])[0], event = { event_id: raw.event_id, version: 8, allowed_actions: ['VERIFY'] };
  let opened;
- const fn = new Function(...Object.keys(riskHelpers), 'targetAlarm', 'toast', 'getUavEvent', 'getAlarm', 'openUavVerification', 'source',
-  `${body('openTargetVerification')}\nreturn openTargetVerification;`)
+ const fn = new Function(...Object.keys(riskHelpers), 'targetAlarm', 'toast', 'getUavEvent', 'getAlarm', 'openUavVerification', 'source', 'openModal', 'h',
+  `let verificationOpening = null;
+${body('openTargetVerification')}\nreturn openTargetVerification;`)
   (...Object.values(riskHelpers), () => mapped, () => {}, async id => { assert.equal(id, raw.event_id); return event; },
-    async id => { assert.equal(id, raw.alarm_id); return raw; }, input => { opened = input; }, { refresh: async () => {} });
+    async id => { assert.equal(id, raw.alarm_id); return raw; }, input => { opened = input; return true; }, { refresh: async () => {} }, () => ({ isCurrent: () => true, close() {} }), () => null);
  await fn({ targetId: raw.target_id });
  assert.equal(opened.event, event); assert.equal(opened.alarm.prediction.prediction_id, raw.prediction.prediction_id);
  assert.equal(opened.alarm.origin_kind, 'PREDICTED_AIRSPACE_ENTRY');
@@ -102,4 +104,141 @@ test('统一风险的旧入区依据不引导到另一条告警', () => {
     assert.match(gate.message, /刷新本条风险/);
     assert.doesNotMatch(gate.message, /请查看实际入区告警/);
   }
+});
+
+
+function verificationEntry(readCase) {
+ const forms = [], notices = [], submissions = [], caseReads = [], loading = [], selectedUavAlarm = { value: null };
+ let activeModal = null;
+ const openModal = options => { const handle = { options, isCurrent: () => activeModal === handle, close: () => { if (activeModal === handle) activeModal = null; } }; activeModal = handle; loading.push(handle); return handle; };
+ const context = vm.createContext({ ...riskHelpers, predictionVerificationState, serverNow: () => now,
+  openFormModal: form => { activeModal = null; forms.push(form); },
+  openModal: options => { activeModal = null; const result = options.render(); forms.push(result.props.form); return { isCurrent:()=>true, close(){} }; },
+  h:(component,props)=>({component,props}), RiskVerificationForm:{}, shallowRef:value=>({value}), readSessionToken:()=> 'session',
+  setTimeout,clearTimeout,getUavRiskCase:readCase, closeModal() {}, toast: message => notices.push(message),
+  crypto: globalThis.crypto, isUncertainOutcome: () => false, ALARM_TYPE_LABEL: {},
+  labelOf: () => '', readableNo: value => value || '', displayAlarmNo: value => value, displayTargetNo: value => value,
+  verifyUavRiskCase: async (id, body) => { submissions.push({ id, body }); return { state: 'CONFIRMED' }; },
+  verifyUavEvent: () => { throw new Error('风险核实不能退回原始事件提交'); } });
+ vm.runInContext(readFileSync(new URL('../src/services/uavRiskVerificationSession.js', import.meta.url), 'utf8').replace(/^import .*;\r?\n/gm, '').replace(/\bexport /g, ''), context);
+ vm.runInContext(readFileSync(new URL('../src/ui/uavVerificationModal.js', import.meta.url), 'utf8')
+  .replace(/^import .*;\r?\n/gm, '').replace(/\bexport /g, ''), context);
+ const deps = { ...riskHelpers, selectedUavAlarm, openModal, h: (...args) => args, targetAlarm: () => { throw new Error('不能从当前筛选列表重新选择风险'); },
+  toast: message => notices.push(message), getUavRiskCase: async id => { caseReads.push(id); return readCase(id); },
+  getUavEvent: () => { throw new Error('已有风险时不能读取原始事件代替'); },
+  getAlarm: () => { throw new Error('已有风险时不能读取原始告警代替'); },
+  openUavVerification: context.openUavVerification, applySelectedRiskDetail: () => false, source: { refresh: async () => {} } };
+ const click = new Function(...Object.keys(deps), `let verificationOpening = null;\n${body('verifySelectedAlarm')}\n${body('openTargetVerification')}\nreturn verifySelectedAlarm;`)(...Object.values(deps));
+ return { click, forms, notices, submissions, caseReads, selectedUavAlarm, loading };
+}
+function caseDetail(id, stage = 'PREDICTED', verification_status = 'PENDING_VERIFICATION') {
+ const raw = rawAlarm(id, stage === 'ENTERED' ? 'ENTERED' : 'ACTIVE');
+ const risk_case = { risk_case_id: `case-${id}`, version: 12, stage, verification_status,
+  allowed_actions: verification_status === 'CONFIRMED' ? [] : ['VERIFY'] };
+ return { risk_case, alarm: raw, event: { event_id: stage === 'ENTERED' ? `actual-${id}` : raw.event_id,
+  version: 9, state: 'PENDING_VERIFICATION', allowed_actions: [], origin_kind: 'PREDICTED_AIRSPACE_ENTRY',
+  prediction: raw.prediction, verification_basis: { confirmable: true, prediction_id: raw.prediction.prediction_id } } };
+}
+
+test('核实点击保留同区域风险，列表移除或选中别区不会丢失异步打开上下文', async () => {
+ for (const id of ['retained-east', 'retained-west']) {
+  const latest = caseDetail(id), clicked = { ...toAlarms([rawAlarm(id)])[0],
+   risk_case: { ...latest.risk_case, version: 4 }, prediction: { prediction_id: 'old-list-snapshot' } };
+  let resolve, readCount = 0;
+  const entry = verificationEntry(() => readCount++ ? latest : new Promise(done => { resolve = done; }));
+  // 点击时当前筛选结果已经移除；明确点击上下文仍能定位，无需目标继续显示在地图。
+  entry.selectedUavAlarm.value = null;
+  const opening = entry.click(clicked);
+  assert.deepEqual(entry.caseReads, [latest.risk_case.risk_case_id]);
+  entry.selectedUavAlarm.value = { risk_case: { risk_case_id: 'different-region' } };
+  resolve(latest);
+  assert.equal(await opening, true);
+  assert.equal(entry.forms.length, 1); assert.equal(entry.notices.length, 0);
+  await entry.forms[0].onSubmit({ conclusion: 'CONFIRMED' });
+  assert.equal(entry.submissions[0].id, latest.risk_case.risk_case_id);
+  assert.equal(entry.submissions[0].body.prediction_id, latest.event.verification_basis.prediction_id);
+  assert.equal(entry.submissions[0].body.expected_case_version, 12);
+  assert.equal(entry.submissions[0].body.expected_version, 9);
+ }
+});
+
+test('点击后转实测按最新资格打开，已自动核实不重复，未知或过期不允许属实', async () => {
+ for (const stage of ['ENTERED', 'AUTO', 'UNKNOWN', 'EXPIRED']) {
+  const id = `latest-${stage}`, latest = caseDetail(id, stage === 'AUTO' ? 'ENTERED' : stage === 'EXPIRED' ? 'PREDICTED' : stage,
+   stage === 'AUTO' ? 'CONFIRMED' : 'PENDING_VERIFICATION');
+  if (stage === 'EXPIRED') latest.event.prediction = { ...latest.event.prediction, valid_until: now - 1 };
+  const clicked = { ...toAlarms([rawAlarm(id)])[0], risk_case: { ...latest.risk_case, stage: 'PREDICTED',
+   verification_status: 'PENDING_VERIFICATION', allowed_actions: ['VERIFY'] } };
+  const entry = verificationEntry(async () => latest);
+  const opened = await entry.click(clicked);
+  assert.deepEqual(entry.caseReads, [latest.risk_case.risk_case_id]);
+  if (stage === 'AUTO') {
+   assert.equal(opened, false); assert.equal(entry.forms.length, 0); assert.equal(entry.submissions.length, 0);
+   assert.equal(entry.notices.length, 1);
+  } else {
+   assert.equal(opened, true); assert.equal(entry.forms.length, 1);
+   const form = entry.forms[0];
+   if (stage === 'ENTERED') {
+    assert.equal(form.fields[0].options[0].disabled, false);
+    assert.match(form.introHtml, /<dd>待核实<\/dd>/);
+    await form.onSubmit({ conclusion: 'CONFIRMED' });
+    assert.equal(entry.submissions[0].body.prediction_id, undefined, '已入区不再提交旧预测快照');
+   } else {
+    assert.equal(form.fields[0].options[0].disabled, true);
+    await assert.rejects(form.onSubmit({ conclusion: 'CONFIRMED' }), /依据不足|过期|不可判断/);
+    assert.equal(entry.submissions.length, 0);
+   }
+  }
+ }
+});
+
+test('核实详情身份不符时明确拒绝，不借另一禁飞区资格打开', async () => {
+ const latest = caseDetail('another-region'), clicked = { eventId: 'pending-event', risk_case: { risk_case_id: 'selected-region' } };
+ const entry = verificationEntry(async () => latest);
+ await entry.click(clicked);
+ assert.deepEqual(entry.caseReads, ['selected-region']);
+ assert.equal(entry.forms.length, 0); assert.match(entry.notices[0], /风险详情与所选记录不一致/);
+});
+
+
+test('核实点击立即显示读取反馈，同风险重复点击不重复读取，最新依据到达再打开表单', async () => {
+ const latest = caseDetail('immediate-loading'); let resolve;
+ const entry = verificationEntry(() => new Promise(done => resolve = done));
+ const clicked = { eventId: latest.event.event_id, risk_case: latest.risk_case };
+ const pending = entry.click(clicked);
+ assert.equal(entry.loading.length, 1); assert.equal(entry.loading[0].isCurrent(), true);
+ assert.match(entry.loading[0].options.title, /正在读取核实依据/);
+ const rendered = entry.loading[0].options.render();
+ assert.equal(rendered[1].role, 'status'); assert.equal(rendered[1]['aria-live'], 'polite');
+ assert.equal(entry.forms.length, 0); assert.equal(entry.submissions.length, 0);
+ await entry.click(clicked); assert.equal(entry.caseReads.length, 1); assert.equal(entry.loading.length, 1);
+ resolve(latest); assert.equal(await pending, true); assert.equal(entry.forms.length, 1);
+ assert.equal(entry.loading[0].isCurrent(), false);
+});
+
+test('关闭读取反馈或开始别区核实后迟到响应不打开旧表单', async () => {
+ for (const change of ['close', 'another-risk']) {
+  const first = caseDetail('cancel-first'), second = caseDetail('cancel-second'), waits = new Map();
+  const entry = verificationEntry(id => new Promise(done => waits.set(id, done)));
+  const pending = entry.click({ eventId: first.event.event_id, risk_case: first.risk_case });
+  let next;
+  if (change === 'close') entry.loading[0].close();
+  else next = entry.click({ eventId: second.event.event_id, risk_case: second.risk_case });
+  waits.get(first.risk_case.risk_case_id)(first); assert.equal(await pending, false);
+  assert.equal(entry.forms.length, 0); assert.equal(entry.notices.length, 0);
+  if (next) { waits.get(second.risk_case.risk_case_id)(second); assert.equal(await next, true); assert.equal(entry.forms.length, 1); }
+ }
+});
+
+test('核实读取失败关闭加载并显示真实原因，已核实优先说明无需重复而非权限不足', async () => {
+ const failed = verificationEntry(async () => { throw new Error('风险阶段更新，请重新读取'); });
+ assert.equal(await failed.click({ eventId: 'event-error', risk_case: { risk_case_id: 'case-error' } }), false);
+ assert.equal(failed.loading[0].isCurrent(), false); assert.equal(failed.forms.length, 0);
+ assert.match(failed.notices[0], /风险阶段更新/);
+ const latest = caseDetail('already-confirmed', 'ENTERED', 'CONFIRMED');
+ const entry = verificationEntry(async () => latest);
+ assert.equal(await entry.click({ eventId: latest.event.event_id, risk_case: latest.risk_case }), false);
+ assert.equal(entry.loading[0].isCurrent(), false); assert.equal(entry.forms.length, 0);
+ assert.match(entry.notices[0], /本次风险已核实，无需重复核实/);
+ assert.doesNotMatch(entry.notices[0], /权限|自动/); assert.equal(entry.submissions.length, 0);
 });

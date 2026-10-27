@@ -70,3 +70,48 @@ export function evidenceChainView(material) {
   }));
   return { total: items.length, items, trackUnavailable: !fused && rows.some(isTrack) };
 }
+
+
+/** 新材料独立冻结的实测入区依据；不读取当前风险，也不把处置核实改写为原始事件结论。 */
+export function measuredRiskBasisView(material) {
+  const basis = material?.measured_risk_basis;
+  if (!basis || typeof basis !== 'object' || Array.isArray(basis)) return null;
+  const related = !!basis.event_id && basis.event_id === material?.event?.event_id;
+  const measured = basis.basis_kind === 'INDEPENDENT_MEASURED_ENTRY' && related;
+  const verification = basis.risk_verification && typeof basis.risk_verification === 'object'
+    && !Array.isArray(basis.risk_verification) ? basis.risk_verification : null;
+  const trigger = verification?.trigger_mode === 'AUTO'
+    ? (verification.automation_run_id ? '规则自动核实' : '自动核实（规则运行未记录）')
+    : verification?.trigger_mode === 'MANUAL' ? '人工核实' : '核实方式未记录';
+  const conclusion = { CONFIRMED: '风险属实', FALSE_POSITIVE: '误报', PENDING_VERIFICATION: '待核实' }[verification?.conclusion] || '结论未记录';
+  const verificationBasis = { PREDICTION: '预测风险依据', OBSERVED: '实测风险依据' }[verification?.basis_kind] || '核实依据类型未记录';
+  const finite = value => typeof value === 'number' && Number.isFinite(value);
+  const position = finite(basis.longitude) && finite(basis.latitude)
+    ? `WGS84 ${basis.longitude}, ${basis.latitude}` : '实测位置未记录';
+  const heights = [];
+  if (finite(basis.altitude_amsl_m)) heights.push(`海拔 ${basis.altitude_amsl_m} 米（AMSL）`);
+  if (finite(basis.height_agl_m)) heights.push(`离地 ${basis.height_agl_m} 米（AGL）`);
+  const simulated = basis.simulated === true || basis.source_mode === 'replay' || basis.source_mode === 'mock';
+  const source = simulated ? (basis.source_mode === 'replay' ? '模拟／回放来源' : '模拟来源')
+    : basis.source_mode === 'live' ? '实时来源' : '来源未记录';
+  const references = [
+    ['风险记录', basis.risk_case_id], ['实测事件', basis.event_id], ['实测研判', basis.evaluation_id],
+    ['关联反制授权', basis.authorization_id], ['禁飞区', basis.airspace_id], ['空域版本', basis.airspace_version_id],
+    ['实测观测', basis.observation_id], ['实测轨迹点', basis.point_id], ['观测来源', basis.source_id],
+    ['观测设备', basis.device_id], ['研判规则版本', basis.rule_set_version_id]
+  ].filter(([, value]) => value != null && value !== '').map(([label, value]) => ({ label, value: String(value) }));
+  return {
+    measured, title: measured ? '已保存本禁飞区独立实测入区依据' : related ? '实测依据类型待核查' : '实测依据与原始事件关联待核查',
+    observedAt: basis.observed_at ?? null, evaluatedAt: basis.evaluated_at ?? null, completedAt: basis.completed_at ?? null,
+    source, simulated, position,
+    altitude: heights.join('；') || '高度及基准未记录', accuracy: finite(basis.position_accuracy_m) ? `${basis.position_accuracy_m} 米` : '未记录',
+    references,
+    verification: verification ? { conclusion, trigger, basis: verificationBasis, at: verification.created_at ?? null,
+      actor: verification.actor_name || verification.actor_id || '', ruleRun: verification.automation_run_id || '', note: verification.note || '' } : null
+  };
+}
+
+
+export function eventMaterialStateText(material, stateLabels = {}) {
+  return `原始事件记录（移送时）：${labelOf(stateLabels, material?.event?.state, '状态未提供')}`;
+}

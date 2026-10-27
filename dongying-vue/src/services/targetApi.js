@@ -1,4 +1,4 @@
-import { apiRequest } from './apiClient.js';
+import { apiRequest, apiRequestTimed } from './apiClient.js';
 
 function query(params = {}) {
   const search = new URLSearchParams();
@@ -33,6 +33,7 @@ async function allPages(loadPage, params = {}) {
 export const targetApi = {
   list: params => apiRequest(`/targets${query(params)}`),
   detail: targetId => apiRequest(`/targets/${id(targetId)}`),
+  detailTimed: targetId => apiRequestTimed(`/targets/${id(targetId)}`, {}, 8_000),
   tracks: (targetId, params) => apiRequest(`/targets/${id(targetId)}/tracks${query(params)}`),
   /* 观测（阶段 15 起带 identity_confidence / bearing_deg / device_id）：态势页据此显示分路置信度与方位线。 */
   observations: (targetId, params) => apiRequest(`/targets/${id(targetId)}/observations${query(params)}`),

@@ -1,7 +1,9 @@
 import math
 import unittest
 
-from adsb_flights import AdsbFeed, PREFIX, aircraft_at
+import json
+
+from adsb_flights import AdsbFeed, PREFIX, STATION_GUID, aircraft_at, pingstation_traffic
 from acceptance_flows import read_acceptance_flows
 from pathlib import Path
 
@@ -49,16 +51,41 @@ class AdsbFlightsTest(unittest.TestCase):
         self.assertIsNotNone(aircraft_at('no_data', 300, CENTER, 0))
         self.assertGreater(km(plane('no_data', 10)), 30)
 
-    def test_feed_registers_around_the_counter_device_reports_and_releases(self):
+    def test_feed_registers_around_the_counter_device_pushes_pingstation_udp_and_releases(self):
         api = FakeApi()
-        feed = AdsbFeed(api, {'owner_org_id': 'org', 'district_id': 'dist'}, 'enter')
+        sent = []
+        feed = AdsbFeed(api, {'owner_org_id': 'org', 'district_id': 'dist'}, 'enter', sender=sent.append)
         feed.prepare()
         self.assertEqual((118.7, 37.5), feed.center)
         self.assertEqual(350, api.calls[1][2]['receive_range_km'])
+        self.assertEqual(STATION_GUID, api.calls[1][2]['station_guid'])
         self.assertEqual(6, feed.tick(0, 1000))
         self.assertEqual(0, feed.tick(1, 2000))  # 每 2 秒送一次
+        # 第一拍：一条状态报文 + 一架一条的航班报文，都是 pingStation3 的 JSON 格式。
+        self.assertEqual(7, len(sent))
+        self.assertEqual(STATION_GUID, json.loads(sent[0])['status']['pingStationGuid'])
+        plane = json.loads(sent[-1])['aircraft'][0]
+        self.assertEqual({'icaoAddress': '780A1B', 'callsign': 'CES2471 ', 'pingStationGuid': STATION_GUID},
+                         {k: plane[k] for k in ('icaoAddress', 'callsign', 'pingStationGuid')})
+        self.assertEqual(3600000, plane['altitudeMM'])
+        self.assertEqual('1970-01-01T00:00:01Z', plane['timeStamp'])
+        self.assertEqual(6, feed.tick(2, 3000))  # 30 秒内不再发状态
+        self.assertEqual(13, len(sent))
         feed.release()
         self.assertEqual(('POST', PREFIX + '/receiver-1/release', {}), api.calls[-1])
+
+    def test_no_data_outage_sends_nothing(self):
+        sent = []
+        feed = AdsbFeed(FakeApi(), {'owner_org_id': 'org', 'district_id': 'dist'}, 'no_data', sender=sent.append)
+        feed.prepare()
+        self.assertEqual(0, feed.tick(100, 1000))
+        self.assertEqual([], sent)
+
+    def test_traffic_datagram_rounds_units_like_the_receiver(self):
+        row = {'icao24': '780A1B', 'callsign': 'CES2471', 'longitude': 118.6, 'latitude': 37.4, 'altitude_m': 1500,
+               'ground_speed_mps': 211.43, 'track_deg': 263.3, 'observed_at': 1700000000000}
+        plane = json.loads(pingstation_traffic(row, STATION_GUID, 7))['aircraft'][0]
+        self.assertEqual((1500000, 26330, 21143, 7), (plane['altitudeMM'], plane['headingDE2'], plane['horVelocityCMS'], plane['sequenceNumber']))
 
     def test_flow_ten_is_built_from_flow_five_with_both_variants(self):
         flows = read_acceptance_flows(ROOT)['flows']

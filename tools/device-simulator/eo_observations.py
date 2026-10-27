@@ -3,6 +3,10 @@ import math
 from engine import target_sample, target_reporting
 from coordinate_contract import simulator_wgs84
 
+# 设备模拟器页面上开的流程不带 eoObservations：按真实光电那样上报看到的无人机和把握度，视频识别框才能关联到告警
+# （rose 10-27 选择「框能点，允许自动核实」）。场景文件里写了 eoObservations（含 enabled:false）时照场景执行。
+PAGE_DEFAULT_CONFIG = {'enabled': True, 'detectConfidence': 0.94, 'trackConfidence': 0.91, 'intervalSeconds': 2}
+
 
 class EoObservations:
     def __init__(self, config, manifest, targets, elapsed):

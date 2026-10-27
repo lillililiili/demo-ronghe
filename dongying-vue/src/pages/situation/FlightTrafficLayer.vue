@@ -40,7 +40,7 @@ async function load() {
 }
 
 function remember(aircraft) {
-  const now = Date.now();
+  const now = Number(traffic.value?.served_at) || Date.now(); // 和「过时」判断用同一个时间（服务器时间），值班电脑时钟不准也不影响
   aircraft.forEach(a => {
     const points = trails.get(a.icao24) || [];
     const last = points[points.length - 1];

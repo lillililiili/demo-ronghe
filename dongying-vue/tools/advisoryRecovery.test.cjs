@@ -177,3 +177,64 @@ test('fusion card shows actual counter block reasons and never borrows another e
   assert.match(counterButton(unknown), disabled);
   assert.match(unknown, /尚未确认反制资格/);
 });
+
+
+test('同风险实测入区后提示规则核实，预警仍提示人工核实且不借此发起反制', async () => {
+  const { randomUUID } = require('node:crypto');
+  for (const source_mode of ['live', 'replay']) {
+    const event_id = randomUUID();
+    const alarm = { eventId: event_id, eventState: 'PENDING_VERIFICATION', source_mode,
+      risk_case: { risk_case_id: randomUUID(), stage: 'ENTERED', verification_status: 'PENDING_VERIFICATION', manual_counter_only: true } };
+    const entered = await renderSituationNextStep({ event_id, counter_launch_visible: false }, alarm);
+    assert.match(entered, /满足已启用的核实规则可自动核实，也可人工核实/);
+    assert.equal(counterButton(entered), undefined);
+    const now = Date.now();
+    const predicted = await renderSituationNextStep({ event_id }, { ...alarm,
+      risk_case: { ...alarm.risk_case, stage: 'PREDICTED' }, originKind: 'PREDICTED_AIRSPACE_ENTRY',
+      prediction: { prediction_id: randomUUID(), status: 'READY', based_on_observed_at: now, valid_until: now + 60000, warning: { state: 'ACTIVE' } } });
+    assert.match(predicted, /请人工核实本次预测风险/);
+    assert.doesNotMatch(predicted, /可自动核实/);
+  }
+});
+
+test('同一风险的SSE、可见性和手动刷新共享在途读取，切换事件后旧响应不覆盖',async()=>{
+  const vue=require('vue'),{shouldRetryRefresh,refreshFailureText}=await retryHelpers();
+  const pending=[],callbacks={},unmounts=[],updates=[],id=vue.ref(crypto.randomUUID()),caseId=vue.ref(crypto.randomUUID());
+  const document={hidden:false,addEventListener:(name,fn)=>callbacks[name]=fn,removeEventListener(){}};
+  const deps={...vue,onMounted:fn=>fn(),onUnmounted:fn=>unmounts.push(fn),
+    uavAdvisoryApi:{get:(event,area)=>new Promise(resolve=>pending.push({event,area,resolve}))},
+    shouldRetryRefresh,refreshFailureText,setTimeout:()=>1,clearTimeout(){},document,
+    useRealtimeRefresh:(_topics,fn)=>callbacks.sse=fn};
+  const hook=new Function(...Object.keys(deps),hookScript()+';return useUavAdvisory;')(...Object.values(deps));
+  const scope=vue.effectScope();let state;
+  try{
+    state=scope.run(()=>hook(()=>id.value,value=>updates.push(value),1000,()=>{},()=>caseId.value));
+    const first=state.load();callbacks.sse();callbacks.visibilitychange();
+    assert.equal(pending.length,1,'同身份多个入口不互相重发并作废结果');
+    const old=pending[0];id.value=crypto.randomUUID();await vue.nextTick();assert.equal(pending.length,2);
+    pending[1].resolve({event_id:id.value,event_version:2,notify_phase:'AWAIT_COUNTER'});
+    await state.load();assert.equal(state.data.value.event_id,id.value);
+    old.resolve({event_id:old.event,event_version:999});await first;
+    assert.equal(state.data.value.event_id,id.value);assert.equal(updates.length,1);
+    const next=state.load();callbacks.sse();assert.equal(pending.length,3);
+    pending[2].resolve({event_id:id.value,event_version:3});await next;
+    assert.equal(state.data.value.event_version,3);
+  }finally{unmounts.forEach(fn=>fn());scope.stop();}
+});
+
+test('无当前地图目标的风险卡也过滤旧case摘要，缺版本不显示旧通知条件',async()=>{
+  const vue=require('vue'),{renderToString}=require('@vue/server-renderer');
+  const eventId=crypto.randomUUID(),risk={risk_case_id:crypto.randomUUID(),version:7};
+  for(const version of [undefined,6,7]){
+    const data={event_id:eventId,risk_case_id:risk.risk_case_id,risk_case_version:version,response_order:{mode:'COUNTER_FIRST'}};
+    const component=advisoryComponent('pages/situation/SituationAdvisoryCard.vue',{
+      ...riskHelpers,displayBusinessNo:value=>value,
+      RiskDisposalSummary:{props:['summary'],render(){return vue.h('span',this.summary?'最新处置摘要':'处置进度更新中');}},
+      AutoSmsNotice:{render(){return vue.h('span','短信记录');}},AutoVoiceNotice:{render(){return vue.h('span','电话记录');}},AdvisoryRecords:{render:()=>null},
+      useUavAdvisory:()=>({data:vue.ref(data),error:vue.ref(''),loading:vue.ref(false),load:()=>{}})
+    });
+    const html=await renderToString(vue.createSSRApp(component,{eventId,riskCase:risk}));
+    if(version===7){assert.match(html,/最新处置摘要/);assert.match(html,/短信记录/);}
+    else {assert.match(html,/处置进度更新中/);assert.doesNotMatch(html,/短信记录|电话记录/);}
+  }
+});

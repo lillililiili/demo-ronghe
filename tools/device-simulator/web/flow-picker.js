@@ -10,7 +10,19 @@
 
   /* 规则管理里核实、反制两组规则现在开没开（服务端只读取到的）；读不到的那一组不说。 */
   function rulesLine(rules, flow) {
-    if (flow?.guide?.prediction_only) return '预测预警由人工核实、人工发起反制，无需调整普通告警的自动规则。';
+    if (flow?.guide?.prediction_only) {
+      const verify = rules?.verify;
+      const parts = ['预警阶段由人工核实'];
+      if (flow.guide.includes_observed_stage) {
+        parts.push(verify?.ok
+          ? verify.enabled > 0
+            ? `实际入区后若尚未核实，启用的 ${verify.enabled}/${verify.total} 条核实规则全部满足且本区实测依据有效时自动核实`
+            : '当前没有启用的核实规则，实际入区后仍需人工核实'
+          : '实际入区后按后台核实规则判断；规则状态暂不可读取，请以平台结果为准');
+      }
+      parts.push('同一次风险已核实不重复核实，预测衍生风险仍须人工发起反制');
+      return parts.join('；') + '。';
+    }
     const verify = rules?.verify, counter = rules?.counter, parts = [];
     if (verify?.ok) parts.push(verify.enabled > 0
       ? `核实规则启用 ${verify.enabled}/${verify.total} 条，全部满足后自动核实`
@@ -71,6 +83,16 @@
     return {...flow, ...variant, title: flow.title, variant: variant.id, variantLabel: variant.label};
   }
 
+  function variantHtml(flow) {
+    if (!flow?.variants?.length) return '';
+    const current = flow.variants.find(item => item.id === flow.variant);
+    const control = `<label class="flow-variant">${flow.variants.some(item => item.supplemental) ? '模拟起点' : '本次模拟情况'}<select data-flow-variant>${flow.variants.map(item => `<option value="${esc(item.id)}" ${item.id === flow.variant ? 'selected' : ''}>${esc(item.label)}</option>`).join('')}</select></label>`;
+    if (!flow.variants.some(item => item.supplemental)) return control;
+    return `<p class="flow-journey">${esc(current?.label || '区外预警 → 实际入区 → 按规则核实并处置')}</p>
+      <details class="flow-supplemental"${current?.supplemental ? ' open' : ''}><summary>补充场景${current?.supplemental ? ' · 已选择' : ''}</summary>
+      <p class="field-note">日常演示使用完整流程；需要验证首次发现就在区内的情况时，在这里切换。</p>${control}</details>`;
+  }
+
   /* 阶段来自本次场景，时间只取本批次服务端进度；它描述模拟飞行，不代表平台业务办理结果。 */
   function sceneGuideModel(scene, current = null, runtime = null) {
     const started = Boolean(current?.startedBatch);
@@ -104,7 +126,7 @@
       <p class="scene-guide-note">阶段按模拟航线和运行进度显示；预警、核实、通知和反制结果以平台为准。</p></section>`;
   }
 
-  if (typeof module !== 'undefined' && module.exports) { module.exports = {rulesLine, orderLine, ruleConflict, advance, statusText, selectVariant, sceneGuideModel, sceneGuideHtml}; return; }
+  if (typeof module !== 'undefined' && module.exports) { module.exports = {rulesLine, orderLine, ruleConflict, advance, statusText, selectVariant, variantHtml, sceneGuideModel, sceneGuideHtml}; return; }
 
   const KEY = `${storeKey}-flow`;
   let flows = [], compatibilityFlows = [], chosen = null, chosenVariant = null, rules = null, current = null, folded = false, loading = null;
@@ -134,7 +156,7 @@
     box.innerHTML = `<div class="flow-banner-head"><strong>流程 ${flow.flow} · ${esc(flow.title)}${flow.variantLabel ? ' · ' + esc(flow.variantLabel) : ''}</strong><span class="flow-chip">${esc(statusText(current, phase))}</span>
       <span class="flow-banner-actions"><button type="button" data-flow-banner="detail">完整说明</button><button type="button" data-flow-banner="switch">换一个流程</button><button type="button" data-flow-banner="fold">${folded ? '展开' : '收起'}</button></span></div>`
       + (folded ? '' : (current.reminder
-        ? `<p class="flow-warning">这个流程已经结束。请回规则管理把自动核实打开，否则独立实测分支不会自动核实。</p><div class="flow-banner-ack"><button type="button" class="primary" data-flow-banner="ack">我知道了</button></div>`
+        ? `<p class="flow-warning">这个流程已经结束。请回规则管理把自动核实打开，否则实际入区后不会自动核实。</p><div class="flow-banner-ack"><button type="button" class="primary" data-flow-banner="ack">我知道了</button></div>`
         : `${g.warning && !current.startedBatch ? `<p class="flow-warning">${esc(g.warning)}</p>` : ''}${sceneGuide ? sceneGuideHtml(sceneGuide, true) : `<div class="flow-banner-body"><b>你要做什么</b>${items(g.todo)}<p class="flow-foot">做完点“停止”，再选下一个流程。</p></div>`}`));
   }
 
@@ -146,7 +168,7 @@
       : `<button type="button" class="primary" data-flow-load ${busy ? 'disabled' : ''}>载入并准备</button><span class="field-note">${busy ? '现在有任务在运行，请先点“停止”，再载入流程。' : '只载入这一个流程，还不会开始发送；载入后点页面底部的“开始模拟”才开始。'}</span>`;
     return `<h3>流程 ${flow.flow} · ${esc(flow.title)}</h3>
       <p class="flow-meta">自动跑 ${flow.minutes} 分钟，时间到自动停；中途也可以点“停止”。</p>
-      ${flow.variants?.length ? `<label class="flow-variant">本次模拟情况<select data-flow-variant>${flow.variants.map(item => `<option value="${esc(item.id)}" ${item.id === flow.variant ? 'selected' : ''}>${esc(item.label)}</option>`).join('')}</select></label>` : ''}
+      ${variantHtml(flow)}
       ${g.warning ? `<p class="flow-warning">${esc(g.warning)}</p>` : ''}
       <section><h4>这个流程演示什么</h4><p>${esc(g.shows)}</p></section>
       ${sceneGuideHtml(sceneGuideModel(flow.scene))}
@@ -195,7 +217,7 @@
   function release() { if (current && !current.startedBatch) clear(); }
 
   function showReminder(flow) {
-    openDialog(`流程 ${flow.flow} 已结束`, `<div class="start-check"><p class="flow-warning">请回规则管理把自动核实打开，否则独立实测分支不会自动核实。</p>
+    openDialog(`流程 ${flow.flow} 已结束`, `<div class="start-check"><p class="flow-warning">请回规则管理把自动核实打开，否则实际入区后不会自动核实。</p>
       <p class="field-note">这个流程需要自动核实关着，所以跑之前让你关了它。模拟器不会替你开关规则，要你自己去打开。</p><p class="flow-rules" id="flow-reminder-rules"></p>
       <div class="form-actions">${btn('close-dialog', '稍后再说')}<button type="button" class="primary" data-flow-banner="ack">我已经打开了</button></div></div>`);
     readRules().then(value => { const verify = value?.verify; const note = document.querySelector('#flow-reminder-rules');
@@ -247,7 +269,9 @@
     if (!event.target.matches('[data-flow-variant]')) return;
     chosenVariant = event.target.value;
     paint();
-    document.querySelector('[data-flow-variant]')?.focus();
+    const control = document.querySelector('[data-flow-variant]'), supplemental = control?.closest('details');
+    if (supplemental && !supplemental.open) supplemental.querySelector('summary')?.focus();
+    else control?.focus();
   });
 
   if (current) readFlows().then(renderBanner).catch(() => {});

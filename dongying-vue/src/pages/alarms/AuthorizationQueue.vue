@@ -28,7 +28,7 @@ const groupedResults = ref(true);
 const view = ref(props.initialAuthorizationId || props.initialStatus || props.eventId || props.riskCaseId ? 'all' : 'pending');
 const loading = ref(false), error = ref(''), detailError = ref(''), detailLoading = ref(false), loadedAt = ref('');
 const pageSize = ref(20), detailHost = ref(null);
-const options = [{ label: '全部状态', value: '' }, ...['REQUESTED', 'APPROVED', 'EXECUTING', 'COMPLETED', 'FAILED', 'REJECTED', 'EXPIRED', 'STOPPED', 'CANCELLED'].map(value => ({ value, label: value === 'STOPPED' ? '反制已中止' : disposalStatusText({ status: value }) }))];
+const options = [{ label: '全部状态', value: '' }, ...['REQUESTED', 'APPROVED', 'EXECUTING', 'COMPLETED', 'FAILED', 'REJECTED', 'EXPIRED', 'STOPPED', 'CANCELLED'].map(value => ({ value, label: value === 'STOPPED' ? '反制已中止' : value === 'FAILED' ? '未成功（含启动拦截）' : disposalStatusText({ status: value }) }))];
 const selectedSubject = computed(() => selected.value ? subjects.value[subjectKey(selected.value)] : null);
 const actions = { APPROVE: openDisposalApproval, EXECUTE: openDisposalExecution };
 const userId = computed(() => authUser.value?.user_id);

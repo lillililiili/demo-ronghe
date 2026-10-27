@@ -24,6 +24,8 @@ export function openFormModal(o) {
       submitEnabled: o.submitEnabled || null,
       validate: o.validate || null,
       onCancel: closeModal,
+      onRefresh: o.onRefresh || null,
+      refreshText: o.refreshText,
       onSubmit: values => o.onSubmit(values)
     })
   });

@@ -37,8 +37,9 @@ export function autoHandoffView(data, handoffId = '') {
     tone: notification?.tone || (submitted ? 'success' : ['MANUAL_REQUIRED', 'BLOCKED', 'PENDING', 'FAILED', 'PENDING_DECISION'].includes(handoff.status) ? 'warning' : 'muted'),
     handoffId: linked,
     canSubmit: !notification && handoff.status === 'MANUAL_REQUIRED' && data?.can_handoff === true && !linked,
-    // 交接已建立但没有发出（例如通知处罚规则未全部满足）：要由有移送权限的人员人工发送，系统不代发。
+    // 交接已建立但没有发出：自动补发资格只采信后端明确的 WAITING_RULES 标记。
     awaitingSend: !notification && handoff.status === 'PENDING' && !!linked,
+    waitingForRules: !notification && handoff.status === 'PENDING' && !!linked && handoff.waiting_for_rules === true,
     partyUnidentified: handoff.party_status === 'UNIDENTIFIED',
     partyReasons: Array.isArray(handoff.party_reasons) ? handoff.party_reasons : []
   };
@@ -70,11 +71,28 @@ export function handoffSubmitError(error) {
  * @param {string} [input.error]
  * @returns {{ who: string, canSend: boolean, blocked: string }}
  */
-export function pendingSendStep({ permitted, status, loading = false, error = '' }) {
-  if (!permitted) return { who: '需由有移送权限的人员发送。系统不会自动代发。', canSend: false, blocked: '' };
-  const who = '系统不会自动代发，请有移送权限的值班人员核对材料后点“发送移送”。';
+export function pendingSendStep({ permitted, status, loading = false, error = '', waitingForRules = false }) {
+  const latest = status?.latest_delivery;
+  const automaticAfterRules = waitingForRules && !loading && !error && !status?.notification_decision
+    && latest?.delivery_status === 'PENDING_DELIVERY' && latest.submitted_at == null
+    && latest.receipt_status === 'NOT_EXPECTED';
+  if (!permitted) return { who: '需由有移送权限的人员核查发送条件。', canSend: false, blocked: '' };
+  const who = automaticAfterRules
+    ? '通知处罚规则全部满足后，系统自动发送；有权限人员也可核对材料后人工发送。'
+    : '请先核对发送记录；有权限人员可在条件满足后点“发送移送”。';
   if (error) return { who, canSend: false, blocked: error };
   if (loading || !status) return { who, canSend: false, blocked: '' };
-  if (status.can_notify === true) return { who, canSend: true, blocked: '' };
-  return { who, canSend: false, blocked: status.blocked_reason || '当前暂不能发送，请在“移送与处罚”核对移送记录。' };
+  if (status.can_notify === true) return { who, canSend: true, blocked: '', automaticAfterRules };
+  return { who, canSend: false, blocked: status.blocked_reason || '当前暂不能发送，请在“移送与处罚”核对移送记录。', automaticAfterRules };
+}
+
+/* 同一风险的已完成反制可附带移送进度；状态来自后端，不能把实测阶段或反制完成当成处罚资格。 */
+export function completedHandoffProgress(summary) {
+  const risk = summary?.risk_case, handoff = summary?.auto_handoff;
+  if (summary?._unavailable || !risk?.risk_case_id || risk.action_event_id !== summary?.event_id
+    || (summary._riskCaseId && summary._riskCaseId !== risk.risk_case_id) || !handoff || notificationProgressView(handoff)) return '';
+  if (handoff.status === 'SUBMITTED' && handoff.handoff_id) return '已移送';
+  if (handoff.status === 'PENDING' && handoff.handoff_id) return '移送待发送';
+  if (handoff.status === 'FAILED' && handoff.handoff_id) return '移送发送失败';
+  return { WAITING: '待移送', BLOCKED: '移送受阻', MANUAL_REQUIRED: '待选择接收单位', NOT_REQUIRED: '无需自动移送' }[handoff.status] || '';
 }

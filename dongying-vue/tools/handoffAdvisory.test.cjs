@@ -170,3 +170,28 @@ test('已有人工通知决定不能变成新的选单位自动移送入口', as
     assert.equal(autoHandoffView({ can_handoff: true, auto_handoff: { status: 'MANUAL_REQUIRED', handoff_id: linked, notification_decision: { state: 'PENDING_DECISION' } } }).canSubmit, false);
   }
 });
+
+
+test('只有明确未发送WAITING_RULES分支说明规则满足后自动发送，旧人工与未知结果不冒充自动重发', async () => {
+  const { autoHandoffView, pendingSendStep } = await load('components/disposal/autoHandoffView.js');
+  const handoff_id = crypto.randomUUID();
+  const waiting = autoHandoffView({ auto_handoff: { status: 'PENDING', handoff_id, waiting_for_rules: true } });
+  assert.equal(waiting.waitingForRules, true);
+  const status = { can_notify: true, latest_delivery: { delivery_status: 'PENDING_DELIVERY', receipt_status: 'NOT_EXPECTED', submitted_at: null } };
+  const args = { permitted: true, status, waitingForRules: waiting.waitingForRules };
+  const enabled = pendingSendStep(args);
+  assert.match(enabled.who, /规则全部满足后，系统自动发送/);
+  assert.equal(enabled.automaticAfterRules, true);
+  assert.equal(enabled.canSend, true);
+  for (const change of [
+    { waitingForRules: false }, { loading: true }, { error: '读取失败' },
+    { status: { ...status, notification_decision: { state: 'PENDING_DECISION' } } },
+    { status: { ...status, latest_delivery: { ...status.latest_delivery, submitted_at: Date.now() } } },
+    { status: { ...status, latest_delivery: { ...status.latest_delivery, receipt_status: 'TIMEOUT' } } },
+    { status: { ...status, latest_delivery: { ...status.latest_delivery, delivery_status: 'UNKNOWN' } } },
+    { status: { ...status, latest_delivery: { ...status.latest_delivery, delivery_status: 'FAILED' } } }
+  ]) assert.doesNotMatch(pendingSendStep({ ...args, ...change }).who, /系统自动发送/);
+  assert.equal(pendingSendStep({ ...args, status: { ...status, can_notify: false, blocked_reason: '来源依据不满足' } }).canSend, false);
+  assert.equal(autoHandoffView({ auto_handoff: { status: 'PENDING', handoff_id, waiting_for_rules: true,
+    notification_decision: { state: 'NOTIFY' } } }).waitingForRules, false);
+});

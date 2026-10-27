@@ -15,6 +15,8 @@ const props = defineProps({
   hideFooter: Boolean,
   onSubmit: { type: Function, required: true },
   onCancel: { type: Function, required: true },
+  onRefresh: { type: Function, default: null },
+  refreshText: { type: String, default: '重新读取当前依据' },
   submitEnabled: { type: Function, default: null },
   validate: { type: Function, default: null }
 });
@@ -49,6 +51,14 @@ async function fail(message) {
   errorBox.value?.focus();
 }
 
+async function refreshBasis() {
+  if (busy.value || !props.onRefresh) return;
+  busy.value = true; error.value = '';
+  try { await props.onRefresh({ ...model }); }
+  catch (cause) { await fail(cause.message || '重新读取失败，请重试。'); }
+  finally { busy.value = false; }
+}
+
 async function submit() {
   if (busy.value) return;
   error.value = '';
@@ -72,6 +82,7 @@ async function submit() {
     <div v-if="error" ref="errorBox" class="warnbox controlled-form__message" tabindex="-1" role="alert">{{ error }}</div>
     <div v-if="warning" class="warnbox controlled-form__message" v-html="warning"></div>
     <div v-if="introHtml" class="controlled-form__intro" v-html="introHtml"></div>
+    <button v-if="onRefresh" type="button" class="btn ghost" :disabled="busy" :aria-busy="busy" @click="refreshBasis">{{ busy ? '正在读取' : refreshText }}</button>
     <UFieldGrid :fields="fields" :model="model" :columns="columns" />
     <div v-if="notice" class="info-line controlled-form__message">{{ notice }}</div>
     <UFormFooter v-if="!hideFooter" :confirm-text="busy ? '正在处理' : confirmText" :danger="danger" :disabled="!canSubmit" :loading="busy"

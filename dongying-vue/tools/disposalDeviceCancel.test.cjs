@@ -1,5 +1,6 @@
 /* 反制设备可用性、撤销授权与“为什么不能反制”的提示（BUG-03 / ZT-18）：node tools/disposalDeviceCancel.test.cjs */
 const { test, before } = require('node:test');
+const riskHelpers = require('./riskCaseTestHelpers.cjs');
 const assert = require('node:assert/strict');
 const { readFileSync } = require('node:fs');
 const path = require('node:path');
@@ -21,14 +22,14 @@ before(async () => {
 
 /** 去掉 import/export 后在隔离上下文里跑弹窗模块，表单、提示和接口调用都记下来。 */
 function load({ devices = DEVICES, create, cancel, listError } = {}) {
-  const state = { forms: [], toasts: [], closed: 0, cancels: [], refreshed: [] };
+  const state = { forms: [], toasts: [], closed: 0, cancels: [], refreshed: [], reads: 0 };
   const source = readFileSync(path.join(__dirname, '../src/ui/disposalAuthModal.js'), 'utf8')
     .replace(/^import .*;\r?\n/gm, '').replace(/\bexport /g, '');
   let sequence = 0;
-  const context = vm.createContext({
+  const context = vm.createContext({ ...riskHelpers,
     openFormModal: form => state.forms.push(form), closeModal: () => { state.closed++; },
     toast: (message, kind) => state.toasts.push([message, kind]),
-    deviceApi: { list: async () => { if (listError) throw listError; return { items: devices }; } },
+    deviceApi: { listTimed: async () => { state.reads++; if (listError) throw listError; return { items: devices }; } },
     disposalApi: {
       create: create || (async () => ({ authorization_no: 'DSP-NEW' })),
       directExecute: create || (async () => ({ authorization_no: 'DSP-NEW' })),
@@ -186,7 +187,7 @@ test('反制已完成但没有后续干扰时，告警不重新显示发起入�
     const disposal = { byAction: {}, handoff: null };
     const advisoryLive = { value: { event_id: eventId, counter_launch_visible: true } };
     const progressSources = new Map([[eventId, { auths: { items: [], failed: false }, handoffs: { items: [], failed: false } }]]);
-    const view = new Function('cur', 'disposal', 'advisoryLive', 'pageProgress', 'progressSources', 'punishmentHandoffProgress', functions + '; return { showCounterLaunch, deriveAlarmProgress };')(cur, disposal, advisoryLive, {}, progressSources, punishmentHandoffProgress);
+    const view = new Function('cur', 'disposal', 'advisoryLive', 'pageProgress', 'progressSources', 'punishmentHandoffProgress', 'progressKey', functions + '; return { showCounterLaunch, deriveAlarmProgress };')(cur, disposal, advisoryLive, {}, progressSources, punishmentHandoffProgress, row => row?.event_id || '');
     assert.equal(view.showCounterLaunch(), true);
     const row = { authorization_id: crypto.randomUUID(), subject_id: eventId, action_type: 'COUNTERMEASURE', source_mode, status: 'COMPLETED', requested_at: Date.now() - 60000 };
     disposal.byAction.COUNTERMEASURE = row;
@@ -445,5 +446,17 @@ test('待审批只给申请人撤回入口，审批人和未知身份不能撤�
       assert.equal(view.canCancel({ ...row, status: 'EXECUTING' }, requester), false);
       assert.equal(view.canStop({ ...row, status: 'EXECUTING', allowed_actions: ['STOP'] }), true);
     }
+  }
+});
+
+test('反制准备已读取设备时表单复用该结果，失败不回退重发或给空权限设备',async()=>{
+  for(const failed of [false,true]){
+    const {context,state}=load();
+    await context.openDisposalDirect({actionType:'COUNTERMEASURE',subjectKind:'UAV_EVENT',subjectId:'event-prepared',
+      preparedDevices:failed?{error:Object.assign(new Error('forbidden'),{status:403})}:{items:DEVICES}});
+    assert.equal(state.reads,0,'不重复等待设备接口');assert.equal(state.forms.length,1);
+    const form=state.forms[0],options=form.fields.find(field=>field.key==='device_id').options({channel:'COUNTERMEASURE_4CH'});
+    if(failed){assert.ok(options.every(row=>row.disabled));assert.match(form.notice,/没有设备台账读取权限/);}
+    else assert.ok(options.some(row=>row.value==='ok'&&!row.disabled));
   }
 });

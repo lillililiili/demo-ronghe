@@ -22,11 +22,15 @@ const DEFINITE_CONFLICT_CODES = new Set([
   'EMERGENCY_STOP_UNCONFIRMED', 'ADVISORY_COUNTER_BLOCKED',
   'DEVICE_CONTROL_UNAVAILABLE', 'DEVICE_NOT_BOUND', 'DEVICE_OFFLINE', 'DEVICE_NOT_OPERABLE', 'DEVICE_BUSY',
   'ACTIVE_AUTHORIZATION_EXISTS', 'SUBJECT_KIND_NOT_SUPPORTED',
-  'TARGET_NOT_ACTIVE', 'POLICY_REQUIRES_CONFIRMED_EVENT', 'DEVICE_UNAVAILABLE'
+  'TARGET_NOT_ACTIVE', 'POLICY_REQUIRES_CONFIRMED_EVENT', 'DEVICE_UNAVAILABLE',
+  'RISK_CASE_VERSION_CONFLICT'
 ]);
 
 /* 同一授权的幂等键在“结果未知”期间保留；服务端给出明确结果后才丢弃，避免超时重试重复写授权。 */
 const pendingKeys = new Map();
+const pendingRequestBodies = new Map();
+// 后续版本拒绝只能证明本次未受理，不能消除此前同键提交的未知结果。
+const uncertainRequestKeys = new Set();
 const keyOf = (scope, action) => {
   const id = `${action}:${scope}`;
   if (!pendingKeys.has(id)) pendingKeys.set(id, newDisposalIdempotencyKey(action));
@@ -48,6 +52,7 @@ function messageOf(error, fallback) {
   // 401 在受理前就被拒绝：这次没有保存，弹窗和已选内容保留，重新登录后再提交（ZT-29）。
   if (error.status === 401) return '登录已过期，这次提交没有保存。重新登录后请再提交一次。';
   if (error.status === 403) return '当前账号没有执行该操作的权限。';
+  if (error.code === 'RISK_CASE_VERSION_CONFLICT') return '风险阶段或办理状态已更新，本次没有受理；请核对当前风险后再次确认，系统会重新读取当前资格。';
   if (error.code === 'TWO_PERSON_RULE') return '审批人不能是申请人，请由另一位有审批权限的人处理。';
   if (error.code === 'AUTHORIZATION_EXPIRED') return '授权已超过时限，不能再执行；如仍需处置请重新申请。';
   if (error.code === 'INVALID_TRANSITION') return '该授权的当前状态不允许这一步操作，请刷新后按最新状态处理。';
@@ -95,16 +100,16 @@ async function submit({ scope, action, call, refresh, onDone, okText }) {
   const { id, key } = keyOf(scope, action);
   try {
     const result = await call(key);
-    pendingKeys.delete(id);
+    pendingKeys.delete(id); pendingRequestBodies.delete(key); uncertainRequestKeys.delete(key);
     closeModal();
     toast(okText(result), 'ok');
     if (refresh) await refresh(result);
     if (onDone) onDone(result);
   } catch (error) {
-    if (DEFINITE_CONFLICT_CODES.has(error?.code)) {
+    if (DEFINITE_CONFLICT_CODES.has(error?.code) && !uncertainRequestKeys.has(key)) {
       // 确定失败：换新键（下次是新请求），但仍回读一次详情——执行被阻的具体原因在 DTO 的
       // execution_block_reason 上，错误码只说"不支持自动执行"，两者合起来才是完整事实。
-      pendingKeys.delete(id);
+      pendingKeys.delete(id); pendingRequestBodies.delete(key); uncertainRequestKeys.delete(key);
       let latest = null;
       if (refresh) { try { latest = await refresh(null); } catch { /* 回读失败不掩盖原始错误 */ } }
       // 资格检查可能先于状态检查失败，不能从错误码推断授权仍然有效。
@@ -115,18 +120,22 @@ async function submit({ scope, action, call, refresh, onDone, okText }) {
       }
       throw new Error(messageOf(error, '提交失败'));
     }
-    if (isUncertainOutcome(error)) {
+    if (isUncertainOutcome(error) || uncertainRequestKeys.has(key)) {
+      uncertainRequestKeys.add(key);
       // 409 / 超时 / 断网：服务端可能已经落库。保留原键，先回读核对，不换键重试、不提示成功。
       const latest = refresh ? await refresh(null) : null;
       if (latest?.status) {
-        pendingKeys.delete(id);
+        pendingKeys.delete(id); pendingRequestBodies.delete(key); uncertainRequestKeys.delete(key);
         closeModal();
         toast(`提交结果未确认，已重新读取：当前为「${disposalStatusText(latest)}」，请核对处置经过后再决定下一步。`, 'err');
         return;
       }
-      throw new Error(`提交结果未确认，请刷新核对：${messageOf(error, '没有收到明确结果')}`);
+      const detail = error.code === 'RISK_CASE_VERSION_CONFLICT'
+        ? '当前风险已更新，但此前提交仍未确认，请先查看反制办理记录。'
+        : messageOf(error, '没有收到明确结果');
+      throw new Error(`提交结果未确认，请刷新核对：${detail}`);
     }
-    pendingKeys.delete(id);
+    pendingKeys.delete(id); pendingRequestBodies.delete(key); uncertainRequestKeys.delete(key);
     throw new Error(messageOf(error, '提交失败'));
   }
 }
@@ -183,8 +192,8 @@ function devicesForChannel(devices, channel) {
   return (devices || []).filter(device => device.device_id && device.device_type_code === type);
 }
 
-async function loadEnabledDevices() {
-  const page = await deviceApi.list({ page: 1, size: 200, enabled: true, sort: 'device_no_asc' });
+export async function loadEnabledDevices() {
+  const page = await deviceApi.listTimed({ page: 1, size: 200, enabled: true, sort: 'device_no_asc' });
   return (page?.items || []).filter(device => device.device_id && device.enabled === true);
 }
 
@@ -202,26 +211,27 @@ async function loadEnabledDevices() {
  * @param {(body: object, key: string) => Promise<object>} [o.submit] 自定义提交；融合感知模拟源用来复用同一弹窗但不打真实授权接口
  * @param {(result: object) => string} [o.okText] 成功提示；缺省为“申请已提交，待审批”
  */
-export function openDisposalRequest({ actionType, actionOptions, subjectKind, subjectId, subjectText, initialReason = '', isCurrent = () => true, policy, refresh, onDone, submit: customSubmit, okText, targetPoint, riskContext } = {}) {
+export function openDisposalRequest({ actionType, actionOptions, subjectKind, subjectId, subjectText, initialReason = '', isCurrent = () => true, policy, refresh, onDone, submit: customSubmit, okText, targetPoint, riskContext, preparedDevices, prepareSubmit } = {}) {
   if (!actionType || !subjectKind || !subjectId) { toast('缺少处置对象，无法发起申请', 'err'); return false; }
-  return showDisposalRequestForm({ actionType, actionOptions, subjectKind, subjectId, subjectText, initialReason, isCurrent, policy, refresh, onDone, customSubmit, okText, direct: false, targetPoint, riskContext });
+  return showDisposalRequestForm({ actionType, actionOptions, subjectKind, subjectId, subjectText, initialReason, isCurrent, policy, refresh, onDone, customSubmit, okText, direct: false, targetPoint, riskContext, preparedDevices, prepareSubmit });
 }
 
 /** 免逐次审批直接处置。资格与业务前置条件仍由 direct-execute 在服务端重新校验。 */
-export function openDisposalDirect({ actionType, subjectKind, subjectId, subjectText, initialReason = '', isCurrent = () => true, policy, refresh, onDone, targetPoint, riskContext } = {}) {
+export function openDisposalDirect({ actionType, subjectKind, subjectId, subjectText, initialReason = '', isCurrent = () => true, policy, refresh, onDone, targetPoint, riskContext, preparedDevices, prepareSubmit } = {}) {
   if (!actionType || !subjectKind || !subjectId) { toast('缺少处置对象，无法直接反制', 'err'); return false; }
-  return showDisposalRequestForm({ actionType, subjectKind, subjectId, subjectText, initialReason, isCurrent, policy, refresh, onDone, direct: true, targetPoint, riskContext });
+  return showDisposalRequestForm({ actionType, subjectKind, subjectId, subjectText, initialReason, isCurrent, policy, refresh, onDone, direct: true, targetPoint, riskContext, preparedDevices, prepareSubmit });
 }
 
 /** targetPoint：目标现在的位置 { lon, lat }。不传或读不到位置（null）时保持原设备清单，不推断覆盖事实。 */
-async function showDisposalRequestForm({ actionType, actionOptions, subjectKind, subjectId, subjectText, initialReason, isCurrent, policy, refresh, onDone, customSubmit, okText, direct = false, targetPoint, riskContext }) {
+async function showDisposalRequestForm({ actionType, actionOptions, subjectKind, subjectId, subjectText, initialReason, isCurrent, policy, refresh, onDone, customSubmit, okText, direct = false, targetPoint, riskContext, preparedDevices, prepareSubmit }) {
   const choices = (actionOptions || []).filter(Boolean);
   const pickable = choices.length > 1;
   let devices = [];
   const point = validPoint(targetPoint) ? targetPoint : null;
   let deviceLoadError = '';
   try {
-    devices = await loadEnabledDevices();
+    if (preparedDevices?.error) throw preparedDevices.error;
+    devices = preparedDevices?.items || await loadEnabledDevices();
   } catch (error) {
     deviceLoadError = error?.status === 403
       ? '当前账号没有设备台账读取权限，无法选择执行设备。'
@@ -293,17 +303,28 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
       return null;
     },
     onSubmit: ({ action_type: chosen, countermeasure_mode: countermeasureMode, channel, device_id: deviceId, reason }) => submit({
-      scope: `${subjectKind}:${subjectId}:${chosen || actionType}`,
+      scope: `${subjectKind}:${riskContext?.risk_case_id || subjectId}:${chosen || actionType}`,
       action: direct ? 'direct' : 'request',
-      call: key => {
+      call: async key => {
         if (!isCurrent()) throw new Error('事件已切换，请关闭后从当前事件重新申请');
-        const body = {
-          action_type: chosen || actionType, subject_kind: subjectKind, subject_id: subjectId,
-          ...riskContext,
-          channel, device_id: String(deviceId || '').trim(),
-          ...((chosen || actionType) === 'COUNTERMEASURE' ? { countermeasure_mode: countermeasureMode } : {}),
-          reason: String(reason || '').trim()
-        };
+        // 结果未知时沿用原主体、版本、设备和幂等键，不把重试改成新的阶段动作。
+        let body = pendingRequestBodies.get(key);
+        if (!body) {
+          let binding;
+          try { binding = prepareSubmit ? await prepareSubmit() : null; }
+          catch (error) { throw new Error(error?.message || '当前反制条件读取失败，本次没有提交。'); }
+          if (!isCurrent()) throw new Error('事件已切换，请关闭后从当前事件重新申请');
+          if (prepareSubmit && (!binding?.subjectId || binding.riskContext?.risk_case_id !== riskContext?.risk_case_id
+              || !Number.isInteger(binding.riskContext?.expected_case_version))) throw new Error('未取得同一风险的当前办理依据，本次没有提交。');
+          body = {
+            action_type: chosen || actionType, subject_kind: subjectKind, subject_id: binding?.subjectId || subjectId,
+            ...(binding?.riskContext || riskContext),
+            channel, device_id: String(deviceId || '').trim(),
+            ...((chosen || actionType) === 'COUNTERMEASURE' ? { countermeasure_mode: countermeasureMode } : {}),
+            reason: String(reason || '').trim()
+          };
+          pendingRequestBodies.set(key, body);
+        }
         return customSubmit ? customSubmit(body, key) : direct ? disposalApi.directExecute(body, key) : disposalApi.create(body, key);
       },
       refresh,

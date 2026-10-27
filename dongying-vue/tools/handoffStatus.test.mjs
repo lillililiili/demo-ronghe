@@ -87,7 +87,7 @@ function apiWith(request) {
   const pool = async (items, size, fn) => Promise.all(items.map(fn));
   const readCounts = new Function('mapPool', `${distribution}\nreturn readDistributionCounts;`)(pool);
   return new Function('apiRequestTimed', 'buildQuery', 'mapPool', 'readDistributionCounts', 'NOTIFICATION_OPTIONS', 'notificationStatisticsFilters', 'statusQuery',
-    `${source}\nreturn {getHandoffStatistics, declineHandoffNotification, notifyHandoff};`)(request,
+    `${source}\nreturn {getHandoffStatistics, declineHandoffNotification, notifyHandoff, createHandoff};`)(request,
     params => `?${new URLSearchParams(params)}`, pool, readCounts, NOTIFICATION_OPTIONS, notificationStatisticsFilters, statusQuery);
 }
 
@@ -131,4 +131,19 @@ test('发送与不通知各自保留真实请求版本、原因和幂等键，�
     ['/handoffs/event%2Fa/notification-decision', 'POST', true, 'decline-key', { decision: 'DO_NOT_NOTIFY', expected_version: 7, reason: '留存原因' }],
     ['/handoffs/event%2Fb/notifications', 'POST', true, 'notify-key', { expected_attempt_no: 3 }]
   ]);
+});
+
+
+test('创建处罚交接显式携带区域风险，旧请求兼容且不把risk_case_id塞进旧body', async () => {
+  const calls = [];
+  const api = apiWith(async (url, options) => { calls.push({ url, options }); return {}; });
+  const body = { source_kind: 'UAV_EVENT', source_id: 'observed-event', handoff_type: 'UAV_PUNISHMENT', recipient_id: 'recipient', expected_version: 8 };
+  await api.createHandoff({ ...body, risk_case_id: 'region-risk-a' }, 'same-key-a');
+  await api.createHandoff({ ...body, risk_case_id: 'region-risk-b' }, 'same-key-b');
+  await api.createHandoff(body, 'legacy-key');
+  assert.equal(calls[0].url, '/handoffs?risk_case_id=region-risk-a');
+  assert.equal(calls[1].url, '/handoffs?risk_case_id=region-risk-b');
+  assert.equal(calls[2].url, '/handoffs');
+  for (const call of calls) { assert.deepEqual(call.options.body, body); assert.equal(call.options.mutation, true); }
+  assert.equal(calls[0].options.idempotencyKey, 'same-key-a');
 });

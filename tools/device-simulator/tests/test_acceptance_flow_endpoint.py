@@ -108,6 +108,7 @@ class ReadAcceptanceFlowsTest(unittest.TestCase):
                 self.assertEqual(6 if variant['id'] == 'enter' else 5, variant['minutes'])
                 self.assertEqual(9, variant['scene']['fullchain']['acceptanceFlow'])
                 self.assertTrue(variant['guide']['prediction_only'])
+                self.assertEqual(variant['id'] == 'enter', variant['guide']['includes_observed_stage'])
                 self.assertIsNone(variant['guide']['auto_verify'])
                 text = '\n'.join(variant['guide']['before'] + variant['guide']['sees'] + variant['guide']['todo'])
                 for required in ('专用录音', '不自动核实', '不自动反制', '不自动处罚', '约半分钟', '未来30秒', '实际回执', '另一个', '直接反制权限'):
@@ -127,12 +128,12 @@ class ReadAcceptanceFlowsTest(unittest.TestCase):
         self.assertIn('连续新实测', variants['avoid']['guide']['sees'][-1])
         self.assertEqual('6分钟继续入区并反制', variants['enter']['label'])
         entry_todo = '\n'.join(variants['enter']['guide']['todo'])
-        for required in ('关联实测告警', '区内停留期间', '权限', '有效证据', '人工核实', '申请', '审批', '执行反制', '6分钟结束'):
+        for required in ('同一条风险', '区内停留期间', '权限', '本区实测依据有效', '人工核实', '申请', '审批', '执行', '6分钟结束'):
             self.assertIn(required, entry_todo)
-        self.assertIn('短信电话回执在原预测预警中查看', entry_todo)
+        self.assertIn('已核实不重复核实', entry_todo)
         self.assertIn('同次风险不重复通知', entry_todo)
-        self.assertIn('仍待核实时先人工核实', entry_todo)
-        self.assertIn('已失效的预测授权不能复用', entry_todo)
+        self.assertIn('尚未核实且启用的核实规则全部满足', entry_todo)
+        self.assertIn('已失效授权不能复用', entry_todo)
         self.assertNotIn('3分20秒', entry_todo)
         self.assertNotIn('5分钟结束', entry_todo)
         avoid_todo = '\n'.join(variants['avoid']['guide']['todo'])

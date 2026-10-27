@@ -529,11 +529,11 @@ export function percent(value) {
   return parsed === null ? null : Math.round(parsed * 100);
 }
 
-/** 告警 → HUD 列表；只保留未关闭的。 */
-export function toAlarms(alarms) {
+/** 告警 → HUD 列表；默认只保留未关闭的，选中风险详情可按真实终态保留上下文。 */
+export function toAlarms(alarms, { includeClosed = false } = {}) {
   const out = [];
   for (const alarm of alarms || []) {
-    if (!OPEN_ALARM_STATES.includes(alarm.state)) continue;
+    if (!includeClosed && !OPEN_ALARM_STATES.includes(alarm.state)) continue;
     out.push({
       id: alarm.alarm_no || alarm.alarm_id,
       alarmId: alarm.alarm_id,

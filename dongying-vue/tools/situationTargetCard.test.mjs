@@ -5,25 +5,32 @@ import { readFileSync } from 'node:fs';
 import { parse, compileScript } from '@vue/compiler-sfc';
 import * as Vue from 'vue';
 import * as prediction from '../src/services/predictionView.js';
+import * as riskFlow from '../src/pages/situation/situationFlow.js';
+import { counterHiddenReason } from '../src/components/disposal/counterNextStep.js';
+import { serverNow } from '../src/services/serverClock.js';
 
 const source = readFileSync(new URL('../src/pages/situation/SituationTargetCard.vue', import.meta.url), 'utf8');
-const { descriptor } = parse(source);
-const imports = {};
-const dependencies = { ...riskHelpers, RiskDisposalSummary: { render() { return null; } }, ...Vue, ...prediction, displayTargetNo: value => value,
+const dependencies = { ...riskHelpers, ...riskFlow, ...Vue, ...prediction, counterHiddenReason, serverNow,
+  RiskDisposalSummary: { render() { return null; } }, CounterLaunch: { render() { return null; } },
+  displayTargetNo: value => value, displayBusinessNo: value => value,
   pilotLocationText: value => value ? '设备测算的大概位置' : '没有遥控器位置', pilotDistanceNote: () => '',
-  useUavAdvisory: () => ({ error: Vue.ref('') }),
-  SituationNextStep: { props: ['alarm'], render() { return Vue.h('button', { 'data-action': this.alarm.eventId }, '查看预警详情'); } } };
-let compiled = compileScript(descriptor, { id: 'test-card', inlineTemplate: true }).content;
-compiled = compiled.replace(/import\s+([\s\S]*?)\s+from\s+['"][^'"]+['"];?/g, (_, list) => {
-  for (const item of list.replace(/[{}]/g, '').split(',').map(value => value.trim()).filter(Boolean)) {
-    const [name, alias = name] = item.split(/\s+as\s+/);
-    assert.ok(name in dependencies, `missing test dependency ${name}`);
-    imports[alias] = dependencies[name];
-  }
-  return '';
-});
-const Card = new Function(...Object.keys(imports), 'window', compiled.replace('export default', 'return'))(
-  ...Object.values(imports), { UI: { targetIcon: () => '<svg></svg>' } });
+  useUavAdvisory: () => ({ error: Vue.ref('') }) };
+function compileComponent(source) {
+  const { descriptor } = parse(source), imports = {};
+  let compiled = compileScript(descriptor, { id: 'test-card', inlineTemplate: true }).content;
+  compiled = compiled.replace(/import\s+([\s\S]*?)\s+from\s+['"][^'"]+['"];?/g, (_, list) => {
+    for (const item of list.replace(/[{}]/g, '').split(',').map(value => value.trim()).filter(Boolean)) {
+      const [name, alias = name] = item.split(/\s+as\s+/);
+      assert.ok(name in dependencies, `missing test dependency ${name}`);
+      imports[alias] = dependencies[name];
+    }
+    return '';
+  });
+  return new Function(...Object.keys(imports), 'window', compiled.replace('export default', 'return'))(
+    ...Object.values(imports), { UI: { targetIcon: () => '<svg></svg>' } });
+}
+dependencies.SituationNextStep = compileComponent(readFileSync(new URL('../src/pages/situation/SituationNextStep.vue', import.meta.url), 'utf8'));
+const Card = compileComponent(source);
 const node = (type, text = '') => ({ type, text, props: {}, children: [], parent: null });
 const renderer = Vue.createRenderer({
   createElement: type => node(type), createText: text => node('#text', text), createComment: text => node('#comment', text),
@@ -100,4 +107,37 @@ test('missing metrics are not zero and a plain target has no prediction or dispo
   assert.doesNotMatch(text(root), /0 m|预测入区|查看预警详情|待人工核实/);
   assert.equal(all(root).filter(el => el.type === 'dd' && el.text === '未提供').length, 4);
   renderer.render(null, root);
+});
+
+
+test('真实核实按钮逐层传递同一风险，不丢失区域及事件上下文', async () => {
+  for (const id of ['same-target-east', 'same-target-west']) {
+    const root = node('root'), props = propsFor(id), clicked = [];
+    props.alarm.risk_case = { risk_case_id: `risk-${id}`, stage: 'PREDICTED', verification_status: 'PENDING_VERIFICATION' };
+    renderer.render(Vue.h(Card, { ...props, onVerify: alarm => clicked.push(alarm) }), root);
+    await Vue.nextTick();
+    const button = find(root, el => el.type === 'button' && text(el) === '核实');
+    assert.ok(button);
+    button.props.onClick();
+    assert.equal(clicked.length, 1);
+    assert.equal(clicked[0], props.alarm);
+    assert.equal(clicked[0].risk_case.risk_case_id, `risk-${id}`);
+    assert.equal(clicked[0].eventId, `event-${id}`);
+    renderer.render(Vue.h(Card, { ...props, alarm: null }), root);
+    await Vue.nextTick();
+    assert.equal(find(root, el => el.type === 'button' && text(el) === '核实'), undefined);
+    assert.equal(clicked[0].risk_case.risk_case_id, `risk-${id}`, '列表刷新不会改变已发出的核实上下文');
+    renderer.render(null, root);
+  }
+});
+
+test('当前风险暂时不可读时卡片保留区域和核实状态，不能退成已观测或继续操作',async()=>{
+  const root=node('root'),props=propsFor('stable');
+  props.alarm={...props.alarm,eventState:'CONFIRMED',risk_case:{risk_case_id:'case-stable',stage:'ENTERED',verification_status:'CONFIRMED',airspace_name:'当前区域'}};
+  renderer.render(Vue.h(Card,props),root);await Vue.nextTick();const card=root.children[0];
+  renderer.render(Vue.h(Card,{...props,alarm:{...props.alarm,_riskUnavailable:true,_riskReadReason:'正在核对当前区域风险'}}),root);await Vue.nextTick();
+  assert.equal(root.children[0],card);assert.match(text(root),/风险状态更新中/);assert.match(text(root),/当前区域/);
+  assert.doesNotMatch(text(root),/已观测|风险持续/);
+  assert.equal(find(root,el=>el.type==='button'&&text(el)==='核实'),undefined);
+  renderer.render(null,root);
 });

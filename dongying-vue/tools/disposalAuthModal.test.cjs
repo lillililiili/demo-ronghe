@@ -71,3 +71,113 @@ for (const channel of ['LINGYUN_B', 'COUNTERMEASURE_4CH']) {
     assert.match(state.messages[0], /已下发，等待设备回执/);
   });
 }
+async function regionalRequest(direct=true) {
+  const {randomUUID}=require('node:crypto');
+  let form,sequence=0;const sent=[],state={stage:0,checks:0,uncertain:false,blocked:false,current:true};
+  const caseId=randomUUID(),oldId=randomUUID(),newId=randomUUID(),device=randomUUID();
+  const source=readFileSync(path.join(__dirname,'../src/ui/disposalAuthModal.js'),'utf8').replace(/^import .*;\r?\n/gm,'').replace(/\bexport /g,'');
+  const send=async(body,key)=>{sent.push({body:JSON.parse(JSON.stringify(body)),key});if(state.beforeSend)await state.beforeSend(body,key);if(state.sendError)throw state.sendError;if(state.uncertain)throw {status:504,message:'timeout'};return {authorization_id:randomUUID()};};
+  const context=vm.createContext({...riskHelpers,openFormModal:value=>{form=value;},closeModal(){},toast(){},
+    disposalApi:{directExecute:send,create:send},newDisposalIdempotencyKey:()=>`key-${++sequence}`,
+    isDisposalUnavailable:()=>false,isUncertainOutcome:e=>e.status===409||e.status===504||['TIMEOUT','NETWORK_ERROR'].includes(e.code),validPoint:()=>false,
+    DISPOSAL_ACTION_LABEL:{COUNTERMEASURE:'反制'},COUNTERMEASURE_MODE_LABEL:{FORCE_LAND:'迫降'},labelOf:(labels,key)=>labels[key]||key});
+  vm.runInContext(source,context);
+  const options={actionType:'COUNTERMEASURE',subjectKind:'UAV_EVENT',subjectId:oldId,isCurrent:()=>state.current,preparedDevices:{items:[]},
+    riskContext:{risk_case_id:caseId,expected_case_version:2},prepareSubmit:async()=>{
+      state.checks++;if(state.blocked)throw new Error('当前依据不足，未提交');
+      return {subjectId:state.stage?newId:oldId,riskContext:{risk_case_id:caseId,expected_case_version:state.stage+2}};
+    }};
+  await (direct?context.openDisposalDirect:context.openDisposalRequest)(options);
+  return {state,sent,form,oldId,newId,caseId,device,values:{action_type:'COUNTERMEASURE',countermeasure_mode:'FORCE_LAND',channel:'LINGYUN_B',device_id:device,reason:'保留填写事由'}};
+}
+test('明确确认前重读同风险实际阶段，保留原设备、方式及事由且只提交一次',async()=>{
+ for(const direct of [true,false]){
+  const f=await regionalRequest(direct);assert.equal(f.state.checks,0);assert.equal(f.sent.length,0);
+  f.state.stage=1;await f.form.onSubmit(f.values);
+  assert.equal(f.sent.length,1);assert.equal(f.state.checks,1);
+  assert.equal(f.sent[0].body.subject_id,f.newId);assert.equal(f.sent[0].body.risk_case_id,f.caseId);
+  assert.equal(f.sent[0].body.expected_case_version,3);assert.equal(f.sent[0].body.device_id,f.device);
+  assert.equal(f.sent[0].body.reason,f.values.reason);assert.equal(f.sent[0].body.countermeasure_mode,'FORCE_LAND');
+ }
+});
+test('提交结果未知后即使阶段和表单值改变，重试冻结原payload及幂等键',async()=>{
+ const f=await regionalRequest();f.state.uncertain=true;
+ await assert.rejects(f.form.onSubmit(f.values),/提交结果未确认/);
+ f.state.stage=1;
+ await assert.rejects(f.form.onSubmit({...f.values,reason:'后来填写',device_id:'different-device'}),/提交结果未确认/);
+ assert.equal(f.state.checks,1);assert.equal(f.sent.length,2);
+ assert.deepEqual(f.sent[1],f.sent[0]);assert.equal(f.sent[0].body.subject_id,f.oldId);
+});
+test('提交前真实依据失效时不创建任何授权，恢复后再次明确提交才发送',async()=>{
+ const f=await regionalRequest();f.state.blocked=true;
+ await assert.rejects(f.form.onSubmit(f.values),/当前依据不足/);assert.equal(f.sent.length,0);
+ f.state.blocked=false;f.state.stage=1;await f.form.onSubmit(f.values);
+ assert.equal(f.sent.length,1);assert.equal(f.sent[0].body.subject_id,f.newId);assert.equal(f.state.checks,2);
+});
+
+
+test('资格预读后风险阶段变化的确定版本拒绝，下一次人工确认重新读取并换键，不自动重发',async()=>{
+ for(const direct of [true,false]){
+  const f=await regionalRequest(direct);
+  f.state.beforeSend=async body=>{
+   // 转实测发生在 prepareSubmit 已返回、请求提交之前。
+   if(f.state.stage===0)f.state.stage=1;
+   if(body.expected_case_version!==f.state.stage+2)throw {status:409,code:'RISK_CASE_VERSION_CONFLICT',message:'风险阶段或办理状态已更新，请刷新'};
+  };
+  await assert.rejects(f.form.onSubmit(f.values),error=>{
+   assert.doesNotMatch(error.message,/提交结果未确认/);
+   assert.match(error.message,/本次没有受理/);return true;
+  });
+  assert.equal(f.sent.length,1);assert.equal(f.state.checks,1);
+  await f.form.onSubmit(f.values);
+  assert.equal(f.sent.length,2);assert.equal(f.state.checks,2);
+  assert.notEqual(f.sent[1].key,f.sent[0].key);
+  assert.equal(f.sent[0].body.subject_id,f.oldId);
+  assert.equal(f.sent[1].body.subject_id,f.newId);
+  assert.equal(f.sent[1].body.expected_case_version,3);
+  assert.equal(f.sent[1].body.risk_case_id,f.caseId);
+  for(const field of ['device_id','countermeasure_mode','reason'])assert.equal(f.sent[1].body[field],f.values[field]);
+ }
+});
+
+for(const error of [{status:408,code:'TIMEOUT'},{status:0,code:'NETWORK_ERROR'},{status:409,code:'UNEXPECTED_CONFLICT'},{status:409,code:'RISK_CASE_CHANGED'}]){
+ test(`${error.code} 未知结果继续冻结原主体、版本和幂等键，不误认成风险版本明确拒绝`,async()=>{
+  const f=await regionalRequest();f.state.sendError=error;
+  await assert.rejects(f.form.onSubmit(f.values),/提交结果未确认/);
+  assert.equal(f.sent.length,1);
+  f.state.stage=1;
+  await assert.rejects(f.form.onSubmit({...f.values,reason:'新填事由',device_id:'other-device'}),/提交结果未确认/);
+  assert.equal(f.state.checks,1);assert.equal(f.sent.length,2);
+  assert.deepEqual(f.sent[1],f.sent[0]);assert.equal(f.sent[1].body.subject_id,f.oldId);
+ });
+}
+
+
+test('同键首次结果未知后收到版本拒绝，不据后一次拒绝撤销原结果未知或换键',async()=>{
+ for(const direct of [true,false]){
+  const f=await regionalRequest(direct);
+  f.state.sendError={status:408,code:'TIMEOUT'};
+  await assert.rejects(f.form.onSubmit(f.values),/提交结果未确认/);
+  f.state.stage=1;
+  f.state.sendError={status:409,code:'RISK_CASE_VERSION_CONFLICT',message:'风险已更新'};
+  await assert.rejects(f.form.onSubmit({...f.values,reason:'新事由'}),error=>{
+   assert.match(error.message,/此前提交仍未确认/);
+   assert.doesNotMatch(error.message,/本次没有受理/);return true;
+  });
+  await assert.rejects(f.form.onSubmit(f.values),/此前提交仍未确认/);
+  assert.equal(f.state.checks,1);assert.equal(f.sent.length,3);
+  assert.deepEqual(f.sent[1],f.sent[0]);assert.deepEqual(f.sent[2],f.sent[0]);
+ }
+});
+
+
+test('未知提交后重试准备阶段失效，仍保存原请求，不因本次未发送而清除前次未知',async()=>{
+ const f=await regionalRequest();f.state.sendError={status:0,code:'NETWORK_ERROR'};
+ await assert.rejects(f.form.onSubmit(f.values),/提交结果未确认/);
+ f.state.current=false;
+ await assert.rejects(f.form.onSubmit(f.values),/提交结果未确认/);
+ assert.equal(f.sent.length,1);
+ f.state.current=true;f.state.stage=1;
+ await assert.rejects(f.form.onSubmit(f.values),/提交结果未确认/);
+ assert.equal(f.state.checks,1);assert.equal(f.sent.length,2);assert.deepEqual(f.sent[1],f.sent[0]);
+});

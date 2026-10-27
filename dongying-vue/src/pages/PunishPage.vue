@@ -29,6 +29,7 @@ import AdvisoryRecords from '@/components/disposal/AdvisoryRecords.vue';
 import PunishmentOutcome from '@/pages/punish/PunishmentOutcome.vue';
 import PunishmentNotification from '@/pages/punish/PunishmentNotification.vue';
 import HandoffMaterialFacts from '@/pages/punish/HandoffMaterialFacts.vue';
+import { eventMaterialStateText } from '@/pages/punish/handoffMaterialView.js';
 import { handoffEvidenceChain } from '@/pages/punish/handoffEvidence.js';
 import { NOTIFICATION_OPTIONS, RECEIPT_OPTIONS, deliveryView, receiptView, statusQuery } from '@/pages/punish/handoffStatus.js';
 import RecipientSnapshotFields from '@/components/notifications/RecipientSnapshotFields.vue';
@@ -404,7 +405,7 @@ onMounted(() => {
                     <div v-if="!selected.material" class="empty">暂无材料</div>
                     <template v-else>
                       <div v-if="selected.material.event" class="pn-material-summary">
-                        <p>{{ labelOf(ALARM_TYPE_LABEL, selected.material.event.alarm_type, '未提供') }} · 移送时{{ labelOf(UAV_STATE_LABEL, selected.material.event.state, '状态未提供') }}</p>
+                        <p>{{ labelOf(ALARM_TYPE_LABEL, selected.material.event.alarm_type, '未提供') }} · {{ eventMaterialStateText(selected.material, UAV_STATE_LABEL) }}</p>
                         <p class="pn-material-meta">发生于 {{ formatTime(selected.material.event.occurred_at) }}</p>
                         <p class="pn-material-meta">遥控器位置：{{ pilotLocationText(selected.material.pilot_location) }}</p>
                       </div>
@@ -416,7 +417,7 @@ onMounted(() => {
                         <div class="pn-material-content">
                       <div v-if="selected.material.verifications?.length" class="pn-sub pn-wrap">
                         <div v-for="(vr, i) in selected.material.verifications" :key="i">
-                          核实结论：{{ labelOf(EVENT_CONCLUSION_LABEL, vr.conclusion, vr.conclusion) }}
+                          原事件核实结论：{{ labelOf(EVENT_CONCLUSION_LABEL, vr.conclusion, vr.conclusion) }}
                           <p class="pn-material-meta">{{ formatTime(vr.created_at) }} · {{ vr.actor_name || '核实人未记录' }}</p>
                           <p>核实说明：{{ vr.note || '未记录' }}</p>
                         </div>

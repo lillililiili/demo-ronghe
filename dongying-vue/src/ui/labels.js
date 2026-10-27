@@ -449,6 +449,7 @@ export function classChangeText(change, formatTime = value => String(value ?? ''
  */
 export const disposalStatusText = auth => {
   const status = auth?.status;
+  if (status === 'FAILED' && auth?.result_code === 'AUTHORIZATION_STOPPED') return '启动被拦截';
   if (auth?.authorization_mode === 'DIRECT' && status === 'APPROVED') {
     return auth?.execution_block_reason
       ? '免逐次审批授权有效；执行受阻'

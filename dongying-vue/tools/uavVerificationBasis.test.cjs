@@ -5,20 +5,25 @@ const { readFileSync } = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-function verificationForm(event, verify, alarm = {}) {
-  let form;
+function verificationForm(event, verify, alarm = {}, dependencies = {}) {
+  let form; const forms=[],handles=[],notices=[];
+  const captureForm = value => { form = value; forms.push(value); const handle={current:true,isCurrent:()=>handle.current,close:()=>{handle.current=false;}}; handles.forEach(old=>old.current=false); handles.push(handle); return handle; };
   const source = readFileSync(path.join(__dirname, '../src/ui/uavVerificationModal.js'), 'utf8')
     .replace(/^import .*;\r?\n/gm, '').replace(/\bexport /g, '');
   const context = vm.createContext({ ...riskHelpers,
-    openFormModal: value => { form = value; }, closeModal() {}, toast() {}, crypto: globalThis.crypto,
+    openFormModal: captureForm, openModal: options => captureForm(options.render().props.form),
+    h: (component,props)=>({component,props}), RiskVerificationForm: {}, shallowRef: value=>({value}), readSessionToken:()=> 'session',
+    setTimeout,clearTimeout, getUavRiskCase:async()=>({risk_case:alarm.risk_case,event,alarm:{alarm_id:'a1',alarm_no:'AL-1',target_id:'t1',...alarm}}),
+    closeModal() {}, toast:message=>notices.push(message), crypto: globalThis.crypto,
     verifyUavRiskCase: verify, verifyUavEvent: verify, isUncertainOutcome: error => !!error && (error.status === 409 || error.code === 'TIMEOUT'),
-    ALARM_TYPE_LABEL: {}, labelOf: () => '', readableNo: value => value || '', serverNow: () => Date.now()
+    ALARM_TYPE_LABEL: {}, labelOf: () => '', readableNo: value => value || '', serverNow: () => Date.now(), ...dependencies
   });
   vm.runInContext(readFileSync(path.join(__dirname, '../src/ui/deviceNumber.js'), 'utf8').replace(/\bexport /g, ''), context);
   vm.runInContext(readFileSync(path.join(__dirname, '../src/services/predictionView.js'), 'utf8').replace(/\bexport /g, ''), context);
+  vm.runInContext(readFileSync(path.join(__dirname, '../src/services/uavRiskVerificationSession.js'), 'utf8').replace(/^import .*;\r?\n/gm, '').replace(/\bexport /g, ''), context);
   vm.runInContext(source, context);
   const opened = context.openUavVerification({ event, alarm: { alarm_id: 'a1', alarm_no: 'AL-1', target_id: 't1', ...alarm } });
-  return { form, opened };
+  return { form, opened, forms, handles, notices };
 }
 
 const pending = patch => ({ event_id: 'e1', version: 3, state: 'PENDING_VERIFICATION', allowed_actions: ['VERIFY'], ...patch });
@@ -51,6 +56,7 @@ test('依据齐全或接口未返回依据时保持原来的属实预选', () =>
   for (const basis of [undefined, null, { confirmable: true, missing: [], message: '', checked_at: 1 }]) {
     const { form } = verificationForm(pending({ verification_basis: basis }), async () => ({}));
     assert.equal(form.warning, '');
+    assert.match(form.introHtml, /<dt>当前状态<\/dt><dd>待人工核实<\/dd>/, '无风险记录的原事件口径保持');
     assert.equal(form.fields[0].options[0].disabled, false);
     assert.equal(form.initial.conclusion, 'CONFIRMED');
     assert.equal(form.validate({ conclusion: 'CONFIRMED' }), '', '核实说明为选填');
@@ -146,6 +152,10 @@ test('统一风险核实优先当前区域资格，实测及未知不误用旧�
     const entered = verificationForm(event, async (id, body) => { submissions.push({ id, body }); return { state: 'CONFIRMED' }; }, alarm);
     assert.equal(entered.opened, true); assert.equal(entered.form.fields[0].options[0].disabled, false);
     assert.match(entered.form.fields[0].options[0].label, /风险属实/);
+    assert.match(entered.form.introHtml, /<dt>当前状态<\/dt><dd>待核实<\/dd>/);
+    assert.match(entered.form.title, /^人工核实/, '手工操作弹窗标题保持');
+    const forecast = verificationForm(event, async () => ({}), { ...alarm, prediction: { warning: { state: 'ACTIVE' } }, risk_case: { ...risk_case, stage: 'PREDICTED' } });
+    assert.match(forecast.form.introHtml, /<dt>当前状态<\/dt><dd>待人工核实<\/dd>/);
     await entered.form.onSubmit({ conclusion: 'CONFIRMED' });
     assert.equal(submissions[0].id, risk_case.risk_case_id); assert.equal(submissions[0].body.expected_case_version, 9);
     assert.equal(Object.hasOwn(submissions[0].body, 'prediction_id'), false);
@@ -155,4 +165,68 @@ test('统一风险核实优先当前区域资格，实测及未知不误用旧�
     const denied = verificationForm(pending(), async () => ({}), { ...alarm, risk_case: { ...risk_case, allowed_actions: [] } });
     assert.equal(denied.opened, false);
   }
+});
+
+test('核实弹窗轻量重读未知转有效，原表单绑定最新case/event/预测依据',async()=>{
+  const id=crypto.randomUUID(),target=crypto.randomUUID(),area=crypto.randomUUID(),sent=[],reads=[];
+  const risk={risk_case_id:id,version:4,stage:'PREDICTED',airspace_id:area,verification_status:'PENDING_VERIFICATION',allowed_actions:['VERIFY']};
+  const alarm={target_id:target,source_mode:'replay',origin_kind:'PREDICTED_AIRSPACE_ENTRY',risk_case:risk,
+    prediction:{status:'UNKNOWN',warning:{state:'UNKNOWN'}}};
+  const newPrediction=crypto.randomUUID();
+  const latest={risk_case:{...risk,version:5},alarm:{...alarm,prediction:{prediction_id:newPrediction,status:'READY',based_on_observed_at:Date.now(),valid_until:Date.now()+3000,warning:{state:'ACTIVE'}}},
+    event:pending({version:9,verification_basis:{confirmable:true,prediction_id:newPrediction}})};
+  const f=verificationForm(pending({verification_basis:{confirmable:false}}),async(id,body)=>{sent.push({id,body});return{};},alarm,
+    {getUavRiskCase:async(id,params)=>{reads.push({id,params});return latest;}});
+  assert.equal(f.form.fields[0].options[0].disabled,true);
+  await f.form.onRefresh({note:'已查看实时视频',conclusion:'FALSE_POSITIVE'});
+  const fresh=f.forms[0];assert.equal(f.forms.length,1);assert.equal(fresh.fields[0].options[0].disabled,false);
+  assert.equal(fresh.initial.conclusion,undefined,'初始缺依据不替人预选；受控表单保持用户输入');
+  assert.equal(reads[0].id,id);assert.equal(reads[0].params.purpose,'verification');
+  await fresh.onSubmit({conclusion:'CONFIRMED',note:'已查看实时视频'});
+  assert.equal(sent[0].id,id);assert.equal(sent[0].body.expected_case_version,5);assert.equal(sent[0].body.expected_version,9);
+  assert.equal(sent[0].body.prediction_id,newPrediction);
+});
+test('核实重读不延长过期依据，转实测按最新资格，已AUTO不重新打开',async()=>{
+  for(const stage of ['PREDICTED','ENTERED','AUTO']) {
+    const id=crypto.randomUUID(),risk={risk_case_id:id,stage:'PREDICTED',version:2,verification_status:'PENDING_VERIFICATION',allowed_actions:['VERIFY']};
+    const alarm={target_id:'t1',risk_case:risk,origin_kind:'PREDICTED_AIRSPACE_ENTRY'};
+    const latestRisk={...risk,stage:stage==='PREDICTED'?stage:'ENTERED',version:3,
+      verification_status:stage==='AUTO'?'CONFIRMED':'PENDING_VERIFICATION',allowed_actions:stage==='AUTO'?[]:['VERIFY']};
+    const f=verificationForm(pending(),async()=>({}),alarm,{getUavRiskCase:async()=>({risk_case:latestRisk,
+      alarm:{...alarm,prediction:{prediction_id:'expired',status:'READY',based_on_observed_at:Date.now()-9000,valid_until:Date.now()-1,warning:{state:'ACTIVE'}}},
+      event:pending({version:4,verification_basis:{confirmable:true,prediction_id:'expired'}})})});
+    await f.form.onRefresh({note:'review'});
+    assert.equal(f.forms.length,1,'始终保留同一个表单');
+    assert.equal(f.forms[0].fields[0].options[0].disabled,stage!=='ENTERED');
+    if(stage==='AUTO') assert.match(f.forms[0].warning,/已核实/);
+  }
+});
+test('关闭核实窗后迟到重读不再打开；来源或区域不符仍停留原表单',async()=>{
+  for(const change of ['close','area','source']) {
+    let resolve;const risk={risk_case_id:crypto.randomUUID(),airspace_id:crypto.randomUUID(),stage:'ENTERED',version:2,verification_status:'PENDING_VERIFICATION',allowed_actions:['VERIFY']};
+    const alarm={target_id:'t1',source_mode:'live',risk_case:risk};
+    const f=verificationForm(pending(),async()=>({}),alarm,{getUavRiskCase:()=>new Promise(done=>resolve=done)});
+    const request=f.form.onRefresh({note:'keep'});
+    const result={risk_case:{...risk},alarm:{...alarm},event:pending()};
+    if(change==='close')f.handles[0].close();
+    if(change==='area')result.risk_case.airspace_id=crypto.randomUUID();
+    if(change==='source')result.alarm.source_mode='replay';
+    resolve(result);
+    if(change==='close')await request;else await assert.rejects(request,/不一致/);
+    assert.equal(f.forms.length,1);
+  }
+});
+
+test('实际受控核实表单重读期间立即禁重复与提交，错误保留人工说明',async()=>{
+  const vue=require('vue');let reject,reads=0,submits=0;
+  const props={fields:[],initial:{note:'已看视频'},onRefresh:()=>{reads++;return new Promise((_resolve,fail)=>reject=fail);},onSubmit:()=>submits++};
+  const source=readFileSync(path.join(__dirname,'../src/components/modals/ControlledFormModal.vue'),'utf8').match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*;\r?\n/gm,'');
+  const deps={...vue,defineProps:()=>props};const scope=vue.effectScope();
+  try{
+    const form=scope.run(()=>new Function(...Object.keys(deps),source+';return {refreshBasis,submit,busy,canSubmit,model,error};')(...Object.values(deps)));
+    const waiting=form.refreshBasis();assert.equal(form.busy.value,true);assert.equal(form.canSubmit.value,false);
+    await form.refreshBasis();await form.submit();assert.equal(reads,1);assert.equal(submits,0);
+    reject(new Error('当前依据读取超时'));await waiting;
+    assert.equal(form.error.value,'当前依据读取超时');assert.equal(form.model.note,'已看视频');assert.equal(form.busy.value,false);
+  }finally{scope.stop();}
 });

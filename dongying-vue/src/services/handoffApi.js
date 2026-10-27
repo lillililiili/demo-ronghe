@@ -14,10 +14,11 @@ export function listHandoffRecipients(handoffType) {
   return apiRequestTimed(`/handoff-recipients${buildQuery({ handoff_type: handoffType })}`);
 }
 
-/* body 只允许 source_kind/source_id/handoff_type/recipient_id/expected_version；
+/* risk_case_id 作为查询参数绑定区域风险；body 保持 source_kind/source_id/handoff_type/recipient_id/expected_version；
    幂等键由调用方保存并在重试时沿用，服务端 409 IDEMPOTENCY_REPLAY 表示已提交过。 */
 export function createHandoff(body, idempotencyKey) {
-  return apiRequestTimed('/handoffs', { method: 'POST', body, mutation: true, idempotencyKey });
+  const { risk_case_id, ...request } = body;
+  return apiRequestTimed(`/handoffs${risk_case_id ? buildQuery({ risk_case_id }) : ''}`, { method: 'POST', body: request, mutation: true, idempotencyKey });
 }
 
 export function listHandoffs(params) {

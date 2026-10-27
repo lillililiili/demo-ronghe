@@ -11,7 +11,7 @@ export const exportAlarmsCsv = values => apiBinary(`/alarms/export.csv${buildQue
 /* 区域字典按页取（15-22）：/districts 是系统管理的全量字典，告警页要的是本页数据可见范围内的区域。
    服务端未就绪时会回 404，页面据此显示"不可用"，不静默改读别的接口。 */
 export const listAlarmDistricts = () => apiRequestTimed('/alarms/districts');
-export const getUavRiskCase = id => apiRequestTimed(`/uav-risk-cases/${encodeURIComponent(id)}`);
+export const getUavRiskCase = (id, params = {}) => apiRequestTimed(`/uav-risk-cases/${encodeURIComponent(id)}${buildQuery(params)}`);
 export const verifyUavRiskCase = (id, body, idempotencyKey) => apiRequestTimed(`/uav-risk-cases/${encodeURIComponent(id)}/verifications`, { method: 'POST', body, mutation: true, idempotencyKey });
 export const getAlarm = alarmId => apiRequestTimed(`/alarms/${encodeURIComponent(alarmId)}`);
 export const getAlarmAirspaceHits = alarmId => apiRequestTimed(`/alarms/${encodeURIComponent(alarmId)}/airspace-hits`);

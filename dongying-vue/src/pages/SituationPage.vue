@@ -4,7 +4,7 @@ import { punishmentHandoffProgress } from '@/ui/punishmentHandoffProgress.js';
 import { displayBusinessNo, displayTargetNo, displayNumberReferences } from '@/ui/deviceNumber.js';
 import { computed, h, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { NSelect } from 'naive-ui';
-import { riskCaseOf, riskCaseKey, riskStageLabel, RISK_STAGE_LABEL, riskCaseVisible, riskCaseVerificationLabel } from '@/services/riskCaseView.js';
+import { riskCaseOf, riskCaseKey, riskStageLabel, RISK_STAGE_LABEL, riskCaseVisible, riskCaseVerificationLabel, riskSummaryMatches } from '@/services/riskCaseView.js';
 import { useRoute } from 'vue-router';
 import { ChevronUpOutline, GitCompareOutline, LocateOutline } from '@vicons/ionicons5';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
@@ -12,12 +12,13 @@ import { createSituationApiSource } from '@/pages/situation/situationApiSource.j
 import { serverNow } from '@/services/serverClock.js';
 import { alarmReasonView, uavNowHtml, uavNowPillHtml, uavNowStatus } from '@/components/disposal/uavNowStatus.js';
 import { uavAdvisoryApi } from '@/services/uavAdvisoryApi.js';
-import { clockLagText, currentMapSnapshot, deviceGroupState, riskMatchesPlan, SITUATION_DEVICE_TYPE_ORDER, targetClassCounts, targetIsCurrent } from '@/services/situationData.js';
+import { toAlarms, clockLagText, currentMapSnapshot, deviceGroupState, riskMatchesPlan, SITUATION_DEVICE_TYPE_ORDER, targetClassCounts, targetIsCurrent } from '@/services/situationData.js';
 import {
   disposalStage, situationAlarmNeedsAttention, situationRouteRiskIsCurrent,
   uavProcessActions, uavProcessStatus
 } from '@/pages/situation/situationFlow.js';
 import { closeModal, openFormModal } from '@/ui/formModal.js';
+import { openModal } from '@/ui/modal.js';
 import { getUavRiskCase, getUavEvent } from '@/services/alarmApi.js';
 import { openUavVerification } from '@/ui/uavVerificationModal.js';
 import {
@@ -72,7 +73,7 @@ const expandedType = ref('');
 const devicesExpanded = ref(true);
 const alertTab = ref('target');
 const riskStageFilter = ref('');
-const riskStageOptions = [{ label: '全部阶段', value: '' }, ...['PREDICTED', 'ENTERED', 'OBSERVED'].map(value => ({ value, label: RISK_STAGE_LABEL[value] }))];
+const riskStageOptions = [{ label: '全部阶段', value: '' }, ...['PREDICTED', 'ENTERED'].map(value => ({ value, label: RISK_STAGE_LABEL[value] }))];
 const alertsExpanded = ref(true);
 // 同一风险周期只提醒一次；重算、暂时失效后恢复不抢回用户手动切换的页签。
 const announcedRiskKeys = new Set();
@@ -219,8 +220,10 @@ const newAlarmCount = computed(() => alarms.value.filter(alarm => alarm.isNew).l
 const newRiskCount = computed(() => riskGroups.value.filter(risk => risk.isNew).length);
 const activeRiskCount = computed(() => alarms.value.length + riskGroups.value.length);
 const selectedTarget = computed(() => {
-  if (selection.value?.kind !== 'target') return null;
-  return targets.value.find(target => target.id === selection.value.id) || null;
+  const value = selection.value;
+  if (!value || !['target', 'alarm'].includes(value.kind)) return null;
+  return targets.value.find(target => (value.targetId ? target.targetId === value.targetId : value.kind === 'target' && target.id === value.id)
+    && (!value.sourceMode || target.sourceMode === value.sourceMode)) || null;
 });
 const predictions = computed(() => snapshot.value.predictions || []);
 const predictionUnavailable = computed(() => (snapshot.value.failedSegments || []).includes('predictions'));
@@ -256,13 +259,46 @@ const showSelectionPopup = computed(() => !!selectedDevice.value || !!selectedTa
   || !!selectedPlan.value || !!selectedRisk.value || !!selectedPrediction.value);
 const selectedPredictionAlarmDetail = ref(null);
 let predictionAlarmDetailSeq = 0;
-const selectedUavAlarm = computed(() => {
+const selectedRiskContext = ref(null);
+let selectedRiskRead = 0;
+const listedSelectedUavAlarm = computed(() => {
   if (selection.value?.kind === 'alarm' || selection.value?.alarmId) {
     const alarmId = selection.value.alarmId || selection.value.id;
     return alarms.value.find(item => riskCaseKey(item) === (selection.value.riskCaseId || alarmId) || item.alarmId === alarmId) || null;
   }
   return selectedTarget.value?.objectTypeCode === 'UAV' ? targetAlarm(selectedTarget.value) : null;
 });
+const selectedUavAlarm = computed(() => {
+  const listed = listedSelectedUavAlarm.value, held = selectedRiskContext.value;
+  if (!held || held.selectionKey !== selectedRiskSelectionKey()) return listed;
+  if (listed && riskCaseKey(listed) === held.caseId && Number(riskCaseOf(listed)?.version || 0) >= Number(riskCaseOf(held.alarm)?.version || 0)) return listed;
+  return { ...held.alarm, _riskUnavailable: held.unavailable, _riskReadReason: held.reason || '' };
+});
+const selectedAdvisorySummary = computed(() => {
+  const alarm = selectedUavAlarm.value, risk = riskCaseOf(alarm);
+  const summary = advisorySummaries.value[risk?.risk_case_id || alarm?.eventId];
+  return !alarm?._riskUnavailable && riskSummaryMatches(summary, alarm?.eventId, risk?.risk_case_id, risk) ? summary : null;
+});
+function selectedRiskSelectionKey() {
+  const value = selection.value;
+  return value && ['target', 'alarm'].includes(value.kind)
+    ? `${value.kind}:${value.id}:${value.riskCaseId || ''}:${value.targetId || ''}:${value.sourceMode || ''}:${authSession.value || ''}` : '';
+}
+
+// 仅保留已选中风险卡片的最后观测资料，不把过期目标放回地图或作为动作依据。
+const heldCardTarget = ref(null);
+watch(() => [selectedRiskSelectionKey(), selectedTarget.value], ([key, target]) => {
+  if (target?.objectTypeCode === 'UAV') heldCardTarget.value = { key, target: { ...target } };
+  else if (heldCardTarget.value?.key !== key) heldCardTarget.value = null;
+}, { immediate: true, flush: 'sync' });
+const selectedCardTarget = computed(() => selectedTarget.value || (
+  heldCardTarget.value?.key === selectedRiskSelectionKey() && selectedUavAlarm.value
+    && heldCardTarget.value.target.targetId === selectedUavAlarm.value.targetInternalId
+    ? { ...heldCardTarget.value.target, _lastObservationOnly: true } : null));
+const selectedCardAlarm = computed(() => selectedCardTarget.value?._lastObservationOnly && selectedUavAlarm.value
+  ? { ...selectedUavAlarm.value, _riskUnavailable: true, _riskReadReason: '当前未取得有效实测位置，以下保留最后观测与核实记录，暂停新操作。' }
+  : selectedUavAlarm.value);
+
 const showAlarmPopup = computed(() => alertTab.value === 'target' && !!selectedUavAlarm.value);
 const showAlarmAdvisoryCard = computed(() => showAlarmPopup.value && !!selectedUavAlarm.value?.eventId);
 const videoContext = computed(() => {
@@ -293,9 +329,44 @@ const clockText = computed(() => formatClock(targetRefreshAt.value));
    才提示刷新慢。SSE 正常空闲没有新观测时，不用距上次读回的时间假定故障。 */
 const SLOW_REFRESH_SECONDS = 10;
 const nowTick = ref(serverNow());
+watch(() => [selectedRiskSelectionKey(), snapshot.value.alarms, snapshot.value.targets, snapshot.value.predictions, nowTick.value], async () => {
+  const key = selectedRiskSelectionKey(), listed = listedSelectedUavAlarm.value;
+  const previous = selectedRiskContext.value;
+  if (!key || (previous && previous.selectionKey !== key)) { selectedRiskRead++; selectedRiskContext.value = null; }
+  const held = selectedRiskContext.value;
+  const caseId = held?.caseId || riskCaseOf(listed)?.risk_case_id || selection.value?.riskCaseId;
+  if (!key || !caseId) return;
+  if (listed && riskCaseKey(listed) === caseId) {
+    if (!held || Number(riskCaseOf(listed)?.version || 0) >= Number(riskCaseOf(held.alarm)?.version || 0)) {
+      selectedRiskRead++;
+      selectedRiskContext.value = { selectionKey: key, caseId, alarm: listed, unavailable: false, missing: false };
+      return;
+    }
+  }
+  if (!held || held.reading || ['CLEARED', 'ENDED'].includes(riskCaseOf(held.alarm)?.stage)
+    || (held.checkedAt && Date.now() - held.checkedAt < 2000)) return;
+  const request = ++selectedRiskRead;
+  selectedRiskContext.value = { ...held, missing: true, reading: true, checkedAt: Date.now(), unavailable: held.missing ? held.unavailable : true };
+  try {
+    const detail = await getUavRiskCase(caseId, { purpose: 'verification' });
+    if (request !== selectedRiskRead || key !== selectedRiskSelectionKey()) return;
+    if (detail?.risk_case?.risk_case_id !== caseId) throw new Error('风险详情与所选记录不一致');
+    const latest = toAlarms([{ ...detail.alarm,
+      risk_case: detail.risk_case, prediction: detail.event?.prediction || detail.alarm?.prediction }], { includeClosed: true })[0];
+    if (!latest || latest.targetInternalId !== held.alarm.targetInternalId
+      || (held.alarm.sourceMode && latest.sourceMode !== held.alarm.sourceMode)
+      || riskCaseOf(latest)?.airspace_id !== riskCaseOf(held.alarm)?.airspace_id) throw new Error('风险目标、来源或区域关联已变化，请重新选择');
+    if (Number(detail.risk_case.version || 0) < Number(riskCaseOf(held.alarm)?.version || 0)) throw new Error('风险状态尚在更新，请稍候重读');
+    selectedRiskContext.value = { selectionKey: key, caseId, alarm: latest, missing: true, unavailable: false, reading: false, checkedAt: Date.now() };
+  } catch (error) {
+    if (request === selectedRiskRead && key === selectedRiskSelectionKey()) selectedRiskContext.value = {
+      ...held, missing: true, reading: false, unavailable: true, checkedAt: Date.now(), reason: error.message || '风险状态读取失败，暂不能办理' };
+  }
+}, { immediate: true });
+onUnmounted(() => { selectedRiskRead++; });
 watch(mapPredictions, () => syncMapData(), { flush: 'post' });
 watch([alarms, predictionRows], ([alarmRows, forecasts]) => {
-  // 预测先读回时即可提醒；统一风险列表随后返回、转实测或重算，不重复弹出同一风险。
+  // 新风险只展开右上角风险列表，不弹顶部提示；同周期更新不反复抢页签。
   const candidates = [
     ...alarmRows.map(row => ({ keys: [eventKey(row), ...(row.prediction?.warnings || [row.prediction?.warning]).filter(warning => warning?.episode_id && (!riskCaseOf(row)?.airspace_id || !warning.airspace_id || warning.airspace_id === riskCaseOf(row).airspace_id)).map(warning => `episode:${warning.episode_id}`)], target: row.targetId || row.id,
       phase: riskStageLabel(row) || (isPredictionAlarm(row) ? '预计入区' : row.type), area: riskCaseOf(row)?.airspace_name })),
@@ -309,12 +380,10 @@ watch([alarms, predictionRows], ([alarmRows, forecasts]) => {
   });
   if (!fresh.length) return;
   alertTab.value = 'target'; alertsExpanded.value = true; predictionClusterIds.value = [];
-  const first = fresh[0];
-  toast(`${fresh.length > 1 ? `发现 ${fresh.length} 项无人机风险；` : ''}${displayBusinessNo(first.target) || '无人机'}：${first.phase}${first.area ? ` · ${first.area}` : ''}`, 'warn');
 }, { flush: 'post' });
 
-watch([selectedPrediction, predictionRows], ([prediction, rows]) => {
-  if (selection.value?.kind === 'prediction' && !prediction) clearSelection();
+watch([selectedPrediction, predictionRows, targets], ([_prediction, rows]) => {
+  reconcilePredictionSelection();
   predictionClusterIds.value = predictionClusterIds.value.filter(id => rows.some(row => row.key === id));
 });
 watch(() => isPredictionAlarm(selectedUavAlarm.value) ? selectedUavAlarm.value.alarmId : null, async alarmId => {
@@ -519,16 +588,18 @@ function decorate(next) {
 }
 
 function applySnapshot(next) {
-  const previousSelectedTargetId = selectedTarget.value?.targetId;
+  const previousSelectedTargetId = selection.value?.targetId || selectedTarget.value?.targetId;
+  const previousCaseId = selection.value?.riskCaseId || riskCaseOf(selectedUavAlarm.value)?.risk_case_id;
   rawSnapshot = next;
   for (const segment of reportedSourceFailures) if (!(next.failedSegments || []).includes(segment)) reportedSourceFailures.delete(segment);
   const decorated = decorate(currentMapSnapshot(next));
   snapshot.value = decorated;
-  if (selection.value?.kind === 'target' && !decorated.targets.some(target => target.id === selection.value.id)) {
+  if (selection.value?.kind === 'target' && !selectedTarget.value && !previousCaseId) {
     const forecast = currentPredictions.value.find(row => row.target_id === previousSelectedTargetId);
-    if (forecast) selection.value = { kind: 'prediction', id: forecast.target_id }; else clearSelection();
+    if (forecast) selection.value = { kind: 'prediction', id: forecast.target_id, targetId: forecast.target_id, sourceMode: selection.value.sourceMode }; else clearSelection();
   }
-  if (selection.value?.kind === 'prediction' && !selectedPrediction.value) clearSelection();
+  // 已选区域风险独立于地图位置时效。地图目标/预测可退出，办理上下文不能被改成纯预测再清掉。
+  reconcilePredictionSelection();
   predictionClusterIds.value = predictionClusterIds.value.filter(id => predictionRows.value.some(row => row.key === id));
   if (selection.value?.kind === 'risk-group' && !selectedRiskGroup.value) clearSelection();
   if (selection.value?.riskId && !decorated.risks.some(risk => risk.riskId === selection.value.riskId && risk.active)) clearSelection();
@@ -609,7 +680,11 @@ function selectTarget(target, alarmId, riskCaseId) {
   const request = ++selectedReadSequence;
   alertTab.value = 'target';
   markViewed([...(target.relatedAlarms || []), ...(target.relatedRisks || []).filter(risk => risk.active)]);
-  selection.value = { kind: 'target', id: target.id, alarmId, riskCaseId };
+  const alarm = riskCaseId ? (target.relatedAlarms || []).find(row => riskCaseKey(row) === riskCaseId)
+    : alarmId ? (target.relatedAlarms || []).find(row => row.alarmId === alarmId) : targetAlarm(target);
+  const caseId = riskCaseId || riskCaseOf(alarm)?.risk_case_id;
+  selection.value = { kind: 'target', id: target.id, targetId: target.targetId, sourceMode: target.sourceMode, alarmId, riskCaseId: caseId };
+  rememberSelectedRisk(alarm);
   if (map) {
     map.sel = target.id;
     map.planSel = null;
@@ -621,12 +696,43 @@ function selectTarget(target, alarmId, riskCaseId) {
   source.loadTargetPrediction(target.targetId).catch(error => { if (current()) onSourceError(error, 'predictions'); });
 }
 
+function rememberSelectedRisk(alarm, unavailable = false) {
+  const caseId = riskCaseOf(alarm)?.risk_case_id;
+  if (!caseId) return;
+  selectedRiskRead++;
+  selectedRiskContext.value = { selectionKey: selectedRiskSelectionKey(), caseId, alarm, unavailable, missing: false };
+}
+
+function reconcilePredictionSelection() {
+  const value = selection.value;
+  if (value?.kind !== 'prediction') return;
+  const target = targets.value.find(item => item.targetId === (value.targetId || value.id)
+    && (!value.sourceMode || item.sourceMode === value.sourceMode));
+  if (target) selectTarget(target, value.alarmId, value.riskCaseId);
+  else if (!selectedPrediction.value && !value.riskCaseId) clearSelection();
+}
+
 function selectPrediction(row) {
   const prediction = currentPredictions.value.find(item => item.target_id === (row.prediction || row).target_id);
   if (!prediction) return;
+  const warning = row.warning;
+  const caseId = warning?.risk_case_id;
+  const linked = caseId ? (snapshot.value.alarms || []).find(alarm => riskCaseKey(alarm) === caseId && alarm.targetInternalId === prediction.target_id) : null;
   const target = targets.value.find(item => item.targetId === prediction.target_id);
-  if (target) selectTarget(target);
-  else { selection.value = { kind: 'prediction', id: prediction.target_id }; map?.clearPinnedHit(); }
+  if (linked) selectAlarm(linked);
+  else if (target) {
+    selectTarget(target, warning?.alarm_id, caseId);
+    if (caseId && (selectedRiskContext.value?.caseId !== caseId || selectedRiskContext.value?.selectionKey !== selectedRiskSelectionKey())) rememberSelectedRisk({
+      alarmId: warning.alarm_id, eventId: warning.event_id, targetInternalId: prediction.target_id, targetId: prediction.target_no,
+      sourceMode: target.sourceMode, originKind: PREDICTION_ORIGIN, risk_case: { risk_case_id: caseId, airspace_id: warning.airspace_id }
+    }, true);
+  } else if (caseId) {
+    selection.value = { kind: 'alarm', id: caseId, riskCaseId: caseId, targetId: prediction.target_id, sourceMode: prediction.source_mode };
+    rememberSelectedRisk({ alarmId: warning.alarm_id, eventId: warning.event_id, targetInternalId: prediction.target_id,
+      targetId: prediction.target_no, sourceMode: prediction.source_mode, originKind: PREDICTION_ORIGIN,
+      risk_case: { risk_case_id: caseId, airspace_id: warning.airspace_id } }, true);
+    map?.clearPinnedHit();
+  } else { selection.value = { kind: 'prediction', id: prediction.target_id, targetId: prediction.target_id, sourceMode: prediction.source_mode }; map?.clearPinnedHit(); }
   alertTab.value = 'target';
   layers.value = { ...layers.value, prediction: true };
   map?.setLayer('prediction', true);
@@ -640,7 +746,8 @@ function selectAlarm(alarm) {
   if (target) selectTarget(target, alarm.alarmId, riskCaseOf(alarm)?.risk_case_id);
   else {
     // 目标不在当前监测窗口，仍查看被点击的同一事件，不能沿用前一个目标。
-    selection.value = { kind: 'alarm', id: riskCaseKey(alarm), riskCaseId: riskCaseOf(alarm)?.risk_case_id };
+    selection.value = { kind: 'alarm', id: riskCaseKey(alarm), riskCaseId: riskCaseOf(alarm)?.risk_case_id, targetId: alarm.targetInternalId, sourceMode: alarm.sourceMode };
+    rememberSelectedRisk(alarm);
     fuseOpen.value = false;
     if (map) { map.sel = null; map.planSel = null; map.clearPinnedHit(); }
   }
@@ -795,7 +902,7 @@ function renderTargetActions(target, hasAdvisoryCard = false, hasNextStep = fals
     const process = uavProcessActions(alarm);
     // 有「下一步」时核实按钮已放在那里。
     const prediction = predictionVerificationState(null, alarm, nowTick.value);
-    if (process.includes('verify') && !hasNextStep && !prediction?.terminal) buttons.push(`<button type="button" data-tip-act="verify">${prediction ? prediction.blocked ? '核实为误报' : '核实预测风险' : '核实'}</button>`);
+    if (process.includes('verify') && !hasNextStep && !prediction?.terminal) buttons.push(`<button type="button" data-tip-act="verify">核实</button>`);
     if (alarm.eventState !== 'FALSE_POSITIVE' && !hasAdvisoryCard) buttons.push('<button type="button" data-tip-act="disposal-flow">处置流程</button>');
   }
   return buttons.length ? `<div class="sit-map-pop-actions">${buttons.join('')}</div>` : '';
@@ -872,7 +979,8 @@ function renderPlanTip(plan) {
 
 function renderMapTip(hit) {
   if (hit?.kind === 'device') return renderDeviceTip(hit.data);
-  if (hit?.kind === 'target') return renderTargetTip(hit.data);
+  // 无人机详情统一由点击后的 Vue 卡片显示，避免悬浮卡与实时选中卡重复。
+  if (hit?.kind === 'target') return hit.data?.objectTypeCode === 'UAV' ? '' : renderTargetTip(hit.data);
   if (hit?.kind === 'plan') return renderPlanTip(hit.data);
   if (hit?.kind === 'prediction') return `<div class="sit-map-pop"><b>预测入区 · ${hit.data.rows.length} 项</b><p>点击查看预测预警，预计位置不代表已经入区。</p></div>`;
   return null;
@@ -960,15 +1068,15 @@ const selectedNowStatus = computed(() => {
   return uavNowStatus({ current: false, now: snapshot.value.generatedAt || serverNow() });
 });
 
-function verifySelectedAlarm() {
-  const target = selectedTarget.value || targets.value.find(row => row.targetId === selectedUavAlarm.value?.targetInternalId);
-  if (target) openTargetVerification(target);
+function verifySelectedAlarm(alarm = selectedUavAlarm.value) {
+  // 点击使用按钮对应的风险，不因实时列表短暂移除或目标过期而重新选择另一条记录。
+  return openTargetVerification(null, alarm);
 }
 
 function targetAlarm(target) {
   const related = (target?.relatedAlarms || []).filter(row => riskCaseVisible(row) && (!isPredictionAlarm(row) || predictionRows.value.some(item => item.warning.event_id === row.eventId || item.warning.alarm_id === row.alarmId)));
   const selectedId = selection.value?.kind === 'target' && selection.value.id === target?.id ? selection.value.alarmId : null;
-  const selectedCaseId = selection.value?.riskCaseId;
+  const selectedCaseId = selection.value?.riskCaseId || (selectedRiskContext.value?.selectionKey === selectedRiskSelectionKey() ? selectedRiskContext.value.caseId : null);
   const alarm = selectedCaseId ? related.find(row => riskCaseKey(row) === selectedCaseId) : selectedId ? related.find(row => row.alarmId === selectedId) : related.find(row => riskCaseVisible(row) && row.eventState !== 'FALSE_POSITIVE');
   if (!alarm || !isPredictionAlarm(alarm)) return alarm || null;
   const latest = predictions.value.find(row => row.target_id === target.targetId);
@@ -981,15 +1089,43 @@ function targetAlarm(target) {
 }
 
 function updateNotification(value) {
-  if (value.event_id !== selectedUavAlarm.value?.eventId) return;
-  const key = value._riskCaseId || value.risk_case?.risk_case_id || value.risk_case_id || value.event_id;
-  if (key !== (riskCaseOf(selectedUavAlarm.value)?.risk_case_id || selectedUavAlarm.value?.eventId)) return;
+  const alarm = selectedUavAlarm.value, risk = riskCaseOf(alarm), incoming = value.risk_case;
+  const key = value._riskCaseId || incoming?.risk_case_id || value.risk_case_id || value.event_id;
+  if (key !== (risk?.risk_case_id || alarm?.eventId)) return;
+  if (risk && incoming?.version != null && Number(incoming.version) < Number(risk.version)) return;
+  const newer = risk && incoming?.risk_case_id === risk.risk_case_id
+    && Number.isInteger(Number(incoming.version)) && Number(incoming.version) > Number(risk.version)
+    && incoming.airspace_id === risk.airspace_id && incoming.source_mode === (risk.source_mode || alarm.sourceMode)
+    && incoming.action_event_id === value.event_id && incoming.stage && incoming.verification_status
+    && (value.event_id === alarm.eventId || incoming.related_event_ids?.includes(alarm.eventId));
+  if (value.event_id !== alarm?.eventId && !newer) return;
   const previous = advisorySummaries.value[key];
-  if (previous && (previous._fetchedAt > (value._fetchedAt || 0) || previous.event_version > value.event_version)) return;
+  if (previous?.event_id === value.event_id && (previous._fetchedAt > (value._fetchedAt || 0) || previous.event_version > value.event_version)) return;
+  if (newer) {
+    selectedRiskRead++;
+    selectedRiskContext.value = { selectionKey: selectedRiskSelectionKey(), caseId: key, unavailable: false, missing: false, checkedAt: Date.now(),
+      alarm: { ...alarm, risk_case: { ...incoming }, eventId: value.event_id, eventState: incoming.verification_status,
+        disposalStage: disposalStage(incoming.counter) } };
+  }
   advisorySummaries.value = { ...advisorySummaries.value, [key]: value };
   departureByEvent.value = { ...departureByEvent.value, [value.event_id]: value.departure_observation || null };
   if (map && selection.value?.kind === 'target') map.pinHit('target', selection.value.id);
 }
+
+// 核实响应的阶段、核实状态和资格来自同一读快照；校验后一次接续选中卡片。
+// 地图列表随后刷新，不丢弃已返回的新资格，也不借其他区域或旧版本恢复按钮。
+function applySelectedRiskDetail(detail) {
+  const alarm = selectedUavAlarm.value, current = riskCaseOf(alarm), risk = detail?.risk_case;
+  if (!current?.risk_case_id || risk?.risk_case_id !== current.risk_case_id
+    || detail.alarm?.target_id !== alarm.targetInternalId || risk.airspace_id !== current.airspace_id
+    || (alarm.sourceMode && detail.alarm.source_mode !== alarm.sourceMode)
+    || Number(risk.version) < Number(current.version)
+    || !riskSummaryMatches(detail.advisory, risk.action_event_id, risk.risk_case_id, risk)) return false;
+  updateNotification({ ...detail.advisory, _riskCaseId: risk.risk_case_id, _fetchedAt: Date.now() });
+  return selectedAdvisorySummary.value === advisorySummaries.value[risk.risk_case_id]
+    && !!selectedAdvisorySummary.value;
+}
+
 function invalidateNotification(eventId, startedAt = Date.now(), caseId = '') {
   const key = caseId || riskCaseOf(selectedUavAlarm.value)?.risk_case_id || eventId;
   if (key !== (riskCaseOf(selectedUavAlarm.value)?.risk_case_id || selectedUavAlarm.value?.eventId)) return;
@@ -998,27 +1134,45 @@ function invalidateNotification(eventId, startedAt = Date.now(), caseId = '') {
   advisorySummaries.value = { ...advisorySummaries.value, [key]: { event_id: eventId, _riskCaseId: caseId, _unavailable: true, _fetchedAt: startedAt } };
 }
 
-async function openTargetVerification(target) {
-  const alarm = targetAlarm(target);
-  if (!alarm?.eventId) return toast('没有关联无人机事件，无法核实', 'err');
+let verificationOpening = null;
+onUnmounted(() => verificationOpening?.modal.close());
+async function openTargetVerification(target, alarm = targetAlarm(target)) {
+  const caseId = riskCaseOf(alarm)?.risk_case_id;
+  const eventId = alarm?.eventId || alarm?.event_id;
+  const alarmId = alarm?.alarmId || alarm?.alarm_id;
+  if (!caseId && !eventId) return toast('没有关联无人机事件，无法核实', 'err');
+  const key = caseId || eventId;
+  if (verificationOpening?.key === key && verificationOpening.modal.isCurrent()) return false;
+  const modal = openModal({ title: '正在读取核实依据', width: '460px',
+    render: () => h('div', { role: 'status', 'aria-live': 'polite' }, [
+      h('p', '正在核对当前风险和最新依据，请稍候。'), h('p', '读取期间不会提交核实结论。')
+    ]) });
+  const opening = { key, modal }; verificationOpening = opening;
   try {
-    const risk = riskCaseOf(alarm);
-    const detail = risk ? await getUavRiskCase(risk.risk_case_id) : null;
+    // 只用点击时的稳定标识定位；阶段、事件、核实资格和预测依据全部读取最新详情。
+    const detail = caseId ? await getUavRiskCase(caseId, { purpose: 'verification' }) : null;
+    if (caseId && detail?.risk_case?.risk_case_id !== caseId) throw new Error('风险详情与所选记录不一致，请重新读取。');
     const [event, linkedAlarm] = detail ? [detail.event, { ...detail.alarm, risk_case: detail.risk_case }] : await Promise.all([
-      getUavEvent(alarm.eventId),
-      alarm.alarmId ? getAlarm(alarm.alarmId) : Promise.resolve(null)
+      getUavEvent(eventId),
+      alarmId ? getAlarm(alarmId) : Promise.resolve(null)
     ]);
-    openUavVerification({
+    if (!modal.isCurrent()) return false;
+    const opened = openUavVerification({
       event,
       alarm: linkedAlarm,
-      refresh: async () => {
+      refresh: async result => {
+        // 优先消费已提交后返回的一致快照，不能等全地图重读后仍保留核实前的在途资格。
+        if (caseId) applySelectedRiskDetail(result);
         await source.refresh();
-        return risk ? (await getUavRiskCase(risk.risk_case_id)).event : getUavEvent(alarm.eventId);
+        return result?.event || (caseId ? (await getUavRiskCase(caseId, { purpose: 'verification' })).event : await getUavEvent(eventId));
       }
     });
+    if (!opened) modal.close();
+    return opened;
   } catch (error) {
-    toast(error.message || '无法读取核实事件，请稍后重试', 'err');
-  }
+    if (modal.isCurrent()) { modal.close(); toast(error.message || '无法读取核实事件，请稍后重试', 'err'); }
+    return false;
+  } finally { if (verificationOpening === opening) verificationOpening = null; }
 }
 
 async function openLinkedDisposal(target) {
@@ -1263,16 +1417,16 @@ onUnmounted(() => {
       <SituationAlarmPopup v-if="showSelectionPopup" :key="`${selection.kind}:${selection.id}:${selection.riskId || selection.riskCaseId || selection.alarmId || ''}`" :get-anchor="alarmAnchor"
         :get-avoid-rect="selectionAvoidRect"
         :video-open="showTargetVideo && !!videoContext"
-        :label="isPredictionAlarm(selectedUavAlarm) ? '预测入区风险详情' : selectedDevice ? '设备详情' : selectedPlan ? '任务详情' : selectedRisk ? '航线风险详情' : showAlarmPopup ? '无人机告警详情' : '目标详情'">
+        :label="riskCaseOf(selectedUavAlarm) ? '无人机风险详情' : isPredictionAlarm(selectedUavAlarm) ? '预测入区风险详情' : selectedDevice ? '设备详情' : selectedPlan ? '任务详情' : selectedRisk ? '航线风险详情' : showAlarmPopup ? '无人机告警详情' : '目标详情'">
         <template v-if="selectedDevice">
           <div @click="onTipAction($event.target.closest('[data-tip-act]')?.dataset.tipAct, { kind: 'device', data: selectedDevice })"
             v-html="renderDeviceTip(selectedDevice)"></div>
           <SituationDeviceReport :key="selectedDevice.deviceId" :device-id="selectedDevice.deviceId" />
         </template>
-        <SituationTargetCard v-else-if="selectedTarget" :key="selectedTarget.targetId || selectedTarget.id"
-          :target="selectedTarget" :alarm="selectedUavAlarm" :now-status="selectedNowStatus"
-          :summary="advisorySummaries[riskCaseOf(selectedUavAlarm)?.risk_case_id || selectedUavAlarm?.eventId]" :now="nowTick" :video-open="showTargetVideo"
-          :source-names="devices.filter(device => (selectedTarget.sourceDeviceIds || []).includes(device.fusionDeviceId || device.deviceId)).map(device => device.type).join(' / ')"
+        <SituationTargetCard v-else-if="selectedCardTarget" :key="selectedCardTarget.targetId || selectedCardTarget.id"
+          :target="selectedCardTarget" :alarm="selectedCardAlarm" :now-status="selectedNowStatus"
+          :summary="selectedAdvisorySummary" :now="nowTick" :video-open="showTargetVideo"
+          :source-names="devices.filter(device => (selectedCardTarget.sourceDeviceIds || []).includes(device.fusionDeviceId || device.deviceId)).map(device => device.type).join(' / ')"
           @close="clearSelection" @video="onTipAction('eo-video')" @verify="verifySelectedAlarm" @records="openCounterRecords"
           @updated="updateNotification" @unavailable="invalidateNotification" @open="openAlarmDisposal(selectedUavAlarm)" />
         <SituationRiskGroupPopup v-else-if="selectedRiskGroup" :group="selectedRiskGroup" :plans="flightPlans"
@@ -1293,22 +1447,28 @@ onUnmounted(() => {
         <section v-else-if="selectedUavAlarm" class="sit-map-pop">
           <header><span class="sit-map-pop-icon" v-html="U.businessIcon('uav')"></span><span><b>{{ displayBusinessNo(selectedUavAlarm.targetId || selectedUavAlarm.id) || '未关联目标告警' }}</b><small>{{ isPredictionAlarm(selectedUavAlarm) ? '预测入区预警' : '无人机告警' }}</small></span>
             <button type="button" aria-label="关闭告警详情" @click="clearSelection" v-html="U.icon('close')"></button></header>
-          <div v-html="isPredictionAlarm(selectedUavAlarm) ? predictionAlarmStatusHtml(selectedUavAlarm, { now: nowTick }) : uavNowHtml(selectedNowStatus, { process: `${selectedUavAlarm.level}风险 · ${selectedUavAlarm.type} · 告警时` })"></div>
+          <div v-if="riskCaseOf(selectedUavAlarm)" class="sit-map-pop-status">
+            <b>{{ selectedUavAlarm._riskUnavailable ? '风险状态更新中' : riskStageLabel(selectedUavAlarm) }}</b>
+            <span>{{ riskCaseVerificationLabel(selectedUavAlarm) }}</span>
+            <p>{{ riskCaseOf(selectedUavAlarm).airspace_name || '风险区域读取中' }}</p>
+            <p v-if="selectedUavAlarm._riskUnavailable">{{ selectedUavAlarm._riskReadReason || '正在重新读取本次风险，暂停新操作。' }}</p>
+          </div>
+          <div v-else v-html="isPredictionAlarm(selectedUavAlarm) ? predictionAlarmStatusHtml(selectedUavAlarm, { now: nowTick }) : uavNowHtml(selectedNowStatus, { process: `${selectedUavAlarm.level}风险 · ${selectedUavAlarm.type} · 告警时` })"></div>
           <p>{{ selectedUavAlarm.district }} · 告警时间 {{ formatClock(selectedUavAlarm.ts) }}</p>
           <p>遥控器位置：{{ PILOT_LOCATION_IN_ALARM_DETAIL }}</p>
         </section>
-        <SituationNextStep v-if="selectedUavAlarm && !selectedTarget && !selectedRisk && !selectedPlan && !selectedDevice" :alarm="selectedUavAlarm"
-          :summary="advisorySummaries[riskCaseOf(selectedUavAlarm)?.risk_case_id || selectedUavAlarm.eventId]" :now-status="selectedNowStatus" :now="nowTick" @verify="verifySelectedAlarm" @records="openCounterRecords"
+        <SituationNextStep v-if="selectedUavAlarm && !selectedCardTarget && !selectedRisk && !selectedPlan && !selectedDevice" :alarm="selectedUavAlarm"
+          :summary="selectedAdvisorySummary" :now-status="selectedNowStatus" :now="nowTick" @verify="verifySelectedAlarm" @records="openCounterRecords"
           @updated="updateNotification" @unavailable="invalidateNotification" />
-        <div v-if="videoContext && !selectedTarget" class="sit-video-entry">
+        <div v-if="videoContext && !selectedCardTarget" class="sit-video-entry">
           <button type="button" :aria-expanded="showTargetVideo" aria-controls="situation-video-window" @click="onTipAction('eo-video')">{{ showTargetVideo ? '收起视频' : '实时视频' }}</button>
         </div>
         <p v-if="showAlarmPopup && !alarmAnchor()" class="sit-alarm-position-note">当前未取得该目标的有效位置，无法定位无人机；以下保留此事件的信息。</p>
-        <SituationAdvisoryCard v-if="showAlarmAdvisoryCard && !selectedTarget" :key="riskCaseKey(selectedUavAlarm)" :risk-case="riskCaseOf(selectedUavAlarm)"
+        <SituationAdvisoryCard v-if="showAlarmAdvisoryCard && !selectedCardTarget" :key="riskCaseKey(selectedUavAlarm)" :risk-case="riskCaseOf(selectedUavAlarm)"
           :event-id="selectedUavAlarm.eventId" :alarm-label="selectedUavAlarm.id"
           @updated="updateNotification" @unavailable="invalidateNotification" @open="openAlarmDisposal(selectedUavAlarm)" />
-        <p v-else-if="showAlarmPopup && !selectedTarget" class="sit-alarm-position-note">此告警未关联无人机事件，暂无可读取的通知记录。</p>
-        <div v-if="selectedPrediction && !selectedTarget" class="prediction-popup-title"><b>目标未来位置</b><button type="button" class="btn" @click="clearSelection">关闭</button></div>
+        <p v-else-if="showAlarmPopup && !selectedCardTarget" class="sit-alarm-position-note">此告警未关联无人机事件，暂无可读取的通知记录。</p>
+        <div v-if="selectedPrediction && !selectedCardTarget" class="prediction-popup-title"><b>目标未来位置</b><button type="button" class="btn" @click="clearSelection">关闭</button></div>
         <details v-if="selectedPrediction && selectedTarget" class="sit-target-prediction-more">
           <summary>未来 10／20／30 秒预测详情</summary>
           <PredictionPanel :prediction="selectedPrediction" :risk-case="riskCaseOf(selectedUavAlarm)" :now="nowTick" :unavailable="predictionUnavailable" />

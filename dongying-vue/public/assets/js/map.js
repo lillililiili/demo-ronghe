@@ -781,6 +781,8 @@
       this.tip.classList.toggle('is-device', hit.kind === 'device' && typeof this.opt.renderTip === 'function');
       this.tip.classList.toggle('is-plan', hit.kind === 'plan' && typeof this.opt.renderTip === 'function');
     }
+    // renderTip 返回空内容表示不显示浮层；缓存命中时也要保持隐藏。
+    if (!this.tip.innerHTML) { this.tip.style.display = 'none'; return; }
     this.tip.style.display = 'block';
     if (this._tipAt && Math.abs(this._tipAt[0] - hit.x) < 0.5 && Math.abs(this._tipAt[1] - hit.y) < 0.5) return;
     this._tipAt = [hit.x, hit.y];

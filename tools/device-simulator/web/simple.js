@@ -20,12 +20,13 @@
     for (const {device} of counterDevices()) {
       if (device.send !== false) { device.send = false; changed = true; }
       if (device.scope === undefined) { device.scope = ''; changed = true; }
+      if (device.enabled === undefined) { device.enabled = true; changed = true; }
     }
     // 载入的场景（流程、样本、导入）里没有画反制设备，而实时收发设置是开着的：按服务端原来的规矩放在第一台雷达所在的点位。
     if (realtimeConfig?.countermeasure_enabled && !counterDevices().length && state.sites.length) {
       const site = state.sites.find(s => s.devices.some(d => d.kind === 'radar')) || state.sites[0];
       const device = createDevice(COUNTER, site.devices);
-      device.send = false; device.scope = realtimeConfig.countermeasure_scope || '';
+      device.send = false; device.scope = realtimeConfig.countermeasure_scope || ''; device.enabled = true;
       site.devices.push(device); changed = true;
     }
     return changed;
@@ -34,7 +35,7 @@
   const defaultCounterSite = () => state.sites.find(s => s.devices.some(d => d.kind === 'radar'));
   function counterConfig() {
     const found = counterDevices()[0];
-    if (!found) return {countermeasure_enabled: false};
+    if (!found || found.device.enabled === false) return {countermeasure_enabled: false};
     const explicit = found.site !== defaultCounterSite();
     const [lon, lat] = explicit ? lonLat(found.site).map(Number) : [null, null];
     return {countermeasure_enabled: true, countermeasure_scope: found.device.scope || '', countermeasure_longitude: lon, countermeasure_latitude: lat};
@@ -111,7 +112,7 @@
     $$('status-sent').textContent = `设备上报 已发 ${data.sent || 0} 条`;
     $$('status-last').textContent = `最近上报 ${time(data.last_published_at)}`;
     const tcp = rt?.countermeasure || {}, n = rt?.notifications || {};
-    $$('status-counter').textContent = isolated ? '反制设备 本模式不启用' : `反制设备 ${tcp.listening ? '已接上 · 收到指令 ' + (tcp.received || 0) + ' 次' : '未连接'}`;
+    $$('status-counter').textContent = isolated ? '反制设备 本模式不启用' : counterDevices().some(c => c.device.enabled !== false) || tcp.listening ? `反制设备 ${tcp.listening ? '已接上 · 收到指令 ' + (tcp.received || 0) + ' 次' : '未连接'}` : '反制设备 已停用';
     $$('status-notify').textContent = isolated ? '短信电话 本模式不启用' : `短信电话 收到 ${n.received_count || 0} / 已回执 ${n.receipt_count || 0}`;
     $$('run-mode-note').textContent = isolated ? '隔离测试场景模式下没有实时收发。'
       : rt ? `接收端：${stateText[rt.state] || rt.state}。点“开始”会自动启动接收端；下面两个按钮只在要单独开关接收端时用。` : '';
@@ -191,7 +192,7 @@
       intervals += field(`${d.name} 心跳间隔（秒）`, `interval_${d.id}`, d.interval, 'number', 'min="1" max="300" required');
       if (d.kind === COUNTER) {
         counters++;
-        html += `<div class="device-row"><h3>${esc(d.name)}<small>四通道</small></h3><input type="hidden" name="health_${d.id}" value="${esc(d.health)}"><input type="hidden" name="heartbeat_${d.id}" value="${esc(d.heartbeat)}">${selectField('所属单位与区县', `scope_${d.id}`, d.scope || '', scopeOptions(d.scope))}<p class="field-note">${counters > 1 ? '一个场景只有第一台反制设备在工作，这一台不生效。' : (scopes ? '' : '登录系统后这里才能选单位与区县。') + '开始模拟时按这个点位的位置登记到平台，反制指令从 TCP 四通道收；归属只决定设备属于谁，不授予反制权限。'}</p></div>`;
+        html += `<div class="device-row"><h3>${esc(d.name)}<small>四通道</small></h3><input type="hidden" name="health_${d.id}" value="${esc(d.health)}"><input type="hidden" name="heartbeat_${d.id}" value="${esc(d.heartbeat)}">${seg(`enabled_${d.id}`, d.enabled === false ? 'off' : 'on', [{value: 'on', label: '启用'}, {value: 'off', label: '停用', bad: true}])}${selectField('所属单位与区县', `scope_${d.id}`, d.scope || '', scopeOptions(d.scope))}<p class="field-note">${d.enabled === false ? '已停用：开始模拟时不启用本机模拟反制设备。' : counters > 1 ? '一个场景只有第一台反制设备在工作，这一台不生效。' : (scopes ? '' : '登录系统后这里才能选单位与区县。') + '开始模拟时按这个点位的位置登记到平台，反制指令从 TCP 四通道收；归属只决定设备属于谁，不授予反制权限。'}</p></div>`;
         continue;
       }
       html += `<div class="device-row"><h3>${esc(d.name)}<small>${esc(labels[d.kind] || d.kind)}</small></h3><div class="seg-pair">${seg(`health_${d.id}`, d.health, [{value: '正常', label: '正常'}, {value: '故障', label: '故障', bad: true}])}${seg(`heartbeat_${d.id}`, d.heartbeat, [{value: '持续上报', label: '持续心跳'}, {value: '停止心跳', label: '停止心跳', bad: true}], 'heartbeat')}</div></div>`;
@@ -235,7 +236,8 @@
     const x = lookup(selected.kind, selected.id);
     if (!x) return;
     if (selected.kind === 'site') {
-      for (const d of x.devices) if (d.kind === COUNTER) { d.scope = form.elements[`scope_${d.id}`]?.value || ''; d.send = false; }
+      for (const d of x.devices) if (d.kind === COUNTER) { d.scope = form.elements[`scope_${d.id}`]?.value || ''; d.send = false; d.enabled = form.elements[`enabled_${d.id}`]?.value !== 'off'; }
+      if (liveState) try { renderStatus(liveState); } catch (error) { console.error(error); }
     }
     if (selected.kind === 'plan') {
       form.querySelectorAll('[data-executor]').forEach(box => {

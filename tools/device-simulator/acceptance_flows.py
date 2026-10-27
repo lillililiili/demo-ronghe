@@ -237,13 +237,16 @@ def _cover_paths_with_eo(scene):
             if device.get('kind') != 'eo' or device.get('coverage') is not None or not points:
                 continue
             # 场景坐标 x 向东、y 向南（engine.coordinates）。
-            bearings = sorted((math.degrees(math.atan2(p[0] - origin[0], origin[1] - p[1])) + 360) % 360
-                              for p in points if p != origin)
+            bearings = sorted({round((math.degrees(math.atan2(p[0] - origin[0], origin[1] - p[1])) + 360) % 360, 1) % 360
+                               for p in points if p != origin})
             if not bearings:
                 continue
-            gaps = [(bearings[(i + 1) % len(bearings)] - b) % 360 or 360 for i, b in enumerate(bearings)]
-            widest = max(range(len(gaps)), key=gaps.__getitem__)
-            start, span = bearings[(widest + 1) % len(bearings)], 360 - gaps[widest]
+            if len(bearings) == 1:
+                start, span = bearings[0], 0
+            else:
+                gaps = [(bearings[(i + 1) % len(bearings)] - b) % 360 for i, b in enumerate(bearings)]
+                widest = max(range(len(gaps)), key=gaps.__getitem__)
+                start, span = bearings[(widest + 1) % len(bearings)], 360 - gaps[widest]
             extent = max(metres(origin, p) for p in points)
             reach = max(1500, math.ceil(extent / 100) * 100 + 200)
             fov = max(120, math.ceil((span + 30) / 10) * 10)

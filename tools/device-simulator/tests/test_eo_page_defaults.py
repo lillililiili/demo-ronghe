@@ -75,3 +75,40 @@ class GimbalLockTest(unittest.TestCase):
             now = at(118.002, 37 + .0004 * step)
             self.assertTrue(g.update(now, guide(previous, 4 + step), 4 + step), step)
             previous = now
+
+
+class NormalizedSourceLinkTest(unittest.TestCase):
+    def setUp(self):
+        self.target = {'id': 'u', 'deviceId': 'radar', 'secondaryDeviceId': '5ga', 'kind': 'uav', 'path': [[0, 0], [100, 0]],
+                       'speed': 10, 'height': 80, 'transport': 'normalized', 'secondaryTransport': 'normalized', 'altitudeDatum': 'AMSL'}
+        self.manifest = {'batch': 'sim-1', 'devices': {}, 'targets': {'u': {'external_id': 'sim-1-t1'}},
+                         'normalized_sources': {'radar': {'device_id': 'obs-radar'}, '5ga': {'device_id': 'obs-5ga'}}}
+        self.generator = EoObservations(PAGE_DEFAULT_CONFIG, self.manifest, {'u': self.target}, lambda: 5)
+
+    def link(self, **change):
+        return dict({'device_id': 'obs-5ga', 'external_target_id': 'sim-1-t1', 'source_mode': 'replay'}, **change)
+
+    def test_batch_external_id_on_this_batch_source_identifies_the_target(self):
+        self.assertEqual(self.generator.observation({'source_links': [self.link()]}, {})['className'], 'drone')
+        self.assertIsNotNone(self.generator.observation({'source_links': [self.link()]}, {}, acquisition=True))
+
+    def test_other_batch_other_device_or_live_never_match(self):
+        for altered in (self.link(external_target_id='sim-2-t1'), self.link(device_id='obs-other'), self.link(source_mode='live')):
+            self.assertIsNone(self.generator.observation({'source_links': [altered]}, {}))
+        second = dict(self.target, id='v'); self.generator.targets['v'] = second
+        self.manifest['targets']['v'] = {'external_id': 'sim-1-t1'}
+        self.assertIsNone(self.generator.observation({'source_links': [self.link()]}, {}))
+
+
+class CoverDuplicateBearingTest(unittest.TestCase):
+    def test_repeated_points_do_not_hide_the_far_side(self):
+        # 东北、正东（重复两次）、正南：重复的方向不能让最宽缺口算错。
+        points = [[100, -173], [100, 0], [100, 0], [0, 200]]
+        scene = {'targets': [{'path': points}], 'sites': [{'x': 0, 'y': 0, 'devices': [{'kind': 'eo'}]}]}
+        _cover_paths_with_eo(scene)
+        coverage = scene['sites'][0]['devices'][0]['coverage']
+        for point in points:
+            self.assertTrue(inside(coverage, [0, 0], point), (coverage, point))
+        single = {'targets': [{'path': [[100, 0]]}], 'sites': [{'x': 0, 'y': 0, 'devices': [{'kind': 'eo'}]}]}
+        _cover_paths_with_eo(single)
+        self.assertEqual(single['sites'][0]['devices'][0]['coverage']['azimuthDeg'], 90)

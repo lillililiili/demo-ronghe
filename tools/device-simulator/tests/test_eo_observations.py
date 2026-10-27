@@ -21,6 +21,14 @@ class ObservationsTest(unittest.TestCase):
         second=dict(self.target,id='b'); self.generator.targets['b']=second
         self.generator.manifest['targets']['b']=dict(self.manifest['targets']['a'])
         self.assertIsNone(self.generator.observation({'source_links':self.links},{}))
+    def test_legacy_default_height_is_not_explicit_eo_calibration(self):
+        self.target.update(transport='normalized',secondaryTransport='auto',altitudeDatum='AMSL',_eo_altitude_datum_defaulted=True)
+        links=[{'device_id':'tdoa-1','external_target_id':'1000','source_mode':'replay'}]
+        sample=self.generator.observation({'source_links':links},{},acquisition=True)
+        self.assertIsNone(sample['altitude_datum'])
+        self.target.pop('_eo_altitude_datum_defaulted')
+        self.assertEqual(self.generator.observation({'source_links':links},{},acquisition=True)['altitude_datum'],'AMSL')
+
     def test_disabled_and_silence(self):
         self.generator.config['enabled']=False
         self.assertIsNone(self.generator.observation({'source_links':self.links},{}))
@@ -70,6 +78,7 @@ class LifecycleTest(unittest.TestCase):
             def observation(self,detail,binding): return {'className':'drone','longitude':118,'latitude':37}
         sent=[]; now=[1000]
         eo=EoSimulator(api,{'devices':{'eo':BINDING}},dict(DEFAULT_VIDEO,enabled=False),lambda t,p:sent.append(p),lambda *a:None,clock=lambda:now[0],observations=Generator())
+        eo._acquire=lambda active,facts: (True, {})
         command={'event':'BeginTracking','edgeId':BINDING['edge_id'],'timestamp':1000000,'metadata':{'deviceId':BINDING['external_id'],'taskId':TASK,'objectData':{'dataId':'guide'},'extention':{'test':True}}}
         eo.handle(BINDING['dispatcher_topic'],json.dumps(command))
         now[0]+=5; eo.tick()
@@ -116,7 +125,7 @@ class StatusOnlyTest(unittest.TestCase):
         self.assertTrue(all('aiStatus' not in p['metadata'] for p in sent))
         heartbeat={'metadata':{'deviceId':BINDING['external_id']}}
         eo.heartbeat(heartbeat)
-        self.assertEqual(heartbeat['metadata']['workState'],1)
+        self.assertEqual(heartbeat['metadata']['workState'],0)  # no measured position/pose fixture
         eo.suspend(); now[0]+=5;eo.tick()
         # 暂停时只多发一条“结束跟踪”回执，告诉平台这个任务结束了；之后不再上报。
         self.assertEqual(len(sent),7)
@@ -136,6 +145,7 @@ class CadenceTest(unittest.TestCase):
             def observation(self,detail,binding): return {'className':'drone','longitude':118,'latitude':37}
         sent=[];now=[1000]
         eo=EoSimulator(api,{'devices':{'eo':BINDING}},dict(DEFAULT_VIDEO,enabled=False),lambda t,p:sent.append(p),lambda *a:None,clock=lambda:now[0],observations=Generator())
+        eo._acquire=lambda active,facts: (True, {})
         eo.handle(BINDING['dispatcher_topic'],json.dumps({'event':'BeginTracking','edgeId':BINDING['edge_id'],'timestamp':1000000,'metadata':{'deviceId':BINDING['external_id'],'taskId':TASK}}))
         for i in range(1,7):now[0]=1000+i;eo.tick()
         self.assertEqual([p['timestamp'] for p in sent if 'aiStatus' in p['metadata']],[1002000,1004000,1006000])
@@ -145,7 +155,7 @@ class CadenceTest(unittest.TestCase):
             with self.assertRaises(ValueError): EoObservations({'enabled':True,'intervalSeconds':value},{},{},lambda:0)
 
 class DisabledInjectedTest(unittest.TestCase):
-    def test_server_injected_disabled_generator_never_reads_target(self):
+    def test_ai_disabled_still_reads_acquisition_target_without_emitting_ai(self):
         import json
         from eo_video import EoSimulator, DEFAULT_VIDEO
         from test_eo_video import BINDING, Platform, TASK
@@ -157,7 +167,7 @@ class DisabledInjectedTest(unittest.TestCase):
         eo=EoSimulator(api,{'devices':{'eo':BINDING}},dict(DEFAULT_VIDEO,enabled=False),lambda t,p:sent.append(p),lambda *a:None,clock=lambda:now[0],observations=EoObservations(None,{}, {},lambda:0))
         eo.handle(BINDING['dispatcher_topic'],json.dumps({'event':'BeginTracking','edgeId':BINDING['edge_id'],'timestamp':1000000,'metadata':{'deviceId':BINDING['external_id'],'taskId':TASK,'extention':{'echo':True}}}))
         now[0]+=5;eo.tick()
-        self.assertFalse(any(path.startswith('/targets/') for path in calls))
+        self.assertTrue(any(path.startswith('/targets/') for path in calls))  # acquisition is independent of AI switch
         self.assertEqual(eo.snapshot()['devices'][0]['ai_observation'],'DISABLED')
         self.assertNotIn('aiStatus',sent[-1]['metadata'])
         self.assertEqual(sent[-1]['metadata']['extention'],{'echo':True})

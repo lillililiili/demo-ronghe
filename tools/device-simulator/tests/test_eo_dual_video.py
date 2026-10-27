@@ -42,7 +42,19 @@ class Api:
         if '/observation-associations?' in path:
             return {'items': self.associations}
         if '/targets/' in path: return {'target_id': self.target}
-        if method == 'PUT' and path.endswith('/frames'): return {}
+        if method=='PUT' and path.endswith('/frames/batch'):
+            frames=[]
+            for index,frame in enumerate(body['frames']):
+                returned=[]
+                for detection in frame['detections']:
+                    linked=next((item for item in self.associations if item['observation_id']==detection.get('observation_id')
+                                 and abs(frame['frame_timestamp']-item['observed_at'])<=2000),None)
+                    returned.append({'association_status':'LINKED' if linked else 'UNLINKED',
+                                     'target_id':linked['target_id'] if linked else None,
+                                     'observation_id':linked['observation_id'] if linked else None})
+                frames.append({'index':index,'frame_timestamp':frame['frame_timestamp'],'media_time_ms':frame['media_time_ms'],
+                               'accepted':True,'error_code':None,'detections':returned})
+            return {'stream_id':body['stream_id'],'task_id':body['task_id'],'frames':frames}
         stream = self.ai if '/video-streams/' in path else self.raw
         return {'device_id': self.device, 'task_id': self.task if stream == self.ai else None,
                 'stream_kind': 'AI' if stream == self.ai else 'RAW', 'stream_id': stream, 'stream_path': 'qa/' + stream}
@@ -71,18 +83,47 @@ class DualVideoTests(unittest.TestCase):
                               clock=lambda: self.now, observations=Observations())
         # Unit lifecycle tests use an already verified media anchor. The real
         # encoder/playlist/barcode roundtrip is tested separately below.
-        self.eo.media_clock = type('Clock', (), {'anchor': lambda *args: self.eo.active[self.api.device]['started_at'] * 1000})()
+        # This suite isolates encoded media; mechanical acquisition is covered in test_eo_pointing.
+        def acquired(active, facts):
+            self.eo.gimbals[self.api.device].state = 'TRACKING'
+            return True, {'target_id': self.api.target}
+        self.eo._acquire = acquired
+        def segment(*args):
+            # Isolated media tests explicitly supply the proved decoded window.
+            active=self.eo.active[self.api.device];key=active.get('progress_key')
+            if key is None:return None
+            last=key[0]-1;first=max(0,last-29) if self.eo.recorded else last
+            origin=active['started_at']*1000
+            frames=[{'number':n,'frame_timestamp':int(origin+n*1000/15),'media_time_ms':int(n*1000/15),
+                     'segment_id':'proved.mp4'} for n in range(first,last+1)]
+            return {'frames':frames,'segments':[{'segment_id':'proved.mp4','program_date_time_ms':frames[0]['frame_timestamp'],
+                    'first_frame':first,'last_frame':last,'frames':frames}]}
+        self.proved_segment=segment
+        self.eo.media_clock=type('Clock',(),{'measure_segment':staticmethod(segment)})()
         self.addCleanup(self.eo.suspend)
 
     def begin(self):
         self.api.task = str(uuid.uuid4())
         self.eo.handle(self.binding['dispatcher_topic'], json.dumps({'event': 'BeginTracking', 'edgeId': 'edge',
             'timestamp': int(self.now * 1000), 'metadata': {'deviceId': self.binding['external_id'], 'taskId': self.api.task}}))
+        self.eo.gimbals[self.api.device].state = 'TRACKING'
 
     def progress(self, process, frame=30, pts=2000000):
         (process.directory / 'progress.txt').write_text(f'frame={frame}\nout_time_us={pts}\nprogress=continue\n')
 
-    def frames(self): return [body for method, path, body in self.api.calls if path.endswith('/frames')]
+    def frames(self):
+        return [{**frame,'stream_id':body['stream_id'],'task_id':body['task_id']}
+                for method,path,body in self.api.calls if path.endswith('/frames/batch') for frame in body['frames']]
+
+    def test_lost_pointing_never_uploads_linked_frame(self):
+        self.begin()
+        self.progress(self.processes[0])
+        self.now+=3
+        self.eo.active[self.api.device]['progress_key']=(30,2000000)
+        for state in ('TURNING','LOST','UNKNOWN','STOPPED'):
+            self.eo.gimbals[self.api.device].state=state
+            self.eo._report_video_frame(self.eo.active[self.api.device])
+            self.assertEqual(self.frames(),[])
 
     def test_idle_raw_survives_tracking_end_and_video_off_stops_both(self):
         self.eo.tick()
@@ -141,7 +182,7 @@ class DualVideoTests(unittest.TestCase):
         self.progress(self.processes[0])
         self.now += 3
         for origin in (None, 900000):
-            self.eo.media_clock = type('Clock', (), {'anchor': lambda *args: origin})()
+            self.eo.media_clock = type('Clock', (), {'measure_segment': lambda *args: None if origin is None else {'frames':[]}})()
             self.eo.active[self.api.device]['next_frame'] = 0
             self.eo.tick()
             self.assertEqual(self.frames(), [])
@@ -177,6 +218,117 @@ class DualVideoTests(unittest.TestCase):
         self.assertEqual([detection['x'] * WIDTH, detection['y'] * HEIGHT,
                           detection['width'] * WIDTH, detection['height'] * HEIGHT], list(BBOX))
         self.assertIn('drawbox=x=380:y=230', self.processes[0].args[self.processes[0].args.index('-vf') + 1])
+
+    def test_frame_uses_nearest_valid_observation_instead_of_latest_wall_clock_sample(self):
+        self.begin()
+        older,newer=str(uuid.uuid4()),str(uuid.uuid4())
+        self.api.associations=[{'observation_id':older,'target_id':self.api.target,'class_code':'UAV','observed_at':1002000},
+                               {'observation_id':newer,'target_id':self.api.target,'class_code':'UAV','observed_at':1005000}]
+        self.now+=5
+        self.progress(self.processes[0],frame=45,pts=3000000)
+        self.eo.tick()
+        frame=self.frames()[-1]
+        self.assertEqual(frame['frame_timestamp'],1002933)
+        self.assertEqual(frame['detections'][0]['observation_id'],older)
+        self.assertEqual(self.eo._state(self.binding)['video_metadata'],'LINKED')
+        self.assertEqual(self.eo._state(self.binding)['video_association_offset_ms'],933)
+
+    def test_outside_two_second_window_or_backend_rejection_cannot_claim_linked(self):
+        self.begin()
+        observation=str(uuid.uuid4())
+        self.api.associations=[{'observation_id':observation,'target_id':self.api.target,'class_code':'UAV','observed_at':1005000}]
+        self.now+=5
+        self.progress(self.processes[0],frame=45,pts=3000000)
+        self.eo.tick()
+        self.assertNotIn('observation_id',self.frames()[-1]['detections'][0])
+        self.assertEqual(self.eo._state(self.binding)['video_metadata'],'UNLINKED')
+        self.api.associations[0]['observed_at']=1004000
+        original=self.api.call
+        def rejected(method,path,body=None):
+            result=original(method,path,body)
+            if path.endswith('/frames/batch'):
+                for frame in result['frames']:frame['detections']=[{'association_status':'UNLINKED'}]
+            return result
+        self.api.call=rejected
+        self.progress(self.processes[0],frame=60,pts=4000000)
+        self.now+=1
+        self.eo.tick()
+        self.assertEqual(self.eo._state(self.binding)['video_metadata'],'UNLINKED')
+
+    def test_only_proved_segment_frames_are_sent_and_thirty_frames_use_one_request(self):
+        from eo_recorded import recorded_clip
+        self.eo.recorded=recorded_clip();self.eo.config['source_mode']='recorded'
+        self.begin();self.progress(self.processes[0],frame=500,pts=33000000)
+        origin=1000000
+        frames=[{'number':n,'frame_timestamp':origin+n*1000//15,'media_time_ms':n*1000//15,'segment_id':'actual.mp4'} for n in range(15,45)]
+        self.eo.media_clock=type('Clock',(),{'measure_segment':lambda *args:{'frames':frames,'segments':[]}})()
+        self.now+=4;self.eo.tick()
+        self.assertEqual(len(self.frames()),30)
+        self.assertEqual(sum(path.endswith('/frames/batch') for _,path,_ in self.api.calls),1)
+        self.assertEqual(self.frames()[0]['media_time_ms'],1000)
+        self.assertEqual(self.frames()[-1]['media_time_ms'],2933)
+
+    def test_segment_utc_overlap_skips_history_without_reanchoring_it(self):
+        self.begin();self.now+=3;self.progress(self.processes[0],frame=30,pts=2000000);self.eo.tick()
+        accepted=self.eo.active[self.api.device]['last_frame_timestamp']
+        frames=[{'number':n,'frame_timestamp':accepted-20+(n-30)*67,'media_time_ms':n*1000//15,'segment_id':'next.mp4'} for n in range(30,33)]
+        self.eo.media_clock=type('Clock',(),{'measure_segment':lambda *args:{'frames':frames,'segments':[]}})()
+        self.now+=1;self.eo.tick()
+        self.assertEqual([f['frame_timestamp'] for f in self.frames()[1:]],[accepted+47,accepted+114])
+
+    def test_near_expiry_frame_is_skipped_before_upload_without_relaxing_server_window(self):
+        self.begin();self.now+=5
+        # n=2 is 133ms into this stream; age4867ms leaves too little transport budget.
+        self.progress(self.processes[0],frame=3,pts=200000)
+        self.eo.tick()
+        self.assertEqual(self.frames(),[])
+
+    def test_batch_partial_rejection_keeps_accepted_cursor_and_no_false_link(self):
+        self.begin();original=self.api.call
+        def call(method,path,body=None):
+            result=original(method,path,body)
+            if path.endswith('/frames/batch'):
+                result['frames'][-1].update(accepted=False,error_code='VIDEO_FRAME_INVALID',detections=[])
+            return result
+        self.api.call=call;self.now+=3;self.progress(self.processes[0],frame=30,pts=2000000);self.eo.tick()
+        self.assertNotIn('last_frame_timestamp',self.eo.active[self.api.device])
+        self.assertEqual(self.eo._state(self.binding)['video_frame_rejection_code'],'VIDEO_FRAME_INVALID')
+        self.assertEqual(self.eo._state(self.binding)['video_metadata'],'UNLINKED')
+
+    def test_real_clock_decode_finishes_in_the_same_background_upload_poll(self):
+        from eo_media_clock import HlsCalibrationClock
+        from concurrent.futures import TimeoutError
+        from types import SimpleNamespace
+        import datetime as dt
+        self.begin();self.now+=3
+        epoch=self.now*1000-1000
+        stamp=dt.datetime.fromtimestamp(epoch/1000,dt.timezone.utc).isoformat()
+        playlist=('#EXTM3U\n#EXT-X-PROGRAM-DATE-TIME:'+stamp+'\n#EXTINF:1,\nactual.mp4').encode()
+        clock=HlsCalibrationClock(reader=lambda path:playlist if path.endswith('index.m3u8') else b'fragment')
+        self.eo.media_clock=clock
+        entered,release=threading.Event(),threading.Event()
+        self.api.associations=[{'observation_id':str(uuid.uuid4()),'target_id':self.api.target,'class_code':'UAV','observed_at':epoch}]
+        def run(command,**kwargs):
+            if '-show_entries' in command:
+                return SimpleNamespace(stdout=json.dumps({'frames':[{'best_effort_timestamp_time':str(i/15)} for i in range(15)]}).encode())
+            entered.set();release.wait(2)
+            return SimpleNamespace(stdout=b'\0'*(960*540*3*15))
+        self.eo.enable_metadata_worker()
+        try:
+            with patch('eo_media_clock.subprocess.run',side_effect=run),patch('eo_media_clock.decoded_frame_number',side_effect=range(15)):
+                self.eo.tick()
+                future=self.eo.metadata_pending[self.api.device]
+                self.assertTrue(entered.wait(1))
+                # Metadata is already off the owner thread: returning an empty
+                # cache here would defer this real decoded segment to another poll.
+                with self.assertRaises(TimeoutError):future.result(timeout=.05)
+                release.set();future.result(timeout=2)
+                self.eo._drain_metadata()
+            self.assertEqual(len(self.frames()),15)
+            self.assertEqual(self.frames()[0]['frame_timestamp'],epoch)
+            self.assertEqual(self.eo._state(self.binding)['video_metadata'],'LINKED')
+        finally:
+            release.set();self.eo.close_metadata();clock.executor.shutdown(wait=True)
 
     def test_switching_source_stops_encoders_and_keeps_same_tracking_task(self):
         self.eo.tick()

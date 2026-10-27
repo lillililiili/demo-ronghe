@@ -6,13 +6,13 @@ import { computed, h, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { NSelect } from 'naive-ui';
 import { riskCaseOf, riskCaseKey, riskStageLabel, RISK_STAGE_LABEL, riskCaseVisible, riskCaseVerificationLabel } from '@/services/riskCaseView.js';
 import { useRoute } from 'vue-router';
-import { ChevronUpOutline, GitCompareOutline, LocateOutline } from '@vicons/ionicons5';
+import { ChevronUpOutline, GitCompareOutline, LocateOutline, VideocamOutline } from '@vicons/ionicons5';
 import { usePageChrome } from '@/hooks/usePageChrome.js';
 import { createSituationApiSource } from '@/pages/situation/situationApiSource.js';
 import { serverNow } from '@/services/serverClock.js';
 import { alarmReasonView, uavNowHtml, uavNowPillHtml, uavNowStatus } from '@/components/disposal/uavNowStatus.js';
 import { uavAdvisoryApi } from '@/services/uavAdvisoryApi.js';
-import { clockLagText, currentMapSnapshot, deviceGroupState, riskMatchesPlan, SITUATION_DEVICE_TYPE_ORDER, targetClassCounts, targetIsCurrent } from '@/services/situationData.js';
+import { clockLagText, currentMapSnapshot, coverageContainsPoint, deviceGroupState, riskMatchesPlan, SITUATION_DEVICE_TYPE_ORDER, targetClassCounts, targetIsCurrent } from '@/services/situationData.js';
 import {
   disposalStage, situationAlarmNeedsAttention, situationRouteRiskIsCurrent,
   uavProcessActions, uavProcessStatus
@@ -52,8 +52,13 @@ import { PREDICTION_ORIGIN, PREDICTION_STATES, currentPredictionViews, predictio
 import { predictionAlarmStatusHtml } from '@/ui/predictionDetails.js';
 import DeviceVideoWorkspace from '@/components/video/DeviceVideoWorkspace.vue';
 import EoMapSelection from './situation/EoMapSelection.vue';
-import { MAX_EO_SELECTION, reconcileSelected, toggleSelected } from './situation/eoSelection.js';
-import { drawEoCoverageMask, eoCoverageView } from './situation/eoCoverage.js';
+import { MAX_EO_SELECTION, reconcileSelected, selectionKey } from './situation/eoSelection.js';
+import { useSituationRiskItems } from './situation/useSituationRiskItems.js';
+import { candidateFromRisk, riskFromAlarm } from './situation/situationRiskItems.js';
+import SituationRiskEvidence from './situation/SituationRiskEvidence.vue';
+import { drawRiskEvidenceGeometry, riskContextCoordinates } from './situation/riskEvidenceGeometry.js';
+import { drawEoCoverageMask, eoCoveragePresentation, eoCoverageView, eoMapFraming } from './situation/eoCoverage.js';
+import { eoCameraText } from './situation/eoCameraState.js';
 import { authSession } from '@/services/auth.js';
 
 const U = window.UI;
@@ -79,6 +84,12 @@ const announcedRiskKeys = new Set();
 const fuseOpen = ref(false);
 const showTargetVideo = ref(false);
 const eoDevice = ref(null), eoExpanded = ref(false), eoMode = ref('point'), eoSelected = ref([]), eoFocusedId = ref('');
+const eoRiskFocus = ref(null), riskMapContext = ref(null);
+const riskItems = useSituationRiskItems(computed(() => !!eoDevice.value));
+const riskListState = computed(() => ({ rows:riskItems.rows.value, counts:riskItems.counts.value,
+  availability:riskItems.availability.value,
+  total:riskItems.total.value, kind:riskItems.kind.value, page:riskItems.page.value, view:riskItems.view.value,
+  error:riskItems.error.value, loading:riskItems.loading.value }));
 const source = createSituationApiSource();
 const layers = ref({ prediction: true, coverage: true, device: true, track: true, flightPlan: true, airspace: true });
 const statusAnnouncement = ref('正在连接融合感知服务');
@@ -90,11 +101,13 @@ let stopSource = null;
 let situationPageActive = true, selectedReadSequence = 0;
 const reportedSourceFailures = new Set();
 const SEGMENT_LABEL = { predictions: '未来预测', targets: '目标', 'target-sources': '目标融合来源', alarms: '告警', risks: '航线风险', handoffs: '移送', devices: '设备',
+  'eo-status': '光电朝向',
   'device-events': '设备事件', 'flight-plans': '飞行任务', airspaces: '空域', 'fusion-status': '融合状态' };
 const sourceFailureLabels = computed(() => (snapshot.value.failedSegments || []).map(segment => SEGMENT_LABEL[segment] || segment).join('、'));
 let selectionResizeObserver = null;
 let expiryTimer = null;
 let mainMapView = null;
+let eoMapAutoFit = true;
 
 const devices = computed(() => snapshot.value.devices || []);
 const locatedDevices = computed(() => devices.value.filter(device => device.posValid !== false
@@ -104,53 +117,130 @@ const hasSimulatedCoverage = computed(() => devices.value.some(device => device.
 const targets = computed(() => snapshot.value.targets || []);
 const currentEoDevice = computed(() => devices.value.find(d => d.deviceId === eoDevice.value?.deviceId));
 const eoMapView = computed(() => eoCoverageView(
-  snapshot.value.failedSegments?.includes('devices') ? null : currentEoDevice.value, targets.value));
+  snapshot.value.failedSegments?.includes('devices') ? null : currentEoDevice.value, targets.value, serverNow()));
+const eoMapFrame = computed(() => eoMapFraming(currentEoDevice.value, eoMapView.value));
+const eoMapTargetKey = computed(() => JSON.stringify(eoMapView.value.targets.map(target => target.targetId).sort()));
 const eoMapCandidates = computed(() => {
   const ids = new Set(eoMapView.value.targets.map(t => t.targetId));
   return eoCandidates.value.filter(row => ids.has(row.targetId));
 });
-const eoCoverageKey = computed(() => JSON.stringify([currentEoDevice.value?.deviceId, eoMapView.value.coordinates]));
-const eoCandidates = computed(() => targets.value.filter(target => target.objectTypeCode === 'UAV').flatMap(target => {
-  const alarm = [...(target.relatedAlarms || [])].filter(a => a.eventId && a.eventState !== 'FALSE_POSITIVE').sort((a,b) => b.ts-a.ts || String(a.alarmId).localeCompare(String(b.alarmId)))[0];
-  return alarm ? [{ targetId: target.targetId, mapId: target.id, eventId: alarm.eventId, alarmId: alarm.alarmId,
-    label: displayTargetNo(target.id), eventState: alarm.eventState, lon: target.lon, lat: target.lat,
-    reasonText: (alarm.violationReasons || []).map(ruleReasonText).filter(Boolean).join('、') || alarm.type || '告警原因未提供' }] : [];
+const eoMapPresentation = computed(() => eoCoveragePresentation({
+  device: currentEoDevice.value,
+  view: eoMapView.value,
+  devicesUnavailable: snapshot.value.failedSegments?.includes('devices'),
+  targetsUnavailable: snapshot.value.failedSegments?.includes('targets'),
+  selectedCount: eoSelected.value.length
 }));
+const eoWorkspaceMapView = computed(() => ({ ...eoMapView.value, ...eoMapPresentation.value,
+  airspaceNotice: riskMapContext.value?.notice || (riskMapContext.value?.airspaces?.length ? '当前选中告警：显示报警时的区域边界' : snapshot.value.failedSegments?.includes('airspaces') ? '空域读取失败，区域边界暂不可用' : '') }));
+const eoCoverageKey = computed(() => JSON.stringify([currentEoDevice.value?.deviceId, eoMapView.value.coordinates]));
+const eoCandidates = computed(() => {
+  const rows = new Map();
+  for (const target of targets.value.filter(t=>t.objectTypeCode==='UAV')) {
+    for (const alarm of target.relatedAlarms || []) {
+      if (!alarm.eventId || alarm.eventState==='FALSE_POSITIVE' || !riskCaseVisible(alarm)) continue;
+      const candidate = candidateFromRisk(riskFromAlarm(alarm,target),targets.value);
+      if (candidate) rows.set(candidate.key,candidate);
+    }
+  }
+  if (!riskItems.error.value && riskItems.view.value==='ACTIVE') for (const item of riskItems.rows.value) {
+    const candidate = candidateFromRisk(item,targets.value);
+    if (candidate) rows.set(candidate.key,candidate);
+  }
+  return [...rows.values()];
+});
+const eoRangeTargets = computed(()=>targets.value.filter(target=>target.posValid!==false && Number.isFinite(target.lon) && Number.isFinite(target.lat)
+  && currentEoDevice.value && coverageContainsPoint({...currentEoDevice.value,coverage:{...currentEoDevice.value.coverage,status:'available'}},target)));
 watch(eoCandidates, candidates => { eoSelected.value = reconcileSelected(eoSelected.value,candidates); });
+watch(()=>eoRiskFocus.value?.key,()=>{riskMapContext.value=null;syncMapData();});
 watch(authSession, () => { closeEoVideo(); eoSelected.value=[];eoFocusedId.value=''; });
 function openEoVideo(device) {
   if (!device || device.typeCode !== 'EO') return;
-  showTargetVideo.value=false;eoDevice.value=device;eoMode.value='point';clearSelection();
+  showTargetVideo.value=false;eoDevice.value=device;eoMode.value='point';eoRiskFocus.value=null;riskMapContext.value=null;clearSelection();
 }
 function focusEoCoverage() {
-  if (eoExpanded.value && eoMapView.value.coordinates.length) map?.fitTo(eoMapView.value.coordinates, .17);
+  const frame = eoMapFrame.value;
+  if (eoExpanded.value && frame.coordinates.length) map?.fitTo(frame.coordinates, frame.padding);
 }
 async function setEoExpanded(value) {
   if (value && !eoExpanded.value && map) mainMapView = { center: map.unpx(map.w / 2, map.h / 2), scale: map.zoom };
+  eoMapAutoFit = value;
   eoExpanded.value = value;
   await nextTick();
   syncMapData();
   if (value) focusEoCoverage();
   else if (mainMapView && map) map.centerAt(...mainMapView.center, { scale: mainMapView.scale });
 }
-watch(eoCoverageKey, () => { if (eoExpanded.value) { syncMapData(); focusEoCoverage(); } }, { flush: 'post' });
-async function closeEoVideo() {await setEoExpanded(false);eoDevice.value=null;eoMode.value='point';}
+watch(eoCoverageKey, () => { if (eoExpanded.value) { eoMapAutoFit=true;syncMapData();focusEoCoverage(); } }, { flush: 'post' });
+watch(eoMapTargetKey, () => { if (eoExpanded.value && eoMapAutoFit) focusEoCoverage(); }, { flush: 'post' });
+function preserveEoMapView() { if (eoExpanded.value) eoMapAutoFit=false; }
+function currentEoMapFocus() {
+  if (!eoExpanded.value) return null;
+  eoMapAutoFit=true;
+  return { kind: 'fit', ...eoMapFrame.value };
+}
+async function closeEoVideo() {await setEoExpanded(false);eoDevice.value=null;eoMode.value='point';eoRiskFocus.value=null;riskMapContext.value=null;syncMapData();}
 function selectEoTargets(rows) {
-  const current=rows.filter(row=>row?.eventId && eoCandidates.value.some(c=>c.eventId===row.eventId && c.targetId===row.targetId));
+  const current=[...new Map(rows.filter(row=>row?.eventId && eoCandidates.value.some(c=>selectionKey(c)===selectionKey(row) && c.targetId===row.targetId)).map(row=>[selectionKey(row),row])).values()];
   if(!current.length){toast('此处没有可关联告警的当前无人机，可在地图或告警列表选择。','warn');return;}
-  if(current.length===1 && eoMode.value==='point') {
-    if(eoSelected.value.length>=MAX_EO_SELECTION && !eoSelected.value.some(row=>row.eventId===current[0].eventId)){toast('每批最多选择20架，请先取消部分选择。','warn');return;}
-    eoSelected.value=toggleSelected(eoSelected.value,current[0]);
-  }
-  else {
-    const added=current.filter(row=>!eoSelected.value.some(old=>old.eventId===row.eventId));
-    if(eoSelected.value.length+added.length>MAX_EO_SELECTION){toast('每批最多选择20架，请缩小框选范围。','warn');return;}
+  const keys = new Set(current.map(selectionKey));
+  if(eoMode.value==='point' && current.every(row=>eoSelected.value.some(old=>selectionKey(old)===selectionKey(row)))) {
+    eoSelected.value=eoSelected.value.filter(row=>!keys.has(selectionKey(row)));
+  } else {
+    const added=current.filter(row=>!eoSelected.value.some(old=>selectionKey(old)===selectionKey(row)));
+    if(eoSelected.value.length+added.length>MAX_EO_SELECTION){toast('每批最多选择20项风险，请缩小选择范围。','warn');return;}
     eoSelected.value=[...eoSelected.value,...added];
   }
-  eoFocusedId.value=current[0].eventId;
+  focusEoRisk(current[0].riskItem);
+  eoFocusedId.value=selectionKey(current[0]);
 }
-function removeEoTarget(eventId){eoSelected.value=eoSelected.value.filter(row=>row.eventId!==eventId);if(eoFocusedId.value===eventId)eoFocusedId.value=eoSelected.value[0]?.eventId||'';}
+function removeEoTarget(key){eoSelected.value=eoSelected.value.filter(row=>selectionKey(row)!==key);if(eoFocusedId.value===key)eoFocusedId.value=eoSelected.value[0]?.key||'';}
 function clearEoTargets(){eoSelected.value=[];eoFocusedId.value='';}
+function focusEoRisk(item){if(!item)return;eoRiskFocus.value=item;if(item.kind==='UAV')eoFocusedId.value=item.key;}
+function focusEoSelected(key){eoFocusedId.value=key;focusEoRisk(eoSelected.value.find(row=>selectionKey(row)===key)?.riskItem);}
+function checkEoRisk(item){
+  const row=candidateFromRisk(item,targets.value);if(!row)return;
+  if(eoSelected.value.some(value=>selectionKey(value)===row.key))removeEoTarget(row.key);
+  else if(eoSelected.value.length>=MAX_EO_SELECTION)toast('每批最多选择20项风险','warn');
+  else eoSelected.value=[...eoSelected.value,row];
+  focusEoRisk(item);
+}
+function receiveRiskContext(context){riskMapContext.value=context;syncMapData();}
+function receiveRiskStatus(item){
+  if(eoRiskFocus.value?.key!==item?.key)return;
+  eoRiskFocus.value=item;
+  const candidate=candidateFromRisk(item,targets.value);
+  eoSelected.value=eoSelected.value.map(row=>selectionKey(row)!==item.key ? row
+    : candidate ? {...row,...candidate} : {...row,unavailable:true,riskItem:item});
+}
+async function locateRiskEvidence(){
+  const coordinates=riskContextCoordinates(riskMapContext.value);
+  const targetId=eoDevice.value ? eoRiskFocus.value?.target_id : mainRiskItem.value?.target_id;
+  const target=targets.value.find(row=>row.targetId===targetId && row.posValid!==false);
+  if(target && Number.isFinite(target.lon) && Number.isFinite(target.lat))coordinates.push([target.lon,target.lat]);
+  if(!coordinates.length){toast('该风险缺少可定位的位置或范围','warn');return;}
+  if(eoExpanded.value)await setEoExpanded(false);
+  map?.fitTo(coordinates,.22);
+}
+function refreshRiskWorkspace(){source.refresh();riskItems.refresh();}
+function normalizedMapRisk(row){
+  if(!row)return null;
+  const id=row.risk_id || row.riskId,kind=(row.risk_type || row.riskType)==='WEATHER'?'WEATHER':'SPACE_OBJECT';
+  if(!id)return null;
+  return {key:`${kind==='WEATHER'?'weather':'space'}:${id}`,kind,risk_id:id,target_id:row.targetInternalId || row.target_id,
+    target_no:row.target_no || row.targetId,plan_id:row.plan_id || row.planId,plan_no:row.plan_no || row.planNo,
+    route_version_id:row.route_version_id || row.routeVersionId,state:row.state,reason_text:row.reason_text || row.reasonText,
+    reason_code:row.reason_code || row.reasonCode,occurred_at:row.occurred_at || row.ts,updated_at:row.updated_at || row.version,
+    current_status:row.current_status || row.currentStatus,presence_reason:row.current_reason || row.currentReason,
+    source_mode:row.source_mode || row.sourceMode,simulated:row.simulated};
+}
+function focusEoMapRisk(row){
+  const value=row?.members?.[0] || row;
+  const item=riskItems.rows.value.find(item=>item.risk_id===(value?.risk_id || value?.riskId)) || normalizedMapRisk(value);
+  if(item)focusEoRisk(item);else toast('当前目标没有可读取的关联风险事项','warn');
+}
+function pickWeatherRisk(row){if(eoDevice.value)focusEoMapRisk(row);else selectWeatherRisk(row);}
+function pickRiskGroup(row){if(eoDevice.value)focusEoMapRisk(row);else selectRiskGroup(row);}
 function locateEoTarget(row){
   const target=targets.value.find(t=>t.targetId===row.targetId);
   if(!target || target.posValid===false || !Number.isFinite(target.lon) || !Number.isFinite(target.lat)){toast('当前没有可定位的有效位置','warn');return;}
@@ -211,7 +301,7 @@ const deviceGroups = computed(() => {
     offline: items.filter(device => device.statusCode === 'OFFLINE').length,
     unknown: items.filter(device => device.statusCode === 'UNKNOWN').length,
     hasNew: items.some(device => device.newAlert),
-    rangeText: `${typeCode === 'EO' ? `单站 ${range} 定向视场` : `单站 ${range} 覆盖范围`}${items.some(device => device.displayCoverage?.displayOnly) ? ' · 含模拟参数' : ''}`
+    rangeText: `单站 ${range} 配置覆盖${items.some(device => device.displayCoverage?.displayOnly) ? ' · 含模拟参数' : ''}`
   };
   });
 });
@@ -234,7 +324,7 @@ const visiblePredictionRows = computed(() => predictionClusterIds.value.length
 const selectedPrediction = computed(() => currentPredictions.value.find(row => row.target_id ===
   (selectedTarget.value?.targetId || (selection.value?.kind === 'prediction' ? selection.value.id : null))) || null);
 const mapPredictions = computed(() => predictionMapData(currentPredictions.value, nowTick.value,
-  selectedPrediction.value?.target_id, predictionUnavailable.value));
+  eoDevice.value ? eoRiskFocus.value?.target_id : selectedPrediction.value?.target_id, predictionUnavailable.value));
 const selectedDevice = computed(() => selection.value?.kind === 'device'
   ? devices.value.find(device => device.id === selection.value.id) : null);
 const selectedPlan = computed(() => selection.value?.kind === 'plan'
@@ -263,6 +353,12 @@ const selectedUavAlarm = computed(() => {
   }
   return selectedTarget.value?.objectTypeCode === 'UAV' ? targetAlarm(selectedTarget.value) : null;
 });
+const mainRiskItem=computed(()=>{
+  if(eoDevice.value)return null;
+  if(selectedUavAlarm.value)return riskFromAlarm(selectedUavAlarm.value,selectedTarget.value);
+  return normalizedMapRisk(selectedRisk.value?.members?.[0] || selectedRisk.value);
+});
+watch(()=>mainRiskItem.value?.key,()=>{if(!eoDevice.value){riskMapContext.value=null;syncMapData();}});
 const showAlarmPopup = computed(() => alertTab.value === 'target' && !!selectedUavAlarm.value);
 const showAlarmAdvisoryCard = computed(() => showAlarmPopup.value && !!selectedUavAlarm.value?.eventId);
 const videoContext = computed(() => {
@@ -535,10 +631,10 @@ function applySnapshot(next) {
   const count = newAlarmCount.value + newRiskCount.value;
   const failed = (next.failedSegments || []).map(segment => ({
     predictions: '未来预测', targets: '目标', alarms: '告警', risks: '风险', handoffs: '移送', devices: '设备',
-    'device-events': '设备事件', 'flight-plans': '飞行任务', airspaces: '空域', 'fusion-status': '融合状态'
+    'device-events': '设备事件', 'flight-plans': '飞行任务', airspaces: '空域', 'fusion-status': '融合状态', 'eo-status': '光电朝向'
   }[segment] || segment));
   statusAnnouncement.value = failed.length
-    ? `${failed.join('、')}数据刷新失败，已保留上次结果；恢复后自动重试`
+    ? `${failed.join('、')}数据刷新失败，正在自动重试；可用性以各项状态为准`
     : count
     ? `融合感知数据已更新，${count} 条新风险`
     : '融合感知数据已更新，当前无未查看异常';
@@ -550,27 +646,35 @@ function applySnapshot(next) {
 function syncMapData() {
   if (!map) return;
   const mini = eoExpanded.value, data = snapshot.value;
+  // 光电小地图保留当前空域作位置参照；关联只按告警中的区域 ID，不按落点猜测报警原因。
+  const context=riskMapContext.value;
+  const historical=(context?.airspaces || []).map(area=>({...area,alarmAssociated:true,name:`报警时 · ${area.name}`}));
+  const historicalIds=new Set(historical.map(area=>area.airspaceId));
+  const alarmAreaIds = new Set((mini?eoMapCandidates.value:[]).map(row => row.airspaceId).filter(Boolean));
+  const currentAreas=(data.failedSegments?.includes('airspaces')?[]:data.airspaces).filter(area=>!historicalIds.has(area.airspaceId));
+  const evidencePlans=context?.flightPlans || [];
   map.layers = { ...map.layers, coverage: mini || layers.value.coverage, device: mini || layers.value.device,
-    track: mini || layers.value.track, flightPlan: !mini && layers.value.flightPlan,
-    nofly: !mini && layers.value.airspace, limit: !mini && layers.value.airspace, suit: !mini && layers.value.airspace };
+    track: mini || layers.value.track, flightPlan: mini ? !!evidencePlans.length : layers.value.flightPlan,
+    nofly: mini || layers.value.airspace, limit: mini || layers.value.airspace, suit: mini || layers.value.airspace };
   map.setData({
-    airspaces: mini ? [] : data.airspaces,
+    airspaces: [...currentAreas.map(area=>({...area,alarmAssociated:alarmAreaIds.has(area.airspaceId)})),...historical],
     devices: mini ? (eoMapView.value.coordinates.length ? [currentEoDevice.value] : []) : locatedDevices.value,
-    targets: mini ? eoMapView.value.targets.map(target => ({ ...target, track: [] })) : data.targets,
-    predictions: mini ? [] : mapPredictions.value,
-    flightPlans: mini ? [] : data.flightPlans,
-    risks: mini ? [] : data.risks.filter(risk => risk.mapVisible !== false), alarms: []
+    targets: mini ? eoRangeTargets.value.map(target => ({ ...target, track: target.targetId===eoRiskFocus.value?.target_id ? target.track : [] })) : data.targets,
+    predictions: mini ? mapPredictions.value.filter(row=>row.targetId===eoRiskFocus.value?.target_id || row.target_id===eoRiskFocus.value?.target_id) : mapPredictions.value,
+    flightPlans: mini ? evidencePlans : [...data.flightPlans.filter(plan=>!evidencePlans.some(e=>e.planId===plan.planId)),...evidencePlans],
+    risks: data.risks.filter(risk => risk.mapVisible !== false), alarms: []
   });
 }
 
 function onSourceError(error, segment) {
   if (!situationPageActive) return;
   const label = SEGMENT_LABEL[segment] || segment;
-  statusAnnouncement.value = `${label}更新失败，正在重试；已保留上次真实结果`;
+  const availability = segment === 'eo-status' ? '镜头朝向已标为未知' : '可用性以各项状态为准';
+  statusAnnouncement.value = `${label}更新失败，正在重试；${availability}`;
   if (reportedSourceFailures.has(segment)) return;
   reportedSourceFailures.add(segment);
   const reason = error?.code === 'TIMEOUT' ? '服务响应超时' : error?.code === 'NETWORK_ERROR' ? '暂时无法连接服务' : error?.message || '服务暂时不可用';
-  toast(`${label}更新失败：${reason}。正在自动重试，当前显示上次结果。`, 'err');
+  toast(`${label}更新失败：${reason}。正在自动重试，${availability}。`, 'err');
 }
 
 function markViewed(rows) {
@@ -782,6 +886,7 @@ function renderDeviceTip(device) {
     ${device.timeUntrusted ? `<p class="sit-map-pop-note">设备数据延迟${esc(clockLagText(device.reportLagMs) || '较多')}，请联系运维检查。</p>` : ''}
     <dl><dt>${esc(coverage.label || '覆盖参数')}</dt><dd class="${unavailable ? 'is-unavailable' : ''}">${esc(coverageState)}${coverage.displayOnly ? ' · 示意范围' : ''}</dd>
       ${coverage.availabilityReason ? `<dt>可用性</dt><dd class="is-unavailable">${esc(coverage.availabilityReason)}</dd>` : ''}
+    ${device.typeCode === 'EO' ? `<dt>镜头当前状态</dt><dd>${esc(eoCameraText(device.eoView))}</dd><dt>地图标识</dt><dd>青色扇形按镜头实时上报的朝向显示；朝向未知或过期时不绘制。引线连接真实安装点。</dd>` : ''}
     </dl>
     ${related.length ? `<div class="sit-map-pop-alerts"><b>近期连接情况</b>${related.map(event => `<span>${esc(event.title)}</span>`).join('')}</div>` : ''}
     ${device.typeCode === 'EO' ? '<div class="sit-video-entry"><button type="button" data-tip-act="device-video">实时视频</button></div>' : ''}
@@ -879,7 +984,8 @@ function renderMapTip(hit) {
 }
 
 function onMapPick(hit) {
-  if(eoDevice.value && hit?.kind==='target') {const row=eoCandidates.value.find(candidate=>candidate.mapId===hit.data.id);selectEoTargets(row?[row]:[]);return;}
+  if(eoDevice.value && hit?.kind==='target' && hit.data.objectTypeCode==='UAV') {selectEoTargets(eoCandidates.value.filter(candidate=>candidate.mapId===hit.data.id));return;}
+  if(eoDevice.value && hit?.kind==='target') {focusEoMapRisk(risks.value.find(row=>row.targetInternalId===hit.data.targetId));return;}
   if(eoExpanded.value) return;
   if (hit?.kind === 'prediction') {
     const rows = hit.data.rows || [];
@@ -1095,13 +1201,15 @@ onMounted(() => {
     zoom: 1,
     legend: false,
     fusionProfile: true,
+    now: serverNow,
     // 固定使用原东营地图范围，不因设备位置扩大底图视野。
     constrainToCoverage: true,
     layoutMarkers: createSituationMarkerLayout(),
-    getExternalMarkers: view => eoExpanded.value ? [] : [...(weatherLayer.value?.getMarkers(view) || []), ...(riskSnapshotLayer.value?.getMarkers(view) || [])],
+    getExternalMarkers: view => [...(weatherLayer.value?.getMarkers(view) || []), ...(riskSnapshotLayer.value?.getMarkers(view) || [])],
     drawUnderMarkers: view => {
-      if (eoExpanded.value) drawEoCoverageMask(view, eoMapView.value.coordinates);
-      else { weatherLayer.value?.draw(view); riskSnapshotLayer.value?.draw(view); }
+      if (eoExpanded.value) drawEoCoverageMask(view, eoMapView.value.viewCoordinates);
+      weatherLayer.value?.draw(view); riskSnapshotLayer.value?.draw(view);
+      drawRiskEvidenceGeometry(view,riskMapContext.value);
     },
     sensorIconScale: 1,
     // 地图装饰动画不需要 60fps；降低 Canvas 像素量和重绘频率，保留数据变化时的即时重画。
@@ -1112,6 +1220,8 @@ onMounted(() => {
     // 卡片上的按钮在点开后的弹窗里都有。
     interactiveTip: false,
     renderTip: hit => eoExpanded.value ? '' : renderMapTip(hit),
+    // 重新定位读取最新目标位置，并恢复目标加入/退出时的自动取景。
+    getRefocus: currentEoMapFocus,
     onTipAction,
     onPick: onMapPick,
     onEmptyPick: clearSelection
@@ -1155,15 +1265,15 @@ onUnmounted(() => {
   <div id="view" class="view situation-page" :class="{ 'has-selection-popup': showSelectionPopup }" @keydown.esc="clearSelection">
     <main class="sit-stage" aria-label="融合感知实时地图">
       <Teleport :to="eoExpanded ? '#eo-video-mini-map' : 'body'" :disabled="!eoExpanded">
-        <div class="eo-map-shell" :class="{'is-mini':eoExpanded}">
+        <div class="eo-map-shell" :class="{'is-mini':eoExpanded}" @pointerdown.capture="preserveEoMapView" @wheel.capture="preserveEoMapView" @keydown.capture="preserveEoMapView">
           <div id="stMap" ref="mapHost" class="sit-map"></div>
+          <SituationRiskMarkers ref="riskSnapshotLayer" :rows="riskSnapshots" :selected-id="selectedSnapshotId"
+            :visible="eoExpanded || layers.flightPlan" @select="pickRiskGroup" />
+          <WeatherRiskMarkers ref="weatherLayer" :risks="risks" :selected-id="eoDevice ? eoRiskFocus?.risk_id : selectedRisk?.riskId" shared-layout :control-target="eoExpanded ? '#eo-weather-control' : '#situation-weather-control'" @select="pickWeatherRisk" />
           <EoMapSelection v-if="eoDevice" :get-map="() => map" :candidates="eoExpanded ? eoMapCandidates : eoCandidates" :selected="eoSelected" :mode="eoMode" @select="selectEoTargets" />
-          <p v-if="eoExpanded && (eoMapView.reason || !eoMapView.targets.length)" class="eo-map-empty" role="status">{{eoMapView.reason || (snapshot.failedSegments?.includes('targets') ? '目标数据读取失败，暂无法确认范围内无人机' : '覆盖范围内暂无当前无人机')}}</p>
+          <p v-if="eoExpanded && eoMapPresentation.emptyMessage" class="eo-map-empty" role="status">{{eoMapPresentation.emptyMessage}}</p>
         </div>
       </Teleport>
-      <SituationRiskMarkers ref="riskSnapshotLayer" :rows="riskSnapshots" :selected-id="selectedSnapshotId"
-        :visible="layers.flightPlan" @select="selectRiskGroup" />
-      <WeatherRiskMarkers ref="weatherLayer" :risks="risks" :selected-id="selectedRisk?.riskId" shared-layout control-target="#situation-weather-control" @select="selectWeatherRisk" />
 
       <div class="sit-live-pill" :aria-label="`当前数据来源：${sourceModeText}`">
         <span class="sit-live-dot" aria-hidden="true"></span>
@@ -1171,7 +1281,7 @@ onUnmounted(() => {
         <span>{{ sourceModeDetail }}</span>
         <span>当前目标 {{ targets.length }} · 无人机 {{ targetCounts.uav }} · 异物 {{ targetCounts.foreign }} · 未分类 {{ targetCounts.unknown }}<template v-if="targetCounts.other"> · 其他 {{ targetCounts.other }}</template>（北京时间）</span>
         <time class="mono">{{ clockText }}</time>
-        <em v-if="sourceFailureLabels || refreshSlow" class="sit-refresh-slow" role="status" :title="sourceFailureLabels ? `${sourceFailureLabels}更新失败，正在自动重试；当前显示上次结果。` : `最近一次数据停在 ${clockText}，已有 ${refreshLagSeconds} 秒没有更新；地图上的目标按期退出，可能不全。恢复后自动更新。`">{{ sourceFailureLabels ? `${sourceFailureLabels}更新失败 · 重试中` : `数据刷新慢 · ${refreshLagSeconds} 秒未更新` }}</em>
+        <em v-if="sourceFailureLabels || refreshSlow" class="sit-refresh-slow" role="status" :title="sourceFailureLabels ? `${sourceFailureLabels}更新失败，正在自动重试；可用性以各项状态为准。` : `最近一次数据停在 ${clockText}，已有 ${refreshLagSeconds} 秒没有更新；地图上的目标按期退出，可能不全。恢复后自动更新。`">{{ sourceFailureLabels ? `${sourceFailureLabels}更新失败 · 重试中` : `数据刷新慢 · ${refreshLagSeconds} 秒未更新` }}</em>
       </div>
       <p class="sr-only" role="status" aria-live="polite" aria-atomic="true">{{ statusAnnouncement }}</p>
 
@@ -1194,20 +1304,27 @@ onUnmounted(() => {
               <span class="sit-device-state" :class="{ 'is-down': deviceGroupState(group).down }"><b>{{ deviceGroupState(group).headline }}</b><small>{{ deviceGroupState(group).detail }}</small></span>
             </button>
             <div v-show="expandedType === group.typeCode" :id="`sit-device-${group.typeCode}`" class="sit-device-node-list">
-              <div v-for="device in group.items" :key="device.id" class="sit-device-node-wrapper">
+              <div v-for="device in group.items" :key="device.id" class="sit-device-node-wrapper"
+                :class="{ 'has-video': device.typeCode === 'EO', 'is-selected': selection?.kind === 'device' && selection.id === device.id }">
               <button type="button" class="sit-device-node"
                 :class="[{ 'is-selected': selection?.kind === 'device' && selection.id === device.id, 'has-new': device.newAlert }, statusClass(device.status)]"
                 :aria-pressed="selection?.kind === 'device' && selection.id === device.id"
                 :aria-label="`查看${device.type}设备 ${device.name}，${device.status}${device.hasAlarm ? '，存在告警' : ''}`" @click="selectDevice(device)">
                 <span><span class="sit-node-icon" v-html="iconHtml(device)"></span><b>{{ device.name }}</b><small class="mono" :title="device.id">{{ device.display_no || device.id }}</small></span>
-                <em>{{ device.status }} · {{ reportAge(device.lastReportAt) }}<template v-if="device.timeUntrusted"> · 设备时间不准</template><template v-if="!locatedDevices.includes(device)"> · 位置未知</template></em>
+                <em v-if="device.typeCode !== 'EO'">{{ device.status }} · {{ reportAge(device.lastReportAt) }}<template v-if="device.timeUntrusted"> · 设备时间不准</template><template v-if="!locatedDevices.includes(device)"> · 位置未知</template></em>
               </button>
-              <button v-if="device.typeCode==='EO'" type="button" class="sit-device-video-button" :aria-label="`查看${device.name}实时视频`" @click="openEoVideo(device)">实时视频</button>
+              <div v-if="device.typeCode === 'EO'" class="sit-device-node-actions">
+                <em>{{ device.status }} · {{ reportAge(device.lastReportAt) }}<template v-if="device.timeUntrusted"> · 设备时间不准</template><template v-if="!locatedDevices.includes(device)"> · 位置未知</template></em>
+                <button type="button" class="sit-device-video-button" :class="{ 'is-open': eoDevice?.deviceId === device.deviceId }"
+                  :aria-label="`查看${device.name}实时视频`" :aria-expanded="eoDevice?.deviceId === device.deviceId" @click="openEoVideo(device)">
+                  <VideocamOutline aria-hidden="true" /><span>实时视频</span>
+                </button>
+              </div>
               </div>
             </div>
           </section>
         </div>
-        <footer v-show="devicesExpanded" id="sit-device-footer">共 {{ devices.length }} 台感知设备；在线设备显示上报脉冲。{{ hasSimulatedCoverage ? '模拟范围仅作地图示意。' : '覆盖范围以设备台账配置为准。' }}</footer>
+        <footer v-show="devicesExpanded" id="sit-device-footer">共 {{ devices.length }} 台感知设备；覆盖范围以台账配置为准，青色视场随光电实际回报变化。</footer>
       </aside>
 
       <aside class="sit-glass sit-alert-dock" :class="{ 'is-collapsed': !alertsExpanded }" aria-labelledby="sit-alert-title">
@@ -1314,6 +1431,8 @@ onUnmounted(() => {
           <PredictionPanel :prediction="selectedPrediction" :risk-case="riskCaseOf(selectedUavAlarm)" :now="nowTick" :unavailable="predictionUnavailable" />
         </details>
         <PredictionPanel v-else-if="selectedPrediction" :prediction="selectedPrediction" :risk-case="riskCaseOf(selectedUavAlarm)" :now="nowTick" :unavailable="predictionUnavailable" />
+        <SituationRiskEvidence v-if="mainRiskItem" :item="mainRiskItem" :targets="targets" :flight-plans="flightPlans" :predictions="currentPredictions"
+          @context="receiveRiskContext" @updated="source.refresh()" @locate="locateRiskEvidence" />
         <template #video="{ expanded, toggleExpanded }">
           <TargetLiveVideo v-if="videoContext" :key="videoContext.key" class="sit-companion-video" compact default-expanded
             :target-id="videoContext.targetId" :event-id="videoContext.eventId" :context-label="videoContext.label" :unavailable-reason="videoContext.unavailableReason" :subtype="videoContext.subtype">
@@ -1326,8 +1445,13 @@ onUnmounted(() => {
         </template>
       </SituationAlarmPopup>
 
-      <Teleport to="body"><DeviceVideoWorkspace v-if="eoDevice" :device="currentEoDevice||eoDevice" :candidates="eoCandidates" :selected="eoSelected" :focused-id="eoFocusedId" :mode="eoMode" :map-view="eoMapView"
-        @expanded="setEoExpanded" @close="closeEoVideo" @select="selectEoTargets" @focus="eoFocusedId=$event" @remove="removeEoTarget" @clear="clearEoTargets" @mode="eoMode=$event" @locate="locateEoTarget" @updated="source.refresh()" />
+      <Teleport to="body"><DeviceVideoWorkspace v-if="eoDevice" :expanded="eoExpanded" :device="currentEoDevice||eoDevice" :candidates="eoCandidates" :selected="eoSelected" :focused-id="eoFocusedId" :mode="eoMode" :map-view="eoWorkspaceMapView" :risk-state="riskListState" :risk-focus="eoRiskFocus" :targets="targets"
+        @expanded="setEoExpanded" @close="closeEoVideo" @select="selectEoTargets" @focus="focusEoSelected" @remove="removeEoTarget" @clear="clearEoTargets" @mode="eoMode=$event" @locate="locateEoTarget" @updated="refreshRiskWorkspace"
+        @risk-kind="riskItems.changeKind" @risk-page="riskItems.page.value=$event" @risk-view="riskItems.changeView" @risk-focus="focusEoRisk" @risk-check="checkEoRisk" @risk-refresh="riskItems.refresh">
+        <template #risk-detail><SituationRiskEvidence v-if="eoRiskFocus" :item="eoRiskFocus" :targets="targets" :flight-plans="flightPlans" :predictions="currentPredictions"
+          @context="receiveRiskContext" @status="receiveRiskStatus" @updated="refreshRiskWorkspace" @locate="locateRiskEvidence" />
+          <p v-else class="eo-risk-placeholder">选择一项风险，查看报警原因、影响范围和办理进度。</p></template>
+      </DeviceVideoWorkspace>
       </Teleport>
 
       <nav class="sit-layerbar" aria-label="地图图层">
@@ -1380,7 +1504,22 @@ onUnmounted(() => {
 .eo-map-empty{position:absolute;z-index:6;left:60px;right:15px;top:45%;margin:0;text-align:center;padding:8px;background:var(--surface-1);color:var(--txt-2);pointer-events:none}
 .eo-map-shell.is-mini :deep(.mapctl){top:44px}
 .eo-map-shell.is-mini :deep(.map-refocus){font-size:11px}
-.eo-map-shell{position:absolute;inset:0}.eo-map-shell.is-mini{position:relative;width:100%;height:100%;min-height:150px}.sit-device-node-wrapper{position:relative}.sit-device-node-wrapper .sit-device-node{width:100%}.sit-device-video-button{margin:0 10px 7px auto;display:block;padding:4px 9px;min-height:28px;border:1px solid var(--control-line);border-radius:5px;color:var(--cyan);background:var(--surface-2);cursor:pointer;font:inherit;font-size:12px}.sit-device-video-button:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+.eo-map-shell{position:absolute;inset:0}.eo-map-shell.is-mini{position:relative;width:100%;height:100%;min-height:150px}
+.sit-device-node-wrapper{position:relative}.sit-device-node-wrapper .sit-device-node{width:100%}
+.situation-page .sit-device-node-wrapper.has-video{display:grid;grid-template-columns:minmax(0,1fr) 92px;align-items:stretch;border:1px solid var(--line-2);border-radius:7px;background:var(--panel-2)}
+.situation-page .sit-device-node-wrapper.has-video.is-selected{border-color:var(--blue);background:var(--surface-selected);box-shadow:inset 3px 0 var(--cyan)}
+.situation-page .has-video .sit-device-node{min-width:0;padding:9px 3px 9px 9px;border:0;background:transparent;box-shadow:none;border-radius:6px 0 0 6px}
+.situation-page .has-video .sit-device-node>span{min-width:0;gap:4px 6px}
+.situation-page .has-video .sit-device-node b{font-size:12px;line-height:1.5;white-space:normal;overflow:visible;overflow-wrap:anywhere}
+.situation-page .has-video .sit-device-node small{font-size:10px;line-height:1.4}
+.sit-device-node-actions{display:flex;flex-direction:column;align-items:flex-end;justify-content:center;gap:2px;min-width:0;padding:7px 7px 7px 0}
+.sit-device-node-actions>em{max-width:100%;padding-right:6px;color:var(--txt-3);font-size:10px;font-style:normal;line-height:1.5;text-align:right;overflow-wrap:anywhere}
+.sit-device-video-button{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-height:30px;margin:0;padding:4px 6px;border:1px solid transparent;border-radius:4px;background:transparent;color:var(--txt-2);font:inherit;font-size:11px;line-height:1.4;white-space:nowrap;cursor:pointer;transition:color .14s ease,background-color .14s ease}
+.sit-device-video-button svg{width:15px;height:15px;flex:none;color:var(--cyan)}
+.sit-device-video-button.is-open{color:var(--cyan);background:var(--surface-selected)}
+.sit-device-video-button:focus-visible{outline:2px solid var(--cyan);outline-offset:-2px}
+.sit-device-video-button:active{background:var(--surface-selected);color:var(--cyan)}
+@media(hover:hover){.sit-device-video-button:hover{color:var(--cyan);background:var(--surface-hover)}.situation-page .has-video .sit-device-node:hover{background:var(--surface-hover)}}
 .situation-page .sit-alert-dock>.sit-dock-head,.situation-page .sit-device-dock>.sit-dock-head{flex-wrap:wrap;gap:8px;flex-shrink:0}
 .situation-page .sit-device-dock>.sit-dock-head>span{flex-basis:85px}
 .situation-page .sit-alert-dock>.sit-dock-head>span{flex-basis:auto}

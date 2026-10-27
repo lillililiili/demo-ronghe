@@ -213,7 +213,7 @@ async function main() {
     coordinate_system: 'WGS84', longitude: 118.6, latitude: 37.2, connectivity: 'ONLINE',
     coverage: { kind: 'SECTOR', range_m: 1500, azimuth_deg: 0, fov_deg: 120, source_label: '模拟器设备范围（模拟参数）' } }])[0];
   check('模拟光电保留扇形参数和小数距离', [simulatedOptical.displayCoverage.kind, simulatedOptical.displayCoverage.azimuthDeg,
-    simulatedOptical.displayCoverage.fovDeg, simulatedOptical.displayCoverageText], ['sector', 0, 120, '0°方位 · 120°视场 · 1.5 km']);
+    simulatedOptical.displayCoverage.fovDeg, simulatedOptical.displayCoverageText], ['sector', 0, 120, '0°方位 · 120°覆盖张角 · 1.5 km']);
   check('没有坐标不补地图范围', S.toDevices([{ device_id: 'no-location', simulated: true, device_type_code: 'radar' }],
     { includeUnlocated: true })[0].displayCoverage.status, 'unknown');
   check('没有定义的类型不补模拟范围', S.toDevices([{ device_id: 'unknown-type', simulated: true,

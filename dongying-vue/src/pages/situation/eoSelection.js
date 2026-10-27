@@ -1,4 +1,5 @@
 export const MAX_EO_SELECTION = 20;
+export const selectionKey = row => row?.riskCaseId ? `risk:${row.riskCaseId}` : row?.key || `event:${row?.eventId || ''}`;
 export function rectangle(a, b) {
   return { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), width: Math.abs(b.x - a.x), height: Math.abs(b.y - a.y) };
 }
@@ -8,12 +9,12 @@ export function pointsWithin(points, rect) {
 }
 export function toggleSelected(selected, row) {
   if (!row?.eventId || !row.targetId) return selected;
-  return selected.some(item => item.eventId === row.eventId) ? selected.filter(item => item.eventId !== row.eventId)
+  return selected.some(item => selectionKey(item) === selectionKey(row)) ? selected.filter(item => selectionKey(item) !== selectionKey(row))
     : selected.length < MAX_EO_SELECTION ? [...selected, { ...row }] : selected;
 }
 export function reconcileSelected(selected, candidates) {
   return selected.map(item => {
-    const current = candidates.find(row => row.eventId === item.eventId && row.targetId === item.targetId);
-    return current ? { ...item, ...current, unavailable: false } : { ...item, unavailable: true };
+    const current = candidates.find(row => selectionKey(row) === selectionKey(item) && row.targetId === item.targetId);
+    return current ? { ...item, ...current, unavailable: !!current.unavailable } : { ...item, unavailable: true };
   });
 }

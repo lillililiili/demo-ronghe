@@ -461,6 +461,9 @@ def compile_scene(raw):
         if t.get('secondaryTransport') == 'normalized' and t['transport'] != 'normalized':
             raise ValueError('规范化辅助观测须与主观测使用同一模拟通道')
         if t['transport'] == 'normalized':
+            # Preserve this legacy transport default, but do not present it to
+            # the EO mechanical model as an explicitly calibrated scene height.
+            if 'altitudeDatum' not in t: t['_eo_altitude_datum_defaulted'] = True
             t.setdefault('altitudeDatum', 'AMSL')  # Existing normalized-scene default.
         if t['kind'] == 'balloon' and t['transport'] != 'normalized':
             raise ValueError('气球须通过规范化观测入口上报')

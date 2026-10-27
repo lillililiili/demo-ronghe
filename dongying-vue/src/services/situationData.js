@@ -205,14 +205,14 @@ export function normalizeCoverage(coverage, online = true) {
 export function coverageSummary(coverage) {
   if (!coverage || coverage.status === 'unknown') return '覆盖参数未知';
   if (coverage.kind === 'sector') {
-    return `${Math.round(coverage.azimuthDeg)}°方位 · ${Math.round(coverage.fovDeg)}°视场 · ${Number((coverage.rangeM / 1000).toFixed(2))} km`;
+    return `${Math.round(coverage.azimuthDeg)}°方位 · ${Math.round(coverage.fovDeg)}°覆盖张角 · ${Number((coverage.rangeM / 1000).toFixed(2))} km`;
   }
   return `${Number((coverage.radiusM / 1000).toFixed(2))} km 覆盖半径`;
 }
 
 // 只补充范围名称；几何参数完全使用平台已保存的设备范围。
 function deviceDisplayCoverage(coverage, typeCode) {
-  const label = typeCode === 'WEATHER' ? '气象参考范围' : typeCode === 'COUNTERMEASURE' ? '作用范围' : '扫描范围';
+  const label = typeCode === 'WEATHER' ? '气象参考范围' : typeCode === 'COUNTERMEASURE' ? '作用范围' : typeCode === 'EO' ? '配置覆盖范围' : '扫描范围';
   // Map geometry and plan inspection use the same persisted device capability.
   return { ...coverage, label };
 }

@@ -1,0 +1,138 @@
+{
+  "version": 1,
+  "name": "模拟光电指向验收 · 东西目标 · 两台独立云台",
+  "duration": 3,
+  "fullchain": {
+    "enabled": false
+  },
+  "sites": [
+    {
+      "id": "full-site",
+      "name": "全量模拟设备组",
+      "x": 420,
+      "y": 300,
+      "devices": [
+        {
+          "id": "radar",
+          "kind": "radar",
+          "name": "正常雷达",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2,
+          "coverage": {
+            "kind": "circle",
+            "radiusM": 8000,
+            "sourceLabel": "全量模拟场景配置"
+          }
+        },
+        {
+          "id": "tdoa",
+          "kind": "tdoa",
+          "name": "身份探测",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2
+        },
+        {
+          "id": "eo",
+          "kind": "eo",
+          "name": "模拟光电一",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2,
+          "coverage": {
+            "kind": "circle",
+            "radiusM": 4000,
+            "sourceLabel": "光电东西指向专项明确全向覆盖（仅模拟）"
+          }
+        },
+        {
+          "id": "eo-second",
+          "kind": "eo",
+          "name": "模拟光电二",
+          "health": "正常",
+          "heartbeat": "持续上报",
+          "interval": 2,
+          "coverage": {
+            "kind": "circle",
+            "radiusM": 4000,
+            "sourceLabel": "光电东西指向专项明确全向覆盖（仅模拟）"
+          }
+        }
+      ]
+    }
+  ],
+  "plans": [],
+  "zones": [],
+  "targets": [
+    {
+      "id": "east-subject",
+      "name": "东侧模拟无人机",
+      "kind": "uav",
+      "path": [
+        [
+          480,
+          300
+        ],
+        [
+          500,
+          300
+        ]
+      ],
+      "motionMode": "pingpong",
+      "height": 80,
+      "heightAgl": 60,
+      "altitudeDatum": "AMSL",
+      "speed": 2,
+      "count": 1,
+      "probability": 0.98,
+      "planId": "",
+      "deviceId": "radar",
+      "notificationBehavior": "none",
+      "secondaryDeviceId": "tdoa",
+      "transport": "mqtt",
+      "pilotPoint": [
+        115,
+        165
+      ]
+    },
+    {
+      "id": "west-subject",
+      "name": "西侧模拟无人机",
+      "kind": "uav",
+      "path": [
+        [
+          360,
+          300
+        ],
+        [
+          340,
+          300
+        ]
+      ],
+      "motionMode": "pingpong",
+      "height": 80,
+      "heightAgl": 60,
+      "altitudeDatum": "AMSL",
+      "speed": 2,
+      "count": 1,
+      "probability": 0.98,
+      "planId": "",
+      "deviceId": "radar",
+      "notificationBehavior": "none",
+      "secondaryDeviceId": "tdoa",
+      "transport": "mqtt",
+      "pilotPoint": [
+        115,
+        165
+      ]
+    }
+  ],
+  "risks": [],
+  "eoObservations": {
+    "enabled": true,
+    "detectConfidence": 0.94,
+    "trackConfidence": 0.91,
+    "intervalSeconds": 2
+  }
+}

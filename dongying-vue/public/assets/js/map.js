@@ -584,7 +584,8 @@
 
   /* 「重新定位」：回到本页数据所在的位置——上一次 fitTo 的包围盒或 centerAt 的中心；没有数据焦点时回默认视图。 */
   MapView.prototype.refocus = function () {
-    const focus = this._focus;
+    // 实时页面可提供最新取景点；其他页面继续使用上次保存的焦点。
+    const focus = (typeof this.opt?.getRefocus === 'function' ? this.opt.getRefocus(this) : null) || this._focus;
     if (!focus) return this.resetView();
     if (focus.kind === 'fit') return this.fitTo(focus.coordinates, focus.padding);
     return this.centerAt(focus.lon, focus.lat, { scale: focus.scale, offset: focus.offset, _replay: true });
@@ -983,6 +984,8 @@
   };
 
   MapView.prototype._drawDeviceCoverage = function (c, device, P) {
+    // 光电的静态覆盖圆容易被误读为镜头当前能看到的方向；光电只绘制下方的实时视场扇形。
+    if (device.typeCode === 'EO') return;
     const coverage = device.displayCoverage || device.coverage || {};
     if (coverage.status === 'unknown') return;
     const radiusM = coverage.kind === 'sector' ? Number(coverage.rangeM) : Number(coverage.radiusM);
@@ -1017,10 +1020,6 @@
         c.fillStyle = gradient; c.fill();
         c.beginPath(); c.moveTo(origin[0], origin[1]); c.lineTo(origin[0] + Math.cos(angle) * radius, origin[1] + Math.sin(angle) * radius);
         c.strokeStyle = color + 'b8'; c.lineWidth = 1.3; c.stroke();
-      } else if (device.typeCode === 'EO') {
-        const sweep = start + (end - start) * (.08 + .84 * (Math.sin(this.t / 34) + 1) / 2);
-        c.beginPath(); c.moveTo(origin[0], origin[1]); c.lineTo(origin[0] + Math.cos(sweep) * radius, origin[1] + Math.sin(sweep) * radius);
-        c.strokeStyle = color + 'c4'; c.lineWidth = 1.5; c.stroke();
       } else if (device.typeCode === 'FIVE_G_A') {
         for (let i = 0; i < 3; i++) {
           const wave = (this._phase(120) + i / 3) % 1;
@@ -1036,6 +1035,35 @@
       }
     }
     c.restore();
+  };
+
+  // 镜头朝向来自设备回报。二维视场仅作方向示意，不证明其中目标已被视频识别。
+  MapView.prototype._drawEoView = function (c, device, P) {
+    const view = device.eoView, now = this.opt.now ? this.opt.now() : Date.now();
+    if (device.typeCode !== 'EO' || device.status !== '在线' || !view?.available || view.validUntil <= now) return;
+    if (!Number.isFinite(view.azimuth) || !Number.isFinite(view.fov)) return;
+    const coverage = device.displayCoverage || device.coverage || {}, distance = coverage.kind === 'circle' ? coverage.radiusM : coverage.rangeM;
+    const hasRange = Number.isFinite(distance) && distance > 0;
+    const origin = P(device.lon, device.lat), rad = Math.PI / 180;
+    const point = bearing => {
+      const arc = (hasRange ? distance : 100) / 6371000, lat = device.lat * rad, a = bearing * rad;
+      const y = Math.asin(Math.sin(lat) * Math.cos(arc) + Math.cos(lat) * Math.sin(arc) * Math.cos(a));
+      const x = device.lon * rad + Math.atan2(Math.sin(a) * Math.sin(arc) * Math.cos(lat), Math.cos(arc) - Math.sin(lat) * Math.sin(y));
+      return P(x / rad, y / rad);
+    };
+    c.save(); c.setLineDash([]);
+    if (hasRange) {
+      c.beginPath(); c.moveTo(...origin);
+      const steps = Math.max(2, Math.ceil(view.fov / 3));
+      for (let i = 0; i <= steps; i++) c.lineTo(...point(view.azimuth - view.fov / 2 + view.fov * i / steps));
+      c.closePath(); c.fillStyle = 'rgba(72,198,255,.2)'; c.fill();
+      c.strokeStyle = 'rgba(100,218,255,.9)'; c.lineWidth = 1.4; c.stroke();
+    }
+    const end = point(view.azimuth);
+    c.beginPath(); c.moveTo(...origin); c.lineTo(...end);
+    c.strokeStyle = '#64daff'; c.lineWidth = 2.4; c.stroke();
+    c.beginPath(); c.arc(origin[0], origin[1], 4, 0, Math.PI * 2);
+    c.fillStyle = '#64daff'; c.fill(); c.restore();
   };
 
   // 类型始终由彩色主体表达；状态角标不覆盖主体，历史记录不闪烁。
@@ -1375,6 +1403,7 @@
     if (this.opt.fusionProfile && this.layers.coverage) {
       (this.data.devices || []).slice(0, this.opt.maxDev || 90).forEach(device => {
         this._drawDeviceCoverage(c, device, P);
+        this._drawEoView(c, device, P);
       });
     }
     /* 所有有坐标的设备都显示同一套上报脉冲；它和覆盖范围是两种不同事实。 */
@@ -1468,6 +1497,7 @@
 
     const airspaceLabels = [];
     const labeledAirspaces = new Set();
+    const paintedAirspaces = new Set();
     /* 空域 */
     (this.data.airspaces || []).forEach(a => {
       /* 图层归属只认数据层声明的 layer，不再按 type 猜（审查第 3 轮 P2-1）。
@@ -1505,18 +1535,24 @@
         RESTRICTED: { dash: [6, 4], fill: '14', width: 1.55 },
         PERMITTED: { dash: [], fill: '12', width: 1.5 }
       })[a.kindCode] || { dash: [6, 4], fill: '14', width: 1.35, hatch: key === 'nofly' };
-      c.fillStyle = a.color + areaStyle.fill; c.fill('evenodd');
-      c.setLineDash(areaStyle.dash); c.lineWidth = areaStyle.width; c.strokeStyle = ink + 'e6'; c.stroke(); c.setLineDash([]);
-      // 仅禁飞空域保留稀疏纹理作为强语义，其他类型让出底图细节。
-      if (areaStyle.hatch) {
-        c.save(); c.clip('evenodd');
-        c.strokeStyle = ink + '1f'; c.lineWidth = .8;
-        const bb = rings.reduce((m, ring) => ring.reduce((n, p) => { const q = P(p[0], p[1]); return [Math.min(n[0], q[0]), Math.min(n[1], q[1]), Math.max(n[2], q[0]), Math.max(n[3], q[1])]; }, m), [1e9, 1e9, -1e9, -1e9]);
-        // 街道级放大时多边形可能远大于屏幕，只绘制可见范围的纹理。
-        const top = Math.max(0, bb[1]), bottom = Math.min(H, bb[3]);
-        const left = Math.max(0, bb[0]), right = Math.min(W, bb[2]);
-        for (let x = left - (bottom - top); x < right && bottom > top; x += 15) { c.beginPath(); c.moveTo(x, top); c.lineTo(x + (bottom - top), bottom); c.stroke(); }
-        c.restore();
+      // 多个历史版本或空域可引用相同边界；同样式的几何每帧只画一次，避免透明填充叠成实心。
+      // 仅合并绘制，下面的名称、拾取信息及原始版本数据仍分别保留；孔洞与告警强调参与区分。
+      const paintKey = JSON.stringify([key, a.kindCode, a.color, !!a.alarmAssociated, rings]);
+      if (!paintedAirspaces.has(paintKey)) {
+        paintedAirspaces.add(paintKey);
+        c.fillStyle = a.color + (a.alarmAssociated ? '30' : areaStyle.fill); c.fill('evenodd');
+        c.setLineDash(areaStyle.dash); c.lineWidth = a.alarmAssociated ? 2.6 : areaStyle.width; c.strokeStyle = ink + 'e6'; c.stroke(); c.setLineDash([]);
+        // 仅禁飞空域保留稀疏纹理作为强语义，其他类型让出底图细节。
+        if (areaStyle.hatch) {
+          c.save(); c.clip('evenodd');
+          c.strokeStyle = ink + '1f'; c.lineWidth = .8;
+          const bb = rings.reduce((m, ring) => ring.reduce((n, p) => { const q = P(p[0], p[1]); return [Math.min(n[0], q[0]), Math.min(n[1], q[1]), Math.max(n[2], q[0]), Math.max(n[3], q[1])]; }, m), [1e9, 1e9, -1e9, -1e9]);
+          // 街道级放大时多边形可能远大于屏幕，只绘制可见范围的纹理。
+          const top = Math.max(0, bb[1]), bottom = Math.min(H, bb[3]);
+          const left = Math.max(0, bb[0]), right = Math.min(W, bb[2]);
+          for (let x = left - (bottom - top); x < right && bottom > top; x += 15) { c.beginPath(); c.moveTo(x, top); c.lineTo(x + (bottom - top), bottom); c.stroke(); }
+          c.restore();
+        }
       }
       const ctr = P(a.center.lon, a.center.lat);
       const labelKey = JSON.stringify([a.airspaceId || a.id, a.kindCode, a.name, rings]);
@@ -1535,7 +1571,8 @@
           c.save();
           c.font = '600 12px "Noto Sans SC"';
           const name = a.name || '空域名称未读取';
-          const text = name === a.type ? name : `${name} · ${a.type}`;
+          const areaText = name === a.type ? name : `${name} · ${a.type}`;
+          const text = a.alarmAssociated ? `关联告警 · ${areaText}` : areaText;
           const maxWidth = Math.max(30, Math.min(240, W - 32));
           const lines = []; let line = '';
           for (const char of text) {
@@ -1594,8 +1631,9 @@
         const point = item.point;
         if (Math.hypot(point[0] - anchor[0], point[1] - anchor[1]) > 2) {
           c.save(); c.beginPath(); c.moveTo(...anchor); c.lineTo(...point);
-          c.strokeStyle = markerPalette().offline; c.globalAlpha = .7; c.lineWidth = 1; c.stroke();
-          c.beginPath(); c.arc(anchor[0], anchor[1], 2, 0, Math.PI * 2); c.fillStyle = markerPalette().offline; c.fill(); c.restore();
+          const selected = kind === 'device' && selectedDevice?.id === id;
+          c.strokeStyle = selected ? '#64daff' : markerPalette().offline; c.globalAlpha = selected ? 1 : .7; c.lineWidth = selected ? 2 : 1; c.stroke();
+          c.beginPath(); c.arc(anchor[0], anchor[1], selected ? 4 : 2, 0, Math.PI * 2); c.fillStyle = c.strokeStyle; c.fill(); c.restore();
         }
         return point;
       }

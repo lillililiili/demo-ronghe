@@ -1,6 +1,6 @@
 """Opt-in replay AI samples from the scene entity, never platform fused coordinates."""
 import math
-from engine import target_sample
+from engine import target_sample, target_reporting
 from coordinate_contract import simulator_wgs84
 
 
@@ -13,11 +13,11 @@ class EoObservations:
         if type(interval) not in (int, float) or not math.isfinite(interval) or not 0.1 <= interval <= 300:
             raise ValueError('EO AI intervalSeconds must be a finite number from 0.1 to 300')
 
-    def observation(self, detail, binding):
-        if self.config.get('enabled') is not True or not self.manifest.get('batch'):
+    def observation(self, detail, binding, acquisition=False):
+        if (not acquisition and self.config.get('enabled') is not True) or not self.manifest.get('batch'):
             return None
         elapsed = self.elapsed()
-        if any(w['at'] <= elapsed < w['at'] + w['seconds'] for w in self.config.get('silenceWindows', [])):
+        if not acquisition and any(w['at'] <= elapsed < w['at'] + w['seconds'] for w in self.config.get('silenceWindows', [])):
             return None
         candidates = set()
         for identity, target in self.targets.items():
@@ -44,13 +44,17 @@ class EoObservations:
         if len(candidates) != 1:
             return None
         target = self.targets[next(iter(candidates))]
+        if not target_reporting(target, elapsed):
+            return None
         category = {'uav':'drone', 'bird':'bird'}.get(target.get('kind'))
         if category is None:
             return None
+        sample = target_sample(target, elapsed)
+        if acquisition:
+            return {**sample, 'altitude_datum': None if target.get('_eo_altitude_datum_defaulted') else target.get('altitudeDatum'), 'coordinate_system': simulator_wgs84(target)}
         quality = [self.config.get('detectConfidence'), self.config.get('trackConfidence')]
         if any(type(v) not in (int, float) or not math.isfinite(v) or not 0 <= v <= 1 for v in quality):
             return None
-        sample = target_sample(target, elapsed)
         lon, lat = sample['longitude'], sample['latitude']
         if not (math.isfinite(lon) and math.isfinite(lat) and -180 <= lon <= 180 and -90 <= lat <= 90):
             return None

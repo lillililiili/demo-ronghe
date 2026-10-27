@@ -22,11 +22,12 @@
       if (device.scope === undefined) { device.scope = ''; changed = true; }
       if (device.enabled === undefined) { device.enabled = true; changed = true; }
     }
-    // 载入的场景（流程、样本、导入）里没有画反制设备，而实时收发设置是开着的：按服务端原来的规矩放在第一台雷达所在的点位。
-    if (realtimeConfig?.countermeasure_enabled && !counterDevices().length && state.sites.length) {
+    // 载入的场景（流程、样本、导入）里没有画反制设备时，按服务端原来的规矩补在第一台雷达所在的点位。
+    // 设置是关的也补这一行（停用状态），这样“启用”开关一直在；没读到实时设置之前不补，免得开始时把设置误写成关。
+    if (realtimeConfig && !counterDevices().length && state.sites.length) {
       const site = state.sites.find(s => s.devices.some(d => d.kind === 'radar')) || state.sites[0];
       const device = createDevice(COUNTER, site.devices);
-      device.send = false; device.scope = realtimeConfig.countermeasure_scope || ''; device.enabled = true;
+      device.send = false; device.scope = realtimeConfig.countermeasure_scope || ''; device.enabled = realtimeConfig.countermeasure_enabled === true;
       site.devices.push(device); changed = true;
     }
     return changed;
@@ -51,7 +52,7 @@
     if (!differs) { realtimeConfig = config; if (syncNote()) syncNote().textContent = ''; return; }
     // 接收端在两次模拟之间一直开着，开着时服务端不让改收发设置；这时不改、也不挡“开始”，只提示一句。
     if (receiverBusy()) {
-      if (syncNote()) syncNote().textContent = '反制设备的单位或位置有改动：要先在“运行方式”里点“停止全部收发”，再点“开始”才会生效。平台上这台设备已经有位置的不会改，要改请到管理后台的设备管理里改。';
+      if (syncNote()) syncNote().textContent = '反制设备的设置有改动：要先在“运行方式”里点“停止全部收发”，再点“开始”才会生效。平台上这台设备已经有位置的不会改，要改请到管理后台的设备管理里改。';
       realtimeConfig = config; return;
     }
     realtimeConfig = await api('realtime/config', {...config, ...wanted});

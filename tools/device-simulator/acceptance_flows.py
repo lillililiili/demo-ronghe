@@ -4,6 +4,7 @@
 这里只读取、校验，再把每个流程的说明（演示什么、开始前、会看到什么、要做什么）一起交给页面。
 """
 import json
+import math
 from pathlib import Path
 from state_file import read_saved_text as read_text
 
@@ -217,7 +218,42 @@ def _read_scene(folder, filename, number, variant=None):
     if number == 9 and (variant not in FLOW_VARIANTS[9]
                         or fullchain.get('predictionVariant') != variant):
         raise ValueError('流程预测变式校验失败：' + filename)
+    _cover_paths_with_eo(scene)
     return scene
+
+
+def _cover_paths_with_eo(scene):
+    """没写范围的模拟光电，给一个盖住本流程全部航线的扇形。
+
+    平台只派「范围内有目标」的光电去跟踪，目标出范围就结束跟踪；不写范围时模拟器按默认（朝北 120°、1500 米）登记，
+    流程 1-8 的航线大多在光电东南方向，光电就一直空闲（dev 10-27 实测）。文件本身不改，只在读出来时补上。"""
+    from engine import metres
+    points = []
+    for target in scene.get('targets') or []:
+        points += list(target.get('path') or []) + list(target.get('departurePath') or [])
+    for site in scene.get('sites') or []:
+        origin = [site.get('x'), site.get('y')]
+        for device in site.get('devices') or []:
+            if device.get('kind') != 'eo' or device.get('coverage') is not None or not points:
+                continue
+            # 场景坐标 x 向东、y 向南（engine.coordinates）。
+            bearings = sorted({round((math.degrees(math.atan2(p[0] - origin[0], origin[1] - p[1])) + 360) % 360, 1) % 360
+                               for p in points if p != origin})
+            if not bearings:
+                continue
+            if len(bearings) == 1:
+                start, span = bearings[0], 0
+            else:
+                gaps = [(bearings[(i + 1) % len(bearings)] - b) % 360 for i, b in enumerate(bearings)]
+                widest = max(range(len(gaps)), key=gaps.__getitem__)
+                start, span = bearings[(widest + 1) % len(bearings)], 360 - gaps[widest]
+            extent = max(metres(origin, p) for p in points)
+            reach = max(1500, math.ceil(extent / 100) * 100 + 200)
+            fov = max(120, math.ceil((span + 30) / 10) * 10)
+            label = '流程场景配置：模拟光电范围（盖住本流程航线，模拟参数）'
+            device['coverage'] = ({'kind': 'circle', 'radiusM': reach, 'sourceLabel': label} if fov >= 300 else
+                                  {'kind': 'sector', 'rangeM': reach, 'azimuthDeg': round((start + span / 2) % 360, 1),
+                                   'fovDeg': fov, 'sourceLabel': label})
 
 
 def _minutes(scene):

@@ -3,6 +3,10 @@ import math
 from engine import target_sample, target_reporting
 from coordinate_contract import simulator_wgs84
 
+# 设备模拟器页面上开的流程不带 eoObservations：按真实光电那样上报看到的无人机和把握度，视频识别框才能关联到告警
+# （rose 10-27 选择「框能点，允许自动核实」）。场景文件里写了 eoObservations（含 enabled:false）时照场景执行。
+PAGE_DEFAULT_CONFIG = {'enabled': True, 'detectConfidence': 0.94, 'trackConfidence': 0.91, 'intervalSeconds': 2}
+
 
 class EoObservations:
     def __init__(self, config, manifest, targets, elapsed):
@@ -20,9 +24,21 @@ class EoObservations:
         if not acquisition and any(w['at'] <= elapsed < w['at'] + w['seconds'] for w in self.config.get('silenceWindows', [])):
             return None
         candidates = set()
+        # 规范化观测源（本批登记的观测设备）。目标走规范化入口时，平台用本批分配的 external_id 建来源关联；
+        # 这个 id 带批次号，和观测源设备一起能唯一对上场景目标，严格程度与 MQTT 编号一致。
+        sources = self.manifest.get('normalized_sources') or {}
+        source_rows = list(sources.values() if isinstance(sources, dict) else sources) + [self.manifest.get('normalized_source') or {}]
+        normalized_ids = {row.get('device_id') for row in source_rows if isinstance(row, dict)} - {None}
         for identity, target in self.targets.items():
             allocated = self.manifest.get('targets', {}).get(identity, {})
             external = allocated.get('mqtt_object_id')
+            normalized_external = allocated.get('external_id')
+            if (target.get('transport') == 'normalized' and normalized_external is not None and any(
+                    link.get('device_id') in normalized_ids
+                    and str(link.get('external_target_id')) == str(normalized_external)
+                    and str(link.get('source_mode', '')).lower() == 'replay'
+                    for link in detail.get('source_links', []))):
+                candidates.add(identity)
             if target.get('transport') == 'normalized':
                 # The optional secondary sensor may really report protocol A for this same scene entity.
                 # Only its allocated MQTT id and registered device can prove the mapping; the normalized

@@ -90,7 +90,12 @@ class SimulatedGimbal:
         if not in_coverage:
             self.state = 'LOST'
             return False
-        dp, de = delta(guide_bearing, self.pan), guide_elevation-self.tilt
+        # Once captured, the camera's own video tracker holds the lock and steers by
+        # what it sees; the platform's ~1 s old fused guide only drives acquisition.
+        # Otherwise a close fast pass drifts out of the 6° half-FOV and flickers TURNING.
+        locked = self.state == 'TRACKING'
+        aim_bearing, aim_elevation = (bearing, elevation) if locked else (guide_bearing, guide_elevation)
+        dp, de = delta(aim_bearing, self.pan), aim_elevation-self.tilt
         self.pan = (self.pan + max(-self.PAN_RATE*dt, min(self.PAN_RATE*dt, dp))) % 360
         self.tilt += max(-self.TILT_RATE*dt, min(self.TILT_RATE*dt, de))
         captured = abs(delta(bearing, self.pan)) <= self.HFOV/2 and abs(elevation-self.tilt) <= self.VFOV/2

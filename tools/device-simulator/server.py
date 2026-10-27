@@ -14,7 +14,7 @@ from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import urlparse, unquote, parse_qs
 from urllib.request import Request, build_opener, ProxyHandler, HTTPRedirectHandler
 from urllib.error import HTTPError, URLError
-from eo_observations import EoObservations
+from eo_observations import EoObservations, PAGE_DEFAULT_CONFIG
 from eo_worker import EoWorker
 from engine import compile_scene, duration_reached, messages, position
 from notification_inbox import read_inbox, open_handoff_evidence
@@ -590,7 +590,7 @@ class Runtime:
                 self.log('EO_RECEIPT', '模拟光电回执已由 Broker 确认', topic=topic, payload=payload)
             self.eo = EoWorker(EoSimulator(self.platform, self.manifest, self.video_config, publish_eo, self.log,
                 is_running=lambda: self.phase == 'RUNNING' and not self.cancel.is_set(),
-                observations=EoObservations(self.scene.get('eoObservations'), self.manifest, self.targets,
+                observations=EoObservations(self.scene.get('eoObservations', PAGE_DEFAULT_CONFIG), self.manifest, self.targets,
                     lambda: self.elapsed), publish_final=publish_eo_final))
             def publish_b(topic, payload):
                 with self.lock:

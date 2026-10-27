@@ -76,22 +76,25 @@
       catch(error) { punishmentError = error.message; }
     }
     const chosen = punishment?.selected || [];
+    // 新版页面里反制设备放在设备组里（simple.js 写进这里的设置），这个表单就不再问。
+    const simple = !!root.SimpleLayout;
+    const countermeasureFields = simple ? '' : `${choice('countermeasure_enabled','本机模拟反制设备',config.countermeasure_enabled,{true:'启用',false:'关闭'})}
+      ${choice('countermeasure_scope','反制设备所属单位与区县',config.countermeasure_scope,options)}
+      <p class="field-note">反制设备长期部署在某个单位与区县，不跟飞行任务绑定；这里只决定设备归属，不授予反制权限。</p>
+      <label class="realtime-field">反制设备经度（WGS-84，可不填）<input name="countermeasure_longitude" type="number" step="any" min="-180" max="180" value="${esc(config.countermeasure_longitude ?? '')}"></label>
+      <label class="realtime-field">反制设备纬度（WGS-84，可不填）<input name="countermeasure_latitude" type="number" step="any" min="-90" max="90" value="${esc(config.countermeasure_latitude ?? '')}"></label>
+      <p class="field-note">位置只用来在融合感知页上画反制设备的“作用范围”。不填时放在场景里第一台雷达的位置；场景里没有雷达时请在这里填。平台上这台设备已经有位置的不会改，要改请到管理端 设备管理。</p>`;
     const punishmentFields = punishment
       ? `<fieldset id="realtime-punishment"><legend>处罚接收单位</legend>
         <p class="field-note">反制完成后的处罚移送发给这里勾的单位，由模拟接收端代收。勾一个时系统自动移送，勾两个以上时要人选。飞手短信、飞手电话和通知上级不用选，接收端一启动就自动接好。这一项保存后马上生效。</p>
         <div class="realtime-checks">${(punishment.organizations || []).map(org=>`<label class="realtime-check"><input type="checkbox" name="punishment_org" value="${esc(org.org_id)}" ${chosen.includes(org.org_id)?'checked':''}>${esc(org.name)}</label>`).join('') || '<p class="field-note">平台上还没有单位，请先在管理端 单位管理 里建好处罚部门。</p>'}</div>
         <p class="field-note">${esc(punishmentSummary(punishment))}</p></fieldset>`
       : `<p class="field-note">处罚接收单位暂时读不到：${esc(punishmentError)}</p>`;
-    openDialog('实时收发设置',`<form id="realtime-form">
+    openDialog(simple ? '运行方式' : '实时收发设置',`<form id="realtime-form">
       <p class="field-note">修改只影响下一次启动。已有通知保留首次接收时的处理方式；混合模式保留正常目标上报，同时按所选通知结果模拟异常回执。</p>
       ${choice('mode','运行模式',config.mode,{normal:'正常',abnormal:'异常',mixed:'混合'})}
       ${choice('notifications_enabled','六类通知接收',config.notifications_enabled,{true:'启用',false:'关闭'})}
-      ${choice('countermeasure_enabled','本机模拟反制设备',config.countermeasure_enabled,{true:'启用',false:'关闭'})}
-      ${choice('countermeasure_scope','反制设备所属单位与区县',config.countermeasure_scope,options)}
-      <p class="field-note">反制设备长期部署在某个单位与区县，不跟飞行任务绑定；这里只决定设备归属，不授予反制权限。</p>
-      <label class="realtime-field">反制设备经度（WGS-84，可不填）<input name="countermeasure_longitude" type="number" step="any" min="-180" max="180" value="${esc(config.countermeasure_longitude ?? '')}"></label>
-      <label class="realtime-field">反制设备纬度（WGS-84，可不填）<input name="countermeasure_latitude" type="number" step="any" min="-90" max="90" value="${esc(config.countermeasure_latitude ?? '')}"></label>
-      <p class="field-note">位置只用来在融合感知页上画反制设备的“作用范围”。不填时放在场景里第一台雷达的位置；场景里没有雷达时请在这里填。平台上这台设备已经有位置的不会改，要改请到管理端 设备管理。</p>
+      ${countermeasureFields}
       <label class="realtime-field">模拟电话播放时长（秒）<input name="play_seconds" type="number" min="0.1" max="60" step="0.1" value="${esc(config.play_seconds)}" required></label>
       <fieldset id="realtime-abnormal"><legend>异常与混合模式参数</legend>
       ${choice('command_mode','设备指令',config.command_mode,{success:'正常执行回执',no_receipt:'不执行、不回执',unchanged:'四通道状态不变，光电正常'})}
@@ -105,10 +108,10 @@
     form.addEventListener('submit',async event=>{
       event.preventDefault();
       const next={...config,outcomes:{...config.outcomes}};
-      for(const key of ['mode','command_mode','countermeasure_scope']) next[key]=form.elements[key].value;
-      for(const key of ['notifications_enabled','countermeasure_enabled']) next[key]=form.elements[key].value==='true';
+      for(const key of ['mode','command_mode','countermeasure_scope']) if(form.elements[key]) next[key]=form.elements[key].value;
+      for(const key of ['notifications_enabled','countermeasure_enabled']) if(form.elements[key]) next[key]=form.elements[key].value==='true';
       next.play_seconds=Number(form.elements.play_seconds.value);
-      for(const key of ['countermeasure_longitude','countermeasure_latitude']) next[key]=positionValue(form.elements[key].value);
+      for(const key of ['countermeasure_longitude','countermeasure_latitude']) if(form.elements[key]) next[key]=positionValue(form.elements[key].value);
       for(const kind of Object.keys(kinds)) next.outcomes[kind]=form.elements[kind].value;
       const submit=form.querySelector('[type=submit]');submit.disabled=true;
       const picked=[...form.querySelectorAll('[name=punishment_org]:checked')].map(input=>input.value);
@@ -128,7 +131,7 @@
   for(const [id,action] of [['realtime-start','start'],['realtime-stop','stop_all']]) {
     document.querySelector('#'+id).addEventListener('click',async()=>{
       busy=true;if(liveState)update(liveState);
-      try { await api('realtime/control',{action});toast(action==='start'?'接收端已启动；点击开始模拟可持续上报':'全部收发已请求停止'); }
+      try { if(action==='start') await root.SimpleLayout?.beforeStart?.(); await api('realtime/control',{action});toast(action==='start'?'接收端已启动；点击开始模拟可持续上报':'全部收发已请求停止'); }
       catch(error) { toast(error.message); }
       finally { busy=false;await poll(); }
     });

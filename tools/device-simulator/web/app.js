@@ -47,7 +47,8 @@ const initial = {
 let state=structuredClone(initial), selected={kind:'risk',id:'r6'}, filter='全部', draw=null, zoom=1, progress=0, timer=null, dialogType=null, returnFocus=null, toastTimer;
 // 确认书 4-3 的模拟机场（新-27）：系统里的资料，不属于场景，不随场景保存或导出。
 let mockAirport=null;
-const storeKey='dongying-mqtt-simulator-v1';
+// 新版页面（index.html）和原版页面（classic.html）各存各的草稿，互不覆盖。
+const storeKey=document.body.dataset.sceneStore||'dongying-mqtt-simulator-v1';
 let liveState=null, showRunPositions=false, restoredDraft=false, draftUnsaved=false;
 const legacyDeviceIds = new Set(['box02-radar','box02-tdoa','box02-eo']);
 function cleanLegacySceneDraft(draft){

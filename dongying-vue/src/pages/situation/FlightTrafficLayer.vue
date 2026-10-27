@@ -2,7 +2,7 @@
 /* 融合感知「民航航班」图层（2026-10-26 用户确认的设计）。
    航班来自后台登记的 ADS-B 航班接收机，每 5 秒取一次。
    - 飞进反制设备「禁止反制范围」的航班标红，进「提醒范围」的标橙；高于规则高度的航班不算，显示为灰色。
-   - 点开反制设备时在它周围画出两个范围圈。
+   - 点开反制设备时在它周围画出两个范围圈。单独设置过距离的反制设备按它自己的数字画、按它自己的数字着色。
    - 鼠标停在飞机上显示航班号、高度、离反制设备多远、是否靠近。
    地图上的颜色只作提示，能不能反制以反制弹窗里服务端的检查为准。 */
 import { computed, onMounted, onUnmounted, ref } from 'vue';
@@ -66,19 +66,27 @@ function approaching(a, device) {
   return Math.cos(toward - a.track_deg * rad) > 0.2;
 }
 
-/** 每架航班离最近反制设备多远、在哪个范围（按迫降的规则，迫降的范围最大）。 */
+/** 这台反制设备用的距离：单独设置过的用自己的，否则用规则管理里的默认值。 */
+function policyFor(device) {
+  return (traffic.value?.device_distances || []).find(item => item.device_id === (device.deviceId || device.id)) || traffic.value?.policy || null;
+}
+
+const ZONE_RANK = { BLOCK: 3, WARN: 2, NONE: 1, HIGH: 0 };
+
+/** 每架航班对各台反制设备在哪个范围（按迫降的距离，迫降的范围最大），取最严重的；一样时取最近的设备。 */
 function zoneOf(a) {
-  const p = traffic.value?.policy;
-  let nearest = null;
+  let best = null, nearest = null;
   props.counterDevices.forEach(device => {
     const km = distanceKm(device.lon, device.lat, a.longitude, a.latitude);
     if (!nearest || km < nearest.km) nearest = { km, device };
+    const p = policyFor(device);
+    if (!p) return;
+    const zone = a.altitude_m != null && a.altitude_m > p.force_land_max_altitude_m ? 'HIGH'
+      : km <= p.force_land_block_km ? 'BLOCK' : km <= p.force_land_warn_km ? 'WARN' : 'NONE';
+    if (!best || ZONE_RANK[zone] > ZONE_RANK[best.zone] || ZONE_RANK[zone] === ZONE_RANK[best.zone] && km < best.km) best = { zone, km, device };
   });
-  if (!nearest || !p) return { zone: 'NONE', nearest };
-  if (a.altitude_m != null && a.altitude_m > p.force_land_max_altitude_m) return { zone: 'HIGH', nearest };
-  if (nearest.km <= p.force_land_block_km) return { zone: 'BLOCK', nearest };
-  if (nearest.km <= p.force_land_warn_km) return { zone: 'WARN', nearest };
-  return { zone: 'NONE', nearest };
+  if (!best) return { zone: 'NONE', nearest };
+  return { zone: best.zone, nearest: best.zone === 'BLOCK' || best.zone === 'WARN' ? { km: best.km, device: best.device } : nearest };
 }
 
 function circle(c, map, device, km, color, dash, fill) {
@@ -100,9 +108,9 @@ function label(c, x, y, text, color) {
 // 复用宿主 MapView 的绘制周期：范围圈画在画布上，飞机用页面元素，便于鼠标悬停。
 function draw(map) {
   lastMap = map;
-  const p = traffic.value?.policy;
   if (!props.visible || !map?.w || !traffic.value) { if (planes.value.length) planes.value = []; return; }
   const selected = props.counterDevices.find(device => device.id === props.selectedCounterId);
+  const p = selected ? policyFor(selected) : null;
   if (selected && p) {
     const c = map.ctx;
     c.save();

@@ -1,7 +1,7 @@
 <script setup>
 import { computed } from 'vue';
 import { displayTargetNo } from '@/ui/deviceNumber.js';
-import { isPredictionAlarm, alarmPredictionState, PREDICTION_STATES } from '@/services/predictionView.js';
+import { isPredictionAlarm, alarmPredictionState, predictionEntrySeconds, PREDICTION_STATES } from '@/services/predictionView.js';
 import { pilotLocationText } from '@/services/pilotLocation.js';
 import { pilotDistanceNote } from '@/ui/pilotDistanceNote.js';
 import { useUavAdvisory } from '@/hooks/useUavAdvisory.js';
@@ -10,7 +10,7 @@ import RiskDisposalSummary from '@/components/disposal/RiskDisposalSummary.vue';
 import SituationNextStep from './SituationNextStep.vue';
 
 const props = defineProps({ target: { type: Object, required: true }, alarm: Object, nowStatus: Object,
-  summary: Object, sourceNames: String, now: Number, videoOpen: Boolean });
+  summary: Object, sourceNames: String, now: Number, videoOpen: Boolean, prediction: Object, predictionUnavailable: Boolean });
 const emit = defineEmits(['close', 'video', 'verify', 'records', 'open', 'updated', 'unavailable']);
 const currentSummary = computed(() => {
   const risk = riskCaseOf(props.alarm);
@@ -43,6 +43,13 @@ const warning = computed(() => {
     || (prediction?.warning?.event_id === eventId ? prediction.warning : null);
   return find(frozen) || find(latest);
 });
+// 只在预计入区阶段给一行倒计时；实际入区或预警结束后不显示。
+const entrySeconds = computed(() => {
+  const risk = riskCaseOf(props.alarm);
+  const stage = risk ? risk.stage : predicted.value ? predictionState.value : null;
+  if (!['PREDICTED', 'ACTIVE'].includes(stage)) return null;
+  return predictionEntrySeconds(props.prediction || props.alarm?.prediction, props.now ?? Date.now(), props.predictionUnavailable);
+});
 const verification = computed(() => riskCaseOf(props.alarm) ? riskCaseVerificationLabel(props.alarm) : !predicted.value || terminal.value ? ''
   : props.alarm?.eventState === 'CONFIRMED' ? '已核实'
     : props.alarm?.eventState === 'FALSE_POSITIVE' ? '已核实为误报' : '待人工核实');
@@ -66,6 +73,7 @@ const metric = (value, unit) => value !== null && value !== undefined && String(
     <p v-if="riskCaseOf(alarm)" class="sit-target-context"><span>风险区域</span>{{ riskCaseOf(alarm).airspace_name || '区域名称未提供' }}</p>
     <p v-else-if="predicted" class="sit-target-context"><span>{{ terminal ? '原预警区域' : '预警区域' }}</span>{{ warning?.airspace_name || '禁飞区（名称未提供）' }}</p>
     <p v-else-if="!alarm && target.activeRisk" class="sit-target-context">{{ target.relatedRisks?.find(row => row.active)?.reasonText || '查看关联风险详情' }}</p>
+    <p v-if="entrySeconds != null" class="sit-target-eta" role="status">预计约 {{ entrySeconds }} 秒后进入</p>
     <dl class="sit-target-card-metrics">
       <div><dt>高度</dt><dd>{{ metric(target.alt, 'm') }}</dd></div>
       <div><dt>速度</dt><dd>{{ metric(target.speed, 'm/s') }}</dd></div>
@@ -99,7 +107,7 @@ const metric = (value, unit) => value !== null && value !== undefined && String(
 .sit-target-card header{display:flex;gap:9px;align-items:center;margin-bottom:12px}.sit-target-card header>div{min-width:0;flex:1}.sit-target-card header b{display:block;color:var(--txt);overflow-wrap:anywhere}.sit-target-card header small{display:block;color:var(--txt-3);font-size:11px}.sit-target-card-icon{display:flex;width:28px;height:28px;flex-shrink:0}.sit-target-card-icon :deep(svg),.sit-target-card-icon :deep(img){width:100%;height:100%}
 .sit-target-card button{font:inherit;cursor:pointer}.sit-target-close{border:0;background:transparent;color:var(--txt-3);width:30px;height:30px;font-size:20px!important}
 .sit-target-current{display:flex;align-items:baseline;justify-content:space-between;gap:8px;min-height:25px;color:var(--txt-2)}.sit-target-current strong{font-size:14px;overflow-wrap:anywhere}.sit-target-current span{flex-shrink:0;color:var(--txt-3);font-size:11px}.sit-target-current.is-amber strong{color:var(--tag-amber-text)}.sit-target-current.is-red strong{color:var(--red)}.sit-target-current.is-green strong{color:var(--green)}
-.sit-target-context{margin:4px 0 10px;overflow-wrap:anywhere}.sit-target-context>span{color:var(--txt-3);margin-right:8px}
+.sit-target-context{margin:4px 0 10px;overflow-wrap:anywhere}.sit-target-eta{margin:-4px 0 10px;color:var(--tag-amber-text);font-weight:600}.sit-target-context>span{color:var(--txt-3);margin-right:8px}
 .sit-target-card-metrics{display:grid;grid-template-columns:1fr 1fr 1.25fr;margin:10px 0;gap:8px;padding:9px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}.sit-target-card-metrics dt{font-size:11px;color:var(--txt-3)}.sit-target-card-metrics dd{margin:3px 0 0;color:var(--txt);font-variant-numeric:tabular-nums;white-space:nowrap}
 .sit-target-card-links{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 0 2px}.sit-target-card-links button{border:0;background:transparent;padding:3px 0;color:var(--cyan)}
 .sit-target-more{margin-top:8px;border-top:1px solid var(--line);padding-top:8px}.sit-target-more summary{cursor:pointer;color:var(--txt-3)}.sit-target-more dl{display:grid;grid-template-columns:72px minmax(0,1fr);gap:6px;margin:10px 0}.sit-target-more dd{margin:0;overflow-wrap:anywhere}.sit-target-more dt,.sit-target-more p{color:var(--txt-3)}.sit-target-read-error{color:var(--tag-amber-text)}

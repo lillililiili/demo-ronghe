@@ -1560,6 +1560,7 @@ onUnmounted(() => {
         <SituationTargetCard v-else-if="selectedCardTarget" :key="selectedCardTarget.targetId || selectedCardTarget.id"
           :target="selectedCardTarget" :alarm="selectedCardAlarm" :now-status="selectedNowStatus"
           :summary="selectedAdvisorySummary" :now="nowTick" :video-open="showTargetVideo"
+          :prediction="selectedPrediction" :prediction-unavailable="predictionUnavailable"
           :source-names="devices.filter(device => (selectedCardTarget.sourceDeviceIds || []).includes(device.fusionDeviceId || device.deviceId)).map(device => device.type).join(' / ')"
           @close="clearSelection" @video="onTipAction('eo-video')" @verify="verifySelectedAlarm" @records="openCounterRecords"
           @updated="updateNotification" @unavailable="invalidateNotification" @open="openAlarmDisposal(selectedUavAlarm)" />
@@ -1603,11 +1604,7 @@ onUnmounted(() => {
           @updated="updateNotification" @unavailable="invalidateNotification" @open="openAlarmDisposal(selectedUavAlarm)" />
         <p v-else-if="showAlarmPopup && !selectedCardTarget" class="sit-alarm-position-note">此告警未关联无人机事件，暂无可读取的通知记录。</p>
         <div v-if="selectedPrediction && !selectedCardTarget" class="prediction-popup-title"><b>目标未来位置</b><button type="button" class="btn" @click="clearSelection">关闭</button></div>
-        <details v-if="selectedPrediction && selectedTarget" class="sit-target-prediction-more">
-          <summary>未来 10／20／30 秒预测详情</summary>
-          <PredictionPanel :prediction="selectedPrediction" :risk-case="riskCaseOf(selectedUavAlarm)" :now="nowTick" :unavailable="predictionUnavailable" />
-        </details>
-        <PredictionPanel v-else-if="selectedPrediction" :prediction="selectedPrediction" :risk-case="riskCaseOf(selectedUavAlarm)" :now="nowTick" :unavailable="predictionUnavailable" />
+        <PredictionPanel v-if="selectedPrediction && !selectedTarget" :prediction="selectedPrediction" :now="nowTick" :unavailable="predictionUnavailable" />
         <SituationRiskEvidence v-if="mainRiskItem" :item="mainRiskItem" :targets="targets" :flight-plans="flightPlans" :predictions="currentPredictions"
           @context="receiveRiskContext" @updated="source.refresh()" @locate="locateRiskEvidence" />
         <template #video="{ expanded, toggleExpanded }">
@@ -1675,8 +1672,6 @@ onUnmounted(() => {
 
 <style scoped>
 .prediction-list-note{padding:8px 12px;margin:0;font-size:12px;line-height:1.5;color:var(--txt-3)}
-.sit-target-prediction-more{margin:0 12px 12px;border-top:1px solid var(--line);padding-top:8px;font-size:12px;color:var(--txt-3)}
-.sit-target-prediction-more>summary{cursor:pointer}
 .prediction-popup-title{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px}
 
 .eo-map-empty{position:absolute;z-index:6;left:60px;right:15px;top:45%;margin:0;text-align:center;padding:8px;background:var(--surface-1);color:var(--txt-2);pointer-events:none}

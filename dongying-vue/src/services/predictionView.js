@@ -19,6 +19,13 @@ export function predictionWarningState(prediction, warning, now, unavailable = f
   if (['WITHDRAWN', 'ENTERED'].includes(warning?.state)) return warning.state;
   return warning?.state === 'ACTIVE' && predictionIsCurrent(prediction, now, unavailable) ? 'ACTIVE' : 'UNKNOWN';
 }
+/** 当前有效预测里最近一次预计入区还有几秒；没有有效的入区预警返回 null。 */
+export function predictionEntrySeconds(prediction, now, unavailable = false) {
+  if (!predictionIsCurrent(prediction, now, unavailable)) return null;
+  const times = predictionWarnings(prediction).filter(warning => warning.state === 'ACTIVE' && numeric(warning.entry_at)
+    && Number(warning.entry_at) > now).map(warning => Number(warning.entry_at));
+  return times.length ? Math.ceil((Math.min(...times) - now) / 1000) : null;
+}
 /** 融合感知只呈现当前预测；告警页仍使用原始快照及完整生命周期。 */
 export function currentPredictionViews(predictions, now, unavailable = false) {
   return (predictions || []).filter(prediction => predictionIsCurrent(prediction, now, unavailable))

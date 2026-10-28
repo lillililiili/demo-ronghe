@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
-import { PREDICTION_ORIGIN, predictionLocation, predictionIsCurrent, currentPredictionViews, predictionWarningRows, predictionMapData, alarmPredictionState, predictionProximityRows } from '../src/services/predictionView.js';
+import { PREDICTION_ORIGIN, predictionLocation, predictionIsCurrent, currentPredictionViews, predictionWarningRows, predictionMapData, alarmPredictionState, predictionProximityRows, predictionEntrySeconds } from '../src/services/predictionView.js';
 import { predictionDetailsHtml, predictionReasonText, predictionEvidenceNotesText } from '../src/ui/predictionDetails.js';
 const origin = Date.now();
 function forecast({ id = 'aircraft-a', mode = 'live', shift = 0 } = {}) {
@@ -291,4 +291,14 @@ test('统一风险的入区预测历史保留失效事实并在同条记录继�
     assert.match(frozen, /预警创建时的预测快照/);
     assert.doesNotMatch(frozen, /未来线已隐藏/);
   }
+});
+
+test('预计入区倒计时只取当前有效预测里尚未到达的入区时间', () => {
+  const base = { status: 'READY', based_on_observed_at: origin - 500, valid_until: origin + 8000 };
+  const warn = (state, at) => ({ state, entry_at: at, airspace_name: '禁飞区' });
+  assert.equal(predictionEntrySeconds({ ...base, warnings: [warn('ACTIVE', origin + 19200), warn('ACTIVE', origin + 25000)] }, origin), 20);
+  assert.equal(predictionEntrySeconds({ ...base, warnings: [warn('ENTERED', origin + 5000)] }, origin), null);
+  assert.equal(predictionEntrySeconds({ ...base, warnings: [warn('ACTIVE', origin - 1000)] }, origin), null);
+  assert.equal(predictionEntrySeconds({ ...base, warnings: [warn('ACTIVE', origin + 5000)] }, origin, true), null, '读取失败不显示倒计时');
+  assert.equal(predictionEntrySeconds({ ...base, valid_until: origin - 1, warnings: [warn('ACTIVE', origin + 5000)] }, origin), null, '过期预测不显示');
 });

@@ -15,7 +15,7 @@ import { serverNow } from '@/services/serverClock.js';
 import { attachEoCameraStates } from './eoCameraState.js';
 import {
   attachBearing, attachDeviceEvents, attachRecentTracks, attachTargetSourceLinks, extendRecentTracks,
-  bearingOrigins, planIsCurrent, toAirspaces, toAlarms, toDevices, toFlightPlans, toRisks, toTargets
+  mergeTrackHistory, thinTrackHistory, toTrack, bearingOrigins, planIsCurrent, toAirspaces, toAlarms, toDevices, toFlightPlans, toRisks, toTargets
 } from '@/services/situationData.js';
 
 // 设备范围由后端统一筛选，未知类型仍留在清单中。
@@ -45,6 +45,8 @@ const RISK_PRESENCE_REFRESH_MS = 5_000;
 // 与后端 target_ids 上限一致；图上目标更多时不按目标限定，仍只要坐标。
 const MAX_TRACK_TARGET_IDS = 100;
 const MAX_ROUTE_VERSION_BATCH = 100;
+// 目标首次出现时读回整条轨迹（从第一次被发现起），同时最多读这么多个目标，不和其他数据抢请求。
+const HISTORY_LOAD_CONCURRENCY = 2;
 /* 各组数据的读取权限与后端接口一致（ZT-09）：没有权限的组不发请求、不报“刷新失败”，地图上这一类保持为空。
    飞行任务同时要读航线版本，两项权限都要有。登录后权限有变化、后端答复 403 时同样按没有权限处理，本页不再重复请求。 */
 const SEGMENT_PERMISSIONS = {
@@ -116,6 +118,10 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
   let batchRouteVersions = true;
   let batchAirspaces = true;
   const routeVersions = new Map();
+  // 每个目标的整条轨迹（targetId → { trackId, points }）；points 为空表示还在读。之后每轮尾迹接到它末尾。
+  const trackHistories = new Map();
+  const historyQueue = [];
+  let historyLoads = 0;
   const trajectoryComparisons = new Map();
   const failedSegments = new Set();
   const deniedSegments = new Set();
@@ -137,9 +143,60 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
     predictionAccessGeneration += 1;
     readGeneration += 1;
     deniedSegments.clear(); failedSegments.delete('predictions');
+    trackHistories.clear(); historyQueue.length = 0;
     snapshot = { ...snapshot, predictions: [], eoReports: [] };
     publish(now()); nudge(['prediction']);
   };
+
+  /* 尾迹只有最近 24 点；读过整条轨迹的目标把尾迹接到整条轨迹后面，并记下接好的结果供下一轮再接。
+     已不在图上的目标（以目标组读回的列表为准）不再保留，重新出现时重读。 */
+  function withHistory(targets, { prune = true } = {}) {
+    const present = new Set(targets.map(target => target.targetId));
+    if (prune) for (const targetId of trackHistories.keys()) if (!present.has(targetId)) trackHistories.delete(targetId);
+    return targets.map(target => {
+      const history = trackHistories.get(target.targetId);
+      const last = target.track?.[target.track.length - 1];
+      if (!history?.points || (last?.track_id && last.track_id !== history.trackId)) return target;
+      const track = thinTrackHistory(mergeTrackHistory(history.points, (target.track || []).filter(point => point.track_id === history.trackId)));
+      history.points = track;
+      return { ...target, track, tailSpanMs: null };
+    });
+  }
+
+  // 后台尾迹带回的融合轨迹编号：没读过整条的（或换了一条融合轨迹的）排队读一次。
+  function requestHistories(recent) {
+    for (const item of recent?.items || []) {
+      if (!item.target_id || !item.track_id) continue;
+      const known = trackHistories.get(item.target_id);
+      if (known?.trackId === item.track_id) continue;
+      trackHistories.set(item.target_id, { trackId: item.track_id, points: null });
+      historyQueue.push(item.target_id);
+    }
+    pumpHistories();
+  }
+
+  function pumpHistories() {
+    while (historyLoads < HISTORY_LOAD_CONCURRENCY && historyQueue.length) {
+      const targetId = historyQueue.shift();
+      const entry = trackHistories.get(targetId);
+      if (!entry || entry.points) continue;
+      const generation = readGeneration;
+      historyLoads += 1;
+      Promise.resolve().then(() => targetApi.pointsAll(entry.trackId, { size: 100 }))
+        .then(page => {
+          if (trackHistories.get(targetId) !== entry) return;
+          // 读的途中离开页面或换了账号：丢掉这次结果，回来后重读。
+          if (stopped || generation !== readGeneration) { trackHistories.delete(targetId); return; }
+          entry.points = toTrack(page.items || []);
+          // 这时目标组可能还没发布本轮目标，不按它清理；下一轮读回目标时照常接上。
+          snapshot = { ...snapshot, targets: withComparison(withHistory(snapshot.targets, { prune: false })) };
+          publish(now());
+        })
+        // 读不到整条轨迹时照旧只画尾迹，这条轨迹不再反复重读；目标离开地图后再出现时重试。
+        .catch(() => { entry.failed = true; })
+        .finally(() => { historyLoads -= 1; pumpHistories(); });
+    }
+  }
 
   function withComparison(targets) {
     return targets.map(target => {
@@ -259,11 +316,11 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
         const due = generatedAt - lastTracksAt >= TRACK_REFRESH_MS || generatedAt < lastTracksAt
           || converted.some(target => !known.has(target.targetId));
         const extended = extendRecentTracks(converted, snapshot.targets);
-        if (!due) return withComparison(extended);
+        if (!due) return withComparison(withHistory(extended));
         const recent = await loadRecentTracks(converted, generatedAt, day.from);
-        if (generation === readGeneration) lastTracksAt = generatedAt;
+        if (generation === readGeneration) { lastTracksAt = generatedAt; requestHistories(recent); }
         // 这次没带回某个目标的尾迹时沿用本机接上的尾迹，不让尾迹一闪而空。
-        return withComparison(attachRecentTracks(extended, recent, snapshot.targets));
+        return withComparison(withHistory(attachRecentTracks(extended, recent, snapshot.targets)));
       }, value => { snapshot = { ...snapshot, targets: value }; }, [])
         // 目标一读回就先发布（CDX-P01）：不等同一轮的告警、风险、移送分页读完。当天记录多时那几组要读很久，
         // 等它们读完，刚收到的目标已过了地图有效期，被页面当成过期滤掉。整轮读完后照旧再发布一次。

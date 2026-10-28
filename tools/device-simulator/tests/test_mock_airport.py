@@ -104,7 +104,7 @@ class MockAirportTest(unittest.TestCase):
     def test_missing_connection_scope_is_explained(self):
         with self.assertRaisesRegex(ValueError, '未找到启用的回放'):
             mock_airport.ensure(AirportPlatform(), {'owner_org_id': None, 'district_id': None,
-                                                    'message': '未找到启用的回放 MQTT 连接 local-lingyun-replay，请手动选择归属单位与区县'})
+                                                    'message': '未找到启用的回放 MQTT 连接 local-sim-replay，请手动选择归属单位与区县'})
 
     def test_status_reads_without_writing(self):
         platform = AirportPlatform()

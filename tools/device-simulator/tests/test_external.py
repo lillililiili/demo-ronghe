@@ -73,8 +73,8 @@ class ExternalBridgeTests(unittest.TestCase):
         self.bridge.connect({'api': self.url, 'account': 'operator', 'password': 'pass'})
         FakePlatform.brokers = [
             {'broker_id': 'other', 'name': 'local-risk-video-eo', 'source_mode': 'replay', 'enabled': True, 'owner_org_id': 'org-x', 'district_id': 'district-x'},
-            {'broker_id': 'replay', 'name': 'local-lingyun-replay', 'source_mode': 'replay', 'enabled': True, 'owner_org_id': 'org-a', 'district_id': 'district-a'}]
-        self.assertEqual(self.bridge.connection_scope(), {'owner_org_id': 'org-a', 'district_id': 'district-a', 'broker_name': 'local-lingyun-replay'})
+            {'broker_id': 'replay', 'name': 'local-sim-replay', 'source_mode': 'replay', 'enabled': True, 'owner_org_id': 'org-a', 'district_id': 'district-a'}]
+        self.assertEqual(self.bridge.connection_scope(), {'owner_org_id': 'org-a', 'district_id': 'district-a', 'broker_name': 'local-sim-replay'})
         # Once a run has chosen its broker, that connection decides, without another broker lookup.
         self.bridge.runtime = types.SimpleNamespace(broker={'name': 'chosen', 'owner_org_id': 'org-b', 'district_id': 'district-b'})
         before = len(FakePlatform.calls)

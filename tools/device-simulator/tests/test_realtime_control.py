@@ -142,7 +142,7 @@ class LifecycleTests(unittest.TestCase):
         self.session = SimpleNamespace(version='first', platform=SimpleNamespace(sync_simulated_range=Mock()))
         self.session.request = lambda c: self.proxy.call(c['method'], c['path'], c.get('body'), c.get('key'))
         self.session.connection_scope = lambda: {'owner_org_id': None, 'district_id': None,
-            'message': '未找到启用的回放 MQTT 连接 local-lingyun-replay，请手动选择归属单位与区县'}
+            'message': '未找到启用的回放 MQTT 连接 local-sim-replay，请手动选择归属单位与区县'}
         self.runtime = SimpleNamespace(data_dir=Path(self.temp.name), platform=True, session=self.session,
                                        lock=threading.RLock(), phase='STOPPED', cancel=threading.Event())
         self.controller = RealtimeController(self.runtime, port=19871)
@@ -197,7 +197,7 @@ class LifecycleTests(unittest.TestCase):
             return {}
         self.session.request = request
         self.session.connection_scope = lambda: {'owner_org_id': 'org-conn', 'district_id': 'district-conn',
-                                                 'broker_name': 'local-lingyun-replay'}
+                                                 'broker_name': 'local-sim-replay'}
         self.controller.configure({'notifications_enabled': False})
         transport = CountermeasureSimulator(port=free_port())
         with patch('countermeasure_tcp.CountermeasureSimulator', return_value=transport):

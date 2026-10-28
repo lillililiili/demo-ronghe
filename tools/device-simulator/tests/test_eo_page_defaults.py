@@ -30,7 +30,8 @@ class PageDefaultsTest(unittest.TestCase):
         checked = 0
         for flow in flows:
             for scene in [flow['scene']] + [v['scene'] for v in flow.get('variants', [])]:
-                points = [p for t in scene['targets'] for p in t['path'] + t.get('departurePath', [])]
+                # 民航航班不经光电（由航班接收机送给平台），航线几十公里，不在光电范围内。
+                points = [p for t in scene['targets'] if t.get('kind') != 'flight' for p in t['path'] + t.get('departurePath', [])]
                 for site in scene['sites']:
                     for device in site['devices']:
                         if device['kind'] != 'eo' or not points: continue

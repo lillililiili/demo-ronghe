@@ -56,7 +56,7 @@ def normal_mode_ignored(scene, config):
             if device.get('health') == '故障':
                 items.append(where + '的工作状态设成了“故障”')
             if device.get('heartbeat') == '停止心跳':
-                items.append(where + '的心跳设成了“停止心跳”')
+                items.append(where + ('设成了“断开”' if device.get('kind') == 'adsb' else '的心跳设成了“停止心跳”'))
     for risk in _dicts(scene.get('risks')):
         if risk.get('type') in ('offline', 'fault') and risk.get('enabled'):
             items.append(f'平台判定条件“{risk.get("name") or ("设备离线" if risk["type"] == "offline" else "设备故障")}”已经勾选')

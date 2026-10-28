@@ -8,7 +8,17 @@ from coverage_defaults import default_coverage
 from protocol_b import validate_config as validate_protocol_b
 
 KINDS = {**protocol_a.SENSING_TYPES, 'dec': 5, 'ifr': 6, 'bsc': 12, 'weather': 1001, 'countermeasure': 1002}
-LABELS = {'radar': '雷达', 'tdoa': 'TDOA', '5ga': '5G-A', 'aoa': 'AOA', 'dcd': '协议破解', 'rid': 'RemoteID', 'dec': '诱骗', 'ifr': '干扰', 'bsc': '驱鸟炮', 'eo': '光电', '5da': '5D-A', 'weather': '气象设备', 'countermeasure': '反制设备'}
+LABELS = {'radar': '雷达', 'tdoa': 'TDOA', '5ga': '5G-A', 'aoa': 'AOA', 'dcd': '协议破解', 'rid': 'RemoteID', 'dec': '诱骗', 'ifr': '干扰', 'bsc': '驱鸟炮', 'eo': '光电', '5da': '5D-A', 'weather': '气象设备', 'countermeasure': '反制设备', 'adsb': '航班接收机'}
+# 航班接收机不是 MQTT 设备：开始时按点位登记到平台，航班按 pingStation3 格式走 UDP（adsb_flights.py）。
+ADSB_KIND = 'adsb'
+ADSB_RANGE_KM = (10, 600, 350)            # 接收范围：平台允许 10–600 公里，默认 350
+ADSB_BACKGROUND = (0, 200, 60)            # 周围背景航班架数，默认 60
+# 民航航班目标（kind=flight）：不经感知设备，只由航班接收机送给平台。
+FLIGHT_KIND = 'flight'
+FLIGHT_MODES = ('once', 'loop', 'pingpong', 'orbit')
+FLIGHT_MAX_ALTITUDE_M = 15000
+FLIGHT_MAX_SPEED_MPS = 350
+FLIGHT_ORBIT_RADIUS_M = (500, 50000, 5000)
 HEARTBEAT_KINDS = frozenset((*KINDS, 'eo'))
 TARGET_REPORT_KINDS = frozenset(protocol_a.SENSING_TYPES)
 RISK_TYPES = {'zone', 'deviation', 'no-plan', 'height', 'time', 'bird', 'balloon', 'offline', 'fault'}
@@ -129,6 +139,14 @@ def _motion_sample(target, elapsed):
     mode = 'once' if departing else target.get('motionMode', 'once')
     dwell = [0] * len(points) if departing else target.get('dwellSeconds') or [0] * len(points)
     elapsed = max(0.0, elapsed - motion.get('at_elapsed', 0)) if departing else max(0.0, elapsed)
+    if mode == 'orbit':
+        # 民航航班「飞到最后一个点盘旋」：先沿航线飞一遍，到最后一个点后绕圈，圈经过最后一个点、向右转。
+        once = dict(target, motionMode='once')
+        once.pop('_notification_motion', None)
+        arrival = _route_seconds(once)
+        if elapsed < arrival or speed <= 0:
+            return _motion_sample(once, elapsed)
+        return _orbit_sample(points, heights[-1], speed, target.get('orbitRadiusM', FLIGHT_ORBIT_RADIUS_M[2]), elapsed - arrival)
     if len(points) == 1 or speed <= 0:
         return points[0], 0.0, 0.0, heights[0], 0.0
     indices = list(range(len(points)))
@@ -164,6 +182,35 @@ def _motion_sample(target, elapsed):
             return point, east, north, heights[a] + fraction * (heights[b] - heights[a]), vertical
         elapsed -= seconds
     return points[-1], 0.0, 0.0, heights[-1], 0.0
+
+
+def _route_seconds(target):
+    """沿航线飞一遍（含停留）要多少秒；单点或速度为 0 时为 0。"""
+    points, speed = target['path'], target['speed']
+    if len(points) == 1 or speed <= 0:
+        return 0.0
+    dwell = target.get('dwellSeconds') or [0] * len(points)
+    return sum(dwell) + sum(metres(a, b) / speed for a, b in zip(points, points[1:]))
+
+
+def _grid_offset(point, east_m, north_m):
+    """从格点出发向东、向北各走多少米后的格点。"""
+    lon, lat = coordinates(point)
+    return [point[0] + east_m / (111320 * math.cos(math.radians(lat))) / .00012, point[1] - north_m / 111320 / .00012]
+
+
+def _orbit_sample(points, height, speed, radius, seconds):
+    """到最后一个点之后绕圈：圈心在到达方向的右侧，航班从最后一个点开始顺时针绕，每圈 2πR/速度 秒。"""
+    last = points[-1]
+    if len(points) >= 2:
+        start, end = coordinates(points[-2]), coordinates(last)
+        heading = math.atan2((end[0] - start[0]) * math.cos(math.radians((start[1] + end[1]) / 2)), end[1] - start[1])
+    else:
+        heading = 0.0
+    center = _grid_offset(last, radius * math.cos(heading), -radius * math.sin(heading))  # 右侧 = 航向 +90°
+    angle = heading - math.pi / 2 + speed * seconds / radius                              # 从最后一个点出发，顺时针
+    point = _grid_offset(center, radius * math.sin(angle), radius * math.cos(angle))
+    return point, speed * math.cos(angle), -speed * math.sin(angle), height, 0.0
 
 
 def target_sample(target, elapsed):
@@ -312,6 +359,81 @@ def duration_reached(scene, elapsed):
     return scene['duration'] > 0 and elapsed >= scene['duration'] * 60
 
 
+def _hex_digest(text, length):
+    import hashlib
+    return hashlib.sha1(text.encode('utf-8')).hexdigest()[:length]
+
+
+def _compile_adsb_device(d):
+    """航班接收机的设置：接收范围、背景航班数、识别码（平台按它认设备）。状态只有正常发送 / 断开。"""
+    if d.get('health', '正常') != '正常':
+        raise ValueError(d.get('name', '航班接收机') + '：航班接收机没有故障码，要模拟收不到航班信息请用「断开」或设备离线条件')
+    d['health'] = '正常'
+    if d.get('heartbeat', '持续上报') not in ('持续上报', '停止心跳'):
+        raise ValueError('设备状态无效')
+    d['heartbeat'] = d.get('heartbeat', '持续上报')
+    d['interval'] = number(d.get('interval', 1), 1, 300, '心跳间隔')
+    low, high, default = ADSB_RANGE_KM
+    d['rangeKm'] = number(d.get('rangeKm', default), low, high, '接收范围')
+    low, high, default = ADSB_BACKGROUND
+    d['backgroundFlights'] = number(d.get('backgroundFlights', default), low, high, '周围背景航班')
+    if not d['backgroundFlights'].is_integer():
+        raise ValueError('周围背景航班必须为整数')
+    guid = str(d.get('stationGuid') or _hex_digest('adsb-station:' + d['id'], 16)).strip().lower()
+    if not re.fullmatch(r'[0-9a-f]{16}', guid):
+        raise ValueError(d.get('name', '航班接收机') + '：识别码须为 16 位十六进制')
+    d['stationGuid'] = guid
+    device_no = str(d.get('deviceNo') or 'SIM-ADSB-' + guid[:8].upper()).strip()
+    if not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', device_no):
+        raise ValueError(d.get('name', '航班接收机') + '：设备编号无效')
+    d['deviceNo'] = device_no
+    d['coverage'] = None
+
+
+def adsb_devices(scene):
+    """场景里的航班接收机（带点位坐标）；它们不在 MQTT 设备表里。"""
+    return {d['id']: dict(d, x=site['x'], y=site['y']) for site in scene.get('sites', [])
+            for d in site.get('devices', []) if d.get('kind') == ADSB_KIND}
+
+
+def _compile_flight(t):
+    """民航航班：航班号、航空公司、机身地址、航线（逐点高度）、速度、怎么飞。"""
+    t.pop('_notification_motion', None)
+    t['kind'] = FLIGHT_KIND
+    label = t.get('name', '民航航班')
+    t['path'] = point_list(t.get('path'), 1, label)
+    callsign = str(t.get('callsign') or '').strip().upper()
+    if not re.fullmatch(r'[A-Z0-9]{2,8}', callsign):
+        raise ValueError(label + '：航班号须为 2–8 位字母或数字（如 CES2471）')
+    t['callsign'] = callsign
+    airline = str(t.get('airline') or '').strip()
+    if len(airline) > 64:
+        raise ValueError(label + '：航空公司名称过长')
+    t['airline'] = airline
+    icao24 = str(t.get('icao24') or '78' + _hex_digest('flight:' + t['id'], 4)).strip().lower()
+    if not re.fullmatch(r'[0-9a-f]{6}', icao24):
+        raise ValueError(label + '：机身地址须为 6 位十六进制')
+    t['icao24'] = icao24
+    t['height'] = number(t.get('height'), 0, FLIGHT_MAX_ALTITUDE_M, label + '高度')
+    t['speed'] = number(t.get('speed'), 0, FLIGHT_MAX_SPEED_MPS, label + '速度')
+    t['motionMode'] = t.get('motionMode', 'once')
+    if t['motionMode'] not in FLIGHT_MODES:
+        raise ValueError(label + '：怎么飞的选项无效')
+    low, high, default = FLIGHT_ORBIT_RADIUS_M
+    t['orbitRadiusM'] = number(t.get('orbitRadiusM', default), low, high, label + '盘旋半径')
+    if t.get('altitudePath') is not None:
+        if not isinstance(t['altitudePath'], list) or len(t['altitudePath']) != len(t['path']):
+            raise ValueError(label + '：航点高度数量须与航线节点一致')
+        t['altitudePath'] = [number(value, 0, FLIGHT_MAX_ALTITUDE_M, label + '航点高度') for value in t['altitudePath']]
+    if t.get('dwellSeconds') is not None:
+        if not isinstance(t['dwellSeconds'], list) or len(t['dwellSeconds']) != len(t['path']):
+            raise ValueError(label + '：航点停留数量须与航线节点一致')
+        t['dwellSeconds'] = [number(value, 0, 86400, label + '航点停留时间') for value in t['dwellSeconds']]
+    t['silenceWindows'] = []
+    t['altitudeDatum'] = 'AMSL'
+    return t
+
+
 def compile_scene(raw):
     s = copy.deepcopy(raw)
     if not isinstance(s, dict):
@@ -347,6 +469,9 @@ def compile_scene(raw):
             seen_devices.add(d['id'])
             if d.get('kind') not in LABELS:
                 raise ValueError('未知设备类型')
+            if d['kind'] == ADSB_KIND:
+                _compile_adsb_device(d)
+                continue
             d['coverage'] = normalize_coverage_config(d.get('coverage') if d.get('coverage') is not None else default_coverage(d['kind']))
             if d.get('health') not in ('正常', '故障') or d.get('heartbeat') not in ('持续上报', '停止心跳'):
                 raise ValueError('设备状态无效')
@@ -363,6 +488,15 @@ def compile_scene(raw):
                 devices[d['id']] = dict(d, x=site['x'], y=site['y'])
     if not devices or len(devices) > 100:
         raise ValueError('请配置 1 至 100 台可发送设备')
+    adsb = adsb_devices(s)
+    # 民航航班单独编译：它不是感知设备上报的目标，由航班接收机送给平台。重新编译已编译的场景时 flights 已经分开了。
+    flights = [t for t in s['targets'] if t.get('kind') == FLIGHT_KIND] + list(s.get('flights') or [])
+    s['targets'] = [t for t in s['targets'] if t.get('kind') != FLIGHT_KIND]
+    if len({f.get('id') for f in flights}) != len(flights) or any(f.get('id') in {t.get('id') for t in s['targets']} for f in flights):
+        raise ValueError('targets编号缺失或重复')
+    s['flights'] = [_compile_flight(f) for f in flights]
+    if flights and not adsb:
+        raise ValueError('画了民航航班，但场景里没有航班接收机：请在「添加 → 设备」里放一台航班接收机')
     plans = {p['id']: p for p in s['plans']}
     zones = {z['id']: z for z in s['zones']}
     targets = {t['id']: t for t in s['targets']}
@@ -486,7 +620,7 @@ def compile_scene(raw):
         if r['type'] not in RISK_TYPES:
             raise ValueError('未知风险类型')
         if r['type'] in ('offline', 'fault'):
-            if r.get('deviceId') not in devices:
+            if r.get('deviceId') not in devices and not (r['type'] == 'offline' and r.get('deviceId') in adsb):
                 raise ValueError(r['name'] + '：关联设备未启用或协议未接入')
             window = s['duration'] * 60 if s['duration'] else 86400
             r['at'] = number(r.get('at'), 0, window, '触发时间')

@@ -49,7 +49,7 @@ import { targetApi } from '@/services/targetApi.js';
 import { toAirspaces } from '@/services/situationData.js';
 import { displayAlarmNo, displayTargetNo } from '@/ui/deviceNumber.js';
 import { mapPool } from '@/services/apiClient.js';
-import { ALARM_PROGRESS_LABEL, ALARM_PROGRESS_TAG, ALARM_TYPE_LABEL, classChangeText, CONCLUSION_LABEL, DISPOSAL_ACTION_LABEL, labelOf, LEGALITY_LABEL, readableNo, sourceDescription, SOURCE_MODE_LABEL as MODE_TEXT, targetTypeLabel } from '@/ui/labels.js';
+import { ALARM_PROGRESS_LABEL, ALARM_PROGRESS_TAG, ALARM_TYPE_LABEL, classChangeText, DISPOSAL_ACTION_LABEL, labelOf, LEGALITY_LABEL, readableNo, sourceDescription, SOURCE_MODE_LABEL as MODE_TEXT, targetTypeLabel } from '@/ui/labels.js';
 import { openEvidenceFileModal } from '@/ui/evidenceFileDetail.js';
 import { openEvidenceChainTypeModal, renderEvidenceChainHtml } from '@/ui/evidenceChainView.js';
 import { disposalApi, isDisposalUnavailable } from '@/services/disposalApi.js';
@@ -67,7 +67,7 @@ import { serverNow } from '@/services/serverClock.js';
 import TargetTrackingPanel from '@/components/video/TargetTrackingPanel.vue';
 import { uavAdvisoryApi } from '@/services/uavAdvisoryApi.js';
 
-import { riskCaseProgress, RISK_STAGE_LABEL, riskCaseOf, riskCaseKey, riskStageLabel, riskConfirmed, riskVerificationState, riskCaseVerificationLabel, riskCaseVerificationHint, verificationSourceLabel, riskCaseAlarm, riskCaseMatches } from '@/services/riskCaseView.js';
+import { riskCaseProgress, RISK_STAGE_LABEL, riskCaseOf, riskCaseKey, riskStageLabel, riskConfirmed, riskVerificationState, riskCaseVerificationLabel, riskCaseVerificationHint, riskCaseAlarm, riskCaseMatches } from '@/services/riskCaseView.js';
 import { businessDateTime } from '@/services/businessTime.js';
 import { PREDICTION_ORIGIN, PREDICTION_STATES, alarmPredictionState, isPredictionAlarm, predictionVerificationState } from '@/services/predictionView.js';
 import { predictionAlarmStatusHtml } from '@/ui/predictionDetails.js';
@@ -806,31 +806,10 @@ function detailHtml() {
     ...(pilotNote ? [['飞手距离', esc(pilotNote)]] : []),
     ['数据来源', `${esc(sourceDescription(a.source_name, a.source_code, a.source_mode, '—'))}`]
   ], { surface: true, density: 'compact' }), { icon: 'alert', className: 'alarm-info-sect' })}
-    ${verificationHtml()}
     ${escalationHtml(brief)}
     ${renderEvidenceChainHtml(cur.chain, {
       loading: cur.chainLoading, error: cur.chainError, unavailable: cur.chainUnavailable
     })}`;
-}
-
-/* 核实记录按当前风险账本显示结论、来源和时间；不能用操作人为空推断自动核实。 */
-function verificationHtml() {
-  const a = cur.alarm;
-  if (!a?.event_id) return '';
-  let body;
-  if (cur.verificationsLoading) body = '<div class="empty">正在读取核实记录</div>';
-  else if (cur.verificationsError) {
-    body = `<div class="empty">${esc(cur.verificationsError)}<br><button class="btn" data-al="verifications-retry" style="margin-top:8px">重试</button></div>`;
-  } else if (!cur.verifications.length) {
-    body = `<div class="empty">${cur.event?.state === 'PENDING_VERIFICATION' ? '还没有核实' : '暂未读到核实记录'}</div>`;
-  } else {
-    body = `<ol class="alarm-escalation-list">${cur.verifications.map(v => `<li>
-        <div class="alarm-escalation-head"><b>${esc(labelOf(CONCLUSION_LABEL, v.conclusion, '结论未知'))}</b></div>
-        ${v.note ? `<div>说明：${esc(v.note)}</div>` : ''}
-        <div class="alarm-escalation-meta">${esc(verificationSourceLabel(v))} · ${esc(fmt(v.created_at) || '时间未知')}</div>
-      </li>`).join('')}</ol>`;
-  }
-  return U.sect('核实记录', body, { icon: 'check' });
 }
 
 /* 升级记录：按升级先后列出每一次是系统研判还是人工转告警、等级怎么变、新增了什么原因、谁在什么时候做的。 */
@@ -1563,7 +1542,6 @@ onMounted(async () => {
     else if (k === 'retry-detail' && st.selId) selectAlarm(st.selId);
     else if (k === 'chain-retry' && st.selId) loadChain(detailSeq);
     else if (k === 'escalations-retry' && st.selId) loadEscalations(detailSeq);
-    else if (k === 'verifications-retry' && st.selId) loadVerifications(detailSeq);
   });
   U.on(view, '[data-ev-file]', 'click', (e, btn) => {
     if (btn.dataset.evFile) openEvidenceFileModal(btn.dataset.evFile);

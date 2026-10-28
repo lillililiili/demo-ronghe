@@ -44,18 +44,24 @@ test('real gaps stay gaps and locally extended points are replaced by backend po
   assert.equal(breaks(newer), 1);
 });
 
-test('long flights are thinned in the older part only and still draw as connected lines', () => {
-  const long = toTrack([...rows(1, 3000), row(3001, { break_before: true }), ...rows(3002, 5000)]);
-  const thin = thinTrackHistory(long, { limit: 3600, recent: 1800 });
-  assert.ok(thin.length <= 3600 + 4, `${thin.length}`);
-  assert.equal(thin[0].point_id, 'p-1');
-  assert.deepEqual(thin.slice(-1800).map(point => point.point_id), long.slice(-1800).map(point => point.point_id));
-  assert.equal(breaks(thin), 1);
-  // 再接新点、再抽稀，仍只有原来那一处断开。
-  let track = thin;
-  for (let seq = 5001; seq <= 7000; seq += 20) track = thinTrackHistory(mergeTrackHistory(track, toTrack(rows(seq, seq + 23))));
-  assert.ok(track.length <= 3600 + 4);
+test('long flights keep about 1000 points spread over the whole flight, with real gaps kept', () => {
+  // 约 2.4 点/秒，每 5 秒接一次 24 点尾迹，飞 2 小时；第 30 分钟处有一次真正的断开。
+  const at = seq => row(seq, { observed_at: Math.round(seq * 1000 / 2.4), ...(seq === 4320 ? { break_before: true } : {}) });
+  let track = toTrack(Array.from({ length: 240 }, (_, index) => at(index + 1)));
+  let last = 240;
+  while (last < 2.4 * 7200) {
+    const tail = toTrack(Array.from({ length: 24 }, (_, index) => at(last - 11 + index)));
+    track = thinTrackHistory(mergeTrackHistory(track, tail));
+    last += 12;
+  }
+  assert.ok(track.length <= 1000, `${track.length}`);
   assert.equal(track[0].point_id, 'p-1');
-  assert.equal(track.at(-1).point_id, 'p-7004');
+  assert.equal(track.at(-1).point_id, `p-${last}`);
   assert.equal(breaks(track), 1);
+  const quarters = Array.from({ length: 8 }, (_, quarter) =>
+    track.filter(point => point.t >= quarter * 900_000 && point.t < (quarter + 1) * 900_000).length);
+  assert.ok(quarters.every(count => count >= 40), quarters.join(','));
+  // 最近 2 分钟原样保留。
+  const recent = track.filter(point => point.t >= track.at(-1).t - 120_000);
+  assert.ok(recent.length >= 280, `${recent.length}`);
 });

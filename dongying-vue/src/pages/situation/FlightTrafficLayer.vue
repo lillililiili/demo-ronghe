@@ -4,6 +4,7 @@
    - 飞进反制设备「禁止反制范围」的航班标红，进「提醒范围」的标橙；高于规则高度的航班不算，显示为灰色。
    - 点开反制设备时在它周围画出两个范围圈。单独设置过距离的反制设备按它自己的数字画、按它自己的数字着色。
    - 鼠标停在飞机上显示航班号、高度、离反制设备多远、是否靠近。
+   - 进了提醒或禁止范围的航班画飞行线：已经飞过的一段是暗虚线（本页收到的最近 10 分钟位置），前方两分钟要飞到的一段是亮虚线。
    地图上的颜色只作提示，能不能反制以反制弹窗里服务端的检查为准。 */
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { flightAvoidanceApi } from '@/services/flightAvoidanceApi.js';
@@ -16,21 +17,65 @@ const props = defineProps({
 
 const POLL_MS = 5000;
 const STALE_MS = 30000;
+const TRAIL_MS = 10 * 60000;
+const AHEAD_S = 120;
 const COLOR = { BLOCK: '#ff6b7a', WARN: '#ffa940', HIGH: '#6b7890', NONE: '#8fb3d9' };
 const traffic = ref(null);
 const planes = ref([]);
 const hover = ref(null);
+/** 每架航班本页收到过的位置（后台只保留最新一点，飞过的线由页面自己记）。 */
+const trails = new Map();
 let timer = 0, lastMap = null, stopped = false;
 
 async function load() {
   if (document.hidden) return;
   try {
     traffic.value = await flightAvoidanceApi.traffic();
+    remember(traffic.value?.aircraft || []);
   } catch (error) {
     // 没有权限或后台还没有这项功能时不显示图层，不打扰值班人员。
     if (error?.status === 403 || error?.status === 404) traffic.value = null;
   }
   lastMap?.draw();
+}
+
+function remember(aircraft) {
+  const now = Number(traffic.value?.served_at) || Date.now(); // 和「过时」判断用同一个时间（服务器时间），值班电脑时钟不准也不影响
+  aircraft.forEach(a => {
+    const points = trails.get(a.icao24) || [];
+    const last = points[points.length - 1];
+    const observedAt = Number(a.observed_at) || now;
+    if (!last || last.observedAt < observedAt) points.push({ lon: a.longitude, lat: a.latitude, observedAt });
+    trails.set(a.icao24, points.filter(point => now - point.observedAt <= TRAIL_MS));
+  });
+  for (const [icao24, points] of trails) if (!points.length || now - points[points.length - 1].observedAt > TRAIL_MS) trails.delete(icao24);
+}
+
+/** 按当前航向和速度，往前推 AHEAD_S 秒到的位置。 */
+function ahead(a) {
+  if (!Number.isFinite(a.track_deg) || !(a.ground_speed_mps > 0)) return null;
+  const rad = Math.PI / 180, km = a.ground_speed_mps * AHEAD_S / 1000;
+  return [a.longitude + km * Math.sin(a.track_deg * rad) / (111.32 * Math.cos(a.latitude * rad)), a.latitude + km * Math.cos(a.track_deg * rad) / 111.32];
+}
+
+function polyline(c, map, points, color, dash, width) {
+  if (points.length < 2) return;
+  c.beginPath();
+  points.forEach(([lon, lat], i) => { const [x, y] = map.px(lon, lat); i ? c.lineTo(x, y) : c.moveTo(x, y); });
+  c.setLineDash(dash); c.lineWidth = width; c.strokeStyle = color; c.stroke(); c.setLineDash([]);
+}
+
+/** 飞行线：飞过的一段暗一些，前方要飞的一段亮一些，颜色跟飞机一样。 */
+function drawTrail(c, map, a, color) {
+  const past = (trails.get(a.icao24) || []).map(point => [point.lon, point.lat]);
+  past.push([a.longitude, a.latitude]);
+  c.save();
+  c.globalAlpha = .55;
+  polyline(c, map, past, color, [4, 4], 2);
+  c.globalAlpha = 1;
+  const next = ahead(a);
+  if (next) polyline(c, map, [[a.longitude, a.latitude], next], color, [2, 5], 1.5);
+  c.restore();
 }
 
 onMounted(() => {
@@ -122,8 +167,9 @@ function draw(map) {
   }
   const next = freshAircraft.value.flatMap(a => {
     const [x, y] = map.px(a.longitude, a.latitude);
-    if (!(x > -20 && y > -20 && x < map.w + 20 && y < map.h + 20)) return [];
     const { zone, nearest } = zoneOf(a);
+    if (zone === 'WARN' || zone === 'BLOCK') drawTrail(map.ctx, map, a, COLOR[zone]);
+    if (!(x > -20 && y > -20 && x < map.w + 20 && y < map.h + 20)) return [];
     return [{ id: a.icao24, x: Math.round(x), y: Math.round(y), heading: Number(a.track_deg) || 0, color: COLOR[zone], zone,
       name: a.callsign || a.icao24, airline: a.airline || '', altitude: a.altitude_m,
       km: nearest ? nearest.km : null, approaching: nearest ? approaching(a, nearest.device) : false }];

@@ -127,7 +127,7 @@ class K03WarningFlowTests(unittest.TestCase):
                     self.assertEqual(target['notificationBehavior'], 'none')
                     self.assertEqual(target['path'], scene['plans'][0]['points'])
                     self.assertEqual(target['planId'], scene['plans'][0]['id'])
-                    self.assertEqual((target['height'], target['heightAgl'], target['altitudeDatum']), (100, 80, 'AMSL'))
+                    self.assertEqual((target['height'], target['heightAgl'], target['altitudeDatum']), (85, 80, 'AMSL'))
                     self.assertEqual(scene['zones'][0]['kindCode'], 'PROHIBITED')
                     self.assertEqual(scene['zones'][0].get('holes', []), [])
                     self.assertEqual(len(scene['zones'][0]['points']), 4)

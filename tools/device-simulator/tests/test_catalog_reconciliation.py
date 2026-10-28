@@ -179,6 +179,7 @@ class CatalogReconciliationTests(unittest.TestCase):
         client = Client('http://127.0.0.1:8081/api/v1')
         client._onboard_or_reuse = Mock(return_value={'device': {'device_id': 'new'}})
         client._sync_sensing_profile = Mock(side_effect=lambda record, *_: record)
+        client.sync_elevation = Mock()
         devices = {'a': dict(kind='radar', x=1, y=1, name='A')}
         manifest = {'provider': 'map-sim', 'devices': {}}
         with patch.object(catalog, 'plan', return_value={'retire': []}) as prepare, \
@@ -196,6 +197,7 @@ class CatalogReconciliationTests(unittest.TestCase):
         client = Client('http://127.0.0.1:8081/api/v1')
         client._onboard_or_reuse = Mock(return_value={'device': {'device_id': 'current'}})
         client._sync_sensing_profile = Mock(side_effect=lambda record, *_: record)
+        client.sync_elevation = Mock()
         devices = {'a': dict(kind='radar', x=1, y=1, name='A')}
         source = {'kind': 'normalized', 'platform_id': 'fusion-only', 'external_id': 'source-only'}
         manifest = {'provider': 'map-sim', 'devices': {'normalized-a': source}}

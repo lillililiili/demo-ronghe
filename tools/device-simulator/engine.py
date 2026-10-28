@@ -17,6 +17,8 @@ ADSB_BACKGROUND = (0, 200, 60)            # 周围背景航班架数，默认 60
 FLIGHT_KIND = 'flight'
 FLIGHT_MODES = ('once', 'loop', 'pingpong', 'orbit')
 FLIGHT_MAX_ALTITUDE_M = 15000
+# 东营大部分地方地面海拔 2–8 米。设备点位没填时按 5 米；无人机的海拔 = 离地高度 + 这个地面海拔。
+DEFAULT_GROUND_ELEVATION_M = 5.0
 FLIGHT_MAX_SPEED_MPS = 350
 FLIGHT_ORBIT_RADIUS_M = (500, 50000, 5000)
 HEARTBEAT_KINDS = frozenset((*KINDS, 'eo'))
@@ -390,9 +392,23 @@ def _compile_adsb_device(d):
     d['coverage'] = None
 
 
+def device_altitude(d):
+    """设备海拔 = 点位地面海拔 + 架设高度；架设高度没填时只算地面海拔（模拟光电转镜头要一个数）。"""
+    return d.get('groundElevationM', DEFAULT_GROUND_ELEVATION_M) + (d.get('mountHeightM') or 0)
+
+
+def _compile_mount_height(d):
+    """架设高度由接入人员填：可留空，填了须在 0–1000 米。"""
+    if d.get('mountHeightM') in (None, ''):
+        d.pop('mountHeightM', None)
+    else:
+        d['mountHeightM'] = number(d['mountHeightM'], 0, 1000, d.get('name', '设备') + '架设高度')
+
+
 def adsb_devices(scene):
     """场景里的航班接收机（带点位坐标）；它们不在 MQTT 设备表里。"""
-    return {d['id']: dict(d, x=site['x'], y=site['y']) for site in scene.get('sites', [])
+    return {d['id']: dict(d, x=site['x'], y=site['y'], groundElevationM=site.get('groundElevationM', DEFAULT_GROUND_ELEVATION_M))
+            for site in scene.get('sites', [])
             for d in site.get('devices', []) if d.get('kind') == ADSB_KIND}
 
 
@@ -460,6 +476,7 @@ def compile_scene(raw):
     skipped = []
     for site in s['sites']:
         site['x'], site['y'] = point_list([[site['x'], site['y']]], 1, '设备位置')[0]
+        site['groundElevationM'] = number(site.get('groundElevationM', DEFAULT_GROUND_ELEVATION_M), -500, 9000, '地面海拔')
         if not isinstance(site.get('devices'), list) or len(site['devices']) > 100:
             raise ValueError('设备组数量无效')
         for d in site['devices']:
@@ -469,6 +486,7 @@ def compile_scene(raw):
             seen_devices.add(d['id'])
             if d.get('kind') not in LABELS:
                 raise ValueError('未知设备类型')
+            _compile_mount_height(d)
             if d['kind'] == ADSB_KIND:
                 _compile_adsb_device(d)
                 continue
@@ -485,7 +503,7 @@ def compile_scene(raw):
             if d['kind'] == '5da' or d.get('send') is False:
                 skipped.append(d.get('name', d['id']))
             else:
-                devices[d['id']] = dict(d, x=site['x'], y=site['y'])
+                devices[d['id']] = dict(d, x=site['x'], y=site['y'], groundElevationM=site['groundElevationM'])
     if not devices and any(d.get('kind') == ADSB_KIND for site in s['sites'] for d in site['devices']):
         raise ValueError('场景里只有航班接收机：还要至少放一台雷达、TDOA 等感知设备（「添加 → 设备 → 放置设备组」）')
     if not devices or len(devices) > 100:
@@ -580,6 +598,9 @@ def compile_scene(raw):
                 t[key] = number(t[key], 0, limit, label)
             else:
                 t.pop(key, None)
+        if 'heightAgl' in t and t.get('altitudeDatum') != 'AGL' and t.get('altitudePath') is None:
+            # 卡片上填的是离地高度；海拔 = 离地高度 + 地面海拔，两个高度始终对得上。
+            t['height'] = min(10000.0, t['heightAgl'] + DEFAULT_GROUND_ELEVATION_M)
         t['speed'] = number(t.get('speed'), 0, 100, '目标速度')
         t['count'] = number(t.get('count',1), 1, 100, '目标数量')
         if not t['count'].is_integer(): raise ValueError('目标数量必须为整数')
@@ -703,7 +724,7 @@ def messages(scene, devices, targets, manifest, elapsed, now, last_sent, sequenc
                 lon, lat = coordinates([d['x'], d['y']])
                 payload = {'providerCode': manifest['provider'], 'deviceId': external, 'deviceName': d['name'],
                            'deviceType': KINDS[kind], 'workState': 2 if condition == 'fault' else 1,
-                           'ptTime': now, 'deviceLongitude': lon, 'deviceLatitude': lat, 'deviceAltitude': 0,
+                           'ptTime': now, 'deviceLongitude': lon, 'deviceLatitude': lat, 'deviceAltitude': device_altitude(d),
                            'coordinate_system': simulator_wgs84(scene, d)}
                 topic = f"bridge/{manifest['provider']}/device/{kind}/{external}"
             out.append((topic, payload))

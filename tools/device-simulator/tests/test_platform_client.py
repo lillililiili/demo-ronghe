@@ -212,6 +212,7 @@ class RetiredDeviceRestoreTests(unittest.TestCase):
         platform = Platform('http://127.0.0.1:8081/api/v1')
         platform._onboard_or_reuse = Mock(return_value={'device': {'device_id': 'platform-1'}, '_restored': 'retired'})
         platform._sync_sensing_profile = Mock(side_effect=lambda record, *_: record)
+        platform.sync_elevation = Mock()
         manifest = {'provider': 'map-sim', 'devices': {}}
         broker = {'broker_id': 'broker-1', 'owner_org_id': 'org', 'district_id': 'district', 'source_mode': 'live'}
         platform.prepare_devices({'a': {'kind': 'radar', 'x': 1, 'y': 1, 'name': '雷达 01'}}, broker, manifest, lambda: None)

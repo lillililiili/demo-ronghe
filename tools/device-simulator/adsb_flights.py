@@ -145,6 +145,10 @@ class AdsbReceiver:
                                                       latitude=self.center[1], receive_range_km=int(round(self.range_km)),
                                                       station_guid=self.guid))
         self.receiver_id = receiver['device_id']
+        # 像接入人员一样填地面海拔和架设高度；架设高度没填就两项都不填，平台显示「未填写」。
+        mount = self.device.get('mountHeightM')
+        self.api.call('PUT', '/devices/' + self.receiver_id + '/elevation', {} if mount is None else {
+            'ground_elevation_m': self.device['groundElevationM'], 'mount_height_m': mount})
         return receiver
 
     def send(self, datagram):

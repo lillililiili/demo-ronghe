@@ -98,11 +98,13 @@
     render(); toast('航班已放下，在右侧点「在地图上画航线」把航线画出来');
   });
   function flightForm(x) {
-    const airlines = AIRLINES.map(([, name]) => ({value: name, label: name}));
-    if (x.airline && !airlines.some(o => o.value === x.airline)) airlines.push({value: x.airline, label: x.airline});
-    airlines.push({value: '', label: '不填（按航班号前三位认）'});
+    // 平台只收航班号，按前三位认航空公司；这里选航空公司就是换航班号前三位。
+    const prefix = String(x.callsign || '').slice(0, 3).toUpperCase();
+    const airlines = AIRLINES.map(([code, name]) => ({value: code, label: `${name}（${code}）`}));
+    if (!AIRLINES.some(([code]) => code === prefix)) airlines.unshift({value: '', label: '按航班号前三位认'});
     let html = `<div class="field-pair wide-first">${field('名称', 'name', x.name, 'text', 'required maxlength="60"')}${field('航班号', 'callsign', x.callsign || '', 'text', 'required maxlength="8" pattern="[A-Za-z0-9]{2,8}" style="text-transform:uppercase"')}</div>`;
-    html += selectField('航空公司', 'airline', x.airline || '', airlines);
+    const current = AIRLINES.some(([code]) => code === prefix) ? prefix : '';
+    html += selectField('航空公司', 'airlineCode', current, airlines) + `<input type="hidden" name="airlineWas" value="${esc(current)}">`;
     html += `<div class="field-pair">${field('高度（米）', 'height', x.height, 'number', 'min="0" max="15000" required')}${field('速度（公里/小时）', 'speedKmh', Math.round(Number(x.speed) * 3.6), 'number', 'min="0" max="1260" required')}</div>`;
     html += '<p class="seg-label">航线</p>' + btn('edit-target-path', `在地图上画航线（已画 ${x.path.length} 个点）`, 'wide cyan-button');
     html += '<p class="seg-label">怎么飞</p>' + seg('motionMode', x.motionMode || 'once', [{value: 'once', label: '沿航线飞一遍'}, {value: 'orbit', label: '飞到最后一个点盘旋'}, {value: 'pingpong', label: '飞一遍再折返'}]);
@@ -115,9 +117,15 @@
     return html;
   }
   function flightValues(v, x) {
-    const result = {name: v.name.trim(), callsign: v.callsign.trim().toUpperCase(), airline: v.airline, height: Number(v.height), speed: Number(v.speedKmh) / 3.6, motionMode: v.motionMode, orbitRadiusM: Number(v.orbitRadiusKm) * 1000};
+    let callsign = v.callsign.trim().toUpperCase();
+    if (!/^[A-Z0-9]{2,8}$/.test(callsign)) throw Error('航班号须为 2–8 位字母或数字，如 CES2471');
+    const chosen = AIRLINES.find(([code]) => code === v.airlineCode);
+    // 只有改了航空公司才换航班号前三位；直接改航班号时以航班号为准。
+    if (chosen && v.airlineCode !== v.airlineWas && callsign.slice(0, 3) !== chosen[0]) callsign = chosen[0] + callsign.replace(/^[A-Z]{3}/, '');
+    if (!/^[A-Z0-9]{2,8}$/.test(callsign)) throw Error('换了航空公司后航班号超过 8 位，请改短航班号');
+    const byPrefix = AIRLINES.find(([code]) => code === callsign.slice(0, 3));
+    const result = {name: v.name.trim(), callsign, airline: byPrefix ? byPrefix[1] : '', height: Number(v.height), speed: Number(v.speedKmh) / 3.6, motionMode: v.motionMode, orbitRadiusM: Number(v.orbitRadiusKm) * 1000};
     if (!result.name) throw Error('请输入名称');
-    if (!/^[A-Z0-9]{2,8}$/.test(result.callsign)) throw Error('航班号须为 2–8 位字母或数字，如 CES2471');
     if (!Number.isFinite(result.height) || result.height < 0 || result.height > 15000) throw Error('高度须在 0 到 15000 米之间');
     if (!Number.isFinite(result.speed) || result.speed < 0 || result.speed > 350) throw Error('速度须在 0 到 1260 公里/小时之间');
     if (!['once', 'orbit', 'pingpong'].includes(result.motionMode)) throw Error('请选择怎么飞');

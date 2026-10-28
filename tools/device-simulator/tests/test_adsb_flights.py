@@ -175,6 +175,10 @@ class FlightEngineTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, '航班接收机'):
             compile_scene(raw)
         raw = scene_with_receiver()
+        raw['sites'][0]['devices'].pop(0)  # 只有接收机、没有感知设备
+        with self.assertRaisesRegex(ValueError, '只有航班接收机'):
+            compile_scene(raw)
+        raw = scene_with_receiver()
         raw['targets'][0]['callsign'] = 'x'
         with self.assertRaisesRegex(ValueError, '航班号'):
             compile_scene(raw)

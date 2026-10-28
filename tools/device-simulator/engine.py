@@ -486,6 +486,8 @@ def compile_scene(raw):
                 skipped.append(d.get('name', d['id']))
             else:
                 devices[d['id']] = dict(d, x=site['x'], y=site['y'])
+    if not devices and any(d.get('kind') == ADSB_KIND for site in s['sites'] for d in site['devices']):
+        raise ValueError('场景里只有航班接收机：还要至少放一台雷达、TDOA 等感知设备（「添加 → 设备 → 放置设备组」）')
     if not devices or len(devices) > 100:
         raise ValueError('请配置 1 至 100 台可发送设备')
     adsb = adsb_devices(s)

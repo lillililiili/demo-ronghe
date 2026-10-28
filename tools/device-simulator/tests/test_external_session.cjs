@@ -111,7 +111,7 @@ test('route owner follows the chosen unit and district; with no routes and sever
  assert.equal(sandbox.__test.readDraft().route.owner_org_id,'org-b');
  assert.match(html,/<option value="1" selected>乙单位 · 乙区<\/option>/);
  // The simulator's device data connection decides first, ahead of an existing route's owner, as on the airspace page.
- const connection={owner_org_id:'org-a',district_id:'d-a',broker_name:'local-lingyun-replay'};
+ const connection={owner_org_id:'org-a',district_id:'d-a',broker_name:'local-sim-replay'};
  sandbox.__test.set([{route_version_id:'r1',owner_org_id:'org-b',district_id:'d-b'}],[a,b],null,connection);
  html=sandbox.__test.buildPlanInput();
  assert.equal(sandbox.__test.readDraft().route.owner_org_id,'org-a');
@@ -124,7 +124,7 @@ test('route owner follows the chosen unit and district; with no routes and sever
  sandbox.__test.set([],[a,b],null,{owner_org_id:'org-x',district_id:'d-x'});
  sandbox.__test.buildPlanInput();
  assert.equal(sandbox.__test.readDraft().route.owner_org_id,'');
- sandbox.__test.set([],[a,b],null,{owner_org_id:null,district_id:null,message:'未找到启用的回放 MQTT 连接 local-lingyun-replay，请手动选择归属单位与区县'});
+ sandbox.__test.set([],[a,b],null,{owner_org_id:null,district_id:null,message:'未找到启用的回放 MQTT 连接 local-sim-replay，请手动选择归属单位与区县'});
  sandbox.__test.buildPlanInput();
  assert.equal(sandbox.__test.readDraft().route.owner_org_id,'');
  sandbox.__test.set([],[a,b],b,connection);

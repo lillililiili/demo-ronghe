@@ -19,7 +19,7 @@ from eo_worker import EoWorker
 from engine import compile_scene, duration_reached, messages, position
 from notification_inbox import read_inbox, open_handoff_evidence
 from notification_response import NotificationResponse
-from platform_client import Platform, Prerequisites, sql
+from platform_client import Platform, Prerequisites, REPLAY_BROKER_NAMES, sql
 from eo_video import EoSimulator, video_config, public_video_config, sanitize_video_error, DEFAULT_VIDEO
 from qa_media import MediaService, load_or_create_credentials
 from realtime_control import RealtimeController, prepare_scene
@@ -118,7 +118,7 @@ class ExternalBridge:
         broker = getattr(runtime, 'broker', None)
         if not broker:
             try:
-                broker = next((b for b in platform.brokers() if b.get('name') == 'local-lingyun-replay'), None)
+                broker = next((b for b in platform.brokers() if b.get('name') in REPLAY_BROKER_NAMES), None)
             except ValueError as error:
                 if '返回 401' in str(error):
                     self.invalidate(platform)
@@ -352,9 +352,9 @@ class Runtime:
             if api is None: raise ExternalAuthenticationRequired('请先登录系统')
             brokers = api.brokers()
             selected = config.get('broker_id')
-            broker = next((b for b in brokers if b['broker_id']==selected),None) if selected else next((b for b in brokers if b['name']=='local-lingyun-replay'), None)
+            broker = next((b for b in brokers if b['broker_id']==selected),None) if selected else next((b for b in brokers if b['name'] in REPLAY_BROKER_NAMES), None)
             if not broker:
-                raise ValueError('平台里没有找到启用的本机回放设备数据连接（名称 local-lingyun-replay）。'
+                raise ValueError('平台里没有找到启用的本机回放设备数据连接（名称 local-sim-replay）。'
                                  '这个连接不能在模拟器里建，后台页面里也建不了，需要开发人员在平台里建好并启用，之后重新登录')
             if broker['host'] not in ('127.0.0.1','localhost'):
                 raise ValueError('当前版本仅连接本机 replay MQTT，避免误发现场环境')

@@ -15,7 +15,7 @@ import server
 from friendly_errors import explain, explain_exception, subject_of
 
 # 页面和报错里不能再出现的说法：指向已经不存在的后台页面，或者让人去做做不了的事。
-STALE_WORDS = ('接口配置', '请在后台配置', 'local-lingyun-replay', '先在管理端')
+STALE_WORDS = ('接口配置', '请在后台配置', 'local-sim-replay', 'local-lingyun-replay', '先在管理端')
 
 
 class SubjectTest(unittest.TestCase):

@@ -710,6 +710,79 @@ export function extendRecentTracks(targets, previousTargets = []) {
   });
 }
 
+// 整条轨迹每架最多画约这么多点（地图每次重画都逐点画线，点多了拖动会卡）。最近 2 分钟原样保留；
+// 更早的按时间抽稀，4 秒留一点，飞得久仍超过上限时间隔按 8、16…秒加倍。已经够稀的点不再动，早段不会越抽越少。
+const HISTORY_POINT_LIMIT = 1000;
+const HISTORY_RECENT_MS = 120_000;
+const HISTORY_MIN_GAP_MS = 4_000;
+
+const sameSegment = (a, b) => a && b && !b.break_before && !!a.track_id && a.track_id === b.track_id
+  && Number.isFinite(a.point_seq) && b.point_seq === a.point_seq + 1;
+
+/* 完整轨迹（目标首次出现时一次读回的整条融合轨迹）接上最新尾迹：按点编号去重，后台点重叠时保留整条轨迹里的
+   点序号与断开标记（尾迹第一点总被标成断开，只因它是那一页的第一点）；本机接上的点（没有点编号）只留比后台点都新的。 */
+export function mergeTrackHistory(history = [], tail = []) {
+  const known = new Map(history.filter(point => point.point_id).map(point => [point.point_id, point]));
+  const merged = new Map(known);
+  let firstNew = true;
+  for (const point of tail) {
+    if (!point.point_id) continue;
+    const before = known.get(point.point_id);
+    merged.set(point.point_id, before ? { ...point, point_seq: before.point_seq, break_before: before.break_before }
+      : firstNew ? { ...point, firstOfTail: true } : point);
+    if (!before) firstNew = false;
+  }
+  const measured = [...merged.values()];
+  const newest = measured.reduce((max, point) => Number.isFinite(point.t) && point.t > max ? point.t : max, -Infinity);
+  const local = [...history, ...tail].filter((point, index, all) => !point.point_id && point.t > newest
+    && all.findIndex(other => !other.point_id && other.t === point.t) === index);
+  const points = [...measured, ...local].sort((a, b) => (a.t - b.t) || ((a.point_seq ?? 0) - (b.point_seq ?? 0)));
+  return points.map((point, index) => {
+    if (!point.firstOfTail) return point;
+    const { firstOfTail, ...rest } = point;
+    const previous = points[index - 1];
+    // 尾迹第一点若正好接在整条轨迹最后一点之后（同一轨迹、序号连续），不是真的断开。
+    return previous && previous.track_id === rest.track_id && previous.point_seq + 1 === rest.point_seq
+      ? { ...rest, break_before: false } : rest;
+  });
+}
+
+/* 最近 recentMs 内的点原样保留；更早的点与上一个留下的点相隔不到 gap 就去掉（断开处两端都留）。
+   地图只把序号连续的相邻点连成线，留下的点按后一个点重新编号，原来连着的仍连着、原来断开的仍断开。 */
+export function thinTrackHistory(points = [], { limit = HISTORY_POINT_LIMIT, recentMs = HISTORY_RECENT_MS, minGapMs = HISTORY_MIN_GAP_MS } = {}) {
+  const newest = points[points.length - 1]?.t;
+  if (!Number.isFinite(newest)) return points;
+  const split = points.findIndex(point => !(point.t < newest - recentMs));
+  if (split <= 0) return points;
+  const older = points.slice(0, split);
+  const out = points.slice(split);
+  // link[i]：第 i 点与它原来的下一点连着。
+  const link = older.map((point, index) => sameSegment(point, older[index + 1] || out[0]));
+  const pick = gap => {
+    let lastT = -Infinity;
+    return older.map((point, index) => {
+      const keep = index === 0 || index === older.length - 1 || point.break_before || !link[index]
+        || !Number.isFinite(point.t) || point.t - lastT >= gap;
+      if (keep && Number.isFinite(point.t)) lastT = point.t;
+      return keep;
+    });
+  };
+  let keep = pick(minGapMs);
+  for (let gap = minGapMs * 2; out.length + keep.filter(Boolean).length > limit && gap <= 86_400_000; gap *= 2) keep = pick(gap);
+  if (keep.every(Boolean)) return points;
+  let joined = true;
+  for (let index = older.length - 1; index >= 0; index -= 1) {
+    joined = joined && link[index];
+    if (!keep[index]) continue;
+    const point = older[index];
+    const next = out[0];
+    if (!joined && !next.break_before) out[0] = { ...next, break_before: true };
+    out.unshift(joined ? { ...point, point_seq: next.point_seq - 1 } : point);
+    joined = true;
+  }
+  return out;
+}
+
 export function attachTargetSourceLinks(targets, targetId, detail) {
   const links = Array.isArray(detail?.source_links) ? detail.source_links : [];
   return (targets || []).map(target => target.targetId === targetId

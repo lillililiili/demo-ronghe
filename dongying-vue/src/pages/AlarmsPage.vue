@@ -277,10 +277,11 @@ function displayState(a) {
   const failed = sources?.auths?.failed || sources?.handoffs?.failed;
   if (!key || !ALARM_PROGRESS_LABEL[key]) {
     if (failed) return { t: '处置进度读取失败', c: 't-gray', color: '#8ca0be' };
-    if (!sources?.auths?.items || !sources?.handoffs?.items) {
+    const summary = advisorySummaries.get(progressKey(a));
+    // 通知摘要没读回也算读取中：否则刷新时先闪一下"告警已确认"再变成"待定是否反制"（2026-10-28）。
+    if (!sources?.auths?.items || !sources?.handoffs?.items || (!summary && pendingProgress.has(progressKey(a)))) {
       return { t: pendingProgress.has(progressKey(a)) ? '处置进度读取中' : '处置进度待确认', c: 't-gray', color: '#8ca0be' };
     }
-    const summary = advisorySummaries.get(progressKey(a));
     if (summary?.response_order?.counter_priority && summary?.counter_launch_visible) return { t: '可人工发起反制', c: 't-amber', color: '#f1a43a' };
     if (NOTIFY_PHASE[summary?.notify_phase]) return NOTIFY_PHASE[summary.notify_phase];
     if (departureView(a, summary)) return { t: '已撤离 · 处置已结束', c: 't-green', color: '#31d19b' };

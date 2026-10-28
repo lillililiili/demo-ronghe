@@ -4,12 +4,14 @@
    1. 左边“添加”栏、右边按对象分块的设置、顶部运行栏、底部“运行情况”——把各脚本自己插进页面的按钮和文字挪到这些位置；
    2. 右侧设置换成分块说明的写法（常用的在上面，其余收进“更多设置”），字段名和原来一样，保存逻辑不变；
    3. 设备组里的“反制设备”就是四通道反制设备：开始前把它所在点位的位置、所属单位写进实时收发设置，它本身不作为 MQTT 设备登记（send:false）；
-   4. 去掉人员、车辆、船舶、遥控器四种目标。
+   4. 去掉人员、车辆、船舶、遥控器四种目标；
+   5. 加「航班接收机」设备（放在点位上，开始时登记到平台，航班按真实接收机的格式走 UDP）和「民航航班」目标（画航线飞）。
    原版页面（classic.html）不加载这个文件，行为不变。 */
 (() => {
   const hiddenTargetKinds = ['person', 'vehicle', 'ship', 'remote_controller'];
   for (const kind of hiddenTargetKinds) { const at = targetKinds.indexOf(kind); if (at >= 0) targetKinds.splice(at, 1); }
-  const COUNTER = 'countermeasure';
+  const COUNTER = 'countermeasure', ADSB = 'adsb', FLIGHT = 'flight';
+  deviceKinds.push(ADSB);
   let realtimeConfig = null, scopes = null, scopesSession = null;
   const lonLat = site => [(118.56 + site.x * .00012).toFixed(6), (37.50 - site.y * .00012).toFixed(6)];
   const counterDevices = () => state.sites.flatMap(site => site.devices.filter(d => d.kind === COUNTER).map(device => ({device, site})));
@@ -59,9 +61,102 @@
     if (syncNote()) syncNote().textContent = '';
   }
   function payload(current) {
+    normalizeAdsb();
     const copy = structuredClone(current);
     copy.sites.forEach(site => site.devices.forEach(d => { if (d.kind === COUNTER) d.send = false; }));
     return copy;
+  }
+
+  /* —— 航班接收机与民航航班 —— */
+  const hex = n => Array.from({length: n}, () => '0123456789abcdef'[Math.floor(Math.random() * 16)]).join('');
+  const AIRLINES = [['CCA', '中国国航'], ['CES', '东方航空'], ['CSN', '南方航空'], ['CHH', '海南航空'], ['CDG', '山东航空'], ['CXA', '厦门航空'], ['CSC', '四川航空'], ['CSZ', '深圳航空'], ['CQH', '春秋航空'], ['DKH', '吉祥航空']];
+  const adsbDevices = () => state.sites.flatMap(site => site.devices.filter(d => d.kind === ADSB));
+  // 新放的接收机补上默认设置：接收范围 350 公里、周围 60 架背景航班、随机识别码（平台按它认设备，开始时自动登记）。
+  function normalizeAdsb() {
+    let changed = false;
+    for (const d of adsbDevices()) {
+      if (!(Number(d.rangeKm) > 0)) { d.rangeKm = 350; changed = true; }
+      if (!Number.isInteger(Number(d.backgroundFlights)) || d.backgroundFlights === undefined) { d.backgroundFlights = 60; changed = true; }
+      if (!/^[0-9a-f]{16}$/.test(String(d.stationGuid || ''))) { d.stationGuid = hex(16); changed = true; }
+      if (d.health !== '正常') { d.health = '正常'; changed = true; }
+      if (!['持续上报', '停止心跳'].includes(d.heartbeat)) { d.heartbeat = '持续上报'; changed = true; }
+      if (!(Number(d.interval) >= 1)) { d.interval = 1; changed = true; }
+    }
+    return changed;
+  }
+  // 放民航航班时 app.js 先按无人机的默认值放下（它那套要选上报设备）；这里紧跟着改成航班的默认值。
+  function flightDefaults(t) {
+    const count = state.targets.filter(x => x.kind === FLIGHT && x.callsign).length, [prefix, airline] = AIRLINES[count % AIRLINES.length];
+    for (const key of ['count', 'transport', 'altitudeDatum', 'secondaryDeviceId', 'heightAgl', 'probability']) delete t[key];
+    Object.assign(t, {name: `民航航班 ${count + 1}`, callsign: prefix + String(1000 + Math.floor(Math.random() * 9000)), airline, icao24: '78' + hex(4),
+      height: 2500, speed: 400 / 3.6, motionMode: 'once', orbitRadiusM: 5000, planId: '', deviceId: ''});
+  }
+  window.addEventListener('simulator-map:point', () => {
+    const fresh = state.targets.filter(t => t.kind === FLIGHT && !t.callsign);
+    if (!fresh.length) return;
+    fresh.forEach(flightDefaults);
+    render(); toast('航班已放下，在右侧点「在地图上画航线」把航线画出来');
+  });
+  function flightForm(x) {
+    // 平台只收航班号，按前三位认航空公司；这里选航空公司就是换航班号前三位。
+    const prefix = String(x.callsign || '').slice(0, 3).toUpperCase();
+    const airlines = AIRLINES.map(([code, name]) => ({value: code, label: `${name}（${code}）`}));
+    if (!AIRLINES.some(([code]) => code === prefix)) airlines.unshift({value: '', label: '按航班号前三位认'});
+    let html = `<div class="field-pair wide-first">${field('名称', 'name', x.name, 'text', 'required maxlength="60"')}${field('航班号', 'callsign', x.callsign || '', 'text', 'required maxlength="8" pattern="[A-Za-z0-9]{2,8}" style="text-transform:uppercase"')}</div>`;
+    const current = AIRLINES.some(([code]) => code === prefix) ? prefix : '';
+    html += selectField('航空公司', 'airlineCode', current, airlines) + `<input type="hidden" name="airlineWas" value="${esc(current)}">`;
+    html += `<div class="field-pair">${field('高度（米）', 'height', x.height, 'number', 'min="0" max="15000" required')}${field('速度（公里/小时）', 'speedKmh', Math.round(Number(x.speed) * 3.6), 'number', 'min="0" max="1260" required')}</div>`;
+    html += '<p class="seg-label">航线</p>' + btn('edit-target-path', `在地图上画航线（已画 ${x.path.length} 个点）`, 'wide cyan-button');
+    html += '<p class="seg-label">怎么飞</p>' + seg('motionMode', x.motionMode || 'once', [{value: 'once', label: '沿航线飞一遍'}, {value: 'orbit', label: '飞到最后一个点盘旋'}, {value: 'pingpong', label: '飞一遍再折返'}]);
+    html += '<p class="field-note">航班由场景里的航班接收机送给平台（接收范围内才送）；能不能反制由平台按规则管理里的航班避让规则判断。</p>';
+    html += moreBox('逐航点高度、盘旋半径、机身地址',
+      field('逐航点高度（米，逗号分隔，可留空）', 'altitudePathInput', (x.altitudePath || []).join(', '))
+      + `<p class="field-note">当前航线 ${x.path.length} 个点；填了就要和点数一样多，航班在两点之间匀速爬升或下降。留空按上面的高度平飞。</p>`
+      + field('盘旋半径（公里）', 'orbitRadiusKm', (Number(x.orbitRadiusM) || 5000) / 1000, 'number', 'min="0.5" max="50" step="0.5"')
+      + field('机身地址（ICAO 24 位，十六进制）', 'icao24', x.icao24 || '', 'text', 'readonly'));
+    return html;
+  }
+  function flightValues(v, x) {
+    let callsign = v.callsign.trim().toUpperCase();
+    if (!/^[A-Z0-9]{2,8}$/.test(callsign)) throw Error('航班号须为 2–8 位字母或数字，如 CES2471');
+    const chosen = AIRLINES.find(([code]) => code === v.airlineCode);
+    // 只有改了航空公司才换航班号前三位；直接改航班号时以航班号为准。
+    if (chosen && v.airlineCode !== v.airlineWas && callsign.slice(0, 3) !== chosen[0]) callsign = chosen[0] + callsign.replace(/^[A-Z]{3}/, '');
+    if (!/^[A-Z0-9]{2,8}$/.test(callsign)) throw Error('换了航空公司后航班号超过 8 位，请改短航班号');
+    const byPrefix = AIRLINES.find(([code]) => code === callsign.slice(0, 3));
+    const result = {name: v.name.trim(), callsign, airline: byPrefix ? byPrefix[1] : '', height: Number(v.height), speed: Number(v.speedKmh) / 3.6, motionMode: v.motionMode, orbitRadiusM: Number(v.orbitRadiusKm) * 1000};
+    if (!result.name) throw Error('请输入名称');
+    if (!Number.isFinite(result.height) || result.height < 0 || result.height > 15000) throw Error('高度须在 0 到 15000 米之间');
+    if (!Number.isFinite(result.speed) || result.speed < 0 || result.speed > 350) throw Error('速度须在 0 到 1260 公里/小时之间');
+    if (!['once', 'orbit', 'pingpong'].includes(result.motionMode)) throw Error('请选择怎么飞');
+    if (!Number.isFinite(result.orbitRadiusM) || result.orbitRadiusM < 500 || result.orbitRadiusM > 50000) throw Error('盘旋半径须在 0.5 到 50 公里之间');
+    if (!v.altitudePathInput.trim()) result.altitudePath = undefined;
+    else {
+      const parts = v.altitudePathInput.split(','), values = parts.map(s => Number(s.trim()));
+      if (parts.some(s => !s.trim()) || values.length !== x.path.length || values.some(n => !Number.isFinite(n) || n < 0 || n > 15000)) throw Error(`逐航点高度须与 ${x.path.length} 个航线点一一对应，每个在 0 到 15000 米之间`);
+      result.altitudePath = values;
+    }
+    return result;
+  }
+  function adsbRow(d) {
+    return `<div class="device-row"><h3>${esc(d.name)}<small>航班接收机</small></h3><input type="hidden" name="health_${d.id}" value="正常"><input type="hidden" name="interval_${d.id}" value="1">${seg(`heartbeat_${d.id}`, d.heartbeat || '持续上报', [{value: '持续上报', label: '正常发送'}, {value: '停止心跳', label: '断开（不发）', bad: true}])}<div class="field-pair">${field('接收范围（公里）', `range_${d.id}`, d.rangeKm, 'number', 'min="10" max="600" step="1" required')}${field('周围背景航班（架）', `background_${d.id}`, d.backgroundFlights, 'number', 'min="0" max="200" step="1" required')}</div>${field('识别码（平台按它认这台接收机）', `guid_${d.id}`, d.stationGuid, 'text', 'readonly')}<p class="field-note">开始模拟时按这个点位的位置自动登记到平台的接入设备里，画出来的航班和周围的背景航班每秒一架一条、每 30 秒一条状态，按真实接收机的格式通过 UDP 送到平台；停止时停用。背景航班都飞在 7000 米以上，不影响反制。</p></div>`;
+  }
+  function adsbSiteValues(form, site) {
+    for (const d of site.devices) {
+      if (d.kind !== ADSB) continue;
+      const range = Number(form.elements[`range_${d.id}`]?.value), background = Number(form.elements[`background_${d.id}`]?.value);
+      if (!Number.isFinite(range) || range < 10 || range > 600) throw Error(`${d.name}：接收范围须在 10 到 600 公里之间`);
+      if (!Number.isInteger(background) || background < 0 || background > 200) throw Error(`${d.name}：周围背景航班须为 0 到 200 的整数`);
+      d.rangeKm = range; d.backgroundFlights = background;
+    }
+  }
+  function adsbStatus(data) {
+    const placed = adsbDevices().length, live = data.adsb || {};
+    if (!placed && !live.devices?.length) return '航班接收机 未放置';
+    if (!running() || !live.devices?.length) return `航班接收机 ${placed} 台 · 开始后登记`;
+    if (live.offline) return '航班接收机 已断开 · 不发';
+    const error = live.devices.find(d => d.error);
+    return `航班接收机 已发 ${live.aircraft || 0} 架 · 每秒 ${live.per_second || 0} 条${error ? ' · 发不出去' : ''}`;
   }
   window.SimpleLayout = {hiddenTargetKinds, payload, beforeStart};
 
@@ -115,6 +210,7 @@
     const tcp = rt?.countermeasure || {}, n = rt?.notifications || {};
     $$('status-counter').textContent = isolated ? '反制设备 本模式不启用' : counterDevices().some(c => c.device.enabled !== false) || tcp.listening ? `反制设备 ${tcp.listening ? '已接上 · 收到指令 ' + (tcp.received || 0) + ' 次' : '未连接'}` : '反制设备 已停用';
     $$('status-notify').textContent = isolated ? '短信电话 本模式不启用' : `短信电话 收到 ${n.received_count || 0} / 已回执 ${n.receipt_count || 0}`;
+    $$('status-adsb').textContent = adsbStatus(data);
     $$('run-mode-note').textContent = isolated ? '隔离测试场景模式下没有实时收发。'
       : rt ? `接收端：${stateText[rt.state] || rt.state}。点“开始”会自动启动接收端；下面两个按钮只在要单独开关接收端时用。` : '';
     $$('stop-button').textContent = '停止';
@@ -189,7 +285,9 @@
     const [lon, lat] = lonLat(x);
     let html = field('名称', 'name', x.name, 'text', 'required maxlength="60"') + btn('relocate-site', '在地图上挪位置', 'wide cyan-button') + '<p class="seg-label">这里的设备</p>';
     let counters = 0, intervals = '';
+    normalizeAdsb();
     for (const d of x.devices) {
+      if (d.kind === ADSB) { html += adsbRow(d); continue; }
       intervals += field(`${d.name} 心跳间隔（秒）`, `interval_${d.id}`, d.interval, 'number', 'min="1" max="300" required');
       if (d.kind === COUNTER) {
         counters++;
@@ -226,7 +324,7 @@
     const x = lookup(selected.kind, selected.id);
     if (!x) { $('#inspector-title').textContent = '对象设置'; $('#inspector').innerHTML = '<div class="empty">从左边“添加”里挑一样放到地图上，或点地图上的对象<br>在这里改它的设置</div>'; return; }
     $('#inspector-title').textContent = x.name;
-    const html = selected.kind === 'risk' ? riskFields(x) : selected.kind === 'site' ? siteForm(x) : selected.kind === 'target' ? targetForm(x) : selected.kind === 'plan' ? planForm(x) : zoneForm(x);
+    const html = selected.kind === 'risk' ? riskFields(x) : selected.kind === 'site' ? siteForm(x) : selected.kind === 'target' ? (x.kind === FLIGHT ? flightForm(x) : targetForm(x)) : selected.kind === 'plan' ? planForm(x) : zoneForm(x);
     $('#inspector').innerHTML = `<section id="notification-progress" class="notification-progress" hidden></section><form id="inspector-form">${html}<p class="inline-error" role="alert"></p><div class="form-actions"><button type="submit" class="primary">${selected.kind === 'risk' ? '保存判定条件' : '应用设置'}</button></div></form>`;
     window.NotificationUI.estimate(); window.NotificationUI.progress(); window.NotificationUI.lock(); updatePlanWindowNote();
   };
@@ -236,7 +334,16 @@
     if (form.id !== 'inspector-form' || running()) return;
     const x = lookup(selected.kind, selected.id);
     if (!x) return;
+    const fail = message => { event.preventDefault(); event.stopImmediatePropagation(); form.querySelector('.inline-error').textContent = message; };
+    if (selected.kind === 'target' && x.kind === FLIGHT) {
+      // 民航航班的字段和无人机不一样，不交给 app.js 的目标校验。
+      event.preventDefault(); event.stopImmediatePropagation();
+      try { Object.assign(x, flightValues(formValues(form), x)); } catch (issue) { form.querySelector('.inline-error').textContent = issue.message; return; }
+      dirty(); render(); toast('设置已应用到本地草稿');
+      return;
+    }
     if (selected.kind === 'site') {
+      try { adsbSiteValues(form, x); } catch (issue) { fail(issue.message); return; }
       for (const d of x.devices) if (d.kind === COUNTER) { d.scope = form.elements[`scope_${d.id}`]?.value || ''; d.send = false; d.enabled = form.elements[`enabled_${d.id}`]?.value !== 'off'; }
       if (liveState) try { renderStatus(liveState); } catch (error) { console.error(error); }
     }
@@ -253,6 +360,7 @@
     if (!el) return;
     const what = el.dataset.simple, workspace = window.SimulatorWorkspace;
     if (what === 'weather') { if (draw) return toast('请先完成或取消当前绘制'); $$('dock-title').textContent = dockTitle.weather; workspace.openInput('weather'); }
+    if (what === 'adsb-device') { if (running()) return toast('请先停止运行'); setDraw('site', null, null, {name: `航班接收机 ${adsbDevices().length + 1}`, counts: Object.fromEntries(deviceKinds.map(k => [k, k === ADSB ? 1 : 0]))}); }
     if (what === 'plan-submit') { selected = {kind: 'plan', id: el.dataset.id}; $$('dock-title').textContent = dockTitle.plans; workspace.openInput('plans'); }
     if (what === 'zone-issue') { $$('dock-title').textContent = dockTitle.airspaces; workspace.openAirspace(el.dataset.id); }
     if (what === 'redraw-zone') setDraw('zone', el.dataset.id);

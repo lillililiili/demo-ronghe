@@ -34,7 +34,7 @@ class FakeApi:
         return copy.deepcopy(self.value)
     def broker(self):
         self.calls.append('broker')
-        return {'name': 'local-lingyun-replay', 'host': '127.0.0.1', 'port': 1883}
+        return {'name': 'local-sim-replay', 'host': '127.0.0.1', 'port': 1883}
     def verify_session(self):
         self.calls.append('verify')
         if self.invalid:

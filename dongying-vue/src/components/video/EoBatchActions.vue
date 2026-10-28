@@ -199,7 +199,7 @@ async function submit() {
             <div class="eo-form-grid">
               <UField :id="`eo-mode-${identity(row)}`" v-model="row.mode" type="select" label="授权方式" :disabled="busy" :options="[{value:'DIRECT',label:'直接反制',allowed:row.check.counter.can_direct},{value:'REQUEST',label:'申请审批',allowed:row.check.counter.can_request}].filter(o=>o.allowed)" />
               <UField :id="`eo-counter-mode-${identity(row)}`" v-model="row.countermeasure_mode" type="select" label="反制方式" :disabled="busy" :options="Object.entries(COUNTERMEASURE_MODE_LABEL).map(([value,label])=>({value,label}))" />
-              <UField :id="`eo-channel-${identity(row)}`" v-model="row.channel" type="select" label="执行通道" :disabled="busy" :options="[{value:'COUNTERMEASURE_4CH',label:'四通道反制设备'},{value:'LINGYUN_B',label:'凌云协议 B 设备'}]" @update:model-value="row.device_id=null" />
+              <UField :id="`eo-channel-${identity(row)}`" v-model="row.channel" type="select" label="执行通道" :disabled="busy" :options="[{value:'COUNTERMEASURE_4CH',label:'四通道反制设备'},{value:'LINGYUN_B',label:'协议 B 设备'}]" @update:model-value="row.device_id=null" />
               <UField :id="`eo-device-${identity(row)}`" v-model="row.device_id" type="select" label="执行设备" required :options="options(row)" :disabled="busy" filterable placeholder="请选择设备" />
             </div>
             <UField :id="`eo-reason-${identity(row)}`" v-model="row.reason" type="textarea" label="事由" :input-props="{maxlength:500}" :disabled="busy" placeholder="选填；填写时为2–500字" />

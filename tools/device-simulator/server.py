@@ -16,10 +16,10 @@ from urllib.request import Request, build_opener, ProxyHandler, HTTPRedirectHand
 from urllib.error import HTTPError, URLError
 from eo_observations import EoObservations, PAGE_DEFAULT_CONFIG
 from eo_worker import EoWorker
-from engine import compile_scene, duration_reached, messages, position
+from engine import adsb_devices, compile_scene, duration_reached, messages, position
 from notification_inbox import read_inbox, open_handoff_evidence
 from notification_response import NotificationResponse
-from platform_client import Platform, Prerequisites, sql
+from platform_client import Platform, Prerequisites, REPLAY_BROKER_NAMES, sql
 from eo_video import EoSimulator, video_config, public_video_config, sanitize_video_error, DEFAULT_VIDEO
 from qa_media import MediaService, load_or_create_credentials
 from realtime_control import RealtimeController, prepare_scene
@@ -28,6 +28,7 @@ from start_check import check as check_before_start, retired_devices, retired_me
 from full_scenario import full_scene, allocate_identities
 import mock_airport
 from fullchain import FullChain
+from adsb_flights import AdsbReceivers
 from protocol_b import ProtocolBResponder
 from mqtt_recovery import CommandSubscriptions
 from device_health import DeviceHealthReporter, declare_planned_offline
@@ -118,7 +119,7 @@ class ExternalBridge:
         broker = getattr(runtime, 'broker', None)
         if not broker:
             try:
-                broker = next((b for b in platform.brokers() if b.get('name') == 'local-lingyun-replay'), None)
+                broker = next((b for b in platform.brokers() if b.get('name') in REPLAY_BROKER_NAMES), None)
             except ValueError as error:
                 if '返回 401' in str(error):
                     self.invalidate(platform)
@@ -230,6 +231,7 @@ class Runtime:
         self.source_scene = None
         self.loaded_history = False
         self.fullchain = None
+        self.adsb = None
         self.cancel = threading.Event(); self.thread = None
         self.next_session_check = 0
         self.snapshot = {}; self.skipped = []; self.response = None
@@ -283,7 +285,9 @@ class Runtime:
         with self.lock:
             return {'phase':self.phase, 'error':self.error, 'error_detail':self.error_detail, 'batch':self.batch, 'elapsed':round(self.elapsed,1),
                     'duration':self.scene.get('duration',0)*60, 'sent':self.sent, 'logs':copy.deepcopy(self.logs[-80:]),
-                    'positions':{k:position(t,self.elapsed) for k,t in self.targets.items()},
+                    'positions':{**{k:position(t,self.elapsed) for k,t in self.targets.items()},
+                                 **{f['id']:position(f,self.elapsed) for f in self.scene.get('flights') or []}},
+                    'adsb':self.adsb.snapshot() if self.adsb else {'devices':[],'aircraft':0,'per_second':0,'sent':0,'offline':False},
                     'notification_observation':self.response.snapshot() if self.response else self.manifest.get('notification_observation', {}),
                     'video_config':public_video_config(self.video_config), 'video_control_available':True,
                     'eo':copy.deepcopy(self.eo_status),
@@ -352,9 +356,9 @@ class Runtime:
             if api is None: raise ExternalAuthenticationRequired('请先登录系统')
             brokers = api.brokers()
             selected = config.get('broker_id')
-            broker = next((b for b in brokers if b['broker_id']==selected),None) if selected else next((b for b in brokers if b['name']=='local-lingyun-replay'), None)
+            broker = next((b for b in brokers if b['broker_id']==selected),None) if selected else next((b for b in brokers if b['name'] in REPLAY_BROKER_NAMES), None)
             if not broker:
-                raise ValueError('平台里没有找到启用的本机回放设备数据连接（名称 local-lingyun-replay）。'
+                raise ValueError('平台里没有找到启用的本机回放设备数据连接（名称 local-sim-replay）。'
                                  '这个连接不能在模拟器里建，后台页面里也建不了，需要开发人员在平台里建好并启用，之后重新登录')
             if broker['host'] not in ('127.0.0.1','localhost'):
                 raise ValueError('当前版本仅连接本机 replay MQTT，避免误发现场环境')
@@ -503,6 +507,7 @@ class Runtime:
                            'broker_id':self.broker['broker_id'],'scope':{k:self.broker[k] for k in ('owner_org_id','district_id')},'devices':{},'plans':{},'zones':{},
                            'targets':allocate_identities(scene,self.batch)}
             self.fullchain = None
+            self.adsb = None
             self.phase='PREPARING'
             self.checkpoint()
             (self.data_dir/self.batch/'scene.json').write_text(json.dumps(scene,ensure_ascii=False,indent=2), encoding='utf-8')
@@ -558,6 +563,14 @@ class Runtime:
             self.log('SUBSCRIPTIONS_READY','后台已确认本批全部设备订阅，准备开始发送')
             self.checkpoint()
             if self.cancel.is_set(): return
+            if adsb_devices(self.scene):
+                scope = self.manifest.get('scope') or {k: self.broker[k] for k in ('owner_org_id', 'district_id')}
+                adsb = AdsbReceivers(self.platform, scope, self.scene)
+                # 航班接收机不是 MQTT 设备：按点位登记到平台，航班每秒按 pingStation3 格式走 UDP 送到平台端口。
+                self.adsb = adsb  # 先挂上，登记到一半出错也能在结束时停用已登记的
+                self.manifest['adsb_receivers'] = adsb.prepare()
+                self.checkpoint()
+                self.log('ADSB_READY','航班接收机已登记到平台：'+'、'.join(r['name'] for r in self.adsb.snapshot()['devices']))
             from paho.mqtt import client as mqtt
             connected=threading.Event(); result=[]
             client=mqtt.Client(mqtt.CallbackAPIVersion.VERSION2,client_id=self.batch,protocol=mqtt.MQTTv311,reconnect_on_failure=True)
@@ -677,6 +690,7 @@ class Runtime:
                     with self.lock:
                         self.response.apply(self.targets, elapsed, int(time.time()*1000))
                     if self.fullchain: self.fullchain.tick(self.targets,elapsed,sequence,observed_at=frame_time)
+                    if self.adsb: self.adsb.tick(elapsed, frame_time)
                     health.observe(self.scene, elapsed)
                     for topic,payload in messages(self.scene,devices,self.targets,self.manifest,elapsed,frame_time,last_sent,sequence):
                         with self.lock:
@@ -721,6 +735,7 @@ class Runtime:
             if client:
                 client.disconnect(); client.loop_stop()
             self.mqtt_connected = False
+            self.release_adsb()
             self.withdraw_run_airspaces()
             self.declare_planned_offline()
             # The notification receiver and command listener outlive the scene; only stop_all
@@ -742,13 +757,18 @@ class Runtime:
             manifest['planned_offline'] = {'declared': result['declared'], 'failed': result['failed'],
                                            'at': int(time.time() * 1000)}
 
+    def release_adsb(self):
+        """停止、完成、失败都会走到这里：停用本批次登记的模拟航班接收机，后面别的场景的反制不再按它检查。"""
+        if not self.adsb: return
+        try:
+            self.adsb.release()
+            self.log('ADSB_RELEASED', '模拟航班接收机已停用')
+        except Exception as error:
+            self.log('ADSB_RELEASE_FAILED', '模拟航班接收机没能停用，10 分钟后平台不再按它检查：' + str(error))
+
     def withdraw_run_airspaces(self):
         """停止、完成、失败都会走到这里：把本批次下发的模拟空域撤回，下一个场景不再受它们影响（清单第 4 条）。"""
         if not self.fullchain: return
-        try:
-            self.fullchain.release_adsb()
-        except Exception as error:
-            self.log('ADSB_RELEASE_FAILED', '模拟航班接收机没能停用，10 分钟后平台不再按它检查：' + str(error))
         try:
             results = self.fullchain.withdraw_zones()
         except Exception as error:

@@ -15,6 +15,9 @@ from engine import coordinates, zone_polygon_rings
 from coverage_defaults import default_coverage
 from engine import normalize_coverage_config
 
+# 本机回放 MQTT 连接的名称；旧库里仍可能叫旧名，两者都认。
+REPLAY_BROKER_NAMES = ('local-sim-replay', 'local-lingyun-replay')
+
 
 def stable_device_identity(device_id, kind):
     """Return the simulator's long-lived external identity for one logical device.

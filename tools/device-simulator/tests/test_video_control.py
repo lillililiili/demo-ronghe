@@ -70,7 +70,7 @@ class VideoControlTests(unittest.TestCase):
         self.runtime.phase = 'STOPPED'
         self.runtime.video_config.update(enabled=True, publisher_password='')
         self.runtime.session.platform.brokers = Mock(return_value=[{
-            'broker_id': 'local-test', 'name': 'local-lingyun-replay',
+            'broker_id': 'local-test', 'name': 'local-sim-replay',
             'host': '127.0.0.1', 'port': 1883}])
         with patch('server.load_or_create_credentials', return_value={'publish': 'generated-secret-only'}), \
                 patch('eo_video.shutil.which', return_value='/test/ffmpeg'):

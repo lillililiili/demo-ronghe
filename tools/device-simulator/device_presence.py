@@ -16,6 +16,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
 from engine import messages, number, point_list
+from platform_client import REPLAY_BROKER_NAMES
 from realtime_notification_receiver import InstanceLock, ProxyClient, ReceiverError
 
 ROOT = Path(__file__).resolve().parent
@@ -54,9 +55,9 @@ class SimulatorApi(ProxyClient):
 class MqttPublisher:
     def __init__(self, broker):
         if (broker.get('host') not in ('localhost', '127.0.0.1')
-                or broker.get('name') != 'local-lingyun-replay'
+                or broker.get('name') not in REPLAY_BROKER_NAMES
                 or type(broker.get('port')) is not int or not 1 <= broker['port'] <= 65535):
-            raise ReceiverError('保活只允许现有本机 local-lingyun-replay MQTT 连接')
+            raise ReceiverError('保活只允许现有本机 local-sim-replay MQTT 连接')
         if any(broker.get(key) for key in ('tls', 'username', 'password', 'auth_required')):
             raise ReceiverError('当前代理未提供可用 MQTT 证书或认证会话，停止保活；不猜测凭据')
         try:

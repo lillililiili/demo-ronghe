@@ -21,9 +21,9 @@ const types = [
 ];
 const airspaceKinds={PROHIBITED:'禁飞区',RESTRICTED:'限制区',ALTITUDE_LIMIT:'限高区',PERMITTED:'允许区',TEMPORARY_CONTROL:'临时管制区'};
 const riskIcons={zone:'area',deviation:'route','no-plan':'document',height:'height',time:'clock',bird:'bird',balloon:'balloon',offline:'offline',fault:'fault'};
-const labels={uav:'无人机',bird:'鸟群',balloon:'气球',unknown:'未知目标',identifying:'识别中目标',person:'人员',vehicle:'车辆',ship:'船舶',remote_controller:'遥控器',radar:'雷达',tdoa:'TDOA',rid:'Remote ID',aoa:'AOA',dcd:'协议破解',dec:'诱骗',ifr:'干扰',bsc:'驱鸟炮',weather:'气象设备','5ga':'5G-A',eo:'光电',countermeasure:'反制设备'};
+const labels={uav:'无人机',bird:'鸟群',balloon:'气球',unknown:'未知目标',identifying:'识别中目标',person:'人员',vehicle:'车辆',ship:'船舶',remote_controller:'遥控器',radar:'雷达',tdoa:'TDOA',rid:'Remote ID',aoa:'AOA',dcd:'协议破解',dec:'诱骗',ifr:'干扰',bsc:'驱鸟炮',weather:'气象设备','5ga':'5G-A',eo:'光电',countermeasure:'反制设备',flight:'民航航班',adsb:'航班接收机'};
 const targetKinds=['uav','bird','balloon','unknown','identifying','person','vehicle','ship','remote_controller'];
-const targetIcon=kind=>kind==='uav'?'uav':kind==='bird'?'bird':kind==='balloon'?'balloon':'fusion';
+const targetIcon=kind=>kind==='uav'?'uav':kind==='bird'?'bird':kind==='balloon'?'balloon':kind==='flight'?'plane':'fusion';
 // 平台后台已停用 AOA、协议破解、Remote ID、诱骗、干扰、驱鸟炮，登记不了；这里不再提供，旧草稿里残留的在开始前会被点名挡住。
 const deviceKinds=['weather','5ga','eo','tdoa','radar','countermeasure'];
 const targetDeviceKinds=['radar','tdoa','5ga'];
@@ -200,7 +200,7 @@ function renderMap(){
   if(weatherPreview.length&&map.projectCoordinates){const ps=weatherPreview.map(p=>map.projectCoordinates(p));svg+=`<polygon points="${attr(ps)}" fill="#65bed333" stroke="#80c8df" stroke-width="1.5" stroke-dasharray="5 4" pointer-events="none"/>`+sceneLabel(ps[0][0],ps[0][1]-32,'模拟天气预报范围');}
   state.zones.forEach(z=>{const ps=points(z.points);svg+=`<path class="map-geometry" data-action="select" data-kind="zone" data-id="${z.id}" d="${window.ZoneRings.svgPath(z,project)}" fill-rule="evenodd" fill="#e5ad432b" stroke="#efb849" stroke-width="2.5"/>`;const p=ps[1]||ps[0];if(p){const x=compactPaths?(Math.min(...ps.map(point=>point[0]))+Math.max(...ps.map(point=>point[0])))/2:p[0]+20,y=compactPaths?Math.min(...ps.map(point=>point[1]))+8:p[1]+35;svg+=sceneLabel(x,y,z.name);}});
   state.plans.forEach(p=>{const ps=points(p.points);svg+=`<polyline class="map-geometry" data-action="select" data-kind="plan" data-id="${p.id}" points="${attr(ps)}" fill="none" stroke="#8190a1" stroke-width="3" stroke-dasharray="10 7"/>`;if(!compactPaths)svg+=ps.map(([x,y])=>`<circle cx="${x}" cy="${y}" r="4" fill="#285076" stroke="#e5f3ff" stroke-width="1.5"/>`).join('');const q=ps[Math.floor(ps.length/2)];if(q)svg+=sceneLabel(q[0],q[1]-40,p.name);});
-  state.targets.forEach(t=>{const ps=points(t.path),color=t.kind==='bird'?'#16866d':t.kind==='balloon'?'#9261c2':'#2867e8';svg+=`<polyline class="map-geometry" data-action="select" data-kind="target" data-id="${t.id}" points="${attr(ps)}" fill="none" stroke="${color}" stroke-width="2.5"/>`;if(!compactPaths)svg+=ps.map(([x,y])=>`<circle cx="${x}" cy="${y}" r="3.5" fill="${color}" stroke="#ffffff" stroke-width="1.4"/>`).join('');});
+  state.targets.forEach(t=>{const ps=points(t.path),color=t.kind==='bird'?'#16866d':t.kind==='balloon'?'#9261c2':t.kind==='flight'?'#c2410c':'#2867e8';svg+=`<polyline class="map-geometry" data-action="select" data-kind="target" data-id="${t.id}" points="${attr(ps)}" fill="none" stroke="${color}" stroke-width="2.5"/>`;if(!compactPaths)svg+=ps.map(([x,y])=>`<circle cx="${x}" cy="${y}" r="3.5" fill="${color}" stroke="#ffffff" stroke-width="1.4"/>`).join('');});
   const departing=state.targets.find(t=>t.id===activeTarget());
   if(departing?.departurePath?.length){const ps=points(departing.departurePath);svg+=`<polyline points="${attr(ps)}" fill="none" stroke="#9261c2" stroke-width="2.5" stroke-dasharray="5 5"/>`+ps.map(([x,y])=>`<circle cx="${x}" cy="${y}" r="4" fill="#9261c2"/>`).join('');const last=ps.at(-1);svg+=sceneLabel(last[0],last[1]+25,'撤离航线（预设）');}
   if(guide){

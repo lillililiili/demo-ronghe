@@ -25,7 +25,7 @@ async function loadSource(deps) {
   let source = fs.readFileSync(filename, 'utf8');
   source = source.replace(/import[\s\S]*?from ['"][^'"]+['"];\r?\n/g, '');
   source = `const { deviceApi, targetApi, listAlarms, listAllFlightPlans, flightApi, airspaceApi,
-    riskApi, handoffApi, mapPool, attachBearing, attachDeviceEvents, attachRecentTracks, extendRecentTracks,
+    riskApi, handoffApi, mapPool, attachBearing, attachDeviceEvents, attachRecentTracks, extendRecentTracks, mergeTrackHistory, thinTrackHistory, toTrack,
     attachTargetSourceLinks, bearingOrigins, planIsCurrent, toAirspaces, toAlarms, toDevices, toFlightPlans,
     toRisks, toTargets, attachEoCameraStates, SITUATION_DEVICE_TYPE_ORDER, isRealtimeConnected, onDataChange, hasPermission, authUser } = globalThis.__situationContractDeps;\n${source}`;
   globalThis.__situationContractDeps = deps;

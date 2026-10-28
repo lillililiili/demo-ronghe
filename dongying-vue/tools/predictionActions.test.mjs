@@ -75,12 +75,12 @@ test('预测公共原因优先首次冻结空域，不混入目标最新实测�
   assert.match(missing, /预计进入禁飞区（名称未提供）/);
 });
 
-test('预测轨迹图说明指向预测依据，普通历史空域的缺失、命中和权限提示不变', () => {
+test('预测轨迹图只说明显示实测轨迹，普通历史空域的缺失、命中和权限提示不变', () => {
   const cur = { airspacesStatus: 'UNKNOWN' };
   const note = new Function(...Object.keys(riskHelpers), 'isPredictionAlarm', 'esc', 'cur', `${body('alarmMapAirspaceNote')}\nreturn alarmMapAirspaceNote;`)
     (...Object.values(riskHelpers), isPredictionAlarm, String, cur);
   for (const state of ['ACTIVE', 'UNKNOWN', 'WITHDRAWN', 'ENTERED']) {
-    assert.equal(note(alarm(state)), '显示实测轨迹；预测及空域依据见详情');
+    assert.equal(note(alarm(state)), '显示实测轨迹');
   }
   assert.equal(note({ origin_kind: 'OBSERVED_AIRSPACE_ENTRY' }), '未保存告警时空域依据');
   cur.airspacesStatus = 'AVAILABLE'; assert.equal(note({}), '告警命中空域 · 历史版本');

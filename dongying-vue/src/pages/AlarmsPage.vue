@@ -70,7 +70,7 @@ import { uavAdvisoryApi } from '@/services/uavAdvisoryApi.js';
 import { riskCaseProgress, RISK_STAGE_LABEL, riskCaseOf, riskCaseKey, riskStageLabel, riskConfirmed, riskVerificationState, riskCaseVerificationLabel, riskCaseVerificationHint, verificationSourceLabel, riskCaseAlarm, riskCaseMatches } from '@/services/riskCaseView.js';
 import { businessDateTime } from '@/services/businessTime.js';
 import { PREDICTION_ORIGIN, PREDICTION_STATES, alarmPredictionState, isPredictionAlarm, predictionVerificationState } from '@/services/predictionView.js';
-import { predictionDetailsHtml, predictionAlarmStatusHtml } from '@/ui/predictionDetails.js';
+import { predictionAlarmStatusHtml } from '@/ui/predictionDetails.js';
 const U = window.UI;
 usePageChrome('alarms');
 const root = ref(null);
@@ -806,7 +806,6 @@ function detailHtml() {
     ...(pilotNote ? [['飞手距离', esc(pilotNote)]] : []),
     ['数据来源', `${esc(sourceDescription(a.source_name, a.source_code, a.source_mode, '—'))}`]
   ], { surface: true, density: 'compact' }), { icon: 'alert', className: 'alarm-info-sect' })}
-    ${predictionAlarmHtml(a)}
     ${verificationHtml()}
     ${escalationHtml(brief)}
     ${renderEvidenceChainHtml(cur.chain, {
@@ -815,13 +814,6 @@ function detailHtml() {
 }
 
 /* 核实记录按当前风险账本显示结论、来源和时间；不能用操作人为空推断自动核实。 */
-function predictionAlarmHtml(alarm) {
-  if (!isPredictionAlarm(alarm)) return '';
-  const scoped = alarm.prediction?.warning ? { ...alarm.prediction, warnings: [alarm.prediction.warning] } : alarm.prediction;
-  const current = predictionDetailsHtml(scoped, { now: serverNow(), riskCase: riskCaseOf(alarm) });
-  return U.sect('预测依据', `<div class="prediction-detail">${current}</div>`, { icon: 'location' });
-}
-
 function verificationHtml() {
   const a = cur.alarm;
   if (!a?.event_id) return '';
@@ -999,7 +991,7 @@ function syncAlarmMap() {
 }
 watch(activeTab, async () => { await nextTick(); if (authorizationPageActive) syncAlarmMap(); });
 function alarmMapAirspaceNote(a) {
-  if (isPredictionAlarm(a)) return '显示实测轨迹；预测及空域依据见详情';
+  if (isPredictionAlarm(a)) return '显示实测轨迹';
   return cur.airspacesLoading ? '空域读取中'
     : cur.airspacesError ? esc(cur.airspacesError)
       : ({ AVAILABLE: '告警命中空域 · 历史版本', NO_HIT: '该告警无已确认的空域命中',
@@ -1687,13 +1679,6 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.alarms-page :deep(.prediction-title){display:flex;align-items:center;justify-content:space-between;gap:8px}
-.alarms-page :deep(.prediction-message){color:var(--txt-3);font-size:12px;line-height:1.5}
-.alarms-page :deep(.prediction-table-scroll){overflow:auto}.alarms-page :deep(.prediction-detail table){width:100%;font-size:12px;border-collapse:collapse}
-.alarms-page :deep(.prediction-detail th),.alarms-page :deep(.prediction-detail td){padding:7px;text-align:left;white-space:nowrap;border-bottom:1px solid var(--line-2)}
-.alarms-page :deep(.prediction-detail summary){padding:8px 0;cursor:pointer;color:var(--txt)}
-.alarms-page :deep(.prediction-warning){display:flex;flex-direction:column;gap:4px;padding:9px 0;border-bottom:1px solid var(--line-2)}
-.alarms-page :deep(.prediction-warning b){color:var(--tag-amber-text)}
 
 .alarms-page :deep(.detail-hero-tags) {
   align-items: flex-start;

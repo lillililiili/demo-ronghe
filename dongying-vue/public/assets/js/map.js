@@ -1573,7 +1573,8 @@
           c.save();
           c.font = '600 12px "Noto Sans SC"';
           const name = a.name || '空域名称未读取';
-          const areaText = name === a.type ? name : `${name} · ${a.type}`;
+          // 名称里已带种类（如「禁飞区 · 矩形内禁止飞行」）时不再重复种类。
+          const areaText = !a.type || name.includes(a.type) ? name : `${name} · ${a.type}`;
           const text = a.alarmAssociated ? `关联告警 · ${areaText}` : areaText;
           const maxWidth = Math.max(30, Math.min(240, W - 32));
           const lines = []; let line = '';

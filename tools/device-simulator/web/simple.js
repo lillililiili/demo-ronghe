@@ -141,7 +141,7 @@
     return result;
   }
   function adsbRow(d) {
-    return `<div class="device-row"><h3>${esc(d.name)}<small>航班接收机</small></h3><input type="hidden" name="health_${d.id}" value="正常"><input type="hidden" name="interval_${d.id}" value="1">${seg(`heartbeat_${d.id}`, d.heartbeat || '持续上报', [{value: '持续上报', label: '正常发送'}, {value: '停止心跳', label: '断开（不发）', bad: true}])}<div class="field-pair">${field('接收范围（公里）', `range_${d.id}`, d.rangeKm, 'number', 'min="10" max="600" step="1" required')}${field('周围背景航班（架）', `background_${d.id}`, d.backgroundFlights, 'number', 'min="0" max="300" step="1" required')}</div>${field('识别码（平台按它认这台接收机）', `guid_${d.id}`, d.stationGuid, 'text', 'readonly')}<p class="field-note">开始模拟时按这个点位的位置自动登记到平台的接入设备里，画出来的航班和周围的背景航班每秒一架一条、每 30 秒一条状态，按真实接收机的格式通过 UDP 送到平台；停止时停用。背景航班一半在 100 公里内、一半沿航路排，都飞在 7000 米以上，不影响反制；把地图缩小能看到整个接收范围里的航班。</p></div>`;
+    return `<div class="device-row"><h3>${esc(d.name)}<small>航班接收机</small></h3><input type="hidden" name="health_${d.id}" value="正常"><input type="hidden" name="interval_${d.id}" value="1">${seg(`heartbeat_${d.id}`, d.heartbeat || '持续上报', [{value: '持续上报', label: '正常发送'}, {value: '停止心跳', label: '断开（不发）', bad: true}])}<div class="field-pair">${field('接收范围（公里）', `range_${d.id}`, d.rangeKm, 'number', 'min="10" max="600" step="1" required')}${field('周围背景航班（架）', `background_${d.id}`, d.backgroundFlights, 'number', 'min="0" max="300" step="1" required')}</div>${field('识别码（平台按它认这台接收机）', `guid_${d.id}`, d.stationGuid, 'text', 'readonly')}<p class="field-note">开始模拟时按这个点位的位置自动登记到平台的接入设备里，画出来的航班和周围的背景航班每秒一架一条、每 30 秒一条状态，按真实接收机的格式通过 UDP 送到平台；停止时停用。背景航班一半在 100 公里内（越靠近越密）、一半沿航路排满整个接收范围，都飞在 7000 米以上，不影响反制。</p></div>`;
   }
   // 设备海拔 = 点位地面海拔 + 架设高度；架设高度像接入人员一样自己填，可留空。
   function mountField(d, site) {

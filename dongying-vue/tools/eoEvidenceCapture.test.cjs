@@ -36,6 +36,8 @@ test('不能取证的原因在点击时说明，保存结果说清关联与能�
     '截图已存为证据 EV-1，已关联目标和告警。');
   assert.equal(capture.captureSavedText({ evidence_no: 'EV-2', links: links(['TARGET', 'DEVICE']) }, 'EO_VIDEO', true),
     '录像已存为证据 EV-2，已关联目标（测试视频画面，非现场）。');
+  assert.deepEqual({ ...capture.captureSavedParts({ evidence_no: 'EV-3' }, 'EO_STILL', true) }, { label: '截图已存证', no: 'EV-3', simulated: true });
+  assert.deepEqual({ ...capture.captureSavedParts({}, 'EO_VIDEO') }, { label: '录像已存证', no: '', simulated: false });
 
   const replay = capture.captureFailure({ status: 409, code: 'IDEMPOTENCY_REPLAY', message: '重复请求' }, true);
   assert.equal(replay.retry, false);

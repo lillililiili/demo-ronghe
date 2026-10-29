@@ -185,11 +185,13 @@ onBeforeUnmount(() => {
       @timeupdate="reportFrame" @pause="resumeLive" @ended="reconnect()" @error="player && reconnect()" />
     <slot name="overlay" :playing="phase === 'PLAYING'" />
     </div>
-    <p :role="error ? 'alert' : 'status'">{{ text }}</p>
+    <p v-if="error || !captureTarget" :role="error ? 'alert' : 'status'">{{ text }}</p>
     <p v-if="fullscreenError" role="alert">{{ fullscreenError }}</p>
     <button v-if="phase === 'BLOCKED'" class="btn" type="button" @click="playLive()">连接直播</button>
     <EoEvidenceCapture v-if="!error && captureTarget" :media="media" :target-id="captureTarget" :video="video" :event-id="eventId"
-      :playing="phase === 'PLAYING'" />
+      :playing="phase === 'PLAYING'">
+      <template #status><span class="live-state" :class="{ 'is-live': phase === 'PLAYING' }" role="status">{{ text }}</span></template>
+    </EoEvidenceCapture>
     <p v-else-if="workspace && !captureTarget">原始画面未关联跟踪目标，暂不支持告警取证。</p>
   </div>
 </template>
@@ -205,4 +207,7 @@ onBeforeUnmount(() => {
 .external-video:fullscreen .fullscreen-toolbar { flex:none; justify-content:space-between; }
 video { width:100%; max-height:360px; background:#000; display:block; }
 p { margin:8px 0; color:var(--txt-2); font-size:13px; }
+.live-state { display:inline-flex; align-items:center; gap:6px; color:var(--txt-2); font-size:13px; }
+.live-state::before { content:''; width:7px; height:7px; border-radius:50%; background:var(--amber); box-shadow:0 0 0 2px color-mix(in srgb, var(--amber) 20%, transparent); }
+.live-state.is-live::before { background:var(--green); box-shadow:0 0 0 2px color-mix(in srgb, var(--green) 20%, transparent); }
 </style>

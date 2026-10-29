@@ -6,7 +6,7 @@ import { isUncertainOutcome } from '@/services/apiClient.js';
 import { toast } from '@/ui/nv.js';
 import {
   MAX_RECORDING_MS, RECORDING_BITS_PER_SECOND, captureBackgroundText, captureBlocked, captureFailure,
-  captureFileName, captureSavedText, elapsedText, recordingFormats
+  captureFileName, captureSavedParts, captureSavedText, elapsedText, recordingFormats
 } from './eoCapture.js';
 import { captureVideoStream, recordVideo } from './eoRecording.js';
 
@@ -22,12 +22,14 @@ const props = defineProps({
 
 const formats = typeof MediaRecorder === 'undefined' ? [] : recordingFormats(type => MediaRecorder.isTypeSupported(type));
 const busy = ref(false), starting = ref(false), recording = ref(false), elapsed = ref(0);
-const savedText = ref(''), savedId = ref(''), error = ref(''), retry = ref(null);
+const saved = ref(null), savedId = ref(''), error = ref(''), retry = ref(null);
 const canOpenLedger = computed(() => canAccessRoute('evidence') && hasPermission('evidence:read'));
 const ledgerHref = computed(() => `#/evidence?${new URLSearchParams({ file: savedId.value })}`);
 let session = null, preparation = null, tick = null, limit = null, interruption = null, alive = true;
 
-function reset() { savedText.value = ''; savedId.value = ''; error.value = ''; retry.value = null; }
+const icon = name => window.UI.icon(name);
+
+function reset() { saved.value = null; savedId.value = ''; error.value = ''; retry.value = null; }
 
 /* 不能取证的原因在点击时说明。 */
 function blocked(kindCode) {
@@ -52,10 +54,9 @@ async function send(pending) {
       file: pending.file, kindCode: pending.kindCode, streamId: pending.streamId, eventId: pending.eventId,
       captureAgeMs: performance.now() - pending.startedAt
     }, pending.key);
-    const text = pending.note + captureSavedText(result, pending.kindCode, pending.simulated);
-    if (!sameSubject(pending)) { toast(text, 'ok'); return; }
+    if (!sameSubject(pending)) { toast(pending.note + captureSavedText(result, pending.kindCode, pending.simulated), 'ok'); return; }
     savedId.value = result?.evidence_id || '';
-    savedText.value = text;
+    saved.value = { note: pending.note, ...captureSavedParts(result, pending.kindCode, pending.simulated) };
   } catch (failure) {
     const outcome = captureFailure(failure, isUncertainOutcome(failure));
     if (!sameSubject(pending)) { toast(pending.note + captureBackgroundText(pending.kindCode, outcome), 'err'); return; }
@@ -173,24 +174,55 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="eo-capture" role="group" aria-label="光电取证">
-    <div class="eo-capture__actions">
-      <button class="btn" type="button" :disabled="busy || starting || recording" @click="snapshot">截图取证</button>
-      <button v-if="!recording" class="btn" type="button" :disabled="busy || starting" @click="startRecording">{{ starting ? '正在准备录像' : '开始录像' }}</button>
-      <button v-else class="btn" type="button" @click="stopRecording()">停止录像 {{ elapsedText(elapsed) }} / {{ elapsedText(MAX_RECORDING_MS) }}</button>
+    <div class="eo-capture__bar">
+      <slot name="status" />
+      <div class="eo-capture__actions">
+        <button class="btn" type="button" :disabled="busy || starting || recording" @click="snapshot">
+          <span aria-hidden="true" v-html="icon('camera')"></span>截图取证</button>
+        <button v-if="!recording" class="btn" type="button" :disabled="busy || starting" @click="startRecording">
+          <span aria-hidden="true" v-html="icon('video')"></span>{{ starting ? '正在准备录像' : '录像取证' }}</button>
+        <button v-else class="btn eo-capture__stop" type="button" @click="stopRecording()">
+          <i class="eo-capture__rec" aria-hidden="true"></i>停止录像 <span class="eo-capture__time">{{ elapsedText(elapsed) }} / {{ elapsedText(MAX_RECORDING_MS) }}</span></button>
+      </div>
     </div>
-    <p v-if="busy" role="status">正在保存取证</p>
-    <p v-if="savedText" role="status">{{ savedText }}</p>
-    <a v-if="savedText && savedId && canOpenLedger" class="btn eo-capture__ledger" :href="ledgerHref">在证据台账查看</a>
-    <p v-if="error" class="eo-capture__error" role="alert">{{ error }}
-      <button v-if="retry" class="btn" type="button" :disabled="busy" @click="send(retry)">按原文件重新提交</button></p>
+    <p v-if="busy" class="eo-capture__strip" role="status">正在保存取证…</p>
+    <p v-else-if="saved" class="eo-capture__strip is-ok" role="status">
+      <span aria-hidden="true" v-html="icon('check')"></span>{{ saved.note }}{{ saved.label }}
+      <a v-if="saved.no && savedId && canOpenLedger" class="eo-capture__no" :href="ledgerHref" title="在证据台账查看">{{ saved.no }}</a>
+      <span v-else-if="saved.no" class="eo-capture__no">{{ saved.no }}</span>
+      <a v-else-if="savedId && canOpenLedger" class="eo-capture__no" :href="ledgerHref">在证据台账查看</a>
+      <em v-if="saved.simulated" class="eo-capture__tag">测试画面</em>
+    </p>
+    <p v-if="error" class="eo-capture__strip is-warn" role="alert">
+      <span aria-hidden="true" v-html="icon('warning')"></span><span class="eo-capture__msg">{{ error }}</span>
+      <button v-if="retry" class="eo-capture__retry" type="button" :disabled="busy" @click="send(retry)">重新提交</button></p>
   </div>
 </template>
 
 <style scoped>
-.eo-capture { margin:4px 0 0; min-width:0; }
-.eo-capture__actions { display:flex; gap:8px; flex-wrap:wrap; }
-.eo-capture p { margin:8px 0 0; font-size:13px; line-height:1.6; overflow-wrap:anywhere; }
-.eo-capture__error { color:var(--amber); }
-.eo-capture__ledger { margin-top:8px; text-decoration:none; }
-.btn { min-height:34px; height:auto; white-space:normal; }
+.eo-capture { margin:4px 0 8px; min-width:0; }
+.eo-capture__bar { display:flex; align-items:center; justify-content:space-between; gap:8px 12px; flex-wrap:wrap; min-height:36px; }
+.eo-capture__actions { display:flex; gap:6px; flex-wrap:wrap; margin-left:auto; }
+.eo-capture .btn { display:inline-flex; align-items:center; gap:5px; min-height:30px; height:auto; padding:0 10px; border-radius:4px; white-space:nowrap;
+  background:var(--button-bg); border:1px solid var(--button-line); color:var(--button-text); }
+.eo-capture .btn:disabled { opacity:.45; cursor:not-allowed; }
+.eo-capture .btn > span, .eo-capture__strip > span:first-child { display:inline-flex; }
+.eo-capture :deep(.svg-icon) { width:15px; height:15px; }
+.eo-capture .eo-capture__stop { background:color-mix(in srgb, var(--red) 16%, transparent); border-color:color-mix(in srgb, var(--red) 55%, transparent); color:var(--tag-red-text, var(--red)); }
+/* 全站按钮悬停会变蓝；录像中鼠标停在按钮上也保持红色。 */
+.eo-capture .btn.eo-capture__stop:hover:not(:disabled):not([aria-disabled="true"]):not([aria-busy="true"]) {
+  background:color-mix(in srgb, var(--red) 26%, transparent); border-color:var(--red); color:var(--tag-red-text, var(--red)); }
+.eo-capture__rec { width:8px; height:8px; border-radius:50%; background:var(--red); animation:eo-capture-blink 1.2s ease-in-out infinite; }
+.eo-capture__time { font-variant-numeric:tabular-nums; }
+@keyframes eo-capture-blink { 50% { opacity:.3; } }
+.eo-capture__strip { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin:6px 0 0; padding:5px 9px; min-height:30px; box-sizing:border-box;
+  border:1px solid var(--line); border-radius:4px; font-size:13px; line-height:1.5; color:var(--txt-2); overflow-wrap:anywhere; }
+.eo-capture__strip.is-ok { color:var(--tag-green-text, var(--green)); background:color-mix(in srgb, var(--green) 12%, transparent); border-color:color-mix(in srgb, var(--green) 35%, transparent); }
+.eo-capture__strip.is-warn { color:var(--amber); background:color-mix(in srgb, var(--amber) 12%, transparent); border-color:color-mix(in srgb, var(--amber) 40%, transparent); }
+.eo-capture__no { color:var(--txt); font-family:var(--app-font-mono, inherit); }
+a.eo-capture__no { color:var(--link-hover, #7fb4ff); text-decoration:underline; text-underline-offset:2px; }
+.eo-capture__tag { font-style:normal; font-size:11px; padding:0 5px; border-radius:3px; color:var(--txt-2); background:color-mix(in srgb, var(--txt-2) 16%, transparent); }
+.eo-capture__msg { flex:1; min-width:0; }
+.eo-capture__retry { margin-left:auto; padding:0; border:0; background:none; color:inherit; font:inherit; text-decoration:underline; cursor:pointer; }
+.eo-capture__retry:disabled { opacity:.5; cursor:not-allowed; }
 </style>

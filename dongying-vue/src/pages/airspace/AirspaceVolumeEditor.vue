@@ -51,8 +51,17 @@ const grid = computed(() => {
   return result;
 });
 // 底面贴本地离线地图，便于看出空域落在哪里；图片按其自身绘制时的中心和范围贴到下限平面。
-const floorMap = useAirspaceFloorMap(computed(() => points.value.length
-  ? { lon: autoFrame.value.lon, lat: autoFrame.value.lat, radius: autoFrame.value.extent * 1.1 } : null));
+// 地图半径按当前缩放和俯仰铺满整个画面（含缩小、压低视角时露出的远处），淡出边缘落在画面外；
+// 半径按 2^(1/4) 档向上取整，旋转和小幅调整不重画。
+const FLOOR_FADE_START = .88;
+const floorMap = useAirspaceFloorMap(computed(() => {
+  if (!points.value.length) return null;
+  const f = autoFrame.value, scale = f.scale * camera.zoom;
+  const [lon, lat] = unproject({ x: 400, y: 260 }, base.value, f, camera);
+  const shift = Math.hypot((lon - f.lon) * f.mx, (lat - f.lat) * f.my);
+  const cover = (Math.hypot(400 / scale, 260 / (scale * Math.sin(camera.pitch))) + shift) / FLOOR_FADE_START;
+  return { lon: f.lon, lat: f.lat, radius: f.extent * 2 ** (Math.ceil(Math.log2(cover / f.extent) * 4) / 4) };
+}));
 const floorMaskId = `airspace-floor-${useId()}`;
 const floorMatrix = computed(() => {
   const m = floorMap.value, f = frame.value;
@@ -148,7 +157,7 @@ function heightKey(event, which) {
         <template v-if="points.length">
           <g v-if="floorMap" class="volume-floor" :transform="floorMatrix">
             <defs>
-              <radialGradient :id="`${floorMaskId}-fade`" cx=".5" cy=".5" r=".5"><stop offset=".72" stop-color="#fff" /><stop offset="1" stop-color="#fff" stop-opacity="0" /></radialGradient>
+              <radialGradient :id="`${floorMaskId}-fade`" cx=".5" cy=".5" r=".5"><stop :offset="FLOOR_FADE_START" stop-color="#fff" /><stop offset="1" stop-color="#fff" stop-opacity="0" /></radialGradient>
               <mask :id="floorMaskId" maskContentUnits="objectBoundingBox"><rect width="1" height="1" :fill="`url(#${floorMaskId}-fade)`" /></mask>
             </defs>
             <image :href="floorMap.href" width="1" height="1" preserveAspectRatio="none" :mask="`url(#${floorMaskId})`" />

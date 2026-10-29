@@ -3,7 +3,7 @@ import { prepareOfflineMap } from '@/services/offlineMap.js';
 
 // 三维空域底面：用本地离线底图在屏外画一张正北朝上的方形图片，由三维视图按地面坐标贴到下限平面。
 // 只影响画面；地图包缺失或加载失败时返回空图片，视图继续使用方格网。
-const SIZE = 1280;
+const SIZE = 2048;
 const EQUATOR_METRES = 40075016.686;
 
 const sameFloor = (a, b) => a && b && a.lon === b.lon && a.lat === b.lat && a.radius === b.radius;
@@ -17,15 +17,19 @@ export function useAirspaceFloorMap(floor) {
     const target = requested;
     if (!map || !target || painting) return;
     painting = true;
-    const metresPerPixel = 2 * target.radius / SIZE;
-    const zoom = Math.log2(EQUATOR_METRES * Math.cos(target.lat * Math.PI / 180) / (512 * metresPerPixel));
-    map.jumpTo({ center: [target.lon, target.lat], zoom: Math.max(0, Math.min(18, zoom)) });
+    const circumference = EQUATOR_METRES * Math.cos(target.lat * Math.PI / 180);
+    const zoom = Math.max(0, Math.min(18, Math.log2(circumference * SIZE / (512 * 2 * target.radius))));
+    // 极小空域放大到 18 级封顶时，图片实际覆盖的范围比请求的小，按实际级别记录半径。
+    const radius = circumference * SIZE / (512 * 2 * 2 ** zoom);
+    map.jumpTo({ center: [target.lon, target.lat], zoom });
     map.once('idle', () => {
       painting = false;
       if (controller.signal.aborted) return;
       if (!sameFloor(target, requested)) { paint(); return; }
-      try { image.value = { ...target, href: map.getCanvas().toDataURL('image/jpeg', .9) }; } catch { image.value = null; }
+      try { image.value = { lon: target.lon, lat: target.lat, radius, href: map.getCanvas().toDataURL('image/jpeg', .9) }; } catch { image.value = null; }
     });
+    // 视角未变时 jumpTo 不重绘，主动触发一次，保证 idle 一定到来。
+    map.triggerRepaint();
   }
 
   watch(floor, value => {

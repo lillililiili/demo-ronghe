@@ -73,12 +73,12 @@
   const hex = n => Array.from({length: n}, () => '0123456789abcdef'[Math.floor(Math.random() * 16)]).join('');
   const AIRLINES = [['CCA', '中国国航'], ['CES', '东方航空'], ['CSN', '南方航空'], ['CHH', '海南航空'], ['CDG', '山东航空'], ['CXA', '厦门航空'], ['CSC', '四川航空'], ['CSZ', '深圳航空'], ['CQH', '春秋航空'], ['DKH', '吉祥航空']];
   const adsbDevices = () => state.sites.flatMap(site => site.devices.filter(d => d.kind === ADSB));
-  // 新放的接收机补上默认设置：接收范围 350 公里、周围 60 架背景航班、随机识别码（平台按它认设备，开始时自动登记）。
+  // 新放的接收机补上默认设置：接收范围 350 公里、周围 150 架背景航班、随机识别码（平台按它认设备，开始时自动登记）。
   function normalizeAdsb() {
     let changed = false;
     for (const d of adsbDevices()) {
       if (!(Number(d.rangeKm) > 0)) { d.rangeKm = 350; changed = true; }
-      if (!Number.isInteger(Number(d.backgroundFlights)) || d.backgroundFlights === undefined) { d.backgroundFlights = 60; changed = true; }
+      if (!Number.isInteger(Number(d.backgroundFlights)) || d.backgroundFlights === undefined) { d.backgroundFlights = 150; changed = true; }
       if (!/^[0-9a-f]{16}$/.test(String(d.stationGuid || ''))) { d.stationGuid = hex(16); changed = true; }
       if (d.health !== '正常') { d.health = '正常'; changed = true; }
       if (!['持续上报', '停止心跳'].includes(d.heartbeat)) { d.heartbeat = '持续上报'; changed = true; }
@@ -141,7 +141,7 @@
     return result;
   }
   function adsbRow(d) {
-    return `<div class="device-row"><h3>${esc(d.name)}<small>航班接收机</small></h3><input type="hidden" name="health_${d.id}" value="正常"><input type="hidden" name="interval_${d.id}" value="1">${seg(`heartbeat_${d.id}`, d.heartbeat || '持续上报', [{value: '持续上报', label: '正常发送'}, {value: '停止心跳', label: '断开（不发）', bad: true}])}<div class="field-pair">${field('接收范围（公里）', `range_${d.id}`, d.rangeKm, 'number', 'min="10" max="600" step="1" required')}${field('周围背景航班（架）', `background_${d.id}`, d.backgroundFlights, 'number', 'min="0" max="200" step="1" required')}</div>${field('识别码（平台按它认这台接收机）', `guid_${d.id}`, d.stationGuid, 'text', 'readonly')}<p class="field-note">开始模拟时按这个点位的位置自动登记到平台的接入设备里，画出来的航班和周围的背景航班每秒一架一条、每 30 秒一条状态，按真实接收机的格式通过 UDP 送到平台；停止时停用。背景航班都飞在 7000 米以上，不影响反制。</p></div>`;
+    return `<div class="device-row"><h3>${esc(d.name)}<small>航班接收机</small></h3><input type="hidden" name="health_${d.id}" value="正常"><input type="hidden" name="interval_${d.id}" value="1">${seg(`heartbeat_${d.id}`, d.heartbeat || '持续上报', [{value: '持续上报', label: '正常发送'}, {value: '停止心跳', label: '断开（不发）', bad: true}])}<div class="field-pair">${field('接收范围（公里）', `range_${d.id}`, d.rangeKm, 'number', 'min="10" max="600" step="1" required')}${field('周围背景航班（架）', `background_${d.id}`, d.backgroundFlights, 'number', 'min="0" max="300" step="1" required')}</div>${field('识别码（平台按它认这台接收机）', `guid_${d.id}`, d.stationGuid, 'text', 'readonly')}<p class="field-note">开始模拟时按这个点位的位置自动登记到平台的接入设备里，画出来的航班和周围的背景航班每秒一架一条、每 30 秒一条状态，按真实接收机的格式通过 UDP 送到平台；停止时停用。背景航班一半在 100 公里内（越靠近越密）、一半沿航路排满整个接收范围，都飞在 7000 米以上，不影响反制。</p></div>`;
   }
   // 设备海拔 = 点位地面海拔 + 架设高度；架设高度像接入人员一样自己填，可留空。
   function mountField(d, site) {
@@ -168,7 +168,7 @@
       if (d.kind !== ADSB) continue;
       const range = Number(form.elements[`range_${d.id}`]?.value), background = Number(form.elements[`background_${d.id}`]?.value);
       if (!Number.isFinite(range) || range < 10 || range > 600) throw Error(`${d.name}：接收范围须在 10 到 600 公里之间`);
-      if (!Number.isInteger(background) || background < 0 || background > 200) throw Error(`${d.name}：周围背景航班须为 0 到 200 的整数`);
+      if (!Number.isInteger(background) || background < 0 || background > 300) throw Error(`${d.name}：周围背景航班须为 0 到 300 的整数`);
       d.rangeKm = range; d.backgroundFlights = background;
     }
   }

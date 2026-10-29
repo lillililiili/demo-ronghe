@@ -12,7 +12,7 @@ LABELS = {'radar': '雷达', 'tdoa': 'TDOA', '5ga': '5G-A', 'aoa': 'AOA', 'dcd':
 # 航班接收机不是 MQTT 设备：开始时按点位登记到平台，航班按 pingStation3 格式走 UDP（adsb_flights.py）。
 ADSB_KIND = 'adsb'
 ADSB_RANGE_KM = (10, 600, 350)            # 接收范围：平台允许 10–600 公里，默认 350
-ADSB_BACKGROUND = (0, 200, 60)            # 周围背景航班架数，默认 60
+ADSB_BACKGROUND = (0, 300, 150)           # 周围背景航班架数，默认 150（一半在 100 公里内、一半沿航路）
 # 民航航班目标（kind=flight）：不经感知设备，只由航班接收机送给平台。
 FLIGHT_KIND = 'flight'
 FLIGHT_MODES = ('once', 'loop', 'pingpong', 'orbit')

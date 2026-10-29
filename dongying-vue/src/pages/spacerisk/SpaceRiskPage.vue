@@ -18,7 +18,7 @@ import { authUser } from '@/services/auth.js';
 import {
   labelOf, SEVERITY_LABEL, SEVERITY_TAG, RISK_STATE_LABEL, SOURCE_MODE_LABEL,
   SPACE_OBJECT_SUBTYPE_LABEL, ALTITUDE_BAND_LABEL, CORRIDOR_RELATION_LABEL, OBJECT_TREND_LABEL,
-  DELIVERY_STATUS_LABEL, HANDOFF_TYPE_LABEL
+  DELIVERY_STATUS_LABEL, HANDOFF_TYPE_LABEL, RULE_SET_LABEL
 } from '@/ui/labels.js';
 import { displayPlanNo, displayRiskNo, displayTargetNo, displayNumberReferences } from '@/ui/deviceNumber.js';
 
@@ -122,7 +122,7 @@ const unknownNotes = computed(() =>
 const ruleBadge = computed(() => {
   const version = summary.value?.rule_version;
   if (!version) return '';
-  return `${version.rule_set_code} 第 ${version.version_no} 版${version.param_status === 'DEMO' ? ' · 演示参数' : ''}`;
+  return `${RULE_SET_LABEL[version.rule_set_code] || '空间安全风险规则集'} 第 ${version.version_no} 版`;
 });
 
 /* ---------- 读取 ---------- */

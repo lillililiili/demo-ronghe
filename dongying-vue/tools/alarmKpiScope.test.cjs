@@ -41,7 +41,7 @@ test('明确排除的旧mock数同次返回，回放来源继续计入', async (
   assert.equal(value['今日告警总数'].value, '7'); assert.equal(value['今日告警总数'].caption, '另有演示告警 3 条未计入');
   assert.equal(value['今日待核实'].value, '3'); assert.equal(value['今日已确认'].value, '3');
   assert.equal(value['今日误报'].value, '1'); assert.equal(value['待处置'].value, '7');
-  assert.match(value['今日告警总数'].desc, /设备模拟器产生的告警（来源标“回放”）照算/);
+  assert.match(value['今日告警总数'].desc, /系统自带的演示告警不计入$/);
 });
 
 test('聚合失败时相关五卡未知，不显示0且不回退九个列表请求', async () => {

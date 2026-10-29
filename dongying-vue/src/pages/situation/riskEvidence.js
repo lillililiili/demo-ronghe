@@ -247,8 +247,10 @@ export function riskEvidenceView(data) {
   const names = {};
   for (const hit of data.hits || []) if (hit.airspace?.airspace_id && hit.airspace.name) names[hit.airspace.airspace_id] = hit.airspace.name;
   if (riskCase?.airspace_id && riskCase.airspace_name) names[riskCase.airspace_id] = riskCase.airspace_name;
+  const plans = {};
+  for (const link of data.linkedPlans || []) if (link.plan?.plan_id && link.plan.plan_no) plans[link.plan.plan_id] = link.plan.plan_no;
   const hitTitle = hit => hit.reason_code === 'BVLOS_EXCEEDED' ? reasonLabel(hit.reason_code)
-    : ruleHitText(hit.message, { names, fallback: reasonLabel(hit.reason_code) }) || '判定依据';
+    : ruleHitText(hit.message, { names, plans, fallback: reasonLabel(hit.reason_code) }) || '判定依据';
   const checks = evaluations.flatMap(evaluation => relevantHits(evaluation, caseAreaId(data)).map(hit => ({
     title: `${hitTitle(hit)} · ${evidenceTime(evaluation.observed_at ?? evaluation.evaluated_at)}`,
     message: '', rows: Object.entries(hit.facts || {}).filter(([key]) => factLabels[key]).map(([key, value]) =>

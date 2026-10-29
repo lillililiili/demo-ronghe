@@ -209,6 +209,9 @@ onBeforeUnmount(() => {
 .eo-capture .btn > span, .eo-capture__strip > span:first-child { display:inline-flex; }
 .eo-capture :deep(.svg-icon) { width:15px; height:15px; }
 .eo-capture .eo-capture__stop { background:color-mix(in srgb, var(--red) 16%, transparent); border-color:color-mix(in srgb, var(--red) 55%, transparent); color:var(--tag-red-text, var(--red)); }
+/* 全站按钮悬停会变蓝；录像中鼠标停在按钮上也保持红色。 */
+.eo-capture .btn.eo-capture__stop:hover:not(:disabled):not([aria-disabled="true"]):not([aria-busy="true"]) {
+  background:color-mix(in srgb, var(--red) 26%, transparent); border-color:var(--red); color:var(--tag-red-text, var(--red)); }
 .eo-capture__rec { width:8px; height:8px; border-radius:50%; background:var(--red); animation:eo-capture-blink 1.2s ease-in-out infinite; }
 .eo-capture__time { font-variant-numeric:tabular-nums; }
 @keyframes eo-capture-blink { 50% { opacity:.3; } }

@@ -3,12 +3,13 @@ import { prepareOfflineMap } from '@/services/offlineMap.js';
 
 // 三维空域底面：用本地离线底图在屏外画一张正北朝上的方形图片，由三维视图按地面坐标贴到下限平面。
 // 只影响画面；地图包缺失或加载失败时返回空图片，视图继续使用方格网。
+// coverage 回填地图包覆盖范围 [西, 南, 东, 北]：加载中为 null，不可用为 false。
 const SIZE = 2048;
 const EQUATOR_METRES = 40075016.686;
 
 const sameFloor = (a, b) => a && b && a.lon === b.lon && a.lat === b.lat && a.radius === b.radius;
 
-export function useAirspaceFloorMap(floor) {
+export function useAirspaceFloorMap(floor, coverage = shallowRef(null)) {
   const image = shallowRef(null);
   const controller = new AbortController();
   let map = null, release = null, host = null, timer = 0, requested = null, painting = false;
@@ -46,6 +47,7 @@ export function useAirspaceFloorMap(floor) {
       const runtime = await prepareOfflineMap(controller.signal);
       if (controller.signal.aborted) { runtime.release(); return; }
       release = runtime.release;
+      coverage.value = runtime.bounds;
       host = document.createElement('div');
       host.setAttribute('aria-hidden', 'true');
       Object.assign(host.style, { position: 'fixed', left: '-10000px', top: '0', width: `${SIZE}px`, height: `${SIZE}px`, pointerEvents: 'none' });
@@ -59,7 +61,7 @@ export function useAirspaceFloorMap(floor) {
       if (typeof runtime.decorate === 'function') runtime.decorate(map);
       map.on('error', () => {});
       map.once('load', paint);
-    } catch { image.value = null; }
+    } catch { image.value = null; coverage.value = false; }
   });
 
   onBeforeUnmount(() => {

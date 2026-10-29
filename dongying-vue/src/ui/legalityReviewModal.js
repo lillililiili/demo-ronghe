@@ -266,7 +266,7 @@ export function openLegalityRecompute({ evaluation, refresh, onDone } = {}) {
         const result = await legalityApi.recomputeEvaluation(evaluationId, { note: trimNote(note), expected_version: expectedVersion }, key);
         releaseKey(evaluationId, action);
         closeModal();
-        toast(`重新研判完成：新研判 ${result?.evaluation_id || ''}（${legalStatusText(result?.legal_status)}）`, 'ok');
+        toast(`重新研判完成，结论：${legalStatusText(result?.legal_status)}`, 'ok');
         if (refresh) await refresh(result);
         if (onDone) onDone(result);
       } catch (error) {
@@ -310,7 +310,7 @@ export function openLegalityEscalation({ evaluation, refresh, onDone } = {}) {
         const result = await legalityApi.escalateEvaluation(evaluationId, { note: trimNote(note), expected_version: expectedVersion }, key);
         releaseKey(evaluationId, action);
         closeModal();
-        toast(`已转告警：告警 ${result?.alarm_id || ''}，无人机事件 ${result?.event_id || ''}`, 'ok');
+        toast('已转为告警，可在告警处置中查看', 'ok');
         if (refresh) await refresh(result);
         if (onDone) onDone(result);
       } catch (error) {

@@ -340,9 +340,9 @@ async function showDisposalRequestForm({ actionType, actionOptions, subjectKind,
       onDone,
       okText: okText || (result => direct
         ? result?.execution_block_reason
-            ? `免逐次审批授权已创建：${result?.authorization_no || ''}，执行受阻，请查看授权记录。`
-            : `直接反制已受理：${result?.authorization_no || ''}，正在等待设备回执。`
-        : `申请已提交：${result?.authorization_no || ''} 待审批`)
+            ? '免逐次审批授权已创建，但执行受阻，请查看授权记录。'
+            : '直接反制已受理，正在等待设备回执。'
+        : '申请已提交，等待审批。')
     })
   });
   return true;

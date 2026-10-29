@@ -54,9 +54,9 @@ async function send(pending) {
       file: pending.file, kindCode: pending.kindCode, streamId: pending.streamId, eventId: pending.eventId,
       captureAgeMs: performance.now() - pending.startedAt
     }, pending.key);
-    if (!sameSubject(pending)) { toast(pending.note + captureSavedText(result, pending.kindCode, pending.simulated), 'ok'); return; }
+    if (!sameSubject(pending)) { toast(pending.note + captureSavedText(result, pending.kindCode), 'ok'); return; }
     savedId.value = result?.evidence_id || '';
-    saved.value = { note: pending.note, ...captureSavedParts(result, pending.kindCode, pending.simulated) };
+    saved.value = { note: pending.note, ...captureSavedParts(result, pending.kindCode) };
   } catch (failure) {
     const outcome = captureFailure(failure, isUncertainOutcome(failure));
     if (!sameSubject(pending)) { toast(pending.note + captureBackgroundText(pending.kindCode, outcome), 'err'); return; }
@@ -188,10 +188,7 @@ onBeforeUnmount(() => {
     <p v-if="busy" class="eo-capture__strip" role="status">正在保存取证…</p>
     <p v-else-if="saved" class="eo-capture__strip is-ok" role="status">
       <span aria-hidden="true" v-html="icon('check')"></span>{{ saved.note }}{{ saved.label }}
-      <a v-if="saved.no && savedId && canOpenLedger" class="eo-capture__no" :href="ledgerHref" title="在证据台账查看">{{ saved.no }}</a>
-      <span v-else-if="saved.no" class="eo-capture__no">{{ saved.no }}</span>
-      <a v-else-if="savedId && canOpenLedger" class="eo-capture__no" :href="ledgerHref">在证据台账查看</a>
-      <em v-if="saved.simulated" class="eo-capture__tag">测试画面</em>
+      <a v-if="savedId && canOpenLedger" class="eo-capture__no" :href="ledgerHref">在证据台账查看</a>
     </p>
     <p v-if="error" class="eo-capture__strip is-warn" role="alert">
       <span aria-hidden="true" v-html="icon('warning')"></span><span class="eo-capture__msg">{{ error }}</span>
@@ -221,7 +218,6 @@ onBeforeUnmount(() => {
 .eo-capture__strip.is-warn { color:var(--amber); background:color-mix(in srgb, var(--amber) 12%, transparent); border-color:color-mix(in srgb, var(--amber) 40%, transparent); }
 .eo-capture__no { color:var(--txt); font-family:var(--app-font-mono, inherit); }
 a.eo-capture__no { color:var(--link-hover, #7fb4ff); text-decoration:underline; text-underline-offset:2px; }
-.eo-capture__tag { font-style:normal; font-size:11px; padding:0 5px; border-radius:3px; color:var(--txt-2); background:color-mix(in srgb, var(--txt-2) 16%, transparent); }
 .eo-capture__msg { flex:1; min-width:0; }
 .eo-capture__retry { margin-left:auto; padding:0; border:0; background:none; color:inherit; font:inherit; text-decoration:underline; cursor:pointer; }
 .eo-capture__retry:disabled { opacity:.5; cursor:not-allowed; }

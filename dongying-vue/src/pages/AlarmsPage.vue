@@ -564,7 +564,7 @@ async function loadKpis() {
       return { ...def, value: num(v[i]), caption: '可能含演示告警', desc: `${text}；演示告警数读取失败（${esc(messageOf(r[i + 8].reason))}），这里暂按全部来源计数` };
     }
     return { ...def, value: num(Math.max(0, v[i] - demo)), caption: demo > 0 ? `另有演示告警 ${U.num(demo)} 条未计入` : def.caption,
-      desc: `${text}；和大屏同一口径：设备模拟器产生的告警（来源标“回放”）照算，系统自带的演示告警（来源标“模拟”）不算` };
+      desc: `${text}；系统自带的演示告警不计入` };
   };
   kpiList.value = [
     todayKpi(KPI_DEFS[0], 0, '北京时间今天发生的告警数量；发生时间未知者不计'),

@@ -48,18 +48,20 @@ export function captureBlocked({ permitted, playing, recordable, kindCode }) {
   return '';
 }
 
-/** 面板里的一行保存结果：「截图已存证」+ 证据编号（点开证据台账）+ 测试画面小标签。 */
-export function captureSavedParts(file, kindCode, simulated = false) {
-  return { label: `${kindCode === 'EO_VIDEO' ? '录像' : '截图'}已存证`, no: file?.evidence_no || '', simulated: simulated === true };
+// 证据关联到了什么，以服务端返回为准。
+const linkedText = file => {
+  const kinds = (file?.links || []).map(link => link.subject_kind);
+  return kinds.includes('EVENT') ? '，已关联目标和告警' : kinds.includes('TARGET') ? '，已关联目标' : '';
+};
+
+/** 面板里的一行保存结果：「截图已存证，已关联目标」+「在证据台账查看」。证据编号和测试画面标记不上屏（画面上已有测试视频标记）。 */
+export function captureSavedParts(file, kindCode) {
+  return { label: `${kindCode === 'EO_VIDEO' ? '录像' : '截图'}已存证${linkedText(file)}` };
 }
 
-/** 保存成功后的提示：证据编号和实际关联到了什么，以服务端返回为准。 */
-export function captureSavedText(file, kindCode, simulated = false) {
-  const what = kindCode === 'EO_VIDEO' ? '录像' : '截图';
-  const no = file?.evidence_no ? ` ${file.evidence_no}` : '';
-  const kinds = (file?.links || []).map(link => link.subject_kind);
-  const linked = kinds.includes('EVENT') ? '，已关联目标和告警' : kinds.includes('TARGET') ? '，已关联目标' : '';
-  return `${what}已存为证据${no}${linked}${simulated ? '（测试视频画面，非现场）' : ''}。`;
+/** 保存成功后的提示：存了什么、关联到了什么；证据编号到证据台账里看。 */
+export function captureSavedText(file, kindCode) {
+  return `${kindCode === 'EO_VIDEO' ? '录像' : '截图'}已存为证据${linkedText(file)}。`;
 }
 
 /**

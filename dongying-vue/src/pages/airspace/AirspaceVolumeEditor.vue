@@ -98,7 +98,11 @@ function screen(event) {
   return point.matrixTransform(svg.value.getScreenCTM().inverse());
 }
 const round = value => Math.round(value * 1e7) / 1e7;
-const frozenView = () => ({ lon: frame.value.lon, lat: frame.value.lat, extent: frame.value.extent });
+// 手动视野按地面取景：以画面中心下方的地面点为中心，冻结时画面不动。
+function frozenView() {
+  const [lon, lat] = unproject({ x: 400, y: 260 }, base.value, frame.value, camera);
+  return { lon, lat, extent: frame.value.extent };
+}
 // 画面上的点击和拖动由视图自己改坐标，不需要重新取景；右侧改坐标、增删点后重新取景，保证改动落在画面里。
 let ownEdit = false;
 function own(change) { ownEdit = true; change(); nextTick(() => { ownEdit = false; }); }
@@ -168,11 +172,9 @@ function wheel(event) {
   const f = frame.value, cursor = screen(event);
   const delta = event.deltaY * (event.deltaMode === 1 ? 33 : event.deltaMode === 2 ? 400 : 1);
   const extent = Math.max(50, Math.min(400000, f.extent * Math.exp(delta * .002)));
-  const target = unproject(cursor, base.value, f, camera), k = extent / f.extent;
-  const next = { lon: target[0] + (f.lon - target[0]) * k, lat: target[1] + (f.lat - target[1]) * k, extent };
-  // 画面原点不在下限平面上，换比例后光标处地面点会偏一点，再按偏移修正一次。
-  const moved = unproject(cursor, base.value, makeViewFrame(props.polygons, props.lower, props.upper, camera, enhanceHeight.value, next), camera);
-  view.value = { lon: next.lon + target[0] - moved[0], lat: next.lat + target[1] - moved[1], extent };
+  // 光标下和画面中心下的地面点按同一比例收放，光标处地面点不动。
+  const target = unproject(cursor, base.value, f, camera), centre = unproject({ x: 400, y: 260 }, base.value, f, camera), k = extent / f.extent;
+  view.value = { lon: target[0] + (centre[0] - target[0]) * k, lat: target[1] + (centre[1] - target[1]) * k, extent };
 }
 function pointKey(event, index) {
   if (props.disabled) return;

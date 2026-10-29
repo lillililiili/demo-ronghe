@@ -3,7 +3,9 @@ import { makeFrame, project as projectMetres, unproject as unprojectMetres, heig
 // Display-only exaggeration: geometry, form values and saved AMSL metres are untouched.
 // The same factor is used by projection and its inverses, including a frozen drag frame.
 // view {lon, lat, extent} optionally replaces the auto-fitted centre and range (frozen while
-// drawing, panned, wheel-zoomed); the exaggeration still follows the volume itself.
+// drawing, panned, wheel-zoomed). Such a view is anchored on the floor (the lower plane, or sea
+// level until the heights are valid), so the map and the points stay put while the boundary or
+// the heights change; the exaggeration still follows the volume itself.
 export function makeViewFrame(polygons, lower, upper, camera, enhanceHeight = true, view = null) {
   const frame = makeFrame(polygons, lower, upper);
   const ready = Number.isFinite(lower) && Number.isFinite(upper) && upper > lower;
@@ -11,7 +13,7 @@ export function makeViewFrame(polygons, lower, upper, camera, enhanceHeight = tr
   const heightScale = enhanceHeight && pixels > 0 ? Math.max(1, 100 / pixels) : 1;
   if (!view) return { ...frame, heightScale };
   return { ...frame, lon: view.lon, lat: view.lat, mx: frame.my * Math.max(1e-6, Math.cos(view.lat * Math.PI / 180)),
-    extent: view.extent, scale: 330 / view.extent, heightScale };
+    altitude: ready ? lower : 0, extent: view.extent, scale: 330 / view.extent, heightScale };
 }
 
 const displayAltitude = (altitude, frame) => frame.altitude + (altitude - frame.altitude) * frame.heightScale;

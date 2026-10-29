@@ -80,3 +80,15 @@ test('a manual view pans and zooms the picture without changing the height exagg
   const picked = unproject({ x: 400, y: 260 }, 0, blank, camera);
   assert.ok(Math.abs(picked[0] - view.lon) < 1e-9 && Math.abs(picked[1] - view.lat) < 1e-9, 'a new airspace can pick points from an empty boundary');
 });
+
+test('a manual view keeps the floor in place while the boundary grows or the heights are filled in', () => {
+  const view = { lon: 118.6, lat: 37.4, extent: 3000 }, point = [118.61, 37.39], small = boundary(118.6, 37.4, .001);
+  for (const pitch of [.65, 1.3]) {
+    const angle = { ...camera, pitch };
+    const floor = (polygons, lower, upper, altitude = lower) => project(point, altitude, makeViewFrame(polygons, lower, upper, angle, true, view), angle);
+    const before = floor(small, 10, 120);
+    for (const after of [floor(boundary(118.6, 37.4, .02), 10, 120), floor(boundary(118.55, 37.35, .1), 10, 120), floor(small, 10, 300), floor(small, null, null, 0)]) {
+      assert.ok(Math.abs(after.x - before.x) < 1e-9 && Math.abs(after.y - before.y) < 1e-9, `floor moved at pitch=${pitch}`);
+    }
+  }
+});

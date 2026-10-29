@@ -168,5 +168,24 @@ class OvernightPlanWindowTest(unittest.TestCase):
         self.assertEqual((self.at(9), self.at(9, 30)), plan_window({'start': '09:00', 'end': '09:30'}, self.at(12, 30)))
 
 
+
+class PlatformEditTest(unittest.TestCase):
+    def test_withdraw_comes_after_a_version_saved_in_the_platform(self):
+        # 有人在平台「空域管理」里保存过一个排在现在之后的版本：撤销须晚于它，否则平台按 409 拒收。
+        later = NOW + 600000
+        item = dict(delivered('z1', 2), airspace_id='a1')
+        platform = Platform([item])
+        original = platform.call
+
+        def call(method, path, body=None, key=None):
+            if method == 'GET' and path == '/airspaces/a1/versions?page=1&size=1':
+                return {'items': [{'valid_from': later}]}
+            return original(method, path, body, key)
+        platform.call = call
+        results = chain_for(platform, ZONES[:1]).withdraw_zones()
+        self.assertEqual([('限飞区域 A', True, 3)], [(r['zone'], r['ok'], r['revision']) for r in results])
+        self.assertEqual(later + 1000, platform.withdrawals()[0]['effective_at'])
+
+
 if __name__ == '__main__':
     unittest.main()

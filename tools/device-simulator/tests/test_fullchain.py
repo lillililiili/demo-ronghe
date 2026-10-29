@@ -812,7 +812,7 @@ class FullChainTests(unittest.TestCase):
             last = {'action':action, 'revision':2, 'state':'ACCEPTED', 'airspace_id':'a', 'airspace_version_id':'v',
                     'payload':{key:effective}}
             with self.subTest(shown=shown), self.assertRaisesRegex(
-                    ValueError, '临时管制区」已经有一条生效时间排在 ' + shown + ' 的下发（或撤销）.*空域下发.*次日零点'):
+                    ValueError, '临时管制区」已经有一条生效时间排在 ' + shown + ' 的下发、撤销或平台上的修改.*空域下发.*次日零点'):
                 prepare(last)
 
     def test_starting_in_the_evening_after_a_manual_delivery_is_not_blocked(self):
@@ -845,6 +845,28 @@ class FullChainTests(unittest.TestCase):
                 self.assertEqual((at(0, 0), at(23, 59)), (row['valid_from'], row['valid_to']))
                 self.assertGreater(row['valid_to'], at(18, 30))
 
+    def test_a_version_saved_in_the_platform_after_the_last_delivery_does_not_block_the_start(self):
+        # 现场 10-29：流程 1 的禁飞区 10-27 已撤销；之后有人在平台「空域管理」里保存过一个新版本（生效时间在今天 0 点之后）。
+        # 模拟器只看自己的回执，按今天 0 点下发，被平台以「新版本生效时间必须晚于上一版本」拒收（409），流程起不来。
+        # 现在先读平台上最新版本的生效时间，下发从现在起生效。
+        from fullchain import FullChain, SHANGHAI
+        from engine import compile_scene
+        scene, _, _, _ = compile_scene(full_scene(['airspaces']))
+        no = 'sim-map-airspace-' + scene['zones'][0]['id']
+        at = lambda day, hour, minute: int(dt.datetime(2026, 10, day, hour, minute, tzinfo=SHANGHAI).timestamp() * 1000)
+        api = AirspaceRulePlatform()
+        api.latest[no] = {'action':'WITHDRAW', 'revision':4, 'state':'ACCEPTED', 'airspace_id':'a', 'airspace_version_id':'v',
+                          'airspace_no':no, 'payload':{'effective_at':at(3, 15, 43)}}
+        saved_in_platform = TEST_NOW - 10 * 60000
+        api.version_from[no], api.valid_to[no] = saved_in_platform, None
+        manifest = dict(batch='sim-platform-edit', created_at=TEST_NOW, devices={}, plans={}, zones={},
+                        targets=allocate_identities(scene, 'sim-platform-edit'))
+        FullChain(api, scene, prepared_manifest(scene, manifest), {'owner_org_id':'o','district_id':'d'}, lambda:None,
+                  clock=lambda:TEST_NOW).prepare()
+        body = next(b for _, path, b, _ in api.calls if path.endswith('/airspaces') and b and b['airspace_no'] == no)
+        self.assertEqual((5, TEST_NOW), (body['revision'], body['valid_from']))
+        self.assertIn(('GET', '/airspaces/a/versions?page=1&size=1', None, None), api.calls)
+
 
 class AirspaceRulePlatform(FakePlatform):
     """Accept airspace deliveries only in the order UpstreamAirspaceService does."""
@@ -857,6 +879,11 @@ class AirspaceRulePlatform(FakePlatform):
         if path.endswith('/airspaces/context'):
             self.calls.append((method, path, copy.deepcopy(body), key))
             return {'items': copy.deepcopy(list(self.latest.values()))}
+        if method == 'GET' and path.startswith('/airspaces/') and '/versions' in path:
+            self.calls.append((method, path, copy.deepcopy(body), key))
+            airspace_id = path.split('/')[2]
+            no = next((n for n, row in self.latest.items() if row.get('airspace_id') == airspace_id), None)
+            return {'items': [{'valid_from': self.version_from[no]}] if no in self.version_from else []}
         if method == 'POST' and path.endswith('/airspaces'):
             no, last = body['airspace_no'], self.latest.get(body['airspace_no'])
             if last and body['revision'] <= last['revision']:

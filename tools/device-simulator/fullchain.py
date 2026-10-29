@@ -212,6 +212,27 @@ class FullChain:
         if type(self.observation_source_count) is not int or not 1 <= self.observation_source_count <= 3:
             raise ValueError('标准化模拟观测来源数量须为 1 至 3 的整数')
 
+    def platform_version_start(self, previous):
+        """平台上这块空域最新版本的生效时间（毫秒），读不到就返回 None。
+
+        回执只记得模拟器自己下发过什么；有人在平台「空域管理」里改过并保存时，平台会多出一个版本，
+        它的生效时间可能比模拟器上次下发的还晚。平台要求新下发晚于最新版本，否则按 409 拒收，所以要一并考虑。"""
+        airspace_id = (previous or {}).get('airspace_id')
+        if not airspace_id:
+            return None
+        try:
+            page = self.api.call('GET', '/airspaces/' + str(airspace_id) + '/versions?page=1&size=1') or {}
+        except Exception:
+            return None
+        items = page.get('items') or []
+        value = items[0].get('valid_from') if items and isinstance(items[0], dict) else None
+        return int(value) if type(value) in (int, float) else None
+
+    def latest_effective_at(self, previous):
+        """上次下发/撤销的时间与平台最新版本生效时间中较晚的一个；两者都没有时返回 None。"""
+        times = [t for t in (airspace_effective_at(previous), self.platform_version_start(previous)) if t is not None]
+        return max(times) if times else None
+
     def existing_airspaces(self):
         """Read the source's latest receipts once so repeated runs can reuse IDs."""
         if self._airspaces is None:
@@ -555,16 +576,16 @@ class FullChain:
                 self.state['requests']['zone-'+zone['id']]={'path':PREFIX+'/airspaces', 'body':copy.deepcopy(saved),
                     'state':'ACCEPTED','result':copy.deepcopy(result),'reused_by_readback':True}
             else:
-                # 同一天重跑（上次已撤销或已更新）或改了区域时，新下发须晚于上次的生效/撤销时间，否则平台拒收（409）；
+                # 同一天重跑（上次已撤销或已更新）、改了区域，或有人在平台「空域管理」里保存过新版本时，新下发须晚于这些时间，否则平台拒收（409）；
                 # 这时从现在起生效，时段已过就紧接上次之后，结束时间不变。
-                last=airspace_effective_at(previous)
+                last=self.latest_effective_at(previous)
                 if last is not None and body['valid_from']<=last:
                     body['valid_from']=max(now,last+1000)
                     if body['valid_from']>=zone_finish:
                         body['valid_from']=last+1000
                     if body['valid_from']>=zone_finish:
                         when=dt.datetime.fromtimestamp(last/1000,SHANGHAI).strftime('%m月%d日 %H:%M')
-                        raise ValueError('空域「'+zone['name']+'」已经有一条生效时间排在 '+when+' 的下发（或撤销），到了当天结束（23:59）或更晚。'
+                        raise ValueError('空域「'+zone['name']+'」已经有一条生效时间排在 '+when+' 的下发、撤销或平台上的修改，到了当天结束（23:59）或更晚。'
                                          '平台要求新的下发必须晚于它，所以现在发不出去。请到「资料输入」里的「空域下发」撤销或改掉那一条，或等到北京时间次日零点之后再开始')
                 result=self.request('zone-'+zone['id'],PREFIX+'/airspaces',body)
             self.manifest['zones'][zone['id']]={'id':result.get('airspace_id'),'revision':int(result.get('revision') or revision),'receipt':result};self.checkpoint()
@@ -736,7 +757,7 @@ class FullChain:
                 continue
             payload = previous.get('payload') or {}
             revision = int(previous.get('revision') or 0) + 1
-            last = airspace_effective_at(previous)
+            last = self.latest_effective_at(previous)
             effective_at = max(self.clock(), (last or 0) + 1000)
             valid_to = payload.get('valid_to')
             if type(valid_to) in (int, float) and effective_at >= valid_to:

@@ -1,7 +1,8 @@
 <script setup>
-import { computed, reactive, ref, shallowRef } from 'vue';
+import { computed, reactive, ref, shallowRef, useId } from 'vue';
 import { validPoint } from './airspaceVolume.js';
 import { heightFromDrag, makeViewFrame, project, unproject } from './airspaceVolumeView.js';
+import { useAirspaceFloorMap } from './airspaceFloorMap.js';
 
 const props = defineProps({ polygons: { type: Array, required: true }, lower: Number, upper: Number,
   part: { type: Number, default: 0 }, ring: { type: Number, default: 0 }, disabled: Boolean });
@@ -48,6 +49,26 @@ const grid = computed(() => {
     result.push([pp([f.lon + step / f.mx, f.lat - radius / f.my], base.value), pp([f.lon + step / f.mx, f.lat + radius / f.my], base.value)]);
   }
   return result;
+});
+// 底面贴本地离线地图，便于看出空域落在哪里；图片按其自身绘制时的中心和范围贴到下限平面。
+// 地图半径按当前缩放和俯仰铺满整个画面（含缩小、压低视角时露出的远处），淡出边缘落在画面外；
+// 半径按 2^(1/4) 档向上取整，旋转和小幅调整不重画。
+const FLOOR_FADE_START = .88;
+const floorMap = useAirspaceFloorMap(computed(() => {
+  if (!points.value.length) return null;
+  const f = autoFrame.value, scale = f.scale * camera.zoom;
+  const [lon, lat] = unproject({ x: 400, y: 260 }, base.value, f, camera);
+  const shift = Math.hypot((lon - f.lon) * f.mx, (lat - f.lat) * f.my);
+  const cover = (Math.hypot(400 / scale, 260 / (scale * Math.sin(camera.pitch))) + shift) / FLOOR_FADE_START;
+  return { lon: f.lon, lat: f.lat, radius: f.extent * 2 ** (Math.ceil(Math.log2(cover / f.extent) * 4) / 4) };
+}));
+const floorMaskId = `airspace-floor-${useId()}`;
+const floorMatrix = computed(() => {
+  const m = floorMap.value, f = frame.value;
+  if (!m) return '';
+  const dx = m.radius / f.mx, dy = m.radius / f.my;
+  const nw = pp([m.lon - dx, m.lat + dy], base.value), ne = pp([m.lon + dx, m.lat + dy], base.value), sw = pp([m.lon - dx, m.lat - dy], base.value);
+  return `matrix(${ne.x - nw.x},${ne.y - nw.y},${sw.x - nw.x},${sw.y - nw.y},${nw.x},${nw.y})`;
 });
 const heightPoint = computed(() => [frame.value.lon + frame.value.extent * .65 / frame.value.mx, frame.value.lat]);
 const east = computed(() => pp([frame.value.lon + frame.value.extent * .72 / frame.value.mx, frame.value.lat], base.value));
@@ -134,7 +155,14 @@ function heightKey(event, which) {
       <svg ref="svg" viewBox="0 0 800 520" role="group" aria-label="空域三维视图：拖动背景旋转，拖动顶点修改经纬度，拖动高度手柄修改海拔"
         @pointerdown="down" @pointermove="move" @pointerup="up" @pointercancel="up" @lostpointercapture="drag = null">
         <template v-if="points.length">
-          <g class="volume-grid"><polyline v-for="(segment, index) in grid" :key="index" :points="line(segment)" /></g>
+          <g v-if="floorMap" class="volume-floor" :transform="floorMatrix">
+            <defs>
+              <radialGradient :id="`${floorMaskId}-fade`" cx=".5" cy=".5" r=".5"><stop :offset="FLOOR_FADE_START" stop-color="#fff" /><stop offset="1" stop-color="#fff" stop-opacity="0" /></radialGradient>
+              <mask :id="floorMaskId" maskContentUnits="objectBoundingBox"><rect width="1" height="1" :fill="`url(#${floorMaskId}-fade)`" /></mask>
+            </defs>
+            <image :href="floorMap.href" width="1" height="1" preserveAspectRatio="none" :mask="`url(#${floorMaskId})`" />
+          </g>
+          <g v-else class="volume-grid"><polyline v-for="(segment, index) in grid" :key="index" :points="line(segment)" /></g>
           <text :x="east.x" :y="east.y" class="axis-label">东 E</text>
           <text :x="north.x" :y="north.y - 10" class="axis-label">北 N</text>
           <path v-for="face in faces" :key="face.key" :d="face.path" fill-rule="evenodd" class="volume-face" :class="{ cap: face.cap, active: face.active }" />
@@ -175,6 +203,7 @@ function heightKey(event, which) {
 .volume-canvas { min-width: 0; overflow: hidden; }
 svg { display: block; width: 100%; min-height: 300px; touch-action: none; cursor: grab; user-select: none; }
 svg:active { cursor: grabbing; }
+.volume-floor { pointer-events: none; }
 .volume-grid polyline { fill: none; stroke: var(--line); stroke-width: 1; }
 .axis-label, .volume-empty { fill: var(--txt-3); font-size: 15px; }
 .volume-face { fill: var(--blue); fill-opacity: .12; stroke: var(--blue); stroke-opacity: .55; stroke-width: 1.2; }

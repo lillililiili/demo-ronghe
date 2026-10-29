@@ -11,6 +11,8 @@
   const hiddenTargetKinds = ['person', 'vehicle', 'ship', 'remote_controller'];
   for (const kind of hiddenTargetKinds) { const at = targetKinds.indexOf(kind); if (at >= 0) targetKinds.splice(at, 1); }
   const COUNTER = 'countermeasure', ADSB = 'adsb', FLIGHT = 'flight';
+  // 东营地面海拔一般 2–8 米；和 engine.py 的 DEFAULT_GROUND_ELEVATION_M 一致。
+  const GROUND_ELEVATION_M = 5;
   deviceKinds.push(ADSB);
   let realtimeConfig = null, scopes = null, scopesSession = null;
   const lonLat = site => [(118.56 + site.x * .00012).toFixed(6), (37.50 - site.y * .00012).toFixed(6)];
@@ -141,6 +143,26 @@
   function adsbRow(d) {
     return `<div class="device-row"><h3>${esc(d.name)}<small>航班接收机</small></h3><input type="hidden" name="health_${d.id}" value="正常"><input type="hidden" name="interval_${d.id}" value="1">${seg(`heartbeat_${d.id}`, d.heartbeat || '持续上报', [{value: '持续上报', label: '正常发送'}, {value: '停止心跳', label: '断开（不发）', bad: true}])}<div class="field-pair">${field('接收范围（公里）', `range_${d.id}`, d.rangeKm, 'number', 'min="10" max="600" step="1" required')}${field('周围背景航班（架）', `background_${d.id}`, d.backgroundFlights, 'number', 'min="0" max="200" step="1" required')}</div>${field('识别码（平台按它认这台接收机）', `guid_${d.id}`, d.stationGuid, 'text', 'readonly')}<p class="field-note">开始模拟时按这个点位的位置自动登记到平台的接入设备里，画出来的航班和周围的背景航班每秒一架一条、每 30 秒一条状态，按真实接收机的格式通过 UDP 送到平台；停止时停用。背景航班都飞在 7000 米以上，不影响反制。</p></div>`;
   }
+  // 设备海拔 = 点位地面海拔 + 架设高度；架设高度像接入人员一样自己填，可留空。
+  function mountField(d, site) {
+    const ground = Number(site.groundElevationM ?? GROUND_ELEVATION_M), mount = d.mountHeightM;
+    const note = mount == null || mount === '' ? '没填架设高度，平台上海拔显示「未填写」' : `海拔高度 ${Number((ground + Number(mount)).toFixed(2))} 米（地面海拔 ${ground} 米 + 架设高度 ${mount} 米）`;
+    return field(`${d.name} 架设高度（米，可留空）`, `mount_${d.id}`, mount ?? '', 'number', 'min="0" max="1000" step="0.1"') + `<p class="field-note">${esc(note)}</p>`;
+  }
+  function elevationSiteValues(form, site) {
+    const ground = Number(form.elements.groundElevationM?.value);
+    if (!Number.isFinite(ground) || ground < -500 || ground > 9000) throw Error('地面海拔须在 -500 到 9000 米之间');
+    const mounts = {};
+    for (const d of site.devices) {
+      const input = form.elements[`mount_${d.id}`];
+      if (!input) continue;
+      const text = input.value.trim(), mount = Number(text);
+      if (text && (!Number.isFinite(mount) || mount < 0 || mount > 1000)) throw Error(`${d.name}：架设高度须在 0 到 1000 米之间`);
+      mounts[d.id] = text ? mount : undefined;
+    }
+    site.groundElevationM = ground;
+    for (const d of site.devices) if (d.id in mounts) { if (mounts[d.id] === undefined) delete d.mountHeightM; else d.mountHeightM = mounts[d.id]; }
+  }
   function adsbSiteValues(form, site) {
     for (const d of site.devices) {
       if (d.kind !== ADSB) continue;
@@ -261,14 +283,16 @@
     const reporters = opts(devices().filter(d => targetDeviceKinds.includes(d.kind)).map(d => ({id: d.id, name: `${d.name}（${d.siteName}）`})), '请选择上报设备');
     const nearby = auxiliaryDevicesFor(x).map(d => ({...d, name: `${d.name} · ${labels[d.kind] || d.kind} · ${d.siteName} · ${formatDistance(d.distanceMetres)}`}));
     let html = `<div class="field-pair wide-first">${field('名称', 'name', x.name, 'text', 'required maxlength="60"')}${selectField('目标类别', 'kind', x.kind, kinds.map(k => ({value: k, label: labels[k] || k})))}</div>`;
-    html += `<div class="field-pair">${field('高度（米）', 'height', x.height, 'number', 'min="0" max="10000" required')}${field('速度（米/秒）', 'speed', x.speed, 'number', 'min="0" max="100" required')}</div>`;
+    const agl = x.heightAgl ?? (x.altitudeDatum === 'AGL' ? x.height : Math.max(0, Number(x.height) - GROUND_ELEVATION_M));
+    html += `<div class="field-pair">${field('离地高度（米）', 'heightAgl', agl, 'number', 'min="0" max="10000" step="0.1" required')}${field('速度（米/秒）', 'speed', x.speed, 'number', 'min="0" max="100" required')}</div><input type="hidden" name="height" value="${esc(x.height)}">`;
+    html += `<p class="field-note">海拔按离地高度加地面海拔 ${GROUND_ELEVATION_M} 米自动算；超高按离地高度判断。</p>`;
     if (x.kind === 'bird') html += field('数量（只）', 'count', x.count, 'number', 'min="1" max="100" required');
     html += '<p class="seg-label">路线</p>' + btn('edit-target-path', `在地图上画路线（已画 ${x.path.length} 个点）`, 'wide cyan-button');
     html += '<p class="seg-label">怎么飞</p>' + seg('motionMode', x.motionMode || 'once', [{value: 'once', label: '到终点停留'}, {value: 'pingpong', label: '原路往返'}, {value: 'loop', label: '闭合循环'}]);
     html += selectField('报备任务', 'planId', x.planId, opts(state.plans, '不关联任务'));
     html += window.NotificationUI.fields(x);
     html += selectField('上报设备', 'deviceId', x.deviceId, reporters);
-    html += moreBox('上报通道、高度基准、逐航点高度和停留、暂停上报时段、辅助上报设备、离地高度、识别概率',
+    html += moreBox('上报通道、高度基准、逐航点高度和停留、暂停上报时段、辅助上报设备、识别概率',
       selectField('上报通道', 'transport', x.transport || (x.altitudeDatum || x.kind === 'balloon' ? 'normalized' : 'mqtt'), [{value: 'mqtt', label: 'MQTT 设备协议'}, {value: 'normalized', label: '规范化观测'}])
       + '<p class="field-note">保存后保持所选上报通道。MQTT 高度按设备协议解释；AGL 须手动选择规范化观测。</p>'
       + selectField('高度基准', 'altitudeDatum', x.altitudeDatum || (x.transport === 'normalized' || x.kind === 'balloon' ? 'AMSL' : ''), [{value: '', label: '未知（设备协议未声明）'}, {value: 'AMSL', label: '海拔 AMSL'}, {value: 'AGL', label: '离地 AGL（规范化观测）'}])
@@ -278,23 +302,25 @@
       + `<p class="field-note">当前路线 ${x.path.length} 个航点；逐航点数值须与航点数一致。闭合循环会沿末点到起点移动，原路往返沿原路返回。</p>`
       + selectField('辅助上报设备', 'secondaryDeviceId', x.secondaryDeviceId || '', opts(nearby, '不使用辅助设备'))
       + '<p class="field-note">显示目标整条路线周边 5 公里内的所有设备；当前主上报设备已排除。只有支持目标观测协议的设备会产生辅助目标报文，光电、气象和反制设备仍按各自协议上报。</p>'
-      + `<div class="field-pair">${field('模拟离地高度（米，可留空）', 'heightAgl', x.heightAgl ?? '', 'number', 'min="0" max="10000" step="0.1"')}${field('模拟识别概率（0—1，可留空）', 'probability', x.probability ?? '', 'number', 'min="0" max="1" step="0.01"')}</div>`);
+      + field('模拟识别概率（0—1，可留空）', 'probability', x.probability ?? '', 'number', 'min="0" max="1" step="0.01"'));
     return html;
   }
   function siteForm(x) {
     const [lon, lat] = lonLat(x);
-    let html = field('名称', 'name', x.name, 'text', 'required maxlength="60"') + btn('relocate-site', '在地图上挪位置', 'wide cyan-button') + '<p class="seg-label">这里的设备</p>';
+    let html = field('名称', 'name', x.name, 'text', 'required maxlength="60"') + btn('relocate-site', '在地图上挪位置', 'wide cyan-button')
+      + field('地面海拔（米）', 'groundElevationM', x.groundElevationM ?? GROUND_ELEVATION_M, 'number', 'min="-500" max="9000" step="0.1" required')
+      + '<p class="field-note">这个点位地面的海拔，东营一般 2 到 8 米。设备海拔 = 地面海拔 + 下面各设备的架设高度。</p><p class="seg-label">这里的设备</p>';
     let counters = 0, intervals = '';
     normalizeAdsb();
     for (const d of x.devices) {
-      if (d.kind === ADSB) { html += adsbRow(d); continue; }
+      if (d.kind === ADSB) { html += adsbRow(d) + mountField(d, x); continue; }
       intervals += field(`${d.name} 心跳间隔（秒）`, `interval_${d.id}`, d.interval, 'number', 'min="1" max="300" required');
       if (d.kind === COUNTER) {
         counters++;
         html += `<div class="device-row"><h3>${esc(d.name)}<small>四通道</small></h3><input type="hidden" name="health_${d.id}" value="${esc(d.health)}"><input type="hidden" name="heartbeat_${d.id}" value="${esc(d.heartbeat)}">${seg(`enabled_${d.id}`, d.enabled === false ? 'off' : 'on', [{value: 'on', label: '启用'}, {value: 'off', label: '停用', bad: true}])}${selectField('所属单位与区县', `scope_${d.id}`, d.scope || '', scopeOptions(d.scope))}<p class="field-note">${d.enabled === false ? '已停用：开始模拟时不启用本机模拟反制设备。' : counters > 1 ? '一个场景只有第一台反制设备在工作，这一台不生效。' : (scopes ? '' : '登录系统后这里才能选单位与区县。') + '开始模拟时按这个点位的位置登记到平台，反制指令从 TCP 四通道收；归属只决定设备属于谁，不授予反制权限。'}</p></div>`;
         continue;
       }
-      html += `<div class="device-row"><h3>${esc(d.name)}<small>${esc(labels[d.kind] || d.kind)}</small></h3><div class="seg-pair">${seg(`health_${d.id}`, d.health, [{value: '正常', label: '正常'}, {value: '故障', label: '故障', bad: true}])}${seg(`heartbeat_${d.id}`, d.heartbeat, [{value: '持续上报', label: '持续心跳'}, {value: '停止心跳', label: '停止心跳', bad: true}], 'heartbeat')}</div></div>`;
+      html += `<div class="device-row"><h3>${esc(d.name)}<small>${esc(labels[d.kind] || d.kind)}</small></h3><div class="seg-pair">${seg(`health_${d.id}`, d.health, [{value: '正常', label: '正常'}, {value: '故障', label: '故障', bad: true}])}${seg(`heartbeat_${d.id}`, d.heartbeat, [{value: '持续上报', label: '持续心跳'}, {value: '停止心跳', label: '停止心跳', bad: true}], 'heartbeat')}</div>${mountField(d, x)}</div>`;
     }
     html += '<div class="subheading">再加一台设备</div>' + selectField('设备类型', 'newKind', deviceKinds[0], deviceKinds.map(v => ({value: v, label: labels[v]}))) + btn('add-device', '添加到此点位', 'wide');
     html += moreBox('心跳间隔、经纬度',
@@ -335,6 +361,11 @@
     const x = lookup(selected.kind, selected.id);
     if (!x) return;
     const fail = message => { event.preventDefault(); event.stopImmediatePropagation(); form.querySelector('.inline-error').textContent = message; };
+    if (selected.kind === 'target' && x.kind !== FLIGHT && form.elements.heightAgl && form.elements.height) {
+      // 卡片上填离地高度；海拔（height）= 离地高度 + 地面海拔，交给 app.js 照常保存。
+      const agl = Number(form.elements.heightAgl.value), datum = form.elements.altitudeDatum?.value;
+      if (Number.isFinite(agl)) form.elements.height.value = String(datum === 'AGL' ? agl : Math.min(10000, agl + GROUND_ELEVATION_M));
+    }
     if (selected.kind === 'target' && x.kind === FLIGHT) {
       // 民航航班的字段和无人机不一样，不交给 app.js 的目标校验。
       event.preventDefault(); event.stopImmediatePropagation();
@@ -343,7 +374,7 @@
       return;
     }
     if (selected.kind === 'site') {
-      try { adsbSiteValues(form, x); } catch (issue) { fail(issue.message); return; }
+      try { elevationSiteValues(form, x); adsbSiteValues(form, x); } catch (issue) { fail(issue.message); return; }
       for (const d of x.devices) if (d.kind === COUNTER) { d.scope = form.elements[`scope_${d.id}`]?.value || ''; d.send = false; d.enabled = form.elements[`enabled_${d.id}`]?.value !== 'off'; }
       if (liveState) try { renderStatus(liveState); } catch (error) { console.error(error); }
     }

@@ -11,7 +11,7 @@ import urllib.error
 import urllib.request
 import urllib.parse
 import uuid
-from engine import coordinates, zone_polygon_rings
+from engine import coordinates, device_altitude, zone_polygon_rings
 from coverage_defaults import default_coverage
 from engine import normalize_coverage_config
 
@@ -200,7 +200,7 @@ class Platform:
             mismatches.append('设备已停用')
         if mismatches:
             raise ValueError('稳定设备身份冲突（' + body['device_no'] + '）：' + '、'.join(dict.fromkeys(mismatches)))
-        mutable = ('name', 'vendor', 'model', 'longitude', 'latitude', 'altitude_m')
+        mutable = ('name', 'vendor', 'model', 'longitude', 'latitude')
         changed = [key for key in mutable if device.get(key) is not None and device.get(key) != body.get(key)]
         if changed:
             version = device.get('version')
@@ -334,6 +334,12 @@ class Platform:
                 result['failed'].append({'device_no': item['device_no'], 'error': str(error)})
         return result
 
+    def sync_elevation(self, device_id, d):
+        """像接入人员一样填地面海拔和架设高度；架设高度没填就两项都不填，平台显示「未填写」。"""
+        body = {} if d.get('mountHeightM') is None else {
+            'ground_elevation_m': d['groundElevationM'], 'mount_height_m': d['mountHeightM']}
+        self.call('PUT', '/devices/' + urllib.parse.quote(str(device_id), safe='') + '/elevation', body)
+
     def prepare_devices(self, devices, broker, manifest, checkpoint):
         from coordinate_contract import simulator_wgs84
         for device_id, d in devices.items():
@@ -343,7 +349,7 @@ class Platform:
                         broker_id=broker['broker_id'], provider_code=manifest['provider'], external_device_id=external,
                         device_type_abbr=d['kind'], source_mode='replay', owner_org_id=broker['owner_org_id'],
                         district_id=broker['district_id'], device_no=external, name='模拟 '+d['name'],
-                        vendor=SIMULATOR_VENDOR, model=SIMULATOR_MODEL, longitude=lon, latitude=lat, altitude_m=0, coordinate_system=simulator_wgs84(d))
+                        vendor=SIMULATOR_VENDOR, model=SIMULATOR_MODEL, longitude=lon, latitude=lat, coordinate_system=simulator_wgs84(d))
             if d['kind'] == 'eo':
                 body['edge_id'] = external + '-edge'
             record = self._onboard_or_reuse(body, 'sim-onboard-'+external)
@@ -351,10 +357,11 @@ class Platform:
                 manifest.setdefault('devices_restored', []).append(
                     {'device_no': external, 'name': body['name'], 'before': record['_restored']})
             record = self._sync_sensing_profile(record, d.get('coverage'), external)
+            self.sync_elevation(record['device']['device_id'], d)
             # source_id 供设备开始、恢复上报时报健康状态用（device_health.py）。
             manifest['devices'][device_id] = {'external_id': external, 'edge_id': body.get('edge_id'), 'platform_id': record['device']['device_id'],
                                               'kind': d['kind'], 'source_id': record.get('source_id'),
-                                              'longitude': lon, 'latitude': lat, 'altitude_m': 0, 'altitude_datum': 'AMSL',
+                                              'longitude': lon, 'latitude': lat, 'altitude_m': device_altitude(d), 'altitude_datum': 'AMSL',
                                               'coverage': copy.deepcopy(d.get('coverage') or default_coverage(d['kind'])),
                                               'fusion_device_id': record['device'].get('fusion_device_id')}
             if d['kind'] == 'eo':

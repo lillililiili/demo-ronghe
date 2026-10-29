@@ -245,7 +245,8 @@ class EngineTests(unittest.TestCase):
         obj=messages(s,d,t,m,0,1000,{},1)[1][1]['objects'][0]
         self.assertEqual(obj.get('height'),60)
         self.assertEqual(obj['extension'].get('probability'),.98)
-        self.assertEqual(obj['altitude'],50)
+        # 海拔 = 离地高度 + 地面海拔 5 米。
+        self.assertEqual(obj['altitude'],65)
     def test_missing_quality_and_agl_remain_missing(self):
         s,d,t,_=compile_scene(scene())
         m={'provider':'test','devices':{'d1':{'external_id':'external'}},'targets':{'t1':{'uav_sn':'TEST'}}}

@@ -35,6 +35,7 @@ import { loadTargetPosition, loadRouteCenterline, loadAirspaceOverlays, installO
 import { trustedTrajectoryPoints, strokePlanComparison } from '@/services/trajectoryDrawing.js';
 import { RULE_SET_LABEL, SOURCE_MODE_LABEL, labelOf } from '@/ui/labels.js';
 import { displayPlanNo, displayTargetNo } from '@/ui/deviceNumber.js';
+import { ruleHitText } from '@/ui/ruleHitText.js';
 import {
   openLegalityReview, openLegalityRecompute, openLegalityEscalation,
   legalStatusText, reviewStateText, planMatchText, ruleReasonText,
@@ -1036,10 +1037,10 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
                     <button v-for="{ hit, index } in checkRows"
                       :key="`${hit.rule_code}-${index}`" type="button" class="lg-check-item"
                       :class="[checkResultClass(hit), { 'is-selected': selectedHitIndex === index }]"
-                      :aria-expanded="selectedHitIndex === index" :title="hit.message || ''" @click="toggleHit(index)">
+                      :aria-expanded="selectedHitIndex === index" :title="ruleHitText(hit.message)" @click="toggleHit(index)">
                       <span class="lg-check-icon" v-html="UI.icon(checkIcon(hit))"></span>
                       <span class="lg-check-copy"><b>{{ ruleName(hit.rule_code) }}<em>{{ checkResultText(hit) }}</em></b>
-                        <small class="lg-check-description">{{ hit.message || (hit.reason_code ? ruleReasonText(hit.reason_code) : '未提供说明') }}</small>
+                        <small class="lg-check-description">{{ ruleHitText(hit.message, { fallback: hit.reason_code ? ruleReasonText(hit.reason_code) : '' }) || '未提供说明' }}</small>
                         <small v-if="selectedHitIndex === index && hit.facts && Object.keys(hit.facts).length">判定时事实：{{ factText(hit.facts, hit.rule_code) }}</small>
                         <small v-if="selectedHitIndex === index">{{ hit.rule_code }} · {{ !hit.params?.length ? (selectedEvaluation.param_status === 'CONFIRMED' ? '已确认规则（本项无数值参数）' : '本项未附数值参数') : hit.params.every(p => p.status === 'CONFIRMED') ? '已确认参数' : '参数待业务确认' }}</small>
                       </span>

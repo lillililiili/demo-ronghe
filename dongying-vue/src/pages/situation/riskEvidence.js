@@ -6,6 +6,8 @@ import { toAirspaces, toFlightPlans } from '@/services/situationData.js';
 import { weatherPolygon } from '@/services/weatherRiskGeometry.js';
 import { REASON_CODE_LABEL, VIOLATION_CODE_LABEL, SOURCE_MODE_LABEL, ALTITUDE_BAND_LABEL, OBJECT_TREND_LABEL, CORRIDOR_RELATION_LABEL, DISPOSAL_STATUS_LABEL, RISK_STATE_LABEL, ALARM_PROGRESS_LABEL } from '@/ui/labels.js';
 import { apiRequestTimed } from '@/services/apiClient.js';
+import { RULE_REASON_TEXT } from '@/ui/legalityReviewModal.js';
+import { ruleHitText } from '@/ui/ruleHitText.js';
 
 export const itemKey = item => item?.key || `${item?.kind || ''}:${item?.risk_case_id || item?.risk_id || item?.alarm_id || ''}`;
 export const emptyRiskContext = item => ({ itemKey: itemKey(item), airspaces: [], flightPlans: [], points: [], lines: [], polygons: [], notice: '' });
@@ -15,8 +17,9 @@ export const evidenceSignature = item => JSON.stringify([itemKey(item), item?.ri
 export const evidenceTime = value => value == null ? '未知' : Number.isNaN(new Date(value).getTime()) ? '未知'
   : new Date(value).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
 const known = value => value == null || value === '' ? '未知' : String(value);
+// 与告警列表同一本词典（RULE_REASON_TEXT）；三本都查不到的原因代码不上屏，返回空串。
 const reasonLabel = code => code === 'BVLOS_EXCEEDED' ? '超视距历史提示（不作为新增违规结论）'
-  : VIOLATION_CODE_LABEL[code] || REASON_CODE_LABEL[code] || code;
+  : RULE_REASON_TEXT[code] || VIOLATION_CODE_LABEL[code] || REASON_CODE_LABEL[code] || '';
 const list = value => Array.isArray(value) ? value : [];
 const unique = values => [...new Set(values.filter(Boolean))];
 const caseAreaId = data => data.riskCase?.airspace_id || data.item?.area_id || null;
@@ -187,6 +190,8 @@ export function riskEvidenceView(data) {
   const reasons = unique([item.reason_text, risk?.reason_text, ...list(alarm?.violation_reasons).map(reasonLabel),
     ...evaluations.flatMap(row => list(row.violation_reasons).map(reasonLabel))]);
   if (!reasons.length) reasons.push(reasonLabel(item.reason_code) || '风险原因尚未提供');
+  // 风险摘要已是“甲、乙”合并的一句时，不再逐条重复甲、乙。
+  const shown = reasons.filter(reason => !reasons.some(other => other !== reason && other.split('、').includes(reason)));
   const rows = [ ['目标', item.target_no || risk?.target_no || alarm?.target_no || '未知'], ['受影响任务', unique((data.linkedPlans || []).map(row => row.plan?.plan_no)).join('、') || data.plan?.plan_no || item.plan_no || risk?.plan_no || '未知'],
     [item.kind === 'UAV' ? '本事项空域' : '区域', riskCase?.airspace_name || item.area_name || fact?.area_name || '未知'], ['事件时间', evidenceTime(item.occurred_at ?? risk?.occurred_at)],
     ['事件事实状态', known(item.state || event?.state || risk?.state)], ['风险阶段', known(item.stage || riskCase?.stage)],
@@ -239,9 +244,14 @@ export function riskEvidenceView(data) {
       if (fact?.[key] != null) rows.push([label, `${fact[key]} ${unit}`]);
     }
   }
+  const names = {};
+  for (const hit of data.hits || []) if (hit.airspace?.airspace_id && hit.airspace.name) names[hit.airspace.airspace_id] = hit.airspace.name;
+  if (riskCase?.airspace_id && riskCase.airspace_name) names[riskCase.airspace_id] = riskCase.airspace_name;
+  const hitTitle = hit => hit.reason_code === 'BVLOS_EXCEEDED' ? reasonLabel(hit.reason_code)
+    : ruleHitText(hit.message, { names, fallback: reasonLabel(hit.reason_code) }) || '判定依据';
   const checks = evaluations.flatMap(evaluation => relevantHits(evaluation, caseAreaId(data)).map(hit => ({
-    title: `${hit.reason_code === 'BVLOS_EXCEEDED' ? reasonLabel(hit.reason_code) : hit.message || reasonLabel(hit.reason_code) || '判定依据'} · ${evidenceTime(evaluation.observed_at ?? evaluation.evaluated_at)}`,
-    message: hit.message || '', rows: Object.entries(hit.facts || {}).filter(([key]) => factLabels[key]).map(([key, value]) =>
+    title: `${hitTitle(hit)} · ${evidenceTime(evaluation.observed_at ?? evaluation.evaluated_at)}`,
+    message: '', rows: Object.entries(hit.facts || {}).filter(([key]) => factLabels[key]).map(([key, value]) =>
       [factLabels[key], formatFact(key, value)]),
     params: list(hit.params).filter(param => paramLabels[param.key]).map(param => `${paramLabels[param.key]}：${evidenceDisplay(param.value)}`)
   })));
@@ -249,8 +259,8 @@ export function riskEvidenceView(data) {
     const facts = Object.entries(hit.facts || {}).filter(([key]) => factLabels[key] && !['required','plan_version'].includes(key))
       .map(([key, value]) => `${factLabels[key]}：${formatFact(key, value)}`);
     const params = list(hit.params).filter(param => paramLabels[param.key]).map(param => `${paramLabels[param.key]}：${evidenceDisplay(param.value)}`);
-    return { title: hit.reason_code === 'BVLOS_EXCEEDED' ? reasonLabel(hit.reason_code) : hit.message || reasonLabel(hit.reason_code) || '判定依据', text: [...facts, ...params].join('；'), time: evidenceTime(evaluation.observed_at ?? evaluation.evaluated_at) };
+    return { title: hitTitle(hit), text: [...facts, ...params].join('；'), time: evidenceTime(evaluation.observed_at ?? evaluation.evaluated_at) };
   }));
   const scopedReasons = unique(caseHits(data).map(hit => reasonLabel(hit.reason_code)));
-  return { reasons, rows: rows.map(([label,value]) => [label,evidenceDisplay(value)]), checks, keyEvidence, scopedReasons };
+  return { reasons: shown, rows: rows.map(([label,value]) => [label,evidenceDisplay(value)]), checks, keyEvidence, scopedReasons };
 }

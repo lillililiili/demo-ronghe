@@ -115,7 +115,7 @@ onUnmounted(() => { alive=false; generation++; statusGeneration++; clearTimeout(
       <p v-if="!canLocate && !loading" class="evidence-notice">位置或范围暂不可用，无法定位。</p>
       <details :open="expanded" @toggle="expanded = $event.target.open"><summary>判定事实明细{{ view.checks.length ? `（${view.checks.length}）` : '' }}</summary>
         <p v-if="!view.checks.length">{{ uav ? '报警时的详细判定依据暂不可用。' : '本次判定事实见上方。' }}</p>
-        <article v-for="(check, index) in view.checks" :key="index"><b>{{ check.title }}</b><p>{{ check.message }}</p>
+        <article v-for="(check, index) in view.checks" :key="index"><b>{{ check.title }}</b><p v-if="check.message">{{ check.message }}</p>
           <dl><template v-for="[label, value] in check.rows" :key="label"><dt>{{ label }}</dt><dd>{{ display(value) }}</dd></template></dl>
           <p v-for="param in check.params" :key="param">当时参数：{{ param }}</p>
         </article>

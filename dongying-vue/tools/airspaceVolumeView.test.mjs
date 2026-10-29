@@ -60,3 +60,23 @@ test('missing, zero and inverted altitude ranges do not gain a fabricated height
     assert.equal(frame.heightScale ?? 1, 1);
   }
 });
+
+test('a manual view pans and zooms the picture without changing the height exaggeration or point picking', () => {
+  const polygons = boundary(118.78, 37.5, .02), view = { lon: 118.6, lat: 37.4, extent: 60000 };
+  for (const pitch of [.65, 1.3]) {
+    const angle = { ...camera, pitch };
+    const auto = makeViewFrame(polygons, 0, 120, angle);
+    const frame = makeViewFrame(polygons, 0, 120, angle, true, view);
+    assert.equal(frame.heightScale, auto.heightScale, 'exaggeration follows the volume, not the view');
+    assert.equal(frame.scale, 330 / view.extent);
+    const centre = project([view.lon, view.lat], frame.altitude, frame, angle);
+    assert.ok(Math.abs(centre.x - 400) < 1e-9 && Math.abs(centre.y - 260) < 1e-9);
+    for (const point of [[118.3, 37.2], [118.79, 37.51]]) {
+      const back = unproject(project(point, 0, frame, angle), 0, frame, angle);
+      assert.ok(Math.abs(back[0] - point[0]) < 1e-9 && Math.abs(back[1] - point[1]) < 1e-9);
+    }
+  }
+  const blank = makeViewFrame([[[]]], null, null, camera, true, view);
+  const picked = unproject({ x: 400, y: 260 }, 0, blank, camera);
+  assert.ok(Math.abs(picked[0] - view.lon) < 1e-9 && Math.abs(picked[1] - view.lat) < 1e-9, 'a new airspace can pick points from an empty boundary');
+});

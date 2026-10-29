@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import UField from '@/components/form/UField.vue';
 import UControl from '@/components/form/UControl.vue';
 import UFormFooter from '@/components/form/UFormFooter.vue';
@@ -8,7 +8,7 @@ import { airspaceApi } from '@/services/airspaceApi.js';
 import { beijingWallClock } from '@/services/timeFilter.js';
 import { AIRSPACE_KIND_LABEL } from '@/ui/labels.js';
 import AirspaceVolumeEditor from './AirspaceVolumeEditor.vue';
-import { closeBoundary, openBoundary, validateVolume, editableSeaLevelBounds } from './airspaceVolume.js';
+import { closeBoundary, openBoundary, validateVolume, editableSeaLevelBounds, validPoint } from './airspaceVolume.js';
 
 const props = defineProps({ airspaceId: { type: String, default: '' } });
 const emit = defineEmits(['saved', 'cancel']);
@@ -16,6 +16,8 @@ const editing = !!props.airspaceId;
 const loading = ref(true), saving = ref(false), error = ref(''), blocked = ref('');
 const scopes = ref([]), detail = ref(null), latest = ref(null), pending = ref(null);
 const polygons = ref([[[]]]), part = ref(0), ring = ref(0), scopeKey = ref('');
+// 三维视图与右侧列表共用的当前边界点，两边同时高亮。
+const selectedPoint = ref(-1), coordinateList = ref(null);
 const form = reactive({ name: '', airspace_no: '', kind_code: 'PERMITTED', lower: null, upper: null,
   immediate: true, start: null, end: null, reason: '' });
 let alive = true;
@@ -66,8 +68,21 @@ async function load() {
   finally { if (alive) loading.value = false; }
 }
 onMounted(load);
+watch([part, ring], () => { selectedPoint.value = -1; });
+function selectPoint(index) {
+  selectedPoint.value = index;
+  nextTick(() => coordinateList.value?.children[index]?.scrollIntoView({ block: 'nearest' }));
+}
 function updatePoint(index, value) { if (!disabled.value) activeRing.value.splice(index, 1, value); }
-function appendPoint(value = [null, null]) { if (!disabled.value) activeRing.value.push(value); }
+function appendPoint(value = [null, null]) {
+  if (disabled.value) return;
+  const points = activeRing.value, last = points.at(-1);
+  // 在地图上点的点先填进末尾还没填写的空行。
+  if (validPoint(value) && last && last.every(item => item == null)) points.splice(points.length - 1, 1, value);
+  else points.push(value);
+  selectPoint(points.length - 1);
+}
+function removePoint(index) { activeRing.value.splice(index, 1); selectedPoint.value = -1; }
 function addPart() { polygons.value.push([[]]); part.value = polygons.value.length - 1; ring.value = 0; }
 function addHole() { polygons.value[part.value].push([]); ring.value = polygons.value[part.value].length - 1; }
 function removeRing() {
@@ -121,8 +136,8 @@ async function save() {
       <p v-if="latest && latest.altitude_datum !== 'AMSL'" class="editor-hint">{{ latest.altitude_datum === 'AGL' ? '原版本采用离地高度' : '原版本未提供明确的海拔高度' }}，请重新填写有依据的海拔上下限，不自动换算原高度。</p>
       <div class="editor-layout">
         <div class="editor-scene">
-          <AirspaceVolumeEditor :polygons="polygons" :lower="form.lower" :upper="form.upper" :part="part" :ring="ring" :disabled="disabled"
-            @point="updatePoint" @append="appendPoint" @lower="form.lower = $event" @upper="form.upper = $event" />
+          <AirspaceVolumeEditor :polygons="polygons" :lower="form.lower" :upper="form.upper" :part="part" :ring="ring" :disabled="disabled" :selected="selectedPoint"
+            @point="updatePoint" @append="appendPoint" @select="selectPoint" @lower="form.lower = $event" @upper="form.upper = $event" />
           <div class="editor-altitudes">
             <UField id="airspace-min-altitude" v-model="form.lower" type="number" label="海拔下限（米）" required :disabled="disabled" />
             <UField id="airspace-max-altitude" v-model="form.upper" type="number" label="海拔上限（米）" required :disabled="disabled" />
@@ -151,10 +166,10 @@ async function save() {
             <button class="btn ghost" type="button" :disabled="disabled" @click="addHole">添加内孔</button>
             <button v-if="ring || polygons.length > 1" class="btn ghost" type="button" :disabled="disabled" @click="removeRing">移除此{{ ring ? '内孔' : '区域' }}</button>
           </div>
-          <p v-if="!activeRing.length" class="editor-hint">添加至少三个边界点。填好首个点后，也可在三维视图中描点。</p>
-          <ol class="coordinate-list">
-            <li v-for="(point, index) in activeRing" :key="`${part}-${ring}-${index}`">
-              <div class="coordinate-title"><b>边界点 {{ index + 1 }}</b><button class="linkbtn" type="button" :aria-label="`移除边界点 ${index + 1}`" :disabled="disabled" @click="activeRing.splice(index, 1)">移除</button></div>
+          <p v-if="!activeRing.length" class="editor-hint">在地图上点击添加边界点，也可以在这里填写经纬度，至少三个点。</p>
+          <ol ref="coordinateList" class="coordinate-list">
+            <li v-for="(point, index) in activeRing" :key="`${part}-${ring}-${index}`" :class="{ selected: index === selectedPoint }" @focusin="selectedPoint = index">
+              <div class="coordinate-title"><b>边界点 {{ index + 1 }}</b><button class="linkbtn" type="button" :aria-label="`移除边界点 ${index + 1}`" :disabled="disabled" @click="removePoint(index)">移除</button></div>
               <div class="coordinate-pair">
                 <UField :id="`longitude-${index}`" v-model="point[0]" type="number" :label="`经度 ${index + 1}`" :min="-180" :max="180" :disabled="disabled" size="small" />
                 <UField :id="`latitude-${index}`" v-model="point[1]" type="number" :label="`纬度 ${index + 1}`" :min="-90" :max="90" :disabled="disabled" size="small" />
@@ -188,6 +203,8 @@ async function save() {
 .boundary-tools .btn { padding: 5px 8px; font-size: 12px; }
 .coordinate-list { list-style: none; margin: 0; padding: 0; max-height: 490px; overflow-y: auto; display: grid; gap: 12px; }
 .coordinate-list li { padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.coordinate-list li.selected { border-bottom-color: var(--amber); background: linear-gradient(to top, color-mix(in srgb, var(--amber) 10%, transparent), transparent); }
+.coordinate-list li.selected .coordinate-title b { color: var(--amber); }
 .coordinate-title { font-size: 12px; margin-bottom: 8px; }
 .coordinate-pair { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 8px; }
 .warnbox { margin-top: 12px; }

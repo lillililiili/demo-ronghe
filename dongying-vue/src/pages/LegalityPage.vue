@@ -36,6 +36,7 @@ import { trustedTrajectoryPoints, strokePlanComparison } from '@/services/trajec
 import { RULE_SET_LABEL, SOURCE_MODE_LABEL, labelOf } from '@/ui/labels.js';
 import { displayPlanNo, displayTargetNo } from '@/ui/deviceNumber.js';
 import { ruleHitText } from '@/ui/ruleHitText.js';
+import { airspaceApi } from '@/services/airspaceApi.js';
 import {
   openLegalityReview, openLegalityRecompute, openLegalityEscalation,
   legalStatusText, reviewStateText, planMatchText, ruleReasonText,
@@ -744,6 +745,17 @@ function toggleHit(index) {
 
 watch(() => st.evidenceTab, value => { S.st.evidenceTab = value; if (value === 'space') void renderEvidenceMap(selectedEvaluation.value); else destroyEvidenceMap(); });
 watch(selectedEvaluation, value => { if (st.evidenceTab === 'space') void renderEvidenceMap(value); });
+/* 单项检查说明里的空域内部编号换成空域名称；读不到名称（无权限或已删除）时说明里去掉编号。 */
+const hitAirspaceNames = reactive({});
+watch(selectedEvaluation, value => {
+  const ids = [...new Set((value?.hit_details || []).map(hit => hit.facts?.airspace_id).filter(id => id && !(id in hitAirspaceNames)))];
+  for (const id of ids) {
+    hitAirspaceNames[id] = '';
+    airspaceApi.detail(id).then(detail => { if (detail?.name) hitAirspaceNames[id] = detail.name; }).catch(() => {});
+  }
+}, { immediate: true });
+const hitText = (hit, fallback = '') => ruleHitText(hit.message, { names: hitAirspaceNames,
+  plans: selectedEvaluation.value?.plan_id && selectedEvaluation.value.plan_no ? { [selectedEvaluation.value.plan_id]: selectedEvaluation.value.plan_no } : {}, fallback });
 onBeforeUnmount(() => {
   pageActive = false;
   listToken += 1;
@@ -1037,10 +1049,10 @@ useRealtimeRefresh(['legality', 'alarm', 'plan', 'airspace'], realtimeRefresh, {
                     <button v-for="{ hit, index } in checkRows"
                       :key="`${hit.rule_code}-${index}`" type="button" class="lg-check-item"
                       :class="[checkResultClass(hit), { 'is-selected': selectedHitIndex === index }]"
-                      :aria-expanded="selectedHitIndex === index" :title="ruleHitText(hit.message)" @click="toggleHit(index)">
+                      :aria-expanded="selectedHitIndex === index" :title="hitText(hit)" @click="toggleHit(index)">
                       <span class="lg-check-icon" v-html="UI.icon(checkIcon(hit))"></span>
                       <span class="lg-check-copy"><b>{{ ruleName(hit.rule_code) }}<em>{{ checkResultText(hit) }}</em></b>
-                        <small class="lg-check-description">{{ ruleHitText(hit.message, { fallback: hit.reason_code ? ruleReasonText(hit.reason_code) : '' }) || '未提供说明' }}</small>
+                        <small class="lg-check-description">{{ hitText(hit, hit.reason_code ? ruleReasonText(hit.reason_code) : '') || '未提供说明' }}</small>
                         <small v-if="selectedHitIndex === index && hit.facts && Object.keys(hit.facts).length">判定时事实：{{ factText(hit.facts, hit.rule_code) }}</small>
                         <small v-if="selectedHitIndex === index">{{ hit.rule_code }} · {{ !hit.params?.length ? (selectedEvaluation.param_status === 'CONFIRMED' ? '已确认规则（本项无数值参数）' : '本项未附数值参数') : hit.params.every(p => p.status === 'CONFIRMED') ? '已确认参数' : '参数待业务确认' }}</small>
                       </span>

@@ -143,6 +143,28 @@ class AdsbFlightsTest(unittest.TestCase):
             self.assertEqual({25.0, 70.0, 115.0, 160.0, 205.0, 250.0, 295.0, 340.0}, {row['track_deg'] for row in rows[75:]})
             self.assertTrue(all(row['altitude_m'] >= 7000 for row in rows))
 
+    def test_background_flights_never_share_an_address_and_both_directions_share_the_airway(self):
+        for guid in ('a1b2c3d4e5f60001', 'ffffffffffffffff', '0123456789abcdef', 'fedcba9876543210'):
+            for count in (150, 300):
+                rows = background_flights(guid, count, 350)
+                addresses = {row['icao24'] for row in rows}
+                self.assertEqual(count, len(addresses))        # 平台按机身编号存，重了就少显示一架
+                self.assertNotIn('780a1b', addresses)           # 不和流程 10 画出来的航班撞号
+        scene, _, _, _ = compile_scene(scene_with_receiver(backgroundFlights=150))
+        receivers = AdsbReceivers(FakeApi(), {'owner_org_id': 'org', 'district_id': 'dist'}, scene, sender=lambda _: None)
+        rows = receivers.receivers[0].aircraft_at(0, 0)[75:150]
+        for heading in (25, 70, 115, 160):   # 正向和反向的飞机都离同一条航路中心线不到 4 公里
+            offsets = []
+            for row in rows:
+                if row['track_deg'] % 180 != heading:
+                    continue
+                east = (row['longitude'] - CENTER[0]) * 111.32 * math.cos(math.radians(CENTER[1]))
+                north = (row['latitude'] - CENTER[1]) * 111.32
+                rad = math.radians(heading)
+                offsets.append(east * math.cos(rad) - north * math.sin(rad))
+            self.assertGreaterEqual(len(offsets), 18)
+            self.assertLessEqual(max(offsets) - min(offsets), 7)
+
     def test_flight_outside_the_receiver_range_is_not_reported(self):
         scene, _, _, _ = compile_scene(scene_with_receiver(backgroundFlights=0, rangeKm=10))
         scene['flights'][0]['path'] = [[450 + 20000 / 10.6, 300]]  # 约 20 公里外

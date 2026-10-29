@@ -91,10 +91,15 @@ def background_flights(guid, count, range_km):
     limit = range_km / math.sqrt(2) * .95          # 整个接收范围内接的正方形
     near_limit = min(NEAR_KM / math.sqrt(2), limit)  # 附近那一半只在 NEAR_KM 公里的圈里来回
     near = (count + 1) // 2
+    used = {PLANE[0]}   # 机身编号不能重复：平台按（接收机，机身编号）只存一架，重了就少显示一架
     for index in range(count):
         rng = random.Random(f'{guid}:{index}')
         prefix, airline = AIRLINES[rng.randrange(len(AIRLINES))]
-        row = {'icao24': '78' + ''.join(rng.choice('0123456789abcdef') for _ in range(4)),
+        icao24 = '78' + ''.join(rng.choice('0123456789abcdef') for _ in range(4))
+        while icao24 in used:
+            icao24 = '78' + ''.join(rng.choice('0123456789abcdef') for _ in range(4))
+        used.add(icao24)
+        row = {'icao24': icao24,
                'callsign': prefix + str(rng.randint(1000, 9999)), 'airline': airline,
                'altitude_m': rng.randrange(7000, 11600, 100), 'speed': rng.randint(210, 250)}
         if index < near:
@@ -103,10 +108,12 @@ def background_flights(guid, count, range_km):
                        along=rng.uniform(-near_limit, near_limit), limit=near_limit)
         else:
             # 航路：固定方向、固定横向偏移，一串飞机前后错开，整条航路贯穿接收范围。
+            # 反方向的飞机航向加 180°，横向偏移要取负，才能和正向的飞在同一条航路上。
             airway = (index - near) % len(AIRWAY_HEADINGS)
             way = random.Random(f'{guid}:airway:{airway}')
-            heading = AIRWAY_HEADINGS[airway] + (180 if (index - near) // len(AIRWAY_HEADINGS) % 2 else 0)
-            row.update(heading=heading, lateral=way.uniform(-40, 40) + rng.uniform(-3, 3),
+            reverse = (index - near) // len(AIRWAY_HEADINGS) % 2 == 1
+            lateral = way.uniform(-40, 40) * (-1 if reverse else 1) + rng.uniform(-3, 3)
+            row.update(heading=AIRWAY_HEADINGS[airway] + (180 if reverse else 0), lateral=lateral,
                        along=rng.uniform(-limit, limit), limit=limit)
         rows.append(row)
     return rows

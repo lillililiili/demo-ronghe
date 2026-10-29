@@ -5,8 +5,8 @@
 - 每台接收机按它所在点位的位置登记到平台（/local-interface-simulator/adsb-receiver，带识别码），停止时停用；
 - 每秒按真实接收机 pingStation3（uAvionix ICD Rev F）的格式、通过 UDP 把航班位置推给平台，一架一条，每 30 秒一条状态报文——
   和正式设备走同一条路，到现场只要把真实接收机的发送地址指向平台、在接入设备里填它的识别码，不用改平台；
-- 画出来的航班按航线飞；另外每台接收机周围还有若干架高空巡航的「背景航班」（数量可设，默认 60），只为地图上有航班可看，
-  它们飞在 7000 米以上，不会影响反制判断。
+- 画出来的航班按航线飞；另外每台接收机周围还有若干架高空巡航的「背景航班」（数量可设，默认 150：一半在 100 公里内、一半沿航路排），
+  只为地图上有航班可看、平台收到的量和真的一样，它们飞在 7000 米以上，不会影响反制判断。
 能不能反制只由平台判断，这里只送位置。
 流程 10「反制前附近有航班」也用这套：流程 5 的无人机 + 一台接收机 + 一架画好航线的航班（见 flight_flow）。
 """
@@ -78,17 +78,37 @@ def _offset(center, east_km, north_km):
     return (lon + east_km / (111.32 * math.cos(math.radians(lat))), lat + north_km / 111.32)
 
 
+# 背景航班怎么摆（2026-10-29 用户「按这个改」）：一半集中在接收机周围 NEAR_KM 公里内（越靠近中心越密），
+# 另一半沿几条固定航路排成串，整个接收范围都有；都在 7000 米以上，不影响反制。
+NEAR_KM = 100
+AIRWAY_HEADINGS = (25, 70, 115, 160)   # 四条穿过接收机附近的航路方向，每条两个方向都有飞机
+
+
 def background_flights(guid, count, range_km):
-    """接收机周围的背景航班：由识别码决定，每次开始都一样。高空巡航（7000 米以上），不影响反制。"""
+    """接收机周围的背景航班：由识别码决定，每次开始都一样。每架沿一条直线飞，飞到头从另一头再进来。"""
     rows = []
-    limit = range_km / math.sqrt(2) * .95  # 在接收范围内接的正方形里飞，飞出去从另一边再进来
-    for index in range(int(count)):
+    count = int(count)
+    limit = range_km / math.sqrt(2) * .95          # 整个接收范围内接的正方形
+    near_limit = min(NEAR_KM / math.sqrt(2), limit)  # 附近那一半只在 NEAR_KM 公里的圈里来回
+    near = (count + 1) // 2
+    for index in range(count):
         rng = random.Random(f'{guid}:{index}')
         prefix, airline = AIRLINES[rng.randrange(len(AIRLINES))]
-        rows.append({'icao24': '78' + ''.join(rng.choice('0123456789abcdef') for _ in range(4)),
-                     'callsign': prefix + str(rng.randint(1000, 9999)), 'airline': airline,
-                     'east': rng.uniform(-limit, limit), 'north': rng.uniform(-limit, limit), 'heading': rng.uniform(0, 360),
-                     'altitude_m': rng.randrange(7000, 11600, 100), 'speed': rng.randint(210, 250), 'limit': limit})
+        row = {'icao24': '78' + ''.join(rng.choice('0123456789abcdef') for _ in range(4)),
+               'callsign': prefix + str(rng.randint(1000, 9999)), 'airline': airline,
+               'altitude_m': rng.randrange(7000, 11600, 100), 'speed': rng.randint(210, 250)}
+        if index < near:
+            # 附近：方向随机，离中心的横向距离按平方分布（一半在 NEAR_KM/4 公里内）。
+            row.update(heading=rng.uniform(0, 360), lateral=rng.uniform(-1, 1) * near_limit * rng.random() ** 2,
+                       along=rng.uniform(-near_limit, near_limit), limit=near_limit)
+        else:
+            # 航路：固定方向、固定横向偏移，一串飞机前后错开，整条航路贯穿接收范围。
+            airway = (index - near) % len(AIRWAY_HEADINGS)
+            way = random.Random(f'{guid}:airway:{airway}')
+            heading = AIRWAY_HEADINGS[airway] + (180 if (index - near) // len(AIRWAY_HEADINGS) % 2 else 0)
+            row.update(heading=heading, lateral=way.uniform(-40, 40) + rng.uniform(-3, 3),
+                       along=rng.uniform(-limit, limit), limit=limit)
+        rows.append(row)
     return rows
 
 
@@ -97,9 +117,9 @@ def _wrap(value, limit):
 
 
 def background_at(row, elapsed, center, observed_at):
-    distance = row['speed'] * elapsed / 1000
+    along = _wrap(row['along'] + row['speed'] * elapsed / 1000, row['limit'])
     rad = math.radians(row['heading'])
-    east, north = _wrap(row['east'] + distance * math.sin(rad), row['limit']), _wrap(row['north'] + distance * math.cos(rad), row['limit'])
+    east, north = along * math.sin(rad) + row['lateral'] * math.cos(rad), along * math.cos(rad) - row['lateral'] * math.sin(rad)
     lon, lat = _offset(center, east, north)
     return {'icao24': row['icao24'], 'callsign': row['callsign'], 'airline': row['airline'], 'longitude': round(lon, 6),
             'latitude': round(lat, 6), 'altitude_m': row['altitude_m'], 'ground_speed_mps': row['speed'],
@@ -293,7 +313,7 @@ def enter_route(center):
 
 def flight_device():
     return {'id': 'acceptance-adsb', 'name': '流程验收航班接收机', 'kind': 'adsb', 'health': '正常', 'heartbeat': '持续上报',
-            'interval': 1, 'rangeKm': 350, 'backgroundFlights': 60, 'stationGuid': STATION_GUID, 'deviceNo': RECEIVER_NO}
+            'interval': 1, 'rangeKm': 350, 'backgroundFlights': 150, 'stationGuid': STATION_GUID, 'deviceNo': RECEIVER_NO}
 
 
 def flight_target(variant, center):

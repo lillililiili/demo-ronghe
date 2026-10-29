@@ -78,7 +78,7 @@ class AdsbFlightsTest(unittest.TestCase):
     def test_flow_ten_receiver_keeps_its_fixed_number_and_guid(self):
         scene, devices, _, _ = compile_scene(flow_scene('enter'))
         receiver = next(d for site in scene['sites'] for d in site['devices'] if d['kind'] == 'adsb')
-        self.assertEqual(('SIM-ADSB-DY01', STATION_GUID, 350, 60), (receiver['deviceNo'], receiver['stationGuid'], receiver['rangeKm'], receiver['backgroundFlights']))
+        self.assertEqual(('SIM-ADSB-DY01', STATION_GUID, 350, 150), (receiver['deviceNo'], receiver['stationGuid'], receiver['rangeKm'], receiver['backgroundFlights']))
         self.assertNotIn('acceptance-adsb', devices)  # 不是 MQTT 设备
         self.assertEqual(['flow10-flight'], [f['id'] for f in scene['flights']])
         self.assertEqual(['流程 10 偏航无人机'], [t['name'] for t in scene['targets']])
@@ -130,6 +130,18 @@ class AdsbFlightsTest(unittest.TestCase):
         for elapsed in (0, 600, 3600):
             for row in receiver.aircraft_at(elapsed, 0)[:60]:
                 self.assertLessEqual(km(row), 350)
+
+    def test_half_of_the_background_flights_stay_near_the_receiver_and_the_rest_follow_airways(self):
+        scene, _, _, _ = compile_scene(scene_with_receiver(backgroundFlights=150))
+        receivers = AdsbReceivers(FakeApi(), {'owner_org_id': 'org', 'district_id': 'dist'}, scene, sender=lambda _: None)
+        receiver = receivers.receivers[0]
+        for elapsed in (0, 900, 3600):   # 飞多久都一样：附近那一半不散开，航路那一半不乱
+            rows = receiver.aircraft_at(elapsed, 0)[:150]
+            near = [row for row in rows[:75]]
+            self.assertTrue(all(km(row) <= 100 for row in near))
+            self.assertGreaterEqual(sum(1 for row in near if km(row) <= 50), 30)   # 越靠近中心越密
+            self.assertEqual({25.0, 70.0, 115.0, 160.0, 205.0, 250.0, 295.0, 340.0}, {row['track_deg'] for row in rows[75:]})
+            self.assertTrue(all(row['altitude_m'] >= 7000 for row in rows))
 
     def test_flight_outside_the_receiver_range_is_not_reported(self):
         scene, _, _, _ = compile_scene(scene_with_receiver(backgroundFlights=0, rangeKm=10))

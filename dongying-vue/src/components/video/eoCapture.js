@@ -54,9 +54,9 @@ const linkedText = file => {
   return kinds.includes('EVENT') ? '，已关联目标和告警' : kinds.includes('TARGET') ? '，已关联目标' : '';
 };
 
-/** 面板里的一行保存结果：「截图已存证，已关联目标」+「在证据台账查看」。证据编号和测试画面标记不上屏（画面上已有测试视频标记）。 */
+/** 面板里的一行保存结果：「截图已存证」+「在证据台账查看」。证据编号和测试画面标记不上屏（画面上已有测试视频标记）。 */
 export function captureSavedParts(file, kindCode) {
-  return { label: `${kindCode === 'EO_VIDEO' ? '录像' : '截图'}已存证${linkedText(file)}` };
+  return { label: `${kindCode === 'EO_VIDEO' ? '录像' : '截图'}已存证` };
 }
 
 /** 保存成功后的提示：存了什么、关联到了什么；证据编号到证据台账里看。 */

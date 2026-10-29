@@ -1,5 +1,6 @@
 <script setup>
 import { computed } from 'vue';
+import { ruleHitText } from '@/ui/ruleHitText.js';
 const props = defineProps({ hits: { type: Array, default: () => [] } });
 const dimensions = [['C02-9', '起飞点'], ['C02-10', '降落点'], ['C02-11', '飞手身份'], ['C02-12', '报送单位']];
 const labels = { MATCH: '符合', MISMATCH: '不符', NOT_APPLICABLE: '不适用' };
@@ -53,7 +54,7 @@ function evidenceLabel(kind) { return kind === 'flight_execution_fact' ? '执行
             <span v-if="row.hit?.facts?.source_mode" class="tag" :class="`t-${sourceTone(row.hit.facts.source_mode)}`">{{ sourceLabel(row.hit.facts.source_mode) }}</span>
           </div>
         </header>
-        <p class="execution-message">{{ row.hit.message || '本次核对未提供详细说明。' }}</p>
+        <p class="execution-message">{{ ruleHitText(row.hit.message) || '本次核对未提供详细说明。' }}</p>
         <div v-if="row.hit?.facts?.received_at || row.hit?.facts?.occurred_at" class="execution-meta">
           <span v-if="row.hit?.facts?.received_at"><i>事实接收</i>{{ time(row.hit.facts.received_at) }}</span>
           <span v-if="row.hit?.facts?.occurred_at"><i>事件发生</i>{{ time(row.hit.facts.occurred_at) }}</span>

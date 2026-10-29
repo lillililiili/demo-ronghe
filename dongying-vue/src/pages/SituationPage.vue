@@ -1062,8 +1062,8 @@ function renderTargetTip(target, hasAdvisoryCard = false, part = 'all') {
     ${target.objectTypeCode === 'UAV' ? `<p>遥控器位置：${esc(pilotLocationText(target.pilotLocation))}</p>` : ''}
     ${target.objectTypeCode === 'UAV' && pilotDistanceNote(target.legalitySummary) ? `<p class="sit-map-pop-note">${esc(pilotDistanceNote(target.legalitySummary))}</p>` : ''}
     <div class="sit-target-source"><span>感知来源：${esc(sourceNames || '未提供')}</span><button type="button" data-tip-act="eo-video" aria-expanded="${showTargetVideo.value}" aria-controls="situation-video-window">${showTargetVideo.value ? '收起视频' : '实时视频'}</button></div>
-    ${alarm?.eventId && !hasAdvisoryCard ? `<p class="sit-map-pop-note">短信通知：${esc(sms?.title || '正在读取通知状态')}${sms?.simulated ? '（模拟）' : ''}${sms?.updatedAt ? ` · ${esc(formatClock(sms.updatedAt))}` : ''}</p>
-    <p class="sit-map-pop-note">飞手电话：${esc(voice?.title || '正在读取通知状态')}${voice?.simulated ? '（模拟）' : ''}${!predicted && voice?.departureBasis ? `<br><small>${esc(voice.departureBasis)}；现在的情况以「无人机现在」为准</small>` : ''}</p>` : ''}
+    ${alarm?.eventId && !hasAdvisoryCard ? `<p class="sit-map-pop-note">短信通知：${esc(sms?.title || '正在读取通知状态')}${sms?.updatedAt ? ` · ${esc(formatClock(sms.updatedAt))}` : ''}</p>
+    <p class="sit-map-pop-note">飞手电话：${esc(voice?.title || '正在读取通知状态')}${!predicted && voice?.departureBasis ? `<br><small>${esc(voice.departureBasis)}；现在的情况以「无人机现在」为准</small>` : ''}</p>` : ''}
     ${renderTargetActions(target, hasAdvisoryCard, part === 'body')}`;
   if (part === 'head') return `${open}${head}</section>`;
   if (part === 'body') return `${open}${body}</section>`;

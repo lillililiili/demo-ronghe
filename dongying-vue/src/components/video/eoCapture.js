@@ -49,6 +49,11 @@ export function captureBlocked({ permitted, playing, recordable, kindCode }) {
 }
 
 /** 保存成功后的提示：证据编号和实际关联到了什么，以服务端返回为准。 */
+/** 面板里的一行保存结果：「截图已存证」+ 证据编号（点开证据台账）+ 测试画面小标签。 */
+export function captureSavedParts(file, kindCode, simulated = false) {
+  return { label: `${kindCode === 'EO_VIDEO' ? '录像' : '截图'}已存证`, no: file?.evidence_no || '', simulated: simulated === true };
+}
+
 export function captureSavedText(file, kindCode, simulated = false) {
   const what = kindCode === 'EO_VIDEO' ? '录像' : '截图';
   const no = file?.evidence_no ? ` ${file.evidence_no}` : '';

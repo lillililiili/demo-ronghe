@@ -35,10 +35,10 @@ class K03WarningFlowTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.variants = [
-            dict(identity='flow9-first', longitude=118.6104, latitude=37.464, start_distance=1500, speed=30,
+            dict(identity='flow9-first', longitude=118.6104, latitude=37.464, start_distance=1500, entry_start_distance=6000, speed=30,
                  turn_clearance=120, turn_radius=60, zone_width=900, zone_half_height=600,
                  return_distance=1500, duration_seconds=300),
-            dict(identity='other-inputs', longitude=118.681, latitude=37.517, start_distance=1600, speed=32,
+            dict(identity='other-inputs', longitude=118.681, latitude=37.517, start_distance=1600, entry_start_distance=6400, speed=32,
                  turn_clearance=140, turn_radius=70, zone_width=1000, zone_half_height=650,
                  return_distance=1400, duration_seconds=320),
         ]
@@ -144,40 +144,54 @@ class K03WarningFlowTests(unittest.TestCase):
                     optical = next(d for d in devices.values() if d['kind'] == 'eo')
                     self.assertEqual(optical['health'], '正常')
                     self.assertEqual(optical['heartbeat'], '持续上报')
-                    self.assertEqual(optical['coverage']['fovDeg'], 180)
+                    self.assertEqual(optical['coverage']['fovDeg'], 220)
                     site = scene['sites'][0]
                     origin = [site['x'], site['y']]
+                    site = [coordinates(origin)]
+                    site_lon, site_lat = site[0]
+                    site_east = (site_lon - params['longitude']) * 111320 * math.cos(math.radians(params['latitude']))
+                    site_north = (site_lat - params['latitude']) * 111320
                     for point in scene['targets'][0]['path']:
                         self.assertLess(metres(origin, point), optical['coverage']['rangeM'])
                         self.assertLess(point[1], origin[1])  # north of the device
+                        target_lon, target_lat = coordinates(point)
+                        east = (target_lon - params['longitude']) * 111320 * math.cos(math.radians(params['latitude'])) - site_east
+                        north = (target_lat - params['latitude']) * 111320 - site_north
+                        bearing = math.degrees(math.atan2(east, north)) % 360
+                        offset = abs((bearing - optical['coverage']['azimuthDeg'] + 180) % 360 - 180)
+                        self.assertLessEqual(offset, optical['coverage']['fovDeg'] / 2)
                     target = next(iter(targets.values()))
                     self.assertNotEqual(target['deviceId'], optical['id'])
                     self.assertNotEqual(target['secondaryDeviceId'], optical['id'])
 
-    def test_straight_approach_has_real_thirty_second_crossing_only_near_boundary(self):
+    def test_avoid_keeps_its_short_route_and_entry_has_a_full_simulated_warning_runway(self):
         for params, scenes in self.packages:
-            for variant, raw in scenes.items():
-                with self.subTest(params=params['identity'], variant=variant):
-                    scene, _, targets, _ = self.compiled(raw)
-                    target = next(iter(targets.values()))
-                    shell = [coordinates(p) for p in scene['zones'][0]['points']]
-                    turn_at = (params['start_distance'] - params['turn_clearance'] - params['turn_radius']) / params['speed']
-                    for second in (0, 10, turn_at - 1):
-                        sample = target_sample(target, second)
-                        east, north = local(sample, params)
-                        self.assertAlmostEqual(east, -params['start_distance'] + params['speed'] * second, delta=.01)
-                        self.assertAlmostEqual(north, 0, delta=.001)
-                        self.assertAlmostEqual(sample['speed'], params['speed'], delta=.001)
-                        self.assertFalse(inside([sample['longitude'], sample['latitude']], shell))
-                    # Input geometry only: actual model reliability is tested separately against the Java domain classes.
-                    def future_inside(second):
-                        sample = target_sample(target, second)
-                        future = [sample['longitude'] + sample['speed_x'] * 30 / (111320 * math.cos(math.radians(sample['latitude']))),
-                                  sample['latitude'] + sample['speed_y'] * 30 / 111320]
-                        return inside(future, shell)
-                    self.assertFalse(future_inside(0))
-                    self.assertTrue(future_inside(turn_at - 1))
-                    self.assertGreater(turn_at - 10, 20)
+            with self.subTest(params=params['identity'], variant='avoid'):
+                scene, _, targets, _ = self.compiled(scenes['avoid'])
+                target = next(iter(targets.values()))
+                shell = [coordinates(p) for p in scene['zones'][0]['points']]
+                turn_at = (params['start_distance'] - params['turn_clearance'] - params['turn_radius']) / params['speed']
+                for second in (0, 10, turn_at - 1):
+                    sample = target_sample(target, second)
+                    east, north = local(sample, params)
+                    self.assertAlmostEqual(east, -params['start_distance'] + params['speed'] * second, delta=.01)
+                    self.assertAlmostEqual(north, 0, delta=.001)
+                    self.assertFalse(inside([sample['longitude'], sample['latitude']], shell))
+                self.assertGreater(turn_at - 10, 20)
+            with self.subTest(params=params['identity'], variant='enter'):
+                scene, _, targets, _ = self.compiled(scenes['enter'])
+                target = next(iter(targets.values()))
+                shell = [coordinates(p) for p in scene['zones'][0]['points']]
+                warning_at = (params['entry_start_distance'] - 120 * params['speed']) / params['speed']
+                entry_at = params['entry_start_distance'] / params['speed']
+                for second in (0, 10, warning_at, entry_at - 120, entry_at - 1):
+                    sample = target_sample(target, second)
+                    east, north = local(sample, params)
+                    self.assertAlmostEqual(east, -params['entry_start_distance'] + params['speed'] * second, delta=.01)
+                    self.assertAlmostEqual(north, 0, delta=.001)
+                    self.assertFalse(inside([sample['longitude'], sample['latitude']], shell))
+                self.assertGreaterEqual(entry_at - warning_at, 120)
+                self.assertLess(metres(target['path'][0], [scene['sites'][0]['x'], scene['sites'][0]['y']]), 7000)
 
     def test_avoid_follows_short_smooth_turn_then_retreats_without_entering_or_losing_reports(self):
         for params, scenes in self.packages:
@@ -268,7 +282,7 @@ class K03WarningFlowTests(unittest.TestCase):
                     guide = raw['mapGuide']
                     stages = raw['sceneGuide']['stages']
                     expected_action = (metres(target['path'][0], target['path'][1]) / params['speed'] if variant == 'avoid'
-                                       else params['start_distance'] / params['speed'])
+                                       else params['entry_start_distance'] / params['speed'])
                     expected_stop = sum(metres(a, b) for a, b in zip(target['path'], target['path'][1:])) / params['speed']
                     self.assertAlmostEqual(stages[2]['at_seconds'], expected_action, delta=.01)
                     self.assertAlmostEqual(stages[3]['at_seconds'], expected_stop, delta=.01)
@@ -290,10 +304,10 @@ class K03WarningFlowTests(unittest.TestCase):
                 shell = [coordinates(p) for p in scene['zones'][0]['points']]
                 duration = int(scene['duration'] * 60)
                 self.assertEqual(duration, max(params['duration_seconds'] + 60,
-                                              math.ceil((params['start_distance'] + params['zone_width'] / 2) / params['speed'] + 120)))
+                                              math.ceil((params['entry_start_distance'] + params['zone_width'] / 2) / params['speed'] + 120)))
                 self.assertEqual(len(target['path']), 2)
                 self.assertEqual(target.get('silenceWindows', []), [])
-                entry_at = params['start_distance'] / params['speed']
+                entry_at = params['entry_start_distance'] / params['speed']
                 stopped_at = metres(*target['path']) / params['speed']
                 previous = None
                 for tick in range(duration * 4 + 1):
@@ -325,8 +339,8 @@ class K03WarningFlowTests(unittest.TestCase):
                 target = next(iter(targets.values()))
                 chain, platform, manifest = self.chain(scene, devices, params['identity'] + '-entry')
                 chain.prepare()
-                for index, second in enumerate([int(params['start_distance'] / params['speed']) - 1,
-                                                int(params['start_distance'] / params['speed']) + 10,
+                for index, second in enumerate([int(params['entry_start_distance'] / params['speed']) - 1,
+                                                int(params['entry_start_distance'] / params['speed']) + 10,
                                                 int(scene['duration'] * 60) - 1], 1):
                     platform.calls.clear()
                     captured_at = TEST_NOW + second * 1000
@@ -351,7 +365,7 @@ class K03WarningFlowTests(unittest.TestCase):
                     self.assertFalse(any('verifications' in route or '/disposal' in route or '/predictions' in route for _, route, _, _ in platform.calls))
 
     def test_invalid_geometry_timing_and_identity_fail_without_partial_inputs(self):
-        cases = [dict(latitude=89), dict(longitude=float('nan')), dict(speed=0), dict(start_distance=True),
+        cases = [dict(latitude=89), dict(longitude=float('nan')), dict(speed=0), dict(start_distance=True), dict(entry_start_distance=True),
                  dict(turn_clearance=0), dict(turn_radius=0), dict(zone_width=0), dict(zone_half_height=0),
                  dict(return_distance=0), dict(start_distance=150), dict(duration_seconds=300.5),
                  dict(duration_seconds=1201), dict(identity='../unsafe')]

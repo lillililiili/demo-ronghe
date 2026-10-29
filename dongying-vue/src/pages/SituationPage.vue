@@ -692,10 +692,18 @@ function decorate(next) {
 function applySnapshot(next) {
   const previousSelectedTargetId = selection.value?.targetId || selectedTarget.value?.targetId;
   const previousCaseId = selection.value?.riskCaseId || riskCaseOf(selectedUavAlarm.value)?.risk_case_id;
+  const previousSourceMode = selection.value?.sourceMode || selectedTarget.value?.sourceMode || selectedUavAlarm.value?.sourceMode;
+  const at = serverNow();
+  nowTick.value = at;
   rawSnapshot = next;
   for (const segment of reportedSourceFailures) if (!(next.failedSegments || []).includes(segment)) reportedSourceFailures.delete(segment);
-  const decorated = decorate(currentMapSnapshot(next));
+  const decorated = decorate(currentMapSnapshot(next, at));
   snapshot.value = decorated;
+  if (decorated.countermeasureCompletedTargets?.some(target => target.targetId === previousSelectedTargetId
+    && target.sourceMode === previousSourceMode)) {
+    selectedReadSequence++; selectedRiskRead++; selectedRiskContext.value = null;
+    clearSelection();
+  }
   if (selection.value?.kind === 'target' && !selectedTarget.value && !previousCaseId) {
     const forecast = currentPredictions.value.find(row => row.target_id === previousSelectedTargetId);
     if (forecast) selection.value = { kind: 'prediction', id: forecast.target_id, targetId: forecast.target_id, sourceMode: selection.value.sourceMode }; else clearSelection();

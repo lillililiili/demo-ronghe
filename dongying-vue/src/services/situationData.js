@@ -129,7 +129,12 @@ export function targetIsCurrent(target, now = serverNow()) {
 
 /** 保留当天风险记录；失去当前目标的风险只退出地图，不伪造已解除。 */
 export function currentMapSnapshot(snapshot, now = serverNow()) {
-  const targets = (snapshot.targets || []).filter(target => targetIsCurrent(target, now));
+  // 后台按同目标、来源和风险周期确认完成后退出实时展示，原始观测与历史不改写。
+  const completedTargets = (snapshot.targets || []).filter(target => target.objectTypeCode === 'UAV'
+    && target.targetId && target.sourceMode && target.situationVisibility?.state === 'COUNTERMEASURE_COMPLETED');
+  const targets = (snapshot.targets || []).filter(target => !completedTargets.includes(target) && targetIsCurrent(target, now));
+  const predictions = (snapshot.predictions || []).filter(prediction => !completedTargets.some(target =>
+    target.targetId === prediction.target_id && target.sourceMode === prediction.source_mode));
   const locatedIds = new Set(targets.filter(target => target.posValid).map(target => target.targetId));
   const risks = (snapshot.risks || []).map(risk => {
     if (!['SPACE_OBJECT', 'FOREIGN_OBJECT'].includes(risk.riskType)) return risk;
@@ -139,7 +144,8 @@ export function currentMapSnapshot(snapshot, now = serverNow()) {
       currentStatus, currentReason: missingPosition && currentStatus !== 'CLEARED'
         ? '目标位置未知或已过期，风险状态待确认' : risk.currentReason };
   });
-  return { ...snapshot, targets, risks };
+  return { ...snapshot, targets, risks, predictions,
+    countermeasureCompletedTargets: completedTargets.map(target => ({ targetId: target.targetId, sourceMode: target.sourceMode })) };
 }
 
 /** 风险只能关联到同一计划的同一条航线版本，避免旧版本风险误点亮当前航线。 */
@@ -452,6 +458,7 @@ export function toTargets(targets, legalMap) {
       reportLagMs: hasTimeUntrusted(state) && num(state?.received_at) !== null && num(state?.observed_at) !== null
         ? num(state.received_at) - num(state.observed_at) : null,
       mapExpiresAt: num(target.map_expires_at),
+      situationVisibility: target.situation_visibility || null,
       trackStatus: target.track_status?.status || '',
       statusCode: target.status_code || target.track_status?.status || '',
       freshness: target.freshness || '',

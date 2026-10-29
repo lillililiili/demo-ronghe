@@ -16,7 +16,12 @@
           "kind": "radar",
           "health": "正常",
           "heartbeat": "持续上报",
-          "interval": 1
+          "interval": 1,
+          "coverage": {
+            "kind": "circle",
+            "radiusM": 2500,
+            "sourceLabel": "流程9入区航线雷达范围（模拟参数）"
+          }
         },
         {
           "id": "tdoa-acceptance-flow9",
@@ -24,7 +29,12 @@
           "kind": "tdoa",
           "health": "正常",
           "heartbeat": "持续上报",
-          "interval": 1
+          "interval": 1,
+          "coverage": {
+            "kind": "circle",
+            "radiusM": 2500,
+            "sourceLabel": "流程9入区航线TDOA范围（模拟参数）"
+          }
         },
         {
           "id": "eo-acceptance-flow9",
@@ -35,9 +45,9 @@
           "interval": 1,
           "coverage": {
             "kind": "sector",
-            "rangeM": 1900,
+            "rangeM": 2400,
             "azimuthDeg": 0,
-            "fovDeg": 180,
+            "fovDeg": 220,
             "sourceLabel": "流程9模拟光电范围（模拟参数）"
           }
         }
@@ -85,7 +95,7 @@
     "acceptanceFlow": 9,
     "predictionVariant": "avoid",
     "expectedChecks": [
-      "无人机从矩形禁飞区左侧直线接近，未来10／20／30秒预测与实测轨迹分别显示",
+      "仅本地模拟目标显示+10／20／30／60／90／120秒预测；真实目标维持原10／20／30秒预测",
       "预警由平台按有效新实测计算；仅在当前依据有效时人工核实，再查看短信和预测专用电话回执",
       "有效预警自动排队光电观察；选中无人机点实时视频，收到跟踪回执且媒体就绪后显示带模拟标识的视频",
       "反制须由有权限人员人工发起，通知、授权、启停均以平台实际结果为准",
@@ -154,7 +164,7 @@
       "height": 100,
       "heightAgl": 80,
       "altitudeDatum": "AMSL",
-      "speed": 30.0,
+      "speed": 30,
       "count": 1,
       "probability": 0.99,
       "planId": "route-acceptance-flow9-avoid",

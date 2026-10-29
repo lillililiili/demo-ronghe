@@ -9,7 +9,7 @@ function forecast({ id = 'aircraft-a', mode = 'live', shift = 0 } = {}) {
   return { prediction_id: `forecast-${id}`, target_id: id, target_no: `UAV-${id}`, version: 2, status: 'READY',
     based_on_observed_at: origin - 500, generated_at: origin, valid_until: origin + 8000, source_mode: mode, simulated: mode === 'replay',
     anchor: { location: { longitude: 118 + shift, latitude: 37 + shift } },
-    points: [10, 20, 30].map(seconds => ({ horizon_seconds: seconds, predicted_at: origin + seconds * 1000,
+    points: [10, 20, 30, ...(mode === 'replay' ? [60, 90, 120] : [])].map(seconds => ({ horizon_seconds: seconds, predicted_at: origin + seconds * 1000,
       location: { longitude: 118 + shift + seconds / 100000, latitude: 37 + shift }, altitude_m: 100, altitude_datum: 'AMSL', uncertainty_m: 5 })),
     warnings: [{ event_id: `event-${id}`, state: 'ACTIVE', airspace_version_id: `area-${id}`, airspace_name: '测试禁飞区',
       entry_at: origin + 18000, entry_location: { longitude: 118 + shift + .00018, latitude: 37 + shift } }] };
@@ -19,9 +19,9 @@ test('不同编号、位置与来源均采用同一预测投影，实测对象�
   for (const options of [{}, { id: 'aircraft-z', mode: 'replay', shift: -.5 }]) {
     const raw = forecast(options), original = JSON.stringify(raw);
     const map = predictionMapData([raw], origin, raw.target_id);
-    assert.equal(map[0].points.length, 3);
-    assert.deepEqual(map[0].points.map(point => point.horizon), [10, 20, 30]);
+    assert.equal(map[0].points.length, options.mode === 'replay' ? 6 : 3);
     assert.equal(map[0].warnings.length, 1);
+    assert.deepEqual(map[0].points.map(point => point.horizon), options.mode === 'replay' ? [10, 20, 30, 60, 90, 120] : [10, 20, 30]);
     assert.equal(JSON.stringify(raw), original);
     assert.equal(Object.hasOwn(raw, 'track'), false);
     assert.equal(predictionMapData([raw], origin, 'another-target')[0].points.length, 0);
@@ -159,6 +159,7 @@ test('冻结与当前依据分开表述，模拟、海拔/离地、误差说明�
   raw.uncertainty_note = '估计不确定范围，不代表准确率';
   const html = predictionDetailsHtml(raw, { now: origin });
   assert.match(html, /模拟／回放/); assert.match(html, /海拔/); assert.match(html, /离地/);
+  assert.match(html, /未来 120 秒的位置与高度/); assert.match(html, /预测 \+120秒/);
   assert.match(html, /默认范围/); assert.match(html, /不代表准确率/);
   assert.equal(html.includes('<img'), false); assert.match(html, /&lt;img/);
   const frozen = predictionDetailsHtml(raw, { now: origin + 100000, frozen: true });

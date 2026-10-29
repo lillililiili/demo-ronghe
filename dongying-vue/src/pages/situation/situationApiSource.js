@@ -34,7 +34,7 @@ const DEVICE_STATE_MIN_MS = 2_000;
 const FAST_SEGMENTS = ['targets', 'alarms', 'risks', 'handoffs', 'predictions', 'eo-status'];
 const TOPIC_SEGMENTS = {
   tracking: ['eo-status'], device_state: ['eo-status'], device: ['eo-status'],
-  target: ['targets', 'predictions'], prediction: ['predictions', 'alarms'], legality: ['targets'], alarm: ['alarms', 'predictions'], disposal: ['alarms'], risk: ['risks'], punishment: ['handoffs'],
+  target: ['targets', 'predictions'], prediction: ['predictions', 'alarms', 'targets'], legality: ['targets'], alarm: ['alarms', 'predictions', 'targets'], disposal: ['alarms', 'targets'], risk: ['risks'], punishment: ['handoffs'],
   'time-boundary': ['risks'], '*': FAST_SEGMENTS
 };
 const RECENT_TRACK_WINDOW_MS = 5 * 60_000;

@@ -435,6 +435,41 @@ async function main() {
   check('恢复有效位置风险重现', restored.risks[0].mapVisible, true);
   check('确认解除风险不再显示', S.currentMapSnapshot({ ...mapSource, risks: [{ ...objectRisk, currentStatus: 'CLEARED' }] }, clock).risks[0].mapVisible, false);
 
+  // 完成退出是服务端的本周期展示结论，不能凭旧处置摘要、来源混用或到期推断。
+  for (const sourceMode of ['live', 'replay']) {
+    const now = Date.now(), id = require('node:crypto').randomUUID(), otherId = require('node:crypto').randomUUID();
+    const otherMode = sourceMode === 'live' ? 'replay' : 'live';
+    const raw = { target_id: id, target_no: 'UAV-' + id, object_type_code: 'UAV', source_mode: sourceMode,
+      latest_state: { observed_at: now - 100, received_at: now - 90, location: { longitude: 118.3, latitude: 37.4 } },
+      map_expires_at: now + 10000, situation_visibility: { state: 'COUNTERMEASURE_COMPLETED' } };
+    const target = S.toTargets([raw])[0];
+    target.track = [{ lon: 118.3, lat: 37.4, at: now - 100 }];
+    const sameIdOtherSource = { ...target, sourceMode: otherMode, situationVisibility: { state: 'VISIBLE' } };
+    const other = { ...target, targetId: otherId, id: 'UAV-' + otherId, situationVisibility: null };
+    const predictions = [{ target_id: id, source_mode: sourceMode }, { target_id: id, source_mode: otherMode }, { target_id: otherId, source_mode: sourceMode }];
+    const source = { targets: [target, sameIdOtherSource, other], predictions, alarms: [{ eventId: id }], risks: [] };
+    const original = JSON.stringify(source), projected = S.currentMapSnapshot(source, now);
+    check('后台完成投影穿过目标转换 ' + sourceMode, target.situationVisibility.state, 'COUNTERMEASURE_COMPLETED');
+    check('完成目标和尾迹从地图集合退出，另来源和另目标保留 ' + sourceMode,
+      projected.targets.map(row => [row.targetId, row.sourceMode]), [[id, otherMode], [otherId, sourceMode]]);
+    check('只有同目标同来源残留预测退出 ' + sourceMode, projected.predictions, predictions.slice(1));
+    check('顶部计数与图上目标同源 ' + sourceMode, S.targetClassCounts(projected.targets).uav, 2);
+    check('返回精确完成目标身份供选择清理 ' + sourceMode, projected.countermeasureCompletedTargets, [{ targetId: id, sourceMode }]);
+    check('完成展示不改写原始观测、轨迹和告警 ' + sourceMode, JSON.stringify(source), original);
+    for (const state of [undefined, 'UNKNOWN', 'VISIBLE', 'FAILED']) {
+      const visible = { ...target, situationVisibility: state ? { state } : null,
+        disposalSummary: { status: 'COMPLETED' } };
+      check('缺少明确完成投影时不借旧摘要隐藏 ' + sourceMode + '/' + state,
+        S.currentMapSnapshot({ targets: [visible] }, now).targets.length, 1);
+    }
+    check('新的可见周期恢复同目标和预测 ' + sourceMode,
+      S.currentMapSnapshot({ ...source, targets: [{ ...target, situationVisibility: { state: 'VISIBLE' } }] }, now).targets.length, 1);
+    check('来源不明不能借完成投影隐藏 ' + sourceMode,
+      S.currentMapSnapshot({ targets: [{ ...target, sourceMode: '' }] }, now).targets.length, 1);
+    check('非无人机不套用反制退出 ' + sourceMode,
+      S.currentMapSnapshot({ targets: [{ ...target, objectTypeCode: 'BIRD' }] }, now).targets.length, 1);
+  }
+
   check('置信度四舍五入', S.percent(0.876), 88);
   check('没有置信度返回 null', S.percent(null), null);
   check('置信度为 0 不当成缺失', S.percent(0), 0);

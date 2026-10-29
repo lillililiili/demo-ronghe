@@ -16,7 +16,12 @@
           "kind": "radar",
           "health": "正常",
           "heartbeat": "持续上报",
-          "interval": 1
+          "interval": 1,
+          "coverage": {
+            "kind": "circle",
+            "radiusM": 2500,
+            "sourceLabel": "流程9入区航线雷达范围（模拟参数）"
+          }
         },
         {
           "id": "tdoa-acceptance-flow9",
@@ -24,7 +29,12 @@
           "kind": "tdoa",
           "health": "正常",
           "heartbeat": "持续上报",
-          "interval": 1
+          "interval": 1,
+          "coverage": {
+            "kind": "circle",
+            "radiusM": 2500,
+            "sourceLabel": "流程9入区航线TDOA范围（模拟参数）"
+          }
         },
         {
           "id": "eo-acceptance-flow9",
@@ -35,9 +45,9 @@
           "interval": 1,
           "coverage": {
             "kind": "sector",
-            "rangeM": 1900,
+            "rangeM": 2400,
             "azimuthDeg": 0,
-            "fovDeg": 180,
+            "fovDeg": 220,
             "sourceLabel": "流程9模拟光电范围（模拟参数）"
           }
         }
@@ -85,7 +95,7 @@
     "acceptanceFlow": 9,
     "predictionVariant": "enter",
     "expectedChecks": [
-      "无人机从矩形禁飞区左侧直线接近，未来10／20／30秒预测与实测轨迹分别显示",
+      "仅本地模拟目标显示+10／20／30／60／90／120秒预测；真实目标维持原10／20／30秒预测",
       "预警由平台按有效新实测计算；仅在当前依据有效时人工核实，再查看短信和预测专用电话回执",
       "有效预警自动排队光电观察；选中无人机点实时视频，收到跟踪回执且媒体就绪后显示带模拟标识的视频",
       "反制须由有权限人员人工发起，通知、授权、启停均以平台实际结果为准",
@@ -107,7 +117,7 @@
       "motionMode": "once",
       "path": [
         [
-          278.5311209530998,
+          193.6497935249785,
           300.00000000001137
         ],
         [
@@ -118,7 +128,7 @@
       "height": 100,
       "heightAgl": 80,
       "altitudeDatum": "AMSL",
-      "speed": 30.0,
+      "speed": 30,
       "count": 1,
       "probability": 0.99,
       "planId": "route-acceptance-flow9-enter",
@@ -136,7 +146,7 @@
       "coordinate_system": "WGS84",
       "points": [
         [
-          278.5311209530998,
+          193.6497935249785,
           300.00000000001137
         ],
         [
@@ -162,7 +172,7 @@
         "role": "start",
         "label": "① 起点 · 向右飞行",
         "point": [
-          278.5311209530998,
+          193.6497935249785,
           300.00000000001137
         ]
       },
@@ -188,11 +198,11 @@
     "directions": [
       {
         "from": [
-          278.5311209530998,
+          193.6497935249785,
           300.00000000001137
         ],
         "to": [
-          403.02373451434426,
+          462.44066371402914,
           300.00000000001137
         ]
       }
@@ -204,20 +214,20 @@
       {
         "at_seconds": 0,
         "label": "① 直线接近",
-        "description": "打开融合感知，选中无人机，查看未来10、20、30秒预测。"
+        "description": "打开融合感知，查看模拟目标未来10、20、30、60、90、120秒预测。"
       },
       {
-        "at_seconds": 20.0,
+        "at_seconds": 10,
         "label": "② 留意提前预警",
-        "description": "临近禁飞区。有效预警触发光电观察，点实时视频查看；人工核实后查看短信、电话回执。"
+        "description": "进入预测窗口。有效预警触发光电观察，查看实时视频；按流程完成人工核实和反制。"
       },
       {
-        "at_seconds": 50.0,
+        "at_seconds": 80.0,
         "label": "③ 飞入禁飞区",
         "description": "查看平台关联的实测入区告警，按当前资格人工办理反制。"
       },
       {
-        "at_seconds": 65.0,
+        "at_seconds": 95.0,
         "label": "④ 区内停留",
         "description": "持续上报位置，留出核实、申请审批及执行时间；查看实际启停回执。"
       }

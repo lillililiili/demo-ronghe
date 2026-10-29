@@ -50,7 +50,9 @@ export function predictionMapData(predictions, now, selectedTargetId, unavailabl
   return (predictions || []).map(prediction => {
     const current = predictionIsCurrent(prediction, now, unavailable);
     const anchor = predictionLocation(prediction.anchor?.location);
-    const horizons = [10, 20, 30];
+    const available = (prediction.points || []).map(point => Number(point.horizon_seconds))
+      .filter(horizon => Number.isInteger(horizon) && horizon > 30 && horizon <= 600);
+    const horizons = [10, 20, 30, ...(prediction.simulated === true ? [...new Set(available)].sort((a, b) => a - b) : [])];
     const samples = horizons.map(horizon => (prediction.points || []).find(point => Number(point.horizon_seconds) === horizon));
     const complete = samples.every(point => predictionLocation(point?.location) && numeric(point.predicted_at)
       && Number(point.predicted_at) > Number(prediction.generated_at));

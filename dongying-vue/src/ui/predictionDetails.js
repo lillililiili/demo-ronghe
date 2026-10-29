@@ -15,7 +15,7 @@ const REASONS = {
   ACTUAL_ENTRY_BEFORE_WARNING: '稳定预警形成前已实测入区，按实际入区处理', TARGET_DOMAIN_CHANGED: '目标归属或来源范围已变化',
   PREDICTION_UNAVAILABLE: '预测依据暂不可用', AIRSPACE_VERSION_INVALID: '空域版本无效', AIRSPACE_VERSION_CONFLICT: '空域版本存在冲突',
   AIRSPACE_VERSION_AMBIGUOUS: '预测时段的空域版本不明确', AIRSPACE_GEOMETRY_UNKNOWN: '空域边界暂不可确认',
-  PREDICTED_ENTRY_CONFIRMED: '预测位置及误差范围支持入区判断', FULL_HORIZON_DISJOINT: '未来 30 秒预测范围与禁飞区不相交',
+  PREDICTED_ENTRY_CONFIRMED: '预测位置及误差范围支持入区判断', FULL_HORIZON_DISJOINT: '当前预测窗口内的预测范围与禁飞区不相交',
   HORIZONTAL_DISJOINT: '预测水平位置与空域不相交', VERTICAL_DISJOINT: '预测高度与空域不相交',
   ALTITUDE_RELATION_UNKNOWN: '预测高度与空域的关系暂不明确', UNCERTAINTY_OR_BOUNDARY_CONTACT: '位置误差范围或边界接触尚不能确认入区',
   ACCURACY_DEFAULTED: '位置误差采用规则中配置的默认范围'
@@ -71,11 +71,19 @@ export function predictionDetailsHtml(prediction, { now = Date.now(), unavailabl
   const rows = [ ['实测基准', predictionTime(prediction.based_on_observed_at)], ['预测生成', predictionTime(prediction.generated_at)],
     ['有效至', predictionTime(prediction.valid_until)], ['预测方向', valueUnit(prediction.heading_deg, '°')], ['预测速度', valueUnit(prediction.speed_mps, 'm/s')],
     ['数据来源', source] ];
-  const points = [10, 20, 30].map(seconds => {
+  const extraHorizons = prediction.simulated === true
+    ? [...new Set((prediction.points || []).map(row => Number(row.horizon_seconds)).filter(seconds => Number.isInteger(seconds) && seconds > 30 && seconds <= 600))].sort((a, b) => a - b)
+    : [];
+  const horizons = [10, 20, 30, ...extraHorizons];
+  const horizonEnd = horizons[horizons.length - 1];
+  const points = horizons.map(seconds => {
     const point = (prediction.points || []).find(row => Number(row.horizon_seconds) === seconds);
     const datum = point?.altitude_m == null ? '' : ({ AMSL: '（海拔）', AGL: '（离地）' }[point.altitude_datum] || '（基准未提供）');
     return `<tr><th scope="row">预测 +${seconds}秒</th><td>${esc(predictionTime(point?.predicted_at))}</td><td>${esc(predictionPosition(point?.location))}</td><td>${esc(valueUnit(point?.altitude_m, 'm') + datum)}</td><td>${esc(valueUnit(point?.uncertainty_m, 'm'))}</td></tr>`;
   }).join('');
+  const horizonNote = extraHorizons.length
+    ? `虚线和空心点表示预计位置，实测轨迹保持原样。当前为模拟目标，除标准+10／20／30秒点外，另显示+${extraHorizons.join('／')}秒演练预测；不代表真实目标的预测规则。`
+    : '虚线和空心点表示预计位置，实测轨迹保持原样。时间均为北京时间，+10／20／30秒以预测生成时刻计算。';
   const warningRows = warnings.map(warning => {
     const status = frozen ? warning.state : predictionWarningState(prediction, warning, now, unavailable);
     const versions = warning.airspace_version_ids?.length ? warning.airspace_version_ids : [warning.airspace_version_id].filter(Boolean);
@@ -87,10 +95,10 @@ export function predictionDetailsHtml(prediction, { now = Date.now(), unavailabl
       </div>`;
   }).join('');
   return `<header class="prediction-title"><strong>${esc(state)}</strong><span class="tag t-cyan">预测</span></header>
-    ${!frozen && !current ? `<p class="prediction-message" role="status">${unavailable ? '预测读取失败，以下为上次结果。' : '预测依据不足或已经过期。'}未来线已隐藏。${esc(inactiveNote)}</p>` : '<p class="prediction-message">虚线和空心点表示预计位置，实测轨迹保持原样。时间均为北京时间，+10／20／30秒以预测生成时刻计算。</p>'}
+    ${!frozen && !current ? `<p class="prediction-message" role="status">${unavailable ? '预测读取失败，以下为上次结果。' : '预测依据不足或已经过期。'}未来线已隐藏。${esc(inactiveNote)}</p>` : `<p class="prediction-message">${esc(horizonNote)}</p>`}
     ${!frozen && prediction.evidence_status === 'LAST_KNOWN' ? `<p class="prediction-message">保留的历史依据仅供追溯，不能作为当前有效预测。${prediction.last_evidence_observed_at != null ? `最后有效预测所用实测：${esc(predictionTime(prediction.last_evidence_observed_at))}。` : ''}${prediction.last_evidence_generated_at != null ? `最后有效预测生成：${esc(predictionTime(prediction.last_evidence_generated_at))}。` : ''}</p>` : ''}
     <dl class="kv">${rows.map(([label, value]) => `<dt>${esc(label)}</dt><dd>${esc(value)}</dd>`).join('')}</dl>
-    ${expiredWithoutPoints ? '<p class="prediction-message">当前预测位置已失效。</p>' : `<details${frozen ? '' : ' open'}><summary>未来 30 秒的位置与高度${!current && !frozen ? '（上次结果）' : ''}</summary>
+    ${expiredWithoutPoints ? '<p class="prediction-message">当前预测位置已失效。</p>' : `<details${frozen ? '' : ' open'}><summary>未来 ${prediction.simulated === true ? horizonEnd : 30} 秒的位置与高度${!current && !frozen ? '（上次结果）' : ''}</summary>
       <div class="prediction-table-scroll"><table><thead><tr><th>预测时长</th><th>预计时刻</th><th>经纬度</th><th>高度</th><th>位置不确定范围</th></tr></thead><tbody>${points}</tbody></table></div></details>`}
     <p class="prediction-message">${esc((prediction.reason_codes || []).map(predictionReasonText).join('；'))}</p>
     ${prediction.uncertainty_note ? `<p class="prediction-message">${esc(prediction.uncertainty_note)}</p>` : ''}

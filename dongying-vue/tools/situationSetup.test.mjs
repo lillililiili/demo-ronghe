@@ -600,3 +600,54 @@ test('核实返回身份、来源、区域或资格快照不一致时不能接�
   }finally{page.stop();}
  }
 });
+
+
+test('明确反制完成清理同来源目标、风险卡、视频及迟到读取，新周期可重新选择', async () => {
+  for (const sourceMode of ['live', 'replay']) {
+    const now = Date.now(), f = currentCase(sourceMode), replies = [];
+    const page = createPage(now, {}, { getUavRiskCase: () => new Promise(resolve => replies.push(resolve)) });
+    const target = { ...f.target, observedAt: now - 100, mapExpiresAt: now + 10000, posValid: true,
+      lon: 118.3, lat: 37.4, track: [{ lon: 118.3, lat: 37.4 }], situationVisibility: { state: 'VISIBLE' } };
+    const prediction = { ...forecast(randomUUID(), now), target_id: target.targetId, source_mode: sourceMode };
+    try {
+      page.applySnapshot({ ...page.snapshot.value, targets: [target], alarms: [f.alarm], predictions: [prediction] });
+      await nextTick(); page.selectAlarm(f.alarm); await nextTick(); page.showTargetVideo.value = true;
+      page.applySnapshot({ ...page.snapshot.value, targets: [target], alarms: [] }); await nextTick();
+      assert.equal(replies.length, 1, '列表先更新触发独立风险详情读取');
+      const completed = { ...target, situationVisibility: { state: 'COUNTERMEASURE_COMPLETED' } };
+      page.applySnapshot({ ...page.snapshot.value, targets: [completed], predictions: [prediction] }); await nextTick();
+      assert.equal(page.snapshot.value.targets.length, 0); assert.equal(page.mapPredictions.value.length, 0);
+      assert.equal(page.selection.value, null); assert.equal(page.selectedRiskContext.value, null);
+      assert.equal(page.selectedCardTarget.value, null); assert.equal(page.showTargetVideo.value, false);
+      replies[0]({ alarm: f.raw, risk_case: f.raw.risk_case, event: {} }); await settle();
+      assert.equal(page.selection.value, null); assert.equal(page.selectedRiskContext.value, null, '旧详情不复活已退出卡片');
+      const newRisk = { ...f.alarm, risk_case: { ...f.raw.risk_case, risk_case_id: randomUUID(), version: 1 } };
+      page.applySnapshot({ ...page.snapshot.value, targets: [{ ...target, relatedAlarms: [newRisk] }], alarms: [newRisk] });
+      await nextTick(); assert.equal(page.snapshot.value.targets.length, 1);
+      page.selectAlarm(newRisk); await nextTick();
+      assert.equal(page.selectedUavAlarm.value.risk_case.risk_case_id, newRisk.risk_case.risk_case_id);
+    } finally { page.stop(); }
+  }
+});
+
+test('完成退出只清理明确同目标同来源选择，未知和普通过期仍保留风险上下文', async () => {
+  for (const sourceMode of ['live', 'replay']) for (const scenario of ['other-source', 'other-target', 'unknown', 'expired', 'failed']) {
+    const now = Date.now(), f = currentCase(sourceMode);
+    const page = createPage(now, {}, { getUavRiskCase: () => new Promise(() => {}) });
+    const target = { ...f.target, observedAt: now - 100, mapExpiresAt: now + 10000, situationVisibility: { state: 'VISIBLE' } };
+    try {
+      page.applySnapshot({ ...page.snapshot.value, targets: [target], alarms: [f.alarm] }); await nextTick();
+      page.selectAlarm(f.alarm); await nextTick(); page.showTargetVideo.value = true;
+      let candidate = { ...target, situationVisibility: { state: 'COUNTERMEASURE_COMPLETED' } }, extra = {};
+      if (scenario === 'other-source') candidate.sourceMode = sourceMode === 'live' ? 'replay' : 'live';
+      if (scenario === 'other-target') candidate.targetId = randomUUID();
+      if (scenario === 'unknown') candidate.situationVisibility = { state: 'UNKNOWN' };
+      if (scenario === 'expired') { candidate.situationVisibility = null; candidate.mapExpiresAt = now; }
+      if (scenario === 'failed') { candidate.situationVisibility = null; extra.failedSegments = ['targets']; }
+      page.applySnapshot({ ...page.snapshot.value, ...extra, targets: [candidate], alarms: [] }); await nextTick();
+      assert.equal(page.selection.value.riskCaseId, f.raw.risk_case.risk_case_id, scenario);
+      assert.equal(page.showTargetVideo.value, true, scenario);
+      assert.equal(page.selectedRiskContext.value.caseId, f.raw.risk_case.risk_case_id, scenario);
+    } finally { page.stop(); }
+  }
+});

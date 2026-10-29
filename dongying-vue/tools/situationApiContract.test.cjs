@@ -317,15 +317,15 @@ async function main() {
   check('目标变化只读目标，不连带告警、风险、移送和设备',
     await afterPush(['target'], (a, b) => b.targets > a.targets),
     { targets: 1, devices: 0, alarms: 0, risks: 0, handoffs: 0, plans: 0 });
-  check('告警变化只读告警',
-    await afterPush(['alarm'], (a, b) => b.alarms > a.alarms),
-    { targets: 0, devices: 0, alarms: 1, risks: 0, handoffs: 0, plans: 0 });
-  check('预测变化同时刷新统一风险阶段，不停在旧的UNKNOWN状态',
-    await afterPush(['prediction'], (a, b) => b.alarms > a.alarms),
-    { targets: 0, devices: 0, alarms: 1, risks: 0, handoffs: 0, plans: 0 });
-  check('设备处置变化刷新统一风险进度',
-    await afterPush(['disposal'], (a, b) => b.alarms > a.alarms),
-    { targets: 0, devices: 0, alarms: 1, risks: 0, handoffs: 0, plans: 0 });
+  check('告警变化同步重读目标可见性，新周期不沿用旧完成标记',
+    await afterPush(['alarm'], (a, b) => b.alarms > a.alarms && b.targets > a.targets),
+    { targets: 1, devices: 0, alarms: 1, risks: 0, handoffs: 0, plans: 0 });
+  check('预测变化同时刷新统一风险阶段和目标可见性',
+    await afterPush(['prediction'], (a, b) => b.alarms > a.alarms && b.targets > a.targets),
+    { targets: 1, devices: 0, alarms: 1, risks: 0, handoffs: 0, plans: 0 });
+  check('设备处置变化同步刷新风险和目标完成投影',
+    await afterPush(['disposal'], (a, b) => b.alarms > a.alarms && b.targets > a.targets),
+    { targets: 1, devices: 0, alarms: 1, risks: 0, handoffs: 0, plans: 0 });
   check('计划变化只读计划资料组',
     await afterPush(['plan'], (a, b) => b.plans > a.plans),
     { targets: 0, devices: 0, alarms: 0, risks: 0, handoffs: 0, plans: 1 });

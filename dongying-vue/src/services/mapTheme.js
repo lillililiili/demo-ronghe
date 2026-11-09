@@ -1,4 +1,4 @@
-// 底图主题只修改本地矢量图层的颜色，保留原几何、缩放、筛选与业务叠加层。
+// 底图主题统一矢量配色与卫星影像色调，保留原几何、缩放、筛选与业务叠加层。
 export function mapPalette() {
   const css = getComputedStyle(document.documentElement);
   return Object.fromEntries([
@@ -58,14 +58,14 @@ export function applyMapTheme(style, options = {}) {
       }
     }
   }
-  if (imagery) injectImagery(style, imagery);
+  if (imagery) injectImagery(style, imagery, p);
   else injectUrbanLayers(style, p);
   return style;
 }
 
 /* 矢量地表留在影像下方，供透明缺测和读取失败时显示；道路、边界及地名继续在上方叠加。
    maxzoom 仅限制源瓦片级别，影像层不设上限，放大时由引擎沿用最高级影像。 */
-function injectImagery(style, imagery) {
+function injectImagery(style, imagery, palette) {
   style.sources.imagery = {
     type: 'raster', tiles: [imagery.tiles], tileSize: imagery.tileSize ?? 256,
     minzoom: imagery.minzoom, maxzoom: imagery.maxzoom, bounds: imagery.bounds, attribution: imagery.attribution
@@ -76,11 +76,17 @@ function injectImagery(style, imagery) {
     {
       id: 'theme_imagery', type: 'raster', source: 'imagery',
       paint: {
-        'raster-saturation': 0, 'raster-contrast': 0,
+        // 保留原色；配套补偿蓝层的明暗衰减，维持道路与建筑的纹理层次。
+        'raster-saturation': 0, 'raster-contrast': 0.25,
         'raster-brightness-min': 0, 'raster-brightness-max': 1,
         'raster-fade-duration': 0,
         'raster-opacity': 1
       }
+    },
+    {
+      // 蓝色薄层位于影像之上、道路和地名之下；保留影像纹理与业务标记颜色。
+      id: 'theme_imagery_tint', type: 'background',
+      paint: { 'background-color': palette.water, 'background-opacity': 0.34 }
     }, ...layers.filter(layer => !ground(layer))];
 }
 
@@ -89,6 +95,7 @@ export function handleImageryError(map, event) {
   if (event?.sourceId !== 'imagery') return null;
   const error = event.error;
   if (error?.name === 'AbortError' || error?.code === 20 || /abort|cancelled|canceled/i.test(String(error?.message || ''))) return 'cancelled';
+  if (map.getLayer('theme_imagery_tint')) map.removeLayer('theme_imagery_tint');
   if (map.getLayer('theme_imagery')) map.removeLayer('theme_imagery');
   if (map.getSource('imagery')) map.removeSource('imagery');
   return 'fallback';

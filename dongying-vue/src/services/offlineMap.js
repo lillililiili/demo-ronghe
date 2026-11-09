@@ -1,7 +1,6 @@
 // 挂载前注册桥接；经典 MapView 和业务页面不依赖具体引擎。
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 import { applyMapTheme, mapPalette, installThemeImages, handleImageryError } from './mapTheme';
-import { proceduralDemTile } from './proceduralTerrain';
 import { warmMapResource, warmMapStyleAssets } from './mapResourceWarmup.js';
 let enginePromise;
 const archives = new Map();
@@ -95,18 +94,14 @@ function preferLocalIdeographs(style) {
 async function readRuntimeConfig(signal) {
   const managedUrl = localUrl(MANAGED_CONFIG_URL);
   const builtinUrl = localUrl(BUILTIN_CONFIG_URL);
-  // 默认配置很小，和后台指针并行读取；后台指针存在时仍优先使用它。
-  // 先处理后备请求的拒绝，避免指针成功时出现无人接收的异步错误。
-  const builtin = json(builtinUrl, signal).then(config => ({ config }), error => ({ error }));
+  // 已发布的地图无需再读取默认配置；仅沿原有后备分支按需读取。
   try {
     const config = await json(managedUrl, signal, 'no-cache', true);
     if (config) return { config, configUrl: managedUrl, managed: true };
   } catch (error) {
     if (error?.name === 'AbortError') throw error;
   }
-  const result = await builtin;
-  if (result.error) throw result.error;
-  return { config: result.config, configUrl: builtinUrl, managed: false };
+  return { config: await json(builtinUrl, signal), configUrl: builtinUrl, managed: false };
 }
 
 async function readMapManifest(signal) {
@@ -150,8 +145,12 @@ function loadEngine() {
       const protocol = new pmtiles.Protocol();
       maplibre.addProtocol('pmtiles', protocol.tile);
       maplibre.addProtocol('offlineimagery', readImageryTile);
-      // 装饰性山影的高程瓦片在本机按噪声生成，不是网络源。
-      maplibre.addProtocol('procdem', proceduralDemTile);
+      // 只有纯矢量主题实际请求山影时才下载计算模块，卫星模式无需加载它。
+      maplibre.addProtocol('procdem', async (request, controller) => {
+        controller?.signal?.throwIfAborted();
+        const { proceduralDemTile } = await import('./proceduralTerrain');
+        return proceduralDemTile(request, controller);
+      });
       return { maplibre, pmtiles, protocol };
     }).catch(error => { enginePromise = null; throw error; });
   }

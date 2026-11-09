@@ -92,6 +92,7 @@
       this.tip.setAttribute('aria-label', '目标详情');
     }
     this.statusEl = box.querySelector('.mapstatus');
+    this._status('loading');
     this._bind();
     this._resize();
     this._initOffline();
@@ -101,6 +102,11 @@
   MapView.prototype._status = function (state, error) {
     if (state === 'ready' && this._imageryError) { state = 'imagery-fallback'; error = this._imageryError; }
     this.box.dataset.mapState = state;
+    this._baseLoading = state === 'loading';
+    // 隐藏首屏中间帧，但保留宿主尺寸，让 MapLibre 继续加载、渲染当前视野。
+    const visibility = this._baseLoading ? 'hidden' : '';
+    [this.baseEl, this.cv, this.acv, this.box.querySelector('.mapscale')].forEach(el => { el.style.visibility = visibility; });
+    if (this._baseLoading) { this._pickPts = []; this.hover = null; this.tip.style.display = 'none'; }
     this.baseEl.setAttribute('aria-busy', String(state === 'loading'));
     this.statusEl.hidden = state === 'ready';
     this.statusEl.className = 'mapstatus is-' + (state === 'imagery-fallback' ? 'fallback' : state);
@@ -109,7 +115,7 @@
         : '离线地图不可用，已切换简化示意图';
     this.statusEl.querySelector('button').hidden = !['fallback', 'imagery-fallback'].includes(state);
     this.statusEl.title = error ? error.message || String(error) : '';
-    this.box.querySelector('.mapcredit').hidden = state === 'ready' || state === 'imagery-fallback';
+    this.box.querySelector('.mapcredit').hidden = state !== 'fallback';
   };
 
   MapView.prototype._isTransientMapError = function (error) {
@@ -161,7 +167,8 @@
     this._status('loading');
     const controller = new AbortController();
     this._loadController = controller;
-    this._loadTimer = setTimeout(() => this._fallback(new Error('地图加载超时，请检查地图包与静态服务器')), 25000);
+    let handleLoadTimeout = error => this._fallback(error);
+    this._loadTimer = setTimeout(() => handleLoadTimeout(new Error('地图加载超时，请检查地图包与静态服务器')), 25000);
     Promise.resolve().then(() => {
       if (!g.OfflineMap) throw new Error('本地地图加载桥接尚未就绪');
       return g.OfflineMap.prepare(controller.signal);
@@ -204,28 +211,50 @@
       map.addControl(new runtime.maplibre.AttributionControl({ compact: false }), 'bottom-left');
       const on = (name, fn) => { map.on(name, fn); this._mapEvents.push([name, fn]); };
       const vectorReady = () => !!map.getSource('protomaps') && map.isSourceLoaded('protomaps');
+      const baseReady = () => vectorReady() && (!map.getSource('imagery') || map.isSourceLoaded('imagery'));
       let initialFailure = null;
+      let viewportPrepared = false;
       const finishLoading = () => {
-        if (this._dead || this.map !== map || this.online || initialFailure) return;
+        if (this._dead || this.map !== map || this.online || initialFailure || !baseReady()) return;
+        if (!viewportPrepared) {
+          viewportPrepared = true;
+          this._applyCameraLimits();
+          map.resize();
+          if (this._pendingFit && this.w > 0 && this.h > 0) {
+            const f = this._pendingFit; this._pendingFit = null;
+            this.fitTo(f.coordinates, f.padding);
+          } else if (this._focus && this._focus.kind === 'fit') {
+            this.fitTo(this._focus.coordinates, this._focus.padding);
+          } else if (!this._isDefaultView) {
+            map.jumpTo({ center: this._pendingCenter, zoom: this._levelForScale(this.zoom) });
+          }
+          // 调整相机可能请求新瓦片，等新视野真正渲染后再揭开首屏。
+          map.triggerRepaint();
+          return;
+        }
         clearTimeout(this._loadTimer);
         clearInterval(this._readyTimer);
         this.online = true;
-        this._applyCameraLimits();
-        map.resize();
-        if (this._pendingFit && this.w > 0 && this.h > 0) {
-          const f = this._pendingFit; this._pendingFit = null;
-          this.fitTo(f.coordinates, f.padding);
-        } else if (this._focus && this._focus.kind === 'fit') {
-          this.fitTo(this._focus.coordinates, this._focus.padding);
-        } else if (!this._isDefaultView) {
-          map.jumpTo({ center: this._pendingCenter, zoom: this._levelForScale(this.zoom) });
-        }
         this._syncView(); this._status('ready'); this.draw();
+      };
+      const imageryFailed = error => {
+        this._imageryError = error;
+        this.box.classList.remove('has-satellite-imagery');
+        if (this.online) this._status('imagery-fallback', error);
+        else map.triggerRepaint(); // 矢量也就绪后才显示回退结果，不能提前揭开空白地图。
+      };
+      handleLoadTimeout = error => {
+        if (this._dead || this.map !== map || this.online) return;
+        const imageryError = new Error('卫星影像加载超时，请检查影像瓦片服务');
+        if (!initialFailure && vectorReady() && map.getSource('imagery')
+          && runtime.handleImageryError?.(map, { sourceId: 'imagery', error: imageryError }) === 'fallback') {
+          imageryFailed(imageryError);
+        } else this._fallback(error);
       };
       on('movestart', event => { if (event.originalEvent) this._isDefaultView = false; });
       on('move', () => { this._syncView(); this._viewHitPending = true; this.draw(); });
-      // 已绘制的矢量底图先显示，影像和装饰山影不阻塞首屏。
-      on('render', () => { if (!this.online && vectorReady()) finishLoading(); this.draw(); });
+      // 卫星首屏与道路标注一起就绪再显示；无影像包仍按矢量就绪显示。
+      on('render', () => { finishLoading(); this.draw(); });
       on('dragstart', () => { this._dragged = true; this._boxLeave(); });
       // 非展示用：拖拽结束后 250ms 内抑制误点击，必须用墙钟而非 M.now()
       on('dragend', () => { this._suppressClickUntil = Date.now() + 250; this._dragged = false; });
@@ -245,9 +274,7 @@
         const imageryState = runtime.handleImageryError?.(map, event);
         if (imageryState) {
           if (imageryState === 'fallback') {
-            this._imageryError = error;
-            this.box.classList.remove('has-satellite-imagery');
-            this._status('imagery-fallback', error);
+            imageryFailed(error);
           }
           return;
         }
@@ -263,7 +290,7 @@
       // 最后一批影像 404 可能只结束请求、不调度渲染；就绪后补一帧，避免等用户缩放。
       // 检查只到首屏成功为止，重试、切页和销毁均清理，不改变地图视野。
       this._readyTimer = setInterval(() => {
-        if (!this._dead && this.map === map && !this.online && !initialFailure && vectorReady()) map.triggerRepaint();
+        if (!this._dead && this.map === map && !this.online && !initialFailure && baseReady()) map.triggerRepaint();
       }, 250);
       this.draw();
     }).catch(error => {
@@ -1364,6 +1391,14 @@
 
   MapView.prototype._drawFrame = function () {
     if (!this.w) return;
+    // 加载提示期间不绘制旧示意地理、业务图形或装饰动画。
+    if (this._baseLoading) {
+      this._splitLayers = false;
+      this._glows = [];
+      this.ctx.clearRect(0, 0, this.w, this.h);
+      this.actx.clearRect(0, 0, this.w, this.h);
+      return;
+    }
     this._splitLayers = !!(this.online && this.map) && !!(g.UI && g.UI.captureAlarmGlows);
     if (this._splitLayers) {
       // 页面叠加层的告警红晕也在同一帧收集，再交给装饰层按时间闪烁。
@@ -1422,7 +1457,7 @@
     const P = (a, b) => this.px(a, b);
     c.clearRect(0, 0, W, H);
 
-    /* 离线详细底图真正加载完成前继续显示简化地图，避免露出 MapLibre 的灰色初始化画布。 */
+    /* 加载时由 _drawFrame 保留空白占位；只有底图整体失败时才绘制简化示意图。 */
     if (this.online && this.map) { this._drawOverlays(c, W, H); return; }
 
     /* 简化示意图：保持业务可操作，不读取任何历史图片瓦片。 */

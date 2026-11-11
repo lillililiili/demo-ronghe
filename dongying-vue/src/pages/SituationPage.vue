@@ -61,7 +61,8 @@ import SituationRiskEvidence from './situation/SituationRiskEvidence.vue';
 import { drawRiskEvidenceGeometry, riskContextCoordinates } from './situation/riskEvidenceGeometry.js';
 import { drawEoCoverageMask, eoCoveragePresentation, eoCoverageView, eoMapFraming } from './situation/eoCoverage.js';
 import { eoCameraText } from './situation/eoCameraState.js';
-import { authSession } from '@/services/auth.js';
+import { authSession, authUser } from '@/services/auth.js';
+import { unitMapViewport } from './situation/unitMapViewport.js';
 
 const U = window.UI;
 usePageChrome('situation');
@@ -176,9 +177,25 @@ async function setEoExpanded(value) {
 }
 watch(eoCoverageKey, () => { if (eoExpanded.value) { eoMapAutoFit=true;syncMapData();focusEoCoverage(); } }, { flush: 'post' });
 watch(eoMapTargetKey, () => { if (eoExpanded.value && eoMapAutoFit) focusEoCoverage(); }, { flush: 'post' });
-function preserveEoMapView() { if (eoExpanded.value) eoMapAutoFit=false; }
+const unitMapBounds = ref(null);
+let unitMapInitialPending = true;
+const unitViewport = computed(() => unitMapViewport(authUser.value, snapshot.value, unitMapBounds.value));
+watch(authSession, () => { unitMapInitialPending = true; });
+function focusInitialUnitMap() {
+  if (!map || eoExpanded.value || !unitMapInitialPending || !unitViewport.value.ready) return;
+  const focus = unitViewport.value.focus;
+  // Empty units can locate once devices arrive; manual panning always wins.
+  if (focus) { map.fitTo(focus.coordinates, focus.padding); unitMapInitialPending = false; }
+  else map.resetView();
+}
+function preserveEoMapView() { unitMapInitialPending = false; if (eoExpanded.value) eoMapAutoFit=false; }
 function currentEoMapFocus() {
-  if (!eoExpanded.value) return null;
+  if (!eoExpanded.value) {
+    if (authUser.value?.user_type !== 'FRONTEND') return null;
+    unitMapInitialPending = false;
+    if (!unitViewport.value.focus) return { kind: 'default' };
+    return unitViewport.value.focus;
+  }
   eoMapAutoFit=true;
   return { kind: 'fit', ...eoMapFrame.value };
 }
@@ -725,6 +742,7 @@ function applySnapshot(next) {
     : '融合感知数据已更新，当前无未查看异常';
   syncMapData();
   if (!map) return;
+  focusInitialUnitMap();
   if (selection.value && ['device', 'target', 'plan'].includes(selection.value.kind)) map.pinHit(selection.value.kind, selection.value.id);
 }
 
@@ -1373,6 +1391,7 @@ onMounted(() => {
     now: serverNow,
     // 固定使用原东营地图范围，不因设备位置扩大底图视野。
     constrainToCoverage: true,
+    onCoverageChange: bounds => { unitMapBounds.value = bounds; focusInitialUnitMap(); },
     layoutMarkers: createSituationMarkerLayout(),
     getExternalMarkers: view => [...(weatherLayer.value?.getMarkers(view) || []), ...(riskSnapshotLayer.value?.getMarkers(view) || [])],
     drawUnderMarkers: view => {
@@ -1449,6 +1468,7 @@ onUnmounted(() => {
       <div class="sit-live-pill" :aria-label="`当前数据来源：${sourceModeText}`">
         <span class="sit-live-dot" aria-hidden="true"></span>
         <b>{{ sourceModeText }}</b>
+        <span v-if="!eoExpanded && unitViewport.notice" role="status">{{ unitViewport.notice }}</span>
         <span>{{ sourceModeDetail }}</span>
         <span>当前目标 {{ targets.length }} · 无人机 {{ targetCounts.uav }} · 异物 {{ targetCounts.foreign }} · 未分类 {{ targetCounts.unknown }}<template v-if="targetCounts.other"> · 其他 {{ targetCounts.other }}</template>（北京时间）</span>
         <time class="mono">{{ clockText }}</time>
@@ -1641,7 +1661,7 @@ onUnmounted(() => {
         <span v-if="layers.coverage && hasSimulatedCoverage" class="sit-scan-key">含模拟参数</span>
         <span class="sit-scan-key" aria-label="在线设备上报脉冲"><i aria-hidden="true"></i>上报脉冲</span>
         <button type="button" :aria-pressed="layers.device" @click="toggleLayer('device')">设备点位</button>
-        <button type="button" :aria-pressed="layers.prediction" @click="toggleLayer('prediction')">未来预测</button>
+        <button type="button" :aria-pressed="layers.prediction" @click="toggleLayer('prediction')">预测轨迹</button>
         <span v-if="layers.prediction" class="sit-scan-key">虚线 ○ 预测位置 · ◇ 预计入区</span>
         <button type="button" :aria-pressed="layers.track" @click="toggleLayer('track')">目标轨迹</button>
         <button type="button" :aria-pressed="layers.flightPlan" @click="toggleLayer('flightPlan')">任务航线</button>

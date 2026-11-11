@@ -144,8 +144,12 @@ useRealtimeRefresh(['evidence', 'alarm', 'disposal'], realtimeRefresh, { minInte
 
 async function syncLocation() {
   clearDetail(); listSequence += 1;
-  if (exact.value && !routeError.value) { const key = exactKeys.value[0]; st.selId = text(route.query[key]); st.sourceKind = { file: 'FILE', track: 'TRACK', command: 'COMMAND' }[key]; }
-  if (Object.hasOwn(route.query, 'category')) st.kind = text(route.query.category);
+  if (exact.value && !routeError.value) {
+    const key = exactKeys.value[0];
+    st.selId = text(route.query[key]); st.sourceKind = { file: 'FILE', track: 'TRACK', command: 'COMMAND' }[key];
+    // 详情与台账同时定位；旧分页、分类及时间筛选不能把本次查看的记录挡在列表外。
+    Object.assign(st, { page: 1, kind: '', status: '', custody: '', refKind: '', time: '', timeRange: null, kw: st.selId });
+  } else if (Object.hasOwn(route.query, 'category')) st.kind = text(route.query.category);
   await nextTick(); await load();
 }
 function filterChanged() { st.page = 1; load(); }
@@ -157,7 +161,7 @@ function select(row) {
   if (exact.value) { const { file, track, command, ...rest } = route.query; router.replace({ path: '/evidence', query: evidenceRecordQuery(row, rest) }); return; }
   st.selId = row.source_id; st.sourceKind = row.source_kind; loadDetail();
 }
-function returnToLedger() { st.kind = ''; st.refKind = ''; st.status = ''; st.custody = ''; st.time = ''; st.timeRange = null; st.page = 1; router.replace({ path: '/evidence' }); }
+function returnToLedger() { st.kind = ''; st.refKind = ''; st.status = ''; st.custody = ''; st.time = ''; st.timeRange = null; st.kw = ''; st.page = 1; router.replace({ path: '/evidence' }); }
 function accessChanged() { listSequence += 1; clearDetail(); items.value = []; totalCount.value = 0; loading.value = false; error.value = '访问权限已变化，请重新读取'; statistics.fail(error.value); closeModal(); }
 function onPage(p) { st.page = p; load(); }
 function onPageSize(size) { st.size = size; st.page = 1; load(); }

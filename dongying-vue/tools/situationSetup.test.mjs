@@ -10,6 +10,7 @@ import { computed, ref, watch, effectScope, nextTick } from 'vue';
 import * as prediction from '../src/services/predictionView.js';
 import * as eoCoverage from '../src/pages/situation/eoCoverage.js';
 import * as eoSelection from '../src/pages/situation/eoSelection.js';
+import { unitMapViewport } from '../src/pages/situation/unitMapViewport.js';
 
 const riskItemsContext = vm.createContext({ ...riskHelpers, coverageContainsPoint,
   displayTargetNo: value => value, ruleReasonText: value => value });
@@ -30,7 +31,8 @@ function createPage(now = Date.now(), sourceOverrides = {}, apiOverrides = {}) {
   const unmounts = [];
   const stats = { watchCount: 0, mapCreated: 0, notices: [] };
   const context = vm.createContext({ ...bindings, ...riskHelpers, ...riskFlow, ...prediction, ...eoCoverage, ...eoSelection, ...riskItemsContext.helpers,
-    authSession: ref('test-session'), toast: (message, tone) => stats.notices.push({ message, tone }), displayBusinessNo: value => value,
+    authSession: ref('test-session'), authUser: ref({ user_type: 'BACKEND' }), unitMapViewport,
+    toast: (message, tone) => stats.notices.push({ message, tone }), displayBusinessNo: value => value,
     computed, ref, nextTick, watch: (...args) => { stats.watchCount++; return watch(...args); },
     onMounted() {}, onUnmounted: callback => unmounts.push(callback), serverNow: () => now,
     useRoute: () => ({ query: {} }), createSituationApiSource: () => ({ setSourceTarget() {},

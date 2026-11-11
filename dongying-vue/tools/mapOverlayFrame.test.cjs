@@ -179,5 +179,25 @@ for (const renderTip of [() => null, undefined]) {
 }
 console.log('PASS: UAV hover stays hidden across cached/replaced observations; click hits, other target/device/plan tips and default map behavior remain');
 
+// Region-only revisions must not steal a camera; in-flight cross-package rollback still cancels/reloads.
+sandbox.ResizeObserver = class { observe() {} };
+sandbox.window.addEventListener = () => {};
+let resets = 0, reloads = 0;
+const runtimeMap = Object.assign(Object.create(MapView.prototype), {
+  box: { addEventListener() {} }, tip: { addEventListener() {} }, opt: {},
+  _activePackageId: 'dongying', _requestedPackageId: 'dongying',
+  _pendingCenter: [118.4, 37.2], zoom: 8,
+  _applyRuntimePolicy() {}, draw() {}, resetView() { resets++; }, _initOffline() { reloads++; }
+});
+runtimeMap._bind();
+runtimeMap._runtimeChange({ detail: { package_id: 'dongying', revision: 2 } });
+assert.equal(resets, 0); assert.equal(reloads, 0);
+assert.deepEqual(runtimeMap._pendingCenter, [118.4, 37.2]); assert.equal(runtimeMap.zoom, 8);
+runtimeMap._runtimeChange({ detail: { package_id: 'jinan', revision: 3 } });
+assert.equal(resets, 1); assert.equal(reloads, 1);
+runtimeMap._runtimeChange({ detail: { package_id: 'dongying', revision: 4 } });
+assert.equal(resets, 2); assert.equal(reloads, 2, 'rollback must cancel a pending load of Jinan');
+console.log('PASS: same-package region revisions preserve the camera; cross-package and pending rollback reload');
+
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

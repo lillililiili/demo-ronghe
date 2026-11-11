@@ -142,10 +142,15 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
   const accessChanged = () => {
     predictionAccessGeneration += 1;
     readGeneration += 1;
-    deniedSegments.clear(); failedSegments.delete('predictions');
+    sourceSelectionGeneration += 1; selectedSourceTarget = null;
+    deniedSegments.clear(); failedSegments.clear();
+    routeVersions.clear(); trajectoryComparisons.clear();
     trackHistories.clear(); historyQueue.length = 0;
-    snapshot = { ...snapshot, predictions: [], eoReports: [] };
-    publish(now()); nudge(['prediction']);
+    lastTracksAt = 0; lastRisksAt = 0;
+    snapshot = { ...snapshot, startedAt: now(), targetUpdatedAt: 0, deviceUpdatedAt: 0,
+      devices: [], targets: [], alarms: [], flightPlans: [], risks: [], airspaces: [],
+      handoffs: [], predictions: [], eoReports: [], fusionStatus: null };
+    publish(now()); nudge(['*']);
   };
 
   /* 尾迹只有最近 24 点；读过整条轨迹的目标把尾迹接到整条轨迹后面，并记下接好的结果供下一轮再接。
@@ -230,6 +235,7 @@ export function createSituationApiSource({ fastMs = FAST_MS, slowMs = SLOW_MS, n
       if (!permitted(name)) { apply(empty); return; }
       apply(result); failedSegments.delete(name);
       if (name === 'targets') snapshot = { ...snapshot, targetUpdatedAt: now() };
+      if (name === 'devices') snapshot = { ...snapshot, deviceUpdatedAt: now() };
     }
     catch (error) {
       if (!current()) return;

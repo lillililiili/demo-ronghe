@@ -11,6 +11,7 @@ function query(params = {}) {
 
 // 冲突接口返回服务端计算的水平/高度/时间关系事实，不宣判合法性，也不等同已保存研判；失败不回退演示 Mock。
 export const airspaceApi = {
+  mapContext: params => apiRequest(`/airspaces/map-context${query(params)}`),
   managementContext: () => apiRequest('/airspaces/management-context'),
   create: (body, idempotencyKey) => apiRequest('/airspaces', { method: 'POST', body, mutation: true, idempotencyKey }),
   update: (id, body, idempotencyKey) => apiRequest(`/airspaces/${encodeURIComponent(id)}`, { method: 'PUT', body, mutation: true, idempotencyKey }),

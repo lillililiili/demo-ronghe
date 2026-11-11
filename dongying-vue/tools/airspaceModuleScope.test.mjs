@@ -22,10 +22,20 @@ const turn = () => new Promise(resolve => setImmediate(resolve));
 
 function pageFixture(row, overrides = {}) {
   const calls = [], mounted = [], unmounted = [];
+  const events = new Map(), dispatched = [];
+  let context = { runtime: { package_id: 'map-a', revision: 1 }, city: { code: '370500', name: '东营市' },
+    state: 'READY', business_available: true, bounds: [118, 37, 119, 38], districts: [] };
   const versions = [{ airspace_version_id: `${row.airspace_id}-version`, version_no: 1 }];
   let subscription;
   const dependencies = {
     ...Vue, mapPool, onMounted: callback => mounted.push(callback), onUnmounted: callback => unmounted.push(callback),
+    window: { addEventListener: (name, fn) => events.set(name, fn), removeEventListener: name => events.delete(name),
+      dispatchEvent: event => { dispatched.push(event); events.get(event.type)?.(event); return true; } },
+    CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options.detail; } },
+    readMapRegionContext: () => context instanceof Promise ? context : Promise.resolve(context),
+    regionQuery: (ctx, district) => ({ map_package_id: ctx.runtime.package_id, map_revision: ctx.runtime.revision, ...(district ? { map_district_code: district } : {}) }),
+    coveredDistrictOptions: ctx => ctx?.state === 'READY' ? [{ value: '', label: '全部覆盖区县' }, { value: row.district_id, label: '本区县' }] : [],
+    boundsPoints: () => [], visibleExtent: () => null,
     usePageChrome() {}, hasPermission: () => true, refreshFailureText: error => error.message,
     useRealtimeRefresh: (topics, callback) => (subscription = { topics, trigger: callback }),
     airspaceApi: {
@@ -43,9 +53,12 @@ function pageFixture(row, overrides = {}) {
   const scope = Vue.effectScope();
   const page = scope.run(() => new Function('dependencies', `with (dependencies) {
     ${setup}
-    return { refreshPage, loadAll, select, clearDetail, all, selected, versions, filters, filtered, canManage, loading, refreshing, error };
+    return { refreshPage, refreshMapContext, loadAll, select, clearDetail, all, selected, versions, filters, filtered, canManage, loading, refreshing, error,
+      queryScope, regionContext, contextLoading, districtOptions, contextNotice, countsUnavailable, mapAirspaces, nextMapChange: () => nextMapChangeAt };
   }`)(dependencies));
-  return { page, calls, subscription, versions,
+  page.regionContext.value = context; page.contextLoading.value = false;
+  return { page, calls, subscription, versions, dispatched,
+    setContext: value => { context = value; },
     mount: async () => { for (const callback of mounted) await callback(); },
     dispose: () => { for (const callback of unmounted) callback(); scope.stop(); }
   };
@@ -70,7 +83,9 @@ test('airspace initialization, refresh and updates only read airspace and route 
       assert.deepEqual(f.page.versions.value, f.versions);
       f.page.filters.district = row.district_id;
       await Vue.nextTick();
+      await turn();
       assert.equal(f.page.filtered.value.length, 1);
+      await f.page.select(row);
 
       f.calls.length = 0;
       await f.page.refreshPage();
@@ -86,6 +101,59 @@ test('airspace initialization, refresh and updates only read airspace and route 
       assert.equal(f.page.selected.value, null);
     } finally { f.dispose(); }
   }
+});
+
+test('missing district configuration disables options without inventing a city catalog', async () => {
+  const f = pageFixture({ airspace_id: 'visible', current_version: {} });
+  try {
+    f.setContext({ ...f.page.regionContext.value, state: 'MISSING' });
+    await f.page.refreshMapContext();
+    assert.equal(f.page.contextNotice.value, '当前地图未配置区县资料');
+    assert.deepEqual(f.page.districtOptions.value, []);
+    assert.equal(f.page.all.value.length, 1, 'same-city map extent remains readable without district metadata');
+  } finally { f.dispose(); }
+});
+
+test('manual refresh noticing a newer pointer updates the basemap through the shared change event', async () => {
+  const f = pageFixture({ airspace_id: 'a', current_version: {} });
+  try {
+    await f.mount();
+    const pointer = { package_id: 'jinan', revision: 2, city_code: '370100', clear_business_overlays: true };
+    f.setContext({ ...f.page.regionContext.value, runtime: { package_id: 'jinan', revision: 2 }, city: { code: '370100' }, business_available: false, runtime_pointer: pointer });
+    await f.page.refreshMapContext(); await turn();
+    assert.equal(f.dispatched.length, 1); assert.equal(f.dispatched[0].type, 'offline-map:change');
+    assert.deepEqual(f.dispatched[0].detail, pointer);
+    assert.equal(f.page.regionContext.value.runtime.package_id, 'jinan'); assert.equal(f.page.countsUnavailable.value, true);
+  } finally { f.dispose(); }
+});
+
+test('cross-city context clears old rows and counts; authorized ledger remains explicitly available', async () => {
+  const f = pageFixture({ airspace_id: 'dongying-row', current_version: {} });
+  try {
+    await f.mount(); f.calls.length = 0;
+    f.setContext({ ...f.page.regionContext.value, runtime: { package_id: 'jinan', revision: 2 }, city: { code: '370100' }, business_available: false });
+    await f.page.refreshMapContext();
+    assert.equal(f.page.all.value.length, 0); assert.equal(f.page.countsUnavailable.value, true);
+    assert.deepEqual(f.calls, [], 'foreign city must not query Dongying business data as local facts');
+    f.page.queryScope.value = 'all'; await Vue.nextTick(); await turn();
+    assert.equal(f.page.all.value.length, 1); assert.equal(f.page.countsUnavailable.value, false);
+    assert.deepEqual(f.page.mapAirspaces.value, [], 'foreign basemap must not paint authorized ledger overlays');
+    assert.equal(f.calls[0][1].map_package_id, undefined);
+  } finally { f.dispose(); }
+});
+
+test('late old map context is discarded and service next-change time reaches the boundary scheduler', async () => {
+  const old = deferred(), fresh = deferred();
+  const f = pageFixture({ airspace_id: 'a', current_version: {} }, { list: async () => ({ items: [], total: 0, next_change_at: Date.now() + 60000 }) });
+  try {
+    const base = { ...f.page.regionContext.value };
+    f.setContext(old.promise); const a = f.page.refreshMapContext();
+    f.setContext(fresh.promise); const b = f.page.refreshMapContext();
+    fresh.resolve({ ...base, runtime: { package_id: 'new', revision: 3 } }); await b;
+    const nextChange = f.page.nextMapChange(); assert.ok(nextChange > Date.now());
+    old.resolve({ ...base, runtime: { package_id: 'old', revision: 2 } }); await a;
+    assert.equal(f.page.regionContext.value.runtime.package_id, 'new'); assert.equal(f.page.nextMapChange(), nextChange);
+  } finally { f.dispose(); }
 });
 
 test('airspace view exposes its retained list, volume editor and history without risk controls', () => {

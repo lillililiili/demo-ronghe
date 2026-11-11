@@ -114,10 +114,14 @@ async function main() {
   const prediction=await import(pathToFileURL(path.resolve(__dirname,'../src/services/predictionView.js')).href);
   const eoCoverage=await import(pathToFileURL(path.resolve(__dirname,'../src/pages/situation/eoCoverage.js')).href);
   const eoSelection=await import(pathToFileURL(path.resolve(__dirname,'../src/pages/situation/eoSelection.js')).href);
+  const { unitMapViewport } = await import(pathToFileURL(path.resolve(__dirname, '../src/pages/situation/unitMapViewport.js')).href);
   const riskHelpers = await import(pathToFileURL(path.resolve(__dirname, '../src/services/riskCaseView.js')).href);
-  const deps={...riskHelpers,...vue,...S,...flow,...labels,...handoff,...prediction,...eoCoverage,...eoSelection,groupRouteRisks,riskSnapshotMarkers,serverNow:()=>clock,
+  const deps={...riskHelpers,...vue,...S,...flow,...labels,...handoff,...prediction,...eoCoverage,...eoSelection,groupRouteRisks,riskSnapshotMarkers,unitMapViewport,serverNow:()=>clock,
     currentMapSnapshot:value=>S.currentMapSnapshot(value,clock),
-    usePageChrome(){},useRoute:()=>({query:{}}),authSession:vue.ref('test-session'),watch(){},onMounted:cb=>mounts.push(cb),onUnmounted(){},
+    usePageChrome(){},useRoute:()=>({query:{}}),authSession:vue.ref('test-session'),authUser:vue.ref({user_type:'BACKEND'}),watch(){},onMounted:cb=>mounts.push(cb),onUnmounted(){},
+    useSituationRiskItems:()=>({kind:vue.ref('ALL'),page:vue.ref(1),view:vue.ref('ACTIVE'),rows:vue.ref([]),
+      counts:vue.ref({}),availability:vue.ref({}),total:vue.ref(null),loading:vue.ref(false),error:vue.ref(''),revision:vue.ref(0),
+      refresh:async()=>{},changeKind(){},changeView(){}}),
     createSituationApiSource:()=>({start:()=>()=>{},loadTargetDetail:async()=>{}}),
     createSituationMarkerLayout:()=>()=>[],ResizeObserver:class{observe(){}},document:{hidden:false,addEventListener(){}},
     sessionStorage:{getItem:()=>null,setItem(){}},window:{UI:{icon:()=>''},setInterval:cb=>intervals.push(cb),
@@ -132,7 +136,7 @@ async function main() {
   const birdRisk={...risk,riskId:randomUUID(),planId:birdPlan.planId,routeVersionId:birdPlan.routeVersionId,
     targetInternalId:birdTarget.targetId,sourceMode:'replay',simulated:true,state:'PENDING_VERIFICATION',
     spaceFact:{longitude:116.8,latitude:31.2,subtypeCode:'BIRD_FLOCK',subtypeName:'鸟群',count:25}};
-  const raw={generatedAt:clock,targets:[t,birdTarget],risks:[risk,birdRisk],alarms:[{alarmId:randomUUID(),targetInternalId:t.targetId,eventState:'PENDING_VERIFICATION'}],flightPlans:[plan,birdPlan],devices:[],handoffs:[]};
+  const raw={generatedAt:clock,targets:[t,birdTarget],risks:[risk,birdRisk],alarms:[{alarmId:randomUUID(),targetInternalId:t.targetId,eventState:'PENDING_VERIFICATION'}],flightPlans:[plan,birdPlan],devices:[],handoffs:[],airspaces:[]};
   mounts.forEach(cb=>cb());page.applySnapshot(raw);
   check('当前风险总数包含目标异常、气球与鸟群',[page.activeRiskCount.value,page.alarms.value.length,page.riskGroups.value.length,page.riskSnapshots.value.length],[3,1,2,2]);
   check('气球与鸟群同时进入航线风险分组',page.riskGroups.value.map(g=>g.spaceFact.subtypeCode).sort(),['BALLOON','BIRD_FLOCK']);

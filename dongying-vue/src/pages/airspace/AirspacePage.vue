@@ -18,6 +18,7 @@ import { usePageChrome } from '@/hooks/usePageChrome.js';
 import UPanel from '@/components/UPanel.vue';
 import UControl from '@/components/form/UControl.vue';
 import { hitMapReference } from './airspaceReferenceHover.js';
+import { readMapRegionContext, regionQuery, coveredDistrictOptions, boundsPoints, visibleExtent } from './mapRegionContext.js';
 import {
   AIRSPACE_KIND_LABEL, AIRSPACE_KIND_TAG, ALTITUDE_DATUM_LABEL,
   labelOf
@@ -49,6 +50,16 @@ const routeLines = ref([]);         // 合法航线中心线 [{ id, name, points
 const routesAvailable = ref(true);  // 无 route:read 时整层不画、图例不列
 const loading = ref(false), refreshing = ref(false), error = ref(''), refreshError = ref('');
 const filters = reactive({ district: '', kind: '', validity: '', keyword: '' });
+const queryScope = ref('map');
+const regionContext = ref(null), contextLoading = ref(true), contextError = ref('');
+const contextNotice = computed(() => contextError.value || (contextLoading.value ? '正在读取当前地图区县资料…'
+  : regionContext.value?.state === 'MISSING' ? '当前地图未配置区县资料' : ''));
+const businessUnavailable = computed(() => queryScope.value === 'map' && (contextLoading.value || !regionContext.value || !regionContext.value.business_available));
+const businessNotice = computed(() => contextError.value || (contextLoading.value ? '正在读取当前地图…'
+  : regionContext.value?.business_unavailable_reason || '当前城市尚未接入业务数据，仅可浏览地图和区县。'));
+const mapBusinessVisible = computed(() => !!regionContext.value?.business_available && !contextLoading.value && !contextError.value);
+const countsUnavailable = computed(() => contextLoading.value || businessUnavailable.value || !!error.value || (loading.value && !all.value.length));
+let contextSequence = 0, routeLoadSeq = 0, editorHandle = null;
 const hiddenKinds = ref({});        // { kindCode: true } → 图上不画
 const showRoutes = ref(true);
 const page = ref(1), size = ref(10);
@@ -130,15 +141,17 @@ function areaText(version) {
 
 /* ---------- 读取 ---------- */
 let batchAirspaces = true;
-async function listAirspaces(withVersion) {
-  const extra = withVersion && batchAirspaces ? { include: 'current_version' } : {};
+async function listAirspaces(withVersion, scopeParams) {
+  const extra = { ...scopeParams, ...(withVersion && batchAirspaces ? { include: 'current_version' } : {}) };
   if (withVersion && !batchAirspaces) return null;
   const first = await airspaceApi.list({ page: 1, size: PAGE_MAX, ...extra });
   const pages = Math.ceil((first.total || 0) / PAGE_MAX);
   const remaining = await mapPool(Array.from({ length: Math.max(0, pages - 1) }, (_, i) => i + 2), 3,
     page => airspaceApi.list({ page, size: PAGE_MAX, ...extra }));
   const items = (first.items || []).concat(...remaining.map(result => result.items || []));
-  return items.filter(item => !OMITTED_TEST_AIRSPACE_IDS.has(item.airspace_id));
+  const rows = items.filter(item => !OMITTED_TEST_AIRSPACE_IDS.has(item.airspace_id));
+  rows.nextMapChangeAt = scopeParams.map_package_id ? Number(first.next_change_at) || 0 : 0;
+  return rows;
 }
 
 /* quiet：实时刷新或到点重读。已有列表时读取失败保留原列表并注明，错误抛给实时刷新按退避重试；
@@ -147,6 +160,8 @@ let airspaceLoadSeq = 0;
 async function loadAll({ quiet = false } = {}) {
   const seq = ++airspaceLoadSeq;
   const isCurrent = () => pageAlive && seq === airspaceLoadSeq;
+  if (businessUnavailable.value) { all.value = []; clearDetail(); loading.value = false; refreshing.value = false; paintMap(false); return; }
+  const scopeParams = queryScope.value === 'map' ? regionQuery(regionContext.value, filters.district) : {};
   const keep = quiet && all.value.length > 0 && !error.value;
   let failure = null;
   loading.value = !keep;
@@ -154,18 +169,20 @@ async function loadAll({ quiet = false } = {}) {
   if (!keep) error.value = '';
   try {
     // 先一次取回空域连同当前版本；旧后端不认（400）或某片空域版本重叠（409）时改回逐片读取详情。
-    let details = await listAirspaces(true).catch(reason => {
+    let details = await listAirspaces(true, scopeParams).catch(reason => {
+      if (queryScope.value === 'map') throw reason;
       if (reason?.status !== 400 && reason?.status !== 409) throw reason;
       if (reason?.status === 400) batchAirspaces = false;
       return null;
     });
     if (!details) {
-      const items = await listAirspaces(false);
+      const items = await listAirspaces(false, scopeParams);
       // 单片详情读不到（例如服务端判版本重叠）不能让它从台账上消失：保留清单行，标出原因。
       details = await mapPool(items, 4, item => airspaceApi.detail(item.airspace_id)
         .catch(reason => ({ ...item, current_version: null, load_error: reason?.code === 'VERSION_AMBIGUOUS' ? '版本区间重叠，服务端拒绝读取' : messageOf(reason) })));
     }
     if (!isCurrent()) return;
+    nextMapChangeAt = details.nextMapChangeAt || 0;
     all.value = details;
     refreshError.value = '';
     if (selected.value) {
@@ -202,7 +219,7 @@ const BOUNDARY_GRACE_MS = 1_000;
 const BOUNDARY_RECHECK_MS = 3_000;
 const MAX_TIMER_MS = 2_000_000_000;
 const upcomingStarts = new Map();   // airspace_id → { version, at }
-let routeBoundaries = [];
+let routeBoundaries = [], nextMapChangeAt = 0;
 let boundaryTimer = 0, boundaryRechecks = 0, pageAlive = true;
 async function loadUpcomingStarts(rows, isCurrent = () => pageAlive) {
   const now = Date.now();
@@ -228,6 +245,7 @@ function scheduleBoundaryReload() {
   let stale = false;
   // 已过边界却仍是旧状态：服务端时钟略慢或恰好在边界前读的，稍后再读。
   const due = at => { if (at > now) times.push(at); else if (at) stale = true; };
+  due(nextMapChangeAt);
   all.value.forEach(row => due(Number(row.current_version?.valid_to) || 0));
   upcomingStarts.forEach(entry => due(entry.at));
   versions.value.forEach(version => [version.valid_from, version.valid_to].forEach(at => { if (Number(at) > now) times.push(Number(at)); }));
@@ -259,6 +277,8 @@ async function loadRouteVersionsOfRoutes(routeIds) {
 
 /** 合法航线：只画启用的航线当前版本的中心线；没权限就整层不列。 */
 async function loadRoutes() {
+  const seq = ++routeLoadSeq;
+  if (!mapBusinessVisible.value) { routeLines.value = []; routeBoundaries = []; paintMap(false); return; }
   try {
     const data = await flightApi.routes({ page: 1, size: 50 });
     const enabled = (data.items || []).filter(route => route.enabled !== false);
@@ -278,10 +298,12 @@ async function loadRoutes() {
         return points.length >= 2 ? { id: route.route_id, name: route.name || displayRouteNo(route.route_no), points } : null;
       } catch { return null; }
     }));
+    if (!pageAlive || seq !== routeLoadSeq) return;
     routeLines.value = lines.filter(Boolean);
     routesAvailable.value = true;
     routeBoundaries = boundaries;
   } catch (reason) {
+    if (!pageAlive || seq !== routeLoadSeq) return;
     routeLines.value = [];
     routesAvailable.value = reason?.status !== 403;
     routeBoundaries = [];
@@ -292,15 +314,16 @@ async function loadRoutes() {
 
 /* ---------- 筛选与派生 ---------- */
 const districtOptions = computed(() => {
+  if (queryScope.value === 'map') return coveredDistrictOptions(regionContext.value);
   const seen = new Map();
   all.value.forEach(row => { if (row.district_id && !seen.has(row.district_id)) seen.set(row.district_id, row.district_name || row.district_id); });
-  return [{ label: '全市', value: '' }].concat([...seen].map(([value, label]) => ({ label, value })));
+  return [{ label: '全部授权区县', value: '' }].concat([...seen].map(([value, label]) => ({ label, value })));
 });
 const filtered = computed(() => {
   const keyword = filters.keyword.trim().toLowerCase();
   return all.value.filter(row => {
     const version = row.current_version;
-    if (filters.district && row.district_id !== filters.district) return false;
+    if (queryScope.value === 'all' && filters.district && row.district_id !== filters.district) return false;
     if (filters.kind && version?.kind_code !== filters.kind) return false;
     if (filters.validity === 'now' && !version) return false;
     if (filters.validity === 'off' && version) return false;
@@ -310,7 +333,10 @@ const filtered = computed(() => {
 });
 const total = computed(() => filtered.value.length);
 const pageRows = computed(() => filtered.value.slice((page.value - 1) * size.value, page.value * size.value));
-watch([filtered, size], () => { const pages = Math.max(1, Math.ceil(total.value / size.value)); if (page.value > pages) page.value = pages; });
+watch([filtered, size], () => {
+  const pages = Math.max(1, Math.ceil(total.value / size.value)); if (page.value > pages) page.value = pages;
+  if (selected.value && !filtered.value.some(row => row.airspace_id === selected.value.airspace_id)) clearDetail();
+});
 
 const counts = computed(() => ({
   total: filtered.value.length,
@@ -320,15 +346,58 @@ const counts = computed(() => ({
 
 /** 图例：只列筛选结果里出现过的种类，点击切换显隐。 */
 const legendKinds = computed(() => {
+  if (!mapBusinessVisible.value) return [];
   const present = new Set(filtered.value.map(row => row.current_version?.kind_code).filter(Boolean));
   return KIND_CODES.filter(code => present.has(code)).map(code => ({ code, label: kindLabel(code), color: kindColor(code), hidden: !!hiddenKinds.value[code] }));
 });
 function toggleKind(code) { hiddenKinds.value = { ...hiddenKinds.value, [code]: !hiddenKinds.value[code] }; }
 
-const mapAirspaces = computed(() => toAirspaces(filtered.value.filter(row => row.current_version && !hiddenKinds.value[row.current_version.kind_code])));
+const mapAirspaces = computed(() => mapBusinessVisible.value ? toAirspaces(filtered.value.filter(row => row.current_version && !hiddenKinds.value[row.current_version.kind_code])) : []);
 
 watch([mapAirspaces, showRoutes], () => paintMap(false));
-function refreshPage() { return Promise.all([loadAll(), loadRoutes()]); }
+async function refreshMapContext(pointer) {
+  const seq = ++contextSequence;
+  const old = regionContext.value;
+  const oldDistrict = filters.district;
+  const changed = (id, revision) => !old || old.runtime?.package_id !== id || old.runtime?.revision !== revision;
+  const clearContextData = () => { nextMapChangeAt = 0; all.value = []; routeLines.value = []; clearDetail(); page.value = 1; };
+  contextLoading.value = true; contextError.value = ''; regionContext.value = null;
+  ++airspaceLoadSeq; ++routeLoadSeq;
+  if (!old || (pointer && changed(pointer.package_id, pointer.revision))) clearContextData();
+  loading.value = false; refreshing.value = false; refreshError.value = ''; error.value = '';
+  // MapView 已根据运行版本定位底图，后续业务刷新不能把视野拉回另一城市。
+  fittedOnce = true;
+  paintMap(false);
+  try {
+    const context = await readMapRegionContext(pointer);
+    if (!pageAlive || seq !== contextSequence) return;
+    // 手动刷新可能先于30秒底图轮询看到新指针，需沿同一事件同时更新底图。
+    if (!pointer && old && changed(context.runtime.package_id, context.runtime.revision) && context.runtime_pointer) {
+      window.dispatchEvent(new CustomEvent('offline-map:change', { detail: context.runtime_pointer }));
+      return;
+    }
+    if (changed(context.runtime.package_id, context.runtime.revision)) clearContextData();
+    regionContext.value = context;
+    filters.district = old?.city?.code === context.city?.code && (queryScope.value === 'all'
+      || coveredDistrictOptions(context).some(option => option.value === oldDistrict)) ? oldDistrict : '';
+    if (editorHandle?.isCurrent() && old?.runtime?.revision !== context.runtime?.revision) {
+      message.warning('底图已切换。当前空域编辑内容和原归属已保留，请核对后再保存。', { duration: 8000 });
+    }
+  } catch (reason) { if (pageAlive && seq === contextSequence) { filters.district = ''; contextError.value = messageOf(reason); } }
+  finally { if (pageAlive && seq === contextSequence) contextLoading.value = false; }
+  if (pageAlive && seq === contextSequence) await Promise.all([loadAll(), loadRoutes()]);
+}
+function refreshPage() { return refreshMapContext(); }
+function onMapChange(event) { refreshMapContext(event.detail); }
+function locateDistrict() {
+  const row = regionContext.value?.districts?.find(item => item.district_code === filters.district);
+  const points = boundsPoints(row?.visible_bounds || regionContext.value?.bounds);
+  if (map && points.length) { map.fitTo(points, 0.12); fittedOnce = true; }
+}
+watch(queryScope, () => {
+  filters.district = ''; page.value = 1; all.value = []; clearDetail();
+  if (!contextLoading.value) loadAll();
+});
 /* 实时刷新：按变化类别只重读受影响的部分；空域详情、选中项与地图视野保留，正在查看的空域的版本历史一并更新。
    到点生效、失效没有推送信号，由上面的边界计时按同样方式触发。空域列表读取失败时抛出，由实时刷新按退避重试。 */
 const realtime = useRealtimeRefresh(['airspace', 'plan'], topics => {
@@ -339,6 +408,9 @@ const realtime = useRealtimeRefresh(['airspace', 'plan'], topics => {
   return Promise.all(tasks);
 }, { minIntervalMs: 1_500 });
 watch(() => filters.district, district => {
+  page.value = 1;
+  if (contextLoading.value) return;
+  if (queryScope.value === 'map') { all.value = []; clearDetail(); loadAll(); locateDistrict(); return; }
   if (selected.value && district && selected.value.district_id !== district) clearDetail();
 });
 
@@ -369,7 +441,7 @@ function installOverlay() {
   map.drawOverlay = function drawWithOverlay() {
     drawBase();
     const c = this.ctx;
-    if (!c || !this.w) return;
+    if (!c || !this.w || !mapBusinessVisible.value) return;
     referenceShapes = [];
     // MapView 每帧重绘；只有视角变化才清除提示，避免悬停卡片一闪即逝。
     const camera = [this.w, this.h, ...this.px(118, 37), ...this.px(119, 38)].join(',');
@@ -377,7 +449,7 @@ function installOverlay() {
     referenceCamera = camera;
     c.save();
     // 计划航线：灰色虚线，不标名——十几条航线的名字叠在一起谁也看不清，名字在飞行计划页看
-    if (showRoutes.value) routeLines.value.forEach(line => {
+    if (showRoutes.value && mapBusinessVisible.value) routeLines.value.forEach(line => {
       referenceShapes.push({ id: line.id, name: line.name, type: '合法航线',
         note: '当前启用航线的中心线。', points: line.points.map(point => this.px(...point)) });
       strokePlannedRoute(c, this, line.points, { color: PLAN_COLOR, terminals: false, arrows: false });
@@ -448,6 +520,7 @@ function editAirspace(row = null) {
         if (saved) await select(saved);
       }
     }) });
+  editorHandle = handle;
 }
 
 async function deleteAirspace() {
@@ -509,8 +582,11 @@ async function reloadVersions() {
 
 function locate() {
   const points = selectedPolygons().flat().flat();
-  if (map && points.length) map.fitTo(points, 0.3);
+  const extent = mapBusinessVisible.value && visibleExtent(points, regionContext.value?.bounds);
+  if (map && extent) map.fitTo(boundsPoints(extent), 0.3);
 }
+const selectedOutsideMap = computed(() => !!selected.value && (!mapBusinessVisible.value
+  || !visibleExtent(selectedPolygons().flat().flat(), regionContext.value?.bounds)));
 
 const latestVersion = computed(() => versions.value[0] || null);
 /** 最新一版还没到生效时间：抽屉里要说出来，区分当前规则与尚未生效的规则。 */
@@ -520,10 +596,13 @@ const rowStatus = row => row.load_error ? { text: '读取失败', cls: 't-red' }
 
 /* ---------- 生命周期 ---------- */
 onMounted(async () => {
+  window.addEventListener('offline-map:change', onMapChange);
   createMap();
-  await Promise.all([loadAll(), loadRoutes()]);
+  await refreshMapContext();
 });
 onUnmounted(() => {
+  ++contextSequence; ++airspaceLoadSeq; ++routeLoadSeq;
+  window.removeEventListener('offline-map:change', onMapChange);
   destroyMap();
 });
 </script>
@@ -531,7 +610,7 @@ onUnmounted(() => {
 <template>
   <section class="view airspace-page" :class="{ 'has-detail': !!selected }">
     <!-- 中部：地图 + 抽屉 -->
-    <div class="airspace-stage"><h3 class="map-heading">空域位置</h3>
+    <div class="airspace-stage"><h3 class="map-heading">{{ regionContext?.city?.name || '当前地图' }} · 空域位置</h3>
       <div class="airspace-map-area" @mousemove="onReferenceMove" @mouseleave="clearReferenceTip" @pointerdown.capture="clearReferenceTip" @wheel.capture="clearReferenceTip">
       <div ref="mapHost" class="airspace-map"></div>
       <div v-if="referenceTip" class="airspace-reference-tip" role="tooltip"
@@ -547,10 +626,11 @@ onUnmounted(() => {
         <button v-if="routesAvailable && routeLines.length" type="button" class="legend-item" :class="{ off: !showRoutes }" @click="showRoutes = !showRoutes">
           <span class="sw ln" :style="{ borderColor: PLAN_COLOR }"></span>任务航线
         </button>
-        <div v-if="!legendKinds.length && !loading" class="legend-empty">图上暂无空域</div>
+        <div v-if="!legendKinds.length && !loading" class="legend-empty">{{ mapBusinessVisible ? '图上暂无空域' : '仅浏览底图' }}</div>
       </details>
 
-      <div v-if="!loading && !error && !all.length" class="airspace-map-empty">暂无空域，可新增本地空域或接收上级下发</div>
+      <div v-if="!mapBusinessVisible" class="airspace-map-empty">{{ businessNotice }}</div>
+      <div v-else-if="!loading && !error && !all.length" class="airspace-map-empty">当前查看范围内暂无可读空域</div>
       <div v-else-if="error" class="airspace-map-empty">{{ error }}</div>
 
 
@@ -584,13 +664,14 @@ onUnmounted(() => {
           <div v-if="selected.load_error" class="warnbox">{{ selected.load_error }}</div>
           <div v-if="detailError" class="warnbox">{{ detailError }}</div>
           <div v-if="mutationError" class="warnbox" role="alert">{{ mutationError }}</div>
+          <div v-if="selectedOutsideMap" class="warnbox">该空域无法在当前底图定位。原资料与所属单位保持不变，可切回对应城市地图查看位置。</div>
           <p v-if="maintenanceBlocker" class="maintenance-note">{{ maintenanceBlocker }}</p>
 
           <details v-if="versions.length"><summary>版本历史</summary><dl v-for="version in versions" :key="version.airspace_version_id || version.version_no" class="kv"><dt>版本</dt><dd>{{ version.version_no }}</dd><dt>种类</dt><dd>{{ kindLabel(version.kind_code) }}</dd><dt>生效期</dt><dd>{{ validityText(version) }}</dd><dt>高度</dt><dd>{{ altitudeText(version) }}</dd><dt>变更原因</dt><dd>{{ version.change_reason || '未记录' }}</dd></dl></details>
           <div v-if="selected.current_version && !selectedPolygons().length" class="warnbox">边界数据有问题，图上未绘制。</div>
         </div>
         <div class="drawer-actions">
-          <button class="btn" type="button" :disabled="!selectedPolygons().length" @click="locate">定位</button>
+          <button class="btn" type="button" :disabled="!selectedPolygons().length || selectedOutsideMap" @click="locate">定位</button>
           <button class="btn" type="button" :disabled="!!maintenanceBlocker || mutationBusy" @click="editAirspace(selected)">三维编辑</button>
           <button class="btn" type="button" :disabled="!!maintenanceBlocker || mutationBusy" @click="deleteAirspace">删除空域</button>
         </div>
@@ -599,9 +680,17 @@ onUnmounted(() => {
 
     <section id="airspace-rules-panel" aria-label="空域列表">
     <div class="panel airspace-bar">
+      <div class="map-region-context" aria-label="当前地图与查询范围">
+        <div class="map-region-heading"><strong>{{ regionContext?.city?.name || '当前地图' }}</strong><span class="tag t-blue">{{ contextLoading ? '读取中' : regionContext?.state === 'MISSING' ? '区划未配置' : regionContext?.coverage_kind === 'FULL' ? '已配置区县全覆盖' : regionContext?.coverage_kind === 'PARTIAL' ? '局部覆盖' : '范围待确认' }}</span></div>
+        <div class="map-region-actions"><button type="button" class="btn ghost" :class="{ on: queryScope === 'map' }" :aria-pressed="queryScope === 'map'" @click="queryScope = 'map'">当前地图范围</button><button type="button" class="btn ghost" :class="{ on: queryScope === 'all' }" :aria-pressed="queryScope === 'all'" @click="queryScope = 'all'">查看全部授权空域</button></div>
+      </div>
+      <div v-if="contextNotice" class="map-region-notice" role="status">{{ contextNotice }}<span v-if="regionContext?.state === 'MISSING'">；请在后台地图管理的“配置区县”窗口补齐。</span></div>
+      <div v-else-if="queryScope === 'map'" class="map-region-note">区县按行政边界与当前底图的相交范围筛选；<span v-if="regionContext?.source">区划来源：{{ regionContext.source }} · {{ regionContext.data_version }}</span></div>
+      <div v-if="queryScope === 'all'" class="map-region-note">正在查看账号有权读取的全部空域；所属区县沿用业务记录，列表不受当前底图范围限制。</div>
       <div class="toolbar">
         <div class="toolbar-fields">
-          <div class="field"><label>区县</label><UControl v-model="filters.district" type="select" :options="districtOptions" :disabled="loading" size="small" /></div>
+          <div class="field"><label>{{ queryScope === 'map' ? '区县' : '所属区县' }}</label><UControl v-model="filters.district" type="select" aria-label="区县筛选" :options="districtOptions" :placeholder="queryScope === 'map' && !districtOptions.length ? contextNotice || '当前地图没有覆盖区县' : '全部授权区县'" :disabled="loading || (queryScope === 'map' && (contextLoading || regionContext?.state !== 'READY'))" filterable size="small" /></div>
+          <button v-if="queryScope === 'map' && filters.district" class="btn ghost" type="button" @click="locateDistrict">定位区县</button>
           <div class="field"><label>空域种类</label><UControl v-model="filters.kind" type="select" :options="KIND_OPTIONS" :disabled="loading" size="small" /></div>
           <div class="field"><label>空域状态</label><UControl v-model="filters.validity" type="select" :options="VALIDITY_OPTIONS" :disabled="loading" size="small" /></div>
           <div class="field"><UControl v-model="filters.keyword" placeholder="搜索名称或编号" clearable :disabled="loading" size="small" /></div>
@@ -613,9 +702,10 @@ onUnmounted(() => {
         </div>
       </div>
     </div>
-    <UPanel :title="`<span class='rule-count count-all'>全部 <b>${counts.total}</b></span><span class='rule-count count-active'>生效中 <b>${counts.active}</b></span><span class='rule-count count-temporary'>临时管制 <b>${counts.temporary}</b></span>`" panel-style="flex:1;min-height:0" nopad class-name="airspace-list-panel">
+    <UPanel :title="`<span class='rule-count count-all'>全部 <b>${countsUnavailable ? '—' : counts.total}</b></span><span class='rule-count count-active'>生效中 <b>${countsUnavailable ? '—' : counts.active}</b></span><span class='rule-count count-temporary'>临时管制 <b>${countsUnavailable ? '—' : counts.temporary}</b></span>`" panel-style="flex:1;min-height:0" nopad class-name="airspace-list-panel">
       <div v-if="refreshError && !error" class="airspace-refresh-note" role="status">自动刷新失败（{{ refreshError }}），正在重试；下面是上次读到的空域。</div>
-      <div v-if="error" class="empty">空域列表暂不可用</div>
+      <div v-if="businessUnavailable" class="empty">{{ businessNotice }}<p v-if="!contextLoading">可选择“查看全部授权空域”读取原业务台账。</p></div>
+      <div v-else-if="error" class="empty">空域列表暂不可用</div>
       <div v-else-if="loading && !all.length" class="empty">正在读取空域…</div>
       <div v-else-if="!filtered.length" class="empty">没有符合条件的空域。</div>
       <div v-else class="scroll airspace-list" aria-label="空域记录列表">
@@ -631,7 +721,7 @@ onUnmounted(() => {
           </span>
         </button>
       </div>
-      <div class="rule-pager">
+      <div v-if="!countsUnavailable" class="rule-pager">
         <span>第 {{ page }} / {{ Math.max(1, Math.ceil(total / size)) }} 页</span>
         <button class="btn ghost" type="button" :disabled="page <= 1" @click="page--">上一页</button>
         <button class="btn ghost" type="button" :disabled="page >= Math.ceil(total / size)" @click="page++">下一页</button>
@@ -644,6 +734,7 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.map-region-context{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:12px 14px 4px}.map-region-heading,.map-region-actions{display:flex;align-items:center;gap:10px}.map-region-actions .on{border-color:var(--blue);color:var(--blue)}.map-region-notice,.map-region-note{padding:5px 14px;color:var(--txt-2);font-size:12px;line-height:1.6}.map-region-notice{color:var(--amber)}.map-region-heading strong{font-size:15px}
 .airspace-page { display: grid; grid-template-columns: minmax(260px, .95fr) minmax(300px, 1.35fr) minmax(280px, 1.1fr); grid-template-rows: auto minmax(280px, 1fr) auto; grid-template-areas: "filters filters filters" "records map detail" "import import import"; height: 100%; min-height: 0; min-width: 0; overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable; scrollbar-width: auto; scrollbar-color: auto; gap: 10px; }
 .airspace-page::-webkit-scrollbar { width: 10px; }
 .airspace-page::-webkit-scrollbar-track { background: var(--panel-2); }

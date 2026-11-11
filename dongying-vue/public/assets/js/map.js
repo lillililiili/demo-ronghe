@@ -175,6 +175,8 @@
     }).then(runtime => {
       if (this._dead || controller.signal.aborted) { runtime.release(); return; }
       this._release = runtime.release;
+      this._activePackageId = runtime.runtime?.packageId || '';
+      this._requestedPackageId = this._activePackageId;
       this._coverageBounds = runtime.bounds;
       if (typeof this.opt.onCoverageChange === 'function') this.opt.onCoverageChange(runtime.bounds);
       this._applyRuntimePolicy(runtime.runtime || {});
@@ -413,11 +415,18 @@
     window.addEventListener('mousemove', this._winMove);
     this._runtimeChange = event => {
       if (self._dead) return;
+      const packageId = event.detail?.package_id;
+      // 地图包内容不可变；同包仅区划修订变化时保留用户相机。
+      // 正在加载另一包时仍须取消并重载，避免快速切换后的旧加载覆盖新选择。
+      const samePackage = packageId && packageId === self._activePackageId
+        && packageId === self._requestedPackageId;
       self._applyRuntimePolicy({
         cityCode: event.detail?.city_code,
         cityName: event.detail?.city_name,
         clearBusinessOverlays: Boolean(event.detail?.clear_business_overlays)
       });
+      if (samePackage) { self.draw(); return; }
+      self._requestedPackageId = packageId || '';
       self._coverageBounds = null;
       self._focus = null;
       self.resetView();
@@ -614,10 +623,13 @@
     // 实时页面可提供最新取景点；其他页面继续使用上次保存的焦点。
     const focus = (typeof this.opt?.getRefocus === 'function' ? this.opt.getRefocus(this) : null) || this._focus;
     if (!focus) return this.resetView();
+    if (focus.kind === 'default') return this.resetView();
     if (focus.kind === 'fit') return this.fitTo(focus.coordinates, focus.padding);
     return this.centerAt(focus.lon, focus.lat, { scale: focus.scale, offset: focus.offset, _replay: true });
   };
   MapView.prototype.resetView = function (scale) {
+    this._focus = null;
+    this._pendingFit = null;
     this.ox = this.oy = 0;
     this._isDefaultView = true;
     this._defaultScale = scale == null ? 1 : scale;

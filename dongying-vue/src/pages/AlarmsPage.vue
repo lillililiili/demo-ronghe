@@ -466,9 +466,8 @@ const KPI_DEFS = [
   { label: '今日告警总数', caption: '按发生时间统计', color: 'blue', icon: 'alert' },
   { label: '今日待核实', caption: '按发生时间统计', color: 'amber', icon: 'alert' },
   { label: '待处置', caption: '实时，不限日期', color: 'pink', icon: 'alert' },
-  { label: '执行中反制记录', caption: '设备处置记录数', color: 'orange', icon: 'radar' },
-  { label: '已完成反制记录', caption: '设备处置记录数', color: 'green', icon: 'check' },
-  { label: '执行中干扰记录', caption: '设备处置记录数', color: 'red', icon: 'radar' },
+  { label: '执行中反制', caption: '设备处置记录数', color: 'orange', icon: 'radar' },
+  { label: '已完成反制', caption: '设备处置记录数', color: 'green', icon: 'check' },
   { label: '今日已确认', caption: '按发生时间统计', color: 'cyan', icon: 'alert' },
   { label: '今日误报', caption: '按发生时间统计', color: 'blue', icon: 'check' }
 ];
@@ -506,8 +505,8 @@ async function loadKpis() {
     if (!Number.isSafeInteger(value) || value < 0) throw new Error('告警统计数据未完整返回');
     return value;
   });
-  /* “反制中 / 干扰中”问的是当前有多少处置在进行，因此按状态计数（契约的列表接口没有日期过滤，
-     跨页在前端数日期会数错）。EXECUTING 是正在执行，APPROVED 是已批准待执行，两者分开报。 */
+  /* “执行中反制”合计反制、干扰两种互斥动作类型的授权记录，不按告警或设备去重。
+     EXECUTING 是正在执行，APPROVED 是已批准待执行，两者分开报且不限日期。 */
   // 没有处置记录查看权限就不去数（#34）：卡片写“无权查看”，不发注定被拒的请求。
   const disposalReadable = canReadProgressSource('auths', hasPermission);
   const NO_DISPOSAL_READ = { forbidden: true };
@@ -553,7 +552,7 @@ async function loadKpis() {
     if (value.completed != null) {
       return { ...def, value: U.num(value.completed), desc: '当前权限范围内累计执行完成的反制记录数，不包含干扰及执行失败的记录' };
     }
-    return { ...def, value: U.num(value.executing), desc: `另有 ${U.num(value.approved)} 起已批准待执行` };
+    return { ...def, value: U.num(value.executing), desc: `包含执行中的反制与干扰；另有 ${U.num(value.approved)} 起已批准待执行` };
   };
   const fail = i => v[i] == null ? '读取失败：' + esc(messageOf(r[i].reason)) : null;
   /* 今日卡 = 全部来源 − 演示告警。演示告警数读不到时先按全部来源显示，卡片上写明可能含演示告警，不冒充已扣除。 */
@@ -566,15 +565,20 @@ async function loadKpis() {
     return { ...def, value: num(Math.max(0, v[i] - demo)), caption: demo > 0 ? `另有演示告警 ${U.num(demo)} 条未计入` : def.caption,
       desc: `${text}；系统自带的演示告警不计入` };
   };
+  // 任一类型读不到时，合计也未知；不能把已读到的一部分显示成完整统计。
+  const activeDisposals = v[4] && v[5] ? {
+    approved: v[4].approved + v[5].approved,
+    executing: v[4].executing + v[5].executing
+  } : null;
+  const activeDisposalResult = r[4].status === 'rejected' ? r[4] : r[5];
   kpiList.value = [
     todayKpi(KPI_DEFS[0], 0, '北京时间今天发生的告警数量；发生时间未知者不计'),
     todayKpi(KPI_DEFS[1], 1, '北京时间今天发生且待核实的告警数量'),
     { ...KPI_DEFS[2], value: num(v[7]), desc: fail(7) || '已核实属实、处置还没结束的告警数量，不限日期；正在反制或干扰中的也算在内，设备反制或干扰完成后不再计入' },
-    disposalKpi(KPI_DEFS[3], r[4], v[4]),
+    disposalKpi(KPI_DEFS[3], activeDisposalResult, activeDisposals),
     disposalKpi(KPI_DEFS[4], r[6], v[6]),
-    disposalKpi(KPI_DEFS[5], r[5], v[5]),
-    todayKpi(KPI_DEFS[6], 2, '北京时间今天发生且已确认属实的告警数量，包含处置已结束的记录'),
-    todayKpi(KPI_DEFS[7], 3, '北京时间今天发生且人工核实后已排除的告警数量')
+    todayKpi(KPI_DEFS[5], 2, '北京时间今天发生且已确认属实的告警数量，包含处置已结束的记录'),
+    todayKpi(KPI_DEFS[6], 3, '北京时间今天发生且人工核实后已排除的告警数量')
   ];
 
   })();
@@ -1666,7 +1670,7 @@ onMounted(async () => {
   display: inline-block;
 }
 .alarms-page :deep(.alarm-kpis) {
-  grid-template-columns: repeat(8, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   flex: none;
 }
 @media (max-width: 1099px) {
